@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rolecard_agent.config import Settings
+from rolecard_agent.core.observability import TraceEvent
 
 if TYPE_CHECKING:
     from langchain_core.tools import BaseTool
@@ -163,6 +164,66 @@ def make_embedder(settings: Settings) -> Embedder:
     raise RuntimeError(f"未知 embedding backend: {backend!r}")
 
 
+class SiliconFlowReranker:
+    """BAAI/bge-reranker-v2-m3 via SiliconFlow 的 /rerank 端点（非 OpenAI 兼容格式）。
+
+    失败语义：调用失败**不抛出**——返回 None 让调用方回退到向量序，同时留痕。
+    重排是质量增强，不能变成可用性故障。
+    """
+
+    name = "siliconflow"
+
+    def __init__(
+        self, *, api_key: str, base_url: str, model: str = "BAAI/bge-reranker-v2-m3"
+    ) -> None:
+        import httpx
+
+        self._client = httpx.Client(
+            base_url=base_url.rstrip("/"),
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=30.0,
+        )
+        self._model = model
+
+    def rerank(self, query: str, documents: list[str]) -> list[tuple[int, float]] | None:
+        """返回 [(原索引, 相关性分数)] 按分数降序；失败返回 None（调用方回退向量序）。"""
+        try:
+            res = self._client.post(
+                "/rerank",
+                json={"model": self._model, "query": query, "documents": documents},
+            )
+            res.raise_for_status()
+            results = res.json().get("results", [])
+            return [(int(r["index"]), float(r["relevance_score"])) for r in results]
+        except Exception:  # noqa: BLE001 - 重排失败 = 降级，不是故障
+            return None
+
+
+def make_reranker(settings: Settings) -> SiliconFlowReranker | None:
+    """按 `Settings.rag_rerank` 构建重排器：off（默认，向量序足够）/ auto（有 key 即用）。"""
+    backend = settings.rag_rerank
+    if backend == "off":
+        return None
+    key = os.environ.get("SILICONFLOW_API_KEY")
+    if backend == "auto":
+        return (
+            SiliconFlowReranker(
+                api_key=key,
+                base_url=os.environ.get("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"),
+            )
+            if key
+            else None
+        )
+    if backend == "siliconflow":
+        if not key:
+            raise RuntimeError("rag_rerank=siliconflow 需要 SILICONFLOW_API_KEY 环境变量。")
+        return SiliconFlowReranker(
+            api_key=key,
+            base_url=os.environ.get("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"),
+        )
+    raise RuntimeError(f"未知 rag_rerank: {backend!r}")
+
+
 # ---------------------------------------------------------------- 知识库
 
 
@@ -175,13 +236,23 @@ class Hit:
 
 
 class KnowledgeBase:
-    """Chroma 持久化知识库：一个作用域一个集合，库归内核、角色只声明作用域。"""
+    """Chroma 持久化知识库：一个作用域一个集合，库归内核、角色只声明作用域。
 
-    def __init__(self, chroma_path: Path, embedder: Embedder) -> None:
+    `reranker` 可选（v2.1 后半）：提供时向量检索取 k×3 的池子再精排到 top-k；
+    重排调用失败自动回退向量序（降级留痕由调用方的 tracer 记录）。
+    """
+
+    def __init__(
+        self,
+        chroma_path: Path,
+        embedder: Embedder,
+        reranker: SiliconFlowReranker | None = None,
+    ) -> None:
         import chromadb
 
         self._client = chromadb.PersistentClient(path=str(chroma_path))
         self._embedder = embedder
+        self._reranker = reranker
 
     def index(self, scope: str, source: str, text: str) -> int:
         """切块 -> 嵌入 -> 入库（同 source 幂等重建）。返回入库的分块数。"""
@@ -200,18 +271,25 @@ class KnowledgeBase:
         )
         return len(chunks)
 
-    def search(self, scopes: Sequence[str], query: str, k: int = 4) -> list[Hit]:
-        """跨授权作用域检索：逐集合查询后按距离合并取 top-k。集合不存在 = 该作用域还没有知识。"""
+    def search(
+        self, scopes: Sequence[str], query: str, k: int = 4, *, tracer: object | None = None
+    ) -> list[Hit]:
+        """跨授权作用域检索：逐集合查询合并候选，有重排器则精排到 top-k。
+
+        候选池取 max(k*3, 8) 条给重排足够空间。重排失败自动回退向量序（质量降级，
+        留痕 `rerank_fallback`，不抛出 —— 重排是增强，不能变成可用性故障）。
+        """
         if not scopes or not query.strip():
             return []
         vector = self._embedder.embed([query.strip()])[0]
+        pool_size = max(k * 3, 8)
         hits: list[Hit] = []
         for scope in scopes:
             try:
                 collection = self._client.get_collection(name=scope)
             except Exception:  # noqa: BLE001 - 作用域尚无集合 = 没有知识，跳过而非报错
                 continue
-            found = collection.query(query_embeddings=[vector], n_results=k)
+            found = collection.query(query_embeddings=[vector], n_results=pool_size)
             docs = (found.get("documents") or [[]])[0]
             metas = (found.get("metadatas") or [[]])[0]
             dists = (found.get("distances") or [[]])[0]
@@ -225,6 +303,13 @@ class KnowledgeBase:
                     )
                 )
         hits.sort(key=lambda h: h.distance)
+
+        if self._reranker is not None and len(hits) > 1:
+            reranked = self._reranker.rerank(query, [h.text for h in hits])
+            if reranked is not None:
+                hits = [hits[i] for i, _ in reranked]
+            elif tracer is not None and hasattr(tracer, "emit"):
+                tracer.emit(TraceEvent(event="rerank_fallback", detail={"reason": "rerank_failed"}))
         return hits[:k]
 
     def scope_count(self, scope: str) -> int:

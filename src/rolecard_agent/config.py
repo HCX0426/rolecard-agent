@@ -66,6 +66,9 @@ class Settings(BaseModel):
     # siliconflow / chroma_default / hash。由 rag/retriever.make_embedder 消费。
     embedding_backend: str = "auto"
 
+    # v2.1 检索重排：off（默认，向量序）/ auto（有 key 走 bge-reranker）/ siliconflow。
+    rag_rerank: str = "off"
+
     obs_backend: str = "local"
     obs_emit_raw_text: bool = False
     obs_log_path: Path | None = None
@@ -141,6 +144,7 @@ class Settings(BaseModel):
             ("CHROMA_PATH", "chroma_path"),
             ("UPLOAD_DIR", "upload_dir"),
             ("RAG_EMBEDDING", "embedding_backend"),
+            ("RAG_RERANK", "rag_rerank"),
             ("OBS_BACKEND", "obs_backend"),
             ("OBS_LOG_PATH", "obs_log_path"),
             ("LANGSMITH_API_KEY", "langsmith_api_key"),

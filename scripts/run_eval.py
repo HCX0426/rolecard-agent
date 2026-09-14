@@ -27,6 +27,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -96,28 +97,43 @@ def _seed_demo_data(conn: object) -> None:  # 与 seed_demo_data.py 同源（脚
                 }
             ],
         )
-        query.create_report(
-            user_id="local-user",
-            report_type="超声",
-            check_time="2026-03-12",
-            institution="市第一医院",
-            note="复查",
-            indices=[
-                {
-                    "index_name": "结石直径",
-                    "index_value": 6.0,
-                    "unit": "mm",
-                    "ref_range": "0-5",
-                    "is_verified": False,
-                },
-                {
-                    "index_name": "尿酸",
-                    "index_value": 488.0,
-                    "unit": "µmol/L",
-                    "ref_range": "208-428",
-                    "is_verified": False,
-                },
-            ],
+    query.create_report(
+        user_id="local-user",
+        report_type="超声",
+        check_time="2026-03-12",
+        institution="市第一医院",
+        note="复查",
+        indices=[
+            {
+                "index_name": "结石直径",
+                "index_value": 6.0,
+                "unit": "mm",
+                "ref_range": "0-5",
+                "is_verified": False,
+            },
+            {
+                "index_name": "尿酸",
+                "index_value": 488.0,
+                "unit": "µmol/L",
+                "ref_range": "208-428",
+                "is_verified": False,
+            },
+        ],
+    )
+
+
+def _seed_knowledge(db_path: Path, settings: object) -> None:
+    """v2.1：注入知识文档。嵌入器与 app 同源（make_embedder 读同一环境）——
+    维度不一致会让检索直接失败，所以必须用同一个 make_embedder。"""
+    from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder
+
+    kb = KnowledgeBase(Path(db_path).parent / "chroma", make_embedder(settings))  # type: ignore[arg-type]
+    if kb.scope_count("health_reports") == 0:
+        kb.index(
+            "health_reports",
+            "随访须知（演示）.md",
+            "胆囊结石随访须知：每 6 到 12 个月复查一次腹部超声，复查固定同一家医疗机构。"
+            "出现腹痛、发热或黄疸时及时就医。饮食低脂、规律进餐。本须知为演示数据。",
         )
 
 
@@ -247,6 +263,7 @@ def main() -> int:
     from fastapi.testclient import TestClient
 
     from rolecard_agent.api.main import create_app
+    from rolecard_agent.config import Settings
     from rolecard_agent.domains.registry import DOMAINS
     from rolecard_agent.storage.db import connect
 
@@ -257,14 +274,21 @@ def main() -> int:
         print(f"未找到评测用例：{args.cases}")
         return 2
 
+    settings = Settings.from_env()
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         db_path = Path(tmp) / "eval.db"
         conn = connect(db_path)
         _seed_demo_data(conn)
         conn.close()
+        _seed_knowledge(db_path, settings)  # 与 app 同一嵌入器（维度一致）
         app = create_app(sqlite_path=db_path)
         with TestClient(app) as client:
-            results = [_run_case(client, case, DOMAINS) for case in cases]
+            results = []
+            for case in cases:
+                started = time.perf_counter()
+                result = _run_case(client, case, DOMAINS)
+                result["duration_ms"] = round((time.perf_counter() - started) * 1000)
+                results.append(result)
 
     by_path: dict[str, list[dict[str, object]]] = {}
     for r in results:
@@ -274,10 +298,11 @@ def main() -> int:
     total_pass = sum(1 for r in results if r["passed"])
     for path, items in by_path.items():
         passed = sum(1 for r in items if r["passed"])
-        print(f"{path:<14} {passed}/{len(items)}")
+        avg_ms = sum(int(r.get("duration_ms", 0)) for r in items) // len(items)
+        print(f"{path:<14} {passed}/{len(items)}  平均 {avg_ms}ms")
         for r in items:
             mark = "✅" if r["passed"] else "❌"
-            print(f"  {mark} {r['id']}")
+            print(f"  {mark} {r['id']} ({r.get('duration_ms', '?')}ms)")
             for f in r["failures"]:
                 print(f"     - {f}")
     print(f"\n总体：{total_pass}/{len(results)}")

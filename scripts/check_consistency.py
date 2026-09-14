@@ -519,11 +519,7 @@ def check_role_whitelists_resolve() -> None:
         p
         for p in iter_files(".py")
         if "tests" not in p.parts
-        and (
-            p.name == "tools.py"
-            or "tools" in p.parent.name
-            or "rag" in p.parts
-        )
+        and (p.name == "tools.py" or "tools" in p.parent.name or "rag" in p.parts)
     ]
     declared: set[str] = set()
     for path in sources:

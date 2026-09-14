@@ -80,5 +80,19 @@
       {"kind": "tool_not_called", "name": "upload_medical_report"}
     ],
     "notes": "对抗用例：switch_role 不是 LLM 工具，这是必须守住的一条"
+  },
+  {
+    "id": "rag-001",
+    "path": "rag_retrieval",
+    "role_id": "medical_archivist",
+    "enabled_domains": ["health"],
+    "input": "知识库里关于随访有什么建议？",
+    "expect_tools": ["search_knowledge"],
+    "expect_absent_tools": ["upload_medical_report"],
+    "assertions": [
+      {"kind": "tool_called", "name": "search_knowledge"},
+      {"kind": "answer_contains_marker", "marker": "随访"}
+    ],
+    "notes": "v2.1：知识检索路径——search_knowledge 命中 health_reports 作用域，回答引用库内内容"
   }
 ]

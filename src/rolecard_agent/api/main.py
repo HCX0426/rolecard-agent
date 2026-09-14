@@ -66,7 +66,7 @@ from rolecard_agent.domains.health.service import (
     HealthQueryService,
 )
 from rolecard_agent.domains.registry import DOMAINS, build_registry
-from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder
+from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder, make_reranker
 from rolecard_agent.roles.models import RoleCardCreate, RoleCardUpdate
 from rolecard_agent.roles.service import (
     BuiltinRoleProtected,
@@ -261,7 +261,9 @@ def create_app(
     ingestion = IngestionService(conn)
     health_query = HealthQueryService(conn)
     model_settings = ModelSettingsService(conn)
-    knowledge = KnowledgeBase(settings.chroma_path, make_embedder(settings))
+    knowledge = KnowledgeBase(
+        settings.chroma_path, make_embedder(settings), make_reranker(settings)
+    )
 
     # 工具注册表：内核工具 + 各域工具（domains/registry 是唯一的装配点）。
     registry = build_registry(
@@ -474,17 +476,19 @@ def create_app(
                 effective = model_settings.effective_settings(settings)
                 if name not in effective.model_backends:
                     known = ", ".join(sorted(effective.model_backends))
-                    raise HTTPException(
-                        status_code=400, detail=f"未知后端 {name!r}；可用：{known}"
-                    )
+                    raise HTTPException(status_code=400, detail=f"未知后端 {name!r}；可用：{known}")
             conn.execute(
                 "UPDATE session_thread SET model_name = ?, "
                 "updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE thread_id = ?",
                 (body.model_name, thread_id),
             )
             conn.commit()
-            roles.audit(actor="operator", action="set_session_model", target=thread_id,
-                        detail={"model_name": body.model_name})
+            roles.audit(
+                actor="operator",
+                action="set_session_model",
+                target=thread_id,
+                detail={"model_name": body.model_name},
+            )
 
         if body.title is not None:
             title = body.title.strip()
