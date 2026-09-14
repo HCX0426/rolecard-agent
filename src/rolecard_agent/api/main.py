@@ -36,6 +36,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sqlite3
 import uuid
@@ -43,7 +44,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -314,6 +315,26 @@ def create_app(
     def list_plugins() -> list[object]:
         return plugins.list_plugins()
 
+    @app.get("/api/tools/catalog")
+    def tools_catalog() -> object:
+        """按领域分组的工具目录 —— 角色表单的白名单选择器与插件详情共用。
+
+        工具名对模型有意义，对人是一串"方法名"；每个工具带 docstring 首行作为一句话
+        说明，白名单才看得懂。内核工具（domain=None）单独成组。
+        """
+        kernel: list[dict[str, str]] = []
+        domains: dict[str, list[dict[str, str]]] = {}
+        for spec in registry.specs():
+            entry = {
+                "name": spec.name,
+                "description": (spec.tool.description or "").split("\n")[0].strip(),
+            }
+            if spec.domain is None:
+                kernel.append(entry)
+            else:
+                domains.setdefault(spec.domain, []).append(entry)
+        return {"kernel": kernel, "domains": domains}
+
     @app.post("/api/plugins/{plugin_id}/toggle")
     def toggle_plugin(plugin_id: str, body: PluginToggle) -> object:
         try:
@@ -461,6 +482,51 @@ def create_app(
         for table in ("checkpoints", "writes"):  # langgraph SqliteSaver 的两张表
             conn.execute(f"DELETE FROM {table} WHERE thread_id = ?", (thread_id,))
         conn.commit()
+
+    # 上传大小上限：请求体整个读进内存算哈希，20MB 是演示负载的合理护栏。
+    UPLOAD_MAX_BYTES = 20 * 1024 * 1024
+
+    @app.post("/api/session/{thread_id}/upload", status_code=201)
+    async def upload_report(thread_id: str, file: UploadFile) -> object:
+        """US-7 上传入口的真实落点：存文件 + 登记 intake 任务（幂等键 sha256）。
+
+        解析（OCR / 结构化）仍是 v2.2 的活 —— 这里只做**登记**。登记后向会话注入一条
+        说明消息（graph.update_state），让模型在后续对话里知道"有文件已登记但还不能读"，
+        而不是假装读过。重复上传同一文件复用同一任务（ingestion_task 幂等键）。
+        """
+        thread = _get_thread(conn, thread_id)
+        user_id = str(thread["user_id"])
+        data = await file.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="空文件。")
+        if len(data) > UPLOAD_MAX_BYTES:
+            raise HTTPException(status_code=400, detail="文件超过 20MB 上限。")
+
+        upload_dir = settings.upload_dir
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = Path(file.filename or "report.bin").name  # 去掉任何路径成分
+        target = upload_dir / f"{uuid.uuid4().hex[:8]}_{safe_name}"
+        target.write_bytes(data)
+        file_hash = hashlib.sha256(data).hexdigest()
+
+        before = len(ingestion.list_for_user(user_id))
+        task_id = ingestion.create(user_id=user_id, source_file=str(target), file_hash=file_hash)
+        reused = len(ingestion.list_for_user(user_id)) == before
+        existing = ingestion.get(task_id)
+
+        note = (
+            f"[用户上传了报告文件：{safe_name}，已登记 intake 任务 {task_id}"
+            f"（status={existing['status']}）。文件解析在 v2.2 接入，当前不能读取其中"
+            "内容，不要假装已经读过。]"
+        )
+        graph_config = {"configurable": {"thread_id": thread_id}}
+        app_state["graph"].update_state(graph_config, {"messages": [HumanMessage(content=note)]})
+        return {
+            "task_id": task_id,
+            "reused": reused,
+            "file": safe_name,
+            "status": existing["status"],
+        }
 
     @app.get("/api/settings/models")
     def get_model_settings() -> object:

@@ -50,6 +50,16 @@ export interface ModelSettings {
   backends: BackendRow[];
 }
 
+export interface ToolEntry {
+  name: string;
+  description: string;
+}
+
+export interface ToolCatalog {
+  kernel: ToolEntry[];
+  domains: Record<string, ToolEntry[]>;
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -62,8 +72,11 @@ export class ApiError extends Error {
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   const opt: RequestInit = { method, headers: {} };
   if (body !== undefined) {
-    opt.headers = { "Content-Type": "application/json" };
-    opt.body = JSON.stringify(body);
+    // FormData 交给浏览器设置 multipart 边界，绝不能手动盖 JSON 头
+    if (!(body instanceof FormData)) {
+      opt.headers = { "Content-Type": "application/json" };
+    }
+    opt.body = body as BodyInit;
   }
   const res = await fetch(url, opt);
   if (!res.ok) {

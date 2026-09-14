@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type PluginRow } from "../api";
+import { api, type PluginRow, type ToolCatalog } from "../api";
 
 // 页签式模块容器：现在只有「领域插件」一个子页签；以后的子模块（评测、审计日志、
 // 数据管理……）往 MODULES 数组加一项即可，布局与状态管理复用 —— 这就是 US-9 的可扩展性要求。
@@ -51,6 +51,8 @@ export default function PluginsPage() {
 
 function DomainPlugins() {
   const [plugins, setPlugins] = useState<PluginRow[]>([]);
+  const [catalog, setCatalog] = useState<ToolCatalog | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
   const [epoch, setEpoch] = useState<number | null>(null);
   const [status, setStatus] = useState("");
 
@@ -59,6 +61,7 @@ function DomainPlugins() {
   }
   useEffect(() => {
     load().catch((e) => setStatus(`加载失败：${e.message}`));
+    api.get<ToolCatalog>("/api/tools/catalog").then(setCatalog).catch(() => {});
   }, []);
 
   async function toggle(pluginId: string, enabled: boolean) {
@@ -78,37 +81,72 @@ function DomainPlugins() {
 
   return (
     <div className="mt-6 grid gap-3">
-      {plugins.map((p) => (
-        <div
-          key={p.plugin_id}
-          className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-5 py-4"
-        >
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-medium text-slate-900">{p.display_name}</span>
-              <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-                {p.plugin_id}
-              </code>
-            </div>
-            <p className="mt-1 text-xs text-slate-400">
-              {p.enabled ? "已启用：工具对模型可见" : "已停用：工具对模型立即不可见（数据保留）"}
-            </p>
-          </div>
-          <button
-            onClick={() => toggle(p.plugin_id, !p.enabled)}
-            className={`relative h-6 w-11 rounded-full transition-colors ${
-              p.enabled ? "bg-green-500" : "bg-slate-300"
-            }`}
-            role="switch"
-            aria-checked={p.enabled}
+      {plugins.map((p) => {
+        const tools = catalog?.domains[p.plugin_id] || [];
+        const isOpen = expanded === p.plugin_id;
+        return (
+          <div
+            key={p.plugin_id}
+            className="rounded-xl border border-slate-200 bg-white px-5 py-4"
           >
-            <span
-              className="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform"
-              style={{ transform: p.enabled ? "translateX(20px)" : "none" }}
-            />
-          </button>
-        </div>
-      ))}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-slate-900">{p.display_name}</span>
+                  <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
+                    {p.plugin_id}
+                  </code>
+                </div>
+                <p className="mt-1 text-xs text-slate-400">
+                  {p.enabled
+                    ? `已启用：${tools.length} 个工具对模型可见`
+                    : `已停用：${tools.length} 个工具立即对模型不可见（数据保留）`}
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                {tools.length > 0 && (
+                  <button
+                    onClick={() => setExpanded(isOpen ? null : p.plugin_id)}
+                    className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-500 hover:border-blue-300 hover:text-blue-600"
+                  >
+                    {isOpen ? "收起工具 ▴" : "查看工具 ▾"}
+                  </button>
+                )}
+                <button
+                  onClick={() => toggle(p.plugin_id, !p.enabled)}
+                  className={`relative h-6 w-11 rounded-full transition-colors ${
+                    p.enabled ? "bg-green-500" : "bg-slate-300"
+                  }`}
+                  role="switch"
+                  aria-checked={p.enabled}
+                >
+                  <span
+                    className="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform"
+                    style={{ transform: p.enabled ? "translateX(20px)" : "none" }}
+                  />
+                </button>
+              </div>
+            </div>
+            {isOpen && (
+              <div className="mt-3 space-y-1.5 rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <p className="text-xs font-medium text-slate-500">
+                  本插件向注册表贡献的工具：
+                </p>
+                {tools.map((t) => (
+                  <div key={t.name} className="text-xs">
+                    <code className="text-slate-700">{t.name}</code>
+                    <span className="ml-2 text-slate-400">{t.description}</span>
+                  </div>
+                ))}
+                <p className="pt-1 text-[11px] leading-relaxed text-slate-400">
+                  说明：知识库检索（RAG）是内核能力、不绑定任何插件（v2.1 接入）；本页的启停
+                  只影响本插件自己贡献的工具。
+                </p>
+              </div>
+            )}
+          </div>
+        );
+      })}
       {epoch !== null && (
         <p className="rounded-lg bg-green-50 px-3 py-2 text-xs text-green-700">{status}</p>
       )}

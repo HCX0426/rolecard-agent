@@ -155,3 +155,59 @@ def test_session_list_survives_role_deletion(client: TestClient) -> None:
     sessions = client.get("/api/sessions").json()
     row = next(s for s in sessions if s["thread_id"] == session["thread_id"])
     assert row["role_id"] == "temp" and row["role_name"] is None
+
+
+# -- upload（US-7 上传入口的真实落点） --------------------------------------------------
+
+
+def test_upload_registers_task_and_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """US-7 / A1：上传 → 登记 intake 任务；同一文件再传复用同一任务（不产生重复行）。"""
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    app = create_app(sqlite_path=tmp_path / "up.db", model=ScriptedChat([]))
+    with TestClient(app) as c:
+        session = c.post("/api/session", json={}).json()
+        tid = str(session["thread_id"])
+
+        first = c.post(
+            f"/api/session/{tid}/upload",
+            files={"file": ("体检报告.pdf", b"%PDF-1.4 fake scan", "application/pdf")},
+        )
+        assert first.status_code == 201
+        body = first.json()
+        assert body["task_id"].startswith("ing_") and body["reused"] is False
+
+        again = c.post(
+            f"/api/session/{tid}/upload",
+            files={"file": ("体检报告.pdf", b"%PDF-1.4 fake scan", "application/pdf")},
+        )
+        assert again.json()["reused"] is True
+        assert again.json()["task_id"] == body["task_id"]  # 同一任务，不是新行
+
+        # 注入的说明消息进入 checkpoint 历史，模型后续轮次能看到
+        messages = c.get(f"/api/session/{tid}/messages").json()
+        assert any("上传了报告文件" in str(m["content"]) for m in messages)
+
+
+def test_upload_rejects_empty_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    app = create_app(sqlite_path=tmp_path / "up2.db", model=ScriptedChat([]))
+    with TestClient(app) as c:
+        session = c.post("/api/session", json={}).json()
+        res = c.post(
+            f"/api/session/{session['thread_id']}/upload",
+            files={"file": ("a.txt", b"", "text/plain")},
+        )
+        assert res.status_code == 400
+
+
+def test_upload_unknown_thread_404(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    app = create_app(sqlite_path=tmp_path / "up3.db", model=ScriptedChat([]))
+    with TestClient(app) as c:
+        res = c.post(
+            "/api/session/nope/upload",
+            files={"file": ("a.txt", b"data", "text/plain")},
+        )
+        assert res.status_code == 404

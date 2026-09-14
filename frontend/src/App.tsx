@@ -50,7 +50,7 @@ export default function App() {
 
       {/* 主内容区 */}
       <main className="min-w-0 flex-1">
-        {tab === "chat" && <ChatPage />}
+        {tab === "chat" && <ChatPage onOpenSettings={() => setTab("settings")} />}
         {tab === "roles" && <RolesPage />}
         {tab === "plugins" && <PluginsPage />}
         {tab === "settings" && <SettingsPage />}

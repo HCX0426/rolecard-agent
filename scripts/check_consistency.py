@@ -460,7 +460,7 @@ RESERVED_SETTINGS = {
     "langsmith_api_key",  # v2.4 cloud observability
     "langsmith_project",  # v2.4 cloud observability
     "chroma_path",  # v2.1 retrieval
-    "upload_dir",  # v2.2 document intake
+    # upload_dir left the reserved set in M5: the chat upload entry reads it for real.
 }
 
 # User stories that are explicitly NOT covered by automated tests yet. They are deferred to a

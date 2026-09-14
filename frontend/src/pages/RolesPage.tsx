@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type RoleCard } from "../api";
+import { api, type RoleCard, type ToolCatalog, type ToolEntry } from "../api";
 
 const EMPTY_FORM = {
   role_id: "",
@@ -7,7 +7,7 @@ const EMPTY_FORM = {
   system_prompt: "",
   temperature: 0.7,
   model_name: "",
-  tool_whitelist: "",
+  tool_whitelist: [] as string[],
   knowledge_scopes: "",
   description: "",
 };
@@ -20,10 +20,53 @@ function splitList(v: string): string[] | null {
   return items.length ? items : null;
 }
 
+/** 一组工具的复选框：工具名 + 一句话说明（title 悬浮给全文） */
+function ToolGroup({
+  label,
+  entries,
+  selected,
+  onToggle,
+}: {
+  label: string;
+  entries: ToolEntry[];
+  selected: string[];
+  onToggle: (name: string) => void;
+}) {
+  return (
+    <div>
+      <p className="text-xs font-medium text-slate-500">{label}</p>
+      <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1.5">
+        {entries.map((t) => (
+          <label
+            key={t.name}
+            className="flex cursor-pointer items-start gap-1.5 text-xs"
+            title={t.description}
+          >
+            <input
+              type="checkbox"
+              checked={selected.includes(t.name)}
+              onChange={() => onToggle(t.name)}
+              className="mt-0.5"
+            />
+            <span className="min-w-0">
+              <code className="text-[11px] text-slate-700">{t.name}</code>
+              <span className="block truncate text-slate-400">{t.description}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function RolesPage() {
   const [roles, setRoles] = useState<RoleCard[]>([]);
   const [editing, setEditing] = useState<string | null>(null); // null=关闭, ""=新建, 其他=role_id
   const [form, setForm] = useState(EMPTY_FORM);
+  // null=全部工具（后端语义），custom=按勾选的白名单
+  const [wlMode, setWlMode] = useState<"all" | "custom">("all");
+  const [catalog, setCatalog] = useState<ToolCatalog | null>(null);
+  const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
 
   async function load() {
@@ -31,11 +74,23 @@ export default function RolesPage() {
   }
   useEffect(() => {
     load().catch((e) => setStatus({ ok: false, msg: `加载失败：${e.message}` }));
+    api.get<ToolCatalog>("/api/tools/catalog").then(setCatalog).catch(() => {});
   }, []);
+
+  function toggleTool(name: string) {
+    setForm((f) => ({
+      ...f,
+      tool_whitelist: f.tool_whitelist.includes(name)
+        ? f.tool_whitelist.filter((n) => n !== name)
+        : [...f.tool_whitelist, name],
+    }));
+  }
 
   function openCreate() {
     setEditing("");
     setForm(EMPTY_FORM);
+    setWlMode("all");
+    setConfirmDel(null);
   }
   function openEdit(r: RoleCard) {
     setEditing(r.role_id);
@@ -45,10 +100,11 @@ export default function RolesPage() {
       system_prompt: r.system_prompt,
       temperature: r.temperature,
       model_name: r.model_name || "",
-      tool_whitelist: (r.tool_whitelist || []).join(", "),
+      tool_whitelist: r.tool_whitelist || [],
       knowledge_scopes: (r.knowledge_scopes || []).join(", "),
       description: r.description || "",
     });
+    setWlMode(r.tool_whitelist === null ? "all" : "custom");
   }
 
   async function save() {
@@ -58,7 +114,7 @@ export default function RolesPage() {
       system_prompt: form.system_prompt,
       temperature: Number(form.temperature),
       model_name: form.model_name.trim() || null,
-      tool_whitelist: splitList(form.tool_whitelist),
+      tool_whitelist: wlMode === "all" ? null : form.tool_whitelist,
       knowledge_scopes: splitList(form.knowledge_scopes),
       description: form.description.trim() || null,
     };
@@ -79,9 +135,9 @@ export default function RolesPage() {
   }
 
   async function remove(roleId: string) {
-    if (!confirm(`确认删除角色 ${roleId}？不可撤销。`)) return;
     try {
       await api.del(`/api/roles/${roleId}`);
+      setConfirmDel(null);
       setStatus({ ok: true, msg: `已删除 ${roleId}` });
       await load();
     } catch (e) {
@@ -180,16 +236,50 @@ export default function RolesPage() {
               </label>
             </div>
             <label className="mt-3 block">
-              <span className="text-xs text-slate-500">
-                工具白名单（逗号分隔；留空 = 启用插件的全部工具）
-              </span>
-              <input
-                value={form.tool_whitelist}
-                onChange={(e) => setForm({ ...form, tool_whitelist: e.target.value })}
-                placeholder="query_health_record, compare_health_index"
-                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              />
+              <span className="text-xs text-slate-500">工具权限</span>
+              <div className="mt-1 flex gap-5 text-sm">
+                <label className="flex cursor-pointer items-center gap-1.5">
+                  <input
+                    type="radio"
+                    checked={wlMode === "all"}
+                    onChange={() => setWlMode("all")}
+                  />
+                  使用全部可用工具（随插件启停自动伸缩）
+                </label>
+                <label className="flex cursor-pointer items-center gap-1.5">
+                  <input
+                    type="radio"
+                    checked={wlMode === "custom"}
+                    onChange={() => setWlMode("custom")}
+                  />
+                  自定义白名单
+                </label>
+              </div>
             </label>
+            {wlMode === "custom" && catalog && (
+              <div className="mt-2 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <ToolGroup
+                  label="内核工具（所有领域通用）"
+                  entries={catalog.kernel}
+                  selected={form.tool_whitelist}
+                  onToggle={toggleTool}
+                />
+                {Object.entries(catalog.domains).map(([domain, entries]) => (
+                  <ToolGroup
+                    key={domain}
+                    label={`领域插件：${domain}`}
+                    entries={entries}
+                    selected={form.tool_whitelist}
+                    onToggle={toggleTool}
+                  />
+                ))}
+                {form.tool_whitelist.length === 0 && (
+                  <p className="text-xs text-amber-600">
+                    未勾选任何工具 = 该角色没有任何工具可用
+                  </p>
+                )}
+              </div>
+            )}
             <label className="mt-3 block">
               <span className="text-xs text-slate-500">知识作用域（逗号分隔；留空 = 不检索）</span>
               <input
@@ -197,6 +287,10 @@ export default function RolesPage() {
                 onChange={(e) => setForm({ ...form, knowledge_scopes: e.target.value })}
                 className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
               />
+              <span className="mt-1 block text-[11px] leading-relaxed text-slate-400">
+                这是对内核知识库（RAG，v2.1 接入）的检索授权：声明 = 可检索该作用域；不声明 =
+                不可检索。库归内核，角色只声明 —— 避免 N 个角色 × M 套索引。
+              </span>
             </label>
             <label className="mt-3 block">
               <span className="text-xs text-slate-500">描述</span>
@@ -262,19 +356,30 @@ export default function RolesPage() {
                   </td>
                   <td className="px-4 py-2.5 text-right">
                     <button
-                      onClick={() => openEdit(r)}
+                      onClick={() => {
+                        setConfirmDel(null);
+                        openEdit(r);
+                      }}
                       className="rounded px-2 py-1 text-xs text-blue-600 hover:bg-blue-50"
                     >
                       编辑
                     </button>
-                    {!r.is_builtin && (
-                      <button
-                        onClick={() => remove(r.role_id)}
-                        className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50"
-                      >
-                        删除
-                      </button>
-                    )}
+                    {!r.is_builtin &&
+                      (confirmDel === r.role_id ? (
+                        <button
+                          onClick={() => remove(r.role_id)}
+                          className="rounded bg-red-500 px-2 py-1 text-xs text-white hover:bg-red-600"
+                        >
+                          确认删除
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmDel(r.role_id)}
+                          className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50"
+                        >
+                          删除
+                        </button>
+                      ))}
                   </td>
                 </tr>
               ))}

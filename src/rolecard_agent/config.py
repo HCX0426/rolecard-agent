@@ -60,7 +60,7 @@ class Settings(BaseModel):
 
     sqlite_path: Path = Path("./data/sqlite/app.db")
     chroma_path: Path = Path("./data/chroma")
-    upload_dir: Path = Path("./data/uploads")
+    upload_dir: Path = Path("./data/uploads")  # v1 M5 上传入口的真实落点（登记 intake 任务）
 
     obs_backend: str = "local"
     obs_emit_raw_text: bool = False

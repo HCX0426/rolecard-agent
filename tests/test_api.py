@@ -126,6 +126,23 @@ def test_toggle_unknown_plugin_404(client: TestClient) -> None:
     assert res.status_code == 404
 
 
+def test_tools_catalog_groups_by_domain(client: TestClient) -> None:
+    """Traceability: US-9 — 工具目录按 内核/领域 分组并带一句话说明。"""
+    res = client.get("/api/tools/catalog")
+    assert res.status_code == 200
+    body = res.json()
+    kernel_names = {t["name"] for t in body["kernel"]}
+    assert {"list_domains", "list_roles"} <= kernel_names
+    health = {t["name"]: t for t in body["domains"]["health"]}
+    assert set(health) == {
+        "query_health_record",
+        "compare_health_index",
+        "list_reports",
+        "upload_medical_report",
+    }
+    assert all(t["description"] for t in health.values())  # 每个工具都有一句人话说明
+
+
 # -- console ------------------------------------------------------------------------
 
 

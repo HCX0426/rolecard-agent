@@ -99,19 +99,42 @@ def _seed_demo_data(db_path: Path) -> None:
     query = HealthQueryService(conn)
     if not query.list_reports("local-user"):
         query.create_report(
-            user_id="local-user", report_type="超声", check_time="2025-05-01",
-            institution="市第一医院", note="年度体检",
-            indices=[{"index_name": "结石直径", "index_value": 5.0, "unit": "mm",
-                      "ref_range": "0-5", "is_verified": True}],
+            user_id="local-user",
+            report_type="超声",
+            check_time="2025-05-01",
+            institution="市第一医院",
+            note="年度体检",
+            indices=[
+                {
+                    "index_name": "结石直径",
+                    "index_value": 5.0,
+                    "unit": "mm",
+                    "ref_range": "0-5",
+                    "is_verified": True,
+                }
+            ],
         )
         query.create_report(
-            user_id="local-user", report_type="超声", check_time="2026-03-12",
-            institution="市第一医院", note="复查",
+            user_id="local-user",
+            report_type="超声",
+            check_time="2026-03-12",
+            institution="市第一医院",
+            note="复查",
             indices=[
-                {"index_name": "结石直径", "index_value": 6.0, "unit": "mm",
-                 "ref_range": "0-5", "is_verified": False},
-                {"index_name": "尿酸", "index_value": 488.0, "unit": "µmol/L",
-                 "ref_range": "208-428", "is_verified": False},
+                {
+                    "index_name": "结石直径",
+                    "index_value": 6.0,
+                    "unit": "mm",
+                    "ref_range": "0-5",
+                    "is_verified": False,
+                },
+                {
+                    "index_name": "尿酸",
+                    "index_value": 488.0,
+                    "unit": "µmol/L",
+                    "ref_range": "208-428",
+                    "is_verified": False,
+                },
             ],
         )
     conn.close()
