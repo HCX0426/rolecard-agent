@@ -24,6 +24,7 @@ from rolecard_agent.roles.models import RoleCardCreate, RoleExemplar
 MEDICAL_ARCHIVIST_TOOLS = [
     "list_domains",
     "list_roles",
+    "search_knowledge",
     "query_health_record",
     "compare_health_index",
     "list_reports",

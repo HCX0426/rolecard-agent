@@ -62,6 +62,10 @@ class Settings(BaseModel):
     chroma_path: Path = Path("./data/chroma")
     upload_dir: Path = Path("./data/uploads")  # v1 M5 上传入口的真实落点（登记 intake 任务）
 
+    # v2.1 RAG 嵌入后端：auto（有 key 走 siliconflow bge-m3，否则 hash 离线兜底）/
+    # siliconflow / chroma_default / hash。由 rag/retriever.make_embedder 消费。
+    embedding_backend: str = "auto"
+
     obs_backend: str = "local"
     obs_emit_raw_text: bool = False
     obs_log_path: Path | None = None
@@ -136,6 +140,7 @@ class Settings(BaseModel):
             ("SQLITE_PATH", "sqlite_path"),
             ("CHROMA_PATH", "chroma_path"),
             ("UPLOAD_DIR", "upload_dir"),
+            ("RAG_EMBEDDING", "embedding_backend"),
             ("OBS_BACKEND", "obs_backend"),
             ("OBS_LOG_PATH", "obs_log_path"),
             ("LANGSMITH_API_KEY", "langsmith_api_key"),

@@ -459,7 +459,7 @@ def check_python_pin() -> None:
 RESERVED_SETTINGS = {
     "langsmith_api_key",  # v2.4 cloud observability
     "langsmith_project",  # v2.4 cloud observability
-    "chroma_path",  # v2.1 retrieval
+    # chroma_path left the reserved set in v2.1: the knowledge base reads it for real.
     # upload_dir left the reserved set in M5: the chat upload entry reads it for real.
 }
 
@@ -514,10 +514,16 @@ def check_role_whitelists_resolve() -> None:
 
     # Only tool-definition modules form the declaration surface. Scanning all of src would
     # find the whitelist's own names inside roles/seed.py and pass trivially.
+    # v2.1: rag/ 也声明工具（search_knowledge —— 检索是内核能力，实现在 rag/）。
     sources = [
         p
         for p in iter_files(".py")
-        if "tests" not in p.parts and (p.name == "tools.py" or "tools" in p.parent.name)
+        if "tests" not in p.parts
+        and (
+            p.name == "tools.py"
+            or "tools" in p.parent.name
+            or "rag" in p.parts
+        )
     ]
     declared: set[str] = set()
     for path in sources:

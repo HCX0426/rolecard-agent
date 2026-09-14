@@ -66,6 +66,7 @@ from rolecard_agent.domains.health.service import (
     HealthQueryService,
 )
 from rolecard_agent.domains.registry import DOMAINS, build_registry
+from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder
 from rolecard_agent.roles.models import RoleCardCreate, RoleCardUpdate
 from rolecard_agent.roles.service import (
     BuiltinRoleProtected,
@@ -257,12 +258,14 @@ def create_app(
     ingestion = IngestionService(conn)
     health_query = HealthQueryService(conn)
     model_settings = ModelSettingsService(conn)
+    knowledge = KnowledgeBase(settings.chroma_path, make_embedder(settings))
 
     # 工具注册表：内核工具 + 各域工具（domains/registry 是唯一的装配点）。
     registry = build_registry(
         roles=roles,
         ingestion=ingestion,
         query=health_query,
+        knowledge=knowledge,
         enabled_domains=plugins.enabled_domains,  # callable：list_domains 报告实时状态
         current_user=lambda: DEFAULT_USER_ID,
     )
@@ -592,11 +595,23 @@ def create_app(
         reused = len(ingestion.list_for_user(user_id)) == before
         existing = ingestion.get(task_id)
 
-        note = (
-            f"[用户上传了报告文件：{safe_name}，已登记 intake 任务 {task_id}"
-            f"（status={existing['status']}）。文件解析在 v2.2 接入，当前不能读取其中"
-            "内容，不要假装已经读过。]"
-        )
+        # v2.1：原生文本文件（.txt/.md）直接解析入检索索引；其余类型等待 v2.2（OCR/解析器）。
+        if target.suffix.lower() in {".txt", ".md"}:
+            text = target.read_text(encoding="utf-8", errors="ignore")
+            chunks = knowledge.index("health_reports", safe_name, text)
+            for next_status in ("parsed", "extracted", "indexed"):
+                ingestion.advance(task_id, next_status)
+            existing = ingestion.get(task_id)
+            note = (
+                f"[用户上传了文档：{safe_name}（{chunks} 段），已建立检索索引"
+                f"（任务 {task_id}，status=indexed）。后续提问可以检索这份文档的内容。]"
+            )
+        else:
+            note = (
+                f"[用户上传了报告文件：{safe_name}，已登记 intake 任务 {task_id}"
+                f"（status={existing['status']}）。文件解析在 v2.2 接入，当前不能读取其中"
+                "内容，不要假装已经读过。]"
+            )
         graph_config = {"configurable": {"thread_id": thread_id}}
         app_state["graph"].update_state(graph_config, {"messages": [HumanMessage(content=note)]})
         return {

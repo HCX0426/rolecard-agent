@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from rolecard_agent.core.tools.builtin import DomainsLike
     from rolecard_agent.core.tools.registry import ToolRegistry
     from rolecard_agent.domains.health.service import HealthQueryService
+    from rolecard_agent.rag.retriever import KnowledgeBase
     from rolecard_agent.roles.service import RoleCardService
 
 # Registered domain ids. Each MUST match a directory under domains/ and the plugin.plugin_id
@@ -43,6 +44,7 @@ def build_registry(
     roles: RoleCardService,
     ingestion: IngestionService,
     query: HealthQueryService,
+    knowledge: KnowledgeBase,
     enabled_domains: DomainsLike,
     current_user: Callable[[], str],
 ) -> ToolRegistry:
@@ -54,15 +56,19 @@ def build_registry(
     whose tools silently never bind is the failure mode this project exists to prevent.
 
     `current_user` is resolved per tool invocation inside the factories; the model can never
-    name who it is acting as.
+    name who it is acting as. `knowledge` backs the kernel search_knowledge tool (v2.1):
+    retrieval is a KERNEL capability — scope-authorised per role at invocation time, the
+    model never names a collection.
     """
     from rolecard_agent.core.tools.builtin import make_kernel_tools
     from rolecard_agent.core.tools.registry import ToolRegistry as _ToolRegistry
     from rolecard_agent.domains.health.tools import make_domain_tools
+    from rolecard_agent.rag.retriever import make_search_tool
 
     registry = _ToolRegistry()
     # Kernel tools carry domain=None and survive every plugin toggle.
     registry.register_many(make_kernel_tools(roles=roles, enabled_domains=enabled_domains))
+    registry.register(make_search_tool(knowledge))
 
     # Explicit per-domain wiring: what each domain needs to construct its tools, visible here.
     factories = {

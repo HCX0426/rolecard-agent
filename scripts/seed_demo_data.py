@@ -38,9 +38,30 @@ def main() -> None:
     conn.commit()
 
     query = HealthQueryService(conn)
+
+    # v2.1：注入知识文档（作用域 health_reports）。放在报告注入之前、独立幂等 ——
+    # 报告已存在时不能连带跳过知识文档。嵌入器与主服务同源（同一环境 → 同一 backend
+    # → 向量维度一致）；切换嵌入后端后需删除 data/chroma 重建。
+    from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder
+
+    kb = KnowledgeBase(Path("data/chroma").resolve(), make_embedder(settings))
+    if kb.scope_count("health_reports") == 0:
+        doc = (
+            "胆囊结石随访须知（虚构演示文档）：\n\n"
+            "胆囊结石直径小于 10 mm 且无症状者，建议每 6 到 12 个月复查一次腹部超声。"
+            "复查应固定同一家医疗机构，便于前后对比。\n\n"
+            "出现持续性腹痛、发热或皮肤巩膜黄染时，提示可能出现并发症，应及时就医，"
+            "而不是等待下次随访。\n\n"
+            "饮食方面：减少油腻食物，规律进餐。本须知为演示数据，不构成任何医疗建议。"
+        )
+        chunks = kb.index("health_reports", "随访须知（演示）.md", doc)
+        print(f"已注入知识文档（{chunks} 段，作用域 health_reports）。")
+    else:
+        print("知识作用域已有内容，跳过（幂等）。")
+
     existing = query.list_reports(DEFAULT_USER_ID)
     if existing:
-        print(f"演示用户已有 {len(existing)} 份报告，跳过（幂等）。")
+        print(f"演示用户已有 {len(existing)} 份报告，跳过报告注入（幂等）。")
         return
 
     query.create_report(

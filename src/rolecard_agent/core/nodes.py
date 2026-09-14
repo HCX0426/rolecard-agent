@@ -19,6 +19,7 @@ allowed to see "that failed", but never a stack trace.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -35,6 +36,19 @@ from rolecard_agent.roles.service import RoleCardService, RoleNotFound
 TOOL_OFFLINE = "该能力当前未启用，无法调用。"
 TOOL_DENIED = "当前角色没有调用该工具的权限。"
 TOOL_FAILED = "工具执行失败，请稍后重试或换一种问法。"
+
+# v2.1 RAG 的作用域注入：execute_tools 在调用工具前，把**当前角色已授权的知识作用域**
+# 放进这里；search_knowledge 工具在调用瞬间读取。作用域从不出现在模型的参数里 ——
+# 模型不能指定检索哪个集合（US-8：角色只声明，内核掌库）。
+role_knowledge_scopes_ctx: ContextVar[Sequence[str]] = ContextVar(
+    "role_knowledge_scopes", default=()
+)
+
+
+def current_knowledge_scopes() -> Sequence[str]:
+    """工具层读取：本轮角色已授权的知识作用域（execute_tools 每轮注入）。"""
+    return role_knowledge_scopes_ctx.get()
+
 
 # Bounded retry, per call, same arguments. Honest about what this can and cannot do: retrying
 # an identical call only helps with transient failures (IO, a cold model, a locked file), and
@@ -237,6 +251,14 @@ def execute_tools(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
     """
     last = state["messages"][-1]
     calls = getattr(last, "tool_calls", None) or []
+
+    # v2.1：把当前角色已授权的知识作用域注入工具层（search_knowledge 读取）。
+    # 角色缺失/无声明 → 空元组，检索工具自己给出明确拒绝。
+    try:
+        _role = ctx.roles.get(state.get("current_role_id", ""))
+        role_knowledge_scopes_ctx.set(tuple(_role.knowledge_scopes or ()))
+    except RoleNotFound:
+        role_knowledge_scopes_ctx.set(())
 
     # Three sets, and the distinction between them is the point:
     #   known     - the tool exists in the registry at all
