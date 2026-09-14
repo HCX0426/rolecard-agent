@@ -1,9 +1,9 @@
-"""Unit tests for the health domain tools, focused on the one v1 tool:  Traceability: US-3.
-`upload_medical_report` - the WRITER for the kernel `ingestion_task` ledger.
+"""Unit tests for the health domain tools.  Traceability: US-3.
 
-The other three declared names (query_health_record / compare_health_index / list_reports)
-have no body yet (M3); this file only covers the tool that is real, so the ingestion table is
-exercised end-to-end rather than left as dead schema (技术评审与决策.md §9 B1).
+`upload_medical_report` - the WRITER for the kernel `ingestion_task` ledger - is covered here
+end-to-end so the ingestion table is exercised rather than left as dead schema
+(技术评审与决策.md §9 B1). The three READ tools (query_health_record / compare_health_index /
+list_reports) have their own file: tests/unit/test_health_query.py.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from rolecard_agent.core.ingestion import IngestionService
+from rolecard_agent.domains.health.service import HealthQueryService
 from rolecard_agent.domains.health.tools import make_domain_tools
 from rolecard_agent.storage.db import bootstrap, connect
 
@@ -29,7 +30,7 @@ def env(tmp_path: Path) -> tuple[IngestionService, list, Path]:
     )
     c.commit()
     ing = IngestionService(c)
-    tools = make_domain_tools(ing, current_user=lambda: "u1")
+    tools = make_domain_tools(ing, HealthQueryService(c), current_user=lambda: "u1")
     f = tmp_path / "report.pdf"
     f.write_bytes(b"%PDF-1.4 not a real scan")
     return ing, tools, f

@@ -49,6 +49,7 @@ from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.observability import Tracer, make_tracer
 from rolecard_agent.core.plugins import PluginError, PluginService, UnknownPlugin
 from rolecard_agent.core.state import new_state
+from rolecard_agent.domains.health.service import HealthQueryService
 from rolecard_agent.domains.registry import DOMAINS, build_registry
 from rolecard_agent.roles.models import RoleCardCreate, RoleCardUpdate
 from rolecard_agent.roles.service import (
@@ -176,11 +177,13 @@ def create_app(
     roles.seed_builtins()
     plugins = PluginService(conn, known_plugins=DOMAINS)
     ingestion = IngestionService(conn)
+    health_query = HealthQueryService(conn)
 
     # 工具注册表：内核工具 + 各域工具（domains/registry 是唯一的装配点）。
     registry = build_registry(
         roles=roles,
         ingestion=ingestion,
+        query=health_query,
         enabled_domains=plugins.enabled_domains,  # callable：list_domains 报告实时状态
         current_user=lambda: DEFAULT_USER_ID,
     )

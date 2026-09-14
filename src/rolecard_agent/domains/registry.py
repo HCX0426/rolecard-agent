@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from rolecard_agent.core.ingestion import IngestionService
     from rolecard_agent.core.tools.builtin import DomainsLike
     from rolecard_agent.core.tools.registry import ToolRegistry
+    from rolecard_agent.domains.health.service import HealthQueryService
     from rolecard_agent.roles.service import RoleCardService
 
 # Registered domain ids. Each MUST match a directory under domains/ and the plugin.plugin_id
@@ -41,6 +42,7 @@ def build_registry(
     *,
     roles: RoleCardService,
     ingestion: IngestionService,
+    query: HealthQueryService,
     enabled_domains: DomainsLike,
     current_user: Callable[[], str],
 ) -> ToolRegistry:
@@ -64,7 +66,7 @@ def build_registry(
 
     # Explicit per-domain wiring: what each domain needs to construct its tools, visible here.
     factories = {
-        "health": lambda: make_domain_tools(ingestion, current_user=current_user),
+        "health": lambda: make_domain_tools(ingestion, query, current_user=current_user),
     }
     for domain in DOMAINS:
         if domain not in factories:

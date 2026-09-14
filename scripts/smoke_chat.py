@@ -82,6 +82,41 @@ def _stream_chat(client: object, thread_id: str, message: str) -> None:
                         print("\n")
 
 
+def _seed_demo_data(db_path: Path) -> None:
+    """给冒烟库注入虚构演示数据（编造数值），让查询工具在真实对话里有东西可查。"""
+    from rolecard_agent.domains.health.service import HealthQueryService
+    from rolecard_agent.storage.db import bootstrap as _bootstrap
+    from rolecard_agent.storage.db import connect as _connect
+
+    conn = _connect(db_path)
+    _bootstrap(conn, enabled_domains=("health",))
+    conn.executescript(
+        "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('t1', 'demo');"
+        "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "
+        "  VALUES ('local-user', 't1', 'demo user');"
+    )
+    conn.commit()
+    query = HealthQueryService(conn)
+    if not query.list_reports("local-user"):
+        query.create_report(
+            user_id="local-user", report_type="超声", check_time="2025-05-01",
+            institution="市第一医院", note="年度体检",
+            indices=[{"index_name": "结石直径", "index_value": 5.0, "unit": "mm",
+                      "ref_range": "0-5", "is_verified": True}],
+        )
+        query.create_report(
+            user_id="local-user", report_type="超声", check_time="2026-03-12",
+            institution="市第一医院", note="复查",
+            indices=[
+                {"index_name": "结石直径", "index_value": 6.0, "unit": "mm",
+                 "ref_range": "0-5", "is_verified": False},
+                {"index_name": "尿酸", "index_value": 488.0, "unit": "µmol/L",
+                 "ref_range": "208-428", "is_verified": False},
+            ],
+        )
+    conn.close()
+
+
 def main() -> None:
     _configure_backend()
     # 延迟导入：确保 Settings.from_env() 读到的是上面刚设置的环境变量。
@@ -92,13 +127,14 @@ def main() -> None:
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         # ignore_cleanup_errors：sqlite 连接在进程退出前仍持有 smoke.db，且本机的
         # safe-delete 会把"进程占用"升级成硬错误。临时目录留几个字节在 %TEMP% 无所谓。
-        app = create_app(sqlite_path=Path(tmp) / "smoke.db")
+        db_path = Path(tmp) / "smoke.db"
+        _seed_demo_data(db_path)
+        app = create_app(sqlite_path=db_path)
         with TestClient(app) as client:
             session = client.post("/api/session", json={}).json()
             thread_id = str(session["thread_id"])
             print(f"[会话] {thread_id} · 角色：{session['role_name']}")
-            _stream_chat(client, thread_id, "用一句话介绍你自己，并说明你只能做什么。")
-            _stream_chat(client, thread_id, "这个系统里现在有哪些角色？请调用工具查一下再回答。")
+            _stream_chat(client, thread_id, "帮我查一下档案里结石直径的变化情况。")
 
 
 if __name__ == "__main__":

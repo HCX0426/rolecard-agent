@@ -2,16 +2,17 @@
 upload_medical_report.
 
 Unverified values must carry the marker inside the TOOL RETURN TEXT
-("[AI extracted, not human verified]") - never rely on the model to add it.
+("【未经人工校验】") - never rely on the model to add it.
 
 NOTE: there is deliberately NO retrieval tool here. Document search is a KERNEL capability
 (rag/retriever.py exposes `search_knowledge`) because it must work for every domain, not
 just this one. A domain that needs a narrower scope passes it as an argument.
 
-`upload_medical_report` is the one tool implemented here today: it is the WRITER for the
-kernel `ingestion_task` ledger, and is what makes that table real rather than a dead schema
-(技术评审与决策.md §9 B1). The other three names are declared up front so the built-in role's
-whitelist resolves against known names; their bodies land in M3.
+The three READ tools are thin formatters over `HealthQueryService`: they never touch SQL and
+never widen a query beyond `current_user()` - user isolation is enforced in the service's
+WHERE clause, and the acting user is resolved at invocation time from a zero-arg callable
+(the model cannot name who it is acting as). `upload_medical_report` is the WRITER for the
+kernel `ingestion_task` ledger.
 """
 
 from __future__ import annotations
@@ -23,19 +24,18 @@ from pathlib import Path
 from langchain_core.tools import BaseTool, tool
 
 from rolecard_agent.core.ingestion import IngestionService
+from rolecard_agent.domains.health.service import HealthQueryService
 
-# The names this domain contributes, declared before the implementations land in M3.
-#
-# Declared rather than inferred because two other places already depend on them being known:
-# `roles/seed.py` builds the built-in role's whitelist from them, and
-# `tests/unit/test_builtin_tools.py` asserts every whitelisted name resolves to something.
-# Before this existed, the whitelist pointed at names that appeared nowhere in the code.
+# The names this domain contributes. The single source of truth for the built-in role's
+# whitelist (`roles/seed.py`) and for `tests/unit/test_builtin_tools.py`'s resolution check.
 DOMAIN_TOOL_NAMES: tuple[str, ...] = (
     "query_health_record",
     "compare_health_index",
     "list_reports",
     "upload_medical_report",
 )
+
+UNVERIFIED_MARKER = "【未经人工校验】"
 
 
 def _sha256_of(path: str) -> str:
@@ -51,8 +51,53 @@ def _sha256_of(path: str) -> str:
     return digest.hexdigest()
 
 
+def _fmt_num(value: float) -> str:
+    """6.0 -> "6", 5.5 -> "5.5", 6.15 -> "6.15" - readable, no float dust."""
+    if value == int(value) and abs(value) < 1e15:
+        return str(int(value))
+    return f"{value:.4f}".rstrip("0")
+
+
+def _value_str(row: dict[str, object]) -> str:
+    """Numeric value + unit, or the verbatim non-numeric text."""
+    value = row.get("index_value")
+    if value is not None:
+        unit = row.get("unit")
+        unit_part = f" {unit}" if unit else ""
+        return f"{_fmt_num(float(value))}{unit_part}"
+    return str(row.get("value_text") or "(无数值)")
+
+
+def _source_str(row: dict[str, object]) -> str:
+    parts = [str(row.get("report_type") or "")]
+    if row.get("institution"):
+        parts.append(str(row["institution"]))
+    return " · ".join(p for p in parts if p)
+
+
+def _row_line(row: dict[str, object]) -> str:
+    """One archive row as the model should relay it: date (type · place): value (ref) marker."""
+    ref = row.get("ref_range")
+    ref_part = f"（参考 {ref}）" if ref else ""
+    marker = "" if row.get("is_verified") else UNVERIFIED_MARKER
+    when = str(row["check_time"])[:10]
+    where = _source_str(row)
+    return f"{when}（{where}）：{_value_str(row)}{ref_part}{marker}"
+
+
+def _not_found(user_id: str, index_name: str, query: HealthQueryService, *, scoped: str) -> str:
+    """The honest miss: say what was searched for, then offer what actually exists."""
+    names = query.index_names(user_id)
+    if names:
+        return f"档案里没有「{index_name}」的记录{scoped}。现有的指标有：{'、'.join(names)}。"
+    return f"档案里没有「{index_name}」的记录{scoped}（档案目前还没有任何指标）。"
+
+
 def make_domain_tools(
-    ingestion: IngestionService, *, current_user: Callable[[], str]
+    ingestion: IngestionService,
+    query: HealthQueryService,
+    *,
+    current_user: Callable[[], str],
 ) -> list[BaseTool]:
     """Build the health domain's tools.
 
@@ -60,6 +105,82 @@ def make_domain_tools(
     the acting user is a security context, the model must not be able to name who it is acting
     as. The app wires it from the session (M2 API); tests inject a constant.
     """
+
+    @tool("query_health_record")
+    def query_health_record(index_name: str, start_date: str = "", end_date: str = "") -> str:
+        """按指标名称查询用户健康档案里的历史记录，按时间先后返回每一次的数值、单位与参考区间。
+
+        index_name 支持部分匹配（如 "结石" 能查到 "结石直径"）；start_date / end_date
+        可选，格式 YYYY-MM-DD，用于限定报告日期区间。数值未经人工核验时必须原样转述
+        【未经人工校验】标记。
+        """
+        user = current_user()
+        start = start_date.strip() or None
+        end = end_date.strip() or None
+        scoped = f"（报告日期 {start} ~ {end} 之间）" if start or end else ""
+        rows = query.search_indices(user, index_name, start_date=start, end_date=end)
+        if not rows:
+            return _not_found(user, index_name, query, scoped=scoped)
+        body = "\n".join(_row_line(r) for r in rows)
+        return f"「{rows[0]['index_name']}」共 {len(rows)} 条记录：\n{body}"
+
+    @tool("compare_health_index")
+    def compare_health_index(index_name: str) -> str:
+        """对比某项指标在档案里最早一次与最近一次记录的数值变化（含变化量与单位）。
+
+        只有 1 次记录时如实说明无法对比，不要编造趋势。数值未经人工核验时结论必须带
+        【未经人工校验】标记。
+        """
+        user = current_user()
+        rows = query.search_indices(user, index_name)
+        if not rows:
+            return _not_found(user, index_name, query, scoped="")
+        if len(rows) == 1:
+            return (
+                f"「{rows[0]['index_name']}」在档案里只有 1 次记录"
+                f"（{str(rows[0]['check_time'])[:10]}：{_value_str(rows[0])}），无法做跨次对比。"
+            )
+        first, last = rows[0], rows[-1]
+        text = (
+            f"「{last['index_name']}」共 {len(rows)} 次记录："
+            f"{str(first['check_time'])[:10]} 为 {_value_str(first)} → "
+            f"{str(last['check_time'])[:10]} 为 {_value_str(last)}"
+        )
+        v1, v2 = first.get("index_value"), last.get("index_value")
+        if v1 is not None and v2 is not None:
+            delta = float(v2) - float(v1)  # type: ignore[arg-type]
+            if delta == 0:
+                text += "（持平）"
+            else:
+                unit = last.get("unit")
+                unit_part = f" {unit}" if unit else ""
+                word = "上升" if delta > 0 else "下降"
+                text += f"（{word} {_fmt_num(abs(delta))}{unit_part}）"
+        if not (first.get("is_verified") and last.get("is_verified")):
+            text += UNVERIFIED_MARKER
+        return text
+
+    @tool("list_reports")
+    def list_reports() -> str:
+        """列出用户档案里所有已入库的报告：报告日期、类型、机构与每份报告的指标数量。"""
+        user = current_user()
+        reports = query.list_reports(user)
+        if not reports:
+            return (
+                "档案里还没有任何已入库的报告。可以用 upload_medical_report 登记报告文件，"
+                "或由用户手工录入指标。"
+            )
+        lines = []
+        for r in reports:
+            institution = f" · {r['institution']}" if r.get("institution") else ""
+            line = (
+                f"{str(r['check_time'])[:10]} · {r['report_type']}{institution}"
+                f" · {r['n_indices']} 项指标"
+            )
+            if r.get("note"):
+                line += f" · 备注：{r['note']}"
+            lines.append(line)
+        return f"档案里共有 {len(reports)} 份报告：\n" + "\n".join(lines)
 
     @tool("upload_medical_report")
     def upload_medical_report(file_path: str) -> str:
@@ -85,6 +206,4 @@ def make_domain_tools(
             f"相同文件再次上传将复用同一任务。"
         )
 
-    # Only upload_medical_report is implemented in v1; the rest join in M3. Returning a single
-    # tool keeps the registry honest: nothing is bound that cannot run.
-    return [upload_medical_report]
+    return [query_health_record, compare_health_index, list_reports, upload_medical_report]
