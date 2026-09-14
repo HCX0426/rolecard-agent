@@ -5,6 +5,8 @@
 # --- runtime data (NEVER commit health records) ---
 data/sqlite/*.db
 data/sqlite/*.db-journal
+data/sqlite/*.db-shm
+data/sqlite/*.db-wal
 # keep the directory, ignore its contents (same pattern as uploads/ below)
 data/chroma/*
 !data/chroma/.gitkeep
