@@ -113,6 +113,9 @@ def make_domain_tools(
         index_name 支持部分匹配（如 "结石" 能查到 "结石直径"）；start_date / end_date
         可选，格式 YYYY-MM-DD，用于限定报告日期区间。数值未经人工核验时必须原样转述
         【未经人工校验】标记。
+        适用边界：用户想看某指标的**原始记录条目**时使用。若用户想知道的是变化、趋势、
+        前后对比，请改用 compare_health_index，不要用本工具逐条罗列再自行总结。
+        寒暄或询问自身能力时不要调用任何查询工具。
         """
         user = current_user()
         start = start_date.strip() or None
@@ -128,8 +131,9 @@ def make_domain_tools(
     def compare_health_index(index_name: str) -> str:
         """对比某项指标在档案里最早一次与最近一次记录的数值变化（含变化量与单位）。
 
-        只有 1 次记录时如实说明无法对比，不要编造趋势。数值未经人工核验时结论必须带
-        【未经人工校验】标记。
+        **当用户想知道某指标的变化、趋势、前后对比、和上次比怎么样时，优先使用本工具**
+        （而不是 query_health_record 逐条查询后自行总结）。只有 1 次记录时如实说明无法
+        对比，不要编造趋势。数值未经人工核验时结论必须带【未经人工校验】标记。
         """
         user = current_user()
         rows = query.search_indices(user, index_name)
