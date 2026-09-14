@@ -172,31 +172,31 @@
 
 | 环境 | 用途 | Python | 何时需要 |
 | --- | --- | --- | --- |
-| `.venv` | 主服务（M1~M4 全部） | 3.11 | **现在** |
-| `.venv-ocr` | PaddleOCR 独立环境 | 3.11 | v2.2 |
+| `.venv` | 主服务（M1~M4 全部） | 3.13 | **现在** |
+| `.venv-ocr` | PaddleOCR 独立环境 | 3.13 | v2.2 |
 | 容器 | 部署 | — | v2.4 |
 
 **为什么 OCR 必须单独一个环境**：`paddleocr` 会拉入 `paddlex` 和一批二进制依赖（opencv / onnxruntime），装进主环境会显著拖慢每次依赖解析，并让主服务的升级被它锁住。它本来就该是独立进程。
 
 ### 8.2 推荐：用 `uv`（venv 的超集）
 
-裸 `venv + pip` 只提供**隔离**，不提供**可复现**：没有锁文件，`pip install` 出来的东西会随时间漂移；这台机器上目前也没有 3.11。`uv` 三件事一起解决——拿到 Python、生成真锁文件、解析快一个量级。
+裸 `venv + pip` 只提供**隔离**，不提供**可复现**：没有锁文件，`pip install` 出来的东西会随时间漂移；本机也只有一个托管的 3.13 与 conda。`uv` 三件事一起解决——拿到 Python、生成真锁文件、解析快一个量级。
 
 ```powershell
 winget install --id astral-sh.uv -e        # 或 pipx install uv
 
-uv python install 3.11                     # uv 自己管理 Python，不依赖系统安装
-uv venv --python 3.11
+uv python install 3.13                     # uv 自己管理 Python，不依赖系统安装
+uv venv --python 3.13
 uv sync --extra api --extra dev            # 读 pyproject，生成 uv.lock
 uv run python scripts/init_db.py
 uv run pytest
 uv run python scripts/check_consistency.py
 ```
 
-### 8.3 兜底：纯 venv，用 conda 提供 Python 3.11
+### 8.3 兜底：纯 venv，用 conda 提供 Python 3.13
 
 ```powershell
-conda create -n rc311 python=3.11 -y
+conda create -n rc313 python=3.13 -y
 conda run -n rc311 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -U pip
 .venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt -r requirements-api.txt

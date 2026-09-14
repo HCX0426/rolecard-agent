@@ -4,11 +4,11 @@
 #   - PaddleOCR 会带入自带的 numpy / OpenCV / onnxruntime，与主进程依赖摩擦
 #   - 这条链很重（paddleocr -> paddlex + 一批二进制），装进主环境会显著拖慢解析
 #
-# 关于 Python 版本：实测 paddlepaddle 3.3.1 已提供 cp39-cp313 wheel，因此 3.12/3.13
-# 并非不可用。项目统一用 3.11 是为了和主环境保持同一基线，而不是被 wheel 卡住。
+# 关于 Python 版本：项目统一用 3.13（与主环境同基线）。这条链路在 3.13 上是安全的——
+# paddleocr / paddlex 为 pure-python，paddlepaddle 有 cp313 wheel，OpenCV 走 cp37-abi3。
 #
 # 安装方式（独立环境）：
-#   py -3.11 -m venv .venv-ocr
+#   py -3.13 -m venv .venv-ocr
 #   .venv-ocr\Scripts\pip install -r requirements-ocr.txt
 
 paddlepaddle>=3.0.0

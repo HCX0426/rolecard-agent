@@ -11,8 +11,8 @@
 
 ```bash
 # 1. 环境（推荐 uv；纯 venv 的兜底写法见 CONTRIBUTING.md 第 8 节）
-uv python install 3.11
-uv venv --python 3.11
+uv python install 3.13
+uv venv --python 3.13
 uv sync --extra api --extra dev
 
 # 2. 依赖（uv sync 已经装好；不用 uv 时改走这一行）
@@ -110,7 +110,7 @@ rolecard-agent/
 
 | 组件 | 版本 | 说明 |
 | --- | --- | --- |
-| Python | >=3.11 | **下界，不是锁定**：v1 在 3.12 / 3.13 上同样能跑；3.11 是含 OCR 在内的整条路线图的统一基线。实测 paddlepaddle 3.3.1 已提供 cp39–cp313 wheel |
+| Python | >=3.13 | **实测基线**：3.13.14 上 v1 与 chromadb 实际装通并跑过测试；OCR 链路的依赖在 3.13 上为 pure-python / cp313 / abi3 全覆盖 |
 | langgraph | 1.2.11 | 与 langchain 1.4.0 的 `>=1.2.11,<1.3.0` 约束对齐 |
 | langchain | 1.4.0 | |
 | langchain-ollama | >=1.1.0 | 模型接入走 `init_chat_model`，本地 / API key 可切换 |

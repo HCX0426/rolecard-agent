@@ -79,7 +79,7 @@ def check_pyproject() -> None:
         fails.append(f"pyproject.toml unreadable: {exc}")
         return
     proj = pp["project"]
-    ok = proj["name"] == "rolecard-agent" and proj["requires-python"] == ">=3.11"
+    ok = proj["name"] == "rolecard-agent" and proj["requires-python"] == ">=3.13"
     detail = f"name={proj['name']} py={proj['requires-python']} deps={len(proj['dependencies'])}"
     out("pyproject.toml", ok, detail)
     if not ok:
@@ -116,8 +116,7 @@ def check_stale_identifiers() -> None:
         "只保留三个里程碑",
     ]
     allowed = {
-        ROOT / "docs" / "02-方案评审与修正.md",
-        ROOT / "docs" / "07-二次核查与遗留问题.md",
+        ROOT / "docs" / "技术评审与决策.md",
         ROOT / "scripts" / "check_consistency.py",
     }
     suffixes = {".md", ".py", ".toml", ".sql", ".cfg", ".ini", ".example"}
@@ -252,8 +251,9 @@ def check_dependency_parity() -> None:
 def check_safety_prompt() -> None:
     """The global safety rules must be *defined in code*, not just described in prose.
 
-    They used to exist only in the archived design doc, while docs/需求与验收标准.md US-4 treated them as
-    a shipped requirement. Safety-critical code is deliberately not delegated (CONTRIBUTING §1).
+    They used to exist only in the archived design doc, while `需求与验收标准.md` US-4
+    treated them as a shipped requirement. Safety-critical code is deliberately not
+    delegated (CONTRIBUTING section 1).
     """
     path = ROOT / "src" / "rolecard_agent" / "core" / "prompts.py"
     text = path.read_text(encoding="utf-8") if path.exists() else ""
@@ -288,7 +288,7 @@ def check_readme_quickstart() -> None:
 def check_milestone_alignment() -> None:
     """Milestone ids declared in the README must match the ones in the plan (docs/实施计划.md)."""
     readme_ids = set(re.findall(r"\*\*M(\d)", (ROOT / "README.md").read_text(encoding="utf-8")))
-    plan_path = ROOT / "docs" / "04-实施计划（修订版）.md"
+    plan_path = ROOT / "docs" / "实施计划.md"
     plan_ids = set(re.findall(r"\*\*M(\d)", plan_path.read_text(encoding="utf-8")))
     ok = readme_ids == plan_ids and bool(plan_ids)
     detail = f"README={sorted(readme_ids)} plan={sorted(plan_ids)}"
@@ -352,6 +352,10 @@ def check_doc_references() -> None:
     pattern = re.compile(r"docs/0[1-9]")
     offenders: list[str] = []
     for path in iter_files(".md", ".py", ".toml", ".txt"):
+        # This file explains why the numbered form was dropped, so it necessarily
+        # contains an example of it.
+        if path == ROOT / "scripts" / "check_consistency.py":
+            continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         for lineno, line in enumerate(text.splitlines(), 1):
             if pattern.search(line):

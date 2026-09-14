@@ -7,7 +7,8 @@ name = "rolecard-agent"
 version = "0.1.0"
 description = "Role-card driven conversational agent kernel with pluggable domain modules"
 readme = "README.md"
-requires-python = ">=3.11"
+# Declared floor = what we actually test. Development and CI run 3.13 (see .python-version).
+requires-python = ">=3.13"
 license = { text = "MIT" }
 
 # v1 core only. FastAPI / chromadb / paddle live in requirements-*.txt
@@ -32,7 +33,7 @@ dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6", "mypy>=1.11"]
 packages = ["src/rolecard_agent"]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py313"
 line-length = 100
 src = ["src", "tests"]
 # docs/ holds documentation, including archived design docs with illustrative code blocks.
@@ -51,7 +52,7 @@ asyncio_mode = "auto"
 addopts = "-q"
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 packages = ["rolecard_agent"]
 ignore_missing_imports = true
 warn_unused_ignores = true

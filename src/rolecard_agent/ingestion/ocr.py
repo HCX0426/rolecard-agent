@@ -1,5 +1,6 @@
 """PaddleOCR backend. DEFERRED (planned, not dropped).
 
 Must run in a SEPARATE venv / process: PaddleOCR pulls its own numpy/opencv/onnxruntime
-stack, and paddlepaddle wheels lag Python releases (hence Python 3.11, not 3.12/3.13).
+stack. It still runs fine on the project's 3.13 baseline: paddleocr/paddlex are pure-python,
+paddlepaddle ships cp313 wheels, and OpenCV uses cp37-abi3.
 """
