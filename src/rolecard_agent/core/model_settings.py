@@ -18,10 +18,11 @@ Two rules worth calling out:
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 
-from rolecard_agent.config import ModelBackend, Settings
+from rolecard_agent.config import MAX_FALLBACKS, ModelBackend, Settings
 
 # Backend names become keys in MODEL_BACKENDS-merged maps and UI list items: keep them tame.
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
@@ -34,6 +35,7 @@ class ModelSettingsError(Exception):
 class ModelSettingsService:
     MODEL_DEFAULT_KEY = "model_default"
     MODEL_SEEDED_KEY = "model_backends_seeded"
+    FALLBACKS_KEY = "model_fallbacks"
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
@@ -62,6 +64,36 @@ class ModelSettingsService:
         ).fetchone()
         value = str(row["value"]) if row and row["value"] else None
         return value or None
+
+    def list_fallbacks(self) -> list[str] | None:
+        """Operator-configured fallback chain, or None = not configured (use env's)."""
+        row = self._conn.execute(
+            "SELECT value FROM kernel_meta WHERE key = ?", (self.FALLBACKS_KEY,)
+        ).fetchone()
+        if row is None or not row["value"]:
+            return None
+        try:
+            return [str(x) for x in json.loads(str(row["value"]))]
+        except json.JSONDecodeError:
+            return None
+
+    def save_fallbacks(self, fallbacks: list[str], *, allowed_names: set[str]) -> None:
+        """Standalone chain write, used by tests and tools that only touch fallbacks.
+        Prefer `save(fallbacks=...)` for full-config writes."""
+        if len(fallbacks) > MAX_FALLBACKS:
+            raise ModelSettingsError(f"回退链最多 {MAX_FALLBACKS} 级（过长只会掩盖降级质量）。")
+        if len(set(fallbacks)) != len(fallbacks):
+            raise ModelSettingsError("回退链里出现了重复的后端名。")
+        for name in fallbacks:
+            if name not in allowed_names:
+                raise ModelSettingsError(f"回退后端 {name!r} 不在已配置的后端列表里。")
+        self._conn.execute(
+            "INSERT INTO kernel_meta (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
+            "  updated_at = CURRENT_TIMESTAMP",
+            (self.FALLBACKS_KEY, json.dumps(fallbacks)),
+        )
+        self._conn.commit()
 
     def seed_from_env(self, env_settings: Settings) -> int:
         """First-boot migration: copy env backends into the table ONCE, then env is out of
@@ -110,11 +142,21 @@ class ModelSettingsService:
 
     # -- writes ----------------------------------------------------------------
 
-    def save(self, *, default: str, backends: list[dict[str, object]]) -> None:
+    def save(
+        self,
+        *,
+        default: str,
+        backends: list[dict[str, object]],
+        fallbacks: list[str] | None = None,
+    ) -> None:
         """Replace the whole backend set in one transaction (the UI edits a list, then saves).
 
         `api_key` semantics per entry: None/absent = keep the stored key for this name;
         "" = clear; a non-empty string = set. Anything else about the row is replaced.
+
+        `fallbacks` (None = keep current) is the ordered failure chain. It is validated in the
+        SAME transaction as the backends, so a config can never be saved with a fallback
+        pointing at a backend that does not exist.
         """
         if not backends:
             raise ModelSettingsError("至少需要保留一个模型后端。")
@@ -150,18 +192,31 @@ class ModelSettingsService:
         if default not in names:
             raise ModelSettingsError(f"默认后端 {default!r} 不在列表里。")
 
+        chain = list(fallbacks) if fallbacks is not None else (self.list_fallbacks() or [])
+        if len(chain) > MAX_FALLBACKS:
+            raise ModelSettingsError(f"回退链最多 {MAX_FALLBACKS} 级（过长只会掩盖降级质量）。")
+        if len(set(chain)) != len(chain):
+            raise ModelSettingsError("回退链里出现了重复的后端名。")
+        for name in chain:
+            if name not in names:
+                raise ModelSettingsError(f"回退后端 {name!r} 不在已配置的后端列表里。")
+
         self._conn.execute("DELETE FROM model_backend")
         self._conn.executemany(
             "INSERT INTO model_backend (name, provider, base_url, model, api_key, sort_order) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             prepared,
         )
-        self._conn.execute(
-            "INSERT INTO kernel_meta (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
-            "  updated_at = CURRENT_TIMESTAMP",
+        for key, value in (
             (self.MODEL_DEFAULT_KEY, default),
-        )
+            (self.FALLBACKS_KEY, json.dumps(chain)),
+        ):
+            self._conn.execute(
+                "INSERT INTO kernel_meta (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
+                "  updated_at = CURRENT_TIMESTAMP",
+                (key, value),
+            )
         self._conn.commit()
 
     # -- merge -------------------------------------------------------------------
@@ -171,7 +226,8 @@ class ModelSettingsService:
 
         The built-in `local` backend from env is preserved (a laptop without the settings
         page open still has its Ollama default); DB rows add or override by name, and the
-        default falls through to env's when the operator has not picked one.
+        default falls through to env's when the operator has not picked one. The fallback
+        chain follows the same rule: unset in DB = env's list.
         """
         raw = self._raw_backends()
         if not raw:
@@ -185,9 +241,13 @@ class ModelSettingsService:
                 provider=str(row["provider"]),
             )
         default = self.default_backend()
+        fallbacks = self.list_fallbacks()
         return env_settings.model_copy(
             update={
                 "model_backends": merged,
                 "model_default": default if default in merged else env_settings.model_default,
+                "model_fallbacks": fallbacks
+                if fallbacks is not None
+                else env_settings.model_fallbacks,
             }
         )

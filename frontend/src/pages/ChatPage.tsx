@@ -35,6 +35,8 @@ export default function ChatPage({
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [modelLabel, setModelLabel] = useState("模型");
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const sendingRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -220,6 +222,19 @@ export default function ChatPage({
 
   const current = sessions.find((s) => s.thread_id === sessionId);
 
+  async function renameSession() {
+    const title = titleDraft.trim();
+    setEditingTitle(false);
+    if (!sessionId || !title) return;
+    try {
+      await api.patch(`/api/session/${sessionId}`, { title });
+      setStatus("已重命名");
+      await refreshSessions();
+    } catch (e) {
+      setStatus(`重命名失败：${(e as Error).message}`);
+    }
+  }
+
   return (
     <div className="flex h-full">
       {/* 会话列表面板 */}
@@ -283,9 +298,51 @@ export default function ChatPage({
       {/* 对话区 */}
       <section className="flex min-w-0 flex-1 flex-col">
         <header className="border-b border-slate-200 bg-white px-5 py-3">
-          <h2 className="truncate text-sm font-medium text-slate-900">
-            {current ? current.title || "新会话" : "对话"}
-          </h2>
+          {editingTitle && current ? (
+            <div className="flex items-center gap-2">
+              <input
+                autoFocus
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.nativeEvent.isComposing) renameSession();
+                  if (e.key === "Escape") setEditingTitle(false);
+                }}
+                maxLength={100}
+                className="w-72 rounded-lg border border-blue-300 px-2.5 py-1 text-sm outline-none"
+              />
+              <button
+                onClick={renameSession}
+                className="rounded bg-blue-600 px-2.5 py-1 text-xs text-white hover:bg-blue-700"
+              >
+                保存
+              </button>
+              <button
+                onClick={() => setEditingTitle(false)}
+                className="rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-100"
+              >
+                取消
+              </button>
+            </div>
+          ) : (
+            <div className="group/title flex items-center gap-2">
+              <h2 className="truncate text-sm font-medium text-slate-900">
+                {current ? current.title || "新会话" : "对话"}
+              </h2>
+              {current && (
+                <button
+                  onClick={() => {
+                    setTitleDraft(current.title || "");
+                    setEditingTitle(true);
+                  }}
+                  className="rounded px-1.5 py-0.5 text-xs text-slate-300 opacity-0 transition-opacity hover:bg-slate-100 hover:text-slate-600 group-hover/title:opacity-100"
+                  title="重命名会话"
+                >
+                  ✎
+                </button>
+              )}
+            </div>
+          )}
           <p className="mt-0.5 text-xs text-slate-400">
             {current
               ? `当前角色：${currentRole ? roles.find((r) => r.role_id === currentRole)?.role_name || currentRole : "默认"} · 切换角色后下一轮生效`

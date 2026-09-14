@@ -48,6 +48,7 @@ export interface BackendRow {
 export interface ModelSettings {
   default: string | null;
   backends: BackendRow[];
+  fallbacks: string[];
 }
 
 export interface ToolEntry {

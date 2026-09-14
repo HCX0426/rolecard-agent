@@ -134,6 +134,7 @@ def test_put_then_get_round_trip_without_key_exposure(client: TestClient) -> Non
     assert fetched["default"] == "siliconflow"
     assert {b["name"] for b in fetched["backends"]} == {"siliconflow", "local"}
 
+
 def test_omitted_key_is_preserved_not_erased(client: TestClient) -> None:
     """PUT 不带 api_key = 保留已存 key（GET 不回读，所以这是唯一的'不丢 key'方式）。"""
     payload = {
@@ -210,6 +211,51 @@ def test_role_model_name_routes_to_declared_backend(client: TestClient) -> None:
     other = client.post("/api/session", json={}).json()
     other_text = authoritative_text(client, str(other["thread_id"]), "你好")
     assert "@cloud-b" not in other_text
+
+
+def test_fallbacks_round_trip_and_validation(client: TestClient) -> None:
+    """US-8 / §8.5：失败回退链在设置页配置，保存进同一事务且被校验。"""
+    res = client.put(
+        "/api/settings/models",
+        json={
+            "default": "cloud-a",
+            "backends": [
+                {"name": "cloud-a", "provider": "openai", "model": "m-a"},
+                {"name": "cloud-b", "provider": "openai", "model": "m-b"},
+            ],
+            "fallbacks": ["cloud-b"],
+        },
+    )
+    assert res.status_code == 200
+    assert res.json()["fallbacks"] == ["cloud-b"]
+    assert client.get("/api/settings/models").json()["fallbacks"] == ["cloud-b"]
+
+    # 未知回退后端 → 400
+    res = client.put(
+        "/api/settings/models",
+        json={
+            "default": "cloud-a",
+            "backends": [{"name": "cloud-a", "provider": "openai", "model": "m-a"}],
+            "fallbacks": ["ghost"],
+        },
+    )
+    assert res.status_code == 400
+
+    # 超过两级 → 400
+    res = client.put(
+        "/api/settings/models",
+        json={
+            "default": "a",
+            "backends": [
+                {"name": "a", "provider": "openai", "model": "m"},
+                {"name": "b", "provider": "openai", "model": "m"},
+                {"name": "c", "provider": "openai", "model": "m"},
+                {"name": "d", "provider": "openai", "model": "m"},
+            ],
+            "fallbacks": ["b", "c", "d"],
+        },
+    )
+    assert res.status_code == 400
 
 
 def test_unknown_role_backend_falls_back_to_default(client: TestClient) -> None:

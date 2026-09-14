@@ -149,6 +149,8 @@ function ModelsPanel() {
   const [rows, setRows] = useState<EditableBackend[]>([]);
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [fb1, setFb1] = useState("");
+  const [fb2, setFb2] = useState("");
 
   const load = useCallback(async () => {
     const s = await api.get<ModelSettings>("/api/settings/models");
@@ -163,6 +165,8 @@ function ModelsPanel() {
         has_key: b.has_key,
       })),
     );
+    setFb1(s.fallbacks?.[0] || "");
+    setFb2(s.fallbacks?.[1] || "");
     setLoaded(true);
   }, []);
 
@@ -197,6 +201,7 @@ function ModelsPanel() {
           // 空串会被后端理解为"清除"；这里区分"没碰过"（保持 None=保留）与"清空"
           api_key: r.api_key === "" && r.has_key ? null : r.api_key,
         })),
+        fallbacks: [fb1, fb2].filter(Boolean),
       };
       const saved = await api.put<ModelSettings>("/api/settings/models", body);
       setDef(saved.default || "");
@@ -320,6 +325,43 @@ function ModelsPanel() {
             >
               保存并生效
             </button>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+            <h3 className="text-sm font-medium text-slate-900">失败自动回退</h3>
+            <p className="mt-1 text-xs text-slate-400">
+              默认后端请求失败（建流阶段）时按序尝试；最多两级，流开始后的失败不回退（前端重试兜底）。
+            </p>
+            <div className="mt-2 grid grid-cols-2 gap-3">
+              <select
+                value={fb1}
+                onChange={(e) => setFb1(e.target.value)}
+                className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm"
+              >
+                <option value="">一级回退：无</option>
+                {rows
+                  .filter((r) => r.name.trim() && r.name.trim() !== def)
+                  .map((r) => (
+                    <option key={r.name} value={r.name.trim()}>
+                      {r.name.trim()}
+                    </option>
+                  ))}
+              </select>
+              <select
+                value={fb2}
+                onChange={(e) => setFb2(e.target.value)}
+                className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm"
+              >
+                <option value="">二级回退：无</option>
+                {rows
+                  .filter((r) => r.name.trim() && r.name.trim() !== def && r.name.trim() !== fb1)
+                  .map((r) => (
+                    <option key={r.name} value={r.name.trim()}>
+                      {r.name.trim()}
+                    </option>
+                  ))}
+              </select>
+            </div>
           </div>
 
           <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2.5 text-xs leading-relaxed text-slate-400">

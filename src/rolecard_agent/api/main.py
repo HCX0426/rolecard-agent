@@ -110,10 +110,11 @@ class SessionCreate(BaseModel):
     role_id: str | None = None
 
 
-class SessionRole(BaseModel):
-    """Switch-role request for an existing session (US-1 operator action)."""
+class SessionPatch(BaseModel):
+    """Session partial update: switch role and/or rename. At least one field required."""
 
-    role_id: str
+    role_id: str | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class ChatMessage(BaseModel):
@@ -141,6 +142,7 @@ class BackendSpec(BaseModel):
 class ModelSettingsBody(BaseModel):
     default: str
     backends: list[BackendSpec]
+    fallbacks: list[str] = Field(default_factory=list)
 
 
 class IndexPatch(BaseModel):
@@ -438,15 +440,38 @@ def create_app(
         }
 
     @app.patch("/api/session/{thread_id}")
-    def switch_session_role(thread_id: str, body: SessionRole) -> object:
-        """US-1：切角色不触碰消息历史 —— 只有 `current_role_id` 变化，
-        下一轮 system prompt 从新角色现场拼装。"""
-        try:
-            roles.set_thread_role(thread_id, body.role_id, actor="operator")
-        except RoleError as exc:
-            raise _role_error_to_http(exc) from exc  # 角色不存在或线程不存在都是 404
-        role = roles.get(body.role_id)
-        return {"thread_id": thread_id, "role_id": body.role_id, "role_name": role.role_name}
+    def patch_session(thread_id: str, body: SessionPatch) -> object:
+        """会话局部更新：切角色（US-1，不触碰历史）和/或重命名标题。"""
+        thread = _get_thread(conn, thread_id)
+        if not body.role_id and body.title is None:
+            raise HTTPException(status_code=400, detail="没有任何要更新的字段。")
+        if body.role_id:
+            try:
+                roles.set_thread_role(thread_id, body.role_id, actor="operator")
+            except RoleError as exc:
+                raise _role_error_to_http(exc) from exc  # 角色/线程不存在都是 404
+        if body.title is not None:
+            title = body.title.strip()
+            if not title:
+                raise HTTPException(status_code=400, detail="标题不能为空。")
+            conn.execute(
+                "UPDATE session_thread SET title = ?, "
+                "updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE thread_id = ?",
+                (title, thread_id),
+            )
+            conn.commit()
+
+        final_role_id = body.role_id or str(thread["current_role_id"])
+        role = roles.get(final_role_id)
+        row = conn.execute(
+            "SELECT title FROM session_thread WHERE thread_id = ?", (thread_id,)
+        ).fetchone()
+        return {
+            "thread_id": thread_id,
+            "role_id": final_role_id,
+            "role_name": role.role_name,
+            "title": row["title"] if row else None,
+        }
 
     @app.post("/api/chat")
     def chat(body: ChatMessage) -> StreamingResponse:
@@ -638,6 +663,7 @@ def create_app(
         return {
             "default": model_settings.default_backend(),
             "backends": model_settings.list_backends(),
+            "fallbacks": model_settings.list_fallbacks() or [],
         }
 
     @app.put("/api/settings/models")
@@ -645,10 +671,12 @@ def create_app(
         """保存后端集合并热重建（下一轮对话即用新后端，无需重启进程）。
 
         api_key 语义：缺省/None = 保留已存 key；空串 = 清除 —— 否则每次没重输 key 的
-        保存都会把 key 抹掉。"""
+        保存都会把 key 抹掉。fallbacks = 失败自动回退链（≤2 级，按序尝试）。"""
         try:
             model_settings.save(
-                default=body.default, backends=[b.model_dump() for b in body.backends]
+                default=body.default,
+                backends=[b.model_dump() for b in body.backends],
+                fallbacks=body.fallbacks,
             )
         except ModelSettingsError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -656,6 +684,7 @@ def create_app(
         return {
             "default": model_settings.default_backend(),
             "backends": model_settings.list_backends(),
+            "fallbacks": model_settings.list_fallbacks() or [],
         }
 
     dist_dir = Path(os.environ.get("FRONTEND_DIST") or _DEFAULT_DIST)
