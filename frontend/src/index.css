@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+/* 项目基调：浅色、紧凑、克制的强调色 —— 对齐 WorkBuddy 的桌面观感 */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-slate-100 text-slate-800 text-sm antialiased;
+}
+
+/* 流式回答时的光标 */
+.caret::after {
+  content: "▍";
+  @apply animate-pulse text-slate-400;
+}

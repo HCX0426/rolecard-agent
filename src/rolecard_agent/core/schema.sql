@@ -80,6 +80,19 @@ CREATE TABLE IF NOT EXISTS kernel_meta (
 -- instead of every reader having to invent a default.
 INSERT OR IGNORE INTO kernel_meta (key, value) VALUES ('tool_epoch', '1');
 
+-- Runtime-editable model backends (settings page). Empty table = use env config as-is;
+-- the first settings save takes over. API keys are stored PLAINTEXT in the local demo
+-- database: this file never leaves the machine, and the GET endpoint never returns them
+-- (only a has_key flag) - the round-trip rule lives in core/model_settings.py.
+CREATE TABLE IF NOT EXISTS model_backend (
+    name        TEXT PRIMARY KEY,
+    provider    TEXT NOT NULL DEFAULT 'openai',
+    base_url    TEXT,
+    model       TEXT NOT NULL,
+    api_key     TEXT,
+    sort_order  INTEGER NOT NULL DEFAULT 0
+);
+
 -- ===========================================================================
 -- Document intake ledger.
 --

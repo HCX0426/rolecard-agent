@@ -21,6 +21,10 @@ venv/
 .ruff_cache/
 .mypy_cache/
 
+# --- frontend ---
+# 构建产物 dist/ 有意提交：clone 后不需要 node 环境就能跑控制台演示。
+frontend/node_modules/
+
 # --- models / large artifacts ---
 models/
 *.onnx

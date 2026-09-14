@@ -192,6 +192,8 @@ def check_promised_artifacts() -> None:
         "tests/eval",
         "tests/eval/cases",
         "tests/eval/cases/health.json",
+        "frontend/package.json",
+        "frontend/dist/index.html",
     ]
     absent = [p for p in promised if not (ROOT / p).exists()]
     detail = f"missing: {absent}" if absent else f"{len(promised)} present"
@@ -329,10 +331,11 @@ def check_milestone_alignment() -> None:
 
 
 def check_v1_v2_boundary() -> None:
-    """M4 delivers the HTTP API and the single-page UI *inside v1*.
+    """M4 delivers the HTTP API and the single-page UI *inside v1*; M5 delivers the
+    engineering-grade frontend inside v1 too (pulled forward from v2.3).
 
     So no live document may still advertise them as a v2 roadmap item. This rule exists
-    because pulling M4 into v1 left exactly such a leftover behind twice.
+    because pulling scope forward left exactly such a leftover behind twice.
     """
     scanned = ("README.md", "docs/实施计划.md", "docs/需求与验收标准.md")
     offenders: list[str] = []
@@ -343,7 +346,7 @@ def check_v1_v2_boundary() -> None:
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if "v2." not in line:
                 continue
-            if "接入层" in line or "单页" in line:
+            if "接入层" in line or "单页" in line or "工程化前端" in line:
                 offenders.append(f"{name}:{lineno}")
     out(
         "v1/v2 boundary",
@@ -462,9 +465,9 @@ RESERVED_SETTINGS = {
 
 # User stories that are explicitly NOT covered by automated tests yet. They are deferred to a
 # later milestone, not forgotten - the traceability check still requires them to be *named* here
-# so the gap stays visible (技术评审与决策.md §9 D3). US-6 / US-7 are the M4 demo surface
-# (single-page UI + 60s video), which has no code yet.
-DEFERRED_US = {"US-6", "US-7"}
+# so the gap stays visible (技术评审与决策.md §9 D3). US-6 waits for the 60s demo video;
+# US-9 (console frontend) lands with M5.
+DEFERRED_US = {"US-6", "US-9"}
 
 
 def check_dead_config() -> None:

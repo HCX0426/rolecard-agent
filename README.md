@@ -3,8 +3,9 @@
 > **角色卡驱动的对话 Agent 内核 + 可插拔领域插件**
 > 运行时切换人设与权限，工具与知识检索以插件方式注册，本地优先、可公网部署。
 
-**当前状态：M1 内核已完成** —— 状态图、角色卡、工具注册表、输出侧审核、SQLite 检查点全部落地，
-**53 个测试全绿且全部离线运行**（注入脚本化模型，不需要启动 Ollama）。下一步：M2 角色卡与插件启停。
+**当前状态：v1 计划内里程碑 M1~M4 已全部落地** —— 内核 / 角色插件 / health 查询工具 /
+FastAPI 接入层 + SSE 流式对话，**158 个测试全绿且全部离线运行**（注入脚本化模型，不需要启动 Ollama）。
+进行中：**M5 控制台前端工程化**（Vite + React，自 v2.3 提前）。待录：60 秒演示视频。
 
 ---
 
@@ -35,6 +36,10 @@ python scripts/check_consistency.py
 uvicorn --factory rolecard_agent.api.main:create_app --port 8000
 # 浏览器打开 http://127.0.0.1:8000/ ：新建会话 → 对话（SSE 流式）→ 页面切角色 → 启停插件
 # 没跑本地模型也能演示：按 scripts/smoke_chat.py 的说明配一个 OpenAI 兼容端点即可
+# （或在设置页直接添加后端，保存即热生效）
+
+# 8.（可选）改动前端后重新构建 —— dist 已提交，普通演示不需要 node
+cd frontend && npm install && npm run build
 ```
 
 > v2 才需要的依赖单独安装：`requirements-rag.txt`（检索，v2.1）、`requirements-ocr.txt`
@@ -126,6 +131,7 @@ rolecard-agent/
 | chromadb | >=1.5.9 | 向量检索 |
 | pydantic | >=2.13 | 跨层强类型 |
 | fastapi / uvicorn | v1 · M4 | 最小接入层，依赖在 `requirements-api.txt` |
+| React + Vite + TypeScript | v1 · M5 | 控制台前端（`frontend/` 子项目），构建产物 `frontend/dist` 由 FastAPI 托管 |
 
 > **依赖按范围拆分，不要把 v2 的包装进 v1 环境**：
 > `requirements.txt`（v1 内核）/ `-dev`（测试工具）/ `-api`（接入层）/ `-rag`（chromadb）/ `-ocr`（paddle，独立 venv）。
@@ -135,7 +141,7 @@ rolecard-agent/
 
 ## 五、版本规划
 
-按开发生命周期推进，v1 保留四个里程碑，其余进 v2 roadmap。
+按开发生命周期推进，v1 保留五个里程碑（M5 为前端工程化，自 v2.3 提前），其余进 v2 roadmap。
 完整计划见 `docs/实施计划.md`，需求与验收标准见 `docs/需求与验收标准.md`。
 
 ### v1 · 当前目标
@@ -146,6 +152,7 @@ rolecard-agent/
 | **M2 角色与插件** | 角色卡 CRUD（含 `exemplars` / `knowledge_scopes`）、插件启停（`tool_epoch` 实时生效）、两阶段工具过滤、审计、云端后端可选 | 停用插件后其工具从可见集消失且**无需重启**（`tool_epoch` 每轮实时读取）；内置角色不可删；`ingestion_task` 独立状态机 + `file_hash` 幂等 |
 | **M3 领域插件** | `domains/health` 档案 CRUD + 查询 / 对比 / 列表工具 | 自然语言提问触发正确工具；跨年对比出结果；未校验指标带标记 |
 | **M4 接入层与演示界面** | 最小 FastAPI（chat SSE / 角色 CRUD / 插件启停）+ 单页聊天 UI | 浏览器里能对话并流式输出；页面切换角色历史不丢；停用插件后立刻看到工具消失；**能录出 60 秒演示视频** |
+| **M5 控制台前端工程化** | `frontend/`（Vite + React + TS）四页签：对话（历史会话续聊）/ 角色卡 / 插件 / 设置（自定义模型热切换） | 四页签可用；点击历史会话能续聊；设置页保存新后端后下一轮对话即生效（**无需重启**）；`npm run build` 产物由 FastAPI 托管 |
 
 v1 同时包含：**测试与评测集（含通过率基线）**、Docker、GitHub Actions、`uv.lock`、README、60 秒演示视频。
 
@@ -155,7 +162,7 @@ v1 同时包含：**测试与评测集（含通过率基线）**、Docker、GitH
 | --- | --- |
 | v2.1 | 检索外挂 RAG（切分 / 嵌入 / 向量库 / rerank） |
 | v2.2 | 文档摄取（OCR + 原生文档解析：PDF / 图片 / docx / pptx / xlsx） |
-| v2.3 | 完整前端（多页 / 组件库 / 移动端适配） |
+| v2.3 | 完整前端（组件库 / 移动端适配；多页应用已提前为 M5） |
 | v2.4 | 公网部署与多后端路由（含失败自动回退） |
 | v2.5 | 生产化替换（Postgres / Milvus / Redis） |
 

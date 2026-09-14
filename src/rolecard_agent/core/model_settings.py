@@ -1,0 +1,147 @@
+"""Runtime-editable model backend configuration - the data layer behind the settings page.
+
+Why a DB table instead of env-only: `MODEL_BACKENDS` (config.py) is a deploy-time contract.
+The settings page needs an OPERATOR-time contract: add a SiliconFlow/OpenAI-compatible
+endpoint, set the default, and have the next conversation turn use it WITHOUT restarting.
+Env stays the bootstrap truth; the first settings save takes over (see `effective_settings`).
+
+Two rules worth calling out:
+
+  * **API keys are write-only over the wire.** `list_backends` never returns a key (only a
+    `has_key` flag) so a browser session can never read secrets back. `save` therefore treats
+    a missing/None `api_key` as "keep the stored one for this backend name" and an empty
+    string as "clear it" - otherwise every save that did not retype the key would erase it.
+  * **Plaintext at rest, stated rather than hidden.** Keys live in the local demo SQLite
+    file, which never leaves the machine. Production would move to a secret manager - that
+    is a v2 concern, and pretending otherwise in a demo would be worse than the limitation.
+"""
+
+from __future__ import annotations
+
+import re
+import sqlite3
+
+from rolecard_agent.config import ModelBackend, Settings
+
+# Backend names become keys in MODEL_BACKENDS-merged maps and UI list items: keep them tame.
+_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+
+
+class ModelSettingsError(Exception):
+    """A settings write that would produce an unusable configuration. Message is user-safe."""
+
+
+class ModelSettingsService:
+    MODEL_DEFAULT_KEY = "model_default"
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    # -- reads -----------------------------------------------------------------
+
+    def _raw_backends(self) -> list[dict[str, object]]:
+        rows = self._conn.execute(
+            "SELECT name, provider, base_url, model, api_key, sort_order "
+            "FROM model_backend ORDER BY sort_order, name"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_backends(self) -> list[dict[str, object]]:
+        """Public shape: NO api_key ever leaves the service, only `has_key`."""
+        return [
+            {k: row[k] for k in ("name", "provider", "base_url", "model", "sort_order")}
+            | {"has_key": bool(row["api_key"])}
+            for row in self._raw_backends()
+        ]
+
+    def default_backend(self) -> str | None:
+        """The operator-chosen default, or None = fall through to env's `model_default`."""
+        row = self._conn.execute(
+            "SELECT value FROM kernel_meta WHERE key = ?", (self.MODEL_DEFAULT_KEY,)
+        ).fetchone()
+        value = str(row["value"]) if row and row["value"] else None
+        return value or None
+
+    # -- writes ----------------------------------------------------------------
+
+    def save(self, *, default: str, backends: list[dict[str, object]]) -> None:
+        """Replace the whole backend set in one transaction (the UI edits a list, then saves).
+
+        `api_key` semantics per entry: None/absent = keep the stored key for this name;
+        "" = clear; a non-empty string = set. Anything else about the row is replaced.
+        """
+        if not backends:
+            raise ModelSettingsError("至少需要保留一个模型后端。")
+        names: list[str] = []
+        prepared: list[tuple[object, ...]] = []
+        existing_keys = {str(row["name"]): row["api_key"] for row in self._raw_backends()}
+        for i, item in enumerate(backends):
+            name = str(item.get("name") or "").strip()
+            provider = str(item.get("provider") or "").strip()
+            model = str(item.get("model") or "").strip()
+            base_url = str(item.get("base_url") or "").strip() or None
+            if not _NAME_RE.match(name):
+                raise ModelSettingsError(
+                    f"后端名 {name!r} 不合法：小写字母开头，只含小写字母/数字/下划线/连字符。"
+                )
+            if name in names:
+                raise ModelSettingsError(f"后端名重复：{name}")
+            if not provider:
+                raise ModelSettingsError(f"后端 {name} 缺少 provider（如 ollama / openai）。")
+            if not model:
+                raise ModelSettingsError(f"后端 {name} 缺少模型名。")
+            names.append(name)
+
+            raw_key = item.get("api_key")
+            if raw_key is None:
+                key = existing_keys.get(name)  # omitted -> keep whatever is stored
+            elif str(raw_key).strip() == "":
+                key = None  # explicit clear
+            else:
+                key = str(raw_key).strip()
+            prepared.append((name, provider, base_url, model, key, i))
+
+        if default not in names:
+            raise ModelSettingsError(f"默认后端 {default!r} 不在列表里。")
+
+        self._conn.execute("DELETE FROM model_backend")
+        self._conn.executemany(
+            "INSERT INTO model_backend (name, provider, base_url, model, api_key, sort_order) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            prepared,
+        )
+        self._conn.execute(
+            "INSERT INTO kernel_meta (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
+            "  updated_at = CURRENT_TIMESTAMP",
+            (self.MODEL_DEFAULT_KEY, default),
+        )
+        self._conn.commit()
+
+    # -- merge -------------------------------------------------------------------
+
+    def effective_settings(self, env_settings: Settings) -> Settings:
+        """DB rows overlaid on env config. Empty table = env config untouched.
+
+        The built-in `local` backend from env is preserved (a laptop without the settings
+        page open still has its Ollama default); DB rows add or override by name, and the
+        default falls through to env's when the operator has not picked one.
+        """
+        raw = self._raw_backends()
+        if not raw:
+            return env_settings
+        merged = dict(env_settings.model_backends)
+        for row in raw:
+            merged[str(row["name"])] = ModelBackend(
+                model=str(row["model"]),
+                base_url=row["base_url"],  # type: ignore[arg-type]
+                api_key=row["api_key"],  # type: ignore[arg-type]
+                provider=str(row["provider"]),
+            )
+        default = self.default_backend()
+        return env_settings.model_copy(
+            update={
+                "model_backends": merged,
+                "model_default": default if default in merged else env_settings.model_default,
+            }
+        )

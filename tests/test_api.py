@@ -130,8 +130,22 @@ def test_toggle_unknown_plugin_404(client: TestClient) -> None:
 
 
 def test_console_page_served(client: TestClient) -> None:
-    """Traceability: US-7 — 单页控制台可被 GET / 返回。"""
+    """Traceability: US-7 / US-9 — GET / 服务前端构建产物（M5：React SPA 壳）。"""
     res = client.get("/")
     assert res.status_code == 200
     assert "text/html" in res.headers["content-type"]
-    assert "管理控制台" in res.text
+    assert '<div id="root">' in res.text  # React 挂载点
+
+
+def test_console_fallback_when_dist_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """US-9：dist 未构建时返回回退提示页，后端 API 不受影响。"""
+    monkeypatch.setenv("FRONTEND_DIST", str(tmp_path / "no-dist"))
+    app = create_app(sqlite_path=tmp_path / "fb.db")
+    with TestClient(app) as c:
+        res = c.get("/")
+        assert res.status_code == 200
+        assert "管理控制台" in res.text
+        assert "npm run build" in res.text
+        assert c.get("/api/roles").status_code == 200  # API 照常工作

@@ -16,11 +16,16 @@
     DELETE /api/roles/{id}     删除角色卡（内置角色返回 409）
     GET  /api/plugins          插件列表（含 enabled 标志）
     POST /api/plugins/{id}/toggle  启停插件，返回新 tool_epoch
+    GET  /api/sessions         会话列表（对话页侧栏，按更新时间倒序）
     POST /api/session          创建会话（默认绑定内置角色）
     GET  /api/session/{tid}    会话信息（含当前角色）
     PATCH /api/session/{tid}   会话切角色（US-1：历史消息不动，下一轮 prompt 换人）
+    DELETE /api/session/{tid}  删除会话（含 checkpoint 清理）
+    GET  /api/session/{tid}/messages  历史消息（checkpoint 回放，供续聊）
     POST /api/chat             SSE 流式对话（text/event-stream）
-    GET  /                     单页管理控制台 + 聊天界面（HTML）
+    GET  /api/settings/models  模型后端设置（api_key 只写不回读）
+    PUT  /api/settings/models  保存后端集合并热重建（下一轮对话即生效，无需重启）
+    GET  /                     控制台（M5 前端构建产物；未构建时回退提示页）
 
 身份说明：v1 是单用户演示，所有会话归属 `DEFAULT_USER_ID`（schema 的 user_id 列已经
 就位，接入真实登录只是数据替换，不需要改表）。
@@ -31,13 +36,17 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import uuid
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
-from langchain_core.messages import HumanMessage
+from fastapi.staticfiles import StaticFiles
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel, Field
 
 from rolecard_agent.api.chat import chat_events
@@ -45,7 +54,8 @@ from rolecard_agent.config import Settings
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.graph import build_kernel, build_model
 from rolecard_agent.core.ingestion import IngestionService
-from rolecard_agent.core.nodes import ChatLike
+from rolecard_agent.core.model_settings import ModelSettingsError, ModelSettingsService
+from rolecard_agent.core.nodes import ChatLike, _text_of
 from rolecard_agent.core.observability import Tracer, make_tracer
 from rolecard_agent.core.plugins import PluginError, PluginService, UnknownPlugin
 from rolecard_agent.core.state import new_state
@@ -61,7 +71,20 @@ from rolecard_agent.roles.service import (
 )
 from rolecard_agent.storage.db import bootstrap, connect
 
-_CONSOLE_HTML = Path(__file__).resolve().parent / "console.html"
+# M5 前端构建产物的位置：frontend/dist（仓库根下）。可用环境变量 FRONTEND_DIST 覆盖
+# （部署布局变化时不必移动文件）。未构建时控制台路由返回回退提示页，后端 API 不受影响。
+_DEFAULT_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
+
+_FALLBACK_HTML = """<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>rolecard-agent 管理控制台</title></head>
+<body style="font-family:system-ui;padding:40px;line-height:1.8">
+<h1>rolecard-agent 管理控制台</h1>
+<p>前端尚未构建。请执行：</p>
+<pre>cd frontend
+npm install
+npm run build</pre>
+<p>构建后刷新本页即可看到完整控制台（或使用 <code>GET /api/*</code> 直接调用接口）。</p>
+</body></html>"""
 
 # v1 demo identity. The schema already carries user_id on every table; wiring real auth later
 # is a data change, not a schema change (and not a v1 goal - there is no login page by design).
@@ -93,6 +116,38 @@ class ChatMessage(BaseModel):
 
     thread_id: str
     message: str = Field(min_length=1, max_length=8000)
+
+
+class BackendSpec(BaseModel):
+    """One model backend row from the settings page.
+
+    `api_key` is write-only: omitted/None = keep the stored key for this name; "" = clear it.
+    The GET endpoint never returns keys, so this round-trip rule is what keeps saves from
+    silently erasing them.
+    """
+
+    name: str = Field(min_length=1, max_length=32)
+    provider: str = Field(min_length=1)
+    base_url: str | None = None
+    model: str = Field(min_length=1)
+    api_key: str | None = None
+
+
+class ModelSettingsBody(BaseModel):
+    default: str
+    backends: list[BackendSpec]
+
+
+def _serialize_message(message: object) -> dict[str, object]:
+    """Checkpoint message -> JSON shape for the frontend history replay."""
+    if isinstance(message, HumanMessage):
+        return {"role": "user", "content": _text_of(message)}
+    if isinstance(message, ToolMessage):
+        return {"role": "tool", "name": message.name, "content": _text_of(message)}
+    if isinstance(message, AIMessage):
+        tools = [tc.get("name") for tc in (message.tool_calls or [])]
+        return {"role": "assistant", "content": _text_of(message), "tools": tools}
+    return {"role": "assistant", "content": _text_of(message)}
 
 
 def _seed_demo_identity(conn: sqlite3.Connection) -> None:
@@ -154,6 +209,7 @@ def create_app(
     sqlite_path: Path | None = None,
     *,
     model: ChatLike | None = None,
+    model_factory: Callable[[Settings], ChatLike] | None = None,
     tracer: Tracer | None = None,
 ) -> FastAPI:
     """Build the FastAPI app.
@@ -163,8 +219,11 @@ def create_app(
 
     `model` / `tracer` 同样可注入：测试传 `ScriptedChat` + `NullTracer` 即可全离线跑通
     对话链路（本项目的测试铁律：测内核行为，不测 LLM 本身）。省略 `model` 时用
-    `build_model(settings)` 按配置实例化真实后端（Ollama 或任意 OpenAI 兼容端点），
-    构造是惰性的，不会在启动时连网。
+    `model_factory`（默认 `build_model`）按配置实例化真实后端（Ollama 或任意 OpenAI 兼容
+    端点），构造是惰性的，不会在启动时连网。
+
+    `model_factory` 会在**设置页保存**时被再次调用来热重建图 —— 测试注入一个每次返回新
+    `ScriptedChat` 的工厂，即可在不接触真实后端的情况下验证热切换确实生效。
     """
     settings = Settings.from_env()
     db_path = sqlite_path or settings.sqlite_path
@@ -178,6 +237,7 @@ def create_app(
     plugins = PluginService(conn, known_plugins=DOMAINS)
     ingestion = IngestionService(conn)
     health_query = HealthQueryService(conn)
+    model_settings = ModelSettingsService(conn)
 
     # 工具注册表：内核工具 + 各域工具（domains/registry 是唯一的装配点）。
     registry = build_registry(
@@ -188,25 +248,39 @@ def create_app(
         current_user=lambda: DEFAULT_USER_ID,
     )
 
+    checkpointer = make_checkpointer(conn)
     resolved_tracer = tracer or make_tracer(settings)
-    resolved_model = model or build_model(settings)
+    factory = model_factory or build_model
+    # 设置页（DB）配置优先于 env：空表 = env 原样；保存过 = DB 覆盖同名后端并接管默认。
+    effective = model_settings.effective_settings(settings)
+    resolved_model = model or factory(effective)
     graph = build_kernel(
         model=resolved_model,
         registry=registry,
         roles=roles,
         tracer=resolved_tracer,
-        settings=settings,
-        checkpointer=make_checkpointer(conn),
+        settings=effective,
+        checkpointer=checkpointer,
         plugins=plugins,
     )
+    # 热替换 holder：设置页保存属于罕见管理动作，重建整图（compile 毫秒级）比把
+    # KernelContext 从 build_kernel 里掏出来改签名更简单直接。对话端点每次请求从这里
+    # 取当前图，因此保存后无需重启即可生效。
+    app_state: dict[str, Any] = {"graph": graph}
 
-    console_html = (
-        _CONSOLE_HTML.read_text(encoding="utf-8")
-        if _CONSOLE_HTML.exists()
-        else "<h1>rolecard-agent</h1>"
-    )
+    def rebuild_graph() -> None:
+        eff = model_settings.effective_settings(settings)
+        app_state["graph"] = build_kernel(
+            model=factory(eff),
+            registry=registry,
+            roles=roles,
+            tracer=resolved_tracer,
+            settings=eff,
+            checkpointer=checkpointer,
+            plugins=plugins,
+        )
 
-    app = FastAPI(title="rolecard-agent 管理控制台", version="0.2.0")
+    app = FastAPI(title="rolecard-agent 管理控制台", version="0.3.0")
 
     @app.get("/api/roles")
     def list_roles() -> list[object]:
@@ -307,8 +381,9 @@ def create_app(
         首轮注入完整初始状态（`new_state`）；续轮只注入新消息 + 实时角色 —— 后者让
         PATCH /api/session 的切角色在下一轮立即生效，而 enabled_domains / tool_epoch 不进
         输入，让 checkpoint 里的旧值保留，`call_model` 的 epoch 漂移检测才能每个变化只报
-        一次（C14）。
+        一次（C14）。图从 `app_state` 现取：设置页保存热重建后，下一次对话自动用新图。
         """
+        graph = app_state["graph"]
         thread = _get_thread(conn, body.thread_id)
         role_id = str(thread["current_role_id"])
         user_id = str(thread["user_id"])
@@ -316,6 +391,16 @@ def create_app(
             role = roles.get(role_id)
         except RoleNotFound as exc:
             raise _role_error_to_http(exc) from exc
+
+        # 侧栏标题：首轮消息截断生成；updated_at 每轮刷新，会话列表按它倒序。
+        # 用毫秒精度（strftime %f）而非 CURRENT_TIMESTAMP（秒级）：同一秒内创建的两个
+        # 会话需要靠"谁最近活跃"严格排序，秒级会打平、只能靠随机 thread_id 兜底。
+        conn.execute(
+            "UPDATE session_thread SET title = COALESCE(title, ?), "
+            "updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE thread_id = ?",
+            (body.message[:24], body.thread_id),
+        )
+        conn.commit()
 
         graph_config = {"configurable": {"thread_id": body.thread_id}}
         snapshot = graph.get_state(graph_config)
@@ -348,9 +433,70 @@ def create_app(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    @app.get("/", response_class=HTMLResponse)
-    @app.get("/console", response_class=HTMLResponse)
-    def console() -> str:
-        return console_html
+    @app.get("/api/sessions")
+    def list_sessions() -> list[object]:
+        """会话列表（对话页侧栏）。v1 单用户演示：只列演示身份名下的会话。"""
+        rows = conn.execute(
+            "SELECT s.thread_id, s.title, s.current_role_id AS role_id, r.role_name, "
+            "s.updated_at FROM session_thread s "
+            "LEFT JOIN role_card r ON r.role_id = s.current_role_id "
+            "WHERE s.user_id = ? ORDER BY s.updated_at DESC, s.thread_id",
+            (DEFAULT_USER_ID,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    @app.get("/api/session/{thread_id}/messages")
+    def get_session_messages(thread_id: str) -> list[object]:
+        """历史消息回放（来源：checkpoint，而非单独的聊天记录表）——
+        点击历史会话续聊时，前端用它恢复消息区。"""
+        _get_thread(conn, thread_id)
+        snapshot = app_state["graph"].get_state({"configurable": {"thread_id": thread_id}})
+        return [_serialize_message(m) for m in (snapshot.values or {}).get("messages", [])]
+
+    @app.delete("/api/session/{thread_id}", status_code=204)
+    def delete_session(thread_id: str) -> None:
+        """删除会话：thread 行 + 该线程的 checkpoint / writes 一并清掉，不留孤儿。"""
+        _get_thread(conn, thread_id)
+        conn.execute("DELETE FROM session_thread WHERE thread_id = ?", (thread_id,))
+        for table in ("checkpoints", "writes"):  # langgraph SqliteSaver 的两张表
+            conn.execute(f"DELETE FROM {table} WHERE thread_id = ?", (thread_id,))
+        conn.commit()
+
+    @app.get("/api/settings/models")
+    def get_model_settings() -> object:
+        """模型后端设置。api_key 永不回读 —— 只有 has_key 标志。"""
+        return {
+            "default": model_settings.default_backend(),
+            "backends": model_settings.list_backends(),
+        }
+
+    @app.put("/api/settings/models")
+    def put_model_settings(body: ModelSettingsBody) -> object:
+        """保存后端集合并热重建（下一轮对话即用新后端，无需重启进程）。
+
+        api_key 语义：缺省/None = 保留已存 key；空串 = 清除 —— 否则每次没重输 key 的
+        保存都会把 key 抹掉。"""
+        try:
+            model_settings.save(
+                default=body.default, backends=[b.model_dump() for b in body.backends]
+            )
+        except ModelSettingsError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        rebuild_graph()
+        return {
+            "default": model_settings.default_backend(),
+            "backends": model_settings.list_backends(),
+        }
+
+    dist_dir = Path(os.environ.get("FRONTEND_DIST") or _DEFAULT_DIST)
+    if (dist_dir / "index.html").exists():
+        # 静态托管必须挂在 API 路由之后注册：FastAPI 按注册顺序匹配，先注册的 /api/* 优先。
+        app.mount("/", StaticFiles(directory=dist_dir, html=True), name="console")
+    else:
+
+        @app.get("/", response_class=HTMLResponse)
+        @app.get("/console", response_class=HTMLResponse)
+        def console() -> str:
+            return _FALLBACK_HTML
 
     return app
