@@ -8,17 +8,11 @@ const EMPTY_FORM = {
   temperature: 0.7,
   model_name: "",
   tool_whitelist: [] as string[],
-  knowledge_scopes: "",
+  knowledge_scopes: [] as string[],
   description: "",
 };
 
-function splitList(v: string): string[] | null {
-  const items = v
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return items.length ? items : null;
-}
+const SCOPE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
 
 /** 一组工具的复选框：工具名 + 一句话说明（title 悬浮给全文） */
 function ToolGroup({
@@ -67,6 +61,7 @@ export default function RolesPage() {
   const [wlMode, setWlMode] = useState<"all" | "custom">("all");
   const [catalog, setCatalog] = useState<ToolCatalog | null>(null);
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
+  const [newScope, setNewScope] = useState("");
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
 
   async function load() {
@@ -77,6 +72,11 @@ export default function RolesPage() {
     api.get<ToolCatalog>("/api/tools/catalog").then(setCatalog).catch(() => {});
   }, []);
 
+  // 当前无内核集合注册表（RAG v2.1）：可选作用域 = 现存角色声明过的并集
+  const knownScopes = Array.from(
+    new Set(roles.flatMap((r) => r.knowledge_scopes || [])),
+  );
+
   function toggleTool(name: string) {
     setForm((f) => ({
       ...f,
@@ -84,6 +84,35 @@ export default function RolesPage() {
         ? f.tool_whitelist.filter((n) => n !== name)
         : [...f.tool_whitelist, name],
     }));
+  }
+
+  function toggleScope(name: string) {
+    setForm((f) => ({
+      ...f,
+      knowledge_scopes: f.knowledge_scopes.includes(name)
+        ? f.knowledge_scopes.filter((n) => n !== name)
+        : [...f.knowledge_scopes, name],
+    }));
+  }
+
+  function addScope() {
+    const name = newScope.trim();
+    if (!name) return;
+    if (!SCOPE_PATTERN.test(name)) {
+      setStatus({
+        ok: false,
+        msg: "作用域名不合法：小写字母开头，只含小写字母/数字/下划线（如 health_reports）。",
+      });
+      return;
+    }
+    setStatus(null);
+    setForm((f) => ({
+      ...f,
+      knowledge_scopes: f.knowledge_scopes.includes(name)
+        ? f.knowledge_scopes
+        : [...f.knowledge_scopes, name],
+    }));
+    setNewScope("");
   }
 
   function openCreate() {
@@ -101,7 +130,7 @@ export default function RolesPage() {
       temperature: r.temperature,
       model_name: r.model_name || "",
       tool_whitelist: r.tool_whitelist || [],
-      knowledge_scopes: (r.knowledge_scopes || []).join(", "),
+      knowledge_scopes: r.knowledge_scopes || [],
       description: r.description || "",
     });
     setWlMode(r.tool_whitelist === null ? "all" : "custom");
@@ -115,7 +144,7 @@ export default function RolesPage() {
       temperature: Number(form.temperature),
       model_name: form.model_name.trim() || null,
       tool_whitelist: wlMode === "all" ? null : form.tool_whitelist,
-      knowledge_scopes: splitList(form.knowledge_scopes),
+      knowledge_scopes: form.knowledge_scopes.length ? form.knowledge_scopes : null,
       description: form.description.trim() || null,
     };
     try {
@@ -281,15 +310,76 @@ export default function RolesPage() {
               </div>
             )}
             <label className="mt-3 block">
-              <span className="text-xs text-slate-500">知识作用域（逗号分隔；留空 = 不检索）</span>
-              <input
-                value={form.knowledge_scopes}
-                onChange={(e) => setForm({ ...form, knowledge_scopes: e.target.value })}
-                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              />
+              <span className="text-xs text-slate-500">
+                知识作用域（声明可检索的范围；不选 = 不可检索）
+              </span>
+              <div className="mt-1.5 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                {/* 已选：可移除的 chips */}
+                {form.knowledge_scopes.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {form.knowledge_scopes.map((s) => (
+                      <span
+                        key={s}
+                        className="flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs text-blue-700"
+                      >
+                        {s}
+                        <button
+                          type="button"
+                          onClick={() => toggleScope(s)}
+                          className="text-blue-300 hover:text-blue-600"
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {/* 现存作用域（来自其他角色的声明）—— 一键勾选 */}
+                {knownScopes.filter((s) => !form.knowledge_scopes.includes(s)).length >
+                  0 && (
+                  <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] text-slate-400">可添加：</span>
+                    {knownScopes
+                      .filter((s) => !form.knowledge_scopes.includes(s))
+                      .map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => toggleScope(s)}
+                          className="rounded-full border border-dashed border-slate-300 px-2.5 py-1 text-xs text-slate-500 hover:border-blue-300 hover:text-blue-600"
+                        >
+                          ＋ {s}
+                        </button>
+                      ))}
+                  </div>
+                )}
+                {/* 新建作用域：v1 尚无内核集合注册表（RAG v2.1），允许声明新名字 */}
+                <div className="flex gap-2">
+                  <input
+                    value={newScope}
+                    onChange={(e) => setNewScope(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        addScope();
+                      }
+                    }}
+                    placeholder="新作用域名（如 health_reports）"
+                    className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={addScope}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-blue-300"
+                  >
+                    添加
+                  </button>
+                </div>
+              </div>
               <span className="mt-1 block text-[11px] leading-relaxed text-slate-400">
                 这是对内核知识库（RAG，v2.1 接入）的检索授权：声明 = 可检索该作用域；不声明 =
-                不可检索。库归内核，角色只声明 —— 避免 N 个角色 × M 套索引。
+                不可检索。库归内核，角色只声明 —— 避免 N 个角色 × M 套索引。可选列表来自现存
+                角色的声明并集；v2.1 后将换成内核集合注册表。
               </span>
             </label>
             <label className="mt-3 block">
