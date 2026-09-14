@@ -15,15 +15,24 @@ search_knowledge is NOT here - it belongs to rag/ and is registered in v2.1.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from langchain_core.tools import BaseTool, tool
 
 from rolecard_agent.roles.service import RoleCardService
 
+# Either a snapshot (tests) or a live provider like `PluginService.enabled_domains` (the app).
+# The callable form is what keeps `list_domains` honest across plugin toggles: the tool reports
+# what is enabled NOW, not what was enabled when the graph was compiled.
+DomainsLike = Sequence[str] | Callable[[], Sequence[str]]
+
+
+def _current(domains: DomainsLike) -> tuple[str, ...]:
+    return tuple(domains() if callable(domains) else domains)
+
 
 def make_kernel_tools(
-    *, roles: RoleCardService, enabled_domains: Sequence[str] = ()
+    *, roles: RoleCardService, enabled_domains: DomainsLike = ()
 ) -> list[BaseTool]:
     """Build the kernel tools, closing over the services they need.
 
@@ -34,7 +43,7 @@ def make_kernel_tools(
 
     Both are read-only, and neither can move a permission boundary - that is the point.
     """
-    enabled = tuple(enabled_domains)
+    provider = enabled_domains
 
     @tool("list_domains")
     def list_domains() -> str:
@@ -43,7 +52,7 @@ def make_kernel_tools(
         Use it when the user asks what you can do, or when a lookup returns nothing and you
         need to say which capabilities are actually switched on.
         """
-        if not enabled:
+        if not (enabled := _current(provider)):
             return "当前没有启用任何领域插件。"
         return "已启用的领域插件：" + "、".join(enabled)
 

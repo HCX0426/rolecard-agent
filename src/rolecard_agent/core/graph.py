@@ -8,11 +8,13 @@ passes `build_model(settings)`. Keeping construction out of the graph is what ma
 kernel testable without a running Ollama instance.
 """
 
-from __future__ import annotations
-
+# NOTE: no `from __future__ import annotations` here on purpose. LangGraph inspects the node's
+# `config` parameter annotation and warns when it is a STRING (PEP 563 lazy form) instead of a
+# real type object; under Python 3.13 every annotation in this file evaluates natively anyway.
 from functools import partial
 from typing import Any, cast
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
@@ -67,7 +69,16 @@ def build_kernel(
         ctx.tool_epoch = plugins.tool_epoch
 
     graph = StateGraph(AgentState)
-    graph.add_node(MODEL_NODE, partial(call_model, ctx=ctx))
+
+    def model_node(state: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
+        # A closure rather than `partial(call_model, ctx=ctx)`: LangGraph passes config as the
+        # SECOND POSITIONAL argument to any node that accepts two. A partial with a bound
+        # keyword would let that land in `ctx`, silently swapping the context for a config
+        # dict. The RunnableConfig annotation is load-bearing too: LangGraph validates it and
+        # warns if a node's config parameter is typed as anything else.
+        return call_model(state, ctx=ctx, config=config)
+
+    graph.add_node(MODEL_NODE, model_node)
     graph.add_node(TOOLS_NODE, partial(execute_tools, ctx=ctx))
 
     graph.add_edge(START, MODEL_NODE)

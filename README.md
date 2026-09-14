@@ -30,10 +30,17 @@ python scripts/init_db.py
 
 # 6. 一致性自检（文档与代码是否同步，退出码可用于 CI）
 python scripts/check_consistency.py
+
+# 7. 启动控制台（管理面 + 流式对话）
+uvicorn --factory rolecard_agent.api.main:create_app --port 8000
+# 浏览器打开 http://127.0.0.1:8000/ ：新建会话 → 对话（SSE 流式）→ 页面切角色 → 启停插件
+# 没跑本地模型也能演示：按 scripts/smoke_chat.py 的说明配一个 OpenAI 兼容端点即可
 ```
 
-> v2 才需要的依赖单独安装：`requirements-rag.txt`（检索）、`requirements-api.txt`（HTTP 接口）、
-> `requirements-ocr.txt`（OCR，**必须独立 venv**，切勿与主服务共用环境）。
+> v2 才需要的依赖单独安装：`requirements-rag.txt`（检索，v2.1）、`requirements-ocr.txt`
+>（OCR，**必须独立 venv**，v2.2，切勿与主服务共用环境）。HTTP 接口依赖
+> `requirements-api.txt` 属于 **v1 M4**，已在上面第 2 步装好；接入云端模型另装
+> `requirements-cloud.txt`（代码零改动，只改 `MODEL_BACKENDS`）。
 >
 > 「3 条命令能跑起来」是 `docs/实施计划.md` P4 的出口条件 —— 这份 README 必须能兑现它。
 

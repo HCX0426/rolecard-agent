@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
 
 from rolecard_agent.config import Settings
 from rolecard_agent.core.guard import check
@@ -124,8 +125,25 @@ def _text_of(message: BaseMessage) -> str:
     return str(content)
 
 
-def call_model(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
-    """Assemble the prompt, bind exactly the permitted tools, call the model, gate the answer."""
+def call_model(
+    state: dict[str, Any],
+    ctx: KernelContext,
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """Assemble the prompt, bind exactly the permitted tools, call the model, gate the answer.
+
+    `config` is the LangGraph `RunnableConfig` (injected automatically when the node is wired
+    with the config-aware wrapper in `core/graph.py`). Forwarding it is what makes TWO features
+    possible at once, because both ride on callback propagation:
+
+      * SSE token streaming (M4): the streaming handler LangGraph attaches travels inside
+        `config`; without forwarding, the model call is invisible to it and no token is ever
+        streamed.
+      * Cloud tracing (US-5): the same propagation is what puts the model call on a LangSmith
+        trace instead of leaving only the node-level events.
+
+    Tests call this directly with two positional args; `config=None` keeps that path unchanged.
+    """
     role_id = state.get("current_role_id", "")
     try:
         role = ctx.roles.get(role_id)
@@ -162,7 +180,8 @@ def call_model(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
     prompt = [SystemMessage(content=system), *state["messages"]]
 
     with timer() as elapsed:
-        response = bound.invoke(prompt)
+        invoke_kwargs = {} if config is None else {"config": config}
+        response = bound.invoke(prompt, **invoke_kwargs)
 
     verdict = check(_text_of(response))
     if not verdict.allowed:
