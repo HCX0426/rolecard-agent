@@ -268,6 +268,8 @@ def create_app(
     checkpointer = make_checkpointer(conn)
     resolved_tracer = tracer or make_tracer(settings)
     factory = model_factory or build_model
+    # 启动时把 env 后端播种进设置表（幂等，操作员此后在 UI 里改），再计算有效配置。
+    model_settings.seed_from_env(settings)
     # 设置页（DB）配置优先于 env：空表 = env 原样；保存过 = DB 覆盖同名后端并接管默认。
     effective = model_settings.effective_settings(settings)
     resolved_model = model or factory(effective, None)

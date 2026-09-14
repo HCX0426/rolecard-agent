@@ -62,11 +62,46 @@ def authoritative_text(client: TestClient, thread_id: str, message: str) -> str:
     return str(replace[-1]["text"])
 
 
-def test_empty_settings_returns_env_default(client: TestClient) -> None:
-    """从未保存过设置 = DB 空表，默认回落 env（model_default='local'）。"""
+def test_fresh_startup_seeds_env_backends(client: TestClient) -> None:
+    """首次启动把 env 后端迁移进表（模型页可见、可编辑）；迁移一次性。"""
     body = client.get("/api/settings/models").json()
-    assert body["default"] is None  # 未挑选过
-    assert body["backends"] == []
+    assert body["default"] == "local"  # env 默认随迁移一并接管
+    assert [b["name"] for b in body["backends"]] == ["local"]
+    assert body["backends"][0]["has_key"] is True  # local 的占位 key（"ollama"）一并入库
+
+
+def test_seed_is_one_way_env_never_comes_back(tmp_path: Path) -> None:
+    """迁移一次性：首启把 env 的 local 迁入；操作员在 UI 换成 siliconflow 后重启，
+    local 不会被 env 重新塞回来 —— 界面是唯一事实来源。"""
+    app = create_app(sqlite_path=tmp_path / "seed.db")
+    with TestClient(app) as c:
+        assert [b["name"] for b in c.get("/api/settings/models").json()["backends"]] == ["local"]
+        # 操作员在 UI 里换成 siliconflow（删除了 local）
+        assert (
+            c.put(
+                "/api/settings/models",
+                json={
+                    "default": "siliconflow",
+                    "backends": [
+                        {
+                            "name": "siliconflow",
+                            "provider": "openai",
+                            "base_url": "https://api.siliconflow.cn/v1",
+                            "model": "deepseek-ai/DeepSeek-V4-Flash",
+                            "api_key": "sk-stored",
+                        }
+                    ],
+                },
+            ).status_code
+            == 200
+        )
+
+    # 同库"重启"：迁移标记已落库，env 不再参与
+    app2 = create_app(sqlite_path=tmp_path / "seed.db")
+    with TestClient(app2) as c2:
+        body = c2.get("/api/settings/models").json()
+        assert {b["name"] for b in body["backends"]} == {"siliconflow"}
+        assert body["default"] == "siliconflow"
 
 
 def test_put_then_get_round_trip_without_key_exposure(client: TestClient) -> None:
@@ -92,12 +127,12 @@ def test_put_then_get_round_trip_without_key_exposure(client: TestClient) -> Non
     by_name = {b["name"]: b for b in body["backends"]}
     assert by_name["siliconflow"]["has_key"] is True
     assert "api_key" not in by_name["siliconflow"]  # 只写不回读
-    assert by_name["local"]["has_key"] is False
+    # local 的占位 key（"ollama"）经播种入库，PUT 未带 key → 保留
+    assert by_name["local"]["has_key"] is True
 
     fetched = client.get("/api/settings/models").json()
     assert fetched["default"] == "siliconflow"
     assert {b["name"] for b in fetched["backends"]} == {"siliconflow", "local"}
-
 
 def test_omitted_key_is_preserved_not_erased(client: TestClient) -> None:
     """PUT 不带 api_key = 保留已存 key（GET 不回读，所以这是唯一的'不丢 key'方式）。"""
@@ -213,7 +248,10 @@ def test_invalid_default_backend_400(client: TestClient) -> None:
         },
     )
     assert res.status_code == 400
-    assert client.get("/api/settings/models").json()["backends"] == []  # 未写入
+    # 未写入：只剩启动时播种的 local，ghost 不存在
+    body = client.get("/api/settings/models").json()
+    assert {b["name"] for b in body["backends"]} == {"local"}
+    assert body["default"] == "local"  # 播种时采纳的 env 默认
 
 
 def test_empty_backend_list_400(client: TestClient) -> None:

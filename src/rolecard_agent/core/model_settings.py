@@ -33,6 +33,7 @@ class ModelSettingsError(Exception):
 
 class ModelSettingsService:
     MODEL_DEFAULT_KEY = "model_default"
+    MODEL_SEEDED_KEY = "model_backends_seeded"
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
@@ -61,6 +62,51 @@ class ModelSettingsService:
         ).fetchone()
         value = str(row["value"]) if row and row["value"] else None
         return value or None
+
+    def seed_from_env(self, env_settings: Settings) -> int:
+        """First-boot migration: copy env backends into the table ONCE, then env is out of
+        the loop — the settings UI (this table) is the single source of truth afterwards.
+
+        The `model_backends_seeded` flag makes the migration one-way: a backend the operator
+        deletes in the UI stays deleted even if env still provides it, and env edits after
+        the first boot are deliberately ignored. 迁移是一次性的，这正是"以后都在界面配置"
+        的含义。
+        """
+        flag = self._conn.execute(
+            "SELECT value FROM kernel_meta WHERE key = ?", (self.MODEL_SEEDED_KEY,)
+        ).fetchone()
+        if flag is not None:
+            return 0
+
+        existing = {str(r["name"]) for r in self._raw_backends()}
+        inserted = 0
+        for name, backend in env_settings.model_backends.items():
+            if name in existing:
+                continue
+            self._conn.execute(
+                "INSERT OR IGNORE INTO model_backend "
+                "(name, provider, base_url, model, api_key, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    name,
+                    backend.provider,
+                    backend.base_url,
+                    backend.model,
+                    backend.api_key,
+                    len(existing) + inserted,
+                ),
+            )
+            inserted += 1
+        if inserted and self.default_backend() is None:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO kernel_meta (key, value) VALUES (?, ?)",
+                (self.MODEL_DEFAULT_KEY, env_settings.model_default),
+            )
+        self._conn.execute(
+            "INSERT OR IGNORE INTO kernel_meta (key, value) VALUES (?, ?)",
+            (self.MODEL_SEEDED_KEY, "1"),
+        )
+        self._conn.commit()
+        return inserted
 
     # -- writes ----------------------------------------------------------------
 
