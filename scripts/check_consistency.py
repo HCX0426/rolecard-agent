@@ -450,6 +450,84 @@ def check_python_pin() -> None:
         fails.append(f".python-version ({pinned}) disagrees with requires-python ({floor})")
 
 
+# Settings fields that are parsed on purpose but not read yet. Declaring them here is the
+# point: a field that is merely forgotten and a field that is deliberately forward-looking
+# look identical in the source, so the difference has to be written down somewhere.
+RESERVED_SETTINGS = {
+    "langsmith_api_key",  # v2.4 cloud observability
+    "langsmith_project",  # v2.4 cloud observability
+    "chroma_path",  # v2.1 retrieval
+    "upload_dir",  # v2.2 document intake
+}
+
+
+def check_dead_config() -> None:
+    """Every Settings field must be read somewhere outside config.py.
+
+    A parsed-but-unread setting is worse than a missing one: `.env.example` advertises it, so
+    someone configures it and believes it took effect. That is how `langsmith_api_key` and
+    `model_fallbacks` sat unused (技术评审与决策.md §9 A2 / A4).
+    """
+    cfg_path = ROOT / "src" / "rolecard_agent" / "config.py"
+    fields = re.findall(
+        r"^\s{4}([a-z][a-z0-9_]*)\s*:", cfg_path.read_text(encoding="utf-8"), flags=re.M
+    )
+    others = "\n".join(
+        p.read_text(encoding="utf-8", errors="ignore")
+        for p in iter_files(".py")
+        if "tests" not in p.parts
+    )
+    # Count across production code INCLUDING config.py, and require more than the declaration
+    # line itself. Excluding config.py looked right but produced a false positive:
+    # `model_backends` is read by `backend()` and `resolve_fallbacks()` in that same file.
+    unread = sorted(
+        f for f in fields if f not in RESERVED_SETTINGS and len(re.findall(rf"\b{f}\b", others)) < 2
+    )
+    detail = (
+        f"unread: {unread}"
+        if unread
+        else f"{len(fields)} fields, {len(RESERVED_SETTINGS)} reserved"
+    )
+    out("dead config", not unread, detail)
+    if unread:
+        fails.append(f"Settings fields never read outside their declaration: {unread}")
+
+
+def check_role_whitelists_resolve() -> None:
+    """Every tool name in a built-in role's whitelist must resolve to a declared tool.
+
+    The built-in role's whitelist listed `list_domains` / `list_roles` while
+    `core/tools/builtin.py` was still an empty docstring - a permission list pointing at
+    nothing, which reads as working code (技术评审与决策.md §9 B1).
+    """
+    sys.path.insert(0, str(ROOT / "src"))
+    from rolecard_agent.roles.seed import BUILTIN_ROLES  # noqa: PLC0415
+
+    # Only tool-definition modules form the declaration surface. Scanning all of src would
+    # find the whitelist's own names inside roles/seed.py and pass trivially.
+    sources = [
+        p
+        for p in iter_files(".py")
+        if "tests" not in p.parts and (p.name == "tools.py" or "tools" in p.parent.name)
+    ]
+    declared: set[str] = set()
+    for path in sources:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        declared |= set(re.findall(r'@tool\("(\w+)"\)', text))
+        declared |= set(re.findall(r"def (\w+)\(", text))
+        declared |= set(re.findall(r'"([a-z][a-z0-9_]{2,})"', text))
+
+    wanted: set[str] = set()
+    for role in BUILTIN_ROLES:
+        wanted |= set(role.tool_whitelist or [])
+
+    missing = sorted(wanted - declared)
+    detail = f"unresolved: {missing}" if missing else f"{len(wanted)} names resolve"
+    out("role whitelists", not missing, detail)
+    if missing:
+        fails.append(f"built-in role whitelists name undeclared tools: {missing}")
+
+
 def report_line_budget() -> None:
     def count(suffix: str) -> int:
         return sum(
@@ -479,6 +557,8 @@ def main() -> int:
     check_doc_references()
     check_doc_links()
     check_python_pin()
+    check_dead_config()
+    check_role_whitelists_resolve()
     report_line_budget()
 
     print("\n--- FAILS ---")

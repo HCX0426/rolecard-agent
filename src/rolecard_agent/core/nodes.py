@@ -35,6 +35,13 @@ TOOL_OFFLINE = "该能力当前未启用，无法调用。"
 TOOL_DENIED = "当前角色没有调用该工具的权限。"
 TOOL_FAILED = "工具执行失败，请稍后重试或换一种问法。"
 
+# Bounded retry, per call, same arguments. Honest about what this can and cannot do: retrying
+# an identical call only helps with transient failures (IO, a cold model, a locked file), and
+# we cannot reliably tell transient from deterministic without inspecting exception types -
+# which would couple this module to every tool's exception hierarchy. So the cap is what bounds
+# the waste, and the count is surfaced in state and in the trace rather than hidden.
+MAX_TOOL_RETRIES = 2
+
 
 class ChatLike(Protocol):
     """Minimal model interface the kernel needs.
@@ -164,6 +171,7 @@ def execute_tools(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
     permitted = {t.name for t in tools_for_turn(state, ctx)}
 
     results: list[ToolMessage] = []
+    retries = 0
     for call in calls:
         name = call.get("name", "")
         call_id = call.get("id", "")
@@ -190,21 +198,41 @@ def execute_tools(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
             continue
 
         tool = ctx.registry.get(name)
+        attempts = 0
+        last_error: str | None = None
         with timer() as elapsed:
-            try:
-                outcome = tool.invoke(args)
-                content = outcome if isinstance(outcome, str) else str(outcome)
-            except Exception as exc:  # noqa: BLE001 - the model gets a sentence, logs get the cause
-                content = TOOL_FAILED
-                ctx.tracer.emit(
-                    TraceEvent(
-                        event="tool_error",
-                        tool=name,
-                        thread_id=state.get("thread_id"),
-                        error=f"{type(exc).__name__}: {exc}",
+            while True:
+                try:
+                    outcome = tool.invoke(args)
+                    content = outcome if isinstance(outcome, str) else str(outcome)
+                    break
+                except Exception as exc:  # noqa: BLE001 - model gets a sentence, log gets the cause
+                    last_error = f"{type(exc).__name__}: {exc}"
+                    if attempts >= MAX_TOOL_RETRIES:
+                        content = TOOL_FAILED
+                        break
+                    attempts += 1
+                    ctx.tracer.emit(
+                        TraceEvent(
+                            event="tool_retry",
+                            tool=name,
+                            thread_id=state.get("thread_id"),
+                            error=last_error,
+                            detail={"attempt": attempts, "limit": MAX_TOOL_RETRIES},
+                        )
                     )
+        if last_error is not None:
+            ctx.tracer.emit(
+                TraceEvent(
+                    event="tool_error",
+                    tool=name,
+                    thread_id=state.get("thread_id"),
+                    error=last_error,
+                    detail={"attempts": attempts + 1},
                 )
+            )
         results.append(ToolMessage(content=content, tool_call_id=call_id, name=name))
+        retries += attempts
         ctx.tracer.emit(
             TraceEvent(
                 event="tool_call",
@@ -213,7 +241,14 @@ def execute_tools(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
                 latency_ms=elapsed["ms"],
             )
         )
-    return {"messages": results}
+
+    update: dict[str, Any] = {"messages": results}
+    if retries:
+        # `retry_count` was a declared-but-never-written field (技术评审与决策.md §9 A4). It is
+        # now the per-session tally of tool retries, which is what makes "how flaky is this
+        # deployment" answerable from state instead of from log grepping.
+        update["retry_count"] = (state.get("retry_count") or 0) + retries
+    return update
 
 
 def route_after_model(state: dict[str, Any]) -> str:

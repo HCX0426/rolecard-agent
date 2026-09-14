@@ -28,6 +28,11 @@ DEFAULT_LOCAL_BACKEND = {
     "api_key": "ollama",
 }
 
+# Measured advice, not a hard limit of the framework: a longer chain makes a failure harder to
+# localise, and it hides "the answer got worse after degrading" from whoever reads the logs
+# (实施计划.md §8.5).
+MAX_FALLBACKS = 2
+
 
 class ModelBackend(BaseModel):
     """One callable model endpoint.
@@ -60,6 +65,11 @@ class Settings(BaseModel):
     obs_backend: str = "local"
     obs_emit_raw_text: bool = False
     obs_log_path: Path | None = None
+
+    # RESERVED for the v2.4 cloud observability backend. Parsed here so the .env contract is
+    # stable from day one, but nothing reads them yet - `make_tracer` only implements `local`
+    # and emits a `tracer_fallback` event if you ask for anything else. Listed in
+    # scripts/check_consistency.py's reserved set so the dead-config check stays honest.
     langsmith_api_key: str | None = None
     langsmith_project: str = "rolecard-agent"
 
@@ -75,6 +85,21 @@ class Settings(BaseModel):
             known = ", ".join(sorted(self.model_backends))
             raise KeyError(f"unknown model backend {key!r}; configured: {known}")
         return self.model_backends[key]
+
+    def resolve_fallbacks(self, primary: str | None = None) -> list[str]:
+        """Ordered backend names to try after the primary one fails.
+
+        Drops the primary (falling back to yourself is not a fallback), drops unknown names
+        (a typo must not become a runtime crash mid-conversation), and caps the chain at
+        `MAX_FALLBACKS`. Pure and dependency-free so it is cheap to test - the actual
+        `with_fallbacks` wiring lives in `core/graph.build_model`.
+        """
+        head = primary or self.model_default
+        seen: list[str] = []
+        for name in self.model_fallbacks:
+            if name != head and name in self.model_backends and name not in seen:
+                seen.append(name)
+        return seen[:MAX_FALLBACKS]
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:

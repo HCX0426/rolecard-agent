@@ -56,22 +56,29 @@ class Tracer(Protocol):
 
 
 def redact(value: Any) -> Any:
-    """Replace sensitive payloads with a length/summary marker.
+    """Replace sensitive payloads with a length marker, keeping everything else readable.
 
-    Keeps shape (so logs remain debuggable: "there was a 412-char answer") while removing
-    content (so nothing about a real person ends up in a log line).
+    Redaction is keyed, not value-based: only values under a known-sensitive key are replaced.
+    The first implementation redacted *every* string, which also destroyed the diagnostic
+    fields - `requested: "langsmith"` became `<redacted:9 chars>` - and made the logs useless.
+    A redactor that removes too much is not safer; it just gets switched off.
+
+    Keeps shape (so "there was a 412-char answer" is still visible) while removing content (so
+    nothing about a real person lands in a log line).
     """
     if isinstance(value, dict):
         out: dict[str, Any] = {}
         for key, item in value.items():
-            out[key] = (
-                f"<redacted:{len(item)} chars>"
-                if key in _SENSITIVE_KEYS and isinstance(item, str)
-                else redact(item)
-            )
+            if key in _SENSITIVE_KEYS and isinstance(item, str):
+                out[key] = f"<redacted:{len(item)} chars>"
+            else:
+                out[key] = redact(item)
         return out
-    if isinstance(value, str):
-        return f"<redacted:{len(value)} chars>"
+    if isinstance(value, list):
+        return [redact(item) for item in value]
+    # Bare strings outside a sensitive key are diagnostic text. `error` is deliberately in
+    # this group: an exception type and message are what make a trace actionable, and tools
+    # are contracted not to put raw record text into exceptions.
     return value
 
 
@@ -111,15 +118,38 @@ class NullTracer:
         return None
 
 
-def make_tracer(settings: Settings) -> Tracer:
-    """Build the tracer named by `settings.obs_backend`.
+KNOWN_BACKENDS = ("local", "langsmith", "langfuse")
+# Only `local` exists today. Stated as data rather than prose so the fallback message and any
+# future check can agree on it.
+IMPLEMENTED_BACKENDS = ("local",)
 
-    Unknown backends fall back to `local` with no error: losing tracing is annoying, failing
-    to start because of a typo in an env var would be worse.
+
+def make_tracer(settings: Settings) -> Tracer:
+    """Build the tracer for `settings.obs_backend`.
+
+    A request for an unimplemented backend does NOT raise - failing to start because of a
+    logging setting would be worse than losing cloud traces - but it is **not silent**
+    either: a `tracer_fallback` event is emitted so the substitution is visible.
+
+    Silently downgrading would be the dangerous option: someone who sets
+    `OBS_BACKEND=langsmith` plus a key and gets local JSON lines would believe they have cloud
+    traces. The previous version of this function had two identical branches behind an `if`,
+    which read as though the cloud backends were already wired (技术评审与决策.md §9 A1).
     """
-    if settings.obs_backend == "local":
-        return LocalTracer(emit_raw_text=settings.obs_emit_raw_text, path=settings.obs_log_path)
-    return LocalTracer(emit_raw_text=settings.obs_emit_raw_text, path=settings.obs_log_path)
+    tracer = LocalTracer(emit_raw_text=settings.obs_emit_raw_text, path=settings.obs_log_path)
+    if settings.obs_backend not in IMPLEMENTED_BACKENDS:
+        tracer.emit(
+            TraceEvent(
+                event="tracer_fallback",
+                detail={
+                    "requested": settings.obs_backend,
+                    "using": "local",
+                    "implemented": list(IMPLEMENTED_BACKENDS),
+                    "planned_in": "v2.4" if settings.obs_backend in KNOWN_BACKENDS else None,
+                },
+            )
+        )
+    return tracer
 
 
 @contextmanager

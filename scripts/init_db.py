@@ -13,10 +13,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# v1 ships exactly one plugin. In M2 this list is replaced by the enabled rows of the
-# `plugin` table, which is also what `call_model` reads to filter tools.
-ENABLED_DOMAINS: tuple[str, ...] = ("health",)
-
 
 def _ensure_importable() -> None:
     """Make `rolecard_agent` importable when run straight from a clone.
@@ -34,18 +30,25 @@ def main() -> int:
 
     from rolecard_agent.config import Settings
     from rolecard_agent.core.checkpointer import make_checkpointer
+    from rolecard_agent.domains.registry import DOMAINS
     from rolecard_agent.roles.service import RoleCardService
     from rolecard_agent.storage.db import bootstrap, connect
 
     settings = Settings.from_env()
     conn = connect(settings.sqlite_path)
 
-    applied = bootstrap(conn, enabled_domains=ENABLED_DOMAINS)
-    for domain in ENABLED_DOMAINS:
+    # Schemas are applied for every REGISTERED domain, not only the enabled ones: the table
+    # should exist regardless, so that toggling a plugin never requires DDL.
+    applied = bootstrap(conn, enabled_domains=DOMAINS)
+
+    # ENABLED state lives in the database, not in this script. A fresh database starts with
+    # every registered domain on; from then on the table is the source of truth and re-running
+    # this script must not silently re-enable something an operator switched off.
+    for domain in DOMAINS:
         conn.execute(
             "INSERT INTO plugin (plugin_id, display_name, enabled, sort_order) "
             "VALUES (?, ?, 1, 0) "
-            "ON CONFLICT(plugin_id) DO UPDATE SET enabled = 1",
+            "ON CONFLICT(plugin_id) DO NOTHING",
             (domain, domain),
         )
     conn.commit()
@@ -57,10 +60,16 @@ def main() -> int:
 
     seeded = RoleCardService(conn).seed_builtins()
 
+    enabled = [
+        row[0]
+        for row in conn.execute("SELECT plugin_id FROM plugin WHERE enabled = 1 ORDER BY plugin_id")
+    ]
+
     print(f"database   : {settings.sqlite_path}")
     for name in applied:
         print(f"  schema   : {name}")
-    print(f"  plugins  : {', '.join(ENABLED_DOMAINS)}")
+    print(f"  registered: {', '.join(DOMAINS) or '(none)'}")
+    print(f"  enabled  : {', '.join(enabled) or '(none)'}")
     print(f"  roles    : {seeded} built-in role(s) seeded")
     conn.close()
     return 0

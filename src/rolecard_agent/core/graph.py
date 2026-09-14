@@ -11,7 +11,7 @@ kernel testable without a running Ollama instance.
 from __future__ import annotations
 
 from functools import partial
-from typing import Any
+from typing import Any, cast
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
@@ -67,12 +67,8 @@ def build_kernel(
     return graph.compile(checkpointer=checkpointer)
 
 
-def build_model(settings: Settings, backend_name: str | None = None) -> ChatLike:
-    """Construct the chat model for a backend by name.
-
-    Not called by any test: tests inject a fake. Imported lazily so that importing the kernel
-    does not require a provider package to be installed.
-    """
+def _init_model(settings: Settings, backend_name: str | None) -> ChatLike:
+    """Instantiate one backend. Imported lazily so the kernel imports without a provider."""
     from langchain.chat_models import init_chat_model
 
     backend = settings.backend(backend_name)
@@ -82,3 +78,29 @@ def build_model(settings: Settings, backend_name: str | None = None) -> ChatLike
     if backend.api_key:
         kwargs["api_key"] = backend.api_key
     return init_chat_model(**kwargs)
+
+
+def build_model(settings: Settings, backend_name: str | None = None) -> ChatLike:
+    """Construct the chat model for a backend by name, wired to its fallback chain.
+
+    Fallbacks matter here specifically because the primary is usually a LOCAL model: a laptop
+    that is asleep, a model that was never pulled, and an Ollama that is not running all look
+    identical from inside the process - a connection error mid-conversation.
+    `with_fallbacks` turns that into "the cloud backend answered" instead of a dead turn.
+
+    Two limits worth knowing before relying on it (实施计划.md §8.5):
+      * When streaming, fallbacks only cover failures during *stream creation*. An error
+        after the first chunk does not fall back - the caller needs its own retry affordance.
+      * The chain is capped at two (`Settings.resolve_fallbacks`); longer chains make failures
+        harder to localise and hide "the answer got worse after degrading".
+
+    Not unit-tested: exercising it needs real provider packages. The part worth testing -
+    which names end up in the chain and in what order - lives in `Settings.resolve_fallbacks`
+    and is covered there.
+    """
+    primary = _init_model(settings, backend_name)
+    chain = settings.resolve_fallbacks(backend_name)
+    if not chain:
+        return primary
+    fallbacks = [_init_model(settings, name) for name in chain]
+    return cast("ChatLike", primary.with_fallbacks(fallbacks))

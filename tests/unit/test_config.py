@@ -76,3 +76,68 @@ def test_unknown_backend_reference_does_not_break_construction() -> None:
     when the role is used, not while parsing."""
     settings = Settings.from_env({"MODEL_DEFAULT": "local"})
     assert settings.backend("local").provider == "ollama"
+
+
+# ------------------------------------------------------------------- fallback chain
+#
+# The chain used to be parsed and then ignored (技术评审与决策.md §9 A4). The resolution rules
+# live here, in a pure function, because `build_model` itself needs real provider packages to
+# exercise - the part worth testing is which names survive and in what order.
+
+
+def test_no_fallbacks_by_default() -> None:
+    assert Settings().resolve_fallbacks() == []
+
+
+def test_primary_is_never_its_own_fallback() -> None:
+    """Falling back to the backend that just failed is not a fallback.
+
+    Note the primary when no backend is named is `model_default`, not "the first one listed".
+    """
+    settings = Settings.from_env(
+        {
+            "MODEL_BACKENDS": '{"cloud": {"model": "a", "provider": "openai"}}',
+            "MODEL_DEFAULT": "cloud",
+            "MODEL_FALLBACKS": "cloud,local",
+        }
+    )
+    assert settings.resolve_fallbacks() == ["local"]
+
+
+def test_fallback_chain_preserves_configured_order() -> None:
+    settings = Settings.from_env(
+        {
+            "MODEL_BACKENDS": (
+                '{"a": {"model": "1", "provider": "openai"},'
+                ' "b": {"model": "2", "provider": "openai"}}'
+            ),
+            "MODEL_DEFAULT": "a",
+            "MODEL_FALLBACKS": "b,local,a",
+        }
+    )
+    assert settings.resolve_fallbacks() == ["b", "local"]
+
+
+def test_unknown_names_are_dropped_rather_than_crashing_mid_conversation() -> None:
+    settings = Settings.from_env({"MODEL_FALLBACKS": "typo,local"})
+    assert settings.resolve_fallbacks("cloud") == ["local"]
+
+
+def test_duplicates_are_collapsed() -> None:
+    settings = Settings.from_env({"MODEL_FALLBACKS": "local,local"})
+    assert settings.resolve_fallbacks("cloud") == ["local"]
+
+
+def test_chain_is_capped() -> None:
+    """Longer chains make a failure harder to localise and hide degraded answers."""
+    settings = Settings.from_env(
+        {
+            "MODEL_BACKENDS": (
+                '{"a": {"model": "1", "provider": "openai"},'
+                ' "b": {"model": "2", "provider": "openai"},'
+                ' "c": {"model": "3", "provider": "openai"}}'
+            ),
+            "MODEL_FALLBACKS": "a,b,c",
+        }
+    )
+    assert settings.resolve_fallbacks("local") == ["a", "b"]
