@@ -42,6 +42,17 @@ uvicorn --factory rolecard_agent.api.main:create_app --port 8000
 cd frontend && npm install && npm run build
 ```
 
+## 部署
+
+```bash
+# Docker（dist 已入库，镜像里没有 node）
+docker build -t rolecard-agent .
+docker run -p 8000:8000 -v rolecard-data:/app/data rolecard-agent
+
+# CI：push 即跑（GitHub Actions）—— ruff + 全量离线测试 + 一致性核查 + 前端构建
+# 依赖快照：requirements.lock（已验证环境的 freeze；CI 安装用 requirements*.txt）
+```
+
 > v2 才需要的依赖单独安装：`requirements-rag.txt`（检索，v2.1）、`requirements-ocr.txt`
 >（OCR，**必须独立 venv**，v2.2，切勿与主服务共用环境）。HTTP 接口依赖
 > `requirements-api.txt` 属于 **v1 M4**，已在上面第 2 步装好；接入云端模型另装

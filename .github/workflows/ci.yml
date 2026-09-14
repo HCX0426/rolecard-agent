@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # 锁文件优先（可复现）；无锁环境（fork）回退到 requirements 镜像
+      - name: Install dependencies
+        run: |
+          if [ -f requirements.lock ]; then
+            pip install -r requirements.lock
+          else
+            pip install -r requirements.txt -r requirements-dev.txt -r requirements-api.txt
+          fi
+      - name: Lint
+        run: ruff check .
+      - name: Tests (offline, no Ollama needed)
+        run: python -m pytest -q -p no:cacheprovider
+      - name: Consistency (docs ↔ code)
+        run: python scripts/check_consistency.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        run: npm ci --no-fund --no-audit
+      - name: Type-check + build
+        run: npm run build
