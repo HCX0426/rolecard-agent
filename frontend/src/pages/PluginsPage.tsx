@@ -1,72 +1,74 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   api,
-  type AuditRow,
   type PluginRow,
   type ReportRecord,
   type ToolCatalog,
 } from "../api";
 
-// 页签式模块容器：新模块（数据管理 / 审计日志）往 MODULES 加一项即可 —— US-9 的可扩展性。
-const MODULES = [
-  { key: "domains", label: "领域插件" },
-  { key: "data", label: "数据管理" },
-  { key: "audit", label: "审计日志" },
-] as const;
-
-type ModuleKey = (typeof MODULES)[number]["key"];
+/**
+ * 插件页 = 纯领域插件。
+ *
+ * 概念边界（读 UI 的人最容易混淆的三件事，这里一次说清）：
+ *   1. 插件 = 领域插件（domains/<id>/ 代码包，显式注册进 DOMAINS）——不是 MCP，
+ *      本项目设计上不做界面动态加载/市场安装（安全取舍，见 docs/实施计划.md §2.2）。
+ *   2. RAG 检索 = 内核能力（search_knowledge），不属于任何插件；角色经
+ *      knowledge_scopes 授权使用（设置页 → 知识库 可查看库内容）。
+ *   3. 数据随域归属：health 域的档案数据在 health 插件的详情里管理。
+ * 新增一个领域插件 = 写一个 domains/<id>/ 包（models/service/tools/schema）并注册
+ * 进 DOMAINS —— 代码路径在 README「架构」有说明。
+ */
 
 export default function PluginsPage() {
-  const [module, setModule] = useState<ModuleKey>("domains");
-
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="mx-auto max-w-4xl">
-        <h2 className="text-base font-semibold text-slate-900">插件</h2>
+        <h2 className="text-base font-semibold text-slate-900">领域插件</h2>
         <p className="mt-0.5 text-xs text-slate-400">
-          领域插件启停立即生效（无需重启），操作写入审计并递增全局 tool_epoch
+          启停立即生效（无需重启），操作写入审计并递增全局 tool_epoch。
+          插件由代码显式注册（DOMAINS）——界面只做启停，不支持动态安装。
         </p>
+        <DomainPlugins />
 
-        <div className="mt-4 flex gap-1 border-b border-slate-200">
-          {MODULES.map((m) => (
-            <button
-              key={m.key}
-              onClick={() => setModule(m.key)}
-              className={`rounded-t-lg px-4 py-2 text-sm ${
-                module === m.key
-                  ? "border-b-2 border-blue-600 font-medium text-blue-700"
-                  : "text-slate-500 hover:text-slate-700"
-              }`}
-            >
-              {m.label}
-            </button>
-          ))}
+        <div className="mt-6 rounded-xl border border-dashed border-slate-300 bg-white p-5">
+          <h3 className="text-sm font-medium text-slate-700">如何新增一个领域插件？</h3>
+          <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-relaxed text-slate-500">
+            <li>
+              新建 <code>src/rolecard_agent/domains/&lt;id&gt;/</code> 包：models.py /
+              service.py / tools.py / schema.sql
+            </li>
+            <li>
+              在 <code>domains/registry.py</code> 的 <code>DOMAINS</code> 追加 id，并在
+              build_registry 里接线它的工具工厂（漏接线启动即报错）
+            </li>
+            <li>重启服务：建表、插件行、工具注册自动完成；在角色卡里为角色勾选新工具</li>
+          </ol>
+          <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
+            为什么不做界面动态安装（MCP 市场）：让运行中的 Agent 自己扩权，等于把权限边界
+            交给运行时注入——显式注册是本项目权限模型的前提。RAG 检索不受此限：
+            它是内核能力，按角色作用域授权（设置页 → 知识库）。
+          </p>
         </div>
-
-        {module === "domains" && <DomainPlugins />}
-        {module === "data" && <DataManagement />}
-        {module === "audit" && <AuditLog />}
       </div>
     </div>
   );
 }
 
-// ---------------------------------------------------------------- 领域插件
+// ---------------------------------------------------------------- 领域插件卡片
 
 function DomainPlugins() {
   const [plugins, setPlugins] = useState<PluginRow[]>([]);
   const [catalog, setCatalog] = useState<ToolCatalog | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [epoch, setEpoch] = useState<number | null>(null);
   const [status, setStatus] = useState("");
 
-  async function load() {
+  const load = useCallback(async () => {
     setPlugins(await api.get<PluginRow[]>("/api/plugins"));
-  }
+  }, []);
   useEffect(() => {
     load().catch((e) => setStatus(`加载失败：${e.message}`));
     api.get<ToolCatalog>("/api/tools/catalog").then(setCatalog).catch(() => {});
-  }, []);
+  }, [load]);
 
   async function toggle(pluginId: string, enabled: boolean) {
     try {
@@ -74,7 +76,6 @@ function DomainPlugins() {
         `/api/plugins/${pluginId}/toggle`,
         { enabled },
       );
-      setEpoch(r.tool_epoch);
       setStatus(`${pluginId} → ${enabled ? "已启用" : "已停用"}（tool_epoch=${r.tool_epoch}）`);
       await load();
     } catch (e) {
@@ -85,6 +86,9 @@ function DomainPlugins() {
 
   return (
     <div className="mt-6 grid gap-3">
+      {status && (
+        <p className="rounded-lg bg-green-50 px-3 py-2 text-xs text-green-700">{status}</p>
+      )}
       {plugins.map((p) => {
         const tools = catalog?.domains[p.plugin_id] || [];
         const isOpen = expanded === p.plugin_id;
@@ -113,7 +117,7 @@ function DomainPlugins() {
                     onClick={() => setExpanded(isOpen ? null : p.plugin_id)}
                     className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-500 hover:border-blue-300 hover:text-blue-600"
                   >
-                    {isOpen ? "收起工具 ▴" : "查看工具 ▾"}
+                    {isOpen ? "收起详情 ▴" : "详情（工具与数据）▾"}
                   </button>
                 )}
                 <button
@@ -132,43 +136,43 @@ function DomainPlugins() {
               </div>
             </div>
             {isOpen && (
-              <div className="mt-3 space-y-1.5 rounded-lg border border-slate-100 bg-slate-50 p-3">
-                <p className="text-xs font-medium text-slate-500">
-                  本插件向注册表贡献的工具：
-                </p>
-                {tools.map((t) => (
-                  <div key={t.name} className="text-xs">
-                    <code className="text-slate-700">{t.name}</code>
-                    <span className="ml-2 text-slate-400">{t.description}</span>
+              <div className="mt-3 space-y-4 rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <div>
+                  <p className="text-xs font-medium text-slate-500">本插件贡献的工具：</p>
+                  {tools.map((t) => (
+                    <div key={t.name} className="mt-1 text-xs">
+                      <code className="text-slate-700">{t.name}</code>
+                      <span className="ml-2 text-slate-400">{t.description}</span>
+                    </div>
+                  ))}
+                </div>
+                {p.plugin_id === "health" && (
+                  <div>
+                    <p className="text-xs font-medium text-slate-500">
+                      本域数据管理（档案与指标，修正 / 删除写审计）：
+                    </p>
+                    <div className="mt-2">
+                      <DataManagement compact />
+                    </div>
                   </div>
-                ))}
-                <p className="pt-1 text-[11px] leading-relaxed text-slate-400">
-                  说明：知识库检索（RAG）是内核能力、不绑定任何插件（v2.1 接入）；本页的启停
-                  只影响本插件自己贡献的工具。
-                </p>
+                )}
               </div>
             )}
           </div>
         );
       })}
-      {epoch !== null && (
-        <p className="rounded-lg bg-green-50 px-3 py-2 text-xs text-green-700">{status}</p>
-      )}
-      {status && epoch === null && (
-        <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{status}</p>
-      )}
     </div>
   );
 }
 
-// ---------------------------------------------------------------- 数据管理（F2）
+// ---------------------------------------------------------------- 数据管理（随域归属）
 
 function fmtValue(i: { index_value: number | null; value_text: string | null; unit: string | null }): string {
   if (i.index_value !== null) return `${i.index_value}${i.unit ? " " + i.unit : ""}`;
   return i.value_text || "（无）";
 }
 
-function DataManagement() {
+function DataManagement({ compact = false }: { compact?: boolean }) {
   const [reports, setReports] = useState<ReportRecord[]>([]);
   const [editId, setEditId] = useState<string | null>(null);
   const [draft, setDraft] = useState({ index_value: "", value_text: "", unit: "", ref_range: "", verified: false });
@@ -224,40 +228,40 @@ function DataManagement() {
 
   if (reports.length === 0) {
     return (
-      <div className="mt-6 rounded-xl border border-dashed border-slate-200 bg-white p-8 text-center text-sm text-slate-400">
-        档案里没有报告。对话中上传报告（登记）或运行 scripts/seed_demo_data.py 注入演示数据。
+      <div className={`rounded-lg border border-dashed border-slate-200 bg-white text-center text-xs text-slate-400 ${compact ? "p-4" : "p-8 text-sm"}`}>
+        该域还没有数据。上传 .txt/.md 文档（对话 → 上传）或运行 scripts/seed_demo_data.py 注入演示数据。
       </div>
     );
   }
 
   return (
-    <div className="mt-6 space-y-4">
+    <div className="space-y-3">
       {status && (
         <p className={`rounded-lg px-3 py-2 text-xs ${status.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
           {status.msg}
         </p>
       )}
       {reports.map((r) => (
-        <div key={r.report_id} className="rounded-xl border border-slate-200 bg-white">
-          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-            <div>
-              <span className="font-medium text-slate-900">
+        <div key={r.report_id} className="rounded-lg border border-slate-200 bg-white">
+          <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+            <div className="text-xs">
+              <span className="font-medium text-slate-800">
                 {String(r.check_time).slice(0, 10)} · {r.report_type}
               </span>
-              {r.institution && <span className="ml-2 text-xs text-slate-400">{r.institution}</span>}
-              {r.note && <span className="ml-2 text-xs text-slate-400">备注：{r.note}</span>}
+              {r.institution && <span className="ml-2 text-slate-400">{r.institution}</span>}
+              {r.note && <span className="ml-2 text-slate-400">备注：{r.note}</span>}
             </div>
             {confirmDel === r.report_id ? (
               <button
                 onClick={() => remove("report", r.report_id)}
-                className="rounded bg-red-500 px-2.5 py-1 text-xs text-white hover:bg-red-600"
+                className="rounded bg-red-500 px-2 py-1 text-[11px] text-white hover:bg-red-600"
               >
                 确认删除整份报告
               </button>
             ) : (
               <button
                 onClick={() => setConfirmDel(r.report_id)}
-                className="rounded px-2 py-1 text-xs text-red-400 hover:bg-red-50 hover:text-red-600"
+                className="rounded px-2 py-1 text-[11px] text-red-400 hover:bg-red-50 hover:text-red-600"
               >
                 删除报告
               </button>
@@ -266,11 +270,10 @@ function DataManagement() {
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="text-slate-400">
-                <th className="px-4 py-2 font-medium">指标</th>
-                <th className="px-4 py-2 font-medium">数值</th>
-                <th className="px-4 py-2 font-medium">参考</th>
-                <th className="px-4 py-2 font-medium">校验</th>
-                <th className="px-4 py-2"></th>
+                <th className="px-3 py-1.5 font-medium">指标</th>
+                <th className="px-3 py-1.5 font-medium">数值</th>
+                <th className="px-3 py-1.5 font-medium">校验</th>
+                <th className="px-3 py-1.5"></th>
               </tr>
             </thead>
             <tbody>
@@ -278,8 +281,8 @@ function DataManagement() {
                 <tr key={i.index_id} className="border-t border-slate-50">
                   {editId === i.index_id ? (
                     <>
-                      <td className="px-4 py-2 font-medium text-slate-700">{i.index_name}</td>
-                      <td className="px-4 py-2" colSpan={4}>
+                      <td className="px-3 py-2 font-medium text-slate-700">{i.index_name}</td>
+                      <td className="px-3 py-2" colSpan={3}>
                         <div className="flex flex-wrap items-center gap-2">
                           <input
                             value={draft.index_value}
@@ -330,19 +333,18 @@ function DataManagement() {
                     </>
                   ) : (
                     <>
-                      <td className="px-4 py-2 font-medium text-slate-700">{i.index_name}</td>
-                      <td className="px-4 py-2">
+                      <td className="px-3 py-2 font-medium text-slate-700">{i.index_name}</td>
+                      <td className="px-3 py-2">
                         {fmtValue(i)}
                         {i.ref_range ? <span className="ml-1 text-slate-400">（参考 {i.ref_range}）</span> : null}
                         {!i.is_verified && <span className="ml-1 text-amber-600">【未经人工校验】</span>}
                       </td>
-                      <td className="px-4 py-2 text-slate-400">{i.source}</td>
-                      <td className="px-4 py-2">
+                      <td className="px-3 py-2">
                         <span className={`rounded-full px-2 py-0.5 ${i.is_verified ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-600"}`}>
                           {i.is_verified ? "已校验" : "未校验"}
                         </span>
                       </td>
-                      <td className="px-4 py-2 text-right">
+                      <td className="px-3 py-2 text-right">
                         <button
                           onClick={() => startEdit(i.index_id, i)}
                           className="rounded px-2 py-1 text-blue-600 hover:bg-blue-50"
@@ -373,63 +375,6 @@ function DataManagement() {
           </table>
         </div>
       ))}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------- 审计日志（F3）
-
-function AuditLog() {
-  const [rows, setRows] = useState<AuditRow[]>([]);
-  const [status, setStatus] = useState("");
-
-  useEffect(() => {
-    api.get<AuditRow[]>("/api/audit?limit=200").then(setRows).catch((e) => setStatus(`加载失败：${e.message}`));
-  }, []);
-
-  return (
-    <div className="mt-6">
-      {status && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{status}</p>}
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-        <table className="w-full text-left text-xs">
-          <thead>
-            <tr className="border-b border-slate-100 text-slate-400">
-              <th className="px-4 py-2 font-medium">时间</th>
-              <th className="px-4 py-2 font-medium">操作者</th>
-              <th className="px-4 py-2 font-medium">动作</th>
-              <th className="px-4 py-2 font-medium">对象</th>
-              <th className="px-4 py-2 font-medium">详情</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
-                  暂无审计记录
-                </td>
-              </tr>
-            )}
-            {rows.map((a, i) => (
-              <tr key={i} className="border-b border-slate-50 last:border-0">
-                <td className="whitespace-nowrap px-4 py-2 font-mono text-slate-500">
-                  {String(a.ts).replace("T", " ").slice(0, 19)}
-                </td>
-                <td className="px-4 py-2">{a.actor}</td>
-                <td className="px-4 py-2">
-                  <code className="rounded bg-slate-100 px-1.5 py-0.5">{a.action}</code>
-                </td>
-                <td className="max-w-40 truncate px-4 py-2 font-mono text-slate-500">{a.target}</td>
-                <td className="max-w-56 truncate px-4 py-2 text-slate-400" title={a.detail_json || ""}>
-                  {a.detail_json}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p className="mt-2 text-[11px] text-slate-400">
-        审计由后端在角色切换、插件启停、会话创建、数据修正/删除时写入（US-3）；本页只读。
-      </p>
     </div>
   );
 }

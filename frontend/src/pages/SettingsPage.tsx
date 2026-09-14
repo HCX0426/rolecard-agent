@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   api,
+  type AuditRow,
+  type KnowledgeScope,
   type ModelSettings,
   type PluginRow,
   type RoleCard,
   type SessionRow,
 } from "../api";
 
-// 设置页子页签：通用（系统信息）/ 模型（后端 CRUD + 热切换）。
-// 与插件页同一套子页签挂载模式 —— 新设置分区加一项即可。
+// 设置页子页签：通用（系统信息）/ 模型（后端 CRUD + 热切换）/ 知识库（RAG 库存）/
+// 审计（操作留痕）。与插件页同一套子页签挂载模式 —— 新设置分区加一项即可。
 const SETTINGS_TABS = [
   { key: "general", label: "通用" },
   { key: "models", label: "模型" },
+  { key: "knowledge", label: "知识库" },
+  { key: "audit", label: "审计" },
 ] as const;
 
 type SettingsTab = (typeof SETTINGS_TABS)[number]["key"];
@@ -40,6 +44,8 @@ export default function SettingsPage({ onOpenChat }: { onOpenChat?: () => void }
         </div>
         {tab === "general" && <GeneralPanel onOpenChat={onOpenChat} />}
         {tab === "models" && <ModelsPanel />}
+        {tab === "knowledge" && <KnowledgePanel />}
+        {tab === "audit" && <AuditPanel />}
       </div>
     </div>
   );
@@ -142,7 +148,18 @@ function GeneralPanel({ onOpenChat }: { onOpenChat?: () => void }) {
   );
 }
 
-// ---------------------------------------------------------------- 模型（原设置页主体）
+// ---------------------------------------------------------------- 模型（后端 CRUD + 回退）
+
+const PROVIDERS = ["openai", "ollama"];
+
+interface EditableBackend {
+  name: string;
+  provider: string;
+  base_url: string;
+  model: string;
+  api_key: string;
+  has_key: boolean;
+}
 
 function ModelsPanel() {
   const [def, setDef] = useState<string>("");
@@ -215,6 +232,8 @@ function ModelsPanel() {
           has_key: b.has_key,
         })),
       );
+      setFb1(saved.fallbacks?.[0] || "");
+      setFb2(saved.fallbacks?.[1] || "");
       setStatus({
         ok: true,
         msg: "已保存并热生效：下一轮对话即使用新模型后端（无需重启）。",
@@ -375,13 +394,114 @@ function ModelsPanel() {
   );
 }
 
-const PROVIDERS = ["openai", "ollama"];
+// ---------------------------------------------------------------- 知识库（v2.1 RAG）
 
-interface EditableBackend {
-  name: string;
-  provider: string;
-  base_url: string;
-  model: string;
-  api_key: string;
-  has_key: boolean;
+function KnowledgePanel() {
+  const [scopes, setScopes] = useState<KnowledgeScope[]>([]);
+  const [status, setStatus] = useState("");
+
+  useEffect(() => {
+    api
+      .get<KnowledgeScope[]>("/api/knowledge")
+      .then(setScopes)
+      .catch((e) => setStatus(`加载失败：${e.message}`));
+  }, []);
+
+  return (
+    <div className="mt-6">
+      {status && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{status}</p>}
+      <p className="rounded-lg bg-slate-50 px-3 py-2.5 text-xs leading-relaxed text-slate-400">
+        知识库是<b>内核能力</b>（search_knowledge），不属于任何插件：库归内核，角色经
+        knowledge_scopes 声明可检索的作用域（角色卡页配置）。上传 .txt/.md 会自动入库到
+        health_reports 作用域；切换嵌入后端后删除 data/chroma 目录重启即重建。
+      </p>
+      <div className="mt-3 space-y-3">
+        {scopes.length === 0 && (
+          <div className="rounded-xl border border-dashed border-slate-200 bg-white p-8 text-center text-sm text-slate-400">
+            知识库还是空的：在对话页上传 .txt/.md 文档，或运行 scripts/seed_demo_data.py
+            注入演示知识。
+          </div>
+        )}
+        {scopes.map((s) => (
+          <div key={s.scope} className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-700">
+                  {s.scope}
+                </code>
+                <span className="ml-2 text-xs text-slate-500">{s.chunks} 段</span>
+                <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">
+                  嵌入：{s.embedder}
+                </span>
+              </div>
+            </div>
+            <ul className="mt-2 space-y-0.5">
+              {s.sources.map((src) => (
+                <li key={src} className="text-xs text-slate-500">
+                  · {src}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- 审计（F3）
+
+function AuditPanel() {
+  const [rows, setRows] = useState<AuditRow[]>([]);
+  const [status, setStatus] = useState("");
+
+  useEffect(() => {
+    api.get<AuditRow[]>("/api/audit?limit=200").then(setRows).catch((e) => setStatus(`加载失败：${e.message}`));
+  }, []);
+
+  return (
+    <div className="mt-6">
+      {status && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{status}</p>}
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <table className="w-full text-left text-xs">
+          <thead>
+            <tr className="border-b border-slate-100 text-slate-400">
+              <th className="px-4 py-2 font-medium">时间</th>
+              <th className="px-4 py-2 font-medium">操作者</th>
+              <th className="px-4 py-2 font-medium">动作</th>
+              <th className="px-4 py-2 font-medium">对象</th>
+              <th className="px-4 py-2 font-medium">详情</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
+                  暂无审计记录
+                </td>
+              </tr>
+            )}
+            {rows.map((a, i) => (
+              <tr key={i} className="border-b border-slate-50 last:border-0">
+                <td className="whitespace-nowrap px-4 py-2 font-mono text-slate-500">
+                  {String(a.ts).replace("T", " ").slice(0, 19)}
+                </td>
+                <td className="px-4 py-2">{a.actor}</td>
+                <td className="px-4 py-2">
+                  <code className="rounded bg-slate-100 px-1.5 py-0.5">{a.action}</code>
+                </td>
+                <td className="max-w-40 truncate px-4 py-2 font-mono text-slate-500">{a.target}</td>
+                <td className="max-w-56 truncate px-4 py-2 text-slate-400" title={a.detail_json || ""}>
+                  {a.detail_json}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-[11px] text-slate-400">
+        审计由后端在角色切换、插件启停、会话创建、数据修正/删除时写入（US-3）；本页只读。
+      </p>
+    </div>
+  );
 }

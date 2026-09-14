@@ -234,6 +234,24 @@ class KnowledgeBase:
         except Exception:  # noqa: BLE001 - 集合本就不存在
             return 0
 
+    def describe(self) -> list[dict[str, object]]:
+        """知识库概览：每个作用域的分块数与来源清单（设置页知识库管理视图）。"""
+        out: list[dict[str, object]] = []
+        for collection in self._client.list_collections():
+            data = collection.get(include=["metadatas"])
+            sources = sorted(
+                {str((m or {}).get("source", "?")) for m in (data.get("metadatas") or [])}
+            )
+            out.append(
+                {
+                    "scope": collection.name,
+                    "chunks": collection.count(),
+                    "sources": sources,
+                    "embedder": self._embedder.name,
+                }
+            )
+        return out
+
     def reset_scope(self, scope: str) -> None:
         """删除整个作用域集合（embedder 切换后维度不兼容时的重建入口）。"""
         with contextlib.suppress(Exception):

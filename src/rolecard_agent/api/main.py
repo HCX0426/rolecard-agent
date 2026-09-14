@@ -672,6 +672,11 @@ def create_app(
         ).fetchall()
         return [dict(r) for r in rows]
 
+    @app.get("/api/knowledge")
+    def list_knowledge() -> list[object]:
+        """v2.1 知识库概览（设置页知识库管理）：作用域 → 分块数 + 来源 + 嵌入器。"""
+        return knowledge.describe()
+
     @app.get("/api/settings/models")
     def get_model_settings() -> object:
         """模型后端设置。api_key 永不回读 —— 只有 has_key 标志。"""

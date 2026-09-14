@@ -90,6 +90,13 @@ export interface AuditRow {
   detail_json: string | null;
 }
 
+export interface KnowledgeScope {
+  scope: string;
+  chunks: number;
+  sources: string[];
+  embedder: string;
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
