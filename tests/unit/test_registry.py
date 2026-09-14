@@ -1,4 +1,4 @@
-"""Two-stage filtering: enabled plugins, then the role whitelist.
+"""Two-stage filtering: enabled plugins, then the role whitelist.  Traceability: US-2.
 
 This is the test that matters most for the permission story. If filtering ever moves to
 execution time, these assertions still pass - which is why the integration test asserts on

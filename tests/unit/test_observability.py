@@ -1,4 +1,4 @@
-"""Observability: the tracer must be useful and must never be dangerous.
+"""Observability: the tracer must be useful and must never be dangerous.  Traceability: US-5.
 
 Two properties matter and neither was tested before (技术评审与决策.md §9 D1):
 
@@ -31,6 +31,7 @@ def _lines(path: Path) -> list[dict[str, object]]:
 
 
 def test_local_tracer_writes_one_json_line_per_event(tmp_path: Path) -> None:
+    """US-5: one JSON line per event, offline-capable local backend."""
     log = tmp_path / "trace.jsonl"
     tracer = LocalTracer(path=log)
     tracer.emit(TraceEvent(event="node_end", node="call_model", latency_ms=12.5))

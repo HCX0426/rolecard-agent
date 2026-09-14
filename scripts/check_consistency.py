@@ -460,6 +460,12 @@ RESERVED_SETTINGS = {
     "upload_dir",  # v2.2 document intake
 }
 
+# User stories that are explicitly NOT covered by automated tests yet. They are deferred to a
+# later milestone, not forgotten - the traceability check still requires them to be *named* here
+# so the gap stays visible (技术评审与决策.md §9 D3). US-6 / US-7 are the M4 demo surface
+# (single-page UI + 60s video), which has no code yet.
+DEFERRED_US = {"US-6", "US-7"}
+
 
 def check_dead_config() -> None:
     """Every Settings field must be read somewhere outside config.py.
@@ -528,6 +534,52 @@ def check_role_whitelists_resolve() -> None:
         fails.append(f"built-in role whitelists name undeclared tools: {missing}")
 
 
+def _required_user_stories() -> set[str]:
+    """The authoritative US list is the `### US-N` headings in 需求与验收标准.md.
+
+    Parsing it from the doc - rather than hard-coding - means a renamed or added story fails
+    the check instead of silently drifting from what the tests claim to cover.
+    """
+    doc = (ROOT / "docs" / "需求与验收标准.md").read_text(encoding="utf-8")
+    return set(re.findall(r"^###\s+(US-\d+)", doc, flags=re.M))
+
+
+def _covered_user_stories() -> set[str]:
+    """Every `US-N` token in the test tree counts as covered (unit / integration / eval)."""
+    found: set[str] = set()
+    for path in iter_files(".py", ".json"):
+        if "tests" not in path.parts:
+            continue
+        found |= set(re.findall(r"US-\d+", path.read_text(encoding="utf-8", errors="ignore")))
+    return found
+
+
+def check_us_traceability() -> None:
+    """Every shipped user story must be traceable to at least one test (技术评审与决策.md §9 D3).
+
+    Before this check the chain was maintained by memory: only US-4 was named in a test, and a
+    story could lose its only coverage with no signal. Now (a) a test citing a non-existent US
+    fails, and (b) any non-deferred US with zero references fails.
+    """
+    required = _required_user_stories()
+    covered = _covered_user_stories()
+
+    stale = sorted(covered - required)
+    if stale:
+        fails.append(f"tests cite non-existent user stories: {stale}")
+    must_cover = required - DEFERRED_US
+    missing = sorted(must_cover - covered)
+    if missing:
+        fails.append(f"user stories with no test traceability: {missing}")
+
+    ok = not stale and not missing
+    detail = (
+        f"required={len(required)} covered={len(required & covered)} "
+        f"deferred={sorted(DEFERRED_US & required)}"
+    )
+    out("us traceability", ok, detail)
+
+
 def report_line_budget() -> None:
     def count(suffix: str) -> int:
         return sum(
@@ -559,6 +611,7 @@ def main() -> int:
     check_python_pin()
     check_dead_config()
     check_role_whitelists_resolve()
+    check_us_traceability()
     report_line_budget()
 
     print("\n--- FAILS ---")

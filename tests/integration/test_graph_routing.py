@@ -1,5 +1,8 @@
 """Graph routing tests. The LLM is MOCKED with fixed responses; we assert which edge was taken.
 
+Traceability: US-1, US-2, US-3, US-4.
+
+
 These are the M1 acceptance tests. They exercise the three claims the kernel makes:
 
   1. a tool call loops back through the model and the tool result reaches history;
@@ -170,7 +173,7 @@ def test_history_survives_a_reconnect(tmp_path: Path) -> None:
 
 
 def test_whitelist_is_applied_before_binding(tmp_path: Path) -> None:
-    """The role may only call what its whitelist allows - the model must not even see the rest."""
+    """US-2: the whitelist is enforced before binding, so the model never sees a forbidden tool."""
     db = tmp_path / "app.db"
     _seed_identity(db)
     conn = connect(db)

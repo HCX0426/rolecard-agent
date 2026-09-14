@@ -1,4 +1,4 @@
-"""Kernel tools must exist and must be named what the whitelists say.
+"""Kernel tools must exist and must be named what the whitelists say.  Traceability: US-2.
 
 `roles/seed.py` already listed `list_domains` / `list_roles` in the built-in role's whitelist
 while `core/tools/builtin.py` was still an empty docstring - the whitelist pointed at nothing

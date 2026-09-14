@@ -1,4 +1,4 @@
-"""Role card CRUD, built-in protection, and whitelist semantics."""
+"""Role card CRUD, built-in protection, and whitelist semantics.  Traceability: US-1, US-2, US-8."""
 
 from __future__ import annotations
 
@@ -125,7 +125,7 @@ def test_role_id_must_be_lowercase(roles: RoleCardService) -> None:
 def test_switch_role_keeps_history_and_audits(
     roles: RoleCardService, conn: sqlite3.Connection
 ) -> None:
-    """Switching changes the pointer only - messages are never touched.
+    """Switching changes the pointer only - messages are never touched.  US-1 / US-3.
 
     The checkpoint table is not even referenced here, which is the point: role switching is a
     one-column update on `session_thread`.

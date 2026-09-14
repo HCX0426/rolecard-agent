@@ -1,4 +1,7 @@
-"""Rule-layer tests for core/guard.py. No model needed - this is the easy layer to test."""
+"""Rule-layer tests for core/guard.py. No model needed - this is the easy layer to test.
+
+Traceability: US-4.
+"""
 
 from __future__ import annotations
 
@@ -15,6 +18,7 @@ def test_plain_summary_is_allowed() -> None:
 
 
 def test_diagnosis_assertion_is_blocked() -> None:
+    """US-4: a diagnosis assertion must be blocked by the output-side guard."""
     result = guard.check("你得了胆囊结石，不用太担心。")
     assert result.allowed is False
     assert "diagnosis_asserted" in result.reasons

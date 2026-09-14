@@ -1,4 +1,4 @@
-"""Ordering tests for core/prompts.py.
+"""Ordering tests for core/prompts.py.  Traceability: US-4, US-8.
 
 These guard the *ordering* invariant, which IS the safety mechanism: if the global rules
 ever end up before the role prompt, the safety layer silently stops working and nothing

@@ -1,4 +1,4 @@
-"""Config parsing: env in, Settings out.
+"""Config parsing: env in, Settings out.  Traceability: US-5, US-8.
 
 The interesting cases are the failure ones. A malformed MODEL_BACKENDS must raise rather than
 quietly fall back to the local default, because a silent fallback turns a misconfiguration

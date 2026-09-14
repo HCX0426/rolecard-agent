@@ -1,4 +1,4 @@
-"""Unit tests for the ingestion-task ledger and its state machine.
+"""Unit tests for the ingestion-task ledger and its state machine.  Traceability: US-3.
 
 Why this table exists (技术评审与决策.md §9 B1): a separate `ingestion_task` row,
 not a `status` column on `medical_report`. These tests pin the two properties that justify the

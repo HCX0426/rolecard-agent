@@ -1,4 +1,4 @@
-"""Unit tests for the health domain tools, focused on the one implemented in v1:
+"""Unit tests for the health domain tools, focused on the one v1 tool:  Traceability: US-3.
 `upload_medical_report` - the WRITER for the kernel `ingestion_task` ledger.
 
 The other three declared names (query_health_record / compare_health_index / list_reports)

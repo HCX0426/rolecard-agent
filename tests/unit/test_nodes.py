@@ -1,4 +1,4 @@
-"""Unit tests for the graph nodes.
+"""Unit tests for the graph nodes.  Traceability: US-1, US-2, US-3.
 
 Integration tests exercise the happy path through a real compiled graph; these pin the
 decisions that are cheap to get wrong and expensive to notice: when to loop back into the
@@ -260,7 +260,7 @@ def test_call_model_writes_live_enabled_domains_and_epoch(roles: RoleCardService
 
 
 def test_call_model_emits_epoch_drift_when_session_is_stale(roles: RoleCardService) -> None:
-    """A session that outlived a plugin toggle carries an old epoch; report once, then refresh."""
+    """US-3 / C14: a session that outlived a plugin toggle carries an old epoch; report once."""
     rid = _role(roles)
     reg = ToolRegistry()
     reg.register(kernel_tool)

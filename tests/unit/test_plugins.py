@@ -1,4 +1,4 @@
-"""Unit tests for the plugin enable/disable half of the domain registry.
+"""Unit tests for the plugin enable/disable half of the domain registry.  Traceability: US-3.
 
 The point under test is the version stamp: toggling a plugin must bump `tool_epoch` inside the
 same transaction, and re-toggling an already-set state must NOT (or every live session would be
@@ -71,6 +71,7 @@ def test_unknown_plugin_is_rejected(plugins: PluginService) -> None:
 
 
 def test_toggle_writes_audit(plugins: PluginService) -> None:
+    """US-3: every enable/disable toggle is written to the audit_log."""
     plugins.register("health", display_name="Health")
     plugins.set_enabled("health", True, actor="alice")
     rows = [
