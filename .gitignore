@@ -1,0 +1,41 @@
+# --- secrets / local config ---
+.env
+.env.local
+
+# --- runtime data (NEVER commit health records) ---
+data/sqlite/*.db
+data/sqlite/*.db-journal
+# keep the directory, ignore its contents (same pattern as uploads/ below)
+data/chroma/*
+!data/chroma/.gitkeep
+data/uploads/*
+!data/uploads/.gitkeep
+
+# --- python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv*/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# --- models / large artifacts ---
+models/
+*.onnx
+*.pdmodel
+*.pdparams
+
+# --- ide / os ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- demos / media (a 60s screen recording is tens of MB - keep it out of the repo) ---
+*.mp4
+*.mov
+*.webm
+*.gif
+!docs/assets/*.gif

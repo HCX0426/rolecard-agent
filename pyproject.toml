@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rolecard-agent"
+version = "0.1.0"
+description = "Role-card driven conversational agent kernel with pluggable domain modules"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+# v1 core only. FastAPI / chromadb / paddle live in requirements-*.txt
+# so that a v1 install never pulls the OCR stack (see C2).
+dependencies = [
+  "langchain==1.4.0",
+  "langgraph==1.2.11",
+  "langchain-core>=1.6.0",
+  "langchain-ollama>=1.1.0",
+  "langgraph-checkpoint-sqlite",
+  "pydantic>=2.13",
+  "langsmith>=0.12.4",
+]
+
+[project.optional-dependencies]
+api = ["fastapi>=0.141", "uvicorn[standard]>=0.52", "python-multipart>=0.0.20"]
+rag = ["chromadb>=1.5.9"]
+# OCR is deliberately NOT an extra: paddle must run in a separate venv/process.
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6", "mypy>=1.11"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rolecard_agent"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+# docs/ holds documentation, including archived design docs with illustrative code blocks.
+# ruff can format fenced code inside Markdown, but reformatting historical docs is pure
+# churn - and in the archive it is actively wrong, since those snippets are intentionally
+# left as they were written.
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+addopts = "-q"
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["rolecard_agent"]
+ignore_missing_imports = true
+warn_unused_ignores = true

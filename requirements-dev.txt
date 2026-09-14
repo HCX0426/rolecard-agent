@@ -1,0 +1,9 @@
+# v1 开发与 CI 依赖
+# 安装：pip install -r requirements.txt -r requirements-dev.txt
+
+pytest>=8
+pytest-asyncio>=0.23
+ruff>=0.6
+mypy>=1.11
+
+# 测试里要 mock 掉 LLM，不需要真实模型；若要跑端到端再用真 Ollama

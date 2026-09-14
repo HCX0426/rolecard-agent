@@ -1,0 +1,402 @@
+"""Repo consistency check. Run in CI and before every commit.
+
+Why this exists: as the project went through several rounds of revision, documents and
+code drifted apart (a renamed config key still referenced in a docstring, stale project
+names, requirements files pulling in scope the version does not need). Eyeballing does
+not catch these - the checker caught one on its very first run.
+
+Usage:
+    python scripts/check_consistency.py        # exits 1 on failure, 0 on pass
+"""
+
+from __future__ import annotations
+
+import pathlib
+import re
+import sys
+import tomllib
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+fails: list[str] = []
+warns: list[str] = []
+
+# Directories that must never be walked. `ROOT.rglob("*.py")` happily descends into a
+# virtualenv, which made the line-budget metric report 300k lines of site-packages instead
+# of the project (C24).
+IGNORED_DIRS = {
+    ".git",
+    ".venv",
+    ".venv-dev",
+    ".venv-ocr",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".mypy_cache",
+    ".idea",
+    ".vscode",
+    "data",
+    "node_modules",
+}
+
+
+def iter_files(*suffixes: str) -> list[pathlib.Path]:
+    """Repo files, skipping environments, caches and generated data."""
+    found: list[pathlib.Path] = []
+    for path in ROOT.rglob("*"):
+        if not path.is_file() or (IGNORED_DIRS & set(path.parts)):
+            continue
+        if suffixes and path.suffix not in suffixes:
+            continue
+        found.append(path)
+    return found
+
+
+def strip_comments(text: str) -> str:
+    """Remove SQL (`--`) and Python (`#`) comment lines and trailing comments.
+
+    Needed by the domain-isolation check: prose *about* a concept must not be mistaken for
+    a definition *of* it. Writing "there is no user table here" kept tripping it.
+    """
+    lines = []
+    for line in text.splitlines():
+        if line.lstrip().startswith(("--", "#")):
+            continue
+        lines.append(line.split("--", 1)[0].split("#", 1)[0])
+    return "\n".join(lines)
+
+
+def out(label: str, ok: bool, detail: str = "") -> None:
+    print(f"{'OK  ' if ok else 'FAIL'} {label}{(' :: ' + detail) if detail else ''}")
+
+
+def check_pyproject() -> None:
+    try:
+        pp = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        out("pyproject.toml", False, str(exc))
+        fails.append(f"pyproject.toml unreadable: {exc}")
+        return
+    proj = pp["project"]
+    ok = proj["name"] == "rolecard-agent" and proj["requires-python"] == ">=3.11"
+    detail = f"name={proj['name']} py={proj['requires-python']} deps={len(proj['dependencies'])}"
+    out("pyproject.toml", ok, detail)
+    if not ok:
+        fails.append("pyproject.toml name / requires-python drifted")
+
+    tool = pp.get("tool", {})
+    ok = "ruff" in tool and "pytest" in tool
+    out("pyproject tooling", ok, f"ruff={'ruff' in tool} pytest={'pytest' in tool}")
+    if not ok:
+        fails.append("pyproject.toml is missing ruff / pytest config")
+
+
+def check_requirements_scope() -> None:
+    """requirements.txt is the v1 kernel set. v2 deps must stay out of it."""
+    lines = [
+        line.split("#", 1)[0]
+        for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+    ]
+    body = "\n".join(lines)
+    leaked = [d for d in ("paddle", "chromadb", "fastapi", "uvicorn") if d in body]
+    out("requirements.txt scope", not leaked, f"leaked: {leaked}" if leaked else "v1 core only")
+    if leaked:
+        fails.append(f"requirements.txt pulls v2-only deps: {leaked}")
+
+
+def check_stale_identifiers() -> None:
+    """Renamed keys / old project names must not survive outside the archive."""
+    stale = [
+        "langgraph-health-agent",
+        "langgraph==1.2.6",
+        "langchain-ollama==0.2.0",
+        "chromadb==0.6.0",
+        "OBS_REDACT_TEXT",
+        "只保留三个里程碑",
+    ]
+    allowed = {
+        ROOT / "docs" / "02-方案评审与修正.md",
+        ROOT / "docs" / "07-二次核查与遗留问题.md",
+        ROOT / "scripts" / "check_consistency.py",
+    }
+    suffixes = {".md", ".py", ".toml", ".sql", ".cfg", ".ini", ".example"}
+    candidates = [*iter_files(*suffixes), ROOT / ".gitignore", ROOT / ".gitattributes"]
+    for path in candidates:
+        if not path.exists() or path in allowed:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for token in stale:
+            if token in text:
+                warns.append(f"{path.relative_to(ROOT)} still mentions {token!r}")
+    out("stale identifiers", not warns, f"{len(warns)} hit(s)" if warns else "clean")
+    fails.extend(warns)
+
+
+def check_config_contract() -> None:
+    """.env.example must expose every key config.py advertises."""
+    env_keys = set(
+        re.findall(
+            r"^([A-Z][A-Z0-9_]+)=",
+            (ROOT / ".env.example").read_text(encoding="utf-8"),
+            flags=re.M,
+        )
+    )
+    cfg_keys = set(
+        re.findall(
+            r"\b(MODEL_[A-Z_]+|OBS_[A-Z_]+|SQLITE_PATH|CHROMA_PATH|UPLOAD_DIR|LANGSMITH_[A-Z_]+)\b",
+            (ROOT / "src" / "rolecard_agent" / "config.py").read_text(encoding="utf-8"),
+        )
+    )
+    missing = sorted(k for k in cfg_keys if k not in env_keys and k != "LANGSMITH_PROJECT")
+    detail = f"missing: {missing}" if missing else f"{len(env_keys)} keys aligned"
+    out("config contract", not missing, detail)
+    if missing:
+        fails.append(f".env.example missing keys documented in config.py: {missing}")
+
+
+def check_promised_artifacts() -> None:
+    promised = [
+        "pyproject.toml",
+        "LICENSE",
+        "CONTRIBUTING.md",
+        "README.md",
+        ".gitattributes",
+        ".gitignore",
+        ".env.example",
+        "requirements.txt",
+        "requirements-dev.txt",
+        "requirements-api.txt",
+        "requirements-rag.txt",
+        "requirements-ocr.txt",
+        "docs/需求与验收标准.md",
+        "docs/实施计划.md",
+        "docs/技术评审与决策.md",
+        "docs/面试问答清单.md",
+        "src/rolecard_agent/core/schema.sql",
+        "src/rolecard_agent/core/guard.py",
+        "src/rolecard_agent/core/prompts.py",
+        "src/rolecard_agent/core/tools/registry.py",
+        "src/rolecard_agent/roles/schema.sql",
+        "src/rolecard_agent/domains/health/schema.sql",
+        "tests/unit",
+        "tests/integration",
+        "tests/eval",
+    ]
+    absent = [p for p in promised if not (ROOT / p).exists()]
+    detail = f"missing: {absent}" if absent else f"{len(promised)} present"
+    out("promised artifacts", not absent, detail)
+    if absent:
+        fails.append(f"plan promises artifacts that do not exist: {absent}")
+
+
+def check_domain_isolation() -> None:
+    """users / tenants are kernel concepts - a domain plugin must not define them.
+
+    Comments are stripped first: a note saying "there is no user table here" is not a
+    violation, and treating it as one made this check fire on its own documentation.
+    """
+    text = strip_comments(
+        "\n".join(
+            p.read_text(encoding="utf-8", errors="ignore")
+            for p in (ROOT / "src" / "rolecard_agent" / "domains").rglob("*")
+            if p.is_file()
+        )
+    )
+    bad = [
+        kw
+        for kw in (
+            "CREATE TABLE IF NOT EXISTS app_user",
+            "CREATE TABLE IF NOT EXISTS tenant",
+            "user_base",
+            "UserBase",
+        )
+        if kw in text
+    ]
+    out("domain isolation", not bad, str(bad) if bad else "no identity concepts inside domains/")
+    if bad:
+        fails.append(f"domain layer references kernel identity concepts: {bad}")
+
+
+def check_dependency_parity() -> None:
+    """pyproject.toml is the single source of truth; requirements*.txt mirror it.
+
+    Drift between the two is silent: it only shows up for whoever installs the *other*
+    way. That is precisely the class of mistake a weaker model introduces, so it gets an
+    assertion rather than a convention.
+    """
+
+    def package_names(lines: list[str]) -> set[str]:
+        names: set[str] = set()
+        for raw in lines:
+            line = raw.split("#", 1)[0].strip()
+            if line:
+                names.add(re.split(r"[<>=!\[;]", line, maxsplit=1)[0].strip().lower())
+        return names
+
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    py_deps = package_names(pyproject["project"]["dependencies"])
+    req_deps = package_names((ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines())
+
+    only_py = sorted(py_deps - req_deps)
+    only_req = sorted(req_deps - py_deps)
+    ok = not only_py and not only_req
+    detail = (
+        "in sync" if ok else f"only in pyproject: {only_py} | only in requirements.txt: {only_req}"
+    )
+    out("dependency parity", ok, detail)
+    if not ok:
+        fails.append(f"pyproject.toml / requirements.txt drift: {detail}")
+
+
+def check_safety_prompt() -> None:
+    """The global safety rules must be *defined in code*, not just described in prose.
+
+    They used to exist only in the archived design doc, while docs/需求与验收标准.md US-4 treated them as
+    a shipped requirement. Safety-critical code is deliberately not delegated (CONTRIBUTING §1).
+    """
+    path = ROOT / "src" / "rolecard_agent" / "core" / "prompts.py"
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    has_const = bool(re.search(r"^GLOBAL_SAFETY_PROMPT\s*=", text, flags=re.M))
+    has_builder = "def build_system_prompt" in text
+    has_rules = "禁止输出任何疾病诊断" in text
+    ok = has_const and has_builder and has_rules
+    out("safety prompt", ok, f"const={has_const} builder={has_builder} rules={has_rules}")
+    if not ok:
+        fails.append("GLOBAL_SAFETY_PROMPT is not concretely defined in core/prompts.py")
+
+
+def check_readme_quickstart() -> None:
+    """The plan's P4 exit criterion is "clone and run in 3 commands" - the README must deliver it.
+
+    Regression guard: this section was lost once during a rewrite, while both docs/实施计划.md and
+    docs/需求与验收标准.md still claimed the criterion was met (C21).
+    """
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    required = [
+        "## 快速开始",
+        "scripts/init_db.py",
+        "scripts/check_consistency.py",
+        "requirements.txt",
+    ]
+    absent = [r for r in required if r not in readme]
+    out("readme quickstart", not absent, f"missing: {absent}" if absent else "present")
+    if absent:
+        fails.append(f"README is missing quickstart pieces: {absent}")
+
+
+def check_milestone_alignment() -> None:
+    """Milestone ids declared in the README must match the ones in the plan (docs/实施计划.md)."""
+    readme_ids = set(re.findall(r"\*\*M(\d)", (ROOT / "README.md").read_text(encoding="utf-8")))
+    plan_path = ROOT / "docs" / "04-实施计划（修订版）.md"
+    plan_ids = set(re.findall(r"\*\*M(\d)", plan_path.read_text(encoding="utf-8")))
+    ok = readme_ids == plan_ids and bool(plan_ids)
+    detail = f"README={sorted(readme_ids)} plan={sorted(plan_ids)}"
+    out("milestone alignment", ok, detail)
+    if not ok:
+        fails.append(f"milestone ids differ between README and plan: {detail}")
+
+
+def check_v1_v2_boundary() -> None:
+    """M4 delivers the HTTP API and the single-page UI *inside v1*.
+
+    So no live document may still advertise them as a v2 roadmap item. This rule exists
+    because pulling M4 into v1 left exactly such a leftover behind twice.
+    """
+    scanned = ("README.md", "docs/实施计划.md", "docs/需求与验收标准.md")
+    offenders: list[str] = []
+    for name in scanned:
+        path = ROOT / name
+        if not path.exists():
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "v2." not in line:
+                continue
+            if "接入层" in line or "单页" in line:
+                offenders.append(f"{name}:{lineno}")
+    out(
+        "v1/v2 boundary",
+        not offenders,
+        str(offenders) if offenders else "API + single-page UI stay in v1",
+    )
+    if offenders:
+        fails.append(f"API / single-page UI still advertised as v2: {offenders}")
+
+
+def check_line_endings() -> None:
+    """Everything under src/ tests/ scripts/ must be LF.
+
+    33 files were CRLF on the first real lint run, because PowerShell's Set-Content and
+    several Windows editors default to CRLF. Mixed line endings become whole-file diffs on
+    CI and make `ruff format --check` fail for reasons unrelated to the change
+    (C22). .gitattributes prevents it happening again.
+    """
+    offenders: list[str] = []
+    for base in ("src", "tests", "scripts"):
+        for path in (ROOT / base).rglob("*"):
+            if path.is_file() and b"\r\n" in path.read_bytes():
+                offenders.append(str(path.relative_to(ROOT)))
+    detail = f"CRLF in: {offenders}" if offenders else "all LF"
+    out("line endings", not offenders, detail)
+    if offenders:
+        fails.append(f"CRLF line endings found: {offenders}")
+
+
+def check_doc_references() -> None:
+    """Docs are referenced by semantic filename now, not by a number.
+
+    Numbers were dropped because merging two docs silently invalidates every numbered link
+    (which is exactly what happened: three separate files all ended up as `docs/02`).
+    This asserts the old numbered form never creeps back in.
+    """
+    pattern = re.compile(r"docs/0[1-9]")
+    offenders: list[str] = []
+    for path in iter_files(".md", ".py", ".toml", ".txt"):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if pattern.search(line):
+                offenders.append(f"{path.relative_to(ROOT)}:{lineno}")
+    out("doc references", not offenders, str(offenders) if offenders else "semantic names only")
+    if offenders:
+        fails.append(f"numbered docs references found: {offenders}")
+
+
+def report_line_budget() -> None:
+    def count(suffix: str) -> int:
+        return sum(
+            len(p.read_text(encoding="utf-8", errors="ignore").splitlines())
+            for p in iter_files(suffix)
+        )
+
+    md, py = count(".md"), count(".py")
+    print(f"\nmd={md} lines | py={py} lines | ratio={md / max(py, 1):.1f}:1")
+    if md > py * 5:
+        print("note: docs still outweigh code - expected during planning, watch it after M1")
+
+
+def main() -> int:
+    check_pyproject()
+    check_requirements_scope()
+    check_stale_identifiers()
+    check_config_contract()
+    check_dependency_parity()
+    check_promised_artifacts()
+    check_domain_isolation()
+    check_safety_prompt()
+    check_line_endings()
+    check_readme_quickstart()
+    check_milestone_alignment()
+    check_v1_v2_boundary()
+    check_doc_references()
+    report_line_budget()
+
+    print("\n--- FAILS ---")
+    for item in fails or ["none"]:
+        print("  " + item)
+
+    print("\nRESULT:", "PASS" if not fails else f"{len(fails)} FAILING CHECK(S)")
+    return 0 if not fails else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

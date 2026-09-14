@@ -1,0 +1,7 @@
+# 向量检索依赖（v2.1，v1 不安装）
+# 安装：pip install -r requirements.txt -r requirements-rag.txt
+#
+# 注意：chromadb 会带入自己的 numpy / onnxruntime / tokenizers 依赖树。
+# 这就是 v1 不把它放进 requirements.txt 的原因（见 C2）。
+
+chromadb>=1.5.9

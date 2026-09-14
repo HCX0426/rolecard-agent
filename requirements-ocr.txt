@@ -1,0 +1,15 @@
+# OCR 依赖（v2.2，v1 不安装）
+#
+# ⚠️ 必须装在【独立 venv / 独立进程】里，不要和主服务共用环境：
+#   - PaddleOCR 会带入自带的 numpy / OpenCV / onnxruntime，与主进程依赖摩擦
+#   - 这条链很重（paddleocr -> paddlex + 一批二进制），装进主环境会显著拖慢解析
+#
+# 关于 Python 版本：实测 paddlepaddle 3.3.1 已提供 cp39-cp313 wheel，因此 3.12/3.13
+# 并非不可用。项目统一用 3.11 是为了和主环境保持同一基线，而不是被 wheel 卡住。
+#
+# 安装方式（独立环境）：
+#   py -3.11 -m venv .venv-ocr
+#   .venv-ocr\Scripts\pip install -r requirements-ocr.txt
+
+paddlepaddle>=3.0.0
+paddleocr>=3.7.0

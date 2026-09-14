@@ -1,0 +1,6 @@
+# 接入层依赖 —— v1 里程碑 M4 就需要（最小 HTTP 接口 + 单页聊天 UI）
+# 安装：pip install -r requirements.txt -r requirements-api.txt
+
+fastapi>=0.141
+uvicorn[standard]>=0.52
+python-multipart>=0.0.20

@@ -1,0 +1,28 @@
+# Normalise line endings before Git ever sees them.
+#
+# Why: on Windows, editors and AI tools happily write CRLF. A mixed-line-ending repo shows
+# up as whole-file diffs on CI, wrecks review diffs, and makes `ruff format --check` fail
+# for reasons that have nothing to do with the actual change. 33 files were CRLF on the
+# first real lint run (C22).
+#
+# Rule: everything is LF in the repository, regardless of platform.
+
+* text=auto eol=lf
+
+# Binary - never touch
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.mp4 binary
+*.mov binary
+*.webm binary
+*.onnx binary
+*.pdmodel binary
+*.pdparams binary
+*.db binary
+
+# Kept as-is
+*.bat text eol=crlf
+*.ps1 text eol=crlf
