@@ -21,6 +21,7 @@ from rolecard_agent.config import Settings
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.graph import build_kernel
 from rolecard_agent.core.observability import NullTracer
+from rolecard_agent.core.plugins import PluginService
 from rolecard_agent.core.state import new_state
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.roles.models import RoleCardCreate
@@ -29,16 +30,30 @@ from rolecard_agent.storage.db import bootstrap, connect
 from tests.conftest import ScriptedChat, compare_health_index, list_roles, query_health_record
 
 
-def _kernel(db_path: Path, replies: list[Any], *, registry: ToolRegistry | None = None) -> Any:
+def _kernel(
+    db_path: Path,
+    replies: list[Any],
+    *,
+    registry: ToolRegistry | None = None,
+    enable_health: bool = True,
+) -> Any:
     """Build a fresh kernel over an existing database file.
 
     Reconnecting on every call is deliberate: it is the only way to prove persistence, since
     an in-memory cache would pass a same-process assertion trivially.
+
+    The plugin switch is wired through a real `PluginService`, because `enabled_domains` is read
+    live from the `plugin` table (not from state) - that is the whole point of the tool_epoch /
+    C14 design. `enable_health=False` simulates "the operator switched the domain off".
     """
     conn = connect(db_path)
     bootstrap(conn, enabled_domains=("health",))
     roles = RoleCardService(conn)
     roles.seed_builtins()
+
+    plugins = PluginService(conn, known_plugins=["health"])
+    plugins.register("health", display_name="Health")
+    plugins.set_enabled("health", enable_health)
 
     reg = registry or ToolRegistry()
     if registry is None:
@@ -53,6 +68,7 @@ def _kernel(db_path: Path, replies: list[Any], *, registry: ToolRegistry | None 
         tracer=NullTracer(),
         settings=Settings(),
         checkpointer=make_checkpointer(conn),
+        plugins=plugins,
     )
     return graph, model, roles
 
@@ -173,6 +189,9 @@ def test_whitelist_is_applied_before_binding(tmp_path: Path) -> None:
     reg = ToolRegistry()
     reg.register(list_roles)
     reg.register_many([query_health_record, compare_health_index], domain="health")
+    plugins = PluginService(conn, known_plugins=["health"])
+    plugins.register("health", display_name="Health")
+    plugins.set_enabled("health", True)
     model = ScriptedChat([AIMessage(content="好的。")])
     graph = build_kernel(
         model=model,
@@ -181,6 +200,7 @@ def test_whitelist_is_applied_before_binding(tmp_path: Path) -> None:
         tracer=NullTracer(),
         settings=Settings(),
         checkpointer=make_checkpointer(conn),
+        plugins=plugins,
     )
     graph.invoke(
         {
@@ -210,6 +230,7 @@ def test_disabled_domain_removes_tools_and_offline_call_does_not_raise(tmp_path:
             ),
             AIMessage(content="该项能力当前不可用。"),
         ],
+        enable_health=False,  # the operator switched the domain off
     )
     result = graph.invoke(
         {

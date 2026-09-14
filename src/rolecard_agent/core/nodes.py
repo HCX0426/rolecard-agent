@@ -18,7 +18,7 @@ allowed to see "that failed", but never a stack trace.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -55,6 +55,24 @@ class ChatLike(Protocol):
     def invoke(self, input: Any, **kwargs: Any) -> Any: ...
 
 
+def _no_domains() -> Sequence[str]:
+    """Default provider: nothing enabled.
+
+    Fails closed on purpose. A context built without a provider binds only kernel tools, rather
+    than silently binding every registered domain's tools because nobody said otherwise.
+    """
+    return ()
+
+
+def _default_epoch() -> int:
+    """Default provider: version 1, matching the `tool_epoch` row the schema seeds.
+
+    Used only when no `PluginService` is wired in (tests, or a graph built before plugins
+    existed). The real value is always read live via a `PluginService`, never snapshotted.
+    """
+    return 1
+
+
 @dataclass(slots=True)
 class KernelContext:
     """Everything the nodes need, assembled once at graph build time."""
@@ -65,18 +83,34 @@ class KernelContext:
     tracer: Tracer
     settings: Settings
 
+    # A callable, not a list. The enabled plugin set is read fresh on every turn so that
+    # "disable a plugin and it takes effect immediately" is literally true. Snapshotting it into
+    # session state would make the effective set depend on when the session started - and a stale
+    # snapshot that still permits a disabled plugin's tools is a silent permission bug.
+    enabled_domains: Callable[[], Sequence[str]] = _no_domains
+
+    # The tool-set version, same shape and for the same reason: read live each turn so a plugin
+    # toggle that happened since the session started is detectable (C14). Stored as a callable so
+    # the value is never frozen at graph-build time.
+    tool_epoch: Callable[[], int] = _default_epoch
+
+
+def turn_context(state: dict[str, Any], ctx: KernelContext) -> tuple[list[Any], list[str]]:
+    """Resolve this turn's permitted tools and the plugin set they were computed against.
+
+    Returns both, from one read, so the model's visible tool set and the executor's permitted set
+    can never disagree. `state["enabled_domains"]` is used ONLY as a historical record written
+    back by `call_model` - never as an input.
+    """
+    domains = list(ctx.enabled_domains())
+    role = ctx.roles.get(state.get("current_role_id", ""))
+    tools = ctx.registry.select(enabled_domains=domains, role_whitelist=role.tool_whitelist)
+    return tools, domains
+
 
 def tools_for_turn(state: dict[str, Any], ctx: KernelContext) -> list[Any]:
-    """Resolve the role, then run the two-stage filter.
-
-    Shared by `call_model` and `execute_tools` so the model's visible tool set and the
-    executor's permitted set can never disagree - they are computed by the same function.
-    """
-    role = ctx.roles.get(state.get("current_role_id", ""))
-    return ctx.registry.select(
-        enabled_domains=state.get("enabled_domains") or [],
-        role_whitelist=role.tool_whitelist,
-    )
+    """The tools this turn may bind. Thin wrapper over `turn_context`."""
+    return turn_context(state, ctx)[0]
 
 
 def _text_of(message: BaseMessage) -> str:
@@ -104,8 +138,23 @@ def call_model(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
         )
         return {"messages": [reply]}
 
-    tools = tools_for_turn(state, ctx)
+    tools, domains = turn_context(state, ctx)
     bound = ctx.model.bind_tools(tools) if tools else ctx.model
+
+    # A session that outlived a plugin toggle can carry historical tool_calls for tools that no
+    # longer exist. `execute_tools` already degrades those to "offline"; this reports the cause
+    # once per change, so a confusing transcript becomes an explainable one.
+    recorded_epoch = state.get("tool_epoch", 0)
+    current_epoch = ctx.tool_epoch()
+    if recorded_epoch != current_epoch:
+        ctx.tracer.emit(
+            TraceEvent(
+                event="tool_epoch_drift",
+                thread_id=state.get("thread_id"),
+                role_id=role_id,
+                detail={"recorded": recorded_epoch, "current": current_epoch},
+            )
+        )
 
     # System prompt is built here, never stored: see the module docstring. Order inside is
     # role -> exemplars -> global safety rules, so the rules remain last and authoritative.
@@ -137,10 +186,17 @@ def call_model(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
             role_id=role_id,
             node="call_model",
             latency_ms=elapsed["ms"],
-            detail={"tools_visible": len(tools)},
+            detail={"tools_visible": len(tools), "enabled_domains": domains},
         )
     )
-    return {"messages": [response]}
+    # `enabled_domains` is written back as a RECORD of what was in force this turn, and
+    # `tool_epoch` as the version now seen - so the drift event fires once per toggle rather than
+    # on every turn afterwards.
+    return {
+        "messages": [response],
+        "enabled_domains": domains,
+        "tool_epoch": current_epoch,
+    }
 
 
 def execute_tools(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:

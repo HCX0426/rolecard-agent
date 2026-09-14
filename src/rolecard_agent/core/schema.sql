@@ -67,3 +67,57 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON audit_log(ts);
+
+-- Kernel bookkeeping: a single-row-per-key table for values the harness needs to persist.
+-- `tool_epoch` lives here and is what makes "a plugin was toggled" detectable after a restart.
+CREATE TABLE IF NOT EXISTS kernel_meta (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Seeded so the invariant "a tool_epoch row always exists" holds immediately after bootstrap,
+-- instead of every reader having to invent a default.
+INSERT OR IGNORE INTO kernel_meta (key, value) VALUES ('tool_epoch', '1');
+
+-- ===========================================================================
+-- Document intake ledger.
+--
+-- WHY THIS IS A SEPARATE TABLE, and not a `status` column on the domain's report table:
+--
+--   1. Process vs fact. An intake can be retried three times; the resulting report is still
+--      one report. Putting run state on the report row means either losing the attempt history
+--      or adding attempts/last_error columns to a fact table - i.e. growing the ledger inside
+--      the report.
+--   2. Half-finished rows leaking. If a report row exists while processing is incomplete, every
+--      reader downstream must remember to filter it out. One forgotten `WHERE status = ...`
+--      and an unverified fragment reaches the user. In this project that is not an acceptable
+--      failure mode, so an incomplete intake produces NO report row at all.
+--   3. Cardinality. One file can yield several reports (a checkup covering multiple
+--      departments). The relation is 1:N, and a 1:N relation cannot be a column.
+--
+-- RELATION DIRECTION: domains reference this table, never the reverse. `medical_report` carries
+-- `ingestion_task_id`, so the kernel stays free of any domain knowledge.
+--
+-- UNIQUE (user_id, file_hash) is the idempotency key: re-uploading the same bytes returns the
+-- existing task instead of creating a duplicate ledger entry. Re-processing is an explicit
+-- action that resets that row, not a new one.
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS ingestion_task (
+    task_id      TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL REFERENCES app_user(user_id),
+    source_file  TEXT,
+    file_hash    TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending'
+                 CHECK (status IN ('pending', 'parsed', 'extracted', 'indexed', 'failed')),
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    last_error   TEXT,
+    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finished_at  TIMESTAMP,
+    UNIQUE (user_id, file_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ingestion_status ON ingestion_task(status);
+CREATE INDEX IF NOT EXISTS idx_ingestion_user ON ingestion_task(user_id);

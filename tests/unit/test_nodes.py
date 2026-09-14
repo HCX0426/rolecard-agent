@@ -9,6 +9,7 @@ See 技术评审与决策.md §9 D2 - these had no unit coverage before.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
@@ -20,6 +21,7 @@ from rolecard_agent.core.nodes import (
     MAX_TOOL_RETRIES,
     TOOL_FAILED,
     KernelContext,
+    call_model,
     execute_tools,
     route_after_model,
     tools_for_turn,
@@ -75,13 +77,26 @@ def registry() -> ToolRegistry:
     return reg
 
 
-def _ctx(registry: ToolRegistry, roles: RoleCardService, model: Any = None) -> KernelContext:
+def _ctx(
+    registry: ToolRegistry,
+    roles: RoleCardService,
+    model: Any = None,
+    *,
+    enabled_domains: Sequence[str] = (),
+    tool_epoch: int = 1,
+    tracer: Any = None,
+) -> KernelContext:
+    # `enabled_domains` / `tool_epoch` are callables on KernelContext (read live each turn),
+    # so the test must supply them here rather than stuffing `enabled_domains` into state -
+    # turn_context deliberately ignores the state copy and reads the callable.
     return KernelContext(
         model=model,
         registry=registry,
         roles=roles,
-        tracer=NullTracer(),
+        tracer=tracer or NullTracer(),
         settings=Settings(),
+        enabled_domains=lambda: list(enabled_domains),
+        tool_epoch=lambda: tool_epoch,
     )
 
 
@@ -91,8 +106,10 @@ def test_tools_for_turn_honours_both_stages(registry: ToolRegistry, roles: RoleC
             role_id="narrow", role_name="窄", system_prompt="x", tool_whitelist=["domain_tool"]
         )
     )
-    state = {"current_role_id": "narrow", "enabled_domains": ["dom"]}
-    assert [t.name for t in tools_for_turn(state, _ctx(registry, roles))] == ["domain_tool"]
+    state = {"current_role_id": "narrow"}
+    assert [
+        t.name for t in tools_for_turn(state, _ctx(registry, roles, enabled_domains=["dom"]))
+    ] == ["domain_tool"]
 
 
 def test_unknown_role_yields_no_tools(registry: ToolRegistry, roles: RoleCardService) -> None:
@@ -181,3 +198,104 @@ def test_retry_count_accumulates_across_turns(roles: RoleCardService, wide_role:
     state = {**_state_with_call("flaky", wide_role), "retry_count": 5}
     out = execute_tools(state, _ctx(reg, roles))
     assert out["retry_count"] == 5 + MAX_TOOL_RETRIES
+
+
+# --------------------------------------------------------------------------- call_model
+
+
+class FakeModel:
+    """Minimal ChatLike for node tests: bind_tools records the tools, invoke returns a canned
+    message. No real provider, so the suite never needs a running Ollama."""
+
+    def __init__(self, reply: Any) -> None:
+        self._reply = reply
+        self.bound_tools: list[Any] = []
+
+    def bind_tools(self, tools: Sequence[Any], **kwargs: Any) -> FakeModel:
+        self.bound_tools = list(tools)
+        return self
+
+    def invoke(self, prompt: Any, **kwargs: Any) -> Any:
+        return self._reply
+
+
+class RecordingTracer:
+    """Duck-typed Tracer: captures emitted events so a test can assert on them."""
+
+    def __init__(self) -> None:
+        self.events: list[object] = []
+
+    def emit(self, event: Any) -> None:
+        self.events.append(event)
+
+    def kinds(self) -> list[str]:
+        return [getattr(e, "event", "") for e in self.events]
+
+
+def _role(roles: RoleCardService, role_id: str = "r") -> str:
+    roles.create(
+        RoleCardCreate(role_id=role_id, role_name=role_id, system_prompt="x", tool_whitelist=None)
+    )
+    return role_id
+
+
+def test_call_model_writes_live_enabled_domains_and_epoch(roles: RoleCardService) -> None:
+    """The enabled set and epoch are read live (callable), not from graph-build time."""
+    rid = _role(roles)
+    reg = ToolRegistry()
+    reg.register(kernel_tool)
+    ctx = _ctx(
+        reg,
+        roles,
+        FakeModel(AIMessage(content="hi")),
+        enabled_domains=["health"],
+        tool_epoch=7,
+    )
+    out = call_model(
+        {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"}, ctx
+    )
+    assert out["messages"][0].content == "hi"
+    assert out["enabled_domains"] == ["health"]
+    assert out["tool_epoch"] == 7
+
+
+def test_call_model_emits_epoch_drift_when_session_is_stale(roles: RoleCardService) -> None:
+    """A session that outlived a plugin toggle carries an old epoch; report once, then refresh."""
+    rid = _role(roles)
+    reg = ToolRegistry()
+    reg.register(kernel_tool)
+    tracer = RecordingTracer()
+    ctx = _ctx(
+        reg,
+        roles,
+        FakeModel(AIMessage(content="hi")),
+        enabled_domains=[],
+        tool_epoch=3,
+        tracer=tracer,
+    )
+    out = call_model(
+        {
+            "messages": [HumanMessage(content="q")],
+            "current_role_id": rid,
+            "thread_id": "t",
+            "tool_epoch": 1,  # the session was checkpointed before the toggle
+        },
+        ctx,
+    )
+    assert "tool_epoch_drift" in tracer.kinds()
+    # refreshed so the drift event does NOT fire on every subsequent turn
+    assert out["tool_epoch"] == 3
+
+
+def test_call_model_degrades_missing_role_without_crashing(roles: RoleCardService) -> None:
+    """A thread bound to a deleted role gets a sentence, not a 500."""
+    reg = ToolRegistry()
+    reg.register(kernel_tool)
+    tracer = RecordingTracer()
+    ctx = _ctx(reg, roles, FakeModel(AIMessage(content="hi")), tracer=tracer)
+    out = call_model(
+        {"messages": [HumanMessage(content="q")], "current_role_id": "ghost", "thread_id": "t"},
+        ctx,
+    )
+    assert out["messages"][0].content  # non-empty refusal
+    assert "role_missing" in tracer.kinds()

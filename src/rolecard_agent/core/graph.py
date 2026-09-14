@@ -25,6 +25,7 @@ from rolecard_agent.core.nodes import (
     route_after_model,
 )
 from rolecard_agent.core.observability import Tracer, make_tracer
+from rolecard_agent.core.plugins import PluginService
 from rolecard_agent.core.state import AgentState
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.roles.service import RoleCardService
@@ -41,12 +42,17 @@ def build_kernel(
     tracer: Tracer | None = None,
     settings: Settings | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
+    plugins: PluginService | None = None,
 ) -> Any:
     """Compile the kernel graph.
 
     `checkpointer` is optional but the app always passes one: without it, a conversation
     lives only as long as the process, which is exactly the failure this project exists to
     avoid.
+
+    `plugins` is optional but the app always passes it: it is what makes "disable a domain and
+    the change is visible on the very next turn" true, by feeding both `enabled_domains` and
+    `tool_epoch` from the live `plugin` table rather than from graph-build time.
     """
     ctx = KernelContext(
         model=model,
@@ -55,6 +61,10 @@ def build_kernel(
         tracer=tracer or make_tracer(settings or Settings()),
         settings=settings or Settings(),
     )
+    if plugins is not None:
+        # Bound methods: `ctx.enabled_domains()` / `ctx.tool_epoch()` now read the live table.
+        ctx.enabled_domains = plugins.enabled_domains
+        ctx.tool_epoch = plugins.tool_epoch
 
     graph = StateGraph(AgentState)
     graph.add_node(MODEL_NODE, partial(call_model, ctx=ctx))

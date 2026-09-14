@@ -10,19 +10,22 @@
 -- ===========================================================================
 
 CREATE TABLE IF NOT EXISTS medical_report (
-    report_id    TEXT PRIMARY KEY,
-    user_id      TEXT NOT NULL REFERENCES app_user(user_id),
-    report_type  TEXT NOT NULL,              -- 'ultrasound' | 'gastroscopy' | 'lab' | ...
-    check_time   TIMESTAMP NOT NULL,
-    institution  TEXT,
-    note         TEXT,
-    -- ingestion bookkeeping (docs/05 A1: SQLite and the vector store must stay in sync)
-    file_hash    TEXT,                       -- dedupe / idempotency key
-    source_file  TEXT,
-    status       TEXT NOT NULL DEFAULT 'parsed'
-                 CHECK (status IN ('pending', 'parsed', 'extracted', 'indexed', 'failed')),
-    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    report_id         TEXT PRIMARY KEY,
+    user_id           TEXT NOT NULL REFERENCES app_user(user_id),
+    -- Which intake produced this report. NULL for rows entered by hand, which have no intake.
+    -- Pointing this way (domain -> kernel) is what keeps the kernel free of domain knowledge.
+    -- The relation is 1:N: one file can yield several reports, e.g. a checkup covering multiple
+    -- departments in v2.2 - which is why this is a column here and not a report_id on the task.
+    ingestion_task_id TEXT REFERENCES ingestion_task(task_id),
+    report_type       TEXT NOT NULL,          -- 'ultrasound' | 'gastroscopy' | 'lab' | ...
+    check_time        TIMESTAMP NOT NULL,
+    institution       TEXT,
+    note              TEXT,
+    created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Reverse lookup: deleting a report must be able to find the intake it came from.
+CREATE INDEX IF NOT EXISTS idx_report_task ON medical_report(ingestion_task_id);
 
 CREATE INDEX IF NOT EXISTS idx_report_user_time ON medical_report(user_id, check_time);
 
