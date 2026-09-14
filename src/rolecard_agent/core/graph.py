@@ -11,6 +11,7 @@ kernel testable without a running Ollama instance.
 # NOTE: no `from __future__ import annotations` here on purpose. LangGraph inspects the node's
 # `config` parameter annotation and warns when it is a STRING (PEP 563 lazy form) instead of a
 # real type object; under Python 3.13 every annotation in this file evaluates natively anyway.
+from collections.abc import Callable
 from functools import partial
 from typing import Any, cast
 
@@ -45,6 +46,7 @@ def build_kernel(
     settings: Settings | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     plugins: PluginService | None = None,
+    model_resolver: Callable[[str | None], ChatLike] | None = None,
 ) -> Any:
     """Compile the kernel graph.
 
@@ -55,6 +57,9 @@ def build_kernel(
     `plugins` is optional but the app always passes it: it is what makes "disable a domain and
     the change is visible on the very next turn" true, by feeding both `enabled_domains` and
     `tool_epoch` from the live `plugin` table rather than from graph-build time.
+
+    `model_resolver` 是角色级路由（US-8 后半）的挂点：给定 `role_card.model_name`（后端名或
+    None）返回该轮要用的模型。由宿主提供缓存与降级；不传 = 全部走默认模型。
     """
     ctx = KernelContext(
         model=model,
@@ -67,6 +72,7 @@ def build_kernel(
         # Bound methods: `ctx.enabled_domains()` / `ctx.tool_epoch()` now read the live table.
         ctx.enabled_domains = plugins.enabled_domains
         ctx.tool_epoch = plugins.tool_epoch
+    ctx.model_resolver = model_resolver
 
     graph = StateGraph(AgentState)
 

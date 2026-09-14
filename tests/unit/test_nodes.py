@@ -85,6 +85,7 @@ def _ctx(
     enabled_domains: Sequence[str] = (),
     tool_epoch: int = 1,
     tracer: Any = None,
+    model_resolver: Any = None,
 ) -> KernelContext:
     # `enabled_domains` / `tool_epoch` are callables on KernelContext (read live each turn),
     # so the test must supply them here rather than stuffing `enabled_domains` into state -
@@ -97,6 +98,7 @@ def _ctx(
         settings=Settings(),
         enabled_domains=lambda: list(enabled_domains),
         tool_epoch=lambda: tool_epoch,
+        model_resolver=model_resolver,
     )
 
 
@@ -232,11 +234,76 @@ class RecordingTracer:
         return [getattr(e, "event", "") for e in self.events]
 
 
-def _role(roles: RoleCardService, role_id: str = "r") -> str:
+def _role(roles: RoleCardService, role_id: str = "r", model_name: str | None = None) -> str:
     roles.create(
-        RoleCardCreate(role_id=role_id, role_name=role_id, system_prompt="x", tool_whitelist=None)
+        RoleCardCreate(
+            role_id=role_id,
+            role_name=role_id,
+            system_prompt="x",
+            tool_whitelist=None,
+            model_name=model_name,
+        )
     )
     return role_id
+
+
+def test_call_model_resolves_role_backend(roles: RoleCardService) -> None:
+    """US-8 后半：角色声明了后端名 → 该轮模型由解析器按名给出。"""
+    rid = _role(roles, "cloudy", model_name="cloud-a")
+    reg = ToolRegistry()
+    reg.register(kernel_tool)
+    picked: list[str | None] = []
+
+    class CloudModel:
+        def bind_tools(self, tools: Sequence[Any], **kwargs: Any) -> CloudModel:
+            return self
+
+        def invoke(self, prompt: Any, **kwargs: Any) -> Any:
+            return AIMessage(content="from-cloud")
+
+    def resolver(name: str | None) -> Any:
+        picked.append(name)
+        return CloudModel()
+
+    ctx = _ctx(
+        reg,
+        roles,
+        FakeModel(AIMessage(content="default")),
+        model_resolver=resolver,
+    )
+    out = call_model(
+        {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"},
+        ctx,
+    )
+    assert picked == ["cloud-a"]  # 角色声明的后端名原样传给解析器
+    assert out["messages"][0].content == "from-cloud"  # 用的是解析出的模型，不是默认
+
+
+def test_call_model_uses_default_when_role_has_no_backend(roles: RoleCardService) -> None:
+    """model_name=None → 解析器收到 None 并由它返回默认模型（解析器契约含 None 分支）。"""
+    rid = _role(roles)
+    reg = ToolRegistry()
+    reg.register(kernel_tool)
+    picked: list[str | None] = []
+
+    def resolver(name: str | None) -> Any:
+        picked.append(name)
+        if name is None:
+            return FakeModel(AIMessage(content="default"))
+        return FakeModel(AIMessage(content="should-not-be-used"))
+
+    ctx = _ctx(
+        reg,
+        roles,
+        FakeModel(AIMessage(content="unused-built-model")),
+        model_resolver=resolver,
+    )
+    out = call_model(
+        {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"},
+        ctx,
+    )
+    assert picked == [None]
+    assert out["messages"][0].content == "default"
 
 
 def test_call_model_writes_live_enabled_domains_and_epoch(roles: RoleCardService) -> None:

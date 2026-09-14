@@ -57,7 +57,7 @@ from rolecard_agent.core.graph import build_kernel, build_model
 from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.core.model_settings import ModelSettingsError, ModelSettingsService
 from rolecard_agent.core.nodes import ChatLike, _text_of
-from rolecard_agent.core.observability import Tracer, make_tracer
+from rolecard_agent.core.observability import TraceEvent, Tracer, make_tracer
 from rolecard_agent.core.plugins import PluginError, PluginService, UnknownPlugin
 from rolecard_agent.core.state import new_state
 from rolecard_agent.domains.health.service import HealthQueryService
@@ -210,7 +210,7 @@ def create_app(
     sqlite_path: Path | None = None,
     *,
     model: ChatLike | None = None,
-    model_factory: Callable[[Settings], ChatLike] | None = None,
+    model_factory: Callable[[Settings, str | None], ChatLike] | None = None,
     tracer: Tracer | None = None,
 ) -> FastAPI:
     """Build the FastAPI app.
@@ -223,8 +223,9 @@ def create_app(
     `model_factory`（默认 `build_model`）按配置实例化真实后端（Ollama 或任意 OpenAI 兼容
     端点），构造是惰性的，不会在启动时连网。
 
-    `model_factory` 会在**设置页保存**时被再次调用来热重建图 —— 测试注入一个每次返回新
-    `ScriptedChat` 的工厂，即可在不接触真实后端的情况下验证热切换确实生效。
+    `model_factory` 会在两处被调用：启动时构建默认模型；**角色级路由**解析 `role_card.model_name`
+    （US-8 后半）以及**设置页保存**后的热重建 —— 测试注入一个每次返回新 `ScriptedChat` 的工厂，
+    即可在不接触真实后端的情况下验证路由与热切换确实生效。
     """
     settings = Settings.from_env()
     db_path = sqlite_path or settings.sqlite_path
@@ -254,7 +255,36 @@ def create_app(
     factory = model_factory or build_model
     # 设置页（DB）配置优先于 env：空表 = env 原样；保存过 = DB 覆盖同名后端并接管默认。
     effective = model_settings.effective_settings(settings)
-    resolved_model = model or factory(effective)
+    resolved_model = model or factory(effective, None)
+    # 角色级路由的模型缓存：按后端名构建一次（惰性）；设置变更时整体失效重建。
+    role_models: dict[str, ChatLike] = {}
+    app_state: dict[str, Any] = {
+        "graph": None,  # 下面 build 后回填；对话端点每次请求从这里取当前图
+        "effective": effective,
+        "default_model": resolved_model,
+    }
+
+    def resolve_role_model(backend_name: str | None) -> ChatLike:
+        """US-8：角色声明了后端名 → 按名解析；未声明 → 默认模型。
+
+        未知后端名（设置页删掉了一个仍被角色引用的后端）→ 降级到默认并留痕，而不是
+        让整轮对话 500：权限 fail-closed，可用性 fail-soft。
+        """
+        if not backend_name:
+            return app_state["default_model"]
+        cached = role_models.get(backend_name)
+        if cached is not None:
+            return cached
+        try:
+            built = factory(app_state["effective"], backend_name)
+        except KeyError:
+            resolved_tracer.emit(
+                TraceEvent(event="role_backend_missing", detail={"backend": backend_name})
+            )
+            return app_state["default_model"]
+        role_models[backend_name] = built
+        return built
+
     graph = build_kernel(
         model=resolved_model,
         registry=registry,
@@ -263,22 +293,28 @@ def create_app(
         settings=effective,
         checkpointer=checkpointer,
         plugins=plugins,
+        model_resolver=resolve_role_model,
     )
     # 热替换 holder：设置页保存属于罕见管理动作，重建整图（compile 毫秒级）比把
     # KernelContext 从 build_kernel 里掏出来改签名更简单直接。对话端点每次请求从这里
     # 取当前图，因此保存后无需重启即可生效。
-    app_state: dict[str, Any] = {"graph": graph}
+    app_state["graph"] = graph
 
     def rebuild_graph() -> None:
         eff = model_settings.effective_settings(settings)
+        role_models.clear()
+        default_model = factory(eff, None)
+        app_state["effective"] = eff
+        app_state["default_model"] = default_model
         app_state["graph"] = build_kernel(
-            model=factory(eff),
+            model=default_model,
             registry=registry,
             roles=roles,
             tracer=resolved_tracer,
             settings=eff,
             checkpointer=checkpointer,
             plugins=plugins,
+            model_resolver=resolve_role_model,
         )
 
     app = FastAPI(title="rolecard-agent 管理控制台", version="0.3.0")

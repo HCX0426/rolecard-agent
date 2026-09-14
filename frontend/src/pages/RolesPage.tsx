@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { api, type RoleCard, type ToolCatalog, type ToolEntry } from "../api";
+import {
+  api,
+  type ModelSettings,
+  type RoleCard,
+  type ToolCatalog,
+  type ToolEntry,
+} from "../api";
 
 const EMPTY_FORM = {
   role_id: "",
@@ -60,6 +66,7 @@ export default function RolesPage() {
   // null=全部工具（后端语义），custom=按勾选的白名单
   const [wlMode, setWlMode] = useState<"all" | "custom">("all");
   const [catalog, setCatalog] = useState<ToolCatalog | null>(null);
+  const [backends, setBackends] = useState<string[]>([]);
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [newScope, setNewScope] = useState("");
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -70,6 +77,10 @@ export default function RolesPage() {
   useEffect(() => {
     load().catch((e) => setStatus({ ok: false, msg: `加载失败：${e.message}` }));
     api.get<ToolCatalog>("/api/tools/catalog").then(setCatalog).catch(() => {});
+    api
+      .get<ModelSettings>("/api/settings/models")
+      .then((s) => setBackends(s.backends.map((b) => b.name)))
+      .catch(() => {});
   }, []);
 
   // 当前无内核集合注册表（RAG v2.1）：可选作用域 = 现存角色声明过的并集
@@ -256,12 +267,21 @@ export default function RolesPage() {
                 />
               </label>
               <label className="block">
-                <span className="text-xs text-slate-500">model_name（后端名，留空用默认）</span>
-                <input
+                <span className="text-xs text-slate-500">
+                  模型后端（角色级路由：该角色的对话走此后端，US-8）
+                </span>
+                <select
                   value={form.model_name}
                   onChange={(e) => setForm({ ...form, model_name: e.target.value })}
                   className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                />
+                >
+                  <option value="">默认后端</option>
+                  {backends.map((b) => (
+                    <option key={b} value={b}>
+                      {b}
+                    </option>
+                  ))}
+                </select>
               </label>
             </div>
             <label className="mt-3 block">

@@ -29,9 +29,12 @@ def counter() -> dict[str, int]:
 
 @pytest.fixture
 def factory(counter: dict[str, int]) -> object:
-    def _factory(_settings: object) -> ScriptedChat:
+    def _factory(_settings: object, backend_name: str | None = None) -> ScriptedChat:
         counter["n"] += 1
-        return ScriptedChat([AIMessage(content=f"build-{counter['n']}")])
+        label = f"build-{counter['n']}"
+        if backend_name:
+            label += f"@{backend_name}"
+        return ScriptedChat([AIMessage(content=label)])
 
     return _factory
 
@@ -137,6 +140,68 @@ def test_save_hot_rebuilds_the_graph(client: TestClient) -> None:
     )
     assert res.status_code == 200
     assert authoritative_text(client, tid, "二问") == "build-2"  # 新图生效，无需重启
+
+
+def test_role_model_name_routes_to_declared_backend(client: TestClient) -> None:
+    """US-8 后半：角色声明 model_name → 该角色的对话走声明的后端（全栈验证）。"""
+    # 注册两个后端；factory 给每次构建打上 backend_name 标记
+    assert (
+        client.put(
+            "/api/settings/models",
+            json={
+                "default": "cloud-a",
+                "backends": [
+                    {"name": "cloud-a", "provider": "openai", "model": "m-a"},
+                    {"name": "cloud-b", "provider": "openai", "model": "m-b"},
+                ],
+            },
+        ).status_code
+        == 200
+    )
+    client.post(
+        "/api/roles",
+        json={
+            "role_id": "b2user",
+            "role_name": "B2 角色",
+            "system_prompt": "x",
+            "model_name": "cloud-b",
+        },
+    )
+    session = client.post("/api/session", json={"role_id": "b2user"}).json()
+    text = authoritative_text(client, str(session["thread_id"]), "你好")
+    assert "@cloud-b" in text  # 该轮确实用了角色声明的后端，而非默认
+
+    # 未声明后端名的会话仍走默认
+    other = client.post("/api/session", json={}).json()
+    other_text = authoritative_text(client, str(other["thread_id"]), "你好")
+    assert "@cloud-b" not in other_text
+
+
+def test_unknown_role_backend_falls_back_to_default(client: TestClient) -> None:
+    """角色引用了被删除的后端 → 降级到默认模型并正常回答，而不是 500。"""
+    client.post(
+        "/api/roles",
+        json={
+            "role_id": "ghost_backend",
+            "role_name": "幽灵",
+            "system_prompt": "x",
+            "model_name": "cloud-a",
+        },
+    )
+    session = client.post("/api/session", json={"role_id": "ghost_backend"}).json()
+    tid = str(session["thread_id"])
+    assert authoritative_text(client, tid, "一问").startswith("build-")
+
+    # 删掉 cloud-a：角色仍引用它 → 下一轮降级默认，对话不崩
+    client.put(
+        "/api/settings/models",
+        json={
+            "default": "cloud-b",
+            "backends": [{"name": "cloud-b", "provider": "openai", "model": "m-b"}],
+        },
+    )
+    text = authoritative_text(client, tid, "二问")
+    assert text.startswith("build-")  # 仍是工厂构建的模型（默认），而非异常
 
 
 def test_invalid_default_backend_400(client: TestClient) -> None:

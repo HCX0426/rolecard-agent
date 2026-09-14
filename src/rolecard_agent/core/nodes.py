@@ -95,6 +95,11 @@ class KernelContext:
     # the value is never frozen at graph-build time.
     tool_epoch: Callable[[], int] = _default_epoch
 
+    # 角色级模型路由（US-8 后半）：按 role.model_name 解析该角色这轮用的模型。
+    # None = 未接线，一律用构建期的 `model`（默认后端）。解析器由宿主提供——缓存、
+    # 未知后端降级、重建失效都是宿主（settings/model_factory）的职责，内核只管"问谁要"。
+    model_resolver: Callable[[str | None], ChatLike] | None = None
+
 
 def turn_context(state: dict[str, Any], ctx: KernelContext) -> tuple[list[Any], list[str]]:
     """Resolve this turn's permitted tools and the plugin set they were computed against.
@@ -157,7 +162,10 @@ def call_model(
         return {"messages": [reply]}
 
     tools, domains = turn_context(state, ctx)
-    bound = ctx.model.bind_tools(tools) if tools else ctx.model
+    # 角色级路由（US-8）：角色声明了后端名 → 按名解析；未声明或未接线 → 默认模型。
+    # 解析失败由解析器自行降级——内核不在这里兜底可用性。
+    base = ctx.model_resolver(role.model_name) if ctx.model_resolver else ctx.model
+    bound = base.bind_tools(tools) if tools else base
 
     # A session that outlived a plugin toggle can carry historical tool_calls for tools that no
     # longer exist. `execute_tools` already degrades those to "offline"; this reports the cause
