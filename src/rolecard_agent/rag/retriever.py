@@ -235,6 +235,23 @@ class Hit:
     distance: float
 
 
+class KnowledgeDimensionMismatch(RuntimeError):
+    """嵌入维度与已有集合不一致 —— 切换 RAG_EMBEDDING 后必须重建 chroma 目录。
+
+    这类错误必须翻译成可操作的话：直接把 chroma 的原始异常抛给用户，他只会看到
+    "Collection expecting embedding with dimension of 1024, got 64"，无从下手。
+    """
+
+    HINT = "嵌入后端与已有索引维度不一致。切换 RAG_EMBEDDING 后请删除 data/chroma 目录并重启重建。"
+
+
+def _translate_dimension_error(exc: Exception) -> Exception:
+    """把 chroma 的维度错误换成人类可读的 KnowledgeDimensionMismatch，其余原样抛。"""
+    if "dimension" in str(exc).lower():
+        return KnowledgeDimensionMismatch(KnowledgeDimensionMismatch.HINT)
+    return exc
+
+
 class KnowledgeBase:
     """Chroma 持久化知识库：一个作用域一个集合，库归内核、角色只声明作用域。
 
@@ -263,12 +280,17 @@ class KnowledgeBase:
         collection.delete(where={"source": source})  # 同源幂等重建
         vectors = self._embedder.embed(chunks)
         ids = [hashlib.md5(f"{source}:{i}".encode()).hexdigest()[:16] for i in range(len(chunks))]
-        collection.add(
-            ids=ids,
-            embeddings=vectors,
-            documents=chunks,
-            metadatas=[{"source": source, "scope": scope, "chunk": i} for i in range(len(chunks))],
-        )
+        try:
+            collection.add(
+                ids=ids,
+                embeddings=vectors,
+                documents=chunks,
+                metadatas=[
+                    {"source": source, "scope": scope, "chunk": i} for i in range(len(chunks))
+                ],
+            )
+        except Exception as exc:  # noqa: BLE001 - 维度错误要翻译成可操作提示
+            raise _translate_dimension_error(exc) from exc
         return len(chunks)
 
     def search(
@@ -289,7 +311,10 @@ class KnowledgeBase:
                 collection = self._client.get_collection(name=scope)
             except Exception:  # noqa: BLE001 - 作用域尚无集合 = 没有知识，跳过而非报错
                 continue
-            found = collection.query(query_embeddings=[vector], n_results=pool_size)
+            try:
+                found = collection.query(query_embeddings=[vector], n_results=pool_size)
+            except Exception as exc:  # noqa: BLE001 - 维度错误翻译成可操作提示（搜索时抛出，由工具层兜住）
+                raise _translate_dimension_error(exc) from exc
             docs = (found.get("documents") or [[]])[0]
             metas = (found.get("metadatas") or [[]])[0]
             dists = (found.get("distances") or [[]])[0]
@@ -370,7 +395,11 @@ def make_search_tool(kb: KnowledgeBase) -> BaseTool:
                 "当前角色未授权任何知识作用域，无法检索。"
                 "请联系管理员在角色卡中声明 knowledge_scopes。"
             )
-        hits = kb.search(scopes, query, k=4)
+        try:
+            hits = kb.search(scopes, query, k=4)
+        except KnowledgeDimensionMismatch as exc:
+            # 维度不一致是管理员可修复的状态（重建索引），不该让整轮对话 500。
+            return f"知识库暂不可用：{exc}"
         if not hits:
             return "知识库中没有找到与该问题相关的内容。"
         lines = [f"[{h.scope} · {h.source}] {h.text}" for h in hits]

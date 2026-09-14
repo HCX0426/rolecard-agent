@@ -202,6 +202,33 @@ def test_upload_rejects_empty_file(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         assert res.status_code == 400
 
 
+def test_upload_txt_indexed_and_reupload_keeps_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """v2.1：.txt 上传直接建索引；重复上传复用任务且**不再推进状态机**
+    （'indexed' -> 'parsed' 是非法跃迁，曾导致 500）。"""
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
+    app = create_app(sqlite_path=tmp_path / "txt.db")
+    with TestClient(app) as c:
+        session = c.post("/api/session", json={}).json()
+        tid = str(session["thread_id"])
+        payload = ("随访须知：每半年复查。".encode(), "text/markdown")
+        first = c.post(
+            f"/api/session/{tid}/upload", files={"file": ("须知.md", payload[0], payload[1])}
+        )
+        assert first.status_code == 201 and first.json()["status"] == "indexed"
+        again = c.post(
+            f"/api/session/{tid}/upload", files={"file": ("须知.md", payload[0], payload[1])}
+        )
+        assert again.status_code == 201
+        assert again.json()["reused"] is True
+        assert again.json()["status"] == "indexed"  # 幂等：不重新解析、不非法跃迁
+
+        knowledge = c.get("/api/knowledge").json()
+        assert any("须知.md" in s["sources"] for s in knowledge)
+
+
 def test_upload_unknown_thread_404(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
     app = create_app(sqlite_path=tmp_path / "up3.db", model=ScriptedChat([]))

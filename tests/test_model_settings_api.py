@@ -171,7 +171,9 @@ def test_save_hot_rebuilds_the_graph(client: TestClient) -> None:
         "/api/settings/models",
         json={
             "default": "cloud-a",
-            "backends": [{"name": "cloud-a", "provider": "openai", "model": "m"}],
+            "backends": [
+                {"name": "cloud-a", "provider": "openai", "model": "m", "api_key": "sk-test"},
+            ],
         },
     )
     assert res.status_code == 200
@@ -187,8 +189,8 @@ def test_role_model_name_routes_to_declared_backend(client: TestClient) -> None:
             json={
                 "default": "cloud-a",
                 "backends": [
-                    {"name": "cloud-a", "provider": "openai", "model": "m-a"},
-                    {"name": "cloud-b", "provider": "openai", "model": "m-b"},
+                    {"name": "cloud-a", "provider": "openai", "model": "m-a", "api_key": "sk-test"},
+                    {"name": "cloud-b", "provider": "openai", "model": "m-b", "api_key": "sk-test"},
                 ],
             },
         ).status_code
@@ -220,8 +222,8 @@ def test_fallbacks_round_trip_and_validation(client: TestClient) -> None:
         json={
             "default": "cloud-a",
             "backends": [
-                {"name": "cloud-a", "provider": "openai", "model": "m-a"},
-                {"name": "cloud-b", "provider": "openai", "model": "m-b"},
+                {"name": "cloud-a", "provider": "openai", "model": "m-a", "api_key": "sk-test"},
+                {"name": "cloud-b", "provider": "openai", "model": "m-b", "api_key": "sk-test"},
             ],
             "fallbacks": ["cloud-b"],
         },
@@ -278,11 +280,60 @@ def test_unknown_role_backend_falls_back_to_default(client: TestClient) -> None:
         "/api/settings/models",
         json={
             "default": "cloud-b",
-            "backends": [{"name": "cloud-b", "provider": "openai", "model": "m-b"}],
+            "backends": [
+                {"name": "cloud-b", "provider": "openai", "model": "m-b", "api_key": "sk-test"}
+            ],
         },
     )
     text = authoritative_text(client, tid, "二问")
     assert text.startswith("build-")  # 仍是工厂构建的模型（默认），而非异常
+
+
+def test_openai_backend_without_key_is_rejected_at_save(client: TestClient) -> None:
+    """没凭据的 openai 后端必须在**保存时**拒绝 —— 否则会存进一个"热重建时才炸"
+    的配置（实测 Missing credentials），配置与运行图还会不一致。
+
+    注意：已存 key 的后端再次提交时不带 key = "保留"，那是合法的（下面一并验证）。
+    """
+    res = client.put(
+        "/api/settings/models",
+        json={
+            "default": "cloud-a",
+            "backends": [{"name": "cloud-a", "provider": "openai", "model": "m"}],
+        },
+    )
+    assert res.status_code == 400 and "api_key" in res.json()["detail"]
+
+    ok = client.put(
+        "/api/settings/models",
+        json={
+            "default": "cloud-a",
+            "backends": [
+                {"name": "cloud-a", "provider": "openai", "model": "m", "api_key": "sk-test"}
+            ],
+        },
+    )
+    assert ok.status_code == 200 and ok.json()["backends"][0]["has_key"] is True
+
+    # 已存 key 的后端再次提交不带 key = 保留原 key
+    keep = client.put(
+        "/api/settings/models",
+        json={
+            "default": "cloud-a",
+            "backends": [{"name": "cloud-a", "provider": "openai", "model": "m"}],
+        },
+    )
+    assert keep.status_code == 200 and keep.json()["backends"][0]["has_key"] is True
+
+    # 本地 Ollama 不需要凭据
+    local_ok = client.put(
+        "/api/settings/models",
+        json={
+            "default": "local",
+            "backends": [{"name": "local", "provider": "ollama", "model": "qwen2.5:7b"}],
+        },
+    )
+    assert local_ok.status_code == 200
 
 
 def test_invalid_default_backend_400(client: TestClient) -> None:

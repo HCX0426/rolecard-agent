@@ -65,6 +65,13 @@ class ModelSettingsService:
         value = str(row["value"]) if row and row["value"] else None
         return value or None
 
+    def stored_api_key(self, name: str) -> str | None:
+        """已保存的 key（只在本进程内使用，绝不经 API 回传）。"""
+        for row in self._raw_backends():
+            if str(row["name"]) == name:
+                return row["api_key"]  # type: ignore[return-value]
+        return None
+
     def list_fallbacks(self) -> list[str] | None:
         """Operator-configured fallback chain, or None = not configured (use env's)."""
         row = self._conn.execute(

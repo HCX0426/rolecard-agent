@@ -66,7 +66,12 @@ from rolecard_agent.domains.health.service import (
     HealthQueryService,
 )
 from rolecard_agent.domains.registry import DOMAINS, build_registry
-from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder, make_reranker
+from rolecard_agent.rag.retriever import (
+    KnowledgeBase,
+    KnowledgeDimensionMismatch,
+    make_embedder,
+    make_reranker,
+)
 from rolecard_agent.roles.models import RoleCardCreate, RoleCardUpdate
 from rolecard_agent.roles.service import (
     BuiltinRoleProtected,
@@ -96,6 +101,8 @@ npm run build</pre>
 # is a data change, not a schema change (and not a v1 goal - there is no login page by design).
 DEFAULT_TENANT_ID = "local"
 DEFAULT_USER_ID = "local-user"
+# Ollama 本地端点不需要凭据；其它 provider（openai 兼容）必须有 key 才能构建客户端。
+_KEYLESS_PROVIDER = "ollama"
 DEFAULT_ROLE_ID = "medical_archivist"
 
 
@@ -639,10 +646,15 @@ def create_app(
         # v2.1：原生文本文件（.txt/.md）直接解析入检索索引；其余类型等待 v2.2（OCR/解析器）。
         if target.suffix.lower() in {".txt", ".md"}:
             text = target.read_text(encoding="utf-8", errors="ignore")
-            chunks = knowledge.index("health_reports", safe_name, text)
-            for next_status in ("parsed", "extracted", "indexed"):
-                ingestion.advance(task_id, next_status)
-            existing = ingestion.get(task_id)
+            try:
+                chunks = knowledge.index("health_reports", safe_name, text)
+            except KnowledgeDimensionMismatch as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+            if (existing["status"] or "pending") == "pending":
+                # 幂等：重复上传同一文件会复用已 indexed 的任务，不能再推进状态机。
+                for next_status in ("parsed", "extracted", "indexed"):
+                    ingestion.advance(task_id, next_status)
+                existing = ingestion.get(task_id)
             note = (
                 f"[用户上传了文档：{safe_name}（{chunks} 段），已建立检索索引"
                 f"（任务 {task_id}，status=indexed）。后续提问可以检索这份文档的内容。]"
@@ -734,6 +746,15 @@ def create_app(
         api_key 语义：缺省/None = 保留已存 key；空串 = 清除 —— 否则每次没重输 key 的
         保存都会把 key 抹掉。fallbacks = 失败自动回退链（≤2 级，按序尝试）。"""
         try:
+            # 凭据校验前置：需要 key 的 provider（openai 类）没有 key 时，保存即拒绝 ——
+            # 否则会存进一个"重建时才炸"的配置（实测：热重建抛 Missing credentials）。
+            for b in body.backends:
+                if b.provider.strip().lower() == _KEYLESS_PROVIDER:
+                    continue
+                if not (b.api_key or model_settings.stored_api_key(b.name)):
+                    raise ModelSettingsError(
+                        f"后端 {b.name} 使用 {b.provider}，缺少 api_key（本地 Ollama 无需填写）。"
+                    )
             model_settings.save(
                 default=body.default,
                 backends=[b.model_dump() for b in body.backends],
@@ -741,7 +762,10 @@ def create_app(
             )
         except ModelSettingsError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        rebuild_graph()
+        try:
+            rebuild_graph()
+        except Exception as exc:  # noqa: BLE001 - 构建失败要给出可读原因，而不是 500 空壳
+            raise HTTPException(status_code=500, detail=f"模型后端构建失败：{exc}") from exc
         return {
             "default": model_settings.default_backend(),
             "backends": model_settings.list_backends(),
