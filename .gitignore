@@ -27,6 +27,10 @@ venv/
 # 构建产物 dist/ 有意提交：clone 后不需要 node 环境就能跑控制台演示。
 frontend/node_modules/
 
+# --- eval ---
+# 每次跑批都会重写（模型相关，数字会漂移）；基线数字固化在 docs/需求与验收标准.md
+tests/eval/report.json
+
 # --- models / large artifacts ---
 models/
 *.onnx

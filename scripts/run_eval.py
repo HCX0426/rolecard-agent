@@ -246,10 +246,12 @@ def main() -> int:
     print(f"\n总体：{total_pass}/{len(results)}")
 
     args.report.parent.mkdir(parents=True, exist_ok=True)
+    # newline 强制 LF：报告本身不入库（.gitignore），但离线打开不该带 CRLF
     args.report.write_text(
         json.dumps({"results": results, "passed": total_pass, "total": len(results)},
                    ensure_ascii=False, indent=2),
         encoding="utf-8",
+        newline="\n",
     )
     print(f"报告已写入 {args.report}")
     return 1 if args.strict and total_pass < len(results) else 0
