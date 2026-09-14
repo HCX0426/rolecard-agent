@@ -112,10 +112,12 @@ class SessionCreate(BaseModel):
 
 
 class SessionPatch(BaseModel):
-    """Session partial update: switch role and/or rename. At least one field required."""
+    """Session partial update: switch role / rename / set session model override.
+    At least one field required."""
 
     role_id: str | None = None
     title: str | None = Field(default=None, min_length=1, max_length=100)
+    model_name: str | None = None
 
 
 class ChatMessage(BaseModel):
@@ -186,7 +188,8 @@ def _seed_demo_identity(conn: sqlite3.Connection) -> None:
 
 def _get_thread(conn: sqlite3.Connection, thread_id: str) -> sqlite3.Row:
     row = conn.execute(
-        "SELECT thread_id, user_id, current_role_id FROM session_thread WHERE thread_id = ?",
+        "SELECT thread_id, user_id, current_role_id, model_name FROM session_thread "
+        "WHERE thread_id = ?",
         (thread_id,),
     ).fetchone()
     if row is None:
@@ -440,19 +443,49 @@ def create_app(
             "user_id": row["user_id"],
             "role_id": row["current_role_id"],
             "role_name": role_name,
+            "model_name": row["model_name"],
         }
 
     @app.patch("/api/session/{thread_id}")
     def patch_session(thread_id: str, body: SessionPatch) -> object:
-        """会话局部更新：切角色（US-1，不触碰历史）和/或重命名标题。"""
+        """会话局部更新：切角色（US-1，不触碰历史）/ 重命名 / 设置会话级模型覆盖。
+
+        model_name 语义（model_fields_set 区分"未提供"与"显式置空"）：
+        未提供 = 不改；null = 清除覆盖（回落 角色.model_name → 默认）；名字 = 会话覆盖。
+        覆盖名必须在有效后端列表里，否则 400（回退由模型解析器兜底，但配置错误仍要大声）。
+        """
         thread = _get_thread(conn, thread_id)
-        if not body.role_id and body.title is None:
+        touched = body.model_fields_set & {"role_id", "title", "model_name"}
+        if not touched:
             raise HTTPException(status_code=400, detail="没有任何要更新的字段。")
+
         if body.role_id:
             try:
                 roles.set_thread_role(thread_id, body.role_id, actor="operator")
             except RoleError as exc:
                 raise _role_error_to_http(exc) from exc  # 角色/线程不存在都是 404
+
+        if body.model_name is not None and body.model_name.strip() == "":
+            body.model_name = None  # 空串 = 清除覆盖
+
+        if "model_name" in body.model_fields_set:
+            name = body.model_name
+            if name is not None:
+                effective = model_settings.effective_settings(settings)
+                if name not in effective.model_backends:
+                    known = ", ".join(sorted(effective.model_backends))
+                    raise HTTPException(
+                        status_code=400, detail=f"未知后端 {name!r}；可用：{known}"
+                    )
+            conn.execute(
+                "UPDATE session_thread SET model_name = ?, "
+                "updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE thread_id = ?",
+                (body.model_name, thread_id),
+            )
+            conn.commit()
+            roles.audit(actor="operator", action="set_session_model", target=thread_id,
+                        detail={"model_name": body.model_name})
+
         if body.title is not None:
             title = body.title.strip()
             if not title:
@@ -467,13 +500,14 @@ def create_app(
         final_role_id = body.role_id or str(thread["current_role_id"])
         role = roles.get(final_role_id)
         row = conn.execute(
-            "SELECT title FROM session_thread WHERE thread_id = ?", (thread_id,)
+            "SELECT title, model_name FROM session_thread WHERE thread_id = ?", (thread_id,)
         ).fetchone()
         return {
             "thread_id": thread_id,
             "role_id": final_role_id,
             "role_name": role.role_name,
             "title": row["title"] if row else None,
+            "model_name": row["model_name"] if row else None,
         }
 
     @app.post("/api/chat")
@@ -489,6 +523,7 @@ def create_app(
         thread = _get_thread(conn, body.thread_id)
         role_id = str(thread["current_role_id"])
         user_id = str(thread["user_id"])
+        session_model = thread["model_name"]  # 会话级覆盖（可 None），每轮实时读库
         try:
             role = roles.get(role_id)
         except RoleNotFound as exc:
@@ -510,6 +545,7 @@ def create_app(
             graph_input: dict[str, object] = {
                 "messages": [HumanMessage(content=body.message)],
                 "current_role_id": role_id,
+                "model_name": session_model,  # 每轮实时注入：会话切模型下一轮即生效
             }
         else:
             graph_input = {
@@ -517,6 +553,7 @@ def create_app(
                     thread_id=body.thread_id,
                     user_id=user_id,
                     current_role_id=role_id,
+                    model_name=session_model,
                     enabled_domains=plugins.enabled_domains(),
                     tool_epoch=plugins.tool_epoch(),
                 ),

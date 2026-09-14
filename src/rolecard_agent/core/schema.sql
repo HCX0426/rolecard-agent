@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS session_thread (
     thread_id        TEXT PRIMARY KEY,
     user_id          TEXT NOT NULL REFERENCES app_user(user_id),
     current_role_id  TEXT NOT NULL,
+    -- 会话级模型覆盖（对话页模型下拉）：NULL = 无覆盖（按 角色.model_name → 默认解析）。
+    model_name       TEXT,
     -- Version stamp of the enabled tool set. Bumped whenever plugins are toggled.
     -- On resume, a checkpoint whose tool_epoch is older than the current one may
     -- reference tools that no longer exist; the executor must answer

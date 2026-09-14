@@ -36,6 +36,8 @@ class AgentState(TypedDict, total=False):
     thread_id: str
     user_id: str
     current_role_id: str
+    # 会话级模型覆盖（对话页模型下拉）：None = 无覆盖，按 角色.model_name → 默认 解析。
+    model_name: str | None
 
     enabled_domains: list[str]
     tool_epoch: int
@@ -47,6 +49,7 @@ def new_state(
     thread_id: str,
     user_id: str,
     current_role_id: str,
+    model_name: str | None = None,
     enabled_domains: list[str] | None = None,
     tool_epoch: int = 1,
 ) -> dict[str, Any]:
@@ -60,6 +63,7 @@ def new_state(
         "thread_id": thread_id,
         "user_id": user_id,
         "current_role_id": current_role_id,
+        "model_name": model_name,
         "enabled_domains": list(enabled_domains or []),
         "tool_epoch": tool_epoch,
         "retry_count": 0,

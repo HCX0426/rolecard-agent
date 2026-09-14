@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   streamChat,
@@ -34,9 +34,12 @@ export default function ChatPage({
   const [status, setStatus] = useState("");
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [modelLabel, setModelLabel] = useState("模型");
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [backends, setBackends] = useState<{ name: string; provider: string; model: string }[]>([]);
+  const [defaultBackend, setDefaultBackend] = useState("");
+  const [sessionModel, setSessionModel] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const sendingRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -48,10 +51,10 @@ export default function ChatPage({
   useEffect(() => {
     refreshSessions().catch((e) => setStatus(`加载会话失败：${e.message}`));
     api.get<RoleCard[]>("/api/roles").then(setRoles).catch(() => {});
-    api
-      .get<ModelSettings>("/api/settings/models")
-      .then((s) => setModelLabel(s.default || "默认(env)"))
-      .catch(() => {});
+    api.get<ModelSettings>("/api/settings/models").then((s) => {
+      setBackends(s.backends.map((b) => ({ name: b.name, provider: b.provider, model: b.model })));
+      setDefaultBackend(s.default || s.backends[0]?.name || "");
+    }).catch(() => {});
   }, [refreshSessions]);
 
   // 头部的角色选择跟随当前会话（切会话时显示该会话自己的角色）
@@ -69,8 +72,14 @@ export default function ChatPage({
     setSessionId(threadId);
     setConfirmDel(null);
     setLive(null);
+    setModelMenuOpen(false);
     try {
-      setMessages(await api.get<MessageRow[]>(`/api/session/${threadId}/messages`));
+      const [msgs, detail] = await Promise.all([
+        api.get<MessageRow[]>(`/api/session/${threadId}/messages`),
+        api.get<{ model_name: string | null }>(`/api/session/${threadId}`),
+      ]);
+      setMessages(msgs);
+      setSessionModel(detail.model_name);
       setStatus("");
     } catch (e) {
       setStatus(`加载历史失败：${(e as Error).message}`);
@@ -220,7 +229,29 @@ export default function ChatPage({
     }
   }
 
+  async function switchModel(name: string | null) {
+    if (!sessionId) return;
+    try {
+      await api.patch(`/api/session/${sessionId}`, { model_name: name });
+      setSessionModel(name);
+      setModelMenuOpen(false);
+      setStatus(
+        name ? `本会话已切换模型 → ${name}（下一轮生效）` : "已清除会话级模型覆盖（下一轮生效）",
+      );
+      await refreshSessions();
+    } catch (e) {
+      setStatus(`切换模型失败：${(e as Error).message}`);
+    }
+  }
+
   const current = sessions.find((s) => s.thread_id === sessionId);
+  const roleBackend = roles.find((r) => r.role_id === (current?.role_id || ""))?.model_name || null;
+  const effectiveBackend = sessionModel || roleBackend || defaultBackend;
+  const grouped = useMemo(() => {
+    const g: Record<string, typeof backends> = {};
+    for (const b of backends) (g[b.provider] ||= []).push(b);
+    return Object.entries(g).sort(([a], [z]) => a.localeCompare(z));
+  }, [backends]);
 
   async function renameSession() {
     const title = titleDraft.trim();
@@ -455,6 +486,56 @@ export default function ChatPage({
                 </option>
               ))}
             </select>
+            <div className="relative">
+              <button
+                onClick={() => setModelMenuOpen((o) => !o)}
+                disabled={!sessionId}
+                title="切换本会话使用的模型（按供应商分组）"
+                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300 disabled:opacity-50"
+              >
+                🤖 {effectiveBackend || "模型"} ▾
+              </button>
+              {modelMenuOpen && (
+                <div className="absolute bottom-full left-0 z-20 mb-2 max-h-72 w-72 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
+                  <button
+                    onClick={() => switchModel(null)}
+                    className="flex w-full items-center justify-between px-3 py-2 text-xs hover:bg-blue-50"
+                  >
+                    <span>默认后端（跟随设置）</span>
+                    {sessionModel === null && <span className="text-blue-600">✓</span>}
+                  </button>
+                  {grouped.map(([provider, list]) => (
+                    <div key={provider}>
+                      <p className="bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-400">
+                        {provider}
+                      </p>
+                      {list.map((b) => (
+                        <button
+                          key={b.name}
+                          onClick={() => switchModel(b.name)}
+                          className="flex w-full items-center justify-between px-3 py-1.5 text-xs hover:bg-blue-50"
+                        >
+                          <span className="font-mono">{b.name}</span>
+                          <span className="ml-2 truncate text-slate-400">{b.model}</span>
+                          {effectiveBackend === b.name && (
+                            <span className="ml-1 text-blue-600">✓</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                  <button
+                    onClick={() => {
+                      setModelMenuOpen(false);
+                      onOpenSettings?.();
+                    }}
+                    className="w-full border-t border-slate-100 px-3 py-2 text-[11px] text-slate-400 hover:text-blue-600"
+                  >
+                    管理后端与回退链 → 设置页
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
@@ -473,13 +554,6 @@ export default function ChatPage({
                 e.target.value = "";
               }}
             />
-            <button
-              onClick={onOpenSettings}
-              title="前往设置页管理模型后端"
-              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300"
-            >
-              🤖 {modelLabel}
-            </button>
             <span className="ml-auto text-[11px] text-slate-300">
               Enter 发送 · 停用插件即刻生效
             </span>

@@ -106,6 +106,27 @@ export class ApiError extends Error {
   }
 }
 
+/** FastAPI 的 detail 可能是字符串（业务错误）或数组（422 校验错误）——
+ *  统一转成可读文本，杜绝 "[object Object]" 这种不可诊断的报错。 */
+function readableDetail(raw: unknown, fallback: string): string {
+  if (typeof raw === "string" && raw.trim()) return raw;
+  if (Array.isArray(raw)) {
+    const lines = raw
+      .map((item) => {
+        const o = item as { msg?: string; loc?: unknown[] };
+        const loc = Array.isArray(o.loc) ? o.loc.join(".") : "";
+        return o.msg ? (loc ? `${loc}: ${o.msg}` : o.msg) : JSON.stringify(item);
+      })
+      .filter(Boolean);
+    if (lines.length) return lines.join("；");
+  }
+  if (raw && typeof raw === "object") {
+    const text = JSON.stringify(raw);
+    return text === "{}" ? fallback : text;
+  }
+  return fallback;
+}
+
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   const opt: RequestInit = { method, headers: {} };
   if (body !== undefined) {
@@ -117,12 +138,17 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
   }
   const res = await fetch(url, opt);
   if (!res.ok) {
-    let detail = `${res.status} ${res.statusText}`;
+    const fallback = `${res.status} ${res.statusText}`;
+    let raw: unknown = null;
     try {
-      detail = ((await res.json()) as { detail?: string }).detail || detail;
+      raw = await res.json();
     } catch {
       /* 非 JSON 错误体，保留状态码 */
     }
+    const detail =
+      raw && typeof raw === "object" && "detail" in raw
+        ? readableDetail((raw as { detail: unknown }).detail, fallback)
+        : fallback;
     throw new ApiError(res.status, detail);
   }
   if (res.status === 204) return undefined as T;

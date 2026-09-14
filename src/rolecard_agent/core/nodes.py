@@ -176,9 +176,10 @@ def call_model(
         return {"messages": [reply]}
 
     tools, domains = turn_context(state, ctx)
-    # 角色级路由（US-8）：角色声明了后端名 → 按名解析；未声明或未接线 → 默认模型。
-    # 解析失败由解析器自行降级——内核不在这里兜底可用性。
-    base = ctx.model_resolver(role.model_name) if ctx.model_resolver else ctx.model
+    # 模型解析优先级（US-8 + 会话级覆盖）：会话 model_name > 角色 model_name > 默认。
+    # 会话覆盖由对话页的模型下拉写入 state（chat 端点每轮实时读库）。
+    backend = state.get("model_name") or role.model_name
+    base = ctx.model_resolver(backend) if ctx.model_resolver else ctx.model
     bound = base.bind_tools(tools) if tools else base
 
     # A session that outlived a plugin toggle can carry historical tool_calls for tools that no
