@@ -10,6 +10,11 @@ Step 1 must run first: domains reference app_user(user_id).
 Every connection MUST enable `PRAGMA foreign_keys = ON` - SQLite ignores foreign keys by
 default, which would silently turn the ON DELETE CASCADE in domains/health/schema.sql into
 a no-op and leave orphaned index rows behind.
+
+No migrations in v1. Every statement is `CREATE TABLE IF NOT EXISTS`, so changing a table
+does NOT update an existing database - it has to be rebuilt (`rm data/sqlite/app.db` then
+re-run `scripts/init_db.py`). That is a deliberate v1 trade-off, not an oversight; production
+would bring in Alembic. Stated here because this is where someone would look for it.
 """
 
 from __future__ import annotations

@@ -14,6 +14,23 @@ CREATE TABLE IF NOT EXISTS role_card (
     model_name      TEXT,                           -- backend NAME from config.MODEL_BACKENDS
     tool_whitelist  TEXT,                           -- JSON array; NULL = all enabled tools, [] = none
     description     TEXT,
+
+    -- Role reproducibility is not one channel but four; system_prompt alone only covers the
+    -- first (rules). These two columns cover the other two that belong to the role:
+    --
+    --   exemplars        JSON [{"user": ..., "assistant": ...}] - a FEW high-quality samples
+    --                    of how this role answers. Behaviour is shaped far more effectively
+    --                    by examples than by writing longer rules.
+    --   knowledge_scopes JSON ["health_reports"] - which retrieval scopes this role may read.
+    --                    The role DECLARES scopes; it does not own a vector store. Owning one
+    --                    would give N roles x M collections, duplicated indexes and no single
+    --                    source of truth (docs/技术评审与决策.md A1).
+    --
+    -- Exemplars are trusted content: writable only by an operator, never generated from
+    -- conversation, otherwise a user could steer the persona through chat.
+    exemplars         TEXT,
+    knowledge_scopes  TEXT,
+
     is_builtin      INTEGER NOT NULL DEFAULT 0,     -- built-in roles cannot be deleted
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP

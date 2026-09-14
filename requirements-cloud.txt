@@ -1,0 +1,13 @@
+# 云端 / OpenAI 兼容后端的接入依赖
+# 安装：pip install -r requirements.txt -r requirements-cloud.txt
+#
+# 为什么单独一个文件而不是放进 requirements.txt：v1 的核心承诺之一是「本地离线可用」。
+# 把 provider 包塞进主依赖，等于让每个只用 Ollama 的人也下载一套云端 SDK。
+#
+# 装了它之后，切后端只需要改 .env 里的 MODEL_BACKENDS —— 代码一行不动
+# （见 config.py 的 ModelBackend.provider 与 core/graph.py 的 build_model）。
+#
+# 覆盖范围：DeepSeek / 通义 / Moonshot / 智谱 / OpenAI 等任何 OpenAI 兼容端点，
+# 都走 provider="openai" + 各自的 base_url，不需要为每家写适配。
+
+langchain-openai>=1.6.2

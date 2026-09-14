@@ -15,8 +15,13 @@ from rolecard_agent.roles.seed import BUILTIN_ROLES
 
 _COLUMNS = (
     "role_id, role_name, system_prompt, temperature, model_name, "
-    "tool_whitelist, description, is_builtin, created_at, updated_at"
+    "tool_whitelist, exemplars, knowledge_scopes, description, "
+    "is_builtin, created_at, updated_at"
 )
+
+# Columns stored as JSON text. For every one of them `None` and `[]` mean different things,
+# so the distinction has to survive the round trip.
+_JSON_COLUMNS = ("tool_whitelist", "exemplars", "knowledge_scopes")
 
 
 class RoleError(Exception):
@@ -41,15 +46,26 @@ class BuiltinRoleProtected(RoleError):
 
 def _row_to_model(row: sqlite3.Row) -> RoleCard:
     payload = dict(row)
-    raw = payload.get("tool_whitelist")
-    payload["tool_whitelist"] = None if raw is None else json.loads(raw)
+    for column in _JSON_COLUMNS:
+        raw = payload.get(column)
+        payload[column] = None if raw is None else json.loads(raw)
     payload["is_builtin"] = bool(payload.get("is_builtin"))
     return RoleCard(**payload)
 
 
-def _dump_whitelist(value: list[str] | None) -> str | None:
-    # None and [] mean different things (all vs none), so both round-trip distinctly.
-    return None if value is None else json.dumps(value, ensure_ascii=False)
+def _dump_json(value: object | None) -> str | None:
+    """Serialize a JSON column.
+
+    `None` passes through untouched: for tool_whitelist `None` means "all" while `[]` means
+    "none", and for knowledge_scopes `None` and `[]` both mean "no retrieval" but must still
+    come back as what was stored.
+    """
+    if value is None:
+        return None
+    if isinstance(value, list):
+        items = [item.model_dump() if hasattr(item, "model_dump") else item for item in value]
+        return json.dumps(items, ensure_ascii=False)
+    return json.dumps(value, ensure_ascii=False)
 
 
 class RoleCardService:
@@ -91,15 +107,17 @@ class RoleCardService:
         self._conn.execute(
             "INSERT INTO role_card "
             "(role_id, role_name, system_prompt, temperature, model_name, "
-            " tool_whitelist, description, is_builtin) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " tool_whitelist, exemplars, knowledge_scopes, description, is_builtin) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 data.role_id,
                 data.role_name,
                 data.system_prompt,
                 data.temperature,
                 data.model_name,
-                _dump_whitelist(data.tool_whitelist),
+                _dump_json(data.tool_whitelist),
+                _dump_json(data.exemplars),
+                _dump_json(data.knowledge_scopes),
                 data.description,
                 1 if is_builtin else 0,
             ),
@@ -109,8 +127,9 @@ class RoleCardService:
 
     def update(self, role_id: str, data: RoleCardUpdate) -> RoleCard:
         changes = data.changes()
-        if "tool_whitelist" in changes:
-            changes["tool_whitelist"] = _dump_whitelist(data.tool_whitelist)
+        for column in _JSON_COLUMNS:
+            if column in changes:
+                changes[column] = _dump_json(getattr(data, column))
         if not changes:
             return self.get(role_id)  # nothing to do; still validate existence
 
@@ -145,14 +164,16 @@ class RoleCardService:
             self._conn.execute(
                 "INSERT INTO role_card "
                 "(role_id, role_name, system_prompt, temperature, model_name, "
-                " tool_whitelist, description, is_builtin) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 1) "
+                " tool_whitelist, exemplars, knowledge_scopes, description, is_builtin) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1) "
                 "ON CONFLICT(role_id) DO UPDATE SET "
                 "  role_name = excluded.role_name, "
                 "  system_prompt = excluded.system_prompt, "
                 "  temperature = excluded.temperature, "
                 "  model_name = excluded.model_name, "
                 "  tool_whitelist = excluded.tool_whitelist, "
+                "  exemplars = excluded.exemplars, "
+                "  knowledge_scopes = excluded.knowledge_scopes, "
                 "  description = excluded.description, "
                 "  is_builtin = 1, "
                 "  updated_at = CURRENT_TIMESTAMP",
@@ -162,7 +183,9 @@ class RoleCardService:
                     role.system_prompt,
                     role.temperature,
                     role.model_name,
-                    _dump_whitelist(role.tool_whitelist),
+                    _dump_json(role.tool_whitelist),
+                    _dump_json(role.exemplars),
+                    _dump_json(role.knowledge_scopes),
                     role.description,
                 ),
             )

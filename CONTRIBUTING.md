@@ -139,7 +139,10 @@
 ```
 
 `path` 取值（**每一类都要有用例**）：
-`tool_selection` / `no_tool` / `multi_tool` / `authz_denied` / `guard_blocked` / `no_data`
+`tool_selection` / `no_tool` / `multi_tool` / `authz_denied` / `guard_blocked` / `no_data` / `role_fidelity`
+
+`role_fidelity` 用确定性断言描述"像不像那个角色"：回答**不该出现什么**（诊断口吻、省略未校验标记）
+以及**该用什么口径**。主观描述没有通过率，"不该出现什么"有。
 
 `assertions[].kind` 取值：
 `tool_called` / `tool_not_called` / `answer_contains_value` / `answer_contains_marker` / `blocked`
@@ -214,9 +217,13 @@ pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 ### 8.5 依赖的单一事实来源
 
-- **`pyproject.toml` 是唯一事实来源**（`dependencies` + 三组 extras：`api` / `rag` / `dev`）。
-- `requirements*.txt` 是给不用 uv 的人准备的**镜像**，按范围拆开，`requirements.txt` 只含 v1 内核。
-- `scripts/check_consistency.py` 会断言两者**包名集合一致**。改了一边不改另一边会被拦下——不要靠记忆同步。
+- **`pyproject.toml` 是唯一事实来源**（`dependencies` + 四组 extras：`api` / `rag` / `cloud` / `dev`）。
+- `requirements*.txt` 是给不用 uv 的人准备的**镜像**，按范围拆开：`requirements.txt` 只含 v1 内核，
+  `-api` 接入层 / `-rag` 向量检索 / `-cloud` 云端 provider / `-dev` 开发工具 / `-ocr` PaddleOCR（独立环境）。
+  `scripts/check_consistency.py` 会断言每一组 extras 与对应镜像文件的**包名集合一致**，改了一边不改另一边会被拦下。
+- **v1 不做数据库迁移**：`bootstrap()` 用的是 `CREATE TABLE IF NOT EXISTS`，所以给已有库加列**不会生效**。
+  改了 schema 就要重建库（删掉 `data/sqlite/app.db` 再跑 `init_db.py`）。生产要引入 Alembic 之类的迁移工具——
+  这是有意留到 v2 的取舍，不是遗漏。
 
 ### 8.6 不要做的事
 

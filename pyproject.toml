@@ -26,6 +26,9 @@ dependencies = [
 [project.optional-dependencies]
 api = ["fastapi>=0.141", "uvicorn[standard]>=0.52", "python-multipart>=0.0.20"]
 rag = ["chromadb>=1.5.9"]
+# Any OpenAI-compatible endpoint (DeepSeek / 通义 / Moonshot / 智谱 / OpenAI) goes through
+# this one provider package. Kept optional so a local-only install stays offline-capable.
+cloud = ["langchain-openai>=1.6.2"]
 # OCR is deliberately NOT an extra: paddle must run in a separate venv/process.
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6", "mypy>=1.11"]
 

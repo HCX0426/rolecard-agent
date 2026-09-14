@@ -172,6 +172,7 @@ def check_promised_artifacts() -> None:
         "requirements-dev.txt",
         "requirements-api.txt",
         "requirements-rag.txt",
+        "requirements-cloud.txt",
         "requirements-ocr.txt",
         "docs/需求与验收标准.md",
         "docs/实施计划.md",
@@ -264,6 +265,7 @@ def check_dependency_parity() -> None:
     for extra, filename in (
         ("api", "requirements-api.txt"),
         ("rag", "requirements-rag.txt"),
+        ("cloud", "requirements-cloud.txt"),
         ("dev", "requirements-dev.txt"),
     ):
         if extra not in extras:

@@ -1,27 +1,80 @@
 """DTOs: RoleCard, RoleCardCreate, RoleCardUpdate.
 
+Reproducing a role takes four channels, not one. Two belong to the role card, one to the
+kernel, one to the plugin layer:
+
+  人设规则    system_prompt        rules and boundaries
+  行为范例    exemplars            how the role answers - the strongest lever per token
+  能力权限    tool_whitelist       what it may do
+  事实知识    knowledge_scopes     which retrieval scopes it may read (declared, not owned)
+
 Fields of note:
 
-  is_builtin      built-in roles cannot be deleted (D6)
-  model_name      a backend NAME from config.MODEL_BACKENDS, not a raw model id - this is
-                  what makes per-role routing work (medical role -> local, chat -> cloud)
-  tool_whitelist  None = all tools of enabled plugins, [] = no tools at all
-  temperature     a SUGGESTION, not a guarantee. Some reasoning models ignore it entirely,
-                  and its valid range differs per provider. Never let downstream logic
-                  depend on it being honoured (C15).
+  is_builtin        built-in roles cannot be deleted (D6)
+  model_name        a backend NAME from config.MODEL_BACKENDS, not a raw model id - this is
+                    what makes per-role routing work (medical role -> local, chat -> cloud)
+  tool_whitelist    None = all tools of enabled plugins, [] = no tools at all
+  knowledge_scopes  None = no retrieval, [] = no retrieval, [..] = those collections only.
+                    A role never owns a vector store; N roles x M stores would duplicate
+                    indexes and leave no single source of truth.
+  temperature       a SUGGESTION, not a guarantee. Some reasoning models ignore it entirely,
+                    and its valid range differs per provider. Never let downstream logic
+                    depend on it being honoured (C15).
 
-tool_whitelist is stored as a JSON array for simplicity in v1. Trade-off to state out loud
-in the interview: it costs queryability ("which roles can use tool X" needs a full scan);
-production would split it into a role_tool join table.
+Both lists are stored as JSON for simplicity in v1. Trade-off to state out loud in the
+interview: it costs queryability ("which roles can use tool X" needs a full scan);
+production would split them into join tables.
 """
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AfterValidator, BaseModel, Field, field_validator
 
 ROLE_ID_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
+SCOPE_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
+
+# Exemplar budget. Chars are used rather than tokens because it needs no tokenizer
+# dependency, and for Chinese text a character budget is a conservative proxy. The cap is
+# not bureaucracy: examples compete with the conversation for context, and past a handful the
+# marginal example mostly dilutes the earlier ones.
+MAX_EXEMPLARS = 4
+MAX_EXEMPLAR_CHARS = 3000
+
+
+class RoleExemplar(BaseModel):
+    """One worked example of how this role answers."""
+
+    user: str = Field(min_length=1, max_length=1000)
+    assistant: str = Field(min_length=1, max_length=2000)
+
+
+def _check_exemplar_budget(value: list[RoleExemplar] | None) -> list[RoleExemplar] | None:
+    if value is None:
+        return None
+    if len(value) > MAX_EXEMPLARS:
+        raise ValueError(f"at most {MAX_EXEMPLARS} exemplars, got {len(value)}")
+    total = sum(len(item.user) + len(item.assistant) for item in value)
+    if total > MAX_EXEMPLAR_CHARS:
+        raise ValueError(f"exemplars total {total} chars, budget is {MAX_EXEMPLAR_CHARS}")
+    return value
+
+
+def _check_scopes(value: list[str] | None) -> list[str] | None:
+    """Scope names become collection identifiers - validate rather than trust."""
+    if value is None:
+        return None
+    for name in value:
+        if not re.match(SCOPE_PATTERN, name):
+            raise ValueError(f"invalid knowledge scope name: {name!r}")
+    return value
+
+
+ExemplarList = Annotated[list[RoleExemplar] | None, AfterValidator(_check_exemplar_budget)]
+ScopeList = Annotated[list[str] | None, AfterValidator(_check_scopes)]
 
 
 class RoleCard(BaseModel):
@@ -33,6 +86,8 @@ class RoleCard(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     model_name: str | None = None
     tool_whitelist: list[str] | None = None
+    exemplars: ExemplarList = None
+    knowledge_scopes: ScopeList = None
     description: str | None = None
     is_builtin: bool = False
     created_at: datetime | None = None
@@ -49,6 +104,14 @@ class RoleCard(BaseModel):
             return True
         return tool_name in self.tool_whitelist
 
+    def allows_scope(self, scope: str) -> bool:
+        """Retrieval authorisation. `None` means no retrieval at all - the opposite default
+        from `allows_tool`, and deliberately so: reading stored documents is a widen-the-
+        blast-radius action, so it is opt-in."""
+        if not self.knowledge_scopes:
+            return False
+        return scope in self.knowledge_scopes
+
 
 class RoleCardCreate(BaseModel):
     """Input for creating a role. `is_builtin` is intentionally absent - it is set by
@@ -60,6 +123,8 @@ class RoleCardCreate(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     model_name: str | None = None
     tool_whitelist: list[str] | None = None
+    exemplars: ExemplarList = None
+    knowledge_scopes: ScopeList = None
     description: str | None = None
 
     @field_validator("role_id")
@@ -79,6 +144,8 @@ class RoleCardUpdate(BaseModel):
     temperature: float | None = Field(default=None, ge=0.0, le=1.0)
     model_name: str | None = None
     tool_whitelist: list[str] | None = None
+    exemplars: ExemplarList = None
+    knowledge_scopes: ScopeList = None
     description: str | None = None
 
     def changes(self) -> dict[str, object]:

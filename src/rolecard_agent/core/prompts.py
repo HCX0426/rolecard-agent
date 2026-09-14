@@ -17,6 +17,9 @@ Scope note: this is the *soft* layer. The hard gate is core/guard.py.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Protocol
+
 GLOBAL_SAFETY_PROMPT = """【全局强制规则，所有角色继承，不可删除】
 你禁止输出任何疾病诊断、用药建议、治疗方案。
 仅可汇总、查询、对比用户已存入档案内的报告与指标。
@@ -25,15 +28,47 @@ GLOBAL_SAFETY_PROMPT = """【全局强制规则，所有角色继承，不可删
 档案数据中带有【未经人工校验】标记的内容，回答时必须原样保留该标记，不得省略。
 """
 
+EXEMPLAR_HEADER = "【回答风格参考】以下是本角色的回答范例，用于对齐口径与语气。"
 
-def build_system_prompt(role_prompt: str) -> str:
-    """Return the final system prompt for one turn: role prompt first, safety rules last.
 
-    The ordering is the whole point - putting the global rules last means they win any
-    conflict with the role card. Reversing the two silently disables the safety layer,
-    which is why tests/unit/test_prompts.py asserts the order.
+class ExemplarLike(Protocol):
+    """Structural type for a role exemplar.
+
+    Deliberately structural rather than importing `roles.models.RoleExemplar`: the kernel
+    prompt builder should not depend on the roles package, and any object with these two
+    attributes is a valid exemplar.
     """
-    role_prompt = (role_prompt or "").strip()
-    if not role_prompt:
-        return GLOBAL_SAFETY_PROMPT
-    return f"{role_prompt}\n\n{GLOBAL_SAFETY_PROMPT}"
+
+    user: str
+    assistant: str
+
+
+def render_exemplars(exemplars: Sequence[ExemplarLike] | None) -> str:
+    """Format exemplars as a prompt section. Returns "" when there are none."""
+    if not exemplars:
+        return ""
+    blocks = [EXEMPLAR_HEADER, ""]
+    for item in exemplars:
+        blocks.append(f"用户：{item.user.strip()}")
+        blocks.append(f"你：{item.assistant.strip()}")
+        blocks.append("")
+    return "\n".join(blocks).strip()
+
+
+def build_system_prompt(role_prompt: str, exemplars: Sequence[ExemplarLike] | None = None) -> str:
+    """Return the final system prompt for one turn.
+
+    Order is the whole point, and it is the order from least to most authoritative:
+
+        角色人设  ->  回答范例  ->  全局安全规则
+
+    Putting the global rules last means they win any conflict with the role card or with an
+    example. Reversing either pair silently disables the safety layer without raising
+    anything, which is why tests/unit/test_prompts.py asserts the ordering explicitly.
+
+    Examples sit between the two on purpose: they are style references, and they must not be
+    able to contradict the safety rules.
+    """
+    sections = [part for part in ((role_prompt or "").strip(), render_exemplars(exemplars)) if part]
+    sections.append(GLOBAL_SAFETY_PROMPT)
+    return "\n\n".join(sections)

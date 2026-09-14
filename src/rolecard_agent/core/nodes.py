@@ -100,8 +100,10 @@ def call_model(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
     tools = tools_for_turn(state, ctx)
     bound = ctx.model.bind_tools(tools) if tools else ctx.model
 
-    # System prompt is built here, never stored: see the module docstring.
-    prompt = [SystemMessage(content=build_system_prompt(role.system_prompt)), *state["messages"]]
+    # System prompt is built here, never stored: see the module docstring. Order inside is
+    # role -> exemplars -> global safety rules, so the rules remain last and authoritative.
+    system = build_system_prompt(role.system_prompt, role.exemplars)
+    prompt = [SystemMessage(content=system), *state["messages"]]
 
     with timer() as elapsed:
         response = bound.invoke(prompt)

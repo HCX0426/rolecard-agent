@@ -6,7 +6,13 @@ import sqlite3
 
 import pytest
 
-from rolecard_agent.roles.models import RoleCardCreate, RoleCardUpdate
+from rolecard_agent.roles.models import (
+    MAX_EXEMPLARS,
+    RoleCard,
+    RoleCardCreate,
+    RoleCardUpdate,
+    RoleExemplar,
+)
 from rolecard_agent.roles.service import (
     BuiltinRoleProtected,
     RoleAlreadyExists,
@@ -143,3 +149,83 @@ def test_switch_to_unknown_role_leaves_the_thread_alone(roles: RoleCardService) 
 def test_switch_on_unknown_thread_raises(roles: RoleCardService) -> None:
     with pytest.raises(RoleNotFound):
         roles.set_thread_role("ghost-thread", "medical_archivist")
+
+
+# --------------------------------------------------------- exemplars & knowledge scopes
+#
+# Reproducing a role is not just rules. Examples shape behaviour more per token than longer
+# instructions, and knowledge scopes are the retrieval authorisation - so both need to survive
+# the JSON round trip exactly.
+
+
+def test_builtin_role_ships_with_examples_and_a_scope(roles: RoleCardService) -> None:
+    role = roles.get("medical_archivist")
+    assert role.exemplars is not None
+    # At least one example must be a refusal: imitation is the strongest signal, so a role
+    # that only sees successful lookups learns to answer everything.
+    assert any("不能" in item.assistant for item in role.exemplars)
+    assert role.knowledge_scopes == ["health_reports"]
+
+
+def test_exemplars_round_trip(roles: RoleCardService) -> None:
+    given = [
+        RoleExemplar(user="问一", assistant="答一"),
+        RoleExemplar(user="问二", assistant="答二"),
+    ]
+    roles.create(_new("styled", exemplars=given))
+    loaded = roles.get("styled").exemplars
+    assert [(e.user, e.assistant) for e in loaded] == [("问一", "答一"), ("问二", "答二")]
+
+
+def test_exemplars_are_optional_and_stay_none(roles: RoleCardService) -> None:
+    roles.create(_new("plain"))
+    assert roles.get("plain").exemplars is None
+
+
+def test_too_many_exemplars_is_rejected() -> None:
+    too_many = [RoleExemplar(user=f"q{i}", assistant="a") for i in range(MAX_EXEMPLARS + 1)]
+    with pytest.raises(ValueError, match="at most"):
+        _new("greedy", exemplars=too_many)
+
+
+def test_exemplar_char_budget_is_enforced() -> None:
+    # Each item stays inside its own per-field limit; it is the TOTAL that must be rejected.
+    big = [RoleExemplar(user="问", assistant="答" * 2000) for _ in range(2)]
+    with pytest.raises(ValueError, match="budget"):
+        _new("wordy", exemplars=big)
+
+
+def test_exemplar_cannot_be_empty() -> None:
+    with pytest.raises(ValueError):
+        RoleExemplar(user="", assistant="答")
+
+
+def test_knowledge_scopes_round_trip(roles: RoleCardService) -> None:
+    roles.create(_new("reader", knowledge_scopes=["health_reports", "guidelines"]))
+    assert roles.get("reader").knowledge_scopes == ["health_reports", "guidelines"]
+
+
+def test_bad_scope_name_is_rejected() -> None:
+    with pytest.raises(ValueError, match="invalid knowledge scope"):
+        _new("badscope", knowledge_scopes=["Health Reports"])
+
+
+def test_allows_scope_is_opt_in() -> None:
+    """`None` means no retrieval here - the opposite default from allows_tool, because
+    reading stored documents widens the blast radius rather than narrowing capabilities."""
+    base = RoleCard(
+        role_id="reader", role_name="只读", system_prompt="x", knowledge_scopes=["health_reports"]
+    )
+    assert base.allows_scope("health_reports") is True
+    assert base.allows_scope("guidelines") is False
+
+    none_scoped = base.model_copy(update={"knowledge_scopes": None})
+    empty_scoped = base.model_copy(update={"knowledge_scopes": []})
+    assert none_scoped.allows_scope("health_reports") is False
+    assert empty_scoped.allows_scope("health_reports") is False
+
+
+def test_update_can_replace_exemplars(roles: RoleCardService) -> None:
+    roles.create(_new("styled", exemplars=[RoleExemplar(user="旧", assistant="旧答")]))
+    roles.update("styled", RoleCardUpdate(exemplars=[RoleExemplar(user="新", assistant="新答")]))
+    assert [e.user for e in roles.get("styled").exemplars] == ["新"]
