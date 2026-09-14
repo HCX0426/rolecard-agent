@@ -20,6 +20,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 fails: list[str] = []
 warns: list[str] = []
+passed = 0
 
 # Directories that must never be walked. `ROOT.rglob("*.py")` happily descends into a
 # virtualenv, which made the line-budget metric report 300k lines of site-packages instead
@@ -68,6 +69,9 @@ def strip_comments(text: str) -> str:
 
 
 def out(label: str, ok: bool, detail: str = "") -> None:
+    global passed
+    if ok:
+        passed += 1
     print(f"{'OK  ' if ok else 'FAIL'} {label}{(' :: ' + detail) if detail else ''}")
 
 
@@ -162,6 +166,7 @@ def check_promised_artifacts() -> None:
         "README.md",
         ".gitattributes",
         ".gitignore",
+        ".python-version",
         ".env.example",
         "requirements.txt",
         "requirements-dev.txt",
@@ -176,11 +181,16 @@ def check_promised_artifacts() -> None:
         "src/rolecard_agent/core/guard.py",
         "src/rolecard_agent/core/prompts.py",
         "src/rolecard_agent/core/tools/registry.py",
+        "src/rolecard_agent/roles/models.py",
+        "src/rolecard_agent/roles/seed.py",
         "src/rolecard_agent/roles/schema.sql",
+        "src/rolecard_agent/domains/registry.py",
         "src/rolecard_agent/domains/health/schema.sql",
         "tests/unit",
         "tests/integration",
         "tests/eval",
+        "tests/eval/cases",
+        "tests/eval/cases/health.json",
     ]
     absent = [p for p in promised if not (ROOT / p).exists()]
     detail = f"missing: {absent}" if absent else f"{len(promised)} present"
@@ -246,6 +256,25 @@ def check_dependency_parity() -> None:
     out("dependency parity", ok, detail)
     if not ok:
         fails.append(f"pyproject.toml / requirements.txt drift: {detail}")
+
+    # The extras map to their own requirement files. Without this the api / rag / dev
+    # mirrors can drift unnoticed - the earlier version of this check covered only the base
+    # set, which is precisely how a mirror silently becomes wrong.
+    extras = pyproject["project"].get("optional-dependencies", {})
+    for extra, filename in (
+        ("api", "requirements-api.txt"),
+        ("rag", "requirements-rag.txt"),
+        ("dev", "requirements-dev.txt"),
+    ):
+        if extra not in extras:
+            continue
+        extra_set = package_names(list(extras[extra]))
+        mirror_set = package_names((ROOT / filename).read_text(encoding="utf-8").splitlines())
+        diff = sorted(extra_set ^ mirror_set)
+        extra_ok = not diff
+        out(f"extra parity: {extra}", extra_ok, "in sync" if extra_ok else f"diff: {diff}")
+        if not extra_ok:
+            fails.append(f"extras[{extra}] vs {filename} drift: {diff}")
 
 
 def check_safety_prompt() -> None:
@@ -365,6 +394,60 @@ def check_doc_references() -> None:
         fails.append(f"numbered docs references found: {offenders}")
 
 
+def check_doc_links() -> None:
+    """Backticked repo paths in the docs must point at files that actually exist.
+
+    After the docs were consolidated (7 files -> 4, numbers replaced by semantic names),
+    nothing verified that the remaining cross-references still resolved. A dead link in a
+    README is the first thing a reviewer hits.
+    """
+    # Documented before they exist, on purpose.
+    not_yet = {"uv.lock", "requirements.lock", ".env", "data/sqlite/app.db"}
+    bare = {"pyproject.toml", "README.md", "CONTRIBUTING.md", "LICENSE"}
+    # Only repo-relative references are validated. Docs also use in-package shorthand such
+    # as `core/prompts.py`, which is not a path from the repo root - validating those
+    # produced nothing but noise.
+    prefixes = ("docs/", "src/", "scripts/", "tests/", "data/")
+    pattern = re.compile(r"`([A-Za-z0-9_][A-Za-z0-9_./\-]*\.(?:md|py|toml|txt|sql|json|cfg|ini))`")
+
+    broken: list[str] = []
+    for path in iter_files(".md"):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for lineno, line in enumerate(text.splitlines(), 1):
+            for ref in pattern.findall(line):
+                if "*" in ref or ref in not_yet:
+                    continue
+                if not (ref.startswith(prefixes) or ref in bare):
+                    continue
+                if not (ROOT / ref).exists():
+                    broken.append(f"{path.relative_to(ROOT)}:{lineno} -> {ref}")
+    detail = "; ".join(broken[:4]) if broken else "all resolve"
+    out("doc links", not broken, detail)
+    if broken:
+        fails.append(f"broken doc references: {broken}")
+
+
+def check_python_pin() -> None:
+    """.python-version must match the floor declared in pyproject.toml.
+
+    uv reads .python-version to pick an interpreter; if the two disagree, uv can happily
+    create an environment that `pip install -e .` then refuses.
+    """
+    pin_path = ROOT / ".python-version"
+    if not pin_path.exists():
+        out("python pin", False, ".python-version is missing (uv needs it)")
+        fails.append(".python-version is missing")
+        return
+    pinned = pin_path.read_text(encoding="utf-8").strip()
+    floor = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"][
+        "requires-python"
+    ]
+    ok = floor == f">={pinned}"
+    out("python pin", ok, f".python-version={pinned} requires-python={floor}")
+    if not ok:
+        fails.append(f".python-version ({pinned}) disagrees with requires-python ({floor})")
+
+
 def report_line_budget() -> None:
     def count(suffix: str) -> int:
         return sum(
@@ -392,13 +475,19 @@ def main() -> int:
     check_milestone_alignment()
     check_v1_v2_boundary()
     check_doc_references()
+    check_doc_links()
+    check_python_pin()
     report_line_budget()
 
     print("\n--- FAILS ---")
     for item in fails or ["none"]:
         print("  " + item)
 
-    print("\nRESULT:", "PASS" if not fails else f"{len(fails)} FAILING CHECK(S)")
+    # The count is reported here rather than quoted in the docs: a hard-coded number in
+    # prose goes stale the moment a check is added, which is the exact failure mode this
+    # script exists to prevent.
+    print(f"\nassertions: {passed} passed, {len(fails)} failed")
+    print("RESULT:", "PASS" if not fails else f"{len(fails)} FAILING CHECK(S)")
     return 0 if not fails else 1
 
 
