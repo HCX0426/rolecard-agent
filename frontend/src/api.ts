@@ -60,6 +60,35 @@ export interface ToolCatalog {
   domains: Record<string, ToolEntry[]>;
 }
 
+export interface IndexRow {
+  index_id: string;
+  index_name: string;
+  index_value: number | null;
+  value_text: string | null;
+  unit: string | null;
+  ref_range: string | null;
+  is_verified: number | boolean;
+  source: string;
+  raw_text: string | null;
+}
+
+export interface ReportRecord {
+  report_id: string;
+  report_type: string;
+  check_time: string;
+  institution: string | null;
+  note: string | null;
+  indices: IndexRow[];
+}
+
+export interface AuditRow {
+  ts: string;
+  actor: string;
+  action: string;
+  target: string | null;
+  detail_json: string | null;
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,

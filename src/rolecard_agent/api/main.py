@@ -60,7 +60,11 @@ from rolecard_agent.core.nodes import ChatLike, _text_of
 from rolecard_agent.core.observability import TraceEvent, Tracer, make_tracer
 from rolecard_agent.core.plugins import PluginError, PluginService, UnknownPlugin
 from rolecard_agent.core.state import new_state
-from rolecard_agent.domains.health.service import HealthQueryService
+from rolecard_agent.domains.health.service import (
+    HealthDataError,
+    HealthNotFound,
+    HealthQueryService,
+)
 from rolecard_agent.domains.registry import DOMAINS, build_registry
 from rolecard_agent.roles.models import RoleCardCreate, RoleCardUpdate
 from rolecard_agent.roles.service import (
@@ -137,6 +141,17 @@ class BackendSpec(BaseModel):
 class ModelSettingsBody(BaseModel):
     default: str
     backends: list[BackendSpec]
+
+
+class IndexPatch(BaseModel):
+    """Data-management correction for one indicator row. `exclude_unset` semantics:
+    a field explicitly set to null means "clear it" (e.g. switching value -> text)."""
+
+    index_value: float | None = None
+    value_text: str | None = None
+    unit: str | None = None
+    ref_range: str | None = None
+    is_verified: bool | None = None
 
 
 def _serialize_message(message: object) -> dict[str, object]:
@@ -563,6 +578,57 @@ def create_app(
             "file": safe_name,
             "status": existing["status"],
         }
+
+    @app.get("/api/records")
+    def list_records() -> list[object]:
+        """F2 数据管理视图：报告 + 完整指标行（归属演示用户）。"""
+        return health_query.list_records(DEFAULT_USER_ID)
+
+    @app.patch("/api/records/index/{index_id}")
+    def patch_record_index(index_id: str, body: IndexPatch) -> object:
+        """F2：修正误录的指标值。变更写审计（US-3 的数据侧延伸）。"""
+        changes = body.model_dump(exclude_unset=True)
+        try:
+            row = health_query.update_index(
+                user_id=DEFAULT_USER_ID, index_id=index_id, changes=changes
+            )
+        except HealthNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except HealthDataError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        roles.audit(
+            actor="operator",
+            action="update_index",
+            target=index_id,
+            detail={"fields": sorted(changes)},
+        )
+        return row
+
+    @app.delete("/api/records/index/{index_id}", status_code=204)
+    def remove_record_index(index_id: str) -> None:
+        try:
+            health_query.delete_index(user_id=DEFAULT_USER_ID, index_id=index_id)
+        except HealthNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        roles.audit(actor="operator", action="delete_index", target=index_id)
+
+    @app.delete("/api/records/report/{report_id}", status_code=204)
+    def remove_record_report(report_id: str) -> None:
+        try:
+            health_query.delete_report(user_id=DEFAULT_USER_ID, report_id=report_id)
+        except HealthNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        roles.audit(actor="operator", action="delete_report", target=report_id)
+
+    @app.get("/api/audit")
+    def list_audit(limit: int = 100) -> list[object]:
+        """F3：审计只读端点 —— 让一直在写入的 audit_log 可被运营方查看。"""
+        capped = max(1, min(limit, 500))
+        rows = conn.execute(
+            "SELECT ts, actor, action, target, detail_json FROM audit_log ORDER BY id DESC LIMIT ?",
+            (capped,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     @app.get("/api/settings/models")
     def get_model_settings() -> object:

@@ -143,6 +143,65 @@ def test_tools_catalog_groups_by_domain(client: TestClient) -> None:
     assert all(t["description"] for t in health.values())  # 每个工具都有一句人话说明
 
 
+# -- records 数据管理 + audit（F2 / F3） ---------------------------------------------
+
+
+def test_records_patch_and_audit_and_delete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F2/F3 端到端：修正指标 → 审计可见；删除报告 → 级联清指标。"""
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    app = create_app(sqlite_path=tmp_path / "rec.db")
+    with TestClient(app) as c:
+        # 用评测同款种子逻辑造一份可管理的数据
+        import sqlite3 as s3
+
+        from rolecard_agent.domains.health.service import HealthQueryService
+        from rolecard_agent.storage.db import bootstrap
+
+        conn = s3.connect(tmp_path / "rec.db")
+        conn.row_factory = s3.Row
+        bootstrap(conn, enabled_domains=("health",))
+        conn.executescript(
+            "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('local', 'd');"
+            "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "
+            "  VALUES ('local-user', 'local', 'u');"
+        )
+        conn.commit()
+        q = HealthQueryService(conn)
+        q.create_report(
+            user_id="local-user",
+            report_type="超声",
+            check_time="2026-03-12",
+            indices=[{"index_name": "结石直径", "index_value": 6.0, "unit": "mm"}],
+        )
+        conn.close()
+
+        records = c.get("/api/records").json()
+        index_id = records[0]["indices"][0]["index_id"]
+        report_id = records[0]["report_id"]
+
+        patch = c.patch(
+            f"/api/records/index/{index_id}",
+            json={"index_value": 5.5, "is_verified": True},
+        )
+        assert patch.status_code == 200
+        assert float(patch.json()["index_value"]) == 5.5
+        assert patch.json()["is_verified"] == 1
+
+        audit = c.get("/api/audit").json()
+        assert any(a["action"] == "update_index" and a["target"] == index_id for a in audit)
+
+        assert c.delete(f"/api/records/report/{report_id}").status_code == 204
+        assert c.get("/api/records").json() == []
+        audit = c.get("/api/audit").json()
+        assert any(a["action"] == "delete_report" and a["target"] == report_id for a in audit)
+
+
+def test_records_patch_unknown_index_404(client: TestClient) -> None:
+    assert client.patch("/api/records/index/nope", json={"index_value": 1.0}).status_code == 404
+
+
 # -- console ------------------------------------------------------------------------
 
 

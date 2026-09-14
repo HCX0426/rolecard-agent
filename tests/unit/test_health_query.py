@@ -20,6 +20,7 @@ import pytest
 
 from rolecard_agent.domains.health.service import (
     HealthInvalidReport,
+    HealthNotFound,
     HealthQueryService,
 )
 from rolecard_agent.domains.health.tools import make_domain_tools
@@ -214,6 +215,86 @@ def test_compare_non_numeric_pairs_skip_delta(service: HealthQueryService, tools
     out = _tool(tools, "compare_health_index").invoke({"index_name": "幽门螺杆菌"})
     assert "阳性" in out and "阴性" in out
     assert "上升" not in out and "下降" not in out  # 文本值不做伪算术
+
+
+# -- F2：数据管理（修正 / 删除） -------------------------------------------------------
+
+
+def _first_index_id(service: HealthQueryService, user: str) -> str:
+    report = service.list_records(user)[0]
+    return str(report["indices"][0]["index_id"])
+
+
+def test_update_index_applies_corrections(service: HealthQueryService) -> None:
+    _seed_two_years(service)
+    index_id = _first_index_id(service, U1)
+    row = service.update_index(
+        user_id=U1,
+        index_id=index_id,
+        changes={"index_value": 4.8, "is_verified": True, "raw_text": "人工复核 4.8mm"},
+    )
+    assert float(row["index_value"]) == 4.8 and row["is_verified"] == 1
+
+
+def test_update_index_switching_to_text_value(service: HealthQueryService) -> None:
+    """显式把数值清空、换成文本 —— 终态校验应放行这种合法切换。"""
+    _seed_two_years(service)
+    index_id = _first_index_id(service, U1)
+    row = service.update_index(
+        user_id=U1,
+        index_id=index_id,
+        changes={"index_value": None, "value_text": "约 6 mm，伴声影"},
+    )
+    assert row["index_value"] is None and "6 mm" in str(row["value_text"])
+
+
+def test_update_index_rejects_both_empty(service: HealthQueryService) -> None:
+    _seed_two_years(service)
+    index_id = _first_index_id(service, U1)
+    with pytest.raises(HealthInvalidReport):
+        service.update_index(
+            user_id=U1,
+            index_id=index_id,
+            changes={"index_value": None, "value_text": None},
+        )
+
+
+def test_update_index_rejects_unknown_field(service: HealthQueryService) -> None:
+    _seed_two_years(service)
+    index_id = _first_index_id(service, U1)
+    with pytest.raises(HealthInvalidReport):
+        service.update_index(user_id=U1, index_id=index_id, changes={"report_id": "x"})
+
+
+def test_update_wrong_user_is_not_found(service: HealthQueryService) -> None:
+    """归属校验：错误用户得到 NotFound（不泄露'行存在但属于别人'）。"""
+    _seed_two_years(service, user=U1)
+    index_id = _first_index_id(service, U1)
+    with pytest.raises(HealthNotFound):
+        service.update_index(user_id=U2, index_id=index_id, changes={"index_value": 1.0})
+
+
+def test_delete_report_cascades_indices(service: HealthQueryService) -> None:
+    _seed_two_years(service)
+    report_id = service.list_records(U1)[0]["report_id"]
+    service.delete_report(user_id=U1, report_id=report_id)
+    remaining = service.list_records(U1)
+    assert len(remaining) == 1  # 另一份报告还在
+    assert service.search_indices(U1, "结石直径")  # 2026 那份的指标仍可查
+
+
+def test_delete_index_keeps_report(service: HealthQueryService) -> None:
+    _seed_two_years(service)
+    index_id = _first_index_id(service, U1)
+    service.delete_index(user_id=U1, index_id=index_id)
+    assert all(i["index_id"] != index_id for r in service.list_records(U1) for i in r["indices"])
+
+
+def test_delete_wrong_user_not_found(service: HealthQueryService) -> None:
+    _seed_two_years(service, user=U1)
+    report_id = service.list_records(U1)[0]["report_id"]
+    with pytest.raises(HealthNotFound):
+        service.delete_report(user_id=U2, report_id=report_id)
 
 
 # -- tools: list_reports ---------------------------------------------------------------

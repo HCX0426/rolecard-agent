@@ -45,6 +45,19 @@ class HealthInvalidReport(HealthDataError):
     """Raised when a report write would produce a row that cannot be queried meaningfully."""
 
 
+class HealthNotFound(HealthDataError):
+    """Raised when the row does not exist OR belongs to another user — one error for both,
+    so a wrong id cannot be used to probe other users' data."""
+
+
+# Fields the data-management UI may edit on an indicator row. Everything else (report_id,
+# provenance timestamps) is off-limits by omission rather than by runtime checks.
+_EDITABLE_INDEX_FIELDS = frozenset(
+    {"index_value", "value_text", "unit", "ref_range", "is_verified", "source", "raw_text"}
+)
+_SOURCE_VALUES = frozenset({"manual", "parsed", "ocr"})
+
+
 class HealthQueryService:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
@@ -191,3 +204,100 @@ class HealthQueryService:
             (user_id,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # -- data management (F2：修正误录 / 删除报告) ----------------------------
+
+    def list_records(self, user_id: str) -> list[dict[str, object]]:
+        """Reports with their full indicator rows nested — the data-management view."""
+        reports = self._conn.execute(
+            "SELECT report_id, report_type, check_time, institution, note "
+            "FROM medical_report WHERE user_id = ? ORDER BY check_time",
+            (user_id,),
+        ).fetchall()
+        out: list[dict[str, object]] = []
+        for report in reports:
+            indices = self._conn.execute(
+                "SELECT index_id, index_name, index_value, value_text, unit, ref_range, "
+                "is_verified, source, raw_text FROM medical_index WHERE report_id = ? "
+                "ORDER BY index_name",
+                (report["report_id"],),
+            ).fetchall()
+            out.append({**dict(report), "indices": [dict(i) for i in indices]})
+        return out
+
+    def update_index(
+        self, *, user_id: str, index_id: str, changes: dict[str, object]
+    ) -> dict[str, object]:
+        """Apply an operator's corrections to one indicator row, then return the new state.
+
+        `changes` keys must be in _EDITABLE_INDEX_FIELDS; `index_value` explicitly set to None
+        is legal (switching to a text value) but the FINAL state must keep value/text from
+        both being empty. Ownership is checked in the JOIN — a wrong user gets NotFound, not
+        a 403 that confirms the row exists.
+        """
+        row = self._conn.execute(
+            "SELECT mi.index_id, mi.index_name, mi.index_value, mi.value_text, mi.unit, "
+            "mi.ref_range, mi.is_verified, mi.source, mi.raw_text "
+            "FROM medical_index mi JOIN medical_report mr ON mi.report_id = mr.report_id "
+            "WHERE mi.index_id = ? AND mr.user_id = ?",
+            (index_id, user_id),
+        ).fetchone()
+        if row is None:
+            raise HealthNotFound(f"indicator not found: {index_id}")
+
+        data = dict(row)
+        data.pop("index_id")
+        unknown = set(changes) - _EDITABLE_INDEX_FIELDS
+        if unknown:
+            raise HealthInvalidReport(f"不可编辑的字段：{sorted(unknown)}")
+        for key, value in changes.items():
+            if key == "index_value" and value is not None:
+                try:
+                    value = float(value)  # type: ignore[arg-type]
+                except (TypeError, ValueError) as exc:
+                    raise HealthInvalidReport(f"index_value 必须是数字，得到 {value!r}") from exc
+            if key == "is_verified":
+                value = 1 if value else 0
+            if key == "source" and value not in _SOURCE_VALUES:
+                raise HealthInvalidReport(f"source 只能是 {sorted(_SOURCE_VALUES)}")
+            data[key] = value
+        if data["index_value"] is None and not str(data.get("value_text") or "").strip():
+            raise HealthInvalidReport("数值与文本不能同时为空")
+
+        assignments = ", ".join(f"{k} = ?" for k in data)
+        self._conn.execute(
+            f"UPDATE medical_index SET {assignments} WHERE index_id = ?",
+            [*data.values(), index_id],
+        )
+        self._conn.commit()
+        updated = self._conn.execute(
+            "SELECT index_id, index_name, index_value, value_text, unit, ref_range, "
+            "is_verified, source, raw_text FROM medical_index WHERE index_id = ?",
+            (index_id,),
+        ).fetchone()
+        return dict(updated) if updated else {}
+
+    def delete_index(self, *, user_id: str, index_id: str) -> None:
+        """Remove one indicator row. Ownership via subquery; NotFound for wrong user too."""
+        cur = self._conn.execute(
+            "DELETE FROM medical_index WHERE index_id = ? AND report_id IN "
+            "(SELECT report_id FROM medical_report WHERE user_id = ?)",
+            (index_id, user_id),
+        )
+        if cur.rowcount == 0:
+            raise HealthNotFound(f"indicator not found: {index_id}")
+        self._conn.commit()
+
+    def delete_report(self, *, user_id: str, report_id: str) -> None:
+        """Remove a report; its indicator rows go with it (ON DELETE CASCADE, FK pragma on).
+
+        The ingestion_task ledger is deliberately NOT touched: the ledger records that a
+        process happened, the report is the fact it produced.
+        """
+        cur = self._conn.execute(
+            "DELETE FROM medical_report WHERE report_id = ? AND user_id = ?",
+            (report_id, user_id),
+        )
+        if cur.rowcount == 0:
+            raise HealthNotFound(f"report not found: {report_id}")
+        self._conn.commit()

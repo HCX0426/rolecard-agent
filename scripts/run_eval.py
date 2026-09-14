@@ -28,6 +28,10 @@ import re
 import sys
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -77,19 +81,42 @@ def _seed_demo_data(conn: object) -> None:  # 与 seed_demo_data.py 同源（脚
     query = HealthQueryService(conn)  # type: ignore[arg-type]
     if not query.list_reports("local-user"):
         query.create_report(
-            user_id="local-user", report_type="超声", check_time="2025-05-01",
-            institution="市第一医院", note="年度体检",
-            indices=[{"index_name": "结石直径", "index_value": 5.0, "unit": "mm",
-                      "ref_range": "0-5", "is_verified": True}],
+            user_id="local-user",
+            report_type="超声",
+            check_time="2025-05-01",
+            institution="市第一医院",
+            note="年度体检",
+            indices=[
+                {
+                    "index_name": "结石直径",
+                    "index_value": 5.0,
+                    "unit": "mm",
+                    "ref_range": "0-5",
+                    "is_verified": True,
+                }
+            ],
         )
         query.create_report(
-            user_id="local-user", report_type="超声", check_time="2026-03-12",
-            institution="市第一医院", note="复查",
+            user_id="local-user",
+            report_type="超声",
+            check_time="2026-03-12",
+            institution="市第一医院",
+            note="复查",
             indices=[
-                {"index_name": "结石直径", "index_value": 6.0, "unit": "mm",
-                 "ref_range": "0-5", "is_verified": False},
-                {"index_name": "尿酸", "index_value": 488.0, "unit": "µmol/L",
-                 "ref_range": "208-428", "is_verified": False},
+                {
+                    "index_name": "结石直径",
+                    "index_value": 6.0,
+                    "unit": "mm",
+                    "ref_range": "0-5",
+                    "is_verified": False,
+                },
+                {
+                    "index_name": "尿酸",
+                    "index_value": 488.0,
+                    "unit": "µmol/L",
+                    "ref_range": "208-428",
+                    "is_verified": False,
+                },
             ],
         )
 
@@ -152,22 +179,32 @@ def _run_case(
         wanted = d in (case.get("enabled_domains") or [])
         res = client.post(f"/api/plugins/{d}/toggle", json={"enabled": wanted})
         if res.status_code != 200:
-            return {"id": case["id"], "path": case["path"], "passed": False,
-                    "failures": [f"插件 {d} 状态对齐失败：HTTP {res.status_code}"]}
+            return {
+                "id": case["id"],
+                "path": case["path"],
+                "passed": False,
+                "failures": [f"插件 {d} 状态对齐失败：HTTP {res.status_code}"],
+            }
 
     session = client.post("/api/session", json={"role_id": case.get("role_id")}).json()
     thread_id = str(session["thread_id"])
-    chat = client.post(
-        "/api/chat", json={"thread_id": thread_id, "message": case["input"]}
-    )
+    chat = client.post("/api/chat", json={"thread_id": thread_id, "message": case["input"]})
     if chat.status_code != 200:
-        return {"id": case["id"], "path": case["path"], "passed": False,
-                "failures": [f"对话请求失败：HTTP {chat.status_code}"]}
+        return {
+            "id": case["id"],
+            "path": case["path"],
+            "passed": False,
+            "failures": [f"对话请求失败：HTTP {chat.status_code}"],
+        }
 
     for ev in _parse_sse(chat.text):
         if ev.get("type") == "error":
-            return {"id": case["id"], "path": case["path"], "passed": False,
-                    "failures": [f"对话出错：{ev.get('detail')}"]}
+            return {
+                "id": case["id"],
+                "path": case["path"],
+                "passed": False,
+                "failures": [f"对话出错：{ev.get('detail')}"],
+            }
 
     messages = client.get(f"/api/session/{thread_id}/messages").json()  # type: ignore[attr-defined]
     invoked = [
@@ -248,8 +285,11 @@ def main() -> int:
     args.report.parent.mkdir(parents=True, exist_ok=True)
     # newline 强制 LF：报告本身不入库（.gitignore），但离线打开不该带 CRLF
     args.report.write_text(
-        json.dumps({"results": results, "passed": total_pass, "total": len(results)},
-                   ensure_ascii=False, indent=2),
+        json.dumps(
+            {"results": results, "passed": total_pass, "total": len(results)},
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
         newline="\n",
     )
