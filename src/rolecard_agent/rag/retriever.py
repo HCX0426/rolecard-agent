@@ -155,22 +155,38 @@ class SiliconFlowEmbedder(Embedder):
         return [item["embedding"] for item in payload["data"]]
 
 
+def _find_embedding_key(settings: Settings) -> str | None:
+    """找嵌入器 key：先查环境变量，再查 DB 合并后的后端配置（设置页存的 key）。
+
+    用户在设置页填的 key 存 DB（effective_settings 已合并），但嵌入器此前只读
+    环境变量 —— 两个 key 源不打通，导致上传 500（嵌入维度不匹配）。
+    """
+    key = os.environ.get("SILICONFLOW_API_KEY")
+    if key:
+        return key
+    for b in settings.model_backends.values():
+        if (b.provider or "").lower() == "openai" and b.api_key:
+            return b.api_key
+    return None
+
+
 def make_embedder(settings: Settings) -> Embedder:
     """按 `Settings.embedding_backend` 构建嵌入器。
 
-    `auto`：有 SILICONFLOW_API_KEY → siliconflow（bge-m3），否则 hash（离线兜底）。
-    显式指定 siliconflow 但没有 key → 启动即报错（配置错误要大声，不要静默降级成
+    `auto`：有 key → siliconflow（bge-m3），否则 hash（离线兜底）。
+    key 来源：`SILICONFLOW_API_KEY` env → DB 后端配置（设置页存的）。
+    显式指定 siliconflow 但没有任何 key → 启动即报错（配置错误要大声，不要静默降级成
     质量很差的检索还让人以为一切正常）。
     """
     backend = settings.embedding_backend
     if backend == "auto":
-        backend = "siliconflow" if os.environ.get("SILICONFLOW_API_KEY") else "hash"
+        backend = "siliconflow" if _find_embedding_key(settings) else "hash"
     if backend == "hash":
         return HashEmbedder()
     if backend == "chroma_default":
         return ChromaDefaultEmbedder()
     if backend == "siliconflow":
-        key = os.environ.get("SILICONFLOW_API_KEY")
+        key = _find_embedding_key(settings)
         if not key:
             raise RuntimeError("embedding_backend=siliconflow 需要 SILICONFLOW_API_KEY 环境变量。")
         return SiliconFlowEmbedder(
