@@ -1,7 +1,7 @@
-import { Suspense, lazy, useState } from "react";
+import { Component, Suspense, lazy, useEffect, useState, type ReactNode } from "react";
 import { useTheme } from "./components/useTheme";
 
-// 路由级代码分割：六个页面各自成 chunk，首屏只加载当前页。
+// ---- 路由级代码分割：六页各自成 chunk，hover 导航时预加载 -------------------------------
 const ChatPage = lazy(() => import("./pages/ChatPage"));
 const DataPage = lazy(() => import("./pages/DataPage"));
 const KnowledgePage = lazy(() => import("./pages/KnowledgePage"));
@@ -9,14 +9,18 @@ const PluginsPage = lazy(() => import("./pages/PluginsPage"));
 const RolesPage = lazy(() => import("./pages/RolesPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 
-// 页签注册表：以后新增模块在这里加一行即可，不改布局代码。
-//
-// 6 个顶层页签刻意把三件最容易混淆的事分开（见 docs/UI设计与信息架构（修订）.md）：
-//   数据   = 领域数据（随域归属）
-//   知识库 = RAG 检索（内核能力，不是插件附属）
-//   插件   = 能力开关（只做启停）
-// 导航图标用内联 SVG 而非 emoji：emoji 依赖系统彩色字体，Linux/无头浏览器里常渲染成方框
-// （截图直接暴露），SVG 在任何环境都一致。
+// hover 预加载：用户在导航栏悬停时提前下载目标页 chunk，消除切换延迟
+const PRELOAD: Partial<Record<string, () => Promise<unknown>>> = {
+  data: () => import("./pages/DataPage"),
+  knowledge: () => import("./pages/KnowledgePage"),
+  roles: () => import("./pages/RolesPage"),
+  plugins: () => import("./pages/PluginsPage"),
+  settings: () => import("./pages/SettingsPage"),
+};
+
+// ---- 页签注册表 -----------------------------------------------------------------------
+// 6 个页签刻意把三件最易混的事分开（docs/UI设计与信息架构（修订）.md）：
+//   数据 = 领域数据 · 知识库 = RAG 检索 · 插件 = 能力开关
 const ICON = {
   width: 16,
   height: 16,
@@ -88,19 +92,64 @@ const TABS = [
 
 type TabKey = (typeof TABS)[number]["key"];
 
+// ---- Hash 路由：URL 即状态，支持深链 + 浏览器前进/后退 ---------------------------------
+function tabFromHash(): TabKey {
+  const h = window.location.hash.replace(/^#\/?/, "");
+  return TABS.some((t) => t.key === h) ? (h as TabKey) : "chat";
+}
+
+// ---- 错误边界：单页崩溃不影响其他页签 ---------------------------------------------------
+class PageBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex h-full items-center justify-center p-8">
+          <div className="max-w-md rounded-xl border border-red-200 bg-red-50 p-6 text-center dark:border-red-800 dark:bg-red-900/30">
+            <h2 className="text-sm font-medium text-red-800 dark:text-red-300">页面出了问题</h2>
+            <p className="mt-2 text-xs text-red-600 dark:text-red-400">{this.state.error.message}</p>
+            <button
+              onClick={() => this.setState({ error: null })}
+              className="mt-4 rounded-lg bg-red-500 px-4 py-2 text-xs text-white hover:bg-red-600"
+            >
+              重试
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ---- App ------------------------------------------------------------------------------
 export default function App() {
-  const [tab, setTab] = useState<TabKey>("chat");
-  const [navOpen, setNavOpen] = useState(false); // 移动端导航抽屉
+  const [tab, setTabState] = useState<TabKey>(tabFromHash);
+  const [navOpen, setNavOpen] = useState(false);
   const { theme, toggle } = useTheme();
 
+  // tab → URL hash（支持深链 /#/data 等）
+  useEffect(() => {
+    window.location.hash = `/${tab}`;
+  }, [tab]);
+
+  // 浏览器前进/后退 → tab 状态同步
+  useEffect(() => {
+    const handler = () => setTabState(tabFromHash());
+    window.addEventListener("hashchange", handler);
+    return () => window.removeEventListener("hashchange", handler);
+  }, []);
+
   function selectTab(key: TabKey) {
-    setTab(key);
-    setNavOpen(false); // 移动端选中后收起抽屉
+    setTabState(key);
+    setNavOpen(false);
   }
 
   return (
     <div className="relative flex h-full">
-      {/* 移动端：导航抽屉的遮罩 */}
       {navOpen && (
         <button
           aria-label="关闭菜单"
@@ -109,7 +158,7 @@ export default function App() {
         />
       )}
 
-      {/* 移动端顶栏：菜单按钮 + 标题 */}
+      {/* 移动端顶栏 */}
       <div className="absolute inset-x-0 top-0 z-20 flex items-center gap-2 border-b border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800 md:hidden">
         <button
           aria-label="打开菜单"
@@ -123,7 +172,7 @@ export default function App() {
         <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">rolecard-agent</span>
       </div>
 
-      {/* 左侧导航：桌面常驻，移动端 off-canvas 抽屉（顶栏给移动端菜单让位） */}
+      {/* 左侧导航 */}
       <nav
         className={`flex w-52 shrink-0 flex-col border-r border-slate-200 bg-white transition-transform dark:border-slate-700 dark:bg-slate-800 max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:pt-[41px] ${
           navOpen ? "max-md:translate-x-0" : "max-md:-translate-x-full"
@@ -138,6 +187,7 @@ export default function App() {
             <button
               key={t.key}
               onClick={() => selectTab(t.key)}
+              onMouseEnter={() => PRELOAD[t.key]?.()}
               className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
                 tab === t.key
                   ? "bg-blue-50 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
@@ -163,16 +213,18 @@ export default function App() {
         </div>
       </nav>
 
-      {/* 主内容区（移动端给顶栏让位） */}
+      {/* 主内容区 */}
       <main className="min-h-0 min-w-0 flex-1 pt-[41px] md:pt-0">
-        <Suspense fallback={<div className="p-6 text-sm text-slate-400 dark:text-slate-500">加载中…</div>}>
-          {tab === "chat" && <ChatPage onOpenSettings={() => selectTab("settings")} />}
-          {tab === "data" && <DataPage />}
-          {tab === "knowledge" && <KnowledgePage onOpenChat={() => selectTab("chat")} />}
-          {tab === "roles" && <RolesPage />}
-          {tab === "plugins" && <PluginsPage />}
-          {tab === "settings" && <SettingsPage onOpenChat={() => selectTab("chat")} />}
-        </Suspense>
+        <PageBoundary key={tab}>
+          <Suspense fallback={<div className="p-6 text-sm text-slate-400 dark:text-slate-500">加载中…</div>}>
+            {tab === "chat" && <ChatPage onOpenSettings={() => selectTab("settings")} />}
+            {tab === "data" && <DataPage />}
+            {tab === "knowledge" && <KnowledgePage onOpenChat={() => selectTab("chat")} />}
+            {tab === "roles" && <RolesPage />}
+            {tab === "plugins" && <PluginsPage />}
+            {tab === "settings" && <SettingsPage onOpenChat={() => selectTab("chat")} />}
+          </Suspense>
+        </PageBoundary>
       </main>
     </div>
   );
