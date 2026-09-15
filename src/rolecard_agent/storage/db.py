@@ -43,12 +43,12 @@ def connect(path: str | Path) -> sqlite3.Connection:
         target.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(target), check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    # busy_timeout 必须是**第一个** PRAGMA：切换 journal_mode 本身要拿排他锁，而并发首次
+    # 建连接时如果超时还没生效，就会直接抛 "database is locked"（实测踩到过 —— 把这条
+    # 放在 WAL 之后等于没设）。
+    conn.execute("PRAGMA busy_timeout = 5000")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
-    # 并发写时不要立刻抛 "database is locked"：先自旋等锁（毫秒级等待通常就够）。
-    # 这不是并发方案本身 —— 单个连接对象被多个线程共享仍不安全；真正的解法是每请求连接
-    # 或连接池（v2.4 公网部署的前置项，见 docs/代码审查报告.md B3）。
-    conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
 

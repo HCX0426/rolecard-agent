@@ -132,6 +132,10 @@ class HealthQueryService:
                 index_rows,
             )
         except sqlite3.IntegrityError as exc:
+            # 必须回滚：DML 已经开了事务，直接抛出去会留下一个悬挂事务 —— 在按线程分发的
+            # 连接模型下（storage/db.py 的 ThreadLocalConnection），它会把**其它线程**的
+            # 写操作堵到超时（database is locked）。事务由谁开，就由谁关。
+            self._conn.rollback()
             raise HealthInvalidReport(f"report rejected by database: {exc}") from exc
         self._conn.commit()
         return report_id
@@ -285,6 +289,8 @@ class HealthQueryService:
             (index_id, user_id),
         )
         if cur.rowcount == 0:
+            # 同上：未命中也要结束事务，否则悬挂的写事务会堵住别的线程。
+            self._conn.rollback()
             raise HealthNotFound(f"indicator not found: {index_id}")
         self._conn.commit()
 
@@ -299,5 +305,7 @@ class HealthQueryService:
             (report_id, user_id),
         )
         if cur.rowcount == 0:
+            # 同上：未命中也要结束事务，否则悬挂的写事务会堵住别的线程。
+            self._conn.rollback()
             raise HealthNotFound(f"report not found: {report_id}")
         self._conn.commit()
