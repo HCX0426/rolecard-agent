@@ -396,13 +396,32 @@ function ModelsPanel() {
 function AuditPanel() {
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [status, setStatus] = useState("");
+  const [filter, setFilter] = useState("");
 
   useEffect(() => {
     api.get<AuditRow[]>("/api/audit?limit=200").then(setRows).catch((e) => setStatus(`加载失败：${e.message}`));
   }, []);
 
+  // 按动作名 / 对象 / 详情模糊过滤
+  const filtered = filter.trim()
+    ? rows.filter((r) =>
+        [r.action, r.target, r.detail_json].some((v) =>
+          (v || "").toLowerCase().includes(filter.trim().toLowerCase()),
+        ),
+      )
+    : rows;
+
   return (
     <div className="mt-6">
+      <div className="mb-3 flex items-center gap-2">
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="筛选：动作名 / 对象 / 详情…"
+          className="w-64 rounded-lg border border-slate-200 px-3 py-1.5 text-xs outline-none focus:border-blue-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+        />
+        <span className="text-[11px] text-slate-400">{filtered.length} / {rows.length} 条</span>
+      </div>
       {status && <p className="rounded-lg bg-red-50 dark:bg-red-900/30 px-3 py-2 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{status}</p>}
       <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
         <table className="w-full text-left text-xs">
@@ -416,14 +435,14 @@ function AuditPanel() {
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && (
+            {filtered.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-4 py-6 text-center text-slate-400 dark:text-slate-500">
                   暂无审计记录
                 </td>
               </tr>
             )}
-            {rows.map((a, i) => (
+            {filtered.map((a, i) => (
               <tr key={i} className="border-b border-slate-50 last:border-0">
                 <td className="whitespace-nowrap px-4 py-2 font-mono text-slate-500 dark:text-slate-400 dark:text-slate-500">
                   {String(a.ts).replace("T", " ").slice(0, 19)}
