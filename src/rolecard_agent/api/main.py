@@ -43,14 +43,21 @@ import sqlite3
 import uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from fastapi import FastAPI, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile
+from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel, Field
 
+from rolecard_agent.api.auth import (
+    Actor,
+    auth_required,
+    client_ip,
+    resolve_actor,
+    unauthorized_response,
+)
 from rolecard_agent.api.chat import chat_events
 from rolecard_agent.config import Settings
 from rolecard_agent.core.checkpointer import make_checkpointer
@@ -446,6 +453,41 @@ def create_app(
         conn.rollback_current()
         return await call_next(request)  # type: ignore[operator]
 
+    # 认证做成**中间件**而不是路由依赖：控制台页面是 StaticFiles mount 的 ASGI 应用，
+    # 不经过路由的依赖系统 —— 只用依赖会出现"API 被保护、页面谁都能开"。
+    exempt_paths = [p.strip() for p in (settings.auth_exempt_paths or "").split(",") if p.strip()]
+
+    @app.middleware("http")
+    async def _authenticate(request: object, call_next: object) -> object:
+        req = cast("Request", request)
+        actor = resolve_actor(
+            authorization=req.headers.get("authorization"),
+            api_key=req.headers.get("x-api-key"),
+            settings=settings,
+        )
+        if actor.is_anonymous and auth_required(
+            mode=settings.auth_mode,
+            ip=client_ip(req.headers) or (req.client.host if req.client else ""),
+            path=req.url.path,
+            exempt=exempt_paths,
+        ):
+            status, headers, body = unauthorized_response()
+            return PlainTextResponse(body, status_code=status, headers=headers)
+        req.state.actor = actor
+        return await call_next(request)  # type: ignore[operator]
+
+    def get_actor(request: Request) -> Actor:
+        """取中间件解析好的身份 —— 端点用它把真实的 actor 写进审计日志。"""
+        return cast("Actor", getattr(request.state, "actor", Actor()))
+
+    @app.get("/api/health")
+    def health() -> object:
+        """探活：容器 healthcheck 与反代探活用，**必须免鉴权**（默认在 `AUTH_EXEMPT_PATHS` 里）。
+
+        只回状态与当前认证档位 —— 便于部署后确认"认证到底开没开"，不含任何凭证信息。
+        """
+        return {"status": "ok", "version": "0.3.0", "auth_mode": settings.auth_mode}
+
     @app.get("/api/roles")
     def list_roles() -> list[object]:
         """All role cards, built-in first."""
@@ -499,9 +541,11 @@ def create_app(
         return {"kernel": kernel, "domains": domains}
 
     @app.post("/api/plugins/{plugin_id}/toggle")
-    def toggle_plugin(plugin_id: str, body: PluginToggle) -> object:
+    def toggle_plugin(
+        plugin_id: str, body: PluginToggle, actor: Actor = Depends(get_actor)
+    ) -> object:
         try:
-            epoch = plugins.set_enabled(plugin_id, body.enabled, actor="admin")
+            epoch = plugins.set_enabled(plugin_id, body.enabled, actor=actor.id)
         except PluginError as exc:
             raise _plugin_error_to_http(exc) from exc
         return {
@@ -511,7 +555,7 @@ def create_app(
         }
 
     @app.post("/api/session", status_code=201)
-    def create_session(body: SessionCreate) -> object:
+    def create_session(body: SessionCreate, actor: Actor = Depends(get_actor)) -> object:
         """Create a session thread bound to a role. The thread row is what makes the
         LangGraph `thread_id` answerable to "who is talking" (core/schema.sql A2)."""
         role_id = body.role_id or _DEFAULT_ROLE_ID
@@ -527,7 +571,7 @@ def create_app(
         )
         conn.commit()
         roles.audit(
-            actor="operator", action="create_session", target=thread_id, detail={"role_id": role_id}
+            actor=actor.id, action="create_session", target=thread_id, detail={"role_id": role_id}
         )
         return {"thread_id": thread_id, "role_id": role_id, "role_name": role.role_name}
 
@@ -549,7 +593,9 @@ def create_app(
         }
 
     @app.patch("/api/session/{thread_id}")
-    def patch_session(thread_id: str, body: SessionPatch) -> object:
+    def patch_session(
+        thread_id: str, body: SessionPatch, actor: Actor = Depends(get_actor)
+    ) -> object:
         """会话局部更新：切角色（US-1，不触碰历史）/ 重命名 / 设置会话级模型覆盖。
 
         model_name 语义（model_fields_set 区分"未提供"与"显式置空"）：
@@ -563,7 +609,7 @@ def create_app(
 
         if body.role_id:
             try:
-                roles.set_thread_role(thread_id, body.role_id, actor="operator")
+                roles.set_thread_role(thread_id, body.role_id, actor=actor.id)
             except RoleError as exc:
                 raise _role_error_to_http(exc) from exc  # 角色/线程不存在都是 404
 
@@ -584,7 +630,7 @@ def create_app(
             )
             conn.commit()
             roles.audit(
-                actor="operator",
+                actor=actor.id,
                 action="set_session_model",
                 target=thread_id,
                 detail={"model_name": body.model_name},
@@ -823,7 +869,9 @@ def create_app(
         return health_query.list_records(DEFAULT_USER_ID)
 
     @app.post("/api/records/report", status_code=201)
-    def create_record_report(body: ReportCreate) -> object:
+    def create_record_report(
+        body: ReportCreate, actor: Actor = Depends(get_actor)
+    ) -> object:
         """手动补录一份报告（最小可用）。**主流程仍是上传报告让 AI 解析**，这里是兜底入口。
 
         校验交给 domain service（类型/时间必填、每行指标需名称 + 数值或文本）；失败翻译成
@@ -841,7 +889,7 @@ def create_app(
         except HealthInvalidReport as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         roles.audit(
-            actor="operator",
+            actor=actor.id,
             action="create_report",
             target=report_id,
             detail={"report_type": body.report_type.strip(), "indices": len(body.indices)},
@@ -853,7 +901,7 @@ def create_app(
         return {"report_id": report_id}
 
     @app.post("/api/records/extract")
-    def extract_record(body: ExtractRequest) -> object:
+    def extract_record(body: ExtractRequest, actor: Actor = Depends(get_actor)) -> object:
         """把已上传的报告抽成**结构化指标**（v2.3）：让 AI 不只能"读"原文，还能"算"数值。
 
         三层校验（确定性 / 原文锚定 / 第二模型交叉）在 domains/health/extract.py；
@@ -901,7 +949,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except ExtractError as exc:
             roles.audit(
-                actor="operator",
+                actor=actor.id,
                 action="extract_report_failed",
                 target=body.task_id,
                 detail={"task_id": body.task_id, "error": str(exc)[:300]},
@@ -926,7 +974,7 @@ def create_app(
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             ingestion.link_report(body.task_id, report_id)
             roles.audit(
-                actor="operator",
+                actor=actor.id,
                 action="extract_report",
                 target=report_id,
                 detail={
@@ -964,7 +1012,9 @@ def create_app(
         }
 
     @app.patch("/api/records/index/{index_id}")
-    def patch_record_index(index_id: str, body: IndexPatch) -> object:
+    def patch_record_index(
+        index_id: str, body: IndexPatch, actor: Actor = Depends(get_actor)
+    ) -> object:
         """F2：修正误录的指标值。变更写审计（US-3 的数据侧延伸）。"""
         changes = body.model_dump(exclude_unset=True)
         try:
@@ -976,7 +1026,7 @@ def create_app(
         except HealthDataError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         roles.audit(
-            actor="operator",
+            actor=actor.id,
             action="update_index",
             target=index_id,
             detail={"fields": sorted(changes)},
@@ -984,20 +1034,20 @@ def create_app(
         return row
 
     @app.delete("/api/records/index/{index_id}", status_code=204)
-    def remove_record_index(index_id: str) -> None:
+    def remove_record_index(index_id: str, actor: Actor = Depends(get_actor)) -> None:
         try:
             health_query.delete_index(user_id=DEFAULT_USER_ID, index_id=index_id)
         except HealthNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        roles.audit(actor="operator", action="delete_index", target=index_id)
+        roles.audit(actor=actor.id, action="delete_index", target=index_id)
 
     @app.delete("/api/records/report/{report_id}", status_code=204)
-    def remove_record_report(report_id: str) -> None:
+    def remove_record_report(report_id: str, actor: Actor = Depends(get_actor)) -> None:
         try:
             health_query.delete_report(user_id=DEFAULT_USER_ID, report_id=report_id)
         except HealthNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        roles.audit(actor="operator", action="delete_report", target=report_id)
+        roles.audit(actor=actor.id, action="delete_report", target=report_id)
 
     @app.get("/api/audit")
     def list_audit(limit: int = 100) -> list[object]:
@@ -1015,7 +1065,7 @@ def create_app(
         return knowledge.describe()
 
     @app.delete("/api/knowledge/{scope}")
-    def reset_knowledge_scope(scope: str) -> object:
+    def reset_knowledge_scope(scope: str, actor: Actor = Depends(get_actor)) -> object:
         """清空一个知识作用域（删除其集合）—— 换嵌入后端后维度不兼容时的重建入口。
 
         破坏性管理动作，必须写审计（含清掉的分块数）。前端需二次确认后再调。
@@ -1023,7 +1073,7 @@ def create_app(
         removed = knowledge.scope_count(scope)
         knowledge.reset_scope(scope)
         roles.audit(
-            actor="operator",
+            actor=actor.id,
             action="reset_knowledge_scope",
             target=scope,
             detail={"chunks_removed": removed},

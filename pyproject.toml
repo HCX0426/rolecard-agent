@@ -48,6 +48,11 @@ extend-exclude = ["docs"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
+# B008 会误报 FastAPI 的 `x: T = Depends(...)` —— 那正是框架要求的写法（依赖注入靠
+# 默认值签名表达），不是"在默认参数里做函数调用"的坏味道。按官方建议登记为不可变调用。
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Security", "fastapi.Query", "fastapi.Body"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

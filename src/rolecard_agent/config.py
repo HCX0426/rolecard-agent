@@ -108,6 +108,15 @@ class Settings(BaseModel):
     obs_emit_raw_text: bool = False
     obs_log_path: Path | None = None
 
+    # v2.4 接入层认证（api/auth.py）：三档开关 + 两种凭证。
+    # off（默认，本地零配置）/ auto（回环放行、外部要求）/ on（一律要求，部署用）。
+    # 凭证为纯配置：Basic 用 "user:pass" 列表、API Key 用 key 列表，逗号分隔。
+    auth_mode: str = "off"
+    auth_credentials: str = ""
+    auth_api_keys: str = ""
+    # 豁免路径前缀（逗号分隔）：探活端点必须免鉴权，否则容器健康检查永远失败。
+    auth_exempt_paths: str = "/api/health"
+
     # RESERVED for the v2.4 cloud observability backend. Parsed here so the .env contract is
     # stable from day one, but nothing reads them yet - `make_tracer` only implements `local`
     # and emits a `tracer_fallback` event if you ask for anything else. Listed in
@@ -190,6 +199,10 @@ class Settings(BaseModel):
             ("EXTRACT_VERIFY", "extract_verify"),
             ("OBS_BACKEND", "obs_backend"),
             ("OBS_LOG_PATH", "obs_log_path"),
+            ("AUTH_MODE", "auth_mode"),
+            ("AUTH_CREDENTIALS", "auth_credentials"),
+            ("AUTH_API_KEYS", "auth_api_keys"),
+            ("AUTH_EXEMPT_PATHS", "auth_exempt_paths"),
             ("LANGSMITH_API_KEY", "langsmith_api_key"),
             ("LANGSMITH_PROJECT", "langsmith_project"),
         ):
