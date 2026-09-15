@@ -84,6 +84,14 @@ class Settings(BaseModel):
     # 等于 off，不破坏离线）/ off（强制关闭）/ siliconflow（强制开启，缺 key 启动即报错）。
     rag_rerank: str = "auto"
 
+    # v2.3 结构化抽取（报告文本 → 指标行）：auto = 优先 provider=ollama 的**本地**后端
+    # （报告内容不出本机），否则用默认后端；也可填具体后端名强制指定。
+    # 由 domains/health/extract.py 消费。
+    extract_backend: str = "auto"
+    # 抽取的第二遍（"AI 校对"）：auto = 有不同 provider 的第二后端就交叉验证，否则降级为
+    # 同模型复查（弱校对，界面会如实标注）；off = 不做第二遍，只做确定性与原文锚定校验。
+    extract_verify: str = "auto"
+
     obs_backend: str = "local"
     obs_emit_raw_text: bool = False
     obs_log_path: Path | None = None
@@ -165,6 +173,8 @@ class Settings(BaseModel):
             ("OCR_API_URL", "ocr_api_url"),
             ("RAG_EMBEDDING", "embedding_backend"),
             ("RAG_RERANK", "rag_rerank"),
+            ("EXTRACT_BACKEND", "extract_backend"),
+            ("EXTRACT_VERIFY", "extract_verify"),
             ("OBS_BACKEND", "obs_backend"),
             ("OBS_LOG_PATH", "obs_log_path"),
             ("LANGSMITH_API_KEY", "langsmith_api_key"),

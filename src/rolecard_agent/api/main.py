@@ -36,6 +36,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import sqlite3
@@ -54,12 +55,18 @@ from rolecard_agent.api.chat import chat_events
 from rolecard_agent.config import Settings
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.graph import build_kernel, build_model
-from rolecard_agent.core.ingestion import IngestionService
+from rolecard_agent.core.ingestion import IngestionNotFound, IngestionService
 from rolecard_agent.core.model_settings import ModelSettingsError, ModelSettingsService
 from rolecard_agent.core.nodes import ChatLike, _text_of
 from rolecard_agent.core.observability import TraceEvent, Tracer, make_tracer
 from rolecard_agent.core.plugins import PluginError, PluginService, UnknownPlugin
 from rolecard_agent.core.state import new_state
+from rolecard_agent.domains.health.extract import (
+    ExtractConfigError,
+    ExtractError,
+    run_extraction,
+    to_index_payload,
+)
 from rolecard_agent.domains.health.service import (
     HealthDataError,
     HealthInvalidReport,
@@ -204,6 +211,12 @@ class ReportCreate(BaseModel):
     indices: list[IndexCreate] = Field(default_factory=list)
 
 
+class ExtractRequest(BaseModel):
+    """触发一次结构化抽取（上传成功后由前端自动调用，见 S5b）。"""
+
+    task_id: str = Field(min_length=1, max_length=64)
+
+
 def _serialize_message(message: object) -> dict[str, object]:
     """Checkpoint message -> JSON shape for the frontend history replay."""
     if isinstance(message, HumanMessage):
@@ -255,6 +268,34 @@ def _plugin_error_to_http(exc: PluginError) -> HTTPException:
     if isinstance(exc, UnknownPlugin):
         return HTTPException(status_code=404, detail=str(exc))
     return HTTPException(status_code=400, detail=str(exc))
+
+
+def _parsed_text_path(target: Path) -> Path:
+    """解析文本的落点：`<上传文件>.parsed.txt`（与上传文件同目录，随 uploads/ 一起被 gitignore）。
+
+    为什么落盘：结构化抽取需要原文，而图片的解析要走 OCR 子进程（很贵）。上传时顺手存一份，
+    抽取就不必再跑一次 OCR。
+    """
+    return target.with_name(target.name + ".parsed.txt")
+
+
+def _latest_numeric_history(records: list[dict[str, object]]) -> dict[str, float]:
+    """每个指标「最近一次」的数值 —— 给抽取的异常突变检查用（只做提示，不做阻断）。"""
+    latest: dict[str, tuple[str, float]] = {}
+    for report in records:
+        day = str(report.get("check_time") or "")
+        for row in report.get("indices") or []:  # type: ignore[union-attr]
+            name = str((row or {}).get("index_name") or "").strip()
+            value = (row or {}).get("index_value")
+            if not name or value is None:
+                continue
+            try:
+                numeric = float(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+            if name not in latest or day >= latest[name][0]:
+                latest[name] = (day, numeric)
+    return {name: value for name, (_, value) in latest.items()}
 
 
 def _seed_plugin_rows(conn: sqlite3.Connection) -> None:
@@ -714,6 +755,9 @@ def create_app(
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
 
             if text.strip():
+                # 存一份解析文本：结构化抽取复用它，避免对同一张图片再跑一次 OCR（OCR 很贵）。
+                with contextlib.suppress(OSError):
+                    _parsed_text_path(target).write_text(text, encoding="utf-8")
                 try:
                     chunks = knowledge.index("health_reports", safe_name, text)
                 except KnowledgeDimensionMismatch as exc:
@@ -785,6 +829,111 @@ def create_app(
             if row.get("report_id") == report_id:
                 return row
         return {"report_id": report_id}
+
+    @app.post("/api/records/extract")
+    def extract_record(body: ExtractRequest) -> object:
+        """把已上传的报告抽成**结构化指标**（v2.3）：让 AI 不只能"读"原文，还能"算"数值。
+
+        三层校验（确定性 / 原文锚定 / 第二模型交叉）在 domains/health/extract.py；
+        **只有双方一致的项才写库**，其余作为 conflicts 返回，由人确认。
+        铁律：一律 `is_verified=0`（没人核实过）；同一 ingestion task 已有报告则不重复写。
+        """
+        try:
+            task = ingestion.get(body.task_id)
+        except IngestionNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        already = conn.execute(
+            "SELECT report_id FROM medical_report WHERE ingestion_task_id = ?",
+            (body.task_id,),
+        ).fetchone()
+        if already is not None:
+            return {"skipped": "already_extracted", "report_id": already["report_id"]}
+
+        source_file = Path(str(task.get("source_file") or ""))
+        parsed = _parsed_text_path(source_file)
+        text = ""
+        if parsed.exists():
+            text = parsed.read_text(encoding="utf-8", errors="ignore")
+        elif source_file.exists():
+            # 兜底：本次改动之前上传的文件没有 .parsed.txt，现场再解析一次。
+            try:
+                is_image = source_file.suffix.lower() in IMAGE_EXTS
+                ocr = select_ocr_backend(settings) if is_image else None
+                text = parse_document(source_file, backend=ocr)
+            except (ParseError, OcrUnavailable):
+                text = ""
+        if not text.strip():
+            return {"skipped": "no_text", "detail": "没有可抽取的文本（未解析成功或内容为空）"}
+
+        source = "ocr" if source_file.suffix.lower() in IMAGE_EXTS else "parsed"
+        try:
+            outcome = run_extraction(
+                text=text,
+                settings=app_state["effective"],  # 设置页改了后端也立刻生效
+                source=source,
+                known_history=_latest_numeric_history(health_query.list_records(DEFAULT_USER_ID)),
+                tracer=resolved_tracer,
+            )
+        except ExtractConfigError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ExtractError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        if outcome is None:
+            return {"skipped": "no_model", "detail": "没有可用的模型后端，无法抽取指标"}
+
+        written: list[object] = []
+        if outcome.agreed and outcome.check_time:
+            try:
+                report_id = health_query.create_report(
+                    user_id=DEFAULT_USER_ID,
+                    report_type=outcome.report_type or "未命名报告",
+                    check_time=outcome.check_time,
+                    institution=outcome.institution,
+                    note=f"AI 抽取（{outcome.mode} 校对）· 未经人工校验",
+                    indices=[to_index_payload(i, source=source) for i in outcome.agreed],
+                )
+            except HealthInvalidReport as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            ingestion.link_report(body.task_id, report_id)
+            roles.audit(
+                actor="operator",
+                action="extract_report",
+                target=report_id,
+                detail={
+                    "task_id": body.task_id,
+                    "mode": outcome.mode,
+                    "written": len(outcome.agreed),
+                },
+            )
+            written = [
+                {
+                    "index_name": i.index_name.strip(),
+                    "index_value": i.index_value,
+                    "value_text": i.value_text,
+                    "unit": i.unit,
+                }
+                for i in outcome.agreed
+            ]
+
+        return {
+            "mode": outcome.mode,
+            "report_type": outcome.report_type,
+            "check_time": outcome.check_time,
+            "institution": outcome.institution,
+            "written": written,
+            "conflicts": [
+                {
+                    "index_name": c.index_name,
+                    "reason": c.reason,
+                    "primary": (c.primary.model_dump() if c.primary else None),
+                    "verify": (c.verify.model_dump() if c.verify else None),
+                }
+                for c in outcome.conflicts
+            ],
+            "notes": list(outcome.notes),
+        }
 
     @app.patch("/api/records/index/{index_id}")
     def patch_record_index(index_id: str, body: IndexPatch) -> object:

@@ -14,6 +14,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from rolecard_agent.api.main import create_app
+from rolecard_agent.core.ingestion import IngestionService
+from rolecard_agent.domains.health.service import HealthQueryService
+from rolecard_agent.storage.db import bootstrap, connect
 
 
 @pytest.fixture
@@ -138,6 +141,65 @@ def test_reset_knowledge_scope_removes_and_audits(client: TestClient) -> None:
 
     actions = {a["action"] for a in client.get("/api/audit?limit=50").json()}
     assert "reset_knowledge_scope" in actions
+
+
+# -- 结构化抽取端点（v2.3） -----------------------------------------------------------
+
+
+def test_extract_unknown_task_is_404(client: TestClient) -> None:
+    res = client.post("/api/records/extract", json={"task_id": "ing_nope"})
+    assert res.status_code == 404
+
+
+def test_extract_requires_a_task_id(client: TestClient) -> None:
+    assert client.post("/api/records/extract", json={}).status_code == 422
+
+
+def test_extract_degrades_honestly_without_a_model(client: TestClient) -> None:
+    """本环境没有可用的对话模型 → 必须如实降级（502 或 200+skipped），**绝不能 500**，
+    也不能假装抽取成功（那会把没校验过的数字塞进档案）。"""
+    tid = client.post("/api/session", json={}).json()["thread_id"]
+    uploaded = client.post(
+        f"/api/session/{tid}/upload",
+        files={"file": ("须知.md", "每半年复查一次超声。".encode(), "text/markdown")},
+    )
+    res = client.post("/api/records/extract", json={"task_id": uploaded.json()["task_id"]})
+    assert res.status_code in (200, 502), res.text
+    if res.status_code == 200:
+        assert res.json().get("skipped") in {"no_model", "no_text", "already_extracted"}
+
+
+def test_extract_is_idempotent_per_ingestion_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """同一个 intake 已经抽出过报告 → 再抽不重复写（幂等靠 medical_report.ingestion_task_id）。"""
+    monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    db = tmp_path / "app.db"
+
+    conn = connect(db)
+    bootstrap(conn, enabled_domains=("health",))
+    conn.execute("INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('local','demo')")
+    conn.execute(
+        "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "
+        "VALUES ('local-user','local','demo')"
+    )
+    conn.commit()
+    report_id = HealthQueryService(conn).create_report(
+        user_id="local-user",
+        report_type="腹部超声",
+        check_time="2026-03-12",
+        indices=[{"index_name": "结石直径", "index_value": 6.1, "source": "parsed"}],
+    )
+    ingestion = IngestionService(conn)
+    ingestion.create(user_id="local-user", file_hash="h1", task_id="ing_x")
+    ingestion.link_report("ing_x", report_id)
+    conn.close()
+
+    with TestClient(create_app(sqlite_path=db)) as c:
+        res = c.post("/api/records/extract", json={"task_id": "ing_x"})
+    assert res.status_code == 200, res.text
+    assert res.json() == {"skipped": "already_extracted", "report_id": report_id}
 
 
 # -- 角色 exemplars（前端表单要写入的字段，确认 API 端到端支持） ------------------------
