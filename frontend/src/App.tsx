@@ -42,9 +42,9 @@ export default function App() {
           ))}
         </div>
         <div className="mt-auto px-4 py-3 text-[11px] leading-relaxed text-slate-400">
-          v1 · M1~M4 已落地
+          v1 · M1~M5 已落地
           <br />
-          M5 前端工程化
+          v2.1 / v2.2 检索 · 文档摄取
         </div>
       </nav>
 

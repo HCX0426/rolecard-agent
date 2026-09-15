@@ -5,6 +5,8 @@ import {
   type KnowledgeScope,
   type ModelSettings,
   type PluginRow,
+  type RagMetrics,
+  type RagStageMs,
   type RoleCard,
   type SessionRow,
 } from "../api";
@@ -396,8 +398,21 @@ function ModelsPanel() {
 
 // ---------------------------------------------------------------- 知识库（v2.1 RAG）
 
+// 检索延迟细分：阶段顺序 + 空值显示（无样本时后端返回 null，显示 "—" 而非 0）。
+const LATENCY_STAGES: [keyof RagStageMs, string][] = [
+  ["embed_ms", "嵌入"],
+  ["vector_ms", "向量检索"],
+  ["rerank_ms", "重排"],
+  ["total_ms", "合计"],
+];
+
+function fmtMs(v: number | null | undefined): string {
+  return v === null || v === undefined ? "—" : v.toFixed(2);
+}
+
 function KnowledgePanel() {
   const [scopes, setScopes] = useState<KnowledgeScope[]>([]);
+  const [metrics, setMetrics] = useState<RagMetrics | null>(null);
   const [status, setStatus] = useState("");
 
   useEffect(() => {
@@ -405,6 +420,11 @@ function KnowledgePanel() {
       .get<KnowledgeScope[]>("/api/knowledge")
       .then(setScopes)
       .catch((e) => setStatus(`加载失败：${e.message}`));
+    // 延迟指标是增强信息：失败静默（不打扰知识库主视图）。
+    api
+      .get<RagMetrics>("/api/rag/metrics")
+      .then(setMetrics)
+      .catch(() => undefined);
   }, []);
 
   return (
@@ -412,9 +432,48 @@ function KnowledgePanel() {
       {status && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{status}</p>}
       <p className="rounded-lg bg-slate-50 px-3 py-2.5 text-xs leading-relaxed text-slate-400">
         知识库是<b>内核能力</b>（search_knowledge），不属于任何插件：库归内核，角色经
-        knowledge_scopes 声明可检索的作用域（角色卡页配置）。上传 .txt/.md 会自动入库到
-        health_reports 作用域；切换嵌入后端后删除 data/chroma 目录重启即重建。
+        knowledge_scopes 声明可检索的作用域（角色卡页配置）。上传 .txt/.md/.pdf/.docx/.pptx/.xlsx
+        或图片会自动入库到 health_reports 作用域；切换嵌入后端后删除 data/chroma 目录重启即重建。
       </p>
+
+      {metrics && (
+        <div className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-slate-700">检索延迟细分（ms）</span>
+            <span className="text-xs text-slate-400">
+              样本 {metrics.samples} · 嵌入 {metrics.embedder} · 重排
+              {metrics.rerank_enabled ? "开" : "关"}
+            </span>
+          </div>
+          {metrics.samples === 0 ? (
+            <p className="mt-2 text-xs text-slate-400">
+              尚无检索样本：在对话里提问一次（触发 search_knowledge）即可看到分位。
+            </p>
+          ) : (
+            <table className="mt-2 w-full text-left text-xs">
+              <thead className="text-slate-400">
+                <tr>
+                  <th className="py-1 font-normal">阶段</th>
+                  <th className="py-1 font-normal">P50</th>
+                  <th className="py-1 font-normal">P95</th>
+                  <th className="py-1 font-normal">P99</th>
+                </tr>
+              </thead>
+              <tbody className="text-slate-600">
+                {LATENCY_STAGES.map(([key, label]) => (
+                  <tr key={key} className="border-t border-slate-100">
+                    <td className="py-1">{label}</td>
+                    <td className="py-1">{fmtMs(metrics.p50[key])}</td>
+                    <td className="py-1">{fmtMs(metrics.p95[key])}</td>
+                    <td className="py-1">{fmtMs(metrics.p99[key])}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
       <div className="mt-3 space-y-3">
         {scopes.length === 0 && (
           <div className="rounded-xl border border-dashed border-slate-200 bg-white p-8 text-center text-sm text-slate-400">

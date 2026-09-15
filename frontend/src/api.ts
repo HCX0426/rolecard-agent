@@ -97,6 +97,23 @@ export interface KnowledgeScope {
   embedder: string;
 }
 
+/** 检索延迟分位（每阶段，单位 ms；无样本时各字段为 null）。 */
+export interface RagStageMs {
+  embed_ms: number | null;
+  vector_ms: number | null;
+  rerank_ms: number | null;
+  total_ms: number | null;
+}
+
+export interface RagMetrics {
+  samples: number;
+  rerank_enabled: boolean;
+  embedder: string;
+  p50: RagStageMs;
+  p95: RagStageMs;
+  p99: RagStageMs;
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
