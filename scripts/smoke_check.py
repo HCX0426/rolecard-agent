@@ -21,10 +21,47 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+# 终端在 GBK 代码页（中文 Windows 默认）下无法编码 emoji/✅❌，捕获到文件也需 UTF-8。
+# 早一点把 stdout/stderr 固定成 UTF-8：直接跑终端可能显示方框，但绝不会崩。
+import contextlib  # noqa: E402
+
+for _s in (sys.stdout, sys.stderr):
+    with contextlib.suppress(Exception):
+        _s.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+
 from fastapi.testclient import TestClient  # noqa: E402
 from langchain_core.messages import AIMessage  # noqa: E402
 
 from rolecard_agent.api.main import create_app  # noqa: E402
+
+
+def _make_pdf_bytes(text: str) -> bytes:
+    """构造一个最小但合法的 1 页 PDF（含文本），供上传链路测试真实解析用。
+
+    仅 ASCII（基础 14 字体 + latin-1 编码足以承载）；中文 PDF 文本由解析测试另覆盖。
+    """
+    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode("latin-1")
+    objs = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for i, body in enumerate(objs, start=1):
+        offsets.append(len(out))
+        out += f"{i} 0 obj\n".encode() + body + b"\nendobj\n"
+    xref_pos = len(out)
+    n = len(objs) + 1
+    out += f"xref\n0 {n}\n".encode()
+    out += b"0000000000 65535 f \n"
+    for off in offsets:
+        out += f"{off:010d} 00000 n \n".encode()
+    out += f"trailer\n<< /Size {n} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF".encode()
+    return bytes(out)
 
 
 class FakeChat:
@@ -182,7 +219,7 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         assert titled["title"] == "冒烟提问", titled
         assert c.delete(f"/api/session/{s['thread_id']}").status_code == 204
 
-    @check("上传：.txt 建索引 / 重复复用 / .pdf 待解析 / 空文件拒绝")
+    @check("上传：.txt/.pdf 建索引 / 重复复用 / 空文件拒绝")
     def _upload() -> None:
         s = c.post("/api/session", json={}).json()
         tid = s["thread_id"]
@@ -197,11 +234,18 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
             files={"file": ("须知.md", doc, "text/markdown")},
         )
         assert again.json()["reused"] is True and again.json()["task_id"] == first.json()["task_id"]
+        # v2.2：PDF 真实解析入索引（不再是 pending）
         pdf = c.post(
             f"/api/session/{tid}/upload",
-            files={"file": ("报告.pdf", b"%PDF-1.4 fake", "application/pdf")},
+            files={
+                "file": (
+                    "报告.pdf",
+                    _make_pdf_bytes("Follow-up: glucose 6.1, recheck."),
+                    "application/pdf",
+                )
+            },
         )
-        assert pdf.json()["status"] == "pending", pdf.text
+        assert pdf.json()["status"] == "indexed", pdf.text
         empty = c.post(f"/api/session/{tid}/upload", files={"file": ("a.txt", b"", "text/plain")})
         assert empty.status_code == 400
         # 注入的说明消息应进入会话历史（模型下一轮知道有文件已索引）

@@ -160,34 +160,85 @@ def test_session_list_survives_role_deletion(client: TestClient) -> None:
 # -- upload（US-7 上传入口的真实落点） --------------------------------------------------
 
 
-def test_upload_registers_task_and_is_idempotent(
+def _make_pdf_bytes(text: str) -> bytes:
+    """最小合法 1 页 PDF（含文本），供上传链路真实解析测试。"""
+    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode("latin-1")
+    objs = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for i, body in enumerate(objs, start=1):
+        offsets.append(len(out))
+        out += f"{i} 0 obj\n".encode() + body + b"\nendobj\n"
+    xref_pos = len(out)
+    n = len(objs) + 1
+    out += f"xref\n0 {n}\n".encode()
+    out += b"0000000000 65535 f \n"
+    for off in offsets:
+        out += f"{off:010d} 00000 n \n".encode()
+    out += f"trailer\n<< /Size {n} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF".encode()
+    return bytes(out)
+
+
+def test_upload_pdf_indexed_and_idempotent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """US-7 / A1：上传 → 登记 intake 任务；同一文件再传复用同一任务（不产生重复行）。"""
+    """US-7 / A1 / v2.2：PDF 上传 → 真实解析入检索索引（status=indexed），且同一文件
+    再传复用同一 intake 任务（不产生重复行）。"""
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
-    app = create_app(sqlite_path=tmp_path / "up.db", model=ScriptedChat([]))
+    monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))  # 别污染演示库
+    app = create_app(sqlite_path=tmp_path / "pdf.db")
+    pdf_bytes = _make_pdf_bytes("Follow-up report: glucose 6.1, recheck advised.")
     with TestClient(app) as c:
         session = c.post("/api/session", json={}).json()
         tid = str(session["thread_id"])
 
         first = c.post(
             f"/api/session/{tid}/upload",
-            files={"file": ("体检报告.pdf", b"%PDF-1.4 fake scan", "application/pdf")},
+            files={"file": ("体检报告.pdf", pdf_bytes, "application/pdf")},
         )
         assert first.status_code == 201
         body = first.json()
         assert body["task_id"].startswith("ing_") and body["reused"] is False
+        assert body["status"] == "indexed"
 
         again = c.post(
             f"/api/session/{tid}/upload",
-            files={"file": ("体检报告.pdf", b"%PDF-1.4 fake scan", "application/pdf")},
+            files={"file": ("体检报告.pdf", pdf_bytes, "application/pdf")},
         )
         assert again.json()["reused"] is True
         assert again.json()["task_id"] == body["task_id"]  # 同一任务，不是新行
 
         # 注入的说明消息进入 checkpoint 历史，模型后续轮次能看到
         messages = c.get(f"/api/session/{tid}/messages").json()
-        assert any("上传了报告文件" in str(m["content"]) for m in messages)
+        assert any("已建立检索索引" in str(m["content"]) for m in messages)
+        knowledge = c.get("/api/knowledge").json()
+        assert any("体检报告.pdf" in s["sources"] for s in knowledge)
+
+
+def test_upload_unsupported_type_stays_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """v2.2：暂不支持的类型（如 .docx）落地为 pending，并明确告知模型不可读，不假装读过。"""
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    app = create_app(sqlite_path=tmp_path / "docx.db", model=ScriptedChat([]))
+    with TestClient(app) as c:
+        session = c.post("/api/session", json={}).json()
+        tid = str(session["thread_id"])
+        res = c.post(
+            f"/api/session/{tid}/upload",
+            files={"file": ("报告.docx", b"PK\x03\x04 fake docx", "application/docx")},
+        )
+        assert res.status_code == 201
+        assert res.json()["status"] == "pending"
+        messages = c.get(f"/api/session/{tid}/messages").json()
+        assert any("暂不支持自动解析" in str(m["content"]) for m in messages)
 
 
 def test_upload_rejects_empty_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -62,6 +62,11 @@ class Settings(BaseModel):
     chroma_path: Path = Path("./data/chroma")
     upload_dir: Path = Path("./data/uploads")  # v1 M5 上传入口的真实落点（登记 intake 任务）
 
+    # v2.2 OCR 后端：必须是【独立 venv / 进程】的 python 可执行文件。PaddleOCR 自带
+    # numpy / OpenCV / onnxruntime，与主环境依赖摩擦（见 requirements-ocr.txt），故绝不进主
+    # 环境。None = 未配置，图片上传保持 pending，由上传端点降级说明，不污染主进程。
+    ocr_python: str | None = None
+
     # v2.1 RAG 嵌入后端：auto（有 key 走 siliconflow bge-m3，否则 hash 离线兜底）/
     # siliconflow / chroma_default / hash。由 rag/retriever.make_embedder 消费。
     embedding_backend: str = "auto"
@@ -143,6 +148,7 @@ class Settings(BaseModel):
             ("SQLITE_PATH", "sqlite_path"),
             ("CHROMA_PATH", "chroma_path"),
             ("UPLOAD_DIR", "upload_dir"),
+            ("OCR_PYTHON", "ocr_python"),
             ("RAG_EMBEDDING", "embedding_backend"),
             ("RAG_RERANK", "rag_rerank"),
             ("OBS_BACKEND", "obs_backend"),

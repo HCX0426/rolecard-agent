@@ -66,6 +66,12 @@ from rolecard_agent.domains.health.service import (
     HealthQueryService,
 )
 from rolecard_agent.domains.registry import DOMAINS, build_registry
+from rolecard_agent.rag.parser import (
+    PARSEABLE_EXTENSIONS,
+    OcrUnavailable,
+    ParseError,
+    parse_document,
+)
 from rolecard_agent.rag.retriever import (
     KnowledgeBase,
     KnowledgeDimensionMismatch,
@@ -619,9 +625,10 @@ def create_app(
     async def upload_report(thread_id: str, file: UploadFile) -> object:
         """US-7 上传入口的真实落点：存文件 + 登记 intake 任务（幂等键 sha256）。
 
-        解析（OCR / 结构化）仍是 v2.2 的活 —— 这里只做**登记**。登记后向会话注入一条
-        说明消息（graph.update_state），让模型在后续对话里知道"有文件已登记但还不能读"，
-        而不是假装读过。重复上传同一文件复用同一任务（ingestion_task 幂等键）。
+        v2.2 起解析在此完成：.txt/.md/.pdf 直接抽文本入 `health_reports` 检索索引；图片走
+        OCR 子进程（独立 venv，见 requirements-ocr.txt）。解析失败的图片 / 不支持的类型保持
+        pending，并向会话注入一条说明消息（graph.update_state），让模型知道"有文件已登记但
+        还不能读"，而不是假装读过。重复上传同一文件复用同一任务（ingestion_task 幂等键）。
         """
         thread = _get_thread(conn, thread_id)
         user_id = str(thread["user_id"])
@@ -643,27 +650,60 @@ def create_app(
         reused = len(ingestion.list_for_user(user_id)) == before
         existing = ingestion.get(task_id)
 
-        # v2.1：原生文本文件（.txt/.md）直接解析入检索索引；其余类型等待 v2.2（OCR/解析器）。
-        if target.suffix.lower() in {".txt", ".md"}:
-            text = target.read_text(encoding="utf-8", errors="ignore")
+        # v2.2：统一解析入口——.txt/.md/.pdf 直接抽文本入检索索引；图片走 OCR 子进程
+        # （独立 venv，见 requirements-ocr.txt）；其余类型（如 .docx）仍保持 pending。
+        suffix = target.suffix.lower()
+        if suffix in PARSEABLE_EXTENSIONS:
             try:
-                chunks = knowledge.index("health_reports", safe_name, text)
-            except KnowledgeDimensionMismatch as exc:
+                text = parse_document(target, ocr_python=settings.ocr_python)
+            except OcrUnavailable:
+                # OCR 未配置：图片保持 pending，明确告知模型不可读（不把 paddle 栈拖进主环境）。
+                note = (
+                    f"[用户上传了图片报告：{safe_name}，已登记 intake 任务 {task_id}"
+                    f"（status={existing['status']}）。OCR 后端未配置，当前不能读取图片内容，"
+                    "不要假装已经读过。]"
+                )
+                graph_config = {"configurable": {"thread_id": thread_id}}
+                app_state["graph"].update_state(
+                    graph_config, {"messages": [HumanMessage(content=note)]}
+                )
+                return {
+                    "task_id": task_id,
+                    "reused": reused,
+                    "file": safe_name,
+                    "status": existing["status"],
+                    "parsed": False,
+                }
+            except ParseError as exc:
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+            if text.strip():
+                try:
+                    chunks = knowledge.index("health_reports", safe_name, text)
+                except KnowledgeDimensionMismatch as exc:
+                    raise HTTPException(status_code=500, detail=str(exc)) from exc
+                chain = ("parsed", "extracted", "indexed")
+                note = (
+                    f"[用户上传了文档：{safe_name}（{chunks} 段），已建立检索索引"
+                    f"（任务 {task_id}，status=indexed）。后续提问可以检索这份文档的内容。]"
+                )
+            else:
+                # 解析出空文本（扫描件 / 无文本层的 PDF）：解析到 parsed 即止，不入索引。
+                chain = ("parsed",)
+                note = (
+                    f"[用户上传了文件：{safe_name}，已解析但未提取到文本（可能为扫描件）。"
+                    f"已登记任务 {task_id}（status={existing['status']}），暂不入检索。]"
+                )
             if (existing["status"] or "pending") == "pending":
                 # 幂等：重复上传同一文件会复用已 indexed 的任务，不能再推进状态机。
-                for next_status in ("parsed", "extracted", "indexed"):
+                for next_status in chain:
                     ingestion.advance(task_id, next_status)
                 existing = ingestion.get(task_id)
-            note = (
-                f"[用户上传了文档：{safe_name}（{chunks} 段），已建立检索索引"
-                f"（任务 {task_id}，status=indexed）。后续提问可以检索这份文档的内容。]"
-            )
         else:
             note = (
                 f"[用户上传了报告文件：{safe_name}，已登记 intake 任务 {task_id}"
-                f"（status={existing['status']}）。文件解析在 v2.2 接入，当前不能读取其中"
-                "内容，不要假装已经读过。]"
+                f"（status={existing['status']}）。文件类型暂不支持自动解析（v2.2 仅接 "
+                ".txt/.md/.pdf 及图片 OCR），当前不能读取其中内容，不要假装已经读过。]"
             )
         graph_config = {"configurable": {"thread_id": thread_id}}
         app_state["graph"].update_state(graph_config, {"messages": [HumanMessage(content=note)]})

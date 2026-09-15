@@ -5,3 +5,4 @@
 # 这就是 v1 不把它放进 requirements.txt 的原因（见 C2）。
 
 chromadb>=1.5.9
+pypdf>=4.0  # v2.2 文档解析（纯 Python，可与主环境共存；OCR 栈另见 requirements-ocr.txt）
