@@ -201,12 +201,23 @@ export async function streamChat(
   threadId: string,
   message: string,
   onEvent: (ev: ChatEvent) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
-  const res = await fetch("/api/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ thread_id: threadId, message }),
-  });
+  let res: Response;
+  try {
+    res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ thread_id: threadId, message }),
+      signal, // 用户点「停止」→ controller.abort()，这里会以 AbortError 结束
+    });
+  } catch (e) {
+    if ((e as Error).name !== "AbortError") {
+      onEvent({ type: "error", detail: (e as Error).message });
+    }
+    onEvent({ type: "end" });
+    return;
+  }
   if (!res.ok || !res.body) {
     let detail = `HTTP ${res.status}`;
     try {
@@ -221,17 +232,24 @@ export async function streamChat(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    let idx: number;
-    while ((idx = buf.indexOf("\n\n")) >= 0) {
-      const frame = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      const line = frame.split("\n").find((l) => l.startsWith("data: "));
-      if (!line) continue;
-      onEvent(JSON.parse(line.slice(6)) as ChatEvent);
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const line = frame.split("\n").find((l) => l.startsWith("data: "));
+        if (!line) continue;
+        onEvent(JSON.parse(line.slice(6)) as ChatEvent);
+      }
+    }
+  } catch (e) {
+    // 中断不是错误：静默结束，由调用方做收尾（回放 checkpoint 拿到已生成的部分）
+    if ((e as Error).name !== "AbortError") {
+      onEvent({ type: "error", detail: (e as Error).message });
     }
   }
 }

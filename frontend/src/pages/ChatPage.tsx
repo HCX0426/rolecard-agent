@@ -7,17 +7,92 @@ import {
   type RoleCard,
   type SessionRow,
 } from "../api";
+import { ToastStack, useToasts, type Tone } from "../components/Toast";
+
+// 一次工具调用：状态 + 名称 + 结果。结构化展示，而不是一行被截断的原始文本。
+interface ToolStep {
+  name: string;
+  status: "running" | "ok" | "error";
+  content: string;
+}
 
 // 流式回答的临时气泡：token 逐段进入，message_replace 用权威文本覆盖，
 // 流结束后用服务端 checkpoint 回放覆盖整个消息列表（前后端唯一真相在 checkpoint）。
 interface LiveBubble {
   text: string;
-  toolChips: string[];
+  tools: ToolStep[];
   streaming: boolean;
 }
 
 // 快捷问题：空会话时直接点着问（对齐 WorkBuddy 输入框上方的建议 chips）
 const QUICK_PROMPTS = ["帮我查一下结石直径的变化", "我有哪些报告？"];
+
+// 功能行图标同样用内联 SVG（emoji 在缺彩色字体的环境会变方框，见 App.tsx 的说明）。
+const ICON = {
+  width: 13,
+  height: 13,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+} as const;
+
+const IconUser = () => (
+  <svg {...ICON}>
+    <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21c0-4 3.6-6 8-6s8 2 8 6" />
+  </svg>
+);
+
+const IconModel = () => (
+  <svg {...ICON}>
+    <rect x="6" y="6" width="12" height="12" rx="2" />
+    <path d="M10 3v3M14 3v3M10 18v3M14 18v3M3 10h3M3 14h3M18 10h3M18 14h3" />
+  </svg>
+);
+
+const IconClip = () => (
+  <svg {...ICON}>
+    <path d="M8 12l6.5-6.5a3 3 0 0 1 4.2 4.2L11 17.4a5 5 0 0 1-7.1-7.1L11 3.2" />
+  </svg>
+);
+
+/** 工具调用卡片：状态点 + 名称 + 可展开的完整结果（历史回放里的工具结果也用它）。 */
+function ToolStepCard({ step }: { step: ToolStep }) {
+  const [open, setOpen] = useState(false);
+  const dot =
+    step.status === "running"
+      ? "bg-blue-400 animate-pulse"
+      : step.status === "error"
+        ? "bg-red-400"
+        : "bg-green-500";
+  const body = step.content.trim();
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+      <button
+        onClick={() => body && setOpen((o) => !o)}
+        className={`flex w-full items-center gap-2 text-left font-mono text-xs text-slate-600 ${
+          body ? "cursor-pointer" : "cursor-default"
+        }`}
+      >
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
+        <span className="shrink-0">{step.name}</span>
+        {step.status === "running" && <span className="text-slate-400">执行中…</span>}
+        {body && (
+          <span className="ml-auto shrink-0 text-slate-300">
+            {open ? "收起 ▴" : `${body.length} 字 ▾`}
+          </span>
+        )}
+      </button>
+      {open && body && (
+        <pre className="mt-1.5 max-h-56 overflow-auto rounded bg-white p-2 text-[11px] whitespace-pre-wrap text-slate-600">
+          {body}
+        </pre>
+      )}
+    </div>
+  );
+}
 
 export default function ChatPage({
   onOpenSettings,
@@ -31,13 +106,6 @@ export default function ChatPage({
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [live, setLive] = useState<LiveBubble | null>(null);
   const [input, setInput] = useState("");
-  // 状态提示带「语气」：成功=绿、告警=琥珀、中性=灰。默认中性，成功/失败路径显式标注。
-  const [status, setStatusRaw] = useState("");
-  const [statusTone, setStatusTone] = useState<"info" | "ok" | "warn">("info");
-  const setStatus = (text: string, tone: "info" | "ok" | "warn" = "info") => {
-    setStatusRaw(text);
-    setStatusTone(tone);
-  };
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
@@ -46,9 +114,18 @@ export default function ChatPage({
   const [backends, setBackends] = useState<{ name: string; provider: string; model: string }[]>([]);
   const [defaultBackend, setDefaultBackend] = useState("");
   const [sessionModel, setSessionModel] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false); // 流式进行中：驱动「停止」按钮与输入禁用
   const fileRef = useRef<HTMLInputElement>(null);
   const sendingRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // 状态提示统一走 toast（可叠加、自动消失、带语气）—— 一行 status 会被后来的消息覆盖，
+  // 上一个操作的结果还没看清就没了。保留 setStatus 这个名字，既有调用点无需改动。
+  const { toasts, push: pushToast, dismiss } = useToasts();
+  const setStatus = (text: string, tone: Tone = "info") => {
+    if (text) pushToast(text, tone);
+  };
 
   const refreshSessions = useCallback(async () => {
     setSessions(await api.get<SessionRow[]>("/api/sessions"));
@@ -155,55 +232,87 @@ export default function ChatPage({
     const text = (preset ?? input).trim();
     if (!text || sendingRef.current) return;
     sendingRef.current = true;
+    setBusy(true);
     setInput("");
-    setStatus("");
     // 没有会话就先建一个（角色可选，用默认）；用局部 tid 而非 state（setState 异步）
     let tid = sessionId;
     if (!tid) {
       tid = await createSession();
       if (!tid) {
         sendingRef.current = false;
+        setBusy(false);
         return;
       }
     }
     setMessages((m) => [...m, { role: "user", content: text }]);
-    setLive({ text: "", toolChips: [], streaming: true });
-    await streamChat(tid, text, (ev) => {
-      if (ev.type === "token") {
-        setLive((s) => (s ? { ...s, text: s.text + ev.text } : s));
-      } else if (ev.type === "tool_call") {
-        setLive((s) =>
-          s ? { ...s, toolChips: [...s.toolChips, `🔧 调用 ${ev.name}`] } : s,
-        );
-      } else if (ev.type === "tool_result") {
-        setLive((s) =>
-          s
-            ? {
-                ...s,
-                toolChips: [
-                  ...s.toolChips,
-                  `✅ ${ev.name} → ${ev.content.slice(0, 100)}`,
-                ],
+    setLive({ text: "", tools: [], streaming: true });
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    await streamChat(
+      tid,
+      text,
+      (ev) => {
+        if (ev.type === "token") {
+          setLive((s) => (s ? { ...s, text: s.text + ev.text } : s));
+        } else if (ev.type === "tool_call") {
+          // 同一轮可能连续调多个工具：每个都开一张卡片，状态"执行中"
+          setLive((s) =>
+            s ? { ...s, tools: [...s.tools, { name: ev.name, status: "running", content: "" }] } : s,
+          );
+        } else if (ev.type === "tool_result") {
+          // 把最近一个同名且"执行中"的卡片标记完成（离线/拒绝也算结果，不再另开卡片）
+          setLive((s) => {
+            if (!s) return s;
+            const tools = [...s.tools];
+            for (let i = tools.length - 1; i >= 0; i -= 1) {
+              if (tools[i].name === ev.name && tools[i].status === "running") {
+                tools[i] = { name: ev.name, status: "ok", content: ev.content };
+                return { ...s, tools };
               }
-            : s,
-        );
-      } else if (ev.type === "message_replace") {
-        setLive((s) => (s ? { ...s, text: ev.text } : s));
-      } else if (ev.type === "error") {
-        setLive((s) => (s ? { ...s, text: `${s.text}\n[错误] ${ev.detail}` } : s));
-      }
-      // "end" 在下面统一收尾
-    });
-    // 流结束：checkpoint 是唯一真相，回放覆盖乐观状态
+            }
+            return {
+              ...s,
+              tools: [...tools, { name: ev.name, status: "ok", content: ev.content }],
+            };
+          });
+        } else if (ev.type === "message_replace") {
+          setLive((s) => (s ? { ...s, text: ev.text } : s));
+        } else if (ev.type === "error") {
+          setLive((s) =>
+            s
+              ? {
+                  ...s,
+                  text: `${s.text}\n[错误] ${ev.detail}`,
+                  tools: s.tools.map((t) =>
+                    t.status === "running" ? { ...t, status: "error" as const } : t,
+                  ),
+                }
+              : s,
+          );
+        }
+        // "end" 在下面统一收尾
+      },
+      controller.signal,
+    );
+    const aborted = controller.signal.aborted;
+    abortRef.current = null;
+    // 流结束：checkpoint 是唯一真相，回放覆盖乐观状态（中断时同样回放，拿到已生成的部分）
     try {
       setMessages(await api.get<MessageRow[]>(`/api/session/${tid}/messages`));
     } catch {
       /* 会话已被删等极端情况：保留现有气泡 */
-      setLive(null);
     }
     setLive(null);
     sendingRef.current = false;
+    setBusy(false);
+    if (aborted) setStatus("已停止生成（已生成的内容已保留）", "warn");
     await refreshSessions();
+  }
+
+  /** 停止生成：中断 SSE 连接。服务端已落 checkpoint 的部分会在收尾回放中显示出来。 */
+  function stop() {
+    abortRef.current?.abort();
   }
 
   async function handleUpload(file: File) {
@@ -287,7 +396,7 @@ export default function ChatPage({
   }
 
   return (
-    <div className="flex h-full">
+    <div className="relative flex h-full">
       {/* 会话列表面板 */}
       <aside className="flex w-64 shrink-0 flex-col border-r border-slate-200 bg-white">
         <div className="border-b border-slate-100 p-3">
@@ -403,9 +512,21 @@ export default function ChatPage({
 
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
           {!sessionId && messages.length === 0 && !live && (
-            <p className="mt-10 text-center text-sm text-slate-400">
-              左上角「＋ 新建对话」开始，或直接在下方输入（会自动创建会话）
-            </p>
+            <div className="mx-auto mt-8 max-w-xl rounded-xl border border-slate-200 bg-white p-5">
+              <h3 className="text-sm font-medium text-slate-800">开始一次对话</h3>
+              <p className="mt-1 text-xs text-slate-400">
+                直接在下方输入即可（会自动创建会话），或点左上角「＋ 新建对话」。
+              </p>
+              <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-slate-500">
+                <li>
+                  · <b>上传报告 / 图片</b> —— 自动解析并入检索索引（.pdf/.docx/.pptx/.xlsx + 图片 OCR）
+                </li>
+                <li>
+                  · <b>提问档案相关问题</b> —— 角色会调用工具查询，结果带来源与「是否已校验」标记
+                </li>
+                <li>· 下方功能行可切换角色与模型（下一轮生效，历史保留）</li>
+              </ul>
+            </div>
           )}
           <div className="mx-auto flex max-w-3xl flex-col gap-4">
             {messages.map((m, i) =>
@@ -417,8 +538,10 @@ export default function ChatPage({
                 </div>
               ) : m.role === "tool" ? (
                 <div key={i} className="flex justify-start">
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 font-mono text-xs text-slate-500">
-                    🛠 {m.name}：{m.content.slice(0, 120)}
+                  <div className="w-full max-w-[85%]">
+                    <ToolStepCard
+                      step={{ name: m.name || "tool", status: "ok", content: m.content }}
+                    />
                   </div>
                 </div>
               ) : (
@@ -432,14 +555,13 @@ export default function ChatPage({
             {live && (
               <div className="flex justify-start">
                 <div className="max-w-[85%] rounded-2xl rounded-bl-sm border border-slate-200 bg-white px-4 py-2.5">
-                  {live.toolChips.map((c, i) => (
-                    <div
-                      key={i}
-                      className="mb-1.5 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 font-mono text-xs break-all text-slate-500"
-                    >
-                      {c}
+                  {live.tools.length > 0 && (
+                    <div className="mb-2 space-y-1.5">
+                      {live.tools.map((t, i) => (
+                        <ToolStepCard key={i} step={t} />
+                      ))}
                     </div>
-                  ))}
+                  )}
                   <div
                     className={`whitespace-pre-wrap ${live.streaming ? "caret" : ""}`}
                   >
@@ -450,20 +572,6 @@ export default function ChatPage({
             )}
           </div>
         </div>
-
-        {status && (
-          <div
-            className={`border-t px-6 py-1.5 text-xs ${
-              statusTone === "ok"
-                ? "border-green-100 bg-green-50 text-green-700"
-                : statusTone === "warn"
-                  ? "border-amber-100 bg-amber-50 text-amber-700"
-                  : "border-slate-100 bg-slate-50 text-slate-600"
-            }`}
-          >
-            {status}
-          </div>
-        )}
 
         <div className="border-t border-slate-200 bg-white p-4">
           {/* 快捷问题（WorkBuddy 式建议 chips）：空会话时出现，点一下直接问 */}
@@ -487,41 +595,57 @@ export default function ChatPage({
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.nativeEvent.isComposing) send();
               }}
-              placeholder="输入消息，回车发送（没有会话会自动创建）"
-              disabled={sendingRef.current}
+              placeholder={
+                busy ? "正在生成…（可点右侧「停止」）" : "输入消息，回车发送（没有会话会自动创建）"
+              }
+              disabled={busy}
               className="flex-1 rounded-xl border border-slate-200 px-4 py-2.5 outline-none focus:border-blue-400 disabled:bg-slate-50"
             />
-            <button
-              onClick={() => send()}
-              disabled={sendingRef.current}
-              className="rounded-xl bg-blue-600 px-5 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-slate-300"
-            >
-              发送
-            </button>
+            {busy ? (
+              <button
+                onClick={stop}
+                className="rounded-xl border border-slate-300 bg-white px-5 text-sm font-medium text-slate-600 hover:border-red-300 hover:text-red-600"
+              >
+                停止
+              </button>
+            ) : (
+              <button
+                onClick={() => send()}
+                className="rounded-xl bg-blue-600 px-5 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                发送
+              </button>
+            )}
           </div>
           {/* 功能行（对齐 WorkBuddy：输入框下方一排功能）—— 全部对接真实后端能力 */}
           <div className="mx-auto mt-2 flex max-w-3xl items-center gap-2">
-            <select
-              value={currentRole}
-              onChange={(e) => switchRole(e.target.value)}
-              disabled={!sessionId}
+            <span
               title="切换当前会话的角色（可选，默认健康档案管理员）"
-              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300 disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300"
             >
-              {roles.map((r) => (
-                <option key={r.role_id} value={r.role_id}>
-                  🎭 {r.role_name}
-                </option>
-              ))}
-            </select>
+              <IconUser />
+              <select
+                value={currentRole}
+                onChange={(e) => switchRole(e.target.value)}
+                disabled={!sessionId}
+                className="bg-transparent text-xs outline-none disabled:opacity-50"
+              >
+                {roles.map((r) => (
+                  <option key={r.role_id} value={r.role_id}>
+                    {r.role_name}
+                  </option>
+                ))}
+              </select>
+            </span>
             <div className="relative">
               <button
                 onClick={() => setModelMenuOpen((o) => !o)}
                 disabled={!sessionId}
                 title="切换本会话使用的模型（按供应商分组）"
-                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300 disabled:opacity-50"
+                className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300 disabled:opacity-50"
               >
-                🤖 {effectiveBackend || "模型"} ▾
+                <IconModel />
+                {effectiveBackend || "模型"} ▾
               </button>
               {modelMenuOpen && (
                 <div className="absolute bottom-full left-0 z-20 mb-2 max-h-72 w-72 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
@@ -568,9 +692,10 @@ export default function ChatPage({
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
               title="上传报告 / 图片，自动解析并入检索索引（.txt/.md/.pdf/.docx/.pptx/.xlsx + 图片 OCR）"
-              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300 disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300 disabled:opacity-50"
             >
-              {uploading ? "📎 上传中…" : "📎 上传报告"}
+              <IconClip />
+              {uploading ? "上传中…" : "上传报告"}
             </button>
             <input
               ref={fileRef}
@@ -583,11 +708,13 @@ export default function ChatPage({
               }}
             />
             <span className="ml-auto text-[11px] text-slate-300">
-              Enter 发送 · 停用插件即刻生效
+              Enter 发送 · 生成中可停止 · 停用插件即刻生效
             </span>
           </div>
         </div>
       </section>
+
+      <ToastStack toasts={toasts} onDismiss={dismiss} />
     </div>
   );
 }
