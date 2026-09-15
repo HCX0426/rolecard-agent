@@ -204,3 +204,70 @@ def test_execute_tools_injects_role_scopes_to_search_tool(
     message = out["messages"][0]
     assert isinstance(message, ToolMessage)
     assert "随访须知.md" in message.content  # 作用域经内核注入，命中授权集合
+
+
+# -- v2.2 检索延迟细分（P50/P95/P99，按阶段） -------------------------------------------
+
+
+class _Recorder:
+    """最小 tracer 桩：只收集 emit 的事件，供断言（不依赖 LocalTracer 的 I/O）。"""
+
+    def __init__(self) -> None:
+        self.events: list[object] = []
+
+    def emit(self, event: object) -> None:
+        self.events.append(event)
+
+
+class _FailingReranker:
+    """鸭子类型的重排器桩：rerank 恒返回 None（模拟调用失败 → 调用方回退向量序）。"""
+
+    name = "fake"
+
+    def rerank(self, _query: str, _documents: list[str]) -> None:
+        return None
+
+
+def test_latency_p95_empty_before_any_search(kb: KnowledgeBase) -> None:
+    """没有检索发生时分位为 None —— "没有数据"与"0ms"必须可区分。"""
+    metrics = kb.latency_p95()
+    assert metrics["samples"] == 0
+    assert metrics["p95"]["total_ms"] is None
+
+
+def test_search_records_latency_samples(kb: KnowledgeBase) -> None:
+    kb.index("health_reports", "随访须知.md", DOC_A)
+    for _ in range(5):
+        kb.search(["health_reports"], "复查频率", k=3)
+    metrics = kb.latency_p95()
+    assert metrics["samples"] == 5
+    assert metrics["rerank_enabled"] is False
+    assert metrics["embedder"] == "hash"
+    assert metrics["p95"]["embed_ms"] is not None
+    assert metrics["p95"]["rerank_ms"] < 5  # 未挂重排器：该阶段开销可忽略
+    assert metrics["p95"]["total_ms"] >= metrics["p95"]["vector_ms"]
+
+
+def test_search_emits_rag_search_trace(kb: KnowledgeBase) -> None:
+    kb.index("health_reports", "随访须知.md", DOC_A)
+    rec = _Recorder()
+    kb.search(["health_reports"], "复查频率", k=3, tracer=rec)
+    rag_events = [e for e in rec.events if getattr(e, "event", None) == "rag_search"]
+    assert rag_events, "应 emit rag_search 留痕"
+    detail = rag_events[0].detail  # type: ignore[attr-defined]
+    assert {"embed_ms", "vector_ms", "rerank_ms", "reranked"} <= set(detail)
+
+
+def test_rerank_failure_falls_back_and_is_timed(tmp_path: Path) -> None:
+    """挂了重排器但调用失败 → 回退向量序仍返回结果，并留痕 rerank_fallback。
+
+    需要 ≥2 个候选，否则 search 会跳过重排（len(hits) > 1 守卫）——故索引两份文档。
+    """
+    kb = KnowledgeBase(tmp_path / "chroma", HashEmbedder(), _FailingReranker())  # type: ignore[arg-type]
+    kb.index("health_reports", "随访须知.md", DOC_A)
+    kb.index("health_reports", "饮食建议.md", DOC_B)
+    rec = _Recorder()
+    hits = kb.search(["health_reports"], "复查频率", k=3, tracer=rec)
+    assert hits, "重排失败必须回退向量序，仍返回结果"
+    assert kb.latency_p95()["rerank_enabled"] is True
+    assert any(getattr(e, "event", None) == "rerank_fallback" for e in rec.events)

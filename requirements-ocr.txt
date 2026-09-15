@@ -1,15 +1,16 @@
-# OCR 依赖（v2.2，v1 不安装）
+# v2.2 OCR 独立环境依赖 —— 本地 Paddle 后端（Paddle 优先路径）。
 #
-# ⚠️ 必须装在【独立 venv / 独立进程】里，不要和主服务共用环境：
-#   - PaddleOCR 会带入自带的 numpy / OpenCV / onnxruntime，与主进程依赖摩擦
-#   - 这条链很重（paddleocr -> paddlex + 一批二进制），装进主环境会显著拖慢解析
+# ⚠️ 必须在【独立 venv】安装，绝不能进主服务环境：
 #
-# 关于 Python 版本：项目统一用 3.13（与主环境同基线）。这条链路在 3.13 上是安全的——
-# paddleocr / paddlex 为 pure-python，paddlepaddle 有 cp313 wheel，OpenCV 走 cp37-abi3。
+#     python -m venv .venv-ocr
+#     .venv-ocr\Scripts\python.exe -m pip install -r requirements-ocr.txt     # Windows
+#     .venv-ocr/bin/python       -m pip install -r requirements-ocr.txt     # macOS / Linux
 #
-# 安装方式（独立环境）：
-#   py -3.13 -m venv .venv-ocr
-#   .venv-ocr\Scripts\pip install -r requirements-ocr.txt
-
-paddlepaddle>=3.0.0
-paddleocr>=3.7.0
+# 为什么隔离：PaddleOCR 自带 numpy / OpenCV / onnxruntime，与主环境（chromadb 的 numpy）
+# 版本主张冲突。主进程只通过子进程调用（scripts/ocr_worker.py），互不污染。
+# 主进程通过 OCR_PYTHON 指向该 venv 的 python（默认自动发现 .venv-ocr/Scripts/python.exe）。
+#
+# 云端 OCR 兜底（配置 OCR_API_KEY 即启用，见 rag/ocr.py 的 CloudApiBackend）**不需要**本文件
+# ——它只用主环境已有的 httpx，无重型依赖。
+paddlepaddle==3.3.1
+paddleocr>=3.0

@@ -62,17 +62,27 @@ class Settings(BaseModel):
     chroma_path: Path = Path("./data/chroma")
     upload_dir: Path = Path("./data/uploads")  # v1 M5 上传入口的真实落点（登记 intake 任务）
 
-    # v2.2 OCR 后端：必须是【独立 venv / 进程】的 python 可执行文件。PaddleOCR 自带
-    # numpy / OpenCV / onnxruntime，与主环境依赖摩擦（见 requirements-ocr.txt），故绝不进主
-    # 环境。None = 未配置，图片上传保持 pending，由上传端点降级说明，不污染主进程。
+    # v2.2 OCR 后端（可插拔，Paddle 优先 / 云端 key 兜底）：
+    # - ocr_python：本地 Paddle 的解释器，必须是【独立 venv / 进程】的 python。PaddleOCR 自带
+    #   numpy / OpenCV / onnxruntime，与主环境依赖摩擦（见 requirements-ocr.txt），故绝不进主
+    #   环境。None = 让解析器自动发现默认路径（.venv-ocr/Scripts/python.exe）。
+    # - ocr_backend：auto（默认，Paddle 优先，不可用时若有 key 回退云端）/ paddle / cloud。
+    # - ocr_api_key：云端 OCR（默认 OCR.space）的 key。仅作兜底、且要求显式配置——
+    #   未配则不启用，绝不悄悄把用户上传的图片发往第三方。
+    # - ocr_provider / ocr_api_url：云端提供方与可选端点覆盖（默认 ocrspace 官方端点）。
     ocr_python: str | None = None
+    ocr_backend: str = "auto"
+    ocr_api_key: str | None = None
+    ocr_provider: str = "ocrspace"
+    ocr_api_url: str | None = None
 
     # v2.1 RAG 嵌入后端：auto（有 key 走 siliconflow bge-m3，否则 hash 离线兜底）/
     # siliconflow / chroma_default / hash。由 rag/retriever.make_embedder 消费。
     embedding_backend: str = "auto"
 
-    # v2.1 检索重排：off（默认，向量序）/ auto（有 key 走 bge-reranker）/ siliconflow。
-    rag_rerank: str = "off"
+    # v2.1 检索重排：auto（默认开启——有 SILICONFLOW_API_KEY 走 bge-reranker 精排，否则静默
+    # 等于 off，不破坏离线）/ off（强制关闭）/ siliconflow（强制开启，缺 key 启动即报错）。
+    rag_rerank: str = "auto"
 
     obs_backend: str = "local"
     obs_emit_raw_text: bool = False
@@ -149,6 +159,10 @@ class Settings(BaseModel):
             ("CHROMA_PATH", "chroma_path"),
             ("UPLOAD_DIR", "upload_dir"),
             ("OCR_PYTHON", "ocr_python"),
+            ("OCR_BACKEND", "ocr_backend"),
+            ("OCR_API_KEY", "ocr_api_key"),
+            ("OCR_PROVIDER", "ocr_provider"),
+            ("OCR_API_URL", "ocr_api_url"),
             ("RAG_EMBEDDING", "embedding_backend"),
             ("RAG_RERANK", "rag_rerank"),
             ("OBS_BACKEND", "obs_backend"),

@@ -1,7 +1,9 @@
-"""rag/parser 单测：扩展名分派、PDF 抽文本、图片 OCR 不可用降级、不支持类型报错。
+"""rag/parser 单测：扩展名分派、PDF 抽文本、图片 OCR 后端选择与降级、不支持类型报错。
 
-OCR 子进程路径（paddle）依赖独立 venv，本环境未装，故只测"未配置 → OcrUnavailable"
-的合约；真实 OCR 在 .venv-ocr 就绪后由集成验证。
+OCR 子进程路径（paddle）依赖独立 venv，本环境可能未装，故这里只测**合约**：
+- 后端不可用（无独立 venv / 未配 key）→ OcrUnavailable 降级；
+- 选择器策略：Paddle 优先，云端 key 兜底；
+真实 OCR 在 .venv-ocr 就绪后由集成验证（scripts/smoke_check.py / 手工上传图片）。
 """
 from __future__ import annotations
 
@@ -9,6 +11,12 @@ from pathlib import Path
 
 import pytest
 
+from rolecard_agent.config import Settings
+from rolecard_agent.rag.ocr import (
+    CloudApiBackend,
+    LocalPaddleBackend,
+    select_ocr_backend,
+)
 from rolecard_agent.rag.parser import (
     PARSEABLE_EXTENSIONS,
     OcrUnavailable,
@@ -76,10 +84,17 @@ def test_unsupported_extension_raises_parse_error(tmp_path: Path) -> None:
         parse_document(f)
 
 
-def test_image_without_ocr_raises_ocr_unavailable(
+def test_image_without_configured_backend_raises_ocr_unavailable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """未配置任何 OCR 后端（无独立 venv / 无 OCR_PYTHON / 无云端 key）→ OcrUnavailable 降级。
+
+    强制"自动发现不到默认解释器"，使断言不依赖本机是否装了 .venv-ocr。
+    """
     monkeypatch.delenv("OCR_PYTHON", raising=False)
+    # 注意：ocr.py 以 `from ... import _default_ocr_python` 绑定的是自己的名字，
+    # 必须 patch ocr 模块里的引用，patch parser 里的原函数不会生效。
+    monkeypatch.setattr("rolecard_agent.rag.ocr._default_ocr_python", lambda: None)
     img = tmp_path / "scan.png"
     img.write_bytes(b"\x89PNG\r\n\x1a\n")  # 假 PNG 头，仅用于触发扩展名分派
     with pytest.raises(OcrUnavailable):
@@ -99,3 +114,40 @@ def test_parseable_extensions_constant() -> None:
     assert ".pdf" in PARSEABLE_EXTENSIONS
     assert ".png" in PARSEABLE_EXTENSIONS
     assert ".bin" not in PARSEABLE_EXTENSIONS
+
+
+# -- OCR 后端选择策略：Paddle 优先，云端 key 兜底 ----------------------------------------
+
+
+def test_select_ocr_backend_prefers_paddle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """两者都可用时，Paddle 优先（离线、数据不出本机）。"""
+    monkeypatch.setattr(LocalPaddleBackend, "available", lambda self: True)
+    monkeypatch.setattr(CloudApiBackend, "available", lambda self: True)
+    backend = select_ocr_backend(Settings(ocr_api_key="sk-x"))
+    assert isinstance(backend, LocalPaddleBackend)
+
+
+def test_select_ocr_backend_falls_back_to_cloud(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Paddle 不可用（未装独立 venv）→ 配了 key 则回退云端。"""
+    monkeypatch.setattr(LocalPaddleBackend, "available", lambda self: False)
+    monkeypatch.setattr(CloudApiBackend, "available", lambda self: True)
+    backend = select_ocr_backend(Settings(ocr_api_key="sk-x"))
+    assert isinstance(backend, CloudApiBackend)
+
+
+def test_select_ocr_backend_none_when_nothing_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """两路都不可用 → None（调用方降级为 OcrUnavailable，不假装已读）。"""
+    monkeypatch.setattr(LocalPaddleBackend, "available", lambda self: False)
+    monkeypatch.setattr(CloudApiBackend, "available", lambda self: False)
+    assert select_ocr_backend(Settings()) is None
+
+
+def test_select_ocr_backend_explicit_paddle_ignores_cloud(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """显式 ocr_backend=paddle 时不回退云端 —— 明确要离线就不外发图片。"""
+    monkeypatch.setattr(LocalPaddleBackend, "available", lambda self: False)
+    monkeypatch.setattr(CloudApiBackend, "available", lambda self: True)
+    assert select_ocr_backend(Settings(ocr_backend="paddle", ocr_api_key="sk-x")) is None

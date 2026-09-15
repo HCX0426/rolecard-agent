@@ -13,8 +13,6 @@
 """
 from __future__ import annotations
 
-import os
-import subprocess
 from pathlib import Path
 
 TEXT_EXTS: frozenset[str] = frozenset({".txt", ".md"})
@@ -33,10 +31,14 @@ class OcrUnavailable(ParseError):
     """OCR 后端未配置 / 不可用：图片当前无法解析，应保持 pending。"""
 
 
-def parse_document(path: str | Path, *, ocr_python: str | None = None) -> str:
+def parse_document(
+    path: str | Path, *, ocr_python: str | None = None, backend: object | None = None
+) -> str:
     """把文件解析为纯文本。返回空字符串表示无文本（不报错，由调用方决定如何处理）。
 
     相对路径按当前工作目录解析；上传端点传入的是已落盘的绝对 / 相对路径。
+    `backend` 为上层按策略选好的 OCR 后端（见 rag/ocr.select_ocr_backend）；未传时图片走
+    本地 Paddle 默认路径（仍离线优先）。
     """
     p = Path(path)
     suffix = p.suffix.lower()
@@ -45,7 +47,7 @@ def parse_document(path: str | Path, *, ocr_python: str | None = None) -> str:
     if suffix in PDF_EXTS:
         return _parse_pdf(p)
     if suffix in IMAGE_EXTS:
-        return _parse_image(p, ocr_python=ocr_python)
+        return _parse_image(p, ocr_python=ocr_python, backend=backend)
     fallback = suffix or "(无扩展名)"
     raise ParseError(f"不支持的文件类型：{fallback}")
 
@@ -71,33 +73,42 @@ def _parse_pdf(p: Path) -> str:
 
 
 def _default_ocr_python() -> str | None:
-    """默认 OCR 解释器：项目根下的独立 venv（requirements-ocr.txt 的安装约定）。"""
-    cand = Path(__file__).resolve().parents[1] / ".venv-ocr" / "Scripts" / "python.exe"
+    """默认 OCR 解释器：项目根下的独立 venv（requirements-ocr.txt 的安装约定）。
+
+    parser.py 位于 <root>/src/rolecard_agent/rag/，故项目根为 parents[3]。
+    """
+    cand = Path(__file__).resolve().parents[3] / ".venv-ocr" / "Scripts" / "python.exe"
     return str(cand) if cand.exists() else None
 
 
-def _parse_image(p: Path, *, ocr_python: str | None = None) -> str:
-    """图片 OCR：子进程调用独立 OCR venv 里的 worker 脚本，协议为纯文本 stdout / 非零退出码。"""
-    exe = ocr_python or os.environ.get("OCR_PYTHON") or _default_ocr_python()
-    if not exe or not Path(exe).exists():
+def _parse_image(
+    p: Path, *, ocr_python: str | None = None, backend: object | None = None
+) -> str:
+    """图片 OCR：优先用上层按策略选好的 `backend`（见 rag/ocr.select_ocr_backend）；
+    否则按 `ocr_python` 构造本地 Paddle 后端，再不行自动发现默认 .venv-ocr 解释器（仍离线优先）。
+
+    后端不可用 → 抛 `OcrUnavailable`（调用方降级为 pending）；可用但调用失败 → 抛 `ParseError`。
+    后端选择逻辑在 rag/ocr.py，避免主环境直接依赖 paddle 栈。
+    """
+    if backend is None and ocr_python is not None:
+        from rolecard_agent.rag.ocr import LocalPaddleBackend
+
+        backend = LocalPaddleBackend(exe=ocr_python)
+    if backend is None:
+        from rolecard_agent.rag.ocr import LocalPaddleBackend
+
+        backend = LocalPaddleBackend()  # 自动发现默认路径（首选）
+    if not backend.available():
         raise OcrUnavailable(
             "OCR 后端未配置：按 requirements-ocr.txt 在独立 venv 安装 paddleocr，"
-            "并设置 OCR_PYTHON 指向其 python（默认 .venv-ocr/Scripts/python.exe）。"
+            "并设置 OCR_PYTHON 指向其 python（默认 .venv-ocr/Scripts/python.exe）；"
+            "或配置 OCR_API_KEY 走云端兜底。"
         )
-    worker = Path(__file__).resolve().parents[1] / "scripts" / "ocr_worker.py"
-    if not worker.exists():
-        raise OcrUnavailable(f"OCR worker 脚本缺失：{worker}")
     try:
-        proc = subprocess.run(
-            [exe, str(worker), str(p)],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
-    except Exception as exc:
-        raise ParseError(f"OCR 子进程启动失败：{exc}") from exc
-    if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip().replace("\n", " ")[:300]
-        raise ParseError(f"OCR 失败（退出码 {proc.returncode}）：{detail}")
-    return (proc.stdout or "").strip()
+        return backend.ocr(p)
+    except OcrUnavailable:
+        raise
+    except ParseError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - 后端意外异常统一成解析失败
+        raise ParseError(f"OCR 失败：{exc}") from exc

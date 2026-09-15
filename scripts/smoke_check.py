@@ -260,6 +260,15 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         assert scope[0]["chunks"] >= 1 and "须知.md" in scope[0]["sources"], scope
         assert scope[0]["embedder"], scope
 
+    @check("检索延迟细分：P50/P95/P99 按阶段（/api/rag/metrics）")
+    def _rag_metrics() -> None:
+        body = c.get("/api/rag/metrics").json()
+        assert "samples" in body and body["embedder"], body
+        assert isinstance(body["rerank_enabled"], bool), body
+        stages = {"embed_ms", "vector_ms", "rerank_ms", "total_ms"}
+        for label in ("p50", "p95", "p99"):
+            assert set(body[label]) == stages, body
+
     @check("数据管理：列表 / 修正指标 / 删除指标与报告")
     def _records() -> None:
         recs = c.get("/api/records").json()  # 数据在起服务前已注入

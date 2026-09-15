@@ -66,7 +66,9 @@ from rolecard_agent.domains.health.service import (
     HealthQueryService,
 )
 from rolecard_agent.domains.registry import DOMAINS, build_registry
+from rolecard_agent.rag.ocr import select_ocr_backend
 from rolecard_agent.rag.parser import (
+    IMAGE_EXTS,
     PARSEABLE_EXTENSIONS,
     OcrUnavailable,
     ParseError,
@@ -626,9 +628,10 @@ def create_app(
         """US-7 上传入口的真实落点：存文件 + 登记 intake 任务（幂等键 sha256）。
 
         v2.2 起解析在此完成：.txt/.md/.pdf 直接抽文本入 `health_reports` 检索索引；图片走
-        OCR 子进程（独立 venv，见 requirements-ocr.txt）。解析失败的图片 / 不支持的类型保持
-        pending，并向会话注入一条说明消息（graph.update_state），让模型知道"有文件已登记但
-        还不能读"，而不是假装读过。重复上传同一文件复用同一任务（ingestion_task 幂等键）。
+        **可插拔 OCR**（本地 Paddle 优先，独立 venv 子进程；不可用时若有 OCR_API_KEY 回退云端，
+        见 rag/ocr.py + requirements-ocr.txt）。解析失败的图片 / 不支持的类型保持 pending，并向
+        会话注入一条说明消息（graph.update_state），让模型知道"有文件已登记但还不能读"，而不是
+        假装读过。重复上传同一文件复用同一任务（ingestion_task 幂等键）。
         """
         thread = _get_thread(conn, thread_id)
         user_id = str(thread["user_id"])
@@ -655,12 +658,15 @@ def create_app(
         suffix = target.suffix.lower()
         if suffix in PARSEABLE_EXTENSIONS:
             try:
-                text = parse_document(target, ocr_python=settings.ocr_python)
+                # 仅图片需要选 OCR 后端：Paddle 优先，云端 key 兜底（见 rag/ocr.py）。
+                backend = select_ocr_backend(settings) if suffix in IMAGE_EXTS else None
+                text = parse_document(target, backend=backend)
             except OcrUnavailable:
-                # OCR 未配置：图片保持 pending，明确告知模型不可读（不把 paddle 栈拖进主环境）。
+                # 后端未配置：图片保持 pending，明确告知模型不可读（不把 paddle 栈拖进主环境）。
                 note = (
                     f"[用户上传了图片报告：{safe_name}，已登记 intake 任务 {task_id}"
-                    f"（status={existing['status']}）。OCR 后端未配置，当前不能读取图片内容，"
+                    f"（status={existing['status']}）。OCR 后端未配置"
+                    "（本地 Paddle 不可用，且未配置 OCR_API_KEY），当前不能读取图片内容，"
                     "不要假装已经读过。]"
                 )
                 graph_config = {"configurable": {"thread_id": thread_id}}
@@ -769,6 +775,15 @@ def create_app(
     def list_knowledge() -> list[object]:
         """v2.1 知识库概览（设置页知识库管理）：作用域 → 分块数 + 来源 + 嵌入器。"""
         return knowledge.describe()
+
+    @app.get("/api/rag/metrics")
+    def rag_metrics() -> object:
+        """v2.2 检索延迟细分：P50/P95/P99，按阶段拆（嵌入 / 向量检索 / 重排 / 合计）。
+
+        基于最近 N 次检索的进程内滑动样本。回答"检索慢在哪一段、P95 多少、重排开没开"。
+        进程重启样本清零（演示足够；生产应落时序库）。未发生检索时各分位为 null。
+        """
+        return knowledge.latency_p95()
 
     @app.get("/api/settings/models")
     def get_model_settings() -> object:

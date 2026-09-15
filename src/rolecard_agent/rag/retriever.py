@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import math
 import os
 import re
 from collections.abc import Sequence
@@ -30,13 +31,28 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rolecard_agent.config import Settings
-from rolecard_agent.core.observability import TraceEvent
+from rolecard_agent.core.observability import TraceEvent, timer
 
 if TYPE_CHECKING:
     from langchain_core.tools import BaseTool
 
 _CHUNK_SIZE = 500
 _CHUNK_OVERLAP = 80
+# 检索延迟滑动样本上限：只保留最近 N 次，进程内用于 P50/P95/P99 细分。
+_LATENCY_CAP = 200
+_LATENCY_STAGES = ("embed_ms", "vector_ms", "rerank_ms", "total_ms")
+
+
+def _percentile(values: Sequence[float], pct: float) -> float | None:
+    """最近秩法（nearest-rank）分位数：对小样本稳定、无插值歧义。
+
+    空样本返回 None —— "没有数据"与"0ms"是两回事，调用方（前端 / 运维）需要区分。
+    """
+    if not values:
+        return None
+    ordered = sorted(values)
+    rank = max(0, min(len(ordered) - 1, math.ceil(pct / 100.0 * len(ordered)) - 1))
+    return round(ordered[rank], 2)
 
 
 def chunk_text(text: str, *, size: int = _CHUNK_SIZE, overlap: int = _CHUNK_OVERLAP) -> list[str]:
@@ -270,6 +286,8 @@ class KnowledgeBase:
         self._client = chromadb.PersistentClient(path=str(chroma_path))
         self._embedder = embedder
         self._reranker = reranker
+        # 检索延迟滑动样本（进程内）：每次 search 追加一条阶段耗时，供 P95 细分。
+        self._samples: list[dict[str, float]] = []
 
     def index(self, scope: str, source: str, text: str) -> int:
         """切块 -> 嵌入 -> 入库（同 source 幂等重建）。返回入库的分块数。"""
@@ -300,42 +318,113 @@ class KnowledgeBase:
 
         候选池取 max(k*3, 8) 条给重排足够空间。重排失败自动回退向量序（质量降级，
         留痕 `rerank_fallback`，不抛出 —— 重排是增强，不能变成可用性故障）。
+
+        v2.2：对三个阶段计时（嵌入 / 向量检索 / 重排）+ 合计，写滑动样本供 P95 细分，
+        并 emit `rag_search` 留痕（只含耗时与计数，不含文本，脱敏安全）。
         """
         if not scopes or not query.strip():
             return []
-        vector = self._embedder.embed([query.strip()])[0]
+        with timer() as t_embed:
+            vector = self._embedder.embed([query.strip()])[0]
         pool_size = max(k * 3, 8)
-        hits: list[Hit] = []
-        for scope in scopes:
-            try:
-                collection = self._client.get_collection(name=scope)
-            except Exception:  # noqa: BLE001 - 作用域尚无集合 = 没有知识，跳过而非报错
-                continue
-            try:
-                found = collection.query(query_embeddings=[vector], n_results=pool_size)
-            except Exception as exc:  # noqa: BLE001 - 维度错误翻译成可操作提示（搜索时抛出，由工具层兜住）
-                raise _translate_dimension_error(exc) from exc
-            docs = (found.get("documents") or [[]])[0]
-            metas = (found.get("metadatas") or [[]])[0]
-            dists = (found.get("distances") or [[]])[0]
-            for doc, meta, dist in zip(docs, metas, dists, strict=True):
-                hits.append(
-                    Hit(
-                        scope=scope,
-                        source=str((meta or {}).get("source", "?")),
-                        text=doc,
-                        distance=float(dist),
+        with timer() as t_vec:
+            hits: list[Hit] = []
+            for scope in scopes:
+                try:
+                    collection = self._client.get_collection(name=scope)
+                except Exception:  # noqa: BLE001 - 作用域尚无集合 = 没有知识，跳过而非报错
+                    continue
+                try:
+                    found = collection.query(query_embeddings=[vector], n_results=pool_size)
+                except Exception as exc:  # noqa: BLE001 - 维度错误翻译成可操作提示（搜索时抛出，由工具层兜住）
+                    raise _translate_dimension_error(exc) from exc
+                docs = (found.get("documents") or [[]])[0]
+                metas = (found.get("metadatas") or [[]])[0]
+                dists = (found.get("distances") or [[]])[0]
+                for doc, meta, dist in zip(docs, metas, dists, strict=True):
+                    hits.append(
+                        Hit(
+                            scope=scope,
+                            source=str((meta or {}).get("source", "?")),
+                            text=doc,
+                            distance=float(dist),
+                        )
                     )
-                )
-        hits.sort(key=lambda h: h.distance)
+            hits.sort(key=lambda h: h.distance)
+        n_candidates = len(hits)
 
-        if self._reranker is not None and len(hits) > 1:
-            reranked = self._reranker.rerank(query, [h.text for h in hits])
-            if reranked is not None:
-                hits = [hits[i] for i, _ in reranked]
-            elif tracer is not None and hasattr(tracer, "emit"):
-                tracer.emit(TraceEvent(event="rerank_fallback", detail={"reason": "rerank_failed"}))
-        return hits[:k]
+        reranked_flag = False
+        with timer() as t_rerank:
+            if self._reranker is not None and len(hits) > 1:
+                reranked = self._reranker.rerank(query, [h.text for h in hits])
+                if reranked is not None:
+                    hits = [hits[i] for i, _ in reranked]
+                    reranked_flag = True
+                elif tracer is not None and hasattr(tracer, "emit"):
+                    tracer.emit(
+                        TraceEvent(event="rerank_fallback", detail={"reason": "rerank_failed"})
+                    )
+        result = hits[:k]
+
+        total_ms = t_embed["ms"] + t_vec["ms"] + t_rerank["ms"]
+        self._record_sample(
+            embed_ms=t_embed["ms"],
+            vector_ms=t_vec["ms"],
+            rerank_ms=t_rerank["ms"],
+            total_ms=total_ms,
+        )
+        if tracer is not None and hasattr(tracer, "emit"):
+            tracer.emit(
+                TraceEvent(
+                    event="rag_search",
+                    latency_ms=round(total_ms, 3),
+                    detail={
+                        "k": k,
+                        "n_candidates": n_candidates,
+                        "n_hits": len(result),
+                        "reranked": reranked_flag,
+                        "reranker": self._reranker.name if self._reranker else None,
+                        "embed_ms": round(t_embed["ms"], 2),
+                        "vector_ms": round(t_vec["ms"], 2),
+                        "rerank_ms": round(t_rerank["ms"], 2),
+                    },
+                )
+            )
+        return result
+
+    def _record_sample(
+        self, *, embed_ms: float, vector_ms: float, rerank_ms: float, total_ms: float
+    ) -> None:
+        """追加一条延迟样本，并裁剪到 `_LATENCY_CAP`（滑动窗口）。"""
+        self._samples.append(
+            {
+                "embed_ms": embed_ms,
+                "vector_ms": vector_ms,
+                "rerank_ms": rerank_ms,
+                "total_ms": total_ms,
+            }
+        )
+        if len(self._samples) > _LATENCY_CAP:
+            del self._samples[: len(self._samples) - _LATENCY_CAP]
+
+    def latency_p95(self) -> dict[str, object]:
+        """检索延迟细分：P50/P95/P99，按阶段（嵌入 / 向量检索 / 重排 / 合计）。
+
+        样本 = 最近 `_LATENCY_CAP` 次 search 的进程内滑动窗口；无样本时各分位为 None
+        （"没有数据"不同于"0ms"）。`rerank_enabled` 反映当前是否挂了重排器——未挂时
+        rerank_ms 恒为 0（阶段计时照常，便于对比开启前后的收益）。
+        """
+        out: dict[str, object] = {
+            "samples": len(self._samples),
+            "rerank_enabled": self._reranker is not None,
+            "embedder": self._embedder.name,
+        }
+        for label, pct in (("p50", 50), ("p95", 95), ("p99", 99)):
+            out[label] = {
+                stage: _percentile([s[stage] for s in self._samples], pct)
+                for stage in _LATENCY_STAGES
+            }
+        return out
 
     def scope_count(self, scope: str) -> int:
         """集合内分块数（集合不存在 = 0）。用于幂等判断，不抛错。"""
