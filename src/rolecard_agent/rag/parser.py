@@ -4,6 +4,9 @@
 - `.txt` / `.md`：直接按 UTF-8 读取（v2.1 已有行为，这里收敛到同一入口）。
 - `.pdf`：用 `pypdf` 抽文本。纯 Python、轻量，可与主环境共存（chromadb 已带入 numpy /
   onnxruntime，pypdf 不新增二进制依赖）。
+- Office OOXML（`.docx` / `.pptx` / `.xlsx`）：本质是 ZIP + XML，用**标准库** `zipfile` +
+  `xml.etree.ElementTree` 抽文本，**零新增依赖**（刻意不引 python-docx / openpyxl / lxml，
+  避免再给主环境加二进制依赖 —— 与 pypdf 的取舍一致）。
 - 图片（`.png/.jpg/.jpeg/.bmp/.gif/.tiff/.webp`）：走 OCR。按 `requirements-ocr.txt` 的硬规则，
   OCR 必须在【独立 venv / 进程】里跑（PaddleOCR 自带 numpy / OpenCV 与主环境冲突），因此通过
   子进程调用一个独立的 OCR Python（`OCR_PYTHON`，默认 `.venv-ocr/Scripts/python.exe`）。未配置
@@ -13,6 +16,9 @@
 """
 from __future__ import annotations
 
+import re
+import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 
 TEXT_EXTS: frozenset[str] = frozenset({".txt", ".md"})
@@ -20,7 +26,16 @@ PDF_EXTS: frozenset[str] = frozenset({".pdf"})
 IMAGE_EXTS: frozenset[str] = frozenset(
     {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tiff", ".webp"}
 )
-PARSEABLE_EXTENSIONS: frozenset[str] = TEXT_EXTS | PDF_EXTS | IMAGE_EXTS
+DOCX_EXTS: frozenset[str] = frozenset({".docx"})
+PPTX_EXTS: frozenset[str] = frozenset({".pptx"})
+XLSX_EXTS: frozenset[str] = frozenset({".xlsx"})
+OFFICE_EXTS: frozenset[str] = DOCX_EXTS | PPTX_EXTS | XLSX_EXTS
+PARSEABLE_EXTENSIONS: frozenset[str] = TEXT_EXTS | PDF_EXTS | OFFICE_EXTS | IMAGE_EXTS
+
+# OOXML 命名空间（各部件 XML 的标签都带前缀，须以完整限定名查找）。
+_W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_A_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+_SS_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 
 
 class ParseError(Exception):
@@ -46,6 +61,12 @@ def parse_document(
         return p.read_text(encoding="utf-8", errors="ignore")
     if suffix in PDF_EXTS:
         return _parse_pdf(p)
+    if suffix in DOCX_EXTS:
+        return _parse_docx(p)
+    if suffix in PPTX_EXTS:
+        return _parse_pptx(p)
+    if suffix in XLSX_EXTS:
+        return _parse_xlsx(p)
     if suffix in IMAGE_EXTS:
         return _parse_image(p, ocr_python=ocr_python, backend=backend)
     fallback = suffix or "(无扩展名)"
@@ -70,6 +91,78 @@ def _parse_pdf(p: Path) -> str:
         raise
     except Exception as exc:  # pypdf 可能抛各种内部错误（加密 / 损坏）
         raise ParseError(f"PDF 解析失败：{exc}") from exc
+
+
+# ---------------------------------------------------------------- Office OOXML（zip + XML，零依赖）
+
+
+def _open_ooxml(p: Path) -> zipfile.ZipFile:
+    """打开 OOXML(zip)；非 zip / 损坏 → 可读 ParseError，而不是 zipfile 的原始异常。"""
+    try:
+        return zipfile.ZipFile(p)
+    except (zipfile.BadZipFile, OSError) as exc:
+        raise ParseError(f"不是有效的 Office 文件（{p.suffix} 损坏或非 OOXML）：{exc}") from exc
+
+
+def _xml_root(xml: bytes) -> ET.Element:
+    try:
+        return ET.fromstring(xml)
+    except ET.ParseError as exc:
+        raise ParseError(f"OOXML 部件 XML 损坏：{exc}") from exc
+
+
+def _text_from_xml(xml: bytes, *, para_tag: str, text_tag: str) -> str:
+    """按段落聚合：每段落内所有 <t> 顺序拼接为一行，丢弃空段落。docx 与 pptx 共用此式。"""
+    lines: list[str] = []
+    for para in _xml_root(xml).iter(para_tag):
+        line = "".join((t.text or "") for t in para.iter(text_tag)).strip()
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def _parse_docx(p: Path) -> str:
+    """docx 正文：`word/document.xml` 的段落（表格单元格内也是 <w:p>，故一并覆盖）。"""
+    with _open_ooxml(p) as z:
+        try:
+            xml = z.read("word/document.xml")
+        except KeyError as exc:
+            raise ParseError("不是有效的 .docx：缺少 word/document.xml") from exc
+    return _text_from_xml(xml, para_tag=f"{_W_NS}p", text_tag=f"{_W_NS}t")
+
+
+def _parse_pptx(p: Path) -> str:
+    """pptx 各页：按 slide 序号排序，逐页抽 <a:t> 文本，页间空行分隔。"""
+    with _open_ooxml(p) as z:
+        slides = sorted(n for n in z.namelist() if re.fullmatch(r"ppt/slides/slide\d+\.xml", n))
+        if not slides:
+            raise ParseError("不是有效的 .pptx：没有 ppt/slides/slide*.xml")
+        parts = [
+            _text_from_xml(z.read(name), para_tag=f"{_A_NS}p", text_tag=f"{_A_NS}t")
+            for name in slides
+        ]
+    return "\n\n".join(x for x in parts if x)
+
+
+def _parse_xlsx(p: Path) -> str:
+    """xlsx 文本：共享字符串（+ 内联字符串）。**只做文本抽取，不重建表结构行列**。"""
+    with _open_ooxml(p) as z:
+        names = z.namelist()
+        sheets = [n for n in names if re.fullmatch(r"xl/worksheets/sheet\d+\.xml", n)]
+        if not sheets:
+            raise ParseError("不是有效的 .xlsx：没有 xl/worksheets/sheet*.xml")
+        lines: list[str] = []
+        if "xl/sharedStrings.xml" in names:
+            for si in _xml_root(z.read("xl/sharedStrings.xml")).iter(f"{_SS_NS}si"):
+                s = "".join((t.text or "") for t in si.iter(f"{_SS_NS}t")).strip()
+                if s:
+                    lines.append(s)
+        for name in sheets:  # 少数写入器用 inlineStr
+            for is_el in _xml_root(z.read(name)).iter(f"{_SS_NS}is"):
+                s = "".join((t.text or "") for t in is_el.iter(f"{_SS_NS}t")).strip()
+                if s:
+                    lines.append(s)
+    return "\n".join(lines)
 
 
 def _default_ocr_python() -> str | None:

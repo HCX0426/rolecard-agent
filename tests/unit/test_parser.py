@@ -7,6 +7,8 @@ OCR 子进程路径（paddle）依赖独立 venv，本环境可能未装，故�
 """
 from __future__ import annotations
 
+import io
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -49,6 +51,56 @@ def _make_pdf_bytes(text: str) -> bytes:
         out += f"{off:010d} 00000 n \n".encode()
     out += f"trailer\n<< /Size {n} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF".encode()
     return bytes(out)
+
+
+def _zip_bytes(files: dict[str, str]) -> bytes:
+    """把 {part 路径: XML 文本} 打包成一个 zip（OOXML 的最小载体）。"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, content in files.items():
+            z.writestr(name, content)
+    return buf.getvalue()
+
+
+def _make_docx_bytes(paragraphs: list[str]) -> bytes:
+    body = "".join(
+        f'<w:p><w:r><w:t xml:space="preserve">{t}</w:t></w:r></w:p>' for t in paragraphs
+    )
+    doc = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f"<w:body>{body}</w:body></w:document>"
+    )
+    return _zip_bytes({"word/document.xml": doc})
+
+
+def _make_pptx_bytes(slides: list[list[str]]) -> bytes:
+    files: dict[str, str] = {}
+    for i, texts in enumerate(slides, start=1):
+        paras = "".join(f"<a:p><a:r><a:t>{t}</a:t></a:r></a:p>" for t in texts)
+        files[f"ppt/slides/slide{i}.xml"] = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+            'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">'
+            f"<p:cSld><p:spTree><p:sp><p:txBody>{paras}</p:txBody></p:sp></p:spTree></p:cSld>"
+            "</p:sld>"
+        )
+    return _zip_bytes(files)
+
+
+def _make_xlsx_bytes(strings: list[str]) -> bytes:
+    sis = "".join(f"<si><t>{s}</t></si>" for s in strings)
+    shared = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f"{sis}</sst>"
+    )
+    sheet = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        "<sheetData/></worksheet>"
+    )
+    return _zip_bytes({"xl/sharedStrings.xml": shared, "xl/worksheets/sheet1.xml": sheet})
 
 
 def test_text_extensions_read_directly(tmp_path: Path) -> None:
@@ -113,6 +165,7 @@ def test_parseable_extensions_constant() -> None:
     assert ".md" in PARSEABLE_EXTENSIONS
     assert ".pdf" in PARSEABLE_EXTENSIONS
     assert ".png" in PARSEABLE_EXTENSIONS
+    assert {".docx", ".pptx", ".xlsx"} <= PARSEABLE_EXTENSIONS
     assert ".bin" not in PARSEABLE_EXTENSIONS
 
 
@@ -151,3 +204,45 @@ def test_select_ocr_backend_explicit_paddle_ignores_cloud(
     monkeypatch.setattr(LocalPaddleBackend, "available", lambda self: False)
     monkeypatch.setattr(CloudApiBackend, "available", lambda self: True)
     assert select_ocr_backend(Settings(ocr_backend="paddle", ocr_api_key="sk-x")) is None
+
+
+# -- Office OOXML：docx / pptx / xlsx（zip + XML，零依赖） --------------------------------
+
+
+def test_docx_extraction(tmp_path: Path) -> None:
+    f = tmp_path / "报告.docx"
+    f.write_bytes(_make_docx_bytes(["随访须知", "每半年复查一次超声。"]))
+    out = parse_document(f)
+    assert "随访须知" in out
+    assert "每半年复查一次超声。" in out
+    assert "\n" in out  # 段落被保留为换行
+
+
+def test_pptx_extraction(tmp_path: Path) -> None:
+    f = tmp_path / "幻灯片.pptx"
+    f.write_bytes(_make_pptx_bytes([["第一页标题"], ["第二页要点", "复查频率"]]))
+    out = parse_document(f)
+    assert "第一页标题" in out
+    assert "复查频率" in out
+
+
+def test_xlsx_extraction(tmp_path: Path) -> None:
+    f = tmp_path / "指标.xlsx"
+    f.write_bytes(_make_xlsx_bytes(["血糖", "6.1"]))
+    out = parse_document(f)
+    assert "血糖" in out and "6.1" in out
+
+
+def test_broken_office_file_raises_parse_error(tmp_path: Path) -> None:
+    """非 zip / 损坏的 .docx → ParseError（而不是 zipfile.BadZipFile 冒出来）。"""
+    f = tmp_path / "坏.docx"
+    f.write_bytes(b"not a zip at all")
+    with pytest.raises(ParseError):
+        parse_document(f)
+
+
+def test_docx_without_document_xml_raises(tmp_path: Path) -> None:
+    f = tmp_path / "缺件.docx"
+    f.write_bytes(_zip_bytes({"other.xml": "<x/>"}))
+    with pytest.raises(ParseError):
+        parse_document(f)

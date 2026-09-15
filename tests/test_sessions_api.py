@@ -225,15 +225,18 @@ def test_upload_pdf_indexed_and_idempotent(
 def test_upload_unsupported_type_stays_pending(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """v2.2：暂不支持的类型（如 .docx）落地为 pending，并明确告知模型不可读，不假装读过。"""
+    """v2.2：暂不支持的类型（如 .bin）落地为 pending，并明确告知模型不可读，不假装读过。
+
+    注意 .docx/.pptx/.xlsx 自 v2.2 起已支持解析，故这里特意用一个真正不支持的扩展名。
+    """
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
-    app = create_app(sqlite_path=tmp_path / "docx.db", model=ScriptedChat([]))
+    app = create_app(sqlite_path=tmp_path / "unsupported.db", model=ScriptedChat([]))
     with TestClient(app) as c:
         session = c.post("/api/session", json={}).json()
         tid = str(session["thread_id"])
         res = c.post(
             f"/api/session/{tid}/upload",
-            files={"file": ("报告.docx", b"PK\x03\x04 fake docx", "application/docx")},
+            files={"file": ("报告.bin", b"\x00\x01\x02binary", "application/octet-stream")},
         )
         assert res.status_code == 201
         assert res.json()["status"] == "pending"

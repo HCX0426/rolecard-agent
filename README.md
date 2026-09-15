@@ -7,8 +7,8 @@
 health 查询工具 / FastAPI 接入层 + SSE 流式对话 / Vite+React 控制台（四页签）；
 **230 个测试全绿、`smoke_check` 12/12、一致性 23/0，且全部离线运行**（注入脚本化模型，不需要启动 Ollama）。
 RAG：chroma 分作用域集合 + 可插拔嵌入（bge-m3 / hash 离线兜底）+ `search_knowledge` 内核工具 +
-**可插拔 OCR（本地 Paddle 优先 / 云端 API key 兜底）** + PDF/图片解析入索引 + **rerank 默认开启** +
-**检索延迟 P50/P95/P99 细分**（`GET /api/rag/metrics`）。待续：docx / pptx / xlsx 原生解析、前端延迟面板。
+**可插拔 OCR（本地 Paddle 优先 / 云端 API key 兜底）** + `.txt/.md/.pdf/.docx/.pptx/.xlsx` 解析入索引 +
+**rerank 默认开启** + **检索延迟 P50/P95/P99 细分**（`GET /api/rag/metrics`）。待续：前端延迟面板。
 
 ---
 
@@ -199,7 +199,7 @@ v1 同时包含：**测试与评测集（含通过率基线）**、Docker、GitH
 | 版本 | 内容 |
 | --- | --- |
 | v2.1 | 检索外挂 RAG —— **已落地**：chroma 分作用域集合、可插拔嵌入（bge-m3 / hash 离线兜底）、`search_knowledge` 内核工具（作用域由角色声明、内核注入）、上传直接入库、**rerank 默认开启**、**检索延迟 P50/P95/P99 细分** |
-| v2.2 | 文档摄取 —— **部分落地**：`.txt/.md/.pdf` 解析 + **可插拔 OCR（本地 Paddle 优先 / 云端 API key 兜底）**；待续：docx / pptx / xlsx 原生解析 |
+| v2.2 | 文档摄取 —— **已落地**：`.txt/.md/.pdf` 解析 + **Office OOXML（`.docx/.pptx/.xlsx`，标准库 zip+XML，零新依赖）** + **可插拔 OCR（本地 Paddle 优先 / 云端 API key 兜底）** |
 | v2.3 | 完整前端（组件库 / 移动端适配；多页应用已提前为 M5） |
 | v2.4 | 公网部署与多后端路由（含失败自动回退） |
 | v2.5 | 生产化替换（Postgres / Milvus / Redis） |

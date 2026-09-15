@@ -627,11 +627,11 @@ def create_app(
     async def upload_report(thread_id: str, file: UploadFile) -> object:
         """US-7 上传入口的真实落点：存文件 + 登记 intake 任务（幂等键 sha256）。
 
-        v2.2 起解析在此完成：.txt/.md/.pdf 直接抽文本入 `health_reports` 检索索引；图片走
-        **可插拔 OCR**（本地 Paddle 优先，独立 venv 子进程；不可用时若有 OCR_API_KEY 回退云端，
-        见 rag/ocr.py + requirements-ocr.txt）。解析失败的图片 / 不支持的类型保持 pending，并向
-        会话注入一条说明消息（graph.update_state），让模型知道"有文件已登记但还不能读"，而不是
-        假装读过。重复上传同一文件复用同一任务（ingestion_task 幂等键）。
+        v2.2 起解析在此完成：.txt/.md/.pdf/.docx/.pptx/.xlsx 直接抽文本入
+        `health_reports` 检索索引；图片走 **可插拔 OCR**（本地 Paddle 优先，独立 venv 子进程；
+        不可用时若有 OCR_API_KEY 回退云端，见 rag/ocr.py + requirements-ocr.txt）。
+        解析失败的图片 / 不支持的类型保持 pending，并向会话注入一条说明消息（graph.update_state），
+        让模型知道"有文件已登记但还不能读"，而不是假装读过。重复上传同一文件复用同一任务。
         """
         thread = _get_thread(conn, thread_id)
         user_id = str(thread["user_id"])
@@ -708,8 +708,9 @@ def create_app(
         else:
             note = (
                 f"[用户上传了报告文件：{safe_name}，已登记 intake 任务 {task_id}"
-                f"（status={existing['status']}）。文件类型暂不支持自动解析（v2.2 仅接 "
-                ".txt/.md/.pdf 及图片 OCR），当前不能读取其中内容，不要假装已经读过。]"
+                f"（status={existing['status']}）。文件类型暂不支持自动解析（v2.2 支持 "
+                ".txt/.md/.pdf/.docx/.pptx/.xlsx 及图片 OCR），当前不能读取其中内容，"
+                "不要假装已经读过。]"
             )
         graph_config = {"configurable": {"thread_id": thread_id}}
         app_state["graph"].update_state(graph_config, {"messages": [HumanMessage(content=note)]})

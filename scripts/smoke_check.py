@@ -14,9 +14,11 @@
 
 from __future__ import annotations
 
+import io
 import json
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -62,6 +64,22 @@ def _make_pdf_bytes(text: str) -> bytes:
         out += f"{off:010d} 00000 n \n".encode()
     out += f"trailer\n<< /Size {n} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF".encode()
     return bytes(out)
+
+
+def _make_docx_bytes(paragraphs: list[str]) -> bytes:
+    """构造一个最小合法 .docx(OOXML = zip + word/document.xml)，供上传链路验证 Office 解析。"""
+    body = "".join(
+        f'<w:p><w:r><w:t xml:space="preserve">{t}</w:t></w:r></w:p>' for t in paragraphs
+    )
+    doc = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f"<w:body>{body}</w:body></w:document>"
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("word/document.xml", doc)
+    return buf.getvalue()
 
 
 class FakeChat:
@@ -219,7 +237,7 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         assert titled["title"] == "冒烟提问", titled
         assert c.delete(f"/api/session/{s['thread_id']}").status_code == 204
 
-    @check("上传：.txt/.pdf 建索引 / 重复复用 / 空文件拒绝")
+    @check("上传：.txt/.pdf/.docx 建索引 / 重复复用 / 空文件拒绝")
     def _upload() -> None:
         s = c.post("/api/session", json={}).json()
         tid = s["thread_id"]
@@ -246,6 +264,18 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
             },
         )
         assert pdf.json()["status"] == "indexed", pdf.text
+        # v2.2：Office（.docx）文本抽取入索引（OOXML = zip + XML，零依赖）
+        docx = c.post(
+            f"/api/session/{tid}/upload",
+            files={
+                "file": (
+                    "随访.docx",
+                    _make_docx_bytes(["复查须知", "每半年复查一次超声。"]),
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+        )
+        assert docx.json()["status"] == "indexed", docx.text
         empty = c.post(f"/api/session/{tid}/upload", files={"file": ("a.txt", b"", "text/plain")})
         assert empty.status_code == 400
         # 注入的说明消息应进入会话历史（模型下一轮知道有文件已索引）
