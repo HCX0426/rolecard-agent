@@ -881,6 +881,12 @@ def create_app(
         except ExtractConfigError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except ExtractError as exc:
+            roles.audit(
+                actor="operator",
+                action="extract_report_failed",
+                target=body.task_id,
+                detail={"task_id": body.task_id, "error": str(exc)[:300]},
+            )
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
         if outcome is None:

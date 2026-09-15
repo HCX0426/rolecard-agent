@@ -17,7 +17,7 @@ from rolecard_agent.config import Settings
 def test_defaults_are_usable_without_any_env() -> None:
     settings = Settings()
     backend = settings.backend()
-    assert backend.model == "qwen2.5:7b"
+    assert backend.model == "qwen2.5vl:7b"
     assert backend.provider == "ollama"
     assert settings.obs_backend == "local"
     assert settings.obs_emit_raw_text is False  # redacted by default
@@ -35,7 +35,7 @@ def test_parses_backends_from_json() -> None:
         }
     )
     assert settings.backend().model == "deepseek-chat"
-    assert settings.backend("local").base_url == "http://localhost:11434/v1"
+    assert settings.backend("local").base_url == "http://localhost:11434"
     assert settings.backend("cloud").api_key == "sk-x"
 
 

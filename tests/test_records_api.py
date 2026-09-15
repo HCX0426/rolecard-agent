@@ -155,18 +155,33 @@ def test_extract_requires_a_task_id(client: TestClient) -> None:
     assert client.post("/api/records/extract", json={}).status_code == 422
 
 
-def test_extract_degrades_honestly_without_a_model(client: TestClient) -> None:
-    """本环境没有可用的对话模型 → 必须如实降级（502 或 200+skipped），**绝不能 500**，
-    也不能假装抽取成功（那会把没校验过的数字塞进档案）。"""
+def test_extract_degrades_honestly_without_a_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """模型后端不可用 → 必须如实降级（502 或 200+skipped），**绝不能 500**，
+    也不能假装抽取成功（那会把没校验过的数字塞进档案）。
+
+    前提必须显式受控：本机 Ollama 在跑时默认后端是真实可用的，会把这条测试
+    变成"真实抽取成功"路径。所以把后端指到一个必然拒绝连接的端口（:9），
+    无论宿主机状态如何，测到的都是降级分支。"""
+    monkeypatch.setenv(
+        "MODEL_BACKENDS",
+        '{"local": {"model": "qwen2.5vl:7b", "provider": "ollama",'
+        ' "base_url": "http://127.0.0.1:9"}}',
+    )
+    monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    client = TestClient(create_app(sqlite_path=tmp_path / "app.db"))
     tid = client.post("/api/session", json={}).json()["thread_id"]
     uploaded = client.post(
         f"/api/session/{tid}/upload",
         files={"file": ("须知.md", "每半年复查一次超声。".encode(), "text/markdown")},
     )
     res = client.post("/api/records/extract", json={"task_id": uploaded.json()["task_id"]})
-    assert res.status_code in (200, 502), res.text
-    if res.status_code == 200:
-        assert res.json().get("skipped") in {"no_model", "no_text", "already_extracted"}
+    assert res.status_code == 502, res.text
+    # 失败也必须留痕：失败的抽取尝试写 extract_report_failed 审计。
+    actions = {a["action"] for a in client.get("/api/audit?limit=300").json()}
+    assert "extract_report_failed" in actions
 
 
 def test_extract_is_idempotent_per_ingestion_task(

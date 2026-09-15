@@ -2,8 +2,10 @@
 
 Same codebase, three deployment topologies - only the config differs:
   A all-local | B app on cloud + model at home | C all-cloud.
-Ollama exposes an OpenAI-compatible endpoint (http://localhost:11434/v1), so a "local model"
-and a "cloud API" are the SAME provider to this code - only base_url changes.
+Ollama exposes BOTH an OpenAI-compatible endpoint (/v1/chat/completions) and a native one
+(/api/chat); provider decides which style is used - `ollama` speaks native (base_url WITHOUT
+/v1), `openai` speaks OpenAI-compatible (base_url WITH /v1). A "local model" and a "cloud API"
+are the SAME provider to this code - only base_url changes.
 
 Deliberately dependency-free: no pydantic-settings. Parsing is ~40 lines and keeping it
 in-house means one less package for the free-model contributors to keep aligned.
@@ -23,8 +25,13 @@ from pydantic import BaseModel, Field, ValidationError
 
 DEFAULT_LOCAL_BACKEND = {
     "provider": "ollama",
-    "base_url": "http://localhost:11434/v1",
-    "model": "qwen2.5:7b",
+    # provider=ollama 走 langchain-ollama 的 Ollama 原生端点（/api/chat），base_url 不带 /v1；
+    # OpenAI 兼容端点（http://localhost:11434/v1/chat/completions）是 provider=openai 时用的。
+    # 带错 /v1 的症状是 Ollama 返回 "404 page not found"——端点风格由 provider 决定。
+    "base_url": "http://localhost:11434",
+    # qwen2.5vl:7b = 文本对话 + 结构化抽取 + 图片直读三合一：8GB 显存只能常驻一个 7B，
+    # 选 vl 版（qwen2.5:7b 的超集）避免「对话模型与抽取模型互相挤出显存」的切换开销。
+    "model": "qwen2.5vl:7b",
     "api_key": "ollama",
 }
 

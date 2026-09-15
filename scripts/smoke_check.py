@@ -282,13 +282,18 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         # 注入的说明消息应进入会话历史（模型下一轮知道有文件已索引）
         msgs = c.get(f"/api/session/{tid}/messages").json()
         assert any("已建立检索索引" in str(m.get("content", "")) for m in msgs), msgs
-        # v2.3 结构化抽取端点：未知任务 404；**没有模型时必须如实降级**（502 或 200+skipped），
-        # 绝不能 500，也不能假装抽取成功 —— 这是"不把未校验数据当事实"的底线。
+        # v2.3 结构化抽取端点：未知任务 404；模型不可用时必须如实降级（502 或
+        # 200+skipped）；模型在线时走真实抽取（200 带 mode/written）。三种都是合法
+        # 结局 —— 底线只有一个：绝不 500，绝不静默假装成功。
         assert c.post("/api/records/extract", json={"task_id": "ing_nope"}).status_code == 404
         ex = c.post("/api/records/extract", json={"task_id": first.json()["task_id"]})
         assert ex.status_code in (200, 502), ex.text
         if ex.status_code == 200:
-            assert ex.json().get("skipped") in {"no_model", "no_text", "already_extracted"}, ex.text
+            body = ex.json()
+            if "skipped" in body:
+                assert body["skipped"] in {"no_model", "no_text", "already_extracted"}, ex.text
+            else:
+                assert "mode" in body and "written" in body, ex.text  # 真实抽取结果
 
     @check("知识库概览：作用域 / 分块数 / 来源 / 嵌入器 / 重建作用域")
     def _knowledge() -> None:
