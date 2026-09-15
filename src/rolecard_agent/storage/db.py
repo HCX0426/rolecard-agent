@@ -19,9 +19,11 @@ would bring in Alembic. Stated here because this is where someone would look for
 
 from __future__ import annotations
 
+import contextlib
 import re
 import sqlite3
-from collections.abc import Iterable
+import threading
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +50,103 @@ def connect(path: str | Path) -> sqlite3.Connection:
     # 或连接池（v2.4 公网部署的前置项，见 docs/代码审查报告.md B3）。
     conn.execute("PRAGMA busy_timeout = 5000")
     return conn
+
+
+class ThreadLocalConnection:
+    """一条"逻辑连接"，内部为**每个线程**各持一条真实连接。
+
+    为什么需要它：sqlite3 的连接对象本身不是线程安全的 —— `check_same_thread=False` 只是
+    关掉 Python 侧的那道检查，并不会让并发 `execute` 变安全。而 FastAPI 的同步端点跑在
+    线程池里，因此"全进程共用一条连接"意味着多个线程同时操作同一个连接对象，症状是偶发的
+    `database is locked`、游标状态错乱，且极难复现。
+
+    这个类把"只有一条连接"的假象维持给调用方（服务层、工具层、端点、langgraph 的
+    checkpointer 都像以前一样持有它），实际每次调用都落到**当前线程自己的**连接上：
+
+      * 服务层 / 工具层 / 端点代码一行不改 —— 重构成本为零；
+      * 每个线程独占一条连接，跨线程共享彻底消失；
+      * WAL 让多条连接可并发读，写冲突由 busy_timeout 排队（见 connect）。
+
+    代价要说清：它**不是**连接池，也不做跨连接的事务协调 —— 两个线程各自开事务，仍然只能
+    靠 SQLite 的写锁串行化。它解决的是"同一连接对象被并发使用"这个 unsafe 用法，不是
+    "SQLite 写并发低"这个规模问题（后者是 v2.5 生产化替换的话题）。
+
+    线程会被线程池复用，所以每个请求开始时应当调 `rollback_current()` 清掉可能残留的
+    未提交事务 —— 由接入层的中间件负责。
+    """
+
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        opener: Callable[[str | Path], sqlite3.Connection] = connect,
+    ) -> None:
+        self._path = Path(path)
+        self._opener = opener
+        self._local = threading.local()
+        self._created: list[sqlite3.Connection] = []
+        self._lock = threading.Lock()
+
+    def _current(self) -> sqlite3.Connection:
+        conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = self._opener(self._path)
+            self._local.conn = conn
+            with self._lock:
+                self._created.append(conn)
+        return conn
+
+    def rollback_current(self) -> None:
+        """丢弃本线程可能残留的未提交事务（线程池线程会被下一个请求复用）。"""
+        conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
+        if conn is not None:
+            with contextlib.suppress(sqlite3.Error):
+                conn.rollback()
+
+    # 高频方法显式转发（比 __getattr__ 快，也让读代码的人一眼看到这是转发）
+    def execute(self, *args: object, **kwargs: object) -> sqlite3.Cursor:
+        return self._current().execute(*args, **kwargs)  # type: ignore[arg-type]
+
+    def executemany(self, *args: object, **kwargs: object) -> sqlite3.Cursor:
+        return self._current().executemany(*args, **kwargs)  # type: ignore[arg-type]
+
+    def executescript(self, *args: object, **kwargs: object) -> sqlite3.Cursor:
+        return self._current().executescript(*args, **kwargs)  # type: ignore[arg-type]
+
+    def commit(self) -> None:
+        self._current().commit()
+
+    def rollback(self) -> None:
+        self._current().rollback()
+
+    def cursor(self, *args: object, **kwargs: object) -> sqlite3.Cursor:
+        return self._current().cursor(*args, **kwargs)  # type: ignore[arg-type]
+
+    def close(self) -> None:
+        """关闭本线程能安全关闭的连接。
+
+        其它线程正在使用的连接**不能**在这里关（sqlite3 禁止跨线程使用连接对象），它们会
+        随线程结束被回收 —— 进程退出时由解释器统一清理。
+        """
+        with self._lock:
+            pending = list(self._created)
+            self._created.clear()
+        for conn in pending:
+            with contextlib.suppress(sqlite3.Error):
+                conn.close()
+        self._local = threading.local()
+
+    def __getattr__(self, name: str) -> object:
+        # 只在真正缺少该属性时兜底转发（row_factory / total_changes / in_transaction 等）。
+        # 双下划线名字一律不转发，避免 pickle / copy 之类协议调用时意外新建连接。
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return getattr(self._current(), name)
+
+
+def connect_threadlocal(path: str | Path) -> ThreadLocalConnection:
+    """`connect` 的线程安全替身：给接入层（多线程）用，语义见 `ThreadLocalConnection`。"""
+    return ThreadLocalConnection(path)
 
 
 def core_schema_path() -> Path:

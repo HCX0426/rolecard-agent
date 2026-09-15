@@ -96,7 +96,7 @@ from rolecard_agent.roles.service import (
     RoleError,
     RoleNotFound,
 )
-from rolecard_agent.storage.db import bootstrap, connect
+from rolecard_agent.storage.db import bootstrap, connect_threadlocal
 
 # M5 前端构建产物的位置：frontend/dist（仓库根下）。可用环境变量 FRONTEND_DIST 覆盖
 # （部署布局变化时不必移动文件）。未构建时控制台路由返回回退提示页，后端 API 不受影响。
@@ -336,7 +336,10 @@ def create_app(
     """
     settings = Settings.from_env()
     db_path = sqlite_path or settings.sqlite_path
-    conn = connect(db_path)
+    # 注意是 `connect_threadlocal` 而不是 `connect`：本进程的多线程（FastAPI 同步端点 +
+    # 图执行）会并发使用这个对象，而 sqlite3 的连接不是线程安全的。它对外仍表现为"一条
+    # 连接"，内部按线程分发（见 storage/db.py 的 ThreadLocalConnection）。
+    conn = connect_threadlocal(db_path)
     # 每个 REGISTERED 域的 schema 都建好，这样表永远存在，重新启用插件无需 DDL。
     bootstrap(conn, enabled_domains=DOMAINS)
     _seed_plugin_rows(conn)
@@ -431,6 +434,17 @@ def create_app(
         )
 
     app = FastAPI(title="rolecard-agent 管理控制台", version="0.3.0")
+
+    @app.middleware("http")
+    async def _drop_stale_transaction(request: object, call_next: object) -> object:
+        """每个请求开始时清掉本线程可能残留的未提交事务。
+
+        线程池的线程会被下一个请求复用；若上一个请求在事务中途异常退出，残留的
+        BEGIN/未提交改动会被下一个请求继承（`ThreadLocalConnection` 按线程复用连接）。
+        这里 rollback 一次，把"请求边界"和"事务边界"重新对齐。
+        """
+        conn.rollback_current()
+        return await call_next(request)  # type: ignore[operator]
 
     @app.get("/api/roles")
     def list_roles() -> list[object]:
