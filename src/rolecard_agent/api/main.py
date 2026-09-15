@@ -59,6 +59,14 @@ from rolecard_agent.api.auth import (
     unauthorized_response,
 )
 from rolecard_agent.api.chat import chat_events
+from rolecard_agent.api.deps import (
+    AppContext,
+    get_actor,
+)
+from rolecard_agent.api.deps import (
+    role_error_to_http as _role_error_to_http,
+)
+from rolecard_agent.api.routers import roles as roles_router
 from rolecard_agent.config import Settings
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.graph import build_kernel, build_model
@@ -66,7 +74,7 @@ from rolecard_agent.core.ingestion import IngestionNotFound, IngestionService
 from rolecard_agent.core.model_settings import ModelSettingsError, ModelSettingsService
 from rolecard_agent.core.nodes import ChatLike, _text_of
 from rolecard_agent.core.observability import TraceEvent, Tracer, make_tracer
-from rolecard_agent.core.plugins import PluginError, PluginService, UnknownPlugin
+from rolecard_agent.core.plugins import PluginService
 from rolecard_agent.core.state import new_state
 from rolecard_agent.domains.health.extract import (
     ExtractConfigError,
@@ -95,10 +103,7 @@ from rolecard_agent.rag.retriever import (
     make_embedder,
     make_reranker,
 )
-from rolecard_agent.roles.models import RoleCardCreate, RoleCardUpdate
 from rolecard_agent.roles.service import (
-    BuiltinRoleProtected,
-    RoleAlreadyExists,
     RoleCardService,
     RoleError,
     RoleNotFound,
@@ -127,12 +132,6 @@ DEFAULT_USER_ID = "local-user"
 # Ollama 本地端点不需要凭据；其它 provider（openai 兼容）必须有 key 才能构建客户端。
 _KEYLESS_PROVIDER = "ollama"
 _DEFAULT_ROLE_ID = "general_assistant"  # 默认"无角色"：纯对话，不接工具与检索
-
-
-class PluginToggle(BaseModel):
-    """Plugin enable/disable request body."""
-
-    enabled: bool
 
 
 class SessionCreate(BaseModel):
@@ -260,21 +259,6 @@ def _get_thread(conn: sqlite3.Connection, thread_id: str) -> sqlite3.Row:
     if row is None:
         raise HTTPException(status_code=404, detail=f"会话不存在：{thread_id}")
     return row
-
-
-def _role_error_to_http(exc: RoleError) -> HTTPException:
-    """Map a domain error to the right HTTP status. Never leaks a stack trace."""
-    if isinstance(exc, RoleNotFound):
-        return HTTPException(status_code=404, detail=str(exc))
-    if isinstance(exc, (RoleAlreadyExists, BuiltinRoleProtected)):
-        return HTTPException(status_code=409, detail=str(exc))
-    return HTTPException(status_code=400, detail=str(exc))
-
-
-def _plugin_error_to_http(exc: PluginError) -> HTTPException:
-    if isinstance(exc, UnknownPlugin):
-        return HTTPException(status_code=404, detail=str(exc))
-    return HTTPException(status_code=400, detail=str(exc))
 
 
 def _parsed_text_path(target: Path) -> Path:
@@ -442,6 +426,24 @@ def create_app(
 
     app = FastAPI(title="rolecard-agent 管理控制台", version="0.3.0")
 
+    # 共享上下文：所有 router 通过 `Depends(get_context)` 取它，不再依赖闭包。
+    app.state.ctx = AppContext(
+        settings=settings,
+        conn=conn,
+        roles=roles,
+        plugins=plugins,
+        ingestion=ingestion,
+        health=health_query,
+        model_settings=model_settings,
+        knowledge=knowledge,
+        registry=registry,
+        tracer=resolved_tracer,
+        app_state=app_state,
+        rebuild_graph=rebuild_graph,
+    )
+    # C1：端点按职责分包。已迁出：管理面配置（角色卡 / 工具目录 / 插件启停）。
+    app.include_router(roles_router.router)
+
     @app.middleware("http")
     async def _drop_stale_transaction(request: object, call_next: object) -> object:
         """每个请求开始时清掉本线程可能残留的未提交事务。
@@ -476,10 +478,6 @@ def create_app(
         req.state.actor = actor
         return await call_next(request)  # type: ignore[operator]
 
-    def get_actor(request: Request) -> Actor:
-        """取中间件解析好的身份 —— 端点用它把真实的 actor 写进审计日志。"""
-        return cast("Actor", getattr(request.state, "actor", Actor()))
-
     @app.get("/api/health")
     def health() -> object:
         """探活：容器 healthcheck 与反代探活用，**必须免鉴权**（默认在 `AUTH_EXEMPT_PATHS` 里）。
@@ -487,72 +485,6 @@ def create_app(
         只回状态与当前认证档位 —— 便于部署后确认"认证到底开没开"，不含任何凭证信息。
         """
         return {"status": "ok", "version": "0.3.0", "auth_mode": settings.auth_mode}
-
-    @app.get("/api/roles")
-    def list_roles() -> list[object]:
-        """All role cards, built-in first."""
-        return [r.model_dump(mode="json") for r in roles.list_roles()]
-
-    @app.post("/api/roles", status_code=201)
-    def create_role(data: RoleCardCreate) -> object:
-        try:
-            created = roles.create(data)
-        except RoleAlreadyExists as exc:
-            raise _role_error_to_http(exc) from exc
-        return created.model_dump(mode="json")
-
-    @app.patch("/api/roles/{role_id}")
-    def update_role(role_id: str, data: RoleCardUpdate) -> object:
-        try:
-            updated = roles.update(role_id, data)
-        except RoleNotFound as exc:
-            raise _role_error_to_http(exc) from exc
-        return updated.model_dump(mode="json")
-
-    @app.delete("/api/roles/{role_id}", status_code=204)
-    def delete_role(role_id: str) -> None:
-        try:
-            roles.delete(role_id)
-        except (RoleNotFound, BuiltinRoleProtected) as exc:
-            raise _role_error_to_http(exc) from exc
-
-    @app.get("/api/plugins")
-    def list_plugins() -> list[object]:
-        return plugins.list_plugins()
-
-    @app.get("/api/tools/catalog")
-    def tools_catalog() -> object:
-        """按领域分组的工具目录 —— 角色表单的白名单选择器与插件详情共用。
-
-        工具名对模型有意义，对人是一串"方法名"；每个工具带 docstring 首行作为一句话
-        说明，白名单才看得懂。内核工具（domain=None）单独成组。
-        """
-        kernel: list[dict[str, str]] = []
-        domains: dict[str, list[dict[str, str]]] = {}
-        for spec in registry.specs():
-            entry = {
-                "name": spec.name,
-                "description": (spec.tool.description or "").split("\n")[0].strip(),
-            }
-            if spec.domain is None:
-                kernel.append(entry)
-            else:
-                domains.setdefault(spec.domain, []).append(entry)
-        return {"kernel": kernel, "domains": domains}
-
-    @app.post("/api/plugins/{plugin_id}/toggle")
-    def toggle_plugin(
-        plugin_id: str, body: PluginToggle, actor: Actor = Depends(get_actor)
-    ) -> object:
-        try:
-            epoch = plugins.set_enabled(plugin_id, body.enabled, actor=actor.id)
-        except PluginError as exc:
-            raise _plugin_error_to_http(exc) from exc
-        return {
-            "plugin_id": plugin_id,
-            "enabled": body.enabled,
-            "tool_epoch": epoch,
-        }
 
     @app.post("/api/session", status_code=201)
     def create_session(body: SessionCreate, actor: Actor = Depends(get_actor)) -> object:
