@@ -465,9 +465,12 @@ RESERVED_SETTINGS = {
 
 # User stories that are explicitly NOT covered by automated tests yet. They are deferred to a
 # later milestone, not forgotten - the traceability check still requires them to be *named* here
-# so the gap stays visible (技术评审与决策.md §9 D3). US-6 waits for the 60s demo video;
-# US-9 (console frontend) lands with M5.
-DEFERRED_US = {"US-6", "US-9"}
+# so the gap stays visible (技术评审与决策.md §9 D3).
+# US-9 (console frontend) was covered once M5 landed -> removed from this set (2026-09-15).
+# US-6 (quick reproduce: 3 commands / lock file / demo video) still has no *test*; the non-video
+# parts are guarded by readme_quickstart / dependency_parity / python_pin, and the 60s demo
+# video was dropped by decision (2026-09-15).
+DEFERRED_US = {"US-6"}
 
 
 def check_dead_config() -> None:

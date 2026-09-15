@@ -3,10 +3,22 @@
 > **角色卡驱动的对话 Agent 内核 + 可插拔领域插件**
 > 运行时切换人设与权限，工具与知识检索以插件方式注册，本地优先、可公网部署。
 
-**当前状态：v1 计划内里程碑 M1~M4 已全部落地** —— 内核 / 角色插件 / health 查询工具 /
-FastAPI 接入层 + SSE 流式对话，**158 个测试全绿且全部离线运行**（注入脚本化模型，不需要启动 Ollama）。
-进行中：**v2.1 检索外挂 RAG 第一批已落地**（chroma 分集合 + 可插拔嵌入 + `search_knowledge`
-内核工具 + 上传 .txt/.md 直接入库；rerank 与更多解析器待续）。
+**当前状态：v1 里程碑 M1~M5 已全部落地，v2.1 / v2.2 检索与文档摄取也已落地** —— 内核 / 角色插件 /
+health 查询工具 / FastAPI 接入层 + SSE 流式对话 / Vite+React 控制台（四页签）；
+**230 个测试全绿、`smoke_check` 12/12、一致性 23/0，且全部离线运行**（注入脚本化模型，不需要启动 Ollama）。
+RAG：chroma 分作用域集合 + 可插拔嵌入（bge-m3 / hash 离线兜底）+ `search_knowledge` 内核工具 +
+**可插拔 OCR（本地 Paddle 优先 / 云端 API key 兜底）** + PDF/图片解析入索引 + **rerank 默认开启** +
+**检索延迟 P50/P95/P99 细分**（`GET /api/rag/metrics`）。待续：docx / pptx / xlsx 原生解析、前端延迟面板。
+
+---
+
+## 架构总览
+
+![架构总览](docs/assets/architecture.svg)
+
+<sub>分层：客户端 → 接入层 → 内核 harness → 能力（RAG 检索 / 文档摄取）→ 领域插件 → 外部依赖。
+核心约束：`core/` 内不出现 `health`（分层解耦，`check_consistency` 可机器校验）；**检索是内核能力**，
+领域只声明作用域；OCR 走可插拔后端，本地 Paddle 优先、云端 key 兜底。</sub>
 
 ---
 
@@ -172,8 +184,8 @@ v1 同时包含：**测试与评测集（含通过率基线）**、Docker、GitH
 
 | 版本 | 内容 |
 | --- | --- |
-| v2.1 | 检索外挂 RAG —— **第一批已落地**：chroma 分作用域集合、可插拔嵌入（bge-m3 / hash 离线兜底）、`search_knowledge` 内核工具（作用域由角色声明、内核注入）、上传 .txt/.md 直接入库；待续：rerank、更多解析器 |
-| v2.2 | 文档摄取（OCR + 原生文档解析：PDF / 图片 / docx / pptx / xlsx） |
+| v2.1 | 检索外挂 RAG —— **已落地**：chroma 分作用域集合、可插拔嵌入（bge-m3 / hash 离线兜底）、`search_knowledge` 内核工具（作用域由角色声明、内核注入）、上传直接入库、**rerank 默认开启**、**检索延迟 P50/P95/P99 细分** |
+| v2.2 | 文档摄取 —— **部分落地**：`.txt/.md/.pdf` 解析 + **可插拔 OCR（本地 Paddle 优先 / 云端 API key 兜底）**；待续：docx / pptx / xlsx 原生解析 |
 | v2.3 | 完整前端（组件库 / 移动端适配；多页应用已提前为 M5） |
 | v2.4 | 公网部署与多后端路由（含失败自动回退） |
 | v2.5 | 生产化替换（Postgres / Milvus / Redis） |
