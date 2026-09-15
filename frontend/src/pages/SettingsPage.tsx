@@ -24,16 +24,16 @@ export default function SettingsPage({ onOpenChat }: { onOpenChat?: () => void }
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="mx-auto max-w-3xl">
-        <h2 className="text-base font-semibold text-slate-900">设置</h2>
-        <div className="mt-4 flex gap-1 border-b border-slate-200">
+        <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">设置</h2>
+        <div className="mt-4 flex gap-1 border-b border-slate-200 dark:border-slate-700">
           {SETTINGS_TABS.map((t) => (
             <button
               key={t.key}
               onClick={() => setTab(t.key)}
               className={`rounded-t-lg px-4 py-2 text-sm ${
                 tab === t.key
-                  ? "border-b-2 border-blue-600 font-medium text-blue-700"
-                  : "text-slate-500 hover:text-slate-700"
+                  ? "border-b-2 border-blue-600 font-medium text-blue-700 dark:text-blue-300"
+                  : "text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:text-slate-200"
               }`}
             >
               {t.label}
@@ -82,50 +82,50 @@ function GeneralPanel({ onOpenChat }: { onOpenChat?: () => void }) {
 
   return (
     <div className="mt-6 space-y-4">
-      <div className="rounded-xl border border-slate-200 bg-white p-5">
-        <h3 className="text-sm font-medium text-slate-900">关于</h3>
-        <p className="mt-1.5 text-xs leading-relaxed text-slate-500">
+      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
+        <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">关于</h3>
+        <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400 dark:text-slate-500">
           rolecard-agent 控制台 · v1（M1 内核 / M2 角色与插件 / M3 领域工具 / M4 接入层 /
           M5 前端工程化）。多角色对话 Agent 内核：角色卡控制人设与工具权限，插件以数据驱动启停。
         </p>
-        <p className="mt-1 text-xs text-slate-400">语言：简体中文（内置）</p>
+        <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">语言：简体中文（内置）</p>
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-5">
-        <h3 className="text-sm font-medium text-slate-900">系统状态</h3>
-        {loadError && <p className="mt-1 text-xs text-red-600">{loadError}</p>}
+      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
+        <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">系统状态</h3>
+        {loadError && <p className="mt-1 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{loadError}</p>}
         <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
           <div className="flex justify-between border-b border-slate-50 py-1">
-            <dt className="text-slate-400">默认模型后端</dt>
+            <dt className="text-slate-400 dark:text-slate-500">默认模型后端</dt>
             <dd className="font-mono">{info.defaultBackend}</dd>
           </div>
           <div className="flex justify-between border-b border-slate-50 py-1">
-            <dt className="text-slate-400">领域插件（启用/注册）</dt>
+            <dt className="text-slate-400 dark:text-slate-500">领域插件（启用/注册）</dt>
             <dd className="font-mono">{info.plugins}</dd>
           </div>
           <div className="flex justify-between border-b border-slate-50 py-1">
-            <dt className="text-slate-400">角色卡数量</dt>
+            <dt className="text-slate-400 dark:text-slate-500">角色卡数量</dt>
             <dd className="font-mono">{info.roles}</dd>
           </div>
           <div className="flex justify-between border-b border-slate-50 py-1">
-            <dt className="text-slate-400">会话数量</dt>
+            <dt className="text-slate-400 dark:text-slate-500">会话数量</dt>
             <dd className="font-mono">{info.sessions}</dd>
           </div>
         </dl>
-        <p className="mt-2 text-[11px] text-slate-400">
+        <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-500">
           修改默认后端请前往「模型」页签；插件启停在「插件」页签（停用立即生效）。
         </p>
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-5">
-        <h3 className="text-sm font-medium text-slate-900">演示数据</h3>
-        <p className="mt-1.5 text-xs text-slate-500">
+      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
+        <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">演示数据</h3>
+        <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
           评测 / 演示用的虚构档案可由脚本重建；会话与数据管理的日常操作在对话页与插件页。
         </p>
         <div className="mt-2 flex gap-2">
           <button
             onClick={() => onOpenChat?.()}
-            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:border-blue-300"
+            className="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
           >
             前往对话
           </button>
@@ -135,7 +135,7 @@ function GeneralPanel({ onOpenChat }: { onOpenChat?: () => void }) {
               setRefreshed(true);
               setTimeout(() => setRefreshed(false), 2000);
             }}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-blue-300"
+            className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
           >
             {refreshed ? "已刷新 ✓" : "刷新状态"}
           </button>
@@ -245,7 +245,7 @@ function ModelsPanel() {
       {status && (
         <p
           className={`rounded-lg px-3 py-2 text-xs ${
-            status.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"
+            status.ok ? "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300" : "bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 dark:text-red-500"
           }`}
         >
           {status.msg}
@@ -256,9 +256,9 @@ function ModelsPanel() {
         <>
           <div className="space-y-3">
             {rows.map((r, i) => (
-              <div key={i} className="rounded-xl border border-slate-200 bg-white p-4">
+              <div key={i} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
                 <div className="flex items-center gap-3">
-                  <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                  <label className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
                     <input
                       type="radio"
                       name="default-backend"
@@ -271,12 +271,12 @@ function ModelsPanel() {
                     value={r.name}
                     onChange={(e) => update(i, { name: e.target.value })}
                     placeholder="后端名（如 siliconflow）"
-                    className="w-40 rounded-lg border border-slate-200 px-2.5 py-1.5 font-mono text-sm"
+                    className="w-40 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 font-mono text-sm"
                   />
                   <select
                     value={r.provider}
                     onChange={(e) => update(i, { provider: e.target.value })}
-                    className="rounded-lg border border-slate-200 px-2 py-1.5 text-sm"
+                    className="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1.5 text-sm"
                   >
                     {PROVIDERS.map((p) => (
                       <option key={p} value={p}>
@@ -286,7 +286,7 @@ function ModelsPanel() {
                   </select>
                   <button
                     onClick={() => removeRow(i)}
-                    className="ml-auto rounded px-2 py-1 text-xs text-red-400 hover:bg-red-50 hover:text-red-600"
+                    className="ml-auto rounded px-2 py-1 text-xs text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
                   >
                     移除
                   </button>
@@ -296,13 +296,13 @@ function ModelsPanel() {
                     value={r.model}
                     onChange={(e) => update(i, { model: e.target.value })}
                     placeholder="模型名（如 deepseek-ai/DeepSeek-V4-Flash）"
-                    className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm"
+                    className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-sm"
                   />
                   <input
                     value={r.base_url}
                     onChange={(e) => update(i, { base_url: e.target.value })}
                     placeholder="base_url（Ollama 可留空，如 https://api.siliconflow.cn/v1）"
-                    className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm"
+                    className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-sm"
                   />
                   <input
                     type="password"
@@ -311,10 +311,10 @@ function ModelsPanel() {
                     placeholder={
                       r.has_key ? "已保存密钥（留空 = 保持不变）" : "api_key（可选）"
                     }
-                    className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm"
+                    className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-sm"
                   />
                   {r.has_key && (
-                    <label className="flex items-center gap-1.5 text-xs text-slate-400">
+                    <label className="flex items-center gap-1.5 text-xs text-slate-400 dark:text-slate-500">
                       <input
                         type="checkbox"
                         checked={r.api_key.trim() === "" && r.api_key.length > 0}
@@ -331,7 +331,7 @@ function ModelsPanel() {
           <div className="mt-4 flex gap-2">
             <button
               onClick={addRow}
-              className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600 hover:bg-slate-50"
+              className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2 text-sm text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:bg-slate-50 dark:bg-slate-800/50 dark:hover:bg-slate-700/60"
             >
               ＋ 添加后端
             </button>
@@ -343,16 +343,16 @@ function ModelsPanel() {
             </button>
           </div>
 
-          <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
-            <h3 className="text-sm font-medium text-slate-900">失败自动回退</h3>
-            <p className="mt-1 text-xs text-slate-400">
+          <div className="mt-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+            <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">失败自动回退</h3>
+            <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
               默认后端请求失败（建流阶段）时按序尝试；最多两级，流开始后的失败不回退（前端重试兜底）。
             </p>
             <div className="mt-2 grid grid-cols-2 gap-3">
               <select
                 value={fb1}
                 onChange={(e) => setFb1(e.target.value)}
-                className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm"
+                className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-sm"
               >
                 <option value="">一级回退：无</option>
                 {rows
@@ -366,7 +366,7 @@ function ModelsPanel() {
               <select
                 value={fb2}
                 onChange={(e) => setFb2(e.target.value)}
-                className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm"
+                className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-sm"
               >
                 <option value="">二级回退：无</option>
                 {rows
@@ -380,7 +380,7 @@ function ModelsPanel() {
             </div>
           </div>
 
-          <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2.5 text-xs leading-relaxed text-slate-400">
+          <p className="mt-4 rounded-lg bg-slate-50 dark:bg-slate-800/50 px-3 py-2.5 text-xs leading-relaxed text-slate-400 dark:text-slate-500">
             说明：首次启动会把 env 里的后端迁移到这里；<b>此后模型配置以本页为准</b>（env 不再参与，
             在页面里删除的后端重启后也不会回来）。删除所有后端会保存失败 —— 至少保留一个。
             角色可在「角色卡」页经由后端下拉做角色级路由。
@@ -403,11 +403,11 @@ function AuditPanel() {
 
   return (
     <div className="mt-6">
-      {status && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{status}</p>}
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+      {status && <p className="rounded-lg bg-red-50 dark:bg-red-900/30 px-3 py-2 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{status}</p>}
+      <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
         <table className="w-full text-left text-xs">
           <thead>
-            <tr className="border-b border-slate-100 text-slate-400">
+            <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 dark:text-slate-500">
               <th className="px-4 py-2 font-medium">时间</th>
               <th className="px-4 py-2 font-medium">操作者</th>
               <th className="px-4 py-2 font-medium">动作</th>
@@ -418,22 +418,22 @@ function AuditPanel() {
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={5} className="px-4 py-6 text-center text-slate-400 dark:text-slate-500">
                   暂无审计记录
                 </td>
               </tr>
             )}
             {rows.map((a, i) => (
               <tr key={i} className="border-b border-slate-50 last:border-0">
-                <td className="whitespace-nowrap px-4 py-2 font-mono text-slate-500">
+                <td className="whitespace-nowrap px-4 py-2 font-mono text-slate-500 dark:text-slate-400 dark:text-slate-500">
                   {String(a.ts).replace("T", " ").slice(0, 19)}
                 </td>
                 <td className="px-4 py-2">{a.actor}</td>
                 <td className="px-4 py-2">
-                  <code className="rounded bg-slate-100 px-1.5 py-0.5">{a.action}</code>
+                  <code className="rounded bg-slate-100 dark:bg-slate-700/50 px-1.5 py-0.5">{a.action}</code>
                 </td>
-                <td className="max-w-40 truncate px-4 py-2 font-mono text-slate-500">{a.target}</td>
-                <td className="max-w-56 truncate px-4 py-2 text-slate-400" title={a.detail_json || ""}>
+                <td className="max-w-40 truncate px-4 py-2 font-mono text-slate-500 dark:text-slate-400 dark:text-slate-500">{a.target}</td>
+                <td className="max-w-56 truncate px-4 py-2 text-slate-400 dark:text-slate-500" title={a.detail_json || ""}>
                   {a.detail_json}
                 </td>
               </tr>
@@ -441,7 +441,7 @@ function AuditPanel() {
           </tbody>
         </table>
       </div>
-      <p className="mt-2 text-[11px] text-slate-400">
+      <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-500">
         审计由后端在角色切换、插件启停、会话创建、数据修正/删除时写入（US-3）；本页只读。
       </p>
     </div>

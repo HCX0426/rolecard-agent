@@ -40,9 +40,9 @@ export function useToasts() {
 }
 
 const TONE_CLS: Record<Tone, string> = {
-  info: "border-slate-200 bg-white text-slate-600",
-  ok: "border-green-200 bg-green-50 text-green-700",
-  warn: "border-amber-200 bg-amber-50 text-amber-700",
+  info: "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 dark:text-slate-600",
+  ok: "border-green-200 bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300",
+  warn: "border-amber-200 bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300",
 };
 
 export function ToastStack({

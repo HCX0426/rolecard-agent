@@ -35,7 +35,7 @@ function ToolGroup({
 }) {
   return (
     <div>
-      <p className="text-xs font-medium text-slate-500">{label}</p>
+      <p className="text-xs font-medium text-slate-500 dark:text-slate-400 dark:text-slate-500">{label}</p>
       <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1.5">
         {entries.map((t) => (
           <label
@@ -50,8 +50,8 @@ function ToolGroup({
               className="mt-0.5"
             />
             <span className="min-w-0">
-              <code className="text-[11px] text-slate-700">{t.name}</code>
-              <span className="block truncate text-slate-400">{t.description}</span>
+              <code className="text-[11px] text-slate-700 dark:text-slate-200">{t.name}</code>
+              <span className="block truncate text-slate-400 dark:text-slate-500">{t.description}</span>
             </span>
           </label>
         ))}
@@ -204,8 +204,8 @@ export default function RolesPage() {
       <div className="mx-auto max-w-4xl">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">角色卡</h2>
-            <p className="mt-0.5 text-xs text-slate-400">
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">角色卡</h2>
+            <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
               人设、温度、工具白名单与知识作用域；内置角色不可删除
             </p>
           </div>
@@ -220,7 +220,7 @@ export default function RolesPage() {
         {status && (
           <p
             className={`mt-3 rounded-lg px-3 py-2 text-xs ${
-              status.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"
+              status.ok ? "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300" : "bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 dark:text-red-500"
             }`}
           >
             {status.msg}
@@ -233,43 +233,43 @@ export default function RolesPage() {
               e.preventDefault();
               save();
             }}
-            className="mt-4 rounded-xl border border-slate-200 bg-white p-5"
+            className="mt-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5"
           >
             <div className="grid grid-cols-2 gap-4">
               <label className="block">
-                <span className="text-xs text-slate-500">role_id（小写字母/数字/下划线{editing ? "，编辑时不可改" : ""}）</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">role_id（小写字母/数字/下划线{editing ? "，编辑时不可改" : ""}）</span>
                 <input
                   required
                   disabled={!!editing}
                   value={form.role_id}
                   onChange={(e) => setForm({ ...form, role_id: e.target.value })}
                   pattern="[a-z][a-z0-9_]*"
-                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:bg-slate-50"
+                  className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm disabled:bg-slate-50 dark:bg-slate-800/50"
                 />
               </label>
               <label className="block">
-                <span className="text-xs text-slate-500">role_name</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">role_name</span>
                 <input
                   required
                   value={form.role_name}
                   onChange={(e) => setForm({ ...form, role_name: e.target.value })}
-                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                  className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm"
                 />
               </label>
             </div>
             <label className="mt-3 block">
-              <span className="text-xs text-slate-500">system_prompt（人设规则）</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">system_prompt（人设规则）</span>
               <textarea
                 required
                 rows={3}
                 value={form.system_prompt}
                 onChange={(e) => setForm({ ...form, system_prompt: e.target.value })}
-                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm"
               />
             </label>
             <div className="mt-3 grid grid-cols-2 gap-4">
               <label className="block">
-                <span className="text-xs text-slate-500">temperature（0–1）</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">temperature（0–1）</span>
                 <input
                   type="number"
                   step="0.1"
@@ -277,17 +277,17 @@ export default function RolesPage() {
                   max="1"
                   value={form.temperature}
                   onChange={(e) => setForm({ ...form, temperature: Number(e.target.value) })}
-                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                  className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm"
                 />
               </label>
               <label className="block">
-                <span className="text-xs text-slate-500">
+                <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
                   模型后端（角色级路由：该角色的对话走此后端，US-8）
                 </span>
                 <select
                   value={form.model_name}
                   onChange={(e) => setForm({ ...form, model_name: e.target.value })}
-                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                  className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm"
                 >
                   <option value="">默认后端</option>
                   {backends.map((b) => (
@@ -299,7 +299,7 @@ export default function RolesPage() {
               </label>
             </div>
             <label className="mt-3 block">
-              <span className="text-xs text-slate-500">工具权限</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">工具权限</span>
               <div className="mt-1 flex gap-5 text-sm">
                 <label className="flex cursor-pointer items-center gap-1.5">
                   <input
@@ -320,7 +320,7 @@ export default function RolesPage() {
               </div>
             </label>
             {wlMode === "custom" && catalog && (
-              <div className="mt-2 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div className="mt-2 space-y-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-3">
                 <ToolGroup
                   label="内核工具（所有领域通用）"
                   entries={catalog.kernel}
@@ -337,30 +337,30 @@ export default function RolesPage() {
                   />
                 ))}
                 {form.tool_whitelist.length === 0 && (
-                  <p className="text-xs text-amber-600">
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
                     未勾选任何工具 = 该角色没有任何工具可用
                   </p>
                 )}
               </div>
             )}
             <label className="mt-3 block">
-              <span className="text-xs text-slate-500">
+              <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
                 知识作用域（声明可检索的范围；不选 = 不可检索）
               </span>
-              <div className="mt-1.5 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div className="mt-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-3">
                 {/* 已选：可移除的 chips */}
                 {form.knowledge_scopes.length > 0 && (
                   <div className="mb-2 flex flex-wrap gap-1.5">
                     {form.knowledge_scopes.map((s) => (
                       <span
                         key={s}
-                        className="flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs text-blue-700"
+                        className="flex items-center gap-1 rounded-full bg-blue-50 dark:bg-blue-900/30 px-2.5 py-1 text-xs text-blue-700 dark:text-blue-300"
                       >
                         {s}
                         <button
                           type="button"
                           onClick={() => toggleScope(s)}
-                          className="text-blue-300 hover:text-blue-600"
+                          className="text-blue-300 hover:text-blue-600 dark:text-blue-400"
                         >
                           ✕
                         </button>
@@ -372,7 +372,7 @@ export default function RolesPage() {
                 {knownScopes.filter((s) => !form.knowledge_scopes.includes(s)).length >
                   0 && (
                   <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                    <span className="text-[11px] text-slate-400">可添加：</span>
+                    <span className="text-[11px] text-slate-400 dark:text-slate-500">可添加：</span>
                     {knownScopes
                       .filter((s) => !form.knowledge_scopes.includes(s))
                       .map((s) => (
@@ -380,7 +380,7 @@ export default function RolesPage() {
                           key={s}
                           type="button"
                           onClick={() => toggleScope(s)}
-                          className="rounded-full border border-dashed border-slate-300 px-2.5 py-1 text-xs text-slate-500 hover:border-blue-300 hover:text-blue-600"
+                          className="rounded-full border border-dashed border-slate-300 dark:border-slate-600 px-2.5 py-1 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600 dark:text-blue-400"
                         >
                           ＋ {s}
                         </button>
@@ -399,18 +399,18 @@ export default function RolesPage() {
                       }
                     }}
                     placeholder="新作用域名（如 health_reports）"
-                    className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
+                    className="flex-1 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs"
                   />
                   <button
                     type="button"
                     onClick={addScope}
-                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-blue-300"
+                    className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
                   >
                     添加
                   </button>
                 </div>
               </div>
-              <span className="mt-1 block text-[11px] leading-relaxed text-slate-400">
+              <span className="mt-1 block text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
                 这是对内核知识库（RAG，v2.1 接入）的检索授权：声明 = 可检索该作用域；不声明 =
                 不可检索。库归内核，角色只声明 —— 避免 N 个角色 × M 套索引。可选列表来自现存
                 角色的声明并集；v2.1 后将换成内核集合注册表。
@@ -418,7 +418,7 @@ export default function RolesPage() {
             </label>
             <div className="mt-3">
               <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-500">
+                <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
                   范例（few-shot：教它「怎么答」，比讲规则更省 token）
                 </span>
                 {form.exemplars.length < 4 && (
@@ -430,7 +430,7 @@ export default function RolesPage() {
                         exemplars: [...f.exemplars, { user: "", assistant: "" }],
                       }))
                     }
-                    className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:border-blue-300"
+                    className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
                   >
                     ＋ 加一条范例
                   </button>
@@ -438,14 +438,14 @@ export default function RolesPage() {
               </div>
               <div className="mt-1.5 space-y-2">
                 {form.exemplars.map((ex, i) => (
-                  <div key={i} className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+                  <div key={i} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-2">
                     <div className="flex items-start gap-2">
-                      <span className="mt-1.5 shrink-0 text-[11px] text-slate-400">用户</span>
+                      <span className="mt-1.5 shrink-0 text-[11px] text-slate-400 dark:text-slate-500">用户</span>
                       <input
                         value={ex.user}
                         onChange={(e) => setExemplar(i, "user", e.target.value)}
                         placeholder="用户会怎么问"
-                        className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
+                        className="flex-1 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs"
                       />
                       <button
                         type="button"
@@ -455,41 +455,41 @@ export default function RolesPage() {
                             exemplars: f.exemplars.filter((_, j) => j !== i),
                           }))
                         }
-                        className="rounded px-1.5 py-1 text-xs text-slate-400 hover:bg-slate-100 hover:text-red-500"
+                        className="rounded px-1.5 py-1 text-xs text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700 hover:text-red-500"
                         title="删除这条范例"
                       >
                         ✕
                       </button>
                     </div>
                     <div className="mt-1.5 flex items-start gap-2">
-                      <span className="mt-1.5 shrink-0 text-[11px] text-slate-400">回答</span>
+                      <span className="mt-1.5 shrink-0 text-[11px] text-slate-400 dark:text-slate-500">回答</span>
                       <textarea
                         value={ex.assistant}
                         onChange={(e) => setExemplar(i, "assistant", e.target.value)}
                         rows={2}
                         placeholder="理想的回答（体现语气与边界）"
-                        className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
+                        className="flex-1 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs"
                       />
                     </div>
                   </div>
                 ))}
                 {form.exemplars.length === 0 && (
-                  <p className="text-[11px] text-slate-400">
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">
                     还没有范例。范例插在角色设定与安全规则之间（上限 4 条 / 共 3000 字）。
                   </p>
                 )}
               </div>
-              <span className="mt-1 block text-[11px] leading-relaxed text-slate-400">
+              <span className="mt-1 block text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
                 装配顺序：角色设定 → <b>范例</b> → 安全规则（安全规则永远最后，不可被覆盖）。
                 半填（只写一半）的范例不会被提交。
               </span>
             </div>
             <label className="mt-3 block">
-              <span className="text-xs text-slate-500">描述</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">描述</span>
               <input
                 value={form.description}
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
-                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm"
               />
             </label>
             <div className="mt-4 flex gap-2">
@@ -502,7 +502,7 @@ export default function RolesPage() {
               <button
                 type="button"
                 onClick={() => setEditing(null)}
-                className="rounded-lg px-4 py-2 text-sm text-slate-500 hover:bg-slate-50"
+                className="rounded-lg px-4 py-2 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:bg-slate-800/50 dark:hover:bg-slate-700/60"
               >
                 取消
               </button>
@@ -510,10 +510,10 @@ export default function RolesPage() {
           </form>
         )}
 
-        <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
           <table className="w-full text-left text-sm">
             <thead>
-              <tr className="border-b border-slate-100 text-xs text-slate-400">
+              <tr className="border-b border-slate-100 dark:border-slate-800 text-xs text-slate-400 dark:text-slate-500">
                 <th className="px-4 py-2.5 font-medium">role_id</th>
                 <th className="px-4 py-2.5 font-medium">名称</th>
                 <th className="px-4 py-2.5 font-medium">后端</th>
@@ -527,8 +527,8 @@ export default function RolesPage() {
                 <tr key={r.role_id} className="border-b border-slate-50 last:border-0">
                   <td className="px-4 py-2.5 font-mono text-xs">{r.role_id}</td>
                   <td className="px-4 py-2.5">{r.role_name}</td>
-                  <td className="px-4 py-2.5 text-slate-500">{r.model_name || "默认"}</td>
-                  <td className="max-w-52 truncate px-4 py-2.5 text-slate-500">
+                  <td className="px-4 py-2.5 text-slate-500 dark:text-slate-400 dark:text-slate-500">{r.model_name || "默认"}</td>
+                  <td className="max-w-52 truncate px-4 py-2.5 text-slate-500 dark:text-slate-400 dark:text-slate-500">
                     {r.tool_whitelist === null
                       ? "（全部）"
                       : r.tool_whitelist.length
@@ -539,8 +539,8 @@ export default function RolesPage() {
                     <span
                       className={`rounded-full px-2 py-0.5 text-xs ${
                         r.is_builtin
-                          ? "bg-green-50 text-green-700"
-                          : "bg-slate-100 text-slate-500"
+                          ? "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300"
+                          : "bg-slate-100 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 dark:text-slate-500"
                       }`}
                     >
                       {r.is_builtin ? "内置" : "自定义"}
@@ -552,7 +552,7 @@ export default function RolesPage() {
                         setConfirmDel(null);
                         openEdit(r);
                       }}
-                      className="rounded px-2 py-1 text-xs text-blue-600 hover:bg-blue-50"
+                      className="rounded px-2 py-1 text-xs text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:bg-blue-900/30"
                     >
                       编辑
                     </button>
@@ -567,7 +567,7 @@ export default function RolesPage() {
                       ) : (
                         <button
                           onClick={() => setConfirmDel(r.role_id)}
-                          className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50"
+                          className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50 dark:bg-red-900/30"
                         >
                           删除
                         </button>

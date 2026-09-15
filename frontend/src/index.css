@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Tailwind v4：class 策略的深色模式 —— html 上挂 .dark 即生效（useTheme 切换） */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* 项目基调：浅色、紧凑、克制的强调色 —— 对齐 WorkBuddy 的桌面观感 */
 html,
 body,
@@ -8,7 +11,7 @@ body,
 }
 
 body {
-  @apply bg-slate-100 text-slate-800 text-sm antialiased;
+  @apply bg-slate-100 text-slate-800 text-sm antialiased dark:bg-slate-900 dark:text-slate-100;
 }
 
 /* 流式回答时的光标 */

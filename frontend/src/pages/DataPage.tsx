@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type PluginRow, type ReportRecord } from "../api";
+import Tag from "../components/ui/Tag";
 
 // 数据 —— 领域数据的唯一归属地（自"插件 → 详情"里升为独立顶层页）。
 // 数据随领域归属：未来新增领域插件时，这里自动多出一个分组。
@@ -12,28 +13,28 @@ export default function DataPage() {
   }, []);
 
   return (
-    <div className="h-full overflow-y-auto p-6">
+    <div className="h-full overflow-y-auto p-4 md:p-6">
       <div className="mx-auto max-w-4xl">
-        <h2 className="text-base font-semibold text-slate-900">数据</h2>
-        <p className="mt-0.5 text-xs text-slate-400">
+        <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">数据</h2>
+        <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
           <b>数据随领域归属</b>：每个领域插件管自己的数据。主流程是<b>上传报告 / 图片让 AI 解析</b>
           （解析结果进检索索引），下方的手动补录只是兜底入口。
         </p>
         <div className="mt-5 space-y-7">
           {plugins.length === 0 && (
-            <p className="text-xs text-slate-400">正在加载领域…</p>
+            <p className="text-xs text-slate-400 dark:text-slate-500">正在加载领域…</p>
           )}
           {plugins.map((p) => (
             <section key={p.plugin_id}>
-              <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 pb-2">
-                <h3 className="text-sm font-medium text-slate-700">{p.display_name}</h3>
+              <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
+                <h3 className="text-sm font-medium text-slate-700 dark:text-slate-200">{p.display_name}</h3>
                 {p.display_name !== p.plugin_id && (
-                  <code className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
+                  <code className="rounded bg-slate-100 dark:bg-slate-700/50 px-1.5 py-0.5 text-[11px] text-slate-500 dark:text-slate-400 dark:text-slate-500">
                     {p.plugin_id}
                   </code>
                 )}
                 {!p.enabled && (
-                  <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] text-amber-600">
+                  <span className="rounded-full bg-amber-50 dark:bg-amber-900/30 px-2 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">
                     该领域插件已停用（数据保留）
                   </span>
                 )}
@@ -42,7 +43,7 @@ export default function DataPage() {
                 {p.plugin_id === "health" ? (
                   <DataManagement />
                 ) : (
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-slate-400 dark:text-slate-500">
                     该领域暂未提供数据视图（新增领域插件时在此挂上它的数据组件）。
                   </p>
                 )}
@@ -120,13 +121,13 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
   return (
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-3">
-        <p className="text-[11px] leading-relaxed text-slate-400">
+        <p className="text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
           主流程是<b>上传报告 / 图片让 AI 解析</b>；这里只是补录入口 —— 手填的数据默认带
           【未经人工校验】标记。
         </p>
         <button
           onClick={() => setAdding((v) => !v)}
-          className="shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:border-blue-300 hover:text-blue-600"
+          className="shrink-0 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600 dark:text-blue-400"
         >
           {adding ? "取消" : "＋ 新增报告"}
         </button>
@@ -141,24 +142,24 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
         />
       )}
       {status && (
-        <p className={`rounded-lg px-3 py-2 text-xs ${status.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
+        <p className={`rounded-lg px-3 py-2 text-xs ${status.ok ? "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300" : "bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 dark:text-red-500"}`}>
           {status.msg}
         </p>
       )}
       {reports.length === 0 ? (
-        <div className={`rounded-lg border border-dashed border-slate-200 bg-white text-center text-xs text-slate-400 ${compact ? "p-4" : "p-8 text-sm"}`}>
+        <div className={`rounded-lg border border-dashed border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-center text-xs text-slate-400 dark:text-slate-500 ${compact ? "p-4" : "p-8 text-sm"}`}>
           该域还没有数据：在对话页上传报告 / 图片（自动解析入索引），或点上方「＋ 新增报告」手动补录。
         </div>
       ) : (
         reports.map((r) => (
-        <div key={r.report_id} className="rounded-lg border border-slate-200 bg-white">
-          <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+        <div key={r.report_id} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 px-3 py-2">
             <div className="text-xs">
-              <span className="font-medium text-slate-800">
+              <span className="font-medium text-slate-800 dark:text-slate-100">
                 {String(r.check_time).slice(0, 10)} · {r.report_type}
               </span>
-              {r.institution && <span className="ml-2 text-slate-400">{r.institution}</span>}
-              {r.note && <span className="ml-2 text-slate-400">备注：{r.note}</span>}
+              {r.institution && <span className="ml-2 text-slate-400 dark:text-slate-500">{r.institution}</span>}
+              {r.note && <span className="ml-2 text-slate-400 dark:text-slate-500">备注：{r.note}</span>}
             </div>
             {confirmDel === r.report_id ? (
               <button
@@ -170,15 +171,16 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
             ) : (
               <button
                 onClick={() => setConfirmDel(r.report_id)}
-                className="rounded px-2 py-1 text-[11px] text-red-400 hover:bg-red-50 hover:text-red-600"
+                className="rounded px-2 py-1 text-[11px] text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
               >
                 删除报告
               </button>
             )}
           </div>
-          <table className="w-full text-left text-xs">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[28rem] text-left text-xs">
             <thead>
-              <tr className="text-slate-400">
+              <tr className="text-slate-400 dark:text-slate-500">
                 <th className="px-3 py-1.5 font-medium">指标</th>
                 <th className="px-3 py-1.5 font-medium">数值</th>
                 <th className="px-3 py-1.5 font-medium">校验</th>
@@ -190,32 +192,32 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
                 <tr key={i.index_id} className="border-t border-slate-50">
                   {editId === i.index_id ? (
                     <>
-                      <td className="px-3 py-2 font-medium text-slate-700">{i.index_name}</td>
+                      <td className="px-3 py-2 font-medium text-slate-700 dark:text-slate-200">{i.index_name}</td>
                       <td className="px-3 py-2" colSpan={3}>
                         <div className="flex flex-wrap items-center gap-2">
                           <input
                             value={draft.index_value}
                             onChange={(e) => setDraft({ ...draft, index_value: e.target.value })}
                             placeholder="数值（可空）"
-                            className="w-24 rounded border border-slate-200 px-2 py-1"
+                            className="w-24 rounded border border-slate-200 dark:border-slate-700 px-2 py-1"
                           />
                           <input
                             value={draft.value_text}
                             onChange={(e) => setDraft({ ...draft, value_text: e.target.value })}
                             placeholder="文本值（可空）"
-                            className="w-32 rounded border border-slate-200 px-2 py-1"
+                            className="w-32 rounded border border-slate-200 dark:border-slate-700 px-2 py-1"
                           />
                           <input
                             value={draft.unit}
                             onChange={(e) => setDraft({ ...draft, unit: e.target.value })}
                             placeholder="单位"
-                            className="w-20 rounded border border-slate-200 px-2 py-1"
+                            className="w-20 rounded border border-slate-200 dark:border-slate-700 px-2 py-1"
                           />
                           <input
                             value={draft.ref_range}
                             onChange={(e) => setDraft({ ...draft, ref_range: e.target.value })}
                             placeholder="参考区间"
-                            className="w-24 rounded border border-slate-200 px-2 py-1"
+                            className="w-24 rounded border border-slate-200 dark:border-slate-700 px-2 py-1"
                           />
                           <label className="flex items-center gap-1">
                             <input
@@ -233,7 +235,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
                           </button>
                           <button
                             onClick={() => setEditId(null)}
-                            className="rounded px-2 py-1 text-slate-500 hover:bg-slate-100"
+                            className="rounded px-2 py-1 text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700"
                           >
                             取消
                           </button>
@@ -242,21 +244,21 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
                     </>
                   ) : (
                     <>
-                      <td className="px-3 py-2 font-medium text-slate-700">{i.index_name}</td>
+                      <td className="px-3 py-2 font-medium text-slate-700 dark:text-slate-200">{i.index_name}</td>
                       <td className="px-3 py-2">
                         {fmtValue(i)}
-                        {i.ref_range ? <span className="ml-1 text-slate-400">（参考 {i.ref_range}）</span> : null}
-                        {!i.is_verified && <span className="ml-1 text-amber-600">【未经人工校验】</span>}
+                        {i.ref_range ? <span className="ml-1 text-slate-400 dark:text-slate-500">（参考 {i.ref_range}）</span> : null}
+                        {!i.is_verified && <span className="ml-1 text-amber-600 dark:text-amber-400">【未经人工校验】</span>}
                       </td>
                       <td className="px-3 py-2">
-                        <span className={`rounded-full px-2 py-0.5 ${i.is_verified ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-600"}`}>
+                        <Tag tone={i.is_verified ? "green" : "amber"}>
                           {i.is_verified ? "已校验" : "未校验"}
-                        </span>
+                        </Tag>
                       </td>
                       <td className="px-3 py-2 text-right">
                         <button
                           onClick={() => startEdit(i.index_id, i)}
-                          className="rounded px-2 py-1 text-blue-600 hover:bg-blue-50"
+                          className="rounded px-2 py-1 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:bg-blue-900/30"
                         >
                           修正
                         </button>
@@ -270,7 +272,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
                         ) : (
                           <button
                             onClick={() => setConfirmDel(i.index_id)}
-                            className="rounded px-2 py-1 text-red-400 hover:bg-red-50 hover:text-red-600"
+                            className="rounded px-2 py-1 text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
                           >
                             删除
                           </button>
@@ -282,6 +284,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
         ))
       )}
@@ -361,10 +364,10 @@ function AddReportForm({ onDone }: { onDone: () => void }) {
   }
 
   const inputCls =
-    "rounded border border-slate-200 px-2 py-1 text-xs outline-none focus:border-blue-400";
+    "rounded border border-slate-200 dark:border-slate-700 px-2 py-1 text-xs outline-none focus:border-blue-400";
 
   return (
-    <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-3">
+    <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/30/40 p-3">
       <div className="flex flex-wrap items-center gap-2">
         <input
           value={reportType}
@@ -417,7 +420,7 @@ function AddReportForm({ onDone }: { onDone: () => void }) {
             {rows.length > 1 && (
               <button
                 onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}
-                className="rounded px-1.5 py-0.5 text-xs text-slate-400 hover:bg-slate-100 hover:text-red-500"
+                className="rounded px-1.5 py-0.5 text-xs text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700 hover:text-red-500"
                 title="删除该行"
               >
                 ✕
@@ -430,27 +433,27 @@ function AddReportForm({ onDone }: { onDone: () => void }) {
       <div className="mt-2 flex items-center gap-2">
         <button
           onClick={() => setRows((rs) => [...rs, { name: "", value: "", unit: "" }])}
-          className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 hover:border-blue-300"
+          className="rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
         >
           ＋ 加一行
         </button>
         <button
           onClick={submit}
           disabled={busy}
-          className="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700 disabled:bg-slate-300"
+          className="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700 disabled:bg-slate-300 dark:bg-slate-600"
         >
           {busy ? "保存中…" : "保存"}
         </button>
         <button
           onClick={onDone}
-          className="rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-100"
+          className="rounded px-2 py-1 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700"
         >
           取消
         </button>
-        <span className="text-[11px] text-slate-400">手填默认标记为【未经人工校验】</span>
+        <span className="text-[11px] text-slate-400 dark:text-slate-500">手填默认标记为【未经人工校验】</span>
       </div>
 
-      {err && <p className="mt-2 text-xs text-red-600">{err}</p>}
+      {err && <p className="mt-2 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{err}</p>}
     </div>
   );
 }

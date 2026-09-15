@@ -67,27 +67,27 @@ function ToolStepCard({ step }: { step: ToolStep }) {
       ? "bg-blue-400 animate-pulse"
       : step.status === "error"
         ? "bg-red-400"
-        : "bg-green-500";
+        : "bg-green-500 dark:bg-green-600";
   const body = step.content.trim();
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+    <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-2.5 py-1.5">
       <button
         onClick={() => body && setOpen((o) => !o)}
-        className={`flex w-full items-center gap-2 text-left font-mono text-xs text-slate-600 ${
+        className={`flex w-full items-center gap-2 text-left font-mono text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 ${
           body ? "cursor-pointer" : "cursor-default"
         }`}
       >
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
         <span className="shrink-0">{step.name}</span>
-        {step.status === "running" && <span className="text-slate-400">执行中…</span>}
+        {step.status === "running" && <span className="text-slate-400 dark:text-slate-500">执行中…</span>}
         {body && (
-          <span className="ml-auto shrink-0 text-slate-300">
+          <span className="ml-auto shrink-0 text-slate-300 dark:text-slate-600">
             {open ? "收起 ▴" : `${body.length} 字 ▾`}
           </span>
         )}
       </button>
       {open && body && (
-        <pre className="mt-1.5 max-h-56 overflow-auto rounded bg-white p-2 text-[11px] whitespace-pre-wrap text-slate-600">
+        <pre className="mt-1.5 max-h-56 overflow-auto rounded bg-white dark:bg-slate-800 p-2 text-[11px] whitespace-pre-wrap text-slate-600 dark:text-slate-300 dark:text-slate-600">
           {body}
         </pre>
       )}
@@ -116,6 +116,7 @@ export default function ChatPage({
   const [defaultBackend, setDefaultBackend] = useState("");
   const [sessionModel, setSessionModel] = useState<string | null>(null);
   const [busy, setBusy] = useState(false); // 流式进行中：驱动「停止」按钮与输入禁用
+  const [sessionsOpen, setSessionsOpen] = useState(false); // 移动端会话栏抽屉
   const fileRef = useRef<HTMLInputElement>(null);
   const sendingRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -157,6 +158,7 @@ export default function ChatPage({
     setConfirmDel(null);
     setLive(null);
     setModelMenuOpen(false);
+    setSessionsOpen(false); // 移动端选中后收起抽屉
     try {
       const [msgs, detail] = await Promise.all([
         api.get<MessageRow[]>(`/api/session/${threadId}/messages`),
@@ -446,34 +448,39 @@ export default function ChatPage({
   return (
     <div className="relative flex h-full">
       {/* 会话列表面板 */}
-      <aside className="flex w-64 shrink-0 flex-col border-r border-slate-200 bg-white">
-        <div className="border-b border-slate-100 p-3">
+      {/* 会话列表面板：桌面常驻，移动端 off-canvas 抽屉 */}
+      <aside
+        className={`flex w-64 shrink-0 flex-col border-r border-slate-200 bg-white transition-transform dark:border-slate-700 dark:bg-slate-800 max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:pt-[41px] ${
+          sessionsOpen ? "max-md:translate-x-0" : "max-md:-translate-x-full"
+        }`}
+      >
+        <div className="border-b border-slate-100 dark:border-slate-800 p-3">
           <button
             onClick={newSession}
             className="w-full rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
           >
             ＋ 新建对话
           </button>
-          <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400">
+          <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
             默认「通用助手」＝纯对话（不接工具与档案）。需要健康档案能力时，在下方切换到
             「健康档案管理员」。
           </p>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
           {sessions.length === 0 && (
-            <p className="px-2 py-4 text-xs text-slate-400">还没有会话</p>
+            <p className="px-2 py-4 text-xs text-slate-400 dark:text-slate-500">还没有会话</p>
           )}
           {sessions.map((s) => (
             <div
               key={s.thread_id}
               className={`group mb-1 flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm ${
-                s.thread_id === sessionId ? "bg-blue-50 text-blue-800" : "hover:bg-slate-50"
+                s.thread_id === sessionId ? "bg-blue-50 dark:bg-blue-900/30 text-blue-800" : "hover:bg-slate-50 dark:bg-slate-800/50 dark:hover:bg-slate-700/60"
               }`}
               onClick={() => selectSession(s.thread_id)}
             >
               <div className="min-w-0 flex-1">
                 <div className="truncate">{s.title || "新会话"}</div>
-                <div className="truncate text-[11px] text-slate-400">
+                <div className="truncate text-[11px] text-slate-400 dark:text-slate-500">
                   {s.role_name || s.role_id}
                 </div>
               </div>
@@ -493,7 +500,7 @@ export default function ChatPage({
                     e.stopPropagation();
                     setConfirmDel(s.thread_id);
                   }}
-                  className="shrink-0 rounded px-1 py-0.5 text-xs text-slate-300 opacity-0 transition-opacity hover:bg-slate-100 hover:text-red-500 group-hover:opacity-100"
+                  className="shrink-0 rounded px-1 py-0.5 text-xs text-slate-300 dark:text-slate-600 opacity-0 transition-opacity hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700 hover:text-red-500 group-hover:opacity-100"
                   title="删除会话"
                 >
                   ✕
@@ -504,9 +511,18 @@ export default function ChatPage({
         </div>
       </aside>
 
+      {/* 移动端：会话抽屉的遮罩 */}
+      {sessionsOpen && (
+        <button
+          aria-label="关闭会话列表"
+          onClick={() => setSessionsOpen(false)}
+          className="absolute inset-0 z-30 bg-slate-900/40 md:hidden"
+        />
+      )}
+
       {/* 对话区 */}
       <section className="flex min-w-0 flex-1 flex-col">
-        <header className="border-b border-slate-200 bg-white px-5 py-3">
+        <header className="border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-5 py-3">
           {editingTitle && current ? (
             <div className="flex items-center gap-2">
               <input
@@ -528,14 +544,21 @@ export default function ChatPage({
               </button>
               <button
                 onClick={() => setEditingTitle(false)}
-                className="rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-100"
+                className="rounded px-2 py-1 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700"
               >
                 取消
               </button>
             </div>
           ) : (
             <div className="group/title flex items-center gap-2">
-              <h2 className="truncate text-sm font-medium text-slate-900">
+              <button
+                onClick={() => setSessionsOpen(true)}
+                aria-label="打开会话列表"
+                className="rounded-lg border border-slate-200 px-2 py-0.5 text-xs text-slate-600 dark:border-slate-700 dark:text-slate-300 md:hidden"
+              >
+                会话
+              </button>
+              <h2 className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
                 {current ? current.title || "新会话" : "对话"}
               </h2>
               {current && (
@@ -544,7 +567,7 @@ export default function ChatPage({
                     setTitleDraft(current.title || "");
                     setEditingTitle(true);
                   }}
-                  className="rounded px-1.5 py-0.5 text-xs text-slate-300 opacity-0 transition-opacity hover:bg-slate-100 hover:text-slate-600 group-hover/title:opacity-100"
+                  className="rounded px-1.5 py-0.5 text-xs text-slate-300 dark:text-slate-600 opacity-0 transition-opacity hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700 hover:text-slate-600 dark:text-slate-300 dark:text-slate-600 group-hover/title:opacity-100"
                   title="重命名会话"
                 >
                   ✎
@@ -552,7 +575,7 @@ export default function ChatPage({
               )}
             </div>
           )}
-          <p className="mt-0.5 text-xs text-slate-400">
+          <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
             {current
               ? `当前角色：${currentRole ? roles.find((r) => r.role_id === currentRole)?.role_name || currentRole : "默认"} · 切换角色后下一轮生效`
               : "新建或从左侧选择一个会话开始"}
@@ -561,12 +584,12 @@ export default function ChatPage({
 
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
           {!sessionId && messages.length === 0 && !live && (
-            <div className="mx-auto mt-8 max-w-xl rounded-xl border border-slate-200 bg-white p-5">
-              <h3 className="text-sm font-medium text-slate-800">开始一次对话</h3>
-              <p className="mt-1 text-xs text-slate-400">
+            <div className="mx-auto mt-8 max-w-xl rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
+              <h3 className="text-sm font-medium text-slate-800 dark:text-slate-100">开始一次对话</h3>
+              <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
                 直接在下方输入即可（会自动创建会话），或点左上角「＋ 新建对话」。
               </p>
-              <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-slate-500">
+              <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400 dark:text-slate-500">
                 <li>
                   · <b>上传报告 / 图片</b> —— 自动解析并入检索索引（.pdf/.docx/.pptx/.xlsx + 图片 OCR）
                 </li>
@@ -596,7 +619,7 @@ export default function ChatPage({
                 </div>
               ) : (
                 <div key={i} className="flex justify-start">
-                  <div className="max-w-[85%] rounded-2xl rounded-bl-sm border border-slate-200 bg-white px-4 py-2.5 whitespace-pre-wrap">
+                  <div className="max-w-[85%] rounded-2xl rounded-bl-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2.5 whitespace-pre-wrap">
                     {m.content}
                   </div>
                 </div>
@@ -604,7 +627,7 @@ export default function ChatPage({
             )}
             {live && (
               <div className="flex justify-start">
-                <div className="max-w-[85%] rounded-2xl rounded-bl-sm border border-slate-200 bg-white px-4 py-2.5">
+                <div className="max-w-[85%] rounded-2xl rounded-bl-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2.5">
                   {live.tools.length > 0 && (
                     <div className="mb-2 space-y-1.5">
                       {live.tools.map((t, i) => (
@@ -623,7 +646,7 @@ export default function ChatPage({
           </div>
         </div>
 
-        <div className="border-t border-slate-200 bg-white p-4">
+        <div className="border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
           {/* 快捷问题（WorkBuddy 式建议 chips）：空会话时出现，点一下直接问 */}
           {sessionId && messages.length === 0 && !live && (
             <div className="mx-auto mb-2 flex max-w-3xl flex-wrap gap-2">
@@ -631,7 +654,7 @@ export default function ChatPage({
                 <button
                   key={q}
                   onClick={() => send(q)}
-                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-blue-300 hover:text-blue-700"
+                  className="rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-700 dark:text-blue-300"
                 >
                   {q}
                 </button>
@@ -649,12 +672,12 @@ export default function ChatPage({
                 busy ? "正在生成…（可点右侧「停止」）" : "输入消息，回车发送（没有会话会自动创建）"
               }
               disabled={busy}
-              className="flex-1 rounded-xl border border-slate-200 px-4 py-2.5 outline-none focus:border-blue-400 disabled:bg-slate-50"
+              className="flex-1 rounded-xl border border-slate-200 dark:border-slate-700 px-4 py-2.5 outline-none focus:border-blue-400 disabled:bg-slate-50 dark:bg-slate-800/50"
             />
             {busy ? (
               <button
                 onClick={stop}
-                className="rounded-xl border border-slate-300 bg-white px-5 text-sm font-medium text-slate-600 hover:border-red-300 hover:text-red-600"
+                className="rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-5 text-sm font-medium text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-red-300 dark:hover:border-red-700 hover:text-red-600 dark:text-red-400 dark:text-red-500"
               >
                 停止
               </button>
@@ -671,7 +694,7 @@ export default function ChatPage({
           <div className="mx-auto mt-2 flex max-w-3xl items-center gap-2">
             <span
               title="切换当前会话的角色（可选，默认健康档案管理员）"
-              className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300"
+              className="flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
             >
               <IconUser />
               <select
@@ -692,35 +715,35 @@ export default function ChatPage({
                 onClick={() => setModelMenuOpen((o) => !o)}
                 disabled={!sessionId}
                 title="切换本会话使用的模型（按供应商分组）"
-                className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300 disabled:opacity-50"
+                className="flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700 disabled:opacity-50"
               >
                 <IconModel />
                 {effectiveBackend || "模型"} ▾
               </button>
               {modelMenuOpen && (
-                <div className="absolute bottom-full left-0 z-20 mb-2 max-h-72 w-72 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
+                <div className="absolute bottom-full left-0 z-20 mb-2 max-h-72 w-72 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-lg">
                   <button
                     onClick={() => switchModel(null)}
-                    className="flex w-full items-center justify-between px-3 py-2 text-xs hover:bg-blue-50"
+                    className="flex w-full items-center justify-between px-3 py-2 text-xs hover:bg-blue-50 dark:bg-blue-900/30"
                   >
                     <span>默认后端（跟随设置）</span>
-                    {sessionModel === null && <span className="text-blue-600">✓</span>}
+                    {sessionModel === null && <span className="text-blue-600 dark:text-blue-400">✓</span>}
                   </button>
                   {grouped.map(([provider, list]) => (
                     <div key={provider}>
-                      <p className="bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-400">
+                      <p className="bg-slate-50 dark:bg-slate-800/50 px-3 py-1 text-[11px] font-medium text-slate-400 dark:text-slate-500">
                         {provider}
                       </p>
                       {list.map((b) => (
                         <button
                           key={b.name}
                           onClick={() => switchModel(b.name)}
-                          className="flex w-full items-center justify-between px-3 py-1.5 text-xs hover:bg-blue-50"
+                          className="flex w-full items-center justify-between px-3 py-1.5 text-xs hover:bg-blue-50 dark:bg-blue-900/30"
                         >
                           <span className="font-mono">{b.name}</span>
-                          <span className="ml-2 truncate text-slate-400">{b.model}</span>
+                          <span className="ml-2 truncate text-slate-400 dark:text-slate-500">{b.model}</span>
                           {effectiveBackend === b.name && (
-                            <span className="ml-1 text-blue-600">✓</span>
+                            <span className="ml-1 text-blue-600 dark:text-blue-400">✓</span>
                           )}
                         </button>
                       ))}
@@ -731,7 +754,7 @@ export default function ChatPage({
                       setModelMenuOpen(false);
                       onOpenSettings?.();
                     }}
-                    className="w-full border-t border-slate-100 px-3 py-2 text-[11px] text-slate-400 hover:text-blue-600"
+                    className="w-full border-t border-slate-100 dark:border-slate-800 px-3 py-2 text-[11px] text-slate-400 dark:text-slate-500 hover:text-blue-600 dark:text-blue-400"
                   >
                     管理后端与回退链 → 设置页
                   </button>
@@ -742,7 +765,7 @@ export default function ChatPage({
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
               title="上传报告 / 图片，自动解析并入检索索引（.txt/.md/.pdf/.docx/.pptx/.xlsx + 图片 OCR）"
-              className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300 disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700 disabled:opacity-50"
             >
               <IconClip />
               {uploading ? "上传中…" : "上传报告"}
@@ -757,7 +780,7 @@ export default function ChatPage({
                 e.target.value = "";
               }}
             />
-            <span className="ml-auto text-[11px] text-slate-300">
+            <span className="ml-auto text-[11px] text-slate-300 dark:text-slate-600">
               Enter 发送 · 生成中可停止 · 停用插件即刻生效
             </span>
           </div>
