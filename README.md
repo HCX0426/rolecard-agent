@@ -22,6 +22,20 @@ RAG：chroma 分作用域集合 + 可插拔嵌入（bge-m3 / hash 离线兜底�
 
 ---
 
+## 界面预览
+
+控制台（Vite + React，`npm run build` 产物由 FastAPI 托管）四个页签：
+
+| 对话 | 角色卡 |
+| --- | --- |
+| ![对话页](docs/assets/console-chat.png) | ![角色卡页](docs/assets/console-roles.png) |
+
+| 插件 | 设置（模型热切换 + 失败自动回退） |
+| --- | --- |
+| ![插件页](docs/assets/console-plugins.png) | ![设置页](docs/assets/console-settings.png) |
+
+---
+
 ## 快速开始
 
 ```bash
