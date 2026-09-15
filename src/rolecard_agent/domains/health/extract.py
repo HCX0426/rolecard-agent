@@ -182,8 +182,13 @@ def make_invoker(settings: Settings, backend_name: str) -> ModelInvoker:
         raise ExtractError(f"无法初始化抽取后端 {backend_name!r}：{exc}") from exc
 
     def invoke(prompt: str) -> str:
-        resp = model.invoke([SystemMessage(content=_SYSTEM), HumanMessage(content=prompt)])
-        return _text_of(resp)
+        try:
+            resp = model.invoke([SystemMessage(content=_SYSTEM), HumanMessage(content=prompt)])
+            return _text_of(resp)
+        except ExtractError:
+            raise
+        except Exception as exc:
+            raise ExtractError(f"模型调用失败：{exc}") from exc
 
     return invoke
 
@@ -412,6 +417,29 @@ def extract_health_report(
     )
 
 
+def _failover_primary(settings: Settings, plan: ExtractorPlan) -> ExtractorPlan:
+    """本地后端连不上时，自动降级到 verifier（云端）做主抽取，校对降级为 self。
+
+    "本地优先"是个偏好，不是硬约束 —— Ollama 没跑时，不 502 而是用云端完成抽取。
+    校对降级为 self（同一个后端自查 = 弱校对）：因为原主后端已经挂了，
+    不能用它做校对。用最小说探（"回复 ok"）探活，成本极低但省掉一次注定失败的昂贵调用。
+    """
+    try:
+        make_invoker(settings, plan.primary)("回复 ok")
+        return plan  # 主后端可用，不降级
+    except Exception:  # noqa: BLE001 - 探活失败 = 后端不可用（含 httpx.ConnectError）
+        pass
+    # 主后端不可用 → 尝试 verifier
+    if plan.verifier and plan.verifier != plan.primary:
+        try:
+            make_invoker(settings, plan.verifier)("回复 ok")
+            # verifier 能通 → 用它做主抽取；校对降级为 self（它不能校对自己）
+            return ExtractorPlan(primary=plan.verifier, verifier=None, mode="self")
+        except Exception:  # noqa: BLE001
+            pass
+    return plan  # 原样返回（两个都挂了），extract_health_report 会报错
+
+
 def run_extraction(
     *,
     text: str,
@@ -421,7 +449,7 @@ def run_extraction(
     tracer: object | None = None,
 ) -> ExtractionOutcome | None:
     """按配置跑完整抽取。返回 None = 没有可用后端（调用方应如实告知，不要假装成功）。"""
-    plan = plan_extractors(settings)
+    plan = _failover_primary(settings, plan_extractors(settings))
     if plan is None:
         return None
     outcome = extract_health_report(

@@ -282,3 +282,30 @@ def test_plan_rejects_unknown_backend_loudly() -> None:
 
 def test_plan_returns_none_without_backends() -> None:
     assert plan_extractors(Settings(model_backends={})) is None
+
+
+# -- 降级：本地后端挂了 → 自动换云端做主抽取 --------------------------------------------
+
+
+def test_failover_to_verifier_when_primary_down(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ollama 连不上 → 自动降级到云端后端做主抽取，校对降级为 self。"""
+    from rolecard_agent.domains.health.extract import (
+        ExtractorPlan,
+        _failover_primary,
+    )
+
+    plan = ExtractorPlan(primary="local", verifier="cloud", mode="cross")
+
+    def fake_make(s: Settings, name: str):
+        def invoke(prompt: str) -> str:
+            if name == "local":
+                raise ExtractError("模型调用失败：connection refused")
+            return json.dumps(_payload(), ensure_ascii=False)
+        return invoke
+
+    monkeypatch.setattr(
+        "rolecard_agent.domains.health.extract.make_invoker", fake_make
+    )
+    result = _failover_primary(_settings(), plan)
+    assert result.primary == "cloud"
+    assert result.mode == "self"  # 降级为弱校对（原主后端挂了，不能校对自己）

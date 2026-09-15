@@ -270,6 +270,25 @@ def _plugin_error_to_http(exc: PluginError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
 
 
+def _sync_embedding_key(conn: sqlite3.Connection) -> None:
+    """从 DB 后端配置同步嵌入器 key 到 `SILICONFLOW_API_KEY` 环境变量。
+
+    嵌入器（retriever.make_embedder）读的是**环境变量**，但用户通常只在设置页输入 key
+    （存 DB）。如果 env 没有，就从 DB 取一个 OpenAI 兼容后端的 key 补上 —— 否则嵌入器
+    退回 hash（64 维），跟已有 chroma 集合维度不匹配 → 上传 500。
+    """
+    import os
+
+    if os.environ.get("SILICONFLOW_API_KEY"):
+        return  # env 已有，不覆盖
+    row = conn.execute(
+        "SELECT api_key FROM model_backend WHERE provider = 'openai' "
+        "AND api_key IS NOT NULL AND api_key != '' LIMIT 1"
+    ).fetchone()
+    if row and row["api_key"]:
+        os.environ["SILICONFLOW_API_KEY"] = str(row["api_key"])
+
+
 def _parsed_text_path(target: Path) -> Path:
     """解析文本的落点：`<上传文件>.parsed.txt`（与上传文件同目录，随 uploads/ 一起被 gitignore）。
 
@@ -343,6 +362,7 @@ def create_app(
     _seed_demo_identity(conn)
     roles = RoleCardService(conn)
     roles.seed_builtins()
+    _sync_embedding_key(conn)  # 嵌入器 key：DB → env（否则嵌入退回 hash → 维度不匹配 500）
     plugins = PluginService(conn, known_plugins=DOMAINS)
     ingestion = IngestionService(conn)
     health_query = HealthQueryService(conn)
