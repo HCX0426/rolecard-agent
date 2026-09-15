@@ -77,7 +77,7 @@ def test_first_message_sets_title_and_bumps_session_to_top(
     sessions = client.get("/api/sessions").json()
     assert sessions[0]["thread_id"] == older["thread_id"]  # 活跃者置顶
     assert sessions[0]["title"] == "帮我查一下结石直径"  # 24 字内全量截取
-    assert sessions[0]["role_name"] == "健康档案管理员"
+    assert sessions[0]["role_name"] == "通用助手"
 
 
 def test_long_message_title_is_truncated(client: TestClient) -> None:

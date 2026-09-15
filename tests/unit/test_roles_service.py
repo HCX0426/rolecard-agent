@@ -35,9 +35,10 @@ def _new(role_id: str = "custom", **overrides: object) -> RoleCardCreate:
 
 def test_seeded_builtin_is_marked_and_listed_first(roles: RoleCardService) -> None:
     listed = roles.list_roles()
-    assert listed[0].role_id == "medical_archivist"
-    assert listed[0].is_builtin is True
-    assert listed[0].temperature == 0.3
+    # 内置角色顺序 = seed 顺序：通用助手（默认）在前，档案管理员其次。
+    assert [r.role_id for r in listed[:2]] == ["general_assistant", "medical_archivist"]
+    assert all(r.is_builtin for r in listed[:2])
+    assert listed[1].temperature == 0.3
 
 
 def test_seeding_is_idempotent(roles: RoleCardService) -> None:

@@ -66,11 +66,11 @@ def types_of(events: list[dict[str, object]]) -> list[str]:
 
 
 def test_create_session_defaults_to_builtin_role(client: TestClient) -> None:
-    """不指定角色 → 绑定内置健康档案管理员。"""
+    """不指定角色 → 绑定内置「通用助手」（默认无角色：纯对话，不接工具与档案）。"""
     session = make_session(client)
     assert str(session["thread_id"]).startswith("s_")
-    assert session["role_id"] == "medical_archivist"
-    assert session["role_name"] == "健康档案管理员"
+    assert session["role_id"] == "general_assistant"
+    assert session["role_name"] == "通用助手"
 
 
 def test_create_session_unknown_role_404(client: TestClient) -> None:
@@ -81,7 +81,7 @@ def test_get_session_reports_current_role(client: TestClient) -> None:
     session = make_session(client)
     res = client.get(f"/api/session/{session['thread_id']}")
     assert res.status_code == 200
-    assert res.json()["role_name"] == "健康档案管理员"
+    assert res.json()["role_name"] == "通用助手"
 
 
 def test_switch_session_role_keeps_thread(client: TestClient) -> None:
@@ -111,7 +111,7 @@ def test_switch_session_role_keeps_thread(client: TestClient) -> None:
 
 def test_chat_delivers_authoritative_text(client: TestClient) -> None:
     """直答轮：即使模型脚本耗尽返回兜底句，文本也经 message_replace 完整到达并以 end 收尾。"""
-    session = make_session(client)
+    session = make_session(client, role_id="medical_archivist")
     events = chat(client, str(session["thread_id"]), "你好")
     assert types_of(events) == ["start", "message_replace", "end"]
     assert events[0]["role"]["role_id"] == "medical_archivist"
@@ -144,7 +144,8 @@ def test_chat_second_turn_sees_history(client: TestClient, model: ScriptedChat) 
 
 def test_chat_tool_roundtrip_uses_real_registry(client: TestClient, model: ScriptedChat) -> None:
     """US-3 / US-2：模型调 list_domains → 真实注册表里的内核工具执行 → 工具结果回给模型。"""
-    session = make_session(client)
+    # 工具回环依赖角色白名单：默认「通用助手」不接工具，故显式用档案管理员角色。
+    session = make_session(client, role_id="medical_archivist")
     model.replies = [
         AIMessage(content="", tool_calls=[{"name": "list_domains", "args": {}, "id": "c1"}]),
         AIMessage(content="当前启用的领域插件是 health。"),

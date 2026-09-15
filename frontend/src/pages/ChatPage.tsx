@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   streamChat,
+  type ExtractResult,
   type MessageRow,
   type ModelSettings,
   type RoleCard,
@@ -332,28 +333,75 @@ export default function ChatPage({
         file: string;
         status?: string;
       }>(`/api/session/${tid}/upload`, fd);
-      // 三态反馈：让用户知道这份文件到底读没读进去（v2.2 起解析已真实生效，不再是"登记一下"）
-      if (r.status === "indexed") {
-        setStatus(`「${r.file}」已解析并入检索索引 —— 现在就可以对它提问`, "ok");
-      } else if (r.status === "parsed") {
-        setStatus(
-          `「${r.file}」已解析，但没有提取到文本（可能是扫描件），暂未入检索`,
-          "warn",
-        );
-      } else {
+
+      // 三态反馈：让用户知道这份文件到底读没读进去（v2.2 起解析已真实生效）
+      if (!r.status || r.status === "pending") {
         setStatus(
           `「${r.file}」已登记，但当前无法解析（类型不支持，或图片 OCR 未配置）${
             r.reused ? "（同一文件此前已登记）" : ""
           }`,
           "warn",
         );
+        return;
       }
-      // 注入的说明消息已进 checkpoint，回放让用户看到
-      setMessages(await api.get<MessageRow[]>(`/api/session/${tid}/messages`));
+      if (r.status === "parsed") {
+        setStatus(
+          `「${r.file}」已解析，但没有提取到文本（可能是扫描件），暂未入检索`,
+          "warn",
+        );
+        return;
+      }
+
+      // v2.3：已入索引 → 自动触发结构化抽取（独立请求 + 进度提示，不拖慢上传本身）。
+      // 抽取失败不算上传失败：原文已可提问，指标提取可以重试。
+      setStatus(`「${r.file}」已入检索索引，AI 识别指标中…`, "info");
+      let result: ExtractResult | null = null;
+      let extractError = "";
+      try {
+        result = await api.extractRecord(r.task_id);
+      } catch (e) {
+        extractError = (e as Error).message;
+      }
+
+      if (result?.skipped) {
+        const why =
+          result.skipped === "already_extracted"
+            ? "此前已识别过，不重复写入"
+            : result.skipped === "no_text"
+              ? "没有可抽取的文本"
+              : "当前没有可用的模型后端";
+        setStatus(`「${r.file}」${why}（原文已入检索，可直接提问）`, "warn");
+        return;
+      }
+      if (!result) {
+        setStatus(`「${r.file}」AI 识别指标失败：${extractError}（原文已入检索，可直接提问）`, "warn");
+        return;
+      }
+
+      let text: string;
+      let tone: Tone = "warn";
+      if (result.written.length > 0) {
+        const names = result.written.map((w) => w.index_name).join("、");
+        text = `「${r.file}」AI 已提取 ${result.written.length} 项指标：${names}（均标记【未经人工校验】，可在「数据」页核对）`;
+        tone = "ok";
+      } else if (result.conflicts.length > 0) {
+        const names = result.conflicts.map((c) => c.index_name).join("、");
+        text = `「${r.file}」识别出 ${result.conflicts.length} 项存疑指标（${names}），按规则未写入 —— 可在「数据」页手动补录`;
+      } else {
+        text = `「${r.file}」未识别出可入档的指标（原文已入检索，可直接提问）`;
+      }
+      if (result.notes.length > 0) text += `　备注：${result.notes.join("；")}`;
+      setStatus(text, tone);
     } catch (e) {
       setStatus(`上传失败：${(e as Error).message}`, "warn");
     } finally {
       setUploading(false);
+      // 注入的说明消息已进 checkpoint，回放让用户看到
+      try {
+        setMessages(await api.get<MessageRow[]>(`/api/session/${tid}/messages`));
+      } catch {
+        /* 会话可能已被删除 */
+      }
     }
   }
 
@@ -407,7 +455,8 @@ export default function ChatPage({
             ＋ 新建对话
           </button>
           <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400">
-            角色可选：默认为「健康档案管理员」，对话中可随时在右上角切换
+            默认「通用助手」＝纯对话（不接工具与档案）。需要健康档案能力时，在下方切换到
+            「健康档案管理员」。
           </p>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
@@ -522,7 +571,8 @@ export default function ChatPage({
                   · <b>上传报告 / 图片</b> —— 自动解析并入检索索引（.pdf/.docx/.pptx/.xlsx + 图片 OCR）
                 </li>
                 <li>
-                  · <b>提问档案相关问题</b> —— 角色会调用工具查询，结果带来源与「是否已校验」标记
+                  · <b>需要查健康档案时</b> —— 切换到「健康档案管理员」，它会调用工具并带来源与
+                  「是否已校验」标记
                 </li>
                 <li>· 下方功能行可切换角色与模型（下一轮生效，历史保留）</li>
               </ul>

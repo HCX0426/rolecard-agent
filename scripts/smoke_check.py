@@ -211,7 +211,8 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
     def _sessions() -> None:
         s = c.post("/api/session", json={}).json()
         tid = s["thread_id"]
-        assert s["role_id"] == "medical_archivist"
+        # 默认"无角色"：general_assistant（纯对话，不接工具与档案）
+        assert s["role_id"] == "general_assistant", s
         assert any(x["thread_id"] == tid for x in c.get("/api/sessions").json())
         assert c.get(f"/api/session/{tid}").json()["model_name"] is None
         assert c.get(f"/api/session/{tid}/messages").json() == []

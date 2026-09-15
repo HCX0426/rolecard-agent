@@ -114,6 +114,36 @@ export interface RagMetrics {
   p99: RagStageMs;
 }
 
+/** 结构化抽取：写入档案的指标行 */
+export interface ExtractWritten {
+  index_name: string;
+  index_value: number | null;
+  value_text: string | null;
+  unit: string | null;
+}
+
+/** 抽取时没能通过校验 / 两次识别不一致的项 —— 交给人确认，未写库 */
+export interface ExtractConflict {
+  index_name: string;
+  reason: string;
+  primary: Record<string, unknown> | null;
+  verify: Record<string, unknown> | null;
+}
+
+export interface ExtractResult {
+  mode: string; // cross（双模型）| self（同模型复查，弱校对）| off
+  report_type: string;
+  check_time: string;
+  institution: string | null;
+  written: ExtractWritten[];
+  conflicts: ExtractConflict[];
+  notes: string[];
+  /** 降级原因：no_model / no_text / already_extracted */
+  skipped?: string;
+  detail?: string;
+  report_id?: string;
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -183,6 +213,9 @@ export const api = {
   patch: <T>(url: string, body: unknown) => request<T>("PATCH", url, body),
   put: <T>(url: string, body: unknown) => request<T>("PUT", url, body),
   del: <T>(url: string) => request<T>("DELETE", url),
+  /** 结构化抽取：把已上传的报告文本抽成指标行（三层校验，只写双方一致的项）。 */
+  extractRecord: (taskId: string) =>
+    request<ExtractResult>("POST", "/api/records/extract", { task_id: taskId }),
 };
 
 // ---- SSE 对话流 ----------------------------------------------------------------

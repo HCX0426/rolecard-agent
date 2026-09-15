@@ -119,7 +119,7 @@ DEFAULT_TENANT_ID = "local"
 DEFAULT_USER_ID = "local-user"
 # Ollama 本地端点不需要凭据；其它 provider（openai 兼容）必须有 key 才能构建客户端。
 _KEYLESS_PROVIDER = "ollama"
-DEFAULT_ROLE_ID = "medical_archivist"
+_DEFAULT_ROLE_ID = "general_assistant"  # 默认"无角色"：纯对话，不接工具与检索
 
 
 class PluginToggle(BaseModel):
@@ -500,7 +500,7 @@ def create_app(
     def create_session(body: SessionCreate) -> object:
         """Create a session thread bound to a role. The thread row is what makes the
         LangGraph `thread_id` answerable to "who is talking" (core/schema.sql A2)."""
-        role_id = body.role_id or DEFAULT_ROLE_ID
+        role_id = body.role_id or _DEFAULT_ROLE_ID
         try:
             role = roles.get(role_id)
         except RoleNotFound as exc:
@@ -765,7 +765,8 @@ def create_app(
                 chain = ("parsed", "extracted", "indexed")
                 note = (
                     f"[用户上传了文档：{safe_name}（{chunks} 段），已建立检索索引"
-                    f"（任务 {task_id}，status=indexed）。后续提问可以检索这份文档的内容。]"
+                    f"（任务 {task_id}，status=indexed）。注意：能否检索到取决于当前角色的"
+                    "knowledge_scopes 授权；未授权时请提示用户切换角色，不要假装已经读过。]"
                 )
             else:
                 # 解析出空文本（扫描件 / 无文本层的 PDF）：解析到 parsed 即止，不入索引。
