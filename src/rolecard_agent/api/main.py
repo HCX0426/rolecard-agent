@@ -752,6 +752,8 @@ def create_app(
                     "parsed": False,
                 }
             except ParseError as exc:
+                # 解析硬失败 → 任务标记 failed（否则永远停在 pending），并返回可读的 500
+                ingestion.record_failure(task_id, str(exc))
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
 
             if text.strip():
