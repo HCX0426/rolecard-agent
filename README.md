@@ -4,7 +4,8 @@
 > 运行时切换人设与权限，工具与知识检索以插件方式注册，本地优先、可公网部署。
 
 **当前状态：v1 里程碑 M1~M5 已全部落地，v2.1 / v2.2 检索与文档摄取也已落地** —— 内核 / 角色插件 /
-health 查询工具 / FastAPI 接入层 + SSE 流式对话 / Vite+React 控制台（四页签）；
+health 查询工具 / FastAPI 接入层 + SSE 流式对话 / Vite+React 控制台（**六个页签**：对话 · 数据 ·
+知识库 · 角色卡 · 插件 · 设置）；
 **230 个测试全绿、`smoke_check` 12/12、一致性 23/0，且全部离线运行**（注入脚本化模型，不需要启动 Ollama）。
 RAG：chroma 分作用域集合 + 可插拔嵌入（bge-m3 / hash 离线兜底）+ `search_knowledge` 内核工具 +
 **可插拔 OCR（本地 Paddle 优先 / 云端 API key 兜底）** + `.txt/.md/.pdf/.docx/.pptx/.xlsx` 解析入索引 +
@@ -24,15 +25,16 @@ RAG：chroma 分作用域集合 + 可插拔嵌入（bge-m3 / hash 离线兜底�
 
 ## 界面预览
 
-控制台（Vite + React，`npm run build` 产物由 FastAPI 托管）四个页签：
+控制台（Vite + React，`npm run build` 产物由 FastAPI 托管）六个页签 —— 刻意把最易混淆的三件事分开：
+**数据**（领域数据，随域归属）· **知识库**（RAG 检索，内核能力）· **插件**（能力开关）。
 
-| 对话 | 角色卡 |
-| --- | --- |
-| ![对话页](docs/assets/console-chat.png) | ![角色卡页](docs/assets/console-roles.png) |
+| 对话 | 数据（领域数据，可补录） | 知识库（RAG + 检索延迟） |
+| --- | --- | --- |
+| ![对话页](docs/assets/console-chat.png) | ![数据页](docs/assets/console-data.png) | ![知识库页](docs/assets/console-knowledge.png) |
 
-| 插件 | 设置（模型热切换 + 失败自动回退） |
-| --- | --- |
-| ![插件页](docs/assets/console-plugins.png) | ![设置页](docs/assets/console-settings.png) |
+| 角色卡（含范例 exemplars） | 插件（纯能力开关） | 设置（模型热切换 + 回退链） |
+| --- | --- | --- |
+| ![角色卡页](docs/assets/console-roles.png) | ![插件页](docs/assets/console-plugins.png) | ![设置页](docs/assets/console-settings.png) |
 
 ---
 
