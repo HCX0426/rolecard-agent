@@ -96,8 +96,9 @@ cd frontend && npm install && npm run build
 docker build -t rolecard-agent .
 docker run -p 8000:8000 -v rolecard-data:/app/data rolecard-agent
 
-# CI：push 即跑（GitHub Actions）—— ruff + 全量离线测试 + 一致性核查 + 前端构建
-# 依赖快照：requirements.lock（已验证环境的 freeze；CI 安装用 requirements*.txt）
+# CI：push 即跑（GitHub Actions）—— ruff + 全量离线测试 + 一致性核查 + 前端 build
+# 依赖快照：`uv.lock`（`uv sync --locked` 可复现）；CI 按范围装 requirements*.txt
+# （内核 + dev + api + rag —— 漏装 rag 会让知识库/解析测试直接 ImportError）
 ```
 
 > v2 才需要的依赖单独安装：`requirements-rag.txt`（检索，v2.1）、`requirements-ocr.txt`
