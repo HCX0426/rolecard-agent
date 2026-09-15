@@ -23,7 +23,11 @@ jobs:
       - name: Lint
         run: ruff check .
       - name: Tests (offline, no Ollama needed)
-        run: python -m pytest -q -p no:cacheprovider
+        # 覆盖率阈值 85%：低于它说明有人在没补测试的情况下大幅加代码。
+        # 真正的意义是"重构前的安全网"—— 拆 api/main.py 这类改动，没有覆盖数据是闭眼改。
+        run: |
+          python -m pytest -q -p no:cacheprovider \
+            --cov=rolecard_agent --cov-report=term-missing --cov-fail-under=85
       - name: Consistency (docs ↔ code)
         run: python scripts/check_consistency.py
 
