@@ -147,11 +147,16 @@ function readableDetail(raw: unknown, fallback: string): string {
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   const opt: RequestInit = { method, headers: {} };
   if (body !== undefined) {
-    // FormData 交给浏览器设置 multipart 边界，绝不能手动盖 JSON 头
-    if (!(body instanceof FormData)) {
+    if (body instanceof FormData) {
+      // FormData 交给浏览器设置 multipart 边界，绝不能手动盖 JSON 头
+      opt.body = body;
+    } else {
+      // 关键：fetch 不会自动序列化对象 —— 必须显式 JSON.stringify。
+      // 否则 body 会退化成 "[object Object]"，服务端 JSON 解析失败 → 422。
+      // （踩过的坑：只设 Content-Type 不序列化，页面 GET 全正常，所有写操作静默 422。）
       opt.headers = { "Content-Type": "application/json" };
+      opt.body = JSON.stringify(body);
     }
-    opt.body = body as BodyInit;
   }
   const res = await fetch(url, opt);
   if (!res.ok) {

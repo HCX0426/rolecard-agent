@@ -62,6 +62,7 @@ from rolecard_agent.core.plugins import PluginError, PluginService, UnknownPlugi
 from rolecard_agent.core.state import new_state
 from rolecard_agent.domains.health.service import (
     HealthDataError,
+    HealthInvalidReport,
     HealthNotFound,
     HealthQueryService,
 )
@@ -172,6 +173,35 @@ class IndexPatch(BaseModel):
     unit: str | None = None
     ref_range: str | None = None
     is_verified: bool | None = None
+
+
+class IndexCreate(BaseModel):
+    """One indicator row in a manually created report (最小可用：名称 + 数值或文本)。
+
+    其余（单位 / 参考区间 / 是否已人工校验）都可选；未勾选校验的照旧带
+    【未经人工校验】标记 —— 手填不等于已核实。
+    """
+
+    index_name: str = Field(min_length=1, max_length=100)
+    index_value: float | None = None
+    value_text: str | None = None
+    unit: str | None = None
+    ref_range: str | None = None
+    is_verified: bool = False
+
+
+class ReportCreate(BaseModel):
+    """手动补录一份报告。**主流程是"上传报告 / 图片让 AI 解析"，本接口是兜底入口**。
+
+    最小可用契约（与 domain service 一致）：report_type + check_time 必填，至少一行指标，
+    每行指标需 index_name 且 index_value / value_text 至少有一个。
+    """
+
+    report_type: str = Field(min_length=1, max_length=100)
+    check_time: str = Field(min_length=1, max_length=32)
+    institution: str | None = None
+    note: str | None = None
+    indices: list[IndexCreate] = Field(default_factory=list)
 
 
 def _serialize_message(message: object) -> dict[str, object]:
@@ -726,6 +756,36 @@ def create_app(
         """F2 数据管理视图：报告 + 完整指标行（归属演示用户）。"""
         return health_query.list_records(DEFAULT_USER_ID)
 
+    @app.post("/api/records/report", status_code=201)
+    def create_record_report(body: ReportCreate) -> object:
+        """手动补录一份报告（最小可用）。**主流程仍是上传报告让 AI 解析**，这里是兜底入口。
+
+        校验交给 domain service（类型/时间必填、每行指标需名称 + 数值或文本）；失败翻译成
+        400 而不是 500 —— 这是用户输入错误，不是服务故障。写入审计。
+        """
+        try:
+            report_id = health_query.create_report(
+                user_id=DEFAULT_USER_ID,
+                report_type=body.report_type,
+                check_time=body.check_time,
+                institution=body.institution,
+                note=body.note,
+                indices=[i.model_dump() for i in body.indices],
+            )
+        except HealthInvalidReport as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        roles.audit(
+            actor="operator",
+            action="create_report",
+            target=report_id,
+            detail={"report_type": body.report_type.strip(), "indices": len(body.indices)},
+        )
+        # 回整份报告（含生成的 index_id），前端可据此直接刷新列表。
+        for row in health_query.list_records(DEFAULT_USER_ID):
+            if row.get("report_id") == report_id:
+                return row
+        return {"report_id": report_id}
+
     @app.patch("/api/records/index/{index_id}")
     def patch_record_index(index_id: str, body: IndexPatch) -> object:
         """F2：修正误录的指标值。变更写审计（US-3 的数据侧延伸）。"""
@@ -776,6 +836,22 @@ def create_app(
     def list_knowledge() -> list[object]:
         """v2.1 知识库概览（设置页知识库管理）：作用域 → 分块数 + 来源 + 嵌入器。"""
         return knowledge.describe()
+
+    @app.delete("/api/knowledge/{scope}")
+    def reset_knowledge_scope(scope: str) -> object:
+        """清空一个知识作用域（删除其集合）—— 换嵌入后端后维度不兼容时的重建入口。
+
+        破坏性管理动作，必须写审计（含清掉的分块数）。前端需二次确认后再调。
+        """
+        removed = knowledge.scope_count(scope)
+        knowledge.reset_scope(scope)
+        roles.audit(
+            actor="operator",
+            action="reset_knowledge_scope",
+            target=scope,
+            detail={"chunks_removed": removed},
+        )
+        return {"scope": scope, "removed_chunks": removed}
 
     @app.get("/api/rag/metrics")
     def rag_metrics() -> object:

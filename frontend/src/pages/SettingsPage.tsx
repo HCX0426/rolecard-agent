@@ -414,18 +414,34 @@ function KnowledgePanel() {
   const [scopes, setScopes] = useState<KnowledgeScope[]>([]);
   const [metrics, setMetrics] = useState<RagMetrics | null>(null);
   const [status, setStatus] = useState("");
+  const [confirmReset, setConfirmReset] = useState<string | null>(null);
 
-  useEffect(() => {
-    api
-      .get<KnowledgeScope[]>("/api/knowledge")
-      .then(setScopes)
-      .catch((e) => setStatus(`加载失败：${e.message}`));
+  const load = useCallback(async () => {
+    setScopes(await api.get<KnowledgeScope[]>("/api/knowledge"));
     // 延迟指标是增强信息：失败静默（不打扰知识库主视图）。
     api
       .get<RagMetrics>("/api/rag/metrics")
       .then(setMetrics)
       .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    load().catch((e) => setStatus(`加载失败：${e.message}`));
+  }, [load]);
+
+  /** 清空一个作用域（破坏性）：换嵌入后端后维度不兼容时的重建入口，走二次确认 + 审计。 */
+  async function resetScope(scope: string) {
+    try {
+      const r = await api.del<{ removed_chunks: number }>(
+        `/api/knowledge/${encodeURIComponent(scope)}`,
+      );
+      setConfirmReset(null);
+      setStatus(`已清空作用域 ${scope}（移除 ${r.removed_chunks} 段，写入审计）`);
+      await load();
+    } catch (e) {
+      setStatus(`清空失败：${(e as Error).message}`);
+    }
+  }
 
   return (
     <div className="mt-6">
@@ -493,6 +509,33 @@ function KnowledgePanel() {
                   嵌入：{s.embedder}
                 </span>
               </div>
+              {confirmReset === s.scope ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-red-600">
+                    清空 {s.chunks} 段且不可恢复？
+                  </span>
+                  <button
+                    onClick={() => resetScope(s.scope)}
+                    className="rounded bg-red-500 px-2 py-1 text-[11px] text-white hover:bg-red-600"
+                  >
+                    确认清空
+                  </button>
+                  <button
+                    onClick={() => setConfirmReset(null)}
+                    className="rounded px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-100"
+                  >
+                    取消
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmReset(s.scope)}
+                  title="删除该作用域的集合 —— 换嵌入后端后维度不兼容时用它重建（写审计）"
+                  className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-500 hover:border-red-300 hover:text-red-600"
+                >
+                  重建（清空）
+                </button>
+              )}
             </div>
             <ul className="mt-2 space-y-0.5">
               {s.sources.map((src) => (

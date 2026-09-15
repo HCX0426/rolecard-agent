@@ -15,6 +15,7 @@ const EMPTY_FORM = {
   model_name: "",
   tool_whitelist: [] as string[],
   knowledge_scopes: [] as string[],
+  exemplars: [] as { user: string; assistant: string }[],
   description: "",
 };
 
@@ -132,6 +133,13 @@ export default function RolesPage() {
     setWlMode("all");
     setConfirmDel(null);
   }
+  function setExemplar(i: number, key: "user" | "assistant", value: string) {
+    setForm((f) => ({
+      ...f,
+      exemplars: f.exemplars.map((e, j) => (j === i ? { ...e, [key]: value } : e)),
+    }));
+  }
+
   function openEdit(r: RoleCard) {
     setEditing(r.role_id);
     setForm({
@@ -142,12 +150,17 @@ export default function RolesPage() {
       model_name: r.model_name || "",
       tool_whitelist: r.tool_whitelist || [],
       knowledge_scopes: r.knowledge_scopes || [],
+      exemplars: r.exemplars || [],
       description: r.description || "",
     });
     setWlMode(r.tool_whitelist === null ? "all" : "custom");
   }
 
   async function save() {
+    // 半填的范例行不提交（后端要求 user/assistant 都非空）
+    const exemplars = form.exemplars
+      .map((e) => ({ user: e.user.trim(), assistant: e.assistant.trim() }))
+      .filter((e) => e.user && e.assistant);
     const payload = {
       role_id: form.role_id.trim(),
       role_name: form.role_name.trim(),
@@ -156,6 +169,7 @@ export default function RolesPage() {
       model_name: form.model_name.trim() || null,
       tool_whitelist: wlMode === "all" ? null : form.tool_whitelist,
       knowledge_scopes: form.knowledge_scopes.length ? form.knowledge_scopes : null,
+      exemplars: exemplars.length ? exemplars : null,
       description: form.description.trim() || null,
     };
     try {
@@ -402,6 +416,74 @@ export default function RolesPage() {
                 角色的声明并集；v2.1 后将换成内核集合注册表。
               </span>
             </label>
+            <div className="mt-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500">
+                  范例（few-shot：教它「怎么答」，比讲规则更省 token）
+                </span>
+                {form.exemplars.length < 4 && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setForm((f) => ({
+                        ...f,
+                        exemplars: [...f.exemplars, { user: "", assistant: "" }],
+                      }))
+                    }
+                    className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:border-blue-300"
+                  >
+                    ＋ 加一条范例
+                  </button>
+                )}
+              </div>
+              <div className="mt-1.5 space-y-2">
+                {form.exemplars.map((ex, i) => (
+                  <div key={i} className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+                    <div className="flex items-start gap-2">
+                      <span className="mt-1.5 shrink-0 text-[11px] text-slate-400">用户</span>
+                      <input
+                        value={ex.user}
+                        onChange={(e) => setExemplar(i, "user", e.target.value)}
+                        placeholder="用户会怎么问"
+                        className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setForm((f) => ({
+                            ...f,
+                            exemplars: f.exemplars.filter((_, j) => j !== i),
+                          }))
+                        }
+                        className="rounded px-1.5 py-1 text-xs text-slate-400 hover:bg-slate-100 hover:text-red-500"
+                        title="删除这条范例"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div className="mt-1.5 flex items-start gap-2">
+                      <span className="mt-1.5 shrink-0 text-[11px] text-slate-400">回答</span>
+                      <textarea
+                        value={ex.assistant}
+                        onChange={(e) => setExemplar(i, "assistant", e.target.value)}
+                        rows={2}
+                        placeholder="理想的回答（体现语气与边界）"
+                        className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
+                      />
+                    </div>
+                  </div>
+                ))}
+                {form.exemplars.length === 0 && (
+                  <p className="text-[11px] text-slate-400">
+                    还没有范例。范例插在角色设定与安全规则之间（上限 4 条 / 共 3000 字）。
+                  </p>
+                )}
+              </div>
+              <span className="mt-1 block text-[11px] leading-relaxed text-slate-400">
+                装配顺序：角色设定 → <b>范例</b> → 安全规则（安全规则永远最后，不可被覆盖）。
+                半填（只写一半）的范例不会被提交。
+              </span>
+            </div>
             <label className="mt-3 block">
               <span className="text-xs text-slate-500">描述</span>
               <input

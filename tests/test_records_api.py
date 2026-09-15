@@ -1,0 +1,157 @@
+"""数据管理端点测试：手动补录报告 + 知识作用域重建。
+
+Traceability: US-3（数据变更写审计）、US-8（知识作用域）。
+
+背景：**主流程是"上传报告/图片让 AI 解析"，手动补录只是兜底入口**（最小可用契约）。
+全部离线：临时库 + 临时 chroma，绝不碰仓库里的 data/。
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from rolecard_agent.api.main import create_app
+
+
+@pytest.fixture
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    return TestClient(create_app(sqlite_path=tmp_path / "app.db"))
+
+
+# -- 手动补录报告（最小可用） ----------------------------------------------------------
+
+
+def test_create_report_minimal(client: TestClient) -> None:
+    """最小可用：类型 + 检查时间 + 一行指标（名称 + 数值），单位等其余可省。"""
+    res = client.post(
+        "/api/records/report",
+        json={
+            "report_type": "腹部超声",
+            "check_time": "2026-03-12",
+            "indices": [{"index_name": "结石直径", "index_value": 6.1, "unit": "mm"}],
+        },
+    )
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body["report_type"] == "腹部超声"
+    assert len(body["indices"]) == 1
+    row = body["indices"][0]
+    assert row["index_name"] == "结石直径"
+    assert float(row["index_value"]) == 6.1
+    # 手填 ≠ 已核实：默认未校验（前端据此显示【未经人工校验】）
+    assert not row["is_verified"]
+
+
+def test_create_report_accepts_text_value(client: TestClient) -> None:
+    """文本型指标（如"未见异常"）同样是最小可用的合法输入。"""
+    res = client.post(
+        "/api/records/report",
+        json={
+            "report_type": "腹部超声",
+            "check_time": "2026-03",
+            "indices": [{"index_name": "胆囊", "value_text": "未见异常"}],
+        },
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["indices"][0]["value_text"] == "未见异常"
+
+
+def test_create_report_rejects_without_indices(client: TestClient) -> None:
+    """没有指标行的报告无法被查询 —— 400（用户输入错误，不是 500）。"""
+    res = client.post(
+        "/api/records/report",
+        json={"report_type": "腹部超声", "check_time": "2026-03-12", "indices": []},
+    )
+    assert res.status_code == 400
+    assert "indicator" in res.json()["detail"]
+
+
+def test_create_report_rejects_indicator_without_value(client: TestClient) -> None:
+    res = client.post(
+        "/api/records/report",
+        json={
+            "report_type": "腹部超声",
+            "check_time": "2026-03-12",
+            "indices": [{"index_name": "结石直径"}],
+        },
+    )
+    assert res.status_code == 400
+    assert "结石直径" in res.json()["detail"]
+
+
+def test_create_report_requires_type_and_time(client: TestClient) -> None:
+    """类型 / 检查时间缺失由 pydantic 拦成 422（字段级校验），不落到业务层。"""
+    res = client.post("/api/records/report", json={"indices": []})
+    assert res.status_code == 422
+
+
+def test_create_report_is_audited(client: TestClient) -> None:
+    client.post(
+        "/api/records/report",
+        json={
+            "report_type": "腹部超声",
+            "check_time": "2026-03-12",
+            "indices": [{"index_name": "胆囊", "value_text": "未见异常"}],
+        },
+    )
+    actions = {a["action"] for a in client.get("/api/audit?limit=50").json()}
+    assert "create_report" in actions
+
+
+def test_created_report_appears_in_records(client: TestClient) -> None:
+    """补录后必须出现在数据管理列表里（写入路径闭环）。"""
+    client.post(
+        "/api/records/report",
+        json={
+            "report_type": "腹部超声",
+            "check_time": "2026-03-12",
+            "indices": [{"index_name": "结石直径", "index_value": 6.1}],
+        },
+    )
+    records = client.get("/api/records").json()
+    assert len(records) == 1
+    assert records[0]["report_type"] == "腹部超声"
+
+
+# -- 知识作用域重建 --------------------------------------------------------------------
+
+
+def test_reset_knowledge_scope_removes_and_audits(client: TestClient) -> None:
+    """清空作用域是破坏性动作：删掉集合 + 写审计（含清掉的分块数）。"""
+    tid = client.post("/api/session", json={}).json()["thread_id"]
+    uploaded = client.post(
+        f"/api/session/{tid}/upload",
+        files={"file": ("须知.md", "每半年复查一次超声。".encode(), "text/markdown")},
+    )
+    assert uploaded.status_code == 201
+    assert client.get("/api/knowledge").json(), "上传后应已有作用域"
+
+    res = client.delete("/api/knowledge/health_reports")
+    assert res.status_code == 200, res.text
+    assert res.json()["removed_chunks"] >= 1
+    assert client.get("/api/knowledge").json() == []
+
+    actions = {a["action"] for a in client.get("/api/audit?limit=50").json()}
+    assert "reset_knowledge_scope" in actions
+
+
+# -- 角色 exemplars（前端表单要写入的字段，确认 API 端到端支持） ------------------------
+
+
+def test_role_exemplars_round_trip(client: TestClient) -> None:
+    """Traceability: US-8 — exemplars 经 API 存取往返一致。"""
+    payload = {
+        "role_id": "coach",
+        "role_name": "教练",
+        "system_prompt": "你是随访教练。",
+        "exemplars": [{"user": "我该复查吗", "assistant": "每半年一次，别拖。"}],
+    }
+    assert client.post("/api/roles", json=payload).status_code == 201
+    row = next(r for r in client.get("/api/roles").json() if r["role_id"] == "coach")
+    assert row["exemplars"][0]["user"] == "我该复查吗"
+    assert row["exemplars"][0]["assistant"] == "每半年一次，别拖。"

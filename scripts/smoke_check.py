@@ -282,13 +282,18 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         msgs = c.get(f"/api/session/{tid}/messages").json()
         assert any("已建立检索索引" in str(m.get("content", "")) for m in msgs), msgs
 
-    @check("知识库概览：作用域 / 分块数 / 来源 / 嵌入器")
+    @check("知识库概览：作用域 / 分块数 / 来源 / 嵌入器 / 重建作用域")
     def _knowledge() -> None:
         body = c.get("/api/knowledge").json()
         scope = [x for x in body if x["scope"] == "health_reports"]
         assert scope, body
         assert scope[0]["chunks"] >= 1 and "须知.md" in scope[0]["sources"], scope
         assert scope[0]["embedder"], scope
+        # 重建（清空作用域）：破坏性管理动作 —— 删集合 + 返回清掉的分块数
+        reset = c.delete("/api/knowledge/health_reports")
+        assert reset.status_code == 200, reset.text
+        assert reset.json()["removed_chunks"] >= 1
+        assert c.get("/api/knowledge").json() == []
 
     @check("检索延迟细分：P50/P95/P99 按阶段（/api/rag/metrics）")
     def _rag_metrics() -> None:
@@ -299,7 +304,7 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         for label in ("p50", "p95", "p99"):
             assert set(body[label]) == stages, body
 
-    @check("数据管理：列表 / 修正指标 / 删除指标与报告")
+    @check("数据管理：列表 / 补录 / 修正指标 / 删除指标与报告")
     def _records() -> None:
         recs = c.get("/api/records").json()  # 数据在起服务前已注入
         assert recs and recs[0]["indices"], recs
@@ -313,11 +318,34 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         for r in c.get("/api/records").json():
             assert c.delete(f"/api/records/report/{r['report_id']}").status_code == 204
         assert c.get("/api/records").json() == []
+        # 手动补录（最小可用）：类型 + 检查时间 + 一行指标
+        created = c.post(
+            "/api/records/report",
+            json={
+                "report_type": "腹部超声",
+                "check_time": "2026-03-12",
+                "indices": [{"index_name": "结石直径", "index_value": 6.1, "unit": "mm"}],
+            },
+        )
+        assert created.status_code == 201, created.text
+        assert created.json()["report_type"] == "腹部超声"
+        assert not created.json()["indices"][0]["is_verified"], "手填 ≠ 已核实"
+        # 输入错误翻译成 400，而不是 500
+        bad = c.post(
+            "/api/records/report", json={"report_type": "t", "check_time": "2026-03-12"}
+        )
+        assert bad.status_code == 400, bad.text
 
     @check("审计：数据变更与模型切换都留痕")
     def _audit() -> None:
         actions = {a["action"] for a in c.get("/api/audit?limit=200").json()}
-        assert {"update_index", "delete_report", "set_session_model"} <= actions, actions
+        assert {
+            "update_index",
+            "delete_report",
+            "create_report",
+            "reset_knowledge_scope",
+            "set_session_model",
+        } <= actions, actions
 
     @check("模型设置：后端 CRUD + 回退链 + api_key 只写不回读 + 热重建")
     def _settings() -> None:

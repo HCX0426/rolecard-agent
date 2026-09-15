@@ -31,7 +31,13 @@ export default function ChatPage({
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [live, setLive] = useState<LiveBubble | null>(null);
   const [input, setInput] = useState("");
-  const [status, setStatus] = useState("");
+  // 状态提示带「语气」：成功=绿、告警=琥珀、中性=灰。默认中性，成功/失败路径显式标注。
+  const [status, setStatusRaw] = useState("");
+  const [statusTone, setStatusTone] = useState<"info" | "ok" | "warn">("info");
+  const setStatus = (text: string, tone: "info" | "ok" | "warn" = "info") => {
+    setStatusRaw(text);
+    setStatusTone(tone);
+  };
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
@@ -49,7 +55,7 @@ export default function ChatPage({
   }, []);
 
   useEffect(() => {
-    refreshSessions().catch((e) => setStatus(`加载会话失败：${e.message}`));
+    refreshSessions().catch((e) => setStatus(`加载会话失败：${e.message}`, "warn"));
     api.get<RoleCard[]>("/api/roles").then(setRoles).catch(() => {});
     api.get<ModelSettings>("/api/settings/models").then((s) => {
       setBackends(s.backends.map((b) => ({ name: b.name, provider: b.provider, model: b.model })));
@@ -82,7 +88,7 @@ export default function ChatPage({
       setSessionModel(detail.model_name);
       setStatus("");
     } catch (e) {
-      setStatus(`加载历史失败：${(e as Error).message}`);
+      setStatus(`加载历史失败：${(e as Error).message}`, "warn");
     }
   }
 
@@ -112,7 +118,7 @@ export default function ChatPage({
       await refreshSessions();
       return s.thread_id;
     } catch (e) {
-      setStatus(`新建会话失败：${(e as Error).message}`);
+      setStatus(`新建会话失败：${(e as Error).message}`, "warn");
       return null;
     }
   }
@@ -124,10 +130,10 @@ export default function ChatPage({
         role_id: roleId,
       });
       setCurrentRole(roleId);
-      setStatus(`已切换角色 → ${r.role_name}（下一轮生效，历史保留）`);
+      setStatus(`已切换角色 → ${r.role_name}（下一轮生效，历史保留）`, "ok");
       await refreshSessions();
     } catch (e) {
-      setStatus(`切换角色失败：${(e as Error).message}`);
+      setStatus(`切换角色失败：${(e as Error).message}`, "warn");
     }
   }
 
@@ -141,7 +147,7 @@ export default function ChatPage({
       }
       await refreshSessions();
     } catch (e) {
-      setStatus(`删除失败：${(e as Error).message}`);
+      setStatus(`删除失败：${(e as Error).message}`, "warn");
     }
   }
 
@@ -211,19 +217,32 @@ export default function ChatPage({
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const r = await api.post<{ task_id: string; reused: boolean; file: string }>(
-        `/api/session/${tid}/upload`,
-        fd,
-      );
-      setStatus(
-        r.reused
-          ? `「${r.file}」已登记（复用任务 ${r.task_id}）`
-          : `「${r.file}」已登记为 intake 任务 ${r.task_id}（解析在 v2.2 接入）`,
-      );
+      const r = await api.post<{
+        task_id: string;
+        reused: boolean;
+        file: string;
+        status?: string;
+      }>(`/api/session/${tid}/upload`, fd);
+      // 三态反馈：让用户知道这份文件到底读没读进去（v2.2 起解析已真实生效，不再是"登记一下"）
+      if (r.status === "indexed") {
+        setStatus(`「${r.file}」已解析并入检索索引 —— 现在就可以对它提问`, "ok");
+      } else if (r.status === "parsed") {
+        setStatus(
+          `「${r.file}」已解析，但没有提取到文本（可能是扫描件），暂未入检索`,
+          "warn",
+        );
+      } else {
+        setStatus(
+          `「${r.file}」已登记，但当前无法解析（类型不支持，或图片 OCR 未配置）${
+            r.reused ? "（同一文件此前已登记）" : ""
+          }`,
+          "warn",
+        );
+      }
       // 注入的说明消息已进 checkpoint，回放让用户看到
       setMessages(await api.get<MessageRow[]>(`/api/session/${tid}/messages`));
     } catch (e) {
-      setStatus(`上传失败：${(e as Error).message}`);
+      setStatus(`上传失败：${(e as Error).message}`, "warn");
     } finally {
       setUploading(false);
     }
@@ -237,10 +256,11 @@ export default function ChatPage({
       setModelMenuOpen(false);
       setStatus(
         name ? `本会话已切换模型 → ${name}（下一轮生效）` : "已清除会话级模型覆盖（下一轮生效）",
+        "ok",
       );
       await refreshSessions();
     } catch (e) {
-      setStatus(`切换模型失败：${(e as Error).message}`);
+      setStatus(`切换模型失败：${(e as Error).message}`, "warn");
     }
   }
 
@@ -259,10 +279,10 @@ export default function ChatPage({
     if (!sessionId || !title) return;
     try {
       await api.patch(`/api/session/${sessionId}`, { title });
-      setStatus("已重命名");
+      setStatus("已重命名", "ok");
       await refreshSessions();
     } catch (e) {
-      setStatus(`重命名失败：${(e as Error).message}`);
+      setStatus(`重命名失败：${(e as Error).message}`, "warn");
     }
   }
 
@@ -432,7 +452,15 @@ export default function ChatPage({
         </div>
 
         {status && (
-          <div className="border-t border-amber-100 bg-amber-50 px-6 py-1.5 text-xs text-amber-700">
+          <div
+            className={`border-t px-6 py-1.5 text-xs ${
+              statusTone === "ok"
+                ? "border-green-100 bg-green-50 text-green-700"
+                : statusTone === "warn"
+                  ? "border-amber-100 bg-amber-50 text-amber-700"
+                  : "border-slate-100 bg-slate-50 text-slate-600"
+            }`}
+          >
             {status}
           </div>
         )}
@@ -539,7 +567,7 @@ export default function ChatPage({
             <button
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
-              title="登记报告文件（解析在 v2.2 接入）"
+              title="上传报告 / 图片，自动解析并入检索索引（.txt/.md/.pdf/.docx/.pptx/.xlsx + 图片 OCR）"
               className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300 disabled:opacity-50"
             >
               {uploading ? "📎 上传中…" : "📎 上传报告"}
