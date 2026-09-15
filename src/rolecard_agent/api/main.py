@@ -695,8 +695,13 @@ def create_app(
     UPLOAD_MAX_BYTES = 20 * 1024 * 1024
 
     @app.post("/api/session/{thread_id}/upload", status_code=201)
-    async def upload_report(thread_id: str, file: UploadFile) -> object:
+    def upload_report(thread_id: str, file: UploadFile) -> object:
         """US-7 上传入口的真实落点：存文件 + 登记 intake 任务（幂等键 sha256）。
+
+        **刻意声明为同步 `def`**：本端的重活（OCR 子进程最长 120 秒、嵌入、落盘）全是
+        **阻塞式**调用。若写成 `async def`，它们会跑在事件循环里 —— 上传一张图片的几十秒
+        内，整个进程（含其他会话的 SSE 对话）都不再响应。同步 `def` 让 FastAPI 把它丢进
+        线程池，事件循环只负责调度。同理用 `file.file.read()` 而不是 `await file.read()`。
 
         v2.2 起解析在此完成：.txt/.md/.pdf/.docx/.pptx/.xlsx 直接抽文本入
         `health_reports` 检索索引；图片走 **可插拔 OCR**（本地 Paddle 优先，独立 venv 子进程；
@@ -706,7 +711,7 @@ def create_app(
         """
         thread = _get_thread(conn, thread_id)
         user_id = str(thread["user_id"])
-        data = await file.read()
+        data = file.file.read()  # 同步端点读同步文件对象（见 docstring：不阻塞事件循环）
         if not data:
             raise HTTPException(status_code=400, detail="空文件。")
         if len(data) > UPLOAD_MAX_BYTES:

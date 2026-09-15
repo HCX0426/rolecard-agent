@@ -9,8 +9,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app/src
 
 # 先装依赖（利用层缓存），再拷代码
-COPY requirements.txt requirements-api.txt ./
-RUN pip install --no-cache-dir -r requirements.txt -r requirements-api.txt
+# requirements-rag.txt（chromadb / pypdf）必须一起装：知识库、上传解析、检索工具都依赖它，
+# 漏装会让容器内 /api/knowledge 与上传直接 ImportError（v2.4 部署前的审查发现）。
+COPY requirements.txt requirements-api.txt requirements-rag.txt ./
+RUN pip install --no-cache-dir \
+    -r requirements.txt -r requirements-api.txt -r requirements-rag.txt
 
 COPY src/ ./src/
 COPY frontend/dist/ ./frontend/dist/

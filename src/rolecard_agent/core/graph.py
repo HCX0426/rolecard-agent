@@ -36,6 +36,9 @@ from rolecard_agent.roles.service import RoleCardService
 MODEL_NODE = "model"
 TOOLS_NODE = "tools"
 
+# 明确接受 `timeout` 入参的 provider。未知 provider 一律不传，宁可不设超时也不能构造失败。
+_TIMEOUT_PROVIDERS = frozenset({"ollama", "openai"})
+
 
 def build_kernel(
     *,
@@ -95,7 +98,13 @@ def build_kernel(
 
 
 def _init_model(settings: Settings, backend_name: str | None) -> ChatLike:
-    """Instantiate one backend. Imported lazily so the kernel imports without a provider."""
+    """Instantiate one backend. Imported lazily so the kernel imports without a provider.
+
+    超时是**显式带上**的：默认没有超时时，一个挂起的本地模型会让 SSE 对话与抽取无限等待
+    ——不仅卡住请求，还会让 `with_fallbacks` 形同虚设（主模型既不返回也不失败，回退永远
+    触发不了）。只在 provider 确实接受 `timeout` 参数时传，避免对未知 provider 抛
+    TypeError（那时宁可不设超时，也不要起不来）。
+    """
     from langchain.chat_models import init_chat_model
 
     backend = settings.backend(backend_name)
@@ -104,6 +113,9 @@ def _init_model(settings: Settings, backend_name: str | None) -> ChatLike:
         kwargs["base_url"] = backend.base_url
     if backend.api_key:
         kwargs["api_key"] = backend.api_key
+    provider = (backend.provider or "").lower()
+    if settings.model_timeout_seconds > 0 and provider in _TIMEOUT_PROVIDERS:
+        kwargs["timeout"] = int(settings.model_timeout_seconds)
     return init_chat_model(**kwargs)
 
 

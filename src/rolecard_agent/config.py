@@ -65,6 +65,11 @@ class Settings(BaseModel):
     model_default: str = "local"
     model_fallbacks: list[str] = Field(default_factory=list)
 
+    # 单次模型调用的超时（秒）。没有它，Ollama 挂起时 SSE 对话与抽取会**无限等待** ——
+    # 后果不只是卡一个请求：线程池被占满，且 `with_fallbacks` 永远触发不了（主模型
+    # "既不返回也不失败"）。设成 0 或负数 = 不设超时（保持旧行为，仅调试用）。
+    model_timeout_seconds: float = 120.0
+
     sqlite_path: Path = Path("./data/sqlite/app.db")
     chroma_path: Path = Path("./data/chroma")
     upload_dir: Path = Path("./data/uploads")  # v1 M5 上传入口的真实落点（登记 intake 任务）
@@ -170,6 +175,7 @@ class Settings(BaseModel):
 
         for env_key, field in (
             ("MODEL_DEFAULT", "model_default"),
+            ("MODEL_TIMEOUT_SECONDS", "model_timeout_seconds"),
             ("SQLITE_PATH", "sqlite_path"),
             ("CHROMA_PATH", "chroma_path"),
             ("UPLOAD_DIR", "upload_dir"),

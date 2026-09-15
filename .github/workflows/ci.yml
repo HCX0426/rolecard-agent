@@ -12,14 +12,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      # 锁文件优先（可复现）；无锁环境（fork）回退到 requirements 镜像
+      # 依赖按范围拆分，要装全：内核 + 开发 + 接入层 + 检索（chromadb/pypdf）。
+      # 漏装 rag 会让 test_rag / test_parser 直接 ImportError（此前从未真正跑过 CI，故未暴露）。
+      # 可复现性由 uv.lock 保证（本地/CI 均可用 `uv sync --locked`）；这里用 requirements 镜像
+      # 是为了不在 CI 里额外引入工具链。
       - name: Install dependencies
         run: |
-          if [ -f requirements.lock ]; then
-            pip install -r requirements.lock
-          else
-            pip install -r requirements.txt -r requirements-dev.txt -r requirements-api.txt
-          fi
+          pip install -r requirements.txt -r requirements-dev.txt \
+                      -r requirements-api.txt -r requirements-rag.txt
       - name: Lint
         run: ruff check .
       - name: Tests (offline, no Ollama needed)
