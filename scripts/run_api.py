@@ -48,7 +48,38 @@ def _maybe_configure_cloud_backend() -> None:
     os.environ["MODEL_DEFAULT"] = "siliconflow"
 
 
+def _resolve_data_paths() -> None:
+    """让数据路径与启动 CWD 解耦：相对路径一律按项目根（本文件所在 scripts/ 的父目录）解析。
+
+    否则从非项目根目录启动（某些终端/IDE 的默认工作目录，或本项目的自动化启动脚本）
+    时，config 里的 `./data/...` 会落到错误位置，表现为"/api/knowledge 返回 []、会话与
+    知识全空"等假性故障——审计中已踩到并定位。落进启动器，保证无论从哪里启动都指向同一
+    份真实数据。
+
+    规则：环境变量未设置 → 用项目根下的默认绝对路径；已设置且为绝对路径 → 原样保留
+    （用户显式覆盖优先）；已设置但为相对路径 → 按项目根解析（CWD 无关）。
+    """
+    root = Path(__file__).resolve().parents[1]
+    defaults = {
+        "SQLITE_PATH": root / "data" / "sqlite" / "app.db",
+        "CHROMA_PATH": root / "data" / "chroma",
+        "UPLOAD_DIR": root / "data" / "uploads",
+    }
+    for key, default_abs in defaults.items():
+        val = os.environ.get(key)
+        if not val:
+            os.environ[key] = str(default_abs)
+        elif not os.path.isabs(val):
+            os.environ[key] = str((root / val).resolve())
+    # 确保落点目录存在：fresh clone / 首次启动时不因父目录缺失而 500（sqlite 的 connect
+    # 不会自动建父目录）。
+    for key in ("SQLITE_PATH", "CHROMA_PATH", "UPLOAD_DIR"):
+        p = Path(os.environ[key])
+        (p.parent if key == "SQLITE_PATH" else p).mkdir(parents=True, exist_ok=True)
+
+
 def main() -> None:
+    _resolve_data_paths()
     _maybe_configure_cloud_backend()
     import uvicorn
 
