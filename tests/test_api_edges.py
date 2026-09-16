@@ -15,7 +15,8 @@ import pytest
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 
-from rolecard_agent.api.main import _latest_numeric_history, create_app
+from rolecard_agent.api.main import create_app
+from rolecard_agent.api.routers.records import _latest_numeric_history
 from tests.conftest import ScriptedChat
 
 

@@ -42,13 +42,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import (
-    Actor,
     auth_required,
     client_ip,
     resolve_actor,
@@ -56,41 +55,24 @@ from rolecard_agent.api.auth import (
 )
 from rolecard_agent.api.deps import (
     AppContext,
-    get_actor,
 )
-from rolecard_agent.api.deps import (
-    parsed_text_path as _parsed_text_path,
-)
+from rolecard_agent.api.routers import console as console_router
+from rolecard_agent.api.routers import records as records_router
 from rolecard_agent.api.routers import roles as roles_router
 from rolecard_agent.api.routers import sessions as sessions_router
+from rolecard_agent.api.routers import settings as settings_router
 from rolecard_agent.config import Settings
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.graph import build_kernel, build_model
-from rolecard_agent.core.ingestion import IngestionNotFound, IngestionService
-from rolecard_agent.core.model_settings import ModelSettingsError, ModelSettingsService
+from rolecard_agent.core.ingestion import IngestionService
+from rolecard_agent.core.model_settings import ModelSettingsService
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.observability import TraceEvent, Tracer, make_tracer
 from rolecard_agent.core.plugins import PluginService
-from rolecard_agent.domains.health.extract import (
-    ExtractConfigError,
-    ExtractError,
-    run_extraction,
-    to_index_payload,
-)
 from rolecard_agent.domains.health.service import (
-    HealthDataError,
-    HealthInvalidReport,
-    HealthNotFound,
     HealthQueryService,
 )
 from rolecard_agent.domains.registry import DOMAINS, build_registry
-from rolecard_agent.rag.ocr import select_ocr_backend
-from rolecard_agent.rag.parser import (
-    IMAGE_EXTS,
-    OcrUnavailable,
-    ParseError,
-    parse_document,
-)
 from rolecard_agent.rag.retriever import (
     KnowledgeBase,
     make_embedder,
@@ -145,52 +127,6 @@ class ModelSettingsBody(BaseModel):
     fallbacks: list[str] = Field(default_factory=list)
 
 
-class IndexPatch(BaseModel):
-    """Data-management correction for one indicator row. `exclude_unset` semantics:
-    a field explicitly set to null means "clear it" (e.g. switching value -> text)."""
-
-    index_value: float | None = None
-    value_text: str | None = None
-    unit: str | None = None
-    ref_range: str | None = None
-    is_verified: bool | None = None
-
-
-class IndexCreate(BaseModel):
-    """One indicator row in a manually created report (最小可用：名称 + 数值或文本)。
-
-    其余（单位 / 参考区间 / 是否已人工校验）都可选；未勾选校验的照旧带
-    【未经人工校验】标记 —— 手填不等于已核实。
-    """
-
-    index_name: str = Field(min_length=1, max_length=100)
-    index_value: float | None = None
-    value_text: str | None = None
-    unit: str | None = None
-    ref_range: str | None = None
-    is_verified: bool = False
-
-
-class ReportCreate(BaseModel):
-    """手动补录一份报告。**主流程是"上传报告 / 图片让 AI 解析"，本接口是兜底入口**。
-
-    最小可用契约（与 domain service 一致）：report_type + check_time 必填，至少一行指标，
-    每行指标需 index_name 且 index_value / value_text 至少有一个。
-    """
-
-    report_type: str = Field(min_length=1, max_length=100)
-    check_time: str = Field(min_length=1, max_length=32)
-    institution: str | None = None
-    note: str | None = None
-    indices: list[IndexCreate] = Field(default_factory=list)
-
-
-class ExtractRequest(BaseModel):
-    """触发一次结构化抽取（上传成功后由前端自动调用，见 S5b）。"""
-
-    task_id: str = Field(min_length=1, max_length=64)
-
-
 def _seed_demo_identity(conn: sqlite3.Connection) -> None:
     """v1 demo runs as one shared identity. INSERT OR IGNORE: re-running bootstrap must not
     resurrect anything, and the FK on session_thread.user_id needs this row to exist."""
@@ -204,25 +140,6 @@ def _seed_demo_identity(conn: sqlite3.Connection) -> None:
         (DEFAULT_USER_ID, DEFAULT_TENANT_ID),
     )
     conn.commit()
-
-
-def _latest_numeric_history(records: list[dict[str, object]]) -> dict[str, float]:
-    """每个指标「最近一次」的数值 —— 给抽取的异常突变检查用（只做提示，不做阻断）。"""
-    latest: dict[str, tuple[str, float]] = {}
-    for report in records:
-        day = str(report.get("check_time") or "")
-        for row in report.get("indices") or []:  # type: ignore[union-attr]
-            name = str((row or {}).get("index_name") or "").strip()
-            value = (row or {}).get("index_value")
-            if not name or value is None:
-                continue
-            try:
-                numeric = float(value)  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                continue
-            if name not in latest or day >= latest[name][0]:
-                latest[name] = (day, numeric)
-    return {name: value for name, (_, value) in latest.items()}
 
 
 def _seed_plugin_rows(conn: sqlite3.Connection) -> None:
@@ -377,10 +294,13 @@ def create_app(
         app_state=app_state,
         rebuild_graph=rebuild_graph,
     )
-    # C1：端点按职责分包。已迁出：管理面配置（角色卡 / 工具目录 / 插件启停）、
-    # 会话与对话（session CRUD / SSE chat / 历史回放 / 上传）。
+    # C1：端点按职责分包，全部 24 个端点已迁出 main.py。本文件只保留 app 装配：
+    # 启动 bootstrap/seed、内核图构建、共享上下文、中间件、静态托管。
     app.include_router(roles_router.router)
     app.include_router(sessions_router.router)
+    app.include_router(records_router.router)
+    app.include_router(console_router.router)
+    app.include_router(settings_router.router)
 
     @app.middleware("http")
     async def _drop_stale_transaction(request: object, call_next: object) -> object:
@@ -423,274 +343,6 @@ def create_app(
         只回状态与当前认证档位 —— 便于部署后确认"认证到底开没开"，不含任何凭证信息。
         """
         return {"status": "ok", "version": "0.3.0", "auth_mode": settings.auth_mode}
-
-    @app.get("/api/records")
-    def list_records() -> list[object]:
-        """F2 数据管理视图：报告 + 完整指标行（归属演示用户）。"""
-        return health_query.list_records(DEFAULT_USER_ID)
-
-    @app.post("/api/records/report", status_code=201)
-    def create_record_report(
-        body: ReportCreate, actor: Actor = Depends(get_actor)
-    ) -> object:
-        """手动补录一份报告（最小可用）。**主流程仍是上传报告让 AI 解析**，这里是兜底入口。
-
-        校验交给 domain service（类型/时间必填、每行指标需名称 + 数值或文本）；失败翻译成
-        400 而不是 500 —— 这是用户输入错误，不是服务故障。写入审计。
-        """
-        try:
-            report_id = health_query.create_report(
-                user_id=DEFAULT_USER_ID,
-                report_type=body.report_type,
-                check_time=body.check_time,
-                institution=body.institution,
-                note=body.note,
-                indices=[i.model_dump() for i in body.indices],
-            )
-        except HealthInvalidReport as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        roles.audit(
-            actor=actor.id,
-            action="create_report",
-            target=report_id,
-            detail={"report_type": body.report_type.strip(), "indices": len(body.indices)},
-        )
-        # 回整份报告（含生成的 index_id），前端可据此直接刷新列表。
-        for row in health_query.list_records(DEFAULT_USER_ID):
-            if row.get("report_id") == report_id:
-                return row
-        return {"report_id": report_id}
-
-    @app.post("/api/records/extract")
-    def extract_record(body: ExtractRequest, actor: Actor = Depends(get_actor)) -> object:
-        """把已上传的报告抽成**结构化指标**（v2.3）：让 AI 不只能"读"原文，还能"算"数值。
-
-        三层校验（确定性 / 原文锚定 / 第二模型交叉）在 domains/health/extract.py；
-        **只有双方一致的项才写库**，其余作为 conflicts 返回，由人确认。
-        铁律：一律 `is_verified=0`（没人核实过）；同一 ingestion task 已有报告则不重复写。
-        """
-        try:
-            task = ingestion.get(body.task_id)
-        except IngestionNotFound as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-        already = conn.execute(
-            "SELECT report_id FROM medical_report WHERE ingestion_task_id = ?",
-            (body.task_id,),
-        ).fetchone()
-        if already is not None:
-            return {"skipped": "already_extracted", "report_id": already["report_id"]}
-
-        source_file = Path(str(task.get("source_file") or ""))
-        parsed = _parsed_text_path(source_file)
-        text = ""
-        if parsed.exists():
-            text = parsed.read_text(encoding="utf-8", errors="ignore")
-        elif source_file.exists():
-            # 兜底：本次改动之前上传的文件没有 .parsed.txt，现场再解析一次。
-            try:
-                is_image = source_file.suffix.lower() in IMAGE_EXTS
-                ocr = select_ocr_backend(settings) if is_image else None
-                text = parse_document(source_file, backend=ocr)
-            except (ParseError, OcrUnavailable):
-                text = ""
-        if not text.strip():
-            return {"skipped": "no_text", "detail": "没有可抽取的文本（未解析成功或内容为空）"}
-
-        source = "ocr" if source_file.suffix.lower() in IMAGE_EXTS else "parsed"
-        try:
-            outcome = run_extraction(
-                text=text,
-                settings=app_state["effective"],  # 设置页改了后端也立刻生效
-                source=source,
-                known_history=_latest_numeric_history(health_query.list_records(DEFAULT_USER_ID)),
-                tracer=resolved_tracer,
-            )
-        except ExtractConfigError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except ExtractError as exc:
-            roles.audit(
-                actor=actor.id,
-                action="extract_report_failed",
-                target=body.task_id,
-                detail={"task_id": body.task_id, "error": str(exc)[:300]},
-            )
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-        if outcome is None:
-            return {"skipped": "no_model", "detail": "没有可用的模型后端，无法抽取指标"}
-
-        written: list[object] = []
-        if outcome.agreed and outcome.check_time:
-            try:
-                report_id = health_query.create_report(
-                    user_id=DEFAULT_USER_ID,
-                    report_type=outcome.report_type or "未命名报告",
-                    check_time=outcome.check_time,
-                    institution=outcome.institution,
-                    note=f"AI 抽取（{outcome.mode} 校对）· 未经人工校验",
-                    indices=[to_index_payload(i, source=source) for i in outcome.agreed],
-                )
-            except HealthInvalidReport as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            ingestion.link_report(body.task_id, report_id)
-            roles.audit(
-                actor=actor.id,
-                action="extract_report",
-                target=report_id,
-                detail={
-                    "task_id": body.task_id,
-                    "mode": outcome.mode,
-                    "written": len(outcome.agreed),
-                },
-            )
-            written = [
-                {
-                    "index_name": i.index_name.strip(),
-                    "index_value": i.index_value,
-                    "value_text": i.value_text,
-                    "unit": i.unit,
-                }
-                for i in outcome.agreed
-            ]
-
-        return {
-            "mode": outcome.mode,
-            "report_type": outcome.report_type,
-            "check_time": outcome.check_time,
-            "institution": outcome.institution,
-            "written": written,
-            "conflicts": [
-                {
-                    "index_name": c.index_name,
-                    "reason": c.reason,
-                    "primary": (c.primary.model_dump() if c.primary else None),
-                    "verify": (c.verify.model_dump() if c.verify else None),
-                }
-                for c in outcome.conflicts
-            ],
-            "notes": list(outcome.notes),
-        }
-
-    @app.patch("/api/records/index/{index_id}")
-    def patch_record_index(
-        index_id: str, body: IndexPatch, actor: Actor = Depends(get_actor)
-    ) -> object:
-        """F2：修正误录的指标值。变更写审计（US-3 的数据侧延伸）。"""
-        changes = body.model_dump(exclude_unset=True)
-        try:
-            row = health_query.update_index(
-                user_id=DEFAULT_USER_ID, index_id=index_id, changes=changes
-            )
-        except HealthNotFound as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except HealthDataError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        roles.audit(
-            actor=actor.id,
-            action="update_index",
-            target=index_id,
-            detail={"fields": sorted(changes)},
-        )
-        return row
-
-    @app.delete("/api/records/index/{index_id}", status_code=204)
-    def remove_record_index(index_id: str, actor: Actor = Depends(get_actor)) -> None:
-        try:
-            health_query.delete_index(user_id=DEFAULT_USER_ID, index_id=index_id)
-        except HealthNotFound as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        roles.audit(actor=actor.id, action="delete_index", target=index_id)
-
-    @app.delete("/api/records/report/{report_id}", status_code=204)
-    def remove_record_report(report_id: str, actor: Actor = Depends(get_actor)) -> None:
-        try:
-            health_query.delete_report(user_id=DEFAULT_USER_ID, report_id=report_id)
-        except HealthNotFound as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        roles.audit(actor=actor.id, action="delete_report", target=report_id)
-
-    @app.get("/api/audit")
-    def list_audit(limit: int = 100) -> list[object]:
-        """F3：审计只读端点 —— 让一直在写入的 audit_log 可被运营方查看。"""
-        capped = max(1, min(limit, 500))
-        rows = conn.execute(
-            "SELECT ts, actor, action, target, detail_json FROM audit_log ORDER BY id DESC LIMIT ?",
-            (capped,),
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-    @app.get("/api/knowledge")
-    def list_knowledge() -> list[object]:
-        """v2.1 知识库概览（设置页知识库管理）：作用域 → 分块数 + 来源 + 嵌入器。"""
-        return knowledge.describe()
-
-    @app.delete("/api/knowledge/{scope}")
-    def reset_knowledge_scope(scope: str, actor: Actor = Depends(get_actor)) -> object:
-        """清空一个知识作用域（删除其集合）—— 换嵌入后端后维度不兼容时的重建入口。
-
-        破坏性管理动作，必须写审计（含清掉的分块数）。前端需二次确认后再调。
-        """
-        removed = knowledge.scope_count(scope)
-        knowledge.reset_scope(scope)
-        roles.audit(
-            actor=actor.id,
-            action="reset_knowledge_scope",
-            target=scope,
-            detail={"chunks_removed": removed},
-        )
-        return {"scope": scope, "removed_chunks": removed}
-
-    @app.get("/api/rag/metrics")
-    def rag_metrics() -> object:
-        """v2.2 检索延迟细分：P50/P95/P99，按阶段拆（嵌入 / 向量检索 / 重排 / 合计）。
-
-        基于最近 N 次检索的进程内滑动样本。回答"检索慢在哪一段、P95 多少、重排开没开"。
-        进程重启样本清零（演示足够；生产应落时序库）。未发生检索时各分位为 null。
-        """
-        return knowledge.latency_p95()
-
-    @app.get("/api/settings/models")
-    def get_model_settings() -> object:
-        """模型后端设置。api_key 永不回读 —— 只有 has_key 标志。"""
-        return {
-            "default": model_settings.default_backend(),
-            "backends": model_settings.list_backends(),
-            "fallbacks": model_settings.list_fallbacks() or [],
-        }
-
-    @app.put("/api/settings/models")
-    def put_model_settings(body: ModelSettingsBody) -> object:
-        """保存后端集合并热重建（下一轮对话即用新后端，无需重启进程）。
-
-        api_key 语义：缺省/None = 保留已存 key；空串 = 清除 —— 否则每次没重输 key 的
-        保存都会把 key 抹掉。fallbacks = 失败自动回退链（≤2 级，按序尝试）。"""
-        try:
-            # 凭据校验前置：需要 key 的 provider（openai 类）没有 key 时，保存即拒绝 ——
-            # 否则会存进一个"重建时才炸"的配置（实测：热重建抛 Missing credentials）。
-            for b in body.backends:
-                if b.provider.strip().lower() == _KEYLESS_PROVIDER:
-                    continue
-                if not (b.api_key or model_settings.stored_api_key(b.name)):
-                    raise ModelSettingsError(
-                        f"后端 {b.name} 使用 {b.provider}，缺少 api_key（本地 Ollama 无需填写）。"
-                    )
-            model_settings.save(
-                default=body.default,
-                backends=[b.model_dump() for b in body.backends],
-                fallbacks=body.fallbacks,
-            )
-        except ModelSettingsError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        try:
-            rebuild_graph()
-        except Exception as exc:  # noqa: BLE001 - 构建失败要给出可读原因，而不是 500 空壳
-            raise HTTPException(status_code=500, detail=f"模型后端构建失败：{exc}") from exc
-        return {
-            "default": model_settings.default_backend(),
-            "backends": model_settings.list_backends(),
-            "fallbacks": model_settings.list_fallbacks() or [],
-        }
 
     dist_dir = Path(os.environ.get("FRONTEND_DIST") or _DEFAULT_DIST)
     if (dist_dir / "index.html").exists():
