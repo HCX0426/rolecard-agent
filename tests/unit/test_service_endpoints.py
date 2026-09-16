@@ -51,8 +51,7 @@ def test_patch_key_semantics_keep_clear_set(svc: ServiceEndpointService) -> None
     svc.add("embedding", label="另一家嵌入商", api_key="sk-a", model="vendor/embed")
     # 不带 api_key = 保留
     e = svc.patch("embedding", "siliconflow", label="SiliconFlow 主力")
-    assert e.label == "SiliconFlow 主力"
-    assert e.api_key is not None or True  # seeded 行的 key 取决于 env；只验证 label 已改
+    assert e.label == "SiliconFlow 主力"  # seeded 行的 key 取决于 env，这里只验证 label 已改
     # 空串 = 清除
     e = svc.patch("embedding", "embedding-1", api_key="")
     assert e.api_key is None

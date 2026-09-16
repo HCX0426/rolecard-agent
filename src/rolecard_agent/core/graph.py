@@ -20,6 +20,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
 from rolecard_agent.config import Settings
+from rolecard_agent.core.model_settings import client_style
 from rolecard_agent.core.nodes import (
     ChatLike,
     KernelContext,
@@ -28,7 +29,6 @@ from rolecard_agent.core.nodes import (
     route_after_model,
 )
 from rolecard_agent.core.observability import Tracer, make_tracer
-from rolecard_agent.core.model_settings import client_style
 from rolecard_agent.core.plugins import PluginService
 from rolecard_agent.core.state import AgentState
 from rolecard_agent.core.tools.registry import ToolRegistry

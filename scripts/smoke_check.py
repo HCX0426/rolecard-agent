@@ -201,7 +201,11 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
 
     @check("插件启停：停用递增 tool_epoch，启停即时生效")
     def _plugins() -> None:
-        before = c.get("/api/plugins").json()[0]
+        # finance 域加入后插件不止一个且按 plugin_id 排序 —— 必须显式点名 health，
+        # 不能假设列表第 0 项是它（多域后 f < h，[0] 会拿到 finance）。
+        before = next(
+            p for p in c.get("/api/plugins").json() if p["plugin_id"] == "health"
+        )
         off = c.post("/api/plugins/health/toggle", json={"enabled": False}).json()
         assert int(off["tool_epoch"]) > 1, off
         on = c.post("/api/plugins/health/toggle", json={"enabled": True}).json()

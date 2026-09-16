@@ -133,7 +133,13 @@ def patch_service_endpoint(
         actor=actor.id,
         action="update_service_endpoint",
         target=f"{key}/{eid}",
-        detail={"fields": body.model_dump(exclude_none=True, exclude_unset=True)},
+        # 审计绝不落密钥：api_key 一律以"是否提供"代替原值（审计页对浏览器可见）。
+        detail={
+            "fields": sorted(
+                k for k, v in body.model_dump(exclude_none=True, exclude_unset=True).items()
+                if k != "api_key"
+            )
+        },
     )
     _rebuild_if_runtime_affected(ctx, key)
     return _endpoint_dict(e)

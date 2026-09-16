@@ -28,7 +28,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from rolecard_agent.config import Settings
 from rolecard_agent.core.observability import TraceEvent, timer

@@ -22,7 +22,7 @@ import os
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from rolecard_agent.config import Settings
 from rolecard_agent.rag.parser import OcrUnavailable, ParseError, _default_ocr_python

@@ -148,7 +148,8 @@ class ServiceEndpointService:
             counters[cat] = order + 1
             self._conn.execute(
                 "INSERT OR IGNORE INTO service_endpoint "
-                "(category, id, label, kind, base_url, api_key, model, enabled, sort_order, builtin) "
+                "(category, id, label, kind, base_url, api_key, model, "
+                " enabled, sort_order, builtin) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
                 (cat, eid, label, kind, base_url, api_key, model, order, builtin),
             )
@@ -227,7 +228,9 @@ class ServiceEndpointService:
                 n += 1
             eid = f"{key}-{n}"
         if not _SLUG_RE.match(eid):
-            raise ValueError(f"端点 id {eid!r} 不合法：小写字母开头，只含小写字母/数字/下划线/连字符。")
+            raise ValueError(
+                f"端点 id {eid!r} 不合法：小写字母开头，只含小写字母/数字/下划线/连字符。"
+            )
         if any(e.id == eid for e in self._rows_raw(key)):
             raise ValueError(f"端点 id 重复：{eid}")
         order = max((e_sort for e_sort in self._raw_sort_orders(key)), default=-1) + 1
