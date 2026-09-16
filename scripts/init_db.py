@@ -30,6 +30,7 @@ def main() -> int:
 
     from rolecard_agent.config import Settings
     from rolecard_agent.core.checkpointer import make_checkpointer
+    from rolecard_agent.core.plugins import seed_plugin_rows
     from rolecard_agent.domains.registry import DOMAINS
     from rolecard_agent.roles.service import RoleCardService
     from rolecard_agent.storage.db import bootstrap, connect
@@ -44,14 +45,8 @@ def main() -> int:
     # ENABLED state lives in the database, not in this script. A fresh database starts with
     # every registered domain on; from then on the table is the source of truth and re-running
     # this script must not silently re-enable something an operator switched off.
-    for domain in DOMAINS:
-        conn.execute(
-            "INSERT INTO plugin (plugin_id, display_name, enabled, sort_order) "
-            "VALUES (?, ?, 1, 0) "
-            "ON CONFLICT(plugin_id) DO NOTHING",
-            (domain, domain),
-        )
-    conn.commit()
+    # （与 create_app 共用同一个函数 —— 此前是两处镜像实现，属于会漂移的重复。）
+    seed_plugin_rows(conn, DOMAINS)
 
     # LangGraph owns the checkpoint tables and creates them in setup(). Doing it here as well
     # means a cloned database is fully self-describing, and removes the "the very first write

@@ -1,37 +1,28 @@
-"""FastAPI 接入层 —— 管理面 + 对话面（v1 M4）。
+﻿"""FastAPI 接入层 —— **app 装配层**（C1 拆分后，端点全部在 `api/routers/`）。
 
-管理面：角色卡 CRUD 与插件启停。这两件事都是**操作员动作**，不是 LLM 工具
-—— 与 `switch_role` / `plugin.set_enabled` 的设计一致（D2 / C5）：让模型移动自己的权限边界
-等于自我授权。
+本文件只做五件事：
+  1. bootstrap + 种子（插件行 / 演示身份 / 内置角色 / env 后端播种）；
+  2. 构建内核图（`build_kernel`）与模型热重建入口（`rebuild_graph`）；
+  3. 组装 `AppContext`（连接、服务、registry、tracer、图句柄）挂到 `app.state.ctx`，
+     各 router 通过 `Depends(get_context)` 注入 —— 不再有共享闭包；
+  4. 两个中间件：请求开始清理本线程残留事务；认证（`api/auth.py`，Basic / X-API-Key，
+     三档 AUTH_MODE，覆盖含静态资源在内的全部请求）；
+  5. 静态托管控制台（`frontend/dist`；未构建时回退提示页）。
 
-对话面：会话创建/切角色 + `POST /api/chat` 的 SSE 流式对话。流式事件框架与增量输出审核
-在 `api/chat.py`。本文件与 `call_model` / `bind_tools` 解耦：它只通过 `RoleCardService` /
-`PluginService` 改库，下一轮 `call_model` 会**实时**读到新的 `enabled_domains` 与角色，
-因此对插件的停用**无需重启进程**即可生效（07 C14 / US-3）。
+端点按职责分包在 `api/routers/`（24 个）：
+    roles.py     角色卡 CRUD / 工具目录 / 插件列表与启停
+    sessions.py  会话 CRUD / SSE 对话（POST /api/chat）/ 历史回放 / 上传（含解析入索引）
+    records.py   手动补录 / 结构化抽取（POST /api/records/extract）/ 指标修正与删除
+    console.py   审计查询 / 知识库概览与重建 / 检索延迟指标 / 探活（GET /api/health）
+    settings.py  模型后端设置（api_key 只写不回读）与保存后热重建
 
-端点：
-    GET  /api/roles            角色卡列表（内置在前）
-    POST /api/roles            新建角色卡
-    PATCH /api/roles/{id}      局部更新角色卡
-    DELETE /api/roles/{id}     删除角色卡（内置角色返回 409）
-    GET  /api/plugins          插件列表（含 enabled 标志）
-    POST /api/plugins/{id}/toggle  启停插件，返回新 tool_epoch
-    GET  /api/sessions         会话列表（对话页侧栏，按更新时间倒序）
-    POST /api/session          创建会话（默认绑定内置角色）
-    GET  /api/session/{tid}    会话信息（含当前角色）
-    PATCH /api/session/{tid}   会话切角色（US-1：历史消息不动，下一轮 prompt 换人）
-    DELETE /api/session/{tid}  删除会话（含 checkpoint 清理）
-    GET  /api/session/{tid}/messages  历史消息（checkpoint 回放，供续聊）
-    POST /api/chat             SSE 流式对话（text/event-stream）
-    GET  /api/settings/models  模型后端设置（api_key 只写不回读）
-    PUT  /api/settings/models  保存后端集合并热重建（下一轮对话即生效，无需重启）
-    GET  /                     控制台（M5 前端构建产物；未构建时回退提示页）
+流式事件框架与增量输出审核在 `api/chat.py`。对话内核与 `call_model` / `bind_tools`
+解耦：router 只通过服务层改库，下一轮 `call_model` **实时**读到新的 `enabled_domains`
+与角色，因此插件启停 / 切角色 / 换模型无需重启即可生效（07 C14 / US-1 / US-8）。
 
-身份说明：v1 是单用户演示，所有会话归属 `DEFAULT_USER_ID`（schema 的 user_id 列已经
-就位，接入真实登录只是数据替换，不需要改表）。
-
-连接策略：`connect()` 已设 `check_same_thread=False`，且本服务是单进程演示，所以一个进程持有一
-条连接即可；并发写入由 SQLite 的锁兜底（演示负载下足够）。生产应换连接池。
+身份：v1 单用户演示，所有会话归属 `DEFAULT_USER_ID`（schema 的 user_id 列已就位，
+接真实登录只是数据替换）。连接：`ThreadLocalConnection` 对外表现为一条连接，内部按
+线程分发真实连接（见 storage/db.py）—— 并发安全的连接共享由它负责，本层不感知。
 """
 
 from __future__ import annotations
@@ -68,7 +59,7 @@ from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.core.model_settings import ModelSettingsService
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.observability import TraceEvent, Tracer, make_tracer
-from rolecard_agent.core.plugins import PluginService
+from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
 from rolecard_agent.domains.health.service import (
     HealthQueryService,
 )
@@ -142,21 +133,6 @@ def _seed_demo_identity(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def _seed_plugin_rows(conn: sqlite3.Connection) -> None:
-    """Mirror `scripts/init_db.py`: every REGISTERED domain gets a plugin row, on by default.
-
-    `ON CONFLICT(plugin_id) DO NOTHING` —— 重跑绝不能把操作员关掉的插件重新打开。表一旦存在就是
-    唯一事实来源。
-    """
-    for domain in DOMAINS:
-        conn.execute(
-            "INSERT INTO plugin (plugin_id, display_name, enabled, sort_order) "
-            "VALUES (?, ?, 1, 0) ON CONFLICT(plugin_id) DO NOTHING",
-            (domain, domain),
-        )
-    conn.commit()
-
-
 def create_app(
     sqlite_path: Path | None = None,
     *,
@@ -186,7 +162,7 @@ def create_app(
     conn = connect_threadlocal(db_path)
     # 每个 REGISTERED 域的 schema 都建好，这样表永远存在，重新启用插件无需 DDL。
     bootstrap(conn, enabled_domains=DOMAINS)
-    _seed_plugin_rows(conn)
+    seed_plugin_rows(conn, DOMAINS)
     _seed_demo_identity(conn)
     roles = RoleCardService(conn)
     roles.seed_builtins()

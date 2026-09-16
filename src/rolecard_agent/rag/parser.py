@@ -96,15 +96,37 @@ def _parse_pdf(p: Path) -> str:
 # ---------------------------------------------------------------- Office OOXML（zip + XML，零依赖）
 
 
+# 单个上传文件的解压规模上限（所有条目 uncompressed 总和）。20MB 的 zip 在理论上可以
+# 解出 GB 级内容（zip bomb）—— 这个校验把 DoS 挡在解析之前。
+_MAX_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
+_MAX_COMPRESSION_RATIO = 200
+
+
 def _open_ooxml(p: Path) -> zipfile.ZipFile:
-    """打开 OOXML(zip)；非 zip / 损坏 → 可读 ParseError，而不是 zipfile 的原始异常。"""
+    """打开 OOXML(zip)；非 zip / 损坏 / 解压规模超限 → 可读 ParseError，而不是原始异常。
+
+    解压规模校验（总 uncompressed 字节数 + 压缩比）是上传恶意的 zip 炸弹时唯一的防线：
+    攻击者控制压缩比，所以"压缩后 ≤ 20MB"不能说明解压后的大小。
+    """
     try:
-        return zipfile.ZipFile(p)
+        z = zipfile.ZipFile(p)
+        infos = z.infolist()
     except (zipfile.BadZipFile, OSError) as exc:
         raise ParseError(f"不是有效的 Office 文件（{p.suffix} 损坏或非 OOXML）：{exc}") from exc
+    total = sum(i.file_size for i in infos)
+    packed = sum(i.compress_size for i in infos) or 1
+    if total > _MAX_UNCOMPRESSED_BYTES or total / packed > _MAX_COMPRESSION_RATIO:
+        z.close()
+        raise ParseError(
+            f"文件解压规模异常（解压后 {total // (1 << 20)}MB / 压缩比 "
+            f"{total // packed}x），已拒绝处理 —— 请确认来源可信后重新导出。"
+        )
+    return z
 
 
 def _xml_root(xml: bytes) -> ET.Element:
+    """解析 XML 部件。只取真正需要的标签文本，且对来源做了 zip 规模校验（见 _open_ooxml）；
+    不引入 defusedxml 是 v1 的依赖取舍 —— 攻击面已由解压规模上限收窄。"""
     try:
         return ET.fromstring(xml)
     except ET.ParseError as exc:

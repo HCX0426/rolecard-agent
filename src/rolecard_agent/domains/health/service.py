@@ -229,6 +229,23 @@ class HealthQueryService:
             out.append({**dict(report), "indices": [dict(i) for i in indices]})
         return out
 
+    def get_record(self, *, user_id: str, report_id: str) -> dict[str, object] | None:
+        """单份报告 + 指标行（shape 同 `list_records`；不存在或非本人返回 None）。"""
+        report = self._conn.execute(
+            "SELECT report_id, report_type, check_time, institution, note "
+            "FROM medical_report WHERE user_id = ? AND report_id = ?",
+            (user_id, report_id),
+        ).fetchone()
+        if report is None:
+            return None
+        indices = self._conn.execute(
+            "SELECT index_id, index_name, index_value, value_text, unit, ref_range, "
+            "is_verified, source, raw_text FROM medical_index WHERE report_id = ? "
+            "ORDER BY index_name",
+            (report_id,),
+        ).fetchall()
+        return {**dict(report), "indices": [dict(i) for i in indices]}
+
     def update_index(
         self, *, user_id: str, index_id: str, changes: dict[str, object]
     ) -> dict[str, object]:

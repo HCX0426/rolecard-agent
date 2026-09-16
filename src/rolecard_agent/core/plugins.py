@@ -39,6 +39,22 @@ class UnknownPlugin(PluginError):
     """
 
 
+def seed_plugin_rows(conn: sqlite3.Connection, domains: Sequence[str]) -> None:
+    """每个 REGISTERED 域一行 plugin 记录，默认开启（幂等）。
+
+    `ON CONFLICT(plugin_id) DO NOTHING` —— 重跑绝不能把操作员关掉的插件重新打开：
+    表一旦存在，`enabled` 就以它为唯一事实来源。`create_app` 与 `scripts/init_db.py`
+    共用此函数（此前是两处镜像实现，靠注释提醒人工同步 —— 正是会漂移的那种重复）。
+    """
+    for domain in domains:
+        conn.execute(
+            "INSERT INTO plugin (plugin_id, display_name, enabled, sort_order) "
+            "VALUES (?, ?, 1, 0) ON CONFLICT(plugin_id) DO NOTHING",
+            (domain, domain),
+        )
+    conn.commit()
+
+
 class PluginService:
     def __init__(
         self, conn: sqlite3.Connection, *, known_plugins: Sequence[str] | None = None

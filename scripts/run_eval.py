@@ -35,6 +35,10 @@ if TYPE_CHECKING:
     from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+# 中文 Windows 的控制台默认 GBK：报告里的 ✓/❌ 会直接 UnicodeEncodeError 崩掉。
+# 与 ocr_worker 同一条教训：子进程脚本必须显式声明 UTF-8 stdout。
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 DEFAULT_CASES = Path(__file__).resolve().parents[1] / "tests" / "eval" / "cases"
 DEFAULT_REPORT = Path(__file__).resolve().parents[1] / "tests" / "eval" / "report.json"

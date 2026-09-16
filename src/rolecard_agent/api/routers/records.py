@@ -139,10 +139,8 @@ def create_record_report(
         detail={"report_type": body.report_type.strip(), "indices": len(body.indices)},
     )
     # 回整份报告（含生成的 index_id），前端可据此直接刷新列表。
-    for row in ctx.health.list_records(DEFAULT_USER_ID):
-        if row.get("report_id") == report_id:
-            return row
-    return {"report_id": report_id}
+    row = ctx.health.get_record(user_id=DEFAULT_USER_ID, report_id=report_id)
+    return row if row is not None else {"report_id": report_id}
 
 
 @router.post("/api/records/extract")

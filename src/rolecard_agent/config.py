@@ -29,8 +29,20 @@ DEFAULT_LOCAL_BACKEND = {
     # OpenAI 兼容端点（http://localhost:11434/v1/chat/completions）是 provider=openai 时用的。
     # 带错 /v1 的症状是 Ollama 返回 "404 page not found"——端点风格由 provider 决定。
     "base_url": "http://localhost:11434",
-    # qwen2.5vl:7b = 文本对话 + 结构化抽取 + 图片直读三合一：8GB 显存只能常驻一个 7B，
-    # 选 vl 版（qwen2.5:7b 的超集）避免「对话模型与抽取模型互相挤出显存」的切换开销。
+    # 2026-09-16 实测修订：默认对话模型必须是**文本版 qwen2.5:7b** —— Ollama 官方库的
+    # qwen2.5vl:7b 模板**不支持工具调用**（bind_tools 直接 400 "does not support tools"），
+    # 而带工具的档案管理员是对话主路径。vl 版保留为 `local_vl` 后端（图片直读/备用抽取）。
+    # 两个 7B 不能同时驻留 8GB 显存：对话↔抽取/视觉切换时 Ollama 自动换载（2~5s 开销），
+    # 演示单用户可接受；公网并发场景换云端 API 后端。
+    "model": "qwen2.5:7b",
+    "api_key": "ollama",
+}
+
+# 多模态后端（vl = 文本版超集）：图片直读对话用；EXTRACT_BACKEND 可显式指向它。
+# 不进默认后端集 —— 需要时在 MODEL_BACKENDS / 设置页里按 name=local_vl 添加。
+DEFAULT_VL_BACKEND = {
+    "provider": "ollama",
+    "base_url": "http://localhost:11434",
     "model": "qwen2.5vl:7b",
     "api_key": "ollama",
 }

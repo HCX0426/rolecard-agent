@@ -11,7 +11,7 @@ RAG：chroma 分作用域集合 + 可插拔嵌入（bge-m3 / hash 离线兜底�
 **可插拔 OCR（本地 Paddle 优先 / 云端 API key 兜底）** + `.txt/.md/.pdf/.docx/.pptx/.xlsx` 解析入索引 +
 **结构化抽取**（报告文本 → 指标行，三层校验 + 第二模型交叉验证，见下）+ **rerank 默认开启** +
 **检索延迟 P50/P95/P99 细分**（`GET /api/rag/metrics`）。
-本地模型默认 **`qwen2.5vl:7b`**（对话 + 抽取 + 图片直读三合一，8GB 显存单模型常驻）。
+本地模型默认 **`qwen2.5:7b`**（对话 + 工具调用 + 抽取）；`qwen2.5vl:7b` 为第二后端（图片直读/备用抽取）。**注意：Ollama 官方 vl 版模板不支持工具调用**（bind_tools 直接 400），带工具的角色必须用文本版。
 **默认角色「通用助手」＝纯对话**（不接工具与档案）；要查档案时切换到「健康档案管理员」。
 待续：**v2.4 公网部署**。
 
@@ -67,7 +67,10 @@ uv sync --extra api --extra dev
 # 2. 依赖（uv sync 已经装好；不用 uv 时改走这一行）
 #    pip install -r requirements.txt -r requirements-dev.txt -r requirements-api.txt
 
-# 3. 本地模型（.env 里默认后端 local 指向 Ollama；vl 版 = 对话 + 抽取 + 图片直读三合一）
+# 3. 本地模型（.env 里默认后端 local 指向 Ollama）
+#    qwen2.5:7b = 对话 + 工具调用（必需，vl 版不支持 tools）
+#    qwen2.5vl:7b = 可选第二后端（图片直读 / 备用抽取）
+ollama pull qwen2.5:7b
 ollama pull qwen2.5vl:7b
 
 # 4. 配置
@@ -141,8 +144,7 @@ docker run -p 8000:8000 -v rolecard-data:/app/data rolecard-agent
   插件层               │  domains/  显式注册，可启停     │
                        │   └─ health  档案 · 指标 · 报告 │
                        │  roles/    角色卡 + 白名单      │
-                       │  rag/      知识库检索（外挂）   │
-                       │  ingestion/文档摄取（延后实现）  │
+                       │  rag/      知识库检索 · 文档摄取 │
                        └──────────────┬───────────────┘
                                       │
                        ┌──────────────▼───────────────┐
@@ -159,20 +161,22 @@ docker run -p 8000:8000 -v rolecard-data:/app/data rolecard-agent
 ```
 rolecard-agent/
 ├── src/rolecard_agent/
-│   ├── config.py                  # 环境驱动配置（模型 provider / 存储 / 可观测后端）
+│   ├── config.py                  # 环境驱动配置（模型 provider / 存储 / 认证 / 可观测后端）
 │   ├── core/                      # ★ Agent 内核，与领域无关
 │   │   ├── state.py  prompts.py  nodes.py  graph.py
 │   │   ├── checkpointer.py        #   会话持久化（SQLite）
-│   │   ├── observability.py       #   可观测门面，后端可切换
-│   │   └── tools/  registry.py  builtin.py
-│   ├── roles/                     # 角色卡 CRUD + 白名单
+│   │   ├── observability.py       #   可观测门面，后端可切换，默认键控脱敏
+│   │   ├── ingestion.py           #   摄取台账（file_hash 幂等 + 状态机）
+│   │   ├── model_settings.py      #   模型后端 CRUD（key 只写不回读）+ 热重建数据层
+│   │   ├── plugins.py  guard.py  tools/
+│   ├── roles/                     # 角色卡 CRUD + 白名单 + 内置种子
 │   ├── domains/                   # ★ 插件层
 │   │   ├── registry.py            #   显式插件清单（无动态加载）
-│   │   └── health/                #   示例领域插件
-│   ├── ingestion/                 # 文档摄取：OCR 与原生解析双路，延后实现
-│   ├── rag/                       # 知识库检索（单模块，不做抽象层）
-│   ├── storage/                   # SQLite / Chroma 连接层
-│   └── api/                       # 最小接入层：FastAPI + 单页 UI（v1）
+│   │   └── health/                #   示例领域插件（含三层校验抽取 extract.py）
+│   ├── rag/                       # 检索：parser（txt/pdf/OOXML）/ ocr（可插拔）/ retriever
+│   ├── storage/                   # SQLite（ThreadLocalConnection）/ bootstrap
+│   └── api/                       # 接入层：main（装配 271 行）+ 认证 + 依赖注入 + 5 个 router
+├── frontend/                      # React 18 + Vite 控制台（6 页签；dist 有意入库）
 ├── docs/   tests/   scripts/   data/
 ```
 

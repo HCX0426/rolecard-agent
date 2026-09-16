@@ -17,7 +17,9 @@ from rolecard_agent.config import Settings
 def test_defaults_are_usable_without_any_env() -> None:
     settings = Settings()
     backend = settings.backend()
-    assert backend.model == "qwen2.5vl:7b"
+    # 2026-09-16 修订：默认对话模型是**文本版** —— Ollama 官方 qwen2.5vl:7b 模板不支持
+    # 工具调用（bind_tools 400），而带工具的档案管理员是对话主路径。vl 是第二后端。
+    assert backend.model == "qwen2.5:7b"
     assert backend.provider == "ollama"
     assert settings.obs_backend == "local"
     assert settings.obs_emit_raw_text is False  # redacted by default
@@ -27,7 +29,7 @@ def test_parses_backends_from_json() -> None:
     settings = Settings.from_env(
         {
             "MODEL_BACKENDS": (
-                '{"local": {"model": "qwen2.5:7b"},'
+                '{"local": {"model": "qwen2.5vl:7b"},'
                 ' "cloud": {"model": "deepseek-chat", "provider": "openai",'
                 ' "base_url": "https://api.example.com/v1", "api_key": "sk-x"}}'
             ),
