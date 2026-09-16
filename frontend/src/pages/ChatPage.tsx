@@ -4,6 +4,7 @@ import {
   streamChat,
   type ExtractResult,
   type MessageRow,
+  type ModelProvider,
   type ModelSettings,
   type RoleCard,
   type SessionRow,
@@ -113,6 +114,8 @@ export default function ChatPage({
   const [titleDraft, setTitleDraft] = useState("");
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [backends, setBackends] = useState<{ name: string; provider: string; model: string }[]>([]);
+  // 供应商 id → 中文档称（分组标题显示"硅基流动"而非原始 id）
+  const [providerLabels, setProviderLabels] = useState<Record<string, string>>({});
   const [defaultBackend, setDefaultBackend] = useState("");
   const [sessionModel, setSessionModel] = useState<string | null>(null);
   const [busy, setBusy] = useState(false); // 流式进行中：驱动「停止」按钮与输入禁用
@@ -140,6 +143,9 @@ export default function ChatPage({
       setBackends(s.backends.map((b) => ({ name: b.name, provider: b.provider, model: b.model })));
       setDefaultBackend(s.default || s.backends[0]?.name || "");
     }).catch(() => {});
+    api.get<{ providers: ModelProvider[] }>("/api/settings/model-providers")
+      .then((s) => setProviderLabels(Object.fromEntries(s.providers.map((p) => [p.id, p.label]))))
+      .catch(() => {});
   }, [refreshSessions]);
 
   // 头部的角色选择跟随当前会话（切会话时显示该会话自己的角色）
@@ -203,10 +209,19 @@ export default function ChatPage({
     }
   }
 
+  /** 拿到一个会话 id：已选就用，没有就先建一个（默认角色 = 通用助手）。
+   *  让「进入时就能选角色/模型」成为可能 —— 选中即开会话，不用先点「新建对话」。 */
+  async function ensureSession(): Promise<string | null> {
+    if (sessionId) return sessionId;
+    return createSession();
+  }
+
   async function switchRole(roleId: string) {
-    if (!sessionId || roleId === currentRole) return;
+    if (sessionId && roleId === currentRole) return;
+    const tid = await ensureSession();
+    if (!tid) return;
     try {
-      const r = await api.patch<{ role_name: string }>(`/api/session/${sessionId}`, {
+      const r = await api.patch<{ role_name: string }>(`/api/session/${tid}`, {
         role_id: roleId,
       });
       setCurrentRole(roleId);
@@ -408,9 +423,10 @@ export default function ChatPage({
   }
 
   async function switchModel(name: string | null) {
-    if (!sessionId) return;
+    const tid = await ensureSession();
+    if (!tid) return;
     try {
-      await api.patch(`/api/session/${sessionId}`, { model_name: name });
+      await api.patch(`/api/session/${tid}`, { model_name: name });
       setSessionModel(name);
       setModelMenuOpen(false);
       setStatus(
@@ -426,6 +442,10 @@ export default function ChatPage({
   const current = sessions.find((s) => s.thread_id === sessionId);
   const roleBackend = roles.find((r) => r.role_id === (current?.role_id || ""))?.model_name || null;
   const effectiveBackend = sessionModel || roleBackend || defaultBackend;
+  // 进入时还没有会话：角色下拉默认停在「通用助手」，让用户一眼看到默认角色且可直接选。
+  const defaultRoleId =
+    roles.find((r) => r.role_id === "general_assistant")?.role_id || roles[0]?.role_id || "";
+  const displayRole = currentRole || defaultRoleId;
   const grouped = useMemo(() => {
     const g: Record<string, typeof backends> = {};
     for (const b of backends) (g[b.provider] ||= []).push(b);
@@ -698,10 +718,10 @@ export default function ChatPage({
             >
               <IconUser />
               <select
-                value={currentRole}
+                value={displayRole}
                 onChange={(e) => switchRole(e.target.value)}
-                disabled={!sessionId}
-                className="bg-transparent text-xs outline-none disabled:opacity-50"
+                title="切换当前会话的角色（可选，默认通用助手；选中即开会话）"
+                className="bg-transparent text-xs outline-none"
               >
                 {roles.map((r) => (
                   <option key={r.role_id} value={r.role_id}>
@@ -713,12 +733,11 @@ export default function ChatPage({
             <div className="relative">
               <button
                 onClick={() => setModelMenuOpen((o) => !o)}
-                disabled={!sessionId}
-                title="切换本会话使用的模型（按供应商分组）"
-                className="flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700 disabled:opacity-50"
+                title="切换本会话使用的模型（按供应商分组；选中即开会话）"
+                className="flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
               >
                 <IconModel />
-                {effectiveBackend || "模型"} ▾
+                {backends.find((b) => b.name === effectiveBackend)?.model || effectiveBackend || "模型"} ▾
               </button>
               {modelMenuOpen && (
                 <div className="absolute bottom-full left-0 z-20 mb-2 max-h-72 w-72 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-lg">
@@ -732,7 +751,7 @@ export default function ChatPage({
                   {grouped.map(([provider, list]) => (
                     <div key={provider}>
                       <p className="bg-slate-50 dark:bg-slate-800/50 px-3 py-1 text-[11px] font-medium text-slate-400 dark:text-slate-500">
-                        {provider}
+                        {providerLabels[provider] ?? provider}
                       </p>
                       {list.map((b) => (
                         <button
@@ -740,8 +759,8 @@ export default function ChatPage({
                           onClick={() => switchModel(b.name)}
                           className="flex w-full items-center justify-between px-3 py-1.5 text-xs hover:bg-blue-50 dark:bg-blue-900/30"
                         >
-                          <span className="font-mono">{b.name}</span>
-                          <span className="ml-2 truncate text-slate-400 dark:text-slate-500">{b.model}</span>
+                          <span className="font-mono">{b.model}</span>
+                          <span className="ml-2 truncate text-slate-400 dark:text-slate-500">{b.name}</span>
                           {effectiveBackend === b.name && (
                             <span className="ml-1 text-blue-600 dark:text-blue-400">✓</span>
                           )}

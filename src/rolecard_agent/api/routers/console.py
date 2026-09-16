@@ -30,6 +30,16 @@ def list_knowledge(ctx: AppContext = Depends(get_context)) -> list[object]:
     return ctx.knowledge.describe()
 
 
+@router.get("/api/knowledge/scopes")
+def list_knowledge_scopes(ctx: AppContext = Depends(get_context)) -> object:
+    """角色卡「知识作用域」下拉的可选项来源：取实际已建的知识集合（RAG 真实作用域）。
+
+    返回的是**真实存在的**作用域名（而不是现存角色声明过的并集），让下拉"所见即所得"。
+    """
+    scopes = [row.get("scope") for row in ctx.knowledge.describe() if row.get("scope")]
+    return {"scopes": scopes}
+
+
 @router.delete("/api/knowledge/{scope}")
 def reset_knowledge_scope(
     scope: str, ctx: AppContext = Depends(get_context), actor: Actor = Depends(get_actor)

@@ -327,10 +327,12 @@ def upload_report(
     suffix = target.suffix.lower()
     if suffix in PARSEABLE_EXTENSIONS:
         try:
-            # 仅图片需要选 OCR 后端：按「服务」页签的策略顺序（默认 Paddle 优先）。
+            # 仅图片需要选 OCR 后端：按「服务」页签的端点顺序（默认 Paddle 优先）。
             backend = (
                 select_ocr_backend(
-                    settings, order=[c.id for c in ctx.services.ordered_candidates("ocr")]
+                    settings,
+                    order=[c.id for c in ctx.services.ordered_candidates("ocr")],
+                    endpoints=ctx.services.endpoint_map("ocr"),
                 )
                 if suffix in IMAGE_EXTS
                 else None

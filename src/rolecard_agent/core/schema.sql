@@ -151,3 +151,56 @@ CREATE TABLE IF NOT EXISTS ingestion_task (
 
 CREATE INDEX IF NOT EXISTS idx_ingestion_status ON ingestion_task(status);
 CREATE INDEX IF NOT EXISTS idx_ingestion_user ON ingestion_task(user_id);
+
+-- ===========================================================================
+-- Generic domain data (settings page,「数据」tab for non-health domains).
+--
+-- A domain plugin that does not need health's rich report/indicator model can still
+-- expose simple structured records here. Keyed by (domain, user_id) so each domain's
+-- data is isolated; the frontend routes health to its own /api/records endpoints and
+-- every other domain to /api/domains/{domain}/records.
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS domain_data (
+    id          TEXT PRIMARY KEY,
+    domain      TEXT NOT NULL,
+    user_id     TEXT NOT NULL REFERENCES app_user(user_id),
+    label       TEXT NOT NULL,
+    value_text  TEXT,
+    value_num   REAL,
+    unit        TEXT,
+    note        TEXT,
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_domain_data_domain ON domain_data(domain, user_id);
+
+-- ===========================================================================
+-- Service endpoints (settings page,「服务」tab) — candidate INSTANCES as data.
+--
+-- 哲学修正（架构归一化）：此前"候选在代码里定义，DB 只存排序与启停"——每类服务被
+-- 钉死在 2 个候选上，操作员想加第 3 个云端条目（另一个 key 的 OCR / 另一家嵌入商）
+-- 只能改代码。现在候选实例 = 行：云端行可增删改（各自 base_url / api_key / model），
+-- 优先级 = sort_order（第 1 位即生效），启停 = enabled。本地实现（Paddle / Hash / off）
+-- 是代码能力，行 builtin=1 不可删，但同样参与排序与启停。
+-- 与 model_backend 同一密钥纪律：api_key 落盘明文（本地演示库不出机）、GET 只回掩码、
+-- PATCH 不带 key = 保留、空串 = 清除。
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS service_endpoint (
+    category   TEXT NOT NULL,
+    id         TEXT NOT NULL,
+    label      TEXT NOT NULL,
+    kind       TEXT NOT NULL DEFAULT 'cloud' CHECK (kind IN ('local', 'cloud')),
+    base_url   TEXT,
+    api_key    TEXT,
+    model      TEXT,
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    builtin    INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP,
+    PRIMARY KEY (category, id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_service_endpoint_cat ON service_endpoint(category, sort_order);
+

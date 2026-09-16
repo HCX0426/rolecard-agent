@@ -24,7 +24,7 @@ from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.core.model_settings import ModelSettingsService
 from rolecard_agent.core.observability import Tracer
 from rolecard_agent.core.plugins import PluginError, PluginService, UnknownPlugin
-from rolecard_agent.core.services import ServicePolicyService
+from rolecard_agent.core.services import ServiceEndpointService
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.domains.health.service import HealthQueryService
 from rolecard_agent.rag.retriever import KnowledgeBase
@@ -102,7 +102,7 @@ class AppContext:
     ingestion: IngestionService
     health: HealthQueryService
     model_settings: ModelSettingsService
-    services: ServicePolicyService
+    services: ServiceEndpointService
     knowledge: KnowledgeBase
     registry: ToolRegistry
     tracer: Tracer

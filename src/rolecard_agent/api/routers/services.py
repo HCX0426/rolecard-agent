@@ -1,8 +1,10 @@
-"""「服务」子页签的路由：运行时状态视图 + 策略保存 + 深度检测。
+"""「服务」子页签的路由：运行时状态视图 + 端点增删改 + 优先级/启停 + 深度检测。
 
-模型推理类的**编辑**在模型页签（后端 CRUD + 回退链）；这里只做状态展示。OCR / 嵌入 /
-重排三类的优先级与启停在这里调整，保存即热生效（嵌入/重排经 ctx.rebuild_runtime 重建
-KnowledgeBase；OCR 在每次上传时实时读策略）。
+模型推理类的**编辑**在模型页签（后端 CRUD + 回退链）；这里管理 OCR / 嵌入 / 重排的
+端点实例（`service_endpoint` 表）：云端行可增删改（各自 base_url/api_key/model，多账号
+多厂商并存），本地实现行 builtin 不可删但可停用。优先级 = 行序，第 1 位即生效 —— 没有独立的
+"首选"字段。保存即热生效：嵌入/重排经 ctx.rebuild_runtime 重建 KnowledgeBase；OCR 在每次
+上传时实时读行序。
 """
 
 from __future__ import annotations
@@ -12,16 +14,57 @@ from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
-from rolecard_agent.core.services import category
+from rolecard_agent.core.model_settings import client_style
 
 router = APIRouter()
 
 
-class ServicePolicyBody(BaseModel):
-    """一类服务的策略：首选候选 + 禁用列表（JSON 数组的候选 id）。"""
+class EndpointCreateBody(BaseModel):
+    """新增云端端点：名称 + 连接配置。id 省略时后端自动生成（`{key}-N`）。"""
 
-    preferred: str = Field(min_length=1, max_length=64)
-    disabled: list[str] = Field(default_factory=list)
+    label: str = Field(min_length=1, max_length=64)
+    base_url: str | None = None
+    api_key: str | None = None
+    model: str | None = None
+    id: str | None = Field(default=None, max_length=32)
+
+
+class EndpointPatchBody(BaseModel):
+    """编辑端点。api_key 语义与 model_backend 一致：None=保留、""=清除、非空=设置。"""
+
+    label: str | None = Field(default=None, max_length=64)
+    base_url: str | None = None
+    api_key: str | None = None
+    model: str | None = None
+    enabled: bool | None = None
+
+
+class ReorderBody(BaseModel):
+    """全量优先级：该服务全部端点 id 的一个排列，第 1 位即生效。"""
+
+    order: list[str] = Field(min_length=1)
+
+
+def _endpoint_dict(e: object) -> dict[str, object]:
+    """行对象 → API 形状（api_key 永不回传，只回掩码）。"""
+    from rolecard_agent.core.services import _mask_key
+
+    return {
+        "id": e.id,  # type: ignore[attr-defined]
+        "label": e.label,  # type: ignore[attr-defined]
+        "kind": e.kind,  # type: ignore[attr-defined]
+        "base_url": e.base_url,  # type: ignore[attr-defined]
+        "model": e.model,  # type: ignore[attr-defined]
+        "enabled": e.enabled,  # type: ignore[attr-defined]
+        "builtin": e.builtin,  # type: ignore[attr-defined]
+        "key_masked": _mask_key(e.api_key),  # type: ignore[attr-defined]
+    }
+
+
+def _rebuild_if_runtime_affected(ctx: AppContext, key: str) -> None:
+    """嵌入/重排的实例在 KnowledgeBase 构造时注入，行变更必须热重建；OCR 每次上传实时读。"""
+    if key in ("embedding", "rerank"):
+        ctx.rebuild_runtime()
 
 
 @router.get("/api/services")
@@ -32,38 +75,110 @@ def list_services(ctx: AppContext = Depends(get_context)) -> object:
     return service_status_view(ctx.conn, ctx.settings)
 
 
-@router.put("/api/services/{key}")
-def put_service_policy(
+@router.post("/api/services/{key}/endpoints", status_code=201)
+def add_service_endpoint(
     key: str,
-    body: ServicePolicyBody,
+    body: EndpointCreateBody,
     ctx: AppContext = Depends(get_context),
     actor: Actor = Depends(get_actor),
 ) -> object:
-    """保存一类服务的策略并热生效。非法候选 / 全禁用一律 400（配置错误要大声）。"""
+    """新增一个云端端点实例（同类服务可并存多个账号/厂商，按优先级依次兜底）。"""
     try:
-        cat = category(key)
+        e = ctx.services.add(
+            key,
+            label=body.label,
+            base_url=body.base_url,
+            api_key=body.api_key,
+            model=body.model,
+            eid=body.id,
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"未知服务类别：{key}") from None
-    try:
-        ctx.services.save(key, preferred=body.preferred, disabled=body.disabled)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     ctx.roles.audit(
         actor=actor.id,
-        action="update_service_policy",
-        target=key,
-        detail={"preferred": body.preferred, "disabled": sorted(body.disabled)},
+        action="add_service_endpoint",
+        target=f"{key}/{e.id}",  # type: ignore[attr-defined]
+        detail={"label": e.label},  # type: ignore[attr-defined]
     )
-    # 嵌入/重排的策略变更需要重建 KnowledgeBase（嵌入器/重排器在构造时注入）；
-    # 复用模型设置的热重建通道 —— rebuild_runtime 会连图一起按最新策略重造。
-    ctx.rebuild_runtime()
-    return {
-        "service_key": key,
-        "title": cat.title,
-        "preferred": body.preferred,
-        "disabled": sorted(body.disabled),
-        "reloaded": True,
-    }
+    _rebuild_if_runtime_affected(ctx, key)
+    return _endpoint_dict(e)
+
+
+@router.patch("/api/services/{key}/endpoints/{eid}")
+def patch_service_endpoint(
+    key: str,
+    eid: str,
+    body: EndpointPatchBody,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> object:
+    """编辑端点（云端行的连接配置 / 任意行的启停）。写审计，嵌入/重排热生效。"""
+    try:
+        e = ctx.services.patch(
+            key,
+            eid,
+            label=body.label,
+            base_url=body.base_url,
+            api_key=body.api_key,
+            model=body.model,
+            enabled=body.enabled,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"未知服务类别：{key}") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ctx.roles.audit(
+        actor=actor.id,
+        action="update_service_endpoint",
+        target=f"{key}/{eid}",
+        detail={"fields": body.model_dump(exclude_none=True, exclude_unset=True)},
+    )
+    _rebuild_if_runtime_affected(ctx, key)
+    return _endpoint_dict(e)
+
+
+@router.delete("/api/services/{key}/endpoints/{eid}", status_code=204)
+def delete_service_endpoint(
+    key: str,
+    eid: str,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> None:
+    """删除云端端点（builtin 本地实现不可删 —— 删了就没有本地兜底了）。"""
+    try:
+        ctx.services.delete(key, eid)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"未知服务类别：{key}") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ctx.roles.audit(actor=actor.id, action="delete_service_endpoint", target=f"{key}/{eid}")
+    _rebuild_if_runtime_affected(ctx, key)
+
+
+@router.put("/api/services/{key}")
+def put_service_order(
+    key: str,
+    body: ReorderBody,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> object:
+    """全量写优先级（第 1 位生效）。嵌入/重排需重建 KnowledgeBase —— 复用热重建通道。"""
+    try:
+        ctx.services.reorder(key, body.order)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"未知服务类别：{key}") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ctx.roles.audit(
+        actor=actor.id,
+        action="update_service_order",
+        target=key,
+        detail={"order": body.order},
+    )
+    _rebuild_if_runtime_affected(ctx, key)
+    return {"service_key": key, "order": body.order, "reloaded": True}
 
 
 @router.post("/api/services/check")
@@ -76,7 +191,8 @@ def deep_check(ctx: AppContext = Depends(get_context)) -> object:
     ollama: dict[str, object] = {"reachable": False, "detail": ""}
     backend = ctx.app_state["effective"].backend(None)
     base = (backend.base_url or "http://localhost:11434").rstrip("/")
-    is_ollama = (backend.provider or "").lower() == "ollama"
+    # provider 是供应商 id；native 风格（Ollama 及别名）探 /api/tags，openai 兼容探 /models。
+    is_ollama = client_style(backend.provider) == "native"
     probe_path = "/api/tags" if is_ollama else "/models"
     try:
         import httpx

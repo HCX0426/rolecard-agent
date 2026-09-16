@@ -36,7 +36,11 @@ if TYPE_CHECKING:
 # Registered domain ids. Each MUST match a directory under domains/ and the plugin.plugin_id
 # in core/schema.sql. This is the single source of truth - previously scripts/init_db.py kept
 # its own hardcoded copy, which is how two lists drift apart (技术评审与决策.md §9 A3).
-DOMAINS: tuple[str, ...] = ("health",)
+#
+# `finance` is a data-only domain (no LLM tools): it exists to exercise the generic
+# `domain_data` CRUD path (前端 `GenericDomainData`) so multi-domain data management is real,
+# not health-only. Add richer domains here the same way (models/service/tools/schema + factory).
+DOMAINS: tuple[str, ...] = ("health", "finance")
 
 
 def build_registry(
@@ -73,6 +77,8 @@ def build_registry(
     # Explicit per-domain wiring: what each domain needs to construct its tools, visible here.
     factories = {
         "health": lambda: make_domain_tools(ingestion, query, current_user=current_user),
+        # Data-only domain: no LLM tools, just a `domain_data` bucket the UI manages directly.
+        "finance": lambda: [],
     }
     for domain in DOMAINS:
         if domain not in factories:

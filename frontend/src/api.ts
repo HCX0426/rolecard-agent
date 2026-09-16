@@ -43,6 +43,30 @@ export interface BackendRow {
   model: string;
   sort_order: number;
   has_key: boolean;
+  key_masked: string | null;
+}
+
+export interface ModelProvider {
+  id: string;
+  label: string;
+  needs_key: string; // "0" | "1"
+  base_url_hint: string;
+  style: string; // native | openai
+}
+
+export interface KnowledgeScopes {
+  scopes: string[];
+}
+
+export interface GenericRecord {
+  id: string;
+  domain: string;
+  label: string;
+  value_text: string | null;
+  value_num: number | null;
+  unit: string | null;
+  note: string | null;
+  created_at: string;
 }
 
 export interface ModelSettings {
@@ -216,6 +240,19 @@ export const api = {
   /** 结构化抽取：把已上传的报告文本抽成指标行（三层校验，只写双方一致的项）。 */
   extractRecord: (taskId: string) =>
     request<ExtractResult>("POST", "/api/records/extract", { task_id: taskId }),
+  /** 模型供应商目录（设置页下拉动态来源）。 */
+  getProviders: () => request<{ providers: ModelProvider[] }>("GET", "/api/settings/model-providers"),
+  /** 知识作用域候选（角色卡下拉来源：真实已建的知识集合）。 */
+  getKnowledgeScopes: () => request<KnowledgeScopes>("GET", "/api/knowledge/scopes"),
+  /** 通用领域记录（非 health 域的数据增删改查）。 */
+  listDomainRecords: (domain: string) =>
+    request<GenericRecord[]>("GET", `/api/domains/${domain}/records`),
+  addDomainRecord: (domain: string, body: unknown) =>
+    request<GenericRecord>("POST", `/api/domains/${domain}/records`, body),
+  patchDomainRecord: (domain: string, id: string, body: unknown) =>
+    request<GenericRecord>("PATCH", `/api/domains/${domain}/records/${id}`, body),
+  deleteDomainRecord: (domain: string, id: string) =>
+    request<void>("DELETE", `/api/domains/${domain}/records/${id}`),
 };
 
 // ---- SSE 对话流 ----------------------------------------------------------------

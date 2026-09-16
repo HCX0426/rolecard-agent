@@ -181,6 +181,7 @@ def extract_record(
                 select_ocr_backend(
                     ctx.settings,
                     order=[c.id for c in ctx.services.ordered_candidates("ocr")],
+                    endpoints=ctx.services.endpoint_map("ocr"),
                 )
                 if is_image
                 else None

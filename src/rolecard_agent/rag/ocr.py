@@ -149,15 +149,30 @@ class CloudApiBackend:
 
 
 def select_ocr_backend(
-    settings: Settings, *, order: Sequence[str] | None = None
+    settings: Settings,
+    *,
+    order: Sequence[str] | None = None,
+    endpoints: Any = None,
 ) -> OcrBackend | None:
     """按策略选择 OCR 后端：默认 **Paddle 优先**，不可用时若有 key 回退云端，否则 None。
 
-    `order` 是操作员在「服务」页签里定好的候选顺序（core/services.py 的策略视图）；
-    给了就按它逐个试可用性，而不是硬编码的 paddle→cloud。返回 None 时调用方应降级为
-    `OcrUnavailable`（保持 pending，不假装已读）。
+    `order` + `endpoints`（操作员在「服务」页签里维护的端点行，core/services.py）：
+    给了就按序逐个试可用 —— `paddle` 探本地解释器；云端行按**行内** key/api_url 实例化
+    （可并存多个云端 OCR 账号，谁排前面谁先被用）。`endpoints` 缺省时保留旧的字面 id
+    解析（paddle/cloud + env key）。返回 None 时调用方应降级为 `OcrUnavailable`
+    （保持 pending，不假装已读）。
     """
     paddle = LocalPaddleBackend(exe=settings.ocr_python)
+    if order and endpoints:
+        for cid in order:
+            if cid == "paddle":
+                if paddle.available():
+                    return paddle
+                continue
+            cfg = endpoints.get(cid)
+            if cfg is not None and cfg.api_key:
+                return CloudApiBackend(api_key=cfg.api_key, api_url=cfg.base_url)
+        return None
     cloud = CloudApiBackend(
         api_key=settings.ocr_api_key,
         provider=settings.ocr_provider,

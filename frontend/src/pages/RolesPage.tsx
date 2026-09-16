@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   api,
+  type KnowledgeScopes,
   type ModelSettings,
   type RoleCard,
   type ToolCatalog,
@@ -70,6 +71,7 @@ export default function RolesPage() {
   const [backends, setBackends] = useState<string[]>([]);
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [newScope, setNewScope] = useState("");
+  const [kbScopes, setKbScopes] = useState<string[]>([]);
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
 
   async function load() {
@@ -82,12 +84,22 @@ export default function RolesPage() {
       .get<ModelSettings>("/api/settings/models")
       .then((s) => setBackends(s.backends.map((b) => b.name)))
       .catch(() => {});
+    // 可选作用域的真实来源：已建的知识集合（RAG 真实作用域），让下拉"所见即所得"。
+    api
+      .get<KnowledgeScopes>("/api/knowledge/scopes")
+      .then((s) => setKbScopes(s.scopes))
+      .catch(() => {});
   }, []);
 
-  // 当前无内核集合注册表（RAG v2.1）：可选作用域 = 现存角色声明过的并集
+  // 可选作用域 = 真实已建知识集合 ∪ 现存角色声明过的并集
   const knownScopes = Array.from(
     new Set(roles.flatMap((r) => r.knowledge_scopes || [])),
   );
+  const availableScopes = Array.from(
+    new Set<string>([...knownScopes, ...kbScopes]),
+  )
+    .filter((s) => !form.knowledge_scopes.includes(s))
+    .sort();
 
   function toggleTool(name: string) {
     setForm((f) => ({
@@ -368,26 +380,27 @@ export default function RolesPage() {
                     ))}
                   </div>
                 )}
-                {/* 现存作用域（来自其他角色的声明）—— 一键勾选 */}
-                {knownScopes.filter((s) => !form.knowledge_scopes.includes(s)).length >
-                  0 && (
-                  <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                    <span className="text-[11px] text-slate-400 dark:text-slate-500">可添加：</span>
-                    {knownScopes
-                      .filter((s) => !form.knowledge_scopes.includes(s))
-                      .map((s) => (
-                        <button
-                          key={s}
-                          type="button"
-                          onClick={() => toggleScope(s)}
-                          className="rounded-full border border-dashed border-slate-300 dark:border-slate-600 px-2.5 py-1 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600 dark:text-blue-400"
-                        >
-                          ＋ {s}
-                        </button>
+                {/* 可选作用域下拉：来自真实已建知识集合 + 现存角色声明；选中即加入 */}
+                {availableScopes.length > 0 && (
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] text-slate-400 dark:text-slate-500">从已有作用域添加：</span>
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        if (e.target.value) toggleScope(e.target.value);
+                      }}
+                      className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1.5 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 outline-none focus:border-blue-400"
+                    >
+                      <option value="">＋ 选择作用域…</option>
+                      {availableScopes.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
                       ))}
+                    </select>
                   </div>
                 )}
-                {/* 新建作用域：v1 尚无内核集合注册表（RAG v2.1），允许声明新名字 */}
+                {/* 仍允许声明一个新作用域（库里还没有的） */}
                 <div className="flex gap-2">
                   <input
                     value={newScope}
@@ -398,7 +411,7 @@ export default function RolesPage() {
                         addScope();
                       }
                     }}
-                    placeholder="新作用域名（如 health_reports）"
+                    placeholder="或新建作用域（如 health_reports）"
                     className="flex-1 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs"
                   />
                   <button
@@ -406,7 +419,7 @@ export default function RolesPage() {
                     onClick={addScope}
                     className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
                   >
-                    添加
+                    新建
                   </button>
                 </div>
               </div>

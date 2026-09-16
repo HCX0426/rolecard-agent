@@ -27,6 +27,71 @@ from rolecard_agent.config import MAX_FALLBACKS, ModelBackend, Settings
 # Backend names become keys in MODEL_BACKENDS-merged maps and UI list items: keep them tame.
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
+# 供应商目录：设置页「模型」页签的下拉不再写死前端，改由后端提供（动态扩展）。
+# id 是**供应商身份**（界面分组/展示用），style 才是运行时客户端风格：
+#   native = Ollama 原生端点（base_url 不带 /v1）；openai = OpenAI 兼容（带 /v1）。
+# 两者刻意分离：同一"OpenAI 兼容"风格下有很多厂商（SiliconFlow/DeepSeek/…），把厂商
+# 写进 provider 才能让界面正确显示"硅基流动"，而不是一句无意义的"openai"。
+MODEL_PROVIDERS: tuple[dict[str, str], ...] = (
+    {"id": "ollama", "label": "本地 Ollama", "needs_key": "0",
+     "base_url_hint": "http://localhost:11434（可留空）", "style": "native"},
+    {"id": "openai", "label": "OpenAI 兼容", "needs_key": "1",
+     "base_url_hint": "https://api.openai.com/v1", "style": "openai"},
+    {"id": "siliconflow", "label": "硅基流动", "needs_key": "1",
+     "base_url_hint": "https://api.siliconflow.cn/v1", "style": "openai"},
+    {"id": "deepseek", "label": "DeepSeek", "needs_key": "1",
+     "base_url_hint": "https://api.deepseek.com/v1", "style": "openai"},
+)
+
+# 历史 alias：旧数据/旧配置里的 "local" 一律视作 ollama（不再作为可选供应商出现）。
+PROVIDER_ALIASES = {"local": "ollama"}
+
+KEYLESS_PROVIDERS = frozenset({"ollama", "local"})
+
+
+def _canonical(provider: str) -> str:
+    p = (provider or "").strip().lower()
+    return PROVIDER_ALIASES.get(p, p)
+
+
+def normalize_provider(provider: str, base_url: str | None = None) -> str:
+    """把历史/风格性 provider 值归一到供应商目录 id。
+
+    此前云端种子只记端点风格（SiliconFlow 存成 "openai"），界面因此显示错误的供应商。
+    这里按 alias 折叠 + base_url 厂商特征推断；识别不出就原样保留（自定义网关仍算 openai）。
+    """
+    p = _canonical(provider)
+    url = (base_url or "").lower()
+    if p in ("", "openai"):
+        if "siliconflow" in url:
+            return "siliconflow"
+        if "deepseek" in url:
+            return "deepseek"
+    return p or "openai"
+
+
+def client_style(provider: str) -> str:
+    """供应商 id → 运行时客户端风格：native 走 Ollama 原生，其余走 OpenAI 兼容。
+
+    `init_chat_model` 只认 "ollama"/"openai" 两类 provider；目录化之后界面上的
+    siliconflow/deepseek 都映射到 openai 兼容客户端（base_url 指向各自厂商）。
+    """
+    p = _canonical(provider)
+    for entry in MODEL_PROVIDERS:
+        if entry["id"] == p:
+            return entry["style"]
+    return "openai"
+
+
+def is_keyless_provider(provider: str) -> bool:
+    """本地类 provider（Ollama 及其别名 local）不需要 api_key。"""
+    return (provider or "").strip().lower() in KEYLESS_PROVIDERS
+
+
+def provider_catalog() -> list[dict[str, str]]:
+    """返回供应商目录（前端下拉用）。新增供应商只改这里，无需动前端。"""
+    return [dict(p) for p in MODEL_PROVIDERS]
+
 
 class ModelSettingsError(Exception):
     """A settings write that would produce an unusable configuration. Message is user-safe."""
@@ -50,12 +115,22 @@ class ModelSettingsService:
         return [dict(r) for r in rows]
 
     def list_backends(self) -> list[dict[str, object]]:
-        """Public shape: NO api_key ever leaves the service, only `has_key`."""
+        """Public shape: NO api_key ever leaves the service, only `has_key` + a masked preview."""
         return [
             {k: row[k] for k in ("name", "provider", "base_url", "model", "sort_order")}
-            | {"has_key": bool(row["api_key"])}
+            | {"has_key": bool(row["api_key"]), "key_masked": self.key_masked(row["name"])}
             for row in self._raw_backends()
         ]
+
+    def key_masked(self, name: str) -> str | None:
+        """回读的**掩码**密钥（如 `sk-…abcd`），仅用于页面"查看已保存密钥"；绝不回明文。"""
+        raw = self.stored_api_key(name)
+        if not raw:
+            return None
+        raw = str(raw)
+        if len(raw) <= 6:
+            return "•" * len(raw)
+        return f"{raw[:3]}…{raw[-4:]}"
 
     def default_backend(self) -> str | None:
         """The operator-chosen default, or None = fall through to env's `model_default`."""
@@ -147,6 +222,29 @@ class ModelSettingsService:
         self._conn.commit()
         return inserted
 
+    def normalize_providers(self) -> int:
+        """启动时一次性归一化历史行的 provider，并清掉无 key 供应商误存的 key。
+
+        幂等：归一化后的值再跑一遍不再变化。修复两类历史脏数据 ——
+        ① 云端种子把 SiliconFlow 写成 provider="openai"（只记了风格没记厂商），
+           设置页因此显示"供应商：openai"这种错误身份；
+        ② 无 key 供应商（Ollama）被早期测试写入了无意义的占位 key。
+        """
+        changed = 0
+        for row in self._raw_backends():
+            old = str(row["provider"])
+            norm = normalize_provider(old, row["base_url"] and str(row["base_url"]))
+            drop_key = is_keyless_provider(norm) and bool(row["api_key"])
+            if norm != old or drop_key:
+                self._conn.execute(
+                    "UPDATE model_backend SET provider = ?, api_key = ? WHERE name = ?",
+                    (norm, None if drop_key else row["api_key"], str(row["name"])),
+                )
+                changed += 1
+        if changed:
+            self._conn.commit()
+        return changed
+
     # -- writes ----------------------------------------------------------------
 
     def save(
@@ -182,9 +280,11 @@ class ModelSettingsService:
             if name in names:
                 raise ModelSettingsError(f"后端名重复：{name}")
             if not provider:
-                raise ModelSettingsError(f"后端 {name} 缺少 provider（如 ollama / openai）。")
+                raise ModelSettingsError(f"后端 {name} 缺少 provider（从供应商目录选择）。")
             if not model:
                 raise ModelSettingsError(f"后端 {name} 缺少模型名。")
+            # 写入即归一：目录外的风格值（如历史 "openai"+硅基流动 URL）折叠成厂商 id。
+            provider = normalize_provider(provider, base_url)
             names.append(name)
 
             raw_key = item.get("api_key")

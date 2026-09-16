@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type PluginRow, type ReportRecord } from "../api";
+import { api, type GenericRecord, type PluginRow, type ReportRecord } from "../api";
 import Tag from "../components/ui/Tag";
 
 // 数据 —— 领域数据的唯一归属地（自"插件 → 详情"里升为独立顶层页）。
@@ -43,9 +43,7 @@ export default function DataPage() {
                 {p.plugin_id === "health" ? (
                   <DataManagement />
                 ) : (
-                  <p className="text-xs text-slate-400 dark:text-slate-500">
-                    该领域暂未提供数据视图（新增领域插件时在此挂上它的数据组件）。
-                  </p>
+                  <GenericDomainData domain={p.plugin_id} displayName={p.display_name} />
                 )}
               </div>
             </section>
@@ -454,6 +452,206 @@ function AddReportForm({ onDone }: { onDone: () => void }) {
       </div>
 
       {err && <p className="mt-2 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{err}</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- 通用领域数据（非 health 域）
+
+/** 非 health 域的通用数据视图：标签 + 数值/文本 + 单位 + 备注，走 /api/domains/{domain}/records。
+ *
+ * health 域有更丰富的报告/指标模型（见 DataManagement），不在此重复；其它域无需写领域服务
+ * 即可在「数据」页拥有增删改查能力 —— 这是「数据随领域归属」的真正多领域化。 */
+function GenericDomainData({
+  domain,
+  displayName,
+}: {
+  domain: string;
+  displayName: string;
+}) {
+  const [records, setRecords] = useState<GenericRecord[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [draft, setDraft] = useState({
+    label: "",
+    value_text: "",
+    value_num: "",
+    unit: "",
+    note: "",
+  });
+  const [confirmDel, setConfirmDel] = useState<string | null>(null);
+  const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  const load = useCallback(async () => {
+    setRecords(await api.listDomainRecords(domain));
+  }, [domain]);
+
+  useEffect(() => {
+    load().catch((e) => setStatus({ ok: false, msg: `加载失败：${e.message}` }));
+  }, [load]);
+
+  function fmt(r: GenericRecord): string {
+    if (r.value_num !== null && r.value_num !== undefined) {
+      return `${r.value_num}${r.unit ? " " + r.unit : ""}`;
+    }
+    return r.value_text || "（无）";
+  }
+
+  function startEdit(r: GenericRecord) {
+    setEditId(r.id);
+    setDraft({
+      label: r.label,
+      value_text: r.value_text || "",
+      value_num: r.value_num === null || r.value_num === undefined ? "" : String(r.value_num),
+      unit: r.unit || "",
+      note: r.note || "",
+    });
+  }
+
+  async function saveEdit(id: string) {
+    const changes: Record<string, unknown> = { label: draft.label.trim() };
+    changes.value_text = draft.value_text.trim() || null;
+    changes.value_num = draft.value_num.trim() === "" ? null : Number(draft.value_num);
+    changes.unit = draft.unit.trim() || null;
+    changes.note = draft.note.trim() || null;
+    try {
+      await api.patchDomainRecord(domain, id, changes);
+      setEditId(null);
+      setStatus({ ok: true, msg: "已保存（写入审计）" });
+      await load();
+    } catch (e) {
+      setStatus({ ok: false, msg: `保存失败：${(e as Error).message}` });
+    }
+  }
+
+  async function remove(id: string) {
+    try {
+      await api.deleteDomainRecord(domain, id);
+      setConfirmDel(null);
+      setStatus({ ok: true, msg: "已删除（写入审计）" });
+      await load();
+    } catch (e) {
+      setStatus({ ok: false, msg: `删除失败：${(e as Error).message}` });
+    }
+  }
+
+  async function submit() {
+    if (!draft.label.trim()) {
+      setStatus({ ok: false, msg: "标签必填" });
+      return;
+    }
+    if (!draft.value_text.trim() && draft.value_num.trim() === "") {
+      setStatus({ ok: false, msg: "数值与文本至少填一个" });
+      return;
+    }
+    try {
+      await api.addDomainRecord(domain, {
+        label: draft.label.trim(),
+        value_text: draft.value_text.trim() || null,
+        value_num: draft.value_num.trim() === "" ? null : Number(draft.value_num),
+        unit: draft.unit.trim() || null,
+        note: draft.note.trim() || null,
+      });
+      setAdding(false);
+      setDraft({ label: "", value_text: "", value_num: "", unit: "", note: "" });
+      setStatus({ ok: true, msg: "已新增（写入审计）" });
+      await load();
+    } catch (e) {
+      setStatus({ ok: false, msg: `保存失败：${(e as Error).message}` });
+    }
+  }
+
+  const cls =
+    "rounded border border-slate-200 dark:border-slate-700 px-2 py-1 text-xs outline-none focus:border-blue-400";
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
+          「{displayName}」域的通用数据（标签 + 数值/文本 + 单位 + 备注）。新增领域插件即自动出现此视图。
+        </p>
+        <button
+          onClick={() => setAdding((v) => !v)}
+          className="shrink-0 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600 dark:text-blue-400"
+        >
+          {adding ? "取消" : "＋ 新增记录"}
+        </button>
+      </div>
+      {status && (
+        <p className={`rounded-lg px-3 py-2 text-xs ${status.ok ? "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300" : "bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 dark:text-red-500"}`}>
+          {status.msg}
+        </p>
+      )}
+      {adding && (
+        <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/30/40 p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} placeholder="标签 *（如 体重）" className={`${cls} w-40`} />
+            <input value={draft.value_num} onChange={(e) => setDraft({ ...draft, value_num: e.target.value })} placeholder="数值（如 62）" className={`${cls} w-28`} />
+            <input value={draft.value_text} onChange={(e) => setDraft({ ...draft, value_text: e.target.value })} placeholder="或文本值" className={`${cls} w-40`} />
+            <input value={draft.unit} onChange={(e) => setDraft({ ...draft, unit: e.target.value })} placeholder="单位（可选）" className={`${cls} w-20`} />
+            <input value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} placeholder="备注（可选）" className={`${cls} w-32`} />
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <button onClick={submit} className="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700">保存</button>
+            <button onClick={() => setAdding(false)} className="rounded px-2 py-1 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700">取消</button>
+          </div>
+        </div>
+      )}
+      {records.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-center text-xs text-slate-400 dark:text-slate-500 p-8">
+          该域还没有数据：点上方「＋ 新增记录」补录。
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+          <table className="w-full min-w-[26rem] text-left text-xs">
+            <thead>
+              <tr className="text-slate-400 dark:text-slate-500">
+                <th className="px-3 py-1.5 font-medium">标签</th>
+                <th className="px-3 py-1.5 font-medium">值</th>
+                <th className="px-3 py-1.5 font-medium">备注</th>
+                <th className="px-3 py-1.5"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {records.map((r) => (
+                <tr key={r.id} className="border-t border-slate-50">
+                  {editId === r.id ? (
+                    <>
+                      <td className="px-3 py-2">
+                        <input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} className={`${cls} w-32`} />
+                      </td>
+                      <td className="px-3 py-2" colSpan={2}>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input value={draft.value_num} onChange={(e) => setDraft({ ...draft, value_num: e.target.value })} placeholder="数值" className={`${cls} w-24`} />
+                          <input value={draft.value_text} onChange={(e) => setDraft({ ...draft, value_text: e.target.value })} placeholder="文本值" className={`${cls} w-32`} />
+                          <input value={draft.unit} onChange={(e) => setDraft({ ...draft, unit: e.target.value })} placeholder="单位" className={`${cls} w-20`} />
+                          <input value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} placeholder="备注" className={`${cls} w-28`} />
+                          <button onClick={() => saveEdit(r.id)} className="rounded bg-blue-600 px-2.5 py-1 text-white hover:bg-blue-700">保存</button>
+                          <button onClick={() => setEditId(null)} className="rounded px-2 py-1 text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700">取消</button>
+                        </div>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td className="px-3 py-2 font-medium text-slate-700 dark:text-slate-200">{r.label}</td>
+                      <td className="px-3 py-2 text-slate-600 dark:text-slate-400 dark:text-slate-500">{fmt(r)}</td>
+                      <td className="px-3 py-2 text-slate-400 dark:text-slate-500">{r.note || "—"}</td>
+                      <td className="px-3 py-2 text-right">
+                        <button onClick={() => startEdit(r)} className="rounded px-2 py-1 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:bg-blue-900/30">修正</button>
+                        {confirmDel === r.id ? (
+                          <button onClick={() => remove(r.id)} className="rounded bg-red-500 px-2 py-1 text-white hover:bg-red-600">确认</button>
+                        ) : (
+                          <button onClick={() => setConfirmDel(r.id)} className="rounded px-2 py-1 text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500">删除</button>
+                        )}
+                      </td>
+                    </>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

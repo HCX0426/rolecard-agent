@@ -170,7 +170,12 @@ def _find_embedding_key(settings: Settings) -> str | None:
     return None
 
 
-def make_embedder(settings: Settings, *, order: Sequence[str] | None = None) -> Embedder:
+def make_embedder(
+    settings: Settings,
+    *,
+    order: Sequence[str] | None = None,
+    endpoints: Any = None,
+) -> Embedder:
     """按 `Settings.embedding_backend` 构建嵌入器。
 
     `auto`：有 key → siliconflow（bge-m3），否则 hash（离线兜底）。
@@ -178,10 +183,24 @@ def make_embedder(settings: Settings, *, order: Sequence[str] | None = None) -> 
     显式指定 siliconflow 但没有任何 key → 启动即报错（配置错误要大声，不要静默降级成
     质量很差的检索还让人以为一切正常）。
 
-    `order` 是「服务」页签的操作员顺序（core/services.py 策略视图）：给了就按序取第一个
-    可用候选（siliconflow 需 key / hash 恒可用），env 档位只在未配置策略时生效。
+    `order` + `endpoints`（「服务」页签的端点行，core/services.py）：给了就按序取第一个
+    可用者 —— `hash` 恒可用；云端行按**行内** base_url/api_key/model 实例化（多云端实例
+    各用各的 key）。`endpoints` 缺省时保留旧的字面 id 解析（env 取 key），兼容测试。
     """
     backend: str | None = settings.embedding_backend
+    if order and endpoints:
+        for cid in order:
+            if cid == "hash":
+                return HashEmbedder()
+            cfg = endpoints.get(cid)
+            if cfg is not None and cfg.api_key:
+                return SiliconFlowEmbedder(
+                    api_key=cfg.api_key,
+                    base_url=cfg.base_url
+                    or os.environ.get("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"),
+                    model=cfg.model or "BAAI/bge-m3",
+                )
+        raise RuntimeError("服务策略里没有可用的嵌入端点（云端行需配置 API Key）。")
     if order:
         available = {"siliconflow": bool(_find_embedding_key(settings)), "hash": True}
         backend = next((c for c in order if available.get(c)), None)
@@ -240,14 +259,31 @@ class SiliconFlowReranker:
 
 
 def make_reranker(
-    settings: Settings, *, order: Sequence[str] | None = None
+    settings: Settings,
+    *,
+    order: Sequence[str] | None = None,
+    endpoints: Any = None,
 ) -> SiliconFlowReranker | None:
     """按 `Settings.rag_rerank` 构建重排器：off（默认，向量序足够）/ auto（有 key 即用）。
 
-    `order` 是「服务」页签的操作员顺序：siliconflow 在序且有 key → 开启；off 在序或
-    无 key → None（回退向量序）。env 档位只在未配置策略时生效。
+    `order` + `endpoints`（「服务」页签的端点行）：按序找第一个可产生重排器的条目 ——
+    `off` 即关闭（返回 None）；云端行按**行内** key/base_url/model 实例化，没配 key 的行
+    跳过（重排是质量增强，缺 key 不是故障）。`endpoints` 缺省时保留旧的字面 id 解析。
     """
     key = os.environ.get("SILICONFLOW_API_KEY")
+    if order and endpoints:
+        for cid in order:
+            if cid == "off":
+                return None
+            cfg = endpoints.get(cid)
+            if cfg is not None and cfg.api_key:
+                return SiliconFlowReranker(
+                    api_key=cfg.api_key,
+                    base_url=cfg.base_url
+                    or os.environ.get("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"),
+                    model=cfg.model or "BAAI/bge-reranker-v2-m3",
+                )
+        return None
     if order:
         chosen = next((c for c in order if c in {"siliconflow", "off"}), None)
         if chosen == "siliconflow" and key:

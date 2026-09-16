@@ -1,0 +1,6 @@
+-- finance 域：数据型域，不定义私有表。
+--
+-- 该域的数据统一落在 core/schema.sql 的通用表 `domain_data`（按 domain = 'finance' 隔离）。
+-- 因此本文件无需 DDL；保留它是为了满足 storage/db.schema_files() 对每个 REGISTERED 域
+-- 都必须存在 schema.sql 的约定（缺失会启动即 FileNotFoundError）。前端通过
+-- /api/domains/finance/records 走通用 CRUD，对应 GenericDomainData 组件。

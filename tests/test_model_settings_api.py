@@ -67,7 +67,8 @@ def test_fresh_startup_seeds_env_backends(client: TestClient) -> None:
     body = client.get("/api/settings/models").json()
     assert body["default"] == "local"  # env 默认随迁移一并接管
     assert [b["name"] for b in body["backends"]] == ["local"]
-    assert body["backends"][0]["has_key"] is True  # local 的占位 key（"ollama"）一并入库
+    # 无 key 供应商（Ollama）不存占位 key：启动归一化会清掉 env 里 "ollama" 这种占位值
+    assert body["backends"][0]["has_key"] is False
 
 
 def test_seed_is_one_way_env_never_comes_back(tmp_path: Path) -> None:
@@ -127,8 +128,8 @@ def test_put_then_get_round_trip_without_key_exposure(client: TestClient) -> Non
     by_name = {b["name"]: b for b in body["backends"]}
     assert by_name["siliconflow"]["has_key"] is True
     assert "api_key" not in by_name["siliconflow"]  # 只写不回读
-    # local 的占位 key（"ollama"）经播种入库，PUT 未带 key → 保留
-    assert by_name["local"]["has_key"] is True
+    # local 的占位 key（"ollama"）经启动归一化清除 —— 无 key 供应商永不存 key
+    assert by_name["local"]["has_key"] is False
 
     fetched = client.get("/api/settings/models").json()
     assert fetched["default"] == "siliconflow"

@@ -3,6 +3,7 @@ import { ServicesPanel } from "../components/ServicesPanel";
 import {
   api,
   type AuditRow,
+  type ModelProvider,
   type ModelSettings,
   type PluginRow,
   type RoleCard,
@@ -150,7 +151,14 @@ function GeneralPanel({ onOpenChat }: { onOpenChat?: () => void }) {
 
 // ---------------------------------------------------------------- 模型（后端 CRUD + 回退）
 
-const PROVIDERS = ["openai", "ollama"];
+// 供应商目录的兜底（后端不可达时仍可用）；正常来自 GET /api/settings/model-providers。
+const PROVIDER_FALLBACK: ModelProvider[] = [
+  { id: "ollama", label: "本地 Ollama", needs_key: "0", base_url_hint: "http://localhost:11434（可留空）", style: "native" },
+  { id: "local", label: "本地模型（Ollama 别名）", needs_key: "0", base_url_hint: "同 Ollama，可留空", style: "native" },
+  { id: "openai", label: "OpenAI 兼容", needs_key: "1", base_url_hint: "https://api.openai.com/v1", style: "openai" },
+  { id: "siliconflow", label: "SiliconFlow", needs_key: "1", base_url_hint: "https://api.siliconflow.cn/v1", style: "openai" },
+  { id: "deepseek", label: "DeepSeek", needs_key: "1", base_url_hint: "https://api.deepseek.com/v1", style: "openai" },
+];
 
 interface EditableBackend {
   name: string;
@@ -159,11 +167,13 @@ interface EditableBackend {
   model: string;
   api_key: string;
   has_key: boolean;
+  key_masked: string | null;
 }
 
 function ModelsPanel() {
   const [def, setDef] = useState<string>("");
   const [rows, setRows] = useState<EditableBackend[]>([]);
+  const [providers, setProviders] = useState<ModelProvider[]>(PROVIDER_FALLBACK);
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [fb1, setFb1] = useState("");
@@ -180,12 +190,28 @@ function ModelsPanel() {
         model: b.model,
         api_key: "",
         has_key: b.has_key,
+        key_masked: b.key_masked ?? null,
       })),
     );
     setFb1(s.fallbacks?.[0] || "");
     setFb2(s.fallbacks?.[1] || "");
     setLoaded(true);
   }, []);
+
+  // 供应商目录（动态）：下拉从此来，新增供应商只改后端。
+  useEffect(() => {
+    api
+      .get<{ providers: ModelProvider[] }>("/api/settings/model-providers")
+      .then((s) => s.providers?.length && setProviders(s.providers))
+      .catch(() => undefined);
+  }, []);
+
+  // 按供应商分组展示（同一供应商的 key 归在一起，便于区分用途）。
+  const grouped = rows.reduce<Record<string, EditableBackend[]>>((acc, r) => {
+    (acc[r.provider] ||= []).push(r);
+    return acc;
+  }, {});
+  const providerOrder = Object.keys(grouped).sort((a, z) => a.localeCompare(z));
 
   useEffect(() => {
     load().catch((e) => setStatus({ ok: false, msg: `加载失败：${e.message}` }));
@@ -198,7 +224,15 @@ function ModelsPanel() {
   function addRow() {
     setRows((rs) => [
       ...rs,
-      { name: "", provider: "openai", base_url: "", model: "", api_key: "", has_key: false },
+      {
+        name: "",
+        provider: providers[0]?.id || "openai",
+        base_url: "",
+        model: "",
+        api_key: "",
+        has_key: false,
+        key_masked: null,
+      },
     ]);
   }
 
@@ -224,13 +258,14 @@ function ModelsPanel() {
       setDef(saved.default || "");
       setRows(
         saved.backends.map((b) => ({
-          name: b.name,
-          provider: b.provider,
-          base_url: b.base_url || "",
-          model: b.model,
-          api_key: "",
-          has_key: b.has_key,
-        })),
+        name: b.name,
+        provider: b.provider,
+        base_url: b.base_url || "",
+        model: b.model,
+        api_key: "",
+        has_key: b.has_key,
+        key_masked: b.key_masked ?? null,
+      })),
       );
       setFb1(saved.fallbacks?.[0] || "");
       setFb2(saved.fallbacks?.[1] || "");
@@ -257,9 +292,21 @@ function ModelsPanel() {
 
       {loaded && (
         <>
-          <div className="space-y-3">
-            {rows.map((r, i) => (
-              <div key={i} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+          <div className="space-y-5">
+            {providerOrder.map((prov) => (
+              <div key={prov} className="space-y-3">
+                <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-1">
+                  <span className="text-xs font-medium text-slate-600 dark:text-slate-300 dark:text-slate-400">
+                    供应商：{providers.find((p) => p.id === prov)?.label ?? prov}
+                  </span>
+                  <span className="text-[11px] text-slate-400 dark:text-slate-500">
+                    {providers.find((p) => p.id === prov)?.base_url_hint || ""}
+                  </span>
+                </div>
+                {grouped[prov].map((r) => {
+                  const i = rows.indexOf(r);
+                  return (
+              <div key={r.name} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
                 <div className="flex items-center gap-3">
                   <label className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
                     <input
@@ -281,9 +328,9 @@ function ModelsPanel() {
                     onChange={(e) => update(i, { provider: e.target.value })}
                     className="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1.5 text-sm"
                   >
-                    {PROVIDERS.map((p) => (
-                      <option key={p} value={p}>
-                        {p}
+                    {providers.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.label}
                       </option>
                     ))}
                   </select>
@@ -307,26 +354,39 @@ function ModelsPanel() {
                     placeholder="base_url（Ollama 可留空，如 https://api.siliconflow.cn/v1）"
                     className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-sm"
                   />
-                  <input
-                    type="password"
-                    value={r.api_key}
-                    onChange={(e) => update(i, { api_key: e.target.value })}
-                    placeholder={
-                      r.has_key ? "已保存密钥（留空 = 保持不变）" : "api_key（可选）"
-                    }
-                    className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-sm"
-                  />
-                  {r.has_key && (
-                    <label className="flex items-center gap-1.5 text-xs text-slate-400 dark:text-slate-500">
-                      <input
-                        type="checkbox"
-                        checked={r.api_key.trim() === "" && r.api_key.length > 0}
-                        onChange={(e) => update(i, { api_key: e.target.checked ? " " : "" })}
-                      />
-                      清除已存密钥
-                    </label>
+                  {r.has_key ? (
+                    <>
+                      <div className="flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 px-2.5 py-1.5 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
+                        <span className="font-mono">{r.key_masked || "••••••"}</span>
+                        <span className="ml-auto text-[11px] text-slate-400 dark:text-slate-500">已保存（不可见明文）</span>
+                      </div>
+                      <label className="flex items-center gap-1.5 text-xs text-slate-400 dark:text-slate-500">
+                        <input
+                          type="checkbox"
+                          checked={r.api_key.trim() === "" && r.api_key.length > 0}
+                          onChange={(e) => update(i, { api_key: e.target.checked ? " " : "" })}
+                        />
+                        清除已存密钥（勾选并保存即删除）
+                      </label>
+                    </>
+                  ) : (
+                    <input
+                      type="password"
+                      value={r.api_key}
+                      onChange={(e) => update(i, { api_key: e.target.value })}
+                      placeholder="api_key（可选）"
+                      className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-sm"
+                    />
+                  )}
+                  {!r.has_key && (
+                    <span className="text-[11px] text-slate-400 dark:text-slate-500">
+                      本地类供应商无需密钥
+                    </span>
                   )}
                 </div>
+              </div>
+                  );
+                })}
               </div>
             ))}
           </div>

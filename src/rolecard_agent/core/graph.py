@@ -28,6 +28,7 @@ from rolecard_agent.core.nodes import (
     route_after_model,
 )
 from rolecard_agent.core.observability import Tracer, make_tracer
+from rolecard_agent.core.model_settings import client_style
 from rolecard_agent.core.plugins import PluginService
 from rolecard_agent.core.state import AgentState
 from rolecard_agent.core.tools.registry import ToolRegistry
@@ -35,9 +36,6 @@ from rolecard_agent.roles.service import RoleCardService
 
 MODEL_NODE = "model"
 TOOLS_NODE = "tools"
-
-# 明确接受 `timeout` 入参的 provider。未知 provider 一律不传，宁可不设超时也不能构造失败。
-_TIMEOUT_PROVIDERS = frozenset({"ollama", "openai"})
 
 
 def build_kernel(
@@ -102,19 +100,25 @@ def _init_model(settings: Settings, backend_name: str | None) -> ChatLike:
 
     超时是**显式带上**的：默认没有超时时，一个挂起的本地模型会让 SSE 对话与抽取无限等待
     ——不仅卡住请求，还会让 `with_fallbacks` 形同虚设（主模型既不返回也不失败，回退永远
-    触发不了）。只在 provider 确实接受 `timeout` 参数时传，避免对未知 provider 抛
-    TypeError（那时宁可不设超时，也不要起不来）。
+    触发不了）。供应商目录化后 model_provider 只会是 "ollama"/"openai" 两类客户端，
+    两者都接受 `timeout`，因此配置了就直接传。
     """
     from langchain.chat_models import init_chat_model
 
     backend = settings.backend(backend_name)
-    kwargs: dict[str, Any] = {"model": backend.model, "model_provider": backend.provider}
+    kwargs: dict[str, Any] = {"model": backend.model}
     if backend.base_url:
         kwargs["base_url"] = backend.base_url
     if backend.api_key:
         kwargs["api_key"] = backend.api_key
-    provider = (backend.provider or "").lower()
-    if settings.model_timeout_seconds > 0 and provider in _TIMEOUT_PROVIDERS:
+    # provider 现在是**供应商 id**（ollama/siliconflow/deepseek/…），而 init_chat_model
+    # 只认 "ollama"/"openai" 两类客户端 —— 厂商 → 客户端风格的映射统一走目录（client_style）。
+    # 历史值 "local" 是 Ollama 的别名，同样按 native 处理。
+    style = client_style(backend.provider)
+    kwargs["model_provider"] = "ollama" if style == "native" else "openai"
+    # 两类客户端都接受 `timeout`（此前的 _TIMEOUT_PROVIDERS 两者都在列）：本地模型挂起
+    # 会让 SSE 与 with_fallbacks 永久等待，所以只要配置了超时就显式带上。
+    if settings.model_timeout_seconds > 0:
         kwargs["timeout"] = int(settings.model_timeout_seconds)
     return init_chat_model(**kwargs)
 

@@ -38,7 +38,9 @@ def _maybe_configure_cloud_backend() -> None:
     os.environ["MODEL_BACKENDS"] = json.dumps(
         {
             "siliconflow": {
-                "provider": "openai",
+                # provider 记**供应商身份**（界面显示"硅基流动"），不是端点风格；
+                # 客户端风格由目录决定（siliconflow → OpenAI 兼容）。
+                "provider": "siliconflow",
                 "base_url": os.environ.get("SMOKE_BASE_URL", DEFAULT_BASE_URL),
                 "model": os.environ.get("SMOKE_MODEL", DEFAULT_MODEL),
                 "api_key": key,

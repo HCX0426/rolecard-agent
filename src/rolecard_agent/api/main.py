@@ -48,6 +48,7 @@ from rolecard_agent.api.deps import (
     AppContext,
 )
 from rolecard_agent.api.routers import console as console_router
+from rolecard_agent.api.routers import domains as domains_router
 from rolecard_agent.api.routers import records as records_router
 from rolecard_agent.api.routers import roles as roles_router
 from rolecard_agent.api.routers import services as services_router
@@ -61,7 +62,7 @@ from rolecard_agent.core.model_settings import ModelSettingsService
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.observability import TraceEvent, Tracer, make_tracer
 from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
-from rolecard_agent.core.services import ServicePolicyService
+from rolecard_agent.core.services import ServiceEndpointService
 from rolecard_agent.domains.health.service import (
     HealthQueryService,
 )
@@ -172,12 +173,21 @@ def create_app(
     ingestion = IngestionService(conn)
     health_query = HealthQueryService(conn)
     model_settings = ModelSettingsService(conn)
-    # 服务策略（OCR / 嵌入 / 重排的操作员顺序）—— schema 已在 bootstrap 建好 service_policy。
-    services = ServicePolicyService(conn)
+    # 服务端点实例（OCR / 嵌入 / 重排的候选行）—— 启动时一次性播种默认行（幂等）。
+    services = ServiceEndpointService(conn)
+    services.seed_once(settings)
     knowledge = KnowledgeBase(
         settings.chroma_path,
-        make_embedder(settings, order=[c.id for c in services.ordered_candidates("embedding")]),
-        make_reranker(settings, order=[c.id for c in services.ordered_candidates("rerank")]),
+        make_embedder(
+            settings,
+            order=[e.id for e in services.ordered_candidates("embedding")],
+            endpoints=services.endpoint_map("embedding"),
+        ),
+        make_reranker(
+            settings,
+            order=[e.id for e in services.ordered_candidates("rerank")],
+            endpoints=services.endpoint_map("rerank"),
+        ),
     )
 
     # 工具注册表：内核工具 + 各域工具（domains/registry 是唯一的装配点）。
@@ -195,6 +205,8 @@ def create_app(
     factory = model_factory or build_model
     # 启动时把 env 后端播种进设置表（幂等，操作员此后在 UI 里改），再计算有效配置。
     model_settings.seed_from_env(settings)
+    # 归一化历史行的 provider（旧种子把 SiliconFlow 记成 "openai" 等风格值）→ 厂商 id。
+    model_settings.normalize_providers()
     # 设置页（DB）配置优先于 env：空表 = env 原样；保存过 = DB 覆盖同名后端并接管默认。
     effective = model_settings.effective_settings(settings)
     resolved_model = model or factory(effective, None)
@@ -270,6 +282,7 @@ def create_app(
     app.include_router(console_router.router)
     app.include_router(settings_router.router)
     app.include_router(services_router.router)
+    app.include_router(domains_router.router)
 
     def rebuild_runtime() -> None:
         """按当前设置与服务策略重建全部运行时对象：模型、KnowledgeBase、registry、图。
@@ -282,12 +295,16 @@ def create_app(
         role_models.clear()
         default_model = factory(eff, None)
 
-        # 服务策略（OCR / 嵌入 / 重排）从 DB 读操作员顺序；无记录时代码默认。
+        # 服务端点（OCR / 嵌入 / 重排）从 DB 读操作员顺序；云端行按行内配置实例化。
         embedder = make_embedder(
-            eff, order=[c.id for c in services.ordered_candidates("embedding")]
+            eff,
+            order=[e.id for e in services.ordered_candidates("embedding")],
+            endpoints=services.endpoint_map("embedding"),
         )
         reranker = make_reranker(
-            eff, order=[c.id for c in services.ordered_candidates("rerank")]
+            eff,
+            order=[e.id for e in services.ordered_candidates("rerank")],
+            endpoints=services.endpoint_map("rerank"),
         )
         knowledge_new = KnowledgeBase(settings.chroma_path, embedder, reranker)
 

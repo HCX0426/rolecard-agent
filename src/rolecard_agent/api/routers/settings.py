@@ -10,12 +10,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from rolecard_agent.api.deps import AppContext, get_context
-from rolecard_agent.core.model_settings import ModelSettingsError
+from rolecard_agent.core.model_settings import (
+    ModelSettingsError,
+    is_keyless_provider,
+    provider_catalog,
+)
 
 router = APIRouter()
-
-# Ollama 本地端点不需要凭据；其它 provider（openai 兼容）必须有 key 才能构建客户端。
-_KEYLESS_PROVIDER = "ollama"
 
 
 class BackendSpec(BaseModel):
@@ -41,12 +42,18 @@ class ModelSettingsBody(BaseModel):
 
 @router.get("/api/settings/models")
 def get_model_settings(ctx: AppContext = Depends(get_context)) -> object:
-    """模型后端设置。api_key 永不回读 —— 只有 has_key 标志。"""
+    """模型后端设置。api_key 永不回明文 —— 只有 has_key 标志 + 掩码预览。"""
     return {
         "default": ctx.model_settings.default_backend(),
         "backends": ctx.model_settings.list_backends(),
         "fallbacks": ctx.model_settings.list_fallbacks() or [],
     }
+
+
+@router.get("/api/settings/model-providers")
+def get_model_providers() -> object:
+    """供应商目录（动态扩展）：设置页「模型」页签的下拉从这里取，不再写死前端。"""
+    return {"providers": provider_catalog()}
 
 
 @router.put("/api/settings/models")
@@ -61,7 +68,7 @@ def put_model_settings(
         # 凭据校验前置：需要 key 的 provider（openai 类）没有 key 时，保存即拒绝 ——
         # 否则会存进一个"重建时才炸"的配置（实测：热重建抛 Missing credentials）。
         for b in body.backends:
-            if b.provider.strip().lower() == _KEYLESS_PROVIDER:
+            if is_keyless_provider(b.provider):
                 continue
             if not (b.api_key or ctx.model_settings.stored_api_key(b.name)):
                 raise ModelSettingsError(
