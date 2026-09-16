@@ -177,7 +177,14 @@ def extract_record(
         # 兜底：本次改动之前上传的文件没有 .parsed.txt，现场再解析一次。
         try:
             is_image = source_file.suffix.lower() in IMAGE_EXTS
-            ocr = select_ocr_backend(ctx.settings) if is_image else None
+            ocr = (
+                select_ocr_backend(
+                    ctx.settings,
+                    order=[c.id for c in ctx.services.ordered_candidates("ocr")],
+                )
+                if is_image
+                else None
+            )
             text = parse_document(source_file, backend=ocr)
         except (ParseError, OcrUnavailable):
             text = ""

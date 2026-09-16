@@ -95,6 +95,21 @@ CREATE TABLE IF NOT EXISTS model_backend (
     sort_order  INTEGER NOT NULL DEFAULT 0
 );
 
+-- Per-category service policy for the runtime service view (settings page,「服务」tab).
+-- Covers the three categories whose candidates are NOT model rows (OCR / embedding / rerank);
+-- model backends already have their own table + fallback chain above.
+--   preferred  : candidate id this category should try FIRST (absent row = code default)
+--   disabled   : JSON array of candidate ids excluded from automatic selection entirely
+-- Candidates are defined IN CODE (core/services.py) — the DB only stores the operator's
+-- ordering/enabling, never a catalogue. That keeps "what can exist" a commit, matching
+-- domains/registry.py's explicit-registration philosophy.
+CREATE TABLE IF NOT EXISTS service_policy (
+    service_key TEXT PRIMARY KEY,
+    preferred   TEXT,
+    disabled    TEXT NOT NULL DEFAULT '[]',
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- ===========================================================================
 -- Document intake ledger.
 --

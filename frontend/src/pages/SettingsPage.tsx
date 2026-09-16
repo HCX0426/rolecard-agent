@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { ServicesPanel } from "../components/ServicesPanel";
 import {
   api,
   type AuditRow,
@@ -8,11 +9,12 @@ import {
   type SessionRow,
 } from "../api";
 
-// 设置页子页签：通用（系统信息）/ 模型（后端 CRUD + 热切换）/ 审计（操作留痕）。
-// 知识库已升为独立顶层页 —— RAG 是内核能力，不该埋在设置里。
+// 设置页子页签：通用（系统信息）/ 模型（后端 CRUD + 热切换）/ 服务（运行时状态与降级策略）/
+// 审计（操作留痕）。知识库已升为独立顶层页 —— RAG 是内核能力，不该埋在设置里。
 const SETTINGS_TABS = [
   { key: "general", label: "通用" },
   { key: "models", label: "模型" },
+  { key: "services", label: "服务" },
   { key: "audit", label: "审计" },
 ] as const;
 
@@ -42,6 +44,7 @@ export default function SettingsPage({ onOpenChat }: { onOpenChat?: () => void }
         </div>
         {tab === "general" && <GeneralPanel onOpenChat={onOpenChat} />}
         {tab === "models" && <ModelsPanel />}
+        {tab === "services" && <ServicesPanel />}
         {tab === "audit" && <AuditPanel />}
       </div>
     </div>

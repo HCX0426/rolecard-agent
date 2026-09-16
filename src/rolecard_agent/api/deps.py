@@ -24,6 +24,7 @@ from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.core.model_settings import ModelSettingsService
 from rolecard_agent.core.observability import Tracer
 from rolecard_agent.core.plugins import PluginError, PluginService, UnknownPlugin
+from rolecard_agent.core.services import ServicePolicyService
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.domains.health.service import HealthQueryService
 from rolecard_agent.rag.retriever import KnowledgeBase
@@ -101,14 +102,15 @@ class AppContext:
     ingestion: IngestionService
     health: HealthQueryService
     model_settings: ModelSettingsService
+    services: ServicePolicyService
     knowledge: KnowledgeBase
     registry: ToolRegistry
     tracer: Tracer
 
     # 图句柄：设置页保存后整体热重建，所以是可变容器而不是直接持有 graph 对象。
     app_state: dict[str, Any] = field(default_factory=dict)
-    # 热重建入口（设置页保存时调用）—— 见 main.create_app 里的实现。
-    rebuild_graph: Callable[[], None] = field(default=lambda: None)
+    # 运行时热重建入口（模型设置或服务策略保存时调用）—— 见 main.create_app 的实现。
+    rebuild_runtime: Callable[[], None] = field(default=lambda: None)
 
 
 def get_context(request: Request) -> AppContext:

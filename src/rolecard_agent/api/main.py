@@ -50,6 +50,7 @@ from rolecard_agent.api.deps import (
 from rolecard_agent.api.routers import console as console_router
 from rolecard_agent.api.routers import records as records_router
 from rolecard_agent.api.routers import roles as roles_router
+from rolecard_agent.api.routers import services as services_router
 from rolecard_agent.api.routers import sessions as sessions_router
 from rolecard_agent.api.routers import settings as settings_router
 from rolecard_agent.config import Settings
@@ -60,6 +61,7 @@ from rolecard_agent.core.model_settings import ModelSettingsService
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.observability import TraceEvent, Tracer, make_tracer
 from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
+from rolecard_agent.core.services import ServicePolicyService
 from rolecard_agent.domains.health.service import (
     HealthQueryService,
 )
@@ -170,8 +172,12 @@ def create_app(
     ingestion = IngestionService(conn)
     health_query = HealthQueryService(conn)
     model_settings = ModelSettingsService(conn)
+    # 服务策略（OCR / 嵌入 / 重排的操作员顺序）—— schema 已在 bootstrap 建好 service_policy。
+    services = ServicePolicyService(conn)
     knowledge = KnowledgeBase(
-        settings.chroma_path, make_embedder(settings), make_reranker(settings)
+        settings.chroma_path,
+        make_embedder(settings, order=[c.id for c in services.ordered_candidates("embedding")]),
+        make_reranker(settings, order=[c.id for c in services.ordered_candidates("rerank")]),
     )
 
     # 工具注册表：内核工具 + 各域工具（domains/registry 是唯一的装配点）。
@@ -236,27 +242,11 @@ def create_app(
     # 取当前图，因此保存后无需重启即可生效。
     app_state["graph"] = graph
 
-    def rebuild_graph() -> None:
-        eff = model_settings.effective_settings(settings)
-        role_models.clear()
-        default_model = factory(eff, None)
-        app_state["effective"] = eff
-        app_state["default_model"] = default_model
-        app_state["graph"] = build_kernel(
-            model=default_model,
-            registry=registry,
-            roles=roles,
-            tracer=resolved_tracer,
-            settings=eff,
-            checkpointer=checkpointer,
-            plugins=plugins,
-            model_resolver=resolve_role_model,
-        )
-
     app = FastAPI(title="rolecard-agent 管理控制台", version="0.3.0")
 
     # 共享上下文：所有 router 通过 `Depends(get_context)` 取它，不再依赖闭包。
-    app.state.ctx = AppContext(
+    # rebuild_runtime 先挂占位，定义完成后立刻绑定真实现（见下方）。
+    ctx = AppContext(
         settings=settings,
         conn=conn,
         roles=roles,
@@ -264,19 +254,70 @@ def create_app(
         ingestion=ingestion,
         health=health_query,
         model_settings=model_settings,
+        services=services,
         knowledge=knowledge,
         registry=registry,
         tracer=resolved_tracer,
         app_state=app_state,
-        rebuild_graph=rebuild_graph,
+        rebuild_runtime=lambda: None,
     )
-    # C1：端点按职责分包，全部 24 个端点已迁出 main.py。本文件只保留 app 装配：
+    app.state.ctx = ctx
+    # C1：端点按职责分包，全部端点已迁出 main.py。本文件只保留 app 装配：
     # 启动 bootstrap/seed、内核图构建、共享上下文、中间件、静态托管。
     app.include_router(roles_router.router)
     app.include_router(sessions_router.router)
     app.include_router(records_router.router)
     app.include_router(console_router.router)
     app.include_router(settings_router.router)
+    app.include_router(services_router.router)
+
+    def rebuild_runtime() -> None:
+        """按当前设置与服务策略重建全部运行时对象：模型、KnowledgeBase、registry、图。
+
+        由两条路径触发：模型设置保存（settings router）与服务策略保存（services router）。
+        嵌入器/重排器是 KnowledgeBase 构造时注入的实例，策略变了必须连 KB 一起重造；
+        search_knowledge 工具闭包持有 KB，所以 registry 也要跟着重建 —— 顺序即依赖序。
+        """
+        eff = model_settings.effective_settings(settings)
+        role_models.clear()
+        default_model = factory(eff, None)
+
+        # 服务策略（OCR / 嵌入 / 重排）从 DB 读操作员顺序；无记录时代码默认。
+        embedder = make_embedder(
+            eff, order=[c.id for c in services.ordered_candidates("embedding")]
+        )
+        reranker = make_reranker(
+            eff, order=[c.id for c in services.ordered_candidates("rerank")]
+        )
+        knowledge_new = KnowledgeBase(settings.chroma_path, embedder, reranker)
+
+        registry_new = build_registry(
+            roles=roles,
+            ingestion=ingestion,
+            query=health_query,
+            knowledge=knowledge_new,
+            enabled_domains=plugins.enabled_domains,
+            current_user=lambda: DEFAULT_USER_ID,
+        )
+        graph_new = build_kernel(
+            model=default_model,
+            registry=registry_new,
+            roles=roles,
+            tracer=resolved_tracer,
+            settings=eff,
+            checkpointer=checkpointer,
+            plugins=plugins,
+            model_resolver=resolve_role_model,
+        )
+        # 一次性换装：KB / registry 换新实例（工具经 registry 间接引用新 KB），图也换新。
+        ctx.knowledge = knowledge_new
+        ctx.registry = registry_new
+        app_state["effective"] = eff
+        app_state["default_model"] = default_model
+        app_state["graph"] = graph_new
+
+    # 绑定真实现（ctx 构造时是占位 lambda，避免定义顺序上的循环依赖）。
+    ctx.rebuild_runtime = rebuild_runtime
 
     @app.middleware("http")
     async def _drop_stale_transaction(request: object, call_next: object) -> object:

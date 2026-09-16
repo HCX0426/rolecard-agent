@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import os
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol
 
@@ -147,11 +148,14 @@ class CloudApiBackend:
         return text
 
 
-def select_ocr_backend(settings: Settings) -> OcrBackend | None:
-    """按策略选择 OCR 后端：**Paddle 优先**，不可用时若有 key 回退云端，否则 None。
+def select_ocr_backend(
+    settings: Settings, *, order: Sequence[str] | None = None
+) -> OcrBackend | None:
+    """按策略选择 OCR 后端：默认 **Paddle 优先**，不可用时若有 key 回退云端，否则 None。
 
-    `ocr_backend` 显式指定时只取该后端（paddle / cloud）；默认 `auto` = 优先 Paddle。
-    返回 None 时调用方应降级为 `OcrUnavailable`（保持 pending，不假装已读）。
+    `order` 是操作员在「服务」页签里定好的候选顺序（core/services.py 的策略视图）；
+    给了就按它逐个试可用性，而不是硬编码的 paddle→cloud。返回 None 时调用方应降级为
+    `OcrUnavailable`（保持 pending，不假装已读）。
     """
     paddle = LocalPaddleBackend(exe=settings.ocr_python)
     cloud = CloudApiBackend(
@@ -159,7 +163,15 @@ def select_ocr_backend(settings: Settings) -> OcrBackend | None:
         provider=settings.ocr_provider,
         api_url=settings.ocr_api_url,
     )
+    by_id = {"paddle": paddle, "cloud": cloud}
     mode = (settings.ocr_backend or "auto").lower()
+    if order:
+        # 操作员顺序优先于 env 档位：逐个试 available，谁就绪用谁（启停与优先级热生效）。
+        for cid in order:
+            backend = by_id.get(cid)
+            if backend is not None and backend.available():
+                return backend
+        return None
     if mode == "paddle":
         return paddle if paddle.available() else None
     if mode == "cloud":

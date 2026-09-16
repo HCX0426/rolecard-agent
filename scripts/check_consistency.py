@@ -368,6 +368,8 @@ def check_line_endings() -> None:
     offenders: list[str] = []
     for base in ("src", "tests", "scripts"):
         for path in (ROOT / base).rglob("*"):
+            if "__pycache__" in path.parts:
+                continue  # 字节码是二进制：其中偶然出现 \r\n 字节序列会造成误报
             if path.is_file() and b"\r\n" in path.read_bytes():
                 offenders.append(str(path.relative_to(ROOT)))
     detail = f"CRLF in: {offenders}" if offenders else "all LF"

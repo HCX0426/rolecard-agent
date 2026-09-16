@@ -75,7 +75,7 @@ def put_model_settings(
     except ModelSettingsError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
-        ctx.rebuild_graph()
+        ctx.rebuild_runtime()
     except Exception as exc:  # noqa: BLE001 - 构建失败要给出可读原因，而不是 500 空壳
         raise HTTPException(status_code=500, detail=f"模型后端构建失败：{exc}") from exc
     return {

@@ -170,16 +170,24 @@ def _find_embedding_key(settings: Settings) -> str | None:
     return None
 
 
-def make_embedder(settings: Settings) -> Embedder:
+def make_embedder(settings: Settings, *, order: Sequence[str] | None = None) -> Embedder:
     """按 `Settings.embedding_backend` 构建嵌入器。
 
     `auto`：有 key → siliconflow（bge-m3），否则 hash（离线兜底）。
     key 来源：`SILICONFLOW_API_KEY` env → DB 后端配置（设置页存的）。
     显式指定 siliconflow 但没有任何 key → 启动即报错（配置错误要大声，不要静默降级成
     质量很差的检索还让人以为一切正常）。
+
+    `order` 是「服务」页签的操作员顺序（core/services.py 策略视图）：给了就按序取第一个
+    可用候选（siliconflow 需 key / hash 恒可用），env 档位只在未配置策略时生效。
     """
-    backend = settings.embedding_backend
-    if backend == "auto":
+    backend: str | None = settings.embedding_backend
+    if order:
+        available = {"siliconflow": bool(_find_embedding_key(settings)), "hash": True}
+        backend = next((c for c in order if available.get(c)), None)
+        if backend is None:
+            raise RuntimeError("服务策略把嵌入候选全部排除 —— 至少保留一个可用实现。")
+    elif backend == "auto":
         backend = "siliconflow" if _find_embedding_key(settings) else "hash"
     if backend == "hash":
         return HashEmbedder()
@@ -231,12 +239,26 @@ class SiliconFlowReranker:
             return None
 
 
-def make_reranker(settings: Settings) -> SiliconFlowReranker | None:
-    """按 `Settings.rag_rerank` 构建重排器：off（默认，向量序足够）/ auto（有 key 即用）。"""
+def make_reranker(
+    settings: Settings, *, order: Sequence[str] | None = None
+) -> SiliconFlowReranker | None:
+    """按 `Settings.rag_rerank` 构建重排器：off（默认，向量序足够）/ auto（有 key 即用）。
+
+    `order` 是「服务」页签的操作员顺序：siliconflow 在序且有 key → 开启；off 在序或
+    无 key → None（回退向量序）。env 档位只在未配置策略时生效。
+    """
+    key = os.environ.get("SILICONFLOW_API_KEY")
+    if order:
+        chosen = next((c for c in order if c in {"siliconflow", "off"}), None)
+        if chosen == "siliconflow" and key:
+            return SiliconFlowReranker(
+                api_key=key,
+                base_url=os.environ.get("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"),
+            )
+        return None
     backend = settings.rag_rerank
     if backend == "off":
         return None
-    key = os.environ.get("SILICONFLOW_API_KEY")
     if backend == "auto":
         return (
             SiliconFlowReranker(
