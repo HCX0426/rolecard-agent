@@ -48,6 +48,9 @@ PROVIDER_ALIASES = {"local": "ollama"}
 
 KEYLESS_PROVIDERS = frozenset({"ollama", "local"})
 
+# 模型页配置行的合法用途（架构归一化：一行配置服务一种能力，服务页按用途引用）。
+BACKEND_USAGES = frozenset({"chat", "embedding", "rerank", "ocr"})
+
 
 def _canonical(provider: str) -> str:
     p = (provider or "").strip().lower()
@@ -109,15 +112,26 @@ class ModelSettingsService:
 
     def _raw_backends(self) -> list[dict[str, object]]:
         rows = self._conn.execute(
-            "SELECT name, provider, base_url, model, api_key, sort_order "
+            "SELECT name, provider, base_url, model, api_key, usage, sort_order "
             "FROM model_backend ORDER BY sort_order, name"
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def raw_backends(self) -> list[dict[str, object]]:
+        """进程内配置解析用（服务引用行取凭据、工厂实例化）。
+
+        含 api_key 明文 —— 只允许在服务层/工厂内部消费，**绝不**直接进任何 API 响应
+        （对外形状见 `list_backends`：只回 has_key + 掩码）。
+        """
+        return self._raw_backends()
+
     def list_backends(self) -> list[dict[str, object]]:
         """Public shape: NO api_key ever leaves the service, only `has_key` + a masked preview."""
         return [
-            {k: row[k] for k in ("name", "provider", "base_url", "model", "sort_order")}
+            {
+                k: row[k]
+                for k in ("name", "provider", "base_url", "model", "usage", "sort_order")
+            }
             | {"has_key": bool(row["api_key"]), "key_masked": self.key_masked(row["name"])}
             for row in self._raw_backends()
         ]
@@ -199,13 +213,15 @@ class ModelSettingsService:
                 continue
             self._conn.execute(
                 "INSERT OR IGNORE INTO model_backend "
-                "(name, provider, base_url, model, api_key, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
+                "(name, provider, base_url, model, api_key, usage, sort_order) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     name,
                     backend.provider,
                     backend.base_url,
                     backend.model,
                     backend.api_key,
+                    backend.usage,
                     len(existing) + inserted,
                 ),
             )
@@ -273,6 +289,7 @@ class ModelSettingsService:
             provider = str(item.get("provider") or "").strip()
             model = str(item.get("model") or "").strip()
             base_url = str(item.get("base_url") or "").strip() or None
+            usage = str(item.get("usage") or "chat").strip().lower() or "chat"
             if not _NAME_RE.match(name):
                 raise ModelSettingsError(
                     f"后端名 {name!r} 不合法：小写字母开头，只含小写字母/数字/下划线/连字符。"
@@ -283,6 +300,10 @@ class ModelSettingsService:
                 raise ModelSettingsError(f"后端 {name} 缺少 provider（从供应商目录选择）。")
             if not model:
                 raise ModelSettingsError(f"后端 {name} 缺少模型名。")
+            if usage not in BACKEND_USAGES:
+                raise ModelSettingsError(
+                    f"后端 {name} 的用途 {usage!r} 不合法（chat/embedding/rerank/ocr）。"
+                )
             # 写入即归一：目录外的风格值（如历史 "openai"+硅基流动 URL）折叠成厂商 id。
             provider = normalize_provider(provider, base_url)
             names.append(name)
@@ -294,7 +315,7 @@ class ModelSettingsService:
                 key = None  # explicit clear
             else:
                 key = str(raw_key).strip()
-            prepared.append((name, provider, base_url, model, key, i))
+            prepared.append((name, provider, base_url, model, key, usage, i))
 
         if default not in names:
             raise ModelSettingsError(f"默认后端 {default!r} 不在列表里。")
@@ -310,8 +331,9 @@ class ModelSettingsService:
 
         self._conn.execute("DELETE FROM model_backend")
         self._conn.executemany(
-            "INSERT INTO model_backend (name, provider, base_url, model, api_key, sort_order) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO model_backend "
+            "(name, provider, base_url, model, api_key, usage, sort_order) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             prepared,
         )
         for key, value in (
@@ -346,6 +368,7 @@ class ModelSettingsService:
                 base_url=row["base_url"],  # type: ignore[arg-type]
                 api_key=row["api_key"],  # type: ignore[arg-type]
                 provider=str(row["provider"]),
+                usage=str(row["usage"]),
             )
         default = self.default_backend()
         fallbacks = self.list_fallbacks()

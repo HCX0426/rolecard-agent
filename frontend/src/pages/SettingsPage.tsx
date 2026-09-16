@@ -168,7 +168,16 @@ interface EditableBackend {
   api_key: string;
   has_key: boolean;
   key_masked: string | null;
+  usage: string;
 }
+
+// 模型页是云端配置的唯一事实面：usage 标记该行服务谁（服务页按用途引用）。
+const USAGE_OPTIONS = [
+  { value: "chat", label: "对话推理" },
+  { value: "embedding", label: "语义嵌入" },
+  { value: "rerank", label: "检索重排" },
+  { value: "ocr", label: "OCR 凭据" },
+];
 
 function ModelsPanel() {
   const [def, setDef] = useState<string>("");
@@ -191,6 +200,7 @@ function ModelsPanel() {
         api_key: "",
         has_key: b.has_key,
         key_masked: b.key_masked ?? null,
+        usage: b.usage ?? "chat",
       })),
     );
     setFb1(s.fallbacks?.[0] || "");
@@ -232,6 +242,7 @@ function ModelsPanel() {
         api_key: "",
         has_key: false,
         key_masked: null,
+        usage: "chat",
       },
     ]);
   }
@@ -249,6 +260,7 @@ function ModelsPanel() {
           provider: r.provider.trim(),
           base_url: r.base_url.trim() || null,
           model: r.model.trim(),
+          usage: r.usage,
           // 空串会被后端理解为"清除"；这里区分"没碰过"（保持 None=保留）与"清空"
           api_key: r.api_key === "" && r.has_key ? null : r.api_key,
         })),
@@ -265,6 +277,7 @@ function ModelsPanel() {
         api_key: "",
         has_key: b.has_key,
         key_masked: b.key_masked ?? null,
+        usage: b.usage ?? "chat",
       })),
       );
       setFb1(saved.fallbacks?.[0] || "");
@@ -308,15 +321,20 @@ function ModelsPanel() {
                   return (
               <div key={r.name} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
                 <div className="flex items-center gap-3">
-                  <label className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
-                    <input
-                      type="radio"
-                      name="default-backend"
-                      checked={def === r.name}
-                      onChange={() => setDef(r.name)}
-                    />
-                    默认
-                  </label>
+                  {r.usage === "chat" && (
+                    <label
+                      title="对话默认后端（角色未指定后端时使用）"
+                      className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500"
+                    >
+                      <input
+                        type="radio"
+                        name="default-backend"
+                        checked={def === r.name}
+                        onChange={() => setDef(r.name)}
+                      />
+                      默认
+                    </label>
+                  )}
                   <input
                     value={r.name}
                     onChange={(e) => update(i, { name: e.target.value })}
@@ -331,6 +349,18 @@ function ModelsPanel() {
                     {providers.map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={r.usage}
+                    onChange={(e) => update(i, { usage: e.target.value })}
+                    title="用途：本行配置服务谁（服务页按用途引用；对话菜单只显示「对话推理」行）"
+                    className="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1.5 text-sm"
+                  >
+                    {USAGE_OPTIONS.map((u) => (
+                      <option key={u.value} value={u.value}>
+                        {u.label}
                       </option>
                     ))}
                   </select>

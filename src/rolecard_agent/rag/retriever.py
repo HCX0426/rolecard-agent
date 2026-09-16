@@ -156,18 +156,13 @@ class SiliconFlowEmbedder(Embedder):
 
 
 def _find_embedding_key(settings: Settings) -> str | None:
-    """找嵌入器 key：先查环境变量，再查 DB 合并后的后端配置（设置页存的 key）。
+    """嵌入 key 的**遗留 env-auto 路径**：只读环境变量。
 
-    用户在设置页填的 key 存 DB（effective_settings 已合并），但嵌入器此前只读
-    环境变量 —— 两个 key 源不打通，导致上传 500（嵌入维度不匹配）。
+    架构归一化后（服务引用化），应用的正式路径是「服务端点行 → 引用的 model_backend」，
+    key 由行配置携带；本函数仅供 `order=None` 的 env-auto 老路径（及测试）使用。
+    此前的 model_backend 兜底已删除 —— 一把 key 不该同时活在三处。
     """
-    key = os.environ.get("SILICONFLOW_API_KEY")
-    if key:
-        return key
-    for b in settings.model_backends.values():
-        if (b.provider or "").lower() == "openai" and b.api_key:
-            return b.api_key
-    return None
+    return os.environ.get("SILICONFLOW_API_KEY")
 
 
 def make_embedder(

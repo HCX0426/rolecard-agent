@@ -71,6 +71,44 @@ def test_fresh_startup_seeds_env_backends(client: TestClient) -> None:
     assert body["backends"][0]["has_key"] is False
 
 
+def test_admin_audits_never_contain_api_key_material(client: TestClient) -> None:
+    """H3 回归：模型设置与服务引用的管理面审计**绝不落 key 明文**（审计页浏览器可见）。"""
+    secret = "sk-super-secret-value-9876"
+    put = client.put(
+        "/api/settings/models",
+        json={
+            "default": "siliconflow",
+            "backends": [
+                {
+                    "name": "siliconflow",
+                    "provider": "siliconflow",
+                    "base_url": "https://api.siliconflow.cn/v1",
+                    "model": "deepseek-ai/DeepSeek-V4-Flash",
+                    "api_key": secret,
+                },
+                {"name": "local", "provider": "ollama", "model": "qwen2.5:7b"},
+            ],
+            "fallbacks": [],
+        },
+    )
+    assert put.status_code == 200
+    # 服务页引用刚配置的后端（引用模型：新增=选择，不复制配置）
+    add = client.post("/api/services/embedding/endpoints", json={"ref_backend": "siliconflow"})
+    assert add.status_code == 201, add.text
+    assert "api_key" not in add.json()  # 引用行也永不回明文（凭据在模型页）
+
+    audits = client.get("/api/audit").json()
+    blob = json.dumps(audits, ensure_ascii=False)
+    assert secret not in blob, "密钥明文泄漏进审计"
+    actions = {a["action"] for a in audits}
+    assert "update_model_settings" in actions  # 模型设置变更必须留痕（此前完全无审计）
+    assert "add_service_endpoint" in actions
+    settings_audit = next(a for a in audits if a["action"] == "update_model_settings")
+    raw_detail = settings_audit["detail_json"]
+    detail = json.loads(raw_detail) if isinstance(raw_detail, str) else raw_detail
+    assert detail["backends"][0]["key_changed"] is True  # 只记"是否提供了 key"，不记值
+
+
 def test_seed_is_one_way_env_never_comes_back(tmp_path: Path) -> None:
     """迁移一次性：首启把 env 的 local 迁入；操作员在 UI 换成 siliconflow 后重启，
     local 不会被 env 重新塞回来 —— 界面是唯一事实来源。"""

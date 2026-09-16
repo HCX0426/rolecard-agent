@@ -86,28 +86,21 @@ INSERT OR IGNORE INTO kernel_meta (key, value) VALUES ('tool_epoch', '1');
 -- the first settings save takes over. API keys are stored PLAINTEXT in the local demo
 -- database: this file never leaves the machine, and the GET endpoint never returns them
 -- (only a has_key flag) - the round-trip rule lives in core/model_settings.py.
+--
+-- usage 标记该配置的用途（架构归一化：模型页是云端端点配置的**唯一事实面**）：
+--   chat      对话/抽取推理（默认；对话菜单与角色路由只消费这类行）
+--   embedding 语义嵌入凭据（服务页「语义嵌入」引用）
+--   rerank    检索重排凭据（服务页「检索重排」引用）
+--   ocr       云端 OCR 凭据（如 OCR.space 账号；服务页「OCR」引用）
+-- 服务页的云端条目一律是对本表行的**引用**，不复制配置（见 service_endpoint）。
 CREATE TABLE IF NOT EXISTS model_backend (
     name        TEXT PRIMARY KEY,
     provider    TEXT NOT NULL DEFAULT 'openai',
     base_url    TEXT,
     model       TEXT NOT NULL,
     api_key     TEXT,
+    usage       TEXT NOT NULL DEFAULT 'chat',
     sort_order  INTEGER NOT NULL DEFAULT 0
-);
-
--- Per-category service policy for the runtime service view (settings page,「服务」tab).
--- Covers the three categories whose candidates are NOT model rows (OCR / embedding / rerank);
--- model backends already have their own table + fallback chain above.
---   preferred  : candidate id this category should try FIRST (absent row = code default)
---   disabled   : JSON array of candidate ids excluded from automatic selection entirely
--- Candidates are defined IN CODE (core/services.py) — the DB only stores the operator's
--- ordering/enabling, never a catalogue. That keeps "what can exist" a commit, matching
--- domains/registry.py's explicit-registration philosophy.
-CREATE TABLE IF NOT EXISTS service_policy (
-    service_key TEXT PRIMARY KEY,
-    preferred   TEXT,
-    disabled    TEXT NOT NULL DEFAULT '[]',
-    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- ===========================================================================
@@ -176,29 +169,26 @@ CREATE TABLE IF NOT EXISTS domain_data (
 CREATE INDEX IF NOT EXISTS idx_domain_data_domain ON domain_data(domain, user_id);
 
 -- ===========================================================================
--- Service endpoints (settings page,「服务」tab) — candidate INSTANCES as data.
+-- Service endpoints (settings page,「服务」tab) — REFERENCES into model_backend.
 --
--- 哲学修正（架构归一化）：此前"候选在代码里定义，DB 只存排序与启停"——每类服务被
--- 钉死在 2 个候选上，操作员想加第 3 个云端条目（另一个 key 的 OCR / 另一家嵌入商）
--- 只能改代码。现在候选实例 = 行：云端行可增删改（各自 base_url / api_key / model），
--- 优先级 = sort_order（第 1 位即生效），启停 = enabled。本地实现（Paddle / Hash / off）
--- 是代码能力，行 builtin=1 不可删，但同样参与排序与启停。
--- 与 model_backend 同一密钥纪律：api_key 落盘明文（本地演示库不出机）、GET 只回掩码、
--- PATCH 不带 key = 保留、空串 = 清除。
+-- 架构归一化（引用模型）：模型页是云端端点配置的唯一事实面；本表只存「哪些配置参与
+-- 这类服务、以什么优先级、是否启用」—— 绝不复制 key/base_url/model。
+--   本地行（builtin=1）：paddle / hash / off 等代码能力，id 固定、不可删、可排序停用；
+--   引用行（builtin=0）：ref_backend → model_backend.name，id = ref_backend（每类服务
+--   内一后端至多一条引用）。删除引用行**绝不**动模型页配置；后端被模型页删除时，
+--   引用行在视图中呈现「失效」。
+-- 优先级 = sort_order，第 1 位即生效；启停 = enabled。
 -- ===========================================================================
 
 CREATE TABLE IF NOT EXISTS service_endpoint (
-    category   TEXT NOT NULL,
-    id         TEXT NOT NULL,
-    label      TEXT NOT NULL,
-    kind       TEXT NOT NULL DEFAULT 'cloud' CHECK (kind IN ('local', 'cloud')),
-    base_url   TEXT,
-    api_key    TEXT,
-    model      TEXT,
-    enabled    INTEGER NOT NULL DEFAULT 1,
-    sort_order INTEGER NOT NULL DEFAULT 0,
-    builtin    INTEGER NOT NULL DEFAULT 0,
-    updated_at TIMESTAMP,
+    category    TEXT NOT NULL,
+    id          TEXT NOT NULL,
+    kind        TEXT NOT NULL DEFAULT 'cloud' CHECK (kind IN ('local', 'cloud')),
+    ref_backend TEXT,
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    builtin     INTEGER NOT NULL DEFAULT 0,
+    updated_at  TIMESTAMP,
     PRIMARY KEY (category, id)
 );
 

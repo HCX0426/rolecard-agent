@@ -9,7 +9,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from rolecard_agent.api.deps import AppContext, get_context
+from rolecard_agent.api.auth import Actor
+from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.core.model_settings import (
     ModelSettingsError,
     is_keyless_provider,
@@ -32,6 +33,9 @@ class BackendSpec(BaseModel):
     base_url: str | None = None
     model: str = Field(min_length=1)
     api_key: str | None = None
+    # 模型页是云端端点配置的唯一事实面：usage 标记该行服务谁（chat/embedding/rerank/ocr），
+    # 服务页按用途引用。对话菜单与角色路由只消费 chat 行。
+    usage: str = "chat"
 
 
 class ModelSettingsBody(BaseModel):
@@ -58,7 +62,9 @@ def get_model_providers() -> object:
 
 @router.put("/api/settings/models")
 def put_model_settings(
-    body: ModelSettingsBody, ctx: AppContext = Depends(get_context)
+    body: ModelSettingsBody,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
 ) -> object:
     """保存后端集合并热重建（下一轮对话即用新后端，无需重启进程）。
 
@@ -81,6 +87,24 @@ def put_model_settings(
         )
     except ModelSettingsError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # 管理面变更必须留痕（H3）。审计只记**结构**（名称/用途/默认/回退链），绝不记 key。
+    ctx.roles.audit(
+        actor=actor.id,
+        action="update_model_settings",
+        target=body.default,
+        detail={
+            "backends": [
+                {
+                    "name": b.name,
+                    "provider": b.provider,
+                    "usage": b.usage,
+                    "key_changed": b.api_key is not None,
+                }
+                for b in body.backends
+            ],
+            "fallbacks": body.fallbacks,
+        },
+    )
     try:
         ctx.rebuild_runtime()
     except Exception as exc:  # noqa: BLE001 - 构建失败要给出可读原因，而不是 500 空壳

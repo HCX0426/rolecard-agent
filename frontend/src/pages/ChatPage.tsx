@@ -113,7 +113,7 @@ export default function ChatPage({
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const [backends, setBackends] = useState<{ name: string; provider: string; model: string }[]>([]);
+  const [backends, setBackends] = useState<{ name: string; provider: string; model: string; usage: string }[]>([]);
   // 供应商 id → 中文档称（分组标题显示"硅基流动"而非原始 id）
   const [providerLabels, setProviderLabels] = useState<Record<string, string>>({});
   const [defaultBackend, setDefaultBackend] = useState("");
@@ -140,7 +140,7 @@ export default function ChatPage({
     refreshSessions().catch((e) => setStatus(`加载会话失败：${e.message}`, "warn"));
     api.get<RoleCard[]>("/api/roles").then(setRoles).catch(() => {});
     api.get<ModelSettings>("/api/settings/models").then((s) => {
-      setBackends(s.backends.map((b) => ({ name: b.name, provider: b.provider, model: b.model })));
+      setBackends(s.backends.map((b) => ({ name: b.name, provider: b.provider, model: b.model, usage: b.usage ?? "chat" })));
       setDefaultBackend(s.default || s.backends[0]?.name || "");
     }).catch(() => {});
     api.get<{ providers: ModelProvider[] }>("/api/settings/model-providers")
@@ -448,7 +448,8 @@ export default function ChatPage({
   const displayRole = currentRole || defaultRoleId;
   const grouped = useMemo(() => {
     const g: Record<string, typeof backends> = {};
-    for (const b of backends) (g[b.provider] ||= []).push(b);
+    // 模型菜单只显示**对话**后端（usage=chat）；嵌入/重排/OCR 凭据行在服务页按用途引用。
+    for (const b of backends.filter((x) => x.usage === "chat")) (g[b.provider] ||= []).push(b);
     return Object.entries(g).sort(([a], [z]) => a.localeCompare(z));
   }, [backends]);
 

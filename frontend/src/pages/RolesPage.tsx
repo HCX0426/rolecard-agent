@@ -82,7 +82,8 @@ export default function RolesPage() {
     api.get<ToolCatalog>("/api/tools/catalog").then(setCatalog).catch(() => {});
     api
       .get<ModelSettings>("/api/settings/models")
-      .then((s) => setBackends(s.backends.map((b) => b.name)))
+      // 角色级路由只允许指向**对话**后端（usage=chat）；嵌入/重排/OCR 凭据行不是推理模型。
+      .then((s) => setBackends(s.backends.filter((b) => (b.usage ?? "chat") === "chat").map((b) => b.name)))
       .catch(() => {});
     // 可选作用域的真实来源：已建的知识集合（RAG 真实作用域），让下拉"所见即所得"。
     api

@@ -61,6 +61,9 @@ class ModelBackend(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
     provider: str = "ollama"
+    # 模型页是云端端点配置的唯一事实面；usage 标记该行服务谁：
+    # chat=对话推理（对话菜单/角色路由只消费这类）| embedding | rerank | ocr（凭据行）。
+    usage: str = "chat"
 
 
 class Settings(BaseModel):

@@ -41,6 +41,8 @@ export interface BackendRow {
   provider: string;
   base_url: string | null;
   model: string;
+  /** 配置用途（模型页=云端配置唯一事实面）：chat=对话推理 | embedding | rerank | ocr 凭据。 */
+  usage: string;
   sort_order: number;
   has_key: boolean;
   key_masked: string | null;

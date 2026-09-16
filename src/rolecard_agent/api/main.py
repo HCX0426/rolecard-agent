@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -173,9 +174,9 @@ def create_app(
     ingestion = IngestionService(conn)
     health_query = HealthQueryService(conn)
     model_settings = ModelSettingsService(conn)
-    # 服务端点实例（OCR / 嵌入 / 重排的候选行）—— 启动时一次性播种默认行（幂等）。
+    # 服务端点引用（OCR / 嵌入 / 重排引用哪些后端）—— 启动时一次性播种默认行（幂等）。
     services = ServiceEndpointService(conn)
-    services.seed_once(settings)
+    services.seed_once()
     knowledge = KnowledgeBase(
         settings.chroma_path,
         make_embedder(
@@ -217,6 +218,9 @@ def create_app(
         "effective": effective,
         "default_model": resolved_model,
     }
+
+    # H2：重建互斥锁 —— 构建在锁外、换装在锁内（见 rebuild_runtime docstring）。
+    _rebuild_lock = threading.Lock()
 
     def resolve_role_model(backend_name: str | None) -> ChatLike:
         """US-8：角色声明了后端名 → 按名解析；未声明 → 默认模型。
@@ -285,17 +289,21 @@ def create_app(
     app.include_router(domains_router.router)
 
     def rebuild_runtime() -> None:
-        """按当前设置与服务策略重建全部运行时对象：模型、KnowledgeBase、registry、图。
+        """按当前设置与服务端点引用重建全部运行时对象：模型、KnowledgeBase、registry、图。
 
-        由两条路径触发：模型设置保存（settings router）与服务策略保存（services router）。
-        嵌入器/重排器是 KnowledgeBase 构造时注入的实例，策略变了必须连 KB 一起重造；
+        由两条路径触发：模型设置保存（settings router）与服务端点变更（services router）。
+        嵌入器/重排器是 KnowledgeBase 构造时注入的实例，引用变了必须连 KB 一起重造；
         search_knowledge 工具闭包持有 KB，所以 registry 也要跟着重建 —— 顺序即依赖序。
+
+        并发安全（H2）：**构建在锁外、换装在锁内**。两个并发重建各自完整构建（后写者
+        胜出，浪费但正确），而 ctx 三引用 + role_models 的换装是单个临界区内的原子序列
+        —— 杜绝"新图配旧 KB"的中间态被 SSE 请求看到。
         """
         eff = model_settings.effective_settings(settings)
         role_models.clear()
         default_model = factory(eff, None)
 
-        # 服务端点（OCR / 嵌入 / 重排）从 DB 读操作员顺序；云端行按行内配置实例化。
+        # 服务端点（OCR / 嵌入 / 重排）从 DB 读引用行；云端行按被引用后端的配置实例化。
         embedder = make_embedder(
             eff,
             order=[e.id for e in services.ordered_candidates("embedding")],
@@ -326,12 +334,14 @@ def create_app(
             plugins=plugins,
             model_resolver=resolve_role_model,
         )
-        # 一次性换装：KB / registry 换新实例（工具经 registry 间接引用新 KB），图也换新。
-        ctx.knowledge = knowledge_new
-        ctx.registry = registry_new
-        app_state["effective"] = eff
-        app_state["default_model"] = default_model
-        app_state["graph"] = graph_new
+        with _rebuild_lock:
+            # 一次性换装：KB / registry 换新实例（工具经 registry 间接引用新 KB），图也换新。
+            role_models.clear()
+            ctx.knowledge = knowledge_new
+            ctx.registry = registry_new
+            app_state["effective"] = eff
+            app_state["default_model"] = default_model
+            app_state["graph"] = graph_new
 
     # 绑定真实现（ctx 构造时是占位 lambda，避免定义顺序上的循环依赖）。
     ctx.rebuild_runtime = rebuild_runtime

@@ -182,5 +182,30 @@ def bootstrap(conn: sqlite3.Connection, enabled_domains: Iterable[str] = ()) -> 
             raise FileNotFoundError(f"schema file missing: {path}")
         conn.executescript(path.read_text(encoding="utf-8"))
         applied.append(str(path.relative_to(PACKAGE_ROOT)))
+    _migrate(conn)
     conn.commit()
     return applied
+
+
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {str(r["name"]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """演示库的幂等列级迁移（无迁移框架，ALTER/DROP 全部可重跑）。
+
+    1. model_backend 增列 usage（供应商配置唯一事实面的用途标记）——旧库补列，默认 chat。
+    2. service_policy 已退役（策略并入 service_endpoint 行内 enabled/sort_order）→ DROP。
+    3. service_endpoint 旧形态（行内嵌 key/base_url 的"实例"模型）→ 整表重建为
+       「引用 model_backend」的新形态；旧行配置属演示数据且引用化后由模型页承接，
+       直接弃用。**必须连 seed flag 一起清**，否则 seed_once 会以为播过种而跳过，
+       留下一张空表（实测踩过：引用行全部缺失）。
+    """
+    if "usage" not in _columns(conn, "model_backend"):
+        conn.execute("ALTER TABLE model_backend ADD COLUMN usage TEXT NOT NULL DEFAULT 'chat'")
+    conn.execute("DROP TABLE IF EXISTS service_policy")
+    if "api_key" in _columns(conn, "service_endpoint"):
+        conn.execute("DROP TABLE service_endpoint")
+        conn.execute("DELETE FROM kernel_meta WHERE key = 'service_endpoints_seeded'")
+        core = core_schema_path()
+        conn.executescript(core.read_text(encoding="utf-8"))
