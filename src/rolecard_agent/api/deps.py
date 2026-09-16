@@ -12,9 +12,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException, Request
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.config import Settings
@@ -32,6 +34,60 @@ from rolecard_agent.roles.service import (
     RoleNotFound,
 )
 from rolecard_agent.storage.db import ThreadLocalConnection
+
+# v1 演示身份（schema 每张表都有 user_id 列；接真实登录是数据替换，不是改表）。
+DEFAULT_TENANT_ID = "local"
+DEFAULT_USER_ID = "local-user"
+# 默认"无角色"：纯对话，不接工具与检索。
+DEFAULT_ROLE_ID = "general_assistant"
+
+
+def get_thread(conn: ThreadLocalConnection, thread_id: str):
+    """按 id 取会话行；不存在 404。多个 router 共用（sessions / chat / upload）。"""
+    row = conn.execute(
+        "SELECT thread_id, user_id, current_role_id, model_name FROM session_thread "
+        "WHERE thread_id = ?",
+        (thread_id,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"会话不存在：{thread_id}")
+    return row
+
+
+def serialize_message(message: object) -> dict[str, object]:
+    """Checkpoint message -> JSON shape for the frontend history replay."""
+    if isinstance(message, HumanMessage):
+        return {"role": "user", "content": _text_of(message)}
+    if isinstance(message, ToolMessage):
+        return {"role": "tool", "name": message.name, "content": _text_of(message)}
+    if isinstance(message, AIMessage):
+        tools = [tc.get("name") for tc in (message.tool_calls or [])]
+        return {"role": "assistant", "content": _text_of(message), "tools": tools}
+    return {"role": "assistant", "content": _text_of(message)}
+
+
+def _text_of(message: object) -> str:
+    content = getattr(message, "content", message)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and isinstance(block.get("text"), str):
+                parts.append(block["text"])
+        return "".join(parts)
+    return str(content)
+
+
+def parsed_text_path(target: Path) -> Path:
+    """解析文本的落点：`<上传文件>.parsed.txt`（与上传文件同目录，随 uploads/ 一起被 gitignore）。
+
+    为什么落盘：结构化抽取需要原文，而图片的解析要走 OCR 子进程（很贵）。上传时顺手存一份，
+    抽取就不必再跑一次 OCR。
+    """
+    return target.with_name(target.name + ".parsed.txt")
 
 
 @dataclass(slots=True)
