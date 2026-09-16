@@ -38,14 +38,9 @@ DEFAULT_LOCAL_BACKEND = {
     "api_key": "ollama",
 }
 
-# 多模态后端（vl = 文本版超集）：图片直读对话用；EXTRACT_BACKEND 可显式指向它。
-# 不进默认后端集 —— 需要时在 MODEL_BACKENDS / 设置页里按 name=local_vl 添加。
-DEFAULT_VL_BACKEND = {
-    "provider": "ollama",
-    "base_url": "http://localhost:11434",
-    "model": "qwen2.5vl:7b",
-    "api_key": "ollama",
-}
+# 多模态后端（vl = 文本版超集）按需添加：图片直读对话 / 备用抽取。
+# 配置示例见 .env.example 的 MODEL_BACKENDS 注释 —— 不进默认后端集，避免
+# "定义了但没人消费"的死配置（那是 P15 类问题）。
 
 # Measured advice, not a hard limit of the framework: a longer chain makes a failure harder to
 # localise, and it hides "the answer got worse after degrading" from whoever reads the logs
