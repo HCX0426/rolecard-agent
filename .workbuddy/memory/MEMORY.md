@@ -130,3 +130,21 @@ cd frontend && npm test && npm run build
 - 超时/参数的传法**因客户端而异**：`ChatOllama` 只认 `client_kwargs`（直接传 `timeout` 会被
   静默丢弃），`init_chat_model` 的 openai 兼容路径才认 `timeout`。断言要读**真实客户端**
   （`model._client._client.timeout`），只断言 kwargs 字典会漏掉这类 bug。
+
+## 关键事实（排查相关问题时先看这里）
+
+- **ChatOllama 的采样参数只能在构造期设置**：`.bind(temperature=...)` 的调用期 kwargs 会
+  进请求顶层而非 `options`，Ollama 忽略之（langchain_ollama `_generate` 源码确认）。
+  角色 temperature 走 `core/graph._init_model(..., temperature)` 构造期注入。
+- **chroma 1.5.9**：集合度量默认 l2，`collection.configuration["hnsw"]["space"]` 可读；
+  新建集合用 `configuration={"hnsw": {"space": "cosine"}}`（旧版 metadata 写法也兼容）。
+  HashEmbedder（离线默认）的相似度**没有标定意义**（正确结果 0.163 < 无关文本 0.358），
+  任何跨嵌入器的固定阈值都会误伤 —— 检索阈值只能按嵌入器标定或用相对裁剪。
+- **api 层不允许 import 具体域模块**：需要域的名字/方法时，加进
+  `core.domain_service.DomainQueryService` 协议由域实现（如 `knowledge_scope`）。
+- **SQLite 残留事务**：清理必须发生在**真正持连接的线程**（`ThreadLocalConnection._current()`
+  的代际检查）；事件循环线程里的 rollback 清的是别人的连接。
+- **`npm run build` = `tsc --noEmit && vite build`**：tsc 错 → dist 不更新 → 浏览器验证
+  会验到旧代码。改完前端先确认 ✓ built 再探针。
+- **长 heredoc 不可靠**：会被截断/转义损坏 —— 多行补丁用 Write 写临时脚本（系统 Temp）
+  再执行；改文件优先用 Edit 工具。
