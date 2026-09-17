@@ -307,6 +307,8 @@ export const api = {
   extractRecord: (taskId: string) =>
     request<ExtractResult>("POST", "/api/records/extract", { task_id: taskId }),
   /** 模型供应商目录（设置页下拉动态来源）。 */
+  enhancePrompt: (text: string) =>
+    request<{ text: string }>("POST", "/api/prompt/enhance", { text }),
   getProviders: () => request<{ providers: ModelProvider[] }>("GET", "/api/settings/model-providers"),
   /** 知识作用域候选（角色卡下拉来源：真实已建的知识集合）。 */
   getKnowledgeScopes: () => request<KnowledgeScopes>("GET", "/api/knowledge/scopes"),

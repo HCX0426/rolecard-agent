@@ -106,6 +106,33 @@ function ToolStepCard({ step }: { step: ToolStep }) {
   );
 }
 
+/** 发送（上箭头）——嵌在输入框内的图标按钮（WorkBuddy 式）。 */
+function IconSend() {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden="true">
+      <path d="M10 3a1 1 0 01.7.3l5 5a1 1 0 01-1.4 1.4L11 6.4V16a1 1 0 11-2 0V6.4L5.7 9.7a1 1 0 01-1.4-1.4l5-5A1 1 0 0110 3z" />
+    </svg>
+  );
+}
+
+/** 停止（方块）——生成中替换发送按钮。 */
+function IconStop() {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5" aria-hidden="true">
+      <rect x="5.5" y="5.5" width="9" height="9" rx="1.5" />
+    </svg>
+  );
+}
+
+/** 增强提示词（四角星）。 */
+function IconSparkle() {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5" aria-hidden="true">
+      <path d="M10 2l1.7 4.6L16 8.3l-4.3 1.7L10 14.6 8.3 10 4 8.3l4.3-1.7L10 2z" />
+    </svg>
+  );
+}
+
 /** 回答耗时：created_at 配对（用户 → 助手）换算成可读时长；无时间戳的旧消息返回 null。 */
 function fmtDuration(from: string, to: string): string | null {
   if (!from || !to) return null;
@@ -156,6 +183,8 @@ export default function ChatPage({
   // 编辑重生成：正在编辑的那条消息（id + 草稿）
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+  const [enhancing, setEnhancing] = useState(false); // 增强提示词进行中
+  const [ctxBudget, setCtxBudget] = useState(0); // 上下文字符预算（后端 context 端点）
   // 多选删除模式：勾选若干消息（勾一侧自动带上整轮）
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
@@ -231,6 +260,7 @@ export default function ChatPage({
       setMessages(msgs);
       setSessionModel(detail.model_name);
       setTrim(ctxInfo.trimmed > 0 ? { dropped: ctxInfo.trimmed, kept: ctxInfo.kept } : null);
+      setCtxBudget(ctxInfo.budget);
       setStatus("");
     } catch (e) {
       setStatus(`加载历史失败：${(e as Error).message}`, "warn");
@@ -325,6 +355,10 @@ export default function ChatPage({
     return { userId, userText, dur };
   });
 
+  // 上下文使用率：已用字符按当前消息估算（展示口径，随消息实时更新），上限来自后端配置。
+  const ctxUsed = messages.reduce((n, m) => n + (m.content?.length ?? 0) + (m.reasoning?.length ?? 0), 0);
+  const ctxPct = ctxBudget > 0 ? Math.min(100, Math.round((ctxUsed / ctxBudget) * 100)) : 0;
+
   function copyContent(i: number) {
     navigator.clipboard?.writeText(messages[i].content).then(
       () => {
@@ -341,6 +375,21 @@ export default function ChatPage({
     const content = pairs[idx]?.userText ?? "";
     if (!uid || busy || !content) return;
     saveEdit(uid, content);
+  }
+
+  /** 增强提示词：一次纯改写模型调用，结果替换草稿（对齐 WorkBuddy）。 */
+  async function enhance() {
+    const draft = input.trim();
+    if (!draft || busy || enhancing) return;
+    setEnhancing(true);
+    try {
+      const r = await api.enhancePrompt(draft);
+      setInput(r.text);
+    } catch (e) {
+      setStatus(`增强提示词失败：${(e as Error).message}`, "warn");
+    } finally {
+      setEnhancing(false);
+    }
   }
 
   async function send(preset?: string) {
@@ -973,42 +1022,79 @@ export default function ChatPage({
               ))}
             </div>
           )}
-          <div className="mx-auto flex max-w-3xl items-end gap-2">
-            <textarea
-              ref={inputRef}
-              value={input}
-              rows={1}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                // Enter 发送、Shift+Enter 换行；输入法组词中（isComposing）不触发。
-                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                  e.preventDefault();
-                  send();
+          {/* 输入框（WorkBuddy 式）：发送/暂停是嵌在框内的图标按钮；左下「增强提示词」，
+              右下上下文使用率（悬停看明细）。 */}
+          <div className="mx-auto max-w-3xl">
+            <div className="rounded-2xl border border-slate-200 bg-white focus-within:border-blue-400 dark:border-slate-700 dark:bg-slate-800">
+              <textarea
+                ref={inputRef}
+                value={input}
+                rows={1}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  // Enter 发送、Shift+Enter 换行；输入法组词中（isComposing）不触发。
+                  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    send();
+                  }
+                }}
+                placeholder={
+                  busy
+                    ? "正在生成…（可点右下角停止）"
+                    : "输入消息，Enter 发送 / Shift+Enter 换行（没有会话会自动创建）"
                 }
-              }}
-              placeholder={
-                busy
-                  ? "正在生成…（可点右侧「停止」）"
-                  : "输入消息，Enter 发送 / Shift+Enter 换行（没有会话会自动创建）"
-              }
-              disabled={busy}
-              className="max-h-40 flex-1 resize-none rounded-xl border border-slate-200 dark:border-slate-700 px-4 py-2.5 leading-relaxed outline-none focus:border-blue-400 disabled:bg-slate-50 dark:bg-slate-800/50"
-            />
-            {busy ? (
-              <button
-                onClick={stop}
-                className="rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-5 text-sm font-medium text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-red-300 dark:hover:border-red-700 hover:text-red-600 dark:text-red-400 dark:text-red-500"
-              >
-                停止
-              </button>
-            ) : (
-              <button
-                onClick={() => send()}
-                className="rounded-xl bg-blue-600 px-5 text-sm font-medium text-white hover:bg-blue-700"
-              >
-                发送
-              </button>
-            )}
+                disabled={busy}
+                className="max-h-40 w-full resize-none bg-transparent px-4 pt-3 pb-1 leading-relaxed outline-none disabled:bg-slate-50 dark:disabled:bg-slate-800/50"
+              />
+              <div className="flex items-center justify-between gap-2 px-2.5 pb-2">
+                <button
+                  onClick={enhance}
+                  disabled={busy || enhancing || !input.trim()}
+                  title="增强提示词：把草稿改写得更清晰、具体（一次模型调用）"
+                  className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-700/60"
+                >
+                  <IconSparkle />
+                  {enhancing ? "增强中…" : "增强提示词"}
+                </button>
+                <div className="flex items-center gap-2">
+                  {ctxBudget > 0 && (
+                    <span
+                      title={`上下文约 ${ctxUsed} 字 / 上限 ${ctxBudget} 字（${ctxPct}%）${
+                        trim ? ` · 本轮已裁 ${trim.dropped} 条` : ""
+                      }`}
+                      className="flex cursor-default items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500"
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ${
+                          ctxPct >= 80 ? "bg-amber-400" : "bg-slate-300 dark:bg-slate-600"
+                        }`}
+                      />
+                      {ctxPct}%
+                    </span>
+                  )}
+                  {busy ? (
+                    <button
+                      onClick={stop}
+                      title="停止生成"
+                      aria-label="停止生成"
+                      className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-700 text-white hover:bg-slate-800 dark:bg-slate-600 dark:hover:bg-slate-500"
+                    >
+                      <IconStop />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => send()}
+                      disabled={!input.trim()}
+                      title="发送（Enter）"
+                      aria-label="发送"
+                      className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-white hover:bg-blue-700 disabled:bg-slate-300 dark:disabled:bg-slate-700"
+                    >
+                      <IconSend />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
           {/* 功能行（对齐 WorkBuddy：输入框下方一排功能）—— 全部对接真实后端能力 */}
           <div className="mx-auto mt-2 flex max-w-3xl items-center gap-2">

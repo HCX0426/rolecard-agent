@@ -229,3 +229,13 @@ def test_console_fallback_when_dist_missing(
         assert "管理控制台" in res.text
         assert "npm run build" in res.text
         assert c.get("/api/roles").status_code == 200  # API 照常工作
+
+
+def test_enhance_prompt_rejects_empty(client: TestClient) -> None:
+    """增强提示词：空草稿直接 400（不浪费一次模型调用）。成功路径需真实模型，见 smoke。"""
+    res = client.post("/api/prompt/enhance", json={"text": "   "})
+    assert res.status_code == 400
+    assert "没有可增强" in res.json()["detail"]
+
+
+
