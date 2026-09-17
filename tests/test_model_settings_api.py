@@ -28,7 +28,11 @@ def counter() -> dict[str, int]:
 
 
 @pytest.fixture
-def factory(counter: dict[str, int]) -> object:
+def factory(
+    counter: dict[str, int],
+    _backend_name: str | None = None,
+    _temperature: float | None = None,
+) -> object:
     """脚本化模型工厂 —— **不接触真实后端**，但必须忠实模拟真实工厂的契约。
 
     契约里有一条是载荷的：`core.graph.build_model` 对未知后端名抛 `KeyError`
@@ -37,7 +41,11 @@ def factory(counter: dict[str, int]) -> object:
     返回模型，于是"降级"测试从来没真正走到降级分支 —— 一个通过了的假阳性
     （代码审查报告（第二轮）新增断言时暴露）。
     """
-    def _factory(settings: object, backend_name: str | None = None) -> ScriptedChat:
+    def _factory(
+        settings: object,
+        backend_name: str | None = None,
+        temperature: float | None = None,
+    ) -> ScriptedChat:
         known = getattr(settings, "model_backends", {}) or {}
         if backend_name is not None and backend_name not in known:
             raise KeyError(f"unknown model backend {backend_name!r}")
@@ -45,6 +53,10 @@ def factory(counter: dict[str, int]) -> object:
         label = f"build-{counter['n']}"
         if backend_name:
             label += f"@{backend_name}"
+        # 温度也打进标记：P1-2 的断言点是「角色卡的 temperature 真的传到了工厂」，
+        # 而不是只看工厂被调用了几次。
+        if temperature is not None:
+            label += f"@t{temperature}"
         return ScriptedChat([AIMessage(content=label)])
 
     return _factory
@@ -215,7 +227,10 @@ def test_save_hot_rebuilds_the_graph(client: TestClient) -> None:
     """US-9 核心：保存后**下一轮对话**就用新图 —— factory 每次构建返回 build-N 的模型。"""
     session = client.post("/api/session", json={}).json()
     tid = str(session["thread_id"])
-    assert authoritative_text(client, tid, "一问") == "build-1"
+    # 角色自带默认温度（0.7），所以第一轮就是"带温度的新实例"（build-2，启动默认
+    # build-1 只有在温度缺失时才会被用到）。这个用例钉的契约是：**保存后下一轮换成
+    # 新构建的实例** —— 所以比较序号，而不是硬编码标签。
+    first = authoritative_text(client, tid, "一问")
 
     res = client.put(
         "/api/settings/models",
@@ -227,7 +242,10 @@ def test_save_hot_rebuilds_the_graph(client: TestClient) -> None:
         },
     )
     assert res.status_code == 200
-    assert authoritative_text(client, tid, "二问") == "build-2"  # 新图生效，无需重启
+    second = authoritative_text(client, tid, "二问")  # 新图生效，无需重启
+    n_first = int(first.split("@")[0].replace("build-", ""))
+    n_second = int(second.split("@")[0].replace("build-", ""))
+    assert n_second > n_first
 
 
 def test_role_model_name_routes_to_declared_backend(client: TestClient) -> None:
@@ -258,6 +276,36 @@ def test_role_model_name_routes_to_declared_backend(client: TestClient) -> None:
     session = client.post("/api/session", json={"role_id": "b2user"}).json()
     text = authoritative_text(client, str(session["thread_id"]), "你好")
     assert "@cloud-b" in text  # 该轮确实用了角色声明的后端，而非默认
+
+
+def test_role_temperature_reaches_the_model(client: TestClient) -> None:
+    """P1-2 回归：角色卡的 temperature 必须真的进到模型构造（此前是死配置）。
+
+    顺带钉住缓存键语义：温度参与 (后端, 温度) 缓存 —— 两个不同温度的角色
+    各自拿到自己的实例，而不是后拿到温度的那份污染先到的。
+    """
+    client.post(
+        "/api/roles",
+        json={
+            "role_id": "cool",
+            "role_name": "低温角色",
+            "system_prompt": "x",
+            "temperature": 0.3,
+        },
+    )
+    client.post(
+        "/api/roles",
+        json={
+            "role_id": "warm",
+            "role_name": "高温角色",
+            "system_prompt": "x",
+            "temperature": 0.9,
+        },
+    )
+    s1 = client.post("/api/session", json={"role_id": "cool"}).json()
+    s2 = client.post("/api/session", json={"role_id": "warm"}).json()
+    assert "@t0.3" in authoritative_text(client, str(s1["thread_id"]), "你好")
+    assert "@t0.9" in authoritative_text(client, str(s2["thread_id"]), "你好")
 
     # 未声明后端名的会话仍走默认
     other = client.post("/api/session", json={}).json()
@@ -365,7 +413,7 @@ def test_unknown_role_backend_falls_back_to_default(client: TestClient) -> None:
     session = client.post("/api/session", json={"role_id": "ghost_backend"}).json()
     tid = str(session["thread_id"])
     # 第一轮：角色路由生效，用的是 cloud-a 上构建的模型
-    assert authoritative_text(client, tid, "一问").endswith("@cloud-a")
+    assert "@cloud-a" in authoritative_text(client, tid, "一问")  # 角色默认温度也会跟着进来
 
     # 删掉 cloud-a：角色仍引用它 → 下一轮降级默认，对话不崩
     client.put(

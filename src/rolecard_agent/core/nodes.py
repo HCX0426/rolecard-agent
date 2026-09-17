@@ -221,7 +221,7 @@ class KernelContext:
     # 角色级模型路由（US-8 后半）：按 role.model_name 解析该角色这轮用的模型。
     # None = 未接线，一律用构建期的 `model`（默认后端）。解析器由宿主提供——缓存、
     # 未知后端降级、重建失效都是宿主（settings/model_factory）的职责，内核只管"问谁要"。
-    model_resolver: Callable[[str | None], ChatLike] | None = None
+    model_resolver: Callable[..., ChatLike] | None = None
 
     # 送进模型的历史字符预算（见 trim_history）。<=0 = 不裁剪。
     max_context_chars: int = DEFAULT_MAX_CONTEXT_CHARS
@@ -308,7 +308,13 @@ def call_model(
     # 模型解析优先级（US-8 + 会话级覆盖）：会话 model_name > 角色 model_name > 默认。
     # 会话覆盖由对话页的模型下拉写入 state（chat 端点每轮实时读库）。
     backend = state.get("model_name") or role.model_name
-    base = ctx.model_resolver(backend) if ctx.model_resolver else ctx.model
+    # 角色卡的 temperature 在构造期生效（见 core/graph._init_model）：
+    # 解析器按 (后端, 温度) 缓存模型实例 —— 模型是跨线程共享的，事后改字段会串到别的对话。
+    base = (
+        ctx.model_resolver(backend, temperature=role.temperature)
+        if ctx.model_resolver
+        else ctx.model
+    )
     bound = base.bind_tools(tools) if tools else base
 
     # A session that outlived a plugin toggle can carry historical tool_calls for tools that no

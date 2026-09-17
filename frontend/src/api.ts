@@ -355,9 +355,6 @@ export const api = {
     ),
   enhancePrompt: (text: string) =>
     request<{ text: string }>("POST", "/api/prompt/enhance", { text }),
-  getProviders: () => request<{ providers: ModelProvider[] }>("GET", "/api/settings/model-providers"),
-  /** 知识作用域候选（角色卡下拉来源：真实已建的知识集合）。 */
-  getKnowledgeScopes: () => request<KnowledgeScopes>("GET", "/api/knowledge/scopes"),
   /** 通用领域记录（非 health 域的数据增删改查）。 */
   listDomainRecords: (domain: string) =>
     request<GenericRecord[]>("GET", `/api/domains/${domain}/records`),
@@ -412,14 +409,6 @@ export interface CleanupResult {
   freed_bytes: number;
   scanned: number;
   referenced: number;
-}
-
-/** 删除会话中选中的问答对（后端按整轮扩展）。 */
-export function deleteMessages(
-  threadId: string,
-  messageIds: string[],
-): Promise<{ deleted: number; remaining: number }> {
-  return request("POST", `/api/session/${threadId}/messages/delete`, { message_ids: messageIds });
 }
 
 /** 编辑一条自己发过的消息并从那里重新生成（SSE 事件流与 streamChat 完全一致）。 */

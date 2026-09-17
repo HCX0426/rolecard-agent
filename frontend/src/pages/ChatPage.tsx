@@ -170,8 +170,19 @@ export default function ChatPage() {
     setCurrentRole(cur?.role_id || "");
   }, [sessionId, sessions]);
 
+  // 自动滚动：只在「用户本来就贴着底部」时跟随。绑死在 [messages, live] 的无条件
+  // scrollTo 会让生成期间往上翻历史的人被每个 token 拽回底部（审查报告 P2）。
+  const stickyRef = useRef(true);
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    stickyRef.current = true; // 切了上下文 = 用户主动换了对话，强制跟一次
+  }, [sessionId]);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
+    if (!stickyRef.current && !nearBottom) return;
+    el.scrollTo({ top: el.scrollHeight });
+    stickyRef.current = false;
   }, [messages, live]);
 
   async function selectSession(threadId: string) {
@@ -274,7 +285,8 @@ export default function ChatPage() {
   }
 
   // 按轮分组（用户提问 → 过程步骤 → 最终回答）：切分逻辑在 lib/turns（与后端同规则）。
-  const turns = buildTurns(messages);
+  // memo：数百条历史时每个 token 都会触发渲染，重跑切分是纯浪费（审查报告 P2）。
+  const turns = useMemo(() => buildTurns(messages), [messages]);
 
   function copyContent(text: string, key: string) {
     navigator.clipboard?.writeText(text).then(
@@ -295,7 +307,11 @@ export default function ChatPage() {
   }
 
   // 上下文使用率：已用字符按当前消息估算（展示口径，随消息实时更新），上限来自后端配置。
-  const ctxUsed = messages.reduce((n, m) => n + (m.content?.length ?? 0) + (m.reasoning?.length ?? 0), 0);
+    const ctxUsed = useMemo(
+    () =>
+      messages.reduce((n, m) => n + (m.content?.length ?? 0) + (m.reasoning?.length ?? 0), 0),
+    [messages],
+  );
   const ctxPct = ctxBudget > 0 ? Math.min(100, Math.round((ctxUsed / ctxBudget) * 100)) : 0;
 
   /** 设置某后端的上下文窗口（本地模型 num_ctx），保存后热重建、下一轮生效。 */
@@ -983,6 +999,13 @@ export default function ChatPage() {
               className="relative"
               onMouseEnter={cancelMenuClose}
               onMouseLeave={() => armMenuClose(() => setRoleMenuOpen(false))}
+              onKeyDown={(e) => {
+                // 键盘用户的第二条退路：菜单靠鼠标移出关闭，Esc 必须也能关。
+                if (e.key === "Escape") {
+                  setRoleMenuOpen(false);
+                  setModelMenuOpen(false);
+                }
+              }}
             >
               {/* 角色切换（WorkBuddy 式自定义菜单）：原生 select 的弹层系统绘制、样式突兀，
                   换成与模型菜单同款的面板——角色名 + 内置徽标 + 当前项勾选。 */}
@@ -991,6 +1014,8 @@ export default function ChatPage() {
                   setModelMenuOpen(false); // 两个菜单互斥
                   setRoleMenuOpen((o) => !o);
                 }}
+                aria-haspopup="true"
+                aria-expanded={roleMenuOpen}
                 title="切换当前对话的角色（下一轮生效）"
                 className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-700"
               >
@@ -1039,6 +1064,8 @@ export default function ChatPage() {
                   setRoleMenuOpen(false); // 两个菜单互斥
                   setModelMenuOpen((o) => !o);
                 }}
+                aria-haspopup="true"
+                aria-expanded={modelMenuOpen}
                 title="切换本对话使用的模型（按供应商分组；选中即开对话）"
                 className="flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
               >

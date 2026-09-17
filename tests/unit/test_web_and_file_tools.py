@@ -10,7 +10,10 @@
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -85,6 +88,67 @@ def test_search_backend_failure_becomes_readable(settings: Settings, monkeypatch
         search.invoke({"query": "q"})
 
 
+# -- web_fetch：行文抽取 / 截断 / 重定向边界 ----------------------------------------
+#
+# web_fetch 现在是**流式读 + 逐跳校验重定向**（审查报告 P1-3 / P2），所以替身必须支持
+# `client.stream(...)` 这个上下文管理器，而不是简单的 `client.get(...)`。
+
+
+class _FakeStream:
+    """httpx 流式响应的最小替身：可当重定向，也可当正文。"""
+
+    def __init__(
+        self, *, url: str, status: int = 200, body: bytes = b"", location: str | None = None
+    ) -> None:
+        self.url = url
+        self.status_code = status
+        self.headers = {"location": location} if location else {}
+        self.encoding = "utf-8"
+        self._body = body
+
+    @property
+    def is_redirect(self) -> bool:
+        return self.status_code in (301, 302, 303, 307, 308)
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    def iter_bytes(self) -> Iterator[bytes]:
+        # 故意切块：代码应当**边读边停**，而不是先整包进内存再截断。
+        for i in range(0, len(self._body), 4096):
+            yield self._body[i : i + 4096]
+
+
+class _FakeStreamingClient:
+    """按 URL 返回预设响应的 httpx.Client 替身（并记录实际请求过哪些 URL）。"""
+
+    is_closed = False
+
+    def __init__(
+        self, responses: dict[str, _FakeStream] | None = None, default: _FakeStream | None = None
+    ) -> None:
+        self._responses = responses or {}
+        self._default = default
+        self.requested: list[str] = []
+
+    def stream(self, _method: str, url: str, **kwargs: Any) -> Any:
+        self.requested.append(url)
+        resp = self._responses.get(url)
+        if resp is None:
+            if self._default is None:
+                # 没预设 = 测试认定不该请求它（例如重定向里的内网那一跳）
+                raise AssertionError(f"不该请求这个地址：{url}")
+            resp = self._default
+        chosen = resp
+
+        @contextlib.contextmanager
+        def _cm() -> Iterator[_FakeStream]:
+            yield chosen
+
+        return _cm()
+
+
 # -- web_fetch：SSRF 边界 --------------------------------------------------------
 
 
@@ -109,26 +173,18 @@ def test_fetch_rejects_loopback_and_private_targets(settings: Settings) -> None:
 def test_fetch_extracts_main_text(settings: Settings, monkeypatch) -> None:
     import rolecard_agent.core.tools.web as web
 
-    class FakeResp:
-        text = (
-            "<html><body><article>爱莉希雅是人之律者，"
-            "逐火十三英桀第二位。</article></body></html>"
-        )
-
-        def raise_for_status(self) -> None:
-            return None
+    url = "https://example.com/elysia"
+    body = (
+        "<html><body><article>爱莉希雅是人之律者，逐火十三英桀第二位。</article></body></html>"
+    ).encode()
 
     # L10：web_fetch 走共享 Client（web._http()），patch 共享实例而不是模块函数。
-    class FakeClient:
-        is_closed = False
-
-        def get(self, *a, **k):
-            return FakeResp()
-
     # 这两个测试测的是抽取/截断逻辑，不是 SSRF 边界（后者有专门测试）——
     # 屏蔽 _host_is_public 的 live DNS 解析，避免网络抖动造成假失败。
     monkeypatch.setattr(web, "_host_is_public", lambda url: True)
-    monkeypatch.setattr(web, "_HTTP_CLIENT", FakeClient())
+    monkeypatch.setattr(
+        web, "_HTTP_CLIENT", _FakeStreamingClient({url: _FakeStream(url=url, body=body)})
+    )
     monkeypatch.setattr(
         web.trafilatura, "extract", lambda html, **k: "爱莉希雅是人之律者，逐火十三英桀第二位。"
     )
@@ -141,25 +197,92 @@ def test_fetch_extracts_main_text(settings: Settings, monkeypatch) -> None:
 def test_fetch_truncates_long_pages(settings: Settings, monkeypatch) -> None:
     import rolecard_agent.core.tools.web as web
 
-    class FakeResp:
-        text = "<html></html>"
-
-        def raise_for_status(self) -> None:
-            return None
-
-    class FakeClient:
-        is_closed = False
-
-        def get(self, *a, **k):
-            return FakeResp()
-
+    url = "https://example.com/long"
     monkeypatch.setattr(web, "_host_is_public", lambda url: True)
-    monkeypatch.setattr(web, "_HTTP_CLIENT", FakeClient())
+    monkeypatch.setattr(
+        web,
+        "_HTTP_CLIENT",
+        _FakeStreamingClient({url: _FakeStream(url=url, body=b"<html></html>")}),
+    )
     monkeypatch.setattr(web.trafilatura, "extract", lambda html, **k: "字" * 99999)
     (_search, fetch) = make_web_tools(settings=settings)
     out = fetch.invoke({"url": "https://example.com/long"})
     assert "已截断" in out
     assert len(out) < 99999
+
+
+def test_fetch_revalidates_every_redirect_hop(settings: Settings, monkeypatch) -> None:
+    """P1-3 回归：302 到内网/元数据地址必须被拦住。
+
+    改前用 `follow_redirects=True`：只在**首跳之前**校验过一次目标，于是公网页面
+    302 到 `http://127.0.0.1:11434/api/tags` 就能读本机 Ollama（或云元数据服务）。
+    """
+    import rolecard_agent.core.tools.web as web
+
+    start = "https://evil.example.com/go"
+    private = "http://127.0.0.1:11434/api/tags"
+    client = _FakeStreamingClient(
+        {
+            start: _FakeStream(url=start, status=302, location=private),
+            # 注意：内网那一跳**故意不预设** —— 一旦代码真的去请求它，替身会直接失败
+        }
+    )
+    monkeypatch.setattr(
+        web, "_host_is_public", lambda url: not url.startswith(("http://127.", "http://169.254."))
+    )
+    monkeypatch.setattr(web, "_HTTP_CLIENT", client)
+    (_search, fetch) = make_web_tools(settings=settings)
+
+    out = fetch.invoke({"url": start})
+
+    assert "已拒绝" in out
+    assert not any("127.0.0.1" in u for u in client.requested)  # 内网地址根本没被访问
+
+
+def test_fetch_gives_up_on_a_redirect_loop(settings: Settings, monkeypatch) -> None:
+    """跳来跳去的网页要变成一句可读的话，而不是把线程拖死。"""
+    import rolecard_agent.core.tools.web as web
+
+    a, b = "https://a.example.com/x", "https://b.example.com/y"
+    client = _FakeStreamingClient(
+        {
+            a: _FakeStream(url=a, status=302, location=b),
+            b: _FakeStream(url=b, status=302, location=a),
+        }
+    )
+    monkeypatch.setattr(web, "_host_is_public", lambda url: True)
+    monkeypatch.setattr(web, "_HTTP_CLIENT", client)
+    (_search, fetch) = make_web_tools(settings=settings)
+
+    with pytest.raises(Exception) as excinfo:
+        fetch.invoke({"url": a})
+
+    assert "重定向次数过多" in str(excinfo.value)
+    assert len(client.requested) <= web._FETCH_MAX_REDIRECTS + 1
+
+
+def test_fetch_caps_the_body_by_bytes_while_streaming(settings: Settings, monkeypatch) -> None:
+    """P2 回归：字节上限要落在**读取**上，而不是整包读完之后再按字符截断。"""
+    import rolecard_agent.core.tools.web as web
+
+    url = "https://example.com/huge"
+    seen: dict[str, int] = {}
+
+    def _extract(html: str, **_kwargs: Any) -> str:
+        seen["html_len"] = len(html)
+        return "正文"
+
+    client = _FakeStreamingClient(
+        {url: _FakeStream(url=url, body=b"x" * (web.DOWNLOAD_MAX_BYTES + 500_000))}
+    )
+    monkeypatch.setattr(web, "_host_is_public", lambda url: True)
+    monkeypatch.setattr(web, "_HTTP_CLIENT", client)
+    monkeypatch.setattr(web.trafilatura, "extract", _extract)
+    (_search, fetch) = make_web_tools(settings=settings)
+
+    fetch.invoke({"url": url})
+
+    assert seen["html_len"] <= web.DOWNLOAD_MAX_BYTES
 
 
 # -- 工作区文件工具 ---------------------------------------------------------------
@@ -209,20 +332,18 @@ def test_fetch_domain_whitelist(settings: Settings, monkeypatch) -> None:
     """白名单（子域匹配）：名单外域名拒绝，名单内/子域放行；空名单 = 不限。"""
     import rolecard_agent.core.tools.web as web
 
-    class FakeResp:
-        text = "<html><body><article>正文</article></body></html>"
-
-        def raise_for_status(self) -> None:
-            return None
-
-    class FakeClient:
-        is_closed = False
-
-        def get(self, *a, **k):
-            return FakeResp()
-
     monkeypatch.setattr(web, "_host_is_public", lambda url: True)  # 本测试只测白名单层
-    monkeypatch.setattr(web, "_HTTP_CLIENT", FakeClient())
+    monkeypatch.setattr(
+        web,
+        "_HTTP_CLIENT",
+        # 本测试试多个域名（含子域），所以让替身对任意 URL 都回同一份正文。
+        _FakeStreamingClient(
+            default=_FakeStream(
+                url="",
+                body="<html><body><article>正文</article></body></html>".encode(),
+            )
+        ),
+    )
     monkeypatch.setattr(web.trafilatura, "extract", lambda html, **k: "正文")
     s = settings.model_copy(update={"web_allowed_domains": "example.com"})
     (_search, fetch) = make_web_tools(settings=s)

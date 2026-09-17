@@ -320,7 +320,7 @@ def test_call_model_resolves_role_backend(roles: RoleCardService) -> None:
         def invoke(self, prompt: Any, **kwargs: Any) -> Any:
             return AIMessage(content="from-cloud")
 
-    def resolver(name: str | None) -> Any:
+    def resolver(name: str | None, **_kwargs: Any) -> Any:
         picked.append(name)
         return CloudModel()
 
@@ -345,7 +345,7 @@ def test_call_model_uses_default_when_role_has_no_backend(roles: RoleCardService
     reg.register(kernel_tool)
     picked: list[str | None] = []
 
-    def resolver(name: str | None) -> Any:
+    def resolver(name: str | None, **_kwargs: Any) -> Any:
         picked.append(name)
         if name is None:
             return FakeModel(AIMessage(content="default"))

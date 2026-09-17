@@ -14,7 +14,8 @@ jobs:
           python-version: "3.13"
       # 依赖按范围拆分，要装全：内核 + 开发 + 接入层 + 检索（chromadb/pypdf）。
       # 漏装 rag 会让 test_rag / test_parser 直接 ImportError（此前从未真正跑过 CI，故未暴露）。
-      # 可复现性由 uv.lock 保证（本地/CI 均可用 `uv sync --locked`）；这里用 requirements 镜像
+      # 注意：CI 实际装的是 requirements*.txt（无上界 pin），uv.lock 只在本地 uv 流程生效。
+      # 上游发大版本可能让这里突然失败 —— 属已知取舍，见 docs/全项目审查报告 P1-14。
       # 是为了不在 CI 里额外引入工具链。
       - name: Install dependencies
         run: |

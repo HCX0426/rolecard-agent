@@ -355,6 +355,58 @@ def make_reranker(
 # ---------------------------------------------------------------- 知识库
 
 
+#: 相对尾部裁剪的比例：最终结果里只保留距离不超过「最优命中」这个倍数的候选。
+#:
+#: 为什么用**相对**而不是绝对阈值（审查报告 P1-6）：绝对阈值必须按嵌入器标定，
+#: 而实测离线默认的 HashEmbedder 下「复查频率是多少」对正确文档只有 0.163、
+#: 完全无关的「编程语言排行榜」却有 0.358 —— 固定阈值会砍掉正确结果、留下噪音。
+#: 相对裁剪不需要任何标定：当 1 条明显最优、其余是陪跑时，把陪跑剪掉。
+RAG_TAIL_RATIO = 3.0
+
+
+def _collection_space(collection: object) -> str:
+    """集合的向量度量。chroma 1.x 在 `configuration.hnsw.space`，旧版在 metadata。"""
+    config = getattr(collection, "configuration", None) or {}
+    hnsw = config.get("hnsw") if isinstance(config, dict) else None
+    if isinstance(hnsw, dict) and hnsw.get("space"):
+        return str(hnsw["space"])
+    meta = getattr(collection, "metadata", None) or {}
+    return str(meta.get("hnsw:space", "l2"))
+
+
+def _similarity(space: str, distance: float) -> float | None:
+    """把 chroma 的距离换算成**余弦相似度**（越大越相关）；换算不了返回 None。
+
+    cosine / ip：单位向量下 d = 1 - cos → cos = 1 - d。
+    l2：只有**单位向量**才成立 cos = 1 - d²/2 —— 而云端嵌入器（bge-m3）不保证归一化
+    （实测 SiliconFlowEmbedder 直接返回原始向量），所以 l2 一律返回 None：
+    宁可放弃绝对过滤，也不要基于错误前提去砍检索结果。
+    """
+    if space in ("cosine", "ip"):
+        return 1.0 - distance
+    return None
+
+
+def _apply_relevance_floor(result: list[Hit], min_similarity: float) -> list[Hit]:
+    """对最终 top-k 做相关性收敛，返回过滤后的列表。
+
+    两步，顺序固定：
+      1. **绝对下限**（只在算得出余弦相似度时生效）：低于 floor 的直接丢；
+      2. **相对尾部裁剪**：距离超过「最优命中」× `RAG_TAIL_RATIO` 的丢掉 ——
+         度量无关，所以对 l2 老集合也安全。最优距离为 0（完全命中）时不做裁剪：
+         那种情况下"谁更近"已经没有分辨力，硬按 0 的倍数裁会只剩完全相同的那条。
+    """
+    kept = result
+    if min_similarity > 0:
+        kept = [h for h in kept if h.similarity is None or h.similarity >= min_similarity]
+    if len(kept) > 1:
+        best = min(h.distance for h in kept)
+        if best > 0:
+            cutoff = best * RAG_TAIL_RATIO
+            kept = [h for h in kept if h.distance <= cutoff]
+    return kept
+
+
 @dataclass(frozen=True, slots=True)
 class Hit:
     scope: str
@@ -364,6 +416,8 @@ class Hit:
     distance: float
     #: 索引身份（同 key 幂等重建）。展示层不需要，但排障时要能区分同名文件。
     source_key: str = ""
+    #: 余弦相似度（越大越相关）；度量换算不出来时为 None（见 `_similarity`）。
+    similarity: float | None = None
 
 
 class KnowledgeDimensionMismatch(RuntimeError):
@@ -402,12 +456,16 @@ class KnowledgeBase:
         chroma_path: Path,
         embedder: Embedder,
         reranker: SiliconFlowReranker | None = None,
+        min_similarity: float = 0.0,
     ) -> None:
         import chromadb
 
         self._client = chromadb.PersistentClient(path=str(chroma_path))
         self._embedder = embedder
         self._reranker = reranker
+        # 绝对相似度下限（0 = 不过滤）。只在能算出余弦相似度的集合上生效 ——
+        # 默认 0 是因为阈值要按嵌入器标定，见 Settings.rag_min_similarity 的实测说明。
+        self._min_similarity = min_similarity
         # 检索延迟滑动样本（进程内）：每次 search 追加一条阶段耗时，供 P95 细分。
         # 加锁：KnowledgeBase 是**跨线程共享**的（FastAPI 线程池 + 图执行），旧实现的
         # append + 切片裁剪在并发下会与 latency_p95() 的读取互相踩（审查报告 L2）。
@@ -420,6 +478,28 @@ class KnowledgeBase:
             if obj is not None and hasattr(obj, "close"):
                 with contextlib.suppress(Exception):
                     obj.close()
+
+    def _collection_for_write(self, scope: str) -> Any:
+        """写索引用的集合：不存在时**按 cosine 度量新建**。
+
+        chroma 的默认度量是 l2，而 l2 距离只有在「向量已归一化」时才等价于余弦距离
+        （见 `_similarity`）—— 于是绝对阈值对 l2 集合只能关闭。新建集合用 cosine，
+        `RAG_MIN_SIMILARITY` 才有意义。已存在的集合**不动**：改度量等于要重建索引，
+        想升级就删掉 data/chroma 或走「重建作用域」再重传（README 有说明）。
+        """
+        try:
+            return self._client.get_collection(name=scope)
+        except Exception:  # noqa: BLE001 - 不存在 → 下面新建
+            pass
+        for kwargs in (
+            {"configuration": {"hnsw": {"space": "cosine"}}},  # chroma 1.x
+            {"metadata": {"hnsw:space": "cosine"}},  # 旧版写法
+        ):
+            try:
+                return self._client.create_collection(name=scope, **kwargs)
+            except Exception:  # noqa: BLE001 - 换一种写法再试；都失败就退回 get（会抛）
+                continue
+        return self._client.get_collection(name=scope)
 
     def index(self, scope: str, source: str, text: str, *, source_name: str | None = None) -> int:
         """切块 -> 嵌入 -> 入库（同 source 幂等重建）。返回入库的分块数。
@@ -448,7 +528,7 @@ class KnowledgeBase:
             # 内容被清空的文件、解析退化的 PDF），幂等契约当场被打破（审查报告 P1-7）。
             self.delete_source(scope, source)
             return 0
-        collection = self._client.get_or_create_collection(name=scope)
+        collection = self._collection_for_write(scope)
         vectors = self._embedder.embed(chunks)  # 先做最容易失败的一步
         ids = _chunk_ids(source, len(chunks))
         try:
@@ -457,12 +537,12 @@ class KnowledgeBase:
         except Exception:  # noqa: BLE001 - 取不到旧 id 只是少一次清理，不该让入库失败
             stale = []
         try:
+            # 注：集合对象在类型上收敛成 Any（见 _collection_for_write）——
+            # chroma 的存根要求 numpy ndarray 的具体 dtype，而"嵌套 float 列表"在运行期
+            # 完全被接受，也是 chroma 自己的文档示例写法。存根比实现更严，不改数据形状。
             collection.upsert(
                 ids=ids,
-                # chroma 的类型存根要求 numpy ndarray 的具体 dtype，而"嵌套 float 列表"
-                # 在运行期完全被接受（也是 chroma 自己的文档示例写法）。这是存根比实现更严，
-            # 不是我们的用法有问题 —— 忽略这一条而不改数据形状。
-                embeddings=vectors,  # type: ignore[arg-type]
+                embeddings=vectors,
                 documents=chunks,
                 metadatas=[
                     {
@@ -516,6 +596,10 @@ class KnowledgeBase:
 
         v2.2：对三个阶段计时（嵌入 / 向量检索 / 重排）+ 合计，写滑动样本供 P95 细分，
         并 emit `rag_search` 留痕（只含耗时与计数，不含文本，脱敏安全）。
+
+        v2.5 相关性收敛（审查报告 P1-6）：最终结果先过**绝对下限**（仅 cosine/ip 度量，
+        见 `_similarity`），再做**相对尾部裁剪**（`RAG_TAIL_RATIO`）。两者都不会让
+        "没有相关内容"变成"返回几条凑数片段" —— 空结果由工具层如实回答。
         """
         if not scopes or not query.strip():
             return []
@@ -540,6 +624,7 @@ class KnowledgeBase:
                 docs = (found.get("documents") or [[]])[0]
                 metas = (found.get("metadatas") or [[]])[0]
                 dists = (found.get("distances") or [[]])[0]
+                space = _collection_space(collection)
                 for doc, meta, dist in zip(docs, metas, dists, strict=True):
                     key = str((meta or {}).get("source", "?"))
                     hits.append(
@@ -551,6 +636,7 @@ class KnowledgeBase:
                             text=doc,
                             distance=float(dist),
                             source_key=key,
+                            similarity=_similarity(space, float(dist)),
                         )
                     )
             hits.sort(key=lambda h: h.distance)
@@ -567,7 +653,7 @@ class KnowledgeBase:
                     tracer.emit(
                         TraceEvent(event="rerank_fallback", detail={"reason": "rerank_failed"})
                     )
-        result = hits[:k]
+        result = _apply_relevance_floor(hits[:k], self._min_similarity)
 
         total_ms = t_embed["ms"] + t_vec["ms"] + t_rerank["ms"]
         self._record_sample(
@@ -661,9 +747,12 @@ class KnowledgeBase:
         return out
 
     def reset_scope(self, scope: str) -> None:
-        """删除整个作用域集合（embedder 切换后维度不兼容时的重建入口）。"""
-        with contextlib.suppress(Exception):
-            self._client.delete_collection(name=scope)
+        """删除整个作用域集合（embedder 切换后维度不兼容时的重建入口）。
+
+        删除失败**必须抛出**：吞掉异常会让调用方以为清空了（审计都写了），而集合还在
+        —— "以为删了"的状态比失败难查得多（审查报告 P2）。
+        """
+        self._client.delete_collection(name=scope)
 
 
 # ---------------------------------------------------------------- 内核工具

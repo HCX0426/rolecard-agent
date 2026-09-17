@@ -17,6 +17,9 @@ _DOMAIN_ID = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 
 _COLUMNS = "id, domain, label, value_text, value_num, unit, note, created_at"
 
+# 可修改列的形状守卫（见 update_record 里的纵深防御）。
+_COL_NAME = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+
 
 class DomainDataService:
     """通用领域记录（标签 + 数值/文本 + 单位 + 备注）的增删改查。"""
@@ -98,6 +101,11 @@ class DomainDataService:
         ).fetchone()
         if row is None:
             raise KeyError(record_id)
+        # 纵深防御：调用方的 Pydantic 模型是 strict 的，但拼列名发生在本层 ——
+        # 在这里再校验一次，调用方放宽模型时不会悄悄变成注入面（审查报告 P2）。
+        for key in changes:
+            if key in {"id", "domain", "user_id", "created_at"} or not _COL_NAME.match(key):
+                raise ValueError(f"不可修改的字段：{key}")
         sets = ", ".join(f"{k} = ?" for k in changes)
         self._conn.execute(
             f"UPDATE domain_data SET {sets} WHERE id = ?",

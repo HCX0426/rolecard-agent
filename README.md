@@ -114,7 +114,9 @@ uv venv --python 3.13
 uv sync --extra api --extra dev
 
 # 2. 依赖（uv sync 已经装好；不用 uv 时改走这一行）
-#    pip install -r requirements.txt -r requirements-dev.txt -r requirements-api.txt
+#    pip install -r requirements.txt -r requirements-dev.txt -r requirements-api.txt \
+#        -r requirements-rag.txt
+#    （-rag 必须装：知识库 / 上传解析 / 检索都依赖 chromadb+pypdf，漏装会 ImportError）
 
 # 3. 本地模型（.env 里默认后端 local 指向 Ollama）
 #    qwen2.5:7b = 对话 + 工具调用（必需，vl 版不支持 tools）
@@ -150,7 +152,9 @@ docker run -p 8000:8000 -v rolecard-data:/app/data rolecard-agent
 
 # CI：push 即跑（GitHub Actions）—— ruff + mypy + 全量离线测试（覆盖率阈值 85%）+
 #     一致性核查 + 前端 vitest / tsc / build
-# 依赖快照：`uv.lock`（`uv sync --locked` 可复现）；CI 按范围装 requirements*.txt
+# 依赖安装：CI 与 Docker 实际使用 requirements*.txt（无上界 pin）；
+# `uv.lock` 只在本地 uv 流程（`uv sync --locked`）里生效 —— 改依赖时两边都要同步，
+# 且跑一次 `check_consistency.py`（它会校验 requirements*.txt 与 pyproject 的一致性）。
 # （内核 + dev + api + rag —— 漏装 rag 会让知识库/解析测试直接 ImportError）
 ```
 

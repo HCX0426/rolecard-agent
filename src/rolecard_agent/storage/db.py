@@ -20,6 +20,7 @@ would bring in Alembic. Stated here because this is where someone would look for
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import re
 import sqlite3
 import threading
@@ -31,6 +32,19 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 
 # Domain ids become path segments, so they are validated rather than trusted.
 _DOMAIN_ID = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+
+# 当前请求的**库代际**：中间件每请求发一个新 id；真正持连接的线程发现代际变了，
+# 就先把上次可能残留的未提交事务回滚掉（审查报告 P1-10）。
+# 为什么不能在中间件里直接 rollback：中间件跑在事件循环线程，而同步端点与图执行
+# 各在别的线程持连接 —— 在那里 rollback 清的是另一条线程的连接，等于没清。
+_REQUEST_EPOCH: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "db_request_epoch", default=""
+)
+
+
+def set_request_epoch(epoch: str) -> None:
+    """标记当前请求的库代际（接入层中间件每请求调用一次）。"""
+    _REQUEST_EPOCH.set(epoch)
 
 
 def connect(path: str | Path) -> sqlite3.Connection:
@@ -72,8 +86,10 @@ class ThreadLocalConnection:
     靠 SQLite 的写锁串行化。它解决的是"同一连接对象被并发使用"这个 unsafe 用法，不是
     "SQLite 写并发低"这个规模问题（后者是 v2.5 生产化替换的话题）。
 
-    线程会被线程池复用，所以每个请求开始时应当调 `rollback_current()` 清掉可能残留的
-    未提交事务 —— 由接入层的中间件负责。
+    线程会被线程池复用，所以跨请求可能残留未提交事务。清理由**本类在取连接时**完成：
+    接入层中间件每请求调 `set_request_epoch()` 发一个新代际号，`_current()` 发现本线程的
+    代际变了（= 新请求第一次用库）就先回滚一次。早期版本把 `rollback_current()` 放在
+    中间件里 —— 但中间件跑在事件循环线程，清的是另一条线程的连接，等于没清（P1-10）。
     """
 
     def __init__(
@@ -95,6 +111,14 @@ class ThreadLocalConnection:
             self._local.conn = conn
             with self._lock:
                 self._created.append(conn)
+        # 请求代际检查必须发生在**真正持连接的线程**里：线程池的线程会被复用，
+        # 上一个请求若在事务中途异常退出，残留的 BEGIN/未提交改动会被下一个请求
+        # 继承并 commit（半写入落地）。中间件只负责发代际号，清理在这里做。
+        epoch = _REQUEST_EPOCH.get()
+        if getattr(self._local, "epoch", None) != epoch:
+            with contextlib.suppress(sqlite3.Error):
+                conn.rollback()
+            self._local.epoch = epoch
         return conn
 
     def rollback_current(self) -> None:

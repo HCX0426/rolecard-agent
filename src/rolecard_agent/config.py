@@ -167,6 +167,15 @@ class Settings(BaseModel):
     # 等于 off，不破坏离线）/ off（强制关闭）/ siliconflow（强制开启，缺 key 启动即报错）。
     rag_rerank: str = "auto"
 
+    # 检索的**绝对相似度下限**（余弦相似度，越大越相关；0 = 不过滤）。
+    # 为什么默认关闭：绝对阈值必须按嵌入器标定，而实测离线默认的 HashEmbedder 下
+    # 「复查频率是多少」对正确文档只有 0.163，完全无关的「编程语言排行榜」却有 0.358
+    # —— 任何固定的绝对阈值都会砍掉正确结果、留下噪音（审查报告 P1-6 的实测数据）。
+    # 用云端嵌入器（bge-m3，无关文本相似度约 0.3-0.5）时可以设 0.35 左右。
+    # 注意：只有 cosine/ip 度量的集合能算绝对相似度；l2 需要「向量已归一化」这个前提，
+    # 而云端嵌入器不保证，所以新建集合会按 cosine 建（见 rag/retriever 的度量说明）。
+    rag_min_similarity: float = 0.0
+
     # v2.3 结构化抽取（报告文本 → 指标行）：auto = 优先 provider=ollama 的**本地**后端
     # （报告内容不出本机），否则用默认后端；也可填具体后端名强制指定。
     # 由 domains/health/extract.py 消费。
@@ -279,6 +288,7 @@ class Settings(BaseModel):
             ("OCR_API_URL", "ocr_api_url"),
             ("RAG_EMBEDDING", "embedding_backend"),
             ("RAG_RERANK", "rag_rerank"),
+            ("RAG_MIN_SIMILARITY", "rag_min_similarity"),
             ("EXTRACT_BACKEND", "extract_backend"),
             ("EXTRACT_VERIFY", "extract_verify"),
             ("OBS_BACKEND", "obs_backend"),

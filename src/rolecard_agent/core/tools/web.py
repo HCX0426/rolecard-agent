@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 import trafilatura
@@ -38,6 +38,8 @@ from rolecard_agent.core.tools.errors import ToolExecutionError
 # 正文给模型的字符上限：再长也只是稀释上下文（上限约束与解析层同一哲学）。
 FETCH_MAX_CHARS = 6000
 DOWNLOAD_MAX_BYTES = 2 * 1024 * 1024
+# 最多跟几跳重定向：够正常站点用，又不至于被「跳转到自己」的环拖住。
+_FETCH_MAX_REDIRECTS = 5
 _UA = "Mozilla/5.0 (compatible; rolecard-agent/0.3)"
 
 # L10：进程级共享 httpx 连接池 —— web_fetch 此前每次新建 Client，握手/TLS 成本白扔。
@@ -156,19 +158,48 @@ def make_web_tools(*, settings) -> list:
         输入必须是以 http:// 或 https:// 开头的完整网址。"""
         if note := _disabled_note():
             return note
-        if not _host_is_public(url):
-            return "已拒绝：只允许读取公网 http/https 网页（内网与本地地址不可访问）。"
-        if not _domain_allowed(url):
-            return "已拒绝：该域名不在联网白名单内（WEB_ALLOWED_DOMAINS）。"
+        # 每一跳都要过公网边界与白名单：`follow_redirects=True` 只在**首跳之前**校验过
+        # 一次目标，一个 302 到 127.0.0.1 / 169.254.169.254 的网页就能把它整个绕过去
+        # （审查报告 P1-3）。所以手动跟重定向，逐跳校验。
+        #
+        # 顺带把整包读进内存改成**流式 + 字节上限**：`resp.text` 是先解码整个响应体，
+        # 那样 DOWNLOAD_MAX_BYTES 只管住了交给模型的字符数，管不住内存（审查报告 P2）。
         try:
-            resp = _http().get(
-                url,
-                timeout=20,
-                follow_redirects=True,
-                headers={"User-Agent": _UA},
-            )
-            resp.raise_for_status()
-            html = resp.text[:DOWNLOAD_MAX_BYTES]
+            html = ""
+            target = url
+            for _hop in range(_FETCH_MAX_REDIRECTS + 1):
+                if not _host_is_public(target):
+                    return "已拒绝：只允许读取公网 http/https 网页（内网与本地地址不可访问）。"
+                if not _domain_allowed(target):
+                    return "已拒绝：该域名不在联网白名单内（WEB_ALLOWED_DOMAINS）。"
+                with _http().stream(
+                    "GET",
+                    target,
+                    timeout=20,
+                    follow_redirects=False,
+                    headers={"User-Agent": _UA},
+                ) as resp:
+                    location = resp.headers.get("location")
+                    if resp.is_redirect and location:
+                        target = urljoin(str(resp.url), location)
+                        continue
+                    resp.raise_for_status()
+                    chunks: list[bytes] = []
+                    total = 0
+                    for chunk in resp.iter_bytes():
+                        room = DOWNLOAD_MAX_BYTES - total
+                        chunks.append(chunk[:room])
+                        total += len(chunk)
+                        if total >= DOWNLOAD_MAX_BYTES:
+                            break
+                    html = b"".join(chunks).decode(resp.encoding or "utf-8", errors="replace")
+                break
+            else:
+                raise WebToolError(
+                    f"网页读取失败：重定向次数过多（超过 {_FETCH_MAX_REDIRECTS} 跳）。"
+                )
+        except WebToolError:
+            raise
         except Exception as exc:  # noqa: BLE001 - 网络失败要变成可读答复
             raise WebToolError(f"网页读取失败（{type(exc).__name__}）：{exc}") from exc
 

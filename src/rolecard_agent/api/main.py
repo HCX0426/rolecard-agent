@@ -30,6 +30,7 @@ from __future__ import annotations
 import contextlib
 import os
 import threading
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -77,7 +78,12 @@ from rolecard_agent.rag.retriever import (
 from rolecard_agent.roles.service import (
     RoleCardService,
 )
-from rolecard_agent.storage.db import SqlConnection, bootstrap, connect_threadlocal
+from rolecard_agent.storage.db import (
+    SqlConnection,
+    bootstrap,
+    connect_threadlocal,
+    set_request_epoch,
+)
 
 # M5 前端构建产物的位置：frontend/dist（仓库根下）。可用环境变量 FRONTEND_DIST 覆盖
 # （部署布局变化时不必移动文件）。未构建时控制台路由返回回退提示页，后端 API 不受影响。
@@ -121,7 +127,8 @@ def create_app(
     sqlite_path: Path | None = None,
     *,
     model: ChatLike | None = None,
-    model_factory: Callable[[Settings, str | None], ChatLike] | None = None,
+    # 温度参与缓存键，工厂可能被传第三个参数 —— 签名放宽为可变参数（见 P1-2）。
+    model_factory: Callable[..., ChatLike] | None = None,
     tracer: Tracer | None = None,
 ) -> FastAPI:
     """Build the FastAPI app.
@@ -182,6 +189,7 @@ def create_app(
             order=[e.id for e in services.ordered_candidates("rerank")],
             endpoints=services.endpoint_map("rerank"),
         ),
+        settings.rag_min_similarity,
     )
 
     # 轨迹器必须先于工具注册表构建：`search_knowledge` 闭包要持有它，
@@ -209,7 +217,7 @@ def create_app(
     factory = model_factory or build_model
     resolved_model = model or factory(effective, None)
     # 角色级路由的模型缓存：按后端名构建一次（惰性）；设置变更时整体失效重建。
-    role_models: dict[str, ChatLike] = {}
+    role_models: dict[tuple[str | None, float | None], ChatLike] = {}
     app_state: dict[str, Any] = {
         "graph": None,  # 下面 build 后回填；对话端点每次请求从这里取当前图
         "effective": effective,
@@ -219,25 +227,34 @@ def create_app(
     # H2：重建互斥锁 —— 构建在锁外、换装在锁内（见 rebuild_runtime docstring）。
     _rebuild_lock = threading.Lock()
 
-    def resolve_role_model(backend_name: str | None) -> ChatLike:
+    def resolve_role_model(backend_name: str | None, temperature: float | None = None) -> ChatLike:
         """US-8：角色声明了后端名 → 按名解析；未声明 → 默认模型。
 
+        `temperature` 参与缓存键：同一后端在不同温度下是**不同的模型实例**
+        （采样参数只能在构造期设置，见 `core.graph._init_model`）。
         未知后端名（设置页删掉了一个仍被角色引用的后端）→ 降级到默认并留痕，而不是
         让整轮对话 500：权限 fail-closed，可用性 fail-soft。
         """
-        if not backend_name:
+        # 测试直接注入模型实例（ScriptedChat）：温度变体对假模型没有意义，而走下面的
+        # 工厂会拿真配置去连真实后端 —— 所以注入了 `model` 时原样返回它。
+        if model is not None:
+            return model
+        # 没声明后端但声明了温度 → 仍要走工厂（默认后端 + 该温度的新实例）：
+        # 温度必须生效，不管角色有没有指定后端（P1-2 的第一版修复就漏了这条分支）。
+        if not backend_name and temperature is None:
             return app_state["default_model"]
-        cached = role_models.get(backend_name)
+        cache_key = (backend_name, temperature)
+        cached = role_models.get(cache_key)
         if cached is not None:
             return cached
         try:
-            built = factory(app_state["effective"], backend_name)
+            built = factory(app_state["effective"], backend_name, temperature)
         except KeyError:
             resolved_tracer.emit(
                 TraceEvent(event="role_backend_missing", detail={"backend": backend_name})
             )
             return app_state["default_model"]
-        role_models[backend_name] = built
+        role_models[cache_key] = built
         return built
 
     graph = build_kernel(
@@ -317,7 +334,9 @@ def create_app(
             order=[e.id for e in services.ordered_candidates("rerank")],
             endpoints=services.endpoint_map("rerank"),
         )
-        knowledge_new = KnowledgeBase(settings.chroma_path, embedder, reranker)
+        knowledge_new = KnowledgeBase(
+            settings.chroma_path, embedder, reranker, settings.rag_min_similarity
+        )
 
         registry_new = build_registry(
             roles=roles,
@@ -362,14 +381,14 @@ def create_app(
     ctx.rebuild_runtime = rebuild_runtime
 
     @app.middleware("http")
-    async def _drop_stale_transaction(request: object, call_next: object) -> object:
-        """每个请求开始时清掉本线程可能残留的未提交事务。
+    async def _begin_db_request(request: object, call_next: object) -> object:
+        """每个请求发一个**库代际**；残留事务的清理在持连接的线程里做（P1-10）。
 
-        线程池的线程会被下一个请求复用；若上一个请求在事务中途异常退出，残留的
-        BEGIN/未提交改动会被下一个请求继承（`ThreadLocalConnection` 按线程复用连接）。
-        这里 rollback 一次，把"请求边界"和"事务边界"重新对齐。
+        早期版本在这里 `conn.rollback_current()` —— 但中间件跑在事件循环线程，而同步
+        端点与图执行各在别的线程持连接，那个 rollback 清的是另一条线程的连接，等于没清。
+        现在只在这里发号，`ThreadLocalConnection._current()` 发现代际变了才清理。
         """
-        conn.rollback_current()
+        set_request_epoch(uuid.uuid4().hex)
         return await call_next(request)  # type: ignore[operator]
 
     # 认证做成**中间件**而不是路由依赖：控制台页面是 StaticFiles mount 的 ASGI 应用，

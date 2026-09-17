@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
@@ -74,7 +74,10 @@ def reset_knowledge_scope(
     破坏性管理动作，必须写审计（含清掉的分块数）。前端需二次确认后再调。
     """
     removed = ctx.knowledge.scope_count(scope)
-    ctx.knowledge.reset_scope(scope)
+    try:
+        ctx.knowledge.reset_scope(scope)
+    except Exception as exc:  # noqa: BLE001 - 失败要可读，且**不能**写"已清空"的审计
+        raise HTTPException(status_code=500, detail=f"重建作用域失败（{exc}）") from exc
     ctx.roles.audit(
         actor=actor.id,
         action="reset_knowledge_scope",

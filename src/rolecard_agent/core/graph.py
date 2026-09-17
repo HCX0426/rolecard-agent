@@ -66,7 +66,7 @@ def build_kernel(
     settings: Settings | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     plugins: PluginService | None = None,
-    model_resolver: Callable[[str | None], ChatLike] | None = None,
+    model_resolver: Callable[..., ChatLike] | None = None,
 ) -> Any:
     """Compile the kernel graph.
 
@@ -121,7 +121,9 @@ def build_kernel(
     return graph.compile(checkpointer=checkpointer)
 
 
-def _init_model(settings: Settings, backend_name: str | None) -> ChatLike:
+def _init_model(
+    settings: Settings, backend_name: str | None, temperature: float | None = None
+) -> ChatLike:
     """Instantiate one backend. Imported lazily so the kernel imports without a provider.
 
     超时是**显式带上**的：默认没有超时时，一个挂起的本地模型会让 SSE 对话与抽取无限等待
@@ -167,10 +169,17 @@ def _init_model(settings: Settings, backend_name: str | None) -> ChatLike:
             kwargs["client_kwargs"] = {"timeout": timeout}
         else:
             kwargs["timeout"] = timeout
+    # 角色卡的 temperature（构造期传入）：它对两类客户端都是**模型字段**，只能在
+    # 实例化时设置。绝不能走 `.bind(temperature=...)` —— 实测 ChatOllama 会把调用期
+    # kwargs 放进请求顶层而不是 `options`，Ollama 直接忽略（审查报告 P1-2）。
+    if temperature is not None:
+        kwargs["temperature"] = temperature
     return init_chat_model(**kwargs)
 
 
-def build_model(settings: Settings, backend_name: str | None = None) -> ChatLike:
+def build_model(
+    settings: Settings, backend_name: str | None = None, temperature: float | None = None
+) -> ChatLike:
     """Construct the chat model for a backend by name, wired to its fallback chain.
 
     Fallbacks matter here specifically because the primary is usually a LOCAL model: a laptop
@@ -188,11 +197,13 @@ def build_model(settings: Settings, backend_name: str | None = None) -> ChatLike
     which names end up in the chain and in what order - lives in `Settings.resolve_fallbacks`
     and is covered there.
     """
-    primary = _init_model(settings, backend_name)
+    primary = _init_model(settings, backend_name, temperature)
     chain = settings.resolve_fallbacks(backend_name)
     if not chain:
         return primary
-    fallbacks = [_init_model(settings, name) for name in chain]
+    # 回退链用同一个温度：角色卡的采样参数描述的是"这个角色怎么说话"，
+    # 与哪台后端接住无关（审查报告 P1-2）。
+    fallbacks = [_init_model(settings, name, temperature) for name in chain]
     # `with_fallbacks` 是 Runnable 的方法，不在 `ChatLike` 这个**最小内核协议**里
     # （故意如此：测试用的假模型不该被迫实现它）。这里明确知道返回的是个可调用模型。
     return cast("ChatLike", primary.with_fallbacks(fallbacks))  # type: ignore[attr-defined]

@@ -298,7 +298,7 @@ class _MessageTarget(BaseModel):
 
 
 class EditMessageBody(_MessageTarget):
-    content: str = Field(min_length=1)
+    content: str = Field(min_length=1, max_length=8000)  # 与新消息同一上限
 
 
 class DeleteMessagesBody(BaseModel):
@@ -433,7 +433,9 @@ def get_session_messages(thread_id: str, ctx: AppContext = Depends(get_context))
 
 
 class PromptEnhanceBody(BaseModel):
-    text: str
+    # 与 ChatMessage.message 同一个上限：增强提示同样会进模型调用与轨迹，不给上限
+    # 就等于允许一次请求把超大文本塞进 checkpoint（审查报告 P2）。
+    text: str = Field(min_length=1, max_length=8000)
 
 
 @router.post("/api/prompt/enhance")

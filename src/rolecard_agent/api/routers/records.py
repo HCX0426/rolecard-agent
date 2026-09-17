@@ -265,7 +265,8 @@ def _extract_and_store(*, body: ExtractRequest, ctx: AppContext, actor: Actor) -
                 "error": scrub_endpoints(str(exc))[:300],
             },
         )
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        # 客户端同样不该看到内部 base_url：审计分支脱敏了，这里没理由不脱（P2）。
+        raise HTTPException(status_code=502, detail=scrub_endpoints(str(exc))[:300]) from exc
 
     if outcome is None:
         return {"skipped": "no_model", "detail": "没有可用的模型后端，无法抽取指标"}
