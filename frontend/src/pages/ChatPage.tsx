@@ -700,7 +700,7 @@ export default function ChatPage({
                       className="mt-3 h-3.5 w-3.5 accent-amber-500"
                     />
                   )}
-                  <div className="w-full max-w-[80%]">
+                  <div className={isEditingThis ? "w-full max-w-[80%]" : "max-w-[80%]"}>
                     {isEditingThis ? (
                       <div className="rounded-2xl rounded-br-sm border border-blue-300 bg-blue-50 dark:bg-slate-800/70 p-2.5">
                         <textarea
@@ -754,7 +754,7 @@ export default function ChatPage({
                             </svg>
                           </button>
                         )}
-                        <div className="max-w-full rounded-2xl rounded-br-sm bg-blue-600 px-4 py-2.5 whitespace-pre-wrap text-white">
+                        <div className="w-fit rounded-2xl rounded-br-sm bg-blue-600 px-4 py-2.5 whitespace-pre-wrap text-white">
                           {m.content}
                           {m.ts && (
                             <p className="mt-1 text-right text-[10px] text-blue-200">{m.ts}</p>
