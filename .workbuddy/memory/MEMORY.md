@@ -108,3 +108,10 @@ cd frontend && npm test && npm run build
 - **审查修复队列优先功能正确性 / 架构 / 性能**：H5（effective 重新并入 env 后端→UI 删后端不生效）、
   H4（路由直写 SQL 违分层）、M 系列（同步阻塞、资源泄漏、前端 key={i}、base_url 无校验等）、
   L 系列（冗余/命名/可维护性）。
+
+## 文案与术语（2026-09-17 用户明确）
+
+- **用户可见文本统一用「对话」**，不用「会话」（页面名与主按钮早已是「对话」）。
+  代码标识符与注释不跟着改：`sessions` / `thread_id` / `/api/sessions` 是契约。
+- 改完文案的复查手法：真机抓 `body.innerText` + 所有 `[title]`/`[aria-label]`/`[placeholder]`
+  是否还含旧词 —— 只 grep 源码会把注释/docstring 一起算进去，判不准"用户还看不看得见"。
