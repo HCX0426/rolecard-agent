@@ -103,7 +103,7 @@ describe("ChatPage 流式渲染", () => {
       { type: "end" },
     ]);
 
-    render(<ChatPage onOpenSettings={() => undefined} />);
+    render(<ChatPage />);
     await sendMessage("问一句");
 
     expect(await screen.findByText("问一句")).toBeTruthy();
@@ -127,7 +127,7 @@ describe("ChatPage 流式渲染", () => {
       },
     );
 
-    render(<ChatPage onOpenSettings={() => undefined} />);
+    render(<ChatPage />);
     await sendMessage("查一下");
 
     await waitFor(() => expect(streamChatMock).toHaveBeenCalledOnce());
@@ -145,7 +145,7 @@ describe("ChatPage 流式渲染", () => {
       { type: "end" },
     ]);
 
-    render(<ChatPage onOpenSettings={() => undefined} />);
+    render(<ChatPage />);
     await sendMessage("长会话里的一问");
 
     const notice = await screen.findByText(/早期对话已折叠/);
@@ -169,7 +169,7 @@ describe("ChatPage 流式渲染", () => {
       return {};
     });
 
-    render(<ChatPage onOpenSettings={() => undefined} />);
+    render(<ChatPage />);
     const { fireEvent } = await import("@testing-library/react");
     // 从侧栏点开历史会话
     fireEvent.click(await screen.findByText("旧会话"));
@@ -188,7 +188,7 @@ describe("ChatPage 流式渲染", () => {
       { type: "end" },
     ]);
 
-    render(<ChatPage onOpenSettings={() => undefined} />);
+    render(<ChatPage />);
     await sendMessage("带思考的一问");
 
     await waitFor(() => expect(streamChatMock).toHaveBeenCalledOnce());
@@ -208,7 +208,7 @@ describe("ChatPage 流式渲染", () => {
     ];
     scriptedStream([{ type: "token", text: "回答正文" }, { type: "end" }]);
 
-    render(<ChatPage onOpenSettings={() => undefined} />);
+    render(<ChatPage />);
     await sendMessage("一问");
 
     // 面板出现，且里面是回放出来的那段思考
@@ -228,7 +228,7 @@ describe("ChatPage 流式渲染", () => {
     ];
     scriptedStream([{ type: "token", text: "答" }, { type: "end" }]);
 
-    render(<ChatPage onOpenSettings={() => undefined} />);
+    render(<ChatPage />);
     await sendMessage("问");
 
     // 一轮的过程合并成一个「过程」面板（思考/工具同框），默认折叠
@@ -247,7 +247,7 @@ describe("ChatPage 流式渲染", () => {
       { type: "end" },
     ]);
 
-    render(<ChatPage onOpenSettings={() => undefined} />);
+    render(<ChatPage />);
     await sendMessage("会失败的请求");
 
     // 关键断言：错误文案出现在**常驻的 toast** 上，而不是只写进随后就被清掉的气泡。

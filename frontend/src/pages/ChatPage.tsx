@@ -244,11 +244,7 @@ function fmtDuration(from: string, to: string): string | null {
   return `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
 }
 
-export default function ChatPage({
-  onOpenSettings,
-}: {
-  onOpenSettings: () => void;
-}) {
+export default function ChatPage() {
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [roles, setRoles] = useState<RoleCard[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -271,6 +267,18 @@ export default function ChatPage({
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
   const [ctxOpen, setCtxOpen] = useState<string | null>(null); // 展开上下文选项的模型行名
+  // 菜单「鼠标移出后关闭」的短延时：留出从按钮移到面板的过渡时间，防抖动。
+  const menuCloseTimer = useRef<number | null>(null);
+  function armMenuClose(close: () => void) {
+    if (menuCloseTimer.current) window.clearTimeout(menuCloseTimer.current);
+    menuCloseTimer.current = window.setTimeout(close, 250);
+  }
+  function cancelMenuClose() {
+    if (menuCloseTimer.current) {
+      window.clearTimeout(menuCloseTimer.current);
+      menuCloseTimer.current = null;
+    }
+  }
   const [backends, setBackends] = useState<
     { name: string; provider: string; model: string; usage: string; num_ctx: number | null }[]
   >([]);
@@ -1171,7 +1179,11 @@ export default function ChatPage({
           </div>
           {/* 功能行（对齐 WorkBuddy：输入框下方一排功能）—— 全部对接真实后端能力 */}
           <div className="mx-auto mt-2 flex max-w-3xl items-center gap-2">
-            <span className="relative">
+            <span
+              className="relative"
+              onMouseEnter={cancelMenuClose}
+              onMouseLeave={() => armMenuClose(() => setRoleMenuOpen(false))}
+            >
               {/* 角色切换（WorkBuddy 式自定义菜单）：原生 select 的弹层系统绘制、样式突兀，
                   换成与模型菜单同款的面板——角色名 + 内置徽标 + 当前项勾选。 */}
               <button
@@ -1187,8 +1199,6 @@ export default function ChatPage({
               </button>
               {roleMenuOpen && (
                 <>
-                  {/* 点击外部自动关闭（用户反馈）：透明背板兜住菜单外的所有点击 */}
-                  <div className="fixed inset-0 z-10" onClick={() => setRoleMenuOpen(false)} />
                   <div className="absolute bottom-full left-0 z-20 mb-2 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-600 dark:bg-slate-800">
                   <p className="bg-slate-50 px-3 py-1.5 text-[11px] font-medium text-slate-400 dark:bg-slate-800/60 dark:text-slate-500">
                     切换角色（下一轮生效，历史保留）
@@ -1219,7 +1229,11 @@ export default function ChatPage({
                 </>
               )}
             </span>
-            <div className="relative">
+            <div
+              className="relative"
+              onMouseEnter={cancelMenuClose}
+              onMouseLeave={() => armMenuClose(() => setModelMenuOpen(false))}
+            >
               <button
                 onClick={() => {
                   setRoleMenuOpen(false); // 两个菜单互斥
@@ -1233,7 +1247,6 @@ export default function ChatPage({
               </button>
               {modelMenuOpen && (
                 <>
-                  <div className="fixed inset-0 z-10" onClick={() => setModelMenuOpen(false)} />
                   <div className="absolute bottom-full left-0 z-20 mb-2 max-h-72 w-72 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-lg">
                   <button
                     onClick={() => switchModel(null)}
@@ -1312,15 +1325,6 @@ export default function ChatPage({
                       ))}
                     </div>
                   ))}
-                  <button
-                    onClick={() => {
-                      setModelMenuOpen(false);
-                      onOpenSettings?.();
-                    }}
-                    className="w-full border-t border-slate-100 dark:border-slate-800 px-3 py-2 text-[11px] text-slate-400 dark:text-slate-500 hover:text-blue-600 dark:text-blue-400"
-                  >
-                    管理后端与回退链 → 设置页
-                  </button>
                   </div>
                 </>
               )}

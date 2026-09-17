@@ -205,7 +205,7 @@ export default function App() {
       <main className="min-h-0 min-w-0 flex-1 pt-[41px] md:pt-0">
         <PageBoundary key={tab}>
           <Suspense fallback={<div className="p-6 text-sm text-slate-400 dark:text-slate-500">加载中…</div>}>
-            {tab === "chat" && <ChatPage onOpenSettings={() => selectTab("settings")} />}
+            {tab === "chat" && <ChatPage />}
             {tab === "data" && <DataPage />}
             {tab === "knowledge" && <KnowledgePage onOpenChat={() => selectTab("chat")} />}
             {tab === "roles" && <RolesPage />}
