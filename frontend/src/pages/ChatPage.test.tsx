@@ -212,7 +212,7 @@ describe("ChatPage 流式渲染", () => {
     await sendMessage("一问");
 
     // 面板出现，且里面是回放出来的那段思考
-    const summary = await screen.findByText(/^过程/);
+    const summary = await screen.findByText(/^思考过程/);
     expect(summary).toBeTruthy();
     expect(await screen.findByText(/回放出来的思考/)).toBeTruthy();
     expect(screen.queryByText(/回答正文/)).toBeTruthy();
@@ -231,8 +231,8 @@ describe("ChatPage 流式渲染", () => {
     render(<ChatPage />);
     await sendMessage("问");
 
-    // 一轮的过程合并成一个「过程」面板（思考/工具同框），默认折叠
-    const summary = await screen.findByText(/^过程/);
+    // 单步思考：直接是「思考过程」面板（不套「过程」外层），默认折叠
+    const summary = await screen.findByText(/^思考过程/);
     const details = summary.closest("details");
     expect(details?.hasAttribute("open")).toBe(false);
     summary.click();

@@ -9,6 +9,43 @@ import ToolStepCard from "./ToolStepCard";
  * 每个思考步再各自独立折叠——看完一段可以收起来再看下一段。
  */
 export default function ProcessPanel({ steps }: { steps: TurnStep<TurnMessageLike>[] }) {
+  // 只有一步：不再套「过程」外层 —— 展开就是那一步本身。
+  // （单步时套两层等于"点两下才看到内容"，用户反馈；多步才需要先合并再逐段展开。）
+  if (steps.length === 1) {
+    const only = steps[0];
+    if (only.kind === "think") {
+      return (
+        <details className="group/proc mb-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 px-2.5 py-1.5">
+          <summary className="cursor-pointer select-none text-xs text-slate-400 dark:text-slate-500">
+            思考过程{only.text.length > 120 ? `（${only.text.length} 字）` : ""}
+          </summary>
+          <pre className="mt-1.5 max-h-72 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+            {only.text}
+          </pre>
+        </details>
+      );
+    }
+    if (only.kind === "text") {
+      return (
+        <div className="mb-2.5 text-sm text-slate-600 dark:text-slate-300">
+          <Markdown text={only.text} />
+        </div>
+      );
+    }
+    return (
+      <div className="mb-2.5">
+        <ToolStepCard
+          step={{
+            id: 0,
+            name: only.msg.name || "tool",
+            status: "ok",
+            content: only.msg.content ?? "",
+            args: only.msg.args,
+          }}
+        />
+      </div>
+    );
+  }
   const thinks = steps.filter((s) => s.kind === "think").length;
   const tools = steps.filter((s) => s.kind === "tool").length;
   const parts = [thinks ? `思考 ×${thinks}` : "", tools ? `工具 ×${tools}` : ""].filter(Boolean);
