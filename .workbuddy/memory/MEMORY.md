@@ -115,3 +115,6 @@ cd frontend && npm test && npm run build
   代码标识符与注释不跟着改：`sessions` / `thread_id` / `/api/sessions` 是契约。
 - 改完文案的复查手法：真机抓 `body.innerText` + 所有 `[title]`/`[aria-label]`/`[placeholder]`
   是否还含旧词 —— 只 grep 源码会把注释/docstring 一起算进去，判不准"用户还看不看得见"。
+11. **子代理的可量化断言必须自己复跑**：审查/调研报告里"零覆盖""不生效""从不被调用"最容易错
+    （只看了一半代码）。本项目实测否掉过两条：`.env 是死配置`（`run_api.py:83` 有 `_load_dotenv`）、
+    `core/services.py 零覆盖`（实际 96%）。只信能自己跑出来的证据。
