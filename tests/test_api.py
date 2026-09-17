@@ -239,3 +239,14 @@ def test_enhance_prompt_rejects_empty(client: TestClient) -> None:
 
 
 
+
+
+def test_patch_model_context_404_and_400(client: TestClient) -> None:
+    """num_ctx 单列端点：未知后端 404；过小 400（校验在 rebuild 之前，测试不触真实模型）。"""
+    res = client.patch("/api/settings/models/ghost/context", json={"num_ctx": 8192})
+    assert res.status_code == 404
+    res = client.patch("/api/settings/models/local/context", json={"num_ctx": 100})
+    assert res.status_code == 400
+    assert "512" in res.json()["detail"]
+
+

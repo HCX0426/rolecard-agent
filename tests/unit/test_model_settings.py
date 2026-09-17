@@ -180,3 +180,36 @@ def test_save_rejects_bad_base_url() -> None:
                 "base_url": "file:///etc/passwd", "usage": "chat",
             }],
         )
+
+
+def test_num_ctx_roundtrip_and_validation() -> None:
+    """上下文窗口（num_ctx）：落库/回读/过小拒绝；单列 set_num_ctx 同规则。"""
+    svc = ModelSettingsService(_conn())
+    svc.save(
+        default="a",
+        backends=[
+            {"name": "a", "provider": "ollama", "model": "qwen3-vl:8b",
+             "usage": "chat", "num_ctx": 8192},
+        ],
+    )
+    rows = svc.list_backends()
+    assert rows[0]["num_ctx"] == 8192
+
+    # 太小（<512）大声拒绝，不落半套配置
+    with pytest.raises(ModelSettingsError, match="不得小于 512"):
+        svc.save(
+            default="a",
+            backends=[{"name": "a", "provider": "ollama", "model": "m", "num_ctx": 128}],
+        )
+
+    # 单列写入：正常 / 清除回落 / 未知名称 KeyError
+    svc.set_num_ctx("a", 16384)
+    assert svc.list_backends()[0]["num_ctx"] == 16384
+    svc.set_num_ctx("a", None)
+    assert svc.list_backends()[0]["num_ctx"] is None
+    with pytest.raises(KeyError):
+        svc.set_num_ctx("ghost", 4096)
+    with pytest.raises(ModelSettingsError, match="不得小于 512"):
+        svc.set_num_ctx("a", 100)
+
+

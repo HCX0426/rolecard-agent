@@ -135,7 +135,7 @@ class ModelSettingsService:
 
     def _raw_backends(self) -> list[dict[str, object]]:
         rows = self._conn.execute(
-            "SELECT name, provider, base_url, model, api_key, usage, sort_order "
+            "SELECT name, provider, base_url, model, api_key, usage, sort_order, num_ctx "
             "FROM model_backend ORDER BY sort_order, name"
         ).fetchall()
         return [dict(r) for r in rows]
@@ -153,7 +153,7 @@ class ModelSettingsService:
         return [
             {
                 k: row[k]
-                for k in ("name", "provider", "base_url", "model", "usage", "sort_order")
+                for k in ("name", "provider", "base_url", "model", "usage", "sort_order", "num_ctx")
             }
             | {"has_key": bool(row["api_key"]), "key_masked": self.key_masked(str(row["name"]))}
             for row in self._raw_backends()
@@ -262,8 +262,8 @@ class ModelSettingsService:
                 continue
             self._conn.execute(
                 "INSERT OR IGNORE INTO model_backend "
-                "(name, provider, base_url, model, api_key, usage, sort_order) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "(name, provider, base_url, model, api_key, usage, sort_order, num_ctx) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     name,
                     backend.provider,
@@ -272,6 +272,7 @@ class ModelSettingsService:
                     backend.api_key,
                     backend.usage,
                     len(existing) + inserted,
+                    backend.num_ctx,
                 ),
             )
             inserted += 1
@@ -286,6 +287,20 @@ class ModelSettingsService:
         )
         self._conn.commit()
         return inserted
+
+    def set_num_ctx(self, name: str, num_ctx: int | None) -> None:
+        """只改一行的上下文窗口（对话菜单悬浮面板用）—— 名称不存在抛 KeyError（404）。
+
+        num_ctx 语义：None = 用引擎默认；给了必须 >= 512（太小的窗口等于把历史截没）。
+        """
+        if num_ctx is not None and num_ctx < 512:
+            raise ModelSettingsError("num_ctx 不得小于 512（tokens）")
+        cur = self._conn.execute(
+            "UPDATE model_backend SET num_ctx = ? WHERE name = ?", (num_ctx, name)
+        )
+        if cur.rowcount == 0:
+            raise KeyError(name)
+        self._conn.commit()
 
     def normalize_providers(self) -> int:
         """启动时一次性归一化历史行的 provider，并清掉无 key 供应商误存的 key。
@@ -354,6 +369,19 @@ class ModelSettingsService:
                 raise ModelSettingsError(
                     f"后端 {name} 的用途 {usage!r} 不合法（chat/embedding/rerank/ocr）。"
                 )
+            # num_ctx（本地 Ollama 上下文窗口）：None 允许；给了必须是不小于 512 的整数
+            # ——太小的窗口等于把历史截没，宁可大声拒绝。
+            raw_ctx = item.get("num_ctx")
+            num_ctx: int | None = None
+            if raw_ctx not in (None, ""):
+                try:
+                    num_ctx = int(str(raw_ctx))
+                except (TypeError, ValueError) as exc:
+                    raise ModelSettingsError(
+                        f"后端 {name} 的 num_ctx 必须是整数（tokens）"
+                    ) from exc
+                if num_ctx < 512:
+                    raise ModelSettingsError(f"后端 {name} 的 num_ctx 不得小于 512（tokens）")
             raw_base = item.get("base_url")
             # 写入即归一：目录外的风格值（如历史 "openai"+硅基流动 URL）折叠成厂商 id。
             provider = normalize_provider(provider, str(raw_base) if raw_base else None)
@@ -369,7 +397,7 @@ class ModelSettingsService:
                 key = None  # explicit clear
             else:
                 key = str(raw_key).strip()
-            prepared.append((name, provider, base_url, model, key, usage, i))
+            prepared.append((name, provider, base_url, model, key, usage, i, num_ctx))
 
         if default not in names:
             raise ModelSettingsError(f"默认后端 {default!r} 不在列表里。")
@@ -399,8 +427,8 @@ class ModelSettingsService:
         self._conn.execute("DELETE FROM model_backend")
         self._conn.executemany(
             "INSERT INTO model_backend "
-            "(name, provider, base_url, model, api_key, usage, sort_order) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "(name, provider, base_url, model, api_key, usage, sort_order, num_ctx) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             prepared,
         )
         for key, value in (
@@ -435,6 +463,7 @@ class ModelSettingsService:
                 api_key=row["api_key"],  # type: ignore[arg-type]
                 provider=str(row["provider"]),
                 usage=str(row["usage"]),
+                num_ctx=int(str(row["num_ctx"])) if row.get("num_ctx") is not None else None,
             )
             for row in raw
         }

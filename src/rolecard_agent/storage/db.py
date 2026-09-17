@@ -219,6 +219,11 @@ def _migrate(conn: SqlConnection) -> None:
     """
     if "usage" not in _columns(conn, "model_backend"):
         conn.execute("ALTER TABLE model_backend ADD COLUMN usage TEXT NOT NULL DEFAULT 'chat'")
+    # 4. model_backend 增列 num_ctx（本地 Ollama 的实际上下文窗口，tokens）。
+    #    为什么必须有：Ollama 默认只开 2048 tokens 的窗口——不显式传 num_ctx，
+    #    模型自带的 32k 窗口形同虚设，超出的历史会被引擎静默截断。NULL = 用模型默认。
+    if "num_ctx" not in _columns(conn, "model_backend"):
+        conn.execute("ALTER TABLE model_backend ADD COLUMN num_ctx INTEGER")
     conn.execute("DROP TABLE IF EXISTS service_policy")
     if "api_key" in _columns(conn, "service_endpoint"):
         conn.execute("DROP TABLE service_endpoint")

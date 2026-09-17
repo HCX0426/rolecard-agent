@@ -123,6 +123,10 @@ def _init_model(settings: Settings, backend_name: str | None) -> ChatLike:
     # 历史值 "local" 是 Ollama 的别名，同样按 native 处理。
     style = client_style(backend.provider)
     kwargs["model_provider"] = "ollama" if style == "native" else "openai"
+    # 本地 Ollama 的实际上下文窗口：不显式传 num_ctx，引擎默认常只有 2048 tokens，
+    # 我们裁剪到 24000 字符的历史会被静默截断（模型自带窗口形同虚设）。
+    if style == "native" and backend.num_ctx:
+        kwargs["num_ctx"] = backend.num_ctx
     # 思考（reasoning）模式只对**显式列出**的思考模型开启（MODEL_THINKING_MODELS），
     # 且受总开关 MODEL_THINKING=auto|off 管制（off = 名单内也不开，临时不想要思考
     # token 时用）：对不支持的模型传 reasoning=True 会直接 400（实测 qwen2.5:7b），

@@ -40,6 +40,8 @@ class BackendSpec(BaseModel):
     # 模型页是云端端点配置的唯一事实面：usage 标记该行服务谁（chat/embedding/rerank/ocr），
     # 服务页按用途引用。对话菜单与角色路由只消费 chat 行。
     usage: str = "chat"
+    # 本地 Ollama 的实际上下文窗口（tokens）；None = 引擎默认（常为 2048）。
+    num_ctx: int | None = None
 
 
 class ModelSettingsBody(BaseModel):
@@ -64,6 +66,40 @@ def get_model_settings(ctx: AppContext = Depends(get_context)) -> object:
 def get_model_providers() -> object:
     """供应商目录（动态扩展）：设置页「模型」页签的下拉从这里取，不再写死前端。"""
     return {"providers": provider_catalog()}
+
+
+class ModelContextBody(BaseModel):
+    """只改一个后端的上下文窗口；null = 回落到引擎默认。"""
+
+    num_ctx: int | None = None
+
+
+@router.patch("/api/settings/models/{name}/context")
+def patch_model_context(
+    name: str,
+    body: ModelContextBody,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> object:
+    """单独改某后端的 num_ctx 并热重建（对话菜单悬浮面板的快速通道）。
+
+    为什么不让前端走整表 PUT：那要求前端持有全部行与回退链，改一个数字却要重传整套
+    配置——写放大且易把并发编辑互相覆盖。这里只改一列。名称不存在 → 404（KeyError）。
+    """
+    try:
+        ctx.model_settings.set_num_ctx(name, body.num_ctx)
+    except ModelSettingsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"后端 {name!r} 不存在。") from None
+    ctx.roles.audit(
+        actor=actor.id,
+        action="update_model_context",
+        target=name,
+        detail={"num_ctx": body.num_ctx},
+    )
+    ctx.rebuild_runtime()
+    return {"name": name, "num_ctx": body.num_ctx}
 
 
 @router.put("/api/settings/models")

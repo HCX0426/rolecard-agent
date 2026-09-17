@@ -20,10 +20,12 @@ import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
-DEFAULT_LOCAL_BACKEND = {
+# Any：num_ctx 是 int|None，dict[str,str] 会让 mypy 逐字段校验失败；展开时由 pydantic 把关。
+DEFAULT_LOCAL_BACKEND: dict[str, Any] = {
     "provider": "ollama",
     # provider=ollama 走 langchain-ollama 的 Ollama 原生端点（/api/chat），base_url 不带 /v1；
     # OpenAI 兼容端点（http://localhost:11434/v1/chat/completions）是 provider=openai 时用的。
@@ -63,6 +65,10 @@ class ModelBackend(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
     provider: str = "ollama"
+    # 本地 Ollama 的**实际上下文窗口**（tokens，映射到 ChatOllama 的 num_ctx）。
+    # None = 用引擎/模型默认（Ollama 常默认为 2048，比模型自带的 32k 小得多）。
+    # 只对 native 风格（Ollama）生效：云端窗口由服务商固定，传了也会被忽略。
+    num_ctx: int | None = None
     # 模型页是云端端点配置的唯一事实面；usage 标记该行服务谁：
     # chat=对话推理（对话菜单/角色路由只消费这类）| embedding | rerank | ocr（凭据行）。
     usage: str = "chat"

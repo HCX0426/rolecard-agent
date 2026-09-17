@@ -199,15 +199,6 @@ export default function App() {
             </button>
           ))}
         </div>
-        <div className="mt-auto px-4 py-3 text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
-          <button
-            onClick={toggle}
-            title={`当前${theme === "dark" ? "深色" : "浅色"}，点击切换`}
-            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:text-slate-300 dark:hover:border-blue-700"
-          >
-            切换{theme === "dark" ? "浅色" : "深色"}模式
-          </button>
-        </div>
       </nav>
 
       {/* 主内容区 */}
@@ -219,7 +210,9 @@ export default function App() {
             {tab === "knowledge" && <KnowledgePage onOpenChat={() => selectTab("chat")} />}
             {tab === "roles" && <RolesPage />}
             {tab === "plugins" && <PluginsPage />}
-            {tab === "settings" && <SettingsPage onOpenChat={() => selectTab("chat")} />}
+            {tab === "settings" && (
+              <SettingsPage onOpenChat={() => selectTab("chat")} theme={theme} onToggleTheme={toggle} />
+            )}
           </Suspense>
         </PageBoundary>
       </main>

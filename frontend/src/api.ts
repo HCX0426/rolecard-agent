@@ -54,6 +54,8 @@ export interface BackendRow {
   /** 配置用途（模型页=云端配置唯一事实面）：chat=对话推理 | embedding | rerank | ocr 凭据。 */
   usage: string;
   sort_order: number;
+  /** 本地 Ollama 的实际上下文窗口（tokens）；null = 引擎默认。 */
+  num_ctx: number | null;
   has_key: boolean;
   key_masked: string | null;
 }
@@ -307,6 +309,12 @@ export const api = {
   extractRecord: (taskId: string) =>
     request<ExtractResult>("POST", "/api/records/extract", { task_id: taskId }),
   /** 模型供应商目录（设置页下拉动态来源）。 */
+  setModelContext: (name: string, numCtx: number | null) =>
+    request<{ name: string; num_ctx: number | null }>(
+      "PATCH",
+      `/api/settings/models/${name}/context`,
+      { num_ctx: numCtx },
+    ),
   enhancePrompt: (text: string) =>
     request<{ text: string }>("POST", "/api/prompt/enhance", { text }),
   getProviders: () => request<{ providers: ModelProvider[] }>("GET", "/api/settings/model-providers"),

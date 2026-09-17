@@ -106,6 +106,98 @@ function ToolStepCard({ step }: { step: ToolStep }) {
   );
 }
 
+/** 一轮对话里的一个过程步骤（思考 / 工具 / 中间轮正文），按发生顺序排列。 */
+type TurnStep =
+  | { kind: "think"; text: string }
+  | { kind: "tool"; msg: MessageRow }
+  | { kind: "text"; text: string };
+
+interface Turn {
+  key: string;
+  user: MessageRow | null;
+  steps: TurnStep[];
+  answer: MessageRow | null;
+}
+
+/** 把消息序列切成"一轮"：用户提问 → 过程步骤（思考/工具/中间正文）→ 最终回答。
+ *
+ * 为什么要合并：一条带工具的回答在数据里是 [AIMessage(思考+tool_calls) → ToolMessage →
+ * AIMessage(最终)]，逐条渲染会散成"思考框 / 工具卡 / 思考框"三个突兀的框（用户反馈）。
+ * WorkBuddy 式做法是一轮一个「过程」折叠面板，展开后看步骤明细。
+ */
+function groupTurns(msgs: MessageRow[]): Turn[] {
+  const turns: Turn[] = [];
+  let cur: Turn | null = null;
+  let seq = 0;
+  const ensure = () => {
+    if (!cur) {
+      cur = { key: `turn-${seq++}`, user: null, steps: [], answer: null };
+      turns.push(cur);
+    }
+    return cur;
+  };
+  for (const m of msgs) {
+    if (m.role === "user") {
+      cur = { key: m.id ?? `turn-${seq++}`, user: m, steps: [], answer: null };
+      turns.push(cur);
+      continue;
+    }
+    const turn = ensure();
+    if (m.role === "tool") {
+      turn.steps.push({ kind: "tool", msg: m });
+    } else if (m.tools?.length) {
+      // 中间轮（还要继续调工具）：思考进过程；若有前言正文也按过程小字展示
+      if (m.reasoning) turn.steps.push({ kind: "think", text: m.reasoning });
+      if (m.content.trim()) turn.steps.push({ kind: "text", text: m.content });
+    } else {
+      if (m.reasoning) turn.steps.push({ kind: "think", text: m.reasoning });
+      turn.answer = m;
+    }
+  }
+  return turns;
+}
+
+/** 一轮的「过程」折叠面板：思考与工具调用同处一个框，展开后按序可读。 */
+function ProcessPanel({ steps }: { steps: TurnStep[] }) {
+  const thinks = steps.filter((s) => s.kind === "think").length;
+  const tools = steps.filter((s) => s.kind === "tool").length;
+  const parts = [thinks ? `思考 ×${thinks}` : "", tools ? `工具 ×${tools}` : ""].filter(Boolean);
+  return (
+    <details className="group/proc mb-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 px-2.5 py-1.5">
+      <summary className="cursor-pointer select-none text-xs text-slate-400 dark:text-slate-500">
+        过程{parts.length ? ` · ${parts.join(" · ")}` : ""}
+      </summary>
+      <div className="mt-1.5 space-y-1.5">
+        {steps.map((s, i) =>
+          s.kind === "think" ? (
+            <pre
+              key={i}
+              className="max-h-56 overflow-auto whitespace-pre-wrap rounded bg-white p-2 text-[11px] leading-relaxed text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+            >
+              {s.text}
+            </pre>
+          ) : s.kind === "text" ? (
+            <div key={i} className="text-xs text-slate-500 dark:text-slate-400">
+              <Markdown text={s.text} />
+            </div>
+          ) : (
+            <ToolStepCard
+              key={i}
+              step={{
+                id: 0,
+                name: s.msg.name || "tool",
+                status: "ok",
+                content: s.msg.content,
+                args: s.msg.args,
+              }}
+            />
+          ),
+        )}
+      </div>
+    </details>
+  );
+}
+
 /** 发送（上箭头）——嵌在输入框内的图标按钮（WorkBuddy 式）。 */
 function IconSend() {
   return (
@@ -169,7 +261,11 @@ export default function ChatPage({
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const [backends, setBackends] = useState<{ name: string; provider: string; model: string; usage: string }[]>([]);
+  const [roleMenuOpen, setRoleMenuOpen] = useState(false);
+  const [ctxOpen, setCtxOpen] = useState<string | null>(null); // 展开上下文选项的模型行名
+  const [backends, setBackends] = useState<
+    { name: string; provider: string; model: string; usage: string; num_ctx: number | null }[]
+  >([]);
   // 供应商 id → 中文档称（分组标题显示"硅基流动"而非原始 id）
   const [providerLabels, setProviderLabels] = useState<Record<string, string>>({});
   const [defaultBackend, setDefaultBackend] = useState("");
@@ -182,7 +278,7 @@ export default function ChatPage({
   const [trim, setTrim] = useState<{ dropped: number; kept: number } | null>(null);
   // 编辑重生成：正在编辑的那条消息（id + 草稿）
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
-  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null); // 复制反馈（按轮 key）
   const [enhancing, setEnhancing] = useState(false); // 增强提示词进行中
   const [ctxBudget, setCtxBudget] = useState(0); // 上下文字符预算（后端 context 端点）
   // 多选删除模式：勾选若干消息（勾一侧自动带上整轮）
@@ -222,7 +318,15 @@ export default function ChatPage({
     refreshSessions().catch((e) => setStatus(`加载会话失败：${e.message}`, "warn"));
     api.get<RoleCard[]>("/api/roles").then(setRoles).catch(() => {});
     api.get<ModelSettings>("/api/settings/models").then((s) => {
-      setBackends(s.backends.map((b) => ({ name: b.name, provider: b.provider, model: b.model, usage: b.usage ?? "chat" })));
+      setBackends(
+        s.backends.map((b) => ({
+          name: b.name,
+          provider: b.provider,
+          model: b.model,
+          usage: b.usage ?? "chat",
+          num_ctx: b.num_ctx ?? null,
+        })),
+      );
       setDefaultBackend(s.default || s.backends[0]?.name || "");
     }).catch(() => {});
     api.get<{ providers: ModelProvider[] }>("/api/settings/model-providers")
@@ -337,44 +441,40 @@ export default function ChatPage({
     }
   }
 
-  // 预配对：每条 AI 回答 → 触发它的用户消息（id/内容）+ 耗时（created_at 差）。
-  // 旧 checkpoint 消息没有 created_at → dur 为 null，只显示操作按钮。
-  const pairs = messages.map((m, i) => {
-    if (m.role !== "assistant") return null;
-    let userId: string | undefined;
-    let userText = "";
-    let dur: string | null = null;
-    for (let j = i - 1; j >= 0; j--) {
-      if (messages[j].role === "user") {
-        userId = messages[j].id;
-        userText = messages[j].content;
-        dur = fmtDuration(messages[j].ts ?? "", m.ts ?? "");
-        break;
-      }
-    }
-    return { userId, userText, dur };
-  });
+  // 按轮分组（用户提问 → 过程步骤 → 最终回答）：渲染与"重新生成"都以轮为单位。
+  const turns = groupTurns(messages);
 
-  // 上下文使用率：已用字符按当前消息估算（展示口径，随消息实时更新），上限来自后端配置。
-  const ctxUsed = messages.reduce((n, m) => n + (m.content?.length ?? 0) + (m.reasoning?.length ?? 0), 0);
-  const ctxPct = ctxBudget > 0 ? Math.min(100, Math.round((ctxUsed / ctxBudget) * 100)) : 0;
-
-  function copyContent(i: number) {
-    navigator.clipboard?.writeText(messages[i].content).then(
+  function copyContent(text: string, key: string) {
+    navigator.clipboard?.writeText(text).then(
       () => {
-        setCopiedIdx(i);
-        setTimeout(() => setCopiedIdx((c) => (c === i ? null : c)), 1500);
+        setCopiedKey(key);
+        setTimeout(() => setCopiedKey((c) => (c === key ? null : c)), 1500);
       },
       () => undefined,
     );
   }
 
   /** 重新生成：丢弃该回答及其后的历史，用触发本轮的用户消息原样重问（WorkBuddy 式）。 */
-  function regenerate(idx: number) {
-    const uid = pairs[idx]?.userId;
-    const content = pairs[idx]?.userText ?? "";
+  function regenerate(turn: Turn) {
+    const uid = turn.user?.id;
+    const content = turn.user?.content ?? "";
     if (!uid || busy || !content) return;
     saveEdit(uid, content);
+  }
+
+  // 上下文使用率：已用字符按当前消息估算（展示口径，随消息实时更新），上限来自后端配置。
+  const ctxUsed = messages.reduce((n, m) => n + (m.content?.length ?? 0) + (m.reasoning?.length ?? 0), 0);
+  const ctxPct = ctxBudget > 0 ? Math.min(100, Math.round((ctxUsed / ctxBudget) * 100)) : 0;
+
+  /** 设置某后端的上下文窗口（本地模型 num_ctx），保存后热重建、下一轮生效。 */
+  async function setModelCtx(name: string, numCtx: number | null) {
+    try {
+      await api.setModelContext(name, numCtx);
+      const ms = await api.get<ModelSettings>("/api/settings/models");
+      setBackends(ms.backends.filter((b) => b.usage === "chat"));
+    } catch (e) {
+      setStatus(`设置上下文窗口失败：${(e as Error).message}`, "warn");
+    }
   }
 
   /** 增强提示词：一次纯改写模型调用，结果替换草稿（对齐 WorkBuddy）。 */
@@ -778,151 +878,118 @@ export default function ChatPage({
             </div>
           )}
           <div className="mx-auto flex max-w-3xl flex-col gap-4">
-            {/* key 用消息的 checkpoint 寻址 id（M7）：流式 message_replace / 编辑重生成 /
-                删除问答对时 React 按身份复用节点，编辑态与勾选才不会错位。
-                仅乐观回显（发送瞬间本地追加、尚未刷新）没有 id，用序号兜底——
-                它永远是列表末尾且存活只有一瞬，序号在这个窗口内是稳定的。 */}
-            {messages.map((m, i) => {
-              const mid = m.id ?? "";
-              const isEditingThis = editing?.id === mid;
-              const checked = selectMode && !!mid && selected.includes(mid);
+            {/* 按轮渲染（WorkBuddy 式）：用户气泡 → 一个「过程」折叠面板（思考/工具同框）
+                → 最终回答 + 操作行。逐条渲染会把一轮散成三个突兀的框（用户反馈）。 */}
+            {turns.map((turn) => {
+              const userMid = turn.user?.id ?? "";
+              const answerMid = turn.answer?.id ?? "";
+              const selectId = userMid || answerMid;
+              const checked = selectMode && !!selectId && selected.includes(selectId);
               const rowTone = checked ? "opacity-60 ring-1 ring-amber-400" : "";
-              return m.role === "user" ? (
-                <div key={mid || `msg-${i}`} className={`group flex items-start justify-end gap-2 ${rowTone}`}>
-                  {selectMode && !!mid && (
+              const isEditingThis = !!userMid && editing?.id === userMid;
+              const dur =
+                turn.user && turn.answer
+                  ? fmtDuration(turn.user.ts ?? "", turn.answer.ts ?? "")
+                  : null;
+              return (
+                <div key={turn.key} className={`group relative w-full ${rowTone}`}>
+                  {selectMode && !!selectId && (
                     <input
                       type="checkbox"
-                      aria-label={`选择这条消息：${m.content.slice(0, 12)}`}
+                      aria-label={`选择这一轮：${(turn.user?.content ?? turn.answer?.content ?? "").slice(0, 12)}`}
                       checked={checked}
-                      onChange={() => toggleSelect(mid)}
-                      className="mt-3 h-3.5 w-3.5 accent-amber-500"
-                    />
-                  )}
-                  <div className={isEditingThis ? "w-full max-w-[80%]" : "max-w-[80%]"}>
-                    {isEditingThis ? (
-                      <div className="rounded-2xl rounded-br-sm border border-blue-300 bg-blue-50 dark:bg-slate-800/70 p-2.5">
-                        <textarea
-                          autoFocus
-                          value={editing.text}
-                          onChange={(e) => setEditing({ id: editing.id, text: e.target.value })}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveEdit();
-                            if (e.key === "Escape") setEditing(null);
-                          }}
-                          rows={3}
-                          className="w-full resize-y rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-blue-400"
-                        />
-                        <div className="mt-1.5 flex items-center justify-end gap-2 text-[11px]">
-                          <span className="text-slate-400 dark:text-slate-500">
-                            发送后此条之后的历史将作废并重新生成（Ctrl+Enter 发送）
-                          </span>
-                          <button
-                            onClick={() => setEditing(null)}
-                            className="rounded px-2 py-1 text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700"
-                          >
-                            取消
-                          </button>
-                          <button
-                            onClick={() => saveEdit()}
-                            className="rounded bg-blue-600 px-2.5 py-1 text-white hover:bg-blue-700"
-                          >
-                            保存并重新生成
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        {/* AI IDE 式交互：悬停自己的消息时，气泡左侧浮现铅笔图标（absolute
-                            悬浮，不占布局——此前 opacity-0 恒占 28px flex 空间，把气泡挤到
-                            换行）。group-hover 而非常显——消息多时不干扰视线。 */}
-                        {!busy && (
-                          <button
-                            onClick={() => startEdit(mid, m.content)}
-                            aria-label="编辑并重答"
-                            title="编辑这条消息并重新生成（之后的对话会被作废）"
-                            className="absolute -left-9 top-2 rounded-full p-1.5 text-slate-400 opacity-0 transition-opacity hover:bg-blue-50 hover:text-blue-600 group-hover:opacity-100 dark:text-slate-500 dark:hover:bg-slate-700/60 dark:hover:text-blue-400"
-                          >
-                            <svg
-                              viewBox="0 0 20 20"
-                              fill="currentColor"
-                              className="h-3.5 w-3.5"
-                              aria-hidden="true"
-                            >
-                              <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-                            </svg>
-                          </button>
-                        )}
-                        <div className="w-fit rounded-2xl rounded-br-sm bg-slate-200/90 px-4 py-2.5 whitespace-pre-wrap text-slate-900 dark:bg-slate-700 dark:text-slate-100">
-                          {m.content}
-                          {m.ts && (
-                            <p className="mt-1 text-right text-[10px] text-slate-500 dark:text-slate-400">{m.ts}</p>
-                          )}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-              ) : m.role === "tool" ? (
-                <div key={mid || `msg-${i}`} className={`flex items-start justify-start gap-2 ${rowTone}`}>
-                  {selectMode && !!mid && (
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleSelect(mid)}
-                      className="mt-3 h-3.5 w-3.5 accent-amber-500"
-                    />
-                  )}
-                  <div className="w-full max-w-[85%]">
-                    {/* id 仅 live 工具列表的 React key 用；回放卡片不在列表里，0 占位。
-                        args：回放也显示"搜了什么"（serialize_message 按 tool_call_id 配对）。 */}
-                    <ToolStepCard
-                      step={{
-                        id: 0,
-                        name: m.name || "tool",
-                        status: "ok",
-                        content: m.content,
-                        args: m.args,
-                      }}
-                    />
-                    {m.ts && (
-                      <p className="mt-1 text-[10px] text-slate-300 dark:text-slate-500">{m.ts}</p>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div key={mid || `msg-${i}`} className={`relative w-full ${rowTone}`}>
-                  {selectMode && !!mid && (
-                    <input
-                      type="checkbox"
-                      aria-label={`选择这条回答：${m.content.slice(0, 12)}`}
-                      checked={checked}
-                      onChange={() => toggleSelect(mid)}
+                      onChange={() => toggleSelect(selectId)}
                       className="absolute -left-7 top-1 h-3.5 w-3.5 accent-amber-500"
                     />
                   )}
-                  {/* AI 回答不带气泡（WorkBuddy 式）：全宽文本直接排在页面上，
-                      思考面板与工具卡是内嵌的浅色面板，视觉层次靠底色而非卡片边框。 */}
-                  <ThinkingPanel text={m.reasoning ?? ""} defaultOpen={false} />
-                  <Markdown text={m.content} />
-                  {/* 操作行（WorkBuddy 式）：耗时 · 复制 · 重新生成 */}
-                  <div className="mt-1 flex items-center gap-3 text-[11px] text-slate-400 dark:text-slate-500">
-                    {pairs[i]?.dur && <span>耗时 {pairs[i]?.dur}</span>}
-                    <button
-                      onClick={() => copyContent(i)}
-                      className="hover:text-slate-600 dark:hover:text-slate-300"
+                  {turn.user && (
+                    <div
+                      className={
+                        isEditingThis ? "ml-auto w-full max-w-[80%]" : "ml-auto w-fit max-w-[80%]"
+                      }
                     >
-                      {copiedIdx === i ? "已复制" : "复制"}
-                    </button>
-                    {pairs[i]?.userId && !busy && (
-                      <button
-                        onClick={() => regenerate(i)}
-                        className="hover:text-slate-600 dark:hover:text-slate-300"
-                      >
-                        重新生成
-                      </button>
-                    )}
-                    {m.ts && <span>{m.ts}</span>}
-                  </div>
+                      {isEditingThis ? (
+                        <div className="rounded-2xl rounded-br-sm border border-blue-300 bg-blue-50 dark:bg-slate-800/70 p-2.5">
+                          <textarea
+                            autoFocus
+                            value={editing.text}
+                            onChange={(e) => setEditing({ id: editing.id, text: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveEdit();
+                              if (e.key === "Escape") setEditing(null);
+                            }}
+                            rows={3}
+                            className="w-full resize-y rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-blue-400"
+                          />
+                          <div className="mt-1.5 flex items-center justify-end gap-2 text-[11px]">
+                            <span className="text-slate-400 dark:text-slate-500">
+                              发送后此条之后的历史将作废并重新生成（Ctrl+Enter 发送）
+                            </span>
+                            <button
+                              onClick={() => setEditing(null)}
+                              className="rounded px-2 py-1 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700"
+                            >
+                              取消
+                            </button>
+                            <button
+                              onClick={() => saveEdit()}
+                              className="rounded bg-blue-600 px-2.5 py-1 text-white hover:bg-blue-700"
+                            >
+                              保存并重新生成
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          {/* 悬浮铅笔：absolute 不占布局（占位会把气泡挤到换行） */}
+                          {!busy && !!userMid && (
+                            <button
+                              onClick={() => startEdit(userMid, turn.user!.content)}
+                              aria-label="编辑并重答"
+                              title="编辑这条消息并重新生成（之后的对话会被作废）"
+                              className="absolute -left-9 top-2 rounded-full p-1.5 text-slate-400 opacity-0 transition-opacity hover:bg-blue-50 hover:text-blue-600 group-hover:opacity-100 dark:text-slate-500 dark:hover:bg-slate-700/60 dark:hover:text-blue-400"
+                            >
+                              <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5" aria-hidden="true">
+                                <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+                              </svg>
+                            </button>
+                          )}
+                          <div className="rounded-2xl rounded-br-sm bg-slate-200/90 px-4 py-2.5 whitespace-pre-wrap text-slate-900 dark:bg-slate-700 dark:text-slate-100">
+                            {turn.user.content}
+                          </div>
+                          {turn.user.ts && (
+                            <p className="mt-1 text-right text-[10px] text-slate-500 dark:text-slate-400">
+                              {turn.user.ts}
+                            </p>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                  {turn.steps.length > 0 && <ProcessPanel steps={turn.steps} />}
+                  {turn.answer && (
+                    <>
+                      <Markdown text={turn.answer.content} />
+                      <div className="mt-1 flex items-center gap-3 text-[11px] text-slate-400 dark:text-slate-500">
+                        {dur && <span>耗时 {dur}</span>}
+                        <button
+                          onClick={() => copyContent(turn.answer!.content, turn.key)}
+                          className="hover:text-slate-600 dark:hover:text-slate-300"
+                        >
+                          {copiedKey === turn.key ? "已复制" : "复制"}
+                        </button>
+                        {turn.user?.id && !busy && (
+                          <button
+                            onClick={() => regenerate(turn)}
+                            className="hover:text-slate-600 dark:hover:text-slate-300"
+                          >
+                            重新生成
+                          </button>
+                        )}
+                        {turn.answer.ts && <span>{turn.answer.ts}</span>}
+                      </div>
+                    </>
+                  )}
                 </div>
               );
             })}
@@ -1098,23 +1165,46 @@ export default function ChatPage({
           </div>
           {/* 功能行（对齐 WorkBuddy：输入框下方一排功能）—— 全部对接真实后端能力 */}
           <div className="mx-auto mt-2 flex max-w-3xl items-center gap-2">
-            <span
-              title="切换当前会话的角色（可选，默认「通用助手」）"
-              className="flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
-            >
-              <IconUser />
-              <select
-                value={displayRole}
-                onChange={(e) => switchRole(e.target.value)}
-                title="切换当前会话的角色（可选，默认通用助手；选中即开会话）"
-                className="bg-transparent text-xs outline-none"
+            <span className="relative">
+              {/* 角色切换（WorkBuddy 式自定义菜单）：原生 select 的弹层系统绘制、样式突兀，
+                  换成与模型菜单同款的面板——角色名 + 内置徽标 + 当前项勾选。 */}
+              <button
+                onClick={() => setRoleMenuOpen((o) => !o)}
+                title="切换当前会话的角色（下一轮生效）"
+                className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-700"
               >
-                {roles.map((r) => (
-                  <option key={r.role_id} value={r.role_id}>
-                    {r.role_name}
-                  </option>
-                ))}
-              </select>
+                <IconUser />
+                {roles.find((r) => r.role_id === displayRole)?.role_name ?? "角色"} ▾
+              </button>
+              {roleMenuOpen && (
+                <div className="absolute bottom-full left-0 z-20 mb-2 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-600 dark:bg-slate-800">
+                  <p className="bg-slate-50 px-3 py-1.5 text-[11px] font-medium text-slate-400 dark:bg-slate-800/60 dark:text-slate-500">
+                    切换角色（下一轮生效，历史保留）
+                  </p>
+                  {roles.map((r) => (
+                    <button
+                      key={r.role_id}
+                      onClick={() => {
+                        setRoleMenuOpen(false);
+                        switchRole(r.role_id);
+                      }}
+                      className="flex w-full items-center justify-between px-3 py-2 text-xs hover:bg-blue-50 dark:hover:bg-blue-900/30"
+                    >
+                      <span className="truncate text-slate-700 dark:text-slate-200">{r.role_name}</span>
+                      <span className="ml-2 flex shrink-0 items-center gap-1.5">
+                        {r.is_builtin && (
+                          <span className="rounded bg-slate-100 px-1 text-[10px] text-slate-400 dark:bg-slate-700/60 dark:text-slate-400">
+                            内置
+                          </span>
+                        )}
+                        {displayRole === r.role_id && (
+                          <span className="text-blue-600 dark:text-blue-400">✓</span>
+                        )}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </span>
             <div className="relative">
               <button
@@ -1140,17 +1230,67 @@ export default function ChatPage({
                         {providerLabels[provider] ?? provider}
                       </p>
                       {list.map((b) => (
-                        <button
-                          key={b.name}
-                          onClick={() => switchModel(b.name)}
-                          className="flex w-full items-center justify-between px-3 py-1.5 text-xs hover:bg-blue-50 dark:bg-blue-900/30"
-                        >
-                          <span className="font-mono">{b.model}</span>
-                          <span className="ml-2 truncate text-slate-400 dark:text-slate-500">{b.name}</span>
-                          {effectiveBackend === b.name && (
-                            <span className="ml-1 text-blue-600 dark:text-blue-400">✓</span>
+                        <div key={b.name} className="relative">
+                          {/* 选择按钮与上下文按钮是**兄弟**：嵌在 button 内部的徽章点击会被
+                              父按钮的激活吞掉（实测），拆开才互不影响。 */}
+                          <div className="flex items-center">
+                            <button
+                              onClick={() => switchModel(b.name)}
+                              className="flex min-w-0 flex-1 items-center justify-between px-3 py-1.5 text-xs hover:bg-blue-50 dark:hover:bg-blue-900/30"
+                            >
+                              <span className="font-mono">{b.model}</span>
+                              <span className="ml-2 flex min-w-0 items-center gap-1.5">
+                                <span className="truncate text-slate-400 dark:text-slate-500">{b.name}</span>
+                              </span>
+                              {effectiveBackend === b.name && (
+                                <span className="ml-1 text-blue-600 dark:text-blue-400">✓</span>
+                              )}
+                            </button>
+                            {(b.provider === "ollama" || b.provider === "local") && (
+                              <button
+                                onClick={() => setCtxOpen((c) => (c === b.name ? null : b.name))}
+                                title="设置该模型的上下文窗口（num_ctx）"
+                                className="mr-2 shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 hover:bg-slate-200 dark:bg-slate-700/60 dark:text-slate-400 dark:hover:bg-slate-600"
+                              >
+                                {b.num_ctx ? `${Math.round(b.num_ctx / 1024)}k ▾` : "上下文 ▾"}
+                              </button>
+                            )}
+                          </div>
+                          {/* 上下文选项：点行内「上下文」徽章展开（inline，触屏可用） */}
+                          {(b.provider === "ollama" || b.provider === "local") &&
+                            ctxOpen === b.name && (
+                            <div className="border-t border-slate-100 px-3 py-2 dark:border-slate-700/60">
+                              <p className="pb-1.5 text-[10px] font-medium text-slate-400 dark:text-slate-500">
+                                上下文窗口 · {b.model}
+                              </p>
+                              <div className="grid grid-cols-3 gap-1">
+                                {[
+                                  { label: "引擎默认", value: null },
+                                  { label: "2048", value: 2048 },
+                                  { label: "4096", value: 4096 },
+                                  { label: "8192", value: 8192 },
+                                  { label: "16384", value: 16384 },
+                                  { label: "32768", value: 32768 },
+                                ].map((opt) => (
+                                  <button
+                                    key={opt.label}
+                                    onClick={() => setModelCtx(b.name, opt.value)}
+                                    className={`rounded px-2 py-1 text-[11px] ${
+                                      (b.num_ctx ?? null) === opt.value
+                                        ? "bg-blue-600 text-white"
+                                        : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700/60"
+                                    }`}
+                                  >
+                                    {opt.label}
+                                  </button>
+                                ))}
+                              </div>
+                              <p className="mt-1.5 text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
+                                Ollama 默认仅 2048 tokens，调大才能真正用上模型窗口
+                              </p>
+                            </div>
                           )}
-                        </button>
+                        </div>
                       ))}
                     </div>
                   ))}

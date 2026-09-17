@@ -24,7 +24,15 @@ const SETTINGS_TABS = [
 
 type SettingsTab = (typeof SETTINGS_TABS)[number]["key"];
 
-export default function SettingsPage({ onOpenChat }: { onOpenChat?: () => void }) {
+export default function SettingsPage({
+  onOpenChat,
+  theme,
+  onToggleTheme,
+}: {
+  onOpenChat?: () => void;
+  theme?: string;
+  onToggleTheme?: () => void;
+}) {
   const [tab, setTab] = useState<SettingsTab>("models");
 
   return (
@@ -46,7 +54,9 @@ export default function SettingsPage({ onOpenChat }: { onOpenChat?: () => void }
             </button>
           ))}
         </div>
-        {tab === "general" && <GeneralPanel onOpenChat={onOpenChat} />}
+        {tab === "general" && (
+          <GeneralPanel onOpenChat={onOpenChat} theme={theme} onToggleTheme={onToggleTheme} />
+        )}
         {tab === "models" && <ModelsPanel />}
         {tab === "services" && <ServicesPanel />}
         {tab === "runtime" && <RuntimePanel />}
@@ -58,7 +68,15 @@ export default function SettingsPage({ onOpenChat }: { onOpenChat?: () => void }
 
 // ---------------------------------------------------------------- 通用
 
-function GeneralPanel({ onOpenChat }: { onOpenChat?: () => void }) {
+function GeneralPanel({
+  onOpenChat,
+  theme,
+  onToggleTheme,
+}: {
+  onOpenChat?: () => void;
+  theme?: string;
+  onToggleTheme?: () => void;
+}) {
   const [info, setInfo] = useState<{
     defaultBackend: string;
     plugins: string;
@@ -90,6 +108,26 @@ function GeneralPanel({ onOpenChat }: { onOpenChat?: () => void }) {
 
   return (
     <div className="mt-6 space-y-4">
+      {onToggleTheme && (
+        <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
+          <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">外观</h3>
+          <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+            界面配色跟随本机偏好时可手动覆盖；切换即时生效、随浏览器记住。
+          </p>
+          <div className="mt-2.5 flex items-center gap-2">
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              当前：{theme === "dark" ? "深色" : "浅色"}
+            </span>
+            <button
+              onClick={onToggleTheme}
+              className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-600 dark:text-slate-300 dark:hover:border-blue-700"
+            >
+              切换为{theme === "dark" ? "浅色" : "深色"}
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
         <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">关于</h3>
         <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400 dark:text-slate-500">
