@@ -700,7 +700,7 @@ export default function ChatPage({
                       className="mt-3 h-3.5 w-3.5 accent-amber-500"
                     />
                   )}
-                  <div className="max-w-[80%]">
+                  <div className="w-full max-w-[80%]">
                     {isEditingThis ? (
                       <div className="rounded-2xl rounded-br-sm border border-blue-300 bg-blue-50 dark:bg-slate-800/70 p-2.5">
                         <textarea
@@ -734,33 +734,31 @@ export default function ChatPage({
                       </div>
                     ) : (
                       <>
-                        {/* AI IDE 式交互：悬停自己的消息时，气泡左侧浮现铅笔图标。
-                            group-hover 而不是常显——消息多时不干扰视线；触屏用户仍可点
-                            （透明元素在 DOM 里可聚焦）。 */}
-                        <div className="ml-auto flex max-w-[80%] items-center gap-1.5">
-                          {!busy && (
-                            <button
-                              onClick={() => startEdit(mid, m.content)}
-                              aria-label="编辑并重答"
-                              title="编辑这条消息并重新生成（之后的对话会被作废）"
-                              className="rounded-full p-1.5 text-slate-400 opacity-0 transition-opacity hover:bg-blue-50 hover:text-blue-600 group-hover:opacity-100 dark:text-slate-500 dark:hover:bg-slate-700/60 dark:hover:text-blue-400"
+                        {/* AI IDE 式交互：悬停自己的消息时，气泡左侧浮现铅笔图标（absolute
+                            悬浮，不占布局——此前 opacity-0 恒占 28px flex 空间，把气泡挤到
+                            换行）。group-hover 而非常显——消息多时不干扰视线。 */}
+                        {!busy && (
+                          <button
+                            onClick={() => startEdit(mid, m.content)}
+                            aria-label="编辑并重答"
+                            title="编辑这条消息并重新生成（之后的对话会被作废）"
+                            className="absolute -left-9 top-2 rounded-full p-1.5 text-slate-400 opacity-0 transition-opacity hover:bg-blue-50 hover:text-blue-600 group-hover:opacity-100 dark:text-slate-500 dark:hover:bg-slate-700/60 dark:hover:text-blue-400"
+                          >
+                            <svg
+                              viewBox="0 0 20 20"
+                              fill="currentColor"
+                              className="h-3.5 w-3.5"
+                              aria-hidden="true"
                             >
-                              <svg
-                                viewBox="0 0 20 20"
-                                fill="currentColor"
-                                className="h-3.5 w-3.5"
-                                aria-hidden="true"
-                              >
-                                <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-                              </svg>
-                            </button>
+                              <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+                            </svg>
+                          </button>
+                        )}
+                        <div className="max-w-full rounded-2xl rounded-br-sm bg-blue-600 px-4 py-2.5 whitespace-pre-wrap text-white">
+                          {m.content}
+                          {m.ts && (
+                            <p className="mt-1 text-right text-[10px] text-blue-200">{m.ts}</p>
                           )}
-                          <div className="rounded-2xl rounded-br-sm bg-blue-600 px-4 py-2.5 whitespace-pre-wrap text-white">
-                            {m.content}
-                            {m.ts && (
-                              <p className="mt-1 text-right text-[10px] text-blue-200">{m.ts}</p>
-                            )}
-                          </div>
                         </div>
                       </>
                     )}
