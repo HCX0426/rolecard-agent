@@ -114,6 +114,14 @@ class Settings(BaseModel):
     # 设成 0 或负数 = 不设上限（仅调试用）。
     tool_timeout_seconds: float = 120.0
 
+    # 单轮用户消息允许的**图步数上限**（LangGraph `recursion_limit`，
+    # 见 core/graph.build_graph_config）。
+    # 一次"模型 → 工具 → 模型"消耗 2 步。不设时 LangGraph 用默认的 10007 —— 而本图是个环：
+    # 模型只要持续返回 tool_calls（提示注入、工具反复报错被重试），这一轮就永远不会终止，
+    # 云端后端等于数千次真实计费调用、SSE 长时间无响应。25 步 ≈ 12 轮工具调用，正常任务
+    # 1-3 轮就够。设成 0 或负数 = 用 LangGraph 默认值（仅调试用）。
+    agent_max_steps: int = 25
+
     sqlite_path: Path = Path("./data/sqlite/app.db")
     chroma_path: Path = Path("./data/chroma")
     upload_dir: Path = Path("./data/uploads")  # v1 M5 上传入口的真实落点（登记 intake 任务）
@@ -260,6 +268,7 @@ class Settings(BaseModel):
             ("TAVILY_API_KEY", "tavily_api_key"),
             ("CONTEXT_MAX_CHARS", "context_max_chars"),
             ("TOOL_TIMEOUT_SECONDS", "tool_timeout_seconds"),
+            ("AGENT_MAX_STEPS", "agent_max_steps"),
             ("SQLITE_PATH", "sqlite_path"),
             ("CHROMA_PATH", "chroma_path"),
             ("UPLOAD_DIR", "upload_dir"),

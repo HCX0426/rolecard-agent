@@ -95,6 +95,56 @@ def test_same_source_reindex_is_idempotent(kb: KnowledgeBase) -> None:
     assert len(ids) == len(set(ids))  # id 唯一：同源重建覆盖而非追加
 
 
+def test_two_files_with_the_same_name_do_not_eat_each_other(kb: KnowledgeBase) -> None:
+    """P0 回归（审查报告 2026-09-17）：索引身份是 task id，**不是文件名**。
+
+    改前上传路径传的是原始文件名，而分块 id 由 `md5(f"{source}:{i}")` 推导 ——
+    两个「报告.pdf」的 id 完全重合，后一份 upsert 直接覆盖前一份：旧文档的索引
+    永久消失，检索还会拿错内容，全程没有任何提示。
+    """
+    kb.index("health_reports", "task-1", DOC_A, source_name="报告.pdf")
+    kb.index("health_reports", "task-2", DOC_B, source_name="报告.pdf")
+
+    ids = kb._client.get_collection("health_reports").get()["ids"]
+    assert len(ids) == len(set(ids))
+
+    hits = kb.search(["health_reports"], "胆囊结石随访", k=8)
+    assert any("胆囊" in h.text for h in hits), "先上传的那份被后者覆盖了"
+    assert {h.source for h in hits} == {"报告.pdf"}  # 展示的仍是文件名
+    assert {h.source_key for h in hits} == {"task-1", "task-2"}  # 身份彼此独立
+
+
+def test_source_name_is_only_a_label(kb: KnowledgeBase) -> None:
+    """展示名不参与身份：同一个文档改个名重建，仍是同一份（不产生第二份）。"""
+    kb.index("health_reports", "task-1", DOC_A, source_name="报告.pdf")
+    before = kb.scope_count("health_reports")
+
+    kb.index("health_reports", "task-1", DOC_A, source_name="报告（改名）.pdf")
+
+    assert kb.scope_count("health_reports") == before
+    hits = kb.search(["health_reports"], "随访", k=4)
+    assert {h.source for h in hits} == {"报告（改名）.pdf"}
+
+
+def test_legacy_chunks_without_source_name_still_show_their_name(kb: KnowledgeBase) -> None:
+    """本次改动前入库的分块没有 `source_name`：展示必须退回 `source`，不能变成 "?"。
+
+    真机上就有一批这样的分块（旧索引不会自动重建），所以这条回落是必需的。
+    """
+    collection = kb._client.get_or_create_collection(name="health_reports")
+    collection.add(  # 故意绕过 index()，模拟旧版元数据
+        ids=["legacy-1"],
+        embeddings=[[0.0] * HashEmbedder.DIM],
+        documents=[DOC_A],
+        metadatas=[{"source": "旧文件.txt", "scope": "health_reports", "chunk": 0}],
+    )
+
+    assert kb.describe()[0]["sources"] == ["旧文件.txt"]
+    hits = kb.search(["health_reports"], "随访", k=4)
+    assert [h.source for h in hits] == ["旧文件.txt"]
+    assert hits[0].source_key == "旧文件.txt"
+
+
 # -- search_knowledge 工具：作用域安全模型 ----------------------------------------------
 
 

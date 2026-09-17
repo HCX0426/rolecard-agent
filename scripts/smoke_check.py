@@ -305,6 +305,57 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
             else:
                 assert "mode" in body and "written" in body, ex.text  # 真实抽取结果
 
+    @check("上传：同名不同内容的文件互不覆盖（索引身份 = task id，不是文件名）")
+    def _same_name_upload() -> None:
+        """P0 回归（审查报告 2026-09-17）。
+
+        改前上传路径把**原始文件名**当索引身份，而分块 id 由 `md5(f"{source}:{i}")` 推导：
+        两份都叫「报告.md」的文件会共享同一批 id，第二份 upsert 直接覆盖第一份 ——
+        旧文档的索引永久消失，且界面/接口上没有任何提示。这里用真实上传链路证明
+        两份都在库里（分块数 +2，而不是 +1）。
+        """
+
+        def scope_chunks(name: str) -> int:
+            for item in c.get("/api/knowledge").json():
+                if item["scope"] == name:
+                    return int(item["chunks"])
+            return 0
+
+        tid = c.post("/api/session", json={}).json()["thread_id"]
+        before = scope_chunks("health_reports")
+        first = c.post(
+            f"/api/session/{tid}/upload",
+            files={
+                "file": (
+                    "报告.md",
+                    "# 超声随访\n\n2026-01 复查：结石 6.0 mm。".encode(),
+                    "text/markdown",
+                )
+            },
+        )
+        second = c.post(
+            f"/api/session/{tid}/upload",
+            files={
+                "file": (
+                    "报告.md",
+                    "# 血脂随访\n\n2026-02 复查：低密度脂蛋白 3.2 mmol/L。".encode(),
+                    "text/markdown",
+                )
+            },
+        )
+        assert first.status_code == 201 and second.status_code == 201, (first.text, second.text)
+        # 内容不同 → 不是同一次上传，不能被去重成同一个任务（那也会让两份合成一份）
+        assert first.json()["reused"] is False and second.json()["reused"] is False
+        assert first.json()["task_id"] != second.json()["task_id"]
+
+        after = scope_chunks("health_reports")
+        assert after - before >= 2, f"同名文件互相覆盖了：分块数 {before} → {after}"
+        # 展示名仍应是用户看到的文件名（身份与展示名分离）
+        sources = [
+            x["sources"] for x in c.get("/api/knowledge").json() if x["scope"] == "health_reports"
+        ][0]
+        assert "报告.md" in sources, sources
+
     @check("知识库概览：作用域 / 分块数 / 来源 / 嵌入器 / 重建作用域")
     def _knowledge() -> None:
         body = c.get("/api/knowledge").json()

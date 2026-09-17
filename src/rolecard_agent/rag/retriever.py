@@ -358,9 +358,12 @@ def make_reranker(
 @dataclass(frozen=True, slots=True)
 class Hit:
     scope: str
+    #: 给人看的来源名（用户上传的原始文件名）。工具层只展示它。
     source: str
     text: str
     distance: float
+    #: 索引身份（同 key 幂等重建）。展示层不需要，但排障时要能区分同名文件。
+    source_key: str = ""
 
 
 class KnowledgeDimensionMismatch(RuntimeError):
@@ -418,8 +421,15 @@ class KnowledgeBase:
                 with contextlib.suppress(Exception):
                     obj.close()
 
-    def index(self, scope: str, source: str, text: str) -> int:
+    def index(self, scope: str, source: str, text: str, *, source_name: str | None = None) -> int:
         """切块 -> 嵌入 -> 入库（同 source 幂等重建）。返回入库的分块数。
+
+        **`source` 是索引身份，`source_name` 只是展示名** —— 这个区分是审查报告 P0 的核心：
+        分块 id 由 `source` 确定性推导、旧分块也按 `source` 清理，所以身份一旦与别的文档
+        重合，后写入的会静默覆盖先前的。上传路径**曾用原始文件名当身份**：两个「报告.pdf」
+        互相吃掉，旧文档的索引永久消失且没有任何提示。
+        身份请传唯一且稳定的东西（上传路径传 ingestion task id，它按内容 hash 去重，
+        恰好满足"同一份字节重建、不同内容彼此独立"）。展示名进元数据，不参与身份。
 
         ## 步骤顺序是刻意的（审查报告 M4）
 
@@ -451,7 +461,13 @@ class KnowledgeBase:
                 embeddings=vectors,  # type: ignore[arg-type]
                 documents=chunks,
                 metadatas=[
-                    {"source": source, "scope": scope, "chunk": i} for i in range(len(chunks))
+                    {
+                        "source": source,
+                        "source_name": source_name or source,
+                        "scope": scope,
+                        "chunk": i,
+                    }
+                    for i in range(len(chunks))
                 ],
             )
         except Exception as exc:  # noqa: BLE001 - 维度错误要翻译成可操作提示
@@ -497,12 +513,16 @@ class KnowledgeBase:
                 metas = (found.get("metadatas") or [[]])[0]
                 dists = (found.get("distances") or [[]])[0]
                 for doc, meta, dist in zip(docs, metas, dists, strict=True):
+                    key = str((meta or {}).get("source", "?"))
                     hits.append(
                         Hit(
                             scope=scope,
-                            source=str((meta or {}).get("source", "?")),
+                            # 展示名：新写入的带 source_name；本次改动前入库的分块没有这个
+                            # 字段，退回 source 本身 —— 显示效果与改动前完全一致。
+                            source=str((meta or {}).get("source_name") or key),
                             text=doc,
                             distance=float(dist),
+                            source_key=key,
                         )
                     )
             hits.sort(key=lambda h: h.distance)
@@ -597,7 +617,10 @@ class KnowledgeBase:
         for collection in self._client.list_collections():
             data = collection.get(include=["metadatas"])
             sources = sorted(
-                {str((m or {}).get("source", "?")) for m in (data.get("metadatas") or [])}
+                {
+                    str((m or {}).get("source_name") or (m or {}).get("source", "?"))
+                    for m in (data.get("metadatas") or [])
+                }
             )
             out.append(
                 {

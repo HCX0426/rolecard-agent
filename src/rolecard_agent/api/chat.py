@@ -29,6 +29,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, cast
 
 from langchain_core.messages import AIMessageChunk, ToolMessage
+from langgraph.errors import GraphRecursionError
 
 from rolecard_agent.core.graph import MODEL_NODE, TOOLS_NODE
 from rolecard_agent.core.guard import check
@@ -215,6 +216,28 @@ UI surfaces it as a quiet inline notice. Same fact is queryable after a page rel
                                     "content": _text_of(message),
                                 }
                             )
+    except GraphRecursionError:
+        # 工具循环撞上步数上限（core/graph.build_graph_config 设的 recursion_limit）。
+        # 这不是"模型调用失败"——模型一直在正常回话，是它陷入了重复调用，所以必须
+        # 说清"发生了什么、怎么绕开"，否则用户只会反复重试同一个问法。
+        limit = config.get("recursion_limit")
+        if tracer is not None:
+            tracer.emit(
+                TraceEvent(
+                    event="chat_error",
+                    error=f"GraphRecursionError: 超过步数上限 {limit}",
+                    detail={"node": MODEL_NODE, "reason": "recursion_limit"},
+                )
+            )
+        yield sse(
+            {
+                "type": "error",
+                "detail": (
+                    f"这一轮的工具调用超过了 {limit} 步上限，已自动停止"
+                    "（通常是模型陷入了重复调用）。换个问法，或把任务拆小一点再试。"
+                ),
+            }
+        )
     except Exception as exc:  # noqa: BLE001 - the client gets a sentence, the log gets the cause
         if tracer is not None:
             # 带上消息体（审查报告 E1）：只记异常类型名等于回答不了"这次为什么失败" ——

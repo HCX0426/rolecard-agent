@@ -30,6 +30,7 @@ from rolecard_agent.api.deps import (
     role_error_to_http,
     serialize_message,
 )
+from rolecard_agent.core.graph import build_graph_config
 from rolecard_agent.core.ingestion import INGESTION_FAILED, INGESTION_PENDING
 from rolecard_agent.core.observability import TraceEvent
 from rolecard_agent.core.state import new_state, now_ts
@@ -248,7 +249,8 @@ async def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Str
     )
     conn.commit()
 
-    graph_config = {"configurable": {"thread_id": body.thread_id}}
+    # 步数上限随运行配置一起带上：没有它，模型持续返回 tool_calls 时这一轮不会终止。
+    graph_config = build_graph_config(body.thread_id, ctx.app_state["effective"])
     snapshot = graph.get_state(graph_config)
     # created_at 随消息入库（additional_kwargs）：历史回放显示时间（用户 2026-09-17）。
     created_at = now_ts()
@@ -307,7 +309,9 @@ def _history_messages(ctx: AppContext, thread_id: str) -> tuple[dict, list[AnyMe
     """取会话的图配置与 checkpoint 消息列表（类型为 AnyMessage：可安全访问 .id）。"""
     get_thread(ctx.conn, thread_id)
     graph = ctx.app_state["graph"]
-    config = {"configurable": {"thread_id": thread_id}}
+    # 这份 config 既用于 get_state / update_state，也直接喂给下面的 graph.stream ——
+    # 所以步数上限在这里就必须带上（否则编辑重生成那条路仍是无上界的）。
+    config = build_graph_config(thread_id, ctx.app_state["effective"])
     snapshot = graph.get_state(config)
     return config, list((snapshot.values or {}).get("messages") or [])
 
@@ -634,7 +638,12 @@ def upload_report(
                     )
                 )
             try:
-                chunks = ctx.knowledge.index("health_reports", safe_name, text)
+                # 索引身份用 task_id（按内容 hash 去重 → 同一份字节重建、不同内容彼此
+                # 独立），**不能用 safe_name**：同名文件会互相覆盖，旧文档索引静默丢失
+                # （审查报告 P0）。文件名只作展示名，引用里显示的仍是它。
+                chunks = ctx.knowledge.index(
+                    "health_reports", task_id, text, source_name=safe_name
+                )
             except (KnowledgeDimensionMismatch, EmbedError) as exc:
                 # 两者都是"管理员可修复"的状态，且都发生在**索引没被破坏**之后
                 # （index() 已改为先嵌入再写库，见审查报告 M4）。给出可操作的原因。

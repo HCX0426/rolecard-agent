@@ -37,6 +37,25 @@ from rolecard_agent.roles.service import RoleCardService
 MODEL_NODE = "model"
 TOOLS_NODE = "tools"
 
+# 不配置时的步数上限（见 config.agent_max_steps 的说明）。留一个模块级常量是为了
+# 让**不持有 Settings** 的调用方（脚本、测试）也能拿到同一个默认值。
+DEFAULT_AGENT_MAX_STEPS = 25
+
+
+def build_graph_config(thread_id: str, settings: Settings | None = None) -> dict[str, Any]:
+    """LangGraph 的运行配置：线程 id + **步数上限**。
+
+    上限必须显式给：不设时 LangGraph 用默认 `recursion_limit=10007`，而本图是
+    `model -> tools -> model` 的环 —— 模型只要持续返回 tool_calls（提示注入、工具反复
+    报错被重试），这一轮就永远不会终止：云端后端等于数千次真实计费调用，SSE 长时间
+    无响应且界面没有中断理由。`settings=None` 时用 `DEFAULT_AGENT_MAX_STEPS`。
+    """
+    limit = DEFAULT_AGENT_MAX_STEPS if settings is None else settings.agent_max_steps
+    config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}
+    if limit > 0:  # <=0 = 显式退回库默认（仅调试用）
+        config["recursion_limit"] = limit
+    return config
+
 
 def build_kernel(
     *,
@@ -137,10 +156,17 @@ def _init_model(settings: Settings, backend_name: str | None) -> ChatLike:
         and backend.model in settings.model_thinking_models
     ):
         kwargs["reasoning"] = True
-    # 两类客户端都接受 `timeout`（此前的 _TIMEOUT_PROVIDERS 两者都在列）：本地模型挂起
-    # 会让 SSE 与 with_fallbacks 永久等待，所以只要配置了超时就显式带上。
+    # 超时的**传法因客户端而异**（实测，别再想当然）：
+    #   - openai 兼容客户端认 `timeout` → 落到 request_timeout；
+    #   - ChatOllama **不认** `timeout`，传了会被静默丢弃（实测 client_kwargs 为空、
+    #     底层 httpx timeout=None）。本地模型挂起时 SSE 与 with_fallbacks 会一起永久
+    #     等待，_CHAT_POOL 的 8 个线程被逐个占死 → 整个对话服务拖停。它只认 client_kwargs。
     if settings.model_timeout_seconds > 0:
-        kwargs["timeout"] = int(settings.model_timeout_seconds)
+        timeout = int(settings.model_timeout_seconds)
+        if style == "native":
+            kwargs["client_kwargs"] = {"timeout": timeout}
+        else:
+            kwargs["timeout"] = timeout
     return init_chat_model(**kwargs)
 
 
