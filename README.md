@@ -3,13 +3,16 @@
 > **角色卡驱动的对话 Agent 内核 + 可插拔领域插件**
 > 运行时切换人设与权限，工具与知识检索以插件方式注册，本地优先、可公网部署。
 
-**当前状态：v1 里程碑 M1~M5 全部落地，v2.1 RAG / v2.2 文档摄取 / v2.3 前端工程化也全部落地** ——
+**当前状态：v1 里程碑 M1~M5 全部落地，v2.1 RAG / v2.2 文档摄取 / v2.3 前端工程化全部落地，v2.4 部分落地** ——
 内核 / 角色插件 / health 查询工具 / FastAPI 接入层 + SSE 流式对话 / Vite+React 控制台（**六个页签**：
-对话 · 数据 · 知识库 · 角色卡 · 插件 · 设置；Hash 路由深链 · 深色模式 · 响应式 · 单页错误边界）；
-**392 个后端测试 + 58 个前端测试全绿、`smoke_check` 13/13（第 13 项是**真机浏览器冒烟**）、
-一致性 24/0，覆盖率 87.9%（阈值 85%），ruff + mypy 零告警**，且全部离线运行（注入脚本化模型）。
+对话 · 数据 · 知识库 · 角色卡 · 插件 · 设置；Hash 路由深链 · 深色模式 · 响应式 · 单页错误边界 ·
+**运行环境在线编辑与热生效**）；
+**457 个后端测试 + 63 个前端测试全绿、smoke 全部通过、一致性 24 项断言 0 失败、覆盖率 86.77%
+（阈值 85%），ruff + mypy 零告警**，且全部离线运行（注入脚本化模型）。
 本地模型默认 **`qwen3-vl:8b`（思考 + 识图 + 工具调用一体，8GB 显存可跑）**；云端后端
-`siliconflow`（DeepSeek-V4-Flash）保留备用、可随时在界面切换。
+`siliconflow`（DeepSeek-V4-Flash）保留备用、可随时在界面切换。两轮全项目审查的 P0/P1/P2
+**全部修复闭环**（工具循环上界、索引身份稳定、ollama 超时、SSRF、库代际、分层、阻塞……），
+剩余事项见「待办与遗留」。
 
 > ⚠️ 评测基线（均值 90.5%~95.2%）是在 **qwen2.5:7b** 上测得的，**该模型已退役**；
 > 换用 qwen3-vl:8b 后需重跑 `run_eval.py --runs 3` 取新基线（见 `docs/需求与验收标准.md`）。
@@ -19,11 +22,22 @@
 > `npm i -D playwright-core`（不下载浏览器）；缺任一条件打印"跳过"并计为通过。
 > 单独跑：`node scripts/ui_smoke.js [base_url]`（`UI_SMOKE_HEADLESS=0` 可看窗口）。
 **默认角色「通用助手」＝纯对话**（不接工具与档案）；要查档案时切换到「健康档案管理员」。
-待续：**v2.4 公网部署**。
+待续：**v2.4 公网部署**（功能面已部分落地，见上）。
 
-> 上面这组数字**实测于 2026-09-16**（`ruff check .` / `mypy` / `pytest --cov` /
+> 上面这组数字**实测于 2026-09-17**（`ruff check .` / `mypy` / `pytest --cov` /
 > `scripts/check_consistency.py` / `scripts/smoke_check.py`）。它们是"当时为真"，不是永久承诺 ——
 > CI 每次 push 都会重跑并以此为准。
+
+### 第三轮全项目审查（2026-09-17）与两轮修复清单
+
+第三轮审查（`docs/全项目审查报告（2026-09-17）.md`）共 P0×3 / P1×14 / P2 20+，**已全部修复闭环**，
+三条 P0 都在正常使用路径上：**工具循环无上界**（+`AGENT_MAX_STEPS` 上限）、**向量索引以原始文件名
+为键**（同名互覆盖、静默丢索引，改指摄入任务身份）、**ollama 超时被静默丢弃**（挂起即拖停服务）。
+其余代表：删除报告连向量一起清、web_fetch 逐跳 SSRF 校验、前端超时分层（300s）、库代际回滚、
+路由直写 SQL 收拢 DomainDataService、sync 阻塞换线程池、base_url scheme 校验、`core/` 清 health 词
+（机器断言）等。**事后第二场补充审查（26 项，H4/H5/M1-M10/L 系列）同样全部完成**，
+仅用户接受的暂缓项保留：🔒 鉴权默认 off / api_key 明文落盘 / OCR 云端复用 base_url（自用与
+友人使用，用户明确接受）。
 
 ### 第二轮的六条安全 / 健壮性修复（2026-09-16）
 
@@ -108,21 +122,18 @@
 ## 快速开始
 
 ```bash
-# 1. 环境（推荐 uv；纯 venv 的兜底写法见 CONTRIBUTING.md 第 8 节）
-uv python install 3.13
-uv venv --python 3.13
-uv sync --extra api --extra dev
+# 1. 环境（.venv + pip，Python ≥ 3.13）
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -U pip
 
-# 2. 依赖（uv sync 已经装好；不用 uv 时改走这一行）
-#    pip install -r requirements.txt -r requirements-dev.txt -r requirements-api.txt \
-#        -r requirements-rag.txt
+# 2. 依赖（按范围镜像安装；OCR 依赖必须独立 venv，勿装进 .venv）
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt \
+    -r requirements-api.txt -r requirements-rag.txt
 #    （-rag 必须装：知识库 / 上传解析 / 检索都依赖 chromadb+pypdf，漏装会 ImportError）
 
 # 3. 本地模型（.env 里默认后端 local 指向 Ollama）
-#    qwen2.5:7b = 对话 + 工具调用（必需，vl 版不支持 tools）
-#    qwen2.5vl:7b = 可选第二后端（图片直读 / 备用抽取）
-ollama pull qwen2.5:7b
-ollama pull qwen2.5vl:7b
+#    qwen3-vl:8b = 对话 + 工具调用 + 识图 + 思考（ModelScope GGUF 导入，见下方说明）
+ollama pull qwen3-vl:8b
 
 # 4. 配置
 copy .env.example .env
@@ -152,9 +163,9 @@ docker run -p 8000:8000 -v rolecard-data:/app/data rolecard-agent
 
 # CI：push 即跑（GitHub Actions）—— ruff + mypy + 全量离线测试（覆盖率阈值 85%）+
 #     一致性核查 + 前端 vitest / tsc / build
-# 依赖安装：CI 与 Docker 实际使用 requirements*.txt（无上界 pin）；
-# `uv.lock` 只在本地 uv 流程（`uv sync --locked`）里生效 —— 改依赖时两边都要同步，
-# 且跑一次 `check_consistency.py`（它会校验 requirements*.txt 与 pyproject 的一致性）。
+# 依赖安装：CI 与 Docker 实际使用 requirements*.txt（无上界 pin，镜像自 pyproject.toml，
+# 由 check_consistency.py 的 dependency parity 断言保证同步）。仓库无 uv.lock ——
+# 依赖管理统一为 .venv + pip（见 CONTRIBUTING.md 第 8 节）。
 # （内核 + dev + api + rag —— 漏装 rag 会让知识库/解析测试直接 ImportError）
 ```
 
@@ -219,17 +230,21 @@ rolecard-agent/
 │   ├── core/                      # ★ Agent 内核，与领域无关
 │   │   ├── state.py  prompts.py  nodes.py  graph.py
 │   │   ├── checkpointer.py        #   会话持久化（SQLite）
-│   │   ├── observability.py       #   可观测门面，后端可切换，默认键控脱敏
+│   │   ├── observability.py       #   可观测门面，默认键控脱敏
 │   │   ├── ingestion.py           #   摄取台账（file_hash 幂等 + 状态机）
 │   │   ├── model_settings.py      #   模型后端 CRUD（key 只写不回读）+ 热重建数据层
+│   │   ├── runtime_settings.py    #   运行环境覆盖（env 之上叠加，保存即热生效）
+│   │   ├── domain_data.py         #   通用领域数据服务（路由不直写 SQL）
+│   │   ├── consensus.py           #   多模型比对内核工具 compare_model_answers
+│   │   ├── probes.py              #   视觉/OCR 后端可用性探测原语
 │   │   ├── plugins.py  guard.py  tools/
-│   ├── roles/                     # 角色卡 CRUD + 白名单 + 内置种子
+│   ├── roles/                     # 角色卡 CRUD + 白名单 + 内置/域种子
 │   ├── domains/                   # ★ 插件层
 │   │   ├── registry.py            #   显式插件清单（无动态加载）
 │   │   └── health/                #   示例领域插件（含三层校验抽取 extract.py）
 │   ├── rag/                       # 检索：parser（txt/pdf/OOXML）/ ocr（可插拔）/ retriever
 │   ├── storage/                   # SQLite（ThreadLocalConnection）/ bootstrap
-│   └── api/                       # 接入层：main（装配 271 行）+ 认证 + 依赖注入 + 5 个 router
+│   └── api/                       # 接入层：main（装配）+ 认证 + 依赖注入 + 路由（routers/）
 ├── frontend/                      # React 18 + Vite 控制台（6 页签；dist 有意入库）
 ├── docs/   tests/   scripts/   data/
 ```
@@ -271,7 +286,7 @@ rolecard-agent/
 | **M4 接入层与演示界面** | 最小 FastAPI（chat SSE / 角色 CRUD / 插件启停）+ 单页聊天 UI | 浏览器里能对话并流式输出；页面切换角色历史不丢；停用插件后立刻看到工具消失；**能录出 60 秒演示视频** |
 | **M5 控制台前端工程化** | `frontend/`（Vite + React + TS）六页签：对话（历史会话续聊）/ 数据 / 知识库 / 角色卡 / 插件 / 设置（自定义模型热切换） | 六页签可用；点击历史会话能续聊；设置页保存新后端后下一轮对话即生效（**无需重启**）；`npm run build` 产物由 FastAPI 托管 |
 
-v1 同时包含：**测试与评测集（含通过率基线）**、Docker、GitHub Actions、`uv.lock`、README、60 秒演示视频。
+v1 同时包含：**测试与评测集（含通过率基线）**、Docker、GitHub Actions、README、60 秒演示视频（按用户决策取消录制）。
 
 ### v2 · roadmap（暂不实现）
 
@@ -279,8 +294,8 @@ v1 同时包含：**测试与评测集（含通过率基线）**、Docker、GitH
 | --- | --- |
 | v2.1 | 检索外挂 RAG —— **已落地**：chroma 分作用域集合、可插拔嵌入（bge-m3 / hash 离线兜底）、`search_knowledge` 内核工具（作用域由角色声明、内核注入）、上传直接入库、**rerank 默认开启**、**检索延迟 P50/P95/P99 细分** |
 | v2.2 | 文档摄取 —— **已落地**：`.txt/.md/.pdf` 解析 + **Office OOXML（`.docx/.pptx/.xlsx`，标准库 zip+XML，零新依赖）** + **可插拔 OCR（本地 Paddle 优先 / 云端 API key 兜底）** + **结构化抽取（报告文本 → 指标行：schema 约束 + 确定性校验 + 原文锚定 + 第二模型交叉验证）** |
-| v2.3 | 完整前端（组件库 / 移动端适配；多页应用已提前为 M5） |
-| v2.4 | 公网部署与多后端路由（含失败自动回退） |
+| v2.3 | 完整前端 —— **已落地**：组件库 / 响应式 / 深色模式 / Hash 路由深链 / 错误边界 / 导航预加载（多页应用已提前为 M5） |
+| v2.4 | 公网部署与多后端路由 —— **部分落地**：联网总闸 + 域名白名单、思考总开关、consensus 多模型比对、运行环境在线编辑与热生效、模型失败自动回退；**公网部署待做** |
 | v2.5 | 生产化替换（Postgres / Milvus / Redis） |
 
 > 取舍理由见 `docs/技术评审与决策.md`：**规划得越完整越容易做不完，而做不完的项目在简历上是零。**
@@ -294,8 +309,8 @@ v1 同时包含：**测试与评测集（含通过率基线）**、Docker、GitH
 
 | 场景 | 模型 | 可观测 | 存储 |
 | --- | --- | --- | --- |
-| 本地离线 | Ollama（qwen2.5） | 本地 JSON 日志（默认） | 本地 SQLite + Chroma |
-| 公网 Demo | Ollama，或任意 OpenAI 兼容 API（填 base_url + key） | LangSmith / Langfuse（按环境变量启用） | 挂载卷 |
+| 本地离线 | Ollama（qwen3-vl:8b） | 本地 JSON 日志（默认，键控脱敏） | 本地 SQLite + Chroma |
+| 公网 Demo | Ollama，或任意 OpenAI 兼容 API（填 base_url + key） | 本地 JSON 日志 / 审计表（langsmith 依赖已删，2026-09-17） | 挂载卷 |
 
 模型接入统一走 `init_chat_model`，provider 由配置决定，不改业务代码。
 文档解析（OCR）依赖较重，计划独立进程 / 独立容器，与主服务解耦。
@@ -323,7 +338,7 @@ v1 同时包含：**测试与评测集（含通过率基线）**、Docker、GitH
 | `docs/技术评审与决策.md` | 依赖版本冲突、设计缺陷、已知风险、历年核查条目、**已定决策记录** |
 | `docs/UI设计与信息架构（修订）.md` | 六页签 IA 的功能覆盖度审计与修订计划（S1~S5 全部完成） |
 | `docs/前端架构设计（S4）.md` | 组件库 / 响应式 / 深色模式的前端架构设计（已落地，保留为设计记录） |
-| `docs/本地多模态模型部署评估.md` | 本机硬件评估 + `qwen2.5vl:7b` 选型与部署验证（已部署完成） |
+| `docs/本地多模态模型部署评估.md` | 本机硬件评估 + 本地多模态模型选型（现用 **qwen3-vl:8b**，一行多用；qwen2.5vl:7b 已退役） |
 | `docs/设计对标.md` | 设计决策 ↔ 业界实践映射（对齐 / 取舍 / 缺口），面试"为什么这么设计"的口径 |
 | `docs/面试问答清单.md` | 面试口述材料（随开发进度填充） |
 | `CONTRIBUTING.md` | 协作规约：铁律、不可改清单、接口契约、错误码、评测用例格式、环境准备 |

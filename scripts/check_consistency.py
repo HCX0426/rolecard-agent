@@ -199,7 +199,6 @@ def check_promised_artifacts() -> None:
         "README.md",
         ".gitattributes",
         ".gitignore",
-        ".python-version",
         ".env.example",
         "requirements.txt",
         "requirements-dev.txt",
@@ -474,7 +473,6 @@ def check_doc_links() -> None:
     # 自检），全新 clone 里本来就不存在 —— 它们是"跑出来的"而不是"仓库里的"，因此不参与
     # "文档里的路径必须存在"这条校验。
     not_yet = {
-        "uv.lock",
         "requirements.lock",
         ".env",
         "data/sqlite/app.db",
@@ -504,25 +502,9 @@ def check_doc_links() -> None:
         fails.append(f"broken doc references: {broken}")
 
 
-def check_python_pin() -> None:
-    """.python-version must match the floor declared in pyproject.toml.
-
-    uv reads .python-version to pick an interpreter; if the two disagree, uv can happily
-    create an environment that `pip install -e .` then refuses.
-    """
-    pin_path = ROOT / ".python-version"
-    if not pin_path.exists():
-        out("python pin", False, ".python-version is missing (uv needs it)")
-        fails.append(".python-version is missing")
-        return
-    pinned = pin_path.read_text(encoding="utf-8").strip()
-    floor = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"][
-        "requires-python"
-    ]
-    ok = floor == f">={pinned}"
-    out("python pin", ok, f".python-version={pinned} requires-python={floor}")
-    if not ok:
-        fails.append(f".python-version ({pinned}) disagrees with requires-python ({floor})")
+# NOTE: check_python_pin was removed (2026-09-17) together with .python-version / uv.lock.
+# The repo now manages dependencies with .venv + pip only; the Python floor lives solely in
+# pyproject.toml's requires-python, and check_pyproject() already verifies it parses.
 
 
 # Settings fields that are parsed on purpose but not read yet. Declaring them here is the
@@ -746,7 +728,6 @@ def main() -> int:
     check_v1_v2_boundary()
     check_doc_references()
     check_doc_links()
-    check_python_pin()
     check_dead_config()
     check_role_whitelists_resolve()
     check_us_traceability()

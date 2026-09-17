@@ -181,28 +181,33 @@
 
 **为什么 OCR 必须单独一个环境**：`paddleocr` 会拉入 `paddlex` 和一批二进制依赖（opencv / onnxruntime），装进主环境会显著拖慢每次依赖解析，并让主服务的升级被它锁住。它本来就该是独立进程。
 
-### 8.2 推荐：用 `uv`（venv 的超集）
+### 8.2 主环境：纯 `.venv` + pip（2026-09-17 定案，弃用 uv）
 
-裸 `venv + pip` 只提供**隔离**，不提供**可复现**：没有锁文件，`pip install` 出来的东西会随时间漂移；本机也只有一个托管的 3.13 与 conda。`uv` 三件事一起解决——拿到 Python、生成真锁文件、解析快一个量级。
+> 历史：曾推荐 uv 并提交 `uv.lock`。本机无 uv、锁文件无法维护（死资产），CI/Docker 实际安装的
+> 也一直是 `requirements*.txt`。**统一为 `.venv` + pip**，`uv.lock`/`.python-version` 已删除，
+> `check_consistency.py` 的 `check_python_pin` 断言一并移除。版本不锁是刻意取舍：
+> 范围镜像 + `dependency parity` 断言保证 packages 一致，但版本漂移由 CI 每次重装暴露。
 
 ```powershell
-winget install --id astral-sh.uv -e        # 或 pipx install uv
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -U pip
 
-uv python install 3.13                     # uv 自己管理 Python，不依赖系统安装
-uv venv --python 3.13
-uv sync --extra api --extra dev            # 读 pyproject，生成 uv.lock
-uv run python scripts/init_db.py
-uv run pytest
-uv run python scripts/check_consistency.py
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt `
+    -r requirements-api.txt -r requirements-rag.txt
+# （-rag 必须装：知识库/解析/检索依赖 chromadb+pypdf，漏装直接 ImportError）
+
+.\.venv\Scripts\python.exe scripts\init_db.py
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe scripts\check_consistency.py
 ```
 
-### 8.3 兜底：纯 venv，用 conda 提供 Python 3.13
+### 8.3 OCR 独立环境：`.venv-ocr`（PaddleOCR 必须隔离）
 
 ```powershell
-conda create -n rc313 python=3.13 -y
-conda run -n rc311 python -m venv .venv
-.venv\Scripts\python.exe -m pip install -U pip
-.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt -r requirements-api.txt
+python -m venv .venv-ocr
+.\.venv-ocr\Scripts\python.exe -m pip install -U pip
+.\.venv-ocr\Scripts\python.exe -m pip install -r requirements-ocr.txt
+# 主服务通过 OCR_PYTHON=/path/to/.venv-ocr/Scripts/python.exe 调用（默认自动发现）
 ```
 
 ### 8.4 国内网络（很实际的一条）
@@ -210,17 +215,18 @@ conda run -n rc311 python -m venv .venv
 `paddleocr` 会拉 `paddlex` 与一批二进制包，直连 PyPI 会慢到让人以为卡死：
 
 ```powershell
-$env:UV_DEFAULT_INDEX = "https://pypi.tuna.tsinghua.edu.cn/simple"
-# 或 pip：
+# pip 走清华镜像（paddle 系包直连 PyPI 极慢）：
 pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
 ### 8.5 依赖的单一事实来源
 
 - **`pyproject.toml` 是唯一事实来源**（`dependencies` + 四组 extras：`api` / `rag` / `cloud` / `dev`）。
-- `requirements*.txt` 是给不用 uv 的人准备的**镜像**，按范围拆开：`requirements.txt` 只含 v1 内核，
+- `requirements*.txt` 是 **pip 安装镜像**，按范围拆开：`requirements.txt` 只含 v1 内核，
   `-api` 接入层 / `-rag` 向量检索 / `-cloud` 云端 provider / `-dev` 开发工具 / `-ocr` PaddleOCR（独立环境）。
   `scripts/check_consistency.py` 会断言每一组 extras 与对应镜像文件的**包名集合一致**，改了一边不改另一边会被拦下。
+- **没有锁文件（刻意）**：版本不 pin，范围镜像 + parity 断言保证包集合一致；版本漂移由 CI
+  每次干净重装暴露。这是弃用 uv 后的如实口径，不要在文档里声称"依赖被锁定"。
 - **v1 不做数据库迁移**：`bootstrap()` 用的是 `CREATE TABLE IF NOT EXISTS`，所以给已有库加列**不会生效**。
   改了 schema 就要重建库（删掉 `data/sqlite/app.db` 再跑 `init_db.py`）。生产要引入 Alembic 之类的迁移工具——
   这是有意留到 v2 的取舍，不是遗漏。
@@ -229,4 +235,5 @@ pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 - ❌ 不要把 OCR 依赖装进 `.venv`
 - ❌ 不要把 `.venv` 当部署产物（部署走容器）
-- ❌ 不要提交 `uv.lock` 之外的锁文件，也不要在两处维护依赖清单
+- ❌ 不要提交锁文件，也不要在两处维护依赖清单（依赖只在 `pyproject.toml` + 镜像里维护）
+- ❌ 不要引入 uv.lock / .python-version（本机无 uv，已是死资产）

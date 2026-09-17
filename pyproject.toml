@@ -7,7 +7,7 @@ name = "rolecard-agent"
 version = "0.3.0"  # 与 api/main.py 的 FastAPI version 保持一致（v2.3 完成）
 description = "Role-card driven conversational agent kernel with pluggable domain modules"
 readme = "README.md"
-# Declared floor = what we actually test. Development and CI run 3.13 (see .python-version).
+# Declared floor = what we actually test. Development and CI run 3.13 (C:\.venv & CI images).
 requires-python = ">=3.13"
 license = { text = "MIT" }
 
