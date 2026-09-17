@@ -106,6 +106,17 @@ function ToolStepCard({ step }: { step: ToolStep }) {
   );
 }
 
+/** 回答耗时：created_at 配对（用户 → 助手）换算成可读时长；无时间戳的旧消息返回 null。 */
+function fmtDuration(from: string, to: string): string | null {
+  if (!from || !to) return null;
+  const a = new Date(from.replace(" ", "T"));
+  const b = new Date(to.replace(" ", "T"));
+  if (isNaN(a.getTime()) || isNaN(b.getTime())) return null;
+  const s = Math.max(0, Math.round((b.getTime() - a.getTime()) / 1000));
+  if (s < 60) return `${s} 秒`;
+  return `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
+}
+
 export default function ChatPage({
   onOpenSettings,
 }: {
@@ -144,6 +155,7 @@ export default function ChatPage({
   const [trim, setTrim] = useState<{ dropped: number; kept: number } | null>(null);
   // 编辑重生成：正在编辑的那条消息（id + 草稿）
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   // 多选删除模式：勾选若干消息（勾一侧自动带上整轮）
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
@@ -295,6 +307,42 @@ export default function ChatPage({
     }
   }
 
+  // 预配对：每条 AI 回答 → 触发它的用户消息（id/内容）+ 耗时（created_at 差）。
+  // 旧 checkpoint 消息没有 created_at → dur 为 null，只显示操作按钮。
+  const pairs = messages.map((m, i) => {
+    if (m.role !== "assistant") return null;
+    let userId: string | undefined;
+    let userText = "";
+    let dur: string | null = null;
+    for (let j = i - 1; j >= 0; j--) {
+      if (messages[j].role === "user") {
+        userId = messages[j].id;
+        userText = messages[j].content;
+        dur = fmtDuration(messages[j].ts ?? "", m.ts ?? "");
+        break;
+      }
+    }
+    return { userId, userText, dur };
+  });
+
+  function copyContent(i: number) {
+    navigator.clipboard?.writeText(messages[i].content).then(
+      () => {
+        setCopiedIdx(i);
+        setTimeout(() => setCopiedIdx((c) => (c === i ? null : c)), 1500);
+      },
+      () => undefined,
+    );
+  }
+
+  /** 重新生成：丢弃该回答及其后的历史，用触发本轮的用户消息原样重问（WorkBuddy 式）。 */
+  function regenerate(idx: number) {
+    const uid = pairs[idx]?.userId;
+    const content = pairs[idx]?.userText ?? "";
+    if (!uid || busy || !content) return;
+    saveEdit(uid, content);
+  }
+
   async function send(preset?: string) {
     const text = (preset ?? input).trim();
     if (!text || sendingRef.current) return;
@@ -410,10 +458,11 @@ export default function ChatPage({
   }
 
   /** 编辑保存 = 从该条重新生成：SSE 与普通对话完全一致，结束后回放刷新历史。 */
-  async function saveEdit() {
-    if (!editing || !sessionId || sendingRef.current) return;
-    const content = editing.text.trim();
-    if (!content) return;
+  async function saveEdit(overrideId?: string, overrideText?: string) {
+    // override：直接指定要重新生成的用户消息（消息行「重新生成」按钮复用同一通道）
+    const mid = overrideId ?? editing?.id;
+    const content = (overrideText ?? editing?.text ?? "").trim();
+    if (!mid || !sessionId || sendingRef.current || !content) return;
     sendingRef.current = true;
     setBusy(true);
     const controller = new AbortController();
@@ -424,7 +473,7 @@ export default function ChatPage({
     setEditing(null);
     await streamEdit(
       sessionId,
-      editing.id,
+      mid,
       content,
       (ev) => {
         const prev = liveRef.current ?? newLiveBubble();
@@ -725,7 +774,7 @@ export default function ChatPage({
                             取消
                           </button>
                           <button
-                            onClick={saveEdit}
+                            onClick={() => saveEdit()}
                             className="rounded bg-blue-600 px-2.5 py-1 text-white hover:bg-blue-700"
                           >
                             保存并重新生成
@@ -806,9 +855,25 @@ export default function ChatPage({
                       思考面板与工具卡是内嵌的浅色面板，视觉层次靠底色而非卡片边框。 */}
                   <ThinkingPanel text={m.reasoning ?? ""} defaultOpen={false} />
                   <Markdown text={m.content} />
-                  {m.ts && (
-                    <p className="mt-1 text-[10px] text-slate-300 dark:text-slate-500">{m.ts}</p>
-                  )}
+                  {/* 操作行（WorkBuddy 式）：耗时 · 复制 · 重新生成 */}
+                  <div className="mt-1 flex items-center gap-3 text-[11px] text-slate-400 dark:text-slate-500">
+                    {pairs[i]?.dur && <span>耗时 {pairs[i]?.dur}</span>}
+                    <button
+                      onClick={() => copyContent(i)}
+                      className="hover:text-slate-600 dark:hover:text-slate-300"
+                    >
+                      {copiedIdx === i ? "已复制" : "复制"}
+                    </button>
+                    {pairs[i]?.userId && !busy && (
+                      <button
+                        onClick={() => regenerate(i)}
+                        className="hover:text-slate-600 dark:hover:text-slate-300"
+                      >
+                        重新生成
+                      </button>
+                    )}
+                    {m.ts && <span>{m.ts}</span>}
+                  </div>
                 </div>
               );
             })}
