@@ -31,7 +31,7 @@ import {
   IconStop,
   IconUser,
 } from "../components/chat/icons";
-import { ThinkingPanel } from "../lib/ThinkingPanel";
+import ThinkingPanel from "../components/chat/ThinkingPanel";
 import { Markdown } from "../components/Markdown";
 
 // 快捷问题：空会话时直接点着问（对齐 WorkBuddy 输入框上方的建议 chips）

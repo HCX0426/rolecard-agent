@@ -131,8 +131,21 @@ function record(name, ok, note = "") {
         const el = document.querySelector("details");
         return el ? el.hasAttribute("open") : null;
       });
-      // 关键回归点：轮次结束会用 checkpoint 回放整体替换消息区，思考必须留得住
-      record("回答结束后思考过程仍然保留", stillVisible && stillOpen === true);
+      // 关键回归点：轮次结束会用 checkpoint 回放整体替换消息区，思考必须留得住。
+      // 注意断言的是**折叠**态：展开属于用户的点击动作（用户 2026-09-16 明确），
+      // 流式期间才是默认展开（上面那条已覆盖）。
+      record("回答结束后思考过程仍然保留", stillVisible);
+      record("回答结束后思考面板已折叠（展开交给用户点击）", stillOpen === false);
+
+      // 点击后必须真的能展开出思考正文（否则"保留"只是留了个空壳）
+      const panel = page.getByText("思考过程", { exact: true }).first();
+      await panel.click().catch(() => {});
+      await page.waitForTimeout(400);
+      const opened = await page.evaluate(() => {
+        const el = document.querySelector("details");
+        return el ? el.hasAttribute("open") : null;
+      });
+      record("点击思考面板可展开", opened === true);
     }
 
     // 刷新后历史仍在（回放）

@@ -56,3 +56,6 @@ Thumbs.db
 *.webm
 *.gif
 !docs/assets/*.gif
+
+# --- ad-hoc UI probe scripts (throwaway; keep the dir clean) ---
+scripts/_*.js

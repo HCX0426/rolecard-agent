@@ -1,5 +1,6 @@
 import type { TurnMessageLike, TurnStep } from "../../lib/turns";
 import { Markdown } from "../Markdown";
+import ThinkingPanel from "./ThinkingPanel";
 import ToolStepCard from "./ToolStepCard";
 
 /** 一轮的「过程」折叠面板：思考与工具调用同处一个框，展开后按序可读。
@@ -14,15 +15,13 @@ export default function ProcessPanel({ steps }: { steps: TurnStep<TurnMessageLik
   if (steps.length === 1) {
     const only = steps[0];
     if (only.kind === "think") {
+      // 复用流式期间那个面板（标题/样式只有一处定义，也不再带"（N 字）"后缀），
+      // 但回放路径恒为**折叠**：流式期间展开是因为"正在思考"本身是过程信号，
+      // 结束之后展开就该是用户自己的动作（用户 2026-09-16 明确）。
       return (
-        <details className="group/proc mb-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 px-2.5 py-1.5">
-          <summary className="cursor-pointer select-none text-xs text-slate-400 dark:text-slate-500">
-            思考过程{only.text.length > 120 ? `（${only.text.length} 字）` : ""}
-          </summary>
-          <pre className="mt-1.5 max-h-72 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-            {only.text}
-          </pre>
-        </details>
+        <div className="mb-2.5">
+          <ThinkingPanel text={only.text} defaultOpen={false} />
+        </div>
       );
     }
     if (only.kind === "text") {
