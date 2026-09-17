@@ -792,43 +792,38 @@ export default function ChatPage({
                   </div>
                 </div>
               ) : (
-                <div key={mid || `msg-${i}`} className={`flex items-start justify-start gap-2 ${rowTone}`}>
+                <div key={mid || `msg-${i}`} className={`relative w-full ${rowTone}`}>
                   {selectMode && !!mid && (
                     <input
                       type="checkbox"
                       aria-label={`选择这条回答：${m.content.slice(0, 12)}`}
                       checked={checked}
                       onChange={() => toggleSelect(mid)}
-                      className="mt-3 h-3.5 w-3.5 accent-amber-500"
+                      className="absolute -left-7 top-1 h-3.5 w-3.5 accent-amber-500"
                     />
                   )}
-                  <div className="max-w-[85%] rounded-2xl rounded-bl-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2.5">
-                    {/* 回放的助手消息也可能带思考（后端 serialize_message 带 reasoning）：
-                        轮次结束 live 气泡会被清掉，思考必须在这里再渲染一次才留得住。 */}
-                    {/* 回放默认折叠：翻历史时主体是回答，推理按需展开 */}
-                    <ThinkingPanel text={m.reasoning ?? ""} defaultOpen={false} />
-                    <Markdown text={m.content} />
-                    {m.ts && (
-                      <p className="mt-1 text-right text-[10px] text-slate-300 dark:text-slate-500">{m.ts}</p>
-                    )}
-                  </div>
+                  {/* AI 回答不带气泡（WorkBuddy 式）：全宽文本直接排在页面上，
+                      思考面板与工具卡是内嵌的浅色面板，视觉层次靠底色而非卡片边框。 */}
+                  <ThinkingPanel text={m.reasoning ?? ""} defaultOpen={false} />
+                  <Markdown text={m.content} />
+                  {m.ts && (
+                    <p className="mt-1 text-[10px] text-slate-300 dark:text-slate-500">{m.ts}</p>
+                  )}
                 </div>
               );
             })}
             {live && (
-              <div className="flex justify-start">
-                <div className="max-w-[85%] rounded-2xl rounded-bl-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2.5">
-                  <ThinkingPanel text={live.thinking} />
-                  {live.tools.length > 0 && (
-                    <div className="mb-2 space-y-1.5">
-                      {live.tools.map((t) => (
-                        <ToolStepCard key={t.id} step={t} />
-                      ))}
-                    </div>
-                  )}
-                  <div className={live.streaming ? "caret" : ""}>
-                    {live.text ? <Markdown text={live.text} /> : "…"}
+              <div className="w-full">
+                <ThinkingPanel text={live.thinking} />
+                {live.tools.length > 0 && (
+                  <div className="mb-2 space-y-1.5">
+                    {live.tools.map((t) => (
+                      <ToolStepCard key={t.id} step={t} />
+                    ))}
                   </div>
+                )}
+                <div className={live.streaming ? "caret" : ""}>
+                  {live.text ? <Markdown text={live.text} /> : "…"}
                 </div>
               </div>
             )}
