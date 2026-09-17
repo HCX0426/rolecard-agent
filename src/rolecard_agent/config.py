@@ -31,12 +31,12 @@ DEFAULT_LOCAL_BACKEND: dict[str, Any] = {
     # OpenAI 兼容端点（http://localhost:11434/v1/chat/completions）是 provider=openai 时用的。
     # 带错 /v1 的症状是 Ollama 返回 "404 page not found"——端点风格由 provider 决定。
     "base_url": "http://localhost:11434",
-    # 2026-09-16 实测修订：默认对话模型必须是**文本版 qwen2.5:7b** —— Ollama 官方库的
-    # qwen2.5vl:7b 模板**不支持工具调用**（bind_tools 直接 400 "does not support tools"），
-    # 而带工具的档案管理员是对话主路径。vl 版保留为 `local_vl` 后端（图片直读/备用抽取）。
-    # 两个 7B 不能同时驻留 8GB 显存：对话↔抽取/视觉切换时 Ollama 自动换载（2~5s 开销），
-    # 演示单用户可接受；公网并发场景换云端 API 后端。
-    "model": "qwen2.5:7b",
+    # 2026-09-17 终版：默认本地模型 = **qwen3-vl:8b**（对话 + 工具调用 + 识图 + 思考一体，
+    # 一行多用，不再为"视觉"单独配后端行）。
+    # 沿革（结论，不是过程）：qwen2.5:7b / qwen2.5vl:7b / local_vl **均已退役** ——
+    # vl 版官方模板不支持 tools（bind_tools 400），而带工具的档案管理员是对话主路径；
+    # 两个 7B 也不能同时驻留 8GB 显存。**qwen2.5:7b 已不再使用**，配置与文档都不应再引用它。
+    "model": "qwen3-vl:8b",
     # L11：不设 api_key（ModelBackend 默认 None）。此前占位 "ollama" 会被 deep_check
     # 拼成 `Bearer ollama` 发出去（无效凭据还进日志）；graph.build_model 与 deep_check
     # 都按真值判断，None = 不带认证头。Ollama 本来就不需要 key。

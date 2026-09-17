@@ -17,9 +17,9 @@ from rolecard_agent.config import Settings
 def test_defaults_are_usable_without_any_env() -> None:
     settings = Settings()
     backend = settings.backend()
-    # 2026-09-16 修订：默认对话模型是**文本版** —— Ollama 官方 qwen2.5vl:7b 模板不支持
-    # 工具调用（bind_tools 400），而带工具的档案管理员是对话主路径。vl 是第二后端。
-    assert backend.model == "qwen2.5:7b"
+    # 2026-09-17 终版：默认本地模型是 qwen3-vl:8b（对话 + tools + 识图 一体，一行多用）；
+    # qwen2.5:7b / qwen2.5vl:7b / local_vl 均已退役，配置里不应再出现它们。
+    assert backend.model == "qwen3-vl:8b"
     assert backend.provider == "ollama"
     assert settings.obs_backend == "local"
     assert settings.obs_emit_raw_text is False  # redacted by default
