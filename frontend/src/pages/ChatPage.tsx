@@ -754,10 +754,10 @@ export default function ChatPage({
                             </svg>
                           </button>
                         )}
-                        <div className="w-fit rounded-2xl rounded-br-sm bg-blue-600 px-4 py-2.5 whitespace-pre-wrap text-white">
+                        <div className="w-fit rounded-2xl rounded-br-sm bg-slate-200/90 px-4 py-2.5 whitespace-pre-wrap text-slate-900 dark:bg-slate-700 dark:text-slate-100">
                           {m.content}
                           {m.ts && (
-                            <p className="mt-1 text-right text-[10px] text-blue-200">{m.ts}</p>
+                            <p className="mt-1 text-right text-[10px] text-slate-500 dark:text-slate-400">{m.ts}</p>
                           )}
                         </div>
                       </>
