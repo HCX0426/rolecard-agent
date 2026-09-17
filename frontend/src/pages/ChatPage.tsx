@@ -163,19 +163,27 @@ function ProcessPanel({ steps }: { steps: TurnStep[] }) {
   const tools = steps.filter((s) => s.kind === "tool").length;
   const parts = [thinks ? `思考 ×${thinks}` : "", tools ? `工具 ×${tools}` : ""].filter(Boolean);
   return (
-    <details className="group/proc mb-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 px-2.5 py-1.5">
+    <details className="group/proc mb-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 px-2.5 py-1.5">
       <summary className="cursor-pointer select-none text-xs text-slate-400 dark:text-slate-500">
         过程{parts.length ? ` · ${parts.join(" · ")}` : ""}
       </summary>
       <div className="mt-1.5 space-y-1.5">
         {steps.map((s, i) =>
           s.kind === "think" ? (
-            <pre
+            // 每个思考步**独立折叠**：看完第一段可以收起来再看第二段（用户反馈：
+            // 合并成一个大面板后无法逐段收起）。编号让"第几段思考"可指认。
+            <details
               key={i}
-              className="max-h-56 overflow-auto whitespace-pre-wrap rounded bg-white p-2 text-[11px] leading-relaxed text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+              className="rounded border border-slate-200/70 bg-white dark:border-slate-700 dark:bg-slate-800"
             >
-              {s.text}
-            </pre>
+              <summary className="cursor-pointer select-none px-2 py-1 text-[11px] text-slate-400 dark:text-slate-500">
+                思考 {steps.slice(0, i + 1).filter((x) => x.kind === "think").length}
+                {s.text.length > 120 ? `（${s.text.length} 字）` : ""}
+              </summary>
+              <pre className="max-h-56 overflow-auto whitespace-pre-wrap px-2 pb-2 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                {s.text}
+              </pre>
+            </details>
           ) : s.kind === "text" ? (
             <div key={i} className="text-xs text-slate-500 dark:text-slate-400">
               <Markdown text={s.text} />
@@ -737,10 +745,6 @@ export default function ChatPage({
           >
             ＋ 新建对话
           </button>
-          <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
-            默认「通用助手」＝纯对话（不接工具与档案）。需要其他能力时，在下方
-            切换角色 —— 每个角色只暴露自己白名单内的工具。
-          </p>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
           {sessions.length === 0 && (
@@ -877,7 +881,7 @@ export default function ChatPage({
               </ul>
             </div>
           )}
-          <div className="mx-auto flex max-w-3xl flex-col gap-4">
+          <div className="mx-auto flex max-w-3xl flex-col gap-6">
             {/* 按轮渲染（WorkBuddy 式）：用户气泡 → 一个「过程」折叠面板（思考/工具同框）
                 → 最终回答 + 操作行。逐条渲染会把一轮散成三个突兀的框（用户反馈）。 */}
             {turns.map((turn) => {
@@ -905,7 +909,9 @@ export default function ChatPage({
                   {turn.user && (
                     <div
                       className={
-                        isEditingThis ? "ml-auto w-full max-w-[80%]" : "ml-auto w-fit max-w-[80%]"
+                        (isEditingThis
+                          ? "ml-auto w-full max-w-[80%]"
+                          : "ml-auto w-fit max-w-[80%]") + " mb-3"
                       }
                     >
                       {isEditingThis ? (
@@ -1169,7 +1175,10 @@ export default function ChatPage({
               {/* 角色切换（WorkBuddy 式自定义菜单）：原生 select 的弹层系统绘制、样式突兀，
                   换成与模型菜单同款的面板——角色名 + 内置徽标 + 当前项勾选。 */}
               <button
-                onClick={() => setRoleMenuOpen((o) => !o)}
+                onClick={() => {
+                  setModelMenuOpen(false); // 两个菜单互斥
+                  setRoleMenuOpen((o) => !o);
+                }}
                 title="切换当前会话的角色（下一轮生效）"
                 className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-700"
               >
@@ -1177,7 +1186,10 @@ export default function ChatPage({
                 {roles.find((r) => r.role_id === displayRole)?.role_name ?? "角色"} ▾
               </button>
               {roleMenuOpen && (
-                <div className="absolute bottom-full left-0 z-20 mb-2 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-600 dark:bg-slate-800">
+                <>
+                  {/* 点击外部自动关闭（用户反馈）：透明背板兜住菜单外的所有点击 */}
+                  <div className="fixed inset-0 z-10" onClick={() => setRoleMenuOpen(false)} />
+                  <div className="absolute bottom-full left-0 z-20 mb-2 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-600 dark:bg-slate-800">
                   <p className="bg-slate-50 px-3 py-1.5 text-[11px] font-medium text-slate-400 dark:bg-slate-800/60 dark:text-slate-500">
                     切换角色（下一轮生效，历史保留）
                   </p>
@@ -1203,12 +1215,16 @@ export default function ChatPage({
                       </span>
                     </button>
                   ))}
-                </div>
+                  </div>
+                </>
               )}
             </span>
             <div className="relative">
               <button
-                onClick={() => setModelMenuOpen((o) => !o)}
+                onClick={() => {
+                  setRoleMenuOpen(false); // 两个菜单互斥
+                  setModelMenuOpen((o) => !o);
+                }}
                 title="切换本会话使用的模型（按供应商分组；选中即开会话）"
                 className="flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
               >
@@ -1216,7 +1232,9 @@ export default function ChatPage({
                 {backends.find((b) => b.name === effectiveBackend)?.model || effectiveBackend || "模型"} ▾
               </button>
               {modelMenuOpen && (
-                <div className="absolute bottom-full left-0 z-20 mb-2 max-h-72 w-72 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-lg">
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setModelMenuOpen(false)} />
+                  <div className="absolute bottom-full left-0 z-20 mb-2 max-h-72 w-72 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-lg">
                   <button
                     onClick={() => switchModel(null)}
                     className="flex w-full items-center justify-between px-3 py-2 text-xs hover:bg-blue-50 dark:bg-blue-900/30"
@@ -1303,7 +1321,8 @@ export default function ChatPage({
                   >
                     管理后端与回退链 → 设置页
                   </button>
-                </div>
+                  </div>
+                </>
               )}
             </div>
             <button
