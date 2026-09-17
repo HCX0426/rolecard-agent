@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -153,6 +154,32 @@ def create_record_report(
     return row if row is not None else {"report_id": report_id}
 
 
+# 「同一 intake 任务不重复抽取」的单进程互斥（审查报告 P1-5）。
+#
+# 为什么是内存互斥而不是数据库唯一约束：`domains/health/schema.sql` 明确写着
+# `medical_report.ingestion_task_id` 是**有意的 1:N**（"one file can yield several
+# reports"），加 UNIQUE 会把那条设计意图钉死。而抽取是"读-判断-写"，中间隔着几十秒的
+# 模型调用，双击/并发必然双写 —— 用进程内互斥把这个窗口关掉即可。
+# 本服务是单进程（`scripts/run_api.py` 不起 workers）；**若将来多 worker 部署，
+# 这里要换成数据库级约束，那时也得先决定 1:N 是否还成立**。
+_EXTRACT_INFLIGHT: set[str] = set()
+_EXTRACT_INFLIGHT_LOCK = threading.Lock()
+
+
+def _claim_extraction(task_id: str) -> bool:
+    """抢占某个 intake 任务的抽取权。False = 已经有人在做。"""
+    with _EXTRACT_INFLIGHT_LOCK:
+        if task_id in _EXTRACT_INFLIGHT:
+            return False
+        _EXTRACT_INFLIGHT.add(task_id)
+        return True
+
+
+def _release_extraction(task_id: str) -> None:
+    with _EXTRACT_INFLIGHT_LOCK:
+        _EXTRACT_INFLIGHT.discard(task_id)
+
+
 @router.post("/api/records/extract")
 def extract_record(
     body: ExtractRequest,
@@ -164,6 +191,26 @@ def extract_record(
     三层校验（确定性 / 原文锚定 / 第二模型交叉）在 domains/health/extract.py；
     **只有双方一致的项才写库**，其余作为 conflicts 返回，由人确认。
     铁律：一律 `is_verified=0`（没人核实过）；同一 ingestion task 已有报告则不重复写。
+    """
+
+    # 并发/双击：第二个请求立刻收到明确答复，而不是陪着跑完几十秒再写第二份报告。
+    # （前端 30s 就会 abort，所以这里**不能**阻塞等待第一个跑完。）
+    if not _claim_extraction(body.task_id):
+        return {
+            "skipped": "in_progress",
+            "detail": "这份文件正在抽取中，稍后刷新即可看到结果（不会重复写入）。",
+        }
+    try:
+        return _extract_and_store(body=body, ctx=ctx, actor=actor)
+    finally:
+        _release_extraction(body.task_id)
+
+
+def _extract_and_store(*, body: ExtractRequest, ctx: AppContext, actor: Actor) -> object:
+    """抽取的**实际工作**：读文本 → 三层校验 → 写库 + 关联 intake + 写审计。
+
+    与路由分开只是为了让上面那层互斥有个干净的 try/finally —— 原实现是一个 120 行的
+    路由函数，互斥逻辑塞进去要整段重排缩进（审查报告 P2：路由过大）。
     """
     conn = ctx.conn
     try:
@@ -315,11 +362,30 @@ def remove_record_index(
 def remove_record_report(
     report_id: str, ctx: AppContext = Depends(get_context), actor: Actor = Depends(get_actor)
 ) -> None:
+    """删除报告，**连它的检索索引一起清**（审查报告 P1-1）。
+
+    顺序是刻意的：**先清向量，再删库行**。
+      * 先清向量最坏情况 = 行还在、索引没了：报告仍列在页面上，只是搜不到 ——
+        可见、可自愈、不泄漏；
+      * 反过来最坏情况 = 行没了、向量还在：用户以为删掉的病历原文仍会被模型检索到
+        并引用 —— 这正是要修的 bug。
+    手工录入的报告没有 intake（`task_id=None`），跳过清理。清索引失败会直接抛错
+    **且不删库行**，让用户重试，而不是留下"以为删了"的状态。
+    """
+    task_id = ctx.health.report_task_id(user_id=DEFAULT_USER_ID, report_id=report_id)
+    removed = 0
+    if task_id is not None:
+        removed = ctx.knowledge.delete_source(ctx.health.knowledge_scope, task_id)
     try:
         ctx.health.delete_report(user_id=DEFAULT_USER_ID, report_id=report_id)
     except HealthNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    ctx.roles.audit(actor=actor.id, action="delete_report", target=report_id)
+    ctx.roles.audit(
+        actor=actor.id,
+        action="delete_report",
+        target=report_id,
+        detail={"removed_chunks": removed} if removed else None,
+    )
 
 
 __all__ = ["router"]

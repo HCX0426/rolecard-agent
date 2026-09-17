@@ -16,6 +16,12 @@ from typing import Protocol
 class DomainQueryService(Protocol):
     """一个域查询服务对外暴露的读写契约（结构化匹配即可，无需显式继承）。"""
 
+    #: 该域在知识库里的作用域名（上传把文档索引进 chroma 用的集合名）。
+    #:
+    #: 为什么要经协议暴露：写索引（上传）与删索引（删除报告）必须用**同一个**字符串，
+    #: 而 api 层按约定不 import 具体域模块 —— 于是由域自己声明，api 只读抽象上的这个属性。
+    knowledge_scope: str
+
     def create_report(
         self,
         *,
@@ -49,4 +55,11 @@ class DomainQueryService(Protocol):
 
     def delete_report(self, *, user_id: str, report_id: str) -> None:
         """删除整份报告（含其指标行）。"""
+        ...
+
+    def report_task_id(self, *, user_id: str, report_id: str) -> str | None:
+        """这份报告由哪个 intake 产出（手工录入 / 行不存在 = None）。
+
+        删除路径要用它找回该文档的**索引身份**，才能把检索分块一起清掉。
+        """
         ...

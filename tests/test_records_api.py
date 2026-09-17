@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from rolecard_agent.api.main import create_app
+from rolecard_agent.api.routers import records as records_router
 from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.domains.health.service import HealthQueryService
 from rolecard_agent.storage.db import bootstrap, connect
@@ -252,6 +253,86 @@ def test_extract_is_idempotent_per_ingestion_task(
         res = c.post("/api/records/extract", json={"task_id": "ing_x"})
     assert res.status_code == 200, res.text
     assert res.json() == {"skipped": "already_extracted", "report_id": report_id}
+
+
+def test_extract_rejects_a_second_call_while_one_is_running(client: TestClient) -> None:
+    """P1-5 回归：抽取是"读-判断-写"，中间隔着几十秒的模型调用 —— 双击/并发必须被挡住。
+
+    第二个请求要**立刻**拿到 `in_progress`（前端 30s 就 abort，所以不能让它阻塞等待
+    第一个跑完），而第一个结束后一切照常 —— 互斥不能变成"永久卡住"。
+    """
+    tid = client.post("/api/session", json={}).json()["thread_id"]
+    uploaded = client.post(
+        f"/api/session/{tid}/upload",
+        files={"file": ("须知.md", "每半年复查一次超声。".encode(), "text/markdown")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    task_id = uploaded.json()["task_id"]
+
+    assert records_router._claim_extraction(task_id) is True  # 模拟"第一个请求正在跑"
+    try:
+        res = client.post("/api/records/extract", json={"task_id": task_id})
+        assert res.status_code == 200, res.text
+        assert res.json()["skipped"] == "in_progress"
+    finally:
+        records_router._release_extraction(task_id)
+
+    # 释放后恢复正常：200（no_model / 真抽取）或 502（模型在线但调用失败）都是合法结局，
+    # 底线是**不再被互斥挡住** —— 本用例只钉这一条。
+    after = client.post("/api/records/extract", json={"task_id": task_id})
+    assert after.status_code in (200, 502), after.text
+    if after.status_code == 200:
+        assert after.json().get("skipped") != "in_progress"
+
+
+def test_deleting_a_report_also_clears_its_knowledge_chunks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P1-1 回归：报告行删了，它的**检索分块**必须一起删。
+
+    两边是两处存储（SQLite / chroma）：只删行的话，"已经删掉"的病历原文仍会被模型
+    检索到并引用，而界面上看不出任何异常 —— 这正是最危险的一类不一致。
+    """
+    monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    db = tmp_path / "app.db"
+
+    # 在库外先造出「已抽取的报告 + intake 关联」：抽取本身要模型，这里只关心删除路径
+    conn = connect(db)
+    bootstrap(conn, enabled_domains=("health",))
+    conn.execute("INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('local','demo')")
+    conn.execute(
+        "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "
+        "VALUES ('local-user','local','demo')"
+    )
+    conn.commit()
+    report_id = HealthQueryService(conn).create_report(
+        user_id="local-user",
+        report_type="腹部超声",
+        check_time="2026-03-12",
+        indices=[{"index_name": "结石直径", "index_value": 6.1, "source": "parsed"}],
+    )
+    ingestion = IngestionService(conn)
+    ingestion.create(user_id="local-user", file_hash="h1", task_id="ing_x")
+    ingestion.link_report("ing_x", report_id)
+    conn.close()
+
+    with TestClient(create_app(sqlite_path=db)) as c:
+        ctx = c.app.state.ctx
+        scope = ctx.health.knowledge_scope  # 域自己声明的知识作用域（api 不 import 具体域）
+        assert ctx.knowledge.index(scope, "ing_x", ARTICLE, source_name="须知.md") >= 1
+        assert ctx.knowledge.scope_count(scope) >= 1
+
+        res = c.delete(f"/api/records/report/{report_id}")
+
+        assert res.status_code == 204, res.text
+        assert ctx.knowledge.scope_count(scope) == 0, "删了报告，向量分块还在"
+        assert c.get("/api/records").json() == []
+        actions = {a["action"] for a in c.get("/api/audit?limit=20").json()}
+        assert "delete_report" in actions
+
+
+ARTICLE = "# 随访须知\n\n每半年复查一次超声；发现腹痛、发热或黄疸请及时就医。"
 
 
 # -- 角色 exemplars（前端表单要写入的字段，确认 API 端到端支持） ------------------------

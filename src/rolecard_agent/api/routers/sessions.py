@@ -642,7 +642,7 @@ def upload_report(
                 # 独立），**不能用 safe_name**：同名文件会互相覆盖，旧文档索引静默丢失
                 # （审查报告 P0）。文件名只作展示名，引用里显示的仍是它。
                 chunks = ctx.knowledge.index(
-                    "health_reports", task_id, text, source_name=safe_name
+                    ctx.health.knowledge_scope, task_id, text, source_name=safe_name
                 )
             except (KnowledgeDimensionMismatch, EmbedError) as exc:
                 # 两者都是"管理员可修复"的状态，且都发生在**索引没被破坏**之后

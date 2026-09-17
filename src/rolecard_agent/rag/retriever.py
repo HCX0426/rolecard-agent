@@ -443,6 +443,10 @@ class KnowledgeBase:
         """
         chunks = chunk_text(text)
         if not chunks:
+            # 空文本 = 这份文档现在没有内容了，必须把它的旧分块**清掉**：直接 return 0
+            # 会让上一次的索引继续被检索到（"同一份文件重传成空"是真实场景：扫描件、
+            # 内容被清空的文件、解析退化的 PDF），幂等契约当场被打破（审查报告 P1-7）。
+            self.delete_source(scope, source)
             return 0
         collection = self._client.get_or_create_collection(name=scope)
         vectors = self._embedder.embed(chunks)  # 先做最容易失败的一步
@@ -477,6 +481,30 @@ class KnowledgeBase:
             with contextlib.suppress(Exception):
                 collection.delete(ids=outdated)
         return len(chunks)
+
+    def delete_source(self, scope: str, source: str) -> int:
+        """按**索引身份**删除某来源的全部分块，返回删除条数（集合/来源不存在 = 0）。
+
+        为什么需要它：报告行在 SQLite、检索分块在 chroma —— 删除业务数据时必须两边
+        一起清，否则"已经删掉"的病历原文仍会被模型检索到并引用（审查报告 P1-1）。
+        `reset_scope` 太狠（会连带清掉同作用域里别的文档），所以要有按来源的粒度。
+
+        与 `index()` 里的清理不同，这里的删除**不吞异常**：调用方（删除报告）已经先把
+        SQLite 行留着，删索引失败就该整个失败、让用户重试，而不是留下"以为删了"的状态。
+        """
+        try:
+            collection = self._client.get_collection(name=scope)
+        except Exception:  # noqa: BLE001 - 集合不存在 = 没有东西可删
+            return 0
+        try:
+            existing = collection.get(where={"source": source})
+        except Exception:  # noqa: BLE001 - 取不到就当没有（与 index() 的 stale 探测同策略）
+            return 0
+        ids = [str(i) for i in (existing.get("ids") or [])]
+        if not ids:
+            return 0
+        collection.delete(ids=ids)
+        return len(ids)
 
     def search(
         self, scopes: Sequence[str], query: str, k: int = 4, *, tracer: object | None = None

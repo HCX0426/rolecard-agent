@@ -179,6 +179,46 @@ def test_query_date_filter_excludes_out_of_range(service: HealthQueryService, to
     assert "2025-05-01" not in out
 
 
+def test_query_accepts_partial_dates(service: HealthQueryService) -> None:
+    """P1-8 回归：`2026-03` / `2026` 这种部分日期必须能取到数据。
+
+    以前 SQL 写的是 `date(check_time) >= date(?)`，而 SQLite 里 `date('2026-03')` 求值是
+    **NULL** → 条件恒为 NULL → **静默返回空**：模型传「2026年3月」时档案看着像空的，
+    与 `_DATE_RE` 注释承诺的"应该拿到数据"完全相反。
+    """
+    _seed_two_years(service)
+
+    by_month = service.search_indices(U1, "结石直径", start_date="2026-03", end_date="2026-03")
+    assert [r["check_time"] for r in by_month] == ["2026-03-12"]
+
+    by_year = service.search_indices(U1, "结石直径", start_date="2026")
+    assert [r["check_time"] for r in by_year] == ["2026-03-12"]
+
+    through_2025 = service.search_indices(U1, "结石直径", end_date="2025")
+    assert [r["check_time"] for r in through_2025] == ["2025-05-01"]
+
+    # 单日边界：结束日当天必须含在内（上界是"次日零点"的开区间）
+    on_day = service.search_indices(
+        U1, "结石直径", start_date="2026-03-12", end_date="2026-03-12"
+    )
+    assert [r["check_time"] for r in on_day] == ["2026-03-12"]
+
+    # 跨年边界：12 月的下一个月是次年 1 月
+    from_december = service.search_indices(U1, "结石直径", start_date="2025-12")
+    assert [r["check_time"] for r in from_december] == ["2026-03-12"]
+
+
+def test_query_ignores_unparseable_dates_instead_of_returning_nothing(
+    service: HealthQueryService,
+) -> None:
+    """认不出的写法按"没有过滤"处理，而不是静默查空（`_DATE_RE` 的既定语义）。"""
+    _seed_two_years(service)
+
+    rows = service.search_indices(U1, "结石直径", start_date="2026年3月")
+
+    assert len(rows) == 2  # 两条都在：当作没有过滤
+
+
 # -- tools: compare_health_index -------------------------------------------------------
 
 

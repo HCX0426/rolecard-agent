@@ -145,6 +145,46 @@ def test_legacy_chunks_without_source_name_still_show_their_name(kb: KnowledgeBa
     assert hits[0].source_key == "旧文件.txt"
 
 
+def test_delete_source_removes_only_that_document(kb: KnowledgeBase) -> None:
+    """P1-1 的底座：报告行删了，它的检索分块也必须跟着走，且不能误伤同作用域别的文档。"""
+    kb.index("health_reports", "task-1", DOC_A, source_name="报告A.pdf")
+    kb.index("health_reports", "task-2", DOC_B, source_name="报告B.pdf")
+    before = kb.scope_count("health_reports")
+
+    removed = kb.delete_source("health_reports", "task-1")
+
+    assert removed >= 1
+    assert kb.scope_count("health_reports") == before - removed
+    hits = kb.search(["health_reports"], "胆囊结石随访", k=8)
+    assert all(h.source_key != "task-1" for h in hits), "删掉的那份仍能被检索到"
+    assert any(h.source_key == "task-2" for h in hits), "不该连带删掉别的文档"
+
+
+def test_delete_source_is_idempotent_on_missing_targets(kb: KnowledgeBase) -> None:
+    """不存在的作用域/来源都返回 0 且不抛错：删除路径要能被重复调用。"""
+    assert kb.delete_source("没这个作用域", "task-1") == 0
+    assert kb.index("health_reports", "task-1", DOC_A) >= 1
+
+    assert kb.delete_source("health_reports", "task-1") >= 1
+    assert kb.delete_source("health_reports", "task-1") == 0
+
+
+def test_reindexing_with_empty_text_clears_the_old_chunks(kb: KnowledgeBase) -> None:
+    """P1-7 回归：同一份文件重传成空，不能留着旧分块继续被检索。
+
+    以前 `index()` 遇到空文本在 **stale 清理之前**就 `return 0`，于是上一次入的
+    分块原样留着 —— 内容已经没有了，模型却还能检索到并引用它，docstring 承诺的
+    "同 source 幂等重建"当场被打破。
+    """
+    assert kb.index("health_reports", "task-1", DOC_A) >= 1
+    assert kb.search(["health_reports"], "胆囊结石随访", k=4)
+
+    assert kb.index("health_reports", "task-1", "   ") == 0
+
+    assert kb.scope_count("health_reports") == 0
+    assert kb.search(["health_reports"], "胆囊结石随访", k=4) == []
+
+
 # -- search_knowledge 工具：作用域安全模型 ----------------------------------------------
 
 

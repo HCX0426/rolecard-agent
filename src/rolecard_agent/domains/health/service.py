@@ -24,7 +24,9 @@ import re
 import sqlite3
 import uuid
 from collections.abc import Sequence
+from datetime import date, timedelta
 
+from rolecard_agent.domains.health import KNOWLEDGE_SCOPE
 from rolecard_agent.storage.db import SqlConnection
 
 # A report check date the tool layer accepts: YYYY-MM-DD (or just YYYY-MM). Anything else is
@@ -37,6 +39,40 @@ def _valid_date(value: str | None) -> str | None:
     if not value:
         return None
     return value if _DATE_RE.match(value.strip()) else None
+
+
+def _lower_bound(value: str | None) -> str | None:
+    """起点：`YYYY` / `YYYY-MM` 展开成该周期的**第一天**（`YYYY-MM-DD` 原样）。"""
+    v = _valid_date(value)
+    if v is None:
+        return None
+    if len(v) == 4:
+        return f"{v}-01-01"
+    if len(v) == 7:
+        return f"{v}-01"
+    return v
+
+
+def _upper_bound(value: str | None) -> str | None:
+    """终点：换算成**开区间上界**（下一天的零点），这样"含末尾这一天"不用靠 `<=`。
+
+    为什么必须换算：SQL 里 `date(mr.check_time) <= date('2026-03')` 的 `date('2026-03')`
+    求值是 **NULL** → 条件恒为 NULL → **静默返回空**。而 `_DATE_RE` 明确接受 `YYYY-MM`
+    （注释写着"模型传『2026年3月』也应该拿到数据"），于是"按月份查"永远查不到东西
+    （审查报告 P1-8）。展开成 ISO 字符串后可以直接比较（ISO 日期字典序 = 时间序）。
+    """
+    v = _valid_date(value)
+    if v is None:
+        return None
+    year = int(v[0:4])
+    if len(v) == 4:
+        return f"{year + 1:04d}-01-01"
+    month = int(v[5:7])
+    if len(v) == 7:
+        if month == 12:
+            return f"{year + 1:04d}-01-01"
+        return f"{year:04d}-{month + 1:02d}-01"
+    return (date(year, month, int(v[8:10])) + timedelta(days=1)).isoformat()
 
 
 class HealthDataError(Exception):
@@ -61,6 +97,9 @@ _SOURCE_VALUES = frozenset({"manual", "parsed", "ocr"})
 
 
 class HealthQueryService:
+    #: 见 `core.domain_service.DomainQueryService.knowledge_scope`。
+    knowledge_scope = KNOWLEDGE_SCOPE
+
     def __init__(self, conn: SqlConnection) -> None:
         self._conn = conn
 
@@ -171,17 +210,18 @@ class HealthQueryService:
         name = index_name.strip()
         if not name:
             return []
-        start = _valid_date(start_date)
-        end = _valid_date(end_date)
+        # 起止换算成半开区间 [lo, hi)：`2026-03` 这种部分日期也能取到数据（P1-8）。
+        lo = _lower_bound(start_date)
+        hi = _upper_bound(end_date)
 
         where = ["mr.user_id = ?"]
         params: list[object] = [user_id]
-        if start:
-            where.append("date(mr.check_time) >= date(?)")
-            params.append(start)
-        if end:
-            where.append("date(mr.check_time) <= date(?)")
-            params.append(end)
+        if lo:
+            where.append("date(mr.check_time) >= ?")
+            params.append(lo)
+        if hi:
+            where.append("date(mr.check_time) < ?")
+            params.append(hi)
 
         def _run(match_clause: str, match_param: object) -> list[sqlite3.Row]:
             date_filters = (" AND " + " AND ".join(where[1:])) if len(where) > 1 else ""
@@ -312,6 +352,22 @@ class HealthQueryService:
             self._conn.rollback()
             raise HealthNotFound(f"indicator not found: {index_id}")
         self._conn.commit()
+
+    def report_task_id(self, *, user_id: str, report_id: str) -> str | None:
+        """这份报告由哪个 intake 任务产出（手工录入 = None）。
+
+        删除报告必须连**检索索引**一起清，而上传时用的索引身份就是 `task_id`
+        （见 `rag.retriever.index` 的身份/展示名约定）—— 所以删除路径需要先把键取出来。
+        行不存在也返回 None（与"存在但没有 intake"不可区分）：唯一的 404 判定点是
+        `delete_report`，这里再判一次只会制造两个真相。
+        """
+        row = self._conn.execute(
+            "SELECT ingestion_task_id FROM medical_report WHERE user_id = ? AND report_id = ?",
+            (user_id, report_id),
+        ).fetchone()
+        if row is None or not row["ingestion_task_id"]:
+            return None
+        return str(row["ingestion_task_id"])
 
     def delete_report(self, *, user_id: str, report_id: str) -> None:
         """Remove a report; its indicator rows go with it (ON DELETE CASCADE, FK pragma on).
