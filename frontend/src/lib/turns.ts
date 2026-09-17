@@ -44,3 +44,62 @@ export function expandSelection<T extends TurnMessage>(
   }
   return [...new Set(out)].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
 }
+
+/** 对话渲染用的消息面（结构约束，避免 lib 层依赖 api 层具体类型）。 */
+export interface TurnMessageLike {
+  role: string;
+  id?: string;
+  content?: string;
+  reasoning?: string;
+  tools?: (string | null)[];
+  name?: string;
+  args?: Record<string, unknown>;
+  ts?: string;
+}
+
+/** 一轮过程里的一个步骤（思考 / 工具 / 中间轮正文）。 */
+export type TurnStep<T extends TurnMessageLike> =
+  | { kind: "think"; text: string }
+  | { kind: "tool"; msg: T }
+  | { kind: "text"; text: string };
+
+export interface BuiltTurn<T extends TurnMessageLike> {
+  key: string;
+  user: T | null;
+  steps: TurnStep<T>[];
+  answer: T | null;
+}
+
+/** 把消息序列切成"可渲染的一轮"：提问 → 过程步骤（思考/工具/中间正文）→ 最终回答。
+ *
+ * 在 `groupTurns`（下标分组，与后端 `expand_to_turns` 同规则）**之上**构建，
+ * 保证"什么算一轮"只有一处定义——此前 ChatPage 内另写了一套同名分组，两处规则
+ * 一旦漂移就会出现"界面选中 1 条、后端删掉 4 条"的错位。
+ */
+export function buildTurns<T extends TurnMessageLike>(messages: T[]): BuiltTurn<T>[] {
+  return groupTurns(messages).map((idx, n) => {
+    const first = messages[idx[0]];
+    const turn: BuiltTurn<T> = {
+      key: first.id ?? `turn-${n}`,
+      user: null,
+      steps: [],
+      answer: null,
+    };
+    for (const i of idx) {
+      const m = messages[i];
+      if (m.role === "user") {
+        turn.user = m;
+      } else if (m.role === "tool") {
+        turn.steps.push({ kind: "tool", msg: m });
+      } else if (m.tools?.length) {
+        // 中间轮（还要继续调工具）：思考进过程；若有前言正文也按过程小字展示
+        if (m.reasoning) turn.steps.push({ kind: "think", text: m.reasoning });
+        if ((m.content ?? "").trim()) turn.steps.push({ kind: "text", text: m.content ?? "" });
+      } else {
+        if (m.reasoning) turn.steps.push({ kind: "think", text: m.reasoning });
+        turn.answer = m;
+      }
+    }
+    return turn;
+  });
+}

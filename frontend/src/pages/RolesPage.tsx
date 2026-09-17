@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Button, Notice, PageHeader } from "../components/ui";
 import {
   api,
   type KnowledgeScopes,
@@ -224,29 +225,16 @@ export default function RolesPage() {
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="mx-auto max-w-4xl">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">角色卡</h2>
-            <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
-              人设、温度、工具白名单与知识作用域；内置角色不可删除
-            </p>
-          </div>
-          <button
-            onClick={openCreate}
-            className="rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            ＋ 新建角色
-          </button>
-        </div>
+        <PageHeader
+          title="角色卡"
+          subtitle="人设、温度、工具白名单与知识作用域；内置角色不可删除"
+          actions={<Button onClick={openCreate}>＋ 新建角色</Button>}
+        />
 
         {status && (
-          <p
-            className={`mt-3 rounded-lg px-3 py-2 text-xs ${
-              status.ok ? "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300" : "bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 dark:text-red-500"
-            }`}
-          >
+          <Notice className="mt-3" tone={status.ok ? "ok" : "error"}>
             {status.msg}
-          </p>
+          </Notice>
         )}
 
         {editing !== null && (

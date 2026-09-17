@@ -18,220 +18,24 @@ import {
   reduceChatEvent,
   type LiveBubble,
   type StreamMeta,
-  type ToolStep,
 } from "../lib/stream";
 import { describeExtract, describeUpload, type UploadResponse } from "../lib/uploadOutcome";
-import { expandSelection } from "../lib/turns";
+import { buildTurns, expandSelection, type BuiltTurn } from "../lib/turns";
+import ProcessPanel from "../components/chat/ProcessPanel";
+import ToolStepCard from "../components/chat/ToolStepCard";
+import {
+  IconClip,
+  IconModel,
+  IconSend,
+  IconSparkle,
+  IconStop,
+  IconUser,
+} from "../components/chat/icons";
 import { ThinkingPanel } from "../lib/ThinkingPanel";
 import { Markdown } from "../components/Markdown";
 
 // 快捷问题：空会话时直接点着问（对齐 WorkBuddy 输入框上方的建议 chips）
 const QUICK_PROMPTS = ["帮我查一下结石直径的变化", "我有哪些报告？"];
-
-// 功能行图标同样用内联 SVG（emoji 在缺彩色字体的环境会变方框，见 App.tsx 的说明）。
-const ICON = {
-  width: 13,
-  height: 13,
-  viewBox: "0 0 24 24",
-  fill: "none",
-  stroke: "currentColor",
-  strokeWidth: 2,
-  strokeLinecap: "round",
-  strokeLinejoin: "round",
-} as const;
-
-const IconUser = () => (
-  <svg {...ICON}>
-    <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21c0-4 3.6-6 8-6s8 2 8 6" />
-  </svg>
-);
-
-const IconModel = () => (
-  <svg {...ICON}>
-    <rect x="6" y="6" width="12" height="12" rx="2" />
-    <path d="M10 3v3M14 3v3M10 18v3M14 18v3M3 10h3M3 14h3M18 10h3M18 14h3" />
-  </svg>
-);
-
-const IconClip = () => (
-  <svg {...ICON}>
-    <path d="M8 12l6.5-6.5a3 3 0 0 1 4.2 4.2L11 17.4a5 5 0 0 1-7.1-7.1L11 3.2" />
-  </svg>
-);
-
-/** 工具调用卡片：状态点 + 名称 + 可展开的完整结果（历史回放里的工具结果也用它）。 */
-function ToolStepCard({ step }: { step: ToolStep }) {
-  const [open, setOpen] = useState(false);
-  const dot =
-    step.status === "running"
-      ? "bg-blue-400 animate-pulse"
-      : step.status === "error"
-        ? "bg-red-400"
-        : "bg-green-500 dark:bg-green-600";
-  const body = step.content.trim();
-  // 入参摘要：让"过程"可见（搜了什么词 / 抓了哪个地址），截断到一行。
-  const argsSummary = Object.entries(step.args ?? {})
-    .filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== "")
-    .map(([k, v]) => `${k}=${String(v)}`)
-    .join("  ")
-    .slice(0, 80);
-  return (
-    <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-2.5 py-1.5">
-      <button
-        onClick={() => body && setOpen((o) => !o)}
-        className={`flex w-full items-center gap-2 text-left font-mono text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 ${
-          body ? "cursor-pointer" : "cursor-default"
-        }`}
-      >
-        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
-        <span className="shrink-0">{step.name}</span>
-        {argsSummary && (
-          <span className="min-w-0 flex-1 truncate text-slate-400 dark:text-slate-500">
-            {argsSummary}
-          </span>
-        )}
-        {step.status === "running" && <span className="shrink-0 text-slate-400 dark:text-slate-500">执行中…</span>}
-        {body && (
-          <span className="ml-auto shrink-0 text-slate-300 dark:text-slate-600">
-            {open ? "收起 ▴" : `${body.length} 字 ▾`}
-          </span>
-        )}
-      </button>
-      {open && body && (
-        <pre className="mt-1.5 max-h-56 overflow-auto rounded bg-white dark:bg-slate-800 p-2 text-[11px] whitespace-pre-wrap text-slate-600 dark:text-slate-300 dark:text-slate-600">
-          {body}
-        </pre>
-      )}
-    </div>
-  );
-}
-
-/** 一轮对话里的一个过程步骤（思考 / 工具 / 中间轮正文），按发生顺序排列。 */
-type TurnStep =
-  | { kind: "think"; text: string }
-  | { kind: "tool"; msg: MessageRow }
-  | { kind: "text"; text: string };
-
-interface Turn {
-  key: string;
-  user: MessageRow | null;
-  steps: TurnStep[];
-  answer: MessageRow | null;
-}
-
-/** 把消息序列切成"一轮"：用户提问 → 过程步骤（思考/工具/中间正文）→ 最终回答。
- *
- * 为什么要合并：一条带工具的回答在数据里是 [AIMessage(思考+tool_calls) → ToolMessage →
- * AIMessage(最终)]，逐条渲染会散成"思考框 / 工具卡 / 思考框"三个突兀的框（用户反馈）。
- * WorkBuddy 式做法是一轮一个「过程」折叠面板，展开后看步骤明细。
- */
-function groupTurns(msgs: MessageRow[]): Turn[] {
-  const turns: Turn[] = [];
-  let cur: Turn | null = null;
-  let seq = 0;
-  const ensure = () => {
-    if (!cur) {
-      cur = { key: `turn-${seq++}`, user: null, steps: [], answer: null };
-      turns.push(cur);
-    }
-    return cur;
-  };
-  for (const m of msgs) {
-    if (m.role === "user") {
-      cur = { key: m.id ?? `turn-${seq++}`, user: m, steps: [], answer: null };
-      turns.push(cur);
-      continue;
-    }
-    const turn = ensure();
-    if (m.role === "tool") {
-      turn.steps.push({ kind: "tool", msg: m });
-    } else if (m.tools?.length) {
-      // 中间轮（还要继续调工具）：思考进过程；若有前言正文也按过程小字展示
-      if (m.reasoning) turn.steps.push({ kind: "think", text: m.reasoning });
-      if (m.content.trim()) turn.steps.push({ kind: "text", text: m.content });
-    } else {
-      if (m.reasoning) turn.steps.push({ kind: "think", text: m.reasoning });
-      turn.answer = m;
-    }
-  }
-  return turns;
-}
-
-/** 一轮的「过程」折叠面板：思考与工具调用同处一个框，展开后按序可读。 */
-function ProcessPanel({ steps }: { steps: TurnStep[] }) {
-  const thinks = steps.filter((s) => s.kind === "think").length;
-  const tools = steps.filter((s) => s.kind === "tool").length;
-  const parts = [thinks ? `思考 ×${thinks}` : "", tools ? `工具 ×${tools}` : ""].filter(Boolean);
-  return (
-    <details className="group/proc mb-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 px-2.5 py-1.5">
-      <summary className="cursor-pointer select-none text-xs text-slate-400 dark:text-slate-500">
-        过程{parts.length ? ` · ${parts.join(" · ")}` : ""}
-      </summary>
-      <div className="mt-1.5 space-y-1.5">
-        {steps.map((s, i) =>
-          s.kind === "think" ? (
-            // 每个思考步**独立折叠**：看完第一段可以收起来再看第二段（用户反馈：
-            // 合并成一个大面板后无法逐段收起）。编号让"第几段思考"可指认。
-            <details
-              key={i}
-              className="rounded border border-slate-200/70 bg-white dark:border-slate-700 dark:bg-slate-800"
-            >
-              <summary className="cursor-pointer select-none px-2 py-1 text-[11px] text-slate-400 dark:text-slate-500">
-                思考 {steps.slice(0, i + 1).filter((x) => x.kind === "think").length}
-                {s.text.length > 120 ? `（${s.text.length} 字）` : ""}
-              </summary>
-              <pre className="max-h-56 overflow-auto whitespace-pre-wrap px-2 pb-2 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-                {s.text}
-              </pre>
-            </details>
-          ) : s.kind === "text" ? (
-            <div key={i} className="text-xs text-slate-500 dark:text-slate-400">
-              <Markdown text={s.text} />
-            </div>
-          ) : (
-            <ToolStepCard
-              key={i}
-              step={{
-                id: 0,
-                name: s.msg.name || "tool",
-                status: "ok",
-                content: s.msg.content,
-                args: s.msg.args,
-              }}
-            />
-          ),
-        )}
-      </div>
-    </details>
-  );
-}
-
-/** 发送（上箭头）——嵌在输入框内的图标按钮（WorkBuddy 式）。 */
-function IconSend() {
-  return (
-    <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden="true">
-      <path d="M10 3a1 1 0 01.7.3l5 5a1 1 0 01-1.4 1.4L11 6.4V16a1 1 0 11-2 0V6.4L5.7 9.7a1 1 0 01-1.4-1.4l5-5A1 1 0 0110 3z" />
-    </svg>
-  );
-}
-
-/** 停止（方块）——生成中替换发送按钮。 */
-function IconStop() {
-  return (
-    <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5" aria-hidden="true">
-      <rect x="5.5" y="5.5" width="9" height="9" rx="1.5" />
-    </svg>
-  );
-}
-
-/** 增强提示词（四角星）。 */
-function IconSparkle() {
-  return (
-    <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5" aria-hidden="true">
-      <path d="M10 2l1.7 4.6L16 8.3l-4.3 1.7L10 14.6 8.3 10 4 8.3l4.3-1.7L10 2z" />
-    </svg>
-  );
-}
 
 /** 回答耗时：created_at 配对（用户 → 助手）换算成可读时长；无时间戳的旧消息返回 null。 */
 function fmtDuration(from: string, to: string): string | null {
@@ -457,8 +261,8 @@ export default function ChatPage() {
     }
   }
 
-  // 按轮分组（用户提问 → 过程步骤 → 最终回答）：渲染与"重新生成"都以轮为单位。
-  const turns = groupTurns(messages);
+  // 按轮分组（用户提问 → 过程步骤 → 最终回答）：切分逻辑在 lib/turns（与后端同规则）。
+  const turns = buildTurns(messages);
 
   function copyContent(text: string, key: string) {
     navigator.clipboard?.writeText(text).then(
@@ -471,7 +275,7 @@ export default function ChatPage() {
   }
 
   /** 重新生成：丢弃该回答及其后的历史，用触发本轮的用户消息原样重问（WorkBuddy 式）。 */
-  function regenerate(turn: Turn) {
+  function regenerate(turn: BuiltTurn<MessageRow>) {
     const uid = turn.user?.id;
     const content = turn.user?.content ?? "";
     if (!uid || busy || !content) return;

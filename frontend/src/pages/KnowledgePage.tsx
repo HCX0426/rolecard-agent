@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Button, Notice, PageHeader } from "../components/ui";
 import {
   api,
   type CleanupResult,
@@ -90,7 +91,7 @@ function KnowledgePanel() {
 
   return (
     <div className="mt-6">
-      {status && <p className="rounded-lg bg-red-50 dark:bg-red-900/30 px-3 py-2 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{status}</p>}
+      {status && <Notice>{status}</Notice>}
       <p className="rounded-lg bg-slate-50 dark:bg-slate-800/50 px-3 py-2.5 text-xs leading-relaxed text-slate-400 dark:text-slate-500">
         知识库是<b>内核能力</b>（search_knowledge），不属于任何插件：库归内核，角色经
         knowledge_scopes 声明可检索的作用域（角色卡页配置）。上传 .txt/.md/.pdf/.docx/.pptx/.xlsx
@@ -277,21 +278,20 @@ export default function KnowledgePage({ onOpenChat }: { onOpenChat?: () => void 
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="mx-auto max-w-3xl">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">知识库</h2>
-            <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
-              检索是<b>内核能力</b>：库归内核，角色声明可检索的作用域。
-            </p>
-          </div>
-          <button
-            onClick={() => onOpenChat?.()}
-            className="shrink-0 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600 dark:text-blue-400"
-            title="上传必须在某个会话里进行（解析结果会注入该会话）"
-          >
-            去对话页上传文档 →
-          </button>
-        </div>
+        <PageHeader
+          title="知识库"
+          subtitle={<>检索是<b>内核能力</b>：库归内核，角色声明可检索的作用域。</>}
+          actions={
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onOpenChat?.()}
+              title="上传必须在某个会话里进行（解析结果会注入该会话）"
+            >
+              去对话页上传文档 →
+            </Button>
+          }
+        />
 
         <KnowledgePanel />
       </div>

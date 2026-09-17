@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type GenericRecord, type PluginRow, type ReportRecord } from "../api";
-import Tag from "../components/ui/Tag";
+import { Notice, PageHeader, Tag } from "../components/ui";
 
 // 数据 —— 领域数据的唯一归属地（自"插件 → 详情"里升为独立顶层页）。
 // 数据随领域归属：未来新增领域插件时，这里自动多出一个分组。
@@ -15,11 +15,15 @@ export default function DataPage() {
   return (
     <div className="h-full overflow-y-auto p-4 md:p-6">
       <div className="mx-auto max-w-4xl">
-        <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">数据</h2>
-        <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
-          <b>数据随领域归属</b>：每个领域插件管自己的数据。主流程是<b>上传报告 / 图片让 AI 解析</b>
-          （解析结果进检索索引），下方的手动补录只是兜底入口。
-        </p>
+        <PageHeader
+          title="数据"
+          subtitle={
+            <>
+              <b>数据随领域归属</b>：每个领域插件管自己的数据。主流程是
+              <b>上传报告 / 图片让 AI 解析</b>（解析结果进检索索引），下方的手动补录只是兜底入口。
+            </>
+          }
+        />
         <div className="mt-5 space-y-7">
           {plugins.length === 0 && (
             <p className="text-xs text-slate-400 dark:text-slate-500">正在加载领域…</p>
@@ -139,11 +143,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
           }}
         />
       )}
-      {status && (
-        <p className={`rounded-lg px-3 py-2 text-xs ${status.ok ? "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300" : "bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 dark:text-red-500"}`}>
-          {status.msg}
-        </p>
-      )}
+      {status && <Notice tone={status.ok ? "ok" : "error"}>{status.msg}</Notice>}
       {reports.length === 0 ? (
         <div className={`rounded-lg border border-dashed border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-center text-xs text-slate-400 dark:text-slate-500 ${compact ? "p-4" : "p-8 text-sm"}`}>
           该域还没有数据：在对话页上传报告 / 图片（自动解析入索引），或点上方「＋ 新增报告」手动补录。
@@ -585,11 +585,7 @@ function GenericDomainData({
           {adding ? "取消" : "＋ 新增记录"}
         </button>
       </div>
-      {status && (
-        <p className={`rounded-lg px-3 py-2 text-xs ${status.ok ? "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300" : "bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 dark:text-red-500"}`}>
-          {status.msg}
-        </p>
-      )}
+      {status && <Notice tone={status.ok ? "ok" : "error"}>{status.msg}</Notice>}
       {adding && (
         <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/30/40 p-3">
           <div className="flex flex-wrap items-center gap-2">

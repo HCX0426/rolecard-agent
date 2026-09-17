@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type PluginRow, type ToolCatalog } from "../api";
-import Switch from "../components/ui/Switch";
+import { PageHeader, Switch } from "../components/ui";
 
 /**
  * 插件页 = 纯领域插件。
@@ -19,13 +19,17 @@ export default function PluginsPage() {
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="mx-auto max-w-4xl">
-        <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">领域插件</h2>
-        <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
-          启停立即生效（无需重启），操作写入审计并递增全局 tool_epoch。
-          插件由代码显式注册（DOMAINS）——界面只做启停，不支持动态安装。
-          <br />
-          领域数据在「数据」页；检索（RAG）在「知识库」页 —— 这次刻意把三件事分开。
-        </p>
+        <PageHeader
+          title="领域插件"
+          subtitle={
+            <>
+              启停立即生效（无需重启），操作写入审计并递增全局 tool_epoch。
+              插件由代码显式注册（DOMAINS）——界面只做启停，不支持动态安装。
+              <br />
+              领域数据在「数据」页；检索（RAG）在「知识库」页 —— 这次刻意把三件事分开。
+            </>
+          }
+        />
         <DomainPlugins />
 
         <div className="mt-6 rounded-xl border border-dashed border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 p-5">
