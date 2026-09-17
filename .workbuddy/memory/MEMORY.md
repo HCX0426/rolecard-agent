@@ -118,3 +118,15 @@ cd frontend && npm test && npm run build
 11. **子代理的可量化断言必须自己复跑**：审查/调研报告里"零覆盖""不生效""从不被调用"最容易错
     （只看了一半代码）。本项目实测否掉过两条：`.env 是死配置`（`run_api.py:83` 有 `_load_dotenv`）、
     `core/services.py 零覆盖`（实际 96%）。只信能自己跑出来的证据。
+
+## 索引身份 vs 展示名（2026-09-17 P0 修复定下的契约）
+
+- `KnowledgeBase.index(scope, source, text, *, source_name=None)`：**`source` 是索引身份**
+  （分块 id 由它推导、旧分块按它清理，必须唯一稳定），`source_name` 只是给人看的名字。
+  上传路径传 `task_id`，文件名走 `source_name`。**永远不要用文件名当身份**——同名文件会
+  静默互相覆盖（`Hit.source_key` 保留身份以便排障）。
+- 新增 `Settings` 字段必须**同时**改三处：字段（带中文 rationale）、env 映射表、`.env.example`
+  ——一致性脚本会拦 `.env.example` 漏键。
+- 超时/参数的传法**因客户端而异**：`ChatOllama` 只认 `client_kwargs`（直接传 `timeout` 会被
+  静默丢弃），`init_chat_model` 的 openai 兼容路径才认 `timeout`。断言要读**真实客户端**
+  （`model._client._client.timeout`），只断言 kwargs 字典会漏掉这类 bug。
