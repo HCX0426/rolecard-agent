@@ -298,7 +298,7 @@ def call_model(
     except RoleNotFound:
         # A session pointing at a deleted role must not crash the graph; degrade to a plain
         # refusal so the user gets a sentence instead of a 500.
-        reply = AIMessage(content="当前会话绑定的角色已不存在，请重新选择一个角色。")
+        reply = AIMessage(content="当前对话绑定的角色已不存在，请重新选择一个角色。")
         ctx.tracer.emit(
             TraceEvent(event="role_missing", role_id=role_id, thread_id=state.get("thread_id"))
         )

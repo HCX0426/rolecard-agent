@@ -286,7 +286,7 @@ export default function KnowledgePage({ onOpenChat }: { onOpenChat?: () => void 
               variant="outline"
               size="sm"
               onClick={() => onOpenChat?.()}
-              title="上传必须在某个会话里进行（解析结果会注入该会话）"
+              title="上传必须在某个对话里进行（解析结果会注入该对话）"
             >
               去对话页上传文档 →
             </Button>

@@ -154,7 +154,7 @@ function GeneralPanel({
             <dd className="font-mono">{info.roles}</dd>
           </div>
           <div className="flex justify-between border-b border-slate-50 py-1">
-            <dt className="text-slate-400 dark:text-slate-500">会话数量</dt>
+            <dt className="text-slate-400 dark:text-slate-500">对话数量</dt>
             <dd className="font-mono">{info.sessions}</dd>
           </div>
         </dl>
@@ -166,7 +166,7 @@ function GeneralPanel({
       <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
         <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">演示数据</h3>
         <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
-          评测 / 演示用的虚构档案可由脚本重建；会话与数据管理的日常操作在对话页与插件页。
+          评测 / 演示用的虚构档案可由脚本重建；对话与数据的管理操作在对话页与插件页。
         </p>
         <div className="mt-2 flex gap-2">
           <button
@@ -763,7 +763,7 @@ function AuditPanel() {
         </table>
       </div>
       <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-500">
-        审计由后端在角色切换、插件启停、会话创建、数据修正/删除时写入（US-3）；本页只读。
+        审计由后端在角色切换、插件启停、对话创建、数据修正/删除时写入（US-3）；本页只读。
       </p>
     </div>
   );

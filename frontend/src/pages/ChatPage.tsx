@@ -34,9 +34,6 @@ import {
 import ThinkingPanel from "../components/chat/ThinkingPanel";
 import { Markdown } from "../components/Markdown";
 
-// 快捷问题：空会话时直接点着问（对齐 WorkBuddy 输入框上方的建议 chips）
-const QUICK_PROMPTS = ["帮我查一下结石直径的变化", "我有哪些报告？"];
-
 /** 回答耗时：created_at 配对（用户 → 助手）换算成可读时长；无时间戳的旧消息返回 null。 */
 function fmtDuration(from: string, to: string): string | null {
   if (!from || !to) return null;
@@ -135,7 +132,7 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => {
-    refreshSessions().catch((e) => setStatus(`加载会话失败：${e.message}`, "warn"));
+    refreshSessions().catch((e) => setStatus(`加载对话失败：${e.message}`, "warn"));
     api.get<RoleCard[]>("/api/roles").then(setRoles).catch(() => {});
     api.get<ModelSettings>("/api/settings/models").then((s) => {
       setBackends(
@@ -202,7 +199,7 @@ export default function ChatPage() {
   async function createSession(): Promise<string | null> {
     const empty = sessions.find((s) => !s.title);
     if (empty) {
-      setStatus("上一次的会话还是空白，已直接为你打开");
+      setStatus("上一次的对话还是空白，已直接为你打开");
       if (sessionId !== empty.thread_id) await selectSession(empty.thread_id);
       else setConfirmDel(null);
       return empty.thread_id;
@@ -219,7 +216,7 @@ export default function ChatPage() {
       await refreshSessions();
       return s.thread_id;
     } catch (e) {
-      setStatus(`新建会话失败：${(e as Error).message}`, "warn");
+      setStatus(`新建对话失败：${(e as Error).message}`, "warn");
       return null;
     }
   }
@@ -505,7 +502,7 @@ export default function ChatPage() {
       setSessionModel(name);
       setModelMenuOpen(false);
       setStatus(
-        name ? `本会话已切换模型 → ${name}（下一轮生效）` : "已清除会话级模型覆盖（下一轮生效）",
+        name ? `本对话已切换模型 → ${name}（下一轮生效）` : "已清除本对话的模型覆盖（下一轮生效）",
         "ok",
       );
       await refreshSessions();
@@ -560,7 +557,7 @@ export default function ChatPage() {
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
           {sessions.length === 0 && (
-            <p className="px-2 py-4 text-xs text-slate-400 dark:text-slate-500">还没有会话</p>
+            <p className="px-2 py-4 text-xs text-slate-400 dark:text-slate-500">还没有对话</p>
           )}
           {sessions.map((s) => (
             <div
@@ -571,7 +568,7 @@ export default function ChatPage() {
               onClick={() => selectSession(s.thread_id)}
             >
               <div className="min-w-0 flex-1">
-                <div className="truncate">{s.title || "新会话"}</div>
+                <div className="truncate">{s.title || "新对话"}</div>
                 <div className="truncate text-[11px] text-slate-400 dark:text-slate-500">
                   {s.role_name || s.role_id}
                 </div>
@@ -593,7 +590,7 @@ export default function ChatPage() {
                     setConfirmDel(s.thread_id);
                   }}
                   className="shrink-0 rounded px-1 py-0.5 text-xs text-slate-300 dark:text-slate-600 opacity-0 transition-opacity hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700 hover:text-red-500 group-hover:opacity-100"
-                  title="删除会话"
+                  title="删除对话"
                 >
                   ✕
                 </button>
@@ -606,7 +603,7 @@ export default function ChatPage() {
       {/* 移动端：会话抽屉的遮罩 */}
       {sessionsOpen && (
         <button
-          aria-label="关闭会话列表"
+          aria-label="关闭对话列表"
           onClick={() => setSessionsOpen(false)}
           className="absolute inset-0 z-30 bg-slate-900/40 md:hidden"
         />
@@ -645,13 +642,13 @@ export default function ChatPage() {
             <div className="group/title flex items-center gap-2">
               <button
                 onClick={() => setSessionsOpen(true)}
-                aria-label="打开会话列表"
+                aria-label="打开对话列表"
                 className="rounded-lg border border-slate-200 px-2 py-0.5 text-xs text-slate-600 dark:border-slate-700 dark:text-slate-300 md:hidden"
               >
-                会话
+                对话
               </button>
               <h2 className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
-                {current ? current.title || "新会话" : "对话"}
+                {current ? current.title || "新对话" : "对话"}
               </h2>
               {current && (
                 <button
@@ -660,7 +657,7 @@ export default function ChatPage() {
                     setEditingTitle(true);
                   }}
                   className="rounded px-1.5 py-0.5 text-xs text-slate-300 dark:text-slate-600 opacity-0 transition-opacity hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700 hover:text-slate-600 dark:text-slate-300 dark:text-slate-600 group-hover/title:opacity-100"
-                  title="重命名会话"
+                  title="重命名对话"
                 >
                   ✎
                 </button>
@@ -670,7 +667,7 @@ export default function ChatPage() {
           <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
             {current
               ? `当前角色：${currentRole ? roles.find((r) => r.role_id === currentRole)?.role_name || currentRole : "默认"} · 切换角色后下一轮生效`
-              : "新建或从左侧选择一个会话开始"}
+              : "新建或从左侧选择一个对话开始"}
           </p>
         </header>
 
@@ -679,7 +676,7 @@ export default function ChatPage() {
             <div className="mx-auto mt-8 max-w-xl rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
               <h3 className="text-sm font-medium text-slate-800 dark:text-slate-100">开始一次对话</h3>
               <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-                直接在下方输入即可（会自动创建会话），或点左上角「＋ 新建对话」。
+                直接在下方输入即可（会自动创建对话），或点左上角「＋ 新建对话」。
               </p>
               <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400 dark:text-slate-500">
                 <li>
@@ -893,20 +890,6 @@ export default function ChatPage() {
               </button>
             </div>
           )}
-          {/* 快捷问题（WorkBuddy 式建议 chips）：空会话时出现，点一下直接问 */}
-          {sessionId && messages.length === 0 && !live && (
-            <div className="mx-auto mb-2 flex max-w-3xl flex-wrap gap-2">
-              {QUICK_PROMPTS.map((q) => (
-                <button
-                  key={q}
-                  onClick={() => send(q)}
-                  className="rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-700 dark:text-blue-300"
-                >
-                  {q}
-                </button>
-              ))}
-            </div>
-          )}
           {/* 输入框（WorkBuddy 式）：发送/暂停是嵌在框内的图标按钮；左下「增强提示词」，
               右下上下文使用率（悬停看明细）。 */}
           <div className="mx-auto max-w-3xl">
@@ -926,7 +909,7 @@ export default function ChatPage() {
                 placeholder={
                   busy
                     ? "正在生成…（可点右下角停止）"
-                    : "输入消息，Enter 发送 / Shift+Enter 换行（没有会话会自动创建）"
+                    : "输入消息，Enter 发送 / Shift+Enter 换行（没有对话会自动创建）"
                 }
                 disabled={busy}
                 className="max-h-40 w-full resize-none bg-transparent px-4 pt-3 pb-1 leading-relaxed outline-none disabled:bg-slate-50 dark:disabled:bg-slate-800/50"
@@ -995,7 +978,7 @@ export default function ChatPage() {
                   setModelMenuOpen(false); // 两个菜单互斥
                   setRoleMenuOpen((o) => !o);
                 }}
-                title="切换当前会话的角色（下一轮生效）"
+                title="切换当前对话的角色（下一轮生效）"
                 className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-700"
               >
                 <IconUser />
@@ -1043,7 +1026,7 @@ export default function ChatPage() {
                   setRoleMenuOpen(false); // 两个菜单互斥
                   setModelMenuOpen((o) => !o);
                 }}
-                title="切换本会话使用的模型（按供应商分组；选中即开会话）"
+                title="切换本对话使用的模型（按供应商分组；选中即开对话）"
                 className="flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
               >
                 <IconModel />

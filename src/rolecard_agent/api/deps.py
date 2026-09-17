@@ -55,7 +55,7 @@ def get_thread(conn: ThreadLocalConnection, thread_id: str):
         (thread_id,),
     ).fetchone()
     if row is None:
-        raise HTTPException(status_code=404, detail=f"会话不存在：{thread_id}")
+        raise HTTPException(status_code=404, detail=f"对话不存在：{thread_id}")
     return row
 
 

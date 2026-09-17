@@ -73,11 +73,11 @@ describe("api.request：请求体序列化（422 事故的原点）", () => {
 
 describe("api.request：错误归一化", () => {
   it("非 2xx 且 detail 为字符串 → ApiError(status, detail)", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ detail: "会话不存在" }, 404)));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ detail: "对话不存在" }, 404)));
     const err = await api.get("/api/session/t_nope").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(404);
-    expect((err as ApiError).message).toBe("会话不存在");
+    expect((err as ApiError).message).toBe("对话不存在");
   });
 
   it("422 校验错误（detail 为数组）→ 拼成可读文本，而不是 [object Object]", async () => {

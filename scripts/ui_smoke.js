@@ -89,7 +89,7 @@ function record(name, ok, note = "") {
       await newChat.click();
       await page.waitForTimeout(400);
     }
-    record("新建会话", true);
+    record("新建对话", true);
 
     // 发消息
     const QUESTION = "用一句话解释：为什么冬天白天比夏天短？";
