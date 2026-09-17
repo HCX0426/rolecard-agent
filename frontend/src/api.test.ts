@@ -195,3 +195,71 @@ describe("streamChat：SSE 解析与 abort 语义", () => {
     expect(events[0].detail).toContain("ECONNREFUSED");
   });
 });
+
+// 超时不只关乎体验，还关乎"界面说的话是否属实"（审查报告 P1-4）：
+// 后端 OCR 子进程单次上限就是 120s，抽取还要跑两次模型调用。若沿用 30s，前端会先 abort
+// 并把界面变成"上传失败/AI 识别指标失败"，而后端线程仍在跑、**文件已落盘、索引/报告已写库**
+// —— 用户看到假失败，还可能照着假失败再点一次。
+describe("请求超时：普通请求 30s，上传 / 抽取走长超时（P1-4）", () => {
+  /** 永不返回、只在 signal abort 时 reject AbortError 的 fetch 替身。 */
+  function hangingFetch() {
+    return vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+          });
+        }),
+    );
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("上传不会在 30s 被掐断", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", hangingFetch());
+
+    const pending = api.upload("t1", new FormData());
+    const onReject = vi.fn();
+    pending.catch(onReject);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(onReject).not.toHaveBeenCalled(); // 30s 到点必须还活着
+
+    await vi.advanceTimersByTimeAsync(270_000); // 累计 300s
+    await expect(pending).rejects.toThrow(/300s/);
+  });
+
+  it("超时提示要说「后端可能仍在处理」，而不是「已挂起」", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", hangingFetch());
+
+    // 用 then(成功分支, 失败分支) 而不是 catch：catch 的返回类型会变成联合类型，
+    // tsc 就没法在下面直接读 ApiError 的字段了。
+    const pending = api.extractRecord("ing_1").then(
+      () => null,
+      (e: ApiError) => e,
+    );
+    await vi.advanceTimersByTimeAsync(300_000); // 必须先推进时间，await 在后
+    const failure = await pending;
+
+    expect(failure?.status).toBe(0);
+    expect(failure?.message).toContain("仍在处理"); // 别让用户以为白做了
+  });
+
+  it("普通 JSON 请求仍然 30s 掐断（默认值不能被一起放大）", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", hangingFetch());
+
+    const pending = api.get("/api/sessions");
+    const onReject = vi.fn();
+    pending.catch(onReject);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(onReject).toHaveBeenCalledOnce();
+    await expect(pending).rejects.toThrow(/30s/);
+  });
+});

@@ -255,4 +255,36 @@ describe("ChatPage 流式渲染", () => {
     const toast = await screen.findByText(/回答中断/);
     expect(toast.textContent).toContain("模型调用失败");
   });
+
+  it("切对话要退出删除模式（勾选属于上一个对话，不能跟着过来）", async () => {
+    // 勾选的是**消息 id**，而 id 属于某一个对话：在 A 里勾两条再切到 B，横幅还写着
+    // "已选 2 条"、复选框却全空；点"删除所选"会把 A 的 id 发给 B（后端 404）。
+    replay = [
+      { role: "user", content: "一问" },
+      { role: "assistant", content: "答" },
+    ];
+    scriptedStream([{ type: "token", text: "答" }, { type: "end" }]);
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/sessions") return [{ thread_id: "s_old", title: "旧会话", role_id: "r" }];
+      if (url === "/api/roles") return [];
+      if (url === "/api/settings/models") return { default: "local", backends: [], fallbacks: [] };
+      if (url === "/api/settings/model-providers") return { providers: [] };
+      if (url.endsWith("/messages")) return replay;
+      if (url.endsWith("/context")) return { trimmed: 0, kept: 0, budget: 24000 };
+      return { model_name: null };
+    });
+
+    render(<ChatPage />);
+    await sendMessage("一问");
+
+    const { fireEvent } = await import("@testing-library/react");
+    fireEvent.click(screen.getByRole("button", { name: "删除对话" }));
+    expect(await screen.findByRole("button", { name: "退出删除模式" })).toBeTruthy();
+
+    fireEvent.click(await screen.findByText("旧会话"));
+
+    // 切过去之后必须已退出删除模式（勾选、编辑态一起清掉）
+    await waitFor(() => expect(screen.queryByRole("button", { name: "退出删除模式" })).toBeNull());
+    expect(screen.getByRole("button", { name: "删除对话" })).toBeTruthy();
+  });
 });

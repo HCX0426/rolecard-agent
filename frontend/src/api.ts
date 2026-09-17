@@ -2,6 +2,9 @@
 // 端点清单见 api/main.py 的模块 docstring —— 这里不发明第二个事实来源。
 
 import { parseSseFrame, splitSseFrames } from "./lib/stream";
+// 只取类型（`import type`）：upload() 的返回体形状跟上传结果解读共用一个定义，
+// 免得"接口返回什么"在两处各写一遍。uploadOutcome 不 import 本文件，不存在循环。
+import type { UploadResponse } from "./lib/uploadOutcome";
 
 export interface RoleCard {
   role_id: string;
@@ -246,12 +249,28 @@ function readableDetail(raw: unknown, fallback: string): string {
  * 为什么必须有：`fetch` 默认**永远不等**——后端挂起（进程在但不响应）时，页面会一直转圈，
  * 用户既看不到错误也看不到结果，只能刷新。浏览器自身的兜底要几分钟之后才触发。
  *
- * 取值：上传与抽取走独立路径且耗时不可预期，这里只约束**普通 JSON 请求**。
- * 30s 远大于本地 SQLite + 本地模型的正常响应，又足够短到"卡了能看见"。
+ * 取值：30s 远大于本地 SQLite + 本地模型的正常响应，又足够短到"卡了能看见"。
+ * **但上传与抽取不能套这个值** —— 见 LONG_REQUEST_TIMEOUT_MS。
  */
 const REQUEST_TIMEOUT_MS = 30_000;
 
-async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
+/**
+ * 上传 / 抽取这类"耗时不可预期"的请求用更长超时。
+ *
+ * 为什么不能沿用 30s：后端的 OCR 子进程单次上限就是 120s（见 sessions.py 的上传路径），
+ * 抽取还要跑两次模型调用。30s 到点前端 abort，界面说"上传失败/AI 识别指标失败"，
+ * 而后端线程仍在跑并且**已经把文件落了盘、写进了索引/报告库** —— 用户看到的是假失败，
+ * 还很可能照着这个假失败再点一次（审查报告 P1-4）。
+ * 300s 是"明显比后端任何一条路径都长"的取值：它只用来兜住真挂死，不参与正常判定。
+ */
+const LONG_REQUEST_TIMEOUT_MS = 300_000;
+
+async function request<T>(
+  method: string,
+  url: string,
+  body?: unknown,
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
+): Promise<T> {
   const opt: RequestInit = { method, headers: {} };
   if (body !== undefined) {
     if (body instanceof FormData) {
@@ -268,14 +287,20 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
   const controller = new AbortController();
   // 用全局 setTimeout 而不是 window.setTimeout：本文件也在 node 环境下被测试
   // （api.test.ts），那里没有 window —— 只有 jsdom 环境才有。
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res: Response;
   try {
     res = await fetch(url, { ...opt, signal: controller.signal });
   } catch (e) {
     // 把超时与网络错误区分开：前者要告诉用户"后端没响应"，而不是笼统的 fetch failed。
     if ((e as Error).name === "AbortError") {
-      throw new ApiError(0, `请求超过 ${REQUEST_TIMEOUT_MS / 1000}s 无响应（后端可能已挂起）`);
+      const secs = timeoutMs / 1000;
+      // 措辞必须诚实：前端不再等了，但**后端很可能还在跑**（上传/抽取就是这样）。
+      // 说成"后端已挂起"会让人以为白做了，于是重复提交。
+      throw new ApiError(
+        0,
+        `已等待 ${secs}s 仍未返回，前端停止等待（后端可能仍在处理：稍后刷新看看结果）`,
+      );
     }
     throw new ApiError(0, `网络错误：${(e as Error).message}`);
   } finally {
@@ -307,7 +332,20 @@ export const api = {
   del: <T>(url: string) => request<T>("DELETE", url),
   /** 结构化抽取：把已上传的报告文本抽成指标行（三层校验，只写双方一致的项）。 */
   extractRecord: (taskId: string) =>
-    request<ExtractResult>("POST", "/api/records/extract", { task_id: taskId }),
+    request<ExtractResult>(
+      "POST",
+      "/api/records/extract",
+      { task_id: taskId },
+      LONG_REQUEST_TIMEOUT_MS,
+    ),
+  /** 上传文件到某个对话（解析 + 入检索索引）。走长超时：OCR 子进程本身就允许 120s。 */
+  upload: (threadId: string, form: FormData) =>
+    request<UploadResponse>(
+      "POST",
+      `/api/session/${threadId}/upload`,
+      form,
+      LONG_REQUEST_TIMEOUT_MS,
+    ),
   /** 模型供应商目录（设置页下拉动态来源）。 */
   setModelContext: (name: string, numCtx: number | null) =>
     request<{ name: string; num_ctx: number | null }>(

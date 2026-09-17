@@ -544,8 +544,10 @@ function ModelsPanel() {
                 </div>
                 {grouped[prov].map((r) => {
                   const i = rows.indexOf(r);
+                  // key 用行下标而**不是 r.name**：改名时 key 一变整棵子树重挂，
+                  // 输入框每敲一个字就失焦（审查报告 P1-12）。
                   return (
-              <div key={r.name} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+              <div key={i} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
                 <div className="flex items-center gap-3">
                   {r.usage === "chat" && (
                     <label

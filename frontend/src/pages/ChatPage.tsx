@@ -19,7 +19,7 @@ import {
   type LiveBubble,
   type StreamMeta,
 } from "../lib/stream";
-import { describeExtract, describeUpload, type UploadResponse } from "../lib/uploadOutcome";
+import { describeExtract, describeUpload } from "../lib/uploadOutcome";
 import { buildTurns, expandSelection, type BuiltTurn } from "../lib/turns";
 import ProcessPanel from "../components/chat/ProcessPanel";
 import ToolStepCard from "../components/chat/ToolStepCard";
@@ -102,6 +102,19 @@ export default function ChatPage() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  /** 退出多选删除模式（切会话、新建会话时必须调）。
+   *
+   * 为什么不能只靠「退出选择」按钮：勾选的是**消息 id**，而 id 属于某一个对话 —— 在 A 里
+   * 勾两条再切到 B，顶部横幅还写着「已选 2 条」、复选框却全空；点「删除所选」会把 A 的 id
+   * 发给 B，后端 404（审查报告 P1-9）。
+   */
+  function clearSelection() {
+    setSelectMode(false);
+    setSelected([]);
+    setConfirmDelete(false);
+    setEditing(null);
+  }
   const fileRef = useRef<HTMLInputElement>(null);
   const sendingRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -164,6 +177,7 @@ export default function ChatPage() {
   async function selectSession(threadId: string) {
     if (sendingRef.current) return;
     setSessionId(threadId);
+    clearSelection(); // 勾选 / 编辑态属于上一个对话，不能跟着过来
     setConfirmDel(null);
     setLive(null);
     setModelMenuOpen(false);
@@ -207,6 +221,7 @@ export default function ChatPage() {
     try {
       const s = await api.post<SessionRow>("/api/session", {});
       setSessionId(s.thread_id);
+      clearSelection();
       setConfirmDel(null);
       setMessages([]);
       setLive(null);
@@ -383,7 +398,9 @@ export default function ChatPage() {
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const r = await api.post<UploadResponse>(`/api/session/${tid}/upload`, fd);
+      // 走 api.upload（长超时）：OCR 子进程本身允许 120s，30s 会把界面切成「假失败」，
+      // 而后端其实已经把文件落盘并入索引了（审查报告 P1-4）。
+      const r = await api.upload(tid, fd);
 
       // 三态反馈（登记但读不了 / 解析了没文本 / 已入索引）：判断逻辑抽到
       // lib/uploadOutcome.ts 并被单测覆盖 —— 这段分支以前只能靠人工点页面验。
@@ -857,11 +874,7 @@ export default function ChatPage() {
                 </button>
               )}
               <button
-                onClick={() => {
-                  setSelectMode(false);
-                  setSelected([]);
-                  setConfirmDelete(false);
-                }}
+                onClick={clearSelection}
                 className="rounded px-2 py-1 hover:bg-amber-100 dark:hover:bg-amber-900/40"
               >
                 退出选择
@@ -1127,9 +1140,9 @@ export default function ChatPage() {
             </button>
             <button
               onClick={() => {
-                setSelectMode((v) => !v);
-                setSelected([]);
-                setConfirmDelete(false);
+                // 进出删除模式都要清掉勾选：退出去再进来时，上一轮的勾选不该还留着。
+                if (selectMode) clearSelection();
+                else setSelectMode(true);
               }}
               disabled={busy || !sessionId}
               title="删除历史里的某几段问答：勾选任意一问或一答，会自动带上配对的另一侧"

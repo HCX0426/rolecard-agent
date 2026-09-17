@@ -203,18 +203,39 @@ export default function App() {
 
       {/* 主内容区 */}
       <main className="min-h-0 min-w-0 flex-1 pt-[41px] md:pt-0">
-        <PageBoundary key={tab}>
-          <Suspense fallback={<div className="p-6 text-sm text-slate-400 dark:text-slate-500">加载中…</div>}>
-            {tab === "chat" && <ChatPage />}
-            {tab === "data" && <DataPage />}
-            {tab === "knowledge" && <KnowledgePage onOpenChat={() => selectTab("chat")} />}
-            {tab === "roles" && <RolesPage />}
-            {tab === "plugins" && <PluginsPage />}
-            {tab === "settings" && (
-              <SettingsPage onOpenChat={() => selectTab("chat")} theme={theme} onToggleTheme={toggle} />
-            )}
+        {/* 对话页**常驻挂载**（用 hidden 隐藏，而不是条件渲染）。
+            它有几样只存在于组件内的状态：正在生成的回答、输入草稿、当前对话与勾选 ——
+            条件渲染会在切页时把整页卸载，这些全丢，而服务端那条流还在跑（审查报告 P1-11）。
+            也正因为常驻，它必须放在 keyed 的 PageBoundary **外面**：那个 key={tab}
+            会在每次切页时把子树整个重挂，放进去等于没改。 */}
+        <div className={tab === "chat" ? "h-full" : "hidden"}>
+          <Suspense
+            fallback={<div className="p-6 text-sm text-slate-400 dark:text-slate-500">加载中…</div>}
+          >
+            <ChatPage />
           </Suspense>
-        </PageBoundary>
+        </div>
+        {tab !== "chat" && (
+          <PageBoundary key={tab}>
+            <Suspense
+              fallback={
+                <div className="p-6 text-sm text-slate-400 dark:text-slate-500">加载中…</div>
+              }
+            >
+              {tab === "data" && <DataPage />}
+              {tab === "knowledge" && <KnowledgePage onOpenChat={() => selectTab("chat")} />}
+              {tab === "roles" && <RolesPage />}
+              {tab === "plugins" && <PluginsPage />}
+              {tab === "settings" && (
+                <SettingsPage
+                  onOpenChat={() => selectTab("chat")}
+                  theme={theme}
+                  onToggleTheme={toggle}
+                />
+              )}
+            </Suspense>
+          </PageBoundary>
+        )}
       </main>
     </div>
   );
