@@ -33,6 +33,7 @@ from rolecard_agent.config import Settings
 from rolecard_agent.core.guard import check
 from rolecard_agent.core.observability import TraceEvent, Tracer, timer
 from rolecard_agent.core.prompts import build_system_prompt
+from rolecard_agent.core.state import now_ts
 from rolecard_agent.core.tools.errors import ToolExecutionError
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.roles.service import RoleCardService, RoleNotFound
@@ -385,6 +386,8 @@ def call_model(
     # on every turn afterwards. `context_trimmed` / `context_kept` 同理：记录"这一轮模型实际
     # 看到了多少历史"，界面据此如实提示，而不是让用户自己猜"模型怎么忘了前面说的"
     # （审查报告 H3 的界面部分）。
+    # created_at 随回复入库：历史回放显示时间（用户 2026-09-17）。
+    response.additional_kwargs.setdefault("created_at", now_ts())
     return {
         "messages": [response],
         "enabled_domains": domains,
@@ -441,13 +444,27 @@ def execute_tools(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
         if name not in known or name not in stage_one:
             # Either the tool never existed, or its plugin has since been switched off: a
             # resumed session can still carry tool_calls for it (C14).
-            results.append(ToolMessage(content=TOOL_OFFLINE, tool_call_id=call_id, name=name))
+            results.append(
+                ToolMessage(
+                    content=TOOL_OFFLINE,
+                    tool_call_id=call_id,
+                    name=name,
+                    additional_kwargs={"created_at": now_ts()},
+                )
+            )
             ctx.tracer.emit(
                 TraceEvent(event="tool_offline", tool=name, thread_id=state.get("thread_id"))
             )
             continue
         if name not in permitted:
-            results.append(ToolMessage(content=TOOL_DENIED, tool_call_id=call_id, name=name))
+            results.append(
+                ToolMessage(
+                    content=TOOL_DENIED,
+                    tool_call_id=call_id,
+                    name=name,
+                    additional_kwargs={"created_at": now_ts()},
+                )
+            )
             ctx.tracer.emit(
                 TraceEvent(
                     event="tool_denied",
@@ -504,7 +521,14 @@ def execute_tools(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
                     detail={"attempts": attempts + 1, "retryable": retryable},
                 )
             )
-        results.append(ToolMessage(content=content, tool_call_id=call_id, name=name))
+        results.append(
+            ToolMessage(
+                content=content,
+                tool_call_id=call_id,
+                name=name,
+                additional_kwargs={"created_at": now_ts()},
+            )
+        )
         retries += attempts
         ctx.tracer.emit(
             TraceEvent(

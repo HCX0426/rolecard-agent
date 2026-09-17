@@ -23,6 +23,7 @@ import {
 import { describeExtract, describeUpload, type UploadResponse } from "../lib/uploadOutcome";
 import { expandSelection } from "../lib/turns";
 import { ThinkingPanel } from "../lib/ThinkingPanel";
+import { Markdown } from "../components/Markdown";
 
 // 快捷问题：空会话时直接点着问（对齐 WorkBuddy 输入框上方的建议 chips）
 const QUICK_PROMPTS = ["帮我查一下结石直径的变化", "我有哪些报告？"];
@@ -756,6 +757,9 @@ export default function ChatPage({
                           )}
                           <div className="rounded-2xl rounded-br-sm bg-blue-600 px-4 py-2.5 whitespace-pre-wrap text-white">
                             {m.content}
+                            {m.ts && (
+                              <p className="mt-1 text-right text-[10px] text-blue-200">{m.ts}</p>
+                            )}
                           </div>
                         </div>
                       </>
@@ -773,10 +777,20 @@ export default function ChatPage({
                     />
                   )}
                   <div className="w-full max-w-[85%]">
-                    {/* id 仅 live 工具列表的 React key 用；回放卡片不在列表里，0 占位。 */}
+                    {/* id 仅 live 工具列表的 React key 用；回放卡片不在列表里，0 占位。
+                        args：回放也显示"搜了什么"（serialize_message 按 tool_call_id 配对）。 */}
                     <ToolStepCard
-                      step={{ id: 0, name: m.name || "tool", status: "ok", content: m.content }}
+                      step={{
+                        id: 0,
+                        name: m.name || "tool",
+                        status: "ok",
+                        content: m.content,
+                        args: m.args,
+                      }}
                     />
+                    {m.ts && (
+                      <p className="mt-1 text-[10px] text-slate-300 dark:text-slate-500">{m.ts}</p>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -790,11 +804,15 @@ export default function ChatPage({
                       className="mt-3 h-3.5 w-3.5 accent-amber-500"
                     />
                   )}
-                  <div className="max-w-[85%] rounded-2xl rounded-bl-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2.5 whitespace-pre-wrap">
+                  <div className="max-w-[85%] rounded-2xl rounded-bl-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2.5">
                     {/* 回放的助手消息也可能带思考（后端 serialize_message 带 reasoning）：
                         轮次结束 live 气泡会被清掉，思考必须在这里再渲染一次才留得住。 */}
-                    <ThinkingPanel text={m.reasoning ?? ""} />
-                    {m.content}
+                    {/* 回放默认折叠：翻历史时主体是回答，推理按需展开 */}
+                    <ThinkingPanel text={m.reasoning ?? ""} defaultOpen={false} />
+                    <Markdown text={m.content} />
+                    {m.ts && (
+                      <p className="mt-1 text-right text-[10px] text-slate-300 dark:text-slate-500">{m.ts}</p>
+                    )}
                   </div>
                 </div>
               );
@@ -810,10 +828,8 @@ export default function ChatPage({
                       ))}
                     </div>
                   )}
-                  <div
-                    className={`whitespace-pre-wrap ${live.streaming ? "caret" : ""}`}
-                  >
-                    {live.text || "…"}
+                  <div className={live.streaming ? "caret" : ""}>
+                    {live.text ? <Markdown text={live.text} /> : "…"}
                   </div>
                 </div>
               </div>

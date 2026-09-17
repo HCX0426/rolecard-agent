@@ -182,10 +182,15 @@ function KnowledgePanel() {
                 </button>
               )}
             </div>
-            <ul className="mt-2 space-y-0.5">
+            {/* 来源文件 chips：比裸文本列表更易扫读（行数多时两列排布）。 */}
+            <ul className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2">
               {s.sources.map((src) => (
-                <li key={src} className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
-                  · {src}
+                <li
+                  key={src}
+                  className="truncate rounded bg-slate-50 px-2 py-0.5 font-mono text-[11px] text-slate-500 dark:bg-slate-700/40 dark:text-slate-400"
+                  title={src}
+                >
+                  {src}
                 </li>
               ))}
             </ul>
@@ -276,8 +281,7 @@ export default function KnowledgePage({ onOpenChat }: { onOpenChat?: () => void 
           <div>
             <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">知识库</h2>
             <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
-              检索是<b>内核能力</b>（search_knowledge），不属于任何插件：库归内核，角色经
-              knowledge_scopes 声明可检索的作用域。
+              检索是<b>内核能力</b>：库归内核，角色声明可检索的作用域。
             </p>
           </div>
           <button

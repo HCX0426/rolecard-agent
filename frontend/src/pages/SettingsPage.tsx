@@ -641,6 +641,7 @@ function AuditPanel() {
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [status, setStatus] = useState("");
   const [filter, setFilter] = useState("");
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   useEffect(() => {
     api.get<AuditRow[]>("/api/audit?limit=200").then(setRows).catch((e) => setStatus(`加载失败：${e.message}`));
@@ -702,8 +703,21 @@ function AuditPanel() {
                   <code className="rounded bg-slate-100 dark:bg-slate-700/50 px-1.5 py-0.5">{a.action}</code>
                 </td>
                 <td className="max-w-40 truncate px-4 py-2 font-mono text-slate-500 dark:text-slate-400 dark:text-slate-500">{a.target}</td>
-                <td className="max-w-56 truncate px-4 py-2 text-slate-400 dark:text-slate-500" title={a.detail_json || ""}>
-                  {a.detail_json}
+                <td className="max-w-56 px-4 py-2 align-top text-slate-400 dark:text-slate-500">
+                  {/* 详情可点开：截断摘要 + title 悬浮不够看全 JSON（审计走查反馈） */}
+                  {a.detail_json && expanded === `${a.ts}|${a.action}` ? (
+                    <pre className="max-w-72 whitespace-pre-wrap break-all rounded bg-slate-50 p-1.5 font-mono text-[11px] text-slate-600 dark:bg-slate-700/40 dark:text-slate-300">
+                      {a.detail_json}
+                    </pre>
+                  ) : (
+                    <button
+                      onClick={() => setExpanded(a.detail_json ? `${a.ts}|${a.action}` : null)}
+                      className="max-w-56 cursor-pointer truncate text-left hover:text-slate-600 dark:hover:text-slate-300"
+                      title="点击展开完整详情"
+                    >
+                      {a.detail_json || "—"}
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

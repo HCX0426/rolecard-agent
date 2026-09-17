@@ -218,7 +218,7 @@ describe("ChatPage 流式渲染", () => {
     expect(screen.queryByText(/回答正文/)).toBeTruthy();
   });
 
-  it("思考面板默认展开（不做流结束自动收起），且不带省略号", async () => {
+  it("回放的思考面板默认折叠（翻历史时主体是回答），可点开且不带省略号", async () => {
     replay = [
       {
         role: "assistant",
@@ -232,9 +232,12 @@ describe("ChatPage 流式渲染", () => {
     await sendMessage("问");
 
     const summary = await screen.findByText(/思考过程/);
-    // 默认展开：details 的 open 属性为真
+    // 回放默认折叠：details 的 open 属性为假（用户 2026-09-17：全展开喧宾夺主）
     const details = summary.closest("details");
-    expect(details?.hasAttribute("open")).toBe(true);
+    expect(details?.hasAttribute("open")).toBe(false);
+    // 点开可见思考内容
+    summary.click();
+    expect(await screen.findByText(/想过了/)).toBeTruthy();
     // 不要省略号
     expect(summary.textContent).toBe("思考过程");
   });

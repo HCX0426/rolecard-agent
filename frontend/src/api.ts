@@ -40,6 +40,10 @@ export interface MessageRow {
   reasoning?: string;
   tools?: (string | null)[];
   name?: string;
+  /** 工具行入参摘要（AI 消息 tool_calls 按 id 配对）：历史里"搜了什么"可见。 */
+  args?: Record<string, unknown>;
+  /** 消息创建时间（本地时间字符串）；旧 checkpoint 消息没有该字段。 */
+  ts?: string;
 }
 
 export interface BackendRow {

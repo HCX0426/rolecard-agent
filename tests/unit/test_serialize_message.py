@@ -52,3 +52,21 @@ def test_other_message_shapes_are_unchanged() -> None:
     )
     assert tool_row["role"] == "tool" and tool_row["content"] == "结果"
     assert "id" in tool_row
+
+
+def test_tool_message_carries_call_args_when_paired() -> None:
+    """工具行回放要能显示"搜了什么"：call_args 按 tool_call_id 配对进 args（用户反馈）。"""
+    row = serialize_message(
+        ToolMessage(content="搜索结果…", tool_call_id="call_1", name="web_search"),
+        call_args={"call_1": {"query": "崩坏3 最新版本"}},
+    )
+    assert row["role"] == "tool"
+    assert row["args"] == {"query": "崩坏3 最新版本"}
+
+
+def test_tool_message_without_pairing_has_no_args_field() -> None:
+    """没配对（旧数据/异常路径）不带空 args 字段去污染前端。"""
+    row = serialize_message(
+        ToolMessage(content="结果", tool_call_id="call_9", name="web_search"),
+    )
+    assert "args" not in row

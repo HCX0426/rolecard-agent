@@ -15,6 +15,7 @@ Two invariants the rest of the kernel depends on:
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Any
 
 from langchain_core.messages import AnyMessage
@@ -49,6 +50,16 @@ class AgentState(TypedDict, total=False):
     # 写进 checkpoint 还带来一个副作用：界面重新加载后依然能查到这个事实。
     context_trimmed: int
     context_kept: int
+
+
+def now_ts() -> str:
+    """消息创建时间（本地时间，秒级字符串）。
+
+    随消息存进 `additional_kwargs["created_at"]`（HumanMessage 在会话路由创建、
+    AIMessage/ToolMessage 在内核节点创建），历史回放据此显示时间（用户 2026-09-17）。
+    存本地时间字符串即可：自用单时区，且 checkpoint 里旧消息天然没有该字段（不显示）。
+    """
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def new_state(

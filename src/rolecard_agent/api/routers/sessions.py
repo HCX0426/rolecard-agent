@@ -32,7 +32,7 @@ from rolecard_agent.api.deps import (
 )
 from rolecard_agent.core.ingestion import INGESTION_FAILED, INGESTION_PENDING
 from rolecard_agent.core.observability import TraceEvent
-from rolecard_agent.core.state import new_state
+from rolecard_agent.core.state import new_state, now_ts
 from rolecard_agent.rag.parser import (
     IMAGE_EXTS,
     PARSEABLE_EXTENSIONS,
@@ -250,9 +250,13 @@ async def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Str
 
     graph_config = {"configurable": {"thread_id": body.thread_id}}
     snapshot = graph.get_state(graph_config)
+    # created_at 随消息入库（additional_kwargs）：历史回放显示时间（用户 2026-09-17）。
+    created_at = now_ts()
     if snapshot.values:
         graph_input: dict[str, object] = {
-            "messages": [HumanMessage(content=body.message)],
+            "messages": [
+                HumanMessage(content=body.message, additional_kwargs={"created_at": created_at})
+            ],
             "current_role_id": role_id,
             "model_name": session_model,  # 每轮实时注入：会话切模型下一轮即生效
         }
@@ -266,7 +270,9 @@ async def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Str
                 enabled_domains=ctx.plugins.enabled_domains(),
                 tool_epoch=ctx.plugins.tool_epoch(),
             ),
-            "messages": [HumanMessage(content=body.message)],
+            "messages": [
+                HumanMessage(content=body.message, additional_kwargs={"created_at": created_at})
+            ],
         }
 
     return StreamingResponse(
@@ -412,7 +418,14 @@ def get_session_messages(thread_id: str, ctx: AppContext = Depends(get_context))
     点击历史会话续聊时，前端用它恢复消息区。"""
     get_thread(ctx.conn, thread_id)
     snapshot = ctx.app_state["graph"].get_state({"configurable": {"thread_id": thread_id}})
-    return [serialize_message(m) for m in (snapshot.values or {}).get("messages", [])]
+    raw = (snapshot.values or {}).get("messages", [])
+    # tool_call_id → 入参：历史工具行要能显示"搜了什么"（单条 ToolMessage 看不到入参）。
+    call_args: dict[str, dict] = {}
+    for m in raw:
+        for tc in getattr(m, "tool_calls", None) or []:
+            if tc.get("id"):
+                call_args[str(tc["id"])] = dict(tc.get("args") or {})
+    return [serialize_message(m, call_args) for m in raw]
 
 
 @router.get("/api/session/{thread_id}/context")

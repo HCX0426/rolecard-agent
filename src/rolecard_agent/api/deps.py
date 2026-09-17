@@ -59,24 +59,39 @@ def get_thread(conn: ThreadLocalConnection, thread_id: str):
     return row
 
 
-def serialize_message(message: object) -> dict[str, object]:
+def serialize_message(
+    message: object, call_args: dict[str, dict[str, Any]] | None = None
+) -> dict[str, object]:
     """Checkpoint message -> JSON shape for the frontend history replay.
 
     `id` 是前端**编辑 / 删除某条消息**时的寻址依据：LangGraph 的 `add_messages`
     按 id 去重与删除（`RemoveMessage(id=...)`），没有 id 就无法精确改动历史中的一条。
+    `call_args`（tool_call_id → 入参）由调用方从消息序列里预先配对 —— 工具行回放时
+    才能显示"搜了什么"（单条 ToolMessage 自己看不到入参）。
     """
+    created_at = (getattr(message, "additional_kwargs", None) or {}).get("created_at")
+    row: dict[str, object]
     if isinstance(message, HumanMessage):
-        return {"role": "user", "content": _text_of(message), "id": message.id}
-    if isinstance(message, ToolMessage):
-        return {
+        row = {
+            "role": "user",
+            "content": _text_of(message),
+            "id": message.id,
+        }
+    elif isinstance(message, ToolMessage):
+        trow: dict[str, object] = {
             "role": "tool",
             "name": message.name,
             "content": _text_of(message),
             "id": message.id,
         }
-    if isinstance(message, AIMessage):
+        if args := (call_args or {}).get(message.tool_call_id):
+            trow["args"] = args  # 历史工具卡显示"搜了什么"（用户 2026-09-17 反馈）
+        if created_at:
+            trow["ts"] = str(created_at)
+        return trow
+    elif isinstance(message, AIMessage):
         tools = [tc.get("name") for tc in (message.tool_calls or [])]
-        row: dict[str, object] = {
+        row = {
             "role": "assistant",
             "content": _text_of(message),
             "tools": tools,
@@ -88,8 +103,15 @@ def serialize_message(message: object) -> dict[str, object]:
         reasoning = (message.additional_kwargs or {}).get("reasoning_content")
         if reasoning:
             row["reasoning"] = reasoning
-        return row
-    return {"role": "assistant", "content": _text_of(message), "id": getattr(message, "id", None)}
+    else:
+        row = {
+            "role": "assistant",
+            "content": _text_of(message),
+            "id": getattr(message, "id", None),
+        }
+    if created_at:
+        row["ts"] = str(created_at)  # 旧消息没有该字段 → 不显示时间
+    return row
 
 
 def group_turns(messages: Sequence[object]) -> list[list[int]]:
