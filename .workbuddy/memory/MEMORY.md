@@ -148,3 +148,6 @@ cd frontend && npm test && npm run build
   会验到旧代码。改完前端先确认 ✓ built 再探针。
 - **长 heredoc 不可靠**：会被截断/转义损坏 —— 多行补丁用 Write 写临时脚本（系统 Temp）
   再执行；改文件优先用 Edit 工具。
+- **本机/默认本地模型 = `qwen3-vl:8b`**（对话 + 工具调用 + 识图一体，一行多用，不为视觉单独配行）。
+  `qwen2.5:7b` / `qwen2.5vl:7b` / `local_vl` **均已退役**，配置与文档不应再引用
+  （docs 里的记述是退役历史，eval fixture 是历史快照 —— 都不是配置）。
