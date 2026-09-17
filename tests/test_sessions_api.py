@@ -92,12 +92,12 @@ def test_messages_replay_from_checkpoint_in_order(client: TestClient) -> None:
     """历史消息来自 checkpoint：两轮对话后回放顺序为 user/ai × 2。"""
     session = client.post("/api/session", json={}).json()
     tid = str(session["thread_id"])
-    assert client.get(f"/api/session/{tid}/messages").json() == []  # 新会话无历史
+    assert client.get(f"/api/session/{tid}/messages").json()["messages"] == []  # 新会话无历史
 
     chat(client, tid, "第一问")
     chat(client, tid, "第二问")
 
-    messages = client.get(f"/api/session/{tid}/messages").json()
+    messages = client.get(f"/api/session/{tid}/messages").json()["messages"]
     assert [(m["role"], m["content"]) for m in messages] == [
         ("user", "第一问"),
         ("assistant", "reply-0"),
@@ -217,7 +217,7 @@ def test_upload_pdf_indexed_and_idempotent(
         assert again.json()["task_id"] == body["task_id"]  # 同一任务，不是新行
 
         # 注入的说明消息进入 checkpoint 历史，模型后续轮次能看到
-        messages = c.get(f"/api/session/{tid}/messages").json()
+        messages = c.get(f"/api/session/{tid}/messages").json()["messages"]
         assert any("已建立检索索引" in str(m["content"]) for m in messages)
         knowledge = c.get("/api/knowledge").json()
         assert any("体检报告.pdf" in s["sources"] for s in knowledge)
@@ -467,7 +467,7 @@ def test_upload_unsupported_type_stays_pending(
         )
         assert res.status_code == 201
         assert res.json()["status"] == "pending"
-        messages = c.get(f"/api/session/{tid}/messages").json()
+        messages = c.get(f"/api/session/{tid}/messages").json()["messages"]
         assert any("暂不支持自动解析" in str(m["content"]) for m in messages)
 
 

@@ -11,7 +11,7 @@ import re
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AnyMessage, HumanMessage, RemoveMessage
 from pydantic import BaseModel, Field
@@ -220,7 +220,12 @@ def patch_session(
 
 
 @router.post("/api/chat")
-async def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> StreamingResponse:
+# 刻意**不是** async def：函数体里跑的全是同步阻塞调用（sqlite / graph.get_state /
+# checkpointer 读全量历史）。async 版本会把这些阻塞**放到事件循环上**，一次模型等待
+# 就能卡住其它会话的 SSE。同步路由由 Starlette 放进线程池执行，而返回的
+# StreamingResponse 内部是 async 生成器 —— 流式并不要求路由本身是 async
+#（审查报告 P2：异步路由内的同步阻塞）。
+def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> StreamingResponse:
     """SSE 流式对话。线程必须已存在（POST /api/session 创建）。
 
     首轮注入完整初始状态（`new_state`）；续轮只注入新消息 + 实时角色 —— 后者让
@@ -317,7 +322,8 @@ def _history_messages(ctx: AppContext, thread_id: str) -> tuple[dict, list[AnyMe
 
 
 @router.post("/api/session/{thread_id}/messages/edit")
-async def edit_message_and_regenerate(
+# 同上：函数体里的 sqlite / graph.update_state 都是阻塞调用，保持同步路由。
+def edit_message_and_regenerate(
     thread_id: str, body: EditMessageBody, ctx: AppContext = Depends(get_context)
 ):
     """编辑**自己发过的某条消息**并从那里重新生成回答。
@@ -417,9 +423,18 @@ def list_sessions(ctx: AppContext = Depends(get_context)) -> list[object]:
 
 
 @router.get("/api/session/{thread_id}/messages")
-def get_session_messages(thread_id: str, ctx: AppContext = Depends(get_context)) -> list[object]:
+def get_session_messages(
+    thread_id: str,
+    ctx: AppContext = Depends(get_context),
+    limit: int = Query(default=500, ge=0),
+) -> dict[str, object]:
     """历史消息回放（来源：checkpoint，而非单独的聊天记录表）——
-    点击历史会话续聊时，前端用它恢复消息区。"""
+    点击历史会话续聊时，前端用它恢复消息区。
+
+    `limit`：默认只回**最近 500 条**（0 = 全部）。长对话一次全量返回既慢又没用
+    （界面本来也只从底部看起）；`total`/`truncated` 让前端能如实说明"只显示了最近 N 条"
+    （审查报告 P2：无分页）。
+    """
     get_thread(ctx.conn, thread_id)
     snapshot = ctx.app_state["graph"].get_state({"configurable": {"thread_id": thread_id}})
     raw = (snapshot.values or {}).get("messages", [])
@@ -429,7 +444,16 @@ def get_session_messages(thread_id: str, ctx: AppContext = Depends(get_context))
         for tc in getattr(m, "tool_calls", None) or []:
             if tc.get("id"):
                 call_args[str(tc["id"])] = dict(tc.get("args") or {})
-    return [serialize_message(m, call_args) for m in raw]
+    rows = [serialize_message(m, call_args) for m in raw]
+    total = len(rows)
+    if limit and total > limit:
+        rows = rows[-limit:]
+    return {
+        "messages": rows,
+        "total": total,
+        "limit": limit,
+        "truncated": len(rows) < total,
+    }
 
 
 class PromptEnhanceBody(BaseModel):

@@ -47,10 +47,20 @@ def build_consensus_tool(*, settings: Any, build: Any = None) -> Any:
                 seen.append(n)
         return seen[:MAX_CONSENSUS_BACKENDS]
 
+    # 一次比对里每个后端只构建一次：模型持有 httpx 连接池，每次 _ask 都新建等于
+    # 每次比对泄漏 N 个客户端（审查报告 P2）。工具实例本身是长生命周期的，
+    # 所以缓存挂在闭包上即可 —— 请求之间共享同一个客户端，这正是初衷。
+    built: dict[str, Any] = {}
+
+    def _model(name: str) -> Any:
+        if name not in built:
+            built[name] = model_builder(name)
+        return built[name]
+
     def _ask(name: str, question: str) -> tuple[str, str]:
         """单后端问答。失败不抛：比对要的是"每个后端各自的状态"，缺一个就缺一个。"""
         try:
-            model = model_builder(name)
+            model = _model(name)
             answer = str(model.invoke(question).content or "").strip()
             return name, (answer or "（该后端返回了空回答）")
         except Exception as exc:  # noqa: BLE001 - 只透出类型名，内部细节不进对话
@@ -70,7 +80,7 @@ def build_consensus_tool(*, settings: Any, build: Any = None) -> Any:
             answers = list(pool.map(lambda n: _ask(n, question), targets))
 
         joined = "\n\n".join(f"【{name}】\n{answer}" for name, answer in answers)
-        aggregator = model_builder(settings.model_default)
+        aggregator = _model(settings.model_default)
         summary = str(
             aggregator.invoke(
                 "你是事实核查员。同一个问题发给了多个模型，下面是它们各自的回答。\n"

@@ -72,10 +72,19 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
   const [adding, setAdding] = useState(false);
+  // 分页：数据页一屏只看得下十几条，整表返回会让"补录几十份之后打开数据页"变慢
+  // （审查报告 P2）。`total` 用于显示"共 N 条"与翻页边界。
+  const PAGE_SIZE = 20;
+  const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
 
   const load = useCallback(async () => {
-    setReports(await api.get<ReportRecord[]>("/api/records"));
-  }, []);
+    const res = await api.get<{ items: ReportRecord[]; total: number }>(
+      `/api/records?limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`,
+    );
+    setReports(res.items);
+    setTotal(res.total);
+  }, [page]);
   useEffect(() => {
     load().catch((e) => setStatus({ ok: false, msg: `加载失败：${e.message}` }));
   }, [load]);
@@ -144,6 +153,30 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
         />
       )}
       {status && <Notice tone={status.ok ? "ok" : "error"}>{status.msg}</Notice>}
+      {total > PAGE_SIZE && (
+        <div className="flex items-center justify-between rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-xs text-slate-500 dark:text-slate-400">
+          <span>
+            共 <b>{total}</b> 条，当前第 {page * PAGE_SIZE + 1}–
+            {Math.min(total, (page + 1) * PAGE_SIZE)} 条
+          </span>
+          <span className="flex items-center gap-1">
+            <button
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0}
+              className="rounded border border-slate-200 px-2 py-0.5 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-700"
+            >
+              上一页
+            </button>
+            <button
+              onClick={() => setPage((p) => p + 1)}
+              disabled={(page + 1) * PAGE_SIZE >= total}
+              className="rounded border border-slate-200 px-2 py-0.5 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-700"
+            >
+              下一页
+            </button>
+          </span>
+        </div>
+      )}
       {reports.length === 0 ? (
         <div className={`rounded-lg border border-dashed border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-center text-xs text-slate-400 dark:text-slate-500 ${compact ? "p-4" : "p-8 text-sm"}`}>
           该域还没有数据：在对话页上传报告 / 图片（自动解析入索引），或点上方「＋ 新增报告」手动补录。

@@ -117,7 +117,9 @@ def test_created_report_appears_in_records(client: TestClient) -> None:
             "indices": [{"index_name": "结石直径", "index_value": 6.1}],
         },
     )
-    records = client.get("/api/records").json()
+    page = client.get("/api/records").json()
+    records = page["items"]
+    assert page["total"] == 1
     assert len(records) == 1
     assert records[0]["report_type"] == "腹部超声"
 
@@ -327,7 +329,7 @@ def test_deleting_a_report_also_clears_its_knowledge_chunks(
 
         assert res.status_code == 204, res.text
         assert ctx.knowledge.scope_count(scope) == 0, "删了报告，向量分块还在"
-        assert c.get("/api/records").json() == []
+        assert c.get("/api/records").json()["items"] == []
         actions = {a["action"] for a in c.get("/api/audit?limit=20").json()}
         assert "delete_report" in actions
 

@@ -181,7 +181,7 @@ def test_records_patch_and_audit_and_delete(
         )
         conn.close()
 
-        records = c.get("/api/records").json()
+        records = c.get("/api/records").json()["items"]  # 分页响应：items/total/limit/offset
         index_id = records[0]["indices"][0]["index_id"]
         report_id = records[0]["report_id"]
 
@@ -197,7 +197,7 @@ def test_records_patch_and_audit_and_delete(
         assert any(a["action"] == "update_index" and a["target"] == index_id for a in audit)
 
         assert c.delete(f"/api/records/report/{report_id}").status_code == 204
-        assert c.get("/api/records").json() == []
+        assert c.get("/api/records").json()["items"] == []
         audit = c.get("/api/audit").json()
         assert any(a["action"] == "delete_report" and a["target"] == report_id for a in audit)
 

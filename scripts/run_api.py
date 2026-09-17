@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
@@ -126,8 +127,20 @@ def main() -> None:
             reload=True,
             reload_dirs=[str(Path(__file__).resolve().parents[1] / "src")],
         )
+        _shutdown_chat_pool()
         return
     uvicorn.run("rolecard_agent.api.main:create_app", factory=True, host=host, port=port)
+    # 走到这里 = 服务已退出（Ctrl+C / 收到停止信号）。`_CHAT_POOL` 是**进程级**资源，
+    # 不能在某个 app 的 lifespan 里关（同进程里可能还有别的 app 实例，测试就是这样
+    # 互相干扰的）—— 真实的进程退出路径才是关它的地方（审查报告 P2：客户端生命周期）。
+
+
+def _shutdown_chat_pool() -> None:
+    """释放对话线程池（同步 graph.stream 靠它执行，线程池是 module-level 的）。"""
+    with contextlib.suppress(Exception):
+        from rolecard_agent.api.chat import _CHAT_POOL
+
+        _CHAT_POOL.shutdown(wait=False)
 
 
 if __name__ == "__main__":

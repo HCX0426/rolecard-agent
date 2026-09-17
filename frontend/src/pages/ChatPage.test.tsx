@@ -54,7 +54,7 @@ function stubMountCalls(
     if (url === "/api/roles") return [];
     if (url === "/api/settings/models") return { default: "local", backends: [], fallbacks: [] };
     if (url === "/api/settings/model-providers") return { providers: [] };
-    if (url.endsWith("/messages")) return replay;
+    if (url.endsWith("/messages")) return { messages: replay, total: replay.length, limit: 500, truncated: false };
     if (url.endsWith("/context")) return contextOverride;
     if (url.startsWith("/api/session/")) return { model_name: null };
     return {};
@@ -163,7 +163,7 @@ describe("ChatPage 流式渲染", () => {
       if (url === "/api/roles") return [];
       if (url === "/api/settings/models") return { default: "local", backends: [], fallbacks: [] };
       if (url === "/api/settings/model-providers") return { providers: [] };
-      if (url.endsWith("/messages")) return [];
+      if (url.endsWith("/messages")) return { messages: [], total: 0, limit: 500, truncated: false };
       if (url.endsWith("/context")) return { trimmed: 9, kept: 3, budget: 24000 };
       if (url.startsWith("/api/session/")) return { model_name: null };
       return {};
@@ -269,7 +269,7 @@ describe("ChatPage 流式渲染", () => {
       if (url === "/api/roles") return [];
       if (url === "/api/settings/models") return { default: "local", backends: [], fallbacks: [] };
       if (url === "/api/settings/model-providers") return { providers: [] };
-      if (url.endsWith("/messages")) return replay;
+      if (url.endsWith("/messages")) return { messages: replay, total: replay.length, limit: 500, truncated: false };
       if (url.endsWith("/context")) return { trimmed: 0, kept: 0, budget: 24000 };
       return { model_name: null };
     });

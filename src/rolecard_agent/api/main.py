@@ -31,7 +31,7 @@ import contextlib
 import os
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -272,7 +272,31 @@ def create_app(
     # 取当前图，因此保存后无需重启即可生效。
     app_state["graph"] = graph
 
-    app = FastAPI(title="rolecard-agent 管理控制台", version="0.3.0")
+    @contextlib.asynccontextmanager
+    async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        """进程退出时收尾：sqlite 连接 / 知识库 httpx 客户端 / 对话线程池。
+
+        之前这三者**从不释放**：uvicorn 被 Ctrl+C 或容器停止时，各线程创建的 sqlite
+        连接、嵌入与重排器的 httpx 连接池都随进程一起消失 —— 在长驻进程里（设置页热
+        重建 knowledge 会换掉实例）表现为 fd 与连接泄漏（审查报告 P2：无 lifespan）。
+
+        注意**这里只关"本 app 持有的"资源**：`_CHAT_POOL` 是模块级（进程级）对象，
+        在一个 app 的 lifespan 里关掉它会让同进程里后续创建的 app 全部拿不到线程池
+        （测试就是这么互相干扰的）—— 它的收尾放在真实的进程退出路径
+        （scripts/run_api.py 里 uvicorn.run 返回之后）。
+        """
+        try:
+            yield
+        finally:
+            # 每个 suppress 都独立：某一处收尾失败不能连累其它资源。
+            with contextlib.suppress(Exception):
+                conn.close()
+            for holder in (knowledge, app_state.get("knowledge")):
+                with contextlib.suppress(Exception):
+                    if holder is not None and hasattr(holder, "close"):
+                        holder.close()
+
+    app = FastAPI(title="rolecard-agent 管理控制台", version="0.3.0", lifespan=_lifespan)
 
     # 共享上下文：所有 router 通过 `Depends(get_context)` 取它，不再依赖闭包。
     # rebuild_runtime 先挂占位，定义完成后立刻绑定真实现（见下方）。

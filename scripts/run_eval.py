@@ -242,7 +242,10 @@ def _run_case(
                 "failures": [f"对话出错：{ev.get('detail')}"],
             }
 
-    messages = client.get(f"/api/session/{thread_id}/messages").json()  # type: ignore[attr-defined]
+    # /api/session/{id}/messages 是分页响应（messages/total/limit/truncated）；
+    # 评测对话都很短，不会被截断 —— 但形状必须按新契约取。
+    page = client.get(f"/api/session/{thread_id}/messages").json()  # type: ignore[attr-defined]
+    messages = page["messages"]  # type: ignore[index]
     invoked = [
         name for m in messages if m["role"] == "assistant" for name in (m.get("tools") or [])
     ]

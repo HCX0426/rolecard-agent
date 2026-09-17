@@ -9,7 +9,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor
@@ -116,9 +116,24 @@ def _latest_numeric_history(records: list[dict[str, object]]) -> dict[str, float
 
 
 @router.get("/api/records")
-def list_records(ctx: AppContext = Depends(get_context)) -> list[dict[str, object]]:
-    """F2 数据管理视图：报告 + 完整指标行（归属演示用户）。"""
-    return ctx.health.list_records(DEFAULT_USER_ID)
+def list_records(
+    ctx: AppContext = Depends(get_context),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, object]:
+    """F2 数据管理视图（分页）：报告 + 完整指标行（归属演示用户）。
+
+    为什么要分页：整表返回会让"补录几十份报告之后打开数据页"变成一次几十 KB 的响应，
+    而界面一屏只看得下十几条（审查报告 P2）。切片目前发生在服务层：数据量到千级再改成
+    SQL 层 `LIMIT/OFFSET`（那时候 `total` 也应改为 COUNT 查询）。
+    """
+    rows = ctx.health.list_records(DEFAULT_USER_ID)
+    return {
+        "items": rows[offset : offset + limit],
+        "total": len(rows),
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.post("/api/records/report", status_code=201)

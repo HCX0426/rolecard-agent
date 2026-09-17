@@ -49,6 +49,14 @@ export interface MessageRow {
   ts?: string;
 }
 
+/** 历史消息的分页响应（默认只回最近 500 条，`truncated` 为真时前端要如实说明）。 */
+export interface MessagePage {
+  messages: MessageRow[];
+  total: number;
+  limit: number;
+  truncated: boolean;
+}
+
 export interface BackendRow {
   name: string;
   provider: string;

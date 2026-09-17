@@ -3,7 +3,7 @@ import {
   api,
   streamChat,
   streamEdit,
-  type ExtractResult,
+  type MessagePage,
   type MessageRow,
   type ModelProvider,
   type ModelSettings,
@@ -19,9 +19,13 @@ import {
   type LiveBubble,
   type StreamMeta,
 } from "../lib/stream";
-import { describeExtract, describeUpload } from "../lib/uploadOutcome";
-import { buildTurns, expandSelection, type BuiltTurn } from "../lib/turns";
+import { buildTurns, type BuiltTurn } from "../lib/turns";
 import ProcessPanel from "../components/chat/ProcessPanel";
+import { useAutoScroll } from "../hooks/useAutoScroll";
+import { useMenus } from "../hooks/useMenus";
+import { useMessageSelection } from "../hooks/useMessageSelection";
+import { useSessions } from "../hooks/useSessions";
+import { fetchMessages, useUploadFlow } from "../hooks/useUploadFlow";
 import ToolStepCard from "../components/chat/ToolStepCard";
 import {
   IconClip,
@@ -46,7 +50,6 @@ function fmtDuration(from: string, to: string): string | null {
 }
 
 export default function ChatPage() {
-  const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [roles, setRoles] = useState<RoleCard[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [currentRole, setCurrentRole] = useState<string>("");
@@ -62,24 +65,21 @@ export default function ChatPage() {
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [input]);
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
+
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const [roleMenuOpen, setRoleMenuOpen] = useState(false);
-  const [ctxOpen, setCtxOpen] = useState<string | null>(null); // 展开上下文选项的模型行名
-  // 菜单「鼠标移出后关闭」的短延时：留出从按钮移到面板的过渡时间，防抖动。
-  const menuCloseTimer = useRef<number | null>(null);
-  function armMenuClose(close: () => void) {
-    if (menuCloseTimer.current) window.clearTimeout(menuCloseTimer.current);
-    menuCloseTimer.current = window.setTimeout(close, 250);
-  }
-  function cancelMenuClose() {
-    if (menuCloseTimer.current) {
-      window.clearTimeout(menuCloseTimer.current);
-      menuCloseTimer.current = null;
-    }
-  }
+  // 菜单开关与「鼠标移出后延时关闭」抽到 hooks/useMenus —— 这里只剩业务语义。
+  const {
+    modelMenuOpen,
+    setModelMenuOpen,
+    roleMenuOpen,
+    setRoleMenuOpen,
+    ctxOpen,
+    setCtxOpen,
+    armMenuClose,
+    cancelMenuClose,
+    closeAllMenus,
+  } = useMenus();
   const [backends, setBackends] = useState<
     { name: string; provider: string; model: string; usage: string; num_ctx: number | null }[]
   >([]);
@@ -88,37 +88,34 @@ export default function ChatPage() {
   const [defaultBackend, setDefaultBackend] = useState("");
   const [sessionModel, setSessionModel] = useState<string | null>(null);
   const [busy, setBusy] = useState(false); // 流式进行中：驱动「停止」按钮与输入禁用
-  const [sessionsOpen, setSessionsOpen] = useState(false); // 移动端会话栏抽屉
   // 上下文预算事实（H3 的界面部分）：>0 时提示"早期对话已折叠"。
   // 单独放在 state 而不是气泡里，是因为气泡在流结束时会被 checkpoint 回放**整体替换** ——
   // 挂在气泡上的提示会在回答刚结束时消失，用户根本来不及看到。
   const [trim, setTrim] = useState<{ dropped: number; kept: number } | null>(null);
+  // 历史消息被分页截断时**还差多少条更早的**（0 = 全部都在）。
+  // 为什么要显示：不说的话，用户看到的"最近 500 条"会被当成全部历史。
+  const [historyTruncated, setHistoryTruncated] = useState(0);
   // 编辑重生成：正在编辑的那条消息（id + 草稿）
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null); // 复制反馈（按轮 key）
   const [enhancing, setEnhancing] = useState(false); // 增强提示词进行中
   const [ctxBudget, setCtxBudget] = useState(0); // 上下文字符预算（后端 context 端点）
-  // 多选删除模式：勾选若干消息（勾一侧自动带上整轮）
-  const [selectMode, setSelectMode] = useState(false);
-  const [selected, setSelected] = useState<string[]>([]);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  // 多选删除（勾选自动扩展到整轮）抽到 hooks/useMessageSelection。
 
-  /** 退出多选删除模式（切会话、新建会话时必须调）。
-   *
-   * 为什么不能只靠「退出选择」按钮：勾选的是**消息 id**，而 id 属于某一个对话 —— 在 A 里
-   * 勾两条再切到 B，顶部横幅还写着「已选 2 条」、复选框却全空；点「删除所选」会把 A 的 id
-   * 发给 B，后端 404（审查报告 P1-9）。
-   */
-  function clearSelection() {
-    setSelectMode(false);
-    setSelected([]);
-    setConfirmDelete(false);
-    setEditing(null);
-  }
+  const {
+    selectMode,
+    setSelectMode,
+    selected,
+    setSelected,
+    confirmDelete,
+    setConfirmDelete,
+    clearSelection,
+    toggleSelect,
+  } = useMessageSelection(messages, () => setEditing(null));
   const fileRef = useRef<HTMLInputElement>(null);
   const sendingRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  // 自动滚动抽到 hooks/useAutoScroll（贴底才跟随，切会话强制跟一次）。
   // 气泡的"当前值"镜像：事件回调里需要读到最新气泡才能归约，而 setState 的更新函数
   // 可能在渲染期被调用（在更新函数里做副作用在 StrictMode 下会执行两次）。用 ref 明确持有。
   const liveRef = useRef<LiveBubble | null>(null);
@@ -140,9 +137,8 @@ export default function ChatPage() {
     if (text) pushToast(text, tone);
   };
 
-  const refreshSessions = useCallback(async () => {
-    setSessions(await api.get<SessionRow[]>("/api/sessions"));
-  }, []);
+  // 会话列表（含移动端抽屉开关）抽到 hooks/useSessions。
+  const { sessions, sessionsOpen, setSessionsOpen, refreshSessions } = useSessions();
 
   useEffect(() => {
     refreshSessions().catch((e) => setStatus(`加载对话失败：${e.message}`, "warn"));
@@ -170,20 +166,7 @@ export default function ChatPage() {
     setCurrentRole(cur?.role_id || "");
   }, [sessionId, sessions]);
 
-  // 自动滚动：只在「用户本来就贴着底部」时跟随。绑死在 [messages, live] 的无条件
-  // scrollTo 会让生成期间往上翻历史的人被每个 token 拽回底部（审查报告 P2）。
-  const stickyRef = useRef(true);
-  useEffect(() => {
-    stickyRef.current = true; // 切了上下文 = 用户主动换了对话，强制跟一次
-  }, [sessionId]);
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
-    if (!stickyRef.current && !nearBottom) return;
-    el.scrollTo({ top: el.scrollHeight });
-    stickyRef.current = false;
-  }, [messages, live]);
+  const scrollRef = useAutoScroll(sessionId, [messages, live]);
 
   async function selectSession(threadId: string) {
     if (sendingRef.current) return;
@@ -194,8 +177,9 @@ export default function ChatPage() {
     setModelMenuOpen(false);
     setSessionsOpen(false); // 移动端选中后收起抽屉
     try {
-      const [msgs, detail, ctxInfo] = await Promise.all([
-        api.get<MessageRow[]>(`/api/session/${threadId}/messages`),
+      const [page, detail, ctxInfo] = await Promise.all([
+        // 分页响应：只取最近 N 条（默认 500），太长的一次性全量返回既慢也没用。
+        api.get<MessagePage>(`/api/session/${threadId}/messages`),
         api.get<{ model_name: string | null }>(`/api/session/${threadId}`),
         // 上下文预算事实：刷新页面后「早期对话已折叠」这条提示同样要能显示出来
         // （它不是一次性的 SSE 事件，而是一个持续为真的状态）。
@@ -203,7 +187,9 @@ export default function ChatPage() {
           .get<SessionContext>(`/api/session/${threadId}/context`)
           .catch(() => ({ trimmed: 0, kept: 0, budget: 0 }) as SessionContext),
       ]);
-      setMessages(msgs);
+      setMessages(page.messages);
+      // 被截断时要如实说明：否则用户以为看到的是全部历史（审查报告 P2）。
+      setHistoryTruncated(page.truncated ? page.total - page.messages.length : 0);
       setSessionModel(detail.model_name);
       setTrim(ctxInfo.trimmed > 0 ? { dropped: ctxInfo.trimmed, kept: ctxInfo.kept } : null);
       setCtxBudget(ctxInfo.budget);
@@ -235,6 +221,7 @@ export default function ChatPage() {
       clearSelection();
       setConfirmDel(null);
       setMessages([]);
+      setHistoryTruncated(0);
       setLive(null);
       liveRef.current = null;
       setTrim(null); // 新会话没有历史，也就谈不上"折叠"
@@ -277,6 +264,7 @@ export default function ChatPage() {
       if (sessionId === threadId) {
         setSessionId(null);
         setMessages([]);
+      setHistoryTruncated(0);
       }
       await refreshSessions();
     } catch (e) {
@@ -381,7 +369,7 @@ export default function ChatPage() {
     abortRef.current = null;
     // 流结束：checkpoint 是唯一真相，回放覆盖乐观状态（中断时同样回放，拿到已生成的部分）
     try {
-      setMessages(await api.get<MessageRow[]>(`/api/session/${tid}/messages`));
+      setMessages(await fetchMessages(tid));
     } catch {
       /* 会话已被删等极端情况：保留现有气泡 */
     }
@@ -403,55 +391,19 @@ export default function ChatPage() {
     abortRef.current?.abort();
   }
 
-  async function handleUpload(file: File) {
-    if (uploading) return;
-    let tid = sessionId;
-    if (!tid) {
-      tid = await createSession();
-      if (!tid) return;
-    }
-    setUploading(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      // 走 api.upload（长超时）：OCR 子进程本身允许 120s，30s 会把界面切成「假失败」，
-      // 而后端其实已经把文件落盘并入索引了（审查报告 P1-4）。
-      const r = await api.upload(tid, fd);
-
-      // 三态反馈（登记但读不了 / 解析了没文本 / 已入索引）：判断逻辑抽到
-      // lib/uploadOutcome.ts 并被单测覆盖 —— 这段分支以前只能靠人工点页面验。
-      const uploadOutcome = describeUpload(r);
-      if (uploadOutcome) {
-        setStatus(uploadOutcome.text, uploadOutcome.tone);
-        return;
-      }
-
-      // v2.3：已入索引 → 自动触发结构化抽取（独立请求 + 进度提示，不拖慢上传本身）。
-      // 抽取失败不算上传失败：原文已可提问，指标提取可以重试。
-      setStatus(`「${r.file}」已入检索索引，AI 识别指标中…`, "info");
-      let result: ExtractResult | null = null;
-      let extractError = "";
+  const { uploading, handleUpload } = useUploadFlow({
+    sessionId,
+    ensureSession: createSession,
+    reloadMessages: async (tid) => {
       try {
-        result = await api.extractRecord(r.task_id);
-      } catch (e) {
-        extractError = (e as Error).message;
-      }
-      const outcome = describeExtract(result, extractError, r.file);
-      setStatus(outcome.text, outcome.tone);
-    } catch (e) {
-      setStatus(`上传失败：${(e as Error).message}`, "warn");
-    } finally {
-      setUploading(false);
-      // 注入的说明消息已进 checkpoint，回放让用户看到
-      try {
-        setMessages(await api.get<MessageRow[]>(`/api/session/${tid}/messages`));
+        setMessages(await fetchMessages(tid));
       } catch {
         /* 会话可能已被删除 */
       }
-    }
-  }
+    },
+    onStatus: setStatus,
+  });
 
-  /** 进入/退出编辑态。 */
   function startEdit(id: string, text: string) {
     setEditing({ id, text });
   }
@@ -493,21 +445,11 @@ export default function ChatPage() {
     setBusy(false);
     if (sessionId) {
       try {
-        setMessages(await api.get<MessageRow[]>(`/api/session/${sessionId}/messages`));
+        setMessages(await fetchMessages(sessionId));
       } catch {
         /* 会话可能已删除 */
       }
     }
-  }
-
-  /** 勾选/取消一条消息：自动扩展到整轮（与后端 expand_to_turns 同一规则）。 */
-  function toggleSelect(id: string) {
-    setSelected((cur) => {
-      const next = new Set(cur);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return expandSelection(messages, [...next]);
-    });
   }
 
   /** 删除所选（后端按整轮扩展并写审计语义上的不可恢复操作）。 */
@@ -521,7 +463,7 @@ export default function ChatPage() {
       setSelected([]);
       setSelectMode(false);
       setStatus(`已删除所选对话`, "ok");
-      setMessages(await api.get<MessageRow[]>(`/api/session/${sessionId}/messages`));
+      setMessages(await fetchMessages(sessionId));
     } catch (e) {
       setStatus(`删除失败：${(e as Error).message}`, "warn");
     }
@@ -902,6 +844,12 @@ export default function ChatPage() {
               删除模式：勾选任意一问或一答，会自动带上配对的另一侧；选好后点右下「删除所选」。
             </div>
           )}
+          {historyTruncated > 0 && (
+            <div className="mx-auto mb-2 max-w-3xl rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-xs text-slate-500 dark:text-slate-400">
+              当前只显示这个对话的<b>最近 {messages.length} 条</b>消息
+              （还有 {historyTruncated} 条更早的未加载）。
+            </div>
+          )}
           {/* 上下文预算提示（H3）：模型这轮只看到了最近 N 条历史。
               为什么值得占一行位置：不说的话，用户遇到"它怎么忘了我前面说的"时只会
               归因于"模型不行"，而实际原因是可解释、可预期的行为。措辞在 lib/stream.ts
@@ -1001,10 +949,7 @@ export default function ChatPage() {
               onMouseLeave={() => armMenuClose(() => setRoleMenuOpen(false))}
               onKeyDown={(e) => {
                 // 键盘用户的第二条退路：菜单靠鼠标移出关闭，Esc 必须也能关。
-                if (e.key === "Escape") {
-                  setRoleMenuOpen(false);
-                  setModelMenuOpen(false);
-                }
+                if (e.key === "Escape") closeAllMenus();
               }}
             >
               {/* 角色切换（WorkBuddy 式自定义菜单）：原生 select 的弹层系统绘制、样式突兀，

@@ -225,7 +225,7 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         assert s["role_id"] == "general_assistant", s
         assert any(x["thread_id"] == tid for x in c.get("/api/sessions").json())
         assert c.get(f"/api/session/{tid}").json()["model_name"] is None
-        assert c.get(f"/api/session/{tid}/messages").json() == []
+        assert c.get(f"/api/session/{tid}/messages").json()["messages"] == []
         renamed = c.patch(f"/api/session/{tid}", json={"title": "冒烟会话"})
         assert renamed.json()["title"] == "冒烟会话", renamed.text
         overridden = c.patch(f"/api/session/{tid}", json={"model_name": "local"})
@@ -241,7 +241,7 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         assert res.status_code == 200
         events = _sse(res.text)
         assert [e for e in events if e["type"] == "end"], events
-        msgs = c.get(f"/api/session/{s['thread_id']}/messages").json()
+        msgs = c.get(f"/api/session/{s['thread_id']}/messages").json()["messages"]
         assert [m["role"] for m in msgs] == ["user", "assistant"], msgs
         listing = c.get("/api/sessions").json()
         titled = [x for x in listing if x["thread_id"] == s["thread_id"]][0]
@@ -290,7 +290,7 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         empty = c.post(f"/api/session/{tid}/upload", files={"file": ("a.txt", b"", "text/plain")})
         assert empty.status_code == 400
         # 注入的说明消息应进入会话历史（模型下一轮知道有文件已索引）
-        msgs = c.get(f"/api/session/{tid}/messages").json()
+        msgs = c.get(f"/api/session/{tid}/messages").json()["messages"]
         assert any("已建立检索索引" in str(m.get("content", "")) for m in msgs), msgs
         # v2.3 结构化抽取端点：未知任务 404；模型不可用时必须如实降级（502 或
         # 200+skipped）；模型在线时走真实抽取（200 带 mode/written）。三种都是合法
@@ -380,7 +380,8 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
 
     @check("数据管理：列表 / 补录 / 修正指标 / 删除指标与报告")
     def _records() -> None:
-        recs = c.get("/api/records").json()  # 数据在起服务前已注入
+        # /api/records 是分页响应（items/total/limit/offset）
+        recs = c.get("/api/records").json()["items"]  # 数据在起服务前已注入
         assert recs and recs[0]["indices"], recs
         idx = recs[0]["indices"][0]
         patched = c.patch(
@@ -389,9 +390,9 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         assert patched.status_code == 200, patched.text
         assert float(patched.json()["index_value"]) == 6.5 and patched.json()["is_verified"] == 1
         assert c.delete(f"/api/records/index/{idx['index_id']}").status_code == 204
-        for r in c.get("/api/records").json():
+        for r in c.get("/api/records").json()["items"]:
             assert c.delete(f"/api/records/report/{r['report_id']}").status_code == 204
-        assert c.get("/api/records").json() == []
+        assert c.get("/api/records").json()["items"] == []
         # 手动补录（最小可用）：类型 + 检查时间 + 一行指标
         created = c.post(
             "/api/records/report",
