@@ -16,5 +16,8 @@
     "useDefineForClassFields": true,
     "types": ["vite/client"]
   },
-  "include": ["src", "vite.config.ts"]
+  // 测试文件（src/**/*.test.tsx）与 vitest 配置也纳入类型检查：
+  // vitest 用 esbuild 转译，**不做类型检查** —— 不把它们列进来，测试里的类型错误
+  // 只会在运行时以"某个字段是 undefined"的形式炸出来，而不是在 `npm run build` 时被拦住。
+  "include": ["src", "vite.config.ts", "vitest.config.ts"]
 }

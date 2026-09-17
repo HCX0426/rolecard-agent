@@ -17,6 +17,22 @@
     与前端展示同源。
   * **退出码**：0 = 报告生成（无论通过率）；--strict 时任何用例失败 → 1；
     基础设施错误（模型不可达等）→ 2。CI 想卡通过率时用 --strict。
+
+## 报告必须自描述（2026-09-16 修）
+
+`tests/eval/report.json` 此前**只存 `passed` / `total`**，不记是谁跑的、用哪个模型 ——
+于是文档里"6/6 全过（DeepSeek-V4-Flash, 2026-09-14）"与后来落盘的"4/7"**无法横向比较**：
+换了模型、换了后端、换了评测集版本，数字含义完全不同。一个不带上下文的通过率不是基线，
+只是一个小数。现在报告里带上：
+
+  * `summary.backend` / `provider` / `model` —— 用哪个后端跑的；
+  * `summary.case_set_hash` —— 评测集的指纹（改了用例，数字就不可比）；
+  * `summary.started_at` / `python` —— 时间与环境；
+  * `summary.pass_rate` 与 `threshold` —— 通过率与本次使用的回归阈值。
+
+`--min-pass-rate`（默认 0.85，与 `docs/需求与验收标准.md` 的回归防线一致）只在 `--strict`
+时生效：达到才退出 0，否则退出 1 并**明确打印差距**。这样"没达标"会表现为一个失败信号，
+而不是一行需要人去解读的分数。
 """
 
 from __future__ import annotations
@@ -256,29 +272,40 @@ def _run_case(
     }
 
 
-def main() -> int:
-    _maybe_configure_cloud_backend()
-    parser = argparse.ArgumentParser(description="rolecard-agent 评测跑批")
-    parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
-    parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
-    parser.add_argument("--strict", action="store_true", help="任一用例失败则退出码 1")
-    args = parser.parse_args()
+def _case_set_hash(cases: list[dict[str, object]]) -> str:
+    """评测集指纹：用例内容变了，历史通过率就不再可比。
 
+    用 SHA-256 而不是"用例条数"：条数不变但断言改严了，数字同样不可比。
+    归一化 JSON 序列化保证字段顺序不影响指纹。
+    """
+    import hashlib
+
+    blob = json.dumps(cases, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
+
+
+def _backend_summary(settings: object) -> dict[str, object]:
+    """本次跑批用的是哪个后端 —— 通过率离开它就无从解释。"""
+    try:
+        backend = settings.backend(None)  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - 后端名缺失时也要能出报告
+        return {"backend": None, "provider": None, "model": None}
+    return {
+        "backend": settings.model_default,  # type: ignore[attr-defined]
+        "provider": backend.provider,
+        "model": backend.model,
+        "base_url": backend.base_url,
+    }
+
+
+def _run_suite(cases: list[dict[str, object]], settings: object) -> list[dict[str, object]]:
+    """完整跑一遍评测集：独立临时库 + 独立 app（与真实部署同构，不共享任何状态）。"""
     from fastapi.testclient import TestClient
 
     from rolecard_agent.api.main import create_app
-    from rolecard_agent.config import Settings
     from rolecard_agent.domains.registry import DOMAINS
     from rolecard_agent.storage.db import connect
 
-    cases: list[dict[str, object]] = []
-    for path in sorted(args.cases.glob("*.json")):
-        cases.extend(json.loads(path.read_text(encoding="utf-8")))
-    if not cases:
-        print(f"未找到评测用例：{args.cases}")
-        return 2
-
-    settings = Settings.from_env()
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         db_path = Path(tmp) / "eval.db"
         conn = connect(db_path)
@@ -293,37 +320,135 @@ def main() -> int:
                 result = _run_case(client, case, DOMAINS)
                 result["duration_ms"] = round((time.perf_counter() - started) * 1000)
                 results.append(result)
+    return results
 
-    by_path: dict[str, list[dict[str, object]]] = {}
-    for r in results:
-        by_path.setdefault(str(r["path"]), []).append(r)
+
+def _aggregate(
+    runs: list[list[dict[str, object]]], cases: list[dict[str, object]]
+) -> dict[str, object]:
+    """跨次聚合：单次通过率是**抽样值**，不是基线（实测同一模型 7/7 与 4/7 相邻出现）。
+
+    聚合三件事：
+      * 每条用例的稳定率（passed/of）—— 哪条用例"看运气"一眼可见；
+      * 通过率的 min / mean / max —— 波动区间本身就是必须报告的事实；
+      * 最不稳定的用例名 —— 下一步改进的对象。
+    """
+    per_case: dict[str, dict[str, int]] = {}
+    for run in runs:
+        for r in run:
+            slot = per_case.setdefault(str(r["id"]), {"passed": 0, "of": 0})
+            slot["of"] += 1
+            if r["passed"]:
+                slot["passed"] += 1
+    rates = [sum(1 for r in run if r["passed"]) / len(run) for run in runs if run]
+    return {
+        "runs": len(runs),
+        "pass_rate_mean": round(sum(rates) / len(rates), 4) if rates else 0.0,
+        "pass_rate_min": round(min(rates), 4) if rates else 0.0,
+        "pass_rate_max": round(max(rates), 4) if rates else 0.0,
+        "per_case": per_case,
+        "flakiest": sorted(
+            (cid for cid, s in per_case.items() if 0 < s["passed"] < s["of"]),
+            key=lambda cid: per_case[cid]["passed"] / per_case[cid]["of"],
+        ),
+    }
+
+
+def main() -> int:
+    _maybe_configure_cloud_backend()
+    parser = argparse.ArgumentParser(description="rolecard-agent 评测跑批")
+    parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
+    parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
+    parser.add_argument("--strict", action="store_true", help="任一用例失败则退出码 1")
+    parser.add_argument(
+        "--min-pass-rate",
+        type=float,
+        default=0.85,
+        help="--strict 下的通过率回归线（默认 0.85，与需求文档的回归防线一致）",
+    )
+    parser.add_argument(
+        "--runs",
+        type=int,
+        default=3,
+        help="每个用例跑几遍（默认 3）。小模型（7B）的工具选择有采样波动，"
+        "实测同一模型相邻两次可出现 7/7 与 4/7 —— 单次结果不是基线，是抽签。",
+    )
+    args = parser.parse_args()
+
+    from rolecard_agent.config import Settings
+
+    cases: list[dict[str, object]] = []
+    for path in sorted(args.cases.glob("*.json")):
+        cases.extend(json.loads(path.read_text(encoding="utf-8")))
+    if not cases:
+        print(f"未找到评测用例：{args.cases}")
+        return 2
+
+    settings = Settings.from_env()
+    started_at = time.strftime("%Y-%m-%d %H:%M:%S")
+    runs = [_run_suite(cases, settings) for _ in range(max(1, args.runs))]
 
     print("\n=== 评测报告 ===")
-    total_pass = sum(1 for r in results if r["passed"])
-    for path, items in by_path.items():
-        passed = sum(1 for r in items if r["passed"])
-        avg_ms = sum(int(r.get("duration_ms", 0)) for r in items) // len(items)
-        print(f"{path:<14} {passed}/{len(items)}  平均 {avg_ms}ms")
-        for r in items:
+    for i, run in enumerate(runs, start=1):
+        total = sum(1 for r in run if r["passed"])
+        print(f"第 {i} 遍：{total}/{len(run)}")
+        for r in run:
             mark = "✅" if r["passed"] else "❌"
             print(f"  {mark} {r['id']} ({r.get('duration_ms', '?')}ms)")
             for f in r["failures"]:
                 print(f"     - {f}")
-    print(f"\n总体：{total_pass}/{len(results)}")
+
+    agg = _aggregate(runs, cases)
+    summary = {
+        "passed": sum(1 for r in runs[-1] if r["passed"]),
+        "total": len(runs[-1]),
+        "pass_rate": agg["pass_rate_mean"],
+        "threshold": args.min_pass_rate,
+        "started_at": started_at,
+        "case_set_hash": _case_set_hash(cases),
+        "python": sys.version.split()[0],
+        **_backend_summary(settings),
+        **agg,
+    }
+
+    print("\n=== 跨遍聚合 ===")
+    for cid, slot in agg["per_case"].items():  # type: ignore[union-attr]
+        flag = "" if slot["passed"] == slot["of"] else "  ← 不稳定"
+        print(f"  {cid:<14} {slot['passed']}/{slot['of']}{flag}")
+    rates = (agg["pass_rate_min"], agg["pass_rate_mean"], agg["pass_rate_max"])
+    print(
+        f"\n总体：通过率 {rates[1] * 100:.1f}%"
+        f"（区间 {rates[0] * 100:.0f}% ~ {rates[2] * 100:.0f}%，{agg['runs']} 遍）"
+    )
+    print(
+        "本次后端："
+        f"{summary['provider']} · {summary['model']}（backend={summary['backend']}）"
+        f" · 评测集指纹 {summary['case_set_hash']}"
+    )
+    if agg["flakiest"]:  # type: ignore[union-attr]
+        print(f"不稳定用例：{', '.join(agg['flakiest'])}")  # type: ignore[union-attr]
+    if agg["pass_rate_mean"] < args.min_pass_rate:  # type: ignore[union-attr]
+        gap = args.min_pass_rate - float(agg["pass_rate_mean"])  # type: ignore[arg-type]
+        # 达标与否都要打印：不达标时人需要立刻看到"差多少"，而不是自己算。
+        print(
+            f"⚠️ 平均通过率未达回归线 {args.min_pass_rate * 100:.0f}%"
+            f"（差 {gap * 100:.1f} 个百分点）。"
+            "注意：通过率必须与上面的后端 + 评测集指纹一起解读。"
+        )
 
     args.report.parent.mkdir(parents=True, exist_ok=True)
     # newline 强制 LF：报告本身不入库（.gitignore），但离线打开不该带 CRLF
     args.report.write_text(
-        json.dumps(
-            {"results": results, "passed": total_pass, "total": len(results)},
-            ensure_ascii=False,
-            indent=2,
-        ),
+        json.dumps({"summary": summary, "runs": runs}, ensure_ascii=False, indent=2),
         encoding="utf-8",
         newline="\n",
     )
     print(f"报告已写入 {args.report}")
-    return 1 if args.strict and total_pass < len(results) else 0
+    if not args.strict:
+        return 0
+    # --strict 用**平均通过率**卡回归线：单次通过率是抽样值，用它卡门等于掷骰子。
+    mean = float(agg["pass_rate_mean"])  # type: ignore[arg-type]
+    return 0 if mean >= args.min_pass_rate else 1
 
 
 if __name__ == "__main__":

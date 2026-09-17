@@ -29,7 +29,18 @@ def counter() -> dict[str, int]:
 
 @pytest.fixture
 def factory(counter: dict[str, int]) -> object:
-    def _factory(_settings: object, backend_name: str | None = None) -> ScriptedChat:
+    """脚本化模型工厂 —— **不接触真实后端**，但必须忠实模拟真实工厂的契约。
+
+    契约里有一条是载荷的：`core.graph.build_model` 对未知后端名抛 `KeyError`
+    （`Settings.backend()` 的语义），而 `resolve_role_model` 正是**靠这个 KeyError**
+    才实现"角色引用了被删除的后端 → 降级默认 + 留痕"。早先这个 fake 对任何名字都
+    返回模型，于是"降级"测试从来没真正走到降级分支 —— 一个通过了的假阳性
+    （代码审查报告（第二轮）新增断言时暴露）。
+    """
+    def _factory(settings: object, backend_name: str | None = None) -> ScriptedChat:
+        known = getattr(settings, "model_backends", {}) or {}
+        if backend_name is not None and backend_name not in known:
+            raise KeyError(f"unknown model backend {backend_name!r}")
         counter["n"] += 1
         label = f"build-{counter['n']}"
         if backend_name:
@@ -299,20 +310,62 @@ def test_fallbacks_round_trip_and_validation(client: TestClient) -> None:
     assert res.status_code == 400
 
 
-def test_unknown_role_backend_falls_back_to_default(client: TestClient) -> None:
-    """角色引用了被删除的后端 → 降级到默认模型并正常回答，而不是 500。"""
-    client.post(
+def test_role_model_name_must_be_a_configured_backend(client: TestClient) -> None:
+    """**写时就大声**：角色声明一个不存在的后端名 → 400，而不是留到运行期降级。
+
+    与会话级覆盖（`PATCH /api/session`）同一纪律。修复前角色侧不校验，拼错名字只能靠
+    "回答质量看起来不对"来暴露（代码审查报告（第二轮）L3）。
+    """
+    res = client.post(
         "/api/roles",
         json={
-            "role_id": "ghost_backend",
-            "role_name": "幽灵",
+            "role_id": "typo",
+            "role_name": "拼错",
             "system_prompt": "x",
-            "model_name": "cloud-a",
+            "model_name": "cloud-a",  # 尚未配置
         },
+    )
+    assert res.status_code == 400
+    assert "cloud-a" in res.json()["detail"]
+    # 也覆盖 PATCH 路径
+    client.post("/api/roles", json={"role_id": "ok", "role_name": "ok", "system_prompt": "x"})
+    assert (
+        client.patch("/api/roles/ok", json={"model_name": "nope"}).status_code == 400
+    )
+
+
+def test_unknown_role_backend_falls_back_to_default(client: TestClient) -> None:
+    """角色引用了**被删除**的后端 → 降级到默认模型并正常回答，而不是 500。
+
+    注：写时校验挡住的是"故意声明一个不存在的后端"；**后端被事后删掉**是另一条路径，
+    必须仍然降级 —— 可用性 fail-soft、权限 fail-closed 的分工就体现在这里。
+    """
+    # 先让 cloud-a 存在，角色才可能（合法地）引用它
+    client.put(
+        "/api/settings/models",
+        json={
+            "default": "cloud-a",
+            "backends": [
+                {"name": "cloud-a", "provider": "openai", "model": "m-a", "api_key": "sk-a"}
+            ],
+        },
+    )
+    assert (
+        client.post(
+            "/api/roles",
+            json={
+                "role_id": "ghost_backend",
+                "role_name": "幽灵",
+                "system_prompt": "x",
+                "model_name": "cloud-a",
+            },
+        ).status_code
+        == 201
     )
     session = client.post("/api/session", json={"role_id": "ghost_backend"}).json()
     tid = str(session["thread_id"])
-    assert authoritative_text(client, tid, "一问").startswith("build-")
+    # 第一轮：角色路由生效，用的是 cloud-a 上构建的模型
+    assert authoritative_text(client, tid, "一问").endswith("@cloud-a")
 
     # 删掉 cloud-a：角色仍引用它 → 下一轮降级默认，对话不崩
     client.put(
@@ -326,6 +379,7 @@ def test_unknown_role_backend_falls_back_to_default(client: TestClient) -> None:
     )
     text = authoritative_text(client, tid, "二问")
     assert text.startswith("build-")  # 仍是工厂构建的模型（默认），而非异常
+    assert not text.endswith("@cloud-a")  # 已不再使用被删除的后端
 
 
 def test_openai_backend_without_key_is_rejected_at_save(client: TestClient) -> None:

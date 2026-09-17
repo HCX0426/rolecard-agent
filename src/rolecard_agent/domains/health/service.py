@@ -25,6 +25,8 @@ import sqlite3
 import uuid
 from collections.abc import Sequence
 
+from rolecard_agent.storage.db import SqlConnection
+
 # A report check date the tool layer accepts: YYYY-MM-DD (or just YYYY-MM). Anything else is
 # treated as "no filter" rather than silently matching nothing - a model that passes
 # "2026年3月" should still get data, not an empty archive.
@@ -59,7 +61,7 @@ _SOURCE_VALUES = frozenset({"manual", "parsed", "ocr"})
 
 
 class HealthQueryService:
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: SqlConnection) -> None:
         self._conn = conn
 
     # -- writes ----------------------------------------------------------------

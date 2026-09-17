@@ -97,6 +97,7 @@ def conn(tmp_path: Any) -> Iterator[sqlite3.Connection]:
 def roles(conn: sqlite3.Connection) -> RoleCardService:
     service = RoleCardService(conn)
     service.seed_builtins()
+    service.seed_domain_roles()  # medical_archivist 是域种子角色（自定义类型）
     return service
 
 

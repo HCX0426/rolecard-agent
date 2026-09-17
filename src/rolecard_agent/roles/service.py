@@ -11,7 +11,8 @@ import sqlite3
 from collections.abc import Iterable
 
 from rolecard_agent.roles.models import RoleCard, RoleCardCreate, RoleCardUpdate
-from rolecard_agent.roles.seed import BUILTIN_ROLES
+from rolecard_agent.roles.seed import BUILTIN_ROLES, DOMAIN_SEED_ROLES
+from rolecard_agent.storage.db import SqlConnection
 
 _COLUMNS = (
     "role_id, role_name, system_prompt, temperature, model_name, "
@@ -76,7 +77,7 @@ class RoleCardService:
     a bound tool (D2 / C5).
     """
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: SqlConnection) -> None:
         self._conn = conn
 
     # -- reads ---------------------------------------------------------------
@@ -176,6 +177,39 @@ class RoleCardService:
                 "  knowledge_scopes = excluded.knowledge_scopes, "
                 "  description = excluded.description, "
                 "  is_builtin = 1, "
+                "  updated_at = CURRENT_TIMESTAMP",
+                (
+                    role.role_id,
+                    role.role_name,
+                    role.system_prompt,
+                    role.temperature,
+                    role.model_name,
+                    _dump_json(role.tool_whitelist),
+                    _dump_json(role.exemplars),
+                    _dump_json(role.knowledge_scopes),
+                    role.description,
+                ),
+            )
+            count += 1
+        self._conn.commit()
+        return count
+
+    def seed_domain_roles(self, roles: Iterable[RoleCardCreate] = DOMAIN_SEED_ROLES) -> int:
+        """播种域角色：类型是**自定义**（is_builtin=0），已存在则一个字段都不覆盖。
+
+        与 `seed_builtins` 的全字段 upsert 刻意不同（用户 2026-09-17 反馈"健康档案管理员
+        改成自定义"）：域角色是领域概念，不该由内核在每次重启时把操作员的改名/改提示词
+        冲回出厂值。两条语义：缺失才插入；已存在的行只做一次幂等降级
+        （is_builtin 纠正为 0，覆盖老库被误标内置的历史数据）。
+        """
+        count = 0
+        for role in roles:
+            self._conn.execute(
+                "INSERT INTO role_card "
+                "(role_id, role_name, system_prompt, temperature, model_name, "
+                " tool_whitelist, exemplars, knowledge_scopes, description, is_builtin) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0) "
+                "ON CONFLICT(role_id) DO UPDATE SET is_builtin = 0, "
                 "  updated_at = CURRENT_TIMESTAMP",
                 (
                     role.role_id,

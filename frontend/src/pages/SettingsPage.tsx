@@ -7,6 +7,8 @@ import {
   type ModelSettings,
   type PluginRow,
   type RoleCard,
+  type RuntimeItem,
+  type RuntimePayload,
   type SessionRow,
 } from "../api";
 
@@ -16,6 +18,7 @@ const SETTINGS_TABS = [
   { key: "general", label: "通用" },
   { key: "models", label: "模型" },
   { key: "services", label: "服务" },
+  { key: "runtime", label: "运行环境" },
   { key: "audit", label: "审计" },
 ] as const;
 
@@ -46,6 +49,7 @@ export default function SettingsPage({ onOpenChat }: { onOpenChat?: () => void }
         {tab === "general" && <GeneralPanel onOpenChat={onOpenChat} />}
         {tab === "models" && <ModelsPanel />}
         {tab === "services" && <ServicesPanel />}
+        {tab === "runtime" && <RuntimePanel />}
         {tab === "audit" && <AuditPanel />}
       </div>
     </div>
@@ -89,8 +93,8 @@ function GeneralPanel({ onOpenChat }: { onOpenChat?: () => void }) {
       <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
         <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">关于</h3>
         <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400 dark:text-slate-500">
-          rolecard-agent 控制台 · v1（M1 内核 / M2 角色与插件 / M3 领域工具 / M4 接入层 /
-          M5 前端工程化）。多角色对话 Agent 内核：角色卡控制人设与工具权限，插件以数据驱动启停。
+          rolecard-agent 控制台。多角色对话 Agent：角色卡控制人设与工具权限，
+          插件以数据驱动启停。
         </p>
         <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">语言：简体中文（内置）</p>
       </div>
@@ -145,6 +149,190 @@ function GeneralPanel({ onOpenChat }: { onOpenChat?: () => void }) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- 运行环境（可改 + 只读混合）
+
+function RuntimePanel() {
+  const [data, setData] = useState<RuntimePayload | null>(null);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [baseline, setBaseline] = useState<Record<string, string>>({});
+  const [err, setErr] = useState("");
+  const [saved, setSaved] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const absorb = useCallback((p: RuntimePayload) => {
+    setData(p);
+    const d: Record<string, string> = {};
+    const b: Record<string, string> = {};
+    for (const g of p.groups) {
+      for (const it of g.items) {
+        if (it.kind !== "ro") {
+          d[it.key] = it.override_value ?? "";
+          b[it.key] = it.override_value ?? "";
+        }
+      }
+    }
+    setDraft(d);
+    setBaseline(b);
+  }, []);
+
+  useEffect(() => {
+    api
+      .get<RuntimePayload>("/api/settings/runtime")
+      .then(absorb)
+      .catch((e) => setErr(`加载失败：${(e as Error).message}`));
+  }, [absorb]);
+
+  const changedCount = Object.keys(draft).filter((k) => draft[k] !== baseline[k]).length;
+
+  async function save() {
+    const values: Record<string, string | null> = {};
+    for (const k of Object.keys(draft)) {
+      if (draft[k] !== baseline[k]) values[k] = draft[k] === "" ? null : draft[k];
+    }
+    if (Object.keys(values).length === 0) return;
+    setBusy(true);
+    setErr("");
+    try {
+      absorb(await api.put<RuntimePayload>("/api/settings/runtime", { values }));
+      setSaved("已保存并生效");
+      setTimeout(() => setSaved(""), 3000);
+    } catch (e) {
+      setErr(`保存失败：${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (err && !data) {
+    return <p className="mt-6 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{err}</p>;
+  }
+  if (!data) {
+    return <p className="mt-6 text-xs text-slate-400 dark:text-slate-500">加载中…</p>;
+  }
+
+  function inputFor(it: RuntimeItem) {
+    const set = (v: string) => setDraft((d) => ({ ...d, [it.key]: v }));
+    if (it.kind === "bool") {
+      return (
+        <select
+          value={draft[it.key] ?? ""}
+          onChange={(e) => set(e.target.value)}
+          className="w-28 rounded border border-slate-200 px-1.5 py-1 text-xs outline-none focus:border-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+        >
+          <option value="">跟随 .env（{it.default}）</option>
+          <option value="1">开</option>
+          <option value="0">关</option>
+        </select>
+      );
+    }
+    // 模型名单（动态选项来自模型页后端）→ 勾选组：勾一个算一个，存成逗号串。
+    if (it.key === "MODEL_THINKING_MODELS" && it.choices && it.choices.length > 0) {
+      const selected = (draft[it.key] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+      const toggle = (name: string) => {
+        const next = selected.includes(name)
+          ? selected.filter((n) => n !== name)
+          : [...selected, name];
+        set(next.join(","));
+      };
+      return (
+        <div className="flex flex-wrap gap-2">
+          {it.choices.map((name) => (
+            <label key={name} className="flex cursor-pointer items-center gap-1 font-mono text-xs text-slate-600 dark:text-slate-300">
+              <input
+                type="checkbox"
+                checked={selected.includes(name)}
+                onChange={() => toggle(name)}
+                className="accent-blue-600"
+              />
+              {name}
+            </label>
+          ))}
+        </div>
+      );
+    }
+    // 枚举 → 下拉单选（含"跟随 .env"兜底项）
+    if (it.choices && it.choices.length > 0) {
+      const current = draft[it.key] ?? "";
+      const extra = current && !it.choices.includes(current) ? [current] : [];
+      return (
+        <select
+          value={current}
+          onChange={(e) => set(e.target.value)}
+          className="w-40 rounded border border-slate-200 px-1.5 py-1 text-xs outline-none focus:border-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+        >
+          <option value="">跟随 .env（{it.value}）</option>
+          {[...it.choices, ...extra].map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      );
+    }
+    const type = it.kind === "secret" ? "password" : it.kind === "float" || it.kind === "int" ? "number" : "text";
+    return (
+      <input
+        type={type}
+        value={draft[it.key] ?? ""}
+        onChange={(e) => set(e.target.value)}
+        placeholder={it.overridden ? `覆盖中：${it.value}` : `未覆盖（当前 ${it.value}）`}
+        className="w-56 rounded border border-slate-200 px-1.5 py-1 font-mono text-xs outline-none focus:border-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+      />
+    );
+  }
+
+  return (
+    <div className="mt-6 space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">{data.note}</p>
+        <div className="flex shrink-0 items-center gap-2">
+          {saved && <span className="text-xs text-green-600 dark:text-green-400">{saved}</span>}
+          {err && <span className="text-xs text-red-600 dark:text-red-400">{err}</span>}
+          <button
+            onClick={save}
+            disabled={busy || changedCount === 0}
+            className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:bg-slate-300 dark:bg-slate-600 dark:disabled:bg-slate-700"
+          >
+            {busy ? "保存中…" : `保存${changedCount ? `（${changedCount} 项修改）` : ""}`}
+          </button>
+        </div>
+      </div>
+      {data.groups.map((g) => (
+        <div
+          key={g.key}
+          className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5"
+        >
+          <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">{g.label}</h3>
+          <table className="mt-2 w-full text-xs">
+            <tbody>
+              {g.items.map((it) => (
+                <tr key={it.key} className="border-b border-slate-50 last:border-0 dark:border-slate-700/50">
+                  <td className="w-40 py-1.5 align-top">
+                    <span className="font-medium text-slate-700 dark:text-slate-200">{it.label}</span>
+                    <span className="ml-1.5 font-mono text-[10px] text-slate-300 dark:text-slate-600">{it.key}</span>
+                  </td>
+                  <td className="py-1.5 align-top">
+                    {it.kind === "ro" ? (
+                      <span className={`font-mono ${it.changed ? "text-amber-600 dark:text-amber-400" : "text-slate-600 dark:text-slate-300"}`}>
+                        {it.value}
+                      </span>
+                    ) : (
+                      inputFor(it)
+                    )}
+                  </td>
+                  <td className="py-1.5 align-top text-slate-400 dark:text-slate-500">
+                    {it.note || (it.changed && it.kind === "ro" ? `默认 ${it.default}` : "")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
     </div>
   );
 }
@@ -436,43 +624,6 @@ function ModelsPanel() {
             </button>
           </div>
 
-          <div className="mt-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
-            <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">失败自动回退</h3>
-            <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-              默认后端请求失败（建流阶段）时按序尝试；最多两级，流开始后的失败不回退（前端重试兜底）。
-            </p>
-            <div className="mt-2 grid grid-cols-2 gap-3">
-              <select
-                value={fb1}
-                onChange={(e) => setFb1(e.target.value)}
-                className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-sm"
-              >
-                <option value="">一级回退：无</option>
-                {rows
-                  .filter((r) => r.name.trim() && r.name.trim() !== def)
-                  .map((r) => (
-                    <option key={r.name} value={r.name.trim()}>
-                      {r.name.trim()}
-                    </option>
-                  ))}
-              </select>
-              <select
-                value={fb2}
-                onChange={(e) => setFb2(e.target.value)}
-                className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-sm"
-              >
-                <option value="">二级回退：无</option>
-                {rows
-                  .filter((r) => r.name.trim() && r.name.trim() !== def && r.name.trim() !== fb1)
-                  .map((r) => (
-                    <option key={r.name} value={r.name.trim()}>
-                      {r.name.trim()}
-                    </option>
-                  ))}
-              </select>
-            </div>
-          </div>
-
           <p className="mt-4 rounded-lg bg-slate-50 dark:bg-slate-800/50 px-3 py-2.5 text-xs leading-relaxed text-slate-400 dark:text-slate-500">
             说明：首次启动会把 env 里的后端迁移到这里；<b>此后模型配置以本页为准</b>（env 不再参与，
             在页面里删除的后端重启后也不会回来）。删除所有后端会保存失败 —— 至少保留一个。
@@ -516,8 +667,9 @@ function AuditPanel() {
         <span className="text-[11px] text-slate-400">{filtered.length} / {rows.length} 条</span>
       </div>
       {status && <p className="rounded-lg bg-red-50 dark:bg-red-900/30 px-3 py-2 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{status}</p>}
-      <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
-        <table className="w-full text-left text-xs">
+      {/* 横向可滚动：审计列（详情 JSON）天然宽，容器必须给滚动条而不是裁掉。 */}
+      <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+        <table className="w-full min-w-[640px] text-left text-xs">
           <thead>
             <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 dark:text-slate-500">
               <th className="px-4 py-2 font-medium">时间</th>
@@ -535,8 +687,13 @@ function AuditPanel() {
                 </td>
               </tr>
             )}
+            {/* 审计行没有唯一 id（M7）：数据锚定 + 序号消歧的组合键；
+                列表整体替换不重排，同 (ts,actor,action,target) 重复行靠 i 区分。 */}
             {filtered.map((a, i) => (
-              <tr key={i} className="border-b border-slate-50 last:border-0">
+              <tr
+                key={`${a.ts}|${a.actor}|${a.action}|${a.target ?? ""}|${i}`}
+                className="border-b border-slate-50 last:border-0"
+              >
                 <td className="whitespace-nowrap px-4 py-2 font-mono text-slate-500 dark:text-slate-400 dark:text-slate-500">
                   {String(a.ts).replace("T", " ").slice(0, 19)}
                 </td>

@@ -1,17 +1,18 @@
-"""Built-in role definitions - held in code, not in the database.
+"""出厂角色定义 - held in code, not in the database.
 
 Why code rather than a SQL fixture:
 
-  * `medical_archivist` is undeletable (`role_card.is_builtin = 1`) and its tool whitelist
-    is a security boundary. Seed data in the DB would be editable by anything that can write
-    to the DB, including a future admin endpoint.
-  * The set of built-in roles should change with a commit, not with a row update.
+  * `general_assistant`（唯一内置角色）不可删除（`role_card.is_builtin = 1`），种子在代码里
+    才能让"出厂角色的改进随提交到达所有库"。
+  * 域角色（`medical_archivist`）是**域种子角色**：随域插件出厂播种，但类型是
+    **自定义**（is_builtin = 0）—— 可编辑、可删除、重启不覆盖修改（用户 2026-09-17 反馈
+    "健康档案管理员改成自定义"）。域概念不该由内核锁死。
 
 `GLOBAL_SAFETY_PROMPT` is NOT duplicated here. It lives in core/prompts.py and is appended at
 call time, after the role prompt, so no role - built-in or custom - can override it.
 
-`scripts/init_db.py` upserts these on every run, and `roles/service.py` refuses to delete any
-role whose `is_builtin` is set.
+`scripts/init_db.py` / `create_app` upsert built-ins and insert domain seeds on every run;
+`roles/service.py` refuses to delete any role whose `is_builtin` is set.
 """
 
 from __future__ import annotations
@@ -49,6 +50,11 @@ BUILTIN_ROLES: tuple[RoleCardCreate, ...] = (
         knowledge_scopes=[],
         description="默认角色：通用对话，不接领域工具与检索（需要档案能力时再切换角色）。",
     ),
+)
+
+# 域种子角色：随域插件出厂播种，但类型是**自定义**——seed_domain_roles 只在缺失时插入，
+# 已存在的行一个字段都不覆盖（操作员的改名/改提示词/删除都能活过重启）。
+DOMAIN_SEED_ROLES: tuple[RoleCardCreate, ...] = (
     RoleCardCreate(
         role_id="medical_archivist",
         role_name="健康档案管理员",
@@ -56,6 +62,12 @@ BUILTIN_ROLES: tuple[RoleCardCreate, ...] = (
             "你是健康档案管理员，负责帮用户查询、汇总、对比他已经存入档案的报告与指标。\n"
             "你的能力边界：仅可汇总、查询、对比用户已存入档案内的报告与指标，"
             "只能读取档案里已有的数据并如实转述；不能做任何推断或延伸。\n"
+            "工具使用规则（必须遵守）：\n"
+            "- 用户问档案里的数值 / 指标 / 报告 → 必须调用 query_health_record 或 "
+            "list_reports 取得数据，不要凭记忆或常识回答；\n"
+            "- 对比同一指标在不同时间的变化 → 用 compare_health_index；\n"
+            "- 用户问健康知识、随访建议、生活方式等档案之外的问题 → 先调用 search_knowledge "
+            "检索知识库，再依据检索结果回答；检索不到就明确说明资料里没有，不要自己编。\n"
             "当用户询问某项指标时，先确认档案里是否存在对应记录；若不存在，直接说明没有，"
             "不要用常识或经验补充。\n"
             "回答涉及数值时，必须同时给出单位与报告时间。"
@@ -70,9 +82,17 @@ BUILTIN_ROLES: tuple[RoleCardCreate, ...] = (
         # answer everything, including the questions it must decline.
         exemplars=[
             RoleExemplar(
-                user="上次检查的结石直径是多少？",
+                # ⚠️ 范例**不能**是评测题的答案（scripts/check_consistency.py 会查）。
+                # 这里曾写成"上次检查的结石直径是多少？→ …6.0 mm…"，与 eval 的
+                # health-001 几乎逐字相同（连问号都只差一个）。结果模型学会的是
+                # **背范例**而不是调工具：评测记录里它的回答与范例逐字一致、一次工具都没调 ——
+                # 数值与标记都对，过程不达标。范例只教"格式与边界"，所以这里换用
+                # 演示数据里**另一个真实存在的指标**（尿酸，且 is_verified=False，
+                # 这样【未经人工校验】标记的教学价值不丢）。
+                user="帮我看看尿酸怎么样",
                 assistant=(
-                    "你 2026-03-12 的报告里记录的是 6.0 mm，参考区间 0-5 mm。【未经人工校验】"
+                    "你 2026-03-12 的报告里记录的是尿酸 488.0 µmol/L，"
+                    "参考区间 208-428。【未经人工校验】"
                 ),
             ),
             RoleExemplar(

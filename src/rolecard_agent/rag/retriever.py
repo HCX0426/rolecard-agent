@@ -25,6 +25,7 @@ import hashlib
 import math
 import os
 import re
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -133,6 +134,17 @@ class ChromaDefaultEmbedder(Embedder):
         return [list(map(float, v)) for v in self._fn(texts)]
 
 
+class EmbedError(RuntimeError):
+    """嵌入请求失败（分批重试之后仍然失败）。携带可读原因，由接入层翻译成 500。"""
+
+
+# 单次嵌入请求的条数上限与重试次数（审查报告 M5）。
+# 为什么必须分批：一篇长报告的 chunk 数可以上百，一次 POST 全部文本会顶到 httpx 超时，
+# 结果是"整个上传以解析失败告终"，而失败原因与文档质量毫无关系。
+_EMBED_BATCH = 64
+_EMBED_RETRIES = 2
+
+
 class SiliconFlowEmbedder(Embedder):
     """BAAI/bge-m3 via SiliconFlow 的 OpenAI 兼容 /embeddings 端点（中文效果好）。"""
 
@@ -149,10 +161,35 @@ class SiliconFlowEmbedder(Embedder):
         self._model = model
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
-        res = self._client.post("/embeddings", json={"model": self._model, "input": texts})
-        res.raise_for_status()
-        payload = res.json()
-        return [item["embedding"] for item in payload["data"]]
+        """分批 + 有限重试。任一批失败即整体失败（宁可不入库，也不要半份索引）。"""
+        out: list[list[float]] = []
+        for start in range(0, len(texts), _EMBED_BATCH):
+            out.extend(self._embed_chunk(texts[start : start + _EMBED_BATCH]))
+        return out
+
+    def _embed_chunk(self, texts: list[str]) -> list[list[float]]:
+        import time
+
+        last: Exception | None = None
+        for attempt in range(_EMBED_RETRIES + 1):
+            try:
+                res = self._client.post("/embeddings", json={"model": self._model, "input": texts})
+                res.raise_for_status()
+                payload = res.json()
+                return [item["embedding"] for item in payload["data"]]
+            except Exception as exc:  # noqa: BLE001 - 网络/HTTP/解析失败一视同仁地重试
+                last = exc
+                if attempt < _EMBED_RETRIES:
+                    time.sleep(0.5 * (2**attempt))
+        raise EmbedError(
+            f"嵌入请求失败（{len(texts)} 条文本，重试 {_EMBED_RETRIES} 次后仍失败）：{last}"
+        )
+
+
+    def close(self) -> None:
+        """M1：释放 httpx.Client 连接（rebuild 旧实例此前从不关闭，累积 fd/连接泄漏）。"""
+        with contextlib.suppress(Exception):
+            self._client.close()
 
 
 def _find_embedding_key(settings: Settings) -> str | None:
@@ -253,6 +290,12 @@ class SiliconFlowReranker:
             return None
 
 
+    def close(self) -> None:
+        """M1：释放 httpx.Client 连接。"""
+        with contextlib.suppress(Exception):
+            self._client.close()
+
+
 def make_reranker(
     settings: Settings,
     *,
@@ -337,6 +380,13 @@ def _translate_dimension_error(exc: Exception) -> Exception:
     return exc
 
 
+def _chunk_ids(source: str, n: int) -> list[str]:
+    """分块 id：由 (source, 序号) 确定性推导 —— 同 source 重索引得到同一批 id，因此 upsert
+    天然幂等。故意不含内容 hash：内容变了也应该**替换**同一位置的分块，而不是留下两份。
+    """
+    return [hashlib.md5(f"{source}:{i}".encode()).hexdigest()[:16] for i in range(n)]
+
+
 class KnowledgeBase:
     """Chroma 持久化知识库：一个作用域一个集合，库归内核、角色只声明作用域。
 
@@ -356,21 +406,49 @@ class KnowledgeBase:
         self._embedder = embedder
         self._reranker = reranker
         # 检索延迟滑动样本（进程内）：每次 search 追加一条阶段耗时，供 P95 细分。
+        # 加锁：KnowledgeBase 是**跨线程共享**的（FastAPI 线程池 + 图执行），旧实现的
+        # append + 切片裁剪在并发下会与 latency_p95() 的读取互相踩（审查报告 L2）。
         self._samples: list[dict[str, float]] = []
+        self._samples_lock = threading.Lock()
+
+    def close(self) -> None:
+        """M1：释放嵌入/重排器持有的 httpx 连接（rebuild_runtime 换装旧实例时调用）。"""
+        for obj in (self._embedder, self._reranker):
+            if obj is not None and hasattr(obj, "close"):
+                with contextlib.suppress(Exception):
+                    obj.close()
 
     def index(self, scope: str, source: str, text: str) -> int:
-        """切块 -> 嵌入 -> 入库（同 source 幂等重建）。返回入库的分块数。"""
+        """切块 -> 嵌入 -> 入库（同 source 幂等重建）。返回入库的分块数。
+
+        ## 步骤顺序是刻意的（审查报告 M4）
+
+        旧实现是 `delete(source)` → `embed()` → `add()`：`embed()` 失败时该来源的既有分块
+        已经被删掉 —— 检索里凭空少一份文档，而 ingestion 台账那边还写着 `indexed`。
+        这是"状态与事实背离"，比单纯报错难查得多。
+
+        现在的顺序：**先嵌入**（最可能失败的一步，失败则库完全没动）→ `upsert` 新分块
+        （同 id 覆盖）→ 删掉本次不再出现的旧 id（文档变短时清理残留）。
+        任何一步失败都不会让既有索引消失。
+        """
         chunks = chunk_text(text)
         if not chunks:
             return 0
         collection = self._client.get_or_create_collection(name=scope)
-        collection.delete(where={"source": source})  # 同源幂等重建
-        vectors = self._embedder.embed(chunks)
-        ids = [hashlib.md5(f"{source}:{i}".encode()).hexdigest()[:16] for i in range(len(chunks))]
+        vectors = self._embedder.embed(chunks)  # 先做最容易失败的一步
+        ids = _chunk_ids(source, len(chunks))
         try:
-            collection.add(
+            existing = collection.get(where={"source": source})
+            stale = [str(i) for i in (existing.get("ids") or [])]
+        except Exception:  # noqa: BLE001 - 取不到旧 id 只是少一次清理，不该让入库失败
+            stale = []
+        try:
+            collection.upsert(
                 ids=ids,
-                embeddings=vectors,
+                # chroma 的类型存根要求 numpy ndarray 的具体 dtype，而"嵌套 float 列表"
+                # 在运行期完全被接受（也是 chroma 自己的文档示例写法）。这是存根比实现更严，
+            # 不是我们的用法有问题 —— 忽略这一条而不改数据形状。
+                embeddings=vectors,  # type: ignore[arg-type]
                 documents=chunks,
                 metadatas=[
                     {"source": source, "scope": scope, "chunk": i} for i in range(len(chunks))
@@ -378,6 +456,10 @@ class KnowledgeBase:
             )
         except Exception as exc:  # noqa: BLE001 - 维度错误要翻译成可操作提示
             raise _translate_dimension_error(exc) from exc
+        outdated = sorted(set(stale) - set(ids))
+        if outdated:
+            with contextlib.suppress(Exception):
+                collection.delete(ids=outdated)
         return len(chunks)
 
     def search(
@@ -404,7 +486,11 @@ class KnowledgeBase:
                 except Exception:  # noqa: BLE001 - 作用域尚无集合 = 没有知识，跳过而非报错
                     continue
                 try:
-                    found = collection.query(query_embeddings=[vector], n_results=pool_size)
+                    found = collection.query(
+                        # 同上：chroma 存根要求 numpy dtype，运行期接受嵌套 float 列表。
+                        query_embeddings=[vector],  # type: ignore[arg-type]
+                        n_results=pool_size,
+                    )
                 except Exception as exc:  # noqa: BLE001 - 维度错误翻译成可操作提示（搜索时抛出，由工具层兜住）
                     raise _translate_dimension_error(exc) from exc
                 docs = (found.get("documents") or [[]])[0]
@@ -464,17 +550,18 @@ class KnowledgeBase:
     def _record_sample(
         self, *, embed_ms: float, vector_ms: float, rerank_ms: float, total_ms: float
     ) -> None:
-        """追加一条延迟样本，并裁剪到 `_LATENCY_CAP`（滑动窗口）。"""
-        self._samples.append(
-            {
-                "embed_ms": embed_ms,
-                "vector_ms": vector_ms,
-                "rerank_ms": rerank_ms,
-                "total_ms": total_ms,
-            }
-        )
-        if len(self._samples) > _LATENCY_CAP:
-            del self._samples[: len(self._samples) - _LATENCY_CAP]
+        """追加一条延迟样本，并裁剪到 `_LATENCY_CAP`（滑动窗口）。加锁见 __init__ 的说明。"""
+        with self._samples_lock:
+            self._samples.append(
+                {
+                    "embed_ms": embed_ms,
+                    "vector_ms": vector_ms,
+                    "rerank_ms": rerank_ms,
+                    "total_ms": total_ms,
+                }
+            )
+            if len(self._samples) > _LATENCY_CAP:
+                del self._samples[: len(self._samples) - _LATENCY_CAP]
 
     def latency_p95(self) -> dict[str, object]:
         """检索延迟细分：P50/P95/P99，按阶段（嵌入 / 向量检索 / 重排 / 合计）。
@@ -483,14 +570,16 @@ class KnowledgeBase:
         （"没有数据"不同于"0ms"）。`rerank_enabled` 反映当前是否挂了重排器——未挂时
         rerank_ms 恒为 0（阶段计时照常，便于对比开启前后的收益）。
         """
+        with self._samples_lock:
+            snapshot = list(self._samples)
         out: dict[str, object] = {
-            "samples": len(self._samples),
+            "samples": len(snapshot),
             "rerank_enabled": self._reranker is not None,
             "embedder": self._embedder.name,
         }
         for label, pct in (("p50", 50), ("p95", 95), ("p99", 99)):
             out[label] = {
-                stage: _percentile([s[stage] for s in self._samples], pct)
+                stage: _percentile([s[stage] for s in snapshot], pct)
                 for stage in _LATENCY_STAGES
             }
         return out
@@ -529,12 +618,17 @@ class KnowledgeBase:
 # ---------------------------------------------------------------- 内核工具
 
 
-def make_search_tool(kb: KnowledgeBase) -> BaseTool:
+def make_search_tool(kb: KnowledgeBase, *, tracer: object | None = None) -> BaseTool:
     """构建 search_knowledge —— 检索是**内核能力**（v2.1），所有领域共享。
 
     作用域安全模型（US-8）：工具签名里没有 scope —— 可检索范围由内核在调用瞬间
     注入（execute_tools 从当前角色读取 knowledge_scopes）。未授权角色得到明确拒绝，
     模型无法通过构造参数越权检索任何集合。
+
+    `tracer` 必须由宿主传进来（审查报告 M3）：`search()` 里的 `rag_search` 与
+    `rerank_fallback` 两个事件都要求 `tracer is not None`，而工具是**唯一**的生产调用点。
+    旧实现没传，于是"重排失败已降级回向量序"这件事在日志里完全不存在 —— 检索质量变差
+    时无法归因。
     """
     from langchain_core.tools import tool
 
@@ -554,7 +648,7 @@ def make_search_tool(kb: KnowledgeBase) -> BaseTool:
                 "请联系管理员在角色卡中声明 knowledge_scopes。"
             )
         try:
-            hits = kb.search(scopes, query, k=4)
+            hits = kb.search(scopes, query, k=4, tracer=tracer)
         except KnowledgeDimensionMismatch as exc:
             # 维度不一致是管理员可修复的状态（重建索引），不该让整轮对话 500。
             return f"知识库暂不可用：{exc}"

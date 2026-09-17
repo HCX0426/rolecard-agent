@@ -33,12 +33,13 @@ def _new(role_id: str = "custom", **overrides: object) -> RoleCardCreate:
     return RoleCardCreate(**payload)
 
 
-def test_seeded_builtin_is_marked_and_listed_first(roles: RoleCardService) -> None:
+def test_seeded_roles_are_listed_builtin_first(roles: RoleCardService) -> None:
     listed = roles.list_roles()
-    # 内置角色顺序 = seed 顺序：通用助手（默认）在前，档案管理员其次。
-    assert [r.role_id for r in listed[:2]] == ["general_assistant", "medical_archivist"]
-    assert all(r.is_builtin for r in listed[:2])
-    assert listed[1].temperature == 0.3
+    # 通用助手（内置）恒在首位；档案管理员已降级为域种子角色（自定义类型）。
+    assert listed[0].role_id == "general_assistant" and listed[0].is_builtin
+    assert any(r.role_id == "medical_archivist" and not r.is_builtin for r in listed)
+    archivist = roles.get("medical_archivist")
+    assert archivist.temperature == 0.3
 
 
 def test_seeding_is_idempotent(roles: RoleCardService) -> None:
@@ -105,9 +106,16 @@ def test_allows_tool_semantics(roles: RoleCardService) -> None:
 
 
 def test_builtin_role_cannot_be_deleted(roles: RoleCardService) -> None:
+    # 内置只剩「通用助手」；域种子角色（档案管理员）类型是自定义，可删除。
     with pytest.raises(BuiltinRoleProtected):
-        roles.delete("medical_archivist")
+        roles.delete("general_assistant")
+    assert roles.exists("general_assistant")
+    roles.delete("medical_archivist")
+    assert not roles.exists("medical_archivist")
+    # 重启（再次播种）：缺失才补插，且不会复活为内置。
+    roles.seed_domain_roles()
     assert roles.exists("medical_archivist")
+    assert roles.get("medical_archivist").is_builtin is False
 
 
 def test_custom_role_can_be_deleted(roles: RoleCardService) -> None:

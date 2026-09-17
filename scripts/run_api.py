@@ -80,7 +80,32 @@ def _resolve_data_paths() -> None:
         (p.parent if key == "SQLITE_PATH" else p).mkdir(parents=True, exist_ok=True)
 
 
+def _load_dotenv() -> None:
+    """读取仓库根的 `.env`（若存在），把 KEY=VALUE 写进 os.environ。
+
+    为什么手写 ~20 行而不引 python-dotenv：配置契约仍是"环境变量"（config.py 不读文件），
+    `.env` 只是本地启动时设置环境变量的便捷容器 —— 引一个依赖来省 20 行不值。规则：
+    ① 真实环境变量优先（`.env` 只填空位，不覆盖已在 shell 里 export 的值）；
+    ② 空值/注释跳过；③ 剥一层成对引号。`.env` 已在 .gitignore，密钥不会入库。
+    """
+    env_file = Path(__file__).resolve().parents[1] / ".env"
+    if not env_file.exists():
+        return
+    for raw in env_file.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if key and value and key not in os.environ:
+            os.environ[key] = value
+
+
 def main() -> None:
+    _load_dotenv()
     _resolve_data_paths()
     _maybe_configure_cloud_backend()
     import uvicorn
@@ -88,6 +113,20 @@ def main() -> None:
     host = "127.0.0.1"  # 演示绝不绑 0.0.0.0：Ollama 式端口无鉴权，公网暴露会被白嫖
     port = int(os.environ.get("RUN_API_PORT", "8000"))
     print(f"rolecard-agent 控制台: http://{host}:{port}/", flush=True)
+    # RUN_API_RELOAD=1：**开发用**代码热重载 —— watchfiles 监听 src/ 下 .py 变化，
+    # 存盘即自动重启 worker。默认关：reload 的本质是"改码即杀进程重启"，运行时状态
+    # （连接池、内存缓存）每次存盘都重建一遍，使用/演示场景没必要付这个成本。
+    # 只监听 src/：data/（sqlite/chroma 持续写入）与 .venv 不进 watch 范围，避免噪音重启。
+    if os.environ.get("RUN_API_RELOAD") == "1":
+        uvicorn.run(
+            "rolecard_agent.api.main:create_app",
+            factory=True,
+            host=host,
+            port=port,
+            reload=True,
+            reload_dirs=[str(Path(__file__).resolve().parents[1] / "src")],
+        )
+        return
     uvicorn.run("rolecard_agent.api.main:create_app", factory=True, host=host, port=port)
 
 

@@ -20,9 +20,32 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
+from urllib.parse import urlparse
 
 from rolecard_agent.config import MAX_FALLBACKS, ModelBackend, Settings
+from rolecard_agent.storage.db import SqlConnection
+
+
+def validate_base_url(value: str | None) -> str | None:
+    """归一并校验 base_url：仅接受 http/https，允许 localhost/私网（自用场景 Ollama 需要）。
+
+    拒绝 file:///gopher 等异常 scheme 与无 scheme 的裸串，避免后续 httpx 把内容当请求发走
+    （M8：base_url 此前无校验，错误地址可作内网探测入口）。空值视作"留空/自动"（如 Ollama）。
+    """
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    lowered = text.lower()
+    if "://" not in lowered:
+        raise ModelSettingsError("base_url 必须包含协议（如 http:// 或 https://）。")
+    parsed = urlparse(lowered)
+    if parsed.scheme not in ("http", "https"):
+        raise ModelSettingsError(f"base_url 仅支持 http/https，不支持 {parsed.scheme}://")
+    if not parsed.hostname:
+        raise ModelSettingsError("base_url 缺少主机名。")
+    return text
 
 # Backend names become keys in MODEL_BACKENDS-merged maps and UI list items: keep them tame.
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
@@ -105,7 +128,7 @@ class ModelSettingsService:
     MODEL_SEEDED_KEY = "model_backends_seeded"
     FALLBACKS_KEY = "model_fallbacks"
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: SqlConnection) -> None:
         self._conn = conn
 
     # -- reads -----------------------------------------------------------------
@@ -132,19 +155,23 @@ class ModelSettingsService:
                 k: row[k]
                 for k in ("name", "provider", "base_url", "model", "usage", "sort_order")
             }
-            | {"has_key": bool(row["api_key"]), "key_masked": self.key_masked(row["name"])}
+            | {"has_key": bool(row["api_key"]), "key_masked": self.key_masked(str(row["name"]))}
             for row in self._raw_backends()
         ]
 
     def key_masked(self, name: str) -> str | None:
-        """回读的**掩码**密钥（如 `sk-…abcd`），仅用于页面"查看已保存密钥"；绝不回明文。"""
+        """回读的**掩码**密钥（如 `sk-…abcd`），仅用于页面"查看已保存密钥"；绝不回明文。
+
+        不足 9 字符时全打点：`raw[:3]…raw[-4:]` 对 7 字符的 key 等于把整个 key 拼回来，
+        掩码就成了回明文（审查报告 L2）。
+        """
         raw = self.stored_api_key(name)
         if not raw:
             return None
-        raw = str(raw)
-        if len(raw) <= 6:
-            return "•" * len(raw)
-        return f"{raw[:3]}…{raw[-4:]}"
+        text = str(raw)
+        if len(text) <= 8:
+            return "•" * len(text)
+        return f"{text[:3]}…{text[-4:]}"
 
     def default_backend(self) -> str | None:
         """The operator-chosen default, or None = fall through to env's `model_default`."""
@@ -188,6 +215,28 @@ class ModelSettingsService:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
             "  updated_at = CURRENT_TIMESTAMP",
             (self.FALLBACKS_KEY, json.dumps(fallbacks)),
+        )
+        self._conn.commit()
+
+    def save_default(self, name: str, *, allowed_names: set[str]) -> None:
+        """Standalone default write，供「服务」页签的优先级列表使用（第 1 位 = 默认）。
+
+        Prefer `save(default=...)` for full-config writes —— 这里只改默认，不触碰后端行，
+        也不清回退链（优先级列表会紧接着用 `save_fallbacks` 写余下顺序）。
+        """
+        if name not in allowed_names:
+            raise ModelSettingsError(f"默认后端 {name!r} 不在已配置的后端列表里。")
+        # M2：对话默认后端必须是 chat 用途；embedding/rerank/ocr 行不能当默认。
+        row = next((r for r in self._raw_backends() if str(r["name"]) == name), None)
+        if row is None or str(row["usage"]) != "chat":
+            raise ModelSettingsError(
+                f"默认后端 {name!r} 必须是已配置的 chat 用途后端（对话/抽取）。"
+            )
+        self._conn.execute(
+            "INSERT INTO kernel_meta (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
+            "  updated_at = CURRENT_TIMESTAMP",
+            (self.MODEL_DEFAULT_KEY, name),
         )
         self._conn.commit()
 
@@ -249,7 +298,8 @@ class ModelSettingsService:
         changed = 0
         for row in self._raw_backends():
             old = str(row["provider"])
-            norm = normalize_provider(old, row["base_url"] and str(row["base_url"]))
+            base = str(row["base_url"]) if row["base_url"] else None
+            norm = normalize_provider(old, base)
             drop_key = is_keyless_provider(norm) and bool(row["api_key"])
             if norm != old or drop_key:
                 self._conn.execute(
@@ -282,13 +332,13 @@ class ModelSettingsService:
         if not backends:
             raise ModelSettingsError("至少需要保留一个模型后端。")
         names: list[str] = []
+        usage_by_name: dict[str, str] = {}
         prepared: list[tuple[object, ...]] = []
         existing_keys = {str(row["name"]): row["api_key"] for row in self._raw_backends()}
         for i, item in enumerate(backends):
             name = str(item.get("name") or "").strip()
             provider = str(item.get("provider") or "").strip()
             model = str(item.get("model") or "").strip()
-            base_url = str(item.get("base_url") or "").strip() or None
             usage = str(item.get("usage") or "chat").strip().lower() or "chat"
             if not _NAME_RE.match(name):
                 raise ModelSettingsError(
@@ -304,9 +354,13 @@ class ModelSettingsService:
                 raise ModelSettingsError(
                     f"后端 {name} 的用途 {usage!r} 不合法（chat/embedding/rerank/ocr）。"
                 )
+            raw_base = item.get("base_url")
             # 写入即归一：目录外的风格值（如历史 "openai"+硅基流动 URL）折叠成厂商 id。
-            provider = normalize_provider(provider, base_url)
+            provider = normalize_provider(provider, str(raw_base) if raw_base else None)
+            # M8：base_url 落库前校验 scheme/host，拒绝异常协议与裸 host（允许 localhost/私网）。
+            base_url = validate_base_url(str(raw_base) if raw_base else None)
             names.append(name)
+            usage_by_name[name] = usage
 
             raw_key = item.get("api_key")
             if raw_key is None:
@@ -319,8 +373,21 @@ class ModelSettingsService:
 
         if default not in names:
             raise ModelSettingsError(f"默认后端 {default!r} 不在列表里。")
+        # M2：对话默认后端必须是 chat 用途（对话/抽取）；embedding/rerank/ocr 不能当默认。
+        if usage_by_name.get(default) != "chat":
+            raise ModelSettingsError(
+                f"默认后端 {default!r} 必须是 chat 用途（对话/抽取），"
+                f"不能是 {usage_by_name.get(default)}。"
+            )
 
-        chain = list(fallbacks) if fallbacks is not None else (self.list_fallbacks() or [])
+        # 回退链：显式给链 → 原样校验（操作员手滑必须大声拒绝）；缺省（=保留当前值）→
+        # **修剪掉引用已删后端的项** —— 后端集缩小时旧链可能指向已删行，此时拒绝会让
+        # 一次普通的缩容保存永远卡死；运行时 `resolve_fallbacks` 本就丢弃未知名字，
+        # 保存时对齐这一语义（smoke：缩容保存 200，链被清空）。
+        kept = self.list_fallbacks() or []
+        chain = (
+            list(fallbacks) if fallbacks is not None else [n for n in kept if n in names]
+        )
         if len(chain) > MAX_FALLBACKS:
             raise ModelSettingsError(f"回退链最多 {MAX_FALLBACKS} 级（过长只会掩盖降级质量）。")
         if len(set(chain)) != len(chain):
@@ -351,31 +418,35 @@ class ModelSettingsService:
     # -- merge -------------------------------------------------------------------
 
     def effective_settings(self, env_settings: Settings) -> Settings:
-        """DB rows overlaid on env config. Empty table = env config untouched.
+        """DB rows are the single source of truth once seeded.
 
-        The built-in `local` backend from env is preserved (a laptop without the settings
-        page open still has its Ollama default); DB rows add or override by name, and the
-        default falls through to env's when the operator has not picked one. The fallback
-        chain follows the same rule: unset in DB = env's list.
+        H5 修复：表非空后**不再并入 env 后端**。此前 `merged = dict(env_settings.model_backends)`
+        会把"UI 删掉、但 env 仍提供"的后端重新复活，与 `seed_from_env` 文档（首启后 env 出局、
+        UI 删除的后端保持删除）直接矛盾。现在：表空 → 退回 env（首启前 bootstrap）；表非空 →
+        仅以 DB 行为准，env 改动（首启后）一律忽略。
         """
         raw = self._raw_backends()
         if not raw:
             return env_settings
-        merged = dict(env_settings.model_backends)
-        for row in raw:
-            merged[str(row["name"])] = ModelBackend(
+        merged: dict[str, ModelBackend] = {
+            str(row["name"]): ModelBackend(
                 model=str(row["model"]),
                 base_url=row["base_url"],  # type: ignore[arg-type]
                 api_key=row["api_key"],  # type: ignore[arg-type]
                 provider=str(row["provider"]),
                 usage=str(row["usage"]),
             )
+            for row in raw
+        }
         default = self.default_backend()
+        # 默认缺失/失效 → 退到 DB 第一个后端（首启种子已保证至少一个 chat 后端）。
+        if default is None or default not in merged:
+            default = next(iter(merged), env_settings.model_default)
         fallbacks = self.list_fallbacks()
         return env_settings.model_copy(
             update={
                 "model_backends": merged,
-                "model_default": default if default in merged else env_settings.model_default,
+                "model_default": default,
                 "model_fallbacks": fallbacks
                 if fallbacks is not None
                 else env_settings.model_fallbacks,

@@ -18,6 +18,7 @@ kernel `ingestion_task` ledger.
 from __future__ import annotations
 
 import hashlib
+import math
 from collections.abc import Callable
 from pathlib import Path
 
@@ -35,7 +36,39 @@ DOMAIN_TOOL_NAMES: tuple[str, ...] = (
     "upload_medical_report",
 )
 
+# 有副作用的工具：**不允许执行器重试**。`upload_medical_report` 会写 ingestion 台账，
+# 重试一次就多一条记录。装配点（domains/registry.build_registry）据此分流注册。
+# 声明在域自身而不是装配点：谁能安全重试是工具的性质，不是宿主的知识。
+WRITE_TOOL_NAMES: frozenset[str] = frozenset({"upload_medical_report"})
+
 UNVERIFIED_MARKER = "【未经人工校验】"
+
+
+def resolve_upload_target(file_path: str, upload_dir: str | Path) -> Path | None:
+    """把模型的入参解析为**上传目录内**的真实路径；越界或非法一律返回 None。
+
+    ## 为什么必须有这道边界（审查报告 H1）
+
+    `file_path` 是模型可自由填写的参数，而模型又受**上传文档内容**的影响（提示注入）。
+    在加入本函数之前，工具唯一的前提是 `p.is_file()`，因此：
+
+      * `upload_medical_report("C:/Windows/win.ini")` 能成功登记；
+      * 随后 `POST /api/records/extract` 的兜底分支（`source_file.exists()`）会把该文件
+        解析成文本并送进抽取模型 —— 一条完整的"读任意主机文件 → 送出本机"链路；
+      * `parsed_text_path()` 还会在受害者文件**同目录**写一份 `.parsed.txt`。
+
+    所以这里不做"净化文件名"，而是直接做**归属校验**：解析后的绝对路径必须落在
+    `upload_dir` 之内（含 `..`、符号链接、大小写等全部由 `resolve()` 收敛）。
+    允许的形态只有上传端点自己写出来的 `<uploads>/<uuid8>_<name>`。
+    """
+    try:
+        candidate = Path(file_path).expanduser().resolve()
+        root = Path(upload_dir).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if candidate == root or not candidate.is_relative_to(root):
+        return None
+    return candidate
 
 
 def _sha256_of(path: str) -> str:
@@ -52,19 +85,38 @@ def _sha256_of(path: str) -> str:
 
 
 def _fmt_num(value: float) -> str:
-    """6.0 -> "6", 5.5 -> "5.5", 6.15 -> "6.15" - readable, no float dust."""
+    """6.0 -> "6", 5.5 -> "5.5", 6.15 -> "6.15" - readable, no float dust.
+
+    非有限值（`inf` / `nan`）必须先挡住：`int(inf)` 抛 OverflowError、`int(nan)` 抛
+    ValueError，而这个函数在工具返回路径上 —— 一条脏数据会把"查询成功"变成
+    "工具执行失败"（审查报告 L3）。脏值原样显示，让用户看见问题本身。
+    """
+    if not math.isfinite(value):
+        return str(value)
     if value == int(value) and abs(value) < 1e15:
         return str(int(value))
     return f"{value:.4f}".rstrip("0")
 
 
+def _as_float(value: object) -> float | None:
+    """把来自 SQLite 行的任意取值收敛成 float；转不了返回 None。
+
+    为什么需要：`row.get(...)` 的静态类型是 `object`，而这个值直接进 `float()` / `_fmt_num()`
+    —— 不收敛的话既过不了类型检查，也让"脏数据会让工具崩掉"这件事只体现在运行期。
+    """
+    try:
+        return float(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
 def _value_str(row: dict[str, object]) -> str:
     """Numeric value + unit, or the verbatim non-numeric text."""
-    value = row.get("index_value")
-    if value is not None:
+    numeric = _as_float(row.get("index_value"))
+    if numeric is not None:
         unit = row.get("unit")
         unit_part = f" {unit}" if unit else ""
-        return f"{_fmt_num(float(value))}{unit_part}"
+        return f"{_fmt_num(numeric)}{unit_part}"
     return str(row.get("value_text") or "(无数值)")
 
 
@@ -98,12 +150,16 @@ def make_domain_tools(
     query: HealthQueryService,
     *,
     current_user: Callable[[], str],
+    upload_dir: str | Path,
 ) -> list[BaseTool]:
     """Build the health domain's tools.
 
     `current_user` is a zero-arg callable resolved at invocation time, NOT a model argument:
     the acting user is a security context, the model must not be able to name who it is acting
     as. The app wires it from the session (M2 API); tests inject a constant.
+
+    `upload_dir` 同理是**宿主提供的安全上下文**而不是模型参数：域写工具只允许在这个目录
+    内取文件（见 `resolve_upload_target` 的 docstring）。
     """
 
     @tool("query_health_record")
@@ -188,16 +244,22 @@ def make_domain_tools(
 
     @tool("upload_medical_report")
     def upload_medical_report(file_path: str) -> str:
-        """登记一份待解析的体检报告文件，返回 intake 任务 id。
+        """登记一份**已在系统里**的待解析报告文件（只接受上传目录内的文件），返回 intake 任务 id。
 
         实际 OCR / 结构化解析在 v2.2 接入；登记后任务处于 pending，重复上传相同文件会复用同一任务。
+        出于安全边界，本工具不能读取上传目录之外的任何路径 —— 越界时如实说明，不要改为猜测路径。
         """
-        p = Path(file_path)
-        if not p.is_file():
+        target = resolve_upload_target(file_path, upload_dir)
+        if target is None:
+            return (
+                f"只能登记上传目录内的文件（{Path(upload_dir)}）。"
+                "请让用户通过控制台的「上传」入口提交文件，不要传其它路径。"
+            )
+        if not target.is_file():
             return f"文件不存在：{file_path}"
-        file_hash = _sha256_of(file_path)
+        file_hash = _sha256_of(str(target))
         task_id = ingestion.create(
-            user_id=current_user(), source_file=file_path, file_hash=file_hash
+            user_id=current_user(), source_file=str(target), file_hash=file_hash
         )
         existing = ingestion.get(task_id)
         if existing["attempts"]:  # a prior failed/pending task was reused

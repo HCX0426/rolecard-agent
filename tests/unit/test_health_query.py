@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -125,8 +126,11 @@ def test_user_isolation_is_enforced_in_the_service(service: HealthQueryService) 
 
 
 @pytest.fixture
-def tools(service: HealthQueryService) -> list:
-    return make_domain_tools(None, service, current_user=lambda: U1)  # type: ignore[arg-type]
+def tools(service: HealthQueryService, tmp_path: Path) -> list:
+    # upload_dir 是宿主的路径边界（审查报告 H1）；本文件只测读工具，取一个空目录即可。
+    return make_domain_tools(  # type: ignore[arg-type]
+        None, service, current_user=lambda: U1, upload_dir=tmp_path
+    )
 
 
 def _tool(tools: list, name: str) -> object:

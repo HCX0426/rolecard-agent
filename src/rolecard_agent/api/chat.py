@@ -22,16 +22,18 @@ Two design decisions, both worth stating out loud:
 
 from __future__ import annotations
 
+import asyncio
 import json
-from collections.abc import Iterator
-from typing import Any
+from collections.abc import AsyncIterator, Iterator
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, cast
 
 from langchain_core.messages import AIMessageChunk, ToolMessage
 
 from rolecard_agent.core.graph import MODEL_NODE, TOOLS_NODE
 from rolecard_agent.core.guard import check
 from rolecard_agent.core.nodes import _text_of
-from rolecard_agent.core.observability import TraceEvent, Tracer
+from rolecard_agent.core.observability import TraceEvent, Tracer, scrub_endpoints
 
 # Characters of accumulated text held back from emission. Must be >= the longest guard trigger
 # pattern (the widest is ~21 chars: subject + 8 filler + modal verb + 8 filler + action verb).
@@ -94,7 +96,7 @@ class StreamingGuard:
         self.blocked = False
 
 
-def chat_events(
+def _chat_events_sync(
     graph: Any,
     *,
     graph_input: dict[str, Any],
@@ -102,31 +104,55 @@ def chat_events(
     role_summary: dict[str, str],
     tracer: Tracer | None = None,
 ) -> Iterator[str]:
-    """Run one user turn through the kernel graph and translate it into SSE events.
+    """Run one user turn through the kernel graph and translate it into SSE events (sync core).
 
-    A SYNC generator on purpose: the project's checkpointer is the sync `SqliteSaver`, whose
-    async counterparts raise NotImplementedError - so `graph.stream` (sync) is the one runner
-    that works with it. Starlette drives sync generators from its thread pool, which is fine
-    for a single-user demo; going async would mean AsyncSqliteSaver + aiosqlite and a second
-    connection story for zero demo benefit.
+    同步实现的内部核心：项目的检查点是同步 `SqliteSaver`，其 async 对应实现会抛
+    NotImplementedError，所以 `graph.stream`（同步）是唯一能用的 runner。见模块级
+    `chat_events`：它把这个同步生成器卸到独立的**有界线程池**里逐步取事件，从而不占用
+    Starlette 的共享线程池、块间让出事件循环（M6 的并发修复，无需重写检查点为 async）。
 
-    Event order for a tool-using turn:
-        start -> tool_call -> tool_result -> (token)* -> end
 
-    Event order for a direct answer:
-        start -> (token)* -> end
+Event order for a tool-using turn:
+    start -> [thinking]* -> tool_call -> tool_result -> (token)* -> end
 
-    `message_replace` appears whenever the committed text diverges from the streamed tokens
-    (guard rewrite, role-missing fallback, or a model that produced no token events at all).
-    """
+Event order for a direct answer:
+    start -> [thinking]* -> (token)* -> end
+
+`thinking` events appear only when the model is a reasoning model invoked with reasoning
+enabled (see MODEL_THINKING_MODELS in config.py). Thinking text is kept separate from the
+answer body - the UI renders it as a collapsible panel, the way AI IDEs do.
+
+`message_replace` appears whenever the committed text diverges from the streamed tokens
+(guard rewrite, role-missing fallback, or a model that produced no token events at all).
+
+`context_trimmed` appears at most once per user turn, and only when the history budget forced
+older messages out of the prompt (`{dropped, kept}`). It exists so the user is told the truth
+about "why doesn't the model remember what I said earlier" instead of having to guess - the
+UI surfaces it as a quiet inline notice. Same fact is queryable after a page reload via
+`GET /api/session/{thread_id}/context`.
+"""
     yield sse({"type": "start", "role": role_summary})
     guard = StreamingGuard()
+    # 一次用户轮次里 `call_model` 可能跑多次（工具循环）。裁剪只报**第一次**：那一轮
+    # 代表"这一问开始时模型能看到多少历史"，是用户需要知道的那个事实；后面几次的数值
+    # 是工具消息把窗口挤得更满的结果，重复上报只会变成噪音。
+    trim_reported = False
+    think_emitted = False
     try:
         for mode, payload in graph.stream(
             graph_input, config=config, stream_mode=["messages", "updates"]
         ):
             if mode == "messages":
                 chunk, _meta = payload
+                # 思考模型的推理增量（langchain-ollama：reasoning=True 时思考进
+                # additional_kwargs['reasoning_content']）。与正文分流：思考走 thinking
+                # 事件、进折叠面板，不混进回答正文。qwen2.5 等非思考模型这里是空 → 零开销。
+                think_delta = (getattr(chunk, "additional_kwargs", None) or {}).get(
+                    "reasoning_content"
+                )
+                if isinstance(chunk, AIMessageChunk) and think_delta:
+                    think_emitted = True
+                    yield sse({"type": "thinking", "text": str(think_delta)})
                 if not isinstance(chunk, AIMessageChunk) or not chunk.content:
                     continue
                 delta = guard.feed(_text_of(chunk))
@@ -139,7 +165,28 @@ def chat_events(
                     messages = (update or {}).get("messages") or []
                     if not messages:
                         continue
+                    # 历史被上下文预算裁剪过 → 如实告诉客户端（审查报告 H3 的界面部分）。
+                    # 事件只承载"发生了什么、多少条"，不含任何对话内容。
+                    dropped = (update or {}).get("context_trimmed") or 0
+                    if dropped and not trim_reported:
+                        trim_reported = True
+                        yield sse(
+                            {
+                                "type": "context_trimmed",
+                                "dropped": dropped,
+                                "kept": (update or {}).get("context_kept") or 0,
+                            }
+                        )
                     committed = messages[-1]
+                    # 兜底路径：模型没有走增量流（测试脚本 / 非流式后端）时，思考内容会
+                    # 完整地落在 committed 消息上 —— 此时一次性发出，并以 think_emitted
+                    # 防止与流式增量重复。
+                    committed_think = (getattr(committed, "additional_kwargs", None) or {}).get(
+                        "reasoning_content"
+                    )
+                    if committed_think and not think_emitted:
+                        think_emitted = True
+                        yield sse({"type": "thinking", "text": str(committed_think)})
                     for call in getattr(committed, "tool_calls", None) or []:
                         yield sse(
                             {
@@ -170,6 +217,52 @@ def chat_events(
                             )
     except Exception as exc:  # noqa: BLE001 - the client gets a sentence, the log gets the cause
         if tracer is not None:
-            tracer.emit(TraceEvent(event="chat_error", error=type(exc).__name__))
+            # 带上消息体（审查报告 E1）：只记异常类型名等于回答不了"这次为什么失败" ——
+            # 超时、连接被拒、模型不存在在日志里长得一模一样。异常文本不承载报告原文，
+            # 且 URL 会被脱敏，因此脱敏纪律不受影响。
+            tracer.emit(
+                TraceEvent(
+                    event="chat_error",
+                    error=f"{type(exc).__name__}: {scrub_endpoints(str(exc))}"[:300],
+                    detail={"node": MODEL_NODE},
+                )
+            )
         yield sse({"type": "error", "detail": "模型调用失败，请稍后重试或换一种问法。"})
     yield sse({"type": "end"})
+
+
+# M6：独立的**有界**线程池承载对话流。同步 `graph.stream` 是阻塞调用（最长 model_timeout
+# 120s），若直接占 Starlette 共享线程池，并发对话会把池子耗尽、其它请求无线程可用。
+# 这里把它隔离到专属小池，并在每次取事件后让出事件循环，既不影响 SSE 协议，又释放了
+# 共享池的并发容量。检查点仍是同步 SqliteSaver，无需改写为 async（避免 AsyncSqliteSaver
+# + aiosqlite 的第二条连接故事与零收益风险）。
+_CHAT_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="chat-stream")
+
+
+async def chat_events(
+    graph: Any,
+    *,
+    graph_input: dict[str, Any],
+    config: dict[str, Any],
+    role_summary: dict[str, str],
+    tracer: Tracer | None = None,
+) -> AsyncIterator[str]:
+    """异步包装 `_chat_events_sync`：逐事件从专属线程池取出，块间让出事件循环。
+
+    对外 SSE 协议与同步版完全一致（start/thinking/token/tool_call/tool_result/
+    message_replace/context_trimmed/error/end）。调用方（端点）需用 `async def` +
+    `StreamingResponse(async_gen)`。
+    """
+    loop = asyncio.get_event_loop()
+    gen = _chat_events_sync(
+        graph, graph_input=graph_input, config=config, role_summary=role_summary, tracer=tracer
+    )
+    sentinel = object()
+    while True:
+        try:
+            item = await loop.run_in_executor(_CHAT_POOL, next, gen, sentinel)
+        except StopIteration:  # pragma: no cover - next 带 default 不会抛，双保险
+            break
+        if item is sentinel:
+            break
+        yield cast("str", item)

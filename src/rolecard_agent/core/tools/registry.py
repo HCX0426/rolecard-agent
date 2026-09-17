@@ -22,11 +22,18 @@ from langchain_core.tools import BaseTool
 
 @dataclass(frozen=True, slots=True)
 class ToolSpec:
-    """A registered tool plus the domain that owns it (`None` = kernel tool)."""
+    """A registered tool plus the domain that owns it (`None` = kernel tool).
+
+    `idempotent` 是执行器的**重试开关**，默认 False（安全默认）：只有显式声明"同一参数
+    重复调用不产生新副作用"的只读工具才允许被重试。旧实现对所有工具一律重试 2 次，
+    于是"写台账"的 `upload_medical_report` 在失败后可能被执行 3 遍 —— 一次模型调用
+    产生多条记录（审查报告 M10）。
+    """
 
     name: str
     tool: BaseTool
     domain: str | None = None
+    idempotent: bool = False
 
 
 def filter_specs(
@@ -52,20 +59,29 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._specs: dict[str, ToolSpec] = {}
 
-    def register(self, tool: BaseTool, *, domain: str | None = None) -> ToolSpec:
+    def register(
+        self, tool: BaseTool, *, domain: str | None = None, idempotent: bool = False
+    ) -> ToolSpec:
         """Register one tool. Duplicate names are rejected rather than overwritten: a
-        silent overwrite would make a permission change look like a no-op."""
+        silent overwrite would make a permission change look like a no-op.
+
+        `idempotent` 默认 False —— 未声明即为不可重试，见 `ToolSpec`。
+        """
         name = tool.name
         if name in self._specs:
             raise ValueError(f"tool already registered: {name}")
-        spec = ToolSpec(name=name, tool=tool, domain=domain)
+        spec = ToolSpec(name=name, tool=tool, domain=domain, idempotent=idempotent)
         self._specs[name] = spec
         return spec
 
     def register_many(
-        self, tools: Iterable[BaseTool], *, domain: str | None = None
+        self,
+        tools: Iterable[BaseTool],
+        *,
+        domain: str | None = None,
+        idempotent: bool = False,
     ) -> list[ToolSpec]:
-        return [self.register(t, domain=domain) for t in tools]
+        return [self.register(t, domain=domain, idempotent=idempotent) for t in tools]
 
     def unregister(self, name: str) -> None:
         self._specs.pop(name, None)
@@ -73,6 +89,15 @@ class ToolRegistry:
     def get(self, name: str) -> BaseTool | None:
         spec = self._specs.get(name)
         return None if spec is None else spec.tool
+
+    def spec(self, name: str) -> ToolSpec | None:
+        """完整规格（含 `idempotent`）—— 执行器判断能否重试要用它。"""
+        return self._specs.get(name)
+
+    def is_idempotent(self, name: str) -> bool:
+        """未注册的名字按**不可重试**处理（fail-safe）。"""
+        spec = self._specs.get(name)
+        return bool(spec and spec.idempotent)
 
     def names(self) -> list[str]:
         return sorted(self._specs)

@@ -22,6 +22,11 @@ jobs:
                       -r requirements-api.txt -r requirements-rag.txt
       - name: Lint
         run: ruff check .
+      - name: Type-check
+        # 此前 `[tool.mypy]` 配置一直躺在 pyproject.toml 里却从不运行 —— 死配置比没有更糟
+        # （看起来有兜底，其实没有）。跑起来之后第一次就报出 47 处真实问题（代码审查报告
+        # （第二轮）F2），包括"28 处连接注解写的类型和实际传入的不一致"。
+        run: mypy
       - name: Tests (offline, no Ollama needed)
         # 覆盖率阈值 85%：低于它说明有人在没补测试的情况下大幅加代码。
         # 真正的意义是"重构前的安全网"—— 拆 api/main.py 这类改动，没有覆盖数据是闭眼改。
@@ -43,7 +48,11 @@ jobs:
           node-version: 22
       - name: Install
         run: npm ci --no-fund --no-audit
-      - name: Unit tests (api 层契约：序列化 / 错误归一化 / SSE / abort)
+      - name: Unit tests (api 层契约 + SSE 归约 + 上传三态 + ChatPage 接线)
+        # 覆盖三类，按"越靠近用户越难测"排列：
+        #   api.test.ts        请求序列化 / 错误归一化 / abort 语义（node 环境）
+        #   lib/*.test.ts      SSE 帧切分与事件归约、上传结局文案（纯函数）
+        #   pages/*.test.tsx   真实渲染 ChatPage，断言流式文本、工具卡片、上下文提示（jsdom）
         run: npm test
       - name: Type-check + build
         run: npm run build

@@ -16,10 +16,16 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import zipfile
 from pathlib import Path
+
+# 仓库根：真机 UI 冒烟需要以仓库根为 cwd 调用 scripts/ui_smoke.js
+ROOT = Path(__file__).resolve().parents[1]
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -435,6 +441,45 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         s = c.post("/api/session", json={}).json()
         after = c.post("/api/chat", json={"thread_id": s["thread_id"], "message": "热重建后再问"})
         assert after.status_code == 200, after.status_code
+
+
+@check("真机 UI 冒烟（浏览器打开控制台：可发消息 / 思考过程保留 / 刷新后历史仍在）")
+def console_ui_smoke() -> None:
+    """用本机 Chrome/Edge 真跑一遍界面交互（scripts/ui_smoke.js）。
+
+    为什么放在最后且允许跳过：它依赖**外部真实服务**（默认 http://127.0.0.1:8000）
+    与本机浏览器，不是纯离线断言。缺 node / 缺 playwright-core / 缺浏览器 / 服务没起
+    时打印跳过说明并计为通过 —— 环境差异不该把冒烟变红，但**跑到了就必须全绿**。
+
+    `SMOKE_SKIP_UI=1`：本地快速迭代的显式逃生门（UI 段约占整套冒烟一半时长）。
+    与"缺依赖"不同，这是**主动选择不跑**，所以跳过说明里必须带上原因，防止误读成全绿。
+    """
+    if os.environ.get("SMOKE_SKIP_UI"):
+        print("（跳过：SMOKE_SKIP_UI=1，本轮未跑真机 UI 冒烟——提交/发布前请跑一次完整冒烟）")
+        return
+    node = shutil.which("node")
+    if not node:
+        print("（跳过：未找到 node，无法跑真机 UI 冒烟）")
+        return
+    script = ROOT / "scripts" / "ui_smoke.js"
+    if not script.exists():
+        raise AssertionError("缺少 scripts/ui_smoke.js")
+    try:
+        proc = subprocess.run(
+            [node, str(script)],
+            capture_output=True,
+            text=True,
+            timeout=600,
+            cwd=str(ROOT),
+            encoding="utf-8",
+            errors="replace",
+        )
+    except subprocess.TimeoutExpired:
+        raise AssertionError("真机 UI 冒烟超时（600s）") from None
+    out = (proc.stdout or "") + (proc.stderr or "")
+    print(out.strip())
+    if proc.returncode != 0:
+        raise AssertionError("真机 UI 冒烟存在失败项（见上）")
 
 
 def report() -> int:

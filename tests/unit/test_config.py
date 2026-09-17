@@ -143,3 +143,57 @@ def test_chain_is_capped() -> None:
         }
     )
     assert settings.resolve_fallbacks("local") == ["a", "b"]
+
+# -- 数值型环境变量：`0` 必须被保留（代码审查报告（第二轮）L1） --------------------
+
+
+def test_zero_is_a_real_value_not_a_missing_one() -> None:
+    """`MODEL_TIMEOUT_SECONDS=0` 必须真的关掉超时。
+
+    修复前解析用的是真值判断（`if value := src.get(k)`），`"0"` 是**真值字符串**但
+    旧代码走的是 `src.get(k)` 的布尔语义 —— 空串被跳过是对的，而 `"0"` 一并被跳过就成了
+    静默失效：`config.py` 的字段注释明确写着"设成 0 或负数 = 不设超时（仅调试用）"，
+    但这个开关在 env 路径上根本不可用。
+    """
+    settings = Settings.from_env({"MODEL_TIMEOUT_SECONDS": "0"})
+    assert settings.model_timeout_seconds == 0
+
+    settings = Settings.from_env({"CONTEXT_MAX_CHARS": "0", "TOOL_TIMEOUT_SECONDS": "0"})
+    assert settings.context_max_chars == 0
+    assert settings.tool_timeout_seconds == 0
+
+
+def test_empty_string_still_means_unset() -> None:
+    """空串 = 未设置（否则 `AUTH_CREDENTIALS=` 会把默认值覆盖成空 —— 那是对的一半，
+    但 `MODEL_TIMEOUT_SECONDS=` 这种写法不该变成 0）。"""
+    settings = Settings.from_env({"MODEL_DEFAULT": "", "AUTH_CREDENTIALS": ""})
+    assert settings.model_default == "local"
+    assert settings.model_timeout_seconds == 120.0
+
+
+def test_context_and_tool_budgets_have_sane_defaults() -> None:
+    """两个新预算都得有非零默认值 —— 默认值就是"忘了配也不会坏"。"""
+    settings = Settings()
+    assert settings.context_max_chars > 0
+    assert settings.tool_timeout_seconds > 0
+    assert settings.auth_trusted_proxies == ""  # 默认不信任任何代理
+
+
+def test_web_master_switch_and_thinking_parse_from_env() -> None:
+    """功能①②的 env 解析：总闸 bool、白名单串、思考总开关三态只认 auto/off 之外原样透传。"""
+    settings = Settings.from_env(
+        {
+            "WEB_SEARCH_ENABLED": "0",
+            "WEB_ALLOWED_DOMAINS": "wikipedia.org, arxiv.org",
+            "MODEL_THINKING": "off",
+        }
+    )
+    assert settings.web_search_enabled is False
+    assert settings.web_allowed_domains == "wikipedia.org, arxiv.org"
+    assert settings.model_thinking == "off"
+
+    # 缺省 = 开 + 不限 + auto（空串视为未设）
+    defaults = Settings.from_env({"WEB_SEARCH_ENABLED": "", "MODEL_THINKING": ""})
+    assert defaults.web_search_enabled is True
+    assert defaults.web_allowed_domains == ""
+    assert defaults.model_thinking == "auto"

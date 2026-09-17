@@ -144,9 +144,9 @@ def test_image_without_configured_backend_raises_ocr_unavailable(
     强制"自动发现不到默认解释器"，使断言不依赖本机是否装了 .venv-ocr。
     """
     monkeypatch.delenv("OCR_PYTHON", raising=False)
-    # 注意：ocr.py 以 `from ... import _default_ocr_python` 绑定的是自己的名字，
+    # 注意：ocr.py 现以 `from rolecard_agent.core.paths import default_ocr_python` 绑定，
     # 必须 patch ocr 模块里的引用，patch parser 里的原函数不会生效。
-    monkeypatch.setattr("rolecard_agent.rag.ocr._default_ocr_python", lambda: None)
+    monkeypatch.setattr("rolecard_agent.rag.ocr.default_ocr_python", lambda: None)
     img = tmp_path / "scan.png"
     img.write_bytes(b"\x89PNG\r\n\x1a\n")  # 假 PNG 头，仅用于触发扩展名分派
     with pytest.raises(OcrUnavailable):
@@ -226,6 +226,24 @@ def test_pptx_extraction(tmp_path: Path) -> None:
     assert "复查频率" in out
 
 
+def test_pptx_slide_order_is_numeric_not_lexicographic(tmp_path: Path) -> None:
+    """**≥10 页的页序回归**（代码审查报告（第二轮）M9）。
+
+    `slide10.xml` 在字典序里排在 `slide2.xml` 前面（'1' < '2'），于是 10 页以上的 PPT
+    会被抽出错乱的页序 —— 第 10 页的数值出现在第 1 页附近，结构化抽取拿到的上下文是错的，
+    而且是**静默**的语义错误。修复方式是按编号排序。
+    """
+    slides = [[f"第{i}页"] for i in range(1, 13)]  # 1..12，确保跨过两位数的分界
+    f = tmp_path / "long.pptx"
+    f.write_bytes(_make_pptx_bytes(slides))
+    out = parse_document(f)
+
+    positions = [out.index(f"第{i}页") for i in range(1, 13)]
+    assert positions == sorted(positions), f"页序错乱：{positions}"
+    # 明确钉住修复前出错的相邻对：第 2 页必须排在第 10 页之前
+    assert out.index("第2页") < out.index("第10页")
+
+
 def test_xlsx_extraction(tmp_path: Path) -> None:
     f = tmp_path / "指标.xlsx"
     f.write_bytes(_make_xlsx_bytes(["血糖", "6.1"]))
@@ -246,3 +264,117 @@ def test_docx_without_document_xml_raises(tmp_path: Path) -> None:
     f.write_bytes(_zip_bytes({"other.xml": "<x/>"}))
     with pytest.raises(ParseError):
         parse_document(f)
+
+
+def test_missing_file_raises_a_readable_parse_error(tmp_path: Path) -> None:
+    """文件不存在 → `ParseError`（可读），**不是**让 `FileNotFoundError` 冒出去。
+
+    为什么这条重要：调用方只把 `ParseError` 翻译成有说明的响应，其它异常一律变成
+    "500 没有任何解释"。而这条路径在真实部署里成立 —— 台账记着某个文件，磁盘上却没有
+    （人工删过 / 数据卷被重置）。实测：不拦住它时，"重复上传同一个已登记过的文件"会 500。
+    """
+    missing = tmp_path / "从未存在过.txt"
+    with pytest.raises(ParseError, match="不存在或不可读"):
+        parse_document(missing)
+
+
+def test_a_directory_is_not_silently_treated_as_a_file(tmp_path: Path) -> None:
+    """传进来一个目录也要是可读错误，而不是 IsADirectoryError 之类。"""
+    with pytest.raises(ParseError, match="不存在或不可读"):
+        parse_document(tmp_path)
+
+
+# -- XML 实体加固（代码审查报告（第二轮）A3 残留） --------------------------------
+
+
+_BILLION_LAUGHS = """<?xml version="1.0"?>
+<!DOCTYPE w:document [
+  <!ENTITY a "aaaaaaaaaa">
+  <!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">
+  <!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">
+  <!ENTITY d "&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;">
+  <!ENTITY e "&d;&d;&d;&d;&d;&d;&d;&d;&d;&d;">
+]>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body><w:p><w:r><w:t>&e;</w:t></w:r></w:p></w:body>
+</w:document>"""
+
+
+def test_docx_with_a_dtd_is_rejected_before_parsing(tmp_path: Path) -> None:
+    """billion laughs（实体递归展开）必须在**解析之前**被拒。
+
+    修复前这里走的是标准库 `ET.fromstring`，注释里写的理由是"攻击面已由解压规模上限收窄"
+    —— 但 zip 的规模上限管的是**解压后**的字节数，而实体展开的放大发生在**解析期**：
+    压缩后几 KB 的部件可以展开成几百 MB 的内存。现在带 DTD / 实体声明的部件一律拒绝，
+    且拒绝发生在调用 expat 之前，不依赖 expat 的版本或默认限额。
+    """
+    f = tmp_path / "炸弹.docx"
+    f.write_bytes(_zip_bytes({"word/document.xml": _BILLION_LAUGHS}))
+    with pytest.raises(ParseError, match="DTD / 实体声明"):
+        parse_document(f)
+
+
+def test_a_doctype_hidden_behind_a_long_comment_is_still_rejected(tmp_path: Path) -> None:
+    """**绕过回归**：用超长注释把 DOCTYPE 推到"只扫开头 N 字节"的窗口之外。
+
+    XML 允许在 DOCTYPE 前放任意长度的注释，所以任何"只看前 N 字节"的实现都有一个可绕过的
+    窗口。这里刻意填 8KB 注释 —— 远大于常见的 4KB 窗口，用来钉住"必须扫全量"这个结论。
+    """
+    padding = "<!-- " + ("x" * 8192) + " -->"
+    payload = '<?xml version="1.0"?>\n' + padding + _BILLION_LAUGHS.split("\n", 1)[1]
+    f = tmp_path / "填充.docx"
+    f.write_bytes(_zip_bytes({"word/document.xml": payload}))
+    with pytest.raises(ParseError, match="DTD / 实体声明"):
+        parse_document(f)
+
+
+def test_pptx_and_xlsx_parts_are_checked_too(tmp_path: Path) -> None:
+    """加固落在**共用的部件解析入口**上：不是只补了 docx 这一条路径。"""
+    pptx = tmp_path / "幻灯片.pptx"
+    pptx.write_bytes(
+        _zip_bytes(
+            {
+                "ppt/slides/slide1.xml": (
+                    '<?xml version="1.0"?><!DOCTYPE p:sld [<!ENTITY x "y">]>'
+                    '<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+                    "<a:p><a:r><a:t>hi</a:t></a:r></a:p></p:sld>"
+                )
+            }
+        )
+    )
+    with pytest.raises(ParseError, match="DTD / 实体声明"):
+        parse_document(pptx)
+
+    xlsx = tmp_path / "表.xlsx"
+    xlsx.write_bytes(
+        _zip_bytes(
+            {
+                "xl/worksheets/sheet1.xml": (
+                    '<?xml version="1.0"?><!DOCTYPE worksheet [<!ENTITY x "y">]>'
+                    '<worksheet xmlns="http://schemas.openxmlformats.org/'
+                    'spreadsheetml/2006/main"><sheetData/></worksheet>'
+                )
+            }
+        )
+    )
+    with pytest.raises(ParseError, match="DTD / 实体声明"):
+        parse_document(xlsx)
+
+
+def test_a_literal_doctype_in_escaped_text_is_not_mistaken_for_markup(tmp_path: Path) -> None:
+    """反向保护：正文里**转义后**的 `<` 不会被误判。
+
+    合法 XML 里出现在文本内容中的 `<` 必须写成 `&lt;`，所以"描述一段 XML"的文档
+    （比如本项目自己的技术文档）不会被这条加固拒掉。这条断言防的是"加固过度"，
+    过度拦截会让真实用户的文档解析失败 —— 那和漏拦一样是缺陷。
+    """
+    doc = (
+        '<?xml version="1.0"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        "<w:body><w:p><w:r><w:t>示例写法：&lt;!DOCTYPE foo&gt; 不要照抄</w:t></w:r></w:p>"
+        "</w:body></w:document>"
+    )
+    f = tmp_path / "文档.docx"
+    f.write_bytes(_zip_bytes({"word/document.xml": doc}))
+    out = parse_document(f)
+    assert "DOCTYPE" in out  # 文本被正常抽出（转义还原）

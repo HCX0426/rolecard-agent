@@ -22,6 +22,7 @@ from rolecard_agent.api.deps import (
     parsed_text_path as _parsed_text_path,
 )
 from rolecard_agent.core.ingestion import IngestionNotFound
+from rolecard_agent.core.observability import scrub_endpoints
 from rolecard_agent.domains.health.extract import (
     ExtractConfigError,
     ExtractError,
@@ -33,7 +34,6 @@ from rolecard_agent.domains.health.service import (
     HealthInvalidReport,
     HealthNotFound,
 )
-from rolecard_agent.rag.ocr import select_ocr_backend
 from rolecard_agent.rag.parser import IMAGE_EXTS, OcrUnavailable, ParseError, parse_document
 
 router = APIRouter()
@@ -86,17 +86,27 @@ class ExtractRequest(BaseModel):
 
 
 def _latest_numeric_history(records: list[dict[str, object]]) -> dict[str, float]:
-    """每个指标「最近一次」的数值 —— 给抽取的异常突变检查用（只做提示，不做阻断）。"""
+    """每个指标「最近一次」的数值 —— 给抽取的异常突变检查用（只做提示，不做阻断）。
+
+    `isinstance` 检查在这里不是防御性噪音：入参来自 SQLite 行转出来的 dict，
+    "indices 一定是 list[dict]" 是调用方（`list_records`）的实现细节，不是类型系统
+    能保证的事。既然要遍历它，就顺手把不可信的形状挡在外面。
+    """
     latest: dict[str, tuple[str, float]] = {}
     for report in records:
         day = str(report.get("check_time") or "")
-        for row in report.get("indices") or []:  # type: ignore[union-attr]
-            name = str((row or {}).get("index_name") or "").strip()
-            value = (row or {}).get("index_value")
+        rows = report.get("indices")
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("index_name") or "").strip()
+            value = row.get("index_value")
             if not name or value is None:
                 continue
             try:
-                numeric = float(value)  # type: ignore[arg-type]
+                numeric = float(str(value))
             except (TypeError, ValueError):
                 continue
             if name not in latest or day >= latest[name][0]:
@@ -105,7 +115,7 @@ def _latest_numeric_history(records: list[dict[str, object]]) -> dict[str, float
 
 
 @router.get("/api/records")
-def list_records(ctx: AppContext = Depends(get_context)) -> list[object]:
+def list_records(ctx: AppContext = Depends(get_context)) -> list[dict[str, object]]:
     """F2 数据管理视图：报告 + 完整指标行（归属演示用户）。"""
     return ctx.health.list_records(DEFAULT_USER_ID)
 
@@ -177,15 +187,8 @@ def extract_record(
         # 兜底：本次改动之前上传的文件没有 .parsed.txt，现场再解析一次。
         try:
             is_image = source_file.suffix.lower() in IMAGE_EXTS
-            ocr = (
-                select_ocr_backend(
-                    ctx.settings,
-                    order=[c.id for c in ctx.services.ordered_candidates("ocr")],
-                    endpoints=ctx.services.endpoint_map("ocr"),
-                )
-                if is_image
-                else None
-            )
+            # L3：OCR 后端选择收拢到 AppContext.ocr_candidates()（原与 sessions.py 重复）。
+            ocr = ctx.ocr_candidates() if is_image else None
             text = parse_document(source_file, backend=ocr)
         except (ParseError, OcrUnavailable):
             text = ""
@@ -204,11 +207,16 @@ def extract_record(
     except ExtractConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ExtractError as exc:
+        # 审计详情里的异常文本会被 `/api/audit` 原样回给前端，而模型调用的异常经常带着
+        # 内部 base_url —— 先脱敏再落库（审查报告 A5 / M11）。
         ctx.roles.audit(
             actor=actor.id,
             action="extract_report_failed",
             target=body.task_id,
-            detail={"task_id": body.task_id, "error": str(exc)[:300]},
+            detail={
+                "task_id": body.task_id,
+                "error": scrub_endpoints(str(exc))[:300],
+            },
         )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

@@ -21,7 +21,8 @@ It is never exposed as an LLM-callable tool (self-authorization risk, same as sw
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     # Annotation-only names: the runtime imports live inside build_registry, keeping this
@@ -43,6 +44,13 @@ if TYPE_CHECKING:
 DOMAINS: tuple[str, ...] = ("health", "finance")
 
 
+def _lazy_settings() -> Any:
+    """兜底默认配置（仅测试直接调用 build_registry 时会走到）。"""
+    from rolecard_agent.config import Settings
+
+    return Settings()
+
+
 def build_registry(
     *,
     roles: RoleCardService,
@@ -51,6 +59,9 @@ def build_registry(
     knowledge: KnowledgeBase,
     enabled_domains: DomainsLike,
     current_user: Callable[[], str],
+    upload_dir: Path,
+    tracer: Any = None,
+    settings: Any = None,
 ) -> ToolRegistry:
     """Assemble the full tool registry: kernel tools + every registered domain's tools.
 
@@ -63,20 +74,59 @@ def build_registry(
     name who it is acting as. `knowledge` backs the kernel search_knowledge tool (v2.1):
     retrieval is a KERNEL capability — scope-authorised per role at invocation time, the
     model never names a collection.
+
+    `upload_dir` 是域**写**工具的路径边界：这些工具的入参来自模型（因而也来自上传文档里
+    的提示注入），不设边界就是"读任意主机文件 + 在任意目录写"（审查报告 H1）。
+
+    `tracer` 必须传下去：`search_knowledge` 闭包持有 KB，而 KB 的 `search()` 只有拿到
+    tracer 才会 emit `rag_search` / `rerank_fallback`（审查报告 M3）。
+
+    `settings` 供联网工具（web_search / web_fetch：搜索后端与 TAVILY_API_KEY）与工作区
+    文件工具（fs_read / fs_write / fs_list：WORKSPACE_DIR 路径边界）使用；None = 默认
+    配置（仅测试场景）。
+
+    工具的 `idempotent` 标记是**执行器的重试开关**：只有显式声明"重复调用无副作用"的
+    只读工具才允许重试（审查报告 M10 —— 旧实现对所有工具都重试 2 次，包括会写台账的
+    `upload_medical_report`）。
     """
+    from rolecard_agent.core.consensus import build_consensus_tool
     from rolecard_agent.core.tools.builtin import make_kernel_tools
+    from rolecard_agent.core.tools.files import make_file_tools
     from rolecard_agent.core.tools.registry import ToolRegistry as _ToolRegistry
-    from rolecard_agent.domains.health.tools import make_domain_tools
+    from rolecard_agent.core.tools.web import make_web_tools
+    from rolecard_agent.domains.health.tools import WRITE_TOOL_NAMES, make_domain_tools
     from rolecard_agent.rag.retriever import make_search_tool
 
     registry = _ToolRegistry()
-    # Kernel tools carry domain=None and survive every plugin toggle.
-    registry.register_many(make_kernel_tools(roles=roles, enabled_domains=enabled_domains))
-    registry.register(make_search_tool(knowledge))
+    # Kernel tools carry domain=None and survive every plugin toggle. Both are read-only.
+    registry.register_many(
+        make_kernel_tools(roles=roles, enabled_domains=enabled_domains), idempotent=True
+    )
+    registry.register(make_search_tool(knowledge, tracer=tracer), idempotent=True)
+
+    # 联网与工作区工具（v2.4）：全部只读除 fs_write 外。web_search 后端缺失时仍注册，
+    # 运行期返回可读的未配置说明 —— 白名单引用的工具必须真实存在（一致性校验的前提）。
+    effective_settings = settings or _lazy_settings()
+    for web_tool in make_web_tools(settings=effective_settings):
+        registry.register(web_tool, idempotent=True)
+    registry.register_many(
+        [t for t in make_file_tools(settings=effective_settings) if t.name != "fs_write"],
+        idempotent=True,
+    )
+    registry.register_many(
+        [t for t in make_file_tools(settings=effective_settings) if t.name == "fs_write"],
+        idempotent=False,
+    )
+
+    # 多模型比对（consensus，用户 2026-09-17 开工）：内核能力（domain=None）。
+    # 一次比对 = N 次 LLM 调用，失败不重试（idempotent=False）—— 重试等于成倍烧 token。
+    registry.register(build_consensus_tool(settings=effective_settings), idempotent=False)
 
     # Explicit per-domain wiring: what each domain needs to construct its tools, visible here.
     factories = {
-        "health": lambda: make_domain_tools(ingestion, query, current_user=current_user),
+        "health": lambda: make_domain_tools(
+            ingestion, query, current_user=current_user, upload_dir=upload_dir
+        ),
         # Data-only domain: no LLM tools, just a `domain_data` bucket the UI manages directly.
         "finance": lambda: [],
     }
@@ -85,5 +135,17 @@ def build_registry(
             raise ValueError(
                 f"domain {domain!r} is registered but has no tool factory in build_registry()"
             )
-        registry.register_many(factories[domain](), domain=domain)
+        # 读写分开注册：写工具的重试开关必须关掉（见上）。声明式的名字清单来自域自身，
+        # 装配点只做分流，不重复维护列表。
+        domain_tools = factories[domain]()
+        registry.register_many(
+            [t for t in domain_tools if t.name not in WRITE_TOOL_NAMES],
+            domain=domain,
+            idempotent=True,
+        )
+        registry.register_many(
+            [t for t in domain_tools if t.name in WRITE_TOOL_NAMES],
+            domain=domain,
+            idempotent=False,
+        )
     return registry

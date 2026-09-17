@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 
 from rolecard_agent.api.main import create_app
+from rolecard_agent.rag.parser import ParseError
 from tests.conftest import ScriptedChat
 
 
@@ -222,6 +223,232 @@ def test_upload_pdf_indexed_and_idempotent(
         assert any("体检报告.pdf" in s["sources"] for s in knowledge)
 
 
+def test_reupload_does_not_write_a_second_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**重复上传不重复落盘**（代码审查报告（第二轮）M4）。
+
+    修复前每次上传都无条件写一份 `<uuid8>_<原名>`，于是"再传一次同一个文件"会不断往
+    `uploads/` 里堆同样的字节、永不回收。现在先算 hash 查幂等键，命中就直接复用已有
+    文件路径 —— 落盘次数 = 唯一文件数。
+    """
+    uploads = tmp_path / "uploads"
+    monkeypatch.setenv("UPLOAD_DIR", str(uploads))
+    monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
+    app = create_app(sqlite_path=tmp_path / "dedupe.db")
+    pdf_bytes = _make_pdf_bytes("Report: glucose 6.1.")
+    with TestClient(app) as c:
+        tid = str(c.post("/api/session", json={}).json()["thread_id"])
+        for _ in range(3):
+            res = c.post(
+                f"/api/session/{tid}/upload",
+                files={"file": ("报告.pdf", pdf_bytes, "application/pdf")},
+            )
+            assert res.status_code == 201
+
+        written = [p for p in uploads.iterdir() if not p.name.endswith(".parsed.txt")]
+        assert len(written) == 1, f"重复上传写了多份副本：{[p.name for p in written]}"
+
+
+def test_upload_sanitizes_a_hostile_filename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """文件名消毒（代码审查报告（第二轮）A4）：控制字符/分隔符被替换、长度被截断。
+
+    截断必须保住扩展名 —— 解析分派完全依赖后缀，丢掉后缀等于把文件变成"不支持的类型"。
+    """
+    uploads = tmp_path / "uploads"
+    monkeypatch.setenv("UPLOAD_DIR", str(uploads))
+    monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
+    app = create_app(sqlite_path=tmp_path / "names.db")
+    with TestClient(app) as c:
+        tid = str(c.post("/api/session", json={}).json()["thread_id"])
+        hostile = "a" * 400 + "\x00bad*.txt"
+        res = c.post(
+            f"/api/session/{tid}/upload",
+            files={"file": (hostile, "纯文本内容".encode(), "text/plain")},
+        )
+        assert res.status_code == 201
+        name = res.json()["file"]
+        assert len(name) <= 120
+        assert name.endswith(".txt")  # 后缀必须保住
+        assert not set(name) & set('\x00<>:"|?*\\/')
+        assert len(list(uploads.iterdir())) >= 1
+
+
+def test_session_context_reports_that_nothing_was_trimmed_initially(
+    client: TestClient,
+) -> None:
+    """新会话：没裁过历史 → `trimmed=0`，界面不该显示任何提示。
+
+    这条守的是"别把正常情况也提示一遍"—— 一个永远亮着的警告等于没有警告。
+    """
+    tid = str(client.post("/api/session", json={}).json()["thread_id"])
+    body = client.get(f"/api/session/{tid}/context").json()
+    assert body["trimmed"] == 0
+    assert body["budget"] > 0  # 当前配置值一并给出，界面不会误读
+
+
+def test_trimmed_history_is_reported_to_the_client_and_persisted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """H3 的界面部分：裁剪要**告诉客户端**，而且刷新页面后仍能查到。
+
+    背景：`state["messages"]` 只增不减，而 prompt 有字符预算。裁剪本身在上一轮已修，
+    但"用户完全不知道模型这次没看到早期对话" —— 表现就是"它怎么忘了我前面说的"。
+    现在两条路都给到：当轮 SSE 事件（即时提示）+ checkpoint 里的 state（刷新后仍可查）。
+    """
+    monkeypatch.setenv("CONTEXT_MAX_CHARS", "120")  # 很小的预算，几轮就把历史挤出去
+    app = create_app(
+        sqlite_path=tmp_path / "trim.db",
+        model=ScriptedChat([AIMessage(content="回复" + "字" * 40) for _ in range(10)]),
+    )
+    with TestClient(app) as c:
+        tid = str(c.post("/api/session", json={}).json()["thread_id"])
+        # 第一轮：只有一问一答，预算装得下 → 不该有裁剪事件
+        first = chat(c, tid, "第一问")
+        assert not [e for e in first if e["type"] == "context_trimmed"]
+        assert c.get(f"/api/session/{tid}/context").json()["trimmed"] == 0
+
+        # 多问几轮把历史推过预算
+        events: list[dict[str, object]] = []
+        for i in range(5):
+            events = chat(c, tid, f"第 {i + 2} 问")
+            if [e for e in events if e["type"] == "context_trimmed"]:
+                break
+
+        trimmed = [e for e in events if e["type"] == "context_trimmed"]
+        assert trimmed, "历史超出预算后必须上报 context_trimmed"
+        assert trimmed[0]["dropped"] >= 1
+        assert trimmed[0]["kept"] >= 1
+        # 一次用户轮次只报一次（工具循环里 call_model 会跑多次）
+        assert len(trimmed) == 1
+
+        # 刷新后（新请求）仍查得到同一个事实
+        after = c.get(f"/api/session/{tid}/context").json()
+        assert after["trimmed"] >= 1
+        assert after["kept"] >= 1
+
+
+def test_session_context_unknown_thread_is_404(client: TestClient) -> None:
+    assert client.get("/api/session/s_nope/context").status_code == 404
+
+
+def test_reupload_self_heals_when_the_stored_file_vanished(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**回归护栏**：台账在、磁盘文件不在时，重复上传要自愈，不能 500。
+
+    这是"重复上传不重复落盘"（M4）与"文件可能被外部删除"叠加出来的真实缺陷：
+    幂等命中后代码直接复用了 `source_file` 记录的路径，而那个文件已经不在了 ——
+    解析抛 `FileNotFoundError`，用户看到 500。修法是：此时把这次的字节重新写下并
+    把台账指过去（正常重复上传仍然零写入）。
+    """
+    uploads = tmp_path / "uploads"
+    monkeypatch.setenv("UPLOAD_DIR", str(uploads))
+    monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
+    app = create_app(sqlite_path=tmp_path / "heal.db")
+    body = b"Follow-up report: glucose 6.1."
+    with TestClient(app) as c:
+        tid = str(c.post("/api/session", json={}).json()["thread_id"])
+        first = c.post(
+            f"/api/session/{tid}/upload", files={"file": ("a.txt", body, "text/plain")}
+        )
+        assert first.status_code == 201
+        stored = next(p for p in uploads.iterdir() if not p.name.endswith(".parsed.txt"))
+        stored.unlink()  # 模拟人工删除 / 数据卷重置
+
+        again = c.post(
+            f"/api/session/{tid}/upload", files={"file": ("a.txt", body, "text/plain")}
+        )
+        assert again.status_code == 201, again.text
+        assert again.json()["reused"] is True  # 仍然是同一个任务，没有重复登记
+        assert again.json()["task_id"] == first.json()["task_id"]
+        # 文件被补回来了，而且台账指向的是新路径
+        files = [p for p in uploads.iterdir() if not p.name.endswith(".parsed.txt")]
+        assert len(files) == 1 and files[0].exists()
+
+
+def test_failed_task_recovers_when_the_same_file_is_reuploaded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**failed 不能是死胡同**：解析失败后重传同一份文件，任务必须能回到 indexed。
+
+    背景：`_INGESTION_TRANSITIONS` 允许 failed → pending（"explicit restart only"），
+    但此前**没有任何代码执行这条回边** —— 任务一旦 failed 就永远 failed，哪怕重传后
+    解析、入库都成功了，台账还在说"失败"（状态与事实背离，比报错更难查）。
+
+    用 monkeypatch 让"同一份字节"第一次解析失败、第二次成功，模拟的是**环境问题被修好**
+    （磁盘满导致的截断文件被补齐、OCR 后端装好了）—— 字节相同而环境不同，是这条路径
+    真实的发生方式。
+    """
+    uploads = tmp_path / "uploads"
+    monkeypatch.setenv("UPLOAD_DIR", str(uploads))
+    monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
+    app = create_app(sqlite_path=tmp_path / "retry.db")
+    body = b"Follow-up: glucose 6.1."
+
+    import rolecard_agent.api.routers.sessions as sessions_mod
+
+    real_parse = sessions_mod.parse_document
+    calls = {"n": 0}
+
+    def flaky_parse(*args: object, **kwargs: object) -> str:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ParseError("第一次解析失败（模拟环境问题）")
+        return real_parse(*args, **kwargs)  # 第二次：环境修好了
+
+    monkeypatch.setattr(sessions_mod, "parse_document", flaky_parse)
+
+    with TestClient(app) as c:
+        tid = str(c.post("/api/session", json={}).json()["thread_id"])
+        first = c.post(f"/api/session/{tid}/upload", files={"file": ("a.txt", body, "text/plain")})
+        assert first.status_code == 500  # 解析失败以可读 500 呈现（而不是别的异常）
+        assert "第一次解析失败" in first.json()["detail"]
+        assert c.get(f"/api/session/{tid}/context").status_code == 200  # 站得住的失败
+
+        again = c.post(f"/api/session/{tid}/upload", files={"file": ("a.txt", body, "text/plain")})
+        assert again.status_code == 201, again.text
+        assert again.json()["status"] == "indexed", (
+            "重传成功后任务必须回到 indexed —— failed 不能是终点"
+        )
+        assert again.json()["reused"] is True  # 同一份字节，仍是同一个任务
+        assert calls["n"] == 2
+
+
+def test_thinking_content_reaches_the_client_as_an_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """思考模型的推理内容必须以 `thinking` 事件透出（qwen3 / deepseek-r1 类）。
+
+    为什么要有独立事件而不是塞进正文：思考是"过程"，回答是"结论"——界面要分别渲染
+    （折叠面板 vs 气泡）。事件与 `MODEL_THINKING_MODELS` 配套：模型在名单里才以
+    reasoning=True 调用，不在名单里的模型（如 qwen2.5）零变化。
+    """
+    thinking_reply = AIMessage(
+        content="答：需要先检索再回答。",
+        additional_kwargs={"reasoning_content": "内心戏：这个问题要先想清楚边界。"},
+    )
+    app = create_app(sqlite_path=tmp_path / "think.db", model=ScriptedChat([thinking_reply]))
+    with TestClient(app) as c:
+        tid = str(c.post("/api/session", json={}).json()["thread_id"])
+        events = chat(c, tid, "一个问题")
+
+        thinking = [e for e in events if e["type"] == "thinking"]
+        assert len(thinking) == 1, thinking  # 工具循环多次跑 call_model 也不能重复发
+        assert "内心戏" in str(thinking[0]["text"])
+        # 思考与正文分流：不混进 message_replace 的权威文本里
+        assert "内心戏" not in authoritative_text(events)
+        assert "答" in authoritative_text(events)
+
+
+def test_plain_model_produces_no_thinking_events(client: TestClient) -> None:
+    """非思考模型（qwen2.5 类）：零 thinking 事件 —— 不能凭空造一个空面板。"""
+    events = chat(client, str(client.post("/api/session", json={}).json()["thread_id"]), "你好")
+    assert [e for e in events if e["type"] == "thinking"] == []
+
+
 def test_upload_unsupported_type_stays_pending(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -292,3 +519,4 @@ def test_upload_unknown_thread_404(tmp_path: Path, monkeypatch: pytest.MonkeyPat
             files={"file": ("a.txt", b"data", "text/plain")},
         )
         assert res.status_code == 404
+# -- 编辑重生成 / 删除问答对（v2.4） ----------------------------------------------

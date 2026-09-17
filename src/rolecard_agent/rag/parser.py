@@ -20,6 +20,13 @@ import re
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # 只在类型检查时导入：`rag/ocr.py` 在运行期 import 本模块，反向依赖必须留在这里
+    # 以免形成循环导入。有了它，`backend` 参数才能标注成 `OcrBackend | None` 而不是
+    # `object`（后者让 mypy 完全看不到 `available()` / `ocr()` 这两个方法）。
+    from rolecard_agent.rag.ocr import OcrBackend
 
 TEXT_EXTS: frozenset[str] = frozenset({".txt", ".md"})
 PDF_EXTS: frozenset[str] = frozenset({".pdf"})
@@ -37,6 +44,10 @@ _W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _A_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 _SS_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 
+# 部件名 → 编号（排序用）。见 `_numbered`：字典序会把 slide10 排到 slide2 前面。
+_SLIDE_RE = re.compile(r"ppt/slides/slide(\d+)\.xml")
+_SHEET_RE = re.compile(r"xl/worksheets/sheet(\d+)\.xml")
+
 
 class ParseError(Exception):
     """解析失败（含 OCR 不可用）。携带可读原因，绝不含栈或内部路径。"""
@@ -47,15 +58,22 @@ class OcrUnavailable(ParseError):
 
 
 def parse_document(
-    path: str | Path, *, ocr_python: str | None = None, backend: object | None = None
+    path: str | Path, *, ocr_python: str | None = None, backend: OcrBackend | None = None
 ) -> str:
     """把文件解析为纯文本。返回空字符串表示无文本（不报错，由调用方决定如何处理）。
 
     相对路径按当前工作目录解析；上传端点传入的是已落盘的绝对 / 相对路径。
     `backend` 为上层按策略选好的 OCR 后端（见 rag/ocr.select_ocr_backend）；未传时图片走
     本地 Paddle 默认路径（仍离线优先）。
+
+    **文件不存在时抛 `ParseError` 而不是让 `FileNotFoundError` 冒出去**：调用方（上传 /
+    抽取端点）只把 `ParseError` 翻译成可读响应，其它异常会变成没有任何说明的 500。
+    这条路径是真实存在的：台账记着某个文件，而它在磁盘上被人工删除或卷被重置过 ——
+    上一轮把"重复上传不重复落盘"做完之后，这个组合就会命中（实测过 500）。
     """
     p = Path(path)
+    if not p.is_file():
+        raise ParseError(f"文件不存在或不可读：{p.name}（可能已被删除或卷未挂载）")
     suffix = p.suffix.lower()
     if suffix in TEXT_EXTS:
         return p.read_text(encoding="utf-8", errors="ignore")
@@ -124,19 +142,61 @@ def _open_ooxml(p: Path) -> zipfile.ZipFile:
     return z
 
 
-def _xml_root(xml: bytes) -> ET.Element:
-    """解析 XML 部件。只取真正需要的标签文本，且对来源做了 zip 规模校验（见 _open_ooxml）；
-    不引入 defusedxml 是 v1 的依赖取舍 —— 攻击面已由解压规模上限收窄。"""
+def _reject_doctype(xml: bytes, part: str) -> None:
+    """拒绝带 DTD / 实体声明的 XML 部件。
+
+    ## 为什么这是完备的（而且不需要 defusedxml）
+
+    标准库 `xml.etree.ElementTree` 基于 expat，历史上受三类攻击：billion laughs
+    （实体递归展开）、quadratic blowup、外部实体（XXE）。**这三类都必须先声明
+    `<!DOCTYPE` 与 `<!ENTITY`** —— 没有 DOCTYPE 就没有 DTD，没有 DTD 就没有实体可展开，
+    也就没有可检索的外部资源。所以"拒绝声明"比"限制展开"更彻底：它在攻击发生**之前**
+    就结束了，不依赖 expat 的版本或默认限额。
+
+    合法 OOXML 部件永远是普通 XML 文档，**不含 DOCTYPE，也不含实体声明**（ECMA-376 定义的
+    部件都是 schema-validated 的普通文档，不靠 DTD）。因此这条拒绝规则不会误伤真实文件 ——
+    测试 `test_docx_with_a_dtd_is_rejected` 与既有的正常解析用例一起守住这一点。
+
+    为什么不用 defusedxml（取舍写在这里，而不是留给后人猜）：本模块的既定选择是
+    OOXML 解析**零新增依赖**（见模块 docstring —— 刻意不引 python-docx / openpyxl / lxml）。
+    为一条"合法输入永不需要"的能力引入一个依赖，不如直接把该输入类别拒掉。
+
+    ## 为什么必须扫全量而不是只看开头
+
+    XML 允许在 DOCTYPE 之前放任意长度的注释与处理指令，所以"只扫前 N 字节"是一个
+    **可绕过的窗口**：攻击者用注释把 DOCTYPE 推到扫描窗口之外即可。这里对整段字节做
+    子串查找（C 层实现，O(n)，且 n 已被 zip 规模上限约束在 64MB 内），不留窗口。
+
+    ## 为什么不做大小写归一
+
+    XML 规范里这两个关键字**必须是大写**（`<!DOCTYPE` / `<!ENTITY`）。写成小写的形式
+    不是合法的 XML 声明，expat 会直接拒 —— 也就是说"绕过大小写检查"的路根本不存在，
+    而 `.upper()` 会把整段字节**复制一份**（64MB 的部件就多 64MB 峰值内存）。
+    精确匹配既更省内存，也更符合规范。
+    """
+    if b"<!DOCTYPE" in xml or b"<!ENTITY" in xml:
+        raise ParseError(
+            f"OOXML 部件 {part} 含有 DTD / 实体声明，已拒绝解析（合法 OOXML 不含这些）。"
+        )
+
+
+def _xml_root(xml: bytes, *, part: str = "?") -> ET.Element:
+    """解析 XML 部件：先拒声明，再解析。规模上限见 `_open_ooxml`。"""
+    _reject_doctype(xml, part)
     try:
         return ET.fromstring(xml)
     except ET.ParseError as exc:
         raise ParseError(f"OOXML 部件 XML 损坏：{exc}") from exc
 
 
-def _text_from_xml(xml: bytes, *, para_tag: str, text_tag: str) -> str:
-    """按段落聚合：每段落内所有 <t> 顺序拼接为一行，丢弃空段落。docx 与 pptx 共用此式。"""
+def _text_from_xml(xml: bytes, *, para_tag: str, text_tag: str, part: str) -> str:
+    """按段落聚合：每段落内所有 <t> 顺序拼接为一行，丢弃空段落。docx 与 pptx 共用此式。
+
+    `part` 只用于报错信息：出问题时告诉操作员**是哪个部件**有问题，比一句
+    "OOXML 部件 XML 损坏" 有用得多。
+    """
     lines: list[str] = []
-    for para in _xml_root(xml).iter(para_tag):
+    for para in _xml_root(xml, part=part).iter(para_tag):
         line = "".join((t.text or "") for t in para.iter(text_tag)).strip()
         if line:
             lines.append(line)
@@ -150,17 +210,35 @@ def _parse_docx(p: Path) -> str:
             xml = z.read("word/document.xml")
         except KeyError as exc:
             raise ParseError("不是有效的 .docx：缺少 word/document.xml") from exc
-    return _text_from_xml(xml, para_tag=f"{_W_NS}p", text_tag=f"{_W_NS}t")
+    return _text_from_xml(
+        xml, para_tag=f"{_W_NS}p", text_tag=f"{_W_NS}t", part="word/document.xml"
+    )
+
+
+def _numbered(names: list[str], pattern: re.Pattern[str]) -> list[str]:
+    """按**编号**排序匹配到的 OOXML 部件，而不是按字典序。
+
+    `sorted()` 是字典序：`slide10.xml` 排在 `slide2.xml` **前面**（'1' < '2'）。≥10 页的
+    PPT 因此会被抽出错乱的页序 —— 第 10 页的数值出现在第 1 页之后，结构化抽取拿到的
+    上下文是错的，而这是**静默**的语义错误（审查报告 M9）。
+    """
+    def key(name: str) -> int:
+        found = pattern.search(name)
+        return int(found.group(1)) if found else 0
+
+    return sorted((n for n in names if pattern.fullmatch(n)), key=key)
 
 
 def _parse_pptx(p: Path) -> str:
     """pptx 各页：按 slide 序号排序，逐页抽 <a:t> 文本，页间空行分隔。"""
     with _open_ooxml(p) as z:
-        slides = sorted(n for n in z.namelist() if re.fullmatch(r"ppt/slides/slide\d+\.xml", n))
+        slides = _numbered(z.namelist(), _SLIDE_RE)
         if not slides:
             raise ParseError("不是有效的 .pptx：没有 ppt/slides/slide*.xml")
         parts = [
-            _text_from_xml(z.read(name), para_tag=f"{_A_NS}p", text_tag=f"{_A_NS}t")
+            _text_from_xml(
+                z.read(name), para_tag=f"{_A_NS}p", text_tag=f"{_A_NS}t", part=name
+            )
             for name in slides
         ]
     return "\n\n".join(x for x in parts if x)
@@ -170,17 +248,19 @@ def _parse_xlsx(p: Path) -> str:
     """xlsx 文本：共享字符串（+ 内联字符串）。**只做文本抽取，不重建表结构行列**。"""
     with _open_ooxml(p) as z:
         names = z.namelist()
-        sheets = [n for n in names if re.fullmatch(r"xl/worksheets/sheet\d+\.xml", n)]
+        sheets = _numbered(names, _SHEET_RE)
         if not sheets:
             raise ParseError("不是有效的 .xlsx：没有 xl/worksheets/sheet*.xml")
         lines: list[str] = []
         if "xl/sharedStrings.xml" in names:
-            for si in _xml_root(z.read("xl/sharedStrings.xml")).iter(f"{_SS_NS}si"):
+            shared = _xml_root(z.read("xl/sharedStrings.xml"), part="xl/sharedStrings.xml")
+            for si in shared.iter(f"{_SS_NS}si"):
                 s = "".join((t.text or "") for t in si.iter(f"{_SS_NS}t")).strip()
                 if s:
                     lines.append(s)
         for name in sheets:  # 少数写入器用 inlineStr
-            for is_el in _xml_root(z.read(name)).iter(f"{_SS_NS}is"):
+            sheet = _xml_root(z.read(name), part=name)
+            for is_el in sheet.iter(f"{_SS_NS}is"):
                 s = "".join((t.text or "") for t in is_el.iter(f"{_SS_NS}t")).strip()
                 if s:
                     lines.append(s)
@@ -188,16 +268,17 @@ def _parse_xlsx(p: Path) -> str:
 
 
 def _default_ocr_python() -> str | None:
-    """默认 OCR 解释器：项目根下的独立 venv（requirements-ocr.txt 的安装约定）。
+    """向后兼容别名：路径发现已下沉到 core.paths（M10 解耦 core→rag）。
 
-    parser.py 位于 <root>/src/rolecard_agent/rag/，故项目根为 parents[3]。
+    新代码请直接用 `from rolecard_agent.core.paths import default_ocr_python`。
     """
-    cand = Path(__file__).resolve().parents[3] / ".venv-ocr" / "Scripts" / "python.exe"
-    return str(cand) if cand.exists() else None
+    from rolecard_agent.core.paths import default_ocr_python as _impl
+
+    return _impl()
 
 
 def _parse_image(
-    p: Path, *, ocr_python: str | None = None, backend: object | None = None
+    p: Path, *, ocr_python: str | None = None, backend: OcrBackend | None = None
 ) -> str:
     """图片 OCR：优先用上层按策略选好的 `backend`（见 rag/ocr.select_ocr_backend）；
     否则按 `ocr_python` 构造本地 Paddle 后端，再不行自动发现默认 .venv-ocr 解释器（仍离线优先）。

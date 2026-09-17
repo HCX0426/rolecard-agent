@@ -53,6 +53,7 @@ def _kernel(
     bootstrap(conn, enabled_domains=("health",))
     roles = RoleCardService(conn)
     roles.seed_builtins()
+    roles.seed_domain_roles()
 
     plugins = PluginService(conn, known_plugins=["health"])
     plugins.register("health", display_name="Health")
@@ -180,6 +181,7 @@ def test_whitelist_is_applied_before_binding(tmp_path: Path) -> None:
     bootstrap(conn, enabled_domains=("health",))
     roles = RoleCardService(conn)
     roles.seed_builtins()
+    roles.seed_domain_roles()
     roles.create(
         RoleCardCreate(
             role_id="narrow",

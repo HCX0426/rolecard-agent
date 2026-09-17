@@ -8,6 +8,14 @@ import {
   type ToolEntry,
 } from "../api";
 
+// 范例草稿行：rowId 是稳定 React key（M7），删行/插行时输入框状态不串行；
+// 提交时只挑 user/assistant，rowId 不会外泄。
+type ExemplarDraft = { rowId: number; user: string; assistant: string };
+
+// 行 id 发号器：模块级自增（key 只需在当前列表实例内唯一）。
+let exemplarSeq = 0;
+const nextExemplarId = () => (exemplarSeq += 1);
+
 const EMPTY_FORM = {
   role_id: "",
   role_name: "",
@@ -16,7 +24,7 @@ const EMPTY_FORM = {
   model_name: "",
   tool_whitelist: [] as string[],
   knowledge_scopes: [] as string[],
-  exemplars: [] as { user: string; assistant: string }[],
+  exemplars: [] as ExemplarDraft[],
   description: "",
 };
 
@@ -163,7 +171,8 @@ export default function RolesPage() {
       model_name: r.model_name || "",
       tool_whitelist: r.tool_whitelist || [],
       knowledge_scopes: r.knowledge_scopes || [],
-      exemplars: r.exemplars || [],
+      // 服务端范例行没有 id：装载时补发稳定 key（M7）。
+      exemplars: (r.exemplars || []).map((e) => ({ ...e, rowId: nextExemplarId() })),
       description: r.description || "",
     });
     setWlMode(r.tool_whitelist === null ? "all" : "custom");
@@ -425,9 +434,9 @@ export default function RolesPage() {
                 </div>
               </div>
               <span className="mt-1 block text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
-                这是对内核知识库（RAG，v2.1 接入）的检索授权：声明 = 可检索该作用域；不声明 =
-                不可检索。库归内核，角色只声明 —— 避免 N 个角色 × M 套索引。可选列表来自现存
-                角色的声明并集；v2.1 后将换成内核集合注册表。
+                这是对内核知识库（RAG）的检索授权：声明 = 可检索该作用域；不声明 =
+                不可检索。库归内核，角色只声明 —— 避免 N 个角色 × M 套索引。可选列表来自
+                现存角色的声明并集。
               </span>
             </label>
             <div className="mt-3">
@@ -441,7 +450,7 @@ export default function RolesPage() {
                     onClick={() =>
                       setForm((f) => ({
                         ...f,
-                        exemplars: [...f.exemplars, { user: "", assistant: "" }],
+                        exemplars: [...f.exemplars, { rowId: nextExemplarId(), user: "", assistant: "" }],
                       }))
                     }
                     className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
@@ -452,7 +461,7 @@ export default function RolesPage() {
               </div>
               <div className="mt-1.5 space-y-2">
                 {form.exemplars.map((ex, i) => (
-                  <div key={i} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-2">
+                  <div key={ex.rowId} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-2">
                     <div className="flex items-start gap-2">
                       <span className="mt-1.5 shrink-0 text-[11px] text-slate-400 dark:text-slate-500">用户</span>
                       <input

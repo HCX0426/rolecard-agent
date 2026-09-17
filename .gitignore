@@ -35,6 +35,8 @@ frontend/node_modules/
 # --- eval ---
 # 每次跑批都会重写（模型相关，数字会漂移）；基线数字固化在 docs/需求与验收标准.md
 tests/eval/report.json
+# 无模型时的跑批链路自检产物（同理由脚本生成，不入库）
+tests/eval/harness/
 
 # --- models / large artifacts ---
 models/

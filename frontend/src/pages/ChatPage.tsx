@@ -2,29 +2,27 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   streamChat,
+  streamEdit,
   type ExtractResult,
   type MessageRow,
   type ModelProvider,
   type ModelSettings,
   type RoleCard,
+  type SessionContext,
   type SessionRow,
 } from "../api";
 import { ToastStack, useToasts, type Tone } from "../components/Toast";
-
-// 一次工具调用：状态 + 名称 + 结果。结构化展示，而不是一行被截断的原始文本。
-interface ToolStep {
-  name: string;
-  status: "running" | "ok" | "error";
-  content: string;
-}
-
-// 流式回答的临时气泡：token 逐段进入，message_replace 用权威文本覆盖，
-// 流结束后用服务端 checkpoint 回放覆盖整个消息列表（前后端唯一真相在 checkpoint）。
-interface LiveBubble {
-  text: string;
-  tools: ToolStep[];
-  streaming: boolean;
-}
+import {
+  describeTrim,
+  newLiveBubble,
+  reduceChatEvent,
+  type LiveBubble,
+  type StreamMeta,
+  type ToolStep,
+} from "../lib/stream";
+import { describeExtract, describeUpload, type UploadResponse } from "../lib/uploadOutcome";
+import { expandSelection } from "../lib/turns";
+import { ThinkingPanel } from "../lib/ThinkingPanel";
 
 // 快捷问题：空会话时直接点着问（对齐 WorkBuddy 输入框上方的建议 chips）
 const QUICK_PROMPTS = ["帮我查一下结石直径的变化", "我有哪些报告？"];
@@ -70,6 +68,12 @@ function ToolStepCard({ step }: { step: ToolStep }) {
         ? "bg-red-400"
         : "bg-green-500 dark:bg-green-600";
   const body = step.content.trim();
+  // 入参摘要：让"过程"可见（搜了什么词 / 抓了哪个地址），截断到一行。
+  const argsSummary = Object.entries(step.args ?? {})
+    .filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== "")
+    .map(([k, v]) => `${k}=${String(v)}`)
+    .join("  ")
+    .slice(0, 80);
   return (
     <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-2.5 py-1.5">
       <button
@@ -80,7 +84,12 @@ function ToolStepCard({ step }: { step: ToolStep }) {
       >
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
         <span className="shrink-0">{step.name}</span>
-        {step.status === "running" && <span className="text-slate-400 dark:text-slate-500">执行中…</span>}
+        {argsSummary && (
+          <span className="min-w-0 flex-1 truncate text-slate-400 dark:text-slate-500">
+            {argsSummary}
+          </span>
+        )}
+        {step.status === "running" && <span className="shrink-0 text-slate-400 dark:text-slate-500">执行中…</span>}
         {body && (
           <span className="ml-auto shrink-0 text-slate-300 dark:text-slate-600">
             {open ? "收起 ▴" : `${body.length} 字 ▾`}
@@ -108,6 +117,14 @@ export default function ChatPage({
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [live, setLive] = useState<LiveBubble | null>(null);
   const [input, setInput] = useState("");
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  // 输入框自适应高度：内容多时长高（封顶 160px 后内部滚动），发送/清空后缩回一行。
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [input]);
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
@@ -120,10 +137,33 @@ export default function ChatPage({
   const [sessionModel, setSessionModel] = useState<string | null>(null);
   const [busy, setBusy] = useState(false); // 流式进行中：驱动「停止」按钮与输入禁用
   const [sessionsOpen, setSessionsOpen] = useState(false); // 移动端会话栏抽屉
+  // 上下文预算事实（H3 的界面部分）：>0 时提示"早期对话已折叠"。
+  // 单独放在 state 而不是气泡里，是因为气泡在流结束时会被 checkpoint 回放**整体替换** ——
+  // 挂在气泡上的提示会在回答刚结束时消失，用户根本来不及看到。
+  const [trim, setTrim] = useState<{ dropped: number; kept: number } | null>(null);
+  // 编辑重生成：正在编辑的那条消息（id + 草稿）
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  // 多选删除模式：勾选若干消息（勾一侧自动带上整轮）
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const sendingRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // 气泡的"当前值"镜像：事件回调里需要读到最新气泡才能归约，而 setState 的更新函数
+  // 可能在渲染期被调用（在更新函数里做副作用在 StrictMode 下会执行两次）。用 ref 明确持有。
+  const liveRef = useRef<LiveBubble | null>(null);
+  // 本轮是否收到过 error 事件（详情留到收尾时统一提示，见 applyMeta 的说明）。
+  const errorRef = useRef<string>("");
+
+  /** 把事件的旁路信息落到对应的界面状态上（气泡正文之外的信息）。 */
+  const applyMeta = useCallback((meta: StreamMeta) => {
+    if (meta.trimmed && meta.trimmed.dropped > 0) setTrim(meta.trimmed);
+    // 错误详情必须**攒起来留到流结束后再说**：气泡会在收尾时被 checkpoint 回放整体替换，
+    // 挂在气泡上的 `[错误] …` 跟着一起消失 —— 用户实际上看不到任何提示。
+    if (meta.errored) errorRef.current = meta.errorDetail || "模型调用失败";
+  }, []);
 
   // 状态提示统一走 toast（可叠加、自动消失、带语气）—— 一行 status 会被后来的消息覆盖，
   // 上一个操作的结果还没看清就没了。保留 setStatus 这个名字，既有调用点无需改动。
@@ -166,12 +206,18 @@ export default function ChatPage({
     setModelMenuOpen(false);
     setSessionsOpen(false); // 移动端选中后收起抽屉
     try {
-      const [msgs, detail] = await Promise.all([
+      const [msgs, detail, ctxInfo] = await Promise.all([
         api.get<MessageRow[]>(`/api/session/${threadId}/messages`),
         api.get<{ model_name: string | null }>(`/api/session/${threadId}`),
+        // 上下文预算事实：刷新页面后「早期对话已折叠」这条提示同样要能显示出来
+        // （它不是一次性的 SSE 事件，而是一个持续为真的状态）。
+        api
+          .get<SessionContext>(`/api/session/${threadId}/context`)
+          .catch(() => ({ trimmed: 0, kept: 0, budget: 0 }) as SessionContext),
       ]);
       setMessages(msgs);
       setSessionModel(detail.model_name);
+      setTrim(ctxInfo.trimmed > 0 ? { dropped: ctxInfo.trimmed, kept: ctxInfo.kept } : null);
       setStatus("");
     } catch (e) {
       setStatus(`加载历史失败：${(e as Error).message}`, "warn");
@@ -184,7 +230,7 @@ export default function ChatPage({
   }
 
   /** 创建会话；上一个会话还没发过消息（无标题 = 空白）→ 直接打开它，不堆叠空会话。
-   *  角色是可选的：不指定即用默认角色（内置健康档案管理员），之后随时在功能行切换。
+   *  角色是可选的：不指定即用默认角色（内置「通用助手」），之后随时在功能行切换。
    *  返回可用的 thread_id（新建或复用的），失败返回 null。 */
   async function createSession(): Promise<string | null> {
     const empty = sessions.find((s) => !s.title);
@@ -200,6 +246,8 @@ export default function ChatPage({
       setConfirmDel(null);
       setMessages([]);
       setLive(null);
+      liveRef.current = null;
+      setTrim(null); // 新会话没有历史，也就谈不上"折叠"
       setStatus("");
       await refreshSessions();
       return s.thread_id;
@@ -263,7 +311,9 @@ export default function ChatPage({
       }
     }
     setMessages((m) => [...m, { role: "user", content: text }]);
-    setLive({ text: "", tools: [], streaming: true });
+    const bubble = newLiveBubble();
+    liveRef.current = bubble;
+    setLive(bubble);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -271,45 +321,13 @@ export default function ChatPage({
       tid,
       text,
       (ev) => {
-        if (ev.type === "token") {
-          setLive((s) => (s ? { ...s, text: s.text + ev.text } : s));
-        } else if (ev.type === "tool_call") {
-          // 同一轮可能连续调多个工具：每个都开一张卡片，状态"执行中"
-          setLive((s) =>
-            s ? { ...s, tools: [...s.tools, { name: ev.name, status: "running", content: "" }] } : s,
-          );
-        } else if (ev.type === "tool_result") {
-          // 把最近一个同名且"执行中"的卡片标记完成（离线/拒绝也算结果，不再另开卡片）
-          setLive((s) => {
-            if (!s) return s;
-            const tools = [...s.tools];
-            for (let i = tools.length - 1; i >= 0; i -= 1) {
-              if (tools[i].name === ev.name && tools[i].status === "running") {
-                tools[i] = { name: ev.name, status: "ok", content: ev.content };
-                return { ...s, tools };
-              }
-            }
-            return {
-              ...s,
-              tools: [...tools, { name: ev.name, status: "ok", content: ev.content }],
-            };
-          });
-        } else if (ev.type === "message_replace") {
-          setLive((s) => (s ? { ...s, text: ev.text } : s));
-        } else if (ev.type === "error") {
-          setLive((s) =>
-            s
-              ? {
-                  ...s,
-                  text: `${s.text}\n[错误] ${ev.detail}`,
-                  tools: s.tools.map((t) =>
-                    t.status === "running" ? { ...t, status: "error" as const } : t,
-                  ),
-                }
-              : s,
-          );
-        }
-        // "end" 在下面统一收尾
+        // 气泡归约是"事件 → 新气泡"的纯函数，逻辑在 lib/stream.ts 里被单测覆盖；
+        // meta 是旁路信息（上下文裁剪 / 角色摘要 / 是否出错），不进入气泡正文。
+        const prev = liveRef.current ?? newLiveBubble();
+        const reduced = reduceChatEvent(prev, ev);
+        liveRef.current = reduced.bubble;
+        setLive(reduced.bubble);
+        applyMeta(reduced.meta);
       },
       controller.signal,
     );
@@ -322,6 +340,12 @@ export default function ChatPage({
       /* 会话已被删等极端情况：保留现有气泡 */
     }
     setLive(null);
+    liveRef.current = null;
+    // 出错必须让用户看到：气泡被回放替换后，挂在气泡上的错误文案会一起消失。
+    if (errorRef.current) {
+      setStatus(`回答中断：${errorRef.current}`, "warn");
+      errorRef.current = "";
+    }
     sendingRef.current = false;
     setBusy(false);
     if (aborted) setStatus("已停止生成（已生成的内容已保留）", "warn");
@@ -344,28 +368,13 @@ export default function ChatPage({
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const r = await api.post<{
-        task_id: string;
-        reused: boolean;
-        file: string;
-        status?: string;
-      }>(`/api/session/${tid}/upload`, fd);
+      const r = await api.post<UploadResponse>(`/api/session/${tid}/upload`, fd);
 
-      // 三态反馈：让用户知道这份文件到底读没读进去（v2.2 起解析已真实生效）
-      if (!r.status || r.status === "pending") {
-        setStatus(
-          `「${r.file}」已登记，但当前无法解析（类型不支持，或图片 OCR 未配置）${
-            r.reused ? "（同一文件此前已登记）" : ""
-          }`,
-          "warn",
-        );
-        return;
-      }
-      if (r.status === "parsed") {
-        setStatus(
-          `「${r.file}」已解析，但没有提取到文本（可能是扫描件），暂未入检索`,
-          "warn",
-        );
+      // 三态反馈（登记但读不了 / 解析了没文本 / 已入索引）：判断逻辑抽到
+      // lib/uploadOutcome.ts 并被单测覆盖 —— 这段分支以前只能靠人工点页面验。
+      const uploadOutcome = describeUpload(r);
+      if (uploadOutcome) {
+        setStatus(uploadOutcome.text, uploadOutcome.tone);
         return;
       }
 
@@ -379,36 +388,8 @@ export default function ChatPage({
       } catch (e) {
         extractError = (e as Error).message;
       }
-
-      if (result?.skipped) {
-        const why =
-          result.skipped === "already_extracted"
-            ? "此前已识别过，不重复写入"
-            : result.skipped === "no_text"
-              ? "没有可抽取的文本"
-              : "当前没有可用的模型后端";
-        setStatus(`「${r.file}」${why}（原文已入检索，可直接提问）`, "warn");
-        return;
-      }
-      if (!result) {
-        setStatus(`「${r.file}」AI 识别指标失败：${extractError}（原文已入检索，可直接提问）`, "warn");
-        return;
-      }
-
-      let text: string;
-      let tone: Tone = "warn";
-      if (result.written.length > 0) {
-        const names = result.written.map((w) => w.index_name).join("、");
-        text = `「${r.file}」AI 已提取 ${result.written.length} 项指标：${names}（均标记【未经人工校验】，可在「数据」页核对）`;
-        tone = "ok";
-      } else if (result.conflicts.length > 0) {
-        const names = result.conflicts.map((c) => c.index_name).join("、");
-        text = `「${r.file}」识别出 ${result.conflicts.length} 项存疑指标（${names}），按规则未写入 —— 可在「数据」页手动补录`;
-      } else {
-        text = `「${r.file}」未识别出可入档的指标（原文已入检索，可直接提问）`;
-      }
-      if (result.notes.length > 0) text += `　备注：${result.notes.join("；")}`;
-      setStatus(text, tone);
+      const outcome = describeExtract(result, extractError, r.file);
+      setStatus(outcome.text, outcome.tone);
     } catch (e) {
       setStatus(`上传失败：${(e as Error).message}`, "warn");
     } finally {
@@ -419,6 +400,81 @@ export default function ChatPage({
       } catch {
         /* 会话可能已被删除 */
       }
+    }
+  }
+
+  /** 进入/退出编辑态。 */
+  function startEdit(id: string, text: string) {
+    setEditing({ id, text });
+  }
+
+  /** 编辑保存 = 从该条重新生成：SSE 与普通对话完全一致，结束后回放刷新历史。 */
+  async function saveEdit() {
+    if (!editing || !sessionId || sendingRef.current) return;
+    const content = editing.text.trim();
+    if (!content) return;
+    sendingRef.current = true;
+    setBusy(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const bubble = newLiveBubble();
+    liveRef.current = bubble;
+    setLive(bubble);
+    setEditing(null);
+    await streamEdit(
+      sessionId,
+      editing.id,
+      content,
+      (ev) => {
+        const prev = liveRef.current ?? newLiveBubble();
+        const reduced = reduceChatEvent(prev, ev);
+        liveRef.current = reduced.bubble;
+        setLive(reduced.bubble);
+        applyMeta(reduced.meta);
+      },
+      controller.signal,
+    );
+    setLive(null);
+    liveRef.current = null;
+    if (errorRef.current) {
+      setStatus(`重新生成失败：${errorRef.current}`, "warn");
+      errorRef.current = "";
+    }
+    sendingRef.current = false;
+    setBusy(false);
+    if (sessionId) {
+      try {
+        setMessages(await api.get<MessageRow[]>(`/api/session/${sessionId}/messages`));
+      } catch {
+        /* 会话可能已删除 */
+      }
+    }
+  }
+
+  /** 勾选/取消一条消息：自动扩展到整轮（与后端 expand_to_turns 同一规则）。 */
+  function toggleSelect(id: string) {
+    setSelected((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return expandSelection(messages, [...next]);
+    });
+  }
+
+  /** 删除所选（后端按整轮扩展并写审计语义上的不可恢复操作）。 */
+  async function deleteSelected() {
+    if (!sessionId || selected.length === 0) return;
+    setConfirmDelete(false);
+    try {
+      await api.post<{ deleted: number }>(`/api/session/${sessionId}/messages/delete`, {
+        message_ids: selected,
+      });
+      setSelected([]);
+      setSelectMode(false);
+      setStatus(`已删除所选对话`, "ok");
+      setMessages(await api.get<MessageRow[]>(`/api/session/${sessionId}/messages`));
+    } catch (e) {
+      setStatus(`删除失败：${(e as Error).message}`, "warn");
     }
   }
 
@@ -483,8 +539,8 @@ export default function ChatPage({
             ＋ 新建对话
           </button>
           <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
-            默认「通用助手」＝纯对话（不接工具与档案）。需要健康档案能力时，在下方切换到
-            「健康档案管理员」。
+            默认「通用助手」＝纯对话（不接工具与档案）。需要其他能力时，在下方
+            切换角色 —— 每个角色只暴露自己白名单内的工具。
           </p>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
@@ -615,44 +671,142 @@ export default function ChatPage({
                   · <b>上传报告 / 图片</b> —— 自动解析并入检索索引（.pdf/.docx/.pptx/.xlsx + 图片 OCR）
                 </li>
                 <li>
-                  · <b>需要查健康档案时</b> —— 切换到「健康档案管理员」，它会调用工具并带来源与
-                  「是否已校验」标记
+                  · <b>需要某类专业能力时</b> —— 切换角色；每个角色只调用自己白名单内的
+                  工具，回答自带来源
                 </li>
                 <li>· 下方功能行可切换角色与模型（下一轮生效，历史保留）</li>
               </ul>
             </div>
           )}
           <div className="mx-auto flex max-w-3xl flex-col gap-4">
-            {messages.map((m, i) =>
-              m.role === "user" ? (
-                <div key={i} className="flex justify-end">
-                  <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-blue-600 px-4 py-2.5 whitespace-pre-wrap text-white">
-                    {m.content}
+            {/* key 用消息的 checkpoint 寻址 id（M7）：流式 message_replace / 编辑重生成 /
+                删除问答对时 React 按身份复用节点，编辑态与勾选才不会错位。
+                仅乐观回显（发送瞬间本地追加、尚未刷新）没有 id，用序号兜底——
+                它永远是列表末尾且存活只有一瞬，序号在这个窗口内是稳定的。 */}
+            {messages.map((m, i) => {
+              const mid = m.id ?? "";
+              const isEditingThis = editing?.id === mid;
+              const checked = selectMode && !!mid && selected.includes(mid);
+              const rowTone = checked ? "opacity-60 ring-1 ring-amber-400" : "";
+              return m.role === "user" ? (
+                <div key={mid || `msg-${i}`} className={`group flex items-start justify-end gap-2 ${rowTone}`}>
+                  {selectMode && !!mid && (
+                    <input
+                      type="checkbox"
+                      aria-label={`选择这条消息：${m.content.slice(0, 12)}`}
+                      checked={checked}
+                      onChange={() => toggleSelect(mid)}
+                      className="mt-3 h-3.5 w-3.5 accent-amber-500"
+                    />
+                  )}
+                  <div className="max-w-[80%]">
+                    {isEditingThis ? (
+                      <div className="rounded-2xl rounded-br-sm border border-blue-300 bg-blue-50 dark:bg-slate-800/70 p-2.5">
+                        <textarea
+                          autoFocus
+                          value={editing.text}
+                          onChange={(e) => setEditing({ id: editing.id, text: e.target.value })}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveEdit();
+                            if (e.key === "Escape") setEditing(null);
+                          }}
+                          rows={3}
+                          className="w-full resize-y rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-blue-400"
+                        />
+                        <div className="mt-1.5 flex items-center justify-end gap-2 text-[11px]">
+                          <span className="text-slate-400 dark:text-slate-500">
+                            发送后此条之后的历史将作废并重新生成（Ctrl+Enter 发送）
+                          </span>
+                          <button
+                            onClick={() => setEditing(null)}
+                            className="rounded px-2 py-1 text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700"
+                          >
+                            取消
+                          </button>
+                          <button
+                            onClick={saveEdit}
+                            className="rounded bg-blue-600 px-2.5 py-1 text-white hover:bg-blue-700"
+                          >
+                            保存并重新生成
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        {/* AI IDE 式交互：悬停自己的消息时，气泡左侧浮现铅笔图标。
+                            group-hover 而不是常显——消息多时不干扰视线；触屏用户仍可点
+                            （透明元素在 DOM 里可聚焦）。 */}
+                        <div className="ml-auto flex max-w-[80%] items-center gap-1.5">
+                          {!busy && (
+                            <button
+                              onClick={() => startEdit(mid, m.content)}
+                              aria-label="编辑并重答"
+                              title="编辑这条消息并重新生成（之后的对话会被作废）"
+                              className="rounded-full p-1.5 text-slate-400 opacity-0 transition-opacity hover:bg-blue-50 hover:text-blue-600 group-hover:opacity-100 dark:text-slate-500 dark:hover:bg-slate-700/60 dark:hover:text-blue-400"
+                            >
+                              <svg
+                                viewBox="0 0 20 20"
+                                fill="currentColor"
+                                className="h-3.5 w-3.5"
+                                aria-hidden="true"
+                              >
+                                <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+                              </svg>
+                            </button>
+                          )}
+                          <div className="rounded-2xl rounded-br-sm bg-blue-600 px-4 py-2.5 whitespace-pre-wrap text-white">
+                            {m.content}
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
               ) : m.role === "tool" ? (
-                <div key={i} className="flex justify-start">
+                <div key={mid || `msg-${i}`} className={`flex items-start justify-start gap-2 ${rowTone}`}>
+                  {selectMode && !!mid && (
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleSelect(mid)}
+                      className="mt-3 h-3.5 w-3.5 accent-amber-500"
+                    />
+                  )}
                   <div className="w-full max-w-[85%]">
+                    {/* id 仅 live 工具列表的 React key 用；回放卡片不在列表里，0 占位。 */}
                     <ToolStepCard
-                      step={{ name: m.name || "tool", status: "ok", content: m.content }}
+                      step={{ id: 0, name: m.name || "tool", status: "ok", content: m.content }}
                     />
                   </div>
                 </div>
               ) : (
-                <div key={i} className="flex justify-start">
+                <div key={mid || `msg-${i}`} className={`flex items-start justify-start gap-2 ${rowTone}`}>
+                  {selectMode && !!mid && (
+                    <input
+                      type="checkbox"
+                      aria-label={`选择这条回答：${m.content.slice(0, 12)}`}
+                      checked={checked}
+                      onChange={() => toggleSelect(mid)}
+                      className="mt-3 h-3.5 w-3.5 accent-amber-500"
+                    />
+                  )}
                   <div className="max-w-[85%] rounded-2xl rounded-bl-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2.5 whitespace-pre-wrap">
+                    {/* 回放的助手消息也可能带思考（后端 serialize_message 带 reasoning）：
+                        轮次结束 live 气泡会被清掉，思考必须在这里再渲染一次才留得住。 */}
+                    <ThinkingPanel text={m.reasoning ?? ""} />
                     {m.content}
                   </div>
                 </div>
-              ),
-            )}
+              );
+            })}
             {live && (
               <div className="flex justify-start">
                 <div className="max-w-[85%] rounded-2xl rounded-bl-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2.5">
+                  <ThinkingPanel text={live.thinking} />
                   {live.tools.length > 0 && (
                     <div className="mb-2 space-y-1.5">
-                      {live.tools.map((t, i) => (
-                        <ToolStepCard key={i} step={t} />
+                      {live.tools.map((t) => (
+                        <ToolStepCard key={t.id} step={t} />
                       ))}
                     </div>
                   )}
@@ -668,6 +822,69 @@ export default function ChatPage({
         </div>
 
         <div className="border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+          {/* 多选删除：确认条出现时输入框让位，避免"边打字边误删" */}
+          {selectMode && selected.length > 0 && (
+            <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+              <span className="flex-1">
+                已选 <b>{selected.length}</b> 条消息（勾选一侧会带上配对的问答）。删除不可恢复。
+              </span>
+              {confirmDelete ? (
+                <>
+                  <button
+                    onClick={deleteSelected}
+                    className="rounded bg-red-500 px-2.5 py-1 text-white hover:bg-red-600"
+                  >
+                    确认删除
+                  </button>
+                  <button
+                    onClick={() => setConfirmDelete(false)}
+                    className="rounded px-2 py-1 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                  >
+                    再想想
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  className="rounded bg-red-500 px-2.5 py-1 text-white hover:bg-red-600"
+                >
+                  删除所选
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  setSelectMode(false);
+                  setSelected([]);
+                  setConfirmDelete(false);
+                }}
+                className="rounded px-2 py-1 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+              >
+                退出选择
+              </button>
+            </div>
+          )}
+          {selectMode && selected.length === 0 && (
+            <div className="mx-auto mb-2 max-w-3xl rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
+              删除模式：勾选任意一问或一答，会自动带上配对的另一侧；选好后点右下「删除所选」。
+            </div>
+          )}
+          {/* 上下文预算提示（H3）：模型这轮只看到了最近 N 条历史。
+              为什么值得占一行位置：不说的话，用户遇到"它怎么忘了我前面说的"时只会
+              归因于"模型不行"，而实际原因是可解释、可预期的行为。措辞在 lib/stream.ts
+              里与测试共用一份（describeTrim），避免界面文案与断言各说各话。 */}
+          {trim && trim.dropped > 0 && (
+            <div className="mx-auto mb-2 flex max-w-3xl items-start gap-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-xs leading-relaxed text-amber-700 dark:text-amber-300">
+              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+              <span className="flex-1">{describeTrim(trim.dropped, trim.kept)}</span>
+              <button
+                onClick={() => setTrim(null)}
+                title="知道了（下次仍会在需要时提示）"
+                className="shrink-0 rounded px-1 text-amber-500 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+              >
+                知道了
+              </button>
+            </div>
+          )}
           {/* 快捷问题（WorkBuddy 式建议 chips）：空会话时出现，点一下直接问 */}
           {sessionId && messages.length === 0 && !live && (
             <div className="mx-auto mb-2 flex max-w-3xl flex-wrap gap-2">
@@ -682,18 +899,26 @@ export default function ChatPage({
               ))}
             </div>
           )}
-          <div className="mx-auto flex max-w-3xl gap-2">
-            <input
+          <div className="mx-auto flex max-w-3xl items-end gap-2">
+            <textarea
+              ref={inputRef}
               value={input}
+              rows={1}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.nativeEvent.isComposing) send();
+                // Enter 发送、Shift+Enter 换行；输入法组词中（isComposing）不触发。
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  send();
+                }
               }}
               placeholder={
-                busy ? "正在生成…（可点右侧「停止」）" : "输入消息，回车发送（没有会话会自动创建）"
+                busy
+                  ? "正在生成…（可点右侧「停止」）"
+                  : "输入消息，Enter 发送 / Shift+Enter 换行（没有会话会自动创建）"
               }
               disabled={busy}
-              className="flex-1 rounded-xl border border-slate-200 dark:border-slate-700 px-4 py-2.5 outline-none focus:border-blue-400 disabled:bg-slate-50 dark:bg-slate-800/50"
+              className="max-h-40 flex-1 resize-none rounded-xl border border-slate-200 dark:border-slate-700 px-4 py-2.5 leading-relaxed outline-none focus:border-blue-400 disabled:bg-slate-50 dark:bg-slate-800/50"
             />
             {busy ? (
               <button
@@ -714,7 +939,7 @@ export default function ChatPage({
           {/* 功能行（对齐 WorkBuddy：输入框下方一排功能）—— 全部对接真实后端能力 */}
           <div className="mx-auto mt-2 flex max-w-3xl items-center gap-2">
             <span
-              title="切换当前会话的角色（可选，默认健康档案管理员）"
+              title="切换当前会话的角色（可选，默认「通用助手」）"
               className="flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
             >
               <IconUser />
@@ -789,6 +1014,22 @@ export default function ChatPage({
             >
               <IconClip />
               {uploading ? "上传中…" : "上传报告"}
+            </button>
+            <button
+              onClick={() => {
+                setSelectMode((v) => !v);
+                setSelected([]);
+                setConfirmDelete(false);
+              }}
+              disabled={busy || !sessionId}
+              title="删除历史里的某几段问答：勾选任意一问或一答，会自动带上配对的另一侧"
+              className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs disabled:opacity-50 ${
+                selectMode
+                  ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                  : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-amber-300 hover:text-amber-600"
+              }`}
+            >
+              {selectMode ? "退出删除模式" : "删除对话"}
             </button>
             <input
               ref={fileRef}

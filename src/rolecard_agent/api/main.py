@@ -27,8 +27,8 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
-import sqlite3
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -37,11 +37,11 @@ from typing import Any, cast
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import (
     auth_required,
     client_ip,
+    parse_trusted_proxies,
     resolve_actor,
     unauthorized_response,
 )
@@ -56,6 +56,7 @@ from rolecard_agent.api.routers import services as services_router
 from rolecard_agent.api.routers import sessions as sessions_router
 from rolecard_agent.api.routers import settings as settings_router
 from rolecard_agent.config import Settings
+from rolecard_agent.core import runtime_settings
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.graph import build_kernel, build_model
 from rolecard_agent.core.ingestion import IngestionService
@@ -76,7 +77,7 @@ from rolecard_agent.rag.retriever import (
 from rolecard_agent.roles.service import (
     RoleCardService,
 )
-from rolecard_agent.storage.db import bootstrap, connect_threadlocal
+from rolecard_agent.storage.db import SqlConnection, bootstrap, connect_threadlocal
 
 # M5 前端构建产物的位置：frontend/dist（仓库根下）。可用环境变量 FRONTEND_DIST 覆盖
 # （部署布局变化时不必移动文件）。未构建时控制台路由返回回退提示页，后端 API 不受影响。
@@ -101,28 +102,7 @@ DEFAULT_USER_ID = "local-user"
 _KEYLESS_PROVIDER = "ollama"
 
 
-class BackendSpec(BaseModel):
-    """One model backend row from the settings page.
-
-    `api_key` is write-only: omitted/None = keep the stored key for this name; "" = clear it.
-    The GET endpoint never returns keys, so this round-trip rule is what keeps saves from
-    silently erasing them.
-    """
-
-    name: str = Field(min_length=1, max_length=32)
-    provider: str = Field(min_length=1)
-    base_url: str | None = None
-    model: str = Field(min_length=1)
-    api_key: str | None = None
-
-
-class ModelSettingsBody(BaseModel):
-    default: str
-    backends: list[BackendSpec]
-    fallbacks: list[str] = Field(default_factory=list)
-
-
-def _seed_demo_identity(conn: sqlite3.Connection) -> None:
+def _seed_demo_identity(conn: SqlConnection) -> None:
     """v1 demo runs as one shared identity. INSERT OR IGNORE: re-running bootstrap must not
     resurrect anything, and the FK on session_thread.user_id needs this row to exist."""
     conn.execute(
@@ -170,6 +150,7 @@ def create_app(
     _seed_demo_identity(conn)
     roles = RoleCardService(conn)
     roles.seed_builtins()
+    roles.seed_domain_roles()
     plugins = PluginService(conn, known_plugins=DOMAINS)
     ingestion = IngestionService(conn)
     health_query = HealthQueryService(conn)
@@ -177,6 +158,18 @@ def create_app(
     # 服务端点引用（OCR / 嵌入 / 重排引用哪些后端）—— 启动时一次性播种默认行（幂等）。
     services = ServiceEndpointService(conn)
     services.seed_once()
+    # 启动时把 env 后端播种进设置表（幂等，操作员此后在 UI 里改），再计算有效配置。
+    model_settings.seed_from_env(settings)
+    # 归一化历史行的 provider（旧种子把 SiliconFlow 记成 "openai" 等风格值）→ 厂商 id。
+    model_settings.normalize_providers()
+    # 设置页（DB）配置优先于 env：空表 = env 原样；保存过 = DB 覆盖同名后端并接管默认。
+    # 运行环境覆盖（「运行环境」页签保存的项，kernel_meta runtime:*）在此一并叠加。
+    # 必须先于 KnowledgeBase / registry 构建：embedder、联网与 consensus 工具闭包
+    # 都要拿到**叠加覆盖后**的配置，而不是裸 env 快照。
+    effective = runtime_settings.apply_overrides(
+        model_settings.effective_settings(settings),
+        runtime_settings.load_overrides(conn),
+    )
     knowledge = KnowledgeBase(
         settings.chroma_path,
         make_embedder(
@@ -191,6 +184,10 @@ def create_app(
         ),
     )
 
+    # 轨迹器必须先于工具注册表构建：`search_knowledge` 闭包要持有它，
+    # 否则 rag_search / rerank_fallback 两个事件永远不会被 emit（审查报告 M3）。
+    resolved_tracer = tracer or make_tracer(settings)
+
     # 工具注册表：内核工具 + 各域工具（domains/registry 是唯一的装配点）。
     registry = build_registry(
         roles=roles,
@@ -199,17 +196,17 @@ def create_app(
         knowledge=knowledge,
         enabled_domains=plugins.enabled_domains,  # callable：list_domains 报告实时状态
         current_user=lambda: DEFAULT_USER_ID,
+        # 域写工具（upload_medical_report）必须知道上传目录：它的 file_path 来自模型，
+        # 不受限就等于"任意主机文件读取 + 任意目录写"（审查报告 H1）。
+        upload_dir=settings.upload_dir,
+        # 联网与工作区工具的后端配置（搜索后端 / TAVILY_API_KEY / WORKSPACE_DIR）。
+        # 传**叠加了运行环境覆盖**的有效配置（而非裸 env 快照）。
+        settings=effective,
+        tracer=resolved_tracer,
     )
 
     checkpointer = make_checkpointer(conn)
-    resolved_tracer = tracer or make_tracer(settings)
     factory = model_factory or build_model
-    # 启动时把 env 后端播种进设置表（幂等，操作员此后在 UI 里改），再计算有效配置。
-    model_settings.seed_from_env(settings)
-    # 归一化历史行的 provider（旧种子把 SiliconFlow 记成 "openai" 等风格值）→ 厂商 id。
-    model_settings.normalize_providers()
-    # 设置页（DB）配置优先于 env：空表 = env 原样；保存过 = DB 覆盖同名后端并接管默认。
-    effective = model_settings.effective_settings(settings)
     resolved_model = model or factory(effective, None)
     # 角色级路由的模型缓存：按后端名构建一次（惰性）；设置变更时整体失效重建。
     role_models: dict[str, ChatLike] = {}
@@ -299,7 +296,13 @@ def create_app(
         胜出，浪费但正确），而 ctx 三引用 + role_models 的换装是单个临界区内的原子序列
         —— 杜绝"新图配旧 KB"的中间态被 SSE 请求看到。
         """
-        eff = model_settings.effective_settings(settings)
+        eff = runtime_settings.apply_overrides(
+            model_settings.effective_settings(settings),
+            runtime_settings.load_overrides(conn),
+        )
+        # M1：捕获旧实例，换装后关闭，释放 httpx 连接/文件句柄（旧 embedder/reranker 持有
+        # httpx.Client 此前从不关闭，累积 fd/连接泄漏）。
+        old_knowledge = ctx.knowledge
         role_models.clear()
         default_model = factory(eff, None)
 
@@ -323,6 +326,11 @@ def create_app(
             knowledge=knowledge_new,
             enabled_domains=plugins.enabled_domains,
             current_user=lambda: DEFAULT_USER_ID,
+            upload_dir=settings.upload_dir,
+            # 传**叠加了运行环境覆盖**的有效配置：联网/consensus 工具闭包持有它，
+            # 「运行环境」页签保存后经 rebuild 在此热生效（此前漏传 → 工具用 env 裸值）。
+            settings=eff,
+            tracer=resolved_tracer,
         )
         graph_new = build_kernel(
             model=default_model,
@@ -336,12 +344,19 @@ def create_app(
         )
         with _rebuild_lock:
             # 一次性换装：KB / registry 换新实例（工具经 registry 间接引用新 KB），图也换新。
+            # ctx.settings 同步换新：OCR / 抽取 / 比对在请求时读 ctx.settings（AppContext
+            # 是可变 dataclass）—— 不换的话「运行环境」页签对它们不热生效。
             role_models.clear()
+            ctx.settings = eff
             ctx.knowledge = knowledge_new
             ctx.registry = registry_new
             app_state["effective"] = eff
             app_state["default_model"] = default_model
             app_state["graph"] = graph_new
+        # M1：旧 KB 换装完成后关闭（旧 embedder/reranker 的 httpx 连接在此释放）。
+        if old_knowledge is not None and old_knowledge is not ctx.knowledge:
+            with contextlib.suppress(Exception):
+                old_knowledge.close()
 
     # 绑定真实现（ctx 构造时是占位 lambda，避免定义顺序上的循环依赖）。
     ctx.rebuild_runtime = rebuild_runtime
@@ -360,6 +375,7 @@ def create_app(
     # 认证做成**中间件**而不是路由依赖：控制台页面是 StaticFiles mount 的 ASGI 应用，
     # 不经过路由的依赖系统 —— 只用依赖会出现"API 被保护、页面谁都能开"。
     exempt_paths = [p.strip() for p in (settings.auth_exempt_paths or "").split(",") if p.strip()]
+    trusted_proxies = parse_trusted_proxies(settings.auth_trusted_proxies)
 
     @app.middleware("http")
     async def _authenticate(request: object, call_next: object) -> object:
@@ -369,9 +385,12 @@ def create_app(
             api_key=req.headers.get("x-api-key"),
             settings=settings,
         )
+        # 来源 IP 只认 **TCP 对端**；X-Forwarded-For 仅在直连方命中 AUTH_TRUSTED_PROXIES
+        # 时才采信（见 auth.client_ip：否则 `auto` 档可被一行请求头绕过）。
+        peer = req.client.host if req.client else ""
         if actor.is_anonymous and auth_required(
             mode=settings.auth_mode,
-            ip=client_ip(req.headers) or (req.client.host if req.client else ""),
+            ip=client_ip(req.headers, peer=peer, trusted=trusted_proxies),
             path=req.url.path,
             exempt=exempt_paths,
         ):

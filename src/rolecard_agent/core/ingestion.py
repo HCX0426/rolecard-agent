@@ -2,8 +2,8 @@
 
 This table (`ingestion_task` in core/schema.sql) is the kernel's record of "a file was handed
 to us and is being turned into structured reports". It is a KERNEL table on purpose, even
-though the work it tracks is health-domain: the kernel owns identity, the plugin switch, and
-this ledger, so the audit story stays in one place.
+though the work it tracks belongs to a domain plugin: the kernel owns identity, the plugin
+switch, and this ledger, so the audit story stays in one place.
 
 Why a separate table and not a `status` column on `medical_report` (技术评审与决策.md §9 B1):
 
@@ -27,6 +27,8 @@ from __future__ import annotations
 import sqlite3
 import uuid
 
+from rolecard_agent.storage.db import SqlConnection
+
 # The status column is CHECK-constrained to exactly these values. Listing them here keeps the
 # valid transitions and the schema in the same place instead of scattering string literals.
 INGESTION_PENDING = "pending"
@@ -43,9 +45,21 @@ INGESTION_STATUSES: tuple[str, ...] = (
     INGESTION_FAILED,
 )
 
+# 台账行的完整投影列（L4）：get / find_by_hash 共用，避免两份列清单悄悄漂移。
+_INGESTION_COLUMNS = (
+    "task_id, user_id, source_file, file_hash, status, attempts, "
+    "last_error, created_at, updated_at, finished_at"
+)
+
 # The pipeline is forward-only; a terminal or failed task may only be restarted explicitly.
 # Modelling it as a graph (not a free state machine) is what stops a caller from calling a
 # failed task "indexed" without going through the retry.
+#
+# ⚠️ `extracted` 在实际链路里是**瞬态**：上传端点按 parsed → extracted → indexed 连续推进
+# （检索索引在上传时就建好），而结构化抽取是否成功由 `medical_report.ingestion_task_id`
+# 这个**关联**表达，不再改状态 —— 一个文件可以产出多份报告（1:N），状态表达不了这件事。
+# 所以不要写 `WHERE status = 'extracted'` 这类查询：它查不到任何持久化的行。
+# 这里保留该状态是给"显式重启 / 分步推进"的调用方用的（见 _INGESTION_TRANSITIONS）。
 _INGESTION_TRANSITIONS: dict[str, tuple[str, ...]] = {
     INGESTION_PENDING: (INGESTION_PARSED, INGESTION_FAILED),
     INGESTION_PARSED: (INGESTION_EXTRACTED, INGESTION_FAILED),
@@ -72,7 +86,7 @@ def _new_task_id() -> str:
 
 
 class IngestionService:
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: SqlConnection) -> None:
         self._conn = conn
 
     # -- create --------------------------------------------------------------
@@ -116,9 +130,7 @@ class IngestionService:
 
     def get(self, task_id: str) -> dict[str, object]:
         row = self._conn.execute(
-            "SELECT task_id, user_id, source_file, file_hash, status, attempts, "
-            "last_error, created_at, updated_at, finished_at "
-            "FROM ingestion_task WHERE task_id = ?",
+            f"SELECT {_INGESTION_COLUMNS} FROM ingestion_task WHERE task_id = ?",
             (task_id,),
         ).fetchone()
         if row is None:
@@ -140,6 +152,32 @@ class IngestionService:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def find_by_hash(self, user_id: str, file_hash: str) -> dict[str, object] | None:
+        """按幂等键查已有任务（不存在返回 None）。
+
+        为什么单独开一个查询而不是让调用方"先 create 再比对列表长度"（旧写法）：后者
+        既做了一次 O(n) 扫描，又在并发下不可靠 —— 另一个请求刚插进来的行会让长度差分
+        得出错误的 `reused` 结论。上传端点要靠它决定**要不要落盘**，因此必须是一次
+        精确、原子的点查（审查报告 M4）。
+        """
+        row = self._conn.execute(
+            f"SELECT {_INGESTION_COLUMNS} FROM ingestion_task "
+            "WHERE user_id = ? AND file_hash = ?",
+            (user_id, file_hash),
+        ).fetchone()
+        return None if row is None else dict(row)
+
+    def all_source_files(self) -> list[str]:
+        """全部台账的 `source_file`（跨用户）。
+
+        为什么不按用户过滤：上传目录是**共享的**，一个文件只要被**任何**一条台账引用就
+        不该被判为孤儿。按用户过滤会把别人在用的文件算成垃圾（回收动作里那是数据丢失）。
+        """
+        rows = self._conn.execute(
+            "SELECT source_file FROM ingestion_task WHERE source_file IS NOT NULL"
+        ).fetchall()
+        return [str(r["source_file"]) for r in rows]
+
     # -- transitions ---------------------------------------------------------
 
     def advance(self, task_id: str, status: str) -> None:
@@ -150,7 +188,7 @@ class IngestionService:
         """
         if status not in INGESTION_STATUSES:
             raise IngestionBadStatus(f"unknown status: {status!r}")
-        current = self.get(task_id)["status"]
+        current = str(self.get(task_id)["status"])
         if status != current and status not in _INGESTION_TRANSITIONS.get(current, ()):
             allowed = _INGESTION_TRANSITIONS.get(current, ())
             raise IngestionBadStatus(
@@ -198,4 +236,21 @@ class IngestionService:
         )
         if cur.rowcount == 0:
             raise IngestionNotFound(f"report not found: {report_id}")
+        self._conn.commit()
+
+    def relink_source(self, task_id: str, source_file: str) -> None:
+        """把台账指到该文件的新位置。
+
+        为什么需要：`file_hash` 幂等意味着"同一份字节只登记一次"，于是**重复上传不会重新
+        落盘**（M4 的修复）。但如果那个文件已经被人工删除、或数据卷被重置过，只靠台账那条
+        记录就会指向一个不存在的路径 —— 解析直接失败。此时正确的做法是：把字节重新写下来，
+        再把台账指过去，而不是让用户看到"重复上传同一个文件却报错"。
+        """
+        cur = self._conn.execute(
+            "UPDATE ingestion_task SET source_file = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE task_id = ?",
+            (source_file, task_id),
+        )
+        if cur.rowcount == 0:
+            raise IngestionNotFound(f"ingestion task not found: {task_id}")
         self._conn.commit()

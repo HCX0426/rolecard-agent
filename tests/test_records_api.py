@@ -180,8 +180,45 @@ def test_extract_degrades_honestly_without_a_model(
     res = client.post("/api/records/extract", json={"task_id": uploaded.json()["task_id"]})
     assert res.status_code == 502, res.text
     # 失败也必须留痕：失败的抽取尝试写 extract_report_failed 审计。
-    actions = {a["action"] for a in client.get("/api/audit?limit=300").json()}
+    audit = client.get("/api/audit?limit=300").json()
+    actions = {a["action"] for a in audit}
     assert "extract_report_failed" in actions
+
+    # 且留痕内容**不得带内部端点**（代码审查报告（第二轮）A5 / M11）：
+    # /api/audit 是前端可见接口，而连接类异常天然带着 base_url。
+    # 注：异常文本因平台而异（Windows 是 WinError、类 Unix 是 httpx 的 URL 文案），
+    # 所以这里断言的是**不变量**（不带 http 端点）而不是某一条具体文案；
+    # 脱敏占位符本身的语义由 tests/unit/test_observability.py 直接覆盖。
+    failed = next(a for a in audit if a["action"] == "extract_report_failed")
+    detail = str(failed["detail_json"])
+    assert "127.0.0.1:9" not in detail, detail
+    assert "http://" not in detail, detail
+    assert "https://" not in detail, detail
+
+
+def test_audit_supports_cursor_pagination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`before_id` 游标翻页（代码审查报告（第二轮）B6 / M11）。
+
+    审计表只增不减，"每次倒序取 N 条"在表变大后既慢又取不全 —— 需要能稳定地往前翻。
+    """
+    monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
+    client = TestClient(create_app(sqlite_path=tmp_path / "audit.db"))
+
+    for _ in range(5):
+        assert client.post("/api/session", json={}).status_code == 201
+
+    first_page = client.get("/api/audit?limit=2").json()
+    assert len(first_page) == 2
+    assert first_page[0]["id"] > first_page[1]["id"]  # 倒序
+    assert all("id" in row for row in first_page)  # 游标字段必须回传
+
+    cursor = first_page[-1]["id"]
+    second_page = client.get(f"/api/audit?limit=2&before_id={cursor}").json()
+    assert len(second_page) == 2
+    assert all(row["id"] < cursor for row in second_page)  # 严格向前，不重叠
+    assert not ({r["id"] for r in first_page} & {r["id"] for r in second_page})
 
 
 def test_extract_is_idempotent_per_ingestion_task(

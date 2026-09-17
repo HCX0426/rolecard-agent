@@ -1,6 +1,8 @@
 // 与后端契约一一对应的类型 + fetch 封装 + SSE 流式读取。
 // 端点清单见 api/main.py 的模块 docstring —— 这里不发明第二个事实来源。
 
+import { parseSseFrame, splitSseFrames } from "./lib/stream";
+
 export interface RoleCard {
   role_id: string;
   role_name: string;
@@ -32,6 +34,10 @@ export interface SessionRow {
 export interface MessageRow {
   role: "user" | "assistant" | "tool";
   content: string;
+  /** 消息在 checkpoint 中的寻址 id：编辑 / 删除按它定位（LangGraph RemoveMessage）。 */
+  id?: string;
+  /** 思考过程（仅思考模型；随 checkpoint 一起回放，因此刷新后仍在）。 */
+  reasoning?: string;
   tools?: (string | null)[];
   name?: string;
 }
@@ -114,6 +120,34 @@ export interface AuditRow {
   action: string;
   target: string | null;
   detail_json: string | null;
+}
+
+/** 运行环境（env + DB 覆盖）的展示项。kind=ro 表示不可在线修改；secret 永不回明文。 */
+export interface RuntimeItem {
+  key: string;
+  field: string;
+  label: string;
+  value: string;
+  default: string;
+  changed: boolean;
+  /** DB 覆盖在位（≠ changed：env 也可能与出厂默认不同）。 */
+  overridden: boolean;
+  /** 覆盖的原始值（可编辑初值）；secret / 未覆盖 = null。 */
+  override_value: string | null;
+  kind: "bool" | "str" | "secret" | "float" | "int" | "ro";
+  choices: string[] | null;
+  note: string;
+}
+
+export interface RuntimeGroup {
+  key: string;
+  label: string;
+  items: RuntimeItem[];
+}
+
+export interface RuntimePayload {
+  note: string;
+  groups: RuntimeGroup[];
 }
 
 export interface KnowledgeScope {
@@ -200,6 +234,17 @@ function readableDetail(raw: unknown, fallback: string): string {
   return fallback;
 }
 
+/**
+ * 请求超时（毫秒）。
+ *
+ * 为什么必须有：`fetch` 默认**永远不等**——后端挂起（进程在但不响应）时，页面会一直转圈，
+ * 用户既看不到错误也看不到结果，只能刷新。浏览器自身的兜底要几分钟之后才触发。
+ *
+ * 取值：上传与抽取走独立路径且耗时不可预期，这里只约束**普通 JSON 请求**。
+ * 30s 远大于本地 SQLite + 本地模型的正常响应，又足够短到"卡了能看见"。
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
+
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   const opt: RequestInit = { method, headers: {} };
   if (body !== undefined) {
@@ -214,7 +259,22 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
       opt.body = JSON.stringify(body);
     }
   }
-  const res = await fetch(url, opt);
+  const controller = new AbortController();
+  // 用全局 setTimeout 而不是 window.setTimeout：本文件也在 node 环境下被测试
+  // （api.test.ts），那里没有 window —— 只有 jsdom 环境才有。
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, { ...opt, signal: controller.signal });
+  } catch (e) {
+    // 把超时与网络错误区分开：前者要告诉用户"后端没响应"，而不是笼统的 fetch failed。
+    if ((e as Error).name === "AbortError") {
+      throw new ApiError(0, `请求超过 ${REQUEST_TIMEOUT_MS / 1000}s 无响应（后端可能已挂起）`);
+    }
+    throw new ApiError(0, `网络错误：${(e as Error).message}`);
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) {
     const fallback = `${res.status} ${res.statusText}`;
     let raw: unknown = null;
@@ -263,11 +323,106 @@ export const api = {
 export type ChatEvent =
   | { type: "start"; role: { role_id: string; role_name: string } }
   | { type: "token"; text: string }
+  | { type: "thinking"; text: string }
   | { type: "message_replace"; text: string }
+  | { type: "context_trimmed"; dropped: number; kept: number }
   | { type: "tool_call"; name: string; args: Record<string, unknown> }
   | { type: "tool_result"; name: string; content: string }
   | { type: "error"; detail: string }
   | { type: "end" };
+
+/** 会话的上下文预算事实（`GET /api/session/{id}/context`）。 */
+export interface SessionContext {
+  /** 最近一轮被裁掉的历史条数（0 = 没裁，界面不该提示）。 */
+  trimmed: number;
+  /** 最近一轮实际送进 prompt 的条数。 */
+  kept: number;
+  /** 当前配置的字符预算。可能与历史那一轮不同（操作员改过配置），所以一起给出。 */
+  budget: number;
+}
+
+/** 上传目录里没被任何 ingestion 台账引用的文件（`/api/uploads/orphans`）。 */
+export interface OrphanUpload {
+  name: string;
+  size: number;
+  companion: boolean;
+}
+
+export interface OrphanReport {
+  orphans: OrphanUpload[];
+  total_bytes: number;
+  scanned: number;
+  referenced: number;
+}
+
+export interface CleanupResult {
+  deleted: number;
+  freed_bytes: number;
+  scanned: number;
+  referenced: number;
+}
+
+/** 删除会话中选中的问答对（后端按整轮扩展）。 */
+export function deleteMessages(
+  threadId: string,
+  messageIds: string[],
+): Promise<{ deleted: number; remaining: number }> {
+  return request("POST", `/api/session/${threadId}/messages/delete`, { message_ids: messageIds });
+}
+
+/** 编辑一条自己发过的消息并从那里重新生成（SSE 事件流与 streamChat 完全一致）。 */
+export async function streamEdit(
+  threadId: string,
+  messageId: string,
+  content: string,
+  onEvent: (ev: ChatEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/session/${threadId}/messages/edit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message_id: messageId, content }),
+      signal,
+    });
+  } catch (e) {
+    if ((e as Error).name !== "AbortError") onEvent({ type: "error", detail: (e as Error).message });
+    onEvent({ type: "end" });
+    return;
+  }
+  if (!res.ok || !res.body) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      detail = ((await res.json()) as { detail?: string }).detail || detail;
+    } catch {
+      /* keep */
+    }
+    onEvent({ type: "error", detail });
+    onEvent({ type: "end" });
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const { frames, rest } = splitSseFrames(buf);
+      buf = rest;
+      for (const frame of frames) {
+        const ev = parseSseFrame(frame);
+        if (ev) onEvent(ev as ChatEvent);
+      }
+    }
+  } catch (e) {
+    if ((e as Error).name !== "AbortError") {
+      onEvent({ type: "error", detail: (e as Error).message });
+    }
+  }
+}
 
 export async function streamChat(
   threadId: string,
@@ -309,13 +464,13 @@ export async function streamChat(
       const { done, value } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
-      let idx: number;
-      while ((idx = buf.indexOf("\n\n")) >= 0) {
-        const frame = buf.slice(0, idx);
-        buf = buf.slice(idx + 2);
-        const line = frame.split("\n").find((l) => l.startsWith("data: "));
-        if (!line) continue;
-        onEvent(JSON.parse(line.slice(6)) as ChatEvent);
+      // 帧切分与解析走 lib/stream.ts 的纯函数（可测）：半帧留在缓冲里，
+      // 坏帧被消化成"这一帧没有事件"而不是抛异常中断整条流。
+      const { frames, rest } = splitSseFrames(buf);
+      buf = rest;
+      for (const frame of frames) {
+        const ev = parseSseFrame(frame);
+        if (ev) onEvent(ev as ChatEvent);
       }
     }
   } catch (e) {

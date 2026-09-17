@@ -293,12 +293,20 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
 // ---------------------------------------------------------------- 手动补录（最小可用）
 
 interface DraftRow {
+  /** 稳定 React key（M7）：删行/插行时输入框状态不串行；提交时只挑业务字段，不会外泄。 */
+  rowId: number;
   name: string;
   value: string;
   unit: string;
 }
 
-const EMPTY_ROWS: DraftRow[] = [{ name: "", value: "", unit: "" }];
+// 行 id 发号器：模块级自增即可（key 只需在当前列表实例内唯一）。
+let draftRowSeq = 0;
+function nextRowId() {
+  return (draftRowSeq += 1);
+}
+
+const EMPTY_ROWS: DraftRow[] = [{ rowId: nextRowId(), name: "", value: "", unit: "" }];
 
 /** 手动补录一份报告 —— **兜底入口**，主流程是上传报告/图片让 AI 解析。
  *
@@ -396,7 +404,7 @@ function AddReportForm({ onDone }: { onDone: () => void }) {
 
       <div className="mt-2 space-y-1.5">
         {rows.map((r, i) => (
-          <div key={i} className="flex items-center gap-2">
+          <div key={r.rowId} className="flex items-center gap-2">
             <input
               value={r.name}
               onChange={(e) => setRow(i, { name: e.target.value })}
@@ -430,7 +438,7 @@ function AddReportForm({ onDone }: { onDone: () => void }) {
 
       <div className="mt-2 flex items-center gap-2">
         <button
-          onClick={() => setRows((rs) => [...rs, { name: "", value: "", unit: "" }])}
+          onClick={() => setRows((rs) => [...rs, { rowId: nextRowId(), name: "", value: "", unit: "" }])}
           className="rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
         >
           ＋ 加一行

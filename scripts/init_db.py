@@ -54,6 +54,7 @@ def main() -> int:
     make_checkpointer(conn)
 
     seeded = RoleCardService(conn).seed_builtins()
+    RoleCardService(conn).seed_domain_roles()
 
     enabled = [
         row[0]

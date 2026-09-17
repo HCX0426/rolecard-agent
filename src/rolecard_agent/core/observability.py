@@ -16,8 +16,11 @@ if it were the caller's job, one forgotten call would leak a medical record.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import re
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -82,20 +85,67 @@ def redact(value: Any) -> Any:
     return value
 
 
+# 异常文本里的 http(s) 端点会被换成占位符。
+# 为什么需要：`/api/audit` 是**前端可见**的只读接口，而入库的异常文本常常带着内部
+# base_url（httpx 的连接错误尤其如此）。审计台是给运营看的，不是给"任何能打开控制台的人"
+# 看内网拓扑的（审查报告 A5 / M11）。
+_ENDPOINT_RE = re.compile(r"https?://[^\s'\"()（）]+")
+
+
+def scrub_endpoints(text: Any) -> Any:
+    """把字符串里的 http(s) 地址替换成 `<endpoint>`；非字符串原样返回。"""
+    if not isinstance(text, str):
+        return text
+    return _ENDPOINT_RE.sub("<endpoint>", text)
+
+
 class LocalTracer:
-    """JSON-lines tracer. Default backend: no network, no extra dependencies."""
+    """JSON-lines tracer. Default backend: no network, no extra dependencies.
+
+    线程安全（审查报告 M7）：`emit` 会被 FastAPI 线程池、图执行、工具执行并发调用，
+    而"写入整行"不是原子操作 —— 旧实现无锁，两行日志可能交错成无法解析的残行，
+    恰恰在需要排查问题的时候让日志失效。懒开文件句柄本身也有竞态（两个线程同时
+    判断 `self._stream is None`），所以初始化和写入放在同一把锁里。
+
+    文件按 `_MAX_LOG_BYTES` 轮转（保留一个 `.1` 备份）：日志是长跑进程里唯一会
+    无限增长的东西，无上限的日志文件最终会变成运维故障。
+    """
+
+    _MAX_LOG_BYTES = 8 * 1024 * 1024
 
     def __init__(self, *, emit_raw_text: bool = False, path: Path | None = None) -> None:
         self._emit_raw = emit_raw_text
         self._path = path
         self._stream: Any = None
+        self._lock = threading.Lock()
 
-    def _target(self) -> Any:
+    def _target_locked(self) -> Any:
+        """取（必要时打开）输出流。**调用方必须已持锁。**"""
         if self._path is None:
             return sys.stderr
         if self._stream is None:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             self._stream = self._path.open("a", encoding="utf-8")
+        return self._stream
+
+    def _rotate_locked(self, stream: Any) -> Any:
+        """超限则轮转一次。失败时原样返回当前流（轮转不该让日志断掉）。"""
+        if self._path is None:
+            return stream
+        try:
+            if stream.tell() < self._MAX_LOG_BYTES:
+                return stream
+        except (OSError, ValueError):
+            return stream
+        try:
+            stream.close()
+            backup = self._path.with_name(self._path.name + ".1")
+            with contextlib.suppress(OSError):
+                backup.unlink()
+            self._path.rename(backup)
+        except OSError:
+            pass
+        self._stream = self._path.open("a", encoding="utf-8")
         return self._stream
 
     def emit(self, event: TraceEvent) -> None:
@@ -104,9 +154,10 @@ class LocalTracer:
             if not self._emit_raw:
                 payload["detail"] = redact(payload.get("detail") or {})
             line = json.dumps(payload, ensure_ascii=False, default=str)
-            stream = self._target()
-            stream.write(line + "\n")
-            stream.flush()
+            with self._lock:
+                stream = self._rotate_locked(self._target_locked())
+                stream.write(line + "\n")
+                stream.flush()
         except Exception:  # noqa: BLE001 - observability must never break the request
             pass
 

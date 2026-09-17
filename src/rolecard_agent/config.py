@@ -35,7 +35,9 @@ DEFAULT_LOCAL_BACKEND = {
     # 两个 7B 不能同时驻留 8GB 显存：对话↔抽取/视觉切换时 Ollama 自动换载（2~5s 开销），
     # 演示单用户可接受；公网并发场景换云端 API 后端。
     "model": "qwen2.5:7b",
-    "api_key": "ollama",
+    # L11：不设 api_key（ModelBackend 默认 None）。此前占位 "ollama" 会被 deep_check
+    # 拼成 `Bearer ollama` 发出去（无效凭据还进日志）；graph.build_model 与 deep_check
+    # 都按真值判断，None = 不带认证头。Ollama 本来就不需要 key。
 }
 
 # 多模态后端（vl = 文本版超集）按需添加：图片直读对话 / 备用抽取。
@@ -80,9 +82,54 @@ class Settings(BaseModel):
     # "既不返回也不失败"）。设成 0 或负数 = 不设超时（保持旧行为，仅调试用）。
     model_timeout_seconds: float = 120.0
 
+    # 思考（reasoning）模式：这里列出的**模型名**在 ollama 风格后端上会以
+    # `reasoning=True` 调用（langchain-ollama ≥1.1 把思考内容放进
+    # AIMessage.additional_kwargs['reasoning_content']，由 SSE 的 thinking 事件透出）。
+    # 为什么按模型名而不是全局开关：对不支持思考的模型传 reasoning=True 会直接 400
+    # （实测 qwen2.5:7b），而思考 token 会显著拉长首字延迟 —— 所以只对显式列出的
+    # 思考模型启用。例：MODEL_THINKING_MODELS=qwen3:8b
+    model_thinking_models: list[str] = Field(default_factory=list)
+
+    # 思考模式**总开关**（用户 2026-09-17）：auto = 按 MODEL_THINKING_MODELS 名单自动；
+    # off = 名单内的模型也不开 reasoning（临时不想要思考 token / 首字延迟时用，无需
+    # 改名单）。刻意没有裸 "on"：对不在名单里的模型传 reasoning=True 会直接 400，
+    # 想给新模型开思考 = 把它加进 MODEL_THINKING_MODELS（名单本身就是安全护栏）。
+    model_thinking: str = "auto"
+
+    # 送给模型的**历史字符预算**（近似上下文窗口，见 core/nodes.trim_history）。
+    # 没有它，会话轮次无上限 → 几十轮后必然超窗，用户只看到"模型调用失败"。
+    # 用字符而不是 token：中文场景下字符数是保守代理，且不必引入分词器依赖。
+    # 24000 是给 7B 本地模型（通常 32k 上下文）留出 system + 回答余量的取值。
+    # 设成 0 或负数 = 不裁剪（仅调试用）。
+    context_max_chars: int = 24000
+
+    # 单次**工具执行**的总时长上限（秒，见 core/nodes._invoke_tool）。
+    # 与 model_timeout_seconds 是两件事：后者管模型调用，本项管工具整体跑多久。
+    # 设成 0 或负数 = 不设上限（仅调试用）。
+    tool_timeout_seconds: float = 120.0
+
     sqlite_path: Path = Path("./data/sqlite/app.db")
     chroma_path: Path = Path("./data/chroma")
     upload_dir: Path = Path("./data/uploads")  # v1 M5 上传入口的真实落点（登记 intake 任务）
+
+    # v2.4 工作区文件工具（core/tools/files.py，fs_read / fs_write / fs_list）的路径边界。
+    # 角色"读写电脑文件"只允许发生在这个目录里 —— 与上传目录同一套 rigor（H1）。
+    workspace_dir: Path = Path("./data/workspace")
+
+    # v2.4 联网工具（core/tools/web.py）：
+    # - web_search_backend：auto（默认，有 TAVILY_API_KEY 走云端 tavily，否则本地 ddgs）/
+    #   tavily / ddgs / off（off 时 web_search 返回可读的未配置说明，不报 500）。
+    # - tavily_api_key：云端搜索 key。auto 模式下有 key 即用云端（网页内容外发到第三方，
+    #   与 OCR 云端兜底同一告知义务：.env.example 里已写明）。
+    # - web_search_enabled：**总闸**（用户 2026-09-17：纯白名单无总闸、纯全局太粗）。
+    #   False = web_search / web_fetch 一律返回可读的关闭说明。
+    # - web_allowed_domains：域名白名单（逗号分隔，子域匹配）。管的是 **web_fetch 的抓取
+    #   目标**；空 = 总闸开着即不限（公网边界仍由 _host_is_public 把守），非空 = 名单外
+    #   域名一律拒绝。搜索源（搜索引擎本身）不受此名单管。
+    web_search_backend: str = "auto"
+    web_search_enabled: bool = True
+    web_allowed_domains: str = ""
+    tavily_api_key: str | None = None
 
     # v2.2 OCR 后端（可插拔，Paddle 优先 / 云端 key 兜底）：
     # - ocr_python：本地 Paddle 的解释器，必须是【独立 venv / 进程】的 python。PaddleOCR 自带
@@ -124,6 +171,11 @@ class Settings(BaseModel):
     auth_mode: str = "off"
     auth_credentials: str = ""
     auth_api_keys: str = ""
+    # 可信反代的**直连来源网段**（CIDR，逗号分隔）。空 = 不信任任何代理，
+    # `X-Forwarded-For` 一律忽略（见 auth.client_ip）。
+    # 为什么必须有这一项：XFF 是客户端可自由设置的头。旧实现无条件采信它，导致
+    # `auto` 档被 `X-Forwarded-For: 127.0.0.1` 完全绕过（代码审查报告（第二轮）H2）。
+    auth_trusted_proxies: str = ""
     # 豁免路径前缀（逗号分隔）：探活端点必须免鉴权，否则容器健康检查永远失败。
     auth_exempt_paths: str = "/api/health"
 
@@ -195,6 +247,13 @@ class Settings(BaseModel):
         for env_key, field in (
             ("MODEL_DEFAULT", "model_default"),
             ("MODEL_TIMEOUT_SECONDS", "model_timeout_seconds"),
+            ("WORKSPACE_DIR", "workspace_dir"),
+            ("WEB_SEARCH_BACKEND", "web_search_backend"),
+            ("WEB_SEARCH_ENABLED", "web_search_enabled"),
+            ("WEB_ALLOWED_DOMAINS", "web_allowed_domains"),
+            ("TAVILY_API_KEY", "tavily_api_key"),
+            ("CONTEXT_MAX_CHARS", "context_max_chars"),
+            ("TOOL_TIMEOUT_SECONDS", "tool_timeout_seconds"),
             ("SQLITE_PATH", "sqlite_path"),
             ("CHROMA_PATH", "chroma_path"),
             ("UPLOAD_DIR", "upload_dir"),
@@ -212,20 +271,34 @@ class Settings(BaseModel):
             ("AUTH_MODE", "auth_mode"),
             ("AUTH_CREDENTIALS", "auth_credentials"),
             ("AUTH_API_KEYS", "auth_api_keys"),
+            ("AUTH_TRUSTED_PROXIES", "auth_trusted_proxies"),
             ("AUTH_EXEMPT_PATHS", "auth_exempt_paths"),
             ("LANGSMITH_API_KEY", "langsmith_api_key"),
             ("LANGSMITH_PROJECT", "langsmith_project"),
         ):
-            if value := src.get(env_key):
+            # 空串视为"未设置"（`AUTH_CREDENTIALS=` 不该覆盖默认值），但 **`"0"` 必须保留** ——
+            # 旧写法 `if value := ...` 用真值判断，`MODEL_TIMEOUT_SECONDS=0` 会被静默忽略，
+            # 于是"设 0 = 不设超时"这个文档承诺的调试开关根本不可用（审查报告 L1）。
+            if (value := src.get(env_key)) is not None and value != "":
                 data[field] = value
 
         if raw := src.get("MODEL_FALLBACKS"):
             data["model_fallbacks"] = [n.strip() for n in raw.split(",") if n.strip()]
 
+        if raw := src.get("MODEL_THINKING_MODELS"):
+            data["model_thinking_models"] = [n.strip() for n in raw.split(",") if n.strip()]
+
+        if (v := src.get("MODEL_THINKING")) is not None and v != "":
+            data["model_thinking"] = v
+
         if raw := src.get("OBS_EMIT_RAW_TEXT"):
             data["obs_emit_raw_text"] = raw.strip().lower() in {"1", "true", "yes", "on"}
 
         try:
-            return cls(**data)
+            # `data` 是按 env 契约逐项组装的普通 dict（值是 str / list[str] / dict …），
+            # 每一项的正确性由 pydantic 在**这一行**校验 —— 那正是它的职责。
+            # mypy 无法验证"dict[str, object] 展开后逐字段类型正确"，所以显式忽略：
+            # 失败会被下面的 ValidationError 接住并翻译成可读的配置错误。
+            return cls(**data)  # type: ignore[arg-type]
         except ValidationError as exc:
             raise ValueError(f"invalid configuration: {exc}") from exc

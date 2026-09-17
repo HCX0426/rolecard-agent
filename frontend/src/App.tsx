@@ -200,9 +200,6 @@ export default function App() {
           ))}
         </div>
         <div className="mt-auto px-4 py-3 text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
-          v1 · M1~M5 已落地
-          <br />
-          v2.1 / v2.2 检索 · 文档摄取
           <button
             onClick={toggle}
             title={`当前${theme === "dark" ? "深色" : "浅色"}，点击切换`}

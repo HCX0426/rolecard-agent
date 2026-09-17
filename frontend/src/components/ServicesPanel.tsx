@@ -29,6 +29,8 @@ interface ServiceCategoryView {
   effective_kind: string | null;
   degraded_from: string | null;
   readonly: boolean;
+  /** order_only = 只能调顺序（第 1 位即默认后端，其后依次回退）；增删与 key 在「模型」页签。 */
+  order_only?: boolean;
   candidates: ServiceEndpoint[];
 }
 
@@ -181,7 +183,7 @@ export function ServicesPanel() {
             <div className="flex items-baseline gap-2">
               <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">{cat.title}</h3>
               <span className="text-[11px] text-slate-400 dark:text-slate-500">{cat.hint}</span>
-              {!cat.readonly && (
+              {!cat.readonly && !cat.order_only && (
                 <button
                   onClick={() => {
                     setAdding(adding === cat.key ? null : cat.key);
@@ -266,7 +268,7 @@ export function ServicesPanel() {
                         </span>
                       )}
                       <span className="ml-auto flex items-center gap-1.5">
-                        {!cat.readonly && (
+                        {(!cat.readonly || cat.order_only) && (
                           <>
                             <button
                               disabled={busy === cat.key || !cand.enabled}
@@ -284,40 +286,49 @@ export function ServicesPanel() {
                             >
                               ↓
                             </button>
-                            <button
-                              disabled={busy === cat.key}
-                              onClick={() => toggleEnabled(cat, cand)}
-                              className={`rounded-full px-2.5 py-0.5 text-[11px] ${
-                                cand.enabled
-                                  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
-                                  : "bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300"
-                              }`}
-                            >
-                              {cand.enabled ? "启用中" : "已停用"}
-                            </button>
-                            {!cand.builtin &&
-                              (confirmDel === delKey ? (
+                            {!cat.order_only && (
+                              <>
                                 <button
                                   disabled={busy === cat.key}
-                                  onClick={() => remove(cat, cand)}
-                                  title="仅从本服务移除引用，不影响模型页配置"
-                                  className="rounded bg-red-500 px-2 py-0.5 text-[11px] text-white hover:bg-red-600"
+                                  onClick={() => toggleEnabled(cat, cand)}
+                                  className={`rounded-full px-2.5 py-0.5 text-[11px] ${
+                                    cand.enabled
+                                      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+                                      : "bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300"
+                                  }`}
                                 >
-                                  确认
+                                  {cand.enabled ? "启用中" : "已停用"}
                                 </button>
-                              ) : (
-                                <button
-                                  disabled={busy === cat.key}
-                                  onClick={() => setConfirmDel(delKey)}
-                                  title="仅从本服务移除引用，不影响模型页配置"
-                                  className="rounded px-2 py-0.5 text-[11px] text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30"
-                                >
-                                  移除
-                                </button>
-                              ))}
+                                {!cand.builtin &&
+                                  (confirmDel === delKey ? (
+                                    <button
+                                      disabled={busy === cat.key}
+                                      onClick={() => remove(cat, cand)}
+                                      title="仅从本服务移除引用，不影响模型页配置"
+                                      className="rounded bg-red-500 px-2 py-0.5 text-[11px] text-white hover:bg-red-600"
+                                    >
+                                      确认
+                                    </button>
+                                  ) : (
+                                    <button
+                                      disabled={busy === cat.key}
+                                      onClick={() => setConfirmDel(delKey)}
+                                      title="仅从本服务移除引用，不影响模型页配置"
+                                      className="rounded px-2 py-0.5 text-[11px] text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30"
+                                    >
+                                      移除
+                                    </button>
+                                  ))}
+                              </>
+                            )}
+                            {cat.order_only && cand.id === cat.effective && (
+                              <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                                默认
+                              </span>
+                            )}
                           </>
                         )}
-                        {cat.readonly && (
+                        {cat.readonly && !cat.order_only && (
                           <span className="text-[11px] text-slate-400 dark:text-slate-500">
                             {cand.id === cat.effective ? "默认" : ""}
                           </span>

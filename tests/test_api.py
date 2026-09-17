@@ -29,7 +29,7 @@ def test_list_roles_includes_builtin(client: TestClient) -> None:
     res = client.get("/api/roles")
     assert res.status_code == 200
     roles = res.json()
-    assert any(r["role_id"] == "medical_archivist" and r["is_builtin"] for r in roles)
+    assert any(r["role_id"] == "medical_archivist" and not r["is_builtin"] for r in roles)
 
 
 def test_create_role(client: TestClient) -> None:
@@ -79,8 +79,12 @@ def test_update_role_applies_fields(client: TestClient) -> None:
 
 
 def test_delete_builtin_rejected(client: TestClient) -> None:
-    """Traceability: US-1 — 内置角色不可删（D6 保护）。"""
-    res = client.delete("/api/roles/medical_archivist")
+    """Traceability: US-1 — 内置角色不可删（D6 保护）。
+
+    内置只剩「通用助手」；档案管理员已降级为域种子角色（自定义类型），可删
+    （test_delete_custom_role 覆盖删除路径）。
+    """
+    res = client.delete("/api/roles/general_assistant")
     assert res.status_code == 409
 
 

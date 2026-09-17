@@ -3,9 +3,10 @@
 从 `main.py` 迁出的第一组（C1）。这些都是**操作员动作**，不是 LLM 工具 —— 与
 `switch_role` 的设计一致：让模型移动自己的权限边界等于自我授权。
 
-本文件是**纯搬迁**：路径、状态码、响应体、异常映射都与迁移前一致。任何行为变更
-（比如给角色 CRUD 补审计）都不在这里夹带，要改就单独提交 —— 否则出问题分不清是
-重构引入的还是特性引入的。
+审计（审查报告 M2）：C1 拆分时本文件是"纯搬迁"，于是角色卡 CRUD 成了管理面里唯一
+**不写审计**的一组 —— 而 `tool_whitelist` / `knowledge_scopes` / `model_name` 恰恰就是
+能力权限、可读文档范围与"数据去哪家模型"的定义，改它们等于改权限。
+现在三处都写审计，`detail` 只记**变更了哪些字段**，不记字段内容（角色 prompt 可能很长）。
 """
 
 from __future__ import annotations
@@ -38,6 +39,21 @@ class PluginToggle(BaseModel):
     enabled: bool
 
 
+def _validate_role_model(ctx: AppContext, model_name: str | None) -> None:
+    """角色声明的模型后端必须是**已配置**的后端名。
+
+    与 `PATCH /api/session` 的会话级校验同一纪律。角色侧此前不校验，拼错一个名字只能靠
+    运行期的"降级 + 留痕"兜 —— 配置错误要当场大声，而不是等用户发现回答质量不对
+    （审查报告 L3）。
+    """
+    if not model_name:
+        return
+    effective = ctx.model_settings.effective_settings(ctx.settings)
+    if model_name not in effective.model_backends:
+        known = ", ".join(sorted(effective.model_backends))
+        raise HTTPException(status_code=400, detail=f"未知后端 {model_name!r}；可用：{known}")
+
+
 @router.get("/api/roles")
 def list_roles(ctx: AppContext = Depends(get_context)) -> list[object]:
     """All role cards, built-in first."""
@@ -46,23 +62,51 @@ def list_roles(ctx: AppContext = Depends(get_context)) -> list[object]:
 
 @router.post("/api/roles", status_code=201)
 def create_role(
-    data: RoleCardCreate, ctx: AppContext = Depends(get_context)
+    data: RoleCardCreate,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
 ) -> object:
+    _validate_role_model(ctx, data.model_name)
     try:
         created = ctx.roles.create(data)
     except RoleAlreadyExists as exc:
         raise role_error_to_http(exc) from exc
+    ctx.roles.audit(
+        actor=actor.id,
+        action="create_role",
+        target=created.role_id,
+        detail={
+            "role_name": created.role_name,
+            # 能力权限与知识范围是权限边界，必须留痕；内容本身可能很长，只记条数。
+            "tools": None if created.tool_whitelist is None else len(created.tool_whitelist),
+            "scopes": len(created.knowledge_scopes or []),
+            "model_name": created.model_name,
+        },
+    )
     return created.model_dump(mode="json")
 
 
 @router.patch("/api/roles/{role_id}")
 def update_role(
-    role_id: str, data: RoleCardUpdate, ctx: AppContext = Depends(get_context)
+    role_id: str,
+    data: RoleCardUpdate,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
 ) -> object:
+    if "model_name" in data.model_fields_set:
+        _validate_role_model(ctx, data.model_name)
     try:
         updated = ctx.roles.update(role_id, data)
     except RoleNotFound as exc:
         raise role_error_to_http(exc) from exc
+    changed = sorted(data.model_fields_set)
+    if changed:  # 空 PATCH 是"什么都没改"，不值得污染审计
+        ctx.roles.audit(
+            actor=actor.id,
+            action="update_role",
+            target=role_id,
+            detail={"fields": changed},
+        )
     return updated.model_dump(mode="json")
 
 
@@ -76,6 +120,7 @@ def delete_role(
         ctx.roles.delete(role_id)
     except (RoleNotFound, BuiltinRoleProtected) as exc:
         raise role_error_to_http(exc) from exc
+    ctx.roles.audit(actor=actor.id, action="delete_role", target=role_id)
 
 
 @router.get("/api/tools/catalog")
@@ -100,7 +145,7 @@ def tools_catalog(ctx: AppContext = Depends(get_context)) -> object:
 
 
 @router.get("/api/plugins")
-def list_plugins(ctx: AppContext = Depends(get_context)) -> list[object]:
+def list_plugins(ctx: AppContext = Depends(get_context)) -> list[dict[str, object]]:
     return ctx.plugins.list_plugins()
 
 
@@ -118,4 +163,4 @@ def toggle_plugin(
     return {"plugin_id": plugin_id, "enabled": body.enabled, "tool_epoch": epoch}
 
 
-__all__ = ["router", "HTTPException"]
+__all__ = ["router"]

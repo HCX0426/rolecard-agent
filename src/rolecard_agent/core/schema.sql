@@ -3,7 +3,7 @@
 --
 -- These tables model concepts the HARNESS itself needs - identity, session
 -- ownership, plugin switches, audit. They are NOT domain concepts, which is
--- why user/tenant live here and not in domains/health/ (docs/07 A2/C6).
+-- why user/tenant live here and not in any domain plugin (docs/07 A2/C6).
 --
 -- A domain plugin must never define its own user or tenant table.
 -- ===========================================================================
@@ -146,12 +146,12 @@ CREATE INDEX IF NOT EXISTS idx_ingestion_status ON ingestion_task(status);
 CREATE INDEX IF NOT EXISTS idx_ingestion_user ON ingestion_task(user_id);
 
 -- ===========================================================================
--- Generic domain data (settings page,「数据」tab for non-health domains).
+-- Generic domain data (settings page,「数据」tab for domains without their own tables).
 --
--- A domain plugin that does not need health's rich report/indicator model can still
+-- A domain plugin that does not need a rich report/indicator model can still
 -- expose simple structured records here. Keyed by (domain, user_id) so each domain's
--- data is isolated; the frontend routes health to its own /api/records endpoints and
--- every other domain to /api/domains/{domain}/records.
+-- data is isolated; the frontend routes the rich-model domain to its own
+-- /api/records endpoints and every other domain to /api/domains/{domain}/records.
 -- ===========================================================================
 
 CREATE TABLE IF NOT EXISTS domain_data (

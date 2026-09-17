@@ -30,8 +30,12 @@ def env(tmp_path: Path) -> tuple[IngestionService, list, Path]:
     )
     c.commit()
     ing = IngestionService(c)
-    tools = make_domain_tools(ing, HealthQueryService(c), current_user=lambda: "u1")
-    f = tmp_path / "report.pdf"
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    tools = make_domain_tools(
+        ing, HealthQueryService(c), current_user=lambda: "u1", upload_dir=uploads
+    )
+    f = uploads / "report.pdf"
     f.write_bytes(b"%PDF-1.4 not a real scan")
     return ing, tools, f
 
@@ -64,3 +68,38 @@ def test_upload_missing_file_is_reported_not_raised(
     out = _upload(tools).invoke({"file_path": str(f) + ".nope"})
     assert "不存在" in out
     assert ing.list_for_user("u1") == []  # no half-written ledger row
+
+
+# -- 路径边界（审查报告 H1） -----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "outside",
+    [
+        "C:/Windows/win.ini",
+        "C:/Users/Public/Documents/其他用户.txt",
+    ],
+)
+def test_upload_refuses_paths_outside_the_upload_dir(
+    env: tuple[IngestionService, list, Path], outside: str
+) -> None:
+    """模型可自由填 `file_path`，因此越界路径必须被拒绝而不是登记。
+
+    回归护栏：修复前 `p.is_file()` 是唯一前提，`C:/Windows/win.ini` 能建成 intake 任务，
+    再经 `POST /api/records/extract` 的 `source_file.exists()` 分支被解析后送进模型 ——
+    一条"读任意主机文件"的完整链路。
+    """
+    ing, tools, _ = env
+    out = _upload(tools).invoke({"file_path": outside})
+    assert "上传目录" in out
+    assert ing.list_for_user("u1") == []  # 没有登记、没有落库
+
+
+def test_upload_refuses_parent_traversal(env: tuple[IngestionService, list, Path]) -> None:
+    """相对路径里的 `..` 由 resolve() 归一，不能借它跑出上传目录。"""
+    ing, tools, f = env
+    escaping = str(f.parent / ".." / "escaped.txt")
+    (f.parent.parent / "escaped.txt").write_text("x", encoding="utf-8")
+    out = _upload(tools).invoke({"file_path": escaping})
+    assert "上传目录" in out
+    assert ing.list_for_user("u1") == []

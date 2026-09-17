@@ -43,6 +43,15 @@ def _rebuild_if_runtime_affected(ctx: AppContext, key: str) -> None:
         ctx.rebuild_runtime()
 
 
+def _row_or_404(ctx: AppContext, key: str, eid: str) -> object:
+    """回写后的那一行。用 `next(..., None)` + 显式 404 —— 旧写法是裸 `next()`，
+    未命中会抛 `StopIteration`，被 FastAPI 兜成 500 而不是可读的 404（审查报告 L2）。"""
+    for e in ctx.services.rows(key):
+        if e.id == eid:
+            return e.to_api()
+    raise HTTPException(status_code=404, detail=f"服务 {key} 下不存在端点 {eid!r}")
+
+
 @router.get("/api/services")
 def list_services(ctx: AppContext = Depends(get_context)) -> object:
     """运行时状态视图（轻检测：配置齐缺 + 本地探活，不发外部请求）。"""
@@ -72,8 +81,7 @@ def add_service_endpoint(
         detail={"ref_backend": body.ref_backend},
     )
     _rebuild_if_runtime_affected(ctx, key)
-    row = next(e for e in ctx.services.rows(key) if e.id == body.ref_backend)
-    return row.to_api()
+    return _row_or_404(ctx, key, body.ref_backend)
 
 
 @router.patch("/api/services/{key}/endpoints/{eid}")
@@ -98,8 +106,7 @@ def patch_service_endpoint(
         detail={"enabled": body.enabled},
     )
     _rebuild_if_runtime_affected(ctx, key)
-    row = next(e for e in ctx.services.rows(key) if e.id == eid)
-    return row.to_api()
+    return _row_or_404(ctx, key, eid)
 
 
 @router.delete("/api/services/{key}/endpoints/{eid}", status_code=204)
@@ -132,7 +139,41 @@ def put_service_order(
     ctx: AppContext = Depends(get_context),
     actor: Actor = Depends(get_actor),
 ) -> object:
-    """全量写优先级（第 1 位生效）。嵌入/重排需重建 KnowledgeBase —— 复用热重建通道。"""
+    """全量写优先级（第 1 位生效）。嵌入/重排需重建 KnowledgeBase —— 复用热重建通道。
+
+    `key == "models"` 是特例：顺序直接映射为「对话默认后端 + 回退链」（与「模型」页签
+    同一份 kernel_meta 存储），改动后热重建默认模型与角色级模型缓存。
+    """
+    if key == "models":
+        chat_names = {
+            str(row["name"])
+            for row in ctx.model_settings.list_backends()
+            if str(row.get("usage", "chat")) == "chat"
+        }
+        unknown = [n for n in body.order if n not in chat_names]
+        if not body.order:
+            raise HTTPException(status_code=400, detail="优先级列表不能为空。")
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=f"以下不是对话用途的后端（或不存在）：{', '.join(unknown[:3])}",
+            )
+        if len(set(body.order)) != len(body.order):
+            raise HTTPException(status_code=400, detail="优先级列表出现了重复的后端名。")
+        try:
+            ctx.model_settings.save_default(body.order[0], allowed_names=chat_names)
+            ctx.model_settings.save_fallbacks(body.order[1:], allowed_names=chat_names)
+        except Exception as exc:  # noqa: BLE001 - 服务层异常转可读 400
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        ctx.roles.audit(
+            actor=actor.id,
+            action="update_service_order",
+            target=key,
+            detail={"order": body.order},
+        )
+        ctx.rebuild_runtime()  # 默认模型与角色级模型缓存都随优先级变化
+        return {"service_key": key, "order": body.order, "reloaded": True}
+
     try:
         ctx.services.reorder(key, body.order)
     except KeyError:
@@ -157,7 +198,14 @@ def deep_check(ctx: AppContext = Depends(get_context)) -> object:
     配额；页面的轻检测（配置齐缺 + 本地探活）已覆盖绝大多数排查场景。
     """
     ollama: dict[str, object] = {"reachable": False, "detail": ""}
-    backend = ctx.app_state["effective"].backend(None)
+    try:
+        backend = ctx.app_state["effective"].backend(None)
+    except KeyError as exc:
+        # 默认后端名不在后端集里 = 配置错误。给可读的 400，而不是裸 KeyError → 500。
+        raise HTTPException(
+            status_code=400,
+            detail=f"默认模型后端未配置：{exc}。请在「模型」页签检查默认后端。",
+        ) from exc
     base = (backend.base_url or "http://localhost:11434").rstrip("/")
     # provider 是供应商 id；native 风格（Ollama 及别名）探 /api/tags，openai 兼容探 /models。
     is_ollama = client_style(backend.provider) == "native"
@@ -186,7 +234,10 @@ def deep_check(ctx: AppContext = Depends(get_context)) -> object:
             ollama["detail"] = f"{res.status_code}（{backend.provider} · {probe_path}）"
     except Exception as exc:  # noqa: BLE001 - 探活失败本身就是检测结果
         ollama["detail"] = f"{type(exc).__name__}: {exc}"[:200]
-    return {"ollama": ollama}
+    # M4：键名按 provider 语义返回（ollama / openai_compatible），不再一律叫 `ollama`，
+    # 前端可按 provider 取对应字段，避免错取。
+    probe_key = "ollama" if is_ollama else "openai_compatible"
+    return {probe_key: ollama}
 
 
 __all__ = ["router"]

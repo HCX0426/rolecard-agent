@@ -20,7 +20,11 @@ dependencies = [
   "langchain-ollama>=1.1.0",
   "langgraph-checkpoint-sqlite",
   "pydantic>=2.13",
-  "langsmith>=0.12.4",
+  # v2.4 联网与工作区工具（core/tools/web.py / files.py）：
+  # 全部用活跃维护的独立轮子，不走已 sunset 的 langchain-community。
+  "ddgs>=9.0",
+  "trafilatura>=2.0",
+  "tavily-python>=0.8",
 ]
 
 [project.optional-dependencies]
@@ -62,5 +66,17 @@ addopts = "-q"
 [tool.mypy]
 python_version = "3.13"
 packages = ["rolecard_agent"]
+# 源码是 src/ 布局，而 CI 用 requirements*.txt 安装（不做 `pip install -e .`），
+# 所以 mypy 必须被显式告知去哪找包 —— 否则报 "Can't find package 'rolecard_agent'"
+# 而**看起来像通过**（这才是最坏的结果：一个从不生效的类型检查）。
+# 与 [tool.pytest.ini_options] 的 pythonpath 是同一个理由。
+mypy_path = "src"
 ignore_missing_imports = true
 warn_unused_ignores = true
+# 起步阶段刻意宽松：不要求第三方库有类型存根、不因可选依赖缺失而报错。
+# 目标不是"零告警的洁癖"，而是"类型标注这件事有机器兜底，不会随提交漂移"。
+follow_imports = "silent"
+warn_redundant_casts = true
+warn_unreachable = true
+check_untyped_defs = true
+no_implicit_optional = true

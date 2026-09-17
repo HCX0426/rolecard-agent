@@ -11,6 +11,8 @@ Usage:
 
 from __future__ import annotations
 
+import json
+import os
 import pathlib
 import re
 import sys
@@ -42,15 +44,29 @@ IGNORED_DIRS = {
 }
 
 
+_file_walk_cache: dict[tuple[str, ...], list[pathlib.Path]] = {}
+
+
 def iter_files(*suffixes: str) -> list[pathlib.Path]:
-    """Repo files, skipping environments, caches and generated data."""
+    """Repo files, skipping environments, caches and generated data.
+
+    结果按 suffix 集合缓存，且遍历时**原地剪枝** IGNORED_DIRS 子树：8 个检查各调一次、
+    每次全量 rglob（frontend/node_modules 几万文件照走，只是最后被过滤）曾把整份脚本
+    拖到 17s（门禁耗时盘点）。目录在单次运行内不会变，缓存 + 剪枝都是纯收益。
+    """
+    key = tuple(sorted(suffixes))
+    cached = _file_walk_cache.get(key)
+    if cached is not None:
+        return cached
     found: list[pathlib.Path] = []
-    for path in ROOT.rglob("*"):
-        if not path.is_file() or (IGNORED_DIRS & set(path.parts)):
-            continue
-        if suffixes and path.suffix not in suffixes:
-            continue
-        found.append(path)
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        # 原地剪枝：巨树（node_modules / .venv / data …）整个不进入，而不是进入后再过滤。
+        dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS]
+        for name in filenames:
+            if suffixes and pathlib.Path(name).suffix not in suffixes:
+                continue
+            found.append(pathlib.Path(dirpath) / name)
+    _file_walk_cache[key] = found
     return found
 
 
@@ -137,7 +153,13 @@ def check_stale_identifiers() -> None:
 
 
 def check_config_contract() -> None:
-    """.env.example must expose every key config.py advertises."""
+    """.env.example must expose every key config.py advertises.
+
+    正则覆盖的**全部**前缀都要在这里列出来。此前只覆盖 MODEL_ / OBS_ / 路径三项，
+    于是 `CONTEXT_MAX_CHARS` / `TOOL_TIMEOUT_SECONDS` / `AUTH_TRUSTED_PROXIES` 这类新键
+    即使漏进 .env.example 也不会被发现 —— 一个只检查部分键的契约检查比没有更容易骗人
+    （代码审查报告（第二轮）L4）。
+    """
     env_keys = set(
         re.findall(
             r"^([A-Z][A-Z0-9_]+)=",
@@ -145,12 +167,23 @@ def check_config_contract() -> None:
             flags=re.M,
         )
     )
-    cfg_keys = set(
-        re.findall(
-            r"\b(MODEL_[A-Z_]+|OBS_[A-Z_]+|SQLITE_PATH|CHROMA_PATH|UPLOAD_DIR|LANGSMITH_[A-Z_]+)\b",
-            (ROOT / "src" / "rolecard_agent" / "config.py").read_text(encoding="utf-8"),
-        )
+    cfg_text = (ROOT / "src" / "rolecard_agent" / "config.py").read_text(encoding="utf-8")
+    prefixes = (
+        "MODEL_[A-Z_]+",
+        "OBS_[A-Z_]+",
+        "AUTH_[A-Z_]+",
+        "CONTEXT_[A-Z_]+",
+        "TOOL_[A-Z_]+",
+        "WEB_[A-Z_]+",
+        "WORKSPACE_[A-Z_]+",
+        "TAVILY_[A-Z_]+",
+        "OCR_[A-Z_]+",
+        "RAG_[A-Z_]+",
+        "EXTRACT_[A-Z_]+",
+        "LANGSMITH_[A-Z_]+",
     )
+    pattern = r"\b(" + "|".join(prefixes) + r"|SQLITE_PATH|CHROMA_PATH|UPLOAD_DIR)\b"
+    cfg_keys = set(re.findall(pattern, cfg_text))
     missing = sorted(k for k in cfg_keys if k not in env_keys and k != "LANGSMITH_PROJECT")
     detail = f"missing: {missing}" if missing else f"{len(env_keys)} keys aligned"
     out("config contract", not missing, detail)
@@ -200,6 +233,34 @@ def check_promised_artifacts() -> None:
     out("promised artifacts", not absent, detail)
     if absent:
         fails.append(f"plan promises artifacts that do not exist: {absent}")
+
+
+def check_core_no_health_token() -> None:
+    """L1：core/ 内不得出现具体域的专有名词 token（当前盯 "health"，不区分大小写）。
+
+    分层硬规则：core 是内核，domains/<x>/ 才是业务域。内核源码里出现某个域的专名，
+    说明有人把域概念抄近道塞进了内核（历史事故：AppContext.health 把具体域硬编码进
+    内核，M9 才解耦）。**注释一并禁止** —— 注释里的域词是概念泄漏的早期信号，
+    等它长成代码就晚了；这与 check_domain_isolation 先剥注释的取向相反，因为那条
+    查的是"结构违规"（建表），本条查的是"概念泄漏"（连提都不该提）。
+    """
+    core_dir = ROOT / "src" / "rolecard_agent" / "core"
+    bad: list[str] = []
+    for path in sorted(core_dir.rglob("*")):
+        if path.suffix not in (".py", ".sql") or not path.is_file():
+            continue
+        for lineno, line in enumerate(
+            path.read_text(encoding="utf-8", errors="ignore").splitlines(), start=1
+        ):
+            if "health" in line.lower():
+                bad.append(f"{path.relative_to(ROOT)}:{lineno}")
+    out(
+        "core/ no domain token 'health'",
+        not bad,
+        "clean" if not bad else f"found in {len(bad)} line(s): {bad[:8]}",
+    )
+    if bad:
+        fails.append(f"core/ mentions a domain token ('health'): {bad}")
 
 
 def check_domain_isolation() -> None:
@@ -409,7 +470,16 @@ def check_doc_links() -> None:
     README is the first thing a reviewer hits.
     """
     # Documented before they exist, on purpose.
-    not_yet = {"uv.lock", "requirements.lock", ".env", "data/sqlite/app.db"}
+    # `tests/eval/report.json` 与 `tests/eval/harness/` 是**脚本按需生成**的产物（跑批/链路
+    # 自检），全新 clone 里本来就不存在 —— 它们是"跑出来的"而不是"仓库里的"，因此不参与
+    # "文档里的路径必须存在"这条校验。
+    not_yet = {
+        "uv.lock",
+        "requirements.lock",
+        ".env",
+        "data/sqlite/app.db",
+        "tests/eval/report.json",
+    }
     bare = {"pyproject.toml", "README.md", "CONTRIBUTING.md", "LICENSE"}
     # Only repo-relative references are validated. Docs also use in-package shorthand such
     # as `core/prompts.py`, which is not a path from the repo root - validating those
@@ -513,35 +583,92 @@ def check_role_whitelists_resolve() -> None:
     The built-in role's whitelist listed `list_domains` / `list_roles` while
     `core/tools/builtin.py` was still an empty docstring - a permission list pointing at
     nothing, which reads as working code (技术评审与决策.md §9 B1).
+
+    ## 声明面只认 `@tool("...")`
+
+    此前这里还加了两条"宽松兜底"：`def (\\w+)\\(` 和 `"([a-z][a-z0-9_]{2,})"`。后者的意思是
+    "文件里出现过的任何小写字符串字面量都算已声明工具" —— 于是这个断言几乎恒真，
+    白名单写错名字也照样绿。**一个永远不会失败的检查最危险的地方在于它给出的是假信心**
+    （代码审查报告（第二轮）L4）。工具名在代码里只有一个权威声明处：`@tool("name")`。
+    """
+    sys.path.insert(0, str(ROOT / "src"))
+    from rolecard_agent.roles.seed import BUILTIN_ROLES, DOMAIN_SEED_ROLES  # noqa: PLC0415
+
+    declared: set[str] = set()
+    for path in iter_files(".py"):
+        if "tests" in path.parts:
+            continue
+        declared |= set(
+            re.findall(r'@tool\("(\w+)"\)', path.read_text(encoding="utf-8", errors="ignore"))
+        )
+
+    # 域种子角色（DOMAIN_SEED_ROLES）与内置角色同样随代码出厂：白名单写错名字要在这里
+    # 大声失败，反向覆盖（声明了却没人引用）也要把它们的引用算进去。
+    wanted: set[str] = set()
+    for role in (*BUILTIN_ROLES, *DOMAIN_SEED_ROLES):
+        wanted |= set(role.tool_whitelist or [])
+
+    missing = sorted(wanted - declared)
+    detail = (
+        f"unresolved: {missing} (declared: {sorted(declared)})"
+        if missing
+        else f"{len(wanted)} names resolve against {len(declared)} declared tools"
+    )
+    out("role whitelists", not missing, detail)
+    if missing:
+        fails.append(f"built-in role whitelists name undeclared tools: {missing}")
+    # 反向也要成立：声明了工具却没人用得上 = 死工具（要么忘了写进白名单，要么忘了注册）。
+    if declared and not wanted:
+        fails.append("tools are declared but no built-in role references any of them")
+        out("role whitelist coverage", False, "no whitelist references any declared tool")
+
+
+def _normalise_question(text: str) -> str:
+    """问题归一：去掉标点与空白 —— 「…是多少？」与「…是多少」是同一道题。"""
+    return re.sub(r"[\s，。！？?!,.:：\"'（）()【】\[\]]", "", text)
+
+
+def check_exemplar_leaks_eval_answers() -> None:
+    """内置角色的**范例不能是评测题的答案**。
+
+    ## 为什么需要一条机器校验
+
+    角色范例（few-shot）会原样进入 system prompt。`medical_archivist` 的第一条范例曾写成
+    「上次检查的结石直径是多少？→ …6.0 mm…【未经人工校验】」，与评测用例 health-001 几乎
+    逐字相同（连问号都只差一个）。后果在评测记录里看得清清楚楚：模型的回答与范例**逐字一致**，
+    一次工具都没调 —— 数值对、标记对、**过程不达标**。而且这种失败极难排查：断言的三项里
+    两项都"通过"了，只有"必须调工具"这一项失败，看起来像模型抽风。
+
+    规则：范例的提问与任何评测用例的提问**归一化后不得相同**。只查提问而不查回答，
+    是因为回答重叠无法静态判定（同一段医疗话术出现在两边是正常的）；
+    提问重叠才是"把答案递给模型"的可判定信号。
     """
     sys.path.insert(0, str(ROOT / "src"))
     from rolecard_agent.roles.seed import BUILTIN_ROLES  # noqa: PLC0415
 
-    # Only tool-definition modules form the declaration surface. Scanning all of src would
-    # find the whitelist's own names inside roles/seed.py and pass trivially.
-    # v2.1: rag/ 也声明工具（search_knowledge —— 检索是内核能力，实现在 rag/）。
-    sources = [
-        p
-        for p in iter_files(".py")
-        if "tests" not in p.parts
-        and (p.name == "tools.py" or "tools" in p.parent.name or "rag" in p.parts)
-    ]
-    declared: set[str] = set()
-    for path in sources:
-        text = path.read_text(encoding="utf-8", errors="ignore")
-        declared |= set(re.findall(r'@tool\("(\w+)"\)', text))
-        declared |= set(re.findall(r"def (\w+)\(", text))
-        declared |= set(re.findall(r'"([a-z][a-z0-9_]{2,})"', text))
+    case_path = ROOT / "tests" / "eval" / "cases" / "health.json"
+    if not case_path.exists():
+        out("exemplar leaks eval answers", True, "no eval cases yet")
+        return
+    cases = json.loads(case_path.read_text(encoding="utf-8"))
+    eval_inputs = {
+        _normalise_question(str(c.get("input") or "")) for c in cases if c.get("input")
+    }
 
-    wanted: set[str] = set()
+    leaked: list[str] = []
     for role in BUILTIN_ROLES:
-        wanted |= set(role.tool_whitelist or [])
+        for ex in role.exemplars or []:
+            q = _normalise_question(ex.user)
+            if q and q in eval_inputs:
+                leaked.append(f"{role.role_id}:{ex.user}")
 
-    missing = sorted(wanted - declared)
-    detail = f"unresolved: {missing}" if missing else f"{len(wanted)} names resolve"
-    out("role whitelists", not missing, detail)
-    if missing:
-        fails.append(f"built-in role whitelists name undeclared tools: {missing}")
+    ok = not leaked
+    out("exemplar leaks eval answers", ok, str(leaked) if leaked else "clean")
+    if not ok:
+        fails.append(
+            "built-in exemplar duplicates an eval question - the model can pass by "
+            f"parroting the prompt instead of calling tools: {leaked}"
+        )
 
 
 def _required_user_stories() -> set[str]:
@@ -610,6 +737,7 @@ def main() -> int:
     check_config_contract()
     check_dependency_parity()
     check_promised_artifacts()
+    check_core_no_health_token()
     check_domain_isolation()
     check_safety_prompt()
     check_line_endings()
@@ -622,6 +750,7 @@ def main() -> int:
     check_dead_config()
     check_role_whitelists_resolve()
     check_us_traceability()
+    check_exemplar_leaks_eval_answers()
     report_line_budget()
 
     print("\n--- FAILS ---")

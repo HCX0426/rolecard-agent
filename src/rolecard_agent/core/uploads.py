@@ -1,0 +1,157 @@
+"""上传目录的孤儿文件：盘点（只读）与回收（需显式确认）。
+
+## 为什么需要它
+
+上传目录是**只增不减**的：上传端点写 `<uuid8>_<name>`、解析文本另存一份 `.parsed.txt`
+副本，而删会话不删文件、也没有任何 GC。M4 修掉"重复上传再写一份副本"之后，新增的垃圾
+止住了，但**历史遗留的副本与半成品仍在**（仓库里实际就能看到 `01b7f378_x.bin` 这类残留）。
+
+## 这是"删用户数据"的动作，所以规则比功能更保守
+
+  1. **只扫上传目录内的普通文件**，`resolve()` 之后必须仍在目录内 —— 符号链接指向外部时
+     不越界（上传目录本身由本服务创建，但目录内容可能被人工干预过）；
+  2. **只认"没有任何 ingestion_task 引用"的文件**：只要有一条台账指向它，就不动；
+  3. **`.parsed.txt` 跟随主文件**：主文件被引用则副本保留，主文件孤立则副本一起回收；
+  4. **先盘点、后执行**：`scan_orphans` 是纯只读，接入层把它给操作员看过再调删除；
+  5. **执行必须留痕**：删了多少个文件、多少字节，写进审计。
+
+第 4 条是刻意的：一步到位的 `DELETE /cleanup` 很省事，但"点一下就永久删掉一批用户文件"
+不该是一个没有预览面的操作。
+"""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Iterable
+from dataclasses import dataclass
+from pathlib import Path
+
+# 解析文本副本的后缀（与 api/deps.py 的 parsed_text_path 约定一致）。
+PARSED_SUFFIX = ".parsed.txt"
+
+
+@dataclass(frozen=True, slots=True)
+class OrphanFile:
+    """一个待回收的文件：名字 + 大小 + 是否属于某个已孤立主文件的副本。"""
+
+    name: str
+    size: int
+    companion: bool
+
+
+@dataclass(frozen=True, slots=True)
+class OrphanReport:
+    """盘点结果。`referenced` / `scanned` 让操作员能自己核对"为什么只删了这些"。"""
+
+    files: tuple[OrphanFile, ...]
+    total_bytes: int
+    scanned: int
+    referenced: int
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "orphans": [
+                {"name": f.name, "size": f.size, "companion": f.companion} for f in self.files
+            ],
+            "total_bytes": self.total_bytes,
+            "scanned": self.scanned,
+            "referenced": self.referenced,
+        }
+
+
+def normalize(path: str | Path) -> str:
+    """路径比较用规范形：`resolve()` 归一相对段与符号链接，`normcase` 抹平大小写。
+
+    两侧必须用**同一个**函数：上传端点存库的是它写文件时的路径，扫描时拿到的是目录项，
+    不归一就会出现"明明有台账引用却被判为孤儿"——那会直接删掉在用的文件。
+    """
+    try:
+        resolved = Path(path).resolve()
+    except (OSError, RuntimeError, ValueError):
+        resolved = Path(path)
+    return os.path.normcase(str(resolved))
+
+
+def referenced_paths(source_files: Iterable[str | None]) -> set[str]:
+    """台账里的 `source_file` 全部归一成一个集合。
+
+    入参是 `Iterable` 而不是 `list`：函数只做遍历，而 `list` 在类型系统里是不变的
+    （`list[str]` 不能传给 `list[str | None]`）—— 用 `list` 会把调用方逼成多余的类型转换。
+    """
+    return {normalize(s) for s in source_files if s}
+
+
+def _inside(path: Path, root: Path) -> bool:
+    try:
+        return path.resolve().is_relative_to(root)
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def scan_orphans(upload_dir: Path, referenced: set[str]) -> OrphanReport:
+    """只读盘点：列出上传目录里没有被任何台账引用的文件。**不删任何东西。**"""
+    root = upload_dir
+    if not root.is_dir():
+        return OrphanReport(files=(), total_bytes=0, scanned=0, referenced=len(referenced))
+
+    entries: list[tuple[str, int, Path]] = []
+    for entry in sorted(root.iterdir()):
+        if not entry.is_file() or not _inside(entry, root):
+            continue  # 目录、越界符号链接一律跳过
+        try:
+            size = entry.stat().st_size
+        except OSError:
+            continue
+        entries.append((entry.name, size, entry))
+
+    # 主文件集合：名字不以 .parsed.txt 结尾的那些。
+    primaries = {name for name, _, _ in entries if not name.endswith(PARSED_SUFFIX)}
+
+    orphans: list[OrphanFile] = []
+    referenced_count = 0
+    for name, size, entry in entries:
+        if normalize(entry) in referenced:
+            referenced_count += 1
+            continue
+        if name.endswith(PARSED_SUFFIX):
+            # 副本：主文件被引用（或被删但台账仍在）→ 保留；主文件也不在 → 一起回收。
+            base = name[: -len(PARSED_SUFFIX)]
+            base_entry = root / base
+            base_referenced = base in primaries and normalize(base_entry) in referenced
+            if base_referenced:
+                referenced_count += 1
+                continue
+            orphans.append(OrphanFile(name=name, size=size, companion=True))
+            continue
+        orphans.append(OrphanFile(name=name, size=size, companion=False))
+
+    return OrphanReport(
+        files=tuple(orphans),
+        total_bytes=sum(f.size for f in orphans),
+        scanned=len(entries),
+        referenced=referenced_count,
+    )
+
+
+def remove_orphans(upload_dir: Path, report: OrphanReport) -> tuple[int, int]:
+    """按盘点结果回收。返回 `(删除数, 释放字节数)`。
+
+    逐个删除并**吞掉单个文件的失败**：一个文件被外部进程占用不该让整批回收中止，
+    而"实际删掉了几个"由返回值如实给出（调用方写审计）。同时再校验一次路径仍在目录内 ——
+    盘点到删除之间目录内容可能已经变了，删除前重新确认比信任旧清单更稳。
+    """
+    root = upload_dir
+    deleted = 0
+    freed = 0
+    for item in report.files:
+        target = root / item.name
+        if not _inside(target, root) or not target.is_file():
+            continue
+        try:
+            size = target.stat().st_size
+            target.unlink()
+        except OSError:
+            continue
+        deleted += 1
+        freed += size
+    return deleted, freed

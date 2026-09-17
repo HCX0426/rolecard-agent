@@ -24,12 +24,43 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
+import httpx
+
 from rolecard_agent.config import Settings
-from rolecard_agent.rag.parser import OcrUnavailable, ParseError, _default_ocr_python
+from rolecard_agent.core.paths import default_ocr_python
+from rolecard_agent.rag.parser import OcrUnavailable, ParseError
 
 # ocr.py 位于 <root>/src/rolecard_agent/rag/，故项目根为 parents[3]；worker 在 <root>/scripts。
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _OCR_WORKER = _PROJECT_ROOT / "scripts" / "ocr_worker.py"
+
+# M3：整图 base64 内联进请求体前先卡大小，避免超大扫描件爆内存/超上下文窗口。
+MAX_OCR_IMAGE_BYTES = 15 * 1024 * 1024  # 15 MB
+
+# L8：Paddle worker 的子进程超时（秒）——OCR 是重活，但也不允许无限挂起。
+_OCR_PROC_TIMEOUT_SECONDS = 120
+
+# L10：进程级共享 httpx 连接池 —— 此前每次调用都新建 Client，握手/TLS 成本白扔。
+# httpx.Client 并发请求安全；单请求 timeout 参数覆盖池默认值。
+_HTTP_CLIENT: httpx.Client | None = None
+
+
+def _http() -> httpx.Client:
+    global _HTTP_CLIENT
+    if _HTTP_CLIENT is None or _HTTP_CLIENT.is_closed:
+        _HTTP_CLIENT = httpx.Client(timeout=30.0)
+    return _HTTP_CLIENT
+
+
+def _read_image_b64(path: Path) -> str:
+    """读取图片并 base64 编码；过大直接抛可读 `ParseError`（不静默吞掉）。"""
+    size = Path(path).stat().st_size
+    if size > MAX_OCR_IMAGE_BYTES:
+        raise ParseError(
+            f"图片过大（{size // 1024 // 1024} MB），超过 OCR 上限 "
+            f"{MAX_OCR_IMAGE_BYTES // 1024 // 1024} MB，请压缩或裁剪后重试。"
+        )
+    return base64.b64encode(Path(path).read_bytes()).decode("ascii")
 
 
 class OcrBackend(Protocol):
@@ -56,7 +87,7 @@ class LocalPaddleBackend:
     name = "paddle"
 
     def __init__(self, *, exe: str | None = None) -> None:
-        self._exe = exe or os.environ.get("OCR_PYTHON") or _default_ocr_python()
+        self._exe = exe or os.environ.get("OCR_PYTHON") or default_ocr_python()
 
     def available(self) -> bool:
         if not self._exe or not Path(self._exe).exists():
@@ -64,20 +95,23 @@ class LocalPaddleBackend:
         return _OCR_WORKER.exists()
 
     def ocr(self, image_path: Path) -> str:
-        if not self.available():
+        # 把解释器路径绑成局部 str：`available()` 已经保证它存在，但 `self._exe` 的静态
+        # 类型仍是 `str | None`，直接放进 argv 会过不了类型检查（而且这里确实需要一个非空值）。
+        exe = self._exe
+        if not exe or not self.available():
             raise OcrUnavailable(
                 "OCR 后端未配置：按 requirements-ocr.txt 在独立 venv 安装 paddleocr，"
                 "并设置 OCR_PYTHON 指向其 python（默认 .venv-ocr/Scripts/python.exe）。"
             )
         try:
             proc = subprocess.run(
-                [self._exe, str(_OCR_WORKER), str(image_path)],
+                [exe, str(_OCR_WORKER), str(image_path)],
                 capture_output=True,
                 # 显式 UTF-8：worker 已 reconfigure 为 UTF-8；不能用 text=True（那样按 locale
                 # 解码，中文 Windows = GBK，中文 OCR 文本会乱码）。
                 encoding="utf-8",
                 errors="replace",
-                timeout=120,
+                timeout=_OCR_PROC_TIMEOUT_SECONDS,
                 check=False,
             )
         except Exception as exc:  # noqa: BLE001 - 启动失败 = 解析失败，由调用方决定降级
@@ -86,6 +120,56 @@ class LocalPaddleBackend:
             detail = (proc.stderr or proc.stdout or "").strip().replace("\n", " ")[:300]
             raise ParseError(f"OCR 失败（退出码 {proc.returncode}）：{detail}")
         return (proc.stdout or "").strip()
+
+
+class VisionModelBackend:
+    """本地视觉模型直读图片（usage=ocr 的模型后端行 → Ollama /api/chat + images）。
+
+    为什么存在：「服务」页允许把模型后端引用进 OCR 优先级（EndpointConfig.kind=local
+    且带 model）——界面允许了，选择器就必须消费，否则"显示可用实则被跳过"是在骗人。
+    与 CloudApiBackend 同层：本地视觉模型不外发数据，天然排在云 OCR 之前合规。
+
+    语义对齐协议：不可达/模型缺失 → `OcrUnavailable`（顺延下一个候选）；
+    可达但识别失败 → `ParseError`（调用方决定 500 还是提示）。
+    """
+
+    name = "vl"
+
+    def __init__(self, *, base_url: str | None, model: str, timeout: float = 90.0) -> None:
+        self._base = (base_url or "http://127.0.0.1:11434").rstrip("/")
+        self._model = model
+        self._timeout = timeout
+
+    def available(self) -> bool:
+        # 判定原语在 core/probes.py（与服务页探测共用一份，防止两处答案打架）。
+        from rolecard_agent.core.probes import vision_model_ready
+
+        return vision_model_ready(self._base, self._model)
+
+    def ocr(self, image_path: Path) -> str:
+        b64 = _read_image_b64(image_path)
+        payload = {
+            "model": self._model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "请把图片中的全部文字按原样转录出来；若图中没有文字，"
+                    "就用一句中文客观描述图片内容。",
+                    "images": [b64],
+                }
+            ],
+            "stream": False,
+        }
+        try:
+            resp = _http().post(f"{self._base}/api/chat", json=payload, timeout=self._timeout)
+        except Exception as exc:  # noqa: BLE001
+            raise OcrUnavailable(f"本地视觉模型不可达：{exc}") from exc
+        if resp.status_code != 200:
+            raise ParseError(f"视觉模型返回 HTTP {resp.status_code}")
+        text = str((resp.json().get("message") or {}).get("content") or "").strip()
+        if not text:
+            raise ParseError("视觉模型没有返回任何内容。")
+        return text
 
 
 class CloudApiBackend:
@@ -112,17 +196,14 @@ class CloudApiBackend:
         return bool(self._key)
 
     def ocr(self, image_path: Path) -> str:
-        import httpx
-
         if not self._key:
             raise OcrUnavailable("云端 OCR 未配置 OCR_API_KEY。")
         try:
-            raw = Path(image_path).read_bytes()
-            b64 = base64.b64encode(raw).decode("ascii")
+            b64 = _read_image_b64(image_path)
         except Exception as exc:
             raise ParseError(f"读取图片失败：{exc}") from exc
         try:
-            res = httpx.post(
+            res = _http().post(
                 self._url,
                 data={
                     "apikey": self._key,
@@ -170,7 +251,16 @@ def select_ocr_backend(
                     return paddle
                 continue
             cfg = endpoints.get(cid)
-            if cfg is not None and cfg.api_key:
+            if cfg is None or getattr(cfg, "stale", False):
+                continue
+            # 视觉模型行（usage=ocr 的后端引用）：本地直读，不外发数据。
+            # available() 探 Ollama 与模型在位；不可用顺延下一候选（降级语义与视图一致）。
+            if getattr(cfg, "kind", "") == "local" and cfg.model:
+                vl = VisionModelBackend(base_url=cfg.base_url, model=cfg.model)
+                if vl.available():
+                    return vl
+                continue
+            if cfg.api_key:
                 return CloudApiBackend(api_key=cfg.api_key, api_url=cfg.base_url)
         return None
     cloud = CloudApiBackend(
@@ -178,7 +268,7 @@ def select_ocr_backend(
         provider=settings.ocr_provider,
         api_url=settings.ocr_api_url,
     )
-    by_id = {"paddle": paddle, "cloud": cloud}
+    by_id: dict[str, OcrBackend] = {"paddle": paddle, "cloud": cloud}
     mode = (settings.ocr_backend or "auto").lower()
     if order:
         # 操作员顺序优先于 env 档位：逐个试 available，谁就绪用谁（启停与优先级热生效）。

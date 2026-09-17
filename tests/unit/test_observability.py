@@ -113,3 +113,69 @@ def test_timer_reports_elapsed_milliseconds() -> None:
     with timer() as box:
         pass
     assert box["ms"] >= 0.0
+
+
+# -- 线程安全与日志轮转（代码审查报告（第二轮）M7） --------------------------------
+
+
+def test_concurrent_emits_produce_only_valid_json_lines(tmp_path: Path) -> None:
+    """并发 emit 不能把日志写成互相交错的残行。
+
+    `emit` 会被 FastAPI 线程池、图执行、工具执行并发调用，而"写入整行"不是原子操作。
+    修复前无锁：两行日志可以交错成无法解析的残行 —— 恰好在需要排查问题的时候让日志失效。
+    """
+    import threading
+
+    path = tmp_path / "trace.log"
+    tracer = LocalTracer(path=path)
+    n_threads, per_thread = 8, 50
+
+    def worker(idx: int) -> None:
+        for i in range(per_thread):
+            tracer.emit(TraceEvent(event=f"e{idx}-{i}", detail={"payload": "x" * 200}))
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == n_threads * per_thread  # 一行不多、一行不少
+    for line in lines:  # 每一行都必须是完整可解析的 JSON
+        assert json.loads(line)["event"]
+
+
+def test_log_file_rotates_instead_of_growing_forever(tmp_path: Path) -> None:
+    """日志按大小轮转，保留一个 `.1` 备份 —— 长跑进程里唯一会无限增长的东西。"""
+    path = tmp_path / "trace.log"
+    tracer = LocalTracer(path=path)
+    tracer._MAX_LOG_BYTES = 512  # type: ignore[misc]  # 便于用小数据触发轮转
+    for i in range(40):
+        tracer.emit(TraceEvent(event=f"e{i}", detail={"pad": "y" * 100}))
+
+    assert path.exists()
+    assert path.with_name(path.name + ".1").exists()
+    assert path.stat().st_size <= 512 * 2  # 轮转之后不会失控
+
+
+def test_background_emits_to_stderr_do_not_rotate(tmp_path: Path) -> None:
+    """没有配置路径（默认写 stderr）时不该尝试轮转 —— 没有文件可轮。"""
+    tracer = LocalTracer()
+    tracer._MAX_LOG_BYTES = 1  # type: ignore[misc]
+    tracer.emit(TraceEvent(event="still-works"))  # 不抛即通过
+
+
+# -- 端点脱敏（代码审查报告（第二轮）A5 / M11） --------------------------------------
+
+
+def test_scrub_endpoints_hides_urls_in_audit_text() -> None:
+    """`/api/audit` 是前端可见的接口，入库的异常文本不该带着内网地址。"""
+    from rolecard_agent.core.observability import scrub_endpoints
+
+    raw = "ExtractError: 模型调用失败：Connection refused to http://localhost:11434/api/chat"
+    cleaned = scrub_endpoints(raw)
+    assert "http://localhost:11434" not in cleaned
+    assert "<endpoint>" in cleaned
+    assert "Connection refused" in cleaned  # 诊断信息保留
+    assert scrub_endpoints(None) is None  # 非字符串原样返回

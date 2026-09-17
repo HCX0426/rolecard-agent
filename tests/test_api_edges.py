@@ -85,19 +85,62 @@ def test_patch_session_without_any_field_is_400(client: TestClient) -> None:
 
 
 def test_unknown_role_backend_degrades_to_default(client: TestClient) -> None:
-    """角色声明了一个已被删除的后端 → 降级默认模型并留痕，绝不能 500。"""
-    client.post(
-        "/api/roles",
+    """角色声明了一个**已被删除**的后端 → 降级默认模型并留痕，绝不能 500。
+
+    两条路径要分开（代码审查报告（第二轮）L3 修的正是第一条）：
+      * **写时**声明一个不存在的后端 → 400（配置错误当场大声）；
+      * **事后**把被引用的后端删掉 → 运行期降级（可用性 fail-soft）。
+    """
+    # 写时校验：不存在的后端名直接被拒
+    assert (
+        client.post(
+            "/api/roles",
+            json={
+                "role_id": "ghost",
+                "role_name": "幽灵角色",
+                "system_prompt": "x",
+                "model_name": "nope",
+            },
+        ).status_code
+        == 400
+    )
+
+    # 运行期降级：让 cloud-a 存在 → 角色合法引用 → 再删掉它
+    client.put(
+        "/api/settings/models",
         json={
-            "role_id": "ghost",
-            "role_name": "幽灵角色",
-            "system_prompt": "x",
-            "model_name": "nope",
+            "default": "cloud-a",
+            "backends": [
+                {"name": "cloud-a", "provider": "openai", "model": "m-a", "api_key": "sk-a"}
+            ],
         },
     )
+    assert (
+        client.post(
+            "/api/roles",
+            json={
+                "role_id": "ghost",
+                "role_name": "幽灵角色",
+                "system_prompt": "x",
+                "model_name": "cloud-a",
+            },
+        ).status_code
+        == 201
+    )
     tid = client.post("/api/session", json={"role_id": "ghost"}).json()["thread_id"]
-    res = client.post("/api/chat", json={"thread_id": tid, "message": "你好"})
-    assert res.status_code == 200
+    assert client.post("/api/chat", json={"thread_id": tid, "message": "你好"}).status_code == 200
+
+    client.put(
+        "/api/settings/models",
+        json={
+            "default": "cloud-b",
+            "backends": [
+                {"name": "cloud-b", "provider": "openai", "model": "m-b", "api_key": "sk-b"}
+            ],
+        },
+    )
+    # cloud-a 已被删除，角色仍指向它 → 下一轮降级到默认，不崩
+    assert client.post("/api/chat", json={"thread_id": tid, "message": "还在吗"}).status_code == 200
 
 
 # -- 数据删除的未命中分支 -----------------------------------------------------------

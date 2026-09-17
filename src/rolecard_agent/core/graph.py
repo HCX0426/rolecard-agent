@@ -74,6 +74,10 @@ def build_kernel(
         ctx.enabled_domains = plugins.enabled_domains
         ctx.tool_epoch = plugins.tool_epoch
     ctx.model_resolver = model_resolver
+    # 历史预算与工具超时随宿主配置走（审查报告 H3 / M10）：内核不再无条件把全量历史塞进
+    # prompt，也不再把工具执行交给"无限等待"。
+    ctx.max_context_chars = ctx.settings.context_max_chars
+    ctx.tool_timeout_seconds = ctx.settings.tool_timeout_seconds
 
     graph = StateGraph(AgentState)
 
@@ -85,7 +89,10 @@ def build_kernel(
         # warns if a node's config parameter is typed as anything else.
         return call_model(state, ctx=ctx, config=config)
 
-    graph.add_node(MODEL_NODE, model_node)
+    # LangGraph 的 `add_node` 泛型要求节点输入是 State 类型；这里的闭包刻意接
+    # `dict[str, Any]`（节点只负责把 state 透传给 call_model）。运行期正确，
+    # 类型变量表达不了这件事，因此显式忽略并留下理由。
+    graph.add_node(MODEL_NODE, model_node)  # type: ignore[type-var]
     graph.add_node(TOOLS_NODE, partial(execute_tools, ctx=ctx))
 
     graph.add_edge(START, MODEL_NODE)
@@ -116,6 +123,16 @@ def _init_model(settings: Settings, backend_name: str | None) -> ChatLike:
     # 历史值 "local" 是 Ollama 的别名，同样按 native 处理。
     style = client_style(backend.provider)
     kwargs["model_provider"] = "ollama" if style == "native" else "openai"
+    # 思考（reasoning）模式只对**显式列出**的思考模型开启（MODEL_THINKING_MODELS），
+    # 且受总开关 MODEL_THINKING=auto|off 管制（off = 名单内也不开，临时不想要思考
+    # token 时用）：对不支持的模型传 reasoning=True 会直接 400（实测 qwen2.5:7b），
+    # 且思考 token 会显著拉长首字延迟 —— 所以按模型名精确启用 + 总闸兜底。
+    if (
+        style == "native"
+        and settings.model_thinking != "off"
+        and backend.model in settings.model_thinking_models
+    ):
+        kwargs["reasoning"] = True
     # 两类客户端都接受 `timeout`（此前的 _TIMEOUT_PROVIDERS 两者都在列）：本地模型挂起
     # 会让 SSE 与 with_fallbacks 永久等待，所以只要配置了超时就显式带上。
     if settings.model_timeout_seconds > 0:
@@ -146,4 +163,6 @@ def build_model(settings: Settings, backend_name: str | None = None) -> ChatLike
     if not chain:
         return primary
     fallbacks = [_init_model(settings, name) for name in chain]
-    return cast("ChatLike", primary.with_fallbacks(fallbacks))
+    # `with_fallbacks` 是 Runnable 的方法，不在 `ChatLike` 这个**最小内核协议**里
+    # （故意如此：测试用的假模型不该被迫实现它）。这里明确知道返回的是个可调用模型。
+    return cast("ChatLike", primary.with_fallbacks(fallbacks))  # type: ignore[attr-defined]

@@ -6,14 +6,14 @@
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
+import re
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AnyMessage, HumanMessage, RemoveMessage
 from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor
@@ -22,6 +22,7 @@ from rolecard_agent.api.deps import (
     DEFAULT_ROLE_ID,
     DEFAULT_USER_ID,
     AppContext,
+    expand_to_turns,
     get_actor,
     get_context,
     get_thread,
@@ -29,8 +30,9 @@ from rolecard_agent.api.deps import (
     role_error_to_http,
     serialize_message,
 )
+from rolecard_agent.core.ingestion import INGESTION_FAILED, INGESTION_PENDING
+from rolecard_agent.core.observability import TraceEvent
 from rolecard_agent.core.state import new_state
-from rolecard_agent.rag.ocr import select_ocr_backend
 from rolecard_agent.rag.parser import (
     IMAGE_EXTS,
     PARSEABLE_EXTENSIONS,
@@ -38,10 +40,31 @@ from rolecard_agent.rag.parser import (
     ParseError,
     parse_document,
 )
-from rolecard_agent.rag.retriever import KnowledgeDimensionMismatch
+from rolecard_agent.rag.retriever import (
+    EmbedError,
+    KnowledgeDimensionMismatch,
+)
 from rolecard_agent.roles.service import RoleError, RoleNotFound
 
 router = APIRouter()
+
+
+# 文件名消毒（审查报告 A4）：模型/浏览器给的 `filename` 不可信。`Path().name` 已经挡掉
+# 路径成分，这里再处理长度与控制字符 —— 超长名或含 `\x00` 的名字会让 `write_bytes` 抛
+# OSError，用户拿到的是一个没有任何说明的 500。
+_FILENAME_MAX = 120
+_UNSAFE_NAME_CHARS = re.compile(r"[\x00-\x1f\x7f<>:\"|?*\\/]")
+
+
+def _sanitize_filename(name: str) -> str:
+    cleaned = _UNSAFE_NAME_CHARS.sub("_", name).strip(" .")
+    if not cleaned:
+        cleaned = "report.bin"
+    if len(cleaned) <= _FILENAME_MAX:
+        return cleaned
+    # 截断但保住扩展名：解析分派完全依赖后缀，丢后缀等于把文件变成"不支持的类型"。
+    suffix = Path(cleaned).suffix[:16]
+    return cleaned[: _FILENAME_MAX - len(suffix)] + suffix
 
 
 class SessionCreate(BaseModel):
@@ -174,21 +197,29 @@ def patch_session(
         conn.commit()
 
     final_role_id = body.role_id or str(thread["current_role_id"])
-    role = ctx.roles.get(final_role_id)
+    try:
+        role = ctx.roles.get(final_role_id)
+    except RoleNotFound:
+        # 会话指向的角色已被删除（角色 CRUD 的常规后果）：这里**必须**降级而不是抛 ——
+        # `get_session` 与 `chat` 都有同样的兜底，本端点此前漏了，于是"只改个标题"也会
+        # 500（审查报告 M1，已复现）。降级后角色信息为空，会话本身仍然可用。
+        role_name: str | None = None
+    else:
+        role_name = role.role_name
     row = conn.execute(
         "SELECT title, model_name FROM session_thread WHERE thread_id = ?", (thread_id,)
     ).fetchone()
     return {
         "thread_id": thread_id,
         "role_id": final_role_id,
-        "role_name": role.role_name,
+        "role_name": role_name,
         "title": row["title"] if row else None,
         "model_name": row["model_name"] if row else None,
     }
 
 
 @router.post("/api/chat")
-def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> StreamingResponse:
+async def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> StreamingResponse:
     """SSE 流式对话。线程必须已存在（POST /api/session 创建）。
 
     首轮注入完整初始状态（`new_state`）；续轮只注入新消息 + 实时角色 —— 后者让
@@ -251,6 +282,117 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
     )
 
 
+# -- 编辑重生成 / 删除问答对 ---------------------------------------------------
+
+
+class _MessageTarget(BaseModel):
+    message_id: str = Field(min_length=1)
+
+
+class EditMessageBody(_MessageTarget):
+    content: str = Field(min_length=1)
+
+
+class DeleteMessagesBody(BaseModel):
+    message_ids: list[str] = Field(min_length=1)
+
+
+def _history_messages(ctx: AppContext, thread_id: str) -> tuple[dict, list[AnyMessage]]:
+    """取会话的图配置与 checkpoint 消息列表（类型为 AnyMessage：可安全访问 .id）。"""
+    get_thread(ctx.conn, thread_id)
+    graph = ctx.app_state["graph"]
+    config = {"configurable": {"thread_id": thread_id}}
+    snapshot = graph.get_state(config)
+    return config, list((snapshot.values or {}).get("messages") or [])
+
+
+@router.post("/api/session/{thread_id}/messages/edit")
+async def edit_message_and_regenerate(
+    thread_id: str, body: EditMessageBody, ctx: AppContext = Depends(get_context)
+):
+    """编辑**自己发过的某条消息**并从那里重新生成回答。
+
+    语义（与主流 AI 客户端一致）：改完回车 = **该条之后的历史全部作废**，用它作为新的
+    提问重新跑一轮。所以这里先把该条及其之后的消息从 checkpoint 移除，再以编辑后的
+    文本作为新输入流式生成 —— 返回的是与 `/api/chat` 完全相同的 SSE 事件流
+    （包含 thinking / token / tool_call / message_replace / end），前端无需分叉处理。
+
+    只允许编辑 **user 消息**：编辑助手回答等于伪造模型输出，会让审计与"数据可追溯"失效。
+    """
+    config, messages = _history_messages(ctx, thread_id)
+    graph = ctx.app_state["graph"]
+    thread = get_thread(ctx.conn, thread_id)
+    role_id = str(thread["current_role_id"])
+    session_model = thread["model_name"]
+    try:
+        role = ctx.roles.get(role_id)
+    except RoleNotFound as exc:
+        raise role_error_to_http(exc) from exc
+
+    target = next((m for m in messages if getattr(m, "id", None) == body.message_id), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="消息不存在（可能已被删除或线程不匹配）。")
+    if not isinstance(target, HumanMessage):
+        raise HTTPException(status_code=400, detail="只能编辑自己发送的消息。")
+
+    index = messages.index(target)
+    # 目标及其之后的全部作废（RemoveMessage 按 id 精确删除，不触碰前面的历史）
+    # 无 id 的消息无法被 RemoveMessage 定位（正常不会出现，防御性跳过）。
+    doomed = [RemoveMessage(id=m.id) for m in messages[index:] if m.id is not None]
+    graph.update_state(config, {"messages": doomed})
+
+    graph_input: dict[str, object] = {
+        "messages": [HumanMessage(content=body.content)],
+        "current_role_id": role_id,
+        "model_name": session_model,
+    }
+    ctx.conn.execute(
+        "UPDATE session_thread SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') "
+        "WHERE thread_id = ?",
+        (thread_id,),
+    )
+    ctx.conn.commit()
+
+    return StreamingResponse(
+        chat_events(
+            graph,
+            graph_input=graph_input,
+            config=config,
+            role_summary={"role_id": role.role_id, "role_name": role.role_name},
+            tracer=ctx.tracer,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/api/session/{thread_id}/messages/delete")
+def delete_messages(
+    thread_id: str, body: DeleteMessagesBody, ctx: AppContext = Depends(get_context)
+) -> dict[str, int]:
+    """删除选中的**一或多个问答对**，其余历史不受影响。
+
+    "选中我的或他的，就带上配对的那一问一答"由后端按 `expand_to_turns` 统一扩展：
+    用户消息 ↔ 助手回答 ↔ 期间的工具消息属于同一轮，必须整轮增删。
+    """
+    config, messages = _history_messages(ctx, thread_id)
+    graph = ctx.app_state["graph"]
+    known = {getattr(m, "id", None) for m in messages}
+    unknown = [i for i in body.message_ids if i not in known]
+    if unknown:
+        raise HTTPException(status_code=404, detail=f"消息不存在：{', '.join(unknown[:3])}")
+
+    doomed_ids = expand_to_turns(messages, list(body.message_ids))
+    graph.update_state(config, {"messages": [RemoveMessage(id=i) for i in doomed_ids]})
+    ctx.conn.execute(
+        "UPDATE session_thread SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') "
+        "WHERE thread_id = ?",
+        (thread_id,),
+    )
+    ctx.conn.commit()
+    return {"deleted": len(doomed_ids), "remaining": len(messages) - len(doomed_ids)}
+
+
 @router.get("/api/sessions")
 def list_sessions(ctx: AppContext = Depends(get_context)) -> list[object]:
     """会话列表（对话页侧栏）。v1 单用户演示：只列演示身份名下的会话。"""
@@ -271,6 +413,27 @@ def get_session_messages(thread_id: str, ctx: AppContext = Depends(get_context))
     get_thread(ctx.conn, thread_id)
     snapshot = ctx.app_state["graph"].get_state({"configurable": {"thread_id": thread_id}})
     return [serialize_message(m) for m in (snapshot.values or {}).get("messages", [])]
+
+
+@router.get("/api/session/{thread_id}/context")
+def get_session_context(thread_id: str, ctx: AppContext = Depends(get_context)) -> object:
+    """这一会话最近一轮的**上下文预算事实**：模型实际看到了多少条历史、被裁掉多少条。
+
+    为什么需要它（而不是只靠 SSE 的 `context_trimmed` 事件）：事件只在当轮到达浏览器，
+    刷新页面就没了；而"早期对话已经被裁掉"是一个**持续为真**的状态 —— 用户重新打开会话
+    时同样应该看得到。数值来自 checkpoint 里的 state，所以进程重启也还在。
+
+    `budget` 回的是当前配置值：它可能和当时那一轮不同（操作员改过 `CONTEXT_MAX_CHARS`），
+    所以两个数字一起给出，界面不会误导。
+    """
+    get_thread(ctx.conn, thread_id)
+    snapshot = ctx.app_state["graph"].get_state({"configurable": {"thread_id": thread_id}})
+    values = snapshot.values or {}
+    return {
+        "trimmed": int(values.get("context_trimmed") or 0),
+        "kept": int(values.get("context_kept") or 0),
+        "budget": ctx.settings.context_max_chars,
+    }
 
 
 @router.delete("/api/session/{thread_id}", status_code=204)
@@ -299,28 +462,81 @@ def upload_report(
     不可用时若有 OCR_API_KEY 回退云端，见 rag/ocr.py + requirements-ocr.txt）。
     解析失败的图片 / 不支持的类型保持 pending，并向会话注入一条说明消息（graph.update_state），
     让模型知道"有文件已登记但还不能读"，而不是假装读过。重复上传同一文件复用同一任务。
+
+    **落盘顺序（审查报告 M4）**：先算 sha256 → 查幂等键 → 只有确实是新文件才落盘。
+    旧实现每次上传都无条件写一份 `<uuid8>_<原名>`，于是"重复上传"会不断往 uploads/
+    里堆同样的字节、永不回收。现在重复上传不产生新文件。
     """
     conn = ctx.conn
     settings = ctx.settings
     thread = get_thread(conn, thread_id)
     user_id = str(thread["user_id"])
-    data = file.file.read()  # 同步端点读同步文件对象（见 docstring：不阻塞事件循环）
-    if not data:
-        raise HTTPException(status_code=400, detail="空文件。")
-    if len(data) > UPLOAD_MAX_BYTES:
-        raise HTTPException(status_code=400, detail="文件超过 20MB 上限。")
-
     upload_dir = settings.upload_dir
     upload_dir.mkdir(parents=True, exist_ok=True)
     safe_name = Path(file.filename or "report.bin").name  # 去掉任何路径成分
-    target = upload_dir / f"{uuid.uuid4().hex[:8]}_{safe_name}"
-    target.write_bytes(data)
-    file_hash = hashlib.sha256(data).hexdigest()
+    # 文件名消毒（审查报告 A4）：截断 + 去掉控制字符/分隔符 —— 超长名会让文件系统直接报错，
+    # 而报错发生在写盘之后就成了 500 而不是可读的 400。
+    safe_name = _sanitize_filename(safe_name)
 
-    before = len(ctx.ingestion.list_for_user(user_id))
-    task_id = ctx.ingestion.create(user_id=user_id, source_file=str(target), file_hash=file_hash)
-    reused = len(ctx.ingestion.list_for_user(user_id)) == before
-    existing = ctx.ingestion.get(task_id)
+    # M5：流式读 + 增量哈希 + 增量落盘到临时 spill，**不再把整文件读进内存**（20MB 峰值消失）。
+    # 先落 spill 是为了拿到 sha256 去做幂等查重；最终按幂等结果 rename 到正式路径或丢弃，
+    # 避免重复落盘（正常重复上传零写入）。
+    spill = upload_dir / f".{uuid.uuid4().hex[:12]}.part"
+    hasher = hashlib.sha256()
+    size = 0
+    try:
+        with spill.open("wb") as out:
+            while True:
+                chunk = file.file.read(1 << 20)  # 1 MB 一块
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > UPLOAD_MAX_BYTES:
+                    raise HTTPException(status_code=400, detail="文件超过 20MB 上限。")
+                hasher.update(chunk)
+                out.write(chunk)
+    except HTTPException:
+        spill.unlink(missing_ok=True)
+        raise
+    except Exception:
+        spill.unlink(missing_ok=True)
+        raise
+    if size == 0:
+        spill.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="空文件。")
+    file_hash = hasher.hexdigest()
+
+    # 幂等：同一份字节只登记一次、只落盘一次。
+    prior = ctx.ingestion.find_by_hash(user_id, file_hash)
+    if prior is not None:
+        task_id = str(prior["task_id"])
+        reused = True
+        existing = prior
+        target = Path(str(prior["source_file"] or ""))
+        if not target.is_file():
+            # 台账在、文件没了（人工删除 / 数据卷重置）。**自愈**：把这次上传的字节写下来，
+            # 并把台账指过去 —— 否则"重复上传同一个文件"会一路走到解析失败（实测 500）。
+            # 注意这不是"重复落盘"：只有在原文件确实缺失时才写，正常重复上传仍然零写入。
+            target = upload_dir / f"{uuid.uuid4().hex[:8]}_{safe_name}"
+            spill.replace(target)  # 原子改名到正式路径
+            ctx.ingestion.relink_source(task_id, str(target))
+        else:
+            spill.unlink(missing_ok=True)  # 已有文件：丢弃 spill（零写入）
+        if existing["status"] == INGESTION_FAILED:
+            # **failed 必须是一条可走出的路**：重传同一份文件 = 用户在重试。状态机唯一允许的
+            # 回边是 failed → pending，而此前没有任何代码执行它 —— 于是任务永远停在 failed，
+            # 哪怕这次已经重新解析并入库成功，台账还在说"失败"（与事实背离）。
+            # 显式重启后走下面的正常推进链。
+            ctx.ingestion.advance(task_id, INGESTION_PENDING)
+            existing["status"] = INGESTION_PENDING
+    else:
+        target = upload_dir / f"{uuid.uuid4().hex[:8]}_{safe_name}"
+        spill.replace(target)
+        task_id = ctx.ingestion.create(
+            user_id=user_id, source_file=str(target), file_hash=file_hash
+        )
+        reused = False
+        existing = ctx.ingestion.get(task_id)
 
     # v2.2：统一解析入口——.txt/.md/.pdf 直接抽文本入检索索引；图片走 OCR 子进程
     # （独立 venv，见 requirements-ocr.txt）；其余类型保持 pending。
@@ -328,15 +544,8 @@ def upload_report(
     if suffix in PARSEABLE_EXTENSIONS:
         try:
             # 仅图片需要选 OCR 后端：按「服务」页签的端点顺序（默认 Paddle 优先）。
-            backend = (
-                select_ocr_backend(
-                    settings,
-                    order=[c.id for c in ctx.services.ordered_candidates("ocr")],
-                    endpoints=ctx.services.endpoint_map("ocr"),
-                )
-                if suffix in IMAGE_EXTS
-                else None
-            )
+            # L3：选择逻辑收拢到 AppContext.ocr_candidates()（原与 records.py 重复）。
+            backend = ctx.ocr_candidates() if suffix in IMAGE_EXTS else None
             text = parse_document(target, backend=backend)
         except OcrUnavailable:
             # 后端未配置：图片保持 pending，明确告知模型不可读（不把 paddle 栈拖进主环境）。
@@ -364,13 +573,27 @@ def upload_report(
 
         if text.strip():
             # 存一份解析文本：结构化抽取复用它，避免对同一张图片再跑一次 OCR（OCR 很贵）。
-            with contextlib.suppress(OSError):
+            try:
                 parsed_text_path(target).write_text(text, encoding="utf-8")
+            except OSError as exc:
+                # 不再静默吞掉（审查报告 E2）：有现场重解析兜底，但"为什么抽取又跑了 OCR"
+                # 必须能在轨迹里查到原因。
+                ctx.tracer.emit(
+                    TraceEvent(
+                        event="parsed_text_write_failed",
+                        thread_id=thread_id,
+                        error=f"{type(exc).__name__}: {exc}",
+                        detail={"target": target.name},
+                    )
+                )
             try:
                 chunks = ctx.knowledge.index("health_reports", safe_name, text)
-            except KnowledgeDimensionMismatch as exc:
+            except (KnowledgeDimensionMismatch, EmbedError) as exc:
+                # 两者都是"管理员可修复"的状态，且都发生在**索引没被破坏**之后
+                # （index() 已改为先嵌入再写库，见审查报告 M4）。给出可操作的原因。
+                ctx.ingestion.record_failure(task_id, str(exc))
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
-            chain = ("parsed", "extracted", "indexed")
+            chain: tuple[str, ...] = ("parsed", "extracted", "indexed")
             note = (
                 f"[用户上传了文档：{safe_name}（{chunks} 段），已建立检索索引"
                 f"（任务 {task_id}，status=indexed）。注意：能否检索到取决于当前角色的"

@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -417,15 +419,50 @@ def extract_health_report(
     )
 
 
+# 探活结果的短 TTL 缓存（秒）。存在的理由（审查报告 M6）：探活本身是**一次真实的模型
+# 调用**，而抽取是低频动作 —— 每次都探会让"省一次注定失败的昂贵调用"变成"每次固定多
+# 一次调用"，本地 Ollama 还要额外吃一次模型换载（2~5s）。
+# 缓存的是**成功**：60 秒内主后端被证明可用就不重复探；期间它挂了也只是这次抽取失败，
+# 与"没做探活"的旧行为一致，不会更差。
+_PROBE_TTL_SECONDS = 60.0
+_probe_ok_at: dict[str, float] = {}
+_probe_lock = threading.Lock()
+
+
+def _probe_key(settings: Settings, backend_name: str) -> str:
+    """缓存键 = 后端名 + 连接三要素。改了 base_url/model 就该重新探，不能沿用旧结论。"""
+    try:
+        b = settings.backend(backend_name)
+    except KeyError:
+        return f"{backend_name}|missing"
+    return f"{backend_name}|{b.provider}|{b.base_url or ''}|{b.model}"
+
+
+def _recently_probed(settings: Settings, backend_name: str) -> bool:
+    with _probe_lock:
+        at = _probe_ok_at.get(_probe_key(settings, backend_name))
+    return at is not None and (time.monotonic() - at) < _PROBE_TTL_SECONDS
+
+
+def _remember_probe(settings: Settings, backend_name: str) -> None:
+    with _probe_lock:
+        _probe_ok_at[_probe_key(settings, backend_name)] = time.monotonic()
+
+
 def _failover_primary(settings: Settings, plan: ExtractorPlan) -> ExtractorPlan:
     """本地后端连不上时，自动降级到 verifier（云端）做主抽取，校对降级为 self。
 
     "本地优先"是个偏好，不是硬约束 —— Ollama 没跑时，不 502 而是用云端完成抽取。
     校对降级为 self（同一个后端自查 = 弱校对）：因为原主后端已经挂了，
     不能用它做校对。用最小说探（"回复 ok"）探活，成本极低但省掉一次注定失败的昂贵调用。
+
+    探活结果有 60 秒 TTL 缓存（见 `_PROBE_TTL_SECONDS`）：这是一个**真实**的模型调用，
+    不该在每次抽取时都付一遍。
     """
     try:
-        make_invoker(settings, plan.primary)("回复 ok")
+        if not _recently_probed(settings, plan.primary):
+            make_invoker(settings, plan.primary)("回复 ok")
+            _remember_probe(settings, plan.primary)
         return plan  # 主后端可用，不降级
     except Exception:  # noqa: BLE001 - 探活失败 = 后端不可用（含 httpx.ConnectError）
         pass
@@ -449,9 +486,13 @@ def run_extraction(
     tracer: object | None = None,
 ) -> ExtractionOutcome | None:
     """按配置跑完整抽取。返回 None = 没有可用后端（调用方应如实告知，不要假装成功）。"""
-    plan = _failover_primary(settings, plan_extractors(settings))
+    # 顺序不能反（审查报告 M6）：`_failover_primary` 会解引用 `plan.primary`，把 None
+    # 传进去会抛 AttributeError —— 旧代码里紧随其后的 `if plan is None` 因此是**死代码**，
+    # 本该返回"没有可用模型"的路径变成 500。
+    plan = plan_extractors(settings)
     if plan is None:
         return None
+    plan = _failover_primary(settings, plan)
     outcome = extract_health_report(
         text=text,
         primary=make_invoker(settings, plan.primary),

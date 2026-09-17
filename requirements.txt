@@ -16,6 +16,13 @@ langchain==1.4.0
 langgraph==1.2.11
 langchain-core>=1.6.0
 
+# --- 1.5 联网与工作区工具（core/tools/web.py / files.py，v2.4） -----------------
+# 选型依据见 docs/MCP接入与思考过程评估.md：全部用活跃维护的独立轮子，
+# 不走已 sunset 的 langchain-community。
+ddgs>=9.0            # 本地搜索（DuckDuckGo，免 key）
+tavily-python>=0.8   # 云端搜索（配 TAVILY_API_KEY 时启用）
+trafilatura>=2.0     # 网页正文抽取（开源事实标准）
+
 # --- 2. 模型接入 -----------------------------------------------------------
 # 本地 Ollama 与任意 OpenAI 兼容端点共用同一个 provider 抽象，见 config.py 的 MODEL_BACKENDS
 langchain-ollama>=1.1.0
@@ -28,5 +35,5 @@ langgraph-checkpoint-sqlite
 pydantic>=2.13
 
 # --- 5. 可观测 -------------------------------------------------------------
-# 可选后端之一；即使不用它也是 langchain-core 的传递依赖，故不硬锁
-langsmith>=0.12.4
+# 注：langsmith 不再直接依赖（L6，源码从不 import；要用传递依赖即可）。
+# local（默认，纯本地 JSON 日志，离线可用）是 OBS_BACKEND 唯一已实现后端。

@@ -20,8 +20,9 @@ permission boundary is self-authorization, the same reasoning as `switch_role` (
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections.abc import Sequence
+
+from rolecard_agent.storage.db import SqlConnection
 
 TOOL_EPOCH_KEY = "tool_epoch"
 DEFAULT_TOOL_EPOCH = 1
@@ -39,7 +40,7 @@ class UnknownPlugin(PluginError):
     """
 
 
-def seed_plugin_rows(conn: sqlite3.Connection, domains: Sequence[str]) -> None:
+def seed_plugin_rows(conn: SqlConnection, domains: Sequence[str]) -> None:
     """每个 REGISTERED 域一行 plugin 记录，默认开启（幂等）。
 
     `ON CONFLICT(plugin_id) DO NOTHING` —— 重跑绝不能把操作员关掉的插件重新打开：
@@ -57,7 +58,7 @@ def seed_plugin_rows(conn: sqlite3.Connection, domains: Sequence[str]) -> None:
 
 class PluginService:
     def __init__(
-        self, conn: sqlite3.Connection, *, known_plugins: Sequence[str] | None = None
+        self, conn: SqlConnection, *, known_plugins: Sequence[str] | None = None
     ) -> None:
         self._conn = conn
         self._known = tuple(known_plugins) if known_plugins is not None else None

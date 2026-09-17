@@ -43,6 +43,13 @@ class AgentState(TypedDict, total=False):
     tool_epoch: int
     retry_count: int
 
+    # 最近一轮被上下文预算裁掉的历史条数与实际送出的条数（0 = 没裁）。
+    # 为什么放进 state 而不是只留在日志里：**用户有权知道模型这次没看到早期对话**。
+    # 静默丢弃历史会让"模型怎么忘了我前面说的"变成一个无从解释的现象（审查报告 H3）。
+    # 写进 checkpoint 还带来一个副作用：界面重新加载后依然能查到这个事实。
+    context_trimmed: int
+    context_kept: int
+
 
 def new_state(
     *,
@@ -67,4 +74,6 @@ def new_state(
         "enabled_domains": list(enabled_domains or []),
         "tool_epoch": tool_epoch,
         "retry_count": 0,
+        "context_trimmed": 0,
+        "context_kept": 0,
     }

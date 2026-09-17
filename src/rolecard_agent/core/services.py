@@ -24,13 +24,13 @@ key/base_url/model：
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from rolecard_agent.config import Settings
 from rolecard_agent.core.model_settings import ModelSettingsService, client_style
+from rolecard_agent.storage.db import SqlConnection
 
 # ---------------------------------------------------------------- 服务类别定义
 
@@ -82,13 +82,28 @@ _CAPABILITY_DEFAULT_MODEL: dict[str, str | None] = {
 }
 
 
+def _mask_key(raw: str | None) -> str | None:
+    """掩码预览（如 `sk-…abcd`）；≤6 字符全 •。与 model_backend.key_masked 同一纪律。
+
+    不足 7 字符时**全打点**：`raw[:3]…raw[-4:]` 对 7 字符的 key 会把整个 key 拼回来
+    （审查报告 L2）。这里宁可少显示一个字符，也不把可用的凭据还原出来。
+    """
+    if not raw:
+        return None
+    text = str(raw)
+    if len(text) <= 8:
+        return "•" * len(text)
+    return f"{text[:3]}…{text[-4:]}"
+
+
 @dataclass(frozen=True, slots=True)
 class EndpointConfig:
     """视图/工厂消费的端点形态：本地实现行，或引用行解析到 model_backend 后的快照。
 
     引用行携带的是**被引用后端**的连接配置（base_url/api_key）；model 按「后端用途与
-    服务类别一致用后端模型名，否则用能力默认模型」解析 —— 对话后端被嵌入服务引用时，
-    凭据生效、模型名回落到 BAAI/bge-m3。
+    服务类别一致用后端模型名；类别有能力默认模型（嵌入/重排）则回落默认；否则（OCR
+    走视觉 LLM）用后端自己的模型」解析 —— 所以一个对话后端可以同时服务对话与视觉 OCR，
+    无需重复建行（用户 2026-09-17："一个名字不能干两件事？"）。
     """
 
     id: str
@@ -104,8 +119,6 @@ class EndpointConfig:
 
     def to_api(self) -> dict[str, Any]:
         """API 形状（api_key 永不回传，只回掩码）。"""
-        from rolecard_agent.core.services import _mask_key
-
         return {
             "id": self.id,
             "label": self.label,
@@ -120,22 +133,23 @@ class EndpointConfig:
         }
 
 
-def _mask_key(raw: str | None) -> str | None:
-    """掩码预览（如 `sk-…abcd`）；≤6 字符全 •。与 model_backend.key_masked 同一纪律。"""
-    if not raw:
-        return None
-    raw = str(raw)
-    if len(raw) <= 6:
-        return "•" * len(raw)
-    return f"{raw[:3]}…{raw[-4:]}"
-
-
 class ServiceEndpointService:
-    """`service_endpoint` 表的读写：引用的增删 + 优先级（sort_order）+ 启停。"""
+    """`service_endpoint` 表的读写：引用的增删 + 优先级（sort_order）+ 启停。
+
+    异常语义（接入层据此映射 HTTP 状态，两边必须一致）：
+
+      * `KeyError`   —— **找不到**：未知服务类别、未知端点行 → 404；
+      * `ValueError` —— **规则不允许**：引用不存在的后端、要停掉最后一个启用行、
+        内置行不可删、优先级序列不是全排列 → 400。
+
+    此前这两类都抛 `ValueError`，于是路由里 `except KeyError: 404` 的分支**永远走不到**
+    —— 一个从不执行的分支比没有更糟，它让人以为"不存在返回 404"这件事已经被测过
+    （代码审查报告（第二轮）补服务端点测试时发现）。
+    """
 
     SEED_FLAG = "service_endpoints_seeded"
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: SqlConnection) -> None:
         self._conn = conn
 
     # -- 播种 ------------------------------------------------------------------
@@ -164,10 +178,10 @@ class ServiceEndpointService:
             ("embedding", "hash", "local", None, 1),
             ("rerank", "off", "local", None, 1),
         ]
-        for ref in ("siliconflow",):
-            if ref in backends:
-                defaults.append(("embedding", ref, "cloud", ref, 0))
-                defaults.append(("rerank", ref, "cloud", ref, 0))
+        for ref_name in ("siliconflow",):
+            if ref_name in backends:
+                defaults.append(("embedding", ref_name, "cloud", ref_name, 0))
+                defaults.append(("rerank", ref_name, "cloud", ref_name, 0))
         counters: dict[str, int] = {}
         for cat, eid, kind, ref, builtin in defaults:
             order = counters.get(cat, 0)
@@ -224,10 +238,15 @@ class ServiceEndpointService:
                 continue
             is_local = client_style(str(b.get("provider", ""))) == "native"
             default_model = _CAPABILITY_DEFAULT_MODEL.get(key)
-            # 后端用途与服务类别一致 → 用后端模型名；否则只借凭据，模型名回落能力默认。
+            # 模型名解析（用户 2026-09-17："一个名字不能干两件事？"）：
+            #   * 后端用途与服务类别一致 → 用后端模型名；
+            #   * 类别有能力默认模型（embedding/rerank 要专用模型）→ 只借凭据，回落默认；
+            #   * 类别**没有**能力默认（ocr 走视觉 LLM，用的就是后端自己的多模态模型）
+            #     → 用后端模型名。这样一个对话后端可同时服务对话与视觉 OCR，无需重复建行。
             model = (
                 str(b["model"])
-                if str(b.get("usage", "chat")) == key and b.get("model")
+                if (str(b.get("usage", "chat")) == key or default_model is None)
+                and b.get("model")
                 else default_model
             )
             out.append(
@@ -235,7 +254,7 @@ class ServiceEndpointService:
                     id=eid,
                     label=f"{b['name']} · {b['model']}",
                     kind="local" if is_local else "cloud",
-                    base_url=b.get("base_url"),  # type: ignore[arg-type]
+                    base_url=b.get("base_url"),
                     api_key=str(b["api_key"]) if b.get("api_key") else None,
                     model=model,
                     enabled=bool(r["enabled"]),
@@ -261,7 +280,9 @@ class ServiceEndpointService:
 
     def _require_category(self, key: str) -> None:
         if key not in _CATEGORY_KEYS:
-            raise ValueError(f"未知服务类别：{key!r}")
+            # KeyError（而不是 ValueError）：调用方据此回 404 —— "类别不存在"是找不到资源，
+            # 不是"参数格式不对"。见类 docstring 的异常语义。
+            raise KeyError(f"未知服务类别：{key!r}")
 
     def _has_row(self, key: str, eid: str) -> bool:
         return (
@@ -306,7 +327,7 @@ class ServiceEndpointService:
         """
         self._require_category(key)
         if not self._has_row(key, eid):
-            raise ValueError(f"服务 {key} 下不存在端点 {eid!r}。")
+            raise KeyError(f"服务 {key} 下不存在端点 {eid!r}。")
         if enabled is not None:
             if not enabled:
                 remaining = [
@@ -339,7 +360,7 @@ class ServiceEndpointService:
             "SELECT builtin FROM service_endpoint WHERE category = ? AND id = ?", (key, eid)
         ).fetchone()
         if row is None:
-            raise ValueError(f"服务 {key} 下不存在端点 {eid!r}。")
+            raise KeyError(f"服务 {key} 下不存在端点 {eid!r}。")
         if bool(row["builtin"]):
             raise ValueError(f"端点 {eid!r} 是内置本地实现，不可删除（可停用）。")
         self._conn.execute(
@@ -373,9 +394,9 @@ def check_availability(candidate_id: str, settings: Settings) -> tuple[bool, str
     云端引用行的可用性只取决于被引用后端是否配了 key（`endpoint_available`）。
     """
     if candidate_id == "paddle":
-        from rolecard_agent.rag.parser import _default_ocr_python
+        from rolecard_agent.core.paths import default_ocr_python
 
-        exe = settings.ocr_python or _default_ocr_python()
+        exe = settings.ocr_python or default_ocr_python()
         if not exe or not Path(exe).exists():
             return False, "未找到独立 OCR 解释器（.venv-ocr）"
         return True, f"就绪：{Path(exe).name}"
@@ -385,17 +406,31 @@ def check_availability(candidate_id: str, settings: Settings) -> tuple[bool, str
 
 
 def endpoint_available(e: EndpointConfig, settings: Settings) -> tuple[bool, str]:
-    """端点的可用性：失效引用 > 云端 key 齐缺 > 本地静态探活。"""
+    """端点的可用性：失效引用 > 云端 key 齐缺 > 本地探活。
+
+    本地引用行分两种，探测必须与 `select_ocr_backend` 的选择语义**同一份判定**
+    （原语在 core/probes.py）——此前探测不认识视觉模型引用行，UI 显示"未知本地
+    实现/不可用"而选择器实际会去试，服务页状态自相矛盾（用户 2026-09-17 反馈）：
+      * 带模型的视觉引用行（usage=ocr 的后端引用，如 qwen3-vl）→ 探 Ollama /api/tags
+        （3s 网络探测；服务页行数个位数，代价可接受）；
+      * 纯本地实现（paddle/hash/off）→ 维持廉价静态探活。
+    """
     if e.stale:
         return False, "引用的后端已在模型页删除 —— 请移除本行或重新配置后端"
     if e.kind == "cloud":
         return bool(e.api_key), (
             "已配置 API Key" if e.api_key else "后端未配置 API Key（去模型页填写）"
         )
+    if e.model:
+        from rolecard_agent.core.probes import vision_model_ready
+
+        if vision_model_ready(e.base_url, e.model):
+            return True, f"就绪：本地视觉模型 {e.model}"
+        return False, f"本地视觉模型不可达或未加载（{e.model}，确认 Ollama 在跑）"
     return check_availability(e.id, settings)
 
 
-def service_status_view(conn: sqlite3.Connection, settings: Settings) -> dict[str, Any]:
+def service_status_view(conn: SqlConnection, settings: Settings) -> dict[str, Any]:
     """「服务」页签的状态视图（每类服务：端点引用、优先级、启停、可用性、当前生效项）。
 
     生效项 = 优先级第 1 位的**可用**端；第 1 位不可用则顺延到下一个可用者（降级发生在这里，
@@ -406,13 +441,17 @@ def service_status_view(conn: sqlite3.Connection, settings: Settings) -> dict[st
     for cat in SERVICE_CATEGORIES:
         all_rows = svc.rows(cat.key)
         enabled = [e for e in all_rows if e.enabled]
+        # 位置用**身份**而不是相等性：`EndpointConfig` 是 frozen dataclass，默认 `eq=True`，
+        # 两个字段完全相同的行（同一后端被两类服务引用、标签一致）在 `list.index()` 下
+        # 会被判为同一个 —— 排序号会串（审查报告 L2）。
+        order_of = {id(e): i for i, e in enumerate(enabled)}
         items: list[dict[str, Any]] = []
         for e in all_rows:
             available, reason = endpoint_available(e, settings)
             item = e.to_api()
             item["available"] = available
             item["reason"] = reason
-            item["order"] = enabled.index(e) if e.enabled else None
+            item["order"] = order_of.get(id(e)) if e.enabled else None
             items.append(item)
         effective: EndpointConfig | None = None
         for e in enabled:
@@ -435,13 +474,26 @@ def service_status_view(conn: sqlite3.Connection, settings: Settings) -> dict[st
             }
         )
 
-    # 模型推理（只读）：候选 = model_backend 表的行；状态只看配置齐缺，不做网络探测。
-    # 编辑在「模型」页签 —— 同一份数据不设两个编辑入口（视图形状与端点行对齐，前端零分叉）。
+    # 模型推理：**可调优先级** —— 第 1 位 = 对话默认后端，其后 = 回退链（写回
+    # kernel_meta 的 model_default / model_fallbacks，与「模型」页签同一份存储）。
+    # 候选只含 usage=chat 的后端行（usage=ocr 的行归「OCR」类别的引用，不进推理优先级，
+    # 否则同一个模型会出现两行 —— 用户实测反馈）。增删与 key 仍在「模型」页签：
+    # 同一份数据不设两个编辑入口，这里只调顺序（order_only）。
     ms = ModelSettingsService(conn)
     backends = ms.list_backends()
     default = ms.default_backend() or settings.model_default
+    fallbacks = ms.list_fallbacks() or []
+    chat_rows = [row for row in backends if str(row.get("usage", "chat")) == "chat"]
+    ordered_names = [default, *fallbacks]
+    ordered_names = [n for n in ordered_names if n] + [
+        str(row["name"]) for row in chat_rows if str(row["name"]) not in ordered_names
+    ]
+    by_name = {str(row["name"]): row for row in chat_rows}
     model_items: list[dict[str, Any]] = []
-    for i, row in enumerate(backends):
+    for name in ordered_names:
+        row = by_name.get(name)
+        if row is None:  # 回退链引用了已删除的后端 —— 不展示，保存时也会被校验拦下
+            continue
         # provider 是供应商 id；native 风格 = 本地 Ollama（不外发），openai 兼容 = 云端。
         is_local = client_style(str(row.get("provider", ""))) == "native"
         model_items.append(
@@ -456,10 +508,9 @@ def service_status_view(conn: sqlite3.Connection, settings: Settings) -> dict[st
                 "key_masked": row.get("key_masked"),
                 "base_url": row.get("base_url"),
                 "model": row.get("model"),
-                "order": i,
             }
         )
-    effective_backend = next((b for b in backends if b["name"] == default), None)
+    effective_backend = by_name.get(default)
     effective_kind = (
         "local"
         if effective_backend
@@ -470,11 +521,13 @@ def service_status_view(conn: sqlite3.Connection, settings: Settings) -> dict[st
         {
             "key": "models",
             "title": "模型推理（对话与抽取）",
-            "hint": "增删与 key 在「模型」页签；这里只读展示",
+            "hint": "第 1 位 = 对话默认后端，其后依次回退（仅建流阶段失败会回退，最多 2 级）。"
+            "增删与 key 在「模型」页签。",
             "effective": default,
             "effective_kind": effective_kind,
             "degraded_from": None,
-            "readonly": True,
+            "readonly": False,
+            "order_only": True,
             "candidates": model_items,
         }
     )

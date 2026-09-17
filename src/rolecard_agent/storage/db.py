@@ -25,6 +25,7 @@ import sqlite3
 import threading
 from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import Any
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 
@@ -104,14 +105,16 @@ class ThreadLocalConnection:
                 conn.rollback()
 
     # 高频方法显式转发（比 __getattr__ 快，也让读代码的人一眼看到这是转发）
-    def execute(self, *args: object, **kwargs: object) -> sqlite3.Cursor:
-        return self._current().execute(*args, **kwargs)  # type: ignore[arg-type]
+    # 参数类型用 Any 而不是 object：这是**纯透传**，sqlite3 的 execute/cursor 都有重载，
+    # 写 object 会让 mypy 挑不出匹配的重载（报 call-overload），而这里并不打算约束参数形状。
+    def execute(self, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+        return self._current().execute(*args, **kwargs)
 
-    def executemany(self, *args: object, **kwargs: object) -> sqlite3.Cursor:
-        return self._current().executemany(*args, **kwargs)  # type: ignore[arg-type]
+    def executemany(self, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+        return self._current().executemany(*args, **kwargs)
 
-    def executescript(self, *args: object, **kwargs: object) -> sqlite3.Cursor:
-        return self._current().executescript(*args, **kwargs)  # type: ignore[arg-type]
+    def executescript(self, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+        return self._current().executescript(*args, **kwargs)
 
     def commit(self) -> None:
         self._current().commit()
@@ -119,8 +122,8 @@ class ThreadLocalConnection:
     def rollback(self) -> None:
         self._current().rollback()
 
-    def cursor(self, *args: object, **kwargs: object) -> sqlite3.Cursor:
-        return self._current().cursor(*args, **kwargs)  # type: ignore[arg-type]
+    def cursor(self, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+        return self._current().cursor(*args, **kwargs)
 
     def close(self) -> None:
         """关闭本线程能安全关闭的连接。
@@ -149,6 +152,19 @@ def connect_threadlocal(path: str | Path) -> ThreadLocalConnection:
     return ThreadLocalConnection(path)
 
 
+# 服务层真正依赖的连接契约：这两者共同暴露的方法子集
+# （execute / executemany / executescript / cursor / commit / rollback）。
+#
+# 为什么是 Union 而不是 Protocol：**测试传真实 `sqlite3.Connection`、应用传
+# `ThreadLocalConnection`，两者都必须被接受**。Protocol 要求 `sqlite3.Connection` 逐条
+# 结构匹配（typeshed 里的重载签名很苛刻），Union 则直接列出两个合法实参，语义更准也更稳。
+#
+# 引入它的直接原因：`scripts/check_consistency.py` 里躺着 `[tool.mypy]` 配置却从不运行，
+# 而"从不运行的类型检查"比没有更糟（看起来有兜底，其实没有）。跑起来之后第一类报错就是
+# 这里 —— 28 处注解写的是 `sqlite3.Connection`，实际传进来的却不是（代码审查报告（第二轮）F2）。
+SqlConnection = sqlite3.Connection | ThreadLocalConnection
+
+
 def core_schema_path() -> Path:
     return PACKAGE_ROOT / "core" / "schema.sql"
 
@@ -170,7 +186,7 @@ def schema_files(enabled_domains: Iterable[str] = ()) -> list[Path]:
     return files
 
 
-def bootstrap(conn: sqlite3.Connection, enabled_domains: Iterable[str] = ()) -> list[str]:
+def bootstrap(conn: SqlConnection, enabled_domains: Iterable[str] = ()) -> list[str]:
     """Apply every schema file. Idempotent - all DDL uses IF NOT EXISTS.
 
     Returns the applied file names, which is what tests assert on: a silently skipped
@@ -187,11 +203,11 @@ def bootstrap(conn: sqlite3.Connection, enabled_domains: Iterable[str] = ()) -> 
     return applied
 
 
-def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+def _columns(conn: SqlConnection, table: str) -> set[str]:
     return {str(r["name"]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
-def _migrate(conn: sqlite3.Connection) -> None:
+def _migrate(conn: SqlConnection) -> None:
     """演示库的幂等列级迁移（无迁移框架，ALTER/DROP 全部可重跑）。
 
     1. model_backend 增列 usage（供应商配置唯一事实面的用途标记）——旧库补列，默认 chat。

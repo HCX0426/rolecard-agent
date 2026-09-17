@@ -21,8 +21,10 @@ from rolecard_agent.core.nodes import (
     role_knowledge_scopes_ctx,
 )
 from rolecard_agent.rag.retriever import (
+    _EMBED_BATCH,
     HashEmbedder,
     KnowledgeBase,
+    SiliconFlowEmbedder,
     chunk_text,
     make_embedder,
     make_search_tool,
@@ -271,3 +273,67 @@ def test_rerank_failure_falls_back_and_is_timed(tmp_path: Path) -> None:
     assert hits, "重排失败必须回退向量序，仍返回结果"
     assert kb.latency_p95()["rerank_enabled"] is True
     assert any(getattr(e, "event", None) == "rerank_fallback" for e in rec.events)
+
+# -- 索引的原子性与嵌入分片（代码审查报告（第二轮）M4 / M5） -----------------------
+
+
+class _FailingEmbedder(HashEmbedder):
+    """前 n 次正常，之后开始失败 —— 用来模拟"嵌入这一步炸了"。"""
+
+    name = "failing"
+
+    def __init__(self, fail_after: int = 0) -> None:
+        self._left = fail_after
+
+    def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+        if self._left <= 0:
+            raise RuntimeError("embedding backend exploded")
+        self._left -= 1
+        return super()._embed_batch(texts)
+
+
+def test_index_failure_does_not_destroy_the_existing_chunks(tmp_path: Path) -> None:
+    """**幂等重建必须不丢数据**：嵌入失败时旧分块要原样还在。
+
+    修复前的顺序是 `delete(source)` → `embed()` → `add()`：嵌入一失败，该来源的既有分块
+    已经被删掉 —— 检索里凭空少一份文档，而 ingestion 台账那边还写着 `indexed`。
+    这种"状态与事实背离"比直接报错难查得多。
+    """
+    embedder = _FailingEmbedder(fail_after=99)
+    kb = KnowledgeBase(tmp_path / "chroma", embedder)
+    kb.index("health_reports", "a.txt", DOC_A)
+    assert kb.search(["health_reports"], "随访"), "前置条件：第一次索引应当成功"
+
+    embedder._left = 0  # 之后每次嵌入都失败
+    with pytest.raises(RuntimeError):
+        kb.index("health_reports", "a.txt", DOC_A)
+
+    embedder._left = 99  # 修好它，才能验证"库里的旧分块还在"
+    assert kb.search(["health_reports"], "随访"), (
+        "嵌入失败后旧的索引被清空了 —— 这正是修复前的问题"
+    )
+
+
+class _CountingEmbedder(SiliconFlowEmbedder):
+    """把真正发请求的那一层换成计数器，用来验证**分片循环**（不打网络）。
+
+    刻意不调父类 `__init__`（那会建 httpx 客户端）：这里要测的是"分几批"，不是传输。
+    """
+
+    def __init__(self) -> None:
+        self.batches: list[int] = []
+        self._model = "stub"
+
+    def _embed_chunk(self, texts: list[str]) -> list[list[float]]:
+        self.batches.append(len(texts))
+        return [[0.0] * 4 for _ in texts]
+
+
+def test_embeddings_are_sent_in_batches() -> None:
+    """长文档必须分批嵌入（修复前一次 POST 全部 chunk，顶到超时就是整篇上传失败）。"""
+    embedder = _CountingEmbedder()
+    total = _EMBED_BATCH * 2 + 5
+    vectors = embedder.embed(["文本" * 20 for _ in range(total)])
+
+    assert len(vectors) == total
+    assert embedder.batches == [_EMBED_BATCH, _EMBED_BATCH, 5], embedder.batches
