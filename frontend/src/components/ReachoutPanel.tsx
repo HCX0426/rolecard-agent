@@ -1,8 +1,8 @@
 // 角色主动开口收件箱（架构计划 B）：铃铛点开后的抽屉。
 // 纯静音设计：不弹提示音、不振动；红点与列表只是视觉呈现。
-// 点一条 = 标记已读（后端会返回最新列表，直接吸收）。
+// 点一条 = 标记已读（后端会返回最新列表，直接吸收）。可按角色筛选（架构计划 §5.3 按角色卡隔离查看）。
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, type ReachoutsPage, type ReachoutRow } from "../api";
 
 export default function ReachoutPanel({
@@ -16,18 +16,28 @@ export default function ReachoutPanel({
 }) {
   const [data, setData] = useState<ReachoutsPage | null>(null);
   const [err, setErr] = useState("");
+  const [roleFilter, setRoleFilter] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setErr("");
     api
-      .getReachouts()
+      .getReachouts(roleFilter ?? undefined)
       .then((p) => {
         setData(p);
         onUnreadChange(p.unread);
       })
       .catch((e) => setErr(`加载失败：${(e as Error).message}`));
-  }, [open, onUnreadChange]);
+  }, [open, roleFilter, onUnreadChange]);
+
+  // 从当前列表里聚合出现过的角色，供筛选下拉（按角色卡隔离查看历史）。
+  const roles = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const r of data?.items ?? []) {
+      if (r.role_id) seen.set(r.role_id, r.role_name || r.role_id);
+    }
+    return [...seen.entries()].map(([id, name]) => ({ id, name }));
+  }, [data]);
 
   async function markRead(row: ReachoutRow) {
     if (row.state === "read") return;
@@ -59,6 +69,25 @@ export default function ReachoutPanel({
             关闭
           </button>
         </div>
+        {roles.length > 1 && (
+          <div className="border-b border-slate-100 px-3 py-2 dark:border-slate-700">
+            <label className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+              <span>只看</span>
+              <select
+                value={roleFilter ?? ""}
+                onChange={(e) => setRoleFilter(e.target.value || null)}
+                className="flex-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
+              >
+                <option value="">全部角色</option>
+                {roles.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto p-2">
           {err && <p className="px-2 py-1 text-xs text-red-600 dark:text-red-400">{err}</p>}
           {data && data.items.length === 0 && (

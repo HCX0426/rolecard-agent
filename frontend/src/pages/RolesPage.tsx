@@ -28,6 +28,8 @@ const EMPTY_FORM = {
   exemplars: [] as ExemplarDraft[],
   description: "",
   reachout_enabled: false,
+  recall_enabled: true,
+  time_pattern_enabled: true,
 };
 
 const SCOPE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
@@ -177,6 +179,8 @@ export default function RolesPage() {
       exemplars: (r.exemplars || []).map((e) => ({ ...e, rowId: nextExemplarId() })),
       description: r.description || "",
       reachout_enabled: !!r.reachout_enabled,
+      recall_enabled: r.recall_enabled !== false,
+      time_pattern_enabled: r.time_pattern_enabled !== false,
     });
     setWlMode(r.tool_whitelist === null ? "all" : "custom");
   }
@@ -197,6 +201,8 @@ export default function RolesPage() {
       exemplars: exemplars.length ? exemplars : null,
       description: form.description.trim() || null,
       reachout_enabled: form.reachout_enabled,
+      recall_enabled: form.recall_enabled,
+      time_pattern_enabled: form.time_pattern_enabled,
     };
     try {
       if (editing) {
@@ -319,6 +325,26 @@ export default function RolesPage() {
               />
               <span className="text-slate-600 dark:text-slate-300">角色会主动找你（需全局「主动开口」总闸开着）</span>
             </label>
+            <div className="mt-2 ml-5 flex flex-col gap-1.5 text-xs">
+              <label className="flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={form.recall_enabled}
+                  disabled={!form.reachout_enabled}
+                  onChange={(e) => setForm({ ...form, recall_enabled: e.target.checked })}
+                />
+                <span className="text-slate-600 dark:text-slate-300">关系驱动·回忆：记得的事会主动提起（按角色记忆隔离）</span>
+              </label>
+              <label className="flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={form.time_pattern_enabled}
+                  disabled={!form.reachout_enabled}
+                  onChange={(e) => setForm({ ...form, time_pattern_enabled: e.target.checked })}
+                />
+                <span className="text-slate-600 dark:text-slate-300">关系驱动·时段规律：按你常互动的时段主动找你</span>
+              </label>
+            </div>
             <label className="mt-3 block">
               <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">工具权限</span>
               <div className="mt-1 flex gap-5 text-sm">

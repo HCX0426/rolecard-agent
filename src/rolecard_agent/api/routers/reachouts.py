@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from rolecard_agent.api.deps import AppContext, get_context
 from rolecard_agent.core import reachout as svc
@@ -16,9 +16,12 @@ router = APIRouter()
 
 
 @router.get("/api/reachouts")
-def get_reachouts(ctx: AppContext = Depends(get_context)) -> object:
-    """收件箱：最近主动消息（含未读数）。前端铃铛红点 = unread。"""
-    return svc.list_reachouts(ctx.conn)
+def get_reachouts(
+    ctx: AppContext = Depends(get_context),
+    role_id: str | None = Query(default=None, description="只返回该角色主动找过你的历史"),
+) -> object:
+    """收件箱：最近主动消息（含未读数）。前端铃铛红点 = unread。可按角色过滤。"""
+    return svc.list_reachouts(ctx.conn, role_id=role_id)
 
 
 @router.post("/api/reachouts/{reachout_id}/read")

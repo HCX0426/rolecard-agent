@@ -11,7 +11,9 @@ from rolecard_agent.config import Settings
 from rolecard_agent.core.memory import (
     MAX_MEMORY_CHARS,
     clear_memory_text,
+    current_role_id_ctx,
     load_memory_text,
+    load_role_memory_text,
     make_memory_tool,
     save_memory_text,
 )
@@ -67,3 +69,27 @@ def test_memory_save_caps_total(conn) -> None:
     # 新事实 + 旧事实一起超过上限：丢最旧，整体不超上限
     tool.invoke({"fact": "新的一条很长的" + "b" * 100})
     assert len(load_memory_text(conn)) <= MAX_MEMORY_CHARS
+
+
+def test_memory_save_writes_role_memory_when_role_active(conn) -> None:
+    """关系驱动主动开口（§5.2）：在角色对话上下文里，memory_save 把事实同时写入该角色专属记忆，
+    使回忆触发有内容来源；且其它角色不会拿到这条（隔离铁律）。"""
+    tool = make_memory_tool(settings=Settings(), conn=conn)
+    token = current_role_id_ctx.set("cat_maid")
+    try:
+        assert "已记住" in tool.invoke({"fact": "用户喜欢蓝莓"})
+    finally:
+        current_role_id_ctx.reset(token)
+    # 全局用户级记忆有
+    assert "用户喜欢蓝莓" in load_memory_text(conn)
+    # 该角色专属记忆有（回忆触发的内容来源）
+    assert "用户喜欢蓝莓" in load_role_memory_text(conn, "cat_maid")
+    # 其它角色桶为空（绝不串到别的角色）
+    assert load_role_memory_text(conn, "other_role") == ""
+
+
+def test_memory_save_skips_role_memory_without_role_context(conn) -> None:
+    """无角色上下文（空串）时只写全局，不污染任何角色桶。"""
+    tool = make_memory_tool(settings=Settings(), conn=conn)
+    assert "已记住" in tool.invoke({"fact": "用户住在上海"})
+    assert load_role_memory_text(conn, "any_role") == ""

@@ -35,6 +35,11 @@ CREATE TABLE IF NOT EXISTS role_card (
     -- 主动开口（架构计划 B）：1 = 该角色会主动来找用户（还需全局 REACHOUT_ENABLED 开着）。
     -- 默认 0 = 出厂静默 —— 主动打扰是 opt-in。旧库经 storage/db._migrate 幂等补列。
     reachout_enabled INTEGER NOT NULL DEFAULT 0,
+    -- 关系驱动主动开口（架构计划 §5.2）：两类关系驱动触发源的 per-role 开关。
+    -- 默认 1 = 一旦该角色开启 reachout_enabled，关系驱动开口即生效（回忆 / 时段规律）。
+    -- 用户可在「角色卡」里单独关掉任一类。旧库经 storage/db._migrate 幂等补列。
+    recall_enabled       INTEGER NOT NULL DEFAULT 1,
+    time_pattern_enabled INTEGER NOT NULL DEFAULT 1,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

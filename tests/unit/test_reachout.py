@@ -285,6 +285,30 @@ def test_trigger_recall_silent_without_memory(conn) -> None:
     assert got is None
 
 
+def test_trigger_recall_respects_role_toggle(conn) -> None:
+    """回忆触发受 per-role 开关闸门：关掉后即使有专属记忆也不触发。"""
+    save_role_memory_text(conn, "active", "用户上周说想学吉他。")
+    role = RoleCard(**{**_role().model_dump(), "recall_enabled": False})
+    assert svc.trigger_recall(role, conn, now_local=_now_local()) is None
+    # 开关开着则照常触发（对照）
+    assert svc.trigger_recall(_role(), conn, now_local=_now_local()) == "recall"
+
+
+def test_trigger_time_pattern_respects_role_toggle(conn) -> None:
+    """时段规律触发受 per-role 开关闸门：关掉后即使众数命中当前小时也不触发。"""
+    ts = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    for _ in range(3):
+        conn.execute(
+            "INSERT INTO agent_reachout (role_id, role_name, text, created_at) "
+            "VALUES ('active','x','hi',?)",
+            (ts,),
+        )
+    conn.commit()
+    role = RoleCard(**{**_role().model_dump(), "time_pattern_enabled": False})
+    assert svc.trigger_time_pattern(role, conn, now_local=_now_local()) is None
+    assert svc.trigger_time_pattern(_role(), conn, now_local=_now_local()) == "time_pattern"
+
+
 def test_tick_once_runs_affection_trigger_and_bumps_affinity(conn) -> None:
     _seed_state(conn, "active", DEFAULT_AFFINITY_THRESHOLD)
     model = _FakeModel(AIMessage(content="嗨，想你啦"))
@@ -306,3 +330,18 @@ def test_generate_recall_mode_uses_role_memory(conn) -> None:
     assert text == "我记得你养了猫。"
     joined = "".join(str(m.content) for m in model.prompt or [])
     assert "他养了只猫" in joined  # 角色专属记忆进提示词
+
+
+def test_list_reachouts_filters_by_role(conn) -> None:
+    """收件箱可按角色过滤（架构计划 §5.3：按角色卡隔离查看历史）。"""
+    conn.execute("INSERT INTO agent_reachout (role_id, role_name, text) VALUES ('a','甲','找过你')")
+    conn.execute("INSERT INTO agent_reachout (role_id, role_name, text) VALUES ('b','乙','也找过')")
+    conn.commit()
+    all_rows = svc.list_reachouts(conn)
+    assert len(all_rows["items"]) == 2
+    only_a = svc.list_reachouts(conn, role_id="a")
+    assert len(only_a["items"]) == 1
+    assert only_a["items"][0]["role_id"] == "a"
+    # 未读数也按角色收敛
+    assert only_a["unread"] == 1
+    assert all_rows["unread"] == 2

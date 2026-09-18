@@ -19,6 +19,10 @@ export interface RoleCard {
   is_builtin: boolean;
   /** 角色主动开口资格（架构计划 B）：还需全局 REACHOUT_ENABLED 开着才生效。 */
   reachout_enabled?: boolean;
+  /** 关系驱动主动开口（架构计划 §5.2）：回忆触发开关，默认开。 */
+  recall_enabled?: boolean;
+  /** 关系驱动主动开口（架构计划 §5.2）：时段规律触发开关，默认开。 */
+  time_pattern_enabled?: boolean;
 }
 
 export interface PluginRow {
@@ -450,8 +454,12 @@ export const api = {
   clearWorkspaceDir: () => request<WorkspaceDir>("DELETE", "/api/workspace/dir"),
   browseTree: (path?: string) =>
     request<TreeResult>("GET", `/api/workspace/tree${path ? `?path=${encodeURIComponent(path)}` : ""}`),
-  /** 角色主动开口（收件箱）：列表（含未读计数）与标记已读（静音，无提示音）。 */
-  getReachouts: () => request<ReachoutsPage>("GET", "/api/reachouts"),
+  /** 角色主动开口（收件箱）：列表（含未读计数）与标记已读（静音，无提示音）。可按角色过滤。 */
+  getReachouts: (roleId?: string) =>
+    request<ReachoutsPage>(
+      "GET",
+      `/api/reachouts${roleId ? `?role_id=${encodeURIComponent(roleId)}` : ""}`,
+    ),
   markReachoutRead: (id: number) => request<ReachoutsPage>("POST", `/api/reachouts/${id}/read`),
   /** 命令执行审批（架构计划 C·§6.2）：列表（含 pending 计数）与批准/拒绝。 */
   getApprovals: (status?: string) =>

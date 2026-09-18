@@ -26,12 +26,18 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from functools import partial
 
 from langchain_core.tools import BaseTool, tool
 
 from rolecard_agent.config import Settings
 from rolecard_agent.storage.db import SqlConnection
+
+# 当前对话角色（架构计划 §5.2）：execute_tools 每轮注入，memory_save 读取它把事实同时写入
+# 该角色专属记忆。默认空串 = 无角色上下文，此时只写全局 memory:facts。与
+# role_knowledge_scopes_ctx 同一机制（ContextVar + copy_context 跨工具线程）。
+current_role_id_ctx: ContextVar[str] = ContextVar("current_role_id", default="")
 
 # kernel_meta 的键与上限。键带 `memory:` 前缀，与 `runtime:` 同一命名约定。
 MEMORY_KEY = "memory:facts"
@@ -107,6 +113,19 @@ def make_memory_tool(*, settings: Settings, conn: SqlConnection) -> BaseTool:
         while len("\n".join(lines)) > MAX_MEMORY_CHARS:
             lines.pop(0)
         save_one("\n".join(lines))
+        # per-role 记忆（架构计划 §5.2）：仅在某个角色对话时，把同一事实也记入该角色专属记忆，
+        # 使回忆触发有内容来源。回忆只在当前角色的记忆里检索，绝不串到其它角色（隔离铁律）。
+        # 无角色上下文（空串）则只写全局，不污染任何角色桶。
+        role_id = current_role_id_ctx.get()
+        if role_id:
+            role_lines = [
+                ln for ln in load_role_memory_text(conn, role_id).splitlines()
+                if ln.strip() != line
+            ]
+            role_lines.append(line)
+            while len("\n".join(role_lines)) > MAX_MEMORY_CHARS:
+                role_lines.pop(0)
+            save_role_memory_text(conn, role_id, "\n".join(role_lines))
         return f"已记住：{line}（当前共 {len(lines)} 条事实）。"
 
     return memory_save
@@ -116,6 +135,7 @@ __all__ = [
     "MEMORY_KEY",
     "MAX_MEMORY_CHARS",
     "clear_memory_text",
+    "current_role_id_ctx",
     "load_memory_text",
     "load_role_memory_text",
     "make_memory_tool",

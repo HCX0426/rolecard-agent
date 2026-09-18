@@ -77,16 +77,29 @@ _REACHOUT_TASK_RECALL = (
 
 # --------------------------------------------------------------------------- 数据
 
-def list_reachouts(conn: SqlConnection, limit: int = 100) -> dict[str, object]:
-    """收件箱：未读 + 最近历史（含未读数，供铃铛红点）。"""
+def list_reachouts(
+    conn: SqlConnection, limit: int = 100, *, role_id: str | None = None
+) -> dict[str, object]:
+    """收件箱：未读 + 最近历史（含未读数，供铃铛红点）。
+
+    `role_id` 给定时只返回该角色主动找过你的历史（架构计划 §5.3：按角色卡隔离查看）。
+    """
+    where = "WHERE role_id = ?" if role_id else ""
+    params = (role_id, limit) if role_id else (limit,)
     rows = conn.execute(
-        "SELECT id, role_id, role_name, text, state, created_at FROM agent_reachout "
-        "ORDER BY id DESC LIMIT ?",
-        (limit,),
+        f"SELECT id, role_id, role_name, text, state, created_at FROM agent_reachout "
+        f"{where} ORDER BY id DESC LIMIT ?",
+        params,
     ).fetchall()
-    unread = conn.execute(
-        "SELECT COUNT(*) AS n FROM agent_reachout WHERE state = 'unread'"
-    ).fetchone()
+    if role_id:
+        unread = conn.execute(
+            "SELECT COUNT(*) AS n FROM agent_reachout WHERE role_id = ? AND state = 'unread'",
+            (role_id,),
+        ).fetchone()
+    else:
+        unread = conn.execute(
+            "SELECT COUNT(*) AS n FROM agent_reachout WHERE state = 'unread'"
+        ).fetchone()
     return {
         "items": [dict(r) for r in rows],
         "unread": int(unread["n"]),
@@ -208,7 +221,10 @@ def trigger_affection(
 def trigger_time_pattern(
     role: RoleCard, conn: SqlConnection, *, now_local: datetime
 ) -> str | None:
-    """时段 / 规律 nudge：若该角色历史上主动开口的本地小时众数 == 当前小时且样本足够，触发。"""
+    """时段 / 规律 nudge：若该角色历史上主动开口的本地小时众数 == 当前小时且样本足够，触发。
+    该角色关掉时段规律 = 不触发。"""
+    if not role.time_pattern_enabled:
+        return None
     rows = conn.execute(
         "SELECT created_at FROM agent_reachout WHERE role_id = ?", (role.role_id,)
     ).fetchall()
@@ -229,7 +245,9 @@ def trigger_time_pattern(
 
 
 def trigger_recall(role: RoleCard, conn: SqlConnection, *, now_local: datetime) -> str | None:
-    """回忆触发：该角色有专属记忆时，自然提起一件记得的事。无记忆 = 不触发。"""
+    """回忆触发：该角色有专属记忆时，自然提起一件记得的事。无记忆 / 该角色关掉回忆 = 不触发。"""
+    if not role.recall_enabled:
+        return None
     if load_role_memory_text(conn, role.role_id).strip():
         return "recall"
     return None

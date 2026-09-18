@@ -258,6 +258,14 @@ def _migrate(conn: SqlConnection) -> None:
     #    NULL/DEFAULT 0 = 出厂静默；角色卡上勾选后该角色才有资格主动（还需全局开关）。
     if "reachout_enabled" not in _columns(conn, "role_card"):
         conn.execute("ALTER TABLE role_card ADD COLUMN reachout_enabled INTEGER NOT NULL DEFAULT 0")
+    # 6b. role_card 增列 recall_enabled / time_pattern_enabled（关系驱动主动开口，架构计划 §5.2）。
+    #     per-role 两类关系驱动触发源的开关；默认 1 = 开启 reachout_enabled 后关系驱动即生效。
+    if "recall_enabled" not in _columns(conn, "role_card"):
+        conn.execute("ALTER TABLE role_card ADD COLUMN recall_enabled INTEGER NOT NULL DEFAULT 1")
+    if "time_pattern_enabled" not in _columns(conn, "role_card"):
+        conn.execute(
+            "ALTER TABLE role_card ADD COLUMN time_pattern_enabled INTEGER NOT NULL DEFAULT 1"
+        )
     # 7. 关系驱动主动开口（架构计划 §5.2）：per-role 状态与 per-role 记忆（幂等建表）。
     if "affinity" not in _columns(conn, "role_proactive_state"):
         conn.execute(
