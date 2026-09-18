@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import argparse
+import platform
 import subprocess
 import sys
 import time
@@ -28,6 +29,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PY = str(ROOT / ".venv" / "Scripts" / "python.exe")
+# Windows 下 npm 是 .cmd，subprocess 直调 "npm" 解析不到会抛 WinError 2（FileNotFoundError）。
+NPM = "npm.cmd" if platform.system() == "Windows" else "npm"
 
 # (名称, 命令, 是否只在全量跑)
 STEPS: list[tuple[str, list[str], bool]] = [
@@ -55,8 +58,8 @@ STEPS: list[tuple[str, list[str], bool]] = [
         ],
         True,
     ),
-    ("前端 vitest", ["npm", "test"], True),
-    ("前端 tsc+build", ["npm", "run", "build"], True),
+    ("前端 vitest", [NPM, "test"], True),
+    ("前端 tsc+build", [NPM, "run", "build"], True),
     ("真机冒烟(14 项)", [PY, "scripts/smoke_check.py"], True),
 ]
 
