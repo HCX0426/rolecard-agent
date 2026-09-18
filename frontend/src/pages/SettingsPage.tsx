@@ -54,13 +54,23 @@ export default function SettingsPage({
             </button>
           ))}
         </div>
-        {tab === "general" && (
+        {/* 子页签常驻挂载 + hidden 隐藏（P1-11 同款）：条件渲染会让每次切页签重新挂载
+            面板并重发请求 —— 服务页的探活会因此"每次点开都加载中"（用户 2026-09-18）。 */}
+        <div className={tab === "general" ? "" : "hidden"}>
           <GeneralPanel onOpenChat={onOpenChat} theme={theme} onToggleTheme={onToggleTheme} />
-        )}
-        {tab === "models" && <ModelsPanel />}
-        {tab === "services" && <ServicesPanel />}
-        {tab === "runtime" && <RuntimePanel />}
-        {tab === "audit" && <AuditPanel />}
+        </div>
+        <div className={tab === "models" ? "" : "hidden"}>
+          <ModelsPanel />
+        </div>
+        <div className={tab === "services" ? "" : "hidden"}>
+          <ServicesPanel />
+        </div>
+        <div className={tab === "runtime" ? "" : "hidden"}>
+          <RuntimePanel />
+        </div>
+        <div className={tab === "audit" ? "" : "hidden"}>
+          <AuditPanel />
+        </div>
       </div>
     </div>
   );
