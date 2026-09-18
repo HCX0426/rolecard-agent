@@ -52,6 +52,7 @@ from rolecard_agent.api.deps import (
 from rolecard_agent.api.routers import approvals as approvals_router
 from rolecard_agent.api.routers import console as console_router
 from rolecard_agent.api.routers import domains as domains_router
+from rolecard_agent.api.routers import mcp as mcp_router
 from rolecard_agent.api.routers import reachouts as reachouts_router
 from rolecard_agent.api.routers import records as records_router
 from rolecard_agent.api.routers import roles as roles_router
@@ -60,7 +61,7 @@ from rolecard_agent.api.routers import sessions as sessions_router
 from rolecard_agent.api.routers import settings as settings_router
 from rolecard_agent.api.routers import workspace as workspace_router
 from rolecard_agent.config import Settings
-from rolecard_agent.core import runtime_settings
+from rolecard_agent.core import mcp_store, runtime_settings
 from rolecard_agent.core.approvals import ApprovalService
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.graph import build_kernel, build_model
@@ -203,24 +204,28 @@ def create_app(
     resolved_tracer = tracer or make_tracer(settings)
 
     # 工具注册表：内核工具 + 各域工具（domains/registry 是唯一的装配点）。
+    # MCP 生效集 = env MCP_SERVERS ∪ mcp_server 表（同 id 表覆盖 env、表内禁用行抑制 env 同名）。
+    # 只把合并结果喂给"构建工具用的 settings"，env 真值仍留在 effective/app_state 不被污染。
+    mcp_eff = mcp_store.effective_servers(conn, effective.mcp_servers)
+    effective_for_tools = effective.model_copy(update={"mcp_servers": mcp_eff})
     registry = build_registry(
         roles=roles,
         ingestion=ingestion,
         query=health_query,
         knowledge=knowledge,
-        # MCP 域按配置启用：配了 MCP_SERVERS 即把 "mcp" 加进启用域（架构计划 C·§6.1）；
+        # MCP 域按生效集启用：有生效 server 才把 "mcp" 加进启用域（架构计划 C·§6.1）；
         # 未配置则与普通插件一致，不暴露 mcp 工具。callable 形式保证运行时实时判定。
         enabled_domains=lambda: [
             *plugins.enabled_domains(),
-            *(["mcp"] if getattr(effective, "mcp_servers", None) else []),
+            *(["mcp"] if mcp_eff else []),
         ],
         current_user=lambda: DEFAULT_USER_ID,
         # 域写工具（upload_medical_report）必须知道上传目录：它的 file_path 来自模型，
         # 不受限就等于"任意主机文件读取 + 任意目录写"（审查报告 H1）。
         upload_dir=settings.upload_dir,
         # 联网与工作区工具的后端配置（搜索后端 / TAVILY_API_KEY / WORKSPACE_DIR）。
-        # 传**叠加了运行环境覆盖**的有效配置（而非裸 env 快照）。
-        settings=effective,
+        # 传**叠加了运行环境覆盖 + MCP 合并**的有效配置（而非裸 env 快照）。
+        settings=effective_for_tools,
         tracer=resolved_tracer,
         memory_conn=conn,
         fs_conn=conn,
@@ -359,6 +364,7 @@ def create_app(
     app.include_router(workspace_router.router)
     app.include_router(reachouts_router.router)
     app.include_router(approvals_router.router)
+    app.include_router(mcp_router.router)
 
     def rebuild_runtime() -> None:
         """按当前设置与服务端点引用重建全部运行时对象：模型、KnowledgeBase、registry、图。
@@ -396,17 +402,25 @@ def create_app(
             settings.chroma_path, embedder, reranker, settings.rag_min_similarity
         )
 
+        # MCP 生效集重建时重新解析（表行可能在两次重建之间被 API 改动）。
+        mcp_eff = mcp_store.effective_servers(conn, eff.mcp_servers)
+        eff_for_tools = eff.model_copy(update={"mcp_servers": mcp_eff})
         registry_new = build_registry(
             roles=roles,
             ingestion=ingestion,
             query=health_query,
             knowledge=knowledge_new,
-            enabled_domains=plugins.enabled_domains,
+            # 与初始装配点同构：有生效 MCP server 才把 "mcp" 加进启用域（此前 rebuild 漏加，
+            # 导致改一次运行环境后 mcp 工具虽已加载却被启用域挡掉）。
+            enabled_domains=lambda: [
+                *plugins.enabled_domains(),
+                *(["mcp"] if mcp_eff else []),
+            ],
             current_user=lambda: DEFAULT_USER_ID,
             upload_dir=settings.upload_dir,
-            # 传**叠加了运行环境覆盖**的有效配置：联网/consensus 工具闭包持有它，
+            # 传**叠加了运行环境覆盖 + MCP 合并**的有效配置：联网/consensus 工具闭包持有它，
             # 「运行环境」页签保存后经 rebuild 在此热生效（此前漏传 → 工具用 env 裸值）。
-            settings=eff,
+            settings=eff_for_tools,
             tracer=resolved_tracer,
             memory_conn=conn,
             fs_conn=conn,

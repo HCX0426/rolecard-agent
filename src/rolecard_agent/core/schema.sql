@@ -261,3 +261,26 @@ CREATE TABLE IF NOT EXISTS command_approval (
 
 CREATE INDEX IF NOT EXISTS idx_command_approval_status ON command_approval(status, id DESC);
 
+-- ===========================================================================
+-- MCP 接入（架构计划 C·§6.1 的 operator 自助入口；界面接入本轮只做后端）。
+--
+-- 与 env 的 MCP_SERVERS 并存：生效集 = env ∪ 本表 enabled 行（同 id 本表覆盖 env）。
+-- env 是"随部署烧进去的高级路径"，本表是"运行时可增删改的路径"，二者经 rebuild 合并加载。
+--
+-- 仅支持 http（远程 MCP 端点）：stdio 会 spawn 本地任意进程，安全面大、另议。
+-- headers 可能含鉴权密钥：GET 端点**永不回明文**（掩码，仿 model_backend.api_key 的
+-- 只写不回读 + round-trip：PATCH 省略 headers = 保留原值，传 {} = 清空）。
+-- 与 plugin 表同构：这是 operator 开关，**绝不暴露成 LLM 可调用工具**（自我扩权红线）。
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS mcp_server (
+    id            TEXT PRIMARY KEY,          -- 稳定标识：工具名前缀 + 审计 target（非展示名）
+    display_name  TEXT NOT NULL,
+    transport     TEXT NOT NULL DEFAULT 'http' CHECK (transport IN ('http')),
+    url           TEXT NOT NULL,             -- 远程 http(s) 端点；create/update 过 SSRF 边界
+    headers_json  TEXT NOT NULL DEFAULT '{}',
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
