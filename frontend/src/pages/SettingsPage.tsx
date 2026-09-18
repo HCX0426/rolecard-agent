@@ -110,6 +110,10 @@ function GeneralPanel({
   const [treeOpen, setTreeOpen] = useState(false);
   const [tree, setTree] = useState<TreeResult | null>(null);
   const [treeErr, setTreeErr] = useState("");
+  // 主动开口全局总闸（覆盖运行环境的 REACHOUT_ENABLED）：rejectOn = 有效值。
+  const [reachoutOn, setReachoutOn] = useState<boolean | null>(null);
+  const [reachoutMsg, setReachoutMsg] = useState("");
+  const [reachoutErr, setReachoutErr] = useState("");
 
   const load = useCallback(async () => {
     const [ms, plugins, roles, sessions] = await Promise.all([
@@ -227,6 +231,30 @@ function GeneralPanel({
     }
   }
 
+  const loadReachout = useCallback(async () => {
+    const rt = await api.get<RuntimePayload>("/api/settings/runtime");
+    const item = rt.groups.flatMap((g) => g.items).find((i) => i.field === "reachout_enabled");
+    setReachoutOn(item ? item.value !== "0" && item.value !== "未设置" : null);
+  }, []);
+
+  useEffect(() => {
+    loadReachout().catch(() => setReachoutOn(null));
+  }, [loadReachout]);
+
+  async function toggleReachout() {
+    setReachoutErr("");
+    setReachoutMsg("");
+    try {
+      await api.put<RuntimePayload>("/api/settings/runtime", {
+        values: { reachout_enabled: reachoutOn ? "0" : "1" },
+      });
+      setReachoutOn(!reachoutOn);
+      setReachoutMsg(reachoutOn ? "已关闭：所有角色都不会主动找你" : "已开启：角色可以主动找你（还需各角色卡的开关）");
+    } catch (e) {
+      setReachoutErr(`保存失败：${(e as Error).message}`);
+    }
+  }
+
   return (
     <div className="mt-6 space-y-4">
       {onToggleTheme && (
@@ -305,6 +333,29 @@ function GeneralPanel({
           {memErr && <span className="text-xs text-red-600 dark:text-red-400 dark:text-red-500">{memErr}</span>}
           {mem && <span className="ml-auto text-[11px] text-slate-400 dark:text-slate-500">{memDraft.length} 字</span>}
         </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">主动开口</h3>
+          <button
+            onClick={toggleReachout}
+            disabled={reachoutOn === null}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+              reachoutOn
+                ? "bg-blue-600 text-white"
+                : "bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-300"
+            }`}
+          >
+            {reachoutOn === null ? "…" : reachoutOn ? "已开启" : "已关闭"}
+          </button>
+        </div>
+        <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400 dark:text-slate-500">
+          全局总闸：关闭后所有角色都不会主动找你（静默，无提示音）。即使开着，也只有角色卡上
+          勾选「角色会主动找你」的角色才会开口。
+        </p>
+        {reachoutMsg && <p className="mt-1.5 text-xs text-emerald-600 dark:text-emerald-400">{reachoutMsg}</p>}
+        {reachoutErr && <p className="mt-1.5 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{reachoutErr}</p>}
       </div>
 
       <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">

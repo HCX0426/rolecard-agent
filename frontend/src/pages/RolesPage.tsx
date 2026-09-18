@@ -27,6 +27,7 @@ const EMPTY_FORM = {
   knowledge_scopes: [] as string[],
   exemplars: [] as ExemplarDraft[],
   description: "",
+  reachout_enabled: false,
 };
 
 const SCOPE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
@@ -175,6 +176,7 @@ export default function RolesPage() {
       // 服务端范例行没有 id：装载时补发稳定 key（M7）。
       exemplars: (r.exemplars || []).map((e) => ({ ...e, rowId: nextExemplarId() })),
       description: r.description || "",
+      reachout_enabled: !!r.reachout_enabled,
     });
     setWlMode(r.tool_whitelist === null ? "all" : "custom");
   }
@@ -194,6 +196,7 @@ export default function RolesPage() {
       knowledge_scopes: form.knowledge_scopes.length ? form.knowledge_scopes : null,
       exemplars: exemplars.length ? exemplars : null,
       description: form.description.trim() || null,
+      reachout_enabled: form.reachout_enabled,
     };
     try {
       if (editing) {
@@ -308,6 +311,14 @@ export default function RolesPage() {
                 </select>
               </label>
             </div>
+            <label className="mt-3 flex cursor-pointer items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={form.reachout_enabled}
+                onChange={(e) => setForm({ ...form, reachout_enabled: e.target.checked })}
+              />
+              <span className="text-slate-600 dark:text-slate-300">角色会主动找你（需全局「主动开口」总闸开着）</span>
+            </label>
             <label className="mt-3 block">
               <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">工具权限</span>
               <div className="mt-1 flex gap-5 text-sm">

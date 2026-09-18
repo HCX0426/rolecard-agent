@@ -1,4 +1,6 @@
 import { Component, Suspense, lazy, useEffect, useState, type ReactNode } from "react";
+import ReachoutPanel from "./components/ReachoutPanel";
+import { api } from "./api";
 import { useTheme } from "./components/useTheme";
 
 // ---- 路由级代码分割：六页各自成 chunk，hover 导航时预加载 -------------------------------
@@ -130,6 +132,29 @@ export default function App() {
   const [tab, setTabState] = useState<TabKey>(tabFromHash);
   const [navOpen, setNavOpen] = useState(false);
   const { theme, toggle } = useTheme();
+  // 角色主动开口（架构计划 B）：铃铛红点 + 收件箱抽屉。静音轮询（10s）：
+  // 页面开着时新开口 10 秒内上角标；页面关着 = 回来看到堆积（web 无常驻推送，如实降级）。
+  const [reachoutOpen, setReachoutOpen] = useState(false);
+  const [reachoutUnread, setReachoutUnread] = useState(0);
+
+  useEffect(() => {
+    if (reachoutOpen) return; // 抽屉开着时不打扰轮询，抽屉自己会刷新
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const p = await api.getReachouts();
+        if (!cancelled) setReachoutUnread(p.unread);
+      } catch {
+        /* 静默：后端没起/网络抖动不值得打扰用户 */
+      }
+    };
+    poll();
+    const timer = setInterval(poll, 10_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [reachoutOpen]);
 
   // tab → URL hash（支持深链 /#/data 等）
   useEffect(() => {
@@ -199,6 +224,21 @@ export default function App() {
             </button>
           ))}
         </div>
+        <div className="mt-auto border-t border-slate-100 px-2 py-2 dark:border-slate-700">
+          <button
+            onClick={() => setReachoutOpen(true)}
+            className="relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700/60"
+            title="角色主动找你（收件箱）"
+          >
+            <span className="shrink-0 opacity-80">🔔</span>
+            主动消息
+            {reachoutUnread > 0 && (
+              <span className="ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-medium text-white">
+                {reachoutUnread}
+              </span>
+            )}
+          </button>
+        </div>
       </nav>
 
       {/* 主内容区 */}
@@ -261,6 +301,13 @@ export default function App() {
           </PageBoundary>
         )}
       </main>
+
+      {/* 角色主动开口收件箱抽屉（全局，所有页签可见） */}
+      <ReachoutPanel
+        open={reachoutOpen}
+        onClose={() => setReachoutOpen(false)}
+        onUnreadChange={setReachoutUnread}
+      />
     </div>
   );
 }

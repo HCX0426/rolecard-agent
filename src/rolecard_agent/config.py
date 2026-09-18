@@ -126,6 +126,16 @@ class Settings(BaseModel):
     # 值为 NULL 的会话 = 跟随本项，改这里对所有"没单独设过"的会话即时生效。
     agent_default_mode: str = "chat"
 
+    # v2.5 角色主动开口（架构计划 B）**全局总闸**：True = 允许角色主动来找用户
+    # （是否真的开口还要看该角色卡 reachout_enabled）；False = 所有角色都不主动
+    # （调度停、铃铛不亮）。默认开 —— 主动沟通是定位招牌；关闭是显式选择（不被打扰）。
+    # 「运行环境」页可热切（runtime override），保存下一轮调度即生效。
+    reachout_enabled: bool = True
+
+    # 同一角色两次主动开口的最小间隔（分钟）。抑制层之一：防角色刷屏。
+    # 低频配置走 env 即可（默认 60 分钟/角色）；改它需重启。
+    reachout_interval_minutes: int = 60
+
     # 单轮用户消息允许的**图步数上限**（LangGraph `recursion_limit`，
     # 见 core/graph.build_graph_config）。
     # 一次"模型 → 工具 → 模型"消耗 2 步。不设时 LangGraph 用默认的 10007 —— 而本图是个环：
@@ -292,6 +302,8 @@ class Settings(BaseModel):
             ("AGENT_MAX_STEPS", "agent_max_steps"),
             ("MEMORY_ENABLED", "memory_enabled"),
             ("AGENT_DEFAULT_MODE", "agent_default_mode"),
+            ("REACHOUT_ENABLED", "reachout_enabled"),
+            ("REACHOUT_INTERVAL_MINUTES", "reachout_interval_minutes"),
             ("SQLITE_PATH", "sqlite_path"),
             ("CHROMA_PATH", "chroma_path"),
             ("UPLOAD_DIR", "upload_dir"),

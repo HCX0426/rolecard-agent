@@ -183,6 +183,7 @@ def check_config_contract() -> None:
         "LANGSMITH_[A-Z_]+",
         "MEMORY_[A-Z_]+",
         "AGENT_[A-Z_]+",
+        "REACHOUT_[A-Z_]+",
     )
     pattern = r"\b(" + "|".join(prefixes) + r"|SQLITE_PATH|CHROMA_PATH|UPLOAD_DIR)\b"
     cfg_keys = set(re.findall(pattern, cfg_text))

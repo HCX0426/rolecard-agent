@@ -17,7 +17,7 @@ from rolecard_agent.storage.db import SqlConnection
 _COLUMNS = (
     "role_id, role_name, system_prompt, temperature, model_name, "
     "tool_whitelist, exemplars, knowledge_scopes, description, "
-    "is_builtin, created_at, updated_at"
+    "is_builtin, reachout_enabled, created_at, updated_at"
 )
 
 # Columns stored as JSON text. For every one of them `None` and `[]` mean different things,
@@ -51,6 +51,7 @@ def _row_to_model(row: sqlite3.Row) -> RoleCard:
         raw = payload.get(column)
         payload[column] = None if raw is None else json.loads(raw)
     payload["is_builtin"] = bool(payload.get("is_builtin"))
+    payload["reachout_enabled"] = bool(payload.get("reachout_enabled"))
     return RoleCard(**payload)
 
 
@@ -108,8 +109,9 @@ class RoleCardService:
         self._conn.execute(
             "INSERT INTO role_card "
             "(role_id, role_name, system_prompt, temperature, model_name, "
-            " tool_whitelist, exemplars, knowledge_scopes, description, is_builtin) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " tool_whitelist, exemplars, knowledge_scopes, description, is_builtin, "
+            "reachout_enabled) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 data.role_id,
                 data.role_name,
@@ -121,6 +123,7 @@ class RoleCardService:
                 _dump_json(data.knowledge_scopes),
                 data.description,
                 1 if is_builtin else 0,
+                data.reachout_enabled,
             ),
         )
         self._conn.commit()

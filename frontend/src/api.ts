@@ -17,6 +17,8 @@ export interface RoleCard {
   knowledge_scopes: string[] | null;
   description: string | null;
   is_builtin: boolean;
+  /** 角色主动开口资格（架构计划 B）：还需全局 REACHOUT_ENABLED 开着才生效。 */
+  reachout_enabled?: boolean;
 }
 
 export interface PluginRow {
@@ -355,6 +357,21 @@ export interface TreeResult {
   truncated: boolean;
 }
 
+/** 角色主动开口（收件箱）条目：独立于对话历史，未读/已读状态由 state 表达。 */
+export interface ReachoutRow {
+  id: number;
+  role_id: string;
+  role_name: string | null;
+  text: string;
+  state: "unread" | "read";
+  created_at: string;
+}
+
+export interface ReachoutsPage {
+  items: ReachoutRow[];
+  unread: number;
+}
+
 export const api = {
   get: <T>(url: string) => request<T>("GET", url),
   post: <T>(url: string, body?: unknown) => request<T>("POST", url, body),
@@ -402,6 +419,9 @@ export const api = {
   clearWorkspaceDir: () => request<WorkspaceDir>("DELETE", "/api/workspace/dir"),
   browseTree: (path?: string) =>
     request<TreeResult>("GET", `/api/workspace/tree${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+  /** 角色主动开口（收件箱）：列表（含未读计数）与标记已读（静音，无提示音）。 */
+  getReachouts: () => request<ReachoutsPage>("GET", "/api/reachouts"),
+  markReachoutRead: (id: number) => request<ReachoutsPage>("POST", `/api/reachouts/${id}/read`),
 };
 
 // ---- SSE 对话流 ----------------------------------------------------------------

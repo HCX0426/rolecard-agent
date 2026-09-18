@@ -86,6 +86,20 @@ CREATE TABLE IF NOT EXISTS kernel_meta (
 -- instead of every reader having to invent a default.
 INSERT OR IGNORE INTO kernel_meta (key, value) VALUES ('tool_epoch', '1');
 
+-- 角色主动开口（架构计划 B）：agent_reachout 是**收件箱**而非对话历史 ——
+-- 角色主动的产出独立于 checkpoint 存储：天然支持未读/已读/清空，不污染对话提交历史，
+-- 且页面关着时也能攒下来（web 端轮询读取，回来才看到）。
+CREATE TABLE IF NOT EXISTS agent_reachout (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    role_id     TEXT NOT NULL,             -- 发起主动的角色
+    role_name   TEXT,                      -- 展示名冗余（角色被删后仍可读）
+    text        TEXT NOT NULL,             -- 主动开口的内容
+    state       TEXT NOT NULL DEFAULT 'unread',  -- unread / read
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP  -- UTC（CURRENT_TIMESTAMP）
+);
+
+CREATE INDEX IF NOT EXISTS idx_reachout_state_time ON agent_reachout(state, created_at DESC);
+
 -- Runtime-editable model backends (settings page). Empty table = use env config as-is;
 -- the first settings save takes over. API keys are stored PLAINTEXT in the local demo
 -- database: this file never leaves the machine, and the GET endpoint never returns them

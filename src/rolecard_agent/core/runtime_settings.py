@@ -61,6 +61,8 @@ RUNTIME_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("memory_enabled", "MEMORY_ENABLED", "bool"),
     # Agent 模式全局默认：「运行环境」页保存即热重建；会话级切换覆盖它（对话页）。
     FieldSpec("agent_default_mode", "AGENT_DEFAULT_MODE", "str", ("chat", "agent")),
+    # 角色主动开口全局总闸：「运行环境」页保存即热生效（调度每 tick 读当前值）。
+    FieldSpec("reachout_enabled", "REACHOUT_ENABLED", "bool"),
 )
 
 _FIELDS_BY_NAME = {f.field: f for f in RUNTIME_FIELDS}

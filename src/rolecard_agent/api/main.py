@@ -51,6 +51,7 @@ from rolecard_agent.api.deps import (
 )
 from rolecard_agent.api.routers import console as console_router
 from rolecard_agent.api.routers import domains as domains_router
+from rolecard_agent.api.routers import reachouts as reachouts_router
 from rolecard_agent.api.routers import records as records_router
 from rolecard_agent.api.routers import roles as roles_router
 from rolecard_agent.api.routers import services as services_router
@@ -67,6 +68,7 @@ from rolecard_agent.core.model_settings import ModelSettingsService
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.observability import TraceEvent, Tracer, make_tracer
 from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
+from rolecard_agent.core.reachout import ReachoutScheduler
 from rolecard_agent.core.services import ServiceEndpointService
 from rolecard_agent.domains.health.service import (
     HealthQueryService,
@@ -278,9 +280,21 @@ def create_app(
     # 取当前图，因此保存后无需重启即可生效。
     app_state["graph"] = graph
 
+    # 角色主动开口的调度器（架构计划 B）：后台 daemon 按固定 tick 检查"有资格主动"的
+    # 角色，符合抑制条件就生成并落收件箱。settings_provider 每次 tick 现取 app_state
+    # 里的**有效配置**（全局总闸 REACHOUT_ENABLED 热切即时生效）；模型解析复用对话路径
+    # 的 resolve_role_model（角色可按 model_name 路由）。lifespan 启停。
+    reachout = ReachoutScheduler(
+        settings_provider=lambda: app_state["effective"],
+        roles=roles,
+        model_resolver=resolve_role_model,
+        conn=conn,
+        tracer=resolved_tracer,
+    )
+
     @contextlib.asynccontextmanager
     async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        """进程退出时收尾：sqlite 连接 / 知识库 httpx 客户端 / 对话线程池。
+        """进程退出时收尾：sqlite 连接 / 知识库 httpx 客户端 / 对话线程池 / 主动开口调度。
 
         之前这三者**从不释放**：uvicorn 被 Ctrl+C 或容器停止时，各线程创建的 sqlite
         连接、嵌入与重排器的 httpx 连接池都随进程一起消失 —— 在长驻进程里（设置页热
@@ -292,6 +306,7 @@ def create_app(
         （scripts/run_api.py 里 uvicorn.run 返回之后）。
         """
         try:
+            reachout.start()  # 后台调度：角色主动开口从这里开始转
             yield
         finally:
             # 每个 suppress 都独立：某一处收尾失败不能连累其它资源。
@@ -301,6 +316,8 @@ def create_app(
                 with contextlib.suppress(Exception):
                     if holder is not None and hasattr(holder, "close"):
                         holder.close()
+            # 主动开口 DAEMON 线程退出（stop 只置位；daemon 线程随进程消亡兜底）。
+            reachout.stop()
 
     app = FastAPI(title="rolecard-agent 管理控制台", version="0.3.0", lifespan=_lifespan)
 
@@ -332,6 +349,7 @@ def create_app(
     app.include_router(services_router.router)
     app.include_router(domains_router.router)
     app.include_router(workspace_router.router)
+    app.include_router(reachouts_router.router)
 
     def rebuild_runtime() -> None:
         """按当前设置与服务端点引用重建全部运行时对象：模型、KnowledgeBase、registry、图。

@@ -367,3 +367,33 @@ def test_workspace_tree_browse(client: TestClient, tmp_path: Path) -> None:
     )
 
 
+def test_reachout_role_switch_and_master_runtime(client: TestClient) -> None:
+    """两级授权：角色卡 reachout_enabled 可切换；全局总闸走运行环境热切。"""
+    tid = client.post("/api/session", json={}).json()["thread_id"]
+
+    # 内置角色出厂即静默（reachout_enabled=False），且 API 透出该字段
+    roles = client.get("/api/roles").json()
+    general = next(r for r in roles if r["role_id"] == "general_assistant")
+    assert general["reachout_enabled"] is False
+
+    # 打开某个角色的主动资格
+    r = client.patch("/api/roles/general_assistant", json={"reachout_enabled": True})
+    assert r.status_code == 200
+    assert r.json()["reachout_enabled"] is True
+
+    # 全局总闸（REACHOUT_ENABLED）在运行环境页可热切
+    rr = client.put("/api/settings/runtime", json={"values": {"reachout_enabled": "0"}})
+    assert rr.status_code == 200
+    client.put("/api/settings/runtime", json={"values": {"reachout_enabled": ""}})  # 还原
+
+    # 清掉刚才的会话与会话级改动，避免污染后续用例
+    client.delete(f"/api/session/{tid}")
+
+
+def test_reachouts_list_and_mark_read_404(client: TestClient) -> None:
+    """收件箱读取路径：列表形状（含 unread 计数）；标记已读不存在 → 404。"""
+    r = client.get("/api/reachouts").json()
+    assert "unread" in r and isinstance(r["items"], list)
+    assert client.post("/api/reachouts/999999/read").status_code == 404
+
+

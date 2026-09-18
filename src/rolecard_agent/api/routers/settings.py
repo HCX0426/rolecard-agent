@@ -275,6 +275,12 @@ def runtime_payload(
         ("agent_max_steps", "AGENT_MAX_STEPS", "步数上限（对话档）",
          "单轮允许的图步数；agent 模式自动翻倍，0=库默认"),
     ])
+    add("reachout", "主动开口", [
+        ("reachout_enabled", "REACHOUT_ENABLED", "全局总闸",
+         "角色主动找你的总开关；谁真有资格主动看各角色卡的开关"),
+        ("reachout_interval_minutes", "REACHOUT_INTERVAL_MINUTES", "开口间隔（分钟）",
+         "同一角色两次主动开口的最小间隔（防刷屏；低频项改它需重启）"),
+    ])
     add("auth", "访问控制", [
         ("auth_mode", "AUTH_MODE", "认证模式", "off / auto / on"),
         ("auth_credentials", "AUTH_CREDENTIALS", "Basic 凭据", None),

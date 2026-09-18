@@ -254,6 +254,10 @@ def _migrate(conn: SqlConnection) -> None:
     #    旧库无此列 → 补；新库建表已含 → 跳过（幂等）。
     if "agent_mode" not in _columns(conn, "session_thread"):
         conn.execute("ALTER TABLE session_thread ADD COLUMN agent_mode TEXT")
+    # 6. role_card 增列 reachout_enabled（v2.5 角色主动开口，架构计划 B）。
+    #    NULL/DEFAULT 0 = 出厂静默；角色卡上勾选后该角色才有资格主动（还需全局开关）。
+    if "reachout_enabled" not in _columns(conn, "role_card"):
+        conn.execute("ALTER TABLE role_card ADD COLUMN reachout_enabled INTEGER NOT NULL DEFAULT 0")
     conn.execute("DROP TABLE IF EXISTS service_policy")
     if "api_key" in _columns(conn, "service_endpoint"):
         conn.execute("DROP TABLE service_endpoint")

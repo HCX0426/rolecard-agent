@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS role_card (
     knowledge_scopes  TEXT,
 
     is_builtin      INTEGER NOT NULL DEFAULT 0,     -- built-in roles cannot be deleted
+    -- 主动开口（架构计划 B）：1 = 该角色会主动来找用户（还需全局 REACHOUT_ENABLED 开着）。
+    -- 默认 0 = 出厂静默 —— 主动打扰是 opt-in。旧库经 storage/db._migrate 幂等补列。
+    reachout_enabled INTEGER NOT NULL DEFAULT 0,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
