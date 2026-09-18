@@ -1,0 +1,4 @@
+# MCP 扩展通道依赖（架构计划 C·§6.1，core/tools/mcp.py）
+# 仅在配置了 MCP_SERVERS 时需要。未安装不影响启动：loader 打 warning 并跳过 MCP 工具
+# （fail-open 仅影响扩展能力，不阻塞核心对话）。
+langchain-mcp-adapters>=0.0.9

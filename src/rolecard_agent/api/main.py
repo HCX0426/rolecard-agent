@@ -208,7 +208,12 @@ def create_app(
         ingestion=ingestion,
         query=health_query,
         knowledge=knowledge,
-        enabled_domains=plugins.enabled_domains,  # callable：list_domains 报告实时状态
+        # MCP 域按配置启用：配了 MCP_SERVERS 即把 "mcp" 加进启用域（架构计划 C·§6.1）；
+        # 未配置则与普通插件一致，不暴露 mcp 工具。callable 形式保证运行时实时判定。
+        enabled_domains=lambda: [
+            *plugins.enabled_domains(),
+            *(["mcp"] if getattr(effective, "mcp_servers", None) else []),
+        ],
         current_user=lambda: DEFAULT_USER_ID,
         # 域写工具（upload_medical_report）必须知道上传目录：它的 file_path 来自模型，
         # 不受限就等于"任意主机文件读取 + 任意目录写"（审查报告 H1）。

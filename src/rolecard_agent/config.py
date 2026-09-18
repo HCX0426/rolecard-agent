@@ -74,6 +74,25 @@ class ModelBackend(BaseModel):
     usage: str = "chat"
 
 
+class McpServerConfig(BaseModel):
+    """One external MCP server whose tools become domain="mcp" tools.
+
+    `id` is the stable identity used for the tool-name prefix (collision avoidance) and the
+    audit `target` - never the display name. A server is either stdio (a local process the user
+    installs) or http (a remote third-party service, deferred scope).
+    """
+
+    id: str
+    transport: str = "stdio"  # "stdio" | "http"
+    # stdio: a local process launched by us.
+    command: str | None = None
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    # http: a remote MCP endpoint.
+    url: str | None = None
+    headers: dict[str, str] = Field(default_factory=dict)
+
+
 class Settings(BaseModel):
     """Resolved configuration. Build with `Settings.from_env()`; treat as immutable."""
 
@@ -160,6 +179,13 @@ class Settings(BaseModel):
     #   （仅自研/可信任务目录用）。两条都可经「运行环境」页热切。
     run_tools_enabled: bool = True
     run_approval: str = "manual"
+
+    # v2.6 MCP 扩展通道（架构计划 C·§6.1，core/tools/mcp.py）：把外部 MCP server 暴露的
+    # 工具作为「域工具」(domain="mcp") 注册，复用角色白名单 / 超时 / 熔断 / 审计。权限模型
+    # （白名单 / 路径边界 / 档位）仍在本家（铁律：guard 与路径守卫不委托）。
+    # 值为 JSON 数组；空 = 不加载任何 MCP 工具。缺 langchain_mcp_adapters 依赖时该字段
+    # 即使被设置也会被静默跳过（loader 打 warning），不阻塞启动。
+    mcp_servers: list[McpServerConfig] = Field(default_factory=list)
 
     # v2.4 联网工具（core/tools/web.py）：
     # - web_search_backend：auto（默认，有 TAVILY_API_KEY 走云端 tavily，否则本地 ddgs）/
@@ -297,6 +323,18 @@ class Settings(BaseModel):
                 else:
                     merged[name] = ModelBackend(**cfg)
             data["model_backends"] = merged
+
+        if raw := src.get("MCP_SERVERS"):
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"MCP_SERVERS is not valid JSON: {exc}") from exc
+            if not isinstance(parsed, list):
+                raise ValueError("MCP_SERVERS must be a JSON array of server configs")
+            try:
+                data["mcp_servers"] = [McpServerConfig(**c) for c in parsed]
+            except ValidationError as exc:
+                raise ValueError(f"invalid MCP_SERVERS config: {exc}") from exc
 
         for env_key, field in (
             ("MODEL_DEFAULT", "model_default"),

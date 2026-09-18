@@ -181,4 +181,14 @@ def build_registry(
             domain=domain,
             idempotent=False,
         )
+
+    # MCP 扩展通道（架构计划 C·§6.1）：外部 server 工具作为 domain="mcp" 域工具注册，
+    # 复用白名单 / 超时 / 熔断 / 审计。无配置、依赖缺失、或所有 server 加载失败时静默跳过
+    # （fail-open 仅影响扩展能力，绝不阻塞启动）。
+    if settings is not None:
+        from rolecard_agent.core.tools.mcp import load_mcp_tools
+
+        mcp_tools = load_mcp_tools(getattr(settings, "mcp_servers", []) or [], conn=fs_conn)
+        if mcp_tools:
+            registry.register_many(mcp_tools, domain="mcp", idempotent=False)
     return registry
