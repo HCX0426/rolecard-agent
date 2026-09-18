@@ -12,6 +12,8 @@ from langchain_core.messages import AIMessage
 
 from rolecard_agent.config import Settings
 from rolecard_agent.core import reachout as svc
+from rolecard_agent.core.memory import save_role_memory_text
+from rolecard_agent.core.proactive_state import DEFAULT_AFFINITY_THRESHOLD, get_state
 from rolecard_agent.core.reachout import ReachoutScheduler
 from rolecard_agent.roles.models import RoleCard
 
@@ -219,3 +221,88 @@ def test_tick_once_continues_after_role_failure(conn) -> None:
     utc, local = _now()
     assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
     assert conn.execute("SELECT COUNT(*) AS n FROM agent_reachout").fetchone()["n"] == 1
+
+
+# ------------------------------------------------------------------ 关系驱动触发源（§5.2 四分类）
+
+
+def _now_local() -> datetime:
+    return datetime.now(UTC).astimezone()
+
+
+def _seed_state(conn, role_id: str, affinity: float = 0.0) -> None:
+    conn.execute(
+        "INSERT INTO role_proactive_state "
+        "(role_id, affinity, last_interaction_utc) VALUES (?, ?, ?) "
+        "ON CONFLICT(role_id) DO UPDATE SET affinity = excluded.affinity",
+        (role_id, affinity, datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")),
+    )
+    conn.commit()
+
+
+def test_trigger_affection_fires_at_threshold(conn) -> None:
+    _seed_state(conn, "active", DEFAULT_AFFINITY_THRESHOLD)
+    state = get_state(conn, "active")
+    utc, _ = _now()
+    got = svc.trigger_affection(_role(), state, _settings(), now_utc=utc)
+    assert got == "affection"
+
+
+def test_trigger_affection_silent_when_low(conn) -> None:
+    state = get_state(conn, "active")  # affinity 0
+    utc, _ = _now()
+    got = svc.trigger_affection(_role(), state, _settings(), now_utc=utc)
+    assert got is None
+
+
+def test_trigger_time_pattern_fires_on_modal_hour(conn) -> None:
+    ts = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    for _ in range(3):
+        conn.execute(
+            "INSERT INTO agent_reachout (role_id, role_name, text, created_at) "
+            "VALUES ('active','x','hi',?)",
+            (ts,),
+        )
+    conn.commit()
+    # 历史记录的本地小时 == 当前本地小时 → 众数即当前小时，样本足够。
+    got = svc.trigger_time_pattern(_role(), conn, now_local=_now_local())
+    assert got == "time_pattern"
+
+
+def test_trigger_time_pattern_silent_without_history(conn) -> None:
+    got = svc.trigger_time_pattern(_role(), conn, now_local=_now_local())
+    assert got is None
+
+
+def test_trigger_recall_fires_when_role_memory_present(conn) -> None:
+    save_role_memory_text(conn, "active", "用户上周说想学吉他。")
+    got = svc.trigger_recall(_role(), conn, now_local=_now_local())
+    assert got == "recall"
+
+
+def test_trigger_recall_silent_without_memory(conn) -> None:
+    got = svc.trigger_recall(_role(), conn, now_local=_now_local())
+    assert got is None
+
+
+def test_tick_once_runs_affection_trigger_and_bumps_affinity(conn) -> None:
+    _seed_state(conn, "active", DEFAULT_AFFINITY_THRESHOLD)
+    model = _FakeModel(AIMessage(content="嗨，想你啦"))
+    scheduler = _scheduler(conn, [_role()], model)
+    utc, local = _now()
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
+    state = get_state(conn, "active")
+    assert state.affinity > DEFAULT_AFFINITY_THRESHOLD  # 开口后关系数值 +增量
+
+
+def test_generate_recall_mode_uses_role_memory(conn) -> None:
+    """回忆触发的生成必须读该角色的专属记忆（per-role 隔离），而不是全局记忆。"""
+    save_role_memory_text(conn, "active", "专属记忆：他养了只猫。")
+    role = _role()
+    model = _FakeModel(AIMessage(content="我记得你养了猫。"))
+    text = svc.generate_reachout_text(
+        role, model, _settings(), conn, role_id="active", mode="recall"
+    )
+    assert text == "我记得你养了猫。"
+    joined = "".join(str(m.content) for m in model.prompt or [])
+    assert "他养了只猫" in joined  # 角色专属记忆进提示词

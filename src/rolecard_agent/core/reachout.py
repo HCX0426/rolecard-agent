@@ -36,8 +36,18 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from rolecard_agent.config import Settings
 from rolecard_agent.core.guard import check
-from rolecard_agent.core.memory import MAX_MEMORY_CHARS, load_memory_text
+from rolecard_agent.core.memory import (
+    MAX_MEMORY_CHARS,
+    load_memory_text,
+    load_role_memory_text,
+)
 from rolecard_agent.core.observability import TraceEvent, Tracer
+from rolecard_agent.core.proactive_state import (
+    DEFAULT_AFFINITY_THRESHOLD,
+    ProactiveState,
+    get_state,
+    record_interaction,
+)
 from rolecard_agent.core.prompts import build_system_prompt
 from rolecard_agent.roles.models import RoleCard
 from rolecard_agent.roles.service import RoleCardService
@@ -55,6 +65,13 @@ _REACHOUT_TASK = (
     "现在是主动开口的时刻。结合你的角色设定和关于用户的长期记忆，用一两句话主动向用户"
     "问候或说一件此刻值得说的小事：可以是有用的提醒、一句关心，或自然地打招呼。"
     "像真人突然想起跟对方说话那样，自然、简短、口语化；不要长篇，不要说教，不要自我介绍。"
+)
+
+# 回忆触发专用的口吻：自然提起一件记得的、之前聊过或答应的事。
+_REACHOUT_TASK_RECALL = (
+    "现在是主动开口的时刻。结合你的角色设定和关于用户的长期记忆，自然地提起一件"
+    "你记得的、之前聊过或答应的事——像突然想起来要跟对方说。简短、口语化；"
+    "不要自我介绍、不要说教、不要长篇。"
 )
 
 
@@ -144,15 +161,27 @@ def generate_reachout_text(
     model: Any,
     settings: Settings,
     conn: SqlConnection,
+    *,
+    role_id: str | None = None,
+    mode: str = "general",
 ) -> str | None:
-    """生成一条主动内容：人设 + 记忆 → 单轮 → guard。被拦/失败返回 None（不发）。"""
-    memory = load_memory_text(conn) if settings.memory_enabled else ""
+    """生成一条主动内容：人设 + 记忆 → 单轮 → guard。被拦/失败返回 None（不发）。
+
+    `role_id` 给定时按角色取**专属记忆**（回忆触发 / per-role 隔离）；若该角色无专属记忆，
+    回退到用户级全局记忆（用户事实，非角色对话，不造成跨角色串扰）。
+    """
+    memory = ""
+    if role_id is not None and settings.memory_enabled:
+        memory = load_role_memory_text(conn, role_id) or load_memory_text(conn)
+    elif settings.memory_enabled:
+        memory = load_memory_text(conn)
     if len(memory) > MAX_MEMORY_CHARS:
         memory = memory[:MAX_MEMORY_CHARS]
+    task = _REACHOUT_TASK_RECALL if mode == "recall" else _REACHOUT_TASK
     system = build_system_prompt(role.system_prompt, role.exemplars, memory=memory, agent=False)
     prompt = [
         SystemMessage(content=system),
-        HumanMessage(content=f"{_REACHOUT_TASK}\n\n（你的角色是 {role.role_name}）"),
+        HumanMessage(content=f"{task}\n\n（你的角色是 {role.role_name}）"),
     ]
     reply = model.invoke(prompt)
     text = str(getattr(reply, "content", "") or "").strip()
@@ -162,6 +191,54 @@ def generate_reachout_text(
     if not verdict.allowed:
         return None  # guard fail-closed：被拦下就不发
     return text[:2000]
+
+
+# 触发源（关系驱动，四类共用抑制 / 生成 / 落库流水线）
+
+def trigger_affection(
+    role: RoleCard, state: ProactiveState, settings: Settings, *, now_utc: datetime
+) -> str | None:
+    """性格·关系数值触发：互动积累的成长值（衰减后）到阈值即主动冒泡。"""
+    # 阈值比较带极小 epsilon：affinity 恰为阈值、且衰减量仅浮点噪声时仍视为达标。
+    if state.decayed_affinity(now=now_utc) >= DEFAULT_AFFINITY_THRESHOLD - 1e-6:
+        return "affection"
+    return None
+
+
+def trigger_time_pattern(
+    role: RoleCard, conn: SqlConnection, *, now_local: datetime
+) -> str | None:
+    """时段 / 规律 nudge：若该角色历史上主动开口的本地小时众数 == 当前小时且样本足够，触发。"""
+    rows = conn.execute(
+        "SELECT created_at FROM agent_reachout WHERE role_id = ?", (role.role_id,)
+    ).fetchall()
+    if not rows:
+        return None
+    hours: dict[int, int] = {}
+    for r in rows:
+        ts = _parse_reachout_ts(r["created_at"])
+        if ts is None:
+            continue
+        hours[ts.astimezone().hour] = hours.get(ts.astimezone().hour, 0) + 1
+    if not hours:
+        return None
+    top_hour, top_n = max(hours.items(), key=lambda kv: kv[1])
+    if top_hour == now_local.hour and top_n >= 2:
+        return "time_pattern"
+    return None
+
+
+def trigger_recall(role: RoleCard, conn: SqlConnection, *, now_local: datetime) -> str | None:
+    """回忆触发：该角色有专属记忆时，自然提起一件记得的事。无记忆 = 不触发。"""
+    if load_role_memory_text(conn, role.role_id).strip():
+        return "recall"
+    return None
+
+
+def _parse_reachout_ts(raw: object) -> datetime | None:
+    if not raw:
+        return None
+    return datetime.strptime(str(raw), "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
 
 
 # --------------------------------------------------------------------------- 调度线程
@@ -236,9 +313,21 @@ class ReachoutScheduler:
         for role in candidates:
             if blocked_why(role, settings, self._conn, now_utc=stamp_utc, now_local=stamp_local):
                 continue
+            # 关系驱动：按角色状态评估四类触发源，取第一个命中者决定"以什么口吻开口"。
+            # "timer" 是基线触发（间隔/时段/未读由 blocked_why 把守），其余为关系驱动增量。
+            state = get_state(self._conn, role.role_id)
+            fired = (
+                trigger_affection(role, state, settings, now_utc=stamp_utc)
+                or trigger_time_pattern(role, self._conn, now_local=stamp_local)
+                or trigger_recall(role, self._conn, now_local=stamp_local)
+                or "timer"
+            )
+            mode = "recall" if fired == "recall" else "general"
             try:
                 model = self._model(role.model_name)
-                text = generate_reachout_text(role, model, settings, self._conn)
+                text = generate_reachout_text(
+                    role, model, settings, self._conn, role_id=role.role_id, mode=mode
+                )
             except Exception as exc:  # noqa: BLE001 - 生成失败只留痕，不阻塞其它角色
                 self._tracer.emit(
                     TraceEvent(
@@ -252,12 +341,13 @@ class ReachoutScheduler:
             if text is None:
                 continue  # guard 拦下 / 空输出：不发，且不重试
             record_reachout(self._conn, role, text)
+            record_interaction(self._conn, role.role_id, now=stamp_utc)
             self._tracer.emit(
                 TraceEvent(
                     event="reachout_sent",
                     node="reachout",
                     role_id=role.role_id,
-                    detail={"chars": len(text)},
+                    detail={"chars": len(text), "trigger": fired},
                 )
             )
             made += 1

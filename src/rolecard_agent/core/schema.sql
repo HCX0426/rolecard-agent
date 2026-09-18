@@ -100,6 +100,26 @@ CREATE TABLE IF NOT EXISTS agent_reachout (
 
 CREATE INDEX IF NOT EXISTS idx_reachout_state_time ON agent_reachout(state, created_at DESC);
 
+-- 关系驱动主动开口的 per-role 状态（架构计划 §5.2）：按 role_id 隔离，不复用全局状态。
+-- affinity = 关系数值（互动积累的成长值，到阈值即主动冒泡）；calibration_json = 主动度校准
+-- （记录哪些主动被接受/驳回，用于"该不该现在打扰"的判断）；last_interaction_utc = 最近一次
+-- 主动/被交互的 UTC 时间，用于关系数值随时间自然衰减。
+CREATE TABLE IF NOT EXISTS role_proactive_state (
+    role_id               TEXT PRIMARY KEY,
+    affinity             REAL NOT NULL DEFAULT 0.0,
+    last_interaction_utc TIMESTAMP,
+    calibration_json     TEXT,
+    updated_at           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 按角色卡隔离的长期记忆（架构计划 §5.2 实现前置）：与全局 kernel_meta 的 memory:facts 分离，
+-- 角色 B 绝不直接读角色 A 的记忆。为空 = 该角色尚无专属记忆（生成回退到用户级全局记忆）。
+CREATE TABLE IF NOT EXISTS role_memory (
+    role_id     TEXT PRIMARY KEY,
+    value       TEXT NOT NULL DEFAULT '',
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Runtime-editable model backends (settings page). Empty table = use env config as-is;
 -- the first settings save takes over. API keys are stored PLAINTEXT in the local demo
 -- database: this file never leaves the machine, and the GET endpoint never returns them

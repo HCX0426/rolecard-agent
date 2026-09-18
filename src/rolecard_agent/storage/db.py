@@ -258,6 +258,20 @@ def _migrate(conn: SqlConnection) -> None:
     #    NULL/DEFAULT 0 = 出厂静默；角色卡上勾选后该角色才有资格主动（还需全局开关）。
     if "reachout_enabled" not in _columns(conn, "role_card"):
         conn.execute("ALTER TABLE role_card ADD COLUMN reachout_enabled INTEGER NOT NULL DEFAULT 0")
+    # 7. 关系驱动主动开口（架构计划 §5.2）：per-role 状态与 per-role 记忆（幂等建表）。
+    if "affinity" not in _columns(conn, "role_proactive_state"):
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS role_proactive_state ("
+            " role_id TEXT PRIMARY KEY, affinity REAL NOT NULL DEFAULT 0.0,"
+            " last_interaction_utc TIMESTAMP, calibration_json TEXT,"
+            " updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+    if "value" not in _columns(conn, "role_memory"):
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS role_memory ("
+            " role_id TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '',"
+            " updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
     conn.execute("DROP TABLE IF EXISTS service_policy")
     if "api_key" in _columns(conn, "service_endpoint"):
         conn.execute("DROP TABLE service_endpoint")

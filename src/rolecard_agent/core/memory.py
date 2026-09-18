@@ -61,6 +61,23 @@ def clear_memory_text(conn: SqlConnection) -> None:
     conn.commit()
 
 
+def load_role_memory_text(conn: SqlConnection, role_id: str) -> str:
+    """读某角色的专属记忆（§5.2）；无记录 = 空串。与全局 memory:facts 隔离。"""
+    row = conn.execute("SELECT value FROM role_memory WHERE role_id = ?", (role_id,)).fetchone()
+    return str(row["value"] or "") if row else ""
+
+
+def save_role_memory_text(conn: SqlConnection, role_id: str, text: str) -> None:
+    """整体覆写某角色的专属记忆（按 role_id 分桶，与全局 memory:facts 隔离）。超限截断。"""
+    capped = (text or "").strip()[:MAX_MEMORY_CHARS]
+    conn.execute(
+        "INSERT INTO role_memory (role_id, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
+        "ON CONFLICT(role_id) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
+        (role_id, capped),
+    )
+    conn.commit()
+
+
 def make_memory_tool(*, settings: Settings, conn: SqlConnection) -> BaseTool:
     """构建 memory_save 内核工具。闭包持有**构建期**的连接与配置（与 fs 工具同一约定：
     运行环境热切换 = 设置保存后重建 registry，闭包随之重建）。
@@ -100,6 +117,8 @@ __all__ = [
     "MAX_MEMORY_CHARS",
     "clear_memory_text",
     "load_memory_text",
+    "load_role_memory_text",
     "make_memory_tool",
     "save_memory_text",
+    "save_role_memory_text",
 ]
