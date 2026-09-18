@@ -215,24 +215,48 @@ export default function App() {
             <ChatPage />
           </Suspense>
         </div>
-        {tab !== "chat" && (
+        {/* 设置页同样**常驻挂载**（hidden 隐藏）：其内部 5 个子页签都有各自的加载
+            状态与表单，条件渲染会在切走顶层页签时整棵卸载 —— 切回设置→服务又从头
+            重新请求（与 ChatPage 同源问题，服务页"每次点开都加载中"的完整根因）。 */}
+        <div className={tab === "settings" ? "h-full" : "hidden"}>
+          <Suspense
+            fallback={<div className="p-6 text-sm text-slate-400 dark:text-slate-500">加载中…</div>}
+          >
+            <SettingsPage
+              onOpenChat={() => selectTab("chat")}
+              theme={theme}
+              onToggleTheme={toggle}
+            />
+          </Suspense>
+        </div>
+        {/* 数据页 / 角色页同样**常驻挂载**（hidden 隐藏）：两者都有未提交的表单与分页
+            位置 —— 数据页的追加报告多行指标草稿、指标修正 draft、分页 page；角色页的
+            编辑表单 form。条件渲染会在切走时整棵卸载丢光（2026-09-18 与服务页同源）。
+            注意常驻 = 组件**无条件渲染**（`tab === x && <Page/>` 会在切走时卸载，
+            与条件渲染等效）。知识库 / 插件页无此类草稿，保留 PageBoundary 按需挂载。 */}
+        <div className={tab === "data" ? "h-full" : "hidden"}>
+          <Suspense
+            fallback={<div className="p-6 text-sm text-slate-400 dark:text-slate-500">加载中…</div>}
+          >
+            <DataPage />
+          </Suspense>
+        </div>
+        <div className={tab === "roles" ? "h-full" : "hidden"}>
+          <Suspense
+            fallback={<div className="p-6 text-sm text-slate-400 dark:text-slate-500">加载中…</div>}
+          >
+            <RolesPage />
+          </Suspense>
+        </div>
+        {tab !== "chat" && tab !== "settings" && tab !== "data" && tab !== "roles" && (
           <PageBoundary key={tab}>
             <Suspense
               fallback={
                 <div className="p-6 text-sm text-slate-400 dark:text-slate-500">加载中…</div>
               }
             >
-              {tab === "data" && <DataPage />}
               {tab === "knowledge" && <KnowledgePage onOpenChat={() => selectTab("chat")} />}
-              {tab === "roles" && <RolesPage />}
               {tab === "plugins" && <PluginsPage />}
-              {tab === "settings" && (
-                <SettingsPage
-                  onOpenChat={() => selectTab("chat")}
-                  theme={theme}
-                  onToggleTheme={toggle}
-                />
-              )}
             </Suspense>
           </PageBoundary>
         )}
