@@ -30,6 +30,7 @@ from rolecard_agent.api.deps import (
     role_error_to_http,
     serialize_message,
 )
+from rolecard_agent.config import Settings
 from rolecard_agent.core.graph import build_graph_config
 from rolecard_agent.core.ingestion import INGESTION_FAILED, INGESTION_PENDING
 from rolecard_agent.core.observability import TraceEvent
@@ -75,12 +76,26 @@ class SessionCreate(BaseModel):
 
 
 class SessionPatch(BaseModel):
-    """Session partial update: switch role / rename / set session model override.
-    At least one field required."""
+    """Session partial update: switch role / rename / set session model override /
+    set conversation mode. At least one field required."""
 
     role_id: str | None = None
     title: str | None = Field(default=None, min_length=1, max_length=100)
     model_name: str | None = None
+    # 会话级对话模式：'chat' / 'agent'（显式设置）；null / 空串 = 清除，回落全局默认
+    # （settings.agent_default_mode）。
+    agent_mode: str | None = None
+
+
+MODE_CHOICES = ("chat", "agent")
+
+
+def resolve_agent_mode(raw: object, settings: Settings) -> str:
+    """会话级 agent_mode 的有效值：显式设置('chat'/'agent') 优先生效；
+    NULL / 未知值 = 回落全局默认（settings.agent_default_mode）。"""
+    if str(raw or "") in MODE_CHOICES:
+        return str(raw)
+    return settings.agent_default_mode
 
 
 class ChatMessage(BaseModel):
@@ -169,6 +184,8 @@ def get_session(thread_id: str, ctx: AppContext = Depends(get_context)) -> objec
         "role_id": row["current_role_id"],
         "role_name": role_name,
         "model_name": row["model_name"],
+        # 返回**有效**模式（会话覆盖 or 全局默认）：前端切换钮直接按它渲染当前状态。
+        "agent_mode": resolve_agent_mode(row["agent_mode"], ctx.settings),
     }
 
 
@@ -179,15 +196,20 @@ def patch_session(
     ctx: AppContext = Depends(get_context),
     actor: Actor = Depends(get_actor),
 ) -> object:
-    """会话局部更新：切角色（US-1，不触碰历史）/ 重命名 / 设置会话级模型覆盖。
+    """会话局部更新：切角色（US-1，不触碰历史）/ 重命名 / 设置会话级模型覆盖 /
+    切换对话模式（chat/agent，下一轮生效）。
 
     model_name 语义（model_fields_set 区分"未提供"与"显式置空"）：
     未提供 = 不改；null = 清除覆盖（回落 角色.model_name → 默认）；名字 = 会话覆盖。
     覆盖名必须在有效后端列表里，否则 400（回退由模型解析器兜底，但配置错误仍要大声）。
+
+    agent_mode 同款语义：未提供 = 不改；'chat'/'agent' = 显式覆盖；null/空串 = 清除
+    （回落全局默认 AGENT_DEFAULT_MODE）。非法值 400 —— 未知字符串既不等于"清除"也
+    不等于任一档，静默吞掉会让前端显示与实际生效值不一致。
     """
     conn = ctx.conn
     thread = get_thread(conn, thread_id)
-    touched = body.model_fields_set & {"role_id", "title", "model_name"}
+    touched = body.model_fields_set & {"role_id", "title", "model_name", "agent_mode"}
     if not touched:
         raise HTTPException(status_code=400, detail="没有任何要更新的字段。")
 
@@ -220,6 +242,27 @@ def patch_session(
             detail={"model_name": body.model_name},
         )
 
+    if "agent_mode" in body.model_fields_set:
+        mode = body.agent_mode
+        if mode is not None and mode.strip() == "":
+            mode = None  # 空串 = 清除覆盖，回落全局默认
+        if mode is not None and mode not in MODE_CHOICES:
+            raise HTTPException(
+                status_code=400, detail=f"未知对话模式 {mode!r}；可用：{' / '.join(MODE_CHOICES)}"
+            )
+        conn.execute(
+            "UPDATE session_thread SET agent_mode = ?, "
+            "updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE thread_id = ?",
+            (mode, thread_id),
+        )
+        conn.commit()
+        ctx.roles.audit(
+            actor=actor.id,
+            action="set_session_mode",
+            target=thread_id,
+            detail={"agent_mode": mode},
+        )
+
     if body.title is not None:
         title = body.title.strip()
         if not title:
@@ -242,7 +285,8 @@ def patch_session(
     else:
         role_name = role.role_name
     row = conn.execute(
-        "SELECT title, model_name FROM session_thread WHERE thread_id = ?", (thread_id,)
+        "SELECT title, model_name, agent_mode FROM session_thread WHERE thread_id = ?",
+        (thread_id,),
     ).fetchone()
     return {
         "thread_id": thread_id,
@@ -250,6 +294,7 @@ def patch_session(
         "role_name": role_name,
         "title": row["title"] if row else None,
         "model_name": row["model_name"] if row else None,
+        "agent_mode": resolve_agent_mode(row["agent_mode"], ctx.settings) if row else "chat",
     }
 
 
@@ -273,6 +318,9 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
     role_id = str(thread["current_role_id"])
     user_id = str(thread["user_id"])
     session_model = thread["model_name"]  # 会话级覆盖（可 None），每轮实时读库
+    # 会话级对话模式（有效值 = 会话覆盖 or 全局默认），每轮实时读库 + 实时回落：
+    # 会话切「对话/智能体」或操作员改 AGENT_DEFAULT_MODE，下一轮即生效。
+    session_mode = resolve_agent_mode(thread["agent_mode"], ctx.app_state["effective"])
     try:
         role = ctx.roles.get(role_id)
     except RoleNotFound as exc:
@@ -291,7 +339,12 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
     conn.commit()
 
     # 步数上限随运行配置一起带上：没有它，模型持续返回 tool_calls 时这一轮不会终止。
-    graph_config = build_graph_config(body.thread_id, ctx.app_state["effective"])
+    # agent 模式上限放大一倍（见 core/graph.build_graph_config）。
+    graph_config = build_graph_config(
+        body.thread_id,
+        ctx.app_state["effective"],
+        agent_mode=session_mode == "agent",
+    )
     snapshot = graph.get_state(graph_config)
     # created_at 随消息入库（additional_kwargs）：历史回放显示时间（用户 2026-09-17）。
     created_at = now_ts()
@@ -300,6 +353,7 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
             "messages": [_user_message(body.message, body.image, created_at=created_at)],
             "current_role_id": role_id,
             "model_name": session_model,  # 每轮实时注入：会话切模型下一轮即生效
+            "agent_mode": session_mode,  # 每轮实时注入：会话切模式下一轮即生效
         }
     else:
         graph_input = {
@@ -308,6 +362,7 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
                 user_id=user_id,
                 current_role_id=role_id,
                 model_name=session_model,
+                agent_mode=session_mode,
                 enabled_domains=ctx.plugins.enabled_domains(),
                 tool_epoch=ctx.plugins.tool_epoch(),
             ),
@@ -353,11 +408,15 @@ class DeleteMessagesBody(BaseModel):
 
 def _history_messages(ctx: AppContext, thread_id: str) -> tuple[dict, list[AnyMessage]]:
     """取会话的图配置与 checkpoint 消息列表（类型为 AnyMessage：可安全访问 .id）。"""
-    get_thread(ctx.conn, thread_id)
+    thread = get_thread(ctx.conn, thread_id)
     graph = ctx.app_state["graph"]
     # 这份 config 既用于 get_state / update_state，也直接喂给下面的 graph.stream ——
     # 所以步数上限在这里就必须带上（否则编辑重生成那条路仍是无上界的）。
-    config = build_graph_config(thread_id, ctx.app_state["effective"])
+    # agent 模式上限放大一倍（与 /api/chat 同一口径，见 core/graph.build_graph_config）。
+    mode = resolve_agent_mode(thread["agent_mode"], ctx.app_state["effective"])
+    config = build_graph_config(
+        thread_id, ctx.app_state["effective"], agent_mode=mode == "agent"
+    )
     snapshot = graph.get_state(config)
     return config, list((snapshot.values or {}).get("messages") or [])
 
@@ -381,6 +440,7 @@ def edit_message_and_regenerate(
     thread = get_thread(ctx.conn, thread_id)
     role_id = str(thread["current_role_id"])
     session_model = thread["model_name"]
+    session_mode = resolve_agent_mode(thread["agent_mode"], ctx.app_state["effective"])
     try:
         role = ctx.roles.get(role_id)
     except RoleNotFound as exc:
@@ -402,6 +462,7 @@ def edit_message_and_regenerate(
         "messages": [_user_message(body.content, body.image, created_at=now_ts())],
         "current_role_id": role_id,
         "model_name": session_model,
+        "agent_mode": session_mode,
     }
     ctx.conn.execute(
         "UPDATE session_thread SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') "
@@ -455,12 +516,14 @@ def list_sessions(ctx: AppContext = Depends(get_context)) -> list[object]:
     """会话列表（对话页侧栏）。v1 单用户演示：只列演示身份名下的会话。"""
     rows = ctx.conn.execute(
         "SELECT s.thread_id, s.title, s.current_role_id AS role_id, r.role_name, "
-        "s.updated_at FROM session_thread s "
+        "s.agent_mode, s.updated_at FROM session_thread s "
         "LEFT JOIN role_card r ON r.role_id = s.current_role_id "
         "WHERE s.user_id = ? ORDER BY s.updated_at DESC, s.thread_id",
         (DEFAULT_USER_ID,),
     ).fetchall()
-    return [dict(r) for r in rows]
+    return [
+        {**dict(r), "agent_mode": resolve_agent_mode(r["agent_mode"], ctx.settings)} for r in rows
+    ]
 
 
 @router.get("/api/session/{thread_id}/messages")

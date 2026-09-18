@@ -269,6 +269,12 @@ def runtime_payload(
         ("model_thinking_models", "MODEL_THINKING_MODELS", "思考模型名单",
          "名单内模型以 reasoning=True 调用"),
     ])
+    add("agent", "对话模式", [
+        ("agent_default_mode", "AGENT_DEFAULT_MODE", "全局默认模式",
+         "chat=一问一答 / agent=多步自主任务（步数上限放大、注入规划指令）"),
+        ("agent_max_steps", "AGENT_MAX_STEPS", "步数上限（对话档）",
+         "单轮允许的图步数；agent 模式自动翻倍，0=库默认"),
+    ])
     add("auth", "访问控制", [
         ("auth_mode", "AUTH_MODE", "认证模式", "off / auto / on"),
         ("auth_credentials", "AUTH_CREDENTIALS", "Basic 凭据", None),

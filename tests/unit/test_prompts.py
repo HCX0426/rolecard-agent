@@ -116,3 +116,27 @@ def test_blank_memory_is_ignored() -> None:
         result = prompts.build_system_prompt("角色说明", memory=memory)
         assert "用户长期记忆" not in result
         assert result.endswith(prompts.GLOBAL_SAFETY_PROMPT)
+
+
+# --------------------------------------------------------------------------- agent mode
+#
+# 智能体模式 = 行为指引（先规划、一步一步来、别暴力重试、最后总结），权威度在角色人设
+# 之上、在范例与安全规则之下：它约束"怎么做"，不能覆盖"绝不能说/做什么"。
+
+
+def test_agent_plan_sits_below_examples_and_safety() -> None:
+    result = prompts.build_system_prompt(
+        "角色说明", _EXEMPLARS, memory="记忆", agent=True
+    )
+    role_at = result.index("角色说明")
+    memory_at = result.index("用户长期记忆")
+    agent_at = result.index("智能体模式")
+    exemplar_at = result.index("回答风格参考")
+    safety_at = result.index("禁止输出任何疾病诊断")
+    assert role_at < memory_at < agent_at < exemplar_at < safety_at
+
+
+def test_chat_mode_has_no_agent_section() -> None:
+    result = prompts.build_system_prompt("角色说明", agent=False)
+    assert "智能体模式" not in result
+    assert result == "角色说明\n\n" + prompts.GLOBAL_SAFETY_PROMPT

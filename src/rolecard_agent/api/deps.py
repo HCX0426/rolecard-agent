@@ -50,8 +50,8 @@ DEFAULT_ROLE_ID = "general_assistant"
 def get_thread(conn: ThreadLocalConnection, thread_id: str):
     """按 id 取会话行；不存在 404。多个 router 共用（sessions / chat / upload）。"""
     row = conn.execute(
-        "SELECT thread_id, user_id, current_role_id, model_name FROM session_thread "
-        "WHERE thread_id = ?",
+        "SELECT thread_id, user_id, current_role_id, model_name, agent_mode "
+        "FROM session_thread WHERE thread_id = ?",
         (thread_id,),
     ).fetchone()
     if row is None:

@@ -39,6 +39,10 @@ class AgentState(TypedDict, total=False):
     current_role_id: str
     # 会话级模型覆盖（对话页模型下拉）：None = 无覆盖，按 角色.model_name → 默认 解析。
     model_name: str | None
+    # 会话级对话模式（对话页「对话/智能体」切换）："chat" / "agent"。
+    # 会话未单独设置（NULL）时由 chat 端点回落全局默认（settings.agent_default_mode），
+    # 每轮实时解析注入 —— 会话切模式下一轮即生效。
+    agent_mode: str
 
     enabled_domains: list[str]
     tool_epoch: int
@@ -68,13 +72,15 @@ def new_state(
     user_id: str,
     current_role_id: str,
     model_name: str | None = None,
+    agent_mode: str = "chat",
     enabled_domains: list[str] | None = None,
     tool_epoch: int = 1,
 ) -> dict[str, Any]:
     """Build the initial state for a fresh thread.
 
     A function rather than a literal at each call site: a missing `tool_epoch` would default
-    to 0 and make every resume look like a downgrade.
+    to 0 and make every resume look like a downgrade. `agent_mode` defaults to "chat";
+    callers that resolved the effective mode (session NULL -> global default) pass it in.
     """
     return {
         "messages": [],
@@ -82,6 +88,7 @@ def new_state(
         "user_id": user_id,
         "current_role_id": current_role_id,
         "model_name": model_name,
+        "agent_mode": agent_mode,
         "enabled_domains": list(enabled_domains or []),
         "tool_epoch": tool_epoch,
         "retry_count": 0,

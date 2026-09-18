@@ -248,6 +248,12 @@ def _migrate(conn: SqlConnection) -> None:
     #    模型自带的 32k 窗口形同虚设，超出的历史会被引擎静默截断。NULL = 用模型默认。
     if "num_ctx" not in _columns(conn, "model_backend"):
         conn.execute("ALTER TABLE model_backend ADD COLUMN num_ctx INTEGER")
+    # 5. session_thread 增列 agent_mode（v2.5 会话级「对话/智能体」切换）。
+    #    与 model_name 同一模式：NULL = 跟随全局默认（settings.agent_default_mode），
+    #    chat 端点每轮实时读库解析有效值注入 state，会话切模式下一轮即生效。
+    #    旧库无此列 → 补；新库建表已含 → 跳过（幂等）。
+    if "agent_mode" not in _columns(conn, "session_thread"):
+        conn.execute("ALTER TABLE session_thread ADD COLUMN agent_mode TEXT")
     conn.execute("DROP TABLE IF EXISTS service_policy")
     if "api_key" in _columns(conn, "service_endpoint"):
         conn.execute("DROP TABLE service_endpoint")

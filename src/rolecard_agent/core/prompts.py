@@ -34,6 +34,21 @@ MEMORY_HEADER = (
     "若与用户当前的明确说法冲突，一律以用户当下的说法为准。"
 )
 
+AGENT_PLAN_HEADER = "【智能体模式】本轮任务由你独立规划并执行，按以下节奏推进："
+AGENT_PLAN_PROMPT = (
+    "1. 先拆解任务目标，判断需要哪些工具；\n"
+    "2. 一次只做一步：调用工具拿到结果后再决定下一步，不要在没拿到结果前盲目连发；\n"
+    "3. 工具报错时，先读错误说明判断能否换一种参数/工具继续，不要无脑重试同一个调用；\n"
+    "4. 所有步骤完成后，用一段话向用户总结：做了什么、拿到了什么、还差什么。"
+)
+
+
+def render_agent_plan(agent: bool) -> str:
+    """Format the agent-mode planning instruction. Returns "" in chat mode."""
+    if not agent:
+        return ""
+    return f"{AGENT_PLAN_HEADER}\n{AGENT_PLAN_PROMPT}"
+
 
 class ExemplarLike(Protocol):
     """Structural type for a role exemplar.
@@ -71,28 +86,34 @@ def build_system_prompt(
     exemplars: Sequence[ExemplarLike] | None = None,
     *,
     memory: str | None = None,
+    agent: bool = False,
 ) -> str:
     """Return the final system prompt for one turn.
 
     Order is the whole point, and it is the order from least to most authoritative:
 
-        角色人设  ->  长期记忆  ->  回答范例  ->  全局安全规则
+        角色人设  ->  长期记忆  ->  智能体规划  ->  回答范例  ->  全局安全规则
 
     Putting the global rules last means they win any conflict with the role card, with a
-    stored memory, or with an example. Reversing either pair silently disables the safety
-    layer without raising anything, which is why tests/unit/test_prompts.py asserts the
-    ordering explicitly.
+    stored memory, with the agent-mode planning instructions, or with an example. Reversing
+    either pair silently disables the safety layer without raising anything, which is why
+    tests/unit/test_prompts.py asserts the ordering explicitly.
 
     Examples sit between the two on purpose: they are style references, and they must not be
     able to contradict the safety rules. Memory sits above the examples: it is user-supplied
     fact, closer to the user's intent than a style template — but it still yields to the
     safety rules, and its own header makes it yield to the user's latest explicit statement.
+
+    `agent=True` inserts the agent-mode planning rhythm (AGENT_PLAN_PROMPT) between memory
+    and the examples: it is behaviour guidance, stronger than a style template yet still
+    below the safety rules.
     """
     sections = [
         part
         for part in (
             (role_prompt or "").strip(),
             render_memory(memory),
+            render_agent_plan(agent),
             render_exemplars(exemplars),
         )
         if part

@@ -23,6 +23,14 @@ def test_defaults_are_usable_without_any_env() -> None:
     assert backend.provider == "ollama"
     assert settings.obs_backend == "local"
     assert settings.obs_emit_raw_text is False  # redacted by default
+    assert settings.memory_enabled is True
+    assert settings.agent_default_mode == "chat"  # 出厂默认 = 普通对话
+
+
+def test_agent_default_mode_from_env() -> None:
+    assert Settings.from_env({"AGENT_DEFAULT_MODE": "agent"}).agent_default_mode == "agent"
+    # 空串 = 未设置（回落默认），不能被当成非法值炸启动
+    assert Settings.from_env({"AGENT_DEFAULT_MODE": ""}).agent_default_mode == "chat"
 
 
 def test_parses_backends_from_json() -> None:

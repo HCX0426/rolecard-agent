@@ -281,3 +281,39 @@ def test_memory_put_rejects_empty_body(client: TestClient) -> None:
     assert "没有要保存" in res.json()["detail"]
 
 
+def test_session_agent_mode_patch_roundtrip(client: TestClient) -> None:
+    """会话级「对话/智能体」切换：PATCH 生效、明细返回有效值、非法值 400、清空回落全局。"""
+    tid = client.post("/api/session", json={}).json()["thread_id"]
+
+    d0 = client.get(f"/api/session/{tid}").json()
+    assert d0["agent_mode"] == "chat"  # 出厂默认（AGENT_DEFAULT_MODE=chat）
+
+    r = client.patch(f"/api/session/{tid}", json={"agent_mode": "agent"})
+    assert r.status_code == 200
+    assert r.json()["agent_mode"] == "agent"
+    assert client.get(f"/api/session/{tid}").json()["agent_mode"] == "agent"
+
+    # 非法值 400：未知字符串既不是清除也不是任一档，静默吞掉会造成前端显示与实际不一致
+    assert client.patch(f"/api/session/{tid}", json={"agent_mode": "robot"}).status_code == 400
+
+    # 显式置空 = 清除覆盖，回落全局默认
+    r2 = client.patch(f"/api/session/{tid}", json={"agent_mode": None})
+    assert r2.status_code == 200
+    assert r2.json()["agent_mode"] == "chat"
+
+    # 管理动作留痕
+    actions = [row["action"] for row in client.get("/api/audit?limit=50").json()]
+    assert actions.count("set_session_mode") == 2
+
+
+def test_agent_default_mode_runtime_override(client: TestClient) -> None:
+    """运行环境覆盖全局默认模式 → 新会话（NULL 会话）的有效模式跟随它。"""
+    r = client.put("/api/settings/runtime", json={"values": {"agent_default_mode": "agent"}})
+    assert r.status_code == 200
+    tid = client.post("/api/session", json={}).json()["thread_id"]
+    assert client.get(f"/api/session/{tid}").json()["agent_mode"] == "agent"
+    # 还原默认（回落 env/出厂），避免污染后续用例
+    client.put("/api/settings/runtime", json={"values": {"agent_default_mode": ""}})
+    client.delete(f"/api/session/{tid}")
+
+

@@ -359,11 +359,17 @@ def call_model(
         )
 
     # System prompt is built here, never stored: see the module docstring. Order inside is
-    # role -> memory -> exemplars -> global safety rules, so the rules remain last and
-    # authoritative. Memory only enters when the master switch is on (MEMORY_ENABLED);
-    # the provider itself is fail-closed (returns "" by default).
+    # role -> memory -> agent plan -> exemplars -> global safety rules, so the rules remain
+    # last and authoritative. Memory only enters when the master switch is on (MEMORY_ENABLED);
+    # the provider itself is fail-closed (returns "" by default). Agent mode is a per-session
+    # state the chat endpoint resolves live from session_thread (NULL = global default).
     memory_text = ctx.memory_provider() if ctx.settings.memory_enabled else ""
-    system = build_system_prompt(role.system_prompt, role.exemplars, memory=memory_text)
+    system = build_system_prompt(
+        role.system_prompt,
+        role.exemplars,
+        memory=memory_text,
+        agent=state.get("agent_mode") == "agent",
+    )
     # 历史按字符预算裁剪（H3）。裁剪只影响"送给模型的内容"，checkpoint 里的完整历史不动 ——
     # 界面回放、审计、下次裁剪都仍然看得到全量对话。
     history, dropped = trim_history(state["messages"], ctx.max_context_chars)

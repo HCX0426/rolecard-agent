@@ -92,6 +92,8 @@ export default function ChatPage() {
   const [providerLabels, setProviderLabels] = useState<Record<string, string>>({});
   const [defaultBackend, setDefaultBackend] = useState("");
   const [sessionModel, setSessionModel] = useState<string | null>(null);
+  // 会话级对话模式（对话/智能体）：后端返回**有效值**（会话覆盖 or 全局默认）。
+  const [sessionMode, setSessionMode] = useState("chat");
   const [busy, setBusy] = useState(false); // 流式进行中：驱动「停止」按钮与输入禁用
   // 上下文预算事实（H3 的界面部分）：>0 时提示"早期对话已折叠"。
   // 单独放在 state 而不是气泡里，是因为气泡在流结束时会被 checkpoint 回放**整体替换** ——
@@ -185,7 +187,7 @@ export default function ChatPage() {
       const [page, detail, ctxInfo] = await Promise.all([
         // 分页响应：只取最近 N 条（默认 500），太长的一次性全量返回既慢也没用。
         api.get<MessagePage>(`/api/session/${threadId}/messages`),
-        api.get<{ model_name: string | null }>(`/api/session/${threadId}`),
+        api.get<{ model_name: string | null; agent_mode: string }>(`/api/session/${threadId}`),
         // 上下文预算事实：刷新页面后「早期对话已折叠」这条提示同样要能显示出来
         // （它不是一次性的 SSE 事件，而是一个持续为真的状态）。
         api
@@ -196,6 +198,7 @@ export default function ChatPage() {
       // 被截断时要如实说明：否则用户以为看到的是全部历史（审查报告 P2）。
       setHistoryTruncated(page.truncated ? page.total - page.messages.length : 0);
       setSessionModel(detail.model_name);
+      setSessionMode(detail.agent_mode || "chat");
       setTrim(ctxInfo.trimmed > 0 ? { dropped: ctxInfo.trimmed, kept: ctxInfo.kept } : null);
       setCtxBudget(ctxInfo.budget);
       setStatus("");
@@ -230,6 +233,7 @@ export default function ChatPage() {
       setLive(null);
       liveRef.current = null;
       setTrim(null); // 新会话没有历史，也就谈不上"折叠"
+      setSessionMode("chat"); // 新会话先按对话档渲染；首次加载明细时会刷新为后端的有效值
       setStatus("");
       await refreshSessions();
       return s.thread_id;
@@ -512,6 +516,24 @@ export default function ChatPage() {
       await refreshSessions();
     } catch (e) {
       setStatus(`切换模型失败：${(e as Error).message}`, "warn");
+    }
+  }
+
+  /** 会话级切换「对话 / 智能体」：agent = 多步自主任务（规划指令 + 步数上限放大）。 */
+  async function switchMode(mode: "chat" | "agent") {
+    const tid = await ensureSession();
+    if (!tid) return;
+    try {
+      await api.patch(`/api/session/${tid}`, { agent_mode: mode });
+      setSessionMode(mode);
+      setStatus(
+        mode === "agent"
+          ? "已切换为智能体模式：多步自主任务，规划 + 反复调用工具（下一轮生效）"
+          : "已切换为对话模式（下一轮生效）",
+        "ok",
+      );
+    } catch (e) {
+      setStatus(`切换模式失败：${(e as Error).message}`, "warn");
     }
   }
 
@@ -1078,6 +1100,29 @@ export default function ChatPage() {
                 </>
               )}
             </span>
+            {/* 对话/智能体 模式切换（会话级，PATCH /api/session）：agent = 多步自主任务
+                —— 注入规划指令、步数上限自动翻倍。与角色/模型同款"下一轮生效"。 */}
+            <div
+              className="flex items-center rounded-full border border-slate-200 bg-white p-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+              title={sessionMode === "agent" ? "智能体模式：多步自主任务" : "对话模式：一问一答"}
+            >
+              <button
+                onClick={() => switchMode("chat")}
+                className={`rounded-full px-2.5 py-1 transition-colors ${
+                  sessionMode !== "agent" ? "bg-blue-600 text-white" : "text-slate-500 dark:text-slate-400"
+                }`}
+              >
+                对话
+              </button>
+              <button
+                onClick={() => switchMode("agent")}
+                className={`rounded-full px-2.5 py-1 transition-colors ${
+                  sessionMode === "agent" ? "bg-blue-600 text-white" : "text-slate-500 dark:text-slate-400"
+                }`}
+              >
+                智能体
+              </button>
+            </div>
             <div
               className="relative"
               onMouseEnter={cancelMenuClose}

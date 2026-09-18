@@ -33,6 +33,10 @@ CREATE TABLE IF NOT EXISTS session_thread (
     current_role_id  TEXT NOT NULL,
     -- 会话级模型覆盖（对话页模型下拉）：NULL = 无覆盖（按 角色.model_name → 默认解析）。
     model_name       TEXT,
+    -- 会话级对话模式（对话页「对话/智能体」切换）：NULL = 跟随全局默认
+    -- （settings.agent_default_mode）；'chat' / 'agent' = 本会话显式覆盖。
+    -- 旧库要跑 core/storage.db 的 _migrate() 补列（ALTER TABLE ADD COLUMN，幂等）。
+    agent_mode       TEXT,
     -- Version stamp of the enabled tool set. Bumped whenever plugins are toggled.
     -- On resume, a checkpoint whose tool_epoch is older than the current one may
     -- reference tools that no longer exist; the executor must answer

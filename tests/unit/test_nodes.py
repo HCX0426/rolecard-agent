@@ -488,6 +488,39 @@ def test_call_model_skips_memory_when_disabled(roles: RoleCardService) -> None:
     assert "用户长期记忆" not in model.last_prompt[0].content
 
 
+def test_call_model_injects_agent_plan_when_state_says_agent(roles: RoleCardService) -> None:
+    """state.agent_mode == 'agent' → 注入规划指令（在安全规则之前）。"""
+    rid = _role(roles)
+    reg = ToolRegistry()
+    reg.register(kernel_tool)
+    model = FakeModel(AIMessage(content="ok"))
+    ctx = _ctx(reg, roles, model)
+    call_model(
+        {
+            "messages": [HumanMessage(content="q")],
+            "current_role_id": rid,
+            "thread_id": "t",
+            "agent_mode": "agent",
+        },
+        ctx,
+    )
+    system = model.last_prompt[0].content
+    assert system.index("智能体模式") < system.index("禁止输出任何疾病诊断")
+
+
+def test_call_model_skips_agent_plan_outside_agent_mode(roles: RoleCardService) -> None:
+    rid = _role(roles)
+    reg = ToolRegistry()
+    reg.register(kernel_tool)
+    model = FakeModel(AIMessage(content="ok"))
+    ctx = _ctx(reg, roles, model)
+    call_model(
+        {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"},
+        ctx,
+    )  # agent_mode 缺席 = 对话档
+    assert "智能体模式" not in model.last_prompt[0].content
+
+
 def test_call_model_writes_live_enabled_domains_and_epoch(roles: RoleCardService) -> None:
     """The enabled set and epoch are read live (callable), not from graph-build time."""
     rid = _role(roles)

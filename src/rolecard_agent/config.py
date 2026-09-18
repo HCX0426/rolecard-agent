@@ -120,6 +120,12 @@ class Settings(BaseModel):
     # 一部分，关闭是显式选择（隐私 / 干净上下文）。
     memory_enabled: bool = True
 
+    # v2.5 Agent 模式的**全局默认**：chat = 普通对话（每轮一问一答）/
+    # agent = 多步自主任务（规划 → 调工具 → 总结，步数上限放大、注入规划指令）。
+    # 会话可单独覆盖（对话页切换，session_thread.agent_mode）；
+    # 值为 NULL 的会话 = 跟随本项，改这里对所有"没单独设过"的会话即时生效。
+    agent_default_mode: str = "chat"
+
     # 单轮用户消息允许的**图步数上限**（LangGraph `recursion_limit`，
     # 见 core/graph.build_graph_config）。
     # 一次"模型 → 工具 → 模型"消耗 2 步。不设时 LangGraph 用默认的 10007 —— 而本图是个环：
@@ -285,6 +291,7 @@ class Settings(BaseModel):
             ("TOOL_TIMEOUT_SECONDS", "tool_timeout_seconds"),
             ("AGENT_MAX_STEPS", "agent_max_steps"),
             ("MEMORY_ENABLED", "memory_enabled"),
+            ("AGENT_DEFAULT_MODE", "agent_default_mode"),
             ("SQLITE_PATH", "sqlite_path"),
             ("CHROMA_PATH", "chroma_path"),
             ("UPLOAD_DIR", "upload_dir"),

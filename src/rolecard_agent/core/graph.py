@@ -42,15 +42,27 @@ TOOLS_NODE = "tools"
 DEFAULT_AGENT_MAX_STEPS = 25
 
 
-def build_graph_config(thread_id: str, settings: Settings | None = None) -> dict[str, Any]:
+def build_graph_config(
+    thread_id: str,
+    settings: Settings | None = None,
+    *,
+    agent_mode: bool = False,
+) -> dict[str, Any]:
     """LangGraph 的运行配置：线程 id + **步数上限**。
 
     上限必须显式给：不设时 LangGraph 用默认 `recursion_limit=10007`，而本图是
     `model -> tools -> model` 的环 —— 模型只要持续返回 tool_calls（提示注入、工具反复
     报错被重试），这一轮就永远不会终止：云端后端等于数千次真实计费调用，SSE 长时间
     无响应且界面没有中断理由。`settings=None` 时用 `DEFAULT_AGENT_MAX_STEPS`。
+
+    `agent_mode=True`（智能体模式）把上限**放大一倍**：多步自主任务需要更多次的
+    "模型 → 工具 → 模型"，对话档的 25 步（≈12 轮工具）对完整任务经常不够；放大有界、
+    不放开无界 —— 熔断的语义（工具循环必被截停）在两档下都成立（审查报告 P0-1 的
+    配套，见 core/nodes.py 的 MAX_REPEATED_TOOL_CALLS 说明）。
     """
     limit = DEFAULT_AGENT_MAX_STEPS if settings is None else settings.agent_max_steps
+    if agent_mode and limit > 0:
+        limit *= 2
     config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}
     if limit > 0:  # <=0 = 显式退回库默认（仅调试用）
         config["recursion_limit"] = limit

@@ -32,6 +32,8 @@ export interface SessionRow {
   role_id: string;
   role_name: string | null;
   updated_at: string;
+  /** 会话级对话模式（后端返回有效值：会话覆盖 or 全局默认）。 */
+  agent_mode?: string;
 }
 
 export interface MessageRow {

@@ -127,6 +127,19 @@ def test_limit_comes_from_settings_and_can_be_relaxed_explicitly() -> None:
     assert "recursion_limit" not in build_graph_config("t", Settings(agent_max_steps=0))
 
 
+def test_agent_mode_doubles_the_step_limit() -> None:
+    """智能体模式 = 多步自主任务：上限翻倍（有界放大，熔断语义仍成立）。"""
+    base = build_graph_config("t", Settings(agent_max_steps=25))["recursion_limit"]
+    grown = build_graph_config("t", Settings(agent_max_steps=25), agent_mode=True)[
+        "recursion_limit"
+    ]
+    assert grown == base * 2
+    # 关闭上限（0=库默认）时不放大：`0 * 2` 会被当成"显式关"以外的神秘值
+    assert "recursion_limit" not in build_graph_config(
+        "t", Settings(agent_max_steps=0), agent_mode=True
+    )
+
+
 # -- 2) 真的会停下 -------------------------------------------------------------
 
 
