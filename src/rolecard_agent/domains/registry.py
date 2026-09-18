@@ -63,6 +63,7 @@ def build_registry(
     tracer: Any = None,
     settings: Any = None,
     memory_conn: Any = None,
+    fs_conn: Any = None,
 ) -> ToolRegistry:
     """Assemble the full tool registry: kernel tools + every registered domain's tools.
 
@@ -90,6 +91,10 @@ def build_registry(
     不注册 memory_save（测试 / 未接入记忆的宿主）：白名单引用了但工具不存在时，
     模型本轮看不到它，执行器按"未启用"处理 —— fail-closed。
 
+    `fs_conn` = 工作区文件工具的 SQLite 连接：既供「任务目录」DB 覆盖的**实时解析**
+    （保存即生效，见 core/workspace.py），也供 fs 工具的**审计写入**（actor="agent"）。
+    None = fs 工具回落 env workspace_dir 且不审计（测试场景）。
+
     工具的 `idempotent` 标记是**执行器的重试开关**：只有显式声明"重复调用无副作用"的
     只读工具才允许重试（审查报告 M10 —— 旧实现对所有工具都重试 2 次，包括会写台账的
     `upload_medical_report`）。
@@ -112,15 +117,18 @@ def build_registry(
 
     # 联网与工作区工具（v2.4）：全部只读除 fs_write 外。web_search 后端缺失时仍注册，
     # 运行期返回可读的未配置说明 —— 白名单引用的工具必须真实存在（一致性校验的前提）。
+    # fs 工具在 v2.5 file1 升级：根 = 每调用实时解析的「任务目录」（DB 覆盖 or env），
+    # 且全部操作写审计（actor="agent"）—— 见 core/workspace.py 与 core/tools/files.py。
     effective_settings = settings or _lazy_settings()
     for web_tool in make_web_tools(settings=effective_settings):
         registry.register(web_tool, idempotent=True)
+    file_tools = make_file_tools(settings=effective_settings, conn=fs_conn)
     registry.register_many(
-        [t for t in make_file_tools(settings=effective_settings) if t.name != "fs_write"],
+        [t for t in file_tools if t.name != "fs_write"],
         idempotent=True,
     )
     registry.register_many(
-        [t for t in make_file_tools(settings=effective_settings) if t.name == "fs_write"],
+        [t for t in file_tools if t.name == "fs_write"],
         idempotent=False,
     )
 

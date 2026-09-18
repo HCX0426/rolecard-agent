@@ -56,6 +56,7 @@ from rolecard_agent.api.routers import roles as roles_router
 from rolecard_agent.api.routers import services as services_router
 from rolecard_agent.api.routers import sessions as sessions_router
 from rolecard_agent.api.routers import settings as settings_router
+from rolecard_agent.api.routers import workspace as workspace_router
 from rolecard_agent.config import Settings
 from rolecard_agent.core import runtime_settings
 from rolecard_agent.core.checkpointer import make_checkpointer
@@ -213,6 +214,7 @@ def create_app(
         settings=effective,
         tracer=resolved_tracer,
         memory_conn=conn,
+        fs_conn=conn,
     )
 
     checkpointer = make_checkpointer(conn)
@@ -329,6 +331,7 @@ def create_app(
     app.include_router(settings_router.router)
     app.include_router(services_router.router)
     app.include_router(domains_router.router)
+    app.include_router(workspace_router.router)
 
     def rebuild_runtime() -> None:
         """按当前设置与服务端点引用重建全部运行时对象：模型、KnowledgeBase、registry、图。
@@ -379,6 +382,7 @@ def create_app(
             settings=eff,
             tracer=resolved_tracer,
             memory_conn=conn,
+            fs_conn=conn,
         )
         graph_new = build_kernel(
             model=default_model,

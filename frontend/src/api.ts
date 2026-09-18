@@ -336,6 +336,25 @@ async function request<T>(
   return (await res.json()) as T;
 }
 
+/** 任务目录（角色可读写的授权范围）：path = 生效目录，overridden = 是否 DB 覆盖（否=跟随 env）。 */
+export interface WorkspaceDir {
+  path: string;
+  overridden: boolean;
+}
+
+export interface TreeEntry {
+  name: string;
+  is_dir: boolean;
+  size: number;
+}
+
+export interface TreeResult {
+  path: string;
+  parent: string;
+  entries: TreeEntry[];
+  truncated: boolean;
+}
+
 export const api = {
   get: <T>(url: string) => request<T>("GET", url),
   post: <T>(url: string, body?: unknown) => request<T>("POST", url, body),
@@ -376,6 +395,13 @@ export const api = {
     request<GenericRecord>("PATCH", `/api/domains/${domain}/records/${id}`, body),
   deleteDomainRecord: (domain: string, id: string) =>
     request<void>("DELETE", `/api/domains/${domain}/records/${id}`),
+  /** 任务目录（file1）：查看 / 设置 / 清除 + 设置页目录树浏览。 */
+  getWorkspaceDir: () => request<WorkspaceDir>("GET", "/api/workspace/dir"),
+  setWorkspaceDir: (path: string) =>
+    request<WorkspaceDir>("PUT", "/api/workspace/dir", { path }),
+  clearWorkspaceDir: () => request<WorkspaceDir>("DELETE", "/api/workspace/dir"),
+  browseTree: (path?: string) =>
+    request<TreeResult>("GET", `/api/workspace/tree${path ? `?path=${encodeURIComponent(path)}` : ""}`),
 };
 
 // ---- SSE 对话流 ----------------------------------------------------------------

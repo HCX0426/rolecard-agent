@@ -11,21 +11,29 @@
 
 ## 边界（这是"读写用户磁盘"的动作，规则比功能更保守）
 
-  * 所有路径**必须落在 `WORKSPACE_DIR` 内**（默认 `./data/workspace`），`..` 与符号链接
-    都被 resolve 收敛后由 is_relative_to 拦下 —— 与上传路径守卫同一套 rigor；
+  * 所有路径**必须落在根目录内**。根不再是 build 时固定的 `WORKSPACE_DIR` 快照，而是
+    `dir_resolver()` 每次调用实时解析的任务目录（DB「设置→通用」可配，保存即生效，
+    见 core/workspace.py）—— 这样"角色读写的范围"跟着用户的授权走；
+  * `..` 与符号链接都被 resolve 收敛后由 is_relative_to 拦下 —— 与上传路径守卫同一套 rigor；
   * `fs_read` 有单文件大小上限（读进 prompt 的东西都要有上界）；
   * `fs_write` **不声明幂等**（执行器不会重试它），创建父目录，写入即真实落盘；
-  * 全部工具只作用于工作区 —— 角色卡 + 白名单决定谁拥有它们。
+  * 全部操作**写审计**（actor="agent"，action=fs_*，路径与字节数，不记内容）——
+    "角色碰电脑"必须可追溯（架构计划 A·§4.2；仅传入 conn 时启用，测试可不传）。
 """
 
 from __future__ import annotations
 
+import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 from langchain_core.tools import tool
 
+from rolecard_agent.config import Settings
 from rolecard_agent.core.tools.errors import ToolExecutionError
+from rolecard_agent.core.workspace import make_dir_resolver
+from rolecard_agent.storage.db import SqlConnection
 
 READ_MAX_CHARS = 200_000  # 单文件读入 prompt 的字符上限（约 20 万字符）
 
@@ -35,7 +43,7 @@ class FsToolError(ToolExecutionError):
 
 
 def _resolve_within(root: Path, rel_path: str) -> Path:
-    """把（可能带 .. / 子目录 / 大小写差异的）相对路径收敛到工作区内的绝对路径。
+    """把（可能带 .. / 子目录 / 大小写差异的）相对路径收敛到根目录内的绝对路径。
 
     与上传路径守卫（domains/<域>/tools.resolve_upload_target）同一套 rigor：
     resolve() 收敛 `..` 与符号链接，is_relative_to 拦越界，normcase 抹平 Windows 大小写。
@@ -45,17 +53,57 @@ def _resolve_within(root: Path, rel_path: str) -> Path:
     if os.path.normcase(str(target)) != os.path.normcase(
         str(root_res)
     ) and not target.is_relative_to(root_res):
-        raise FsToolError(f"路径越界：只允许访问工作区目录内的文件（{root_res}）。")
+        raise FsToolError(f"路径越界：只允许访问任务目录内的文件（{root_res}）。")
     return target
 
 
-def make_file_tools(*, settings) -> list:
-    """构建工作区文件工具。目录不存在时惰性创建（fs_write / fs_list 需要）。"""
-    root = Path(settings.workspace_dir)
+def _audit(
+    conn: SqlConnection | None,
+    action: str,
+    target: str,
+    detail: dict[str, object] | None = None,
+) -> None:
+    """写审计（actor 固定 "agent"：模型触发的工具动作，与操作员的 operator 动作区分）。
+
+    与 roles.audit 同列结构；不传 conn = 跳过（测试/未接审计的宿主，fail-open 只影响
+    留痕、不影响权限）。
+    """
+    if conn is None:
+        return
+    conn.execute(
+        "INSERT INTO audit_log (actor, action, target, detail_json) VALUES (?, ?, ?, ?)",
+        (
+            "agent",
+            action,
+            target,
+            None if detail is None else json.dumps(detail, ensure_ascii=False),
+        ),
+    )
+    conn.commit()
+
+
+def make_file_tools(
+    *,
+    settings: Settings,
+    conn: SqlConnection | None = None,
+    dir_resolver: Callable[[], Path] | None = None,
+) -> list:
+    """构建工作区文件工具。
+
+    `dir_resolver` = 每调用实时解析的任务目录；不传时回落 env 的 settings.workspace_dir。
+    `conn` = 审计写入用的连接（不传不审计）。
+    """
+    if dir_resolver is not None:
+        root_of = dir_resolver
+    elif conn is not None:
+        root_of = make_dir_resolver(settings, conn)
+    else:
+        root_of = lambda: Path(settings.workspace_dir)  # noqa: E731 - 闭包，模块内约定
 
     @tool("fs_read")
     def fs_read(path: str) -> str:
-        """读取工作区内的一个文本文件，返回其内容。path 是相对工作区的路径，如 notes/todo.md。"""
+        """读取任务目录内一个文本文件并返回内容；path 相对任务目录，如 notes/todo.md。"""
+        root = root_of()
         try:
             target = _resolve_within(root, path)
         except FsToolError as exc:
@@ -68,12 +116,14 @@ def make_file_tools(*, settings) -> list:
             return f"读取失败：{exc}"
         if len(text) > READ_MAX_CHARS:
             text = text[:READ_MAX_CHARS] + f"\n…（文件过长，已截断，共约 {len(text)} 字符）"
+        _audit(conn, "fs_read", str(target), {"size": target.stat().st_size})
         return f"（文件 {path}，{target.stat().st_size} 字节）\n{text}"
 
     @tool("fs_write")
     def fs_write(path: str, content: str) -> str:
-        """把文本内容写入工作区内的一个文件（会创建缺失的父目录，覆盖同名文件）。
-        path 是相对工作区的路径。"""
+        """把文本内容写入任务目录内的一个文件（会创建缺失的父目录，覆盖同名文件）。
+        path 是相对任务目录的路径。"""
+        root = root_of()
         try:
             target = _resolve_within(root, path)
         except FsToolError as exc:
@@ -83,12 +133,15 @@ def make_file_tools(*, settings) -> list:
             target.write_text(content, encoding="utf-8", newline="\n")
         except OSError as exc:
             return f"写入失败：{exc}"
-        return f"已写入 {path}（{len(content.encode('utf-8'))} 字节）。"
+        bytes_written = len(content.encode("utf-8"))
+        _audit(conn, "fs_write", str(target), {"bytes": bytes_written})
+        return f"已写入 {path}（{bytes_written} 字节）。"
 
     @tool("fs_list")
     def fs_list(path: str = "") -> str:
-        """列出工作区内某个目录（默认根目录）的文件与子目录，含大小。
-        path 为空或 "." 表示工作区根目录。"""
+        """列出任务目录内某个目录（默认根目录）的文件与子目录，含大小。
+        path 为空或 "." 表示任务目录根目录。"""
+        root = root_of()
         try:
             target = _resolve_within(root, path or ".")
         except FsToolError as exc:
@@ -104,7 +157,8 @@ def make_file_tools(*, settings) -> list:
                 lines.append(f"[目录] {entry.name}/")
             else:
                 lines.append(f"        {entry.name}（{entry.stat().st_size} 字节）")
-        return f"（工作区 {path or '.'}，共 {len(entries)} 项）\n" + "\n".join(lines)
+        _audit(conn, "fs_list", str(target), {"entries": len(entries)})
+        return f"（任务目录 {path or '.'}，共 {len(entries)} 项）\n" + "\n".join(lines)
 
     return [fs_read, fs_write, fs_list]
 

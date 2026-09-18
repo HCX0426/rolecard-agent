@@ -317,3 +317,53 @@ def test_agent_default_mode_runtime_override(client: TestClient) -> None:
     client.delete(f"/api/session/{tid}")
 
 
+def test_workspace_dir_roundtrip(client: TestClient, tmp_path: Path) -> None:
+    """任务目录：默认 env → 设置（规范化落库）→ 清除回落；操作都进审计。"""
+    d0 = client.get("/api/workspace/dir").json()
+    assert d0["overridden"] is False  # env 出厂默认生效
+
+    target = tmp_path / "task"
+    r = client.put("/api/workspace/dir", json={"path": str(target)})
+    assert r.status_code == 200
+    assert r.json()["overridden"] is True
+    assert r.json()["path"] == str(target.resolve())
+    assert target.is_dir()  # 不存在也会建出来
+
+    assert client.get("/api/workspace/dir").json()["path"] == str(target.resolve())
+
+    d = client.delete("/api/workspace/dir")
+    assert d.status_code == 200
+    assert d.json()["overridden"] is False  # 回落 env
+
+    actions = [row["action"] for row in client.get("/api/audit?limit=50").json()]
+    assert "set_task_dir" in actions and "clear_task_dir" in actions
+
+
+def test_workspace_dir_rejects_invalid(client: TestClient) -> None:
+    res = client.put("/api/workspace/dir", json={"path": "   "})
+    assert res.status_code == 400
+    assert "不能为空" in res.json()["detail"]
+    # 校验失败不落任何值
+    assert client.get("/api/workspace/dir").json()["overridden"] is False
+
+
+def test_workspace_tree_browse(client: TestClient, tmp_path: Path) -> None:
+    # 用子目录做浏览目标：test client 的 sqlite 就落在 tmp_path 下（WAL 模式会留下
+    # app.db / app.db-wal / app.db-shm 三个文件），直接扫 tmp_path 会混进数据库文件。
+    browse_dir = tmp_path / "browse"
+    browse_dir.mkdir()
+    (browse_dir / "one.txt").write_text("x", encoding="utf-8")
+    (browse_dir / "dir").mkdir()
+    r = client.get("/api/workspace/tree", params={"path": str(browse_dir)})
+    assert r.status_code == 200
+    names = {e["name"] for e in r.json()["entries"]}
+    assert names == {"one.txt", "dir"}
+
+    # 空 path = 主目录；不存在的目录 = 400
+    assert client.get("/api/workspace/tree").json()["path"]
+    assert (
+        client.get("/api/workspace/tree", params={"path": str(browse_dir / "nope")}).status_code
+        == 400
+    )
+
+
