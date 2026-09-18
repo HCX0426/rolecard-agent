@@ -23,6 +23,8 @@ export interface RoleCard {
   recall_enabled?: boolean;
   /** 关系驱动主动开口（架构计划 §5.2）：时段规律触发开关，默认开。 */
   time_pattern_enabled?: boolean;
+  /** 文件事件触发（架构计划 C·§5.2）：该角色可否被任务目录变化触发，默认开。 */
+  file_watch_enabled?: boolean;
 }
 
 export interface PluginRow {
@@ -374,6 +376,8 @@ export interface ReachoutRow {
 export interface ReachoutsPage {
   items: ReachoutRow[];
   unread: number;
+  /** 挂起的任务目录变更条数（文件事件触发开启时 >0 = 角色正攒着素材）。 */
+  file_watch_pending?: number;
 }
 
 // ---- 命令执行审批（架构计划 C·§6.2） ----------------------------------------------------

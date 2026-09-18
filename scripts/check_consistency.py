@@ -184,6 +184,7 @@ def check_config_contract() -> None:
         "MEMORY_[A-Z_]+",
         "AGENT_[A-Z_]+",
         "REACHOUT_[A-Z_]+",
+        "FILE_WATCH_[A-Z_]+",
     )
     pattern = r"\b(" + "|".join(prefixes) + r"|SQLITE_PATH|CHROMA_PATH|UPLOAD_DIR)\b"
     cfg_keys = set(re.findall(pattern, cfg_text))
@@ -636,9 +637,7 @@ def check_exemplar_leaks_eval_answers() -> None:
         out("exemplar leaks eval answers", True, "no eval cases yet")
         return
     cases = json.loads(case_path.read_text(encoding="utf-8"))
-    eval_inputs = {
-        _normalise_question(str(c.get("input") or "")) for c in cases if c.get("input")
-    }
+    eval_inputs = {_normalise_question(str(c.get("input") or "")) for c in cases if c.get("input")}
 
     leaked: list[str] = []
     for role in BUILTIN_ROLES:

@@ -29,12 +29,18 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from rolecard_agent.config import Settings
+from rolecard_agent.core.file_watch import (
+    FileEvent,
+    advance_baseline,
+    check_changes,
+)
 from rolecard_agent.core.guard import check
 from rolecard_agent.core.memory import (
     MAX_MEMORY_CHARS,
@@ -49,6 +55,7 @@ from rolecard_agent.core.proactive_state import (
     record_interaction,
 )
 from rolecard_agent.core.prompts import build_system_prompt
+from rolecard_agent.core.workspace import resolve_task_dir
 from rolecard_agent.roles.models import RoleCard
 from rolecard_agent.roles.service import RoleCardService
 from rolecard_agent.storage.db import SqlConnection
@@ -60,6 +67,8 @@ QUIET_HOURS_END = 8
 MAX_UNREAD_PER_ROLE = 2
 # 后台轮询间隔（秒）：30s 一查足够（真正开口还受间隔/时段抑制）。
 TICK_SECONDS = 30
+# 文件事件素材清单的最大行数（再多只报总数）。
+_FILE_EVENT_MAX_LINES = 10
 
 _REACHOUT_TASK = (
     "现在是主动开口的时刻。结合你的角色设定和关于用户的长期记忆，用一两句话主动向用户"
@@ -74,15 +83,41 @@ _REACHOUT_TASK_RECALL = (
     "不要自我介绍、不要说教、不要长篇。"
 )
 
+# 文件事件触发（架构计划 C·§5.2）的口吻：目录变化是素材，严禁编造未见过的内容。
+_REACHOUT_TASK_FILE_EVENT = (
+    "现在是主动开口的时刻。你注意到用户的任务目录最近有了变化（清单见下）。以你的"
+    "角色口吻自然地就此跟用户说一句——可以是好奇、关心或点评，但**不得编造文件内容**"
+    "（你只看到文件名）。简短、口语化；不要自我介绍、不要说教、不要长篇。"
+)
+
+
+def _format_change_list(events: list[FileEvent] | None, *, truncated: bool = False) -> str:
+    """变更清单 → prompt 素材行（前 10 条，只给名字不给内容）。"""
+    if not events:
+        return ""
+    verb = {"add": "新增", "mod": "修改", "del": "删除"}
+    lines = [f"- {verb.get(e['op'], e['op'])}：{e['path']}" for e in events[:_FILE_EVENT_MAX_LINES]]
+    if len(events) > _FILE_EVENT_MAX_LINES:
+        lines.append(f"- …等共 {len(events)} 项变化")
+    if truncated:
+        lines.append("- （目录较大，以上仅为部分快照）")
+    return "\n".join(lines)
+
 
 # --------------------------------------------------------------------------- 数据
 
+
 def list_reachouts(
-    conn: SqlConnection, limit: int = 100, *, role_id: str | None = None
+    conn: SqlConnection,
+    limit: int = 100,
+    *,
+    role_id: str | None = None,
+    file_watch_pending: int = 0,
 ) -> dict[str, object]:
     """收件箱：未读 + 最近历史（含未读数，供铃铛红点）。
 
     `role_id` 给定时只返回该角色主动找过你的历史（架构计划 §5.3：按角色卡隔离查看）。
+    `file_watch_pending` = 当前挂起的目录变更条数（0 = 无事件或功能关闭）。
     """
     where = "WHERE role_id = ?" if role_id else ""
     params = (role_id, limit) if role_id else (limit,)
@@ -103,6 +138,7 @@ def list_reachouts(
     return {
         "items": [dict(r) for r in rows],
         "unread": int(unread["n"]),
+        "file_watch_pending": file_watch_pending,
     }
 
 
@@ -126,6 +162,7 @@ def record_reachout(conn: SqlConnection, role: RoleCard, text: str) -> None:
 
 
 # ----------------------------------------------------------- 判定与生成（可测，无线程依赖）
+
 
 def _last_reachout_utc(conn: SqlConnection, role_id: str) -> datetime | None:
     row = conn.execute(
@@ -152,13 +189,16 @@ def blocked_why(
     *,
     now_utc: datetime,
     now_local: datetime,
+    file_event: bool = False,
 ) -> str | None:
     """决定"这个角色此刻能不能主动开口"。None = 可以；否则返回阻塞原因。
 
     （全局开关与角色开关由调用方先过滤，这里只负责抑制层判定 —— 两层授权在主流程做。）
+    `file_event=True`（任务目录有变化、该角色可被触发）时**豁免间隔档一次**——素材门控
+    语义：变化值得即时播报；静默时段与未读堆积是用户级护栏，不豁免。
     """
     last = _last_reachout_utc(conn, role.role_id)
-    if last is not None:
+    if last is not None and not file_event:
         elapsed = now_utc - last
         if elapsed < timedelta(minutes=settings.reachout_interval_minutes):
             return f"距上次开口不足 {settings.reachout_interval_minutes} 分钟"
@@ -177,11 +217,14 @@ def generate_reachout_text(
     *,
     role_id: str | None = None,
     mode: str = "general",
+    file_list: str = "",
 ) -> str | None:
     """生成一条主动内容：人设 + 记忆 → 单轮 → guard。被拦/失败返回 None（不发）。
 
     `role_id` 给定时按角色取**专属记忆**（回忆触发 / per-role 隔离）；若该角色无专属记忆，
     回退到用户级全局记忆（用户事实，非角色对话，不造成跨角色串扰）。
+    `mode="file_event"` 时 `file_list` 为目录变更素材清单（只含文件名，细节由角色
+    自行用 fs 工具查证 —— 素材门控语义，见架构计划 §5.2）。
     """
     memory = ""
     if role_id is not None and settings.memory_enabled:
@@ -190,7 +233,12 @@ def generate_reachout_text(
         memory = load_memory_text(conn)
     if len(memory) > MAX_MEMORY_CHARS:
         memory = memory[:MAX_MEMORY_CHARS]
-    task = _REACHOUT_TASK_RECALL if mode == "recall" else _REACHOUT_TASK
+    if mode == "recall":
+        task = _REACHOUT_TASK_RECALL
+    elif mode == "file_event":
+        task = f"{_REACHOUT_TASK_FILE_EVENT}\n\n任务目录的变化：\n{file_list}"
+    else:
+        task = _REACHOUT_TASK
     system = build_system_prompt(role.system_prompt, role.exemplars, memory=memory, agent=False)
     prompt = [
         SystemMessage(content=system),
@@ -208,6 +256,7 @@ def generate_reachout_text(
 
 # 触发源（关系驱动，四类共用抑制 / 生成 / 落库流水线）
 
+
 def trigger_affection(
     role: RoleCard, state: ProactiveState, settings: Settings, *, now_utc: datetime
 ) -> str | None:
@@ -218,9 +267,7 @@ def trigger_affection(
     return None
 
 
-def trigger_time_pattern(
-    role: RoleCard, conn: SqlConnection, *, now_local: datetime
-) -> str | None:
+def trigger_time_pattern(role: RoleCard, conn: SqlConnection, *, now_local: datetime) -> str | None:
     """时段 / 规律 nudge：若该角色历史上主动开口的本地小时众数 == 当前小时且样本足够，触发。
     该角色关掉时段规律 = 不触发。"""
     if not role.time_pattern_enabled:
@@ -261,6 +308,7 @@ def _parse_reachout_ts(raw: object) -> datetime | None:
 
 # --------------------------------------------------------------------------- 调度线程
 
+
 class ReachoutScheduler:
     """后台 daemon：每 tick 检查启用主动的角色，符合条件就生成并落收件箱。
 
@@ -288,9 +336,7 @@ class ReachoutScheduler:
     # -- 生命周期 -------------------------------------------------------
 
     def start(self) -> None:
-        thread = threading.Thread(
-            target=self._loop, name="reachout-scheduler", daemon=True
-        )
+        thread = threading.Thread(target=self._loop, name="reachout-scheduler", daemon=True)
         thread.start()
 
     def stop(self) -> None:
@@ -324,27 +370,61 @@ class ReachoutScheduler:
         stamp_utc = now_utc or datetime.now(UTC)
         stamp_local = now_local or datetime.now().astimezone()
         made = 0
+        # 文件事件（架构计划 C·§5.2 素材门控）：全局侦测一次，任何合格角色共享同一事件；
+        # 谁都没开口且未过期 → 事件挂起到下一 tick（基线不推进，变化不会被吞掉）。
+        file_events: list[FileEvent] | None = None
+        file_truncated = False
+        file_expired = False
+        if settings.file_watch_enabled:
+            try:
+                detected = check_changes(
+                    self._conn, resolve_task_dir(settings, self._conn), now_utc=stamp_utc
+                )
+            except OSError:
+                detected = None  # 目录暂时不可达：静默，下一轮重试
+            if detected is not None:
+                file_events, file_truncated, file_expired = detected
+        file_event_consumed = False
         try:
             candidates = [r for r in self._roles.list_roles() if r.reachout_enabled]
         except Exception:  # noqa: BLE001 - 读角色失败不退整个调度
             return 0
         for role in candidates:
-            if blocked_why(role, settings, self._conn, now_utc=stamp_utc, now_local=stamp_local):
+            can_file = file_events is not None and role.file_watch_enabled
+            if blocked_why(
+                role,
+                settings,
+                self._conn,
+                now_utc=stamp_utc,
+                now_local=stamp_local,
+                file_event=can_file,
+            ):
                 continue
-            # 关系驱动：按角色状态评估四类触发源，取第一个命中者决定"以什么口吻开口"。
-            # "timer" 是基线触发（间隔/时段/未读由 blocked_why 把守），其余为关系驱动增量。
+            # 关系驱动：按角色状态评估触发源，取第一个命中者决定"以什么口吻开口"。
+            # file_event 居链首（素材门控：有变化先说变化）；"timer" 是基线触发。
             state = get_state(self._conn, role.role_id)
             fired = (
-                trigger_affection(role, state, settings, now_utc=stamp_utc)
+                ("file_event" if can_file else None)
+                or trigger_affection(role, state, settings, now_utc=stamp_utc)
                 or trigger_time_pattern(role, self._conn, now_local=stamp_local)
                 or trigger_recall(role, self._conn, now_local=stamp_local)
                 or "timer"
             )
-            mode = "recall" if fired == "recall" else "general"
+            mode = fired if fired in ("recall", "file_event") else "general"
             try:
                 model = self._model(role.model_name)
                 text = generate_reachout_text(
-                    role, model, settings, self._conn, role_id=role.role_id, mode=mode
+                    role,
+                    model,
+                    settings,
+                    self._conn,
+                    role_id=role.role_id,
+                    mode=mode,
+                    file_list=(
+                        _format_change_list(file_events, truncated=file_truncated)
+                        if can_file
+                        else ""
+                    ),
                 )
             except Exception as exc:  # noqa: BLE001 - 生成失败只留痕，不阻塞其它角色
                 self._tracer.emit(
@@ -369,6 +449,19 @@ class ReachoutScheduler:
                 )
             )
             made += 1
+            file_event_consumed = file_event_consumed or fired == "file_event"
+        if file_events is not None and (file_event_consumed or file_expired):
+            with suppress(OSError):  # 推进失败：事件仍在，下一 tick 重试
+                advance_baseline(
+                    self._conn, resolve_task_dir(settings, self._conn), now_utc=stamp_utc
+                )
+            self._tracer.emit(
+                TraceEvent(
+                    event="file_watch_advance",
+                    node="reachout",
+                    detail={"changed": len(file_events), "expired": file_expired},
+                )
+            )
         return made
 
 

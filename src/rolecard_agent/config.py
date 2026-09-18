@@ -155,6 +155,12 @@ class Settings(BaseModel):
     # 低频配置走 env 即可（默认 60 分钟/角色）；改它需重启。
     reachout_interval_minutes: int = 60
 
+    # 文件事件触发（架构计划 C·§5.2 第四类触发源，core/file_watch.py）：全局总闸。
+    # True = 每 tick 轮询任务目录（size+mtime 基线 diff），有变化时该次开口以 file_event
+    # 触发（绕过 per-role 间隔一次，静默时段/未读上限不放松），变更清单作为说话素材。
+    # 默认关 —— 扫描有 IO 成本，且主动素材门控是显式选择；「运行环境」页可热切。
+    file_watch_enabled: bool = False
+
     # 单轮用户消息允许的**图步数上限**（LangGraph `recursion_limit`，
     # 见 core/graph.build_graph_config）。
     # 一次"模型 → 工具 → 模型"消耗 2 步。不设时 LangGraph 用默认的 10007 —— 而本图是个环：
@@ -353,6 +359,7 @@ class Settings(BaseModel):
             ("AGENT_DEFAULT_MODE", "agent_default_mode"),
             ("REACHOUT_ENABLED", "reachout_enabled"),
             ("REACHOUT_INTERVAL_MINUTES", "reachout_interval_minutes"),
+            ("FILE_WATCH_ENABLED", "file_watch_enabled"),
             ("SQLITE_PATH", "sqlite_path"),
             ("CHROMA_PATH", "chroma_path"),
             ("UPLOAD_DIR", "upload_dir"),

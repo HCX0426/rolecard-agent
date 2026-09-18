@@ -37,9 +37,7 @@ _DOMAIN_ID = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 # 就先把上次可能残留的未提交事务回滚掉（审查报告 P1-10）。
 # 为什么不能在中间件里直接 rollback：中间件跑在事件循环线程，而同步端点与图执行
 # 各在别的线程持连接 —— 在那里 rollback 清的是另一条线程的连接，等于没清。
-_REQUEST_EPOCH: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "db_request_epoch", default=""
-)
+_REQUEST_EPOCH: contextvars.ContextVar[str] = contextvars.ContextVar("db_request_epoch", default="")
 
 
 def set_request_epoch(epoch: str) -> None:
@@ -265,6 +263,12 @@ def _migrate(conn: SqlConnection) -> None:
     if "time_pattern_enabled" not in _columns(conn, "role_card"):
         conn.execute(
             "ALTER TABLE role_card ADD COLUMN time_pattern_enabled INTEGER NOT NULL DEFAULT 1"
+        )
+    # 6c. role_card 增列 file_watch_enabled（文件事件触发，架构计划 C·§5.2）。
+    #     per-role 闸门；默认 1 = 有主动开口资格的角色自动可被目录变化触发（还需全局闸）。
+    if "file_watch_enabled" not in _columns(conn, "role_card"):
+        conn.execute(
+            "ALTER TABLE role_card ADD COLUMN file_watch_enabled INTEGER NOT NULL DEFAULT 1"
         )
     # 7. 关系驱动主动开口（架构计划 §5.2）：per-role 状态与 per-role 记忆（幂等建表）。
     if "affinity" not in _columns(conn, "role_proactive_state"):

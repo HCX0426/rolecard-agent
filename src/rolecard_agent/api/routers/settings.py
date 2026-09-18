@@ -199,9 +199,7 @@ def runtime_payload(
     defaults = Settings()
     groups: list[dict[str, object]] = []
 
-    def add(
-        group_key: str, label: str, items: list[tuple[str, str, str, str | None]]
-    ) -> None:
+    def add(group_key: str, label: str, items: list[tuple[str, str, str, str | None]]) -> None:
         """items: (settings 字段名, env 键名, 中文名, 说明)。"""
         rows = []
         for field, env_key, row_label, note in items:
@@ -235,69 +233,178 @@ def runtime_payload(
             )
         groups.append({"key": group_key, "label": label, "items": rows})
 
-    add("web", "联网", [
-        ("web_search_enabled", "WEB_SEARCH_ENABLED", "联网总闸",
-         "0 = web_search / web_fetch 一律返回关闭说明"),
-        ("web_allowed_domains", "WEB_ALLOWED_DOMAINS", "域名白名单",
-         "web_fetch 只允许名单内域名（子域匹配），空 = 不限"),
-        ("web_search_backend", "WEB_SEARCH_BACKEND", "搜索后端",
-         "auto=配了 Tavily Key 走云端搜索，否则本地 ddgs"),
-        ("tavily_api_key", "TAVILY_API_KEY", "Tavily 云端搜索 Key",
-         "本地搜索超时时配它（当前搜索走哪条路看上一行）"),
-    ])
+    add(
+        "web",
+        "联网",
+        [
+            (
+                "web_search_enabled",
+                "WEB_SEARCH_ENABLED",
+                "联网总闸",
+                "0 = web_search / web_fetch 一律返回关闭说明",
+            ),
+            (
+                "web_allowed_domains",
+                "WEB_ALLOWED_DOMAINS",
+                "域名白名单",
+                "web_fetch 只允许名单内域名（子域匹配），空 = 不限",
+            ),
+            (
+                "web_search_backend",
+                "WEB_SEARCH_BACKEND",
+                "搜索后端",
+                "auto=配了 Tavily Key 走云端搜索，否则本地 ddgs",
+            ),
+            (
+                "tavily_api_key",
+                "TAVILY_API_KEY",
+                "Tavily 云端搜索 Key",
+                "本地搜索超时时配它（当前搜索走哪条路看上一行）",
+            ),
+        ],
+    )
     ocr_python = settings.ocr_python or "(自动发现 .venv-ocr)"
-    add("ocr", "OCR", [
-        ("ocr_backend", "OCR_BACKEND", "OCR 后端", "auto=Paddle 优先、云端兜底 / paddle / cloud"),
-        ("ocr_python", "OCR_PYTHON", "Paddle 解释器", f"Paddle 独立解释器：{ocr_python}"),
-        ("ocr_api_key", "OCR_API_KEY", "云端 OCR Key", "未配则绝不外发图片"),
-        ("ocr_api_url", "OCR_API_URL", "云端 OCR 端点", None),
-    ])
-    add("rag", "检索与抽取", [
-        ("embedding_backend", "RAG_EMBEDDING", "嵌入后端", "auto=有 Key 走 bge-m3，否则离线 hash"),
-        ("rag_rerank", "RAG_RERANK", "重排", "auto=有 Key 精排，否则关闭"),
-        ("extract_backend", "EXTRACT_BACKEND", "抽取后端", None),
-        ("extract_verify", "EXTRACT_VERIFY", "抽取校对", None),
-    ])
-    add("limit", "超时与预算", [
-        ("model_timeout_seconds", "MODEL_TIMEOUT_SECONDS", "模型调用超时（秒）", "0=不限"),
-        ("tool_timeout_seconds", "TOOL_TIMEOUT_SECONDS", "工具执行上限（秒）", "单次工具总时长"),
-        ("context_max_chars", "CONTEXT_MAX_CHARS", "历史字符预算", "送模型的历史上限"),
-    ])
-    add("think", "思考模式", [
-        ("model_thinking", "MODEL_THINKING", "思考总开关",
-         "auto=按名单自动 / off=名单内也临时关"),
-        ("model_thinking_models", "MODEL_THINKING_MODELS", "思考模型名单",
-         "名单内模型以 reasoning=True 调用"),
-    ])
-    add("agent", "对话模式", [
-        ("agent_default_mode", "AGENT_DEFAULT_MODE", "全局默认模式",
-         "chat=一问一答 / agent=多步自主任务（步数上限放大、注入规划指令）"),
-        ("agent_max_steps", "AGENT_MAX_STEPS", "步数上限（对话档）",
-         "单轮允许的图步数；agent 模式自动翻倍，0=库默认"),
-    ])
-    add("reachout", "主动开口", [
-        ("reachout_enabled", "REACHOUT_ENABLED", "全局总闸",
-         "角色主动找你的总开关；谁真有资格主动看各角色卡的开关"),
-        ("reachout_interval_minutes", "REACHOUT_INTERVAL_MINUTES", "开口间隔（分钟）",
-         "同一角色两次主动开口的最小间隔（防刷屏；低频项改它需重启）"),
-    ])
-    add("run", "命令执行", [
-        ("run_tools_enabled", "RUN_TOOLS_ENABLED", "命令执行总闸",
-         "关掉 = run_command 一律返回关闭说明（1=开，0=关）"),
-        ("run_approval", "RUN_APPROVAL", "审批模式",
-         "manual=命令要人批准才跑（推荐）；auto=无审批直接跑（仅自研/可信目录用）"),
-    ])
-    add("auth", "访问控制", [
-        ("auth_mode", "AUTH_MODE", "认证模式", "off / auto / on"),
-        ("auth_credentials", "AUTH_CREDENTIALS", "Basic 凭据", None),
-        ("auth_api_keys", "AUTH_API_KEYS", "API Key 列表", None),
-    ])
-    add("obs", "观测", [
-        ("obs_backend", "OBS_BACKEND", "观测后端", None),
-        ("obs_emit_raw_text", "OBS_EMIT_RAW_TEXT", "记录原文", None),
-        ("langsmith_project", "LANGSMITH_PROJECT", "LangSmith 项目", None),
-        ("langsmith_api_key", "LANGSMITH_API_KEY", "LangSmith Key", None),
-    ])
+    add(
+        "ocr",
+        "OCR",
+        [
+            (
+                "ocr_backend",
+                "OCR_BACKEND",
+                "OCR 后端",
+                "auto=Paddle 优先、云端兜底 / paddle / cloud",
+            ),
+            ("ocr_python", "OCR_PYTHON", "Paddle 解释器", f"Paddle 独立解释器：{ocr_python}"),
+            ("ocr_api_key", "OCR_API_KEY", "云端 OCR Key", "未配则绝不外发图片"),
+            ("ocr_api_url", "OCR_API_URL", "云端 OCR 端点", None),
+        ],
+    )
+    add(
+        "rag",
+        "检索与抽取",
+        [
+            (
+                "embedding_backend",
+                "RAG_EMBEDDING",
+                "嵌入后端",
+                "auto=有 Key 走 bge-m3，否则离线 hash",
+            ),
+            ("rag_rerank", "RAG_RERANK", "重排", "auto=有 Key 精排，否则关闭"),
+            ("extract_backend", "EXTRACT_BACKEND", "抽取后端", None),
+            ("extract_verify", "EXTRACT_VERIFY", "抽取校对", None),
+        ],
+    )
+    add(
+        "limit",
+        "超时与预算",
+        [
+            ("model_timeout_seconds", "MODEL_TIMEOUT_SECONDS", "模型调用超时（秒）", "0=不限"),
+            (
+                "tool_timeout_seconds",
+                "TOOL_TIMEOUT_SECONDS",
+                "工具执行上限（秒）",
+                "单次工具总时长",
+            ),
+            ("context_max_chars", "CONTEXT_MAX_CHARS", "历史字符预算", "送模型的历史上限"),
+        ],
+    )
+    add(
+        "think",
+        "思考模式",
+        [
+            (
+                "model_thinking",
+                "MODEL_THINKING",
+                "思考总开关",
+                "auto=按名单自动 / off=名单内也临时关",
+            ),
+            (
+                "model_thinking_models",
+                "MODEL_THINKING_MODELS",
+                "思考模型名单",
+                "名单内模型以 reasoning=True 调用",
+            ),
+        ],
+    )
+    add(
+        "agent",
+        "对话模式",
+        [
+            (
+                "agent_default_mode",
+                "AGENT_DEFAULT_MODE",
+                "全局默认模式",
+                "chat=一问一答 / agent=多步自主任务（步数上限放大、注入规划指令）",
+            ),
+            (
+                "agent_max_steps",
+                "AGENT_MAX_STEPS",
+                "步数上限（对话档）",
+                "单轮允许的图步数；agent 模式自动翻倍，0=库默认",
+            ),
+        ],
+    )
+    add(
+        "reachout",
+        "主动开口",
+        [
+            (
+                "reachout_enabled",
+                "REACHOUT_ENABLED",
+                "全局总闸",
+                "角色主动找你的总开关；谁真有资格主动看各角色卡的开关",
+            ),
+            (
+                "file_watch_enabled",
+                "FILE_WATCH_ENABLED",
+                "文件事件触发",
+                "开 = 轮询任务目录，有变化时该次开口先说变化（绕间隔一次，静默时段不放松）",
+            ),
+            (
+                "reachout_interval_minutes",
+                "REACHOUT_INTERVAL_MINUTES",
+                "开口间隔（分钟）",
+                "同一角色两次主动开口的最小间隔（防刷屏；低频项改它需重启）",
+            ),
+        ],
+    )
+    add(
+        "run",
+        "命令执行",
+        [
+            (
+                "run_tools_enabled",
+                "RUN_TOOLS_ENABLED",
+                "命令执行总闸",
+                "关掉 = run_command 一律返回关闭说明（1=开，0=关）",
+            ),
+            (
+                "run_approval",
+                "RUN_APPROVAL",
+                "审批模式",
+                "manual=命令要人批准才跑（推荐）；auto=无审批直接跑（仅自研/可信目录用）",
+            ),
+        ],
+    )
+    add(
+        "auth",
+        "访问控制",
+        [
+            ("auth_mode", "AUTH_MODE", "认证模式", "off / auto / on"),
+            ("auth_credentials", "AUTH_CREDENTIALS", "Basic 凭据", None),
+            ("auth_api_keys", "AUTH_API_KEYS", "API Key 列表", None),
+        ],
+    )
+    add(
+        "obs",
+        "观测",
+        [
+            ("obs_backend", "OBS_BACKEND", "观测后端", None),
+            ("obs_emit_raw_text", "OBS_EMIT_RAW_TEXT", "记录原文", None),
+            ("langsmith_project", "LANGSMITH_PROJECT", "LangSmith 项目", None),
+            ("langsmith_api_key", "LANGSMITH_API_KEY", "LangSmith Key", None),
+        ],
+    )
 
     return {
         "note": "标「可改」的项在本页保存即热生效（DB 覆盖 env，清空即回落 env 值）；"
@@ -323,7 +430,6 @@ def _model_names(conn: object) -> list[str]:
         "SELECT DISTINCT model FROM model_backend WHERE model IS NOT NULL ORDER BY model"
     ).fetchall()
     return [str(r["model"]) for r in rows]
-
 
 
 class RuntimeUpdateBody(BaseModel):
@@ -364,6 +470,7 @@ def put_runtime_settings(
 
 
 # ---------------------------------------------------------------- 跨会话记忆
+
 
 class MemoryBody(BaseModel):
     """记忆面板的保存负载：任选其一提交，缺省 = 该字段不变。
@@ -406,9 +513,7 @@ def put_memory(
     if body.content is not None:
         save_memory_text(ctx.conn, body.content)
     if body.enabled is not None:
-        runtime_settings.save_overrides(
-            ctx.conn, {"memory_enabled": "1" if body.enabled else "0"}
-        )
+        runtime_settings.save_overrides(ctx.conn, {"memory_enabled": "1" if body.enabled else "0"})
     ctx.roles.audit(
         actor=actor.id,
         action="update_memory",

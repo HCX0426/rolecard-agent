@@ -7,14 +7,17 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from langchain_core.messages import AIMessage
 
 from rolecard_agent.config import Settings
+from rolecard_agent.core import file_watch as fw
 from rolecard_agent.core import reachout as svc
 from rolecard_agent.core.memory import save_role_memory_text
 from rolecard_agent.core.proactive_state import DEFAULT_AFFINITY_THRESHOLD, get_state
 from rolecard_agent.core.reachout import ReachoutScheduler
+from rolecard_agent.core.workspace import resolve_task_dir
 from rolecard_agent.roles.models import RoleCard
 
 _UTC = UTC
@@ -34,14 +37,19 @@ def _settings(**kw: object) -> Settings:
 
 
 def _now() -> tuple[datetime, datetime]:
-    """真实当前时间（UTC + 本地）：间隔记录用 CURRENT_TIMESTAMP（UTC），必须与实例对得上。"""
-    return datetime.now(UTC), datetime.now().astimezone().replace(tzinfo=None)
+    """间隔档用 CURRENT_TIMESTAMP（真实 UTC），now_utc 必须与之对得上；但 now_local 强制
+    落到非静默时刻（本地 14:00）—— 否则 23:00–08:00 跑整套 tick/blocked 用例会误命中静默档
+    而集体失败。要单独测静默行为的用例自带显式 quiet_local（见 _blocked_by_quiet_hours 等）。
+    """
+    real_utc = datetime.now(UTC)
+    safe_local = datetime.now().astimezone().replace(
+        tzinfo=None, hour=14, minute=0, second=0, microsecond=0
+    )
+    return real_utc, safe_local
 
 
 def _seed_last(conn, role_id: str, minutes_ago: int) -> None:
-    ts = (datetime.now(UTC) - timedelta(minutes=minutes_ago)).strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
+    ts = (datetime.now(UTC) - timedelta(minutes=minutes_ago)).strftime("%Y-%m-%d %H:%M:%S")
     conn.execute(
         "INSERT INTO agent_reachout (role_id, role_name, text, state, created_at) "
         "VALUES (?, ?, ?, 'read', ?)",
@@ -345,3 +353,161 @@ def test_list_reachouts_filters_by_role(conn) -> None:
     # 未读数也按角色收敛
     assert only_a["unread"] == 1
     assert all_rows["unread"] == 2
+
+
+# ------------------------------------------------------------------ 文件事件触发（架构计划 C·§5.2）
+
+
+def _fw_settings(task_dir: Path, **kw: object) -> Settings:
+    return Settings(
+        file_watch_enabled=kw.pop("file_watch_enabled", True),
+        workspace_dir=str(task_dir),
+        reachout_interval_minutes=kw.pop("reachout_interval_minutes", 60),
+        **kw,
+    )
+
+
+def _file_scheduler(conn, roles: list[RoleCard], model, task_dir: Path, **skw: object):
+    settings = _fw_settings(task_dir, **skw)
+    tracer = _Tracer()
+    scheduler = ReachoutScheduler(
+        settings_provider=lambda: settings,
+        roles=_Roles(roles),  # type: ignore[arg-type]
+        model_resolver=lambda _name: model,
+        conn=conn,
+        tracer=tracer,
+    )
+    return scheduler, settings, tracer
+
+
+def _prime_baseline(conn, settings: Settings, task_dir: Path, when: datetime) -> None:
+    """在调度器之外先建好基线（免得 tick 的 timer 基线触发先开口搅局）。"""
+    fw.clear_state(conn)
+    assert fw.check_changes(conn, resolve_task_dir(settings, conn), now_utc=when) is None
+
+
+def test_blocked_why_interval_exempt_for_file_event_only(conn) -> None:
+    _seed_last(conn, "active", minutes_ago=10)  # 间隔 60 分钟内
+    utc, local = _now()
+    # 常规：被间隔挡住
+    assert svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local) is not None
+    # file_event：豁免间隔档（素材门控）
+    assert (
+        svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local, file_event=True)
+        is None
+    )
+
+
+def test_blocked_why_file_event_still_respects_quiet_hours(conn) -> None:
+    utc = datetime(2026, 9, 18, 5, 0, tzinfo=_UTC)
+    local = datetime(2026, 9, 18, 0, 30)  # 本地 00:30 = 静默时段
+    reason = svc.blocked_why(
+        _role(), _settings(), conn, now_utc=utc, now_local=local, file_event=True
+    )
+    assert reason is not None and "静默" in reason  # 用户级护栏不豁免
+
+
+def test_generate_file_event_mode_injects_change_list(conn) -> None:
+    role = _role()
+    model = _FakeModel(AIMessage(content="看到你把报告放进目录啦？"))
+    text = svc.generate_reachout_text(
+        role,
+        model,
+        _settings(),
+        conn,
+        role_id="active",
+        mode="file_event",
+        file_list="- 新增：报告.md",
+    )
+    assert text == "看到你把报告放进目录啦？"
+    joined = "".join(str(m.content) for m in model.prompt or [])
+    assert "报告.md" in joined  # 素材清单进提示词
+    assert "不得编造文件内容" in joined  # 口吻指令带防编造纪律
+
+
+def test_format_change_list_caps_and_marks_truncated() -> None:
+    events = [fw.FileEvent(op="add", path=f"f{i}.txt") for i in range(12)]
+    text = svc._format_change_list(events, truncated=True)
+    assert "f0.txt" in text and "f9.txt" in text
+    assert "f10.txt" not in text  # 第 11 条起只进总数
+    assert "等共 12 项" in text and "部分快照" in text
+    assert svc._format_change_list(None) == ""
+
+
+def test_tick_file_event_bypasses_interval_and_records_trigger(conn, tmp_path: Path) -> None:
+    task_dir = tmp_path / "wd"
+    task_dir.mkdir()
+    model = _FakeModel(AIMessage(content="目录里有新文件？"))
+    scheduler, settings, tracer = _file_scheduler(conn, [_role()], model, task_dir)
+    utc, local = _now()
+    _prime_baseline(conn, settings, task_dir, utc)
+    (task_dir / "季度报告.md").write_text("x", encoding="utf-8")
+    _seed_last(conn, "active", minutes_ago=10)  # 常规会被间隔挡住
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
+    joined = "".join(str(m.content) for m in model.prompt or [])
+    assert "季度报告.md" in joined
+    sent = [e for e in tracer.events if getattr(e, "event", "") == "reachout_sent"]
+    assert sent and sent[-1].detail["trigger"] == "file_event"
+    # 消费后基线推进：无新变化则下一轮静默（间隔此刻为 10 分钟前刚开口 → 被挡）
+    assert fw.pending_count(conn) == 0
+
+
+def test_tick_file_event_pending_survives_quiet_hours(conn, tmp_path: Path) -> None:
+    task_dir = tmp_path / "wd"
+    task_dir.mkdir()
+    model = _FakeModel(AIMessage(content="不该在静默时段发"))
+    scheduler, settings, tracer = _file_scheduler(conn, [_role()], model, task_dir)
+    utc, local = _now()
+    _prime_baseline(conn, settings, task_dir, utc)
+    (task_dir / "a.txt").write_text("x", encoding="utf-8")
+    quiet_local = datetime(2026, 9, 18, 0, 30)  # 本地 00:30
+    made = scheduler.tick_once(now_utc=utc, now_local=quiet_local)
+    assert made == 0
+    assert fw.pending_count(conn) == 1  # 事件挂起，基线未推进
+    assert not [e for e in tracer.events if getattr(e, "event", "") == "file_watch_advance"]
+
+
+def test_tick_file_event_respects_role_toggle(conn, tmp_path: Path) -> None:
+    task_dir = tmp_path / "wd"
+    task_dir.mkdir()
+    model = _FakeModel(AIMessage(content="不该发"))
+    role = RoleCard(**{**_role().model_dump(), "file_watch_enabled": False})
+    scheduler, settings, _tracer = _file_scheduler(conn, [role], model, task_dir)
+    utc, local = _now()
+    _prime_baseline(conn, settings, task_dir, utc)
+    (task_dir / "a.txt").write_text("x", encoding="utf-8")
+    _seed_last(conn, "active", minutes_ago=10)  # 角色闸门关 → 无豁免 → 被间隔挡
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 0
+    assert fw.pending_count(conn) == 1  # 全局事件不丢，等着被消费或过期
+    # 对照：开关开着的同一事件即触发
+    on = _file_scheduler(conn, [_role()], _FakeModel(AIMessage(content="发")), task_dir)
+    assert on[0].tick_once(now_utc=utc, now_local=local) == 1
+
+
+def test_tick_file_event_shared_by_multiple_roles(conn, tmp_path: Path) -> None:
+    task_dir = tmp_path / "wd"
+    task_dir.mkdir()
+    roles = [_role(), RoleCard(**{**_role().model_dump(), "role_id": "second"})]
+    model = _FakeModel(AIMessage(content="目录有动静"))
+    scheduler, settings, _tracer = _file_scheduler(conn, roles, model, task_dir)
+    utc, local = _now()
+    _prime_baseline(conn, settings, task_dir, utc)
+    (task_dir / "b.txt").write_text("x", encoding="utf-8")
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 2  # 同一事件两个角色各说一句
+    rows = conn.execute("SELECT role_id FROM agent_reachout ORDER BY id").fetchall()
+    assert [r["role_id"] for r in rows] == ["active", "second"]
+    assert fw.pending_count(conn) == 0  # 本轮消费 → 基线推进
+
+
+def test_tick_file_watch_globally_off_is_inert(conn, tmp_path: Path) -> None:
+    task_dir = tmp_path / "wd"
+    task_dir.mkdir()
+    model = _FakeModel(AIMessage(content="嗨"))
+    scheduler, settings, tracer = _file_scheduler(
+        conn, [_role()], model, task_dir, file_watch_enabled=False
+    )
+    utc, local = _now()
+    (task_dir / "a.txt").write_text("x", encoding="utf-8")
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 1  # timer 基线行为照旧
+    assert fw.load_state(conn) is None  # 完全不扫描、不留状态
+    assert not [e for e in tracer.events if getattr(e, "event", "") == "file_watch_advance"]

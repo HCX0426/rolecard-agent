@@ -30,6 +30,7 @@ const EMPTY_FORM = {
   reachout_enabled: false,
   recall_enabled: true,
   time_pattern_enabled: true,
+  file_watch_enabled: true,
 };
 
 const SCOPE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
@@ -181,6 +182,7 @@ export default function RolesPage() {
       reachout_enabled: !!r.reachout_enabled,
       recall_enabled: r.recall_enabled !== false,
       time_pattern_enabled: r.time_pattern_enabled !== false,
+      file_watch_enabled: r.file_watch_enabled !== false,
     });
     setWlMode(r.tool_whitelist === null ? "all" : "custom");
   }
@@ -203,6 +205,7 @@ export default function RolesPage() {
       reachout_enabled: form.reachout_enabled,
       recall_enabled: form.recall_enabled,
       time_pattern_enabled: form.time_pattern_enabled,
+      file_watch_enabled: form.file_watch_enabled,
     };
     try {
       if (editing) {
@@ -343,6 +346,15 @@ export default function RolesPage() {
                   onChange={(e) => setForm({ ...form, time_pattern_enabled: e.target.checked })}
                 />
                 <span className="text-slate-600 dark:text-slate-300">关系驱动·时段规律：按你常互动的时段主动找你</span>
+              </label>
+              <label className="flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={form.file_watch_enabled}
+                  disabled={!form.reachout_enabled}
+                  onChange={(e) => setForm({ ...form, file_watch_enabled: e.target.checked })}
+                />
+                <span className="text-slate-600 dark:text-slate-300">文件事件：任务目录有变化时主动说（需全局「文件事件触发」开着）</span>
               </label>
             </div>
             <label className="mt-3 block">

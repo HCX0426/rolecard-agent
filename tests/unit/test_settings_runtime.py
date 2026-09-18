@@ -50,3 +50,13 @@ def test_thinking_models_choices_come_from_model_names() -> None:
     # 枚举项 choices 照旧来自静态规格
     web_rows = {r["key"]: r for r in groups["web"]["items"]}  # type: ignore[index]
     assert web_rows["WEB_SEARCH_BACKEND"]["choices"] == ["auto", "tavily", "ddgs", "off"]
+
+
+def test_file_watch_row_editable_in_reachout_group() -> None:
+    """文件事件触发（架构计划 C·§5.2）进「运行环境」主动开口组，且是可热切 bool。"""
+    payload = runtime_payload(Settings())
+    groups = {g["key"]: g for g in payload["groups"]}  # type: ignore[index]
+    rows = {r["key"]: r for r in groups["reachout"]["items"]}  # type: ignore[index]
+    assert rows["FILE_WATCH_ENABLED"]["kind"] == "bool"
+    assert rows["FILE_WATCH_ENABLED"]["field"] == "file_watch_enabled"
+    assert rows["FILE_WATCH_ENABLED"]["default"] == rows["FILE_WATCH_ENABLED"]["value"]

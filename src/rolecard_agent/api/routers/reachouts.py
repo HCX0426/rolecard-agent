@@ -11,8 +11,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from rolecard_agent.api.deps import AppContext, get_context
 from rolecard_agent.core import reachout as svc
+from rolecard_agent.core.file_watch import pending_count
 
 router = APIRouter()
+
+
+def _pending(ctx: AppContext) -> int:
+    """挂起的目录变更条数（功能关闭 = 不查，恒 0；只读操作，不改基线）。"""
+    return pending_count(ctx.conn) if ctx.settings.file_watch_enabled else 0
 
 
 @router.get("/api/reachouts")
@@ -21,7 +27,7 @@ def get_reachouts(
     role_id: str | None = Query(default=None, description="只返回该角色主动找过你的历史"),
 ) -> object:
     """收件箱：最近主动消息（含未读数）。前端铃铛红点 = unread。可按角色过滤。"""
-    return svc.list_reachouts(ctx.conn, role_id=role_id)
+    return svc.list_reachouts(ctx.conn, role_id=role_id, file_watch_pending=_pending(ctx))
 
 
 @router.post("/api/reachouts/{reachout_id}/read")
@@ -29,7 +35,7 @@ def mark_read(reachout_id: int, ctx: AppContext = Depends(get_context)) -> objec
     """标记一条主动消息已读（点收件箱条目 / 去对话时调用）。"""
     if not svc.mark_read(ctx.conn, reachout_id):
         raise HTTPException(status_code=404, detail=f"主动消息不存在：{reachout_id}")
-    return svc.list_reachouts(ctx.conn)
+    return svc.list_reachouts(ctx.conn, file_watch_pending=_pending(ctx))
 
 
 __all__ = ["router"]

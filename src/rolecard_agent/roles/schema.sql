@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS role_card (
     -- 用户可在「角色卡」里单独关掉任一类。旧库经 storage/db._migrate 幂等补列。
     recall_enabled       INTEGER NOT NULL DEFAULT 1,
     time_pattern_enabled INTEGER NOT NULL DEFAULT 1,
+    -- 文件事件触发（架构计划 C·§5.2）per-role 闸门：该角色可否被目录变化触发。
+    -- 默认 1 = 开了主动开口的角色自动关注目录变化；事件本身全局一份（任务目录是全局单值）。
+    file_watch_enabled   INTEGER NOT NULL DEFAULT 1,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

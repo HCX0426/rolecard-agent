@@ -18,7 +18,7 @@ _COLUMNS = (
     "role_id, role_name, system_prompt, temperature, model_name, "
     "tool_whitelist, exemplars, knowledge_scopes, description, "
     "is_builtin, reachout_enabled, recall_enabled, time_pattern_enabled, "
-    "created_at, updated_at"
+    "file_watch_enabled, created_at, updated_at"
 )
 
 # Columns stored as JSON text. For every one of them `None` and `[]` mean different things,
@@ -55,6 +55,7 @@ def _row_to_model(row: sqlite3.Row) -> RoleCard:
     payload["reachout_enabled"] = bool(payload.get("reachout_enabled"))
     payload["recall_enabled"] = bool(payload.get("recall_enabled"))
     payload["time_pattern_enabled"] = bool(payload.get("time_pattern_enabled"))
+    payload["file_watch_enabled"] = bool(payload.get("file_watch_enabled"))
     return RoleCard(**payload)
 
 
@@ -113,8 +114,8 @@ class RoleCardService:
             "INSERT INTO role_card "
             "(role_id, role_name, system_prompt, temperature, model_name, "
             " tool_whitelist, exemplars, knowledge_scopes, description, is_builtin, "
-            "reachout_enabled, recall_enabled, time_pattern_enabled) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "reachout_enabled, recall_enabled, time_pattern_enabled, file_watch_enabled) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 data.role_id,
                 data.role_name,
@@ -129,6 +130,7 @@ class RoleCardService:
                 data.reachout_enabled,
                 data.recall_enabled,
                 data.time_pattern_enabled,
+                data.file_watch_enabled,
             ),
         )
         self._conn.commit()

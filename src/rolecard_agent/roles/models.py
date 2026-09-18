@@ -96,6 +96,8 @@ class RoleCard(BaseModel):
     # 默认 True = 一旦开启 reachout_enabled，回忆 / 时段规律两类关系驱动开口即生效。
     recall_enabled: bool = True
     time_pattern_enabled: bool = True
+    # 文件事件触发（架构计划 C·§5.2）per-role 闸门：该角色可否被任务目录变化触发。
+    file_watch_enabled: bool = True
     is_builtin: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -136,6 +138,7 @@ class RoleCardCreate(BaseModel):
     reachout_enabled: bool = False
     recall_enabled: bool = True
     time_pattern_enabled: bool = True
+    file_watch_enabled: bool = True
 
     @field_validator("role_id")
     @classmethod
@@ -160,6 +163,7 @@ class RoleCardUpdate(BaseModel):
     reachout_enabled: bool | None = None
     recall_enabled: bool | None = None
     time_pattern_enabled: bool | None = None
+    file_watch_enabled: bool | None = None
 
     def changes(self) -> dict[str, object]:
         """Only the fields the caller actually provided."""
