@@ -30,6 +30,7 @@ from typing import Any
 
 from rolecard_agent.config import Settings
 from rolecard_agent.core.model_settings import ModelSettingsService, client_style
+from rolecard_agent.core.probes import vision_model_ready
 from rolecard_agent.storage.db import SqlConnection
 
 # ---------------------------------------------------------------- 服务类别定义
@@ -446,8 +447,13 @@ def service_status_view(conn: SqlConnection, settings: Settings) -> dict[str, An
         # 会被判为同一个 —— 排序号会串（审查报告 L2）。
         order_of = {id(e): i for i, e in enumerate(enabled)}
         items: list[dict[str, Any]] = []
+        # 可用性按**行身份**算一次、复用两次（状态行 + 生效判定）：探活对不可达的
+        # Ollama 每次要等满 3s 网络超时，重复探测等于把页面等待时间翻倍
+        # （用户 2026-09-18：服务页签加载要等一会）。
+        available_by_id: dict[int, bool] = {}
         for e in all_rows:
             available, reason = endpoint_available(e, settings)
+            available_by_id[id(e)] = available
             item = e.to_api()
             item["available"] = available
             item["reason"] = reason
@@ -455,7 +461,7 @@ def service_status_view(conn: SqlConnection, settings: Settings) -> dict[str, An
             items.append(item)
         effective: EndpointConfig | None = None
         for e in enabled:
-            if endpoint_available(e, settings)[0]:
+            if available_by_id[id(e)]:
                 effective = e
                 break
         fallback_from: str | None = None
@@ -496,13 +502,31 @@ def service_status_view(conn: SqlConnection, settings: Settings) -> dict[str, An
             continue
         # provider 是供应商 id；native 风格 = 本地 Ollama（不外发），openai 兼容 = 云端。
         is_local = client_style(str(row.get("provider", ""))) == "native"
+        row_model = str(row.get("model", ""))
+        if is_local:
+            # 与 OCR 类别**同一份实时探活**（core.probes，带 10s TTL 缓存）：此前这里
+            # 是"配置存在即可用"，于是 Ollama 没跑时 OCR 说"不可用"、模型推理说"可用"，
+            # 同一页两个结论，用户没法判断到底能不能用（用户 2026-09-18）。
+            # 探的是"模型在位"（/api/tags，不发推理请求）；推理健康仍以「深度检测」为准。
+            ready = vision_model_ready(
+                str(row["base_url"]) if row.get("base_url") else None, row_model
+            )
+            available, reason = (
+                (True, f"就绪：本地模型 {row_model}")
+                if ready
+                else (False, f"本地模型不可达或未加载（{row_model}，确认 Ollama 在跑）")
+            )
+        else:
+            # 云端**刻意不在这里发请求**（探活会消耗第三方配额）；配置齐缺即状态，
+            # 真实连通性走「深度检测」按钮。
+            available, reason = bool(row.get("has_key")), "已配置 key"
         model_items.append(
             {
                 "id": row["name"],
                 "label": f"{row['name']} · {row['model']}",
                 "kind": "local" if is_local else "cloud",
-                "available": is_local or bool(row.get("has_key")),
-                "reason": "本地端点（运行状态见深度检测）" if is_local else "已配置 key",
+                "available": available,
+                "reason": reason,
                 "enabled": True,
                 "builtin": False,
                 "key_masked": row.get("key_masked"),
