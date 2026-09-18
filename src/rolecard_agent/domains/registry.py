@@ -104,6 +104,7 @@ def build_registry(
     from rolecard_agent.core.tools.builtin import make_kernel_tools
     from rolecard_agent.core.tools.files import make_file_tools
     from rolecard_agent.core.tools.registry import ToolRegistry as _ToolRegistry
+    from rolecard_agent.core.tools.run import make_run_tool
     from rolecard_agent.core.tools.web import make_web_tools
     from rolecard_agent.domains.health.tools import WRITE_TOOL_NAMES, make_domain_tools
     from rolecard_agent.rag.retriever import make_search_tool
@@ -143,6 +144,16 @@ def build_registry(
             make_memory_tool(settings=effective_settings, conn=memory_conn),
             idempotent=False,
         )
+
+    # 命令执行（v2.6，架构计划 C·§6.2）：内核能力（domain=None），idempotent=False ——
+    # 执行会真实产生副作用，执行器绝不重试。审批档 manual 时"批准后后台执行一次"
+    # （run_approval_execution），工具随后的调用只是读回历史结果 —— 不重复跑命令。
+    # 未接连接（conn=None）也注册：白名单引用的工具必须真实存在，审批/审计/任务目录
+    # 解析在测试宿主里回落"不传 conn 的分支"（fail-open 只影响留痕，不影响权限）。
+    registry.register(
+        make_run_tool(settings=effective_settings, conn=fs_conn),
+        idempotent=False,
+    )
 
     # Explicit per-domain wiring: what each domain needs to construct its tools, visible here.
     factories = {

@@ -63,6 +63,9 @@ RUNTIME_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("agent_default_mode", "AGENT_DEFAULT_MODE", "str", ("chat", "agent")),
     # 角色主动开口全局总闸：「运行环境」页保存即热生效（调度每 tick 读当前值）。
     FieldSpec("reachout_enabled", "REACHOUT_ENABLED", "bool"),
+    # 命令执行（架构计划 C·§6.2）：总闸 + 审批档都允许在线热切（工具每调用读 settings）。
+    FieldSpec("run_tools_enabled", "RUN_TOOLS_ENABLED", "bool"),
+    FieldSpec("run_approval", "RUN_APPROVAL", "str", ("manual", "auto")),
 )
 
 _FIELDS_BY_NAME = {f.field: f for f in RUNTIME_FIELDS}

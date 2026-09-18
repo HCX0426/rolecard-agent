@@ -20,6 +20,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.config import Settings
+from rolecard_agent.core.approvals import ApprovalService
 from rolecard_agent.core.domain_service import DomainQueryService
 from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.core.model_settings import ModelSettingsService
@@ -199,6 +200,8 @@ class AppContext:
     knowledge: KnowledgeBase
     registry: ToolRegistry
     tracer: Tracer
+    # 命令执行审批（架构计划 C·§6.2）：run_command 提交的命令由这个服务管审批状态。
+    approvals: ApprovalService
 
     # 图句柄：设置页保存后整体热重建，所以是可变容器而不是直接持有 graph 对象。
     app_state: dict[str, Any] = field(default_factory=dict)

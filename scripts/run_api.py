@@ -128,11 +128,22 @@ def main() -> None:
             reload_dirs=[str(Path(__file__).resolve().parents[1] / "src")],
         )
         _shutdown_chat_pool()
+        _shutdown_approval_executor()
         return
     uvicorn.run("rolecard_agent.api.main:create_app", factory=True, host=host, port=port)
     # 走到这里 = 服务已退出（Ctrl+C / 收到停止信号）。`_CHAT_POOL` 是**进程级**资源，
     # 不能在某个 app 的 lifespan 里关（同进程里可能还有别的 app 实例，测试就是这样
     # 互相干扰的）—— 真实的进程退出路径才是关它的地方（审查报告 P2：客户端生命周期）。
+    _shutdown_chat_pool()
+    _shutdown_approval_executor()
+
+
+def _shutdown_approval_executor() -> None:
+    """释放命令审批的后台执行池（core/tools/run.py，进程级资源）。"""
+    with contextlib.suppress(Exception):
+        from rolecard_agent.core.tools.run import shutdown_approval_executor
+
+        shutdown_approval_executor()
 
 
 def _shutdown_chat_pool() -> None:

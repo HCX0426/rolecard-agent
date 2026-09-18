@@ -49,6 +49,7 @@ from rolecard_agent.api.auth import (
 from rolecard_agent.api.deps import (
     AppContext,
 )
+from rolecard_agent.api.routers import approvals as approvals_router
 from rolecard_agent.api.routers import console as console_router
 from rolecard_agent.api.routers import domains as domains_router
 from rolecard_agent.api.routers import reachouts as reachouts_router
@@ -60,6 +61,7 @@ from rolecard_agent.api.routers import settings as settings_router
 from rolecard_agent.api.routers import workspace as workspace_router
 from rolecard_agent.config import Settings
 from rolecard_agent.core import runtime_settings
+from rolecard_agent.core.approvals import ApprovalService
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.graph import build_kernel, build_model
 from rolecard_agent.core.ingestion import IngestionService
@@ -335,6 +337,7 @@ def create_app(
         knowledge=knowledge,
         registry=registry,
         tracer=resolved_tracer,
+        approvals=ApprovalService(conn),
         app_state=app_state,
         rebuild_runtime=lambda: None,
     )
@@ -350,6 +353,7 @@ def create_app(
     app.include_router(domains_router.router)
     app.include_router(workspace_router.router)
     app.include_router(reachouts_router.router)
+    app.include_router(approvals_router.router)
 
     def rebuild_runtime() -> None:
         """按当前设置与服务端点引用重建全部运行时对象：模型、KnowledgeBase、registry、图。

@@ -281,6 +281,12 @@ def runtime_payload(
         ("reachout_interval_minutes", "REACHOUT_INTERVAL_MINUTES", "开口间隔（分钟）",
          "同一角色两次主动开口的最小间隔（防刷屏；低频项改它需重启）"),
     ])
+    add("run", "命令执行", [
+        ("run_tools_enabled", "RUN_TOOLS_ENABLED", "命令执行总闸",
+         "关掉 = run_command 一律返回关闭说明（1=开，0=关）"),
+        ("run_approval", "RUN_APPROVAL", "审批模式",
+         "manual=命令要人批准才跑（推荐）；auto=无审批直接跑（仅自研/可信目录用）"),
+    ])
     add("auth", "访问控制", [
         ("auth_mode", "AUTH_MODE", "认证模式", "off / auto / on"),
         ("auth_credentials", "AUTH_CREDENTIALS", "Basic 凭据", None),

@@ -152,6 +152,15 @@ class Settings(BaseModel):
     # 角色"读写电脑文件"只允许发生在这个目录里 —— 与上传目录同一套 rigor（H1）。
     workspace_dir: Path = Path("./data/workspace")
 
+    # v2.6 命令执行（架构计划 C·§6.2，core/tools/run.py 的 run_command）：
+    # - run_tools_enabled：**总闸**。False = run_command 一律返回可读的关闭说明
+    #   （注册不受影响，白名单引用的工具必须真实存在 —— 与 web_search 同一哲学）。
+    # - run_approval：manual（默认）—— 模型提议的命令先进审批队列，人批准后才在后台
+    #   执行一次（状态机见 core/approvals.py）；auto = 绿色通道，无审批直接执行
+    #   （仅自研/可信任务目录用）。两条都可经「运行环境」页热切。
+    run_tools_enabled: bool = True
+    run_approval: str = "manual"
+
     # v2.4 联网工具（core/tools/web.py）：
     # - web_search_backend：auto（默认，有 TAVILY_API_KEY 走云端 tavily，否则本地 ddgs）/
     #   tavily / ddgs / off（off 时 web_search 返回可读的未配置说明，不报 500）。
@@ -293,6 +302,8 @@ class Settings(BaseModel):
             ("MODEL_DEFAULT", "model_default"),
             ("MODEL_TIMEOUT_SECONDS", "model_timeout_seconds"),
             ("WORKSPACE_DIR", "workspace_dir"),
+            ("RUN_TOOLS_ENABLED", "run_tools_enabled"),
+            ("RUN_APPROVAL", "run_approval"),
             ("WEB_SEARCH_BACKEND", "web_search_backend"),
             ("WEB_SEARCH_ENABLED", "web_search_enabled"),
             ("WEB_ALLOWED_DOMAINS", "web_allowed_domains"),

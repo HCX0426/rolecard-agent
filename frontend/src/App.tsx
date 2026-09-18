@@ -1,5 +1,6 @@
 import { Component, Suspense, lazy, useEffect, useState, type ReactNode } from "react";
 import ReachoutPanel from "./components/ReachoutPanel";
+import ApprovalPanel from "./components/ApprovalPanel";
 import { api } from "./api";
 import { useTheme } from "./components/useTheme";
 
@@ -136,6 +137,10 @@ export default function App() {
   // 页面开着时新开口 10 秒内上角标；页面关着 = 回来看到堆积（web 无常驻推送，如实降级）。
   const [reachoutOpen, setReachoutOpen] = useState(false);
   const [reachoutUnread, setReachoutUnread] = useState(0);
+  // 命令执行审批（架构计划 C·§6.2）：待批红点 + 审批抽屉。与主动消息同一套静默轮询
+  // （10s）：模型提交审批后 10 秒内红点出现 —— 后端无推送，只能如实降级为轮询。
+  const [approvalOpen, setApprovalOpen] = useState(false);
+  const [approvalPending, setApprovalPending] = useState(0);
 
   useEffect(() => {
     if (reachoutOpen) return; // 抽屉开着时不打扰轮询，抽屉自己会刷新
@@ -155,6 +160,25 @@ export default function App() {
       clearInterval(timer);
     };
   }, [reachoutOpen]);
+
+  useEffect(() => {
+    if (approvalOpen) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const p = await api.getApprovals("pending");
+        if (!cancelled) setApprovalPending(p.pending);
+      } catch {
+        /* 静默 */
+      }
+    };
+    poll();
+    const timer = setInterval(poll, 10_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [approvalOpen]);
 
   // tab → URL hash（支持深链 /#/data 等）
   useEffect(() => {
@@ -225,6 +249,19 @@ export default function App() {
           ))}
         </div>
         <div className="mt-auto border-t border-slate-100 px-2 py-2 dark:border-slate-700">
+          <button
+            onClick={() => setApprovalOpen(true)}
+            className="relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700/60"
+            title="命令执行审批（run_command 待批命令）"
+          >
+            <span className="shrink-0 opacity-80">⚙️</span>
+            命令审批
+            {approvalPending > 0 && (
+              <span className="ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-full bg-amber-500 px-1.5 text-[10px] font-medium text-white">
+                {approvalPending}
+              </span>
+            )}
+          </button>
           <button
             onClick={() => setReachoutOpen(true)}
             className="relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700/60"
@@ -307,6 +344,12 @@ export default function App() {
         open={reachoutOpen}
         onClose={() => setReachoutOpen(false)}
         onUnreadChange={setReachoutUnread}
+      />
+      {/* 命令执行审批抽屉（全局；面板内操作会回传 pending 数，保持与侧栏红点同步） */}
+      <ApprovalPanel
+        open={approvalOpen}
+        onClose={() => setApprovalOpen(false)}
+        onPendingChange={setApprovalPending}
       />
     </div>
   );

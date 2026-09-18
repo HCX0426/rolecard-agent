@@ -372,6 +372,37 @@ export interface ReachoutsPage {
   unread: number;
 }
 
+// ---- 命令执行审批（架构计划 C·§6.2） ----------------------------------------------------
+// 与 core/approvals.py 的 `_row`、api/routers/approvals.py 的响应一一对应。
+
+export type ApprovalStatus = "pending" | "approved" | "rejected" | "done";
+
+export interface ApprovalResult {
+  exit_code: number | null;
+  output: string;
+  duration_ms: number;
+  output_bytes: number;
+}
+
+export interface ApprovalRow {
+  id: number;
+  command: string;
+  cwd: string | null;
+  role_id: string | null;
+  role_name: string | null;
+  thread_id: string | null;
+  status: ApprovalStatus;
+  result: ApprovalResult | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApprovalsPage {
+  items: ApprovalRow[];
+  /** 待批（pending）条数：侧栏红点计数用，不是"未读"，所以不叫 unread。 */
+  pending: number;
+}
+
 export const api = {
   get: <T>(url: string) => request<T>("GET", url),
   post: <T>(url: string, body?: unknown) => request<T>("POST", url, body),
@@ -422,6 +453,14 @@ export const api = {
   /** 角色主动开口（收件箱）：列表（含未读计数）与标记已读（静音，无提示音）。 */
   getReachouts: () => request<ReachoutsPage>("GET", "/api/reachouts"),
   markReachoutRead: (id: number) => request<ReachoutsPage>("POST", `/api/reachouts/${id}/read`),
+  /** 命令执行审批（架构计划 C·§6.2）：列表（含 pending 计数）与批准/拒绝。 */
+  getApprovals: (status?: string) =>
+    request<ApprovalsPage>(
+      "GET",
+      `/api/approvals${status ? `?status=${encodeURIComponent(status)}` : ""}`,
+    ),
+  decideApproval: (id: number, decision: "approve" | "reject") =>
+    request<ApprovalRow>("POST", `/api/approvals/${id}/decide`, { decision }),
 };
 
 // ---- SSE 对话流 ----------------------------------------------------------------

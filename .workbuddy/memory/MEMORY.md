@@ -26,11 +26,11 @@
 export PATH="/c/Users/hcx/.workbuddy/binaries/PortableGit/versions/1.2.0/usr/bin:$PATH"
 cd /c/Users/hcx/Desktop/rolecard-agent
 ./.venv/Scripts/python.exe -m ruff check .            # 零告警
-./.venv/Scripts/python.exe -m mypy                    # 50 文件零问题
+./.venv/Scripts/python.exe -m mypy                    # 66+ 文件零问题
 ./.venv/Scripts/python.exe -m pytest -p no:cacheprovider -W ignore \
     --cov=rolecard_agent --cov-fail-under=85          # 覆盖率门槛是真在拦人
 ./.venv/Scripts/python.exe scripts/check_consistency.py
-./.venv/Scripts/python.exe scripts/smoke_check.py     # 12/12
+./.venv/Scripts/python.exe scripts/smoke_check.py     # 14/14
 cd frontend && npm test && npm run build
 ```
 
@@ -53,6 +53,9 @@ cd frontend && npm test && npm run build
 - `ModelSettingsService.save()` 的回退链语义：**显式给链 = 严格校验（手滑大声拒绝）；
   缺省 = 保留当前值但修剪为存活后端子集**（与运行时 `resolve_fallbacks` 丢弃未知名对齐）。
   改这两处任何一边都要同步另一边的语义假设。
+- **run_command 命令审批（v2.6）**：批准是**一次性**的 —— 某命令一旦跑过（done），
+  工具再调用同一命令只回放历史结果，不重复执行。"批准一次跑 N 遍"被结构性禁止。
+  拒绝（rejected）是终态，不会自动重提。审批/执行分别写 operator / agent 审计。
 - 破坏性管理动作三件套：**先只读盘点 → 前端二次确认 → 写审计**
   （`reset_knowledge_scope`、`cleanup_orphan_uploads` 都是这个形状）。
 - 每一层都要"失败时说人话"：`ParseError` / `ExtractError` / `HealthInvalidReport` 等

@@ -212,3 +212,32 @@ CREATE TABLE IF NOT EXISTS service_endpoint (
 
 CREATE INDEX IF NOT EXISTS idx_service_endpoint_cat ON service_endpoint(category, sort_order);
 
+-- ===========================================================================
+-- 命令执行审批（架构计划 C·§6.2 run_command）。命令要"跑在授权目录里"这件事本身
+-- 就是高危动作，所以模型提交的命令**默认要人批准**才执行：
+--
+--   状态机（v1）：pending → approved（后台执行中）→ done（result_json 已回填）
+--                     ↘ rejected（终态：拒了不再自动重提）
+--   批准判定（幂等复用）：同 command（规范化后）最近一条记录 ∈ {approved, done}
+--   → 工具视为已获准（不再要求重复提交审批）；pending 表示"还在等"。
+--
+-- 区别于 agent_reachout：这里存的是**执行意图 + 结果**，不是给用户看的内容；
+-- 命令、目录、退出码、耗时落 audit_log，输出只截断进 result_json（不上审计表）。
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS command_approval (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    command      TEXT NOT NULL,
+    cwd          TEXT,
+    role_id      TEXT,                     -- 提交审批的角色（角色被删后仍可读冗余名）
+    role_name    TEXT,
+    thread_id    TEXT,
+    status       TEXT NOT NULL DEFAULT 'pending'
+                 CHECK (status IN ('pending', 'approved', 'rejected', 'done')),
+    result_json  TEXT,                     -- done 后：{exit_code, stdout, stderr, duration_ms, output_bytes}
+    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_command_approval_status ON command_approval(status, id DESC);
+
