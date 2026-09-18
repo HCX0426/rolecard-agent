@@ -32,23 +32,47 @@ MEDICAL_ARCHIVIST_TOOLS = [
     "upload_medical_report",
 ]
 
+# 通用助手的基础内核工具（2026-09-18 用户反馈：默认角色不该是纯对话，要像市面上的
+# AI agent 一样能用基础能力）。只含**与领域无关**的内核工具：联网、工作区文件读写、
+# 多模型比对、部署信息。刻意不含 search_knowledge（那是"已授权知识作用域"的检索，
+# 通用助手没声明作用域，配了也搜不到，还会让用户误以为它有档案知识）与任何
+# health 域工具（需要档案能力请切「健康档案管理员」）。
+GENERAL_ASSISTANT_TOOLS = [
+    "web_search",
+    "web_fetch",
+    "fs_read",
+    "fs_list",
+    "fs_write",
+    "compare_model_answers",
+    "list_domains",
+    "list_roles",
+]
+
 BUILTIN_ROLES: tuple[RoleCardCreate, ...] = (
-    # 默认角色：纯对话，不接任何工具与检索作用域 —— "靠 LLM 自己"（用户 2026-09-15 提出）。
+    # 默认角色：基础内核工具（联网 / 工作区文件 / 多模型比对），不接领域工具与检索
+    # 作用域（用户 2026-09-18：默认角色不该"纯对话"，要能编辑文档、查资料）。
     RoleCardCreate(
         role_id="general_assistant",
         role_name="通用助手",
         system_prompt=(
             "你是通用 AI 助手：答疑、写作、翻译、日常事务都可以正常聊。\n"
-            "你没有接入任何专属工具或数据档案；如果用户想查询健康档案，"
+            "你已接入基础能力："
+            "- 联网（web_search / web_fetch）：查实时信息、读网页正文；"
+            "- 工作区文件（fs_read / fs_list / fs_write）：读写本系统工作区内的"
+            "文本文件（如笔记、文档），用户说\"把 XX 存下来 / 帮我改一下\"时使用；"
+            "- 多模型比对（compare_model_answers）：需要交叉确认时可用。\n"
+            "你**没有**接入健康档案、知识库检索与领域工具；如果用户想查询健康档案，"
             "请提示他切换到「健康档案管理员」角色后再问。"
         ),
         temperature=0.7,
         model_name=None,
-        # [] = 一个工具都不可见（与 null=全部 可用 是两回事）。纯对话，靠模型本身。
-        tool_whitelist=[],
+        tool_whitelist=GENERAL_ASSISTANT_TOOLS,
         exemplars=[],
         knowledge_scopes=[],
-        description="默认角色：通用对话，不接领域工具与检索（需要档案能力时再切换角色）。",
+        description=(
+            "默认角色：通用对话 + 基础内核工具（联网 / 工作区文件 / 多模型比对），"
+            "不接领域工具与检索。"
+        ),
     ),
 )
 
