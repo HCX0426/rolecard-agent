@@ -28,7 +28,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     # 默认后端指向一个必然拒绝连接的端口：深度检测的断言因此与宿主机是否跑着 Ollama 无关。
     monkeypatch.setenv(
         "MODEL_BACKENDS",
-        '{"local": {"model": "qwen2.5:7b", "provider": "ollama",'
+        '{"local": {"model": "qwen3-vl:8b", "provider": "ollama",'
         ' "base_url": "http://127.0.0.1:9"}}',
     )
     monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
@@ -92,7 +92,7 @@ def test_add_then_remove_a_reference_never_touches_the_model_page(client: TestCl
         json={
             "default": "local",
             "backends": [
-                {"name": "local", "provider": "ollama", "model": "qwen2.5:7b", "api_key": "x"},
+                {"name": "local", "provider": "ollama", "model": "qwen3-vl:8b", "api_key": "x"},
                 {
                     "name": "embed_c",
                     "provider": "siliconflow",
@@ -144,7 +144,7 @@ def test_disable_then_reenable_when_another_candidate_exists(client: TestClient)
         json={
             "default": "local",
             "backends": [
-                {"name": "local", "provider": "ollama", "model": "qwen2.5:7b", "api_key": "x"},
+                {"name": "local", "provider": "ollama", "model": "qwen3-vl:8b", "api_key": "x"},
                 {
                     "name": "r1",
                     "provider": "siliconflow",
@@ -217,7 +217,7 @@ def test_reference_to_a_deleted_backend_shows_up_as_stale(client: TestClient) ->
         json={
             "default": "local",
             "backends": [
-                {"name": "local", "provider": "ollama", "model": "qwen2.5:7b", "api_key": "x"},
+                {"name": "local", "provider": "ollama", "model": "qwen3-vl:8b", "api_key": "x"},
                 {
                     "name": "gone",
                     "provider": "siliconflow",
@@ -234,7 +234,7 @@ def test_reference_to_a_deleted_backend_shows_up_as_stale(client: TestClient) ->
         json={
             "default": "local",
             "backends": [
-                {"name": "local", "provider": "ollama", "model": "qwen2.5:7b", "api_key": "x"}
+                {"name": "local", "provider": "ollama", "model": "qwen3-vl:8b", "api_key": "x"}
             ],
         },
     )
@@ -267,7 +267,7 @@ def test_reorder_changes_which_endpoint_is_effective(client: TestClient) -> None
         json={
             "default": "local",
             "backends": [
-                {"name": "local", "provider": "ollama", "model": "qwen2.5:7b", "api_key": "x"},
+                {"name": "local", "provider": "ollama", "model": "qwen3-vl:8b", "api_key": "x"},
                 {"name": "r2", "provider": "siliconflow", "model": "m", "api_key": "sk-b"},
             ],
         },

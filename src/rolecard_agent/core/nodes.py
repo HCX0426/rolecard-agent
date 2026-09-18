@@ -19,6 +19,7 @@ allowed to see "that failed", but never a stack trace.
 from __future__ import annotations
 
 import contextvars
+import json
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
@@ -41,6 +42,16 @@ from rolecard_agent.roles.service import RoleCardService, RoleNotFound
 TOOL_OFFLINE = "该能力当前未启用，无法调用。"
 TOOL_DENIED = "当前角色没有调用该工具的权限。"
 TOOL_FAILED = "工具执行失败，请稍后重试或换一种问法。"
+
+# 工具循环熔断（审查报告 P0-1 的配套）：同一个工具（同参数）连续重试到上限就判定为
+# 循环，回一句"请直接回答"让模型停下。实测 8B 模型在「插件停用」用例里会幻觉式地
+# 反复调用同一个被拒工具，每次约 12s，一直转到步数上限（300 秒白转，评测 authz-001）。
+# 熔断不是修模型，是给**一轮对话**一个可预期的上界。
+MAX_REPEATED_TOOL_CALLS = 3
+TOOL_LOOP_BREAK = (
+    f"检测到循环：同一个工具（同参数）已连续调用 {MAX_REPEATED_TOOL_CALLS} 次。"
+    "不要再调用任何工具 —— 直接回答用户，说明当前做不到这件事与原因。"
+)
 
 # 工具执行的**总时长**上限（审查报告 M10）。工具各自的内部超时（OCR 子进程 120s、
 # 云端 HTTP 30s、模型 120s）管的是"这一次网络调用"，管不了"这个工具整体跑多久"
@@ -403,6 +414,29 @@ def call_model(
     }
 
 
+def _consecutive_same_calls(messages: list[Any], call: dict[str, Any]) -> int:
+    """最近（含本次）连续多少次要求调用「同一个工具 + 同一份参数」。
+
+    只沿**最近的连续工具循环**回溯：AI(带该调用) → Tool(结果) → AI(带该调用) → …。
+    遇到不带该调用的 AI 消息、或用户消息就停 —— 那之后属于新的用户意图，不该算循环。
+    """
+    key = (call.get("name", ""), json.dumps(call.get("args") or {}, sort_keys=True, default=str))
+    count = 1
+    for message in reversed(messages[:-1]):
+        if isinstance(message, ToolMessage):
+            continue  # 工具结果行：循环的"间隔"，跳过继续往回数
+        tool_calls = getattr(message, "tool_calls", None) or []
+        keys = {
+            (c.get("name", ""), json.dumps(c.get("args") or {}, sort_keys=True, default=str))
+            for c in tool_calls
+        }
+        if key in keys:
+            count += 1
+            continue
+        break  # 出现了别的意图（用户消息 / 不带该调用的 AI 轮）→ 停止回溯
+    return count
+
+
 def execute_tools(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
     """Run the tool calls the model asked for, one ToolMessage per call.
 
@@ -411,6 +445,8 @@ def execute_tools(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
       * the tool exists but the role lost access -> denied (defence in depth, D1)
       * the tool raised                          -> failed, with the stack sent to the tracer
         only
+
+    还有一种情况排在**最前面**：模型陷入循环、反复要求同一个工具 —— 见 `MAX_REPEATED_TOOL_CALLS`。
     """
     messages = state.get("messages") or []
     # 空消息态不该 IndexError：这里的目的是"把模型要求的工具跑掉"，没有消息就是没有请求。
@@ -446,6 +482,27 @@ def execute_tools(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
         name = call.get("name", "")
         call_id = call.get("id", "")
         args = call.get("args") or {}
+
+        # 循环熔断放在**所有分支之前**：离线 / 被拒 / 正常工具都可能被模型反复调用，
+        # 而循环与否与工具是否可用无关。触发时不执行工具，回一句"请直接回答"。
+        if _consecutive_same_calls(messages, call) >= MAX_REPEATED_TOOL_CALLS:
+            results.append(
+                ToolMessage(
+                    content=TOOL_LOOP_BREAK,
+                    tool_call_id=call_id,
+                    name=name,
+                    additional_kwargs={"created_at": now_ts()},
+                )
+            )
+            ctx.tracer.emit(
+                TraceEvent(
+                    event="tool_loop_break",
+                    tool=name,
+                    thread_id=state.get("thread_id"),
+                    detail={"threshold": MAX_REPEATED_TOOL_CALLS},
+                )
+            )
+            continue
 
         if name not in known or name not in stage_one:
             # Either the tool never existed, or its plugin has since been switched off: a

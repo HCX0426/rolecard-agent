@@ -22,6 +22,7 @@ from rolecard_agent.config import Settings
 from rolecard_agent.core.nodes import (
     MAX_TOOL_RETRIES,
     TOOL_FAILED,
+    TOOL_LOOP_BREAK,
     KernelContext,
     call_model,
     execute_tools,
@@ -187,6 +188,95 @@ def test_retry_is_bounded(roles: RoleCardService, wide_role: str) -> None:
     assert calls[0] == MAX_TOOL_RETRIES + 1
     assert out["messages"][0].content == TOOL_FAILED
     assert out["retry_count"] == MAX_TOOL_RETRIES
+
+
+# -- 工具循环熔断（审查报告 P0-1 的配套 / 评测 authz-001 暴露） -----------------------
+
+
+def _history_with_repeated_calls(times: int, *, human_last: bool = False) -> list[Any]:
+    """构造「同一工具同参数连续调用 times 次」的历史，可选在末尾再补一句用户消息。"""
+    history: list[Any] = [HumanMessage(content="问")]
+    for i in range(times):
+        history.append(
+            AIMessage(content="", tool_calls=[{"name": "flaky", "args": {}, "id": f"c{i}"}])
+        )
+        history.append(ToolMessage(content="x", tool_call_id=f"c{i}", name="flaky"))
+    if human_last:
+        history.append(HumanMessage(content="再查一次"))
+    history.append(AIMessage(content="", tool_calls=[{"name": "flaky", "args": {}, "id": "c9"}]))
+    return history
+
+
+def test_repeated_identical_calls_break_the_loop(roles: RoleCardService, wide_role: str) -> None:
+    """同一个工具（同参数）连续调用到上限 → 不再执行，回「请直接回答」。
+
+    实测 8B 模型在「插件停用」用例里会幻觉式地反复调用同一个被拒工具，每次约 12s，
+    一直转到步数上限（300 秒白转，评测 authz-001 三遍全挂在这里）。熔断让一轮对话
+    有可预期的上界，而不是指望模型自己醒。
+    """
+    flaky, calls = _flaky_tool(fail_times=0)
+    reg = ToolRegistry()
+    reg.register(flaky)
+
+    # 历史里已有 2 次完全相同的调用；本次（最后一条 AI）是第 3 次 → 触发熔断
+    out = execute_tools(
+        {
+            "messages": _history_with_repeated_calls(2),
+            "current_role_id": wide_role,
+            "enabled_domains": [],
+            "thread_id": "t1",
+        },
+        _ctx(reg, roles),
+    )
+
+    assert calls[0] == 0, "熔断后不应再执行工具"
+    assert out["messages"][0].content == TOOL_LOOP_BREAK
+    assert "不要再调用任何工具" in out["messages"][0].content
+
+
+def test_two_identical_calls_still_execute(roles: RoleCardService, wide_role: str) -> None:
+    """上限是 3：历史里 1 次相同调用 + 本次第 2 次 → 照常执行（不误伤正常调用）。"""
+    flaky, calls = _flaky_tool(fail_times=0)
+    reg = ToolRegistry()
+    reg.register(flaky)
+
+    out = execute_tools(
+        {
+            "messages": _history_with_repeated_calls(1),
+            "current_role_id": wide_role,
+            "enabled_domains": [],
+            "thread_id": "t1",
+        },
+        _ctx(reg, roles),
+    )
+
+    assert calls[0] == 1
+    assert out["messages"][0].content == "ok"
+
+
+def test_new_user_intent_resets_the_loop_counter(
+    roles: RoleCardService, wide_role: str
+) -> None:
+    """用户再问一句 = 新意图：即使参数与之前完全相同，也从零开始计数。
+
+    这是熔断"沿最近的连续工具循环回溯"这条规则的另一半：回溯遇到用户消息就停。
+    """
+    flaky, calls = _flaky_tool(fail_times=0)
+    reg = ToolRegistry()
+    reg.register(flaky)
+
+    out = execute_tools(
+        {
+            "messages": _history_with_repeated_calls(3, human_last=True),
+            "current_role_id": wide_role,
+            "enabled_domains": [],
+            "thread_id": "t1",
+        },
+        _ctx(reg, roles),
+    )
+
+    assert calls[0] == 1
+    assert out["messages"][0].content == "ok"
 
 
 def test_non_idempotent_tool_is_never_retried(roles: RoleCardService, wide_role: str) -> None:
