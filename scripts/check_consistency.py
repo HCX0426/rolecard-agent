@@ -181,6 +181,7 @@ def check_config_contract() -> None:
         "RAG_[A-Z_]+",
         "EXTRACT_[A-Z_]+",
         "LANGSMITH_[A-Z_]+",
+        "MEMORY_[A-Z_]+",
     )
     pattern = r"\b(" + "|".join(prefixes) + r"|SQLITE_PATH|CHROMA_PATH|UPLOAD_DIR)\b"
     cfg_keys = set(re.findall(pattern, cfg_text))

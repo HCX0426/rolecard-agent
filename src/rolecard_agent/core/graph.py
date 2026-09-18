@@ -67,6 +67,7 @@ def build_kernel(
     checkpointer: BaseCheckpointSaver | None = None,
     plugins: PluginService | None = None,
     model_resolver: Callable[..., ChatLike] | None = None,
+    memory_provider: Callable[[], str] | None = None,
 ) -> Any:
     """Compile the kernel graph.
 
@@ -80,6 +81,9 @@ def build_kernel(
 
     `model_resolver` 是角色级路由（US-8 后半）的挂点：给定 `role_card.model_name`（后端名或
     None）返回该轮要用的模型。由宿主提供缓存与降级；不传 = 全部走默认模型。
+
+    `memory_provider` 是跨会话记忆的读取器（每次调用实时取），由宿主注入连接；缺省
+    fail-closed（无记忆）。
     """
     ctx = KernelContext(
         model=model,
@@ -93,6 +97,8 @@ def build_kernel(
         ctx.enabled_domains = plugins.enabled_domains
         ctx.tool_epoch = plugins.tool_epoch
     ctx.model_resolver = model_resolver
+    if memory_provider is not None:
+        ctx.memory_provider = memory_provider
     # 历史预算与工具超时随宿主配置走（审查报告 H3 / M10）：内核不再无条件把全量历史塞进
     # prompt，也不再把工具执行交给"无限等待"。
     ctx.max_context_chars = ctx.settings.context_max_chars

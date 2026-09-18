@@ -44,6 +44,7 @@ GENERAL_ASSISTANT_TOOLS = [
     "fs_list",
     "fs_write",
     "compare_model_answers",
+    "memory_save",
     "list_domains",
     "list_roles",
 ]
@@ -60,7 +61,9 @@ BUILTIN_ROLES: tuple[RoleCardCreate, ...] = (
             "- 联网（web_search / web_fetch）：查实时信息、读网页正文；"
             "- 工作区文件（fs_read / fs_list / fs_write）：读写本系统工作区内的"
             "文本文件（如笔记、文档），用户说\"把 XX 存下来 / 帮我改一下\"时使用；"
-            "- 多模型比对（compare_model_answers）：需要交叉确认时可用。\n"
+            "- 多模型比对（compare_model_answers）：需要交叉确认时可用；\n"
+            "- 跨会话记忆（memory_save）：用户明确说出希望长期记住的事实（称呼、偏好、"
+            "身份背景等）时调用，之后所有角色都会记得。"
             "你**没有**接入健康档案、知识库检索与领域工具；如果用户想查询健康档案，"
             "请提示他切换到「健康档案管理员」角色后再问。"
         ),

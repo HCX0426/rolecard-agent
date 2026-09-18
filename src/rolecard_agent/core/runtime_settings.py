@@ -57,6 +57,8 @@ RUNTIME_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("model_timeout_seconds", "MODEL_TIMEOUT_SECONDS", "float"),
     FieldSpec("tool_timeout_seconds", "TOOL_TIMEOUT_SECONDS", "float"),
     FieldSpec("context_max_chars", "CONTEXT_MAX_CHARS", "int"),
+    # 跨会话记忆总开关：「设置→通用」记忆面板的开关走这里保存（保存即热重建生效）。
+    FieldSpec("memory_enabled", "MEMORY_ENABLED", "bool"),
 )
 
 _FIELDS_BY_NAME = {f.field: f for f in RUNTIME_FIELDS}
@@ -105,7 +107,7 @@ def load_overrides(conn: SqlConnection) -> dict[str, Any]:
     ).fetchall()
     out: dict[str, Any] = {}
     for row in rows:
-        field = str(row["key"])[len(_PREFIX):]
+        field = str(row["key"])[len(_PREFIX) :]
         spec = _FIELDS_BY_NAME.get(field)
         if spec is None:
             continue  # 未知覆盖（字段已下线）：忽略而不是炸启动

@@ -455,6 +455,39 @@ def test_call_model_uses_default_when_role_has_no_backend(roles: RoleCardService
     assert out["messages"][0].content == "default"
 
 
+def test_call_model_injects_memory_when_enabled(roles: RoleCardService) -> None:
+    """记忆开启 + 有文本 → 进 system prompt（角色之后、安全规则之前）。"""
+    rid = _role(roles)
+    reg = ToolRegistry()
+    reg.register(kernel_tool)
+    model = FakeModel(AIMessage(content="hi"))
+    ctx = _ctx(reg, roles, model)
+    ctx.memory_provider = lambda: "用户住在上海。"
+    call_model(
+        {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"},
+        ctx,
+    )
+    system = model.last_prompt[0].content
+    assert system.index("用户住在上海。") < system.index("禁止输出任何疾病诊断")
+    assert "用户长期记忆" in system
+
+
+def test_call_model_skips_memory_when_disabled(roles: RoleCardService) -> None:
+    """总开关 MEMORY_ENABLED=false → 提供者照常返回也不注入（双保险的第二道门）。"""
+    rid = _role(roles)
+    reg = ToolRegistry()
+    reg.register(kernel_tool)
+    model = FakeModel(AIMessage(content="hi"))
+    ctx = _ctx(reg, roles, model)
+    ctx.settings = Settings(memory_enabled=False)
+    ctx.memory_provider = lambda: "用户住在上海。"
+    call_model(
+        {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"},
+        ctx,
+    )
+    assert "用户长期记忆" not in model.last_prompt[0].content
+
+
 def test_call_model_writes_live_enabled_domains_and_epoch(roles: RoleCardService) -> None:
     """The enabled set and epoch are read live (callable), not from graph-build time."""
     rid = _role(roles)

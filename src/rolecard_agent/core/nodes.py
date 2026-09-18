@@ -190,6 +190,16 @@ class ChatLike(Protocol):
     def invoke(self, input: Any, **kwargs: Any) -> Any: ...
 
 
+def _no_memory() -> str:
+    """Default memory provider: no memory.
+
+    Fails closed on purpose. A context built without a provider injects no memory, rather
+    than silently reading from some ambient store that nobody wired in (tests, or a graph
+    built before memory existed).
+    """
+    return ""
+
+
 def _no_domains() -> Sequence[str]:
     """Default provider: nothing enabled.
 
@@ -239,6 +249,11 @@ class KernelContext:
 
     # 单次工具执行的总时长上限（秒），见 `_invoke_tool`。<=0 = 不设上限。
     tool_timeout_seconds: float = DEFAULT_TOOL_TIMEOUT_SECONDS
+
+    # 跨会话记忆的读取器，每次调用实时取（用户可能在设置面板里改 / 清空记忆）。
+    # 返回要注入 system prompt 的记忆文本；"" = 本轮无记忆。总开关在 call_model 里
+    # 用 ctx.settings.memory_enabled 把关（双保险：这里 fail-closed，门再闭一次）。
+    memory_provider: Callable[[], str] = _no_memory
 
 
 def turn_context(state: dict[str, Any], ctx: KernelContext) -> tuple[list[Any], list[str]]:
@@ -344,8 +359,11 @@ def call_model(
         )
 
     # System prompt is built here, never stored: see the module docstring. Order inside is
-    # role -> exemplars -> global safety rules, so the rules remain last and authoritative.
-    system = build_system_prompt(role.system_prompt, role.exemplars)
+    # role -> memory -> exemplars -> global safety rules, so the rules remain last and
+    # authoritative. Memory only enters when the master switch is on (MEMORY_ENABLED);
+    # the provider itself is fail-closed (returns "" by default).
+    memory_text = ctx.memory_provider() if ctx.settings.memory_enabled else ""
+    system = build_system_prompt(role.system_prompt, role.exemplars, memory=memory_text)
     # 历史按字符预算裁剪（H3）。裁剪只影响"送给模型的内容"，checkpoint 里的完整历史不动 ——
     # 界面回放、审计、下次裁剪都仍然看得到全量对话。
     history, dropped = trim_history(state["messages"], ctx.max_context_chars)

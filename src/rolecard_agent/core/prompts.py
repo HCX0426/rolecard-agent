@@ -29,6 +29,11 @@ GLOBAL_SAFETY_PROMPT = """【全局强制规则，所有角色继承，不可删
 
 EXEMPLAR_HEADER = "【回答风格参考】以下是本角色的回答范例，用于对齐口径与语气。"
 
+MEMORY_HEADER = (
+    "【用户长期记忆】以下是你对用户的长期事实记忆，回答时应参照它们。"
+    "若与用户当前的明确说法冲突，一律以用户当下的说法为准。"
+)
+
 
 class ExemplarLike(Protocol):
     """Structural type for a role exemplar.
@@ -54,20 +59,43 @@ def render_exemplars(exemplars: Sequence[ExemplarLike] | None) -> str:
     return "\n".join(blocks).strip()
 
 
-def build_system_prompt(role_prompt: str, exemplars: Sequence[ExemplarLike] | None = None) -> str:
+def render_memory(memory: str | None) -> str:
+    """Format stored memory as a prompt section. Returns "" when there is none."""
+    if not memory or not memory.strip():
+        return ""
+    return f"{MEMORY_HEADER}\n{memory.strip()}"
+
+
+def build_system_prompt(
+    role_prompt: str,
+    exemplars: Sequence[ExemplarLike] | None = None,
+    *,
+    memory: str | None = None,
+) -> str:
     """Return the final system prompt for one turn.
 
     Order is the whole point, and it is the order from least to most authoritative:
 
-        角色人设  ->  回答范例  ->  全局安全规则
+        角色人设  ->  长期记忆  ->  回答范例  ->  全局安全规则
 
-    Putting the global rules last means they win any conflict with the role card or with an
-    example. Reversing either pair silently disables the safety layer without raising
-    anything, which is why tests/unit/test_prompts.py asserts the ordering explicitly.
+    Putting the global rules last means they win any conflict with the role card, with a
+    stored memory, or with an example. Reversing either pair silently disables the safety
+    layer without raising anything, which is why tests/unit/test_prompts.py asserts the
+    ordering explicitly.
 
     Examples sit between the two on purpose: they are style references, and they must not be
-    able to contradict the safety rules.
+    able to contradict the safety rules. Memory sits above the examples: it is user-supplied
+    fact, closer to the user's intent than a style template — but it still yields to the
+    safety rules, and its own header makes it yield to the user's latest explicit statement.
     """
-    sections = [part for part in ((role_prompt or "").strip(), render_exemplars(exemplars)) if part]
+    sections = [
+        part
+        for part in (
+            (role_prompt or "").strip(),
+            render_memory(memory),
+            render_exemplars(exemplars),
+        )
+        if part
+    ]
     sections.append(GLOBAL_SAFETY_PROMPT)
     return "\n\n".join(sections)

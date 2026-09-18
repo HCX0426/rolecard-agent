@@ -95,6 +95,11 @@ function GeneralPanel({
   }>({ defaultBackend: "…", plugins: "…", roles: 0, sessions: 0 });
   const [refreshed, setRefreshed] = useState(false);
   const [loadError, setLoadError] = useState("");
+  // 跨会话记忆面板：enabled = 总开关（runtime 覆盖，保存即热生效）；content = 全文。
+  const [mem, setMem] = useState<{ enabled: boolean; content: string } | null>(null);
+  const [memDraft, setMemDraft] = useState("");
+  const [memMsg, setMemMsg] = useState("");
+  const [memErr, setMemErr] = useState("");
 
   const load = useCallback(async () => {
     const [ms, plugins, roles, sessions] = await Promise.all([
@@ -112,9 +117,60 @@ function GeneralPanel({
     });
   }, []);
 
+  const loadMemory = useCallback(async () => {
+    const m = await api.get<{ enabled: boolean; content: string }>("/api/settings/memory");
+    setMem(m);
+    setMemDraft(m.content);
+  }, []);
+
   useEffect(() => {
     load().catch((e) => setLoadError(`加载失败：${(e as Error).message}`));
-  }, [load]);
+    loadMemory().catch((e) => setMemErr(`加载失败：${(e as Error).message}`));
+  }, [load, loadMemory]);
+
+  async function toggleMemory() {
+    if (!mem) return;
+    setMemErr("");
+    setMemMsg("");
+    try {
+      const m = await api.put<{ enabled: boolean; content: string }>("/api/settings/memory", {
+        enabled: !mem.enabled,
+      });
+      setMem(m);
+      setMemDraft(m.content);
+      setMemMsg(m.enabled ? "已开启（此后的对话会带上记忆）" : "已关闭");
+    } catch (e) {
+      setMemErr(`保存失败：${(e as Error).message}`);
+    }
+  }
+
+  async function saveMemory() {
+    setMemErr("");
+    setMemMsg("");
+    try {
+      const m = await api.put<{ enabled: boolean; content: string }>("/api/settings/memory", {
+        content: memDraft,
+      });
+      setMem(m);
+      setMemDraft(m.content);
+      setMemMsg("已保存");
+    } catch (e) {
+      setMemErr(`保存失败：${(e as Error).message}`);
+    }
+  }
+
+  async function clearMemory() {
+    setMemErr("");
+    setMemMsg("");
+    try {
+      const m = await api.del<{ enabled: boolean; content: string }>("/api/settings/memory");
+      setMem(m);
+      setMemDraft(m.content);
+      setMemMsg("已清空");
+    } catch (e) {
+      setMemErr(`清空失败：${(e as Error).message}`);
+    }
+  }
 
   return (
     <div className="mt-6 space-y-4">
@@ -145,6 +201,55 @@ function GeneralPanel({
           插件以数据驱动启停。
         </p>
         <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">语言：简体中文（内置）</p>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">跨会话记忆</h3>
+          <button
+            onClick={toggleMemory}
+            disabled={!mem}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+              mem?.enabled
+                ? "bg-blue-600 text-white"
+                : "bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-300"
+            }`}
+          >
+            {mem ? (mem.enabled ? "已开启" : "已关闭") : "…"}
+          </button>
+        </div>
+        <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400 dark:text-slate-500">
+          启用后，对话中 AI 检测到你明确说出的可复用事实（称呼 / 偏好 / 背景）会通过
+          memory_save 写入；记忆会注入每个角色的对话，跨会话长期保留。可在下方查看、
+          编辑或清空。
+        </p>
+        <textarea
+          value={memDraft}
+          onChange={(e) => setMemDraft(e.target.value)}
+          rows={5}
+          disabled={!mem}
+          placeholder={mem ? "暂无记忆内容。" : "加载中…"}
+          className="mt-2.5 w-full resize-y rounded-lg border border-slate-200 bg-white p-2.5 font-mono text-xs text-slate-700 focus:border-blue-400 focus:outline-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+        />
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            onClick={saveMemory}
+            disabled={!mem}
+            className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-500 disabled:opacity-50"
+          >
+            保存
+          </button>
+          <button
+            onClick={clearMemory}
+            disabled={!mem}
+            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:border-red-300 hover:text-red-600 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300"
+          >
+            清空
+          </button>
+          {memMsg && <span className="text-xs text-emerald-600 dark:text-emerald-400">{memMsg}</span>}
+          {memErr && <span className="text-xs text-red-600 dark:text-red-400 dark:text-red-500">{memErr}</span>}
+          {mem && <span className="ml-auto text-[11px] text-slate-400 dark:text-slate-500">{memDraft.length} 字</span>}
+        </div>
       </div>
 
       <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">

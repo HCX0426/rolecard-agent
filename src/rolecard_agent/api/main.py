@@ -61,6 +61,7 @@ from rolecard_agent.core import runtime_settings
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.graph import build_kernel, build_model
 from rolecard_agent.core.ingestion import IngestionService
+from rolecard_agent.core.memory import load_memory_text
 from rolecard_agent.core.model_settings import ModelSettingsService
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.observability import TraceEvent, Tracer, make_tracer
@@ -211,6 +212,7 @@ def create_app(
         # 传**叠加了运行环境覆盖**的有效配置（而非裸 env 快照）。
         settings=effective,
         tracer=resolved_tracer,
+        memory_conn=conn,
     )
 
     checkpointer = make_checkpointer(conn)
@@ -266,6 +268,8 @@ def create_app(
         checkpointer=checkpointer,
         plugins=plugins,
         model_resolver=resolve_role_model,
+        # 跨会话记忆的读取器：每次调用实时读库；总开关在 call_model 里按当前有效配置把关。
+        memory_provider=lambda: load_memory_text(conn),
     )
     # 热替换 holder：设置页保存属于罕见管理动作，重建整图（compile 毫秒级）比把
     # KernelContext 从 build_kernel 里掏出来改签名更简单直接。对话端点每次请求从这里
@@ -374,6 +378,7 @@ def create_app(
             # 「运行环境」页签保存后经 rebuild 在此热生效（此前漏传 → 工具用 env 裸值）。
             settings=eff,
             tracer=resolved_tracer,
+            memory_conn=conn,
         )
         graph_new = build_kernel(
             model=default_model,
@@ -384,6 +389,7 @@ def create_app(
             checkpointer=checkpointer,
             plugins=plugins,
             model_resolver=resolve_role_model,
+            memory_provider=lambda: load_memory_text(conn),
         )
         with _rebuild_lock:
             # 一次性换装：KB / registry 换新实例（工具经 registry 间接引用新 KB），图也换新。

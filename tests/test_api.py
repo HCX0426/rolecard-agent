@@ -250,3 +250,34 @@ def test_patch_model_context_404_and_400(client: TestClient) -> None:
     assert "512" in res.json()["detail"]
 
 
+def test_memory_get_put_delete_roundtrip(client: TestClient) -> None:
+    """跨会话记忆端点：读默认 → 保存文本 → 读回 → 清空 → 审计留痕。"""
+    r0 = client.get("/api/settings/memory")
+    assert r0.status_code == 200
+    assert r0.json()["enabled"] is True  # 默认开
+    assert r0.json()["content"] == ""
+
+    r1 = client.put("/api/settings/memory", json={"content": "用户住在上海。\n用户周五交周报。"})
+    assert r1.status_code == 200
+    assert r1.json()["content"] == "用户住在上海。\n用户周五交周报。"
+
+    r2 = client.put("/api/settings/memory", json={"enabled": False})
+    assert r2.status_code == 200
+    assert r2.json()["enabled"] is False  # 覆盖已落库（runtime 覆盖），热重建后生效
+
+    r3 = client.delete("/api/settings/memory")
+    assert r3.status_code == 200
+    assert r3.json()["content"] == ""
+
+    # 管理动作都进审计
+    rows = client.get("/api/audit?limit=50").json()
+    actions = [row["action"] for row in rows]
+    assert "update_memory" in actions and "clear_memory" in actions
+
+
+def test_memory_put_rejects_empty_body(client: TestClient) -> None:
+    res = client.put("/api/settings/memory", json={})
+    assert res.status_code == 400
+    assert "没有要保存" in res.json()["detail"]
+
+

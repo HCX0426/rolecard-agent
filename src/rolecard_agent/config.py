@@ -114,6 +114,12 @@ class Settings(BaseModel):
     # 设成 0 或负数 = 不设上限（仅调试用）。
     tool_timeout_seconds: float = 120.0
 
+    # v2.5 跨会话记忆（core/memory.py + core/prompts.py）总开关。True = 面板可管理记忆、
+    # 记忆文本注入每轮 system prompt、memory_save 工具可用（AI 检测到用户明确说出的
+    # 可复用事实时写入）；False = 上述全部关闭。默认开：记忆是本项目"跨会话"体验的
+    # 一部分，关闭是显式选择（隐私 / 干净上下文）。
+    memory_enabled: bool = True
+
     # 单轮用户消息允许的**图步数上限**（LangGraph `recursion_limit`，
     # 见 core/graph.build_graph_config）。
     # 一次"模型 → 工具 → 模型"消耗 2 步。不设时 LangGraph 用默认的 10007 —— 而本图是个环：
@@ -278,6 +284,7 @@ class Settings(BaseModel):
             ("CONTEXT_MAX_CHARS", "context_max_chars"),
             ("TOOL_TIMEOUT_SECONDS", "tool_timeout_seconds"),
             ("AGENT_MAX_STEPS", "agent_max_steps"),
+            ("MEMORY_ENABLED", "memory_enabled"),
             ("SQLITE_PATH", "sqlite_path"),
             ("CHROMA_PATH", "chroma_path"),
             ("UPLOAD_DIR", "upload_dir"),

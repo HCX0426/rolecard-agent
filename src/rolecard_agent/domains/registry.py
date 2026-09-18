@@ -62,6 +62,7 @@ def build_registry(
     upload_dir: Path,
     tracer: Any = None,
     settings: Any = None,
+    memory_conn: Any = None,
 ) -> ToolRegistry:
     """Assemble the full tool registry: kernel tools + every registered domain's tools.
 
@@ -81,15 +82,20 @@ def build_registry(
     `tracer` 必须传下去：`search_knowledge` 闭包持有 KB，而 KB 的 `search()` 只有拿到
     tracer 才会 emit `rag_search` / `rerank_fallback`（审查报告 M3）。
 
-    `settings` 供联网工具（web_search / web_fetch：搜索后端与 TAVILY_API_KEY）与工作区
-    文件工具（fs_read / fs_write / fs_list：WORKSPACE_DIR 路径边界）使用；None = 默认
-    配置（仅测试场景）。
+    `settings` 供联网工具（web_search / web_fetch：搜索后端与 TAVILY_API_KEY）、工作区
+    文件工具（fs_read / fs_write / fs_list：WORKSPACE_DIR 路径边界）与跨会话记忆工具
+    （memory_save：MEMORY_ENABLED 总闸）使用；None = 默认配置（仅测试场景）。
+
+    `memory_conn` = 跨会话记忆读写用的 SQLite 连接（ThreadLocalConnection）。None =
+    不注册 memory_save（测试 / 未接入记忆的宿主）：白名单引用了但工具不存在时，
+    模型本轮看不到它，执行器按"未启用"处理 —— fail-closed。
 
     工具的 `idempotent` 标记是**执行器的重试开关**：只有显式声明"重复调用无副作用"的
     只读工具才允许重试（审查报告 M10 —— 旧实现对所有工具都重试 2 次，包括会写台账的
     `upload_medical_report`）。
     """
     from rolecard_agent.core.consensus import build_consensus_tool
+    from rolecard_agent.core.memory import make_memory_tool
     from rolecard_agent.core.tools.builtin import make_kernel_tools
     from rolecard_agent.core.tools.files import make_file_tools
     from rolecard_agent.core.tools.registry import ToolRegistry as _ToolRegistry
@@ -121,6 +127,14 @@ def build_registry(
     # 多模型比对（consensus，用户 2026-09-17 开工）：内核能力（domain=None）。
     # 一次比对 = N 次 LLM 调用，失败不重试（idempotent=False）—— 重试等于成倍烧 token。
     registry.register(build_consensus_tool(settings=effective_settings), idempotent=False)
+
+    # 跨会话记忆写入工具（v2.5，内核能力）：AI 检测到用户明确说出的可复用事实时调用。
+    # 写入类工具不声明幂等（执行器不重试）；未接入连接 = 不注册（fail-closed）。
+    if memory_conn is not None:
+        registry.register(
+            make_memory_tool(settings=effective_settings, conn=memory_conn),
+            idempotent=False,
+        )
 
     # Explicit per-domain wiring: what each domain needs to construct its tools, visible here.
     factories = {

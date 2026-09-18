@@ -15,6 +15,11 @@ from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.config import Settings
 from rolecard_agent.core import runtime_settings
+from rolecard_agent.core.memory import (
+    clear_memory_text,
+    load_memory_text,
+    save_memory_text,
+)
 from rolecard_agent.core.model_settings import (
     ModelSettingsError,
     is_keyless_provider,
@@ -338,6 +343,77 @@ def put_runtime_settings(
         runtime_settings.load_overrides(ctx.conn),
         _model_names(ctx.conn),
     )
+
+
+# ---------------------------------------------------------------- 跨会话记忆
+
+class MemoryBody(BaseModel):
+    """记忆面板的保存负载：任选其一提交，缺省 = 该字段不变。
+
+    `enabled` = 总开关（走 runtime 覆盖保存 + 热重建，下一轮对话即生效）；
+    `content`  = 记忆全文（None = 不变；"" = 清空）。
+    """
+
+    enabled: bool | None = None
+    content: str | None = None
+
+
+def _memory_payload(ctx: AppContext) -> dict[str, object]:
+    """记忆面板数据：当前有效开关（env + DB 覆盖叠加）与全文。"""
+    return {
+        "enabled": ctx.settings.memory_enabled,
+        "content": load_memory_text(ctx.conn),
+    }
+
+
+@router.get("/api/settings/memory")
+def get_memory(ctx: AppContext = Depends(get_context)) -> object:
+    """跨会话记忆：开关（有效值）与全文。文本是面板的编辑面，明文可读可改。"""
+    return _memory_payload(ctx)
+
+
+@router.put("/api/settings/memory")
+def put_memory(
+    body: MemoryBody,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> object:
+    """保存记忆：开关变化走 runtime 覆盖（保存即热重建），文本变化直接写库。
+
+    审计只记结构与体量（开关/字符数），不记记忆内容 —— 记忆可能含用户隐私事实，
+    审计日志不该成为它的第二个拷贝。
+    """
+    if body.enabled is None and body.content is None:
+        raise HTTPException(status_code=400, detail="没有要保存的内容。")
+    if body.content is not None:
+        save_memory_text(ctx.conn, body.content)
+    if body.enabled is not None:
+        runtime_settings.save_overrides(
+            ctx.conn, {"memory_enabled": "1" if body.enabled else "0"}
+        )
+    ctx.roles.audit(
+        actor=actor.id,
+        action="update_memory",
+        target="memory",
+        detail={
+            "enabled": body.enabled,
+            "chars": len(body.content or ""),
+        },
+    )
+    if body.enabled is not None:
+        ctx.rebuild_runtime()
+    return _memory_payload(ctx)
+
+
+@router.delete("/api/settings/memory")
+def delete_memory(
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> object:
+    """清空记忆全文（开关不动）。管理动作必须留痕。"""
+    clear_memory_text(ctx.conn)
+    ctx.roles.audit(actor=actor.id, action="clear_memory", target="memory", detail={})
+    return _memory_payload(ctx)
 
 
 __all__ = ["router"]
