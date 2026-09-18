@@ -273,7 +273,7 @@ function KnowledgePanel() {
 
 // 知识库（RAG）—— 自"设置"升为独立顶层页。
 // 理由：检索是内核能力（search_knowledge），与"插件启停"是两件事；混在一起正是
-// 「插件页到底是 MCP 还是 RAG」这一困惑的来源（见 docs/UI设计与信息架构（修订）.md）。
+// 「插件页到底是 MCP 还是 RAG」这一困惑的来源（见 docs/前端设计.md 的 IA 一节）。
 export default function KnowledgePage({ onOpenChat }: { onOpenChat?: () => void }) {
   return (
     <div className="h-full overflow-y-auto p-6">

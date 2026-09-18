@@ -136,13 +136,13 @@ def check_stale_identifiers() -> None:
         "只保留三个里程碑",
     ]
     allowed = {
-        ROOT / "docs" / "技术评审与决策.md",
         ROOT / "scripts" / "check_consistency.py",
     }
+    archive = ROOT / "docs" / "archive"
     suffixes = {".md", ".py", ".toml", ".sql", ".cfg", ".ini", ".example"}
     candidates = [*iter_files(*suffixes), ROOT / ".gitignore", ROOT / ".gitattributes"]
     for path in candidates:
-        if not path.exists() or path in allowed:
+        if not path.exists() or path in allowed or archive in path.parents:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         for token in stale:
@@ -211,9 +211,9 @@ def check_promised_artifacts() -> None:
         "requirements-cloud.txt",
         "requirements-ocr.txt",
         "docs/需求与验收标准.md",
-        "docs/实施计划.md",
-        "docs/技术评审与决策.md",
-        "docs/面试问答清单.md",
+        "docs/架构总览.md",
+        "docs/前端设计.md",
+        "docs/开发流程.md",
         "src/rolecard_agent/core/schema.sql",
         "src/rolecard_agent/core/guard.py",
         "src/rolecard_agent/core/prompts.py",
@@ -383,9 +383,9 @@ def check_readme_quickstart() -> None:
 
 
 def check_milestone_alignment() -> None:
-    """Milestone ids declared in the README must match the ones in the plan (docs/实施计划.md)."""
+    """Milestone ids in the README must match the plan (now docs/archive/实施计划.md)."""
     readme_ids = set(re.findall(r"\*\*M(\d)", (ROOT / "README.md").read_text(encoding="utf-8")))
-    plan_path = ROOT / "docs" / "实施计划.md"
+    plan_path = ROOT / "docs" / "archive" / "实施计划.md"
     plan_ids = set(re.findall(r"\*\*M(\d)", plan_path.read_text(encoding="utf-8")))
     ok = readme_ids == plan_ids and bool(plan_ids)
     detail = f"README={sorted(readme_ids)} plan={sorted(plan_ids)}"
@@ -401,7 +401,7 @@ def check_v1_v2_boundary() -> None:
     So no live document may still advertise them as a v2 roadmap item. This rule exists
     because pulling scope forward left exactly such a leftover behind twice.
     """
-    scanned = ("README.md", "docs/实施计划.md", "docs/需求与验收标准.md")
+    scanned = ("README.md", "docs/archive/实施计划.md", "docs/需求与验收标准.md")
     offenders: list[str] = []
     for name in scanned:
         path = ROOT / name

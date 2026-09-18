@@ -7,7 +7,7 @@ import { PageHeader, Switch } from "../components/ui";
  *
  * 概念边界（读 UI 的人最容易混淆的三件事，这里一次说清）：
  *   1. 插件 = 领域插件（domains/<id>/ 代码包，显式注册进 DOMAINS）——不是 MCP，
- *      本项目设计上不做界面动态加载/市场安装（安全取舍，见 docs/实施计划.md §2.2）。
+ *      本项目设计上不做界面动态加载/市场安装（安全取舍，见 docs/架构总览.md §6）。
  *   2. RAG 检索 = 内核能力（search_knowledge），不属于任何插件；角色经
  *      knowledge_scopes 授权使用（设置页 → 知识库 可查看库内容）。
  *   3. 数据随域归属：health 域的档案数据在 health 插件的详情里管理。
