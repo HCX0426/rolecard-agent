@@ -77,6 +77,11 @@ def serialize_message(
             "content": _text_of(message),
             "id": message.id,
         }
+        # 多模态传图（2026-09-18）：content 是 text + image_url 块时，把图透出给前端
+        # 回放（用户气泡显示小图 + 点击放大）。只有文本时无此键。
+        image = _image_of(message)
+        if image:
+            row["image"] = image
     elif isinstance(message, ToolMessage):
         trow: dict[str, object] = {
             "role": "tool",
@@ -112,6 +117,28 @@ def serialize_message(
     if created_at:
         row["ts"] = str(created_at)  # 旧消息没有该字段 → 不显示时间
     return row
+
+
+def _image_of(message: object) -> str | None:
+    """从多模态 content 块里取图片 data URL（有图才返回，否则 None）。
+
+    与 `_text_of` 同哲学：宽容处理形状意外的块 —— 回放循环里一个怪块不该让整页渲染挂掉。
+    """
+    content = getattr(message, "content", None)
+    if not isinstance(content, list):
+        return None
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        url = None
+        iu = part.get("image_url")
+        if isinstance(iu, str):
+            url = iu
+        elif isinstance(iu, dict) and isinstance(iu.get("url"), str):
+            url = iu["url"]
+        if url:
+            return url
+    return None
 
 
 def group_turns(messages: Sequence[object]) -> list[list[int]]:

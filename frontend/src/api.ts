@@ -47,6 +47,8 @@ export interface MessageRow {
   args?: Record<string, unknown>;
   /** 消息创建时间（本地时间字符串）；旧 checkpoint 消息没有该字段。 */
   ts?: string;
+  /** 用户消息附带的图片（data URL；多模态传图，2026-09-18）。回放时用户气泡显示小图。 */
+  image?: string;
 }
 
 /** 历史消息的分页响应（默认只回最近 500 条，`truncated` 为真时前端要如实说明）。 */
@@ -426,13 +428,14 @@ export async function streamEdit(
   content: string,
   onEvent: (ev: ChatEvent) => void,
   signal?: AbortSignal,
+  image?: string | null, // 重新生成/编辑时保留原图（多模态传图，2026-09-18）
 ): Promise<void> {
   let res: Response;
   try {
     res = await fetch(`/api/session/${threadId}/messages/edit`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message_id: messageId, content }),
+      body: JSON.stringify({ message_id: messageId, content, ...(image ? { image } : {}) }),
       signal,
     });
   } catch (e) {
@@ -478,13 +481,14 @@ export async function streamChat(
   message: string,
   onEvent: (ev: ChatEvent) => void,
   signal?: AbortSignal,
+  image?: string | null, // 多模态传图：data URL（None = 纯文本）
 ): Promise<void> {
   let res: Response;
   try {
     res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ thread_id: threadId, message }),
+      body: JSON.stringify({ thread_id: threadId, message, ...(image ? { image } : {}) }),
       signal, // 用户点「停止」→ controller.abort()，这里会以 AbortError 结束
     });
   } catch (e) {

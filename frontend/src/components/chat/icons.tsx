@@ -33,6 +33,15 @@ export const IconClip = () => (
   </svg>
 );
 
+/** 图片（照片）——输入框「附加图片」按钮（多模态传图，2026-09-18）。 */
+export const IconImage = () => (
+  <svg {...ICON}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <circle cx="9" cy="10" r="1.6" />
+    <path d="M3 17l5-5 4 4 4-4 5 5" />
+  </svg>
+);
+
 /** 发送（上箭头）——嵌在输入框内的图标按钮（WorkBuddy 式）。 */
 export const IconSend = () => (
   <svg {...ICON} className="h-4 w-4">

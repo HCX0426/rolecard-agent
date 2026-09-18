@@ -70,3 +70,26 @@ def test_tool_message_without_pairing_has_no_args_field() -> None:
         ToolMessage(content="结果", tool_call_id="call_9", name="web_search"),
     )
     assert "args" not in row
+
+
+def test_multimodal_user_message_replays_text_and_image() -> None:
+    """多模态传图（2026-09-18）：text + image_url 块 → 文本进 content、图进 image。"""
+    row = serialize_message(
+        HumanMessage(
+            content=[
+                {"type": "text", "text": "这张图是什么？"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}},
+            ]
+        )
+    )
+    assert row["role"] == "user"
+    assert row["content"] == "这张图是什么？"
+    assert row["image"] == "data:image/png;base64,AAA"
+
+
+def test_plain_user_message_has_no_image_field() -> None:
+    """纯文本用户消息不带 image 字段（不污染旧消息渲染）。"""
+    row = serialize_message(HumanMessage(content="纯文本"))
+    assert row["role"] == "user"
+    assert row["content"] == "纯文本"
+    assert "image" not in row

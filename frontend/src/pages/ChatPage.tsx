@@ -29,6 +29,7 @@ import { fetchMessages, useUploadFlow } from "../hooks/useUploadFlow";
 import ToolStepCard from "../components/chat/ToolStepCard";
 import {
   IconClip,
+  IconImage,
   IconModel,
   IconSend,
   IconSparkle,
@@ -57,6 +58,10 @@ export default function ChatPage() {
   const [live, setLive] = useState<LiveBubble | null>(null);
   const [input, setInput] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // 多模态传图（2026-09-18）：待发送的图片（data URL），附件就绪后随消息一起发。
+  const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
   // 输入框自适应高度：内容多时长高（封顶 160px 后内部滚动），发送/清空后缩回一行。
   useEffect(() => {
     const el = inputRef.current;
@@ -95,8 +100,8 @@ export default function ChatPage() {
   // 历史消息被分页截断时**还差多少条更早的**（0 = 全部都在）。
   // 为什么要显示：不说的话，用户看到的"最近 500 条"会被当成全部历史。
   const [historyTruncated, setHistoryTruncated] = useState(0);
-  // 编辑重生成：正在编辑的那条消息（id + 草稿）
-  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  // 编辑重生成：正在编辑的那条消息（id + 草稿 + 原图，图随编辑保留）
+  const [editing, setEditing] = useState<{ id: string; text: string; image?: string } | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null); // 复制反馈（按轮 key）
   const [enhancing, setEnhancing] = useState(false); // 增强提示词进行中
   const [ctxBudget, setCtxBudget] = useState(0); // 上下文字符预算（后端 context 端点）
@@ -290,8 +295,9 @@ export default function ChatPage() {
   function regenerate(turn: BuiltTurn<MessageRow>) {
     const uid = turn.user?.id;
     const content = turn.user?.content ?? "";
-    if (!uid || busy || !content) return;
-    saveEdit(uid, content);
+    if (!uid || busy || (!content && !turn.user?.image)) return;
+    // 多模态：原消息带图时随重问一起保图（重新生成保留上下文完整性，2026-09-18）
+    saveEdit(uid, content, turn.user?.image ?? null);
   }
 
   // 上下文使用率：已用字符按当前消息估算（展示口径，随消息实时更新），上限来自后端配置。
@@ -328,12 +334,30 @@ export default function ChatPage() {
     }
   }
 
+  function pickImage(file: File | undefined) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setStatus("只支持图片文件", "warn");
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setStatus(`图片超过 15MB 上限（当前 ${Math.round(file.size / 1024 / 1024)}MB）`, "warn");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setPendingImage(String(reader.result));
+    reader.onerror = () => setStatus("图片读取失败", "warn");
+    reader.readAsDataURL(file);
+  }
+
   async function send(preset?: string) {
     const text = (preset ?? input).trim();
-    if (!text || sendingRef.current) return;
+    if ((!text && !pendingImage) || sendingRef.current) return;
     sendingRef.current = true;
     setBusy(true);
     setInput("");
+    const image = pendingImage;
+    setPendingImage(null);
     // 没有会话就先建一个（角色可选，用默认）；用局部 tid 而非 state（setState 异步）
     let tid = sessionId;
     if (!tid) {
@@ -344,7 +368,7 @@ export default function ChatPage() {
         return;
       }
     }
-    setMessages((m) => [...m, { role: "user", content: text }]);
+    setMessages((m) => [...m, { role: "user", content: text || "（图片）", ...(image ? { image } : {}) }]);
     const bubble = newLiveBubble();
     liveRef.current = bubble;
     setLive(bubble);
@@ -364,6 +388,7 @@ export default function ChatPage() {
         applyMeta(reduced.meta);
       },
       controller.signal,
+      image,
     );
     const aborted = controller.signal.aborted;
     abortRef.current = null;
@@ -404,16 +429,19 @@ export default function ChatPage() {
     onStatus: setStatus,
   });
 
-  function startEdit(id: string, text: string) {
-    setEditing({ id, text });
+  function startEdit(id: string, text: string, image?: string) {
+    setEditing({ id, text, image });
   }
 
-  /** 编辑保存 = 从该条重新生成：SSE 与普通对话完全一致，结束后回放刷新历史。 */
-  async function saveEdit(overrideId?: string, overrideText?: string) {
+  /** 编辑保存 = 从该条重新生成：SSE 与普通对话完全一致，结束后回放刷新历史。
+   *  override* 供「重新生成」按钮复用同一通道（不经过编辑表单）。 */
+  async function saveEdit(overrideId?: string, overrideText?: string, overrideImage?: string | null) {
     // override：直接指定要重新生成的用户消息（消息行「重新生成」按钮复用同一通道）
     const mid = overrideId ?? editing?.id;
     const content = (overrideText ?? editing?.text ?? "").trim();
-    if (!mid || !sessionId || sendingRef.current || !content) return;
+    if (!mid || !sessionId || sendingRef.current) return;
+    const image = overrideImage ?? editing?.image ?? null;
+    if (!content && !image) return;
     sendingRef.current = true;
     setBusy(true);
     const controller = new AbortController();
@@ -434,6 +462,7 @@ export default function ChatPage() {
         applyMeta(reduced.meta);
       },
       controller.signal,
+      image,
     );
     setLive(null);
     liveRef.current = null;
@@ -703,7 +732,9 @@ export default function ChatPage() {
                           <textarea
                             autoFocus
                             value={editing.text}
-                            onChange={(e) => setEditing({ id: editing.id, text: e.target.value })}
+                            onChange={(e) =>
+                              setEditing({ id: editing.id, text: e.target.value, image: editing.image })
+                            }
                             onKeyDown={(e) => {
                               if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveEdit();
                               if (e.key === "Escape") setEditing(null);
@@ -734,7 +765,7 @@ export default function ChatPage() {
                           {/* 悬浮铅笔：absolute 不占布局（占位会把气泡挤到换行） */}
                           {!busy && !!userMid && (
                             <button
-                              onClick={() => startEdit(userMid, turn.user!.content)}
+                              onClick={() => startEdit(userMid, turn.user!.content, turn.user?.image)}
                               aria-label="编辑并重答"
                               title="编辑这条消息并重新生成（之后的对话会被作废）"
                               className="absolute -left-9 top-2 rounded-full p-1.5 text-slate-400 opacity-0 transition-opacity hover:bg-blue-50 hover:text-blue-600 group-hover:opacity-100 dark:text-slate-500 dark:hover:bg-slate-700/60 dark:hover:text-blue-400"
@@ -744,8 +775,17 @@ export default function ChatPage() {
                               </svg>
                             </button>
                           )}
-                          <div className="rounded-2xl rounded-br-sm bg-slate-200/90 px-4 py-2.5 whitespace-pre-wrap text-slate-900 dark:bg-slate-700 dark:text-slate-100">
-                            {turn.user.content}
+                          <div className="rounded-2xl rounded-br-sm bg-slate-200/90 px-4 py-2.5 text-slate-900 dark:bg-slate-700 dark:text-slate-100">
+                            {turn.user.image && (
+                              <img
+                                src={turn.user.image}
+                                alt="对话附图"
+                                className="mb-2 max-h-48 w-full rounded-lg object-contain"
+                              />
+                            )}
+                            {turn.user.content && (
+                              <p className="whitespace-pre-wrap">{turn.user.content}</p>
+                            )}
                           </div>
                           {turn.user.ts && (
                             <p className="mt-1 text-right text-[10px] text-slate-500 dark:text-slate-400">
@@ -871,6 +911,24 @@ export default function ChatPage() {
               右下上下文使用率（悬停看明细）。 */}
           <div className="mx-auto max-w-3xl">
             <div className="rounded-2xl border border-slate-200 bg-white focus-within:border-blue-400 dark:border-slate-700 dark:bg-slate-800">
+              {pendingImage && (
+                <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2 dark:border-slate-700">
+                  <img
+                    src={pendingImage}
+                    alt="待发送图片"
+                    className="h-16 w-16 rounded-lg border border-slate-200 object-cover dark:border-slate-600"
+                  />
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400">图片已附加，将随消息一起发送</span>
+                  <button
+                    onClick={() => setPendingImage(null)}
+                    disabled={busy}
+                    title="移除图片"
+                    className="ml-auto rounded px-2 py-1 text-[11px] text-red-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-900/30"
+                  >
+                    移除
+                  </button>
+                </div>
+              )}
               <textarea
                 ref={inputRef}
                 value={input}
@@ -892,15 +950,36 @@ export default function ChatPage() {
                 className="max-h-40 w-full resize-none bg-transparent px-4 pt-3 pb-1 leading-relaxed outline-none disabled:bg-slate-50 dark:disabled:bg-slate-800/50"
               />
               <div className="flex items-center justify-between gap-2 px-2.5 pb-2">
-                <button
-                  onClick={enhance}
-                  disabled={busy || enhancing || !input.trim()}
-                  title="增强提示词：把草稿改写得更清晰、具体（一次模型调用）"
-                  className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-700/60"
-                >
-                  <IconSparkle />
-                  {enhancing ? "增强中…" : "增强提示词"}
-                </button>
+                <div className="flex items-center gap-1">
+                  <input
+                    ref={imageInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      pickImage(e.target.files?.[0]);
+                      e.target.value = ""; // 允许连续选同一文件
+                    }}
+                  />
+                  <button
+                    onClick={() => imageInputRef.current?.click()}
+                    disabled={busy}
+                    title="附加图片（发给当前模型识别；需视觉模型支持）"
+                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-700/60"
+                  >
+                    <IconImage />
+                    图片
+                  </button>
+                  <button
+                    onClick={enhance}
+                    disabled={busy || enhancing || !input.trim()}
+                    title="增强提示词：把草稿改写得更清晰、具体（一次模型调用）"
+                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-700/60"
+                  >
+                    <IconSparkle />
+                    {enhancing ? "增强中…" : "增强提示词"}
+                  </button>
+                </div>
                 <div className="flex items-center gap-2">
                   {ctxBudget > 0 && (
                     <span

@@ -14,7 +14,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AnyMessage, HumanMessage, RemoveMessage
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.chat import chat_events
@@ -87,11 +87,45 @@ class ChatMessage(BaseModel):
     """One user turn. Length-capped so a pasted novel cannot become a checkpoint bomb."""
 
     thread_id: str
-    message: str = Field(min_length=1, max_length=8000)
+    message: str = Field(default="", max_length=8000)
+    # 多模态传图（用户 2026-09-18）：data URL（data:image/...;base64, ...）。
+    # None = 纯文本。上限 15MB（与 OCR 上传一致）：base64 会放大 ~33%，前端读文件前检查。
+    # 是否真正接受取决于**当前生效后端**是否支持视觉 —— 由模型能力决定，界面按探测禁用。
+    image: str | None = Field(default=None, max_length=20 * 1024 * 1024)
+
+    @field_validator("message")
+    @classmethod
+    def _text_or_image(cls, v: str, info: ValidationInfo) -> str:
+        """至少得有一样：纯文字 or 文字+图 or 纯图。空消息没有任何文本时必须有图，
+        否则是无效轮次（防止"点发送无事发生"的静默失败）。"""
+        if v.strip():
+            return v
+        if (info.data.get("image") or "").strip():
+            return v
+        raise ValueError("message 为空且未附图片")
 
 
 # 上传大小上限：请求体整个读进内存算哈希，20MB 是演示负载的合理护栏。
 UPLOAD_MAX_BYTES = 20 * 1024 * 1024
+
+
+def _user_message(text: str, image: str | None, *, created_at: str) -> HumanMessage:
+    """构造用户消息：纯文本 or 文本 + 图片（多模态 content 块，langchain 会按模型能力解析）。
+
+    langchain_ollama 把 `{"type": "image_url", "image_url": {"url": data_url}}` 转成
+    Ollama 的 images 数组（源码 verified）；openai 兼容路径走标准 image_url。模型不支持
+    视觉时供应商会 400 —— 所以**前端按 vision 探测禁用按钮**，而不是后端拦截（探测有
+    TTL 且可能误判，真发失败就让错误自然穿透成可读答复）。
+    """
+    if not image:
+        return HumanMessage(content=text, additional_kwargs={"created_at": created_at})
+    return HumanMessage(
+        content=[
+            {"type": "text", "text": text},
+            {"type": "image_url", "image_url": {"url": image}},
+        ],
+        additional_kwargs={"created_at": created_at, "has_image": True},
+    )
 
 
 @router.post("/api/session", status_code=201)
@@ -247,10 +281,12 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
     # 侧栏标题：首轮消息截断生成；updated_at 每轮刷新，会话列表按它倒序。
     # 用毫秒精度（strftime %f）而非 CURRENT_TIMESTAMP（秒级）：同一秒内创建的两个
     # 会话需要靠"谁最近活跃"严格排序，秒级会打平、只能靠随机 thread_id 兜底。
+    # 纯图消息没有文本 → 标题用 "[图片]"，COALESCE 兜底空标题（首次就覆盖）。
+    title_fallback = "[图片]" if not body.message.strip() else body.message[:24]
     conn.execute(
         "UPDATE session_thread SET title = COALESCE(title, ?), "
         "updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE thread_id = ?",
-        (body.message[:24], body.thread_id),
+        (title_fallback, body.thread_id),
     )
     conn.commit()
 
@@ -261,9 +297,7 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
     created_at = now_ts()
     if snapshot.values:
         graph_input: dict[str, object] = {
-            "messages": [
-                HumanMessage(content=body.message, additional_kwargs={"created_at": created_at})
-            ],
+            "messages": [_user_message(body.message, body.image, created_at=created_at)],
             "current_role_id": role_id,
             "model_name": session_model,  # 每轮实时注入：会话切模型下一轮即生效
         }
@@ -277,9 +311,7 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
                 enabled_domains=ctx.plugins.enabled_domains(),
                 tool_epoch=ctx.plugins.tool_epoch(),
             ),
-            "messages": [
-                HumanMessage(content=body.message, additional_kwargs={"created_at": created_at})
-            ],
+            "messages": [_user_message(body.message, body.image, created_at=created_at)],
         }
 
     return StreamingResponse(
@@ -303,7 +335,16 @@ class _MessageTarget(BaseModel):
 
 
 class EditMessageBody(_MessageTarget):
-    content: str = Field(min_length=1, max_length=8000)  # 与新消息同一上限
+    content: str = Field(default="", max_length=8000)  # 与新消息同一上限
+    # 编辑/重新生成时保留原图（多模态传图，2026-09-18）：编辑只改文本，图随原消息走。
+    image: str | None = Field(default=None, max_length=20 * 1024 * 1024)
+
+    @field_validator("content")
+    @classmethod
+    def _text_or_image(cls, v: str, info: ValidationInfo) -> str:
+        if v.strip() or (info.data.get("image") or "").strip():
+            return v
+        raise ValueError("message 为空且未附图片")
 
 
 class DeleteMessagesBody(BaseModel):
@@ -358,7 +399,7 @@ def edit_message_and_regenerate(
     graph.update_state(config, {"messages": doomed})
 
     graph_input: dict[str, object] = {
-        "messages": [HumanMessage(content=body.content)],
+        "messages": [_user_message(body.content, body.image, created_at=now_ts())],
         "current_role_id": role_id,
         "model_name": session_model,
     }
