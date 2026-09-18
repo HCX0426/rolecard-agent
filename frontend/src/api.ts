@@ -411,6 +411,38 @@ export interface ApprovalsPage {
   pending: number;
 }
 
+/** MCP server（架构计划 C·§6.1 operator 接入；仅 http）。headers 值永不出明文（后端掩码）。 */
+export interface McpServer {
+  id: string;
+  display_name: string;
+  transport: string;
+  url: string;
+  headers: Record<string, string>;
+  enabled: boolean;
+}
+
+export interface McpServersView {
+  servers: McpServer[];
+  effective_count: number;
+}
+
+/** POST /api/mcp/servers/{id}/test 的结果（不落库，真连一次列工具）。 */
+export interface McpTestResult {
+  id: string;
+  ok: boolean;
+  tool_count: number;
+  tools: string[];
+  error?: string;
+}
+
+/** POST /api/services/check 的单探测量（ollama 或 openai_compatible 之一）。 */
+export interface ConnectivityProbe {
+  reachable: boolean;
+  detail: string;
+  models?: string[];
+}
+export type ConnectivityResult = Record<string, ConnectivityProbe>;
+
 export const api = {
   get: <T>(url: string) => request<T>("GET", url),
   post: <T>(url: string, body?: unknown) => request<T>("POST", url, body),

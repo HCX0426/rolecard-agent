@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { ExtensionPanel } from "../components/ExtensionPanel";
 import { ServicesPanel } from "../components/ServicesPanel";
 import {
   api,
@@ -20,6 +21,7 @@ const SETTINGS_TABS = [
   { key: "general", label: "通用" },
   { key: "models", label: "模型" },
   { key: "services", label: "服务" },
+  { key: "extension", label: "扩展" },
   { key: "runtime", label: "运行环境" },
   { key: "audit", label: "审计" },
 ] as const;
@@ -66,6 +68,9 @@ export default function SettingsPage({
         </div>
         <div className={tab === "services" ? "" : "hidden"}>
           <ServicesPanel />
+        </div>
+        <div className={tab === "extension" ? "" : "hidden"}>
+          <ExtensionPanel />
         </div>
         <div className={tab === "runtime" ? "" : "hidden"}>
           <RuntimePanel />
