@@ -80,7 +80,14 @@ export default function ChatPage() {
     closeAllMenus,
   } = useMenus();
   const [backends, setBackends] = useState<
-    { name: string; provider: string; model: string; usage: string; num_ctx: number | null }[]
+    {
+      name: string;
+      provider: string;
+      model: string;
+      usage: string;
+      num_ctx: number | null;
+      supports_vision?: boolean;
+    }[]
   >([]);
   // 供应商 id → 中文档称（分组标题显示"硅基流动"而非原始 id）
   const [providerLabels, setProviderLabels] = useState<Record<string, string>>({});
@@ -159,6 +166,7 @@ export default function ChatPage() {
           model: b.model,
           usage: b.usage ?? "chat",
           num_ctx: b.num_ctx ?? null,
+          supports_vision: b.supports_vision ?? false,
         })),
       );
       setDefaultBackend(s.default || s.backends[0]?.name || "");
@@ -1127,7 +1135,14 @@ export default function ChatPage() {
                               onClick={() => switchModel(b.name)}
                               className="flex min-w-0 flex-1 items-center justify-between px-3 py-1.5 text-xs hover:bg-blue-50 dark:hover:bg-blue-900/30"
                             >
-                              <span className="font-mono">{b.model}</span>
+                              <span className="flex min-w-0 items-center gap-1.5">
+                                <span className="font-mono truncate">{b.model}</span>
+                                {b.supports_vision && (
+                                  <span className="shrink-0 rounded bg-emerald-100 px-1 py-0.5 text-[9px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                                    视觉
+                                  </span>
+                                )}
+                              </span>
                               <span className="ml-2 flex min-w-0 items-center gap-1.5">
                                 <span className="truncate text-slate-400 dark:text-slate-500">{b.name}</span>
                               </span>

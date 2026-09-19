@@ -786,6 +786,8 @@ interface EditableBackend {
   has_key: boolean;
   key_masked: string | null;
   usage: string;
+  supports_vision: boolean;
+  supports_tools: boolean;
 }
 
 // 模型页是云端配置的唯一事实面：usage 标记该行服务谁（服务页按用途引用）。
@@ -818,6 +820,8 @@ function ModelsPanel() {
         has_key: b.has_key,
         key_masked: b.key_masked ?? null,
         usage: b.usage ?? "chat",
+        supports_vision: b.supports_vision ?? false,
+        supports_tools: b.supports_tools ?? true,
       })),
     );
     setFb1(s.fallbacks?.[0] || "");
@@ -860,6 +864,8 @@ function ModelsPanel() {
         has_key: false,
         key_masked: null,
         usage: "chat",
+        supports_vision: false,
+        supports_tools: true,
       },
     ]);
   }
@@ -878,6 +884,8 @@ function ModelsPanel() {
           base_url: r.base_url.trim() || null,
           model: r.model.trim(),
           usage: r.usage,
+          supports_vision: r.supports_vision,
+          supports_tools: r.supports_tools,
           // 空串会被后端理解为"清除"；这里区分"没碰过"（保持 None=保留）与"清空"
           api_key: r.api_key === "" && r.has_key ? null : r.api_key,
         })),
@@ -895,6 +903,8 @@ function ModelsPanel() {
         has_key: b.has_key,
         key_masked: b.key_masked ?? null,
         usage: b.usage ?? "chat",
+        supports_vision: b.supports_vision ?? false,
+        supports_tools: b.supports_tools ?? true,
       })),
       );
       setFb1(saved.fallbacks?.[0] || "");
@@ -1004,6 +1014,31 @@ function ModelsPanel() {
                     placeholder="base_url（Ollama 可留空，如 https://api.siliconflow.cn/v1）"
                     className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-sm"
                   />
+                  {r.usage === "chat" && (
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+                      <label className="flex cursor-pointer items-center gap-1.5">
+                        <input
+                          type="checkbox"
+                          checked={r.supports_vision}
+                          onChange={(e) => update(i, { supports_vision: e.target.checked })}
+                        />
+                        支持视觉（可收图）
+                      </label>
+                      <label className="flex cursor-pointer items-center gap-1.5">
+                        <input
+                          type="checkbox"
+                          checked={r.supports_tools}
+                          onChange={(e) => update(i, { supports_tools: e.target.checked })}
+                        />
+                        支持工具调用
+                      </label>
+                      {!r.supports_tools && (
+                        <span className="text-[11px] text-amber-500 dark:text-amber-400">
+                          该模型带工具会返回空，已关闭工具（换模型对所有角色仍可用，只是不绑工具）
+                        </span>
+                      )}
+                    </div>
+                  )}
                   {r.has_key ? (
                     <>
                       <div className="flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 px-2.5 py-1.5 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">

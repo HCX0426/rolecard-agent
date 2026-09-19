@@ -79,6 +79,10 @@ export interface BackendRow {
   sort_order: number;
   /** 本地 Ollama 的实际上下文窗口（tokens）；null = 引擎默认。 */
   num_ctx: number | null;
+  /** 后端能力位：能否收图（决定对话页发图按钮）。 */
+  supports_vision: boolean;
+  /** 后端能力位：工具调用是否可用（false 时该轮不绑工具，兼容带 tools 会返回空的云端 VLM）。 */
+  supports_tools: boolean;
   has_key: boolean;
   key_masked: string | null;
 }
