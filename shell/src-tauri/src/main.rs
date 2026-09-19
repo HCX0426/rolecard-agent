@@ -12,8 +12,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod backend;
+mod pet;
 
 use tauri::Manager;
+
+/// 桌宠窗默认开（`ROLECARD_PET=0` 关掉）。
+///
+/// 为什么默认开而不是相反：这一版的目标就是"真开一扇透明置顶窗看效果"；关掉它的开关留着，
+/// 是因为桌宠全天驻在桌面上，有人就是不想看它 —— 这类"能不能不看我"的开关比它长什么样更要紧。
+fn pet_wanted() -> bool {
+    std::env::var("ROLECARD_PET").ok().as_deref() != Some("0")
+}
 
 /// 着陆页问"控制台在哪"：端口只有一处定义（`backend::endpoint`），不让页面自己再写一遍。
 #[tauri::command]
@@ -38,6 +47,17 @@ fn main() {
                 Err(error) => eprintln!(
                     "[shell] 拉不起本地后端：{error}；界面会停在着陆页并说明原因"
                 ),
+            }
+            if pet_wanted() {
+                let handle = app.handle().clone();
+                match pet::open(&handle) {
+                    Ok(window) => println!(
+                        "[shell] 桌宠窗已打开（{}×{}）",
+                        window.outer_size().map_or(0, |s| s.width),
+                        window.outer_size().map_or(0, |s| s.height)
+                    ),
+                    Err(error) => eprintln!("[shell] 桌宠窗没开起来：{error}"),
+                }
             }
             Ok(())
         })

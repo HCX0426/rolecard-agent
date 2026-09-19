@@ -55,6 +55,23 @@
         font: inherit;
         cursor: pointer;
       }
+
+      /* 桌宠模式（壳用 index.html?pet=1 开第二扇窗）：整页必须不涂背景，否则那扇
+         透明窗就是一块灰矩形；文案也要收着 —— 桌宠位上放不下一段说明书。 */
+      html[data-page="pet"],
+      html[data-page="pet"] body {
+        background: transparent;
+      }
+      html[data-page="pet"] main {
+        align-self: flex-end;
+        padding: 0 0.4rem;
+      }
+      html[data-page="pet"] h1 {
+        display: none;
+      }
+      html[data-page="pet"] p {
+        font-size: 11px;
+      }
     </style>
   </head>
   <body>
@@ -71,6 +88,10 @@
       const line = document.getElementById("line");
       const detail = document.getElementById("detail");
       const retry = document.getElementById("retry");
+
+      // 同一张页面服务两扇窗：主窗跳控制台，桌宠窗跳 #/pet。
+      const PET = new URLSearchParams(window.location.search).get("pet") === "1";
+      if (PET) document.documentElement.dataset.page = "pet";
 
       const PROBE_MS = 400;
       // 上限给到 60s：首次装配要建库、建知识库索引，慢机器上十几秒是实测过的。
@@ -102,25 +123,27 @@
         try {
           base = await backendUrl();
         } catch (error) {
-          line.textContent = "壳与页面的桥没接上";
-          detail.textContent = String(error?.message ?? error);
+          line.textContent = PET ? "桌宠起不来" : "壳与页面的桥没接上";
+          detail.textContent = PET ? "" : String(error?.message ?? error);
           retry.hidden = false;
           return;
         }
-        line.textContent = `正在连接 ${base} …`;
+        line.textContent = PET ? "正在连接本地服务…" : `正在连接 ${base} …`;
         const deadline = Date.now() + GIVE_UP_MS;
         while (Date.now() < deadline) {
           if (await reachable(base)) {
-            line.textContent = "已连接，正在打开控制台…";
-            location.replace(base + "/"); // 之后的一切都是后端托管的那一份界面（B/S 与 C/S 同源）
+            line.textContent = PET ? "" : "已连接，正在打开控制台…";
+            // 之后的一切都是后端托管的那一份界面（B/S 与 C/S 同源）。
+            location.replace(PET ? `${base}/#/pet` : `${base}/`);
             return;
           }
           await new Promise((resolve) => setTimeout(resolve, PROBE_MS));
         }
-        line.textContent = "本地后端没能启动";
-        detail.textContent =
-          "若你是手动开着后端，请确认它在本页所示地址；由壳启动则检查 ROLECARD_PYTHON / " +
-          "ROLECARD_API_SCRIPT（或整条 ROLECARD_BACKEND_CMD）是否指向有效的解释器与 run_api.py。";
+        line.textContent = PET ? "连不上本地服务" : "本地后端没能启动";
+        detail.textContent = PET
+          ? ""
+          : "若你是手动开着后端，请确认它在本页所示地址；由壳启动则检查 ROLECARD_PYTHON / " +
+            "ROLECARD_API_SCRIPT（或整条 ROLECARD_BACKEND_CMD）是否指向有效的解释器与 scripts/run_api.py。";
         retry.hidden = false;
       }
 

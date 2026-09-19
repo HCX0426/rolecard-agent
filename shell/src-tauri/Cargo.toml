@@ -9,3 +9,12 @@ tauri-build = { version = "2" }
 
 [dependencies]
 tauri = { version = "2" }
+
+# 只用 Win32 的作业对象（Job Object）：壳被硬杀/崩溃时，它 spawn 的后端必须跟着没，
+# 不能留下孤儿进程占着端口与显存。版本与 tauri 依赖图里的那份对齐，避免多编一份。
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+] }

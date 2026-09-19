@@ -14,6 +14,15 @@ body {
   @apply bg-slate-100 text-slate-800 text-sm antialiased dark:bg-slate-900 dark:text-slate-100;
 }
 
+/* 桌宠窗（html[data-page="pet"]）必须**一路都不涂背景**：控制台那层 body 底色会让
+   透明窗变成一块灰色矩形 —— 这正是这类窗最常见的翻车点（不是 WebView 画不出透明，
+   是页面自己先把不透明的底铺满了）。色片和气泡自带底色，不受这条影响。 */
+html[data-page="pet"],
+html[data-page="pet"] body,
+html[data-page="pet"] #root {
+  background: transparent;
+}
+
 /* 流式回答时的光标 */
 .caret::after {
   content: "▍";
