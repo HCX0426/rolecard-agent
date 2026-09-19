@@ -799,17 +799,13 @@ const USAGE_OPTIONS = [
 ];
 
 function ModelsPanel() {
-  const [def, setDef] = useState<string>("");
   const [rows, setRows] = useState<EditableBackend[]>([]);
   const [providers, setProviders] = useState<ModelProvider[]>(PROVIDER_FALLBACK);
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [fb1, setFb1] = useState("");
-  const [fb2, setFb2] = useState("");
 
   const load = useCallback(async () => {
     const s = await api.get<ModelSettings>("/api/settings/models");
-    setDef(s.default || s.backends[0]?.name || "");
     setRows(
       s.backends.map((b) => ({
         name: b.name,
@@ -824,8 +820,6 @@ function ModelsPanel() {
         supports_tools: b.supports_tools ?? true,
       })),
     );
-    setFb1(s.fallbacks?.[0] || "");
-    setFb2(s.fallbacks?.[1] || "");
     setLoaded(true);
   }, []);
 
@@ -876,8 +870,9 @@ function ModelsPanel() {
 
   async function save() {
     try {
+      // 只提交 backends：默认后端与回退链的唯一编辑入口在「服务」页签（后端已声明）。
+      // 这里不带 default/fallbacks → 后端 None = 保留当前值，避免用挂载时的旧值覆盖服务页新设。
       const body = {
-        default: def,
         backends: rows.map((r) => ({
           name: r.name.trim(),
           provider: r.provider.trim(),
@@ -889,10 +884,8 @@ function ModelsPanel() {
           // 空串会被后端理解为"清除"；这里区分"没碰过"（保持 None=保留）与"清空"
           api_key: r.api_key === "" && r.has_key ? null : r.api_key,
         })),
-        fallbacks: [fb1, fb2].filter(Boolean),
       };
       const saved = await api.put<ModelSettings>("/api/settings/models", body);
-      setDef(saved.default || "");
       setRows(
         saved.backends.map((b) => ({
         name: b.name,
@@ -907,8 +900,6 @@ function ModelsPanel() {
         supports_tools: b.supports_tools ?? true,
       })),
       );
-      setFb1(saved.fallbacks?.[0] || "");
-      setFb2(saved.fallbacks?.[1] || "");
       setStatus({
         ok: true,
         msg: "已保存并热生效：下一轮对话即使用新模型后端（无需重启）。",
@@ -951,20 +942,6 @@ function ModelsPanel() {
                   return (
               <div key={i} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
                 <div className="flex items-center gap-3">
-                  {r.usage === "chat" && (
-                    <label
-                      title="对话默认后端（角色未指定后端时使用）"
-                      className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500"
-                    >
-                      <input
-                        type="radio"
-                        name="default-backend"
-                        checked={def === r.name}
-                        onChange={() => setDef(r.name)}
-                      />
-                      默认
-                    </label>
-                  )}
                   <input
                     value={r.name}
                     onChange={(e) => update(i, { name: e.target.value })}
