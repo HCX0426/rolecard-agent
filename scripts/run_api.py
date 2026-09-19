@@ -111,7 +111,9 @@ def main() -> None:
     _maybe_configure_cloud_backend()
     import uvicorn
 
-    host = "127.0.0.1"  # 演示绝不绑 0.0.0.0：Ollama 式端口无鉴权，公网暴露会被白嫖
+    # 默认绑 127.0.0.1（演示绝不裸奔公网）。RUN_API_HOST 可覆盖（如反向代理场景绑 0.0.0.0），
+    # 但 create_app 有护栏：非回环 + AUTH_MODE=off 会拒绝启动 —— 换绑不会绕过鉴权。
+    host = os.environ.get("RUN_API_HOST", "127.0.0.1")
     port = int(os.environ.get("RUN_API_PORT", "8000"))
     print(f"rolecard-agent 控制台: http://{host}:{port}/", flush=True)
     # RUN_API_RELOAD=1：**开发用**代码热重载 —— watchfiles 监听 src/ 下 .py 变化，

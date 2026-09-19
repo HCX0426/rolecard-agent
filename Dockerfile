@@ -20,6 +20,10 @@ COPY frontend/dist/ ./frontend/dist/
 COPY scripts/ ./scripts/
 
 EXPOSE 8000
-# 容器内绑 0.0.0.0 是标准做法；数据（SQLite + 上传）必须挂卷：
-#   docker run -p 8000:8000 -v rolecard-data:/app/data <image>
+# 容器内绑 0.0.0.0 是标准做法；但 create_app 有公网护栏：非回环 + AUTH_MODE=off 会**拒绝启动**
+# （把"忘记配鉴权就公网裸奔"变成起不来的硬失败）。公网部署必须显式开鉴权：
+#   docker run -e AUTH_MODE=on -e AUTH_CREDENTIALS=<user>:<pass> -p 8000:8000 \
+#     -v rolecard-data:/app/data <image>
+# RUN_API_HOST 让护栏看到实际绑定地址（uvicorn 的 --host 不会自动进环境变量）。
+ENV RUN_API_HOST=0.0.0.0
 CMD ["uvicorn", "--factory", "rolecard_agent.api.main:create_app", "--host", "0.0.0.0", "--port", "8000"]

@@ -154,6 +154,19 @@ def create_app(
     即可在不接触真实后端的情况下验证路由与热切换确实生效。
     """
     settings = Settings.from_env()
+    # 公网暴露护栏（P0-3）：非回环地址绑定 + 无鉴权 = 任何人可改配置 / 自批命令 / 浏览全盘。
+    # run_api.py 默认绑 127.0.0.1（本地安全）；Docker 绑 0.0.0.0 时若没开 AUTH_MODE，直接拒绝
+    # 启动 —— 把"忘记配鉴权就公网裸奔"变成起不来的硬失败，而不是默默暴露。
+    bind_host = os.environ.get("RUN_API_HOST", "127.0.0.1")
+    if (
+        bind_host not in ("127.0.0.1", "localhost", "::1")
+        and not bind_host.startswith("127.")
+        and settings.auth_mode == "off"
+    ):
+        raise RuntimeError(
+            f"拒绝启动：绑定地址 {bind_host!r} 非回环，但 AUTH_MODE=off（无鉴权）。"
+            "公网部署请设 AUTH_MODE=on，或改绑 127.0.0.1 经反向代理转发。"
+        )
     db_path = sqlite_path or settings.sqlite_path
     # 注意是 `connect_threadlocal` 而不是 `connect`：本进程的多线程（FastAPI 同步端点 +
     # 图执行）会并发使用这个对象，而 sqlite3 的连接不是线程安全的。它对外仍表现为"一条

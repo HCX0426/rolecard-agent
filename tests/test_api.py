@@ -408,6 +408,22 @@ def test_runtime_put_accepts_env_keys(client: TestClient) -> None:
     assert bad.status_code == 400
 
 
+def test_startup_guard_refuses_public_bind_without_auth(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """P0-3 公网护栏：非回环绑定 + AUTH_MODE=off → create_app 拒绝启动（硬失败，不裸奔）。"""
+    monkeypatch.setenv("RUN_API_HOST", "0.0.0.0")
+    monkeypatch.setenv("AUTH_MODE", "off")
+    with pytest.raises(RuntimeError, match="拒绝启动"):
+        create_app(sqlite_path=tmp_path / "pub.db")
+    # 开了鉴权就放行（不再抛"拒绝启动"；后续即便因缺凭据失败也不是护栏那条）
+    monkeypatch.setenv("AUTH_MODE", "on")
+    try:
+        create_app(sqlite_path=tmp_path / "pub2.db")
+    except Exception as exc:  # noqa: BLE001 - 只断言不是公网护栏
+        assert "拒绝启动" not in str(exc)
+
+
 def test_workspace_dir_roundtrip(client: TestClient, tmp_path: Path) -> None:
     """任务目录：默认 env → 设置（规范化落库）→ 清除回落；操作都进审计。"""
     d0 = client.get("/api/workspace/dir").json()
