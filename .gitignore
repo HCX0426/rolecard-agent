@@ -37,6 +37,8 @@ frontend/node_modules/
 tests/eval/report.json
 # 无模型时的跑批链路自检产物（同理由脚本生成，不入库）
 tests/eval/harness/
+# 指定 --report 落到 data/ 的基线报告同样是临时件（数字已固化进 docs/需求与验收标准.md）
+data/eval_*.md
 
 # --- models / large artifacts ---
 models/
