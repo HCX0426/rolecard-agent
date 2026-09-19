@@ -268,6 +268,15 @@ class KernelContext:
     memory_provider: Callable[[], str] = _no_memory
 
 
+def _backend_supports_tools(state: dict[str, Any], role: Any, ctx: KernelContext) -> bool:
+    """当前这轮实际用的后端是否支持工具调用。后端名未知/解析失败 → 保守返回 True（照常暴露）。"""
+    name = state.get("model_name") or getattr(role, "model_name", None)
+    try:
+        return ctx.settings.backend(name).supports_tools
+    except Exception:  # noqa: BLE001 - 配置异常不该让整轮挂掉，退回默认（支持工具）
+        return True
+
+
 def turn_context(state: dict[str, Any], ctx: KernelContext) -> tuple[list[Any], list[str]]:
     """Resolve this turn's permitted tools and the plugin set they were computed against.
 
@@ -278,6 +287,11 @@ def turn_context(state: dict[str, Any], ctx: KernelContext) -> tuple[list[Any], 
     domains = list(ctx.enabled_domains())
     role = ctx.roles.get(state.get("current_role_id", ""))
     tools = ctx.registry.select(enabled_domains=domains, role_whitelist=role.tool_whitelist)
+    # 后端能力位：当前模型不支持工具调用（如某些云端 VLM 一旦附 tools 就返回空）→ 本轮清空工具。
+    # 放在这个**唯一入口**：call_model 的 bind 与 execute_tools 的 permitted 同源，模型即便幻觉出
+    # tool_calls，执行侧也因不在 permitted 而拒绝（P1-3 纵深防御）。
+    if tools and not _backend_supports_tools(state, role, ctx):
+        tools = []
     return tools, domains
 
 
@@ -380,16 +394,8 @@ def call_model(
     tools, domains = turn_context(state, ctx)
     # 模型解析优先级（US-8 + 会话级覆盖）：会话 model_name > 角色 model_name > 默认。
     # 会话覆盖由对话页的模型下拉写入 state（chat 端点每轮实时读库）。
+    # 注：后端 supports_tools=false 时 turn_context 已把 tools 清空（bind 与执行侧同源）。
     backend = state.get("model_name") or role.model_name
-    # 后端能力位：该模型不支持工具调用（如 SiliconFlow Qwen3-VL-30B-A3B 一旦附 tools 就返回
-    # 空）→ 本轮清空 tools，不绑工具，模型仍能正常答。让"换模型"对所有角色统一生效，不必
-    # 为此建特殊角色（用户 2026-09-19）。后端名未知/解析失败 → 保守照常绑（默认 supports_tools）。
-    try:
-        supports_tools = ctx.settings.backend(backend).supports_tools
-    except Exception:  # noqa: BLE001 - 配置异常不该让整轮挂掉，退回默认行为
-        supports_tools = True
-    if not supports_tools:
-        tools = []
     # 角色卡的 temperature 在构造期生效（见 core/graph._init_model）：
     # 解析器按 (后端, 温度) 缓存模型实例 —— 模型是跨线程共享的，事后改字段会串到别的对话。
     base = (

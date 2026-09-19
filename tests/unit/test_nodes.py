@@ -21,6 +21,7 @@ from langchain_core.tools import tool
 from rolecard_agent.config import ModelBackend, Settings
 from rolecard_agent.core.nodes import (
     MAX_TOOL_RETRIES,
+    TOOL_DENIED,
     TOOL_FAILED,
     TOOL_LOOP_BREAK,
     KernelContext,
@@ -583,6 +584,26 @@ def test_call_model_binds_tools_when_backend_supports_them(
         ctx,
     )
     assert [t.name for t in model.bound_tools] == ["kernel_tool"]
+
+
+def test_execute_tools_denies_call_when_backend_disables_tools(
+    registry: ToolRegistry, roles: RoleCardService, wide_role: str
+) -> None:
+    """P1-3 纵深防御：后端 supports_tools=false → 即便模型幻觉出 tool_call，执行侧也拒
+    （工具不在 permitted），不会真去执行。turn_context 是 bind 与 permitted 的共同来源。"""
+    flaky, calls = _flaky_tool(fail_times=0)
+    reg = ToolRegistry()
+    reg.register(flaky)
+    ctx = _ctx(reg, roles)
+    ctx.settings = Settings(
+        model_default="novl",
+        model_backends={"novl": ModelBackend(model="m", provider="ollama", supports_tools=False)},
+    )
+    state = _state_with_call("flaky", wide_role)
+    state["model_name"] = "novl"
+    out = execute_tools(state, ctx)
+    assert calls[0] == 0  # 工具一次都没执行
+    assert out["messages"][0].content == TOOL_DENIED
 
 
 def test_call_model_injects_agent_plan_when_state_says_agent(roles: RoleCardService) -> None:
