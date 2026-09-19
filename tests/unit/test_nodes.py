@@ -18,7 +18,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 
-from rolecard_agent.config import Settings
+from rolecard_agent.config import ModelBackend, Settings
 from rolecard_agent.core.nodes import (
     MAX_TOOL_RETRIES,
     TOOL_FAILED,
@@ -536,6 +536,53 @@ def test_call_model_no_image_grounding_for_text_only_turn(roles: RoleCardService
         {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"}, ctx
     )
     assert "图像理解规则" not in model.last_prompt[0].content
+
+
+def test_call_model_skips_tools_when_backend_disables_them(
+    registry: ToolRegistry, roles: RoleCardService
+) -> None:
+    """后端 supports_tools=false（如某些云端 VLM 带 tools 会返回空）→ 本轮不绑工具，
+    让"换模型"对所有角色统一生效，不必建特殊角色。"""
+    rid = _role(roles)
+    model = FakeModel(AIMessage(content="ok"))
+    ctx = _ctx(registry, roles, model)
+    ctx.settings = Settings(
+        model_default="novl",
+        model_backends={"novl": ModelBackend(model="m", provider="ollama", supports_tools=False)},
+    )
+    call_model(
+        {
+            "messages": [HumanMessage(content="q")],
+            "current_role_id": rid,
+            "thread_id": "t",
+            "model_name": "novl",
+        },
+        ctx,
+    )
+    assert model.bound_tools == []  # 工具被跳过
+
+
+def test_call_model_binds_tools_when_backend_supports_them(
+    registry: ToolRegistry, roles: RoleCardService
+) -> None:
+    """对照组：supports_tools=true（默认）→ 照常绑上可见工具。"""
+    rid = _role(roles)
+    model = FakeModel(AIMessage(content="ok"))
+    ctx = _ctx(registry, roles, model)
+    ctx.settings = Settings(
+        model_default="full",
+        model_backends={"full": ModelBackend(model="m", provider="ollama", supports_tools=True)},
+    )
+    call_model(
+        {
+            "messages": [HumanMessage(content="q")],
+            "current_role_id": rid,
+            "thread_id": "t",
+            "model_name": "full",
+        },
+        ctx,
+    )
+    assert [t.name for t in model.bound_tools] == ["kernel_tool"]
 
 
 def test_call_model_injects_agent_plan_when_state_says_agent(roles: RoleCardService) -> None:

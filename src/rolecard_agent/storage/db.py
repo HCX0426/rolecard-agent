@@ -246,6 +246,21 @@ def _migrate(conn: SqlConnection) -> None:
     #    模型自带的 32k 窗口形同虚设，超出的历史会被引擎静默截断。NULL = 用模型默认。
     if "num_ctx" not in _columns(conn, "model_backend"):
         conn.execute("ALTER TABLE model_backend ADD COLUMN num_ctx INTEGER")
+    # 4b. model_backend 增列 supports_vision / supports_tools（后端能力位，用户 2026-09-19）。
+    #     换模型应对所有角色统一生效——能力是"模型"的属性，不是靠特殊角色去绕。
+    #     supports_vision：能否收图（决定对话页发图按钮；云端模型无法像 Ollama 那样
+    #     探测视觉，故显式标注）。
+    #     supports_tools：工具调用是否可用（某些云端 VLM 一旦附工具就返回空，如 SiliconFlow
+    #     Qwen3-VL-30B-A3B）；false 时 call_model 这轮跳过 bind_tools，模型仍能正常答。
+    #     默认：不支持视觉、支持工具（与既有行为一致，只有显式标注才改变）。
+    if "supports_vision" not in _columns(conn, "model_backend"):
+        conn.execute(
+            "ALTER TABLE model_backend ADD COLUMN supports_vision INTEGER NOT NULL DEFAULT 0"
+        )
+    if "supports_tools" not in _columns(conn, "model_backend"):
+        conn.execute(
+            "ALTER TABLE model_backend ADD COLUMN supports_tools INTEGER NOT NULL DEFAULT 1"
+        )
     # 5. session_thread 增列 agent_mode（v2.5 会话级「对话/智能体」切换）。
     #    与 model_name 同一模式：NULL = 跟随全局默认（settings.agent_default_mode），
     #    chat 端点每轮实时读库解析有效值注入 state，会话切模式下一轮即生效。

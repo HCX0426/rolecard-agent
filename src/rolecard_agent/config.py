@@ -72,6 +72,13 @@ class ModelBackend(BaseModel):
     # 模型页是云端端点配置的唯一事实面；usage 标记该行服务谁：
     # chat=对话推理（对话菜单/角色路由只消费这类）| embedding | rerank | ocr（凭据行）。
     usage: str = "chat"
+    # 后端能力位（换模型对所有角色统一生效的关键，用户 2026-09-19）：
+    # - supports_vision：能否收图。云端模型无法像 Ollama 那样探测视觉，故显式声明；
+    #   决定对话页"发图"按钮是否放开。
+    # - supports_tools：工具调用是否可用。某些云端 VLM（如 SiliconFlow Qwen3-VL-30B-A3B）
+    #   一旦请求附 tools 就返回空，标 false 后 call_model 这轮不绑工具，模型仍能正常答。
+    supports_vision: bool = False
+    supports_tools: bool = True
 
 
 class McpServerConfig(BaseModel):

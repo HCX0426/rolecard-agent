@@ -381,6 +381,15 @@ def call_model(
     # 模型解析优先级（US-8 + 会话级覆盖）：会话 model_name > 角色 model_name > 默认。
     # 会话覆盖由对话页的模型下拉写入 state（chat 端点每轮实时读库）。
     backend = state.get("model_name") or role.model_name
+    # 后端能力位：该模型不支持工具调用（如 SiliconFlow Qwen3-VL-30B-A3B 一旦附 tools 就返回
+    # 空）→ 本轮清空 tools，不绑工具，模型仍能正常答。让"换模型"对所有角色统一生效，不必
+    # 为此建特殊角色（用户 2026-09-19）。后端名未知/解析失败 → 保守照常绑（默认 supports_tools）。
+    try:
+        supports_tools = ctx.settings.backend(backend).supports_tools
+    except Exception:  # noqa: BLE001 - 配置异常不该让整轮挂掉，退回默认行为
+        supports_tools = True
+    if not supports_tools:
+        tools = []
     # 角色卡的 temperature 在构造期生效（见 core/graph._init_model）：
     # 解析器按 (后端, 温度) 缓存模型实例 —— 模型是跨线程共享的，事后改字段会串到别的对话。
     base = (

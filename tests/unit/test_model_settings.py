@@ -213,3 +213,27 @@ def test_num_ctx_roundtrip_and_validation() -> None:
         svc.set_num_ctx("a", 100)
 
 
+def test_capability_flags_roundtrip_and_defaults() -> None:
+    """后端能力位（supports_vision/supports_tools）：显式落库回读；缺省按 vision=0/tools=1。"""
+    svc = ModelSettingsService(_conn())
+    svc.save(
+        default="vl",
+        backends=[
+            {"name": "vl", "provider": "siliconflow", "model": "Qwen3-VL", "usage": "chat",
+             "api_key": "sk-x", "supports_vision": True, "supports_tools": False},
+        ],
+    )
+    row = svc.list_backends()[0]
+    assert row["supports_vision"] is True
+    assert row["supports_tools"] is False
+
+    # 不传能力位 → 默认（不支持视觉、支持工具），与历史行为一致
+    svc.save(
+        default="plain",
+        backends=[{"name": "plain", "provider": "ollama", "model": "m", "usage": "chat"}],
+    )
+    row2 = svc.list_backends()[0]
+    assert row2["supports_vision"] is False
+    assert row2["supports_tools"] is True
+
+

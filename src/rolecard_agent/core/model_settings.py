@@ -135,7 +135,8 @@ class ModelSettingsService:
 
     def _raw_backends(self) -> list[dict[str, object]]:
         rows = self._conn.execute(
-            "SELECT name, provider, base_url, model, api_key, usage, sort_order, num_ctx "
+            "SELECT name, provider, base_url, model, api_key, usage, sort_order, num_ctx, "
+            "supports_vision, supports_tools "
             "FROM model_backend ORDER BY sort_order, name"
         ).fetchall()
         return [dict(r) for r in rows]
@@ -153,9 +154,16 @@ class ModelSettingsService:
         return [
             {
                 k: row[k]
-                for k in ("name", "provider", "base_url", "model", "usage", "sort_order", "num_ctx")
+                for k in (
+                    "name", "provider", "base_url", "model", "usage", "sort_order", "num_ctx",
+                )
             }
-            | {"has_key": bool(row["api_key"]), "key_masked": self.key_masked(str(row["name"]))}
+            | {
+                "supports_vision": bool(row["supports_vision"]),
+                "supports_tools": bool(row["supports_tools"]),
+                "has_key": bool(row["api_key"]),
+                "key_masked": self.key_masked(str(row["name"])),
+            }
             for row in self._raw_backends()
         ]
 
@@ -397,7 +405,15 @@ class ModelSettingsService:
                 key = None  # explicit clear
             else:
                 key = str(raw_key).strip()
-            prepared.append((name, provider, base_url, model, key, usage, i, num_ctx))
+            # 能力位：缺省按"不支持视觉、支持工具"（与历史行为一致，只有显式标注才改变）。
+            supports_vision = bool(item.get("supports_vision", False))
+            supports_tools = bool(item.get("supports_tools", True))
+            prepared.append(
+                (
+                    name, provider, base_url, model, key, usage, i, num_ctx,
+                    int(supports_vision), int(supports_tools),
+                )
+            )
 
         if default not in names:
             raise ModelSettingsError(f"默认后端 {default!r} 不在列表里。")
@@ -427,8 +443,9 @@ class ModelSettingsService:
         self._conn.execute("DELETE FROM model_backend")
         self._conn.executemany(
             "INSERT INTO model_backend "
-            "(name, provider, base_url, model, api_key, usage, sort_order, num_ctx) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "(name, provider, base_url, model, api_key, usage, sort_order, num_ctx, "
+            "supports_vision, supports_tools) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             prepared,
         )
         for key, value in (
@@ -464,6 +481,8 @@ class ModelSettingsService:
                 provider=str(row["provider"]),
                 usage=str(row["usage"]),
                 num_ctx=int(str(row["num_ctx"])) if row.get("num_ctx") is not None else None,
+                supports_vision=bool(row.get("supports_vision")),
+                supports_tools=bool(row.get("supports_tools", 1)),
             )
             for row in raw
         }
