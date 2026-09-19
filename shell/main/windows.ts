@@ -11,13 +11,15 @@
 import { BrowserWindow, screen } from "electron";
 import path from "node:path";
 
+import { initialBounds, trackBounds } from "./state";
+
 export const PET_WIDTH = 200;
 export const PET_HEIGHT = 240;
 
 const PRELOAD = path.join(__dirname, "..", "preload", "bridge.js");
 const LANDING = path.join(__dirname, "..", "..", "web", "index.html");
 
-/** 落点：主屏**工作区**右下角（离任务栏与屏幕边各 24px）。
+/** 首次落点：主屏**工作区**右下角（离任务栏与屏幕边各 24px）。
  *  按 workArea 而不是屏幕尺寸：桌宠被任务栏压住半张脸是这类应用最常见的差评。 */
 function petOrigin(): { x: number; y: number } {
   const { workArea } = screen.getPrimaryDisplay();
@@ -38,15 +40,21 @@ function webPreferences(): Electron.WebPreferences {
 }
 
 export function createMainWindow(): BrowserWindow {
-  const win = new BrowserWindow({
+  const bounds = initialBounds("main", {
+    x: 120,
+    y: 80,
     width: 1240,
     height: 860,
+  });
+  const win = new BrowserWindow({
+    ...bounds,
     minWidth: 720,
     minHeight: 480,
     title: "rolecard-agent",
     show: false,
     webPreferences: webPreferences(),
   });
+  trackBounds(win, "main");
   win.once("ready-to-show", () => win.show());
   void win.loadFile(LANDING);
   return win;
@@ -54,10 +62,9 @@ export function createMainWindow(): BrowserWindow {
 
 /** 桌宠窗：无边框透明置顶、不进任务栏、不可缩放。 */
 export function createPetWindow(): BrowserWindow {
+  const bounds = initialBounds("pet", { ...petOrigin(), width: PET_WIDTH, height: PET_HEIGHT });
   const win = new BrowserWindow({
-    ...petOrigin(),
-    width: PET_WIDTH,
-    height: PET_HEIGHT,
+    ...bounds,
     frame: false,
     transparent: true,
     backgroundColor: "#00000000",
@@ -72,6 +79,10 @@ export function createPetWindow(): BrowserWindow {
     title: "rolecard-agent · 桌宠",
     webPreferences: webPreferences(),
   });
+  trackBounds(win, "pet");
+  // 着陆页的 `<title>` 是"控制台"，不拦一下的话桌宠在窗口列表里也叫那个名字 —— 它会让人
+  // 以为桌宠是一扇控制台窗（ Alt+Tab / 截屏工具 / 辅助技术都只看标题）。
+  win.on("page-title-updated", (event) => event.preventDefault());
   // 桌宠不该抢你正在打字的焦点：亮出来就行。
   win.once("ready-to-show", () => win.showInactive());
   void win.loadFile(LANDING, { query: { pet: "1" } });

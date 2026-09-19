@@ -2,6 +2,7 @@ import { Component, Suspense, lazy, useEffect, useState, type ReactNode } from "
 import ReachoutPanel from "./components/ReachoutPanel";
 import ApprovalPanel from "./components/ApprovalPanel";
 import { api } from "./api";
+import { shellBridge } from "./lib/shell";
 import { useTheme } from "./components/useTheme";
 
 // ---- 路由级代码分割：六页各自成 chunk，hover 导航时预加载 -------------------------------
@@ -232,6 +233,17 @@ export default function App() {
     // replaceState 而不是改 hash：不触发 hashchange，也就不会被上面的 effect 弹回来。
     window.history.replaceState(null, "", "#/chat");
   }
+
+  // 桌面壳的"点系统通知 / 点桌宠气泡 → 打开那条主动会话"：控制台这边只需要接住一个会话 id，
+  // 走的就是收件箱"打开对话并回复"那条现成的路 —— 壳不另开一套跳转语义（B/S 下桥不存在，
+  // 这段直接不成立，行为不变）。
+  useEffect(() => {
+    const shell = shellBridge();
+    if (!shell) return;
+    shell.onRequestOpenThread((threadId) => openThread(threadId));
+    return () => shell.onRequestOpenThread(null);
+    // openThread 只用到稳定的 setState 与 location，没有需要跟随渲染的闭包状态。
+  }, []);
 
   return (
     <div className="relative flex h-full">

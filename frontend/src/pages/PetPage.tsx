@@ -1,15 +1,20 @@
-// 桌宠（D②-2 极简驻留形态）：一张色片 + 一句气泡，200×240，透明无边框置顶。
+// 桌宠（D②-2 极简驻留形态 + D②-3 原生桥）：一张色片 + 一句气泡，200×240，透明无边框置顶。
 //
 // 这一页**只在桌面壳里出现**：浏览器直接开 #/pet 也能看（就是窗口不透明而已），但真正
-// 的透明/置顶/无边框由壳的第二扇窗给（shell/src-tauri/src/pet.rs）。界面仍在这份前端里，
+// 的透明/置顶/无边框由壳的第二扇窗给（shell/main/windows.ts）。界面仍在这份前端里，
 // 不在壳里另写一份 —— 两壳看到同一个 dist 是里程碑 D 的立身之本。
 //
-// 只做三件事：角色主动说话时抬眼能看到；一眼看出攒了几条；点一下能把未读清掉。
-// 「点开跳回那条主动会话」需要原生桥（壳替我们打开主窗并定位会话），排在 D②-3。
+// 做四件事：角色主动说话时抬眼能看到；一眼看出攒了几条；点气泡把那条主动会话打开（壳负责
+// 把控制台拉到前台）；有新开口时拍一条系统通知。
+//
+// "什么算新消息、要不要通知"故意留在这份前端里，而不是塞进后端的调度器：调度器不知道自己
+// 面对的是谁（B/S 在轮询、壳也在轮询），而壳只是"页面说了才拍一块 toast"的那只手。同一份
+// dist 的两种形态因此不会分叉成两套通知判断。
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type ReachoutRow } from "../api";
+import { shellBridge } from "../lib/shell";
 
 const POLL_MS = 10_000; // 与铃铛红点同一节奏：后端没有推送，如实降级为轮询
 const BUBBLE_MS = 30_000; // 气泡自己淡出：驻留件不该把一句话长期戳在桌面上
@@ -31,14 +36,29 @@ export default function PetPage() {
   const [offline, setOffline] = useState(false);
   const [bubbleShownAt, setBubbleShownAt] = useState(0);
   const [faded, setFaded] = useState(false);
+  // 已经"见过"的最新一条 id。**在第一次真正拿到快照之前保持 null**：初始的空白状态不是
+  // 一次快照，拿它当基线会让每次开机都把积压的最后一条当新消息拍出去。
+  const seenNewestRef = useRef<number | null>(null);
 
   const load = useCallback(async () => {
+    let page;
     try {
-      const page = await api.getReachouts();
-      setItems(page.items);
-      setOffline(false);
+      page = await api.getReachouts();
     } catch {
       setOffline(true); // 后端没起来 / 在换：桌面件必须说清"我现在是哑的"，不能装作没有消息
+      return;
+    }
+    setItems(page.items);
+    setOffline(false);
+
+    const newest = page.items[0]?.id ?? 0;
+    const seen = seenNewestRef.current;
+    seenNewestRef.current = newest;
+    // 系统通知只给"这次真的新到"的那条：首次快照立基线，之后 id 没变大就不弹。
+    if (seen === null || newest <= seen) return;
+    const arrived = page.items[0];
+    if (arrived?.state === "unread") {
+      shellBridge()?.notify(arrived.role_name || "主动消息", shorten(arrived.text), arrived.thread_id);
     }
   }, []);
 
@@ -58,6 +78,7 @@ export default function PetPage() {
     setFaded(false);
   }, [latest?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 系统通知的判断在 `load()` 里（"拿到快照"那一刻才是"新到"的定义），这里只管气泡计时。
   useEffect(() => {
     if (!bubbleShownAt || faded) return;
     const timer = setTimeout(() => setFaded(true), BUBBLE_MS);
@@ -80,6 +101,24 @@ export default function PetPage() {
     await load();
   }
 
+  async function openRow(row: ReachoutRow) {
+    if (!row.thread_id) {
+      // 这个功能上线之前落库的老消息没有对应的主动会话：只能标已读，不给死链。
+      await acknowledge(row);
+      return;
+    }
+    try {
+      await api.markRoleReachoutsRead(row.role_id);
+    } catch {
+      setOffline(true); // 标记失败不拦跳转：会话就在那儿，点得开比红点准更重要
+    }
+    setFaded(true);
+    // 跳转交给壳：它要把控制台那扇窗拉到前台，而这一页自己**不是**控制台（浏览器里直接开
+    // #/pet 只是看看的调试入口，真要读历史就点侧栏的主动消息收件箱）。桥不存在时这里就只是
+    // 标已读 —— 不留一个"点了什么都没发生"的假链接。
+    shellBridge()?.openSession(row.thread_id);
+  }
+
   return (
     // 拖拽靠 CSS `-webkit-app-region`（Chromium 自己处理，不需要页面拿到任何壳能力）。
     // Tauri 那边"后端源拿不到注入 → data-tauri-drag-region 拖不动"的坑在这里不存在；
@@ -87,10 +126,12 @@ export default function PetPage() {
     <div className="pet-drag flex h-full select-none flex-col items-center justify-end gap-2 pb-1">
       {latest && !faded && (
         <button
-          onClick={() => void acknowledge(latest)}
+          onClick={() => void openRow(latest)}
           title={
-            unreadOfLatest > 1
-              ? `还有 ${unreadOfLatest - 1} 条未读，点击全部标记已读`
+            latest.thread_id
+              ? unreadOfLatest > 1
+                ? `打开与 ${name} 的对话（还有 ${unreadOfLatest - 1} 条未读）`
+                : `打开与 ${name} 的对话`
               : "点击标记已读"
           }
           className="pet-nodrag w-full rounded-2xl border border-slate-200/70 bg-white/90 px-3 py-2 text-left text-[11px] leading-relaxed text-slate-700 shadow-sm backdrop-blur-sm transition-opacity duration-500 dark:border-slate-600/70 dark:bg-slate-800/90 dark:text-slate-100"
