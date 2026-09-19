@@ -818,7 +818,7 @@ export default function ChatPage() {
                   </div>
                 )}
                 <div className={live.streaming ? "caret" : ""}>
-                  {live.text ? <Markdown text={live.text} /> : "…"}
+                  {live.text ? <Markdown text={live.text} /> : "思考中…"}
                 </div>
               </div>
             )}
