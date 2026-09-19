@@ -109,6 +109,12 @@ def main() -> None:
     _load_dotenv()
     _resolve_data_paths()
     _maybe_configure_cloud_backend()
+    # 桌面壳 spawn 时会注入 ROLECARD_PARENT_PID：壳被硬杀/崩溃时，这里负责让后端跟着走，
+    # 不留孤儿占着端口（本地模型场景还占着几 GB 显存）。没注入 = 不装，人手工起的服务器
+    # 不该被一个看门狗杀掉。
+    from rolecard_agent.core import parent_watch
+
+    parent_watch.start()
     import uvicorn
 
     # 默认绑 127.0.0.1（演示绝不裸奔公网）。RUN_API_HOST 可覆盖（如反向代理场景绑 0.0.0.0），
