@@ -25,7 +25,7 @@ import logging
 from typing import Any, cast
 
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, PrivateAttr
+from pydantic import PrivateAttr
 
 from rolecard_agent.config import McpServerConfig
 
@@ -88,7 +88,10 @@ class AuditedMcpTool(BaseTool):
 
     name: str
     description: str
-    args_schema: type[BaseModel] | None = None
+    # 透传 raw 工具的入参 schema：新版 langchain-mcp-adapters 给的是 JSON dict，旧的/BaseModel
+    # 工具给的是模型类 → 类型放宽到 Any 原样带过，交给 BaseTool 解析（此前按 type[BaseModel]
+    # 收窄会让真连 MCP 时 ValidationError 直接崩，mock 测不到）。
+    args_schema: Any = None
 
     _raw: BaseTool = PrivateAttr()
     _conn: Any = PrivateAttr(default=None)
@@ -124,7 +127,11 @@ class AuditedMcpTool(BaseTool):
     def _run(self, **kwargs: Any) -> Any:
         self._audit("invoke", {"args": kwargs})
         try:
-            return self._raw.invoke(kwargs)
+            # MCP 工具是 async-only（StructuredTool.invoke 会 NotImplementedError）。
+            # 而本项目的执行器**同步**调 tool.invoke(...)（core/nodes.py），故同步路径必须
+            # 桥接到 raw 的 ainvoke —— 在调用方线程里跑一个事件循环（_run_async 已处理"已在
+            # loop 中"的情况）。真连开源 MCP server 才发现，mock 的假工具带 sync _run 掩盖了它。
+            return _run_async(self._raw.ainvoke(kwargs))
         except Exception as exc:
             self._audit("error", {"error": f"{type(exc).__name__}: {exc}"})
             raise

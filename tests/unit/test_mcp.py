@@ -16,7 +16,7 @@ import pytest
 from langchain_core.tools import BaseTool
 
 from rolecard_agent.config import McpServerConfig, Settings
-from rolecard_agent.core.tools.mcp import load_mcp_tools
+from rolecard_agent.core.tools.mcp import AuditedMcpTool, load_mcp_tools
 from rolecard_agent.core.tools.registry import ToolRegistry
 
 
@@ -144,6 +144,26 @@ def test_settings_parses_mcp_servers() -> None:
     assert len(settings.mcp_servers) == 1
     assert settings.mcp_servers[0].id == "s1"
     assert settings.mcp_servers[0].args == ["-m", "x"]
+
+
+class _AsyncOnlyTool(BaseTool):
+    """模拟真实 MCP 工具：只有 async 路径（同步 _run 直接抛，像 StructuredTool）。"""
+
+    description: str = "async only"
+
+    def _run(self, **kwargs: object) -> str:  # pragma: no cover - 故意不支持同步
+        raise NotImplementedError("StructuredTool does not support sync invocation.")
+
+    async def _arun(self, **kwargs: object) -> str:
+        return f"async:{sorted(kwargs)}"
+
+
+def test_audited_tool_sync_invoke_bridges_to_async() -> None:
+    """真连开源 MCP server 才暴露的回归：执行器同步调 tool.invoke，但 MCP 工具 async-only，
+    AuditedMcpTool._run 必须桥接到 raw.ainvoke，否则运行时全挂（旧 FakeTool 有 _run 掩盖了它）。"""
+    wrapped = AuditedMcpTool(_AsyncOnlyTool(name="ping"), conn=None, server_id="s")
+    out = wrapped.invoke({"x": 1})
+    assert isinstance(out, str) and out.startswith("async:")
 
 
 def test_settings_rejects_bad_mcp_servers() -> None:
