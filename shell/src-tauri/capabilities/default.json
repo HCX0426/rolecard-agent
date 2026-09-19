@@ -1,7 +1,0 @@
-{
-  "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
-  "description": "主窗（着陆页 + 后端托管的控制台）默认能力：壳自己的窗口与事件，不含文件系统",
-  "windows": ["main"],
-  "permissions": ["core:default"]
-}
