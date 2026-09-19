@@ -67,10 +67,11 @@ from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.graph import build_kernel, build_model
 from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.core.memory import load_memory_text
-from rolecard_agent.core.model_settings import ModelSettingsService
+from rolecard_agent.core.model_settings import ModelSettingsService, client_style
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.observability import TraceEvent, Tracer, make_tracer
 from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
+from rolecard_agent.core.probes import ollama_keep
 from rolecard_agent.core.reachout import ReachoutScheduler
 from rolecard_agent.core.services import ServiceEndpointService
 from rolecard_agent.domains.health.service import (
@@ -304,6 +305,18 @@ def create_app(
         tracer=resolved_tracer,
     )
 
+    def _auto_pin_default_model() -> None:
+        """启动即预热默认模型：仅本地 Ollama(native) 有意义，按后端配置的 num_ctx
+        以 keep_alive=-1 常驻。best-effort 后台线程——Ollama 没起 / 默认是云端 / 未配默认
+        后端 / 任何异常都静默跳过，绝不阻断启动或抛到请求路径（用户 2026-09-19）。"""
+        with contextlib.suppress(Exception):
+            eff = app_state.get("effective")
+            if eff is None:
+                return
+            backend = eff.backend(None)  # 未配默认 → KeyError，被 suppress 吞掉
+            if client_style(backend.provider) == "native":
+                ollama_keep(backend.base_url, backend.model, -1, num_ctx=backend.num_ctx)
+
     @contextlib.asynccontextmanager
     async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
         """进程退出时收尾：sqlite 连接 / 知识库 httpx 客户端 / 对话线程池 / 主动开口调度。
@@ -319,6 +332,9 @@ def create_app(
         """
         try:
             reachout.start()  # 后台调度：角色主动开口从这里开始转
+            # 启动即预热：后台线程把默认本地模型按配置的 num_ctx 常驻（keep_alive=-1），
+            # 免首条消息冷加载、也修复空闲后 Ollama 默认 5min 卸载把 pin 打回 4096。
+            threading.Thread(target=_auto_pin_default_model, daemon=True).start()
             yield
         finally:
             # 每个 suppress 都独立：某一处收尾失败不能连累其它资源。
