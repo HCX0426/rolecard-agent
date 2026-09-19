@@ -8,14 +8,15 @@ Design decisions worth stating:
   * **角色只声明作用域，库归内核（US-8）**：`search_knowledge(query)` 没有 scope 参数 ——
     模型永远不能指定去哪个集合检索；可检索范围 = 当前角色 `knowledge_scopes` 的并集，
     由内核在调用工具时注入。未授权角色的检索请求直接得到明确拒绝。
-  * **Embedder 可插拔**（`make_embedder` + `Settings.embedding_backend`）：
-    - `siliconflow`：BAAI/bge-m3（中文效果好，走已有 OpenAI 兼容端点，需 key）；
+  * **Embedder 可插拔，选型只有一个事实面**（`make_embedder(order=…, endpoints=…)`，即
+    「服务」页签的嵌入端点序；P1-5 收口 —— 曾有的 `Settings.embedding_backend` env 分支在
+    生产上从不执行，因为每类服务恒有一条启用的内置行）：
+    - 云端行（引用模型页的 OpenAI 兼容后端）：BAAI/bge-m3（中文效果好，需该后端配 key）；
+    - `hash`（内置行，恒可用）：确定性字符 n-gram 哈希向量（离线、零依赖、**仅供链路跑通**，
+      检索质量有限）——所以出厂默认就是它，配了云端行并在服务页启用才是 bge-m3；
     - `chroma_default`：chromadb 自带 ONNX MiniLM（离线，首次使用需下载模型，中文偏弱）；
-    - `hash`：确定性字符 n-gram 哈希向量（离线、零依赖、**仅供测试与链路跑通**，检索质量有限）；
-    - `auto`（默认）：有 SILICONFLOW_API_KEY → siliconflow，否则 hash。
+      目前没有任何内置行用它，保留是实现面，服务页要能用它得先播种一条行。
     注意：不同 embedder 维度不同，切换后需要重建集合（v2.1 用小语料，直接删除 chroma 目录重建）。
-  * **embedding_backend 目前读 env（RAG_EMBEDDING）而非 Settings 契约** —— v2.1 第一个增量
-    刻意保持 rag 自包含；若后续要进设置页，再正式升格为 Settings 字段（那时一起改 .env.example）。
 """
 
 from __future__ import annotations
@@ -191,74 +192,39 @@ class SiliconFlowEmbedder(Embedder):
             self._client.close()
 
 
-def _find_embedding_key(settings: Settings) -> str | None:
-    """嵌入 key 的**遗留 env-auto 路径**：只认 `Settings.siliconflow_api_key`。
-
-    架构归一化后（服务引用化），应用的正式路径是「服务端点行 → 引用的 model_backend」，
-    key 由行配置携带；本函数仅供 `order=None` 的 env-auto 老路径（及测试）使用。
-    此前的 model_backend 兜底已删除 —— 一把 key 不该同时活在三处。
-
-    为什么读 Settings 而不是 `os.environ`：env 直读会绕开配置契约（运行环境覆盖层管不到、
-    掩码纪律管不到、`check_dead_config` 也算不到），同一把 key 于是有两个事实面
-    （架构审计报告 P1-4）。
-    """
-    return settings.siliconflow_api_key
-
-
 def make_embedder(
     settings: Settings,
     *,
-    order: Sequence[str] | None = None,
-    endpoints: Any = None,
+    order: Sequence[str],
+    endpoints: Any,
 ) -> Embedder:
-    """按 `Settings.embedding_backend` 构建嵌入器。
+    """按「服务」页签的端点序构建嵌入器 —— **运行期唯一事实面**（架构审计报告 P1-5）。
 
-    `auto`：有 key → siliconflow（bge-m3），否则 hash（离线兜底）。
-    key 来源：`Settings.siliconflow_api_key`（部署期由 `SILICONFLOW_API_KEY` env 引导）→
-    DB 后端配置（模型页存的）。
-    显式指定 siliconflow 但没有任何 key → 启动即报错（配置错误要大声，不要静默降级成
-    质量很差的检索还让人以为一切正常）。
+    `order` + `endpoints`（core/services.py 的端点行）按序取第一个可用者：`hash` 恒可用；
+    云端行按**行内** base_url/api_key/model 实例化（多云端实例各用各的 key），行内未填
+    base_url 时回落 `Settings.siliconflow_base_url`。
 
-    `order` + `endpoints`（「服务」页签的端点行，core/services.py）：给了就按序取第一个
-    可用者 —— `hash` 恒可用；云端行按**行内** base_url/api_key/model 实例化（多云端实例
-    各用各的 key）。`endpoints` 缺省时保留旧的字面 id 解析（env 取 key），兼容测试。
+    为什么不再有"按 `Settings.embedding_backend` 选型"的第二条路径：`seed_once()` 恒为每类
+    服务播种一条启用的内置行 ⇒ 生产上 `order` 永不为空 ⇒ 那条 env 路径**从不执行**，
+    但 `RAG_EMBEDDING` 仍出现在 .env.example 与运行环境页的"可改"清单里 —— 一个改了不生效
+    的开关比没有开关更糟（同一件事在 §3 里被记为"死开关 + 重复事实面"）。
+    没有可用端点时大声失败，而不是静默降级成质量很差的检索。
     """
-    backend: str | None = settings.embedding_backend
-    if order and endpoints:
-        for cid in order:
-            if cid == "hash":
-                return HashEmbedder()
-            cfg = endpoints.get(cid)
-            if cfg is not None and cfg.api_key:
-                return SiliconFlowEmbedder(
-                    api_key=cfg.api_key,
-                    base_url=cfg.base_url
-                    or settings.siliconflow_base_url,
-                    model=cfg.model or "BAAI/bge-m3",
-                )
-        raise RuntimeError("服务策略里没有可用的嵌入端点（云端行需配置 API Key）。")
-    if order:
-        available = {"siliconflow": bool(_find_embedding_key(settings)), "hash": True}
-        backend = next((c for c in order if available.get(c)), None)
-        if backend is None:
-            raise RuntimeError("服务策略把嵌入候选全部排除 —— 至少保留一个可用实现。")
-    elif backend == "auto":
-        backend = "siliconflow" if _find_embedding_key(settings) else "hash"
-    if backend == "hash":
-        return HashEmbedder()
-    if backend == "chroma_default":
-        return ChromaDefaultEmbedder()
-    if backend == "siliconflow":
-        key = _find_embedding_key(settings)
-        if not key:
-            raise RuntimeError(
-                "embedding_backend=siliconflow 需要 SILICONFLOW_API_KEY（.env 引导或模型页凭据）。"
+    for cid in order:
+        if cid == "hash":
+            return HashEmbedder()
+        if cid == "chroma_default":
+            return ChromaDefaultEmbedder()
+        cfg = endpoints.get(cid)
+        if cfg is not None and cfg.api_key:
+            return SiliconFlowEmbedder(
+                api_key=cfg.api_key,
+                base_url=cfg.base_url or settings.siliconflow_base_url,
+                model=cfg.model or "BAAI/bge-m3",
             )
-        return SiliconFlowEmbedder(
-            api_key=key,
-            base_url=settings.siliconflow_base_url,
-        )
-    raise RuntimeError(f"未知 embedding backend: {backend!r}")
+    raise RuntimeError(
+        "服务策略里没有可用的嵌入端点（云端行需在模型页配置 API Key，或保留 hash 内置行）。"
+    )
 
 
 class SiliconFlowReranker:
@@ -305,59 +271,27 @@ class SiliconFlowReranker:
 def make_reranker(
     settings: Settings,
     *,
-    order: Sequence[str] | None = None,
-    endpoints: Any = None,
+    order: Sequence[str],
+    endpoints: Any,
 ) -> SiliconFlowReranker | None:
-    """按 `Settings.rag_rerank` 构建重排器：off（默认，向量序足够）/ auto（有 key 即用）。
+    """按「服务」页签的端点序构建重排器；返回 None = 用向量序（架构审计报告 P1-5 收口）。
 
-    `order` + `endpoints`（「服务」页签的端点行）：按序找第一个可产生重排器的条目 ——
-    `off` 即关闭（返回 None）；云端行按**行内** key/base_url/model 实例化，没配 key 的行
-    跳过（重排是质量增强，缺 key 不是故障）。`endpoints` 缺省时保留旧的字面 id 解析。
+    `off` 行即关闭（返回 None）；云端行按**行内** key/base_url/model 实例化，没配 key 的行
+    跳过（重排是质量增强，缺 key 不是故障，所以这里不像嵌入器那样大声失败）。
+    选型路径与 `make_embedder` 同一条：端点行是唯一事实面，`Settings.rag_rerank` 那个
+    生产上从不执行的 env 分支已删除。
     """
-    key = settings.siliconflow_api_key
-    if order and endpoints:
-        for cid in order:
-            if cid == "off":
-                return None
-            cfg = endpoints.get(cid)
-            if cfg is not None and cfg.api_key:
-                return SiliconFlowReranker(
-                    api_key=cfg.api_key,
-                    base_url=cfg.base_url
-                    or settings.siliconflow_base_url,
-                    model=cfg.model or "BAAI/bge-reranker-v2-m3",
-                )
-        return None
-    if order:
-        chosen = next((c for c in order if c in {"siliconflow", "off"}), None)
-        if chosen == "siliconflow" and key:
+    for cid in order:
+        if cid == "off":
+            return None
+        cfg = endpoints.get(cid)
+        if cfg is not None and cfg.api_key:
             return SiliconFlowReranker(
-                api_key=key,
-                base_url=settings.siliconflow_base_url,
+                api_key=cfg.api_key,
+                base_url=cfg.base_url or settings.siliconflow_base_url,
+                model=cfg.model or "BAAI/bge-reranker-v2-m3",
             )
-        return None
-    backend = settings.rag_rerank
-    if backend == "off":
-        return None
-    if backend == "auto":
-        return (
-            SiliconFlowReranker(
-                api_key=key,
-                base_url=settings.siliconflow_base_url,
-            )
-            if key
-            else None
-        )
-    if backend == "siliconflow":
-        if not key:
-            raise RuntimeError(
-                "rag_rerank=siliconflow 需要 SILICONFLOW_API_KEY（.env 引导或模型页凭据）。"
-            )
-        return SiliconFlowReranker(
-            api_key=key,
-            base_url=settings.siliconflow_base_url,
-        )
-    raise RuntimeError(f"未知 rag_rerank: {backend!r}")
+    return None
 
 
 # ---------------------------------------------------------------- 知识库

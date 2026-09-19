@@ -207,26 +207,34 @@ def test_web_master_switch_and_thinking_parse_from_env() -> None:
     assert defaults.model_thinking == "auto"
 
 
-def test_siliconflow_credentials_and_ocr_python_parse_from_env() -> None:
-    """P1-4：`SILICONFLOW_*` / `OCR_PYTHON` 必须经 Settings 落地，而不是在 rag 里直读 env。
+def test_siliconflow_endpoint_and_ocr_python_parse_from_env() -> None:
+    """P1-4 + P1-5：仍归 env 的只剩两项 —— 云端兜底端点、本地 Paddle 解释器。
 
-    这三把值以前有一半是在 `rag/retriever.py`、`rag/ocr.py` 里 `os.environ.get` 取的 ——
-    配置契约（.env.example 对齐、掩码、dead-config 检查、运行环境覆盖层）全都管不到它们。
-    本用例把它们钉成"env 只在这里参与一次"。
+    `SILICONFLOW_API_KEY` 不再是 Settings 字段：凭据的家是模型页（DB 是事实面），env 那把
+    key 只被 scripts/run_api.py 用作"首启注册一个硅基流动后端行"的引导输入。
+    RAG_EMBEDDING / RAG_RERANK / OCR_BACKEND / OCR_API_KEY 那一族开关则整个删掉了 ——
+    它们在 .env.example 上宣传"可改"，而工厂里对应的分支生产上从不执行（服务页恒有启用的
+    内置行）。一个改了不生效的开关比没有开关更糟（架构审计报告 P1-5）。
     """
     parsed = Settings.from_env(
         {
-            "SILICONFLOW_API_KEY": "sk-x",
             "SILICONFLOW_BASE_URL": "https://mirror.example/v1",
             "OCR_PYTHON": ".venv-ocr/Scripts/python.exe",
         }
     )
-    assert parsed.siliconflow_api_key == "sk-x"
     assert parsed.siliconflow_base_url == "https://mirror.example/v1"
     assert parsed.ocr_python == ".venv-ocr/Scripts/python.exe"
 
-    # 未设置：key 为空（"配了才用"），base_url 用出厂常量（云端端点行未填时的兜底）。
+    # 未设置 = 出厂兜底端点（只有一处常量）+ 自动发现 .venv-ocr。
     defaults = Settings.from_env({})
-    assert defaults.siliconflow_api_key is None
     assert defaults.siliconflow_base_url == DEFAULT_SILICONFLOW_BASE_URL
     assert defaults.ocr_python is None
+
+    names = set(Settings.model_fields)
+    assert not {
+        "siliconflow_api_key",
+        "embedding_backend",
+        "rag_rerank",
+        "ocr_backend",
+        "ocr_api_key",
+    } & names

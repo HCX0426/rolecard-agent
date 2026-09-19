@@ -32,26 +32,29 @@ def test_payload_groups_and_masks() -> None:
     assert obs_rows["OBS_BACKEND"]["value"] == "local"
 
 
-def test_siliconflow_credentials_are_visible_but_masked_and_readonly() -> None:
-    """P1-4：云端嵌入/重排的凭据在界面上**看得见**（掩码）、但**不假装可改**。
+def test_backend_selection_is_not_a_runtime_knob() -> None:
+    """P1-5：「用哪个后端」不在运行环境页 —— 那一页不再宣传任何改了不生效的开关。
 
-    以前这把 key 只在 `rag/retriever` 里 `os.environ.get`，界面上一个字都没有 —— 用户无从
-    知道检索到底用了谁的凭据。现在它进了配置契约，于是：
-      * 必须掩码（`_SECRET_FIELDS` 漏一个就会把明文发给前端）；
-      * 必须是只读（`kind="ro"`）：它的操作员时刻家是「模型」页，运行环境页给一个改了不
-        生效的输入框，正是 P1-5 那一类假接缝。
+    曾经 rag/ocr 组里挂着 嵌入后端 / 重排 / OCR 后端 / 云端 OCR Key / 云端 OCR 端点 五行
+    "可改"，而工厂里对应的 env 分支在生产上从不执行（`seed_once` 恒播种一条启用的内置行）
+    —— 保存它们等于什么都不发生。事实面在「服务」页的端点序 + 「模型」页的凭据。
     """
-    settings = Settings(siliconflow_api_key="sk-1234567890abcd")
-    payload = runtime_payload(settings)
+    payload = runtime_payload(Settings())
     groups = {g["key"]: g for g in payload["groups"]}  # type: ignore[index]
-    rows = {r["key"]: r for r in groups["rag"]["items"]}  # type: ignore[index]
+    rows = {r["key"]: r for g in payload["groups"] for r in g["items"]}  # type: ignore[index]
+    assert not {
+        "RAG_EMBEDDING",
+        "RAG_RERANK",
+        "OCR_BACKEND",
+        "OCR_API_KEY",
+        "OCR_API_URL",
+    } & set(rows)
 
-    key = rows["SILICONFLOW_API_KEY"]
-    assert "sk-1234567890abcd" not in str(key["value"])
-    assert str(key["value"]).endswith("abcd")
-    assert key["kind"] == "ro"
-    assert rows["SILICONFLOW_BASE_URL"]["value"] == "https://api.siliconflow.cn/v1"
+    # 仍在的两项都必须是只读：解释器路径与云端兜底端点随进程构建，改了要重启。
+    assert rows["OCR_PYTHON"]["kind"] == "ro"
     assert rows["SILICONFLOW_BASE_URL"]["kind"] == "ro"
+    assert rows["SILICONFLOW_BASE_URL"]["value"] == "https://api.siliconflow.cn/v1"
+    assert {"ocr", "rag", "web"} <= set(groups)
 
 
 def test_secret_defaults_masked_even_when_unset() -> None:

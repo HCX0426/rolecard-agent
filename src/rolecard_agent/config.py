@@ -231,39 +231,22 @@ class Settings(BaseModel):
     # saucenao.com（第三方），故默认不设 key、不静默上传。
     saucenao_api_key: str | None = None
 
-    # v2.2 OCR 后端（可插拔，Paddle 优先 / 云端 key 兜底）：
-    # - ocr_python：本地 Paddle 的解释器，必须是【独立 venv / 进程】的 python。PaddleOCR 自带
-    #   numpy / OpenCV / onnxruntime，与主环境依赖摩擦（见 requirements-ocr.txt），故绝不进主
-    #   环境。None = 让解析器自动发现默认路径（.venv-ocr/Scripts/python.exe）。
-    # - ocr_backend：auto（默认，Paddle 优先，不可用时若有 key 回退云端）/ paddle / cloud。
-    # - ocr_api_key：云端 OCR（默认 OCR.space）的 key。仅作兜底、且要求显式配置——
-    #   未配则不启用，绝不悄悄把用户上传的图片发往第三方。
-    # - ocr_provider / ocr_api_url：云端提供方与可选端点覆盖（默认 ocrspace 官方端点）。
+    # v2.2 OCR：本地 Paddle 的解释器，必须是【独立 venv / 进程】的 python。PaddleOCR 自带
+    # numpy / OpenCV / onnxruntime，与主环境依赖摩擦（见 requirements-ocr.txt），故绝不进主
+    # 环境。None = 让解析器自动发现默认路径（.venv-ocr/Scripts/python.exe）。
+    # 「用哪个 OCR 后端」不在这里配：那是「服务」页的 OCR 端点序（运行期唯一事实面，
+    # 见 rag/ocr.select_ocr_backend 与架构审计报告 P1-5）。曾有过的 ocr_backend /
+    # ocr_api_key / ocr_provider / ocr_api_url 四项生产上从不被读（内置行恒在 ⇒ env 分支
+    # 不可达），却挂在 .env.example 与"可改"清单里 —— 已随那次收口删除。
     ocr_python: str | None = None
-    ocr_backend: str = "auto"
-    ocr_api_key: str | None = None
-    ocr_provider: str = "ocrspace"
-    ocr_api_url: str | None = None
 
-    # v2.1 RAG 嵌入/重排的**云端凭据**（SiliconFlow）：以前这两把值是在 rag/retriever.py 里
-    # 直接 `os.environ.get` 读的 —— 那等于绕开 Settings 契约：运行环境覆盖层管不到它、
-    # 掩码纪律管不到它、`check_dead_config` 也算不到它，于是同一把 key 同时活在 env 和
-    # 模型页的 model_backend 行两处而没人知道哪一处生效（架构审计报告 P1-4）。
-    # 现在它是**部署期引导值**：读法只有 Settings 一条路径；操作员时刻的凭据归模型页
-    # （DB 是事实面，`has_key` 掩码纪律在那边）。
-    # 注意 `siliconflow_base_url` 有默认值：只有 key 是"配了才用"，端点不必每次重写。
-    siliconflow_api_key: str | None = None
+    # 云端嵌入/重排的行内未填 base_url 时的兜底端点（`Settings.siliconflow_base_url`）。
+    # 注意**只有端点**留在这里：凭据的家是模型页（DB 是事实面、`has_key` 只写不回读），
+    # 曾经并存的 `SILICONFLOW_API_KEY` → Settings 一条路径随 P1-5 一并去掉，
+    # 该 env 变量现在只被 scripts/run_api.py 用作"首启注册一个硅基流动后端行"的引导输入。
     siliconflow_base_url: str = DEFAULT_SILICONFLOW_BASE_URL
 
-    # v2.1 RAG 嵌入后端：auto（有 key 走 siliconflow bge-m3，否则 hash 离线兜底）/
-    # siliconflow / chroma_default / hash。由 rag/retriever.make_embedder 消费。
-    embedding_backend: str = "auto"
-
-    # v2.1 检索重排：auto（默认开启——有 SILICONFLOW_API_KEY 走 bge-reranker 精排，否则静默
-    # 等于 off，不破坏离线）/ off（强制关闭）/ siliconflow（强制开启，缺 key 启动即报错）。
-    rag_rerank: str = "auto"
-
-    # 检索的**绝对相似度下限**（余弦相似度，越大越相关；0 = 不过滤）。
+    # v2.1 检索的**绝对相似度下限**（余弦相似度，越大越相关；0 = 不过滤）。
     # 为什么默认关闭：绝对阈值必须按嵌入器标定，而实测离线默认的 HashEmbedder 下
     # 「复查频率是多少」对正确文档只有 0.163，完全无关的「编程语言排行榜」却有 0.358
     # —— 任何固定的绝对阈值都会砍掉正确结果、留下噪音（审查报告 P1-6 的实测数据）。
@@ -399,15 +382,8 @@ class Settings(BaseModel):
             ("CHROMA_PATH", "chroma_path"),
             ("UPLOAD_DIR", "upload_dir"),
             ("OCR_PYTHON", "ocr_python"),
-            ("OCR_BACKEND", "ocr_backend"),
-            ("OCR_API_KEY", "ocr_api_key"),
-            ("OCR_PROVIDER", "ocr_provider"),
-            ("OCR_API_URL", "ocr_api_url"),
-            ("RAG_EMBEDDING", "embedding_backend"),
-            ("RAG_RERANK", "rag_rerank"),
-            ("RAG_MIN_SIMILARITY", "rag_min_similarity"),
-            ("SILICONFLOW_API_KEY", "siliconflow_api_key"),
             ("SILICONFLOW_BASE_URL", "siliconflow_base_url"),
+            ("RAG_MIN_SIMILARITY", "rag_min_similarity"),
             ("EXTRACT_BACKEND", "extract_backend"),
             ("EXTRACT_VERIFY", "extract_verify"),
             ("OBS_BACKEND", "obs_backend"),

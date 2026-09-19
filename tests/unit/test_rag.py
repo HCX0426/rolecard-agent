@@ -20,6 +20,7 @@ from rolecard_agent.config import DEFAULT_SILICONFLOW_BASE_URL, Settings
 from rolecard_agent.core.nodes import (
     role_knowledge_scopes_ctx,
 )
+from rolecard_agent.core.services import EndpointConfig
 from rolecard_agent.rag.retriever import (
     _EMBED_BATCH,
     HashEmbedder,
@@ -216,67 +217,98 @@ def test_scopes_never_in_tool_signature(search_tool) -> None:
     assert "scope" not in schema.get("properties", {})
 
 
-# -- embedder 选型 ----------------------------------------------------------------------
+# -- 嵌入/重排选型：「服务」页的端点序是唯一事实面（P1-5 收口） --------------------------------
 
 
-def test_make_embedder_auto_with_key() -> None:
-    assert make_embedder(Settings(siliconflow_api_key="sk-x")).name == "siliconflow"
+def _row(
+    eid: str,
+    *,
+    kind: str = "cloud",
+    api_key: str | None = None,
+    base_url: str | None = None,
+    model: str | None = None,
+) -> EndpointConfig:
+    """一条服务端点行的快照（工厂消费的形态）。内置行（hash/off/paddle）kind=local。"""
+    return EndpointConfig(
+        id=eid,
+        label=eid,
+        kind=kind,
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        enabled=True,
+        builtin=kind == "local",
+    )
 
 
-def test_make_embedder_auto_without_key_is_hash() -> None:
-    assert make_embedder(Settings()).name == "hash"
+def _strategy(*rows: EndpointConfig) -> tuple[list[str], dict[str, EndpointConfig]]:
+    """按启用序给出 (order, endpoints) —— 与 AppContext 交给工厂的形状一致。"""
+    return [r.id for r in rows], {r.id: r for r in rows}
 
 
-def test_make_embedder_siliconflow_without_key_fails_loudly() -> None:
-    """配置错误要大声失败：静默降级成质量很差的检索会让人误以为一切正常。"""
-    with pytest.raises(RuntimeError, match="SILICONFLOW_API_KEY"):
-        make_embedder(Settings(embedding_backend="siliconflow"))
+def test_embedder_takes_the_first_usable_row_in_order() -> None:
+    order, endpoints = _strategy(_row("sf", api_key="sk-row"), _row("hash", kind="local"))
+    assert make_embedder(Settings(), order=order, endpoints=endpoints).name == "siliconflow"
+
+    # 排在后面的行轮不到：把 hash 提前就用 hash（内置行恒可用 = 出厂默认）。
+    order, endpoints = _strategy(_row("hash", kind="local"), _row("sf", api_key="sk-row"))
+    assert make_embedder(Settings(), order=order, endpoints=endpoints).name == "hash"
 
 
-def test_embedder_credentials_come_from_settings_not_environ(
+def test_embedder_uses_the_row_own_credentials_not_any_env_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """P1-4 回归：rag 工厂**只**认 Settings，不再在函数里 `os.environ.get`。
+    """P1-4 + P1-5 的合流：凭据只有一个家 = 端点行所引用的模型页后端。
 
-    这条断言钉的是"事实面只有一个"：env 里塞一把别的 key、Settings 里塞另一把，
-    实例化的客户端必须用 Settings 那把（env 只在 `Settings.from_env()` 那一层参与一次）。
-    以前是 Settings 之外再直读 env，于是运行环境覆盖层改了值而检索仍用旧 key。
+    以前这里既可能取行内 key、也可能取 `SILICONFLOW_API_KEY` env（两条路径、两个事实面）。
+    现在 env 里塞什么都不影响工厂，而行的 base_url/model 必须被逐行消费（多云端实例各用各的）。
     """
     monkeypatch.setenv("SILICONFLOW_API_KEY", "sk-from-env")
-    monkeypatch.setenv("SILICONFLOW_BASE_URL", "https://env.example/v1")
-    embedder = make_embedder(Settings(siliconflow_api_key="sk-from-settings"))
-    assert embedder.name == "siliconflow"
-    auth = embedder._client.headers.get("Authorization") or ""  # noqa: SLF001
-    assert "sk-from-settings" in auth and "sk-from-env" not in auth
-    # httpx 会把 base_url 规范化成带尾斜杠，比较前统一 rstrip（断言的是"走的是哪个端点"）。
-    base = str(embedder._client.base_url).rstrip("/")  # noqa: SLF001
-    assert base == "https://api.siliconflow.cn/v1"
-    assert "env.example" not in base
-
-
-def test_reranker_base_url_default_is_a_single_constant() -> None:
-    """出厂端点默认值**只有一处**（config.DEFAULT_SILICONFLOW_BASE_URL），且可被 Settings 覆盖。
-
-    以前那句 `os.environ.get("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")` 在
-    一个文件里抄了 5 遍 —— 漏改一处就是"嵌入走了新端点、重排还在旧端点"。
-    """
-    plain = make_reranker(Settings(siliconflow_api_key="sk-x", rag_rerank="auto"))
-    assert plain is not None
-    assert str(plain._client.base_url).rstrip("/") == DEFAULT_SILICONFLOW_BASE_URL  # noqa: SLF001
-
-    custom = make_reranker(
-        Settings(
-            siliconflow_api_key="sk-x",
-            siliconflow_base_url="https://mirror.example/v1",
-            rag_rerank="auto",
-        )
+    order, endpoints = _strategy(
+        _row("sf", api_key="sk-from-row", base_url="https://row.example/v1", model="m-row")
     )
-    assert str(custom._client.base_url).rstrip("/") == "https://mirror.example/v1"  # noqa: SLF001
+    embedder = make_embedder(Settings(), order=order, endpoints=endpoints)
+    auth = embedder._client.headers.get("Authorization") or ""  # noqa: SLF001
+    assert "sk-from-row" in auth and "sk-from-env" not in auth
+    assert str(embedder._client.base_url).rstrip("/") == "https://row.example/v1"  # noqa: SLF001
 
 
-def test_make_embedder_unknown_backend_fails() -> None:
-    with pytest.raises(RuntimeError, match="未知 embedding backend"):
-        make_embedder(Settings(embedding_backend="warp-drive"))
+def test_embedder_falls_back_to_settings_base_url_and_capability_default_model() -> None:
+    """行内未填 base_url → 用 `Settings.siliconflow_base_url`；未填 model → 用 bge-m3。"""
+    order, endpoints = _strategy(_row("sf", api_key="sk-row"))
+    embedder = make_embedder(
+        Settings(siliconflow_base_url="https://mirror.example/v1"),
+        order=order,
+        endpoints=endpoints,
+    )
+    assert str(embedder._client.base_url).rstrip("/") == "https://mirror.example/v1"  # noqa: SLF001
+    assert embedder._model == "BAAI/bge-m3"  # noqa: SLF001
+    # 出厂默认端点只有一处常量（字段默认即它），改它只需要改 config.py 一行。
+    assert Settings().siliconflow_base_url == DEFAULT_SILICONFLOW_BASE_URL
+
+
+def test_embedder_fails_loudly_when_no_row_is_usable() -> None:
+    """云端行没配 key 又没有 hash 内置行 → 启动即报错。
+
+    静默降级成质量很差的检索会让人以为一切正常；而"服务策略里一个可用嵌入端点都没有"
+    是配置错误，必须大声（服务页本身不允许停掉最后一条启用行，所以这只能来自手改库）。
+    """
+    order, endpoints = _strategy(_row("sf", api_key=None))
+    with pytest.raises(RuntimeError, match="没有可用的嵌入端点"):
+        make_embedder(Settings(), order=order, endpoints=endpoints)
+
+
+def test_reranker_off_row_means_vector_order_and_missing_key_is_not_a_failure() -> None:
+    """重排是质量增强：`off` 行 = 关闭；云端行缺 key 顺延而不是故障。"""
+    order, endpoints = _strategy(_row("off", kind="local"))
+    assert make_reranker(Settings(), order=order, endpoints=endpoints) is None
+
+    order, endpoints = _strategy(_row("sf", api_key=None), _row("off", kind="local"))
+    assert make_reranker(Settings(), order=order, endpoints=endpoints) is None
+
+    order, endpoints = _strategy(_row("sf", api_key="sk-row", model="rerank-m"))
+    reranker = make_reranker(Settings(), order=order, endpoints=endpoints)
+    assert reranker is not None and reranker._model == "rerank-m"  # noqa: SLF001
 
 
 # -- 集成：search_knowledge 在内核执行器里也拿到作用域 ---------------------------------

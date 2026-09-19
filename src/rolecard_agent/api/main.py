@@ -198,19 +198,22 @@ def create_app(
         model_settings.effective_settings(settings),
         runtime_settings.load_overrides(conn),
     )
+    # 与 `rebuild_runtime` 同构：初始装配也必须用**叠加过覆盖**的配置。此前这里传的是裸 env
+    # 快照 `settings`，于是运行环境页存过的值在重启前对嵌入/重排完全不生效，而保存一次之后
+    # 又突然生效 —— 两条装配路径给出两个答案，就是两个事实面。
     knowledge = KnowledgeBase(
-        settings.chroma_path,
+        effective.chroma_path,
         make_embedder(
-            settings,
+            effective,
             order=[e.id for e in services.ordered_candidates("embedding")],
             endpoints=services.endpoint_map("embedding"),
         ),
         make_reranker(
-            settings,
+            effective,
             order=[e.id for e in services.ordered_candidates("rerank")],
             endpoints=services.endpoint_map("rerank"),
         ),
-        settings.rag_min_similarity,
+        effective.rag_min_similarity,
     )
 
     # 轨迹器必须先于工具注册表构建：`search_knowledge` 闭包要持有它，
@@ -431,7 +434,7 @@ def create_app(
             endpoints=services.endpoint_map("rerank"),
         )
         knowledge_new = KnowledgeBase(
-            settings.chroma_path, embedder, reranker, settings.rag_min_similarity
+            eff.chroma_path, embedder, reranker, eff.rag_min_similarity
         )
 
         # MCP 生效集重建时重新解析（表行可能在两次重建之间被 API 改动）。

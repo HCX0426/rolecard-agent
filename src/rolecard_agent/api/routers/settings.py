@@ -180,8 +180,6 @@ _SECRET_FIELDS = frozenset(
     {
         "tavily_api_key",
         "saucenao_api_key",
-        "ocr_api_key",
-        "siliconflow_api_key",
         "langsmith_api_key",
         "auth_credentials",
         "auth_api_keys",
@@ -290,41 +288,25 @@ def runtime_payload(
         "ocr",
         "OCR",
         [
-            (
-                "ocr_backend",
-                "OCR_BACKEND",
-                "OCR 后端",
-                "auto=Paddle 优先、云端兜底 / paddle / cloud",
-            ),
             ("ocr_python", "OCR_PYTHON", "Paddle 解释器", f"Paddle 独立解释器：{ocr_python}"),
-            ("ocr_api_key", "OCR_API_KEY", "云端 OCR Key", "未配则绝不外发图片"),
-            ("ocr_api_url", "OCR_API_URL", "云端 OCR 端点", None),
+            # 「用哪个 OCR 后端 / 云端 OCR 的 key」这里**不再有行**（P1-5 收口）：曾有的
+            # OCR_BACKEND / OCR_API_KEY / OCR_API_URL 三项在生产上从不被读（服务页恒有一条
+            # 启用的内置行 ⇒ 工厂的 env 分支不可达），留着就是三个假开关。
+            # 事实面在「服务」页的 OCR 端点序 + 模型页的云端后端凭据（图片会外发第三方，
+            # 只允许操作员显式配置，绝不从 env 默认启用）。
         ],
     )
     add(
         "rag",
         "检索与抽取",
         [
-            (
-                "embedding_backend",
-                "RAG_EMBEDDING",
-                "嵌入后端",
-                "auto=有 Key 走 bge-m3，否则离线 hash",
-            ),
-            ("rag_rerank", "RAG_RERANK", "重排", "auto=有 Key 精排，否则关闭"),
-            # 云端嵌入/重排的凭据：以前只在 rag/retriever 里 `os.environ` 直读，界面上
-            # 完全看不见（P1-4）。现在走 Settings 契约，因此这里如实展示一行只读掩码值，
-            # 并说明操作员时刻的家在哪：凭据归「模型」页（DB 是事实面、只写不回读）。
-            (
-                "siliconflow_api_key",
-                "SILICONFLOW_API_KEY",
-                "云端嵌入/重排 Key",
-                "部署期引导值（掩码显示）；日常改凭据请在「模型」页对应后端",
-            ),
+            # 嵌入/重排的**选型**同样不在这里：「服务」页的端点序是唯一事实面。
+            # 这里只留一个真正被读的部署值 —— 云端行未填 base_url 时的兜底端点。
+            # 凭据不出现在任何运行环境行里：模型页的 api_key 只写不回读（`has_key` 掩码）。
             (
                 "siliconflow_base_url",
                 "SILICONFLOW_BASE_URL",
-                "云端嵌入/重排端点",
+                "云端嵌入/重排兜底端点",
                 "行内未填 base_url 的云端端点用它兜底；改它需重启（随进程构建）",
             ),
             ("extract_backend", "EXTRACT_BACKEND", "抽取后端", None),

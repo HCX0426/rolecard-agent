@@ -43,16 +43,9 @@ RUNTIME_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("web_search_backend", "WEB_SEARCH_BACKEND", "str", ("auto", "tavily", "ddgs", "off")),
     FieldSpec("tavily_api_key", "TAVILY_API_KEY", "secret"),
     FieldSpec("saucenao_api_key", "SAUCENAO_API_KEY", "secret"),
-    FieldSpec("ocr_backend", "OCR_BACKEND", "str", ("auto", "paddle", "cloud")),
-    FieldSpec("ocr_api_key", "OCR_API_KEY", "secret"),
-    FieldSpec("ocr_api_url", "OCR_API_URL", "str"),
-    FieldSpec(
-        "embedding_backend",
-        "RAG_EMBEDDING",
-        "str",
-        ("auto", "siliconflow", "chroma_default", "hash"),
-    ),
-    FieldSpec("rag_rerank", "RAG_RERANK", "str", ("auto", "off", "siliconflow")),
+    # OCR / 嵌入 / 重排"用哪个后端"**不在此列**：那是「服务」页的端点序（运行期唯一事实面）。
+    # 它们曾在这里各挂一条"可改"，而工厂里对应的 env 分支在生产上从不执行（内置行恒在），
+    # 于是保存=什么都不发生 —— 随架构审计报告 P1-5 一并收口。
     FieldSpec("extract_backend", "EXTRACT_BACKEND", "str"),
     FieldSpec("extract_verify", "EXTRACT_VERIFY", "str"),
     FieldSpec("model_thinking", "MODEL_THINKING", "str", ("auto", "off")),

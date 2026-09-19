@@ -7,8 +7,8 @@
     约定）。离线、数据不出本机；numpy/OpenCV/onnxruntime 的摩擦被隔离在独立进程之外。
   - `CloudApiBackend`：走 HTTP 的 OCR API（默认 OCR.space，仅需 api_key，无 SDK）。数据会
     发往第三方——因此只作兜底，且 `available()` 严格要求显式配了 key，绝不悄悄外发。
-- 选择器 `select_ocr_backend`：**Paddle 优先**；Paddle 不可用（未装独立 venv）时，若配了
-  `OCR_API_KEY` 则回退云端；都没有 → 返回 None，调用方降级为 `OcrUnavailable`，而不是把重型
+- 选择器 `select_ocr_backend`：按「服务」页签的 OCR 端点序逐个试可用（Paddle / 本地视觉
+  模型 / 云端），不可用就顺延；都没有 → 返回 None，调用方降级为 `OcrUnavailable`，而不是把重型
   依赖拖进主进程或偷偷把图片发到外网。
 
 错误语义（与解析层一致）：后端"不可用"抛 `OcrUnavailable`（调用方降级为 pending）；"可用但
@@ -175,23 +175,19 @@ class VisionModelBackend:
 
 
 class CloudApiBackend:
-    """云端 OCR（默认 OCR.space）：仅需 api_key，无 SDK。仅作 Paddle 不可用时的兜底。
+    """云端 OCR（默认 OCR.space）：仅需 api_key，无 SDK。仅在服务页把它排进 OCR 序时才会被用。
 
-    隐私红线：图片会发往第三方。所以 `available()` 严格要求显式配了 `OCR_API_KEY`；未配则
-    不启用，绝不悄悄把用户上传的病历图片发出去。调用失败抛 `ParseError`（不静默返回空）。
+    隐私红线：图片会发往第三方。所以 `available()` 严格要求该端点行引用的后端**显式配了
+    key**（模型页填写）；未配则不启用，绝不悄悄把用户上传的病历图片发出去。
+    调用失败抛 `ParseError`（不静默返回空）。
     """
 
     name = "cloud"
 
-    def __init__(
-        self,
-        *,
-        api_key: str | None = None,
-        provider: str = "ocrspace",
-        api_url: str | None = None,
-    ) -> None:
+    def __init__(self, *, api_key: str | None = None, api_url: str | None = None) -> None:
+        # `provider` 参数已删：它被存进 `self._provider` 然后**从没被读过**（§3 的死开关），
+        # 而端点行本来就自带 base_url —— 提供方由那一行的 base_url 表达，不需要第二个名字。
         self._key = api_key
-        self._provider = provider
         self._url = api_url or "https://api.ocr.space/parse/image"
 
     def available(self) -> bool:
@@ -199,7 +195,7 @@ class CloudApiBackend:
 
     def ocr(self, image_path: Path) -> str:
         if not self._key:
-            raise OcrUnavailable("云端 OCR 未配置 OCR_API_KEY。")
+            raise OcrUnavailable("云端 OCR 未配置 API Key（去模型页为该后端填写凭据）。")
         try:
             b64 = _read_image_b64(image_path)
         except Exception as exc:
@@ -234,58 +230,39 @@ class CloudApiBackend:
 def select_ocr_backend(
     settings: Settings,
     *,
-    order: Sequence[str] | None = None,
-    endpoints: Any = None,
+    order: Sequence[str],
+    endpoints: Any,
 ) -> OcrBackend | None:
-    """按策略选择 OCR 后端：默认 **Paddle 优先**，不可用时若有 key 回退云端，否则 None。
+    """按「服务」页签的 OCR 端点序选一个就绪后端 —— **运行期唯一事实面**（架构审计报告 P1-5）。
 
-    `order` + `endpoints`（操作员在「服务」页签里维护的端点行，core/services.py）：
-    给了就按序逐个试可用 —— `paddle` 探本地解释器；云端行按**行内** key/api_url 实例化
-    （可并存多个云端 OCR 账号，谁排前面谁先被用）。`endpoints` 缺省时保留旧的字面 id
-    解析（paddle/cloud + env key）。返回 None 时调用方应降级为 `OcrUnavailable`
-    （保持 pending，不假装已读）。
+    `paddle` 探本地解释器（`Settings.ocr_python`）；带模型的本地引用行 = 本地视觉模型，
+    探 Ollama 与模型在位；云端行按**行内** key/api_url 实例化（可并存多个云端 OCR 账号，
+    谁排前面谁先被用）。不可用的候选顺延下一个；全部不可用返回 None，调用方应降级为
+    `OcrUnavailable`（保持 pending，不假装已读）。
+
+    为什么不再有"按 `Settings.ocr_backend` 走 paddle/cloud 档位"的第二条路径：`seed_once()`
+    恒播种一条启用的内置行 ⇒ 生产上 `order` 永不为空 ⇒ 那条分支**从不执行**，而
+    `OCR_BACKEND`/`OCR_API_KEY`/`OCR_API_URL` 还挂在 .env.example 与运行环境页的"可改"清单上。
+    凭据因此只有一个家：模型页的云端后端行（`has_key` 掩码纪律在那边）。
+    云端 OCR 会把图片外发第三方 —— 它**只能**由操作员显式在模型页建凭据行、再在服务页引用，
+    绝不从 env 默认启用（隐私红线，与 `seed_once` 的"OCR 默认无云端引用"同一条理由）。
     """
-    paddle = LocalPaddleBackend(exe=settings.ocr_python)
-    if order and endpoints:
-        for cid in order:
-            if cid == "paddle":
-                if paddle.available():
-                    return paddle
-                continue
-            cfg = endpoints.get(cid)
-            if cfg is None or getattr(cfg, "stale", False):
-                continue
-            # 视觉模型行（usage=ocr 的后端引用）：本地直读，不外发数据。
-            # available() 探 Ollama 与模型在位；不可用顺延下一候选（降级语义与视图一致）。
-            if getattr(cfg, "kind", "") == "local" and cfg.model:
-                vl = VisionModelBackend(base_url=cfg.base_url, model=cfg.model)
-                if vl.available():
-                    return vl
-                continue
-            if cfg.api_key:
-                return CloudApiBackend(api_key=cfg.api_key, api_url=cfg.base_url)
-        return None
-    cloud = CloudApiBackend(
-        api_key=settings.ocr_api_key,
-        provider=settings.ocr_provider,
-        api_url=settings.ocr_api_url,
-    )
-    by_id: dict[str, OcrBackend] = {"paddle": paddle, "cloud": cloud}
-    mode = (settings.ocr_backend or "auto").lower()
-    if order:
-        # 操作员顺序优先于 env 档位：逐个试 available，谁就绪用谁（启停与优先级热生效）。
-        for cid in order:
-            backend = by_id.get(cid)
-            if backend is not None and backend.available():
-                return backend
-        return None
-    if mode == "paddle":
-        return paddle if paddle.available() else None
-    if mode == "cloud":
-        return cloud if cloud.available() else None
-    # auto（默认）：Paddle 优先，云端兜底
-    if paddle.available():
-        return paddle
-    if cloud.available():
-        return cloud
+    for cid in order:
+        if cid == "paddle":
+            paddle = LocalPaddleBackend(exe=settings.ocr_python)
+            if paddle.available():
+                return paddle
+            continue
+        cfg = endpoints.get(cid)
+        if cfg is None or getattr(cfg, "stale", False):
+            continue
+        # 视觉模型行（usage=ocr 的后端引用）：本地直读，不外发数据。
+        # available() 探 Ollama 与模型在位；不可用顺延下一候选（降级语义与视图一致）。
+        if getattr(cfg, "kind", "") == "local" and cfg.model:
+            vl = VisionModelBackend(base_url=cfg.base_url, model=cfg.model)
+            if vl.available():
+                return vl
+            continue
+        if cfg.api_key:
+            return CloudApiBackend(api_key=cfg.api_key, api_url=cfg.base_url)
     return None

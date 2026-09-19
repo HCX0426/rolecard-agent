@@ -10,10 +10,12 @@ from __future__ import annotations
 import io
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from rolecard_agent.config import Settings
+from rolecard_agent.core.services import EndpointConfig
 from rolecard_agent.rag.ocr import (
     CloudApiBackend,
     LocalPaddleBackend,
@@ -184,45 +186,106 @@ def test_paddle_interpreter_comes_from_settings_not_environ(
     """
     monkeypatch.setenv("OCR_PYTHON", "C:/from/env/python.exe")
     monkeypatch.setattr(LocalPaddleBackend, "available", lambda self: True)
-    chosen = select_ocr_backend(Settings(ocr_python="C:/from/settings/python.exe"))
+    chosen = select_ocr_backend(
+        Settings(ocr_python="C:/from/settings/python.exe"), **_ocr_strategy(_paddle_row())
+    )
     assert isinstance(chosen, LocalPaddleBackend)
     assert chosen._exe == "C:/from/settings/python.exe"  # noqa: SLF001
     # 未显式给出解释器（None）= 自动发现默认路径，同样**不是**去读 env。
     assert LocalPaddleBackend()._exe == default_ocr_python()  # noqa: SLF001
 
 
-def test_select_ocr_backend_prefers_paddle(monkeypatch: pytest.MonkeyPatch) -> None:
-    """两者都可用时，Paddle 优先（离线、数据不出本机）。"""
+def _paddle_row() -> EndpointConfig:
+    return EndpointConfig(
+        id="paddle",
+        label="paddle",
+        kind="local",
+        base_url=None,
+        api_key=None,
+        model=None,
+        enabled=True,
+        builtin=True,
+    )
+
+
+def _cloud_row(eid: str = "ocrspace", *, api_key: str | None = "sk-x") -> EndpointConfig:
+    return EndpointConfig(
+        id=eid,
+        label=eid,
+        kind="cloud",
+        base_url="https://ocr.example/parse",
+        api_key=api_key,
+        model=None,
+        enabled=True,
+        builtin=False,
+    )
+
+
+def _ocr_strategy(*rows: EndpointConfig) -> dict[str, Any]:
+    """工厂参数（「服务」页的 OCR 端点序 + 行配置）—— P1-5 后它是唯一入口。"""
+    return {
+        "order": [r.id for r in rows],
+        "endpoints": {r.id: r for r in rows},
+    }
+
+
+def test_select_ocr_backend_follows_the_service_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    """两者都可用时，**排在前面**的那条行被选中（出厂播种是 paddle 在前 = 离线优先）。"""
     monkeypatch.setattr(LocalPaddleBackend, "available", lambda self: True)
     monkeypatch.setattr(CloudApiBackend, "available", lambda self: True)
-    backend = select_ocr_backend(Settings(ocr_api_key="sk-x"))
+    backend = select_ocr_backend(Settings(), **_ocr_strategy(_paddle_row(), _cloud_row()))
     assert isinstance(backend, LocalPaddleBackend)
 
+    flipped = select_ocr_backend(Settings(), **_ocr_strategy(_cloud_row(), _paddle_row()))
+    assert isinstance(flipped, CloudApiBackend)
+    # 云端行的连接配置来自**行**（模型页的引用后端），不再来自 OCR_API_KEY 那把 env key。
+    assert flipped._url == "https://ocr.example/parse"  # noqa: SLF001
 
-def test_select_ocr_backend_falls_back_to_cloud(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Paddle 不可用（未装独立 venv）→ 配了 key 则回退云端。"""
+
+def test_select_ocr_backend_skips_unready_row_to_next_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Paddle 未装独立 venv → 顺延到下一条就绪的行（启停与优先级都在服务页）。"""
     monkeypatch.setattr(LocalPaddleBackend, "available", lambda self: False)
     monkeypatch.setattr(CloudApiBackend, "available", lambda self: True)
-    backend = select_ocr_backend(Settings(ocr_api_key="sk-x"))
+    backend = select_ocr_backend(Settings(), **_ocr_strategy(_paddle_row(), _cloud_row()))
     assert isinstance(backend, CloudApiBackend)
 
 
-def test_select_ocr_backend_none_when_nothing_configured(
+def test_select_ocr_backend_none_when_nothing_is_ready(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """两路都不可用 → None（调用方降级为 OcrUnavailable，不假装已读）。"""
+    """所有候选都不就绪 → None（调用方降级为 OcrUnavailable，不假装已读）。"""
     monkeypatch.setattr(LocalPaddleBackend, "available", lambda self: False)
-    monkeypatch.setattr(CloudApiBackend, "available", lambda self: False)
-    assert select_ocr_backend(Settings()) is None
+    assert select_ocr_backend(Settings(), **_ocr_strategy(_paddle_row())) is None
 
 
-def test_select_ocr_backend_explicit_paddle_ignores_cloud(
+def test_select_ocr_backend_never_sends_images_to_a_keyless_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """显式 ocr_backend=paddle 时不回退云端 —— 明确要离线就不外发图片。"""
+    """隐私红线的机器形态：云端行没配 key 就是不可用，绝不外发图片。
+
+    取代旧的"显式 ocr_backend=paddle 时不回退云端" —— 现在这条不靠档位，而是靠
+    「服务」页要不要把云端行排进序 + 模型页有没有填 key（两个动作都是显式的）。
+    """
     monkeypatch.setattr(LocalPaddleBackend, "available", lambda self: False)
-    monkeypatch.setattr(CloudApiBackend, "available", lambda self: True)
-    assert select_ocr_backend(Settings(ocr_backend="paddle", ocr_api_key="sk-x")) is None
+    monkeypatch.setattr(CloudApiBackend, "available", lambda self: bool(self._key))
+    backend = select_ocr_backend(
+        Settings(), **_ocr_strategy(_paddle_row(), _cloud_row(api_key=None))
+    )
+    assert backend is None
+
+
+def test_settings_no_longer_advertise_ocr_backend_switches() -> None:
+    """P1-5：`ocr_backend` / `ocr_api_key` / `ocr_api_url` / `ocr_provider` 已不是配置项。
+
+    它们在 .env.example 与运行环境页上被宣传为"可改"，而工厂里对应的分支生产上从不执行
+    （服务页恒有一条启用的内置行）—— 一个改了不生效的开关比没有开关更糟。
+    删掉字段本身，比留着并给它加一条"仅首次启动生效"的注释诚实。
+    """
+    names = set(Settings.model_fields)
+    assert not {"ocr_backend", "ocr_api_key", "ocr_api_url", "ocr_provider"} & names
+    assert "ocr_python" in names  # 唯一仍归 env 的 OCR 项：本地 Paddle 的解释器路径
 
 
 # -- Office OOXML：docx / pptx / xlsx（zip + XML，零依赖） --------------------------------
