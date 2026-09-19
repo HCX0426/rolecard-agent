@@ -171,9 +171,9 @@ def create_record_report(
 
 # 「同一 intake 任务不重复抽取」的单进程互斥（审查报告 P1-5）。
 #
-# 为什么是内存互斥而不是数据库唯一约束：`domains/health/schema.sql` 明确写着
-# `medical_report.ingestion_task_id` 是**有意的 1:N**（"one file can yield several
-# reports"），加 UNIQUE 会把那条设计意图钉死。而抽取是"读-判断-写"，中间隔着几十秒的
+# 为什么是内存互斥而不是数据库唯一约束：域报告行上的 intake 外键是**有意的 1:N**
+# （"one file can yield several reports"，见 `domains/health/schema.sql` 的注释），
+# 加 UNIQUE 会把那条设计意图钉死。而抽取是"读-判断-写"，中间隔着几十秒的
 # 模型调用，双击/并发必然双写 —— 用进程内互斥把这个窗口关掉即可。
 # 本服务是单进程（`scripts/run_api.py` 不起 workers）；**若将来多 worker 部署，
 # 这里要换成数据库级约束，那时也得先决定 1:N 是否还成立**。
@@ -222,23 +222,21 @@ def extract_record(
 
 
 def _extract_and_store(*, body: ExtractRequest, ctx: AppContext, actor: Actor) -> object:
-    """抽取的**实际工作**：读文本 → 三层校验 → 写库 + 关联 intake + 写审计。
+    """抽取的**实际工作**：读文本 → 三层校验 → 交域写库（含 intake 关联）+ 写审计。
 
     与路由分开只是为了让上面那层互斥有个干净的 try/finally —— 原实现是一个 120 行的
     路由函数，互斥逻辑塞进去要整段重排缩进（审查报告 P2：路由过大）。
     """
-    conn = ctx.conn
     try:
         task = ctx.ingestion.get(body.task_id)
     except IngestionNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    already = conn.execute(
-        "SELECT report_id FROM medical_report WHERE ingestion_task_id = ?",
-        (body.task_id,),
-    ).fetchone()
+    # 幂等判据在**域**那一侧（`report_id_for_task`）：外键列住在域的表里，路由按约定既不
+    # import 具体域、也不自己写它的表名（架构审计报告 P1-1）。
+    already = ctx.health.report_id_for_task(user_id=DEFAULT_USER_ID, task_id=body.task_id)
     if already is not None:
-        return {"skipped": "already_extracted", "report_id": already["report_id"]}
+        return {"skipped": "already_extracted", "report_id": already}
 
     source_file = Path(str(task.get("source_file") or ""))
     parsed = _parsed_text_path(source_file)
@@ -296,10 +294,12 @@ def _extract_and_store(*, body: ExtractRequest, ctx: AppContext, actor: Actor) -
                 institution=outcome.institution,
                 note=f"AI 抽取（{outcome.mode} 校对）· 未经人工校验",
                 indices=[to_index_payload(i, source=source) for i in outcome.agreed],
+                # intake 关联由域在插入这条报告时一起写（外键列在域的表里）—— 内核不再
+                # 事后 UPDATE 域表，也就没有"已插入但尚未关联"的可被看到的中间态（P1-1）。
+                ingestion_task_id=body.task_id,
             )
         except HealthInvalidReport as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        ctx.ingestion.link_report(body.task_id, report_id)
         ctx.roles.audit(
             actor=actor.id,
             action="extract_report",

@@ -239,15 +239,52 @@ def check_promised_artifacts() -> None:
         fails.append(f"plan promises artifacts that do not exist: {absent}")
 
 
-def check_core_no_health_token() -> None:
-    """L1：core/ 内不得出现具体域的专有名词 token（当前盯 "health"，不区分大小写）。
+def _sql_table_names(path: pathlib.Path) -> set[str]:
+    """一个 schema 文件里声明的表名（小写）。"""
+    if not path.exists():
+        return set()
+    return {
+        m.lower()
+        for m in re.findall(
+            r"CREATE TABLE IF NOT EXISTS (\w+)",
+            path.read_text(encoding="utf-8", errors="ignore"),
+            flags=re.I,
+        )
+    }
+
+
+def _domain_private_tokens() -> set[str]:
+    """各域**自己建**的表名 = 内核源码里不该出现的专有名词（架构审计报告 §5.1 / P1-1）。
+
+    过去这条检查只盯字面量 "health"，于是 `core/ingestion.py` 里一句
+    `UPDATE medical_report …` 大摇大摆躲过了检查 —— 一个只会绿的检查比没有检查更糟，
+    因为它给的是假信心。现在**从各域的 schema 推导**：新增一个域、改一个表名，检查自动
+    跟上，不需要有人记得来改这个脚本。
+
+    扣掉内核自己也声明的表名：万一某个域的表恰好叫 `settings` / `sessions`，那本来就是
+    内核词汇，报出来只会让人学会给检查加豁免 —— 那等于没有检查。
+    """
+    src = ROOT / "src" / "rolecard_agent"
+    kernel = _sql_table_names(src / "core" / "schema.sql") | _sql_table_names(
+        src / "roles" / "schema.sql"
+    )
+    private: set[str] = set()
+    for schema in sorted((src / "domains").glob("*/schema.sql")):
+        private |= _sql_table_names(schema) - kernel
+    return private
+
+
+def check_core_no_domain_token() -> None:
+    """L1：core/ 内不得出现具体域的专有名词（域目录名 + 域自己声明的表名，不区分大小写）。
 
     分层硬规则：core 是内核，domains/<x>/ 才是业务域。内核源码里出现某个域的专名，
     说明有人把域概念抄近道塞进了内核（历史事故：AppContext.health 把具体域硬编码进
-    内核，M9 才解耦）。**注释一并禁止** —— 注释里的域词是概念泄漏的早期信号，
+    内核，M9 才解耦）。**注释与 SQL 注释一并禁止** —— 注释里的域词是概念泄漏的早期信号，
     等它长成代码就晚了；这与 check_domain_isolation 先剥注释的取向相反，因为那条
     查的是"结构违规"（建表），本条查的是"概念泄漏"（连提都不该提）。
+    内核自己的 schema 里那句"域引用本表、反向不行"因此也必须写成中性表述。
     """
+    tokens = {"health"} | _domain_private_tokens()
     core_dir = ROOT / "src" / "rolecard_agent" / "core"
     bad: list[str] = []
     for path in sorted(core_dir.rglob("*")):
@@ -256,15 +293,14 @@ def check_core_no_health_token() -> None:
         for lineno, line in enumerate(
             path.read_text(encoding="utf-8", errors="ignore").splitlines(), start=1
         ):
-            if "health" in line.lower():
-                bad.append(f"{path.relative_to(ROOT)}:{lineno}")
-    out(
-        "core/ no domain token 'health'",
-        not bad,
-        "clean" if not bad else f"found in {len(bad)} line(s): {bad[:8]}",
-    )
+            lowered = line.lower()
+            hit = [t for t in tokens if t in lowered]
+            if hit:
+                bad.append(f"{path.relative_to(ROOT)}:{lineno} {hit}")
+    detail = f"{len(tokens)} tokens clean" if not bad else f"found: {bad[:8]}"
+    out("core/ no domain token", not bad, detail)
     if bad:
-        fails.append(f"core/ mentions a domain token ('health'): {bad}")
+        fails.append(f"core/ mentions domain tokens: {bad}")
 
 
 def check_domain_isolation() -> None:
@@ -722,7 +758,7 @@ def main() -> int:
     check_config_contract()
     check_dependency_parity()
     check_promised_artifacts()
-    check_core_no_health_token()
+    check_core_no_domain_token()
     check_domain_isolation()
     check_safety_prompt()
     check_line_endings()

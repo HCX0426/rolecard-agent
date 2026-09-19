@@ -31,8 +31,15 @@ class DomainQueryService(Protocol):
         institution: str | None = None,
         note: str | None = None,
         indices: Sequence[dict[str, object]],
+        ingestion_task_id: str | None = None,
     ) -> str:
-        """原子地插入一份报告及其指标行，返回报告 id。"""
+        """原子地插入一份报告及其指标行，返回报告 id。
+
+        `ingestion_task_id`：这份报告由哪次 intake 产出（手工录入 = None）。**关联必须由域
+        在插入这一条报告时一起写**，而不是由内核事后去 UPDATE 域表 —— 那条关系的外键列
+        住在域的表里（`core/schema.sql` 的 RELATION DIRECTION：域引用内核，反向不行）。
+        内核因此既不需要知道域表叫什么，也不需要在"插入"与"关联"之间留一个能被看到的中间态。
+        """
         ...
 
     def list_records(self, user_id: str) -> list[dict[str, object]]:
@@ -61,5 +68,13 @@ class DomainQueryService(Protocol):
         """这份报告由哪个 intake 产出（手工录入 / 行不存在 = None）。
 
         删除路径要用它找回该文档的**索引身份**，才能把检索分块一起清掉。
+        """
+        ...
+
+    def report_id_for_task(self, *, user_id: str, task_id: str) -> str | None:
+        """这次 intake 已经产出过哪份报告（还没产出 = None）—— 抽取的幂等判据。
+
+        与上一个方法反向。放在协议里是因为调用方在 api 层：它需要"这份文件抽过了吗"这个
+        答案，但按约定不 import 具体域、也不自己写域的表名（架构审计报告 P1-1）。
         """
         ...

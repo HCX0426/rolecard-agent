@@ -114,6 +114,7 @@ class HealthQueryService:
         institution: str | None = None,
         note: str | None = None,
         indices: Sequence[dict[str, object]],
+        ingestion_task_id: str | None = None,
     ) -> str:
         """Insert one report with its indicator rows, atomically.
 
@@ -122,6 +123,11 @@ class HealthQueryService:
         answered with, and an unanswerable row is worse than no row. Optional keys: `unit`,
         `ref_range`, `is_verified` (default 0 = AI extracted / not yet human-checked),
         `source` (default 'manual'), `raw_text`.
+
+        `ingestion_task_id` 把这份报告关联到产出它的那次 intake（手工录入留 None）。外键列在
+        本域的表里，所以**这条关联归本服务写**：内核只交出 id，从不 UPDATE 域表（关系方向见
+        `core/schema.sql`）。写在这里还顺带消掉了"报告已插入但还没关联"的中间态 —— 抽取的
+        幂等判据正是这个外键，中间态一旦可见就等于允许重复抽。
         """
         if not report_type.strip():
             raise HealthInvalidReport("report_type is required")
@@ -163,8 +169,16 @@ class HealthQueryService:
         try:
             self._conn.execute(
                 "INSERT INTO medical_report (report_id, user_id, report_type, check_time, "
-                "institution, note) VALUES (?, ?, ?, ?, ?, ?)",
-                (report_id, user_id, report_type.strip(), check_time.strip(), institution, note),
+                "institution, note, ingestion_task_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    report_id,
+                    user_id,
+                    report_type.strip(),
+                    check_time.strip(),
+                    institution,
+                    note,
+                    ingestion_task_id,
+                ),
             )
             self._conn.executemany(
                 "INSERT INTO medical_index (index_id, report_id, index_name, index_value, "
@@ -368,6 +382,22 @@ class HealthQueryService:
         if row is None or not row["ingestion_task_id"]:
             return None
         return str(row["ingestion_task_id"])
+
+    def report_id_for_task(self, *, user_id: str, task_id: str) -> str | None:
+        """这次 intake 已经产出过哪份报告（还没抽过 = None）。
+
+        `report_task_id` 的反向查询，也是抽取端点的**幂等判据**：同一份文件重复点"抽取"
+        不该写第二份。为什么由本服务查而不是路由直查表 —— api 层按约定不 import 具体域，
+        也就不该知道域的表叫什么（架构审计报告 P1-1 的同一条边界）。
+        关系是有意的 1:N（一份文件可产出多份报告），所以这里取**最早**那份，让"已抽过"
+        的答复稳定可复现，而不是每次返回一个不确定的 id。
+        """
+        row = self._conn.execute(
+            "SELECT report_id FROM medical_report WHERE user_id = ? AND ingestion_task_id = ? "
+            "ORDER BY created_at, report_id LIMIT 1",
+            (user_id, task_id),
+        ).fetchone()
+        return None if row is None else str(row["report_id"])
 
     def delete_report(self, *, user_id: str, report_id: str) -> None:
         """Remove a report; its indicator rows go with it (ON DELETE CASCADE, FK pragma on).

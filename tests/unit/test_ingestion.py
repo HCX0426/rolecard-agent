@@ -7,6 +7,7 @@ separate table: idempotency on file hash, and a forward-only status graph.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 
 import pytest
@@ -23,7 +24,8 @@ from rolecard_agent.storage.db import bootstrap, connect
 
 @pytest.fixture
 def conn() -> sqlite3.Connection:
-    # Core + roles + health schema: `medical_report` (FK target for link_report) needs health.
+    # Core + roles + health schema：域报告表上有指向 `ingestion_task` 的外键列，
+    # 而外键是**真 enforced** 的（PRAGMA foreign_keys=ON），所以要把被引用的域 schema 一起建出来。
     # Seed the identity rows `ingestion_task`/`medical_report` reference, so the FK holds.
     c = connect(":memory:")
     bootstrap(c, enabled_domains=["health"])
@@ -91,16 +93,29 @@ def test_record_failure_increments_attempts_and_is_terminal(ing: IngestionServic
     assert ing.get(tid)["status"] == INGESTION_PENDING
 
 
-def test_link_report_sets_the_fk(ing: IngestionService, conn: sqlite3.Connection) -> None:
-    tid = ing.create(user_id="u1", file_hash="h1")
-    conn.execute(
-        "INSERT INTO medical_report (report_id, user_id, report_type, check_time) "
-        "VALUES (?, ?, 'lab', '2026-01-01')",
-        ("r1", "u1"),
-    )
-    conn.commit()
-    ing.link_report(tid, "r1")
-    row = conn.execute(
-        "SELECT ingestion_task_id FROM medical_report WHERE report_id = 'r1'"
-    ).fetchone()
-    assert row["ingestion_task_id"] == tid
+def test_the_ledger_only_touches_its_own_table(
+    ing: IngestionService, conn: sqlite3.Connection
+) -> None:
+    """内核台账只许碰 `ingestion_task`：与域报告行的关系由**域**那一侧写（P1-1）。
+
+    原来这里是 `test_link_report_sets_the_fk` —— 它测的正是那个不该存在的写：内核一条
+    `UPDATE medical_report …`。一致性脚本 `check_core_no_domain_token` 已从源码层面挡住，
+    这一条从**行为**上再钉一遍（脚本可以被删，测试跟着它一起失效的概率更低）：跑一遍完整
+    生命周期，用 sqlite 的 trace 回调收集真正执行过的 SQL，除本表外一张域表都不许出现。
+    """
+    seen: list[str] = []
+    conn.set_trace_callback(seen.append)
+    try:
+        tid = ing.create(user_id="u1", file_hash="h1")
+        ing.advance(tid, "parsed")
+        ing.record_failure(tid, "ocr exploded")
+        ing.relink_source(tid, "uploads/x.pdf")
+    finally:
+        conn.set_trace_callback(None)
+
+    touched = {
+        table
+        for stmt in seen
+        for table in re.findall(r"\b(?:INTO|UPDATE|FROM)\s+(\w+)", stmt, flags=re.I)
+    }
+    assert touched <= {"ingestion_task"}, f"台账写了别的表：{sorted(touched - {'ingestion_task'})}"

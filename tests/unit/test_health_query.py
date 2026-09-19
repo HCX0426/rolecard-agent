@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.domains.health.service import (
     HealthInvalidReport,
     HealthNotFound,
@@ -77,6 +78,57 @@ def _seed_two_years(service: HealthQueryService, *, user: str = U1) -> None:
             },
         ],
     )
+
+
+# -- service: intake 关联（关系由域写、由域读）--------------------------------------------
+
+
+def test_intake_link_is_written_by_the_domain_with_the_report() -> None:
+    """intake ↔ 报告 这条关系的**两个方向**都归域写/域读（架构审计报告 P1-1）。
+
+    改前是内核的 `IngestionService.link_report` 事后一条 `UPDATE medical_report …`：
+    内核因此知道了域的表名（躲过了当时只会 grep "health" 的分层检查），而且"报告已插入、
+    还没关联"的中间态是可见的 —— 抽取的幂等判据恰恰就是这个外键，中间态一旦可见就等于
+    允许重复抽。现在关联跟着 INSERT 一起落，一次写、无中间态。
+    """
+    c = connect(":memory:")
+    bootstrap(c, enabled_domains=["health"])
+    _seed_identity(c)
+    task_id = IngestionService(c).create(user_id=U1, file_hash="h1")
+    service = HealthQueryService(c)
+
+    report_id = service.create_report(
+        user_id=U1,
+        report_type="超声",
+        check_time="2026-03-12",
+        indices=[{"index_name": "结石直径", "index_value": 6.0, "unit": "mm"}],
+        ingestion_task_id=task_id,
+    )
+    assert service.report_id_for_task(user_id=U1, task_id=task_id) == report_id
+    assert service.report_task_id(user_id=U1, report_id=report_id) == task_id
+
+    # 手工录入没有 intake：两个方向都查不到（而不是报错），也不影响上面那条关联。
+    manual = service.create_report(
+        user_id=U1,
+        report_type="超声",
+        check_time="2026-04-01",
+        indices=[{"index_name": "结石直径", "index_value": 5.0, "unit": "mm"}],
+    )
+    assert service.report_task_id(user_id=U1, report_id=manual) is None
+    assert service.report_id_for_task(user_id=U1, task_id=task_id) == report_id
+
+    # 用户隔离照旧在服务层的 WHERE 里：别的用户拿同一个 task_id 查不到东西。
+    assert service.report_id_for_task(user_id=U2, task_id=task_id) is None
+
+    # 指向不存在的 intake = 数据库外键拒掉 → 可读的 HealthInvalidReport（路由据此回 400）。
+    with pytest.raises(HealthInvalidReport):
+        service.create_report(
+            user_id=U1,
+            report_type="超声",
+            check_time="2026-05-01",
+            indices=[{"index_name": "结石直径", "index_value": 5.0}],
+            ingestion_task_id="ing_ghost",
+        )
 
 
 # -- service: create + read round trip -----------------------------------------------

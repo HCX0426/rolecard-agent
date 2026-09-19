@@ -234,8 +234,8 @@ def create_app(
             *(["mcp"] if mcp_eff else []),
         ],
         current_user=lambda: DEFAULT_USER_ID,
-        # 域写工具（upload_medical_report）必须知道上传目录：它的 file_path 来自模型，
-        # 不受限就等于"任意主机文件读取 + 任意目录写"（审查报告 H1）。
+        # 域的**写型**工具（把上传文件落进档案那一类）必须知道上传目录：它的 file_path 来自
+        # 模型，不受限就等于"任意主机文件读取 + 任意目录写"（审查报告 H1）。
         upload_dir=settings.upload_dir,
         # 联网与工作区工具的后端配置（搜索后端 / TAVILY_API_KEY / WORKSPACE_DIR）。
         # 传**叠加了运行环境覆盖 + MCP 合并**的有效配置（而非裸 env 快照）。

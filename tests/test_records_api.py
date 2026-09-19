@@ -250,15 +250,16 @@ def test_extract_is_idempotent_per_ingestion_task(
         "VALUES ('local-user','local','demo')"
     )
     conn.commit()
+    # 先建 intake 再建报告：`ingestion_task_id` 是**真外键**（PRAGMA foreign_keys=ON），
+    # 指向不存在的任务会被数据库拒掉。
+    IngestionService(conn).create(user_id="local-user", file_hash="h1", task_id="ing_x")
     report_id = HealthQueryService(conn).create_report(
         user_id="local-user",
         report_type="腹部超声",
         check_time="2026-03-12",
         indices=[{"index_name": "结石直径", "index_value": 6.1, "source": "parsed"}],
+        ingestion_task_id="ing_x",  # intake 关联由域在插入时一起写（P1-1）
     )
-    ingestion = IngestionService(conn)
-    ingestion.create(user_id="local-user", file_hash="h1", task_id="ing_x")
-    ingestion.link_report("ing_x", report_id)
     conn.close()
 
     with TestClient(create_app(sqlite_path=db)) as c:
@@ -351,15 +352,14 @@ def test_deleting_a_report_also_clears_its_knowledge_chunks(
         "VALUES ('local-user','local','demo')"
     )
     conn.commit()
+    IngestionService(conn).create(user_id="local-user", file_hash="h1", task_id="ing_x")
     report_id = HealthQueryService(conn).create_report(
         user_id="local-user",
         report_type="腹部超声",
         check_time="2026-03-12",
         indices=[{"index_name": "结石直径", "index_value": 6.1, "source": "parsed"}],
+        ingestion_task_id="ing_x",
     )
-    ingestion = IngestionService(conn)
-    ingestion.create(user_id="local-user", file_hash="h1", task_id="ing_x")
-    ingestion.link_report("ing_x", report_id)
     conn.close()
 
     with TestClient(create_app(sqlite_path=db)) as c:

@@ -5,7 +5,7 @@ to us and is being turned into structured reports". It is a KERNEL table on purp
 though the work it tracks belongs to a domain plugin: the kernel owns identity, the plugin
 switch, and this ledger, so the audit story stays in one place.
 
-Why a separate table and not a `status` column on `medical_report` (技术评审与决策.md §9 B1):
+Why a separate table and not a `status` column on the domain's report row (技术评审与决策.md §9 B1):
 
   * **Process vs fact.** An intake can be retried; the resulting report is still one report.
     Putting run state on the report row means either losing attempt history or growing the
@@ -56,8 +56,9 @@ _INGESTION_COLUMNS = (
 # failed task "indexed" without going through the retry.
 #
 # ⚠️ `extracted` 在实际链路里是**瞬态**：上传端点按 parsed → extracted → indexed 连续推进
-# （检索索引在上传时就建好），而结构化抽取是否成功由 `medical_report.ingestion_task_id`
-# 这个**关联**表达，不再改状态 —— 一个文件可以产出多份报告（1:N），状态表达不了这件事。
+# （检索索引在上传时就建好），而结构化抽取是否成功由**域报告行上的 `ingestion_task_id`
+# 外键**表达（关系方向：域引用本表，见 core/schema.sql），不再改状态 —— 一个文件可以产出
+# 多份报告（1:N），状态表达不了这件事。
 # 所以不要写 `WHERE status = 'extracted'` 这类查询：它查不到任何持久化的行。
 # 这里保留该状态是给"显式重启 / 分步推进"的调用方用的（见 _INGESTION_TRANSITIONS）。
 _INGESTION_TRANSITIONS: dict[str, tuple[str, ...]] = {
@@ -222,21 +223,6 @@ class IngestionService:
         self._conn.commit()
 
     # -- linking -------------------------------------------------------------
-
-    def link_report(self, task_id: str, report_id: str) -> None:
-        """Point a successfully parsed report back at the intake that produced it.
-
-        The FK lives in `medical_report.ingestion_task_id`; this just sets it. A report entered
-        by hand has no intake, so the caller passes task_id=None and never calls this - the
-        column defaults to NULL and the relation stays 1:N as designed.
-        """
-        cur = self._conn.execute(
-            "UPDATE medical_report SET ingestion_task_id = ? WHERE report_id = ?",
-            (task_id, report_id),
-        )
-        if cur.rowcount == 0:
-            raise IngestionNotFound(f"report not found: {report_id}")
-        self._conn.commit()
 
     def relink_source(self, task_id: str, source_file: str) -> None:
         """把台账指到该文件的新位置。

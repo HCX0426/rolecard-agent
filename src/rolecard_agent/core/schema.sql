@@ -157,8 +157,9 @@ CREATE TABLE IF NOT EXISTS model_backend (
 --   3. Cardinality. One file can yield several reports (a checkup covering multiple
 --      departments). The relation is 1:N, and a 1:N relation cannot be a column.
 --
--- RELATION DIRECTION: domains reference this table, never the reverse. `medical_report` carries
--- `ingestion_task_id`, so the kernel stays free of any domain knowledge.
+-- RELATION DIRECTION: domains reference this table, never the reverse. A domain's own row
+-- carries an `ingestion_task_id` column pointing here, so the kernel stays free of any domain
+-- knowledge - it hands out task ids, it never names (or writes) the table that stores them.
 --
 -- UNIQUE (user_id, file_hash) is the idempotency key: re-uploading the same bytes returns the
 -- existing task instead of creating a duplicate ledger entry. Re-processing is an explicit
