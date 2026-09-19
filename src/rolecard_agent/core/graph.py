@@ -139,6 +139,17 @@ def build_kernel(
     return graph.compile(checkpointer=checkpointer)
 
 
+def _thinking_model_list(raw: object) -> list[str]:
+    """把 model_thinking_models 归一成 list[str]。字段声明是 list[str]，但运行环境覆盖经
+    model_copy 绕过 pydantic 校验后运行时可能是逗号串——入参用 object 让 isinstance(str) 分支
+    对 mypy 可达，两种形态都归到精确成员列表，杜绝 `x in str` 的子串误命中。"""
+    if isinstance(raw, str):
+        return [n.strip() for n in raw.split(",") if n.strip()]
+    if isinstance(raw, (list, tuple, set)):
+        return [str(n).strip() for n in raw if str(n).strip()]
+    return []
+
+
 def _init_model(
     settings: Settings, backend_name: str | None, temperature: float | None = None
 ) -> ChatLike:
@@ -172,12 +183,8 @@ def _init_model(
     # 且思考 token 会显著拉长首字延迟 —— 所以按模型名精确启用 + 总闸兜底。
     # 名单归一：字段声明是 list[str]，但运行环境覆盖路径经 model_copy 不过 pydantic 校验 →
     # 运行时可能是逗号串，直接 `x in str` 会退化成子串匹配（"qwen3" 命中 "qwen3-vl:8b"）。
-    # 用 object 承接绕过静态误判，运行时统一归一成 list 再精确判成员。
-    raw_models: object = settings.model_thinking_models
-    if isinstance(raw_models, str):
-        thinking_models = [n.strip() for n in raw_models.split(",") if n.strip()]
-    else:
-        thinking_models = list(raw_models or [])  # type: ignore[arg-type]
+    # 归一交给 _thinking_model_list（入参 object，绕开 mypy 对 isinstance(str) 的"不可达"误判）。
+    thinking_models = _thinking_model_list(settings.model_thinking_models)
     if (
         style == "native"
         and settings.model_thinking != "off"
