@@ -170,10 +170,15 @@ def _init_model(
     # 且受总开关 MODEL_THINKING=auto|off 管制（off = 名单内也不开，临时不想要思考
     # token 时用）：对不支持的模型传 reasoning=True 会直接 400（实测 qwen2.5:7b），
     # 且思考 token 会显著拉长首字延迟 —— 所以按模型名精确启用 + 总闸兜底。
+    # 名单归一：env 路径是 list、运行环境覆盖路径（model_copy 不过 pydantic 校验）是逗号
+    # 串，直接 `x in str` 会退化成子串匹配（"qwen3" 命中 "qwen3-vl:8b"）。统一成 list 再精确判。
+    thinking_models = settings.model_thinking_models
+    if isinstance(thinking_models, str):
+        thinking_models = [n.strip() for n in thinking_models.split(",") if n.strip()]
     if (
         style == "native"
         and settings.model_thinking != "off"
-        and backend.model in settings.model_thinking_models
+        and backend.model in thinking_models
     ):
         kwargs["reasoning"] = True
     # 超时的**传法因客户端而异**（实测，别再想当然）：
