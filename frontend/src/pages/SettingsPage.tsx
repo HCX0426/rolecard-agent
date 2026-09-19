@@ -108,6 +108,10 @@ function GeneralPanel({
   const [memDraft, setMemDraft] = useState("");
   const [memMsg, setMemMsg] = useState("");
   const [memErr, setMemErr] = useState("");
+  // 记忆作用域："" = 全局用户记忆；否则 = 该角色的专属记忆（role_memory，回忆触发用的那份）。
+  // 注入开关是全局的，角色作用域只读/改文本、不能改开关。
+  const [memScope, setMemScope] = useState("");
+  const [memRoles, setMemRoles] = useState<{ role_id: string; role_name: string }[]>([]);
   // 任务目录（file1）：角色可读写的授权范围。wsDir = 生效值；树抽屉 = 目录选择器。
   const [wsDir, setWsDir] = useState<WorkspaceDir | null>(null);
   const [wsDraft, setWsDraft] = useState("");
@@ -135,21 +139,36 @@ function GeneralPanel({
       roles: roles.length,
       sessions: sessions.length,
     });
+    setMemRoles(roles.map((r) => ({ role_id: r.role_id, role_name: r.role_name })));
   }, []);
 
-  const loadMemory = useCallback(async () => {
-    const m = await api.get<{ enabled: boolean; content: string }>("/api/settings/memory");
+  const memoryUrl = (scope: string) =>
+    scope ? `/api/settings/memory?role_id=${encodeURIComponent(scope)}` : "/api/settings/memory";
+
+  const loadMemory = useCallback(async (scope: string) => {
+    const m = await api.get<{ enabled: boolean; content: string }>(memoryUrl(scope));
     setMem(m);
     setMemDraft(m.content);
   }, []);
 
   useEffect(() => {
     load().catch((e) => setLoadError(`加载失败：${(e as Error).message}`));
-    loadMemory().catch((e) => setMemErr(`加载失败：${(e as Error).message}`));
-  }, [load, loadMemory]);
+    loadMemory(memScope).catch((e) => setMemErr(`加载失败：${(e as Error).message}`));
+  }, [load, loadMemory, memScope]);
+
+  function changeMemScope(next: string) {
+    if (next === memScope) return;
+    // 未保存改动：切换作用域前确认，避免草稿被静默丢弃。
+    if (mem && memDraft !== mem.content && !window.confirm("当前作用域有未保存的修改，切换会丢弃，继续？")) {
+      return;
+    }
+    setMemScope(next);
+    setMemMsg("");
+    setMemErr("");
+  }
 
   async function toggleMemory() {
-    if (!mem) return;
+    if (!mem || memScope) return; // 注入开关是全局的，角色作用域不可改
     setMemErr("");
     setMemMsg("");
     try {
@@ -168,7 +187,7 @@ function GeneralPanel({
     setMemErr("");
     setMemMsg("");
     try {
-      const m = await api.put<{ enabled: boolean; content: string }>("/api/settings/memory", {
+      const m = await api.put<{ enabled: boolean; content: string }>(memoryUrl(memScope), {
         content: memDraft,
       });
       setMem(m);
@@ -183,7 +202,7 @@ function GeneralPanel({
     setMemErr("");
     setMemMsg("");
     try {
-      const m = await api.del<{ enabled: boolean; content: string }>("/api/settings/memory");
+      const m = await api.del<{ enabled: boolean; content: string }>(memoryUrl(memScope));
       setMem(m);
       setMemDraft(m.content);
       setMemMsg("已清空");
@@ -297,27 +316,43 @@ function GeneralPanel({
           <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">跨会话记忆</h3>
           <button
             onClick={toggleMemory}
-            disabled={!mem}
-            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+            disabled={!mem || !!memScope}
+            title={memScope ? "注入开关是全局设置，切到「全局记忆」才能改" : undefined}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
               mem?.enabled
                 ? "bg-blue-600 text-white"
                 : "bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-300"
             }`}
           >
-            {mem ? (mem.enabled ? "已开启" : "已关闭") : "…"}
+            {mem ? (mem.enabled ? "记忆注入：已开启" : "记忆注入：已关闭") : "…"}
           </button>
         </div>
+        <div className="mt-2 flex items-center gap-2">
+          <label className="text-xs text-slate-500 dark:text-slate-400">作用域</label>
+          <select
+            value={memScope}
+            onChange={(e) => changeMemScope(e.target.value)}
+            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+          >
+            <option value="">全局（跨角色共享的用户事实）</option>
+            {memRoles.map((r) => (
+              <option key={r.role_id} value={r.role_id}>
+                {r.role_name}（该角色专属记忆）
+              </option>
+            ))}
+          </select>
+        </div>
         <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400 dark:text-slate-500">
-          启用后，对话中 AI 检测到你明确说出的可复用事实（称呼 / 偏好 / 背景）会通过
-          memory_save 写入；记忆会注入每个角色的对话，跨会话长期保留。可在下方查看、
-          编辑或清空。
+          {memScope
+            ? "这是该角色自己的记忆（回忆触发只读这一份），与全局记忆和其它角色隔离。编辑/清空只作用于本角色。"
+            : "全局记忆注入每个角色的对话。AI 检测到你明确说出的可复用事实（称呼 / 偏好 / 背景）会通过 memory_save 写入，并同步进当前角色的专属记忆。"}
         </p>
         <textarea
           value={memDraft}
           onChange={(e) => setMemDraft(e.target.value)}
           rows={5}
           disabled={!mem}
-          placeholder={mem ? "暂无记忆内容。" : "加载中…"}
+          placeholder={mem ? (mem.content ? "" : memScope ? "该角色还没有专属记忆。" : "暂无全局记忆。") : "加载中…"}
           className="mt-2.5 w-full resize-y rounded-lg border border-slate-200 bg-white p-2.5 font-mono text-xs text-slate-700 focus:border-blue-400 focus:outline-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
         />
         <div className="mt-2 flex items-center gap-2">
