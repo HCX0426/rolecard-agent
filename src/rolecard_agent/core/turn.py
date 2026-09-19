@@ -1,0 +1,363 @@
+"""一轮对话的编排（内核侧）：跑图 → 产出**结构化轮次事件**，不知道 HTTP、不知道 SSE。
+
+为什么从 `api/chat.py` 拆出来（架构审计报告 §0 / §7）：原先"一轮怎么编排"和"怎么把它
+帧成 Server-Sent Event"缠在同一个函数里，于是里程碑 D 的桌宠壳要么重写这~150 行、要么
+被迫继续吃 SSE —— 而事件流只是**其中一种**投送方式。拆完之后：
+
+    内核 `run_turn()` → `Iterator[TurnEvent]`  ← 桌宠壳 / 评测脚本 / 任何宿主直接消费
+    HTTP 壳 `api/chat.py` → 帧成 SSE + 线程池桥   ← 浏览器要的格式
+
+两个不变式（都在下面 `TurnEvent` 与 `run_turn` 的注释里），它们比"代码放哪儿"更重要：
+
+1. **流式审核怎么活下来**：`call_model` 的 guard 审的是**完整**回复，而流式意味着 token 先于
+   该检查存在 —— 但"生成了"不等于"显示了"。这里只投送**已过审的前缀**：每个块喂给累加器，
+   对累计文本跑 `guard.check()`，只有(a)检查仍通过且(b)该文本越过了尾部回扣窗口
+   （`WINDOW` ≥ 最长触发式，所以半个触发式永远不会显示）才发出。累计文本一触规则就**停止
+   投送**，权威文本（与 `call_model` 写进 checkpoint 的那份同一个 `BLOCKED_RESPONSE`）
+   以 `MessageReplace` 事件到达。残余风险如实写明而非藏起：触发式的前半截可能短暂出现，
+   由 replace 事件纠正。
+2. **权威文本从哪儿来**：`stream_mode="messages"` 给的是模型的原始块（guard 之前），
+   `stream_mode="updates"` 给的是节点**已提交**的内容（guard 之后）。每轮模型结束时对账：
+   相等 → 把窗口扣住的尾巴作为最终 token 放出；不等（guard 改写、或角色缺失兜底句）→
+   `MessageReplace`。客户端永远把已提交文本当真相。
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from typing import Any, ClassVar
+
+from langchain_core.messages import AIMessageChunk, ToolMessage
+from langgraph.errors import GraphRecursionError
+
+from rolecard_agent.core.graph import MODEL_NODE, TOOLS_NODE
+from rolecard_agent.core.guard import check
+from rolecard_agent.core.observability import TraceEvent, Tracer, scrub_endpoints
+from rolecard_agent.core.text import text_of
+
+# 回扣不投送的字符数。必须 >= 最长触发式（最宽约 21 字：主语 + 8 填充 + 能愿动词 + 8 填充
+# + 动作动词），32 留足余量又察觉不到渲染延迟。
+WINDOW = 32
+
+# 供应商对"把图片发给不支持视觉的模型"的报错形态各家不一（siliconflow 20041 / OpenAI
+# 兼容 / Ollama 文案都不同），但都围绕 "VLM / vision / image / text-only" 这几个词。
+# 命中即翻译成可操作提示，而不是笼统的"模型调用失败"——用户据此知道是"含图会话切到了
+# 纯文本模型"，该切回视觉模型或新开不含图的会话（用户 2026-09-19 报的 bug）。
+_VISION_MISMATCH_SIGNALS = (
+    "not a vlm",
+    "vision language model",
+    "text-only prompt",
+    "does not support image",
+    "does not support vision",
+    "unsupported image",
+    "image not supported",
+    "input does not contain any image",
+)
+
+VISION_MISMATCH_DETAIL = (
+    "当前模型不支持图片识别（视觉）。这条对话里含有图片，请切换到支持视觉的模型"
+    "（例如本地 qwen3-vl）后再问；或新开一条不含图片的会话来使用当前模型。"
+)
+
+_GENERIC_MODEL_FAILURE = "模型调用失败，请稍后重试或换一种问法。"
+
+
+def model_error_detail(exc: Exception) -> str:
+    """把模型调用异常映射成给用户的可读提示。纯函数，便于脱机测试。"""
+    text = str(exc).lower()
+    if any(sig in text for sig in _VISION_MISMATCH_SIGNALS):
+        return VISION_MISMATCH_DETAIL
+    return _GENERIC_MODEL_FAILURE
+
+
+# ---------------------------------------------------------------- 轮次事件
+#
+# 每个事件类自带 `sse_type`（投送给浏览器时的那个 wire 名）。它是**词表的唯一声明处**：
+# HTTP 壳据此帧化，桌宠壳据此映射成原生事件，而 `tests/unit/test_frontend_contract.py`
+# 拿它去比对 `frontend/src/lib/stream.ts` 的 switch 分支 —— 前后端事件名漂移曾是一类
+# 静默故障（谁改名谁自己知道，浏览器就只是"少一类渲染"）。
+
+
+@dataclass(frozen=True, slots=True)
+class Start:
+    """一轮开始。`role` 是角色摘要（id/名字/模型），客户端据此点亮头像。"""
+
+    sse_type: ClassVar[str] = "start"
+    role: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class Thinking:
+    """思考模型的推理增量。与正文**分流**：UI 收进折叠面板，不混进回答。"""
+
+    sse_type: ClassVar[str] = "thinking"
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class Token:
+    """一段已过审、可以显示的正文增量。"""
+
+    sse_type: ClassVar[str] = "token"
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCall:
+    """模型这一轮提交的工具调用（在工具真正执行之前投送，UI 才能显示"进行中"）。"""
+
+    sse_type: ClassVar[str] = "tool_call"
+    name: str | None
+    args: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolResult:
+    """工具执行结果。内容按内核的失败三分类已是用户可读文本，不含内部细节。"""
+
+    sse_type: ClassVar[str] = "tool_result"
+    name: str | None
+    content: str
+
+
+@dataclass(frozen=True, slots=True)
+class MessageReplace:
+    """权威文本：已提交内容与已投送内容不一致时（guard 改写 / 兜底句 / 非流式后端），
+    客户端用它**整条替换**当前气泡。"""
+
+    sse_type: ClassVar[str] = "message_replace"
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ContextTrimmed:
+    """历史预算挤掉了旧消息。只承载"发生了什么、多少条"，不含任何对话内容；
+    每**用户轮次**最多一条（见 `run_turn` 的 trim_reported）。"""
+
+    sse_type: ClassVar[str] = "context_trimmed"
+    dropped: int
+    kept: int
+
+
+@dataclass(frozen=True, slots=True)
+class Error:
+    """这一轮以失败结束。`detail` 是给用户的一句人话；原因只进日志（见 tracer 调用点）。"""
+
+    sse_type: ClassVar[str] = "error"
+    detail: str
+
+
+@dataclass(frozen=True, slots=True)
+class End:
+    """流收尾。无论成功失败都会发 —— 客户端靠它结束"生成中"态。"""
+
+    sse_type: ClassVar[str] = "end"
+
+
+TurnEvent = (
+    Start
+    | Thinking
+    | Token
+    | ToolCall
+    | ToolResult
+    | MessageReplace
+    | ContextTrimmed
+    | Error
+    | End
+)
+
+#: 词表（测试与文档用它，不手抄字符串）。
+EVENT_TYPES: tuple[str, ...] = (
+    Start.sse_type,
+    Thinking.sse_type,
+    Token.sse_type,
+    ToolCall.sse_type,
+    ToolResult.sse_type,
+    MessageReplace.sse_type,
+    ContextTrimmed.sse_type,
+    Error.sse_type,
+    End.sse_type,
+)
+
+
+class StreamingGuard:
+    """单轮模型输出的增量式 fail-closed 审核。
+
+    与客户端的契约：文本只通过本守卫允许的事件到达，所以完整的违规式永远不会上屏；
+    权威文本始终由模型节点的已提交更新给出，客户端把它当最终真相。
+    """
+
+    def __init__(self) -> None:
+        self.buffer = ""
+        self.emitted = 0
+        self.blocked = False
+
+    def feed(self, text: str) -> str:
+        """累加一个块；返回可投送的增量（无事可发时返回 ""）。
+
+        每块都对**整个** buffer 重跑 `check()`，这不是省事的近似而是正确的增量语义：
+        一个式子只有**完整**出现在文本里才可检，而 buffer 里出现完整式子恰好就是全文检查
+        会抓到的那个东西。
+        """
+        self.buffer += text
+        if self.blocked:
+            return ""
+        verdict = check(self.buffer)
+        if not verdict.allowed:
+            self.blocked = True
+            return ""
+        safe = max(0, len(self.buffer) - WINDOW)
+        if safe <= self.emitted:
+            return ""
+        delta = self.buffer[self.emitted : safe]
+        self.emitted = safe
+        return delta
+
+    def flush_tail(self) -> str:
+        """放出被窗口扣住的部分。只在该轮已提交文本过了全文守卫后调用一次
+        （那才是让整个 buffer 都安全、包括尾巴的依据）。"""
+        if self.blocked:
+            return ""
+        delta = self.buffer[self.emitted :]
+        self.emitted = len(self.buffer)
+        return delta
+
+    def reset(self) -> None:
+        """下一轮模型调用从干净累加器开始。"""
+        self.buffer = ""
+        self.emitted = 0
+        self.blocked = False
+
+
+def run_turn(
+    graph: Any,
+    *,
+    graph_input: dict[str, Any],
+    config: dict[str, Any],
+    role_summary: dict[str, str],
+    tracer: Tracer | None = None,
+) -> Iterator[TurnEvent]:
+    """把一个用户轮次跑过内核图，产出结构化事件流（同步，宿主无关）。
+
+    同步实现是**必须的**而不是选择：项目的检查点是同步 `SqliteSaver`，其 async 对应实现会抛
+    `NotImplementedError`。需要异步投送（SSE 不占事件循环）的宿主用 `api/chat.py` 的线程池桥。
+
+    工具轮的事件序：`Start → [Thinking]* → ToolCall → ToolResult → (Token)* → End`
+    直答轮的事件序：`Start → [Thinking]* → (Token)* → End`
+
+    `Thinking` 只在模型是"按名单启用思考"的推理模型时出现（见 config 的 MODEL_THINKING_MODELS）。
+    `MessageReplace` 在已提交文本与已投送文本分叉时出现（guard 改写、角色缺失兜底、或该模型
+    根本没发任何增量块）。
+    """
+    yield Start(role=role_summary)
+    guard = StreamingGuard()
+    # 一次用户轮次里 `call_model` 可能跑多次（工具循环）。裁剪只报**第一次**：那一轮代表
+    # "这一问开始时模型能看到多少历史"，是用户需要知道的那个事实；后面几次的数值是工具
+    # 消息把窗口挤得更满的结果，重复上报只会变成噪音。
+    trim_reported = False
+    think_emitted = False
+    try:
+        for mode, payload in graph.stream(
+            graph_input, config=config, stream_mode=["messages", "updates"]
+        ):
+            if mode == "messages":
+                yield from _from_message_chunk(payload, guard=guard)
+                continue
+            for node, update in (payload or {}).items():
+                if node == MODEL_NODE:
+                    messages = (update or {}).get("messages") or []
+                    if not messages:
+                        continue
+                    # 历史被上下文预算裁剪过 → 如实告诉客户端（审查报告 H3 的界面部分）。
+                    # 事件只承载"发生了什么、多少条"，不含任何对话内容。
+                    dropped = (update or {}).get("context_trimmed") or 0
+                    if dropped and not trim_reported:
+                        trim_reported = True
+                        yield ContextTrimmed(
+                            dropped=dropped, kept=(update or {}).get("context_kept") or 0
+                        )
+                    committed = messages[-1]
+                    # 兜底路径：模型没有走增量流（评测脚本 / 非流式后端）时，思考内容会
+                    # 完整地落在 committed 上 —— 此时一次性发出，并以 think_emitted
+                    # 防止与流式增量重复。
+                    committed_think = (getattr(committed, "additional_kwargs", None) or {}).get(
+                        "reasoning_content"
+                    )
+                    if committed_think and not think_emitted:
+                        think_emitted = True
+                        yield Thinking(text=str(committed_think))
+                    for call in getattr(committed, "tool_calls", None) or []:
+                        yield ToolCall(name=call.get("name"), args=call.get("args") or {})
+                    text = text_of(committed)
+                    if guard.blocked or text != guard.buffer:
+                        # 已提交文本与已投送文本分叉：客户端用权威（安全）文本整条替换
+                        # 进行中的气泡。
+                        yield MessageReplace(text=text)
+                    else:
+                        tail = guard.flush_tail()
+                        if tail:
+                            yield Token(text=tail)
+                    guard.reset()
+                elif node == TOOLS_NODE:
+                    yield from _from_tool_update(update)
+    except GraphRecursionError:
+        # 工具循环撞上步数上限（core/graph.build_graph_config 设的 recursion_limit）。
+        # 这不是"模型调用失败"——模型一直在正常回话，是它陷入了重复调用，所以必须
+        # 说清"发生了什么、怎么绕开"，否则用户只会反复重试同一个问法。
+        limit = config.get("recursion_limit")
+        _emit_error_trace(
+            tracer,
+            f"GraphRecursionError: 超过步数上限 {limit}",
+            {"node": MODEL_NODE, "reason": "recursion_limit"},
+        )
+        yield Error(
+            detail=(
+                f"这一轮的工具调用超过了 {limit} 步上限，已自动停止"
+                "（通常是模型陷入了重复调用）。换个问法，或把任务拆小一点再试。"
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - 客户端拿一句人话，日志拿真实原因
+        # 带上消息体（审查报告 E1）：只记异常类型名等于回答不了"这次为什么失败" ——
+        # 超时、连接被拒、模型不存在在日志里长得一模一样。异常文本不承载报告原文，
+        # 且 URL 会被脱敏，因此脱敏纪律不受影响。
+        _emit_error_trace(
+            tracer,
+            f"{type(exc).__name__}: {scrub_endpoints(str(exc))}"[:300],
+            {"node": MODEL_NODE},
+        )
+        yield Error(detail=model_error_detail(exc))
+    yield End()
+
+
+def _from_message_chunk(payload: Any, *, guard: StreamingGuard) -> Iterator[TurnEvent]:
+    """`messages` 模式的一个原始块 → 思考事件 + 已过审的正文增量。"""
+    chunk, _meta = payload
+    # 思考模型的推理增量（langchain-ollama：reasoning=True 时思考进
+    # additional_kwargs['reasoning_content']）。与正文分流：思考走 thinking 事件、进折叠
+    # 面板，不混进回答正文。qwen2.5 等非思考模型这里是空 → 零开销。
+    think_delta = (getattr(chunk, "additional_kwargs", None) or {}).get("reasoning_content")
+    if isinstance(chunk, AIMessageChunk) and think_delta:
+        yield Thinking(text=str(think_delta))
+    if not isinstance(chunk, AIMessageChunk) or not chunk.content:
+        return
+    delta = guard.feed(text_of(chunk))
+    if delta:
+        yield Token(text=delta)
+
+
+def _from_tool_update(update: Any) -> Iterator[TurnEvent]:
+    for message in (update or {}).get("messages") or []:
+        if isinstance(message, ToolMessage):
+            yield ToolResult(name=message.name, content=text_of(message))
+
+
+def _emit_error_trace(
+    tracer: Tracer | None, error: str, detail: dict[str, Any]
+) -> None:
+    if tracer is not None:
+        tracer.emit(TraceEvent(event="chat_error", error=error, detail=detail))
+
+
+#: 宿主侧只需要的一个签名：跑一轮拿事件流（桌宠壳据此不必 import 任何 HTTP 件）。
+TurnRunner = Callable[..., Iterator[TurnEvent]]

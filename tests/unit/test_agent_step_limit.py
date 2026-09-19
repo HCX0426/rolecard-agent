@@ -22,7 +22,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.errors import GraphRecursionError
 
-from rolecard_agent.api.chat import _chat_events_sync
+from rolecard_agent.api.chat import sse
 from rolecard_agent.config import Settings
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.graph import DEFAULT_AGENT_MAX_STEPS, build_graph_config, build_kernel
@@ -30,6 +30,7 @@ from rolecard_agent.core.observability import NullTracer
 from rolecard_agent.core.plugins import PluginService
 from rolecard_agent.core.state import new_state
 from rolecard_agent.core.tools.registry import ToolRegistry
+from rolecard_agent.core.turn import run_turn
 from rolecard_agent.roles.models import RoleCardCreate
 from rolecard_agent.roles.service import RoleCardService
 from rolecard_agent.storage.db import bootstrap, connect
@@ -159,15 +160,18 @@ def test_looping_tool_calls_are_stopped_by_the_step_limit(tmp_path: Path) -> Non
 
 def test_recursion_limit_reaches_the_user_as_an_actionable_sentence() -> None:
     tracer = _RecordingTracer()
-    events = list(
-        _chat_events_sync(
+    # 轮次语义在 core/turn.py，帧化在 api/chat.py —— 这条用例要的是"用户看到的那句话"，
+    # 所以走完整链路（事件 → SSE 帧），而不是只拿内核事件。
+    events = [
+        sse(e)
+        for e in run_turn(
             _RecursingGraph(),
             graph_input={},
             config=build_graph_config("t", Settings(agent_max_steps=25)),
             role_summary={"role_id": "r", "role_name": "循环测试角色"},
             tracer=tracer,
         )
-    )
+    ]
     payloads = [
         json.loads(e.removeprefix("data: ").strip()) for e in events if e.startswith("data:")
     ]

@@ -11,13 +11,13 @@ Traceability: US-4（输出侧安全）在流式场景下的延续。整段审�
 
 from __future__ import annotations
 
-from rolecard_agent.api.chat import (
+from rolecard_agent.core.guard import check
+from rolecard_agent.core.turn import (
     VISION_MISMATCH_DETAIL,
     WINDOW,
     StreamingGuard,
-    _model_error_detail,
+    model_error_detail,
 )
-from rolecard_agent.core.guard import check
 
 # 足够长（代码点数 > WINDOW），保证在违规片段到达前已经有文本流出。
 SAFE_PREFIX = "好的，我查到了你 2026-03-12 的报告：结石直径 6.0 mm，区间 0-5 mm，数据如下，"
@@ -83,10 +83,10 @@ def test_vision_mismatch_maps_to_actionable_detail() -> None:
         Exception("model does not support vision capability"),
     ]
     for exc in cases:
-        assert _model_error_detail(exc) == VISION_MISMATCH_DETAIL
+        assert model_error_detail(exc) == VISION_MISMATCH_DETAIL
 
 
 def test_unrelated_model_error_keeps_generic_detail() -> None:
     """超时/连接失败等不得误判成视觉不匹配（否则误导用户去换模型）。"""
-    assert _model_error_detail(Exception("Request timed out after 120s")).startswith("模型调用失败")
-    assert _model_error_detail(Exception("Connection refused")).startswith("模型调用失败")
+    assert model_error_detail(Exception("Request timed out after 120s")).startswith("模型调用失败")
+    assert model_error_detail(Exception("Connection refused")).startswith("模型调用失败")

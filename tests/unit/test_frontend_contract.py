@@ -10,9 +10,38 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 API_TS = Path(__file__).resolve().parents[2] / "frontend" / "src" / "api.ts"
+STREAM_TS = Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib" / "stream.ts"
+
+
+def test_sse_event_vocabulary_matches_the_parser() -> None:
+    """内核声明的轮次事件名 == 前端 `ChatEvent` 联合里声明的那些（一个不多一个不少）。
+
+    为什么单独钉这条（架构审计报告 §7 / D 的前置）：事件名是**跨语言的线协议**，改一边不会
+    让另一边编译失败，症状只是"那一类东西再也不显示了"——比如 guard 改写后不替换气泡，
+    用户看到半截违规文本还以为是模型的问题。`core/turn.py` 的 `EVENT_TYPES` 与
+    `frontend/src/api.ts` 的 `ChatEvent` 各自是唯一声明处，这里做双向差分。
+    """
+    from rolecard_agent.core.turn import EVENT_TYPES
+
+    api_src = API_TS.read_text(encoding="utf-8")
+    block = re.search(r"export type ChatEvent =(.+?\};)", api_src, flags=re.S)
+    assert block, "frontend/src/api.ts 里找不到 ChatEvent 联合 —— 词表源头挪位置了？"
+    declared_frontend = set(re.findall(r'type:\s*"([a-z_]+)"', block.group(1)))
+    assert set(EVENT_TYPES) == declared_frontend, (
+        f"内核发了前端没声明的：{sorted(set(EVENT_TYPES) - declared_frontend)}；"
+        f"前端声明了内核不发的：{sorted(declared_frontend - set(EVENT_TYPES))}"
+    )
+    # 解析方（stream.ts 的 switch）必须处理除"收尾类"之外的每一个事件。
+    stream_src = STREAM_TS.read_text(encoding="utf-8")
+    handled = set(re.findall(r'case "([a-z_]+)"', stream_src))
+    no_render = {"end"}  # end 只由调用方结束"生成中"态，没有要渲染的载荷
+    assert declared_frontend - no_render <= handled, (
+        f"前端解析器漏了这些事件：{sorted(declared_frontend - no_render - handled)}"
+    )
 
 
 def test_json_request_bodies_are_serialised() -> None:
