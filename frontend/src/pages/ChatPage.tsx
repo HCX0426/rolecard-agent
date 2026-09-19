@@ -12,16 +12,11 @@ import {
   type SessionRow,
 } from "../api";
 import { ToastStack, useToasts, type Tone } from "../components/Toast";
-import {
-  describeTrim,
-  newLiveBubble,
-  reduceChatEvent,
-  type LiveBubble,
-  type StreamMeta,
-} from "../lib/stream";
+import { describeTrim, type StreamMeta } from "../lib/stream";
 import { buildTurns, type BuiltTurn } from "../lib/turns";
 import ProcessPanel from "../components/chat/ProcessPanel";
 import { useAutoScroll } from "../hooks/useAutoScroll";
+import { useChatStream } from "../hooks/useChatStream";
 import { useMenus } from "../hooks/useMenus";
 import { useMessageSelection } from "../hooks/useMessageSelection";
 import { useSessions } from "../hooks/useSessions";
@@ -55,7 +50,6 @@ export default function ChatPage() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [currentRole, setCurrentRole] = useState<string>("");
   const [messages, setMessages] = useState<MessageRow[]>([]);
-  const [live, setLive] = useState<LiveBubble | null>(null);
   const [input, setInput] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // 多模态传图（2026-09-18）：待发送的图片（data URL），附件就绪后随消息一起发。
@@ -94,7 +88,6 @@ export default function ChatPage() {
   const [sessionModel, setSessionModel] = useState<string | null>(null);
   // 会话级对话模式（对话/智能体）：后端返回**有效值**（会话覆盖 or 全局默认）。
   const [sessionMode, setSessionMode] = useState("chat");
-  const [busy, setBusy] = useState(false); // 流式进行中：驱动「停止」按钮与输入禁用
   // 上下文预算事实（H3 的界面部分）：>0 时提示"早期对话已折叠"。
   // 单独放在 state 而不是气泡里，是因为气泡在流结束时会被 checkpoint 回放**整体替换** ——
   // 挂在气泡上的提示会在回答刚结束时消失，用户根本来不及看到。
@@ -120,12 +113,6 @@ export default function ChatPage() {
     toggleSelect,
   } = useMessageSelection(messages, () => setEditing(null));
   const fileRef = useRef<HTMLInputElement>(null);
-  const sendingRef = useRef(false);
-  const abortRef = useRef<AbortController | null>(null);
-  // 自动滚动抽到 hooks/useAutoScroll（贴底才跟随，切会话强制跟一次）。
-  // 气泡的"当前值"镜像：事件回调里需要读到最新气泡才能归约，而 setState 的更新函数
-  // 可能在渲染期被调用（在更新函数里做副作用在 StrictMode 下会执行两次）。用 ref 明确持有。
-  const liveRef = useRef<LiveBubble | null>(null);
   // 本轮是否收到过 error 事件（详情留到收尾时统一提示，见 applyMeta 的说明）。
   const errorRef = useRef<string>("");
 
@@ -136,6 +123,20 @@ export default function ChatPage() {
     // 挂在气泡上的 `[错误] …` 跟着一起消失 —— 用户实际上看不到任何提示。
     if (meta.errored) errorRef.current = meta.errorDetail || "模型调用失败";
   }, []);
+
+  // 流式对话的生命周期（busy/live 气泡/发送闸门/abort + SSE 归约）抽到 hooks/useChatStream。
+  const {
+    busy,
+    setBusy,
+    live,
+    setLive,
+    liveRef,
+    sendingRef,
+    abortRef,
+    onEvent,
+    startBubble,
+    stop,
+  } = useChatStream(applyMeta);
 
   // 状态提示统一走 toast（可叠加、自动消失、带语气）—— 一行 status 会被后来的消息覆盖，
   // 上一个操作的结果还没看清就没了。保留 setStatus 这个名字，既有调用点无需改动。
@@ -373,27 +374,8 @@ export default function ChatPage() {
       }
     }
     setMessages((m) => [...m, { role: "user", content: text || "（图片）", ...(image ? { image } : {}) }]);
-    const bubble = newLiveBubble();
-    liveRef.current = bubble;
-    setLive(bubble);
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-    await streamChat(
-      tid,
-      text,
-      (ev) => {
-        // 气泡归约是"事件 → 新气泡"的纯函数，逻辑在 lib/stream.ts 里被单测覆盖；
-        // meta 是旁路信息（上下文裁剪 / 角色摘要 / 是否出错），不进入气泡正文。
-        const prev = liveRef.current ?? newLiveBubble();
-        const reduced = reduceChatEvent(prev, ev);
-        liveRef.current = reduced.bubble;
-        setLive(reduced.bubble);
-        applyMeta(reduced.meta);
-      },
-      controller.signal,
-      image,
-    );
+    const controller = startBubble();
+    await streamChat(tid, text, onEvent, controller.signal, image);
     const aborted = controller.signal.aborted;
     abortRef.current = null;
     // 流结束：checkpoint 是唯一真相，回放覆盖乐观状态（中断时同样回放，拿到已生成的部分）
@@ -415,10 +397,7 @@ export default function ChatPage() {
     await refreshSessions();
   }
 
-  /** 停止生成：中断 SSE 连接。服务端已落 checkpoint 的部分会在收尾回放中显示出来。 */
-  function stop() {
-    abortRef.current?.abort();
-  }
+  // 停止生成（abortRef.current?.abort()）与流式生命周期一并由 hooks/useChatStream 的 stop() 提供。
 
   const { uploading, handleUpload } = useUploadFlow({
     sessionId,
@@ -448,26 +427,9 @@ export default function ChatPage() {
     if (!content && !image) return;
     sendingRef.current = true;
     setBusy(true);
-    const controller = new AbortController();
-    abortRef.current = controller;
-    const bubble = newLiveBubble();
-    liveRef.current = bubble;
-    setLive(bubble);
+    const controller = startBubble();
     setEditing(null);
-    await streamEdit(
-      sessionId,
-      mid,
-      content,
-      (ev) => {
-        const prev = liveRef.current ?? newLiveBubble();
-        const reduced = reduceChatEvent(prev, ev);
-        liveRef.current = reduced.bubble;
-        setLive(reduced.bubble);
-        applyMeta(reduced.meta);
-      },
-      controller.signal,
-      image,
-    );
+    await streamEdit(sessionId, mid, content, onEvent, controller.signal, image);
     setLive(null);
     liveRef.current = null;
     if (errorRef.current) {
