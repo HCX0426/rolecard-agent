@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import base64
 import contextlib
 from collections.abc import Iterator
 from pathlib import Path
@@ -18,6 +19,7 @@ from typing import Any
 import pytest
 
 from rolecard_agent.config import Settings
+from rolecard_agent.core.nodes import turn_image_ctx
 from rolecard_agent.core.tools.files import make_file_tools
 from rolecard_agent.core.tools.web import make_web_tools
 
@@ -48,7 +50,7 @@ def test_search_dispatches_to_ddgs_when_no_api_key(settings: Settings, monkeypat
     import rolecard_agent.core.tools.web as web
 
     monkeypatch.setattr(web, "DDGS", FakeDDGS, raising=False)
-    (search, _fetch) = make_web_tools(settings=settings)
+    (search, _fetch, _img) = make_web_tools(settings=settings)
     out = search.invoke({"query": "崩坏3 爱莉希雅"})
     assert "爱莉希雅" in out and "example.com/a" in out
     assert "DuckDuckGo" in out  # 来源标注（不可信内容必须可溯源）
@@ -68,7 +70,7 @@ def test_search_prefers_tavily_when_key_present(settings: Settings, monkeypatch)
     import rolecard_agent.core.tools.web as web
 
     monkeypatch.setattr(web, "TavilyClient", FakeClient, raising=False)
-    (search, _fetch) = make_web_tools(settings=settings_with_key)
+    (search, _fetch, _img) = make_web_tools(settings=settings_with_key)
     out = search.invoke({"query": "q"})
     assert "Tavily" in out and "真我" in out
 
@@ -83,7 +85,7 @@ def test_search_backend_failure_becomes_readable(settings: Settings, monkeypatch
     import rolecard_agent.core.tools.web as web
 
     monkeypatch.setattr(web, "DDGS", BoomDDGS, raising=False)
-    (search, _fetch) = make_web_tools(settings=settings)
+    (search, _fetch, _img) = make_web_tools(settings=settings)
     with pytest.raises(Exception, match="搜索失败"):
         search.invoke({"query": "q"})
 
@@ -153,14 +155,14 @@ class _FakeStreamingClient:
 
 
 def test_fetch_rejects_non_http_schemes(settings: Settings) -> None:
-    (_search, fetch) = make_web_tools(settings=settings)
+    (_search, fetch, _img) = make_web_tools(settings=settings)
     out = fetch.invoke({"url": "file:///etc/passwd"})
     assert "已拒绝" in out
 
 
 def test_fetch_rejects_loopback_and_private_targets(settings: Settings) -> None:
     """SSRF 边界：回环 / 私网目标一律拒绝 —— 否则"读网页"会变成"读内网服务"。"""
-    (_search, fetch) = make_web_tools(settings=settings)
+    (_search, fetch, _img) = make_web_tools(settings=settings)
     for url in (
         "http://localhost:8000/api/health",
         "http://127.0.0.1:11434/api/tags",
@@ -188,7 +190,7 @@ def test_fetch_extracts_main_text(settings: Settings, monkeypatch) -> None:
     monkeypatch.setattr(
         web.trafilatura, "extract", lambda html, **k: "爱莉希雅是人之律者，逐火十三英桀第二位。"
     )
-    (_search, fetch) = make_web_tools(settings=settings)
+    (_search, fetch, _img) = make_web_tools(settings=settings)
     out = fetch.invoke({"url": "https://example.com/elysia"})
     assert out.startswith("（来源：https://example.com/elysia）")
     assert "人之律者" in out
@@ -205,7 +207,7 @@ def test_fetch_truncates_long_pages(settings: Settings, monkeypatch) -> None:
         _FakeStreamingClient({url: _FakeStream(url=url, body=b"<html></html>")}),
     )
     monkeypatch.setattr(web.trafilatura, "extract", lambda html, **k: "字" * 99999)
-    (_search, fetch) = make_web_tools(settings=settings)
+    (_search, fetch, _img) = make_web_tools(settings=settings)
     out = fetch.invoke({"url": "https://example.com/long"})
     assert "已截断" in out
     assert len(out) < 99999
@@ -231,7 +233,7 @@ def test_fetch_revalidates_every_redirect_hop(settings: Settings, monkeypatch) -
         web, "_host_is_public", lambda url: not url.startswith(("http://127.", "http://169.254."))
     )
     monkeypatch.setattr(web, "_HTTP_CLIENT", client)
-    (_search, fetch) = make_web_tools(settings=settings)
+    (_search, fetch, _img) = make_web_tools(settings=settings)
 
     out = fetch.invoke({"url": start})
 
@@ -252,7 +254,7 @@ def test_fetch_gives_up_on_a_redirect_loop(settings: Settings, monkeypatch) -> N
     )
     monkeypatch.setattr(web, "_host_is_public", lambda url: True)
     monkeypatch.setattr(web, "_HTTP_CLIENT", client)
-    (_search, fetch) = make_web_tools(settings=settings)
+    (_search, fetch, _img) = make_web_tools(settings=settings)
 
     with pytest.raises(Exception) as excinfo:
         fetch.invoke({"url": a})
@@ -278,7 +280,7 @@ def test_fetch_caps_the_body_by_bytes_while_streaming(settings: Settings, monkey
     monkeypatch.setattr(web, "_host_is_public", lambda url: True)
     monkeypatch.setattr(web, "_HTTP_CLIENT", client)
     monkeypatch.setattr(web.trafilatura, "extract", _extract)
-    (_search, fetch) = make_web_tools(settings=settings)
+    (_search, fetch, _img) = make_web_tools(settings=settings)
 
     fetch.invoke({"url": url})
 
@@ -323,7 +325,7 @@ def test_fs_read_missing_file_is_readable_error(settings: Settings) -> None:
 def test_web_master_switch_disables_both_tools() -> None:
     """总闸：WEB_SEARCH_ENABLED=0 → web_search / web_fetch 都返回可读关闭说明。"""
     s = Settings(web_search_enabled=False, web_search_backend="auto")
-    (search, fetch) = make_web_tools(settings=s)
+    (search, fetch, _img) = make_web_tools(settings=s)
     assert "已被管理员关闭" in search.invoke({"query": "x"})
     assert "已被管理员关闭" in fetch.invoke({"url": "https://example.com/"})
 
@@ -346,7 +348,7 @@ def test_fetch_domain_whitelist(settings: Settings, monkeypatch) -> None:
     )
     monkeypatch.setattr(web.trafilatura, "extract", lambda html, **k: "正文")
     s = settings.model_copy(update={"web_allowed_domains": "example.com"})
-    (_search, fetch) = make_web_tools(settings=s)
+    (_search, fetch, _img) = make_web_tools(settings=s)
 
     assert "已拒绝：该域名不在联网白名单内" in fetch.invoke({"url": "https://other.org/a"})
     assert "正文" in fetch.invoke({"url": "https://example.com/a"})
@@ -354,5 +356,113 @@ def test_fetch_domain_whitelist(settings: Settings, monkeypatch) -> None:
 
     # 空名单 = 不限（回到公网边界单层把关）
     s_open = settings.model_copy(update={"web_allowed_domains": ""})
-    (_search, fetch_open) = make_web_tools(settings=s_open)
+    (_search, fetch_open, _img) = make_web_tools(settings=s_open)
     assert "正文" in fetch_open.invoke({"url": "https://anything.org/a"})
+
+
+# -- image_search（SauceNAO 反向图搜：看图认角色） ------------------------------------
+
+_IMG_URL = "data:image/png;base64," + base64.b64encode(b"fake-png-bytes").decode()
+
+
+def test_image_search_no_key_returns_readable(settings) -> None:
+    """配置了图但没配 SAUCENAO_API_KEY → 可读的未配置提示，绝不静默上传。"""
+    tok = turn_image_ctx.set(_IMG_URL)
+    try:
+        (_s, _f, img) = make_web_tools(settings=settings)  # 无 saucenao_api_key
+        out = img.invoke({})
+        assert "未配置" in out and "SAUCENAO_API_KEY" in out
+    finally:
+        turn_image_ctx.reset(tok)
+
+
+def test_image_search_no_turn_image_returns_readable(settings) -> None:
+    """有 key 但本轮没有图 → 可读说明（工具只能搜当前对话里的图）。"""
+    tok = turn_image_ctx.set(None)
+    try:
+        s = settings.model_copy(update={"saucenao_api_key": "k"})
+        (_s, _f, img) = make_web_tools(settings=s)
+        assert "没有可检索的图片" in img.invoke({})
+    finally:
+        turn_image_ctx.reset(tok)
+
+
+def test_image_search_disabled_by_master_gate(settings) -> None:
+    """web_search_enabled=0 总闸关掉 image_search（与 web_search 同一道闸）。"""
+    s = settings.model_copy(update={"web_search_enabled": False, "saucenao_api_key": "k"})
+    (_s, _f, img) = make_web_tools(settings=s)
+    assert "关闭" in img.invoke({})
+
+
+def test_image_search_formats_saucenao_results(settings, monkeypatch) -> None:
+    """命中 SauceNAO → 相似度 / 作品 / 角色 / 来源都要出现在返回里（供模型据此作答）。"""
+    import rolecard_agent.core.tools.web as web
+
+    class FakeResp:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {
+                "header": {"status": 0},
+                "results": [
+                    {
+                        "header": {"similarity": 92.0},
+                        "data": {
+                            "part": "异环",
+                            "material": ["女主角A", "路人B"],
+                            "ext_urls": ["https://pixiv.net/1"],
+                            "title": "某插画",
+                        },
+                    }
+                ],
+            }
+
+    class FakeClient:
+        def post(self, *a: Any, **k: Any) -> FakeResp:
+            return FakeResp()
+
+    monkeypatch.setattr(web, "_http", lambda: FakeClient())
+    tok = turn_image_ctx.set(_IMG_URL)
+    try:
+        s = settings.model_copy(update={"saucenao_api_key": "k"})
+        (_s, _f, img) = make_web_tools(settings=s)
+        out = img.invoke({})
+        assert "相似度 92" in out and "异环" in out and "女主角A" in out and "pixiv.net/1" in out
+    finally:
+        turn_image_ctx.reset(tok)
+
+
+def test_image_search_rate_limited_status_is_readable(settings, monkeypatch) -> None:
+    """SauceNAO header.status != 0（多为限流）→ 可读说明，不抛异常。"""
+    import rolecard_agent.core.tools.web as web
+
+    class FakeResp:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {"header": {"status": -1, "e_msg": "Rate limiting"}}
+
+    class FakeClient:
+        def post(self, *a: Any, **k: Any) -> FakeResp:
+            return FakeResp()
+
+    monkeypatch.setattr(web, "_http", lambda: FakeClient())
+    tok = turn_image_ctx.set(_IMG_URL)
+    try:
+        s = settings.model_copy(update={"saucenao_api_key": "k"})
+        (_s, _f, img) = make_web_tools(settings=s)
+        out = img.invoke({})
+        assert "检索未成功" in out and "限流" in out
+    finally:
+        turn_image_ctx.reset(tok)
+
+
+def test_decode_data_url_rejects_bad_input() -> None:
+    import rolecard_agent.core.tools.web as web
+
+    with pytest.raises(ValueError):
+        web._decode_data_url("https://example.com/a.png")  # 非 data URL
+    with pytest.raises(ValueError):
+        web._decode_data_url("data:image/png,notbase64")  # 缺 base64 标记

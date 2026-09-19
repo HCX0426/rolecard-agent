@@ -40,6 +40,7 @@ MEDICAL_ARCHIVIST_TOOLS = [
 GENERAL_ASSISTANT_TOOLS = [
     "web_search",
     "web_fetch",
+    "image_search",
     "fs_read",
     "fs_list",
     "fs_write",

@@ -42,6 +42,7 @@ RUNTIME_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("web_allowed_domains", "WEB_ALLOWED_DOMAINS", "str"),
     FieldSpec("web_search_backend", "WEB_SEARCH_BACKEND", "str", ("auto", "tavily", "ddgs", "off")),
     FieldSpec("tavily_api_key", "TAVILY_API_KEY", "secret"),
+    FieldSpec("saucenao_api_key", "SAUCENAO_API_KEY", "secret"),
     FieldSpec("ocr_backend", "OCR_BACKEND", "str", ("auto", "paddle", "cloud")),
     FieldSpec("ocr_api_key", "OCR_API_KEY", "secret"),
     FieldSpec("ocr_api_url", "OCR_API_URL", "str"),

@@ -108,6 +108,17 @@ def current_knowledge_scopes() -> Sequence[str]:
     return role_knowledge_scopes_ctx.get()
 
 
+# 反向图搜（image_search）的图片来源注入：与 role_knowledge_scopes_ctx 同一机制。
+# execute_tools 在跑工具前把**本轮最近一张图的 data URL** 放进这里；image_search 在调用
+# 瞬间读取，模型无需（也不能）把巨大的 base64 塞进工具参数里。无图 → None，工具自降级。
+turn_image_ctx: ContextVar[str | None] = ContextVar("turn_image", default=None)
+
+
+def current_turn_image() -> str | None:
+    """工具层读取：本轮最近一张图片的 data URL（execute_tools 每轮注入；无图为 None）。"""
+    return turn_image_ctx.get()
+
+
 # Bounded retry, per call, same arguments. Honest about what this can and cannot do: retrying
 # an identical call only helps with transient failures (IO, a cold model, a locked file), and
 # we cannot reliably tell transient from deterministic without inspecting exception types -
@@ -321,6 +332,20 @@ def _history_has_image(messages: Sequence[Any]) -> bool:
     return any(_message_has_image(m) for m in messages)
 
 
+def _latest_image_data_url(messages: Sequence[Any]) -> str | None:
+    """从历史里取**最近一条**带图消息的 data URL（反向图搜的输入）。找不到 → None。
+    兼容两种形态：`image_url.url` 块，或 additional_kwargs 里直接存的 image 字符串。"""
+    for m in reversed(list(messages)):
+        content = getattr(m, "content", None)
+        if isinstance(content, list):
+            for part in reversed(content):
+                if isinstance(part, dict) and part.get("type") in ("image_url", "image"):
+                    url = (part.get("image_url") or {}).get("url")
+                    if isinstance(url, str) and url:
+                        return url
+    return None
+
+
 def call_model(
     state: dict[str, Any],
     ctx: KernelContext,
@@ -511,6 +536,8 @@ def execute_tools(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
     # 同时写入该角色专属记忆（与全局 memory:facts 隔离）。无角色 = 空串，只写全局。
     # _invoke_tool 用 copy_context() 提交，所以 worker 线程能看到这里写入的值。
     current_role_id_ctx.set(state.get("current_role_id", "") or "")
+    # 反向图搜的图片来源：本轮最近一张图（无图 → None，image_search 自降级）。
+    turn_image_ctx.set(_latest_image_data_url(messages))
 
     # Three sets, and the distinction between them is the point:
     #   known     - the tool exists in the registry at all

@@ -177,6 +177,7 @@ def check_config_contract() -> None:
         "WEB_[A-Z_]+",
         "WORKSPACE_[A-Z_]+",
         "TAVILY_[A-Z_]+",
+        "SAUCENAO_[A-Z_]+",
         "OCR_[A-Z_]+",
         "RAG_[A-Z_]+",
         "EXTRACT_[A-Z_]+",

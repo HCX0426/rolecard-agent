@@ -23,6 +23,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import ipaddress
 import socket
 from urllib.parse import urljoin, urlparse
@@ -41,6 +43,11 @@ DOWNLOAD_MAX_BYTES = 2 * 1024 * 1024
 # 最多跟几跳重定向：够正常站点用，又不至于被「跳转到自己」的环拖住。
 _FETCH_MAX_REDIRECTS = 5
 _UA = "Mozilla/5.0 (compatible; rolecard-agent/0.3)"
+
+# 反向图搜（SauceNAO）：动漫/插画角色识别的事实标准。db=999 = 全库；上传上限按官方 ~8MB。
+_SAUCENAO_URL = "https://saucenao.com/search.php"
+_IMAGE_SEARCH_MAX_BYTES = 8 * 1024 * 1024
+_IMAGE_SEARCH_RESULTS = 5
 
 # L10：进程级共享 httpx 连接池 —— web_fetch 此前每次新建 Client，握手/TLS 成本白扔。
 # httpx.Client 并发请求安全；单请求 timeout / follow_redirects 覆盖默认值。
@@ -100,6 +107,65 @@ def _search_tavily(query: str, api_key: str) -> str:
         url = str(item.get("url") or "")
         content = str(item.get("content") or "")[:300]
         lines.append(f"{i}. {title}\n   链接：{url}\n   摘要：{content}")
+    return "\n".join(lines)
+
+
+def _decode_data_url(data_url: str) -> bytes:
+    """把 `data:image/...;base64,XXXX` 解成原始字节。非 base64 data URL 或解码失败 → ValueError。"""
+    if not data_url.startswith("data:") or "," not in data_url:
+        raise ValueError("不是合法的 data URL")
+    meta, _, b64 = data_url.partition(",")
+    if "base64" not in meta:
+        raise ValueError("data URL 未使用 base64 编码")
+    return base64.b64decode(b64, validate=False)
+
+
+def _search_saucenao(image_bytes: bytes, api_key: str) -> str:
+    """把图片字节 POST 给 SauceNAO，返回按相似度排序的来源/角色/作品文本。
+
+    只读、无副作用；失败（限流 / 网络 / 非图）一律转成可读说明，不抛给上层。
+    """
+    resp = _http().post(
+        _SAUCENAO_URL,
+        params={
+            "api_key": api_key,
+            "output_type": "json",
+            "num_results": _IMAGE_SEARCH_RESULTS,
+            "db": 999,
+        },
+        files={"file": ("image", image_bytes, "application/octet-stream")},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    header = data.get("header") or {}
+    status = header.get("status")
+    if status not in (0, None):
+        reason = header.get("e_msg") or (header.get("short_header") or {}).get("reason") or "未知"
+        return f"SauceNAO 检索未成功（status={status}：{reason}）。多为限流，稍后再试。"
+    results = data.get("results") or []
+    if not results:
+        return "SauceNAO 没找到相似图（可能不是动漫/插画，或库里没有该来源）。"
+    lines = ["（来源：SauceNAO 反向图搜，按相似度排序，请自行判断准确性）"]
+    for i, r in enumerate(results, 1):
+        hd = r.get("header") or {}
+        d = r.get("data") or {}
+        sim = hd.get("similarity")
+        part = str(d.get("part") or "").strip()  # 动画库：作品/集名
+        material = d.get("material") or []  # 动画库：角色名列表
+        title = str(d.get("title") or "").strip()
+        urls = d.get("ext_urls") or []
+        bits = [f"{i}. 相似度 {sim}%"]
+        if part:
+            bits.append(f"作品：{part[:100]}")
+        if material:
+            names = "、".join(str(m) for m in material[:6])
+            bits.append(f"角色：{names[:160]}")
+        if title:
+            bits.append(f"标题：{title[:80]}")
+        if urls:
+            bits.append("来源：" + " ".join(str(u) for u in urls[:3]))
+        lines.append("\n   ".join(bits))
     return "\n".join(lines)
 
 
@@ -211,7 +277,39 @@ def make_web_tools(*, settings) -> list:
             text = text[:FETCH_MAX_CHARS] + f"\n…（正文过长，已截断，原文约 {len(text)} 字）"
         return f"（来源：{url}）\n{text}"
 
-    return [web_search, web_fetch]
+    @tool("image_search")
+    def image_search() -> str:
+        """当图片里有你不确定的角色 / 插画 / 作品，想用"以图搜图"找到它的来源或角色名时调用。
+        会自动取本轮对话里最近一张图去检索相似图，返回最可能的作品 / 角色 / 来源链接。无需填参数。
+        （这是文字搜不出来的"看图认角色"专用能力。）"""
+        if note := _disabled_note():
+            return note
+        # 局部导入：core.nodes ← 本模块存在潜在环依赖，仿 search_knowledge 的做法在调用期取。
+        from rolecard_agent.core.nodes import current_turn_image
+
+        data_url = current_turn_image()
+        if not data_url:
+            return "本轮没有可检索的图片：image_search 只能对当前对话里的图片做反向搜索。"
+        key = settings.saucenao_api_key or ""
+        if not key:
+            return (
+                "反向图搜未配置：请在「运行环境」填入 SAUCENAO_API_KEY"
+                "（SauceNAO 免费申请）后重试。"
+            )
+        try:
+            image_bytes = _decode_data_url(data_url)
+        except (ValueError, binascii.Error) as exc:
+            return f"图片解析失败：{exc}"
+        if len(image_bytes) > _IMAGE_SEARCH_MAX_BYTES:
+            return f"图片过大（{len(image_bytes) // 1024 // 1024}MB，上限 8MB），反向图搜暂不支持。"
+        try:
+            return _search_saucenao(image_bytes, key)
+        except WebToolError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 外部图搜服务失败要变成可读答复
+            raise WebToolError(f"反向图搜失败（{type(exc).__name__}）：{exc}") from exc
+
+    return [web_search, web_fetch, image_search]
 
 
 __all__ = ["WebToolError", "make_web_tools"]

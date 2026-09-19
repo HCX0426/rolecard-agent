@@ -207,6 +207,10 @@ class Settings(BaseModel):
     web_search_enabled: bool = True
     web_allowed_domains: str = ""
     tavily_api_key: str | None = None
+    # 反向图搜（image_search）用的 SauceNAO key（动漫/插画角色识别的事实标准）。None/空 =
+    # 工具返回可读的"未配置"说明。与 web_search 同受 web_search_enabled 总闸管；图会外发到
+    # saucenao.com（第三方），故默认不设 key、不静默上传。
+    saucenao_api_key: str | None = None
 
     # v2.2 OCR 后端（可插拔，Paddle 优先 / 云端 key 兜底）：
     # - ocr_python：本地 Paddle 的解释器，必须是【独立 venv / 进程】的 python。PaddleOCR 自带
@@ -352,6 +356,7 @@ class Settings(BaseModel):
             ("WEB_SEARCH_ENABLED", "web_search_enabled"),
             ("WEB_ALLOWED_DOMAINS", "web_allowed_domains"),
             ("TAVILY_API_KEY", "tavily_api_key"),
+            ("SAUCENAO_API_KEY", "saucenao_api_key"),
             ("CONTEXT_MAX_CHARS", "context_max_chars"),
             ("TOOL_TIMEOUT_SECONDS", "tool_timeout_seconds"),
             ("AGENT_MAX_STEPS", "agent_max_steps"),

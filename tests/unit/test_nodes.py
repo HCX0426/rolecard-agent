@@ -24,6 +24,7 @@ from rolecard_agent.core.nodes import (
     TOOL_FAILED,
     TOOL_LOOP_BREAK,
     KernelContext,
+    _latest_image_data_url,
     call_model,
     execute_tools,
     route_after_model,
@@ -497,6 +498,16 @@ def _image_human_msg() -> HumanMessage:
         ],
         additional_kwargs={"has_image": True},
     )
+
+
+def test_latest_image_data_url_picks_most_recent_image() -> None:
+    """从历史里取最近一张图的 data URL（反向图搜的输入）；纯文本轮 → None。"""
+    assert _latest_image_data_url([_image_human_msg()]) == "data:image/png;base64,AAAA"
+    assert _latest_image_data_url([HumanMessage(content="纯文本")]) is None
+    assert _latest_image_data_url([]) is None
+    # 多图取最近一条
+    msgs = [_image_human_msg(), HumanMessage(content="中间"), _image_human_msg()]
+    assert _latest_image_data_url(msgs) == "data:image/png;base64,AAAA"
 
 
 def test_call_model_injects_image_grounding_when_turn_has_image(roles: RoleCardService) -> None:

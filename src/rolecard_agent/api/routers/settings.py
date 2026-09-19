@@ -173,7 +173,14 @@ def put_model_settings(
 
 # 密钥类字段：只回掩码，绝不把明文送出进程（与模型页 has_key 纪律一致）。
 _SECRET_FIELDS = frozenset(
-    {"tavily_api_key", "ocr_api_key", "langsmith_api_key", "auth_credentials", "auth_api_keys"}
+    {
+        "tavily_api_key",
+        "saucenao_api_key",
+        "ocr_api_key",
+        "langsmith_api_key",
+        "auth_credentials",
+        "auth_api_keys",
+    }
 )
 
 
@@ -264,6 +271,12 @@ def runtime_payload(
                 "TAVILY_API_KEY",
                 "Tavily 云端搜索 Key",
                 "本地搜索超时时配它（当前搜索走哪条路看上一行）",
+            ),
+            (
+                "saucenao_api_key",
+                "SAUCENAO_API_KEY",
+                "SauceNAO 反向图搜 Key",
+                "image_search 工具用（识别动漫/插画角色）；不配则该工具返回未配置提示",
             ),
         ],
     )
