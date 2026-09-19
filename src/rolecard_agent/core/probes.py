@@ -47,23 +47,31 @@ def vision_model_ready(base_url: str | None, model: str, *, use_cache: bool = Tr
 _DEFAULT_OLLAMA = "http://127.0.0.1:11434"
 
 
-def ollama_keep(base_url: str | None, model: str, keep_alive: int = -1) -> bool:
+def ollama_keep(
+    base_url: str | None,
+    model: str,
+    keep_alive: int = -1,
+    num_ctx: int | None = None,
+) -> bool:
     """把模型载入显存并按 keep_alive 常驻（-1 = 永不自动卸载）。
 
     Ollama 闲置默认 ~5 分钟卸载模型，下次请求要冷加载（8GB 卡上可能十几~几十秒），
     用户体感就是"首条消息很慢/服务页连不上"。这里 POST /api/generate 空 prompt + keep_alive
     触发/续期驻留。keep_alive 是 Ollama 原生参数，仅 native(Ollama) 后端有意义。
     加载本身可能很慢，给足超时；任何异常返回 False（调用方如实提示，不静默）。
+
+    num_ctx 必须一起传：Ollama 在**加载时**按请求里的 options.num_ctx 定死上下文窗口，
+    缺省回落到 4096。若常驻探针不带 num_ctx，就会把模型钉在 4096，随后第一条真实对话
+    （带后端配置的 num_ctx）又触发一次重载——预热反而制造了一次冷加载（2026-09-19）。
     """
     import httpx
 
     base = (base_url or _DEFAULT_OLLAMA).rstrip("/")
+    payload: dict[str, object] = {"model": model, "prompt": "", "keep_alive": keep_alive}
+    if num_ctx:
+        payload["options"] = {"num_ctx": num_ctx}
     try:
-        r = httpx.post(
-            f"{base}/api/generate",
-            json={"model": model, "prompt": "", "keep_alive": keep_alive},
-            timeout=120.0,
-        )
+        r = httpx.post(f"{base}/api/generate", json=payload, timeout=120.0)
         return r.status_code == 200
     except Exception:  # noqa: BLE001 - 探活/驻留失败即结果
         return False

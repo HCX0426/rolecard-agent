@@ -313,10 +313,21 @@ def test_role_memory_rejects_unknown_role_and_global_toggle(client: TestClient) 
 
 
 def test_keepalive_and_resident(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    """预热/常驻端点：默认后端是本地 Ollama → is_local；常驻返回 ok 并审计。全程离线（打桩）。"""
+    """预热/常驻端点：默认后端是本地 Ollama → is_local；常驻返回 ok 并审计，
+    且必须把后端配置的 num_ctx 透传给 ollama_keep（否则会把模型钉回 4096 默认，
+    预热反而触发一次重载）。全程离线（打桩）。"""
     import rolecard_agent.api.routers.settings as srt
 
-    monkeypatch.setattr(srt, "ollama_keep", lambda base, model, keep_alive=-1: True)
+    seen: dict[str, object] = {}
+
+    def _fake_keep(
+        base: object, model: str, keep_alive: int = -1, num_ctx: int | None = None
+    ) -> bool:
+        seen["model"] = model
+        seen["num_ctx"] = num_ctx
+        return True
+
+    monkeypatch.setattr(srt, "ollama_keep", _fake_keep)
     monkeypatch.setattr(
         srt,
         "ollama_loaded",
@@ -326,8 +337,16 @@ def test_keepalive_and_resident(client: TestClient, monkeypatch: pytest.MonkeyPa
     )
     r = client.get("/api/settings/models/resident").json()
     assert r["is_local"] is True and r["loaded"] and r["model"]
+
+    # 把默认后端 num_ctx 抬到 8192，再点常驻，探针必须带 8192 去加载。
+    default_name = client.get("/api/settings/models").json()["default"]
+    assert client.patch(
+        f"/api/settings/models/{default_name}/context", json={"num_ctx": 8192}
+    ).status_code == 200
+
     k = client.post("/api/settings/models/keepalive", json={"keep_alive": -1})
     assert k.status_code == 200 and k.json()["ok"] is True
+    assert seen["num_ctx"] == 8192
     actions = [row["action"] for row in client.get("/api/audit?limit=50").json()]
     assert "keepalive_model" in actions
 

@@ -637,12 +637,12 @@ def keepalive_model(
             detail="仅本地 Ollama 后端支持常驻；云端后端无 keep_alive。",
         )
     model = (body.model or backend.model).strip()
-    ok = ollama_keep(backend.base_url, model, body.keep_alive)
+    ok = ollama_keep(backend.base_url, model, body.keep_alive, num_ctx=backend.num_ctx)
     ctx.roles.audit(
         actor=actor.id,
         action="keepalive_model",
         target=model,
-        detail={"keep_alive": body.keep_alive, "ok": ok},
+        detail={"keep_alive": body.keep_alive, "num_ctx": backend.num_ctx, "ok": ok},
     )
     return {"ok": ok, "model": model, "loaded": ollama_loaded(backend.base_url)}
 
