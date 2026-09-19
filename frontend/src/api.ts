@@ -375,6 +375,9 @@ export interface ReachoutRow {
   text: string;
   state: "unread" | "read";
   created_at: string;
+  /** 该角色的"主动会话"线程 id：点进去能翻历史、能直接回话。
+   *  null = 这条消息还没有对应会话（本功能上线前落库的老消息）→ 界面只给"标记已读"。 */
+  thread_id: string | null;
 }
 
 export interface ReachoutsPage {
@@ -536,6 +539,12 @@ export const api = {
       `/api/reachouts${roleId ? `?role_id=${encodeURIComponent(roleId)}` : ""}`,
     ),
   markReachoutRead: (id: number) => request<ReachoutsPage>("POST", `/api/reachouts/${id}/read`),
+  /** 点进某角色的「主动会话」时调用：那一摞未读一次标完（看见 = 读过）。 */
+  markRoleReachoutsRead: (roleId: string) =>
+    request<ReachoutsPage>(
+      "POST",
+      `/api/reachouts/read-by-role?role_id=${encodeURIComponent(roleId)}`,
+    ),
   /** 命令执行审批（架构计划 C·§6.2）：列表（含 pending 计数）与批准/拒绝。 */
   getApprovals: (status?: string) =>
     request<ApprovalsPage>(

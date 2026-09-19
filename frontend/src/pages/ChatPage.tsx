@@ -45,7 +45,15 @@ function fmtDuration(from: string, to: string): string | null {
   return `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
 }
 
-export default function ChatPage() {
+export default function ChatPage({
+  deepThread = null,
+  onDeepThreadUsed,
+}: {
+  /** 深链要打开的会话（收件箱「打开对话并回复」；将来桌宠壳的通知点击同一个入口）。 */
+  deepThread?: string | null;
+  /** 消费完必须回销：留着不消，下次点同一条就不会再触发跳转。 */
+  onDeepThreadUsed?: () => void;
+}) {
   const [roles, setRoles] = useState<RoleCard[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [currentRole, setCurrentRole] = useState<string>("");
@@ -220,6 +228,25 @@ export default function ChatPage() {
     if (sendingRef.current) return;
     await createSession();
   }
+
+  // 深链打开会话：收件箱「打开对话并回复」（将来桌宠壳的系统通知点击也走这一个入口）。
+  // 放在 selectSession 之后，是因为它要复用同一条载入路径（历史 / 角色 / 模型 / 上下文预算）。
+  useEffect(() => {
+    if (!deepThread) return;
+    if (deepThread === sessionId) {
+      onDeepThreadUsed?.();
+      return;
+    }
+    if (sendingRef.current) {
+      // 生成中切会话会被 selectSession 挡下（防半截回答串台）。与其"点了没反应"，说清原因。
+      setStatus("这条回答还没生成完，等它结束再点一次就切过去", "warn");
+      onDeepThreadUsed?.();
+      return;
+    }
+    void selectSession(deepThread);
+    onDeepThreadUsed?.();
+    inputRef.current?.focus(); // 跳进来的目的是回话：光标直接落在输入框
+  }, [deepThread, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** 创建会话；上一个会话还没发过消息（无标题 = 空白）→ 直接打开它，不堆叠空会话。
    *  角色是可选的：不指定即用默认角色（内置「通用助手」），之后随时在功能行切换。

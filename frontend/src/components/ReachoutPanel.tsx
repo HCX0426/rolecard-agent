@@ -1,6 +1,10 @@
 // 角色主动开口收件箱（架构计划 B）：铃铛点开后的抽屉。
 // 纯静音设计：不弹提示音、不振动；红点与列表只是视觉呈现。
-// 点一条 = 标记已读（后端会返回最新列表，直接吸收）。可按角色筛选（架构计划 §5.3 按角色卡隔离查看）。
+// 点一条 = 打开该角色的「主动会话」（那里能翻历史、能直接回话）+ 顺手把这个角色的未读标完。
+// 可按角色筛选（架构计划 §5.3 按角色卡隔离查看历史）。
+//
+// 为什么跳转而不是就地回复：主动消息现在同时是"该角色的一条真消息"，落在它的主动会话里。
+// 就地再做一个回复框等于把同一次对话做出两个入口、两套状态（历史、流式、审核都在对话页那边）。
 
 import { useEffect, useMemo, useState } from "react";
 import { api, type ReachoutsPage, type ReachoutRow } from "../api";
@@ -9,10 +13,13 @@ export default function ReachoutPanel({
   open,
   onClose,
   onUnreadChange,
+  onOpenThread,
 }: {
   open: boolean;
   onClose: () => void;
   onUnreadChange: (unread: number) => void;
+  /** 跳进某个会话（App 负责改 hash 与切页签）。 */
+  onOpenThread: (threadId: string) => void;
 }) {
   const [data, setData] = useState<ReachoutsPage | null>(null);
   const [err, setErr] = useState("");
@@ -39,15 +46,28 @@ export default function ReachoutPanel({
     return [...seen.entries()].map(([id, name]) => ({ id, name }));
   }, [data]);
 
-  async function markRead(row: ReachoutRow) {
-    if (row.state === "read") return;
+  async function openRow(row: ReachoutRow) {
+    if (!row.thread_id) {
+      // 没有主动会话可去（本功能上线前的老消息）→ 退回"只标记这一条已读"。
+      try {
+        const p = await api.markReachoutRead(row.id);
+        setData(p);
+        onUnreadChange(p.unread);
+      } catch (e) {
+        setErr(`操作失败：${(e as Error).message}`);
+      }
+      return;
+    }
+    // 先标已读再跳转：跳完这个抽屉就关掉了，回来 setData 没有意义。
+    // 但**标记失败绝不拦跳转** —— 用户要的是看到那条消息，红点数下一轮轮询自然校正。
     try {
-      const p = await api.markReachoutRead(row.id);
+      const p = await api.markRoleReachoutsRead(row.role_id);
       setData(p);
       onUnreadChange(p.unread);
-    } catch (e) {
-      setErr(`操作失败：${(e as Error).message}`);
+    } catch {
+      /* 静默：跳转优先 */
     }
+    onOpenThread(row.thread_id);
   }
 
   if (!open) return null;
@@ -103,7 +123,8 @@ export default function ReachoutPanel({
           {data?.items.map((row) => (
             <button
               key={row.id}
-              onClick={() => markRead(row)}
+              onClick={() => void openRow(row)}
+              title={row.thread_id ? "打开与该角色的对话（可翻历史、可直接回复）" : "标记为已读"}
               className={`mb-1 flex w-full flex-col rounded-lg border px-3 py-2 text-left transition-colors ${
                 row.state === "unread"
                   ? "border-blue-200 bg-blue-50/60 dark:border-blue-800 dark:bg-blue-900/20"
@@ -123,8 +144,13 @@ export default function ReachoutPanel({
               <span className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
                 {row.text}
               </span>
-              <span className="mt-1 text-[10px] text-slate-400">
-                {row.created_at?.replace("T", " ").slice(0, 16) || ""}
+              <span className="mt-1 flex items-center justify-between text-[10px] text-slate-400">
+                <span>{row.created_at?.replace("T", " ").slice(0, 16) || ""}</span>
+                {row.thread_id ? (
+                  <span className="text-blue-600 dark:text-blue-400">打开对话并回复 →</span>
+                ) : (
+                  <span>标记已读</span>
+                )}
               </span>
             </button>
           ))}

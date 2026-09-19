@@ -479,3 +479,43 @@ def test_reachouts_list_and_mark_read_404(client: TestClient) -> None:
     assert client.post("/api/reachouts/999999/read").status_code == 404
 
 
+
+
+def test_reachouts_point_at_the_proactive_thread_and_read_by_role(client: TestClient) -> None:
+    """收件箱的"能点进去"这条合同：会话存在才给跳转目标 + 按角色一次标完。
+
+    为什么在 API 层再钉一次：单测证明了写入侧落了会话，而用户点的是这里的 `thread_id`
+    —— 它一旦改名字或漏字段，前端只会表现成"点了没反应"，正是要修的那个症状。
+    """
+    from rolecard_agent.core.identity import DEFAULT_USER_ID
+    from rolecard_agent.core.reachout import proactive_thread_id
+
+    conn = client.app.state.ctx.conn
+    conn.execute(
+        "INSERT INTO agent_reachout (role_id, role_name, text) VALUES ('general_assistant', ?, ?)",
+        ("通用助手", "今天腰还酸吗"),
+    )
+    conn.commit()
+
+    page = client.get("/api/reachouts").json()
+    assert page["unread"] == 1
+    tid = proactive_thread_id("general_assistant")
+    # 会话还不存在（这条消息是本功能上线前落的形状）→ 不给死链接。
+    assert page["items"][0]["thread_id"] is None
+    conn.execute(
+        "INSERT INTO session_thread (thread_id, user_id, current_role_id, title)"
+        " VALUES (?, ?, 'general_assistant', ?)",
+        (tid, DEFAULT_USER_ID, "通用助手 · 主动找你"),
+    )
+    conn.commit()
+    assert client.get("/api/reachouts").json()["items"][0]["thread_id"] == tid
+
+    r = client.post("/api/reachouts/read-by-role", params={"role_id": "general_assistant"})
+    assert r.status_code == 200
+    assert r.json()["marked"] == 1 and r.json()["unread"] == 0
+
+    # 没点角色的条目：无未读可标不是错误，也不该顺手把别人的未读带走。
+    ghost = client.post("/api/reachouts/read-by-role", params={"role_id": "ghost"}).json()
+    assert ghost["marked"] == 0 and ghost["unread"] == 0
+    # 少了 role_id 就不能盲标（否则一次点击清掉所有人）。
+    assert client.post("/api/reachouts/read-by-role").status_code == 422

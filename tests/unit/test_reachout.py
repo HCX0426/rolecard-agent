@@ -217,6 +217,99 @@ def test_tick_once_skips_roles_without_permission(conn) -> None:
     assert conn.execute("SELECT COUNT(*) AS n FROM agent_reachout").fetchone()["n"] == 0
 
 
+# --------------------------------------------------------------- 主动会话（回得来的那条路）
+
+
+def test_tick_delivers_into_the_proactive_thread(conn) -> None:
+    """主动开口除了进收件箱，还要投进"该角色的主动会话"—— 否则用户回不了话。"""
+    seen: list[tuple[str, str]] = []
+
+    def _deliver(role: RoleCard, text: str) -> str:
+        seen.append((role.role_id, text))
+        # 真实投递（bootstrap.deliver_proactive）会顺手建会话行；这里照同一份合同建。
+        tid = svc.proactive_thread_id(role.role_id)
+        conn.execute(
+            "INSERT INTO session_thread (thread_id, user_id, current_role_id, title)"
+            " VALUES (?, 'u1', ?, ?)",
+            (tid, role.role_id, svc.proactive_thread_title(role.role_name)),
+        )
+        conn.commit()
+        return tid
+
+    scheduler = ReachoutScheduler(
+        settings_provider=lambda: _settings(),
+        roles=_Roles([_role()]),  # type: ignore[arg-type]
+        model_resolver=lambda _n: _FakeModel(AIMessage(content="今天腰还酸吗")),
+        conn=conn,
+        tracer=_Tracer(),
+        deliver=_deliver,
+    )
+    utc, local = _now()
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
+    assert seen == [("active", "今天腰还酸吗")]
+
+    items = svc.list_reachouts(conn)["items"]
+    assert items[0]["thread_id"] == svc.proactive_thread_id("active")
+
+
+def test_old_messages_without_a_thread_are_not_links(conn) -> None:
+    """跳转目标只在会话**真的存在**时给出。
+
+    这个功能上线之前落库的主动消息没有对应的线程，前端若照着 id 跳，用户看到的是一句
+    "加载历史失败" —— 宁可退回到"只能标记已读"。
+    """
+    conn.execute(
+        "INSERT INTO agent_reachout (role_id, role_name, text) VALUES ('old', '旧角色', '很久以前')"
+    )
+    conn.commit()
+    assert svc.list_reachouts(conn)["items"][0]["thread_id"] is None
+
+
+def test_deliver_failure_keeps_the_inbox_message_and_is_traced(conn) -> None:
+    """投递炸了不能把消息一起吞掉：用户仍看得见那条，只是暂时点不进会话（要留痕）。"""
+
+    def _boom(_role: RoleCard, _text: str) -> str:
+        raise RuntimeError("checkpoint busy")
+
+    tracer = _Tracer()
+    scheduler = ReachoutScheduler(
+        settings_provider=lambda: _settings(),
+        roles=_Roles([_role()]),  # type: ignore[arg-type]
+        model_resolver=lambda _n: _FakeModel(AIMessage(content="嗨")),
+        conn=conn,
+        tracer=tracer,
+        deliver=_boom,
+    )
+    utc, local = _now()
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
+    assert conn.execute("SELECT COUNT(*) AS n FROM agent_reachout").fetchone()["n"] == 1
+    events = [getattr(e, "event", "") for e in tracer.events]
+    assert "reachout_deliver_failed" in events
+
+
+def test_without_a_deliverer_the_inbox_still_works(conn) -> None:
+    """没接投递接缝（纯内核装配 / 单测）时主动消息照发 —— 两级是可选叠加，不是前置条件。"""
+    scheduler = _scheduler(conn, [_role()], _FakeModel(AIMessage(content="嗨")))
+    utc, local = _now()
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
+
+
+def test_mark_role_read_clears_the_whole_bundle(conn) -> None:
+    """跳进主动会话 = 那一摞都算读过：一次标完，别留"半已读"骗红点数字。"""
+    for text in ("一", "二"):
+        conn.execute(
+            "INSERT INTO agent_reachout (role_id, role_name, text) VALUES ('a', 'x', ?)", (text,)
+        )
+    conn.execute(
+        "INSERT INTO agent_reachout (role_id, role_name, text) VALUES ('b', 'y', '别人的')"
+    )
+    conn.commit()
+
+    assert svc.mark_role_read(conn, "a") == 2
+    assert svc.list_reachouts(conn)["unread"] == 1  # 别的角色不受影响
+    assert svc.mark_role_read(conn, "a") == 0  # 再标一次没有变化
+
+
 def test_tick_once_continues_after_role_failure(conn) -> None:
     """一个角色（生成抛错）不阻塞其它角色，且错误留痕。"""
     roles = [_role(), RoleCard(**{**_role().model_dump(), "role_id": "second"})]

@@ -15,9 +15,11 @@
 ## 生成（一次单轮模型调用，所有安全纪律照旧）
 
   主动内容 = 角色人设 + 用户长期记忆 → 单轮生成，**输出必须过 guard**（fail-closed：
-  被拦下就不发，而不是过滤后发）→ 落 `agent_reachout`（unread）。
-  不拖对话历史：主动开口是"另起一句话"，不需要正在进行的会话上下文（v1 口径）——
-  如果将来要"基于当前任务开口"，那是 B 的迭代。
+  被拦下就不发，而不是过滤后发）→ 落 `agent_reachout`（unread）**并且**落进该角色的
+  "主动会话"（`proactive_thread_id`，由宿主注入的 `deliver` 写 checkpoint）。
+  生成时不拖对话历史（单轮、独立），但**发出后它就是一条真消息**：用户能从收件箱点进
+  会话直接回话，角色下次也记得自己主动说过什么（2026-09-19 用户报"主动找我我却回不了"）。
+  两处的分工是刻意的：收件箱负责"攒着 + 红点 + 页面关着也能收"，会话负责"能继续谈"。
 
 ## 运行形态
 
@@ -127,6 +129,15 @@ def list_reachouts(
         f"{where} ORDER BY id DESC LIMIT ?",
         params,
     ).fetchall()
+    # 只有**主动会话真的存在**才给跳转目标：这个功能上线之前落库的老消息没有对应的线程，
+    # 给了 id 等于把用户送进一句"加载历史失败"。宁可只给"标记已读"。
+    opened = {
+        str(r["thread_id"])
+        for r in conn.execute(
+            "SELECT thread_id FROM session_thread WHERE thread_id LIKE ?",
+            (f"{PROACTIVE_THREAD_PREFIX}%",),
+        )
+    }
     if role_id:
         unread = conn.execute(
             "SELECT COUNT(*) AS n FROM agent_reachout WHERE role_id = ? AND state = 'unread'",
@@ -137,10 +148,22 @@ def list_reachouts(
             "SELECT COUNT(*) AS n FROM agent_reachout WHERE state = 'unread'"
         ).fetchone()
     return {
-        "items": [dict(r) for r in rows],
+        "items": [
+            dict(r)
+            | {
+                # 点进去能翻历史、能回话的那个会话；尚未建立（老消息 / 从没投递成功）→ None。
+                "thread_id": _opened_thread(str(r["role_id"]), opened)
+            }
+            for r in rows
+        ],
         "unread": int(unread["n"]),
         "file_watch_pending": file_watch_pending,
     }
+
+
+def _opened_thread(role_id: str, opened: set[str]) -> str | None:
+    tid = proactive_thread_id(role_id)
+    return tid if tid in opened else None
 
 
 def mark_read(conn: SqlConnection, reachout_id: int) -> bool:
@@ -151,6 +174,42 @@ def mark_read(conn: SqlConnection, reachout_id: int) -> bool:
     )
     conn.commit()
     return cur.rowcount > 0
+
+
+def mark_role_read(conn: SqlConnection, role_id: str) -> int:
+    """把某角色攒下的未读一次标完，返回条数。
+
+    为什么单独要它：主动消息现在落在"该角色的主动会话"里（见 `proactive_thread_id`），
+    用户点进会话看 = 已经读过了，此刻应把收件箱那一摞一起清掉；让前端逐条发请求
+    既啰嗦又会在中途失败留下半已读状态。
+    """
+    cur = conn.execute(
+        "UPDATE agent_reachout SET state = 'read' WHERE role_id = ? AND state = 'unread'",
+        (role_id,),
+    )
+    conn.commit()
+    return int(cur.rowcount)
+
+
+# ------------------------------------------------------------------ 主动会话（可回话的落点）
+
+#: 每个角色一条固定的"主动会话"：角色开口时落进这里，用户回复走普通对话链路。
+PROACTIVE_THREAD_PREFIX = "s_proactive_"
+
+
+def proactive_thread_id(role_id: str) -> str:
+    """该角色主动开口的会话线程 id（**确定性**：同角色恒定，不做随机分配）。
+
+    为什么确定性而不是"首条时生成一个 uuid 存库"：主动消息与它的会话是"一个角色一条
+    对话"这一事实的两面，用一个从 role_id 推出来的 id，收件箱与写入侧就天然指同一个地方，
+    不必再加一列去记"那个 id 是哪个"（也不会出现两处各存一份、改天不同步）。
+    """
+    return f"{PROACTIVE_THREAD_PREFIX}{role_id}"
+
+
+def proactive_thread_title(role_name: str) -> str:
+    """会话列表里显示的名字 —— 一眼看出"这是角色主动找我的那条"，不是自己开的对话。"""
+    return f"{role_name} · 主动找你"
 
 
 def record_reachout(conn: SqlConnection, role: RoleCard, text: str) -> None:
@@ -318,6 +377,10 @@ class ReachoutScheduler:
     `settings_provider` 每次 tick 现取（全局总闸热切即时生效）；角色资格实时读库
     （角色卡开关改下一 tick 生效）。`model_resolver` 由宿主提供（角色可按 model_name
     路由模型，同对话路径）。
+
+    `deliver` 是"把这句话也落进该角色的主动会话"的宿主实现（需要图与检查点，本模块不
+    持有）：省略 = 只进收件箱（离线单测与无图环境就走这条）。投递失败**不影响收件箱**
+    —— 消息已经在用户能看见的地方了，只是暂时点不进会话，这一点如实进 tracer。
     """
 
     def __init__(
@@ -328,12 +391,14 @@ class ReachoutScheduler:
         model_resolver: Callable[[str | None], Any],
         conn: SqlConnection,
         tracer: Tracer,
+        deliver: Callable[[RoleCard, str], str | None] | None = None,
     ) -> None:
         self._settings = settings_provider
         self._roles = roles
         self._model = model_resolver
         self._conn = conn
         self._tracer = tracer
+        self._deliver = deliver
         self._stop = threading.Event()
 
     # -- 生命周期 -------------------------------------------------------
@@ -443,12 +508,26 @@ class ReachoutScheduler:
                 continue  # guard 拦下 / 空输出：不发，且不重试
             record_reachout(self._conn, role, text)
             record_interaction(self._conn, role.role_id, now=stamp_utc)
+            # 先落收件箱（用户一定能看见），再尽力投进主动会话；投递坏了也不把消息吞掉。
+            thread_id: str | None = None
+            if self._deliver is not None:
+                try:
+                    thread_id = self._deliver(role, text)
+                except Exception as exc:  # noqa: BLE001 - 投递失败只留痕，不回滚收件箱
+                    self._tracer.emit(
+                        TraceEvent(
+                            event="reachout_deliver_failed",
+                            node="reachout",
+                            role_id=role.role_id,
+                            detail={"error": str(exc)},
+                        )
+                    )
             self._tracer.emit(
                 TraceEvent(
                     event="reachout_sent",
                     node="reachout",
                     role_id=role.role_id,
-                    detail={"chars": len(text), "trigger": fired},
+                    detail={"chars": len(text), "trigger": fired, "thread_id": thread_id},
                 )
             )
             made += 1

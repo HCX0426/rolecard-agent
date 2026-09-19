@@ -151,3 +151,40 @@ def test_assembly_seeds_schema_and_demo_identity(tmp_path: Path) -> None:
         assert DEFAULT_USER_ID in users
     finally:
         conn.close()
+
+
+def test_deliver_proactive_lands_in_the_roles_thread(tmp_path: Path) -> None:
+    """主动开口必须真的落进"该角色的主动会话"—— 这是"能回复 / 能翻历史"的地基。
+
+    用装配出来的**真图与真检查点**验（不起 app）：只验 SQL 行的话，checkpoint 那条腿
+    断了也照样绿，而用户碰到的正是"点进去是空的、回不了"。
+    """
+    from rolecard_agent.core.graph import build_graph_config
+    from rolecard_agent.core.reachout import proactive_thread_id
+    from rolecard_agent.roles.models import RoleCard
+
+    runtime = _assemble(tmp_path)
+    try:
+        role = RoleCard(role_id="wan", role_name="苏晚晴", system_prompt="你是苏晚晴。")
+        tid = runtime.deliver_proactive(role, "今天腰还酸吗？")
+        assert tid == proactive_thread_id("wan")
+
+        row = runtime.conn.execute(
+            "SELECT current_role_id, user_id, title FROM session_thread WHERE thread_id = ?",
+            (tid,),
+        ).fetchone()
+        # 绑角色（回复时 persona 才对）+ 绑演示用户（会话列表才看得见）
+        assert row["current_role_id"] == "wan" and row["user_id"] == DEFAULT_USER_ID
+        assert "主动找你" in str(row["title"])
+
+        graph = runtime.state["graph"]
+        config = build_graph_config(tid, runtime.effective)
+        assert [str(m.content) for m in graph.get_state(config).values["messages"]] == [
+            "今天腰还酸吗？"
+        ]
+
+        # 第二条：建行幂等（不冲突），历史按顺序累积 —— 角色下一次看得见自己说过什么。
+        runtime.deliver_proactive(role, "记得喝水")
+        assert len(graph.get_state(config).values["messages"]) == 2
+    finally:
+        runtime.conn.close()

@@ -38,4 +38,20 @@ def mark_read(reachout_id: int, ctx: AppContext = Depends(get_context)) -> objec
     return svc.list_reachouts(ctx.conn, file_watch_pending=_pending(ctx))
 
 
+@router.post("/api/reachouts/read-by-role")
+def mark_role_read(
+    ctx: AppContext = Depends(get_context),
+    role_id: str = Query(..., max_length=64),
+) -> object:
+    """把某角色攒下的未读一次标完（返回 `marked` 条数）。
+
+    为什么按角色而不是逐条：点收件箱条目 = 跳进那条主动会话，进去看的是**整段历史**，
+    所以那一摞未读同时就都算读过了。逐条发请求会在中途失败留下"半已读"，红点数字还骗人。
+    """
+    marked = svc.mark_role_read(ctx.conn, role_id)
+    return {"marked": marked} | dict(
+        svc.list_reachouts(ctx.conn, file_watch_pending=_pending(ctx))
+    )
+
+
 __all__ = ["router"]

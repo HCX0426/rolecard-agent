@@ -96,9 +96,22 @@ const TABS = [
 type TabKey = (typeof TABS)[number]["key"];
 
 // ---- Hash 路由：URL 即状态，支持深链 + 浏览器前进/后退 ---------------------------------
-function tabFromHash(): TabKey {
+// hash 形态：`#/<tab>`，或带一段查询的 `#/<tab>?thread=<id>`（跨页深链：收件箱点"打开对话"、
+// 以后桌宠壳的系统通知点击也是同一个入口）。
+function hashParts(): { path: string; query: URLSearchParams } {
   const h = window.location.hash.replace(/^#\/?/, "");
-  return TABS.some((t) => t.key === h) ? (h as TabKey) : "chat";
+  const [path, qs = ""] = h.split("?");
+  return { path, query: new URLSearchParams(qs) };
+}
+
+function tabFromHash(): TabKey {
+  const { path } = hashParts();
+  return TABS.some((t) => t.key === path) ? (path as TabKey) : "chat";
+}
+
+/** 深链指向的会话（没有则 null）。只当"一次性意图"用，消费后由 ChatPage 清掉。 */
+function threadFromHash(): string | null {
+  return hashParts().query.get("thread");
 }
 
 // ---- 错误边界：单页崩溃不影响其他页签 ---------------------------------------------------
@@ -185,9 +198,16 @@ export default function App() {
     window.location.hash = `/${tab}`;
   }, [tab]);
 
+  // 跨页深链：`#/chat?thread=…` 里的会话只是"一次性的意图"，ChatPage 打开它之后清掉
+  // （见 `clearDeepThread`）。留着会让第二次点同一条收件箱消息时 hash 不变、事件不触发。
+  const [deepThread, setDeepThread] = useState<string | null>(threadFromHash);
+
   // 浏览器前进/后退 → tab 状态同步
   useEffect(() => {
-    const handler = () => setTabState(tabFromHash());
+    const handler = () => {
+      setTabState(tabFromHash());
+      setDeepThread(threadFromHash());
+    };
     window.addEventListener("hashchange", handler);
     return () => window.removeEventListener("hashchange", handler);
   }, []);
@@ -195,6 +215,22 @@ export default function App() {
   function selectTab(key: TabKey) {
     setTabState(key);
     setNavOpen(false);
+  }
+
+  /** 打开某个会话（收件箱"打开对话并回复"的入口；桌面壳的通知点击将来也走这里）。 */
+  function openThread(threadId: string) {
+    // 先写 URL 再改状态：地址栏与前进/后退两条路都经同一个 hashchange handler 收敛。
+    window.location.hash = `/chat?thread=${encodeURIComponent(threadId)}`;
+    setTabState("chat");
+    setDeepThread(threadId);
+    setReachoutOpen(false);
+    setNavOpen(false);
+  }
+
+  function clearDeepThread() {
+    setDeepThread(null);
+    // replaceState 而不是改 hash：不触发 hashchange，也就不会被上面的 effect 弹回来。
+    window.history.replaceState(null, "", "#/chat");
   }
 
   return (
@@ -289,7 +325,7 @@ export default function App() {
           <Suspense
             fallback={<div className="p-6 text-sm text-slate-400 dark:text-slate-500">加载中…</div>}
           >
-            <ChatPage />
+            <ChatPage deepThread={deepThread} onDeepThreadUsed={clearDeepThread} />
           </Suspense>
         </div>
         {/* 设置页同样**常驻挂载**（hidden 隐藏）：其内部 6 个子页签都有各自的加载
@@ -344,6 +380,7 @@ export default function App() {
         open={reachoutOpen}
         onClose={() => setReachoutOpen(false)}
         onUnreadChange={setReachoutUnread}
+        onOpenThread={openThread}
       />
       {/* 命令执行审批抽屉（全局；面板内操作会回传 pending 数，保持与侧栏红点同步） */}
       <ApprovalPanel

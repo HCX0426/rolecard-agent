@@ -288,3 +288,20 @@ describe("ChatPage 流式渲染", () => {
     expect(screen.getByRole("button", { name: "删除对话" })).toBeTruthy();
   });
 });
+
+describe("ChatPage 深链打开会话（收件箱「打开对话并回复」）", () => {
+  it("按普通会话路径载入指定线程，并把深链意图回销", async () => {
+    // 主动消息现在落在"该角色的主动会话"里，跳进来的目的就是接着谈 —— 所以它必须走
+    // 普通会话那条载入路径（历史 / 明细 / 上下文预算），而不是另造一套"主动消息视图"。
+    replay = [{ role: "assistant", content: "今天腰还酸吗？" }];
+    const onUsed = vi.fn();
+    render(
+      <ChatPage deepThread="s_proactive_general_assistant" onDeepThreadUsed={onUsed} />,
+    );
+    await waitFor(() => expect(onUsed).toHaveBeenCalled());
+    expect(apiMock.get).toHaveBeenCalledWith(
+      "/api/session/s_proactive_general_assistant/messages",
+    );
+    expect(await screen.findByText("今天腰还酸吗？")).toBeTruthy();
+  });
+});

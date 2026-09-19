@@ -25,13 +25,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from langchain_core.messages import AIMessage
+
 from rolecard_agent.config import Settings
 from rolecard_agent.core import mcp_store, runtime_settings
 from rolecard_agent.core.approvals import ApprovalService
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.domain_service import DomainQueryService
-from rolecard_agent.core.graph import build_kernel, build_model
-from rolecard_agent.core.identity import seed_demo_identity
+from rolecard_agent.core.graph import build_graph_config, build_kernel, build_model
+from rolecard_agent.core.identity import DEFAULT_USER_ID, seed_demo_identity
 from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.core.memory import load_memory_text
 from rolecard_agent.core.model_settings import ModelSettingsService, client_style
@@ -39,10 +41,15 @@ from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.observability import TraceEvent, Tracer, make_tracer
 from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
 from rolecard_agent.core.probes import ollama_keep
-from rolecard_agent.core.reachout import ReachoutScheduler
+from rolecard_agent.core.reachout import (
+    ReachoutScheduler,
+    proactive_thread_id,
+    proactive_thread_title,
+)
 from rolecard_agent.core.services import ServiceEndpointService
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder, make_reranker
+from rolecard_agent.roles.models import RoleCard
 from rolecard_agent.roles.service import RoleCardService
 from rolecard_agent.storage.db import SqlConnection, ThreadLocalConnection, connect_threadlocal
 from rolecard_agent.storage.db import bootstrap as apply_schema
@@ -267,6 +274,7 @@ class Runtime:
                 model_resolver=self.resolve_role_model,
                 conn=self.conn,
                 tracer=self.tracer,
+                deliver=self.deliver_proactive,
             )
         self.reachout.start()
         if self.env_settings.model_pin_on_startup:
@@ -281,6 +289,41 @@ class Runtime:
             backend = self.effective.backend(None)  # 未配默认 → KeyError，被 suppress 吞掉
             if client_style(backend.provider) == "native":
                 ollama_keep(backend.base_url, backend.model, -1, num_ctx=backend.num_ctx)
+
+    # -- 主动开口的投递（收件箱之外，还得能回话）--------------------------------
+
+    def deliver_proactive(self, role: RoleCard, text: str) -> str | None:
+        """把角色主动说的那句落进"该角色的主动会话"，返回线程 id（图还没建 → None）。
+
+        为什么需要这一步：主动消息原先只进 `agent_reachout`，于是"角色找我，我却回不了、
+        也点不开历史"（用户 2026-09-19）。落进会话后，回复与历史都直接复用既有对话链路，
+        不需要再造一套消息通道；角色下一次生成时也能在自己的历史里看到说过什么。
+
+        写检查点用 `graph.update_state`（与上传说明、图片注入同一路数）而**不跑图**：
+        这句是角色"已经出口"的话，不是让它接着想 —— 跑图会变成替用户自言自语。
+        """
+        thread_id = proactive_thread_id(role.role_id)
+        # 会话行按需建（幂等）：用户即便在会话列表里删了它，下一条主动消息会重新建回来。
+        self.conn.execute(
+            "INSERT INTO session_thread (thread_id, user_id, current_role_id, tool_epoch, title)"
+            " VALUES (?, ?, ?, ?, ?) ON CONFLICT(thread_id) DO NOTHING",
+            (
+                thread_id,
+                DEFAULT_USER_ID,
+                role.role_id,
+                self.plugins.tool_epoch(),
+                proactive_thread_title(role.role_name),
+            ),
+        )
+        self.conn.commit()
+        graph = self.state.get("graph")
+        if graph is None:  # 还没有图（纯内核装配 / 装配失败）：收件箱那条照样有效
+            return None
+        graph.update_state(
+            build_graph_config(thread_id, self.effective),
+            {"messages": [AIMessage(content=text)]},
+        )
+        return thread_id
 
     def shutdown(self) -> None:
         """释放本运行时持有的资源：sqlite 连接、知识库的 httpx 客户端、调度线程。
