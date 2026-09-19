@@ -1,0 +1,11 @@
+[package]
+name = "rolecard-shell"
+version = "0.1.0"
+description = "rolecard-agent 桌面壳：窗口 + 本地后端生命周期 + 原生能力桥（不含第二份 UI）"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2" }
+
+[dependencies]
+tauri = { version = "2" }

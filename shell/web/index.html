@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>rolecard-agent · 启动中</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --fg: #0f172a;
+        --muted: #64748b;
+        --bg: #f8fafc;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --fg: #e2e8f0;
+          --muted: #94a3b8;
+          --bg: #0f172a;
+        }
+      }
+      body {
+        margin: 0;
+        height: 100vh;
+        display: grid;
+        place-items: center;
+        background: var(--bg);
+        color: var(--fg);
+        font: 14px/1.6 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+      }
+      main {
+        max-width: 30rem;
+        padding: 0 1.25rem;
+        text-align: center;
+      }
+      h1 {
+        font-size: 1.05rem;
+        font-weight: 600;
+        margin: 0 0 0.6rem;
+      }
+      p {
+        margin: 0.35rem 0;
+        color: var(--muted);
+      }
+      code {
+        font-family: ui-monospace, Consolas, monospace;
+        font-size: 0.85em;
+      }
+      button {
+        margin-top: 0.9rem;
+        padding: 0.4rem 1rem;
+        border-radius: 0.5rem;
+        border: 1px solid var(--muted);
+        background: transparent;
+        color: var(--fg);
+        font: inherit;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>rolecard-agent</h1>
+      <p id="line">正在启动本地服务…</p>
+      <p id="detail"></p>
+      <button id="retry" hidden>重试</button>
+    </main>
+    <script type="module">
+      // 这张着陆页存在的理由：控制台由本地后端托管，而后端起来要一两秒（建库/装配/预热）。
+      // 直接把窗口指向后端地址，这段空档就是 WebView 的空白错误页 —— 用户只能靠猜。
+      // 现在"还在启动 / 起不来 + 为什么"是一个看得见的状态。
+      const line = document.getElementById("line");
+      const detail = document.getElementById("detail");
+      const retry = document.getElementById("retry");
+
+      const PROBE_MS = 400;
+      // 上限给到 60s：首次装配要建库、建知识库索引，慢机器上十几秒是实测过的。
+      const GIVE_UP_MS = 60_000;
+
+      retry.addEventListener("click", () => start());
+
+      async function backendUrl() {
+        // 地址由壳给 —— 端口只有一个事实来源（Rust 的 backend::console_url），这里不写死。
+        const invoke = window.__TAURI__?.core?.invoke;
+        if (!invoke) throw new Error("拿不到壳的 IPC 桥（window.__TAURI__ 不存在）");
+        return await invoke("backend_url");
+      }
+
+      async function reachable(base) {
+        try {
+          // no-cors：我们只想知道"有没有人在应答"，不需要读响应体（跨源读不到，也不该读）。
+          await fetch(`${base}/api/roles`, { mode: "no-cors", cache: "no-store" });
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
+      async function start() {
+        retry.hidden = true;
+        detail.textContent = "";
+        let base;
+        try {
+          base = await backendUrl();
+        } catch (error) {
+          line.textContent = "壳与页面的桥没接上";
+          detail.textContent = String(error?.message ?? error);
+          retry.hidden = false;
+          return;
+        }
+        line.textContent = `正在连接 ${base} …`;
+        const deadline = Date.now() + GIVE_UP_MS;
+        while (Date.now() < deadline) {
+          if (await reachable(base)) {
+            line.textContent = "已连接，正在打开控制台…";
+            location.replace(base + "/"); // 之后的一切都是后端托管的那一份界面（B/S 与 C/S 同源）
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, PROBE_MS));
+        }
+        line.textContent = "本地后端没能启动";
+        detail.textContent =
+          "若你是手动开着后端，请确认它在本页所示地址；由壳启动则检查 ROLECARD_PYTHON / " +
+          "ROLECARD_API_SCRIPT（或整条 ROLECARD_BACKEND_CMD）是否指向有效的解释器与 run_api.py。";
+        retry.hidden = false;
+      }
+
+      void start();
+    </script>
+  </body>
+</html>
