@@ -443,6 +443,20 @@ export interface ConnectivityProbe {
 }
 export type ConnectivityResult = Record<string, ConnectivityProbe>;
 
+/** 显存里常驻模型（Ollama /api/ps）+ 默认模型是否已常驻，供"预热/常驻"按钮显示状态。 */
+export interface ResidentModel {
+  name: string | null;
+  size: number | null;
+  expires_at: string | null;
+  processor?: string;
+}
+export interface ResidentInfo {
+  is_local: boolean;
+  model: string;
+  loaded: ResidentModel[];
+  resident: boolean;
+}
+
 export const api = {
   get: <T>(url: string) => request<T>("GET", url),
   post: <T>(url: string, body?: unknown) => request<T>("POST", url, body),

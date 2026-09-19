@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ExtensionPanel } from "../components/ExtensionPanel";
+import { ModelKeepAlive } from "../components/ModelKeepAlive";
 import { ServicesPanel } from "../components/ServicesPanel";
 import {
   api,
@@ -874,6 +875,7 @@ function ModelsPanel() {
 
   return (
     <div className="mt-6">
+      <ModelKeepAlive />
       {status && (
         <p
           className={`rounded-lg px-3 py-2 text-xs ${

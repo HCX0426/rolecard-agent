@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor
@@ -18,13 +18,17 @@ from rolecard_agent.core import runtime_settings
 from rolecard_agent.core.memory import (
     clear_memory_text,
     load_memory_text,
+    load_role_memory_text,
     save_memory_text,
+    save_role_memory_text,
 )
 from rolecard_agent.core.model_settings import (
     ModelSettingsError,
+    client_style,
     is_keyless_provider,
     provider_catalog,
 )
+from rolecard_agent.core.probes import ollama_keep, ollama_loaded
 
 router = APIRouter()
 
@@ -483,18 +487,36 @@ class MemoryBody(BaseModel):
     content: str | None = None
 
 
-def _memory_payload(ctx: AppContext) -> dict[str, object]:
-    """记忆面板数据：当前有效开关（env + DB 覆盖叠加）与全文。"""
-    return {
-        "enabled": ctx.settings.memory_enabled,
-        "content": load_memory_text(ctx.conn),
-    }
+def _require_role(ctx: AppContext, role_id: str) -> None:
+    """角色作用域的守卫：角色不存在 → 404（避免凭空造出孤立的 role_memory 行）。"""
+    if not ctx.roles.exists(role_id):
+        raise HTTPException(status_code=404, detail=f"角色 {role_id!r} 不存在。")
+
+
+def _memory_payload(ctx: AppContext, role_id: str | None = None) -> dict[str, object]:
+    """记忆面板数据。role_id=None → 全局用户记忆；给定 → 该角色专属记忆。
+
+    `enabled` 是**全局**记忆注入开关（memory_enabled），两作用域都回它供界面显示；
+    但它只能在**全局**作用域下改（角色作用域改它 → 400）。角色作用域只读该角色自己
+    存的那份，**不回退全局**（编辑/清空必须精确命中该角色的桶）。
+    """
+    content = (
+        load_role_memory_text(ctx.conn, role_id)
+        if role_id
+        else load_memory_text(ctx.conn)
+    )
+    return {"enabled": ctx.settings.memory_enabled, "content": content, "role_id": role_id}
 
 
 @router.get("/api/settings/memory")
-def get_memory(ctx: AppContext = Depends(get_context)) -> object:
-    """跨会话记忆：开关（有效值）与全文。文本是面板的编辑面，明文可读可改。"""
-    return _memory_payload(ctx)
+def get_memory(
+    ctx: AppContext = Depends(get_context),
+    role_id: str | None = Query(None, max_length=64),
+) -> object:
+    """跨会话记忆：开关（有效值）与全文。`?role_id=` 切到该角色的专属记忆。"""
+    if role_id:
+        _require_role(ctx, role_id)
+    return _memory_payload(ctx, role_id)
 
 
 @router.put("/api/settings/memory")
@@ -502,12 +524,31 @@ def put_memory(
     body: MemoryBody,
     ctx: AppContext = Depends(get_context),
     actor: Actor = Depends(get_actor),
+    role_id: str | None = Query(None, max_length=64),
 ) -> object:
-    """保存记忆：开关变化走 runtime 覆盖（保存即热重建），文本变化直接写库。
+    """保存记忆。全局作用域：开关变化走 runtime 覆盖（保存即热重建）+ 文本写 kernel_meta；
+    角色作用域（`?role_id=`）：只改该角色的 role_memory，**不接受改开关**（开关是全局的）。
 
-    审计只记结构与体量（开关/字符数），不记记忆内容 —— 记忆可能含用户隐私事实，
+    审计只记结构与体量（开关/字符数/作用域），不记记忆内容 —— 记忆可能含用户隐私事实，
     审计日志不该成为它的第二个拷贝。
     """
+    if role_id:
+        _require_role(ctx, role_id)
+        if body.enabled is not None:
+            raise HTTPException(
+                status_code=400, detail="记忆注入开关是全局设置，不能在角色作用域下修改。"
+            )
+        if body.content is None:
+            raise HTTPException(status_code=400, detail="没有要保存的内容。")
+        save_role_memory_text(ctx.conn, role_id, body.content)
+        ctx.roles.audit(
+            actor=actor.id,
+            action="update_role_memory",
+            target=f"memory:{role_id}",
+            detail={"chars": len(body.content)},
+        )
+        return _memory_payload(ctx, role_id)
+
     if body.enabled is None and body.content is None:
         raise HTTPException(status_code=400, detail="没有要保存的内容。")
     if body.content is not None:
@@ -518,10 +559,7 @@ def put_memory(
         actor=actor.id,
         action="update_memory",
         target="memory",
-        detail={
-            "enabled": body.enabled,
-            "chars": len(body.content or ""),
-        },
+        detail={"enabled": body.enabled, "chars": len(body.content or "")},
     )
     if body.enabled is not None:
         ctx.rebuild_runtime()
@@ -532,11 +570,81 @@ def put_memory(
 def delete_memory(
     ctx: AppContext = Depends(get_context),
     actor: Actor = Depends(get_actor),
+    role_id: str | None = Query(None, max_length=64),
 ) -> object:
-    """清空记忆全文（开关不动）。管理动作必须留痕。"""
+    """清空记忆全文（开关不动）。给定 role_id 只清该角色的记忆。管理动作必须留痕。"""
+    if role_id:
+        _require_role(ctx, role_id)
+        save_role_memory_text(ctx.conn, role_id, "")
+        ctx.roles.audit(
+            actor=actor.id, action="clear_role_memory", target=f"memory:{role_id}", detail={}
+        )
+        return _memory_payload(ctx, role_id)
     clear_memory_text(ctx.conn)
     ctx.roles.audit(actor=actor.id, action="clear_memory", target="memory", detail={})
     return _memory_payload(ctx)
+
+
+class KeepaliveBody(BaseModel):
+    """预热/常驻参数。keep_alive = Ollama 原生秒数，-1 = 永不自动卸载（常驻）。"""
+
+    keep_alive: int = -1
+    model: str | None = None
+
+
+def _default_backend(ctx: AppContext) -> Any:
+    """默认对话后端（叠加运行环境覆盖后的有效配置）；未配置默认 → 可读 400。"""
+    eff = ctx.app_state.get("effective") or ctx.settings
+    try:
+        return eff.backend(None)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"默认模型后端未配置：{exc}。请先在「模型」页签设置。"
+        ) from exc
+
+
+@router.get("/api/settings/models/resident")
+def resident_models(ctx: AppContext = Depends(get_context)) -> object:
+    """当前显存里常驻的模型（读 Ollama /api/ps）+ 默认模型是否已在其中。云端后端 → loaded 空。"""
+    backend = _default_backend(ctx)
+    is_local = client_style(backend.provider) == "native"
+    loaded = ollama_loaded(backend.base_url) if is_local else []
+    names = {str(m.get("name")) for m in loaded}
+    return {
+        "is_local": is_local,
+        "model": backend.model,
+        "loaded": loaded,
+        "resident": backend.model in names or backend.model.split(":")[0] in {
+            n.split(":")[0] for n in names
+        },
+    }
+
+
+@router.post("/api/settings/models/keepalive")
+def keepalive_model(
+    body: KeepaliveBody,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> object:
+    """把默认（或指定）模型载入显存并按 keep_alive 常驻（默认 -1 = 不再 5 分钟自动卸载）。
+
+    只解决"冷加载慢"这一体感；模型是否真能跑仍取决于显存。仅本地 Ollama(native) 支持。
+    """
+    backend = _default_backend(ctx)
+    if client_style(backend.provider) != "native":
+        raise HTTPException(
+            status_code=400,
+            detail="仅本地 Ollama 后端支持常驻；云端后端无 keep_alive。",
+        )
+    model = (body.model or backend.model).strip()
+    ok = ollama_keep(backend.base_url, model, body.keep_alive)
+    ctx.roles.audit(
+        actor=actor.id,
+        action="keepalive_model",
+        target=model,
+        detail={"keep_alive": body.keep_alive, "ok": ok},
+    )
+    return {"ok": ok, "model": model, "loaded": ollama_loaded(backend.base_url)}
 
 
 __all__ = ["router"]

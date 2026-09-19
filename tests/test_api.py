@@ -281,6 +281,57 @@ def test_memory_put_rejects_empty_body(client: TestClient) -> None:
     assert "没有要保存" in res.json()["detail"]
 
 
+def test_role_memory_scoped_roundtrip(client: TestClient) -> None:
+    """per-role 记忆作用域：读写只命中该角色、与全局隔离、审计带 memory:{role_id}。"""
+    role_id = client.get("/api/roles").json()[0]["role_id"]
+
+    # 初始：该角色没有专属记忆（不回退全局）
+    assert client.get(f"/api/settings/memory?role_id={role_id}").json()["content"] == ""
+
+    r = client.put(f"/api/settings/memory?role_id={role_id}", json={"content": "用户爱喝美式。"})
+    assert r.status_code == 200
+    assert r.json()["content"] == "用户爱喝美式。"
+    assert r.json()["role_id"] == role_id
+
+    # 隔离铁律：全局记忆不受角色写入影响
+    assert client.get("/api/settings/memory").json()["content"] == ""
+
+    client.delete(f"/api/settings/memory?role_id={role_id}")
+    assert client.get(f"/api/settings/memory?role_id={role_id}").json()["content"] == ""
+
+    actions = [row["action"] for row in client.get("/api/audit?limit=50").json()]
+    assert "update_role_memory" in actions and "clear_role_memory" in actions
+
+
+def test_role_memory_rejects_unknown_role_and_global_toggle(client: TestClient) -> None:
+    """角色作用域：不存在的角色 404；注入开关是全局的，角色作用域改它 → 400。"""
+    assert client.get("/api/settings/memory?role_id=ghost").status_code == 404
+    role_id = client.get("/api/roles").json()[0]["role_id"]
+    res = client.put(f"/api/settings/memory?role_id={role_id}", json={"enabled": False})
+    assert res.status_code == 400
+    assert "全局" in res.json()["detail"]
+
+
+def test_keepalive_and_resident(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """预热/常驻端点：默认后端是本地 Ollama → is_local；常驻返回 ok 并审计。全程离线（打桩）。"""
+    import rolecard_agent.api.routers.settings as srt
+
+    monkeypatch.setattr(srt, "ollama_keep", lambda base, model, keep_alive=-1: True)
+    monkeypatch.setattr(
+        srt,
+        "ollama_loaded",
+        lambda base: [
+            {"name": "qwen3-vl:8b", "size": 5800000000, "expires_at": None, "processor": "GPU"}
+        ],
+    )
+    r = client.get("/api/settings/models/resident").json()
+    assert r["is_local"] is True and r["loaded"] and r["model"]
+    k = client.post("/api/settings/models/keepalive", json={"keep_alive": -1})
+    assert k.status_code == 200 and k.json()["ok"] is True
+    actions = [row["action"] for row in client.get("/api/audit?limit=50").json()]
+    assert "keepalive_model" in actions
+
+
 def test_session_agent_mode_patch_roundtrip(client: TestClient) -> None:
     """会话级「对话/智能体」切换：PATCH 生效、明细返回有效值、非法值 400、清空回落全局。"""
     tid = client.post("/api/session", json={}).json()["thread_id"]
