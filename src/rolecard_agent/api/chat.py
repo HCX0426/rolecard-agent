@@ -47,6 +47,35 @@ def sse(event: dict[str, Any]) -> str:
     return "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
 
 
+# 供应商对"把图片发给不支持视觉的模型"的报错形态各家不一（siliconflow 20041 / OpenAI
+# 兼容 / Ollama 文案都不同），但都围绕 "VLM / vision / image / text-only" 这几个词。
+# 命中即翻译成可操作提示，而不是笼统的"模型调用失败"——用户据此知道是"含图会话切到了
+# 纯文本模型"，该切回视觉模型或新开不含图的会话（用户 2026-09-19 报的 bug）。
+_VISION_MISMATCH_SIGNALS = (
+    "not a vlm",
+    "vision language model",
+    "text-only prompt",
+    "does not support image",
+    "does not support vision",
+    "unsupported image",
+    "image not supported",
+    "input does not contain any image",
+)
+
+VISION_MISMATCH_DETAIL = (
+    "当前模型不支持图片识别（视觉）。这条对话里含有图片，请切换到支持视觉的模型"
+    "（例如本地 qwen3-vl）后再问；或新开一条不含图片的会话来使用当前模型。"
+)
+
+
+def _model_error_detail(exc: Exception) -> str:
+    """把模型调用异常映射成给用户的可读提示。纯函数，便于脱机测试。"""
+    text = str(exc).lower()
+    if any(sig in text for sig in _VISION_MISMATCH_SIGNALS):
+        return VISION_MISMATCH_DETAIL
+    return "模型调用失败，请稍后重试或换一种问法。"
+
+
 class StreamingGuard:
     """Incremental fail-closed output review for a single model turn.
 
@@ -250,7 +279,7 @@ UI surfaces it as a quiet inline notice. Same fact is queryable after a page rel
                     detail={"node": MODEL_NODE},
                 )
             )
-        yield sse({"type": "error", "detail": "模型调用失败，请稍后重试或换一种问法。"})
+        yield sse({"type": "error", "detail": _model_error_detail(exc)})
     yield sse({"type": "end"})
 
 
