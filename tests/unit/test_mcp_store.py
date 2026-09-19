@@ -40,18 +40,24 @@ def test_create_rejects_duplicate_and_bad_id(conn: sqlite3.Connection) -> None:
 @pytest.mark.parametrize(
     "url",
     [
-        "http://127.0.0.1:9/mcp",  # 回环
-        "http://192.168.1.10/x",  # 私网
-        "http://10.0.0.5/x",  # 私网
-        "http://169.254.169.254/latest/meta-data",  # link-local（云元数据）
         "file:///etc/passwd",  # 非 http
         "ftp://8.8.8.8/x",  # 非 http
         "",  # 空
+        "http://",  # 无主机
+        "not a url",  # 无 scheme
     ],
 )
-def test_validate_rejects_nonpublic_or_nonscheme(url: str) -> None:
+def test_validate_rejects_non_http_or_no_host(url: str) -> None:
     with pytest.raises(ValueError):
         mcp_store.validate_server("ok", url)
+
+
+def test_validate_allows_private_and_loopback() -> None:
+    # MCP URL 由可信 operator 主动填 → 本机/内网/公网均可（公网-only 只留给 web_fetch 的模型 URL）。
+    mcp_store.validate_server("a", "http://127.0.0.1:3001/mcp")
+    mcp_store.validate_server("b", "http://localhost:3001/mcp")
+    mcp_store.validate_server("c", "http://192.168.1.10:8/mcp")
+    mcp_store.validate_server("d", "https://8.8.8.8/mcp")
 
 
 def test_update_roundtrip_headers_and_toggle(conn: sqlite3.Connection) -> None:
@@ -74,10 +80,10 @@ def test_update_roundtrip_headers_and_toggle(conn: sqlite3.Connection) -> None:
         mcp_store.update(conn, "ghost", enabled=True)
 
 
-def test_update_rejects_private_url(conn: sqlite3.Connection) -> None:
+def test_update_rejects_non_http_url(conn: sqlite3.Connection) -> None:
     mcp_store.create(conn, id="s", display_name="a", url="http://8.8.8.8/mcp")
     with pytest.raises(ValueError):
-        mcp_store.update(conn, "s", url="http://127.0.0.1/x")
+        mcp_store.update(conn, "s", url="file:///etc/passwd")
 
 
 def _env(*ids_url: tuple[str, str]) -> list[McpServerConfig]:

@@ -1,10 +1,11 @@
-"""MCP server 接入的存储与合并（架构计划 C·§6.1 的 operator 路径；本轮仅后端）。
+"""MCP server 接入的存储与合并（架构计划 C·§6.1 的 operator 路径）。
 
 职责边界：
   * 把「运行时可增删改的 MCP server」（`mcp_server` 表）与「随部署烧进去的 env
     `MCP_SERVERS`」合并成加载用的 `McpServerConfig` 列表（同 id 时表覆盖 env，禁用行
     连 env 同名一并抑制）；
-  * 校验（仅 http、URL 过 SSRF 公网边界、id 合法）与 headers 的只写不回读掩码。
+  * 校验（http/https 且带主机、id 合法）与 headers 的只写不回读掩码。URL 由**可信 operator
+    主动填** → 本机/内网/公网均可；"仅公网"的 SSRF 边界只用于模型给的 URL（web_fetch）。
 
 **不做**的事：实际连接/加载工具在 `core/tools/mcp.py`（`load_mcp_tools` / `_fetch_one`）。
 本模块纯数据，离线可测。连接失败隔离、审计包裹都在那一层。
@@ -15,9 +16,9 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 from rolecard_agent.config import McpServerConfig
-from rolecard_agent.core.tools.web import _host_is_public
 from rolecard_agent.storage.db import SqlConnection
 
 # id 会进工具名前缀 `{id}__`，所以禁下划线外的分隔符冲突：只允许字母数字与 -_.，
@@ -30,17 +31,17 @@ _MAX_NAME = 80
 def validate_server(id: str, url: str) -> None:
     """id / url 合法性。非法 → ValueError（router 转可读 400）。
 
-    仅允许 http(s) 且解析到**公网**地址（复用 web_fetch 的 SSRF 边界）：拒绝回环 /
-    私网 / link-local / 保留段，否则"接入一个 MCP server"就变成对宿主内网的探测口。
+    URL 只要求是**带主机的 http(s)**：本机 / 内网 / 自托管 / 公网均可。理由：MCP server
+    地址是**可信 operator 主动填的**（不像 web_fetch 的 URL 来自模型 → 才需"仅公网"SSRF 边界）。
+    这里若强判仅公网，反而挡住最常见的"本机/内网跑一个 http MCP server 接进来"。
     """
     if not id or len(id) > _MAX_ID or not _ID_RE.match(id) or "__" in id:
         raise ValueError(
             "id 需以字母或数字开头，仅含字母数字与 . _ -，长度 ≤ 64，且不含连续下划线。"
         )
-    if not url or not url.strip():
-        raise ValueError("URL 不能为空。")
-    if not _host_is_public(url):
-        raise ValueError("URL 必须是可解析到公网的 http(s) 端点（拒绝回环 / 私网 / 内网地址）。")
+    parsed = urlparse((url or "").strip())
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError("URL 必须是带主机的 http(s) 端点（本机 / 内网 / 公网均可）。")
 
 
 def create(

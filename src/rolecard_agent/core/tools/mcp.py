@@ -22,7 +22,7 @@ import asyncio
 import importlib.util
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, PrivateAttr
@@ -34,6 +34,14 @@ logger = logging.getLogger(__name__)
 # bind_tools 把每个工具的 name + description + JSON schema 一起发给模型。描述过长会白白
 # 撑大每轮 prompt 载荷；截断到一个够用的上限即可（架构计划 §6.1 治理项）。
 MAX_MCP_DESC = 1024
+
+# MCP 是**可选扩展层**（与 OCR/RAG 同层，不进 requirements.txt 内核）。没装 adapters 时
+# 一律给这条可操作提示，而不是裸 ModuleNotFoundError（用户点"测试连接"时看得懂下一步）。
+MISSING_ADAPTER_HINT = "MCP 依赖未安装：运行 pip install -r requirements-mcp.txt"
+
+
+def _adapters_installed() -> bool:
+    return importlib.util.find_spec("langchain_mcp_adapters") is not None
 
 
 def _connection(cfg: McpServerConfig) -> dict[str, Any]:
@@ -56,9 +64,13 @@ def _make_client(cfg: McpServerConfig) -> Any:
     Isolated per-server so a misbehaving server cannot poison the others. Lazy import so the
     dependency is only required when MCP is actually configured.
     """
+    if not _adapters_installed():
+        raise ImportError(MISSING_ADAPTER_HINT)
     from langchain_mcp_adapters.client import MultiServerMCPClient
 
-    return MultiServerMCPClient({cfg.id: _connection(cfg)})
+    # _connection 返回的是 transport 相关的动态 dict；cast 让 mypy 在"装了 adapters"时也不
+    # 纠结它的具体 TypedDict 分支（未装时它本就是 Any）。
+    return MultiServerMCPClient(cast(Any, {cfg.id: _connection(cfg)}))
 
 
 async def _fetch_one(cfg: McpServerConfig) -> list[BaseTool]:

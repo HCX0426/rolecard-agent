@@ -1,7 +1,7 @@
-"""MCP server 接入路由（架构计划 C·§6.1 的 operator 自助入口；本轮仅后端）。
+"""MCP server 接入路由（架构计划 C·§6.1 的 operator 自助入口）。
 
 四态：list / create / update / delete + 单服务器"测试连接"。所有写操作：
-  * 经 `mcp_store` 校验（仅 http、URL 过 SSRF 公网边界、id 合法）；
+  * 经 `mcp_store` 校验（http/https 带主机、id 合法；URL 由 operator 主动填 → 本机/内网亦可）；
   * 写审计（actor=操作者，detail **不含 headers 值**，只记 url/transport/enabled）；
   * 成功后 `ctx.rebuild_runtime()` 热重载 registry（新增/停用即时生效，无需重启）。
 

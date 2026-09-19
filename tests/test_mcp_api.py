@@ -48,10 +48,17 @@ def test_create_lists_with_masked_headers(client: TestClient) -> None:
     assert body["effective_count"] == 1
 
 
-def test_create_rejects_private_url(client: TestClient) -> None:
-    r = _create(client, url="http://127.0.0.1:9/mcp")
+def test_create_rejects_non_http_url(client: TestClient) -> None:
+    r = _create(client, url="file:///etc/passwd")
     assert r.status_code == 400
-    assert "公网" in r.json()["detail"] or "SSRF" in r.json()["detail"]
+    assert "http" in r.json()["detail"]
+
+
+def test_create_allows_loopback_url(client: TestClient) -> None:
+    # operator 主动填的本机 MCP 端点应被接受（公网-only 只留给模型给的 URL）。
+    r = _create(client, id="local", url="http://127.0.0.1:3001/mcp")
+    assert r.status_code == 201
+    assert r.json()["url"] == "http://127.0.0.1:3001/mcp"
 
 
 def test_create_rejects_duplicate(client: TestClient) -> None:

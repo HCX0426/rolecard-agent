@@ -99,6 +99,7 @@ export function ExtensionPanel() {
     setBusy("form");
     setStatus(null);
     try {
+      let saved: McpServer;
       if (editingId) {
         const body: Record<string, unknown> = {
           display_name: form.display_name.trim() || editingId,
@@ -106,9 +107,9 @@ export function ExtensionPanel() {
           enabled: form.enabled,
         };
         if (headersTouched) body.headers = headersToMap(form.headers); // 省略=保留
-        await api.patch(`/api/mcp/servers/${encodeURIComponent(editingId)}`, body);
+        saved = await api.patch<McpServer>(`/api/mcp/servers/${encodeURIComponent(editingId)}`, body);
       } else {
-        await api.post("/api/mcp/servers", {
+        saved = await api.post<McpServer>("/api/mcp/servers", {
           id: form.id.trim(),
           display_name: form.display_name.trim() || form.id.trim(),
           url: form.url.trim(),
@@ -117,9 +118,9 @@ export function ExtensionPanel() {
         });
       }
       await load();
-      setTests((t) => ({ ...t, [editingId ?? form.id.trim()]: { phase: "idle" } }));
       closeForm();
-      setStatus({ ok: true, msg: "已保存并热生效（启用/停用即时刷新工具集，无需重启）。" });
+      setStatus({ ok: true, msg: "已保存并热生效；正在自动测试连接…" });
+      void test(saved); // 添加即自动测；连不上保留该行、交通灯标红
     } catch (e) {
       setStatus({ ok: false, msg: `保存失败：${(e as Error).message}` });
     } finally {
@@ -301,7 +302,7 @@ export function ExtensionPanel() {
                 <input
                   value={form.url}
                   onChange={(e) => setForm({ ...form, url: e.target.value })}
-                  placeholder="https://…（公网 http(s) 端点）"
+                  placeholder="http(s)://… 端点（本机 / 内网 / 公网均可）"
                   className="flex-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
                 />
               </div>
