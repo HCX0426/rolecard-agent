@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 from langchain_core.messages import AIMessage
 
-from rolecard_agent.config import Settings
+from rolecard_agent.config import DEFAULT_SILICONFLOW_BASE_URL, Settings
 from rolecard_agent.core.nodes import (
     role_knowledge_scopes_ctx,
 )
@@ -27,6 +27,7 @@ from rolecard_agent.rag.retriever import (
     SiliconFlowEmbedder,
     chunk_text,
     make_embedder,
+    make_reranker,
     make_search_tool,
 )
 
@@ -218,27 +219,62 @@ def test_scopes_never_in_tool_signature(search_tool) -> None:
 # -- embedder 选型 ----------------------------------------------------------------------
 
 
-def test_make_embedder_auto_with_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SILICONFLOW_API_KEY", "sk-x")
-
-    assert make_embedder(Settings()).name == "siliconflow"
+def test_make_embedder_auto_with_key() -> None:
+    assert make_embedder(Settings(siliconflow_api_key="sk-x")).name == "siliconflow"
 
 
-def test_make_embedder_auto_without_key_is_hash(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("SILICONFLOW_API_KEY", raising=False)
+def test_make_embedder_auto_without_key_is_hash() -> None:
     assert make_embedder(Settings()).name == "hash"
 
 
-def test_make_embedder_siliconflow_without_key_fails_loudly(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_make_embedder_siliconflow_without_key_fails_loudly() -> None:
     """配置错误要大声失败：静默降级成质量很差的检索会让人误以为一切正常。"""
-    monkeypatch.delenv("SILICONFLOW_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="SILICONFLOW_API_KEY"):
         make_embedder(Settings(embedding_backend="siliconflow"))
 
 
-def test_make_embedder_unknown_backend_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_embedder_credentials_come_from_settings_not_environ(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P1-4 回归：rag 工厂**只**认 Settings，不再在函数里 `os.environ.get`。
+
+    这条断言钉的是"事实面只有一个"：env 里塞一把别的 key、Settings 里塞另一把，
+    实例化的客户端必须用 Settings 那把（env 只在 `Settings.from_env()` 那一层参与一次）。
+    以前是 Settings 之外再直读 env，于是运行环境覆盖层改了值而检索仍用旧 key。
+    """
+    monkeypatch.setenv("SILICONFLOW_API_KEY", "sk-from-env")
+    monkeypatch.setenv("SILICONFLOW_BASE_URL", "https://env.example/v1")
+    embedder = make_embedder(Settings(siliconflow_api_key="sk-from-settings"))
+    assert embedder.name == "siliconflow"
+    auth = embedder._client.headers.get("Authorization") or ""  # noqa: SLF001
+    assert "sk-from-settings" in auth and "sk-from-env" not in auth
+    # httpx 会把 base_url 规范化成带尾斜杠，比较前统一 rstrip（断言的是"走的是哪个端点"）。
+    base = str(embedder._client.base_url).rstrip("/")  # noqa: SLF001
+    assert base == "https://api.siliconflow.cn/v1"
+    assert "env.example" not in base
+
+
+def test_reranker_base_url_default_is_a_single_constant() -> None:
+    """出厂端点默认值**只有一处**（config.DEFAULT_SILICONFLOW_BASE_URL），且可被 Settings 覆盖。
+
+    以前那句 `os.environ.get("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")` 在
+    一个文件里抄了 5 遍 —— 漏改一处就是"嵌入走了新端点、重排还在旧端点"。
+    """
+    plain = make_reranker(Settings(siliconflow_api_key="sk-x", rag_rerank="auto"))
+    assert plain is not None
+    assert str(plain._client.base_url).rstrip("/") == DEFAULT_SILICONFLOW_BASE_URL  # noqa: SLF001
+
+    custom = make_reranker(
+        Settings(
+            siliconflow_api_key="sk-x",
+            siliconflow_base_url="https://mirror.example/v1",
+            rag_rerank="auto",
+        )
+    )
+    assert str(custom._client.base_url).rstrip("/") == "https://mirror.example/v1"  # noqa: SLF001
+
+
+def test_make_embedder_unknown_backend_fails() -> None:
     with pytest.raises(RuntimeError, match="未知 embedding backend"):
         make_embedder(Settings(embedding_backend="warp-drive"))
 

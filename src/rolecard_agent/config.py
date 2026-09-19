@@ -51,6 +51,12 @@ DEFAULT_LOCAL_BACKEND: dict[str, Any] = {
 # (实施计划.md §8.5).
 MAX_FALLBACKS = 2
 
+# SiliconFlow 的 OpenAI 兼容端点（嵌入 bge-m3 / 重排 bge-reranker 共用一个 base_url）。
+# 之所以是**一个常量**而不是散在各工厂里的字面量：以前 `os.environ.get("SILICONFLOW_BASE_URL",
+# "https://api.siliconflow.cn/v1")` 在 rag/retriever.py 里写了 5 遍，改默认值得找 5 处，
+# 而漏掉一处就是"有的调用走了新端点、有的没有"（架构审计报告 P1-4）。
+DEFAULT_SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
+
 
 class ModelBackend(BaseModel):
     """One callable model endpoint.
@@ -239,6 +245,16 @@ class Settings(BaseModel):
     ocr_provider: str = "ocrspace"
     ocr_api_url: str | None = None
 
+    # v2.1 RAG 嵌入/重排的**云端凭据**（SiliconFlow）：以前这两把值是在 rag/retriever.py 里
+    # 直接 `os.environ.get` 读的 —— 那等于绕开 Settings 契约：运行环境覆盖层管不到它、
+    # 掩码纪律管不到它、`check_dead_config` 也算不到它，于是同一把 key 同时活在 env 和
+    # 模型页的 model_backend 行两处而没人知道哪一处生效（架构审计报告 P1-4）。
+    # 现在它是**部署期引导值**：读法只有 Settings 一条路径；操作员时刻的凭据归模型页
+    # （DB 是事实面，`has_key` 掩码纪律在那边）。
+    # 注意 `siliconflow_base_url` 有默认值：只有 key 是"配了才用"，端点不必每次重写。
+    siliconflow_api_key: str | None = None
+    siliconflow_base_url: str = DEFAULT_SILICONFLOW_BASE_URL
+
     # v2.1 RAG 嵌入后端：auto（有 key 走 siliconflow bge-m3，否则 hash 离线兜底）/
     # siliconflow / chroma_default / hash。由 rag/retriever.make_embedder 消费。
     embedding_backend: str = "auto"
@@ -390,6 +406,8 @@ class Settings(BaseModel):
             ("RAG_EMBEDDING", "embedding_backend"),
             ("RAG_RERANK", "rag_rerank"),
             ("RAG_MIN_SIMILARITY", "rag_min_similarity"),
+            ("SILICONFLOW_API_KEY", "siliconflow_api_key"),
+            ("SILICONFLOW_BASE_URL", "siliconflow_base_url"),
             ("EXTRACT_BACKEND", "extract_backend"),
             ("EXTRACT_VERIFY", "extract_verify"),
             ("OBS_BACKEND", "obs_backend"),

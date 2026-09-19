@@ -18,7 +18,6 @@
 from __future__ import annotations
 
 import base64
-import os
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
@@ -87,7 +86,10 @@ class LocalPaddleBackend:
     name = "paddle"
 
     def __init__(self, *, exe: str | None = None) -> None:
-        self._exe = exe or os.environ.get("OCR_PYTHON") or default_ocr_python()
+        # 只认调用方传进来的 `exe`（生产路径由 `select_ocr_backend` 交 `settings.ocr_python`），
+        # 不再自己偷偷读 OCR_PYTHON：那会让"运行环境页/覆盖层改过的值"与"这里实际用的解释器"
+        # 是两个事实面（架构审计报告 P1-4）。None = 自动发现默认 .venv-ocr。
+        self._exe = exe or default_ocr_python()
 
     def available(self) -> bool:
         if not self._exe or not Path(self._exe).exists():

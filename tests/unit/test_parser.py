@@ -17,6 +17,7 @@ from rolecard_agent.config import Settings
 from rolecard_agent.rag.ocr import (
     CloudApiBackend,
     LocalPaddleBackend,
+    default_ocr_python,
     select_ocr_backend,
 )
 from rolecard_agent.rag.parser import (
@@ -170,6 +171,24 @@ def test_parseable_extensions_constant() -> None:
 
 
 # -- OCR 后端选择策略：Paddle 优先，云端 key 兜底 ----------------------------------------
+
+
+def test_paddle_interpreter_comes_from_settings_not_environ(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P1-4：OCR 解释器只认 `Settings.ocr_python`，构造函数不再自己 `os.environ.get`。
+
+    两个事实面的症状是这样的：运行环境页/覆盖层改了 OCR_PYTHON，实际执行的却还是 .env 里
+    那把 —— 因为 `LocalPaddleBackend.__init__` 在 Settings 之外又读了一遍 env，而那条路径
+    既不受覆盖层管，也不在配置契约里。
+    """
+    monkeypatch.setenv("OCR_PYTHON", "C:/from/env/python.exe")
+    monkeypatch.setattr(LocalPaddleBackend, "available", lambda self: True)
+    chosen = select_ocr_backend(Settings(ocr_python="C:/from/settings/python.exe"))
+    assert isinstance(chosen, LocalPaddleBackend)
+    assert chosen._exe == "C:/from/settings/python.exe"  # noqa: SLF001
+    # 未显式给出解释器（None）= 自动发现默认路径，同样**不是**去读 env。
+    assert LocalPaddleBackend()._exe == default_ocr_python()  # noqa: SLF001
 
 
 def test_select_ocr_backend_prefers_paddle(monkeypatch: pytest.MonkeyPatch) -> None:

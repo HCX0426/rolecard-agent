@@ -181,6 +181,7 @@ _SECRET_FIELDS = frozenset(
         "tavily_api_key",
         "saucenao_api_key",
         "ocr_api_key",
+        "siliconflow_api_key",
         "langsmith_api_key",
         "auth_credentials",
         "auth_api_keys",
@@ -311,6 +312,21 @@ def runtime_payload(
                 "auto=有 Key 走 bge-m3，否则离线 hash",
             ),
             ("rag_rerank", "RAG_RERANK", "重排", "auto=有 Key 精排，否则关闭"),
+            # 云端嵌入/重排的凭据：以前只在 rag/retriever 里 `os.environ` 直读，界面上
+            # 完全看不见（P1-4）。现在走 Settings 契约，因此这里如实展示一行只读掩码值，
+            # 并说明操作员时刻的家在哪：凭据归「模型」页（DB 是事实面、只写不回读）。
+            (
+                "siliconflow_api_key",
+                "SILICONFLOW_API_KEY",
+                "云端嵌入/重排 Key",
+                "部署期引导值（掩码显示）；日常改凭据请在「模型」页对应后端",
+            ),
+            (
+                "siliconflow_base_url",
+                "SILICONFLOW_BASE_URL",
+                "云端嵌入/重排端点",
+                "行内未填 base_url 的云端端点用它兜底；改它需重启（随进程构建）",
+            ),
             ("extract_backend", "EXTRACT_BACKEND", "抽取后端", None),
             ("extract_verify", "EXTRACT_VERIFY", "抽取校对", None),
         ],

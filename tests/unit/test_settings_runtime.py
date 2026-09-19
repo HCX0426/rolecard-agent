@@ -32,6 +32,28 @@ def test_payload_groups_and_masks() -> None:
     assert obs_rows["OBS_BACKEND"]["value"] == "local"
 
 
+def test_siliconflow_credentials_are_visible_but_masked_and_readonly() -> None:
+    """P1-4：云端嵌入/重排的凭据在界面上**看得见**（掩码）、但**不假装可改**。
+
+    以前这把 key 只在 `rag/retriever` 里 `os.environ.get`，界面上一个字都没有 —— 用户无从
+    知道检索到底用了谁的凭据。现在它进了配置契约，于是：
+      * 必须掩码（`_SECRET_FIELDS` 漏一个就会把明文发给前端）；
+      * 必须是只读（`kind="ro"`）：它的操作员时刻家是「模型」页，运行环境页给一个改了不
+        生效的输入框，正是 P1-5 那一类假接缝。
+    """
+    settings = Settings(siliconflow_api_key="sk-1234567890abcd")
+    payload = runtime_payload(settings)
+    groups = {g["key"]: g for g in payload["groups"]}  # type: ignore[index]
+    rows = {r["key"]: r for r in groups["rag"]["items"]}  # type: ignore[index]
+
+    key = rows["SILICONFLOW_API_KEY"]
+    assert "sk-1234567890abcd" not in str(key["value"])
+    assert str(key["value"]).endswith("abcd")
+    assert key["kind"] == "ro"
+    assert rows["SILICONFLOW_BASE_URL"]["value"] == "https://api.siliconflow.cn/v1"
+    assert rows["SILICONFLOW_BASE_URL"]["kind"] == "ro"
+
+
 def test_secret_defaults_masked_even_when_unset() -> None:
     settings = Settings()
     payload = runtime_payload(settings)

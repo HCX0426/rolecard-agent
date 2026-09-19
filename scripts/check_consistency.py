@@ -180,6 +180,10 @@ def check_config_contract() -> None:
         "SAUCENAO_[A-Z_]+",
         "OCR_[A-Z_]+",
         "RAG_[A-Z_]+",
+        # 这两个前缀此前漏在表外：SILICONFLOW_API_KEY / MCP_SERVERS 明明在 config.py 里解析，
+        # 却从不被契约检查覆盖 —— 漏一个前缀就是"这一族键可以随便漂"（架构审计报告 §3）。
+        "SILICONFLOW_[A-Z_]+",
+        "MCP_[A-Z_]+",
         "EXTRACT_[A-Z_]+",
         "LANGSMITH_[A-Z_]+",
         "MEMORY_[A-Z_]+",

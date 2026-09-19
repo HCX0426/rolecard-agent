@@ -23,7 +23,6 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import math
-import os
 import re
 import threading
 from collections.abc import Sequence
@@ -193,13 +192,17 @@ class SiliconFlowEmbedder(Embedder):
 
 
 def _find_embedding_key(settings: Settings) -> str | None:
-    """嵌入 key 的**遗留 env-auto 路径**：只读环境变量。
+    """嵌入 key 的**遗留 env-auto 路径**：只认 `Settings.siliconflow_api_key`。
 
     架构归一化后（服务引用化），应用的正式路径是「服务端点行 → 引用的 model_backend」，
     key 由行配置携带；本函数仅供 `order=None` 的 env-auto 老路径（及测试）使用。
     此前的 model_backend 兜底已删除 —— 一把 key 不该同时活在三处。
+
+    为什么读 Settings 而不是 `os.environ`：env 直读会绕开配置契约（运行环境覆盖层管不到、
+    掩码纪律管不到、`check_dead_config` 也算不到），同一把 key 于是有两个事实面
+    （架构审计报告 P1-4）。
     """
-    return os.environ.get("SILICONFLOW_API_KEY")
+    return settings.siliconflow_api_key
 
 
 def make_embedder(
@@ -211,7 +214,8 @@ def make_embedder(
     """按 `Settings.embedding_backend` 构建嵌入器。
 
     `auto`：有 key → siliconflow（bge-m3），否则 hash（离线兜底）。
-    key 来源：`SILICONFLOW_API_KEY` env → DB 后端配置（设置页存的）。
+    key 来源：`Settings.siliconflow_api_key`（部署期由 `SILICONFLOW_API_KEY` env 引导）→
+    DB 后端配置（模型页存的）。
     显式指定 siliconflow 但没有任何 key → 启动即报错（配置错误要大声，不要静默降级成
     质量很差的检索还让人以为一切正常）。
 
@@ -229,7 +233,7 @@ def make_embedder(
                 return SiliconFlowEmbedder(
                     api_key=cfg.api_key,
                     base_url=cfg.base_url
-                    or os.environ.get("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"),
+                    or settings.siliconflow_base_url,
                     model=cfg.model or "BAAI/bge-m3",
                 )
         raise RuntimeError("服务策略里没有可用的嵌入端点（云端行需配置 API Key）。")
@@ -247,10 +251,12 @@ def make_embedder(
     if backend == "siliconflow":
         key = _find_embedding_key(settings)
         if not key:
-            raise RuntimeError("embedding_backend=siliconflow 需要 SILICONFLOW_API_KEY 环境变量。")
+            raise RuntimeError(
+                "embedding_backend=siliconflow 需要 SILICONFLOW_API_KEY（.env 引导或模型页凭据）。"
+            )
         return SiliconFlowEmbedder(
             api_key=key,
-            base_url=os.environ.get("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"),
+            base_url=settings.siliconflow_base_url,
         )
     raise RuntimeError(f"未知 embedding backend: {backend!r}")
 
@@ -308,7 +314,7 @@ def make_reranker(
     `off` 即关闭（返回 None）；云端行按**行内** key/base_url/model 实例化，没配 key 的行
     跳过（重排是质量增强，缺 key 不是故障）。`endpoints` 缺省时保留旧的字面 id 解析。
     """
-    key = os.environ.get("SILICONFLOW_API_KEY")
+    key = settings.siliconflow_api_key
     if order and endpoints:
         for cid in order:
             if cid == "off":
@@ -318,7 +324,7 @@ def make_reranker(
                 return SiliconFlowReranker(
                     api_key=cfg.api_key,
                     base_url=cfg.base_url
-                    or os.environ.get("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"),
+                    or settings.siliconflow_base_url,
                     model=cfg.model or "BAAI/bge-reranker-v2-m3",
                 )
         return None
@@ -327,7 +333,7 @@ def make_reranker(
         if chosen == "siliconflow" and key:
             return SiliconFlowReranker(
                 api_key=key,
-                base_url=os.environ.get("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"),
+                base_url=settings.siliconflow_base_url,
             )
         return None
     backend = settings.rag_rerank
@@ -337,17 +343,19 @@ def make_reranker(
         return (
             SiliconFlowReranker(
                 api_key=key,
-                base_url=os.environ.get("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"),
+                base_url=settings.siliconflow_base_url,
             )
             if key
             else None
         )
     if backend == "siliconflow":
         if not key:
-            raise RuntimeError("rag_rerank=siliconflow 需要 SILICONFLOW_API_KEY 环境变量。")
+            raise RuntimeError(
+                "rag_rerank=siliconflow 需要 SILICONFLOW_API_KEY（.env 引导或模型页凭据）。"
+            )
         return SiliconFlowReranker(
             api_key=key,
-            base_url=os.environ.get("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"),
+            base_url=settings.siliconflow_base_url,
         )
     raise RuntimeError(f"未知 rag_rerank: {backend!r}")
 

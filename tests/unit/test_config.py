@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from rolecard_agent.config import Settings
+from rolecard_agent.config import DEFAULT_SILICONFLOW_BASE_URL, Settings
 
 
 def test_defaults_are_usable_without_any_env() -> None:
@@ -205,3 +205,28 @@ def test_web_master_switch_and_thinking_parse_from_env() -> None:
     assert defaults.web_search_enabled is True
     assert defaults.web_allowed_domains == ""
     assert defaults.model_thinking == "auto"
+
+
+def test_siliconflow_credentials_and_ocr_python_parse_from_env() -> None:
+    """P1-4：`SILICONFLOW_*` / `OCR_PYTHON` 必须经 Settings 落地，而不是在 rag 里直读 env。
+
+    这三把值以前有一半是在 `rag/retriever.py`、`rag/ocr.py` 里 `os.environ.get` 取的 ——
+    配置契约（.env.example 对齐、掩码、dead-config 检查、运行环境覆盖层）全都管不到它们。
+    本用例把它们钉成"env 只在这里参与一次"。
+    """
+    parsed = Settings.from_env(
+        {
+            "SILICONFLOW_API_KEY": "sk-x",
+            "SILICONFLOW_BASE_URL": "https://mirror.example/v1",
+            "OCR_PYTHON": ".venv-ocr/Scripts/python.exe",
+        }
+    )
+    assert parsed.siliconflow_api_key == "sk-x"
+    assert parsed.siliconflow_base_url == "https://mirror.example/v1"
+    assert parsed.ocr_python == ".venv-ocr/Scripts/python.exe"
+
+    # 未设置：key 为空（"配了才用"），base_url 用出厂常量（云端端点行未填时的兜底）。
+    defaults = Settings.from_env({})
+    assert defaults.siliconflow_api_key is None
+    assert defaults.siliconflow_base_url == DEFAULT_SILICONFLOW_BASE_URL
+    assert defaults.ocr_python is None
