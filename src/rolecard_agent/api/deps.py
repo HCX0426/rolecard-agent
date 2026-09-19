@@ -24,10 +24,10 @@ from rolecard_agent.core.approvals import ApprovalService
 from rolecard_agent.core.domain_service import DomainQueryService
 from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.core.model_settings import ModelSettingsService
-from rolecard_agent.core.nodes import _text_of
 from rolecard_agent.core.observability import Tracer
 from rolecard_agent.core.plugins import PluginError, PluginService, UnknownPlugin
 from rolecard_agent.core.services import ServiceEndpointService
+from rolecard_agent.core.text import text_of
 from rolecard_agent.core.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
@@ -75,7 +75,7 @@ def serialize_message(
     if isinstance(message, HumanMessage):
         row = {
             "role": "user",
-            "content": _text_of(message),
+            "content": text_of(message),
             "id": message.id,
         }
         # 多模态传图（2026-09-18）：content 是 text + image_url 块时，把图透出给前端
@@ -87,7 +87,7 @@ def serialize_message(
         trow: dict[str, object] = {
             "role": "tool",
             "name": message.name,
-            "content": _text_of(message),
+            "content": text_of(message),
             "id": message.id,
         }
         if args := (call_args or {}).get(message.tool_call_id):
@@ -99,7 +99,7 @@ def serialize_message(
         tools = [tc.get("name") for tc in (message.tool_calls or [])]
         row = {
             "role": "assistant",
-            "content": _text_of(message),
+            "content": text_of(message),
             "tools": tools,
             "id": message.id,
         }
@@ -112,7 +112,7 @@ def serialize_message(
     else:
         row = {
             "role": "assistant",
-            "content": _text_of(message),
+            "content": text_of(message),
             "id": getattr(message, "id", None),
         }
     if created_at:
@@ -123,7 +123,7 @@ def serialize_message(
 def _image_of(message: object) -> str | None:
     """从多模态 content 块里取图片 data URL（有图才返回，否则 None）。
 
-    与 `_text_of` 同哲学：宽容处理形状意外的块 —— 回放循环里一个怪块不该让整页渲染挂掉。
+    与 `text_of` 同哲学：宽容处理形状意外的块 —— 回放循环里一个怪块不该让整页渲染挂掉。
     """
     content = getattr(message, "content", None)
     if not isinstance(content, list):

@@ -566,6 +566,7 @@ def put_memory(
 
     if body.enabled is None and body.content is None:
         raise HTTPException(status_code=400, detail="没有要保存的内容。")
+    saved_chars = 0 if body.content is None else len(body.content)
     if body.content is not None:
         save_memory_text(ctx.conn, body.content)
     if body.enabled is not None:
@@ -574,7 +575,7 @@ def put_memory(
         actor=actor.id,
         action="update_memory",
         target="memory",
-        detail={"enabled": body.enabled, "chars": len(body.content or "")},
+        detail={"enabled": body.enabled, "chars": saved_chars},
     )
     if body.enabled is not None:
         ctx.rebuild_runtime()

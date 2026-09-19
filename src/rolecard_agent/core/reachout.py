@@ -55,6 +55,7 @@ from rolecard_agent.core.proactive_state import (
     record_interaction,
 )
 from rolecard_agent.core.prompts import build_system_prompt
+from rolecard_agent.core.text import text_of
 from rolecard_agent.core.workspace import resolve_task_dir
 from rolecard_agent.roles.models import RoleCard
 from rolecard_agent.roles.service import RoleCardService
@@ -245,7 +246,9 @@ def generate_reachout_text(
         HumanMessage(content=f"{task}\n\n（你的角色是 {role.role_name}）"),
     ]
     reply = model.invoke(prompt)
-    text = str(getattr(reply, "content", "") or "").strip()
+    # 用全项目唯一的取值实现：`str(reply.content)` 在分块形态下会得到 Python repr，
+    # 而这份文本既进 guard 又进用户收件箱（架构审计报告 P1-8）。
+    text = text_of(reply).strip()
     if not text:
         return None
     verdict = check(text)

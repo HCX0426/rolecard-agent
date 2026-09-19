@@ -143,6 +143,19 @@ def test_generate_ignores_empty_reply(conn) -> None:
     assert svc.generate_reachout_text(_role(), model, _settings(), conn) is None
 
 
+def test_generate_handles_block_shaped_reply(conn) -> None:
+    """P1-8 回归：分块形态的回复不能变成 Python repr 冒给用户。
+
+    多模态/流式模型的 `content` 常是块列表。旧实现 `str(getattr(reply, "content", ""))`
+    于是把 `[{'type': 'text', 'text': '…'}]` 这一串送进 guard、再送进用户收件箱 ——
+    guard 认不出这是承诺性话术（该拦的拦不住），用户看到的是一坨数据结构。
+    """
+    model = _FakeModel(AIMessage(content=[{"type": "text", "text": "今天过得怎么样？"}]))
+    text = svc.generate_reachout_text(_role(), model, _settings(), conn)
+    assert text == "今天过得怎么样？"
+    assert "type" not in (text or "") and "[" not in (text or "")
+
+
 # ------------------------------------------------------------------ 调度一轮
 
 

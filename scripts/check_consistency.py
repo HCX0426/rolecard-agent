@@ -221,6 +221,7 @@ def check_promised_artifacts() -> None:
         "docs/开发流程.md",
         "src/rolecard_agent/core/schema.sql",
         "src/rolecard_agent/core/guard.py",
+        "src/rolecard_agent/core/text.py",
         "src/rolecard_agent/core/prompts.py",
         "src/rolecard_agent/core/tools/registry.py",
         "src/rolecard_agent/roles/models.py",
@@ -305,6 +306,39 @@ def check_core_no_domain_token() -> None:
     out("core/ no domain token", not bad, detail)
     if bad:
         fails.append(f"core/ mentions domain tokens: {bad}")
+
+
+def check_single_text_extractor() -> None:
+    """消息取文本只允许一处实现：`core/text.py::text_of`（架构审计报告 P1-8）。
+
+    这条断言防的是两类复发：
+      1. **就地复刻** —— `domains/health/extract.py` 曾抄了第二份，且用空串拼接而不是空格，
+         于是同一条消息在"流式输出"与"抽取解析"两条路上渲染成不同文本；
+      2. **裸取消息体** —— 把多模态/流式形态下的分块列表直接字符串化，得到的是 Python
+         repr（方括号花括号那一串）。那份 repr 曾进过 guard、用户收件箱，以及"增强提示词"
+         贴回输入框的文本。
+    所以除了"不许有第二份定义"，两种裸取写法也一起挡掉：先 getattr 取 content 再整体
+    字符串化、以及拿 content 属性兜一个空串当文本用。它们正是上面那个 bug 的形状。
+    """
+    offenders: list[str] = []
+    for path in iter_files(".py"):
+        if "tests" in path.parts:
+            continue  # 测试里为验证降级行为而手工构造怪形状，是刻意的
+        rel = path.relative_to(ROOT).as_posix()
+        if rel == "src/rolecard_agent/core/text.py":
+            continue  # 唯一实现本尊
+        for lineno, line in enumerate(
+            path.read_text(encoding="utf-8", errors="ignore").splitlines(), start=1
+        ):
+            redefined = re.search(r"^\s*def _(?:text_of|serialize_text|content_text)\b", line)
+            stringified = re.search(r"\bstr\(\s*getattr\([^()]*,\s*[\"']content[\"']", line)
+            empty_defaulted = re.search(r"\.content\s+or\s+[\"'][\"']", line)
+            if redefined or stringified or empty_defaulted:
+                offenders.append(f"{rel}:{lineno}")
+    detail = "single implementation" if not offenders else str(offenders[:6])
+    out("single text extractor", not offenders, detail)
+    if offenders:
+        fails.append(f"message text must be read via core/text.py::text_of only: {offenders}")
 
 
 def check_domain_isolation() -> None:
@@ -763,6 +797,7 @@ def main() -> int:
     check_dependency_parity()
     check_promised_artifacts()
     check_core_no_domain_token()
+    check_single_text_extractor()
     check_domain_isolation()
     check_safety_prompt()
     check_line_endings()

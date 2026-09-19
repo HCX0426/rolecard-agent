@@ -35,6 +35,7 @@ from rolecard_agent.core.graph import build_graph_config
 from rolecard_agent.core.ingestion import INGESTION_FAILED, INGESTION_PENDING
 from rolecard_agent.core.observability import TraceEvent
 from rolecard_agent.core.state import new_state, now_ts
+from rolecard_agent.core.text import text_of
 from rolecard_agent.rag.parser import (
     IMAGE_EXTS,
     PARSEABLE_EXTENSIONS,
@@ -590,7 +591,9 @@ def enhance_prompt(
         raise HTTPException(
             status_code=502, detail=f"增强失败（模型调用错误）：{type(exc).__name__}"
         ) from exc
-    enhanced = str(getattr(out, "content", "") or "").strip()
+    # 分块回复（多模态模型的常态形态）必须走唯一的取值实现：`str(content)` 会把 Python
+    # repr 原样贴回用户的输入框（架构审计报告 P1-8）。
+    enhanced = text_of(out).strip()
     if not enhanced:
         raise HTTPException(status_code=502, detail="增强失败：模型没有返回内容。")
     return {"text": enhanced}

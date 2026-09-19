@@ -39,6 +39,7 @@ from pydantic import BaseModel, Field
 
 from rolecard_agent.config import Settings
 from rolecard_agent.core.observability import TraceEvent
+from rolecard_agent.core.text import text_of
 
 # 一次模型调用：prompt -> 原始文本回复。注入式，便于单测。
 ModelInvoker = Callable[[str], str]
@@ -186,29 +187,13 @@ def make_invoker(settings: Settings, backend_name: str) -> ModelInvoker:
     def invoke(prompt: str) -> str:
         try:
             resp = model.invoke([SystemMessage(content=_SYSTEM), HumanMessage(content=prompt)])
-            return _text_of(resp)
+            return text_of(resp)
         except ExtractError:
             raise
         except Exception as exc:
             raise ExtractError(f"模型调用失败：{exc}") from exc
 
     return invoke
-
-
-def _text_of(message: object) -> str:
-    """把模型回复压成纯文本（content 可能是 str 或分块列表）。"""
-    content = getattr(message, "content", message)
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict) and isinstance(block.get("text"), str):
-                parts.append(block["text"])
-        return "".join(parts)
-    return str(content)
 
 
 # ---------------------------------------------------------------- 抽取（①）

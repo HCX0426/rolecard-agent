@@ -21,6 +21,8 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Protocol
 
+from rolecard_agent.core.text import text_of
+
 MAX_CONSENSUS_BACKENDS = 3
 
 
@@ -61,7 +63,7 @@ def build_consensus_tool(*, settings: Any, build: Any = None) -> Any:
         """单后端问答。失败不抛：比对要的是"每个后端各自的状态"，缺一个就缺一个。"""
         try:
             model = _model(name)
-            answer = str(model.invoke(question).content or "").strip()
+            answer = text_of(model.invoke(question)).strip()
             return name, (answer or "（该后端返回了空回答）")
         except Exception as exc:  # noqa: BLE001 - 只透出类型名，内部细节不进对话
             return name, f"（该后端调用失败：{type(exc).__name__}，结论仅基于其余后端）"
@@ -81,13 +83,13 @@ def build_consensus_tool(*, settings: Any, build: Any = None) -> Any:
 
         joined = "\n\n".join(f"【{name}】\n{answer}" for name, answer in answers)
         aggregator = _model(settings.model_default)
-        summary = str(
+        summary = text_of(
             aggregator.invoke(
                 "你是事实核查员。同一个问题发给了多个模型，下面是它们各自的回答。\n"
                 "请输出：1) 它们一致同意的结论；2) 任何实质分歧点；3) 若某后端调用失败，"
                 "说明结论仅基于其余回答。用简洁中文，不要复述各回答全文。\n\n"
                 f"问题：{question}\n\n{joined}"
-            ).content or ""
+            )
         ).strip()
         # 缺席后端显式标注（带原因类型）：不依赖聚合器转述（聚合器自己也可能漏说）。
         failed = [(n, a) for n, a in answers if a.startswith("（该后端调用失败")]

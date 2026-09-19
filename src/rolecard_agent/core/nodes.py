@@ -36,6 +36,7 @@ from rolecard_agent.core.memory import current_role_id_ctx
 from rolecard_agent.core.observability import TraceEvent, Tracer, timer
 from rolecard_agent.core.prompts import build_system_prompt
 from rolecard_agent.core.state import now_ts
+from rolecard_agent.core.text import text_of
 from rolecard_agent.core.tools.errors import ToolExecutionError
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.roles.service import RoleCardService, RoleNotFound
@@ -169,7 +170,7 @@ def trim_history(messages: Sequence[Any], max_chars: int) -> tuple[list[Any], in
     total = 0
     start = len(messages)
     for i in range(len(messages) - 1, -1, -1):
-        size = len(_text_of(messages[i])) + 16  # +16：给角色/结构开销留个粗略余量
+        size = len(text_of(messages[i])) + 16  # +16：给角色/结构开销留个粗略余量
         if total + size > max_chars and start < len(messages):
             break
         total += size
@@ -298,31 +299,6 @@ def turn_context(state: dict[str, Any], ctx: KernelContext) -> tuple[list[Any], 
 def tools_for_turn(state: dict[str, Any], ctx: KernelContext) -> list[Any]:
     """The tools this turn may bind. Thin wrapper over `turn_context`."""
     return turn_context(state, ctx)[0]
-
-
-def _text_of(message: Any) -> str:
-    """把消息压成纯文本。`content` 可能是 str，也可能是分块列表（多模态 / 流式形态）。
-
-    这是全项目**唯一**的实现：`api/deps.py` 曾有一份语义不同的副本（那份用 `"".join`），
-    于是同一条消息在"流式输出"与"历史回放"两条路径上会渲染出不同的文本（审查报告 M8）。
-    对分块内容用空格连接：可读性优先，且两侧现在用的是同一个函数、不存在偏差。
-
-    入参类型是 `Any` 而不是 `BaseMessage`：调用点既有真实消息对象，也有
-    `getattr(msg, "content", msg)` 这类"可能是任意对象"的场景。
-    宽容处理异常分块：这个函数跑在 SSE 循环里，一个形状意外的块不该让整轮对话挂掉。
-    """
-    content = getattr(message, "content", message)
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for part in content:
-            if isinstance(part, str):
-                parts.append(part)
-            elif isinstance(part, dict) and isinstance(part.get("text"), str):
-                parts.append(part["text"])
-        return " ".join(parts)
-    return str(content)
 
 
 def _message_has_image(message: Any) -> bool:
@@ -455,7 +431,7 @@ def call_model(
         invoke_kwargs = {} if config is None else {"config": config}
         response = bound.invoke(prompt, **invoke_kwargs)
 
-    verdict = check(_text_of(response))
+    verdict = check(text_of(response))
     if not verdict.allowed:
         # Replacing the message also drops any tool_calls it carried - a blocked answer must
         # not be allowed to keep acting through the tool loop.

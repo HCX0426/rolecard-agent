@@ -33,8 +33,8 @@ from langgraph.errors import GraphRecursionError
 
 from rolecard_agent.core.graph import MODEL_NODE, TOOLS_NODE
 from rolecard_agent.core.guard import check
-from rolecard_agent.core.nodes import _text_of
 from rolecard_agent.core.observability import TraceEvent, Tracer, scrub_endpoints
+from rolecard_agent.core.text import text_of
 
 # Characters of accumulated text held back from emission. Must be >= the longest guard trigger
 # pattern (the widest is ~21 chars: subject + 8 filler + modal verb + 8 filler + action verb).
@@ -185,7 +185,7 @@ UI surfaces it as a quiet inline notice. Same fact is queryable after a page rel
                     yield sse({"type": "thinking", "text": str(think_delta)})
                 if not isinstance(chunk, AIMessageChunk) or not chunk.content:
                     continue
-                delta = guard.feed(_text_of(chunk))
+                delta = guard.feed(text_of(chunk))
                 if delta:
                     yield sse({"type": "token", "text": delta})
                 continue
@@ -225,7 +225,7 @@ UI surfaces it as a quiet inline notice. Same fact is queryable after a page rel
                                 "args": call.get("args") or {},
                             }
                         )
-                    text = _text_of(committed)
+                    text = text_of(committed)
                     if guard.blocked or text != guard.buffer:
                         # Committed text diverged from what was streamed: the client replaces
                         # its in-progress bubble with the authoritative (safe) text.
@@ -242,7 +242,7 @@ UI surfaces it as a quiet inline notice. Same fact is queryable after a page rel
                                 {
                                     "type": "tool_result",
                                     "name": message.name,
-                                    "content": _text_of(message),
+                                    "content": text_of(message),
                                 }
                             )
     except GraphRecursionError:
