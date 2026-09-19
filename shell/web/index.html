@@ -99,31 +99,24 @@
 
       retry.addEventListener("click", () => start());
 
-      async function backendUrl() {
-        // 地址由壳给 —— 端口只有一个事实来源（Rust 的 backend::console_url），这里不写死。
-        const invoke = window.__TAURI__?.core?.invoke;
-        if (!invoke) throw new Error("拿不到壳的 IPC 桥（window.__TAURI__ 不存在）");
-        return await invoke("backend_url");
-      }
-
-      async function reachable(base) {
-        try {
-          // no-cors：我们只想知道"有没有人在应答"，不需要读响应体（跨源读不到，也不该读）。
-          await fetch(`${base}/api/roles`, { mode: "no-cors", cache: "no-store" });
-          return true;
-        } catch {
-          return false;
-        }
-      }
+      // 这张页面由浏览器直接执行（不经 tsc），所以只写纯 JS：壳的桥在 window.rolecardShell。
+      const shell = window.rolecardShell;
 
       async function start() {
         retry.hidden = true;
         detail.textContent = "";
+        if (!shell?.backendUrl || !shell.backendReachable) {
+          // 桥没接上 = 壳与页面的接线出了问题，这里说得清，浏览器里说不了。
+          line.textContent = PET ? "桌宠起不来" : "壳与页面的桥没接上";
+          detail.textContent = PET ? "" : "没拿到 window.rolecardShell（preload 未加载？）";
+          retry.hidden = false;
+          return;
+        }
         let base;
         try {
-          base = await backendUrl();
+          base = await shell.backendUrl();
         } catch (error) {
-          line.textContent = PET ? "桌宠起不来" : "壳与页面的桥没接上";
+          line.textContent = PET ? "桌宠起不来" : "拿不到后端地址";
           detail.textContent = PET ? "" : String(error?.message ?? error);
           retry.hidden = false;
           return;
@@ -131,7 +124,8 @@
         line.textContent = PET ? "正在连接本地服务…" : `正在连接 ${base} …`;
         const deadline = Date.now() + GIVE_UP_MS;
         while (Date.now() < deadline) {
-          if (await reachable(base)) {
+          // 探活由主进程做（着陆页是 file:// 页面，自己跨源 fetch 只会拿到恒假的结果）。
+          if (await shell.backendReachable()) {
             line.textContent = PET ? "" : "已连接，正在打开控制台…";
             // 之后的一切都是后端托管的那一份界面（B/S 与 C/S 同源）。
             location.replace(PET ? `${base}/#/pet` : `${base}/`);

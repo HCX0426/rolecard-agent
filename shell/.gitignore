@@ -1,4 +1,4 @@
 /node_modules
+/out
+/release
 /build.log
-/src-tauri/target
-/src-tauri/gen/schemas

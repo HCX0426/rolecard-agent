@@ -23,6 +23,15 @@ html[data-page="pet"] #root {
   background: transparent;
 }
 
+/* 桌宠窗的拖拽区：`-webkit-app-region` 由 Chromium 自己处理，页面不需要拿到任何壳能力
+   （Tauri 那边"后端源拿不到注入 → 拖不动"的坑在这里不存在）。气泡要能点，单独 no-drag。 */
+.pet-drag {
+  -webkit-app-region: drag;
+}
+.pet-nodrag {
+  -webkit-app-region: no-drag;
+}
+
 /* 流式回答时的光标 */
 .caret::after {
   content: "▍";

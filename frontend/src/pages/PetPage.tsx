@@ -81,19 +81,19 @@ export default function PetPage() {
   }
 
   return (
-    // data-tauri-drag-region 现在**不生效**（实测：拖拽窗口不动）。原因不是写错属性，
-    // 而是 Tauri 的拖拽区靠注入脚本实现，而后端源的页面默认拿不到注入 —— 要等原生桥
-    // 那一步把 backend origin 加进 capability 的 remote.urls（D②-3）。留着这两个标记，
-    // 那时不用改界面代码；在那之前桌宠位置由壳按屏幕右下角摆放。
-    <div
-      className="flex h-full select-none flex-col items-center justify-end gap-2 pb-1"
-      data-tauri-drag-region
-    >
+    // 拖拽靠 CSS `-webkit-app-region`（Chromium 自己处理，不需要页面拿到任何壳能力）。
+    // Tauri 那边"后端源拿不到注入 → data-tauri-drag-region 拖不动"的坑在这里不存在；
+    // 气泡要能点，所以它单独标 no-drag。
+    <div className="pet-drag flex h-full select-none flex-col items-center justify-end gap-2 pb-1">
       {latest && !faded && (
         <button
           onClick={() => void acknowledge(latest)}
-          title={unreadOfLatest > 1 ? `还有 ${unreadOfLatest - 1} 条未读，点击全部标记已读` : "点击标记已读"}
-          className="w-full rounded-2xl border border-slate-200/70 bg-white/90 px-3 py-2 text-left text-[11px] leading-relaxed text-slate-700 shadow-sm backdrop-blur-sm transition-opacity duration-500 dark:border-slate-600/70 dark:bg-slate-800/90 dark:text-slate-100"
+          title={
+            unreadOfLatest > 1
+              ? `还有 ${unreadOfLatest - 1} 条未读，点击全部标记已读`
+              : "点击标记已读"
+          }
+          className="pet-nodrag w-full rounded-2xl border border-slate-200/70 bg-white/90 px-3 py-2 text-left text-[11px] leading-relaxed text-slate-700 shadow-sm backdrop-blur-sm transition-opacity duration-500 dark:border-slate-600/70 dark:bg-slate-800/90 dark:text-slate-100"
         >
           {shorten(latest.text)}
           {unreadOfLatest > 1 && (
@@ -108,7 +108,6 @@ export default function PetPage() {
         className="grid h-[88px] w-[88px] shrink-0 place-items-center rounded-full text-2xl font-medium text-white shadow-md"
         style={{ background: `hsl(${hue} 62% 48%)` }}
         title={`${name}${offline ? " · 连不上本地服务" : ""}`}
-        data-tauri-drag-region
       >
         {name.slice(0, 1)}
       </div>
