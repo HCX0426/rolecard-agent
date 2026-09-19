@@ -202,6 +202,8 @@ def make_web_tools(*, settings) -> list:
             return note
         backend = (settings.web_search_backend or "auto").lower()
         key = settings.tavily_api_key or ""
+        if backend == "off":
+            return "联网搜索已关闭（WEB_SEARCH_BACKEND=off）。"
         try:
             if backend == "ddgs":
                 return _search_ddgs(query)
