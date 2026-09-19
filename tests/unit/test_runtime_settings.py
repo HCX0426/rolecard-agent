@@ -36,6 +36,17 @@ def test_save_load_roundtrip_with_types(conn) -> None:
     assert o["web_search_enabled"] is False
 
 
+def test_save_overrides_accepts_env_key(conn) -> None:
+    """P0-1：前端按 payload.key（env 名）提交也要能落库，统一解析回字段名存储。"""
+    saved = rs.save_overrides(conn, {"WEB_SEARCH_ENABLED": "0"})
+    assert saved == ["web_search_enabled"]  # 落库以字段名为准
+    assert rs.load_overrides(conn)["web_search_enabled"] is False
+    # env 名与字段名混提，各自解析到对应字段
+    rs.save_overrides(conn, {"CONTEXT_MAX_CHARS": "8000", "agent_default_mode": "agent"})
+    o = rs.load_overrides(conn)
+    assert o["context_max_chars"] == 8000 and o["agent_default_mode"] == "agent"
+
+
 def test_apply_overrides_take_precedence_over_env(conn) -> None:
     base = Settings()  # env 默认：web_search_enabled=True
     assert base.web_search_enabled is True

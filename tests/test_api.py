@@ -387,6 +387,27 @@ def test_agent_default_mode_runtime_override(client: TestClient) -> None:
     client.delete(f"/api/session/{tid}")
 
 
+def test_runtime_put_accepts_env_keys(client: TestClient) -> None:
+    """P0-1 回归：前端「运行环境」页按 payload 的 `key`（= env 名）提交，必须被接受。
+
+    过去后端只认字段名、前端发 env 名 → 任何保存都 400，而测试全用字段名，从没暴露。
+    这条直接拿后端**自己吐出的 key** 回提交，锁死前后端键名契约。"""
+    payload = client.get("/api/settings/runtime").json()
+    item = next(
+        it
+        for g in payload["groups"]
+        for it in g["items"]
+        if it["kind"] == "bool"
+    )
+    assert item["key"].isupper()  # payload.key 就是 env 名（如 WEB_SEARCH_ENABLED）
+    r = client.put("/api/settings/runtime", json={"values": {item["key"]: "1"}})
+    assert r.status_code == 200, r.text
+    client.put("/api/settings/runtime", json={"values": {item["key"]: ""}})  # 还原
+    # 未知键仍大声 400（不能因为兼容 env 名就放宽校验）
+    bad = client.put("/api/settings/runtime", json={"values": {"NOPE_KEY_X": "1"}})
+    assert bad.status_code == 400
+
+
 def test_workspace_dir_roundtrip(client: TestClient, tmp_path: Path) -> None:
     """任务目录：默认 env → 设置（规范化落库）→ 清除回落；操作都进审计。"""
     d0 = client.get("/api/workspace/dir").json()

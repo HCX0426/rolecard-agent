@@ -74,6 +74,9 @@ RUNTIME_FIELDS: tuple[FieldSpec, ...] = (
 )
 
 _FIELDS_BY_NAME = {f.field: f for f in RUNTIME_FIELDS}
+# 前端「运行环境」页按 payload 的 `key`（= env 键）提交，测试/脚本按字段名提交，
+# 两者都要收 → 建 env 键索引，save_overrides 统一解析到 FieldSpec 再按字段名落库。
+_FIELDS_BY_ENV = {f.env_key: f for f in RUNTIME_FIELDS}
 
 
 def spec_of(field: str) -> FieldSpec | None:
@@ -142,10 +145,13 @@ def save_overrides(conn: SqlConnection, values: dict[str, str | None]) -> list[s
     —— 半套配置比旧配置更危险。
     """
     parsed: dict[str, Any] = {}
-    for field, raw in values.items():
-        spec = _FIELDS_BY_NAME.get(field)
+    for key, raw in values.items():
+        # 键名兼容：env 键（前端提交的 payload.key）或字段名（测试/脚本）都收，
+        # 统一解析到 FieldSpec、按**字段名**落库（存储与 load_overrides 都以 field 为准）。
+        spec = _FIELDS_BY_NAME.get(key) or _FIELDS_BY_ENV.get(key)
         if spec is None:
-            raise ValueError(f"不支持在线修改的配置项：{field}")
+            raise ValueError(f"不支持在线修改的配置项：{key}")
+        field = spec.field
         if raw is None or str(raw).strip() == "":
             parsed[field] = None  # 清除覆盖
             continue
