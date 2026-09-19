@@ -14,8 +14,9 @@
 **全部修复闭环**（工具循环上界、索引身份稳定、ollama 超时、SSRF、库代际、分层、阻塞……），
 剩余事项见「待办与遗留」。
 
-> ⚠️ 评测基线（均值 90.5%~95.2%）是在 **qwen2.5:7b** 上测得的，**该模型已退役**；
-> 换用 qwen3-vl:8b 后需重跑 `run_eval.py --runs 3` 取新基线（见 `docs/需求与验收标准.md`）。
+> ⚠️ 早期评测基线（均值 90.5%~95.2%）是在 **qwen2.5:7b** 上测得的，该模型已退役；
+> **2026-09-19 已在 qwen3-vl:8b 上重跑**（`run_eval.py --runs 3`，7/7 通过），
+> 新基线见 `data/eval_baseline_2026-09-19.md` 与 `docs/需求与验收标准.md` §1.4。
 > 另：Ollama 官方 vl 版模板不支持工具调用（bind_tools 直接 400），本项目用的是 ModelScope
 > GGUF 导入的 qwen3-vl（tools + thinking + vision 三者齐全）。
 > 真机 UI 冒烟（`scripts/ui_smoke.js`）需要：服务已启动 + 本机 Chrome/Edge +
@@ -34,7 +35,7 @@
 三条 P0 都在正常使用路径上：**工具循环无上界**（+`AGENT_MAX_STEPS` 上限）、**向量索引以原始文件名
 为键**（同名互覆盖、静默丢索引，改指摄入任务身份）、**ollama 超时被静默丢弃**（挂起即拖停服务）。
 其余代表：删除报告连向量一起清、web_fetch 逐跳 SSRF 校验、前端超时分层（300s）、库代际回滚、
-路由直写 SQL 收拢 DomainDataService、sync 阻塞换线程池、base_url scheme 校验、`core/` 清 health 词
+路由直写 SQL 收拢 DomainDataService、sync 阻塞换线程池、base_url scheme 校验、`core/` 域专名清理
 （机器断言）等。**事后第二场补充审查（26 项，H4/H5/M1-M10/L 系列）同样全部完成**，
 仅用户接受的暂缓项保留：🔒 鉴权默认 off / api_key 明文落盘 / OCR 云端复用 base_url（自用与
 友人使用，用户明确接受）。
@@ -99,8 +100,10 @@
 ![架构总览](docs/assets/architecture.svg)
 
 <sub>分层：客户端 → 接入层 → 内核 harness → 能力（RAG 检索 / 文档摄取）→ 领域插件 → 外部依赖。
-核心约束：`core/` 内不出现 `health`（分层解耦，`check_consistency` 可机器校验）；**检索是内核能力**，
-领域只声明作用域；OCR 走可插拔后端，本地 Paddle 优先、云端 key 兜底。</sub>
+核心约束：`core/` 内不出现任何**域的专有名词**（域目录名 + 各域 schema 里声明的表名，
+由 `check_consistency` 从 `domains/*/schema.sql` 推导后机器校验）；**检索是内核能力**，
+领域只声明作用域；OCR 走可插拔后端，选哪个由「服务」页的端点序决定（本地 Paddle 优先，
+云端 OCR 必须显式配置才启用）。</sub>
 
 ---
 
@@ -187,7 +190,9 @@ docker run -p 8000:8000 -v rolecard-data:/app/data rolecard-agent
 | **外挂能力** | 知识库检索（RAG）：作为可注册工具挂载，不绑定任何领域 | |
 | **示例领域** | `domains/health` 健康档案（结构化查询 + 文档报告检索） | 证明内核可扩展，不是项目主题 |
 
-**自证分层的一条硬规则**：`src/rolecard_agent/core/` 内**不出现任何 `health` 字样**。
+**自证分层的一条硬规则**：`src/rolecard_agent/core/` 内**不出现任何域的专有名词**——
+包括域目录名（health 等）和各域自己声明的表名（`medical_report` / `medical_index` …，
+从 `domains/*/schema.sql` 推导，新增域自动跟上）。注释与 SQL 注释一并算。
 
 ---
 
@@ -231,11 +236,15 @@ rolecard-agent/
 │   │   ├── state.py  prompts.py  nodes.py  graph.py
 │   │   ├── checkpointer.py        #   会话持久化（SQLite）
 │   │   ├── observability.py       #   可观测门面，默认键控脱敏
+│   │   ├── bootstrap.py           #   ★ 装配根：建库/播种 → 服务 → 知识库/注册表 → 图 → 热重建
 │   │   ├── ingestion.py           #   摄取台账（file_hash 幂等 + 状态机）
 │   │   ├── model_settings.py      #   模型后端 CRUD（key 只写不回读）+ 热重建数据层
 │   │   ├── runtime_settings.py    #   运行环境覆盖（env 之上叠加，保存即热生效）
-│   │   ├── domain_data.py         #   通用领域数据服务（路由不直写 SQL）
+│   │   ├── domain_data.py         #   通用领域数据服务（让 CRUD 类路由不必自己写 SQL）
+│   │   ├── domain_service.py      #   域查询服务抽象（api/core 只依赖它，不 import 具体域）
 │   │   ├── consensus.py           #   多模型比对内核工具 compare_model_answers
+│   │   ├── text.py  markers.py    #   消息→纯文本的唯一实现 / 「未经人工校验」标记常量
+│   │   ├── identity.py            #   v1 单用户身份常量与播种（内核概念，不归任何域）
 │   │   ├── probes.py              #   视觉/OCR 后端可用性探测原语
 │   │   ├── plugins.py  guard.py  tools/
 │   ├── roles/                     # 角色卡 CRUD + 白名单 + 内置/域种子
@@ -244,7 +253,7 @@ rolecard-agent/
 │   │   └── health/                #   示例领域插件（含三层校验抽取 extract.py）
 │   ├── rag/                       # 检索：parser（txt/pdf/OOXML）/ ocr（可插拔）/ retriever
 │   ├── storage/                   # SQLite（ThreadLocalConnection）/ bootstrap
-│   └── api/                       # 接入层：main（装配）+ 认证 + 依赖注入 + 路由（routers/）
+│   └── api/                       # HTTP 壳：main（路由/中间件/静态托管/生命周期）+ 认证 + 依赖注入
 ├── frontend/                      # React 18 + Vite 控制台（6 页签；dist 有意入库）
 ├── docs/   tests/   scripts/   data/
 ```
@@ -293,7 +302,7 @@ v1 同时包含：**测试与评测集（含通过率基线）**、Docker、GitH
 | 版本 | 内容 |
 | --- | --- |
 | v2.1 | 检索外挂 RAG —— **已落地**：chroma 分作用域集合、可插拔嵌入（bge-m3 / hash 离线兜底）、`search_knowledge` 内核工具（作用域由角色声明、内核注入）、上传直接入库、**rerank 默认开启**、**检索延迟 P50/P95/P99 细分** |
-| v2.2 | 文档摄取 —— **已落地**：`.txt/.md/.pdf` 解析 + **Office OOXML（`.docx/.pptx/.xlsx`，标准库 zip+XML，零新依赖）** + **可插拔 OCR（本地 Paddle 优先 / 云端 API key 兜底）** + **结构化抽取（报告文本 → 指标行：schema 约束 + 确定性校验 + 原文锚定 + 第二模型交叉验证）** |
+| v2.2 | 文档摄取 —— **已落地**：`.txt/.md/.pdf` 解析 + **Office OOXML（`.docx/.pptx/.xlsx`，标准库 zip+XML，零新依赖）** + **可插拔 OCR（本地 Paddle 优先；云端 OCR 只有在「服务」页把已配凭据的端点排进序时才启用）** + **结构化抽取（报告文本 → 指标行：schema 约束 + 确定性校验 + 原文锚定 + 第二模型交叉验证）** |
 | v2.3 | 完整前端 —— **已落地**：组件库 / 响应式 / 深色模式 / Hash 路由深链 / 错误边界 / 导航预加载（多页应用已提前为 M5） |
 | v2.4 | 公网部署与多后端路由 —— **部分落地**：联网总闸 + 域名白名单、思考总开关、consensus 多模型比对、运行环境在线编辑与热生效、模型失败自动回退；**公网部署待做** |
 | v2.5 | 生产化替换（Postgres / Milvus / Redis） |

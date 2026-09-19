@@ -129,9 +129,12 @@ def _user_message(text: str, image: str | None, *, created_at: str) -> HumanMess
     """构造用户消息：纯文本 or 文本 + 图片（多模态 content 块，langchain 会按模型能力解析）。
 
     langchain_ollama 把 `{"type": "image_url", "image_url": {"url": data_url}}` 转成
-    Ollama 的 images 数组（源码 verified）；openai 兼容路径走标准 image_url。模型不支持
-    视觉时供应商会 400 —— 所以**前端按 vision 探测禁用按钮**，而不是后端拦截（探测有
-    TTL 且可能误判，真发失败就让错误自然穿透成可读答复）。
+    Ollama 的 images 数组（源码 verified）；openai 兼容路径走标准 image_url。
+    **现状（不要把这里写成承诺）**：模型不支持视觉时由供应商返回 400，我们只在错误穿透
+    后把它翻成可读答复（`api/chat.py` 的 `_VISION_MISMATCH_SIGNALS`）；前端只按
+    `supports_vision` 渲染「视觉」徽标，**发图按钮不 disabled**，后端也没有调用前拦截。
+    做成"调用前按能力位拦截"是架构审计报告 P1-2，尚未落地（它要先定"能力声明 vs
+    Ollama 实际探测"谁说了算，是行为变更）。
     """
     if not image:
         return HumanMessage(content=text, additional_kwargs={"created_at": created_at})
@@ -643,7 +646,7 @@ def upload_report(
 
     v2.2 起解析在此完成：.txt/.md/.pdf/.docx/.pptx/.xlsx 直接抽文本入
     `health_reports` 检索索引；图片走 **可插拔 OCR**（本地 Paddle 优先，独立 venv 子进程；
-    不可用时若有 OCR_API_KEY 回退云端，见 rag/ocr.py + requirements-ocr.txt）。
+    排在其后的候选由「服务」页的 OCR 端点序决定，见 rag/ocr.select_ocr_backend）。
     解析失败的图片 / 不支持的类型保持 pending，并向会话注入一条说明消息（graph.update_state），
     让模型知道"有文件已登记但还不能读"，而不是假装读过。重复上传同一文件复用同一任务。
 
@@ -736,8 +739,8 @@ def upload_report(
             note = (
                 f"[用户上传了图片报告：{safe_name}，已登记 intake 任务 {task_id}"
                 f"（status={existing['status']}）。OCR 后端未配置"
-                "（本地 Paddle 不可用，且未配置 OCR_API_KEY），当前不能读取图片内容，"
-                "不要假装已经读过。]"
+                "（本地 Paddle 不可用，且「服务」页没有就绪的云端 OCR / 视觉模型端点），"
+                "当前不能读取图片内容，不要假装已经读过。]"
             )
             graph_config = {"configurable": {"thread_id": thread_id}}
             ctx.app_state["graph"].update_state(

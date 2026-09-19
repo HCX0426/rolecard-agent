@@ -9,6 +9,7 @@ from typing import Any
 
 from rolecard_agent.config import ModelBackend, Settings
 from rolecard_agent.core.consensus import build_consensus_tool
+from rolecard_agent.core.markers import AI_TEXT_MARKER
 
 
 class FakeLLM:
@@ -46,6 +47,20 @@ def test_consensus_aggregates_via_default_backend() -> None:
     assert fakes["b"].prompts[0] == "结石 6mm 严重吗"
     assert fakes["a"].prompts[-1].startswith("你是事实核查员")
     assert "【b】" in fakes["a"].prompts[-1] and "回答B" in fakes["a"].prompts[-1]
+
+
+def test_consensus_output_carries_the_ai_marker() -> None:
+    """§5-5「AI 数据一律带未校验标记」对**比对工具**的覆盖（架构审计报告 §8-4 补漏）。
+
+    比对结果是拿来当"事实核查依据"的，而它整段都是模型产物。以前只有域工具的返回文本带
+    标记，聚合结果一个字都没标 —— 于是这条不变式在最需要它的地方恰好不成立。
+    """
+    fakes = {"a": FakeLLM("一致"), "b": FakeLLM("一致")}
+    tool = build_consensus_tool(settings=_settings(fallbacks=["b"]), build=lambda n: fakes[n])
+
+    out = tool.invoke({"question": "q"})
+    assert out.splitlines()[0] == AI_TEXT_MARKER  # 第一行：截断也丢不掉
+    assert "未经人工校验" in out
 
 
 def test_consensus_marks_failed_backend() -> None:

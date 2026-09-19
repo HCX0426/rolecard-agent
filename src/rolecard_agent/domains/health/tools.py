@@ -25,6 +25,7 @@ from pathlib import Path
 from langchain_core.tools import BaseTool, tool
 
 from rolecard_agent.core.ingestion import IngestionService
+from rolecard_agent.core.markers import UNVERIFIED_MARKER
 from rolecard_agent.domains.health.service import HealthQueryService
 
 # The names this domain contributes. The single source of truth for the built-in role's
@@ -40,8 +41,6 @@ DOMAIN_TOOL_NAMES: tuple[str, ...] = (
 # 重试一次就多一条记录。装配点（domains/registry.build_registry）据此分流注册。
 # 声明在域自身而不是装配点：谁能安全重试是工具的性质，不是宿主的知识。
 WRITE_TOOL_NAMES: frozenset[str] = frozenset({"upload_medical_report"})
-
-UNVERIFIED_MARKER = "【未经人工校验】"
 
 
 def resolve_upload_target(file_path: str, upload_dir: str | Path) -> Path | None:

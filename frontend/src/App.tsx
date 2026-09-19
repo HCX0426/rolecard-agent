@@ -292,7 +292,7 @@ export default function App() {
             <ChatPage />
           </Suspense>
         </div>
-        {/* 设置页同样**常驻挂载**（hidden 隐藏）：其内部 5 个子页签都有各自的加载
+        {/* 设置页同样**常驻挂载**（hidden 隐藏）：其内部 6 个子页签都有各自的加载
             状态与表单，条件渲染会在切走顶层页签时整棵卸载 —— 切回设置→服务又从头
             重新请求（与 ChatPage 同源问题，服务页"每次点开都加载中"的完整根因）。 */}
         <div className={tab === "settings" ? "h-full" : "hidden"}>

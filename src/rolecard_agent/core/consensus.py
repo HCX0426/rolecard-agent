@@ -21,6 +21,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Protocol
 
+from rolecard_agent.core.markers import AI_TEXT_MARKER
 from rolecard_agent.core.text import text_of
 
 MAX_CONSENSUS_BACKENDS = 3
@@ -93,7 +94,9 @@ def build_consensus_tool(*, settings: Any, build: Any = None) -> Any:
         ).strip()
         # 缺席后端显式标注（带原因类型）：不依赖聚合器转述（聚合器自己也可能漏说）。
         failed = [(n, a) for n, a in answers if a.startswith("（该后端调用失败")]
-        lines = [f"参与比对的后端：{'、'.join(n for n, _ in answers)}"]
+        # 标记放在**第一行**：这段文本整体是模型产物，而比对结果常被拿去当"事实核查依据"。
+        # 架构总览 §5-5 要的是"标记跟着数据走"，不是指望模型转述时记得补一句（P1 补漏）。
+        lines = [AI_TEXT_MARKER, f"参与比对的后端：{'、'.join(n for n, _ in answers)}"]
         if failed:
             lines.append("缺席后端：" + "；".join(f"{n} {a}" for n, a in failed))
         lines.append("")

@@ -298,7 +298,7 @@ def _parse_image(
         raise OcrUnavailable(
             "OCR 后端未配置：按 requirements-ocr.txt 在独立 venv 安装 paddleocr，"
             "并设置 OCR_PYTHON 指向其 python（默认 .venv-ocr/Scripts/python.exe）；"
-            "或配置 OCR_API_KEY 走云端兜底。"
+            "或在「服务」页把一个已配凭据的云端 OCR / 视觉模型端点排进 OCR 序。"
         )
     try:
         return backend.ocr(p)
