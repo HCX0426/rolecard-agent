@@ -447,18 +447,22 @@ export interface ConnectivityProbe {
 }
 export type ConnectivityResult = Record<string, ConnectivityProbe>;
 
-/** 显存里常驻模型（Ollama /api/ps）+ 默认模型是否已常驻，供"预热/常驻"按钮显示状态。 */
+/** 本地推理服务（Ollama）的一张状态快照：模型页「本地推理服务」卡的数据面。
+ *  `pinned` = 常驻（`keep_alive=-1`，自己永远不会让出显存）；`is_local` 决定给不给"常驻"按钮。 */
 export interface ResidentModel {
   name: string | null;
-  size: number | null;
+  size_bytes: number;
   expires_at: string | null;
-  processor?: string;
+  pinned: boolean;
 }
-export interface ResidentInfo {
+export interface LocalServiceStatus {
+  base_url: string;
+  running: boolean;
+  resident: ResidentModel[];
+  resident_bytes: number;
+  pinned: boolean;
   is_local: boolean;
-  model: string;
-  loaded: ResidentModel[];
-  resident: boolean;
+  model: string | null;
 }
 
 export const api = {
@@ -492,6 +496,23 @@ export const api = {
     ),
   enhancePrompt: (text: string) =>
     request<{ text: string }>("POST", "/api/prompt/enhance", { text }),
+  /** 本地推理服务状态（在不在跑 / 驻留了哪些模型 / 占多少显存）。 */
+  getLocalService: () => request<LocalServiceStatus>("GET", "/api/local-service"),
+  /** 把默认模型载入显存并常驻。长超时：8GB 卡上冷加载就要十几~几十秒，30s 会报假失败。 */
+  pinLocalModel: () =>
+    request<{ model: string; resident: ResidentModel[] }>(
+      "POST",
+      "/api/local-service/pin",
+      { keep_alive: -1 },
+      LONG_REQUEST_TIMEOUT_MS,
+    ),
+  /** 释放显存（省略 model = 卸掉当前驻留的全部模型）。卸载是即时动作，默认超时即可。 */
+  unloadLocalModel: (model?: string) =>
+    request<{ unloaded: (string | null)[]; skipped: (string | null)[] }>(
+      "POST",
+      "/api/local-service/unload",
+      model ? { model } : {},
+    ),
   /** 通用领域记录（非 health 域的数据增删改查）。 */
   listDomainRecords: (domain: string) =>
     request<GenericRecord[]>("GET", `/api/domains/${domain}/records`),

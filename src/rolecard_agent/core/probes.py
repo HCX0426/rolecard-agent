@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import time
 
+from rolecard_agent.config import Settings
+from rolecard_agent.core.model_settings import client_style
+
 # 探活结果的短 TTL 缓存（按 base_url+model 记）。
 # 为什么需要：服务页一次渲染会对同一 (base_url, model) 探测多次（状态行 + 生效判定），
 # Ollama 没在跑时每次都要等满 3s 网络超时 —— 用户看到的就是"服务页签转圈好几秒"
@@ -75,6 +78,56 @@ def ollama_keep(
         return r.status_code == 200
     except Exception:  # noqa: BLE001 - 探活/驻留失败即结果
         return False
+
+
+def ollama_unload(base_url: str | None, model: str) -> bool:
+    """把一个模型从显存里卸载（keep_alive=0 的空请求，Ollama 原生语义）。
+
+    为什么需要它而不只是"别常驻"：`ollama_keep(-1)` 钉住的模型**自己永远不会让出显存**
+    （expires_at 被推到几百年后），而 8GB 卡上那就是整机不可用——用户要玩游戏、要跑别的
+    模型，必须先有人替他按下这个按钮（2026-09-19 的真实场景）。与 `ollama_keep` 相反，
+    这里要**短超时**：卸载是即时动作，等久了说明服务本来就没在跑，返回 False 让调用方
+    如实提示，而不是把请求线程挂住。
+    """
+    import httpx
+
+    base = (base_url or _DEFAULT_OLLAMA).rstrip("/")
+    try:
+        r = httpx.post(
+            f"{base}/api/generate",
+            json={"model": model, "prompt": "", "keep_alive": 0},
+            timeout=10.0,
+        )
+        return r.status_code == 200
+    except Exception:  # noqa: BLE001 - 卸不掉 / 连不上即失败，调用方如实报
+        return False
+
+
+def ollama_reachable(base_url: str | None) -> bool:
+    """本地推理服务在不在跑（GET /api/tags，3s）。区分"没起"与"起了但没驻留模型"。"""
+    import httpx
+
+    base = (base_url or _DEFAULT_OLLAMA).rstrip("/")
+    try:
+        return httpx.get(f"{base}/api/tags", timeout=3.0).status_code == 200
+    except Exception:  # noqa: BLE001 - 连不上就是没在跑
+        return False
+
+
+def local_inference_base_url(settings: Settings) -> str:
+    """本机推理服务（Ollama）的地址该问哪儿。
+
+    默认后端是 native(Ollama) 时用它配的那个 `base_url`（用户可能把 Ollama 装在别的端口/
+    机器上）；默认后端是云端时，本地服务仍然是出厂那个地址——"停掉本地服务"这件事与
+    "当前用哪个后端对话"是两码事，不能混成一个。
+    """
+    try:
+        backend = settings.backend(None)
+    except KeyError:  # 没配默认后端：出厂本地地址
+        return _DEFAULT_OLLAMA
+    if client_style(backend.provider) == "native" and backend.base_url:
+        return str(backend.base_url)
+    return _DEFAULT_OLLAMA
 
 
 def ollama_loaded(base_url: str | None) -> list[dict[str, object]]:

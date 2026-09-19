@@ -13,8 +13,9 @@ HTTP 这一层该做的五件事：
      预热、退出时释放）。
 
 端点按职责分包在 `api/routers/`（roles / sessions / records / console / settings /
-services / domains / workspace / reachouts / approvals / mcp），流式事件框架与增量输出审核
-在 `api/chat.py`。对话内核与 `call_model` / `bind_tools` 解耦：router 只通过服务层改库，
+services / domains / workspace / reachouts / approvals / mcp / local_service），流式事件
+框架与增量输出审核在 `api/chat.py`。对话内核与 `call_model` / `bind_tools` 解耦：router
+只通过服务层改库，
 下一轮 `call_model` **实时**读到新的 `enabled_domains` 与角色，因此插件启停 / 切角色 /
 换模型无需重启即可生效（07 C14 / US-1 / US-8）。
 
@@ -46,6 +47,7 @@ from rolecard_agent.api.deps import AppContext
 from rolecard_agent.api.routers import approvals as approvals_router
 from rolecard_agent.api.routers import console as console_router
 from rolecard_agent.api.routers import domains as domains_router
+from rolecard_agent.api.routers import local_service as local_service_router
 from rolecard_agent.api.routers import mcp as mcp_router
 from rolecard_agent.api.routers import reachouts as reachouts_router
 from rolecard_agent.api.routers import records as records_router
@@ -192,6 +194,7 @@ def create_app(
     app.include_router(reachouts_router.router)
     app.include_router(approvals_router.router)
     app.include_router(mcp_router.router)
+    app.include_router(local_service_router.router)
 
     @app.middleware("http")
     async def _begin_db_request(request: object, call_next: object) -> object:

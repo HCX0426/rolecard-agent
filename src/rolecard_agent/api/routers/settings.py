@@ -24,11 +24,9 @@ from rolecard_agent.core.memory import (
 )
 from rolecard_agent.core.model_settings import (
     ModelSettingsError,
-    client_style,
     is_keyless_provider,
     provider_catalog,
 )
-from rolecard_agent.core.probes import ollama_keep, ollama_loaded
 
 router = APIRouter()
 
@@ -599,68 +597,6 @@ def delete_memory(
     clear_memory_text(ctx.conn)
     ctx.roles.audit(actor=actor.id, action="clear_memory", target="memory", detail={})
     return _memory_payload(ctx)
-
-
-class KeepaliveBody(BaseModel):
-    """预热/常驻参数。keep_alive = Ollama 原生秒数，-1 = 永不自动卸载（常驻）。"""
-
-    keep_alive: int = -1
-    model: str | None = None
-
-
-def _default_backend(ctx: AppContext) -> Any:
-    """默认对话后端（叠加运行环境覆盖后的有效配置）；未配置默认 → 可读 400。"""
-    eff = ctx.app_state.get("effective") or ctx.settings
-    try:
-        return eff.backend(None)
-    except KeyError as exc:
-        raise HTTPException(
-            status_code=400, detail=f"默认模型后端未配置：{exc}。请先在「模型」页签设置。"
-        ) from exc
-
-
-@router.get("/api/settings/models/resident")
-def resident_models(ctx: AppContext = Depends(get_context)) -> object:
-    """当前显存里常驻的模型（读 Ollama /api/ps）+ 默认模型是否已在其中。云端后端 → loaded 空。"""
-    backend = _default_backend(ctx)
-    is_local = client_style(backend.provider) == "native"
-    loaded = ollama_loaded(backend.base_url) if is_local else []
-    names = {str(m.get("name")) for m in loaded}
-    return {
-        "is_local": is_local,
-        "model": backend.model,
-        "loaded": loaded,
-        "resident": backend.model in names or backend.model.split(":")[0] in {
-            n.split(":")[0] for n in names
-        },
-    }
-
-
-@router.post("/api/settings/models/keepalive")
-def keepalive_model(
-    body: KeepaliveBody,
-    ctx: AppContext = Depends(get_context),
-    actor: Actor = Depends(get_actor),
-) -> object:
-    """把默认（或指定）模型载入显存并按 keep_alive 常驻（默认 -1 = 不再 5 分钟自动卸载）。
-
-    只解决"冷加载慢"这一体感；模型是否真能跑仍取决于显存。仅本地 Ollama(native) 支持。
-    """
-    backend = _default_backend(ctx)
-    if client_style(backend.provider) != "native":
-        raise HTTPException(
-            status_code=400,
-            detail="仅本地 Ollama 后端支持常驻；云端后端无 keep_alive。",
-        )
-    model = (body.model or backend.model).strip()
-    ok = ollama_keep(backend.base_url, model, body.keep_alive, num_ctx=backend.num_ctx)
-    ctx.roles.audit(
-        actor=actor.id,
-        action="keepalive_model",
-        target=model,
-        detail={"keep_alive": body.keep_alive, "num_ctx": backend.num_ctx, "ok": ok},
-    )
-    return {"ok": ok, "model": model, "loaded": ollama_loaded(backend.base_url)}
 
 
 __all__ = ["router"]

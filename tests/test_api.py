@@ -250,6 +250,20 @@ def test_patch_model_context_404_and_400(client: TestClient) -> None:
     assert "512" in res.json()["detail"]
 
 
+def test_patch_model_context_roundtrip(client: TestClient) -> None:
+    """改窗口要**读得回来**并留痕：本地推理服务的「常驻」档按这个数字下发给 Ollama，
+    存了 8192、探针却按 4096 加载，用户看到的就是"预热完还要再等一次冷加载"。"""
+    name = client.get("/api/settings/models").json()["default"]
+    assert name
+    res = client.patch(f"/api/settings/models/{name}/context", json={"num_ctx": 8192})
+    assert res.status_code == 200 and res.json()["num_ctx"] == 8192
+    rows = client.get("/api/settings/models").json()["backends"]
+    row = next(b for b in rows if b["name"] == name)
+    assert row["num_ctx"] == 8192
+    actions = [a["action"] for a in client.get("/api/audit?limit=50").json()]
+    assert "update_model_context" in actions
+
+
 def test_memory_get_put_delete_roundtrip(client: TestClient) -> None:
     """跨会话记忆端点：读默认 → 保存文本 → 读回 → 清空 → 审计留痕。"""
     r0 = client.get("/api/settings/memory")
@@ -310,45 +324,6 @@ def test_role_memory_rejects_unknown_role_and_global_toggle(client: TestClient) 
     res = client.put(f"/api/settings/memory?role_id={role_id}", json={"enabled": False})
     assert res.status_code == 400
     assert "全局" in res.json()["detail"]
-
-
-def test_keepalive_and_resident(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    """预热/常驻端点：默认后端是本地 Ollama → is_local；常驻返回 ok 并审计，
-    且必须把后端配置的 num_ctx 透传给 ollama_keep（否则会把模型钉回 4096 默认，
-    预热反而触发一次重载）。全程离线（打桩）。"""
-    import rolecard_agent.api.routers.settings as srt
-
-    seen: dict[str, object] = {}
-
-    def _fake_keep(
-        base: object, model: str, keep_alive: int = -1, num_ctx: int | None = None
-    ) -> bool:
-        seen["model"] = model
-        seen["num_ctx"] = num_ctx
-        return True
-
-    monkeypatch.setattr(srt, "ollama_keep", _fake_keep)
-    monkeypatch.setattr(
-        srt,
-        "ollama_loaded",
-        lambda base: [
-            {"name": "qwen3-vl:8b", "size": 5800000000, "expires_at": None, "processor": "GPU"}
-        ],
-    )
-    r = client.get("/api/settings/models/resident").json()
-    assert r["is_local"] is True and r["loaded"] and r["model"]
-
-    # 把默认后端 num_ctx 抬到 8192，再点常驻，探针必须带 8192 去加载。
-    default_name = client.get("/api/settings/models").json()["default"]
-    assert client.patch(
-        f"/api/settings/models/{default_name}/context", json={"num_ctx": 8192}
-    ).status_code == 200
-
-    k = client.post("/api/settings/models/keepalive", json={"keep_alive": -1})
-    assert k.status_code == 200 and k.json()["ok"] is True
-    assert seen["num_ctx"] == 8192
-    actions = [row["action"] for row in client.get("/api/audit?limit=50").json()]
-    assert "keepalive_model" in actions
 
 
 def test_session_agent_mode_patch_roundtrip(client: TestClient) -> None:

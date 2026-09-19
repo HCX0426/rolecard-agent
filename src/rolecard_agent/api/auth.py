@@ -186,7 +186,7 @@ def is_trusted_peer(peer: str, trusted: Any = ()) -> bool:
     return False
 
 
-def _is_loopback(ip: str) -> bool:
+def is_loopback(ip: str) -> bool:
     addr = _address(ip)
     return addr is not None and addr.is_loopback
 
@@ -205,7 +205,7 @@ def auth_required(*, mode: str, ip: str, path: str, exempt: list[str]) -> bool:
     if normalized == "on":
         return True
     if normalized == "auto":
-        return not _is_loopback(ip)
+        return not is_loopback(ip)
     # 未知档位按最严处理
     return True
 
