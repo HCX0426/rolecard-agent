@@ -6,15 +6,26 @@
   * 没有**每步计时**，慢了也不知道慢在哪、该优化谁。本脚本每步打印耗时并汇总。
 
 用法：
-  python scripts/gate.py --fast   # ruff + mypy + 单测(不带覆盖率, -x) + 一致性  ≈ 1 分钟
+  python scripts/gate.py --fast   # ruff + mypy + 单测(不带覆盖率, -x) + 一致性  ≈ 1.5 分钟
   python scripts/gate.py          # 全量：上面 + 覆盖率门槛 + 前端 test/build + 真机冒烟
 
 任何一步失败即停（后续步骤不再跑），但已跑完步骤的耗时仍会打印。
 
-实测记录（2026-09-18，避免重复试错）：
-  * fast 层 51.7s：ruff 0.6 / mypy 2.1 / pytest 46.9 / consistency 2.1 —— pytest 占 91%；
+真模型/真机用例带 `live` 标记，**两层门禁都不跑**（`pyproject.toml` 的 addopts 已含
+`-m 'not live'`）：一次 8B 抽取比其余 640 个用例加起来还贵，且结果随模型版本漂移。
+要跑它们：`pytest -m live`；跑完整冒烟但跳过浏览器那段：`SMOKE_SKIP_UI=1`。
+
+实测记录（2026-09-19，架构审计报告 §6 的提速落地之后；Ollama 在跑的 Windows 本机）：
+  * fast 层 83.8s：ruff 1.0 / mypy 6.2 / pytest 73.7 / consistency 3.0 —— pytest 仍占 88%；
+  * 提速前同一套 pytest 是 199s：最慢的 `test_records_api` 一条用例（真 8B 抽取）独占 117s。
+    现在它离线跑（模型后端指向死端口 + 断言收紧到确定的 502），全套 199s → 73.7s；
+    lifespan 的启动预热（真 POST /api/generate，把 8B 钉进显存）由 conftest 统一关闭；
+    离线冒烟 13 项 98s → 10s。
   * **pytest-xdist 并行反而更慢**（-n auto 56.6s vs 46.9s）：大量用例各自起临时
     chroma/sqlite，worker 复制导入与建库的开销吃掉了并行收益 —— 别再试；
+  * 剩下的 73.7s 里最大的两块：两条指向死端口的抽取用例各 ~7s（langchain 客户端对
+    连接失败重试两遍，约 4s/次 —— 减它需要给模型客户端加"重试次数"配置，为测试速度
+    改生产默认不值得），其余是 ~640 个用例各自的建库/装配开销。
   * 更快的迭代方式是**只跑相关测试文件**（单文件 ≈ 2s），gate.py 是提交前的最低门槛。
 """
 

@@ -8,8 +8,12 @@
 
     .venv\\Scripts\\python.exe scripts\\smoke_check.py     # 退出码非 0 = 有功能断了
 
-设计：create_app + TestClient（真实 API 路径，与前端同源），模型用鸭子类型的假模型
-（不联网、不依赖 Ollama/云端）。RAG 用 hash 嵌入器（无 key 时的默认，离线确定）。
+设计：**冒烟测接线，不测模型**。create_app + TestClient（真实 API 路径，与前端同源），
+模型走两层替身 —— 对话链路用鸭子类型的假模型（`model=` + `model_factory=`，后者保证
+设置页保存后的**热重建**也拿不到真后端），抽取链路没有模型注入口（它按配置自建调用器），
+所以把 `MODEL_BACKENDS` 指到一个必然拒绝连接的端口，让"模型不可用"成为确定的前提。
+RAG 用 hash 嵌入器（无 key 时的默认，离线确定）。真模型路径不在这里，见
+`pytest -m live` 与 scripts/run_eval.py。最后一项是真机 UI 冒烟（依赖外部服务，可跳过）。
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 
 # 仓库根：真机 UI 冒烟需要以仓库根为 cwd 调用 scripts/ui_smoke.js
@@ -105,16 +110,21 @@ class FakeChat:
 RESULTS: list[tuple[str, bool, str]] = []
 
 
+def run_check(name: str, fn: Callable[[], None]) -> None:
+    """跑一项并把结论记进 RESULTS —— 冒烟要把任何异常都记成"功能断了"，而不是崩掉整轮。"""
+    try:
+        fn()
+    except AssertionError as exc:
+        RESULTS.append((name, False, str(exc) or "断言失败"))
+    except Exception as exc:  # noqa: BLE001 - 冒烟要把任何异常记为"功能断了"
+        RESULTS.append((name, False, f"{type(exc).__name__}: {exc}"))
+    else:
+        RESULTS.append((name, True, ""))
+
+
 def check(name: str) -> None:  # 装饰器：把函数的 docstring 当作判定依据
     def wrap(fn):
-        try:
-            fn()
-        except AssertionError as exc:
-            RESULTS.append((name, False, str(exc) or "断言失败"))
-        except Exception as exc:  # noqa: BLE001 - 冒烟要把任何异常记为"功能断了"
-            RESULTS.append((name, False, f"{type(exc).__name__}: {exc}"))
-        else:
-            RESULTS.append((name, True, ""))
+        run_check(name, fn)
         return fn
 
     return wrap
@@ -135,14 +145,21 @@ def main() -> int:
         root = Path(tmp)
         db_path = root / "smoke.db"
         # 关键：把数据目录也指向临时目录，否则会污染演示库（data/chroma / data/uploads）
-        import os
-
-        os.environ["CHROMA_PATH"] = str(root / "chroma")
-        os.environ["UPLOAD_DIR"] = str(root / "uploads")
-        # 档案数据在起服务前注入：避免另开连接与应用的连接互相锁库
         from rolecard_agent.domains.health.service import HealthQueryService
         from rolecard_agent.storage.db import bootstrap, connect
 
+        os.environ["CHROMA_PATH"] = str(root / "chroma")
+        os.environ["UPLOAD_DIR"] = str(root / "uploads")
+        # 抽取链路按**配置**自建模型调用器（没有 model= 注入口），所以把后端指到一个必然
+        # 拒绝连接的端口：真模型不在冒烟的职责范围内（一次 8B 抽取实测 90~130s，且结果
+        # 随模型版本漂移），而"模型不可用要如实降级"这条契约需要**确定的前提**才能钉死。
+        os.environ["MODEL_BACKENDS"] = (
+            '{"local": {"model": "qwen2.5vl:7b", "provider": "ollama",'
+            ' "base_url": "http://127.0.0.1:9"}}'
+        )
+        # 预热是真 POST /api/generate —— 冒烟不跑推理，不需要把模型钉进显存。
+        os.environ["MODEL_PIN_ON_STARTUP"] = "0"
+        # 档案数据在起服务前注入：避免另开连接与应用的连接互相锁库
         conn = connect(db_path)
         bootstrap(conn, enabled_domains=("health",))  # 建表（create_app 内的 bootstrap 幂等）
         conn.executescript(  # 报告外键指向 app_user
@@ -166,9 +183,19 @@ def main() -> int:
             ],
         )
         conn.close()
-        app = create_app(sqlite_path=db_path, model=model)
+        # `model_factory` 同样要给假模型：设置页保存后 rebuild_runtime 用它重建（此前只传
+        # `model=`，于是热重建把假模型换成**真后端** —— `_settings` 那一项因此偷偷打了
+        # 一次真 Ollama，与"离线冒烟"的自述不符（架构审计报告 §6））。
+        app = create_app(sqlite_path=db_path, model=model, model_factory=lambda *_a, **_k: model)
         with TestClient(app) as c:
             run_all(c, db_path)
+    # 真机 UI 冒烟放**最后**：它依赖外部服务与本机浏览器，且是整套里最贵的一项。
+    # 此前它是模块级 `@check` 装饰的函数 —— 装饰即执行，于是实际跑在**最前**（顺序反了，
+    # 且离线项还没跑就可能被它带崩）。现在显式在离线项之后调用。
+    run_check(
+        "真机 UI 冒烟（浏览器打开控制台：可发消息 / 思考过程保留 / 刷新后历史仍在）",
+        console_ui_smoke,
+    )
     return report()
 
 
@@ -292,18 +319,12 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         # 注入的说明消息应进入会话历史（模型下一轮知道有文件已索引）
         msgs = c.get(f"/api/session/{tid}/messages").json()["messages"]
         assert any("已建立检索索引" in str(m.get("content", "")) for m in msgs), msgs
-        # v2.3 结构化抽取端点：未知任务 404；模型不可用时必须如实降级（502 或
-        # 200+skipped）；模型在线时走真实抽取（200 带 mode/written）。三种都是合法
-        # 结局 —— 底线只有一个：绝不 500，绝不静默假装成功。
+        # v2.3 结构化抽取端点：未知任务 404；模型不可用时**如实 502**（可读失败，不是 500，
+        # 也不是 200+假装成功）。本冒烟把后端指向死端口，所以"模型不可用"是确定前提 ——
+        # 旧断言写成 `in (200, 502)`，在装了 Ollama 的机器上真实抽取必然 200，于是恒绿。
         assert c.post("/api/records/extract", json={"task_id": "ing_nope"}).status_code == 404
         ex = c.post("/api/records/extract", json={"task_id": first.json()["task_id"]})
-        assert ex.status_code in (200, 502), ex.text
-        if ex.status_code == 200:
-            body = ex.json()
-            if "skipped" in body:
-                assert body["skipped"] in {"no_model", "no_text", "already_extracted"}, ex.text
-            else:
-                assert "mode" in body and "written" in body, ex.text  # 真实抽取结果
+        assert ex.status_code == 502, ex.text
 
     @check("上传：同名不同内容的文件互不覆盖（索引身份 = task id，不是文件名）")
     def _same_name_upload() -> None:
@@ -495,9 +516,8 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         assert after.status_code == 200, after.status_code
 
 
-@check("真机 UI 冒烟（浏览器打开控制台：可发消息 / 思考过程保留 / 刷新后历史仍在）")
 def console_ui_smoke() -> None:
-    """用本机 Chrome/Edge 真跑一遍界面交互（scripts/ui_smoke.js）。
+    """用本机 Chrome/Edge 真跑一遍界面交互（scripts/ui_smoke.js）；由 main() 在末项调用。
 
     为什么放在最后且允许跳过：它依赖**外部真实服务**（默认 http://127.0.0.1:8000）
     与本机浏览器，不是纯离线断言。缺 node / 缺 playwright-core / 缺浏览器 / 服务没起

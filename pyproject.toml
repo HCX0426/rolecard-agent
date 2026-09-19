@@ -61,7 +61,13 @@ extend-immutable-calls = ["fastapi.Depends", "fastapi.Security", "fastapi.Query"
 testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
-addopts = "-q"
+addopts = "-q -m 'not live'"
+# `live` = 需要**真实模型/真实服务**的用例（一次 8B 抽取比其余 640 个用例加起来还贵，
+# 且结果随模型版本漂移）。默认整条排除（见 addopts 与 scripts/gate.py），要跑它们用
+# `pytest -m live`。登记在此是为了让拼错标记名直接报错，而不是静默地一个都不跑。
+markers = [
+    "live: 真机/真模型用例，默认不跑（pytest -m live 显式执行）",
+]
 
 [tool.mypy]
 python_version = "3.13"

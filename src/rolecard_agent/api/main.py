@@ -347,7 +347,10 @@ def create_app(
             reachout.start()  # 后台调度：角色主动开口从这里开始转
             # 启动即预热：后台线程把默认本地模型按配置的 num_ctx 常驻（keep_alive=-1），
             # 免首条消息冷加载、也修复空闲后 Ollama 默认 5min 卸载把 pin 打回 4096。
-            threading.Thread(target=_auto_pin_default_model, daemon=True).start()
+            # MODEL_PIN_ON_STARTUP=0 时跳过：这一句是真 POST /api/generate，会把大模型钉进
+            # 显存 —— 测试套件（23 处 with TestClient）与不跑推理的部署都该关掉它。
+            if settings.model_pin_on_startup:
+                threading.Thread(target=_auto_pin_default_model, daemon=True).start()
             yield
         finally:
             # 每个 suppress 都独立：某一处收尾失败不能连累其它资源。

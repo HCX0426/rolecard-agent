@@ -3,10 +3,15 @@
 Everything here is offline: no Ollama, no network, no model downloads. If a test needs a
 model it gets `ScriptedChat`, which replays a fixed list of replies. That constraint is what
 lets `pytest` run in CI on any machine.
+
+`with TestClient(app)` 会跑 lifespan，而 lifespan 的启动预热是**真** HTTP 调用（把默认本地
+模型按 num_ctx 钉进显存）—— 它不在任何断言里，却把 8B 装进 GPU 与测试抢资源。会话级
+autouse fixture 把它关掉，是这条离线铁律的最后一块（架构审计报告 §6 隐蔽外呼）。
 """
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections.abc import Iterator, Sequence
 from typing import Any
@@ -18,6 +23,23 @@ from langchain_core.tools import BaseTool, tool
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.roles.service import RoleCardService
 from rolecard_agent.storage.db import bootstrap, connect
+
+# --------------------------------------------------------------------------- offline guard
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _no_startup_model_pin() -> Iterator[None]:
+    """整个测试会话都不做启动预热（`MODEL_PIN_ON_STARTUP=0`，见 config.py 该字段的理由）。"""
+    previous = os.environ.get("MODEL_PIN_ON_STARTUP")
+    os.environ["MODEL_PIN_ON_STARTUP"] = "0"
+    try:
+        yield
+    finally:
+        if previous is None:
+            del os.environ["MODEL_PIN_ON_STARTUP"]
+        else:
+            os.environ["MODEL_PIN_ON_STARTUP"] = previous
+
 
 # --------------------------------------------------------------------------- model fake
 

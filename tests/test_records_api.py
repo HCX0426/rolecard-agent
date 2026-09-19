@@ -22,6 +22,16 @@ from rolecard_agent.storage.db import bootstrap, connect
 
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    # 本文件的 docstring 承诺"全部离线"，但抽取端点走的是**配置里的真实后端**（它按
+    # MODEL_BACKENDS 自己建模型，不像对话端点那样有 model= 注入口）。宿主机 Ollama 在跑时
+    # 默认后端就真的可用，于是 `test_extract_rejects_a_second_call_while_one_is_running`
+    # 变成一次 8B 真实抽取（实测 117s，占全套 60%+）。指到一个必然拒绝连接的端口，
+    # 让本文件测到的确实是它声称测的东西；真模型路径见下方 live 标记的用例。
+    monkeypatch.setenv(
+        "MODEL_BACKENDS",
+        '{"local": {"model": "qwen2.5vl:7b", "provider": "ollama",'
+        ' "base_url": "http://127.0.0.1:9"}}',
+    )
     monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
     return TestClient(create_app(sqlite_path=tmp_path / "app.db"))
@@ -279,12 +289,45 @@ def test_extract_rejects_a_second_call_while_one_is_running(client: TestClient) 
     finally:
         records_router._release_extraction(task_id)
 
-    # 释放后恢复正常：200（no_model / 真抽取）或 502（模型在线但调用失败）都是合法结局，
-    # 底线是**不再被互斥挡住** —— 本用例只钉这一条。
+    # 释放后恢复正常：本文件的后端必然拒绝连接 → 稳定的 502（可读失败，不是 500）。
+    # 旧断言是 `in (200, 502)`，宿主机 Ollama 在跑时真实抽取必然 200 —— 于是这条用例
+    # 无论实现对错都绿（架构审计报告 §6：顶层冒烟含真模型、断言接受任何结局）。
     after = client.post("/api/records/extract", json={"task_id": task_id})
-    assert after.status_code in (200, 502), after.text
-    if after.status_code == 200:
-        assert after.json().get("skipped") != "in_progress"
+    assert after.status_code == 502, after.text
+
+
+@pytest.mark.live
+def test_extract_with_a_real_model_writes_an_unverified_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """真模型路径（**默认不跑**，`-m live` 才跑）：离线替身覆盖不了"模型真的输出 JSON"这件事。
+
+    为什么单独一个标记而不是塞进常规套件：一次 8B 抽取实测 90~130s，比其余 640 个用例
+    加起来还贵，而且结果取决于模型版本 —— 它是**验收**（scripts/run_eval.py 同一性质），
+    不是回归门禁。需要本机 Ollama + 已拉取的默认模型。
+    """
+    monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.delenv("MODEL_BACKENDS", raising=False)  # 回落到出厂默认后端（真 Ollama）
+    client = TestClient(create_app(sqlite_path=tmp_path / "app.db"))
+    tid = client.post("/api/session", json={}).json()["thread_id"]
+    report = (
+        "# 腹部超声\n\n检查时间：2026-03-12\n\n"
+        "结论：胆囊内见强回声团，后方伴声影。结石直径 6.0 mm（参考范围 0-5 mm）。"
+    ).encode()
+    uploaded = client.post(
+        f"/api/session/{tid}/upload", files={"file": ("腹部超声.md", report, "text/markdown")}
+    )
+    assert uploaded.status_code == 201, uploaded.text
+
+    res = client.post("/api/records/extract", json={"task_id": uploaded.json()["task_id"]})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert "mode" in body and "written" in body, body
+    # 铁律：AI 抽取的一律未人工校验，且**关联回这次 intake**（幂等靠它）。
+    for item in client.get("/api/records").json()["items"]:
+        for index in item["indices"]:
+            assert not index["is_verified"], index
 
 
 def test_deleting_a_report_also_clears_its_knowledge_chunks(

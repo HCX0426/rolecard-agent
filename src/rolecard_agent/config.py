@@ -114,6 +114,12 @@ class Settings(BaseModel):
     # "既不返回也不失败"）。设成 0 或负数 = 不设超时（保持旧行为，仅调试用）。
     model_timeout_seconds: float = 120.0
 
+    # 启动即把默认本地模型 `keep_alive=-1` 常驻显存（免首条消息冷加载）。
+    # 为什么可关：预热是**真 POST /api/generate**，会把 8B 钉进显存与任何在跑的推理争 GPU；
+    # 测试套件与只做 API 装配的场景必须能关掉它（见 tests/conftest.py 的离线纪律）。
+    # 只在进程构建期读取，改了要重启 —— 与其它"随进程构建"的项同类，不在线可改。
+    model_pin_on_startup: bool = True
+
     # 思考（reasoning）模式：这里列出的**模型名**在 ollama 风格后端上会以
     # `reasoning=True` 调用（langchain-ollama ≥1.1 把思考内容放进
     # AIMessage.additional_kwargs['reasoning_content']，由 SSE 的 thinking 事件透出）。
@@ -356,6 +362,7 @@ class Settings(BaseModel):
         for env_key, field in (
             ("MODEL_DEFAULT", "model_default"),
             ("MODEL_TIMEOUT_SECONDS", "model_timeout_seconds"),
+            ("MODEL_PIN_ON_STARTUP", "model_pin_on_startup"),
             ("WORKSPACE_DIR", "workspace_dir"),
             ("RUN_TOOLS_ENABLED", "run_tools_enabled"),
             ("RUN_APPROVAL", "run_approval"),

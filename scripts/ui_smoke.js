@@ -9,7 +9,8 @@
  *   - 只依赖 **playwright-core**（不下载浏览器，约几 MB），驱动本机已装的 Chrome/Edge；
  *     没装驱动或没浏览器时，**以"跳过"退出（exit 0）**，不把环境差异变成 CI 红。
  *   - 断言的是"用户能看到的"（可见性 / 默认展开 / 刷新后仍在），不是实现细节。
- *   - 由 scripts/smoke_check.py 的第 13 项调用，因此这里只输出结论行与退出码。
+ *   - 由 scripts/smoke_check.py 作为**末项**调用（前面的离线项先跑完），因此这里只输出结论行与退出码。
+ *   - 时长几乎全花在"真模型生成一遍回答"上；等待一律用条件（按钮/文本出现）而非固定 sleep。
  *
  * 环境覆盖：
  *   UI_SMOKE_BASE      被测地址
@@ -85,21 +86,28 @@ function record(name, ok, note = "") {
 
     // 新建会话
     const newChat = page.getByRole("button", { name: /新建对话/ }).first();
-    if (await newChat.count()) {
+    const input = page.getByPlaceholder(/输入消息/);
+    if ((await newChat.count()) === 0) {
+      // 按钮不在位（当前页不是对话页）：如实跳过，而不是 record(true) ——
+      // "无论有没有测到东西都算通过"的断言给出的是假信心（架构审计报告 §6）。
+      console.log("（跳过新建对话断言：当前页面没有「＋ 新建对话」按钮）");
+    } else {
       await newChat.click();
-      await page.waitForTimeout(400);
+      // 新会话的判据：输入框就绪且为空（等条件，不是等固定 400ms）。
+      await input.waitFor({ state: "visible", timeout: 10000 });
+      const empty = (await input.inputValue()) === "";
+      record("新建对话：点击后输入框就绪且为空", empty);
     }
-    record("新建对话", true);
 
     // 发消息
     const QUESTION = "用一句话解释：为什么冬天白天比夏天短？";
-    const input = page.getByPlaceholder(/输入消息/);
     await input.click();
     await input.fill(QUESTION);
     await page.getByRole("button", { name: "发送" }).click();
 
     // 思考面板（思考模型才会有；没有就跳过这一项而不是判失败）
     const summary = page.getByText("思考过程", { exact: true }).first();
+    const answer = page.getByText(/白天|白昼|昼长|日照/).first();
     let thinkingSeen = false;
     try {
       await summary.waitFor({ state: "visible", timeout: 90000 });
@@ -119,10 +127,13 @@ function record(name, ok, note = "") {
       console.log("（跳过思考相关断言：当前模型未输出思考，或响应较慢）");
     }
 
-    // 等待回答结束
+    // 等待回答结束：生成中这个按钮是「停止生成」，流结束后才换回「发送」——
+    // 所以等它出现 = 等流真正结束（不是靠 sleep 猜时长）。
     await page.getByRole("button", { name: "发送" }).waitFor({ timeout: 180000 });
-    await page.waitForTimeout(2500);
-    const answered = await page.getByText(/白天|白昼|昼长|日照/).first().isVisible().catch(() => false);
+    const answered = await answer
+      .waitFor({ state: "visible", timeout: 15000 })
+      .then(() => true)
+      .catch(() => false);
     record("回答生成并渲染", answered);
 
     if (thinkingSeen) {
@@ -140,18 +151,24 @@ function record(name, ok, note = "") {
       // 点击后必须真的能展开出思考正文（否则"保留"只是留了个空壳）
       const panel = page.getByText("思考过程", { exact: true }).first();
       await panel.click().catch(() => {});
-      await page.waitForTimeout(400);
-      const opened = await page.evaluate(() => {
-        const el = document.querySelector("details");
-        return el ? el.hasAttribute("open") : null;
-      });
-      record("点击思考面板可展开", opened === true);
+      // 等 `details` 真的带上 open，而不是 sleep 400ms 后赌一次快照。
+      const opened = await page
+        .waitForFunction(() => document.querySelector("details")?.hasAttribute("open") === true, undefined, {
+          timeout: 5000,
+        })
+        .then(() => true)
+        .catch(() => false);
+      record("点击思考面板可展开", opened);
     }
 
-    // 刷新后历史仍在（回放）
+    // 刷新后历史仍在（回放）：等回答文本重新出现，而不是 sleep 1.2s 赌回放已渲染完。
     await page.reload({ waitUntil: "networkidle" });
-    await page.waitForTimeout(1200);
-    const historyKept = await page.getByText(/白天|白昼|昼长|日照/).first().isVisible().catch(() => false);
+    const historyKept = await page
+      .getByText(/白天|白昼|昼长|日照/)
+      .first()
+      .waitFor({ state: "visible", timeout: 15000 })
+      .then(() => true)
+      .catch(() => false);
     record("刷新页面后历史回放仍在", historyKept);
 
     record("无页面 JS 报错", pageErrors.length === 0, pageErrors[0] || "");
