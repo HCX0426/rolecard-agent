@@ -42,6 +42,30 @@ AGENT_PLAN_PROMPT = (
     "4. 所有步骤完成后，用一段话向用户总结：做了什么、拿到了什么、还差什么。"
 )
 
+# 图像接地规则：仅在本轮模型可见的历史里含图片时注入（见 nodes.call_model）。
+# 为什么单独成段且放在安全规则之前：多模态角色最容易犯的错，是让"人设 + 知识库检索到的
+# 资料"盖过图片里真实可见的像素——用户发一张与角色世界观无关的图，模型却按人设/检索内容
+# 编出一段"识别"（2026-09-19 爱莉希雅把无关图答成崩坏设定）。这段把优先级钉死：
+# **事实以图为准，角色只负责解读**；不确定就联网查，查不到就承认不知道，绝不硬编。
+IMAGE_GROUNDING_HEADER = "【图像理解规则】本轮包含用户提供的图片：事实以图为准，角色负责解读。"
+IMAGE_GROUNDING_PROMPT = (
+    "1. 先如实看清图里真实可见的内容（物体、场景，以及标签/水印/数字/单位等文字，逐字转录）；"
+    "看不清或图里没有的，直说看不清或没有，绝不编造。\n"
+    "2. 角色人设决定你「怎么看、怎么讲」这张图，但不决定「图里有什么」——用角色的身份、语气和"
+    "知识框架去解读真实的图像，而不是用人设口吻、长期记忆或知识库检索到的资料去替换、补充或"
+    "捏造图像内容；一旦它们与图中真实内容冲突，一律以图为准。\n"
+    "3. 遇到图里不认识的东西（物体、术语、指标含义等），调用 web_search / web_fetch 查证，"
+    "再把查到的事实用自己的话讲给用户。\n"
+    "4. 联网也查不到、或信息不足以判断时，坦白说不知道/不确定，不要硬编。"
+)
+
+
+def render_image_grounding(has_image: bool) -> str:
+    """Format the image-grounding rule. Returns "" when this turn has no image."""
+    if not has_image:
+        return ""
+    return f"{IMAGE_GROUNDING_HEADER}\n{IMAGE_GROUNDING_PROMPT}"
+
 
 def render_agent_plan(agent: bool) -> str:
     """Format the agent-mode planning instruction. Returns "" in chat mode."""
@@ -87,12 +111,13 @@ def build_system_prompt(
     *,
     memory: str | None = None,
     agent: bool = False,
+    has_image: bool = False,
 ) -> str:
     """Return the final system prompt for one turn.
 
     Order is the whole point, and it is the order from least to most authoritative:
 
-        角色人设  ->  长期记忆  ->  智能体规划  ->  回答范例  ->  全局安全规则
+        角色人设  ->  长期记忆  ->  智能体规划  ->  回答范例  ->  图像接地  ->  全局安全规则
 
     Putting the global rules last means they win any conflict with the role card, with a
     stored memory, with the agent-mode planning instructions, or with an example. Reversing
@@ -107,6 +132,10 @@ def build_system_prompt(
     `agent=True` inserts the agent-mode planning rhythm (AGENT_PLAN_PROMPT) between memory
     and the examples: it is behaviour guidance, stronger than a style template yet still
     below the safety rules.
+
+    `has_image=True` inserts the image-grounding rule (IMAGE_GROUNDING_PROMPT) just before the
+    safety rules: it must outrank persona/memory/retrieved lore so the model answers from the
+    actual pixels. It stays below the safety rules, which are never demoted.
     """
     sections = [
         part
@@ -115,6 +144,7 @@ def build_system_prompt(
             render_memory(memory),
             render_agent_plan(agent),
             render_exemplars(exemplars),
+            render_image_grounding(has_image),
         )
         if part
     ]

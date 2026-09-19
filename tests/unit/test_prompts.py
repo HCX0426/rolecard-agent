@@ -140,3 +140,35 @@ def test_chat_mode_has_no_agent_section() -> None:
     result = prompts.build_system_prompt("角色说明", agent=False)
     assert "智能体模式" not in result
     assert result == "角色说明\n\n" + prompts.GLOBAL_SAFETY_PROMPT
+
+
+# --------------------------------------------------------------------------- image grounding
+#
+# 多模态角色最危险的失效模式：人设 / 检索资料盖过图片真实像素，把无关图"识别"成设定内容
+# （2026-09-19 爱莉希雅事故）。图像接地规则必须排在人设/记忆/范例之后、安全规则之前——
+# 压得住人设，又永远不被安全规则降级。
+
+
+def test_image_grounding_outranks_persona_and_sits_below_safety() -> None:
+    result = prompts.build_system_prompt(
+        "角色说明", _EXEMPLARS, memory="记忆", agent=True, has_image=True
+    )
+    role_at = result.index("角色说明")
+    exemplar_at = result.index("回答风格参考")
+    image_at = result.index("图像理解规则")
+    safety_at = result.index("禁止输出任何疾病诊断")
+    assert role_at < exemplar_at < image_at < safety_at
+
+
+def test_no_image_adds_no_grounding_section() -> None:
+    assert "图像理解规则" not in prompts.build_system_prompt("角色说明")
+    assert "图像理解规则" not in prompts.build_system_prompt("角色说明", has_image=False)
+
+
+def test_grounding_rule_encodes_persona_interprets_not_fabricates() -> None:
+    """规则要点：以图为准 + 角色只解读不捏造 + 不确定联网查 + 查不到承认不知道。"""
+    result = prompts.build_system_prompt("角色说明", has_image=True)
+    assert "以图为准" in result
+    assert "不决定「图里有什么」" in result  # 人设管"怎么看"，不管"看到什么"
+    assert "web_search" in result  # 不明白就联网搜
+    assert "不知道" in result  # 搜不到就承认不知道

@@ -488,6 +488,45 @@ def test_call_model_skips_memory_when_disabled(roles: RoleCardService) -> None:
     assert "用户长期记忆" not in model.last_prompt[0].content
 
 
+def _image_human_msg() -> HumanMessage:
+    """复刻 _user_message 的带图形态：多模态 content 块 + has_image 标记。"""
+    return HumanMessage(
+        content=[
+            {"type": "text", "text": "这是什么？"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        ],
+        additional_kwargs={"has_image": True},
+    )
+
+
+def test_call_model_injects_image_grounding_when_turn_has_image(roles: RoleCardService) -> None:
+    """本轮带图片 → 图像接地规则进 system（在安全规则之前）。"""
+    rid = _role(roles)
+    reg = ToolRegistry()
+    reg.register(kernel_tool)
+    model = FakeModel(AIMessage(content="ok"))
+    ctx = _ctx(reg, roles, model)
+    call_model(
+        {"messages": [_image_human_msg()], "current_role_id": rid, "thread_id": "t"}, ctx
+    )
+    system = model.last_prompt[0].content
+    assert "图像理解规则" in system
+    assert system.index("图像理解规则") < system.index("禁止输出任何疾病诊断")
+
+
+def test_call_model_no_image_grounding_for_text_only_turn(roles: RoleCardService) -> None:
+    """纯文本轮次不注入图像接地规则（省额度、避免无谓指令）。"""
+    rid = _role(roles)
+    reg = ToolRegistry()
+    reg.register(kernel_tool)
+    model = FakeModel(AIMessage(content="ok"))
+    ctx = _ctx(reg, roles, model)
+    call_model(
+        {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"}, ctx
+    )
+    assert "图像理解规则" not in model.last_prompt[0].content
+
+
 def test_call_model_injects_agent_plan_when_state_says_agent(roles: RoleCardService) -> None:
     """state.agent_mode == 'agent' → 注入规划指令（在安全规则之前）。"""
     rid = _role(roles)

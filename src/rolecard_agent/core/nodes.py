@@ -300,6 +300,27 @@ def _text_of(message: Any) -> str:
     return str(content)
 
 
+def _message_has_image(message: Any) -> bool:
+    """这条消息是否携带图片：多模态 content 块（type=image_url/image），或
+    `_user_message` 打的 `additional_kwargs.has_image` 标记。两条都认，兼容不同供应商形态。"""
+    if (getattr(message, "additional_kwargs", None) or {}).get("has_image"):
+        return True
+    content = getattr(message, "content", None)
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and (
+                part.get("type") in ("image_url", "image") or "image_url" in part
+            ):
+                return True
+    return False
+
+
+def _history_has_image(messages: Sequence[Any]) -> bool:
+    """本轮模型**实际能看到**的历史里是否含图片——决定要不要注入图像接地规则。
+    用裁剪后的 history 判定，而不是全量 state：图已被裁掉时规则不该白占额度。"""
+    return any(_message_has_image(m) for m in messages)
+
+
 def call_model(
     state: dict[str, Any],
     ctx: KernelContext,
@@ -365,15 +386,16 @@ def call_model(
     # the provider itself is fail-closed (returns "" by default). Agent mode is a per-session
     # state the chat endpoint resolves live from session_thread (NULL = global default).
     memory_text = ctx.memory_provider() if ctx.settings.memory_enabled else ""
+    # 历史按字符预算裁剪（H3）。裁剪只影响"送给模型的内容"，checkpoint 里的完整历史不动 ——
+    # 界面回放、审计、下次裁剪都仍然看得到全量对话。先裁剪，再据此判断本轮模型能否看到图片。
+    history, dropped = trim_history(state["messages"], ctx.max_context_chars)
     system = build_system_prompt(
         role.system_prompt,
         role.exemplars,
         memory=memory_text,
         agent=state.get("agent_mode") == "agent",
+        has_image=_history_has_image(history),
     )
-    # 历史按字符预算裁剪（H3）。裁剪只影响"送给模型的内容"，checkpoint 里的完整历史不动 ——
-    # 界面回放、审计、下次裁剪都仍然看得到全量对话。
-    history, dropped = trim_history(state["messages"], ctx.max_context_chars)
     if dropped:
         ctx.tracer.emit(
             TraceEvent(
