@@ -17,12 +17,12 @@ from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import (
-    DEFAULT_USER_ID,
     AppContext,
     get_actor,
     get_context,
 )
 from rolecard_agent.core.domain_data import DomainDataService
+from rolecard_agent.core.identity import DEFAULT_USER_ID
 
 router = APIRouter()
 

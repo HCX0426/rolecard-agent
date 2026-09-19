@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -21,6 +21,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.config import Settings
 from rolecard_agent.core.approvals import ApprovalService
+from rolecard_agent.core.bootstrap import Runtime
 from rolecard_agent.core.domain_service import DomainQueryService
 from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.core.model_settings import ModelSettingsService
@@ -41,9 +42,6 @@ from rolecard_agent.roles.service import (
 )
 from rolecard_agent.storage.db import ThreadLocalConnection
 
-# v1 演示身份（schema 每张表都有 user_id 列；接真实登录是数据替换，不是改表）。
-DEFAULT_TENANT_ID = "local"
-DEFAULT_USER_ID = "local-user"
 # 默认"无角色"：纯对话，不接工具与检索。
 DEFAULT_ROLE_ID = "general_assistant"
 
@@ -186,27 +184,77 @@ def parsed_text_path(target: Path) -> Path:
 
 @dataclass(slots=True)
 class AppContext:
-    """一次应用启动的全部运行时依赖。挂在 `app.state.ctx` 上，由 `get_context` 注入。"""
+    """端点注入用的应用上下文 —— **内核 `Runtime` 的读穿视图**。
 
-    settings: Settings
-    conn: ThreadLocalConnection
-    roles: RoleCardService
-    plugins: PluginService
-    ingestion: IngestionService
-    # M9：只依赖域查询抽象，不持有 health 具体类（api 层不直接 import 具体域）。
-    health: DomainQueryService
-    model_settings: ModelSettingsService
-    services: ServiceEndpointService
-    knowledge: KnowledgeBase
-    registry: ToolRegistry
-    tracer: Tracer
-    # 命令执行审批（架构计划 C·§6.2）：run_command 提交的命令由这个服务管审批状态。
-    approvals: ApprovalService
+    以前它是 13 个字段的容器，其中 `settings` / `knowledge` / `registry` 三件在热重建时被
+    逐个显式换新（`ctx.settings = eff` …）。那就是同一份可变量存在两处，漏换任何一个字段
+    就是一个"改了不生效"的接缝。装配根下沉到 `core/bootstrap.py` 之后可变量只剩一份，
+    这里全部改成属性读穿，端点侧 `ctx.roles` / `ctx.knowledge` 的写法一字不变。
 
-    # 图句柄：设置页保存后整体热重建，所以是可变容器而不是直接持有 graph 对象。
-    app_state: dict[str, Any] = field(default_factory=dict)
-    # 运行时热重建入口（模型设置或服务策略保存时调用）—— 见 main.create_app 的实现。
-    rebuild_runtime: Callable[[], None] = field(default=lambda: None)
+    `settings` 读到的是**有效配置**（模型页 DB 配置 ⊕ 运行环境覆盖），不是裸 env 快照：
+    OCR / 抽取 / 比对在请求时读它，「运行环境」页签保存后要立刻生效。
+    `health` 只依赖域查询抽象，不持有具体域类（api 层不 import 具体域）。
+    """
+
+    runtime: Runtime
+
+    @property
+    def settings(self) -> Settings:
+        return self.runtime.effective
+
+    @property
+    def conn(self) -> ThreadLocalConnection:
+        return self.runtime.conn
+
+    @property
+    def roles(self) -> RoleCardService:
+        return self.runtime.roles
+
+    @property
+    def plugins(self) -> PluginService:
+        return self.runtime.plugins
+
+    @property
+    def ingestion(self) -> IngestionService:
+        return self.runtime.ingestion
+
+    @property
+    def health(self) -> DomainQueryService:
+        return self.runtime.query
+
+    @property
+    def model_settings(self) -> ModelSettingsService:
+        return self.runtime.model_settings
+
+    @property
+    def services(self) -> ServiceEndpointService:
+        return self.runtime.services
+
+    @property
+    def knowledge(self) -> KnowledgeBase:
+        return self.runtime.knowledge
+
+    @property
+    def registry(self) -> ToolRegistry:
+        return self.runtime.registry
+
+    @property
+    def tracer(self) -> Tracer:
+        return self.runtime.tracer
+
+    @property
+    def approvals(self) -> ApprovalService:
+        return self.runtime.approvals
+
+    @property
+    def app_state(self) -> dict[str, Any]:
+        """图 / 有效配置 / 默认模型的槽位：设置页热重建后这里被整体换掉，端点每请求读它。"""
+        return self.runtime.state
+
+    @property
+    def rebuild_runtime(self) -> Callable[[], None]:
+        """热重建入口（模型设置或服务策略保存时调用）—— 实现在 `Runtime.rebuild`。"""
+        return self.runtime.rebuild
 
     def ocr_candidates(self) -> OcrBackend | None:
         """按「服务」页的 OCR 端点序选一个可用后端（L3：两处重复调用收拢到此）。
@@ -219,7 +267,7 @@ class AppContext:
 
         return select_ocr_backend(
             self.settings,
-            order=[c.id for c in self.services.ordered_candidates("ocr")],
+            order=self.runtime.candidate_ids("ocr"),
             endpoints=self.services.endpoint_map("ocr"),
         )
 

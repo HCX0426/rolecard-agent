@@ -20,7 +20,6 @@ from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.chat import chat_events
 from rolecard_agent.api.deps import (
     DEFAULT_ROLE_ID,
-    DEFAULT_USER_ID,
     AppContext,
     expand_to_turns,
     get_actor,
@@ -32,6 +31,7 @@ from rolecard_agent.api.deps import (
 )
 from rolecard_agent.config import Settings
 from rolecard_agent.core.graph import build_graph_config
+from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.core.ingestion import INGESTION_FAILED, INGESTION_PENDING
 from rolecard_agent.core.observability import TraceEvent
 from rolecard_agent.core.state import new_state, now_ts

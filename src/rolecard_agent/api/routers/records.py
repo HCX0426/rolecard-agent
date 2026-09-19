@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import (
-    DEFAULT_USER_ID,
     AppContext,
     get_actor,
     get_context,
@@ -22,6 +21,7 @@ from rolecard_agent.api.deps import (
 from rolecard_agent.api.deps import (
     parsed_text_path as _parsed_text_path,
 )
+from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.core.ingestion import IngestionNotFound
 from rolecard_agent.core.observability import scrub_endpoints
 from rolecard_agent.domains.health.extract import (
