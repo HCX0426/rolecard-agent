@@ -1,9 +1,13 @@
-"""模型后端配置服务（core/model_settings.py）的单元测试。
+"""模型配置服务（core/model_settings.py）的单元测试。
 
-覆盖三处代码审查修复的不变量：
-  * H5：`effective_settings` 不再把「UI 已删、但 env 仍提供」的后端复活。
-  * M2：对话默认后端必须落在 chat 用途行上（embedding/rerank/ocr 不能当默认）。
-  * M8：`save` / `validate_base_url` 拒绝异常 scheme / 裸 host（SSRF 入口封堵）。
+覆盖代码审查修复的不变量（H5/M2/M8）与拆层后的三条新纪律：
+
+  * **一把 key 只有一个家**：同一 (供应商, 端点) 下的多个模型共用一条 `model_provider`，
+    省略 api_key = 保留组里已存的（不是"这行没 key"）；组里最后一个模型被删 = 组随 key 一起消失。
+  * **用途是派生的**：`usage`/`used_by` 来自 `service_endpoint` 引用行，`save_chat_pool`
+    写它即定义它 —— 模型页不再有可写的用途列。
+  * **能力位三态**：省略 = 保留库里已存的（含"没测过"），不是回落到默认值。
+  * **搬层无损**：旧库的 N 行折叠成 M 个组时，模型行、key、默认与回退顺序一个都不能变少。
 """
 
 from __future__ import annotations
@@ -12,8 +16,10 @@ import pytest
 
 from rolecard_agent.config import ModelBackend, Settings
 from rolecard_agent.core.model_settings import (
+    UNASSIGNED_USAGE,
     ModelSettingsError,
     ModelSettingsService,
+    migrate_to_provider_layers,
     validate_base_url,
 )
 from rolecard_agent.storage.db import bootstrap, connect
@@ -98,7 +104,8 @@ def test_save_rejects_non_chat_default() -> None:
         )
 
 
-def test_save_default_rejects_non_chat_backend() -> None:
+def test_chat_pool_rejects_unknown_backend() -> None:
+    """对话序列只能写模型页已有的行（凭空造引用 = 指向不存在的模型）。"""
     svc = ModelSettingsService(_conn())
     svc.save(
         default="chat",
@@ -109,8 +116,15 @@ def test_save_default_rejects_non_chat_backend() -> None:
              "usage": "chat"},
         ],
     )
-    with pytest.raises(ModelSettingsError, match="chat 用途"):
-        svc.save_default("emb", allowed_names={"emb", "chat"})
+    with pytest.raises(ModelSettingsError, match="不在模型页配置里"):
+        svc.save_chat_pool(["ghost"])
+    # 空序列也不行：那等于把对话彻底关掉，而界面上没有任何地方说得通。
+    with pytest.raises(ModelSettingsError, match="不能为空"):
+        svc.save_chat_pool([])
+    # 已存在的行**可以**被加进对话序列 —— 它原本"用于嵌入"不构成障碍：一行模型服务谁是
+    # 服务页的决定，不是行上写死的属性（拆层前的死循环正是 usage 自己定义了自己）。
+    svc.save_chat_pool(["chat", "emb"])
+    assert svc.list_fallbacks() == ["emb"]
 
 
 def test_save_prunes_stale_fallbacks_when_backends_shrink() -> None:
@@ -235,5 +249,276 @@ def test_capability_flags_roundtrip_and_defaults() -> None:
     row2 = svc.list_backends()[0]
     assert row2["supports_vision"] is False
     assert row2["supports_tools"] is True
+
+
+# --------------------------------------------------------------------------- #
+# 拆层①：一把 key 只有一个家
+# --------------------------------------------------------------------------- #
+
+def _silicon(row: dict[str, object]) -> dict[str, object]:
+    return {
+        "name": str(row["name"]),
+        "provider": str(row["provider"]),
+        "base_url": row.get("base_url"),
+        "model": str(row["model"]),
+        "usage": str(row.get("usage", "chat")),
+    }
+
+
+def test_same_endpoint_shares_one_credential_group() -> None:
+    """两个模型同一个端点 = 一个组、一把 key（用户："为啥不用供应商和模型名组成一个键"）。"""
+    svc = ModelSettingsService(_conn())
+    svc.save(
+        default="vl",
+        backends=[
+            {"name": "chat", "provider": "siliconflow", "model": "DeepSeek-V4",
+             "api_key": "sk-shared", "usage": "chat"},
+            {"name": "vl", "provider": "siliconflow", "usage": "chat",
+             "base_url": "https://api.siliconflow.cn/v1", "model": "Qwen3-VL-30B"},
+        ],
+    )
+    groups = svc.list_providers()
+    assert len(groups) == 1, "同一端点被拆成两组 = key 又有两个家"
+    assert groups[0]["provider"] == "siliconflow"
+    assert [m["name"] for m in groups[0]["models"]] == ["chat", "vl"]
+    # 两行都"有 key"，因为 key 属于组；掩码也来自组。
+    assert {b["has_key"] for b in svc.list_backends()} == {True}
+    assert {b["key_masked"] for b in svc.list_backends()} == {groups[0]["key_masked"]}
+
+
+def test_omitted_key_keeps_the_group_key_for_a_new_model() -> None:
+    """在已有供应商下再加一个模型不必重输凭据（这正是拆层要解决的日常动作）。"""
+    svc = ModelSettingsService(_conn())
+    svc.save(
+        default="chat",
+        backends=[{"name": "chat", "provider": "siliconflow", "model": "m-a",
+                   "api_key": "sk-1", "usage": "chat"}],
+    )
+    assert svc.has_key_for_endpoint("siliconflow", "https://api.siliconflow.cn/v1")
+    svc.save(
+        default="chat",
+        backends=[
+            _silicon({"name": "chat", "provider": "siliconflow",
+                      "base_url": "https://api.siliconflow.cn/v1", "model": "m-a"}),
+            _silicon({"name": "second", "provider": "siliconflow",
+                      "base_url": "https://api.siliconflow.cn/v1", "model": "m-b"}),
+        ],
+    )
+    assert [str(g["api_key"]) for g in svc._provider_rows()] == ["sk-1"]  # noqa: SLF001
+    # 空串 = 清除，且一次清掉整组（不会出现"半组模型没 key"的状态）。
+    svc.save(
+        default="chat",
+        backends=[
+            {**_silicon({"name": "chat", "provider": "siliconflow",
+                         "base_url": "https://api.siliconflow.cn/v1", "model": "m-a"}),
+             "api_key": ""},
+            _silicon({"name": "second", "provider": "siliconflow",
+                      "base_url": "https://api.siliconflow.cn/v1", "model": "m-b"}),
+        ],
+    )
+    assert [str(g["api_key"]) for g in svc._provider_rows()] == ["None"]  # noqa: SLF001
+
+
+def test_group_disappears_with_its_last_model() -> None:
+    """删掉组里最后一个模型 = 这个端点不再存在，key 随组一起消失（不留看不见的凭据）。"""
+    svc = ModelSettingsService(_conn())
+    svc.save(
+        default="chat",
+        backends=[
+            {"name": "chat", "provider": "siliconflow", "model": "m-a",
+             "api_key": "sk-1", "usage": "chat"},
+            {"name": "extra", "provider": "siliconflow", "model": "m-b",
+             "base_url": "https://api.siliconflow.cn/v1", "usage": "chat"},
+        ],
+    )
+    assert len(svc.list_providers()) == 1
+    svc.save(
+        default="chat",
+        backends=[{"name": "chat", "provider": "ollama", "model": "m-local", "usage": "chat"}],
+    )
+    assert [g["provider"] for g in svc.list_providers()] == ["ollama"]
+    assert svc.list_providers()[0]["has_key"] is False
+
+
+def test_local_provider_never_stores_a_key() -> None:
+    """Ollama 组一律不存 key：历史上测试与种子往里塞过占位串，界面因此谎报"已存凭据"。"""
+    svc = ModelSettingsService(_conn())
+    svc.save(
+        default="local",
+        backends=[{"name": "local", "provider": "ollama", "model": "qwen3-vl:8b",
+                   "api_key": "ollama", "usage": "chat"}],
+    )
+    group = svc.list_providers()[0]
+    assert group["has_key"] is False and group["key_masked"] is None
+    assert group["needs_key"] is False
+
+
+# --------------------------------------------------------------------------- #
+# 拆层②：用途派生自引用行
+# --------------------------------------------------------------------------- #
+
+def test_usage_is_derived_from_service_references() -> None:
+    """`used_by` 就是 service_endpoint 的引用集；从对话序列里摘掉一行 ≠ 删掉这行配置。"""
+    conn = _conn()
+    svc = ModelSettingsService(conn)
+    svc.save(
+        default="a",
+        backends=[
+            {"name": "a", "provider": "ollama", "model": "m-a", "usage": "chat"},
+            {"name": "b", "provider": "ollama", "model": "m-b", "usage": "chat"},
+        ],
+    )
+    assert [b["usage"] for b in svc.list_backends()] == ["chat", "chat"]
+    conn.execute(
+        "INSERT INTO service_endpoint (category, id, kind, ref_backend, enabled, sort_order, "
+        "builtin) VALUES ('embedding', 'b', 'cloud', 'b', 1, 0, 0)"
+    )
+    conn.commit()
+    by_name = {str(b["name"]): b for b in svc.list_backends()}
+    assert by_name["b"]["used_by"] == ["chat", "embedding"]
+
+    svc.save_chat_pool(["a"])  # b 退出对话，但仍服务嵌入
+    assert svc.default_backend() == "a"
+    assert svc.list_fallbacks() == []
+    by_name = {str(b["name"]): b for b in svc.list_backends()}
+    assert by_name["b"]["usage"] == "embedding"
+    assert by_name["b"]["used_by"] == ["embedding"]
+    # 关键：行还在，配置没变小 —— 只是"用于对话"这件事没了。
+    assert set(by_name) == {"a", "b"}
+    assert svc.effective_settings(Settings(model_backends={})).model_backends.keys() == {
+        "a",
+        "b",
+    }
+
+
+def test_unassigned_model_is_not_mistaken_for_a_chat_backend() -> None:
+    """刚加进来、还没被任何服务引用的行 = `unassigned`，不进对话可选列表。"""
+    conn = _conn()
+    svc = ModelSettingsService(conn)
+    conn.execute(
+        "INSERT INTO model_provider (id, provider, base_url, api_key, sort_order) "
+        "VALUES ('deepseek', 'deepseek', 'https://api.deepseek.com/v1', 'sk-x', 0)"
+    )
+    conn.execute(
+        "INSERT INTO model_backend (name, provider_id, model, sort_order) "
+        "VALUES ('fresh', 'deepseek', 'deepseek-chat', 0)"
+    )
+    conn.commit()
+    row = svc.list_backends()[0]
+    assert row["usage"] == UNASSIGNED_USAGE
+    assert row["used_by"] == []
+    # 服务页的模型推理候选按 usage=='chat' 过滤：它不该出现，但配置本身仍然可读。
+    assert [b["name"] for b in svc.list_backends() if b["usage"] == "chat"] == []
+    assert svc.default_backend() is None
+
+
+# --------------------------------------------------------------------------- #
+# 拆层③：能力位三态（NULL = 没测过，界面要渲染成 `?`）
+# --------------------------------------------------------------------------- #
+
+def test_capability_is_a_tri_state_and_survives_an_omitted_save() -> None:
+    """省略能力位 = 库里是什么就还是什么（探测结论与"没测过"都不能被无关保存改掉）。"""
+    conn = _conn()
+    svc = ModelSettingsService(conn)
+    svc.save(
+        default="vl",
+        backends=[{"name": "vl", "provider": "siliconflow", "model": "Qwen3-VL",
+                   "api_key": "sk-x", "usage": "chat", "supports_vision": True}],
+    )
+    assert svc.list_providers()[0]["models"][0]["supports_vision"] is True
+    # 另起一行"从没测过"的（NULL）：新添加流程就是这个状态，界面要渲染成 `?`。
+    conn.execute(
+        "INSERT INTO model_provider (id, provider, base_url, api_key, sort_order) "
+        "VALUES ('openai', 'openai', 'https://api.openai.com/v1', 'sk-k', 1)"
+    )
+    conn.execute(
+        "INSERT INTO model_backend (name, provider_id, model, sort_order) "
+        "VALUES ('unprobed', 'openai', 'gpt-x', 1)"
+    )
+    conn.commit()
+    models = {m["name"]: m for g in svc.list_providers() for m in g["models"]}
+    assert models["unprobed"]["supports_vision"] is None
+    assert models["unprobed"]["supports_tools"] is None
+    # 运行时那侧必须有确定值：未探测 = 放行（与 P1-2"只拦确定的否"同一条纪律）。
+    rows = {str(b["name"]): b for b in svc.list_backends()}
+    assert rows["unprobed"]["supports_vision"] is False
+    assert rows["unprobed"]["supports_tools"] is True
+
+    svc.save(
+        default="vl",
+        backends=[
+            {"name": "vl", "provider": "siliconflow", "model": "Qwen3-VL-32B",
+             "usage": "chat"},
+            {"name": "unprobed", "provider": "openai", "model": "gpt-x", "usage": "chat",
+             "base_url": "https://api.openai.com/v1"},
+        ],
+    )
+    models = {m["name"]: m for g in svc.list_providers() for m in g["models"]}
+    assert models["vl"]["supports_vision"] is True  # 没提交这一列 → 探测结论仍在
+    assert models["unprobed"]["supports_vision"] is None  # NULL 也没被悄悄写成"不支持"
+
+
+# --------------------------------------------------------------------------- #
+# 拆层④：搬层无损（旧库 → 两层 + chat 引用）
+# --------------------------------------------------------------------------- #
+
+_LEGACY_DDL = """
+CREATE TABLE model_provider (
+    id TEXT PRIMARY KEY, provider TEXT NOT NULL, label TEXT, base_url TEXT,
+    api_key TEXT, sort_order INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE service_endpoint (
+    category TEXT NOT NULL, id TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'cloud',
+    ref_backend TEXT, enabled INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0,
+    builtin INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (category, id)
+);
+CREATE TABLE kernel_meta (key TEXT PRIMARY KEY, value TEXT, updated_at TIMESTAMP);
+CREATE TABLE model_backend (
+    name TEXT PRIMARY KEY, provider TEXT NOT NULL, base_url TEXT, model TEXT NOT NULL,
+    api_key TEXT, sort_order INTEGER NOT NULL DEFAULT 0, usage TEXT NOT NULL DEFAULT 'chat',
+    num_ctx INTEGER, supports_vision INTEGER NOT NULL DEFAULT 0,
+    supports_tools INTEGER NOT NULL DEFAULT 1
+);
+"""
+
+
+def test_legacy_db_moves_into_two_layers_without_losing_config() -> None:
+    """三行旧数据（两行同一把 key）→ 两个组、一把 key、chat 顺序与默认一个不变。"""
+    conn = connect(":memory:")
+    conn.executescript(_LEGACY_DDL)
+    conn.executescript(
+        "INSERT INTO model_backend (name, provider, base_url, model, api_key, sort_order, "
+        "usage, num_ctx, supports_vision, supports_tools) VALUES "
+        "('vl',  'siliconflow', 'https://api.siliconflow.cn/v1', 'Qwen3-VL', 'sk-shared', 1, "
+        " 'chat', NULL, 1, 0),"
+        "('chat','siliconflow', 'https://api.siliconflow.cn/v1', 'DeepSeek', 'sk-shared', 0, "
+        " 'chat', NULL, 0, 1),"
+        "('local','ollama', 'http://localhost:11434', 'qwen3-vl:8b', NULL, 2, 'chat', 8192, 1, 1);"
+    )
+    conn.execute("INSERT INTO kernel_meta (key, value) VALUES ('model_default', 'local')")
+    conn.execute("INSERT INTO kernel_meta (key, value) VALUES ('model_fallbacks', "
+                 "'[\"chat\"]')")
+    conn.commit()
+
+    assert migrate_to_provider_layers(conn) == 2
+    assert migrate_to_provider_layers(conn) == 0  # 幂等：搬过就不再搬
+
+    svc = ModelSettingsService(conn)
+    groups = {str(g["id"]): g for g in svc._provider_rows()}  # noqa: SLF001
+    assert len(groups) == 2, "同一端点的两行必须归成一个组"
+    assert groups["siliconflow"]["api_key"] == "sk-shared"
+    assert [b["name"] for b in svc.list_backends()] == ["chat", "vl", "local"]
+    # 默认与回退顺序照搬：local 仍是第 1 位，chat 第二（旧链），vl 跟在后面。
+    assert svc.default_backend() == "local"
+    assert svc.list_fallbacks() == ["chat", "vl"]
+    # 旧列的三行用途都在：都是 chat；能力位与 num_ctx 原样跟行。
+    by_name = {str(b["name"]): b for b in svc.list_backends()}
+    assert by_name["vl"]["supports_vision"] is True and by_name["vl"]["supports_tools"] is False
+    assert by_name["local"]["num_ctx"] == 8192
+    # kernel_meta 里的第二处默认/回退链被清掉（事实面只剩引用行的顺序）。
+    left = conn.execute(
+        "SELECT key FROM kernel_meta WHERE key IN ('model_default','model_fallbacks')"
+    ).fetchall()
+    assert left == []
 
 

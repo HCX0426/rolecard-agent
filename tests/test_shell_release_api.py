@@ -34,10 +34,14 @@ class _Ctx:
     settings: Settings
 
 
-def _client(tmp_path: Path | None) -> TestClient:
-    app = create_app()
+def _client(release_dir: Path | None, tmp_path: Path) -> TestClient:
+    """建一个只为了这两个端点的 app。`sqlite_path` 必须显式给：`create_app()` 不传就会
+    bootstrap **仓库里的演示库**（data/sqlite/app.db），于是一个只读设置端点的测试开始改
+    真数据（本次拆层的迁移就是这样被撞出来的）。
+    """
+    app = create_app(sqlite_path=tmp_path / "runtime" / "shell-release.db")
     app.dependency_overrides[get_context] = lambda: _Ctx(
-        Settings(shell_release_dir=tmp_path)
+        Settings(shell_release_dir=release_dir)
     )
     return TestClient(app)
 
@@ -49,16 +53,16 @@ def _artifact(directory: Path, name: str, payload: bytes, mtime: float) -> Path:
     return path
 
 
-def test_not_configured_reports_unavailable() -> None:
+def test_not_configured_reports_unavailable(tmp_path: Path) -> None:
     """目录都没配：available 与 configured 都是 False，下载 404。"""
-    client = _client(None)
+    client = _client(None, tmp_path)
     body = client.get("/api/shell-release").json()
     assert body == {"available": False, "configured": False}
     assert client.get("/api/shell-release/download").status_code == 404
 
 
 def test_configured_but_empty_is_still_unavailable(tmp_path: Path) -> None:
-    client = _client(tmp_path)
+    client = _client(tmp_path, tmp_path)
     body = client.get("/api/shell-release").json()
     assert body == {"available": False, "configured": True}
     assert client.get("/api/shell-release/download").status_code == 404
@@ -69,14 +73,14 @@ def test_non_artifact_files_do_not_count(tmp_path: Path) -> None:
     (tmp_path / "latest.yml").write_text("version: 0.3.0", encoding="utf-8")
     (tmp_path / f"{_NEW}.blockmap").write_bytes(b"x")
     (tmp_path / "setup.exe").write_bytes(b"x")
-    body = _client(tmp_path).get("/api/shell-release").json()
+    body = _client(tmp_path, tmp_path).get("/api/shell-release").json()
     assert body == {"available": False, "configured": True}
 
 
 def test_newest_artifact_wins_and_reports_size(tmp_path: Path) -> None:
     _artifact(tmp_path, _OLD, b"old-old", 1_700_000_000)
     _artifact(tmp_path, _NEW, b"new-package-bytes", 1_800_000_000)
-    body = _client(tmp_path).get("/api/shell-release").json()
+    body = _client(tmp_path, tmp_path).get("/api/shell-release").json()
     assert body["available"] is True
     assert body["file_name"] == _NEW
     assert body["size_bytes"] == len(b"new-package-bytes")
@@ -86,7 +90,7 @@ def test_newest_artifact_wins_and_reports_size(tmp_path: Path) -> None:
 
 def test_download_streams_the_artifact_it_described(tmp_path: Path) -> None:
     _artifact(tmp_path, _NEW, b"binary-payload", 1_800_000_000)
-    client = _client(tmp_path)
+    client = _client(tmp_path, tmp_path)
     name = client.get("/api/shell-release").json()["file_name"]
     response = client.get("/api/shell-release/download")
     assert response.status_code == 200
@@ -96,11 +100,11 @@ def test_download_streams_the_artifact_it_described(tmp_path: Path) -> None:
 
 def test_missing_directory_config_does_not_explode(tmp_path: Path) -> None:
     """配置指向一个不存在的路径：报"没有产物"而不是 500（部署方删目录是常态）。"""
-    body = _client(tmp_path / "gone").get("/api/shell-release").json()
+    body = _client(tmp_path / "gone", tmp_path).get("/api/shell-release").json()
     assert body == {"available": False, "configured": True}
 
 
 @pytest.mark.parametrize("path", ["/api/shell-release", "/api/shell-release/download"])
 def test_endpoints_answer_without_credentials_when_auth_off(tmp_path: Path, path: str) -> None:
     """默认 AUTH_MODE=off 的本地形态下这两个都是**只读**端点：不碰主机，也不接受路径输入。"""
-    assert _client(tmp_path).get(path).status_code in {200, 404}
+    assert _client(tmp_path, tmp_path).get(path).status_code in {200, 404}

@@ -145,26 +145,55 @@ CREATE TABLE IF NOT EXISTS role_memory_item (
 CREATE INDEX IF NOT EXISTS idx_role_memory_item_bucket
     ON role_memory_item(role_id, invalidated_at, pinned, id DESC);
 
--- Runtime-editable model backends (settings page). Empty table = use env config as-is;
--- the first settings save takes over. API keys are stored PLAINTEXT in the local demo
--- database: this file never leaves the machine, and the GET endpoint never returns them
--- (only a has_key flag) - the round-trip rule lives in core/model_settings.py.
+-- ===========================================================================
+-- 模型配置两层（用户 2026-09-20：「为啥不用供应商和模型名组成一个键」）。
 --
--- usage 标记该配置的用途（架构归一化：模型页是云端端点配置的**唯一事实面**）：
---   chat      对话/抽取推理（默认；对话菜单与角色路由只消费这类行）
---   embedding 语义嵌入凭据（服务页「语义嵌入」引用）
---   rerank    检索重排凭据（服务页「检索重排」引用）
---   ocr       云端 OCR 凭据（如 OCR.space 账号；服务页「OCR」引用）
--- 服务页的云端条目一律是对本表行的**引用**，不复制配置（见 service_endpoint）。
-CREATE TABLE IF NOT EXISTS model_backend (
-    name        TEXT PRIMARY KEY,
-    provider    TEXT NOT NULL DEFAULT 'openai',
-    base_url    TEXT,
-    model       TEXT NOT NULL,
-    api_key     TEXT,
-    usage       TEXT NOT NULL DEFAULT 'chat',
-    sort_order  INTEGER NOT NULL DEFAULT 0
+--   model_provider  = **凭据层**：一组 = 一个 (供应商, base_url) 端点，key 只有一个家。
+--   model_backend   = **模型层**：一行 = 一个可调用的模型，指向某个供应商组。
+--
+-- 以前一张表混装两层，同一把 key 抄在每一行上（siliconflow / siliconflow-vl / …），
+-- 改 key 要改 N 处、漏一处就是"部分模型突然 401"。拆完之后 base_url / provider /
+-- api_key 都只在组上，模型行只剩"这个模型叫什么"。
+--
+-- api_key 明文存在**本机** demo 库里，这个文件不出机器；GET 端点永不回明文
+-- （只回 has_key + 掩码），写侧的往返规则在 core/model_settings.py。
+--
+-- **用途不在这里**（usage 列已删）：一行服务谁 = `service_endpoint` 里有没有指向它的
+-- 引用行（含 category='chat'，见 core/services.py）。模型页只读回显 `used_by`，
+-- 唯一的编辑入口在「服务」页签 —— 一个事实面。
+--
+-- 能力位是**三态**（NULL=没测过 / 0=测过且不支持 / 1=测过且支持），界面据此渲染
+-- `视觉 ?` / `视觉 ✗` / `视觉 ✓`：把"没测过"显示成"不支持"是撒谎，而"不支持"会
+-- 触发调用前拦截（P1-2 只拦确定的否）。运行时消费方（core/nodes、工厂）拿到的仍是
+-- bool：unknown 一律按"放行"解释（vision=False→不拦、tools=None→绑工具），
+-- 与拆层前一致。
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS model_provider (
+    id         TEXT PRIMARY KEY,                    -- 组键（供应商目录 id，重名加后缀）
+    provider   TEXT NOT NULL,                       -- 供应商目录 id：ollama/openai/siliconflow/…
+    label      TEXT,                                -- 展示名；NULL = 用目录 label
+    base_url   TEXT,                                -- 端点（native 风格不带 /v1；可空=自动）
+    api_key    TEXT,                                -- 凭据唯一源（无 key 供应商恒 NULL）
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- name 仍是模型行的主键：`session_thread.model_name` 与 `role_card.model_name` 都指向它，
+-- 拆层不能断这条链（本次唯一不能破的兼容点）。
+CREATE TABLE IF NOT EXISTS model_backend (
+    name             TEXT PRIMARY KEY,
+    provider_id      TEXT NOT NULL REFERENCES model_provider(id),
+    model            TEXT NOT NULL,
+    sort_order       INTEGER NOT NULL DEFAULT 0,
+    num_ctx          INTEGER,                       -- 本地 Ollama 上下文窗口；NULL=引擎默认
+    supports_vision  INTEGER,                       -- NULL=未探测
+    supports_tools   INTEGER                        -- NULL=未探测
+);
+
+-- 索引 `idx_model_backend_provider` 在 storage/db.py::_migrate 里建：搬层会重建本表，
+-- 索引必须跟着重建后的形状走（放在这里，旧库的 `CREATE TABLE IF NOT EXISTS` 会跳过建表、
+-- 却仍然执行这条 CREATE INDEX → "no such column: provider_id"）。
 
 -- ===========================================================================
 -- Document intake ledger.
@@ -235,13 +264,20 @@ CREATE INDEX IF NOT EXISTS idx_domain_data_domain ON domain_data(domain, user_id
 -- ===========================================================================
 -- Service endpoints (settings page,「服务」tab) — REFERENCES into model_backend.
 --
--- 架构归一化（引用模型）：模型页是云端端点配置的唯一事实面；本表只存「哪些配置参与
+-- 架构归一化（引用模型）：模型页是模型与凭据配置的唯一事实面；本表只存「哪些配置参与
 -- 这类服务、以什么优先级、是否启用」—— 绝不复制 key/base_url/model。
 --   本地行（builtin=1）：paddle / hash / off 等代码能力，id 固定、不可删、可排序停用；
 --   引用行（builtin=0）：ref_backend → model_backend.name，id = ref_backend（每类服务
 --   内一后端至多一条引用）。删除引用行**绝不**动模型页配置；后端被模型页删除时，
 --   引用行在视图中呈现「失效」。
 -- 优先级 = sort_order，第 1 位即生效；启停 = enabled。
+--
+-- category 取值：ocr / embedding / rerank（服务页可增删的三类）+ **chat**（「模型推理」
+-- 那一节）。chat 也是引用行 —— 这样"某模型用于对话"和"某模型用于嵌入"才是同一种事实，
+-- 模型页的 `used_by` 才能一处派生（拆层前它是 model_backend.usage 列，于是同一件事有两个
+-- 家：列说 chat、服务页的序说别的）。**对话默认后端 = category='chat' 第一条启用的引用**，
+-- 回退链 = 其后若干条（运行时截到 MAX_FALLBACKS）；kernel_meta 里不再有 model_default /
+-- model_fallbacks（旧值由迁移写进引用行的顺序，见 storage/db.py::_migrate）。
 -- ===========================================================================
 
 CREATE TABLE IF NOT EXISTS service_endpoint (

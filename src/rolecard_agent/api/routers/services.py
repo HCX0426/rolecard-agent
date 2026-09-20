@@ -141,28 +141,25 @@ def put_service_order(
 ) -> object:
     """全量写优先级（第 1 位生效）。嵌入/重排需重建 KnowledgeBase —— 复用热重建通道。
 
-    `key == "models"` 是特例：顺序直接映射为「对话默认后端 + 回退链」（与「模型」页签
-    同一份 kernel_meta 存储），改动后热重建默认模型与角色级模型缓存。
+    `key == "models"` 是特例：这一条序列**就是**"哪些模型用于对话"的事实面（拆层后不再
+    有 model_backend.usage 列），第 1 位 = 对话默认、其后 = 回退顺序（运行时截到
+    `MAX_FALLBACKS` 级）。候选是模型页的全部行，不是"已经用于对话的行"—— 否则第一次
+    把某个模型拖进对话就没有入口。改动后热重建默认模型与角色级模型缓存。
     """
     if key == "models":
-        chat_names = {
-            str(row["name"])
-            for row in ctx.model_settings.list_backends()
-            if str(row.get("usage", "chat")) == "chat"
-        }
-        unknown = [n for n in body.order if n not in chat_names]
+        known = {str(row["name"]) for row in ctx.model_settings.list_backends()}
+        unknown = [n for n in body.order if n not in known]
         if not body.order:
             raise HTTPException(status_code=400, detail="优先级列表不能为空。")
         if unknown:
             raise HTTPException(
                 status_code=400,
-                detail=f"以下不是对话用途的后端（或不存在）：{', '.join(unknown[:3])}",
+                detail=f"以下后端不在模型页配置里（或已被删除）：{', '.join(unknown[:3])}",
             )
         if len(set(body.order)) != len(body.order):
             raise HTTPException(status_code=400, detail="优先级列表出现了重复的后端名。")
         try:
-            ctx.model_settings.save_default(body.order[0], allowed_names=chat_names)
-            ctx.model_settings.save_fallbacks(body.order[1:], allowed_names=chat_names)
+            ctx.model_settings.save_chat_pool(body.order)
         except Exception as exc:  # noqa: BLE001 - 服务层异常转可读 400
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         ctx.roles.audit(

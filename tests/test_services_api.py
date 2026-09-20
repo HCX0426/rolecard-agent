@@ -184,8 +184,12 @@ def test_unavailable_first_choice_degrades_and_says_so(tmp_path: Path) -> None:
     conn = connect(db)
     bootstrap(conn, enabled_domains=("health",))
     conn.execute(
-        "INSERT INTO model_backend (name, provider, model, api_key, usage, sort_order) "
-        "VALUES ('cloud_nokey', 'siliconflow', 'BAAI/bge-m3', NULL, 'embedding', 0)"
+        "INSERT INTO model_provider (id, provider, base_url, api_key, sort_order) "
+        "VALUES ('siliconflow', 'siliconflow', NULL, NULL, 0)"
+    )
+    conn.execute(
+        "INSERT INTO model_backend (name, provider_id, model, sort_order) "
+        "VALUES ('cloud_nokey', 'siliconflow', 'BAAI/bge-m3', 0)"
     )
     conn.execute(
         "INSERT INTO service_endpoint (category, id, kind, ref_backend, enabled, sort_order, "

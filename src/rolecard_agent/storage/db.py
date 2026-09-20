@@ -232,35 +232,28 @@ def _columns(conn: SqlConnection, table: str) -> set[str]:
 def _migrate(conn: SqlConnection) -> None:
     """演示库的幂等列级迁移（无迁移框架，ALTER/DROP 全部可重跑）。
 
-    1. model_backend 增列 usage（供应商配置唯一事实面的用途标记）——旧库补列，默认 chat。
-    2. service_policy 已退役（策略并入 service_endpoint 行内 enabled/sort_order）→ DROP。
-    3. service_endpoint 旧形态（行内嵌 key/base_url 的"实例"模型）→ 整表重建为
+    1. service_policy 已退役（策略并入 service_endpoint 行内 enabled/sort_order）→ DROP。
+    2. service_endpoint 旧形态（行内嵌 key/base_url 的"实例"模型）→ 整表重建为
        「引用 model_backend」的新形态；旧行配置属演示数据且引用化后由模型页承接，
        直接弃用。**必须连 seed flag 一起清**，否则 seed_once 会以为播过种而跳过，
        留下一张空表（实测踩过：引用行全部缺失）。
+    3. model_backend 旧形态（一张表混装供应商凭据与模型，每行自带 provider/base_url/
+       api_key/usage）→ 先补齐历史列，再由 `model_settings.migrate_to_provider_layers`
+       搬进两层表（凭据上收到 model_provider、用途变成 service_endpoint 的 chat 引用）。
+       补列必须发生在搬层**之前**（搬层要读这些列），且必须限定"这是旧形态"才补 ——
+       新库里 model_backend 已经没有 usage 列，无条件补一次就是把它加回来。
     """
-    if "usage" not in _columns(conn, "model_backend"):
-        conn.execute("ALTER TABLE model_backend ADD COLUMN usage TEXT NOT NULL DEFAULT 'chat'")
-    # 4. model_backend 增列 num_ctx（本地 Ollama 的实际上下文窗口，tokens）。
-    #    为什么必须有：Ollama 默认只开 2048 tokens 的窗口——不显式传 num_ctx，
-    #    模型自带的 32k 窗口形同虚设，超出的历史会被引擎静默截断。NULL = 用模型默认。
-    if "num_ctx" not in _columns(conn, "model_backend"):
-        conn.execute("ALTER TABLE model_backend ADD COLUMN num_ctx INTEGER")
-    # 4b. model_backend 增列 supports_vision / supports_tools（后端能力位，用户 2026-09-19）。
-    #     换模型应对所有角色统一生效——能力是"模型"的属性，不是靠特殊角色去绕。
-    #     supports_vision：能否收图（对话页「视觉」徽标 + 调用前拦截的一半证据；云端模型
-    #     无法像 Ollama 那样探测视觉，故显式标注）。
-    #     supports_tools：工具调用是否可用（某些云端 VLM 一旦附工具就返回空，如 SiliconFlow
-    #     Qwen3-VL-30B-A3B）；false 时 call_model 这轮跳过 bind_tools，模型仍能正常答。
-    #     默认：不支持视觉、支持工具（与既有行为一致，只有显式标注才改变）。
-    if "supports_vision" not in _columns(conn, "model_backend"):
-        conn.execute(
-            "ALTER TABLE model_backend ADD COLUMN supports_vision INTEGER NOT NULL DEFAULT 0"
-        )
-    if "supports_tools" not in _columns(conn, "model_backend"):
-        conn.execute(
-            "ALTER TABLE model_backend ADD COLUMN supports_tools INTEGER NOT NULL DEFAULT 1"
-        )
+    cols = _columns(conn, "model_backend")
+    if cols and "provider_id" not in cols:
+        # 旧形态库：先把历史缺列补齐（这些列曾经分三次 ALTER 加过），再交给搬层迁移。
+        for name, ddl in {
+            "usage": "TEXT NOT NULL DEFAULT 'chat'",
+            "num_ctx": "INTEGER",
+            "supports_vision": "INTEGER NOT NULL DEFAULT 0",
+            "supports_tools": "INTEGER NOT NULL DEFAULT 1",
+        }.items():
+            if name not in cols:
+                conn.execute(f"ALTER TABLE model_backend ADD COLUMN {name} {ddl}")
     # 5. session_thread 增列 agent_mode（v2.5 会话级「对话/智能体」切换）。
     #    与 model_name 同一模式：NULL = 跟随全局默认（settings.agent_default_mode），
     #    chat 端点每轮实时读库解析有效值注入 state，会话切模式下一轮即生效。
@@ -331,3 +324,13 @@ def _migrate(conn: SqlConnection) -> None:
         conn.execute("DELETE FROM kernel_meta WHERE key = 'service_endpoints_seeded'")
         core = core_schema_path()
         conn.executescript(core.read_text(encoding="utf-8"))
+    # 9. model_backend 两层化（凭据上收 model_provider、usage 变成 chat 引用行）。
+    #    必须排在 service_endpoint 重建**之后**：搬层要往新形态的引用表里写 chat 行。
+    from rolecard_agent.core.model_settings import migrate_to_provider_layers  # noqa: PLC0415
+
+    migrate_to_provider_layers(conn)
+    # 索引在搬层之后建：搬层会 DROP/RENAME 重建 model_backend，先建的索引跟着表一起没了。
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_model_backend_provider ON model_backend"
+        "(provider_id, sort_order, name)"
+    )

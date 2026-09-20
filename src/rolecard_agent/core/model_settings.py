@@ -1,16 +1,32 @@
-"""Runtime-editable model backend configuration - the data layer behind the settings page.
+"""Runtime-editable model configuration - the data layer behind the settings page.
 
 Why a DB table instead of env-only: `MODEL_BACKENDS` (config.py) is a deploy-time contract.
 The settings page needs an OPERATOR-time contract: add a SiliconFlow/OpenAI-compatible
 endpoint, set the default, and have the next conversation turn use it WITHOUT restarting.
 Env stays the bootstrap truth; the first settings save takes over (see `effective_settings`).
 
-Two rules worth calling out:
+## 为什么是两层（2026-09-20 拆层）
 
-  * **API keys are write-only over the wire.** `list_backends` never returns a key (only a
-    `has_key` flag) so a browser session can never read secrets back. `save` therefore treats
-    a missing/None `api_key` as "keep the stored one for this backend name" and an empty
-    string as "clear it" - otherwise every save that did not retype the key would erase it.
+一张表混装两层时，同一把 key 抄在每一行上（`siliconflow` + `siliconflow-vl` + …），于是
+"改一次 key 要改 N 处"，漏一处就是"部分模型突然 401"（用户："为啥不用供应商和模型名组成
+一个键"）。拆完之后：
+
+  * `model_provider` = 凭据层：一组 = 一个 (供应商, base_url) 端点，**key 只有一个家**；
+  * `model_backend`  = 模型层：一行 = 一个可调用模型，指向某个组。`name` 仍是主键，
+    `session_thread.model_name` / `role_card.model_name` 都指着它 —— 拆层不能断这条链。
+
+  * **用途也不在行上了**：一行服务谁 = `service_endpoint` 里有没有指向它的引用行（含
+    category='chat'）。所以 `usage` 是**派生只读**值，唯一的写入口在「服务」页签。
+
+读侧形状不变：`raw_backends` / `list_backends` / `effective_settings` 仍给出带
+`provider`/`base_url`/`api_key`/`usage` 的"后端行"（JOIN + 派生补齐），所以内核、模型工厂、
+rag 与 services 一行不改。变的是写入与迁移：这些字段不再有第二处副本。
+
+两条规则值得单独说：
+
+  * **API keys are write-only over the wire.** 读接口从不返回 key（只有 `has_key` + 掩码），
+    浏览器会话因此永远读不到明文。`save` 把省略/None 的 `api_key` 理解为"保留该组已存的"、
+    空串理解为"清除" —— 否则每次没重输 key 的保存都会把 key 抹掉。
   * **Plaintext at rest, stated rather than hidden.** Keys live in the local demo SQLite
     file, which never leaves the machine. Production would move to a secret manager - that
     is a v2 concern, and pretending otherwise in a demo would be worse than the limitation.
@@ -18,12 +34,43 @@ Two rules worth calling out:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
+from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from rolecard_agent.config import MAX_FALLBACKS, ModelBackend, Settings
+from rolecard_agent.config import (
+    DEFAULT_SILICONFLOW_BASE_URL,
+    MAX_FALLBACKS,
+    ModelBackend,
+    Settings,
+)
 from rolecard_agent.storage.db import SqlConnection
+
+
+@dataclass(slots=True)
+class _PreparedBackend:
+    """`save()` 校验后的一行模型（还没落库）。
+
+    存在理由是"校验一次、写两处"：同一份数据既要按端点归并成凭据组，又要逐行写进
+    model_backend。用 dict 传的话每条读取都要 `str(...)`/`int(str(...))` 重申一遍类型，
+    拼错键名只会静默拿到 None —— 那是给"存进去一个跑不通的配置"开门。
+    """
+
+    name: str
+    endpoint: tuple[str, str | None]  # (供应商目录 id, base_url) = 凭据组的身份
+    model: str
+    # key 的三态：None = 这行没给（保留组里已存的）；"" = 清除；非空 = 设成它。
+    api_key: str | None
+    sort_order: int
+    num_ctx: int | None
+    supports_vision: int | None
+    supports_tools: int | None
+
+
+class ModelSettingsError(Exception):
+    """A settings write that would produce an unusable configuration. Message is user-safe."""
 
 
 def validate_base_url(value: str | None) -> str | None:
@@ -47,6 +94,7 @@ def validate_base_url(value: str | None) -> str | None:
         raise ModelSettingsError("base_url 缺少主机名。")
     return text
 
+
 # Backend names become keys in MODEL_BACKENDS-merged maps and UI list items: keep them tame.
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
@@ -57,22 +105,45 @@ _NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 # 写进 provider 才能让界面正确显示"硅基流动"，而不是一句无意义的"openai"。
 MODEL_PROVIDERS: tuple[dict[str, str], ...] = (
     {"id": "ollama", "label": "本地 Ollama", "needs_key": "0",
-     "base_url_hint": "http://localhost:11434（可留空）", "style": "native"},
+     "base_url_hint": "http://localhost:11434（可留空）", "style": "native",
+     "default_base_url": "http://localhost:11434"},
     {"id": "openai", "label": "OpenAI 兼容", "needs_key": "1",
-     "base_url_hint": "https://api.openai.com/v1", "style": "openai"},
+     "base_url_hint": "https://api.openai.com/v1", "style": "openai",
+     "default_base_url": "https://api.openai.com/v1"},
     {"id": "siliconflow", "label": "硅基流动", "needs_key": "1",
-     "base_url_hint": "https://api.siliconflow.cn/v1", "style": "openai"},
+     "base_url_hint": "https://api.siliconflow.cn/v1", "style": "openai",
+     "default_base_url": DEFAULT_SILICONFLOW_BASE_URL},
     {"id": "deepseek", "label": "DeepSeek", "needs_key": "1",
-     "base_url_hint": "https://api.deepseek.com/v1", "style": "openai"},
+     "base_url_hint": "https://api.deepseek.com/v1", "style": "openai",
+     "default_base_url": "https://api.deepseek.com/v1"},
 )
+
+# 留空 base_url 的厂商 = 用它自己的默认端点。分组必须按**归一后的端点**算：否则
+# "硅基流动 + 留空" 与 "硅基流动 + 显式 URL" 会成两个组，于是那把 key 又有了两个家 ——
+# 正是拆层要消灭的东西（用户在旧界面加第二个模型时不重填 URL，这条路径天天会走到）。
+_DEFAULT_BASE_URLS = {p["id"]: p["default_base_url"] for p in MODEL_PROVIDERS}
 
 # 历史 alias：旧数据/旧配置里的 "local" 一律视作 ollama（不再作为可选供应商出现）。
 PROVIDER_ALIASES = {"local": "ollama"}
 
 KEYLESS_PROVIDERS = frozenset({"ollama", "local"})
 
-# 模型页配置行的合法用途（架构归一化：一行配置服务一种能力，服务页按用途引用）。
+# 一行模型可以参与的服务。模型页**不再选用途**：它与其余三类一样是「服务」页签的一条引用
+# 行，模型页只读回显 `used_by`（用途只有一个事实面）。
 BACKEND_USAGES = frozenset({"chat", "embedding", "rerank", "ocr"})
+
+# 「模型推理」在 service_endpoint 里的类别键。它刻意**不进** `SERVICE_CATEGORIES`（那三类各有
+# 内置本地行、服务页可自由增删引用）：chat 引用只由本模块写，通用 REST 面
+# （/api/services/{key}/...）因此碰不到它 —— 少一个能写出半套语义的入口。
+CHAT_CATEGORY = "chat"
+
+# `used_by` 的展示序：对话在前，其余按服务页的出现顺序。
+USAGE_DISPLAY_ORDER = ("chat", "embedding", "rerank", "ocr")
+
+# 没有被任何服务引用的一行模型。曾经它叫 "chat"（旧列的默认值），但那是撒谎：没人用它，
+# 而消费方（对话页/角色页的后端下拉）会因为它是 "chat" 把它列进去。"还没配用途"是个真实
+# 状态（刚添加的模型就是还没被任何服务引用），所以它需要自己的值。
+UNASSIGNED_USAGE = "unassigned"
 
 
 def _canonical(provider: str) -> str:
@@ -111,7 +182,7 @@ def client_style(provider: str) -> str:
 
 def is_keyless_provider(provider: str) -> bool:
     """本地类 provider（Ollama 及其别名 local）不需要 api_key。"""
-    return (provider or "").strip().lower() in KEYLESS_PROVIDERS
+    return _canonical(provider) in KEYLESS_PROVIDERS
 
 
 def provider_catalog() -> list[dict[str, str]]:
@@ -119,27 +190,261 @@ def provider_catalog() -> list[dict[str, str]]:
     return [dict(p) for p in MODEL_PROVIDERS]
 
 
-class ModelSettingsError(Exception):
-    """A settings write that would produce an unusable configuration. Message is user-safe."""
+def provider_label(provider: str) -> str:
+    """供应商 id 的展示名；目录外的自定义网关显示 id 本身（不编一个假名字）。"""
+    p = _canonical(provider)
+    for entry in MODEL_PROVIDERS:
+        if entry["id"] == p:
+            return entry["label"]
+    return p
+
+
+def mask_key(raw: str | None) -> str | None:
+    """回读的**掩码**密钥（如 `sk-…abcd`）；不足 9 字符全打点。
+
+    `raw[:3]…raw[-4:]` 对 7 字符的 key 等于把整个 key 拼回来，掩码就成了回明文
+    （审查报告 L2）。与 `core/services._mask_key` 同一纪律（那里是引用行的快照）。
+    """
+    if not raw:
+        return None
+    text = str(raw)
+    if len(text) <= 8:
+        return "•" * len(text)
+    return f"{text[:3]}…{text[-4:]}"
+
+
+def _table_columns(conn: SqlConnection, table: str) -> set[str]:
+    return {str(r["name"]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _group_id(taken: set[str], catalog: str) -> str:
+    """给凭据组分配 id：目录 id 本身，重名加 `-2`/`-3` 后缀（同一协议的两个不同端点）。
+
+    id 里带目录 id 是为了让审计日志与界面文案仍然认得出供应商。
+    """
+    if catalog not in taken:
+        taken.add(catalog)
+        return catalog
+    n = 2
+    while f"{catalog}-{n}" in taken:
+        n += 1
+    gid = f"{catalog}-{n}"
+    taken.add(gid)
+    return gid
+
+
+def _dedupe(names: list[str], allowed: set[str]) -> list[str]:
+    """按首次出现去重，丢掉不在 allowed 里的（env/历史默认值可能指向一个不存在的名字）。"""
+    out: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        if name in allowed and name not in seen:
+            seen.add(name)
+            out.append(name)
+    return out
+
+
+def endpoint_key(provider: str, base_url: object) -> tuple[str, str | None]:
+    """凭据组的身份 = (供应商目录 id, **归一后的**端点)。
+
+    留空的 base_url 折叠到该厂商的默认端点（运行时也是这么兜底的），所以"没填"与"填了
+    默认值"是同一个组。自定义网关不在目录里，留空就自成一组（它本来也没有可兜底的端点）。
+    """
+    catalog = normalize_provider(provider, str(base_url) if base_url else None)
+    base = str(base_url).strip() if base_url else ""
+    return (catalog, base or _DEFAULT_BASE_URLS.get(catalog) or None)
+
+
+# --------------------------------------------------------------------------- 搬层迁移
+
+
+def migrate_to_provider_layers(conn: SqlConnection) -> int:
+    """旧形态（每行自带 provider/base_url/api_key/usage）→ 两层 + chat 引用行。幂等。
+
+    由 `storage/db.py::_migrate` 在建表之后调用（那一步已把历史缺列补齐）。判据是
+    `model_backend.provider_id` 在不在：不在 = 旧库，搬；在 = 已搬过或本来就是新库。
+
+    三件事必须同时做，否则配置会**变小**（用户最不能接受的一种错）：
+
+      1. 同一 (供应商, base_url) 的行的 key 归并到一条 `model_provider`（取第一个非空 key
+         —— 它们本就是同一把 key 的副本）；
+      2. `usage='chat'` 的行换成 chat 引用行，**顺序照旧**（默认第 1 位，其后回退链），
+         否则拆一次层对话默认就换了个模型；
+      3. 删掉 kernel_meta 的 `model_default`/`model_fallbacks` —— 它们的事实面已经搬进
+         引用行的顺序，留着就是第二个家（下次读谁？没有答案）。
+
+    返回搬出的凭据组数（0 = 无需搬）。
+    """
+    cols = _table_columns(conn, "model_backend")
+    if not cols or "provider_id" in cols:
+        return 0
+    rows = conn.execute(
+        "SELECT name, provider, base_url, model, api_key, usage, sort_order, num_ctx, "
+        "supports_vision, supports_tools FROM model_backend ORDER BY sort_order, name"
+    ).fetchall()
+
+    groups: dict[tuple[str, str | None], dict[str, object]] = {}
+    taken: set[str] = set()
+    group_of_name: dict[str, str] = {}
+    for row in rows:
+        base = str(row["base_url"]) if row["base_url"] else None
+        catalog = normalize_provider(str(row["provider"]), base)
+        key = endpoint_key(catalog, base)
+        group = groups.get(key)
+        if group is None:
+            group = {
+                "id": _group_id(taken, catalog),
+                "provider": catalog,
+                "base_url": base,
+                "api_key": str(row["api_key"]) if row["api_key"] else None,
+            }
+            groups[key] = group
+        else:
+            if not group["api_key"] and row["api_key"]:
+                group["api_key"] = str(row["api_key"])
+            if not group["base_url"] and base:
+                group["base_url"] = base  # 存显式端点，比"留空靠默认兜底"更少一层推断
+        group_of_name[str(row["name"])] = str(group["id"])
+
+    for order, group in enumerate(groups.values()):
+        conn.execute(
+            "INSERT OR IGNORE INTO model_provider (id, provider, base_url, api_key, sort_order) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                str(group["id"]),
+                str(group["provider"]),
+                group["base_url"],
+                group["api_key"],
+                order,
+            ),
+        )
+
+    conn.execute(
+        "CREATE TABLE model_backend__layers ("
+        " name TEXT PRIMARY KEY,"
+        " provider_id TEXT NOT NULL REFERENCES model_provider(id),"
+        " model TEXT NOT NULL,"
+        " sort_order INTEGER NOT NULL DEFAULT 0,"
+        " num_ctx INTEGER,"
+        " supports_vision INTEGER,"
+        " supports_tools INTEGER)"
+    )
+    conn.executemany(
+        "INSERT INTO model_backend__layers "
+        "(name, provider_id, model, sort_order, num_ctx, supports_vision, supports_tools) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                str(row["name"]),
+                group_of_name[str(row["name"])],
+                str(row["model"]),
+                int(str(row["sort_order"])),
+                row["num_ctx"],
+                row["supports_vision"],
+                row["supports_tools"],
+            )
+            for row in rows
+        ],
+    )
+    conn.execute("DROP TABLE model_backend")
+    conn.execute("ALTER TABLE model_backend__layers RENAME TO model_backend")
+
+    # usage → 引用行：默认与回退链的顺序照搬，其余 chat 行按原序跟在后面。
+    legacy_default = conn.execute(
+        "SELECT value FROM kernel_meta WHERE key = 'model_default'"
+    ).fetchone()
+    legacy_chain = conn.execute(
+        "SELECT value FROM kernel_meta WHERE key = 'model_fallbacks'"
+    ).fetchone()
+    chain: list[str] = []
+    if legacy_chain and legacy_chain["value"]:
+        with contextlib.suppress(ValueError):
+            chain = [str(x) for x in json.loads(str(legacy_chain["value"]))]
+    head = [str(legacy_default["value"])] if legacy_default and legacy_default["value"] else []
+    chat_names = [str(row["name"]) for row in rows if str(row["usage"]) == "chat"]
+    ordered = _dedupe([*head, *chain, *chat_names], set(chat_names))
+    kinds = _kind_of_names(conn, ordered)
+    for order, name in enumerate(ordered):
+        conn.execute(
+            "INSERT OR IGNORE INTO service_endpoint "
+            "(category, id, kind, ref_backend, enabled, sort_order, builtin) "
+            "VALUES (?, ?, ?, ?, 1, ?, 0)",
+            (CHAT_CATEGORY, name, kinds.get(name, "cloud"), name, order),
+        )
+    conn.execute("DELETE FROM kernel_meta WHERE key IN ('model_default', 'model_fallbacks')")
+    conn.commit()
+    return len(groups)
+
+
+def _kind_of_names(conn: SqlConnection, names: list[str]) -> dict[str, str]:
+    """引用行的 kind 跟随凭据组风格（native = 本地类，数据不出机）。"""
+    rows = conn.execute(
+        "SELECT b.name, p.provider FROM model_backend b JOIN model_provider p "
+        "ON p.id = b.provider_id"
+    ).fetchall()
+    by_name = {str(r["name"]): str(r["provider"]) for r in rows}
+    return {
+        n: ("local" if client_style(by_name.get(n, "")) == "native" else "cloud")
+        for n in names
+    }
+
+
+# --------------------------------------------------------------------------- 服务层
 
 
 class ModelSettingsService:
-    MODEL_DEFAULT_KEY = "model_default"
     MODEL_SEEDED_KEY = "model_backends_seeded"
-    FALLBACKS_KEY = "model_fallbacks"
 
     def __init__(self, conn: SqlConnection) -> None:
         self._conn = conn
 
     # -- reads -----------------------------------------------------------------
 
-    def _raw_backends(self) -> list[dict[str, object]]:
+    def _provider_rows(self) -> list[dict[str, object]]:
         rows = self._conn.execute(
-            "SELECT name, provider, base_url, model, api_key, usage, sort_order, num_ctx, "
-            "supports_vision, supports_tools "
-            "FROM model_backend ORDER BY sort_order, name"
+            "SELECT id, provider, label, base_url, api_key, sort_order "
+            "FROM model_provider ORDER BY sort_order, id"
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def _usages(self) -> dict[str, list[str]]:
+        """后端名 → 引用它的服务类别（chat 在前，其余按优先级序）。
+
+        这就是"用途"的唯一事实面：服务页写引用行，模型页只读这张映射。
+        """
+        rows = self._conn.execute(
+            "SELECT ref_backend, category FROM service_endpoint "
+            "WHERE builtin = 0 AND ref_backend IS NOT NULL "
+            "ORDER BY CASE WHEN category = 'chat' THEN 0 ELSE 1 END, sort_order, category"
+        ).fetchall()
+        out: dict[str, list[str]] = {}
+        for row in rows:
+            buckets = out.setdefault(str(row["ref_backend"]), [])
+            if str(row["category"]) not in buckets:
+                buckets.append(str(row["category"]))
+        return out
+
+    def _raw_backends(self) -> list[dict[str, object]]:
+        """两层 JOIN 出"后端行"视图 —— 内核与 services 消费的仍是拆层前那一形状。
+
+        `provider`/`base_url`/`api_key` 来自凭据组，`usage`/`used_by` 派生自引用行。
+        """
+        rows = self._conn.execute(
+            "SELECT b.name, b.provider_id, b.model, b.sort_order, b.num_ctx, "
+            "b.supports_vision, b.supports_tools, "
+            "p.provider, p.label, p.base_url, p.api_key "
+            "FROM model_backend b JOIN model_provider p ON p.id = b.provider_id "
+            "ORDER BY b.sort_order, b.name"
+        ).fetchall()
+        usages = self._usages()
+        out: list[dict[str, object]] = []
+        for row in rows:
+            item = dict(row)
+            used = usages.get(str(item["name"]), [])
+            item["used_by"] = used
+            item["usage"] = _derived_usage(used)
+            out.append(item)
+        return out
 
     def raw_backends(self) -> list[dict[str, object]]:
         """进程内配置解析用（服务引用行取凭据、工厂实例化）。
@@ -150,112 +455,173 @@ class ModelSettingsService:
         return self._raw_backends()
 
     def list_backends(self) -> list[dict[str, object]]:
-        """Public shape: NO api_key ever leaves the service, only `has_key` + a masked preview."""
+        """过渡形状（对话页 / 角色页 / 旧模型页仍在消费）：NO api_key ever leaves the service.
+
+        `usage` 现在是派生只读值；`used_by` 是它的全集（一行可同时服务多种能力）。
+        """
+        usages = self._usages()
         return [
             {
                 k: row[k]
                 for k in (
-                    "name", "provider", "base_url", "model", "usage", "sort_order", "num_ctx",
+                    "name", "provider", "base_url", "model", "usage", "sort_order",
+                    "num_ctx", "provider_id",
                 )
             }
             | {
-                "supports_vision": bool(row["supports_vision"]),
-                "supports_tools": bool(row["supports_tools"]),
+                "supports_vision": _vision_of(row["supports_vision"]),
+                "supports_tools": _tools_of(row["supports_tools"]),
                 "has_key": bool(row["api_key"]),
-                "key_masked": self.key_masked(str(row["name"])),
+                "key_masked": mask_key(str(row["api_key"]) if row["api_key"] else None),
+                "used_by": _sorted_usages(usages.get(str(row["name"]), [])),
             }
             for row in self._raw_backends()
         ]
 
-    def key_masked(self, name: str) -> str | None:
-        """回读的**掩码**密钥（如 `sk-…abcd`），仅用于页面"查看已保存密钥"；绝不回明文。
+    def list_providers(self) -> list[dict[str, object]]:
+        """「模型」页签的形状：按凭据组分层的卡片数据（key 只在组头出现一次）。
 
-        不足 9 字符时全打点：`raw[:3]…raw[-4:]` 对 7 字符的 key 等于把整个 key 拼回来，
-        掩码就成了回明文（审查报告 L2）。
+        能力位是**三态**（true / false / null=没测过）—— 把"没测过"显示成"不支持"是撒谎，
+        而"不支持"会触发调用前拦截。运行时那侧仍按 bool 解释（`_vision_of`/`_tools_of`）。
         """
-        raw = self.stored_api_key(name)
-        if not raw:
-            return None
-        text = str(raw)
-        if len(text) <= 8:
-            return "•" * len(text)
-        return f"{text[:3]}…{text[-4:]}"
+        usages = self._usages()
+        default = self.default_backend()
+        models_of_group: dict[str, list[dict[str, object]]] = {}
+        for row in self._conn.execute(
+            "SELECT name, provider_id, model, num_ctx, supports_vision, supports_tools "
+            "FROM model_backend ORDER BY sort_order, name"
+        ).fetchall():
+            name = str(row["name"])
+            models_of_group.setdefault(str(row["provider_id"]), []).append(
+                {
+                    "name": name,
+                    "model": str(row["model"]),
+                    "num_ctx": row["num_ctx"],
+                    "supports_vision": _tri_state(row["supports_vision"]),
+                    "supports_tools": _tri_state(row["supports_tools"]),
+                    "used_by": _sorted_usages(usages.get(name, [])),
+                    "is_default": name == default,
+                }
+            )
+        out: list[dict[str, object]] = []
+        for group in self._provider_rows():
+            gid = str(group["id"])
+            provider = str(group["provider"])
+            out.append(
+                {
+                    "id": gid,
+                    "provider": provider,
+                    "label": str(group["label"] or provider_label(provider)),
+                    "base_url": group["base_url"],
+                    "style": client_style(provider),
+                    "needs_key": not is_keyless_provider(provider),
+                    "has_key": bool(group["api_key"]),
+                    "key_masked": mask_key(str(group["api_key"]) if group["api_key"] else None),
+                    "models": models_of_group.get(gid, []),
+                }
+            )
+        return out
 
     def default_backend(self) -> str | None:
-        """The operator-chosen default, or None = fall through to env's `model_default`."""
+        """对话默认后端 = chat 引用行的第 1 位；None = 未配置（退回 env 的 `model_default`）。"""
         row = self._conn.execute(
-            "SELECT value FROM kernel_meta WHERE key = ?", (self.MODEL_DEFAULT_KEY,)
+            "SELECT id FROM service_endpoint WHERE category = ? ORDER BY sort_order, id LIMIT 1",
+            (CHAT_CATEGORY,),
         ).fetchone()
-        value = str(row["value"]) if row and row["value"] else None
-        return value or None
+        return str(row["id"]) if row else None
 
     def stored_api_key(self, name: str) -> str | None:
-        """已保存的 key（只在本进程内使用，绝不经 API 回传）。"""
+        """已保存的 key（来自该行所属的凭据组；只在本进程内使用，绝不经 API 回传）。"""
         for row in self._raw_backends():
             if str(row["name"]) == name:
                 return row["api_key"]  # type: ignore[return-value]
         return None
 
-    def list_fallbacks(self) -> list[str] | None:
-        """Operator-configured fallback chain, or None = not configured (use env's)."""
-        row = self._conn.execute(
-            "SELECT value FROM kernel_meta WHERE key = ?", (self.FALLBACKS_KEY,)
-        ).fetchone()
-        if row is None or not row["value"]:
-            return None
-        try:
-            return [str(x) for x in json.loads(str(row["value"]))]
-        except json.JSONDecodeError:
-            return None
+    def stored_group_key(self, group_id: str) -> str | None:
+        """按**组**取 key（拆层后 key 不再属于单行；添加抽屉与探测端点用）。"""
+        for group in self._provider_rows():
+            if str(group["id"]) == group_id:
+                return group["api_key"]  # type: ignore[return-value]
+        return None
 
-    def save_fallbacks(self, fallbacks: list[str], *, allowed_names: set[str]) -> None:
-        """Standalone chain write, used by tests and tools that only touch fallbacks.
-        Prefer `save(fallbacks=...)` for full-config writes."""
-        if len(fallbacks) > MAX_FALLBACKS:
-            raise ModelSettingsError(f"回退链最多 {MAX_FALLBACKS} 级（过长只会掩盖降级质量）。")
-        if len(set(fallbacks)) != len(fallbacks):
-            raise ModelSettingsError("回退链里出现了重复的后端名。")
-        for name in fallbacks:
-            if name not in allowed_names:
-                raise ModelSettingsError(f"回退后端 {name!r} 不在已配置的后端列表里。")
-        self._conn.execute(
-            "INSERT INTO kernel_meta (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
-            "  updated_at = CURRENT_TIMESTAMP",
-            (self.FALLBACKS_KEY, json.dumps(fallbacks)),
-        )
-        self._conn.commit()
+    def has_key_for_endpoint(self, provider: str, base_url: str | None) -> bool:
+        """这个 (供应商, 端点) 是否已经有 key —— 决定"新增一行模型"要不要重输凭据。
 
-    def save_default(self, name: str, *, allowed_names: set[str]) -> None:
-        """Standalone default write，供「服务」页签的优先级列表使用（第 1 位 = 默认）。
-
-        Prefer `save(default=...)` for full-config writes —— 这里只改默认，不触碰后端行，
-        也不清回退链（优先级列表会紧接着用 `save_fallbacks` 写余下顺序）。
+        归一化必须与写入路径同源（都走 `endpoint_key`），否则界面上一行"看起来同一个"的
+        端点会因为留空/填了默认 URL 的差别被要求重填 key。
         """
-        if name not in allowed_names:
-            raise ModelSettingsError(f"默认后端 {name!r} 不在已配置的后端列表里。")
-        # M2：对话默认后端必须是 chat 用途；embedding/rerank/ocr 行不能当默认。
-        row = next((r for r in self._raw_backends() if str(r["name"]) == name), None)
-        if row is None or str(row["usage"]) != "chat":
-            raise ModelSettingsError(
-                f"默认后端 {name!r} 必须是已配置的 chat 用途后端（对话/抽取）。"
-            )
-        self._conn.execute(
-            "INSERT INTO kernel_meta (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
-            "  updated_at = CURRENT_TIMESTAMP",
-            (self.MODEL_DEFAULT_KEY, name),
+        target = endpoint_key(provider, base_url)
+        return any(
+            group["api_key"]
+            and endpoint_key(str(group["provider"]), group["base_url"]) == target
+            for group in self._provider_rows()
         )
+
+    def list_fallbacks(self) -> list[str] | None:
+        """Operator-configured fallback chain, or None = not configured (use env's).
+
+        派生自 chat 引用行：第 1 位是默认（不算回退），其后就是回退链。一条 chat 引用都没有
+        = 操作员没配过 = None（env 的 `MODEL_FALLBACKS` 仍然说话）。
+        """
+        names = self._chat_ref_names()
+        return names[1:] if names else None
+
+    # -- chat 引用行（"这行用于对话"这件事的事实面） ---------------------------------
+
+    def _chat_ref_names(self) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT id FROM service_endpoint WHERE category = ? ORDER BY sort_order, id",
+            (CHAT_CATEGORY,),
+        ).fetchall()
+        return [str(r["id"]) for r in rows]
+
+    def _write_chat_refs(self, ordered: list[str]) -> None:
+        """整体重写 chat 引用行（第 1 位 = 默认，其后 = 回退链）。"""
+        self._conn.execute("DELETE FROM service_endpoint WHERE category = ?", (CHAT_CATEGORY,))
+        kinds = _kind_of_names(self._conn, ordered)
+        for i, name in enumerate(ordered):
+            self._conn.execute(
+                "INSERT INTO service_endpoint "
+                "(category, id, kind, ref_backend, enabled, sort_order, builtin) "
+                "VALUES (?, ?, ?, ?, 1, ?, 0)",
+                (CHAT_CATEGORY, name, kinds.get(name, "cloud"), name, i),
+            )
+
+    def save_chat_pool(self, names: list[str]) -> None:
+        """「服务」页签模型推理序列的全量写入：第 1 位 = 对话默认，其后 = 回退顺序。
+
+        这一条就是"哪些模型用于对话"的事实面 —— 写它即定义它：列进来的行从此是 chat
+        用途，没列进来的不再是（引用被删）。所以候选**不能**只给"已经是 chat 的行"，
+        否则第一次加入就没有入口（拆层前的死循环：usage=chat 才能进列表，进列表才能改 usage）。
+
+        链长不再在这里拦："最多 2 级"是运行时的截断（`Settings.resolve_fallbacks`），
+        序列里第 4 位以后不参与回退，但仍然记录在案 —— 因为拖动顺序本身就是意图，
+        当场拒绝对用户没有意义（他改的是第 1 位，你却告诉他"链太长"）。
+        """
+        if not names:
+            raise ModelSettingsError("对话后端序列不能为空 —— 至少要留一个用于对话的模型。")
+        if len(set(names)) != len(names):
+            raise ModelSettingsError("对话序列里出现了重复的后端名。")
+        known = {str(row["name"]) for row in self._raw_backends()}
+        unknown = [n for n in names if n not in known]
+        if unknown:
+            raise ModelSettingsError(
+                f"以下后端不在模型页配置里：{', '.join(unknown[:3])}（请先在「模型」页签添加）。"
+            )
+        self._write_chat_refs(names)
         self._conn.commit()
 
     def seed_from_env(self, env_settings: Settings) -> int:
-        """First-boot migration: copy env backends into the table ONCE, then env is out of
-        the loop — the settings UI (this table) is the single source of truth afterwards.
+        """First-boot migration: copy env backends into the tables ONCE, then env is out of
+        the loop — the settings UI (these tables) is the single source of truth afterwards.
 
         The `model_backends_seeded` flag makes the migration one-way: a backend the operator
         deletes in the UI stays deleted even if env still provides it, and env edits after
         the first boot are deliberately ignored. 迁移是一次性的，这正是"以后都在界面配置"
         的含义。
+
+        env 的后端按 (供应商, base_url) 归并成凭据组（同一端点的多个模型共用一把 key），
+        `usage='chat'` 的行同时播 chat 引用，env 的默认后端排第 1 位。
         """
         flag = self._conn.execute(
             "SELECT value FROM kernel_meta WHERE key = ?", (self.MODEL_SEEDED_KEY,)
@@ -264,31 +630,56 @@ class ModelSettingsService:
             return 0
 
         existing = {str(r["name"]) for r in self._raw_backends()}
+        groups = {
+            endpoint_key(str(g["provider"]), g["base_url"]): str(g["id"])
+            for g in self._provider_rows()
+        }
+        taken = {str(g["id"]) for g in self._provider_rows()}
         inserted = 0
+        chat_rows: list[str] = []
         for name, backend in env_settings.model_backends.items():
             if name in existing:
                 continue
+            catalog = normalize_provider(backend.provider, backend.base_url)
+            base_url = validate_base_url(backend.base_url)
+            endpoint = endpoint_key(catalog, base_url)
+            if endpoint not in groups:
+                gid = _group_id(taken, catalog)
+                self._conn.execute(
+                    "INSERT INTO model_provider (id, provider, base_url, api_key, sort_order) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        gid,
+                        catalog,
+                        base_url,
+                        None if is_keyless_provider(catalog) else backend.api_key,
+                        len(taken) - 1,
+                    ),
+                )
+                groups[endpoint] = gid
             self._conn.execute(
                 "INSERT OR IGNORE INTO model_backend "
-                "(name, provider, base_url, model, api_key, usage, sort_order, num_ctx) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "(name, provider_id, model, sort_order, num_ctx, supports_vision, "
+                "supports_tools) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     name,
-                    backend.provider,
-                    backend.base_url,
+                    groups[endpoint],
                     backend.model,
-                    backend.api_key,
-                    backend.usage,
                     len(existing) + inserted,
                     backend.num_ctx,
+                    int(backend.supports_vision),
+                    int(backend.supports_tools),
                 ),
             )
+            if backend.usage == "chat":
+                chat_rows.append(name)
             inserted += 1
-        if inserted and self.default_backend() is None:
-            self._conn.execute(
-                "INSERT OR IGNORE INTO kernel_meta (key, value) VALUES (?, ?)",
-                (self.MODEL_DEFAULT_KEY, env_settings.model_default),
+        if chat_rows:
+            ordered = _dedupe(
+                [env_settings.model_default, *env_settings.model_fallbacks, *chat_rows],
+                set(chat_rows),
             )
+            self._write_chat_refs(ordered)
         self._conn.execute(
             "INSERT OR IGNORE INTO kernel_meta (key, value) VALUES (?, ?)",
             (self.MODEL_SEEDED_KEY, "1"),
@@ -311,7 +702,7 @@ class ModelSettingsService:
         self._conn.commit()
 
     def normalize_providers(self) -> int:
-        """启动时一次性归一化历史行的 provider，并清掉无 key 供应商误存的 key。
+        """启动时一次性归一化历史组的 provider，并清掉无 key 供应商误存的 key。
 
         幂等：归一化后的值再跑一遍不再变化。修复两类历史脏数据 ——
         ① 云端种子把 SiliconFlow 写成 provider="openai"（只记了风格没记厂商），
@@ -319,15 +710,15 @@ class ModelSettingsService:
         ② 无 key 供应商（Ollama）被早期测试写入了无意义的占位 key。
         """
         changed = 0
-        for row in self._raw_backends():
-            old = str(row["provider"])
-            base = str(row["base_url"]) if row["base_url"] else None
+        for group in self._provider_rows():
+            old = str(group["provider"])
+            base = str(group["base_url"]) if group["base_url"] else None
             norm = normalize_provider(old, base)
-            drop_key = is_keyless_provider(norm) and bool(row["api_key"])
+            drop_key = is_keyless_provider(norm) and bool(group["api_key"])
             if norm != old or drop_key:
                 self._conn.execute(
-                    "UPDATE model_backend SET provider = ?, api_key = ? WHERE name = ?",
-                    (norm, None if drop_key else row["api_key"], str(row["name"])),
+                    "UPDATE model_provider SET provider = ?, api_key = ? WHERE id = ?",
+                    (norm, None if drop_key else group["api_key"], str(group["id"])),
                 )
                 changed += 1
         if changed:
@@ -343,21 +734,27 @@ class ModelSettingsService:
         backends: list[dict[str, object]],
         fallbacks: list[str] | None = None,
     ) -> None:
-        """Replace the whole backend set in one transaction (the UI edits a list, then saves).
+        """Replace the whole backend set in one transaction（过渡期：旧模型页的整表保存）。
 
-        `api_key` semantics per entry: None/absent = keep the stored key for this name;
-        "" = clear; a non-empty string = set. Anything else about the row is replaced.
+        入参仍是**旧形状**：每行带 provider/base_url/api_key/usage。内部按 (供应商, base_url)
+        归并成凭据组，模型行只留模型名 + 能力位 + num_ctx；`usage='chat'` 翻译成 chat 引用行
+        （第 1 位 = `default`，其后 = `fallbacks`）。旧界面下线后本方法随
+        `PUT /api/settings/models` 一起退役，新界面走逐条增删改的端点。
 
-        `fallbacks` (None = keep current) is the ordered failure chain. It is validated in the
-        SAME transaction as the backends, so a config can never be saved with a fallback
-        pointing at a backend that does not exist.
+        `api_key` 语义（组内聚合后落到组上）：任一行给了非空串 = 设成它；给了空串且无人给
+        新值 = 清除；所有行都省略 = 保留组里已存的。无 key 供应商（Ollama）一律不存 key。
         """
         if not backends:
             raise ModelSettingsError("至少需要保留一个模型后端。")
+        stored_rows = {str(row["name"]): row for row in self._raw_backends()}
+        existing_groups = {str(g["id"]): g for g in self._provider_rows()}
+        stored_gid_of_endpoint = {
+            endpoint_key(str(g["provider"]), g["base_url"]): str(g["id"])
+            for g in existing_groups.values()
+        }
         names: list[str] = []
         usage_by_name: dict[str, str] = {}
-        prepared: list[tuple[object, ...]] = []
-        existing_keys = {str(row["name"]): row["api_key"] for row in self._raw_backends()}
+        prepared: list[_PreparedBackend] = []
         for i, item in enumerate(backends):
             name = str(item.get("name") or "").strip()
             provider = str(item.get("provider") or "").strip()
@@ -397,21 +794,23 @@ class ModelSettingsService:
             base_url = validate_base_url(str(raw_base) if raw_base else None)
             names.append(name)
             usage_by_name[name] = usage
-
             raw_key = item.get("api_key")
-            if raw_key is None:
-                key = existing_keys.get(name)  # omitted -> keep whatever is stored
-            elif str(raw_key).strip() == "":
-                key = None  # explicit clear
-            else:
-                key = str(raw_key).strip()
-            # 能力位：缺省按"不支持视觉、支持工具"（与历史行为一致，只有显式标注才改变）。
-            supports_vision = bool(item.get("supports_vision", False))
-            supports_tools = bool(item.get("supports_tools", True))
             prepared.append(
-                (
-                    name, provider, base_url, model, key, usage, i, num_ctx,
-                    int(supports_vision), int(supports_tools),
+                _PreparedBackend(
+                    name=name,
+                    endpoint=endpoint_key(provider, base_url),
+                    model=model,
+                    # 三态：省略/None = 这行没给（保留组里已存的）；空串 = 清除；非空 = 设值。
+                    api_key=None if raw_key is None else str(raw_key).strip(),
+                    sort_order=i,
+                    num_ctx=num_ctx,
+                    # 能力位三态：省略 = 保留库里已存的（包括"没测过"）；显式给了才写。
+                    supports_vision=_capability_of(
+                        item, "supports_vision", stored_rows.get(name), default=False
+                    ),
+                    supports_tools=_capability_of(
+                        item, "supports_tools", stored_rows.get(name), default=True
+                    ),
                 )
             )
 
@@ -439,25 +838,79 @@ class ModelSettingsService:
         for name in chain:
             if name not in names:
                 raise ModelSettingsError(f"回退后端 {name!r} 不在已配置的后端列表里。")
+            if usage_by_name[name] != "chat":
+                raise ModelSettingsError(
+                    f"回退后端 {name!r} 不是 chat 用途（对话/抽取），不能进回退链。"
+                )
+
+        # 组 key：先按端点聚合各行信号（给了新值 > 显式清除 > 保留已存的）。
+        orders: dict[tuple[str, str | None], int] = {}
+        signals: dict[tuple[str, str | None], str] = {}
+        keyless: dict[tuple[str, str | None], bool] = {}
+        for row in prepared:
+            endpoint = row.endpoint
+            orders.setdefault(endpoint, row.sort_order)
+            keyless[endpoint] = is_keyless_provider(endpoint[0])
+            if keyless[endpoint] or row.api_key is None:
+                continue
+            if row.api_key:
+                signals[endpoint] = row.api_key
+            else:
+                signals.setdefault(endpoint, "")
 
         self._conn.execute("DELETE FROM model_backend")
-        self._conn.executemany(
-            "INSERT INTO model_backend "
-            "(name, provider, base_url, model, api_key, usage, sort_order, num_ctx, "
-            "supports_vision, supports_tools) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            prepared,
-        )
-        for key, value in (
-            (self.MODEL_DEFAULT_KEY, default),
-            (self.FALLBACKS_KEY, json.dumps(chain)),
-        ):
+        used_ids: set[str] = set()
+        gid_of_endpoint: dict[tuple[str, str | None], str] = {}
+        for endpoint, order in orders.items():
+            stored_gid = stored_gid_of_endpoint.get(endpoint)
+            if keyless[endpoint]:
+                api_key = None  # 本地类供应商不存 key（历史脏数据也在这次保存里被清掉）
+            elif endpoint in signals:
+                api_key = signals[endpoint] or None
+            elif stored_gid is not None:
+                api_key = str(existing_groups[stored_gid]["api_key"] or "") or None
+            else:
+                api_key = None
+            if stored_gid is not None:
+                gid = stored_gid
+                self._conn.execute(
+                    "UPDATE model_provider SET base_url = ?, api_key = ?, sort_order = ? "
+                    "WHERE id = ?",
+                    (endpoint[1], api_key, order, gid),
+                )
+            else:
+                gid = _group_id(set(existing_groups) | used_ids, endpoint[0])
+                self._conn.execute(
+                    "INSERT INTO model_provider (id, provider, base_url, api_key, sort_order) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (gid, endpoint[0], endpoint[1], api_key, order),
+                )
+            gid_of_endpoint[endpoint] = gid
+            used_ids.add(gid)
+        for row in prepared:
             self._conn.execute(
-                "INSERT INTO kernel_meta (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
-                "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
-                "  updated_at = CURRENT_TIMESTAMP",
-                (key, value),
+                "INSERT INTO model_backend "
+                "(name, provider_id, model, sort_order, num_ctx, supports_vision, "
+                "supports_tools) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    row.name,
+                    gid_of_endpoint[row.endpoint],
+                    row.model,
+                    row.sort_order,
+                    row.num_ctx,
+                    row.supports_vision,
+                    row.supports_tools,
+                ),
             )
+        # 组里最后一个模型被删掉 = 这个端点不再存在。key 随组一起消失，不是"留着备用"：
+        # 界面上已经没有它，留在盘上就是一处看不见的凭据。
+        self._conn.execute(
+            f"DELETE FROM model_provider WHERE id NOT IN ({','.join('?' * len(used_ids))})",
+            tuple(used_ids),
+        )
+        # 用途（chat 引用行）：默认永远第 1 位，其后依次是回退链，再后面是其余对话后端。
+        chat_names = [n for n in names if usage_by_name[n] == "chat"]
+        self._write_chat_refs(_dedupe([default, *chain, *chat_names], set(chat_names)))
         self._conn.commit()
 
     # -- merge -------------------------------------------------------------------
@@ -481,8 +934,8 @@ class ModelSettingsService:
                 provider=str(row["provider"]),
                 usage=str(row["usage"]),
                 num_ctx=int(str(row["num_ctx"])) if row.get("num_ctx") is not None else None,
-                supports_vision=bool(row.get("supports_vision")),
-                supports_tools=bool(row.get("supports_tools", 1)),
+                supports_vision=_vision_of(row["supports_vision"]),
+                supports_tools=_tools_of(row["supports_tools"]),
             )
             for row in raw
         }
@@ -500,3 +953,76 @@ class ModelSettingsService:
                 else env_settings.model_fallbacks,
             }
         )
+
+
+# ------------------------------------------------------------------ 派生与三态小工具
+
+
+def _derived_usage(categories: list[str]) -> str:
+    """引用类别 → 过渡期的 `usage` 值：chat 优先，其次优先级最高的那个类别。"""
+    for candidate in USAGE_DISPLAY_ORDER:
+        if candidate in categories:
+            return candidate
+    return UNASSIGNED_USAGE
+
+
+def _sorted_usages(categories: list[str]) -> list[str]:
+    return [c for c in USAGE_DISPLAY_ORDER if c in categories] + [
+        c for c in sorted(categories) if c not in USAGE_DISPLAY_ORDER
+    ]
+
+
+def _tri_state(raw: object) -> bool | None:
+    """列值 → 三态：NULL 保持 null（"没测过"），0/1 → 明确 bool。不猜：猜就是第二个事实面。"""
+    if raw is None or raw == "":
+        return None
+    return bool(raw)
+
+
+def _vision_of(raw: object) -> bool:
+    """运行时语义：未探测 = 不支持视觉（拆层前的列默认值，行为不变）。"""
+    return bool(raw) if raw is not None else False
+
+
+def _tools_of(raw: object) -> bool:
+    """运行时语义：未探测 = 支持工具（与 P1-2"只拦确定的否"同一条纪律）。"""
+    return bool(raw) if raw is not None else True
+
+
+def _capability_of(
+    item: dict[str, object], field: str, stored: dict[str, object] | None, *, default: bool
+) -> int | None:
+    """能力位的三态写入：没提交这一列时，**库里是什么就还是什么**。
+
+    库里是 NULL（没测过）→ 继续 NULL。把"没测过"在一次无关的保存里悄悄写成"不支持"，
+    界面上就从 `?` 变成 `✗`，而 `✗` 会触发调用前拦截 —— 那不是"保留原状"，是改了行为。
+    只有库里根本没有这行（新增模型）才落到出厂默认（视觉不支持 / 工具支持）。
+    """
+    if field in item and item[field] is not None:
+        return int(bool(item[field]))
+    if stored is None:
+        return int(default)
+    raw = stored.get(field)
+    return None if raw is None else int(bool(raw))
+
+
+__all__ = [
+    "BACKEND_USAGES",
+    "CHAT_CATEGORY",
+    "KEYLESS_PROVIDERS",
+    "MODEL_PROVIDERS",
+    "ModelSettingsError",
+    "ModelSettingsService",
+    "PROVIDER_ALIASES",
+    "UNASSIGNED_USAGE",
+    "USAGE_DISPLAY_ORDER",
+    "client_style",
+    "endpoint_key",
+    "is_keyless_provider",
+    "mask_key",
+    "migrate_to_provider_layers",
+    "normalize_provider",
+    "provider_catalog",
+    "provider_label",
+    "validate_base_url",
+]

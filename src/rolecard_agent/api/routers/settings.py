@@ -37,8 +37,8 @@ class BackendSpec(BaseModel):
     base_url: str | None = None
     model: str = Field(min_length=1)
     api_key: str | None = None
-    # 模型页是云端端点配置的唯一事实面：usage 标记该行服务谁（chat/embedding/rerank/ocr），
-    # 服务页按用途引用。对话菜单与角色路由只消费 chat 行。
+    # 用途（chat/embedding/rerank/ocr）：**过渡字段**，界面不再选它。写进来只翻译成
+    # `service_endpoint` 的引用行（chat 由它决定，其余三类由服务页写），读出去是派生值。
     usage: str = "chat"
     # 本地 Ollama 的实际上下文窗口（tokens）；None = 引擎默认（常为 2048）。
     num_ctx: int | None = None
@@ -57,14 +57,26 @@ class ModelSettingsBody(BaseModel):
     fallbacks: list[str] | None = None
 
 
-@router.get("/api/settings/models")
-def get_model_settings(ctx: AppContext = Depends(get_context)) -> object:
-    """模型后端设置。api_key 永不回明文 —— 只有 has_key 标志 + 掩码预览。"""
+def _models_payload(ctx: AppContext) -> dict[str, object]:
+    """模型页的读形状（GET 与 PUT 响应同一份，前端不必猜两次不一样）。"""
     return {
         "default": ctx.model_settings.default_backend(),
+        "providers": ctx.model_settings.list_providers(),
         "backends": ctx.model_settings.list_backends(),
         "fallbacks": ctx.model_settings.list_fallbacks() or [],
     }
+
+
+@router.get("/api/settings/models")
+def get_model_settings(ctx: AppContext = Depends(get_context)) -> object:
+    """模型设置。api_key 永不回明文 —— 只有 has_key 掩码预览。
+
+    两个视图同时给（拆层过渡期，见 docs/模型页设计稿.md §5）：
+      * `providers` = 新形状：按凭据组分层的卡片数据，key 只在组头出现一次；
+      * `backends`  = 旧形状（对话页/角色页/旧模型页仍在消费），`usage` 已是派生只读值。
+    界面切完删 `backends`；两份不是两处真相，是同一份行数据的两种投影。
+    """
+    return _models_payload(ctx)
 
 
 @router.get("/api/settings/model-providers")
@@ -115,18 +127,22 @@ def put_model_settings(
 ) -> object:
     """保存后端集合并热重建（下一轮对话即用新后端，无需重启进程）。
 
-    api_key 语义：缺省/None = 保留已存 key；空串 = 清除 —— 否则每次没重输 key 的
-    保存都会把 key 抹掉。fallbacks = 失败自动回退链（≤2 级，按序尝试）。"""
+    api_key 语义：缺省/None = 保留**该凭据组**已存的 key；空串 = 清除 —— 否则每次没重输
+    key 的保存都会把 key 抹掉。同一 (供应商, 端点) 下的多个模型共用一把 key，所以"在已有
+    供应商下再加一个模型"不需要重填凭据。fallbacks = 失败自动回退链（≤2 级，按序尝试）。"""
     try:
-        # 凭据校验前置：需要 key 的 provider（openai 类）没有 key 时，保存即拒绝 ——
-        # 否则会存进一个"重建时才炸"的配置（实测：热重建抛 Missing credentials）。
+        # 凭据校验前置：需要 key 的端点没有 key 时，保存即拒绝 —— 否则会存进一个
+        # "重建时才炸"的配置（实测：热重建抛 Missing credentials）。
         for b in body.backends:
             if is_keyless_provider(b.provider):
                 continue
-            if not (b.api_key or ctx.model_settings.stored_api_key(b.name)):
-                raise ModelSettingsError(
-                    f"后端 {b.name} 使用 {b.provider}，缺少 api_key（本地 Ollama 无需填写）。"
-                )
+            if b.api_key:
+                continue
+            if ctx.model_settings.has_key_for_endpoint(b.provider, b.base_url):
+                continue  # 组里已有 key：这一行只是同端点的另一个模型，不必重输
+            raise ModelSettingsError(
+                f"后端 {b.name} 使用 {b.provider}，缺少 api_key（本地 Ollama 无需填写）。"
+            )
         # default/fallbacks 缺省 = 保留当前值（编辑入口已统一到「服务」页签优先级列表）。
         current_default = ctx.model_settings.default_backend() or "local"
         ctx.model_settings.save(
@@ -158,11 +174,7 @@ def put_model_settings(
         ctx.rebuild_runtime()
     except Exception as exc:  # noqa: BLE001 - 构建失败要给出可读原因，而不是 500 空壳
         raise HTTPException(status_code=500, detail=f"模型后端构建失败：{exc}") from exc
-    return {
-        "default": ctx.model_settings.default_backend(),
-        "backends": ctx.model_settings.list_backends(),
-        "fallbacks": ctx.model_settings.list_fallbacks() or [],
-    }
+    return _models_payload(ctx)
 
 
 # ---------------------------------------------------------------- 运行环境（只读展示）
