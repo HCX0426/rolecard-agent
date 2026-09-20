@@ -3,6 +3,7 @@ import {
   api,
   streamChat,
   streamEdit,
+  type BackendRow,
   type MessagePage,
   type MessageRow,
   type ModelProvider,
@@ -35,6 +36,12 @@ import ThinkingPanel from "../components/chat/ThinkingPanel";
 import { Markdown } from "../components/Markdown";
 
 /** 回答耗时：created_at 配对（用户 → 助手）换算成可读时长；无时间戳的旧消息返回 null。 */
+/** 模型设置里"这一页要显示的那些行"：只留对话后端（嵌入/重排/OCR 凭据行归服务页按用途引用）。
+ *  两条拉取路径（挂载、改窗口后刷新）共用它，state 因此只有一种形状。 */
+function chatRows(settings: ModelSettings): BackendRow[] {
+  return settings.backends.filter((b) => (b.usage ?? "chat") === "chat");
+}
+
 function fmtDuration(from: string, to: string): string | null {
   if (!from || !to) return null;
   const a = new Date(from.replace(" ", "T"));
@@ -87,16 +94,10 @@ export default function ChatPage({
     cancelMenuClose,
     closeAllMenus,
   } = useMenus();
-  const [backends, setBackends] = useState<
-    {
-      name: string;
-      provider: string;
-      model: string;
-      usage: string;
-      num_ctx: number | null;
-      supports_vision?: boolean;
-    }[]
-  >([]);
+  // 对话页只关心 usage=chat 的后端行；类型直接用 `api.ts` 的 `BackendRow`，不再自造窄化
+  // 形状（审计 §5）：以前挂载路径手挑 6 个字段、改窗口那条路径塞原始行 —— 同一个 state
+  // 两种形状，谁先跑过决定字段在不在，`supports_tools` 这类就这样被页面"看不见"了。
+  const [backends, setBackends] = useState<BackendRow[]>([]);
   // 供应商 id → 中文档称（分组标题显示"硅基流动"而非原始 id）
   const [providerLabels, setProviderLabels] = useState<Record<string, string>>({});
   const [defaultBackend, setDefaultBackend] = useState("");
@@ -167,16 +168,7 @@ export default function ChatPage({
     refreshSessions().catch((e) => setStatus(`加载对话失败：${e.message}`, "warn"));
     api.get<RoleCard[]>("/api/roles").then(setRoles).catch(() => {});
     api.get<ModelSettings>("/api/settings/models").then((s) => {
-      setBackends(
-        s.backends.map((b) => ({
-          name: b.name,
-          provider: b.provider,
-          model: b.model,
-          usage: b.usage ?? "chat",
-          num_ctx: b.num_ctx ?? null,
-          supports_vision: b.supports_vision ?? false,
-        })),
-      );
+      setBackends(chatRows(s));
       setDefaultBackend(s.default || s.backends[0]?.name || "");
     }).catch(() => {});
     api.get<{ providers: ModelProvider[] }>("/api/settings/model-providers")
@@ -353,7 +345,7 @@ export default function ChatPage({
     try {
       await api.setModelContext(name, numCtx);
       const ms = await api.get<ModelSettings>("/api/settings/models");
-      setBackends(ms.backends.filter((b) => b.usage === "chat"));
+      setBackends(chatRows(ms));
     } catch (e) {
       setStatus(`设置上下文窗口失败：${(e as Error).message}`, "warn");
     }
@@ -542,9 +534,9 @@ export default function ChatPage({
     roles.find((r) => r.role_id === "general_assistant")?.role_id || roles[0]?.role_id || "";
   const displayRole = currentRole || defaultRoleId;
   const grouped = useMemo(() => {
-    const g: Record<string, typeof backends> = {};
-    // 模型菜单只显示**对话**后端（usage=chat）；嵌入/重排/OCR 凭据行在服务页按用途引用。
-    for (const b of backends.filter((x) => x.usage === "chat")) (g[b.provider] ||= []).push(b);
+    const g: Record<string, BackendRow[]> = {};
+    // state 里已经只有**对话**后端（`chatRows` 在拉取边界就筛掉了），这里不再重复过滤。
+    for (const b of backends) (g[b.provider] ||= []).push(b);
     return Object.entries(g).sort(([a], [z]) => a.localeCompare(z));
   }, [backends]);
 

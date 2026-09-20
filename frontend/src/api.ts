@@ -79,7 +79,9 @@ export interface BackendRow {
   sort_order: number;
   /** 本地 Ollama 的实际上下文窗口（tokens）；null = 引擎默认。 */
   num_ctx: number | null;
-  /** 后端能力位：能否收图。当前只用于渲染「视觉」徽标；发图按钮尚未据此 disabled（审计 P1-2）。 */
+  /** 后端能力位：能否收图。对话页据此渲染「视觉」徽标；后端还把它当作**调用前拦截的一半
+   *  证据**（与 Ollama `/api/show` 的实测同时为否才拒，见 core/nodes P1-2）。发图按钮故意
+   *  不据此 disabled —— 判定只留在后端一处。 */
   supports_vision: boolean;
   /** 后端能力位：工具调用是否可用（false 时该轮不绑工具，兼容带 tools 会返回空的云端 VLM）。 */
   supports_tools: boolean;
