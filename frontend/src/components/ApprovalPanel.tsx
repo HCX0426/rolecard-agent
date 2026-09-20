@@ -152,19 +152,30 @@ export default function ApprovalPanel({
                   #{row.id} · {row.created_at?.replace("T", " ").slice(0, 16) || ""}
                 </span>
                 {row.status === "pending" && (
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => decide(row, "approve")}
-                      className="rounded bg-green-600 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-green-700"
-                    >
-                      批准
-                    </button>
-                    <button
-                      onClick={() => decide(row, "reject")}
-                      className="rounded bg-red-600 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-red-700"
-                    >
-                      拒绝
-                    </button>
+                  <div className="flex flex-col items-end gap-0.5">
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => decide(row, "approve")}
+                        disabled={!row.decide_token}
+                        className="rounded bg-green-600 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-green-700 disabled:bg-slate-300 disabled:text-slate-500 dark:disabled:bg-slate-700 dark:disabled:text-slate-500"
+                      >
+                        批准
+                      </button>
+                      <button
+                        onClick={() => decide(row, "reject")}
+                        disabled={!row.decide_token}
+                        className="rounded bg-red-600 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-red-700 disabled:bg-slate-300 disabled:text-slate-500 dark:disabled:bg-slate-700 dark:disabled:text-slate-500"
+                      >
+                        拒绝
+                      </button>
+                    </div>
+                    {/* 决定令牌是一次性的：为 null 说明这条已被批过、或列表是旧的。
+                        与其让人点一下吃 403，不如当场说清怎么恢复（禁用必须配说明）。 */}
+                    {!row.decide_token && (
+                      <span className="text-[10px] leading-tight text-slate-400 dark:text-slate-500">
+                        这条的决定令牌已用掉或过期 —— 关掉重开待批列表再批
+                      </span>
+                    )}
                   </div>
                 )}
               </div>

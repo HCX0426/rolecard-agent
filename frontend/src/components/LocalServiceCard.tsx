@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { api, type LocalServiceStatus } from "../api";
+import Button from "./ui/Button";
 import { shellBridge, type OllamaOwner } from "../lib/shell";
 
 function gb(bytes: number): string {
@@ -127,44 +128,60 @@ export function LocalServiceCard() {
             </p>
           )}
         </div>
-        <div className="flex shrink-0 gap-2">
-          {status.is_local && shell && !status.running && (
-            <button
-              onClick={() => void actService("start")}
-              disabled={busy !== null}
-              className="rounded-lg border border-blue-300 px-3 py-1.5 text-xs text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-900/30"
-            >
-              {busy === "start" ? "启动中…" : "启动 Ollama 服务"}
-            </button>
-          )}
-          {/* 只停自己起的：别人的 Ollama 不给这个按钮，而不是给了再拒绝 */}
-          {status.is_local && shell && status.running && owner?.managed && (
-            <button
-              onClick={() => void actService("stop")}
-              disabled={busy !== null}
-              className="rounded-lg border border-red-300 px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/30"
-            >
-              {busy === "stop" ? "停止中…" : "停止服务（本应用起的）"}
-            </button>
-          )}
-          {status.is_local && (
-            <button
-              onClick={() => void act("pin")}
-              disabled={busy !== null}
-              className="rounded-lg border border-blue-300 px-3 py-1.5 text-xs text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-900/30"
-            >
-              {busy === "pin" ? "载入中…（可能十几秒）" : "预热 / 常驻默认模型"}
-            </button>
-          )}
-          {status.resident.length > 0 && (
-            <button
+        <div className="flex shrink-0 flex-wrap items-start justify-end gap-2">
+            {status.is_local && shell && !status.running && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-blue-300 text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-900/30"
+                onClick={() => void actService("start")}
+                disabled={busy !== null}
+              >
+                {busy === "start" ? "启动中…" : "启动 Ollama 服务"}
+              </Button>
+            )}
+            {/* 只停自己起的：别人的 Ollama 不给这个按钮，而不是给了再拒绝 */}
+            {status.is_local && shell && status.running && owner?.managed && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-red-300 text-red-700 hover:bg-red-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/30"
+                onClick={() => void actService("stop")}
+                disabled={busy !== null}
+              >
+                {busy === "stop" ? "停止中…" : "停止服务（本应用起的）"}
+              </Button>
+            )}
+            {status.is_local && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-blue-300 text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-900/30"
+                onClick={() => void act("pin")}
+                disabled={busy !== null || !status.running}
+                disabledHint={
+                  status.running ? undefined : "本机推理服务没在跑 —— 先把它起起来才能预热"
+                }
+              >
+                {busy === "pin" ? "载入中…（可能十几秒）" : "预热 / 常驻默认模型"}
+              </Button>
+            )}
+            {/* 显存里没东西时以前**整个不出现**，用户不知道这个能力存在、也不知道为什么没有；
+                它属于"暂时不可用但有明确恢复路径"，所以是禁用 + 说明，而不是消失。
+                不按 is_local 收口：默认后端在云端、但显存里还驻着本地模型是真实场景，
+                那时"释放显存"照样是用户要的按钮（后端 unload 本来也不看默认后端是谁）。 */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-700 dark:text-amber-300 dark:hover:bg-amber-900/30"
               onClick={() => void act("unload")}
-              disabled={busy !== null}
-              className="rounded-lg border border-amber-300 px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-700 dark:text-amber-300 dark:hover:bg-amber-900/30"
+              disabled={busy !== null || status.resident.length === 0}
+              disabledHint={
+                status.resident.length > 0 ? undefined : "显存里现在没有模型 —— 预热或发一条消息之后这里就能用"
+              }
             >
               {busy === "unload" ? "释放中…" : "释放显存（卸载模型）"}
-            </button>
-          )}
+            </Button>
         </div>
       </div>
       {msg && (

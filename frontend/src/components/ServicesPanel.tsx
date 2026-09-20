@@ -285,6 +285,13 @@ export function ServicesPanel() {
                             >
                               ↓
                             </button>
+                            {/* 禁用必须配一句"怎么恢复"：`title` 在禁用按钮上 Chromium 根本不弹，
+                                所以说明要落在 DOM 里，而不是藏在悬浮提示里。 */}
+                            {!cand.enabled && (
+                              <span className="text-[10px] leading-tight text-slate-400 dark:text-slate-500">
+                                该行已停用 —— 先「启用」才能排优先级
+                              </span>
+                            )}
                             {!cat.order_only && (
                               <>
                                 <button

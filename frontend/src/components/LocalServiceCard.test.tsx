@@ -109,13 +109,26 @@ describe("LocalServiceCard", () => {
     );
     const { unmount } = render(<LocalServiceCard />);
     expect(await screen.findByText(/Ollama 没起来/)).toBeTruthy();
-    expect(screen.queryByText("释放显存（卸载模型）")).toBeNull();
+    // 按钮不再消失，而是禁用 + 说清怎么恢复（藏起来等于让人不知道有这能力）。
+    const unload = screen.getByRole("button", { name: /释放显存/ });
+    expect((unload as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/显存里现在没有模型/)).toBeTruthy();
+    const pin = screen.getByRole("button", { name: /预热 \/ 常驻/ });
+    expect((pin as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/先把它起起来才能预热/)).toBeTruthy();
     unmount();
 
     apiMock.getLocalService.mockResolvedValue(status({ resident: [], resident_bytes: 0 }));
     render(<LocalServiceCard />);
     expect(await screen.findByText(/冷加载/)).toBeTruthy();
     expect(screen.queryByText(/没起来/)).toBeNull();
+    // 服务在跑：预热可点；仍没驻留 → 释放照旧禁用并说明
+    expect((screen.getByRole("button", { name: /预热 \/ 常驻/ }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    expect((screen.getByRole("button", { name: /释放显存/ }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
   });
 
   it("默认模型不在显存里时点名（显存被别的模型占着的真实场景）", async () => {

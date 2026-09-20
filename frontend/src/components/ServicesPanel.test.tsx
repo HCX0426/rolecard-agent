@@ -87,3 +87,19 @@ describe("ServicesPanel 移除引用二次确认（useConfirm）", () => {
     expect(apiMock.del).not.toHaveBeenCalled();
   });
 });
+
+describe("ServicesPanel 停用行的排序按钮（禁用必须配说明）", () => {
+  it("行已停用：↑/↓ 禁用，且说明写在 DOM 里而不是 title 里", async () => {
+    const disabledRow = { ...VIEW.services[0].candidates[0], enabled: false };
+    const view = { services: [{ ...VIEW.services[0], candidates: [disabledRow] }] };
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/services") return view;
+      if (url === "/api/settings/models") return { backends: [], fallbacks: [], default: "" };
+      return {};
+    });
+    render(<ServicesPanel />);
+    const up = await screen.findByRole("button", { name: "↑" });
+    expect((up as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/先「启用」才能排优先级/)).toBeTruthy();
+  });
+});

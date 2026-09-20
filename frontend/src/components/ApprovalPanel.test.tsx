@@ -148,3 +148,16 @@ describe("ApprovalPanel 审批抽屉", () => {
     expect(apiMock.getApprovals).not.toHaveBeenCalled();
   });
 });
+  it("令牌为空（用过或列表是旧的）：批准/拒绝禁用并说明怎么恢复", async () => {
+    apiMock.getApprovals.mockResolvedValue(
+      page({ items: [{ ...page().items[0], decide_token: null }] }),
+    );
+    render(<ApprovalPanel open={true} onClose={() => {}} onPendingChange={() => {}} />);
+    await screen.findByText("python run.py --mode prod");
+    for (const name of ["批准", "拒绝"]) {
+      const btn = screen.getByRole("button", { name }) as HTMLButtonElement;
+      expect(btn.disabled).toBe(true);
+    }
+    expect(screen.getByText(/决定令牌已用掉或过期/)).toBeTruthy();
+    expect(apiMock.decideApproval).not.toHaveBeenCalled();
+  });
