@@ -73,6 +73,13 @@ def build_consensus_tool(*, settings: Any, build: Any = None) -> Any:
     def compare_model_answers(question: str) -> str:
         """把同一问题并行发给多个已配置的对话后端，并聚合比对它们的回答：一致结论、
         实质分歧点、有无后端缺席。适合事实核查与重要判断；一次调用约等于 N 次普通对话。"""
+        # 全局总闸（与 web 工具、run_command 同一模式：工具自己把关，返回可读的关闭说明，
+        # 而不是让模型对着一句"工具不存在"瞎猜）。
+        if not settings.consensus_enabled:
+            return (
+                "多模型比对已被总闸关闭（CONSENSUS_ENABLED=0）。"
+                "要启用请在「设置 → 运行环境 → 超时与预算」里打开总闸。"
+            )
         targets = _targets()
         if len(targets) < 2:
             return (

@@ -324,6 +324,12 @@ def runtime_payload(
                 "单次工具总时长",
             ),
             ("context_max_chars", "CONTEXT_MAX_CHARS", "历史字符预算", "送模型的历史上限"),
+            (
+                "consensus_enabled",
+                "CONSENSUS_ENABLED",
+                "多模型比对总闸",
+                "0 = compare_model_answers 返回关闭说明（一次≈N 次调用，且发给多个供应商）",
+            ),
         ],
     )
     add(

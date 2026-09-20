@@ -161,6 +161,13 @@ class Settings(BaseModel):
     # 一部分，关闭是显式选择（隐私 / 干净上下文）。
     memory_enabled: bool = True
 
+    # 多模型比对（`compare_model_answers`，core/consensus.py）**全局总闸**。开 = 白名单里
+    # 有它的角色可以一次问 N 个后端并聚合；关 = 工具一律返回关闭说明。
+    # 为什么值得一个闸（而不是只靠角色白名单）：一次调用 = N 次真实模型调用 + 1 次聚合，
+    # 且同一问题会被发给**多个供应商**（含云端）—— 成本与隐私都是"联网总闸"同一类。
+    # 默认开：它是显式触发的工具（模型只在用户要核查时调），不是每轮都跑的隐式行为。
+    consensus_enabled: bool = True
+
     # v2.5 Agent 模式的**全局默认**：chat = 普通对话（每轮一问一答）/
     # agent = 多步自主任务（规划 → 调工具 → 总结，步数上限放大、注入规划指令）。
     # 会话可单独覆盖（对话页切换，session_thread.agent_mode）；
@@ -384,6 +391,7 @@ class Settings(BaseModel):
             ("TOOL_TIMEOUT_SECONDS", "tool_timeout_seconds"),
             ("AGENT_MAX_STEPS", "agent_max_steps"),
             ("MEMORY_ENABLED", "memory_enabled"),
+            ("CONSENSUS_ENABLED", "consensus_enabled"),
             ("AGENT_DEFAULT_MODE", "agent_default_mode"),
             ("REACHOUT_ENABLED", "reachout_enabled"),
             ("REACHOUT_INTERVAL_MINUTES", "reachout_interval_minutes"),

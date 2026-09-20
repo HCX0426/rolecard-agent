@@ -53,6 +53,9 @@ RUNTIME_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("model_timeout_seconds", "MODEL_TIMEOUT_SECONDS", "float"),
     FieldSpec("tool_timeout_seconds", "TOOL_TIMEOUT_SECONDS", "float"),
     FieldSpec("context_max_chars", "CONTEXT_MAX_CHARS", "int"),
+    # 多模型比对总闸：关 = `compare_model_answers` 一律返回关闭说明（一次 = N 次真调用，
+    # 且同一问题会发给多个供应商；成本与隐私同一类，见 core/consensus.py）。
+    FieldSpec("consensus_enabled", "CONSENSUS_ENABLED", "bool"),
     # 跨会话记忆总开关：「设置→通用」记忆面板的开关走这里保存（保存即热重建生效）。
     FieldSpec("memory_enabled", "MEMORY_ENABLED", "bool"),
     # Agent 模式全局默认：「运行环境」页保存即热重建；会话级切换覆盖它（对话页）。

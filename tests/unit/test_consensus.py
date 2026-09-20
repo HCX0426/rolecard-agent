@@ -24,8 +24,9 @@ class FakeLLM:
         return self
 
 
-def _settings(*, fallbacks: list[str]) -> Settings:
+def _settings(*, fallbacks: list[str], consensus: bool = True) -> Settings:
     return Settings(
+        consensus_enabled=consensus,
         model_default="a",
         model_fallbacks=fallbacks,
         model_backends={
@@ -82,3 +83,20 @@ def test_consensus_with_single_backend_explains() -> None:
     tool = build_consensus_tool(settings=_settings(fallbacks=[]), build=lambda n: FakeLLM("x"))
     out = tool.invoke({"question": "q"})
     assert "无从比对" in out
+
+
+def test_consensus_master_switch_stops_every_call() -> None:
+    """CONSENSUS_ENABLED=0 必须**真的不发任何一次模型调用**（闸的价值就在省掉那 N 次），
+    而不是照跑完再把结果换成一句关闭说明。"""
+    fakes = {"a": FakeLLM("聚合结论"), "b": FakeLLM("回答B")}
+    tool = build_consensus_tool(
+        settings=_settings(fallbacks=["b"], consensus=False), build=lambda n: fakes[n]
+    )
+    out = tool.invoke({"question": "结石 6mm 严重吗"})
+    assert "已被总闸关闭" in out
+    assert fakes["a"].prompts == [] and fakes["b"].prompts == []
+
+
+def test_consensus_master_switch_defaults_to_on() -> None:
+    """默认开：它是显式触发的工具，不是每轮隐式跑的行为；关它是显式选择。"""
+    assert Settings().consensus_enabled is True
