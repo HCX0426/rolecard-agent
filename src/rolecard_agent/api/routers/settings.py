@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -15,13 +15,6 @@ from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context, value_error_to_http
 from rolecard_agent.config import Settings
 from rolecard_agent.core import runtime_settings
-from rolecard_agent.core.memory import (
-    clear_memory_text,
-    load_memory_text,
-    load_role_memory_text,
-    save_memory_text,
-    save_role_memory_text,
-)
 from rolecard_agent.core.model_settings import (
     ModelSettingsError,
     is_keyless_provider,
@@ -508,7 +501,7 @@ class MemoryBody(BaseModel):
 
 
 def _require_role(ctx: AppContext, role_id: str) -> None:
-    """角色作用域的守卫：角色不存在 → 404（避免凭空造出孤立的 role_memory 行）。"""
+    """角色作用域的守卫：角色不存在 → 404（避免凭空造出孤立的记忆桶）。"""
     if not ctx.roles.exists(role_id):
         raise HTTPException(status_code=404, detail=f"角色 {role_id!r} 不存在。")
 
@@ -516,16 +509,25 @@ def _require_role(ctx: AppContext, role_id: str) -> None:
 def _memory_payload(ctx: AppContext, role_id: str | None = None) -> dict[str, object]:
     """记忆面板数据。role_id=None → 全局用户记忆；给定 → 该角色专属记忆。
 
-    `enabled` 是**全局**记忆注入开关（memory_enabled），两作用域都回它供界面显示；
-    但它只能在**全局**作用域下改（角色作用域改它 → 400）。角色作用域只读该角色自己
-    存的那份，**不回退全局**（编辑/清空必须精确命中该角色的桶）。
+    `items` 是事实面（逐条可编辑/钉住/删除），`content` 是按注入顺序渲染出来的同一份 ——
+    两个字段不是两处真相：前者是行，后者是那几行的文本视图，界面两种用法都能拿。
+    `over_limit` 用来提示"建议整理"（超限的保底淘汰在写入时已做，模型合并是显式动作）。
     """
-    content = (
-        load_role_memory_text(ctx.conn, role_id)
-        if role_id
-        else load_memory_text(ctx.conn)
-    )
-    return {"enabled": ctx.settings.memory_enabled, "content": content, "role_id": role_id}
+    from rolecard_agent.core import memory as mem
+
+    bucket = role_id if role_id else mem.GLOBAL_BUCKET
+    items = mem.list_items(ctx.conn, bucket=bucket)
+    content, _ = mem.render_memory(ctx.conn, bucket=bucket)
+    active = [i for i in items if i["invalidated_at"] is None]
+    return {
+        "enabled": ctx.settings.memory_enabled,
+        "role_id": role_id,
+        "content": content,
+        "items": items,
+        "active_count": len(active),
+        "limit": mem.MAX_ITEMS_PER_BUCKET,
+        "over_limit": len(active) >= mem.MAX_ITEMS_PER_BUCKET,
+    }
 
 
 @router.get("/api/settings/memory")
@@ -533,7 +535,7 @@ def get_memory(
     ctx: AppContext = Depends(get_context),
     role_id: str | None = Query(None, max_length=64),
 ) -> object:
-    """跨会话记忆：开关（有效值）与全文。`?role_id=` 切到该角色的专属记忆。"""
+    """跨会话记忆：开关（有效值）+ 条目 + 渲染文本。`?role_id=` 切到该角色的专属记忆。"""
     if role_id:
         _require_role(ctx, role_id)
     return _memory_payload(ctx, role_id)
@@ -546,12 +548,15 @@ def put_memory(
     actor: Actor = Depends(get_actor),
     role_id: str | None = Query(None, max_length=64),
 ) -> object:
-    """保存记忆。全局作用域：开关变化走 runtime 覆盖（保存即热重建）+ 文本写 kernel_meta；
-    角色作用域（`?role_id=`）：只改该角色的 role_memory，**不接受改开关**（开关是全局的）。
+    """保存记忆。全局作用域：开关变化走 runtime 覆盖（保存即热重建）+ 整段文本按行覆写条目；
+    角色作用域（`?role_id=`）：只改该角色的桶，**不接受改开关**（开关是全局的）。
 
-    审计只记结构与体量（开关/字符数/作用域），不记记忆内容 —— 记忆可能含用户隐私事实，
-    审计日志不该成为它的第二个拷贝。
+    整段覆写只动**未钉住**的条目 —— 用户特意钉的东西不该被一次整段保存抹掉。
+    审计只记结构与体量（开关/字符数/作用域），不记记忆内容。
     """
+    from rolecard_agent.core import memory as mem
+
+    bucket = role_id if role_id else mem.GLOBAL_BUCKET
     if role_id:
         _require_role(ctx, role_id)
         if body.enabled is not None:
@@ -560,7 +565,7 @@ def put_memory(
             )
         if body.content is None:
             raise HTTPException(status_code=400, detail="没有要保存的内容。")
-        save_role_memory_text(ctx.conn, role_id, body.content)
+        mem.replace_bucket_from_text(ctx.conn, bucket=bucket, text=body.content)
         ctx.roles.audit(
             actor=actor.id,
             action="update_role_memory",
@@ -573,7 +578,7 @@ def put_memory(
         raise HTTPException(status_code=400, detail="没有要保存的内容。")
     saved_chars = 0 if body.content is None else len(body.content)
     if body.content is not None:
-        save_memory_text(ctx.conn, body.content)
+        mem.replace_bucket_from_text(ctx.conn, bucket=mem.GLOBAL_BUCKET, text=body.content)
     if body.enabled is not None:
         runtime_settings.save_overrides(ctx.conn, {"memory_enabled": "1" if body.enabled else "0"})
     ctx.roles.audit(
@@ -587,23 +592,114 @@ def put_memory(
     return _memory_payload(ctx)
 
 
+class MemoryItemBody(BaseModel):
+    """新增一条记忆。`role_id` 走查询参数，与整桶接口同一个作用域口径。"""
+
+    text: Annotated[str, Field(min_length=1, max_length=2000)]
+
+
+class MemoryItemPatchBody(BaseModel):
+    """改一条：文本与钉住状态任选其一。"""
+
+    text: Annotated[str | None, Field(default=None, max_length=2000)] = None
+    pinned: bool | None = None
+
+
+@router.post("/api/settings/memory/item")
+def post_memory_item(
+    body: MemoryItemBody,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+    role_id: str | None = Query(None, max_length=64),
+) -> object:
+    """面板手动加一条事实（source=manual）。角色作用域必须先有该角色。"""
+    from rolecard_agent.core import memory as mem
+
+    if role_id:
+        _require_role(ctx, role_id)
+    bucket = role_id if role_id else mem.GLOBAL_BUCKET
+    added = mem.add_item(ctx.conn, bucket=bucket, text=body.text, source="manual")
+    if added is None:
+        raise HTTPException(status_code=400, detail="传入的记忆内容为空。")
+    ctx.roles.audit(
+        actor=actor.id,
+        action="add_memory_item",
+        target=f"memory:{bucket}",
+        detail={"chars": len(added["text"])},
+    )
+    return _memory_payload(ctx, role_id)
+
+
+@router.patch("/api/settings/memory/item/{item_id}")
+def patch_memory_item(
+    item_id: int,
+    body: MemoryItemPatchBody,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+    role_id: str | None = Query(None, max_length=64),
+) -> object:
+    """改一条的文本，或钉住/取消钉住。"""
+    from rolecard_agent.core import memory as mem
+
+    if mem.get_item(ctx.conn, item_id) is None:
+        raise HTTPException(status_code=404, detail=f"记忆条目不存在：{item_id}")
+    updated: dict[str, object] = {}
+    if body.text is not None:
+        updated = mem.edit_item(ctx.conn, item_id=item_id, text=body.text) or {}
+    if body.pinned is not None:
+        updated = mem.set_pinned(ctx.conn, item_id=item_id, pinned=body.pinned) or {}
+    if not updated:
+        raise HTTPException(status_code=400, detail="没有要保存的内容。")
+    ctx.roles.audit(
+        actor=actor.id,
+        action="update_memory_item",
+        target=f"memory_item:{item_id}",
+        detail={"pinned": updated.get("pinned"), "chars": len(str(updated.get("text") or ""))},
+    )
+    return _memory_payload(ctx, role_id)
+
+
+@router.delete("/api/settings/memory/item/{item_id}")
+def remove_memory_item(
+    item_id: int,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+    role_id: str | None = Query(None, max_length=64),
+) -> object:
+    """删除一条。用户明确删除 = **物理删**（留个"已删除"的行只是把隐私留在盘上）；
+    自动退役才走 `invalidated_at`。"""
+    from rolecard_agent.core import memory as mem
+
+    if not mem.delete_item(ctx.conn, item_id=item_id):
+        raise HTTPException(status_code=404, detail=f"记忆条目不存在：{item_id}")
+    ctx.roles.audit(
+        actor=actor.id, action="delete_memory_item", target=f"memory_item:{item_id}", detail={}
+    )
+    return _memory_payload(ctx, role_id)
+
+
 @router.delete("/api/settings/memory")
 def delete_memory(
     ctx: AppContext = Depends(get_context),
     actor: Actor = Depends(get_actor),
     role_id: str | None = Query(None, max_length=64),
 ) -> object:
-    """清空记忆全文（开关不动）。给定 role_id 只清该角色的记忆。管理动作必须留痕。"""
+    """清空整个记忆桶（开关不动）。给定 role_id 只清该角色的。管理动作必须留痕。"""
+    from rolecard_agent.core import memory as mem
+
+    bucket = role_id if role_id else mem.GLOBAL_BUCKET
     if role_id:
         _require_role(ctx, role_id)
-        save_role_memory_text(ctx.conn, role_id, "")
-        ctx.roles.audit(
-            actor=actor.id, action="clear_role_memory", target=f"memory:{role_id}", detail={}
-        )
-        return _memory_payload(ctx, role_id)
-    clear_memory_text(ctx.conn)
-    ctx.roles.audit(actor=actor.id, action="clear_memory", target="memory", detail={})
-    return _memory_payload(ctx)
+    rows = mem.list_items(ctx.conn, bucket=bucket, include_invalidated=True)
+    for item in rows:
+        mem.delete_item(ctx.conn, item_id=item["id"])
+    ctx.roles.audit(
+        actor=actor.id,
+        action="clear_role_memory" if role_id else "clear_memory",
+        target=f"memory:{bucket}",
+        detail={"items": len(rows)},
+    )
+    return _memory_payload(ctx, role_id)
 
 
 __all__ = ["router"]

@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage
 from rolecard_agent.config import Settings
 from rolecard_agent.core import file_watch as fw
 from rolecard_agent.core import reachout as svc
-from rolecard_agent.core.memory import save_role_memory_text
+from rolecard_agent.core.memory import add_item
 from rolecard_agent.core.proactive_state import DEFAULT_AFFINITY_THRESHOLD, get_state
 from rolecard_agent.core.reachout import ReachoutScheduler
 from rolecard_agent.core.workspace import resolve_task_dir
@@ -194,7 +194,7 @@ def test_empty_memory_does_not_claim_long_term_memory(conn) -> None:
 
 def test_memory_present_restores_the_memory_clause(conn) -> None:
     role = _role()
-    save_role_memory_text(conn, role.role_id, "用户喜欢猫")
+    add_item(conn, bucket=role.role_id, text="用户喜欢猫")
     model = _FakeModel(AIMessage(content="嗨"))
     svc.generate_reachout_text(role, model, _settings(), conn, role_id=role.role_id)
     joined = _prompt_text(model)
@@ -460,7 +460,7 @@ def test_trigger_time_pattern_silent_without_history(conn) -> None:
 
 
 def test_trigger_recall_fires_when_role_memory_present(conn) -> None:
-    save_role_memory_text(conn, "active", "用户上周说想学吉他。")
+    add_item(conn, bucket="active", text="用户上周说想学吉他。")
     got = svc.trigger_recall(_role(), conn, now_local=_now_local())
     assert got == "recall"
 
@@ -472,7 +472,7 @@ def test_trigger_recall_silent_without_memory(conn) -> None:
 
 def test_trigger_recall_respects_role_toggle(conn) -> None:
     """回忆触发受 per-role 开关闸门：关掉后即使有专属记忆也不触发。"""
-    save_role_memory_text(conn, "active", "用户上周说想学吉他。")
+    add_item(conn, bucket="active", text="用户上周说想学吉他。")
     role = RoleCard(**{**_role().model_dump(), "recall_enabled": False})
     assert svc.trigger_recall(role, conn, now_local=_now_local()) is None
     # 开关开着则照常触发（对照）
@@ -506,7 +506,7 @@ def test_tick_once_runs_affection_trigger_and_bumps_affinity(conn) -> None:
 
 def test_generate_recall_mode_uses_role_memory(conn) -> None:
     """回忆触发的生成必须读该角色的专属记忆（per-role 隔离），而不是全局记忆。"""
-    save_role_memory_text(conn, "active", "专属记忆：他养了只猫。")
+    add_item(conn, bucket="active", text="专属记忆：他养了只猫。")
     role = _role()
     model = _FakeModel(AIMessage(content="我记得你养了猫。"))
     text = svc.generate_reachout_text(

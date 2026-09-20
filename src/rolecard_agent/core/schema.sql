@@ -120,6 +120,31 @@ CREATE TABLE IF NOT EXISTS role_memory (
     updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 记忆的**条目表**（取代上面那张 blob 成为事实面；旧表保留不删列是迁移纪律，
+-- 但注入/面板/工具都只认这张表 —— 两处都能写就等于两处会漂移）。
+-- 为什么从"一大段文本"改成条目：一坨文本没法逐条管理，于是没有"这条过期了 / 这条被
+-- 更新的事实取代了 / 这条别再用"的概念 —— 记忆只会越长越浑，且错事实粘滞。条目化之后
+-- 才有退役（invalidated_at）、版本链（superseded_by）、按近因×频次选择注入、以及
+-- recall 档"带着具体某一条去说"（以前它被要求"提起以前答应的事"却什么素材都没有）。
+-- role_id='' = 用户级全局桶（与旧的 kernel_meta memory:facts 同一语义，但按同一张表管理）。
+CREATE TABLE IF NOT EXISTS role_memory_item (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    role_id        TEXT NOT NULL,
+    text           TEXT NOT NULL,
+    source         TEXT NOT NULL DEFAULT 'manual'
+                   CHECK (source IN ('manual','chat','proactive','extract','seed')),
+    pinned         INTEGER NOT NULL DEFAULT 0,   -- 钉住 = 不参与淘汰、不被整理覆盖
+    hit_count      INTEGER NOT NULL DEFAULT 0,   -- 被注入过几次（近因×频次的"频次"那半）
+    last_hit_at    TIMESTAMP,
+    invalidated_at TIMESTAMP,                    -- **失效不删**：可撤销、可调试、可回滚
+    superseded_by  INTEGER,                      -- 取代它的那条 id（版本链）
+    created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_role_memory_item_bucket
+    ON role_memory_item(role_id, invalidated_at, pinned, id DESC);
+
 -- Runtime-editable model backends (settings page). Empty table = use env config as-is;
 -- the first settings save takes over. API keys are stored PLAINTEXT in the local demo
 -- database: this file never leaves the machine, and the GET endpoint never returns them

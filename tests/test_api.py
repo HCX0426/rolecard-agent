@@ -265,15 +265,23 @@ def test_patch_model_context_roundtrip(client: TestClient) -> None:
 
 
 def test_memory_get_put_delete_roundtrip(client: TestClient) -> None:
-    """跨会话记忆端点：读默认 → 保存文本 → 读回 → 清空 → 审计留痕。"""
+    """跨会话记忆端点：读默认 → 整段保存 → 读回（渲染视图）→ 清空 → 审计留痕。
+
+    `content` 现在是**条目渲染出来的文本**（带 `- ` 前缀），事实面是 `items`；
+    两个字段同源，不是两处真相。
+    """
     r0 = client.get("/api/settings/memory")
     assert r0.status_code == 200
     assert r0.json()["enabled"] is True  # 默认开
     assert r0.json()["content"] == ""
+    assert r0.json()["items"] == []
 
     r1 = client.put("/api/settings/memory", json={"content": "用户住在上海。\n用户周五交周报。"})
     assert r1.status_code == 200
-    assert r1.json()["content"] == "用户住在上海。\n用户周五交周报。"
+    # 顺序是"近因×频次"（同分时后写的在前），不是写入顺序：注入侧要的是这个顺序，
+    # 面板列出来也是这个顺序 —— 一个顺序两处共用，才有"看到的就是注入的"。
+    assert r1.json()["content"] == "- 用户周五交周报。\n- 用户住在上海。"
+    assert [i["text"] for i in r1.json()["items"]] == ["用户周五交周报。", "用户住在上海。"]
 
     r2 = client.put("/api/settings/memory", json={"enabled": False})
     assert r2.status_code == 200
@@ -282,11 +290,41 @@ def test_memory_get_put_delete_roundtrip(client: TestClient) -> None:
     r3 = client.delete("/api/settings/memory")
     assert r3.status_code == 200
     assert r3.json()["content"] == ""
+    assert r3.json()["items"] == []
 
     # 管理动作都进审计
     rows = client.get("/api/audit?limit=50").json()
     actions = [row["action"] for row in rows]
     assert "update_memory" in actions and "clear_memory" in actions
+
+
+def test_memory_item_endpoints_crud_and_pin(client: TestClient) -> None:
+    """逐条端点：加 → 钉住 → 改 → 删；钉住的条目不被整段覆写抹掉。"""
+    added = client.post("/api/settings/memory/item", json={"text": "用户对花生过敏"})
+    assert added.status_code == 200
+    items = added.json()["items"]
+    assert len(items) == 1
+    item_id = items[0]["id"]
+    assert items[0]["source"] == "manual"
+
+    pinned = client.patch(f"/api/settings/memory/item/{item_id}", json={"pinned": True})
+    assert pinned.json()["items"][0]["pinned"] is True
+
+    edited = client.patch(
+        f"/api/settings/memory/item/{item_id}", json={"text": "用户对花生严重过敏"}
+    )
+    assert edited.json()["items"][0]["text"] == "用户对花生严重过敏"
+
+    # 整段覆写只动未钉住的：钉住是用户明确的表态
+    overwritten = client.put("/api/settings/memory", json={"content": "另一条"})
+    texts = [i["text"] for i in overwritten.json()["items"]]
+    assert "用户对花生严重过敏" in texts and "另一条" in texts
+
+    assert client.delete(f"/api/settings/memory/item/{item_id}").status_code == 200
+    assert client.delete(f"/api/settings/memory/item/{item_id}").status_code == 404
+    missing = client.patch("/api/settings/memory/item/999999", json={"pinned": True})
+    assert missing.status_code == 404
+    assert client.post("/api/settings/memory/item", json={"text": "  "}).status_code == 400
 
 
 def test_memory_put_rejects_empty_body(client: TestClient) -> None:
@@ -304,7 +342,8 @@ def test_role_memory_scoped_roundtrip(client: TestClient) -> None:
 
     r = client.put(f"/api/settings/memory?role_id={role_id}", json={"content": "用户爱喝美式。"})
     assert r.status_code == 200
-    assert r.json()["content"] == "用户爱喝美式。"
+    assert r.json()["content"] == "- 用户爱喝美式。"
+    assert [i["text"] for i in r.json()["items"]] == ["用户爱喝美式。"]
     assert r.json()["role_id"] == role_id
 
     # 隔离铁律：全局记忆不受角色写入影响

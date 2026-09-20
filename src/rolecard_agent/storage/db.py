@@ -308,6 +308,23 @@ def _migrate(conn: SqlConnection) -> None:
             " role_id TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '',"
             " updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
         )
+    # 8. role_memory_item（记忆条目表）：记忆从"一坨文本"升级为可逐条退役的条目。
+    #    老库里的 role_memory / memory:facts 两块 blob **不迁移**（用户 2026-09-20："旧的记忆
+    #    数据也可以不要了"）—— 旧表原样留着不删列（迁移纪律），只是不再是事实面。
+    if "text" not in _columns(conn, "role_memory_item"):
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS role_memory_item ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT, role_id TEXT NOT NULL,"
+            " text TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'manual',"
+            " pinned INTEGER NOT NULL DEFAULT 0, hit_count INTEGER NOT NULL DEFAULT 0,"
+            " last_hit_at TIMESTAMP, invalidated_at TIMESTAMP, superseded_by INTEGER,"
+            " created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+            " updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_role_memory_item_bucket ON role_memory_item"
+            "(role_id, invalidated_at, pinned, id DESC)"
+        )
     conn.execute("DROP TABLE IF EXISTS service_policy")
     if "api_key" in _columns(conn, "service_endpoint"):
         conn.execute("DROP TABLE service_endpoint")

@@ -1,33 +1,42 @@
-"""跨会话记忆：kernel_meta 里的一条文本（`memory:facts`）+ AI 可直接调用的写入工具。
+"""跨会话记忆：条目表 `role_memory_item` + AI 可直接调用的写入工具。
 
-## 为什么是"一条文本"而不是"一张表"
+## 形状：条目，不是一坨文本
 
-本项目的记忆是**用户级**事实（"我住在上海 / 我管三个项目的账"），单用户 demo 下
-不分会话、不分角色 —— 一张键值表存一大段文本已经够用，且「设置→通用」面板可以整段
-查看 / 编辑 / 清空，对人类最可读。粒度更细（逐条打分、过期、分角色）是后续演进，
-不是第一版的形状。
+以前是"一条大文本"（全局在 `kernel_meta:memory:facts`、每角色在 `role_memory.value`）。
+一坨文本没法逐条管理，于是没有"这条过期了 / 这条被新事实取代 / 这条别再用"的概念 ——
+记忆只会越长越浑，而错事实粘滞。现在每条事实是一行，带：
+
+  * `source`（manual / chat / proactive / extract / seed）—— 从哪来的，出问题时能查；
+  * `pinned` —— 钉住的不参与淘汰、不被整理覆盖；
+  * `hit_count` + `last_hit_at` —— 被注入过几次、最近什么时候，退役排序的依据；
+  * `invalidated_at` + `superseded_by` —— **失效不物理删**（可撤销、可调试、可回滚）。
+
+旧的 blob 表原样留着不删列（迁移纪律），但它**不再是事实面**：注入、面板、工具都只认这张表。
+老库里那些 blob 不迁移（用户 2026-09-20 明确"旧的记忆数据也可以不要了"）。
 
 ## 谁写记忆
 
-  * `memory_save` 内核工具：AI 在对话中检测到**用户明确说出的、可复用的**事实时调用
-    （"记住我每周五要交周报"）。这比"每轮对话后偷偷跑一次抽取"少一次模型调用、且
-    动作可见 —— 模型会向用户确认"我已记住"。
-  * 面板：查看 / 编辑 / 清空，是人工的最终仲裁面。
+  * `memory_save` 内核工具：AI 在对话中检测到**用户明确说出的、可复用的**事实时调用；
+    同时写入全局桶与当前角色桶（跨角色的隔离铁律见架构总览 §5 不变式 8）。
+  * 面板：逐条增删改与钉住，是人工的最终仲裁面。
+  * 「提取精华 / 整理记忆」（见 `memory_extract.py`）把长对话压成条目 —— 那才是一次模型调用。
 
-## 边界
+## 边界与不变式
 
-  * 总开关 `MEMORY_ENABLED`：关掉后注入与工具都停，面板仍可编辑（只存不用）。
-  * 文本有字符上限（`MAX_MEMORY_CHARS`），写工具追加新行、超限时丢最旧的 ——
-    记忆是 system prompt 的一部分，必须有上界。
-  * `memory_save` **不声明幂等**：执行器不会重试它（写入类工具，重试 = 重复副作用）。
+  * 总开关 `MEMORY_ENABLED`：关掉后注入、工具、提取全停（面板仍可编辑，只存不用）。
+  * **注入必须有上界**：条数上限（`MAX_ITEMS_PER_BUCKET`，超出即淘汰最弱的）+ 字符预算
+    （`MAX_MEMORY_CHARS`）。记忆是 system prompt 的一部分，没有上界迟早挤掉对话本身。
+  * "哪一轮该注入什么"只有 `memory_for_turn` 一处实现（对话与主动开口同源）。
   * 记忆区在 prompt 里自带"以用户最新说法为准"的降权声明：一条被提示注入污染的记忆
     不会压过用户当下的明确说法（软层规则，硬门仍是 core/guard.py）。
 """
 
 from __future__ import annotations
 
+import math
 from contextvars import ContextVar
-from functools import partial
+from datetime import UTC, datetime
+from typing import Any
 
 from langchain_core.tools import BaseTool, tool
 
@@ -35,51 +44,221 @@ from rolecard_agent.config import Settings
 from rolecard_agent.storage.db import SqlConnection
 
 # 当前对话角色（架构计划 §5.2）：execute_tools 每轮注入，memory_save 读取它把事实同时写入
-# 该角色专属记忆。默认空串 = 无角色上下文，此时只写全局 memory:facts。与
-# role_knowledge_scopes_ctx 同一机制（ContextVar + copy_context 跨工具线程）。
+# 该角色专属记忆。默认空串 = 无角色上下文，此时只写全局桶。与 role_knowledge_scopes_ctx
+# 同一机制（ContextVar + copy_context 跨工具线程）。
 current_role_id_ctx: ContextVar[str] = ContextVar("current_role_id", default="")
 
-# kernel_meta 的键与上限。键带 `memory:` 前缀，与 `runtime:` 同一命名约定。
-MEMORY_KEY = "memory:facts"
+#: 全局（用户级）记忆用的桶名。空串而不是 NULL：NULL 在唯一约束与 WHERE 里都是麻烦源。
+GLOBAL_BUCKET = ""
+
 MAX_MEMORY_CHARS = 4000
+# 每桶 active 条目上限。写死不做成配置：它是"记忆不会吃掉 prompt"这条保底约束的实现细节，
+# 多一个旋钮就多一条要测、要解释、会被误配的路径。
+MAX_ITEMS_PER_BUCKET = 200
+# 单条事实的字符上限：一条"事实"该是一句话，超长的多半是没拆解的对话片段。
+MAX_ITEM_CHARS = 200
+
+_COLUMNS = (
+    "id, role_id, text, source, pinned, hit_count, last_hit_at, invalidated_at, "
+    "superseded_by, created_at, updated_at"
+)
 
 
-def load_memory_text(conn: SqlConnection) -> str:
-    """读当前记忆文本；没有 / 从未写过 = 空串（调用方按"无记忆"处理）。"""
-    row = conn.execute("SELECT value FROM kernel_meta WHERE key = ?", (MEMORY_KEY,)).fetchone()
-    return str(row["value"] or "") if row else ""
+def _parse_ts(raw: object) -> datetime | None:
+    """sqlite 的 `CURRENT_TIMESTAMP` 是 UTC 文本；解析失败一律 None（不参与近因加权）。"""
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(str(raw).strip(), "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+    except ValueError:
+        return None
 
 
-def save_memory_text(conn: SqlConnection, text: str) -> None:
-    """整体覆写记忆文本（面板保存与 memory_save 共用的落点）。超限截断。"""
-    capped = (text or "").strip()[:MAX_MEMORY_CHARS]
+def _row_to_item(row: Any) -> dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "role_id": str(row["role_id"]),
+        "text": str(row["text"]),
+        "source": str(row["source"]),
+        "pinned": bool(row["pinned"]),
+        "hit_count": int(row["hit_count"] or 0),
+        "last_hit_at": row["last_hit_at"],
+        "invalidated_at": row["invalidated_at"],
+        "superseded_by": None if row["superseded_by"] is None else int(row["superseded_by"]),
+        "created_at": row["created_at"],
+    }
+
+
+def list_items(
+    conn: SqlConnection, *, bucket: str, include_invalidated: bool = False
+) -> list[dict[str, Any]]:
+    """某个桶的条目。默认只给 active —— 失效的留着是为了能查、能撤销，不是为了注入。"""
+    where = "role_id = ?" if include_invalidated else "role_id = ? AND invalidated_at IS NULL"
+    rows = conn.execute(
+        f"SELECT {_COLUMNS} FROM role_memory_item WHERE {where} ORDER BY id DESC", (bucket,)
+    ).fetchall()
+    return [_row_to_item(r) for r in rows]
+
+
+def _score(item: dict[str, Any], *, now: datetime) -> float:
+    """近因 × 频次。没被命中过的条目靠 created_at 撑，所以新事实不会一进来就被淘汰。
+
+    半衰期取 30 天：比它短会让"低频但重要"的事实反复进出 prompt（模型表现会跳），
+    比它长就退化成纯频次排序。
+    """
+    anchor = _parse_ts(item.get("last_hit_at")) or _parse_ts(item.get("created_at"))
+    age_days = (now - anchor).total_seconds() / 86400.0 if anchor else 3650.0
+    recency = 0.5 ** (age_days / 30.0)
+    return recency * math.log1p(int(item.get("hit_count") or 0) + 1)
+
+
+def ranked_active(
+    conn: SqlConnection, *, bucket: str, now: datetime | None = None
+) -> list[dict[str, Any]]:
+    """注入顺序：钉住的在前，其余按 近因×频次。"""
+    stamp = now or datetime.now(UTC)
+    items = list_items(conn, bucket=bucket)
+    return sorted(items, key=lambda i: (not i["pinned"], -_score(i, now=stamp), -i["id"]))
+
+
+def add_item(
+    conn: SqlConnection,
+    *,
+    bucket: str,
+    text: str,
+    source: str = "manual",
+    now: datetime | None = None,
+) -> dict[str, Any] | None:
+    """新增一条事实。**完全相同的文本不重复插入**（只刷新那一条的时间），并做超限淘汰。
+
+    返回 None = 文本为空，什么都没做。
+    """
+    line = " ".join((text or "").split())[:MAX_ITEM_CHARS]
+    if not line:
+        return None
+    existing = conn.execute(
+        "SELECT id FROM role_memory_item WHERE role_id = ? AND text = ? AND invalidated_at IS NULL",
+        (bucket, line),
+    ).fetchone()
+    if existing is not None:
+        conn.execute(
+            "UPDATE role_memory_item SET last_hit_at = CURRENT_TIMESTAMP,"
+            " updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (existing["id"],),
+        )
+        conn.commit()
+        return get_item(conn, int(existing["id"]))
     conn.execute(
-        "INSERT INTO kernel_meta (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
-        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
-        (MEMORY_KEY, capped),
+        "INSERT INTO role_memory_item (role_id, text, source) VALUES (?, ?, ?)",
+        (bucket, line, source),
     )
     conn.commit()
+    created = conn.execute(
+        f"SELECT {_COLUMNS} FROM role_memory_item WHERE role_id = ? ORDER BY id DESC LIMIT 1",
+        (bucket,),
+    ).fetchone()
+    enforce_cap(conn, bucket=bucket, now=now)
+    return _row_to_item(created) if created else None
 
 
-def clear_memory_text(conn: SqlConnection) -> None:
-    """清空记忆（面板「清空」按钮）。删除整行；没写过则无事发生。"""
-    conn.execute("DELETE FROM kernel_meta WHERE key = ?", (MEMORY_KEY,))
-    conn.commit()
+def get_item(conn: SqlConnection, item_id: int) -> dict[str, Any] | None:
+    row = conn.execute(
+        f"SELECT {_COLUMNS} FROM role_memory_item WHERE id = ?", (item_id,)
+    ).fetchone()
+    return None if row is None else _row_to_item(row)
 
 
-def load_role_memory_text(conn: SqlConnection, role_id: str) -> str:
-    """读某角色的专属记忆（§5.2）；无记录 = 空串。与全局 memory:facts 隔离。"""
-    row = conn.execute("SELECT value FROM role_memory WHERE role_id = ?", (role_id,)).fetchone()
-    return str(row["value"] or "") if row else ""
-
-
-def save_role_memory_text(conn: SqlConnection, role_id: str, text: str) -> None:
-    """整体覆写某角色的专属记忆（按 role_id 分桶，与全局 memory:facts 隔离）。超限截断。"""
-    capped = (text or "").strip()[:MAX_MEMORY_CHARS]
+def edit_item(conn: SqlConnection, *, item_id: int, text: str) -> dict[str, Any] | None:
+    """人工修正一条（面板上的"编辑"）。空文本 = 不改，交给删除去做那件事。"""
+    line = " ".join((text or "").split())[:MAX_ITEM_CHARS]
+    if not line:
+        return get_item(conn, item_id)
     conn.execute(
-        "INSERT INTO role_memory (role_id, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
-        "ON CONFLICT(role_id) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
-        (role_id, capped),
+        "UPDATE role_memory_item SET text = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (line, item_id),
+    )
+    conn.commit()
+    return get_item(conn, item_id)
+
+
+def set_pinned(conn: SqlConnection, *, item_id: int, pinned: bool) -> dict[str, Any] | None:
+    conn.execute(
+        "UPDATE role_memory_item SET pinned = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (1 if pinned else 0, item_id),
+    )
+    conn.commit()
+    return get_item(conn, item_id)
+
+
+def delete_item(conn: SqlConnection, *, item_id: int) -> bool:
+    """用户明确删除 = **物理删**（他要它消失，留个"已删除"的行只是把隐私留在盘上）。
+
+    与自动退役相反：那条走 `invalidate_item`，可撤销。
+    """
+    cur = conn.execute("DELETE FROM role_memory_item WHERE id = ?", (item_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def invalidate_item(
+    conn: SqlConnection, *, item_id: int, superseded_by: int | None = None
+) -> dict[str, Any] | None:
+    """退役一条：只写标记，不删行 —— 整理错了能回滚，也留得下"谁取代了谁"。"""
+    conn.execute(
+        "UPDATE role_memory_item SET invalidated_at = CURRENT_TIMESTAMP, superseded_by = ?,"
+        " updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (superseded_by, item_id),
+    )
+    conn.commit()
+    return get_item(conn, item_id)
+
+
+def enforce_cap(
+    conn: SqlConnection, *, bucket: str, now: datetime | None = None
+) -> list[int]:
+    """把 active 条数压回上限，返回被退役的 id。
+
+    **这里刻意不做模型整理**：整理（合并/改写）要调模型，不能在写入路径上顺手发起 ——
+    那会让"记一条事实"变成一次慢调用、且失败不可见。所以超限时只做保底淘汰（最弱的转失效）
+    并在界面上提示"建议整理"，真正的合并是用户点「整理记忆」时发生的一次显式调用。
+    """
+    stamp = now or datetime.now(UTC)
+    active = [i for i in list_items(conn, bucket=bucket) if not i["pinned"]]
+    if len(active) <= MAX_ITEMS_PER_BUCKET:
+        return []
+    weakest = sorted(active, key=lambda i: (_score(i, now=stamp), i["id"]))
+    retired: list[int] = []
+    for item in weakest[: len(active) - MAX_ITEMS_PER_BUCKET]:
+        invalidate_item(conn, item_id=item["id"])
+        retired.append(item["id"])
+    return retired
+
+
+def render_memory(
+    conn: SqlConnection, *, bucket: str, budget: int = MAX_MEMORY_CHARS
+) -> tuple[str, list[int]]:
+    """渲染成注入用的文本，同时返回**真的进了文本**的那些条目 id（供命中计数）。
+
+    截断按条目为单位：半句话被切掉，模型会把那半句当完整事实用。
+    """
+    used: list[str] = []
+    ids: list[int] = []
+    total = 0
+    for item in ranked_active(conn, bucket=bucket):
+        line = f"- {item['text']}"
+        if total + len(line) + 1 > budget:
+            break
+        used.append(line)
+        ids.append(item["id"])
+        total += len(line) + 1
+    return "\n".join(used), ids
+
+
+def mark_hit(conn: SqlConnection, *, item_id: int) -> None:
+    conn.execute(
+        "UPDATE role_memory_item SET hit_count = hit_count + 1, last_hit_at = CURRENT_TIMESTAMP"
+        " WHERE id = ?",
+        (item_id,),
     )
     conn.commit()
 
@@ -87,44 +266,49 @@ def save_role_memory_text(conn: SqlConnection, role_id: str, text: str) -> None:
 def memory_for_turn(conn: SqlConnection, settings: Settings, role_id: str | None) -> str:
     """以某个角色为锚点的一轮该注入什么记忆 —— **对话与主动开口共用这一份规则**。
 
-    总开关关掉 → 空串；给了角色 → 先取该角色的专属记忆，没有则回退用户级全局（全局存的是
+    总开关关掉 → 空串；给了角色 → 先取该角色的条目，为空则回退用户级全局桶（全局存的是
     用户事实，不是别的角色的对话，所以回退不构成跨角色串扰）；没给角色 → 全局。
 
-    以前这条规则只写在 `reachout.generate_reachout_text` 里，而普通对话的 provider 只取全局
-    —— 于是"设置→记忆里给某角色写的内容，聊天时模型看不到"（审计 §3 台账，取舍见 §10.9）。
-    规则有两份实现，迟早会各自漂移；接一条新链路时永远只有一个人记得另一条的存在。
+    顺手记命中：只有真进了 prompt 的条目才涨 hit_count —— 这就是退役排序里"频次"那一半的
+    唯一来源，所以它必须长在注入这条路径上，而不是另开一个统计口。
     """
     if not settings.memory_enabled:
         return ""
-    if role_id:
-        text = load_role_memory_text(conn, role_id) or load_memory_text(conn)
-    else:
-        text = load_memory_text(conn)
-    return text[:MAX_MEMORY_CHARS]
+    buckets = [role_id, GLOBAL_BUCKET] if role_id else [GLOBAL_BUCKET]
+    for bucket in buckets:
+        text, ids = render_memory(conn, bucket=bucket)
+        if text:
+            for item_id in ids:
+                mark_hit(conn, item_id=item_id)
+            return text
+    return ""
 
 
-def _append_fact(current: str, fact: str) -> str:
-    """把一条事实追加进记忆文本：删掉与本次完全相同的旧行（去重），超上限时丢最旧的行。
+def top_active_item(conn: SqlConnection, *, bucket: str) -> dict[str, Any] | None:
+    """recall 档的素材：此刻最该被提起的那一条。没有 = None（调用方就不该走回忆口吻）。"""
+    ranked = ranked_active(conn, bucket=bucket)
+    return ranked[0] if ranked else None
 
-    全局记忆与角色专属记忆共用这一份规则 —— 以前那段 append+去重+截断在 `memory_save`
-    里写了两遍（一处全局、一处 per-role），改一处忘另一处就是两个记忆桶行为分叉。
+
+def replace_bucket_from_text(
+    conn: SqlConnection, *, bucket: str, text: str, source: str = "manual"
+) -> list[dict[str, Any]]:
+    """整段文本 → 该桶的非钉住条目（保留旧 PUT /api/settings/memory 的"覆写"语义）。
+
+    一行一条；钉住的条目**不动** —— 用户特意钉的东西不该被一次整段保存抹掉。
     """
-    lines = [ln for ln in current.splitlines() if ln.strip() != fact]
-    lines.append(fact)
-    while len("\n".join(lines)) > MAX_MEMORY_CHARS:
-        lines.pop(0)
-    return "\n".join(lines)
+    conn.execute(
+        "DELETE FROM role_memory_item WHERE role_id = ? AND pinned = 0",
+        (bucket,),
+    )
+    conn.commit()
+    for line in (text or "").splitlines():
+        add_item(conn, bucket=bucket, text=line, source=source)
+    return [i for i in list_items(conn, bucket=bucket) if i["pinned"]]
 
 
 def make_memory_tool(*, settings: Settings, conn: SqlConnection) -> BaseTool:
-    """构建 memory_save 内核工具。闭包持有**构建期**的连接与配置（与 fs 工具同一约定：
-    运行环境热切换 = 设置保存后重建 registry，闭包随之重建）。
-
-    `conn` 是 ThreadLocalConnection：工具在独立线程执行，内部按线程分发真实连接
-    （见 storage/db.py），闭包持有一个全局共享引用是安全的设计。
-    """
-    save_one = partial(save_memory_text, conn)
-    load_one = partial(load_memory_text, conn)
+    """构建 `memory_save` 内核工具（闭包持构建期连接与配置，与 fs 工具同一约定）。"""
 
     @tool("memory_save")
     def memory_save(fact: str) -> str:
@@ -135,33 +319,38 @@ def make_memory_tool(*, settings: Settings, conn: SqlConnection) -> BaseTool:
         """
         if not settings.memory_enabled:
             return "跨会话记忆功能未启用，无法写入。"
-        line = (fact or "").strip()
+        line = " ".join((fact or "").split())
         if not line:
             return "没有可记住的内容：传入的 fact 为空。"
-        # 追加新行 + 丢弃与本次完全相同的旧行（去重）；超上限时丢最旧的行。
-        text = _append_fact(load_one(), line)
-        save_one(text)
-        # per-role 记忆（架构计划 §5.2）：仅在某个角色对话时，把同一事实也记入该角色专属记忆，
-        # 使回忆触发有内容来源。回忆只在当前角色的记忆里检索，绝不串到其它角色（隔离铁律）。
-        # 无角色上下文（空串）则只写全局，不污染任何角色桶。
+        added_global = add_item(conn, bucket=GLOBAL_BUCKET, text=line, source="chat")
         role_id = current_role_id_ctx.get()
         if role_id:
-            save_role_memory_text(
-                conn, role_id, _append_fact(load_role_memory_text(conn, role_id), line)
-            )
-        return f"已记住：{line}（当前共 {len(text.splitlines())} 条事实）。"
+            add_item(conn, bucket=role_id, text=line, source="chat")
+        count = len(list_items(conn, bucket=role_id or GLOBAL_BUCKET))
+        return f"已记住：{line}（该桶现有 {count} 条事实）。" if added_global else "没有写入。"
 
     return memory_save
 
 
 __all__ = [
-    "MEMORY_KEY",
+    "GLOBAL_BUCKET",
+    "MAX_ITEMS_PER_BUCKET",
+    "MAX_ITEM_CHARS",
     "MAX_MEMORY_CHARS",
-    "clear_memory_text",
+    "add_item",
     "current_role_id_ctx",
-    "load_memory_text",
-    "load_role_memory_text",
+    "delete_item",
+    "edit_item",
+    "enforce_cap",
+    "get_item",
+    "invalidate_item",
+    "list_items",
+    "mark_hit",
+    "memory_for_turn",
     "make_memory_tool",
-    "save_memory_text",
-    "save_role_memory_text",
+    "ranked_active",
+    "render_memory",
+    "replace_bucket_from_text",
+    "set_pinned",
+    "top_active_item",
 ]

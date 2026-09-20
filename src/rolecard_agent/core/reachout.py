@@ -45,8 +45,9 @@ from rolecard_agent.core.file_watch import (
 )
 from rolecard_agent.core.guard import check
 from rolecard_agent.core.memory import (
-    load_role_memory_text,
+    GLOBAL_BUCKET,
     memory_for_turn,
+    top_active_item,
 )
 from rolecard_agent.core.observability import TraceEvent, Tracer
 from rolecard_agent.core.proactive_state import (
@@ -109,16 +110,30 @@ _TASK_PREFIX = "现在是主动开口的时刻。"
 RECENT_CONTEXT_LIMIT = 5
 
 
-def _task_text(mode: str, file_list: str, *, has_memory: bool) -> str:
+def _task_text(
+    mode: str,
+    file_list: str,
+    *,
+    has_memory: bool,
+    material: dict[str, object] | None = None,
+) -> str:
     """拼任务指令：开头按"有没有长期记忆"分叉，正文按触发口吻分叉。
 
     recall 档最需要这处分叉：它的字面意思就是"提起一件之前答应过的事"，而记忆里没东西时
     这句话就是在要求模型捏造（审计 §8「人设只解读不捏造」那条不变式，正是在这种地方被违反）。
+    有素材时把**那一条**摊给它，并限定"只说这一条、别补细节"—— 与 file_event 档给清单同理。
     """
     lead = _LEAD_WITH_MEMORY if has_memory else _LEAD_NO_MEMORY
     if mode == "recall":
         if not has_memory:
             return _RECALL_TASK_WITHOUT_MEMORY
+        if material:
+            text = str(material.get("text") or "").strip()
+            return (
+                f"{_TASK_PREFIX}{lead}自然地提起下面这件你记得的事，像突然想起来要跟对方说。"
+                f"**只说这一件，不要编造别的细节、不要补充没写在这里的时间或承诺**：\n- {text}\n"
+                "简短、口语化；不要自我介绍、不要说教、不要长篇。"
+            )
         return f"{_TASK_PREFIX}{lead}{_REACHOUT_TASK_RECALL_BODY}"
     if mode == "file_event":
         return (
@@ -354,7 +369,11 @@ def generate_reachout_text(
     自行用 fs 工具查证 —— 素材门控语义，见架构计划 §5.2）。
     """
     memory = memory_for_turn(conn, settings, role_id)
-    task = _task_text(mode, file_list, has_memory=bool(memory.strip()))
+    # recall 档带素材：闸门与素材同源（`top_active_item` 既决定"能不能回忆"也决定"回忆哪一条"）。
+    material = (
+        top_active_item(conn, bucket=role_id or GLOBAL_BUCKET) if mode == "recall" else None
+    )
+    task = _task_text(mode, file_list, has_memory=bool(memory.strip()), material=material)
     # E1 去重：把"最近已经说过什么"摊给它看。没有这一层，每次开口都是从零现编 ——
     # 实测同一天连发四条"花海/阳光/亮晶晶"，症状不是模型差，是上下文里没有"我刚说过"。
     if role_id:
@@ -416,12 +435,14 @@ def trigger_time_pattern(role: RoleCard, conn: SqlConnection, *, now_local: date
 
 
 def trigger_recall(role: RoleCard, conn: SqlConnection, *, now_local: datetime) -> str | None:
-    """回忆触发：该角色有专属记忆时，自然提起一件记得的事。无记忆 / 该角色关掉回忆 = 不触发。"""
+    """回忆触发：该角色有**可用的记忆条目**时才触发。无条目 / 关掉回忆 = 不触发。
+
+    判据从"有没有那段 blob"换成"有没有一条 active 条目"是必须的：同一个东西既当闸门又当素材，
+    才不会"闸门说可以、素材却是空的" —— 后者正是让模型捏造的形状。
+    """
     if not role.recall_enabled:
         return None
-    if load_role_memory_text(conn, role.role_id).strip():
-        return "recall"
-    return None
+    return "recall" if top_active_item(conn, bucket=role.role_id) is not None else None
 
 
 def _parse_reachout_ts(raw: object) -> datetime | None:

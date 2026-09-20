@@ -94,16 +94,49 @@ export default function SettingsPage({
 
 // ---------------------------------------------------------------- 记忆与任务目录
 
+/** 一条记忆（后端 `role_memory_item` 行）。`content` 是这些条目渲染出来的文本，不是第二份事实。 */
+type MemoryItem = {
+  id: number;
+  text: string;
+  source: string;
+  pinned: boolean;
+  hit_count: number;
+  last_hit_at: string | null;
+  created_at: string | null;
+};
+
+type MemoryPayload = {
+  enabled: boolean;
+  role_id: string | null;
+  content: string;
+  items: MemoryItem[];
+  active_count: number;
+  limit: number;
+  over_limit: boolean;
+};
+
+const SOURCE_LABEL: Record<string, string> = {
+  manual: "手动",
+  chat: "对话",
+  proactive: "主动",
+  extract: "提取",
+  seed: "预置",
+};
+
 function MemoryPanel() {
-  // 跨会话记忆面板：enabled = 总开关（runtime 覆盖，保存即热生效）；content = 全文。
-  const [mem, setMem] = useState<{ enabled: boolean; content: string } | null>(null);
+  // 跨会话记忆面板：enabled = 总开关（runtime 覆盖，保存即热生效）；
+  // items = 事实面（逐条可钉/改/删），content = 同一批条目的渲染文本（下方"原文视图"）。
+  const [mem, setMem] = useState<MemoryPayload | null>(null);
   const [memDraft, setMemDraft] = useState("");
   const [memMsg, setMemMsg] = useState("");
   const [memErr, setMemErr] = useState("");
-  // 记忆作用域："" = 全局用户记忆；否则 = 该角色的专属记忆（role_memory，回忆触发用的那份）。
-  // 注入开关是全局的，角色作用域只读/改文本、不能改开关。
+  // 记忆作用域："" = 全局用户记忆；否则 = 该角色的专属记忆（回忆触发用的那个桶）。
+  // 注入开关是全局的，角色作用域只读/改条目、不能改开关。
   const [memScope, setMemScope] = useState("");
   const [memRoles, setMemRoles] = useState<{ role_id: string; role_name: string }[]>([]);
+  // 新增一条的草稿。逐条录入取代了"只能在 textarea 里手改整段"。
+  const [newFact, setNewFact] = useState("");
+  const [itemBusy, setItemBusy] = useState(false);
   // 任务目录（file1）：角色可读写的授权范围。wsDir = 生效值；树抽屉 = 目录选择器。
   const [wsDir, setWsDir] = useState<WorkspaceDir | null>(null);
   const [wsDraft, setWsDraft] = useState("");
@@ -127,7 +160,7 @@ function MemoryPanel() {
     scope ? `/api/settings/memory?role_id=${encodeURIComponent(scope)}` : "/api/settings/memory";
 
   const loadMemory = useCallback(async (scope: string) => {
-    const m = await api.get<{ enabled: boolean; content: string }>(memoryUrl(scope));
+    const m = await api.get<MemoryPayload>(memoryUrl(scope));
     setMem(m);
     setMemDraft(m.content);
   }, []);
@@ -157,7 +190,7 @@ function MemoryPanel() {
     setMemErr("");
     setMemMsg("");
     try {
-      const m = await api.put<{ enabled: boolean; content: string }>("/api/settings/memory", {
+      const m = await api.put<MemoryPayload>("/api/settings/memory", {
         enabled: !mem.enabled,
       });
       setMem(m);
@@ -172,7 +205,7 @@ function MemoryPanel() {
     setMemErr("");
     setMemMsg("");
     try {
-      const m = await api.put<{ enabled: boolean; content: string }>(memoryUrl(memScope), {
+      const m = await api.put<MemoryPayload>(memoryUrl(memScope), {
         content: memDraft,
       });
       setMem(m);
@@ -187,7 +220,7 @@ function MemoryPanel() {
     setMemErr("");
     setMemMsg("");
     try {
-      const m = await api.del<{ enabled: boolean; content: string }>(memoryUrl(memScope));
+      const m = await api.del<MemoryPayload>(memoryUrl(memScope));
       setMem(m);
       setMemDraft(m.content);
       setMemMsg("已清空");
@@ -195,6 +228,62 @@ function MemoryPanel() {
       setMemErr(`清空失败：${(e as Error).message}`);
     }
   }
+
+  /** 逐条操作都直接采用响应里的 payload —— 面板显示的就是后端算完的那份，不在前端猜顺序。 */
+  async function withItems(run: () => Promise<MemoryPayload>, ok: string) {
+    setMemErr("");
+    setMemMsg("");
+    setItemBusy(true);
+    try {
+      const m = await run();
+      setMem(m);
+      setMemDraft(m.content);
+      setMemMsg(ok);
+    } catch (e) {
+      setMemErr(`操作失败：${(e as Error).message}`);
+    } finally {
+      setItemBusy(false);
+    }
+  }
+
+  const addFact = () => {
+    const text = newFact.trim();
+    if (!text) return;
+    void withItems(
+      () =>
+        api.post<MemoryPayload>(`/api/settings/memory/item${memScope ? `?role_id=${encodeURIComponent(memScope)}` : ""}`, {
+          text,
+        }),
+      "已记住",
+    ).then(() => setNewFact(""));
+  };
+
+  const togglePin = (item: MemoryItem) =>
+    withItems(
+      () =>
+        api.patch<MemoryPayload>(
+          `/api/settings/memory/item/${item.id}${memScope ? `?role_id=${encodeURIComponent(memScope)}` : ""}`,
+          { pinned: !item.pinned },
+        ),
+      item.pinned ? "已取消钉住" : "已钉住（不参与淘汰与整理）",
+    );
+
+  const removeItem = async (item: MemoryItem) => {
+    const ok = await confirm({
+      title: "删除这条记忆？",
+      body: `「${item.text}」会从记忆里删除（真删，不是失效）。`,
+      confirmText: "确认删除",
+      danger: true,
+    });
+    if (!ok) return;
+    await withItems(
+      () =>
+        api.del<MemoryPayload>(
+          `/api/settings/memory/item/${item.id}${memScope ? `?role_id=${encodeURIComponent(memScope)}` : ""}`,
+        ),
+      "已删除",
+    );
+  };
 
   const loadWorkspace = useCallback(async () => {
     const d = await api.getWorkspaceDir();
@@ -303,7 +392,70 @@ function MemoryPanel() {
             ? "这是该角色自己的记忆（回忆触发只读这一份），与全局记忆和其它角色隔离。编辑/清空只作用于本角色。"
             : "全局记忆注入每个角色的对话。AI 检测到你明确说出的可复用事实（称呼 / 偏好 / 背景）会通过 memory_save 写入，并同步进当前角色的专属记忆。"}
         </p>
-        <textarea
+        {/* 逐条列表 = 事实面（后端按 近因×频次 排，钉住的在前）；下面的 textarea 只是同一批
+            条目的"原文视图 + 整段覆写"，不是第二份记忆。 */}
+        <div className="mt-2.5 flex gap-2">
+          <input
+            value={newFact}
+            onChange={(e) => setNewFact(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") addFact();
+            }}
+            disabled={!mem || itemBusy}
+            placeholder="手动记一条事实（一句话）"
+            className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-blue-400 focus:outline-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+          />
+          <button
+            onClick={addFact}
+            disabled={!mem || itemBusy || !newFact.trim()}
+            className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-500 disabled:bg-slate-300 dark:disabled:bg-slate-700"
+          >
+            记住
+          </button>
+        </div>
+        <ul className="mt-2 max-h-56 space-y-1 overflow-y-auto">
+          {(mem?.items ?? []).map((item) => (
+            <li
+              key={item.id}
+              className="flex items-start gap-2 rounded-lg border border-slate-100 px-2 py-1.5 text-xs dark:border-slate-700"
+            >
+              <span className="min-w-0 flex-1 break-words text-slate-700 dark:text-slate-200">
+                {item.text}
+                <span className="mt-0.5 block text-[10px] text-slate-400 dark:text-slate-500">
+                  {SOURCE_LABEL[item.source] ?? item.source}
+                  {" · "}用过 {item.hit_count} 次
+                  {item.pinned ? " · 已钉住" : ""}
+                </span>
+              </span>
+              <button
+                onClick={() => void togglePin(item)}
+                disabled={itemBusy}
+                title={item.pinned ? "取消钉住（允许被淘汰/整理）" : "钉住（不参与淘汰与整理）"}
+                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700"
+              >
+                {item.pinned ? "取消钉住" : "钉住"}
+              </button>
+              <button
+                onClick={() => void removeItem(item)}
+                disabled={itemBusy}
+                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:text-red-600 dark:hover:text-red-400"
+              >
+                删除
+              </button>
+            </li>
+          ))}
+        </ul>
+        {mem?.over_limit && (
+          <p className="mt-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+            活跃记忆已达上限（{mem.active_count}/{mem.limit}）—— 最弱的已被退役（没删，可撤销）。
+            建议整理一下：合并同义的、删掉过时的。
+          </p>
+        )}
+        <details className="mt-2">
+          <summary className="cursor-pointer text-[11px] text-slate-500 dark:text-slate-400">
+            原文视图 / 整段编辑（注入到 prompt 的就是这段）
+          </summary>
+          <textarea
           value={memDraft}
           onChange={(e) => setMemDraft(e.target.value)}
           rows={5}
@@ -311,6 +463,7 @@ function MemoryPanel() {
           placeholder={mem ? (mem.content ? "" : memScope ? "该角色还没有专属记忆。" : "暂无全局记忆。") : "加载中…"}
           className="mt-2.5 w-full resize-y rounded-lg border border-slate-200 bg-white p-2.5 font-mono text-xs text-slate-700 focus:border-blue-400 focus:outline-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
         />
+        </details>
         <div className="mt-2 flex items-center gap-2">
           <button
             onClick={saveMemory}

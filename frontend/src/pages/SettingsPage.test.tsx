@@ -3,7 +3,7 @@
 // SettingsPage（设置页）接线测试。重点：切换记忆作用域时若有未保存修改，走 useConfirm
 // 二次确认 —— 点确认才切换并丢弃草稿，点取消不切换。
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -47,7 +47,15 @@ beforeEach(() => {
     }
     if (url === "/api/sessions") return [];
     if (url === "/api/settings/memory" || url.startsWith("/api/settings/memory?"))
-      return { enabled: false, content: "原始记忆" };
+      return {
+        enabled: false,
+        role_id: null,
+        content: "原始记忆",
+        items: [{ id: 7, text: "原始记忆", source: "chat", pinned: false, hit_count: 2, last_hit_at: null, created_at: null }],
+        active_count: 1,
+        limit: 200,
+        over_limit: false,
+      };
     if (url === "/api/knowledge/scopes") return { scopes: [] };
     if (url === "/api/services") return { services: [] };
     if (url === "/api/mcp/servers") return { servers: [], effective_count: 0 };
@@ -146,5 +154,50 @@ describe("SettingsPage 页签拆分（Batch 5：记忆与任务目录 / 关于�
     expect(await screen.findByText("外观")).toBeTruthy();
     expect(screen.getByText("关于")).toBeTruthy();
     expect(screen.getByText("系统状态")).toBeTruthy();
+  });
+});
+
+describe("记忆卡逐条列表（事实面是条目）", () => {
+  function renderPage() {
+    return render(<SettingsPage />);
+  }
+
+  it("列出条目并显示来源与命中次数", async () => {
+    renderPage();
+    // 条目行的存在用元信息那一行证明（来源 + 命中次数只有渲染出的条目才会出现）。
+expect(await screen.findByText(/对话 · 用过 2 次/)).toBeTruthy();
+  });
+
+  it("「记住」提交一条并采用返回的 payload", async () => {
+    apiMock.post.mockResolvedValue({
+      enabled: false, role_id: null, content: "- 新的", items: [
+        { id: 8, text: "新的", source: "manual", pinned: false, hit_count: 0, last_hit_at: null, created_at: null },
+      ], active_count: 1, limit: 200, over_limit: false,
+    });
+    renderPage();
+    fireEvent.change(await screen.findByPlaceholderText(/手动记一条事实/), { target: { value: "新的" } });
+    fireEvent.click(screen.getByRole("button", { name: "记住" }));
+    await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith("/api/settings/memory/item", { text: "新的" }));
+    expect(await screen.findByText("新的")).toBeTruthy();
+  });
+
+  it("钉住走 PATCH；删除要先二次确认，确认后才真删", async () => {
+    apiMock.patch.mockResolvedValue({
+      enabled: false, role_id: null, content: "原始记忆",
+      items: [{ id: 7, text: "原始记忆", source: "chat", pinned: true, hit_count: 2, last_hit_at: null, created_at: null }],
+      active_count: 1, limit: 200, over_limit: false,
+    });
+    apiMock.del.mockResolvedValue({
+      enabled: false, role_id: null, content: "", items: [], active_count: 0, limit: 200, over_limit: false,
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "钉住" }));
+    await waitFor(() => expect(apiMock.patch).toHaveBeenCalledWith("/api/settings/memory/item/7", { pinned: true }));
+
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+    expect(await screen.findByText(/会从记忆里删除/)).toBeTruthy();
+    expect(apiMock.del).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: "确认删除" }));
+    await waitFor(() => expect(apiMock.del).toHaveBeenCalledWith("/api/settings/memory/item/7"));
   });
 });
