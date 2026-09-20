@@ -34,7 +34,7 @@ export default function DataPage() {
               <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
                 <h3 className="text-sm font-medium text-slate-700 dark:text-slate-200">{p.display_name}</h3>
                 {p.display_name !== p.plugin_id && (
-                  <code className="rounded bg-slate-100 dark:bg-slate-700/50 px-1.5 py-0.5 text-[11px] text-slate-500 dark:text-slate-400 dark:text-slate-500">
+                  <code className="rounded bg-slate-100 dark:bg-slate-700/50 px-1.5 py-0.5 text-[11px] text-slate-500 dark:text-slate-400">
                     {p.plugin_id}
                   </code>
                 )}
@@ -138,7 +138,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
         </p>
         <button
           onClick={() => setAdding((v) => !v)}
-          className="shrink-0 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600 dark:text-blue-400"
+          className="shrink-0 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600 dark:text-blue-400"
         >
           {adding ? "取消" : "＋ 新增报告"}
         </button>
@@ -259,7 +259,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
                           </button>
                           <button
                             onClick={() => setEditId(null)}
-                            className="rounded px-2 py-1 text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700"
+                            className="rounded px-2 py-1 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700"
                           >
                             取消
                           </button>
@@ -458,7 +458,7 @@ function AddReportForm({ onDone }: { onDone: () => void }) {
       <div className="mt-2 flex items-center gap-2">
         <button
           onClick={() => setRows((rs) => [...rs, { rowId: nextRowId(), name: "", value: "", unit: "" }])}
-          className="rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
+          className="rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700"
         >
           ＋ 加一行
         </button>
@@ -471,7 +471,7 @@ function AddReportForm({ onDone }: { onDone: () => void }) {
         </button>
         <button
           onClick={onDone}
-          className="rounded px-2 py-1 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700"
+          className="rounded px-2 py-1 text-xs text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700"
         >
           取消
         </button>
@@ -598,7 +598,7 @@ function GenericDomainData({
         </p>
         <button
           onClick={() => setAdding((v) => !v)}
-          className="shrink-0 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600 dark:text-blue-400"
+          className="shrink-0 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600 dark:text-blue-400"
         >
           {adding ? "取消" : "＋ 新增记录"}
         </button>
@@ -615,7 +615,7 @@ function GenericDomainData({
           </div>
           <div className="mt-2 flex items-center gap-2">
             <button onClick={submit} className="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700">保存</button>
-            <button onClick={() => setAdding(false)} className="rounded px-2 py-1 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700">取消</button>
+            <button onClick={() => setAdding(false)} className="rounded px-2 py-1 text-xs text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700">取消</button>
           </div>
         </div>
       )}
@@ -649,14 +649,14 @@ function GenericDomainData({
                           <input value={draft.unit} onChange={(e) => setDraft({ ...draft, unit: e.target.value })} placeholder="单位" className={`${cls} w-20`} />
                           <input value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} placeholder="备注" className={`${cls} w-28`} />
                           <button onClick={() => saveEdit(r.id)} className="rounded bg-blue-600 px-2.5 py-1 text-white hover:bg-blue-700">保存</button>
-                          <button onClick={() => setEditId(null)} className="rounded px-2 py-1 text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700">取消</button>
+                          <button onClick={() => setEditId(null)} className="rounded px-2 py-1 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700">取消</button>
                         </div>
                       </td>
                     </>
                   ) : (
                     <>
                       <td className="px-3 py-2 font-medium text-slate-700 dark:text-slate-200">{r.label}</td>
-                      <td className="px-3 py-2 text-slate-600 dark:text-slate-400 dark:text-slate-500">{fmt(r)}</td>
+                      <td className="px-3 py-2 text-slate-600 dark:text-slate-400">{fmt(r)}</td>
                       <td className="px-3 py-2 text-slate-400 dark:text-slate-500">{r.note || "—"}</td>
                       <td className="px-3 py-2 text-right">
                         <button onClick={() => startEdit(r)} className="rounded px-2 py-1 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:bg-blue-900/30">修正</button>

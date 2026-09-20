@@ -50,7 +50,7 @@ function ToolGroup({
 }) {
   return (
     <div>
-      <p className="text-xs font-medium text-slate-500 dark:text-slate-400 dark:text-slate-500">{label}</p>
+      <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p>
       <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1.5">
         {entries.map((t) => (
           <label
@@ -258,7 +258,7 @@ export default function RolesPage() {
           >
             <div className="grid grid-cols-2 gap-4">
               <label className="block">
-                <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">role_id（小写字母/数字/下划线{editing ? "，编辑时不可改" : ""}）</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">role_id（小写字母/数字/下划线{editing ? "，编辑时不可改" : ""}）</span>
                 <input
                   required
                   disabled={!!editing}
@@ -269,7 +269,7 @@ export default function RolesPage() {
                 />
               </label>
               <label className="block">
-                <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">role_name</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">role_name</span>
                 <input
                   required
                   value={form.role_name}
@@ -279,7 +279,7 @@ export default function RolesPage() {
               </label>
             </div>
             <label className="mt-3 block">
-              <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">system_prompt（人设规则）</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">system_prompt（人设规则）</span>
               <textarea
                 required
                 rows={3}
@@ -290,7 +290,7 @@ export default function RolesPage() {
             </label>
             <div className="mt-3 grid grid-cols-2 gap-4">
               <label className="block">
-                <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">temperature（0–1）</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">temperature（0–1）</span>
                 <input
                   type="number"
                   step="0.1"
@@ -302,7 +302,7 @@ export default function RolesPage() {
                 />
               </label>
               <label className="block">
-                <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
+                <span className="text-xs text-slate-500 dark:text-slate-400">
                   模型后端（角色级路由：该角色的对话走此后端，US-8）
                 </span>
                 <select
@@ -357,7 +357,7 @@ export default function RolesPage() {
               </label>
             </div>
             <label className="mt-3 block">
-              <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">工具权限</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">工具权限</span>
               <div className="mt-1 flex gap-5 text-sm">
                 <label className="flex cursor-pointer items-center gap-1.5">
                   <input
@@ -402,7 +402,7 @@ export default function RolesPage() {
               </div>
             )}
             <label className="mt-3 block">
-              <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
+              <span className="text-xs text-slate-500 dark:text-slate-400">
                 知识作用域（声明可检索的范围；不选 = 不可检索）
               </span>
               <div className="mt-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-3">
@@ -435,7 +435,7 @@ export default function RolesPage() {
                       onChange={(e) => {
                         if (e.target.value) toggleScope(e.target.value);
                       }}
-                      className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1.5 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 outline-none focus:border-blue-400"
+                      className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1.5 text-xs text-slate-600 dark:text-slate-300 outline-none focus:border-blue-400"
                     >
                       <option value="">＋ 选择作用域…</option>
                       {availableScopes.map((s) => (
@@ -463,7 +463,7 @@ export default function RolesPage() {
                   <button
                     type="button"
                     onClick={addScope}
-                    className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
+                    className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700"
                   >
                     新建
                   </button>
@@ -477,7 +477,7 @@ export default function RolesPage() {
             </label>
             <div className="mt-3">
               <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
+                <span className="text-xs text-slate-500 dark:text-slate-400">
                   范例（few-shot：教它「怎么答」，比讲规则更省 token）
                 </span>
                 {form.exemplars.length < 4 && (
@@ -489,7 +489,7 @@ export default function RolesPage() {
                         exemplars: [...f.exemplars, { rowId: nextExemplarId(), user: "", assistant: "" }],
                       }))
                     }
-                    className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
+                    className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700"
                   >
                     ＋ 加一条范例
                   </button>
@@ -544,7 +544,7 @@ export default function RolesPage() {
               </span>
             </div>
             <label className="mt-3 block">
-              <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">描述</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">描述</span>
               <input
                 value={form.description}
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
@@ -561,7 +561,7 @@ export default function RolesPage() {
               <button
                 type="button"
                 onClick={() => setEditing(null)}
-                className="rounded-lg px-4 py-2 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:bg-slate-800/50 dark:hover:bg-slate-700/60"
+                className="rounded-lg px-4 py-2 text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:bg-slate-800/50 dark:hover:bg-slate-700/60"
               >
                 取消
               </button>
@@ -586,8 +586,8 @@ export default function RolesPage() {
                 <tr key={r.role_id} className="border-b border-slate-50 last:border-0">
                   <td className="px-4 py-2.5 font-mono text-xs">{r.role_id}</td>
                   <td className="px-4 py-2.5">{r.role_name}</td>
-                  <td className="px-4 py-2.5 text-slate-500 dark:text-slate-400 dark:text-slate-500">{r.model_name || "默认"}</td>
-                  <td className="max-w-52 truncate px-4 py-2.5 text-slate-500 dark:text-slate-400 dark:text-slate-500">
+                  <td className="px-4 py-2.5 text-slate-500 dark:text-slate-400">{r.model_name || "默认"}</td>
+                  <td className="max-w-52 truncate px-4 py-2.5 text-slate-500 dark:text-slate-400">
                     {r.tool_whitelist === null
                       ? "（全部）"
                       : r.tool_whitelist.length
@@ -599,7 +599,7 @@ export default function RolesPage() {
                       className={`rounded-full px-2 py-0.5 text-xs ${
                         r.is_builtin
                           ? "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300"
-                          : "bg-slate-100 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 dark:text-slate-500"
+                          : "bg-slate-100 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400"
                       }`}
                     >
                       {r.is_builtin ? "内置" : "自定义"}

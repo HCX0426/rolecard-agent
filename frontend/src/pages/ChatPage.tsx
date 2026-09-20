@@ -630,7 +630,7 @@ export default function ChatPage({
               </button>
               <button
                 onClick={() => setEditingTitle(false)}
-                className="rounded px-2 py-1 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700"
+                className="rounded px-2 py-1 text-xs text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700"
               >
                 取消
               </button>
@@ -653,7 +653,7 @@ export default function ChatPage({
                     setTitleDraft(current.title || "");
                     setEditingTitle(true);
                   }}
-                  className="rounded px-1.5 py-0.5 text-xs text-slate-300 dark:text-slate-600 opacity-0 transition-opacity hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700 hover:text-slate-600 dark:text-slate-300 dark:text-slate-600 group-hover/title:opacity-100"
+                  className="rounded px-1.5 py-0.5 text-xs text-slate-300 dark:text-slate-600 opacity-0 transition-opacity hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700 hover:text-slate-600 dark:hover:text-slate-300 group-hover/title:opacity-100"
                   title="重命名对话"
                 >
                   ✎
@@ -675,7 +675,7 @@ export default function ChatPage({
               <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
                 直接在下方输入即可（会自动创建对话），或点左上角「＋ 新建对话」。
               </p>
-              <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400 dark:text-slate-500">
+              <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
                 <li>
                   · <b>上传报告 / 图片</b> —— 自动解析并入检索索引（.pdf/.docx/.pptx/.xlsx + 图片 OCR）
                 </li>
@@ -858,7 +858,7 @@ export default function ChatPage({
             </div>
           )}
           {selectMode && selected.length === 0 && (
-            <div className="mx-auto mb-2 max-w-3xl rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
+            <div className="mx-auto mb-2 max-w-3xl rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-xs text-slate-500 dark:text-slate-400">
               删除模式：勾选任意一问或一答，会自动带上配对的另一侧；选好后点右下「删除所选」。
             </div>
           )}
@@ -1092,7 +1092,7 @@ export default function ChatPage({
                 aria-haspopup="true"
                 aria-expanded={modelMenuOpen}
                 title="切换本对话使用的模型（按供应商分组；选中即开对话）"
-                className="flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
+                className="flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700"
               >
                 <IconModel />
                 {backends.find((b) => b.name === effectiveBackend)?.model || effectiveBackend || "模型"} ▾
@@ -1197,7 +1197,7 @@ export default function ChatPage({
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
               title="上传报告 / 图片，自动解析并入检索索引（.txt/.md/.pdf/.docx/.pptx/.xlsx + 图片 OCR）"
-              className="flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700 disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700 disabled:opacity-50"
             >
               <IconClip />
               {uploading ? "上传中…" : "上传报告"}
@@ -1213,7 +1213,7 @@ export default function ChatPage({
               className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs disabled:opacity-50 ${
                 selectMode
                   ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
-                  : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-amber-300 hover:text-amber-600"
+                  : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:border-amber-300 hover:text-amber-600"
               }`}
             >
               {selectMode ? "退出删除模式" : "删除对话"}

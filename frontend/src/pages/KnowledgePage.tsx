@@ -121,7 +121,7 @@ function KnowledgePanel() {
                   <th className="py-1 font-normal">P99</th>
                 </tr>
               </thead>
-              <tbody className="text-slate-600 dark:text-slate-300 dark:text-slate-600">
+              <tbody className="text-slate-600 dark:text-slate-300">
                 {LATENCY_STAGES.map(([key, label]) => (
                   <tr key={key} className="border-t border-slate-100 dark:border-slate-800">
                     <td className="py-1">{label}</td>
@@ -150,8 +150,8 @@ function KnowledgePanel() {
                 <code className="rounded bg-slate-100 dark:bg-slate-700/50 px-1.5 py-0.5 text-xs text-slate-700 dark:text-slate-200">
                   {s.scope}
                 </code>
-                <span className="ml-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">{s.chunks} 段</span>
-                <span className="ml-2 rounded-full bg-slate-100 dark:bg-slate-700/50 px-2 py-0.5 text-[11px] text-slate-500 dark:text-slate-400 dark:text-slate-500">
+                <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">{s.chunks} 段</span>
+                <span className="ml-2 rounded-full bg-slate-100 dark:bg-slate-700/50 px-2 py-0.5 text-[11px] text-slate-500 dark:text-slate-400">
                   嵌入：{s.embedder}
                 </span>
               </div>
@@ -160,7 +160,7 @@ function KnowledgePanel() {
                   if (await confirm({ title: "清空知识库作用域？", body: `将清空作用域 ${s.scope} 的 ${s.chunks} 段内容，此操作不可恢复，且写入审计。`, confirmText: "确认清空", danger: true })) resetScope(s.scope);
                 }}
                 title="删除该作用域的集合 —— 换嵌入后端后维度不兼容时用它重建（写审计）"
-                className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:border-red-300 dark:hover:border-red-700 hover:text-red-600 dark:text-red-400 dark:text-red-500"
+                className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs text-slate-500 dark:text-slate-400 hover:border-red-300 dark:hover:border-red-700 hover:text-red-600 dark:text-red-400 dark:text-red-500"
               >
                 重建（清空）
               </button>
@@ -196,7 +196,7 @@ function KnowledgePanel() {
             <button
               onClick={scanOrphans}
               disabled={busy}
-              className="shrink-0 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600 dark:text-blue-400 disabled:opacity-50"
+              className="shrink-0 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600 dark:text-blue-400 disabled:opacity-50"
             >
               {busy ? "处理中…" : "检查可回收文件"}
             </button>
@@ -204,7 +204,7 @@ function KnowledgePanel() {
 
           {orphans && (
             <div className="mt-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 p-3">
-              <p className="text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600">
+              <p className="text-xs text-slate-600 dark:text-slate-300">
                 扫描 {orphans.scanned} 个文件，其中 {orphans.referenced} 个被台账引用；
                 可回收 <b>{orphans.orphans.length}</b> 个（{formatBytes(orphans.total_bytes)}）。
               </p>
@@ -214,7 +214,7 @@ function KnowledgePanel() {
                     {orphans.orphans.map((o) => (
                       <li
                         key={o.name}
-                        className="flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400 dark:text-slate-500"
+                        className="flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400"
                       >
                         <code className="truncate">{o.name}</code>
                         <span className="shrink-0">
@@ -237,7 +237,7 @@ function KnowledgePanel() {
                     </button>
                     <button
                       onClick={() => setOrphans(null)}
-                      className="rounded px-2 py-1 text-[11px] text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700"
+                      className="rounded px-2 py-1 text-[11px] text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700"
                     >
                       取消
                     </button>

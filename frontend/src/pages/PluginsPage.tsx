@@ -34,7 +34,7 @@ export default function PluginsPage() {
 
         <div className="mt-6 rounded-xl border border-dashed border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 p-5">
           <h3 className="text-sm font-medium text-slate-700 dark:text-slate-200">如何新增一个领域插件？</h3>
-          <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-relaxed text-slate-500 dark:text-slate-400 dark:text-slate-500">
+          <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
             <li>
               新建 <code>src/rolecard_agent/domains/&lt;id&gt;/</code> 包：models.py /
               service.py / tools.py / schema.sql
@@ -103,7 +103,7 @@ function DomainPlugins() {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-slate-900 dark:text-slate-100">{p.display_name}</span>
-                  <code className="rounded bg-slate-100 dark:bg-slate-700/50 px-1.5 py-0.5 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
+                  <code className="rounded bg-slate-100 dark:bg-slate-700/50 px-1.5 py-0.5 text-xs text-slate-500 dark:text-slate-400">
                     {p.plugin_id}
                   </code>
                 </div>
@@ -117,7 +117,7 @@ function DomainPlugins() {
                 {tools.length > 0 && (
                   <button
                     onClick={() => setExpanded(isOpen ? null : p.plugin_id)}
-                    className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600 dark:text-blue-400"
+                    className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs text-slate-500 dark:text-slate-400 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600 dark:text-blue-400"
                   >
                     {isOpen ? "收起详情 ▴" : "详情（工具与数据）▾"}
                   </button>
@@ -132,7 +132,7 @@ function DomainPlugins() {
             {isOpen && (
               <div className="mt-3 space-y-4 rounded-lg border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 p-3">
                 <div>
-                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400 dark:text-slate-500">本插件贡献的工具：</p>
+                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400">本插件贡献的工具：</p>
                   {tools.map((t) => (
                     <div key={t.name} className="mt-1 text-xs">
                       <code className="text-slate-700 dark:text-slate-200">{t.name}</code>

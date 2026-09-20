@@ -57,7 +57,7 @@ export default function SettingsPage({
               className={`rounded-t-lg px-4 py-2 text-sm ${
                 tab === t.key
                   ? "border-b-2 border-blue-600 font-medium text-blue-700 dark:text-blue-300"
-                  : "text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:text-slate-200"
+                  : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
               }`}
             >
               {t.label}
@@ -298,7 +298,7 @@ function MemoryPanel() {
             ))}
           </select>
         </div>
-        <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400 dark:text-slate-500">
+        <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
           {memScope
             ? "这是该角色自己的记忆（回忆触发只读这一份），与全局记忆和其它角色隔离。编辑/清空只作用于本角色。"
             : "全局记忆注入每个角色的对话。AI 检测到你明确说出的可复用事实（称呼 / 偏好 / 背景）会通过 memory_save 写入，并同步进当前角色的专属记忆。"}
@@ -347,7 +347,7 @@ function MemoryPanel() {
             {reachoutOn === null ? "…" : reachoutOn ? "已开启" : "已关闭"}
           </button>
         </div>
-        <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400 dark:text-slate-500">
+        <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
           全局总闸：关闭后所有角色都不会主动找你（静默，无提示音）。即使开着，也只有角色卡上
           勾选「角色会主动找你」的角色才会开口。
         </p>
@@ -357,7 +357,7 @@ function MemoryPanel() {
 
       <Card className="p-5">
         <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">任务目录</h3>
-        <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400 dark:text-slate-500">
+        <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
           角色读写文件的授权范围：只看得到、只碰得到这个目录里的内容（目录外一律拒绝）。
           修改保存后对角色下一轮对话即时生效。
         </p>
@@ -555,7 +555,7 @@ function AboutPanel({
 
       <Card className="p-5">
         <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">关于</h3>
-        <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400 dark:text-slate-500">
+        <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
           rolecard-agent 控制台。多角色对话 Agent：角色卡控制人设与工具权限，
           插件以数据驱动启停。
         </p>
@@ -590,13 +590,13 @@ function AboutPanel({
 
       <Card className="p-5">
         <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">演示数据</h3>
-        <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
+        <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
           评测 / 演示用的虚构档案可由脚本重建；对话与数据的管理操作在对话页与插件页。
         </p>
         <div className="mt-2 flex gap-2">
           <button
             onClick={() => onOpenChat?.()}
-            className="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
+            className="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700"
           >
             前往对话
           </button>
@@ -606,7 +606,7 @@ function AboutPanel({
               setRefreshed(true);
               setTimeout(() => setRefreshed(false), 2000);
             }}
-            className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
+            className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700"
           >
             {refreshed ? "已刷新 ✓" : "刷新状态"}
           </button>
@@ -969,7 +969,7 @@ function ModelsPanel() {
             {providerOrder.map((prov) => (
               <div key={prov} className="space-y-3">
                 <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-1">
-                  <span className="text-xs font-medium text-slate-600 dark:text-slate-300 dark:text-slate-400">
+                  <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
                     供应商：{providers.find((p) => p.id === prov)?.label ?? prov}
                   </span>
                   <span className="text-[11px] text-slate-400 dark:text-slate-500">
@@ -1059,7 +1059,7 @@ function ModelsPanel() {
                   )}
                   {r.has_key ? (
                     <>
-                      <div className="flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 px-2.5 py-1.5 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
+                      <div className="flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 px-2.5 py-1.5 text-xs text-slate-500 dark:text-slate-400">
                         <span className="font-mono">{r.key_masked || "••••••"}</span>
                         <span className="ml-auto text-[11px] text-slate-400 dark:text-slate-500">已保存（不可见明文）</span>
                       </div>
@@ -1097,7 +1097,7 @@ function ModelsPanel() {
           <div className="mt-4 flex gap-2">
             <button
               onClick={addRow}
-              className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2 text-sm text-slate-600 dark:text-slate-300 dark:text-slate-600 hover:bg-slate-50 dark:bg-slate-800/50 dark:hover:bg-slate-700/60"
+              className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:bg-slate-800/50 dark:hover:bg-slate-700/60"
             >
               ＋ 添加后端
             </button>
@@ -1180,14 +1180,14 @@ function AuditPanel() {
                 key={`${a.ts}|${a.actor}|${a.action}|${a.target ?? ""}|${i}`}
                 className="border-b border-slate-50 last:border-0"
               >
-                <td className="whitespace-nowrap px-4 py-2 font-mono text-slate-500 dark:text-slate-400 dark:text-slate-500">
+                <td className="whitespace-nowrap px-4 py-2 font-mono text-slate-500 dark:text-slate-400">
                   {String(a.ts).replace("T", " ").slice(0, 19)}
                 </td>
                 <td className="px-4 py-2">{a.actor}</td>
                 <td className="px-4 py-2">
                   <code className="rounded bg-slate-100 dark:bg-slate-700/50 px-1.5 py-0.5">{a.action}</code>
                 </td>
-                <td className="max-w-40 truncate px-4 py-2 font-mono text-slate-500 dark:text-slate-400 dark:text-slate-500">{a.target}</td>
+                <td className="max-w-40 truncate px-4 py-2 font-mono text-slate-500 dark:text-slate-400">{a.target}</td>
                 <td className="max-w-56 px-4 py-2 align-top text-slate-400 dark:text-slate-500">
                   {/* 详情可点开：截断摘要 + title 悬浮不够看全 JSON（审计走查反馈） */}
                   {a.detail_json && expanded === `${a.ts}|${a.action}` ? (
