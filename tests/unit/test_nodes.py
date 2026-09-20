@@ -10,6 +10,7 @@ See 技术评审与决策.md §9 D2 - these had no unit coverage before.
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Sequence
 from typing import Any
@@ -19,6 +20,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 
 from rolecard_agent.config import ModelBackend, Settings
+from rolecard_agent.core import probes
 from rolecard_agent.core.nodes import (
     MAX_TOOL_RETRIES,
     TOOL_DENIED,
@@ -952,6 +954,7 @@ def _vision_ctx(
     probe: Any,
     provider: str = "ollama",
     tracer: Any = None,
+    model_name: str = "some-model",
 ) -> tuple[KernelContext, FakeModel, RecordingTracer]:
     """一张带图能跑的 ctx：后端行的 `supports_vision` 与探测器答案都由用例点名。"""
     rec = tracer or RecordingTracer()
@@ -962,9 +965,7 @@ def _vision_ctx(
     ctx.settings = Settings(
         model_default="vl",
         model_backends={
-            "vl": ModelBackend(
-                model="some-model", provider=provider, supports_vision=declared
-            )
+            "vl": ModelBackend(model=model_name, provider=provider, supports_vision=declared)
         },
     )
     ctx.vision_probe = probe  # type: ignore[assignment]
@@ -1034,3 +1035,45 @@ def test_vision_gate_does_not_guess_about_cloud_backends(roles: RoleCardService)
     )
     call_model(_image_state(rid), ctx)
     assert model.last_prompt is not None
+
+
+# 这台机器上拿来当"确定不能看"证据的纯文本模型（`ollama pull all-minilm`，45 MB）。
+# 名字可经 env 换：任何 `/api/show` 的 capabilities 里不含 vision 的 Ollama 模型都行。
+TEXT_ONLY_PROBE_MODEL = os.environ.get("ROLECARD_TEST_TEXT_MODEL", "all-minilm:latest")
+
+
+@pytest.mark.live
+def test_vision_gate_fires_on_a_real_text_only_model(roles: RoleCardService) -> None:
+    """上面那批喂的是**假探针**；这条把真 `probes.vision_capability` 接进真闸门，是 P1-2
+    `False` 那一支唯一的真机覆盖（本机原先只装了一个 VLM，那一支从来没有真实证据）。
+
+    三态在这里各有一次真问答：纯文本模型 → `False`（闸门该落），VLM → `True`（该放行）。
+    没装对应模型时**跳过而不是失败** —— 探针问不到 = "不知道"，那本来就是放行的正确答案，
+    把环境问题报成断言失败会让这条用例在别人的机器上变成噪音。
+    """
+    blocked = probes.vision_capability(None, TEXT_ONLY_PROBE_MODEL, use_cache=False)
+    if blocked is not False:
+        pytest.skip(f"{TEXT_ONLY_PROBE_MODEL} 不在本机 Ollama 上（探针给 {blocked!r}）")
+    rid = _role(roles)
+    ctx, model, rec = _vision_ctx(
+        roles,
+        declared=False,
+        probe=probes.vision_capability,
+        model_name=TEXT_ONLY_PROBE_MODEL,
+    )
+    with pytest.raises(VisionNotSupported):
+        call_model(_image_state(rid), ctx)
+    assert model.last_prompt is None  # 拦住发生在调用前：一次真推理都没发出
+    assert "vision_blocked_pre_call" in rec.kinds()
+
+    # 反向半条：同一台机器上的 VLM 探到 True → 放行（探针赢过一次过期的勾选框）。
+    if probes.vision_capability(None, "qwen3-vl:8b", use_cache=False) is True:
+        ctx2, model2, rec2 = _vision_ctx(
+            roles,
+            declared=False,
+            probe=probes.vision_capability,
+            model_name="qwen3-vl:8b",
+        )
+        call_model(_image_state(rid), ctx2)
+        assert model2.last_prompt is not None
+        assert "vision_blocked_pre_call" not in rec2.kinds()
