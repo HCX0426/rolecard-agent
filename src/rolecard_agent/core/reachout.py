@@ -166,13 +166,24 @@ def _opened_thread(role_id: str, opened: set[str]) -> str | None:
 
 
 def mark_read(conn: SqlConnection, reachout_id: int) -> bool:
-    """标记已读；不存在返回 False（路由层转 404）。"""
+    """把一条置为已读，返回"这条现在处于已读状态"。记录不存在才返回 False。
+
+    **已读再标一次是幂等成功，不是"不存在"** —— 这两件事以前共用一个 False，于是点一条
+    历史（已读）消息会弹"主动消息不存在：9"，而那条就在你眼前。收件箱列的是未读+最近历史，
+    点已读的那几条是正常路径，不该报错。
+    """
     cur = conn.execute(
         "UPDATE agent_reachout SET state = 'read' WHERE id = ? AND state = 'unread'",
         (reachout_id,),
     )
+    if cur.rowcount > 0:
+        conn.commit()
+        return True
     conn.commit()
-    return cur.rowcount > 0
+    return (
+        conn.execute("SELECT 1 FROM agent_reachout WHERE id = ?", (reachout_id,)).fetchone()
+        is not None
+    )
 
 
 def mark_role_read(conn: SqlConnection, role_id: str) -> int:

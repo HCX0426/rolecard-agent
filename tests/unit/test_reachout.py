@@ -66,7 +66,10 @@ def test_mark_read_transitions_state(conn) -> None:
     conn.commit()
     rid = conn.execute("SELECT id FROM agent_reachout").fetchone()["id"]
     assert svc.mark_read(conn, int(rid)) is True  # unread → read
-    assert svc.mark_read(conn, int(rid)) is False  # 已读再标 = 无变化
+    # 已读再标 = **幂等成功**（收件箱列的是"未读+最近历史"，点已读条目是正常路径）。
+    # 以前这里返回 False，与"记录不存在"混成一谈，用户看到的就是"主动消息不存在"的谎话。
+    assert svc.mark_read(conn, int(rid)) is True
+    assert svc.mark_read(conn, 999_999) is False  # 真没有这条才是 False
     rows = conn.execute("SELECT state FROM agent_reachout").fetchall()
     assert rows[0]["state"] == "read"
 

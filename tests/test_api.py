@@ -473,10 +473,31 @@ def test_reachout_role_switch_and_master_runtime(client: TestClient) -> None:
 
 
 def test_reachouts_list_and_mark_read_404(client: TestClient) -> None:
-    """收件箱读取路径：列表形状（含 unread 计数）；标记已读不存在 → 404。"""
+    """收件箱读取路径：列表形状（含 unread 计数）；标记**不存在**的记录 → 404。"""
     r = client.get("/api/reachouts").json()
     assert "unread" in r and isinstance(r["items"], list)
     assert client.post("/api/reachouts/999999/read").status_code == 404
+
+
+def test_marking_an_already_read_reachout_is_not_an_error(client: TestClient) -> None:
+    """点一条**已读**的历史不该弹"主动消息不存在"（用户 2026-09-20 报的症状）。
+
+    收件箱列的是"未读 + 最近历史"，所以点已读的那几条是正常路径。以前"没东西可改"
+    （已读）与"记录不存在"共用一个 False，于是列表里明明看得见的消息被报成不存在 ——
+    一句谎话，还会把"这条点不开"渲染成"这条没了"。
+    """
+    conn = client.app.state.ctx.conn
+    conn.execute(
+        "INSERT INTO agent_reachout (role_id, role_name, text, state) VALUES (?, ?, ?, 'read')",
+        ("general_assistant", "通用助手", "看过了的那条"),
+    )
+    conn.commit()
+    rid = conn.execute("SELECT id FROM agent_reachout ORDER BY id DESC LIMIT 1").fetchone()["id"]
+
+    res = client.post(f"/api/reachouts/{int(rid)}/read")
+    assert res.status_code == 200
+    assert res.json()["unread"] == 0
+    assert any(i["id"] == int(rid) for i in res.json()["items"])  # 还在历史里，没被"标没了"
 
 
 

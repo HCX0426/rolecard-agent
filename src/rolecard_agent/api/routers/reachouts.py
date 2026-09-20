@@ -32,7 +32,11 @@ def get_reachouts(
 
 @router.post("/api/reachouts/{reachout_id}/read")
 def mark_read(reachout_id: int, ctx: AppContext = Depends(get_context)) -> object:
-    """标记一条主动消息已读（点收件箱条目 / 去对话时调用）。"""
+    """标记一条主动消息已读（点收件箱条目 / 去对话时调用）。
+
+    已经读过再标一次 = 幂等成功（收件箱列的是"未读 + 最近历史"，点历史条目是正常路径）；
+    只有**记录真的不存在**才 404。
+    """
     if not svc.mark_read(ctx.conn, reachout_id):
         raise HTTPException(status_code=404, detail=f"主动消息不存在：{reachout_id}")
     return svc.list_reachouts(ctx.conn, file_watch_pending=_pending(ctx))
