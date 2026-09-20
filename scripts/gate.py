@@ -6,8 +6,9 @@
   * 没有**每步计时**，慢了也不知道慢在哪、该优化谁。本脚本每步打印耗时并汇总。
 
 用法：
-  python scripts/gate.py --fast   # ruff + mypy + 单测(不带覆盖率, -x) + 一致性  ≈ 1.5 分钟
-  python scripts/gate.py          # 全量：上面 + 覆盖率门槛 + 前端 test/build + 真机冒烟
+  python scripts/gate.py --fast   # ruff + mypy + 单测(-x, 无覆盖率) + 一致性  ≈ 1.5 分钟
+  python scripts/gate.py          # 全量：上面(单测换成一趟带覆盖率) + 前端 test/build + 真机冒烟
+                                  #   覆盖率那趟仅在改动 src/ 时跑（没碰 src/ 自动跳过，≈ 省 97s）
 
 任何一步失败即停（后续步骤不再跑），但已跑完步骤的耗时仍会打印。
 
@@ -43,16 +44,17 @@ PY = str(ROOT / ".venv" / "Scripts" / "python.exe")
 # Windows 下 npm 是 .cmd，subprocess 直调 "npm" 解析不到会抛 WinError 2（FileNotFoundError）。
 NPM = "npm.cmd" if platform.system() == "Windows" else "npm"
 
-# (名称, 命令, 是否只在全量跑)
-STEPS: list[tuple[str, list[str], bool]] = [
-    ("ruff", [PY, "-m", "ruff", "check", "."], False),
-    ("mypy", [PY, "-m", "mypy"], False),
+# (名称, 命令, 模式) —— "both"=快/全量都跑; "fast"=仅快门禁; "full"=仅全量
+# 覆盖率那趟只在 full 跑，且 _src_changed() 为 False 时跳过（见 main）。
+STEPS: list[tuple[str, list[str], str]] = [
+    ("ruff", [PY, "-m", "ruff", "check", "."], "both"),
+    ("mypy", [PY, "-m", "mypy"], "both"),
     (
         "pytest(-x, 无覆盖率)",
         [PY, "-m", "pytest", "-p", "no:cacheprovider", "-W", "ignore", "-q", "-x"],
-        False,
+        "fast",
     ),
-    ("consistency", [PY, "scripts/check_consistency.py"], False),
+    ("consistency", [PY, "scripts/check_consistency.py"], "both"),
     (
         "pytest(覆盖率≥85%)",
         [
@@ -67,12 +69,47 @@ STEPS: list[tuple[str, list[str], bool]] = [
             "--cov-fail-under=85",
             "-q",
         ],
-        True,
+        "full",
     ),
-    ("前端 vitest", [NPM, "test"], True),
-    ("前端 tsc+build", [NPM, "run", "build"], True),
-    ("真机冒烟(14 项)", [PY, "scripts/smoke_check.py"], True),
+    ("前端 vitest", [NPM, "test"], "full"),
+    ("前端 tsc+build", [NPM, "run", "build"], "full"),
+    ("真机冒烟(14 项)", [PY, "scripts/smoke_check.py"], "full"),
 ]
+
+
+def _src_changed() -> bool:
+    """覆盖率只量 ``src/``。没碰 ``src/`` 时那趟是纯重跑，可跳过。
+
+    fail-safe：任何不确定（无 git / 找不到基线 / 调用异常）都返回 True（要跑），
+    绝不因探测失误而悄悄削弱 85% 安全网。
+    """
+    try:
+        base = (
+            subprocess.run(
+                ["git", "merge-base", "HEAD", "origin/main"],
+                cwd=str(ROOT), capture_output=True, text=True,
+            ).stdout.strip()
+            or subprocess.run(
+                ["git", "merge-base", "HEAD", "main"],
+                cwd=str(ROOT), capture_output=True, text=True,
+            ).stdout.strip()
+        )
+        if not base:
+            return True  # 找不到基线 → 保守跑
+        changed = subprocess.run(
+            ["git", "diff", "--name-only", f"{base}...HEAD"],
+            cwd=str(ROOT), capture_output=True, text=True,
+        ).stdout.splitlines()
+        untracked = [
+            line[3:] for line in subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=str(ROOT), capture_output=True, text=True,
+            ).stdout.splitlines()
+            if line.startswith("??")
+        ]
+        return any(p.startswith("src/") for p in changed + untracked)
+    except Exception:
+        return True
 
 
 def _run(name: str, cmd: list[str], cwd: Path | None = None) -> tuple[bool, float]:
@@ -93,8 +130,15 @@ def main() -> int:
     failures: list[str] = []
     started = time.perf_counter()
 
-    for name, cmd, full_only in STEPS:
-        if args.fast and full_only:
+    for name, cmd, mode in STEPS:
+        if args.fast and mode not in ("fast", "both"):
+            continue
+        if (not args.fast) and mode not in ("full", "both"):
+            continue
+        # 覆盖率那趟：没碰 src/ 就跳过（安全网只在数字真会变时跑）
+        if (not args.fast) and name.startswith("pytest(覆盖率") and not _src_changed():
+            print("\n▶ pytest(覆盖率≥85%)：跳过（src/ 无改动）", flush=True)
+            timings.append((name, 0.0))
             continue
         cwd = ROOT / "frontend" if name.startswith("前端") else None
         ok, dt = _run(name, cmd, cwd)
