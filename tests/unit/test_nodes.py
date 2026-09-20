@@ -491,7 +491,7 @@ def test_call_model_asks_the_provider_for_the_current_role(roles: RoleCardServic
     """接线本身：provider 收到的必须是**本轮角色**，不是 None。
 
     对话侧以前只取全局记忆，于是"设置→记忆里给某角色写的内容，聊天时模型看不到"
-    （审计 §3.1）。角色专属 → 全局的取法在 `core/memory.memory_for_turn`，与主动开口同源，
+    （审计 §3 台账）。角色专属 → 全局的取法在 `core/memory.memory_for_turn`，与主动开口同源，
     这里只钉"内核把角色传出来了"这一环。
     """
     rid = _role(roles, role_id="elysia")

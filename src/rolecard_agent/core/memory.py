@@ -91,8 +91,8 @@ def memory_for_turn(conn: SqlConnection, settings: Settings, role_id: str | None
     用户事实，不是别的角色的对话，所以回退不构成跨角色串扰）；没给角色 → 全局。
 
     以前这条规则只写在 `reachout.generate_reachout_text` 里，而普通对话的 provider 只取全局
-    —— 于是"设置→记忆里给某角色写的内容，聊天时模型看不到"（审计 §3.1）。规则有两份实现，
-    迟早会各自漂移；接一条新链路时永远只有一个人记得另一条的存在。
+    —— 于是"设置→记忆里给某角色写的内容，聊天时模型看不到"（审计 §3 台账，取舍见 §10.9）。
+    规则有两份实现，迟早会各自漂移；接一条新链路时永远只有一个人记得另一条的存在。
     """
     if not settings.memory_enabled:
         return ""

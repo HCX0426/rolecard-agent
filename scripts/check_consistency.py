@@ -261,7 +261,8 @@ def _sql_table_names(path: pathlib.Path) -> set[str]:
 
 
 def _domain_private_tokens() -> set[str]:
-    """各域**自己建**的表名 = 内核源码里不该出现的专有名词（架构审计报告 §5.1 / P1-1）。
+    """各域**自己建**的表名 = 内核源码里不该出现的专有名词
+    （架构总览 §5 不变式 1 / 架构审计报告 P1-1）。
 
     过去这条检查只盯字面量 "health"，于是 `core/ingestion.py` 里一句
     `UPDATE medical_report …` 大摇大摆躲过了检查 —— 一个只会绿的检查比没有检查更糟，
