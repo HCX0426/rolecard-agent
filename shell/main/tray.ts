@@ -4,7 +4,7 @@
  * 「关闭控制台」= 隐藏而不是退出（桌宠与后端继续活着）—— 这是一只宠物，
  * 关掉窗口不该让它消失；真要退出走托盘的「退出」，那条路会回收后端进程。
  */
-import { Menu, Tray, app, nativeImage } from "electron";
+import { Menu, MenuItem, Tray, app, nativeImage } from "electron";
 import path from "node:path";
 
 const ICON = path.join(__dirname, "..", "..", "build", "icon.ico");
@@ -13,6 +13,10 @@ export type TrayControls = {
   showConsole: () => void;
   petVisible: () => boolean;
   setPetVisible: (visible: boolean) => void;
+  /** 开机自启只在打包态存在（dev 下写登录项 = 留一条指向 node_modules 的假启动项）。 */
+  canAutostart: () => boolean;
+  autostartEnabled: () => boolean;
+  setAutostart: (on: boolean) => void;
 };
 
 export type TrayHandle = { tray: Tray; refresh: () => void };
@@ -40,7 +44,21 @@ export function createTray(controls: TrayControls): TrayHandle {
             render(); // 勾选态由这次操作决定：立刻重画，托盘就不会短暂说谎
           },
         },
-        { type: "separator" },
+        // 不给一个"看得见但永远无效"的条目：开发态整条不出现。
+        ...(controls.canAutostart()
+          ? [
+              {
+                label: "开机自启",
+                type: "checkbox" as const,
+                checked: controls.autostartEnabled(),
+                click: (item: MenuItem) => {
+                  controls.setAutostart(item.checked);
+                  render();
+                },
+              },
+            ]
+          : []),
+        { type: "separator" as const },
         // 唯一的退出入口：它触发 before-quit，那里负责回收本壳 spawn 的后端。
         { label: "退出 rolecard-agent", click: () => app.quit() },
       ]),

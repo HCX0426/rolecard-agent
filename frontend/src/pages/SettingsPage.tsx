@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ExtensionPanel } from "../components/ExtensionPanel";
 import { LocalServiceCard } from "../components/LocalServiceCard";
+import { NativeDirPickerButton } from "../components/NativeDirPickerButton";
 import { ServicesPanel } from "../components/ServicesPanel";
 import { ShellReleaseCard } from "../components/ShellReleaseCard";
 import {
@@ -424,6 +425,9 @@ function GeneralPanel({
           >
             浏览…
           </button>
+          {/* 桌面壳里多一条系统对话框的路子（B/S 下整个按钮不出现）；挑完同样只填草稿，
+              要用户按「保存」才生效 —— 授权范围不该被一次点击顺手改掉。 */}
+          <NativeDirPickerButton disabled={!wsDir} onPicked={(p) => setWsDraft(p)} />
           <button
             onClick={saveWorkspace}
             disabled={!wsDir}

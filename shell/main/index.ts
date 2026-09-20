@@ -11,10 +11,11 @@
  * 关于"关窗口"的语义（D②-3 定）：**收起而不是退出**。这是一只放在桌面上的宠物，关掉控制台
  * 不该让它消失；真要退出走托盘的「退出」，只有那条路会回收后端进程。
  */
-import { Notification, app, ipcMain, type BrowserWindow } from "electron";
+import { BrowserWindow, Notification, app, dialog, globalShortcut, ipcMain } from "electron";
 import path from "node:path";
 
 import { Backend, consoleUrl, endpoint, serving, type BackendOptions, type Outcome } from "./backend";
+import { canManageLoginItem, loginItemEnabled, setLoginItemEnabled, startedByLoginItem } from "./autostart";
 import { Ollama } from "./ollama";
 import { createMainWindow, createPetWindow } from "./windows";
 import { createTray, type TrayHandle } from "./tray";
@@ -81,11 +82,20 @@ function textOf(value: unknown, max: number): string {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 
+/** 全局热键：唤起/收起控制台。选组合而不是单键，是因为它要能在任何应用头上抢下来而不撞车。 */
+const HOTKEY = "CommandOrControl+Alt+R";
+
 function showConsole(): void {
   if (!mainWin) return; // boot 完成之前（第二个实例抢跑）没有窗可显示
   if (mainWin.isMinimized()) mainWin.restore();
   mainWin.show();
   mainWin.focus();
+}
+
+/** 热键的动作：看不见就唤出来，正开着（在前台）就收回去。 */
+function toggleConsole(): void {
+  if (mainWin?.isVisible() && mainWin.isFocused()) mainWin.hide();
+  else showConsole();
 }
 
 function tellConsole(threadId: string): void {
@@ -152,6 +162,15 @@ function boot(): void {
   ipcMain.handle("shell:ollama-owner", () => ollama.owner());
   ipcMain.handle("shell:ollama-start", () => ollama.start());
   ipcMain.handle("shell:ollama-stop", () => ollama.stop());
+  // 原生目录选择器（D②-6）。**零参数 + 路径由用户在对话框里选**：页面拿不到"指定任意路径"
+  // 的能力，所以这条不构成新的口子。取消返回 null，由界面决定什么都不做。
+  ipcMain.handle("shell:pick-directory", async (event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWin ?? undefined;
+    const result = owner
+      ? await dialog.showOpenDialog(owner, { properties: ["openDirectory", "createDirectory"] })
+      : await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
   // 渲染端挂了监听才敢投递"要打开的会话"（早于监听 send 就是丢消息）。
   ipcMain.handle("shell:renderer-ready", (event) => {
     if (!mainWin || event.sender.id !== mainWin.webContents.id) return;
@@ -164,7 +183,8 @@ function boot(): void {
 
   void backend.ensure().then(report);
 
-  mainWin = createMainWindow();
+  // 开机自启带起来的那次启动：只放桌宠，不弹一扇控制台盖住用户刚打开的工作。
+  mainWin = createMainWindow({ visible: !startedByLoginItem() });
   wireWindow(mainWin);
   // 真·跨文档跳转（着陆页 → 后端地址，以及后端地址换新地址）期间监听者不存在；
   // 页内 hash 变化（isInPlace）不能清，清了会把正常深链挤掉一次。
@@ -176,7 +196,15 @@ function boot(): void {
     showConsole,
     petVisible: () => Boolean(petWin && petWin.isVisible()),
     setPetVisible,
+    canAutostart: canManageLoginItem,
+    autostartEnabled: loginItemEnabled,
+    setAutostart: setLoginItemEnabled,
   });
+
+  // 全局热键：唤起/收起控制台。刻意不做"让角色开口"那种触发 —— 那是要过 operator 鉴权的
+  // 动作，而那个鉴权还不存在（P0-3）。注册失败（键被别的程序占了）只说一声，不影响启动。
+  const registered = globalShortcut.register(HOTKEY, toggleConsole);
+  if (!registered) console.warn(`[shell] 全局热键 ${HOTKEY} 被占用，注册失败（其余功能不受影响）`);
 
   // 桌宠是"能不能不看我"的开关：默认开，ROLECARD_PET=0 关掉（不为此加设置界面）。
   if (process.env.ROLECARD_PET !== "0") setPetVisible(true);
@@ -195,6 +223,8 @@ if (!app.requestSingleInstanceLock()) {
     // 退出入口的僵尸。托盘的「退出」才是用户那侧唯一的退出入口。
     app.quit();
   });
+
+  app.on("will-quit", () => globalShortcut.unregisterAll());
 
   app.on("before-quit", () => {
     quitting = true;

@@ -59,6 +59,7 @@ function withShell(owner: { managed: boolean; pid: number | null }) {
     ollamaOwner: vi.fn().mockResolvedValue({ ...owner, binary: "C:\\ollama.exe" }),
     startOllama: vi.fn().mockResolvedValue({ ok: true }),
     stopOllama: vi.fn().mockResolvedValue({ ok: true }),
+    pickDirectory: vi.fn().mockResolvedValue(null),
   };
   window.rolecardShell = shell;
   return shell;

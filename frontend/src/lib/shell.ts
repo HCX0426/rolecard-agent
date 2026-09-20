@@ -33,6 +33,8 @@ export interface ShellBridge {
   ollamaOwner(): Promise<OllamaOwner>;
   startOllama(): Promise<ShellAttempt>;
   stopOllama(): Promise<ShellAttempt>;
+  /** 系统目录选择器（D②-6）。取消 = null。**页面不给路径**，所以这不是一条"任意路径"口子。 */
+  pickDirectory(): Promise<string | null>;
 }
 
 declare global {

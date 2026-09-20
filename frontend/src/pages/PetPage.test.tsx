@@ -53,6 +53,7 @@ function withShell(): ShellBridge & { notify: ReturnType<typeof vi.fn>; openSess
     ollamaOwner: vi.fn().mockResolvedValue({ managed: false, pid: null, binary: null }),
     startOllama: vi.fn(),
     stopOllama: vi.fn(),
+    pickDirectory: vi.fn().mockResolvedValue(null),
   };
   window.rolecardShell = shell;
   return shell;

@@ -50,4 +50,7 @@ contextBridge.exposeInMainWorld("rolecardShell", {
     ipcRenderer.invoke("shell:ollama-start"),
   stopOllama: (): Promise<{ ok: boolean; reason?: string }> =>
     ipcRenderer.invoke("shell:ollama-stop"),
+  /** 用系统目录选择器挑一个目录；取消 = null。**不回传任何参数给主进程**：路径是用户
+   *  在原生对话框里选的，不是页面给的，所以这条不构成"页面能指定任意路径"的口子。 */
+  pickDirectory: (): Promise<string | null> => ipcRenderer.invoke("shell:pick-directory"),
 });

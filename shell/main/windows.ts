@@ -39,7 +39,10 @@ function webPreferences(): Electron.WebPreferences {
   };
 }
 
-export function createMainWindow(): BrowserWindow {
+/** @param options.visible 就绪后要不要显示出来。开机自启带起来的那次是 false：
+ *  桌宠该在桌面上，但不该弹一扇控制台盖住用户正在做的事。 */
+export function createMainWindow(options: { visible?: boolean } = {}): BrowserWindow {
+  const visible = options.visible !== false;
   const bounds = initialBounds("main", {
     x: 120,
     y: 80,
@@ -55,7 +58,9 @@ export function createMainWindow(): BrowserWindow {
     webPreferences: webPreferences(),
   });
   trackBounds(win, "main");
-  win.once("ready-to-show", () => win.show());
+  win.once("ready-to-show", () => {
+    if (visible) win.show();
+  });
   void win.loadFile(LANDING);
   return win;
 }
