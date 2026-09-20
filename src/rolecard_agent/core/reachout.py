@@ -72,25 +72,77 @@ TICK_SECONDS = 30
 # 文件事件素材清单的最大行数（再多只报总数）。
 _FILE_EVENT_MAX_LINES = 10
 
-_REACHOUT_TASK = (
-    "现在是主动开口的时刻。结合你的角色设定和关于用户的长期记忆，用一两句话主动向用户"
-    "问候或说一件此刻值得说的小事：可以是有用的提醒、一句关心，或自然地打招呼。"
-    "像真人突然想起跟对方说话那样，自然、简短、口语化；不要长篇，不要说教，不要自我介绍。"
+# 三种口吻共用的开头。**记忆为空时必须换掉那半句** —— 指着一个空槽说"结合长期记忆"，
+# 模型只能凭人设编（实测就是这样连着几天说"花海真漂亮"），那是假契约。
+_LEAD_WITH_MEMORY = "结合你的角色设定和关于用户的长期记忆，"
+_LEAD_NO_MEMORY = "结合你的角色设定，"
+
+_REACHOUT_TASK_BODY = (
+    "用一两句话主动向用户问候或说一件此刻值得说的小事：可以是有用的提醒、一句关心，"
+    "或自然地打招呼。像真人突然想起跟对方说话那样，自然、简短、口语化；"
+    "不要长篇，不要说教，不要自我介绍。"
 )
 
 # 回忆触发专用的口吻：自然提起一件记得的、之前聊过或答应的事。
-_REACHOUT_TASK_RECALL = (
-    "现在是主动开口的时刻。结合你的角色设定和关于用户的长期记忆，自然地提起一件"
-    "你记得的、之前聊过或答应的事——像突然想起来要跟对方说。简短、口语化；"
-    "不要自我介绍、不要说教、不要长篇。"
+_REACHOUT_TASK_RECALL_BODY = (
+    "自然地提起一件你记得的、之前聊过或答应的事——像突然想起来要跟对方说。"
+    "简短、口语化；不要自我介绍、不要说教、不要长篇。"
 )
 
 # 文件事件触发（架构计划 C·§5.2）的口吻：目录变化是素材，严禁编造未见过的内容。
-_REACHOUT_TASK_FILE_EVENT = (
-    "现在是主动开口的时刻。你注意到用户的任务目录最近有了变化（清单见下）。以你的"
-    "角色口吻自然地就此跟用户说一句——可以是好奇、关心或点评，但**不得编造文件内容**"
-    "（你只看到文件名）。简短、口语化；不要自我介绍、不要说教、不要长篇。"
+_REACHOUT_TASK_FILE_EVENT_BODY = (
+    "你注意到用户的任务目录最近有了变化（清单见下）。以你的角色口吻自然地就此跟用户说一句"
+    "——可以是好奇、关心或点评，但**不得编造文件内容**（你只看到文件名）。"
+    "简短、口语化；不要自我介绍、不要说教、不要长篇。"
 )
+
+_RECALL_TASK_WITHOUT_MEMORY = (
+    "现在是主动开口的时刻。你还没有关于这个用户的长期记忆，所以这次**不要假装记得什么"
+    "往事**：就按角色设定自然地打招呼、说一句此刻值得说的小事。简短、口语化；"
+    "不要自我介绍、不要说教、不要长篇。"
+)
+
+_TASK_PREFIX = "现在是主动开口的时刻。"
+
+# 开口前去重用：把该角色最近说过的几条原文带进指令。**写死成常量而不是配置项** ——
+# 它是"别复读"这个机制的实现细节，调它的人不会存在，但留一个旋钮就得多测一条路径。
+RECENT_CONTEXT_LIMIT = 5
+
+
+def _task_text(mode: str, file_list: str, *, has_memory: bool) -> str:
+    """拼任务指令：开头按"有没有长期记忆"分叉，正文按触发口吻分叉。
+
+    recall 档最需要这处分叉：它的字面意思就是"提起一件之前答应过的事"，而记忆里没东西时
+    这句话就是在要求模型捏造（审计 §8「人设只解读不捏造」那条不变式，正是在这种地方被违反）。
+    """
+    lead = _LEAD_WITH_MEMORY if has_memory else _LEAD_NO_MEMORY
+    if mode == "recall":
+        if not has_memory:
+            return _RECALL_TASK_WITHOUT_MEMORY
+        return f"{_TASK_PREFIX}{lead}{_REACHOUT_TASK_RECALL_BODY}"
+    if mode == "file_event":
+        return (
+            f"{_TASK_PREFIX}{lead}{_REACHOUT_TASK_FILE_EVENT_BODY}\n\n"
+            f"任务目录的变化：\n{file_list}"
+        )
+    return f"{_TASK_PREFIX}{lead}{_REACHOUT_TASK_BODY}"
+
+
+def recent_reachout_lines(
+    conn: SqlConnection, role_id: str, *, limit: int = RECENT_CONTEXT_LIMIT
+) -> str:
+    """该角色最近几轮主动说过什么（原文，按时间正序）；没有则空串。"""
+    rows = conn.execute(
+        "SELECT text FROM agent_reachout WHERE role_id = ? ORDER BY id DESC LIMIT ?",
+        (role_id, limit),
+    ).fetchall()
+    if not rows:
+        return ""
+    lines = "\n".join(f"- {str(r['text']).strip()[:120]}" for r in reversed(rows))
+    return (
+        "这些是你最近已经主动对用户说过的话，**别重复它们说过的内容、"
+        "也别再用同样的由头开场**：\n" + lines
+    )
 
 
 def _format_change_list(events: list[FileEvent] | None, *, truncated: bool = False) -> str:
@@ -289,7 +341,11 @@ def generate_reachout_text(
     mode: str = "general",
     file_list: str = "",
 ) -> str | None:
-    """生成一条主动内容：人设 + 记忆 → 单轮 → guard。被拦/失败返回 None（不发）。
+    """生成一条主动内容：人设 + 记忆 + 最近说过什么 → 单轮 → guard。被拦/失败返回 None（不发）。
+
+    两条与"内容合适吗"直接相关的口径：① **记忆为空时指令不再提"长期记忆"**（指着一个空槽
+    说话就是假契约，模型只能凭人设编）；② **带上该角色最近几条原文并要求别重复**（没有这一层
+    每次开口都是从零现编，实测会连发几条同义的话）。recall 档没记忆时整段换成"不假装记得往事"。
 
     `role_id` 给定时按角色取**专属记忆**（回忆触发 / per-role 隔离）；若该角色无专属记忆，
     回退到用户级全局记忆（用户事实，非角色对话，不造成跨角色串扰）。这条规则与对话侧
@@ -298,12 +354,13 @@ def generate_reachout_text(
     自行用 fs 工具查证 —— 素材门控语义，见架构计划 §5.2）。
     """
     memory = memory_for_turn(conn, settings, role_id)
-    if mode == "recall":
-        task = _REACHOUT_TASK_RECALL
-    elif mode == "file_event":
-        task = f"{_REACHOUT_TASK_FILE_EVENT}\n\n任务目录的变化：\n{file_list}"
-    else:
-        task = _REACHOUT_TASK
+    task = _task_text(mode, file_list, has_memory=bool(memory.strip()))
+    # E1 去重：把"最近已经说过什么"摊给它看。没有这一层，每次开口都是从零现编 ——
+    # 实测同一天连发四条"花海/阳光/亮晶晶"，症状不是模型差，是上下文里没有"我刚说过"。
+    if role_id:
+        recent = recent_reachout_lines(conn, role_id)
+        if recent:
+            task = f"{task}\n\n{recent}"
     system = build_system_prompt(role.system_prompt, role.exemplars, memory=memory, agent=False)
     prompt = [
         SystemMessage(content=system),

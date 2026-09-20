@@ -146,6 +146,74 @@ def test_generate_ignores_empty_reply(conn) -> None:
     assert svc.generate_reachout_text(_role(), model, _settings(), conn) is None
 
 
+# ----------------------------------------------------- 开口上下文：去重与"别指着空记忆说事"
+
+
+def _prompt_text(model: _FakeModel) -> str:
+    return "".join(str(m.content) for m in model.prompt or [])
+
+
+def test_reachout_prompt_shows_what_it_already_said(conn) -> None:
+    """E1 去重：该角色最近说过的原文要进 prompt，并明令别重复。
+
+    没有这一层时每次开口都是"从零现编"—— 实测同一天连发四条"花海/阳光/亮晶晶"，
+    症状不是模型差，是上下文里压根没有"我刚说过这些"。
+    """
+    role = _role()
+    for text in ("今天花海真漂亮", "阳光正好呢"):
+        conn.execute(
+            "INSERT INTO agent_reachout (role_id, role_name, text, state) VALUES (?, ?, ?, 'read')",
+            (role.role_id, role.role_name, text),
+        )
+    conn.commit()
+    model = _FakeModel(AIMessage(content="新的一条"))
+    svc.generate_reachout_text(role, model, _settings(), conn, role_id=role.role_id)
+    joined = _prompt_text(model)
+    assert "今天花海真漂亮" in joined and "阳光正好呢" in joined
+    assert "别重复" in joined
+
+
+def test_recent_context_is_isolated_per_role(conn) -> None:
+    """per-role 铁律在这里同样成立：别人的主动历史不能变成"我说过的话"。"""
+    conn.execute(
+        "INSERT INTO agent_reachout (role_id, role_name, text) "
+        "VALUES ('other', '别人', '那是别人说的')"
+    )
+    conn.commit()
+    model = _FakeModel(AIMessage(content="嗨"))
+    svc.generate_reachout_text(_role(), model, _settings(), conn, role_id="active")
+    assert "那是别人说的" not in _prompt_text(model)
+
+
+def test_empty_memory_does_not_claim_long_term_memory(conn) -> None:
+    """E3：记忆槽为空时，指令不再写"结合关于用户的长期记忆"（指着空槽说话=假契约）。"""
+    model = _FakeModel(AIMessage(content="嗨"))
+    svc.generate_reachout_text(_role(), model, _settings(), conn, role_id="active")
+    assert "长期记忆" not in _prompt_text(model)
+
+
+def test_memory_present_restores_the_memory_clause(conn) -> None:
+    role = _role()
+    save_role_memory_text(conn, role.role_id, "用户喜欢猫")
+    model = _FakeModel(AIMessage(content="嗨"))
+    svc.generate_reachout_text(role, model, _settings(), conn, role_id=role.role_id)
+    joined = _prompt_text(model)
+    assert "长期记忆" in joined and "用户喜欢猫" in joined
+
+
+def test_recall_mode_without_memory_refuses_to_fake_the_past(conn) -> None:
+    """recall 档在没记忆时必须换成"不假装记得往事"的指令。
+
+    它的字面意思就是"提起一件之前答应过的事"，而素材只有一坨（可能为空的）记忆 ——
+    对着空记忆说这句话，是在**要求模型捏造**（审计 §8 那条"人设只解读不捏造"）。
+    """
+    model = _FakeModel(AIMessage(content="嗨"))
+    svc.generate_reachout_text(_role(), model, _settings(), conn, role_id="active", mode="recall")
+    joined = _prompt_text(model)
+    assert "不要假装记得" in joined
+    assert "之前聊过或答应的事" not in joined
+
+
 def test_generate_handles_block_shaped_reply(conn) -> None:
     """P1-8 回归：分块形态的回复不能变成 Python repr 冒给用户。
 
