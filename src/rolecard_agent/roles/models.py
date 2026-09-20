@@ -102,26 +102,6 @@ class RoleCard(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
-    def allows_tool(self, tool_name: str) -> bool:
-        """Whitelist semantics, in one place.
-
-        `None` means "everything the enabled plugins expose". `[]` means "nothing" - the
-        distinction matters and is easy to get backwards, so it is expressed once here and
-        every caller goes through it.
-        """
-        if self.tool_whitelist is None:
-            return True
-        return tool_name in self.tool_whitelist
-
-    def allows_scope(self, scope: str) -> bool:
-        """Retrieval authorisation. `None` means no retrieval at all - the opposite default
-        from `allows_tool`, and deliberately so: reading stored documents is a widen-the-
-        blast-radius action, so it is opt-in."""
-        if not self.knowledge_scopes:
-            return False
-        return scope in self.knowledge_scopes
-
-
 class RoleCardCreate(BaseModel):
     """Input for creating a role. `is_builtin` is intentionally absent - it is set by
     `roles/seed.py`, never by a caller."""

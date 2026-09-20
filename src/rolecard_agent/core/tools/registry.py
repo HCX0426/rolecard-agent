@@ -83,16 +83,9 @@ class ToolRegistry:
     ) -> list[ToolSpec]:
         return [self.register(t, domain=domain, idempotent=idempotent) for t in tools]
 
-    def unregister(self, name: str) -> None:
-        self._specs.pop(name, None)
-
     def get(self, name: str) -> BaseTool | None:
         spec = self._specs.get(name)
         return None if spec is None else spec.tool
-
-    def spec(self, name: str) -> ToolSpec | None:
-        """完整规格（含 `idempotent`）—— 执行器判断能否重试要用它。"""
-        return self._specs.get(name)
 
     def is_idempotent(self, name: str) -> bool:
         """未注册的名字按**不可重试**处理（fail-safe）。"""

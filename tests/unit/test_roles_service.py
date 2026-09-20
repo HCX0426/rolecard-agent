@@ -8,7 +8,6 @@ import pytest
 
 from rolecard_agent.roles.models import (
     MAX_EXEMPLARS,
-    RoleCard,
     RoleCardCreate,
     RoleCardUpdate,
     RoleExemplar,
@@ -92,17 +91,6 @@ def test_whitelist_none_and_empty_round_trip_distinctly(roles: RoleCardService) 
     roles.create(_new("no_tools", tool_whitelist=[]))
     assert roles.get("all_tools").tool_whitelist is None
     assert roles.get("no_tools").tool_whitelist == []
-
-
-def test_allows_tool_semantics(roles: RoleCardService) -> None:
-    roles.create(_new("wide", tool_whitelist=None))
-    roles.create(_new("none", tool_whitelist=[]))
-    roles.create(_new("one", tool_whitelist=["list_roles"]))
-
-    assert roles.get("wide").allows_tool("anything") is True
-    assert roles.get("none").allows_tool("list_roles") is False
-    assert roles.get("one").allows_tool("list_roles") is True
-    assert roles.get("one").allows_tool("other") is False
 
 
 def test_builtin_role_cannot_be_deleted(roles: RoleCardService) -> None:
@@ -217,21 +205,6 @@ def test_knowledge_scopes_round_trip(roles: RoleCardService) -> None:
 def test_bad_scope_name_is_rejected() -> None:
     with pytest.raises(ValueError, match="invalid knowledge scope"):
         _new("badscope", knowledge_scopes=["Health Reports"])
-
-
-def test_allows_scope_is_opt_in() -> None:
-    """`None` means no retrieval here - the opposite default from allows_tool, because
-    reading stored documents widens the blast radius rather than narrowing capabilities."""
-    base = RoleCard(
-        role_id="reader", role_name="只读", system_prompt="x", knowledge_scopes=["health_reports"]
-    )
-    assert base.allows_scope("health_reports") is True
-    assert base.allows_scope("guidelines") is False
-
-    none_scoped = base.model_copy(update={"knowledge_scopes": None})
-    empty_scoped = base.model_copy(update={"knowledge_scopes": []})
-    assert none_scoped.allows_scope("health_reports") is False
-    assert empty_scoped.allows_scope("health_reports") is False
 
 
 def test_update_can_replace_exemplars(roles: RoleCardService) -> None:

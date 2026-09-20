@@ -179,10 +179,9 @@ class ServiceEndpointService:
             ("embedding", "hash", "local", None, 1),
             ("rerank", "off", "local", None, 1),
         ]
-        for ref_name in ("siliconflow",):
-            if ref_name in backends:
-                defaults.append(("embedding", ref_name, "cloud", ref_name, 0))
-                defaults.append(("rerank", ref_name, "cloud", ref_name, 0))
+        if "siliconflow" in backends:
+            defaults.append(("embedding", "siliconflow", "cloud", "siliconflow", 0))
+            defaults.append(("rerank", "siliconflow", "cloud", "siliconflow", 0))
         counters: dict[str, int] = {}
         for cat, eid, kind, ref, builtin in defaults:
             order = counters.get(cat, 0)
