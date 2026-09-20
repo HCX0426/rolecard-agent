@@ -944,6 +944,62 @@ def test_search_tool_sees_the_role_scopes_across_the_executor_thread(
     assert out["messages"][0].content == "reports_2026"
 
 
+def test_one_turn_writes_all_three_injected_scopes_together(roles: RoleCardService) -> None:
+    """轮次注入的三个 ContextVar 必须**作为一个整体**被写入、且每轮都重写。
+
+    三条的注入点全在 `execute_tools` 开头那一段：知识作用域（检索授权）、当前角色
+    （per-role 记忆归属）、本轮图片（反向图搜输入）。把它们合成一个变量属于跨模块 +
+    `copy_context` 敏感的顺手重构、收益边缘，已判定不做（审计 §5）；真正的风险不是"有三个"，
+    而是"**改了其中两个、忘第三个**"——不会有编译错误，症状只是某条工具静默降级或拿到上一轮的
+    残留。所以这里钉的是同一个快照的两半：一轮跑完，三个读侧在**工具自己的线程里**看都与 state
+    一致；换一轮（换角色、去掉图片）之后**一个都不许留**。
+    """
+    from rolecard_agent.core.memory import current_role_id_ctx
+    from rolecard_agent.core.nodes import current_knowledge_scopes, current_turn_image
+
+    @tool("turn_scope_probe")
+    def turn_scope_probe() -> str:
+        """Reports what the turn injected, as seen from the tool's own thread."""
+        parts = [",".join(current_knowledge_scopes()), current_role_id_ctx.get()]
+        parts.append(str(current_turn_image()))
+        return "|".join(parts)
+
+    roles.create(
+        RoleCardCreate(
+            role_id="scoped2",
+            role_name="带作用域",
+            system_prompt="x",
+            tool_whitelist=None,
+            knowledge_scopes=["reports_2026"],
+        )
+    )
+    roles.create(
+        RoleCardCreate(role_id="plain", role_name="干净", system_prompt="x", tool_whitelist=None)
+    )
+    reg = ToolRegistry()
+    reg.register(turn_scope_probe, idempotent=True)
+    ctx = _ctx(reg, roles)
+    ctx.tool_timeout_seconds = 5  # 非 0 → 真的走线程池，读侧必须是 copy_context 之后的上下文
+
+    def probe(role_id: str, messages: list[Any]) -> tuple[str, str, str]:
+        state = {
+            "messages": [*messages, AIMessage(content="", tool_calls=[
+                {"name": "turn_scope_probe", "args": {}, "id": "c1"}])],
+            "current_role_id": role_id,
+            "thread_id": "t1",
+        }
+        scopes, role, image = execute_tools(state, ctx)["messages"][0].content.split("|")
+        return scopes, role, image
+
+    assert probe("scoped2", [_image_human_msg()]) == (
+        "reports_2026",
+        "scoped2",
+        "data:image/png;base64,AAAA",
+    )
+    # 第二轮：换角色 + 没图。任何一项还留着上一轮的值，就是"忘了重写"。
+    assert probe("plain", [HumanMessage(content="纯文本")]) == ("", "plain", "None")
+
+
 # ---------------------------------------------------- P1-2 视觉的调用前拦截（只拦确定的否）
 
 
