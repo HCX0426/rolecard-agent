@@ -117,3 +117,34 @@ describe("SettingsPage 切换记忆作用域二次确认（useConfirm）", () =>
     expect(memScopeSelect().value).toBe("");
   });
 });
+
+describe("SettingsPage 页签拆分（Batch 5：记忆与任务目录 / 关于与系统状态）", () => {
+  function renderPage() {
+    return render(
+      <SettingsPage onOpenChat={() => {}} theme="light" onToggleTheme={() => {}} />,
+    );
+  }
+
+  it("页签栏含两个新帖，且不再有『通用』", async () => {
+    renderPage();
+    expect(await screen.findByRole("button", { name: "记忆与任务目录" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "关于与系统状态" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "通用" })).toBeNull();
+  });
+
+  it("主动开口总闸只在「记忆与任务目录」可写；运行环境里 reachout_enabled 只读并指向该页签", async () => {
+    renderPage();
+    // 单写点：记忆与任务目录里的可写开关（stub 的 reachout_enabled 值非 "0" → 视为开）
+    expect(await screen.findByRole("button", { name: "已开启" })).toBeTruthy();
+    // 运行环境（只读）：当前生效值 + 指向单写点的备注，而不是可编辑控件
+    expect(await screen.findByText("在「记忆与任务目录」页签修改")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "已关闭" })).toBeNull();
+  });
+
+  it("关于与系统状态页含 外观 / 关于 / 系统状态 三块", async () => {
+    renderPage();
+    expect(await screen.findByText("外观")).toBeTruthy();
+    expect(screen.getByText("关于")).toBeTruthy();
+    expect(screen.getByText("系统状态")).toBeTruthy();
+  });
+});

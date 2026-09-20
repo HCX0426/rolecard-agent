@@ -23,9 +23,10 @@ import { Card, Switch } from "../components/ui";
 // 设置页子页签：通用（系统信息）/ 模型（后端 CRUD + 热切换）/ 服务（运行时状态与降级策略）/
 // 审计（操作留痕）。知识库已升为独立顶层页 —— RAG 是内核能力，不该埋在设置里。
 const SETTINGS_TABS = [
-  { key: "general", label: "通用" },
   { key: "models", label: "模型" },
   { key: "services", label: "服务" },
+  { key: "memory", label: "记忆与任务目录" },
+  { key: "about", label: "关于与系统状态" },
   { key: "extension", label: "扩展" },
   { key: "runtime", label: "运行环境" },
   { key: "audit", label: "审计" },
@@ -65,8 +66,11 @@ export default function SettingsPage({
         </div>
         {/* 子页签常驻挂载 + hidden 隐藏（P1-11 同款）：条件渲染会让每次切页签重新挂载
             面板并重发请求 —— 服务页的探活会因此"每次点开都加载中"（用户 2026-09-18）。 */}
-        <div className={tab === "general" ? "" : "hidden"}>
-          <GeneralPanel onOpenChat={onOpenChat} theme={theme} onToggleTheme={onToggleTheme} />
+        <div className={tab === "memory" ? "" : "hidden"}>
+          <MemoryPanel />
+        </div>
+        <div className={tab === "about" ? "" : "hidden"}>
+          <AboutPanel onOpenChat={onOpenChat} theme={theme} onToggleTheme={onToggleTheme} />
         </div>
         <div className={tab === "models" ? "" : "hidden"}>
           <ModelsPanel />
@@ -88,25 +92,9 @@ export default function SettingsPage({
   );
 }
 
-// ---------------------------------------------------------------- 通用
+// ---------------------------------------------------------------- 记忆与任务目录
 
-function GeneralPanel({
-  onOpenChat,
-  theme,
-  onToggleTheme,
-}: {
-  onOpenChat?: () => void;
-  theme?: string;
-  onToggleTheme?: () => void;
-}) {
-  const [info, setInfo] = useState<{
-    defaultBackend: string;
-    plugins: string;
-    roles: number;
-    sessions: number;
-  }>({ defaultBackend: "…", plugins: "…", roles: 0, sessions: 0 });
-  const [refreshed, setRefreshed] = useState(false);
-  const [loadError, setLoadError] = useState("");
+function MemoryPanel() {
   // 跨会话记忆面板：enabled = 总开关（runtime 覆盖，保存即热生效）；content = 全文。
   const [mem, setMem] = useState<{ enabled: boolean; content: string } | null>(null);
   const [memDraft, setMemDraft] = useState("");
@@ -130,20 +118,8 @@ function GeneralPanel({
   const [reachoutErr, setReachoutErr] = useState("");
   const confirm = useConfirm();
 
-  const load = useCallback(async () => {
-    const [ms, plugins, roles, sessions] = await Promise.all([
-      api.get<ModelSettings>("/api/settings/models"),
-      api.get<PluginRow[]>("/api/plugins"),
-      api.get<RoleCard[]>("/api/roles"),
-      api.get<SessionRow[]>("/api/sessions"),
-    ]);
-    const enabled = plugins.filter((p) => p.enabled).length;
-    setInfo({
-      defaultBackend: ms.default || "env 默认（local）",
-      plugins: `${enabled} / ${plugins.length} 启用`,
-      roles: roles.length,
-      sessions: sessions.length,
-    });
+  const loadRoles = useCallback(async () => {
+    const roles = await api.get<RoleCard[]>("/api/roles");
     setMemRoles(roles.map((r) => ({ role_id: r.role_id, role_name: r.role_name })));
   }, []);
 
@@ -157,9 +133,9 @@ function GeneralPanel({
   }, []);
 
   useEffect(() => {
-    load().catch((e) => setLoadError(`加载失败：${(e as Error).message}`));
+    loadRoles().catch(() => {});
     loadMemory(memScope).catch((e) => setMemErr(`加载失败：${(e as Error).message}`));
-  }, [load, loadMemory, memScope]);
+  }, [loadRoles, loadMemory, memScope]);
 
   async function changeMemScope(next: string) {
     if (next === memScope) return;
@@ -291,35 +267,6 @@ function GeneralPanel({
 
   return (
     <div className="mt-6 space-y-4">
-      {onToggleTheme && (
-        <Card className="p-5">
-          <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">外观</h3>
-          <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-            界面配色跟随本机偏好时可手动覆盖；切换即时生效、随浏览器记住。
-          </p>
-          <div className="mt-2.5 flex items-center gap-2">
-            <span className="text-xs text-slate-500 dark:text-slate-400">
-              当前：{theme === "dark" ? "深色" : "浅色"}
-            </span>
-            <button
-              onClick={onToggleTheme}
-              className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-600 dark:text-slate-300 dark:hover:border-blue-700"
-            >
-              切换为{theme === "dark" ? "浅色" : "深色"}
-            </button>
-          </div>
-        </Card>
-      )}
-
-      <Card className="p-5">
-        <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">关于</h3>
-        <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400 dark:text-slate-500">
-          rolecard-agent 控制台。多角色对话 Agent：角色卡控制人设与工具权限，
-          插件以数据驱动启停。
-        </p>
-        <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">语言：简体中文（内置）</p>
-      </Card>
-
       <Card className="p-5">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">跨会话记忆</h3>
@@ -540,6 +487,81 @@ function GeneralPanel({
         </div>
       )}
 
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- 关于与系统状态
+
+function AboutPanel({
+  onOpenChat,
+  theme,
+  onToggleTheme,
+}: {
+  onOpenChat?: () => void;
+  theme?: string;
+  onToggleTheme?: () => void;
+}) {
+  const [info, setInfo] = useState<{
+    defaultBackend: string;
+    plugins: string;
+    roles: number;
+    sessions: number;
+  }>({ defaultBackend: "…", plugins: "…", roles: 0, sessions: 0 });
+  const [refreshed, setRefreshed] = useState(false);
+  const [loadError, setLoadError] = useState("");
+
+  const loadInfo = useCallback(async () => {
+    const [ms, plugins, roles, sessions] = await Promise.all([
+      api.get<ModelSettings>("/api/settings/models"),
+      api.get<PluginRow[]>("/api/plugins"),
+      api.get<RoleCard[]>("/api/roles"),
+      api.get<SessionRow[]>("/api/sessions"),
+    ]);
+    const enabled = plugins.filter((p) => p.enabled).length;
+    setInfo({
+      defaultBackend: ms.default || "env 默认（local）",
+      plugins: `${enabled} / ${plugins.length} 启用`,
+      roles: roles.length,
+      sessions: sessions.length,
+    });
+  }, []);
+
+  useEffect(() => {
+    loadInfo().catch((e) => setLoadError(`加载失败：${(e as Error).message}`));
+  }, [loadInfo]);
+
+  return (
+    <div className="mt-6 space-y-4">
+      {onToggleTheme && (
+        <Card className="p-5">
+          <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">外观</h3>
+          <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+            界面配色跟随本机偏好时可手动覆盖；切换即时生效、随浏览器记住。
+          </p>
+          <div className="mt-2.5 flex items-center gap-2">
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              当前：{theme === "dark" ? "深色" : "浅色"}
+            </span>
+            <button
+              onClick={onToggleTheme}
+              className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-600 dark:text-slate-300 dark:hover:border-blue-700"
+            >
+              切换为{theme === "dark" ? "浅色" : "深色"}
+            </button>
+          </div>
+        </Card>
+      )}
+
+      <Card className="p-5">
+        <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">关于</h3>
+        <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400 dark:text-slate-500">
+          rolecard-agent 控制台。多角色对话 Agent：角色卡控制人设与工具权限，
+          插件以数据驱动启停。
+        </p>
+        <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">语言：简体中文（内置）</p>
+      </Card>
+
       <Card className="p-5">
         <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">系统状态</h3>
         {loadError && <p className="mt-1 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{loadError}</p>}
@@ -580,7 +602,7 @@ function GeneralPanel({
           </button>
           <button
             onClick={async () => {
-              await load();
+              await loadInfo();
               setRefreshed(true);
               setTimeout(() => setRefreshed(false), 2000);
             }}
@@ -760,7 +782,9 @@ function RuntimePanel() {
                     <span className="ml-1.5 font-mono text-[10px] text-slate-300 dark:text-slate-600">{it.key}</span>
                   </td>
                   <td className="py-1.5 align-top">
-                    {it.kind === "ro" ? (
+                    {/* 主动开口总闸（reachout_enabled）是「记忆与任务目录」页签的单写点：
+                        这里只读展示当前生效值，避免同一开关两处可写（设计稿 §2.2.2）。 */}
+                    {it.kind === "ro" || it.key === "reachout_enabled" ? (
                       <span className={`font-mono ${it.changed ? "text-amber-600 dark:text-amber-400" : "text-slate-600 dark:text-slate-300"}`}>
                         {it.value}
                       </span>
@@ -769,7 +793,9 @@ function RuntimePanel() {
                     )}
                   </td>
                   <td className="py-1.5 align-top text-slate-400 dark:text-slate-500">
-                    {it.note || (it.changed && it.kind === "ro" ? `默认 ${it.default}` : "")}
+                    {it.key === "reachout_enabled"
+                      ? "在「记忆与任务目录」页签修改"
+                      : it.note || (it.changed && it.kind === "ro" ? `默认 ${it.default}` : "")}
                   </td>
                 </tr>
               ))}
