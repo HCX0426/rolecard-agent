@@ -107,6 +107,11 @@ def _src_changed() -> bool:
         changed: list[str] = []
         if base and base != head:  # 基线存在且不同于 HEAD，跨提交的差异才有意义
             changed += _git("diff", "--name-only", f"{base}...HEAD").splitlines()
+        else:
+            # 没有可用的跨提交基线（无远端 + 直接在 main 上提交）：退到"最近一个提交"。
+            # 否则"先提交 src 改动、再跑全量门禁"这条最常见的顺序会永远跳过覆盖率 ——
+            # 而那恰恰是唯一需要它的时刻。多跑一次只是慢，少跑一次是静默失效。
+            changed += _git("diff", "--name-only", f"{head}~1", head).splitlines()
         changed += _git("diff", "--name-only", "HEAD").splitlines()  # 未提交（含已暂存）
         changed += _git("ls-files", "--others", "--exclude-standard").splitlines()
     except Exception:
