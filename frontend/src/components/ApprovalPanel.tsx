@@ -81,7 +81,9 @@ export default function ApprovalPanel({
   async function decide(row: ApprovalRow, decision: "approve" | "reject") {
     if (row.status !== "pending") return;
     try {
-      const updated = await api.decideApproval(row.id, decision);
+      // 令牌随行下发、用一次即废：过期或从没拿到时后端回 403，detail 已经是一句人话
+      // （"请重新查看待批列表后再批"），这里原样显示，不在前端另造一套判断。
+      const updated = await api.decideApproval(row.id, decision, row.decide_token);
       setData((prev) => {
         if (!prev) return prev;
         const items = prev.items.map((r) => (r.id === updated.id ? updated : r));

@@ -285,6 +285,15 @@ def _migrate(conn: SqlConnection) -> None:
         conn.execute(
             "ALTER TABLE role_card ADD COLUMN file_watch_enabled INTEGER NOT NULL DEFAULT 1"
         )
+    # 6d. command_approval 增列 decide_token（P0-3 第一步：批准要持有凭据，不能靠猜 id）。
+    #     一次性能力令牌：submit 生成、随 pending 行下发给读侧、decide 必须带它并在决定后清空。
+    #     挡掉的是"任何能碰到 8000 的一方盲 POST 一个自增 id 就批准了命令"——尤其是浏览器里
+    #     一段跨源 JS：它读不到响应（同源策略），就拿不到令牌。旧库补列为 NULL，那几条 pending
+    #     记录会因"没有可比对的令牌"而必须重新提交，这是安全侧的默认。
+    if _columns(conn, "command_approval") and "decide_token" not in _columns(
+        conn, "command_approval"
+    ):
+        conn.execute("ALTER TABLE command_approval ADD COLUMN decide_token TEXT")
     # 7. 关系驱动主动开口（架构计划 §5.2）：per-role 状态与 per-role 记忆（幂等建表）。
     if "affinity" not in _columns(conn, "role_proactive_state"):
         conn.execute(

@@ -256,6 +256,7 @@ CREATE TABLE IF NOT EXISTS command_approval (
     status       TEXT NOT NULL DEFAULT 'pending'
                  CHECK (status IN ('pending', 'approved', 'rejected', 'done')),
     result_json  TEXT,                     -- done 后：{exit_code, stdout, stderr, duration_ms, output_bytes}
+    decide_token TEXT,                     -- 一次性能力令牌：decide 必须持有（见 storage/db.py 6d）
     created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

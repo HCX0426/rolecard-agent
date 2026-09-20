@@ -6,12 +6,16 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from rolecard_agent.core.approvals import (
+    DECIDE_TOKEN_TTL_SECONDS,
     ApprovalAlreadyDecided,
     ApprovalNotFound,
     ApprovalService,
+    ApprovalUnauthorised,
     normalise_cmd,
 )
 
@@ -48,7 +52,7 @@ def test_submit_is_idempotent_while_pending(approvals: ApprovalService) -> None:
 def test_submit_after_done_returns_history(approvals: ApprovalService) -> None:
     """跑过（done）的命令再提交 = 拿回历史记录，不新排队。"""
     first = approvals.submit("ls -la")
-    approvals.decide(first["id"], "approve")
+    approvals.decide(first["id"], "approve", token=first["decide_token"])
     approvals.finish(first["id"], {"exit_code": 0, "output": "ok", "duration_ms": 5})
     again = approvals.submit("ls -la")
     assert again["id"] == first["id"]
@@ -58,15 +62,20 @@ def test_submit_after_done_returns_history(approvals: ApprovalService) -> None:
 
 def test_decide_approve_and_reject(approvals: ApprovalService) -> None:
     pending = approvals.submit("rm tmp.txt")
-    approved = approvals.decide(pending["id"], "approve")
+    approved = approvals.decide(pending["id"], "approve", token=pending["decide_token"])
     assert approved["status"] == "approved"
     rejected = approvals.submit("rm other.txt")
-    assert approvals.decide(rejected["id"], "reject")["status"] == "rejected"
+    assert (
+        approvals.decide(rejected["id"], "reject", token=rejected["decide_token"])["status"]
+        == "rejected"
+    )
 
 
 def test_decide_twice_raises(approvals: ApprovalService) -> None:
     row = approvals.submit("echo twice")
-    approvals.decide(row["id"], "approve")
+    approvals.decide(row["id"], "approve", token=row["decide_token"])
+    # 第二次**不带令牌**也报"已决定"而不是"没令牌"：状态判定排在凭据判定之前，
+    # 对用户更有用（这条命令早就批过了，跟令牌没关系）。
     with pytest.raises(ApprovalAlreadyDecided):
         approvals.decide(row["id"], "reject")
 
@@ -78,7 +87,7 @@ def test_get_missing_raises(approvals: ApprovalService) -> None:
 
 def test_finish_backfills_result(approvals: ApprovalService) -> None:
     row = approvals.submit("python run.py")
-    approvals.decide(row["id"], "approve")
+    approvals.decide(row["id"], "approve", token=row["decide_token"])
     approvals.finish(row["id"], {"exit_code": 2, "output": "boom", "duration_ms": 10})
     done = approvals.get(row["id"])
     assert done["status"] == "done"
@@ -106,3 +115,48 @@ def test_status_of_semantics(approvals: ApprovalService) -> None:
 def test_list_rows_empty(approvals: ApprovalService) -> None:
     assert approvals.list_rows() == []
     assert approvals.list_rows(status="pending") == []
+
+
+# ------------------------------------------------------ 决定令牌（P0-3 第一步：批不动 = 没凭据）
+
+
+def test_decide_requires_the_token_it_issued(approvals: ApprovalService) -> None:
+    """令牌是这条记录自己下发的那一个：缺失 / 空 / 说错，三种都批不动。"""
+    row = approvals.submit("echo no-token")
+    for bad in (None, "", "not-the-issued-token"):
+        with pytest.raises(ApprovalUnauthorised):
+            approvals.decide(row["id"], "approve", token=bad)
+    assert approvals.get(row["id"])["status"] == "pending"  # 拒的是这次请求，记录还等着批
+
+
+def test_decide_token_is_one_time(approvals: ApprovalService) -> None:
+    """决定之后令牌清空 —— 同一份读到的内容不能批第二次，也没有可重放的东西。"""
+    row = approvals.submit("echo once")
+    approvals.decide(row["id"], "approve", token=row["decide_token"])
+    assert approvals.get(row["id"])["decide_token"] is None
+    with pytest.raises(ApprovalAlreadyDecided):
+        approvals.decide(row["id"], "reject", token=row["decide_token"])
+
+
+def test_decide_token_expires(conn: Any, approvals: ApprovalService) -> None:
+    """过期就得重新看一遍待批列表：挂着昨天的令牌批今天的命令，不算"刚看到过"。"""
+    row = approvals.submit("echo stale")
+    conn.execute(
+        "UPDATE command_approval SET created_at = datetime('now', ?) WHERE id = ?",
+        (f"-{DECIDE_TOKEN_TTL_SECONDS // 60 + 1} minutes", row["id"]),
+    )
+    conn.commit()
+    with pytest.raises(ApprovalUnauthorised):
+        approvals.decide(row["id"], "approve", token=row["decide_token"])
+
+
+def test_legacy_pending_row_without_token_must_be_resubmitted(
+    conn: Any, approvals: ApprovalService
+) -> None:
+    """令牌机制之前的 pending 行没有可比对的令牌 —— 宁可拒，也不要"缺令牌就放行"。"""
+    approvals.submit("echo legacy")
+    conn.execute("UPDATE command_approval SET decide_token = NULL")
+    conn.commit()
+    pending = approvals.list_rows(status="pending")[0]
+    with pytest.raises(ApprovalUnauthorised):
+        approvals.decide(pending["id"], "approve", token="whatever")

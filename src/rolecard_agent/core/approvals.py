@@ -26,8 +26,10 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import re
+import secrets
 from typing import Any
 
 from rolecard_agent.storage.db import SqlConnection
@@ -40,6 +42,11 @@ _DONE = "done"
 # 同命令比较用的空白折叠：任意连续空白（含换行）替换为单个空格。
 _WS_RE = re.compile(r"\s+")
 
+# 决定令牌的有效期（秒）。为什么要有：令牌是"你刚才确实看到过这条待批"的凭据，而审批面板
+# 可能开着就去干别的了；不设上限的话一次读取等于买断一条命令的批准权（页面挂一整天，
+# 期间任何一次带该令牌的 POST 都能批）。30 分钟是"回来还能批，隔天就得重新看一遍"。
+DECIDE_TOKEN_TTL_SECONDS = 30 * 60
+
 
 class ApprovalNotFound(KeyError):
     """找不到审批记录（按 id / 命令查）。请求语义 = 404。"""
@@ -49,9 +56,21 @@ class ApprovalAlreadyDecided(ValueError):
     """对已决定（approved/rejected）的记录再次 decide。请求语义 = 400。"""
 
 
+class ApprovalUnauthorised(PermissionError):
+    """决定令牌缺失 / 不匹配 / 过期。请求语义 = 403。
+
+    与 `ApprovalAlreadyDecided` 分开是有意的：那条说"你已经批过了"，这条说"你没法批" ——
+    前者是重复提交，后者是缺凭据，用户看到的两句人话不能混。
+    """
+
+
 def normalise_cmd(command: str) -> str:
     """规范化命令字符串，让"同一命令"的比较不因多余空白漂移。"""
     return _WS_RE.sub(" ", (command or "").strip())
+
+
+def _new_decide_token() -> str:
+    return secrets.token_urlsafe(24)
 
 
 class ApprovalService:
@@ -83,28 +102,37 @@ class ApprovalService:
             return latest
         conn = self._conn
         conn.execute(
-            "INSERT INTO command_approval (command, cwd, role_id, role_name, thread_id) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (cmd, cwd, role_id, role_name, thread_id),
+            "INSERT INTO command_approval (command, cwd, role_id, role_name, thread_id, "
+            "decide_token) VALUES (?, ?, ?, ?, ?, ?)",
+            (cmd, cwd, role_id, role_name, thread_id, _new_decide_token()),
         )
         conn.commit()
         created = self.latest(cmd)
         assert created is not None  # 刚插入，必然可查
         return created
 
-    def decide(self, approval_id: int, decision: str) -> dict[str, Any]:
+    def decide(
+        self, approval_id: int, decision: str, *, token: str | None = None
+    ) -> dict[str, Any]:
         """pending → approved / rejected。对已决定的行抛 ApprovalAlreadyDecided。
 
         `decision` 是动词："approve" / "reject"（存进库的是状态值 approved / rejected）。
         只改状态，**不执行**：approve 后的实际执行由调用方（路由）安排到后台线程，
         完成后调 `finish` 把结果写回。这样"批准"这个 HTTP 请求自身永远快。
+
+        `token` 是这条记录的一次性能力凭证（P0-3 第一步）：只有先从读侧看到过这条待批，
+        才可能持有它 —— 于是"猜一个自增 id 就批准"与"浏览器里一段跨源 JS 盲 POST"都失效。
+        决定之后令牌清空（同一份响应内容不能批第二次），过期同理要重新读一遍。
         """
         target = {"approve": _APPROVED, "reject": _REJECTED}.get((decision or "").strip().lower())
         if target is None:
             raise ValueError(f"decide 只接受 approve/reject，收到：{decision!r}")
         conn = self._conn
         row = conn.execute(
-            "SELECT id, status FROM command_approval WHERE id = ?", (approval_id,)
+            "SELECT id, status, decide_token, "
+            "(julianday('now') - julianday(created_at)) * 86400.0 AS age_s "
+            "FROM command_approval WHERE id = ?",
+            (approval_id,),
         ).fetchone()
         if row is None:
             raise ApprovalNotFound(f"审批记录不存在：{approval_id}")
@@ -112,13 +140,34 @@ class ApprovalService:
             raise ApprovalAlreadyDecided(
                 f"审批记录 {approval_id} 已是 {row['status']}，不能再次决定"
             )
+        self._check_token(approval_id, row["decide_token"], token, float(row["age_s"] or 0.0))
         conn.execute(
-            "UPDATE command_approval SET status = ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE id = ?",
+            "UPDATE command_approval SET status = ?, decide_token = NULL, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (target, approval_id),
         )
         conn.commit()
         return self.get(approval_id)
+
+    @staticmethod
+    def _check_token(
+        approval_id: int, expected: str | None, given: str | None, age_seconds: float
+    ) -> None:
+        """令牌的三件事：存在、相等、没过期。比对用常量时间比较（不比对长度）。"""
+        if not expected:
+            # 老库里补列之前的 pending 行没有令牌 —— 宁可让它重新提交，也不要"缺令牌就放行"。
+            raise ApprovalUnauthorised(
+                f"审批记录 {approval_id} 没有决定令牌（早于令牌机制建立），请让角色重新提交这条命令"
+            )
+        if age_seconds > DECIDE_TOKEN_TTL_SECONDS:
+            raise ApprovalUnauthorised(
+                f"审批记录 {approval_id} 的决定令牌已过期（超过 "
+                f"{DECIDE_TOKEN_TTL_SECONDS // 60} 分钟），请重新查看待批列表后再批"
+            )
+        if not given or not hmac.compare_digest(expected, given):
+            raise ApprovalUnauthorised(
+                f"批准审批记录 {approval_id} 需要决定令牌（随待批列表下发），且必须一致"
+            )
 
     def finish(self, approval_id: int, result: dict[str, Any]) -> None:
         """approved → done 并回填执行结果（后台线程在命令跑完后调用）。"""
@@ -142,7 +191,7 @@ class ApprovalService:
         conn = self._conn
         row = conn.execute(
             "SELECT id, command, cwd, role_id, role_name, thread_id, status, "
-            "result_json, created_at, updated_at FROM command_approval "
+            "result_json, decide_token, created_at, updated_at FROM command_approval "
             "WHERE command = ? ORDER BY id DESC LIMIT 1",
             (normalise_cmd(command),),
         ).fetchone()
@@ -152,7 +201,7 @@ class ApprovalService:
         conn = self._conn
         row = conn.execute(
             "SELECT id, command, cwd, role_id, role_name, thread_id, status, "
-            "result_json, created_at, updated_at FROM command_approval WHERE id = ?",
+            "result_json, decide_token, created_at, updated_at FROM command_approval WHERE id = ?",
             (approval_id,),
         ).fetchone()
         if row is None:
@@ -167,14 +216,14 @@ class ApprovalService:
         if status is None:
             rows = conn.execute(
                 "SELECT id, command, cwd, role_id, role_name, thread_id, status, "
-                "result_json, created_at, updated_at FROM command_approval "
+                "result_json, decide_token, created_at, updated_at FROM command_approval "
                 "ORDER BY id DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         else:
             rows = conn.execute(
                 "SELECT id, command, cwd, role_id, role_name, thread_id, status, "
-                "result_json, created_at, updated_at FROM command_approval "
+                "result_json, decide_token, created_at, updated_at FROM command_approval "
                 "WHERE status = ? ORDER BY id DESC LIMIT ?",
                 (status, limit),
             ).fetchall()
@@ -194,6 +243,9 @@ class ApprovalService:
             "thread_id": row["thread_id"],
             "status": row["status"],
             "result": None if not raw else json.loads(raw),
+            # 令牌随读侧下发：持有它 = "刚才确实看到过这条待批"。决定后为 None。
+            "decide_token": row["decide_token"],
+            "decide_token_ttl_seconds": DECIDE_TOKEN_TTL_SECONDS,
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
@@ -203,5 +255,7 @@ __all__ = [
     "ApprovalAlreadyDecided",
     "ApprovalNotFound",
     "ApprovalService",
+    "ApprovalUnauthorised",
+    "DECIDE_TOKEN_TTL_SECONDS",
     "normalise_cmd",
 ]

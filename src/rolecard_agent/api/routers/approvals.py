@@ -5,6 +5,9 @@
     （`run_approval_execution`），执行完成后回填结果（status=done）。批准这个 HTTP
     请求自身永远快 —— 命令可能在后台跑几十秒，前端 30s 超时不能等到它。
   * **拒绝 = 终态**：rejected 后同一命令不再自动重提审批（工具向模型转述拒绝原因）。
+  * **批准必须持有凭据**：`decide` 要带这条记录下发的一次性 `decide_token`（读侧给的），
+    缺 / 错 / 过期 = 403。挡的是"猜自增 id 就批"与浏览器里的跨源盲 POST（读不到响应就拿不到
+    令牌），不是"登录"——单机形态本来就不登录。
   * 全部审批动作写 operator 审计（actor=操作员号，与工具内部 actor="agent" 的执行
     审计区分 —— 审批是管理动作，执行是 agent 动作）。
 """
@@ -21,6 +24,7 @@ from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.core.approvals import (
     ApprovalAlreadyDecided,
     ApprovalNotFound,
+    ApprovalUnauthorised,
 )
 from rolecard_agent.core.tools import run as run_tools
 
@@ -31,9 +35,14 @@ router = APIRouter()
 
 
 class DecideBody(BaseModel):
-    """对一条待批命令拍板。只允许 pending 记录；批准会在后台立即执行一次。"""
+    """对一条待批命令拍板。只允许 pending 记录；批准会在后台立即执行一次。
+
+    `token` 是这条记录下发的一次性能力凭证（读侧 `GET /api/approvals` 带的 `decide_token`）：
+    持有它才批得动 —— 挡的是"猜一个自增 id 就批准"和浏览器里跨源的盲 POST。
+    """
 
     decision: Annotated[str, Field(min_length=3, max_length=16)]
+    token: Annotated[str | None, Field(default=None, max_length=64)] = None
 
 
 @router.get("/api/approvals")
@@ -63,11 +72,15 @@ def decide_approval(
             detail=f"decision 只接受 approve / reject，收到：{body.decision!r}",
         )
     try:
-        record = ctx.approvals.decide(approval_id, decision)
+        record = ctx.approvals.decide(approval_id, decision, token=body.token)
     except ApprovalNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ApprovalAlreadyDecided as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ApprovalUnauthorised as exc:
+        # 403 而不是 401：这里的缺口不是"没登录"（单机形态本来就不登录），而是"没持有
+        # 这条待批下发的凭据"——身份可以匿名，凭据不行。
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     ctx.roles.audit(
         actor=actor.id,

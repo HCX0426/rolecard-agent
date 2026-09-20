@@ -53,6 +53,7 @@ function page(overrides: Partial<ApprovalsPage> = {}): ApprovalsPage {
         thread_id: null,
         status: "pending",
         result: null,
+        decide_token: "tok-issued-for-1",
         created_at: "2026-09-18T10:00:00",
         updated_at: "2026-09-18T10:00:00",
       },
@@ -70,6 +71,7 @@ function page(overrides: Partial<ApprovalsPage> = {}): ApprovalsPage {
           duration_ms: 42,
           output_bytes: 64,
         },
+        decide_token: null,  // 批过的行令牌已清空
         created_at: "2026-09-18T09:00:00",
         updated_at: "2026-09-18T09:00:10",
       },
@@ -104,21 +106,35 @@ describe("ApprovalPanel 审批抽屉", () => {
     expect(onPendingChange).toHaveBeenCalledWith(1);
   });
 
-  it("批准调用 decideApproval(approve) 并更新计数", async () => {
+  it("批准调用 decideApproval(approve) 并带上这条记录下发的决定令牌", async () => {
     const onPendingChange = vi.fn();
     render(
       <ApprovalPanel open={true} onClose={() => {}} onPendingChange={onPendingChange} />,
     );
     await screen.findByText("python run.py --mode prod");
     fireEvent.click(screen.getAllByText("批准")[0]);
-    expect(apiMock.decideApproval).toHaveBeenCalledWith(1, "approve");
+    expect(apiMock.decideApproval).toHaveBeenCalledWith(1, "approve", "tok-issued-for-1");
   });
 
   it("拒绝调用 decideApproval(reject)", async () => {
     render(<ApprovalPanel open={true} onClose={() => {}} onPendingChange={() => {}} />);
     await screen.findByText("python run.py --mode prod");
     fireEvent.click(screen.getAllByText("拒绝")[0]);
-    expect(apiMock.decideApproval).toHaveBeenCalledWith(1, "reject");
+    expect(apiMock.decideApproval).toHaveBeenCalledWith(1, "reject", "tok-issued-for-1");
+  });
+
+  it("令牌被后端拒了（403）就照实报错，不悄悄改状态", async () => {
+    const onPendingChange = vi.fn();
+    apiMock.decideApproval.mockRejectedValueOnce(new Error("决定令牌已过期，请重新查看待批列表后再批"));
+    render(
+      <ApprovalPanel open={true} onClose={() => {}} onPendingChange={onPendingChange} />,
+    );
+    await screen.findByText("python run.py --mode prod");
+    fireEvent.click(screen.getAllByText("批准")[0]);
+    expect(await screen.findByText(/决定令牌已过期/)).toBeTruthy();
+    // 待批计数没被前端自行减掉 —— 那条命令还在等批，界面不能假装它没了。
+    expect(onPendingChange).not.toHaveBeenCalledWith(0);
+    expect(screen.getByText("待批准")).toBeTruthy();
   });
 
   it("空列表给出空态文案", async () => {

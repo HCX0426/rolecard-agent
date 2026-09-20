@@ -191,7 +191,7 @@ def test_manual_rejected_is_terminal(task_dir: Path, db: Any) -> None:
     approvals = ApprovalService(db)
     row = approvals.latest(cmd)
     assert row is not None
-    approvals.decide(row["id"], "reject")
+    approvals.decide(row["id"], "reject", token=row["decide_token"])
     text2 = _invoke(tool, cmd)
     assert "已被拒绝" in text2
     assert approvals.status_of(cmd) == "rejected"
@@ -205,7 +205,7 @@ def test_manual_approved_history_replay(task_dir: Path, db: Any) -> None:
     approvals = ApprovalService(db)
     row = approvals.latest(cmd)
     assert row is not None
-    approvals.decide(row["id"], "approve")
+    approvals.decide(row["id"], "approve", token=row["decide_token"])
     # 后台完成的回填（此处用 finish 模拟后台线程写结果，无真实子进程）
     approvals.finish(row["id"], {"exit_code": 0, "output": "history-ran", "duration_ms": 9})
     text = _invoke(tool, cmd)
@@ -222,7 +222,7 @@ def test_manual_approved_in_flight(task_dir: Path, db: Any) -> None:
     approvals = ApprovalService(db)
     row = approvals.latest(cmd)
     assert row is not None
-    approvals.decide(row["id"], "approve")
+    approvals.decide(row["id"], "approve", token=row["decide_token"])
     text = _invoke(tool, cmd)
     assert "正在执行" in text
 
@@ -235,7 +235,7 @@ def test_run_approval_execution_finishes_with_audit(task_dir: Path, db: Any) -> 
     approvals = ApprovalService(db)
     cmd = f'{PY} -c "print(\'OUTPUT_BODY_TEXT\')"'
     row = approvals.submit(cmd, cwd=str(task_dir))
-    approvals.decide(row["id"], "approve")
+    approvals.decide(row["id"], "approve", token=row["decide_token"])
     run_approval_execution(row["id"], settings=settings, conn=db)
     done = approvals.get(row["id"])
     assert done["status"] == "done"
@@ -258,7 +258,7 @@ def test_run_approval_execution_skips_rejected(task_dir: Path, db: Any) -> None:
     settings = Settings(run_approval="manual", workspace_dir=str(task_dir))
     approvals = ApprovalService(db)
     row = approvals.submit(f'{PY} -c "print(\'never\')"', cwd=str(task_dir))
-    approvals.decide(row["id"], "reject")
+    approvals.decide(row["id"], "reject", token=row["decide_token"])
     run_approval_execution(row["id"], settings=settings, conn=db)
     assert approvals.get(row["id"])["status"] == "rejected"  # 拒绝是终态：不执行
     audit = db.execute(

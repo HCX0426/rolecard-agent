@@ -410,6 +410,9 @@ export interface ApprovalRow {
   thread_id: string | null;
   status: ApprovalStatus;
   result: ApprovalResult | null;
+  /** 这条待批下发的**一次性决定令牌**：批准/拒绝必须原样带回（后端读完即清空）。
+   *  它不是登录凭据 —— 单机形态本来就不登录；它证明的是"这一条你确实看到过"。 */
+  decide_token: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -565,8 +568,8 @@ export const api = {
       "GET",
       `/api/approvals${status ? `?status=${encodeURIComponent(status)}` : ""}`,
     ),
-  decideApproval: (id: number, decision: "approve" | "reject") =>
-    request<ApprovalRow>("POST", `/api/approvals/${id}/decide`, { decision }),
+  decideApproval: (id: number, decision: "approve" | "reject", token: string | null) =>
+    request<ApprovalRow>("POST", `/api/approvals/${id}/decide`, { decision, token }),
 };
 
 // ---- SSE 对话流 ----------------------------------------------------------------
