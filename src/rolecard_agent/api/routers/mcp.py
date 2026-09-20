@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor
-from rolecard_agent.api.deps import AppContext, get_actor, get_context
+from rolecard_agent.api.deps import AppContext, get_actor, get_context, value_error_to_http
 from rolecard_agent.core import mcp_store
 
 router = APIRouter()
@@ -65,7 +65,7 @@ def create_mcp_server(
             enabled=body.enabled,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise value_error_to_http(exc) from exc
     ctx.roles.audit(
         actor=actor.id,
         action="add_mcp_server",
@@ -95,7 +95,7 @@ def patch_mcp_server(
     except KeyError:
         raise HTTPException(status_code=404, detail=f"MCP server {server_id!r} 不存在。") from None
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise value_error_to_http(exc) from exc
     ctx.roles.audit(
         actor=actor.id,
         action="update_mcp_server",

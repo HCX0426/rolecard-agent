@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor
-from rolecard_agent.api.deps import AppContext, get_actor, get_context
+from rolecard_agent.api.deps import AppContext, get_actor, get_context, value_error_to_http
 from rolecard_agent.core.model_settings import client_style
 
 router = APIRouter()
@@ -73,7 +73,7 @@ def add_service_endpoint(
     except KeyError:
         raise HTTPException(status_code=404, detail=f"未知服务类别：{key}") from None
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise value_error_to_http(exc) from exc
     ctx.roles.audit(
         actor=actor.id,
         action="add_service_endpoint",
@@ -98,7 +98,7 @@ def patch_service_endpoint(
     except KeyError:
         raise HTTPException(status_code=404, detail=f"未知服务类别：{key}") from None
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise value_error_to_http(exc) from exc
     ctx.roles.audit(
         actor=actor.id,
         action="update_service_endpoint",
@@ -122,7 +122,7 @@ def delete_service_endpoint(
     except KeyError:
         raise HTTPException(status_code=404, detail=f"未知服务类别：{key}") from None
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise value_error_to_http(exc) from exc
     ctx.roles.audit(
         actor=actor.id,
         action="remove_service_endpoint",
@@ -179,7 +179,7 @@ def put_service_order(
     except KeyError:
         raise HTTPException(status_code=404, detail=f"未知服务类别：{key}") from None
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise value_error_to_http(exc) from exc
     ctx.roles.audit(
         actor=actor.id,
         action="update_service_order",

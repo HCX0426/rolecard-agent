@@ -15,11 +15,11 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor
-from rolecard_agent.api.deps import AppContext, get_actor, get_context
+from rolecard_agent.api.deps import AppContext, get_actor, get_context, value_error_to_http
 from rolecard_agent.core import workspace
 
 router = APIRouter()
@@ -55,7 +55,7 @@ def put_workspace_dir(
     try:
         saved = workspace.save_task_dir(ctx.conn, body.path)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise value_error_to_http(exc) from exc
     ctx.roles.audit(
         actor=actor.id,
         action="set_task_dir",
@@ -82,7 +82,7 @@ def browse(path: Annotated[str, Query(max_length=1024)] = "") -> object:
     try:
         return workspace.browse_tree(path)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise value_error_to_http(exc) from exc
 
 
 __all__ = ["router"]

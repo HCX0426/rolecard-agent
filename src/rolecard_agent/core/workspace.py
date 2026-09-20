@@ -23,6 +23,7 @@ fs 工具的运行边界必须跟着"用户此刻在设置页选的任务目录"
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from pathlib import Path
 
@@ -89,6 +90,31 @@ def resolve_task_dir(settings: Settings, conn: SqlConnection) -> Path:
     return Path(override) if override else Path(settings.workspace_dir).resolve()
 
 
+def resolve_within(
+    root: Path | str,
+    rel_path: str,
+    *,
+    error_cls: type[Exception],
+    what: str,
+) -> Path:
+    """把（可能带 `..` / 子目录 / 大小写差异的）相对路径收敛到 root 内的绝对路径。
+
+    角色"碰电脑"的路径边界**唯一实现** —— fs 工具（`core/tools/files.py`）与
+    run_command 的 cwd（`core/tools/run.py`）共用它：`resolve()` 收敛 `..` 与符号链接，
+    `is_relative_to` 拦越界，`normcase` 抹平 Windows 大小写，root 自身允许。
+
+    越界抛 `error_cls`：各调用方保留自己的异常类型（`FsToolError` / `RunCommandError`）
+    与可读文案，`what` 是动作短语（如"访问任务目录内的文件"）。
+    """
+    root_res = Path(root).resolve()
+    target = (root_res / rel_path).resolve()
+    if os.path.normcase(str(target)) != os.path.normcase(
+        str(root_res)
+    ) and not target.is_relative_to(root_res):
+        raise error_cls(f"路径越界：只允许{what}（{root_res}）。")
+    return target
+
+
 def make_dir_resolver(settings: Settings, conn: SqlConnection) -> Callable[[], Path]:
     """fs 工具用的根解析器：每次调用实时读 DB 覆盖（保存即生效，无需 rebuild）。
 
@@ -136,5 +162,6 @@ __all__ = [
     "load_task_dir",
     "make_dir_resolver",
     "resolve_task_dir",
+    "resolve_within",
     "save_task_dir",
 ]

@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor
-from rolecard_agent.api.deps import AppContext, get_actor, get_context
+from rolecard_agent.api.deps import AppContext, get_actor, get_context, value_error_to_http
 from rolecard_agent.config import Settings
 from rolecard_agent.core import runtime_settings
 from rolecard_agent.core.memory import (
@@ -478,7 +478,7 @@ def put_runtime_settings(
     try:
         runtime_settings.save_overrides(ctx.conn, body.values)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise value_error_to_http(exc) from exc
     ctx.roles.audit(
         actor=actor.id,
         action="update_runtime_settings",

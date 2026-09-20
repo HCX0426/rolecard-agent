@@ -20,6 +20,7 @@ from rolecard_agent.api.deps import (
     AppContext,
     get_actor,
     get_context,
+    value_error_to_http,
 )
 from rolecard_agent.core.domain_data import DomainDataService
 from rolecard_agent.core.identity import DEFAULT_USER_ID
@@ -59,7 +60,7 @@ def list_domain_records(
     try:
         return _domain_service(ctx).list_records(domain, DEFAULT_USER_ID)  # type: ignore[return-value]
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise value_error_to_http(exc) from exc
 
 
 @router.post("/api/domains/{domain}/records", status_code=201)
@@ -81,7 +82,7 @@ def create_domain_record(
             note=body.note,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise value_error_to_http(exc) from exc
     ctx.roles.audit(
         actor=actor.id,
         action="create_domain_record",
@@ -104,7 +105,7 @@ def patch_domain_record(
     try:
         row = _domain_service(ctx).patch_record(domain, DEFAULT_USER_ID, record_id, changes)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise value_error_to_http(exc) from exc
     except KeyError:
         raise HTTPException(status_code=404, detail="记录不存在") from None
     ctx.roles.audit(
@@ -126,7 +127,7 @@ def delete_domain_record(
     try:
         _domain_service(ctx).delete_record(domain, DEFAULT_USER_ID, record_id)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise value_error_to_http(exc) from exc
     except KeyError:
         raise HTTPException(status_code=404, detail="记录不存在") from None
     ctx.roles.audit(actor=actor.id, action="delete_domain_record", target=f"{domain}/{record_id}")

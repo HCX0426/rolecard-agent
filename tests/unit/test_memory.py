@@ -10,6 +10,7 @@ from __future__ import annotations
 from rolecard_agent.config import Settings
 from rolecard_agent.core.memory import (
     MAX_MEMORY_CHARS,
+    _append_fact,
     clear_memory_text,
     current_role_id_ctx,
     load_memory_text,
@@ -131,3 +132,19 @@ def test_turn_memory_master_switch_closes_everything(conn) -> None:
 def test_turn_memory_is_capped(conn) -> None:
     save_role_memory_text(conn, "elysia", "x" * (MAX_MEMORY_CHARS + 500))
     assert len(memory_for_turn(conn, Settings(), "elysia")) == MAX_MEMORY_CHARS
+
+
+# ------------------------------------------- 追加+去重+截断（全局与角色共用的唯一实现）
+
+
+def test_append_fact_dedupes_and_drops_oldest() -> None:
+    """`_append_fact` 是全局/角色两个记忆桶共用的唯一实现（收口 §5 冗余）：
+    与本次完全相同的旧行被移走再追加到末尾，整体超上限时丢最旧的行。"""
+    assert _append_fact("", "A") == "A"
+    # 去重：旧 "A" 被删掉，新 "A" 追加到末尾（视为"最近确认过"）
+    assert _append_fact("A\nB", "A") == "B\nA"
+    # 截断：塞满后追加，最旧的行被丢，整体不超上限且新事实保留
+    text = _append_fact("old " + "x" * MAX_MEMORY_CHARS, "new")
+    assert len(text) <= MAX_MEMORY_CHARS
+    assert text.endswith("new")
+    assert not text.startswith("old ")

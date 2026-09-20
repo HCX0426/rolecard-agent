@@ -12,6 +12,8 @@ import pytest
 
 from rolecard_agent.config import Settings
 from rolecard_agent.core import workspace
+from rolecard_agent.core.tools import files as files_mod
+from rolecard_agent.core.tools import run as run_mod
 from rolecard_agent.core.tools.files import make_file_tools
 
 DEFAULT_DIR = "./data/workspace"
@@ -127,3 +129,28 @@ def test_fs_tools_without_conn_fall_back_to_env(tmp_path: Path) -> None:
     out = tools["fs_write"].invoke({"path": "x.txt", "content": "x"})
     assert "已写入" in out
     assert (tmp_path / "envdir" / "x.txt").exists()
+
+
+def test_resolve_within_allows_inside_rejects_escape(tmp_path: Path) -> None:
+    """路径边界唯一实现（收口 §5 冗余）：root 内（含子目录）放行、越界按给定异常拒。"""
+    (tmp_path / "a" / "b").mkdir(parents=True)
+    assert workspace.resolve_within(
+        tmp_path, "a/b", error_cls=ValueError, what="访问文件"
+    ) == (tmp_path / "a" / "b").resolve()
+    # root 自身允许（normcase 相等那条分支）
+    assert workspace.resolve_within(
+        tmp_path, ".", error_cls=ValueError, what="访问文件"
+    ) == tmp_path.resolve()
+    # 越界 → 抛指定异常，文案含动作短语
+    with pytest.raises(ValueError, match="只允许访问文件"):
+        workspace.resolve_within(
+            tmp_path, "../../etc/passwd", error_cls=ValueError, what="访问文件"
+        )
+
+
+def test_files_and_run_boundaries_share_one_impl(tmp_path: Path) -> None:
+    """fs 工具与 run_command 的边界委托同一实现，各自保留异常类型与文案。"""
+    with pytest.raises(files_mod.FsToolError, match="只允许访问任务目录内的文件"):
+        files_mod._resolve_within(tmp_path, "../../escape")
+    with pytest.raises(run_mod.RunCommandError, match="只允许在任务目录内执行命令"):
+        run_mod._resolve_within(tmp_path, "../../escape")

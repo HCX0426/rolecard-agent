@@ -103,6 +103,19 @@ def memory_for_turn(conn: SqlConnection, settings: Settings, role_id: str | None
     return text[:MAX_MEMORY_CHARS]
 
 
+def _append_fact(current: str, fact: str) -> str:
+    """把一条事实追加进记忆文本：删掉与本次完全相同的旧行（去重），超上限时丢最旧的行。
+
+    全局记忆与角色专属记忆共用这一份规则 —— 以前那段 append+去重+截断在 `memory_save`
+    里写了两遍（一处全局、一处 per-role），改一处忘另一处就是两个记忆桶行为分叉。
+    """
+    lines = [ln for ln in current.splitlines() if ln.strip() != fact]
+    lines.append(fact)
+    while len("\n".join(lines)) > MAX_MEMORY_CHARS:
+        lines.pop(0)
+    return "\n".join(lines)
+
+
 def make_memory_tool(*, settings: Settings, conn: SqlConnection) -> BaseTool:
     """构建 memory_save 内核工具。闭包持有**构建期**的连接与配置（与 fs 工具同一约定：
     运行环境热切换 = 设置保存后重建 registry，闭包随之重建）。
@@ -126,26 +139,17 @@ def make_memory_tool(*, settings: Settings, conn: SqlConnection) -> BaseTool:
         if not line:
             return "没有可记住的内容：传入的 fact 为空。"
         # 追加新行 + 丢弃与本次完全相同的旧行（去重）；超上限时丢最旧的行。
-        current = load_one()
-        lines = [ln for ln in current.splitlines() if ln.strip() != line]
-        lines.append(line)
-        while len("\n".join(lines)) > MAX_MEMORY_CHARS:
-            lines.pop(0)
-        save_one("\n".join(lines))
+        text = _append_fact(load_one(), line)
+        save_one(text)
         # per-role 记忆（架构计划 §5.2）：仅在某个角色对话时，把同一事实也记入该角色专属记忆，
         # 使回忆触发有内容来源。回忆只在当前角色的记忆里检索，绝不串到其它角色（隔离铁律）。
         # 无角色上下文（空串）则只写全局，不污染任何角色桶。
         role_id = current_role_id_ctx.get()
         if role_id:
-            role_lines = [
-                ln for ln in load_role_memory_text(conn, role_id).splitlines()
-                if ln.strip() != line
-            ]
-            role_lines.append(line)
-            while len("\n".join(role_lines)) > MAX_MEMORY_CHARS:
-                role_lines.pop(0)
-            save_role_memory_text(conn, role_id, "\n".join(role_lines))
-        return f"已记住：{line}（当前共 {len(lines)} 条事实）。"
+            save_role_memory_text(
+                conn, role_id, _append_fact(load_role_memory_text(conn, role_id), line)
+            )
+        return f"已记住：{line}（当前共 {len(text.splitlines())} 条事实）。"
 
     return memory_save
 

@@ -47,7 +47,7 @@ from langchain_core.tools import BaseTool, tool
 from rolecard_agent.config import Settings
 from rolecard_agent.core.approvals import ApprovalNotFound, ApprovalService
 from rolecard_agent.core.tools.errors import ToolExecutionError
-from rolecard_agent.core.workspace import make_dir_resolver, resolve_task_dir
+from rolecard_agent.core.workspace import make_dir_resolver, resolve_task_dir, resolve_within
 from rolecard_agent.storage.db import SqlConnection
 
 # 单条命令返回给模型 / 审批记录的输出上限（字符，近似字节）。命令的输出能被塞进
@@ -71,14 +71,11 @@ def shutdown_approval_executor() -> None:
 
 
 def _resolve_within(root: Path, rel_path: str) -> Path:
-    """cwd 的路径边界（与 core/tools/files.py 同源，不重复造轮子——但那个在文件模块）。"""
-    root_res = Path(root).resolve()
-    target = (root_res / rel_path).resolve()
-    if os.path.normcase(str(target)) != os.path.normcase(
-        str(root_res)
-    ) and not target.is_relative_to(root_res):
-        raise RunCommandError(f"路径越界：只允许在任务目录内执行命令（{root_res}）。")
-    return target
+    """cwd 的路径边界：委托给 `core/workspace.resolve_within`（唯一实现），
+    只把异常换成命令工具的可读失败类型。"""
+    return resolve_within(
+        root, rel_path, error_cls=RunCommandError, what="在任务目录内执行命令"
+    )
 
 
 def _task_venv_bin(task_dir: Path) -> str | None:

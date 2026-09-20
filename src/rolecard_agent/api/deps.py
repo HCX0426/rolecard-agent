@@ -302,3 +302,12 @@ def plugin_error_to_http(exc: PluginError) -> HTTPException:
     if isinstance(exc, UnknownPlugin):
         return HTTPException(status_code=404, detail=str(exc))
     return HTTPException(status_code=400, detail=str(exc))
+
+
+def value_error_to_http(exc: ValueError) -> HTTPException:
+    """路由层的 `ValueError`（可读的用户输入/业务错误）统一翻译成 400。
+
+    与 `role_error_to_http` / `plugin_error_to_http` 同族；收口各路由里重复了十几遍的
+    `raise HTTPException(status_code=400, detail=str(exc)) from exc`。
+    """
+    return HTTPException(status_code=400, detail=str(exc))

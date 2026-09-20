@@ -24,7 +24,6 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Callable
 from pathlib import Path
 
@@ -32,7 +31,7 @@ from langchain_core.tools import tool
 
 from rolecard_agent.config import Settings
 from rolecard_agent.core.tools.errors import ToolExecutionError
-from rolecard_agent.core.workspace import make_dir_resolver
+from rolecard_agent.core.workspace import make_dir_resolver, resolve_within
 from rolecard_agent.storage.db import SqlConnection
 
 READ_MAX_CHARS = 200_000  # 单文件读入 prompt 的字符上限（约 20 万字符）
@@ -43,18 +42,11 @@ class FsToolError(ToolExecutionError):
 
 
 def _resolve_within(root: Path, rel_path: str) -> Path:
-    """把（可能带 .. / 子目录 / 大小写差异的）相对路径收敛到根目录内的绝对路径。
-
-    与上传路径守卫（domains/<域>/tools.resolve_upload_target）同一套 rigor：
-    resolve() 收敛 `..` 与符号链接，is_relative_to 拦越界，normcase 抹平 Windows 大小写。
-    """
-    root_res = Path(root).resolve()
-    target = (root_res / rel_path).resolve()
-    if os.path.normcase(str(target)) != os.path.normcase(
-        str(root_res)
-    ) and not target.is_relative_to(root_res):
-        raise FsToolError(f"路径越界：只允许访问任务目录内的文件（{root_res}）。")
-    return target
+    """fs 工具的路径边界：委托给 `core/workspace.resolve_within`（唯一实现），
+    只把它抛出的异常换成文件工具的可读失败类型。"""
+    return resolve_within(
+        root, rel_path, error_cls=FsToolError, what="访问任务目录内的文件"
+    )
 
 
 def _audit(
