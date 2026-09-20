@@ -190,6 +190,8 @@ def check_config_contract() -> None:
         "AGENT_[A-Z_]+",
         "REACHOUT_[A-Z_]+",
         "FILE_WATCH_[A-Z_]+",
+        # D②-4 起新增的一族：桌面壳安装包的托管目录（SHELL_RELEASE_DIR）。
+        "SHELL_[A-Z_]+",
     )
     pattern = r"\b(" + "|".join(prefixes) + r"|SQLITE_PATH|CHROMA_PATH|UPLOAD_DIR)\b"
     cfg_keys = set(re.findall(pattern, cfg_text))

@@ -194,6 +194,13 @@ class Settings(BaseModel):
     chroma_path: Path = Path("./data/chroma")
     upload_dir: Path = Path("./data/uploads")  # v1 M5 上传入口的真实落点（登记 intake 任务）
 
+    # 里程碑 D②-4：**桌面壳安装包**的托管目录。分发形态 A 下这台机器不是公网服务器，
+    # 但 B/S 用户仍然要能拿到壳 —— 所以由本应用自己的后端托管一份产物（默认不托管）。
+    # None = 未配置 ⇒ `/api/shell-release` 报"没有产物"，界面连下载入口都不渲染（不留死按钮）。
+    # 配置了目录但里面没有匹配的 exe，同样是 available=False：**"能下载"这句话由文件是否存在
+    # 决定，而不是由配置决定**，否则部署方忘了拷产物就会得到一个点了没反应的按钮。
+    shell_release_dir: Path | None = None
+
     # v2.4 工作区文件工具（core/tools/files.py，fs_read / fs_write / fs_list）的路径边界。
     # 角色"读写电脑文件"只允许发生在这个目录里 —— 与上传目录同一套 rigor（H1）。
     workspace_dir: Path = Path("./data/workspace")
@@ -383,6 +390,7 @@ class Settings(BaseModel):
             ("SQLITE_PATH", "sqlite_path"),
             ("CHROMA_PATH", "chroma_path"),
             ("UPLOAD_DIR", "upload_dir"),
+            ("SHELL_RELEASE_DIR", "shell_release_dir"),
             ("OCR_PYTHON", "ocr_python"),
             ("SILICONFLOW_BASE_URL", "siliconflow_base_url"),
             ("RAG_MIN_SIMILARITY", "rag_min_similarity"),

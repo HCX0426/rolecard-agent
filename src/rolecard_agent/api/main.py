@@ -55,21 +55,24 @@ from rolecard_agent.api.routers import roles as roles_router
 from rolecard_agent.api.routers import services as services_router
 from rolecard_agent.api.routers import sessions as sessions_router
 from rolecard_agent.api.routers import settings as settings_router
+from rolecard_agent.api.routers import shell_release as shell_release_router
 from rolecard_agent.api.routers import workspace as workspace_router
 from rolecard_agent.config import Settings
 from rolecard_agent.core.bootstrap import Assembly, build_runtime
 from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.observability import Tracer
+from rolecard_agent.core.paths import bundle_root
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.domains.health.service import HealthQueryService
 from rolecard_agent.domains.registry import DOMAINS, build_registry
 from rolecard_agent.rag.retriever import KnowledgeBase
 from rolecard_agent.storage.db import set_request_epoch
 
-# M5 前端构建产物的位置：frontend/dist（仓库根下）。可用环境变量 FRONTEND_DIST 覆盖
-# （部署布局变化时不必移动文件）。未构建时控制台路由返回回退提示页，后端 API 不受影响。
-_DEFAULT_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
+# M5 前端构建产物的位置：开发态是仓库根下的 `frontend/dist`，打包态是随包资源里的同名目录
+# （`bundle_root()` 认得这两种落点）。可用环境变量 FRONTEND_DIST 覆盖（部署布局变化时不必移动
+# 文件）。未构建时控制台路由返回回退提示页，后端 API 不受影响。
+_DEFAULT_DIST = bundle_root() / "frontend" / "dist"
 
 _FALLBACK_HTML = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>rolecard-agent 管理控制台</title></head>
@@ -195,6 +198,7 @@ def create_app(
     app.include_router(approvals_router.router)
     app.include_router(mcp_router.router)
     app.include_router(local_service_router.router)
+    app.include_router(shell_release_router.router)
 
     @app.middleware("http")
     async def _begin_db_request(request: object, call_next: object) -> object:

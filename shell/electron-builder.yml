@@ -1,0 +1,48 @@
+# 桌面安装包（electron-builder）—— 里程碑 D②-4
+#
+# 分发形态 A：**后端打进包**（`extraResources` 那份 PyInstaller onedir），装到用户自己的
+# 机器上、只绑 127.0.0.1。这台开发机不是公网服务器，用户的机器也不该是 —— 所以没有
+# "共享服务"那条路（那属于形态 B，压在 v2.4 硬化后面）。
+#
+# 国内网络：下载 electron 与 builder 的二进制要走镜像，两条环境变量见 docs/开发流程.md
+#   ELECTRON_MIRROR / ELECTRON_BUILDER_BINARIES_MIRROR
+
+appId: com.rolecardagent.desktop
+productName: rolecard-agent
+copyright: ""
+
+directories:
+  output: release
+  # 默认就是 build/：shell/build/icon.ico 会被自动当应用图标（托盘/任务栏/安装包同源）
+
+# 壳里**只有壳**：界面是后端托管的那一份 dist，不在这里复制第二套。
+files:
+  - out/**/*
+  - web/**/*
+  - package.json
+  # 托盘图标。electron-builder 会把 build/icon.ico 用作**安装包/exe** 的图标，但那不等于
+  # 它进了 asar —— 运行时 `nativeImage.createFromPath` 读的是包内路径。漏了这一条的表现
+  # 很难查：托盘变成一个看不见也点不到的入口，而收起主窗之后它是唯一的出路。
+  - build/icon.ico
+
+extraResources:
+  # PyInstaller 的产物（scripts/build_sidecar.py）。装完后运行期路径是
+  # `resources/rolecard-backend/rolecard-backend.exe`，由 main/index.ts 按 app.isPackaged 拼出来。
+  - from: ../build/sidecar/rolecard-backend
+    to: rolecard-backend
+
+win:
+  target:
+    # dir = 未安装的解包目录：用来验"打包态"而不真的往系统里装东西
+    - dir
+    - nsis
+  artifactName: rolecard-agent-${version}-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  # 装到用户目录：不需要 UAC，也不会有"Program Files 不可写"那一类坑（数据本来就在
+  # %LOCALAPPDATA%，见 core/paths.py）
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: rolecard-agent

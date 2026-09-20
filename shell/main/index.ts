@@ -12,12 +12,26 @@
  * 不该让它消失；真要退出走托盘的「退出」，只有那条路会回收后端进程。
  */
 import { Notification, app, ipcMain, type BrowserWindow } from "electron";
+import path from "node:path";
 
-import { Backend, consoleUrl, endpoint, serving, type Outcome } from "./backend";
+import { Backend, consoleUrl, endpoint, serving, type BackendOptions, type Outcome } from "./backend";
 import { createMainWindow, createPetWindow } from "./windows";
 import { createTray, type TrayHandle } from "./tray";
 
-const backend = new Backend();
+/** 后端的启动配置：打包态用随包的 `resources/rolecard-backend/`，开发态由 backend.ts
+ *  自己从仓库布局推（那里还管 cwd=仓库根）。日志两种形态都落盘 —— 打包态没有终端，
+ *  而"进程归属"这类保证的判据就是日志里那一行。 */
+function backendOptions(): BackendOptions {
+  const shared = { logFile: path.join(app.getPath("userData"), "backend.log") };
+  if (!app.isPackaged) return shared;
+  return {
+    ...shared,
+    sidecarExe: path.join(process.resourcesPath, "rolecard-backend", "rolecard-backend.exe"),
+    cwd: app.getPath("userData"),
+  };
+}
+
+const backend = new Backend(backendOptions());
 
 let mainWin: BrowserWindow | null = null;
 let petWin: BrowserWindow | null = null;

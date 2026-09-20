@@ -52,28 +52,36 @@ def _maybe_configure_cloud_backend() -> None:
 
 
 def _resolve_data_paths() -> None:
-    """让数据路径与启动 CWD 解耦：相对路径一律按项目根（本文件所在 scripts/ 的父目录）解析。
+    """让数据路径与启动 CWD 解耦：相对路径一律按数据根解析。
 
     否则从非项目根目录启动（某些终端/IDE 的默认工作目录，或本项目的自动化启动脚本）
     时，config 里的 `./data/...` 会落到错误位置，表现为"/api/knowledge 返回 []、会话与
     知识全空"等假性故障——审计中已踩到并定位。落进启动器，保证无论从哪里启动都指向同一
     份真实数据。
 
-    规则：环境变量未设置 → 用项目根下的默认绝对路径；已设置且为绝对路径 → 原样保留
-    （用户显式覆盖优先）；已设置但为相对路径 → 按项目根解析（CWD 无关）。
+    数据根由 `core/paths.user_data_root()` 决定：**开发态是仓库 `data/`，打包态是
+    `%LOCALAPPDATA%\rolecard-agent`**。后者不是可选项 —— 安装目录可能不可写，而且升级是
+    整目录替换，库放进去等于"更新一次丢一次"。
+
+    规则：环境变量未设置 → 用数据根下的默认绝对路径；已设置且为绝对路径 → 原样保留
+    （用户显式覆盖优先）；已设置但为相对路径 → 按 `path_from_config` 的基准解析（CWD 无关）。
     """
-    root = Path(__file__).resolve().parents[1]
+    from rolecard_agent.core.paths import path_from_config, user_data_root
+
+    root = user_data_root()
     defaults = {
-        "SQLITE_PATH": root / "data" / "sqlite" / "app.db",
-        "CHROMA_PATH": root / "data" / "chroma",
-        "UPLOAD_DIR": root / "data" / "uploads",
+        "SQLITE_PATH": root / "sqlite" / "app.db",
+        "CHROMA_PATH": root / "chroma",
+        "UPLOAD_DIR": root / "uploads",
     }
     for key, default_abs in defaults.items():
         val = os.environ.get(key)
         if not val:
             os.environ[key] = str(default_abs)
-        elif not os.path.isabs(val):
-            os.environ[key] = str((root / val).resolve())
+        else:
+            # 相对值按**仓库根**（开发态）解析，不是按数据根：`.env.example` 里的
+            # `./data/...` 就是这么约定的，换基准会让"没改过路径"的人凭空丢库。
+            os.environ[key] = str(path_from_config(val))
     # 确保落点目录存在：fresh clone / 首次启动时不因父目录缺失而 500（sqlite 的 connect
     # 不会自动建父目录）。
     for key in ("SQLITE_PATH", "CHROMA_PATH", "UPLOAD_DIR"):
@@ -88,8 +96,13 @@ def _load_dotenv() -> None:
     `.env` 只是本地启动时设置环境变量的便捷容器 —— 引一个依赖来省 20 行不值。规则：
     ① 真实环境变量优先（`.env` 只填空位，不覆盖已在 shell 里 export 的值）；
     ② 空值/注释跳过；③ 剥一层成对引号。`.env` 已在 .gitignore，密钥不会入库。
+
+    落点由 `core/paths.dotenv_path()` 决定：开发态是仓库根，打包态是用户数据目录旁边
+    （安装目录既可能不可写，也会被升级整目录替换，不能当配置位）。
     """
-    env_file = Path(__file__).resolve().parents[1] / ".env"
+    from rolecard_agent.core.paths import dotenv_path
+
+    env_file = dotenv_path()
     if not env_file.exists():
         return
     for raw in env_file.read_text(encoding="utf-8").splitlines():

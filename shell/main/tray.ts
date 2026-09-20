@@ -18,7 +18,13 @@ export type TrayControls = {
 export type TrayHandle = { tray: Tray; refresh: () => void };
 
 export function createTray(controls: TrayControls): TrayHandle {
-  const tray = new Tray(nativeImage.createFromPath(ICON));
+  const icon = nativeImage.createFromPath(ICON);
+  if (icon.isEmpty()) {
+    // 打包态最容易踩的就是这条：图标文件没进 asar ⇒ 托盘变成一个"看不见的入口"，
+    // 而收起主窗之后它是用户唯一的出路。宁可在这里说一句，也别让它安静地空白。
+    console.error(`[shell] 托盘图标读不出来（${ICON}）→ 托盘会是空白，收进 asar 后重试`);
+  }
+  const tray = new Tray(icon);
   tray.setToolTip("rolecard-agent");
 
   const render = () => {
