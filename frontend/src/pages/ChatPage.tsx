@@ -1128,6 +1128,11 @@ export default function ChatPage({
                                     视觉
                                   </span>
                                 )}
+                                {b.supports_tools && (
+                                  <span className="shrink-0 rounded bg-sky-100 px-1 py-0.5 text-[9px] font-medium text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                                    工具
+                                  </span>
+                                )}
                               </span>
                               <span className="ml-2 flex min-w-0 items-center gap-1.5">
                                 <span className="truncate text-slate-400 dark:text-slate-500">{b.name}</span>

@@ -373,3 +373,43 @@ describe("ChatPage 删除二次确认（useConfirm）", () => {
     );
   });
 });
+
+describe("ChatPage 模型菜单能力位徽章（Batch 6：supports_tools）", () => {
+  function stubBackends(rows: unknown[]) {
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/sessions") return [];
+      if (url === "/api/roles") return [];
+      if (url === "/api/settings/models") return { default: "local", backends: rows, fallbacks: [] };
+      if (url === "/api/settings/model-providers") return { providers: [] };
+      if (url.endsWith("/messages")) return { messages: [], total: 0, limit: 500, truncated: false };
+      if (url.endsWith("/context")) return { trimmed: 0, kept: 0, budget: 24000 };
+      if (url.startsWith("/api/session/")) return { model_name: null };
+      return {};
+    });
+  }
+
+  async function openModelMenu() {
+    const { fireEvent } = await import("@testing-library/react");
+    render(<ToastProvider><ChatPage /></ToastProvider>);
+    fireEvent.click(await screen.findByTitle(/切换本对话使用的模型/));
+  }
+
+  it("supports_tools=true 的后端在模型菜单显示「工具」徽章（纯展示能力位）", async () => {
+    stubBackends([
+      { name: "with_tools", provider: "openai", model: "gpt-x", usage: "chat", supports_vision: false, supports_tools: true },
+    ]);
+    await openModelMenu();
+    expect(await screen.findByText("gpt-x")).toBeTruthy();
+    expect(screen.getByText("工具")).toBeTruthy();
+  });
+
+  it("supports_tools=false 的后端不显示「工具」徽章", async () => {
+    stubBackends([
+      { name: "no_tools", provider: "openai", model: "gpt-y", usage: "chat", supports_vision: false, supports_tools: false },
+    ]);
+    await openModelMenu();
+    // 菜单已开：该后端行可见，但没有「工具」徽章（避免把能力位这条事实复制到前端做 disable）
+    expect(await screen.findByText("gpt-y")).toBeTruthy();
+    expect(screen.queryByText("工具")).toBeNull();
+  });
+});

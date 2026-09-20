@@ -164,6 +164,8 @@
 | 3 | `Modal` + `useConfirm`（收口 9 处二次确认 → 实际覆盖 10 个调用点：ExtensionPanel / ServicesPanel / DataPage（报告+索引 2 处）/ KnowledgePage 清空作用域 / RolesPage / useMessageSelection / ChatPage（删除对话+多选删除 2 处）/ SettingsPage 切作用域） | ✅ 完成 | 2026-09-20 |
 | 4 | 全局 `Toast`（`ToastProvider` 挂 App 根） | ✅ 完成 | 2026-09-20 |
 | 5 | 设置拆帖 + 主动开口收口 + `*_enabled` 单写点 | ✅ 完成 | 2026-09-20 |
-| 6 | `supports_tools` 对话页「工具」徽章 | ⏳ 待做 | — |
+| 6 | `supports_tools` 对话页「工具」徽章 | ✅ 完成 | 2026-09-20 |
+
+> 六批全部落地（2026-09-20）：Switch 统一 → Card 迁移 → `Modal`+`useConfirm` → 全局 `Toast` → 设置拆帖+主动开口单写点 → `supports_tools` 徽章。
 
 每批单独提交，文档回写同提交。
