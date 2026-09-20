@@ -80,6 +80,7 @@ def build_kernel(
     plugins: PluginService | None = None,
     model_resolver: Callable[..., ChatLike] | None = None,
     memory_provider: Callable[[], str] | None = None,
+    vision_probe: Callable[[str | None, str], bool | None] | None = None,
 ) -> Any:
     """Compile the kernel graph.
 
@@ -111,6 +112,10 @@ def build_kernel(
     ctx.model_resolver = model_resolver
     if memory_provider is not None:
         ctx.memory_provider = memory_provider
+    # 视觉能力探测（P1-2）：不传 = "永远不知道" = 永远不拦（fail-open）。拦与不拦的口径
+    # 写在 core/nodes._reject_unsupported_vision，这里只负责把宿主的探测器接进来。
+    if vision_probe is not None:
+        ctx.vision_probe = vision_probe
     # 历史预算与工具超时随宿主配置走（审查报告 H3 / M10）：内核不再无条件把全量历史塞进
     # prompt，也不再把工具执行交给"无限等待"。
     ctx.max_context_chars = ctx.settings.context_max_chars

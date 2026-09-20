@@ -40,7 +40,7 @@ from rolecard_agent.core.model_settings import ModelSettingsService, client_styl
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.observability import TraceEvent, Tracer, make_tracer
 from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
-from rolecard_agent.core.probes import ollama_keep
+from rolecard_agent.core.probes import ollama_keep, vision_capability
 from rolecard_agent.core.reachout import (
     ReachoutScheduler,
     proactive_thread_id,
@@ -223,6 +223,9 @@ class Runtime:
             model_resolver=self.resolve_role_model,
             # 跨会话记忆的读取器：每次调用实时读库；总开关在 call_model 里按当前有效配置把关。
             memory_provider=lambda: load_memory_text(self.conn),
+            # 视觉能力探测（P1-2）：Ollama `/api/show` 的 capabilities，带 TTL 缓存。
+            # 只有"声明不支持 + 探测确认不支持"两条同时成立才会调用前拦（见 nodes 里那段）。
+            vision_probe=vision_capability,
         )
 
     # -- 热重建 --------------------------------------------------------------

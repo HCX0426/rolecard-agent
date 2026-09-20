@@ -130,11 +130,14 @@ def _user_message(text: str, image: str | None, *, created_at: str) -> HumanMess
 
     langchain_ollama 把 `{"type": "image_url", "image_url": {"url": data_url}}` 转成
     Ollama 的 images 数组（源码 verified）；openai 兼容路径走标准 image_url。
-    **现状（不要把这里写成承诺）**：模型不支持视觉时由供应商返回 400，我们只在错误穿透
-    后把它翻成可读答复（`api/chat.py` 的 `_VISION_MISMATCH_SIGNALS`）；前端只按
-    `supports_vision` 渲染「视觉」徽标，**发图按钮不 disabled**，后端也没有调用前拦截。
-    做成"调用前按能力位拦截"是架构审计报告 P1-2，尚未落地（它要先定"能力声明 vs
-    Ollama 实际探测"谁说了算，是行为变更）。
+    **现状**：两条路并存 ——
+    ① 调用前拦截（P1-2，2026-09-20 落地）：这一轮要送出去的内容含图片、且"该行声明
+    `supports_vision=false`"与"Ollama `/api/show` 实测 capabilities 不含 vision"**两条同时
+    成立**时，`core/nodes._reject_unsupported_vision` 直接拒，不发那次调用；
+    ② 反应式兜底仍然留着：云端行探不了视觉、探测问不到答案（老版本 Ollama / 超时）时
+    一律放行，由供应商 400 再翻成同一句可读答复（`core/turn._VISION_MISMATCH_SIGNALS`）。
+    前端仍只渲染「视觉」徽标、**发图按钮不 disabled** —— 拦与不拦的判定在后端，界面不
+    复制一份（复制就是两处事实面）。
     """
     if not image:
         return HumanMessage(content=text, additional_kwargs={"created_at": created_at})

@@ -49,7 +49,8 @@ class BackendSpec(BaseModel):
     usage: str = "chat"
     # 本地 Ollama 的实际上下文窗口（tokens）；None = 引擎默认（常为 2048）。
     num_ctx: int | None = None
-    # 后端能力位（换模型对所有角色统一生效）：视觉=能否收图（决定发图按钮）；
+    # 后端能力位（换模型对所有角色统一生效）：视觉=能否收图（徽标 + 调用前拦截的一半证据，
+    # 见 core/nodes._reject_unsupported_vision）；
     # 工具=工具调用是否可用（某些云端 VLM 带 tools 会返回空 → 关掉后该轮不绑工具）。
     supports_vision: bool = False
     supports_tools: bool = True

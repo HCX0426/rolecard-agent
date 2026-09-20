@@ -80,9 +80,10 @@ class ModelBackend(BaseModel):
     usage: str = "chat"
     # 后端能力位（换模型对所有角色统一生效的关键，用户 2026-09-19）：
     # - supports_vision：能否收图。云端模型无法像 Ollama 那样探测视觉，故显式声明。
-    #   **当前消费方只有两处**：模型页/对话页渲染「视觉」徽标，以及后端在供应商报"不支持
-    #   图片"时把错误翻成可读答复。它**还不**控制发图按钮 disabled，也不做调用前拦截
-    #   （架构审计报告 P1-2 未落地，要先定"声明 vs 探测"谁说了算）。
+    #   消费方两处：① 模型页/对话页渲染「视觉」徽标；② **调用前拦截的一半证据**
+    #   （P1-2）：声明 false **且** Ollama `/api/show` 实测也不含 vision 才拦；声明 true
+    #   直接放行且不去探测。它**不**控制发图按钮 disabled —— 判定只在一处（后端），
+    #   界面复制一份就是第二个事实面。
     # - supports_tools：工具调用是否可用。某些云端 VLM（如 SiliconFlow Qwen3-VL-30B-A3B）
     #   一旦请求附 tools 就返回空，标 false 后 call_model 这轮不绑工具，模型仍能正常答。
     supports_vision: bool = False

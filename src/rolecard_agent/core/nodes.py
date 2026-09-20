@@ -75,6 +75,14 @@ class ToolTimeout(Exception):
     """工具在预算内没有返回。转成 `TOOL_FAILED` 给模型，原因进轨迹。"""
 
 
+class VisionNotSupported(Exception):
+    """这一轮要送出去的内容含图片，而当前后端**被确认**看不了图（P1-2 的调用前拦截）。
+
+    抛而不是返回一句假回答：`core/turn.py` 的错误路径会把它翻译成与"供应商 400 后识别出来"
+    **同一句**用户提示（`VISION_MISMATCH_DETAIL`）—— 一个条件一个句子，不分两处各写一遍。
+    """
+
+
 def _invoke_tool(tool: Any, args: dict[str, Any], timeout_seconds: float) -> Any:
     """在独立线程里执行工具，并施加总时长上限。
 
@@ -231,6 +239,15 @@ def _default_epoch() -> int:
     return 1
 
 
+def _vision_unknown(_base_url: str | None, _model: str) -> bool | None:
+    """Default capability probe: **don't know**.
+
+    三态里的 `None`。默认必须是"不知道"而不是"不能"：没接线就拦，等于让一个探测器的缺失
+    变成一次功能缺失（用户会撞到"我的模型明明能看图却被挡"）。
+    """
+    return None
+
+
 @dataclass(slots=True)
 class KernelContext:
     """Everything the nodes need, assembled once at graph build time."""
@@ -268,14 +285,62 @@ class KernelContext:
     # 用 ctx.settings.memory_enabled 把关（双保险：这里 fail-closed，门再闭一次）。
     memory_provider: Callable[[], str] = _no_memory
 
+    # 视觉能力探测（P1-2）：给 (base_url, model) 返回 True/False/**None**。宿主接线到
+    # `core/probes.vision_capability`（Ollama `/api/show` 的 capabilities）；没接线就是
+    # "永远不知道" ⇒ 永远不拦。内核不自己发 HTTP：能不能看图是**宿主环境**的事实。
+    vision_probe: Callable[[str | None, str], bool | None] = _vision_unknown
+
+
+def _turn_backend(state: dict[str, Any], role: Any, ctx: KernelContext) -> Any | None:
+    """这一轮**实际会用到的后端配置**（会话覆盖 > 角色 > 默认）。解析失败返回 None。
+
+    能力位（工具 / 视觉）都从这里取，避免"这一轮到底用哪个后端"出现两份判定。
+    """
+    name = state.get("model_name") or getattr(role, "model_name", None)
+    try:
+        return ctx.settings.backend(name)
+    except Exception:  # noqa: BLE001 - 配置异常不该让整轮挂掉，退回默认（调用方按未知处理）
+        return None
+
 
 def _backend_supports_tools(state: dict[str, Any], role: Any, ctx: KernelContext) -> bool:
     """当前这轮实际用的后端是否支持工具调用。后端名未知/解析失败 → 保守返回 True（照常暴露）。"""
-    name = state.get("model_name") or getattr(role, "model_name", None)
-    try:
-        return ctx.settings.backend(name).supports_tools
-    except Exception:  # noqa: BLE001 - 配置异常不该让整轮挂掉，退回默认（支持工具）
-        return True
+    backend = _turn_backend(state, role, ctx)
+    return True if backend is None else bool(backend.supports_tools)
+
+
+def _reject_unsupported_vision(
+    state: dict[str, Any], role: Any, ctx: KernelContext, history: Sequence[Any]
+) -> None:
+    """P1-2 的调用前拦截，口径是**只拦确定的否**（用户 2026-09-20 选定）。
+
+    放行是默认，四个条件任一成立就放行：这一轮没有图片 / 后端声明支持视觉 / 探测给不出答案
+    （`None`，含云端行根本探不了）/ 探测说**能**看（探针赢过一次过期的勾选框）。
+    只有"声明 false" **且** "Ollama 实测 capabilities 里没有 vision" 两条独立证据同时成立，
+    才在调用前拒 —— 误杀一个能看图的模型，比多花一次 400 往返严重得多。
+
+    拦下来抛的是 `VisionNotSupported`，由 `core/turn.model_error_detail` 翻成与 reactive
+    路径同一句提示：一个条件一句人话，不分两处各写一遍。
+    """
+    if not _history_has_image(history):
+        return
+    backend = _turn_backend(state, role, ctx)
+    if backend is None or backend.supports_vision:
+        return
+    if backend.provider != "ollama":
+        return  # 云端模型探不了视觉（要真发一张图，有成本），未知 ⇒ 不拦
+    if ctx.vision_probe(backend.base_url, backend.model) is not False:
+        return
+    ctx.tracer.emit(
+        TraceEvent(
+            event="vision_blocked_pre_call",
+            thread_id=state.get("thread_id"),
+            role_id=getattr(role, "role_id", None),
+            node="call_model",
+            detail={"model": backend.model, "base_url": backend.base_url},
+        )
+    )
+    raise VisionNotSupported(f"{backend.model} 的 capabilities 不含 vision")
 
 
 def turn_context(state: dict[str, Any], ctx: KernelContext) -> tuple[list[Any], list[str]]:
@@ -421,6 +486,10 @@ def call_model(
             )
         )
     prompt = [SystemMessage(content=system), *history]
+    # 调用前的能力检查（P1-2）：要送出去的内容含图片、而这一轮的后端被**两条独立证据**确认
+    # 看不了图 —— 就在这里拒，不要拿一次真调用去换一句供应商 400。放在裁剪之后、组装 prompt
+    # 之后：判据必须与"实际发出去的内容"一致，否则被裁掉的图片会误触发拦截。
+    _reject_unsupported_vision(state, role, ctx, history)
 
     with timer() as elapsed:
         invoke_kwargs = {} if config is None else {"config": config}

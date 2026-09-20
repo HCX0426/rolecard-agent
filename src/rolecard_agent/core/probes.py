@@ -49,6 +49,44 @@ def vision_model_ready(base_url: str | None, model: str, *, use_cache: bool = Tr
 
 _DEFAULT_OLLAMA = "http://127.0.0.1:11434"
 
+# 能力探测单独一份缓存：键形状与 `vision_model_ready` 的 (base, model) 一样，共用一个 dict
+# 会让两个语义互相覆盖（一个是"这个模型在不在位"，一个是"这个模型能不能看图"）。
+_CAP_CACHE: dict[tuple[str, str], tuple[bool | None, float]] = {}
+
+
+def vision_capability(
+    base_url: str | None, model: str, *, use_cache: bool = True
+) -> bool | None:
+    """Ollama 这个模型**能不能看图** —— 读 `/api/show` 的 `capabilities`（实测形状：
+    `["tools","thinking","completion","vision"]`）。只问元数据，不发推理请求。
+
+    **三态是这条存在的全部理由**（P1-2 定的口径是"只拦确定的否"）：
+    `True` 能看 / `False` 明确不能看 / `None` **不知道**（老版本 Ollama 没这个字段、
+    请求失败、超时、模型没装）。把"不知道"当成"不能看"，就会误杀那些其实能看、
+    只是能力位没勾或 Ollama 暂时抽风的模型 —— 那比不拦更糟。
+    """
+    base = (base_url or _DEFAULT_OLLAMA).rstrip("/")
+    key = (base, model)
+    if use_cache:
+        cached = _CAP_CACHE.get(key)
+        if cached is not None and time.monotonic() - cached[1] < _PROBE_TTL:
+            return cached[0]
+    verdict: bool | None
+    try:
+        import httpx
+
+        payload = httpx.post(f"{base}/api/show", json={"model": model}, timeout=3.0).json()
+        caps = payload.get("capabilities")
+    except Exception:  # noqa: BLE001 - 问不到就是"不知道"，不是"不能"
+        caps = None
+    if not isinstance(caps, list):
+        verdict = None
+    else:
+        lowered = {str(c).strip().lower() for c in caps}
+        verdict = "vision" in lowered
+    _CAP_CACHE[key] = (verdict, time.monotonic())
+    return verdict
+
 
 def ollama_keep(
     base_url: str | None,

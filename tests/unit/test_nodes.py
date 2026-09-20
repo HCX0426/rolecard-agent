@@ -26,6 +26,7 @@ from rolecard_agent.core.nodes import (
     TOOL_LOOP_BREAK,
     TOOL_OFFLINE,
     KernelContext,
+    VisionNotSupported,
     _latest_image_data_url,
     call_model,
     execute_tools,
@@ -917,3 +918,97 @@ def test_search_tool_sees_the_role_scopes_across_the_executor_thread(
 
     out = execute_tools(_state_with_call("scope_probe", "scoped"), ctx)
     assert out["messages"][0].content == "reports_2026"
+
+
+# ---------------------------------------------------- P1-2 视觉的调用前拦截（只拦确定的否）
+
+
+def _vision_ctx(
+    roles: RoleCardService,
+    *,
+    declared: bool,
+    probe: Any,
+    provider: str = "ollama",
+    tracer: Any = None,
+) -> tuple[KernelContext, FakeModel, RecordingTracer]:
+    """一张带图能跑的 ctx：后端行的 `supports_vision` 与探测器答案都由用例点名。"""
+    rec = tracer or RecordingTracer()
+    model = FakeModel(AIMessage(content="ok"))
+    reg = ToolRegistry()
+    reg.register(kernel_tool)
+    ctx = _ctx(reg, roles, model, tracer=rec)
+    ctx.settings = Settings(
+        model_default="vl",
+        model_backends={
+            "vl": ModelBackend(
+                model="some-model", provider=provider, supports_vision=declared
+            )
+        },
+    )
+    ctx.vision_probe = probe  # type: ignore[assignment]
+    return ctx, model, rec
+
+
+def _image_state(rid: str) -> dict[str, Any]:
+    return {"messages": [_image_human_msg()], "current_role_id": rid, "thread_id": "t"}
+
+
+def test_vision_block_needs_both_evidences(roles: RoleCardService) -> None:
+    """声明 false **且** 探测确认不能看 —— 才拦。抛的是专用异常，不是通用失败句。"""
+    rid = _role(roles)
+    ctx, model, rec = _vision_ctx(roles, declared=False, probe=lambda _b, _m: False)
+    with pytest.raises(VisionNotSupported):
+        call_model(_image_state(rid), ctx)
+    assert model.last_prompt is None  # 一次真调用都没发生
+    assert "vision_blocked_pre_call" in rec.kinds()
+
+
+def test_vision_probe_overrides_a_stale_checkbox(roles: RoleCardService) -> None:
+    """探测说能看 → 放行：勾选框是人的输入，会过期；误杀一个能看图的模型比多花一次
+    往返严重得多，所以这里探针赢。"""
+    rid = _role(roles)
+    ctx, model, rec = _vision_ctx(roles, declared=False, probe=lambda _b, _m: True)
+    call_model(_image_state(rid), ctx)
+    assert model.last_prompt is not None
+    assert "vision_blocked_pre_call" not in rec.kinds()
+
+
+def test_vision_unknown_never_blocks(roles: RoleCardService) -> None:
+    """探测器问不出答案（老版本 Ollama / 没接线 / 超时）= 不知道 → 放行。"""
+    rid = _role(roles)
+    ctx, model, _rec = _vision_ctx(roles, declared=False, probe=lambda _b, _m: None)
+    call_model(_image_state(rid), ctx)
+    assert model.last_prompt is not None
+
+
+def test_vision_declared_capable_is_not_probed(roles: RoleCardService) -> None:
+    """声明支持就不去探（省一次 HTTP），也不拦。"""
+    rid = _role(roles)
+    calls: list[str] = []
+
+    def probe(_base: str | None, _model: str) -> bool:
+        calls.append("probed")
+        return False
+
+    ctx, model, _rec = _vision_ctx(roles, declared=True, probe=probe)
+    call_model(_image_state(rid), ctx)
+    assert model.last_prompt is not None
+    assert calls == []
+
+
+def test_vision_gate_ignores_text_only_turns(roles: RoleCardService) -> None:
+    """这一轮没图片 → 与视觉无关，照常走。"""
+    rid = _role(roles)
+    ctx, model, _rec = _vision_ctx(roles, declared=False, probe=lambda _b, _m: False)
+    call_model({"messages": [HumanMessage(content="纯文本")], "current_role_id": rid}, ctx)
+    assert model.last_prompt is not None
+
+
+def test_vision_gate_does_not_guess_about_cloud_backends(roles: RoleCardService) -> None:
+    """云端行探不了（要真发一张图，有成本）→ 未知 → 放行，维持 reactive 兜底。"""
+    rid = _role(roles)
+    ctx, model, _rec = _vision_ctx(
+        roles, declared=False, provider="openai", probe=lambda _b, _m: False
+    )
+    call_model(_image_state(rid), ctx)
+    assert model.last_prompt is not None

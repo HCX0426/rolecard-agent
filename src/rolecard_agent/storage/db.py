@@ -248,8 +248,8 @@ def _migrate(conn: SqlConnection) -> None:
         conn.execute("ALTER TABLE model_backend ADD COLUMN num_ctx INTEGER")
     # 4b. model_backend 增列 supports_vision / supports_tools（后端能力位，用户 2026-09-19）。
     #     换模型应对所有角色统一生效——能力是"模型"的属性，不是靠特殊角色去绕。
-    #     supports_vision：能否收图（决定对话页发图按钮；云端模型无法像 Ollama 那样
-    #     探测视觉，故显式标注）。
+    #     supports_vision：能否收图（对话页「视觉」徽标 + 调用前拦截的一半证据；云端模型
+    #     无法像 Ollama 那样探测视觉，故显式标注）。
     #     supports_tools：工具调用是否可用（某些云端 VLM 一旦附工具就返回空，如 SiliconFlow
     #     Qwen3-VL-30B-A3B）；false 时 call_model 这轮跳过 bind_tools，模型仍能正常答。
     #     默认：不支持视觉、支持工具（与既有行为一致，只有显式标注才改变）。

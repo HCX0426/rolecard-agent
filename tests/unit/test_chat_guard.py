@@ -12,6 +12,7 @@ Traceability: US-4（输出侧安全）在流式场景下的延续。整段审�
 from __future__ import annotations
 
 from rolecard_agent.core.guard import check
+from rolecard_agent.core.nodes import VisionNotSupported
 from rolecard_agent.core.turn import (
     VISION_MISMATCH_DETAIL,
     WINDOW,
@@ -84,6 +85,14 @@ def test_vision_mismatch_maps_to_actionable_detail() -> None:
     ]
     for exc in cases:
         assert model_error_detail(exc) == VISION_MISMATCH_DETAIL
+
+
+def test_pre_call_block_shares_the_same_sentence() -> None:
+    """P1-2：调用前拦（我们自己判的）与调用后翻译（供应商 400）是**同一个条件**，
+    所以必须是同一句话 —— 分两处各写一遍，用户就会看到两种说法。"""
+    assert model_error_detail(VisionNotSupported("some-model 的 capabilities 不含 vision")) == (
+        VISION_MISMATCH_DETAIL
+    )
 
 
 def test_unrelated_model_error_keeps_generic_detail() -> None:

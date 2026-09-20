@@ -33,6 +33,7 @@ from langgraph.errors import GraphRecursionError
 
 from rolecard_agent.core.graph import MODEL_NODE, TOOLS_NODE
 from rolecard_agent.core.guard import check
+from rolecard_agent.core.nodes import VisionNotSupported
 from rolecard_agent.core.observability import TraceEvent, Tracer, scrub_endpoints
 from rolecard_agent.core.text import text_of
 
@@ -65,6 +66,10 @@ _GENERIC_MODEL_FAILURE = "模型调用失败，请稍后重试或换一种问法
 
 def model_error_detail(exc: Exception) -> str:
     """把模型调用异常映射成给用户的可读提示。纯函数，便于脱机测试。"""
+    # 调用前拦截（P1-2）与"供应商 400 后才认出来"是**同一个条件**，所以必须是同一句话；
+    # 差别只在轨迹里（`vision_blocked_pre_call` 只有前者才会有）。
+    if isinstance(exc, VisionNotSupported):
+        return VISION_MISMATCH_DETAIL
     text = str(exc).lower()
     if any(sig in text for sig in _VISION_MISMATCH_SIGNALS):
         return VISION_MISMATCH_DETAIL
