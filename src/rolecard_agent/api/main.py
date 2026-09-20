@@ -36,6 +36,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
+from rolecard_agent.api.access import OPERATOR, classify
+from rolecard_agent.api.access import allowed as access_allowed
 from rolecard_agent.api.auth import (
     auth_required,
     client_ip,
@@ -229,14 +231,30 @@ def create_app(
         # 来源 IP 只认 **TCP 对端**；X-Forwarded-For 仅在直连方命中 AUTH_TRUSTED_PROXIES
         # 时才采信（见 auth.client_ip：否则 `auto` 档可被一行请求头绕过）。
         peer = req.client.host if req.client else ""
+        origin = client_ip(req.headers, peer=peer, trusted=trusted_proxies)
         if actor.is_anonymous and auth_required(
             mode=env_settings.auth_mode,
-            ip=client_ip(req.headers, peer=peer, trusted=trusted_proxies),
+            ip=origin,
             path=req.url.path,
             exempt=exempt_paths,
         ):
             status, headers, body = unauthorized_response()
             return PlainTextResponse(body, status_code=status, headers=headers)
+        # 操作员面（`api/access.py` 那张表里没被降级的一切）：`on`/`auto` 档下必须是
+        # **本机来源或已认证身份**。这一条真正关掉的洞是"`AUTH_EXEMPT_PATHS` 配宽了一点，
+        # 于是管理端点变成免凭据可达" —— 认证那一步会因豁免直接放过，分级这里补上。
+        # off 档不启用：它的语义就是"我本机单人用"，且非回环绑定已被启动护栏拒绝。
+        if classify(req.url.path, req.method) == OPERATOR and not access_allowed(
+            req.url.path,
+            req.method,
+            ip=origin,
+            authenticated=not actor.is_anonymous,
+            enforce=env_settings.auth_mode != "off",
+        ):
+            return PlainTextResponse(
+                "Forbidden: 这一项需要本机来源或操作员凭据",
+                status_code=403,
+            )
         req.state.actor = actor
         return await call_next(request)  # type: ignore[operator]
 
