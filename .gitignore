@@ -31,6 +31,8 @@ htmlcov/
 # --- frontend ---
 # 构建产物 dist/ 有意提交：clone 后不需要 node 环境就能跑控制台演示。
 frontend/node_modules/
+# 兜底：任何层级的 node_modules（含 Vite 依赖预打包缓存 node_modules/.vite，Vite 会在仓库根生成）
+node_modules/
 
 # --- eval ---
 # 每次跑批都会重写（模型相关，数字会漂移）；基线数字固化在 docs/需求与验收标准.md
