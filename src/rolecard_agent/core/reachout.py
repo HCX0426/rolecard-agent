@@ -419,12 +419,17 @@ class ReachoutScheduler:
         while not self._stop.wait(TICK_SECONDS):
             try:
                 self.tick_once()
-            except Exception:  # noqa: BLE001 - 调度循环绝不能被一个错误打死
+            except Exception as exc:  # noqa: BLE001 - 调度循环绝不能被一个错误打死
+                # 打死不等于闭嘴：以前这个事件连异常文本都不带（只有 `fatal: False`），
+                # 于是"角色找你了你却点不开"这类故障在日志里查不到任何线索。
                 self._tracer.emit(
                     TraceEvent(
                         event="reachout_tick_error",
                         node="reachout",
-                        detail={"fatal": False},
+                        detail={
+                            "fatal": False,
+                            "error": f"{type(exc).__name__}: {exc}",
+                        },
                     )
                 )
 
@@ -524,7 +529,7 @@ class ReachoutScheduler:
                             event="reachout_deliver_failed",
                             node="reachout",
                             role_id=role.role_id,
-                            detail={"error": str(exc)},
+                            detail={"error": f"{type(exc).__name__}: {exc}"},
                         )
                     )
             self._tracer.emit(
