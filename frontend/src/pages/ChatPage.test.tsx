@@ -16,6 +16,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChatEvent } from "../api";
+import { ToastProvider } from "../components/Toast";
 
 // `vi.mock` 的工厂会被**提升到文件顶部**，因此它引用的变量必须同样被提升 ——
 // 用 `vi.hoisted` 而不是普通 `const`，否则报 "Cannot access before initialization"。
@@ -103,7 +104,7 @@ describe("ChatPage 流式渲染", () => {
       { type: "end" },
     ]);
 
-    render(<ChatPage />);
+    render(<ToastProvider><ChatPage /></ToastProvider>);
     await sendMessage("问一句");
 
     expect(await screen.findByText("问一句")).toBeTruthy();
@@ -127,7 +128,7 @@ describe("ChatPage 流式渲染", () => {
       },
     );
 
-    render(<ChatPage />);
+    render(<ToastProvider><ChatPage /></ToastProvider>);
     await sendMessage("查一下");
 
     await waitFor(() => expect(streamChatMock).toHaveBeenCalledOnce());
@@ -145,7 +146,7 @@ describe("ChatPage 流式渲染", () => {
       { type: "end" },
     ]);
 
-    render(<ChatPage />);
+    render(<ToastProvider><ChatPage /></ToastProvider>);
     await sendMessage("长会话里的一问");
 
     const notice = await screen.findByText(/早期对话已折叠/);
@@ -169,7 +170,7 @@ describe("ChatPage 流式渲染", () => {
       return {};
     });
 
-    render(<ChatPage />);
+    render(<ToastProvider><ChatPage /></ToastProvider>);
     const { fireEvent } = await import("@testing-library/react");
     // 从侧栏点开历史会话
     fireEvent.click(await screen.findByText("旧会话"));
@@ -188,7 +189,7 @@ describe("ChatPage 流式渲染", () => {
       { type: "end" },
     ]);
 
-    render(<ChatPage />);
+    render(<ToastProvider><ChatPage /></ToastProvider>);
     await sendMessage("带思考的一问");
 
     await waitFor(() => expect(streamChatMock).toHaveBeenCalledOnce());
@@ -208,7 +209,7 @@ describe("ChatPage 流式渲染", () => {
     ];
     scriptedStream([{ type: "token", text: "回答正文" }, { type: "end" }]);
 
-    render(<ChatPage />);
+    render(<ToastProvider><ChatPage /></ToastProvider>);
     await sendMessage("一问");
 
     // 面板出现，且里面是回放出来的那段思考
@@ -228,7 +229,7 @@ describe("ChatPage 流式渲染", () => {
     ];
     scriptedStream([{ type: "token", text: "答" }, { type: "end" }]);
 
-    render(<ChatPage />);
+    render(<ToastProvider><ChatPage /></ToastProvider>);
     await sendMessage("问");
 
     // 单步思考：直接是「思考过程」面板（不套「过程」外层），默认折叠
@@ -247,7 +248,7 @@ describe("ChatPage 流式渲染", () => {
       { type: "end" },
     ]);
 
-    render(<ChatPage />);
+    render(<ToastProvider><ChatPage /></ToastProvider>);
     await sendMessage("会失败的请求");
 
     // 关键断言：错误文案出现在**常驻的 toast** 上，而不是只写进随后就被清掉的气泡。
@@ -274,7 +275,7 @@ describe("ChatPage 流式渲染", () => {
       return { model_name: null };
     });
 
-    render(<ChatPage />);
+    render(<ToastProvider><ChatPage /></ToastProvider>);
     await sendMessage("一问");
 
     const { fireEvent } = await import("@testing-library/react");
@@ -324,7 +325,7 @@ describe("ChatPage 删除二次确认（useConfirm）", () => {
     const { fireEvent } = await import("@testing-library/react");
     stubWithSession();
 
-    render(<ChatPage />);
+    render(<ToastProvider><ChatPage /></ToastProvider>);
     fireEvent.click(await screen.findByText("✕"));
     expect(await screen.findByText("删除这个对话？")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "删除" }));
@@ -335,7 +336,7 @@ describe("ChatPage 删除二次确认（useConfirm）", () => {
     const { fireEvent } = await import("@testing-library/react");
     stubWithSession();
 
-    render(<ChatPage />);
+    render(<ToastProvider><ChatPage /></ToastProvider>);
     fireEvent.click(await screen.findByText("✕"));
     expect(await screen.findByText("删除这个对话？")).toBeTruthy();
     fireEvent.click(screen.getByText("取消"));
@@ -351,7 +352,7 @@ describe("ChatPage 删除二次确认（useConfirm）", () => {
     ];
     scriptedStream([{ type: "token", text: "答" }, { type: "end" }]);
 
-    render(<ChatPage />);
+    render(<ToastProvider><ChatPage /></ToastProvider>);
     await sendMessage("一问");
     // 消息已渲染（用户问 + 助手答）
     expect(await screen.findByText("一问")).toBeTruthy();

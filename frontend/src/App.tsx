@@ -1,6 +1,7 @@
 import { Component, Suspense, lazy, useEffect, useState, type ReactNode } from "react";
 import ReachoutPanel from "./components/ReachoutPanel";
 import ApprovalPanel from "./components/ApprovalPanel";
+import { ToastProvider } from "./components/Toast";
 import { api } from "./api";
 import { shellBridge } from "./lib/shell";
 import { useTheme } from "./components/useTheme";
@@ -246,6 +247,7 @@ export default function App() {
   }, []);
 
   return (
+    <ToastProvider>
     <div className="relative flex h-full">
       {navOpen && (
         <button
@@ -401,5 +403,6 @@ export default function App() {
         onPendingChange={setApprovalPending}
       />
     </div>
+    </ToastProvider>
   );
 }

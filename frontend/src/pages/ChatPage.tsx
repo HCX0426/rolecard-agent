@@ -13,7 +13,7 @@ import {
   type SessionRow,
 } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
-import { ToastStack, useToasts, type Tone } from "../components/Toast";
+import { useToast, type Tone } from "../components/Toast";
 import { describeTrim, type StreamMeta } from "../lib/stream";
 import { buildTurns, type BuiltTurn } from "../lib/turns";
 import ProcessPanel from "../components/chat/ProcessPanel";
@@ -155,7 +155,7 @@ export default function ChatPage({
 
   // 状态提示统一走 toast（可叠加、自动消失、带语气）—— 一行 status 会被后来的消息覆盖，
   // 上一个操作的结果还没看清就没了。保留 setStatus 这个名字，既有调用点无需改动。
-  const { toasts, push: pushToast, dismiss } = useToasts();
+  const { push: pushToast } = useToast();
   const setStatus = (text: string, tone: Tone = "info") => {
     if (text) pushToast(text, tone);
   };
@@ -1229,8 +1229,6 @@ export default function ChatPage({
           </div>
         </div>
       </section>
-
-      <ToastStack toasts={toasts} onDismiss={dismiss} />
     </div>
   );
 }
