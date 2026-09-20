@@ -296,11 +296,6 @@ def turn_context(state: dict[str, Any], ctx: KernelContext) -> tuple[list[Any], 
     return tools, domains
 
 
-def tools_for_turn(state: dict[str, Any], ctx: KernelContext) -> list[Any]:
-    """The tools this turn may bind. Thin wrapper over `turn_context`."""
-    return turn_context(state, ctx)[0]
-
-
 def _message_has_image(message: Any) -> bool:
     """这条消息是否携带图片：多模态 content 块（type=image_url/image），或
     `_user_message` 打的 `additional_kwargs.has_image` 标记。两条都认，兼容不同供应商形态。"""
@@ -536,14 +531,17 @@ def execute_tools(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
     #   permitted - stage_one AND allowed by the role's whitelist
     # "offline" and "denied" are different answers to the user, so they are computed
     # separately rather than collapsed into one "not allowed".
+    #
+    # 两个集合都从**同一次** `turn_context` 取（P1-9）：以前 stage_one 读
+    # `state["enabled_domains"]`（本轮 bind 时写下的**录制值**），而 permitted 走实时 callable ——
+    # 于是"插件刚刚被关掉"这种情况会被答成 denied（"这个角色没这个权限"），而真实答案是
+    # offline（"这个插件已经关了"）。给用户错的那一句，比不给解释更糟。
+    tools, domains = turn_context(state, ctx)
     known = set(ctx.registry.names())
     stage_one = {
-        t.name
-        for t in ctx.registry.select(
-            enabled_domains=state.get("enabled_domains") or [], role_whitelist=None
-        )
+        t.name for t in ctx.registry.select(enabled_domains=domains, role_whitelist=None)
     }
-    permitted = {t.name for t in tools_for_turn(state, ctx)}
+    permitted = {t.name for t in tools}
 
     results: list[ToolMessage] = []
     retries = 0

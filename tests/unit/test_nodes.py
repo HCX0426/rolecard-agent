@@ -24,13 +24,14 @@ from rolecard_agent.core.nodes import (
     TOOL_DENIED,
     TOOL_FAILED,
     TOOL_LOOP_BREAK,
+    TOOL_OFFLINE,
     KernelContext,
     _latest_image_data_url,
     call_model,
     execute_tools,
     route_after_model,
-    tools_for_turn,
     trim_history,
+    turn_context,
 )
 from rolecard_agent.core.observability import NullTracer
 from rolecard_agent.core.tools.errors import ToolExecutionError  # noqa: F401 - 文档化分界用
@@ -110,23 +111,34 @@ def _ctx(
     )
 
 
-def test_tools_for_turn_honours_both_stages(registry: ToolRegistry, roles: RoleCardService) -> None:
+def test_turn_context_honours_both_stages(registry: ToolRegistry, roles: RoleCardService) -> None:
     roles.create(
         RoleCardCreate(
             role_id="narrow", role_name="窄", system_prompt="x", tool_whitelist=["domain_tool"]
         )
     )
     state = {"current_role_id": "narrow"}
-    assert [
-        t.name for t in tools_for_turn(state, _ctx(registry, roles, enabled_domains=["dom"]))
-    ] == ["domain_tool"]
+    tools, _domains = turn_context(state, _ctx(registry, roles, enabled_domains=["dom"]))
+    assert [t.name for t in tools] == ["domain_tool"]
 
 
 def test_unknown_role_yields_no_tools(registry: ToolRegistry, roles: RoleCardService) -> None:
     """A session pointing at a deleted role must not fall through to 'everything allowed'."""
     state = {"current_role_id": "ghost", "enabled_domains": ["dom"]}
     with pytest.raises(Exception, match="ghost"):
-        tools_for_turn(state, _ctx(registry, roles))
+        turn_context(state, _ctx(registry, roles))
+
+
+def test_plugin_switched_off_mid_turn_is_reported_offline_not_denied(
+    registry: ToolRegistry, roles: RoleCardService, wide_role: str
+) -> None:
+    """P1-9：bind 时插件还开着（录制值 `enabled_domains=["dom"]`），执行时已经被关掉。
+    真实答案是 **offline（这个插件关了）**，不是 denied（这个角色没权限）—— 给用户错的
+    那一句比不给解释更糟。两个集合必须来自同一次实时读取。"""
+    state = _state_with_call("domain_tool", wide_role)
+    state["enabled_domains"] = ["dom"]  # 上一轮 bind 写下的历史记录，故意与实时值不一致
+    out = execute_tools(state, _ctx(registry, roles, enabled_domains=[]))
+    assert out["messages"][0].content == TOOL_OFFLINE
 
 
 # --------------------------------------------------------------------------- tool retry
