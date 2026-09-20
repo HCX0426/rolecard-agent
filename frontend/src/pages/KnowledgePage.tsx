@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button, Notice, PageHeader } from "../components/ui";
+import { Button, Card, Notice, PageHeader } from "../components/ui";
 import {
   api,
   type CleanupResult,
@@ -99,7 +99,7 @@ function KnowledgePanel() {
       </p>
 
       {metrics && (
-        <div className="mt-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+        <Card className="mt-3 p-4">
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium text-slate-700 dark:text-slate-200">检索延迟细分（ms）</span>
             <span className="text-xs text-slate-400 dark:text-slate-500">
@@ -133,18 +133,18 @@ function KnowledgePanel() {
               </tbody>
             </table>
           )}
-        </div>
+        </Card>
       )}
 
       <div className="mt-3 space-y-3">
         {scopes.length === 0 && (
-          <div className="rounded-xl border border-dashed border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-8 text-center text-sm text-slate-400 dark:text-slate-500">
+          <Card className="border-dashed p-8 text-center text-sm text-slate-400 dark:text-slate-500">
             知识库还是空的：在对话页上传 .txt/.md 文档，或运行 scripts/seed_demo_data.py
             注入演示知识。
-          </div>
+          </Card>
         )}
         {scopes.map((s) => (
-          <div key={s.scope} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+          <Card key={s.scope} className="p-4">
             <div className="flex items-center justify-between">
               <div>
                 <code className="rounded bg-slate-100 dark:bg-slate-700/50 px-1.5 py-0.5 text-xs text-slate-700 dark:text-slate-200">
@@ -195,12 +195,12 @@ function KnowledgePanel() {
                 </li>
               ))}
             </ul>
-          </div>
+          </Card>
         ))}
 
         {/* 上传目录回收：只增不减的目录需要一个出口，但它是**删用户文件**的动作，
             所以做成"先盘点 → 人看清单 → 二次确认 → 执行"，而不是一键清理。 */}
-        <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+        <Card className="p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
               <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
@@ -264,7 +264,7 @@ function KnowledgePanel() {
               )}
             </div>
           )}
-        </div>
+        </Card>
       </div>
     </div>
   );

@@ -160,7 +160,7 @@
 | # | 批次 | 状态 | 提交 |
 |---|---|---|---|
 | 1 | `Switch` 统一（SettingsPage 裸 checkbox → `ui/Switch`） | ✅ 完成 | 2026-09-20 |
-| 2 | `Card` 迁移（新增 `ui/Card.tsx`，设置/知识/数据三页） | ⏳ 待做 | — |
+| 2 | `Card` 迁移（新增 `ui/Card.tsx`，设置/知识/数据三页） | ✅ 完成 | 2026-09-20 |
 | 3 | `Modal` + `useConfirm`（收口 9 处二次确认） | ⏳ 待做 | — |
 | 4 | 全局 `Toast`（`ToastProvider` 挂 App 根） | ⏳ 待做 | — |
 | 5 | 设置拆帖 + 主动开口收口 + `*_enabled` 单写点 | ⏳ 待做 | — |

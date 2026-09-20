@@ -17,7 +17,7 @@ import {
   type TreeResult,
   type WorkspaceDir,
 } from "../api";
-import { Switch } from "../components/ui";
+import { Card, Switch } from "../components/ui";
 
 // 设置页子页签：通用（系统信息）/ 模型（后端 CRUD + 热切换）/ 服务（运行时状态与降级策略）/
 // 审计（操作留痕）。知识库已升为独立顶层页 —— RAG 是内核能力，不该埋在设置里。
@@ -286,7 +286,7 @@ function GeneralPanel({
   return (
     <div className="mt-6 space-y-4">
       {onToggleTheme && (
-        <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
+        <Card className="p-5">
           <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">外观</h3>
           <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
             界面配色跟随本机偏好时可手动覆盖；切换即时生效、随浏览器记住。
@@ -302,19 +302,19 @@ function GeneralPanel({
               切换为{theme === "dark" ? "浅色" : "深色"}
             </button>
           </div>
-        </div>
+        </Card>
       )}
 
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
+      <Card className="p-5">
         <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">关于</h3>
         <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400 dark:text-slate-500">
           rolecard-agent 控制台。多角色对话 Agent：角色卡控制人设与工具权限，
           插件以数据驱动启停。
         </p>
         <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">语言：简体中文（内置）</p>
-      </div>
+      </Card>
 
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
+      <Card className="p-5">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">跨会话记忆</h3>
           <button
@@ -377,9 +377,9 @@ function GeneralPanel({
           {memErr && <span className="text-xs text-red-600 dark:text-red-400 dark:text-red-500">{memErr}</span>}
           {mem && <span className="ml-auto text-[11px] text-slate-400 dark:text-slate-500">{memDraft.length} 字</span>}
         </div>
-      </div>
+      </Card>
 
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
+      <Card className="p-5">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">主动开口</h3>
           <button
@@ -400,9 +400,9 @@ function GeneralPanel({
         </p>
         {reachoutMsg && <p className="mt-1.5 text-xs text-emerald-600 dark:text-emerald-400">{reachoutMsg}</p>}
         {reachoutErr && <p className="mt-1.5 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{reachoutErr}</p>}
-      </div>
+      </Card>
 
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
+      <Card className="p-5">
         <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">任务目录</h3>
         <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400 dark:text-slate-500">
           角色读写文件的授权范围：只看得到、只碰得到这个目录里的内容（目录外一律拒绝）。
@@ -457,7 +457,7 @@ function GeneralPanel({
             该目录仅存于本机数据库；删除即回落 .env 的 WORKSPACE_DIR。
           </p>
         )}
-      </div>
+      </Card>
 
       {/* 目录树选择抽屉（设置页专用，人用的选择器；后端/树契约见 /api/workspace/tree） */}
       {treeOpen && (
@@ -534,7 +534,7 @@ function GeneralPanel({
         </div>
       )}
 
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
+      <Card className="p-5">
         <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">系统状态</h3>
         {loadError && <p className="mt-1 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{loadError}</p>}
         <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
@@ -558,9 +558,9 @@ function GeneralPanel({
         <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-500">
           修改默认后端请前往「模型」页签；插件启停在「插件」页签（停用立即生效）。
         </p>
-      </div>
+      </Card>
 
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
+      <Card className="p-5">
         <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">演示数据</h3>
         <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
           评测 / 演示用的虚构档案可由脚本重建；对话与数据的管理操作在对话页与插件页。
@@ -583,7 +583,7 @@ function GeneralPanel({
             {refreshed ? "已刷新 ✓" : "刷新状态"}
           </button>
         </div>
-      </div>
+      </Card>
 
       {/* 桌面壳安装包（D②-4）：没有产物时整卡不渲染，所以它放在最后也不会在页面上留空位。 */}
       <ShellReleaseCard />
@@ -740,9 +740,9 @@ function RuntimePanel() {
         </div>
       </div>
       {data.groups.map((g) => (
-        <div
+        <Card
           key={g.key}
-          className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5"
+          className="p-5"
         >
           <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">{g.label}</h3>
           <table className="mt-2 w-full text-xs">
@@ -769,7 +769,7 @@ function RuntimePanel() {
               ))}
             </tbody>
           </table>
-        </div>
+        </Card>
       ))}
     </div>
   );
@@ -949,7 +949,7 @@ function ModelsPanel() {
                   // key 用行下标而**不是 r.name**：改名时 key 一变整棵子树重挂，
                   // 输入框每敲一个字就失焦（审查报告 P1-12）。
                   return (
-              <div key={i} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+              <Card key={i} className="p-4">
                 <div className="flex items-center gap-3">
                   <input
                     value={r.name}
@@ -1055,7 +1055,7 @@ function ModelsPanel() {
                     </span>
                   )}
                 </div>
-              </div>
+              </Card>
                   );
                 })}
               </div>
@@ -1122,7 +1122,7 @@ function AuditPanel() {
       </div>
       {status && <p className="rounded-lg bg-red-50 dark:bg-red-900/30 px-3 py-2 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{status}</p>}
       {/* 横向可滚动：审计列（详情 JSON）天然宽，容器必须给滚动条而不是裁掉。 */}
-      <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+      <Card className="overflow-x-auto">
         <table className="w-full min-w-[640px] text-left text-xs">
           <thead>
             <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 dark:text-slate-500">
@@ -1176,7 +1176,7 @@ function AuditPanel() {
             ))}
           </tbody>
         </table>
-      </div>
+      </Card>
       <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-500">
         审计由后端在角色切换、插件启停、对话创建、数据修正/删除时写入（US-3）；本页只读。
       </p>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type GenericRecord, type PluginRow, type ReportRecord } from "../api";
-import { Notice, PageHeader, Tag } from "../components/ui";
+import { Card, Notice, PageHeader, Tag } from "../components/ui";
 
 // 数据 —— 领域数据的唯一归属地（自"插件 → 详情"里升为独立顶层页）。
 // 数据随领域归属：未来新增领域插件时，这里自动多出一个分组。
@@ -154,7 +154,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
       )}
       {status && <Notice tone={status.ok ? "ok" : "error"}>{status.msg}</Notice>}
       {total > PAGE_SIZE && (
-        <div className="flex items-center justify-between rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-xs text-slate-500 dark:text-slate-400">
+        <Card className="flex items-center justify-between px-3 py-2 text-xs text-slate-500 dark:text-slate-400">
           <span>
             共 <b>{total}</b> 条，当前第 {page * PAGE_SIZE + 1}–
             {Math.min(total, (page + 1) * PAGE_SIZE)} 条
@@ -175,7 +175,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
               下一页
             </button>
           </span>
-        </div>
+        </Card>
       )}
       {reports.length === 0 ? (
         <div className={`rounded-lg border border-dashed border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-center text-xs text-slate-400 dark:text-slate-500 ${compact ? "p-4" : "p-8 text-sm"}`}>
@@ -183,7 +183,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
         </div>
       ) : (
         reports.map((r) => (
-        <div key={r.report_id} className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+        <Card key={r.report_id} className="overflow-hidden">
           <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/70 px-3 py-2 dark:border-slate-700/60 dark:bg-slate-700/30">
             <div className="text-xs">
               <span className="font-medium text-slate-800 dark:text-slate-100">
@@ -316,7 +316,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
             </tbody>
           </table>
           </div>
-        </div>
+        </Card>
         ))
       )}
     </div>
@@ -639,7 +639,7 @@ function GenericDomainData({
           该域还没有数据：点上方「＋ 新增记录」补录。
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+        <Card className="overflow-x-auto">
           <table className="w-full min-w-[26rem] text-left text-xs">
             <thead>
               <tr className="text-slate-400 dark:text-slate-500">
@@ -687,7 +687,7 @@ function GenericDomainData({
               ))}
             </tbody>
           </table>
-        </div>
+        </Card>
       )}
     </div>
   );
