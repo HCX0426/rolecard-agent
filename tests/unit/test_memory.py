@@ -15,7 +15,9 @@ from rolecard_agent.core.memory import (
     load_memory_text,
     load_role_memory_text,
     make_memory_tool,
+    memory_for_turn,
     save_memory_text,
+    save_role_memory_text,
 )
 
 
@@ -93,3 +95,39 @@ def test_memory_save_skips_role_memory_without_role_context(conn) -> None:
     tool = make_memory_tool(settings=Settings(), conn=conn)
     assert "已记住" in tool.invoke({"fact": "用户住在上海"})
     assert load_role_memory_text(conn, "any_role") == ""
+
+
+# ------------------------------------------- 一轮该注入什么记忆（对话与主动开口共用的一份规则）
+
+
+def test_turn_memory_prefers_the_roles_own_bucket(conn) -> None:
+    save_memory_text(conn, "用户住在上海。")
+    save_role_memory_text(conn, "elysia", "她记得自己喜欢蒲公英。")
+    assert memory_for_turn(conn, Settings(), "elysia") == "她记得自己喜欢蒲公英。"
+
+
+def test_turn_memory_falls_back_to_global_when_the_role_has_none(conn) -> None:
+    """角色专属桶是空的 → 回退用户级全局。全局存的是**用户事实**，不是别的角色的对话，
+    所以这条回退不构成跨角色串扰（这正是它被允许的理由）。"""
+    save_memory_text(conn, "用户住在上海。")
+    assert memory_for_turn(conn, Settings(), "elysia") == "用户住在上海。"
+
+
+def test_turn_memory_without_a_role_is_the_global_bucket(conn) -> None:
+    save_memory_text(conn, "用户住在上海。")
+    save_role_memory_text(conn, "elysia", "专属内容")
+    assert memory_for_turn(conn, Settings(), None) == "用户住在上海。"
+
+
+def test_turn_memory_master_switch_closes_everything(conn) -> None:
+    """MEMORY_ENABLED=off 时两个桶都不进 prompt —— 总开关必须真的总。"""
+    save_memory_text(conn, "用户住在上海。")
+    save_role_memory_text(conn, "elysia", "专属内容")
+    off = Settings(memory_enabled=False)
+    assert memory_for_turn(conn, off, "elysia") == ""
+    assert memory_for_turn(conn, off, None) == ""
+
+
+def test_turn_memory_is_capped(conn) -> None:
+    save_role_memory_text(conn, "elysia", "x" * (MAX_MEMORY_CHARS + 500))
+    assert len(memory_for_turn(conn, Settings(), "elysia")) == MAX_MEMORY_CHARS

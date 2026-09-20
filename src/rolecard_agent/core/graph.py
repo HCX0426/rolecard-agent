@@ -79,7 +79,7 @@ def build_kernel(
     checkpointer: BaseCheckpointSaver | None = None,
     plugins: PluginService | None = None,
     model_resolver: Callable[..., ChatLike] | None = None,
-    memory_provider: Callable[[], str] | None = None,
+    memory_provider: Callable[[str | None], str] | None = None,
     vision_probe: Callable[[str | None, str], bool | None] | None = None,
 ) -> Any:
     """Compile the kernel graph.
@@ -95,7 +95,8 @@ def build_kernel(
     `model_resolver` 是角色级路由（US-8 后半）的挂点：给定 `role_card.model_name`（后端名或
     None）返回该轮要用的模型。由宿主提供缓存与降级；不传 = 全部走默认模型。
 
-    `memory_provider` 是跨会话记忆的读取器（每次调用实时取），由宿主注入连接；缺省
+    `memory_provider` 是跨会话记忆的读取器（每次调用实时取，**参数是本轮的角色 id**：
+    给了就取该角色专属记忆、没有则回退全局），由宿主注入连接；缺省
     fail-closed（无记忆）。
     """
     ctx = KernelContext(

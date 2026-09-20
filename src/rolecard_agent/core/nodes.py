@@ -211,7 +211,7 @@ class ChatLike(Protocol):
     def invoke(self, input: Any, **kwargs: Any) -> Any: ...
 
 
-def _no_memory() -> str:
+def _no_memory(_role_id: str | None = None) -> str:
     """Default memory provider: no memory.
 
     Fails closed on purpose. A context built without a provider injects no memory, rather
@@ -281,9 +281,11 @@ class KernelContext:
     tool_timeout_seconds: float = DEFAULT_TOOL_TIMEOUT_SECONDS
 
     # 跨会话记忆的读取器，每次调用实时取（用户可能在设置面板里改 / 清空记忆）。
+    # **按角色取**：给了 role_id 就是"该角色专属记忆，没有则回退全局"，与主动开口同源于
+    # `core/memory.memory_for_turn`（以前对话侧只取全局，角色专属内容聊天时模型看不到）。
     # 返回要注入 system prompt 的记忆文本；"" = 本轮无记忆。总开关在 call_model 里
     # 用 ctx.settings.memory_enabled 把关（双保险：这里 fail-closed，门再闭一次）。
-    memory_provider: Callable[[], str] = _no_memory
+    memory_provider: Callable[[str | None], str] = _no_memory
 
     # 视觉能力探测（P1-2）：给 (base_url, model) 返回 True/False/**None**。宿主接线到
     # `core/probes.vision_capability`（Ollama `/api/show` 的 capabilities）；没接线就是
@@ -461,7 +463,8 @@ def call_model(
     # last and authoritative. Memory only enters when the master switch is on (MEMORY_ENABLED);
     # the provider itself is fail-closed (returns "" by default). Agent mode is a per-session
     # state the chat endpoint resolves live from session_thread (NULL = global default).
-    memory_text = ctx.memory_provider() if ctx.settings.memory_enabled else ""
+    # 记忆**按当前角色取**（该角色专属 → 无则回退全局），与主动开口共用一条规则。
+    memory_text = ctx.memory_provider(role_id) if ctx.settings.memory_enabled else ""
     # 历史按字符预算裁剪（H3）。裁剪只影响"送给模型的内容"，checkpoint 里的完整历史不动 ——
     # 界面回放、审计、下次裁剪都仍然看得到全量对话。先裁剪，再据此判断本轮模型能否看到图片。
     history, dropped = trim_history(state["messages"], ctx.max_context_chars)

@@ -84,6 +84,25 @@ def save_role_memory_text(conn: SqlConnection, role_id: str, text: str) -> None:
     conn.commit()
 
 
+def memory_for_turn(conn: SqlConnection, settings: Settings, role_id: str | None) -> str:
+    """以某个角色为锚点的一轮该注入什么记忆 —— **对话与主动开口共用这一份规则**。
+
+    总开关关掉 → 空串；给了角色 → 先取该角色的专属记忆，没有则回退用户级全局（全局存的是
+    用户事实，不是别的角色的对话，所以回退不构成跨角色串扰）；没给角色 → 全局。
+
+    以前这条规则只写在 `reachout.generate_reachout_text` 里，而普通对话的 provider 只取全局
+    —— 于是"设置→记忆里给某角色写的内容，聊天时模型看不到"（审计 §3.1）。规则有两份实现，
+    迟早会各自漂移；接一条新链路时永远只有一个人记得另一条的存在。
+    """
+    if not settings.memory_enabled:
+        return ""
+    if role_id:
+        text = load_role_memory_text(conn, role_id) or load_memory_text(conn)
+    else:
+        text = load_memory_text(conn)
+    return text[:MAX_MEMORY_CHARS]
+
+
 def make_memory_tool(*, settings: Settings, conn: SqlConnection) -> BaseTool:
     """构建 memory_save 内核工具。闭包持有**构建期**的连接与配置（与 fs 工具同一约定：
     运行环境热切换 = 设置保存后重建 registry，闭包随之重建）。

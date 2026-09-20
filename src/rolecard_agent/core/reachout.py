@@ -45,9 +45,8 @@ from rolecard_agent.core.file_watch import (
 )
 from rolecard_agent.core.guard import check
 from rolecard_agent.core.memory import (
-    MAX_MEMORY_CHARS,
-    load_memory_text,
     load_role_memory_text,
+    memory_for_turn,
 )
 from rolecard_agent.core.observability import TraceEvent, Tracer
 from rolecard_agent.core.proactive_state import (
@@ -282,17 +281,12 @@ def generate_reachout_text(
     """生成一条主动内容：人设 + 记忆 → 单轮 → guard。被拦/失败返回 None（不发）。
 
     `role_id` 给定时按角色取**专属记忆**（回忆触发 / per-role 隔离）；若该角色无专属记忆，
-    回退到用户级全局记忆（用户事实，非角色对话，不造成跨角色串扰）。
+    回退到用户级全局记忆（用户事实，非角色对话，不造成跨角色串扰）。这条规则与对话侧
+    **同源于** `core/memory.memory_for_turn` —— 两边各写一遍迟早漂移。
     `mode="file_event"` 时 `file_list` 为目录变更素材清单（只含文件名，细节由角色
     自行用 fs 工具查证 —— 素材门控语义，见架构计划 §5.2）。
     """
-    memory = ""
-    if role_id is not None and settings.memory_enabled:
-        memory = load_role_memory_text(conn, role_id) or load_memory_text(conn)
-    elif settings.memory_enabled:
-        memory = load_memory_text(conn)
-    if len(memory) > MAX_MEMORY_CHARS:
-        memory = memory[:MAX_MEMORY_CHARS]
+    memory = memory_for_turn(conn, settings, role_id)
     if mode == "recall":
         task = _REACHOUT_TASK_RECALL
     elif mode == "file_event":

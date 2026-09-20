@@ -35,7 +35,7 @@ from rolecard_agent.core.domain_service import DomainQueryService
 from rolecard_agent.core.graph import build_graph_config, build_kernel, build_model
 from rolecard_agent.core.identity import DEFAULT_USER_ID, seed_demo_identity
 from rolecard_agent.core.ingestion import IngestionService
-from rolecard_agent.core.memory import load_memory_text
+from rolecard_agent.core.memory import memory_for_turn
 from rolecard_agent.core.model_settings import ModelSettingsService, client_style
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.observability import TraceEvent, Tracer, make_tracer
@@ -221,8 +221,11 @@ class Runtime:
             checkpointer=self.checkpointer,
             plugins=self.plugins,
             model_resolver=self.resolve_role_model,
-            # 跨会话记忆的读取器：每次调用实时读库；总开关在 call_model 里按当前有效配置把关。
-            memory_provider=lambda: load_memory_text(self.conn),
+            # 跨会话记忆的读取器：每次调用实时读库、**按本轮角色取**（该角色专属 → 无则回退
+            # 全局），与主动开口同源一个 `memory_for_turn`；总开关在 call_model 里再把关一次。
+            memory_provider=lambda role_id: memory_for_turn(
+                self.conn, self.effective, role_id
+            ),
             # 视觉能力探测（P1-2）：Ollama `/api/show` 的 capabilities，带 TTL 缓存。
             # 只有"声明不支持 + 探测确认不支持"两条同时成立才会调用前拦（见 nodes 里那段）。
             vision_probe=vision_capability,

@@ -477,7 +477,7 @@ def test_call_model_injects_memory_when_enabled(roles: RoleCardService) -> None:
     reg.register(kernel_tool)
     model = FakeModel(AIMessage(content="hi"))
     ctx = _ctx(reg, roles, model)
-    ctx.memory_provider = lambda: "用户住在上海。"
+    ctx.memory_provider = lambda _role_id=None: "用户住在上海。"
     call_model(
         {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"},
         ctx,
@@ -485,6 +485,28 @@ def test_call_model_injects_memory_when_enabled(roles: RoleCardService) -> None:
     system = model.last_prompt[0].content
     assert system.index("用户住在上海。") < system.index("禁止输出任何疾病诊断")
     assert "用户长期记忆" in system
+
+
+def test_call_model_asks_the_provider_for_the_current_role(roles: RoleCardService) -> None:
+    """接线本身：provider 收到的必须是**本轮角色**，不是 None。
+
+    对话侧以前只取全局记忆，于是"设置→记忆里给某角色写的内容，聊天时模型看不到"
+    （审计 §3.1）。角色专属 → 全局的取法在 `core/memory.memory_for_turn`，与主动开口同源，
+    这里只钉"内核把角色传出来了"这一环。
+    """
+    rid = _role(roles, role_id="elysia")
+    reg = ToolRegistry()
+    reg.register(kernel_tool)
+    model = FakeModel(AIMessage(content="hi"))
+    ctx = _ctx(reg, roles, model)
+    asked: list[str | None] = []
+    ctx.memory_provider = lambda role_id: asked.append(role_id) or "她记得自己喜欢蒲公英。"
+    call_model(
+        {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"},
+        ctx,
+    )
+    assert asked == ["elysia"]
+    assert "她记得自己喜欢蒲公英。" in model.last_prompt[0].content
 
 
 def test_call_model_skips_memory_when_disabled(roles: RoleCardService) -> None:
@@ -495,7 +517,7 @@ def test_call_model_skips_memory_when_disabled(roles: RoleCardService) -> None:
     model = FakeModel(AIMessage(content="hi"))
     ctx = _ctx(reg, roles, model)
     ctx.settings = Settings(memory_enabled=False)
-    ctx.memory_provider = lambda: "用户住在上海。"
+    ctx.memory_provider = lambda _role_id=None: "用户住在上海。"
     call_model(
         {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"},
         ctx,
