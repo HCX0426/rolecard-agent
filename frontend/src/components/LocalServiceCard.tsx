@@ -5,10 +5,14 @@
 // 交回用户手里。Ollama 闲置 ~5min 会自己卸载，卸载后首条消息要冷加载十几~几十秒，所以
 // "常驻"按钮与"释放显存"按钮是同一枚硬币的两面，必须同屏（分居两处就会各说一套状态）。
 //
-// 停止 / 启动服务两档**故意不在这里**：那是起停本机进程，属于桌面壳（里程碑 D）的职责。
+// 三档里的「启动 / 停止服务」是**起停本机进程**，归桌面壳（D③-b）：网页拿不到、也不该拿到
+// 这个能力。所以这两个按钮只在壳里出现，B/S 下换成一句说明而不是一个点不动的灰按钮。
+// "停止"只针对**本壳自己 spawn 的那个** Ollama —— 开机自启或用户手起的是别人的服务，
+// 我们不代管它的退出（界面上也就干脆不给这个按钮）。
 import { useCallback, useEffect, useState } from "react";
 
 import { api, type LocalServiceStatus } from "../api";
+import { shellBridge, type OllamaOwner } from "../lib/shell";
 
 function gb(bytes: number): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
@@ -16,14 +20,22 @@ function gb(bytes: number): string {
 
 export function LocalServiceCard() {
   const [status, setStatus] = useState<LocalServiceStatus | null>(null);
-  const [busy, setBusy] = useState<"pin" | "unload" | null>(null);
+  const [busy, setBusy] = useState<"pin" | "unload" | "start" | "stop" | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // 进程归属只有壳知道（"在不在跑"由后端的 status 说，两边各说一件事）。
+  const [owner, setOwner] = useState<OllamaOwner | null>(null);
+  const shell = shellBridge();
 
   const load = useCallback(async () => {
     try {
       setStatus(await api.getLocalService());
     } catch {
       /* 拉不到就静默不显示：模型页主功能是后端 CRUD，不被这张附属卡片干扰 */
+    }
+    try {
+      setOwner((await shellBridge()?.ollamaOwner()) ?? null);
+    } catch {
+      /* 归属问不到就不显示那半句，不影响状态本身 */
     }
   }, []);
 
@@ -56,19 +68,41 @@ export function LocalServiceCard() {
     }
   }
 
+  /** 起 / 停服务进程（只有壳能做）。失败句子照实来自壳给的理由，不自己编。 */
+  async function actService(kind: "start" | "stop") {
+    if (!shell) return;
+    setBusy(kind);
+    setMsg(null);
+    try {
+      const attempt = kind === "start" ? await shell.startOllama() : await shell.stopOllama();
+      setMsg(
+        attempt.ok
+          ? { ok: true, text: kind === "start" ? "已拉起本机 Ollama，等它就绪即可预热模型。" : "已停掉本应用起的 Ollama。" }
+          : { ok: false, text: attempt.reason ?? "壳没有理由就给回失败" },
+      );
+    } catch (e) {
+      setMsg({ ok: false, text: (e as Error).message });
+    } finally {
+      setBusy(null);
+      await load();
+    }
+  }
+
   if (!status) return null;
   const names = status.resident.map((m) => (m.name ?? "").split(":")[0]);
   const defaultMissing =
     status.is_local && !!status.model && !names.includes(status.model.split(":")[0]);
+  // 进程归属只补半句，不改"在不在跑"的判定 —— 那句话归后端。
+  const owned = status.running && owner?.managed ? ` · 由本应用启动（pid ${owner.pid}）` : "";
   const line = !status.running
     ? "未运行：本机 Ollama 没起来（或地址配错），对话会失败"
     : status.resident.length === 0
-      ? "在跑，但显存里没有模型 —— 下一条消息会冷加载（较慢）"
+      ? `在跑，但显存里没有模型 —— 下一条消息会冷加载（较慢）${owned}`
       : `${status.resident
           .map((m) => `${m.name} ${gb(m.size_bytes)}${m.pinned ? "（常驻）" : ""}`)
           .join("、")} · 合计 ${gb(status.resident_bytes)}${
           defaultMissing ? ` · 默认 ${status.model} 不在显存` : ""
-        }`;
+        }${owned}`;
 
   return (
     <section className="mb-4 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
@@ -86,8 +120,33 @@ export function LocalServiceCard() {
             </span>
           </h3>
           <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">{line}</p>
+          {/* B/S 下不摆一个点不动的灰按钮，直接说清为什么这里没有 */}
+          {status.is_local && !shell && (
+            <p className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">
+              起停服务进程属于桌面壳（网页不能碰你电脑上的进程）。
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 gap-2">
+          {status.is_local && shell && !status.running && (
+            <button
+              onClick={() => void actService("start")}
+              disabled={busy !== null}
+              className="rounded-lg border border-blue-300 px-3 py-1.5 text-xs text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-900/30"
+            >
+              {busy === "start" ? "启动中…" : "启动 Ollama 服务"}
+            </button>
+          )}
+          {/* 只停自己起的：别人的 Ollama 不给这个按钮，而不是给了再拒绝 */}
+          {status.is_local && shell && status.running && owner?.managed && (
+            <button
+              onClick={() => void actService("stop")}
+              disabled={busy !== null}
+              className="rounded-lg border border-red-300 px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/30"
+            >
+              {busy === "stop" ? "停止中…" : "停止服务（本应用起的）"}
+            </button>
+          )}
           {status.is_local && (
             <button
               onClick={() => void act("pin")}

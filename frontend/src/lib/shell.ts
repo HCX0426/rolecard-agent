@@ -7,6 +7,19 @@
  * 事由它决定。
  */
 
+/** 壳对"这个 Ollama 是不是我起的"的回答。**"在不在跑"不在这里** —— 那是
+ *  `/api/local-service` 的事实，两处各说一件事，才不会互相打脸。 */
+export interface OllamaOwner {
+  managed: boolean;
+  pid: number | null;
+  binary: string | null;
+}
+
+export interface ShellAttempt {
+  ok: boolean;
+  reason?: string;
+}
+
 export interface ShellBridge {
   backendUrl(): Promise<string>;
   backendReachable(): Promise<boolean>;
@@ -16,6 +29,10 @@ export interface ShellBridge {
   notify(title: string, body: string, threadId?: string | null): void;
   /** 登记"谁来接收壳发来的打开会话"；传 null 注销。 */
   onRequestOpenThread(handler: ((threadId: string) => void) | null): void;
+  /** 本地推理服务进程的归属与起停（D③-b）。**都不带参数**：路径由壳自己决定。 */
+  ollamaOwner(): Promise<OllamaOwner>;
+  startOllama(): Promise<ShellAttempt>;
+  stopOllama(): Promise<ShellAttempt>;
 }
 
 declare global {

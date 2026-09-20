@@ -1,5 +1,6 @@
 /**
- * 壳暴露给页面的全部能力 —— 目前四类：后端在哪 / 起来了吗、打开某个会话、发一条系统通知。
+ * 壳暴露给页面的全部能力 —— 目前三类：后端在哪 / 起来了吗、打开某个会话（+系统通知）、
+ * 本地推理服务的进程归属与起停。
  *
  * 为什么探测要问主进程，而不是页面自己 fetch 后端：着陆页是 `file://` 加载的本地页面，
  * 从那儿跨源访问 http 端点会被浏览器拦，探活结果变成一个恒假的信号（表现为"永远在启动中"）。
@@ -39,4 +40,14 @@ contextBridge.exposeInMainWorld("rolecardShell", {
     onOpenThread = handler;
     if (handler) void ipcRenderer.invoke("shell:renderer-ready");
   },
+  // ---- 本地推理服务的进程（D③-b）：三个方法**一律零参数** ------------------------------
+  // 起停一个本机进程，能碰到的东西比"打开一个会话"多得多。参数一旦允许路径/命令，
+  // 这个桥就退化成任意执行入口 —— 所以归属、启动、停止都不带任何输入，路径由壳自己决定。
+  /** 只回答"这个 Ollama 是不是本壳起的（+pid）"；"在不在跑"由 `/api/local-service` 说。 */
+  ollamaOwner: (): Promise<{ managed: boolean; pid: number | null; binary: string | null }> =>
+    ipcRenderer.invoke("shell:ollama-owner"),
+  startOllama: (): Promise<{ ok: boolean; reason?: string }> =>
+    ipcRenderer.invoke("shell:ollama-start"),
+  stopOllama: (): Promise<{ ok: boolean; reason?: string }> =>
+    ipcRenderer.invoke("shell:ollama-stop"),
 });

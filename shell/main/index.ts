@@ -15,6 +15,7 @@ import { Notification, app, ipcMain, type BrowserWindow } from "electron";
 import path from "node:path";
 
 import { Backend, consoleUrl, endpoint, serving, type BackendOptions, type Outcome } from "./backend";
+import { Ollama } from "./ollama";
 import { createMainWindow, createPetWindow } from "./windows";
 import { createTray, type TrayHandle } from "./tray";
 
@@ -32,6 +33,10 @@ function backendOptions(): BackendOptions {
 }
 
 const backend = new Backend(backendOptions());
+
+/** 本地推理服务的进程（D③-b）。**退出时不跟着壳走**：Ollama 是共用的服务，壳只是替用户
+ *  把它拉起来过一次，不该在关掉自己的窗口时把别人正在用的推理也断了。 */
+const ollama = new Ollama();
 
 let mainWin: BrowserWindow | null = null;
 let petWin: BrowserWindow | null = null;
@@ -142,6 +147,11 @@ function boot(): void {
   ipcMain.handle("shell:notify", (_event, title: unknown, body: unknown, value: unknown) => {
     notify(textOf(title, 80), textOf(body, 200), threadIdOf(value));
   });
+  // 本地推理服务的进程（D③-b）。**三个方法都不收参数**：起停一个本机进程能碰到的东西比
+  // 打开一个会话多得多，参数一旦是路径/命令，桥就成了任意执行入口。
+  ipcMain.handle("shell:ollama-owner", () => ollama.owner());
+  ipcMain.handle("shell:ollama-start", () => ollama.start());
+  ipcMain.handle("shell:ollama-stop", () => ollama.stop());
   // 渲染端挂了监听才敢投递"要打开的会话"（早于监听 send 就是丢消息）。
   ipcMain.handle("shell:renderer-ready", (event) => {
     if (!mainWin || event.sender.id !== mainWin.webContents.id) return;
