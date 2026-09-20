@@ -468,6 +468,16 @@ export interface LocalServiceStatus {
   model: string | null;
 }
 
+/** 桌面壳安装包的可下载状态（D②-4）。`available=false` 时**其余字段都不存在**，
+ *  界面也就整卡不渲染 —— "能不能下载"由后端看产物文件在不在决定，不是由前端猜。 */
+export interface ShellRelease {
+  available: boolean;
+  configured: boolean;
+  file_name?: string;
+  size_bytes?: number;
+  built_at?: string;
+}
+
 export const api = {
   get: <T>(url: string) => request<T>("GET", url),
   post: <T>(url: string, body?: unknown) => request<T>("POST", url, body),
@@ -501,6 +511,8 @@ export const api = {
     request<{ text: string }>("POST", "/api/prompt/enhance", { text }),
   /** 本地推理服务状态（在不在跑 / 驻留了哪些模型 / 占多少显存）。 */
   getLocalService: () => request<LocalServiceStatus>("GET", "/api/local-service"),
+  /** 桌面壳安装包有没有得下（D②-4；没有产物时 available=false）。 */
+  getShellRelease: () => request<ShellRelease>("GET", "/api/shell-release"),
   /** 把默认模型载入显存并常驻。长超时：8GB 卡上冷加载就要十几~几十秒，30s 会报假失败。 */
   pinLocalModel: () =>
     request<{ model: string; resident: ResidentModel[] }>(

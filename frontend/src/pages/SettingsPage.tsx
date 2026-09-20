@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ExtensionPanel } from "../components/ExtensionPanel";
 import { LocalServiceCard } from "../components/LocalServiceCard";
 import { ServicesPanel } from "../components/ServicesPanel";
+import { ShellReleaseCard } from "../components/ShellReleaseCard";
 import {
   api,
   type AuditRow,
@@ -578,6 +579,9 @@ function GeneralPanel({
           </button>
         </div>
       </div>
+
+      {/* 桌面壳安装包（D②-4）：没有产物时整卡不渲染，所以它放在最后也不会在页面上留空位。 */}
+      <ShellReleaseCard />
     </div>
   );
 }
