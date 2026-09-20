@@ -7,7 +7,8 @@
 
 用法：
   python scripts/gate.py --fast   # ruff + mypy + 单测(-x, 无覆盖率) + 一致性  ≈ 1.5 分钟
-  python scripts/gate.py          # 全量：上面(单测换成一趟带覆盖率) + 前端 test/build + 真机冒烟
+  python scripts/gate.py          # 全量：上面(单测换成一趟带覆盖率) + 前端 test/build
+                                  #   + dist 入库同步 + 真机冒烟
                                   #   覆盖率那趟仅在改动 src/ 时跑（没碰 src/ 自动跳过，≈ 省 97s）
 
 任何一步失败即停（后续步骤不再跑），但已跑完步骤的耗时仍会打印。
@@ -121,6 +122,51 @@ def _run(name: str, cmd: list[str], cwd: Path | None = None) -> tuple[bool, floa
     return proc.returncode == 0, dt
 
 
+# dist 是**有意入库**的第二份事实（clone 后无 node 也能演示、随包后端直接托管它）。
+# 入库意味着"必须与源码同时更新"，而这条此前没人把守：六批 UI 整改全部落地后，
+# 仓库里的 dist 还停在批次之前 —— 症状不是报错，是 clone 与安装包静静带着旧界面。
+DIST_PATH = "frontend/dist"
+
+
+def _dist_drifted() -> list[str]:
+    """刚构建完，`frontend/dist` 却与仓库不一致 ⇒ 入库的那份是旧的。
+
+    只在**全量门禁的构建之后**判：fast 层不跑 build，那时"没差异"只说明没人重建过，
+    判断不了陈旧。拿不到 git / 调用异常时返回空（不拦）—— 这条的意义是"确认漂移"，
+    一次误报就会让人开始忽略门禁的红。
+    """
+    try:
+        probe = subprocess.run(
+            ["git", "status", "--porcelain", "--", DIST_PATH],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode != 0:
+            return []
+    except Exception:
+        return []
+    return [line for line in probe.stdout.splitlines() if line.strip()]
+
+
+def _check_dist_sync() -> tuple[bool, float]:
+    print("\n▶ dist 入库同步")
+    t0 = time.perf_counter()
+    drift = _dist_drifted()
+    dt = time.perf_counter() - t0
+    print(f"  ⏱ dist 入库同步: {dt:.1f}s {'❌' if drift else '✅'}", flush=True)
+    if drift:
+        print(
+            f"  {DIST_PATH} 在重建后与仓库不一致 ⇒ **入库的构建产物是旧的**："
+            "clone 出来的界面、以及随包后端托管的那份 dist 都不是当前代码。"
+            "把刚构建出来的产物一起提交（或明确决定不入库，再改这条）。",
+            flush=True,
+        )
+        for line in drift[:8]:
+            print(f"    {line}", flush=True)
+    return not drift, dt
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="分层门禁（带每步计时）")
     parser.add_argument("--fast", action="store_true", help="只跑快速层（约 1 分钟）")
@@ -146,6 +192,13 @@ def main() -> int:
         if not ok:
             failures.append(name)
             break  # 失败即停：后面的步骤在同一个问题上只会重复失败
+        # 构建之后才谈得上"入库的 dist 旧没旧"，所以这条挂在这里而不是一致性检查里。
+        if name == "前端 tsc+build":
+            ok, dt = _check_dist_sync()
+            timings.append(("dist 入库同步", dt))
+            if not ok:
+                failures.append("dist 入库同步")
+                break
 
     total = time.perf_counter() - started
     print("\n" + "=" * 52)
