@@ -17,6 +17,7 @@ import {
   type TreeResult,
   type WorkspaceDir,
 } from "../api";
+import { Switch } from "../components/ui";
 
 // 设置页子页签：通用（系统信息）/ 模型（后端 CRUD + 热切换）/ 服务（运行时状态与降级策略）/
 // 审计（操作留痕）。知识库已升为独立顶层页 —— RAG 是内核能力，不该埋在设置里。
@@ -1001,22 +1002,22 @@ function ModelsPanel() {
                   />
                   {r.usage === "chat" && (
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
-                      <label className="flex cursor-pointer items-center gap-1.5">
-                        <input
-                          type="checkbox"
+                      <span className="flex items-center gap-1.5">
+                        <Switch
                           checked={r.supports_vision}
-                          onChange={(e) => update(i, { supports_vision: e.target.checked })}
+                          onChange={(v) => update(i, { supports_vision: v })}
+                          label="支持视觉（可收图）"
                         />
                         支持视觉（可收图）
-                      </label>
-                      <label className="flex cursor-pointer items-center gap-1.5">
-                        <input
-                          type="checkbox"
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <Switch
                           checked={r.supports_tools}
-                          onChange={(e) => update(i, { supports_tools: e.target.checked })}
+                          onChange={(v) => update(i, { supports_tools: v })}
+                          label="支持工具调用"
                         />
                         支持工具调用
-                      </label>
+                      </span>
                       {!r.supports_tools && (
                         <span className="text-[11px] text-amber-500 dark:text-amber-400">
                           该模型带工具会返回空，已关闭工具（换模型对所有角色仍可用，只是不绑工具）
