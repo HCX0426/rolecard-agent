@@ -78,39 +78,40 @@ STEPS: list[tuple[str, list[str], str]] = [
 ]
 
 
+def _git(*args: str) -> str:
+    """git 查询：失败就抛（调用方按"不确定 = 保守跑"处理，绝不静默当成"没改动"）。"""
+    proc = subprocess.run(["git", *args], cwd=str(ROOT), capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)} -> {proc.returncode}")
+    return proc.stdout
+
+
 def _src_changed() -> bool:
     """覆盖率只量 ``src/``。没碰 ``src/`` 时那趟是纯重跑，可跳过。
 
-    fail-safe：任何不确定（无 git / 找不到基线 / 调用异常）都返回 True（要跑），
+    两条实测教训（2026-09-20，都是"安全网静默失效"的形状）：
+      * 本仓库**没有远端**且直接在 main 上提交，`merge-base HEAD main` 就是 HEAD ——
+        只看"相对基线的提交"会永远得到"没改 src"，而那恰恰是提交前该跑覆盖率的时刻；
+      * 旧实现把未跟踪文件算进来，却看不见**已修改未提交**的 `src/` 文件（最常见的情况）。
+    所以判据 = 相对基线的提交 ∪ 工作区未提交的改动 ∪ 未跟踪文件。
+    fail-safe 不变：任何不确定（无 git / 调用失败 / 找不到基线）一律 True，
     绝不因探测失误而悄悄削弱 85% 安全网。
     """
     try:
-        base = (
-            subprocess.run(
-                ["git", "merge-base", "HEAD", "origin/main"],
-                cwd=str(ROOT), capture_output=True, text=True,
-            ).stdout.strip()
-            or subprocess.run(
-                ["git", "merge-base", "HEAD", "main"],
-                cwd=str(ROOT), capture_output=True, text=True,
-            ).stdout.strip()
-        )
-        if not base:
-            return True  # 找不到基线 → 保守跑
-        changed = subprocess.run(
-            ["git", "diff", "--name-only", f"{base}...HEAD"],
-            cwd=str(ROOT), capture_output=True, text=True,
-        ).stdout.splitlines()
-        untracked = [
-            line[3:] for line in subprocess.run(
-                ["git", "status", "--porcelain"],
-                cwd=str(ROOT), capture_output=True, text=True,
-            ).stdout.splitlines()
-            if line.startswith("??")
-        ]
-        return any(p.startswith("src/") for p in changed + untracked)
+        head = _git("rev-parse", "HEAD").strip()
+        try:
+            base = _git("merge-base", "HEAD", "origin/main").strip()
+        except RuntimeError:
+            base = ""
+        base = base or _git("merge-base", "HEAD", "main").strip()
+        changed: list[str] = []
+        if base and base != head:  # 基线存在且不同于 HEAD，跨提交的差异才有意义
+            changed += _git("diff", "--name-only", f"{base}...HEAD").splitlines()
+        changed += _git("diff", "--name-only", "HEAD").splitlines()  # 未提交（含已暂存）
+        changed += _git("ls-files", "--others", "--exclude-standard").splitlines()
     except Exception:
         return True
+    return any(p.startswith("src/") for p in changed)
 
 
 def _run(name: str, cmd: list[str], cwd: Path | None = None) -> tuple[bool, float]:
