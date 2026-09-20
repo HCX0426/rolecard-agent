@@ -39,7 +39,7 @@ vi.mock("../api", async (importOriginal) => {
 import ChatPage from "./ChatPage";
 
 /** 服务端会返回的历史（checkpoint 回放）。每个测试自己设，模拟"这一轮之后服务端的真相"。 */
-let replay: { role: string; content: string; name?: string; reasoning?: string }[] = [];
+let replay: { id?: string; role: string; content: string; name?: string; reasoning?: string }[] = [];
 
 /** 一份最小可用的后端应答集：会话列表 / 角色 / 模型设置 / 历史回放 / 上下文预算。 */
 function stubMountCalls(
@@ -303,5 +303,72 @@ describe("ChatPage 深链打开会话（收件箱「打开对话并回复」）"
       "/api/session/s_proactive_general_assistant/messages",
     );
     expect(await screen.findByText("今天腰还酸吗？")).toBeTruthy();
+  });
+});
+
+describe("ChatPage 删除二次确认（useConfirm）", () => {
+  function stubWithSession() {
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/sessions") return [{ thread_id: "s1", title: "会话A", role_id: "r" }];
+      if (url === "/api/roles") return [];
+      if (url === "/api/settings/models") return { default: "local", backends: [], fallbacks: [] };
+      if (url === "/api/settings/model-providers") return { providers: [] };
+      if (url.endsWith("/messages")) return { messages: [], total: 0, limit: 500, truncated: false };
+      if (url.endsWith("/context")) return { trimmed: 0, kept: 0, budget: 24000 };
+      if (url.startsWith("/api/session/")) return { model_name: null };
+      return {};
+    });
+  }
+
+  it("删除会话：点 ✕ 弹确认框，点『删除』才调用 DELETE", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    stubWithSession();
+
+    render(<ChatPage />);
+    fireEvent.click(await screen.findByText("✕"));
+    expect(await screen.findByText("删除这个对话？")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+    await waitFor(() => expect(apiMock.del).toHaveBeenCalledWith("/api/session/s1"));
+  });
+
+  it("删除会话：点『取消』不调用 DELETE", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    stubWithSession();
+
+    render(<ChatPage />);
+    fireEvent.click(await screen.findByText("✕"));
+    expect(await screen.findByText("删除这个对话？")).toBeTruthy();
+    fireEvent.click(screen.getByText("取消"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(apiMock.del).not.toHaveBeenCalled();
+  });
+
+  it("多选删除消息：勾选后点『删除所选』弹确认框，点『确认删除』才调用 DELETE", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    replay = [
+      { id: "m1", role: "user", content: "一问" },
+      { id: "m2", role: "assistant", content: "答" },
+    ];
+    scriptedStream([{ type: "token", text: "答" }, { type: "end" }]);
+
+    render(<ChatPage />);
+    await sendMessage("一问");
+    // 消息已渲染（用户问 + 助手答）
+    expect(await screen.findByText("一问")).toBeTruthy();
+    // 进入多选删除模式（无会话时，只有这个『删除对话』按钮）
+    fireEvent.click(screen.getByRole("button", { name: "删除对话" }));
+    // 进入选择模式后，每条消息左侧出现勾选框（这也是 selectMode 生效的信号）
+    const boxes = await screen.findAllByRole("checkbox");
+    expect(boxes.length).toBeGreaterThan(0);
+    fireEvent.click(boxes[0]);
+    fireEvent.click(await screen.findByRole("button", { name: "删除所选" }));
+    expect(await screen.findByText("删除选中的消息？")).toBeTruthy();
+    fireEvent.click(screen.getByText("确认删除"));
+    await waitFor(() =>
+      expect(apiMock.post).toHaveBeenCalledWith(
+        "/api/session/s_test/messages/delete",
+        expect.any(Object),
+      ),
+    );
   });
 });

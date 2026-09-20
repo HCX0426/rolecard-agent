@@ -17,6 +17,7 @@ import {
   type TreeResult,
   type WorkspaceDir,
 } from "../api";
+import { useConfirm } from "../hooks/useConfirm";
 import { Card, Switch } from "../components/ui";
 
 // 设置页子页签：通用（系统信息）/ 模型（后端 CRUD + 热切换）/ 服务（运行时状态与降级策略）/
@@ -127,6 +128,7 @@ function GeneralPanel({
   const [reachoutOn, setReachoutOn] = useState<boolean | null>(null);
   const [reachoutMsg, setReachoutMsg] = useState("");
   const [reachoutErr, setReachoutErr] = useState("");
+  const confirm = useConfirm();
 
   const load = useCallback(async () => {
     const [ms, plugins, roles, sessions] = await Promise.all([
@@ -159,11 +161,15 @@ function GeneralPanel({
     loadMemory(memScope).catch((e) => setMemErr(`加载失败：${(e as Error).message}`));
   }, [load, loadMemory, memScope]);
 
-  function changeMemScope(next: string) {
+  async function changeMemScope(next: string) {
     if (next === memScope) return;
     // 未保存改动：切换作用域前确认，避免草稿被静默丢弃。
-    if (mem && memDraft !== mem.content && !window.confirm("当前作用域有未保存的修改，切换会丢弃，继续？")) {
-      return;
+    if (mem && memDraft !== mem.content) {
+      const ok = await confirm({
+        title: "切换作用域将丢弃未保存的修改",
+        body: "当前作用域有未保存的修改，切换会丢弃。是否继续？",
+      });
+      if (!ok) return;
     }
     setMemScope(next);
     setMemMsg("");

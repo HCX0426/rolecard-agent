@@ -8,6 +8,7 @@ import {
   type RagMetrics,
   type RagStageMs,
 } from "../api";
+import { useConfirm } from "../hooks/useConfirm";
 import { formatBytes } from "../lib/uploadOutcome";
 
 // ---------------------------------------------------------------- 知识库（v2.1 RAG）
@@ -28,7 +29,7 @@ function KnowledgePanel() {
   const [scopes, setScopes] = useState<KnowledgeScope[]>([]);
   const [metrics, setMetrics] = useState<RagMetrics | null>(null);
   const [status, setStatus] = useState("");
-  const [confirmReset, setConfirmReset] = useState<string | null>(null);
+  const confirm = useConfirm();
   const [orphans, setOrphans] = useState<OrphanReport | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -51,7 +52,6 @@ function KnowledgePanel() {
       const r = await api.del<{ removed_chunks: number }>(
         `/api/knowledge/${encodeURIComponent(scope)}`,
       );
-      setConfirmReset(null);
       setStatus(`已清空作用域 ${scope}（移除 ${r.removed_chunks} 段，写入审计）`);
       await load();
     } catch (e) {
@@ -155,33 +155,15 @@ function KnowledgePanel() {
                   嵌入：{s.embedder}
                 </span>
               </div>
-              {confirmReset === s.scope ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-red-600 dark:text-red-400 dark:text-red-500">
-                    清空 {s.chunks} 段且不可恢复？
-                  </span>
-                  <button
-                    onClick={() => resetScope(s.scope)}
-                    className="rounded bg-red-500 px-2 py-1 text-[11px] text-white hover:bg-red-600"
-                  >
-                    确认清空
-                  </button>
-                  <button
-                    onClick={() => setConfirmReset(null)}
-                    className="rounded px-2 py-1 text-[11px] text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700"
-                  >
-                    取消
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setConfirmReset(s.scope)}
-                  title="删除该作用域的集合 —— 换嵌入后端后维度不兼容时用它重建（写审计）"
-                  className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:border-red-300 dark:hover:border-red-700 hover:text-red-600 dark:text-red-400 dark:text-red-500"
-                >
-                  重建（清空）
-                </button>
-              )}
+              <button
+                onClick={async () => {
+                  if (await confirm({ title: "清空知识库作用域？", body: `将清空作用域 ${s.scope} 的 ${s.chunks} 段内容，此操作不可恢复，且写入审计。`, confirmText: "确认清空", danger: true })) resetScope(s.scope);
+                }}
+                title="删除该作用域的集合 —— 换嵌入后端后维度不兼容时用它重建（写审计）"
+                className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:border-red-300 dark:hover:border-red-700 hover:text-red-600 dark:text-red-400 dark:text-red-500"
+              >
+                重建（清空）
+              </button>
             </div>
             {/* 来源文件 chips：比裸文本列表更易扫读（行数多时两列排布）。 */}
             <ul className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2">

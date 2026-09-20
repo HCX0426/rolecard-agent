@@ -162,3 +162,53 @@ describe("KnowledgePage 上传目录回收", () => {
     expect(await screen.findByText(/盘点失败：后端炸了/)).toBeTruthy();
   });
 });
+
+describe("KnowledgePage 清空知识库作用域二次确认（useConfirm）", () => {
+  function scopeStub(scope = "health_reports", chunks = 12) {
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/knowledge") {
+        return [{ scope, chunks, embedder: "hash", sources: ["须知.md"] }];
+      }
+      if (url === "/api/rag/metrics") return null;
+      return {};
+    });
+  }
+
+  it("点『确认清空』才调用删除端点并回显，点『取消』不调用", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    scopeStub();
+    apiMock.del.mockResolvedValue({ removed_chunks: 12 });
+
+    render(<KnowledgePage />);
+    expect(await screen.findByText("health_reports")).toBeTruthy();
+    // 点"重建（清空）" -> 弹确认框，且此时还没动后端
+    fireEvent.click(screen.getByRole("button", { name: "重建（清空）" }));
+    expect(await screen.findByText("清空知识库作用域？")).toBeTruthy();
+    expect(apiMock.del).not.toHaveBeenCalled();
+
+    // 取消：删除端点不被调用，作用域仍在
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(apiMock.del).not.toHaveBeenCalled();
+    expect(screen.getByText("health_reports")).toBeTruthy();
+  });
+
+  it("点『确认清空』调用 /api/knowledge/:scope 并回显移除段数", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    scopeStub();
+    apiMock.del.mockResolvedValue({ removed_chunks: 12 });
+
+    render(<KnowledgePage />);
+    expect(await screen.findByText("health_reports")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "重建（清空）" }));
+    expect(await screen.findByText("清空知识库作用域？")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "确认清空" }));
+
+    await waitFor(() =>
+      expect(apiMock.del).toHaveBeenCalledWith("/api/knowledge/health_reports"),
+    );
+    expect(
+      await screen.findByText(/已清空作用域 health_reports（移除 12 段，写入审计）/),
+    ).toBeTruthy();
+  });
+});

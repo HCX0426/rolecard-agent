@@ -4,6 +4,7 @@
 // 优先级第 1 位即生效；修改立即保存并热生效（嵌入/重排后端热重建）。
 import { useCallback, useEffect, useState } from "react";
 import { api, type ModelSettings } from "../api";
+import { useConfirm } from "../hooks/useConfirm";
 
 interface ServiceEndpoint {
   id: string;
@@ -73,7 +74,7 @@ export function ServicesPanel() {
   const [flash, setFlash] = useState("");
   const [adding, setAdding] = useState<string | null>(null); // 类别 key
   const [picked, setPicked] = useState<string>(""); // 选中的后端名
-  const [confirmDel, setConfirmDel] = useState<string | null>(null);
+  const confirm = useConfirm();
 
   const load = useCallback(async () => {
     const [v, s] = await Promise.all([
@@ -134,7 +135,6 @@ export function ServicesPanel() {
   /** 移除引用：只从本服务优先级中摘除，模型页配置不受影响。 */
   const remove = (cat: ServiceCategoryView, cand: ServiceEndpoint) => {
     run(cat.key, () => api.del(`/api/services/${cat.key}/endpoints/${cand.id}`), "已从本服务移除（模型页配置保留）");
-    setConfirmDel(null);
   };
 
   if (error && !view) {
@@ -237,7 +237,6 @@ export function ServicesPanel() {
 
             <div className="flex flex-col gap-1.5">
               {cat.candidates.map((cand) => {
-                const delKey = `${cat.key}/${cand.id}`;
                 return (
                   <div
                     key={cand.id}
@@ -299,26 +298,18 @@ export function ServicesPanel() {
                                 >
                                   {cand.enabled ? "启用中" : "已停用"}
                                 </button>
-                                {!cand.builtin &&
-                                  (confirmDel === delKey ? (
-                                    <button
-                                      disabled={busy === cat.key}
-                                      onClick={() => remove(cat, cand)}
-                                      title="仅从本服务移除引用，不影响模型页配置"
-                                      className="rounded bg-red-500 px-2 py-0.5 text-[11px] text-white hover:bg-red-600"
-                                    >
-                                      确认
-                                    </button>
-                                  ) : (
-                                    <button
-                                      disabled={busy === cat.key}
-                                      onClick={() => setConfirmDel(delKey)}
-                                      title="仅从本服务移除引用，不影响模型页配置"
-                                      className="rounded px-2 py-0.5 text-[11px] text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30"
-                                    >
-                                      移除
-                                    </button>
-                                  ))}
+                                {!cand.builtin && (
+                                  <button
+                                    disabled={busy === cat.key}
+                                    onClick={async () => {
+                                      if (await confirm({ title: "从本服务移除该后端引用？", body: "仅从本服务优先级中摘除引用，模型页配置不受影响。", confirmText: "确认移除", danger: true })) remove(cat, cand);
+                                    }}
+                                    title="仅从本服务移除引用，不影响模型页配置"
+                                    className="rounded px-2 py-0.5 text-[11px] text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30"
+                                  >
+                                    移除
+                                  </button>
+                                )}
                               </>
                             )}
                             {cat.order_only && cand.id === cat.effective && (

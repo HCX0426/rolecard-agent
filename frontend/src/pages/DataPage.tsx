@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type GenericRecord, type PluginRow, type ReportRecord } from "../api";
+import { useConfirm } from "../hooks/useConfirm";
 import { Card, Notice, PageHeader, Tag } from "../components/ui";
 
 // 数据 —— 领域数据的唯一归属地（自"插件 → 详情"里升为独立顶层页）。
@@ -69,7 +70,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
   const [reports, setReports] = useState<ReportRecord[]>([]);
   const [editId, setEditId] = useState<string | null>(null);
   const [draft, setDraft] = useState({ index_value: "", value_text: "", unit: "", ref_range: "", verified: false });
-  const [confirmDel, setConfirmDel] = useState<string | null>(null);
+  const confirm = useConfirm();
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
   const [adding, setAdding] = useState(false);
   // 分页：数据页一屏只看得下十几条，整表返回会让"补录几十份之后打开数据页"变慢
@@ -121,7 +122,6 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
   async function remove(kind: "report" | "index", id: string) {
     try {
       await api.del(`/api/records/${kind}/${id}`);
-      setConfirmDel(null);
       setStatus({ ok: true, msg: "已删除（写入审计）" });
       await load();
     } catch (e) {
@@ -192,21 +192,14 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
               {r.institution && <span className="ml-2 text-slate-400 dark:text-slate-500">{r.institution}</span>}
               {r.note && <span className="ml-2 text-slate-400 dark:text-slate-500">备注：{r.note}</span>}
             </div>
-            {confirmDel === r.report_id ? (
-              <button
-                onClick={() => remove("report", r.report_id)}
-                className="rounded bg-red-500 px-2 py-1 text-[11px] text-white hover:bg-red-600"
-              >
-                确认删除整份报告
-              </button>
-            ) : (
-              <button
-                onClick={() => setConfirmDel(r.report_id)}
-                className="rounded px-2 py-1 text-[11px] text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
-              >
-                删除报告
-              </button>
-            )}
+            <button
+              onClick={async () => {
+                if (await confirm({ title: "删除整份报告？", body: "将删除该报告及其全部指标记录，不可恢复。", confirmText: "确认删除", danger: true })) remove("report", r.report_id);
+              }}
+              className="rounded px-2 py-1 text-[11px] text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
+            >
+              删除报告
+            </button>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[28rem] text-left text-xs">
@@ -293,21 +286,14 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
                         >
                           修正
                         </button>
-                        {confirmDel === i.index_id ? (
-                          <button
-                            onClick={() => remove("index", i.index_id)}
-                            className="rounded bg-red-500 px-2 py-1 text-white hover:bg-red-600"
-                          >
-                            确认
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => setConfirmDel(i.index_id)}
-                            className="rounded px-2 py-1 text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
-                          >
-                            删除
-                          </button>
-                        )}
+                        <button
+                          onClick={async () => {
+                            if (await confirm({ title: "删除这条指标记录？", body: "将删除该指标项，不可恢复。", confirmText: "确认删除", danger: true })) remove("index", i.index_id);
+                          }}
+                          className="rounded px-2 py-1 text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
+                        >
+                          删除
+                        </button>
                       </td>
                     </>
                   )}
@@ -520,7 +506,7 @@ function GenericDomainData({
     unit: "",
     note: "",
   });
-  const [confirmDel, setConfirmDel] = useState<string | null>(null);
+  const confirm = useConfirm();
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -568,7 +554,6 @@ function GenericDomainData({
   async function remove(id: string) {
     try {
       await api.deleteDomainRecord(domain, id);
-      setConfirmDel(null);
       setStatus({ ok: true, msg: "已删除（写入审计）" });
       await load();
     } catch (e) {
@@ -675,11 +660,14 @@ function GenericDomainData({
                       <td className="px-3 py-2 text-slate-400 dark:text-slate-500">{r.note || "—"}</td>
                       <td className="px-3 py-2 text-right">
                         <button onClick={() => startEdit(r)} className="rounded px-2 py-1 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:bg-blue-900/30">修正</button>
-                        {confirmDel === r.id ? (
-                          <button onClick={() => remove(r.id)} className="rounded bg-red-500 px-2 py-1 text-white hover:bg-red-600">确认</button>
-                        ) : (
-                          <button onClick={() => setConfirmDel(r.id)} className="rounded px-2 py-1 text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500">删除</button>
-                        )}
+                        <button
+                          onClick={async () => {
+                            if (await confirm({ title: "删除这条记录？", body: "将删除该条领域数据，不可恢复。", confirmText: "确认删除", danger: true })) remove(r.id);
+                          }}
+                          className="rounded px-2 py-1 text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
+                        >
+                          删除
+                        </button>
                       </td>
                     </>
                   )}

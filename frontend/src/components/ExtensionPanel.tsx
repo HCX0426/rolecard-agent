@@ -12,6 +12,7 @@ import {
   type McpServersView,
   type McpTestResult,
 } from "../api";
+import { useConfirm } from "../hooks/useConfirm";
 
 /** 每行的连接态：交通灯 + 展开时显示的工具/错误。 */
 type RowTest = { phase: "idle" } | { phase: "testing" } | { phase: "done"; result: McpTestResult };
@@ -64,7 +65,7 @@ export function ExtensionPanel() {
   const [headersTouched, setHeadersTouched] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState("");
-  const [confirmDel, setConfirmDel] = useState<string | null>(null);
+  const confirm = useConfirm();
   const [conn, setConn] = useState<ConnectivityResult | null>(null);
   const [connBusy, setConnBusy] = useState(false);
 
@@ -159,7 +160,6 @@ export function ExtensionPanel() {
     try {
       await api.del(`/api/mcp/servers/${encodeURIComponent(s.id)}`);
       await load();
-      setConfirmDel(null);
       setStatus({ ok: true, msg: `已移除 ${s.display_name}。` });
     } catch (e) {
       setStatus({ ok: false, msg: `删除失败：${(e as Error).message}` });
@@ -428,15 +428,15 @@ export function ExtensionPanel() {
                   <button onClick={() => openEdit(s)} className="rounded px-2 py-0.5 text-[11px] text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30">
                     编辑
                   </button>
-                  {confirmDel === s.id ? (
-                    <button disabled={busy === s.id} onClick={() => remove(s)} className="rounded bg-red-500 px-2 py-0.5 text-[11px] text-white hover:bg-red-600">
-                      确认删除
-                    </button>
-                  ) : (
-                    <button onClick={() => setConfirmDel(s.id)} className="rounded px-2 py-0.5 text-[11px] text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30">
-                      删除
-                    </button>
-                  )}
+                  <button
+                    disabled={busy === s.id}
+                    onClick={async () => {
+                      if (await confirm({ title: "删除这个 MCP server？", body: "将从本系统移除该连接（不影响远端服务）。", confirmText: "确认删除", danger: true })) remove(s);
+                    }}
+                    className="rounded px-2 py-0.5 text-[11px] text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30"
+                  >
+                    删除
+                  </button>
                 </span>
               </div>
               {isOpen && t.phase === "done" && (

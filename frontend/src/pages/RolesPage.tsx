@@ -8,6 +8,7 @@ import {
   type ToolCatalog,
   type ToolEntry,
 } from "../api";
+import { useConfirm } from "../hooks/useConfirm";
 
 // 范例草稿行：rowId 是稳定 React key（M7），删行/插行时输入框状态不串行；
 // 提交时只挑 user/assistant，rowId 不会外泄。
@@ -82,7 +83,7 @@ export default function RolesPage() {
   const [wlMode, setWlMode] = useState<"all" | "custom">("all");
   const [catalog, setCatalog] = useState<ToolCatalog | null>(null);
   const [backends, setBackends] = useState<string[]>([]);
-  const [confirmDel, setConfirmDel] = useState<string | null>(null);
+  const confirm = useConfirm();
   const [newScope, setNewScope] = useState("");
   const [kbScopes, setKbScopes] = useState<string[]>([]);
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -157,7 +158,6 @@ export default function RolesPage() {
     setEditing("");
     setForm(EMPTY_FORM);
     setWlMode("all");
-    setConfirmDel(null);
   }
   function setExemplar(i: number, key: "user" | "assistant", value: string) {
     setForm((f) => ({
@@ -226,7 +226,6 @@ export default function RolesPage() {
   async function remove(roleId: string) {
     try {
       await api.del(`/api/roles/${roleId}`);
-      setConfirmDel(null);
       setStatus({ ok: true, msg: `已删除 ${roleId}` });
       await load();
     } catch (e) {
@@ -609,29 +608,22 @@ export default function RolesPage() {
                   <td className="px-4 py-2.5 text-right">
                     <button
                       onClick={() => {
-                        setConfirmDel(null);
                         openEdit(r);
                       }}
                       className="rounded px-2 py-1 text-xs text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:bg-blue-900/30"
                     >
                       编辑
                     </button>
-                    {!r.is_builtin &&
-                      (confirmDel === r.role_id ? (
-                        <button
-                          onClick={() => remove(r.role_id)}
-                          className="rounded bg-red-500 px-2 py-1 text-xs text-white hover:bg-red-600"
-                        >
-                          确认删除
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => setConfirmDel(r.role_id)}
-                          className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50 dark:bg-red-900/30"
-                        >
-                          删除
-                        </button>
-                      ))}
+                    {!r.is_builtin && (
+                      <button
+                        onClick={async () => {
+                          if (await confirm({ title: "删除这个角色卡？", body: "将删除该角色卡（内置角色不可删）。", confirmText: "确认删除", danger: true })) remove(r.role_id);
+                        }}
+                        className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50 dark:bg-red-900/30"
+                      >
+                        删除
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

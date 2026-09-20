@@ -88,3 +88,26 @@ describe("ExtensionPanel", () => {
     expect(await screen.findByText(/还没有接入任何 MCP server/)).toBeTruthy();
   });
 });
+
+describe("ExtensionPanel 删除二次确认（useConfirm）", () => {
+  it("点『删除』弹确认框，点『确认删除』才真正调用 DELETE", async () => {
+    render(<ExtensionPanel />);
+    await screen.findByText("地图服务");
+    fireEvent.click(screen.getByText("删除"));
+    expect(await screen.findByText("删除这个 MCP server？")).toBeTruthy();
+    fireEvent.click(screen.getByText("确认删除"));
+    await waitFor(() =>
+      expect(apiMock.del).toHaveBeenCalledWith("/api/mcp/servers/maps"),
+    );
+  });
+
+  it("点『取消』不调用 DELETE", async () => {
+    render(<ExtensionPanel />);
+    await screen.findByText("地图服务");
+    fireEvent.click(screen.getByText("删除"));
+    expect(await screen.findByText("删除这个 MCP server？")).toBeTruthy();
+    fireEvent.click(screen.getByText("取消"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(apiMock.del).not.toHaveBeenCalled();
+  });
+});

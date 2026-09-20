@@ -13,7 +13,6 @@ import { expandSelection } from "../lib/turns";
 export function useMessageSelection(messages: MessageRow[], onClear?: () => void) {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
-  const [confirmDelete, setConfirmDelete] = useState(false);
 
   /** 退出多选删除模式（切会话、新建会话、进出删除模式都必须调）。
    *
@@ -23,7 +22,6 @@ export function useMessageSelection(messages: MessageRow[], onClear?: () => void
   function clearSelection() {
     setSelectMode(false);
     setSelected([]);
-    setConfirmDelete(false);
     onClear?.();
   }
 
@@ -42,8 +40,6 @@ export function useMessageSelection(messages: MessageRow[], onClear?: () => void
     setSelectMode,
     selected,
     setSelected,
-    confirmDelete,
-    setConfirmDelete,
     clearSelection,
     toggleSelect,
   };

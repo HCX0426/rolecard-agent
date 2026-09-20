@@ -12,6 +12,7 @@ import {
   type SessionContext,
   type SessionRow,
 } from "../api";
+import { useConfirm } from "../hooks/useConfirm";
 import { ToastStack, useToasts, type Tone } from "../components/Toast";
 import { describeTrim, type StreamMeta } from "../lib/stream";
 import { buildTurns, type BuiltTurn } from "../lib/turns";
@@ -78,7 +79,7 @@ export default function ChatPage({
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [input]);
-  const [confirmDel, setConfirmDel] = useState<string | null>(null);
+  const confirm = useConfirm();
 
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
@@ -123,8 +124,6 @@ export default function ChatPage({
     setSelectMode,
     selected,
     setSelected,
-    confirmDelete,
-    setConfirmDelete,
     clearSelection,
     toggleSelect,
   } = useMessageSelection(messages, () => setEditing(null));
@@ -188,7 +187,6 @@ export default function ChatPage({
     if (sendingRef.current) return;
     setSessionId(threadId);
     clearSelection(); // 勾选 / 编辑态属于上一个对话，不能跟着过来
-    setConfirmDel(null);
     setLive(null);
     setModelMenuOpen(false);
     setSessionsOpen(false); // 移动端选中后收起抽屉
@@ -248,14 +246,12 @@ export default function ChatPage({
     if (empty) {
       setStatus("上一次的对话还是空白，已直接为你打开");
       if (sessionId !== empty.thread_id) await selectSession(empty.thread_id);
-      else setConfirmDel(null);
       return empty.thread_id;
     }
     try {
       const s = await api.post<SessionRow>("/api/session", {});
       setSessionId(s.thread_id);
       clearSelection();
-      setConfirmDel(null);
       setMessages([]);
       setHistoryTruncated(0);
       setLive(null);
@@ -297,7 +293,6 @@ export default function ChatPage({
   async function doDelete(threadId: string) {
     try {
       await api.del(`/api/session/${threadId}`);
-      setConfirmDel(null);
       if (sessionId === threadId) {
         setSessionId(null);
         setMessages([]);
@@ -477,7 +472,6 @@ export default function ChatPage({
   /** 删除所选（后端按整轮扩展并写审计语义上的不可恢复操作）。 */
   async function deleteSelected() {
     if (!sessionId || selected.length === 0) return;
-    setConfirmDelete(false);
     try {
       await api.post<{ deleted: number }>(`/api/session/${sessionId}/messages/delete`, {
         message_ids: selected,
@@ -588,28 +582,16 @@ export default function ChatPage({
                   {s.role_name || s.role_id}
                 </div>
               </div>
-              {confirmDel === s.thread_id ? (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    doDelete(s.thread_id);
-                  }}
-                  className="shrink-0 rounded bg-red-500 px-1.5 py-0.5 text-[11px] text-white hover:bg-red-600"
-                >
-                  删除
-                </button>
-              ) : (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setConfirmDel(s.thread_id);
-                  }}
-                  className="shrink-0 rounded px-1 py-0.5 text-xs text-slate-300 dark:text-slate-600 opacity-0 transition-opacity hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700 hover:text-red-500 group-hover:opacity-100"
-                  title="删除对话"
-                >
-                  ✕
-                </button>
-              )}
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  if (await confirm({ title: "删除这个对话？", body: "对话及其全部消息将被永久删除，不可恢复。", confirmText: "删除", danger: true })) doDelete(s.thread_id);
+                }}
+                className="shrink-0 rounded px-1 py-0.5 text-xs text-slate-300 dark:text-slate-600 opacity-0 transition-opacity hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700 hover:text-red-500 group-hover:opacity-100"
+                title="删除对话"
+              >
+                ✕
+              </button>
             </div>
           ))}
         </div>
@@ -859,29 +841,14 @@ export default function ChatPage({
               <span className="flex-1">
                 已选 <b>{selected.length}</b> 条消息（勾选一侧会带上配对的问答）。删除不可恢复。
               </span>
-              {confirmDelete ? (
-                <>
-                  <button
-                    onClick={deleteSelected}
-                    className="rounded bg-red-500 px-2.5 py-1 text-white hover:bg-red-600"
-                  >
-                    确认删除
-                  </button>
-                  <button
-                    onClick={() => setConfirmDelete(false)}
-                    className="rounded px-2 py-1 hover:bg-amber-100 dark:hover:bg-amber-900/40"
-                  >
-                    再想想
-                  </button>
-                </>
-              ) : (
-                <button
-                  onClick={() => setConfirmDelete(true)}
-                  className="rounded bg-red-500 px-2.5 py-1 text-white hover:bg-red-600"
-                >
-                  删除所选
-                </button>
-              )}
+              <button
+                onClick={async () => {
+                  if (await confirm({ title: "删除选中的消息？", body: `将删除 ${selected.length} 条消息（整轮），不可恢复。`, confirmText: "确认删除", danger: true })) deleteSelected();
+                }}
+                className="rounded bg-red-500 px-2.5 py-1 text-white hover:bg-red-600"
+              >
+                删除所选
+              </button>
               <button
                 onClick={clearSelection}
                 className="rounded px-2 py-1 hover:bg-amber-100 dark:hover:bg-amber-900/40"

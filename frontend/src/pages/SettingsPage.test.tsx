@@ -1,0 +1,119 @@
+// @vitest-environment jsdom
+//
+// SettingsPage（设置页）接线测试。重点：切换记忆作用域时若有未保存修改，走 useConfirm
+// 二次确认 —— 点确认才切换并丢弃草稿，点取消不切换。
+
+import { render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { apiMock } = vi.hoisted(() => ({
+  apiMock: {
+    get: vi.fn(),
+    post: vi.fn(),
+    put: vi.fn(),
+    patch: vi.fn(),
+    del: vi.fn(),
+  },
+}));
+
+vi.mock("../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api")>();
+  return { ...actual, api: apiMock };
+});
+
+import SettingsPage from "./SettingsPage";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  apiMock.get.mockImplementation(async (url: string) => {
+    if (url === "/api/settings/models") return { default: "", backends: [], fallbacks: [] };
+    if (url === "/api/plugins") return [];
+    if (url === "/api/roles") {
+      return [
+        {
+          role_id: "r1",
+          role_name: "角色1",
+          system_prompt: "",
+          temperature: 0.7,
+          model_name: "",
+          tool_whitelist: [],
+          knowledge_scopes: [],
+          is_builtin: false,
+          description: "",
+          reachout_enabled: false,
+          exemplars: [],
+        },
+      ];
+    }
+    if (url === "/api/sessions") return [];
+    if (url === "/api/settings/memory" || url.startsWith("/api/settings/memory?"))
+      return { enabled: false, content: "原始记忆" };
+    if (url === "/api/knowledge/scopes") return { scopes: [] };
+    if (url === "/api/services") return { services: [] };
+    if (url === "/api/mcp/servers") return { servers: [], effective_count: 0 };
+    if (url === "/api/settings/runtime") {
+      return {
+        note: "",
+        groups: [
+          {
+            key: "core",
+            label: "核心",
+            items: [
+              {
+                key: "reachout_enabled",
+                field: "reachout_enabled",
+                label: "主动开口",
+                value: "false",
+                default: "false",
+                changed: false,
+                overridden: false,
+                override_value: null,
+                kind: "bool",
+                choices: null,
+              },
+            ],
+          },
+        ],
+      };
+    }
+    if (url.startsWith("/api/audit")) return [];
+    return {};
+  });
+});
+
+function memScopeSelect(): HTMLSelectElement {
+  const selects = screen.getAllByRole("combobox") as HTMLSelectElement[];
+  const sel = selects.find((s) => s.textContent?.includes("全局"));
+  if (!sel) throw new Error("找不到记忆作用域下拉");
+  return sel;
+}
+
+describe("SettingsPage 切换记忆作用域二次确认（useConfirm）", () => {
+  it("有未保存修改时切换作用域弹确认框，点『确认』才切换", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    render(<SettingsPage onOpenChat={() => {}} theme="light" onToggleTheme={() => {}} />);
+    // 等记忆加载完，草稿文本框显示原文后再改脏（否则异步加载会覆盖改动）
+    const ta = (await screen.findByDisplayValue("原始记忆")) as HTMLTextAreaElement;
+    fireEvent.change(ta, { target: { value: "改了" } });
+    const select = memScopeSelect();
+    expect(select.value).toBe("");
+    fireEvent.change(select, { target: { value: "r1" } });
+    expect(await screen.findByText("切换作用域将丢弃未保存的修改")).toBeTruthy();
+    fireEvent.click(screen.getByText("确认"));
+    await waitFor(() => expect(memScopeSelect().value).toBe("r1"));
+  });
+
+  it("点『取消』不切换作用域", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    render(<SettingsPage onOpenChat={() => {}} theme="light" onToggleTheme={() => {}} />);
+    // 等记忆加载完、草稿文本框可编辑且显示原文后再改脏（否则命中 disabled 文本框或异步加载覆盖）
+    const ta = (await screen.findByDisplayValue("原始记忆")) as HTMLTextAreaElement;
+    fireEvent.change(ta, { target: { value: "改了" } });
+    const select = memScopeSelect();
+    fireEvent.change(select, { target: { value: "r1" } });
+    expect(await screen.findByText("切换作用域将丢弃未保存的修改")).toBeTruthy();
+    fireEvent.click(screen.getByText("取消"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(memScopeSelect().value).toBe("");
+  });
+});
