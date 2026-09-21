@@ -120,6 +120,15 @@ export interface ModelSettings {
   providers: ProviderGroup[];
 }
 
+/** 服务类别的内部键 → 给人看的名字。模型页与服务页都在回显 `used_by`，译名只留一份
+ *  （两处各写一遍就是"同一个事实两个答案"，两页会各自漂移）。 */
+export const USAGE_LABEL: Record<string, string> = {
+  chat: "对话",
+  embedding: "嵌入",
+  rerank: "重排",
+  ocr: "OCR",
+};
+
 /** 一行模型（属于某个凭据组）。能力位是**三态**：null = 没测过 → 界面渲染 `?`。 */
 export interface ProviderModelRow {
   name: string;

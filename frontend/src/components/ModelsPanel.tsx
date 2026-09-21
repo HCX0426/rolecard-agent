@@ -16,18 +16,12 @@ import {
   type ProbeOutcome,
   type ProviderGroup,
   type ProviderModelRow,
+  USAGE_LABEL,
 } from "../api";
 import { AddModelDrawer } from "./AddModelDrawer";
 import { LocalServiceCard } from "./LocalServiceCard";
 import { useConfirm } from "../hooks/useConfirm";
 import { Button, Card, Modal, Notice } from "./ui";
-
-const USAGE_LABEL: Record<string, string> = {
-  chat: "对话",
-  embedding: "嵌入",
-  rerank: "重排",
-  ocr: "OCR",
-};
 
 type ProbeTarget = { group: ProviderGroup; row: ProviderModelRow };
 

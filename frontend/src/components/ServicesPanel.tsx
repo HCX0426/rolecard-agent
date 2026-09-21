@@ -3,7 +3,7 @@
 // 移除 = 仅从本服务优先级中摘除引用（不影响模型页配置）；配置的编辑只在模型页。
 // 优先级第 1 位即生效；修改立即保存并热生效（嵌入/重排后端热重建）。
 import { useCallback, useEffect, useState } from "react";
-import { api, type ModelSettings } from "../api";
+import { api, USAGE_LABEL, type ModelSettings } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
 
 interface ServiceEndpoint {
@@ -198,6 +198,12 @@ export function ServicesPanel() {
           .filter((m) => !referenced.has(m.name));
         const usedBy = (name: string) =>
           providers.flatMap((g) => g.models).find((m) => m.name === name)?.used_by ?? [];
+        // 用途回显给人看的是中文类别名（与模型页同一份译名），不是内部键。
+        const usedByLabel = (name: string) =>
+          usedBy(name)
+            .filter((u) => u !== "chat")
+            .map((u) => USAGE_LABEL[u] ?? u)
+            .join("、");
         return (
           <section key={cat.key} className="flex flex-col gap-2">
             <div className="flex items-baseline gap-2">
@@ -353,8 +359,8 @@ export function ServicesPanel() {
                                 {/* 模型推理这一节：序列本身就是"谁用于对话"的事实面，
                                     所以摘除是一等动作（配置仍留在模型页，不是删配置）。 */}
                                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-slate-700 dark:text-slate-300">
-                                  {usedBy(cand.id).length > 1
-                                    ? `还用于：${usedBy(cand.id).filter((u) => u !== "chat").join("、")}`
+                                  {usedByLabel(cand.id)
+                                    ? `还用于：${usedByLabel(cand.id)}`
                                     : "仅用于对话"}
                                 </span>
                                 <button
