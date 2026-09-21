@@ -205,3 +205,79 @@ def test_loopback_peer_reaches_the_operator_tier_without_credentials(
         peer="127.0.0.1",
     )
     assert client.get("/api/settings/runtime").status_code == 200
+
+
+# ------------------------------------------------------------------ 凭证分族（c）
+
+
+def test_operator_tier_requires_an_operator_credential(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """远端"带了某条凭据"不再自动等于操作员 —— 这正是 b/a 之后剩下的那半个洞。
+
+    `AUTH_MODE=on` 下配两条凭据：`alice`（使用者）与 `operator:bob`（操作员）。
+    alice 能用自己的界面，但管理端点对她是 403；而且**文案要说清是角色不够**，
+    不是"忘了带凭据" —— 她已经带对了凭据，另一种说法会让人对着密码框发愣。
+    """
+    client = _client(
+        monkeypatch, tmp_path, mode="on", creds="alice:pw,operator:bob:pw"
+    )
+    assert client.get("/api/sessions", auth=("alice", "pw")).status_code == 200
+    denied = client.get("/api/settings/runtime", auth=("alice", "pw"))
+    assert denied.status_code == 403
+    assert "使用者角色" in denied.text
+    assert client.get("/api/settings/runtime", auth=("bob", "pw")).status_code == 200
+
+
+def test_roles_stay_dormant_until_an_operator_credential_is_declared(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """一条 operator 凭据都没配 = 不分族：老配置不能被这次改动锁在自己的设置页外。"""
+    client = _client(monkeypatch, tmp_path, mode="on", creds="alice:pw")
+    assert client.get("/api/settings/runtime", auth=("alice", "pw")).status_code == 200
+
+
+def test_loopback_owner_is_not_asked_for_a_role(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """本机来源不看角色 —— 收紧针对的是"远端里任何带凭证的人"，不是坐在键盘前的主人。
+
+    两档各测一格，因为它们的语义不同：`auto` 下回环**免凭据**（单机形态的全部意义），
+    `on` 下凭据仍然要带、但带了使用者凭据也进得来（本机来源这一条不被角色判定推翻）。
+    """
+    auto = _client(
+        monkeypatch, tmp_path, mode="auto", creds="alice:pw,operator:bob:pw", peer="127.0.0.1"
+    )
+    assert auto.get("/api/settings/runtime").status_code == 200
+    on = _client(
+        monkeypatch, tmp_path, mode="on", creds="alice:pw,operator:bob:pw", peer="127.0.0.1"
+    )
+    assert on.get("/api/settings/runtime", auth=("alice", "pw")).status_code == 200
+    # 同一个配置从远端来就是另一回事（上一条用例钉的就是这个）
+    far = _client(monkeypatch, tmp_path, mode="on", creds="alice:pw,operator:bob:pw")
+    assert far.get("/api/settings/runtime", auth=("alice", "pw")).status_code == 403
+
+
+def test_allowed_truth_table_with_roles() -> None:
+    """`allowed()` 的角色维度单独钉：四格都不可省。"""
+    operator_put = ("/api/settings/runtime", "PUT")
+
+    def verdict(*, role: str, roles_in_effect: bool, authenticated: bool, ip: str) -> bool:
+        return allowed(
+            operator_put[0],
+            operator_put[1],
+            ip=ip,
+            authenticated=authenticated,
+            enforce=True,
+            role=role,
+            roles_in_effect=roles_in_effect,
+        )
+
+    assert verdict(role="operator", roles_in_effect=True, authenticated=True, ip="203.0.113.9")
+    assert not verdict(
+        role="user", roles_in_effect=True, authenticated=True, ip="203.0.113.9"
+    )
+    # 分族未生效：任何已认证身份都算操作员（兼容规则）
+    assert verdict(role="user", roles_in_effect=False, authenticated=True, ip="203.0.113.9")
+    # 本机来源永远放行，且与"带没带凭据"无关
+    assert verdict(role="user", roles_in_effect=True, authenticated=False, ip="127.0.0.1")

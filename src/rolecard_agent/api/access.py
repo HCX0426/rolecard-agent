@@ -22,7 +22,7 @@
 
 from __future__ import annotations
 
-from rolecard_agent.api.auth import is_loopback
+from rolecard_agent.api.auth import ROLE_OPERATOR, ROLE_USER, is_loopback
 
 PUBLIC = "public"
 USER = "user"
@@ -89,16 +89,35 @@ def classify(path: str, method: str = "GET") -> str:
 
 
 def allowed(
-    path: str, method: str, *, ip: str, authenticated: bool, enforce: bool
+    path: str,
+    method: str,
+    *,
+    ip: str,
+    authenticated: bool,
+    enforce: bool,
+    role: str = ROLE_USER,
+    roles_in_effect: bool = False,
 ) -> bool:
     """这一档是否放行。
 
     `enforce=False`（`AUTH_MODE=off`）时一律放行 —— 那档的语义就是"这是我本机的单人使用"，
     而且非回环绑定已经被启动护栏拒绝（`cf887c8`），在这里再拦一次等于用一条永远为真的条件
-    伪装成安全检查。真正的收紧发生在 `on`/`auto`：操作员端点**必须**是本机来源或已认证身份。
+    伪装成安全检查。真正的收紧发生在 `on`/`auto`：操作员端点要 **本机来源** 或
+    **操作员凭据**。
+
+    两条判定的分工要说清，别以为重复：
+      * **本机来源**始终放行 —— 桌面壳与本机界面就走 127.0.0.1，owner 坐在键盘前不需要凭据；
+        这次要关的洞从来不是"本机能碰本机"，而是"远端/局域网里任何带凭证的人"。
+      * **带凭证**不再自动等于操作员：`roles_in_effect` 为真（配置里出现了 `operator:` 凭据）
+        时，只有 operator 族的凭据进得了管理面；使用者凭据可以在自己界面上聊天、改数据、
+        看收件箱，动配置就是 403。
     """
     if not enforce:
         return True
     if classify(path, method) != OPERATOR:
         return True
-    return authenticated or is_loopback(ip)
+    if is_loopback(ip):
+        return True
+    if not authenticated:
+        return False
+    return (not roles_in_effect) or role == ROLE_OPERATOR

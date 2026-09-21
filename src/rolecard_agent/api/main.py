@@ -39,10 +39,12 @@ from fastapi.staticfiles import StaticFiles
 from rolecard_agent.api.access import OPERATOR, classify
 from rolecard_agent.api.access import allowed as access_allowed
 from rolecard_agent.api.auth import (
+    ROLE_OPERATOR,
     auth_required,
     client_ip,
     parse_trusted_proxies,
     resolve_actor,
+    roles_declared,
     unauthorized_response,
 )
 from rolecard_agent.api.deps import AppContext
@@ -219,6 +221,9 @@ def create_app(
         p.strip() for p in (env_settings.auth_exempt_paths or "").split(",") if p.strip()
     ]
     trusted_proxies = parse_trusted_proxies(env_settings.auth_trusted_proxies)
+    # 凭证分族是否生效：配置里出现过 `operator:` 凭据才生效（见 auth.roles_declared）。
+    # 随进程构建，与 exempt_paths/trusted_proxies 同类 —— 改了要重启，不在界面可改。
+    roles_in_effect = roles_declared(env_settings)
 
     @app.middleware("http")
     async def _authenticate(request: object, call_next: object) -> object:
@@ -241,8 +246,9 @@ def create_app(
             status, headers, body = unauthorized_response()
             return PlainTextResponse(body, status_code=status, headers=headers)
         # 操作员面（`api/access.py` 那张表里没被降级的一切）：`on`/`auto` 档下必须是
-        # **本机来源或已认证身份**。这一条真正关掉的洞是"`AUTH_EXEMPT_PATHS` 配宽了一点，
+        # **本机来源或操作员凭据**。这一条真正关掉的洞是"`AUTH_EXEMPT_PATHS` 配宽了一点，
         # 于是管理端点变成免凭据可达" —— 认证那一步会因豁免直接放过，分级这里补上。
+        # 凭证分族补上另一半：远端"带了某条凭据"不再自动等于操作员，得是 `operator:` 那一族。
         # off 档不启用：它的语义就是"我本机单人用"，且非回环绑定已被启动护栏拒绝。
         if classify(req.url.path, req.method) == OPERATOR and not access_allowed(
             req.url.path,
@@ -250,11 +256,18 @@ def create_app(
             ip=origin,
             authenticated=not actor.is_anonymous,
             enforce=env_settings.auth_mode != "off",
+            role=actor.role,
+            roles_in_effect=roles_in_effect,
         ):
-            return PlainTextResponse(
-                "Forbidden: 这一项需要本机来源或操作员凭据",
-                status_code=403,
+            # 文案要说清缺的是**哪一样**：已经认证却被拒 = 角色不够，不是"忘了带凭据"。
+            # 报成"需要凭据"会让人对着已经填对的密码框发愣。
+            user_is_authenticated_operator = actor.is_anonymous or actor.role == ROLE_OPERATOR
+            reason = (
+                "Forbidden: 这一项需要本机来源或操作员凭据"
+                if user_is_authenticated_operator
+                else "Forbidden: 这一项需要操作员凭据（当前凭据只是使用者角色）"
             )
+            return PlainTextResponse(reason, status_code=403)
         req.state.actor = actor
         return await call_next(request)  # type: ignore[operator]
 

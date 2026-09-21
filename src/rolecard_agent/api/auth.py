@@ -18,6 +18,13 @@ ASGI 应用 —— 它完全不经过路由的依赖系统。只加依赖的话�
 两者由同一个依赖解析，返回同一个 `Actor`。将来换成 JWT 只改 `_parse_*` 这几个函数，
 端点签名不动 —— 这与项目其它可插拔点（`model_resolver` / `enabled_domains`）是同一个套路。
 
+## 凭证分族：同一条列表里区分「使用者」与「操作员」
+
+`Actor.role` 取自凭据串上的 `operator:` 前缀（见 `OPERATOR_PREFIX`）。它只为一件事服务：
+`access.py` 那张表里判为 operator 的端点（改配置、动本机、看审计）从此不接受"任何带了凭证的人"，
+而只接受操作员凭据或本机来源。**没有声明任何 operator 凭据时这套区分关闭**（`roles_declared`）
+—— 否则 `AUTH_MODE=on` + 一条 `alice:pw` 的老配置会在升级后把主人锁在自己的设置页外。
+
 ## 三档开关与 fail-closed
 
 `off`（默认，本地零配置）/ `auto`（回环放行、外部要求）/ `on`（一律要求）。
@@ -47,6 +54,17 @@ ANONYMOUS_KIND = "anonymous"
 BASIC_KIND = "basic"
 APIKEY_KIND = "apikey"
 
+# 凭证分族（P0-3 第三步）。两档角色就对应 `access.py` 的两个门槛：使用者能用自己的界面，
+# 操作员才能动配置与本机。为什么不做成 RBAC 矩阵：这产品没有第二个租户，也没有第三种人；
+# 多一档只会让"谁该被挡在外面"这件事重新变成没有答案的问题。
+ROLE_USER = "user"
+ROLE_OPERATOR = "operator"
+
+#: 凭据串上的操作员标记：Basic 写 `operator:bob:pw`，API Key 写 `operator:sk-...`。
+#: 为什么用前缀而不是再加一个 env 字段：`AUTH_CREDENTIALS`/`AUTH_API_KEYS` 已经是
+#: "五处必须同步"的配置契约（不变式 10），加字段要多维护四处，前缀只改一处解析。
+OPERATOR_PREFIX = "operator:"
+
 _WWW_AUTHENTICATE = 'Basic realm="rolecard-agent", charset="UTF-8"'
 
 
@@ -56,10 +74,14 @@ class Actor:
 
     `id` 会写进审计日志，所以**绝不能是完整凭证**：Basic 记用户名，API Key 只记前 4 位
     （够你在日志里区分是哪个 key，又不足以让人拿去用）。
+
+    `role` 是**凭据自带的族**（见 `OPERATOR_PREFIX`）。匿名身份是 user —— 它能不能进任何
+    门由 `auth_required` 决定，而不是靠角色。
     """
 
     id: str = "anonymous"
     kind: str = ANONYMOUS_KIND
+    role: str = ROLE_USER
 
     @property
     def is_anonymous(self) -> bool:
@@ -70,16 +92,39 @@ def _split_list(raw: str | None) -> list[str]:
     return [item.strip() for item in (raw or "").split(",") if item.strip()]
 
 
-def _match_api_key(candidate: str, allowed: list[str]) -> str | None:
-    """常量时间比对，命中返回该 key 的可记录前缀。"""
-    for key in allowed:
-        if hmac.compare_digest(candidate, key):
-            return key[:4]
+def _entry_role(entry: str) -> tuple[str, str]:
+    """拆 `operator:` 前缀 → (角色, 去掉前缀后的凭据串)。"""
+    if entry.lower().startswith(OPERATOR_PREFIX):
+        return ROLE_OPERATOR, entry[len(OPERATOR_PREFIX):].strip()
+    return ROLE_USER, entry
+
+
+def roles_declared(settings: Settings) -> bool:
+    """这套配置里**有没有**任何一条操作员凭据 —— 决定角色要不要真的生效。
+
+    一条都没有 = 这个部署没打算区分两种人：所有已认证身份都按操作员看待。这条兼容规则是
+    必须的，否则 `AUTH_MODE=on` + 一条 `alice:pw` 的老配置在升级后会把人锁在自己的设置页
+    外 —— 单人自用是本产品的主形态，"改安全逻辑改到主人进不来"是这次改动最不该发生的失败。
+    一旦写下第一条 `operator:`，分族立刻生效，没标记的凭据就只算使用者。
+    """
+    entries = [*_split_list(settings.auth_credentials), *_split_list(settings.auth_api_keys)]
+    return any(entry.lower().startswith(OPERATOR_PREFIX) for entry in entries)
+
+
+def _match_api_key(candidate: str, allowed: list[str]) -> tuple[str, str] | None:
+    """常量时间比对。命中返回 (可记录的 key 前缀, 角色)。"""
+    for entry in allowed:
+        role, key = _entry_role(entry)
+        if key and hmac.compare_digest(candidate, key):
+            return key[:4], role
     return None
 
 
 def _parse_basic(header: str, credentials: list[str]) -> Actor | None:
-    """`Authorization: Basic base64(user:pass)` —— 与 `auth_credentials` 里的 "user:pass" 比对。"""
+    """`Authorization: Basic base64(user:pass)` —— 与 `auth_credentials` 里的 "user:pass" 比对。
+
+    操作员凭据写成 `operator:bob:pw`（三段）：开头那段是族标记，剩下的仍然是 `user:pass`。
+    """
     if not header.lower().startswith("basic "):
         return None
     try:
@@ -90,13 +135,14 @@ def _parse_basic(header: str, credentials: list[str]) -> Actor | None:
     if not sep:
         return None
     for entry in credentials:
-        want_user, want_sep, want_pass = entry.partition(":")
+        role, rest = _entry_role(entry)
+        want_user, want_sep, want_pass = rest.partition(":")
         if not want_sep:
             continue
         if hmac.compare_digest(user, want_user) and hmac.compare_digest(
             password, want_pass
         ):
-            return Actor(id=user, kind=BASIC_KIND)
+            return Actor(id=user, kind=BASIC_KIND, role=role)
     return None
 
 
@@ -119,9 +165,10 @@ def resolve_actor(
         if actor is not None:
             return actor
     if api_key and keys:
-        prefix = _match_api_key(api_key, keys)
-        if prefix is not None:
-            return Actor(id=f"key:{prefix}", kind=APIKEY_KIND)
+        matched = _match_api_key(api_key, keys)
+        if matched is not None:
+            prefix, role = matched
+            return Actor(id=f"key:{prefix}", kind=APIKEY_KIND, role=role)
     return Actor()
 
 

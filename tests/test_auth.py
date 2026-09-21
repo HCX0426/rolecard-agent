@@ -224,3 +224,48 @@ def test_audit_never_stores_the_full_api_key(
     actor = create_events[0]["actor"]
     assert actor == "key:k-ab"
     assert "abcdef" not in actor
+
+
+# -- 凭证分族（P0-3 第三步）---------------------------------------------------------
+
+
+def test_operator_prefix_on_basic_credential_sets_the_role() -> None:
+    """`operator:bob:pw` = 用户名 bob、密码 pw、角色 operator。
+
+    前缀是**族标记**，不是用户名的一部分：日志里记的仍然是 `bob`，不然审计里会出现
+    一个查无此人的 "operator:bob"。
+    """
+    from rolecard_agent.api.auth import ROLE_OPERATOR, ROLE_USER, resolve_actor
+    from rolecard_agent.config import Settings
+
+    settings = Settings(auth_credentials="alice:pw,operator:bob:pw")
+    alice = resolve_actor(authorization=_basic("alice", "pw"), api_key=None, settings=settings)
+    bob = resolve_actor(authorization=_basic("bob", "pw"), api_key=None, settings=settings)
+    assert (alice.role, bob.role) == (ROLE_USER, ROLE_OPERATOR)
+    assert bob.id == "bob"
+    # 密码错仍然是匿名（`operator:` 那条目的存在不许让 alice 的比对走形）
+    wrong = resolve_actor(authorization=_basic("alice", "nope"), api_key=None, settings=settings)
+    assert wrong.is_anonymous
+
+
+def test_operator_prefix_on_api_key_sets_the_role() -> None:
+    from rolecard_agent.api.auth import ROLE_OPERATOR, ROLE_USER, resolve_actor
+    from rolecard_agent.config import Settings
+
+    settings = Settings(auth_api_keys="k-user,operator:k-admin")
+    as_user = resolve_actor(authorization=None, api_key="k-user", settings=settings)
+    as_admin = resolve_actor(authorization=None, api_key="k-admin", settings=settings)
+    assert (as_user.role, as_admin.role) == (ROLE_USER, ROLE_OPERATOR)
+    # 审计里仍然只留前 4 位（分族不许顺手把 key 记全）
+    assert as_admin.id.startswith("key:") and len(as_admin.id) <= len("key:") + 4
+
+
+def test_roles_are_declared_only_when_an_operator_entry_exists() -> None:
+    """没写 operator 条目 = 这套配置不分族（老配置升级后不会被锁在门外）。"""
+    from rolecard_agent.api.auth import roles_declared
+    from rolecard_agent.config import Settings
+
+    assert roles_declared(Settings(auth_credentials="alice:pw")) is False
+    assert roles_declared(Settings(auth_api_keys="k-a,k-b")) is False
+    assert roles_declared(Settings(auth_credentials="alice:pw,operator:bob:pw")) is True
+    assert roles_declared(Settings(auth_api_keys="operator:k-admin")) is True
