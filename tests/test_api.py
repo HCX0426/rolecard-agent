@@ -592,3 +592,49 @@ def test_reachouts_point_at_the_proactive_thread_and_read_by_role(client: TestCl
     assert ghost["marked"] == 0 and ghost["unread"] == 0
     # 少了 role_id 就不能盲标（否则一次点击清掉所有人）。
     assert client.post("/api/reachouts/read-by-role").status_code == 422
+
+
+def test_deleting_a_session_keeps_memory_and_the_inbox_ledger(client: TestClient) -> None:
+    """删会话的边界（用户 2026-09-21）：**只删这条对话本身**，其余各有自己的主人。
+
+    - 已进角色记忆的事实**留下** —— 那是从对话里提炼出来的、关于用户的东西，删对话不该
+      把它一起销毁（否则"提取精华"提完再删会话 = 白做）；
+    - 收件箱那几行**留下** —— 它们是"它哪天主动找过我"的账，桌宠气泡与未读数都读这里；
+      会话没了之后它们不再有跳转目标（`thread_id` 回落 None），点一下只标已读，不给死链；
+    - 走掉的只有 thread 行与它的 checkpoint / writes（不留可被复活的孤儿）。
+    """
+    from rolecard_agent.core.identity import DEFAULT_USER_ID
+    from rolecard_agent.core.reachout import proactive_thread_id
+
+    conn = client.app.state.ctx.conn
+    tid = proactive_thread_id("general_assistant")
+    conn.execute(
+        "INSERT INTO session_thread (thread_id, user_id, current_role_id, title)"
+        " VALUES (?, ?, 'general_assistant', ?)",
+        (tid, DEFAULT_USER_ID, "通用助手 · 主动找你"),
+    )
+    conn.execute(
+        "INSERT INTO agent_reachout (role_id, role_name, text, state) "
+        "VALUES ('general_assistant', '通用助手', '今天腰还酸吗', 'unread')"
+    )
+    conn.commit()
+    assert client.get("/api/reachouts").json()["items"][0]["thread_id"] == tid
+    added = client.post(
+        "/api/settings/memory/item",
+        params={"role_id": "general_assistant"},
+        json={"text": "用户每周三晚上练琴"},
+    )
+    assert added.status_code == 200
+
+    assert client.delete(f"/api/session/{tid}").status_code == 204
+
+    assert client.get(f"/api/session/{tid}").status_code == 404
+    kept = client.get("/api/settings/memory", params={"role_id": "general_assistant"}).json()
+    assert [i["text"] for i in kept["items"]] == ["用户每周三晚上练琴"]  # 记忆活着
+    page = client.get("/api/reachouts").json()
+    assert page["unread"] == 1  # 未读账也活着（红点不该因为删会话而谎报"读过了"）
+    assert page["items"][0]["thread_id"] is None  # 但不再给一个不存在的会话当链接
+    orphans = conn.execute(
+        "SELECT COUNT(*) FROM checkpoints WHERE thread_id = ?", (tid,)
+    ).fetchone()[0]
+    assert orphans == 0  # 没有可被"复活"的孤儿 checkpoint
