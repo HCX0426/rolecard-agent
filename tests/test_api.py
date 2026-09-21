@@ -513,9 +513,21 @@ def test_reachout_role_switch_and_master_runtime(client: TestClient) -> None:
 
 
 def test_reachouts_list_and_mark_read_404(client: TestClient) -> None:
-    """收件箱读取路径：列表形状（含 unread 计数）；标记**不存在**的记录 → 404。"""
+    """收件箱读取路径：列表形状（含 unread 计数 + 折叠窗口）；标记**不存在**的记录 → 404。
+
+    `merge_days` 为什么在列表响应里：折叠是"这一摞怎么显示"的一部分，而前端去读
+    「运行环境」拿它是越权（那条路由是 operator 档，收件箱是使用者档）。
+    """
     r = client.get("/api/reachouts").json()
     assert "unread" in r and isinstance(r["items"], list)
+    assert r["merge_days"] == 1  # 出厂：按天折一摞
+    # 在线覆盖能改到它（写点在「记忆与任务目录」，保存即热生效）
+    client.put("/api/settings/runtime", json={"values": {"reachout_merge_days": "7"}})
+    assert client.get("/api/reachouts").json()["merge_days"] == 7
+    client.put("/api/settings/runtime", json={"values": {"reachout_merge_days": ""}})  # 还原
+    # 非法档（只有 1/3/7）当场拒绝，不悄悄接受一个没人能预判界面形状的窗口
+    bad = client.put("/api/settings/runtime", json={"values": {"reachout_merge_days": "5"}})
+    assert bad.status_code == 400
     assert client.post("/api/reachouts/999999/read").status_code == 404
 
 

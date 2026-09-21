@@ -21,13 +21,27 @@ def _pending(ctx: AppContext) -> int:
     return pending_count(ctx.conn) if ctx.settings.file_watch_enabled else 0
 
 
+def _page(ctx: AppContext, *, role_id: str | None = None) -> dict[str, object]:
+    """收件箱的响应 = 列表 + 折叠窗口（天）。
+
+    `merge_days` 为什么在这里给而不是让前端去读「运行环境」：那条路由是 **operator 档**
+    （`api/access.py`），让使用者面的收件箱去读它等于给自己开一个越权依赖；而折叠窗口
+    本来就是"这一摞怎么显示"的一部分，跟着列表一起给最省。分组本身仍然只做在前端
+    （后端不算第二份分组逻辑，见 docs/主动消息与记忆设计稿.md §1）。
+    """
+    return {
+        **svc.list_reachouts(ctx.conn, role_id=role_id, file_watch_pending=_pending(ctx)),
+        "merge_days": ctx.settings.reachout_merge_days,
+    }
+
+
 @router.get("/api/reachouts")
 def get_reachouts(
     ctx: AppContext = Depends(get_context),
     role_id: str | None = Query(default=None, description="只返回该角色主动找过你的历史"),
 ) -> object:
-    """收件箱：最近主动消息（含未读数）。前端铃铛红点 = unread。可按角色过滤。"""
-    return svc.list_reachouts(ctx.conn, role_id=role_id, file_watch_pending=_pending(ctx))
+    """收件箱：最近主动消息（含未读数与折叠窗口）。前端铃铛红点 = unread，可按角色过滤。"""
+    return _page(ctx, role_id=role_id)
 
 
 @router.post("/api/reachouts/{reachout_id}/read")
@@ -39,7 +53,7 @@ def mark_read(reachout_id: int, ctx: AppContext = Depends(get_context)) -> objec
     """
     if not svc.mark_read(ctx.conn, reachout_id):
         raise HTTPException(status_code=404, detail=f"主动消息不存在：{reachout_id}")
-    return svc.list_reachouts(ctx.conn, file_watch_pending=_pending(ctx))
+    return _page(ctx)
 
 
 @router.post("/api/reachouts/read-by-role")
@@ -51,11 +65,10 @@ def mark_role_read(
 
     为什么按角色而不是逐条：点收件箱条目 = 跳进那条主动会话，进去看的是**整段历史**，
     所以那一摞未读同时就都算读过了。逐条发请求会在中途失败留下"半已读"，红点数字还骗人。
+    这一条正好也是折叠要的语义：展开后点任意一条，整摞一起变已读。
     """
     marked = svc.mark_role_read(ctx.conn, role_id)
-    return {"marked": marked} | dict(
-        svc.list_reachouts(ctx.conn, file_watch_pending=_pending(ctx))
-    )
+    return {"marked": marked} | _page(ctx)
 
 
 __all__ = ["router"]

@@ -147,6 +147,8 @@ function MemoryPanel() {
   const [treeErr, setTreeErr] = useState("");
   // 主动开口全局总闸（覆盖运行环境的 REACHOUT_ENABLED）：rejectOn = 有效值。
   const [reachoutOn, setReachoutOn] = useState<boolean | null>(null);
+  // 收件箱折叠窗口（天，1/3/7）：与总闸同帖单写点，运行环境只读展示。
+  const [mergeDays, setMergeDays] = useState<number | null>(null);
   const [reachoutMsg, setReachoutMsg] = useState("");
   const [reachoutErr, setReachoutErr] = useState("");
   const confirm = useConfirm();
@@ -332,13 +334,33 @@ function MemoryPanel() {
 
   const loadReachout = useCallback(async () => {
     const rt = await api.get<RuntimePayload>("/api/settings/runtime");
-    const item = rt.groups.flatMap((g) => g.items).find((i) => i.field === "reachout_enabled");
-    setReachoutOn(item ? item.value !== "0" && item.value !== "未设置" : null);
+    const items = rt.groups.flatMap((g) => g.items);
+    const sw = items.find((i) => i.field === "reachout_enabled");
+    setReachoutOn(sw ? sw.value !== "0" && sw.value !== "未设置" : null);
+    // 收件箱折叠窗口：读的是**生效值**（env + 在线覆盖叠加），和总闸同一个来源。
+    const merge = items.find((i) => i.field === "reachout_merge_days");
+    setMergeDays(merge ? Number.parseInt(merge.value, 10) || 1 : null);
   }, []);
 
   useEffect(() => {
     loadReachout().catch(() => setReachoutOn(null));
   }, [loadReachout]);
+
+  async function changeMergeDays(next: string) {
+    setReachoutErr("");
+    setReachoutMsg("");
+    try {
+      await api.put<RuntimePayload>("/api/settings/runtime", {
+        values: { reachout_merge_days: next },
+      });
+      setMergeDays(Number.parseInt(next, 10));
+      setReachoutMsg(
+        `收件箱已改为每 ${next} 天一摞：同一角色在这个窗口里的主动开口会折成一行`,
+      );
+    } catch (e) {
+      setReachoutErr(`保存失败：${(e as Error).message}`);
+    }
+  }
 
   async function toggleReachout() {
     setReachoutErr("");
@@ -503,6 +525,24 @@ function MemoryPanel() {
         <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
           全局总闸：关闭后所有角色都不会主动找你（静默，无提示音）。即使开着，也只有角色卡上
           勾选「角色会主动找你」的角色才会开口。
+        </p>
+        <label className="mt-3 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+          <span>收件箱折叠窗口</span>
+          <select
+            value={String(mergeDays ?? 1)}
+            disabled={mergeDays === null}
+            onChange={(e) => void changeMergeDays(e.target.value)}
+            className="rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
+          >
+            <option value="1">每 1 天一摞（按天）</option>
+            <option value="3">每 3 天一摞</option>
+            <option value="7">每 7 天一摞</option>
+          </select>
+          {mergeDays === null && <span className="text-[10px] text-slate-400">读取中…</span>}
+        </label>
+        <p className="mt-1 text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
+          同一角色在一个窗口里攒下的开口折成一行（行上有未读角标，展开看每一条）。
+          有未读的那摞总是摊开 —— 折叠只为把旧消息收干净，不藏新消息。
         </p>
         {reachoutMsg && <p className="mt-1.5 text-xs text-emerald-600 dark:text-emerald-400">{reachoutMsg}</p>}
         {reachoutErr && <p className="mt-1.5 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{reachoutErr}</p>}
@@ -937,7 +977,14 @@ function RuntimePanel() {
                   <td className="py-1.5 align-top">
                     {/* 主动开口总闸（reachout_enabled）是「记忆与任务目录」页签的单写点：
                         这里只读展示当前生效值，避免同一开关两处可写（设计稿 §2.2.2）。 */}
-                    {it.kind === "ro" || it.key === "reachout_enabled" ? (
+                    {/* 主动开口总闸与收件箱折叠窗口是「记忆与任务目录」页签的单写点：这里
+                        只读展示当前生效值，避免同一开关两处可写（设计稿 §2.2.2）。
+                        比对必须用 `field`（保存路径用的稳定身份），**不能用 `key`** —— `key`
+                        是 env 名（REACHOUT_ENABLED），以前写成比 env 名的小串，运行环境里
+                        其实一直是可编辑的，用例因为 stub 把 key 写成了 field 名而没发现。 */}
+                    {it.kind === "ro"
+                    || it.field === "reachout_enabled"
+                    || it.field === "reachout_merge_days" ? (
                       <span className={`font-mono ${it.changed ? "text-amber-600 dark:text-amber-400" : "text-slate-600 dark:text-slate-300"}`}>
                         {it.value}
                       </span>
@@ -946,7 +993,7 @@ function RuntimePanel() {
                     )}
                   </td>
                   <td className="py-1.5 align-top text-slate-400 dark:text-slate-500">
-                    {it.key === "reachout_enabled"
+                    {it.field === "reachout_enabled" || it.field === "reachout_merge_days"
                       ? "在「记忆与任务目录」页签修改"
                       : it.note || (it.changed && it.kind === "ro" ? `默认 ${it.default}` : "")}
                   </td>

@@ -64,20 +64,35 @@ beforeEach(() => {
         note: "",
         groups: [
           {
-            key: "core",
-            label: "核心",
+            key: "reachout",
+            label: "主动开口",
             items: [
               {
-                key: "reachout_enabled",
+                // 真实后端：`key` 是 **env 名**，`field` 才是 Settings 字段名（保存按它）。
+                // 以前这份 stub 把 key 写成了小写 field 名，于是"运行环境只读"那条判定
+                // （比 key）在生产上从未命中，用例却一直是绿的。
+                key: "REACHOUT_ENABLED",
                 field: "reachout_enabled",
-                label: "主动开口",
-                value: "false",
-                default: "false",
+                label: "全局总闸",
+                value: "1",
+                default: "1",
                 changed: false,
                 overridden: false,
                 override_value: null,
                 kind: "bool",
                 choices: null,
+              },
+              {
+                key: "REACHOUT_MERGE_DAYS",
+                field: "reachout_merge_days",
+                label: "收件箱合并窗口（天）",
+                value: "3",
+                default: "1",
+                changed: true,
+                overridden: true,
+                override_value: "3",
+                kind: "int",
+                choices: ["1", "3", "7"],
               },
             ],
           },
@@ -140,13 +155,25 @@ describe("SettingsPage 页签拆分（Batch 5：记忆与任务目录 / 关于�
     expect(screen.queryByRole("button", { name: "通用" })).toBeNull();
   });
 
-  it("主动开口总闸只在「记忆与任务目录」可写；运行环境里 reachout_enabled 只读并指向该页签", async () => {
+  it("主动开口总闸与收件箱窗口只在「记忆与任务目录」可写；运行环境里只读并指向该页签", async () => {
+    const { fireEvent } = await import("@testing-library/react");
     renderPage();
-    // 单写点：记忆与任务目录里的可写开关（stub 的 reachout_enabled 值非 "0" → 视为开）
+    // 单写点：记忆与任务目录里的可写开关（stub 的 reachout_enabled 生效值 = 1 → 已开启）
     expect(await screen.findByRole("button", { name: "已开启" })).toBeTruthy();
-    // 运行环境（只读）：当前生效值 + 指向单写点的备注，而不是可编辑控件
-    expect(await screen.findByText("在「记忆与任务目录」页签修改")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "已关闭" })).toBeNull();
+    // 两条都该只读并指回单写点：只有一条被标成只读 = 判定按错了字段（key vs field）
+    expect((await screen.findAllByText("在「记忆与任务目录」页签修改")).length).toBe(2);
+    // 窗口下拉按**生效值**选中（stub 给 3），而不是按出厂默认 1
+    const select = (await screen.findByLabelText(/收件箱折叠窗口/)) as HTMLSelectElement;
+    expect(select.value).toBe("3");
+    fireEvent.change(select, { target: { value: "7" } });
+    await waitFor(() =>
+      expect(apiMock.put).toHaveBeenCalledWith(
+        "/api/settings/runtime",
+        expect.objectContaining({ values: { reachout_merge_days: "7" } }),
+      ),
+    );
+    // 折叠窗口不是"建议改重启"的只读项：保存走同一条 runtime 覆盖通道，即时生效
+    expect(screen.queryAllByRole("button", { name: "已关闭" })).toHaveLength(0);
   });
 
   it("关于与系统状态页含 外观 / 关于 / 系统状态 三块", async () => {

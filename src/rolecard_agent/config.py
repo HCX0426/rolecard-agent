@@ -181,8 +181,14 @@ class Settings(BaseModel):
     reachout_enabled: bool = True
 
     # 同一角色两次主动开口的最小间隔（分钟）。抑制层之一：防角色刷屏。
-    # 低频配置走 env 即可（默认 60 分钟/角色）；改它需重启。
+    # 「运行环境」页可热切（调度每 tick 读当前值），排查时调小它就能立刻复现一次开口。
     reachout_interval_minutes: int = 60
+
+    # 收件箱一摞消息合并成一行覆盖多少天（1/3/7 三档；纯展示口径，落在前端）。
+    # 为什么是"桶宽"而不是"合并条数"：用户抱怨的是"一天开口 5 次就是 5 行，历史糊成流水账"
+    # —— 那是**时间**密度问题，按条数合并会让三天前的五条挤成一行而今天的五条占五行。
+    # 后端不参与分组：`created_at` 已经在响应里，折叠只做在界面（理由见设计稿 §1）。
+    reachout_merge_days: int = 1
 
     # 文件事件触发（架构计划 C·§5.2 第四类触发源，core/file_watch.py）：全局总闸。
     # True = 每 tick 轮询任务目录（size+mtime 基线 diff），有变化时该次开口以 file_event
@@ -395,6 +401,7 @@ class Settings(BaseModel):
             ("AGENT_DEFAULT_MODE", "agent_default_mode"),
             ("REACHOUT_ENABLED", "reachout_enabled"),
             ("REACHOUT_INTERVAL_MINUTES", "reachout_interval_minutes"),
+            ("REACHOUT_MERGE_DAYS", "reachout_merge_days"),
             ("FILE_WATCH_ENABLED", "file_watch_enabled"),
             ("SQLITE_PATH", "sqlite_path"),
             ("CHROMA_PATH", "chroma_path"),

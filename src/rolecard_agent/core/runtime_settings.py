@@ -62,6 +62,14 @@ RUNTIME_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("agent_default_mode", "AGENT_DEFAULT_MODE", "str", ("chat", "agent")),
     # 角色主动开口全局总闸：「运行环境」页保存即热生效（调度每 tick 读当前值）。
     FieldSpec("reachout_enabled", "REACHOUT_ENABLED", "bool"),
+    # 开口间隔（分钟）：调度每 tick 读当前值，所以在线可改。以前只能改 env + 重启，
+    # 排查"它为什么不开口"时没法临时调小复现（架构计划 §5.2 的抑制层之一）。
+    FieldSpec("reachout_interval_minutes", "REACHOUT_INTERVAL_MINUTES", "int"),
+    # 收件箱一摞合并成一行覆盖几天。**只有三档**（决策点 A）：连续滑块会产出
+    # "合并 5 天"这种没人能预判界面长什么样的取值，而 1/3/7 正好对应"今天/这周/最近一段"。
+    # 写在 RUNTIME_FIELDS 是为了复用覆盖存储与热重建，**可写入口不在运行环境页**
+    # （那里只读展示），单一写点在「记忆与任务目录」的主动开口卡 —— 同 reachout_enabled。
+    FieldSpec("reachout_merge_days", "REACHOUT_MERGE_DAYS", "int", ("1", "3", "7")),
     # 文件事件触发（架构计划 C·§5.2）全局闸：开 = 每 tick 轮询任务目录做素材门控开口。
     FieldSpec("file_watch_enabled", "FILE_WATCH_ENABLED", "bool"),
     # 命令执行（架构计划 C·§6.2）：总闸 + 审批档都允许在线热切（工具每调用读 settings）。
@@ -105,6 +113,10 @@ def _parse(spec: FieldSpec, raw: str) -> Any:
             raise ValueError(f"{spec.env_key} 必须是整数（{raw!r}）") from exc
         if v < 0:
             raise ValueError(f"{spec.env_key} 不能为负（0 = 不裁剪）")
+        # int 也能带 choices（如收件箱合并窗口只有 1/3/7）。以前 choices 只在字符串分支
+        # 校验，于是"带枚举的整数字段"能写进任意值 —— 界面会显示一个没人处理得好的窗口。
+        if spec.choices and str(v) not in spec.choices:
+            raise ValueError(f"{spec.env_key} 只支持：{' / '.join(spec.choices)}")
         return v
     if spec.choices and text.lower() not in spec.choices:
         raise ValueError(f"{spec.env_key} 只支持：{' / '.join(spec.choices)}")
