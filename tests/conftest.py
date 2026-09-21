@@ -134,3 +134,27 @@ def registry() -> ToolRegistry:
 @pytest.fixture
 def all_tools() -> list[BaseTool]:
     return [list_roles, query_health_record, compare_health_index]
+
+
+def model_rows(payload: dict[str, object]) -> list[dict[str, object]]:
+    """把 `GET /api/settings/models` 的分组视图摊平成"行"，给按行断言的用例用。
+
+    放在 conftest 是因为契约只有一个视图（`providers`）：以前响应里还并排放着一份平铺
+    `backends`，界面切完就删了 —— 测试不该为了少敲几行键而把那个双形状契约续命。
+    摊平时把组上的凭据（provider/base_url/has_key/key_masked）挂到行上，正是"key 属于组"
+    这件事在数据结构上的样子。
+    """
+    rows: list[dict[str, object]] = []
+    for group in payload.get("providers", []):  # type: ignore[union-attr]
+        for model in group["models"]:
+            rows.append(
+                {
+                    **model,
+                    "provider": group["provider"],
+                    "provider_id": group["id"],
+                    "base_url": group["base_url"],
+                    "has_key": group["has_key"],
+                    "key_masked": group["key_masked"],
+                }
+            )
+    return rows

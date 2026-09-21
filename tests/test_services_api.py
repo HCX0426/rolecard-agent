@@ -21,6 +21,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from rolecard_agent.api.main import create_app
+from tests.conftest import model_rows
 
 
 @pytest.fixture
@@ -117,7 +118,7 @@ def test_add_then_remove_a_reference_never_touches_the_model_page(client: TestCl
 
     assert client.delete("/api/services/embedding/endpoints/embed_c").status_code == 204
     # 模型页配置必须原样还在
-    names = {b["name"] for b in client.get("/api/settings/models").json()["backends"]}
+    names = {r["name"] for r in model_rows(client.get("/api/settings/models").json())}
     assert "embed_c" in names
 
 
@@ -346,3 +347,40 @@ def test_models_order_rejects_unknown_and_duplicate(client: TestClient) -> None:
     ).status_code == 400
     # 空列表在 schema 层被拒（ReorderBody min_length=1）→ FastAPI 校验错误 422
     assert client.put("/api/services/models", json={"order": []}).status_code == 422
+
+
+def test_models_order_is_the_chat_pool_and_can_grow_shrink(client: TestClient) -> None:
+    """「模型推理」那一节的序列**就是**"谁用于对话"：能加进来、能摘出去，配置本身不受影响。
+
+    拆层前这里是死循环（候选只给 usage=chat 的行，而 usage 只能从模型页写）；批次③ 之后
+    服务页给的就是宇宙 = 模型页全部行，所以一个原本只服务嵌入的后端也能被拖进对话。
+    """
+    client.put(
+        "/api/settings/models",
+        json={
+            "default": "local",
+            "backends": [
+                {"name": "local", "provider": "ollama", "model": "m", "usage": "chat"},
+                {"name": "emb", "provider": "ollama", "model": "bge-m3", "usage": "embedding"},
+            ],
+        },
+    )
+    models = _category(client.get("/api/services").json(), "models")
+    assert [c["id"] for c in models["candidates"]] == ["local"]  # emb 还没参与对话
+
+    res = client.put("/api/services/models", json={"order": ["local", "emb"]})
+    assert res.status_code == 200, res.text
+    body = client.get("/api/settings/models").json()
+    assert body["default"] == "local" and body["fallbacks"] == ["emb"]
+
+    # 摘掉第 1 位：下一位顶上，emb 那行配置仍在（摘引用 ≠ 删配置）
+    assert client.put("/api/services/models", json={"order": ["emb"]}).status_code == 200
+    body = client.get("/api/settings/models").json()
+    assert body["default"] == "emb" and body["fallbacks"] == []
+    assert {r["name"] for r in model_rows(body)} == {"local", "emb"}
+    # 现在轮到 local 被摘出去：它还在模型页，只是不再用于对话
+    assert client.put("/api/services/models", json={"order": ["local"]}).status_code == 200
+    body = client.get("/api/settings/models").json()
+    assert {r["name"] for r in model_rows(body)} == {"local", "emb"}  # 两行配置都还在
+    emb = next(r for r in model_rows(body) if r["name"] == "emb")
+    assert emb["used_by"] == []  # 派生用途跟着序列走，没有第二处答案

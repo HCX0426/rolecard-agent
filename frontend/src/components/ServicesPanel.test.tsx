@@ -58,7 +58,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   apiMock.get.mockImplementation(async (url: string) => {
     if (url === "/api/services") return VIEW;
-    if (url === "/api/settings/models") return { backends: [], fallbacks: [], default: "" };
+    if (url === "/api/settings/models") return { providers: [], fallbacks: [], default: "" };
     return {};
   });
 });
@@ -94,7 +94,7 @@ describe("ServicesPanel 停用行的排序按钮（禁用必须配说明）", ()
     const view = { services: [{ ...VIEW.services[0], candidates: [disabledRow] }] };
     apiMock.get.mockImplementation(async (url: string) => {
       if (url === "/api/services") return view;
-      if (url === "/api/settings/models") return { backends: [], fallbacks: [], default: "" };
+      if (url === "/api/settings/models") return { providers: [], fallbacks: [], default: "" };
       return {};
     });
     render(<ServicesPanel />);

@@ -53,7 +53,7 @@ function stubMountCalls(
   apiMock.get.mockImplementation(async (url: string) => {
     if (url === "/api/sessions") return [];
     if (url === "/api/roles") return [];
-    if (url === "/api/settings/models") return { default: "local", backends: [], fallbacks: [] };
+    if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
     if (url === "/api/settings/model-providers") return { providers: [] };
     if (url.endsWith("/messages")) return { messages: replay, total: replay.length, limit: 500, truncated: false };
     if (url.endsWith("/context")) return contextOverride;
@@ -162,7 +162,7 @@ describe("ChatPage 流式渲染", () => {
     apiMock.get.mockImplementation(async (url: string) => {
       if (url === "/api/sessions") return [{ thread_id: "s_old", title: "旧会话", role_id: "r" }];
       if (url === "/api/roles") return [];
-      if (url === "/api/settings/models") return { default: "local", backends: [], fallbacks: [] };
+      if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
       if (url === "/api/settings/model-providers") return { providers: [] };
       if (url.endsWith("/messages")) return { messages: [], total: 0, limit: 500, truncated: false };
       if (url.endsWith("/context")) return { trimmed: 9, kept: 3, budget: 24000 };
@@ -268,7 +268,7 @@ describe("ChatPage 流式渲染", () => {
     apiMock.get.mockImplementation(async (url: string) => {
       if (url === "/api/sessions") return [{ thread_id: "s_old", title: "旧会话", role_id: "r" }];
       if (url === "/api/roles") return [];
-      if (url === "/api/settings/models") return { default: "local", backends: [], fallbacks: [] };
+      if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
       if (url === "/api/settings/model-providers") return { providers: [] };
       if (url.endsWith("/messages")) return { messages: replay, total: replay.length, limit: 500, truncated: false };
       if (url.endsWith("/context")) return { trimmed: 0, kept: 0, budget: 24000 };
@@ -312,7 +312,7 @@ describe("ChatPage 删除二次确认（useConfirm）", () => {
     apiMock.get.mockImplementation(async (url: string) => {
       if (url === "/api/sessions") return [{ thread_id: "s1", title: "会话A", role_id: "r" }];
       if (url === "/api/roles") return [];
-      if (url === "/api/settings/models") return { default: "local", backends: [], fallbacks: [] };
+      if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
       if (url === "/api/settings/model-providers") return { providers: [] };
       if (url.endsWith("/messages")) return { messages: [], total: 0, limit: 500, truncated: false };
       if (url.endsWith("/context")) return { trimmed: 0, kept: 0, budget: 24000 };
@@ -375,12 +375,24 @@ describe("ChatPage 删除二次确认（useConfirm）", () => {
 });
 
 describe("ChatPage 模型菜单能力位徽章（Batch 6：supports_tools）", () => {
-  function stubBackends(rows: unknown[]) {
+  function stubBackends(rows: Record<string, unknown>[]) {
+    // 用例按"行"写最省事，这里统一包成一个凭据组：契约只有分组这一个视图，
+    // 参与对话 = used_by 含 chat（不再有 usage 字段可筛）。
+    const providers = [
+      {
+        id: "g", provider: "openai", label: "OpenAI 兼容", base_url: null, style: "openai",
+        needs_key: true, has_key: true, key_masked: "sk-…x",
+        models: rows.map((r) => ({
+          name: r.name, model: r.model, num_ctx: r.num_ctx ?? null,
+          supports_vision: r.supports_vision ?? null, supports_tools: r.supports_tools ?? null,
+          used_by: ["chat"], is_default: false,
+        })),
+      },
+    ];
     apiMock.get.mockImplementation(async (url: string) => {
       if (url === "/api/sessions") return [];
       if (url === "/api/roles") return [];
-      if (url === "/api/settings/models") return { default: "local", backends: rows, fallbacks: [] };
-      if (url === "/api/settings/model-providers") return { providers: [] };
+      if (url === "/api/settings/models") return { default: "local", providers, fallbacks: [] };
       if (url.endsWith("/messages")) return { messages: [], total: 0, limit: 500, truncated: false };
       if (url.endsWith("/context")) return { trimmed: 0, kept: 0, budget: 24000 };
       if (url.startsWith("/api/session/")) return { model_name: null };
@@ -396,7 +408,7 @@ describe("ChatPage 模型菜单能力位徽章（Batch 6：supports_tools）", (
 
   it("supports_tools=true 的后端在模型菜单显示「工具」徽章（纯展示能力位）", async () => {
     stubBackends([
-      { name: "with_tools", provider: "openai", model: "gpt-x", usage: "chat", supports_vision: false, supports_tools: true },
+      { name: "with_tools", provider: "openai", model: "gpt-x", supports_vision: false, supports_tools: true },
     ]);
     await openModelMenu();
     expect(await screen.findByText("gpt-x")).toBeTruthy();
@@ -405,7 +417,7 @@ describe("ChatPage 模型菜单能力位徽章（Batch 6：supports_tools）", (
 
   it("supports_tools=false 的后端不显示「工具」徽章", async () => {
     stubBackends([
-      { name: "no_tools", provider: "openai", model: "gpt-y", usage: "chat", supports_vision: false, supports_tools: false },
+      { name: "no_tools", provider: "openai", model: "gpt-y", supports_vision: false, supports_tools: false },
     ]);
     await openModelMenu();
     // 菜单已开：该后端行可见，但没有「工具」徽章（避免把能力位这条事实复制到前端做 disable）

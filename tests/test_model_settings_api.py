@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 
 from rolecard_agent.api.main import create_app
-from tests.conftest import ScriptedChat
+from tests.conftest import ScriptedChat, model_rows
 
 
 @pytest.fixture
@@ -89,9 +89,9 @@ def test_fresh_startup_seeds_env_backends(client: TestClient) -> None:
     """首次启动把 env 后端迁移进表（模型页可见、可编辑）；迁移一次性。"""
     body = client.get("/api/settings/models").json()
     assert body["default"] == "local"  # env 默认随迁移一并接管
-    assert [b["name"] for b in body["backends"]] == ["local"]
+    assert [r["name"] for r in model_rows(body)] == ["local"]
     # 无 key 供应商（Ollama）不存占位 key：启动归一化会清掉 env 里 "ollama" 这种占位值
-    assert body["backends"][0]["has_key"] is False
+    assert model_rows(body)[0]["has_key"] is False
 
 
 def test_admin_audits_never_contain_api_key_material(client: TestClient) -> None:
@@ -137,7 +137,7 @@ def test_seed_is_one_way_env_never_comes_back(tmp_path: Path) -> None:
     local 不会被 env 重新塞回来 —— 界面是唯一事实来源。"""
     app = create_app(sqlite_path=tmp_path / "seed.db")
     with TestClient(app) as c:
-        assert [b["name"] for b in c.get("/api/settings/models").json()["backends"]] == ["local"]
+        assert [r["name"] for r in model_rows(c.get("/api/settings/models").json())] == ["local"]
         # 操作员在 UI 里换成 siliconflow（删除了 local）
         assert (
             c.put(
@@ -162,7 +162,7 @@ def test_seed_is_one_way_env_never_comes_back(tmp_path: Path) -> None:
     app2 = create_app(sqlite_path=tmp_path / "seed.db")
     with TestClient(app2) as c2:
         body = c2.get("/api/settings/models").json()
-        assert {b["name"] for b in body["backends"]} == {"siliconflow"}
+        assert {r["name"] for r in model_rows(body)} == {"siliconflow"}
         assert body["default"] == "siliconflow"
 
 
@@ -186,7 +186,7 @@ def test_put_then_get_round_trip_without_key_exposure(client: TestClient) -> Non
     assert res.status_code == 200
     body = res.json()
     assert body["default"] == "siliconflow"
-    by_name = {b["name"]: b for b in body["backends"]}
+    by_name = {r["name"]: r for r in model_rows(body)}
     assert by_name["siliconflow"]["has_key"] is True
     assert "api_key" not in by_name["siliconflow"]  # 只写不回读
     # local 的占位 key（"ollama"）经启动归一化清除 —— 无 key 供应商永不存 key
@@ -194,7 +194,7 @@ def test_put_then_get_round_trip_without_key_exposure(client: TestClient) -> Non
 
     fetched = client.get("/api/settings/models").json()
     assert fetched["default"] == "siliconflow"
-    assert {b["name"] for b in fetched["backends"]} == {"siliconflow", "local"}
+    assert {r["name"] for r in model_rows(fetched)} == {"siliconflow", "local"}
 
 
 def test_omitted_key_is_preserved_not_erased(client: TestClient) -> None:
@@ -213,14 +213,14 @@ def test_omitted_key_is_preserved_not_erased(client: TestClient) -> None:
     }
     assert client.put("/api/settings/models", json=payload_no_key).status_code == 200
     body = client.get("/api/settings/models").json()
-    assert body["backends"][0]["has_key"] is True  # 没被抹掉
+    assert model_rows(body)[0]["has_key"] is True  # 没被抹掉
 
     payload_clear = {
         "default": "cloud-a",
         "backends": [{"name": "cloud-a", "provider": "openai", "model": "m", "api_key": ""}],
     }
     assert client.put("/api/settings/models", json=payload_clear).status_code == 200
-    assert client.get("/api/settings/models").json()["backends"][0]["has_key"] is False
+    assert model_rows(client.get("/api/settings/models").json())[0]["has_key"] is False
 
 
 def test_save_hot_rebuilds_the_graph(client: TestClient) -> None:
@@ -454,7 +454,7 @@ def test_openai_backend_without_key_is_rejected_at_save(client: TestClient) -> N
             ],
         },
     )
-    assert ok.status_code == 200 and ok.json()["backends"][0]["has_key"] is True
+    assert ok.status_code == 200 and model_rows(ok.json())[0]["has_key"] is True
 
     # 已存 key 的后端再次提交不带 key = 保留原 key
     keep = client.put(
@@ -464,7 +464,7 @@ def test_openai_backend_without_key_is_rejected_at_save(client: TestClient) -> N
             "backends": [{"name": "cloud-a", "provider": "openai", "model": "m"}],
         },
     )
-    assert keep.status_code == 200 and keep.json()["backends"][0]["has_key"] is True
+    assert keep.status_code == 200 and model_rows(keep.json())[0]["has_key"] is True
 
     # 本地 Ollama 不需要凭据
     local_ok = client.put(
@@ -488,7 +488,7 @@ def test_invalid_default_backend_400(client: TestClient) -> None:
     assert res.status_code == 400
     # 未写入：只剩启动时播种的 local，ghost 不存在
     body = client.get("/api/settings/models").json()
-    assert {b["name"] for b in body["backends"]} == {"local"}
+    assert {r["name"] for r in model_rows(body)} == {"local"}
     assert body["default"] == "local"  # 播种时采纳的 env 默认
 
 

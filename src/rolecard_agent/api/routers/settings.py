@@ -62,7 +62,6 @@ def _models_payload(ctx: AppContext) -> dict[str, object]:
     return {
         "default": ctx.model_settings.default_backend(),
         "providers": ctx.model_settings.list_providers(),
-        "backends": ctx.model_settings.list_backends(),
         "fallbacks": ctx.model_settings.list_fallbacks() or [],
     }
 
@@ -71,10 +70,9 @@ def _models_payload(ctx: AppContext) -> dict[str, object]:
 def get_model_settings(ctx: AppContext = Depends(get_context)) -> object:
     """模型设置。api_key 永不回明文 —— 只有 has_key 掩码预览。
 
-    两个视图同时给（拆层过渡期，见 docs/模型页设计稿.md §5）：
-      * `providers` = 新形状：按凭据组分层的卡片数据，key 只在组头出现一次；
-      * `backends`  = 旧形状（对话页/角色页/旧模型页仍在消费），`usage` 已是派生只读值。
-    界面切完删 `backends`；两份不是两处真相，是同一份行数据的两种投影。
+    只有 `providers` 一个视图（批次②③ 之后旧 `backends` 平铺投影已随界面一起下线）：
+    凭据组 → 组下模型行，`used_by` 是派生只读值。内部的 `list_backends()` 还在（服务页与
+    工厂消费那套"后端行"形状），但它不再是对外契约。
     """
     return _models_payload(ctx)
 

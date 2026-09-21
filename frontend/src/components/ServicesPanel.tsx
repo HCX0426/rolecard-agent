@@ -68,7 +68,7 @@ function AvailBadge({ available, reason }: { available: boolean; reason: string 
 
 export function ServicesPanel() {
   const [view, setView] = useState<ServicesView | null>(null);
-  const [backends, setBackends] = useState<ModelSettings["backends"]>([]);
+  const [providers, setProviders] = useState<ModelSettings["providers"]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [flash, setFlash] = useState("");
@@ -82,7 +82,9 @@ export function ServicesPanel() {
       api.get<ModelSettings>("/api/settings/models"),
     ]);
     setView(v);
-    setBackends(s.backends);
+    // 候选的宇宙 = 模型页的凭据组（按供应商分组显示）。用途不在这里存第二份：
+    // 这一页写的是引用行，模型页读的是派生值。
+    setProviders(s.providers ?? []);
   }, []);
 
   useEffect(() => {
@@ -121,15 +123,28 @@ export function ServicesPanel() {
     );
   };
 
-  /** 新增引用：从模型页已配置的后端中选择（不做任何配置复制）。 */
+  /** 新增引用：从模型页已配置的后端中选择（不做任何配置复制）。
+   *  模型推理那一节没有"引用行"可 POST —— 它的序列本身就是事实面，
+   *  所以"加入对话"= 把这个名字追加到全量序里再整体写回。 */
   const addRef = (cat: ServiceCategoryView) => {
     if (!picked) {
       setError("请先选择要引用的后端");
       return;
     }
-    run(cat.key, () => api.post(`/api/services/${cat.key}/endpoints`, { ref_backend: picked }), "已引用并热生效");
+    if (cat.order_only) {
+      const order = [...cat.candidates.map((c) => c.id), picked];
+      run(cat.key, () => api.put(`/api/services/${cat.key}`, { order }), "已加入对话序列并热生效");
+    } else {
+      run(cat.key, () => api.post(`/api/services/${cat.key}/endpoints`, { ref_backend: picked }), "已引用并热生效");
+    }
     setAdding(null);
     setPicked("");
+  };
+
+  /** 从对话序列里摘掉一行（配置本身留在模型页）。至少要留一行 —— 空序列等于没模型可对话。 */
+  const removeFromPool = (cat: ServiceCategoryView, cand: ServiceEndpoint) => {
+    const order = cat.candidates.map((c) => c.id).filter((id) => id !== cand.id);
+    run(cat.key, () => api.put(`/api/services/${cat.key}`, { order }), "已移出对话序列（模型页配置保留）");
   };
 
   /** 移除引用：只从本服务优先级中摘除，模型页配置不受影响。 */
@@ -175,15 +190,20 @@ export function ServicesPanel() {
       )}
 
       {view.services.map((cat) => {
-        // 可引用的后端 = 模型页全部配置 − 本服务已引用的（含失效引用占位）
+        // 候选 = 模型页全部模型 − 本服务已引用的；按供应商分组显示（组头就是凭据组名，
+        // 与模型页那一屏的分组口径一致，用户在两页看到的是同一套名字）。
         const referenced = new Set(cat.candidates.filter((c) => !c.builtin).map((c) => c.id));
-        const selectable = backends.filter((b) => !referenced.has(b.name));
+        const selectable = providers
+          .flatMap((g) => g.models.map((m) => ({ group: g.label, name: m.name, model: m.model })))
+          .filter((m) => !referenced.has(m.name));
+        const usedBy = (name: string) =>
+          providers.flatMap((g) => g.models).find((m) => m.name === name)?.used_by ?? [];
         return (
           <section key={cat.key} className="flex flex-col gap-2">
             <div className="flex items-baseline gap-2">
               <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">{cat.title}</h3>
               <span className="text-[11px] text-slate-400 dark:text-slate-500">{cat.hint}</span>
-              {!cat.readonly && !cat.order_only && (
+              {!cat.readonly && (
                 <button
                   onClick={() => {
                     setAdding(adding === cat.key ? null : cat.key);
@@ -191,7 +211,7 @@ export function ServicesPanel() {
                   }}
                   className="ml-auto shrink-0 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 hover:text-blue-600 dark:hover:text-blue-400"
                 >
-                  {adding === cat.key ? "取消" : "＋ 引用后端"}
+                  {adding === cat.key ? "取消" : cat.order_only ? "＋ 加入对话" : "＋ 引用后端"}
                 </button>
               )}
             </div>
@@ -212,16 +232,26 @@ export function ServicesPanel() {
                     onChange={(e) => setPicked(e.target.value)}
                     className="rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-xs"
                   >
-                    <option value="">选择模型页已配置的后端…</option>
-                    {selectable.map((b) => (
-                      <option key={b.name} value={b.name}>
-                        {b.name} · {b.model}（{b.usage === "chat" ? "对话" : b.usage === "embedding" ? "嵌入" : b.usage === "rerank" ? "重排" : "OCR"}）
-                      </option>
-                    ))}
+                    <option value="">
+                      {cat.order_only ? "选择要用于对话的模型…" : "选择模型页已配置的后端…"}
+                    </option>
+                    {providers
+                      .filter((g) => g.models.some((m) => !referenced.has(m.name)))
+                      .map((g) => (
+                        <optgroup key={g.id} label={g.label}>
+                          {g.models
+                            .filter((m) => !referenced.has(m.name))
+                            .map((m) => (
+                              <option key={m.name} value={m.name}>
+                                {m.name} · {m.model}
+                              </option>
+                            ))}
+                        </optgroup>
+                      ))}
                   </select>
                   {selectable.length === 0 && (
                     <span className="text-[11px] text-slate-400 dark:text-slate-500">
-                      模型页还没有可引用的后端 —— 请先去「模型」页签新增
+                      模型页还没有可加入的后端 —— 请先去「模型」页签新增
                     </span>
                   )}
                   <button
@@ -292,7 +322,7 @@ export function ServicesPanel() {
                                 该行已停用 —— 先「启用」才能排优先级
                               </span>
                             )}
-                            {!cat.order_only && (
+                            {!cat.order_only ? (
                               <>
                                 <button
                                   disabled={busy === cat.key}
@@ -316,6 +346,31 @@ export function ServicesPanel() {
                                   >
                                     移除
                                   </button>
+                                )}
+                              </>
+                            ) : (
+                              <>
+                                {/* 模型推理这一节：序列本身就是"谁用于对话"的事实面，
+                                    所以摘除是一等动作（配置仍留在模型页，不是删配置）。 */}
+                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-slate-700 dark:text-slate-300">
+                                  {usedBy(cand.id).length > 1
+                                    ? `还用于：${usedBy(cand.id).filter((u) => u !== "chat").join("、")}`
+                                    : "仅用于对话"}
+                                </span>
+                                <button
+                                  disabled={busy === cat.key || cat.candidates.length <= 1}
+                                  onClick={async () => {
+                                    if (await confirm({ title: `把「${cand.label}」移出对话序列？`, body: "只取消「用于对话」这一项，模型页那行配置与它的其他用途都不受影响。至少要保留一个对话模型。", confirmText: "确认移出", danger: true })) removeFromPool(cat, cand);
+                                  }}
+                                  title={cat.candidates.length <= 1 ? "至少要保留一个对话模型" : "移出对话序列（模型页配置保留）"}
+                                  className="rounded px-2 py-0.5 text-[11px] text-red-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-900/30"
+                                >
+                                  移出对话
+                                </button>
+                                {cat.candidates.length <= 1 && (
+                                  <span className="text-[10px] leading-tight text-slate-400 dark:text-slate-500">
+                                    这是唯一在册的对话模型 —— 想换先「＋ 加入对话」
+                                  </span>
                                 )}
                               </>
                             )}

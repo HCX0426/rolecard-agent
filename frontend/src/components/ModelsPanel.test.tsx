@@ -93,7 +93,7 @@ const CATALOG = [
   },
 ];
 
-const SETTINGS = { default: "sf-vl", fallbacks: ["sf"], providers: [SF_GROUP, OLLAMA_GROUP], backends: [] };
+const SETTINGS = { default: "sf-vl", fallbacks: ["sf"], providers: [SF_GROUP, OLLAMA_GROUP] };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -146,7 +146,7 @@ describe("分组卡片：一屏读懂凭据 / 模型 / 谁在用", () => {
   it("一个供应商都没有时给空态与添加入口", async () => {
     apiMock.get.mockImplementation(async (url: string) => {
       if (url === "/api/settings/models")
-        return { default: null, fallbacks: [], providers: [], backends: [] };
+        return { default: null, fallbacks: [], providers: [] };
       if (url === "/api/settings/model-providers") return { providers: CATALOG };
       return {};
     });

@@ -96,8 +96,16 @@ export default function RolesPage() {
     api.get<ToolCatalog>("/api/tools/catalog").then(setCatalog).catch(() => {});
     api
       .get<ModelSettings>("/api/settings/models")
-      // 角色级路由只允许指向**对话**后端（usage=chat）；嵌入/重排/OCR 凭据行不是推理模型。
-      .then((s) => setBackends(s.backends.filter((b) => (b.usage ?? "chat") === "chat").map((b) => b.name)))
+      // 角色级路由只允许指向**参与对话**的模型（`used_by` 含 chat，派生自服务页的引用行）；
+      // 只服务嵌入/重排的行不是推理模型。
+      .then((s) =>
+        setBackends(
+          (s.providers ?? [])
+            .flatMap((g) => g.models)
+            .filter((m) => m.used_by.includes("chat"))
+            .map((m) => m.name),
+        ),
+      )
       .catch(() => {});
     // 可选作用域的真实来源：已建的知识集合（RAG 真实作用域），让下拉"所见即所得"。
     api

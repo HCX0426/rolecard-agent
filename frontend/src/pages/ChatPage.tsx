@@ -6,7 +6,6 @@ import {
   type BackendRow,
   type MessagePage,
   type MessageRow,
-  type ModelProvider,
   type ModelSettings,
   type RoleCard,
   type SessionContext,
@@ -37,10 +36,27 @@ import ThinkingPanel from "../components/chat/ThinkingPanel";
 import { Markdown } from "../components/Markdown";
 
 /** 回答耗时：created_at 配对（用户 → 助手）换算成可读时长；无时间戳的旧消息返回 null。 */
-/** 模型设置里"这一页要显示的那些行"：只留对话后端（嵌入/重排/OCR 凭据行归服务页按用途引用）。
+/** 模型设置里"这一页要显示的那些行"：只留**参与对话**的模型（`used_by` 含 chat，派生自
+ *  服务页的引用行 —— 拆层后没有 usage 列可筛了）。读的是分组视图 `providers`，把凭据组
+ *  的 provider/base_url 摊平回行上，菜单那套按 provider 分组的逻辑因此一行不用改。
  *  两条拉取路径（挂载、改窗口后刷新）共用它，state 因此只有一种形状。 */
 function chatRows(settings: ModelSettings): BackendRow[] {
-  return settings.backends.filter((b) => (b.usage ?? "chat") === "chat");
+  return (settings.providers ?? []).flatMap((g) =>
+    g.models
+      .filter((m) => m.used_by.includes("chat"))
+      .map((m) => ({
+        name: m.name,
+        provider: g.provider,
+        base_url: g.base_url,
+        model: m.model,
+        sort_order: 0,
+        num_ctx: m.num_ctx,
+        supports_vision: m.supports_vision ?? false,
+        supports_tools: m.supports_tools ?? true,
+        has_key: g.has_key,
+        key_masked: g.key_masked,
+      })),
+  );
 }
 
 function fmtDuration(from: string, to: string): string | null {
@@ -95,7 +111,7 @@ export default function ChatPage({
     cancelMenuClose,
     closeAllMenus,
   } = useMenus();
-  // 对话页只关心 usage=chat 的后端行；类型直接用 `api.ts` 的 `BackendRow`，不再自造窄化
+  // 对话页只关心**参与对话**的模型行；类型直接用 `api.ts` 的 `BackendRow`，不再自造窄化
   // 形状（审计 §5）：以前挂载路径手挑 6 个字段、改窗口那条路径塞原始行 —— 同一个 state
   // 两种形状，谁先跑过决定字段在不在，`supports_tools` 这类就这样被页面"看不见"了。
   const [backends, setBackends] = useState<BackendRow[]>([]);
@@ -168,11 +184,10 @@ export default function ChatPage({
     api.get<RoleCard[]>("/api/roles").then(setRoles).catch(() => {});
     api.get<ModelSettings>("/api/settings/models").then((s) => {
       setBackends(chatRows(s));
-      setDefaultBackend(s.default || s.backends[0]?.name || "");
+      setDefaultBackend(s.default || chatRows(s)[0]?.name || "");
+      // 分组标题用供应商的中文 displayName（来自 providers 视图，不再另拉一次目录接口）
+      setProviderLabels(Object.fromEntries((s.providers ?? []).map((g) => [g.provider, g.label])));
     }).catch(() => {});
-    api.get<{ providers: ModelProvider[] }>("/api/settings/model-providers")
-      .then((s) => setProviderLabels(Object.fromEntries(s.providers.map((p) => [p.id, p.label]))))
-      .catch(() => {});
   }, [refreshSessions]);
 
   // 头部的角色选择跟随当前会话（切会话时显示该会话自己的角色）

@@ -42,7 +42,7 @@ beforeEach(() => {
   apiMock.get.mockImplementation(async (url: string) => {
     if (url === "/api/roles") return [ROLE];
     if (url === "/api/tools/catalog") return { tools: [] };
-    if (url === "/api/settings/models") return { default: "", backends: [], fallbacks: [] };
+    if (url === "/api/settings/models") return { default: "", providers: [], fallbacks: [] };
     if (url === "/api/knowledge/scopes") return { scopes: [] };
     return {};
   });

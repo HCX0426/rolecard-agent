@@ -239,7 +239,8 @@ class ServiceEndpointService:
             is_local = client_style(str(b.get("provider", ""))) == "native"
             default_model = _CAPABILITY_DEFAULT_MODEL.get(key)
             # 模型名解析（用户 2026-09-17："一个名字不能干两件事？"）：
-            #   * 后端用途与服务类别一致 → 用后端模型名；
+            #   * 后端用途（**派生自引用行的 usage 值，拆层④ 后它不再是列**）与服务类别一致
+            #     → 用后端模型名；
             #   * 类别有能力默认模型（embedding/rerank 要专用模型）→ 只借凭据，回落默认；
             #   * 类别**没有**能力默认（ocr 走视觉 LLM，用的就是后端自己的多模态模型）
             #     → 用后端模型名。这样一个对话后端可同时服务对话与视觉 OCR，无需重复建行。
@@ -479,11 +480,10 @@ def service_status_view(conn: SqlConnection, settings: Settings) -> dict[str, An
             }
         )
 
-    # 模型推理：**可调优先级** —— 第 1 位 = 对话默认后端，其后 = 回退链（写回
-    # kernel_meta 的 model_default / model_fallbacks，与「模型」页签同一份存储）。
-    # 候选只含 usage=chat 的后端行（usage=ocr 的行归「OCR」类别的引用，不进推理优先级，
-    # 否则同一个模型会出现两行 —— 用户实测反馈）。增删与 key 仍在「模型」页签：
-    # 同一份数据不设两个编辑入口，这里只调顺序（order_only）。
+    # 模型推理：这一节的序列**就是**"哪些模型用于对话"的事实面（拆层后 usage 列已删）——
+    # 第 1 位 = 对话默认，其后 = 回退顺序（运行时截到 MAX_FALLBACKS 级）。候选来自 chat
+    # 引用行，不是某个列的取值；加入/移出也在这一节做（`order_only` 只表示"这里不编辑
+    # key/base_url/模型名"，那仍然是模型页的事）。
     ms = ModelSettingsService(conn)
     backends = ms.list_backends()
     default = ms.default_backend() or settings.model_default
@@ -545,7 +545,7 @@ def service_status_view(conn: SqlConnection, settings: Settings) -> dict[str, An
             "key": "models",
             "title": "模型推理（对话与抽取）",
             "hint": "第 1 位 = 对话默认后端，其后依次回退（仅建流阶段失败会回退，最多 2 级）。"
-            "增删与 key 在「模型」页签。",
+            "这里的序列就是「哪些模型用于对话」；key/端点/模型名仍在「模型」页签。",
             "effective": default,
             "effective_kind": effective_kind,
             "degraded_from": None,

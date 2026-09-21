@@ -26,7 +26,7 @@ import SettingsPage from "./SettingsPage";
 beforeEach(() => {
   vi.clearAllMocks();
   apiMock.get.mockImplementation(async (url: string) => {
-    if (url === "/api/settings/models") return { default: "", backends: [], fallbacks: [] };
+    if (url === "/api/settings/models") return { default: "", providers: [], fallbacks: [] };
     if (url === "/api/plugins") return [];
     if (url === "/api/roles") {
       return [

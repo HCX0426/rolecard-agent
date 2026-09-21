@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from rolecard_agent.api.main import create_app
+from tests.conftest import model_rows
 
 
 @pytest.fixture
@@ -257,8 +258,8 @@ def test_patch_model_context_roundtrip(client: TestClient) -> None:
     assert name
     res = client.patch(f"/api/settings/models/{name}/context", json={"num_ctx": 8192})
     assert res.status_code == 200 and res.json()["num_ctx"] == 8192
-    rows = client.get("/api/settings/models").json()["backends"]
-    row = next(b for b in rows if b["name"] == name)
+    rows = model_rows(client.get("/api/settings/models").json())
+    row = next(r for r in rows if r["name"] == name)
     assert row["num_ctx"] == 8192
     actions = [a["action"] for a in client.get("/api/audit?limit=50").json()]
     assert "update_model_context" in actions

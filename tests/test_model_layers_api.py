@@ -24,6 +24,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from rolecard_agent.api.main import create_app
+from tests.conftest import model_rows
 
 
 class _Response:
@@ -232,7 +233,7 @@ def test_first_model_becomes_the_chat_default_automatically(client: TestClient) 
     client.delete("/api/settings/models/sf")
     client.delete("/api/settings/models/local")
     body = client.get("/api/settings/models").json()
-    assert body["default"] is None and body["backends"] == []
+    assert body["default"] is None and model_rows(body) == []
     added = client.post(
         "/api/settings/models",
         json={"provider": "ollama", "base_url": "http://127.0.0.1:9",
@@ -284,7 +285,7 @@ def test_deleting_the_default_promotes_the_next_in_line(client: TestClient) -> N
     assert client.delete("/api/settings/models/sf").status_code == 204
     body = client.get("/api/settings/models").json()
     assert body["default"] == "local"  # 默认绝不悬空
-    assert body["backends"] and all(b["name"] != "sf" for b in body["backends"])
+    assert model_rows(body) and all(r["name"] != "sf" for r in model_rows(body))
 
 
 def test_delete_unknown_model_is_404(client: TestClient) -> None:
@@ -302,10 +303,6 @@ def test_capabilities_patch_writes_the_tri_state(client: TestClient) -> None:
     model = _group(client, "siliconflow")["models"][0]
     assert model["supports_vision"] is True
     assert model["supports_tools"] is None  # null = 没测过，界面渲染 `?`，不是"不支持"
-    # 运行时那侧仍要有确定值（未探测 = 放行）
-    row = next(b for b in client.get("/api/settings/models").json()["backends"]
-               if b["name"] == "sf")
-    assert row["supports_tools"] is True
     # 缺席的键不动：只写视觉，工具仍是"没测过"
     client.patch("/api/settings/models/sf/capabilities", json={"supports_vision": False})
     model = _group(client, "siliconflow")["models"][0]

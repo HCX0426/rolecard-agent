@@ -74,8 +74,6 @@ export interface BackendRow {
   provider: string;
   base_url: string | null;
   model: string;
-  /** 配置用途（模型页=云端配置唯一事实面）：chat=对话推理 | embedding | rerank | ocr 凭据。 */
-  usage: string;
   sort_order: number;
   /** 本地 Ollama 的实际上下文窗口（tokens）；null = 引擎默认。 */
   num_ctx: number | null;
@@ -114,11 +112,11 @@ export interface GenericRecord {
   created_at: string;
 }
 
+/** 模型设置：**只有分组这一个视图**（旧平铺 `backends` 投影随旧界面一起删了）。
+ * 行上的凭据（provider/base_url/has_key）来自它所属的组 —— 需要平铺时用 helper 摊平。 */
 export interface ModelSettings {
   default: string | null;
-  backends: BackendRow[];
   fallbacks: string[];
-  /** 拆层后的新形状：按凭据组分层（模型页的卡片数据源）。`backends` 是过渡投影。 */
   providers: ProviderGroup[];
 }
 
