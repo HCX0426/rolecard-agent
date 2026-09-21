@@ -12,6 +12,7 @@
  * 不该让它消失；真要退出走托盘的「退出」，只有那条路会回收后端进程。
  */
 import { BrowserWindow, Notification, app, dialog, globalShortcut, ipcMain } from "electron";
+import { appendFileSync } from "node:fs";
 import path from "node:path";
 
 import { Backend, consoleUrl, endpoint, serving, type BackendOptions, type Outcome } from "./backend";
@@ -34,6 +35,25 @@ function backendOptions(): BackendOptions {
 }
 
 const backend = new Backend(backendOptions());
+
+/**
+ * 壳自己的一行流水，落在与 `backend.log` 同一个目录。
+ *
+ * 为什么值得有：打包态没有终端，而"这条保证到底兑现了没有"的判据往往就是一句日志 ——
+ * 后端那侧早就为此把 stdout 落盘了（`[parent-watch] …`），壳这侧却一直只能靠猜。
+ * 最典型的是系统通知：页面决定"这条是真的新到"之后调 `notify`，而**控制台在前台时它是
+ * 故意不弹的**（红点就在他眼前，再拍一块 toast 只是噪音）。没有这一行，"没看到 toast"
+ * 就永远分不清是"按设计抑制了"、"根本没调到"、还是"Windows 把它吞了"。
+ */
+const shellLogFile = path.join(app.getPath("userData"), "shell.log");
+
+function logLine(text: string): void {
+  try {
+    appendFileSync(shellLogFile, `${new Date().toISOString()} ${text}\n`);
+  } catch {
+    /* 日志写不进去绝不该弄坏功能本身（目录被锁、磁盘满都是这里不该管的事） */
+  }
+}
 
 /** 本地推理服务的进程（D③-b）。**退出时不跟着壳走**：Ollama 是共用的服务，壳只是替用户
  *  把它拉起来过一次，不该在关掉自己的窗口时把别人正在用的推理也断了。 */
@@ -115,10 +135,14 @@ function openSession(threadId: string): void {
 
 function notify(title: string, body: string, threadId: string | null): void {
   // 用户正盯着控制台：铃铛红点就在他自己眼前跳，再拍一块系统 toast 只是噪音。
-  if (mainWin?.isVisible() && mainWin.isFocused()) return;
+  if (mainWin?.isVisible() && mainWin.isFocused()) {
+    logLine(`notify 抑制（控制台在前台）：${title}`);
+    return;
+  }
   const shot = new Notification({ title, body });
   if (threadId) shot.on("click", () => openSession(threadId));
   shot.show();
+  logLine(`notify 弹出：${title}｜${body}｜thread=${threadId ?? "-"}`);
 }
 
 /** 托盘那个勾选框能做到的全部：让宠物在桌面上，或者不在。
