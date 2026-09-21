@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { ExtensionPanel } from "../components/ExtensionPanel";
-import { LocalServiceCard } from "../components/LocalServiceCard";
+import { ModelsPanel } from "../components/ModelsPanel";
 import { NativeDirPickerButton } from "../components/NativeDirPickerButton";
 import { ServicesPanel } from "../components/ServicesPanel";
 import { ShellReleaseCard } from "../components/ShellReleaseCard";
 import {
   api,
   type AuditRow,
-  type ModelProvider,
   type ModelSettings,
   type PluginRow,
   type RoleCard,
@@ -18,10 +17,11 @@ import {
   type WorkspaceDir,
 } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
-import { Card, Switch } from "../components/ui";
+import { Card } from "../components/ui";
 
-// 设置页子页签：通用（系统信息）/ 模型（后端 CRUD + 热切换）/ 服务（运行时状态与降级策略）/
-// 审计（操作留痕）。知识库已升为独立顶层页 —— RAG 是内核能力，不该埋在设置里。
+// 设置页子页签：模型（凭据组 + 模型行，见 components/ModelsPanel）/ 服务（运行时状态与降级
+// 策略）/ 记忆与任务目录 / 关于 / 扩展 / 运行环境 / 审计。知识库已升为独立顶层页 ——
+// RAG 是内核能力，不该埋在设置里。
 const SETTINGS_TABS = [
   { key: "models", label: "模型" },
   { key: "services", label: "服务" },
@@ -73,7 +73,7 @@ export default function SettingsPage({
           <AboutPanel onOpenChat={onOpenChat} theme={theme} onToggleTheme={onToggleTheme} />
         </div>
         <div className={tab === "models" ? "" : "hidden"}>
-          <ModelsPanel />
+          <ModelsPanel onOpenServices={() => setTab("services")} />
         </div>
         <div className={tab === "services" ? "" : "hidden"}>
           <ServicesPanel />
@@ -959,320 +959,6 @@ function RuntimePanel() {
     </div>
   );
 }
-
-// ---------------------------------------------------------------- 模型（后端 CRUD + 回退）
-
-// 供应商目录的兜底（后端不可达时仍可用）；正常来自 GET /api/settings/model-providers。
-const PROVIDER_FALLBACK: ModelProvider[] = [
-  { id: "ollama", label: "本地 Ollama", needs_key: "0", base_url_hint: "http://localhost:11434（可留空）", style: "native" },
-  { id: "local", label: "本地模型（Ollama 别名）", needs_key: "0", base_url_hint: "同 Ollama，可留空", style: "native" },
-  { id: "openai", label: "OpenAI 兼容", needs_key: "1", base_url_hint: "https://api.openai.com/v1", style: "openai" },
-  { id: "siliconflow", label: "SiliconFlow", needs_key: "1", base_url_hint: "https://api.siliconflow.cn/v1", style: "openai" },
-  { id: "deepseek", label: "DeepSeek", needs_key: "1", base_url_hint: "https://api.deepseek.com/v1", style: "openai" },
-];
-
-interface EditableBackend {
-  name: string;
-  provider: string;
-  base_url: string;
-  model: string;
-  api_key: string;
-  has_key: boolean;
-  key_masked: string | null;
-  usage: string;
-  supports_vision: boolean;
-  supports_tools: boolean;
-}
-
-// 模型页是云端配置的唯一事实面：usage 标记该行服务谁（服务页按用途引用）。
-const USAGE_OPTIONS = [
-  { value: "chat", label: "对话推理" },
-  { value: "embedding", label: "语义嵌入" },
-  { value: "rerank", label: "检索重排" },
-  { value: "ocr", label: "OCR 凭据" },
-];
-
-function ModelsPanel() {
-  const [rows, setRows] = useState<EditableBackend[]>([]);
-  const [providers, setProviders] = useState<ModelProvider[]>(PROVIDER_FALLBACK);
-  const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
-  const [loaded, setLoaded] = useState(false);
-
-  const load = useCallback(async () => {
-    const s = await api.get<ModelSettings>("/api/settings/models");
-    setRows(
-      s.backends.map((b) => ({
-        name: b.name,
-        provider: b.provider,
-        base_url: b.base_url || "",
-        model: b.model,
-        api_key: "",
-        has_key: b.has_key,
-        key_masked: b.key_masked ?? null,
-        usage: b.usage ?? "chat",
-        supports_vision: b.supports_vision ?? false,
-        supports_tools: b.supports_tools ?? true,
-      })),
-    );
-    setLoaded(true);
-  }, []);
-
-  // 供应商目录（动态）：下拉从此来，新增供应商只改后端。
-  useEffect(() => {
-    api
-      .get<{ providers: ModelProvider[] }>("/api/settings/model-providers")
-      .then((s) => s.providers?.length && setProviders(s.providers))
-      .catch(() => undefined);
-  }, []);
-
-  // 按供应商分组展示（同一供应商的 key 归在一起，便于区分用途）。
-  const grouped = rows.reduce<Record<string, EditableBackend[]>>((acc, r) => {
-    (acc[r.provider] ||= []).push(r);
-    return acc;
-  }, {});
-  const providerOrder = Object.keys(grouped).sort((a, z) => a.localeCompare(z));
-
-  useEffect(() => {
-    load().catch((e) => setStatus({ ok: false, msg: `加载失败：${e.message}` }));
-  }, [load]);
-
-  function update(i: number, patch: Partial<EditableBackend>) {
-    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
-  }
-
-  function addRow() {
-    setRows((rs) => [
-      ...rs,
-      {
-        name: "",
-        provider: providers[0]?.id || "openai",
-        base_url: "",
-        model: "",
-        api_key: "",
-        has_key: false,
-        key_masked: null,
-        usage: "chat",
-        supports_vision: false,
-        supports_tools: true,
-      },
-    ]);
-  }
-
-  function removeRow(i: number) {
-    setRows((rs) => rs.filter((_, j) => j !== i));
-  }
-
-  async function save() {
-    try {
-      // 只提交 backends：默认后端与回退链的唯一编辑入口在「服务」页签（后端已声明）。
-      // 这里不带 default/fallbacks → 后端 None = 保留当前值，避免用挂载时的旧值覆盖服务页新设。
-      const body = {
-        backends: rows.map((r) => ({
-          name: r.name.trim(),
-          provider: r.provider.trim(),
-          base_url: r.base_url.trim() || null,
-          model: r.model.trim(),
-          usage: r.usage,
-          supports_vision: r.supports_vision,
-          supports_tools: r.supports_tools,
-          // 空串会被后端理解为"清除"；这里区分"没碰过"（保持 None=保留）与"清空"
-          api_key: r.api_key === "" && r.has_key ? null : r.api_key,
-        })),
-      };
-      const saved = await api.put<ModelSettings>("/api/settings/models", body);
-      setRows(
-        saved.backends.map((b) => ({
-        name: b.name,
-        provider: b.provider,
-        base_url: b.base_url || "",
-        model: b.model,
-        api_key: "",
-        has_key: b.has_key,
-        key_masked: b.key_masked ?? null,
-        usage: b.usage ?? "chat",
-        supports_vision: b.supports_vision ?? false,
-        supports_tools: b.supports_tools ?? true,
-      })),
-      );
-      setStatus({
-        ok: true,
-        msg: "已保存并热生效：下一轮对话即使用新模型后端（无需重启）。",
-      });
-    } catch (e) {
-      setStatus({ ok: false, msg: `保存失败：${(e as Error).message}` });
-    }
-  }
-
-  return (
-    <div className="mt-6">
-      <LocalServiceCard />
-      {status && (
-        <p
-          className={`rounded-lg px-3 py-2 text-xs ${
-            status.ok ? "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300" : "bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 dark:text-red-500"
-          }`}
-        >
-          {status.msg}
-        </p>
-      )}
-
-      {loaded && (
-        <>
-          <div className="space-y-5">
-            {providerOrder.map((prov) => (
-              <div key={prov} className="space-y-3">
-                <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-1">
-                  <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
-                    供应商：{providers.find((p) => p.id === prov)?.label ?? prov}
-                  </span>
-                  <span className="text-[11px] text-slate-400 dark:text-slate-500">
-                    {providers.find((p) => p.id === prov)?.base_url_hint || ""}
-                  </span>
-                </div>
-                {grouped[prov].map((r) => {
-                  const i = rows.indexOf(r);
-                  // key 用行下标而**不是 r.name**：改名时 key 一变整棵子树重挂，
-                  // 输入框每敲一个字就失焦（审查报告 P1-12）。
-                  return (
-              <Card key={i} className="p-4">
-                <div className="flex items-center gap-3">
-                  <input
-                    value={r.name}
-                    onChange={(e) => update(i, { name: e.target.value })}
-                    placeholder="后端名（如 siliconflow）"
-                    className="w-40 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 font-mono text-sm"
-                  />
-                  <select
-                    value={r.provider}
-                    onChange={(e) => update(i, { provider: e.target.value })}
-                    className="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1.5 text-sm"
-                  >
-                    {providers.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.label}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    value={r.usage}
-                    onChange={(e) => update(i, { usage: e.target.value })}
-                    title="用途：本行配置服务谁（服务页按用途引用；对话菜单只显示「对话推理」行）"
-                    className="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1.5 text-sm"
-                  >
-                    {USAGE_OPTIONS.map((u) => (
-                      <option key={u.value} value={u.value}>
-                        {u.label}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={() => removeRow(i)}
-                    className="ml-auto rounded px-2 py-1 text-xs text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
-                  >
-                    移除
-                  </button>
-                </div>
-                <div className="mt-2.5 grid grid-cols-2 gap-3">
-                  <input
-                    value={r.model}
-                    onChange={(e) => update(i, { model: e.target.value })}
-                    placeholder="模型名（如 deepseek-ai/DeepSeek-V4-Flash）"
-                    className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-sm"
-                  />
-                  <input
-                    value={r.base_url}
-                    onChange={(e) => update(i, { base_url: e.target.value })}
-                    placeholder="base_url（Ollama 可留空，如 https://api.siliconflow.cn/v1）"
-                    className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-sm"
-                  />
-                  {r.usage === "chat" && (
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
-                      <span className="flex items-center gap-1.5">
-                        <Switch
-                          checked={r.supports_vision}
-                          onChange={(v) => update(i, { supports_vision: v })}
-                          label="支持视觉（可收图）"
-                        />
-                        支持视觉（可收图）
-                      </span>
-                      <span className="flex items-center gap-1.5">
-                        <Switch
-                          checked={r.supports_tools}
-                          onChange={(v) => update(i, { supports_tools: v })}
-                          label="支持工具调用"
-                        />
-                        支持工具调用
-                      </span>
-                      {!r.supports_tools && (
-                        <span className="text-[11px] text-amber-500 dark:text-amber-400">
-                          该模型带工具会返回空，已关闭工具（换模型对所有角色仍可用，只是不绑工具）
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  {r.has_key ? (
-                    <>
-                      <div className="flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 px-2.5 py-1.5 text-xs text-slate-500 dark:text-slate-400">
-                        <span className="font-mono">{r.key_masked || "••••••"}</span>
-                        <span className="ml-auto text-[11px] text-slate-400 dark:text-slate-500">已保存（不可见明文）</span>
-                      </div>
-                      <label className="flex items-center gap-1.5 text-xs text-slate-400 dark:text-slate-500">
-                        <input
-                          type="checkbox"
-                          checked={r.api_key.trim() === "" && r.api_key.length > 0}
-                          onChange={(e) => update(i, { api_key: e.target.checked ? " " : "" })}
-                        />
-                        清除已存密钥（勾选并保存即删除）
-                      </label>
-                    </>
-                  ) : (
-                    <input
-                      type="password"
-                      value={r.api_key}
-                      onChange={(e) => update(i, { api_key: e.target.value })}
-                      placeholder="api_key（可选）"
-                      className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-sm"
-                    />
-                  )}
-                  {!r.has_key && (
-                    <span className="text-[11px] text-slate-400 dark:text-slate-500">
-                      本地类供应商无需密钥
-                    </span>
-                  )}
-                </div>
-              </Card>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-4 flex gap-2">
-            <button
-              onClick={addRow}
-              className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:bg-slate-800/50 dark:hover:bg-slate-700/60"
-            >
-              ＋ 添加后端
-            </button>
-            <button
-              onClick={save}
-              className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700"
-            >
-              保存并生效
-            </button>
-          </div>
-
-          <p className="mt-4 rounded-lg bg-slate-50 dark:bg-slate-800/50 px-3 py-2.5 text-xs leading-relaxed text-slate-400 dark:text-slate-500">
-            说明：首次启动会把 env 里的后端迁移到这里；<b>此后模型配置以本页为准</b>（env 不再参与，
-            在页面里删除的后端重启后也不会回来）。删除所有后端会保存失败 —— 至少保留一个。
-            角色可在「角色卡」页经由后端下拉做角色级路由。
-          </p>
-        </>
-      )}
-    </div>
-  );
-}
-
 // ---------------------------------------------------------------- 审计（F3）
 
 function AuditPanel() {

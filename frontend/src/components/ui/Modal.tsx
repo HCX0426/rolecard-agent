@@ -2,7 +2,11 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 /** 受控模态框：ESC / 点遮罩关闭、基础焦点管理、暗色态一致。
- *  通过 portal 渲染到 document.body，调用方无需 relative 容器。 */
+ *  通过 portal 渲染到 document.body，调用方无需 relative 容器。
+ *
+ *  `variant="drawer"` 是右侧抽屉（添加模型那种多步表单）：同样一套 ESC/遮罩/焦点逻辑，
+ *  只是位置与宽度不同 —— 与其再造一个 Drawer 组件、把这套行为复制一遍，
+ *  不如让"模态行为"只有一处实现（两处实现迟早各自漂移）。 */
 export default function Modal({
   open,
   onClose,
@@ -10,6 +14,7 @@ export default function Modal({
   children,
   footer,
   closeOnOverlay = true,
+  variant = "center",
 }: {
   open: boolean;
   onClose: () => void;
@@ -17,6 +22,7 @@ export default function Modal({
   children?: ReactNode;
   footer?: ReactNode;
   closeOnOverlay?: boolean;
+  variant?: "center" | "drawer";
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -32,9 +38,10 @@ export default function Modal({
 
   if (!open) return null;
 
+  const drawer = variant === "drawer";
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className={`fixed inset-0 z-50 bg-black/40 ${drawer ? "" : "flex items-center justify-center p-4"}`}
       onClick={closeOnOverlay ? onClose : undefined}
     >
       <div
@@ -43,17 +50,27 @@ export default function Modal({
         aria-modal="true"
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        className="relative w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl outline-none dark:border-slate-700 dark:bg-slate-800"
+        className={
+          drawer
+            ? "absolute inset-y-0 right-0 flex w-full max-w-lg flex-col overflow-y-auto border-l border-slate-200 bg-white p-5 shadow-xl outline-none dark:border-slate-700 dark:bg-slate-800"
+            : "relative w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl outline-none dark:border-slate-700 dark:bg-slate-800"
+        }
       >
         {title != null && (
           <h3 className="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
             {title}
           </h3>
         )}
-        <div className="text-sm leading-relaxed text-slate-600 dark:text-slate-300">
+        <div className="flex-1 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
           {children}
         </div>
-        {footer != null && <div className="mt-4 flex justify-end gap-2">{footer}</div>}
+        {footer != null && (
+          <div
+            className={`flex justify-end gap-2 ${drawer ? "sticky bottom-0 mt-5 bg-white pt-3 dark:bg-slate-800" : "mt-4"}`}
+          >
+            {footer}
+          </div>
+        )}
       </div>
     </div>,
     document.body,

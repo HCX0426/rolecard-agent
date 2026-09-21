@@ -87,6 +87,8 @@ export interface BackendRow {
   supports_tools: boolean;
   has_key: boolean;
   key_masked: string | null;
+  /** 派生只读：这行被哪些服务引用（模型页不再有用途下拉，见 ProviderModelRow.used_by）。 */
+  used_by?: string[];
 }
 
 export interface ModelProvider {
@@ -116,6 +118,45 @@ export interface ModelSettings {
   default: string | null;
   backends: BackendRow[];
   fallbacks: string[];
+  /** 拆层后的新形状：按凭据组分层（模型页的卡片数据源）。`backends` 是过渡投影。 */
+  providers: ProviderGroup[];
+}
+
+/** 一行模型（属于某个凭据组）。能力位是**三态**：null = 没测过 → 界面渲染 `?`。 */
+export interface ProviderModelRow {
+  name: string;
+  model: string;
+  num_ctx: number | null;
+  supports_vision: boolean | null;
+  supports_tools: boolean | null;
+  /** 这行被哪些服务引用（派生自服务页，模型页只读）：chat / embedding / rerank / ocr。 */
+  used_by: string[];
+  is_default: boolean;
+}
+
+/** 凭据组：一组 = 一个 (供应商, 端点)，key 只在这里出现一次。 */
+export interface ProviderGroup {
+  id: string;
+  provider: string;
+  label: string;
+  base_url: string | null;
+  style: string; // native | openai
+  needs_key: boolean;
+  has_key: boolean;
+  key_masked: string | null;
+  models: ProviderModelRow[];
+}
+
+/** 探测结论（`POST /api/settings/models/probe`）。三态字段 null = 不知道，不是"不行"。 */
+export interface ProbeOutcome {
+  reachable: boolean;
+  detail: string;
+  model_listed: boolean | null;
+  tools: boolean | null;
+  vision: boolean | null;
+  vision_source: "free-metadata" | "uploaded-image" | "not-tested" | string;
+  calls_used: number;
+  models: string[];
 }
 
 export interface ToolEntry {
