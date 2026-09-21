@@ -7,12 +7,25 @@
 import { Menu, MenuItem, Tray, app, nativeImage } from "electron";
 import path from "node:path";
 
+import type { PetPrefs } from "./state";
+
 const ICON = path.join(__dirname, "..", "..", "build", "icon.ico");
+
+/** 透明度档位：照 Cherry Studio 那样给几档挑，而不是拖滑块 —— 托盘菜单里放滑块要再造一扇窗。 */
+export const OPACITY_STEPS: { label: string; value: number }[] = [
+  { label: "100%", value: 1 },
+  { label: "85%", value: 0.85 },
+  { label: "70%", value: 0.7 },
+  { label: "55%", value: 0.55 },
+];
 
 export type TrayControls = {
   showConsole: () => void;
   petVisible: () => boolean;
   setPetVisible: (visible: boolean) => void;
+  /** 桌宠三项偏好：勾选态从这里读，改的时候整包交回去（应用与持久化都在主进程那一处）。 */
+  petPrefs: () => PetPrefs;
+  setPetPrefs: (patch: Partial<PetPrefs>) => void;
   /** 开机自启只在打包态存在（dev 下写登录项 = 留一条指向 node_modules 的假启动项）。 */
   canAutostart: () => boolean;
   autostartEnabled: () => boolean;
@@ -32,18 +45,60 @@ export function createTray(controls: TrayControls): TrayHandle {
   tray.setToolTip("rolecard-agent");
 
   const render = () => {
+    const prefs = controls.petPrefs();
+    const onPet = controls.petVisible();
+    // 桌宠收起时这三项照样可改：写的是偏好，下次放出桌宠时生效（`createPetWindow` 读同一份）。
+    // 原生菜单没有 tooltip 可挂这句话（`MenuItemConstructorOptions` 里压根没那一项），所以摆在
+    // 它上面一行 —— 一个"改了 apparently 没反应"的勾选框，比一句说明更容易被当成坏了。
+    const check = (
+      label: string,
+      checked: boolean,
+      onChange: (next: boolean) => void,
+    ): MenuItem =>
+      new MenuItem({
+        label,
+        type: "checkbox",
+        checked,
+        click: (item) => onChange(item.checked),
+      });
     tray.setContextMenu(
       Menu.buildFromTemplate([
         { label: "显示控制台", click: () => controls.showConsole() },
-        {
-          label: "桌宠在桌面",
-          type: "checkbox",
-          checked: controls.petVisible(),
-          click: (item) => {
-            controls.setPetVisible(item.checked);
-            render(); // 勾选态由这次操作决定：立刻重画，托盘就不会短暂说谎
-          },
-        },
+        check("桌宠在桌面", onPet, (next) => {
+          controls.setPetVisible(next);
+          render(); // 勾选态由这次操作决定：立刻重画，托盘就不会短暂说谎
+        }),
+        ...(onPet
+          ? []
+          : [
+              new MenuItem({
+                label: "（桌宠收起中：下面三项下次放出时生效）",
+                enabled: false,
+              }),
+            ]),
+        check("自动置顶", prefs.alwaysOnTop, (next) => {
+          controls.setPetPrefs({ alwaysOnTop: next });
+          render();
+        }),
+        new MenuItem({
+          label: "透明度",
+          submenu: Menu.buildFromTemplate(
+            OPACITY_STEPS.map((step) => ({
+              label: step.label,
+              type: "radio" as const,
+              // 手改过偏好文件时可能落在档位之外：没有一条匹配就全不选中，比硬选一条诚实。
+              checked: Math.abs(prefs.opacity - step.value) < 0.001,
+              click: () => {
+                controls.setPetPrefs({ opacity: step.value });
+                render();
+              },
+            })),
+          ),
+        }),
+        check("显示消息内容", prefs.showContent, (next) => {
+          controls.setPetPrefs({ showContent: next });
+          render();
+        }),
         // 不给一个"看得见但永远无效"的条目：开发态整条不出现。
         ...(controls.canAutostart()
           ? [

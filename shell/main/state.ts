@@ -15,8 +15,36 @@ import path from "node:path";
 
 type Saved = Record<string, Rectangle>;
 
+/** 桌宠的三项偏好（词汇照 Cherry Studio 的浮动窗设置，设计稿 §7.2 第 4 条）。
+ *
+ * 为什么单独一个文件而不是塞进 `window-state.json`：那份的形状是"label → 矩形"，被
+ * `initialBounds` 直接按 label 取；混进一个非矩形键就要在每个读取点加类型判断，而这两样
+ * 东西的演化方向根本不同（位置每拖一次写一次，偏好只在托盘点一下写）。 */
+export type PetPrefs = {
+  /** 自动置顶：关掉之后宠物会被别的窗口盖住 —— 有人就这么要求。 */
+  alwaysOnTop: boolean;
+  /** 0.2–1 的整窗不透明度。**下限不是装饰**：0 等于一扇看不见的置顶窗挡住桌面点击。 */
+  opacity: number;
+  /** 显示消息内容：关掉后桌宠只给"有 N 条"和输入框，别人站在背后读不到你们聊了什么。 */
+  showContent: boolean;
+};
+
+export const PET_PREF_DEFAULTS: PetPrefs = {
+  alwaysOnTop: true,
+  opacity: 1,
+  showContent: true,
+};
+
+function jsonFile(name: string): string {
+  return path.join(app.getPath("userData"), name);
+}
+
 function stateFile(): string {
-  return path.join(app.getPath("userData"), "window-state.json");
+  return jsonFile("window-state.json");
+}
+
+function prefsFile(): string {
+  return jsonFile("pet-prefs.json");
 }
 
 function load(): Saved {
@@ -86,4 +114,34 @@ export function trackBounds(
     states[label] = options.persistAs ? options.persistAs(rect) : rect;
     save(states);
   });
+}
+
+/** 读桌宠偏好：文件读不出来 / 形状不对一律回默认值，坏掉的偏好不该拦住窗口启动。
+ *  `opacity` 夹进 [0.2, 1]：这个文件用户可以手改，而"整窗透明到看不见"会留下一扇
+ *  点得着却找不着的置顶窗 —— 那是只能重装才能解的坑。 */
+export function loadPetPrefs(): PetPrefs {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(prefsFile(), "utf8"));
+  } catch {
+    return { ...PET_PREF_DEFAULTS };
+  }
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const flag = (key: "alwaysOnTop" | "showContent") =>
+    typeof o[key] === "boolean" ? o[key] : PET_PREF_DEFAULTS[key];
+  const opacity = typeof o.opacity === "number" && Number.isFinite(o.opacity) ? o.opacity : 1;
+  return {
+    alwaysOnTop: flag("alwaysOnTop"),
+    showContent: flag("showContent"),
+    opacity: Math.min(1, Math.max(0.2, opacity)),
+  };
+}
+
+export function savePetPrefs(prefs: PetPrefs): void {
+  try {
+    mkdirSync(path.dirname(prefsFile()), { recursive: true });
+    writeFileSync(prefsFile(), JSON.stringify(prefs), "utf8");
+  } catch (error) {
+    console.warn(`[shell] 桌宠偏好没存下：${String(error)}`);
+  }
 }

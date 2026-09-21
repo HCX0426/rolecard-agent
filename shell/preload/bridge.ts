@@ -1,6 +1,6 @@
 /**
- * 壳暴露给页面的全部能力 —— 目前三类：后端在哪 / 起来了吗、打开某个会话（+系统通知）、
- * 本地推理服务的进程归属与起停。
+ * 壳暴露给页面的全部能力 —— 目前四类：后端在哪 / 起来了吗、打开某个会话（+系统通知）、
+ * 桌宠窗（展开 / 拖动 / 「显示消息内容」旗子）、本地推理服务的进程归属与起停。
  *
  * 为什么探测要问主进程，而不是页面自己 fetch 后端：着陆页是 `file://` 加载的本地页面，
  * 从那儿跨源访问 http 端点会被浏览器拦，探活结果变成一个恒假的信号（表现为"永远在启动中"）。
@@ -17,11 +17,19 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 type OpenThreadHandler = (threadId: string) => void;
+type ContentVisibleHandler = (visible: boolean) => void;
 
 let onOpenThread: OpenThreadHandler | null = null;
+// 与 open-thread 同一个形状：**单个槽位**而不是监听器列表 —— 桌宠页是这面旗的唯一归属者，
+// 后注册者覆盖前者（React 严格模式下挂载两次也不留旧监听）。
+let onContentVisible: ContentVisibleHandler | null = null;
 
 ipcRenderer.on("shell:open-thread", (_event, value: unknown) => {
   if (typeof value === "string" && value) onOpenThread?.(value);
+});
+
+ipcRenderer.on("shell:pet-content-visible", (_event, value: unknown) => {
+  if (typeof value === "boolean") onContentVisible?.(value);
 });
 
 contextBridge.exposeInMainWorld("rolecardShell", {
@@ -42,6 +50,13 @@ contextBridge.exposeInMainWorld("rolecardShell", {
   /** 拖动桌宠：只报增量，绝对坐标与出屏夹取都在壳里。 */
   movePetBy: (dx: number, dy: number): void => {
     ipcRenderer.send("shell:pet-drag", [dx, dy]);
+  },
+  /** 桌宠的「显示消息内容」旗子（托盘是它唯一的写入口）。**只有读**：给页面一条写回的路，
+   *  等于让后端托管的那个源自己决定要不要藏起内容，那就不叫隐私开关了。 */
+  petContentVisible: (): Promise<boolean> => ipcRenderer.invoke("shell:pet-content-visible"),
+  /** 旗子被托盘改动时收一次通知；传 null 注销。首次值仍要 pull（push 早于监听就是丢消息）。 */
+  onPetContentVisible: (handler: ContentVisibleHandler | null): void => {
+    onContentVisible = handler;
   },
   /** 登记"谁来接收打开会话"，并向主进程报一次就绪。传 null 注销。 */
   onRequestOpenThread: (handler: OpenThreadHandler | null): void => {

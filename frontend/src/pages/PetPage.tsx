@@ -67,6 +67,12 @@ export default function PetPage() {
   // 发出去但还没落库的那句：流结束后以服务端回放为准，所以它只活在这一轮里。
   const [pendingUser, setPendingUser] = useState("");
   const [streamError, setStreamError] = useState("");
+  // 托盘「显示消息内容」的旗子。**默认显示**：拿不到旗子（浏览器里开这页、或界面跑在还没
+  // 有这面旗子的旧壳里）时不该把功能藏起来，那等于用一个用户找不到的开关把他锁在门外。
+  const [showContent, setShowContent] = useState(true);
+  // 同一个值的"读时不重订阅"版本：`load` 是轮询回调，依赖里加旗子会让每次改开关都
+  // 把 10 秒的节拍重置一遍（而它只是想知道这次要不要拍原文）。
+  const showContentRef = useRef(true);
   const collapseRef = useRef<number | null>(null);
   // 已经"见过"的最新一条 id。**在第一次真正拿到快照之前保持 null**：初始的空白状态不是
   // 一次快照，拿它当基线会让每次开机都把积压的最后一条当新消息拍出去。
@@ -97,7 +103,13 @@ export default function PetPage() {
     if (seen === null || newest <= seen) return;
     const arrived = page.items[0];
     if (arrived?.state === "unread") {
-      shellBridge()?.notify(arrived.role_name || "主动消息", shorten(arrived.text), arrived.thread_id);
+      // 旗子关掉时连系统通知也不拍原文：toast 是桌面上最显眼的一块"别人也能读"的内容，
+      // 让它绕过隐藏就等于这个开关只糊住了半张脸。谁找你了照样说清（标题是角色名）。
+      shellBridge()?.notify(
+        arrived.role_name || "主动消息",
+        showContentRef.current ? shorten(arrived.text) : "内容已隐藏",
+        arrived.thread_id,
+      );
     }
   }, []);
 
@@ -141,6 +153,8 @@ export default function PetPage() {
   // 只有"当前这个角色"的那条主动会话能直接读历史；换了角色就得先 ensure（见 `send`）。
   const threadId = latest && latest.role_id === activeRole ? latest.thread_id ?? null : null;
   const name = activeName;
+  // 隐藏内容时面板要说"有几条没读"，那数的是**当前对象**的（切到别的角色就不是那一堆了）。
+  const unreadOfActive = activeRole ? unread.filter((row) => row.role_id === activeRole).length : 0;
 
   /** 展开/收起。桥不在（浏览器直接开 #/pet 的调试入口）时面板照样画，只是窗口不跟着变大。 */
   function expand(next: boolean) {
@@ -199,10 +213,36 @@ export default function PetPage() {
     [],
   );
 
+  // 旗子的首值要 pull（push 早于监听就是丢消息），之后托盘每改一次收一次通知。
+  // 注销放在清理里：React 严格模式下挂载两次，留着旧的会把上一次的 `setShowContent` 也带上。
+  useEffect(() => {
+    const bridge = shellBridge();
+    if (!bridge?.petContentVisible) return;
+    let alive = true;
+    void bridge
+      .petContentVisible()
+      .then((value) => {
+        if (!alive) return;
+        showContentRef.current = value;
+        setShowContent(value);
+      })
+      .catch(() => undefined); // 问不到就保持"显示"：这是调试入口和旧壳共同的默认，不是故障
+    bridge.onPetContentVisible?.((value) => {
+      if (!alive) return;
+      showContentRef.current = value;
+      setShowContent(value);
+    });
+    return () => {
+      alive = false;
+      bridge.onPetContentVisible?.(null);
+    };
+  }, []);
+
   // 历史只在**展开时**读：驻留件不该为了一个没被看到的面板每 10 秒打一次接口。
   // `historyRefresh` 是"刚跑完一轮"的那个触发点 —— 流结束后以 checkpoint 为准重读一次。
+  // 关掉「显示消息内容」时连读都不读：藏起来的东西不该只是不画，还留在页面里等着被看到。
   useEffect(() => {
-    if (!expanded) {
+    if (!expanded || !showContent) {
       setHistory(null);
       setHistoryError("");
       return;
@@ -217,7 +257,7 @@ export default function PetPage() {
     return () => {
       alive = false;
     };
-  }, [expanded, threadId, historyRefresh]);
+  }, [expanded, threadId, historyRefresh, showContent]);
 
   // 角色表只在第一次展开时拉：面板顶上的切换要用它，而收起时没必要占一次请求。
   useEffect(() => {
@@ -350,29 +390,39 @@ export default function PetPage() {
           <div className="max-h-[300px] min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 py-2 text-[11px] leading-relaxed">
             {historyError && <p className="text-red-600 dark:text-red-400">{historyError}</p>}
             {streamError && <p className="text-red-600 dark:text-red-400">{streamError}</p>}
-            {!threadId && !historyError && !pendingUser && (
+            {!showContent && (
+              // 关掉旗子时这里一个字的对话都不画（连历史都没去读，见上面那个 effect）。
+              // 但"它在不在说话"仍然要说 —— 隐藏内容不等于把驻留件变成没有反馈的黑盒。
+              <p className="text-slate-400 dark:text-slate-500">
+                {busy
+                  ? "它正在回话…（内容已隐藏）"
+                  : `内容已隐藏${unreadOfActive ? ` · ${unreadOfActive} 条未读` : ""} —— 在控制台里读，或到托盘勾回「显示消息内容」。`}
+              </p>
+            )}
+            {showContent && !threadId && !historyError && !pendingUser && (
               <p className="text-slate-400 dark:text-slate-500">
                 还没有你们的对话 —— 说第一句就会开始（它会记进这个角色的记忆与这条会话）。
               </p>
             )}
-            {threadId && history === null && !historyError && !pendingUser && (
+            {showContent && threadId && history === null && !historyError && !pendingUser && (
               <p className="text-slate-400 dark:text-slate-500">读取中…</p>
             )}
-            {(history ?? [])
-              .filter((m) => m.role === "user" || m.role === "assistant")
-              .map((m, i) => (
-                <p key={m.id ?? i} className="break-words">
-                  <Speaker mine={m.role === "user"} />
-                  {m.content}
-                </p>
-              ))}
-            {pendingUser && (
+            {showContent &&
+              (history ?? [])
+                .filter((m) => m.role === "user" || m.role === "assistant")
+                .map((m, i) => (
+                  <p key={m.id ?? i} className="break-words">
+                    <Speaker mine={m.role === "user"} />
+                    {m.content}
+                  </p>
+                ))}
+            {showContent && pendingUser && (
               <p className="break-words">
                 <Speaker mine />
                 {pendingUser}
               </p>
             )}
-            {live && (busy || live.text) && (
+            {showContent && live && (busy || live.text) && (
               <p className="break-words">
                 <Speaker mine={false} />
                 {live.text || (live.streaming ? "…" : "")}
@@ -421,15 +471,17 @@ export default function PetPage() {
             onMouseEnter={() => expand(true)}
             onMouseLeave={leave}
             title={
-              latest.thread_id
-                ? unreadOfLatest > 1
-                  ? `打开与 ${name} 的对话（还有 ${unreadOfLatest - 1} 条未读）`
-                  : `打开与 ${name} 的对话`
-                : "点击标记已读"
+              !showContent
+                ? "内容已隐藏 —— 托盘里勾回「显示消息内容」就能看到（点开仍然会拉起控制台）"
+                : latest.thread_id
+                  ? unreadOfLatest > 1
+                    ? `打开与 ${name} 的对话（还有 ${unreadOfLatest - 1} 条未读）`
+                    : `打开与 ${name} 的对话`
+                  : "点击标记已读"
             }
             className="pet-nodrag w-full rounded-2xl border border-slate-200/70 bg-white/90 px-3 py-2 text-left text-[11px] leading-relaxed text-slate-700 shadow-sm backdrop-blur-sm transition-opacity duration-500 dark:border-slate-600/70 dark:bg-slate-800/90 dark:text-slate-100"
           >
-            {shorten(latest.text)}
+            {showContent ? shorten(latest.text) : "它说了话 · 内容已隐藏"}
             {unreadOfLatest > 1 && (
               <span className="ml-1 rounded-full bg-blue-600 px-1.5 text-[10px] text-white">
                 +{unreadOfLatest - 1}
@@ -448,7 +500,9 @@ export default function PetPage() {
         onPointerCancel={dragEnd}
         className="pet-nodrag grid h-[88px] w-[88px] shrink-0 cursor-grab place-items-center rounded-full text-2xl font-medium text-white shadow-md active:cursor-grabbing"
         style={{ background: `hsl(${hue} 62% 48%)` }}
-        title={`${name}${offline ? " · 连不上本地服务" : ""} · 悬停看你们最近聊了什么`}
+        title={`${name}${offline ? " · 连不上本地服务" : ""} · 悬停${
+          showContent ? "看你们最近聊了什么" : "打开输入框（内容已隐藏）"
+        }`}
       >
         {name.slice(0, 1)}
       </div>

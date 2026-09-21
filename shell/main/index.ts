@@ -18,8 +18,9 @@ import path from "node:path";
 import { Backend, consoleUrl, endpoint, serving, type BackendOptions, type Outcome } from "./backend";
 import { canManageLoginItem, loginItemEnabled, setLoginItemEnabled, startedByLoginItem } from "./autostart";
 import { Ollama } from "./ollama";
-import { createMainWindow, createPetWindow, movePetBy, setPetExpanded } from "./windows";
+import { createMainWindow, createPetWindow, applyPetPrefs, movePetBy, setPetExpanded } from "./windows";
 import { createTray, type TrayHandle } from "./tray";
+import { loadPetPrefs, savePetPrefs, type PetPrefs } from "./state";
 
 /** 后端的启动配置：打包态用随包的 `resources/rolecard-backend/`，开发态由 backend.ts
  *  自己从仓库布局推（那里还管 cwd=仓库根）。日志两种形态都落盘 —— 打包态没有终端，
@@ -63,6 +64,33 @@ let mainWin: BrowserWindow | null = null;
 let petWin: BrowserWindow | null = null;
 let tray: TrayHandle | null = null;
 let quitting = false;
+
+/** 桌宠三项偏好的**唯一真相**（自动置顶 / 透明度 / 显示消息内容，设计稿 §7.2 第 4 条）。
+ *  托盘是它唯一的写入口；渲染端只能读，不能写 —— 页面能改"内容画不画"就等于让后端托管的
+ *  那个源自己决定隐私开关，而开关的意义恰恰在于它握在用户手里。 */
+let petPrefs: PetPrefs = loadPetPrefs();
+
+const prefsText = (): string =>
+  `置顶=${petPrefs.alwaysOnTop}｜不透明度=${petPrefs.opacity}｜显示内容=${petPrefs.showContent}`;
+
+/** 把"窗表现在到底是什么样"记一行。**为什么值得记**：实测构造参数 `alwaysOnTop: true`
+ *  和 `setAlwaysOnTop(true)`（默认 floating 档）都没能让窗真的带上 `WS_EX_TOPMOST`
+ *  （量到 `0x280000`，缺 `0x8`），只有 `"screen-saver"` 档兑现了 —— 这种"要的是 A、拿到的
+ *  是 B"的偏差光看请求值永远发现不了，打包态又没有终端。 */
+function logPetWindow(win: BrowserWindow): void {
+  logLine(`桌宠窗实际：置顶=${win.isAlwaysOnTop()}｜不透明度=${win.getOpacity()}`);
+}
+
+function updatePetPrefs(patch: Partial<PetPrefs>): void {
+  petPrefs = { ...petPrefs, ...patch };
+  savePetPrefs(petPrefs);
+  logLine(`桌宠偏好：${prefsText()}`);
+  if (!petWin) return; // 桌宠收起时改的是"下次放出时用哪份偏好"，这里没什么可应用的
+  applyPetPrefs(petWin, petPrefs);
+  logPetWindow(petWin);
+  // 「显示消息内容」是页面该画什么：告诉它一次，之后它自己 pull（见 preload）。
+  petWin.webContents.send("shell:pet-content-visible", petPrefs.showContent);
+}
 
 /** 桌宠/通知要求打开某个会话时，主窗的文档可能还在加载（着陆页→后端地址那次跳转）。
  *  攒一条就够：用户点的是"最新那一条"，第二条会覆盖它，也符合点完之后的预期。 */
@@ -153,7 +181,7 @@ function setPetVisible(visible: boolean): void {
     return;
   }
   if (!petWin) {
-    petWin = createPetWindow(); // 它自己在 ready-to-show 上 showInactive
+    petWin = createPetWindow(petPrefs); // 它自己在 ready-to-show 上 showInactive
     wireWindow(petWin);
   } else {
     petWin.showInactive();
@@ -198,6 +226,9 @@ function boot(): void {
     if (typeof dx !== "number" || typeof dy !== "number" || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
     movePetBy(petWin, dx, dy);
   });
+  // 桌宠页问"内容该不该画出来"（托盘「显示消息内容」）。**只有读**：写的那一侧只在托盘，
+  // 页面能改它就不是隐私开关了，是后端托管的那个源自己把自己藏起来的手势。
+  ipcMain.handle("shell:pet-content-visible", () => petPrefs.showContent);
   // 本地推理服务的进程（D③-b）。**三个方法都不收参数**：起停一个本机进程能碰到的东西比
   // 打开一个会话多得多，参数一旦是路径/命令，桥就成了任意执行入口。
   ipcMain.handle("shell:ollama-owner", () => ollama.owner());
@@ -237,6 +268,8 @@ function boot(): void {
     showConsole,
     petVisible: () => Boolean(petWin && petWin.isVisible()),
     setPetVisible,
+    petPrefs: () => petPrefs,
+    setPetPrefs: updatePetPrefs,
     canAutostart: canManageLoginItem,
     autostartEnabled: loginItemEnabled,
     setAutostart: setLoginItemEnabled,
@@ -248,7 +281,13 @@ function boot(): void {
   if (!registered) console.warn(`[shell] 全局热键 ${HOTKEY} 被占用，注册失败（其余功能不受影响）`);
 
   // 桌宠是"能不能不看我"的开关：默认开，ROLECARD_PET=0 关掉（不为此加设置界面）。
+  logLine(`桌宠偏好（本次启动读到）：${prefsText()}`);
   if (process.env.ROLECARD_PET !== "0") setPetVisible(true);
+  // 上屏之后再量一次实际状态。听 `ready-to-show` 而不是 `show`：`showInactive()` 是在
+  // 那个 handler **里面**同步发出 "show" 的，听 "show" 会量在 `applyPetPrefs` 之前
+  // （第一版就是这么错的，日志里写下"实际：置顶=false"而偏好明明是 true）。
+  // 注册顺序保证这条跑在 `createPetWindow` 里那条之后 —— 同一个事件，后注册的后触发。
+  petWin?.once("ready-to-show", () => petWin && logPetWindow(petWin));
 }
 
 // 单实例：第二个实例直接退出（它没有自己的后端可管，留着只会两个壳抢同一个端口）。

@@ -31,6 +31,14 @@ export interface ShellBridge {
   setPetExpanded(expanded: boolean): Promise<boolean>;
   /** 拖动桌宠：只报**增量**。绝对坐标等于让页面决定"窗口摆在哪"，那条权力留在壳里。 */
   movePetBy(dx: number, dy: number): void;
+  /** 托盘「显示消息内容」那面旗子。**页面只能读**：写它的是用户手里的托盘，不是界面自己。
+   *
+   * 标成可选是因为一条真实的错身：`dist` 由后端随时更新，而安装包是偶尔才重打一次的 ——
+   * **新界面完全可能跑在旧壳里**。当成必选就是拿一个 tsc 里的假设，换桌面上一次
+   * `undefined is not a function`（整个桌宠页白屏）。缺这能力时页面按"显示"渲染。 */
+  petContentVisible?(): Promise<boolean>;
+  /** 旗子被改动时收一次通知；传 null 注销。首值仍需 pull 一次。同样可选（旧壳没有）。 */
+  onPetContentVisible?(handler: ((visible: boolean) => void) | null): void;
   /** 登记"谁来接收壳发来的打开会话"；传 null 注销。 */
   onRequestOpenThread(handler: ((threadId: string) => void) | null): void;
   /** 本地推理服务进程的归属与起停（D③-b）。**都不带参数**：路径由壳自己决定。 */

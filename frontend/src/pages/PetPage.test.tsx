@@ -50,10 +50,11 @@ function page(items: ReturnType<typeof row>[], unread = items.length): Reachouts
 
 /** 装上"壳"：桌宠的系统通知、悬停展开与"点气泡拉起控制台"都以它存在为前提。
  *  不装的时候就是 B/S —— 同一个组件、少两样能力，其余行为必须一模一样。 */
-function withShell(): ShellBridge & {
+function withShell(contentVisible = true): ShellBridge & {
   notify: ReturnType<typeof vi.fn>;
   openSession: ReturnType<typeof vi.fn>;
   movePetBy: ReturnType<typeof vi.fn>;
+  onPetContentVisible: ReturnType<typeof vi.fn>;
 } {
   const shell = {
     backendUrl: () => Promise.resolve("http://127.0.0.1:8000"),
@@ -62,6 +63,8 @@ function withShell(): ShellBridge & {
     openSession: vi.fn(),
     setPetExpanded: vi.fn().mockResolvedValue(true),
     movePetBy: vi.fn(),
+    petContentVisible: vi.fn().mockResolvedValue(contentVisible),
+    onPetContentVisible: vi.fn(),
     onRequestOpenThread: vi.fn(),
     ollamaOwner: vi.fn().mockResolvedValue({ managed: false, pid: null, binary: null }),
     startOllama: vi.fn(),
@@ -459,5 +462,86 @@ describe("PetPage 在桌宠上回话（③：不进控制台就能聊）", () =>
       finish?.();
       for (let i = 0; i < 6; i += 1) await Promise.resolve();
     });
+  });
+});
+
+describe("PetPage 托盘的「显示消息内容」旗子（§7.2 第 4 条：别人站在背后读不到）", () => {
+  const HIDDEN = "外头降温了，穿上外套。";
+
+  function sprite(): Element {
+    return screen.getByTitle(/^苏晚晴/);
+  }
+
+  /** 面板里那一句历史：默认 mock 是空历史，所以这里换成一条真内容。 */
+  function withHistory(text: string) {
+    apiMock.get.mockImplementation(async (url: string) =>
+      url === "/api/roles"
+        ? [{ role_id: "wan", role_name: "苏晚晴", model_name: "" }]
+        : {
+            messages: [{ role: "assistant", content: text, id: "m1" }],
+            total: 1,
+            limit: 8,
+            truncated: false,
+          },
+    );
+  }
+
+  async function hover() {
+    fireEvent.mouseEnter(sprite());
+    await act(async () => {
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+  }
+
+  it("关掉之后：气泡不画原文，面板不读历史，只说'去哪读、怎么打开'", async () => {
+    withShell(false);
+    withHistory(HIDDEN);
+    await mount();
+    expect(screen.getByText("它说了话 · 内容已隐藏")).toBeTruthy();
+    expect(screen.queryByText(HIDDEN)).toBeNull();
+
+    await hover();
+    expect(screen.getByText(/在控制台里读/)).toBeTruthy();
+    expect(screen.getByText(/3 条未读/)).toBeTruthy();
+    // 藏起来的东西不该只是"不画"：连请求都不发，页面里不留那份明文。
+    expect(apiMock.get.mock.calls.some((c) => String(c[0]).includes("/messages"))).toBe(false);
+    expect(screen.queryByText(HIDDEN)).toBeNull();
+  });
+
+  it("托盘当场改旗子：正开着的面板立刻把内容收掉", async () => {
+    const shell = withShell(true);
+    withHistory(HIDDEN);
+    await mount();
+    await hover();
+    expect(screen.getByText(HIDDEN)).toBeTruthy();
+
+    const push = shell.onPetContentVisible.mock.calls[0][0] as (v: boolean) => void;
+    act(() => push(false));
+    expect(screen.queryByText(HIDDEN)).toBeNull();
+    expect(screen.getByText(/内容已隐藏/)).toBeTruthy();
+
+    act(() => push(true));
+    await act(async () => {
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+    expect(screen.getByText(HIDDEN)).toBeTruthy(); // 勾回来就又读回来，不用重开面板
+  });
+
+  it("旗子关掉时新到的消息只报'谁找你了'，toast 里不拍原文", async () => {
+    const shell = withShell(false);
+    await mount();
+    apiMock.getReachouts.mockResolvedValue(page([row(4, "给你带了桂花糕。"), row(3, HIDDEN)]));
+    await poll();
+    expect(shell.notify).toHaveBeenCalledTimes(1);
+    expect(shell.notify).toHaveBeenCalledWith("苏晚晴", "内容已隐藏", "s_proactive_wan");
+  });
+
+  it("旧壳没这能力（新 dist 跑在旧安装包上）：内容照画，不白屏也不自己藏起来", async () => {
+    const shell = withShell(true);
+    delete shell.petContentVisible;
+    withHistory(HIDDEN);
+    await mount();
+    await hover();
+    expect(screen.getByText(HIDDEN)).toBeTruthy();
   });
 });
