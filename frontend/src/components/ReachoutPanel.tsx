@@ -239,7 +239,15 @@ export default function ReachoutPanel({
                   )}
                 </button>
               )}
-              {isOpen(stack) && stack.items.map((row) => <MessageRow key={row.id} row={row} stackLabel={stack.label} showRole={stack.items.length === 1} onOpen={openRow} />)}
+              {isOpen(stack) &&
+                stack.items.map((row) => (
+                  <MessageRow
+                    key={row.id}
+                    row={row}
+                    showRole={stack.items.length === 1}
+                    onOpen={openRow}
+                  />
+                ))}
               {!isOpen(stack) && (
                 <button
                   onClick={() => void openRow(stack.items[0])}
@@ -259,15 +267,13 @@ export default function ReachoutPanel({
   );
 }
 
-/** 一条主动消息。`showRole=false` 时组头已经写了角色名，这里就不重复。 */
+/** 一条主动消息。组头已经写过角色名与时间标签，所以成组时这里**不重复**（行上自有时间戳）。 */
 function MessageRow({
   row,
-  stackLabel,
   showRole,
   onOpen,
 }: {
   row: ReachoutRow;
-  stackLabel: string;
   showRole: boolean;
   onOpen: (row: ReachoutRow) => void | Promise<void>;
 }) {
@@ -281,16 +287,19 @@ function MessageRow({
           : "border-slate-100 opacity-70 dark:border-slate-700"
       }`}
     >
-      <span className="flex items-center justify-between text-xs">
-        <span className="font-medium text-slate-800 dark:text-slate-100">
-          {showRole ? row.role_name || row.role_id || "未知角色" : stackLabel}
-        </span>
-        {row.state === "unread" && (
-          <span className="rounded-full bg-blue-600 px-1.5 py-0.5 text-[10px] text-white">
-            未读
+      {/* 组头已经给了角色与日期区间，行里就不重复；只有"未读"标记值得占一行。 */}
+      {(showRole || row.state === "unread") && (
+        <span className="flex items-center justify-between text-xs">
+          <span className="font-medium text-slate-800 dark:text-slate-100">
+            {showRole ? row.role_name || row.role_id || "未知角色" : ""}
           </span>
-        )}
-      </span>
+          {row.state === "unread" && (
+            <span className="rounded-full bg-blue-600 px-1.5 py-0.5 text-[10px] text-white">
+              未读
+            </span>
+          )}
+        </span>
+      )}
       <span className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
         {row.text}
       </span>
