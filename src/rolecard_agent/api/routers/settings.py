@@ -20,6 +20,7 @@ from rolecard_agent.core.model_settings import (
     is_keyless_provider,
     provider_catalog,
 )
+from rolecard_agent.core.observability import TraceEvent
 
 router = APIRouter()
 
@@ -904,6 +905,53 @@ def remove_memory_item(
         actor=actor.id, action="delete_memory_item", target=f"memory_item:{item_id}", detail={}
     )
     return _memory_payload(ctx, role_id)
+
+
+@router.post("/api/settings/memory/consolidate")
+def consolidate_memory(
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+    role_id: str | None = Query(None, max_length=64),
+) -> object:
+    """「整理记忆」：让模型对一个记忆桶做 MERGE / INVALID（一次真模型调用，用户点才跑）。
+
+    为什么不是超限自动触发（写路径上）：一次整理是一次模型调用，把它塞进"记一条事实"
+    会让那件本该秒回的事变慢且可能失败 —— 超限时的**保底淘汰**（最弱的转失效）留在
+    写入路径上，真正的合并是这里的显式动作（设计稿 §3 决策点 C）。
+    只写 `invalidated_at` / `superseded_by`，不物理删任何行 —— 整理坏了最坏是回滚一个标记。
+    """
+    from rolecard_agent.core import memory as mem
+    from rolecard_agent.core import memory_distill
+
+    if not ctx.settings.memory_enabled:
+        raise HTTPException(
+            status_code=400, detail="跨会话记忆当前是关闭的 —— 先打开它再整理。"
+        )
+    if role_id:
+        _require_role(ctx, role_id)
+    bucket = role_id or mem.GLOBAL_BUCKET
+    outcome = memory_distill.consolidate(
+        ctx.conn, model=ctx.runtime.resolve_role_model(None), bucket=bucket
+    )
+    report = outcome["report"]
+    ctx.roles.audit(
+        actor=actor.id,
+        action="consolidate_memory",
+        target=f"memory:{bucket}",
+        detail={k: v for k, v in report.items() if v and k != "detail"},
+    )
+    ctx.tracer.emit(
+        TraceEvent(
+            event="memory_consolidate",
+            node="memory",
+            role_id=role_id,
+            tokens=report.get("tokens"),
+            detail={k: v for k, v in report.items() if v},
+        )
+    )
+    if not outcome["ok"]:
+        raise HTTPException(status_code=502, detail=report["detail"] or "模型调用失败。")
+    return {"report": report, **_memory_payload(ctx, role_id)}
 
 
 @router.delete("/api/settings/memory")

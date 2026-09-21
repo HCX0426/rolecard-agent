@@ -13,6 +13,7 @@ const { apiMock } = vi.hoisted(() => ({
     put: vi.fn(),
     patch: vi.fn(),
     del: vi.fn(),
+    consolidateMemory: vi.fn(),
   },
 }));
 
@@ -109,6 +110,23 @@ function memScopeSelect(): HTMLSelectElement {
   const sel = selects.find((s) => s.textContent?.includes("全局"));
   if (!sel) throw new Error("找不到记忆作用域下拉");
   return sel;
+}
+
+/**
+ * 等到按钮**真的可点**再交回去。
+ *
+ * 为什么要等：面板的数据是异步载入的，`render()` 之后立刻拿到的往往是禁用态那一下，
+ * `fireEvent.click` 点上去什么都不发生，于是一屏"没调用"的红 —— 测的是竞态，不是行为。
+ * 为什么每轮**重新查**元素：`Button` 在禁用时会套一层带说明文字的容器，从禁用翻成可用
+ * 时那个 `<button>` 节点是被换掉的，攥着旧引用等下去只会永远 `disabled === true`。
+ */
+async function enabledButton(name: string): Promise<HTMLButtonElement> {
+  let btn!: HTMLButtonElement;
+  await waitFor(() => {
+    btn = screen.getByRole("button", { name }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+  });
+  return btn;
 }
 
 describe("SettingsPage 切换记忆作用域二次确认（useConfirm）", () => {
@@ -226,5 +244,158 @@ expect(await screen.findByText(/对话 · 用过 2 次/)).toBeTruthy();
     expect(apiMock.del).not.toHaveBeenCalled();
     fireEvent.click(await screen.findByRole("button", { name: "确认删除" }));
     await waitFor(() => expect(apiMock.del).toHaveBeenCalledWith("/api/settings/memory/item/7"));
+  });
+});
+
+describe("记忆卡「整理记忆」（一次模型调用，只写标记）", () => {
+  const item = (id: number, text: string) => ({
+    id,
+    text,
+    source: "chat",
+    pinned: false,
+    hit_count: 1,
+    last_hit_at: null,
+    created_at: null,
+  });
+
+  /** 记忆面板的读侧桩：两条活跃条目（够整理）。 */
+  function stubMemory(items: ReturnType<typeof item>[]) {
+    const payload = {
+      enabled: true,
+      role_id: null,
+      content: items.map((i) => `- ${i.text}`).join("\n"),
+      items,
+      active_count: items.length,
+      limit: 200,
+      over_limit: false,
+    };
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/settings/models") return { default: "", providers: [], fallbacks: [] };
+      if (url === "/api/plugins") return [];
+      if (url === "/api/roles") {
+        return [
+          {
+            role_id: "r1",
+            role_name: "角色1",
+            system_prompt: "",
+            temperature: 0.7,
+            model_name: "",
+            tool_whitelist: [],
+            knowledge_scopes: [],
+            is_builtin: false,
+            description: "",
+            reachout_enabled: false,
+            exemplars: [],
+          },
+        ];
+      }
+      if (url === "/api/sessions") return [];
+      if (url === "/api/knowledge/scopes") return { scopes: [] };
+      if (url === "/api/services") return { services: [] };
+      if (url === "/api/mcp/servers") return { servers: [], effective_count: 0 };
+      if (url === "/api/settings/runtime") return { note: "", groups: [] };
+      if (url.startsWith("/api/audit")) return [];
+      if (url === "/api/settings/memory" || url.startsWith("/api/settings/memory?")) {
+        return items.length ? { ...payload, items } : { ...payload, items: [], active_count: 0 };
+      }
+      return {};
+    });
+  }
+
+  it("两条以上才可点：整理后列表刷成响应里那份，并报出条数与成本", async () => {
+    stubMemory([item(1, "用户养了一只猫"), item(2, "用户的猫叫米")]);
+    apiMock.consolidateMemory.mockResolvedValue({
+      report: {
+        added: 0,
+        updated: 0,
+        merged: 1,
+        invalidated: 0,
+        noop: 0,
+        skipped: 0,
+        detail: "",
+        tokens: 456,
+        before: 2,
+        after: 1,
+      },
+      turns_since: 0,
+      enabled: true,
+      role_id: null,
+      content: "- 用户养了一只叫米的猫",
+      items: [item(3, "用户养了一只叫米的猫")],
+      active_count: 1,
+      limit: 200,
+      over_limit: false,
+    });
+
+    render(<SettingsPage />);
+    // 记忆是**异步**载入的：`mem` 到位前按钮一直是禁用态，直接点等于点空气（第一次写就踩了）。
+    fireEvent.click(await enabledButton("整理记忆"));
+    await waitFor(() => expect(apiMock.consolidateMemory).toHaveBeenCalledWith(undefined));
+    expect(await screen.findByText("用户养了一只叫米的猫")).toBeTruthy();
+    expect(screen.queryByText("用户养了一只猫")).toBeNull();
+    // 「没删任何一行」是这句提示的重点：整理只写失效标记
+    expect(await screen.findByText(/合并 1 组/)).toBeTruthy();
+    expect(screen.getByText(/没删任何一行/)).toBeTruthy();
+    expect(screen.getByText(/456 tokens/)).toBeTruthy();
+  });
+
+  it("作用域切到某角色时，整理的是那个桶（不是全局那份）", async () => {
+    stubMemory([item(1, "它记得的猫"), item(2, "猫叫米")]);
+    apiMock.consolidateMemory.mockResolvedValue({
+      report: {
+        added: 0,
+        updated: 0,
+        merged: 1,
+        invalidated: 0,
+        noop: 0,
+        skipped: 0,
+        detail: "",
+        tokens: null,
+        before: 2,
+        after: 1,
+      },
+      turns_since: 0,
+      enabled: true,
+      role_id: "r1",
+      content: "- 它记得一只叫米的猫",
+      items: [item(3, "它记得一只叫米的猫")],
+      active_count: 1,
+      limit: 200,
+      over_limit: false,
+    });
+
+    render(<SettingsPage />);
+    const sel = await waitFor(() => {
+      const found = (screen.getAllByRole("combobox") as HTMLSelectElement[]).find((s) =>
+        s.textContent?.includes("全局"),
+      );
+      if (!found) throw new Error("还没渲染出作用域下拉");
+      return found;
+    });
+    fireEvent.change(sel, { target: { value: "r1" } });
+    fireEvent.click(await enabledButton("整理记忆"));
+    await waitFor(() => expect(apiMock.consolidateMemory).toHaveBeenCalledWith("r1"));
+    // 模型没报 usage 时不编一个数：提示里没有 tokens，也不能显示 0
+    expect(await screen.findByText(/合并 1 组/)).toBeTruthy();
+    expect(screen.queryByText(/tokens/)).toBeNull();
+  });
+
+  it("只有一条时禁用并说明原因（而不是一个点了没反应的按钮）", async () => {
+    stubMemory([item(1, "只有一条")]);
+    render(<SettingsPage />);
+    const btn = (await screen.findByText("整理记忆")).closest("button") as HTMLButtonElement;
+    await waitFor(() => expect(btn.disabled).toBe(true));
+    expect(screen.getByText("至少两条活跃记忆才有可整理的")).toBeTruthy();
+    expect(apiMock.consolidateMemory).not.toHaveBeenCalled();
+  });
+
+  it("整理失败把后端原文显示出来（里面有「去哪开」）", async () => {
+    stubMemory([item(1, "用户养了一只猫"), item(2, "用户的猫叫米")]);
+    apiMock.consolidateMemory.mockRejectedValue(
+      new Error("跨会话记忆当前是关闭的 —— 先打开它再整理。"),
+    );
+    render(<SettingsPage />);
+    fireEvent.click(await enabledButton("整理记忆"));
+    expect(await screen.findByText(/整理失败：跨会话记忆当前是关闭的/)).toBeTruthy();
   });
 });

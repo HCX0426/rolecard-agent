@@ -37,6 +37,10 @@ CREATE TABLE IF NOT EXISTS session_thread (
     -- （settings.agent_default_mode）；'chat' / 'agent' = 本会话显式覆盖。
     -- 旧库要跑 core/storage.db 的 _migrate() 补列（ALTER TABLE ADD COLUMN，幂等）。
     agent_mode       TEXT,
+    -- 提取精华的游标：上次提取时这个会话的消息条数。差值攒够 N 轮才再提一次
+    -- （按消息数而非"距上次多久"：一次提取是一次真模型调用，本地卡上按时间兜底会让
+    --  连续聊天的成本不可预算）。NULL = 从未提取过。旧库由 storage/db.py::_migrate 补列。
+    distilled_at_seq INTEGER,
     -- Version stamp of the enabled tool set. Bumped whenever plugins are toggled.
     -- On resume, a checkpoint whose tool_epoch is older than the current one may
     -- reference tools that no longer exist; the executor must answer
@@ -133,6 +137,10 @@ CREATE TABLE IF NOT EXISTS role_memory_item (
     text           TEXT NOT NULL,
     source         TEXT NOT NULL DEFAULT 'manual'
                    CHECK (source IN ('manual','chat','proactive','extract','seed')),
+    -- source 的读法是"这条是谁写的"，不是"哪条命令写的"：手动提取、每 N 轮自动提取、
+    -- 整理时合并出来的新条目都算 `extract`（模型写的），用户在面板上敲的是 `manual`，
+    -- memory_save 工具在对话里写的是 `chat`。区分"提取/整理"会让这一列变成两套语义的
+    -- 混合体，而隐私要问的只有"是不是模型自己写进我记忆里的"。
     pinned         INTEGER NOT NULL DEFAULT 0,   -- 钉住 = 不参与淘汰、不被整理覆盖
     hit_count      INTEGER NOT NULL DEFAULT 0,   -- 被注入过几次（近因×频次的"频次"那半）
     last_hit_at    TIMESTAMP,

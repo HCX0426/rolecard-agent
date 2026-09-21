@@ -34,6 +34,7 @@ import {
 } from "../components/chat/icons";
 import ThinkingPanel from "../components/chat/ThinkingPanel";
 import { Markdown } from "../components/Markdown";
+import { Button } from "../components/ui";
 
 /** 回答耗时：created_at 配对（用户 → 助手）换算成可读时长；无时间戳的旧消息返回 null。 */
 /** 模型设置里"这一页要显示的那些行"：只留**参与对话**的模型（`used_by` 含 chat，派生自
@@ -132,6 +133,7 @@ export default function ChatPage({
   const [editing, setEditing] = useState<{ id: string; text: string; image?: string } | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null); // 复制反馈（按轮 key）
   const [enhancing, setEnhancing] = useState(false); // 增强提示词进行中
+  const [distilling, setDistilling] = useState(false); // 提取精海中（一次真模型调用，本地卡上要几十秒）
   const [ctxBudget, setCtxBudget] = useState(0); // 上下文字符预算（后端 context 端点）
   // 多选删除（勾选自动扩展到整轮）抽到 hooks/useMessageSelection。
 
@@ -376,6 +378,32 @@ export default function ChatPage({
     }
   }
 
+  /**
+   * 提取精华：把**这段对话**抽成该角色的记忆条目（一次真模型调用，用户点才跑）。
+   *
+   * 结果只说条数与成本，不把抽出来的事实复读一遍 —— 那是模型对用户的理解，界面上要看的
+   * 地方是记忆卡（那里还能逐条钉住/删除）。记忆总闸关着时后端回 400，文案里带着"去哪开"。
+   */
+  async function distillNow() {
+    if (!sessionId || busy || distilling) return;
+    setDistilling(true);
+    try {
+      const { report } = await api.distillSession(sessionId);
+      const parts = [
+        report.added && `新增 ${report.added} 条`,
+        report.updated && `更新 ${report.updated} 条`,
+        report.skipped && `忽略 ${report.skipped} 行看不懂的输出`,
+      ].filter(Boolean);
+      const cost = report.tokens ? ` · 用去 ${report.tokens} tokens` : "";
+      if (parts.length) setStatus(`已提取进${roleLabel}的记忆：${parts.join("、")}${cost}`);
+      else setStatus(report.detail || "这段对话里没有值得新记的事实。", "info");
+    } catch (e) {
+      setStatus(`提取失败：${(e as Error).message}`, "warn");
+    } finally {
+      setDistilling(false);
+    }
+  }
+
   function pickImage(file: File | undefined) {
     if (!file) return;
     if (!file.type.startsWith("image/")) {
@@ -542,6 +570,9 @@ export default function ChatPage({
   const defaultRoleId =
     roles.find((r) => r.role_id === "general_assistant")?.role_id || roles[0]?.role_id || "";
   const displayRole = currentRole || defaultRoleId;
+  // 提取精华的归属说明：写进的是**这个角色**的记忆桶，所以提示里要念出它的名字。
+  const roleLabel =
+    roles.find((r) => r.role_id === (current?.role_id || displayRole))?.role_name || "当前角色";
   const grouped = useMemo(() => {
     const g: Record<string, BackendRow[]> = {};
     // state 里已经只有**对话**后端（`chatRows` 在拉取边界就筛掉了），这里不再重复过滤。
@@ -673,6 +704,28 @@ export default function ChatPage({
                 >
                   ✎
                 </button>
+              )}
+              {/* 提取精华：输入是**这段对话**，所以按钮在对话页；记忆卡上那个是另一件事
+                  （「整理记忆」，输入是已有条目）。两个按钮各自只需要自己那份输入。 */}
+              {current && (
+                <div className="ml-auto shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={distillNow}
+                    disabled={busy || distilling || messages.length === 0}
+                    disabledHint={
+                      messages.length === 0
+                        ? "先聊几句再提取"
+                        : distilling
+                          ? "正在提取（本地模型可能要几十秒）"
+                          : "等这轮回答完再提取"
+                    }
+                    title={`把这段对话里关于你的事实抽进「${roleLabel}」的记忆（一次模型调用；逐条核对在 设置 → 跨会话记忆）`}
+                  >
+                    {distilling ? "提取中…" : "提取精华"}
+                  </Button>
+                </div>
               )}
             </div>
           )}

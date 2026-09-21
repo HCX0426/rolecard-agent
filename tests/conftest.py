@@ -29,16 +29,23 @@ from rolecard_agent.storage.db import bootstrap, connect
 
 @pytest.fixture(scope="session", autouse=True)
 def _no_startup_model_pin() -> Iterator[None]:
-    """整个测试会话都不做启动预热（`MODEL_PIN_ON_STARTUP=0`，见 config.py 该字段的理由）。"""
-    previous = os.environ.get("MODEL_PIN_ON_STARTUP")
+    """整个测试会话都不做启动预热（`MODEL_PIN_ON_STARTUP=0`，见 config.py 该字段的理由）。
+
+    同时关掉**自动提取记忆**（`MEMORY_EXTRACT_AUTO=0`）：那是一次后台真模型调用，它会把
+    ScriptedChat 的脚本回复吃掉一条 —— 断言"这一轮回复是 build-N"的用例就会偶发错位。
+    提取自身的用例（test_memory_distill）单独把它打开再测，不在这里偷开。
+    """
+    previous = {key: os.environ.get(key) for key in ("MODEL_PIN_ON_STARTUP", "MEMORY_EXTRACT_AUTO")}
     os.environ["MODEL_PIN_ON_STARTUP"] = "0"
+    os.environ["MEMORY_EXTRACT_AUTO"] = "0"
     try:
         yield
     finally:
-        if previous is None:
-            del os.environ["MODEL_PIN_ON_STARTUP"]
-        else:
-            os.environ["MODEL_PIN_ON_STARTUP"] = previous
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 # --------------------------------------------------------------------------- model fake

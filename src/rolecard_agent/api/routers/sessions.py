@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import hashlib
 import re
+import threading
 import uuid
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -30,6 +32,7 @@ from rolecard_agent.api.deps import (
     serialize_message,
 )
 from rolecard_agent.config import Settings
+from rolecard_agent.core import memory_distill
 from rolecard_agent.core.graph import build_graph_config
 from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.core.ingestion import INGESTION_FAILED, INGESTION_PENDING
@@ -377,16 +380,154 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
         }
 
     return StreamingResponse(
-        chat_events(
-            graph,
-            graph_input=graph_input,
-            config=graph_config,
-            role_summary={"role_id": role.role_id, "role_name": role.role_name},
-            tracer=ctx.tracer,
+        _stream_then(
+            chat_events(
+                graph,
+                graph_input=graph_input,
+                config=graph_config,
+                role_summary={"role_id": role.role_id, "role_name": role.role_name},
+                tracer=ctx.tracer,
+            ),
+            after=(
+                lambda: _distill_after_turn(ctx, thread_id=body.thread_id, role_id=role_id)
+                if ctx.settings.memory_enabled and ctx.settings.memory_extract_auto
+                else None
+            ),
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# -- 提取精华（对话 → 记忆条目）------------------------------------------------
+
+
+def _thread_model(ctx: AppContext, thread: dict, role_id: str) -> Any:
+    """这一会话**真正在用**的那个模型：会话覆盖 > 角色覆盖 > 默认（与 call_model 同一条链）。
+
+    提取必须用同一个后端：换到一个更弱的模型上去抽事实，症状是"记忆悄悄变笨了"，
+    而没人会怀疑到提取这一步 —— 这条链的优先级不是实现细节，是结果质量的因。
+    """
+    name = thread["model_name"]
+    if not name:
+        try:
+            name = ctx.roles.get(role_id).model_name
+        except Exception:  # noqa: BLE001 - 角色被删了就用默认，提取不该因此 500
+            name = None
+    return ctx.runtime.resolve_role_model(name)
+
+
+def _stream_then(events: Any, *, after: Any) -> Any:
+    """把一次后台动作挂在"响应已经流完"之后。
+
+    为什么是 fire-and-forget 线程而不是 `await`：await 会让 SSE 响应在提取期间保持打开 ——
+    客户端看到的还是"这一轮变慢了"。后台跑的代价是它可以失败得安静，所以它必须
+    **只写 trace、绝不影响对话**（这是 §2 那条"提取失败不影响开口"的实现方式）。
+    """
+
+    async def pump() -> Any:
+        async for chunk in events:
+            yield chunk
+        if after is not None:
+            threading.Thread(target=after, daemon=True, name="memory-distill").start()
+
+    return pump()
+
+
+def _distill_after_turn(ctx: AppContext, *, thread_id: str, role_id: str) -> None:
+    """每 N 轮的兜底提取（N=`MEMORY_EXTRACT_TURNS`，0 = 只留手动按钮）。"""
+    conn = ctx.conn
+    try:
+        thread = get_thread(conn, thread_id)
+        _, messages = _history_messages(ctx, thread_id)
+        if not memory_distill.due_for_extract(
+            conn,
+            thread_id=thread_id,
+            every=ctx.settings.memory_extract_turns,
+            message_count=len(messages),
+        ):
+            return
+        outcome = memory_distill.extract(
+            conn,
+            model=_thread_model(ctx, thread, role_id),
+            bucket=role_id,
+            messages=messages,
+        )
+        report = outcome["report"]
+        if outcome["ok"]:
+            memory_distill.mark_extracted(conn, thread_id=thread_id, message_count=len(messages))
+        ctx.tracer.emit(
+            TraceEvent(
+                event="memory_extract",
+                node="memory",
+                thread_id=thread_id,
+                role_id=role_id,
+                tokens=report.get("tokens"),
+                detail={"trigger": "auto", **{k: v for k, v in report.items() if v}},
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - 后台提取失败只留痕，绝不打扰对话
+        ctx.tracer.emit(
+            TraceEvent(
+                event="memory_extract",
+                node="memory",
+                thread_id=thread_id,
+                role_id=role_id,
+                error=f"{type(exc).__name__}: {exc}"[:200],
+                detail={"trigger": "auto", "fatal": False},
+            )
+        )
+
+
+@router.post("/api/session/{thread_id}/distill")
+def distill_session(
+    thread_id: str,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> object:
+    """手动「提取精华」：把这段会话抽成条目写进该角色的记忆桶（一次真模型调用）。
+
+    为什么按钮在对话页而不在记忆卡：提取的输入是**这段对话**；记忆卡上那个手动按钮做的是
+    另一件事（「整理记忆」，输入是已有条目）。两个按钮各自只需要自己那份输入，不互相冒充。
+    写进的是该角色的桶（不是全局）—— 对话是跟这个角色说的，回忆也只在它这里被引用。
+    """
+    if not ctx.settings.memory_enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="跨会话记忆当前是关闭的 —— 先在「设置 → 记忆与任务目录」打开它。",
+        )
+    thread = get_thread(ctx.conn, thread_id)
+    _, messages = _history_messages(ctx, thread_id)
+    role_id = str(thread["current_role_id"])
+    outcome = memory_distill.extract(
+        ctx.conn,
+        model=_thread_model(ctx, thread, role_id),
+        bucket=role_id,
+        messages=messages,
+    )
+    report = outcome["report"]
+    if outcome["ok"]:
+        memory_distill.mark_extracted(ctx.conn, thread_id=thread_id, message_count=len(messages))
+    # 审计只记**结构与条数**，绝不记提取出来的内容（那是用户的事实）。
+    ctx.roles.audit(
+        actor=actor.id,
+        action="extract_memory",
+        target=f"memory:{role_id}",
+        detail={"thread_id": thread_id, **{k: v for k, v in report.items() if v and k != "detail"}},
+    )
+    ctx.tracer.emit(
+        TraceEvent(
+            event="memory_extract",
+            node="memory",
+            thread_id=thread_id,
+            role_id=role_id,
+            tokens=report.get("tokens"),
+            detail={"trigger": "manual", **{k: v for k, v in report.items() if v}},
+        )
+    )
+    if not outcome["ok"]:
+        raise HTTPException(status_code=502, detail=report["detail"] or "模型调用失败。")
+    return {"report": report, "turns_since": 0}
 
 
 # -- 编辑重生成 / 删除问答对 ---------------------------------------------------

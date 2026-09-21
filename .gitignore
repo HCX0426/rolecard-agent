@@ -7,6 +7,8 @@ data/sqlite/*.db
 data/sqlite/*.db-journal
 data/sqlite/*.db-shm
 data/sqlite/*.db-wal
+# 迁移前手搓的库备份（里面和 app.db 一样是真实数据与凭据，同样绝不入库）
+data/sqlite/*.bak
 # keep the directory, ignore its contents (same pattern as uploads/ below)
 data/chroma/*
 !data/chroma/.gitkeep

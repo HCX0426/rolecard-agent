@@ -620,7 +620,67 @@ export const api = {
     ),
   decideApproval: (id: number, decision: "approve" | "reject", token: string | null) =>
     request<ApprovalRow>("POST", `/api/approvals/${id}/decide`, { decision, token }),
+  /** 提取精华：把这段对话抽成记忆条目（一次真模型调用 → 长超时，本地卡上就要几十秒）。 */
+  distillSession: (threadId: string) =>
+    request<DistillOutcome>(
+      "POST",
+      `/api/session/${threadId}/distill`,
+      undefined,
+      LONG_REQUEST_TIMEOUT_MS,
+    ),
+  /** 整理记忆：合并同义条目、让过时条目失效（同样是一次真模型调用）。 */
+  consolidateMemory: (roleId?: string) =>
+    request<ConsolidateOutcome>(
+      "POST",
+      `/api/settings/memory/consolidate${roleId ? `?role_id=${encodeURIComponent(roleId)}` : ""}`,
+      undefined,
+      LONG_REQUEST_TIMEOUT_MS,
+    ),
 };
+
+/**
+ * 一次模型调用的账本（`core/memory_distill.py::_report`）。
+ *
+ * `tokens` 可能是 null：模型没报 usage 时后端**不编一个数**，界面也就不显示成本，
+ * 而不是显示 0（0 会被读成"这次没花钱"）。
+ */
+export interface DistillReport {
+  added: number;
+  updated: number;
+  merged: number;
+  invalidated: number;
+  noop: number;
+  skipped: number;
+  detail: string;
+  tokens: number | null;
+  before: number | null;
+  after: number | null;
+}
+
+export interface DistillOutcome {
+  report: DistillReport;
+  /** 距上次提取又攒了几轮（0 = 刚提取过）。 */
+  turns_since: number;
+}
+
+/** 整理完顺手回一份当前桶的记忆视图：界面不用再发一次 GET 就能刷新列表。 */
+export interface ConsolidateOutcome extends DistillOutcome {
+  enabled: boolean;
+  role_id: string | null;
+  content: string;
+  items: {
+    id: number;
+    text: string;
+    source: string;
+    pinned: boolean;
+    hit_count: number;
+    last_hit_at: string | null;
+    created_at: string | null;
+  }[];
+  active_count: number;
+  limit: number;
+  over_limit: boolean;
+}
 
 // ---- SSE 对话流 ----------------------------------------------------------------
 // 事件协议与 api/chat.py 一一对应；前端永远以 message_replace / 权威文本为最终真相。

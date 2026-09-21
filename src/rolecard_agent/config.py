@@ -161,6 +161,15 @@ class Settings(BaseModel):
     # 一部分，关闭是显式选择（隐私 / 干净上下文）。
     memory_enabled: bool = True
 
+    # 「提取精华」的自动兜底节奏：一个会话自上次提取起攒够多少**个用户轮次**才再提一次
+    # （一次提取 = 一次真模型调用；界面上的手动按钮不受这个数限制）。
+    # 设 0 = 关掉自动提取，只留手动 —— 8GB 本地卡上这是省时间的显式选择。
+    memory_extract_turns: int = 12
+
+    # 自动提取跑在**后台线程**（响应已经流完才发起），因此它可以失败而不影响对话；
+    # 失败只留一条 trace。这条闸存在是因为"后台偷偷调模型"这件事本身该能一键停。
+    memory_extract_auto: bool = True
+
     # 多模型比对（`compare_model_answers`，core/consensus.py）**全局总闸**。开 = 白名单里
     # 有它的角色可以一次问 N 个后端并聚合；关 = 工具一律返回关闭说明。
     # 为什么值得一个闸（而不是只靠角色白名单）：一次调用 = N 次真实模型调用 + 1 次聚合，
@@ -397,6 +406,8 @@ class Settings(BaseModel):
             ("TOOL_TIMEOUT_SECONDS", "tool_timeout_seconds"),
             ("AGENT_MAX_STEPS", "agent_max_steps"),
             ("MEMORY_ENABLED", "memory_enabled"),
+            ("MEMORY_EXTRACT_TURNS", "memory_extract_turns"),
+            ("MEMORY_EXTRACT_AUTO", "memory_extract_auto"),
             ("CONSENSUS_ENABLED", "consensus_enabled"),
             ("AGENT_DEFAULT_MODE", "agent_default_mode"),
             ("REACHOUT_ENABLED", "reachout_enabled"),

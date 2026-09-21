@@ -17,7 +17,7 @@ import {
   type WorkspaceDir,
 } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
-import { Card } from "../components/ui";
+import { Button, Card } from "../components/ui";
 
 // 设置页子页签：模型（凭据组 + 模型行，见 components/ModelsPanel）/ 服务（运行时状态与降级
 // 策略）/ 记忆与任务目录 / 关于 / 扩展 / 运行环境 / 审计。知识库已升为独立顶层页 ——
@@ -137,6 +137,8 @@ function MemoryPanel() {
   // 新增一条的草稿。逐条录入取代了"只能在 textarea 里手改整段"。
   const [newFact, setNewFact] = useState("");
   const [itemBusy, setItemBusy] = useState(false);
+  // 「整理记忆」进行中：一次真模型调用，本地卡上可能几十秒，所以按钮要有明确的进行中态。
+  const [consolidating, setConsolidating] = useState(false);
   // 任务目录（file1）：角色可读写的授权范围。wsDir = 生效值；树抽屉 = 目录选择器。
   const [wsDir, setWsDir] = useState<WorkspaceDir | null>(null);
   const [wsDraft, setWsDraft] = useState("");
@@ -228,6 +230,39 @@ function MemoryPanel() {
       setMemMsg("已清空");
     } catch (e) {
       setMemErr(`清空失败：${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * 整理记忆：让模型对**当前作用域这个桶**做 MERGE / INVALID（一次真模型调用，点才跑）。
+   *
+   * 为什么不自动：超限时的保底淘汰已经在写入路径上做了（不调模型），真正的合并会改写
+   * 事实 —— 什么时候花这个钱由用户决定。响应里带整理后的同一份视图，所以列表当场刷新。
+   */
+  async function consolidateNow() {
+    setMemErr("");
+    setMemMsg("");
+    setConsolidating(true);
+    try {
+      const r = await api.consolidateMemory(memScope || undefined);
+      setMem(r);
+      setMemDraft(r.content);
+      const p = r.report;
+      const parts = [
+        p.merged && `合并 ${p.merged} 组`,
+        p.invalidated && `让 ${p.invalidated} 条过时事实失效`,
+        p.skipped && `忽略 ${p.skipped} 行看不懂的输出`,
+      ].filter(Boolean);
+      const cost = p.tokens ? ` · 用去 ${p.tokens} tokens` : "";
+      setMemMsg(
+        parts.length
+          ? `已整理：${parts.join("、")}${cost}（活跃 ${r.active_count}/${r.limit} 条，没删任何一行）`
+          : p.detail || "没有需要整理的条目。",
+      );
+    } catch (e) {
+      setMemErr(`整理失败：${(e as Error).message}`);
+    } finally {
+      setConsolidating(false);
     }
   }
 
@@ -408,6 +443,21 @@ function MemoryPanel() {
               </option>
             ))}
           </select>
+          {/* 整理 = 对"当前作用域这一个桶"的动作，所以按钮跟着作用域走，不跟列表走。 */}
+          <div className="ml-auto">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={consolidateNow}
+              disabled={!mem || consolidating || (mem?.active_count ?? 0) < 2}
+              disabledHint={
+                (mem?.active_count ?? 0) < 2 ? "至少两条活跃记忆才有可整理的" : undefined
+              }
+              title="让模型合并同义的条目、把过时的转成失效（一次模型调用；只写标记，不删任何一行）"
+            >
+              {consolidating ? "整理中…" : "整理记忆"}
+            </Button>
+          </div>
         </div>
         <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
           {memScope
@@ -470,7 +520,7 @@ function MemoryPanel() {
         {mem?.over_limit && (
           <p className="mt-1.5 text-[11px] text-amber-600 dark:text-amber-400">
             活跃记忆已达上限（{mem.active_count}/{mem.limit}）—— 最弱的已被退役（没删，可撤销）。
-            建议整理一下：合并同义的、删掉过时的。
+            点上面的「整理记忆」合并同义的、让过时的失效，比继续堆着更准。
           </p>
         )}
         <details className="mt-2">

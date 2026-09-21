@@ -12,7 +12,7 @@
 //   2. 工具调用卡片从"执行中"变成结果；
 //   3. 上下文裁剪提示真的渲染出来（而且挂在不会被回放覆盖的位置）。
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChatEvent } from "../api";
@@ -27,6 +27,7 @@ const { apiMock, streamChatMock } = vi.hoisted(() => ({
     patch: vi.fn(),
     del: vi.fn(),
     extractRecord: vi.fn(),
+    distillSession: vi.fn(),
   },
   streamChatMock: vi.fn(),
 }));
@@ -423,5 +424,117 @@ describe("ChatPage 模型菜单能力位徽章（Batch 6：supports_tools）", (
     // 菜单已开：该后端行可见，但没有「工具」徽章（避免把能力位这条事实复制到前端做 disable）
     expect(await screen.findByText("gpt-y")).toBeTruthy();
     expect(screen.queryByText("工具")).toBeNull();
+  });
+});
+
+describe("ChatPage 提取精华（对话 → 该角色的记忆）", () => {
+  /** 一份"有历史的会话"：头部那个按钮只有在**当前会话且读到了消息**时才该可点。 */
+  function stubConversation(messages: { role: string; content: string }[]) {
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/sessions") {
+        return [{ thread_id: "s_d", title: "聊过的", role_id: "general_assistant", role_name: "通用助手", updated_at: "t" }];
+      }
+      if (url === "/api/roles") {
+        return [{ role_id: "general_assistant", role_name: "通用助手", model_name: "" }];
+      }
+      if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
+      if (url.endsWith("/messages")) {
+        return { messages, total: messages.length, limit: 500, truncated: false };
+      }
+      if (url.endsWith("/context")) return { trimmed: 0, kept: 0, budget: 24000 };
+      if (url.startsWith("/api/session/")) return { model_name: null, agent_mode: "chat" };
+      return {};
+    });
+  }
+
+  const report = {
+    added: 2,
+    updated: 0,
+    merged: 0,
+    invalidated: 0,
+    noop: 0,
+    skipped: 0,
+    detail: "",
+    tokens: 321,
+    before: null,
+    after: null,
+  };
+
+  /**
+   * 打开这会话并点头部那个按钮 —— 但**每轮重新查**按钮再判断能不能点。
+   *
+   * 两个坑都在这里：历史是异步载入的（早一步点在禁用态上，等于点了空气）；而 `Button`
+   * 禁用时会多套一层带说明的容器，翻成可用时那个 `<button>` 节点是**被换掉的**，攥着旧
+   * 引用等下去只会永远 `disabled === true`。
+   */
+  async function openConversationAndClickDistill() {
+    render(
+      <ToastProvider>
+        <ChatPage deepThread="s_d" onDeepThreadUsed={() => {}} />
+      </ToastProvider>,
+    );
+    let btn!: HTMLButtonElement;
+    await waitFor(() => {
+      const found = screen.getByText("提取精华").closest("button");
+      expect(found).not.toBeNull();
+      btn = found as HTMLButtonElement;
+      expect(btn.disabled).toBe(false);
+    });
+    fireEvent.click(btn);
+    return btn;
+  }
+
+  it("点按钮打这一会话的提取端点，并把条数与成本说清楚", async () => {
+    stubConversation([
+      { role: "user", content: "我搬到苏州住了半年" },
+      { role: "assistant", content: "苏州不错" },
+    ]);
+    apiMock.distillSession.mockResolvedValue({ report, turns_since: 0 });
+
+    await openConversationAndClickDistill();
+
+    await waitFor(() => expect(apiMock.distillSession).toHaveBeenCalledWith("s_d"));
+    // 报的是"进了谁的记忆 + 几条 + 花多少"，不复读抽出来的事实（那归记忆卡看）
+    expect(await screen.findByText(/已提取进通用助手的记忆：新增 2 条/)).toBeTruthy();
+    expect(screen.getByText(/321 tokens/)).toBeTruthy();
+  });
+
+  it("什么都没抽到时说清楚，而不是静默", async () => {
+    stubConversation([
+      { role: "user", content: "今天天气不错" },
+      { role: "assistant", content: "是啊" },
+    ]);
+    apiMock.distillSession.mockResolvedValue({
+      report: { ...report, added: 0, noop: 1 },
+      turns_since: 0,
+    });
+
+    await openConversationAndClickDistill();
+    expect(await screen.findByText(/没有值得新记的事实/)).toBeTruthy();
+  });
+
+  it("后端说「记忆是关的」→ 原文显示出来（里面带着去哪开）", async () => {
+    stubConversation([
+      { role: "user", content: "一问" },
+      { role: "assistant", content: "一答" },
+    ]);
+    apiMock.distillSession.mockRejectedValue(
+      new Error("跨会话记忆当前是关闭的 —— 先在「设置 → 记忆与任务目录」打开它。"),
+    );
+
+    await openConversationAndClickDistill();
+    expect(await screen.findByText(/记忆与任务目录/)).toBeTruthy();
+  });
+
+  it("空对话时按钮禁用并说明「先聊几句」（不是点了没反应的死按钮）", async () => {
+    stubConversation([]);
+    render(
+      <ToastProvider>
+        <ChatPage deepThread="s_d" onDeepThreadUsed={() => {}} />
+      </ToastProvider>,
+    );
+    const btn = (await screen.findByText("提取精华")).closest("button") as HTMLButtonElement;
+    await waitFor(() => expect(btn.disabled).toBe(true));
+    expect(screen.getByText("先聊几句再提取")).toBeTruthy();
   });
 });
