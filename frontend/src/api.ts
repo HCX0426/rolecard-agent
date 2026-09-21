@@ -680,6 +680,7 @@ export interface ConsolidateOutcome extends DistillOutcome {
   active_count: number;
   limit: number;
   over_limit: boolean;
+  extract_turns: number;
 }
 
 // ---- SSE 对话流 ----------------------------------------------------------------

@@ -113,6 +113,8 @@ type MemoryPayload = {
   active_count: number;
   limit: number;
   over_limit: boolean;
+  /** 自动提取的节奏（有效值；0 = 关，只留对话页那个手动按钮）。 */
+  extract_turns: number;
 };
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -122,6 +124,9 @@ const SOURCE_LABEL: Record<string, string> = {
   extract: "提取",
   seed: "预置",
 };
+
+/** 界面上给的自动提取档位（"0" = 关）。env 里设成别的数仍会原样回显，不假装是这些档之一。 */
+const CADENCES = ["0", "6", "12", "24"];
 
 function MemoryPanel() {
   // 跨会话记忆面板：enabled = 总开关（runtime 覆盖，保存即热生效）；
@@ -139,6 +144,8 @@ function MemoryPanel() {
   const [itemBusy, setItemBusy] = useState(false);
   // 「整理记忆」进行中：一次真模型调用，本地卡上可能几十秒，所以按钮要有明确的进行中态。
   const [consolidating, setConsolidating] = useState(false);
+  // 自动提取那一档（0 = 关）单独一个忙碌态：它走的是同一个 PUT，但保存后要读回**新有效值**。
+  const [extractBusy, setExtractBusy] = useState(false);
   // 任务目录（file1）：角色可读写的授权范围。wsDir = 生效值；树抽屉 = 目录选择器。
   const [wsDir, setWsDir] = useState<WorkspaceDir | null>(null);
   const [wsDraft, setWsDraft] = useState("");
@@ -154,6 +161,8 @@ function MemoryPanel() {
   const [reachoutMsg, setReachoutMsg] = useState("");
   const [reachoutErr, setReachoutErr] = useState("");
   const confirm = useConfirm();
+  // 有效档位（"0" = 自动提取关着）。字符串是为了让 `<select>` 与 option 的 value 对得上。
+  const cadence = String(mem?.extract_turns ?? 12);
 
   const loadRoles = useCallback(async () => {
     const roles = await api.get<RoleCard[]>("/api/roles");
@@ -230,6 +239,35 @@ function MemoryPanel() {
       setMemMsg("已清空");
     } catch (e) {
       setMemErr(`清空失败：${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * 自动提取那一档：`0` = 关掉自动那条（只留对话页的手动按钮），否则 = 每 N 轮兜底一次。
+   *
+   * 保存后要**读回**一次：这个 select 显示的是有效值（env + 在线覆盖叠加），而 PUT 的
+   * 响应在重建之前生成，直接用它会把界面停在旧数字上。
+   */
+  async function changeExtractCadence(next: string) {
+    setMemErr("");
+    setMemMsg("");
+    setExtractBusy(true);
+    try {
+      await api.put<MemoryPayload>("/api/settings/memory", {
+        extract_turns: Number.parseInt(next, 10),
+      });
+      const m = await api.get<MemoryPayload>("/api/settings/memory");
+      setMem(m);
+      setMemDraft(m.content);
+      setMemMsg(
+        m.extract_turns
+          ? `已设为每 ${m.extract_turns} 轮自动提取一次（跑在回答出完之后，不影响对话）`
+          : "已关掉自动提取：只留对话页那个「提取精华」按钮",
+      );
+    } catch (e) {
+      setMemErr(`保存失败：${(e as Error).message}`);
+    } finally {
+      setExtractBusy(false);
     }
   }
 
@@ -464,6 +502,30 @@ function MemoryPanel() {
             ? "这是该角色自己的记忆（回忆触发只读这一份），与全局记忆和其它角色隔离。编辑/清空只作用于本角色。"
             : "全局记忆注入每个角色的对话。AI 检测到你明确说出的可复用事实（称呼 / 偏好 / 背景）会通过 memory_save 写入，并同步进当前角色的专属记忆。"}
         </p>
+        {/* 自动提取的节奏：**一个**控件同时管"要不要自动跑"和"多久跑一次"（0 = 只留手动）。
+            放在记忆卡而不是运行环境页 —— 它和「整理记忆」是同一件事的两个入口，
+            而且这是一笔会自己发生的模型开销，得跟记忆本身同屏才看得见。 */}
+        <label className="mt-2 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+          <span>每 N 轮自动提取一次</span>
+          <select
+            value={cadence}
+            disabled={!mem || extractBusy}
+            onChange={(e) => void changeExtractCadence(e.target.value)}
+            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+          >
+            <option value="0">关闭（只留对话页的「提取精华」）</option>
+            <option value="6">每 6 轮</option>
+            <option value="12">每 12 轮（默认）</option>
+            <option value="24">每 24 轮</option>
+            {/* env 里设成了别的数（比如 8）时不能显示成"每 12 轮"—— 那是假回显。 */}
+            {!CADENCES.includes(cadence) && (
+              <option value={cadence}>每 {cadence} 轮（.env 里的其它值）</option>
+            )}
+          </select>
+          <span className="text-[11px] text-slate-400 dark:text-slate-500">
+            一次提取 = 一次模型调用，跑在回答已经出完之后（不影响对话，失败只留痕）
+          </span>
+        </label>
         {/* 逐条列表 = 事实面（后端按 近因×频次 排，钉住的在前）；下面的 textarea 只是同一批
             条目的"原文视图 + 整段覆写"，不是第二份记忆。 */}
         <div className="mt-2.5 flex gap-2">

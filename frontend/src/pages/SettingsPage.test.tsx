@@ -399,3 +399,66 @@ describe("记忆卡「整理记忆」（一次模型调用，只写标记）", (
     expect(await screen.findByText(/整理失败：跨会话记忆当前是关闭的/)).toBeTruthy();
   });
 });
+
+describe("记忆卡「每 N 轮自动提取」那一档（会自己花钱的行为必须能在界面上关）", () => {
+  /** 记忆 payload 的读侧桩；`turns` 用 getter 现取，才能模拟"保存之后读回新值"。 */
+  function stubMemory(getTurns: () => number) {
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/settings/models") return { default: "", providers: [], fallbacks: [] };
+      if (url === "/api/plugins") return [];
+      if (url === "/api/roles") return [];
+      if (url === "/api/sessions") return [];
+      if (url === "/api/knowledge/scopes") return { scopes: [] };
+      if (url === "/api/services") return { services: [] };
+      if (url === "/api/mcp/servers") return { servers: [], effective_count: 0 };
+      if (url === "/api/settings/runtime") return { note: "", groups: [] };
+      if (url.startsWith("/api/audit")) return [];
+      if (url === "/api/settings/memory" || url.startsWith("/api/settings/memory?")) {
+        return {
+          enabled: true,
+          role_id: null,
+          content: "",
+          items: [],
+          active_count: 0,
+          limit: 200,
+          over_limit: false,
+          extract_turns: getTurns(),
+        };
+      }
+      return {};
+    });
+  }
+
+  function cadenceSelect(): HTMLSelectElement {
+    const found = (screen.getAllByRole("combobox") as HTMLSelectElement[]).find((s) =>
+      [...s.options].some((o) => o.textContent?.includes("每 12 轮")),
+    );
+    if (!found) throw new Error("找不到自动提取节奏下拉");
+    return found;
+  }
+
+  it("按有效值回显当前档位，改成 0 = 关掉自动那条（并读回一次新值）", async () => {
+    let turns = 12;
+    stubMemory(() => turns);
+    apiMock.put.mockImplementation(async () => {
+      turns = 0; // 后端收下"关"之后，有效值就变 0 了
+      return {};
+    });
+    render(<SettingsPage />);
+    const sel = cadenceSelect();
+    await waitFor(() => expect(sel.value).toBe("12"));
+
+    fireEvent.change(cadenceSelect(), { target: { value: "0" } });
+    await waitFor(() =>
+      expect(apiMock.put).toHaveBeenCalledWith("/api/settings/memory", { extract_turns: 0 }),
+    );
+    expect(await screen.findByText(/已关掉自动提取/)).toBeTruthy();
+  });
+
+  it(".env 里设成档位外的数（8）时原样回显，不假装是「每 12 轮」", async () => {
+    stubMemory(() => 8);
+    render(<SettingsPage />);
+    await waitFor(() => expect(cadenceSelect().value).toBe("8"));
+    expect(cadenceSelect().selectedOptions[0].textContent).toContain("每 8 轮");
+  });
+});

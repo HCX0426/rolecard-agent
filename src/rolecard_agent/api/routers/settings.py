@@ -722,11 +722,13 @@ class MemoryBody(BaseModel):
     """记忆面板的保存负载：任选其一提交，缺省 = 该字段不变。
 
     `enabled` = 总开关（走 runtime 覆盖保存 + 热重建，下一轮对话即生效）；
-    `content`  = 记忆全文（None = 不变；"" = 清空）。
+    `content`  = 记忆全文（None = 不变；"" = 清空）；
+    `extract_turns` = 自动提取的节奏（None = 不变；**0 = 关掉自动那条，只留手动按钮**）。
     """
 
     enabled: bool | None = None
     content: str | None = None
+    extract_turns: Annotated[int | None, Field(ge=0, le=200)] = None
 
 
 def _require_role(ctx: AppContext, role_id: str) -> None:
@@ -756,6 +758,10 @@ def _memory_payload(ctx: AppContext, role_id: str | None = None) -> dict[str, ob
         "active_count": len(active),
         "limit": mem.MAX_ITEMS_PER_BUCKET,
         "over_limit": len(active) >= mem.MAX_ITEMS_PER_BUCKET,
+        # 自动提取那一档的回显（0 = 关，只留手动按钮）：读的是**有效值**，与那个开关同源。
+        "extract_turns": (
+            ctx.settings.memory_extract_turns if ctx.settings.memory_extract_auto else 0
+        ),
     }
 
 
@@ -792,6 +798,10 @@ def put_memory(
             raise HTTPException(
                 status_code=400, detail="记忆注入开关是全局设置，不能在角色作用域下修改。"
             )
+        if body.extract_turns is not None:
+            raise HTTPException(
+                status_code=400, detail="自动提取的节奏是全局设置，不能在角色作用域下修改。"
+            )
         if body.content is None:
             raise HTTPException(status_code=400, detail="没有要保存的内容。")
         mem.replace_bucket_from_text(ctx.conn, bucket=bucket, text=body.content)
@@ -803,20 +813,38 @@ def put_memory(
         )
         return _memory_payload(ctx, role_id)
 
-    if body.enabled is None and body.content is None:
+    if body.enabled is None and body.content is None and body.extract_turns is None:
         raise HTTPException(status_code=400, detail="没有要保存的内容。")
     saved_chars = 0 if body.content is None else len(body.content)
+    rebuilt = False
     if body.content is not None:
         mem.replace_bucket_from_text(ctx.conn, bucket=mem.GLOBAL_BUCKET, text=body.content)
     if body.enabled is not None:
         runtime_settings.save_overrides(ctx.conn, {"memory_enabled": "1" if body.enabled else "0"})
+        rebuilt = True
+    if body.extract_turns is not None:
+        # 界面上只有**一个**控件（关闭 / 每 N 轮），落到配置里是两个字段：
+        # 0 = 关掉自动那条并把节奏留在原值（下次打开还是原来那个 N），>0 = 开 + 设成 N。
+        # env 侧那两个字段仍各自独立可配，这里只是不逼用户在界面上做两次决定。
+        turns = body.extract_turns
+        values: dict[str, str | None] = (
+            {"memory_extract_auto": "0"}
+            if turns == 0
+            else {"memory_extract_auto": "1", "memory_extract_turns": str(turns)}
+        )
+        runtime_settings.save_overrides(ctx.conn, values)
+        rebuilt = True
     ctx.roles.audit(
         actor=actor.id,
         action="update_memory",
         target="memory",
-        detail={"enabled": body.enabled, "chars": saved_chars},
+        detail={
+            "enabled": body.enabled,
+            "chars": saved_chars,
+            "extract_turns": body.extract_turns,
+        },
     )
-    if body.enabled is not None:
+    if rebuilt:
         ctx.rebuild_runtime()
     return _memory_payload(ctx)
 

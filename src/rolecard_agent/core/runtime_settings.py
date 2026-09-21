@@ -58,6 +58,11 @@ RUNTIME_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("consensus_enabled", "CONSENSUS_ENABLED", "bool"),
     # 跨会话记忆总开关：「设置→通用」记忆面板的开关走这里保存（保存即热重建生效）。
     FieldSpec("memory_enabled", "MEMORY_ENABLED", "bool"),
+    # 自动提取那条兜底路：一次提取 = 一次真模型调用，所以"要不要跑、多久跑一次"必须能在
+    # 界面上改 —— 一个会自己花钱的开关不该只活在一个要重启才生效的 env 里。
+    # 与 memory_enabled 同例：**写点在「记忆与任务目录」的记忆卡**，运行环境页不列这两行。
+    FieldSpec("memory_extract_auto", "MEMORY_EXTRACT_AUTO", "bool"),
+    FieldSpec("memory_extract_turns", "MEMORY_EXTRACT_TURNS", "int"),
     # Agent 模式全局默认：「运行环境」页保存即热重建；会话级切换覆盖它（对话页）。
     FieldSpec("agent_default_mode", "AGENT_DEFAULT_MODE", "str", ("chat", "agent")),
     # 角色主动开口全局总闸：「运行环境」页保存即热生效（调度每 tick 读当前值）。

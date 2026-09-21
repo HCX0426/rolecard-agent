@@ -302,3 +302,46 @@ def test_consolidate_with_memory_disabled_is_400(client: TestClient) -> None:
 def test_consolidate_unknown_role_404(client: TestClient) -> None:
     res = client.post("/api/settings/memory/consolidate", params={"role_id": "ghost_role"})
     assert res.status_code == 404
+
+# ---------------------------------------------------------------- 自动那一档在线可改
+#
+# 一次提取 = 一次真模型调用，所以"要不要自动跑、多久跑一次"必须能在界面上改 ——
+# 一个会自己花钱的行为不该只活在一个要重启才生效的 env 里。
+
+
+def test_extract_cadence_roundtrip(client: TestClient, tmp_path: Path) -> None:
+    """设成 6 轮就读得回 6；设成 0 = 关掉自动那条（按钮仍在，只是不再自己跑）。"""
+    # 起始是 0 而不是出厂的 12：conftest 那条离线守卫把 AUTO 关了，
+    # 而这里的回显读的是**有效值**（关着就是 0，不会假报一个跑起来的节奏）。
+    assert client.get("/api/settings/memory").json()["extract_turns"] == 0
+
+    assert client.put("/api/settings/memory", json={"extract_turns": 6}).status_code == 200
+    assert client.get("/api/settings/memory").json()["extract_turns"] == 6
+    assert client.put("/api/settings/memory", json={"extract_turns": 0}).status_code == 200
+    assert client.get("/api/settings/memory").json()["extract_turns"] == 0
+
+    # 关自动时**只**动那个总闸：节奏值留着，下次打开还是原来那一档（不是被重置成 12）。
+    # bool 覆盖按 `str(False)` 落库（读侧 `_parse` 认 false/0/off，见 runtime_settings）。
+    db = sqlite3.connect(tmp_path / "app.db")
+    rows = db.execute(
+        "SELECT key, value FROM kernel_meta WHERE key LIKE 'runtime:memory_%'"
+    ).fetchall()
+    db.close()
+    stored = {str(r[0]): str(r[1]) for r in rows}
+    assert stored["runtime:memory_extract_auto"] == "False"
+    assert stored["runtime:memory_extract_turns"] == "6"
+
+
+def test_extract_cadence_rejects_absurd_values(client: TestClient) -> None:
+    """负数与"每 500 轮"都是确认的坏输入（一次提取是一次真调用），不该被写进配置。"""
+    assert client.put("/api/settings/memory", json={"extract_turns": -1}).status_code == 422
+    assert client.put("/api/settings/memory", json={"extract_turns": 500}).status_code == 422
+
+
+def test_extract_cadence_is_global_only(client: TestClient) -> None:
+    """角色作用域下改它 = 400：那一档是所有会话共用的行为，不属于某个桶。"""
+    _, role_id = new_session(client)
+    res = client.put(
+        "/api/settings/memory", params={"role_id": role_id}, json={"extract_turns": 6}
+    )
+    assert res.status_code == 400 and "全局" in res.json()["detail"]
