@@ -913,6 +913,181 @@ class ModelSettingsService:
         self._write_chat_refs(_dedupe([default, *chain, *chat_names], set(chat_names)))
         self._conn.commit()
 
+    # -- 逐条写入（新模型页的添加抽屉 / 删除 / 探测写回） -----------------------------
+
+    def group_for(
+        self,
+        *,
+        group_id: str | None = None,
+        provider: str | None = None,
+        base_url: str | None = None,
+    ) -> dict[str, object] | None:
+        """按组 id 或按 (供应商, 端点) 找那条凭据组（含 api_key 明文，**只在进程内用**）。
+
+        端点走 `endpoint_key` 归一，所以"没填 URL 的硅基流动"能命中"填了默认 URL 的那一组"。
+        """
+        for group in self._provider_rows():
+            if group_id is not None:
+                if str(group["id"]) == group_id:
+                    return group
+            elif provider is not None and endpoint_key(
+                provider, base_url
+            ) == endpoint_key(str(group["provider"]), group["base_url"]):
+                return group
+        return None
+
+    def add_model(
+        self,
+        *,
+        model: str,
+        provider: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        group_id: str | None = None,
+        name: str | None = None,
+        num_ctx: int | None = None,
+        supports_vision: bool | None = None,
+        supports_tools: bool | None = None,
+    ) -> dict[str, str]:
+        """加一行模型（添加抽屉测连通过后走这里）；组不存在就顺手建。
+
+        与整表 `save()` 的区别是它**只动这一行**：不重排别的行、不覆写回退链、不要求前端
+        持有全部配置（写放大与并发互相覆盖都少了）。新行进对话序列的尾部（能加进来就是要
+        能聊），序列本身仍是"哪些模型用于对话"的唯一事实面。
+
+        `name` 是这行的身份键（session/角色卡引用它）。缺省时由 (供应商, 模型名) 生成一个
+        可读的短键，冲突就加后缀 —— 让用户少填一格，同时名字仍然说得出它是谁。
+        返回 `{"name":…, "provider_id":…}`。
+        """
+        model = (model or "").strip()
+        if not model:
+            raise ModelSettingsError("缺少模型名。")
+        group = self.group_for(group_id=group_id) if group_id else None
+        if group is None and provider:
+            group = self.group_for(provider=provider, base_url=base_url)
+        if group is None:
+            if not provider:
+                raise ModelSettingsError("要么选一个已配置的供应商，要么填 provider。")
+            catalog = normalize_provider(provider, base_url)
+            pinned = validate_base_url(base_url)
+            if is_keyless_provider(catalog):
+                api_key = None
+            gid = _group_id({str(g["id"]) for g in self._provider_rows()}, catalog)
+            self._conn.execute(
+                "INSERT INTO model_provider (id, provider, base_url, api_key, sort_order) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    gid,
+                    catalog,
+                    pinned,
+                    api_key.strip() or None if api_key else None,
+                    len(self._provider_rows()),
+                ),
+            )
+            group = {"id": gid, "provider": catalog, "base_url": pinned, "api_key": api_key}
+        gid = str(group["id"])
+        if name:
+            key = name.strip()
+            if not _NAME_RE.match(key):
+                raise ModelSettingsError(
+                    f"后端名 {key!r} 不合法：小写字母开头，只含小写字母/数字/下划线/连字符。"
+                )
+            if self._has_backend(key):
+                raise ModelSettingsError(
+                    f"这个配置名已经存在：{key}（换一个，或直接编辑原来那行）。"
+                )
+        else:
+            key = self._free_name(gid, str(group["provider"]), model)
+        # 能力位：探测结果原样写（None 保持"没测过"），不让一次添加把未知说成已知。
+        order = len(self._raw_backends())
+        self._conn.execute(
+            "INSERT INTO model_backend "
+            "(name, provider_id, model, sort_order, num_ctx, supports_vision, supports_tools) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                key,
+                gid,
+                model,
+                order,
+                num_ctx,
+                None if supports_vision is None else int(supports_vision),
+                None if supports_tools is None else int(supports_tools),
+            ),
+        )
+        # 新行默认进对话序列的尾部（拆层前的行为：加一个模型就是为了能跟它说话）。
+        # 不想让它参与对话 → 在「服务」页的模型推理序列里把它摘掉；只服务嵌入的那行
+        # 也是在那里加回来（批次③ 补这个入口）。
+        self._write_chat_refs([*self._chat_ref_names(), key])
+        self._conn.commit()
+        return {"name": key, "provider_id": gid}
+
+    def remove_model(self, name: str) -> None:
+        """删一行模型（名称不存在 → KeyError/404）。
+
+        组里没别的模型了才连凭据一起删（key 不留成"看不见的凭据"）。其余服务类别的引用行
+        **保持原样**并在服务页呈现「失效」—— 摘引用与删配置是两个动作，不能顺手合并；
+        chat 引用则跟着这行走，并把它的位置让给序列里的下一个（默认不能悬空）。
+        """
+        row = next((r for r in self._raw_backends() if str(r["name"]) == name), None)
+        if row is None:
+            raise KeyError(name)
+        gid = str(row["provider_id"])
+        pool = [n for n in self._chat_ref_names() if n != name]
+        self._conn.execute("DELETE FROM model_backend WHERE name = ?", (name,))
+        left = self._conn.execute(
+            "SELECT 1 FROM model_backend WHERE provider_id = ? LIMIT 1", (gid,)
+        ).fetchone()
+        if left is None:
+            self._conn.execute("DELETE FROM model_provider WHERE id = ?", (gid,))
+        # 引用行按新序重编 sort_order，所以删掉的正是默认时，下一位自动顶上（默认不会悬空）。
+        self._write_chat_refs(pool)
+        self._conn.commit()
+
+    def set_capabilities(
+        self, name: str, capabilities: dict[str, bool | None]
+    ) -> None:
+        """写回探测结论（三态）。字典里**出现**的键才写，缺席的键不动。
+
+        为什么按"键在不在"而不是"值是不是 None"：`None` 在这三态里是一个**有内容的结论**
+        ("没测过" → 界面 `?`)。把 None 当"没提交"，PATCH 就永远没法把 `✗` 改回 `?`。
+        """
+        if not self._has_backend(name):
+            raise KeyError(name)
+        unknown = set(capabilities) - {"supports_vision", "supports_tools"}
+        if unknown:
+            raise ModelSettingsError(f"未知能力位：{', '.join(sorted(unknown))}")
+        if not capabilities:
+            raise ModelSettingsError("没有要写的 capability。")
+        columns = {
+            field: None if value is None else int(bool(value))
+            for field, value in capabilities.items()
+        }
+        # 参数化列名来自白名单（`unknown` 已经挡掉其它键），不是用户输入。
+        assignments = ", ".join(f"{field} = ?" for field in columns)
+        self._conn.execute(
+            f"UPDATE model_backend SET {assignments} WHERE name = ?",
+            (*columns.values(), name),
+        )
+        self._conn.commit()
+
+    def _has_backend(self, name: str) -> bool:
+        return (
+            self._conn.execute("SELECT 1 FROM model_backend WHERE name = ?", (name,)).fetchone()
+            is not None
+        )
+
+    def _free_name(self, group_id: str, provider: str, model: str) -> str:
+        """由 (供应商, 模型名) 生成一个合法且未占用的配置名，例如 `siliconflow-qwen3-vl-30b`。"""
+        slug = re.sub(r"[^a-z0-9]+", "-", f"{provider}-{model}".lower()).strip("-")
+        base = slug[:28].rstrip("-") or "model"
+        taken = {str(row["name"]) for row in self._raw_backends()}
+        if base not in taken:
+            return base
+        n = 2
+        while f"{base}-{n}" in taken:
+            n += 1
+        return f"{base}-{n}"
+
     # -- merge -------------------------------------------------------------------
 
     def effective_settings(self, env_settings: Settings) -> Settings:

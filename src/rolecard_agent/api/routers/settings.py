@@ -177,6 +177,217 @@ def put_model_settings(
     return _models_payload(ctx)
 
 
+# ---------------------------------------------------------------- 逐条写入与探测（新模型页）
+
+
+class TargetBody(BaseModel):
+    """"给哪个端点问一次"的四种给法，按精确度排：
+
+    1. 只给 `provider_id` —— 已配置的凭据组（key 由服务端取，从不在网络上往返）；
+    2. 给 `provider` + `base_url` —— 同端点已被配置过则复用它的 key；
+    3. 再带上 `api_key` —— 抽屉里正在填一把新 key（或换一个中转端点复用旧 key）；
+    4. 什么都不给只给 `provider` —— 用该厂商的默认端点。
+    """
+
+    provider_id: str | None = None
+    provider: str | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+
+
+class CatalogBody(TargetBody):
+    """拉模型列表。没有字段是刻意的：这一步只需要知道问谁。"""
+
+
+@router.post("/api/settings/models/catalog")
+def post_model_catalog(
+    body: CatalogBody, ctx: AppContext = Depends(get_context)
+) -> object:
+    """这个端点提供哪些模型名（添加抽屉的第二步：选，而不是抄）。
+
+    为什么是 **POST**：拉 OpenAI 兼容的 `/models` 要带 key，而 key 绝不进 query string
+    （会被访问日志、代理日志与浏览器历史留下来）。原设计稿写的是 GET + query，落地时改了。
+
+    **拉不到不是错误**：中转站经常给不全列表，所以这里回 200 + `detail`，界面据此退回
+    "手填模型名"，而不是把一次列表失败显示成配置失败。
+    """
+    from rolecard_agent.core.model_probe import list_models, resolve_target
+
+    try:
+        target = resolve_target(
+            ctx.model_settings,
+            provider_id=body.provider_id,
+            provider=body.provider,
+            base_url=body.base_url,
+            api_key=body.api_key,
+        )
+    except ModelSettingsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    names, error = list_models(target)
+    return {"models": names, "reachable": not error, "detail": error}
+
+
+class ProbeBody(TargetBody):
+    model: str = Field(min_length=1)
+    # 两项默认 false：工具探测要烧一次配额，视觉探测要**把图片发出去**（红线动作）。
+    # 界面上它们是确认卡里的两个按钮，不是"顺手全测"。
+    test_tools: bool = False
+    test_vision: bool = False
+
+
+@router.post("/api/settings/models/probe")
+def post_model_probe(
+    body: ProbeBody,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> object:
+    """测连 + 可选的能力探测。**纯测量，不落库** —— 结论由界面确认后另走 capabilities。
+
+    返回里 `calls_used`（真发出去几次推理）与 `vision_source`（free-metadata /
+    uploaded-image / not-tested）是给人看的代价账：确认卡上写的"会发几次请求、发不发图片"
+    与这里同源，不另编一份。
+    """
+    from rolecard_agent.core.model_probe import probe, resolve_target
+
+    try:
+        target = resolve_target(
+            ctx.model_settings,
+            provider_id=body.provider_id,
+            provider=body.provider,
+            base_url=body.base_url,
+            api_key=body.api_key,
+            model=body.model,
+        )
+    except ModelSettingsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result = probe(target, test_tools=body.test_tools, test_vision=body.test_vision).to_api()
+    ctx.roles.audit(
+        actor=actor.id,
+        action="probe_model",
+        target=body.model,
+        detail={
+            "provider": target.provider,
+            "test_tools": body.test_tools,
+            "test_vision": body.test_vision,
+            "reachable": result["reachable"],
+            "calls_used": result["calls_used"],
+        },
+    )
+    return result
+
+
+class AddModelBody(BaseModel):
+    """添加一行模型（测连通过之后才允许调这里）。"""
+
+    model: str = Field(min_length=1)
+    provider_id: str | None = None
+    provider: str | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+    # 配置名（session/角色卡引用它）；缺省由 (供应商, 模型名) 生成
+    name: str | None = None
+    num_ctx: int | None = None
+    supports_vision: bool | None = None
+    supports_tools: bool | None = None
+
+
+@router.post("/api/settings/models", status_code=201)
+def post_add_model(
+    body: AddModelBody,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> object:
+    """只加一行：不重排别的行、不覆写回退链（那是整表 `PUT` 的旧习惯）。
+
+    加完热重建，下一轮对话就能选到它；如果这是整套配置里的第一行，它同时成为对话默认
+    （否则"加完模型仍然不能对话"是最难查的那种空配置）。
+    """
+    try:
+        added = ctx.model_settings.add_model(
+            model=body.model,
+            provider=body.provider,
+            base_url=body.base_url,
+            api_key=body.api_key,
+            group_id=body.provider_id,
+            name=body.name,
+            num_ctx=body.num_ctx,
+            supports_vision=body.supports_vision,
+            supports_tools=body.supports_tools,
+        )
+    except ModelSettingsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ctx.roles.audit(
+        actor=actor.id,
+        action="add_model",
+        target=added["name"],
+        detail={
+            "provider_id": added["provider_id"],
+            "model": body.model,
+            "key_given": bool(body.api_key),
+        },
+    )
+    try:
+        ctx.rebuild_runtime()
+    except Exception as exc:  # noqa: BLE001 - 配置已写进去，生效失败必须说清而不是静默
+        raise HTTPException(
+            status_code=500, detail=f"配置已保存，但生效失败：{exc}"
+        ) from exc
+    return _models_payload(ctx) | {"added": added}
+
+
+@router.delete("/api/settings/models/{name}", status_code=204)
+def delete_model(
+    name: str,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> None:
+    """删一行模型。组里没别的模型时连凭据一起删；其他服务类别的引用呈现「失效」不动。"""
+    try:
+        ctx.model_settings.remove_model(name)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"后端 {name!r} 不存在。") from None
+    ctx.roles.audit(actor=actor.id, action="delete_model", target=name, detail={})
+    ctx.rebuild_runtime()
+
+
+class CapabilityBody(BaseModel):
+    """探测结论写回。`null` = 这一项没测过（保持 `?`），不是"测过且不支持"。
+
+    只有**出现在请求里**的字段会被写：`{"supports_tools": null}` 是把工具改回"没测过"，
+    不带这个键才是"别动它"。
+    """
+
+    supports_vision: bool | None = None
+    supports_tools: bool | None = None
+
+
+@router.patch("/api/settings/models/{name}/capabilities")
+def patch_model_capabilities(
+    name: str,
+    body: CapabilityBody,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> object:
+    """写回能力位并热重建（徽标与调用前拦截都读这一处，界面不再自己判）。"""
+    given = body.model_dump(exclude_unset=True)
+    try:
+        ctx.model_settings.set_capabilities(name, given)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"后端 {name!r} 不存在。") from None
+    except ModelSettingsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ctx.roles.audit(
+        actor=actor.id,
+        action="update_model_capabilities",
+        target=name,
+        detail=dict(given),
+    )
+    ctx.rebuild_runtime()
+    return next(
+        b for b in ctx.model_settings.list_backends() if str(b["name"]) == name
+    )
+
+
 # ---------------------------------------------------------------- 运行环境（只读展示）
 
 # 密钥类字段：只回掩码，绝不把明文送出进程（与模型页 has_key 纪律一致）。
