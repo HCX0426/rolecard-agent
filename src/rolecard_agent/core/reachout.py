@@ -289,6 +289,35 @@ def proactive_thread_title(role_name: str) -> str:
     return f"{role_name} · 主动找你"
 
 
+def ensure_proactive_thread(
+    conn: SqlConnection, *, role: RoleCard, user_id: str, tool_epoch: int
+) -> str:
+    """确保该角色的主动会话存在（幂等），返回线程 id。
+
+    为什么单独一个函数：**这条线的创建只能有一处逻辑**。今天有三方需要它 —— 角色开口时投递
+    （`bootstrap.deliver_proactive`）、收件箱点进来（只读，不建）、桌宠面板要接着聊
+    （设计稿 §7.2.1，用户从没被主动找过的角色也能先聊起来）。三处各写一条 INSERT 的话，
+    `title` 或 `tool_epoch` 迟早有一处漏掉，而那条会话的行是收件箱跳转的判据。
+
+    删了还会再长出来：用户把这条会话从列表里删掉，下一次角色开口（或桌宠上发消息）会重新
+    建一行 —— 已提炼进角色记忆的事实不跟着走（那条边界有断言钉着）。
+    """
+    thread_id = proactive_thread_id(role.role_id)
+    conn.execute(
+        "INSERT INTO session_thread (thread_id, user_id, current_role_id, tool_epoch, title)"
+        " VALUES (?, ?, ?, ?, ?) ON CONFLICT(thread_id) DO NOTHING",
+        (
+            thread_id,
+            user_id,
+            role.role_id,
+            tool_epoch,
+            proactive_thread_title(role.role_name),
+        ),
+    )
+    conn.commit()
+    return thread_id
+
+
 def record_reachout(conn: SqlConnection, role: RoleCard, text: str) -> None:
     """落一条主动开口（unread）。role 冗余存角色名：角色被删后收件箱仍可读。"""
     conn.execute(

@@ -37,6 +37,7 @@ from rolecard_agent.core.graph import build_graph_config
 from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.core.ingestion import INGESTION_FAILED, INGESTION_PENDING
 from rolecard_agent.core.observability import TraceEvent
+from rolecard_agent.core.reachout import ensure_proactive_thread
 from rolecard_agent.core.state import new_state, now_ts
 from rolecard_agent.core.text import text_of
 from rolecard_agent.rag.parser import (
@@ -77,6 +78,12 @@ class SessionCreate(BaseModel):
     """Create-session request. Omitting `role_id` binds the default assistant."""
 
     role_id: str | None = None
+
+
+class ProactiveSessionBody(BaseModel):
+    """桌宠面板的落点请求：只要角色 id，线程 id 是从它推出来的（不给客户端猜的机会）。"""
+
+    role_id: str = Field(min_length=1, max_length=64)
 
 
 class SessionPatch(BaseModel):
@@ -177,6 +184,35 @@ def create_session(
         actor=actor.id, action="create_session", target=thread_id, detail={"role_id": role_id}
     )
     return {"thread_id": thread_id, "role_id": role_id, "role_name": role.role_name}
+
+
+@router.post("/api/session/proactive", status_code=201)
+def open_proactive_session(
+    body: ProactiveSessionBody,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> object:
+    """确保该角色的**主动会话**存在并返回它（设计稿 §7.2.1，桌宠面板的落点）。
+
+    为什么桌宠要这个而不是 `POST /api/session`：这条线是"角色主动找我 + 我回它"的同一处
+    历史，角色下次开口读的就是它（`deliver_proactive` 写进同一个线程）。另开一条随机线程
+    会让两边各记一半 —— 用户拍的那句"不然和人交流就会断掉记忆了"就是这个意思。
+
+    幂等：从没被主动找过的角色也能先在桌宠上聊起来；被删掉后再调一次会长回同一行
+    （已提炼进角色记忆的事实不跟着走，那条边界有断言钉着）。
+    """
+    try:
+        role = ctx.roles.get(body.role_id)
+    except RoleNotFound as exc:
+        raise role_error_to_http(exc) from exc
+    thread_id = ensure_proactive_thread(
+        ctx.conn, role=role, user_id=DEFAULT_USER_ID, tool_epoch=ctx.plugins.tool_epoch()
+    )
+    ctx.roles.audit(
+        actor=actor.id, action="open_proactive_session", target=thread_id,
+        detail={"role_id": role.role_id},
+    )
+    return {"thread_id": thread_id, "role_id": role.role_id, "role_name": role.role_name}
 
 
 @router.get("/api/session/{thread_id}")

@@ -638,3 +638,36 @@ def test_deleting_a_session_keeps_memory_and_the_inbox_ledger(client: TestClient
         "SELECT COUNT(*) FROM checkpoints WHERE thread_id = ?", (tid,)
     ).fetchone()[0]
     assert orphans == 0  # 没有可被"复活"的孤儿 checkpoint
+
+
+def test_proactive_session_ensure_is_idempotent_and_recreatable(client: TestClient) -> None:
+    """桌宠的落点（设计稿 §7.2.1）：**一个角色一条线**，调几次都是同一行。
+
+    幂等要能扛住两件事：角色从没主动说过话（桌宠上先聊起来）、以及用户把这条会话删了
+    （下一条主动消息或下一次桌宠发消息会把它长回来 —— 记忆不跟着走，见上一条用例）。
+    """
+    from rolecard_agent.core.reachout import proactive_thread_id
+
+    first = client.post("/api/session/proactive", json={"role_id": "general_assistant"})
+    assert first.status_code == 201
+    tid = first.json()["thread_id"]
+    assert tid == proactive_thread_id("general_assistant")
+    assert first.json()["role_name"] == "通用助手"
+
+    again = client.post("/api/session/proactive", json={"role_id": "general_assistant"})
+    assert again.json()["thread_id"] == tid  # 不会开出第二条线
+    rows = client.get("/api/sessions").json()
+    assert [s for s in rows if s["thread_id"] == tid].__len__() == 1
+    assert any(s["title"] == "通用助手 · 主动找你" for s in rows)
+
+    assert client.delete(f"/api/session/{tid}").status_code == 204
+    assert client.get(f"/api/session/{tid}").status_code == 404
+    assert client.post("/api/session/proactive", json={"role_id": "general_assistant"}).json()[
+        "thread_id"
+    ] == tid
+
+
+def test_proactive_session_requires_a_real_role(client: TestClient) -> None:
+    """凭空造一条指向不存在角色的线 = 给收件箱攒一个永远点不开的目标。"""
+    assert client.post("/api/session/proactive", json={"role_id": "ghost"}).status_code == 404
+    assert client.post("/api/session/proactive", json={}).status_code == 422

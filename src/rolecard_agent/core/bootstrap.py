@@ -41,11 +41,7 @@ from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.observability import TraceEvent, Tracer, make_tracer
 from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
 from rolecard_agent.core.probes import ollama_keep, vision_capability
-from rolecard_agent.core.reachout import (
-    ReachoutScheduler,
-    proactive_thread_id,
-    proactive_thread_title,
-)
+from rolecard_agent.core.reachout import ReachoutScheduler, ensure_proactive_thread
 from rolecard_agent.core.services import ServiceEndpointService
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder, make_reranker
@@ -308,20 +304,12 @@ class Runtime:
         写检查点用 `graph.update_state`（与上传说明、图片注入同一路数）而**不跑图**：
         这句是角色"已经出口"的话，不是让它接着想 —— 跑图会变成替用户自言自语。
         """
-        thread_id = proactive_thread_id(role.role_id)
-        # 会话行按需建（幂等）：用户即便在会话列表里删了它，下一条主动消息会重新建回来。
-        self.conn.execute(
-            "INSERT INTO session_thread (thread_id, user_id, current_role_id, tool_epoch, title)"
-            " VALUES (?, ?, ?, ?, ?) ON CONFLICT(thread_id) DO NOTHING",
-            (
-                thread_id,
-                DEFAULT_USER_ID,
-                role.role_id,
-                self.plugins.tool_epoch(),
-                proactive_thread_title(role.role_name),
-            ),
+        thread_id = ensure_proactive_thread(
+            self.conn,
+            role=role,
+            user_id=DEFAULT_USER_ID,
+            tool_epoch=self.plugins.tool_epoch(),
         )
-        self.conn.commit()
         graph = self.state.get("graph")
         if graph is None:  # 还没有图（纯内核装配 / 装配失败）：收件箱那条照样有效
             return None
