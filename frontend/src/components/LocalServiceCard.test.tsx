@@ -55,6 +55,8 @@ function withShell(owner: { managed: boolean; pid: number | null }) {
     backendReachable: () => Promise.resolve(true),
     openSession: vi.fn(),
     notify: vi.fn(),
+    setPetExpanded: vi.fn().mockResolvedValue(true),
+    movePetBy: vi.fn(),
     onRequestOpenThread: vi.fn(),
     ollamaOwner: vi.fn().mockResolvedValue({ ...owner, binary: "C:\\ollama.exe" }),
     startOllama: vi.fn().mockResolvedValue({ ok: true }),

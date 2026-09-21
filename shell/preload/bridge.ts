@@ -35,6 +35,14 @@ contextBridge.exposeInMainWorld("rolecardShell", {
   notify: (title: string, body: string, threadId?: string | null): void => {
     void ipcRenderer.invoke("shell:notify", title, body, threadId ?? null);
   },
+  /** 桌宠悬停展开 / 收起（设计稿 §7.2）。**只报意图不报坐标**：面板该长多大、贴着屏幕
+   *  哪一侧翻，全是主进程按工作区算的 —— 页面能指定的只有"现在要不要摊开"。 */
+  setPetExpanded: (expanded: boolean): Promise<boolean> =>
+    ipcRenderer.invoke("shell:pet-expanded", expanded),
+  /** 拖动桌宠：只报增量，绝对坐标与出屏夹取都在壳里。 */
+  movePetBy: (dx: number, dy: number): void => {
+    ipcRenderer.send("shell:pet-drag", [dx, dy]);
+  },
   /** 登记"谁来接收打开会话"，并向主进程报一次就绪。传 null 注销。 */
   onRequestOpenThread: (handler: OpenThreadHandler | null): void => {
     onOpenThread = handler;

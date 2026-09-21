@@ -13,7 +13,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiMock } = vi.hoisted(() => ({
-  apiMock: { getReachouts: vi.fn(), markRoleReachoutsRead: vi.fn() },
+  apiMock: { getReachouts: vi.fn(), markRoleReachoutsRead: vi.fn(), get: vi.fn() },
 }));
 
 vi.mock("../api", async (importOriginal) => {
@@ -41,14 +41,20 @@ function page(items: ReturnType<typeof row>[], unread = items.length): Reachouts
   return { items, unread } as ReachoutsPage;
 }
 
-/** 装上"壳"：桌宠的系统通知与"点气泡拉起控制台"两件事都以它存在为前提。
+/** 装上"壳"：桌宠的系统通知、悬停展开与"点气泡拉起控制台"都以它存在为前提。
  *  不装的时候就是 B/S —— 同一个组件、少两样能力，其余行为必须一模一样。 */
-function withShell(): ShellBridge & { notify: ReturnType<typeof vi.fn>; openSession: ReturnType<typeof vi.fn> } {
+function withShell(): ShellBridge & {
+  notify: ReturnType<typeof vi.fn>;
+  openSession: ReturnType<typeof vi.fn>;
+  movePetBy: ReturnType<typeof vi.fn>;
+} {
   const shell = {
     backendUrl: () => Promise.resolve("http://127.0.0.1:8000"),
     backendReachable: () => Promise.resolve(true),
     notify: vi.fn(),
     openSession: vi.fn(),
+    setPetExpanded: vi.fn().mockResolvedValue(true),
+    movePetBy: vi.fn(),
     onRequestOpenThread: vi.fn(),
     ollamaOwner: vi.fn().mockResolvedValue({ managed: false, pid: null, binary: null }),
     startOllama: vi.fn(),
@@ -94,7 +100,7 @@ describe("PetPage 桌宠", () => {
     expect(screen.getByText("外头降温了，穿上外套。")).toBeTruthy();
     expect(screen.queryByText("旧的一条")).toBeNull();
     expect(screen.getByText("+2")).toBeTruthy();
-    expect(screen.getByTitle("苏晚晴")).toBeTruthy();
+    expect(screen.getByTitle(/^苏晚晴/)).toBeTruthy();
     expect(screen.getByText("苏")).toBeTruthy();
   });
 
@@ -183,5 +189,134 @@ describe("PetPage 桌宠", () => {
     });
     expect(apiMock.markRoleReachoutsRead).toHaveBeenCalledWith("wan");
     expect(shell.openSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("PetPage 悬停展开（§7：想回话不用开控制台）", () => {
+  /** 色片（悬停的目标）。根节点是拖拽区，检测挂在色片与面板上 —— 见 PetPage 的注释。 */
+  function sprite(): Element {
+    return screen.getByTitle(/悬停看你们最近聊了什么/);
+  }
+
+  /** 悬停 → 展开 → 把历史请求的 Promise 跑完。 */
+  async function hover(shell: ShellBridge) {
+    fireEvent.mouseEnter(sprite());
+    await act(async () => {
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+    return shell;
+  }
+
+  it("鼠标停上去：请壳展开，并把这条主动会话的最近几条摊开", async () => {
+    const shell = withShell();
+    apiMock.get.mockResolvedValue({
+      messages: [
+        { role: "assistant", content: "外头降温了，穿上外套。" },
+        { role: "user", content: "好，你也穿点" },
+        { role: "tool", content: "工具返回的一堆东西" },
+      ],
+      total: 3,
+      limit: 8,
+      truncated: false,
+    });
+    await mount();
+    await hover(shell);
+
+    expect(shell.setPetExpanded).toHaveBeenCalledWith(true);
+    expect(apiMock.get).toHaveBeenCalledWith("/api/session/s_proactive_wan/messages?limit=8");
+    expect(screen.getByText(/好，你也穿点/)).toBeTruthy();
+    // 工具行不进这块小面板：它是对话页的过程细节，摆在桌面上只是噪音
+    expect(screen.queryByText(/工具返回/)).toBeNull();
+    // 展开态取代气泡（同一条内容摆两遍只是噪音）
+    expect(screen.queryByText("+2")).toBeNull();
+  });
+
+  it("鼠标离开要等一段宽限才收起（不然永远点不到面板），中途回来就不收", async () => {
+    const shell = withShell();
+    await mount();
+    await hover(shell);
+    expect(screen.getByText("苏晚晴")).toBeTruthy();
+
+    fireEvent.mouseLeave(sprite());
+    await act(async () => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(shell.setPetExpanded).not.toHaveBeenCalledWith(false); // 还在宽限期里
+    fireEvent.mouseEnter(sprite());
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+    expect(shell.setPetExpanded).not.toHaveBeenCalledWith(false); // 回来了，那个定时器作废
+
+    fireEvent.mouseLeave(sprite());
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+    expect(shell.setPetExpanded).toHaveBeenCalledWith(false);
+  });
+
+  it("还没有主动会话：面板说清楚，并且一次请求都不发", async () => {
+    const shell = withShell();
+    apiMock.getReachouts.mockResolvedValue({
+      items: [{ ...row(1, "很早以前的一句话"), thread_id: null }],
+      unread: 1,
+    } as ReachoutsPage);
+    await mount();
+    await hover(shell);
+    expect(screen.getByText(/还没有你们的对话/)).toBeTruthy();
+    expect(apiMock.get).not.toHaveBeenCalled();
+  });
+
+  it("历史读不到就明说（面板不能停在上一次的内容上装作没事）", async () => {
+    const shell = withShell();
+    apiMock.get.mockRejectedValue(new Error("500"));
+    await mount();
+    await hover(shell);
+    expect(screen.getByText(/历史没读到：500/)).toBeTruthy();
+  });
+
+  it("浏览器里没有壳：面板照样画，只是不去调那个不存在的方法", async () => {
+    apiMock.get.mockResolvedValue({ messages: [], total: 0, limit: 8, truncated: false });
+    await mount();
+    fireEvent.mouseEnter(sprite());
+    await act(async () => {
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+    expect(window.rolecardShell).toBeUndefined();
+    expect(screen.queryByText(/读取中/)).toBeNull(); // 空历史就真的是空，不卡在"读取中"
+    expect(screen.getByText("苏晚晴")).toBeTruthy();
+  });
+});
+
+
+describe("PetPage 拖桌宠（手动拖，因为 CSS 拖拽区会吞掉悬停事件）", () => {
+  function sprite(): Element {
+    return screen.getByTitle(/悬停看你们最近聊了什么/);
+  }
+
+  it("按下后移动：把**增量**交给壳，方向与步长都对", async () => {
+    const shell = withShell();
+    await mount();
+    const el = sprite();
+    fireEvent.pointerDown(el, { screenX: 500, screenY: 400, pointerId: 1 });
+    fireEvent.pointerMove(el, { screenX: 512, screenY: 395, pointerId: 1 });
+    expect(shell.movePetBy).toHaveBeenCalledWith(12, -5);
+    fireEvent.pointerMove(el, { screenX: 512, screenY: 380, pointerId: 1 });
+    expect(shell.movePetBy).toHaveBeenLastCalledWith(0, -15); // 第二次是相对上一点，不是相对起点
+
+    fireEvent.pointerUp(el, { pointerId: 1 });
+    shell.movePetBy.mockClear();
+    fireEvent.pointerMove(el, { screenX: 900, screenY: 900, pointerId: 1 });
+    expect(shell.movePetBy).not.toHaveBeenCalled(); // 抬起之后不再拖
+  });
+
+  it("浏览器里没有壳：拖不动也不报错（这一页在 B/S 下只是调试入口）", async () => {
+    await mount();
+    const el = sprite();
+    fireEvent.pointerDown(el, { screenX: 10, screenY: 10, pointerId: 1 });
+    fireEvent.pointerMove(el, { screenX: 40, screenY: 10, pointerId: 1 });
+    expect(screen.getByTitle(/^苏晚晴/)).toBeTruthy();
   });
 });

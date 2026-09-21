@@ -18,7 +18,7 @@ import path from "node:path";
 import { Backend, consoleUrl, endpoint, serving, type BackendOptions, type Outcome } from "./backend";
 import { canManageLoginItem, loginItemEnabled, setLoginItemEnabled, startedByLoginItem } from "./autostart";
 import { Ollama } from "./ollama";
-import { createMainWindow, createPetWindow } from "./windows";
+import { createMainWindow, createPetWindow, movePetBy, setPetExpanded } from "./windows";
 import { createTray, type TrayHandle } from "./tray";
 
 /** 后端的启动配置：打包态用随包的 `resources/rolecard-backend/`，开发态由 backend.ts
@@ -180,6 +180,23 @@ function boot(): void {
   });
   ipcMain.handle("shell:notify", (_event, title: unknown, body: unknown, value: unknown) => {
     notify(textOf(title, 80), textOf(body, 200), threadIdOf(value));
+  });
+  // 桌宠悬停展开 / 收起（设计稿 §7.2）。参数只有一个布尔：**几何不让页面报**——
+  // 工作区在哪、色片锚在哪个角只有主进程知道，交给后端托管的那个源就等于把"窗口能摆到哪"
+  // 交了出去。非布尔一律不动窗（跟 `threadIdOf` / `textOf` 同一套"输入不可信"的写法）。
+  ipcMain.handle("shell:pet-expanded", (_event, value: unknown) => {
+    if (typeof value !== "boolean" || !petWin) return false;
+    setPetExpanded(petWin, value);
+    return true;
+  });
+  // 拖动桌宠：页面只报**增量**（`[dx, dy]`），摆哪、能不能出屏由壳定（`movePetBy`）。
+  // 为什么不用 CSS 的 `-webkit-app-region: drag`：见 PetPage 里那段注释 —— 实测拖拽区
+  // 会把鼠标事件整个吞掉，悬停展开就没法工作（那篇悬浮球实现说的"drag 与点击冲突"是同一件事）。
+  ipcMain.on("shell:pet-drag", (_event, value: unknown) => {
+    if (!petWin || !Array.isArray(value) || value.length !== 2) return;
+    const [dx, dy] = value;
+    if (typeof dx !== "number" || typeof dy !== "number" || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
+    movePetBy(petWin, dx, dy);
   });
   // 本地推理服务的进程（D③-b）。**三个方法都不收参数**：起停一个本机进程能碰到的东西比
   // 打开一个会话多得多，参数一旦是路径/命令，桥就成了任意执行入口。

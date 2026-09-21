@@ -56,15 +56,24 @@ export function initialBounds(label: string, fallback: Rectangle): Rectangle {
   return clampToWorkArea(stored ? { ...fallback, ...stored } : fallback);
 }
 
-/** 之后自动存：拖拽/缩放结束时写一次（debounce，别把磁盘当心跳）。 */
-export function trackBounds(win: BrowserWindow, label: string): void {
+/** 之后自动存：拖拽/缩放结束时写一次（debounce，别把磁盘当心跳）。
+ *
+ * `persistAs` 是给桌宠留的口子：它会因悬停而临时变大，而**记住的位置必须是收起态那一块**
+ * —— 把展开形状存下来，下次开机就是一张 380×520 的透明大窗贴在桌面上（内容还是小宠物，
+ * 多出来的部分既看不见又挡住下面的点击）。传进来的永远是窗口当前的真实边界。
+ */
+export function trackBounds(
+  win: BrowserWindow,
+  label: string,
+  options: { persistAs?: (rect: Rectangle) => Rectangle } = {},
+): void {
   let timer: NodeJS.Timeout | null = null;
   const persist = () => {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
       const states = load();
-      states[label] = win.getBounds();
+      states[label] = options.persistAs ? options.persistAs(win.getBounds()) : win.getBounds();
       save(states);
     }, 400);
   };
@@ -73,7 +82,8 @@ export function trackBounds(win: BrowserWindow, label: string): void {
   win.on("closed", () => {
     if (timer) clearTimeout(timer);
     const states = load();
-    states[label] = win.getBounds();
+    const rect = win.getBounds();
+    states[label] = options.persistAs ? options.persistAs(rect) : rect;
     save(states);
   });
 }

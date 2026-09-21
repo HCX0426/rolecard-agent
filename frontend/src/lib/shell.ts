@@ -27,6 +27,10 @@ export interface ShellBridge {
   openSession(threadId: string): void;
   /** 拍一条系统通知；点通知 = 打开 `threadId`。 */
   notify(title: string, body: string, threadId?: string | null): void;
+  /** 桌宠悬停展开 / 收起：页面只说要不要摊开，尺寸与落点由壳按工作区算（§7.2）。 */
+  setPetExpanded(expanded: boolean): Promise<boolean>;
+  /** 拖动桌宠：只报**增量**。绝对坐标等于让页面决定"窗口摆在哪"，那条权力留在壳里。 */
+  movePetBy(dx: number, dy: number): void;
   /** 登记"谁来接收壳发来的打开会话"；传 null 注销。 */
   onRequestOpenThread(handler: ((threadId: string) => void) | null): void;
   /** 本地推理服务进程的归属与起停（D③-b）。**都不带参数**：路径由壳自己决定。 */
