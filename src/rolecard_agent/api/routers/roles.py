@@ -11,7 +11,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from rolecard_agent.api.auth import Actor
@@ -22,6 +24,7 @@ from rolecard_agent.api.deps import (
     plugin_error_to_http,
     role_error_to_http,
 )
+from rolecard_agent.core import timeline
 from rolecard_agent.core.plugins import PluginError
 from rolecard_agent.roles.models import RoleCardCreate, RoleCardUpdate
 from rolecard_agent.roles.service import (
@@ -121,6 +124,33 @@ def delete_role(
     except (RoleNotFound, BuiltinRoleProtected) as exc:
         raise role_error_to_http(exc) from exc
     ctx.roles.audit(actor=actor.id, action="delete_role", target=role_id)
+
+
+@router.get("/api/roles/{role_id}/timeline")
+def role_timeline(
+    role_id: str,
+    ctx: AppContext = Depends(get_context),
+    limit: int = Query(50, ge=1, le=200),
+    before: Annotated[str | None, Query(max_length=120)] = None,
+    kinds: Annotated[
+        str | None, Query(description="逗号分隔：reachout,memory,memory_correct,thread")
+    ] = None,
+) -> object:
+    """事件簿（设计稿 §6）：把这个角色的主动开口、记下/更正的事实、会话锚点并成一条**只读**轴。
+
+    纯读，所以不写审计 —— "谁翻了时间线"不是运维要关心的事，而这条轴的内容全是用户自己的对话
+    与事实，写进审计流水反而是在给它们做第二份留存。
+    """
+    try:
+        ctx.roles.get(role_id)
+    except RoleNotFound as exc:
+        raise role_error_to_http(exc) from exc
+    wanted = tuple(k.strip() for k in kinds.split(",") if k.strip()) if kinds else None
+    if bad := [k for k in wanted or () if k not in timeline.KINDS]:
+        raise HTTPException(
+            status_code=400, detail=f"未知的事件种类 {bad}；可用：{' / '.join(timeline.KINDS)}"
+        )
+    return timeline.build(ctx.conn, role_id=role_id, limit=limit, before=before, kinds=wanted)
 
 
 @router.get("/api/tools/catalog")
