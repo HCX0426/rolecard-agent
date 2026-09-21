@@ -12,13 +12,20 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: { getReachouts: vi.fn(), markRoleReachoutsRead: vi.fn(), get: vi.fn() },
+const { apiMock, streamChatMock } = vi.hoisted(() => ({
+  apiMock: {
+    getReachouts: vi.fn(),
+    markRoleReachoutsRead: vi.fn(),
+    get: vi.fn(),
+    post: vi.fn(),
+  },
+  // 桌宠的回话复用对话页那份 SSE 归约，所以这里也换掉 `streamChat`（不是另写一套流）。
+  streamChatMock: vi.fn(),
 }));
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
-  return { ...actual, api: apiMock };
+  return { ...actual, api: apiMock, streamChat: streamChatMock };
 });
 
 import PetPage from "./PetPage";
@@ -71,6 +78,20 @@ beforeEach(() => {
   delete window.rolecardShell;
   apiMock.getReachouts.mockResolvedValue(page([row(3, "外头降温了，穿上外套。"), row(2, "旧的一条"), row(1, "更早的一条")]));
   apiMock.markRoleReachoutsRead.mockResolvedValue(page([], 0));
+  // 面板会按 URL 打两种请求：会话历史（对象）与角色表（数组）。一刀切的 mock 会让
+  // `roles.find` 在一个"看着像历史"的对象上炸掉 —— 按 URL 分派才反映真实的两个端点。
+  apiMock.get.mockImplementation(async (url: string) =>
+    url === "/api/roles"
+      ? [{ role_id: "wan", role_name: "苏晚晴", model_name: "" }]
+      : { messages: [], total: 0, limit: 8, truncated: false },
+  );
+  apiMock.post.mockResolvedValue({ thread_id: "s_proactive_wan" });
+  streamChatMock.mockImplementation(
+    async (_tid: string, _msg: string, onEvent: (e: unknown) => void) => {
+      onEvent({ type: "token", text: "好呀" });
+      onEvent({ type: "end" });
+    },
+  );
 });
 
 afterEach(() => {
@@ -209,16 +230,20 @@ describe("PetPage 悬停展开（§7：想回话不用开控制台）", () => {
 
   it("鼠标停上去：请壳展开，并把这条主动会话的最近几条摊开", async () => {
     const shell = withShell();
-    apiMock.get.mockResolvedValue({
-      messages: [
-        { role: "assistant", content: "外头降温了，穿上外套。" },
-        { role: "user", content: "好，你也穿点" },
-        { role: "tool", content: "工具返回的一堆东西" },
-      ],
-      total: 3,
-      limit: 8,
-      truncated: false,
-    });
+    apiMock.get.mockImplementation(async (url: string) =>
+      url === "/api/roles"
+        ? [{ role_id: "wan", role_name: "苏晚晴", model_name: "" }]
+        : {
+            messages: [
+              { role: "assistant", content: "外头降温了，穿上外套。" },
+              { role: "user", content: "好，你也穿点" },
+              { role: "tool", content: "工具返回的一堆东西" },
+            ],
+            total: 3,
+            limit: 8,
+            truncated: false,
+          },
+    );
     await mount();
     await hover(shell);
 
@@ -266,7 +291,10 @@ describe("PetPage 悬停展开（§7：想回话不用开控制台）", () => {
     await mount();
     await hover(shell);
     expect(screen.getByText(/还没有你们的对话/)).toBeTruthy();
-    expect(apiMock.get).not.toHaveBeenCalled();
+    // 角色表照拉（面板顶上要用），但**没有会话就不去读历史**：不给一个不存在的线程发请求。
+    expect(apiMock.get).not.toHaveBeenCalledWith(
+      expect.stringMatching(/\/messages(\?|$)/),
+    );
   });
 
   it("历史读不到就明说（面板不能停在上一次的内容上装作没事）", async () => {
@@ -278,7 +306,13 @@ describe("PetPage 悬停展开（§7：想回话不用开控制台）", () => {
   });
 
   it("浏览器里没有壳：面板照样画，只是不去调那个不存在的方法", async () => {
-    apiMock.get.mockResolvedValue({ messages: [], total: 0, limit: 8, truncated: false });
+    // 面板会按 URL 打两种请求：会话历史（对象）与角色表（数组）。一刀切的 mock 会让
+  // `roles.find` 在一个"看着像历史"的对象上炸掉 —— 按 URL 分派才反映真实的两个端点。
+  apiMock.get.mockImplementation(async (url: string) =>
+    url === "/api/roles"
+      ? [{ role_id: "wan", role_name: "苏晚晴", model_name: "" }]
+      : { messages: [], total: 0, limit: 8, truncated: false },
+  );
     await mount();
     fireEvent.mouseEnter(sprite());
     await act(async () => {
@@ -318,5 +352,112 @@ describe("PetPage 拖桌宠（手动拖，因为 CSS 拖拽区会吞掉悬停事
     fireEvent.pointerDown(el, { screenX: 10, screenY: 10, pointerId: 1 });
     fireEvent.pointerMove(el, { screenX: 40, screenY: 10, pointerId: 1 });
     expect(screen.getByTitle(/^苏晚晴/)).toBeTruthy();
+  });
+});
+
+
+describe("PetPage 在桌宠上回话（③：不进控制台就能聊）", () => {
+  function sprite(): Element {
+    return screen.getByTitle(/悬停看你们最近聊了什么/);
+  }
+
+  async function expandPanel() {
+    await mount();
+    fireEvent.mouseEnter(sprite());
+    await act(async () => {
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+  }
+
+  it("输入 + Enter：先标这条已读，再走对话页同一套 streamChat，流完刷新历史", async () => {
+    await expandPanel();
+    const box = screen.getByPlaceholderText(/跟苏晚晴说一句/) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "我穿好了" } });
+    fireEvent.keyDown(box, { key: "Enter", shiftKey: false, isComposing: false });
+    await act(async () => {
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+
+    expect(apiMock.markRoleReachoutsRead).toHaveBeenCalledWith("wan");
+    expect(streamChatMock).toHaveBeenCalledWith(
+      "s_proactive_wan",
+      "我穿好了",
+      expect.any(Function),
+      expect.anything(),
+    );
+    // 流完以服务端回放为准：历史被重新读了一次（展开一次 + 一轮结束一次）
+    expect(apiMock.get).toHaveBeenCalledWith("/api/session/s_proactive_wan/messages?limit=8");
+  });
+
+  it("Shift+Enter 是换行，不是发送", async () => {
+    await expandPanel();
+    const box = screen.getByPlaceholderText(/跟苏晚晴说一句/) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "第一行" } });
+    fireEvent.keyDown(box, { key: "Enter", shiftKey: true, isComposing: false });
+    await act(async () => {
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+    expect(streamChatMock).not.toHaveBeenCalled();
+  });
+
+  it("输入法组合期间的 Enter 不发送（否则打拼音打到一半就发出去了）", async () => {
+    await expandPanel();
+    const box = screen.getByPlaceholderText(/跟苏晚晴说一句/) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "chuan" } });
+    fireEvent.keyDown(box, { key: "Enter", shiftKey: false, isComposing: true });
+    await act(async () => {
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+    expect(streamChatMock).not.toHaveBeenCalled();
+  });
+
+  it("这条线还不存在时：先按确定 id 幂等地把它建出来，再发第一句", async () => {
+    apiMock.getReachouts.mockResolvedValue({
+      items: [{ ...row(1, "它的话"), thread_id: null }],
+      unread: 1,
+    } as ReachoutsPage);
+    await expandPanel();
+    const box = screen.getByPlaceholderText(/跟苏晚晴说一句/) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "第一句" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await act(async () => {
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(apiMock.post).toHaveBeenCalledWith("/api/session/proactive", { role_id: "wan" });
+    expect(streamChatMock.mock.calls[0][0]).toBe("s_proactive_wan");
+  });
+
+  it("鼠标移开只收面板，不打断正在跑的这一轮", async () => {
+    const shell = withShell();
+    let finish: (() => void) | null = null;
+    streamChatMock.mockImplementation(
+      (_tid: string, _msg: string, onEvent: (e: unknown) => void) =>
+        new Promise<void>((resolve) => {
+          onEvent({ type: "token", text: "正在想…" });
+          finish = resolve;
+        }),
+    );
+    await expandPanel();
+    const box = screen.getByPlaceholderText(/跟苏晚晴说一句/) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "喂" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await act(async () => {
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+    expect(screen.getByText("停止")).toBeTruthy();
+
+    fireEvent.mouseLeave(sprite());
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+    expect(shell.setPetExpanded).toHaveBeenCalledWith(false); // 面板收了
+    const signal = streamChatMock.mock.calls[0][3] as AbortSignal;
+    expect(signal.aborted).toBe(false); // 但这一轮没被掐掉
+
+    await act(async () => {
+      finish?.();
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
   });
 });

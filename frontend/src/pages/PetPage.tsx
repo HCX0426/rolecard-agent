@@ -18,8 +18,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { api, type MessagePage, type MessageRow, type ReachoutRow } from "../api";
+import { api, streamChat, type MessagePage, type MessageRow, type ReachoutRow, type RoleCard } from "../api";
+import { useChatStream } from "../hooks/useChatStream";
 import { shellBridge } from "../lib/shell";
+import { type StreamMeta } from "../lib/stream";
 
 const POLL_MS = 10_000; // 与铃铛红点同一节奏：后端没有推送，如实降级为轮询
 const BUBBLE_MS = 30_000; // 气泡自己淡出：驻留件不该把一句话长期戳在桌面上
@@ -40,6 +42,14 @@ function shorten(text: string): string {
   return text.length > MAX_BUBBLE_CHARS ? `${text.slice(0, MAX_BUBBLE_CHARS)}…` : text;
 }
 
+/**
+ * 一行前面的说话人。写成组件是因为这块小面板里"谁说的"不能只靠颜色区分 ——
+ * 色弱用户和截图里都读不出来，而"它说的"和"我说的"混在一起正是这类气泡最容易出事的地方。
+ */
+function Speaker({ mine }: { mine: boolean }) {
+  return <span className="text-slate-400 dark:text-slate-500">{mine ? "你：" : "它："}</span>;
+}
+
 export default function PetPage() {
   const [items, setItems] = useState<ReachoutRow[]>([]);
   const [offline, setOffline] = useState(false);
@@ -49,10 +59,25 @@ export default function PetPage() {
   const [expanded, setExpanded] = useState(false);
   const [history, setHistory] = useState<MessageRow[] | null>(null);
   const [historyError, setHistoryError] = useState("");
+  // 历史在"展开"和"刚跑完一轮"时各读一次（refresh 计数就是后者那个触发点）。
+  const [historyRefresh, setHistoryRefresh] = useState(0);
+  const [roles, setRoles] = useState<RoleCard[]>([]);
+  const [picked, setPicked] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  // 发出去但还没落库的那句：流结束后以服务端回放为准，所以它只活在这一轮里。
+  const [pendingUser, setPendingUser] = useState("");
+  const [streamError, setStreamError] = useState("");
   const collapseRef = useRef<number | null>(null);
   // 已经"见过"的最新一条 id。**在第一次真正拿到快照之前保持 null**：初始的空白状态不是
   // 一次快照，拿它当基线会让每次开机都把积压的最后一条当新消息拍出去。
   const seenNewestRef = useRef<number | null>(null);
+
+  // 流式那一轮：与对话页**同一份**归约（lib/stream）与同一个 hook，桌宠不写第二套。
+  const { busy, setBusy, live, onEvent, startBubble, stop, sendingRef } = useChatStream(
+    (meta: StreamMeta) => {
+      if (meta.errored) setStreamError(meta.errorDetail || "模型调用失败");
+    },
+  );
 
   const load = useCallback(async () => {
     let page;
@@ -100,9 +125,22 @@ export default function PetPage() {
   }, [bubbleShownAt, faded]);
 
   const unreadOfLatest = latest ? unread.filter((row) => row.role_id === latest.role_id).length : 0;
-  const hue = latest ? hueOf(latest.role_id) : 210;
-  const name = latest?.role_name || latest?.role_id || "助手";
-  const threadId = latest?.thread_id ?? null;
+  /**
+   * 面板跟谁说话：手动选的 > 最近主动找你的 > 角色表里的第一个。
+   *
+   * 为什么要兜到"角色表第一个"：一个从没被主动找过的新用户也该能在桌宠上开口，
+   * 而那时 `latest` 是空的 —— 只按气泡定角色会让面板变成一只不能说话的摆件。
+   */
+  const activeRole = picked ?? latest?.role_id ?? roles[0]?.role_id ?? null;
+  const activeName =
+    roles.find((r) => r.role_id === activeRole)?.role_name ??
+    latest?.role_name ??
+    latest?.role_id ??
+    "助手";
+  const hue = hueOf(activeRole ?? "general_assistant");
+  // 只有"当前这个角色"的那条主动会话能直接读历史；换了角色就得先 ensure（见 `send`）。
+  const threadId = latest && latest.role_id === activeRole ? latest.thread_id ?? null : null;
+  const name = activeName;
 
   /** 展开/收起。桥不在（浏览器直接开 #/pet 的调试入口）时面板照样画，只是窗口不跟着变大。 */
   function expand(next: boolean) {
@@ -162,6 +200,7 @@ export default function PetPage() {
   );
 
   // 历史只在**展开时**读：驻留件不该为了一个没被看到的面板每 10 秒打一次接口。
+  // `historyRefresh` 是"刚跑完一轮"的那个触发点 —— 流结束后以 checkpoint 为准重读一次。
   useEffect(() => {
     if (!expanded) {
       setHistory(null);
@@ -178,7 +217,59 @@ export default function PetPage() {
     return () => {
       alive = false;
     };
-  }, [expanded, threadId]);
+  }, [expanded, threadId, historyRefresh]);
+
+  // 角色表只在第一次展开时拉：面板顶上的切换要用它，而收起时没必要占一次请求。
+  useEffect(() => {
+    if (!expanded || roles.length) return;
+    api
+      .get<RoleCard[]>("/api/roles")
+      .then(setRoles)
+      .catch(() => setRoles([])); // 拉不到就少一个切换器，不拦对话本身
+  }, [expanded, roles.length]);
+
+  /**
+   * 发一条：桌宠上的回话落进**这个角色的主动会话**（§7.2.1 拍定的那条线）。
+   *
+   * 三个不显然的点：
+   *  - **不新建会话**：那条线程不存在时按确定 id 幂等地建出来（`/api/session/proactive`），
+   *    而不是 `POST /api/session` 开一条随机的 —— 后者会让"角色记得的"和"你说的"分家。
+   *  - **收起不打断**：鼠标移开只是把面板收起来，正在跑的这一轮继续到底（`streamChat` 的
+   *    signal 只在点「停止」时才 abort）。驻留件不该因为手一抖就丢掉一个回答。
+   *  - 发之前先标已读：你正在回它的话，"看见 = 读过"在这里成立。标失败不拦发送。
+   */
+  async function send() {
+    const text = draft.trim();
+    if (!text || busy || sendingRef.current || !activeRole) return;
+    sendingRef.current = true;
+    setDraft("");
+    setPendingUser(text);
+    try {
+      void api.markRoleReachoutsRead(activeRole).catch(() => undefined);
+      let tid = threadId;
+      if (!tid) {
+        const ensured = await api.post<{ thread_id: string }>("/api/session/proactive", {
+          role_id: activeRole,
+        });
+        tid = ensured.thread_id;
+      }
+      setBusy(true);
+      const controller = startBubble();
+      try {
+        await streamChat(tid, text, onEvent, controller.signal);
+      } finally {
+        setBusy(false);
+      }
+    } catch (e) {
+      setStreamError((e as Error).message);
+    } finally {
+      sendingRef.current = false;
+      setPendingUser("");
+      // 服务端 checkpoint 是对话的唯一真相：一轮跑完刷一次，面板显示的就是库里真存下的东西。
+      await load();
+      setHistoryRefresh((n) => n + 1);
+    }
+  }
 
   async function acknowledge(row: ReachoutRow) {
     // 先标已读再收气泡：标失败就留着，让用户知道"这条还没真被读过"。
@@ -215,9 +306,9 @@ export default function PetPage() {
     // Tauri 那边"后端源拿不到注入 → data-tauri-drag-region 拖不动"的坑在这里不存在；
     // 气泡与面板要能点/能选字，所以它们各自标 no-drag。
     //
-    // **悬停检测挂在色片与面板上，不挂在这块拖拽区上**：drag 区域由 Chromium 接管鼠标
-    // 按下，整窗根节点上监听会时灵时不灵（掘金那篇悬浮球实现说的"drag 与点击冲突"就是
-    // 同一族问题）。色片是 drag 区，但 mouseenter 不吃 —— 拖只在"按下 + 移动"时才成立。
+    // **悬停检测与拖动都挂在色片与面板上，不挂在这块拖拽区上**：实测 drag 区域会把鼠标
+    // 事件整个吞掉（色片上的 mouseenter 一次都收不到），所以色片改 no-drag + 手动拖
+    // —— 增量交给壳（见 `dragMove`）。Tauri 那边"远程源拿不到注入 → 拖不动"的坑在这里不存在。
     <div className="pet-drag flex h-full select-none flex-col items-center justify-end gap-2 pb-1">
       {expanded ? (
         // 展开态：面板取代气泡（气泡那条就是面板最后一条，重复摆一遍只是噪音）。
@@ -227,7 +318,25 @@ export default function PetPage() {
           className="pet-nodrag flex max-h-full w-full flex-col rounded-2xl border border-slate-200/70 bg-white/95 text-slate-700 shadow-md backdrop-blur-sm dark:border-slate-600/70 dark:bg-slate-800/95 dark:text-slate-100"
         >
           <header className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-100 px-3 py-2 dark:border-slate-700">
-            <span className="truncate text-xs font-medium">{name}</span>
+            {roles.length > 1 ? (
+              <select
+                value={activeRole ?? ""}
+                onChange={(e) => {
+                  setPicked(e.target.value);
+                  setHistory(null);
+                }}
+                className="max-w-[150px] truncate rounded border border-slate-200 bg-white px-1 py-0.5 text-xs dark:border-slate-600 dark:bg-slate-800"
+                title="换个工作台对象（每个角色是它自己的那条主动会话）"
+              >
+                {roles.map((r) => (
+                  <option key={r.role_id} value={r.role_id}>
+                    {r.role_name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="truncate text-xs font-medium">{activeName}</span>
+            )}
             {threadId && (
               <button
                 onClick={() => shellBridge()?.openSession(threadId)}
@@ -239,27 +348,69 @@ export default function PetPage() {
             )}
           </header>
           <div className="max-h-[300px] min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 py-2 text-[11px] leading-relaxed">
-            {historyError && (
-              <p className="text-red-600 dark:text-red-400">{historyError}</p>
-            )}
-            {!threadId && !historyError && (
+            {historyError && <p className="text-red-600 dark:text-red-400">{historyError}</p>}
+            {streamError && <p className="text-red-600 dark:text-red-400">{streamError}</p>}
+            {!threadId && !historyError && !pendingUser && (
               <p className="text-slate-400 dark:text-slate-500">
-                还没有你们的对话 —— 它主动找你的那次会出现在这里。
+                还没有你们的对话 —— 说第一句就会开始（它会记进这个角色的记忆与这条会话）。
               </p>
             )}
-            {threadId && history === null && !historyError && (
+            {threadId && history === null && !historyError && !pendingUser && (
               <p className="text-slate-400 dark:text-slate-500">读取中…</p>
             )}
             {(history ?? [])
               .filter((m) => m.role === "user" || m.role === "assistant")
               .map((m, i) => (
                 <p key={m.id ?? i} className="break-words">
-                  <span className="text-slate-400 dark:text-slate-500">
-                    {m.role === "user" ? "你：" : "它："}
-                  </span>
+                  <Speaker mine={m.role === "user"} />
                   {m.content}
                 </p>
               ))}
+            {pendingUser && (
+              <p className="break-words">
+                <Speaker mine />
+                {pendingUser}
+              </p>
+            )}
+            {live && (busy || live.text) && (
+              <p className="break-words">
+                <Speaker mine={false} />
+                {live.text || (live.streaming ? "…" : "")}
+              </p>
+            )}
+          </div>
+          <div className="flex shrink-0 items-end gap-1.5 border-t border-slate-100 px-2 py-2 dark:border-slate-700">
+            <textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter 发、Shift+Enter 换行（与对话页同一套键位）；输入法组合期间不发。
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+              rows={1}
+              placeholder={`跟${activeName}说一句`}
+              className="max-h-16 min-w-0 flex-1 resize-none rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] leading-relaxed focus:border-blue-400 focus:outline-none dark:border-slate-600 dark:bg-slate-900"
+            />
+            {busy ? (
+              <button
+                onClick={stop}
+                className="shrink-0 rounded-lg border border-slate-200 px-2 py-1 text-[11px] text-slate-500 hover:text-red-600 dark:border-slate-600 dark:text-slate-300"
+                title="停止这一轮生成"
+              >
+                停止
+              </button>
+            ) : (
+              <button
+                onClick={() => void send()}
+                disabled={!draft.trim() || !activeRole || offline}
+                className="shrink-0 rounded-lg bg-blue-600 px-2.5 py-1 text-[11px] text-white hover:bg-blue-500 disabled:bg-slate-300 dark:disabled:bg-slate-700"
+              >
+                发送
+              </button>
+            )}
           </div>
         </section>
       ) : (
