@@ -46,6 +46,9 @@ export interface ShellBridge {
   petContentVisible?(): Promise<boolean>;
   /** 旗子被改动时收一次通知；传 null 注销。首值仍需 pull 一次。同样可选（旧壳没有）。 */
   onPetContentVisible?(handler: ((visible: boolean) => void) | null): void;
+  /** 壳每次改展开落点时推一次"色片在窗内要自挪几像素"（贴边放不下 380 宽才非零）。
+   *  同样可选：旧壳不推，页面就按 0 画 —— 色片在中间，面板照样出，只是贴边时会偏一点。 */
+  onPetSpriteShift?(handler: ((px: number) => void) | null): void;
   /** 登记"谁来接收壳发来的打开会话"；传 null 注销。 */
   onRequestOpenThread(handler: ((threadId: string) => void) | null): void;
   /** 本地推理服务进程的归属与起停（D③-b）。**都不带参数**：路径由壳自己决定。 */

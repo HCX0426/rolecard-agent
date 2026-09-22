@@ -18,11 +18,13 @@ import { contextBridge, ipcRenderer } from "electron";
 
 type OpenThreadHandler = (threadId: string) => void;
 type ContentVisibleHandler = (visible: boolean) => void;
+type SpriteShiftHandler = (px: number) => void;
 
 let onOpenThread: OpenThreadHandler | null = null;
 // 与 open-thread 同一个形状：**单个槽位**而不是监听器列表 —— 桌宠页是这面旗的唯一归属者，
 // 后注册者覆盖前者（React 严格模式下挂载两次也不留旧监听）。
 let onContentVisible: ContentVisibleHandler | null = null;
+let onSpriteShift: SpriteShiftHandler | null = null;
 
 ipcRenderer.on("shell:open-thread", (_event, value: unknown) => {
   if (typeof value === "string" && value) onOpenThread?.(value);
@@ -30,6 +32,11 @@ ipcRenderer.on("shell:open-thread", (_event, value: unknown) => {
 
 ipcRenderer.on("shell:pet-content-visible", (_event, value: unknown) => {
   if (typeof value === "boolean") onContentVisible?.(value);
+});
+// 色片在展开窗里要自己挪回原位多少像素（贴边时夹取会把窗推走，见 windows.ts 的
+// `petExpandTarget`）。非数字一律不动 —— 这条通道来自壳自己，但渲染端不该信任任何输入。
+ipcRenderer.on("shell:pet-sprite-shift", (_event, value: unknown) => {
+  if (typeof value === "number" && Number.isFinite(value)) onSpriteShift?.(value);
 });
 
 contextBridge.exposeInMainWorld("rolecardShell", {
@@ -69,6 +76,10 @@ contextBridge.exposeInMainWorld("rolecardShell", {
   /** 旗子被托盘改动时收一次通知；传 null 注销。首次值仍要 pull（push 早于监听就是丢消息）。 */
   onPetContentVisible: (handler: ContentVisibleHandler | null): void => {
     onContentVisible = handler;
+  },
+  /** 色片自挪的像素数（壳每次改展开落点时推一次）；传 null 注销。同上是单槽位。 */
+  onPetSpriteShift: (handler: SpriteShiftHandler | null): void => {
+    onSpriteShift = handler;
   },
   /** 登记"谁来接收打开会话"，并向主进程报一次就绪。传 null 注销。 */
   onRequestOpenThread: (handler: OpenThreadHandler | null): void => {

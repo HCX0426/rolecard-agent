@@ -639,3 +639,52 @@ describe("PetPage 托盘的「显示消息内容」旗子（§7.2 第 4 条：�
     expect(screen.getByText(HIDDEN)).toBeTruthy();
   });
 });
+
+describe("PetPage 命中区与一次拖只收一次（三条都是量出来的，不是设想）", () => {
+  function sprite(): HTMLElement {
+    return screen.getByTitle(/点开看你们最近聊了什么/) as HTMLElement;
+  }
+  function root(): HTMLElement {
+    return sprite().parentElement as HTMLElement;
+  }
+
+  it("点色片两侧的透明边也开面板：悬停把宠物拉回屏内时，光标会落到那 56px 上", async () => {
+    // 实测：从右边趴着点它，窗口往屏内滑 96px，色片从光标底下滑走，而光标还在窗口里。
+    // handler 只挂在色片上就是"我点它，它跑了"。
+    const shell = withShell();
+    const expanded = shell.setPetExpanded as unknown as ReturnType<typeof vi.fn>;
+    await mount();
+    fireEvent.click(root());
+    expect(expanded).toHaveBeenLastCalledWith(true);
+  });
+
+  it("面板里打字/点按钮不冒泡成「收起面板」", async () => {
+    const shell = withShell();
+    const expanded = shell.setPetExpanded as unknown as ReturnType<typeof vi.fn>;
+    await mount();
+    fireEvent.click(sprite()); // 开
+    expect(expanded).toHaveBeenLastCalledWith(true);
+    expanded.mockClear();
+    fireEvent.click(screen.getByRole("textbox")); // 输入框自己的一下
+    fireEvent.click(screen.getByTitle(/在控制台里打开这条会话/));
+    expect(expanded).not.toHaveBeenCalled();
+  });
+
+  it("一次拖拽里连着多次 pointermove：只发一次「收起」", async () => {
+    // React 状态要到下一次渲染才更新，只认 `expanded` 就会在一次拖里把"收起"发十几遍，
+    // 而壳每一次都会重算落点 —— 读起来就是抖。
+    const shell = withShell();
+    const expanded = shell.setPetExpanded as unknown as ReturnType<typeof vi.fn>;
+    await mount();
+    fireEvent.click(sprite());
+    expanded.mockClear();
+    const el = root();
+    fireEvent.pointerDown(el, { screenX: 500, screenY: 400, pointerId: 1 });
+    for (const y of [392, 384, 376, 368]) {
+      fireEvent.pointerMove(el, { screenX: 500, screenY: y, pointerId: 1 });
+    }
+    fireEvent.pointerUp(el, { pointerId: 1 });
+    expect(expanded).toHaveBeenCalledTimes(1);
+    expect(expanded).toHaveBeenCalledWith(false);
+  });
+});

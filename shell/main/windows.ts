@@ -81,6 +81,37 @@ export function petBoundsFor(current: Rect, expanded: boolean): Rect {
 const PRELOAD = path.join(__dirname, "..", "preload", "bridge.js");
 const LANDING = path.join(__dirname, "..", "..", "web", "index.html");
 
+/**
+ * 展开/收起时窗口该落在哪，**外加**"色片在窗口里要自己挪回原位多少像素"。
+ *
+ * 为什么需要第二个数：色片贴着右边趴着的时候，它的中心离屏幕右沿只有 100px，而面板要 380 宽
+ * —— 居中放不下，夹取必然把窗口往屏内推（实测推掉 138px）。推窗口 = 色片从光标底下滑走，
+ * 用户读作"我点它它跳了"。所以这里反过来：**窗口照夹取的规矩放，色片在窗口内部自己挪回去**，
+ * 于是面板往屏幕内侧长，而色片一格都不动。挪的量随 bounds 一起报给页面（见 `sendShift`）。
+ */
+function petExpandTarget(win: BrowserWindow, expanded: boolean): { rect: Rect; shiftX: number } {
+  const current = win.getBounds();
+  const width = expanded ? PET_PANEL_WIDTH : PET_WIDTH;
+  const centerX = current.x + current.width / 2;
+  const rect = petBoundsFor(current, expanded);
+  const actualCenter = rect.x + width / 2;
+  // 没被夹取时 desiredCenter === actualCenter ⇒ shift 为 0，页面什么都不用做。
+  const raw = Math.round(centerX - actualCenter);
+  // 色片 88 见方、窗口 380：挪过头会把色片顶出窗口外，那点量干脆让窗口自己承担（夹一半）。
+  const limit = Math.max(0, (width - SPRITE_PX) / 2 - 8);
+  const shiftX = expanded ? Math.max(-limit, Math.min(limit, raw)) : 0;
+  return { rect, shiftX };
+}
+
+/** 把"色片自己挪多少像素"告诉页面。收起态一律 0（根节点就是色片本来的位置）。 */
+function sendPetShift(win: BrowserWindow, shiftX: number): void {
+  if (shiftX === lastPetShift) return;
+  lastPetShift = shiftX;
+  if (!win.isDestroyed()) win.webContents.send("shell:pet-sprite-shift", shiftX);
+}
+
+let lastPetShift = 0;
+
 /** 桌宠现在是不是摊开的。只有 `setPetExpanded` 会改它，所以它就是"展开态"的那一份真相。 */
 let petIsExpanded = false;
 
@@ -137,8 +168,6 @@ function tuckedRect(edge: DockEdge, rect: Rect, work: Rect): Rect {
 // "它不见了"而不是"它收起来了"。时长与曲线照那类东西的量级来：百来毫秒到三百毫秒，
 // **起步快、收尾慢**（ease-out cubic）—— 用户报"140ms 太快、没渐进"，缺的就是这条缓动。
 const DOCK_MS = 280;
-const GROW_MS = 200;
-const SHRINK_MS = 160;
 const SLIDE_STEP_MS = 16; // ≈60fps
 let slideTimer: NodeJS.Timeout | null = null;
 
@@ -217,12 +246,22 @@ export function petRetuck(win: BrowserWindow): void {
 /**
  * 藏着的话滑回贴边。展开面板前、拖之前、关掉「靠边隐藏」时都要先走这一步。
  * `instant` 是给拖拽留的：拖的过程中滑，等于跟用户的手抢那一两百毫秒。
+ *
+ * **`force` 补的是另一件事**：`tucked` 已经是 false 但滑出的动画还在路上时，光看旗子会以为
+ * "已经在屏内了"而什么都不做 —— 于是调用方拿到的是**半路上的坐标**（实测：悬停滑出 280ms，
+ * 第 62ms 就点开了面板，基准成了 x=1555 而不是贴边的 1507，色片一开场就被算歪）。
+ * force = "别管旗子，把窗按到贴边那块去"。
  */
-export function petUntuck(win: BrowserWindow, options: { instant?: boolean } = {}): void {
-  if (!petDock || !petDock.tucked) return;
+export function petUntuck(win: BrowserWindow, options: { instant?: boolean; force?: boolean } = {}): void {
+  if (!petDock) return;
+  if (!petDock.tucked && !options.force) return;
+  const wasTucked = petDock.tucked;
   petDock = { ...petDock, tucked: false };
   const target = flushRect(petDock.edge, win.getBounds(), workRect());
-  if (options.instant) {
+  // `force` 蕴含 `instant`：要 force 就是要"现在、一步、到位"。留着动画起去，等于在调用方
+  // 已经算完落点之后，还有一个定时器每 16ms 把窗按回收起尺寸（实测：展开成功 34ms 后窗被
+  // 按回 202×242，面板照画 ⇒ 用户看到"点一下它变形"）。
+  if (options.instant || options.force || wasTucked === false) {
     stopSlide();
     win.setBounds(target);
     return;
@@ -300,23 +339,35 @@ export function setPetExpanded(win: BrowserWindow, expanded: boolean): void {
   // （用户 2026-09-22 拍的：只在拖到边上那一刻吸，之后不再自动收）。
   stopSlide(); // 展开/收起是用户的动作，赢过任何在跑的滑动
   if (expanded) {
+    // `force`：悬停把宠物往屏内滑的那 280ms 可能还在路上（实测第 62ms 就点开了面板），
+    // 那时窗口停在**半路上**的 x=1555 —— 拿它当基准算展开落点，色片一开场就被算歪。
+    petUntuck(win, { force: true });
+    // 记账必须在 untuck **之后**：藏着一半的时候那块矩形是推到屏幕外 96px 的那一块，
+    // 记了它，收起时就是把宠物丢回屏幕边上（点一下就"不见了"）。
     if (!petIsExpanded) petRectBeforeExpand = petBoundsFor(win.getBounds(), false);
-    petUntuck(win, { instant: true }); // 展开时不滑：滑 + 同时长大会糊成一次跳动
     petDockPending = false; // 又在看它了 ⇒ 那次"等收起再吸"作废，以最后一次放手为准
   }
   petIsExpanded = expanded;
-  const target = expanded
-    ? petBoundsFor(win.getBounds(), true)
-    : (petRectBeforeExpand ?? petBoundsFor(win.getBounds(), false));
+  const { rect: target, shiftX } = expanded
+    ? petExpandTarget(win, true)
+    : { rect: petRectBeforeExpand ?? petBoundsFor(win.getBounds(), false), shiftX: 0 };
   if (!expanded) petRectBeforeExpand = null;
+  // **展开/收起不滑，一步到位**：滑的是尺寸，而页面在你说"展开"的那一帧就已经把 380 宽的
+  // 面板画出来了 —— 窗口还在从 200 长到 380 的那 200ms 里，面板被挤在越来越宽却还没到位的
+  // 盒子里，读起来就是"点一下它抖一下还变形"（用户报的第二条）。缓动留给只挪位置、
+  // 尺寸不变的吸边滑动（`DOCK_MS`），那一条不会引起重排，才是"滑进滑出"该有的形状。
+  const apply = (): void => {
+    win.setBounds(target);
+    sendPetShift(win, shiftX);
+  };
   if (!expanded && petDockPending) {
     // 要演"吸进去"那一段，收起这步就别再叠一段动画（两段串起来读起来是卡了一下）。
     petDockPending = false;
-    win.setBounds(target);
+    apply();
     settlePetDock(win); // 拖到边上之后是在"面板收起那一瞬"吸进去的（见 `petDragEnded`）
     return;
   }
-  slidePetTo(win, target, expanded ? GROW_MS : SHRINK_MS);
+  apply();
 }
 
 /**
@@ -359,24 +410,29 @@ function petSize(): { width: number; height: number } {
  *
  * 页面只说"往这边走 12px"，摆到哪、能不能出屏全由壳定 —— 与 `setPetExpanded` 同一条分工：
  * 能碰桌面的参数越少越好，绝对坐标就是一种"你把窗放哪"的权力。
+ *
+ * **锚点是色片，不是窗口左上角**：色片在页面里是"底部居中"的，所以拖动要按 `petBoundsFor`
+ * 那条规则走（下沿与水平中心跟着手走，尺寸变化围绕它做）。以前这里直接沿用 `getBounds()`
+ * 的左上角 + 增量，于是"面板开着拖第一下"就是一次跳位：那一刻 `petIsExpanded` 已经被页面
+ * 发来的 `setPetExpanded(false)` 改成 false、尺寸要缩成 200×240，而左上角还是 380×520 那块的
+ * 左上角 —— 色片瞬间往上弹约 280px、往左约 90px（用户报的"长按桌宠它一下子跳到上面"）。
  */
 export function movePetBy(win: BrowserWindow, dx: number, dy: number): void {
   petUntuck(win, { instant: true }); // 拖着藏着的那一小条走 = 一动手就先把它拉回屏内；拖的时候不滑
   stopSlide(); // 手在拖 ⇒ 任何在跑的动画让开，否则它每帧把窗口按回自己的目标，位移被吃掉
   const current = win.getBounds();
-  const size = petSize();
-  const { workArea } = screen.getPrimaryDisplay();
-  const maxX = workArea.x + Math.max(0, workArea.width - size.width);
-  const maxY = workArea.y + Math.max(0, workArea.height - size.height);
-  const x = Math.min(Math.max(current.x + Math.round(dx), workArea.x), maxX);
-  const y = Math.min(Math.max(current.y + Math.round(dy), workArea.y), maxY);
-  win.setBounds({ ...size, x, y });
-  // **拖到哪，"展开前那块"就跟到哪。**不记这一步的话：拖的时候面板是开着的（悬停必然带开），
-  // 松手后那次收起会把窗口按 `petRectBeforeExpand` 放回去 —— 整段拖拽被抹掉，宠物弹回原地
-  // （实测拖 94px 松手后停在原位，于是靠边隐藏的 ≤24px 判据永远够不到，就是用户报的现象）。
-  if (petRectBeforeExpand) {
-    petRectBeforeExpand = { ...petRectBeforeExpand, x: petRectBeforeExpand.x + (x - current.x), y: petRectBeforeExpand.y + (y - current.y) };
-  }
+  const moved: Rect = {
+    ...current,
+    x: current.x + Math.round(dx),
+    y: current.y + Math.round(dy),
+  };
+  // 尺寸仍按 `petSize()` 的口径给（`petBoundsFor` 就是这么定的），绝不拿 getBounds 的宽高反喂。
+  const target = petBoundsFor(moved, petIsExpanded);
+  win.setBounds(target);
+  // **拖到哪，"展开前那块"就跟到哪**（只在摊开着的时候需要记）：收起时要把窗口放回色片此刻
+  // 所在的位置，而不是拖之前的那一处。收起状态下这块矩形就是窗口自己，清成 null 让
+  // `setPetExpanded` 走"按当前形状反推"那条分支。
+  petRectBeforeExpand = petIsExpanded ? petBoundsFor(target, false) : null;
 }
 
 /** 把托盘那三项偏好里的**窗口两样**落到窗上：置顶与整窗不透明度。

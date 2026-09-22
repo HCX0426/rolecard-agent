@@ -74,6 +74,18 @@ export default function PetPage() {
   // 把 10 秒的节拍重置一遍（而它只是想知道这次要不要拍原文）。
   const showContentRef = useRef(true);
   const retuckRef = useRef<number | null>(null);
+  // `expanded` 的"读时不重渲染"版本：拖拽期间 pointermove 密集触发，而 React 状态要到下一次
+  // 渲染才更新，只认状态就会在一次拖里连发十几次"收起"给壳。
+  const expandedRef = useRef(false);
+  /**
+   * 色片在窗口里自己挪回原位多少像素（壳推过来的，贴边展开时才非零）。
+   *
+   * 为什么页面要接这个数：色片贴着右边趴着时它中心离屏幕右沿只有 100px，而面板要 380 宽 ——
+   * 居中放不下，壳夹取时必然把整扇窗往屏内推（实测推掉 138px），于是"一点它，色片就从光标
+   * 底下滑走了"。改成**窗口照夹取、色片在窗内自挪**：面板朝屏幕内侧长，色片一格都不动。
+   * 旧壳不推这个数 ⇒ 保持 0，等于回到"色片在窗正中"那个老画法，不会更坏。
+   */
+  const [spriteShift, setSpriteShift] = useState(0);
   // 已经"见过"的最新一条 id。**在第一次真正拿到快照之前保持 null**：初始的空白状态不是
   // 一次快照，拿它当基线会让每次开机都把积压的最后一条当新消息拍出去。
   const seenNewestRef = useRef<number | null>(null);
@@ -159,6 +171,8 @@ export default function PetPage() {
   /** 展开/收起面板。由**点击**触发（悬停不算，理由见下面 `reveal`）。
    *  桥不在（浏览器直接开 #/pet 的调试入口）时面板照样画，只是窗口不跟着变大。 */
   function expand(next: boolean) {
+    if (expandedRef.current === next) return; // 一次拖拽里连着十几次 pointermove：只发一次
+    expandedRef.current = next;
     setExpanded(next);
     void shellBridge()?.setPetExpanded(next);
   }
@@ -183,9 +197,14 @@ export default function PetPage() {
     }, RETUCK_MS);
   }
 
-  function togglePanel() {
-    if (dragMovedRef.current) return; // 刚拖完，松手那一下不算"点"
-    expand(!expanded);
+  /** 这次指针动作是不是落在"有内容的东西"上（面板、气泡）。
+   *
+   *  根节点整块都接点击与拖拽（见下面那段注释），而面板里的输入框、发送键、角色下拉
+   *  也在这块范围内 —— 不区分的话，在面板里打一个字按回车都会顺着冒泡把面板收起来。
+   */
+  function insideUi(event: { target: EventTarget | null }): boolean {
+    const el = event.target as HTMLElement | null;
+    return Boolean(el?.closest?.("[data-pet-ui]"));
   }
 
   /**
@@ -199,11 +218,16 @@ export default function PetPage() {
    *    一起拖回去，用 clientX 算出来的差值恒为 0（这类"看起来在动其实没动"的坑很典型）；
    *  - 只把增量交给壳（`movePetBy`），绝对坐标与出屏夹取都在主进程 —— 页面拿不到"把窗
    *    放到哪"的权力。
+   *  - **按下/点击挂在根节点，不挂在色片上**：200×240 里色片只占中间 88 见方，两侧各 56px
+   *    是透明的。实测从右边趴着的状态点它：悬停把窗口往屏内拉 96px，色片就从光标底下滑走了，
+   *    而那时光标还在窗口内、只是落到了透明边上 —— 挂在色片上的 handler 收不到，用户看到的
+   *    就是"我点它，它跑了"。透明区对用户是不可见的，整扇窗都该算"点的是桌宠"。
    */
   const dragRef = useRef<{ x: number; y: number } | null>(null);
   const dragMovedRef = useRef(false);
 
   function dragStart(event: React.PointerEvent<HTMLDivElement>) {
+    if (insideUi(event)) return;
     dragMovedRef.current = false;
     dragRef.current = { x: event.screenX, y: event.screenY };
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -222,7 +246,7 @@ export default function PetPage() {
     //  ① 拖的是宠物不是面板，摊着一块 380×520 的面板挡视野、还跟着晃；
     //  ② 壳按**窗口当前形状**夹取，面板开着时色片中心最远只能到离屏幕边 190px，
     //     而靠边隐藏判的是收起态那块矩形离边 ≤ 24px ⇒ 永远够不到，怎么拖都不吸。
-    if (expanded) expand(false);
+    if (expandedRef.current) expand(false);
     dragRef.current = { x: event.screenX, y: event.screenY };
     shellBridge()?.movePetBy(dx, dy);
   }
@@ -236,6 +260,16 @@ export default function PetPage() {
     // 会补一个 click，不认这一点就是"拖完一松手面板自己弹出来了"。
   }
 
+  function togglePanel() {
+    if (dragMovedRef.current) return; // 刚拖完，松手那一下不算"点"
+    expand(!expandedRef.current);
+  }
+
+  function rootClick(event: React.MouseEvent<HTMLDivElement>) {
+    if (insideUi(event)) return; // 面板/气泡自己的按钮，见 `insideUi`
+    togglePanel();
+  }
+
   // 卸载时把待趴回的定时器收掉：留着它会在组件没了之后去调桥。
   useEffect(
     () => () => {
@@ -243,6 +277,14 @@ export default function PetPage() {
     },
     [],
   );
+
+  // 壳每次把展开落点算歪一点，就推一次自挪量过来（旧壳不推 ⇒ 一直是 0，见 `spriteShift`）。
+  useEffect(() => {
+    const bridge = shellBridge();
+    if (!bridge?.onPetSpriteShift) return;
+    bridge.onPetSpriteShift((px) => setSpriteShift(px));
+    return () => bridge.onPetSpriteShift?.(null);
+  }, []);
 
   // 旗子的首值要 pull（push 早于监听就是丢消息），之后托盘每改一次收一次通知。
   // 注销放在清理里：React 严格模式下挂载两次，留着旧的会把上一次的 `setShowContent` 也带上。
@@ -380,11 +422,17 @@ export default function PetPage() {
       className="flex h-full select-none flex-col items-center justify-end gap-2 pb-1"
       onMouseEnter={reveal}
       onMouseLeave={pointerLeft}
+      onPointerDown={dragStart}
+      onPointerMove={dragMove}
+      onPointerUp={dragEnd}
+      onPointerCancel={dragEnd}
+      onClick={rootClick}
     >
       {expanded ? (
         // 展开态：面板取代气泡（气泡那条就是面板最后一条，重复摆一遍只是噪音）。
         <section
-          className="pet-nodrag flex max-h-full w-full flex-col rounded-2xl border border-slate-200/70 bg-white/95 text-slate-700 shadow-md backdrop-blur-sm dark:border-slate-600/70 dark:bg-slate-800/95 dark:text-slate-100"
+          data-pet-ui="panel"
+          className="pet-panel-in pet-nodrag flex max-h-full w-full flex-col rounded-2xl border border-slate-200/70 bg-white/95 text-slate-700 shadow-md backdrop-blur-sm dark:border-slate-600/70 dark:bg-slate-800/95 dark:text-slate-100"
         >
           <header className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-100 px-3 py-2 dark:border-slate-700">
             {roles.length > 1 ? (
@@ -508,6 +556,7 @@ export default function PetPage() {
         latest &&
         !faded && (
           <button
+            data-pet-ui="bubble"
             onClick={() => void openRow(latest)}
             title={
               !showContent
@@ -519,6 +568,8 @@ export default function PetPage() {
                   : "点击标记已读"
             }
             className="pet-nodrag w-full rounded-2xl border border-slate-200/70 bg-white/90 px-3 py-2 text-left text-[11px] leading-relaxed text-slate-700 shadow-sm backdrop-blur-sm transition-opacity duration-500 dark:border-slate-600/70 dark:bg-slate-800/90 dark:text-slate-100"
+            // 气泡跟着色片走：它标在色片正上方，色片自挪而它不动就会错开一截。
+            style={{ transform: `translateX(${spriteShift}px)` }}
           >
             {showContent ? shorten(latest.text) : "它说了话 · 内容已隐藏"}
             {unreadOfLatest > 1 && (
@@ -530,14 +581,11 @@ export default function PetPage() {
         )
       )}
 
+      {/* 色片自己**不挂**任何处理器：点击与拖拽都在根节点上（透明边也要接得住，
+          见 `dragStart` 那段）。挂两处会因冒泡触发两遍，净效果是"点了没反应"。 */}
       <div
-        onClick={togglePanel}
-        onPointerDown={dragStart}
-        onPointerMove={dragMove}
-        onPointerUp={dragEnd}
-        onPointerCancel={dragEnd}
         className="pet-nodrag grid h-[88px] w-[88px] shrink-0 cursor-grab place-items-center rounded-full text-2xl font-medium text-white shadow-md active:cursor-grabbing"
-        style={{ background: `hsl(${hue} 62% 48%)` }}
+        style={{ background: `hsl(${hue} 62% 48%)`, transform: `translateX(${spriteShift}px)` }}
         title={`${name}${offline ? " · 连不上本地服务" : ""} · 点开看你们最近聊了什么${
           showContent ? "" : "（内容已隐藏）"
         }`}
