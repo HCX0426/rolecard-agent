@@ -130,22 +130,29 @@ class _FakeModel:
 def test_generate_returns_text_and_uses_persona_memory(conn) -> None:
     role = _role()
     model = _FakeModel(AIMessage(content="你今天还好吗？"))
-    text = svc.generate_reachout_text(role, model, _settings(), conn)
-    assert text == "你今天还好吗？"
+    draft = svc.generate_reachout_text(role, model, _settings(), conn)
+    assert draft.text == "你今天还好吗？" and draft.why == ""
     joined = "".join(str(m.content) for m in model.prompt or [])
     assert role.system_prompt in joined  # 人设进系统提示词
 
 
 def test_generate_drops_guarded_output(conn) -> None:
-    """guard fail-closed：被拦下的输出**不发**（而不是过滤后发）。"""
+    """guard fail-closed：被拦下的输出**不发**（而不是过滤后发），且原因为 `guard`。"""
     role = _role()
     model = _FakeModel(AIMessage(content="我建议你服用阿莫西林，一次两粒。"))
-    assert svc.generate_reachout_text(role, model, _settings(), conn) is None
+    draft = svc.generate_reachout_text(role, model, _settings(), conn)
+    assert draft.text is None and draft.why == "guard"
 
 
 def test_generate_ignores_empty_reply(conn) -> None:
+    """空正文的原因必须是 `empty_output`，不能和"被 guard 拦下"混成同一个 None。
+
+    真机实测过这条通路：qwen3-vl 会把整段 token 预算花在思考上、`done_reason=length`
+    而正文为空（同一条 prompt 三次里两次如此）。混进 guard 那一类，就永远没人去修它。
+    """
     model = _FakeModel(AIMessage(content="   "))
-    assert svc.generate_reachout_text(_role(), model, _settings(), conn) is None
+    draft = svc.generate_reachout_text(_role(), model, _settings(), conn)
+    assert draft.text is None and draft.why == "empty_output"
 
 
 # ----------------------------------------------------- 开口上下文：去重与"别指着空记忆说事"
@@ -224,7 +231,7 @@ def test_generate_handles_block_shaped_reply(conn) -> None:
     guard 认不出这是承诺性话术（该拦的拦不住），用户看到的是一坨数据结构。
     """
     model = _FakeModel(AIMessage(content=[{"type": "text", "text": "今天过得怎么样？"}]))
-    text = svc.generate_reachout_text(_role(), model, _settings(), conn)
+    text = svc.generate_reachout_text(_role(), model, _settings(), conn).text
     assert text == "今天过得怎么样？"
     assert "type" not in (text or "") and "[" not in (text or "")
 
@@ -288,6 +295,29 @@ def test_tick_once_skips_roles_without_permission(conn) -> None:
     utc, local = _now()
     assert scheduler.tick_once(now_utc=utc, now_local=local) == 0
     assert conn.execute("SELECT COUNT(*) AS n FROM agent_reachout").fetchone()["n"] == 0
+
+
+def test_an_empty_generation_leaves_a_trace_saying_why(conn) -> None:
+    """空正文不能"静悄悄地少说一句" —— 必须留痕，且原因与 guard 拦下分得开。
+
+    真机实测：qwen3-vl 会把整段 token 预算花在思考上、`done_reason=length` 而正文为空
+    （同一条 prompt 三次里两次如此）。改造前 `generate_reachout_text` 对此返回裸 None，
+    调度器 `continue`，轨迹里**什么也没有** —— 于是"她最近不找我了"这个症状没有任何地方
+    能看出是模型坏了还是护栏在正常工作。
+    """
+    tracer = _Tracer()
+    scheduler = ReachoutScheduler(
+        settings_provider=lambda: _settings(),
+        roles=_Roles([_role(reachout_enabled=True)]),  # type: ignore[arg-type]
+        model_resolver=lambda _n: _FakeModel(AIMessage(content="   ")),
+        conn=conn,
+        tracer=tracer,
+    )
+    utc, local = _now()
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 0
+    skipped = [e for e in tracer.events if getattr(e, "event", "") == "reachout_skipped"]
+    assert len(skipped) == 1
+    assert skipped[0].detail["why"] == "empty_output"
 
 
 # --------------------------------------------------------------- 主动会话（回得来的那条路）
@@ -513,7 +543,7 @@ def test_generate_recall_mode_uses_role_memory(conn) -> None:
     model = _FakeModel(AIMessage(content="我记得你养了猫。"))
     text = svc.generate_reachout_text(
         role, model, _settings(), conn, role_id="active", mode="recall"
-    )
+    ).text
     assert text == "我记得你养了猫。"
     joined = "".join(str(m.content) for m in model.prompt or [])
     assert "他养了只猫" in joined  # 角色专属记忆进提示词
@@ -597,7 +627,7 @@ def test_generate_file_event_mode_injects_change_list(conn) -> None:
         role_id="active",
         mode="file_event",
         file_list="- 新增：报告.md",
-    )
+    ).text
     assert text == "看到你把报告放进目录啦？"
     joined = "".join(str(m.content) for m in model.prompt or [])
     assert "报告.md" in joined  # 素材清单进提示词

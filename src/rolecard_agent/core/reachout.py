@@ -36,7 +36,7 @@ import threading
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -436,6 +436,19 @@ def blocked_why(
     return None
 
 
+class ReachoutDraft(NamedTuple):
+    """一次主动开口生成的结果：`text=None` 时 `why` 说清**为什么没发**。
+
+    为什么把原因带回调用方而不是就地打日志或直接返回 None：「模型没产出正文」和
+    「内容被 guard 拦下」长得一样（都是不发），但一个是配置/模型坏了、该修，
+    另一个是内容确实不该发、是对的。混成一个 None，调度器就只会安静地少说话，
+    而用户看到的症状是"她最近怎么不找我了"—— 2026-09-22 那次实测正是这样混掉的。
+    """
+
+    text: str | None
+    why: str = ""
+
+
 def generate_reachout_text(
     role: RoleCard,
     model: Any,
@@ -446,8 +459,12 @@ def generate_reachout_text(
     mode: str = "general",
     file_list: str = "",
     thread_lines: str = "",
-) -> str | None:
-    """生成一条主动内容：人设 + 记忆 + 最近说过什么 → 单轮 → guard。被拦/失败返回 None（不发）。
+) -> ReachoutDraft:
+    """生成一条主动内容：人设 + 记忆 + 最近说过什么 → 单轮 → guard。
+
+    返回 `ReachoutDraft`：不发时里面带着**为什么不发**（`empty_output` / `guard`），
+    调度器据此留痕。以前这两种都返回裸 None，于是"模型一个字没产出"和"内容被拦下"
+    在轨迹里长得一模一样 —— 前者是该修的故障，后者是护栏正常工作。
 
     两条与"内容合适吗"直接相关的口径：① **记忆为空时指令不再提"长期记忆"**（指着一个空槽
     说话就是假契约，模型只能凭人设编）；② **带上该角色最近几条原文并要求别重复**（没有这一层
@@ -488,11 +505,15 @@ def generate_reachout_text(
     # 而这份文本既进 guard 又进用户收件箱（架构审计报告 P1-8）。
     text = text_of(reply).strip()
     if not text:
-        return None
+        # 2026-09-22 真机实测：qwen3-vl 会"想"完整 token 预算再 `done_reason=length` 收工，
+        # 正文一个字都不留 —— 思考内容在 Ollama 的 `message.thinking` 通道里，而
+        # `model_thinking_models` 没登记它，langchain 就把那一整段丢了。这不是偶发：
+        # 同一条 prompt 连开三次，两次是这个空返回。所以它必须**可统计**（见 `ReachoutDraft`）。
+        return ReachoutDraft(None, "empty_output")
     verdict = check(text)
     if not verdict.allowed:
-        return None  # guard fail-closed：被拦下就不发
-    return text[:2000]
+        return ReachoutDraft(None, "guard")  # guard fail-closed：被拦下就不发
+    return ReachoutDraft(text[:2000], "")
 
 
 # 触发源（关系驱动，四类共用抑制 / 生成 / 落库流水线）
@@ -670,7 +691,7 @@ class ReachoutScheduler:
             mode = fired if fired in ("recall", "file_event") else "general"
             try:
                 model = self._model(role.model_name)
-                text = generate_reachout_text(
+                draft = generate_reachout_text(
                     role,
                     model,
                     settings,
@@ -695,8 +716,19 @@ class ReachoutScheduler:
                     )
                 )
                 continue
-            if text is None:
-                continue  # guard 拦下 / 空输出：不发，且不重试
+            if draft.text is None:
+                # 不发，也不重试 —— 但要留痕：空输出与 guard 拦下是两件不同的事
+                # （前者要去修模型配置，后者是护栏在正常工作）。
+                self._tracer.emit(
+                    TraceEvent(
+                        event="reachout_skipped",
+                        node="reachout",
+                        role_id=role.role_id,
+                        detail={"why": draft.why, "trigger": fired},
+                    )
+                )
+                continue
+            text = draft.text
             record_reachout(self._conn, role, text)
             record_interaction(self._conn, role.role_id, now=stamp_utc)
             # 先落收件箱（用户一定能看见），再尽力投进主动会话；投递坏了也不把消息吞掉。
