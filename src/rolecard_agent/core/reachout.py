@@ -7,8 +7,10 @@
 
 ## 抑制层（决定"值不值得/能不能开口"）
 
-  1. 间隔：同一角色两次开口 ≥ `REACHOUT_INTERVAL_MINUTES`（间隔记录取 `agent_reachout`
-     的 `created_at`，UTC 口径，与 CURRENT_TIMESTAMP 一致）；
+  1. 间隔：同一角色两次开口 ≥ `REACHOUT_INTERVAL_MINUTES` **再乘退避与抖动** —— 每攒一条未读
+     乘一倍（她说了你没接，下一句就该等更久），并按 (角色, 上次开口时刻) 派生 ±12% 抖动
+     （否则"每天同一时刻"会精确成立）。间隔记录取 `agent_reachout` 的 `created_at`，
+     UTC 口径，与 CURRENT_TIMESTAMP 一致；
   2. 静默时段：本地时间 23:00–08:00 不主动（与间隔的 UTC 分开，注释点明口径）；
   3. 堆积上限：同一角色未读 ≤ `MAX_UNREAD_PER_ROLE`，满了不再开（防轰炸）。
 
@@ -29,6 +31,7 @@
 
 from __future__ import annotations
 
+import random
 import threading
 from collections.abc import Callable, Sequence
 from contextlib import suppress
@@ -70,6 +73,10 @@ QUIET_HOURS_END = 8
 MAX_UNREAD_PER_ROLE = 2
 # 后台轮询间隔（秒）：30s 一查足够（真正开口还受间隔/时段抑制）。
 TICK_SECONDS = 30
+# 退避倍率：每攒一条未读，下次要等的间隔乘一次这个数（未读=2 时本来就被上限闸住）。
+BACKOFF_GROWTH = 2.0
+# 间隔抖动幅度（±比例）：让"每天同一时刻"这件事不成立。依据见 `_quiet_minutes`。
+JITTER_FRACTION = 0.12
 # 文件事件素材清单的最大行数（再多只报总数）。
 _FILE_EVENT_MAX_LINES = 10
 
@@ -82,9 +89,13 @@ _REACHOUT_TASK_BODY = (
     "用一两句话主动向用户问候或说一件此刻值得说的小事：可以是有用的提醒、一句关心，"
     "或自然地打招呼。像真人突然想起跟对方说话那样，自然、简短、口语化；"
     "不要长篇，不要说教，不要自我介绍。\n"
-    "**格式别塌成模板**（这是实测出来的毛病：连着几条都以（动作描写）开头、字数挤在同一档）："
-    "不要每句都用（动作或神态）开头，可以直接说话、可以只问一句、可以省略主语；"
-    "长度随内容走，半句、一句都行，不要凑成同样长短的一段。"
+    "**这一条具体怎么写**（四条各对着一个实测出来的毛病）：\n"
+    "1. 开口直接说事，或用一个称呼、一个动作起头，并且每次换一个 —— "
+    "上一条的开头几个字这次不要用（实测：8 条里 4 条都从「哎呀，今天的」起头）。\n"
+    "2. 要写动作或神态，就把它放进句子中间或末尾，并每次换个动作；（）不是每句的起手式。\n"
+    "3. 长度由内容决定：一句能说完就只写一句，别凑成和上一条差不多长的段落。\n"
+    "4. 结尾换一种句式收：上一条以问句收尾，这一条就以陈述收尾。\n"
+    "要说出口的话用引号包起来，没说的动作和神态用（）包起来。"
 )
 
 # 回忆触发专用的口吻：自然提起一件记得的、之前聊过或答应的事。
@@ -374,6 +385,25 @@ def _unread_for_role(conn: SqlConnection, role_id: str) -> int:
     return int(row["n"])
 
 
+def _quiet_minutes(base_minutes: float, unread: int, seed: str) -> float:
+    """这次该等多久（分钟）：先按未读条数退避，再乘一个**确定性**的 ±12% 抖动。
+
+    两件不同的事，各治一个实测症状：
+
+      * **退避**（`base × BACKOFF_GROWTH ** 未读`）—— 她说了你还没接，下一句就该等更久。
+        N.E.K.O 用"级别"实现同一件事（120s 起步、按 1.09/1.55 收敛到 3600s 硬顶），我们不必
+        再造一个级别字段：**未读条数就是"她开口而用户没接"的现成计数**，而且它已经是硬闸
+        （`MAX_UNREAD_PER_ROLE`）的判据 —— 同一个信号既退避又封顶，不会出现两处各记一份。
+      * **抖动**（±12%）—— 治"每天同一时刻说一句同样的话"。抄 N.E.K.O 的注释原话是
+        "避免节奏过于机械"；它每次抽签，我们**改成按 (角色, 上次开口时刻) 派生的确定性抖动**：
+        随机阈值会让"到底哪一秒够格"变成每 tick 重摇的抽签，既测不住也复现不了；种子只在
+        她再次开口时才变，于是时间点自然逐日错开。
+    """
+    grown = base_minutes * BACKOFF_GROWTH ** max(0, unread)
+    frac = random.Random(seed).uniform(-JITTER_FRACTION, JITTER_FRACTION)
+    return grown * (1 + frac)
+
+
 def blocked_why(
     role: RoleCard,
     settings: Settings,
@@ -389,14 +419,19 @@ def blocked_why(
     `file_event=True`（任务目录有变化、该角色可被触发）时**豁免间隔档一次**——素材门控
     语义：变化值得即时播报；静默时段与未读堆积是用户级护栏，不豁免。
     """
+    unread = _unread_for_role(conn, role.role_id)
     last = _last_reachout_utc(conn, role.role_id)
     if last is not None and not file_event:
+        need = _quiet_minutes(
+            settings.reachout_interval_minutes, unread, f"{role.role_id}|{last.isoformat()}"
+        )
         elapsed = now_utc - last
-        if elapsed < timedelta(minutes=settings.reachout_interval_minutes):
-            return f"距上次开口不足 {settings.reachout_interval_minutes} 分钟"
+        if elapsed < timedelta(minutes=need):
+            backoff = f"，未读 {unread} 条已退避" if unread else ""
+            return f"距上次开口不足 {need:.0f} 分钟{backoff}"
     if now_local.hour >= QUIET_HOURS_START or now_local.hour < QUIET_HOURS_END:
         return "处于静默时段（23:00–08:00）"
-    if _unread_for_role(conn, role.role_id) >= MAX_UNREAD_PER_ROLE:
+    if unread >= MAX_UNREAD_PER_ROLE:
         return "未读堆积已达上限"
     return None
 

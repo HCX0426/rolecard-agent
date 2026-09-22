@@ -83,7 +83,9 @@ def test_blocked_by_interval(conn) -> None:
     _seed_last(conn, "active", minutes_ago=10)  # 间隔 60 分钟，10 分钟前刚开口
     utc, local = _now()
     reason = svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local)
-    assert reason is not None and "60 分钟" in reason
+    # 数字带 ±12% 抖动，所以钉"报了分钟数 + 没有未读就不提退避"，不钉 60。
+    assert reason is not None and "分钟" in reason
+    assert "退避" not in reason
 
 
 def test_blocked_by_quiet_hours(conn) -> None:
@@ -719,9 +721,45 @@ def test_format_thread_lines_keeps_the_tail_in_order() -> None:
 
 
 def test_task_text_names_the_template_explicitly(conn) -> None:
-    """实测 6/6 条都以（动作描写）开头、字数挤在 68–90 —— 指令里得点名这件事。"""
+    """实测 8/8 条以（动作）开头、正文一半以「哎呀，今天的」起头、字数挤在窄带 ——
+    指令里要点名这件事，而且**按 §8.2 第 2 条改正写**：给"该怎么写"，不是只列"别怎么写"。
+    """
     model = _FakeModel(AIMessage(content='嗨'))
     svc.generate_reachout_text(_role(), model, _settings(), conn, role_id='active')
     joined = _prompt_text(model)
-    assert '不要每句都用（动作' in joined
-    assert '长度随内容走' in joined
+    assert '上一条的开头几个字这次不要用' in joined
+    assert '长度由内容决定' in joined
+    assert '结尾换一种句式收' in joined
+    # 正写 ≠ 把毛病忘掉：四条各自对着一个数，缺一条就是回到旧写法。
+    assert '（）不是每句的起手式' in joined
+
+
+def test_quiet_minutes_grows_with_unread_and_jitters_deterministically() -> None:
+    """退避按未读翻倍；抖动**按 (角色, 上次开口) 确定**，不是每 tick 重摇的抽签。
+
+    为什么钉"确定性"：调度器每 30 秒问一次"够久了吗"。若阈值每次重算都不同，
+    "哪一刻够格"就成了一场抽签 —— 测试钉不住，真机上还会抖出谁也复现不了的时机。
+    """
+    seed = "active|2026-09-22T00:00:00+00:00"
+    plain = svc._quiet_minutes(60, 0, seed)
+    assert 60 * 0.88 <= plain <= 60 * 1.12, "抖动只能 ±12%"
+    assert svc._quiet_minutes(60, 0, seed) == plain, "同一个种子必须算出同一个数"
+    assert svc._quiet_minutes(60, 1, seed) == plain * svc.BACKOFF_GROWTH
+    assert svc._quiet_minutes(60, 0, "other|" + seed.split("|", 1)[1]) != plain, "换角色要换节奏"
+    assert svc._quiet_minutes(60, 0, seed.replace("00:00", "00:01")) != plain, "换开口时刻也要换"
+
+
+def test_blocked_by_interval_backs_off_per_unread(conn) -> None:
+    """她说了你没回 → 要等的间隔翻倍；这条把"退避真的进了闸门"钉住。
+
+    只改 `state`、不再插新行：新行的 `created_at` 会把"上次开口"挪到现在，那样拦截与退避
+    无关，测试就变成钉了个假东西。
+    """
+    _seed_last(conn, "active", minutes_ago=100)  # 已读，且超过基础 60 分钟
+    utc, local = _now()
+    assert svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local) is None
+
+    conn.execute("UPDATE agent_reachout SET state = 'unread' WHERE role_id = 'active'")
+    conn.commit()
+    reason = svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local)
+    assert reason is not None and "退避" in reason, "未读 1 条时 100 分钟还不够（要等 ~120 分钟）"

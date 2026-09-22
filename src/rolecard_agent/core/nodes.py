@@ -34,7 +34,11 @@ from rolecard_agent.config import Settings
 from rolecard_agent.core.guard import check
 from rolecard_agent.core.memory import current_role_id_ctx
 from rolecard_agent.core.observability import TraceEvent, Tracer, timer
-from rolecard_agent.core.prompts import build_system_prompt
+from rolecard_agent.core.prompts import (
+    DEPTH_INJECT_FROM_END,
+    VOICE_DEPTH_PROMPT,
+    build_system_prompt,
+)
 from rolecard_agent.core.state import now_ts
 from rolecard_agent.core.text import text_of
 from rolecard_agent.core.tools.errors import ToolExecutionError
@@ -197,6 +201,26 @@ def trim_history(messages: Sequence[Any], max_chars: int) -> tuple[list[Any], in
             return list(messages), 0
         start = advanced
     return list(messages[start:]), start
+
+
+def _depth_insert_at(history: Sequence[Any], depth: int) -> int:
+    """深度注入的落点：倒数第 `depth` 条**之前**，必要时向前退到不会拆散工具消息组的位置。
+
+    为什么落点要挑：`AIMessage(tool_calls=[...])` 与它后面那些 `ToolMessage` 必须严格相邻，
+    中间插一条系统消息就等价于亲手造出非法消息序列（供应商 400，且只在"上一轮调过工具"
+    这一轮才复现 —— 最难查的那种）。所以只允许落在"上一条不是发起工具调用的 AI 消息、
+    下一条不是 ToolMessage"的位置；一路退到 0 都找不到，就退化成贴在开头那条 system 之后
+    （位置差一点，但发出去的序列永远合法）。
+    """
+    index = max(0, min(len(history) - depth, len(history)))
+    while index > 0:
+        prev = history[index - 1]
+        cur = history[index] if index < len(history) else None
+        splits_tool_group = bool(getattr(prev, "tool_calls", None)) or isinstance(cur, ToolMessage)
+        if not splits_tool_group:
+            return index
+        index -= 1
+    return 0
 
 
 class ChatLike(Protocol):
@@ -489,6 +513,11 @@ def call_model(
             )
         )
     prompt = [SystemMessage(content=system), *history]
+    # 深度注入：同一条写法要求，还要再贴着生成点说一遍（依据见 prompts.VOICE_DEPTH_PROMPT）。
+    # 放在裁剪之后：插入位置按"实际发出去的那段历史"倒数，否则被裁掉的旧消息会把落点算偏。
+    # `+1` 是因为 `_depth_insert_at` 数的是 history 里的位置，而 prompt 第 0 条是内核自己拼的。
+    at = _depth_insert_at(history, DEPTH_INJECT_FROM_END) + 1
+    prompt.insert(at, SystemMessage(content=VOICE_DEPTH_PROMPT))
     # 调用前的能力检查（P1-2）：要送出去的内容含图片、而这一轮的后端被**两条独立证据**确认
     # 看不了图 —— 就在这里拒，不要拿一次真调用去换一句供应商 400。放在裁剪之后、组装 prompt
     # 之后：判据必须与"实际发出去的内容"一致，否则被裁掉的图片会误触发拦截。

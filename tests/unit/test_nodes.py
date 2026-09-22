@@ -11,12 +11,13 @@ See 技术评审与决策.md §9 D2 - these had no unit coverage before.
 from __future__ import annotations
 
 import os
+import re
 import time
 from collections.abc import Sequence
 from typing import Any
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 
 from rolecard_agent.config import ModelBackend, Settings
@@ -37,6 +38,7 @@ from rolecard_agent.core.nodes import (
     turn_context,
 )
 from rolecard_agent.core.observability import NullTracer
+from rolecard_agent.core.prompts import VOICE_DEPTH_PROMPT
 from rolecard_agent.core.tools.errors import ToolExecutionError  # noqa: F401 - 文档化分界用
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.core.tools.web import WebToolError
@@ -858,7 +860,96 @@ def test_call_model_without_pressure_does_not_trim(roles: RoleCardService) -> No
         {"messages": history, "current_role_id": "medical_archivist", "thread_id": "t"}, ctx
     )
     assert "context_trimmed" not in tracer.kinds()
-    assert len(model.last_prompt) == 1 + len(history)
+    # 1 条 system + 全量历史 + 1 条深度注入（写法要求贴在生成点再说一遍）
+    assert len(model.last_prompt) == 2 + len(history)
+
+
+# -------------------------------------------------------------------------- 深度注入（§8.2）
+
+
+def _voice_index(prompt: list[Any]) -> int:
+    """深度注入那条指令在 prompt 里的下标（找不到就直接失败，别用 -1 蒙过去）。"""
+    hits = [
+        i
+        for i, m in enumerate(prompt)
+        if isinstance(m, SystemMessage) and m.content == VOICE_DEPTH_PROMPT
+    ]
+    assert len(hits) == 1, f"深度注入应当恰好一条，实际 {len(hits)}"
+    return int(hits[0])
+
+
+def test_voice_directive_is_injected_after_history_not_inside_the_system_block(
+    roles: RoleCardService,
+) -> None:
+    """活人感的写法要求要**贴着生成点**说，而不是塞进最前面那条 system。
+
+    这是本节全部症状的机制性回应：她的历史里有「（动作）+哎呀」，而离生成点最远的那段
+    指令盖不住它。SillyTavern 的 Author's Note 就是为此存在（默认 depth=4）。
+    断言"不在系统消息里 + 落在历史中段之后"，改回一行 `[SystemMessage, *history]` 就会红。
+    """
+    model = FakeModel(AIMessage(content="ok"))
+    ctx = _ctx(ToolRegistry(), roles, model)
+    history = _history(6, 10)  # 12 条，倒数第 4 条的位置明显在历史里
+    call_model(
+        {"messages": history, "current_role_id": "medical_archivist", "thread_id": "t"}, ctx
+    )
+    prompt = model.last_prompt
+    at = _voice_index(prompt)
+    assert at > 1, "不能就是开头那条系统消息（那样等于没做深度注入）"
+    assert at <= len(history), "必须落在历史中间或末尾之前，不能掉到最后一条之后"
+    # 人设那条 system 里不该含这段：否则两遍重复，且第 0 条会随写法要求一起变长。
+    assert VOICE_DEPTH_PROMPT not in prompt[0].content
+    assert prompt[-1] is history[-1], "最新的用户消息仍然是最后一条"
+
+
+def test_voice_injection_never_splits_a_tool_call_group(roles: RoleCardService) -> None:
+    """**关键不变量**：插入点不能把 `AIMessage(tool_calls)` 和它的 `ToolMessage` 隔开。
+
+    历史末尾正好是工具组时，"倒数第 4 条"这个朴素落点会插在两者中间 —— 供应商判非法序列
+    （400），而且只在"上一轮调过工具"的那一轮复现。这里构造的 history 让朴素落点恰好压在
+    ToolMessage 上，脚本必须往前退到工具组之外。
+    """
+    model = FakeModel(AIMessage(content="ok"))
+    ctx = _ctx(ToolRegistry(), roles, model)
+    call = AIMessage(content="", tool_calls=[{"name": "list_domains", "args": {}, "id": "c1"}])
+    result = ToolMessage(content="结果", tool_call_id="c1", name="list_domains")
+    history: list[Any] = [
+        *[HumanMessage(content=f"问{i}") for i in range(4)],
+        call,
+        result,
+        HumanMessage(content="那现在呢"),
+        AIMessage(content="刚才答的"),
+        HumanMessage(content="最后这句"),
+    ]  # 9 条：朴素落点 9-4=5 正是 result
+    call_model(
+        {"messages": history, "current_role_id": "medical_archivist", "thread_id": "t"}, ctx
+    )
+    prompt = model.last_prompt
+    at = _voice_index(prompt)
+    call_at = prompt.index(call)
+    result_at = prompt.index(result)
+    assert not call_at < at < result_at, "把工具组和它的结果隔开了"
+    # 顺带钉住"整段发出去的序列仍然合法"：起点之后第一条不能是孤立的 ToolMessage。
+    assert all(
+        not isinstance(m, ToolMessage) or prompt[i - 1] is call or prompt[i - 1].tool_calls
+        for i, m in enumerate(prompt)
+        if i
+    )
+
+
+def test_voice_injection_survives_a_history_shorter_than_depth(
+    roles: RoleCardService,
+) -> None:
+    """历史不足 4 条：退化成贴在系统消息之后，序列照样合法、照样只注入一条。"""
+    model = FakeModel(AIMessage(content="ok"))
+    ctx = _ctx(ToolRegistry(), roles, model)
+    history = [HumanMessage(content="就一句")]
+    call_model(
+        {"messages": history, "current_role_id": "medical_archivist", "thread_id": "t"}, ctx
+    )
+    prompt = model.last_prompt
+    assert len(prompt) == 3
+    assert _voice_index(prompt) == 1
 
 
 # --------------------------------------------------------------------------- 工具超时（M10）
@@ -1133,3 +1224,61 @@ def test_vision_gate_fires_on_a_real_text_only_model(roles: RoleCardService) -> 
         call_model(_image_state(rid), ctx2)
         assert model2.last_prompt is not None
         assert "vision_blocked_pre_call" not in rec2.kinds()
+
+
+_STATUS_IN_TEXT = re.compile(r"status code: (\d{3})")
+
+
+@pytest.mark.live
+def test_real_backend_accepts_a_mid_conversation_system_message() -> None:
+    """深度注入唯一没法在单元层证明的事：**服务端**收不收历史中间的 system 消息。
+
+    客户端这一半已经钉住了（langchain-ollama 原样按顺序序列化成 role=system）。但 GGUF 的
+    聊天模板是模型自带的，有些模板里写着"系统消息必须在最前面"那种断言，那种模型会直接 400
+    —— 只能真发一次才知道。所以这里的分界按**状态码**划，不按异常名字猜：
+    4xx = 服务端拒了这条消息序列 → **失败**（正是这条用例要抓的东西）；
+    连不通 / 5xx / 模型没拉 = 没问到真服务 → **跳过**（本机 2026-09-22 就是这样：
+    Ollama 没跑，请求被本地代理挡成 502，那不是消息序列的问题）。
+
+    这条只证明"发得出去"。"她是否因此少说几句模板腔"不由断言管，那是
+    `scripts/persona_meter.py` 的活（一次采样不足以判质量）。
+    """
+    backend = Settings.from_env().backend()
+    if not backend.base_url or "11434" not in backend.base_url:
+        pytest.skip("默认后端不是本机 Ollama，这条真机用例的前提不成立")
+    try:
+        from langchain_ollama import ChatOllama
+    except ImportError:  # pragma: no cover - 装了 provider=ollama 才有
+        pytest.skip("langchain-ollama 未安装")
+
+    model = ChatOllama(model=backend.model, base_url=backend.base_url, num_ctx=4096)
+    prompt = [
+        SystemMessage(content="你是一个陪聊角色，说话简短。"),
+        HumanMessage(content="我回来了"),
+        AIMessage(content="（转身）哎呀，你回来啦"),
+        SystemMessage(content=VOICE_DEPTH_PROMPT),
+        HumanMessage(content="今天好累"),
+    ]
+    try:
+        reply = model.invoke(prompt)
+    except Exception as exc:
+        code = _http_status_of(exc)
+        if code is not None and 400 <= code < 500:
+            raise AssertionError(
+                f"服务端拒了「历史中间的 system 消息」（{code}）——深度注入这个形态对它不成立："
+                f"{exc}"
+            ) from exc
+        pytest.skip(f"没问到真服务（{type(exc).__name__}: {exc}），这条需要 Ollama 在跑")
+    assert str(reply.content).strip(), "服务端收了，但回了一条空消息"
+
+
+def _http_status_of(exc: BaseException) -> int | None:
+    """从异常里抠出 HTTP 状态码：langchain 会把 ollama 的错误再包一层，字段不一定还在。"""
+    code = getattr(exc, "status_code", None)
+    if isinstance(code, int):
+        return code
+    response = getattr(getattr(exc, "response", None), "status_code", None)
+    if isinstance(response, int):
+        return response
+    found = _STATUS_IN_TEXT.search(str(exc))
+    return int(found.group(1)) if found else None
