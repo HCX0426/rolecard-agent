@@ -90,6 +90,20 @@ export function collapsedPetRect(rect: Rect): Rect {
 }
 
 /**
+ * 当前该是哪块尺寸：**永远按常量算，不拿 `getBounds()` 里的宽高用**。
+ *
+ * DWM 给无边框透明窗留了一圈不可见边：实测 `setBounds(200×240)` 之后 `getBounds()` 报回来
+ * 202×244。把这个值再喂进 `setBounds` 就是"每来一个 pointermove 长两像素" —— 一路拖到屏幕
+ * 边能把气泡撑成一条宽带（用户报的现象），而夹取用的 `maxX = 工作区宽 − 窗宽` 也跟着变小，
+ * 色片就永远贴不到边（同一个根因的两个症状）。请求什么就用什么，往返才幂等。
+ */
+function petSize(): { width: number; height: number } {
+  return petIsExpanded
+    ? { width: PET_PANEL_WIDTH, height: PET_PANEL_HEIGHT }
+    : { width: PET_WIDTH, height: PET_HEIGHT };
+}
+
+/**
  * 按**增量**挪桌宠（手动拖，见 PetPage 里"为什么不用 CSS drag"那段注释）。
  *
  * 页面只说"往这边走 12px"，摆到哪、能不能出屏全由壳定 —— 与 `setPetExpanded` 同一条分工：
@@ -97,11 +111,12 @@ export function collapsedPetRect(rect: Rect): Rect {
  */
 export function movePetBy(win: BrowserWindow, dx: number, dy: number): void {
   const current = win.getBounds();
+  const size = petSize();
   const { workArea } = screen.getPrimaryDisplay();
-  const maxX = workArea.x + Math.max(0, workArea.width - current.width);
-  const maxY = workArea.y + Math.max(0, workArea.height - current.height);
+  const maxX = workArea.x + Math.max(0, workArea.width - size.width);
+  const maxY = workArea.y + Math.max(0, workArea.height - size.height);
   win.setBounds({
-    ...current,
+    ...size,
     x: Math.min(Math.max(current.x + Math.round(dx), workArea.x), maxX),
     y: Math.min(Math.max(current.y + Math.round(dy), workArea.y), maxY),
   });
