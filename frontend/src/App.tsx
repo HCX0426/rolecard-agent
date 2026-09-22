@@ -372,7 +372,7 @@ export default function App() {
           <Suspense
             fallback={<div className="p-6 text-sm text-slate-400 dark:text-slate-500">加载中…</div>}
           >
-            <RolesPage />
+            <RolesPage onOpenThread={openThread} />
           </Suspense>
         </div>
         {tab !== "chat" && tab !== "settings" && tab !== "data" && tab !== "roles" && (

@@ -439,6 +439,35 @@ export interface ReachoutsPage {
   merge_days?: number;
 }
 
+// ---- 事件簿（docs/主动消息与记忆设计稿.md §6）---------------------------------------------
+// 与 `core/timeline.py` 的响应一一对应。**后端不写文案**：它只给 `kind` + `verb`，
+// "记下：/ 更正：/ 开始聊："这些中文动词在这里造句 —— 替界面造句的下一步，就是想改一句
+// 措辞时发现得改两端。
+
+export type TimelineKind = "reachout" | "memory" | "memory_correct" | "thread";
+
+export interface TimelineEvent {
+  kind: TimelineKind;
+  /** "YYYY-MM-DD HH:MM:SS"（库里原文，定宽 ⇒ 界面直接切片，不再解析一遍时区）。 */
+  at: string;
+  text: string;
+  /** 只有会话锚点带 `start` / `recent`；`correct` 只出现在"更正"那一条。 */
+  verb: "start" | "recent" | "correct" | null;
+  /** "更正"那条被作废的旧事实原文：划掉显示，这是 §3「失效不删」第一次被用户看见的地方。 */
+  from_text: string | null;
+  /** 可跳转的会话；null = 没有（记忆条目、上线前的老消息）⇒ 不给死链。 */
+  thread_id: string | null;
+  ref_id: number;
+}
+
+export interface TimelinePage {
+  role_id: string;
+  items: TimelineEvent[];
+  next_cursor: string | null;
+  /** 某个源扫到了上限：只说明"这里可能还有更早的"，不承诺总量（数全量是归档功能的事）。 */
+  truncated: boolean;
+}
+
 // ---- 命令执行审批（架构计划 C·§6.2） ----------------------------------------------------
 // 与 core/approvals.py 的 `_row`、api/routers/approvals.py 的响应一一对应。
 

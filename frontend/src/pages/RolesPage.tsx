@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button, Notice, PageHeader } from "../components/ui";
+import TimelineDrawer from "../components/TimelineDrawer";
 import {
   api,
   type KnowledgeScopes,
@@ -75,10 +76,19 @@ function ToolGroup({
   );
 }
 
-export default function RolesPage() {
+export default function RolesPage({
+  onOpenThread,
+}: {
+  /** 事件簿里点某条会话 → 走收件箱那条现成的跳转（App 里它会顺手切到对话页签）。 */
+  onOpenThread?: (threadId: string) => void;
+} = {}) {
   const [roles, setRoles] = useState<RoleCard[]>([]);
   const [editing, setEditing] = useState<string | null>(null); // null=关闭, ""=新建, 其他=role_id
   const [form, setForm] = useState(EMPTY_FORM);
+  // 事件簿抽屉开在哪个角色上（null=关着）。
+  const [timelineFor, setTimelineFor] = useState<{ role_id: string; role_name: string } | null>(
+    null,
+  );
   // null=全部工具（后端语义），custom=按勾选的白名单
   const [wlMode, setWlMode] = useState<"all" | "custom">("all");
   const [catalog, setCatalog] = useState<ToolCatalog | null>(null);
@@ -622,6 +632,13 @@ export default function RolesPage() {
                     >
                       编辑
                     </button>
+                    <button
+                      onClick={() => setTimelineFor({ role_id: r.role_id, role_name: r.role_name })}
+                      className="rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700/50"
+                      title="它主动说过什么、记下/更正过哪些事实、你们哪天开聊（只读）"
+                    >
+                      事件簿
+                    </button>
                     {!r.is_builtin && (
                       <button
                         onClick={async () => {
@@ -639,6 +656,12 @@ export default function RolesPage() {
           </table>
         </div>
       </div>
+      <TimelineDrawer
+        open={timelineFor !== null}
+        role={timelineFor}
+        onClose={() => setTimelineFor(null)}
+        onOpenThread={onOpenThread}
+      />
     </div>
   );
 }
