@@ -363,6 +363,21 @@ describe("PetPage 拖桌宠（手动拖，因为 CSS 拖拽区会吞掉悬停事
     expect(screen.getByTitle(/^苏晚晴/)).toBeTruthy();
   });
 
+  it("拖拽期间不展开面板：面板开着时色片到不了屏幕边，靠边隐藏就永远够不到", async () => {
+    const shell = withShell();
+    const expanded = shell.setPetExpanded as unknown as ReturnType<typeof vi.fn>;
+    await mount();
+    const el = sprite();
+    fireEvent.pointerDown(el, { screenX: 500, screenY: 400, pointerId: 1 });
+    expanded.mockClear();
+    fireEvent.mouseEnter(el); // 指针本来就在色片上，拖的时候不该再把它摊开
+    fireEvent.pointerMove(el, { screenX: 520, screenY: 400, pointerId: 1 });
+    expect(expanded).not.toHaveBeenCalledWith(true);
+    fireEvent.pointerUp(el, { pointerId: 1 });
+    // 松手后也不自动展开：那等于把刚吸上去的宠物又拉回屏内
+    expect(expanded).not.toHaveBeenCalledWith(true);
+  });
+
   it("旧壳没有 petDragEnd（新 dist 跑在旧安装包上）：照拖不误", async () => {
     const shell = withShell();
     delete shell.petDragEnd;

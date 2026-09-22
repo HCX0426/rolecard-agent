@@ -185,8 +185,24 @@ export default function PetPage() {
    *  - 色片没有点击动作，所以不需要"移动多少算拖"的阈值，按下即拖、抬起即止。
    */
   const dragRef = useRef<{ x: number; y: number } | null>(null);
+  const draggingRef = useRef(false);
+
+  /** 悬停展开的唯一入口：拖拽期间一律不展开（见 `dragStart` 里那条夹取的理由）。 */
+  function hoverIn() {
+    if (!draggingRef.current) expand(true);
+  }
 
   function dragStart(event: React.PointerEvent<HTMLDivElement>) {
+    draggingRef.current = true;
+    // 拖的时候先收起面板。两个理由，第二个是用户报的那个 bug：
+    //  ① 拖的是宠物不是面板，摊着一块 380×520 的面板挡视野、还跟着晃；
+    //  ② 壳按**窗口当前形状**夹取，面板开着时色片中心最远只能到离屏幕边 190px，
+    //     而靠边隐藏判的是收起态那块矩形离边 ≤ 24px ⇒ 永远够不到，怎么拖都不吸。
+    if (collapseRef.current !== null) {
+      window.clearTimeout(collapseRef.current);
+      collapseRef.current = null;
+    }
+    if (expanded) expand(false); // 已经收起就别再发一次"收起"：那会让壳起一段没用的动画
     dragRef.current = { x: event.screenX, y: event.screenY };
     event.currentTarget.setPointerCapture?.(event.pointerId);
   }
@@ -203,9 +219,12 @@ export default function PetPage() {
 
   function dragEnd() {
     dragRef.current = null;
+    draggingRef.current = false;
     // 松手才让壳判"要不要吸到边上"（§7.6）。零参数：吸哪条边由壳按当前工作区量，
     // 而移动过程中判会抖（一路拖过去会"吸上→拉开→吸上"）。旧壳没这个方法就是不吸，无害。
     shellBridge()?.petDragEnd?.();
+    // 放手后**不**立刻展开：指针还在色片上、不会再触发 mouseenter，这里展开就等于把
+    // 刚吸上去的宠物又拉回屏内。要读东西再划走划回来一次就是。
   }
 
   // 卸载时把待收起的定时器收掉：留着它会在组件没了之后去调桥。
@@ -356,7 +375,7 @@ export default function PetPage() {
       {expanded ? (
         // 展开态：面板取代气泡（气泡那条就是面板最后一条，重复摆一遍只是噪音）。
         <section
-          onMouseEnter={() => expand(true)}
+          onMouseEnter={hoverIn}
           onMouseLeave={leave}
           className="pet-nodrag flex max-h-full w-full flex-col rounded-2xl border border-slate-200/70 bg-white/95 text-slate-700 shadow-md backdrop-blur-sm dark:border-slate-600/70 dark:bg-slate-800/95 dark:text-slate-100"
         >
@@ -471,7 +490,7 @@ export default function PetPage() {
         !faded && (
           <button
             onClick={() => void openRow(latest)}
-            onMouseEnter={() => expand(true)}
+            onMouseEnter={hoverIn}
             onMouseLeave={leave}
             title={
               !showContent
@@ -495,7 +514,7 @@ export default function PetPage() {
       )}
 
       <div
-        onMouseEnter={() => expand(true)}
+        onMouseEnter={hoverIn}
         onMouseLeave={leave}
         onPointerDown={dragStart}
         onPointerMove={dragMove}

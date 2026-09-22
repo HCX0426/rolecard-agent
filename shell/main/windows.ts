@@ -84,6 +84,11 @@ const LANDING = path.join(__dirname, "..", "..", "web", "index.html");
 /** 桌宠现在是不是摊开的。只有 `setPetExpanded` 会改它，所以它就是"展开态"的那一份真相。 */
 let petIsExpanded = false;
 
+/** 展开**之前**那块收起态矩形。收起时回到这里，而不是从展开态反推 —— 边上面板放不下时
+ *  夹取会把整扇窗往里挪（实测贴着左沿悬停一下，色片就被推到离边 90px 处），于是"我拖它，
+ *  它自己跑开"，而靠边隐藏判的正是离边 ≤ 24px，永远够不到。宠物不该因为被看了一眼就搬家。 */
+let petRectBeforeExpand: Rect | null = null;
+
 /** 吸在哪条边、此刻藏着还是露着。null = 没吸边。 */
 let petDock: { edge: DockEdge; tucked: boolean } | null = null;
 
@@ -128,35 +133,52 @@ function tuckedRect(edge: DockEdge, rect: Rect, work: Rect): Rect {
 }
 
 // ---- 滑进滑出，不瞬移 -------------------------------------------------------------------
-// 任务栏、GNOME 的 Dash、macOS 的 Dock 这些都是**滑**进滑出的（百来毫秒），一帧到位在桌面上
-// 读起来是"它不见了"而不是"它收起来了" —— 对一个会自己动边界的驻留件，这两种读法的差别就是
-// "功能"与"bug"的差别。
-const SLIDE_MS = 140;
-const SLIDE_STEPS = 8;
+// 任务栏、GNOME 的 Dash、macOS 的 Dock 这些都是**滑**进滑出的，一帧到位在桌面上读起来是
+// "它不见了"而不是"它收起来了"。时长与曲线照那类东西的量级来：百来毫秒到三百毫秒，
+// **起步快、收尾慢**（ease-out cubic）—— 用户报"140ms 太快、没渐进"，缺的就是这条缓动。
+const DOCK_MS = 280;
+const GROW_MS = 200;
+const SHRINK_MS = 160;
+const SLIDE_STEP_MS = 16; // ≈60fps
 let slideTimer: NodeJS.Timeout | null = null;
+
+function easeOut(t: number): number {
+  return 1 - Math.pow(1 - t, 3);
+}
 
 function stopSlide(): void {
   if (slideTimer) clearInterval(slideTimer);
   slideTimer = null;
 }
 
-function slidePetTo(win: BrowserWindow, target: Rect): void {
+function slidePetTo(win: BrowserWindow, target: Rect, ms: number): void {
   stopSlide();
   const from = win.getBounds();
-  const dxStep = (target.x - from.x) / SLIDE_STEPS;
-  const dyStep = (target.y - from.y) / SLIDE_STEPS;
-  if (!dxStep && !dyStep) return;
-  let step = 0;
+  if (
+    from.x === target.x &&
+    from.y === target.y &&
+    from.width === target.width &&
+    from.height === target.height
+  )
+    return;
+  const start = Date.now();
   slideTimer = setInterval(() => {
-    step += 1;
     if (win.isDestroyed()) return stopSlide();
-    if (step >= SLIDE_STEPS) {
+    const t = Math.min(1, (Date.now() - start) / ms);
+    if (t >= 1) {
       stopSlide();
       win.setBounds(target);
       return;
     }
-    win.setBounds({ ...target, x: Math.round(from.x + dxStep * step), y: Math.round(from.y + dyStep * step) });
-  }, SLIDE_MS / SLIDE_STEPS);
+    const k = easeOut(t);
+    const lerp = (a: number, b: number) => Math.round(a + (b - a) * k);
+    win.setBounds({
+      x: lerp(from.x, target.x),
+      y: lerp(from.y, target.y),
+      width: lerp(from.width, target.width),
+      height: lerp(from.height, target.height),
+    });
+  }, SLIDE_STEP_MS);
 }
 
 /**
@@ -188,7 +210,7 @@ export function petUntuck(win: BrowserWindow, options: { instant?: boolean } = {
     win.setBounds(target);
     return;
   }
-  slidePetTo(win, target);
+  slidePetTo(win, target, DOCK_MS);
 }
 
 /**
@@ -206,7 +228,7 @@ function settlePetDock(win: BrowserWindow): DockEdge | null {
     return null;
   }
   petDock = { edge, tucked: true };
-  slidePetTo(win, tuckedRect(edge, win.getBounds(), workRect()));
+  slidePetTo(win, tuckedRect(edge, win.getBounds(), workRect()), DOCK_MS);
   onDockChanged?.(edge);
   return edge;
 }
@@ -254,19 +276,30 @@ export function releasePetDock(win: BrowserWindow): void {
  * 在哪、色片锚在哪个角，让页面报坐标等于把"窗口能摆到哪"交给一个后端托管的源。
  */
 export function setPetExpanded(win: BrowserWindow, expanded: boolean): void {
+  // 状态没变就一个 setBounds 都别发：收起动画若在拖拽刚开始时跑起来，它每帧都会把窗口按回
+  // 自己的目标矩形，用户那几下位移全被吃掉（实测拖了 94px，窗口纹丝不动）。
+  if (expanded === petIsExpanded && !petDockPending) return;
   // 面板要 380 宽，藏着一半没法看 ⇒ 展开前先滑回贴边。**收起时不再自动藏回去**
   // （用户 2026-09-22 拍的：只在拖到边上那一刻吸，之后不再自动收）。
   stopSlide(); // 展开/收起是用户的动作，赢过任何在跑的滑动
   if (expanded) {
+    if (!petIsExpanded) petRectBeforeExpand = petBoundsFor(win.getBounds(), false);
     petUntuck(win, { instant: true }); // 展开时不滑：滑 + 同时长大会糊成一次跳动
     petDockPending = false; // 又在看它了 ⇒ 那次"等收起再吸"作废，以最后一次放手为准
   }
   petIsExpanded = expanded;
-  win.setBounds(petBoundsFor(win.getBounds(), expanded));
+  const target = expanded
+    ? petBoundsFor(win.getBounds(), true)
+    : (petRectBeforeExpand ?? petBoundsFor(win.getBounds(), false));
+  if (!expanded) petRectBeforeExpand = null;
   if (!expanded && petDockPending) {
+    // 要演"吸进去"那一段，收起这步就别再叠一段动画（两段串起来读起来是卡了一下）。
     petDockPending = false;
+    win.setBounds(target);
     settlePetDock(win); // 拖到边上之后是在"面板收起那一瞬"吸进去的（见 `petDragEnded`）
+    return;
   }
+  slidePetTo(win, target, expanded ? GROW_MS : SHRINK_MS);
 }
 
 /**
@@ -283,7 +316,9 @@ export function setPetExpanded(win: BrowserWindow, expanded: boolean): void {
  *    所以存的是贴边那块，"藏"这个意图另存在偏好里（`docked`），每次开机按当前工作区重算。
  */
 export function collapsedPetRect(rect: Rect): Rect {
-  const origin = petIsExpanded ? petBoundsFor(rect, false) : rect;
+  const origin = petIsExpanded
+    ? (petRectBeforeExpand ?? petBoundsFor(rect, false))
+    : rect;
   const pinned = { ...origin, width: PET_WIDTH, height: PET_HEIGHT };
   return petDock ? flushRect(petDock.edge, pinned, workRect()) : pinned;
 }
@@ -310,16 +345,21 @@ function petSize(): { width: number; height: number } {
  */
 export function movePetBy(win: BrowserWindow, dx: number, dy: number): void {
   petUntuck(win, { instant: true }); // 拖着藏着的那一小条走 = 一动手就先把它拉回屏内；拖的时候不滑
+  stopSlide(); // 手在拖 ⇒ 任何在跑的动画让开，否则它每帧把窗口按回自己的目标，位移被吃掉
   const current = win.getBounds();
   const size = petSize();
   const { workArea } = screen.getPrimaryDisplay();
   const maxX = workArea.x + Math.max(0, workArea.width - size.width);
   const maxY = workArea.y + Math.max(0, workArea.height - size.height);
-  win.setBounds({
-    ...size,
-    x: Math.min(Math.max(current.x + Math.round(dx), workArea.x), maxX),
-    y: Math.min(Math.max(current.y + Math.round(dy), workArea.y), maxY),
-  });
+  const x = Math.min(Math.max(current.x + Math.round(dx), workArea.x), maxX);
+  const y = Math.min(Math.max(current.y + Math.round(dy), workArea.y), maxY);
+  win.setBounds({ ...size, x, y });
+  // **拖到哪，"展开前那块"就跟到哪。**不记这一步的话：拖的时候面板是开着的（悬停必然带开），
+  // 松手后那次收起会把窗口按 `petRectBeforeExpand` 放回去 —— 整段拖拽被抹掉，宠物弹回原地
+  // （实测拖 94px 松手后停在原位，于是靠边隐藏的 ≤24px 判据永远够不到，就是用户报的现象）。
+  if (petRectBeforeExpand) {
+    petRectBeforeExpand = { ...petRectBeforeExpand, x: petRectBeforeExpand.x + (x - current.x), y: petRectBeforeExpand.y + (y - current.y) };
+  }
 }
 
 /** 把托盘那三项偏好里的**窗口两样**落到窗上：置顶与整窗不透明度。
