@@ -34,6 +34,7 @@
 from __future__ import annotations
 
 import math
+import re
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
@@ -234,18 +235,58 @@ def enforce_cap(
     return retired
 
 
+#: 一轮最多注入几条记忆。**这是"条数"上界，和 `MAX_MEMORY_CHARS`（字符预算）是两回事**：
+#: 只卡字符，4000 字能塞进几十条短句，而 LoCoMo 那篇实测 **top-5 observations 优于 top-50**
+#: （41.4 vs 37.8）—— 记忆给多了不是"更全"，是给模型一堆互相竞争的事实，它抓哪条都不稳。
+#: 200 条/桶是"存"的上界，8 条是"用"的上界，两者不冲突。
+MAX_ITEMS_PER_TURN = 8
+
+
+def _age_label(raw: object, *, now: datetime) -> str:
+    """条目后面的时间标签。为什么要带：注入文本里一句"用户膝盖不舒服"没有保质期，
+    模型会当成"此刻仍然如此"来说 —— 而事实会变（搬家、换工作、复查之后指标正常了）。
+    Zep 把 `valid_at/invalid_at` 直接写进检索结果，就是这个道理。
+    """
+    created = _parse_ts(raw)
+    if created is None:
+        return ""
+    days = (now - created).days
+    if days <= 0:
+        return "今天 "
+    if days == 1:
+        return "昨天 "
+    if days < 30:
+        return f"{days}天前 "
+    return f"{created.month}月{created.day}日 "
+
+
 def render_memory(
-    conn: SqlConnection, *, bucket: str, budget: int = MAX_MEMORY_CHARS
+    conn: SqlConnection,
+    *,
+    bucket: str,
+    budget: int = MAX_MEMORY_CHARS,
+    limit: int = MAX_ITEMS_PER_TURN,
+    now: datetime | None = None,
+    with_age_labels: bool = False,
 ) -> tuple[str, list[int]]:
-    """渲染成注入用的文本，同时返回**真的进了文本**的那些条目 id（供命中计数）。
+    """渲染成文本，同时返回**真的进了文本**的那些条目 id（供命中计数）。
 
     截断按条目为单位：半句话被切掉，模型会把那半句当完整事实用。
+
+    `with_age_labels` **只对注入侧开**（`memory_for_turn`），设置面板那一侧必须关着：
+    面板把这段文本原样填进编辑框、保存时又整段按行覆写条目（`SettingsPage` 的
+    `setMemDraft(m.content)`）。标签一旦进这段文本，用户点一次保存「今天」就成了事实正文
+    的一部分，再存一次叠一层 —— 一个只读的显示字段被写回了存储层。
     """
+    stamp = now or datetime.now(UTC)
     used: list[str] = []
     ids: list[int] = []
     total = 0
     for item in ranked_active(conn, bucket=bucket):
-        line = f"- {item['text']}"
+        if len(used) >= limit:
+            break
+        head = _age_label(item["created_at"], now=stamp) if with_age_labels else ""
+        line = f"- {head}{item['text']}"
         if total + len(line) + 1 > budget:
             break
         used.append(line)
@@ -276,7 +317,7 @@ def memory_for_turn(conn: SqlConnection, settings: Settings, role_id: str | None
         return ""
     buckets = [role_id, GLOBAL_BUCKET] if role_id else [GLOBAL_BUCKET]
     for bucket in buckets:
-        text, ids = render_memory(conn, bucket=bucket)
+        text, ids = render_memory(conn, bucket=bucket, with_age_labels=True)
         if text:
             for item_id in ids:
                 mark_hit(conn, item_id=item_id)
@@ -290,12 +331,21 @@ def top_active_item(conn: SqlConnection, *, bucket: str) -> dict[str, Any] | Non
     return ranked[0] if ranked else None
 
 
+#: 面板文本每行前面那个列表符号。`render_memory` 吐 `- 事实`，而设置面板把这段文本**原样
+#: 填进编辑框**、保存时又整段按行覆写条目 —— 于是解析侧必须把它当显示用的装饰剥掉，
+#: 不然就是往返叠加：实测存三次变成 `- - - 用户住在上海`，而这串破折号会跟着进 prompt。
+#: （剥 `[–—•*] ` 这几种是因为用户会手敲别的符号；剥多次是因为旧库里已经存着叠好的。）
+_BULLET = re.compile(r"^\s*(?:[-–—•*]\s*)+")
+
+
 def replace_bucket_from_text(
     conn: SqlConnection, *, bucket: str, text: str, source: str = "manual"
 ) -> list[dict[str, Any]]:
     """整段文本 → 该桶的非钉住条目（保留旧 PUT /api/settings/memory 的"覆写"语义）。
 
     一行一条；钉住的条目**不动** —— 用户特意钉的东西不该被一次整段保存抹掉。
+    行首的列表符号会被剥掉，理由见 `_BULLET`：这段文本的**来源就是 `render_memory`**，
+    不剥就是自己造的显示格式被自己当成正文反复吃进去。
     """
     conn.execute(
         "DELETE FROM role_memory_item WHERE role_id = ? AND pinned = 0",
@@ -303,7 +353,7 @@ def replace_bucket_from_text(
     )
     conn.commit()
     for line in (text or "").splitlines():
-        add_item(conn, bucket=bucket, text=line, source=source)
+        add_item(conn, bucket=bucket, text=_BULLET.sub("", line), source=source)
     return [i for i in list_items(conn, bucket=bucket) if i["pinned"]]
 
 
@@ -335,6 +385,7 @@ def make_memory_tool(*, settings: Settings, conn: SqlConnection) -> BaseTool:
 __all__ = [
     "GLOBAL_BUCKET",
     "MAX_ITEMS_PER_BUCKET",
+    "MAX_ITEMS_PER_TURN",
     "MAX_ITEM_CHARS",
     "MAX_MEMORY_CHARS",
     "add_item",

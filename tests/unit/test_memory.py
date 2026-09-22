@@ -12,6 +12,7 @@ from rolecard_agent.config import Settings
 from rolecard_agent.core.memory import (
     GLOBAL_BUCKET,
     MAX_ITEMS_PER_BUCKET,
+    MAX_ITEMS_PER_TURN,
     MAX_MEMORY_CHARS,
     add_item,
     current_role_id_ctx,
@@ -124,10 +125,67 @@ def test_master_switch_stops_injection_and_write(conn) -> None:
 def test_role_bucket_and_global_bucket_are_isolated(conn) -> None:
     _seed(conn, "全局：用户养了只猫")
     _seed(conn, "角色专属：她答应过帮他查资料", bucket="elsie")
-    assert memory_for_turn(conn, _settings(), "elsie").startswith("- 角色专属")
+    assert memory_for_turn(conn, _settings(), "elsie").startswith("- 今天 角色专属")
     # 该角色没有专属记忆时回退全局（全局存的是用户事实，不构成跨角色串扰）
-    assert memory_for_turn(conn, _settings(), "nobody").startswith("- 全局")
+    assert memory_for_turn(conn, _settings(), "nobody").startswith("- 今天 全局")
     assert "她答应过帮他查资料" not in memory_for_turn(conn, _settings(), "other")
+
+
+def test_injected_lines_carry_an_age_label(conn) -> None:
+    """每条记忆前面带时间。**没有保质期的事实会被当成"此刻仍然如此"**来说，
+    而事实会变（复查之后指标正常了、换工作了）。标签口径见 `_age_label`。
+    """
+    _seed(conn, "今天说的一条")
+    old = _seed(conn, "四十天前说的一条")[0]
+    long_ago = datetime.now(UTC) - timedelta(days=40)
+    conn.execute(
+        "UPDATE role_memory_item SET created_at = ? WHERE id = ?",
+        (long_ago.strftime("%Y-%m-%d %H:%M:%S"), old),
+    )
+    conn.commit()
+    text = memory_for_turn(conn, _settings(), None)
+    assert "- 今天 今天说的一条" in text
+    assert f"- {long_ago.month}月{long_ago.day}日 四十天前说的一条" in text
+    # 一周内用"几天前"，读起来才知道那件事有多近
+    recent = _seed(conn, "三天前说的一条")[0]
+    conn.execute(
+        "UPDATE role_memory_item SET created_at = ? WHERE id = ?",
+        ((datetime.now(UTC) - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S"), recent),
+    )
+    conn.commit()
+    assert "- 3天前 三天前说的一条" in memory_for_turn(conn, _settings(), None)
+
+
+def test_panel_text_has_no_age_label_but_injection_does(conn) -> None:
+    """标签只能长在注入那一条路上。**设置面板把 `content` 原样填进编辑框、保存时又整段
+    按行覆写条目**（`SettingsPage` 的 `setMemDraft(m.content)`）—— 面板那段一旦带标签，
+    用户点一次保存「今天」就成了事实正文的一部分，再存一次叠一层。
+    """
+    _seed(conn, "用户住在上海")
+    panel, _ = render_memory(conn, bucket=GLOBAL_BUCKET)
+    assert panel == "- 用户住在上海", "面板文本必须等于原文，不加任何显示用的前后缀"
+    assert memory_for_turn(conn, _settings(), None) == "- 今天 用户住在上海"
+    # 覆写回来的文本按行解析，显示用的前缀不该变成事实的一部分（存三次仍然只有一层）
+    for _ in range(3):
+        replace_bucket_from_text(conn, bucket=GLOBAL_BUCKET, text=panel)
+        assert [i["text"] for i in list_items(conn, bucket=GLOBAL_BUCKET)] == ["用户住在上海"]
+    # 库里可能已经存着叠好的旧数据（这个 bug 上线过一次），剥多层也要成立
+    replace_bucket_from_text(conn, bucket=GLOBAL_BUCKET, text="- - - 用户搬到了杭州")
+    assert [i["text"] for i in list_items(conn, bucket=GLOBAL_BUCKET)][-1] == "用户搬到了杭州"
+
+
+def test_injection_is_capped_by_count_not_only_by_chars(conn) -> None:
+    """**条数**上界与字符预算是两重：4000 字塞得下几十条短句，而 LoCoMo 实测
+    top-5 优于 top-50 —— 给多了不是更全，是给模型一堆互相竞争的事实。
+    """
+    facts = [f"短事实第{i}号" for i in range(40)]  # 每条十几个字，字符预算根本用不完
+    _seed(conn, *facts)
+    text, ids = render_memory(conn, bucket=GLOBAL_BUCKET)
+    assert len(text.splitlines()) == MAX_ITEMS_PER_TURN
+    assert len(ids) == MAX_ITEMS_PER_TURN
+    assert len(text) < MAX_MEMORY_CHARS, "这条要证的是「卡条数」，不是「卡字符」"
+    # 留下的是打分最高的那几条，不是插入顺序的前几条（钉住的优先，其余按 近因×频次）
+    assert all(f"短事实第{i}号" in text for i in range(40 - MAX_ITEMS_PER_TURN, 40))
 
 
 def test_memory_save_tool_writes_both_buckets(conn) -> None:
