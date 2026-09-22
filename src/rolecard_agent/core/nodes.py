@@ -31,6 +31,7 @@ from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 
 from rolecard_agent.config import Settings
+from rolecard_agent.core.anti_repeat import clean_repeated_spans
 from rolecard_agent.core.guard import check
 from rolecard_agent.core.memory import current_role_id_ctx
 from rolecard_agent.core.observability import TraceEvent, Tracer, timer
@@ -422,6 +423,58 @@ def _latest_image_data_url(messages: Sequence[Any]) -> str | None:
     return None
 
 
+def _scrub_own_repeats(
+    history: list[Any], ctx: KernelContext, thread_id: str | None, role_id: str
+) -> list[Any]:
+    """把她历史里**重复说过的小句**从"送给模型的那一份拷贝"里去掉，原文一个字不动。
+
+    为什么在这里做（而不是在写库时、也不是在显示时）：她复读的源头就是她自己的历史 ——
+    模型看见同一句口癖出现四遍就照着续第五遍（真库实测：一条 88 字的回复与她两小时前的
+    主动开口**逐字相同**）。断源头只要改"她看见的那一份"，代价为零；改原文则等于毁掉
+    回放与审计的证据，那是另一条线（见 `trim_history` 的既定口径：裁剪只影响送给模型的内容）。
+
+    三条硬约束，都在下面这段里守住：
+      * **只碰她说过的纯文本消息** —— 用户的原话不是套话（那是关于他的事实），
+        带图的、带工具调用的、工具结果一律不动；
+      * **返回新对象**（`model_copy`），传进来的那些消息一个字段都不改 ——
+        它们同时是 checkpoint 里那份历史的内存形态，改了就等于把清洗写进了库；
+      * 改了什么必须留痕（`history_scrubbed`）：这道工序会让"她看到的"与"她说过的"
+        不一致，没有这行 trace，下一次排查复读时那个差异就是隐形的。
+    """
+    own = [
+        i
+        for i, message in enumerate(history)
+        if isinstance(message, AIMessage)
+        and isinstance(message.content, str)
+        and not getattr(message, "tool_calls", None)
+        and message.content.strip()
+    ]
+    if len(own) < 2:
+        return history
+    cleaned = clean_repeated_spans([history[i].content for i in own])
+    original = [history[i].content for i in own]
+    changed = [
+        (i, before, after)
+        for i, before, after in zip(own, original, cleaned, strict=True)
+        if before != after
+    ]
+    if not changed:
+        return history
+    out = list(history)
+    for i, _before, after in changed:
+        out[i] = out[i].model_copy(update={"content": after})
+    ctx.tracer.emit(
+        TraceEvent(
+            event="history_scrubbed",
+            thread_id=thread_id,
+            role_id=role_id,
+            node="call_model",
+            detail={"messages": len(changed), "clauses": sum(len(a) for _, _, a in changed)},
+        )
+    )
+    return out
+
+
 def call_model(
     state: dict[str, Any],
     ctx: KernelContext,
@@ -492,6 +545,8 @@ def call_model(
     # 历史按字符预算裁剪（H3）。裁剪只影响"送给模型的内容"，checkpoint 里的完整历史不动 ——
     # 界面回放、审计、下次裁剪都仍然看得到全量对话。先裁剪，再据此判断本轮模型能否看到图片。
     history, dropped = trim_history(state["messages"], ctx.max_context_chars)
+    # 套话清洗：裁剪之后、拼 prompt 之前，只改送出去的那份拷贝（红线见 `_scrub_own_repeats`）。
+    history = _scrub_own_repeats(history, ctx, state.get("thread_id"), role_id)
     system = build_system_prompt(
         role.system_prompt,
         role.exemplars,

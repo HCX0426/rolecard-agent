@@ -415,6 +415,61 @@ def _role(roles: RoleCardService, role_id: str = "r", model_name: str | None = N
     return role_id
 
 
+def test_call_model_scrubs_her_repeats_from_the_prompt_copy_only(
+    roles: RoleCardService,
+) -> None:
+    """套话清洗只改"送出去的那一份"：她说过的原话一个字段都不动。
+
+    这条断言守的是整个设计的红线 —— 清洗的目的是让她**看不见**自己的口癖，
+    不是让审计与界面看不见。一旦哪天有人图省事去改 state 里的对象，
+    回放与"下次裁剪"看到的就是被改写过的历史，那是毁证据。
+    """
+    rid = _role(roles)
+    first = AIMessage(content="（指尖轻点裙摆）今天风真好呀，你要不要一起去看看那条河？")
+    again = AIMessage(content="（忽然凑近屏幕）今天风真好呀，我们去看河吧")
+    original_again = again.content
+    state_messages = [first, HumanMessage(content="好"), again, HumanMessage(content="再说说")]
+    model = FakeModel(AIMessage(content="那我们去河边吧"))
+    tracer = RecordingTracer()
+    ctx = _ctx(ToolRegistry(), roles, model, tracer=tracer)
+
+    out = call_model(
+        {"messages": state_messages, "current_role_id": rid, "thread_id": "t"}, ctx
+    )
+
+    sent = [str(m.content) for m in model.last_prompt]
+    assert sum("今天风真好呀" in text for text in sent) == 1, (
+        "第一份要被留着（她确实说过），第二份要被抹掉（否则她看见两遍就照着续第三遍）"
+    )
+    # 进来的那批消息对象没有被改写 —— 它们同时是 checkpoint 那份历史的内存形态
+    assert again.content == original_again
+    assert all(m is not again for m in model.last_prompt), "送出去的必须是另一份拷贝，不是原对象"
+    assert first.content != "" and again in state_messages
+    assert out["messages"][0].content == "那我们去河边吧"
+    assert tracer.kinds().count("history_scrubbed") == 1
+
+
+def test_call_model_leaves_a_clean_history_untouched(roles: RoleCardService) -> None:
+    """没有可判的重复 ⇒ 一份拷贝都不做、一条 trace 都不发（否则日志会被"清洗了个寂寞"刷满）。"""
+    rid = _role(roles)
+    first = AIMessage(content="（指尖轻点裙摆）今天风真好呀，你要不要一起去看看那条河？")
+    second = AIMessage(content="（翻出小本子）上次你说的那家店我今天找到地图了")
+    model = FakeModel(AIMessage(content="好"))
+    tracer = RecordingTracer()
+    ctx = _ctx(ToolRegistry(), roles, model, tracer=tracer)
+    call_model(
+        {
+            "messages": [first, HumanMessage(content="嗯"), second, HumanMessage(content="哦")],
+            "current_role_id": rid,
+            "thread_id": "t",
+        },
+        ctx,
+    )
+    assert "history_scrubbed" not in tracer.kinds()
+    # 没改动就该把原对象交出去，不要凭空造一份拷贝
+    assert any(m is first for m in model.last_prompt)
+
+
 def test_call_model_resolves_role_backend(roles: RoleCardService) -> None:
     """US-8 后半：角色声明了后端名 → 该轮模型由解析器按名给出。"""
     rid = _role(roles, "cloudy", model_name="cloud-a")

@@ -41,6 +41,12 @@ from typing import Any, NamedTuple
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from rolecard_agent.config import Settings
+from rolecard_agent.core.anti_repeat import (
+    BG_LIMIT,
+    DROP_SCORE,
+    REGEN_SCORE,
+    repeat_score,
+)
 from rolecard_agent.core.file_watch import (
     FileEvent,
     advance_baseline,
@@ -172,6 +178,33 @@ def recent_reachout_lines(
         "这些是你最近已经主动对用户说过的话。**别重复它们说过的内容，也别沿用它们的句式** —— "
         "不要再用同样的（动作/神态）开场，不要再提同一个由头（同一片花海、同一句关心）：\n" + lines
     )
+
+
+def recent_own_texts(conn: SqlConnection, role_id: str, *, limit: int = BG_LIMIT) -> list[str]:
+    """该角色最近说过的主动开口**原文**（按时间正序）。没有则空表。
+
+    与 `recent_reachout_lines` 是同一批东西的两种用法：那个是渲染给她**看**的（带指令措辞、
+    每条截 120 字），这个是喂给打分器的语料（全量原文，不截断 —— 截断了就量不出整句复读）。
+
+    语料只有"主动开口"这一份，不含她在会话里答的话：那部分要读检查点，而这一侧没有那个
+    入口（只有调度器预先渲染好的 `thread_lines` 字符串）。答过的话的复读由对话侧那层管 ——
+    那里会把她自己重复的小句从回喂副本里抹掉（`core/nodes.py:_scrub_own_repeats`）。
+    """
+    rows = conn.execute(
+        "SELECT text FROM agent_reachout WHERE role_id = ? ORDER BY id DESC LIMIT ?",
+        (role_id, limit),
+    ).fetchall()
+    return [str(r["text"]).strip() for r in reversed(rows) if str(r["text"]).strip()]
+
+
+#: 重生时贴在任务后面的那句话。**为什么不能只重抽一次**：同一条 prompt 再来一遍，出来的
+#: 还是同一个句式（实测过：同一条 prompt 连开三次，两次空正文、一次同样的口癖）—— 要变的
+#: 是指令，不是随机数。措辞刻意不点名任何具体意象：那是角色卡的内容，不是内核该知道的事。
+_AVOIDANCE_NOTE = (
+    "\n\n【这一次换个说法】你刚才写的那句（见下）与你最近已经说过的话太像了，那一句不算数、"
+    "要重写。重写时**换一件完全不同的事**当由头，换一种开头、换一种收尾，"
+    "也不要沿用下面那句里出现过的比喻：\n"
+)
 
 
 #: 主动开口时带进上下文的"你们聊过的最近几条"的条数。只给最后几条、每条截 120 字 ——
@@ -463,10 +496,14 @@ class ReachoutDraft(NamedTuple):
     「内容被 guard 拦下」长得一样（都是不发），但一个是配置/模型坏了、该修，
     另一个是内容确实不该发、是对的。混成一个 None，调度器就只会安静地少说话，
     而用户看到的症状是"她最近怎么不找我了"—— 2026-09-22 那次实测正是这样混掉的。
+
+    `score` 是这条草稿与她最近说过的话的重合分（口径见 `core/anti_repeat.repeat_score`）。
+    带出来而不是只留个 bool：闸门会不会误伤只能看分布，而分布只在真机上一天天攒。
     """
 
     text: str | None
     why: str = ""
+    score: float = 0.0
 
 
 def generate_reachout_text(
@@ -516,24 +553,52 @@ def generate_reachout_text(
     if thread_lines:
         task = f"{task}\n\n{thread_lines}"
     system = build_system_prompt(role.system_prompt, role.exemplars, memory=memory, agent=False)
-    prompt = [
-        SystemMessage(content=system),
-        HumanMessage(content=f"{task}\n\n（你的角色是 {role.role_name}）"),
-    ]
-    reply = model.invoke(prompt)
-    # 用全项目唯一的取值实现：`str(reply.content)` 在分块形态下会得到 Python repr，
-    # 而这份文本既进 guard 又进用户收件箱（架构审计报告 P1-8）。
-    text = text_of(reply).strip()
-    if not text:
-        # 2026-09-22 真机实测：qwen3-vl 会"想"完整 token 预算再 `done_reason=length` 收工，
-        # 正文一个字都不留 —— 思考内容在 Ollama 的 `message.thinking` 通道里，而
-        # `model_thinking_models` 没登记它，langchain 就把那一整段丢了。这不是偶发：
-        # 同一条 prompt 连开三次，两次是这个空返回。所以它必须**可统计**（见 `ReachoutDraft`）。
-        return ReachoutDraft(None, "empty_output")
-    verdict = check(text)
-    if not verdict.allowed:
-        return ReachoutDraft(None, "guard")  # guard fail-closed：被拦下就不发
-    return ReachoutDraft(text[:2000], "")
+
+    def speak(extra: str = "") -> tuple[str, ReachoutDraft]:
+        """要一次正文。返回 `(可用于打分的文本, 草稿)`；草稿为 None 时文本是空的。"""
+        prompt = [
+            SystemMessage(content=system),
+            HumanMessage(content=f"{task}{extra}\n\n（你的角色是 {role.role_name}）"),
+        ]
+        reply = model.invoke(prompt)
+        # 用全项目唯一的取值实现：`str(reply.content)` 在分块形态下会得到 Python repr，
+        # 而这份文本既进 guard 又进用户收件箱（架构审计报告 P1-8）。
+        text = text_of(reply).strip()
+        if not text:
+            # 2026-09-22 真机实测：qwen3-vl 会"想"完整 token 预算再 `done_reason=length` 收工，
+            # 正文一个字都不留 —— 思考内容在 Ollama 的 `message.thinking` 通道里，而
+            # `model_thinking_models` 没登记它，langchain 就把那一整段丢了。这不是偶发：
+            # 同一条 prompt 连开三次，两次是这个空返回。所以它必须**可统计**（见 `ReachoutDraft`）。
+            return "", ReachoutDraft(None, "empty_output")
+        text = text[:2000]
+        verdict = check(text)
+        if not verdict.allowed:
+            return "", ReachoutDraft(None, "guard")  # guard fail-closed：被拦下就不发
+        return text, ReachoutDraft(text, "")
+
+    text, draft = speak()
+    if draft.text is None:
+        return draft
+    priors = recent_own_texts(conn, role_id) if role_id else []
+    score = repeat_score(text, priors)
+    if score <= REGEN_SCORE:
+        return ReachoutDraft(text, "", round(score, 2))
+
+    # 像自己说过的那句话 → 带着"这句不算数"的指令重来一次，然后在两条里挑不像的那条。
+    retry_text, retry = speak(_AVOIDANCE_NOTE + text[:120])
+    if retry.text is None:
+        # 重生失败（空正文 / 被 guard 拦）⇒ **保留第一条**而不是改判不发：第一条只是"像她自己"，
+        # 不是坏内容。因为重生的故障吞掉一条本来能说的话，是我们亏。
+        return ReachoutDraft(text, "", round(score, 2))
+    retry_score = repeat_score(retry_text, priors)
+    best, best_score = (
+        (retry_text, retry_score) if retry_score <= score else (text, round(score, 2))
+    )
+    if best_score > DROP_SCORE:
+        # 两条都够得着"逐字复读"那一档（真库里那条 88 字全同的是 52.7，而普通口癖只到 27）——
+        # 宁可这次不开口。用户读到的"她怎么又不说话了"远轻于"她把我两小时前的话又发了一遍"。
+        return ReachoutDraft(None, "repeat", round(best_score, 2))
+    return ReachoutDraft(best, "", round(best_score, 2))
 
 
 # 触发源（关系驱动，四类共用抑制 / 生成 / 落库流水线）
@@ -744,7 +809,7 @@ class ReachoutScheduler:
                         event="reachout_skipped",
                         node="reachout",
                         role_id=role.role_id,
-                        detail={"why": draft.why, "trigger": fired},
+                        detail={"why": draft.why, "trigger": fired, "score": draft.score},
                     )
                 )
                 continue
@@ -770,7 +835,13 @@ class ReachoutScheduler:
                     event="reachout_sent",
                     node="reachout",
                     role_id=role.role_id,
-                    detail={"chars": len(text), "trigger": fired, "thread_id": thread_id},
+                    detail={
+                        "chars": len(text),
+                        "trigger": fired,
+                        "thread_id": thread_id,
+                        # 复读分带进审计：闸门会不会误伤只能看分布，而分布要在真机上一天天攒。
+                        "score": draft.score,
+                    },
                 )
             )
             made += 1

@@ -770,6 +770,86 @@ def test_format_thread_lines_keeps_the_tail_in_order() -> None:
     assert svc.format_thread_lines([('用户', '   ')]) == ''
 
 
+class _ScriptedModel:
+    """按脚本依次吐出回复，并记下每次收到的 prompt（重生那条测试要看第二次的指令）。"""
+
+    def __init__(self, replies: list[str]) -> None:
+        self._replies = list(replies)
+        self.prompts: list[list] = []
+
+    def invoke(self, prompt: list, **kwargs: object) -> AIMessage:
+        self.prompts.append(prompt)
+        return AIMessage(content=self._replies.pop(0) if self._replies else "")
+
+
+_PRIOR = (
+    "（指尖轻点裙摆，忽然歪头笑出声）哎呀，今天的乐土风铃草开得正盛呢♪ "
+    "要是被花粉困扰的话……记得好好看看我的眼睛哦，这样就能在花雨里找到回家的路啦♪"
+)
+_NEW = "风也有颜色哦，你猜猜——此刻越过乐土的那阵，是不是带着花瓣的粉？♪"
+
+
+def _seed_prior(conn, role_id: str = "active") -> None:
+    conn.execute(
+        "INSERT INTO agent_reachout (role_id, role_name, text, state) "
+        "VALUES (?, '主动角色', ?, 'read')",
+        (role_id, _PRIOR),
+    )
+    conn.commit()
+
+
+def test_reachout_regenerates_once_when_the_draft_echoes_her_own_line(conn) -> None:
+    """草稿与她旧话逐字相同 ⇒ 换指令重来一次，发的是第二条。"""
+    _seed_prior(conn)
+    model = _ScriptedModel([_PRIOR, _NEW])
+    draft = svc.generate_reachout_text(_role(), model, _settings(), conn, role_id="active")
+    assert draft.text == _NEW
+    assert len(model.prompts) == 2, "只该重生一次"
+    second = "".join(str(m.content) for m in model.prompts[1])
+    assert "换个说法" in second and "乐土风铃草" in second, "重生的指令要说清哪句不算数"
+    assert draft.score < svc.REGEN_SCORE
+
+
+def test_reachout_stays_silent_when_both_drafts_echo(conn) -> None:
+    """两次都一样 ⇒ **宁可不说**（`why="repeat"`），而不是把复读发进收件箱。"""
+    _seed_prior(conn)
+    model = _ScriptedModel([_PRIOR, _PRIOR])
+    draft = svc.generate_reachout_text(_role(), model, _settings(), conn, role_id="active")
+    assert draft.text is None and draft.why == "repeat"
+    assert draft.score > svc.DROP_SCORE
+    assert len(model.prompts) == 2, "重生一次就收工，不许无限重试"
+    assert conn.execute("SELECT COUNT(*) c FROM agent_reachout").fetchone()["c"] == 1, "不该落库"
+
+
+def test_failed_regeneration_keeps_the_first_draft(conn) -> None:
+    """重生失败（空正文）时**保留第一条**：第一条只是"像她自己"，不是坏内容。
+
+    因为重生的故障吞掉一条本来能发的话，是我们亏 —— 用户读到的会是"她不找我了"。
+    """
+    _seed_prior(conn)
+    model = _ScriptedModel([_PRIOR, ""])
+    draft = svc.generate_reachout_text(_role(), model, _settings(), conn, role_id="active")
+    assert draft.text == _PRIOR and draft.why == ""
+    assert len(model.prompts) == 2
+
+
+def test_ordinary_draft_costs_exactly_one_call(conn) -> None:
+    """普通内容一次调用就够：闸门不能变成"每次都多问一遍"的税。"""
+    _seed_prior(conn)
+    model = _ScriptedModel([_NEW])
+    draft = svc.generate_reachout_text(_role(), model, _settings(), conn, role_id="active")
+    assert draft.text == _NEW and len(model.prompts) == 1
+    assert draft.score < svc.REGEN_SCORE
+
+
+def test_no_role_id_means_no_scoring_corpus(conn) -> None:
+    """没给 role_id（全局口吻）时无从取"她最近说过什么" ⇒ 不判，也不炸。"""
+    model = _ScriptedModel([_PRIOR])
+    draft = svc.generate_reachout_text(_role(), model, _settings(), conn)
+    assert draft.text == _PRIOR and draft.score == 0.0
+    assert len(model.prompts) == 1
+
+
 def test_task_text_names_the_template_explicitly(conn) -> None:
     """实测 8/8 条以（动作）开头、正文一半以「哎呀，今天的」起头、字数挤在窄带 ——
     指令里要点名这件事，而且**按 §8.2 第 2 条改正写**：给"该怎么写"，不是只列"别怎么写"。
