@@ -127,6 +127,38 @@ function tuckedRect(edge: DockEdge, rect: Rect, work: Rect): Rect {
   return { ...flush, y: flush.y + BOTTOM_TUCK };
 }
 
+// ---- 滑进滑出，不瞬移 -------------------------------------------------------------------
+// 任务栏、GNOME 的 Dash、macOS 的 Dock 这些都是**滑**进滑出的（百来毫秒），一帧到位在桌面上
+// 读起来是"它不见了"而不是"它收起来了" —— 对一个会自己动边界的驻留件，这两种读法的差别就是
+// "功能"与"bug"的差别。
+const SLIDE_MS = 140;
+const SLIDE_STEPS = 8;
+let slideTimer: NodeJS.Timeout | null = null;
+
+function stopSlide(): void {
+  if (slideTimer) clearInterval(slideTimer);
+  slideTimer = null;
+}
+
+function slidePetTo(win: BrowserWindow, target: Rect): void {
+  stopSlide();
+  const from = win.getBounds();
+  const dxStep = (target.x - from.x) / SLIDE_STEPS;
+  const dyStep = (target.y - from.y) / SLIDE_STEPS;
+  if (!dxStep && !dyStep) return;
+  let step = 0;
+  slideTimer = setInterval(() => {
+    step += 1;
+    if (win.isDestroyed()) return stopSlide();
+    if (step >= SLIDE_STEPS) {
+      stopSlide();
+      win.setBounds(target);
+      return;
+    }
+    win.setBounds({ ...target, x: Math.round(from.x + dxStep * step), y: Math.round(from.y + dyStep * step) });
+  }, SLIDE_MS / SLIDE_STEPS);
+}
+
 /**
  * 拖完那一刻判：该吸哪条边。
  *
@@ -143,11 +175,20 @@ export function petDockEdgeFor(rect: Rect, work: Rect): DockEdge | null {
   return null;
 }
 
-/** 藏着的话滑回贴边。展开面板前、拖之前、关掉「靠边隐藏」时都要先走这一步。 */
-export function petUntuck(win: BrowserWindow): void {
+/**
+ * 藏着的话滑回贴边。展开面板前、拖之前、关掉「靠边隐藏」时都要先走这一步。
+ * `instant` 是给拖拽留的：拖的过程中滑，等于跟用户的手抢那 140ms。
+ */
+export function petUntuck(win: BrowserWindow, options: { instant?: boolean } = {}): void {
   if (!petDock || !petDock.tucked) return;
   petDock = { ...petDock, tucked: false };
-  win.setBounds(flushRect(petDock.edge, win.getBounds(), workRect()));
+  const target = flushRect(petDock.edge, win.getBounds(), workRect());
+  if (options.instant) {
+    stopSlide();
+    win.setBounds(target);
+    return;
+  }
+  slidePetTo(win, target);
 }
 
 /**
@@ -165,7 +206,7 @@ function settlePetDock(win: BrowserWindow): DockEdge | null {
     return null;
   }
   petDock = { edge, tucked: true };
-  win.setBounds(tuckedRect(edge, win.getBounds(), workRect()));
+  slidePetTo(win, tuckedRect(edge, win.getBounds(), workRect()));
   onDockChanged?.(edge);
   return edge;
 }
@@ -193,6 +234,7 @@ export function petDragEnded(win: BrowserWindow): void {
 /** 开机恢复：偏好里记着吸哪条边且开关没关，就按**当前**工作区重算贴边位再藏进去。 */
 export function restorePetDock(win: BrowserWindow, prefs: PetPrefs): void {
   if (!prefs.dockEnabled || !prefs.docked) return;
+  stopSlide(); // 开机那一下不滑：从屏外滑进来会让人以为宠物是自己跑出去的
   petDock = { edge: prefs.docked, tucked: false };
   win.setBounds(flushRect(prefs.docked, win.getBounds(), workRect())); // 先落到屏内的贴边位
   petDock = { edge: prefs.docked, tucked: true };
@@ -214,8 +256,9 @@ export function releasePetDock(win: BrowserWindow): void {
 export function setPetExpanded(win: BrowserWindow, expanded: boolean): void {
   // 面板要 380 宽，藏着一半没法看 ⇒ 展开前先滑回贴边。**收起时不再自动藏回去**
   // （用户 2026-09-22 拍的：只在拖到边上那一刻吸，之后不再自动收）。
+  stopSlide(); // 展开/收起是用户的动作，赢过任何在跑的滑动
   if (expanded) {
-    petUntuck(win);
+    petUntuck(win, { instant: true }); // 展开时不滑：滑 + 同时长大会糊成一次跳动
     petDockPending = false; // 又在看它了 ⇒ 那次"等收起再吸"作废，以最后一次放手为准
   }
   petIsExpanded = expanded;
@@ -266,7 +309,7 @@ function petSize(): { width: number; height: number } {
  * 能碰桌面的参数越少越好，绝对坐标就是一种"你把窗放哪"的权力。
  */
 export function movePetBy(win: BrowserWindow, dx: number, dy: number): void {
-  petUntuck(win); // 拖着藏着的那一小条走 = 一动手就先把它拉回屏内，之后的位移才看得见
+  petUntuck(win, { instant: true }); // 拖着藏着的那一小条走 = 一动手就先把它拉回屏内；拖的时候不滑
   const current = win.getBounds();
   const size = petSize();
   const { workArea } = screen.getPrimaryDisplay();
