@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from rolecard_agent.config import Settings
 from rolecard_agent.core import mcp_store, runtime_settings
@@ -46,8 +46,10 @@ from rolecard_agent.core.reachout import (
     ensure_proactive_thread,
     format_thread_lines,
     proactive_thread_id,
+    unanswered_lines,
 )
 from rolecard_agent.core.services import ServiceEndpointService
+from rolecard_agent.core.state import now_ts
 from rolecard_agent.core.text import text_of
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder, make_reranker
@@ -302,12 +304,17 @@ class Runtime:
     # -- 主动开口的投递（收件箱之外，还得能回话）--------------------------------
 
     def proactive_recent_lines(self, role_id: str, *, limit: int = 6) -> str:
-        """那条主动会话的最近几条（**含用户说的话**），拼成一段可直接进指令的上下文。
+        """那条主动会话里**她还没接住的那几句**（读检查点，不另存一份），拼成可进指令的上下文。
 
         读检查点而不是另存一份消息：会话的唯一真相就是 checkpoint（与桌宠面板读历史同源）。
         没有这一段，用户在桌宠上回的话她下一条完全看不见 —— 实测过一句"刚跑完步"换来一句
         逐字复读的旧台词。读不到（图没建 / 线程不存在 / 反序列化出问题）一律给空串：
         少一段上下文，比不开口更不该出事。
+
+        两件事让它不再是"最后 6 条"：① 只取她**最后说过话之后**的那一截（`unanswered_lines`）——
+        她已经答过的话还会在之后每一次定时开口里被当由头重答一遍，那是用户报的"回两条"；
+        ② `ToolMessage` 不进"你说过的话"：工具结果是内核读到的东西，把它标成"她说过"
+        等于让她以为自己对一段 JSON 说出口过。
         """
         graph = self.state.get("graph")
         if graph is None:
@@ -317,11 +324,13 @@ class Runtime:
             snap = graph.get_state(
                 build_graph_config(proactive_thread_id(role_id), self.effective)
             )
-            for m in ((snap.values or {}).get("messages") or [])[-limit:]:
+            for m in ((snap.values or {}).get("messages") or []):
+                if isinstance(m, ToolMessage):
+                    continue
                 text = text_of(m).strip()
                 if text:
                     rows.append(("用户" if isinstance(m, HumanMessage) else "你", text))
-        return format_thread_lines(rows, limit=limit)
+        return format_thread_lines(unanswered_lines(rows), limit=limit)
 
     def deliver_proactive(self, role: RoleCard, text: str) -> str | None:
         """把角色主动说的那句落进"该角色的主动会话"，返回线程 id（图还没建 → None）。
@@ -344,7 +353,10 @@ class Runtime:
             return None
         graph.update_state(
             build_graph_config(thread_id, self.effective),
-            {"messages": [AIMessage(content=text)]},
+            # created_at 与内核节点那条同一口径（`additional_kwargs`）：这句是"她已经说出口"的
+            # 消息，没带时间就会在回放里悬着不知排在哪一轮 —— 而她什么时候说的恰恰是要判断的
+            # 东西（2026-09-22 那次"一句话回三遍"的取证只能靠 id 前缀区分主动投递与图内回复）。
+            {"messages": [AIMessage(content=text, additional_kwargs={"created_at": now_ts()})]},
         )
         return thread_id
 

@@ -737,7 +737,27 @@ def test_thread_lines_reach_the_prompt(conn) -> None:
     )
     joined = _prompt_text(model)
     assert '刚跑完步，坐下歇会儿。' in joined
-    assert '对方说过的话要接得住' in joined
+    assert '还没有接过话' in joined
+
+
+def test_unanswered_lines_stops_at_her_own_last_utterance() -> None:
+    """素材只取"她最后说过话之后"那一截 —— 答过的话不能再当由头（见 test_bootstrap 同名场景）。"""
+    assert svc.unanswered_lines([("用户", "想你了")]) == [("用户", "想你了")]
+    # 她已经答过 → 空：这次开口不能把同一句再回一遍
+    assert svc.unanswered_lines([("用户", "想你了"), ("你", "我也想")]) == []
+    # 分界线之后又攒了新话 → 只留新的那些，且保持时间正序
+    assert svc.unanswered_lines(
+        [("你", "旧台词"), ("用户", "刚跑完步"), ("你", "辛苦啦"), ("用户", "你在哪呢")]
+    ) == [("用户", "你在哪呢")]
+    # 全是她说的 / 空表 → 空
+    assert svc.unanswered_lines([("你", "一句"), ("你", "两句")]) == []
+    assert svc.unanswered_lines([]) == []
+
+
+def test_thread_lines_are_empty_when_she_has_the_last_word() -> None:
+    """串起来的那条：她刚答完话的会话，主动开口拿到的上下文必须是空串而不是旧台词。"""
+    rows = [("你", "外头降温了，穿上外套。"), ("用户", "想你了"), ("你", "我也想你")]
+    assert svc.format_thread_lines(svc.unanswered_lines(rows)) == ""
 
 
 def test_format_thread_lines_keeps_the_tail_in_order() -> None:

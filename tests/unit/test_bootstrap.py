@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -179,12 +180,61 @@ def test_deliver_proactive_lands_in_the_roles_thread(tmp_path: Path) -> None:
 
         graph = runtime.state["graph"]
         config = build_graph_config(tid, runtime.effective)
-        assert [str(m.content) for m in graph.get_state(config).values["messages"]] == [
-            "今天腰还酸吗？"
-        ]
+        messages = graph.get_state(config).values["messages"]
+        assert [str(m.content) for m in messages] == ["今天腰还酸吗？"]
+        # 主动投递也要带时间：没带的话，回放里她"什么时候说的"就查不出来，
+        # 而"她是不是一句话说了好几遍"只能靠时间分辨（2026-09-22 取证时只能靠 id 前缀猜）。
+        assert re.fullmatch(
+            r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}",
+            str(messages[0].additional_kwargs.get("created_at") or ""),
+        ), "主动投递的消息没带 created_at"
 
         # 第二条：建行幂等（不冲突），历史按顺序累积 —— 角色下一次看得见自己说过什么。
         runtime.deliver_proactive(role, "记得喝水")
         assert len(graph.get_state(config).values["messages"]) == 2
+    finally:
+        runtime.conn.close()
+
+
+def test_proactive_lines_only_offer_what_she_has_not_picked_up(tmp_path: Path) -> None:
+    """主动开口的上下文只带"她还没接住的那几句"—— 这条断的是"一句话回三遍"。
+
+    真库实测（2026-09-22，`s_proactive_elysia`）：用户 19:13:29 说「想你了」，她 19:13:36
+    正常答了；调度器随后在 19:31 与 20:35 又各"主动"冒了一句，而两次的素材都是那条会话的
+    尾部 6 条 —— 于是两句都还在回 19:13 那句话。用户读到的是"我发一条，它回我两条重复的"，
+    而对话永远不往前走。分界线就是她自己最后说过话的位置，所以这里连**真图真检查点**一起验。
+    """
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    from rolecard_agent.core.graph import build_graph_config
+    from rolecard_agent.roles.models import RoleCard
+
+    runtime = _assemble(tmp_path)
+    try:
+        role = RoleCard(role_id="wan", role_name="苏晚晴", system_prompt="你是苏晚晴。")
+        tid = runtime.deliver_proactive(role, "外头降温了，穿上外套。")
+        graph = runtime.state["graph"]
+        config = build_graph_config(tid, runtime.effective)
+
+        def push(*items: object) -> None:
+            graph.update_state(config, {"messages": list(items)})
+
+        # 她刚说完、用户还没吭声 ⇒ 没有待接的话，这次开口只能另找由头（记忆 / 时间 / 文件事件）
+        assert runtime.proactive_recent_lines("wan") == ""
+
+        push(HumanMessage(content="想你了"))
+        lines = runtime.proactive_recent_lines("wan")
+        assert "想你了" in lines and "还没有接过话" in lines
+
+        push(AIMessage(content="我也想"))  # 答过了 → 那句立刻从素材里退出去
+        assert runtime.proactive_recent_lines("wan") == ""
+
+        # 工具结果不是"她出口说的话"：既不能当她答过话（会把待接的那句抹掉），
+        # 也不能当成她说过的话喂回去（那等于让她以为自己对一段 JSON 说出口过）。
+        push(HumanMessage(content="你在哪呢"))
+        push(ToolMessage(content='{"ok": true}', tool_call_id="t1"))
+        lines = runtime.proactive_recent_lines("wan")
+        assert "你在哪呢" in lines, lines
+        assert "ok" not in lines, lines
     finally:
         runtime.conn.close()
