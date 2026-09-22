@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 from rolecard_agent.config import Settings
 from rolecard_agent.core import mcp_store, runtime_settings
@@ -41,8 +41,14 @@ from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.observability import TraceEvent, Tracer, make_tracer
 from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
 from rolecard_agent.core.probes import ollama_keep, vision_capability
-from rolecard_agent.core.reachout import ReachoutScheduler, ensure_proactive_thread
+from rolecard_agent.core.reachout import (
+    ReachoutScheduler,
+    ensure_proactive_thread,
+    format_thread_lines,
+    proactive_thread_id,
+)
 from rolecard_agent.core.services import ServiceEndpointService
+from rolecard_agent.core.text import text_of
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder, make_reranker
 from rolecard_agent.roles.models import RoleCard
@@ -277,6 +283,7 @@ class Runtime:
                 conn=self.conn,
                 tracer=self.tracer,
                 deliver=self.deliver_proactive,
+                thread_lines=self.proactive_recent_lines,
             )
         self.reachout.start()
         if self.env_settings.model_pin_on_startup:
@@ -293,6 +300,28 @@ class Runtime:
                 ollama_keep(backend.base_url, backend.model, -1, num_ctx=backend.num_ctx)
 
     # -- 主动开口的投递（收件箱之外，还得能回话）--------------------------------
+
+    def proactive_recent_lines(self, role_id: str, *, limit: int = 6) -> str:
+        """那条主动会话的最近几条（**含用户说的话**），拼成一段可直接进指令的上下文。
+
+        读检查点而不是另存一份消息：会话的唯一真相就是 checkpoint（与桌宠面板读历史同源）。
+        没有这一段，用户在桌宠上回的话她下一条完全看不见 —— 实测过一句"刚跑完步"换来一句
+        逐字复读的旧台词。读不到（图没建 / 线程不存在 / 反序列化出问题）一律给空串：
+        少一段上下文，比不开口更不该出事。
+        """
+        graph = self.state.get("graph")
+        if graph is None:
+            return ""
+        rows: list[tuple[str, str]] = []
+        with contextlib.suppress(Exception):
+            snap = graph.get_state(
+                build_graph_config(proactive_thread_id(role_id), self.effective)
+            )
+            for m in ((snap.values or {}).get("messages") or [])[-limit:]:
+                text = text_of(m).strip()
+                if text:
+                    rows.append(("用户" if isinstance(m, HumanMessage) else "你", text))
+        return format_thread_lines(rows, limit=limit)
 
     def deliver_proactive(self, role: RoleCard, text: str) -> str | None:
         """把角色主动说的那句落进"该角色的主动会话"，返回线程 id（图还没建 → None）。

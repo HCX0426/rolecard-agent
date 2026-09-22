@@ -688,3 +688,40 @@ def test_tick_file_watch_globally_off_is_inert(conn, tmp_path: Path) -> None:
     assert scheduler.tick_once(now_utc=utc, now_local=local) == 1  # timer 基线行为照旧
     assert fw.load_state(conn) is None  # 完全不扫描、不留状态
     assert not [e for e in tracer.events if getattr(e, "event", "") == "file_watch_advance"]
+
+
+def test_thread_lines_reach_the_prompt(conn) -> None:
+    """用户在桌宠上回的话必须进下一条的上下文 —— 不给她看，她就复读自己那条旧台词。"""
+    model = _FakeModel(AIMessage(content="跑完记得拉伸一下。"))
+    svc.generate_reachout_text(
+        _role(),
+        model,
+        _settings(),
+        conn,
+        role_id='active',
+        thread_lines=svc.format_thread_lines(
+            [('用户', '刚跑完步，坐下歇会儿。'), ('你', '辛苦啦')]
+        ),
+    )
+    joined = _prompt_text(model)
+    assert '刚跑完步，坐下歇会儿。' in joined
+    assert '对方说过的话要接得住' in joined
+
+
+def test_format_thread_lines_keeps_the_tail_in_order() -> None:
+    """只留最后几条、按时间正序；全空白不该产出一段空上下文。"""
+    rows = [('你' if i % 2 == 0 else '用户', f'第{i}条') for i in range(10)]
+    out = svc.format_thread_lines(rows, limit=3)
+    assert '第7条' in out and '第9条' in out
+    assert '第6条' not in out
+    assert out.index('第7条') < out.index('第9条')
+    assert svc.format_thread_lines([('用户', '   ')]) == ''
+
+
+def test_task_text_names_the_template_explicitly(conn) -> None:
+    """实测 6/6 条都以（动作描写）开头、字数挤在 68–90 —— 指令里得点名这件事。"""
+    model = _FakeModel(AIMessage(content='嗨'))
+    svc.generate_reachout_text(_role(), model, _settings(), conn, role_id='active')
+    joined = _prompt_text(model)
+    assert '不要每句都用（动作' in joined
+    assert '长度随内容走' in joined

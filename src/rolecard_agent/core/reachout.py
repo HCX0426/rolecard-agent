@@ -30,7 +30,7 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -81,7 +81,10 @@ _LEAD_NO_MEMORY = "结合你的角色设定，"
 _REACHOUT_TASK_BODY = (
     "用一两句话主动向用户问候或说一件此刻值得说的小事：可以是有用的提醒、一句关心，"
     "或自然地打招呼。像真人突然想起跟对方说话那样，自然、简短、口语化；"
-    "不要长篇，不要说教，不要自我介绍。"
+    "不要长篇，不要说教，不要自我介绍。\n"
+    "**格式别塌成模板**（这是实测出来的毛病：连着几条都以（动作描写）开头、字数挤在同一档）："
+    "不要每句都用（动作或神态）开头，可以直接说话、可以只问一句、可以省略主语；"
+    "长度随内容走，半句、一句都行，不要凑成同样长短的一段。"
 )
 
 # 回忆触发专用的口吻：自然提起一件记得的、之前聊过或答应的事。
@@ -155,8 +158,31 @@ def recent_reachout_lines(
         return ""
     lines = "\n".join(f"- {str(r['text']).strip()[:120]}" for r in reversed(rows))
     return (
-        "这些是你最近已经主动对用户说过的话，**别重复它们说过的内容、"
-        "也别再用同样的由头开场**：\n" + lines
+        "这些是你最近已经主动对用户说过的话。**别重复它们说过的内容，也别沿用它们的句式** —— "
+        "不要再用同样的（动作/神态）开场，不要再提同一个由头（同一片花海、同一句关心）：\n" + lines
+    )
+
+
+#: 主动开口时带进上下文的"你们聊过的最近几条"的条数。只给最后几条、每条截 120 字 ——
+#: 主动开口是"想起一件事"，不是重放整段对话；全量塞进去既贵，又会把小模型带成照着念。
+RECENT_THREAD_LIMIT = 6
+
+
+def format_thread_lines(
+    rows: Sequence[tuple[str, str]], *, limit: int = RECENT_THREAD_LIMIT
+) -> str:
+    """把 `(说话人, 原文)` 序列（按时间正序）拼成一段"你们最近聊过的"上下文；没内容给空串。
+
+    放在这里而不是调用方：**措辞与截断只该有一处**，读 checkpoint 的那一侧只负责把消息取出来。
+    """
+    picked = [(str(who), str(text).strip()) for who, text in rows if str(text).strip()]
+    picked = picked[-limit:]
+    if not picked:
+        return ""
+    lines = "\n".join(f"- {who}：{text[:120]}" for who, text in picked)
+    return (
+        "这些是你们最近聊的（最后几条，按时间正序）。**对方说过的话要接得住** —— "
+        "可以追问、可以回应里面那件具体的事，但不要照抄复读：\n" + lines
     )
 
 
@@ -384,12 +410,18 @@ def generate_reachout_text(
     role_id: str | None = None,
     mode: str = "general",
     file_list: str = "",
+    thread_lines: str = "",
 ) -> str | None:
     """生成一条主动内容：人设 + 记忆 + 最近说过什么 → 单轮 → guard。被拦/失败返回 None（不发）。
 
     两条与"内容合适吗"直接相关的口径：① **记忆为空时指令不再提"长期记忆"**（指着一个空槽
     说话就是假契约，模型只能凭人设编）；② **带上该角色最近几条原文并要求别重复**（没有这一层
     每次开口都是从零现编，实测会连发几条同义的话）。recall 档没记忆时整段换成"不假装记得往事"。
+
+    `thread_lines` 是**你们聊过的最近几条**（那条主动会话的原文，含用户说的话）。它与
+    `recent_reachout_lines` 不是一回事：后者只有"她自己说过什么"，前者才有"你说过什么"。
+    没有这一层，用户在桌宠上回的话她下一条完全看不见 —— 实测过一条"刚跑完步"换来一句
+    逐字复读的旧台词，症状不是模型差，是上下文里没有对方的话。
 
     `role_id` 给定时按角色取**专属记忆**（回忆触发 / per-role 隔离）；若该角色无专属记忆，
     回退到用户级全局记忆（用户事实，非角色对话，不造成跨角色串扰）。这条规则与对话侧
@@ -409,6 +441,8 @@ def generate_reachout_text(
         recent = recent_reachout_lines(conn, role_id)
         if recent:
             task = f"{task}\n\n{recent}"
+    if thread_lines:
+        task = f"{task}\n\n{thread_lines}"
     system = build_system_prompt(role.system_prompt, role.exemplars, memory=memory, agent=False)
     prompt = [
         SystemMessage(content=system),
@@ -504,6 +538,7 @@ class ReachoutScheduler:
         conn: SqlConnection,
         tracer: Tracer,
         deliver: Callable[[RoleCard, str], str | None] | None = None,
+        thread_lines: Callable[[str], str] | None = None,
     ) -> None:
         self._settings = settings_provider
         self._roles = roles
@@ -511,6 +546,8 @@ class ReachoutScheduler:
         self._conn = conn
         self._tracer = tracer
         self._deliver = deliver
+        # "你们最近聊过什么"的取法由宿主给（它才知道图与检查点在哪）：None = 不带这段上下文。
+        self._thread_lines = thread_lines
         self._stop = threading.Event()
 
     # -- 生命周期 -------------------------------------------------------
@@ -610,6 +647,8 @@ class ReachoutScheduler:
                         if can_file
                         else ""
                     ),
+                    # 读不到就是没有这段上下文（provider 自己吞异常），不该拦住开口。
+                    thread_lines=self._thread_lines(role.role_id) if self._thread_lines else "",
                 )
             except Exception as exc:  # noqa: BLE001 - 生成失败只留痕，不阻塞其它角色
                 self._tracer.emit(

@@ -418,6 +418,18 @@ describe("PetPage 拖桌宠（手动拖，因为 CSS 拖拽区会吞掉悬停事
     expect(expanded).toHaveBeenLastCalledWith(true);
   });
 
+  it("按一下（没拖动）只发一次指令：不会先收再开那样跳一下", async () => {
+    const shell = withShell();
+    const expanded = shell.setPetExpanded as unknown as ReturnType<typeof vi.fn>;
+    await mount();
+    const el = sprite();
+    fireEvent.pointerDown(el, { screenX: 500, screenY: 400, pointerId: 1 });
+    fireEvent.pointerUp(el, { pointerId: 1 });
+    fireEvent.click(el);
+    expect(expanded).toHaveBeenCalledTimes(1); // 只有"开"，没有按下时那次多余的"收"
+    expect(expanded).toHaveBeenCalledWith(true);
+  });
+
   it("旧壳没有 petDragEnd（新 dist 跑在旧安装包上）：照拖不误", async () => {
     const shell = withShell();
     delete shell.petDragEnd;

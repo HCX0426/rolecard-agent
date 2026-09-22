@@ -76,7 +76,10 @@ def test_execute_timeout_returns_readable_result(task_dir: Path) -> None:
     )
     assert res.exit_code is None
     assert "未结束" in res.output
-    assert res.duration_ms < 3_000  # 真杀了树；若等满 30s 就是 run() 的老 bug
+    # 上限要能区分"真杀了树"（这里量级是几百毫秒）与"等满 30s 的老 bug"，但**不能贴着**
+    # 几百毫秒卡：整条门禁并发跑 + 覆盖率插桩时，Windows 的进程树拆除实测到过 3212ms。
+    # 8s 仍然是 30s 的 1/4，牙齿没丢。
+    assert res.duration_ms < 8_000
 
 
 def test_execute_output_truncated(task_dir: Path) -> None:

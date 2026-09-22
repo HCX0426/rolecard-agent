@@ -205,13 +205,10 @@ export default function PetPage() {
 
   function dragStart(event: React.PointerEvent<HTMLDivElement>) {
     dragMovedRef.current = false;
-    // 拖的时候先收起面板。两个理由，第二个是用户报的那个 bug：
-    //  ① 拖的是宠物不是面板，摊着一块 380×520 的面板挡视野、还跟着晃；
-    //  ② 壳按**窗口当前形状**夹取，面板开着时色片中心最远只能到离屏幕边 190px，
-    //     而靠边隐藏判的是收起态那块矩形离边 ≤ 24px ⇒ 永远够不到，怎么拖都不吸。
-    if (expanded) expand(false); // 已经收起就别再发一次"收起"：那会让壳起一段没用的动画
     dragRef.current = { x: event.screenX, y: event.screenY };
     event.currentTarget.setPointerCapture?.(event.pointerId);
+    // 这里**不收面板**：按下不等于要拖。以前在这儿收一次，紧随其后的 click 又把面板开回来
+    // ⇒ 一次来回跳（用户报的"点击桌宠也摇晃"）。收起挪到 `dragMove` 里，只有真拖起来才收。
   }
 
   function dragMove(event: React.PointerEvent<HTMLDivElement>) {
@@ -221,6 +218,11 @@ export default function PetPage() {
     const dy = event.screenY - last.y;
     if (!dx && !dy) return;
     dragMovedRef.current = true;
+    // 拖的时候先收起面板。两个理由，第二个是用户报的那个 bug：
+    //  ① 拖的是宠物不是面板，摊着一块 380×520 的面板挡视野、还跟着晃；
+    //  ② 壳按**窗口当前形状**夹取，面板开着时色片中心最远只能到离屏幕边 190px，
+    //     而靠边隐藏判的是收起态那块矩形离边 ≤ 24px ⇒ 永远够不到，怎么拖都不吸。
+    if (expanded) expand(false);
     dragRef.current = { x: event.screenX, y: event.screenY };
     shellBridge()?.movePetBy(dx, dy);
   }
