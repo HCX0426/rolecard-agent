@@ -31,6 +31,9 @@ const RETUCK_MS = 900;
 /** 面板里摊开最近几条（再多就该去控制台翻了）。 */
 const PANEL_MESSAGES = 8;
 
+/** 读这条主动会话的最近几条。URL 只写一处：展开时与一轮跑完两条路径必须读同一个东西。 */
+const messagesPath = (tid: string) => `/api/session/${tid}/messages?limit=${PANEL_MESSAGES}`;
+
 /** role_id → 稳定色相。同一个角色的色片跨设备/跨主题都一样，认脸靠它。 */
 function hueOf(roleId: string): number {
   let hash = 0;
@@ -59,8 +62,6 @@ export default function PetPage() {
   const [expanded, setExpanded] = useState(false);
   const [history, setHistory] = useState<MessageRow[] | null>(null);
   const [historyError, setHistoryError] = useState("");
-  // 历史在"展开"和"刚跑完一轮"时各读一次（refresh 计数就是后者那个触发点）。
-  const [historyRefresh, setHistoryRefresh] = useState(0);
   const [roles, setRoles] = useState<RoleCard[]>([]);
   const [picked, setPicked] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -91,10 +92,31 @@ export default function PetPage() {
   const seenNewestRef = useRef<number | null>(null);
 
   // 流式那一轮：与对话页**同一份**归约（lib/stream）与同一个 hook，桌宠不写第二套。
-  const { busy, setBusy, live, onEvent, startBubble, stop, sendingRef } = useChatStream(
-    (meta: StreamMeta) => {
+  const { busy, setBusy, live, setLive, liveRef, onEvent, startBubble, stop, sendingRef } =
+    useChatStream((meta: StreamMeta) => {
       if (meta.errored) setStreamError(meta.errorDetail || "模型调用失败");
+    });
+  // `busy` 的"读时不重渲染"版本：回放到手那一刻要判断"这一轮还在流吗"（见 `handoff`），
+  // 而闭包里的 `busy` 是上一次渲染的值，正在流的这一轮会被误判成已结束。
+  const busyRef = useRef(false);
+
+  /**
+   * 回放到手 = 服务端已经是这一轮的唯一真相：把乐观那条与流式气泡一起交出去。
+   *
+   * 为什么必须在**这一处**做：回放里已经有她那句了，而气泡里还挂着同一句 —— 两个都画就是
+   * 用户报的"重影"（发一条，屏幕上回两条一模一样的）。对话页在流结束时做的是同一件事
+   * （`ChatPage` 里那句 `setLive(null)`），桌宠这边先前漏了，于是气泡一辈子不消失，
+   * 直到下一次发送才被 `startBubble` 覆盖。
+   */
+  const handoff = useCallback(
+    (messages: MessageRow[]) => {
+      setHistory(messages);
+      if (busyRef.current) return; // 还在流：气泡是唯一的实时反馈，不能被一次回放吃掉
+      setLive(null);
+      liveRef.current = null;
+      setPendingUser("");
     },
+    [setLive, liveRef],
   );
 
   const load = useCallback(async () => {
@@ -312,7 +334,7 @@ export default function PetPage() {
   }, []);
 
   // 历史只在**展开时**读：驻留件不该为了一个没被看到的面板每 10 秒打一次接口。
-  // `historyRefresh` 是"刚跑完一轮"的那个触发点 —— 流结束后以 checkpoint 为准重读一次。
+  // 一轮跑完的那次重读在 `send()` 里 inline 做（要等它到手才敢收气泡，见 `handoff`）。
   // 关掉「显示消息内容」时连读都不读：藏起来的东西不该只是不画，还留在页面里等着被看到。
   useEffect(() => {
     if (!expanded || !showContent) {
@@ -324,13 +346,13 @@ export default function PetPage() {
     let alive = true;
     setHistoryError("");
     api
-      .get<MessagePage>(`/api/session/${threadId}/messages?limit=${PANEL_MESSAGES}`)
-      .then((page) => alive && setHistory(page.messages))
+      .get<MessagePage>(messagesPath(threadId))
+      .then((page) => alive && handoff(page.messages))
       .catch((e: Error) => alive && setHistoryError(`历史没读到：${e.message}`));
     return () => {
       alive = false;
     };
-  }, [expanded, threadId, historyRefresh, showContent]);
+  }, [expanded, threadId, showContent, handoff]);
 
   // 角色表只在第一次展开时拉：面板顶上的切换要用它，而收起时没必要占一次请求。
   useEffect(() => {
@@ -350,6 +372,8 @@ export default function PetPage() {
    *  - **收起不打断**：鼠标移开只是把面板收起来，正在跑的这一轮继续到底（`streamChat` 的
    *    signal 只在点「停止」时才 abort）。驻留件不该因为手一抖就丢掉一个回答。
    *  - 发之前先标已读：你正在回它的话，"看见 = 读过"在这里成立。标失败不拦发送。
+   *  - **收尾必须等回放到手再收气泡**：见 `handoff`。先前这里直接把乐观那句清掉、把刷新
+   *    丢给一个计数器，于是回放里那句和气泡里那句并排画了两遍（"我发一条消息，他回两条"）。
    */
   async function send() {
     const text = draft.trim();
@@ -357,30 +381,41 @@ export default function PetPage() {
     sendingRef.current = true;
     setDraft("");
     setPendingUser(text);
+    setStreamError(""); // 上一轮的错误不能一直挂着：它会跟着回放一起被读成"这一轮又出事了"
+    let usedTid = threadId;
     try {
       void api.markRoleReachoutsRead(activeRole).catch(() => undefined);
-      let tid = threadId;
-      if (!tid) {
+      if (!usedTid) {
         const ensured = await api.post<{ thread_id: string }>("/api/session/proactive", {
           role_id: activeRole,
         });
-        tid = ensured.thread_id;
+        usedTid = ensured.thread_id;
       }
       setBusy(true);
+      busyRef.current = true;
       const controller = startBubble();
       try {
-        await streamChat(tid, text, onEvent, controller.signal);
+        await streamChat(usedTid, text, onEvent, controller.signal);
       } finally {
         setBusy(false);
+        busyRef.current = false;
       }
     } catch (e) {
       setStreamError((e as Error).message);
     } finally {
       sendingRef.current = false;
-      setPendingUser("");
-      // 服务端 checkpoint 是对话的唯一真相：一轮跑完刷一次，面板显示的就是库里真存下的东西。
+      // 服务端 checkpoint 是对话的唯一真相：一轮跑完重读一次，面板显示的就是库里真存下的东西。
       await load();
-      setHistoryRefresh((n) => n + 1);
+      if (!usedTid) {
+        setPendingUser(""); // 线程都没建起来（第一句就失败）：没有回放可等，乐观那条自己收掉
+        return;
+      }
+      try {
+        handoff((await api.get<MessagePage>(messagesPath(usedTid))).messages);
+      } catch (e) {
+        // 读不到回放就**留着**气泡与乐观那条：宁可屏幕上重一遍，也不能让用户以为"我说的话没了"。
+        setHistoryError(`历史没读到：${(e as Error).message}`);
+      }
     }
   }
 

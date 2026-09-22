@@ -557,6 +557,67 @@ describe("PetPage 在桌宠上回话（③：不进控制台就能聊）", () =>
       for (let i = 0; i < 6; i += 1) await Promise.resolve();
     });
   });
+
+  it("一轮跑完只留一份：回放到手就把流式气泡交出去（先前是同一条回答画两遍）", async () => {
+    // 回放里带上这一轮那两条 —— 这正是流结束那一刻 checkpoint 的真实形状。
+    apiMock.get.mockImplementation(async (url: string) =>
+      url === "/api/roles"
+        ? [{ role_id: "wan", role_name: "苏晚晴", model_name: "" }]
+        : {
+            messages: [
+              { role: "user", content: "我穿好了", id: "u1" },
+              { role: "assistant", content: "好呀", id: "a1" },
+            ],
+            total: 2,
+            limit: 8,
+            truncated: false,
+          },
+    );
+    await expandPanel();
+    const box = screen.getByPlaceholderText(/跟苏晚晴说一句/) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "我穿好了" } });
+    fireEvent.keyDown(box, { key: "Enter", shiftKey: false, isComposing: false });
+    await act(async () => {
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    });
+    // 「重影」就是这两行数不相等：气泡里挂着的与回放里新到的各画一遍。
+    expect(screen.getAllByText("好呀")).toHaveLength(1);
+    expect(screen.getAllByText("我穿好了")).toHaveLength(1);
+  });
+
+  it("还在流的时候重读历史，不许把正在长的那句收掉", async () => {
+    let finish: (() => void) | null = null;
+    streamChatMock.mockImplementation(
+      (_tid: string, _msg: string, onEvent: (e: unknown) => void) =>
+        new Promise<void>((resolve) => {
+          onEvent({ type: "token", text: "正在想…" });
+          finish = resolve;
+        }),
+    );
+    await expandPanel();
+    const box = screen.getByPlaceholderText(/跟苏晚晴说一句/) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "喂" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await act(async () => {
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+
+    // 收起再展开：会再打一次历史重读，而这一轮还没落进回放里（mock 给的是空历史）。
+    fireEvent.click(screen.getByRole("button", { name: "收起面板" }));
+    await act(async () => {
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+    fireEvent.click(sprite());
+    await act(async () => {
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(screen.getByText("正在想…")).toBeTruthy(); // 实时那句还在，没被一次空回放吃掉
+
+    await act(async () => {
+      finish?.();
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+  });
 });
 
 describe("PetPage 托盘的「显示消息内容」旗子（§7.2 第 4 条：别人站在背后读不到）", () => {
