@@ -11,7 +11,13 @@
 import { BrowserWindow, screen } from "electron";
 import path from "node:path";
 
-import { initialBounds, loadPetPrefs, trackBounds, type PetPrefs } from "./state";
+import {
+  initialBounds,
+  loadPetPrefs,
+  trackBounds,
+  type DockEdge,
+  type PetPrefs,
+} from "./state";
 
 export const PET_WIDTH = 200;
 export const PET_HEIGHT = 240;
@@ -19,6 +25,20 @@ export const PET_HEIGHT = 240;
 /** 悬停展开后的面板尺寸（设计稿 §7.2）。宽度够读一句话，高度够放最近几条 + 输入框。 */
 export const PET_PANEL_WIDTH = 380;
 export const PET_PANEL_HEIGHT = 520;
+
+// ---- 靠边隐藏（趴边）的几何，设计稿 §7.6 -------------------------------------------------
+// 露出的目标必须是**色片的像素**，不是窗口的像素：色片 88 见方、水平居中在 200 宽的窗里，
+// 两侧各 56px 是透明的 —— 推 40px 藏的全是透明边，色片一格没少，看上去根本没吸进去
+// （提案那版就是这么算错的）。而透明区不吃 hover，露出的那条窄边要全是色片本体才点得着。
+const SPRITE_PX = 88;
+const SPRITE_BOTTOM_GAP = 4; // 根节点的 `pb-1`
+const SIDE_PAD = (PET_WIDTH - SPRITE_PX) / 2;
+/** 藏起来之后仍露在屏外的色片宽度。 */
+export const PET_PEEK_PX = 48;
+/** 拖完那一刻离边多近才算"往边上放"（再远就是"放在桌面上"，不该吸）。 */
+const SNAP_PX = 24;
+const SIDE_TUCK = SIDE_PAD + (SPRITE_PX - PET_PEEK_PX); // 56 + 40 = 96
+const BOTTOM_TUCK = SPRITE_PX + SPRITE_BOTTOM_GAP - PET_PEEK_PX; // 88 + 4 - 48 = 44
 
 export interface Rect {
   x: number;
@@ -64,29 +84,165 @@ const LANDING = path.join(__dirname, "..", "..", "web", "index.html");
 /** 桌宠现在是不是摊开的。只有 `setPetExpanded` 会改它，所以它就是"展开态"的那一份真相。 */
 let petIsExpanded = false;
 
+/** 吸在哪条边、此刻藏着还是露着。null = 没吸边。 */
+let petDock: { edge: DockEdge; tucked: boolean } | null = null;
+
+/** 拖完时面板还摊着 ⇒ 先记账，等收起那一刻再吸（见 `petDragEnded`）。 */
+let petDockPending = false;
+
+/** 「靠边隐藏」总开关的当前值。`applyPetPrefs` 每次落偏好时顺手带进来。 */
+let dockEnabled = true;
+
+/** 吸边状态变了就通知一次（落库与日志都在 index.ts 那一侧，这里只管窗）。 */
+let onDockChanged: ((edge: DockEdge | null) => void) | null = null;
+
+export function onPetDockChanged(cb: (edge: DockEdge | null) => void): void {
+  onDockChanged = cb;
+}
+
+function workRect(): Rect {
+  const { workArea } = screen.getPrimaryDisplay();
+  return workArea;
+}
+
+function clamp(n: number, low: number, high: number): number {
+  return Math.min(Math.max(n, low), high);
+}
+
+/** 贴边但**一格都没藏**的那块矩形（另两条轴仍夹在工作区里）。 */
+function flushRect(edge: DockEdge, rect: Rect, work: Rect): Rect {
+  const size = petSize();
+  const x = clamp(rect.x, work.x, work.x + Math.max(0, work.width - size.width));
+  const y = clamp(rect.y, work.y, work.y + Math.max(0, work.height - size.height));
+  if (edge === "left") return { ...size, x: work.x, y };
+  if (edge === "right") return { ...size, x: work.x + work.width - size.width, y };
+  return { ...size, x, y: work.y + work.height - size.height };
+}
+
+/** 藏起来之后的矩形：沿吸的那条轴推出去，露出 `PET_PEEK_PX` 的色片。 */
+function tuckedRect(edge: DockEdge, rect: Rect, work: Rect): Rect {
+  const flush = flushRect(edge, rect, work);
+  if (edge === "left") return { ...flush, x: flush.x - SIDE_TUCK };
+  if (edge === "right") return { ...flush, x: flush.x + SIDE_TUCK };
+  return { ...flush, y: flush.y + BOTTOM_TUCK };
+}
+
+/**
+ * 拖完那一刻判：该吸哪条边。
+ *
+ * 贴角上时**左右优先于下**：侧着趴是这类桌宠最常见的那个姿势，而且下边推出去会压到任务栏
+ * 那条带（`workArea` 不含任务栏），风险留给它自己那条（§7.6 要求本机实测为准）。
+ */
+export function petDockEdgeFor(rect: Rect, work: Rect): DockEdge | null {
+  const size = petSize();
+  const right = rect.x + size.width;
+  const bottom = rect.y + size.height;
+  if (rect.x - work.x <= SNAP_PX) return "left";
+  if (work.x + work.width - right <= SNAP_PX) return "right";
+  if (work.y + work.height - bottom <= SNAP_PX) return "bottom";
+  return null;
+}
+
+/** 藏着的话滑回贴边。展开面板前、拖之前、关掉「靠边隐藏」时都要先走这一步。 */
+export function petUntuck(win: BrowserWindow): void {
+  if (!petDock || !petDock.tucked) return;
+  petDock = { ...petDock, tucked: false };
+  win.setBounds(flushRect(petDock.edge, win.getBounds(), workRect()));
+}
+
+/**
+ * 判边 → 藏起来 → 把边报出去。
+ *
+ * 没到任何一条边（或总开关关着）就**什么都不挪**（它就在用户放手的地方），只把吸边状态清掉
+ * —— 清掉这一步不能省：`collapsedPetRect` 会照吸边状态把落库矩形换算成贴边位，留着旧状态
+ * 就等于用户把它拖到桌面中间，下次存盘却被拽回边上。
+ */
+function settlePetDock(win: BrowserWindow): DockEdge | null {
+  const edge = dockEnabled ? petDockEdgeFor(petBoundsFor(win.getBounds(), false), workRect()) : null;
+  if (!edge) {
+    if (petDock) onDockChanged?.(null);
+    petDock = null;
+    return null;
+  }
+  petDock = { edge, tucked: true };
+  win.setBounds(tuckedRect(edge, win.getBounds(), workRect()));
+  onDockChanged?.(edge);
+  return edge;
+}
+
+/**
+ * 松手那一刻（§7.6）。
+ *
+ * **面板还摊着时不吸，只记账**：拖拽必然带着悬停（鼠标在色片上才拖得动），那时候窗口是
+ * 380×520 的展开形状 —— 拿它判边、再按它算贴边位，等于把"藏一半"作用在面板上：面板会被
+ * 推出屏幕，而你正在读它。所以吸边发生在**面板收起的那一瞬间**（`setPetExpanded(false)`）。
+ */
+export function petDragEnded(win: BrowserWindow): void {
+  if (!dockEnabled) {
+    petDockPending = false;
+    settlePetDock(win);
+    return;
+  }
+  if (petIsExpanded) {
+    petDockPending = true;
+    return;
+  }
+  settlePetDock(win);
+}
+
+/** 开机恢复：偏好里记着吸哪条边且开关没关，就按**当前**工作区重算贴边位再藏进去。 */
+export function restorePetDock(win: BrowserWindow, prefs: PetPrefs): void {
+  if (!prefs.dockEnabled || !prefs.docked) return;
+  petDock = { edge: prefs.docked, tucked: false };
+  win.setBounds(flushRect(prefs.docked, win.getBounds(), workRect())); // 先落到屏内的贴边位
+  petDock = { edge: prefs.docked, tucked: true };
+  win.setBounds(tuckedRect(prefs.docked, win.getBounds(), workRect()));
+}
+
+/** 关掉「靠边隐藏」：露出来并忘掉吸边（开关关掉之后还藏着，就是"关了却还有影响"）。 */
+export function releasePetDock(win: BrowserWindow): void {
+  petDockPending = false;
+  petUntuck(win);
+  if (petDock) onDockChanged?.(null);
+  petDock = null;
+}
+
 /**
  * 悬停展开 / 收起桌宠窗。页面只说"要不要展开"，**几何全在壳里** —— 只有主进程知道工作区
  * 在哪、色片锚在哪个角，让页面报坐标等于把"窗口能摆到哪"交给一个后端托管的源。
  */
 export function setPetExpanded(win: BrowserWindow, expanded: boolean): void {
+  // 面板要 380 宽，藏着一半没法看 ⇒ 展开前先滑回贴边。**收起时不再自动藏回去**
+  // （用户 2026-09-22 拍的：只在拖到边上那一刻吸，之后不再自动收）。
+  if (expanded) {
+    petUntuck(win);
+    petDockPending = false; // 又在看它了 ⇒ 那次"等收起再吸"作废，以最后一次放手为准
+  }
   petIsExpanded = expanded;
   win.setBounds(petBoundsFor(win.getBounds(), expanded));
+  if (!expanded && petDockPending) {
+    petDockPending = false;
+    settlePetDock(win); // 拖到边上之后是在"面板收起那一瞬"吸进去的（见 `petDragEnded`）
+  }
 }
 
 /**
- * 存盘时该存哪块矩形：**收起态那一块**（否则下次开机是一张 380×520 的透明大窗贴在桌面上）。
+ * 存盘时该存哪块矩形：**收起态、且一格不藏**那一块。
  *
- * 两条各自会自己走路的漂移，都在这一个函数里按掉：
+ * 三条各自会自己走路的问题，都在这一个函数里按掉：
  *  - **尺寸**：`setBounds(200×240)` 之后 `getBounds()` 报回来的是 202×244（DWM 给无边框
  *    透明窗留的那圈不可见边），照它存就每次开机把窗口撑大 4px（实测 243→244→248）。
  *    所以尺寸**永远存常量**：请求什么存什么，往返幂等。
  *  - **横向**：展开态时按"下沿与中心不动"反推收起矩形，而中心是按常量 200 算的、真实宽度
  *    是 202 ⇒ 每存一次盘 x 被推出去 1.5px（实测九次重启从 1345 漂到 1363）。所以只有
  *    **真的摊开着**才反推，收起着就用自己的左上角。
+ *  - **藏起来的时候**：屏外坐标一旦落库，拔掉副屏 / 改分辨率之后就是一扇找不回来的窗。
+ *    所以存的是贴边那块，"藏"这个意图另存在偏好里（`docked`），每次开机按当前工作区重算。
  */
 export function collapsedPetRect(rect: Rect): Rect {
   const origin = petIsExpanded ? petBoundsFor(rect, false) : rect;
-  return { ...origin, width: PET_WIDTH, height: PET_HEIGHT };
+  const pinned = { ...origin, width: PET_WIDTH, height: PET_HEIGHT };
+  return petDock ? flushRect(petDock.edge, pinned, workRect()) : pinned;
 }
 
 /**
@@ -110,6 +266,7 @@ function petSize(): { width: number; height: number } {
  * 能碰桌面的参数越少越好，绝对坐标就是一种"你把窗放哪"的权力。
  */
 export function movePetBy(win: BrowserWindow, dx: number, dy: number): void {
+  petUntuck(win); // 拖着藏着的那一小条走 = 一动手就先把它拉回屏内，之后的位移才看得见
   const current = win.getBounds();
   const size = petSize();
   const { workArea } = screen.getPrimaryDisplay();
@@ -138,6 +295,7 @@ export function movePetBy(win: BrowserWindow, dx: number, dy: number): void {
  * `setOpacity` 与 `transparent` 是乘算关系：我们那 200×240 里透明的那部分本来就是 0，
  * 再乘一个系数仍然是 0 ⇒ 淡出只淡内容，不会把透明区变成一块灰纸。 */
 export function applyPetPrefs(win: BrowserWindow, prefs: PetPrefs): void {
+  dockEnabled = prefs.dockEnabled; // 吸边判据要在"没有偏好可查"的时刻也知道开关状态
   win.setAlwaysOnTop(prefs.alwaysOnTop, "screen-saver");
   win.setOpacity(prefs.opacity);
 }
@@ -222,6 +380,7 @@ export function createPetWindow(prefs: PetPrefs = loadPetPrefs()): BrowserWindow
   win.once("ready-to-show", () => {
     win.showInactive();
     applyPetPrefs(win, prefs);
+    restorePetDock(win, prefs);
   });
   void win.loadFile(LANDING, { query: { pet: "1" } });
   return win;

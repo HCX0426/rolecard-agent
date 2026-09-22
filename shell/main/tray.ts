@@ -72,7 +72,7 @@ export function createTray(controls: TrayControls): TrayHandle {
           ? []
           : [
               new MenuItem({
-                label: "（桌宠收起中：下面三项下次放出时生效）",
+                label: "（桌宠收起中：下面四项下次放出时生效）",
                 enabled: false,
               }),
             ]),
@@ -97,6 +97,11 @@ export function createTray(controls: TrayControls): TrayHandle {
         }),
         check("显示消息内容", prefs.showContent, (next) => {
           controls.setPetPrefs({ showContent: next });
+          render();
+        }),
+        check("靠边隐藏", prefs.dockEnabled, (next) => {
+          // 关掉时 `updatePetPrefs` 会当场把它从边上滑回来（关了却还藏着 = 开关只管下一次）。
+          controls.setPetPrefs({ dockEnabled: next });
           render();
         }),
         // 不给一个"看得见但永远无效"的条目：开发态整条不出现。

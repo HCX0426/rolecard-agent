@@ -20,6 +20,14 @@ type Saved = Record<string, Rectangle>;
  * 为什么单独一个文件而不是塞进 `window-state.json`：那份的形状是"label → 矩形"，被
  * `initialBounds` 直接按 label 取；混进一个非矩形键就要在每个读取点加类型判断，而这两样
  * 东西的演化方向根本不同（位置每拖一次写一次，偏好只在托盘点一下写）。 */
+/** 靠边隐藏吸的那几条边。上边故意不做：Windows 顶部有贴边手势与最大化热区。 */
+export type DockEdge = "left" | "right" | "bottom";
+
+/** 桌宠偏好的**唯一形状**（托盘是它唯一的写入口，渲染端只能读其中一样）。
+ *
+ * 为什么单独一个文件而不是塞进 `window-state.json`：那份的形状是"label → 矩形"，被
+ * `initialBounds` 直接按 label 取；混进非矩形键就要在每个读取点加类型判断，而这两样
+ * 东西的演化方向根本不同（位置每拖一次写一次，偏好只在托盘点一下写）。 */
 export type PetPrefs = {
   /** 自动置顶：关掉之后宠物会被别的窗口盖住 —— 有人就这么要求。 */
   alwaysOnTop: boolean;
@@ -27,12 +35,18 @@ export type PetPrefs = {
   opacity: number;
   /** 显示消息内容：关掉后桌宠只给"有 N 条"和输入框，别人站在背后读不到你们聊了什么。 */
   showContent: boolean;
+  /** 托盘「靠边隐藏」总开关（默认开：只有"拖到边上"这一个动作会触发它，它不自己动）。 */
+  dockEnabled: boolean;
+  /** 上次吸在哪条边；null = 没吸。**存的是意图**，藏多深每次按当前工作区重算。 */
+  docked: DockEdge | null;
 };
 
 export const PET_PREF_DEFAULTS: PetPrefs = {
   alwaysOnTop: true,
   opacity: 1,
   showContent: true,
+  dockEnabled: true,
+  docked: null,
 };
 
 function jsonFile(name: string): string {
@@ -127,13 +141,17 @@ export function loadPetPrefs(): PetPrefs {
     return { ...PET_PREF_DEFAULTS };
   }
   const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-  const flag = (key: "alwaysOnTop" | "showContent") =>
+  const flag = (key: "alwaysOnTop" | "showContent" | "dockEnabled") =>
     typeof o[key] === "boolean" ? o[key] : PET_PREF_DEFAULTS[key];
   const opacity = typeof o.opacity === "number" && Number.isFinite(o.opacity) ? o.opacity : 1;
+  const docked = o.docked;
   return {
     alwaysOnTop: flag("alwaysOnTop"),
     showContent: flag("showContent"),
+    dockEnabled: flag("dockEnabled"),
     opacity: Math.min(1, Math.max(0.2, opacity)),
+    // 认不出的边（手改过文件、或上一版还不叫这个名字）一律当"没吸"，不猜。
+    docked: docked === "left" || docked === "right" || docked === "bottom" ? docked : null,
   };
 }
 

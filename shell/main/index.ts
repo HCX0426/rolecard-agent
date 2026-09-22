@@ -18,7 +18,16 @@ import path from "node:path";
 import { Backend, consoleUrl, endpoint, serving, type BackendOptions, type Outcome } from "./backend";
 import { canManageLoginItem, loginItemEnabled, setLoginItemEnabled, startedByLoginItem } from "./autostart";
 import { Ollama } from "./ollama";
-import { createMainWindow, createPetWindow, applyPetPrefs, movePetBy, setPetExpanded } from "./windows";
+import {
+  applyPetPrefs,
+  createMainWindow,
+  createPetWindow,
+  movePetBy,
+  onPetDockChanged,
+  petDragEnded,
+  releasePetDock,
+  setPetExpanded,
+} from "./windows";
 import { createTray, type TrayHandle } from "./tray";
 import { loadPetPrefs, savePetPrefs, type PetPrefs } from "./state";
 
@@ -65,13 +74,14 @@ let petWin: BrowserWindow | null = null;
 let tray: TrayHandle | null = null;
 let quitting = false;
 
-/** 桌宠三项偏好的**唯一真相**（自动置顶 / 透明度 / 显示消息内容，设计稿 §7.2 第 4 条）。
- *  托盘是它唯一的写入口；渲染端只能读，不能写 —— 页面能改"内容画不画"就等于让后端托管的
- *  那个源自己决定隐私开关，而开关的意义恰恰在于它握在用户手里。 */
+/** 桌宠偏好的**唯一真相**（自动置顶 / 透明度 / 显示消息内容 / 靠边隐藏，设计稿 §7.2 第 4 条
+ *  与 §7.6）。托盘是它唯一的写入口；渲染端只能读，不能写 —— 页面能改"内容画不画"就等于让
+ *  后端托管的那个源自己决定隐私开关，而开关的意义恰恰在于它握在用户手里。 */
 let petPrefs: PetPrefs = loadPetPrefs();
 
 const prefsText = (): string =>
-  `置顶=${petPrefs.alwaysOnTop}｜不透明度=${petPrefs.opacity}｜显示内容=${petPrefs.showContent}`;
+  `置顶=${petPrefs.alwaysOnTop}｜不透明度=${petPrefs.opacity}｜显示内容=${petPrefs.showContent}` +
+  `｜靠边隐藏=${petPrefs.dockEnabled}${petPrefs.docked ? `(${petPrefs.docked})` : ""}`;
 
 /** 把"窗表现在到底是什么样"记一行。**为什么值得记**：实测构造参数 `alwaysOnTop: true`
  *  和 `setAlwaysOnTop(true)`（默认 floating 档）都没能让窗真的带上 `WS_EX_TOPMOST`
@@ -83,6 +93,11 @@ function logPetWindow(win: BrowserWindow): void {
 
 function updatePetPrefs(patch: Partial<PetPrefs>): void {
   petPrefs = { ...petPrefs, ...patch };
+  // 关掉「靠边隐藏」时当场滑回贴边：关了却还藏着，等于这个开关只管下一次、不管这一次。
+  if (patch.dockEnabled === false) {
+    petPrefs = { ...petPrefs, docked: null };
+    if (petWin) releasePetDock(petWin);
+  }
   savePetPrefs(petPrefs);
   logLine(`桌宠偏好：${prefsText()}`);
   if (!petWin) return; // 桌宠收起时改的是"下次放出时用哪份偏好"，这里没什么可应用的
@@ -226,6 +241,11 @@ function boot(): void {
     if (typeof dx !== "number" || typeof dy !== "number" || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
     movePetBy(petWin, dx, dy);
   });
+  // 松手那一刻交给壳判边（§7.6）。**零参数**：吸哪条边、藏多深由壳按当前工作区量，而面板
+  // 还摊着时它只记账 —— 真吸发生在面板收起那一瞬（见 windows.ts 的 `petDragEnded`）。
+  ipcMain.on("shell:pet-drag-end", () => {
+    if (petWin) petDragEnded(petWin);
+  });
   // 桌宠页问"内容该不该画出来"（托盘「显示消息内容」）。**只有读**：写的那一侧只在托盘，
   // 页面能改它就不是隐私开关了，是后端托管的那个源自己把自己藏起来的手势。
   ipcMain.handle("shell:pet-content-visible", () => petPrefs.showContent);
@@ -254,6 +274,14 @@ function boot(): void {
   });
 
   void backend.ensure().then(report);
+
+  // 吸边状态一变就落库 + 记一行：判边在主进程（windows.ts），落库在这，两边各管一件事。
+  onPetDockChanged((edge) => {
+    if (edge === petPrefs.docked) return;
+    petPrefs = { ...petPrefs, docked: edge };
+    savePetPrefs(petPrefs);
+    logLine(`桌宠吸边：${edge ?? "取消"}｜靠边隐藏=${petPrefs.dockEnabled}`);
+  });
 
   // 开机自启带起来的那次启动：只放桌宠，不弹一扇控制台盖住用户刚打开的工作。
   mainWin = createMainWindow({ visible: !startedByLoginItem() });

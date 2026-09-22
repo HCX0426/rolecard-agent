@@ -63,6 +63,7 @@ function withShell(contentVisible = true): ShellBridge & {
     openSession: vi.fn(),
     setPetExpanded: vi.fn().mockResolvedValue(true),
     movePetBy: vi.fn(),
+    petDragEnd: vi.fn(),
     petContentVisible: vi.fn().mockResolvedValue(contentVisible),
     onPetContentVisible: vi.fn(),
     onRequestOpenThread: vi.fn(),
@@ -344,9 +345,13 @@ describe("PetPage 拖桌宠（手动拖，因为 CSS 拖拽区会吞掉悬停事
     expect(shell.movePetBy).toHaveBeenLastCalledWith(0, -15); // 第二次是相对上一点，不是相对起点
 
     fireEvent.pointerUp(el, { pointerId: 1 });
+    const ended = shell.petDragEnd as ReturnType<typeof vi.fn>;
+    expect(ended).toHaveBeenCalledTimes(1); // 松手那一刻才让壳判吸边（§7.6）
     shell.movePetBy.mockClear();
+    ended.mockClear();
     fireEvent.pointerMove(el, { screenX: 900, screenY: 900, pointerId: 1 });
     expect(shell.movePetBy).not.toHaveBeenCalled(); // 抬起之后不再拖
+    expect(ended).not.toHaveBeenCalled(); // 也不再重复报"放手了"
   });
 
   it("浏览器里没有壳：拖不动也不报错（这一页在 B/S 下只是调试入口）", async () => {
@@ -354,7 +359,19 @@ describe("PetPage 拖桌宠（手动拖，因为 CSS 拖拽区会吞掉悬停事
     const el = sprite();
     fireEvent.pointerDown(el, { screenX: 10, screenY: 10, pointerId: 1 });
     fireEvent.pointerMove(el, { screenX: 40, screenY: 10, pointerId: 1 });
+    fireEvent.pointerUp(el, { pointerId: 1 }); // 放手也不去找那个不存在的 petDragEnd
     expect(screen.getByTitle(/^苏晚晴/)).toBeTruthy();
+  });
+
+  it("旧壳没有 petDragEnd（新 dist 跑在旧安装包上）：照拖不误", async () => {
+    const shell = withShell();
+    delete shell.petDragEnd;
+    await mount();
+    const el = sprite();
+    fireEvent.pointerDown(el, { screenX: 10, screenY: 10, pointerId: 1 });
+    fireEvent.pointerMove(el, { screenX: 40, screenY: 10, pointerId: 1 });
+    expect(shell.movePetBy).toHaveBeenCalledWith(30, 0);
+    expect(() => fireEvent.pointerUp(el, { pointerId: 1 })).not.toThrow();
   });
 });
 

@@ -51,6 +51,10 @@ contextBridge.exposeInMainWorld("rolecardShell", {
   movePetBy: (dx: number, dy: number): void => {
     ipcRenderer.send("shell:pet-drag", [dx, dy]);
   },
+  /** 松手了：壳在这一刻才判要不要吸到边上（§7.6）。**零参数** —— 哪条边、藏多深都由壳量。 */
+  petDragEnd: (): void => {
+    ipcRenderer.send("shell:pet-drag-end");
+  },
   /** 桌宠的「显示消息内容」旗子（托盘是它唯一的写入口）。**只有读**：给页面一条写回的路，
    *  等于让后端托管的那个源自己决定要不要藏起内容，那就不叫隐私开关了。 */
   petContentVisible: (): Promise<boolean> => ipcRenderer.invoke("shell:pet-content-visible"),

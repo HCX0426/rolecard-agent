@@ -203,6 +203,9 @@ export default function PetPage() {
 
   function dragEnd() {
     dragRef.current = null;
+    // 松手才让壳判"要不要吸到边上"（§7.6）。零参数：吸哪条边由壳按当前工作区量，
+    // 而移动过程中判会抖（一路拖过去会"吸上→拉开→吸上"）。旧壳没这个方法就是不吸，无害。
+    shellBridge()?.petDragEnd?.();
   }
 
   // 卸载时把待收起的定时器收掉：留着它会在组件没了之后去调桥。

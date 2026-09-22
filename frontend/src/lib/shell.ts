@@ -31,6 +31,9 @@ export interface ShellBridge {
   setPetExpanded(expanded: boolean): Promise<boolean>;
   /** 拖动桌宠：只报**增量**。绝对坐标等于让页面决定"窗口摆在哪"，那条权力留在壳里。 */
   movePetBy(dx: number, dy: number): void;
+  /** 松手那一刻让壳判要不要吸到边上（§7.6）。**零参数、只报"放手了"**：哪条边、藏多深
+   *  由壳按当前工作区量。可选 —— 旧壳没这个方法就是不吸，不该因此报错。 */
+  petDragEnd?(): void;
   /** 托盘「显示消息内容」那面旗子。**页面只能读**：写它的是用户手里的托盘，不是界面自己。
    *
    * 标成可选是因为一条真实的错身：`dist` 由后端随时更新，而安装包是偶尔才重打一次的 ——
