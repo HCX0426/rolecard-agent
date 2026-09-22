@@ -149,7 +149,8 @@ class Runtime:
     #: 主动开口调度器只在实际跑后台循环时存在（`start_background` 里建）。
     reachout: ReachoutScheduler | None = field(default=None, repr=False)
     rebuild_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
-    role_models: dict[tuple[str | None, float | None], ChatLike] = field(
+    #: 缓存键 (后端名, 温度, 是否要思考)：三者都是**构造期**参数，同后端不同参数是不同实例。
+    role_models: dict[tuple[str | None, float | None, bool | None], ChatLike] = field(
         default_factory=dict, repr=False
     )
 
@@ -185,25 +186,29 @@ class Runtime:
     # -- 模型解析与图 --------------------------------------------------------
 
     def resolve_role_model(
-        self, backend_name: str | None, temperature: float | None = None
+        self,
+        backend_name: str | None,
+        temperature: float | None = None,
+        reasoning: bool | None = None,
     ) -> ChatLike:
         """US-8：角色声明了后端名 → 按名解析；未声明 → 默认模型。
 
         `temperature` 参与缓存键：同一后端在不同温度下是**不同的模型实例**
-        （采样参数只能在构造期设置，见 `core.graph._init_model`）。
+        （采样参数只能在构造期设置，见 `core.graph._init_model`）。`reasoning` 同理
+        （主动开口那条单轮调用要的是"不思考"的实例，见 `_init_model` 的说明）。
         未知后端名（设置页删掉了一个仍被角色引用的后端）→ 降级到默认并留痕，而不是
         让整轮对话 500：权限 fail-closed，可用性 fail-soft。
         """
         if self.injected_model is not None:
             return self.injected_model
-        if not backend_name and temperature is None:
+        if not backend_name and temperature is None and reasoning is None:
             return self.state["default_model"]
-        cache_key = (backend_name, temperature)
+        cache_key = (backend_name, temperature, reasoning)
         cached = self.role_models.get(cache_key)
         if cached is not None:
             return cached
         try:
-            built = self.model_factory(self.effective, backend_name, temperature)
+            built = self.model_factory(self.effective, backend_name, temperature, reasoning)
         except KeyError:
             self.tracer.emit(
                 TraceEvent(event="role_backend_missing", detail={"backend": backend_name})
@@ -279,7 +284,10 @@ class Runtime:
             self.reachout = ReachoutScheduler(
                 settings_provider=lambda: self.effective,
                 roles=self.roles,
-                model_resolver=self.resolve_role_model,
+                # 主动开口是**单轮内部生成**：实测为一句 30 字的问候想了 5919 token、花 221 秒，
+                # 还会把本地窗口撑到正文为空（2026-09-22 真机）。所以这一路要"不思考"的实例；
+                # 对话侧照旧用默认那个（可思考）—— 缓存键含 reasoning，两者不互相顶掉。
+                model_resolver=lambda name: self.resolve_role_model(name, reasoning=False),
                 conn=self.conn,
                 tracer=self.tracer,
                 deliver=self.deliver_proactive,

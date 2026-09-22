@@ -157,7 +157,10 @@ def _thinking_model_list(raw: object) -> list[str]:
 
 
 def _init_model(
-    settings: Settings, backend_name: str | None, temperature: float | None = None
+    settings: Settings,
+    backend_name: str | None,
+    temperature: float | None = None,
+    reasoning: bool | None = None,
 ) -> ChatLike:
     """Instantiate one backend. Imported lazily so the kernel imports without a provider.
 
@@ -165,6 +168,12 @@ def _init_model(
     ——不仅卡住请求，还会让 `with_fallbacks` 形同虚设（主模型既不返回也不失败，回退永远
     触发不了）。供应商目录化后 model_provider 只会是 "ollama"/"openai" 两类客户端，
     两者都接受 `timeout`，因此配置了就直接传。
+
+    `reasoning=False` 是**调用方按用途要求关掉思考**（主动开口那种单轮内部生成用得上：
+    实测 qwen3-vl 为一句 30 字的问候会想 5919 token / 221 秒，把 8192 的窗口撑到
+    `done_reason=length` 而正文一个字不留）。它绕开 `MODEL_THINKING_MODELS` 名单 ——
+    名单管的是"这个模型值不值得给它开思考"，这里问的是"这一次调用要不要付思考的代价"。
+    与 num_ctx 同理：只对 native（Ollama）客户端有意义，云端不传。
     """
     from langchain.chat_models import init_chat_model
 
@@ -191,7 +200,9 @@ def _init_model(
     # 运行时可能是逗号串，直接 `x in str` 会退化成子串匹配（"qwen3" 命中 "qwen3-vl:8b"）。
     # 归一交给 _thinking_model_list（入参 object，绕开 mypy 对 isinstance(str) 的"不可达"误判）。
     thinking_models = _thinking_model_list(settings.model_thinking_models)
-    if (
+    if reasoning is False and style == "native":
+        kwargs["reasoning"] = False
+    elif (
         style == "native"
         and settings.model_thinking != "off"
         and backend.model in thinking_models
@@ -217,7 +228,10 @@ def _init_model(
 
 
 def build_model(
-    settings: Settings, backend_name: str | None = None, temperature: float | None = None
+    settings: Settings,
+    backend_name: str | None = None,
+    temperature: float | None = None,
+    reasoning: bool | None = None,
 ) -> ChatLike:
     """Construct the chat model for a backend by name, wired to its fallback chain.
 
@@ -236,13 +250,14 @@ def build_model(
     which names end up in the chain and in what order - lives in `Settings.resolve_fallbacks`
     and is covered there.
     """
-    primary = _init_model(settings, backend_name, temperature)
+    primary = _init_model(settings, backend_name, temperature, reasoning)
     chain = settings.resolve_fallbacks(backend_name)
     if not chain:
         return primary
     # 回退链用同一个温度：角色卡的采样参数描述的是"这个角色怎么说话"，
-    # 与哪台后端接住无关（审查报告 P1-2）。
-    fallbacks = [_init_model(settings, name, temperature) for name in chain]
+    # 与哪台后端接住无关（审查报告 P1-2）。同理沿用 reasoning 诉求 —— 降级到云端也不该
+    # 突然开始为一句问候写千字思考。
+    fallbacks = [_init_model(settings, name, temperature, reasoning) for name in chain]
     # `with_fallbacks` 是 Runnable 的方法，不在 `ChatLike` 这个**最小内核协议**里
     # （故意如此：测试用的假模型不该被迫实现它）。这里明确知道返回的是个可调用模型。
     return cast("ChatLike", primary.with_fallbacks(fallbacks))  # type: ignore[attr-defined]
