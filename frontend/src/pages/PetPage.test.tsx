@@ -64,6 +64,8 @@ function withShell(contentVisible = true): ShellBridge & {
     setPetExpanded: vi.fn().mockResolvedValue(true),
     movePetBy: vi.fn(),
     petDragEnd: vi.fn(),
+    petReveal: vi.fn(),
+    petRetuck: vi.fn(),
     petContentVisible: vi.fn().mockResolvedValue(contentVisible),
     onPetContentVisible: vi.fn(),
     onRequestOpenThread: vi.fn(),
@@ -217,22 +219,27 @@ describe("PetPage 桌宠", () => {
   });
 });
 
-describe("PetPage 悬停展开（§7：想回话不用开控制台）", () => {
-  /** 色片（悬停的目标）。根节点是拖拽区，检测挂在色片与面板上 —— 见 PetPage 的注释。 */
+describe("PetPage 点开面板（§7：想回话不用开控制台）", () => {
+  /** 色片：点击开合面板的目标。 */
   function sprite(): Element {
-    return screen.getByTitle(/悬停看你们最近聊了什么/);
+    return screen.getByTitle(/点开看你们最近聊了什么/);
   }
 
-  /** 悬停 → 展开 → 把历史请求的 Promise 跑完。 */
-  async function hover(shell: ShellBridge) {
-    fireEvent.mouseEnter(sprite());
+  /** enter/leave 现在挂在根节点上（色片的父级）—— 悬停只负责"把趴着的拉出来"。 */
+  function hoverZone(): Element {
+    return sprite().parentElement as Element;
+  }
+
+  /** 点开面板 → 把历史请求的 Promise 跑完。 */
+  async function open(shell: ShellBridge) {
+    fireEvent.click(sprite());
     await act(async () => {
-      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
     });
     return shell;
   }
 
-  it("鼠标停上去：请壳展开，并把这条主动会话的最近几条摊开", async () => {
+  it("点一下色片：请壳展开，并把这条主动会话的最近几条摊开", async () => {
     const shell = withShell();
     apiMock.get.mockImplementation(async (url: string) =>
       url === "/api/roles"
@@ -249,7 +256,7 @@ describe("PetPage 悬停展开（§7：想回话不用开控制台）", () => {
           },
     );
     await mount();
-    await hover(shell);
+    await open(shell);
 
     expect(shell.setPetExpanded).toHaveBeenCalledWith(true);
     expect(apiMock.get).toHaveBeenCalledWith("/api/session/s_proactive_wan/messages?limit=8");
@@ -260,30 +267,60 @@ describe("PetPage 悬停展开（§7：想回话不用开控制台）", () => {
     expect(screen.queryByText("+2")).toBeNull();
   });
 
-  it("鼠标离开要等一段宽限才收起（不然永远点不到面板），中途回来就不收", async () => {
+  it("悬停只负责把趴着的半只拉出来：不改窗口大小，也就没有「把自己挪出光标」的自激", async () => {
     const shell = withShell();
     await mount();
-    await hover(shell);
+    fireEvent.mouseEnter(hoverZone());
+    await act(async () => {
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+    expect(shell.petReveal).toHaveBeenCalledTimes(1);
+    expect(shell.setPetExpanded).not.toHaveBeenCalled(); // 悬停不再弹面板
+    expect(screen.queryByText("苏晚晴")).toBeNull();
+  });
+
+  it("面板改成点击开合；鼠标走开不关它（关它是 ✕ 或再点一下色片）", async () => {
+    const shell = withShell();
+    await mount();
+    fireEvent.click(sprite());
+    await act(async () => {
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+    expect(shell.setPetExpanded).toHaveBeenLastCalledWith(true);
     expect(screen.getByText("苏晚晴")).toBeTruthy();
 
-    fireEvent.mouseLeave(sprite());
+    fireEvent.mouseLeave(hoverZone());
     await act(async () => {
-      vi.advanceTimersByTime(200);
+      vi.advanceTimersByTime(3_000);
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
     });
-    expect(shell.setPetExpanded).not.toHaveBeenCalledWith(false); // 还在宽限期里
-    fireEvent.mouseEnter(sprite());
+    expect(shell.setPetExpanded).not.toHaveBeenCalledWith(false); // 走开不算关
+
+    fireEvent.click(screen.getByRole("button", { name: "收起面板" }));
+    await act(async () => {
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+    expect(shell.setPetExpanded).toHaveBeenLastCalledWith(false);
+  });
+
+  it("指针离开一段宽限之后才让壳把它趴回去，中途回来就取消", async () => {
+    const shell = withShell();
+    await mount();
+    fireEvent.mouseLeave(hoverZone());
+    await act(async () => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(shell.petRetuck).not.toHaveBeenCalled(); // 还在宽限期里
+    fireEvent.mouseEnter(hoverZone()); // 回来了 ⇒ 那个定时器作废
+    await act(async () => {
+      vi.advanceTimersByTime(3_000);
+    });
+    expect(shell.petRetuck).not.toHaveBeenCalled();
+    fireEvent.mouseLeave(hoverZone());
     await act(async () => {
       vi.advanceTimersByTime(1_000);
-      for (let i = 0; i < 4; i += 1) await Promise.resolve();
     });
-    expect(shell.setPetExpanded).not.toHaveBeenCalledWith(false); // 回来了，那个定时器作废
-
-    fireEvent.mouseLeave(sprite());
-    await act(async () => {
-      vi.advanceTimersByTime(500);
-      for (let i = 0; i < 4; i += 1) await Promise.resolve();
-    });
-    expect(shell.setPetExpanded).toHaveBeenCalledWith(false);
+    expect(shell.petRetuck).toHaveBeenCalledTimes(1);
   });
 
   it("还没有主动会话：面板说清楚，并且一次请求都不发", async () => {
@@ -293,7 +330,7 @@ describe("PetPage 悬停展开（§7：想回话不用开控制台）", () => {
       unread: 1,
     } as ReachoutsPage);
     await mount();
-    await hover(shell);
+    await open(shell);
     expect(screen.getByText(/还没有你们的对话/)).toBeTruthy();
     // 角色表照拉（面板顶上要用），但**没有会话就不去读历史**：不给一个不存在的线程发请求。
     expect(apiMock.get).not.toHaveBeenCalledWith(
@@ -305,7 +342,7 @@ describe("PetPage 悬停展开（§7：想回话不用开控制台）", () => {
     const shell = withShell();
     apiMock.get.mockRejectedValue(new Error("500"));
     await mount();
-    await hover(shell);
+    await open(shell);
     expect(screen.getByText(/历史没读到：500/)).toBeTruthy();
   });
 
@@ -318,7 +355,7 @@ describe("PetPage 悬停展开（§7：想回话不用开控制台）", () => {
       : { messages: [], total: 0, limit: 8, truncated: false },
   );
     await mount();
-    fireEvent.mouseEnter(sprite());
+    fireEvent.click(sprite());
     await act(async () => {
       for (let i = 0; i < 4; i += 1) await Promise.resolve();
     });
@@ -331,7 +368,7 @@ describe("PetPage 悬停展开（§7：想回话不用开控制台）", () => {
 
 describe("PetPage 拖桌宠（手动拖，因为 CSS 拖拽区会吞掉悬停事件）", () => {
   function sprite(): Element {
-    return screen.getByTitle(/悬停看你们最近聊了什么/);
+    return screen.getByTitle(/点开看你们最近聊了什么/);
   }
 
   it("按下后移动：把**增量**交给壳，方向与步长都对", async () => {
@@ -363,19 +400,22 @@ describe("PetPage 拖桌宠（手动拖，因为 CSS 拖拽区会吞掉悬停事
     expect(screen.getByTitle(/^苏晚晴/)).toBeTruthy();
   });
 
-  it("拖拽期间不展开面板：面板开着时色片到不了屏幕边，靠边隐藏就永远够不到", async () => {
+  it("拖完松手补的那一下 click 不算点击：面板不弹（弹了就等于把刚吸上去的又拉回屏内）", async () => {
     const shell = withShell();
     const expanded = shell.setPetExpanded as unknown as ReturnType<typeof vi.fn>;
     await mount();
     const el = sprite();
     fireEvent.pointerDown(el, { screenX: 500, screenY: 400, pointerId: 1 });
-    expanded.mockClear();
-    fireEvent.mouseEnter(el); // 指针本来就在色片上，拖的时候不该再把它摊开
     fireEvent.pointerMove(el, { screenX: 520, screenY: 400, pointerId: 1 });
-    expect(expanded).not.toHaveBeenCalledWith(true);
     fireEvent.pointerUp(el, { pointerId: 1 });
-    // 松手后也不自动展开：那等于把刚吸上去的宠物又拉回屏内
+    fireEvent.click(el); // 浏览器在拖完之后照样会补一个 click
     expect(expanded).not.toHaveBeenCalledWith(true);
+
+    // 而原地按一下（没有位移）就是开面板
+    fireEvent.pointerDown(el, { screenX: 520, screenY: 400, pointerId: 1 });
+    fireEvent.pointerUp(el, { pointerId: 1 });
+    fireEvent.click(el);
+    expect(expanded).toHaveBeenLastCalledWith(true);
   });
 
   it("旧壳没有 petDragEnd（新 dist 跑在旧安装包上）：照拖不误", async () => {
@@ -393,12 +433,12 @@ describe("PetPage 拖桌宠（手动拖，因为 CSS 拖拽区会吞掉悬停事
 
 describe("PetPage 在桌宠上回话（③：不进控制台就能聊）", () => {
   function sprite(): Element {
-    return screen.getByTitle(/悬停看你们最近聊了什么/);
+    return screen.getByTitle(/点开看你们最近聊了什么/);
   }
 
   async function expandPanel() {
     await mount();
-    fireEvent.mouseEnter(sprite());
+    fireEvent.click(sprite());
     await act(async () => {
       for (let i = 0; i < 6; i += 1) await Promise.resolve();
     });
@@ -462,7 +502,7 @@ describe("PetPage 在桌宠上回话（③：不进控制台就能聊）", () =>
     expect(streamChatMock.mock.calls[0][0]).toBe("s_proactive_wan");
   });
 
-  it("鼠标移开只收面板，不打断正在跑的这一轮", async () => {
+  it("走开不算关面板；显式收起也不打断正在跑的这一轮", async () => {
     const shell = withShell();
     let finish: (() => void) | null = null;
     streamChatMock.mockImplementation(
@@ -481,14 +521,24 @@ describe("PetPage 在桌宠上回话（③：不进控制台就能聊）", () =>
     });
     expect(screen.getByText("停止")).toBeTruthy();
 
-    fireEvent.mouseLeave(sprite());
+    // 指针走开：面板不再被悬停驱动（那正是自激晃动的来源），也不会被趴回去顶掉
+    fireEvent.mouseLeave(sprite().parentElement as Element);
     await act(async () => {
-      vi.advanceTimersByTime(500);
+      vi.advanceTimersByTime(3_000);
       for (let i = 0; i < 4; i += 1) await Promise.resolve();
     });
-    expect(shell.setPetExpanded).toHaveBeenCalledWith(false); // 面板收了
+    expect(shell.setPetExpanded).not.toHaveBeenCalledWith(false);
+    expect(shell.petRetuck).toHaveBeenCalled(); // 但"回去"这件事照发 —— 壳那边见面板开着会不动
     const signal = streamChatMock.mock.calls[0][3] as AbortSignal;
-    expect(signal.aborted).toBe(false); // 但这一轮没被掐掉
+    expect(signal.aborted).toBe(false); // 走开没掐掉这一轮
+
+    // 显式收起（✕）也不 abort：收的只是那扇窗，不是这一轮
+    fireEvent.click(screen.getByRole("button", { name: "收起面板" }));
+    await act(async () => {
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+    expect(shell.setPetExpanded).toHaveBeenLastCalledWith(false);
+    expect(signal.aborted).toBe(false);
 
     await act(async () => {
       finish?.();
@@ -519,7 +569,7 @@ describe("PetPage 托盘的「显示消息内容」旗子（§7.2 第 4 条：�
   }
 
   async function hover() {
-    fireEvent.mouseEnter(sprite());
+    fireEvent.click(sprite());
     await act(async () => {
       for (let i = 0; i < 6; i += 1) await Promise.resolve();
     });

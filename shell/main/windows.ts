@@ -198,8 +198,25 @@ export function petDockEdgeFor(rect: Rect, work: Rect): DockEdge | null {
 }
 
 /**
+ * 悬停只做一件事：把趴在边上的那半只拉出来（§7.6 改）。**不再负责弹面板** —— 悬停若改窗口
+ * 尺寸，就会把宠物从光标底下挪走，于是"离开→收起→又进入→展开"自激（用户报的"鼠标移过去
+ * 桌宠乱晃"）。面板改成点击才弹，这条环就断了。
+ */
+export function petReveal(win: BrowserWindow): void {
+  if (!petDock || !petDock.tucked) return;
+  petUntuck(win); // 滑出来，带缓动
+}
+
+/** 指针离开桌面件之后：只有"本来就吸着边、且面板没开着"的才自己趴回去。 */
+export function petRetuck(win: BrowserWindow): void {
+  if (!dockEnabled || !petDock || petDock.tucked || petIsExpanded) return;
+  petDock = { ...petDock, tucked: true };
+  slidePetTo(win, tuckedRect(petDock.edge, win.getBounds(), workRect()), DOCK_MS);
+}
+
+/**
  * 藏着的话滑回贴边。展开面板前、拖之前、关掉「靠边隐藏」时都要先走这一步。
- * `instant` 是给拖拽留的：拖的过程中滑，等于跟用户的手抢那 140ms。
+ * `instant` 是给拖拽留的：拖的过程中滑，等于跟用户的手抢那一两百毫秒。
  */
 export function petUntuck(win: BrowserWindow, options: { instant?: boolean } = {}): void {
   if (!petDock || !petDock.tucked) return;

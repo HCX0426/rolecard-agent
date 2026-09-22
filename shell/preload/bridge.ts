@@ -55,6 +55,14 @@ contextBridge.exposeInMainWorld("rolecardShell", {
   petDragEnd: (): void => {
     ipcRenderer.send("shell:pet-drag-end");
   },
+  /** 悬停：只把趴在边上的那半只拉出来（面板改成点击才弹，见 §7.6）。零参数。 */
+  petReveal: (): void => {
+    ipcRenderer.send("shell:pet-reveal");
+  },
+  /** 指针离开桌面件：本来吸着边的，让它自己趴回去。零参数。 */
+  petRetuck: (): void => {
+    ipcRenderer.send("shell:pet-retuck");
+  },
   /** 桌宠的「显示消息内容」旗子（托盘是它唯一的写入口）。**只有读**：给页面一条写回的路，
    *  等于让后端托管的那个源自己决定要不要藏起内容，那就不叫隐私开关了。 */
   petContentVisible: (): Promise<boolean> => ipcRenderer.invoke("shell:pet-content-visible"),

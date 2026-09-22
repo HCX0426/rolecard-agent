@@ -25,6 +25,8 @@ import {
   movePetBy,
   onPetDockChanged,
   petDragEnded,
+  petRetuck,
+  petReveal,
   releasePetDock,
   setPetExpanded,
 } from "./windows";
@@ -245,6 +247,13 @@ function boot(): void {
   // 还摊着时它只记账 —— 真吸发生在面板收起那一瞬（见 windows.ts 的 `petDragEnded`）。
   ipcMain.on("shell:pet-drag-end", () => {
     if (petWin) petDragEnded(petWin);
+  });
+  // 悬停 = 只把趴着的半只拉出来；离开 = 让它自己趴回去（面板开着时不动）。**零参数**。
+  ipcMain.on("shell:pet-reveal", () => {
+    if (petWin) petReveal(petWin);
+  });
+  ipcMain.on("shell:pet-retuck", () => {
+    if (petWin) petRetuck(petWin);
   });
   // 桌宠页问"内容该不该画出来"（托盘「显示消息内容」）。**只有读**：写的那一侧只在托盘，
   // 页面能改它就不是隐私开关了，是后端托管的那个源自己把自己藏起来的手势。

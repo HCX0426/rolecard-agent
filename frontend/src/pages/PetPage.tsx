@@ -26,8 +26,8 @@ import { type StreamMeta } from "../lib/stream";
 const POLL_MS = 10_000; // 与铃铛红点同一节奏：后端没有推送，如实降级为轮询
 const BUBBLE_MS = 30_000; // 气泡自己淡出：驻留件不该把一句话长期戳在桌面上
 const MAX_BUBBLE_CHARS = 64;
-/** 鼠标离开后等多久收起。留一段"游过去"的时间，否则永远点不到面板里的东西。 */
-const COLLAPSE_MS = 400;
+/** 指针离开桌面件多久之后，趴着的才自己回去：给"划过它身上"留的宽限。 */
+const RETUCK_MS = 900;
 /** 面板里摊开最近几条（再多就该去控制台翻了）。 */
 const PANEL_MESSAGES = 8;
 
@@ -73,7 +73,7 @@ export default function PetPage() {
   // 同一个值的"读时不重订阅"版本：`load` 是轮询回调，依赖里加旗子会让每次改开关都
   // 把 10 秒的节拍重置一遍（而它只是想知道这次要不要拍原文）。
   const showContentRef = useRef(true);
-  const collapseRef = useRef<number | null>(null);
+  const retuckRef = useRef<number | null>(null);
   // 已经"见过"的最新一条 id。**在第一次真正拿到快照之前保持 null**：初始的空白状态不是
   // 一次快照，拿它当基线会让每次开机都把积压的最后一条当新消息拍出去。
   const seenNewestRef = useRef<number | null>(null);
@@ -156,52 +156,59 @@ export default function PetPage() {
   // 隐藏内容时面板要说"有几条没读"，那数的是**当前对象**的（切到别的角色就不是那一堆了）。
   const unreadOfActive = activeRole ? unread.filter((row) => row.role_id === activeRole).length : 0;
 
-  /** 展开/收起。桥不在（浏览器直接开 #/pet 的调试入口）时面板照样画，只是窗口不跟着变大。 */
+  /** 展开/收起面板。由**点击**触发（悬停不算，理由见下面 `reveal`）。
+   *  桥不在（浏览器直接开 #/pet 的调试入口）时面板照样画，只是窗口不跟着变大。 */
   function expand(next: boolean) {
-    if (collapseRef.current !== null) {
-      window.clearTimeout(collapseRef.current);
-      collapseRef.current = null;
-    }
     setExpanded(next);
     void shellBridge()?.setPetExpanded(next);
   }
 
-  function leave() {
-    if (collapseRef.current !== null) window.clearTimeout(collapseRef.current);
-    collapseRef.current = window.setTimeout(() => expand(false), COLLAPSE_MS);
+  /** 悬停只做一件事：把趴在边上的那半只拉出来（§7.6）。**不再弹面板** —— 悬停会改窗口尺寸，
+   *  而改尺寸就把宠物从光标底下挪走了，于是"离开→收起→又进入→展开"自激（用户报的"鼠标移过去
+   *  桌宠乱晃"）。面板改成点击才弹，这条环就断了。 */
+  function reveal() {
+    if (retuckRef.current !== null) {
+      window.clearTimeout(retuckRef.current);
+      retuckRef.current = null;
+    }
+    shellBridge()?.petReveal?.();
+  }
+
+  /** 指针真的离开桌面件：宽限一会儿再让壳把它趴回去（面板开着时壳自己会拒绝，见 `petRetuck`）。 */
+  function pointerLeft() {
+    if (retuckRef.current !== null) window.clearTimeout(retuckRef.current);
+    retuckRef.current = window.setTimeout(() => {
+      retuckRef.current = null;
+      shellBridge()?.petRetuck?.();
+    }, RETUCK_MS);
+  }
+
+  function togglePanel() {
+    if (dragMovedRef.current) return; // 刚拖完，松手那一下不算"点"
+    expand(!expanded);
   }
 
   /**
    * 手动拖桌宠（实测换来的形状）。
    *
    * 原来靠 CSS 的 `-webkit-app-region: drag`，整块根节点都是拖拽区 —— 而**拖拽区会把鼠标
-   * 事件整个吞掉**：色片上悬停根本收不到 mouseenter，悬停展开就没法工作（那篇 Electron
-   * 悬浮球实现说的"drag 与点击冲突"是同一件事，只是我当时以为我们能共存，实测不能）。
-   * 所以色片改成 no-drag + 自己处理拖：
+   * 事件整个吞掉**：色片上悬停根本收不到 mouseenter（那篇 Electron 悬浮球实现说的"drag 与
+   * 点击冲突"就是这件事）。既然拖动已经改成手动，那个 drag 标记就只剩坏处了：它连根节点的
+   * "指针离开"都吞掉，而趴回去的判据正需要它 ⇒ 根节点现在不标 drag。
    *  - 用 `screenX/screenY` 的**增量**而不是 `clientX`：窗口正跟着鼠标走，页面坐标会被
    *    一起拖回去，用 clientX 算出来的差值恒为 0（这类"看起来在动其实没动"的坑很典型）；
    *  - 只把增量交给壳（`movePetBy`），绝对坐标与出屏夹取都在主进程 —— 页面拿不到"把窗
-   *    放到哪"的权力；
-   *  - 色片没有点击动作，所以不需要"移动多少算拖"的阈值，按下即拖、抬起即止。
+   *    放到哪"的权力。
    */
   const dragRef = useRef<{ x: number; y: number } | null>(null);
-  const draggingRef = useRef(false);
-
-  /** 悬停展开的唯一入口：拖拽期间一律不展开（见 `dragStart` 里那条夹取的理由）。 */
-  function hoverIn() {
-    if (!draggingRef.current) expand(true);
-  }
+  const dragMovedRef = useRef(false);
 
   function dragStart(event: React.PointerEvent<HTMLDivElement>) {
-    draggingRef.current = true;
+    dragMovedRef.current = false;
     // 拖的时候先收起面板。两个理由，第二个是用户报的那个 bug：
     //  ① 拖的是宠物不是面板，摊着一块 380×520 的面板挡视野、还跟着晃；
     //  ② 壳按**窗口当前形状**夹取，面板开着时色片中心最远只能到离屏幕边 190px，
     //     而靠边隐藏判的是收起态那块矩形离边 ≤ 24px ⇒ 永远够不到，怎么拖都不吸。
-    if (collapseRef.current !== null) {
-      window.clearTimeout(collapseRef.current);
-      collapseRef.current = null;
-    }
     if (expanded) expand(false); // 已经收起就别再发一次"收起"：那会让壳起一段没用的动画
     dragRef.current = { x: event.screenX, y: event.screenY };
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -213,24 +220,24 @@ export default function PetPage() {
     const dx = event.screenX - last.x;
     const dy = event.screenY - last.y;
     if (!dx && !dy) return;
+    dragMovedRef.current = true;
     dragRef.current = { x: event.screenX, y: event.screenY };
     shellBridge()?.movePetBy(dx, dy);
   }
 
   function dragEnd() {
     dragRef.current = null;
-    draggingRef.current = false;
     // 松手才让壳判"要不要吸到边上"（§7.6）。零参数：吸哪条边由壳按当前工作区量，
     // 而移动过程中判会抖（一路拖过去会"吸上→拉开→吸上"）。旧壳没这个方法就是不吸，无害。
     shellBridge()?.petDragEnd?.();
-    // 放手后**不**立刻展开：指针还在色片上、不会再触发 mouseenter，这里展开就等于把
-    // 刚吸上去的宠物又拉回屏内。要读东西再划走划回来一次就是。
+    // `dragMovedRef` 留给紧随其后的 click 事件看完，下一次按下才清 —— 浏览器在拖完之后照样
+    // 会补一个 click，不认这一点就是"拖完一松手面板自己弹出来了"。
   }
 
-  // 卸载时把待收起的定时器收掉：留着它会在组件没了之后去调桥。
+  // 卸载时把待趴回的定时器收掉：留着它会在组件没了之后去调桥。
   useEffect(
     () => () => {
-      if (collapseRef.current !== null) window.clearTimeout(collapseRef.current);
+      if (retuckRef.current !== null) window.clearTimeout(retuckRef.current);
     },
     [],
   );
@@ -364,19 +371,17 @@ export default function PetPage() {
   }
 
   return (
-    // 拖拽靠 CSS `-webkit-app-region`（Chromium 自己处理，不需要页面拿到任何壳能力）。
-    // Tauri 那边"后端源拿不到注入 → data-tauri-drag-region 拖不动"的坑在这里不存在；
-    // 气泡与面板要能点/能选字，所以它们各自标 no-drag。
-    //
-    // **悬停检测与拖动都挂在色片与面板上，不挂在这块拖拽区上**：实测 drag 区域会把鼠标
-    // 事件整个吞掉（色片上的 mouseenter 一次都收不到），所以色片改 no-drag + 手动拖
-    // —— 增量交给壳（见 `dragMove`）。Tauri 那边"远程源拿不到注入 → 拖不动"的坑在这里不存在。
-    <div className="pet-drag flex h-full select-none flex-col items-center justify-end gap-2 pb-1">
+    // **根节点不再标 `-webkit-app-region: drag`**：拖动早就改成手动了（见 `dragMove`），而
+    // drag 区域会把鼠标事件整个吞掉 —— 连"指针离开了这扇窗"都收不到，而"趴回去"的判据正
+    // 需要它。悬停也因此能挂在根上：它只负责把宠物从边上拉出来，不弹面板。
+    <div
+      className="flex h-full select-none flex-col items-center justify-end gap-2 pb-1"
+      onMouseEnter={reveal}
+      onMouseLeave={pointerLeft}
+    >
       {expanded ? (
         // 展开态：面板取代气泡（气泡那条就是面板最后一条，重复摆一遍只是噪音）。
         <section
-          onMouseEnter={hoverIn}
-          onMouseLeave={leave}
           className="pet-nodrag flex max-h-full w-full flex-col rounded-2xl border border-slate-200/70 bg-white/95 text-slate-700 shadow-md backdrop-blur-sm dark:border-slate-600/70 dark:bg-slate-800/95 dark:text-slate-100"
         >
           <header className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-100 px-3 py-2 dark:border-slate-700">
@@ -399,15 +404,27 @@ export default function PetPage() {
             ) : (
               <span className="truncate text-xs font-medium">{activeName}</span>
             )}
-            {threadId && (
+            <div className="flex shrink-0 items-center gap-2">
+              {threadId && (
+                <button
+                  onClick={() => shellBridge()?.openSession(threadId)}
+                  className="text-[10px] text-blue-600 hover:underline dark:text-blue-400"
+                  title="在控制台里打开这条会话（能翻完整历史、能发图）"
+                >
+                  在控制台打开
+                </button>
+              )}
+              {/* 面板是点击打开的，就得给一个显式的关法（再点色片也行）。悬停不再负责关它 ——
+                  那正是"移动窗口 ⇒ 把自己挪出光标 ⇒ 自激晃动"的来源。 */}
               <button
-                onClick={() => shellBridge()?.openSession(threadId)}
-                className="shrink-0 text-[10px] text-blue-600 hover:underline dark:text-blue-400"
-                title="在控制台里打开这条会话（能翻完整历史、能发图）"
+                onClick={() => expand(false)}
+                className="px-1 text-[11px] leading-none text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                title="收起面板（再点一下色片也能开合）"
+                aria-label="收起面板"
               >
-                在控制台打开
+                ✕
               </button>
-            )}
+            </div>
           </header>
           <div className="max-h-[300px] min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 py-2 text-[11px] leading-relaxed">
             {historyError && <p className="text-red-600 dark:text-red-400">{historyError}</p>}
@@ -490,8 +507,6 @@ export default function PetPage() {
         !faded && (
           <button
             onClick={() => void openRow(latest)}
-            onMouseEnter={hoverIn}
-            onMouseLeave={leave}
             title={
               !showContent
                 ? "内容已隐藏 —— 托盘里勾回「显示消息内容」就能看到（点开仍然会拉起控制台）"
@@ -514,16 +529,15 @@ export default function PetPage() {
       )}
 
       <div
-        onMouseEnter={hoverIn}
-        onMouseLeave={leave}
+        onClick={togglePanel}
         onPointerDown={dragStart}
         onPointerMove={dragMove}
         onPointerUp={dragEnd}
         onPointerCancel={dragEnd}
         className="pet-nodrag grid h-[88px] w-[88px] shrink-0 cursor-grab place-items-center rounded-full text-2xl font-medium text-white shadow-md active:cursor-grabbing"
         style={{ background: `hsl(${hue} 62% 48%)` }}
-        title={`${name}${offline ? " · 连不上本地服务" : ""} · 悬停${
-          showContent ? "看你们最近聊了什么" : "打开输入框（内容已隐藏）"
+        title={`${name}${offline ? " · 连不上本地服务" : ""} · 点开看你们最近聊了什么${
+          showContent ? "" : "（内容已隐藏）"
         }`}
       >
         {name.slice(0, 1)}
