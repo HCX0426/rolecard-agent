@@ -45,7 +45,6 @@ def factory(
         settings: object,
         backend_name: str | None = None,
         temperature: float | None = None,
-        reasoning: bool | None = None,
     ) -> ScriptedChat:
         known = getattr(settings, "model_backends", {}) or {}
         if backend_name is not None and backend_name not in known:
@@ -58,9 +57,6 @@ def factory(
         # 而不是只看工厂被调用了几次。
         if temperature is not None:
             label += f"@t{temperature}"
-        # 「这一路不要思考」同样是构造期决定，所以也要能被看见（主动开口那条）。
-        if reasoning is False:
-            label += "@nothink"
         return ScriptedChat([AIMessage(content=label)])
 
     return _factory
