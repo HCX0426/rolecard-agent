@@ -43,6 +43,11 @@ CREATE TABLE IF NOT EXISTS role_card (
     -- 文件事件触发（架构计划 C·§5.2）per-role 闸门：该角色可否被目录变化触发。
     -- 默认 1 = 开了主动开口的角色自动关注目录变化；事件本身全局一份（任务目录是全局单值）。
     file_watch_enabled   INTEGER NOT NULL DEFAULT 1,
+    -- 收件箱自动保留条数（用户 2026-09-23："抽屉没删除功能，越堆越多"）：
+    -- 0 = 不自动删（默认，行为与今天一致）；N>0 = 每次她主动开口后，该角色的收件箱
+    -- 只留最近 N 条。删的是**投递记录**，不是她说出口的那句话（那句在主动会话里，
+    -- 是她下次开口的依据 —— 边界见 docs/主动消息与记忆设计稿.md）。旧库经 _migrate 补列。
+    reachout_keep        INTEGER NOT NULL DEFAULT 0,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

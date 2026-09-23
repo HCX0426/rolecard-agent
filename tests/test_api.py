@@ -8,6 +8,7 @@ Traceability: US-1, US-2, US-3, US-8（US-7 由控制台页面端点覆盖）。
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -671,3 +672,72 @@ def test_proactive_session_requires_a_real_role(client: TestClient) -> None:
     """凭空造一条指向不存在角色的线 = 给收件箱攒一个永远点不开的目标。"""
     assert client.post("/api/session/proactive", json={"role_id": "ghost"}).status_code == 404
     assert client.post("/api/session/proactive", json={}).status_code == 422
+
+
+# -- 主动消息收件箱的删除（用户 2026-09-23："抽屉没删除功能，越堆越多"）----------------
+
+
+def _inbox_conn(tmp_path: Path) -> Any:
+    from rolecard_agent.storage.db import connect
+
+    return connect(tmp_path / "app.db")
+
+
+def _record(conn: Any, role_id: str, text: str, *, keep: int = 0) -> None:
+    from rolecard_agent.core import reachout as svc
+    from rolecard_agent.roles.models import RoleCard
+
+    role = RoleCard(role_id=role_id, role_name="晚晴", system_prompt="x", reachout_keep=keep)
+    svc.record_reachout(conn, role, text)
+
+
+def test_reachout_inbox_deletes_one_row(client: TestClient, tmp_path: Path) -> None:
+    """删一行只让那一行从抽屉里消失；**她主动说出口的那句话不跟着没**（它在会话里）。"""
+    conn = _inbox_conn(tmp_path)
+    _record(conn, "wan", "第一条")
+    _record(conn, "wan", "第二条")
+    items = client.get("/api/reachouts").json()["items"]
+    assert [i["text"] for i in items] == ["第二条", "第一条"]
+
+    res = client.delete(f"/api/reachouts/{items[1]['id']}")
+    assert res.status_code == 200 and res.json()["deleted"] == 1
+    assert [i["text"] for i in res.json()["items"]] == ["第二条"]
+    assert client.delete("/api/reachouts/999999").status_code == 404
+    conn.close()
+
+
+def test_reachout_inbox_clear_is_scoped_by_role(client: TestClient, tmp_path: Path) -> None:
+    conn = _inbox_conn(tmp_path)
+    _record(conn, "wan", "晚晴的")
+    _record(conn, "bai", "白也的")
+    assert client.delete("/api/reachouts?role_id=wan").json()["deleted"] == 1
+    left = client.get("/api/reachouts").json()["items"]
+    assert [i["role_id"] for i in left] == ["bai"], "清空一个角色不该动别的角色"
+    assert client.delete("/api/reachouts").json()["deleted"] == 1
+    assert client.get("/api/reachouts").json()["items"] == []
+    conn.close()
+
+
+def test_role_reachout_keep_prunes_on_write(client: TestClient, tmp_path: Path) -> None:
+    """角色卡上写了"只留 N 条"，那就**每次落新行时**修剪：不为此再跑一个定时任务。"""
+    role_id = "general_assistant"  # 新库里只有两个内置角色，`wan` 是不存在的（PATCH 会 404）
+    res = client.patch(f"/api/roles/{role_id}", json={"reachout_keep": 2})
+    assert res.status_code == 200 and res.json()["reachout_keep"] == 2, "新列要能过角色卡的 PATCH"
+
+    conn = _inbox_conn(tmp_path)
+    # 没有 `GET /api/roles/{id}` 这条路由（列表端点是唯一的读口），所以直接用 PATCH 的回执。
+    keep = res.json()["reachout_keep"]
+    for i in range(5):
+        _record(conn, role_id, f"第{i}条", keep=keep)
+    texts = [i["text"] for i in client.get(f"/api/reachouts?role_id={role_id}").json()["items"]]
+    assert texts == ["第4条", "第3条"], f"只该留最近两条，实际 {texts}"
+    conn.close()
+
+
+def test_reachout_keep_zero_keeps_everything(client: TestClient, tmp_path: Path) -> None:
+    """默认 0 = 不自动删 —— 这条钉的是"别默认替用户丢历史"。"""
+    conn = _inbox_conn(tmp_path)
+    for i in range(4):
+        _record(conn, "wan", f"第{i}条", keep=0)
+    assert len(client.get("/api/reachouts?role_id=wan").json()["items"]) == 4
+    conn.close()

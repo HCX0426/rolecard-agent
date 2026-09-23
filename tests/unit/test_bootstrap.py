@@ -196,6 +196,45 @@ def test_deliver_proactive_lands_in_the_roles_thread(tmp_path: Path) -> None:
         runtime.conn.close()
 
 
+def test_deliver_proactive_does_not_interrupt_a_running_turn(tmp_path: Path) -> None:
+    """用户那一轮还在图上跑时，主动投递**这次就不做**（审计 #12：他会丢一条消息）。
+
+    成因不是调度策略：`update_state` 读的是"它此刻看到的最新检查点"，而那一轮的
+    `graph.stream` 正在往同一个线程追加 —— 两边分叉同一个父节点，后写的盖掉先写的，
+    用户刚发的那条就从界面上消失了（检查点里那条分支还在，所以翻不到也说不清）。
+    这里用真图真检查点验两件事：拿不到锁 ⇒ 一句都不写；放了锁 ⇒ 正常落进去。
+    """
+    from rolecard_agent.core.graph import build_graph_config
+    from rolecard_agent.core.reachout import proactive_thread_id
+    from rolecard_agent.core.thread_locks import (
+        release_thread,
+        thread_is_busy,
+        try_thread_write,
+    )
+    from rolecard_agent.roles.models import RoleCard
+
+    runtime = _assemble(tmp_path)
+    try:
+        role = RoleCard(role_id="wan", role_name="苏晚晴", system_prompt="你是苏晚晴。")
+        tid = proactive_thread_id("wan")
+
+        assert try_thread_write(tid, timeout=0.0)  # 模拟：用户那一轮正在飞
+        try:
+            assert thread_is_busy(tid)
+            assert runtime.deliver_proactive(role, "这句现在不该冒出来") is None
+        finally:
+            release_thread(tid)
+
+        assert not thread_is_busy(tid)
+        assert runtime.deliver_proactive(role, "这轮说完了才说") == tid
+        messages = runtime.state["graph"].get_state(
+            build_graph_config(tid, runtime.effective)
+        ).values["messages"]
+        assert [str(m.content) for m in messages] == ["这轮说完了才说"]
+    finally:
+        runtime.conn.close()
+
+
 def test_proactive_lines_only_offer_what_she_has_not_picked_up(tmp_path: Path) -> None:
     """主动开口的上下文只带"她还没接住的那几句"—— 这条断的是"一句话回三遍"。
 

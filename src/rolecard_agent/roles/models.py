@@ -98,6 +98,9 @@ class RoleCard(BaseModel):
     time_pattern_enabled: bool = True
     # 文件事件触发（架构计划 C·§5.2）per-role 闸门：该角色可否被任务目录变化触发。
     file_watch_enabled: bool = True
+    #: 收件箱自动保留条数：0 = 不自动删（默认）；N>0 = 只留最近 N 条。删的是投递记录，
+    #: 不是她说出口的那句话（那句留在主动会话里 —— 那是她下次开口的依据）。
+    reachout_keep: int = Field(default=0, ge=0, le=1000)
     is_builtin: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -119,6 +122,7 @@ class RoleCardCreate(BaseModel):
     recall_enabled: bool = True
     time_pattern_enabled: bool = True
     file_watch_enabled: bool = True
+    reachout_keep: int = Field(default=0, ge=0, le=1000)
 
     @field_validator("role_id")
     @classmethod
@@ -144,6 +148,7 @@ class RoleCardUpdate(BaseModel):
     recall_enabled: bool | None = None
     time_pattern_enabled: bool | None = None
     file_watch_enabled: bool | None = None
+    reachout_keep: int | None = Field(default=None, ge=0, le=1000)
 
     def changes(self) -> dict[str, object]:
         """Only the fields the caller actually provided."""

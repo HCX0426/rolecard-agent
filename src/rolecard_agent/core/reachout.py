@@ -67,6 +67,7 @@ from rolecard_agent.core.proactive_state import (
 )
 from rolecard_agent.core.prompts import build_system_prompt
 from rolecard_agent.core.text import text_of
+from rolecard_agent.core.thread_locks import thread_is_busy
 from rolecard_agent.core.usage import TokenUsage, parse_usage, record_usage
 from rolecard_agent.core.workspace import resolve_task_dir
 from rolecard_agent.roles.models import RoleCard
@@ -427,12 +428,60 @@ def ensure_proactive_thread(
 
 
 def record_reachout(conn: SqlConnection, role: RoleCard, text: str) -> None:
-    """落一条主动开口（unread）。role 冗余存角色名：角色被删后收件箱仍可读。"""
+    """落一条主动开口（unread）。role 冗余存角色名：角色被删后收件箱仍可读。
+
+    落完顺手按角色卡的 `reachout_keep` 修剪（0 = 不自动删）：抽屉"只增不减"是用户报的
+    第二件事，而这条挂在写入点上就够了 —— 不需要为此再跑一个定时任务。
+    """
     conn.execute(
         "INSERT INTO agent_reachout (role_id, role_name, text) VALUES (?, ?, ?)",
         (role.role_id, role.role_name, text),
     )
     conn.commit()
+    prune_inbox(conn, role.role_id, int(getattr(role, "reachout_keep", 0) or 0))
+
+
+def prune_inbox(conn: SqlConnection, role_id: str, keep: int) -> int:
+    """该角色的收件箱只留最近 `keep` 条，返回删掉的条数。`keep <= 0` = 什么都不做。
+
+    **删的是投递记录，不是她说出口的那句话**：那句话在主动会话的 checkpoint 里，留着它
+    她才记得自己主动找过你（§"主动开口落进会话"那条设计）。清掉记录只是清掉红点与列表。
+    """
+    if keep <= 0:
+        return 0
+    before = int(
+        str(conn.execute(
+            "SELECT COUNT(*) AS n FROM agent_reachout WHERE role_id = ?", (role_id,)
+        ).fetchone()["n"])
+    )
+    conn.execute(
+        "DELETE FROM agent_reachout WHERE role_id = ? AND id NOT IN ("
+        "  SELECT id FROM agent_reachout WHERE role_id = ? ORDER BY id DESC LIMIT ?)",
+        (role_id, role_id, keep),
+    )
+    conn.commit()
+    return max(0, before - keep)
+
+
+def delete_reachout(conn: SqlConnection, reachout_id: int) -> bool:
+    """删抽屉里的某一行（**不碰会话里的那条消息**）。False = 没有这条。"""
+    cur = conn.execute("DELETE FROM agent_reachout WHERE id = ?", (reachout_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def clear_inbox(conn: SqlConnection, role_id: str) -> int:
+    """清空该角色的主动消息记录（同样不碰会话）。返回删掉的条数。"""
+    cur = conn.execute("DELETE FROM agent_reachout WHERE role_id = ?", (role_id,))
+    conn.commit()
+    return cur.rowcount
+
+
+def clear_all_inboxes(conn: SqlConnection) -> int:
+    """清空所有角色的主动消息记录（不给 role_id 时的那条路）。"""
+    cur = conn.execute("DELETE FROM agent_reachout")
+    conn.commit()
+    return cur.rowcount
 
 
 # ----------------------------------------------------------- 判定与生成（可测，无线程依赖）
@@ -504,6 +553,12 @@ def blocked_why(
         return "处于静默时段（23:00–08:00）"
     if unread >= MAX_UNREAD_PER_ROLE:
         return "未读堆积已达上限"
+    # **正在聊就别插话**（审计 #12 的第二层）：这一轮用户的话还在图上跑，此时投递的那句
+    # 会和它抢同一份检查点（`deliver_proactive` 那侧也有锁兜底，但"不打断"本来就是对的语义）。
+    # 判据用锁的持有状态而不是"最后一条消息的时间"：后者在用户回完话、她还没答的间隙里是 False，
+    # 而那恰好是最不该插嘴的一刻。
+    if thread_is_busy(proactive_thread_id(role.role_id)):
+        return "这条会话正在对话中"
     return None
 
 

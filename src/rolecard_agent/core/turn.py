@@ -36,6 +36,7 @@ from rolecard_agent.core.guard import check
 from rolecard_agent.core.nodes import VisionNotSupported
 from rolecard_agent.core.observability import TraceEvent, Tracer, scrub_endpoints
 from rolecard_agent.core.text import text_of
+from rolecard_agent.core.thread_locks import release_thread, try_thread_write
 from rolecard_agent.core.usage import TokenUsage, usage_from_metadata
 
 # 回扣不投送的字符数。必须 >= 最长触发式（最宽约 21 字：主语 + 8 填充 + 能愿动词 + 8 填充
@@ -246,6 +247,54 @@ def run_turn(
     usage_recorder: Callable[[TokenUsage | None], None] | None = None,
 ) -> Iterator[TurnEvent]:
     """把一个用户轮次跑过内核图，产出结构化事件流（同步，宿主无关）。
+
+    **整轮占住这个会话的写入锁**（`core/thread_locks.py`，审计 #12）：调度线程的主动投递
+    走的是 `graph.update_state`，它读的可能是这一轮开始**之前**的检查点，两边分叉同一个父节点
+    时后写的会盖掉先写的 —— 用户报的"我发的一条消息被吞了"就是这么来的。等锁超过 150 秒
+    （只有"同一会话同时开两轮"这种极端情况做得到）时**照样往下跑并留痕**：宁可罕见地分叉，
+    也不因为一把拿不到的锁把用户这句话拒掉。
+    """
+    thread_id = str((config.get("configurable") or {}).get("thread_id") or "")
+    held = try_thread_write(thread_id, timeout=_TURN_LOCK_WAIT)
+    if not held and tracer is not None:
+        tracer.emit(
+            TraceEvent(
+                event="thread_lock_timeout",
+                node="run_turn",
+                thread_id=thread_id,
+                detail={"waited_s": _TURN_LOCK_WAIT},
+            )
+        )
+    try:
+        yield from _iter_turn(
+            graph,
+            graph_input=graph_input,
+            config=config,
+            role_summary=role_summary,
+            tracer=tracer,
+            usage_recorder=usage_recorder,
+        )
+    finally:
+        # 只放自己拿到的那把：等满 150 秒没拿到时锁在**别人**手里，无条件 release 会把
+        # 那一轮的互斥提前解开 —— 正是要防的那个分叉。
+        if held:
+            release_thread(thread_id)
+
+
+#: 一轮等锁的上限（秒）：比 `model_timeout` 略长，"排队"才不等于"丢掉这一轮"。
+_TURN_LOCK_WAIT = 150
+
+
+def _iter_turn(
+    graph: Any,
+    *,
+    graph_input: dict[str, Any],
+    config: dict[str, Any],
+    role_summary: dict[str, str],
+    tracer: Tracer | None = None,
+    usage_recorder: Callable[[TokenUsage | None], None] | None = None,
+) -> Iterator[TurnEvent]:
+    """`run_turn` 的正文：一轮事件流本身（锁在外层那半边，见上）。
 
     同步实现是**必须的**而不是选择：项目的检查点是同步 `SqliteSaver`，其 async 对应实现会抛
     `NotImplementedError`。需要异步投送（SSE 不占事件循环）的宿主用 `api/chat.py` 的线程池桥。

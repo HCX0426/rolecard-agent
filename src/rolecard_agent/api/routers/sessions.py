@@ -41,6 +41,7 @@ from rolecard_agent.core.observability import TraceEvent
 from rolecard_agent.core.reachout import ensure_proactive_thread
 from rolecard_agent.core.state import new_state, now_ts
 from rolecard_agent.core.text import text_of
+from rolecard_agent.core.thread_locks import thread_write
 from rolecard_agent.core.usage import TokenUsage, record_usage
 from rolecard_agent.rag.parser import (
     IMAGE_EXTS,
@@ -672,7 +673,10 @@ def edit_message_and_regenerate(
     # 目标及其之后的全部作废（RemoveMessage 按 id 精确删除，不触碰前面的历史）
     # 无 id 的消息无法被 RemoveMessage 定位（正常不会出现，防御性跳过）。
     doomed = [RemoveMessage(id=m.id) for m in messages[index:] if m.id is not None]
-    graph.update_state(config, {"messages": doomed})
+    # 改检查点要占住这条会话（审计 #12）：紧随其后的那一轮由 `run_turn` 自己持锁，
+    # 而中间这一秒若被调度线程的主动投递插进来，两边会分叉同一个父检查点。
+    with thread_write(thread_id):
+        graph.update_state(config, {"messages": doomed})
 
     graph_input: dict[str, object] = {
         "messages": [_user_message(body.content, body.image, created_at=now_ts())],

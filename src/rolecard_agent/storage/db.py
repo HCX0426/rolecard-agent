@@ -281,6 +281,11 @@ def _migrate(conn: SqlConnection) -> None:
         conn.execute(
             "ALTER TABLE role_card ADD COLUMN file_watch_enabled INTEGER NOT NULL DEFAULT 1"
         )
+    # 6e. role_card 增列 reachout_keep（收件箱自动保留条数；0 = 不自动删）。
+    #     用户报"主动对话的抽屉没删除功能，越堆越多"，这是它的自动侧配套（手动侧是
+    #     DELETE /api/reachouts/…，见 core/reachout.prune_inbox 的路由）。
+    if "reachout_keep" not in _columns(conn, "role_card"):
+        conn.execute("ALTER TABLE role_card ADD COLUMN reachout_keep INTEGER NOT NULL DEFAULT 0")
     # 6d. command_approval 增列 decide_token（P0-3 第一步：批准要持有凭据，不能靠猜 id）。
     #     一次性能力令牌：submit 生成、随 pending 行下发给读侧、decide 必须带它并在决定后清空。
     #     挡掉的是"任何能碰到 8000 的一方盲 POST 一个自增 id 就批准了命令"——尤其是浏览器里

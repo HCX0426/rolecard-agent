@@ -33,6 +33,7 @@ const EMPTY_FORM = {
   recall_enabled: true,
   time_pattern_enabled: true,
   file_watch_enabled: true,
+  reachout_keep: 0,
 };
 
 const SCOPE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
@@ -201,6 +202,7 @@ export default function RolesPage({
       recall_enabled: r.recall_enabled !== false,
       time_pattern_enabled: r.time_pattern_enabled !== false,
       file_watch_enabled: r.file_watch_enabled !== false,
+      reachout_keep: Number(r.reachout_keep ?? 0),
     });
     setWlMode(r.tool_whitelist === null ? "all" : "custom");
   }
@@ -224,6 +226,7 @@ export default function RolesPage({
       recall_enabled: form.recall_enabled,
       time_pattern_enabled: form.time_pattern_enabled,
       file_watch_enabled: form.file_watch_enabled,
+      reachout_keep: form.reachout_keep,
     };
     try {
       if (editing) {
@@ -372,6 +375,24 @@ export default function RolesPage({
                   onChange={(e) => setForm({ ...form, file_watch_enabled: e.target.checked })}
                 />
                 <span className="text-slate-600 dark:text-slate-300">文件事件：任务目录有变化时主动说（需全局「文件事件触发」开着）</span>
+              </label>
+              {/* 抽屉"只增不减"的自动侧配套（用户 2026-09-23）：手动侧是抽屉里的 ✕ 与「清空」。
+                  删的都是**投递记录**，她说出口的那句话留在对话里 —— 那是她下次开口的依据。 */}
+              <label className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  max={1000}
+                  value={form.reachout_keep}
+                  disabled={!form.reachout_enabled}
+                  onChange={(e) =>
+                    setForm({ ...form, reachout_keep: Math.max(0, Number(e.target.value) || 0) })
+                  }
+                  className="w-20 rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
+                />
+                <span className="text-slate-600 dark:text-slate-300">
+                  主动消息只留最近 N 条（0 = 不自动删，只手动清）
+                </span>
               </label>
             </div>
             <label className="mt-3 block">

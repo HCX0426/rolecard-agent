@@ -51,6 +51,7 @@ from rolecard_agent.core.reachout import (
 from rolecard_agent.core.services import ServiceEndpointService
 from rolecard_agent.core.state import now_ts
 from rolecard_agent.core.text import text_of
+from rolecard_agent.core.thread_locks import release_thread, try_thread_write
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder, make_reranker
 from rolecard_agent.roles.models import RoleCard
@@ -351,13 +352,31 @@ class Runtime:
         graph = self.state.get("graph")
         if graph is None:  # 还没有图（纯内核装配 / 装配失败）：收件箱那条照样有效
             return None
-        graph.update_state(
-            build_graph_config(thread_id, self.effective),
-            # created_at 与内核节点那条同一口径（`additional_kwargs`）：这句是"她已经说出口"的
-            # 消息，没带时间就会在回放里悬着不知排在哪一轮 —— 而她什么时候说的恰恰是要判断的
-            # 东西（2026-09-22 那次"一句话回三遍"的取证只能靠 id 前缀区分主动投递与图内回复）。
-            {"messages": [AIMessage(content=text, additional_kwargs={"created_at": now_ts()})]},
-        )
+        # 占住这条会话的写入再改检查点（审计 #12）：用户那一轮可能正在图上跑，而
+        # `update_state` 读的是"它此刻认为的最新检查点"—— 两边分叉同一个父节点时后写的盖掉
+        # 先写的，用户发的那条就被吞了。拿不到锁就**这次不投递**（调度器下一轮还会再问），
+        # 而不是阻塞调度线程去等一轮对话跑完（那会拖住别的角色的开口时机）。
+        if not try_thread_write(thread_id, timeout=0.0):
+            self.tracer.emit(
+                TraceEvent(
+                    event="reachout_skipped",
+                    node="reachout",
+                    thread_id=thread_id,
+                    role_id=role.role_id,
+                    detail={"why": "这条会话正在对话中"},
+                )
+            )
+            return None
+        try:
+            graph.update_state(
+                build_graph_config(thread_id, self.effective),
+                # created_at 与内核节点那条同一口径（`additional_kwargs`）：这句是"她已经说出口"的
+                # 消息，没带时间就会在回放里悬着不知排在哪一轮 —— 而她什么时候说的恰恰是要判断的
+                # 东西（2026-09-22 那次"一句话回三遍"的取证只能靠 id 前缀区分主动投递与图内回复）。
+                {"messages": [AIMessage(content=text, additional_kwargs={"created_at": now_ts()})]},
+            )
+        finally:
+            release_thread(thread_id)
         return thread_id
 
     def shutdown(self) -> None:

@@ -18,7 +18,7 @@ _COLUMNS = (
     "role_id, role_name, system_prompt, temperature, model_name, "
     "tool_whitelist, exemplars, knowledge_scopes, description, "
     "is_builtin, reachout_enabled, recall_enabled, time_pattern_enabled, "
-    "file_watch_enabled, created_at, updated_at"
+    "file_watch_enabled, reachout_keep, created_at, updated_at"
 )
 
 # Columns stored as JSON text. For every one of them `None` and `[]` mean different things,
@@ -114,8 +114,9 @@ class RoleCardService:
             "INSERT INTO role_card "
             "(role_id, role_name, system_prompt, temperature, model_name, "
             " tool_whitelist, exemplars, knowledge_scopes, description, is_builtin, "
-            "reachout_enabled, recall_enabled, time_pattern_enabled, file_watch_enabled) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "reachout_enabled, recall_enabled, time_pattern_enabled, file_watch_enabled, "
+            "reachout_keep) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 data.role_id,
                 data.role_name,
@@ -131,6 +132,7 @@ class RoleCardService:
                 data.recall_enabled,
                 data.time_pattern_enabled,
                 data.file_watch_enabled,
+                data.reachout_keep,
             ),
         )
         self._conn.commit()

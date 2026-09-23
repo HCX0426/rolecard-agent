@@ -71,4 +71,30 @@ def mark_role_read(
     return {"marked": marked} | _page(ctx)
 
 
+@router.delete("/api/reachouts/{reachout_id}")
+def delete_reachout(reachout_id: int, ctx: AppContext = Depends(get_context)) -> object:
+    """删收件箱里的**那一行投递记录**。404 = 没有这条。
+
+    与"标已读"的分工要说清楚：已读只是不再算未读，行还在列表里；删是这行不再出现。
+    **她主动说出口的那句话不跟着消失** —— 那句在主动会话的 checkpoint 里，留着它她才记得
+    自己找过你（删会话本身才会在界面上抹掉那句话，那是另一条路：DELETE /api/session/…）。
+    """
+    if not svc.delete_reachout(ctx.conn, reachout_id):
+        raise HTTPException(status_code=404, detail=f"主动消息不存在：{reachout_id}")
+    return {"deleted": 1} | _page(ctx)
+
+
+@router.delete("/api/reachouts")
+def clear_inbox(
+    ctx: AppContext = Depends(get_context),
+    role_id: str | None = Query(default=None, max_length=64),
+) -> object:
+    """清空主动消息记录：给了 `role_id` 就只清那个角色，不给就全清（"整理抽屉"那一下）。
+
+    同样只动投递记录，不动会话里的原话。返回删掉的条数，界面据此说"清掉了 N 条"。
+    """
+    deleted = svc.clear_inbox(ctx.conn, role_id) if role_id else svc.clear_all_inboxes(ctx.conn)
+    return {"deleted": deleted} | _page(ctx, role_id=role_id)
+
+
 __all__ = ["router"]

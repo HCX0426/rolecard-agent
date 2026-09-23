@@ -25,6 +25,8 @@ export interface RoleCard {
   time_pattern_enabled?: boolean;
   /** 文件事件触发（架构计划 C·§5.2）：该角色可否被任务目录变化触发，默认开。 */
   file_watch_enabled?: boolean;
+  /** 收件箱自动保留条数：0 = 不自动删（默认）；N>0 = 只留最近 N 条投递记录。 */
+  reachout_keep?: number;
 }
 
 export interface PluginRow {
@@ -641,6 +643,11 @@ export const api = {
       "POST",
       `/api/reachouts/read-by-role?role_id=${encodeURIComponent(roleId)}`,
     ),
+  /** 删抽屉里的**那一行投递记录**。她说过的那句仍留在对话里（那是她下次开口的依据）。 */
+  deleteReachout: (id: number) => request<ReachoutsPage>("DELETE", `/api/reachouts/${id}`),
+  /** 清空主动消息记录：给了角色就只清那个角色，不给就全清。同样不碰对话里的原话。 */
+  clearReachouts: (roleId?: string) =>
+    request<ReachoutsPage>(`DELETE`, `/api/reachouts${roleId ? `?role_id=${encodeURIComponent(roleId)}` : ""}`),
   /** 命令执行审批（架构计划 C·§6.2）：列表（含 pending 计数）与批准/拒绝。 */
   getApprovals: (status?: string) =>
     request<ApprovalsPage>(

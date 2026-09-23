@@ -79,6 +79,29 @@ def test_blocked_why_is_none_when_all_clear(conn) -> None:
     assert svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local) is None
 
 
+def test_blocked_while_that_conversation_is_talking(conn) -> None:
+    """用户正在那条主动会话里回话（她的图在跑）⇒ 这次不插话（审计 #12）。
+
+    判据是"那条会话的写入锁正被持有"，不是"最后一条消息过了多久"：后者在她答完、
+    用户还没回的间隙里也是 False，而那同样不该再冒一句。
+    """
+    from rolecard_agent.core.thread_locks import (
+        release_thread,
+        try_thread_write,
+    )
+
+    utc, local = _now()
+    role = _role()
+    tid = svc.proactive_thread_id(role.role_id)
+    assert try_thread_write(tid, timeout=0.0)
+    try:
+        reason = svc.blocked_why(role, _settings(), conn, now_utc=utc, now_local=local)
+        assert reason and "正在对话" in reason
+    finally:
+        release_thread(tid)
+    assert svc.blocked_why(role, _settings(), conn, now_utc=utc, now_local=local) is None
+
+
 def test_blocked_by_interval(conn) -> None:
     _seed_last(conn, "active", minutes_ago=10)  # 间隔 60 分钟，10 分钟前刚开口
     utc, local = _now()

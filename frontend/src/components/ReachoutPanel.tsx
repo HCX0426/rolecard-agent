@@ -15,6 +15,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { api, type ReachoutsPage, type ReachoutRow } from "../api";
+import { useConfirm } from "../hooks/useConfirm";
 
 const DAY_MS = 86_400_000;
 
@@ -114,18 +115,63 @@ export default function ReachoutPanel({
   const [roleFilter, setRoleFilter] = useState<string | null>(null);
   // 手动展开/折起的组（key → 是否展开）。没记的组走默认规则，见 `isOpen`。
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
+  const confirm = useConfirm();
 
-  useEffect(() => {
-    if (!open) return;
+  /** 重读列表并把未读报回给铃铛。删完之后必须走它，否则红点与列表会各说一套。 */
+  function reload() {
     setErr("");
-    api
+    return api
       .getReachouts(roleFilter ?? undefined)
       .then((p) => {
         setData(p);
         onUnreadChange(p.unread);
       })
       .catch((e) => setErr(`加载失败：${(e as Error).message}`));
-  }, [open, roleFilter, onUnreadChange]);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    void reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, roleFilter]);
+
+  /** 删一行 = 只让这条投递记录从抽屉消失。**她说过的那句仍在对话里**，文案要说清这一点。 */
+  async function removeRow(row: ReachoutRow) {
+    if (
+      !(await confirm({
+        title: "从抽屉里删掉这条？",
+        body: "只是删掉这条提醒记录。她说出口的那句话仍然留在你们的对话里（那是她下次开口的依据）—— 要连话一起抹掉，去对话里删那条。",
+        confirmText: "删除",
+        danger: true,
+      }))
+    )
+      return;
+    try {
+      await api.deleteReachout(row.id);
+      await reload();
+    } catch (e) {
+      setErr(`删除失败：${(e as Error).message}`);
+    }
+  }
+
+  async function clearAll() {
+    const scope = roleFilter ? `「${roles.find((r) => r.id === roleFilter)?.name ?? roleFilter}」` : "所有角色";
+    if (
+      !(await confirm({
+        title: `清空${scope}的主动消息记录？`,
+        body: "抽屉会空出来。各条主动会话里的原话不动，她仍然记得自己主动找过你；已提炼进记忆的事实也不跟着走。",
+        confirmText: "清空",
+        danger: true,
+      }))
+    )
+      return;
+    try {
+      await api.clearReachouts(roleFilter ?? undefined);
+      await reload();
+    } catch (e) {
+      setErr(`清空失败：${(e as Error).message}`);
+    }
+  }
 
   // 从当前列表里聚合出现过的角色，供筛选下拉（按角色卡隔离查看历史）。
   const roles = useMemo(() => {
@@ -179,12 +225,23 @@ export default function ReachoutPanel({
           <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
             角色主动找你
           </span>
-          <button
-            onClick={onClose}
-            className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-          >
-            关闭
-          </button>
+          <span className="flex items-center gap-2">
+            {!!data?.items.length && (
+              <button
+                onClick={() => void clearAll()}
+                title="清空投递记录（对话里她说过的话不动）"
+                className="text-xs text-slate-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400"
+              >
+                清空
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+            >
+              关闭
+            </button>
+          </span>
         </div>
         {roles.length > 1 && (
           <div className="border-b border-slate-100 px-3 py-2 dark:border-slate-700">
@@ -246,6 +303,7 @@ export default function ReachoutPanel({
                     row={row}
                     showRole={stack.items.length === 1}
                     onOpen={openRow}
+                    onDelete={() => void removeRow(row)}
                   />
                 ))}
               {!isOpen(stack) && (
@@ -272,21 +330,26 @@ function MessageRow({
   row,
   showRole,
   onOpen,
+  onDelete,
 }: {
   row: ReachoutRow;
   showRole: boolean;
   onOpen: (row: ReachoutRow) => void | Promise<void>;
+  onDelete: () => void;
 }) {
   return (
-    <button
-      onClick={() => void onOpen(row)}
-      title={row.thread_id ? "打开与该角色的对话（可翻历史、可直接回复）" : "标记为已读"}
-      className={`mb-1 flex w-full flex-col rounded-lg border px-3 py-2 text-left transition-colors ${
-        row.state === "unread"
-          ? "border-blue-200 bg-blue-50/60 dark:border-blue-800 dark:bg-blue-900/20"
-          : "border-slate-100 opacity-70 dark:border-slate-700"
-      }`}
-    >
+    // 删除键不能放进那个 `<button>` 里（HTML 不允许按钮套按钮），所以行是 relative 容器、
+    // ✕ 绝对定位在右上角，只在悬停这一行时出现 —— 与对话页侧栏那个 ✕ 同一个手势。
+    <div className="group relative mb-1">
+      <button
+        onClick={() => void onOpen(row)}
+        title={row.thread_id ? "打开与该角色的对话（可翻历史、可直接回复）" : "标记为已读"}
+        className={`flex w-full flex-col rounded-lg border pr-7 py-2 pl-3 text-left transition-colors ${
+          row.state === "unread"
+            ? "border-blue-200 bg-blue-50/60 dark:border-blue-800 dark:bg-blue-900/20"
+            : "border-slate-100 opacity-70 dark:border-slate-700"
+        }`}
+      >
       {/* 组头已经给了角色与日期区间，行里就不重复；只有"未读"标记值得占一行。 */}
       {(showRole || row.state === "unread") && (
         <span className="flex items-center justify-between text-xs">
@@ -311,6 +374,14 @@ function MessageRow({
           <span>标记已读</span>
         )}
       </span>
-    </button>
+      </button>
+      <button
+        onClick={onDelete}
+        title="从抽屉里删掉这条记录（她说过的话仍留在对话里）"
+        className="absolute right-1 top-1 hidden h-5 w-5 place-items-center rounded text-xs text-slate-400 hover:bg-red-50 hover:text-red-500 group-hover:grid dark:hover:bg-red-900/30"
+      >
+        ✕
+      </button>
+    </div>
   );
 }
