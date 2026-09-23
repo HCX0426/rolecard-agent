@@ -107,6 +107,14 @@ def dice(a: Sequence[str], b: Sequence[str]) -> float:
     return 2 * len(sa & sb) / (len(sa) + len(sb))
 
 
+def jaccard(a: Sequence[str], b: Sequence[str]) -> float:
+    """两个集合的 Jaccard（交/并）。**对等**的两句话才用它 —— `dice` 那侧要的是"草稿里
+    有多少材料是旧的"（非对称），而"这两条像不像同一件事"是对称问题。"""
+    sa, sb = set(a), set(b)
+    union = sa | sb
+    return len(sa & sb) / len(union) if union else 0.0
+
+
 def repeat_score(draft: str, priors: Sequence[str]) -> float:
     """草稿里有多大比例的"材料"是她已经用过的 —— **0.0 = 全新，1.0 = 整段都是旧话**。
 

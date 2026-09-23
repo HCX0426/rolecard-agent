@@ -449,6 +449,7 @@ describe("ChatPage 提取精华（对话 → 该角色的记忆）", () => {
 
   const report = {
     added: 2,
+    similar: 0,
     updated: 0,
     merged: 0,
     invalidated: 0,
@@ -497,6 +498,23 @@ describe("ChatPage 提取精华（对话 → 该角色的记忆）", () => {
     // 报的是"进了谁的记忆 + 几条 + 花多少"，不复读抽出来的事实（那归记忆卡看）
     expect(await screen.findByText(/已提取进通用助手的记忆：新增 2 条/)).toBeTruthy();
     expect(screen.getByText(/321 tokens/)).toBeTruthy();
+  });
+
+  it("像重复的那几条只提示、不自动合并，并把「整理记忆」指给用户", async () => {
+    stubConversation([
+      { role: "user", content: "我搬到苏州住了半年" },
+      { role: "assistant", content: "苏州不错" },
+    ]);
+    apiMock.distillSession.mockResolvedValue({
+      report: { ...report, added: 1, similar: 3 },
+      turns_since: 0,
+    });
+
+    await openConversationAndClickDistill();
+
+    expect(
+      await screen.findByText(/新增 1 条 · 用去 321 tokens（另有 3 条字面上看着像同一件事/)
+    ).toBeTruthy();
   });
 
   it("什么都没抽到时说清楚，而不是静默", async () => {

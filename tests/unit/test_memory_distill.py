@@ -118,6 +118,52 @@ def test_extract_update_supersedes_instead_of_rewriting(conn: SqlConnection) -> 
     assert len(mem.list_items(conn, bucket="elysia", include_invalidated=True)) == 2
 
 
+def test_extract_update_that_repeats_the_same_fact_loses_nothing(conn: SqlConnection) -> None:
+    """模型说"这条过时了"却给了同一件事的另一种说法 ⇒ 不能把那条自己标为失效。
+
+    这条路径不是想象出来的：`ADD`/`UPDATE` 给的文本与库里某条**逐字相同**时，`add_item`
+    会返回那一条本身；照原流程往下 `invalidate_item(old, superseded_by=old)` 就会让
+    幸存者自己取代自己 ⇒ 事实从注入里消失，而界面报的还是"更新 1 条"。
+    """
+    old = mem.add_item(conn, bucket="elysia", text="用户住在上海", source="manual")
+    assert old is not None
+    out = distill.extract(
+        conn,
+        model=FakeModel(f"UPDATE {old['id']} 用户住在上海"),
+        bucket="elysia",
+        messages=[_Msg("human", "我还是住在上海")],
+    )
+    assert out["report"]["updated"] == 0
+    assert _texts(conn, "elysia") == ["用户住在上海"]  # 那条还在，也没被自己取代
+    assert mem.get_item(conn, int(str(old["id"])))["invalidated_at"] is None
+
+
+def test_consolidate_keeps_the_survivor_of_a_merge(conn: SqlConnection) -> None:
+    """MERGE 的结果如果就是被合并的某一条（文本逐字相同），那条是幸存者，不能把自己弄失效。"""
+    a = mem.add_item(conn, bucket="elysia", text="用户养了一只猫叫米")
+    b = mem.add_item(conn, bucket="elysia", text="用户的猫叫米")
+    assert a is not None and b is not None
+    out = distill.consolidate(
+        conn,
+        model=FakeModel(f"MERGE {a['id']},{b['id']} 用户养了一只猫叫米"),
+        bucket="elysia",
+    )
+    assert out["report"]["merged"] == 1
+    survivor = mem.get_item(conn, int(str(a["id"])))
+    assert survivor is not None and survivor["invalidated_at"] is None, "幸存者被自己取代了"
+    assert _texts(conn, "elysia") == ["用户养了一只猫叫米"]
+
+
+def test_count_similar_only_counts_and_touches_nothing(conn: SqlConnection) -> None:
+    """`count_similar` 是**提示**：它报数，不新增、不失效、不改写任何一行。"""
+    mem.add_item(conn, bucket="elysia", text="用户喜欢断舍离，清理衣物上瘾")
+    mem.add_item(conn, bucket="elysia", text="用户喜欢断舍离，清理衣柜上瘾")
+    mem.add_item(conn, bucket="elysia", text="用户住在上海")
+    before = mem.list_items(conn, bucket="elysia", include_invalidated=True)
+    assert distill.count_similar(conn, bucket="elysia") == 2
+    assert mem.list_items(conn, bucket="elysia", include_invalidated=True) == before
+
+
 def test_extract_ignores_unparseable_lines_and_counts_them(conn: SqlConnection) -> None:
     out = distill.extract(
         conn,

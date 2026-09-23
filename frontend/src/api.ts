@@ -676,6 +676,8 @@ export const api = {
 export interface DistillReport {
   added: number;
   updated: number;
+  /** 有几条字面上看着像同一件事。只是提示：合并要人在记忆卡上发起「整理记忆」。 */
+  similar: number;
   merged: number;
   invalidated: number;
   noop: number;

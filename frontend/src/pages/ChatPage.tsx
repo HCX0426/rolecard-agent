@@ -395,7 +395,12 @@ export default function ChatPage({
         report.skipped && `忽略 ${report.skipped} 行看不懂的输出`,
       ].filter(Boolean);
       const cost = report.tokens ? ` · 用去 ${report.tokens} tokens` : "";
-      if (parts.length) setStatus(`已提取进${roleLabel}的记忆：${parts.join("、")}${cost}`);
+      // 像重复的只**报数**、不自动合并：字面度量分不清"换个说法"与"换个值"（实测
+      // 「住在上海」与「住在苏州」比两条真同义还像），所以合并留在记忆卡的「整理记忆」里。
+      const hint = report.similar
+        ? `（另有 ${report.similar} 条字面上看着像同一件事，可在记忆卡点「整理记忆」核对合并）`
+        : "";
+      if (parts.length) setStatus(`已提取进${roleLabel}的记忆：${parts.join("、")}${cost}${hint}`);
       else setStatus(report.detail || "这段对话里没有值得新记的事实。", "info");
     } catch (e) {
       setStatus(`提取失败：${(e as Error).message}`, "warn");

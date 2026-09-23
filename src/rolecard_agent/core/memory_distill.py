@@ -23,6 +23,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from rolecard_agent.core import memory as mem
+from rolecard_agent.core.anti_repeat import grams, jaccard
 from rolecard_agent.core.text import text_of
 from rolecard_agent.core.usage import TokenUsage, parse_usage, record_usage
 from rolecard_agent.storage.db import SqlConnection
@@ -35,6 +36,11 @@ _MAX_LINE_CHARS = 300
 _MAX_CONSOLIDATE_ITEMS = 60
 
 _OPS = "ADD / UPDATE / MERGE / INVALID / NOOP"
+
+#: `count_similar` 的两个数：提示门槛与"短到不比"的下限。门槛定在实测同义对的最低值上
+#: （0.40），因为它**判错不伤人**（用户多看一眼），而真正的合并仍由「整理记忆」发起。
+SIMILAR_HINT = 0.40
+_MIN_HINT_GRAMS = 6  # ≈7 个字：再短，两条不相干的事实靠共用几个字就能挤过门槛
 
 _EXTRACT_PROMPT = (
     "你在维护一个长期记忆库。读下面的对话，只抽**关于用户的、值得跨会话记住的**事实："
@@ -156,10 +162,17 @@ def extract(
             if fresh is None:
                 report["skipped"] += 1
                 continue
+            if int(str(fresh["id"])) == int(str(old["id"])):
+                # 模型说"这条过时了"，给的却是同一件事的另一种说法 ⇒ 同义判重把它并回了原条。
+                # 这里绝不能继续往下把原条标为失效 —— 那等于把一条真事实亲手弄丢，
+                # 而界面上只会显示"更新 1 条"。
+                report["noop"] += 1
+                continue
             mem.invalidate_item(conn, item_id=old["id"], superseded_by=int(str(fresh["id"])))
             report["updated"] += 1
             continue
         report["skipped"] += 1  # 看不懂的行：忽略并计数，不猜
+    report["similar"] = count_similar(conn, bucket=bucket)
     return {"ok": True, "report": report}
 
 
@@ -208,6 +221,10 @@ def consolidate(
                 report["skipped"] += 1
                 continue
             for item in targets:
+                if int(str(item["id"])) == int(str(fresh["id"])):
+                    # 合并结果被 `add_item` 并进了这几条里的一条 —— 那条就是幸存者，
+                    # 再给它写上"被自己取代"会把合并出来的事实直接弄丢。
+                    continue
                 mem.invalidate_item(
                     conn, item_id=int(str(item["id"])), superseded_by=int(str(fresh["id"]))
                 )
@@ -234,7 +251,36 @@ def consolidate(
             continue
         report["skipped"] += 1
     report["after"] = len(mem.ranked_active(conn, bucket=bucket))
+    report["similar"] = count_similar(conn, bucket=bucket)
     return {"ok": True, "report": report}
+
+
+def count_similar(conn: SqlConnection, *, bucket: str) -> int:
+    """桶里"字面上看着像同一件事"的条目有几条。**只用于提示，不改动任何一行。**
+
+    为什么是提示而不是闸门（任务 #9 的实测结论，数据与推导写在 `docs/架构审计.md` §12.7 末）：
+    字面度量分不开"同一件事换个说法"（真同义，实测 0.40~0.73）与"同一句式换个值"
+    （「住在上海」vs「住在苏州」0.43、「每周三上课」vs「每周四上课」0.60 —— 都是**不同事实**）。
+    在写入路径上挡下来会**吞掉**一条真事实，而放过去只是多一条看得见重复的条目 ——
+    所以这里只报数，真正判断"是不是同一件事"留给模型 + 用户发起的「整理记忆」。
+    """
+    texts = [str(i["text"]) for i in mem.ranked_active(conn, bucket=bucket)]
+    gram_sets = [_bigrams(t) for t in texts]
+    flagged = 0
+    for a in range(len(texts)):
+        for b in range(a + 1, len(texts)):
+            ga, gb = gram_sets[a], gram_sets[b]
+            if len(ga) < _MIN_HINT_GRAMS or len(gb) < _MIN_HINT_GRAMS:
+                continue  # 短到没什么可比材料的两条不比：共用几个字就能挤过门槛
+            if jaccard(ga, gb) >= SIMILAR_HINT:
+                flagged += 2  # 这一对里的两条都算"看着像重复"
+                break
+    return min(flagged, len(texts))
+
+
+def _bigrams(text: str) -> list[str]:
+    """字符二元组。用 2 而不是闸门那把 4-gram：换语序的同义句在 4-gram 上只剩 0.20。"""
+    return grams(text, n=2)
 
 
 def _report(**fields: Any) -> dict[str, Any]:
@@ -242,6 +288,7 @@ def _report(**fields: Any) -> dict[str, Any]:
     out: dict[str, Any] = {
         "added": 0,
         "updated": 0,
+        "similar": 0,  # 有几条字面上看着像同一件事：只是提示，合并要由「整理记忆」发起
         "merged": 0,
         "invalidated": 0,
         "noop": 0,
@@ -283,6 +330,7 @@ def mark_extracted(conn: SqlConnection, *, thread_id: str, message_count: int) -
 
 __all__ = [
     "consolidate",
+    "count_similar",
     "due_for_extract",
     "extract",
     "mark_extracted",
