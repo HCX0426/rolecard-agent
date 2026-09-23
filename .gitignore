@@ -68,3 +68,4 @@ scripts/_*.js
 
 # --- 打包中间产物（D②-4）：PyInstaller 的 onedir 有几百 MB，永远不入库，安装包现打 ---
 /build/
+data/sqlite/*.trace.jsonl
