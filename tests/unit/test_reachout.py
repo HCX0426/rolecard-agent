@@ -888,6 +888,10 @@ def test_reachout_books_a_call_even_when_the_model_reports_nothing(conn) -> None
 def test_task_text_names_the_template_explicitly(conn) -> None:
     """实测 8/8 条以（动作）开头、正文一半以「哎呀，今天的」起头、字数挤在窄带 ——
     指令里要点名这件事，而且**按 §8.2 第 2 条改正写**：给"该怎么写"，不是只列"别怎么写"。
+
+    2026-09-23 又改了一次：那条"要写动作就放句中"配上末尾那句"没说的动作和神态用（）包起来"，
+    实测把主动会话推成 20 句里 15 句以（开头（同一条卡在普通对话里是 0%）—— 于是
+    改成直接禁止旁白，这里钉的就是**新**那四条。
     """
     model = _FakeModel(AIMessage(content='嗨'))
     svc.generate_reachout_text(_role(), model, _settings(), conn, role_id='active')
@@ -895,8 +899,10 @@ def test_task_text_names_the_template_explicitly(conn) -> None:
     assert '上一条的开头几个字这次不要用' in joined
     assert '长度由内容决定' in joined
     assert '结尾换一种句式收' in joined
-    # 正写 ≠ 把毛病忘掉：四条各自对着一个数，缺一条就是回到旧写法。
-    assert '（）不是每句的起手式' in joined
+    assert '只写你会说出口的那句话' in joined
+    # 旧写法里那两句"教她写（）"的不能悄悄回来。
+    assert '动作和神态用（）包起来' not in joined
+    assert '一个动作起头' not in joined
 
 
 def test_quiet_minutes_grows_with_unread_and_jitters_deterministically() -> None:
