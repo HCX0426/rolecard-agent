@@ -203,6 +203,25 @@ CREATE TABLE IF NOT EXISTS model_backend (
 -- 索引必须跟着重建后的形状走（放在这里，旧库的 `CREATE TABLE IF NOT EXISTS` 会跳过建表、
 -- 却仍然执行这条 CREATE INDEX → "no such column: provider_id"）。
 
+-- 模型调用的 token 账（审计 §12.8）：路由改云端之后，对话/主动开口/记忆提取三条路都花真钱，
+-- 而项目里没有任何一个数能回答"今天花了多少"（`node_end` 的 tokens 一直是 null，
+-- `reachout_sent` 只带 chars —— 字数不是钱）。
+-- 粒度是 (本地日期, 后端)，**故意不给每次调用留一行**：这张表只增不减（audit_log 已经为此
+-- 做过游标分页），而"今天云端花了多少"要的是一个数，不是一堆等着聚合的原始行。
+-- 一天一行/后端 ⇒ 单人自用下常年就几十行。后端为分开的键，因为"云端花了多少"与
+-- "本地花了多少"是两件事（本地不花钱，花的是显存与 184 秒）。
+CREATE TABLE IF NOT EXISTS token_usage_day (
+    day               TEXT NOT NULL,             -- 本地日期 YYYY-MM-DD（问"今天"的人用自己的日历）
+    backend           TEXT NOT NULL,             -- model_backend.name；空串 = 未指名（默认后端）
+    calls             INTEGER NOT NULL DEFAULT 0,
+    prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    -- 多少次调用**后端根本没报用量**。没有这一列，"今天 0 token"就同时意味着
+    -- "今天没花钱"和"今天报了 12 次、一次都没数"两件事 —— 后者是账本坏了，不是免费。
+    unreported        INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, backend)
+);
+
 -- ===========================================================================
 -- Document intake ledger.
 --

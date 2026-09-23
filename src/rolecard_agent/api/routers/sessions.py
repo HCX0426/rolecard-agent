@@ -438,11 +438,14 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
 # -- 提取精华（对话 → 记忆条目）------------------------------------------------
 
 
-def _thread_model(ctx: AppContext, thread: dict, role_id: str) -> Any:
-    """这一会话**真正在用**的那个模型：会话覆盖 > 角色覆盖 > 默认（与 call_model 同一条链）。
+def _thread_model(ctx: AppContext, thread: dict, role_id: str) -> tuple[Any, str | None]:
+    """这一会话**真正在用**的模型与它的后端名：会话覆盖 > 角色覆盖 > 默认（同 call_model 那条链）。
 
     提取必须用同一个后端：换到一个更弱的模型上去抽事实，症状是"记忆悄悄变笨了"，
     而没人会怀疑到提取这一步 —— 这条链的优先级不是实现细节，是结果质量的因。
+
+    后端名一起返回（而不是让调用方再解一遍）：token 账要按后端分（审计 §12.8），
+    而"谁在用哪个后端"这件事只该有一处答案。
     """
     name = thread["model_name"]
     if not name:
@@ -450,7 +453,7 @@ def _thread_model(ctx: AppContext, thread: dict, role_id: str) -> Any:
             name = ctx.roles.get(role_id).model_name
         except Exception:  # noqa: BLE001 - 角色被删了就用默认，提取不该因此 500
             name = None
-    return ctx.runtime.resolve_role_model(name)
+    return ctx.runtime.resolve_role_model(name), name
 
 
 def _stream_then(events: Any, *, after: Any) -> Any:
@@ -483,11 +486,14 @@ def _distill_after_turn(ctx: AppContext, *, thread_id: str, role_id: str) -> Non
             message_count=len(messages),
         ):
             return
+        model, backend = _thread_model(ctx, thread, role_id)
         outcome = memory_distill.extract(
             conn,
-            model=_thread_model(ctx, thread, role_id),
+            model=model,
             bucket=role_id,
             messages=messages,
+            backend=backend,
+            tracer=ctx.tracer,
         )
         report = outcome["report"]
         if outcome["ok"]:
@@ -535,11 +541,14 @@ def distill_session(
     thread = get_thread(ctx.conn, thread_id)
     _, messages = _history_messages(ctx, thread_id)
     role_id = str(thread["current_role_id"])
+    model, backend = _thread_model(ctx, thread, role_id)
     outcome = memory_distill.extract(
         ctx.conn,
-        model=_thread_model(ctx, thread, role_id),
+        model=model,
         bucket=role_id,
         messages=messages,
+        backend=backend,
+        tracer=ctx.tracer,
     )
     report = outcome["report"]
     if outcome["ok"]:

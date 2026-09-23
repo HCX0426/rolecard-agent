@@ -81,6 +81,23 @@ def test_extract_adds_facts_as_items(conn: SqlConnection) -> None:
     assert "【已有条目】" in model.prompts[0]
 
 
+def test_extract_books_the_call_on_the_backend_that_served_it(conn: SqlConnection) -> None:
+    """提取也花真钱，所以要进同一本 token 账（审计 §12.8）。
+
+    本地实测一次提取约 122 秒 / 248 token —— 自动提取降频到 5 轮之后，这笔开销是按轮次涨的，
+    看不见它就等于"悄悄把成本加上去"。
+    """
+    distill.extract(
+        conn,
+        model=FakeModel("ADD 用户住在上海"),
+        bucket="elysia",
+        messages=[_Msg("human", "我搬到上海了")],
+        backend="local-8b",
+    )
+    row = conn.execute("SELECT backend, calls, completion_tokens FROM token_usage_day").fetchone()
+    assert (row["backend"], row["calls"], row["completion_tokens"]) == ("local-8b", 1, 123)
+
+
 def test_extract_update_supersedes_instead_of_rewriting(conn: SqlConnection) -> None:
     """UPDATE 不是就地改文本：新增一条 + 把旧那条标失效（版本链是"它何时开始搞错"的证据）。"""
     old = mem.add_item(conn, bucket="elysia", text="用户住在上海", source="manual")

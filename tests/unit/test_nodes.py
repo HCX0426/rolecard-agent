@@ -470,6 +470,57 @@ def test_call_model_leaves_a_clean_history_untouched(roles: RoleCardService) -> 
     assert any(m is first for m in model.last_prompt)
 
 
+def test_call_model_reports_usage_to_the_host_sink(roles: RoleCardService) -> None:
+    """这一轮花了多少 token 要交给宿主的账本，并如实进 `node_end`（审计 §12.8）。
+
+    `node_end` 的 `tokens` 字段一直存在、一直是 null —— 而路由改云端之后，"今天花了多少"
+    是必须答得出的问题。内核不自己开账本（它没有连接），只把事实交给宿主给的落点。
+    """
+    rid = _role(roles, "cloudy", model_name="cloud-a")
+    seen: list[tuple[str | None, Any]] = []
+
+    class _UsageModel:
+        def bind_tools(self, tools: Sequence[Any], **kwargs: Any) -> Any:
+            return self
+
+        def invoke(self, prompt: Any, **kwargs: Any) -> Any:
+            return AIMessage(
+                content="好",
+                usage_metadata={"input_tokens": 900, "output_tokens": 37, "total_tokens": 937},
+            )
+
+    tracer = RecordingTracer()
+    ctx = _ctx(ToolRegistry(), roles, _UsageModel(), tracer=tracer)
+    ctx.usage_recorder = lambda backend, usage: seen.append((backend, usage))
+    call_model(
+        {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"}, ctx
+    )
+
+    assert [name for name, _ in seen] == ["cloud-a"], "账要记在真正服务这一轮的那个后端名下"
+    assert seen[0][1].prompt == 900 and seen[0][1].completion == 37
+    end = next(e for e in tracer.events if getattr(e, "event", "") == "node_end")
+    assert end.tokens == 937
+    assert end.detail["prompt_tokens"] == 900 and end.detail["completion_tokens"] == 37
+
+
+def test_call_model_records_an_unreported_call_as_such(roles: RoleCardService) -> None:
+    """后端没报用量 ⇒ 交 None 上去，不交一个 0。0 会被读成"这一句不要钱"。"""
+    rid = _role(roles)
+    seen: list[Any] = []
+    ctx = _ctx(ToolRegistry(), roles, FakeModel(AIMessage(content="ok")))
+    ctx.usage_recorder = lambda _backend, usage: seen.append(usage)
+    call_model(
+        {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"}, ctx
+    )
+    assert seen == [None]
+    end = [e for e in _trace_of(ctx) if getattr(e, "event", "") == "node_end"]
+    assert not end or end[0].tokens is None
+
+
+def _trace_of(ctx: KernelContext) -> list[Any]:
+    return list(getattr(ctx.tracer, "events", []))
+
+
 def test_call_model_resolves_role_backend(roles: RoleCardService) -> None:
     """US-8 后半：角色声明了后端名 → 该轮模型由解析器按名给出。"""
     rid = _role(roles, "cloudy", model_name="cloud-a")

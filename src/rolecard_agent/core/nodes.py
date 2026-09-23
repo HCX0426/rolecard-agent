@@ -44,6 +44,7 @@ from rolecard_agent.core.state import now_ts
 from rolecard_agent.core.text import text_of
 from rolecard_agent.core.tools.errors import ToolExecutionError
 from rolecard_agent.core.tools.registry import ToolRegistry
+from rolecard_agent.core.usage import parse_usage
 from rolecard_agent.roles.service import RoleCardService, RoleNotFound
 
 TOOL_OFFLINE = "该能力当前未启用，无法调用。"
@@ -273,6 +274,13 @@ def _vision_unknown(_base_url: str | None, _model: str) -> bool | None:
     return None
 
 
+def _no_usage(_backend: str | None, _usage: Any) -> None:
+    """Default usage sink: record nothing.
+
+    Same shape as the other providers: an unwired kernel does not invent a cost ledger.
+    """
+
+
 @dataclass(slots=True)
 class KernelContext:
     """Everything the nodes need, assembled once at graph build time."""
@@ -316,6 +324,11 @@ class KernelContext:
     # `core/probes.vision_capability`（Ollama `/api/show` 的 capabilities）；没接线就是
     # "永远不知道" ⇒ 永远不拦。内核不自己发 HTTP：能不能看图是**宿主环境**的事实。
     vision_probe: Callable[[str | None, str], bool | None] = _vision_unknown
+
+    # token 账的落点（审计 §12.8）：`(后端名, 这次调用的用量) -> None`。宿主接成"累进今天的账"，
+    # 内核自己不碰 sqlite —— 与 memory_provider / vision_probe 同一条分工：内核只**报告事实**，
+    # 账本、连接、日期口径都是宿主环境的事。没接线就是不分发（不编一份空的成本报表）。
+    usage_recorder: Callable[[str | None, Any], None] = _no_usage
 
 
 def _turn_backend(state: dict[str, Any], role: Any, ctx: KernelContext) -> Any | None:
@@ -581,6 +594,10 @@ def call_model(
     with timer() as elapsed:
         invoke_kwargs = {} if config is None else {"config": config}
         response = bound.invoke(prompt, **invoke_kwargs)
+    # 一次调用的用量（四种形状都认，见 core/usage.parse_usage）。拿不到就是 None ——
+    # 记成 0 等于报告"这一句不要钱"，而那正是要回答的那个问题的假答案。
+    usage = parse_usage(response)
+    ctx.usage_recorder(backend, usage)
 
     verdict = check(text_of(response))
     if not verdict.allowed:
@@ -604,11 +621,16 @@ def call_model(
             role_id=role_id,
             node="call_model",
             latency_ms=elapsed["ms"],
+            # 这个字段一直存在、一直是 null（审计 §12.8）：字数不是钱，而路由改云端之后
+            # "今天花了多少"是必须答得出的问题。没报用量时仍留 None，不写 0。
+            tokens=usage.total if usage is not None else None,
             detail={
                 "tools_visible": len(tools),
                 "enabled_domains": domains,
                 "history_messages": len(history),
                 "history_dropped": dropped,
+                "prompt_tokens": usage.prompt if usage is not None else None,
+                "completion_tokens": usage.completion if usage is not None else None,
             },
         )
     )

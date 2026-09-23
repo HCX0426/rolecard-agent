@@ -959,7 +959,12 @@ def consolidate_memory(
         _require_role(ctx, role_id)
     bucket = role_id or mem.GLOBAL_BUCKET
     outcome = memory_distill.consolidate(
-        ctx.conn, model=ctx.runtime.resolve_role_model(None), bucket=bucket
+        ctx.conn,
+        model=ctx.runtime.resolve_role_model(None),
+        bucket=bucket,
+        # 默认后端（没指名），但**照样进账**：整理一次也是一次真调用（审计 §12.8）。
+        backend=None,
+        tracer=ctx.tracer,
     )
     report = outcome["report"]
     ctx.roles.audit(

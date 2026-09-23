@@ -58,7 +58,7 @@ from rolecard_agent.core.memory import (
     memory_for_turn,
     top_active_item,
 )
-from rolecard_agent.core.observability import TraceEvent, Tracer
+from rolecard_agent.core.observability import NullTracer, TraceEvent, Tracer
 from rolecard_agent.core.proactive_state import (
     DEFAULT_AFFINITY_THRESHOLD,
     ProactiveState,
@@ -67,6 +67,7 @@ from rolecard_agent.core.proactive_state import (
 )
 from rolecard_agent.core.prompts import build_system_prompt
 from rolecard_agent.core.text import text_of
+from rolecard_agent.core.usage import TokenUsage, parse_usage, record_usage
 from rolecard_agent.core.workspace import resolve_task_dir
 from rolecard_agent.roles.models import RoleCard
 from rolecard_agent.roles.service import RoleCardService
@@ -178,6 +179,19 @@ def recent_reachout_lines(
         "这些是你最近已经主动对用户说过的话。**别重复它们说过的内容，也别沿用它们的句式** —— "
         "不要再用同样的（动作/神态）开场，不要再提同一个由头（同一片花海、同一句关心）：\n" + lines
     )
+
+
+def _sum_or_none(a: int | None, b: int | None) -> int | None:
+    """两个"可能没报"的数相加：**两边都没数才给 None**。
+
+    为什么不是"有一边是 None 就返回 None"：这个函数用在累加器上，而累加器从
+    `TokenUsage(None, None)` 起步 —— 那条规则会让第一次已知的用量也被后面的"没报"毒掉，
+    结果明明花了 1685 却报 None（这条是被真用例抓出来的）。
+    现在宁可少算也至少有算；每次调用有没有报数，账本另有 `unreported` 那一列兜着。
+    """
+    if a is None and b is None:
+        return None
+    return (a or 0) + (b or 0)
 
 
 def recent_own_texts(conn: SqlConnection, role_id: str, *, limit: int = BG_LIMIT) -> list[str]:
@@ -504,6 +518,9 @@ class ReachoutDraft(NamedTuple):
     text: str | None
     why: str = ""
     score: float = 0.0
+    # 这一次开口（含可能的一次重生）花掉的 token；后端没报就是 None（审计 §12.8）。
+    # 放在草稿里而不是让调度器去问生成函数：`spent` 是那次调用的局部量，出不去。
+    tokens: int | None = None
 
 
 def generate_reachout_text(
@@ -516,6 +533,7 @@ def generate_reachout_text(
     mode: str = "general",
     file_list: str = "",
     thread_lines: str = "",
+    tracer: Tracer | None = None,
 ) -> ReachoutDraft:
     """生成一条主动内容：人设 + 记忆 + 最近说过什么 → 单轮 → guard。
 
@@ -553,6 +571,18 @@ def generate_reachout_text(
     if thread_lines:
         task = f"{task}\n\n{thread_lines}"
     system = build_system_prompt(role.system_prompt, role.exemplars, memory=memory, agent=False)
+    spent = TokenUsage(None, None)  # 这一次开口（含重生）花掉的总量，没报就是 None
+    _tracer = tracer or NullTracer()
+
+    def add_usage(usage: TokenUsage | None) -> None:
+        nonlocal spent
+        record_usage(conn, backend=role.model_name, usage=usage, tracer=_tracer)
+        if usage is None:
+            return
+        spent = TokenUsage(
+            _sum_or_none(spent.prompt, usage.prompt),
+            _sum_or_none(spent.completion, usage.completion),
+        )
 
     def speak(extra: str = "") -> tuple[str, ReachoutDraft]:
         """要一次正文。返回 `(可用于打分的文本, 草稿)`；草稿为 None 时文本是空的。"""
@@ -561,6 +591,7 @@ def generate_reachout_text(
             HumanMessage(content=f"{task}{extra}\n\n（你的角色是 {role.role_name}）"),
         ]
         reply = model.invoke(prompt)
+        add_usage(parse_usage(reply))  # 主动开口也花真钱，重生一次就是两次（审计 §12.8）
         # 用全项目唯一的取值实现：`str(reply.content)` 在分块形态下会得到 Python repr，
         # 而这份文本既进 guard 又进用户收件箱（架构审计报告 P1-8）。
         text = text_of(reply).strip()
@@ -569,12 +600,13 @@ def generate_reachout_text(
             # 正文一个字都不留 —— 思考内容在 Ollama 的 `message.thinking` 通道里，而
             # `model_thinking_models` 没登记它，langchain 就把那一整段丢了。这不是偶发：
             # 同一条 prompt 连开三次，两次是这个空返回。所以它必须**可统计**（见 `ReachoutDraft`）。
-            return "", ReachoutDraft(None, "empty_output")
+            # 带上当前的 `spent` 正是这件事的另一半：**一个字没产出也一样把钱花掉了**。
+            return "", ReachoutDraft(None, "empty_output", 0.0, spent.total)
         text = text[:2000]
         verdict = check(text)
         if not verdict.allowed:
-            return "", ReachoutDraft(None, "guard")  # guard fail-closed：被拦下就不发
-        return text, ReachoutDraft(text, "")
+            return "", ReachoutDraft(None, "guard", 0.0, spent.total)  # guard fail-closed：不发
+        return text, ReachoutDraft(text, "", 0.0, spent.total)
 
     text, draft = speak()
     if draft.text is None:
@@ -582,23 +614,24 @@ def generate_reachout_text(
     priors = recent_own_texts(conn, role_id) if role_id else []
     score = repeat_score(text, priors)
     if score <= REGEN_SCORE:
-        return ReachoutDraft(text, "", round(score, 2))
+        return ReachoutDraft(text, "", round(score, 2), spent.total)
 
     # 像自己说过的那句话 → 带着"这句不算数"的指令重来一次，然后在两条里挑不像的那条。
     retry_text, retry = speak(_AVOIDANCE_NOTE + text[:120])
     if retry.text is None:
         # 重生失败（空正文 / 被 guard 拦）⇒ **保留第一条**而不是改判不发：第一条只是"像她自己"，
         # 不是坏内容。因为重生的故障吞掉一条本来能说的话，是我们亏。
-        return ReachoutDraft(text, "", round(score, 2))
+        return ReachoutDraft(text, "", round(score, 2), spent.total)
     retry_score = repeat_score(retry_text, priors)
     best, best_score = (
         (retry_text, retry_score) if retry_score <= score else (text, round(score, 2))
     )
     if best_score > DROP_SCORE:
-        # 两条都够得着"逐字复读"那一档（真库里那条 88 字全同的是 52.7，而普通口癖只到 27）——
-        # 宁可这次不开口。用户读到的"她怎么又不说话了"远轻于"她把我两小时前的话又发了一遍"。
-        return ReachoutDraft(None, "repeat", round(best_score, 2))
-    return ReachoutDraft(best, "", round(best_score, 2))
+        # 两条都够得着"逐字复读"那一档（覆盖率尺度：那条 88 字全同的是 1.000，
+        # 而真库里口癖最重的一条只有 0.472）—— 宁可这次不开口。
+        # 用户读到的"她怎么又不说话了"远轻于"她把我两小时前的话又发了一遍"。
+        return ReachoutDraft(None, "repeat", round(best_score, 2), spent.total)
+    return ReachoutDraft(best, "", round(best_score, 2), spent.total)
 
 
 # 触发源（关系驱动，四类共用抑制 / 生成 / 落库流水线）
@@ -790,6 +823,7 @@ class ReachoutScheduler:
                     ),
                     # 读不到就是没有这段上下文（provider 自己吞异常），不该拦住开口。
                     thread_lines=self._thread_lines(role.role_id) if self._thread_lines else "",
+                    tracer=self._tracer,
                 )
             except Exception as exc:  # noqa: BLE001 - 生成失败只留痕，不阻塞其它角色
                 self._tracer.emit(
@@ -841,6 +875,8 @@ class ReachoutScheduler:
                         "thread_id": thread_id,
                         # 复读分带进审计：闸门会不会误伤只能看分布，而分布要在真机上一天天攒。
                         "score": draft.score,
+                        # 一句主动开口花了多少 token（重生过就是两次）。`chars` 是字数，不是钱。
+                        "tokens": draft.tokens,
                     },
                 )
             )

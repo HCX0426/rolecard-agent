@@ -24,6 +24,9 @@
     阈值 0.85 与 n-gram 的做法抄自 N.E.K.O 的 `anti_repeat`（它用 Dice≥0.85 判逐字复读）。
   * **记忆条数** —— 原料在不在场：0 条=她没有任何关于你的事实可用，只能凭人设编。
   * 回复侧多一列**「用户条数」** —— 为 0 表示那条会话里你根本没说过话，她是在自言自语。
+  * **今日 token（按后端）** —— 路由改云端之后，"活人感"每一步都花真钱（审计 §12.8）：
+    一句回答一次调用，而 §12.1 那道复读闸门太像时还会**重生一次**。`没报` 那一列不为 0
+    说明账本在漏（后端没回用量），**不等于**今天很省。
 
 设计约束：
 
@@ -57,6 +60,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from rolecard_agent.config import Settings  # noqa: E402
 from rolecard_agent.core.reachout import proactive_thread_id  # noqa: E402
+from rolecard_agent.core.usage import daily_usage, local_day, usage_days  # noqa: E402
 
 FIRST_CHARS = 6  # 开场复读看前几个字
 NGRAM = 4  # 复读判定的 n-gram 长度
@@ -166,9 +170,20 @@ def report(db: Path, limit: int) -> dict[str, Any]:
             "取样时间": datetime.now(UTC).isoformat(timespec="seconds"),
             "每角色窗口": limit,
             "角色": per_role,
+            # 钱的事也在这把尺子上（审计 §12.8）：路由改云端后，"活人感"每一步都花真 token，
+            # 而重生一次就是两次调用。不读库就报不出这个数，所以它跟着同一份只读连接走。
+            "token": _token_report(conn),
         }
     finally:
         conn.close()
+
+
+def _token_report(conn: sqlite3.Connection) -> dict[str, Any]:
+    """今日各后端的用量 + 最近几天的总量。老库里可能还没这张表 ⇒ 给个说明而不是崩。"""
+    try:
+        return {"今日": daily_usage(conn), "最近": usage_days(conn, limit=7)}
+    except sqlite3.OperationalError:  # 没有 token_usage_day = 这份库比记账功能还老
+        return {"说明": f"这份库还没有 token 账表（{local_day()} 起记账）"}
 
 
 def reply_side(api: str, role_ids: Sequence[str], limit: int) -> dict[str, Any]:
@@ -223,8 +238,39 @@ _METRIC_COLUMNS: tuple[tuple[str, str], ...] = (
 
 COLUMNS = (("角色", "rid"), *_METRIC_COLUMNS, ("记忆", "记忆条数"))
 
+#: token 账那一栏。「没报」单独一列是重点：一次调用后端没回用量时，
+#: 总数里就是没有它 —— 那一列不为 0 就说明账本在漏，而不是"今天很省"。
+TOKEN_COLUMNS = (
+    ("后端", "backend"),
+    ("调用", "calls"),
+    ("输入", "prompt"),
+    ("输出", "completion"),
+    ("合计", "total"),
+    ("没报", "unreported"),
+)
+
 #: 回复侧没有"记忆条数"，但有"用户条数"——同一把尺子，最后一列换掉。
 REPLY_COLUMNS = (("角色", "rid"), *_METRIC_COLUMNS, ("用户条数", "用户条数"))
+
+
+def _print_token(token: Mapping[str, Any]) -> None:
+    """今天各后端花了多少 token（审计 §12.8）。按后端分：云端是钱，本地是显存与时间。"""
+    if token.get("说明"):
+        print(f"\ntoken 账：{token['说明']}")
+        return
+    today = list(token.get("今日") or [])
+    if not today:
+        print("\ntoken 账：今天还没有一次调用被记下")
+        return
+    print("\n今日 token（按后端）")
+    print("  ".join(name.ljust(10) for name, _ in TOKEN_COLUMNS))
+    for row in today:
+        cells = [str(row[key]) for _, key in TOKEN_COLUMNS]
+        print("  ".join(c.ljust(10) for c in cells))
+    days = list(token.get("最近") or [])
+    if len(days) > 1:
+        trend = "  ".join(f"{d['day'][5:]}:{d['total']}" for d in days[:7])
+        print(f"最近几天总量：{trend}")
 
 
 def _print_table(
@@ -289,12 +335,14 @@ def main() -> None:
     _print_table("主动开口侧（来自 agent_reachout）", data["角色"], COLUMNS)
     if "回复侧" in data:
         _print_table("回复侧（来自那条主动会话的 checkpoint 回放）", data["回复侧"], REPLY_COLUMNS)
+    _print_token(data.get("token") or {})
     print(
         "\n读法：两列去重率→1.00 越好（正文那列才是口癖所在，只报原文那列会量错东西）；"
         "长度看 **CV**（σ/均值）而不是绝对 σ —— 均值一变 σ 就跟着变（把回复从 161–202 压到"
         "74–95 那次，σ 反而从 12.0 掉到 6.1，看着像退步）；重合最大≥0.85 按逐字复读计；"
         "记忆 0 条 = 她没有任何关于你的事实可用；"
-        "回复侧「用户条数」为 0 = 她那句根本没接住你说过的任何事。"
+        "回复侧「用户条数」为 0 = 她那句根本没接住你说过的任何事；"
+        "token 那栏的「没报」= 后端没回用量，**不是**这次不要钱。"
     )
 
 

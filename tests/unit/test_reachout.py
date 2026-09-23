@@ -771,15 +771,21 @@ def test_format_thread_lines_keeps_the_tail_in_order() -> None:
 
 
 class _ScriptedModel:
-    """按脚本依次吐出回复，并记下每次收到的 prompt（重生那条测试要看第二次的指令）。"""
+    """按脚本依次吐出回复，并记下每次收到的 prompt（重生那条测试要看第二次的指令）。
 
-    def __init__(self, replies: list[str]) -> None:
+    `usages` 给定时第 n 次调用带上第 n 份用量 —— 账要按调用次数列，一次重生就是两份。
+    """
+
+    def __init__(self, replies: list[str], usages: list[dict] | None = None) -> None:
         self._replies = list(replies)
+        self._usages = list(usages or [])
         self.prompts: list[list] = []
 
     def invoke(self, prompt: list, **kwargs: object) -> AIMessage:
         self.prompts.append(prompt)
-        return AIMessage(content=self._replies.pop(0) if self._replies else "")
+        content = self._replies.pop(0) if self._replies else ""
+        usage = self._usages.pop(0) if self._usages else None
+        return AIMessage(content=content, usage_metadata=usage)
 
 
 _PRIOR = (
@@ -848,6 +854,35 @@ def test_no_role_id_means_no_scoring_corpus(conn) -> None:
     draft = svc.generate_reachout_text(_role(), model, _settings(), conn)
     assert draft.text == _PRIOR and draft.score == 0.0
     assert len(model.prompts) == 1
+
+
+def test_reachout_costs_are_booked_per_call(conn) -> None:
+    """主动开口花的 token 进账，重生一次就是两次调用（审计 §12.8）。
+
+    这条是 §12.1 那道闸门的配套：闸门说"太像就重来一次"，那笔钱必须看得见，
+    否则"为了不复读而把每天的双倍调用悄悄加上去"没人会注意到。
+    （`_ScriptedModel` 的 `usages` 一份对应一次调用。）
+    """
+    _seed_prior(conn)
+    model = _ScriptedModel(
+        [_PRIOR, _NEW],
+        [
+            {"input_tokens": 800, "output_tokens": 40, "total_tokens": 840},
+            {"input_tokens": 820, "output_tokens": 25, "total_tokens": 845},
+        ],
+    )
+    draft = svc.generate_reachout_text(_role(), model, _settings(), conn, role_id="active")
+    row = conn.execute("SELECT * FROM token_usage_day").fetchone()
+    assert row["calls"] == 2 and row["prompt_tokens"] == 1620 and row["completion_tokens"] == 65
+    assert draft.tokens == 840 + 845, "草稿要带回这一次开口一共花了多少（审计里那行 tokens）"
+
+
+def test_reachout_books_a_call_even_when_the_model_reports_nothing(conn) -> None:
+    """后端没报用量也要记下"发生过一次调用"（unreported 那一列），否则账上看着是免费。"""
+    model = _ScriptedModel([_NEW])
+    svc.generate_reachout_text(_role(), model, _settings(), conn, role_id="active")
+    row = conn.execute("SELECT calls, unreported FROM token_usage_day").fetchone()
+    assert row["calls"] == 1 and row["unreported"] == 1
 
 
 def test_task_text_names_the_template_explicitly(conn) -> None:

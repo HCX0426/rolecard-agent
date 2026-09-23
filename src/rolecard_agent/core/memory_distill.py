@@ -24,6 +24,7 @@ from typing import Any
 
 from rolecard_agent.core import memory as mem
 from rolecard_agent.core.text import text_of
+from rolecard_agent.core.usage import TokenUsage, parse_usage, record_usage
 from rolecard_agent.storage.db import SqlConnection
 
 # 一次提取最多带多少条最近消息、每条截多长：提取要的是"关于这个人的稳定事实"，
@@ -89,19 +90,10 @@ def _existing_block(items: list[dict[str, Any]], *, mark_pinned: bool) -> str:
     )
 
 
-def _token_count(reply: Any) -> int | None:
-    """模型若报了 usage 就取（成本可见化），没报就是 None —— 不编一个数。"""
-    meta = getattr(reply, "response_metadata", None) or {}
-    usage = meta.get("token_usage") or meta.get("usage") or {}
-    total = usage.get("total_tokens") or usage.get("output_tokens")
-    if not isinstance(total, int):
-        return None
-    return total
-
-
-def _invoke(model: Any, prompt: str) -> tuple[str, int | None]:
+def _invoke(model: Any, prompt: str) -> tuple[str, TokenUsage | None]:
+    """跑一次提取/整理调用，带回正文与**这次花掉的 token**（后端没报就是 None）。"""
     reply = model.invoke(prompt)
-    return text_of(reply).strip(), _token_count(reply)
+    return text_of(reply).strip(), parse_usage(reply)
 
 
 def extract(
@@ -111,11 +103,16 @@ def extract(
     bucket: str,
     messages: Sequence[Any],
     source: str = "extract",
+    backend: str | None = None,
+    tracer: Any = None,
 ) -> dict[str, Any]:
     """从一段对话里提事实，按 ADD/UPDATE 落进某个记忆桶。
 
     UPDATE 不是就地改文本：它**新增一条**并把旧条目标为失效（`superseded_by` 指向新那条）
     —— 记忆的历史是审计"它什么时候开始以为我住在北京"的唯一证据（决策点 C）。
+
+    `backend`/`tracer` 只为一件事：提取也花真钱（本地实测一次约 122 秒 / 248 token），
+    所以它进同一本 token 账（审计 §12.8）。没给 backend 就记在"未指名"下，不假装免费。
     """
     dialogue = _turn_lines(messages)
     if not dialogue:
@@ -130,10 +127,11 @@ def extract(
         + "\n"
     )
     try:
-        raw, tokens = _invoke(model, prompt)
+        raw, usage = _invoke(model, prompt)
     except Exception as exc:  # noqa: BLE001 - 提取失败不该影响任何东西，但要能查
         return {"ok": False, "report": _report(detail=f"模型调用失败：{type(exc).__name__}")}
-    report = _report(tokens=tokens)
+    record_usage(conn, backend=backend, usage=usage, tracer=tracer)
+    report = _report(tokens=usage.total if usage is not None else None)
     for line in raw.splitlines():
         text = line.strip()
         if not text:
@@ -165,7 +163,14 @@ def extract(
     return {"ok": True, "report": report}
 
 
-def consolidate(conn: SqlConnection, *, model: Any, bucket: str) -> dict[str, Any]:
+def consolidate(
+    conn: SqlConnection,
+    *,
+    model: Any,
+    bucket: str,
+    backend: str | None = None,
+    tracer: Any = None,
+) -> dict[str, Any]:
     """整理一个记忆桶：合并同义条目、让过时条目失效。**不物理删任何行。**"""
     active = mem.ranked_active(conn, bucket=bucket)[:_MAX_CONSOLIDATE_ITEMS]
     if len(active) < 2:
@@ -175,11 +180,12 @@ def consolidate(conn: SqlConnection, *, model: Any, bucket: str) -> dict[str, An
         }
     prompt = _CONSOLIDATE_PROMPT + "\n【条目】\n" + _existing_block(active, mark_pinned=True) + "\n"
     try:
-        raw, tokens = _invoke(model, prompt)
+        raw, usage = _invoke(model, prompt)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "report": _report(detail=f"模型调用失败：{type(exc).__name__}")}
+    record_usage(conn, backend=backend, usage=usage, tracer=tracer)
     by_id = {int(str(i["id"])): i for i in active}
-    report = _report(tokens=tokens, before=len(active))
+    report = _report(tokens=usage.total if usage is not None else None, before=len(active))
     for line in raw.splitlines():
         text = line.strip()
         if not text:
