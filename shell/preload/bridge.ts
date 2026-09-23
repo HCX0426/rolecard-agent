@@ -70,15 +70,15 @@ contextBridge.exposeInMainWorld("rolecardShell", {
   petRetuck: (): void => {
     ipcRenderer.send("shell:pet-retuck");
   },
-  /** 「只在有像素的地方吃点击」的开关（§12.3）。页面挂载时报 true、卸载时报 false；
-   *  报 false（或根本没人报）就是**整窗照旧吃点击** —— 旧界面与新壳搭配时不该点不动。 */
+  /** 「只在画了像素的地方吃点击」的开关（§12.3）。页面挂载时报 true、卸载时报 false；
+   *  没报过 true（旧界面、着陆页、浏览器里开）就是**整窗照旧吃点击** —— 不会点不动。 */
   petHitTest: (active: boolean): void => {
     ipcRenderer.send("shell:pet-hittest", active);
   },
-  /** 光标此刻在不在"画了东西"的元素上（色片 / 气泡 / 面板）。**只报一个布尔**：
-   *  坐标与尺寸一概不报，摆窗的权力仍然全在主进程。 */
-  petClickable: (accepting: boolean): void => {
-    ipcRenderer.send("shell:pet-clickable", accepting);
+  /** 这页"画了东西的块"在哪：`[[x, y, w, h], …]`，窗口坐标。**只报这个**：摆窗的权力
+   *  一条都不给，所以这条不构成"页面能决定窗口怎么放"的新口子。 */
+  petHotRects: (rects: number[][]): void => {
+    ipcRenderer.send("shell:pet-hot-rects", rects);
   },
   /** 桌宠的「显示消息内容」旗子（托盘是它唯一的写入口）。**只有读**：给页面一条写回的路，
    *  等于让后端托管的那个源自己决定要不要藏起内容，那就不叫隐私开关了。 */

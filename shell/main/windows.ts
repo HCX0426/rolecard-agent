@@ -470,25 +470,38 @@ export function applyPetPrefs(win: BrowserWindow, prefs: PetPrefs): void {
  * 200×240 里色片只占中间 88 见方，两侧各 56px、上下还有余量 —— 那些像素是全透明的，
  * 但整扇窗都在吃鼠标，于是用户点下面的桌面图标会点不到（2026-09-22 他就问过这件事）。
  *
- * 机制是 Electron 官那条：`setIgnoreMouseEvents(true, { forward: true })` 让整扇窗对鼠标
- * 事件"透明"，但 `mousemove` 仍然投进页面 —— 所以**由页面来判"光标在不在这块有像素的东西上"**
- * （色片 / 气泡 / 面板，即 `.pet-nodrag` 那几个元素），它一报 true 就恢复吃点击。
- * 为什么不在主进程轮询光标位置：主进程要复刻三份几何（收起的色片、气泡的有无、展开的面板，
- * 外加贴边时色片的自挪量 `lastPetShift`），而这三份真相本来就长在 DOM 上。
+ * **为什么是"主进程轮光标 + 页面只报有哪几块像素"**，而不是 Electron 文档那条
+ * `setIgnoreMouseEvents(true, { forward: true })` 让页面自己判 hover：真机量出来翻不回来 ——
+ * 窗一带上 `WS_EX_TRANSPARENT`，`forward` 声称会送的 mousemove **一条都没到页面**
+ * （Electron 44 / Win11 26200：跳回色片 1.6s，样式位不动、壳也没收到任何判定）。也就是
+ * "一旦放行就再也没有回来的路"，桌宠会变成一只点不动的东西。主进程问
+ * `screen.getCursorScreenPoint()` 不看这扇窗自己的样式位，环因此闭得上：40ms 一次，
+ * 只在页面 arm 之后跑。
+ *
+ * 分工仍守得住：**页面只报"画了东西的块"在哪**（色片 / 气泡 / 面板三个矩形，窗口坐标），
+ * 摆窗的权力、工作区、夹取、吸边全在主进程 —— 它报的是"哪里有我看得见的像素"，
+ * 不是"把窗放到哪"。
  *
  * 三道保险，缺一道就是一个新 bug：
- *  - **没接线之前一切照旧**（`petHitTestArmed`）：页面可能根本没加载起来（后端没起 ⇒ 着陆页），
- *    旧界面也不会有人报这件事。没听到"我来判"之前绝不改成透明 —— 否则桌宠变成彻底点不动的东西。
- *  - **宽限期**（`petHoldMs`）：滑动与拖拽期间整窗照旧吃点击。悬停把窗往屏内拉 96px 的那
- *    280ms 里，色片会从光标底下走开而光标落到透明带上 —— 那一刻若按新规矩就是"点它它跑了"
- *    （正是当年把 handler 挂到根节点上的原因，见 PetPage 那段注释）。
- *  - **导航即复位**：桌宠页跳回着陆页 / 重新加载时，没人报判定了，立刻回到吃点击状态。
+ *  - **没接线之前一切照旧**：后端没起时那是着陆页、旧界面也不会报矩形；没听到"我来判"之前
+ *    绝不改成透明。而且**一个矩形都没报到时也按整窗吃点击** —— 宁可不放行。
+ *  - **宽限期**（`petHoldUntil`）：壳自己动窗的那段路整窗吃点击 —— 滑动 280+400ms、展开/收起
+ *    500ms、拖拽每来一个增量续 400ms。堵的是 2026-09-22 那个"我点它它跑了"（悬停把窗往里拉
+ *    96px，色片从光标底下滑走而光标落到透明带上，见 PetPage 根节点那段注释）。
+ *  - **导航即复位**：跳回着陆页 / 重载 ⇒ 没人报矩形了，回到吃点击并停表。
  */
 let petHitTestArmed = false;
 let petWantsClicks = true;
 let petHoldUntil = 0;
 let petHoldTimer: NodeJS.Timeout | null = null;
 let petMouseAccepting = true;
+let petHotRects: Rect[] = [];
+let petPoll: NodeJS.Timeout | null = null;
+
+const PET_POLL_MS = 40;
+/** 矩形外扩：DWM 给无边框透明窗留了 1~3px 不可见边（`setBounds(200×240)` 之后 `getBounds`
+ *  报 202×244），光标压在边缘上那点差值不该判成"已经离开"。 */
+const PET_HOT_PAD = 6;
 
 function applyPetMouse(win: BrowserWindow): void {
   if (win.isDestroyed()) return;
@@ -498,14 +511,70 @@ function applyPetMouse(win: BrowserWindow): void {
   win.setIgnoreMouseEvents(!accept, accept ? undefined : { forward: true });
 }
 
-/** 页面挂载/卸载"我来判光标在不在东西上"。关闭时立刻恢复吃点击。 */
+/** 光标落在不在"画了东西的块"上。一个矩形都没报到 ⇒ 算落在里面（那是"还没报"，不是"没有东西"）。 */
+function petCursorOnPainted(win: BrowserWindow): boolean {
+  if (!petHotRects.length) return true;
+  const b = win.getBounds();
+  const p = screen.getCursorScreenPoint();
+  const x = p.x - b.x;
+  const y = p.y - b.y;
+  return petHotRects.some(
+    (r) =>
+      x >= r.x - PET_HOT_PAD &&
+      y >= r.y - PET_HOT_PAD &&
+      x <= r.x + r.width + PET_HOT_PAD &&
+      y <= r.y + r.height + PET_HOT_PAD,
+  );
+}
+
+function petPollTick(win: BrowserWindow): void {
+  if (win.isDestroyed()) {
+    stopPetPolling();
+    return;
+  }
+  setPetClickable(win, petCursorOnPainted(win));
+}
+
+function startPetPolling(win: BrowserWindow): void {
+  if (petPoll) return;
+  petPoll = setInterval(() => petPollTick(win), PET_POLL_MS);
+}
+
+function stopPetPolling(): void {
+  if (petPoll) clearInterval(petPoll);
+  petPoll = null;
+}
+
+/** 页面报来的"画了东西的块"（窗口坐标、CSS 像素）。非数字、越界、超 8 块的一律丢掉。 */
+export function setPetHotRects(win: BrowserWindow, rects: unknown): void {
+  const next: Rect[] = [];
+  for (const item of Array.isArray(rects) ? rects.slice(0, 8) : []) {
+    if (!Array.isArray(item) || item.length !== 4) continue;
+    const nums = item.map((n) =>
+      typeof n === "number" && Number.isFinite(n) ? Math.round(n) : Number.NaN,
+    );
+    if (nums.some((n) => Number.isNaN(n))) continue;
+    const [x, y, width, height] = nums as [number, number, number, number];
+    if (width <= 0 || height <= 0 || width > 4000 || height > 4000) continue;
+    next.push({ x, y, width, height });
+  }
+  petHotRects = next;
+  if (petHitTestArmed) petPollTick(win); // 布局刚变完就判一次，不等下一个 tick
+}
+
+/** 页面挂载/卸载"这页会报像素块"。关掉 = 立刻恢复吃点击并停表。 */
 export function setPetHitTestArmed(win: BrowserWindow, armed: boolean): void {
   petHitTestArmed = armed;
-  if (!armed) petWantsClicks = true;
+  petWantsClicks = true;
+  if (armed) startPetPolling(win);
+  else {
+    petHotRects = [];
+    stopPetPolling();
+  }
   applyPetMouse(win);
 }
 
-/** 页面每次判定结果的变化报一次：光标在色片/气泡/面板上 ⇒ 这扇窗该吃点击。 */
+/** 落点判定的唯一写入口：轮询与复位路径调它。 */
 export function setPetClickable(win: BrowserWindow, clickable: boolean): void {
   petWantsClicks = clickable;
   applyPetMouse(win);
@@ -524,8 +593,6 @@ export function holdPetClickable(win: BrowserWindow, ms: number): void {
     applyPetMouse(win);
   }, ms);
 }
-
-/** 工作区里那块"色片 + 气泡 + 面板"以外的透明余量，现在归桌面。见上面整段注释。 */
 
 /** 首次落点：主屏**工作区**右下角（离任务栏与屏幕边各 24px）。
  *  按 workArea 而不是屏幕尺寸：桌宠被任务栏压住半张脸是这类应用最常见的差评。 */
@@ -605,7 +672,9 @@ export function createPetWindow(prefs: PetPrefs = loadPetPrefs()): BrowserWindow
   win.on("closed", () => {
     if (petHoldTimer) clearTimeout(petHoldTimer);
     petHoldTimer = null;
+    stopPetPolling();
     petHitTestArmed = false;
+    petHotRects = [];
     petMouseAccepting = true;
     petHoldUntil = 0;
   });

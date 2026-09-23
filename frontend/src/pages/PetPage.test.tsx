@@ -67,7 +67,7 @@ function withShell(contentVisible = true): ShellBridge & {
     petReveal: vi.fn(),
     petRetuck: vi.fn(),
     petHitTest: vi.fn(),
-    petClickable: vi.fn(),
+    petHotRects: vi.fn(),
     petContentVisible: vi.fn().mockResolvedValue(contentVisible),
     onPetContentVisible: vi.fn(),
     onRequestOpenThread: vi.fn(),
@@ -269,26 +269,35 @@ describe("PetPage 点开面板（§7：想回话不用开控制台）", () => {
     expect(screen.queryByText("+2")).toBeNull();
   });
 
-  it("光标移到透明带上就报「这里别吃点击」，回到色片上又报回来（§12.3）", async () => {
+  it("把「画了像素的那几块」报给壳，形状没变不重复发，卸载时收回（§12.3）", async () => {
     const shell = withShell();
+    const send = shell.petHotRects as unknown as ReturnType<typeof vi.fn>;
     const { unmount } = await mount();
-    expect(shell.petHitTest).toHaveBeenLastCalledWith(true); // 挂载 = 声明"这页来判"
+    expect(shell.petHitTest).toHaveBeenLastCalledWith(true);
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+    });
+    const rects = send.mock.calls[0][0] as number[][];
+    expect(rects.length).toBeGreaterThanOrEqual(1); // 至少有色片那一块
+    expect(rects[0]).toHaveLength(4);
+    // jsdom 没有排版，量出来必然是 0 —— 这里能钉的是"形状报出去了、都是有限整数"，
+    // 真实尺寸那一半由壳那边的样式位探针在真机上量（见审计 §12.3）。
+    expect(rects.flat().every((n) => Number.isInteger(n))).toBe(true);
 
-    fireEvent.mouseMove(hoverZone()); // 目标就是根节点自己 ⇒ 那块是透明的
-    expect(shell.petClickable).toHaveBeenLastCalledWith(false);
-    fireEvent.mouseMove(sprite()); // 冒泡到根，而 target 是色片（`.pet-nodrag`）
-    expect(shell.petClickable).toHaveBeenLastCalledWith(true);
-    fireEvent.mouseMove(sprite()); // 一次移动几十帧：状态没变就不该再报
-    expect(shell.petClickable).toHaveBeenCalledTimes(2);
+    const before = send.mock.calls.length;
+    await act(async () => {
+      vi.advanceTimersByTime(1_200);
+    });
+    expect(send).toHaveBeenCalledTimes(before); // 形状没变 ⇒ 不发消息
 
-    unmount(); // 卸载 = 没人判了，让壳立刻回到"整窗吃点击"
+    unmount();
     expect(shell.petHitTest).toHaveBeenLastCalledWith(false);
   });
 
-  it("浏览器里直接开这一页（没有壳）：移动鼠标什么都不做，也不报错", async () => {
+  it("浏览器里直接开这一页（没有壳）：不报像素块，也不报错", async () => {
     const { container } = await mount();
     expect(() => {
-      fireEvent.mouseMove(container.querySelector(".h-full") as Element);
+      fireEvent.mouseOver(container.querySelector(".h-full") as Element);
       fireEvent.mouseOver(sprite());
     }).not.toThrow();
   });
