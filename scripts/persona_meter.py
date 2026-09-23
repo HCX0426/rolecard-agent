@@ -23,6 +23,12 @@
   * **与最近 5 条的 4-gram Dice**（均值 / 最大 / ≥0.85 的条数）—— 逐字复读的量化。
     阈值 0.85 与 n-gram 的做法抄自 N.E.K.O 的 `anti_repeat`（它用 Dice≥0.85 判逐字复读）。
   * **记忆条数** —— 原料在不在场：0 条=她没有任何关于你的事实可用，只能凭人设编。
+  * **型例比 / 词面复用 / 高频意象** —— "语义空转"那一族（设计稿 §8.1 的症状：句式指标全绿，
+    读原话却来回是乐土/月光/那几样）。前两个是数，第三个直接写出**她卡在哪些字组上**。
+    两个脾气要知道：① 词面用**字符二元组**近似"词"（不引分词器），所以像「乐的」「土的」
+    这种跨词边界的碎片也会进来 —— 一句句不同的真语料里共同的意象才会浮上来，
+    同一句复制 N 遍的假语料里反而是碎片赢；② TTR 随样本变长自然下降，
+    **只在同一个 `--limit` 下横比**，别拿 20 条的数去比 5 条的数。
   * 回复侧多一列**「用户条数」** —— 为 0 表示那条会话里你根本没说过话，她是在自言自语。
   * **今日 token（按后端）** —— 路由改云端之后，"活人感"每一步都花真钱（审计 §12.8）：
     一句回答一次调用，而 §12.1 那道复读闸门太像时还会**重生一次**。`没报` 那一列不为 0
@@ -52,6 +58,7 @@ import urllib.request
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
+from math import ceil
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +73,9 @@ FIRST_CHARS = 6  # 开场复读看前几个字
 NGRAM = 4  # 复读判定的 n-gram 长度
 RECENT_WINDOW = 5  # 每条只与它**前面**几条比：复读是抄历史，不是被抄
 DICE_REWRITE = 0.85  # ≥ 这个值按"逐字复读"计
+#: 一个意象要出现在多少比例的消息里才单独报出来（「高频意象」那一栏的呈现门槛）。
+#: 它是**呈现**门槛不是判据：这把尺子不拦任何东西，只决定哪些词值得写在脸上给人看。
+IMAGERY_SHARE = 0.6
 
 
 def _norm(text: str) -> str:
@@ -88,6 +98,65 @@ def _body(text: str) -> str:
 
 def _ngrams(text: str, n: int = NGRAM) -> set[str]:
     return {text[i : i + n] for i in range(len(text) - n + 1)} if len(text) >= n else set()
+
+
+#: 词面的最小长度：两个汉字。一个字的"的/了/呢"谁都是高频，报了没有信息量。
+_LEX_N = 2
+
+
+def _lexigrams(text: str) -> list[str]:
+    """汉字/字母数字串里的二元组 —— **近似"词"**，不引分词器。
+
+    为什么用字符二元组而不是 jieba：这把尺子的定位是"零依赖、随时能跑"（它读的是只读库，
+    装在一个已经跑着 Ollama 与 Electron 的机器上）。多一个依赖就多一个装不上的理由。
+    """
+    out: list[str] = []
+    for run in re.findall(r"[\w一-鿿]+", str(text or "")):
+        out.extend(run[i : i + _LEX_N] for i in range(len(run) - _LEX_N + 1))
+    return out
+
+
+def lexical_metrics(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """"语义空转"那一族：句式全绿但来回就是那几个意象，Dice 0.85 那把抓不到（设计稿 §8.1）。
+
+    三个数，各自量一件不同的事：
+
+    * **型例比 TTR** = 不同的二元组 / 全部二元组。越低越"词汇翻来覆去"。
+      它随样本变长自然下降，所以只在**同一个 `--limit`** 下横比 —— 这条限制写在这里，
+      是因为一个不注明分母的可比性会被下一个人当成趋势。
+    * **词面复用均值** = 每条里"她在更早的句子里用过的二元组"占多少（0~1）。
+      这一列**故意不复用**生产闸门那个 `anti_repeat.repeat_score`：那个是 4-gram 覆盖率，
+      量的还是"逐字"，而本节要抓的恰恰是"同一堆词换个说法"（§12.6 的原话：句式全绿、
+      读起来却翻来覆去那几个意象）。两套量纲各管一段：4-gram 管复读，2-gram 管空转。
+    * **高频意象** = 出现在 ≥`IMAGERY_SHARE` 条消息里的二元组，按条数排。这是给人**看**的那一个：
+      数字说"空转"，它说"空转在哪些词上"。
+    """
+    texts = [str(r["text"]).strip() for r in rows]
+    texts = [t for t in texts if _norm(t)]
+    if not texts:
+        return {"型例比": 0.0}
+    grams = [_lexigrams(t) for t in texts]
+    flat = [g for row in grams for g in row]
+    per_doc = [set(row) for row in grams]
+    doc_hits = Counter(g for row in per_doc for g in row)
+    top = [
+        (gram, count)
+        for gram, count in doc_hits.most_common(40)
+        if count >= max(2, ceil(len(texts) * IMAGERY_SHARE))
+    ][:3]
+    reused: list[float] = []
+    for i in range(1, len(texts)):
+        earlier: set[str] = set()
+        for row in per_doc[:i]:
+            earlier |= row
+        mine = per_doc[i]
+        if mine:
+            reused.append(len(mine & earlier) / len(mine))
+    return {
+        "型例比": round(len(set(flat)) / len(flat), 3) if flat else 0.0,
+        "词面复用均值": round(statistics.mean(reused), 3) if reused else 0.0,
+        "高频意象": "、".join(f"「{g}」{c}/{len(texts)}" for g, c in top),
+    }
 
 
 def _dice(a: set[str], b: set[str]) -> float:
@@ -127,6 +196,7 @@ def measure(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "正文首6字去重率": round(len(set(openings)) / n, 3),
         "口癖开头": tic,
         "口癖条数": tic_count,
+        **lexical_metrics(rows),
         "长度均值": round(statistics.mean(lengths), 1),
         "长度标准差": round(statistics.pstdev(lengths), 1) if n > 1 else 0.0,
         # 变异系数 σ/均值。**判"每句一样长"只能用这个，不能用绝对 σ**：2026-09-22 加了一条
@@ -234,6 +304,8 @@ _METRIC_COLUMNS: tuple[tuple[str, str], ...] = (
     ("重合均", "重合度均值"),
     ("重合最大", "重合度最大"),
     ("复读条", "判为逐字复读条数"),
+    ("型例比", "型例比"),
+    ("词面复用", "词面复用均值"),
 )
 
 COLUMNS = (("角色", "rid"), *_METRIC_COLUMNS, ("记忆", "记忆条数"))
@@ -295,11 +367,14 @@ def _print_table(
             value = rid if key == "rid" else row[key]
             cells.append(f"{value:.2f}" if isinstance(value, float) else str(value))
         print("  ".join(c.ljust(10) for c in cells))
-    # 口癖单独一行：值是变长中文，塞进表格里会把整张表挤歪，而它恰恰是最该被看见的一条。
+    # 口癖与"反复念叨的意象"单独一行：值是变长中文，塞进表格里会把整张表挤歪，
+    # 而它们恰恰是最该被看见的两条 —— 尤其后者，它说的是**她卡在哪些词上**，不是又一个分数。
     for rid, row in rows.items():
+        who = str(row.get("名称") or rid)
         if row.get("口癖条数", 0) > 1:
-            who = str(row.get("名称") or rid)
             print(f"{who[:10]:<10} 的口癖：正文开头 {row['口癖条数']} 次「{row['口癖开头']}」")
+        if row.get("高频意象"):
+            print(f"{who[:10]:<10} 反复用的意象：{row['高频意象']}")
 
 
 def main() -> None:
