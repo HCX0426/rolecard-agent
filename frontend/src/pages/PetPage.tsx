@@ -24,7 +24,8 @@ import { shellBridge } from "../lib/shell";
 import { type StreamMeta } from "../lib/stream";
 
 const POLL_MS = 10_000; // 与铃铛红点同一节奏：后端没有推送，如实降级为轮询
-const BUBBLE_MS = 30_000; // 气泡自己淡出：驻留件不该把一句话长期戳在桌面上
+const BUBBLE_MS = 30_000; // 气泡到点自己收起：驻留件不该把一句话长期戳在桌面上
+// （不做淡出：这扇窗是透明窗，半透明的每一毫秒透出来的都是桌面本身 —— 那正是"重影"）
 const MAX_BUBBLE_CHARS = 64;
 /** 指针离开桌面件多久之后，趴着的才自己回去：给"划过它身上"留的宽限。 */
 const RETUCK_MS = 900;
@@ -509,7 +510,7 @@ export default function PetPage() {
         // 展开态：面板取代气泡（气泡那条就是面板最后一条，重复摆一遍只是噪音）。
         <section
           data-pet-ui="panel"
-          className="pet-panel-in pet-nodrag flex max-h-full w-full flex-col rounded-2xl border border-slate-200/70 bg-white/95 text-slate-700 shadow-md backdrop-blur-sm dark:border-slate-600/70 dark:bg-slate-800/95 dark:text-slate-100"
+          className="pet-panel-in pet-nodrag flex max-h-full w-full flex-col rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-md dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
         >
           <header className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-100 px-3 py-2 dark:border-slate-700">
             {roles.length > 1 ? (
@@ -644,7 +645,11 @@ export default function PetPage() {
                     : `打开与 ${name} 的对话`
                   : "点击标记已读"
             }
-            className="pet-nodrag w-full rounded-2xl border border-slate-200/70 bg-white/90 px-3 py-2 text-left text-[11px] leading-relaxed text-slate-700 shadow-sm backdrop-blur-sm transition-opacity duration-500 dark:border-slate-600/70 dark:bg-slate-800/90 dark:text-slate-100"
+            // 底色必须是**不透明**的，也别加 backdrop-blur：这扇窗是 transparent 窗，
+            // 半透明透出来的是桌面本身（壁纸/图标/底下那个窗口的字），blur 也没有东西可糊
+            // （backdrop-filter 只看页面自己身后那层），用户报的"重影"就是这两样叠出来的。
+            // 同理不再淡出 opacity —— 淡出的那 500ms 就是一块 500ms 的半透明。
+            className="pet-nodrag w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-left text-[11px] leading-relaxed text-slate-700 shadow-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
             // 气泡跟着色片走：它标在色片正上方，色片自挪而它不动就会错开一截。
             style={{ transform: `translateX(${spriteShift}px)` }}
           >

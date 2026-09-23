@@ -144,7 +144,7 @@ describe("PetPage 桌宠", () => {
     expect(screen.queryByText("外头降温了，穿上外套。")).toBeNull();
   });
 
-  it("气泡 30 秒后自己淡出（驻留件不长期戳在桌面上）", async () => {
+  it("气泡 30 秒后自己收起（驻留件不长期戳在桌面上；不做淡出，见 PetPage 那条注释）", async () => {
     await mount();
     expect(screen.getByText("外头降温了，穿上外套。")).toBeTruthy();
     await act(async () => {
