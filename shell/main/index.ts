@@ -28,7 +28,9 @@ import {
   petRetuck,
   petReveal,
   releasePetDock,
+  setPetClickable,
   setPetExpanded,
+  setPetHitTestArmed,
 } from "./windows";
 import { createTray, type TrayHandle } from "./tray";
 import { loadPetPrefs, savePetPrefs, type PetPrefs } from "./state";
@@ -254,6 +256,15 @@ function boot(): void {
   });
   ipcMain.on("shell:pet-retuck", () => {
     if (petWin) petRetuck(petWin);
+  });
+  // 桌宠的"只在有像素的地方吃点击"（§12.3）。两条通道都**只有一个布尔**：判定交给页面
+  // （它才知道色片/气泡/面板画在哪），而"要不要吃鼠标"仍然由主进程做 —— 页面拿不到
+  // 任何坐标或尺寸，也就拿不到"把窗怎么摆"的权力。
+  ipcMain.on("shell:pet-hittest", (_event, value: unknown) => {
+    if (petWin && typeof value === "boolean") setPetHitTestArmed(petWin, value);
+  });
+  ipcMain.on("shell:pet-clickable", (_event, value: unknown) => {
+    if (petWin && typeof value === "boolean") setPetClickable(petWin, value);
   });
   // 桌宠页问"内容该不该画出来"（托盘「显示消息内容」）。**只有读**：写的那一侧只在托盘，
   // 页面能改它就不是隐私开关了，是后端托管的那个源自己把自己藏起来的手势。

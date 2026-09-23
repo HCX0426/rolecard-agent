@@ -199,6 +199,37 @@ export default function PetPage() {
     void shellBridge()?.setPetExpanded(next);
   }
 
+  /** 只在"画了东西的地方"吃桌面点击（审计 §12.3）。
+   *
+   *  200×240 里色片只占中间 88 见方，两侧各 56px 是全透明的，可整扇窗都在吃鼠标 ——
+   *  结果那两条带上面的桌面图标点不到（用户 2026-09-22 就问过）。壳把窗设成"忽略鼠标但
+   *  仍转发 mousemove"，于是这页还看得见光标，由它判"光标在不在有像素的元素上"
+   *  （`.pet-nodrag` 那三块：色片、气泡、面板），只回一个布尔。
+   *  浏览器里开 #/pet、或新界面跑在旧壳里（没这两个方法）时一行都不做 ⇒ 保持整窗吃点击。
+   */
+  const clickableRef = useRef(true);
+
+  function reportClickable(target: EventTarget | null) {
+    const report = shellBridge()?.petClickable;
+    if (!report) return; // 浏览器里开 #/pet、或旧壳：不判，整窗照旧吃点击
+    const el = target as HTMLElement | null;
+    const hot = Boolean(el?.closest?.(".pet-nodrag"));
+    if (hot === clickableRef.current) return; // 一次移动几十帧：只在变化时报
+    clickableRef.current = hot;
+    report(hot);
+  }
+
+  useEffect(() => {
+    const arm = shellBridge()?.petHitTest;
+    if (!arm) return;
+    arm(true);
+    return () => {
+      // 卸载 = 没人判了，让壳立刻回到"整窗吃点击"（它也会在本次导航自己复位，两遍都幂等）。
+      arm(false);
+      clickableRef.current = true;
+    };
+  }, []);
+
   /** 悬停只做一件事：把趴在边上的那半只拉出来（§7.6）。**不再弹面板** —— 悬停会改窗口尺寸，
    *  而改尺寸就把宠物从光标底下挪走了，于是"离开→收起→又进入→展开"自激（用户报的"鼠标移过去
    *  桌宠乱晃"）。面板改成点击才弹，这条环就断了。 */
@@ -456,7 +487,11 @@ export default function PetPage() {
     <div
       className="flex h-full select-none flex-col items-center justify-end gap-2 pb-1"
       onMouseEnter={reveal}
-      onMouseLeave={pointerLeft}
+      onMouseMove={(event) => reportClickable(event.target)}
+      onMouseLeave={() => {
+        reportClickable(null);
+        pointerLeft();
+      }}
       onPointerDown={dragStart}
       onPointerMove={dragMove}
       onPointerUp={dragEnd}

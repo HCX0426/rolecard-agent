@@ -66,6 +66,8 @@ function withShell(contentVisible = true): ShellBridge & {
     petDragEnd: vi.fn(),
     petReveal: vi.fn(),
     petRetuck: vi.fn(),
+    petHitTest: vi.fn(),
+    petClickable: vi.fn(),
     petContentVisible: vi.fn().mockResolvedValue(contentVisible),
     onPetContentVisible: vi.fn(),
     onRequestOpenThread: vi.fn(),
@@ -265,6 +267,30 @@ describe("PetPage 点开面板（§7：想回话不用开控制台）", () => {
     expect(screen.queryByText(/工具返回/)).toBeNull();
     // 展开态取代气泡（同一条内容摆两遍只是噪音）
     expect(screen.queryByText("+2")).toBeNull();
+  });
+
+  it("光标移到透明带上就报「这里别吃点击」，回到色片上又报回来（§12.3）", async () => {
+    const shell = withShell();
+    const { unmount } = await mount();
+    expect(shell.petHitTest).toHaveBeenLastCalledWith(true); // 挂载 = 声明"这页来判"
+
+    fireEvent.mouseMove(hoverZone()); // 目标就是根节点自己 ⇒ 那块是透明的
+    expect(shell.petClickable).toHaveBeenLastCalledWith(false);
+    fireEvent.mouseMove(sprite()); // 冒泡到根，而 target 是色片（`.pet-nodrag`）
+    expect(shell.petClickable).toHaveBeenLastCalledWith(true);
+    fireEvent.mouseMove(sprite()); // 一次移动几十帧：状态没变就不该再报
+    expect(shell.petClickable).toHaveBeenCalledTimes(2);
+
+    unmount(); // 卸载 = 没人判了，让壳立刻回到"整窗吃点击"
+    expect(shell.petHitTest).toHaveBeenLastCalledWith(false);
+  });
+
+  it("浏览器里直接开这一页（没有壳）：移动鼠标什么都不做，也不报错", async () => {
+    const { container } = await mount();
+    expect(() => {
+      fireEvent.mouseMove(container.querySelector(".h-full") as Element);
+      fireEvent.mouseOver(sprite());
+    }).not.toThrow();
   });
 
   it("悬停只负责把趴着的半只拉出来：不改窗口大小，也就没有「把自己挪出光标」的自激", async () => {

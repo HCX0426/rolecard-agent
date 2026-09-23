@@ -182,6 +182,9 @@ function stopSlide(): void {
 
 function slidePetTo(win: BrowserWindow, target: Rect, ms: number): void {
   stopSlide();
+  // 滑的这整段路都吃点击：窗在走而手不动 ⇒ 色片会从光标底下滑走，那一刻光标落到透明带上
+  // （见 §12.3 那段的"点它它跑了"）。多给的 400ms 是留给手反应的时间。
+  holdPetClickable(win, ms + 400);
   const from = win.getBounds();
   if (
     from.x === target.x &&
@@ -332,6 +335,8 @@ export function releasePetDock(win: BrowserWindow): void {
  * 在哪、色片锚在哪个角，让页面报坐标等于把"窗口能摆到哪"交给一个后端托管的源。
  */
 export function setPetExpanded(win: BrowserWindow, expanded: boolean): void {
+  // 展开/收起也是"窗在动而手没动"（尤其贴边时夹取会把整扇窗往里推），照滑动那条规矩给宽限期。
+  holdPetClickable(win, 500);
   // 状态没变就一个 setBounds 都别发：收起动画若在拖拽刚开始时跑起来，它每帧都会把窗口按回
   // 自己的目标矩形，用户那几下位移全被吃掉（实测拖了 94px，窗口纹丝不动）。
   if (expanded === petIsExpanded && !petDockPending) return;
@@ -418,6 +423,9 @@ function petSize(): { width: number; height: number } {
  * 左上角 —— 色片瞬间往上弹约 280px、往左约 90px（用户报的"长按桌宠它一下子跳到上面"）。
  */
 export function movePetBy(win: BrowserWindow, dx: number, dy: number): void {
+  // 拖着的时候整窗吃点击：拖拽必然让光标滑出色片那块 88 见方（手快、窗慢），按新规矩一滑出
+  // 就把点击漏给桌面 ⇒ 拖到一半突然在拖桌面。松手后 400ms 自动收回（见 §12.3）。
+  holdPetClickable(win, 400);
   petUntuck(win, { instant: true }); // 拖着藏着的那一小条走 = 一动手就先把它拉回屏内；拖的时候不滑
   stopSlide(); // 手在拖 ⇒ 任何在跑的动画让开，否则它每帧把窗口按回自己的目标，位移被吃掉
   const current = win.getBounds();
@@ -455,6 +463,69 @@ export function applyPetPrefs(win: BrowserWindow, prefs: PetPrefs): void {
   win.setAlwaysOnTop(prefs.alwaysOnTop, "screen-saver");
   win.setOpacity(prefs.opacity);
 }
+
+/**
+ * 透明带不再挡桌面点击（审计 §12.3）。
+ *
+ * 200×240 里色片只占中间 88 见方，两侧各 56px、上下还有余量 —— 那些像素是全透明的，
+ * 但整扇窗都在吃鼠标，于是用户点下面的桌面图标会点不到（2026-09-22 他就问过这件事）。
+ *
+ * 机制是 Electron 官那条：`setIgnoreMouseEvents(true, { forward: true })` 让整扇窗对鼠标
+ * 事件"透明"，但 `mousemove` 仍然投进页面 —— 所以**由页面来判"光标在不在这块有像素的东西上"**
+ * （色片 / 气泡 / 面板，即 `.pet-nodrag` 那几个元素），它一报 true 就恢复吃点击。
+ * 为什么不在主进程轮询光标位置：主进程要复刻三份几何（收起的色片、气泡的有无、展开的面板，
+ * 外加贴边时色片的自挪量 `lastPetShift`），而这三份真相本来就长在 DOM 上。
+ *
+ * 三道保险，缺一道就是一个新 bug：
+ *  - **没接线之前一切照旧**（`petHitTestArmed`）：页面可能根本没加载起来（后端没起 ⇒ 着陆页），
+ *    旧界面也不会有人报这件事。没听到"我来判"之前绝不改成透明 —— 否则桌宠变成彻底点不动的东西。
+ *  - **宽限期**（`petHoldMs`）：滑动与拖拽期间整窗照旧吃点击。悬停把窗往屏内拉 96px 的那
+ *    280ms 里，色片会从光标底下走开而光标落到透明带上 —— 那一刻若按新规矩就是"点它它跑了"
+ *    （正是当年把 handler 挂到根节点上的原因，见 PetPage 那段注释）。
+ *  - **导航即复位**：桌宠页跳回着陆页 / 重新加载时，没人报判定了，立刻回到吃点击状态。
+ */
+let petHitTestArmed = false;
+let petWantsClicks = true;
+let petHoldUntil = 0;
+let petHoldTimer: NodeJS.Timeout | null = null;
+let petMouseAccepting = true;
+
+function applyPetMouse(win: BrowserWindow): void {
+  if (win.isDestroyed()) return;
+  const accept = !petHitTestArmed || petWantsClicks || Date.now() < petHoldUntil;
+  if (accept === petMouseAccepting) return;
+  petMouseAccepting = accept;
+  win.setIgnoreMouseEvents(!accept, accept ? undefined : { forward: true });
+}
+
+/** 页面挂载/卸载"我来判光标在不在东西上"。关闭时立刻恢复吃点击。 */
+export function setPetHitTestArmed(win: BrowserWindow, armed: boolean): void {
+  petHitTestArmed = armed;
+  if (!armed) petWantsClicks = true;
+  applyPetMouse(win);
+}
+
+/** 页面每次判定结果的变化报一次：光标在色片/气泡/面板上 ⇒ 这扇窗该吃点击。 */
+export function setPetClickable(win: BrowserWindow, clickable: boolean): void {
+  petWantsClicks = clickable;
+  applyPetMouse(win);
+}
+
+/**
+ * 短时间内整窗照旧吃点击（拖拽中、滑动中）。每次调用都往后推，所以拖多久保多久；
+ * 手停了 `ms` 之后自动松开，不需要页面做任何事。
+ */
+export function holdPetClickable(win: BrowserWindow, ms: number): void {
+  petHoldUntil = Math.max(petHoldUntil, Date.now() + ms);
+  applyPetMouse(win);
+  if (petHoldTimer) clearTimeout(petHoldTimer);
+  petHoldTimer = setTimeout(() => {
+    petHoldTimer = null;
+    applyPetMouse(win);
+  }, ms);
+}
+
+/** 工作区里那块"色片 + 气泡 + 面板"以外的透明余量，现在归桌面。见上面整段注释。 */
 
 /** 首次落点：主屏**工作区**右下角（离任务栏与屏幕边各 24px）。
  *  按 workArea 而不是屏幕尺寸：桌宠被任务栏压住半张脸是这类应用最常见的差评。 */
@@ -528,6 +599,16 @@ export function createPetWindow(prefs: PetPrefs = loadPetPrefs()): BrowserWindow
   // 着陆页的 `<title>` 是"控制台"，不拦一下的话桌宠在窗口列表里也叫那个名字 —— 它会让人
   // 以为桌宠是一扇控制台窗（ Alt+Tab / 截屏工具 / 辅助技术都只看标题）。
   win.on("page-title-updated", (event) => event.preventDefault());
+  // 桌宠页换了（跳回着陆页、重载、后端挂了）⇒ 没人报"光标在不在东西上"了，立刻回到吃点击。
+  // 不复位就是"桌宠突然点不动"，而那正是这条优化想修的那类毛病。
+  win.webContents.on("did-start-navigation", () => setPetHitTestArmed(win, false));
+  win.on("closed", () => {
+    if (petHoldTimer) clearTimeout(petHoldTimer);
+    petHoldTimer = null;
+    petHitTestArmed = false;
+    petMouseAccepting = true;
+    petHoldUntil = 0;
+  });
   // 桌宠不该抢你正在打字的焦点：亮出来就行。
   //
   // 偏好**在显示之后**落：构造参数只管初始形状，而 `alwaysOnTop` 那条实测不生效
