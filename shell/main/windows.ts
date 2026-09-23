@@ -498,7 +498,9 @@ let petMouseAccepting = true;
 let petHotRects: Rect[] = [];
 let petPoll: NodeJS.Timeout | null = null;
 
-const PET_POLL_MS = 40;
+/** 40ms 实测太粗：光标落到色片后 40ms 内按下的那一下仍然被放行（我自己就是这么点空了两次）。
+ *  一次 tick 只是 `getCursorScreenPoint` + 至多八个矩形比较，60Hz 的量级不值一提。 */
+const PET_POLL_MS = 16;
 /** 矩形外扩：DWM 给无边框透明窗留了 1~3px 不可见边（`setBounds(200×240)` 之后 `getBounds`
  *  报 202×244），光标压在边缘上那点差值不该判成"已经离开"。 */
 const PET_HOT_PAD = 6;
