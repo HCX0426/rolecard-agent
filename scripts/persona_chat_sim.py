@@ -73,13 +73,21 @@ def _cloud_twin(conn: sqlite3.Connection, role_id: str) -> str:
     return twin
 
 
-def _run_thread(client: TestClient, label: str, role_id: str, turns: list[str]) -> list[str]:
-    """八轮走完整链路，逐条打时间；返回她这轮说出口的几句（空的那几条也留着，它们是要看的）。"""
+def _run_thread(
+    client: TestClient, label: str, role_id: str, turns: list[str]
+) -> list[tuple[str, float, float]]:
+    """逐轮走完整链路，**分别记首字延迟与总耗时**；返回每轮的 `(她说的话, 首字秒, 总秒)`。
+
+    为什么要首字（TTFT）而不是只有总耗时：§12.7 要答的问题是"后台自动提取会不会跟下一轮
+    抢显存"，那件事的表现形态是**响应变慢**，而本地 8B 的总耗时里大头是它在思考（实测一条
+    问候 184~232 秒）。只有首字延迟能把"模型没空"和"这句话说得长"分开。
+    """
     thread = client.post("/api/session", json={"role_id": role_id}).json()["thread_id"]
     print(f"\n===== {label}（thread {thread[:18]}）", flush=True)
-    hers: list[str] = []
+    hers: list[tuple[str, float, float]] = []
     for msg in turns:
         started = time.time()
+        first: float | None = None
         text = ""
         with client.stream(
             "POST", "/api/chat", json={"thread_id": thread, "message": msg}
@@ -97,20 +105,32 @@ def _run_thread(client: TestClient, label: str, role_id: str, turns: list[str]) 
                             continue
                         ev = json.loads(line[6:])
                         if ev["type"] == "token":
+                            if first is None and ev["text"]:
+                                first = time.time()
                             text += ev["text"]
                         elif ev["type"] == "message_replace":
                             text = ev["text"]
                         elif ev["type"] == "error":
                             print(f"  [错误] {ev['detail']}", flush=True)
-        hers.append(text.strip())
+        total = time.time() - started
+        ttft = (first - started) if first is not None else float("nan")
+        hers.append((text.strip(), ttft, total))
         print(f"  我：{msg}", flush=True)
-        print(f"  她（{time.time() - started:.0f}s）：{text.strip()}", flush=True)
+        print(
+            f"  她（首字 {ttft:.1f}s｜总 {total:.0f}s）：{text.strip()}"
+            if first is not None
+            else f"  她（{total:.0f}s，一个正文 token 都没出）",
+            flush=True,
+        )
     # 提取精华：§8.7 那格"记忆 0 条"的解药就是它，跑完对话顺手看能不能落到库里。
     client.post(f"/api/session/{thread}/distill", json={})
     return hers
 
 
-def _report(db: Path, role_id: str, sides: dict[str, list[str]], baseline: tuple[int, int]) -> None:
+def _report(
+    db: Path, role_id: str, sides: dict[str, list[tuple[str, float, float]]],
+    baseline: tuple[int, int],
+) -> None:
     """每个臂单独量一遍（**别把两边的句子混在一栏里** —— 那等于量了一个不存在的角色）。"""
     conn = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
@@ -121,11 +141,16 @@ def _report(db: Path, role_id: str, sides: dict[str, list[str]], baseline: tuple
     print(f"\n对话后记忆条目：{len(items)} 条")
     for r in items[:10]:
         print(f"   [{r['role_id']}] {str(r['text'])[:66]}")
-    for label, hers in sides.items():
+    for label, log in sides.items():
+        hers = [t for t, _ttft, _total in log]
         kept = [t for t in hers if t]
         m = pm.measure([{"text": t} for t in kept])
+        # 首字延迟单独一行，按轮序排：自动提取会不会跟下一轮抢显存，看的就是这一串里
+        # 有没有哪一格突然翘起来（§12.7）。第 5 轮之后是提取该触发的位置。
+        series = " ".join(f"{ttft:.1f}" if ttft == ttft else "—" for _t, ttft, _tot in log)
+        print(f"\n{label}：首字延迟序列（秒，按轮）{series}")
         print(
-            f"\n{label}：{m.get('样本数')} 句｜空正文 {len(hers) - len(kept)} 句"
+            f"{label}：{m.get('样本数')} 句｜空正文 {len(hers) - len(kept)} 句"
             f"｜动作开头 {m.get('以动作括号开头')}｜正文去重 {m.get('正文首6字去重率')}"
             f"｜口癖「{m.get('口癖开头')}」×{m.get('口癖条数')}"
             f"｜长度 {m.get('长度范围')}（CV {m.get('长度变异系数')}）"
@@ -172,10 +197,14 @@ def main() -> None:
         raise SystemExit(f"--turns 得在 1..{len(TURNS)}")
 
     scratch_db.copy_of_live_db(args.copy)
-    conn = sqlite3.connect(args.copy)
-    conn.row_factory = sqlite3.Row  # 下面要 dict(row)，默认工厂给的是裸 tuple
-    twin = _cloud_twin(conn, args.role)
-    conn.close()
+    # 孪生角色只在真要跑云端那一格时才建：`--side local` 的跑法不该凭空多插一行角色卡
+    # （它还会因为"库里没有云端后端"直接退出，而那一格本次根本不跑）。
+    twin = ""
+    if args.side in ("both", "cloud"):
+        conn = sqlite3.connect(args.copy)
+        conn.row_factory = sqlite3.Row  # 下面要 dict(row)，默认工厂给的是裸 tuple
+        twin = _cloud_twin(conn, args.role)
+        conn.close()
 
     # trace 落到副本旁边：`node_end` 里那一行 `prompt_tokens` 正是这轮最值钱的证据
     # （实测这个单轮 prompt 就有 46k），但让它刷在控制台里会把"我/她"的对话冲得看不见。
@@ -186,7 +215,7 @@ def main() -> None:
     # 开跑前抄一份基线：副本是从真库 backup 来的，**今天真实跑过的那几笔也在表里**，
     # 不减掉就会把它们算成"本轮花的"（第一版就这么报错了数）。
     baseline = _token_baseline(args.copy, day)
-    sides: dict[str, list[str]] = {}
+    sides: dict[str, list[tuple[str, float, float]]] = {}
     with TestClient(app) as client:
         # 顺序有讲究：先云端后本地。本地 8B 一旦把模型钉进显存，云端那一格也会被它拖慢。
         if args.side in ("both", "cloud"):
