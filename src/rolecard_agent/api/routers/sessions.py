@@ -10,6 +10,7 @@ import hashlib
 import re
 import threading
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,7 @@ from rolecard_agent.core.observability import TraceEvent
 from rolecard_agent.core.reachout import ensure_proactive_thread
 from rolecard_agent.core.state import new_state, now_ts
 from rolecard_agent.core.text import text_of
+from rolecard_agent.core.usage import TokenUsage, record_usage
 from rolecard_agent.rag.parser import (
     IMAGE_EXTS,
     PARSEABLE_EXTENSIONS,
@@ -423,6 +425,9 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
                 config=graph_config,
                 role_summary={"role_id": role.role_id, "role_name": role.role_name},
                 tracer=ctx.tracer,
+                usage_recorder=_usage_ledger(
+                    conn, session_model or role.model_name, ctx.tracer
+                ),
             ),
             after=(
                 lambda: _distill_after_turn(ctx, thread_id=body.thread_id, role_id=role_id)
@@ -454,6 +459,24 @@ def _thread_model(ctx: AppContext, thread: dict, role_id: str) -> tuple[Any, str
         except Exception:  # noqa: BLE001 - 角色被删了就用默认，提取不该因此 500
             name = None
     return ctx.runtime.resolve_role_model(name), name
+
+
+def _usage_ledger(
+    conn: Any, backend: str | None, tracer: Any
+) -> Callable[[TokenUsage | None], None]:
+    """这一轮对话的 token 落点（审计 §12.8/#8）。
+
+    为什么账要由 `core/turn.py` 递出来、而不是在 `call_model` 里记：供应商在每一个流式
+    分块里都回一份"累计到此"的 usage，langchain 合并时逐块相加 —— 节点里看到的值是
+    真值 × 分块数（实测一条"在吗"：26 → 272,607）。后端名用这一轮**实际服务**的那个，
+    否则云端与本地会在账上混成一行。
+    """
+
+    def record(usage: TokenUsage | None) -> None:
+        # 返回值不吃掉：记不上账不该影响这一轮（fail-open），而坏账的留声在 `record_usage` 里。
+        record_usage(conn, backend=backend, usage=usage, tracer=tracer)
+
+    return record
 
 
 def _stream_then(events: Any, *, after: Any) -> Any:
@@ -671,6 +694,10 @@ def edit_message_and_regenerate(
             config=config,
             role_summary={"role_id": role.role_id, "role_name": role.role_name},
             tracer=ctx.tracer,
+            # 重新生成花的也是真钱：不记就等于"这一轮没发生"，账会静悄悄地少一截。
+            usage_recorder=_usage_ledger(
+                ctx.conn, session_model or role.model_name, ctx.tracer
+            ),
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},

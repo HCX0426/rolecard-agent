@@ -36,6 +36,7 @@ from rolecard_agent.core.guard import check
 from rolecard_agent.core.nodes import VisionNotSupported
 from rolecard_agent.core.observability import TraceEvent, Tracer, scrub_endpoints
 from rolecard_agent.core.text import text_of
+from rolecard_agent.core.usage import TokenUsage, usage_from_metadata
 
 # 回扣不投送的字符数。必须 >= 最长触发式（最宽约 21 字：主语 + 8 填充 + 能愿动词 + 8 填充
 # + 动作动词），32 留足余量又察觉不到渲染延迟。
@@ -242,6 +243,7 @@ def run_turn(
     config: dict[str, Any],
     role_summary: dict[str, str],
     tracer: Tracer | None = None,
+    usage_recorder: Callable[[TokenUsage | None], None] | None = None,
 ) -> Iterator[TurnEvent]:
     """把一个用户轮次跑过内核图，产出结构化事件流（同步，宿主无关）。
 
@@ -262,12 +264,15 @@ def run_turn(
     # 消息把窗口挤得更满的结果，重复上报只会变成噪音。
     trim_reported = False
     think_emitted = False
+    # 每次模型调用的真用量，键是 (节点, 步)。分块带的是累计值，所以"后到的覆盖先到的"
+    # 才是那一次调用的数（见 `_from_message_chunk`）。
+    usage_seen: dict[Any, TokenUsage | None] = {}
     try:
         for mode, payload in graph.stream(
             graph_input, config=config, stream_mode=["messages", "updates"]
         ):
             if mode == "messages":
-                yield from _from_message_chunk(payload, guard=guard)
+                yield from _from_message_chunk(payload, guard=guard, usage_seen=usage_seen)
                 continue
             for node, update in (payload or {}).items():
                 if node == MODEL_NODE:
@@ -332,15 +337,58 @@ def run_turn(
             {"node": MODEL_NODE},
         )
         yield Error(detail=model_error_detail(exc))
+    # 用量在 End 之前结账：这一轮可能跑了多次模型调用（工具循环），逐次留痕并交给宿主记账。
+    # 放在这里是唯一能看到真值的地方 —— `call_model` 拿到的已经是被逐块相加污染过的合并值。
+    ordered = sorted(usage_seen.items(), key=lambda kv: (kv[0][1] is None, kv[0][1] or 0))
+    for (node, step), usage in ordered:
+        if tracer is not None:
+            tracer.emit(
+                TraceEvent(
+                    event="llm_usage",
+                    node=str(node),
+                    tokens=usage.total if usage is not None else None,
+                    detail={
+                        "step": step,
+                        "prompt_tokens": usage.prompt if usage is not None else None,
+                        "completion_tokens": usage.completion if usage is not None else None,
+                    },
+                )
+            )
+        if usage_recorder is not None:
+            usage_recorder(usage)
     yield End()
 
 
-def _from_message_chunk(payload: Any, *, guard: StreamingGuard) -> Iterator[TurnEvent]:
-    """`messages` 模式的一个原始块 → 思考事件 + 已过审的正文增量。"""
-    chunk, _meta = payload
+def _from_message_chunk(
+    payload: Any,
+    *,
+    guard: StreamingGuard,
+    usage_seen: dict[Any, TokenUsage | None] | None = None,
+) -> Iterator[TurnEvent]:
+    """`messages` 模式的一个原始块 → 思考事件 + 已过审的正文增量（并顺手记一次用量）。
+
+    用量为什么在这里取而不是在 `call_model` 里取（审计 §12.8/#8）：
+    **供应商在每一个流式分块里都回一份"累计到目前为止"的 usage**，而 langchain 合并
+    `AIMessageChunk` 时是把这些逐块**相加**的 —— 于是 `call_model` 拿到的那个合并值是
+    `真值 × 分块数`（实测一条"在吗"：非流式 26 token，流式合并后 272,607）。
+    只有这里看得见单个分块，所以真值只能在这儿取：**按 (节点, 步) 取最后一次出现的累计值**
+    —— 第一次不行，第一块的 `output_tokens` 恒为 0。
+    """
+    chunk, meta = payload
+    if usage_seen is not None and isinstance(chunk, AIMessageChunk) and isinstance(meta, dict):
+        usage = usage_from_metadata(getattr(chunk, "usage_metadata", None))
+        # 键用 (langgraph_node, langgraph_step)：一次用户轮次里 `call_model` 会因
+        # 工具循环跑多次，这两样正好把每次调用分开。`run_id` 在 langgraph 的 messages
+        # 元数据里**不存在**（实测只有 checkpoint_ns / node / step / triggers）。
+        key = (meta.get("langgraph_node"), meta.get("langgraph_step"))
+        # 没带用量的块也要把这次调用登记上（值为 None）：`calls` 少记一次，账上的
+        # "今天 0 token"就又同时意味着"没花钱"和"报了账但没数"这两种完全不同的事。
+        if usage is not None or key not in usage_seen:
+            usage_seen[key] = usage
     # 思考模型的推理增量（langchain-ollama：reasoning=True 时思考进
     # additional_kwargs['reasoning_content']）。与正文分流：思考走 thinking 事件、进折叠
-    # 面板，不混进回答正文。qwen2.5 等非思考模型这里是空 → 零开销。
+    # 面板，不混进回答正文。qwen3-vl / 云端 DeepSeek 这类思考模型这里是关键分流 ——
+    # 否则思考 token 会被当成回答的字数报给用户（审计 §12.10 那次误判的一半成因）。
     think_delta = (getattr(chunk, "additional_kwargs", None) or {}).get("reasoning_content")
     if isinstance(chunk, AIMessageChunk) and think_delta:
         yield Thinking(text=str(think_delta))

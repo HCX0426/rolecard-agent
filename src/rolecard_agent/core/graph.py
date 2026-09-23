@@ -81,7 +81,6 @@ def build_kernel(
     model_resolver: Callable[..., ChatLike] | None = None,
     memory_provider: Callable[[str | None], str] | None = None,
     vision_probe: Callable[[str | None, str], bool | None] | None = None,
-    usage_recorder: Callable[[str | None, Any], None] | None = None,
 ) -> Any:
     """Compile the kernel graph.
 
@@ -118,10 +117,6 @@ def build_kernel(
     # 写在 core/nodes._reject_unsupported_vision，这里只负责把宿主的探测器接进来。
     if vision_probe is not None:
         ctx.vision_probe = vision_probe
-    # token 账（审计 §12.8）：宿主给落点（它才有 sqlite 连接），内核只报告"这次用了多少"。
-    # 不传 = 不分发 —— 没有账本可比"记了但看不见"更诚实。
-    if usage_recorder is not None:
-        ctx.usage_recorder = usage_recorder
     # 历史预算与工具超时随宿主配置走（审查报告 H3 / M10）：内核不再无条件把全量历史塞进
     # prompt，也不再把工具执行交给"无限等待"。
     ctx.max_context_chars = ctx.settings.context_max_chars

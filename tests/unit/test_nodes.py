@@ -470,14 +470,15 @@ def test_call_model_leaves_a_clean_history_untouched(roles: RoleCardService) -> 
     assert any(m is first for m in model.last_prompt)
 
 
-def test_call_model_reports_usage_to_the_host_sink(roles: RoleCardService) -> None:
-    """这一轮花了多少 token 要交给宿主的账本，并如实进 `node_end`（审计 §12.8）。
+def test_call_model_leaves_usage_out_of_node_end(roles: RoleCardService) -> None:
+    """`call_model` 这一层**不许**记 token 账，也不许把用量写进 `node_end`（审计 §12.8/#8）。
 
-    `node_end` 的 `tokens` 字段一直存在、一直是 null —— 而路由改云端之后，"今天花了多少"
-    是必须答得出的问题。内核不自己开账本（它没有连接），只把事实交给宿主给的落点。
+    不是"取不到"——是这里取到的一定是错的：后端在每一个流式分块里都回一份"累计到此"的
+    usage，langchain 合并时逐块相加，所以合并值 = 真值 × 分块数（实测一条"在吗"：
+    非流式 26 token，流式合并后 272,607）。真值只有在分块层（`core/turn.py`）才看得见。
+    一个错的数比没有数有害：它会安静地喂给"今天花了多少"那个问题。
     """
     rid = _role(roles, "cloudy", model_name="cloud-a")
-    seen: list[tuple[str | None, Any]] = []
 
     class _UsageModel:
         def bind_tools(self, tools: Sequence[Any], **kwargs: Any) -> Any:
@@ -491,30 +492,15 @@ def test_call_model_reports_usage_to_the_host_sink(roles: RoleCardService) -> No
 
     tracer = RecordingTracer()
     ctx = _ctx(ToolRegistry(), roles, _UsageModel(), tracer=tracer)
-    ctx.usage_recorder = lambda backend, usage: seen.append((backend, usage))
     call_model(
         {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"}, ctx
     )
 
-    assert [name for name, _ in seen] == ["cloud-a"], "账要记在真正服务这一轮的那个后端名下"
-    assert seen[0][1].prompt == 900 and seen[0][1].completion == 37
+    assert not hasattr(ctx, "usage_recorder"), "落账点已经搬走，内核上下文不该再有这个字段"
+    assert [e for e in tracer.events if getattr(e, "event", "") == "llm_usage"] == []
     end = next(e for e in tracer.events if getattr(e, "event", "") == "node_end")
-    assert end.tokens == 937
-    assert end.detail["prompt_tokens"] == 900 and end.detail["completion_tokens"] == 37
-
-
-def test_call_model_records_an_unreported_call_as_such(roles: RoleCardService) -> None:
-    """后端没报用量 ⇒ 交 None 上去，不交一个 0。0 会被读成"这一句不要钱"。"""
-    rid = _role(roles)
-    seen: list[Any] = []
-    ctx = _ctx(ToolRegistry(), roles, FakeModel(AIMessage(content="ok")))
-    ctx.usage_recorder = lambda _backend, usage: seen.append(usage)
-    call_model(
-        {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"}, ctx
-    )
-    assert seen == [None]
-    end = [e for e in _trace_of(ctx) if getattr(e, "event", "") == "node_end"]
-    assert not end or end[0].tokens is None
+    assert end.tokens is None, "这里的 null 是**如实**，不是漏报"
+    assert "prompt_tokens" not in end.detail and "completion_tokens" not in end.detail
 
 
 def _trace_of(ctx: KernelContext) -> list[Any]:

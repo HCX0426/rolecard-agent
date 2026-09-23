@@ -22,13 +22,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from typing import Any, cast
 
 from rolecard_agent.core.observability import Tracer
 from rolecard_agent.core.turn import TurnEvent, run_turn
+from rolecard_agent.core.usage import TokenUsage
 
 _CHAT_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="chat-stream")
 
@@ -50,6 +51,7 @@ async def chat_events(
     config: dict[str, Any],
     role_summary: dict[str, str],
     tracer: Tracer | None = None,
+    usage_recorder: Callable[[TokenUsage | None], None] | None = None,
 ) -> AsyncIterator[str]:
     """异步投送 `core.turn.run_turn` 的事件流：逐事件从专属线程池取出，块间让出事件循环。
 
@@ -64,6 +66,7 @@ async def chat_events(
         config=config,
         role_summary=role_summary,
         tracer=tracer,
+        usage_recorder=usage_recorder,
     ))
     sentinel = object()
     while True:

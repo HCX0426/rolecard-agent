@@ -10,6 +10,8 @@
      `prompt_eval_count`/`eval_count`，OpenAI 兼容口是 `prompt_tokens`/`completion_tokens`），
      而且 langchain 新旧两版分别放在 `usage_metadata` 与 `response_metadata["token_usage"]`。
      这四个形状必须**一处**认全：在两个地方各写一半键名，就是"某家的数永远是 0"那种 bug。
+     流式那条路**不走** `parse_usage`（它拿到的合并值被逐块相加污染过，见 #8），而是用
+     `usage_from_metadata` 在分块层按 (节点, 步) 取最后一次累计 —— 认键的规矩两边共用一个。
   2. `record_usage` —— 按 (本地日期, 后端) 累计。不落库的账等于没有账：
      trace 默认写 stderr（`OBS_LOG_PATH` 没配就哪儿都不留），而 `persona_meter.py` 这类
      只读尺子读的是 sqlite。
@@ -78,6 +80,22 @@ def parse_usage(reply: Any) -> TokenUsage | None:
         # 第一版在这里漏了分支，直接把 123 报成 None —— 而 `memory_distill` 一直依赖它，
         # 于是一次改写的回归把一条既有测试打红了。总数记在 completion 上：
         # 宁可标"分不清输入输出"，也不能把已知的量丢掉。
+        return TokenUsage(None, total) if total is not None else None
+    return TokenUsage(prompt, completion)
+
+
+def usage_from_metadata(meta: Any) -> TokenUsage | None:
+    """把 langchain 的 `usage_metadata`（`input_tokens`/`output_tokens`）转成 TokenUsage。
+
+    给"手上已经是一份 usage 字典、没有消息对象"的调用方用 —— 流式那条路径就是这么取的：
+    每个增量块都带**累计值**，所以要按调用取**最后一次**出现的（第一次的 output 恒为 0）。
+    """
+    if not isinstance(meta, dict):
+        return None
+    prompt = _as_int(meta.get("input_tokens"))
+    completion = _as_int(meta.get("output_tokens"))
+    if prompt is None and completion is None:
+        total = _as_int(meta.get("total_tokens"))
         return TokenUsage(None, total) if total is not None else None
     return TokenUsage(prompt, completion)
 
@@ -195,4 +213,5 @@ __all__ = [
     "parse_usage",
     "record_usage",
     "usage_days",
+    "usage_from_metadata",
 ]

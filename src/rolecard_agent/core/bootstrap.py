@@ -52,8 +52,6 @@ from rolecard_agent.core.services import ServiceEndpointService
 from rolecard_agent.core.state import now_ts
 from rolecard_agent.core.text import text_of
 from rolecard_agent.core.tools.registry import ToolRegistry
-from rolecard_agent.core.usage import TokenUsage
-from rolecard_agent.core.usage import record_usage as add_usage
 from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder, make_reranker
 from rolecard_agent.roles.models import RoleCard
 from rolecard_agent.roles.service import RoleCardService
@@ -235,13 +233,7 @@ class Runtime:
             # 视觉能力探测（P1-2）：Ollama `/api/show` 的 capabilities，带 TTL 缓存。
             # 只有"声明不支持 + 探测确认不支持"两条同时成立才会调用前拦（见 nodes 里那段）。
             vision_probe=vision_capability,
-            # token 账（审计 §12.8）：连接在这里，所以账也在这里落。
-            usage_recorder=self.record_usage,
         )
-
-    def record_usage(self, backend: str | None, usage: TokenUsage | None) -> None:
-        """把一次模型调用的用量累进"今天 · 这个后端"的账（失败怎么留声见 `usage.record_usage`）。"""
-        add_usage(self.conn, backend=backend, usage=usage, tracer=self.tracer)
 
     # -- 热重建 --------------------------------------------------------------
 
