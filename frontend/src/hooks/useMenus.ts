@@ -12,6 +12,9 @@ export function useMenus() {
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
   /** 展开上下文选项（num_ctx）的模型行名。 */
   const [ctxOpen, setCtxOpen] = useState<string | null>(null);
+  /** 展开采样惩罚选项的模型行名。与上面那个分开：两栏可以在同一行各自开合，
+   *  共用一个开关会变成"点采样把上下文面板顶掉"。 */
+  const [sampOpen, setSampOpen] = useState<string | null>(null);
   const menuCloseTimer = useRef<number | null>(null);
 
   // 菜单「鼠标移出后关闭」的短延时：留出从按钮移到面板的过渡时间，防抖动。
@@ -29,6 +32,7 @@ export function useMenus() {
     setModelMenuOpen(false);
     setRoleMenuOpen(false);
     setCtxOpen(null);
+    setSampOpen(null);
   }
 
   // 卸载时清定时器：否则在延迟触发的瞬间组件已卸载（React 会警告状态更新到已卸载组件）。
@@ -46,6 +50,8 @@ export function useMenus() {
     setRoleMenuOpen,
     ctxOpen,
     setCtxOpen,
+    sampOpen,
+    setSampOpen,
     armMenuClose,
     cancelMenuClose,
     closeAllMenus,

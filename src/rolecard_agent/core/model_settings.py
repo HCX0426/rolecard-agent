@@ -327,7 +327,13 @@ def migrate_to_provider_layers(conn: SqlConnection) -> int:
         " sort_order INTEGER NOT NULL DEFAULT 0,"
         " num_ctx INTEGER,"
         " supports_vision INTEGER,"
-        " supports_tools INTEGER)"
+        " supports_tools INTEGER,"
+        # 与 `core/schema.sql` 里那张表**必须同形**：搬完层读侧就按新形状查了。
+        # （采样惩罚三栏 2026-09-24 加进来时，漏在这里的代价是旧库一搬层就
+        #  "no such column: b.repeat_penalty"。）
+        " repeat_penalty REAL,"
+        " frequency_penalty REAL,"
+        " presence_penalty REAL)"
     )
     conn.executemany(
         "INSERT INTO model_backend__layers "
@@ -432,6 +438,7 @@ class ModelSettingsService:
         rows = self._conn.execute(
             "SELECT b.name, b.provider_id, b.model, b.sort_order, b.num_ctx, "
             "b.supports_vision, b.supports_tools, "
+            "b.repeat_penalty, b.frequency_penalty, b.presence_penalty, "
             "p.provider, p.label, p.base_url, p.api_key "
             "FROM model_backend b JOIN model_provider p ON p.id = b.provider_id "
             "ORDER BY b.sort_order, b.name"
@@ -488,7 +495,8 @@ class ModelSettingsService:
         default = self.default_backend()
         models_of_group: dict[str, list[dict[str, object]]] = {}
         for row in self._conn.execute(
-            "SELECT name, provider_id, model, num_ctx, supports_vision, supports_tools "
+            "SELECT name, provider_id, model, num_ctx, supports_vision, supports_tools, "
+            "repeat_penalty, frequency_penalty, presence_penalty "
             "FROM model_backend ORDER BY sort_order, name"
         ).fetchall():
             name = str(row["name"])
@@ -499,6 +507,11 @@ class ModelSettingsService:
                     "num_ctx": row["num_ctx"],
                     "supports_vision": _tri_state(row["supports_vision"]),
                     "supports_tools": _tri_state(row["supports_tools"]),
+                    # 采样惩罚现值（null = 没设 = 引擎默认）。对话页那一栏要回显它，
+                    # 否则"我上次设了什么"在界面上看不见 —— 看不见的设置就是没人管的设置。
+                    "repeat_penalty": _opt_float(row["repeat_penalty"]),
+                    "frequency_penalty": _opt_float(row["frequency_penalty"]),
+                    "presence_penalty": _opt_float(row["presence_penalty"]),
                     "used_by": _sorted_usages(usages.get(name, [])),
                     "is_default": name == default,
                 }
@@ -700,6 +713,65 @@ class ModelSettingsService:
         if cur.rowcount == 0:
             raise KeyError(name)
         self._conn.commit()
+
+    #: 三栏惩罚的可接受区间。**故意不给"聪明"的默认值**：出厂全 NULL = 不传 = 引擎默认
+    #: （Ollama 的 repeat_penalty 自带 1.1）。区间只挡"会把输出打成人话不成人话"的数：
+    #: repeat 超过 2 实测就是断句复读，负数无意义；另两项 OpenAI 兼容体的定义域就是 −2..2。
+    SAMPLING_RANGES: dict[str, tuple[float, float]] = {
+        "repeat_penalty": (0.0, 2.0),
+        "frequency_penalty": (-2.0, 2.0),
+        "presence_penalty": (-2.0, 2.0),
+    }
+
+    def set_sampling(self, name: str, values: dict[str, float | None]) -> dict[str, float | None]:
+        """改一行的采样惩罚（对话菜单那一栏）。给 None = 清回"不传"，不是传 0。
+
+        **`repeat_penalty` 只对 native（Ollama）后端收**：OpenAI 兼容体里没有这个标准字段，
+        存进去工厂也不会发出去 —— 让它写进去就是"界面显示已设、实际没生效"的第二个事实面。
+        界面上那一栏对云端根本不出现，这里是同一件事的后端闸门。
+        """
+        unknown = sorted(set(values) - set(self.SAMPLING_RANGES))
+        if unknown:
+            raise ModelSettingsError(f"未知的采样参数：{', '.join(unknown)}")
+        row = self._conn.execute(
+            "SELECT p.provider FROM model_backend b JOIN model_provider p ON p.id = b.provider_id"
+            " WHERE b.name = ?",
+            (name,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(name)
+        native = client_style(str(row["provider"])) == "native"
+        if not native and values.get("repeat_penalty") is not None:
+            raise ModelSettingsError("重复惩罚只对本地 Ollama 后端有效（OpenAI 兼容体没这个字段）")
+        for field, (low, high) in self.SAMPLING_RANGES.items():
+            raw = values.get(field)
+            if raw is None:
+                continue
+            if not -1e9 < float(raw) < 1e9 or not low <= float(raw) <= high:
+                raise ModelSettingsError(f"{field} 得在 {low}..{high} 之间（给了 {raw}）")
+        for field in self.SAMPLING_RANGES:
+            if field in values:
+                self._conn.execute(
+                    f"UPDATE model_backend SET {field} = ? WHERE name = ?",  # noqa: S608
+                    (values[field], name),
+                )
+        self._conn.commit()
+        return self.sampling(name)
+
+    def sampling(self, name: str) -> dict[str, float | None]:
+        """一行的三栏惩罚现值（None = 没设）。写侧的回显走它，免得前端拿旧草稿。"""
+        row = self._conn.execute(
+            "SELECT repeat_penalty, frequency_penalty, presence_penalty FROM model_backend"
+            " WHERE name = ?",
+            (name,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(name)
+        return {
+            "repeat_penalty": _opt_float(row["repeat_penalty"]),
+            "frequency_penalty": _opt_float(row["frequency_penalty"]),
+            "presence_penalty": _opt_float(row["presence_penalty"]),
+        }
 
     def normalize_providers(self) -> int:
         """启动时一次性归一化历史组的 provider，并清掉无 key 供应商误存的 key。
@@ -1111,6 +1183,11 @@ class ModelSettingsService:
                 num_ctx=int(str(row["num_ctx"])) if row.get("num_ctx") is not None else None,
                 supports_vision=_vision_of(row["supports_vision"]),
                 supports_tools=_tools_of(row["supports_tools"]),
+                # 采样惩罚：NULL 一路留到工厂再判，**不在这里补 0**。Ollama 出厂
+                # repeat_penalty=1.1，把"没设"写成 0 等于替用户关掉了它。
+                repeat_penalty=_opt_float(row.get("repeat_penalty")),
+                frequency_penalty=_opt_float(row.get("frequency_penalty")),
+                presence_penalty=_opt_float(row.get("presence_penalty")),
             )
             for row in raw
         }
@@ -1152,6 +1229,20 @@ def _tri_state(raw: object) -> bool | None:
     if raw is None or raw == "":
         return None
     return bool(raw)
+
+
+def _opt_float(raw: object) -> float | None:
+    """采样惩罚那一列 → `float | None`。认不出的一律当"没设"（None）而不是 0。
+
+    0 在这三栏里是一个**有语义的值**（frequency_penalty=0 = 明确关掉惩罚），所以坏值不能
+    退成 0 —— 退成 None 才是"不传这个参数、听引擎的"。
+    """
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        return float(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
 
 
 def _vision_of(raw: object) -> bool:

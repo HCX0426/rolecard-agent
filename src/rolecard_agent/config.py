@@ -88,6 +88,17 @@ class ModelBackend(BaseModel):
     #   一旦请求附 tools 就返回空，标 false 后 call_model 这轮不绑工具，模型仍能正常答。
     supports_vision: bool = False
     supports_tools: bool = True
+    # 采样惩罚（设计稿 §8.2 那条"我们只暴露了 num_ctx/temperature，惩罚项没露"的补课）。
+    # **三个都默认 None = 不传 = 引擎默认**，不是"出厂给个更聪明的值"：小模型上调惩罚容易
+    # 伤连贯（§8.2 原话），所以界面只负责"能设"，推荐值得等 `persona_meter` 的数出来再说。
+    # 语义按 provider 分家，见 `core/graph.py::_init_model`：
+    # - repeat_penalty：Ollama 专有（≥0，1=不惩罚）。OpenAI 兼容体里没有这个标准字段，
+    #   给云端传它等于赌服务商实现 —— 所以云端那一栏在界面上**不出现**。
+    # - frequency_penalty / presence_penalty：两类都有，但区间不同（Ollama ≥0；
+    #   OpenAI 兼容 −2..2），校验也按这个分（见 `model_settings.set_sampling`）。
+    repeat_penalty: float | None = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
 
 
 class McpServerConfig(BaseModel):

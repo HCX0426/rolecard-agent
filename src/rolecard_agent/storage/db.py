@@ -349,3 +349,10 @@ def _migrate(conn: SqlConnection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_model_backend_provider ON model_backend"
         "(provider_id, sort_order, name)"
     )
+    # 10. model_backend 增列采样惩罚三档（设计稿 §8.2 的补课：只露过 num_ctx/temperature）。
+    #     排在搬层**之后**：搬层会重建这张表，先补的列跟着旧表一起没了（与上面那条索引同理）。
+    #     三档都可空，NULL = 不传该参数 = 引擎默认（Ollama 出厂 repeat_penalty=1.1，
+    #     写成 0 是"把它关了"，与"没设"是两种行为 —— 所以这里不用 DEFAULT 0）。
+    for name in ("repeat_penalty", "frequency_penalty", "presence_penalty"):
+        if name not in _columns(conn, "model_backend"):
+            conn.execute(f"ALTER TABLE model_backend ADD COLUMN {name} REAL")

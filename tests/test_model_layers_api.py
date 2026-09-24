@@ -317,3 +317,57 @@ def test_capabilities_patch_unknown_model_is_404(client: TestClient) -> None:
     assert client.patch(
         "/api/settings/models/ghost/capabilities", json={"supports_vision": True}
     ).status_code == 404
+
+
+# --------------------------------------------------------------------------- 采样惩罚
+
+
+def test_sampling_penalties_roundtrip_through_the_library(client: TestClient) -> None:
+    """本地那一行三栏全能设，且**回读走库**（不是请求回显）：没提交的列保持原样。"""
+    model = _group(client, "ollama")["models"][0]
+    assert model["repeat_penalty"] is None  # 没设 = null = 不传，界面显示"未设置"而不是 0
+
+    res = client.patch(
+        "/api/settings/models/local/sampling",
+        json={"repeat_penalty": 1.2, "frequency_penalty": 0.1},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json() == {
+        "name": "local",
+        "repeat_penalty": 1.2,
+        "frequency_penalty": 0.1,
+        "presence_penalty": None,
+    }
+    again = _group(client, "ollama")["models"][0]
+    assert again["repeat_penalty"] == 1.2 and again["frequency_penalty"] == 0.1
+    assert again["presence_penalty"] is None
+
+    # null 是"清回不传"，不是"设成 0"：0 在惩罚栏里是一个有语义的值。
+    client.patch("/api/settings/models/local/sampling", json={"repeat_penalty": None})
+    assert _group(client, "ollama")["models"][0]["repeat_penalty"] is None
+
+
+def test_sampling_rejects_repeat_penalty_on_a_cloud_backend(client: TestClient) -> None:
+    """OpenAI 兼容体没有 `repeat_penalty` 这个标准字段。存进去 = 界面显示已设而实际没发出去，
+    所以写侧直接 400；另两栏是标准字段，云端照设。"""
+    bad = client.patch("/api/settings/models/sf/sampling", json={"repeat_penalty": 1.3})
+    assert bad.status_code == 400 and "Ollama" in bad.json()["detail"]
+    ok = client.patch("/api/settings/models/sf/sampling", json={"presence_penalty": 0.2})
+    assert ok.status_code == 200
+    assert _group(client, "siliconflow")["models"][0]["presence_penalty"] == 0.2
+
+
+def test_sampling_validates_ranges_names_and_rows(client: TestClient) -> None:
+    assert client.patch(
+        "/api/settings/models/local/sampling", json={"repeat_penalty": 9}
+    ).status_code == 400
+    assert client.patch(
+        "/api/settings/models/local/sampling", json={"presence_penalty": -3}
+    ).status_code == 400
+    assert client.patch(
+        "/api/settings/models/local/sampling", json={"top_k": 40}
+    ).status_code == 400
+    assert client.patch("/api/settings/models/local/sampling", json={}).status_code == 400
+    assert client.patch(
+        "/api/settings/models/ghost/sampling", json={"presence_penalty": 0.1}
+    ).status_code == 404

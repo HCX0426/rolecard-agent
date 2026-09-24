@@ -118,6 +118,49 @@ def patch_model_context(
     return {"name": name, "num_ctx": body.num_ctx}
 
 
+class ModelSamplingBody(BaseModel):
+    """只改一个后端的采样惩罚。**字段不给默认值**：没出现的键不动，出现且为 null = 清回"不传"。
+
+    与 `ModelContextBody` 同一套取舍 —— 走整表 PUT 要前端持有全部行与回退链，改一个数
+    却重传整套配置，写放大且并发编辑互相覆盖。
+    """
+
+    repeat_penalty: float | None = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
+
+    def given(self) -> dict[str, float | None]:
+        return self.model_dump(exclude_unset=True)
+
+
+@router.patch("/api/settings/models/{name}/sampling")
+def patch_model_sampling(
+    name: str,
+    body: ModelSamplingBody,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> object:
+    """改一行的采样惩罚（重复 / 频率 / 存在）并热重建。回的是**库里的现值**，不是请求回显。
+
+    惩罚项与 temperature 一样只能在**构造期**传进客户端（调用期 bind 会被 Ollama 丢到
+    请求顶层而忽略），所以这里必须 `rebuild_runtime()` —— 不重建就是"存下了但没生效"。
+    """
+    given = body.given()
+    if not given:
+        raise HTTPException(status_code=400, detail="没有要保存的内容。")
+    try:
+        stored = ctx.model_settings.set_sampling(name, given)
+    except ModelSettingsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"后端 {name!r} 不存在。") from None
+    # dict 不变：`dict[str, float | None]` 不是 `dict[str, object]`，交给审计要显式过一道。
+    detail: dict[str, object] = dict(given)
+    ctx.roles.audit(actor=actor.id, action="update_model_sampling", target=name, detail=detail)
+    ctx.rebuild_runtime()
+    return {"name": name, **stored}
+
+
 @router.put("/api/settings/models")
 def put_model_settings(
     body: ModelSettingsBody,

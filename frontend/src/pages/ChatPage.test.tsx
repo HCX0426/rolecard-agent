@@ -25,6 +25,7 @@ const { apiMock, streamChatMock } = vi.hoisted(() => ({
     get: vi.fn(),
     post: vi.fn(),
     patch: vi.fn(),
+    setModelSampling: vi.fn(),
     del: vi.fn(),
     extractRecord: vi.fn(),
     distillSession: vi.fn(),
@@ -376,16 +377,20 @@ describe("ChatPage 删除二次确认（useConfirm）", () => {
 });
 
 describe("ChatPage 模型菜单能力位徽章（Batch 6：supports_tools）", () => {
-  function stubBackends(rows: Record<string, unknown>[]) {
+  function stubBackends(rows: Record<string, unknown>[], groupProvider = "openai") {
     // 用例按"行"写最省事，这里统一包成一个凭据组：契约只有分组这一个视图，
     // 参与对话 = used_by 含 chat（不再有 usage 字段可筛）。
     const providers = [
       {
-        id: "g", provider: "openai", label: "OpenAI 兼容", base_url: null, style: "openai",
+        id: "g", provider: groupProvider, label: "OpenAI 兼容", base_url: null,
+        style: groupProvider === "ollama" ? "native" : "openai",
         needs_key: true, has_key: true, key_masked: "sk-…x",
         models: rows.map((r) => ({
           name: r.name, model: r.model, num_ctx: r.num_ctx ?? null,
           supports_vision: r.supports_vision ?? null, supports_tools: r.supports_tools ?? null,
+          repeat_penalty: r.repeat_penalty ?? null,
+          frequency_penalty: r.frequency_penalty ?? null,
+          presence_penalty: r.presence_penalty ?? null,
           used_by: ["chat"], is_default: false,
         })),
       },
@@ -424,6 +429,35 @@ describe("ChatPage 模型菜单能力位徽章（Batch 6：supports_tools）", (
     // 菜单已开：该后端行可见，但没有「工具」徽章（避免把能力位这条事实复制到前端做 disable）
     expect(await screen.findByText("gpt-y")).toBeTruthy();
     expect(screen.queryByText("工具")).toBeNull();
+  });
+
+  it("采样那一栏：云端行根本没有「重复惩罚」，点档位走 PATCH", async () => {
+    stubBackends([{ name: "sf", model: "deepseek-x" }]);
+    await openModelMenu();
+    fireEvent.click(await screen.findByTitle(/采样惩罚/));
+    expect(await screen.findByText("频率惩罚")).toBeTruthy();
+    expect(screen.findByText("存在惩罚")).toBeTruthy();
+    // OpenAI 兼容体没有 repeat_penalty 这个标准字段：那一栏对云端**不出现**，
+    // 而不是出现而后端 400 —— 看得见却存不进去的控件比没有控件更糟。
+    expect(screen.queryByText("重复惩罚")).toBeNull();
+    apiMock.setModelSampling.mockResolvedValue({
+      name: "sf", repeat_penalty: null, frequency_penalty: 0.1, presence_penalty: null,
+    });
+    // 两行的档位数字重名（频率 0.1 与存在 0.1），按 DOM 序取第一行 = 频率惩罚。
+    fireEvent.click(screen.getAllByRole("button", { name: "0.1" })[0]);
+    await waitFor(() =>
+      expect(apiMock.setModelSampling).toHaveBeenCalledWith("sf", { frequency_penalty: 0.1 }),
+    );
+  });
+
+  it("本地（Ollama）行多一栏「重复惩罚」，徽章在已设时改口", async () => {
+    stubBackends([{ name: "local", model: "qwen3-vl:8b", repeat_penalty: 1.2 }], "ollama");
+    await openModelMenu();
+    // 徽章只说"至少一栏不是默认"，具体值在面板里逐栏回显。
+    expect(await screen.findByText("采样 ·已设 ▾")).toBeTruthy();
+    fireEvent.click(screen.getByTitle(/采样惩罚/));
+    expect(await screen.findByText("重复惩罚")).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "1.2" }).length).toBeGreaterThan(0);
   });
 });
 

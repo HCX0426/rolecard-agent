@@ -54,11 +54,34 @@ function chatRows(settings: ModelSettings): BackendRow[] {
         num_ctx: m.num_ctx,
         supports_vision: m.supports_vision ?? false,
         supports_tools: m.supports_tools ?? true,
+        // 采样惩罚三栏原样摊平：菜单那一栏要回显"现在是多少 / 根本没设"。
+        repeat_penalty: m.repeat_penalty,
+        frequency_penalty: m.frequency_penalty,
+        presence_penalty: m.presence_penalty,
         has_key: g.has_key,
         key_masked: g.key_masked,
       })),
   );
 }
+
+/**
+ * 采样惩罚那一栏的三行（设计稿 §8.2：我们此前只露了 num_ctx / temperature）。
+ *
+ * 档位是**保守地照出厂区间**给的，不是"我们认为更好的值"：`null` = 不传 = 听引擎的，排在第一，
+ * 而且默认就停在那儿 —— 小模型上调惩罚容易伤连贯（§8.2 原话），没量过就不替用户决定。
+ * `nativeOnly` 那一行对云端根本不出现：OpenAI 兼容体没有 `repeat_penalty` 这个标准字段，
+ * 给一个"设了也不知道有没有生效"的控件比不给更糟（后端 PATCH 也会 400 挡）。
+ */
+const SAMPLING_FIELDS: {
+  key: "repeat_penalty" | "frequency_penalty" | "presence_penalty";
+  label: string;
+  nativeOnly: boolean;
+  options: (number | null)[];
+}[] = [
+  { key: "repeat_penalty", label: "重复惩罚", nativeOnly: true, options: [null, 1.0, 1.1, 1.2, 1.3] },
+  { key: "frequency_penalty", label: "频率惩罚", nativeOnly: false, options: [null, 0, 0.1, 0.2, 0.3] },
+  { key: "presence_penalty", label: "存在惩罚", nativeOnly: false, options: [null, 0, 0.1, 0.2, 0.3] },
+];
 
 function fmtDuration(from: string, to: string): string | null {
   if (!from || !to) return null;
@@ -108,6 +131,8 @@ export default function ChatPage({
     setRoleMenuOpen,
     ctxOpen,
     setCtxOpen,
+    sampOpen,
+    setSampOpen,
     armMenuClose,
     cancelMenuClose,
     closeAllMenus,
@@ -360,6 +385,33 @@ export default function ChatPage({
       setBackends(chatRows(ms));
     } catch (e) {
       setStatus(`设置上下文窗口失败：${(e as Error).message}`, "warn");
+    }
+  }
+
+  /** 改一栏采样惩罚（一次只改一栏）。后端保存时已经热重建 —— 惩罚项与 temperature 同一条
+   *  铁律，只能在构造期传进客户端，所以"下一轮生效"不需要重启，也不需要前端再猜。 */
+  async function setModelSampling(
+    name: string,
+    field: "repeat_penalty" | "frequency_penalty" | "presence_penalty",
+    value: number | null,
+  ) {
+    try {
+      const stored = await api.setModelSampling(name, { [field]: value });
+      // 用后端回来的那份现值更新，而不是本地假设：它同时管住了"没提交的那栏保持原样"。
+      setBackends((rows) =>
+        rows.map((r) =>
+          r.name === stored.name
+            ? {
+                ...r,
+                repeat_penalty: stored.repeat_penalty,
+                frequency_penalty: stored.frequency_penalty,
+                presence_penalty: stored.presence_penalty,
+              }
+            : r,
+        ),
+      );
+    } catch (e) {
+      setStatus(`设置采样惩罚失败：${(e as Error).message}`, "warn");
     }
   }
 
@@ -1223,6 +1275,20 @@ export default function ChatPage({
                                 {b.num_ctx ? `${Math.round(b.num_ctx / 1024)}k ▾` : "上下文 ▾"}
                               </button>
                             )}
+                            {/* 采样惩罚：两类客户端都有这一栏（重复惩罚只对本地，见
+                                `SAMPLING_FIELDS`）。徽章上的"·已设"只说"至少一栏不是默认"，
+                                具体数值在面板里逐栏回显 —— 徽章上摆三个数是给人在菜单里读表格。 */}
+                            <button
+                              onClick={() => setSampOpen((s) => (s === b.name ? null : b.name))}
+                              title="采样惩罚（重复 / 频率 / 存在）：保存即热重建，下一轮生效"
+                              className="mr-2 shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 hover:bg-slate-200 dark:bg-slate-700/60 dark:text-slate-400 dark:hover:bg-slate-600"
+                            >
+                              {b.repeat_penalty != null ||
+                              b.frequency_penalty != null ||
+                              b.presence_penalty != null
+                                ? "采样 ·已设 ▾"
+                                : "采样 ▾"}
+                            </button>
                           </div>
                           {/* 上下文选项：点行内「上下文」徽章展开（inline，触屏可用） */}
                           {(b.provider === "ollama" || b.provider === "local") &&
@@ -1255,6 +1321,40 @@ export default function ChatPage({
                               </div>
                               <p className="mt-1.5 text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
                                 Ollama 默认仅 2048 tokens，调大才能真正用上模型窗口
+                              </p>
+                            </div>
+                          )}
+                          {/* 采样惩罚面板：一栏一行、行内点档位，第一档永远是「未设置」。 */}
+                          {sampOpen === b.name && (
+                            <div className="border-t border-slate-100 px-3 py-2 dark:border-slate-700/60">
+                              {SAMPLING_FIELDS.filter(
+                                (f) =>
+                                  !f.nativeOnly || b.provider === "ollama" || b.provider === "local",
+                              ).map((f) => (
+                                <div key={f.key} className="flex items-start gap-1.5 py-0.5">
+                                  <span className="w-16 shrink-0 pt-1 text-[10px] text-slate-400 dark:text-slate-500">
+                                    {f.label}
+                                  </span>
+                                  <div className="flex flex-wrap gap-1">
+                                    {f.options.map((opt) => (
+                                      <button
+                                        key={String(opt)}
+                                        onClick={() => void setModelSampling(b.name, f.key, opt)}
+                                        className={`rounded px-2 py-0.5 text-[11px] ${
+                                          (b[f.key] ?? null) === opt
+                                            ? "bg-blue-600 text-white"
+                                            : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700/60"
+                                        }`}
+                                      >
+                                        {opt === null ? "未设置" : String(opt)}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                              <p className="mt-1 text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
+                                「未设置」= 不传这项、听引擎的（Ollama 出厂重复惩罚就是 1.1）。
+                                上调能压复读，但小模型上更容易伤连贯 —— 拿不准就留未设置。
                               </p>
                             </div>
                           )}

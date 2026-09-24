@@ -85,6 +85,10 @@ export interface BackendRow {
   supports_vision: boolean;
   /** 后端能力位：工具调用是否可用（false 时该轮不绑工具，兼容带 tools 会返回空的云端 VLM）。 */
   supports_tools: boolean;
+  /** 采样惩罚三栏（null = 没设 = 不传 = 听引擎的）。`repeat_penalty` 只对本地 Ollama 有意义。 */
+  repeat_penalty?: number | null;
+  frequency_penalty?: number | null;
+  presence_penalty?: number | null;
   has_key: boolean;
   key_masked: string | null;
   /** 派生只读：这行被哪些服务引用（模型页不再有用途下拉，见 ProviderModelRow.used_by）。 */
@@ -138,6 +142,11 @@ export interface ProviderModelRow {
   num_ctx: number | null;
   supports_vision: boolean | null;
   supports_tools: boolean | null;
+  /** 采样惩罚三栏（null = 没设）。`repeat_penalty` 只有本地 Ollama 行会非空 —— 云端那一栏
+   *  在界面上根本不出现，后端也会 400 挡下写入（OpenAI 兼容体没有这个标准字段）。 */
+  repeat_penalty: number | null;
+  frequency_penalty: number | null;
+  presence_penalty: number | null;
   /** 这行被哪些服务引用（派生自服务页，模型页只读）：chat / embedding / rerank / ocr。 */
   used_by: string[];
   is_default: boolean;
@@ -595,6 +604,17 @@ export const api = {
       `/api/settings/models/${name}/context`,
       { num_ctx: numCtx },
     ),
+  /** 采样惩罚：一次只改一栏，回的是**库里的现值**（三栏都在）。null = 清回"不传"。 */
+  setModelSampling: (
+    name: string,
+    values: Partial<{ repeat_penalty: number | null; frequency_penalty: number | null; presence_penalty: number | null }>,
+  ) =>
+    request<{
+      name: string;
+      repeat_penalty: number | null;
+      frequency_penalty: number | null;
+      presence_penalty: number | null;
+    }>("PATCH", `/api/settings/models/${name}/sampling`, values),
   enhancePrompt: (text: string) =>
     request<{ text: string }>("POST", "/api/prompt/enhance", { text }),
   /** 本地推理服务状态（在不在跑 / 驻留了哪些模型 / 占多少显存）。 */

@@ -59,3 +59,40 @@ def test_cloud_backend_never_gets_num_ctx() -> None:
     graph._init_model(s, "c")
     assert captured["model_provider"] == "openai"
     assert "num_ctx" not in captured  # 云端窗口固定，传了也会被忽略
+
+
+# ------------------------------------------------------------------ 采样惩罚三栏
+#
+# 与 temperature 同一条铁律：**构造期**传（调用期 bind 会被 ChatOllama 放进请求顶层，
+# Ollama 忽略）。这三条锁的是"传法"和"云端那一栏根本不出现"两件事。
+
+_SAMPLING = {"repeat_penalty": 1.2, "frequency_penalty": 0.1, "presence_penalty": 0.2}
+
+
+def _one(**fields: Any) -> Settings:
+    return Settings(
+        model_default="a",
+        model_backends={"a": ModelBackend(model="m-a", **fields)},  # type: ignore[arg-type]
+    )
+
+
+def test_penalties_are_passed_at_construction_for_native() -> None:
+    graph._init_model(_one(provider="ollama", **_SAMPLING), "a")
+    assert captured["model_provider"] == "ollama"
+    assert {k: captured[k] for k in _SAMPLING} == _SAMPLING
+
+
+def test_unset_penalties_are_omitted_not_zeroed() -> None:
+    """三个都没设 = **一个都不传**。Ollama 出厂 repeat_penalty=1.1，替它写 0 就是悄悄关掉它，
+    而界面上那一栏显示的是"未设置"—— 那就是"界面说的和发出去的不是一回事"。"""
+    graph._init_model(_one(provider="ollama"), "a")
+    assert not (set(_SAMPLING) & set(captured))
+
+
+def test_cloud_client_never_receives_repeat_penalty() -> None:
+    """OpenAI 兼容体没有 repeat_penalty 这个标准字段。写侧 `set_sampling` 挡一道，这里是第二道
+    —— env 里手写的 MODEL_BACKENDS 不经那道闸门，而它一旦漏进请求就是各家服务商行为不一。"""
+    graph._init_model(_one(provider="siliconflow", **_SAMPLING), "a")
+    assert captured["model_provider"] == "openai"
+    assert "repeat_penalty" not in captured
+    assert captured["frequency_penalty"] == 0.1 and captured["presence_penalty"] == 0.2

@@ -183,6 +183,19 @@ def _init_model(
     # 我们裁剪到 24000 字符的历史会被静默截断（模型自带窗口形同虚设）。
     if style == "native" and backend.num_ctx:
         kwargs["num_ctx"] = backend.num_ctx
+    # 采样惩罚（设计稿 §8.2 那条"我们只露了 num_ctx/temperature"的补课）：**与 temperature
+    # 同一条铁律，只能在构造期传**（见下面那段实测：`.bind()` 会让 ChatOllama 把它们放进请求
+    # 顶层而不是 `options`，Ollama 直接忽略）。
+    # `repeat_penalty` 只对 native 发：OpenAI 兼容体没有这个标准字段，写侧 `set_sampling`
+    # 已经挡了一道，这里是第二道 —— env 里手写的 MODEL_BACKENDS 不经那个闸门。
+    # 三个都默认 None = **一个都不传**，让引擎自己的默认值说话（Ollama 出厂 repeat_penalty=1.1，
+    # 我们替它写 0 就是悄悄关掉了它）。
+    if backend.frequency_penalty is not None:
+        kwargs["frequency_penalty"] = backend.frequency_penalty
+    if backend.presence_penalty is not None:
+        kwargs["presence_penalty"] = backend.presence_penalty
+    if style == "native" and backend.repeat_penalty is not None:
+        kwargs["repeat_penalty"] = backend.repeat_penalty
     # 思考（reasoning）模式只对**显式列出**的思考模型开启（MODEL_THINKING_MODELS），
     # 且受总开关 MODEL_THINKING=auto|off 管制（off = 名单内也不开，临时不想要思考
     # token 时用）：对不支持的模型传 reasoning=True 会直接 400（实测 qwen2.5:7b），

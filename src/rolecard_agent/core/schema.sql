@@ -200,7 +200,12 @@ CREATE TABLE IF NOT EXISTS model_backend (
     sort_order       INTEGER NOT NULL DEFAULT 0,
     num_ctx          INTEGER,                       -- 本地 Ollama 上下文窗口；NULL=引擎默认
     supports_vision  INTEGER,                       -- NULL=未探测
-    supports_tools   INTEGER                        -- NULL=未探测
+    supports_tools   INTEGER,                       -- NULL=未探测
+    -- 采样惩罚三档（设计稿 §8.2 的补课）。NULL = **不传这个参数**，不是 0：Ollama 的
+    -- repeat_penalty 出厂是 1.1，写成 0 等于把它关了，而 0 与"没设"是两种行为。
+    repeat_penalty   REAL,                          -- 仅本地（Ollama 专有）
+    frequency_penalty REAL,                         -- 本地 ≥0 / 云端 −2..2
+    presence_penalty  REAL                          -- 本地 ≥0 / 云端 −2..2
 );
 
 -- 索引 `idx_model_backend_provider` 在 storage/db.py::_migrate 里建：搬层会重建本表，
