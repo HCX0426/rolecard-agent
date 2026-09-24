@@ -322,6 +322,14 @@ def list_reachouts(
         unread = conn.execute(
             "SELECT COUNT(*) AS n FROM agent_reachout WHERE state = 'unread'"
         ).fetchone()
+    # "某个角色有几条没读"只在这里算一次（审计 §12.11 的"三份各算"那一格）：铃铛、桌宠、
+    # 抽屉以前各自 filter 一遍，其中桌宠那份连后端给的 `unread` 都不看。
+    # 边界：抽屉里**同一摞**（同角色同一天）的角标仍然在前端数 —— 那是显示分组的一部分，
+    # 分组只做在前端（设计稿 §1），后端只负责把 `merge_days` 随列表带回。
+    by_role = conn.execute(
+        "SELECT role_id, COUNT(*) AS n FROM agent_reachout "
+        "WHERE state = 'unread' GROUP BY role_id"
+    ).fetchall()
     return {
         "items": [
             dict(r)
@@ -332,6 +340,7 @@ def list_reachouts(
             for r in rows
         ],
         "unread": int(unread["n"]),
+        "unread_by_role": {str(r["role_id"]): int(r["n"]) for r in by_role},
         "file_watch_pending": file_watch_pending,
     }
 

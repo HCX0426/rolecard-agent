@@ -46,7 +46,10 @@ function row(id: number, text: string, state = "unread") {
 }
 
 function page(items: ReturnType<typeof row>[], unread = items.length): ReachoutsPage {
-  return { items, unread } as ReachoutsPage;
+  // 这份 map 由后端算（`list_reachouts`），测试里按同样的口径造出来当"服务端的回答"。
+  const byRole: Record<string, number> = {};
+  for (const r of items) if (r.state === "unread") byRole[r.role_id] = (byRole[r.role_id] ?? 0) + 1;
+  return { items, unread, unread_by_role: byRole } as ReachoutsPage;
 }
 
 /** 装上"壳"：桌宠的系统通知、悬停展开与"点气泡拉起控制台"都以它存在为前提。

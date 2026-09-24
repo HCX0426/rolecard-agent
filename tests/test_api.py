@@ -770,8 +770,12 @@ def test_read_all_marks_every_role(client: TestClient, tmp_path: Path) -> None:
         svc.record_reachout(conn, RoleCard(role_id=rid, role_name=rid, system_prompt="x"), "在吗")
 
     assert client.get("/api/reachouts").json()["unread"] == 2
+    body0 = client.get("/api/reachouts").json()
+    # "某个角色有几条没读"由后端算一次（审计 §12.11 的"三份各算"那一格）
+    assert body0["unread_by_role"] == {"wan": 1, "bai": 1}
     res = client.post("/api/reachouts/read-all")
     assert res.status_code == 200 and res.json()["marked"] == 2
     body = res.json()
     assert body["unread"] == 0 and len(body["items"]) == 2, "标已读不是删：行还要留在抽屉里"
+    assert body["unread_by_role"] == {}
     conn.close()

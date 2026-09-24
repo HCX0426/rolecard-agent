@@ -16,7 +16,7 @@
 // 展开时**页面只告诉壳"要不要摊开"**，尺寸与往哪边翻由主进程按工作区算（§7.2）：让后端
 // 托管的那个源报坐标，等于把"窗口能摆到哪"交了出去。
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, streamChat, type MessagePage, type MessageRow, type ReachoutRow, type RoleCard } from "../api";
 import { useChatStream } from "../hooks/useChatStream";
@@ -56,6 +56,8 @@ function Speaker({ mine }: { mine: boolean }) {
 
 export default function PetPage() {
   const [items, setItems] = useState<ReachoutRow[]>([]);
+  // "某个角色有几条没读"读后端那一份（`unread_by_role`），不在这里 filter 第二遍。
+  const [unreadByRole, setUnreadByRole] = useState<Record<string, number>>({});
   const [offline, setOffline] = useState(false);
   const [bubbleShownAt, setBubbleShownAt] = useState(0);
   const [faded, setFaded] = useState(false);
@@ -129,6 +131,7 @@ export default function PetPage() {
       return;
     }
     setItems(page.items);
+    setUnreadByRole(page.unread_by_role ?? {});
     setOffline(false);
 
     const newest = page.items[0]?.id ?? 0;
@@ -155,7 +158,6 @@ export default function PetPage() {
   }, [load]);
 
   const latest = items[0] ?? null;
-  const unread = useMemo(() => items.filter((row) => row.state === "unread"), [items]);
 
   // 新的一条（id 变大）出现时重新计时；同一条不再弹第二次。
   useEffect(() => {
@@ -171,7 +173,7 @@ export default function PetPage() {
     return () => clearTimeout(timer);
   }, [bubbleShownAt, faded]);
 
-  const unreadOfLatest = latest ? unread.filter((row) => row.role_id === latest.role_id).length : 0;
+  const unreadOfLatest = latest ? (unreadByRole[latest.role_id] ?? 0) : 0;
   /**
    * 面板跟谁说话：手动选的 > 最近主动找你的 > 角色表里的第一个。
    *
@@ -194,7 +196,7 @@ export default function PetPage() {
   const threadId = knownThreadId ?? resolvedThreadId;
   const name = activeName;
   // 隐藏内容时面板要说"有几条没读"，那数的是**当前对象**的（切到别的角色就不是那一堆了）。
-  const unreadOfActive = activeRole ? unread.filter((row) => row.role_id === activeRole).length : 0;
+  const unreadOfActive = activeRole ? (unreadByRole[activeRole] ?? 0) : 0;
 
   useEffect(() => {
     if (knownThreadId || !activeRole) {

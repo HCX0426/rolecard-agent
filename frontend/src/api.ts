@@ -435,6 +435,8 @@ export interface ReachoutRow {
 export interface ReachoutsPage {
   items: ReachoutRow[];
   unread: number;
+  /** 每个角色各有几条没读 —— 后端算一次，铃铛/桌宠都读这份，不再各自 filter 一遍。 */
+  unread_by_role?: Record<string, number>;
   /** 挂起的任务目录变更条数（文件事件触发开启时 >0 = 角色正攒着素材）。 */
   file_watch_pending?: number;
   /** 收件箱折叠窗口（天，1/3/7）：同一角色在一个窗口里的开口折成一行。 */
