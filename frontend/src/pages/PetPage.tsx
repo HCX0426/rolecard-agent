@@ -29,6 +29,14 @@ const BUBBLE_MS = 30_000; // 气泡到点自己收起：驻留件不该把一句
 const MAX_BUBBLE_CHARS = 64;
 /** 指针离开桌面件多久之后，趴着的才自己回去：给"划过它身上"留的宽限。 */
 const RETUCK_MS = 900;
+/**
+ * "点哪儿算点桌宠"的余量：色片那 88 见方之外，再算上**壳能把窗挪走多远**。
+ * 横向 96 = 壳里的 `SIDE_TUCK`（趴边 ↔ 拉出来那一步），纵向 44 = `BOTTOM_TUCK`。
+ * 宽限期里整扇窗都吃点击（为的是"色片刚从边上滑走而手还在原地"），所以落在这段带上的一下
+ * 要认成点它；再往外（画布左右各还有 84px、上面 280px）就是"点在桌宠旁边的桌面上"了。
+ */
+const HIT_SLACK_X = 96;
+const HIT_SLACK_Y = 44;
 /** 面板里摊开最近几条（再多就该去控制台翻了）。 */
 const PANEL_MESSAGES = 8;
 
@@ -78,6 +86,8 @@ export default function PetPage() {
   // 把 10 秒的节拍重置一遍（而它只是想知道这次要不要拍原文）。
   const showContentRef = useRef(true);
   const retuckRef = useRef<number | null>(null);
+  /** 色片那块 DOM：只用来量"点的那一下离它有多远"（见 `onPet` 与 `HIT_SLACK_*`）。 */
+  const spriteRef = useRef<HTMLDivElement | null>(null);
   // `expanded` 的"读时不重渲染"版本：拖拽期间 pointermove 密集触发，而 React 状态要到下一次
   // 渲染才更新，只认状态就会在一次拖里连发十几次"收起"给壳。
   const expandedRef = useRef(false);
@@ -355,9 +365,39 @@ export default function PetPage() {
     expand(!expandedRef.current);
   }
 
+  /** 点哪儿算"点桌宠"：色片那 88 见方，**外加壳能把窗挪走的距离**（见 `HIT_SLACK_*`）。
+   *  宽限期里整扇窗都吃点击，所以这一层必须自己认清楚落点是不是它。 */
+  function onPet(event: { clientX: number; clientY: number; target: EventTarget | null }): boolean {
+    const el = spriteRef.current;
+    if (!el) return false;
+    const hit = event.target as HTMLElement | null;
+    if (hit && (hit === el || el.contains(hit))) return true; // 就点在色片身上，不用量坐标
+    const r = el.getBoundingClientRect();
+    if (!r.width && !r.height) return true; // 量不到形状（无布局的环境）就按老规矩：算点它
+    return (
+      event.clientX >= r.left - HIT_SLACK_X &&
+      event.clientX <= r.right + HIT_SLACK_X &&
+      event.clientY >= r.top - HIT_SLACK_Y &&
+      event.clientY <= r.bottom + HIT_SLACK_Y
+    );
+  }
+
+  /** 根节点的点击分工：**"点开面板"这个动作只属于色片那一块（含上面那段位移余量）**。
+   *
+   *  以前是"整块窗都是桌宠"（200×240 里色片占中间 88，边上是 56px 透明带），点哪儿都算点它。
+   *  2026-09-24 把窗改成常驻画布（560×520，为了根治展开重影）之后，"边上"变成了左右各 180px、
+   *  上面 280px —— 于是"我明明没点到桌宠，点它旁边的桌面却调出了消息框"（用户报的这条）。
+   *
+   *  分工：色片那一带 = 开 / 合；摊着的时候点别处 = 收起来（点空白关闭，这条留着有用）；
+   *  收起着的时候点别处 = **什么都不做**。
+   */
   function rootClick(event: React.MouseEvent<HTMLDivElement>) {
     if (insideUi(event)) return; // 面板/气泡自己的按钮，见 `insideUi`
-    togglePanel();
+    if (onPet(event)) {
+      togglePanel();
+      return;
+    }
+    if (expandedRef.current) expand(false);
   }
 
   // 卸载时把待趴回的定时器收掉：留着它会在组件没了之后去调桥。
@@ -695,9 +735,11 @@ export default function PetPage() {
         )
       )}
 
-      {/* 色片自己**不挂**任何处理器：点击与拖拽都在根节点上（透明边也要接得住，
-          见 `dragStart` 那段）。挂两处会因冒泡触发两遍，净效果是"点了没反应"。 */}
+      {/* 色片自己**不挂**事件处理器：点击与拖拽都在根节点上（handler 只挂在色片上会变成
+          "色片从光标底下滑走之后，我点它没反应"，见 `rootClick`），挂两处会因冒泡触发两遍，
+          净效果是"点了没反应"。这个 ref 只用来量落点离它多远。 */}
       <div
+        ref={spriteRef}
         className="pet-nodrag grid h-[88px] w-[88px] shrink-0 cursor-grab place-items-center rounded-full text-2xl font-medium text-white shadow-md active:cursor-grabbing"
         style={{ background: `hsl(${hue} 62% 48%)` }}
         title={`${name}${offline ? " · 连不上本地服务" : ""} · 点开看你们最近聊了什么${

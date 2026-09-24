@@ -776,15 +776,45 @@ describe("PetPage 命中区与一次拖只收一次（三条都是量出来的�
   function root(): HTMLElement {
     return sprite().parentElement as HTMLElement;
   }
+  /** 给色片一块真实的矩形：jsdom 默认什么都量成 0，而"落点离色片多远"正是判据。
+   *  画布 560×520，色片 88 见方在下沿居中 → x 236..324，y 428..516。 */
+  function stubSpriteRect(): void {
+    const el = sprite();
+    el.getBoundingClientRect = () =>
+      ({
+        x: 236, y: 428, left: 236, top: 428, right: 324, bottom: 516, width: 88, height: 88,
+        toJSON: () => ({}),
+      }) as DOMRect;
+  }
 
-  it("点色片两侧的透明边也开面板：悬停把宠物拉回屏内时，光标会落到那 56px 上", async () => {
+  it("点色片旁边的透明边也算点它：悬停把宠物拉回屏内时，光标会落在那段带上", async () => {
     // 实测：从右边趴着点它，窗口往屏内滑 96px，色片从光标底下滑走，而光标还在窗口里。
-    // handler 只挂在色片上就是"我点它，它跑了"。
+    // handler 只挂在色片上就是"我点它，它跑了"。余量按壳能挪走多远给（`HIT_SLACK_X`）。
     const shell = withShell();
     const expanded = shell.setPetExpanded as unknown as ReturnType<typeof vi.fn>;
     await mount();
-    fireEvent.click(root());
+    stubSpriteRect();
+    // 色片右沿外 56px：正是旧尺寸里那条透明带的位置。
+    fireEvent.click(root(), { clientX: 380, clientY: 470 });
     expect(expanded).toHaveBeenLastCalledWith(true);
+  });
+
+  it("点画布远处的空白不算点桌宠：收起着不摊开，摊着的时候才是收起", async () => {
+    // 用户 2026-09-24 报的：窗改成 560×520 的常驻画布之后，"边上"是左右各 180px、上面 280px。
+    // 壳放行点击有宽限期（展开/收起后 500ms），那段时间落在这儿的点击会收到页面上 ——
+    // 若按整块窗判就是"我明明没点到桌宠，消息框却弹出来了"。
+    const shell = withShell();
+    const expanded = shell.setPetExpanded as unknown as ReturnType<typeof vi.fn>;
+    await mount();
+    stubSpriteRect();
+    fireEvent.click(root(), { clientX: 60, clientY: 60 });
+    expect(expanded).not.toHaveBeenCalled();
+
+    // 摊着的时候点空白 = 收起来（"点空白关闭"这条留着有用，不用去摸那个 ✕）。
+    fireEvent.click(sprite(), { clientX: 280, clientY: 470 });
+    expect(expanded).toHaveBeenLastCalledWith(true);
+    fireEvent.click(root(), { clientX: 60, clientY: 60 });
+    expect(expanded).toHaveBeenLastCalledWith(false);
   });
 
   it("面板里打字/点按钮不冒泡成「收起面板」", async () => {
