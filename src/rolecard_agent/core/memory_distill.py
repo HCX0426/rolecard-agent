@@ -52,6 +52,9 @@ _EXTRACT_PROMPT = (
     "  ADD <事实>                     库里没有的新事实\n"
     "  UPDATE <编号> <事实>           库里那条已过时或说错了，用新的一条取代它\n"
     "  NOOP                           没有任何值得新增的事实（就只输出这一行）\n"
+    "`ADD` 后可以紧跟一个档号 `[0]`/`[1]`/`[2]`（不写就是 `[1]`）：`[2]` 只给**说错会伤人**的那类"
+    "—— 过敏与禁忌、正在治的东西、住址与家人这类身份事实；`[0]` 给「顺便提了一句」的偏好。"
+    "拿不准就别写档号。\n"
     "编号见下面【已有条目】。与已有条目同义的事实不要重复 ADD。\n"
 )
 
@@ -67,7 +70,9 @@ _CONSOLIDATE_PROMPT = (
     "没有可整理的就只输出 NOOP。\n"
 )
 
-_ADD = re.compile(r"^ADD\s+(.+)$", re.IGNORECASE)
+#: `ADD` 后面那个可选档号：`[2] 用户青霉素过敏`。写成可选是因为模型漏标是常态，
+#: 而漏标的正确后果是"按常规档 1 记"，不是"这条被丢掉"。
+_ADD = re.compile(r"^ADD\s*(?:\[(\d)\]\s*)?(.+)$", re.IGNORECASE)
 _UPDATE = re.compile(r"^UPDATE\s+(\d+)\s+(.+)$", re.IGNORECASE)
 _MERGE = re.compile(r"^MERGE\s+([\d,\s]+)\s+(.+)$", re.IGNORECASE)
 _INVALID = re.compile(r"^INVALID\s+(\d+)\s+(.*)$", re.IGNORECASE)
@@ -147,7 +152,16 @@ def extract(
             continue
         add = _ADD.match(text)
         if add:
-            if mem.add_item(conn, bucket=bucket, text=add.group(1), source=source) is None:
+            if (
+                mem.add_item(
+                    conn,
+                    bucket=bucket,
+                    text=add.group(2),
+                    source=source,
+                    importance=mem.clamp_importance(add.group(1)),
+                )
+                is None
+            ):
                 report["skipped"] += 1
             else:
                 report["added"] += 1
@@ -216,7 +230,20 @@ def consolidate(
             if any(t["pinned"] for t in targets):
                 report["skipped"] += 1
                 continue
-            fresh = mem.add_item(conn, bucket=bucket, text=merge.group(2))
+            # 合并出来的那条**继承源条目里最高的显著性**：把"青霉素过敏"和另一句同义的
+            # 过敏话合成一条，不该顺手把它从 [2] 降回常规档 —— 降级是「整理」里 INVALID
+            # 那种有判断的动作，或者用户自己做的事，不是合并的副作用。
+            # source 写 extract 而不是默认的 manual：这条是模型写的（schema 里那段注释
+            # 早就这么说，之前这一行漏传了，于是面板上"谁写的"这一列对整理出来的条目在撒谎）。
+            fresh = mem.add_item(
+                conn,
+                bucket=bucket,
+                text=merge.group(2),
+                source="extract",
+                importance=max(
+                    (mem.clamp_importance(t.get("importance")) for t in targets), default=1
+                ),
+            )
             if fresh is None:
                 report["skipped"] += 1
                 continue

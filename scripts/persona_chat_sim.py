@@ -13,6 +13,12 @@
     .venv\\Scripts\\python.exe scripts\\persona_chat_sim.py                 # 两边都跑（本地很慢）
     .venv\\Scripts\\python.exe scripts\\persona_chat_sim.py --side cloud    # 只跑云端
     .venv\\Scripts\\python.exe scripts\\persona_chat_sim.py --role elysia --turns 4
+    # 审计 §12.5 那一格（角色留本地、只把提取交云端）——两次跑对减就是 A/B：
+    .venv\\Scripts\\python.exe scripts\\persona_chat_sim.py \\
+        --role medical_archivist --model qwen3-vl-8b
+    .venv\\Scripts\\python.exe scripts\\persona_chat_sim.py \\
+        --role medical_archivist --model qwen3-vl-8b --extract-backend siliconflow \\
+        --copy data/sqlite/_chat_sim_cloud_extract.db
 """
 
 from __future__ import annotations
@@ -190,6 +196,17 @@ def main() -> None:
         default=ROOT / "data" / "sqlite" / "_chat_sim.db",
         help="副本库落在哪（默认 data/sqlite/_chat_sim.db，已被 .gitignore 挡着）",
     )
+    parser.add_argument(
+        "--model",
+        default="",
+        help="副本里把该角色的 model_name 设成这个后端名。档案角色那一格必须是\"角色留在本地\""
+             "（真库的默认后端是云端，不设这一项测的就不是路由决策后的形状）",
+    )
+    parser.add_argument(
+        "--extract-backend",
+        default="",
+        help="MEMORY_EXTRACT_BACKEND：只把「提取精华/整理记忆」交给这个后端（审计 §12.5 那一格）",
+    )
     args = parser.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -197,6 +214,22 @@ def main() -> None:
         raise SystemExit(f"--turns 得在 1..{len(TURNS)}")
 
     scratch_db.copy_of_live_db(args.copy)
+    if args.model:
+        conn = sqlite3.connect(args.copy)
+        changed = conn.execute(
+            "UPDATE role_card SET model_name = ? WHERE role_id = ?", (args.model, args.role)
+        ).rowcount
+        conn.commit()
+        conn.close()
+        if not changed:
+            raise SystemExit(f"副本里没有角色卡 {args.role!r}，--model 没处落")
+    if args.extract_backend:
+        os.environ["MEMORY_EXTRACT_BACKEND"] = args.extract_backend
+    print(
+        f"\n配置：角色 {args.role}｜对话后端 {args.model or '（跟随卡片/默认）'}"
+        f"｜提取后端 {args.extract_backend or '（未设 = 跟随会话）'}",
+        flush=True,
+    )
     # 孪生角色只在真要跑云端那一格时才建：`--side local` 的跑法不该凭空多插一行角色卡
     # （它还会因为"库里没有云端后端"直接退出，而那一格本次根本不跑）。
     twin = ""

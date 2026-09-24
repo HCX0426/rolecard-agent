@@ -143,6 +143,10 @@ CREATE TABLE IF NOT EXISTS role_memory_item (
     -- 混合体，而隐私要问的只有"是不是模型自己写进我记忆里的"。
     pinned         INTEGER NOT NULL DEFAULT 0,   -- 钉住 = 不参与淘汰、不被整理覆盖
     hit_count      INTEGER NOT NULL DEFAULT 0,   -- 被注入过几次（近因×频次的"频次"那半）
+    -- 显著性三档（设计稿 §8.5 的 P2）：0 = 随口一提 / 1 = 常规事实（出厂默认）/ 2 = 要紧
+    -- （过敏、住址、正在治疗的东西）。**不给 CHECK**：值是提取模型写的，越界只能靠代码钳，
+    -- 加 CHECK 会让"旧库没这约束、新库有"变成两套行为，而迁移路径恰恰是旧库。
+    importance     INTEGER NOT NULL DEFAULT 1,
     last_hit_at    TIMESTAMP,
     invalidated_at TIMESTAMP,                    -- **失效不删**：可撤销、可调试、可回滚
     superseded_by  INTEGER,                      -- 取代它的那条 id（版本链）

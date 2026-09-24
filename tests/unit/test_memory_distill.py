@@ -223,6 +223,54 @@ def test_consolidate_merges_synonyms_and_keeps_rows(conn: SqlConnection) -> None
     assert out["report"]["before"] == 2 and out["report"]["after"] == 1
 
 
+def test_extract_reads_the_importance_marker(conn: SqlConnection) -> None:
+    """`ADD [2] …` 那个档号进库变成显著性；漏标与越界都落在常规档，**不是丢掉那条**。
+
+    钳制与默认都发生在 `memory.clamp_importance` 那一处（写它的来源有三条）。
+    """
+    model = FakeModel(
+        "ADD [2] 用户青霉素过敏\nADD 用户住在苏州\nADD [9] 越界的档号\nADD [很要紧] 不是数字"
+    )
+    out = distill.extract(
+        conn,
+        model=model,
+        bucket="medical_archivist",
+        messages=[_Msg("human", "我青霉素过敏，住在苏州")],
+    )
+    assert out["report"]["added"] == 4
+    items = mem.list_items(conn, bucket="medical_archivist")
+    tiers = {str(i["text"]): int(i["importance"]) for i in items}
+    assert tiers == {
+        "用户青霉素过敏": 2,
+        "用户住在苏州": 1,
+        "越界的档号": 2,
+        "[很要紧] 不是数字": 1,
+    }
+
+
+def test_consolidated_merge_inherits_the_highest_importance(conn: SqlConnection) -> None:
+    """合并两条同义事实时，结果取源条目里**最高**的档：合并是加法性的整理，不是降级动作。
+
+    顺手钉住另一件事：整理写出来的那条 `source` 必须是 `extract`（它是模型写的）——
+    以前这一路漏传了参数，面板上"谁写的"那一列对整理出来的条目一直在撒谎。
+    """
+    a = mem.add_item(
+        conn, bucket="elysia", text="用户青霉素过敏", importance=2, source="extract"
+    )
+    b = mem.add_item(
+        conn, bucket="elysia", text="青霉素吃了会起疹子", importance=1, source="extract"
+    )
+    assert a is not None and b is not None
+    out = distill.consolidate(
+        conn,
+        model=FakeModel(f"MERGE {a['id']},{b['id']} 用户青霉素过敏会起疹子"),
+        bucket="elysia",
+    )
+    assert out["report"]["merged"] == 1
+    survivor = mem.list_items(conn, bucket="elysia")[0]
+    assert int(survivor["importance"]) == 2 and str(survivor["source"]) == "extract"
+
+
 def test_consolidate_never_touches_pinned_items(conn: SqlConnection) -> None:
     """钉住 = 不参与淘汰，也不被模型改写（用户对某条事实特意钉过）。"""
     pinned = mem.add_item(conn, bucket="elysia", text="用户的全名是张三")

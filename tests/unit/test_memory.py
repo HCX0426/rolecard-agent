@@ -15,6 +15,7 @@ from rolecard_agent.core.memory import (
     MAX_ITEMS_PER_TURN,
     MAX_MEMORY_CHARS,
     add_item,
+    clamp_importance,
     current_role_id_ctx,
     delete_item,
     edit_item,
@@ -37,6 +38,20 @@ def _settings(enabled: bool = True) -> Settings:
 
 def _seed(conn, *facts: str, bucket: str = GLOBAL_BUCKET) -> list[int]:
     return [int(add_item(conn, bucket=bucket, text=f)["id"]) for f in facts]
+
+
+def _backdate(conn, item_id: int, *, days: int, hits: int = 0) -> None:
+    """把一条挪到"多少天前"并设定命中数（没有 `last_hit_at` 时，近因的锚点就是 created_at）。
+
+    直接写库而不是走参数：这两个值是排序的输入，测试要的是"摆出这个局面"，
+    而不是给生产代码开一条只给测试用的后门。
+    """
+    stamp = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute(
+        "UPDATE role_memory_item SET created_at = ?, hit_count = ? WHERE id = ?",
+        (stamp, hits, item_id),
+    )
+    conn.commit()
 
 
 # ------------------------------------------------------------------ 基本读写
@@ -98,6 +113,65 @@ def test_hit_count_and_recency_decide_the_order(conn) -> None:
     ranked = ranked_active(conn, bucket=GLOBAL_BUCKET, now=datetime.now(UTC))
     assert ranked[0]["text"] == "常被用到的一条"
     assert ranked[1]["text"] == "没人理的一条"
+
+
+def test_importance_outranks_a_fresh_throwaway_line(conn) -> None:
+    """显著性这一维要顶得住近因：60 天没提的"青霉素过敏"该排在今天随口一句前面。
+
+    旧的乘法（`近因 × log1p(hits)`）做不到 —— 同一个局面下两条是 0.402 vs 0.693（新闲聊赢）。
+    所以这里同一份数据把档号拿掉再断言一次：**翻转它的是这一维，不是别的**。
+    """
+    allergy = int(add_item(conn, bucket=GLOBAL_BUCKET, text="用户青霉素过敏", importance=2)["id"])
+    fresh = int(add_item(conn, bucket=GLOBAL_BUCKET, text="今天喝了燕麦奶")["id"])
+    _backdate(conn, allergy, days=60, hits=3)
+    _backdate(conn, fresh, days=0, hits=0)
+    assert [i["text"] for i in ranked_active(conn, bucket=GLOBAL_BUCKET)] == [
+        "用户青霉素过敏",
+        "今天喝了燕麦奶",
+    ]
+
+    conn.execute("UPDATE role_memory_item SET importance = 1 WHERE id = ?", (allergy,))
+    conn.commit()
+    assert ranked_active(conn, bucket=GLOBAL_BUCKET)[0]["text"] == "今天喝了燕麦奶"
+
+
+def test_frequency_saturates_and_cannot_buy_out_a_critical_fact(conn) -> None:
+    """频次有饱和点（`HIT_CEIL`）：被提过几千次的旧口癖，压不过同龄、标要紧的事实。
+
+    没有上限的话"次数"这一维可以无限涨，而它只说明"被提过"，不说明"更要紧"。
+    """
+    noisy = int(add_item(conn, bucket=GLOBAL_BUCKET, text="她爱用「今天」开头", importance=0)["id"])
+    critical = int(
+        add_item(conn, bucket=GLOBAL_BUCKET, text="用户在做胰岛素治疗", importance=2)["id"]
+    )
+    _backdate(conn, noisy, days=200, hits=5000)
+    _backdate(conn, critical, days=200, hits=0)
+    assert ranked_active(conn, bucket=GLOBAL_BUCKET)[0]["id"] == critical
+
+
+def test_importance_is_clamped_and_only_ever_raised(conn) -> None:
+    """档号来自模型，什么数都可能给：越界钳进 0..2，认不出的退回常规 1，**再提一次不降级**。"""
+    assert clamp_importance(9) == 2 and clamp_importance(-4) == 0
+    assert clamp_importance(None) == 1 and clamp_importance("很高") == 1
+
+    item = add_item(conn, bucket=GLOBAL_BUCKET, text="用户住在苏州", importance=9)
+    assert int(item["importance"]) == 2
+    # 同一条再说一次（默认档 1）走的是判重合并那条路，它该保持 2：
+    # 降级是「整理记忆」或用户做的判断，不是"再提一次"的副作用。
+    again = add_item(conn, bucket=GLOBAL_BUCKET, text="用户住在苏州")
+    assert int(again["importance"]) == 2 and int(again["id"]) == int(item["id"])
+    low = add_item(conn, bucket=GLOBAL_BUCKET, text="另一条", importance=-4)
+    assert int(low["importance"]) == 0
+
+
+def test_the_critical_marker_appears_only_on_the_injection_side(conn) -> None:
+    """【要紧】只挂在注入侧。面板那段文本会被原样填回编辑框、保存时整行覆写条目 ——
+    标记进了面板文本就等于被写回存储层（时间标签当年犯的正是同一个错）。"""
+    add_item(conn, bucket=GLOBAL_BUCKET, text="用户青霉素过敏", importance=2)
+    add_item(conn, bucket=GLOBAL_BUCKET, text="用户住在苏州", importance=1)
+    injected, _ids = render_memory(conn, bucket=GLOBAL_BUCKET, with_age_labels=True)
+    assert "【要紧】用户青霉素过敏" in injected
+    assert "要紧" not in render_memory(conn, bucket=GLOBAL_BUCKET)[0]
 
 
 def test_memory_for_turn_marks_only_what_it_injected(conn) -> None:

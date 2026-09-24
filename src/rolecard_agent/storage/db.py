@@ -286,6 +286,13 @@ def _migrate(conn: SqlConnection) -> None:
     #     DELETE /api/reachouts/…，见 core/reachout.prune_inbox 的路由）。
     if "reachout_keep" not in _columns(conn, "role_card"):
         conn.execute("ALTER TABLE role_card ADD COLUMN reachout_keep INTEGER NOT NULL DEFAULT 0")
+    # 6f. role_memory_item 增列 importance（召回缺的"显著性"那一维，设计稿 §8.5 的 P2）。
+    #     0 随口一提 / 1 常规 / 2 要紧。旧条目一律 1 而不是 0：把它们判成"随口说的"是替用户
+    #     做决定，而 1 正是新写入的默认 —— 老库不会因为加了这一列就丢掉原来的行为。
+    if "importance" not in _columns(conn, "role_memory_item"):
+        conn.execute(
+            "ALTER TABLE role_memory_item ADD COLUMN importance INTEGER NOT NULL DEFAULT 1"
+        )
     # 6d. command_approval 增列 decide_token（P0-3 第一步：批准要持有凭据，不能靠猜 id）。
     #     一次性能力令牌：submit 生成、随 pending 行下发给读侧、decide 必须带它并在决定后清空。
     #     挡掉的是"任何能碰到 8000 的一方盲 POST 一个自增 id 就批准了命令"——尤其是浏览器里

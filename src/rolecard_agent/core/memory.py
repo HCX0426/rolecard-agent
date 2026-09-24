@@ -9,6 +9,7 @@
   * `source`（manual / chat / proactive / extract / seed）—— 从哪来的，出问题时能查；
   * `pinned` —— 钉住的不参与淘汰、不被整理覆盖；
   * `hit_count` + `last_hit_at` —— 被注入过几次、最近什么时候，退役排序的依据；
+  * `importance`（0 随口 / 1 常规 / 2 要紧）—— 显著性，提取时由模型标、钳在 `clamp_importance`；
   * `invalidated_at` + `superseded_by` —— **失效不物理删**（可撤销、可调试、可回滚）。
 
 旧的 blob 表原样留着不删列（迁移纪律），但它**不再是事实面**：注入、面板、工具都只认这张表。
@@ -60,7 +61,7 @@ MAX_ITEMS_PER_BUCKET = 200
 MAX_ITEM_CHARS = 200
 
 _COLUMNS = (
-    "id, role_id, text, source, pinned, hit_count, last_hit_at, invalidated_at, "
+    "id, role_id, text, source, pinned, hit_count, importance, last_hit_at, invalidated_at, "
     "superseded_by, created_at, updated_at"
 )
 
@@ -83,6 +84,7 @@ def _row_to_item(row: Any) -> dict[str, Any]:
         "source": str(row["source"]),
         "pinned": bool(row["pinned"]),
         "hit_count": int(row["hit_count"] or 0),
+        "importance": int(row["importance"] if row["importance"] is not None else 1),
         "last_hit_at": row["last_hit_at"],
         "invalidated_at": row["invalidated_at"],
         "superseded_by": None if row["superseded_by"] is None else int(row["superseded_by"]),
@@ -101,16 +103,35 @@ def list_items(
     return [_row_to_item(r) for r in rows]
 
 
-def _score(item: dict[str, Any], *, now: datetime) -> float:
-    """近因 × 频次。没被命中过的条目靠 created_at 撑，所以新事实不会一进来就被淘汰。
+#: 半衰期（天）：比它短会让"低频但重要"的事实反复进出 prompt（模型表现会跳），比它长就退化成纯频次。
+RECENCY_HALFLIFE_DAYS = 30.0
+#: 频次那一维的饱和点：被注入过 24 次就算"常提"，再多不再加分。
+#: 没有上限的话，一条被反复命中的口癖可以靠次数把"青霉素过敏"压下去 —— 而次数只说明
+#: 它被提过，不说明它更要紧。
+HIT_CEIL = 24
+#: 显著性的档数（0/1/2 → 除完正好落在 0、0.5、1）。
+IMPORTANCE_TIERS = 2
+_W_RECENCY, _W_HITS, _W_IMPORTANCE = 0.35, 0.30, 0.35
 
-    半衰期取 30 天：比它短会让"低频但重要"的事实反复进出 prompt（模型表现会跳），
-    比它长就退化成纯频次排序。
+
+def _score(item: dict[str, Any], *, now: datetime) -> float:
+    """三维各归一到 0~1 再**加权相加**：近因 0.35 + 频次 0.30 + 显著性 0.35（设计稿 §8.5 的 P2）。
+
+    为什么不再是 `近因 × log1p(hits)`（乘法）：乘法里任何一维趋零就把另两维一笔抹掉，
+    于是"三年没被提起的青霉素过敏"和"三年没被提起的随口一句"分数一样 —— 缺的正是显著性，
+    而它被乘进了零里。加法允许"某一维很低但另两维撑住"，这才是要的形状。
+
+    为什么**固定上限**归一，而不是按桶内 min-max：后者会让"新加一条事实"把整桶的分数重标一遍
+    —— 旧事实只应被新事实超过，不该因为别人来了而自己掉分。上限写死在常数里，
+    一条事实的分数就只取决于它自己。
     """
     anchor = _parse_ts(item.get("last_hit_at")) or _parse_ts(item.get("created_at"))
     age_days = (now - anchor).total_seconds() / 86400.0 if anchor else 3650.0
-    recency = 0.5 ** (age_days / 30.0)
-    return recency * math.log1p(int(item.get("hit_count") or 0) + 1)
+    recency = 0.5 ** (max(0.0, age_days) / RECENCY_HALFLIFE_DAYS)
+    hits = min(1.0, math.log1p(int(item.get("hit_count") or 0)) / math.log1p(HIT_CEIL))
+    raw = item.get("importance")
+    importance = 1.0 if raw is None else max(0.0, min(1.0, int(raw) / IMPORTANCE_TIERS))
+    return _W_RECENCY * recency + _W_HITS * hits + _W_IMPORTANCE * importance
 
 
 def ranked_active(
@@ -122,12 +143,27 @@ def ranked_active(
     return sorted(items, key=lambda i: (not i["pinned"], -_score(i, now=stamp), -i["id"]))
 
 
+def clamp_importance(raw: object) -> int:
+    """把任何来源写的显著性钳进 0..2。
+
+    单点存在是因为写它的有三处（手动面板、提取模型的 `ADD [n]`、memory_save 工具），
+    而提取模型给什么数字都不奇怪（给 5、给 "很高" 都有可能）。CHECK 约束挡不住旧库，
+    钳在这里同时管住两条路，坏值一律退回中间档 1 —— 不替用户把要紧的事降级。
+    """
+    try:
+        value = int(float(str(raw).strip()))
+    except (TypeError, ValueError):
+        return 1
+    return max(0, min(IMPORTANCE_TIERS, value))
+
+
 def add_item(
     conn: SqlConnection,
     *,
     bucket: str,
     text: str,
     source: str = "manual",
+    importance: int = 1,
     now: datetime | None = None,
 ) -> dict[str, Any] | None:
     """新增一条事实。**完全相同的文本不重复插入**（只刷新那一条的时间），并做超限淘汰。
@@ -137,11 +173,16 @@ def add_item(
     会把「用户住在上海」与「用户住在苏州」并成一条（0.43）。误并是**吞掉一条真事实**，
     而漏并只是留着一眼看得见的重复，还有「整理记忆」按钮（模型判断 + 用户发起）能收拾。
 
+    重复那条**只抬显著性、不压**（`max`）：第二次说"我青霉素过敏"带 `[2]` 时该升上去，
+    而提取模型这次没标号（默认 1）不该把一条已经标成要紧的降回常规 —— 降级的判断该由
+    「整理记忆」或用户来做，不该是"再提一次"的副作用。
+
     返回 None = 文本为空，什么都没做。
     """
     line = " ".join((text or "").split())[:MAX_ITEM_CHARS]
     if not line:
         return None
+    tier = clamp_importance(importance)
     existing = conn.execute(
         "SELECT id FROM role_memory_item WHERE role_id = ? AND text = ? AND invalidated_at IS NULL",
         (bucket, line),
@@ -149,14 +190,14 @@ def add_item(
     if existing is not None:
         conn.execute(
             "UPDATE role_memory_item SET last_hit_at = CURRENT_TIMESTAMP,"
-            " updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (existing["id"],),
+            " updated_at = CURRENT_TIMESTAMP, importance = MAX(importance, ?) WHERE id = ?",
+            (tier, existing["id"]),
         )
         conn.commit()
         return get_item(conn, int(existing["id"]))
     conn.execute(
-        "INSERT INTO role_memory_item (role_id, text, source) VALUES (?, ?, ?)",
-        (bucket, line, source),
+        "INSERT INTO role_memory_item (role_id, text, source, importance) VALUES (?, ?, ?, ?)",
+        (bucket, line, source, tier),
     )
     conn.commit()
     created = conn.execute(
@@ -291,7 +332,12 @@ def render_memory(
         if len(used) >= limit:
             break
         head = _age_label(item["created_at"], now=stamp) if with_age_labels else ""
-        line = f"- {head}{item['text']}"
+        # 「要紧」只挂在注入侧（与时间标签同一条纪律）：面板那段文本会被原样填进编辑框、
+        # 保存时整行覆写回条目，标记进了面板文本就等于被写回存储层。
+        mark = ""
+        if with_age_labels and int(item.get("importance") or 0) >= IMPORTANCE_TIERS:
+            mark = "【要紧】"
+        line = f"- {head}{mark}{item['text']}"
         if total + len(line) + 1 > budget:
             break
         used.append(line)
