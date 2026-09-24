@@ -28,7 +28,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
+from langchain_core.messages import AIMessageChunk, ToolMessage
 from langgraph.errors import GraphRecursionError
 
 from rolecard_agent.core.graph import MODEL_NODE, TOOLS_NODE
@@ -253,9 +253,6 @@ def run_turn(
     时后写的会盖掉先写的 —— 用户报的"我发的一条消息被吞了"就是这么来的。等锁超过 150 秒
     （只有"同一会话同时开两轮"这种极端情况做得到）时**照样往下跑并留痕**：宁可罕见地分叉，
     也不因为一把拿不到的锁把用户这句话拒掉。
-
-    客户端中途断开（停止生成 / 关窗）时，这一轮**没走到 End** —— 那种情况下已投送的那半句
-    会被补进历史（`_record_spoken_part`），否则她说过的话只存在于用户的屏幕上。
     """
     thread_id = str((config.get("configurable") or {}).get("thread_id") or "")
     held = try_thread_write(thread_id, timeout=_TURN_LOCK_WAIT)
@@ -268,89 +265,20 @@ def run_turn(
                 detail={"waited_s": _TURN_LOCK_WAIT},
             )
         )
-    # 投送出去的正文增量（= 用户**已经看到**的那部分）。只在没走到 End 时有用。
-    delivered: list[str] = []
-    ended = False
     try:
-        for event in _iter_turn(
+        yield from _iter_turn(
             graph,
             graph_input=graph_input,
             config=config,
             role_summary=role_summary,
             tracer=tracer,
             usage_recorder=usage_recorder,
-        ):
-            if isinstance(event, Token):
-                delivered.append(event.text)
-            elif isinstance(event, MessageReplace):
-                # 权威文本：已提交与已投送分叉（guard 改写 / 兜底句）时以它为准。
-                delivered = [event.text]
-            elif isinstance(event, End):
-                ended = True
-            yield event
+        )
     finally:
-        if not ended:
-            _record_spoken_part(graph, config, "".join(delivered), tracer=tracer)
         # 只放自己拿到的那把：等满 150 秒没拿到时锁在**别人**手里，无条件 release 会把
         # 那一轮的互斥提前解开 —— 正是要防的那个分叉。
         if held:
             release_thread(thread_id)
-
-
-def _record_spoken_part(
-    graph: Any, config: dict[str, Any], text: str, *, tracer: Tracer | None
-) -> None:
-    """用户中途停了（关窗 / 点停止 / 断网）：把**她实际说出口的那半句**补进历史。
-
-    为什么必须有：客户端 abort 时图里只留下那句用户问话 —— 那半句话在界面上还在，
-    在历史里却不存在。于是用户说"继续"时，她不知道刚才说到哪儿了（Open-LLM-VTuber 为
-    同样的问题改写了末条 assistant 消息，我们没语音但形态一致）。
-
-    只在"检查点栈顶还是那条用户消息"时才补：模型节点若已经提交过一条 AI 消息，历史里
-    已经有她说过什么，再补一条就是重复。
-
-    **尾巴用省略号，不放机器标记**（不写 `[被打断]` 之类）：§8.13 刚量过一遍"她每句话都
-    带（动作）"，成因就是历史里长那样的文本、她照着学。这条纪律比"信息更明确"值钱。
-    """
-    spoken = text.strip()
-    if not spoken:
-        return
-    try:
-        snapshot = graph.get_state(config)
-        messages = (getattr(snapshot, "values", None) or {}).get("messages") or []
-        last = messages[-1] if messages else None
-        if last is None or getattr(last, "type", "") != "human":
-            return
-        graph.update_state(
-            config,
-            {
-                "messages": [
-                    AIMessage(
-                        content=spoken + "…",
-                        additional_kwargs={"interrupted": True},
-                    )
-                ]
-            },
-        )
-    except Exception as exc:  # noqa: BLE001 - 补历史坏了不能反过来影响这一轮的收尾
-        if tracer is not None:
-            tracer.emit(
-                TraceEvent(
-                    event="turn_interrupt_write_failed",
-                    node="run_turn",
-                    error=f"{type(exc).__name__}"[:200],
-                )
-            )
-        return
-    if tracer is not None:
-        tracer.emit(
-            TraceEvent(
-                event="turn_interrupted",
-                node="run_turn",
-                thread_id=str((config.get("configurable") or {}).get("thread_id") or ""),
-                detail={"chars": len(spoken)},
-            )
-        )
 
 
 #: 一轮等锁的上限（秒）：比 `model_timeout` 略长，"排队"才不等于"丢掉这一轮"。
