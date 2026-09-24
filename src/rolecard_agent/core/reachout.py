@@ -377,6 +377,19 @@ def mark_role_read(conn: SqlConnection, role_id: str) -> int:
     return int(cur.rowcount)
 
 
+def mark_all_read(conn: SqlConnection) -> int:
+    """把所有未读一次标完，返回条数。
+
+    口径是用户 2026-09-23 拍的：**"我点进对话界面了"就等于都看过了** —— 所以打开任何一个
+    角色的主动会话，别的角色攒的未读也一并算读过。代价是"另一个角色找过我"这件事会被
+    这一动作抹平（抽屉里那些行还在，只是不再标未读、不再顶红点）。
+    与 `mark_role_read` 的分工：那条管"这一摞我看过了"，这条管"我进入阅读状态了"。
+    """
+    cur = conn.execute("UPDATE agent_reachout SET state = 'read' WHERE state = 'unread'")
+    conn.commit()
+    return int(cur.rowcount)
+
+
 # ------------------------------------------------------------------ 主动会话（可回话的落点）
 
 #: 每个角色一条固定的"主动会话"：角色开口时落进这里，用户回复走普通对话链路。

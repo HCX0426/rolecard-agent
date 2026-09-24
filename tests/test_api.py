@@ -741,3 +741,37 @@ def test_reachout_keep_zero_keeps_everything(client: TestClient, tmp_path: Path)
         _record(conn, "wan", f"第{i}条", keep=0)
     assert len(client.get("/api/reachouts?role_id=wan").json()["items"]) == 4
     conn.close()
+
+
+def test_proactive_thread_lookup_is_read_only(client: TestClient) -> None:
+    """`GET /api/session/proactive` 只回答"在不在"，**不建行**（2026-09-23 桌宠历史那条）。"""
+    ghost = client.get("/api/session/proactive", params={"role_id": "general_assistant"})
+    assert ghost.status_code == 200 and ghost.json()["thread_id"] is None
+    assert client.get("/api/sessions").json() == [], "只是问一句，侧栏不该因此多出一条会话"
+
+    tid = client.post("/api/session/proactive", json={"role_id": "general_assistant"}).json()[
+        "thread_id"
+    ]
+    got = client.get("/api/session/proactive", params={"role_id": "general_assistant"})
+    assert got.json()["thread_id"] == tid
+    assert client.get("/api/session/proactive", params={"role_id": "ghost"}).json()[
+        "thread_id"
+    ] is None
+
+
+def test_read_all_marks_every_role(client: TestClient, tmp_path: Path) -> None:
+    """进入对话界面 = 都看过了（用户 2026-09-23 定的口径）：read-all 跨角色一次标完。"""
+    from rolecard_agent.core import reachout as svc
+    from rolecard_agent.roles.models import RoleCard
+    from rolecard_agent.storage.db import connect
+
+    conn = connect(tmp_path / "app.db")
+    for rid in ("wan", "bai"):
+        svc.record_reachout(conn, RoleCard(role_id=rid, role_name=rid, system_prompt="x"), "在吗")
+
+    assert client.get("/api/reachouts").json()["unread"] == 2
+    res = client.post("/api/reachouts/read-all")
+    assert res.status_code == 200 and res.json()["marked"] == 2
+    body = res.json()
+    assert body["unread"] == 0 and len(body["items"]) == 2, "标已读不是删：行还要留在抽屉里"
+    conn.close()

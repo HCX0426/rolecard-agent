@@ -199,10 +199,11 @@ export default function ReachoutPanel({
       }
       return;
     }
-    // 先标已读再跳转：跳完这个抽屉就关掉了，回来 setData 没有意义。
+    // 先进入对话再标已读：跳完这个抽屉就关掉了，回来 setData 没有意义。
+    // 标的是**所有**未读（用户 2026-09-23："点进对话界面了就都算看过"），不只是这一个角色。
     // 但**标记失败绝不拦跳转** —— 用户要的是看到那条消息，红点数下一轮轮询自然校正。
     try {
-      const p = await api.markRoleReachoutsRead(row.role_id);
+      const p = await api.markAllReachoutsRead();
       setData(p);
       onUnreadChange(p.unread);
     } catch {

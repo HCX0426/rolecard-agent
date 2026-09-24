@@ -643,11 +643,19 @@ export const api = {
       "POST",
       `/api/reachouts/read-by-role?role_id=${encodeURIComponent(roleId)}`,
     ),
+  /** 进入对话界面 = 都看过了（用户 2026-09-23 定的口径）：所有未读一次标完。 */
+  markAllReachoutsRead: () => request<ReachoutsPage>("POST", "/api/reachouts/read-all"),
   /** 删抽屉里的**那一行投递记录**。她说过的那句仍留在对话里（那是她下次开口的依据）。 */
   deleteReachout: (id: number) => request<ReachoutsPage>("DELETE", `/api/reachouts/${id}`),
   /** 清空主动消息记录：给了角色就只清那个角色，不给就全清。同样不碰对话里的原话。 */
   clearReachouts: (roleId?: string) =>
     request<ReachoutsPage>(`DELETE`, `/api/reachouts${roleId ? `?role_id=${encodeURIComponent(roleId)}` : ""}`),
+  /** 只问"这条主动会话在不在"（不建行）：清空抽屉之后面板仍要能读到历史。 */
+  proactiveThread: (roleId: string) =>
+    request<{ thread_id: string | null; role_id: string }>(
+      "GET",
+      `/api/session/proactive?role_id=${encodeURIComponent(roleId)}`,
+    ),
   /** 命令执行审批（架构计划 C·§6.2）：列表（含 pending 计数）与批准/拒绝。 */
   getApprovals: (status?: string) =>
     request<ApprovalsPage>(

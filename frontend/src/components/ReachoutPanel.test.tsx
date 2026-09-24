@@ -14,7 +14,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getReachouts: vi.fn(),
-    markRoleReachoutsRead: vi.fn(),
+    markAllReachoutsRead: vi.fn(),
     markReachoutRead: vi.fn(),
   },
 }));
@@ -66,7 +66,7 @@ function renderPanel(onOpenThread = vi.fn(), onUnreadChange = vi.fn()) {
 beforeEach(() => {
   vi.clearAllMocks();
   apiMock.getReachouts.mockResolvedValue(page());
-  apiMock.markRoleReachoutsRead.mockResolvedValue(page({ items: [], unread: 0 }));
+  apiMock.markAllReachoutsRead.mockResolvedValue(page({ items: [], unread: 0 }));
 });
 
 describe("ReachoutPanel 收件箱", () => {
@@ -75,12 +75,12 @@ describe("ReachoutPanel 收件箱", () => {
     fireEvent.click(await screen.findByText("今天腰还酸吗？"));
     // 跳转发生在"标完未读"那个 await 之后，所以要等一拍再断言。
     await waitFor(() => expect(onOpenThread).toHaveBeenCalledWith("s_proactive_general_assistant"));
-    expect(apiMock.markRoleReachoutsRead).toHaveBeenCalledWith("general_assistant");
+    expect(apiMock.markAllReachoutsRead).toHaveBeenCalled();
     expect(onUnreadChange).toHaveBeenCalledWith(0); // 红点当场归零，不等下一轮轮询
   });
 
   it("标已读失败照样跳转（红点下一轮轮询自然校正）", async () => {
-    apiMock.markRoleReachoutsRead.mockRejectedValue(new Error("500"));
+    apiMock.markAllReachoutsRead.mockRejectedValue(new Error("500"));
     const { onOpenThread } = renderPanel();
     fireEvent.click(await screen.findByText("今天腰还酸吗？"));
     await waitFor(() => expect(onOpenThread).toHaveBeenCalledWith("s_proactive_general_assistant"));

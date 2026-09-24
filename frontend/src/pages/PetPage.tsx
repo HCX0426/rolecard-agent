@@ -185,11 +185,33 @@ export default function PetPage() {
     latest?.role_id ??
     "助手";
   const hue = hueOf(activeRole ?? "general_assistant");
-  // 只有"当前这个角色"的那条主动会话能直接读历史；换了角色就得先 ensure（见 `send`）。
-  const threadId = latest && latest.role_id === activeRole ? latest.thread_id ?? null : null;
+  // 投递记录给的线程 id（有最近一条时用它，省一次请求）。
+  const knownThreadId = latest && latest.role_id === activeRole ? latest.thread_id ?? null : null;
+  /** 这条主动会话的 id。清空抽屉之后 `latest` 就没了，而**会话与历史一直在**
+   *  （用户 2026-09-23："桌宠的历史消息没记录了，切换角色也没"）—— 所以没有行时问一次
+   *  后端"这条线在不在"（只读，不建行：只打开面板看一眼不该在侧栏长出一条会话）。 */
+  const [resolvedThreadId, setResolvedThreadId] = useState<string | null>(null);
+  const threadId = knownThreadId ?? resolvedThreadId;
   const name = activeName;
   // 隐藏内容时面板要说"有几条没读"，那数的是**当前对象**的（切到别的角色就不是那一堆了）。
   const unreadOfActive = activeRole ? unread.filter((row) => row.role_id === activeRole).length : 0;
+
+  useEffect(() => {
+    if (knownThreadId || !activeRole) {
+      setResolvedThreadId(knownThreadId);
+      return;
+    }
+    // 换角色时先清掉上一个角色的解析结果：留着会让面板拿旧线程读一拍历史。
+    setResolvedThreadId(null);
+    let alive = true;
+    api
+      .proactiveThread(activeRole)
+      .then((r) => alive && setResolvedThreadId(r.thread_id))
+      .catch(() => alive && setResolvedThreadId(null)); // 问不到就当没有这条线，面板走"还没有对话"
+    return () => {
+      alive = false;
+    };
+  }, [knownThreadId, activeRole]);
 
   /** 展开/收起面板。由**点击**触发（悬停不算，理由见下面 `reveal`）。
    *  桥不在（浏览器直接开 #/pet 的调试入口）时面板照样画，只是窗口不跟着变大。 */
@@ -427,7 +449,8 @@ export default function PetPage() {
     setStreamError(""); // 上一轮的错误不能一直挂着：它会跟着回放一起被读成"这一轮又出事了"
     let usedTid = threadId;
     try {
-      void api.markRoleReachoutsRead(activeRole).catch(() => undefined);
+      // 进对话 = 都看过（用户 2026-09-23 定的口径）：不再是"只标这一个角色"。
+      void api.markAllReachoutsRead().catch(() => undefined);
       if (!usedTid) {
         const ensured = await api.post<{ thread_id: string }>("/api/session/proactive", {
           role_id: activeRole,
@@ -462,10 +485,11 @@ export default function PetPage() {
     }
   }
 
-  async function acknowledge(row: ReachoutRow) {
+  async function acknowledge() {
     // 先标已读再收气泡：标失败就留着，让用户知道"这条还没真被读过"。
+    // 标的是**所有**未读（用户 2026-09-23 定的口径），所以这里不再需要那一条是谁的。
     try {
-      await api.markRoleReachoutsRead(row.role_id);
+      await api.markAllReachoutsRead();
     } catch {
       setOffline(true);
       return;
@@ -477,11 +501,11 @@ export default function PetPage() {
   async function openRow(row: ReachoutRow) {
     if (!row.thread_id) {
       // 这个功能上线之前落库的老消息没有对应的主动会话：只能标已读，不给死链。
-      await acknowledge(row);
+      await acknowledge();
       return;
     }
     try {
-      await api.markRoleReachoutsRead(row.role_id);
+      await api.markAllReachoutsRead();
     } catch {
       setOffline(true); // 标记失败不拦跳转：会话就在那儿，点得开比红点准更重要
     }

@@ -15,7 +15,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { apiMock, streamChatMock } = vi.hoisted(() => ({
   apiMock: {
     getReachouts: vi.fn(),
-    markRoleReachoutsRead: vi.fn(),
+    markAllReachoutsRead: vi.fn(),
+    proactiveThread: vi.fn(),
     get: vi.fn(),
     post: vi.fn(),
   },
@@ -85,7 +86,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   delete window.rolecardShell;
   apiMock.getReachouts.mockResolvedValue(page([row(3, "外头降温了，穿上外套。"), row(2, "旧的一条"), row(1, "更早的一条")]));
-  apiMock.markRoleReachoutsRead.mockResolvedValue(page([], 0));
+  apiMock.markAllReachoutsRead.mockResolvedValue(page([], 0));
   // 面板会按 URL 打两种请求：会话历史（对象）与角色表（数组）。一刀切的 mock 会让
   // `roles.find` 在一个"看着像历史"的对象上炸掉 —— 按 URL 分派才反映真实的两个端点。
   apiMock.get.mockImplementation(async (url: string) =>
@@ -94,6 +95,8 @@ beforeEach(() => {
       : { messages: [], total: 0, limit: 8, truncated: false },
   );
   apiMock.post.mockResolvedValue({ thread_id: "s_proactive_wan" });
+  // 默认"这条主动会话还不存在"（清空抽屉 / 从没被找过的角色都是这个答案）。
+  apiMock.proactiveThread.mockResolvedValue({ thread_id: null, role_id: "wan" });
   streamChatMock.mockImplementation(
     async (_tid: string, _msg: string, onEvent: (e: unknown) => void) => {
       onEvent({ type: "token", text: "好呀" });
@@ -133,14 +136,14 @@ describe("PetPage 桌宠", () => {
     expect(screen.getByText("苏")).toBeTruthy();
   });
 
-  it("点气泡 = 标该角色已读，气泡随即收起", async () => {
+  it("点气泡 = 进入对话即都算读过（read-all），气泡随即收起", async () => {
     await mount();
     fireEvent.click(screen.getByText("外头降温了，穿上外套。"));
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(apiMock.markRoleReachoutsRead).toHaveBeenCalledWith("wan");
+    expect(apiMock.markAllReachoutsRead).toHaveBeenCalled();
     expect(screen.queryByText("外头降温了，穿上外套。")).toBeNull();
   });
 
@@ -216,7 +219,7 @@ describe("PetPage 桌宠", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(apiMock.markRoleReachoutsRead).toHaveBeenCalledWith("wan");
+    expect(apiMock.markAllReachoutsRead).toHaveBeenCalled();
     expect(shell.openSession).not.toHaveBeenCalled();
   });
 });
@@ -358,6 +361,33 @@ describe("PetPage 点开面板（§7：想回话不用开控制台）", () => {
     expect(shell.petRetuck).toHaveBeenCalledTimes(1);
   });
 
+  it("抽屉被清空之后仍然读得到历史：线程 id 问后端，不从投递记录倒推（2026-09-23）", async () => {
+    const shell = withShell();
+    apiMock.getReachouts.mockResolvedValue({ items: [], unread: 0 } as ReachoutsPage);
+    apiMock.proactiveThread.mockResolvedValue({ thread_id: "s_proactive_wan", role_id: "wan" });
+    const seen: string[] = [];
+    apiMock.get.mockImplementation(async (url: string) => {
+      seen.push(url);
+      if (url === "/api/roles") return [{ role_id: "wan", role_name: "苏晚晴", model_name: "" }];
+      return {
+        messages: [{ id: "m1", role: "assistant", content: "今天腰还酸吗？", created_at: "" }],
+        total: 1,
+        limit: 8,
+        truncated: false,
+      };
+    });
+    await mount();
+    await open(shell);
+    // 这条链比别的多一跳：先问"这条线在不在"，拿到 id 才去读历史。fake timers 下
+    // `findByText` 那种轮询等不出来，手动把微任务排干再直接查 DOM。
+    await act(async () => {
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+    expect(apiMock.proactiveThread).toHaveBeenCalledWith("wan");
+    expect(seen.some((u) => u.includes("s_proactive_wan/messages"))).toBe(true);
+    expect(screen.getByText("今天腰还酸吗？")).toBeTruthy();
+  });
+
   it("还没有主动会话：面板说清楚，并且一次请求都不发", async () => {
     const shell = withShell();
     apiMock.getReachouts.mockResolvedValue({
@@ -491,7 +521,7 @@ describe("PetPage 在桌宠上回话（③：不进控制台就能聊）", () =>
     });
   }
 
-  it("输入 + Enter：先标这条已读，再走对话页同一套 streamChat，流完刷新历史", async () => {
+  it("输入 + Enter：先把所有未读标掉，再走对话页同一套 streamChat，流完刷新历史", async () => {
     await expandPanel();
     const box = screen.getByPlaceholderText(/跟苏晚晴说一句/) as HTMLTextAreaElement;
     fireEvent.change(box, { target: { value: "我穿好了" } });
@@ -500,7 +530,7 @@ describe("PetPage 在桌宠上回话（③：不进控制台就能聊）", () =>
       for (let i = 0; i < 8; i += 1) await Promise.resolve();
     });
 
-    expect(apiMock.markRoleReachoutsRead).toHaveBeenCalledWith("wan");
+    expect(apiMock.markAllReachoutsRead).toHaveBeenCalled();
     expect(streamChatMock).toHaveBeenCalledWith(
       "s_proactive_wan",
       "我穿好了",

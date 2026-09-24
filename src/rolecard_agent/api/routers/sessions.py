@@ -38,7 +38,7 @@ from rolecard_agent.core.graph import build_graph_config
 from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.core.ingestion import INGESTION_FAILED, INGESTION_PENDING
 from rolecard_agent.core.observability import TraceEvent
-from rolecard_agent.core.reachout import ensure_proactive_thread
+from rolecard_agent.core.reachout import ensure_proactive_thread, proactive_thread_id
 from rolecard_agent.core.state import new_state, now_ts
 from rolecard_agent.core.text import text_of
 from rolecard_agent.core.thread_locks import thread_write
@@ -216,6 +216,26 @@ def open_proactive_session(
         detail={"role_id": role.role_id},
     )
     return {"thread_id": thread_id, "role_id": role.role_id, "role_name": role.role_name}
+
+
+@router.get("/api/session/proactive")
+def proactive_session_of(
+    role_id: str = Query(..., max_length=64),
+    ctx: AppContext = Depends(get_context),
+) -> object:
+    """问一句"这个角色的主动会话在不在、id 是什么"—— **只读，不建行**。
+
+    为什么要有这条（2026-09-23 用户报"桌宠的历史消息没记录了，切换角色也没"）：面板以前
+    是从"最近一条主动消息"倒推线程 id 的，于是**清空抽屉**（`DELETE /api/reachouts`）之后
+    行没了、面板就没了读的对象，而那条会话连同历史一直好好地在库里。读历史不该依赖投递记录。
+    不建行的理由同 `ensure_proactive_session` 的反面：只是打开面板看一眼，不该在侧栏长出
+    一条"从没被找过的角色 · 主动找你"。
+    """
+    tid = proactive_thread_id(role_id)
+    row = ctx.conn.execute(
+        "SELECT thread_id FROM session_thread WHERE thread_id = ?", (tid,)
+    ).fetchone()
+    return {"thread_id": None if row is None else str(row["thread_id"]), "role_id": role_id}
 
 
 @router.get("/api/session/{thread_id}")

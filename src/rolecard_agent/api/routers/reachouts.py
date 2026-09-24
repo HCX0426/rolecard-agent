@@ -71,6 +71,17 @@ def mark_role_read(
     return {"marked": marked} | _page(ctx)
 
 
+@router.post("/api/reachouts/read-all")
+def mark_all_read(ctx: AppContext = Depends(get_context)) -> object:
+    """进入对话界面 = 都看过了：把所有未读一次标完（用户 2026-09-23 定的口径）。
+
+    桌宠上点开面板、点气泡、发一句话，以及抽屉里点任意一条，都走这条 —— 以前各走
+    `read-by-role`，于是"我明明在回话了，铃铛上还有别的角色在闪"。
+    """
+    marked = svc.mark_all_read(ctx.conn)
+    return {"marked": marked} | _page(ctx)
+
+
 @router.delete("/api/reachouts/{reachout_id}")
 def delete_reachout(reachout_id: int, ctx: AppContext = Depends(get_context)) -> object:
     """删收件箱里的**那一行投递记录**。404 = 没有这条。
