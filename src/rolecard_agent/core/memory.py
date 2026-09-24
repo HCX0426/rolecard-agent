@@ -237,6 +237,19 @@ def set_pinned(conn: SqlConnection, *, item_id: int, pinned: bool) -> dict[str, 
     return get_item(conn, item_id)
 
 
+def set_importance(
+    conn: SqlConnection, *, item_id: int, importance: object
+) -> dict[str, Any] | None:
+    """面板上那一档「这条要紧」。与 `pinned` 是两件事：钉住 = 不进淘汰/整理池，
+    显著性 = 还在池里时排多前。坏值经 `clamp_importance` 退回中间档，不报错。"""
+    conn.execute(
+        "UPDATE role_memory_item SET importance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (clamp_importance(importance), item_id),
+    )
+    conn.commit()
+    return get_item(conn, item_id)
+
+
 def delete_item(conn: SqlConnection, *, item_id: int) -> bool:
     """用户明确删除 = **物理删**（他要它消失，留个"已删除"的行只是把隐私留在盘上）。
 
@@ -399,9 +412,10 @@ def replace_bucket_from_text(
     不剥就是自己造的显示格式被自己当成正文反复吃进去。
 
     **显著性按"同一句话"带过去**：这一段先抄下 `文本 → 档号`，覆写时原样还回去。
-    不是兼容性的多此一举，而是界面上根本没有"这条要紧"的控件 —— 用户编辑一次记忆文本，
-    就把提取模型标好的档号全抹回 1，而他不知道自己做了什么（那条事实下次就可能被挤出 prompt）。
-    改过的行（文本不再逐字相同）落回默认档：那确实是一句新话。
+    理由不是兼容，而是**这一段文本里根本没有档位信息** —— 它是 `render_memory` 的输出，
+    档号只在【要紧】那个前缀里露一下，还只在带时间标签的注入渲染里露。用户在这里编辑的
+    是"话"，不是"行"，一次保存不该顺手把逐条面板上标好的档号抹回 1（那条事实下次就可能
+    被挤出 prompt）。改过的行（文本不再逐字相同）落回默认档：那确实是一句新话。
     """
     tiers = {
         " ".join(str(i["text"]).split()): clamp_importance(i.get("importance"))

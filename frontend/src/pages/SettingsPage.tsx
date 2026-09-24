@@ -101,6 +101,8 @@ type MemoryItem = {
   source: string;
   pinned: boolean;
   hit_count: number;
+  /** 显著性档位（0 次要 / 1 一般 / 2 要紧）。后端 `clamp_importance` 保证只会是这三个数。 */
+  importance: number;
   last_hit_at: string | null;
   created_at: string | null;
 };
@@ -124,6 +126,11 @@ const SOURCE_LABEL: Record<string, string> = {
   extract: "提取",
   seed: "预置",
 };
+
+/** 显著性三档的界面名。**"要紧"这个词是后端渲染注入文本时用的那一个**（`render_memory`
+ *  给 2 档加【要紧】标记），界面与模型看到的必须同词，否则用户在面板上标的档与 prompt 里
+ *  那个标签对不上，就成了一个猜不透的开关。 */
+const IMPORTANCE_LABEL: Record<number, string> = { 0: "次要", 1: "一般", 2: "要紧" };
 
 /** 界面上给的自动提取档位（"0" = 关）。env 里设成别的数仍会原样回显，不假装是这些档之一。 */
 const CADENCES = ["0", "6", "12", "24"];
@@ -343,6 +350,16 @@ function MemoryPanel() {
       item.pinned ? "已取消钉住" : "已钉住（不参与淘汰与整理）",
     );
 
+  const setItemImportance = (item: MemoryItem, tier: number) =>
+    withItems(
+      () =>
+        api.patch<MemoryPayload>(
+          `/api/settings/memory/item/${item.id}${memScope ? `?role_id=${encodeURIComponent(memScope)}` : ""}`,
+          { importance: tier },
+        ),
+      `已标为「${IMPORTANCE_LABEL[tier] ?? "一般"}」`,
+    );
+
   const removeItem = async (item: MemoryItem) => {
     const ok = await confirm({
       title: "删除这条记忆？",
@@ -559,6 +576,28 @@ function MemoryPanel() {
                   {SOURCE_LABEL[item.source] ?? item.source}
                   {" · "}用过 {item.hit_count} 次
                   {item.pinned ? " · 已钉住" : ""}
+                  {" · "}
+                  {/* 三档做成下拉而不是"点一下循环"：这三档语义不对称（0 与 2 是两端，1 是
+                      默认），循环控件要数两下才知道自己在哪。与同一张卡里「收件箱折叠窗口」同款。 */}
+                  <label className="inline-flex items-center gap-1">
+                    要紧程度
+                    <select
+                      value={String(item.importance ?? 1)}
+                      disabled={itemBusy}
+                      onChange={(e) => void setItemImportance(item, Number(e.target.value))}
+                      title={
+                        "要紧 = 注入时带【要紧】标记、排序里权重最高；次要 = 活跃数超限时最先被退役（不删）。\n" +
+                        "与右边的「钉住」是两件事：钉住完全不进淘汰与整理，这一档只管还在池里时排多前。"
+                      }
+                      className="rounded border border-slate-200 bg-white px-1 py-0 text-[10px] text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                    >
+                      {[0, 1, 2].map((tier) => (
+                        <option key={tier} value={tier}>
+                          {IMPORTANCE_LABEL[tier]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 </span>
               </span>
               <button
@@ -588,6 +627,12 @@ function MemoryPanel() {
         <details className="mt-2">
           <summary className="cursor-pointer text-[11px] text-slate-500 dark:text-slate-400">
             原文视图 / 整段编辑（注入到 prompt 的就是这段）
+            {/* 说实在的代价，不藏：整段覆写只删非钉住的条目再按行重建，而"哪一行还是哪一条"
+                是按**文本**认的 —— 所以在TextArea里改了某条的措辞，那条的「要紧程度」会回到一般。
+                逐条列表里改不受影响（按 id 走）。 */}
+            <span className="ml-1 text-[10px] text-slate-400 dark:text-slate-500">
+              （在这里改写某条的措辞，那条的「要紧程度」会回到一般；钉住的条目整段保存不动它）
+            </span>
           </summary>
           <textarea
           value={memDraft}

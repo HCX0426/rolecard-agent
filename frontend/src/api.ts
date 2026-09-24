@@ -722,6 +722,8 @@ export interface ConsolidateOutcome extends DistillOutcome {
     source: string;
     pinned: boolean;
     hit_count: number;
+    /** 显著性档位（0 次要 / 1 一般 / 2 要紧）—— 与记忆面板那三档下拉同源。 */
+    importance: number;
     last_hit_at: string | null;
     created_at: string | null;
   }[];

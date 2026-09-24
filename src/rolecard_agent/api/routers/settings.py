@@ -869,10 +869,15 @@ class MemoryItemBody(BaseModel):
 
 
 class MemoryItemPatchBody(BaseModel):
-    """改一条：文本与钉住状态任选其一。"""
+    """改一条：文本、钉住状态、显著性档位任选其一。
+
+    `importance` 用 `int | None` 而不是 `int`：0（次要）是一个**要能显式写进去**的值，
+    拿 None 当"没给"才能把"改成 0"和"没打算改"分开。
+    """
 
     text: Annotated[str | None, Field(default=None, max_length=2000)] = None
     pinned: bool | None = None
+    importance: int | None = None
 
 
 @router.post("/api/settings/memory/item")
@@ -908,7 +913,7 @@ def patch_memory_item(
     actor: Actor = Depends(get_actor),
     role_id: str | None = Query(None, max_length=64),
 ) -> object:
-    """改一条的文本，或钉住/取消钉住。"""
+    """改一条的文本、钉住状态，或显著性档位（0 次要 / 1 一般 / 2 要紧）。"""
     from rolecard_agent.core import memory as mem
 
     if mem.get_item(ctx.conn, item_id) is None:
@@ -918,13 +923,19 @@ def patch_memory_item(
         updated = mem.edit_item(ctx.conn, item_id=item_id, text=body.text) or {}
     if body.pinned is not None:
         updated = mem.set_pinned(ctx.conn, item_id=item_id, pinned=body.pinned) or {}
+    if body.importance is not None:
+        updated = mem.set_importance(ctx.conn, item_id=item_id, importance=body.importance) or {}
     if not updated:
         raise HTTPException(status_code=400, detail="没有要保存的内容。")
     ctx.roles.audit(
         actor=actor.id,
         action="update_memory_item",
         target=f"memory_item:{item_id}",
-        detail={"pinned": updated.get("pinned"), "chars": len(str(updated.get("text") or ""))},
+        detail={
+            "pinned": updated.get("pinned"),
+            "importance": updated.get("importance"),
+            "chars": len(str(updated.get("text") or "")),
+        },
     )
     return _memory_payload(ctx, role_id)
 

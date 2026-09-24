@@ -27,6 +27,7 @@ from rolecard_agent.core.memory import (
     ranked_active,
     render_memory,
     replace_bucket_from_text,
+    set_importance,
     set_pinned,
     top_active_item,
 )
@@ -162,6 +163,23 @@ def test_importance_is_clamped_and_only_ever_raised(conn) -> None:
     assert int(again["importance"]) == 2 and int(again["id"]) == int(item["id"])
     low = add_item(conn, bucket=GLOBAL_BUCKET, text="另一条", importance=-4)
     assert int(low["importance"]) == 0
+
+
+def test_set_importance_is_the_one_write_allowed_to_downgrade(conn) -> None:
+    """`add_item` 永不降级（再提一次不是判断），但面板那一档**就是**用户的判断：能升也能降，
+    包括降到 0（0 不是"没给"）。降完排序立刻跟着走，不然这个控件只是个存着好看的数。"""
+    a = int(add_item(conn, bucket=GLOBAL_BUCKET, text="用户青霉素过敏", importance=2)["id"])
+    b = int(add_item(conn, bucket=GLOBAL_BUCKET, text="用户喜欢喝美式")["id"])
+    assert [int(i["id"]) for i in ranked_active(conn, bucket=GLOBAL_BUCKET)] == [a, b]
+
+    assert int(set_importance(conn, item_id=a, importance=0)["importance"]) == 0  # type: ignore[index]
+    assert int(get_item(conn, b)["importance"]) == 1  # 只动被点的那一条
+    assert [int(i["id"]) for i in ranked_active(conn, bucket=GLOBAL_BUCKET)] == [b, a]
+
+    # 越界与坏值同一条路：钳进 0..2，认不出的退回 1，不抛。
+    assert int(set_importance(conn, item_id=a, importance=9)["importance"]) == 2  # type: ignore[index]
+    assert int(set_importance(conn, item_id=a, importance="很高")["importance"]) == 1  # type: ignore[index]
+    assert set_importance(conn, item_id=999999, importance=2) is None
 
 
 def test_the_critical_marker_appears_only_on_the_injection_side(conn) -> None:

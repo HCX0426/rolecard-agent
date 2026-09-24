@@ -311,6 +311,17 @@ def test_memory_item_endpoints_crud_and_pin(client: TestClient) -> None:
 
     pinned = client.patch(f"/api/settings/memory/item/{item_id}", json={"pinned": True})
     assert pinned.json()["items"][0]["pinned"] is True
+    # 载荷里就带显著性：界面那三档下拉读的是它，不是第二处接口。默认档 1 = 一般。
+    assert pinned.json()["items"][0]["importance"] == 1
+
+    # 「次要」= 0 是一个**要能显式写进去**的值：早先那种"空就不改"的写法会把它当成没给。
+    demoted = client.patch(f"/api/settings/memory/item/{item_id}", json={"importance": 0})
+    assert demoted.status_code == 200
+    assert demoted.json()["items"][0]["importance"] == 0
+    # 越界的数由 `clamp_importance` 钳进 0..2，不报错也不落库成 7。
+    over = client.patch(f"/api/settings/memory/item/{item_id}", json={"importance": 7})
+    assert over.json()["items"][0]["importance"] == 2
+    assert client.patch(f"/api/settings/memory/item/{item_id}", json={}).status_code == 400
 
     edited = client.patch(
         f"/api/settings/memory/item/{item_id}", json={"text": "用户对花生严重过敏"}

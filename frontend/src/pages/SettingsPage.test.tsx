@@ -245,6 +245,35 @@ expect(await screen.findByText(/对话 · 用过 2 次/)).toBeTruthy();
     fireEvent.click(await screen.findByRole("button", { name: "确认删除" }));
     await waitFor(() => expect(apiMock.del).toHaveBeenCalledWith("/api/settings/memory/item/7"));
   });
+
+  it("「要紧程度」那一档走 PATCH：0 是一个真值，回读也要显示成「次要」", async () => {
+    apiMock.patch.mockResolvedValue({
+      enabled: false, role_id: null, content: "原始记忆",
+      items: [
+        {
+          id: 7, text: "原始记忆", source: "chat", pinned: false, hit_count: 2,
+          importance: 0, last_hit_at: null, created_at: null,
+        },
+      ],
+      active_count: 1, limit: 200, over_limit: false,
+    });
+    renderPage();
+    const tier = await screen.findByLabelText(/要紧程度/);
+    // 只数这一个 select 里的档（整页还有角色下拉，`getAllByRole("option")` 会连它一起捞）。
+    expect(Array.from((tier as HTMLSelectElement).options).map((o) => o.textContent)).toEqual([
+      "次要",
+      "一般",
+      "要紧",
+    ]);
+    fireEvent.change(tier, { target: { value: "0" } });
+    await waitFor(() =>
+      expect(apiMock.patch).toHaveBeenCalledWith("/api/settings/memory/item/7", { importance: 0 }),
+    );
+    // 后端回什么就显示什么：0 若被当成"没给"而退回默认档，用户点"次要"会看到"一般"。
+    await waitFor(() =>
+      expect((screen.getByLabelText(/要紧程度/) as HTMLSelectElement).value).toBe("0"),
+    );
+  });
 });
 
 describe("记忆卡「整理记忆」（一次模型调用，只写标记）", () => {
