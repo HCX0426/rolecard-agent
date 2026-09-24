@@ -417,9 +417,17 @@ function anchorOf(rect: Rect): Rect {
   };
 }
 
-/** 摆窗子的唯一出口：传进来的永远是锚点。 */
+/**
+ * 摆窗子的唯一出口：传进来的永远是锚点。
+ *
+ * 顺手把"面板该往屏内挪多少"再推一遍 —— **窗口一动这个数就变了**，而页面只在画面板的那一帧
+ * 用它。等 `setPetExpanded` 再推，页面上留着的还是上一次的值，于是面板先按旧位置画一拍、
+ * 下一拍才横跳到位（用户 2026-09-24 报的"点出来会左移一下"里剩下的那一拍）。挂在这里，
+ * 页面上那份就一路是现值：贴着边拖的时候面板跟着走，而不是拖出画布外被切掉。
+ */
 function placePet(win: BrowserWindow, anchor: Rect): void {
   win.setBounds(canvasOf(anchor));
+  sendPanelShift(win, petIsExpanded ? panelShiftFor(anchor, workRect()) : 0);
 }
 
 /** 读窗子的唯一出口：拿回来的永远是锚点（色片那块）。 */

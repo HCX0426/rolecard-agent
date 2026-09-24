@@ -38,13 +38,22 @@ html[data-page="pet"] #root {
 
    **这里刻意不淡入 opacity**：桌宠那扇窗是 `transparent` + `#00000000`，面板一透明，
    透出来的是**桌面本身**（壁纸、图标、底下那个窗口的字）—— 用户看到的"重影"就是这个，
-   而那 150ms 的淡入期正是它最明显的时候。上浮与缩放留着，"长出来"的感觉靠它们就够。 */
+   而那 150ms 的淡入期正是它最明显的时候。上浮与缩放留着，"长出来"的感觉靠它们就够。
+
+   **为什么动的是 `translate`/`scale` 而不是 `transform`**（用户 2026-09-24 报"点出来会左移一下"）：
+   面板身上还挂着一个行内的 `transform: translateX(屏内对齐量)`（壳推过来的，色片贴边时非零），
+   而**动画对被动画的那个属性有最高优先级** —— 关键帧写 `transform` 就会在这 150ms 里把行内那份
+   整个盖掉，动画一结束又"啪"地还回去。于是面板先按画布正中画一拍、150ms 后再横跳到位，
+   那就是那一下左移。CSS 的独立变换属性（`translate` / `scale`，Chromium 104+）与 `transform`
+   **各自生效再复合**（顺序：translate → rotate → scale → transform），两边不再互相覆盖。 */
 @keyframes pet-panel-in {
   from {
-    transform: translateY(6px) scale(0.98);
+    translate: 0 6px;
+    scale: 0.98;
   }
   to {
-    transform: none;
+    translate: none;
+    scale: none;
   }
 }
 .pet-panel-in {
