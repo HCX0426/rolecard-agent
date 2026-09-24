@@ -89,8 +89,14 @@ const LANDING = path.join(__dirname, "..", "..", "web", "index.html");
  * 用户读作"我点它它跳了"。所以这里反过来：**窗口照夹取的规矩放，色片在窗口内部自己挪回去**，
  * 于是面板往屏幕内侧长，而色片一格都不动。挪的量随 bounds 一起报给页面（见 `sendShift`）。
  */
-function petExpandTarget(win: BrowserWindow, expanded: boolean): { rect: Rect; shiftX: number } {
-  const current = win.getBounds();
+function petExpandTarget(
+  win: BrowserWindow,
+  expanded: boolean,
+  base?: Rect,
+): { rect: Rect; shiftX: number } {
+  // `base` = 该从哪块矩形长出去。展开路径上调用方给的是**贴边位**（窗口此刻可能还藏着
+  // 96px，甚至停在滑出的半路上），不再靠"先摆一次再读回来"—— 那会多一次 setBounds。
+  const current = base ?? win.getBounds();
   const width = expanded ? PET_PANEL_WIDTH : PET_WIDTH;
   const centerX = current.x + current.width / 2;
   const rect = petBoundsFor(current, expanded);
@@ -343,18 +349,25 @@ export function setPetExpanded(win: BrowserWindow, expanded: boolean): void {
   // 面板要 380 宽，藏着一半没法看 ⇒ 展开前先滑回贴边。**收起时不再自动藏回去**
   // （用户 2026-09-22 拍的：只在拖到边上那一刻吸，之后不再自动收）。
   stopSlide(); // 展开/收起是用户的动作，赢过任何在跑的滑动
+  let base: Rect | null = null;
   if (expanded) {
-    // `force`：悬停把宠物往屏内滑的那 280ms 可能还在路上（实测第 62ms 就点开了面板），
-    // 那时窗口停在**半路上**的 x=1555 —— 拿它当基准算展开落点，色片一开场就被算歪。
-    petUntuck(win, { force: true });
-    // 记账必须在 untuck **之后**：藏着一半的时候那块矩形是推到屏幕外 96px 的那一块，
+    // **一次点击只许有一次 `setBounds`**（2026-09-23，用户报"形状会变再恢复、消息框重影"）。
+    // 这里原本调 `petUntuck(win, {force:true})`：它先把窗口按到贴边位（一次 setBounds），
+    // 下面再按到展开位（第二次）。实测一次点击的矩形序列是
+    // `200×240 → 201×240（x 跳 16px）→ 380×520`，中间那帧 DWM 会把旧内容拉伸一下 ——
+    // 那就是用户看到的"从桌宠上扩大出来的重影"。所以贴边位只**算**出来当基准，不再摆上去；
+    // 连"悬停滑出还没走完"（实测第 62ms 就点开了面板）这种情况也一并按 flush 位算，
+    // 免得拿半路上的坐标当基准、把色片算歪。
+    base = petDock ? flushRect(petDock.edge, win.getBounds(), workRect()) : win.getBounds();
+    if (petDock) petDock = { ...petDock, tucked: false };
+    // 记账的是"收起时该回到哪"：藏着一半时那块矩形是推到屏幕外 96px 的那一块，
     // 记了它，收起时就是把宠物丢回屏幕边上（点一下就"不见了"）。
-    if (!petIsExpanded) petRectBeforeExpand = petBoundsFor(win.getBounds(), false);
+    if (!petIsExpanded) petRectBeforeExpand = petBoundsFor(base, false);
     petDockPending = false; // 又在看它了 ⇒ 那次"等收起再吸"作废，以最后一次放手为准
   }
   petIsExpanded = expanded;
   const { rect: target, shiftX } = expanded
-    ? petExpandTarget(win, true)
+    ? petExpandTarget(win, true, base ?? undefined)
     : { rect: petRectBeforeExpand ?? petBoundsFor(win.getBounds(), false), shiftX: 0 };
   if (!expanded) petRectBeforeExpand = null;
   // **展开/收起不滑，一步到位**：滑的是尺寸，而页面在你说"展开"的那一帧就已经把 380 宽的
