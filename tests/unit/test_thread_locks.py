@@ -15,9 +15,12 @@ import time
 from typing import Any
 
 from rolecard_agent.core.thread_locks import (
+    end_extraction,
+    extraction_is_running,
     release_thread,
     thread_is_busy,
     thread_write,
+    try_extraction,
     try_thread_write,
 )
 from rolecard_agent.core.turn import run_turn
@@ -86,6 +89,32 @@ class _CheckingGraph:
     def stream(self, *_a: Any, **_kw: Any) -> Any:
         self.saw_lock.append(thread_is_busy("t5"))
         return iter(())
+
+
+def test_extraction_marker_is_not_the_write_lock() -> None:
+    """提取的"在飞"标记与会话写入锁**互不相干**，这是刻意的。
+
+    同一个会话的第二次提取要挡住（否则每次都在抄已有清单），但用户那一轮绝不能因此排队：
+    一次提取 10–120 秒，而 `run_turn` 等锁上限 150 秒 —— 共用一把锁的话，"提取在跑"就等于
+    "下一句最慢等一分半"，那正是 §12.7 实测排除掉的耦合（第一版就踩了，被一条 158 秒的测试抓到）。
+    """
+    assert try_extraction("t7")
+    assert extraction_is_running("t7")
+    assert not try_extraction("t7"), "同会话的第二次提取该被挡住"
+    # 但对话那一轮的写入锁照拿 —— 提取不该把它占住
+    assert try_thread_write("t7", timeout=0.0)
+    release_thread("t7")
+    end_extraction("t7")
+    assert not extraction_is_running("t7")
+    assert try_extraction("t7")
+    end_extraction("t7")
+
+
+def test_extraction_marker_is_per_thread_and_tolerates_extra_ends() -> None:
+    assert try_extraction("t8")
+    assert try_extraction("other")  # 别的会话不受影响
+    end_extraction("other")
+    end_extraction("没有占过标记的会话")  # 静默，不抛
 
 
 def test_run_turn_holds_the_thread_lock_for_the_whole_turn() -> None:

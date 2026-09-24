@@ -100,9 +100,53 @@ def thread_is_busy(thread_id: str) -> bool:
     return bool(lock and lock.locked())
 
 
+# ---------------------------------------------------------------- 提取的"在飞"标记
+#
+# 故意**不是** `thread_write` 的那把锁：后台提取要跑 10–120 秒，如果它去抢会话写入锁，
+# 用户下一句话就得排队等它（`run_turn` 的等锁上限 150s > `model_timeout` 120s ⇒ 本地那次
+# 基本就是等满）。§12.7 实测过"自动提取不拖慢下一轮"，靠的正是它不进这把锁 ——
+# 所以去重提取需要的是另一个只问"有没有同类在跑"的标记，双方都不阻塞对方。
+
+_extracting: set[str] = set()
+
+
+def try_extraction(thread_id: str) -> bool:
+    """没有同会话的提取在跑就占上它（True）；已经有一次在跑就 False。
+
+    一次提取 = 一次真模型调用，而游标只在**调用结束**时才推进：不挡的话，用户在提取跑的
+    那几十秒里每发一句都会另起一次看到同一个窗口的提取（2026-09-24 副本实测八轮跑了 4 次，
+    每次都把 prompt 里的【已有条目】抄一点回来）。挡住就是了 —— 兜底下一轮还会再问。
+    """
+    if not thread_id:
+        return True
+    with _guard:
+        if thread_id in _extracting:
+            return False
+        _extracting.add(thread_id)
+        return True
+
+
+def end_extraction(thread_id: str) -> None:
+    """`try_extraction` 的另一半。没占过就静默（它只是一枚标记，不该制造新的失败模式）。"""
+    if not thread_id:
+        return
+    with _guard:
+        _extracting.discard(thread_id)
+
+
+def extraction_is_running(thread_id: str) -> bool:
+    if not thread_id:
+        return False
+    with _guard:
+        return thread_id in _extracting
+
+
 __all__ = [
+    "end_extraction",
+    "extraction_is_running",
     "release_thread",
     "thread_is_busy",
     "thread_write",
+    "try_extraction",
     "try_thread_write",
 ]

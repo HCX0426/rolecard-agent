@@ -248,6 +248,129 @@ def test_extract_reads_the_importance_marker(conn: SqlConnection) -> None:
     }
 
 
+def _thread(conn: SqlConnection, thread_id: str) -> None:
+    """插一条真的会话行 —— 游标是 `session_thread` 上的列，没有行就没地方写。"""
+    conn.executescript(
+        "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('t1', 'demo');"
+        "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "
+        "  VALUES ('u1', 't1', 'demo');"
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO session_thread (thread_id, user_id, current_role_id) "
+        "VALUES (?, 'u1', 'elysia')",
+        (thread_id,),
+    )
+    conn.commit()
+
+
+def test_pending_messages_only_feeds_what_the_cursor_has_not_seen(conn: SqlConnection) -> None:
+    """游标决定**喂什么**，不只是"要不要跑"：跑过一次之后，旧消息不该再进第二次的料。
+
+    这条是 2026-09-24 那组读数逼出来的：固定八轮对话里自动提取跑了 3 次，每次喂的都是整段，
+    于是弱模型把同一批事实换个说法重抽一遍 —— 桶里 **35 条 / 只有 8 个不同事实**。
+    注入窗口一共 8 条，重复条目干的事就是**把不同的事实挤出去**。
+    """
+    msgs = [_Msg("human", f"第 {i} 句") for i in range(1, 9)]
+    _thread(conn, "t1")
+    assert distill.pending_messages(conn, thread_id="t1", messages=msgs) == msgs  # 游标 0 = 全量
+
+    distill.mark_extracted(conn, thread_id="t1", message_count=6)
+    left = distill.pending_messages(conn, thread_id="t1", messages=msgs)
+    assert [str(m.content) for m in left] == ["第 7 句", "第 8 句"]
+
+    distill.mark_extracted(conn, thread_id="t1", message_count=8)
+    assert distill.pending_messages(conn, thread_id="t1", messages=msgs) == []
+
+
+def test_pending_messages_falls_back_to_the_whole_history_when_the_cursor_lies(
+    conn: SqlConnection
+) -> None:
+    """编辑/删除消息会让列表变短、游标落在长度之外：那种情况**退回整段**。
+
+    宁可重抽一遍（顶多多几条，还能「整理记忆」收），也不能"看起来提取过、其实新消息一条没看"
+    —— 后者是静默丢事实，代价不对等。
+    """
+    msgs = [_Msg("human", "只剩这一句")]
+    _thread(conn, "t2")
+    distill.mark_extracted(conn, thread_id="t2", message_count=9)
+    assert distill.pending_messages(conn, thread_id="t2", messages=msgs) == msgs
+
+
+def test_echo_adds_are_dropped_without_losing_information(conn: SqlConnection) -> None:
+    """模型把【已有条目】抄回来当新事实时丢掉，但**只丢"字面已经在里面"的那种**。
+
+    实测的形状（2026-09-24，本地 8B、固定八轮对话）：自动提取跑三轮，`added` 11 → 9 → 8，
+    桶里 26 条而 `similar` 也涨到 26 —— 后两轮新增的基本是把清单换个长度重抄一遍。
+    """
+    mem.add_item(conn, bucket="elysia", text="用户今天加班到十点才走", source="extract")
+    out = distill.extract(
+        conn,
+        model=FakeModel("ADD 今天加班到十点才走\nADD 用户中午和同事吵架了"),
+        bucket="elysia",
+        messages=[_Msg("human", "中午和同事吵架了")],
+    )
+    assert out["report"]["added"] == 1 and out["report"]["dup_echo"] == 1
+    assert set(_texts(conn, "elysia")) == {
+        "用户今天加班到十点才走",
+        "用户中午和同事吵架了",
+    }
+
+
+def test_a_more_specific_fact_is_never_treated_as_an_echo(conn: SqlConnection) -> None:
+    """反方向不能一起砍：「有结石」已在库里，而新说的是「结石直径 6 mm」—— 那是**更多信息**。
+
+    抹掉它是吞真事实（§12.9 那次误并的同一种错），这种收敛留给「整理记忆」。
+    """
+    mem.add_item(conn, bucket="medical_archivist", text="用户有肾结石", source="extract")
+    out = distill.extract(
+        conn,
+        model=FakeModel("ADD 用户有肾结石，2026-03-12 复查直径 6 mm"),
+        bucket="medical_archivist",
+        messages=[_Msg("human", "复查说结石 6 毫米了")],
+    )
+    assert out["report"]["added"] == 1 and out["report"]["dup_echo"] == 0
+    assert any("6 mm" in t for t in _texts(conn, "medical_archivist"))
+
+
+def test_is_echo_needs_a_real_length_before_it_can_suppress(conn: SqlConnection) -> None:
+    """短到几个字的句子到处是子串 —— 不够长就不许当回声丢掉。"""
+    known = ["用户喜欢养猫，家里两只"]
+    assert distill.is_echo("用户喜欢养猫", known)  # 够长（≥6 字）且确实在里面
+    assert not distill.is_echo("喜欢养猫", known)  # 4 个字：短于下限，宁可留一条重复
+    assert not distill.is_echo("用户住在苏州", known)
+    # 条目里多余的空格不影响判断（写入侧本来就把空白折成一个空格）
+    assert distill.is_echo("加班到十点才走", ["今天  加班到十点才走"])
+
+
+def test_extract_prompt_forbids_background_not_said_in_the_dialogue(conn: SqlConnection) -> None:
+    """提取指令里必须**点名**"不许补进对话里没有的背景"—— 2026-09-24 实测抓到的捏造形状。
+
+    本地 8B 从一段固定八轮对话提出的条目里有「用户住在城市」「工作强度较高」
+    （原话只有"今天加班到十点才走"）。这类东西一旦入库就会被当成用户的事实永久注入回去，
+    而这条路径没有别的兜底 —— 「整理记忆」判的是"谁顶替谁"，看不出"这句没说过"。
+
+    **这条约束第一版写过头了**（同一批实测）：把"写成用户说了什么"写进指令之后，本地改成
+    每提一次就抄一条（同义对 0 → 2），云端产量从 15 掉到 5（八轮里约 8 个真事实）。
+    所以钉的是**两头**：不许补没说的，也不许把明说的当琐碎漏掉。
+    """
+    joined = _extract_prompt_of(conn)
+    assert "事实只从对方说过的话里取" in joined
+    assert "没出现过的地点、职业、程度、原因、结论一律不补" in joined
+    assert "同一件事在对话里被提到几次，只写一条" in joined
+    assert "他明说的事就要记下来" in joined
+    assert "不要加\"用户说\"" in joined
+    # 第一版那两句"教它抄原话"的写法不能悄悄回来。
+    assert "写成\"用户说了什么\"" not in joined
+    assert "拿不准就少写一条" not in joined
+
+
+def _extract_prompt_of(conn: SqlConnection) -> str:
+    """跑一次提取，把发给模型的那段指令原样拿回来（只钉文本，不测模型行为）。"""
+    model = FakeModel("NOOP")
+    distill.extract(conn, model=model, bucket="elysia", messages=[_Msg("human", "随便一句")])
+    return model.prompts[0]
+
+
 def test_consolidated_merge_inherits_the_highest_importance(conn: SqlConnection) -> None:
     """合并两条同义事实时，结果取源条目里**最高**的档：合并是加法性的整理，不是降级动作。
 
@@ -344,18 +467,44 @@ def _thread(conn: SqlConnection, thread_id: str = "t1") -> None:
 
 def test_due_for_extract_counts_turns_from_the_cursor(conn: SqlConnection) -> None:
     _thread(conn)
-    # 每 12 轮 = 24 条消息；一条都没有时游标是 NULL，所以按 0 算
-    assert distill.due_for_extract(conn, thread_id="t1", every=12, message_count=23) is False
-    assert distill.due_for_extract(conn, thread_id="t1", every=12, message_count=24) is True
-    distill.mark_extracted(conn, thread_id="t1", message_count=24)
+
+    def convo(humans: int, ai_per_turn: int = 1) -> list[_Msg]:
+        msgs: list[_Msg] = []
+        for i in range(humans):
+            msgs.append(_Msg("human", f"问 {i}"))
+            msgs.extend([_Msg("ai", f"答 {i}")] * ai_per_turn)
+        return msgs
+
+    # 每 12 轮：11 个用户轮不提，12 个才提（判据是"用户轮次"，不是墙钟也不是消息条数）
+    assert distill.due_for_extract(conn, thread_id="t1", every=12, messages=convo(11)) is False
+    assert distill.due_for_extract(conn, thread_id="t1", every=12, messages=convo(12)) is True
+    distill.mark_extracted(conn, thread_id="t1", message_count=len(convo(12)))
     # 提取完之后重新计时，不会每轮都再提一次
-    assert distill.due_for_extract(conn, thread_id="t1", every=12, message_count=40) is False
-    assert distill.due_for_extract(conn, thread_id="t1", every=12, message_count=48) is True
+    assert distill.due_for_extract(conn, thread_id="t1", every=12, messages=convo(18)) is False
+    assert distill.due_for_extract(conn, thread_id="t1", every=12, messages=convo(24)) is True
+
+
+def test_due_for_extract_is_not_inflated_by_tool_messages(conn: SqlConnection) -> None:
+    """智能体模式一轮能产生 AI + 工具 + 汇总好几条消息 —— 那些不该把"每 12 轮"变成"每 5 轮"。
+
+    实现以前数的是**消息条数除以 2**，而 docstring 承诺的是"用户轮次"。副本实测（固定八轮、
+    节奏 5）因此跑了 3 次自动提取 + 1 次手动，一共 4 次真模型调用，每次都把已有清单重抄一遍。
+    """
+    _thread(conn)
+    # 4 个用户轮，每轮带 3 条 AI/工具消息 = 16 条消息；按旧算法早该触发 every=5
+    inflated: list[_Msg] = []
+    for i in range(4):
+        inflated.append(_Msg("human", f"问 {i}"))
+        inflated.extend([_Msg("ai", "中段")] * 3)
+    assert len(inflated) == 16
+    assert distill.due_for_extract(conn, thread_id="t1", every=5, messages=inflated) is False
+    assert distill.due_for_extract(conn, thread_id="t1", every=4, messages=inflated) is True
 
 
 def test_every_zero_disables_the_auto_path(conn: SqlConnection) -> None:
     _thread(conn)
-    assert distill.due_for_extract(conn, thread_id="t1", every=0, message_count=999) is False
+    msgs = [_Msg("human", "说很多")] * 999
+    assert distill.due_for_extract(conn, thread_id="t1", every=0, messages=msgs) is False
 
 
 def test_cursor_migration_adds_the_column(conn: SqlConnection) -> None:
@@ -370,7 +519,13 @@ def test_cursor_migration_adds_the_column(conn: SqlConnection) -> None:
     assert "distilled_at_seq" not in _thread_cols(conn)
     _migrate(conn)
     assert "distilled_at_seq" in _thread_cols(conn)
-    assert distill.due_for_extract(conn, thread_id="t9", every=1, message_count=4) is True
+    # 补列之后游标是 NULL ⇒ 全部消息都算"没提取过"，节奏判断照跑
+    assert distill.due_for_extract(
+        conn, thread_id="t9", every=1, messages=[_Msg("human", "一句话")]
+    ) is True
+    assert distill.pending_messages(
+        conn, thread_id="t9", messages=[_Msg("human", "一句话")]
+    ) != []
 
 
 class _Msg:

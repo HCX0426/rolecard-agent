@@ -45,7 +45,13 @@ _MIN_HINT_GRAMS = 6  # ≈7 个字：再短，两条不相干的事实靠共用�
 _EXTRACT_PROMPT = (
     "你在维护一个长期记忆库。读下面的对话，只抽**关于用户的、值得跨会话记住的**事实："
     "身份与称呼、居住地、固定习惯与偏好、长期项目、明确说过的重要事件。\n"
-    "不要抽：情节描写、模型自己说的话、一次性的闲聊、你的推测或评价。\n"
+    "不要抽：情节描写、模型自己说的话、你的推测或评价。\n"
+    "**事实只从对方说过的话里取**：说过的地点、数值、时间照原样写；没出现过的地点、职业、"
+    "程度、原因、结论一律不补（说过\"加班到十点\"推不出\"工作强度较高\"，更推不出住在哪）。"
+    "反过来，**他明说的事就要记下来**，别因为看起来琐碎就漏掉（买了什么、几点睡、打算去做什么，"
+    "对健康档案都是有用的事实）。\n"
+    "**同一件事在对话里被提到几次，只写一条**，写信息最全的那句；不要把同一句原话抄两遍。\n"
+    "直接写事实本身，不要加\"用户说\"\"用户表示\"这类前缀。\n"
     "每条事实写成一句话（不超过 40 字），使用与对话相同的语言。\n"
     "\n"
     "只输出下列格式的行，每行一条指令，不要任何解释、不要代码块：\n"
@@ -55,7 +61,8 @@ _EXTRACT_PROMPT = (
     "`ADD` 后可以紧跟一个档号 `[0]`/`[1]`/`[2]`（不写就是 `[1]`）：`[2]` 只给**说错会伤人**的那类"
     "—— 过敏与禁忌、正在治的东西、住址与家人这类身份事实；`[0]` 给「顺便提了一句」的偏好。"
     "拿不准就别写档号。\n"
-    "编号见下面【已有条目】。与已有条目同义的事实不要重复 ADD。\n"
+    "编号见下面【已有条目】。**那份清单只用来看\"是不是已经有了\"和引用编号，"
+    "不要把它的文字再抄成一条 ADD** —— 同义的事实不要重复 ADD。\n"
 )
 
 _CONSOLIDATE_PROMPT = (
@@ -107,6 +114,28 @@ def _invoke(model: Any, prompt: str) -> tuple[str, TokenUsage | None]:
     return text_of(reply).strip(), parse_usage(reply)
 
 
+#: 判"纯回声"时新条目至少要有多长：太短的句子（「猫」「十点」）作为子串到处都能撞上，
+#: 拿它去跳过一条真事实的代价，比留一条重复大得多。
+_MIN_ECHO_CHARS = 6
+
+
+def is_echo(new_text: str, known: list[str]) -> bool:
+    """这条 ADD 是不是**只是把已有条目里的字再抄一遍**。
+
+    只认一个方向：新文本是某条已存条目的**子串** ⇒ 它没有带来任何新字，丢掉零风险。
+    反方向（已有条目是新文本的子串）**不丢** —— 那是同一件事的更具体版本（"有结石" →
+    "结石直径 6 mm"），把它当回声抹掉就是吞掉一条真事实，那种合并该由「整理记忆」判。
+
+    为什么不在这里做 §12.9 那种相似度判断：那把尺子分不清"换个说法"与"换个值"
+    （「住在上海」vs「住在苏州」的二元组 Jaccard 0.43，比两条真同义还像）。
+    子串是**另一种东西**：它不问"像不像"，只问"这些字是不是已经在里面了"。
+    """
+    probe = " ".join(new_text.split())
+    if len(probe) < _MIN_ECHO_CHARS:
+        return False
+    return any(probe in " ".join(one.split()) for one in known)
+
+
 def extract(
     conn: SqlConnection,
     *,
@@ -143,6 +172,8 @@ def extract(
         return {"ok": False, "report": _report(detail=f"模型调用失败：{type(exc).__name__}")}
     record_usage(conn, backend=backend, usage=usage, tracer=tracer)
     report = _report(tokens=usage.total if usage is not None else None)
+    # 已存条目的文字，随本轮新增一起长：模型在同一次输出里把同一件事写两遍时也认得出回声。
+    known = [str(i["text"]) for i in active]
     for line in raw.splitlines():
         text = line.strip()
         if not text:
@@ -152,19 +183,25 @@ def extract(
             continue
         add = _ADD.match(text)
         if add:
-            if (
-                mem.add_item(
-                    conn,
-                    bucket=bucket,
-                    text=add.group(2),
-                    source=source,
-                    importance=mem.clamp_importance(add.group(1)),
-                )
-                is None
-            ):
+            proposed = " ".join(str(add.group(2)).split())
+            if is_echo(proposed, known):
+                # 小模型会把【已有条目】那份清单当素材抄回 ADD（实测：本地 8B 连跑三轮，
+                # added 11 → 9 → 8，桶里 26 条而 similar 已经 26）。丢掉纯回声是零信息损失的
+                # 那一侧；要不要"合并成更具体的那条"是「整理记忆」的判断，不在这里越权。
+                report["dup_echo"] += 1
+                continue
+            fresh = mem.add_item(
+                conn,
+                bucket=bucket,
+                text=proposed,
+                source=source,
+                importance=mem.clamp_importance(add.group(1)),
+            )
+            if fresh is None:
                 report["skipped"] += 1
             else:
                 report["added"] += 1
+                known.append(str(fresh["text"]))
             continue
         upd = _UPDATE.match(text)
         if upd:
@@ -320,6 +357,7 @@ def _report(**fields: Any) -> dict[str, Any]:
         "invalidated": 0,
         "noop": 0,
         "skipped": 0,
+        "dup_echo": 0,  # 被当回声丢掉的 ADD：字面已在已有条目里，丢掉不损失任何信息
         "detail": "",
         "tokens": None,
         "before": None,
@@ -332,19 +370,25 @@ def _report(**fields: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------- 自动兜底的节奏
 
 
-def due_for_extract(conn: SqlConnection, *, thread_id: str, every: int, message_count: int) -> bool:
-    """自上次提取以来是否攒够了 `every` 个**用户轮次**（一轮 = 一问一答两条消息）。
+def due_for_extract(
+    conn: SqlConnection, *, thread_id: str, every: int, messages: Sequence[Any]
+) -> bool:
+    """自上次提取以来是否攒够了 `every` 个**用户轮次**。
+
+    只数 `HumanMessage`。docstring 一直写的是"用户轮次"，而实现数的是**消息条数除以 2** ——
+    智能体模式下一次问答会有 AI 消息 + 工具消息 + 汇总消息（实测一次带工具调用的对话轮
+    能占 4 条消息），于是"每 5 轮"实际变成"每 2.5 轮"：固定八轮对话跑了 4 次提取调用
+    （3 自动 + 1 手动），每一次都是一次真模型调用，也每一次都把【已有条目】那份清单
+    重新抄一遍回去（见 §12.12①）。**成本与重复是同一个根因。**
 
     `every <= 0` = 关掉自动提取（只留手动按钮）。游标存的是"上次提取时的消息条数"，
     所以这个判断与模型无关、也不依赖墙钟 —— 连续聊天不会把成本放大成每几条一调。
     """
-    if every <= 0 or message_count <= 0:
+    if every <= 0 or not messages:
         return False
-    row = conn.execute(
-        "SELECT distilled_at_seq FROM session_thread WHERE thread_id = ?", (thread_id,)
-    ).fetchone()
-    cursor = int(str(row["distilled_at_seq"] or 0)) if row and row["distilled_at_seq"] else 0
-    return message_count - cursor >= every * 2
+    pending = pending_messages(conn, thread_id=thread_id, messages=list(messages))
+    turns = sum(1 for m in pending if str(getattr(m, "type", "") or "").lower() == "human")
+    return turns >= every
 
 
 def mark_extracted(conn: SqlConnection, *, thread_id: str, message_count: int) -> None:
@@ -355,10 +399,46 @@ def mark_extracted(conn: SqlConnection, *, thread_id: str, message_count: int) -
     conn.commit()
 
 
+def nothing_new(conn: SqlConnection, *, bucket: str) -> dict[str, Any]:
+    """「这次没东西可抽」的报告 —— 形状归本模块管，宿主不该自己拼一份。
+
+    `similar` 照样要算：按钮按下去却一条都没加时，界面上要说得出"库里有几对看着像同一件事"，
+    那才是用户下一步（点「整理记忆」）的依据。
+    """
+    return _report(
+        similar=count_similar(conn, bucket=bucket),
+        detail="这段会话自上次提取以来没有新内容 —— 没有要重抽的东西。",
+    )
+
+
+def pending_messages(conn: SqlConnection, *, thread_id: str, messages: list[Any]) -> list[Any]:
+    """**上次提取之后**新增的那几条消息 —— 决定"这一轮该喂什么"。
+
+    这里修的是一个会直接放大成本的洞：游标 `distilled_at_seq` 过去只被 `due_for_extract`
+    拿去判断"要不要跑"，喂给模型的却**始终是整段对话**。于是每自动提取一次，那几条老事实
+    就换一种说法被重新抽一遍。实测（2026-09-24，固定八轮对话、副本库）：一轮对话自动跑了
+    3 次，最后桶里 **35 条 / 实际只有 8 个不同事实** —— 而注入侧的窗口只有 8 条，
+    重复条目是在**把不同的事实挤出 prompt**。
+
+    编辑/删除消息会让列表变短、游标因此可能落在长度之外：那种情况下**退回整段**
+    （宁可重抽一遍，也不要"看起来提取过、其实新消息一条都没看"）。
+    """
+    row = conn.execute(
+        "SELECT distilled_at_seq FROM session_thread WHERE thread_id = ?", (thread_id,)
+    ).fetchone()
+    cursor = int(str(row["distilled_at_seq"] or 0)) if row and row["distilled_at_seq"] else 0
+    if not 0 <= cursor <= len(messages):
+        return list(messages)
+    return list(messages[cursor:])
+
+
 __all__ = [
     "consolidate",
     "count_similar",
     "due_for_extract",
     "extract",
+    "is_echo",
     "mark_extracted",
+    "nothing_new",
+    "pending_messages",
 ]

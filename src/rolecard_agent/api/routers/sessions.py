@@ -41,7 +41,11 @@ from rolecard_agent.core.observability import TraceEvent
 from rolecard_agent.core.reachout import ensure_proactive_thread, proactive_thread_id
 from rolecard_agent.core.state import new_state, now_ts
 from rolecard_agent.core.text import text_of
-from rolecard_agent.core.thread_locks import thread_write
+from rolecard_agent.core.thread_locks import (
+    end_extraction,
+    thread_write,
+    try_extraction,
+)
 from rolecard_agent.core.usage import TokenUsage, record_usage
 from rolecard_agent.rag.parser import (
     IMAGE_EXTS,
@@ -534,34 +538,62 @@ def _distill_after_turn(ctx: AppContext, *, thread_id: str, role_id: str) -> Non
         thread = get_thread(conn, thread_id)
         _, messages = _history_messages(ctx, thread_id)
         if not memory_distill.due_for_extract(
-            conn,
-            thread_id=thread_id,
-            every=ctx.settings.memory_extract_turns,
-            message_count=len(messages),
+            conn, thread_id=thread_id, every=ctx.settings.memory_extract_turns, messages=messages
         ):
             return
-        model, backend = _thread_model(ctx, thread, role_id)
-        outcome = memory_distill.extract(
-            conn,
-            model=model,
-            bucket=role_id,
-            messages=messages,
-            backend=backend,
-            tracer=ctx.tracer,
-        )
-        report = outcome["report"]
-        if outcome["ok"]:
-            memory_distill.mark_extracted(conn, thread_id=thread_id, message_count=len(messages))
-        ctx.tracer.emit(
-            TraceEvent(
-                event="memory_extract",
-                node="memory",
-                thread_id=thread_id,
-                role_id=role_id,
-                tokens=report.get("tokens"),
-                detail={"trigger": "auto", **{k: v for k, v in report.items() if v}},
+        pending = memory_distill.pending_messages(conn, thread_id=thread_id, messages=messages)
+        if not pending:
+            return
+        # 一次提取 = 一次真模型调用（云端 10–20s、本地 8B 约 122s），而**游标只在那次调用结束时
+        # 才推进**。用户在这期间继续聊，每一轮都会看到"该提取了"，同一个窗口于是被并发提取多次，
+        # 每次都把 prompt 里那份【已有条目】抄一点回来（2026-09-24 副本实测：八轮对话 4 次自动
+        # 提取同时跑，桶里 32 条 / 23 对同义，而 `fed` 一直是全量）。
+        # 用提取自己的在飞标记而不是会话写入锁：后者一占 120 秒，用户下一句就得排队（见
+        # `thread_locks.try_extraction` 那段）。挡住就是了 —— 兜底下一轮还会再问。
+        if not try_extraction(thread_id):
+            ctx.tracer.emit(
+                TraceEvent(
+                    event="memory_extract",
+                    node="memory",
+                    thread_id=thread_id,
+                    role_id=role_id,
+                    detail={"trigger": "auto", "skipped": "上一次提取还在跑"},
+                )
             )
-        )
+            return
+        try:
+            model, backend = _thread_model(ctx, thread, role_id)
+            outcome = memory_distill.extract(
+                conn,
+                model=model,
+                bucket=role_id,
+                messages=pending,
+                backend=backend,
+                tracer=ctx.tracer,
+            )
+            report = outcome["report"]
+            if outcome["ok"]:
+                memory_distill.mark_extracted(
+                    conn, thread_id=thread_id, message_count=len(messages)
+                )
+            ctx.tracer.emit(
+                TraceEvent(
+                    event="memory_extract",
+                    node="memory",
+                    thread_id=thread_id,
+                    role_id=role_id,
+                    tokens=report.get("tokens"),
+                    detail={
+                        "trigger": "auto",
+                        # `fed` = 这一轮真的喂进去几条消息。没有它，"游标到底有没有推进"只能靠
+                        # 猜 —— 而那次"每轮都在抄清单"的读数，判据就是这个数。
+                        "fed": len(pending),
+                        **{k: v for k, v in report.items() if v},
+                    },
+                )
+            )
+        finally:
+            end_extraction(thread_id)
     except Exception as exc:  # noqa: BLE001 - 后台提取失败只留痕，绝不打扰对话
         ctx.tracer.emit(
             TraceEvent(
@@ -595,12 +627,17 @@ def distill_session(
     thread = get_thread(ctx.conn, thread_id)
     _, messages = _history_messages(ctx, thread_id)
     role_id = str(thread["current_role_id"])
+    # 手动按钮同一条口径：抽的是"上次提取之后"的那几条，不是整段。第一次点（游标 0）时
+    # 两者相等，所以行为不变；变的是"聊了一阵再点一次"——那时不该把老事实换个说法再记一遍。
+    pending = memory_distill.pending_messages(ctx.conn, thread_id=thread_id, messages=messages)
+    if not pending:
+        return {"report": memory_distill.nothing_new(ctx.conn, bucket=role_id), "turns_since": 0}
     model, backend = _thread_model(ctx, thread, role_id)
     outcome = memory_distill.extract(
         ctx.conn,
         model=model,
         bucket=role_id,
-        messages=messages,
+        messages=pending,
         backend=backend,
         tracer=ctx.tracer,
     )

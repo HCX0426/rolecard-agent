@@ -156,6 +156,36 @@ def test_distill_unknown_thread_404(client: TestClient) -> None:
     assert client.post("/api/session/ghost/distill").status_code == 404
 
 
+def test_second_distill_sees_only_what_is_new(client: TestClient, model: ChatAndDistill) -> None:
+    """第二次按「提取精华」不该把整段对话再喂一遍：喂料由游标决定，不只由"要不要跑"决定。
+
+    实测过的形状（2026-09-24 副本库）：固定八轮对话里自动提取跑了 3 次，每次喂整段 ⇒
+    弱模型换个说法重抽同一批事实，**35 条 / 只有 8 个不同事实**；注入窗口只有 8 条，
+    重复条目真正挤掉的是**别的事实**。所以这里钉两件事：第二次不发调用、且第一次的原话
+    不再出现在第二次的 prompt 里。
+    """
+    tid, role_id = new_session(client)
+    chat(client, tid, "我搬到苏州住了半年")
+    assert client.post(f"/api/session/{tid}/distill").status_code == 200
+    assert len(model.prompts) == 1
+
+    again = client.post(f"/api/session/{tid}/distill")
+    assert again.status_code == 200
+    assert again.json()["report"]["added"] == 0
+    assert "没有新内容" in again.json()["report"]["detail"]
+    assert len(model.prompts) == 1, "没有新消息却还是花了一次真调用"
+    assert texts(client, role_id) == ["用户住在苏州"]
+
+    # 又聊了一轮 ⇒ 第二次提取只该看到那一句新的（第一句的原话不该再进 prompt）
+    chat(client, tid, "另外我开始学弹琴了")
+    model.distill = "ADD 用户在学弹琴"
+    assert client.post(f"/api/session/{tid}/distill").status_code == 200
+    assert len(model.prompts) == 2
+    assert "学弹琴" in model.prompts[1]
+    assert "搬到苏州" not in model.prompts[1]
+    assert set(texts(client, role_id)) == {"用户住在苏州", "用户在学弹琴"}
+
+
 # ---------------------------------------------------------------- 自动兜底
 
 
@@ -227,6 +257,35 @@ def test_auto_extract_off_means_no_string_call(
         chat(client, tid, "每周五要交周报")
         time.sleep(0.2)
         assert model.prompts == []
+
+
+def test_auto_extract_does_not_stack_up_while_one_is_running(
+    tmp_path: Path, model: ChatAndDistill, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """一次提取还在跑时，下一轮**不再另起一次**，而且用户那句话不能被它拖慢。
+
+    游标只在那次调用结束时推进，而一次调用要 10–120 秒。用户在这期间继续聊 ⇒ 每一轮都看到
+    "该提取了"，同一个窗口被并发提取多次，每次都把 prompt 里的【已有条目】抄一点回来
+    （实测八轮对话跑了 4 次自动提取，桶里 32 条 / 23 对同义，而 `fed` 一直是全量）。
+
+    两条断言各管一边：`prompts == []` 管"别再起一次"，耗时那条管**去重不能用会话写入锁**
+    —— 第一版我正是这么写的，于是这一句 chat 等了 158 秒才回来（`run_turn` 等锁上限 150s），
+    把 §12.7 量过的"自动提取不拖慢下一轮"直接弄坏。那条误设计就是这条断言要挡的。
+    """
+    from rolecard_agent.core.thread_locks import end_extraction, try_extraction
+
+    with auto_client(tmp_path, model, monkeypatch, turns="1") as client:
+        tid, role_id = new_session(client)
+        assert try_extraction(tid), "前提：这条会话可以先占住「提取在飞」这枚标记"
+        started = time.time()
+        try:
+            chat(client, tid, "每周五要交周报")
+            time.sleep(0.4)  # 给后台那条线程一次"发现自己不是唯一"的机会
+        finally:
+            end_extraction(tid)
+        assert time.time() - started < 20, "提取的在飞标记把对话那一轮挡住了"
+        assert model.prompts == [], "上一次提取还在跑，却又起了第二次（会抄清单）"
+        assert texts(client, role_id) == []
 
 
 # ---------------------------------------------------------------- 「整理记忆」
