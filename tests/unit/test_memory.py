@@ -334,6 +334,23 @@ def test_replace_from_text_preserves_pinned_and_rebuilds_the_rest(conn) -> None:
     assert {"新的一行", "又一行"} <= set(texts)
 
 
+def test_replace_from_text_carries_the_tiers_of_unchanged_lines(conn) -> None:
+    """整段保存**不能把显著性抹回 1**：界面上没有那个控件，抹了就等于偷偷改了用户的记忆。
+
+    这条洞是加 `importance` 那次自己挖的：`replace_bucket_from_text` 先 DELETE 再按行
+    `add_item`，而 `add_item` 的默认档是 1 —— 于是用户在面板上编辑一次记忆文本，
+    提取模型标好的「青霉素过敏 = 要紧」就悄悄降回常规，下一次它可能直接被挤出 prompt。
+    """
+    add_item(conn, bucket=GLOBAL_BUCKET, text="用户青霉素过敏", importance=2)
+    add_item(conn, bucket=GLOBAL_BUCKET, text="用户住在苏州", importance=1)
+    replace_bucket_from_text(
+        conn, bucket=GLOBAL_BUCKET, text="- 用户青霉素过敏\n- 用户住在苏州，最近换了公寓"
+    )
+    tiers = {str(i["text"]): int(i["importance"]) for i in list_items(conn, bucket=GLOBAL_BUCKET)}
+    assert tiers == {"用户青霉素过敏": 2, "用户住在苏州，最近换了公寓": 1}
+    # 逐字相同的那行保住档号；**改过的行是一句新话**，落回默认档（不是"猜它还想要 2"）
+
+
 def test_delete_is_physical_and_edit_rewrites_in_place(conn) -> None:
     (one, two) = _seed(conn, "要删掉的", "要改掉的")
     assert delete_item(conn, item_id=one) is True

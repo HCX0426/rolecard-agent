@@ -397,14 +397,31 @@ def replace_bucket_from_text(
     一行一条；钉住的条目**不动** —— 用户特意钉的东西不该被一次整段保存抹掉。
     行首的列表符号会被剥掉，理由见 `_BULLET`：这段文本的**来源就是 `render_memory`**，
     不剥就是自己造的显示格式被自己当成正文反复吃进去。
+
+    **显著性按"同一句话"带过去**：这一段先抄下 `文本 → 档号`，覆写时原样还回去。
+    不是兼容性的多此一举，而是界面上根本没有"这条要紧"的控件 —— 用户编辑一次记忆文本，
+    就把提取模型标好的档号全抹回 1，而他不知道自己做了什么（那条事实下次就可能被挤出 prompt）。
+    改过的行（文本不再逐字相同）落回默认档：那确实是一句新话。
     """
+    tiers = {
+        " ".join(str(i["text"]).split()): clamp_importance(i.get("importance"))
+        for i in list_items(conn, bucket=bucket)
+        if not i["pinned"]
+    }
     conn.execute(
         "DELETE FROM role_memory_item WHERE role_id = ? AND pinned = 0",
         (bucket,),
     )
     conn.commit()
     for line in (text or "").splitlines():
-        add_item(conn, bucket=bucket, text=_BULLET.sub("", line), source=source)
+        body = _BULLET.sub("", line)
+        add_item(
+            conn,
+            bucket=bucket,
+            text=body,
+            source=source,
+            importance=tiers.get(" ".join(body.split()), 1),
+        )
     return [i for i in list_items(conn, bucket=bucket) if i["pinned"]]
 
 

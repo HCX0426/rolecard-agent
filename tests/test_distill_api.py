@@ -406,8 +406,9 @@ def test_extract_backend_sends_the_distill_to_that_backend(
 ) -> None:
     """填了它 ⇒ 提取那一次算在它名下，而不是会话正在用的那个后端。
 
-    这正是这个旋钮存在的全部理由：会话留在本地（陪聊不想出网），而"把对话抽成事实"
-    那一步交给云端 —— 同一段对话实测本地 8B 提 0 条、云端 8 条。
+    这正是这个旋钮存在的全部理由：会话留在本地（陪聊不想出网），而"把对话抽成永久事实"
+    那一步可以单独交给选定的后端 —— 2026-09-24 实测同一段对话本地提 21 条、云端 15 条，
+    两边都提得出，所以这里钉的是**"这一步到底走了谁"**，不是"只有云端才提得出"。
     """
     with memory_backend(tmp_path, model, monkeypatch, extract_backend="sf") as (client, db):
         tid, role_id = session_on_local(client)
