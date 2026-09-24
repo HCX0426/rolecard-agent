@@ -82,14 +82,15 @@ export default function PetPage() {
   // 渲染才更新，只认状态就会在一次拖里连发十几次"收起"给壳。
   const expandedRef = useRef(false);
   /**
-   * 色片在窗口里自己挪回原位多少像素（壳推过来的，贴边展开时才非零）。
+   * 面板在画布里往屏内挪多少像素（壳推过来的，贴边展开时才非零）。
    *
    * 为什么页面要接这个数：色片贴着右边趴着时它中心离屏幕右沿只有 100px，而面板要 380 宽 ——
-   * 居中放不下，壳夹取时必然把整扇窗往屏内推（实测推掉 138px），于是"一点它，色片就从光标
-   * 底下滑走了"。改成**窗口照夹取、色片在窗内自挪**：面板朝屏幕内侧长，色片一格都不动。
-   * 旧壳不推这个数 ⇒ 保持 0，等于回到"色片在窗正中"那个老画法，不会更坏。
+   * 居中放不下。旧解法是"把窗口往屏内推 + 色片在窗内自挪回原位"，代价是一次 `setBounds`，
+   * 而 DWM 会在那一帧把旧内容拉伸成新尺寸 —— 就是用户报了三次的重影。现在窗口是常驻画布
+   * （两侧各 180px 余量）**永远不变尺寸**，只有这一块的 transform 在动：面板朝屏幕内侧长，
+   * 色片一格都不动。旧壳不推这个数 ⇒ 保持 0，等于回到"面板在画布正中"那个老画法，不会更坏。
    */
-  const [spriteShift, setSpriteShift] = useState(0);
+  const [panelShift, setPanelShift] = useState(0);
   // 已经"见过"的最新一条 id。**在第一次真正拿到快照之前保持 null**：初始的空白状态不是
   // 一次快照，拿它当基线会让每次开机都把积压的最后一条当新消息拍出去。
   const seenNewestRef = useRef<number | null>(null);
@@ -367,12 +368,15 @@ export default function PetPage() {
     [],
   );
 
-  // 壳每次把展开落点算歪一点，就推一次自挪量过来（旧壳不推 ⇒ 一直是 0，见 `spriteShift`）。
+  // 壳推来的"面板要水平挪多少"：色片贴着屏幕边时，画布（560 宽）有一截本来就在屏外，
+  // 面板得对齐到屏内那 380px。窗口不因此动一格 —— 旧写法是推窗口、再让色片在窗内自挪回去，
+  // 那一次 setBounds 就是"展开时从色片上扩大出来的重影"的载体（DWM 会拉伸上一帧）。
+  // 旧壳不推 ⇒ 一直是 0，面板照旧居中。
   useEffect(() => {
     const bridge = shellBridge();
-    if (!bridge?.onPetSpriteShift) return;
-    bridge.onPetSpriteShift((px) => setSpriteShift(px));
-    return () => bridge.onPetSpriteShift?.(null);
+    if (!bridge?.onPetPanelShift) return;
+    bridge.onPetPanelShift((px) => setPanelShift(px));
+    return () => bridge.onPetPanelShift?.(null);
   }, []);
 
   // 旗子的首值要 pull（push 早于监听就是丢消息），之后托盘每改一次收一次通知。
@@ -536,7 +540,9 @@ export default function PetPage() {
         // 展开态：面板取代气泡（气泡那条就是面板最后一条，重复摆一遍只是噪音）。
         <section
           data-pet-ui="panel"
-          className="pet-panel-in pet-nodrag flex max-h-full w-full flex-col rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-md dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+          className="pet-panel-in pet-nodrag flex max-h-full w-[380px] flex-col rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-md dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+          /* 屏内对齐：见上面 `panelShift`。窗口没动，动的是这一块在画布里的位置。 */
+          style={{ transform: `translateX(${panelShift}px)` }}
         >
           <header className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-100 px-3 py-2 dark:border-slate-700">
             {roles.length > 1 ? (
@@ -675,9 +681,9 @@ export default function PetPage() {
             // 半透明透出来的是桌面本身（壁纸/图标/底下那个窗口的字），blur 也没有东西可糊
             // （backdrop-filter 只看页面自己身后那层），用户报的"重影"就是这两样叠出来的。
             // 同理不再淡出 opacity —— 淡出的那 500ms 就是一块 500ms 的半透明。
-            className="pet-nodrag w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-left text-[11px] leading-relaxed text-slate-700 shadow-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-            // 气泡跟着色片走：它标在色片正上方，色片自挪而它不动就会错开一截。
-            style={{ transform: `translateX(${spriteShift}px)` }}
+            className="pet-nodrag w-[200px] rounded-2xl border border-slate-200 bg-white px-3 py-2 text-left text-[11px] leading-relaxed text-slate-700 shadow-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+            // 宽度按锚点那块（200）而不是 w-full：画布是 560 宽，w-full 会把气泡拉成一条
+            // 横穿桌面的白带子（它还是不透明白底 ⇒ 读起来像屏幕被划了一道）。
           >
             {showContent ? shorten(latest.text) : "它说了话 · 内容已隐藏"}
             {unreadOfLatest > 1 && (
@@ -693,7 +699,7 @@ export default function PetPage() {
           见 `dragStart` 那段）。挂两处会因冒泡触发两遍，净效果是"点了没反应"。 */}
       <div
         className="pet-nodrag grid h-[88px] w-[88px] shrink-0 cursor-grab place-items-center rounded-full text-2xl font-medium text-white shadow-md active:cursor-grabbing"
-        style={{ background: `hsl(${hue} 62% 48%)`, transform: `translateX(${spriteShift}px)` }}
+        style={{ background: `hsl(${hue} 62% 48%)` }}
         title={`${name}${offline ? " · 连不上本地服务" : ""} · 点开看你们最近聊了什么${
           showContent ? "" : "（内容已隐藏）"
         }`}
