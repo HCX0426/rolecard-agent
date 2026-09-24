@@ -345,3 +345,120 @@ def test_extract_cadence_is_global_only(client: TestClient) -> None:
         "/api/settings/memory", params={"role_id": role_id}, json={"extract_turns": 6}
     )
     assert res.status_code == 400 and "全局" in res.json()["detail"]
+
+
+# ------------------------------------------------ 记忆那两步用哪个后端（审计 §12.5）
+#
+# 钉的是"提取精华 / 整理记忆这两步算在哪个后端的账上"。为什么拿 token 账当读数：后端名
+# 一路从 `_thread_model`（或 consolidate）传到 `record_usage`，所以账上的名字就是这一步
+# **实际走的那条链**，比对着注释断言可靠。
+# 会话固定在 `local` 上，这样"跟随会话"与"指定另一个后端"在账上是两个不同的名字。
+
+BACKEND_ROWS = [
+    {"name": "local", "provider": "ollama", "model": "qwen3-vl:8b",
+     "base_url": "http://127.0.0.1:9", "usage": "chat"},
+    {"name": "sf", "provider": "siliconflow", "base_url": "https://api.siliconflow.cn/v1",
+     "model": "deepseek-ai/DeepSeek-V4-Flash", "api_key": "sk-test"},
+]
+
+
+def ledger_calls(db_path: Path) -> dict[str, int]:
+    """token 账 → {后端名: 调用次数}。假模型不报 token，但**次数**照样记（没数≠没花）。"""
+    db = sqlite3.connect(db_path)
+    rows = db.execute("SELECT backend, calls FROM token_usage_day").fetchall()
+    db.close()
+    return {str(r[0]): int(r[1]) for r in rows}
+
+
+@contextmanager
+def memory_backend(
+    tmp_path: Path,
+    model: ChatAndDistill,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    extract_backend: str | None = None,
+    tag: str = "default",
+) -> Iterator[tuple[TestClient, Path]]:
+    """两个后端（local + sf）+ 会话挂在 local；`extract_backend` 就是那个旋钮（走 env 路径）。
+
+    `None` = 完全不设这个环境变量（今天的形状），`""` = 显式设成空 —— 两条都该"不动"。
+    让库路径出来（`tag` 区分同一 `tmp_path` 下的多份库），因为这几条用例钉的就是**账**。
+    """
+    if extract_backend is not None:
+        monkeypatch.setenv("MEMORY_EXTRACT_BACKEND", extract_backend)
+    db = tmp_path / f"app-{tag}.db"
+    with TestClient(create_app(sqlite_path=db, model=model)) as c:
+        assert c.put(
+            "/api/settings/models", json={"default": "local", "backends": BACKEND_ROWS}
+        ).status_code == 200
+        yield c, db
+
+
+def session_on_local(client: TestClient) -> tuple[str, str]:
+    """新建一条会话并把它的后端钉在 local 上（不钉就没法区分"跟随会话"与"另有指定"）。"""
+    tid, role_id = new_session(client)
+    assert client.patch(f"/api/session/{tid}", json={"model_name": "local"}).status_code == 200
+    return tid, role_id
+
+
+def test_extract_backend_sends_the_distill_to_that_backend(
+    tmp_path: Path, model: ChatAndDistill, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """填了它 ⇒ 提取那一次算在它名下，而不是会话正在用的那个后端。
+
+    这正是这个旋钮存在的全部理由：会话留在本地（陪聊不想出网），而"把对话抽成事实"
+    那一步交给云端 —— 同一段对话实测本地 8B 提 0 条、云端 8 条。
+    """
+    with memory_backend(tmp_path, model, monkeypatch, extract_backend="sf") as (client, db):
+        tid, role_id = session_on_local(client)
+        chat(client, tid, "我搬到苏州住了半年")
+        assert client.post(f"/api/session/{tid}/distill").status_code == 200
+
+        calls = ledger_calls(db)
+        # 只有提取这一笔：对话那一路走流式，而假模型不报 usage ⇒ 流式 flush 只记它看见的
+        # （见 test_usage 那几条），所以这里数得到的是"这一步用了谁"，正好是要钉的东西。
+        assert calls == {"sf": 1}
+        assert texts(client, role_id) == ["用户住在苏州"]
+
+
+def test_empty_extract_backend_keeps_today_wiring(
+    tmp_path: Path, model: ChatAndDistill, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """没填（env 空 / 根本没这个变量）= 一切照旧：提取跟会话的后端，整理跟默认后端。
+
+    "填了才出网"是隐私口径，所以这一半比上面那半更要钉住 —— 默认值不该替用户决定出不出网。
+    """
+    for value in (None, "", "   "):  # 没设 / 设成空 / 只有空格，三种都是"没填"
+        with memory_backend(
+            tmp_path, model, monkeypatch, extract_backend=value, tag=repr(value)
+        ) as (client, db):
+            tid, _ = session_on_local(client)
+            chat(client, tid, "我搬到苏州住了半年")
+            assert client.post(f"/api/session/{tid}/distill").status_code == 200
+            add_item(client, "用户养了一只猫")
+            add_item(client, "用户的猫叫米")
+            assert client.post("/api/settings/memory/consolidate").status_code == 200
+
+            calls = ledger_calls(db)
+            # 提取跟着会话（local），整理跟着默认后端（未指名 = 账上那行空名字），
+            # 而 `sf` 一个字节都没沾上 —— 没填就是不出网。
+            assert calls == {"local": 1, "": 1}, value
+
+
+def test_consolidate_follows_the_same_knob(
+    tmp_path: Path, model: ChatAndDistill, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """「整理记忆」和「提取精华」共用一个旋钮：答案只该有一个 —— 哪个模型碰过我的记忆文本。
+
+    两个入口分开配会留出一个最坏的组合：提取走云端、整理走本地 8B，而整理恰恰是"判断谁
+    顶替谁"那一步，弱模型在这里最容易被同义改述骗过（§12.9 量过的正是这件事）。
+    """
+    model.distill = "NOOP"
+    with memory_backend(tmp_path, model, monkeypatch, extract_backend="sf") as (client, db):
+        add_item(client, "用户养了一只猫")
+        add_item(client, "用户的猫叫米")
+        assert client.post("/api/settings/memory/consolidate").status_code == 200
+
+        calls = ledger_calls(db)
+        assert calls["sf"] == 1
+        assert calls.get("", 0) == 0  # 不再有一笔"整理挂在未指名下"的账

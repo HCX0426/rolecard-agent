@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from rolecard_agent.api.routers.settings import runtime_payload
-from rolecard_agent.config import Settings
+from rolecard_agent.config import ModelBackend, Settings
 
 
 def test_payload_groups_and_masks() -> None:
@@ -75,6 +75,32 @@ def test_thinking_models_choices_come_from_model_names() -> None:
     # 枚举项 choices 照旧来自静态规格
     web_rows = {r["key"]: r for r in groups["web"]["items"]}  # type: ignore[index]
     assert web_rows["WEB_SEARCH_BACKEND"]["choices"] == ["auto", "tavily", "ddgs", "off"]
+
+
+def test_memory_extract_backend_choices_are_backend_names() -> None:
+    """「记忆后端」的下拉给的是**后端名**（`resolve_role_model` 认的那份），不是模型列。
+
+    为什么单独钉这一条：填错了不报错 —— 它静默回落默认模型，症状正好是 §12.5 要修的
+    "记忆悄悄提不出来"。而模型列可以重名（两个后端都跑 qwen3:8b），所以"models"那个
+    选项源顶替不了它。
+    """
+    base = Settings()
+    settings = base.model_copy(
+        update={
+            "model_backends": {
+                "local": base.model_backends["local"],
+                "云端强模型": ModelBackend(model="qwen3:8b", provider="openai"),
+            }
+        }
+    )
+    payload = runtime_payload(settings, model_names=["some-model"])
+    groups = {g["key"]: g for g in payload["groups"]}  # type: ignore[index]
+    rag_rows = {r["key"]: r for r in groups["rag"]["items"]}  # type: ignore[index]
+    row = rag_rows["MEMORY_EXTRACT_BACKEND"]
+    assert row["choices"] == ["local", "云端强模型"]
+    assert row["kind"] == "str"
+    # 没填 = 出厂默认（空串在界面上显示成"未设置"，而它正是"跟随会话/角色"那一档）
+    assert row["value"] == "未设置" and row["changed"] is False
 
 
 def test_file_watch_row_editable_in_reachout_group() -> None:

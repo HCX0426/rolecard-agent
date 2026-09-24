@@ -436,12 +436,16 @@ def runtime_payload(
             secret = field in _SECRET_FIELDS
             overridden = field in overrides
             shown = _display(value, secret=secret)
-            # 动态选项源：choices_from="models" → 用户配置的模型名（下拉/勾选不再手打）。
+            # 动态选项源：choices_from="models" → 用户配置的模型名（下拉/勾选不再手打）；
+            # ="backends" → **后端名**（`Settings.model_backends` 的键，即 `resolve_role_model()`
+            # 认的那一份）。两者不能互相顶替：模型列可重名，填错后端名是静默回落默认模型。
             choices: list[str] | None = None
             if spec and spec.choices:
                 choices = list(spec.choices)
             elif spec and spec.choices_from == "models":
                 choices = model_names or []
+            elif spec and spec.choices_from == "backends":
+                choices = sorted(settings.model_backends)
             rows.append(
                 {
                     "key": env_key,
@@ -525,6 +529,14 @@ def runtime_payload(
             ),
             ("extract_backend", "EXTRACT_BACKEND", "抽取后端", None),
             ("extract_verify", "EXTRACT_VERIFY", "抽取校对", None),
+            (
+                "memory_extract_backend",
+                "MEMORY_EXTRACT_BACKEND",
+                "记忆后端（提取精华 / 整理记忆）",
+                "空 = 跟随这条会话/角色的后端。填上一个云端后端名 = 只把「提取精华」和「整理记忆」"
+                "这两步交给它：留在本地的角色也能记住事实（实测本地 8B 在同一段对话上提 0 条、"
+                "云端 8 条）。**填了才出网**，清空即回到今天的行为。下拉里是模型页的**后端名**。",
+            ),
         ],
     )
     add(
@@ -958,12 +970,16 @@ def consolidate_memory(
     if role_id:
         _require_role(ctx, role_id)
     bucket = role_id or mem.GLOBAL_BUCKET
+    # 「提取精华」和「整理记忆」是同一件事的两个入口（都要判断"哪些是事实、谁顶替谁"），
+    # 所以共用 `MEMORY_EXTRACT_BACKEND` 这一个旋钮：填了就用它，没填就用默认后端 —— 与今天
+    # 完全一致。**"哪个模型碰过我的记忆文本"必须只有一个答案**（审计 §12.5）。
+    backend = (ctx.settings.memory_extract_backend or "").strip() or None
     outcome = memory_distill.consolidate(
         ctx.conn,
-        model=ctx.runtime.resolve_role_model(None),
+        model=ctx.runtime.resolve_role_model(backend),
         bucket=bucket,
-        # 默认后端（没指名），但**照样进账**：整理一次也是一次真调用（审计 §12.8）。
-        backend=None,
+        # 后端名跟着模型一起进账：默认那条记在"未指名"下，指定了就该记在它名下（§12.8）。
+        backend=backend,
         tracer=ctx.tracer,
     )
     report = outcome["report"]

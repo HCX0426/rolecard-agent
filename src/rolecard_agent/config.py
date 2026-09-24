@@ -177,6 +177,15 @@ class Settings(BaseModel):
     # 失败只留一条 trace。这条闸存在是因为"后台偷偷调模型"这件事本身该能一键停。
     memory_extract_auto: bool = True
 
+    # 记忆那两步（「提取精华」+「整理记忆」）用哪个后端（后端**名**，见模型页）。
+    # 空 = 提取跟随这条会话/角色的后端、整理跟随默认后端。
+    # 为什么单独一个旋钮（审计 §12.5）：同一段 8 轮对话实测云端提 8 条、本地 8B 提 **0 条**，
+    # 而"陪聊走云端、健康档案留本地"的路由让档案角色的提取永远提不出东西 ⇒ 它的长期记忆
+    # 一直是空的。把"对话用谁"与"记忆用谁"分开，才能只把这两步交给云端。
+    # 隐私口径：用户 2026-09-24 明确"健康数据也可以云端分析"，所以这个默认值的语义是
+    # **"没配就是不动"** —— 填了才出网，不填行为与今天完全一致。
+    memory_extract_backend: str = ""
+
     # 多模型比对（`compare_model_answers`，core/consensus.py）**全局总闸**。开 = 白名单里
     # 有它的角色可以一次问 N 个后端并聚合；关 = 工具一律返回关闭说明。
     # 为什么值得一个闸（而不是只靠角色白名单）：一次调用 = N 次真实模型调用 + 1 次聚合，
@@ -415,6 +424,7 @@ class Settings(BaseModel):
             ("MEMORY_ENABLED", "memory_enabled"),
             ("MEMORY_EXTRACT_TURNS", "memory_extract_turns"),
             ("MEMORY_EXTRACT_AUTO", "memory_extract_auto"),
+            ("MEMORY_EXTRACT_BACKEND", "memory_extract_backend"),
             ("CONSENSUS_ENABLED", "consensus_enabled"),
             ("AGENT_DEFAULT_MODE", "agent_default_mode"),
             ("REACHOUT_ENABLED", "reachout_enabled"),

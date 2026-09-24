@@ -28,11 +28,15 @@ class FieldSpec:
 
     `choices_from="models"`：下拉选项**动态**来自用户配置的模型名（model_backend 表），
     而不是写死的枚举 —— 用户加了新模型，选项自动跟上。
+    `choices_from="backends"`：选项是**后端名**（`Settings.model_backends` 的键）。
+    两者不是一回事，别混：`resolve_role_model(后端名)` 认的是键，而"模型列"可以重名
+    （两个后端都叫 qwen3:8b）。填错在这里是**静默**回落默认模型 ⇒ 症状又变回
+    "记忆悄悄提不出来"，所以这类字段必须给下拉，不能让人手打。
     """
 
     field: str
     env_key: str
-    kind: str  # bool | str | secret | float | int
+    kind: str  # bool | secret | float | int | str
     choices: tuple[str, ...] | None = None
     choices_from: str | None = None
 
@@ -48,6 +52,15 @@ RUNTIME_FIELDS: tuple[FieldSpec, ...] = (
     # 于是保存=什么都不发生 —— 随架构审计报告 P1-5 一并收口。
     FieldSpec("extract_backend", "EXTRACT_BACKEND", "str"),
     FieldSpec("extract_verify", "EXTRACT_VERIFY", "str"),
+    # 「提取精华」用哪个后端（空 = 跟随会话/角色）。它单独一条是因为实测：本地 8B 在同一段
+    # 对话上提得出 0 条而云端提得出 8 条 —— 让留在本地的角色"能记住"不必先把对话搬上云端
+    # （审计 §12.5）。填了才出网，不填行为与今天一致。
+    # 为什么是"backends"而不是"models"：这里存的是 `resolve_role_model()` 认的**后端名**
+    # （`Settings.model_backends` 的键），而模型列可以重名 —— 手打错了不会报错，只会静默
+    # 回落默认模型，症状正好是这次要修的"记忆悄悄提不出来"。
+    FieldSpec(
+        "memory_extract_backend", "MEMORY_EXTRACT_BACKEND", "str", choices_from="backends"
+    ),
     FieldSpec("model_thinking", "MODEL_THINKING", "str", ("auto", "off")),
     FieldSpec("model_thinking_models", "MODEL_THINKING_MODELS", "str", choices_from="models"),
     FieldSpec("model_timeout_seconds", "MODEL_TIMEOUT_SECONDS", "float"),

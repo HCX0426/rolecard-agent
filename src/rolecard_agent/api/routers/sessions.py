@@ -465,14 +465,23 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
 
 
 def _thread_model(ctx: AppContext, thread: dict, role_id: str) -> tuple[Any, str | None]:
-    """这一会话**真正在用**的模型与它的后端名：会话覆盖 > 角色覆盖 > 默认（同 call_model 那条链）。
+    """提取这一步**真正在用**的模型与它的后端名。
 
-    提取必须用同一个后端：换到一个更弱的模型上去抽事实，症状是"记忆悄悄变笨了"，
-    而没人会怀疑到提取这一步 —— 这条链的优先级不是实现细节，是结果质量的因。
+    优先级：`MEMORY_EXTRACT_BACKEND`（运行环境里显式指定的提取后端）> 会话覆盖 > 角色覆盖 > 默认。
+
+    为什么把"提取用谁"与"对话用谁"分开（审计 §12.5）：同一段 8 轮对话实测云端提 8 条、
+    本地 8B 提 **0 条** —— 而"陪聊走云端、健康档案留本地"那条路由让档案角色的提取
+    永远提不出东西，它的长期记忆一直是空的。以前这里刻意跟随对话后端，理由是"换到更弱的
+    模型上抽事实会悄悄变笨"；那个理由仍然成立，只是它现在有了一个显式的、可清空的答案，
+    而不是只能靠把整个角色搬上云端来解决。
+    **没配就是不动**：填了才出网（用户 2026-09-24 同意健康数据可云端分析，但默认值不该替他决定）。
 
     后端名一起返回（而不是让调用方再解一遍）：token 账要按后端分（审计 §12.8），
     而"谁在用哪个后端"这件事只该有一处答案。
     """
+    want = (ctx.settings.memory_extract_backend or "").strip()
+    if want:
+        return ctx.runtime.resolve_role_model(want), want
     name = thread["model_name"]
     if not name:
         try:
