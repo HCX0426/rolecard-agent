@@ -232,8 +232,8 @@ def main() -> None:
     parser.add_argument(
         "--copy",
         type=Path,
-        default=ROOT / "data" / "sqlite" / "_persona_ab.db",
-        help="副本库落在哪（默认 data/sqlite/_persona_ab.db，已被 .gitignore 挡着）",
+        default=scratch_db.SCRATCH_DIR / "_persona_ab.db",
+        help="副本库落在哪（默认 build/scratch/ 下，整目录 gitignore）",
     )
     args = parser.parse_args()
     if hasattr(sys.stdout, "reconfigure"):

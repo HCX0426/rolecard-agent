@@ -46,6 +46,14 @@ _FRESHNESS_QUERIES: tuple[str, ...] = (
     "SELECT MAX(created_at) FROM agent_reachout",
 )
 
+#: 取证副本的家（09-26 轮 `R26-18` 的尾巴）。
+#:
+#: 以前 `persona_ab` / `persona_chat_sim` 的 `--copy` 默认落在 `data/sqlite/` 里
+#: （`_persona_ab.db`、`_chat_sim.db`），而那个目录同时住着"开发态真库"与"09-24 隔离出来的
+#: 陈旧快照" —— 三个长得都像库的文件放一起，认错一次就是一整轮错档读数（09-25 真发生过）。
+#: 副本一律改落 `build/scratch/`：整目录 gitignore，而且**不在"能连上的库"的视野里**。
+SCRATCH_DIR = _REPO_ROOT / "build" / "scratch"
+
 
 def _freshness(path: Path) -> datetime | None:
     """这份库"最后一次有内容"的时刻。**空库一律读成 None**（= 不参与比较，必输）。

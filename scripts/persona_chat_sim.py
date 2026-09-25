@@ -18,7 +18,7 @@
         --role medical_archivist --model qwen3-vl-8b
     .venv\\Scripts\\python.exe scripts\\persona_chat_sim.py \\
         --role medical_archivist --model qwen3-vl-8b --extract-backend siliconflow \\
-        --copy data/sqlite/_chat_sim_cloud_extract.db
+        --copy build/scratch/_chat_sim_cloud_extract.db
 """
 
 from __future__ import annotations
@@ -193,8 +193,8 @@ def main() -> None:
     parser.add_argument(
         "--copy",
         type=Path,
-        default=ROOT / "data" / "sqlite" / "_chat_sim.db",
-        help="副本库落在哪（默认 data/sqlite/_chat_sim.db，已被 .gitignore 挡着）",
+        default=scratch_db.SCRATCH_DIR / "_chat_sim.db",
+        help="副本库落在哪（默认 build/scratch/ 下，整目录 gitignore）",
     )
     parser.add_argument(
         "--model",
