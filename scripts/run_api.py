@@ -87,6 +87,21 @@ def _resolve_data_paths() -> None:
     for key in ("SQLITE_PATH", "CHROMA_PATH", "UPLOAD_DIR"):
         p = Path(os.environ[key])
         (p.parent if key == "SQLITE_PATH" else p).mkdir(parents=True, exist_ok=True)
+    # 但"建出来"这件事在一种情况下必须出声：仓库那份开发态库已经在 2026-09-25 被**有意**
+    # 隔离成陈旧快照（真数据在安装目录下那份），于是这一次 mkdir 会让一个 0 行的空库
+    # 重新出现在 `data/sqlite/` 里。静默发生的恢复看起来就像"我的库被清空了"（09-26 轮
+    # R26-18）。只提示、不改路径：开发态根本身就是合法的，问题从来是"没人告诉你它被建了"。
+    dev_db = Path(os.environ["SQLITE_PATH"])
+    marker = dev_db.parent / "_stale-dev-snapshot-20260924"
+    if not dev_db.exists() and marker.exists():
+        print(
+            f"[run_api] 注意：正在**新建一份空的开发态库** {dev_db}\n"
+            f"[run_api]       原来那份已被有意隔离到 {marker}；真实数据在安装目录下\n"
+            f"[run_api]       %LOCALAPPDATA%\\rolecard-agent\\sqlite\\app.db（实验取数请用它，"
+            f"或设 LIVE_DB_PATH）。",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def _load_dotenv() -> None:
