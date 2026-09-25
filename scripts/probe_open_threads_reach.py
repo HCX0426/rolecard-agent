@@ -29,6 +29,12 @@ os.environ.setdefault("NO_PROXY", "*")
 # 副本上不需要把 8B 钉进显存（那会真打一次 Ollama）。
 os.environ["MODEL_PIN_ON_STARTUP"] = "false"
 
+# Windows 控制台默认 GBK：本探针打出对勾/叉号 emoji，不重配编码会在最后一行抛
+# UnicodeEncodeError（`R26-24` 那一族，`check_consistency.py` 的 `console encoding` 盯着）。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))

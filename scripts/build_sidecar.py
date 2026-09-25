@@ -22,6 +22,13 @@ OUT = ROOT / "build" / "sidecar"
 WORK = ROOT / "build" / "sidecar-work"
 SPEC = ROOT / "packaging" / "rolecard-backend.spec"
 
+# 与 `gate.py` 同一族、同一个漏网（`R26-24` 当时只修了 gate.py）：Windows 控制台默认 GBK，
+# 收尾那句「✅」在 **PyInstaller 已经全部成功之后** 抛 UnicodeEncodeError ⇒ 退出码 1，
+# 看起来像"打包失败"而产物其实是对的（实测：225 MB 的 bundle 已经躺在 build/sidecar 里）。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 
 def _size_mb(path: Path) -> float:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) / 1024 / 1024

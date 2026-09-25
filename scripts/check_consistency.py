@@ -607,6 +607,62 @@ def check_line_endings() -> None:
         fails.append(f"CRLF line endings found: {offenders}")
 
 
+def check_console_encoding() -> None:
+    """每个 `scripts/*.py` 入口：会打出 GBK 装不下的字符，就必须自己重配 stdout 编码。
+
+    这条是 `R26-24` 的**收口**而不是重复发现它：那次只修了 `gate.py`，而同一族的
+    `build_sidecar.py` 一路漏着 —— 症状最坏的那种：PyInstaller 已经全部成功、225 MB 产物
+    都落盘了，收尾那句带对勾 emoji 的 print 在 GBK 控制台上抛 `UnicodeEncodeError` ⇒ 退出码 1，
+    看起来像"打包失败"。（09-25 深夜实测撞上。）
+
+    口径用"能不能被 gbk 编码"判，而不是抄一份 emoji 清单：中文本身 GBK 装得下，
+    炸的从来是对勾、播放三角、秒表这类 emoji —— 只盯 emoji 清单会漏，只盯"有没有中文"会全是误报。
+    而且只看**真被打出来的字符串**（AST 里 `print(...)` 的实参）：注释与文档串里的 emoji
+    永远不会进控制台，按全文算会误伤三个本来就安全的脚本。
+    """
+    import ast  # noqa: PLC0415
+
+    def _printed_literals(tree: ast.AST) -> list[str]:
+        out_: list[str] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            if node.func.id != "print":
+                continue
+            for arg in [*node.args, *(kw.value for kw in node.keywords)]:
+                for part in ast.walk(arg):
+                    if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                        out_.append(part.value)
+                    elif isinstance(part, ast.FormattedValue) and isinstance(
+                        part.format_spec, ast.Constant
+                    ):
+                        out_.append(str(part.format_spec.value))
+        return out_
+
+    offenders: list[str] = []
+    scripts = sorted((ROOT / "scripts").glob("*.py"))
+    for path in scripts:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        literals = _printed_literals(tree)
+        if not literals:
+            continue
+        try:
+            "".join(literals).encode("gbk")
+            continue  # 打出来的东西全在 GBK 里：这个脚本在任何 codepage 下都不会因 print 而崩
+        except UnicodeEncodeError:
+            pass
+        if "reconfigure" not in path.read_text(encoding="utf-8"):
+            offenders.append(path.name)
+    detail = (
+        f"会 print GBK 装不下的字符而没重配编码：{offenders}"
+        if offenders
+        else f"{len(scripts)} 个脚本入口对齐"
+    )
+    out("console encoding", not offenders, detail)
+    if offenders:
+        fails.append(f"scripts print non-GBK characters without reconfiguring stdout: {offenders}")
+
+
 def check_doc_references() -> None:
     """Docs are referenced by semantic filename now, not by a number.
 
@@ -1016,6 +1072,7 @@ def main() -> int:
     check_domain_isolation()
     check_safety_prompt()
     check_line_endings()
+    check_console_encoding()
     check_readme_quickstart()
     check_milestone_alignment()
     check_v1_v2_boundary()
