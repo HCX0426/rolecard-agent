@@ -161,9 +161,21 @@ class RoleCardService:
         return self.get(role_id)
 
     def delete(self, role_id: str) -> None:
+        """删角色卡，并**连她自己的那份状态一起删**。
+
+        09-26 轮 R26-08：从前这里只删 `role_card` 一行，于是该角色的
+        `role_memory_item` / `role_proactive_state` / `role_memory` 全部留着 —— 而
+        `current_role_id` 没有外键，**同名重建一张卡就把旧记忆原样复活**。用户读到的是
+        "我删掉的角色还记得我从没说过的事"。
+
+        刻意**不动会话与消息**：那是用户的对话历史，不是这个角色的附属物；删一个角色
+        不该顺手销毁用户聊过的东西（与卸载不删数据同一条理由）。
+        """
         role = self.get(role_id)  # raises RoleNotFound if absent
         if role.is_builtin:
             raise BuiltinRoleProtected(f"built-in role cannot be deleted: {role_id}")
+        for table in ("role_memory_item", "role_proactive_state", "role_memory"):
+            self._conn.execute(f"DELETE FROM {table} WHERE role_id = ?", (role_id,))
         self._conn.execute("DELETE FROM role_card WHERE role_id = ?", (role_id,))
         self._conn.commit()
 

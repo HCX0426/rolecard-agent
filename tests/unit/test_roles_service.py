@@ -211,3 +211,65 @@ def test_update_can_replace_exemplars(roles: RoleCardService) -> None:
     roles.create(_new("styled", exemplars=[RoleExemplar(user="旧", assistant="旧答")]))
     roles.update("styled", RoleCardUpdate(exemplars=[RoleExemplar(user="新", assistant="新答")]))
     assert [e.user for e in roles.get("styled").exemplars] == ["新"]
+
+
+def test_deleting_a_role_takes_her_own_state_with_it(
+    conn: sqlite3.Connection, roles: RoleCardService
+) -> None:
+    """R26-08：删角色要连**她自己的**记忆与主动状态一起删，但不动用户的会话。
+
+    从前这里只删 `role_card` 一行，于是同名重建一张卡就把旧记忆原样复活 ——
+    用户读到的是"我删掉的角色还记得我从没说过的事"。
+    """
+    from rolecard_agent.core.memory import add_item
+    from rolecard_agent.core.proactive_state import get_state, save_state
+
+    roles.create(_new("ghost"))
+    add_item(conn, bucket="ghost", text="用户下周要体检")
+    st = get_state(conn, "ghost")
+    st.affinity = 3.0
+    save_state(conn, st)
+    assert get_state(conn, "ghost").affinity == 3.0
+
+    roles.delete("ghost")
+
+    gone = conn.execute(
+        "SELECT COUNT(*) c FROM role_card WHERE role_id='ghost'"
+    ).fetchone()["c"]
+    assert gone == 0
+    assert conn.execute(
+        "SELECT COUNT(*) c FROM role_memory_item WHERE role_id='ghost'"
+    ).fetchone()["c"] == 0, "记忆跟着角色走"
+    assert conn.execute(
+        "SELECT COUNT(*) c FROM role_proactive_state WHERE role_id='ghost'"
+    ).fetchone()["c"] == 0, "关系数值跟着角色走"
+
+    # 同名重建：必须是一张干净的卡，不该继承任何旧状态
+    roles.create(_new("ghost", system_prompt="全新设定。"))
+    fresh = get_state(conn, "ghost")
+    assert fresh.affinity == 0.0 and fresh.open_threads == ()
+    assert conn.execute(
+        "SELECT COUNT(*) c FROM role_memory_item WHERE role_id='ghost'"
+    ).fetchone()["c"] == 0
+
+
+def test_deleting_a_role_keeps_the_users_conversation(
+    conn: sqlite3.Connection, roles: RoleCardService
+) -> None:
+    """删角色销毁的是那个角色，**不是用户聊过的历史**（与"卸载不删数据"同一条理由）。"""
+    roles.create(_new("todelete"))
+    # 用 conftest 已经种好的 tenant/user（'t1'/'u1'）—— 外键是真开的，自己拼一份
+    # 假租户只会先撞 FK。
+    conn.execute(
+        "INSERT INTO session_thread (thread_id, user_id, current_role_id, title)"
+        " VALUES ('s_x', 'u1', 'todelete', '和她要聊的事')"
+    )
+    conn.commit()
+
+    roles.delete("todelete")
+
+    row = conn.execute(
+        "SELECT current_role_id FROM session_thread WHERE thread_id='s_x'"
+    ).fetchone()
+    assert row is not None, "会话与历史必须原样留着"
+    assert row["current_role_id"] == "todelete"
