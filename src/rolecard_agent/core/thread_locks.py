@@ -141,10 +141,57 @@ def extraction_is_running(thread_id: str) -> bool:
         return thread_id in _extracting
 
 
+# ---------------------------------------------------------------- 停止生成的取消信号
+#
+# 与上面两样都不是一回事：锁管"谁先写这份检查点"，提取标记管"有没有同类在跑"，这里管
+# **"这一轮还要不要继续"**。生命周期也不同 —— 它不由下令的人释放，而是在**下一轮开始时**
+# 清掉（上一句的"停"绝不能顺延到下一句）。
+#
+# 为什么需要单独一枚旗子而不是"把 SSE 连接关掉就完事"（2026-09-24 实测推翻的假设，
+# 审计 §12.12②）：`await run_in_executor(next, gen)` 被取消**不会**中断线程池里已经在跑的
+# 那次 `next()` —— 节点继续跑到提交，模型继续吐字。所以取消必须走到**分块边界**上，
+# 由正在消费流的那一层自己收手。
+
+_stopped: set[str] = set()
+
+
+def request_stop(thread_id: str) -> bool:
+    """给这个会话下"停"的手势。True = 这次是新增的（调用方据此决定要不要留痕）。"""
+    if not thread_id:
+        return False
+    with _guard:
+        added = thread_id not in _stopped
+        if len(_stopped) > _MAX_TRACKED:
+            # 停过又再没开过口的会话会一直留一枚旗子。忘了它是安全的（最坏是某一轮没被
+            # 取消），而攒成无界集合是不安全的 —— 宁可忘，不可长。
+            _stopped.clear()
+        _stopped.add(thread_id)
+        return added
+
+
+def stop_requested(thread_id: str) -> bool:
+    """这一轮该不该收手。消费循环每个边界问一次 —— 它只是一次集合查找。"""
+    if not thread_id:
+        return False
+    with _guard:
+        return thread_id in _stopped
+
+
+def clear_stop(thread_id: str) -> None:
+    """一轮**开始**时调用：把上一句留下的"停"擦掉。"""
+    if not thread_id:
+        return
+    with _guard:
+        _stopped.discard(thread_id)
+
+
 __all__ = [
+    "clear_stop",
     "end_extraction",
     "extraction_is_running",
     "release_thread",
+    "request_stop",
+    "stop_requested",
     "thread_is_busy",
     "thread_write",
     "try_extraction",

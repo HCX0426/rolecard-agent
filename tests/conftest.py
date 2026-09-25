@@ -67,11 +67,23 @@ class ScriptedChat:
         self._bound = sorted(getattr(t, "name", str(t)) for t in tools)
         return self
 
-    def invoke(self, input: Any, **kwargs: Any) -> BaseMessage:  # noqa: A002
+    def _next_reply(self, input: Any) -> BaseMessage:  # noqa: A002
         self.calls.append({"tools": self._bound, "messages": list(input)})
         if not self.replies:
             return AIMessage(content="(script exhausted)")
         return self.replies.pop(0)
+
+    def invoke(self, input: Any, **kwargs: Any) -> BaseMessage:  # noqa: A002
+        return self._next_reply(input)
+
+    def stream(self, input: Any, **kwargs: Any) -> Any:  # noqa: A002
+        """内核现在走流（`call_model` 要能在分块边界收手，见 #18）。
+
+        这里一次交出**整块**：节点的累加是 `acc + chunk`，单块就是恒等情形 —— 所以既有那些
+        "断言提交了什么文本 / 哪些 tool_calls"的用例一条都不用改，而真实的多块与中途收手
+        由 `tests/unit/test_turn_stop.py` 专门钉。
+        """
+        yield self._next_reply(input)
 
     @property
     def last_visible_tools(self) -> list[str] | None:

@@ -17,7 +17,12 @@ from collections.abc import Sequence
 from typing import Any
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.tools import tool
 
 from rolecard_agent.config import ModelBackend, Settings
@@ -388,6 +393,11 @@ class FakeModel:
         self.last_prompt = prompt
         return self._reply
 
+    def stream(self, prompt: Any, **kwargs: Any) -> Any:
+        """内核走的是流（`call_model` 要能在分块边界收手）：一次给整块 = 累加的恒等情形。"""
+        self.last_prompt = prompt
+        yield self._reply
+
 
 class RecordingTracer:
     """Duck-typed Tracer: captures emitted events so a test can assert on them."""
@@ -490,6 +500,9 @@ def test_call_model_leaves_usage_out_of_node_end(roles: RoleCardService) -> None
                 usage_metadata={"input_tokens": 900, "output_tokens": 37, "total_tokens": 937},
             )
 
+        def stream(self, prompt: Any, **kwargs: Any) -> Any:
+            yield self.invoke(prompt, **kwargs)
+
     tracer = RecordingTracer()
     ctx = _ctx(ToolRegistry(), roles, _UsageModel(), tracer=tracer)
     call_model(
@@ -520,6 +533,9 @@ def test_call_model_resolves_role_backend(roles: RoleCardService) -> None:
 
         def invoke(self, prompt: Any, **kwargs: Any) -> Any:
             return AIMessage(content="from-cloud")
+
+        def stream(self, prompt: Any, **kwargs: Any) -> Any:
+            yield self.invoke(prompt, **kwargs)
 
     def resolver(name: str | None, **_kwargs: Any) -> Any:
         picked.append(name)

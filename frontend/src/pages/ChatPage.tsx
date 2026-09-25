@@ -496,7 +496,7 @@ export default function ChatPage({
       }
     }
     setMessages((m) => [...m, { role: "user", content: text || "（图片）", ...(image ? { image } : {}) }]);
-    const controller = startBubble();
+    const controller = startBubble(tid);
     await streamChat(tid, text, onEvent, controller.signal, image);
     const aborted = controller.signal.aborted;
     abortRef.current = null;
@@ -549,7 +549,7 @@ export default function ChatPage({
     if (!content && !image) return;
     sendingRef.current = true;
     setBusy(true);
-    const controller = startBubble();
+    const controller = startBubble(sessionId);
     setEditing(null);
     await streamEdit(sessionId, mid, content, onEvent, controller.signal, image);
     setLive(null);

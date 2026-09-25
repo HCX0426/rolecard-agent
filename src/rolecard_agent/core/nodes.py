@@ -27,7 +27,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 
 from rolecard_agent.config import Settings
@@ -42,6 +42,7 @@ from rolecard_agent.core.prompts import (
 )
 from rolecard_agent.core.state import now_ts
 from rolecard_agent.core.text import text_of
+from rolecard_agent.core.thread_locks import stop_requested
 from rolecard_agent.core.tools.errors import ToolExecutionError
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.roles.service import RoleCardService, RoleNotFound
@@ -229,11 +230,18 @@ class ChatLike(Protocol):
 
     Narrow on purpose: tests inject a scripted fake, and a Protocol keeps them from having to
     construct a real chat model (which would drag in a running Ollama instance).
+
+    `stream` (not `invoke`) is what the kernel calls since #18: "停止生成" has to reach inside
+    the model call, and a call we do not iterate cannot be interrupted. Fakes yield one chunk
+    holding the whole scripted reply - accumulation is `acc + chunk`, so a single chunk is the
+    identity case.
     """
 
     def bind_tools(self, tools: Sequence[Any], **kwargs: Any) -> ChatLike: ...
 
     def invoke(self, input: Any, **kwargs: Any) -> Any: ...
+
+    def stream(self, input: Any, **kwargs: Any) -> Any: ...
 
 
 def _no_memory(_role_id: str | None = None) -> str:
@@ -475,6 +483,85 @@ def _scrub_own_repeats(
     return out
 
 
+class TurnStopped(Exception):
+    """用户按了「停止生成」，而这一轮的模型调用**还没开始**。
+
+    与"中途收手"分开处理是有必要的：中途停 = 把已经生成的那半截如实提交（她看到的就是
+    历史里有的，见 `_collect_model_stream`）；还没开始就停 = 什么都不提交，检查点停在
+    按下去之前那一刻 —— 留一条空的 AI 消息在历史里，界面上就是一个没人说过的气泡。
+    """
+
+
+def _plain_message(chunk: AIMessageChunk) -> AIMessage:
+    """分块 → 一条普通的 AI 消息（搬字段，不是转类型）。
+
+    `AIMessageChunk` 是 `AIMessage` 的子类，看着能直接用 —— 但它的 `type` 是
+    `"AIMessageChunk"`，而检查点序列化与历史回放都按消息类型分流，存进去就是界面上一个
+    认不出来的行。langchain-core 1.6 没有 `.message` 那个属性，所以自己搬。
+    """
+    return AIMessage(
+        content=chunk.content,
+        additional_kwargs=dict(chunk.additional_kwargs or {}),
+        response_metadata=dict(chunk.response_metadata or {}),
+        tool_calls=list(chunk.tool_calls or []),
+        invalid_tool_calls=list(chunk.invalid_tool_calls or []),
+        usage_metadata=chunk.usage_metadata,
+        name=chunk.name,
+    )
+
+
+def _collect_model_stream(
+    bound: ChatLike,
+    prompt: list[Any],
+    invoke_kwargs: dict[str, Any],
+    *,
+    thread_id: str,
+) -> tuple[Any, bool]:
+    """自己拿住模型的**分块流**：攒回一条完整回复，并在每个块边界问一次"该收手了吗"。
+
+    为什么不再是 `bound.invoke()`（2026-09-25，#18）：挂了 SSE 回调时 langchain 内部走的
+    确实也是流式路径，但**那条流不在我们手里** —— 于是"停止生成"只能干等：
+    `await run_in_executor(next, gen)` 被取消并不中断线程池里已经在跑的那次 `next()`
+    （审计 §12.12② 实测：一句被取消的 800 字生成把下一个请求排在它后面）。
+    拿住流之后收手就是 `close()`，而实测**关掉连接真的放得开引擎**：同一台机 qwen3-vl:8b，
+    长生成跑到第 3 块关连接，之后 1-token 探针 0.30s / 0.20s / 0.16s（基线 0.12s）——
+    Ollama 在客户端断开后不到一秒就停了，云端同理是连接一断就不再计。停这才意味着省。
+
+    返回 `(消息, 是否中途被打断)`。中途停时**丢掉半截的 tool_calls**：用户按停止的意思是
+    "别说了"，不是"用没生成完的参数去执行工具"；丢掉之后图的路由自然走到结束。
+    """
+    if thread_id and stop_requested(thread_id):
+        raise TurnStopped
+    acc: Any = None
+    stopped = False
+    stream = bound.stream(prompt, **invoke_kwargs)
+    try:
+        for chunk in stream:
+            if thread_id and stop_requested(thread_id):
+                stopped = True
+                break
+            acc = chunk if acc is None else acc + chunk
+    finally:
+        # 显式关：让底层 HTTP 流立刻断掉，而不是等 GC。这一步才是"省下来"的那一下。
+        close = getattr(stream, "close", None)
+        if close is not None:
+            close()
+    if acc is None:
+        # 一个块都没来就被停（或模型回了个空流）：这一轮没有内容可提交。
+        if not stopped:
+            return AIMessage(content=""), False
+        raise TurnStopped
+    message = _plain_message(acc) if isinstance(acc, AIMessageChunk) else acc
+    if stopped and getattr(message, "tool_calls", None):
+        kept = {
+            k: v
+            for k, v in (getattr(message, "additional_kwargs", None) or {}).items()
+            if k != "tool_calls"
+        }
+        message = AIMessage(content=message.content, additional_kwargs=kept)
+    return message, stopped
+
+
 def call_model(
     state: dict[str, Any],
     ctx: KernelContext,
@@ -580,7 +667,22 @@ def call_model(
 
     with timer() as elapsed:
         invoke_kwargs = {} if config is None else {"config": config}
-        response = bound.invoke(prompt, **invoke_kwargs)
+        response, stopped = _collect_model_stream(
+            bound, prompt, invoke_kwargs, thread_id=str(state.get("thread_id") or "")
+        )
+    if stopped:
+        # 中途收手：把已经生成的那半截照原样提交（她看到的与历史里的必须是同一份），
+        # 并留一条痕 —— 审计 §12.12② 里"补写半句"那条 P3 的前提正是"半句没进历史"，
+        # 从这一版起它不成立了：停在哪儿，历史就到哪儿。
+        ctx.tracer.emit(
+            TraceEvent(
+                event="turn_stopped",
+                node="call_model",
+                thread_id=state.get("thread_id"),
+                role_id=role_id,
+                detail={"chars": len(text_of(response))},
+            )
+        )
     # 这里**不记 token 账，也不往 `node_end` 写用量**（审计 §12.8/#8）。原因不是"取不到"，
     # 而是取到的必然错：挂了 SSE 回调时 langchain 走的也是流式路径，而供应商每个分块都回一份
     # "累计到此"的 usage、合并时逐块相加 —— 实测一条"在吗"非流式 26 token、流式合并后 272,607。

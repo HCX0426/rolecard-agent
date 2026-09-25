@@ -57,6 +57,9 @@ class _LoopingChat:
             tool_calls=[{"name": "list_roles", "args": {}, "id": f"c{self.rounds}"}],
         )
 
+    def stream(self, prompt: Any, **kwargs: Any) -> Any:  # noqa: A002
+        yield self.invoke(prompt, **kwargs)
+
 
 class _RecursingGraph:
     """`.stream` 直接抛超限：把"翻译成人话"那一段单独钉住，不必真跑 25 步。"""

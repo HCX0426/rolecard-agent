@@ -686,6 +686,12 @@ export const api = {
     ),
   decideApproval: (id: number, decision: "approve" | "reject", token: string | null) =>
     request<ApprovalRow>("POST", `/api/approvals/${id}/decide`, { decision, token }),
+  /** 叫停这一轮生成（#18）。幂等；真正的收手发生在服务端消费分块的那一层。 */
+  stopTurn: (threadId: string) =>
+    request<{ thread_id: string; requested: boolean }>(
+      "POST",
+      `/api/session/${encodeURIComponent(threadId)}/stop`,
+    ),
   /** 提取精华：把这段对话抽成记忆条目（一次真模型调用 → 长超时，本地卡上就要几十秒）。 */
   distillSession: (threadId: string) =>
     request<DistillOutcome>(
@@ -765,7 +771,9 @@ export type ChatEvent =
   | { type: "tool_call"; name: string; args: Record<string, unknown> }
   | { type: "tool_result"; name: string; content: string }
   | { type: "error"; detail: string }
-  | { type: "end" };
+  // `stopped` 是后端对"这一轮是用户叫停的"的记账（#18）。界面目前不读它 —— 客户端自己按的
+  // 停止有 `signal.aborted` 可依据，而这个字段真正回答的是"服务端认不认这个停"。
+  | { type: "end"; stopped?: boolean };
 
 /** 会话的上下文预算事实（`GET /api/session/{id}/context`）。 */
 export interface SessionContext {

@@ -1,0 +1,238 @@
+""""停止生成"要真的停（任务 #18 / 审计 §12.12②）。
+
+钉的是三件事，每一件都是这一轮改动新增的行为：
+
+1. **中途停 = 停在哪儿，历史就到哪儿**：`call_model` 现在自己拿住模型的流，看到取消旗就
+   收手并把**已经生成的那半截**提交 —— 她看到的与检查点里的是同一份。顺带把半截的
+   tool_calls 丢掉：按停止的意思是"别说了"，不是"拿没生成完的参数去执行工具"。
+2. **流必须被 `close()`**：停之所以省东西，全靠关掉底层 HTTP 流。实测（同机 qwen3-vl:8b，
+   长生成跑到第 3 块关连接）之后 1-token 探针 0.30 / 0.20 / 0.16 s，基线 0.12 s ——
+   Ollama 不到 1s 就停了。不 close 就是"界面停了而它还在写"，那正是 #18 的原始症状。
+3. **旗子的生命周期**：一轮开始清一次（上一句的停不顺延），没人要这一轮时（客户端关页面）
+   由 `run_turn` 的 finally 补上停。
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from typing import Any
+
+import pytest
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
+from langchain_core.tools import tool
+
+from rolecard_agent.config import Settings
+from rolecard_agent.core.nodes import KernelContext, TurnStopped, call_model
+from rolecard_agent.core.observability import NullTracer
+from rolecard_agent.core.thread_locks import clear_stop, request_stop, stop_requested
+from rolecard_agent.core.tools.registry import ToolRegistry
+from rolecard_agent.core.turn import End, run_turn
+from rolecard_agent.roles.service import RoleCardCreate, RoleCardService
+
+
+@pytest.fixture(autouse=True)
+def _clean_flags() -> Iterator[None]:
+    """旗子是进程内的：用例之间必须互不残留。"""
+    clear_stop("t")
+    yield
+    clear_stop("t")
+
+
+@tool
+def list_roles() -> str:
+    """一个够用的假工具。"""
+    return "ok"
+
+
+def _ctx(roles: RoleCardService, model: Any) -> KernelContext:
+    return KernelContext(
+        model=model,
+        registry=ToolRegistry(),
+        roles=roles,
+        tracer=NullTracer(),
+        settings=Settings(),
+        enabled_domains=lambda: [],
+        tool_epoch=lambda: 1,
+    )
+
+
+def _role(roles: RoleCardService, role_id: str = "stopper") -> str:
+    roles.create(
+        RoleCardCreate(
+            role_id=role_id,
+            role_name=role_id,
+            system_prompt="x",
+            tool_whitelist=None,
+            model_name=None,
+        )
+    )
+    return role_id
+
+
+class _StreamedFake:
+    """一条真·分块流：按 `stop_after` 块之后自己按下"停止"，并记下有没有被 `close()`。
+
+    生产里按停止的是用户（走 `/api/session/{tid}/stop`），这里让她出现在流的中间 —— 这样
+    "边界上收手"这件事才有东西可收。
+    """
+
+    def __init__(
+        self, chunks: list[Any], *, stop_after: int | None = None, thread_id: str = "t"
+    ) -> None:
+        self.chunks = chunks
+        self.stop_after = stop_after
+        self.thread_id = thread_id
+        self.closed = False
+        self.yielded = 0
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> _StreamedFake:
+        return self
+
+    def invoke(self, prompt: Any, **kwargs: Any) -> Any:  # noqa: A002 - 与 ChatLike 同名
+        return self.chunks[-1]
+
+    def stream(self, prompt: Any, **kwargs: Any) -> Any:  # noqa: A002
+        try:
+            for chunk in self.chunks:
+                yield chunk
+                self.yielded += 1
+                if self.stop_after is not None and self.yielded >= self.stop_after:
+                    request_stop(self.thread_id)
+        finally:
+            self.closed = True
+
+
+def _state(role_id: str) -> dict[str, Any]:
+    return {
+        "messages": [HumanMessage(content="问一句")],
+        "current_role_id": role_id,
+        "thread_id": "t",
+    }
+
+
+# ------------------------------------------------------------------ 节点：中途收手
+
+
+def test_stop_mid_stream_commits_the_partial_and_closes_the_stream(
+    roles: RoleCardService,
+) -> None:
+    """停在哪儿，历史就到哪儿；而那条流必须被关掉（不关就是没停）。"""
+    fake = _StreamedFake(
+        [
+            AIMessageChunk(content="雨后"),
+            AIMessageChunk(content="她走了很远"),
+            AIMessageChunk(content="这一段不该出现"),
+        ],
+        stop_after=2,
+    )
+    out = call_model(_state(_role(roles)), _ctx(roles, fake))
+    committed = str(out["messages"][0].content)
+    assert committed == "雨后她走了很远"
+    assert "这一段不该出现" not in committed
+    assert fake.closed is True, "没 close 的「停」只是不看了，模型还在往这条流里写"
+
+
+def test_stop_drops_tool_calls_that_never_finished(roles: RoleCardService) -> None:
+    """丢掉半截的工具调用之后，路由自然走向结束 —— 停不该顺手替她把事做了。"""
+    fake = _StreamedFake(
+        [
+            AIMessageChunk(
+                content="我想查一下",
+                tool_calls=[{"name": "list_roles", "args": {}, "id": "c1", "type": "tool_call"}],
+            ),
+            AIMessageChunk(content="然后按了停止"),
+            AIMessageChunk(content="后面还有"),
+        ],
+        stop_after=2,
+    )
+    out = call_model(_state(_role(roles)), _ctx(roles, fake))
+    message = out["messages"][0]
+    assert isinstance(message, AIMessage)
+    assert not message.tool_calls
+    assert "然后按了停止" in str(message.content)
+
+
+def test_stop_before_the_call_raises_and_commits_nothing(roles: RoleCardService) -> None:
+    """停在模型调用**开始之前**（多半是工具还跑着）：不提交一条空 AI 消息 ——
+    那会在界面上留下一个没人说过的气泡。"""
+    fake = _StreamedFake([AIMessageChunk(content="根本不该被叫")])
+    request_stop("t")
+    with pytest.raises(TurnStopped):
+        call_model(_state(_role(roles)), _ctx(roles, fake))
+    assert fake.yielded == 0
+
+
+# ------------------------------------------------------------------ 轮次：旗子与 End
+
+
+class _OneNodeGraph:
+    """够用的"图"：`stream()` 按 LangGraph 的形状吐 `(mode, payload)`，并记下有没有被关。"""
+
+    def __init__(self, chunks: list[Any]) -> None:
+        self.chunks = chunks
+        self.closed = False
+
+    def stream(self, _input: Any, *, config: Any = None, stream_mode: Any = None) -> Any:
+        try:
+            for chunk in self.chunks:
+                yield ("messages", (chunk, {"langgraph_node": "call_model"}))
+        finally:
+            self.closed = True
+
+
+def _end_event(events: list[Any]) -> End:
+    ends = [e for e in events if isinstance(e, End)]
+    assert ends, f"没有 End 事件：{[type(e).__name__ for e in events]}"
+    return ends[-1]
+
+
+def test_end_reports_stopped_when_the_user_called_it(roles: RoleCardService) -> None:
+    """中途停：事件流照常收尾，但 `End.stopped=True` —— 界面据此标"已停止"而不是发错误。"""
+    graph = _OneNodeGraph([AIMessageChunk(content="半句话", id="m1")])
+    events: list[Any] = []
+    for ev in run_turn(
+        graph,
+        graph_input={"messages": []},
+        config={"configurable": {"thread_id": "t"}},
+        role_summary={"role_id": "r", "role_name": "r"},
+    ):
+        events.append(ev)
+        request_stop("t")  # 用户在她开口之后立刻按了停止
+    assert _end_event(events).stopped is True
+
+
+def test_abandoned_turn_asks_for_stop_so_the_model_does_not_run_on(
+    roles: RoleCardService,
+) -> None:
+    """客户端关了页面（生成器被 close）⇒ 这一轮没人要了 ⇒ 立起取消旗。
+
+    这是 #18 的另一半：用户以为"关掉窗口就停了"，而实测那边还在跑 —— 现在消费循环在
+    下一个块边界就会看到旗子并收手（`call_model` 那半边由上面三条钉住）。
+    """
+    graph = _OneNodeGraph(
+        [AIMessageChunk(content="第一块", id="m1"), AIMessageChunk(content="第二块", id="m1")]
+    )
+    gen = run_turn(
+        graph,
+        graph_input={"messages": []},
+        config={"configurable": {"thread_id": "t"}},
+        role_summary={"role_id": "r", "role_name": "r"},
+    )
+    next(gen)  # 只拿一个事件就走人（等价于浏览器 abort）
+    gen.close()
+    assert stop_requested("t") is True
+
+
+def test_a_new_turn_clears_the_stale_stop(roles: RoleCardService) -> None:
+    """上一句的"停"不顺延到下一句：新一轮开始就把旗子擦掉，否则第二次永远停在第一块上。"""
+    request_stop("t")
+    events = list(
+        run_turn(
+            _OneNodeGraph([AIMessageChunk(content="这次跑完了", id="m1")]),
+            graph_input={"messages": []},
+            config={"configurable": {"thread_id": "t"}},
+            role_summary={"role_id": "r", "role_name": "r"},
+        )
+    )
+    assert _end_event(events).stopped is False
+    assert stop_requested("t") is False

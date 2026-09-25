@@ -505,7 +505,7 @@ export default function PetPage() {
       }
       setBusy(true);
       busyRef.current = true;
-      const controller = startBubble();
+      const controller = startBubble(usedTid);
       try {
         await streamChat(usedTid, text, onEvent, controller.signal);
       } finally {

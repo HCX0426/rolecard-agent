@@ -790,3 +790,26 @@ def test_read_all_marks_every_role(client: TestClient, tmp_path: Path) -> None:
     assert body["unread"] == 0 and len(body["items"]) == 2, "标已读不是删：行还要留在抽屉里"
     assert body["unread_by_role"] == {}
     conn.close()
+
+
+def test_stop_turn_endpoint_only_raises_the_flag(client: TestClient) -> None:
+    """`POST /api/session/{tid}/stop` 的全部职责就是立一枚取消旗（#18）。
+
+    停一个"已经不跑了"的会话也回 200：用户的按钮不该因为手速比流快而报错，而旗子在下一轮
+    开始时会被清掉（`run_turn` 开头），所以这里没有需要清理的状态。真正收手的是
+    `call_model` 里那个分块循环 —— 由 `tests/unit/test_turn_stop.py` 钉住。
+    """
+    from rolecard_agent.core.thread_locks import clear_stop, stop_requested
+
+    tid = client.post("/api/session", json={"role_id": "general_assistant"}).json()["thread_id"]
+    try:
+        assert stop_requested(tid) is False
+        res = client.post(f"/api/session/{tid}/stop")
+        assert res.status_code == 200
+        assert res.json() == {"thread_id": tid, "requested": True}
+        assert stop_requested(tid) is True
+        assert client.post(f"/api/session/{tid}/stop").status_code == 200, "按两次不该有第二种结果"
+        actions = [row["action"] for row in client.get("/api/audit?limit=50").json()]
+        assert "stop_turn" in actions, "停止是一个会改变系统状态的动作，得留痕"
+    finally:
+        clear_stop(tid)

@@ -43,6 +43,7 @@ from rolecard_agent.core.state import new_state, now_ts
 from rolecard_agent.core.text import text_of
 from rolecard_agent.core.thread_locks import (
     end_extraction,
+    request_stop,
     thread_write,
     try_extraction,
 )
@@ -463,6 +464,28 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.post("/api/session/{thread_id}/stop")
+def stop_turn(
+    thread_id: str,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> object:
+    """叫停这一轮 —— 只做一件事：立一枚取消旗，别的一律交给正在消费流的那一层去看。
+
+    为什么不"直接取消那个线程"：Python 没有安全的强杀，而 `await run_in_executor(next)` 被
+    取消**并不中断**线程池里已经在跑的那次 `next()`（审计 §12.12② 实测）。所以停必须走到
+    **分块边界**上：`call_model` 自己拿住了模型的流（`_collect_model_stream`），看见旗子就
+    `close()` 收手 —— 实测关掉连接后 Ollama 不到 1s 就停止生成（1-token 探针 0.30/0.20/0.16s，
+    基线 0.12s），云端同理是连接一断就不再计。
+
+    幂等：按两次停止没有额外后果。这一轮已经跑完时旗子会留到**下一轮开始**才被清
+    （`run_turn` 开头），所以这里不需要去问"那轮还在不在"。
+    """
+    request_stop(thread_id)
+    ctx.roles.audit(actor=actor.id, action="stop_turn", target=thread_id, detail={})
+    return {"thread_id": thread_id, "requested": True}
 
 
 # -- 提取精华（对话 → 记忆条目）------------------------------------------------

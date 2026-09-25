@@ -33,10 +33,16 @@ from langgraph.errors import GraphRecursionError
 
 from rolecard_agent.core.graph import MODEL_NODE, TOOLS_NODE
 from rolecard_agent.core.guard import check
-from rolecard_agent.core.nodes import VisionNotSupported
+from rolecard_agent.core.nodes import TurnStopped, VisionNotSupported
 from rolecard_agent.core.observability import TraceEvent, Tracer, scrub_endpoints
 from rolecard_agent.core.text import text_of
-from rolecard_agent.core.thread_locks import release_thread, try_thread_write
+from rolecard_agent.core.thread_locks import (
+    clear_stop,
+    release_thread,
+    request_stop,
+    stop_requested,
+    try_thread_write,
+)
 from rolecard_agent.core.usage import TokenUsage, usage_from_metadata
 
 # 回扣不投送的字符数。必须 >= 最长触发式（最宽约 21 字：主语 + 8 填充 + 能愿动词 + 8 填充
@@ -157,9 +163,15 @@ class Error:
 
 @dataclass(frozen=True, slots=True)
 class End:
-    """流收尾。无论成功失败都会发 —— 客户端靠它结束"生成中"态。"""
+    """流收尾。无论成功失败都会发 —— 客户端靠它结束"生成中"态。
+
+    `stopped=True` 说清"这一轮是用户叫停的"：不是失败（不发 Error），但界面该把气泡标成
+    已停止而不是"生成完了"。中途停时历史里已经有那半截（`call_model` 提交的就是它），
+    所以这里只是补一个来源说明。
+    """
 
     sse_type: ClassVar[str] = "end"
+    stopped: bool = False
 
 
 TurnEvent = (
@@ -255,6 +267,9 @@ def run_turn(
     也不因为一把拿不到的锁把用户这句话拒掉。
     """
     thread_id = str((config.get("configurable") or {}).get("thread_id") or "")
+    # 上一句的"停"绝不能顺延到这一句：旗子是在这一轮的开始处清，不是在上一轮的结束处清 ——
+    # 结束处清会赶上"用户立刻发了下一句"那种接力，两边抢同一个键。
+    clear_stop(thread_id)
     held = try_thread_write(thread_id, timeout=_TURN_LOCK_WAIT)
     if not held and tracer is not None:
         tracer.emit(
@@ -265,6 +280,11 @@ def run_turn(
                 detail={"waited_s": _TURN_LOCK_WAIT},
             )
         )
+    # `ended[0]` 由正文在发出 `End` 的那一刻立起来。它留着的唯一用途是分辨
+    # **"这一轮自己跑完了"** 与 **"没人要它了"**（客户端关页面 / 断连）：
+    # 后者要顺手把这轮叫停 —— 不然生成会继续在线程池里跑到天荒地老（#18 的另一半：
+    # 用户以为"关掉窗口就停了"，实测那边还在烧）。
+    ended = [False]
     try:
         yield from _iter_turn(
             graph,
@@ -273,8 +293,11 @@ def run_turn(
             role_summary=role_summary,
             tracer=tracer,
             usage_recorder=usage_recorder,
+            ended=ended,
         )
     finally:
+        if not ended[0]:
+            request_stop(thread_id)
         # 只放自己拿到的那把：等满 150 秒没拿到时锁在**别人**手里，无条件 release 会把
         # 那一轮的互斥提前解开 —— 正是要防的那个分叉。
         if held:
@@ -293,8 +316,9 @@ def _iter_turn(
     role_summary: dict[str, str],
     tracer: Tracer | None = None,
     usage_recorder: Callable[[TokenUsage | None], None] | None = None,
+    ended: list[bool] | None = None,
 ) -> Iterator[TurnEvent]:
-    """`run_turn` 的正文：一轮事件流本身（锁在外层那半边，见上）。
+    """`run_turn` 的正文：一轮事件流本身（锁与"没人要了就叫停"在外层那半边，见上）。
 
     同步实现是**必须的**而不是选择：项目的检查点是同步 `SqliteSaver`，其 async 对应实现会抛
     `NotImplementedError`。需要异步投送（SSE 不占事件循环）的宿主用 `api/chat.py` 的线程池桥。
@@ -308,6 +332,9 @@ def _iter_turn(
     """
     yield Start(role=role_summary)
     guard = StreamingGuard()
+    # 这一轮是不是用户叫停的（两种：模型调用没开始就停 = 异常；开始后被停 = 旗子还立着）。
+    stopped_early = False
+    thread_id = str((config.get("configurable") or {}).get("thread_id") or "")
     # 一次用户轮次里 `call_model` 可能跑多次（工具循环）。裁剪只报**第一次**：那一轮代表
     # "这一问开始时模型能看到多少历史"，是用户需要知道的那个事实；后面几次的数值是工具
     # 消息把窗口挤得更满的结果，重复上报只会变成噪音。
@@ -360,6 +387,11 @@ def _iter_turn(
                     guard.reset()
                 elif node == TOOLS_NODE:
                     yield from _from_tool_update(update)
+    except TurnStopped:
+        # 用户按了停止，而这一轮的模型调用**还没开始**（多半是停在工具跑着的那段路上）。
+        # 不发 Error：那不是失败；也不会有新消息进历史：节点根本没跑完一次生成。
+        # 仍然往下走用量结账 —— 一次用户轮次里可能已经跑过几轮工具调用，那些 token 是真花了。
+        stopped_early = True
     except GraphRecursionError:
         # 工具循环撞上步数上限（core/graph.build_graph_config 设的 recursion_limit）。
         # 这不是"模型调用失败"——模型一直在正常回话，是它陷入了重复调用，所以必须
@@ -405,7 +437,10 @@ def _iter_turn(
             )
         if usage_recorder is not None:
             usage_recorder(usage)
-    yield End()
+    # 中途收手时旗子还立着（节点自己看见它才停的手）；没开始就停是上面那条 TurnStopped。
+    if ended is not None:
+        ended[0] = True
+    yield End(stopped=stopped_early or stop_requested(thread_id))
 
 
 def _from_message_chunk(
