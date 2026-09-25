@@ -8,8 +8,10 @@
 
 跑法（后端配置从**库副本**读，不碰真库；模型自己连）：
 
-    SQLITE_PATH=build/scratch-stop.db OPEN_THREADS_PROBE_BACKEND=siliconflow \\
-    PYTHONIOENCODING=utf-8 PYTHONPATH=src .venv/Scripts/python.exe scripts/probe_open_threads_live.py
+    SQLITE_PATH=build/scratch-stop.db \\
+    OPEN_THREADS_PROBE_BACKEND=siliconflow \\
+    PYTHONIOENCODING=utf-8 PYTHONPATH=src \\
+        .venv/Scripts/python.exe scripts/probe_open_threads_live.py
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from pathlib import Path
 from rolecard_agent.config import Settings
 from rolecard_agent.core.graph import build_model
 from rolecard_agent.core.model_settings import ModelSettingsService
-from rolecard_agent.core.open_threads import MAX_OPEN_THREADS, _PROMPT, parse_open_threads
+from rolecard_agent.core.open_threads import _PROMPT, MAX_OPEN_THREADS, parse_open_threads
 from rolecard_agent.core.text import text_of
 from rolecard_agent.storage.db import connect
 

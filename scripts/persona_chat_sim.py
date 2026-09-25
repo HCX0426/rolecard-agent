@@ -293,7 +293,9 @@ def _write_sampling(db: Path, spec: str, *, target: str) -> None:
             conn.execute("SELECT name FROM model_backend ORDER BY sort_order LIMIT 1").fetchone()[0]
         )
         cols = ", ".join(f"{k} = ?" for k in fields)
-        cur = conn.execute(f"UPDATE model_backend SET {cols} WHERE name = ?", (*fields.values(), name))
+        cur = conn.execute(
+            f"UPDATE model_backend SET {cols} WHERE name = ?", (*fields.values(), name)
+        )
         conn.commit()
         if cur.rowcount == 0:
             raise SystemExit(f"副本里没有后端 {name!r}，--sampling 没处落")
