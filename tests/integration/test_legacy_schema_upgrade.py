@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from rolecard_agent.core.model_settings import _tools_of, _vision_of
 from rolecard_agent.domains.registry import DOMAINS
 from rolecard_agent.storage.db import bootstrap, connect, reconcile_columns, schema_files
 
@@ -200,6 +201,41 @@ def test_shape_migrated_tables_are_left_to_migrate(tmp_path: Path) -> None:
         f"补列器把手形迁移的活抢了：{added}"
     )
     assert "provider_id" not in _cols(conn, "model_backend")
+    conn.close()
+
+
+def test_a_legacy_upgrade_leaves_the_capability_flags_unmeasured(tmp_path: Path) -> None:
+    """旧形态库升上来之后，`supports_vision` / `supports_tools` 必须是 **NULL（没测过）**。
+
+    旧写法回填成 `NOT NULL DEFAULT 0/1`。运行时的数值一模一样（`_vision_of(NULL)=False`、
+    `_tools_of(NULL)=True`），坏的是**声明**：模型页把那两格渲染成"✗ / ✓"，用户以为有人
+    测过，其实一次都没测 —— 而"没测过"该显示成 `?`（`list_providers` 走 `_tri_state`）。
+    本轮猜测区那条"升级回填与新建路径语义不一致"就是这么定成实的（新建路径写 NULL 是对的，
+    错的是升级路径）。
+    """
+    db = tmp_path / "app.db"
+    conn = connect(db)
+    bootstrap(conn, enabled_domains=DOMAINS)
+    conn.execute("DROP TABLE model_backend")
+    conn.execute(
+        "CREATE TABLE model_backend ("
+        " name TEXT PRIMARY KEY, provider TEXT, base_url TEXT, api_key TEXT,"
+        " model TEXT, usage TEXT NOT NULL DEFAULT 'chat', sort_order INTEGER DEFAULT 0)"
+    )
+    conn.execute("INSERT INTO model_backend (name, provider, model) VALUES ('old','ollama','m')")
+    conn.commit()
+    # 第二次启动才走得到形态判定与搬层（第一次建的是新库形状）
+    bootstrap(conn, enabled_domains=DOMAINS)
+
+    row = conn.execute(
+        "SELECT supports_vision, supports_tools FROM model_backend WHERE name = 'old'"
+    ).fetchone()
+    assert row is not None, "搬层把这一行弄丢了"
+    assert row[0] is None and row[1] is None, f"升级替用户回答了没人问过的问题：{tuple(row)}"
+    # 运行时口径没变 —— 这句是"为什么这个修正零风险"的证据，不是附赠断言。
+    # 直接引这两个私有函数是故意的：语义就长在它们身上，绕道公开接口反而断不到同一件事。
+    assert _vision_of(row[0]) is False
+    assert _tools_of(row[1]) is True
     conn.close()
 
 

@@ -351,8 +351,13 @@ def _migrate(conn: SqlConnection) -> None:
         for name, ddl in {
             "usage": "TEXT NOT NULL DEFAULT 'chat'",
             "num_ctx": "INTEGER",
-            "supports_vision": "INTEGER NOT NULL DEFAULT 0",
-            "supports_tools": "INTEGER NOT NULL DEFAULT 1",
+            # 能力位**必须留 NULL**：NULL 是"没测过"，而 `schema.sql` 与界面（`?`）都按这个
+            # 口径走。旧写法回填成 `NOT NULL DEFAULT 0/1`，等于替每个升级上来的用户回答了两
+            # 个没人问过的问题 —— 界面上从此显示"✗ 不支持视觉 / ✓ 支持工具"，看着像测过。
+            # 运行时不受影响（`_vision_of(NULL)=False`、`_tools_of(NULL)=True` 与旧默认同值），
+            # 所以这是一次纯"别撒谎"的修正。（09-26 把本轮猜测区那条量实之后改的。）
+            "supports_vision": "INTEGER",
+            "supports_tools": "INTEGER",
         }.items():
             if name not in cols:
                 conn.execute(f"ALTER TABLE model_backend ADD COLUMN {name} {ddl}")
