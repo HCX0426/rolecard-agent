@@ -220,7 +220,15 @@ def main() -> int:
             print("\n▶ pytest(覆盖率≥85%)：跳过（src/ 无改动）", flush=True)
             timings.append((name, 0.0))
             continue
-        cwd = ROOT / "frontend" if name.startswith("前端") else None
+        # 步骤跑在哪个目录按名字前缀定（比在元组里再加一个字段少一处噪声）。第一版
+        # 我把 shell 那步写成"全局 npm run typecheck"，于是它在仓库根跑、根本没有这个
+        # script —— 报错的样子像"壳的类型检查挂了"，其实是步目录错了。
+        if name.startswith("前端"):
+            cwd: Path | None = ROOT / "frontend"
+        elif name.startswith("shell"):
+            cwd = ROOT / "shell"
+        else:
+            cwd = None
         ok, dt = _run(name, cmd, cwd)
         timings.append((name, dt))
         if not ok:
