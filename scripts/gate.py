@@ -58,6 +58,12 @@ NPM = "npm.cmd" if platform.system() == "Windows" else "npm"
 STEPS: list[tuple[str, list[str], str]] = [
     ("ruff", [PY, "-m", "ruff", "check", "."], "both"),
     ("mypy", [PY, "-m", "mypy"], "both"),
+    # scripts/ 是 2957 行**取证尺子**，从前只过 ruff 不过 mypy（09-26 轮 R26-21）。
+    # 补上第一天就抓到两个运行时已经坏了的脚本（seed_demo_data / run_eval 调
+    # `make_embedder` 少两个必填关键字参数 ⇒ 一跑就 TypeError），见那一轮台账 S-6 行。
+    ("mypy scripts/", [PY, "-m", "mypy", "scripts/"], "both"),
+    # shell/（Electron 壳）此前全程无人检查：它有 `npm run typecheck` 但门禁只 cd frontend。
+    ("shell typecheck", [NPM, "run", "typecheck"], "full"),
     (
         "pytest(-x, 无覆盖率)",
         [PY, "-m", "pytest", "-p", "no:cacheprovider", "-W", "ignore", "-q", "-x"],

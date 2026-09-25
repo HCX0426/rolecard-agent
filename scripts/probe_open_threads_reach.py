@@ -175,7 +175,7 @@ def _run_tick(rt: Any, stub: StubModel, rec: Recorder, roles: list[Any], label: 
     for role in roles:
         rt.conn.execute("UPDATE agent_reachout SET state='read' WHERE role_id=?", (role.role_id,))
     before = _scans(stub)
-    made = rt.reachout.tick_once(now_utc=when_utc, now_local=when_local)  # type: ignore[union-attr]
+    made = rt.reachout.tick_once(now_utc=when_utc, now_local=when_local)
     traces = [
         f"{e.event}:{e.detail.get('trigger') or e.detail.get('why') or e.detail.get('mode')}"
         for e in rec.events
@@ -206,7 +206,7 @@ def _force_timer_experiment(
             cfg, {"messages": [HumanMessage(content="我下周要体检，结果出来跟你说")]}
         )
         before = _scans(stub)
-        made = rt.reachout.tick_once(now_utc=now, now_local=now.astimezone())  # type: ignore[union-attr]
+        made = rt.reachout.tick_once(now_utc=now, now_local=now.astimezone())
         fired = [
             e.detail.get("trigger")
             for e in rec.events
@@ -234,7 +234,7 @@ def _clear_all_shadows(
     )
     rt.conn.commit()
     before = _scans(stub)
-    made = rt.reachout.tick_once(now_utc=now, now_local=now.astimezone())  # type: ignore[union-attr]
+    made = rt.reachout.tick_once(now_utc=now, now_local=now.astimezone())
     fired = [
         e.detail.get("trigger")
         for e in rec.events

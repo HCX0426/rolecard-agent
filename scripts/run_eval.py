@@ -45,7 +45,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from fastapi.testclient import TestClient
@@ -144,10 +144,29 @@ def _seed_demo_data(conn: object) -> None:  # 与 seed_demo_data.py 同源（脚
 
 def _seed_knowledge(db_path: Path, settings: object) -> None:
     """v2.1：注入知识文档。嵌入器与 app 同源（make_embedder 读同一环境）——
-    维度不一致会让检索直接失败，所以必须用同一个 make_embedder。"""
-    from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder
+    维度不一致会让检索直接失败，所以必须用同一个 make_embedder。
 
-    kb = KnowledgeBase(Path(db_path).parent / "chroma", make_embedder(settings))  # type: ignore[arg-type]
+    选型走这份 eval 库自己的「服务」页事实面：`make_embedder` 的签名早已改成
+    `order` + `endpoints` 两个必填关键字参数，这里曾经还按老样子一个参数调用，
+    跑批直接 TypeError —— 与 `seed_demo_data.py` 同源，同一个静默坏掉的根因
+    （scripts 从前不进 mypy，见 09-26 轮 S-6）。
+    """
+    from rolecard_agent.core.bootstrap import candidate_ids
+    from rolecard_agent.core.services import ServiceEndpointService
+    from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder
+    from rolecard_agent.storage.db import connect
+
+    svc_conn = connect(Path(db_path))
+    try:
+        services = ServiceEndpointService(svc_conn)
+        embedder = make_embedder(
+            settings,  # type: ignore[arg-type]
+            order=candidate_ids(services, "embedding"),
+            endpoints=services.endpoint_map("embedding"),
+        )
+    finally:
+        svc_conn.close()
+    kb = KnowledgeBase(Path(db_path).parent / "chroma", embedder)
     if kb.scope_count("health_reports") == 0:
         kb.index(
             "health_reports",
@@ -186,10 +205,10 @@ def _check_assertions(
     for a in assertions:
         kind = a.get("kind")
         if kind == "tool_called":
-            if a["name"] not in invoked:  # type: ignore[operator]
+            if a["name"] not in invoked:
                 failures.append(f"未调用工具 {a['name']}")
         elif kind == "tool_not_called":
-            if a["name"] in invoked:  # type: ignore[operator]
+            if a["name"] in invoked:
                 failures.append(f"不该调用却调用了 {a['name']}")
         elif kind == "answer_contains_value":
             value = float(a["value"])  # type: ignore[arg-type]
@@ -208,8 +227,8 @@ def _check_assertions(
 
 
 def _run_case(
-    client: TestClient, case: dict[str, object], domains: tuple[str, ...]
-) -> dict[str, object]:
+    client: TestClient, case: dict[str, Any], domains: tuple[str, ...]
+) -> dict[str, Any]:
     """对齐插件状态 → 建会话 → 对话 → 回放。返回该用例的判定结果。"""
     for d in domains:
         wanted = d in (case.get("enabled_domains") or [])
@@ -244,8 +263,8 @@ def _run_case(
 
     # /api/session/{id}/messages 是分页响应（messages/total/limit/truncated）；
     # 评测对话都很短，不会被截断 —— 但形状必须按新契约取。
-    page = client.get(f"/api/session/{thread_id}/messages").json()  # type: ignore[attr-defined]
-    messages = page["messages"]  # type: ignore[index]
+    page = client.get(f"/api/session/{thread_id}/messages").json()
+    messages = page["messages"]
     invoked = [
         name for m in messages if m["role"] == "assistant" for name in (m.get("tools") or [])
     ]
@@ -301,7 +320,7 @@ def _backend_summary(settings: object) -> dict[str, object]:
     }
 
 
-def _run_suite(cases: list[dict[str, object]], settings: object) -> list[dict[str, object]]:
+def _run_suite(cases: list[dict[str, Any]], settings: object) -> list[dict[str, Any]]:
     """完整跑一遍评测集：独立临时库 + 独立 app（与真实部署同构，不共享任何状态）。"""
     from fastapi.testclient import TestClient
 
@@ -328,7 +347,7 @@ def _run_suite(cases: list[dict[str, object]], settings: object) -> list[dict[st
 
 def _aggregate(
     runs: list[list[dict[str, object]]], cases: list[dict[str, object]]
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """跨次聚合：单次通过率是**抽样值**，不是基线（实测同一模型 7/7 与 4/7 相邻出现）。
 
     聚合三件事：
@@ -415,7 +434,7 @@ def main() -> int:
     }
 
     print("\n=== 跨遍聚合 ===")
-    for cid, slot in agg["per_case"].items():  # type: ignore[union-attr]
+    for cid, slot in agg["per_case"].items():
         flag = "" if slot["passed"] == slot["of"] else "  ← 不稳定"
         print(f"  {cid:<14} {slot['passed']}/{slot['of']}{flag}")
     rates = (agg["pass_rate_min"], agg["pass_rate_mean"], agg["pass_rate_max"])
@@ -428,10 +447,10 @@ def main() -> int:
         f"{summary['provider']} · {summary['model']}（backend={summary['backend']}）"
         f" · 评测集指纹 {summary['case_set_hash']}"
     )
-    if agg["flakiest"]:  # type: ignore[union-attr]
-        print(f"不稳定用例：{', '.join(agg['flakiest'])}")  # type: ignore[union-attr]
-    if agg["pass_rate_mean"] < args.min_pass_rate:  # type: ignore[union-attr]
-        gap = args.min_pass_rate - float(agg["pass_rate_mean"])  # type: ignore[arg-type]
+    if agg["flakiest"]:
+        print(f"不稳定用例：{', '.join(agg['flakiest'])}")
+    if agg["pass_rate_mean"] < args.min_pass_rate:
+        gap = args.min_pass_rate - float(agg["pass_rate_mean"])
         # 达标与否都要打印：不达标时人需要立刻看到"差多少"，而不是自己算。
         print(
             f"⚠️ 平均通过率未达回归线 {args.min_pass_rate * 100:.0f}%"
@@ -450,7 +469,7 @@ def main() -> int:
     if not args.strict:
         return 0
     # --strict 用**平均通过率**卡回归线：单次通过率是抽样值，用它卡门等于掷骰子。
-    mean = float(agg["pass_rate_mean"])  # type: ignore[arg-type]
+    mean = float(agg["pass_rate_mean"])
     return 0 if mean >= args.min_pass_rate else 1
 
 

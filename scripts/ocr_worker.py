@@ -19,7 +19,9 @@ from __future__ import annotations
 import contextlib
 import os
 import sys
+from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 # PaddlePaddle 3.x 的 oneDNN(MKLDNN) CPU 后端在部分 OCR 模型上会命中未实现的 PIR 属性
 # （ConvertPirAttribute2RuntimeAttribute not support ... onednn_instruction.cc），导致推理崩。
@@ -30,7 +32,7 @@ os.environ.setdefault("PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT", "0")
 # stdout/stderr 固定 UTF-8：否则中文 Windows 默认按 GBK 编码，父进程按 locale 解码会乱码。
 for _stream in (sys.stdout, sys.stderr):
     with contextlib.suppress(Exception):
-        _stream.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+        _stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
 
 
 def _build_ocr():  # noqa: ANN202 - 返回 (ocr, is_v3)，类型依赖外部库
@@ -55,10 +57,10 @@ def _build_ocr():  # noqa: ANN202 - 返回 (ocr, is_v3)，类型依赖外部库
     return PaddleOCR(use_angle_cls=True, lang="ch"), False  # 2.x
 
 
-def _texts_from_v3(results: object) -> list[str]:
+def _texts_from_v3(results: Iterable[Any] | None) -> list[str]:
     """3.x：每个 result 为 dict-like，取 `rec_texts`（识别出的字符串列表）。"""
     out: list[str] = []
-    for res in results or []:  # type: ignore[union-attr]
+    for res in results or []:
         texts = None
         if isinstance(res, dict):
             texts = res.get("rec_texts")
@@ -72,10 +74,10 @@ def _texts_from_v3(results: object) -> list[str]:
     return out
 
 
-def _texts_from_v2(result: object) -> list[str]:
+def _texts_from_v2(result: Iterable[Any] | None) -> list[str]:
     """2.x：List[page]，每页 List[(bbox, (text, score))]。"""
     out: list[str] = []
-    for page in result or []:  # type: ignore[union-attr]
+    for page in result or []:
         for line in page or []:
             if not line or len(line) < 2 or not line[1]:
                 continue

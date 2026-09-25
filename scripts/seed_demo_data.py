@@ -42,9 +42,22 @@ def main() -> None:
     # v2.1：注入知识文档（作用域 health_reports）。放在报告注入之前、独立幂等 ——
     # 报告已存在时不能连带跳过知识文档。嵌入器与主服务同源（同一环境 → 同一 backend
     # → 向量维度一致）；切换嵌入后端后需删除 data/chroma 重建。
+    # 选型必须走「服务」页那份事实面（`candidate_ids`/`endpoint_map`）：这里曾经直接
+    # `make_embedder(settings)`，而那个签名早已改成两个必填关键字参数 —— 于是这个脚本
+    # 一跑就 TypeError，却因为"scripts 不归 mypy 管"（09-26 轮 S-6）静默坏了很久。
+    from rolecard_agent.core.bootstrap import candidate_ids
+    from rolecard_agent.core.services import ServiceEndpointService
     from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder
 
-    kb = KnowledgeBase(Path("data/chroma").resolve(), make_embedder(settings))
+    services = ServiceEndpointService(conn)
+    kb = KnowledgeBase(
+        Path("data/chroma").resolve(),
+        make_embedder(
+            settings,
+            order=candidate_ids(services, "embedding"),
+            endpoints=services.endpoint_map("embedding"),
+        ),
+    )
     if kb.scope_count("health_reports") == 0:
         doc = (
             "胆囊结石随访须知（虚构演示文档）：\n\n"

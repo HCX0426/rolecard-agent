@@ -30,6 +30,13 @@ import urllib.request
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING, TypeVar, cast
+
+if TYPE_CHECKING:  # 只为类型存在：cast 的字符串形式不在运行时求值
+    from rolecard_agent.core.nodes import ChatLike
+
+#: `check()` 是装饰器而不是"跑完给 None"：被装饰的函数必须原样返回（见 `check` 的 docstring）。
+_F = TypeVar("_F", bound=Callable[..., object])
 
 # 仓库根：真机 UI 冒烟需要以仓库根为 cwd 调用 scripts/ui_smoke.js
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,7 +49,7 @@ import contextlib  # noqa: E402
 
 for _s in (sys.stdout, sys.stderr):
     with contextlib.suppress(Exception):
-        _s.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+        _s.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
 
 from fastapi.testclient import TestClient  # noqa: E402
 from langchain_core.messages import AIMessage  # noqa: E402
@@ -129,7 +136,7 @@ def _flat_models(payload: dict) -> dict:
 RESULTS: list[tuple[str, bool, str]] = []
 
 
-def run_check(name: str, fn: Callable[[], None]) -> None:
+def run_check(name: str, fn: Callable[..., object]) -> None:
     """跑一项并把结论记进 RESULTS —— 冒烟要把任何异常都记成"功能断了"，而不是崩掉整轮。
 
     失败说明里带上**断言在哪一行断的**：项内十几条断言不每条都写得出消息（写了也重复），
@@ -150,8 +157,15 @@ def run_check(name: str, fn: Callable[[], None]) -> None:
         RESULTS.append((name, True, ""))
 
 
-def check(name: str) -> None:  # 装饰器：把函数的 docstring 当作判定依据
-    def wrap(fn):
+def check(name: str) -> Callable[[_F], _F]:  # 装饰器：把函数的 docstring 当作判定依据
+    """就地跑一次检查，并把原函数原样返回（被装饰的 `_console()` 等仍然是可调用的）。
+
+    原先签名写的是 `-> None` —— 那是个**撒谎的注解**：它其实返回一个装饰器。mypy 一旦
+    覆盖 scripts/ 就在 13 个 `@check(...)` 处报 `func-returns-value`，症状长得像"有人把
+    装饰器的返回值当函数用"，而真正错的是这一行签名（09-26 轮 S-6 把 mypy 推进门禁后现形）。
+    """
+
+    def wrap(fn: _F) -> _F:
         run_check(name, fn)
         return fn
 
@@ -168,7 +182,9 @@ def _sse(text: str) -> list[dict[str, object]]:
 
 
 def main() -> int:
-    model = FakeChat()
+    # 假模型只需要满足冒烟自己要用的那几个方法，不去冒充完整的 ChatLike 协议
+    # （那是一坨 langchain 基类，为了过类型去继承它只会让这份替身比被测的东西更重）。
+    model = cast("ChatLike", FakeChat())
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         root = Path(tmp)
         db_path = root / "smoke.db"
