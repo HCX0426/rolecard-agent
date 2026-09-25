@@ -225,11 +225,18 @@ pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 - `requirements*.txt` 是 **pip 安装镜像**，按范围拆开：`requirements.txt` 只含 v1 内核，
   `-api` 接入层 / `-rag` 向量检索 / `-cloud` 云端 provider / `-dev` 开发工具 / `-ocr` PaddleOCR（独立环境）。
   `scripts/check_consistency.py` 会断言每一组 extras 与对应镜像文件的**包名集合一致**，改了一边不改另一边会被拦下。
-- **没有锁文件（刻意）**：版本不 pin，范围镜像 + parity 断言保证包集合一致；版本漂移由 CI
-  每次干净重装暴露。这是弃用 uv 后的如实口径，不要在文档里声称"依赖被锁定"。
-- **v1 不做数据库迁移**：`bootstrap()` 用的是 `CREATE TABLE IF NOT EXISTS`，所以给已有库加列**不会生效**。
-  改了 schema 就要重建库（删掉 `data/sqlite/app.db` 再跑 `init_db.py`）。生产要引入 Alembic 之类的迁移工具——
-  这是有意留到 v2 的取舍，不是遗漏。
+- **数据库有迁移，别再写"删库重建"**（本条 2026-09-25 订正：原文说"v1 不做迁移、改 schema 就删
+  `data/sqlite/app.db`"，那句话在 `_migrate` 存在之后一直是错的，而**照做会去删一份真实数据**）。
+  实际机制是 `storage/db.py::_migrate`：一串**幂等**的 `ALTER TABLE ... ADD COLUMN`（当前 12 处），
+  每次 `connect()` 都跑一遍，所以老库能一路升上来。加列的正确做法是三处一起改：
+  `core/schema.sql`（新建路径）+ `_migrate`（升级路径）+ **`model_settings.py` 里那份自带的内联
+  DDL**（`migrate_to_provider_layers` 复制了一份建表语句，漏改它会在老库升级测试里炸
+  `no such column`，2026-09-25 就炸过一次）。
+  ⚠️ **仍然成立的缺口**（本轮审计 `R26-04`，别当成"迁移机制完备"）：`_migrate` 只覆盖核心表，
+  **域表一列都没有迁移**（`domains/*/schema.sql` 的列只在新建时出现），且
+  `session_thread.model_name` 也没有 `ALTER`；全仓**没有一条**"从老形状库跑 bootstrap、再比列集合
+  等于 schema.sql"的测试。所以：改**核心表**列要走上面三处；改**域表**列目前真的只能重建库——
+  这是缺口不是设计，补法见新一轮台账。
 
 ### 8.6 不要做的事
 

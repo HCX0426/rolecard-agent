@@ -38,32 +38,44 @@ CANDIDATE_SOURCES: tuple[Path, ...] = (
 )
 
 
-def _freshness(path: Path) -> datetime | None:
-    """这份库"最后一次有内容"的时刻。
+#: 判"这份库有没有内容、什么时候有内容"要看的所有表。
+#: **不能只看 session_thread**：今天有一轮实验里快照库的 reachout 比 session 晚 26 小时，
+#: 只看会话表会把活的那一侧读成旧的。
+_FRESHNESS_QUERIES: tuple[str, ...] = (
+    "SELECT MAX(updated_at) FROM session_thread",
+    "SELECT MAX(created_at) FROM agent_reachout",
+)
 
-    先问库本身（`session_thread.max(updated_at)`），问不到才退回文件 mtime：
-    WAL 模式下主库文件可以几十天不动，而内容全在 `-wal` 里 —— 只看 mtime 会把一份
-    活库读成死的。
+
+def _freshness(path: Path) -> datetime | None:
+    """这份库"最后一次有内容"的时刻。**空库一律读成 None**（= 不参与比较，必输）。
+
+    为什么不能用文件 mtime 兜底（这是我今天自己写出来的一个回归）：第一版在表为空时
+    回落 `path.stat().st_mtime`，于是"刚被某个开发态启动顺手建出来的空库"凭着一个新 mtime
+    **压过了 52 MB 的真库**被选为源 —— 空库永远不该赢，赢了的后果是整轮实验采了一个空世界。
     """
+    best: datetime | None = None
     try:
         conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
     except sqlite3.Error:
         return None
     try:
-        row = conn.execute("SELECT MAX(updated_at) FROM session_thread").fetchone()
-    except sqlite3.Error:
-        row = None
+        for sql in _FRESHNESS_QUERIES:
+            try:
+                row = conn.execute(sql).fetchone()
+            except sqlite3.Error:
+                continue  # 表还没有（很老的库/新库）—— 跳过这一路，别当成 0
+            if not row or not row[0]:
+                continue
+            try:
+                stamp = datetime.fromisoformat(str(row[0]))
+            except ValueError:
+                continue  # 各家后端时间格式不完全一致，读不懂就忽略这一路
+            if best is None or stamp > best:
+                best = stamp
     finally:
         conn.close()
-    if row and row[0]:
-        try:
-            return datetime.fromisoformat(str(row[0]))
-        except ValueError:
-            pass  # 各家后端写的时间格式不完全一致（有的带毫秒有的不带），落 mtime
-    try:
-        return datetime.fromtimestamp(path.stat().st_mtime)
-    except OSError:
-        return None
+    return best
 
 
 def resolve_live_db() -> Path:

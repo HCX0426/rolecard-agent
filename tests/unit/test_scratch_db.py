@@ -81,7 +81,7 @@ def test_single_root_is_quiet(tmp_path, monkeypatch, capsys):
 
 
 def test_content_beats_file_mtime(tmp_path, monkeypatch):
-    """WAL 模式下主库文件可以几十天不动而内容很新；只看 mtime 会把活库读成死的。"""
+    """新旧只问库里的内容：WAL 下主库文件可以几十天不动而内容很新。"""
     db = _db(tmp_path / "live.db", newest="2026-09-25 05:59:18", ids=("s1",))
     stale = (datetime.now(UTC) - timedelta(days=30)).timestamp()
     import os
@@ -89,6 +89,43 @@ def test_content_beats_file_mtime(tmp_path, monkeypatch):
     os.utime(db, (stale, stale))
     mod = _load(monkeypatch, tmp_path)
     assert mod._freshness(db).year == 2026  # 来自表，不是文件时间
+
+
+def test_empty_db_never_wins_even_with_fresh_mtime(tmp_path, monkeypatch):
+    """**空库不参与比较**。第一版（同一天的我自己）在表为空时回落文件 mtime，于是
+    某个开发态启动顺手建出来的空库凭新 mtime 压过 52 MB 真库被选为源 —— 整轮实验
+    就采在一个空世界上，而且没有任何一条输出会提这件事。
+    """
+    empty = tmp_path / "empty-fresh.db"
+    empty.touch()
+    conn = sqlite3.connect(empty)
+    conn.execute("CREATE TABLE session_thread (thread_id TEXT, updated_at TEXT)")
+    conn.execute("CREATE TABLE agent_reachout (id TEXT, created_at TEXT)")
+    conn.commit()
+    conn.close()
+    future = (datetime.now(UTC) + timedelta(days=1)).timestamp()
+    import os
+
+    os.utime(empty, (future, future))  # 故意让它"看起来最新"
+
+    old = _db(tmp_path / "real.db", newest="2026-09-20 00:00:00", ids=("s1",))
+    monkeypatch.delenv("LIVE_DB_PATH", raising=False)
+    mod = _load(monkeypatch, tmp_path)
+    monkeypatch.setattr(mod, "CANDIDATE_SOURCES", (empty, old))
+    assert mod._freshness(empty) is None
+    assert mod.resolve_live_db() == old
+
+
+def test_freshness_reads_reachout_too(tmp_path, monkeypatch):
+    """只看 session_thread 会把"会话没动、但刚冒过话"的活库读成旧的（实测差 26 小时）。"""
+    db = _db(tmp_path / "quiet-chatter.db", newest="2026-09-23 12:21:11", ids=("s1",))
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE agent_reachout (id TEXT, created_at TEXT)")
+    conn.execute("INSERT INTO agent_reachout VALUES ('r9', '2026-09-24 14:18:00')")
+    conn.commit()
+    conn.close()
+    mod = _load(monkeypatch, tmp_path)
+    assert mod._freshness(db).day == 24
 
 
 def test_copy_carries_the_exact_session_set(tmp_path, monkeypatch):
