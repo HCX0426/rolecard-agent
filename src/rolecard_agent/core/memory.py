@@ -273,6 +273,38 @@ def invalidate_item(
     return get_item(conn, item_id)
 
 
+def merged_text(keep: dict[str, Any], drop: dict[str, Any]) -> str:
+    """两句拼成一句的**兜底**写法（面板上那是个可编辑的预填框，不是最终结果）。
+
+    为什么还要留一个默认值：合并这条路将来会被"整理记忆"那种批量动作复用，那时没人
+    逐条改句子 —— 而一个空的/只剩半句的默认值比一句读起来别扭但信息完整的合并句更糟。
+    """
+    a = str(keep["text"]).strip()
+    b = str(drop["text"]).strip()
+    if not b or a == b:
+        return a[:MAX_ITEM_CHARS]
+    return f"{a}；{b}"[:MAX_ITEM_CHARS]
+
+
+def merge_items(
+    conn: SqlConnection, *, keep_id: int, drop_id: int, text: str | None = None
+) -> dict[str, Any] | None:
+    """把两条合成一条：留下的那条换上合并后的句子，被合掉的那条**退役并指向它**。
+
+    走 `invalidate_item` 而不是删除，是这一族记忆的铁律（不变式 15）：整理错了要能撤销、
+    能回滚，而 `superseded_by` 就是这条链的来路。**同桶才许合**由调用方挡（跨角色的
+    "合并"其实是把一个人的事实搬进另一个人的脑子，那是污染不是整理）。
+    """
+    keep = get_item(conn, keep_id)
+    drop = get_item(conn, drop_id)
+    if keep is None or drop is None:
+        return None
+    line = " ".join((text if text is not None else merged_text(keep, drop)).split())
+    updated = edit_item(conn, item_id=keep_id, text=line)
+    invalidate_item(conn, item_id=drop_id, superseded_by=keep_id)
+    return updated
+
+
 def enforce_cap(
     conn: SqlConnection, *, bucket: str, now: datetime | None = None
 ) -> list[int]:

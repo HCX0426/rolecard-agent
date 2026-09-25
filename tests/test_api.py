@@ -7,6 +7,7 @@ Traceability: US-1, US-2, US-3, US-8（US-7 由控制台页面端点覆盖）。
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -338,6 +339,65 @@ def test_memory_item_endpoints_crud_and_pin(client: TestClient) -> None:
     missing = client.patch("/api/settings/memory/item/999999", json={"pinned": True})
     assert missing.status_code == 404
     assert client.post("/api/settings/memory/item", json={"text": "  "}).status_code == 400
+
+
+def test_memory_items_can_be_merged(tmp_path: Path) -> None:
+    """S-3 的后端那一半：两条合一条，**被合掉的那条退役并指向留下的那条**。
+
+    判据不是"列表少了一条"，而是那条链还在：`invalidated_at` + `superseded_by` 是
+    "整理错了能回滚"的唯一依据（不变式 15：退役不物理删）。今天没有任何读端点会给出
+    已退役的条目，所以这一步直接看库 —— 看的是落库形状，不是接口口径。
+    """
+    app = create_app(sqlite_path=tmp_path / "merge.db")
+    with TestClient(app) as client:
+
+        def id_of(payload: dict, text: str) -> int:
+            return next(i["id"] for i in payload["items"] if i["text"] == text)
+
+        first = client.post("/api/settings/memory/item", json={"text": "用户住在上海"}).json()
+        second = client.post(
+            "/api/settings/memory/item", json={"text": "用户在上海一家医院工作"}
+        ).json()
+        a, b = id_of(first, "用户住在上海"), id_of(second, "用户在上海一家医院工作")
+
+        merged = client.post(
+            f"/api/settings/memory/item/{a}/merge/{b}",
+            json={"text": "用户住在上海，在一家医院工作"},
+        )
+        assert merged.status_code == 200
+        items = merged.json()["items"]
+        assert [i["text"] for i in items] == ["用户住在上海，在一家医院工作"]
+        assert items[0]["id"] == a
+
+        with sqlite3.connect(tmp_path / "merge.db") as conn:
+            row = conn.execute(
+                "SELECT invalidated_at, superseded_by FROM role_memory_item WHERE id = ?", (b,)
+            ).fetchone()
+        assert row is not None and row[0] is not None and row[1] == a
+
+        # 不给句子 = 退回"两句拼一起"那个兜底写法（批量整理那条路没人逐条改句子）。
+        third = client.post("/api/settings/memory/item", json={"text": "用户养了一只猫"}).json()
+        c = id_of(third, "用户养了一只猫")
+        joined = client.post(f"/api/settings/memory/item/{c}/merge/{a}", json={}).json()
+        assert "用户养了一只猫" in joined["items"][0]["text"]
+        assert "上海" in joined["items"][0]["text"]
+
+        # 三种挡在门口的判定：自己跟自己合、不存在的条目、跨桶。
+        assert client.post(f"/api/settings/memory/item/{c}/merge/{c}", json={}).status_code == 400
+        assert (
+            client.post("/api/settings/memory/item/99998/merge/99999", json={}).status_code == 404
+        )
+        role = client.post(
+            "/api/settings/memory/item",
+            json={"text": "她记得用户提过体检"},
+            params={"role_id": "medical_archivist"},
+        )
+        assert role.status_code == 200
+        cross = client.post(
+            f"/api/settings/memory/item/{id_of(role.json(), '她记得用户提过体检')}/merge/{c}",
+            json={},
+        )
+        assert cross.status_code == 400 and "同一个记忆桶" in cross.json()["detail"]
 
 
 def test_memory_put_rejects_empty_body(client: TestClient) -> None:

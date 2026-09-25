@@ -983,9 +983,64 @@ def patch_memory_item(
     return _memory_payload(ctx, role_id)
 
 
+class MemoryMergeBody(BaseModel):
+    """合并两条时**留下的那条改成什么句子**。不给就退回"两句拼一起"那个兜底写法。
+
+    为什么允许不给：合并这条路将来会被「整理记忆」那种批量动作复用，那时没人逐条改句子。
+    为什么界面一定要给（面板上是可编辑的预填框）：拼出来的句子会重复、常常也读不通，
+    它是兜底不是结果。
+    """
+
+    text: Annotated[str | None, Field(default=None, max_length=2000)] = None
+
+
+@router.post("/api/settings/memory/item/{keep_id}/merge/{drop_id}")
+def merge_memory_item(
+    keep_id: int,
+    drop_id: int,
+    body: MemoryMergeBody,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+    role_id: str | None = Query(None, max_length=64),
+) -> object:
+    """把两条合成一条（S-3 的后端那一半，零迁移：`superseded_by` / `invalidated_at` 早就在表里）。
+
+    三条挡在门口的判定，都是"这一步会不会污染记忆"而不是参数校验：
+      - 任一条不存在 → 404；
+      - **同一条记忆不许跟自己合** → 400（否则留下的那条会被自己退役，界面上凭空少一条）；
+      - **跨角色不许合** → 400：那不是整理，是把一个人的事实搬进另一个人的脑子。
+    被合掉那条走 `invalidate_item`（退役不物理删），所以整理错了能回滚、能查来路。
+    """
+    from rolecard_agent.core import memory as mem
+
+    keep = mem.get_item(ctx.conn, keep_id)
+    drop = mem.get_item(ctx.conn, drop_id)
+    if keep is None or drop is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"记忆条目不存在：{keep_id if keep is None else drop_id}",
+        )
+    if keep_id == drop_id:
+        raise HTTPException(status_code=400, detail="不能把一条记忆和它自己合并。")
+    if keep["role_id"] != drop["role_id"]:
+        raise HTTPException(
+            status_code=400,
+            detail="只能合并同一个记忆桶里的两条（全局与角色之间不许互搬）。",
+        )
+    merged = mem.merge_items(ctx.conn, keep_id=keep_id, drop_id=drop_id, text=body.text)
+    if merged is None:
+        raise HTTPException(status_code=400, detail="合并没做成（条目可能刚被删掉）。")
+    ctx.roles.audit(
+        actor=actor.id,
+        action="merge_memory_item",
+        target=f"memory_item:{keep_id}",
+        detail={"dropped": drop_id, "chars": len(str(merged.get("text") or ""))},
+    )
+    return _memory_payload(ctx, role_id)
+
+
 @router.delete("/api/settings/memory/item/{item_id}")
-def remove_memory_item(
-    item_id: int,
+def remove_memory_item(    item_id: int,
     ctx: AppContext = Depends(get_context),
     actor: Actor = Depends(get_actor),
     role_id: str | None = Query(None, max_length=64),
