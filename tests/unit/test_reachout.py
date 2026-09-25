@@ -1018,6 +1018,32 @@ def test_open_threads_replaces_the_generic_timer_and_are_cached(conn) -> None:
     assert state.open_threads_scan_at is not None, "扫过要记时刻，否则下一 tick 又问一遍"
 
 
+def test_dismissing_a_reachout_keeps_the_row_so_outcomes_can_be_measured(conn) -> None:
+    """R26-14 / S-2：划掉一条主动消息 = 软删，行与三个时刻都留在库里。
+
+    从前这是 `DELETE`，而且主动消息**不进 audit_log** —— 于是"她冒了话而用户把它划掉"
+    这一种结局查无痕迹，接话率 / 看了不接 / 自说自话连击数三种口径一个都算不出来。
+    """
+    from rolecard_agent.core.reachout import delete_reachout, mark_read
+
+    svc.record_reachout(conn, _role(), "她主动冒的一句")
+    rid = int(str(conn.execute("SELECT MAX(id) AS i FROM agent_reachout").fetchone()["i"]))
+    assert mark_read(conn, rid) is True
+    got = conn.execute("SELECT read_at FROM agent_reachout WHERE id=?", (rid,)).fetchone()
+    assert got["read_at"], "已读要留下第一次被读到的时刻"
+    assert delete_reachout(conn, rid) is True
+
+    row = conn.execute(
+        "SELECT state, dismissed_at FROM agent_reachout WHERE id=?", (rid,)
+    ).fetchone()
+    assert row["state"] == "dismissed" and row["dismissed_at"], "行不该被物理删掉"
+    # 划掉的不再出现在收件箱里（用户视角"没了"），但证据还在
+    assert svc.list_reachouts(conn)["items"] == []  # type: ignore[index]
+    assert conn.execute("SELECT COUNT(*) c FROM agent_reachout").fetchone()["c"] == 1
+    # 再划一次 = False（幂等靠状态判，不靠"行还在不在"）
+    assert delete_reachout(conn, rid) is False
+
+
 def test_used_topics_are_consumed_so_they_drive_only_one_open(conn) -> None:
     """R26-11 第二条：这批话题被这句话用掉了就要清空。
 

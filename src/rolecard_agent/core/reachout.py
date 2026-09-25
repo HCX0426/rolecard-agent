@@ -349,11 +349,12 @@ def list_reachouts(
     `role_id` 给定时只返回该角色主动找过你的历史（架构计划 §5.3：按角色卡隔离查看）。
     `file_watch_pending` = 当前挂起的目录变更条数（0 = 无事件或功能关闭）。
     """
-    where = "WHERE role_id = ?" if role_id else ""
+    # `dismissed` 不进列表（用户已经划掉了），但**行留着** —— 那才是"她冒话而没人接"的证据。
+    where = "WHERE state != 'dismissed'" + (" AND role_id = ?" if role_id else "")
     params = (role_id, limit) if role_id else (limit,)
     rows = conn.execute(
-        f"SELECT id, role_id, role_name, text, state, created_at FROM agent_reachout "
-        f"{where} ORDER BY id DESC LIMIT ?",
+        f"SELECT id, role_id, role_name, text, state, created_at, read_at, dismissed_at "
+        f"FROM agent_reachout {where} ORDER BY id DESC LIMIT ?",
         params,
     ).fetchall()
     # 只有**主动会话真的存在**才给跳转目标：这个功能上线之前落库的老消息没有对应的线程，
@@ -410,7 +411,8 @@ def mark_read(conn: SqlConnection, reachout_id: int) -> bool:
     点已读的那几条是正常路径，不该报错。
     """
     cur = conn.execute(
-        "UPDATE agent_reachout SET state = 'read' WHERE id = ? AND state = 'unread'",
+        "UPDATE agent_reachout SET state = 'read', read_at = CURRENT_TIMESTAMP "
+        "WHERE id = ? AND state = 'unread'",
         (reachout_id,),
     )
     if cur.rowcount > 0:
@@ -525,11 +527,14 @@ def prune_inbox(conn: SqlConnection, role_id: str, keep: int) -> int:
         return 0
     before = int(
         str(conn.execute(
-            "SELECT COUNT(*) AS n FROM agent_reachout WHERE role_id = ?", (role_id,)
+            "SELECT COUNT(*) AS n FROM agent_reachout "
+            "WHERE role_id = ? AND state != 'dismissed'",
+            (role_id,),
         ).fetchone()["n"])
     )
     conn.execute(
-        "DELETE FROM agent_reachout WHERE role_id = ? AND id NOT IN ("
+        "UPDATE agent_reachout SET state = 'dismissed', dismissed_at = CURRENT_TIMESTAMP "
+        "WHERE role_id = ? AND state != 'dismissed' AND id NOT IN ("
         "  SELECT id FROM agent_reachout WHERE role_id = ? ORDER BY id DESC LIMIT ?)",
         (role_id, role_id, keep),
     )
@@ -538,22 +543,38 @@ def prune_inbox(conn: SqlConnection, role_id: str, keep: int) -> int:
 
 
 def delete_reachout(conn: SqlConnection, reachout_id: int) -> bool:
-    """删抽屉里的某一行（**不碰会话里的那条消息**）。False = 没有这条。"""
-    cur = conn.execute("DELETE FROM agent_reachout WHERE id = ?", (reachout_id,))
+    """把抽屉里的某一行划掉（**不碰会话里的那条消息**）。False = 没有这条。
+
+    软删而不是 DELETE（09-26 轮 R26-14 / S-2）：从前这一行是**真删掉且不进 audit_log**，
+    于是"她主动说了话而用户把它划了"这一种结局在库里查无痕迹 —— 三种口径里最重要的
+    "看了不接 / 不想接"永久算不出来。留着行只多两个时刻列。
+    """
+    cur = conn.execute(
+        "UPDATE agent_reachout SET state = 'dismissed', dismissed_at = CURRENT_TIMESTAMP "
+        "WHERE id = ? AND state != 'dismissed'",
+        (reachout_id,),
+    )
     conn.commit()
     return cur.rowcount > 0
 
 
 def clear_inbox(conn: SqlConnection, role_id: str) -> int:
     """清空该角色的主动消息记录（同样不碰会话）。返回删掉的条数。"""
-    cur = conn.execute("DELETE FROM agent_reachout WHERE role_id = ?", (role_id,))
+    cur = conn.execute(
+        "UPDATE agent_reachout SET state = 'dismissed', dismissed_at = CURRENT_TIMESTAMP "
+        "WHERE role_id = ? AND state != 'dismissed'",
+        (role_id,),
+    )
     conn.commit()
     return cur.rowcount
 
 
 def clear_all_inboxes(conn: SqlConnection) -> int:
     """清空所有角色的主动消息记录（不给 role_id 时的那条路）。"""
-    cur = conn.execute("DELETE FROM agent_reachout")
+    cur = conn.execute(
+        "UPDATE agent_reachout SET state = 'dismissed', dismissed_at = CURRENT_TIMESTAMP "
+        "WHERE state != 'dismissed'"
+    )
     conn.commit()
     return cur.rowcount
 

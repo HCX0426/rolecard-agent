@@ -103,7 +103,13 @@ CREATE TABLE IF NOT EXISTS agent_reachout (
     role_id     TEXT NOT NULL,             -- 发起主动的角色
     role_name   TEXT,                      -- 展示名冗余（角色被删后仍可读）
     text        TEXT NOT NULL,             -- 主动开口的内容
-    state       TEXT NOT NULL DEFAULT 'unread',  -- unread / read
+    state       TEXT NOT NULL DEFAULT 'unread',  -- unread / read / dismissed（软删，见下）
+    -- 三个结局时刻。为什么必须有（09-26 轮 R26-14 / S-2）：这一源的成败在"她冒出来的那句
+    -- 你想不想回"，而从前**一种结局都量不出来** —— 删除是真删行且不进 audit_log，
+    -- read-all 可以批量刷所以 read≠看过。有了这三列，接话率、自说自话连击数、
+    -- "看了不接"三种口径才都能算。
+    read_at     TIMESTAMP,                       -- 第一次被读到（重复标记不覆盖）
+    dismissed_at TIMESTAMP,                      -- 用户把它从抽屉里划掉
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP  -- UTC（CURRENT_TIMESTAMP）
 );
 
