@@ -18,12 +18,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { api, streamChat, type MessagePage, type MessageRow, type ReachoutRow, type RoleCard } from "../api";
+import { api, streamChat, UNREAD_POLL_MS, type MessagePage, type MessageRow, type ReachoutRow, type RoleCard } from "../api";
 import { useChatStream } from "../hooks/useChatStream";
 import { shellBridge } from "../lib/shell";
 import { type StreamMeta } from "../lib/stream";
 
-const POLL_MS = 10_000; // 与铃铛红点同一节奏：后端没有推送，如实降级为轮询
 const BUBBLE_MS = 30_000; // 气泡到点自己收起：驻留件不该把一句话长期戳在桌面上
 // （不做淡出：这扇窗是透明窗，半透明的每一毫秒透出来的都是桌面本身 —— 那正是"重影"）
 const MAX_BUBBLE_CHARS = 64;
@@ -164,7 +163,7 @@ export default function PetPage() {
 
   useEffect(() => {
     void load();
-    const timer = setInterval(() => void load(), POLL_MS);
+    const timer = setInterval(() => void load(), UNREAD_POLL_MS);
     return () => clearInterval(timer);
   }, [load]);
 

@@ -38,6 +38,11 @@ export interface PluginRow {
   config: unknown;
 }
 
+//: 未读红点的轮询节奏。**后端没有推送通道，如实降级为轮询**。从前是 10s、且在三个地方各写
+//: 一遍字面量；收成一处并按 09-26 轮 S-4 的结论调到 3s —— 主动开口本身是分钟级事件，
+//: 3s 与 10s 的差别只到"勉强能感知"，而上 SSE 要动三个文件一到两天再加断线重连，不值。
+export const UNREAD_POLL_MS = 3_000;
+
 export interface SessionRow {
   thread_id: string;
   title: string | null;

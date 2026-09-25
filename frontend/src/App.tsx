@@ -2,7 +2,7 @@ import { Component, Suspense, lazy, useEffect, useState, type ReactNode } from "
 import ReachoutPanel from "./components/ReachoutPanel";
 import ApprovalPanel from "./components/ApprovalPanel";
 import { ToastProvider } from "./components/Toast";
-import { api } from "./api";
+import { api, UNREAD_POLL_MS } from "./api";
 import { shellBridge } from "./lib/shell";
 import { useTheme } from "./components/useTheme";
 
@@ -169,7 +169,7 @@ export default function App() {
       }
     };
     poll();
-    const timer = setInterval(poll, 10_000);
+    const timer = setInterval(poll, UNREAD_POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(timer);
@@ -188,7 +188,7 @@ export default function App() {
       }
     };
     poll();
-    const timer = setInterval(poll, 10_000);
+    const timer = setInterval(poll, UNREAD_POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(timer);
