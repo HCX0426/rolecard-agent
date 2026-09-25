@@ -103,11 +103,15 @@ def data_roots() -> dict[str, Path | None]:
     """两个数据根 + 安装目录里那份随包 dist。开发态根在 2026-09-25 起是**空的**（陈旧快照
     已隔离到 `data/sqlite/_stale-dev-snapshot-20260924/`），这里仍把它列出来，是为了让"两根"
     这件事本身可见，而不是等下一个人再撞一次。"""
-    local = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-    return {
-        "dev(repo/data)": ROOT / "data" / "sqlite" / "app.db",
-        "installed(%LOCALAPPDATA%)": local / "rolecard-agent" / "sqlite" / "app.db",
-    }
+    # 两个候选**取自 `scratch_db.CANDIDATE_SOURCES`**（09-26 轮 R26-17）：从前这里按
+    # `$LOCALAPPDATA` 自己拼一遍，那边按 `Path.home()/AppData` 硬编码一遍，
+    # `persona_meter` 再按 `Settings.sqlite_path` 走第三套 —— 三套规则并存时，
+    # "改前/改后"的尺子与被量的 A/B 看的可以不是同一个世界。规则只留一处。
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import scratch_db  # noqa: PLC0415
+
+    labels = ("dev(repo/data)", "installed(%LOCALAPPDATA%)")
+    return dict(zip(labels, scratch_db.CANDIDATE_SOURCES, strict=True))
 
 
 def section_schema(declared: dict[str, set[str]]) -> dict[str, Any]:

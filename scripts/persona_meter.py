@@ -65,7 +65,6 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from rolecard_agent.config import Settings  # noqa: E402
 from rolecard_agent.core.reachout import proactive_thread_id  # noqa: E402
 from rolecard_agent.core.usage import daily_usage, local_day, usage_days  # noqa: E402
 
@@ -398,7 +397,19 @@ def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-    db = Path(args.db) if args.db else Path(Settings.from_env().sqlite_path)
+    # 默认看哪份库：**必须与 `persona_ab` / `persona_chat_sim` 同一个取法**（09-26 轮
+    # R26-17 / S-7）。从前这里走 `Settings.from_env().sqlite_path` —— 那是**仓库开发态**
+    # 那一份，而 09-24 之后真数据在安装目录下、开发态那份被隔离成空快照。结果就是：
+    # 这把"改前/改后"的尺子与被量的那两条 A/B 臂看的不是同一个世界，读数没法对。
+    # 判定逻辑因此收口到 `scratch_db.resolve_live_db()` 一处（env 覆盖 > 两根里内容较新者），
+    # 空库永远当不上源那条规矩也只写一遍。
+    if args.db:
+        db = Path(args.db)
+    else:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import scratch_db  # noqa: PLC0415
+
+        db = scratch_db.resolve_live_db()
     if not db.is_absolute():
         db = (ROOT / db).resolve()
     data = report(db, args.limit)
