@@ -69,3 +69,7 @@ scripts/_*.js
 # --- 打包中间产物（D②-4）：PyInstaller 的 onedir 有几百 MB，永远不入库，安装包现打 ---
 /build/
 data/sqlite/*.trace.jsonl
+
+# 开发态数据根里被隔离出来的陈旧快照（2026-09-25，见审计 §12.19 那条数据根分叉）
+data/sqlite/_stale-dev-snapshot-*/
+build/_baseline/

@@ -792,6 +792,100 @@ def report_line_budget() -> None:
         print("note: docs still outweigh code - expected during planning, watch it after M1")
 
 
+#: 行里出现这个词就**优先**当它指这份文档（越具体越靠前）。匹配不到词时不做假设：
+#: 直接去所有文档里找这个编号，找到谁就算谁。
+_CITATION_DOC_KEYS: tuple[tuple[str, str], ...] = (
+    ("架构计划", "docs/archive/架构计划.md"),
+    ("设计稿", "docs/主动消息与记忆设计稿.md"),
+    ("总览", "docs/架构总览.md"),
+    ("需求", "docs/需求与验收标准.md"),
+    ("审计", "docs/架构审计.md"),
+)
+_SECTION_RE = re.compile(r"§\s*(\d+(?:\.\d+)*)")
+_PID_RE = re.compile(r"\b(P\d-\d+)\b")
+#: 文档里可以当被引用目标的两种形状：标题编号（`### 12.19 …`）与台账行号（`| 12.4 |`）。
+_TARGET_HEAD_RE = re.compile(r"^#{2,5}\s+(\d+(?:\.\d+)*)\b")
+_TARGET_ROW_RE = re.compile(r"^\|\s*(P\d-\d+|\d+\.\d+)\s*\|")
+
+
+def _citation_targets(path: pathlib.Path) -> set[str]:
+    """一份文档里所有"能被指到"的编号。"""
+    if not path.exists():
+        return set()
+    found: set[str] = set()
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        for regex in (_TARGET_HEAD_RE, _TARGET_ROW_RE):
+            hit = regex.match(line)
+            if hit:
+                found.add(hit.group(1))
+    return found
+
+
+def check_citation_reachability() -> None:
+    """代码/测试/壳里的每一处 `§x.y` 与 `P{n}-{m}` 引用都必须真的指得到东西。
+
+    为什么单独立这条（2026-09-25，审计 §12.19）：`check_doc_links` 只查 markdown 反引号里的
+    **路径**，查不到 .py docstring 里"（架构审计报告 P1-5）"这种**散文引用** —— 而这类引用
+    实测 29 个文件、400 处。后果不是难看，是**文档一动就静默断链**，而断掉的正好是"这个决策
+    为什么长这样"的唯一线索（今天的误判就被一句过期的"P0-3 尚未闭环"带偏过一次）。
+
+    判据按"只在确证的负面上进红"分三级（与 `fail open on uncertainty` 同一条纪律）：
+      * **红**：这个编号在**任何**一份文档里都不存在 —— 要么写错，要么那一节被删了。
+      * **黄**：只存在于 `docs/archive/` 下 —— 引用没有断，但读者拿到的已是作废的规划。
+        首次跑就抓到 94 处指向《架构计划》§5.2/§6.x，那些设计早已搬进架构总览。
+      * **黄**：行内点了某份文档、但那个编号在它里面没有而在别处有 —— 归因可疑，不武断。
+    """
+    live = {p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").glob("*.md")}
+    archived = {
+        p.relative_to(ROOT).as_posix() for p in (ROOT / "docs" / "archive").glob("*.md")
+    }
+    # 一律用**仓库相对 posix 路径**当 key。第一版拿 `pathlib.Path` 绝对路径去
+    # `str(h).startswith("docs/archive")`，Windows 上永远是 False —— 于是"把审计档搬进
+    # archive/"这个本该被看见的动作，只报了 4 条可疑。是搬档模拟实验把它照出来的。
+    targets = {rel: _citation_targets(ROOT / rel) for rel in (*live, *archived)}
+
+    def _home(num: str) -> list[str]:
+        return [rel for rel, pool in targets.items() if num in pool]
+
+    dangling: list[str] = []
+    archived_refs: list[str] = []
+    doubtful: list[str] = []
+    total = 0
+    for path in iter_files(".py", ".ts", ".tsx", ".js"):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        rel_file = path.relative_to(ROOT).as_posix()
+        for lineno, line in enumerate(text.splitlines(), 1):
+            for match in _SECTION_RE.finditer(line):
+                total += 1
+                num = match.group(1)
+                homes = _home(num)
+                named = next((rel for word, rel in _CITATION_DOC_KEYS if word in line), None)
+                if not homes:
+                    dangling.append(f"{rel_file}:{lineno} §{num}")
+                elif all(h in archived for h in homes):
+                    archived_refs.append(f"{rel_file}:{lineno} §{num}→{homes[0]}")
+                elif named and named not in homes:
+                    doubtful.append(f"{rel_file}:{lineno} §{num} 点了「{named}」却在别处")
+            for num in _PID_RE.findall(line):
+                total += 1
+                if not _home(num):
+                    dangling.append(f"{rel_file}:{lineno} {num}")
+
+    detail = (
+        f"{total} citations; {len(dangling)} dangling, "
+        f"{len(archived_refs)} 指向归档档, {len(doubtful)} 归因可疑"
+    )
+    out("audit citations", not dangling, detail)
+    for label, items in (
+        ("Dangling §/P citations", dangling),
+        ("Citations into archived (superseded) docs", archived_refs),
+        ("Citations whose named doc lacks the number", doubtful),
+    ):
+        if items:
+            line = f"{label} ({len(items)}): " + " | ".join(items[:8])
+            (fails if label.startswith("Dangling") else warns).append(line)
+
+
 def main() -> int:
     check_pyproject()
     check_requirements_scope()
@@ -809,11 +903,16 @@ def main() -> int:
     check_v1_v2_boundary()
     check_doc_references()
     check_doc_links()
+    check_citation_reachability()
     check_dead_config()
     check_role_whitelists_resolve()
     check_us_traceability()
     check_exemplar_leaks_eval_answers()
     report_line_budget()
+
+    print("\n--- WARNS ---（不进红，但也不假装没看见）")
+    for item in warns or ["none"]:
+        print("  " + item)
 
     print("\n--- FAILS ---")
     for item in fails or ["none"]:
