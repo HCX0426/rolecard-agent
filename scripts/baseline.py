@@ -304,7 +304,29 @@ def build() -> dict[str, Any]:
     }
 
 
+def _drift_lines(data: dict[str, Any]) -> list[str]:
+    """各根上"实库列集合 ≠ schema 声明"的那些条。空表 = 没有列漂移。"""
+    out: list[str] = []
+    for root, entry in (data.get("schema_per_root") or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        drift = entry.get("column_drift_vs_declared")
+        if drift and drift not in ("无", "none", "None", []):
+            out.append(f"{root}: {drift}")
+    return out
+
+
 def main() -> None:
+    # `--check`：只问一句话"这份库与声明有没有列漂移"，漂移就非零退出。
+    # 从前 baseline.py 是唯一会算列漂移的脚本，却既不在门禁也不在 CI（09-26 轮 R26-21）——
+    # 算了没人看，等于没有。`--check` 就是把它接进门禁的那半个接口。
+    if "--check" in sys.argv:
+        drift = _drift_lines(build())
+        if drift:
+            print("列漂移（实库 ≠ 声明）：\n  " + "\n  ".join(drift))
+            raise SystemExit(1)
+        print("无列漂移")
+        return
     data = build()
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")

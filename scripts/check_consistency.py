@@ -248,6 +248,47 @@ def check_config_contract() -> None:
         fails.append(f".env.example values drifted from Settings defaults: {drifted}")
 
 
+def check_version_parity() -> None:
+    """版本号各有它的"必须一致"对象，从前一处都没人比（09-26 轮 R26-21）。
+
+    三条规则来自各处注释里自己写下的承诺，不是新发明：
+      * `pyproject.toml` 的 version 承诺"与 api/main.py 的 FastAPI version 保持一致"；
+      * 壳与其托管的前端是**同一个产品版本**（安装包文件名与下载卡都按它显示），
+        所以 `shell/package.json` 与 `frontend/package.json` 必须相等。
+    """
+    def grep_version(text: str, pattern: str) -> str | None:
+        # re.M 是必需的：三条模式都锚在 `^` 上，没有 MULTILINE 时除了文件第一行什么都匹配不到
+        # —— 写这条检查的人当场就被自己的正则骗过一次（pyproject 读成 None）。
+        found = re.search(pattern, text, flags=re.M)
+        return found.group(1) if found else None
+
+    py = grep_version(
+        (ROOT / "pyproject.toml").read_text(encoding="utf-8"),
+        r'^version = "([^"]+)"',
+    )
+    api = grep_version(
+        (ROOT / "src/rolecard_agent/api/main.py").read_text(encoding="utf-8"),
+        r'version="([^"]+)"',
+    )
+    shell = grep_version(
+        (ROOT / "shell/package.json").read_text(encoding="utf-8"),
+        r'"version":\s*"([^"]+)"',
+    )
+    front = grep_version(
+        (ROOT / "frontend/package.json").read_text(encoding="utf-8"),
+        r'"version":\s*"([^"]+)"',
+    )
+    bad: list[str] = []
+    if py != api:
+        bad.append(f"pyproject {py} ≠ api/main.py {api}（注释承诺两者一致）")
+    if shell != front:
+        bad.append(f"shell/package.json {shell} ≠ frontend/package.json {front}")
+    detail = f"py={py} api={api} shell={shell} frontend={front}"
+    out("version parity", not bad, "; ".join(bad) if bad else detail)
+    if bad:
+        fails.append(f"version claims out of sync: {bad}")
+
+
 def check_promised_artifacts() -> None:
     promised = [
         "pyproject.toml",
@@ -981,6 +1022,7 @@ def main() -> int:
     check_doc_references()
     check_doc_links()
     check_citation_reachability()
+    check_version_parity()
     check_dead_config()
     check_role_whitelists_resolve()
     check_us_traceability()

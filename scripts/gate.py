@@ -70,6 +70,7 @@ STEPS: list[tuple[str, list[str], str]] = [
         "fast",
     ),
     ("consistency", [PY, "scripts/check_consistency.py"], "both"),
+    ("baseline --check", [PY, "scripts/baseline.py", "--check"], "full"),
     (
         "pytest(覆盖率≥85%)",
         [
