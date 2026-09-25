@@ -92,14 +92,14 @@ class RoleCard(BaseModel):
     # 主动开口（架构计划 B）：角色是否会主动来找用户（还需要全局 REACHOUT_ENABLED 开着）。
     # 默认 False = 出厂即静默 —— 主动打扰是 opt-in，不是默认行为。
     reachout_enabled: bool = False
-    # 关系驱动主动开口（架构计划 §5.2）：两类关系驱动触发源的 per-role 开关。
+    # 关系驱动主动开口（架构总览 §5）：两类关系驱动触发源的 per-role 开关。
     # 默认 True = 一旦开启 reachout_enabled，回忆 / 时段规律两类关系驱动开口即生效。
     recall_enabled: bool = True
     time_pattern_enabled: bool = True
     #: 「关系数值到阈值就想开口」这一档的开关。09-26 轮 R26-23：触发源是排他的一条 `or`
     #: 链，affinity 触顶后这一档永久命中，后面的时段规律 / 回忆 / 定时再也轮不到。
     affinity_enabled: bool = True
-    # 文件事件触发（架构计划 C·§5.2）per-role 闸门：该角色可否被任务目录变化触发。
+    # 文件事件触发（架构总览 §5）per-role 闸门：该角色可否被任务目录变化触发。
     file_watch_enabled: bool = True
     #: 收件箱自动保留条数：0 = 不自动删（默认）；N>0 = 只留最近 N 条。删的是投递记录，
     #: 不是她说出口的那句话（那句留在主动会话里 —— 那是她下次开口的依据）。

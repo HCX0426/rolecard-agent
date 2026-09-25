@@ -463,7 +463,7 @@ def test_tick_once_continues_after_role_failure(conn) -> None:
     assert conn.execute("SELECT COUNT(*) AS n FROM agent_reachout").fetchone()["n"] == 1
 
 
-# ------------------------------------------------------------------ 关系驱动触发源（§5.2 四分类）
+# ------------------------------------------------- 关系驱动触发源（架构总览 §5）
 
 
 def _now_local() -> datetime:
@@ -573,7 +573,7 @@ def test_generate_recall_mode_uses_role_memory(conn) -> None:
 
 
 def test_list_reachouts_filters_by_role(conn) -> None:
-    """收件箱可按角色过滤（架构计划 §5.3：按角色卡隔离查看历史）。"""
+    """收件箱可按角色过滤（架构总览 §5：按角色卡隔离查看历史）。"""
     conn.execute("INSERT INTO agent_reachout (role_id, role_name, text) VALUES ('a','甲','找过你')")
     conn.execute("INSERT INTO agent_reachout (role_id, role_name, text) VALUES ('b','乙','也找过')")
     conn.commit()
@@ -587,7 +587,7 @@ def test_list_reachouts_filters_by_role(conn) -> None:
     assert all_rows["unread"] == 2
 
 
-# ------------------------------------------------------------------ 文件事件触发（架构计划 C·§5.2）
+# ------------------------------------------------------------------ 文件事件触发（架构总览 §5）
 
 
 def _fw_settings(task_dir: Path, **kw: object) -> Settings:

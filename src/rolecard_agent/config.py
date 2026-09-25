@@ -230,7 +230,7 @@ class Settings(BaseModel):
     # 后端不参与分组：`created_at` 已经在响应里，折叠只做在界面（理由见设计稿 §1）。
     reachout_merge_days: int = 1
 
-    # 文件事件触发（架构计划 C·§5.2 第四类触发源，core/file_watch.py）：全局总闸。
+    # 文件事件触发（架构总览 §5 第四类触发源，core/file_watch.py）：全局总闸。
     # True = 每 tick 轮询任务目录（size+mtime 基线 diff），有变化时该次开口以 file_event
     # 触发（绕过 per-role 间隔一次，静默时段/未读上限不放松），变更清单作为说话素材。
     # 默认关 —— 扫描有 IO 成本，且主动素材门控是显式选择；「运行环境」页可热切。

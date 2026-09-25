@@ -119,7 +119,7 @@ _REACHOUT_TASK_RECALL_BODY = (
     "简短、口语化；不要自我介绍、不要说教、不要长篇。"
 )
 
-# 文件事件触发（架构计划 C·§5.2）的口吻：目录变化是素材，严禁编造未见过的内容。
+# 文件事件触发（架构总览 §5）的口吻：目录变化是素材，严禁编造未见过的内容。
 _REACHOUT_TASK_FILE_EVENT_BODY = (
     "你注意到用户的任务目录最近有了变化（清单见下）。以你的角色口吻自然地就此跟用户说一句"
     "——可以是好奇、关心或点评，但**不得编造文件内容**（你只看到文件名）。"
@@ -346,7 +346,7 @@ def list_reachouts(
 ) -> dict[str, object]:
     """收件箱：未读 + 最近历史（含未读数，供铃铛红点）。
 
-    `role_id` 给定时只返回该角色主动找过你的历史（架构计划 §5.3：按角色卡隔离查看）。
+    `role_id` 给定时只返回该角色主动找过你的历史（架构总览 §5：按角色卡隔离查看）。
     `file_watch_pending` = 当前挂起的目录变更条数（0 = 无事件或功能关闭）。
     """
     # `dismissed` 不进列表（用户已经划掉了），但**行留着** —— 那才是"她冒话而没人接"的证据。
@@ -709,7 +709,7 @@ def generate_reachout_text(
     回退到用户级全局记忆（用户事实，非角色对话，不造成跨角色串扰）。这条规则与对话侧
     **同源于** `core/memory.memory_for_turn` —— 两边各写一遍迟早漂移。
     `mode="file_event"` 时 `file_list` 为目录变更素材清单（只含文件名，细节由角色
-    自行用 fs 工具查证 —— 素材门控语义，见架构计划 §5.2）。
+    自行用 fs 工具查证 —— 素材门控语义，见架构总览 §5）。
     """
     memory = memory_for_turn(conn, settings, role_id)
     # recall 档带素材：闸门与素材同源（`top_active_item` 既决定"能不能回忆"也决定"回忆哪一条"）。
@@ -954,7 +954,7 @@ class ReachoutScheduler:
         stamp_utc = now_utc or datetime.now(UTC)
         stamp_local = now_local or datetime.now().astimezone()
         made = 0
-        # 文件事件（架构计划 C·§5.2 素材门控）：全局侦测一次，任何合格角色共享同一事件；
+        # 文件事件（架构总览 §5 素材门控）：全局侦测一次，任何合格角色共享同一事件；
         # 谁都没开口且未过期 → 事件挂起到下一 tick（基线不推进，变化不会被吞掉）。
         file_events: list[FileEvent] | None = None
         file_truncated = False

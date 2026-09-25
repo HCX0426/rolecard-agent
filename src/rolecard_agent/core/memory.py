@@ -45,7 +45,7 @@ from langchain_core.tools import BaseTool, tool
 from rolecard_agent.config import Settings
 from rolecard_agent.storage.db import SqlConnection
 
-# 当前对话角色（架构计划 §5.2）：execute_tools 每轮注入，memory_save 读取它把事实同时写入
+# 当前对话角色（架构总览 §5）：execute_tools 每轮注入，memory_save 读取它把事实同时写入
 # 该角色专属记忆。默认空串 = 无角色上下文，此时只写全局桶。与 role_knowledge_scopes_ctx
 # 同一机制（ContextVar + copy_context 跨工具线程）。
 current_role_id_ctx: ContextVar[str] = ContextVar("current_role_id", default="")

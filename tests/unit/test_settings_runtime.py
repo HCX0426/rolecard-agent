@@ -104,7 +104,7 @@ def test_memory_extract_backend_choices_are_backend_names() -> None:
 
 
 def test_file_watch_row_editable_in_reachout_group() -> None:
-    """文件事件触发（架构计划 C·§5.2）进「运行环境」主动开口组，且是可热切 bool。"""
+    """文件事件触发（架构总览 §5）进「运行环境」主动开口组，且是可热切 bool。"""
     payload = runtime_payload(Settings())
     groups = {g["key"]: g for g in payload["groups"]}  # type: ignore[index]
     rows = {r["key"]: r for r in groups["reachout"]["items"]}  # type: ignore[index]

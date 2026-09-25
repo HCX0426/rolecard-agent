@@ -783,7 +783,7 @@ def execute_tools(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
         role_knowledge_scopes_ctx.set(tuple(_role.knowledge_scopes or ()))
     except RoleNotFound:
         role_knowledge_scopes_ctx.set(())
-    # 关系驱动主动开口（架构计划 §5.2）：当前对话角色注入工具层，memory_save 据此把事实
+    # 关系驱动主动开口（架构总览 §5）：当前对话角色注入工具层，memory_save 据此把事实
     # 同时写入该角色专属记忆（与全局 memory:facts 隔离）。无角色 = 空串，只写全局。
     # _invoke_tool 用 copy_context() 提交，所以 worker 线程能看到这里写入的值。
     current_role_id_ctx.set(state.get("current_role_id", "") or "")

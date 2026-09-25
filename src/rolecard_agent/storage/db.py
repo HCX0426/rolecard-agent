@@ -361,7 +361,7 @@ def _migrate(conn: SqlConnection) -> None:
     # command_approval.decide_token）—— 全部由 `reconcile_columns` 按声明补齐，
     # `bootstrap` 在跑 DDL 前后各调一次，语义与那些 `if 缺则 ADD` 逐字相同
     # （列的 type/NOT NULL/DEFAULT 直接取自 `schema.sql`，见 R26-04）。
-    # 7. 关系驱动主动开口（架构计划 §5.2）：per-role 状态与 per-role 记忆（幂等建表）。
+    # 7. 关系驱动主动开口（架构总览 §5）：per-role 状态与 per-role 记忆（幂等建表）。
     if "affinity" not in _columns(conn, "role_proactive_state"):
         conn.execute(
             "CREATE TABLE IF NOT EXISTS role_proactive_state ("
