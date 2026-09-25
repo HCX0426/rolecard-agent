@@ -594,3 +594,23 @@ def test_legacy_db_moves_into_two_layers_without_losing_config() -> None:
     assert left == []
 
 
+
+
+def test_a_declared_column_without_a_reader_fails_loud(conn: object) -> None:
+    """S-1 的那道守卫：加进 `ModelBackend` 却没写读取器 ⇒ 当场抛，不是静默读成 None。
+
+    从前"加一列要动 7 处"里最坏的一处就是读侧：漏了不报错，只是那一列永远是 None，
+    症状是"设了但看不见"。现在它变成一条明确的错误。
+    """
+    from rolecard_agent.config import ModelBackend
+    from rolecard_agent.core.model_settings import _value_columns
+
+    bootstrap(conn, enabled_domains=())  # type: ignore[attr-defined]
+    conn.execute("ALTER TABLE model_backend ADD COLUMN new_thing REAL")  # type: ignore[attr-defined]
+    conn.commit()  # type: ignore[attr-defined]
+    ModelBackend.model_fields["new_thing"] = ModelBackend.model_fields["num_ctx"]
+    try:
+        with pytest.raises(ModelSettingsError, match="没写怎么读它"):
+            _value_columns(conn)
+    finally:
+        ModelBackend.model_fields.pop("new_thing", None)

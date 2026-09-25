@@ -37,7 +37,9 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlparse
 
 from rolecard_agent.config import (
@@ -427,6 +429,41 @@ def unmanaged_backend_columns(conn: SqlConnection) -> tuple[str, ...]:
     return tuple(sorted(declared - SAVE_MANAGED_COLUMNS))
 
 
+def _opt_int(raw: object) -> int | None:
+    """NULL / 读不出整数 → None（= 引擎默认），不猜一个数。"""
+    if raw is None or raw == "":
+        return None
+    try:
+        return int(str(raw))
+    except ValueError:
+        return None
+
+
+
+#: 两份 SELECT 里**按字面读**的列：`model` 既是 `ModelBackend` 的字段也是表列，
+#: 但它就是一列字符串，不需要读取器（硬塞一个假 reader 只会多一处会骗人的地方）。
+_LITERAL_COLUMNS = frozenset({"model"})
+
+
+def _value_columns(conn: SqlConnection) -> tuple[str, ...]:
+    """两份 SELECT 的列清单由这里算，不抄清单（抄了就会漂）。
+
+    交集正好排掉两类不属于值列的东西：`name`/`provider_id` 是行身份与组引用（不在
+    `ModelBackend` 里），`provider`/`base_url`/`api_key`/`usage` 来自凭据组或是派生值
+    （不在 `model_backend` 表里）。
+    """
+    declared = set(ModelBackend.model_fields) - _LITERAL_COLUMNS
+    columns = tuple(c for c in sorted(_table_columns(conn, "model_backend")) if c in declared)
+    missing = sorted(set(columns) - set(_COLUMN_READERS))
+    if missing:
+        raise ModelSettingsError(
+            f"model_backend 有了新列 {missing}，但 `_COLUMN_READERS` 里没写怎么读它。"
+            " 加一列只改 schema.sql 声明就够（补列器接管），读侧必须同时补一个读取器 ——"
+            " 否则那一列会一路静默读成 None。（09-26 轮 S-1）"
+        )
+    return columns
+
+
 class ModelSettingsService:
     MODEL_SEEDED_KEY = "model_backends_seeded"
 
@@ -464,10 +501,11 @@ class ModelSettingsService:
 
         `provider`/`base_url`/`api_key` 来自凭据组，`usage`/`used_by` 派生自引用行。
         """
+        # 值列清单由 `_value_columns` 算（S-1）：从前这里抄一遍列名，加一列漏一处
+        # 不会红，只是那一列永远读成 None。
+        b_cols = ", ".join(f"b.{c}" for c in _value_columns(self._conn))
         rows = self._conn.execute(
-            "SELECT b.name, b.provider_id, b.model, b.sort_order, b.num_ctx, "
-            "b.supports_vision, b.supports_tools, "
-            "b.repeat_penalty, b.frequency_penalty, b.presence_penalty, "
+            f"SELECT b.name, b.provider_id, b.model, b.sort_order, {b_cols}, "
             "p.provider, p.label, p.base_url, p.api_key "
             "FROM model_backend b JOIN model_provider p ON p.id = b.provider_id "
             "ORDER BY b.sort_order, b.name"
@@ -523,9 +561,9 @@ class ModelSettingsService:
         usages = self._usages()
         default = self.default_backend()
         models_of_group: dict[str, list[dict[str, object]]] = {}
+        value_cols = ", ".join(_value_columns(self._conn))
         for row in self._conn.execute(
-            "SELECT name, provider_id, model, num_ctx, supports_vision, supports_tools, "
-            "repeat_penalty, frequency_penalty, presence_penalty "
+            f"SELECT name, provider_id, model, {value_cols} "
             "FROM model_backend ORDER BY sort_order, name"
         ).fetchall():
             name = str(row["name"])
@@ -1292,6 +1330,19 @@ def _opt_float(raw: object) -> float | None:
         return float(str(raw).strip())
     except (TypeError, ValueError):
         return None
+
+
+#: "值由 `ModelBackend` 声明、又真的存在 `model_backend` 表里"的那些列怎么读出来。
+#: 读取器**缺一个就当场抛**，而不是让那一列静默变成 None —— 这就是 S-1 的全部目的：
+#: 从前加一列要手写 7 处，漏在读侧的那一处不会红，症状是"设了但看不见"。
+_COLUMN_READERS: dict[str, Callable[[Any], Any]] = {
+    "num_ctx": _opt_int,
+    "supports_vision": _tri_state,
+    "supports_tools": _tri_state,
+    "repeat_penalty": _opt_float,
+    "frequency_penalty": _opt_float,
+    "presence_penalty": _opt_float,
+}
 
 
 def _vision_of(raw: object) -> bool:
