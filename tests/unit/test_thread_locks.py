@@ -16,7 +16,6 @@ from typing import Any
 
 from rolecard_agent.core.thread_locks import (
     end_extraction,
-    extraction_is_running,
     release_thread,
     thread_is_busy,
     thread_write,
@@ -99,14 +98,14 @@ def test_extraction_marker_is_not_the_write_lock() -> None:
     "下一句最慢等一分半"，那正是 §12.7 实测排除掉的耦合（第一版就踩了，被一条 158 秒的测试抓到）。
     """
     assert try_extraction("t7")
-    assert extraction_is_running("t7")
+    # "在飞"这件事只用 try 的返回值读就够（它拿不到锁 = 有同类在跑）——
+    # 从前这里另有一个 `extraction_is_running` 查询，生产零引用，只有测试在用（R26-13）。
     assert not try_extraction("t7"), "同会话的第二次提取该被挡住"
     # 但对话那一轮的写入锁照拿 —— 提取不该把它占住
     assert try_thread_write("t7", timeout=0.0)
     release_thread("t7")
     end_extraction("t7")
-    assert not extraction_is_running("t7")
-    assert try_extraction("t7")
+    assert try_extraction("t7"), "end 之后再 try 必须能拿到 = 标记真的清了"
     end_extraction("t7")
 
 

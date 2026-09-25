@@ -134,13 +134,6 @@ def end_extraction(thread_id: str) -> None:
         _extracting.discard(thread_id)
 
 
-def extraction_is_running(thread_id: str) -> bool:
-    if not thread_id:
-        return False
-    with _guard:
-        return thread_id in _extracting
-
-
 # ---------------------------------------------------------------- 停止生成的取消信号
 #
 # 与上面两样都不是一回事：锁管"谁先写这份检查点"，提取标记管"有没有同类在跑"，这里管
@@ -152,21 +145,29 @@ def extraction_is_running(thread_id: str) -> bool:
 # 那次 `next()` —— 节点继续跑到提交，模型继续吐字。所以取消必须走到**分块边界**上，
 # 由正在消费流的那一层自己收手。
 
-_stopped: set[str] = set()
+#: 有序字典当集合用：Python 的 dict 保持插入序，于是"最旧的先扔"做得到。
+#: 从前这里是 `set` + 超上限 `.clear()`，而 clear 会把**所有**在飞的停一把抹掉 ——
+#: 包括上一微秒刚按下的那一次。09-26 轮 R26-13 记的就是这个。
+_stopped: dict[str, None] = {}
 
 
-def request_stop(thread_id: str) -> bool:
-    """给这个会话下"停"的手势。True = 这次是新增的（调用方据此决定要不要留痕）。"""
+def request_stop(thread_id: str) -> None:
+    """给这个会话下"停"的手势。
+
+    从前它返回 `bool`（"这次是不是新增的"）并在文档里承诺"调用方据此决定要不要留痕"，
+    而两处调用方（`sessions.py:486` 与 `turn.py:305`）都把返回值丢掉 —— 一个没人兑现的
+    承诺比没有承诺更容易骗到下一个人（R26-13）。签名照实收成 None。
+    """
     if not thread_id:
-        return False
+        return
     with _guard:
-        added = thread_id not in _stopped
         if len(_stopped) > _MAX_TRACKED:
             # 停过又再没开过口的会话会一直留一枚旗子。忘了它是安全的（最坏是某一轮没被
-            # 取消），而攒成无界集合是不安全的 —— 宁可忘，不可长。
-            _stopped.clear()
-        _stopped.add(thread_id)
-        return added
+            # 取消），而攒成无界集合是不安全的 —— 宁可忘，不可长。但"忘"按**最旧的先扔**，
+            # 不是一把清光。
+            for stale in list(_stopped)[: _MAX_TRACKED // 2]:
+                _stopped.pop(stale, None)
+        _stopped[thread_id] = None
 
 
 def stop_requested(thread_id: str) -> bool:
@@ -182,13 +183,12 @@ def clear_stop(thread_id: str) -> None:
     if not thread_id:
         return
     with _guard:
-        _stopped.discard(thread_id)
+        _stopped.pop(thread_id, None)
 
 
 __all__ = [
     "clear_stop",
     "end_extraction",
-    "extraction_is_running",
     "release_thread",
     "request_stop",
     "stop_requested",

@@ -76,6 +76,11 @@ export interface MessagePage {
 export interface BackendRow {
   name: string;
   provider: string;
+  /** 客户端风格（native = Ollama 原生口 / openai = 兼容口），来自凭据组。界面判「这一档能不能
+   *  设采样惩罚」只认它：后端 `core/graph.client_style()` 已是同一份判定的唯一出处，前端再拿
+   *  provider 名字猜一遍就是第三处事实面（09-26 轮 R26-12：改供应商 id 时漏一处，症状是
+   *  「明明支持却不给设」）。 */
+  style?: string;
   base_url: string | null;
   model: string;
   sort_order: number;

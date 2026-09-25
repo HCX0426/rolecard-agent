@@ -48,6 +48,7 @@ function chatRows(settings: ModelSettings): BackendRow[] {
       .map((m) => ({
         name: m.name,
         provider: g.provider,
+        style: g.style,
         base_url: g.base_url,
         model: m.model,
         sort_order: 0,
@@ -1300,7 +1301,7 @@ export default function ChatPage({
                                 <span className="ml-1 text-blue-600 dark:text-blue-400">✓</span>
                               )}
                             </button>
-                            {(b.provider === "ollama" || b.provider === "local") && (
+                            {(b.style === "native") && (
                               <button
                                 onClick={() => setCtxOpen((c) => (c === b.name ? null : b.name))}
                                 title="设置该模型的上下文窗口（num_ctx）"
@@ -1325,7 +1326,7 @@ export default function ChatPage({
                             </button>
                           </div>
                           {/* 上下文选项：点行内「上下文」徽章展开（inline，触屏可用） */}
-                          {(b.provider === "ollama" || b.provider === "local") &&
+                          {(b.style === "native") &&
                             ctxOpen === b.name && (
                             <div className="border-t border-slate-100 px-3 py-2 dark:border-slate-700/60">
                               <p className="pb-1.5 text-[10px] font-medium text-slate-400 dark:text-slate-500">
@@ -1363,7 +1364,7 @@ export default function ChatPage({
                             <div className="border-t border-slate-100 px-3 py-2 dark:border-slate-700/60">
                               {SAMPLING_FIELDS.filter(
                                 (f) =>
-                                  !f.nativeOnly || b.provider === "ollama" || b.provider === "local",
+                                  !f.nativeOnly || b.style === "native",
                               ).map((f) => (
                                 <div key={f.key} className="flex items-start gap-1.5 py-0.5">
                                   <span className="w-16 shrink-0 pt-1 text-[10px] text-slate-400 dark:text-slate-500">

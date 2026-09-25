@@ -70,9 +70,7 @@ def parse_open_threads(reply: Any, *, limit: int = MAX_OPEN_THREADS) -> list[str
     return out
 
 
-def find_open_threads(
-    turns: str, model: Any, *, limit: int = MAX_OPEN_THREADS
-) -> list[str] | None:
+def find_open_threads(turns: str, model: Any) -> list[str] | None:
     """一次模型调用扫这段最近对话，返回真正没收尾的那几件事。
 
     **返回 `None` = 这一次调用没成功**（模型抛了），`[]` = 调用成功、判没有没收尾的事。
@@ -87,9 +85,9 @@ def find_open_threads(
     turns = (turns or "").strip()
     if not turns or model is None:
         return []
-    prompt = _PROMPT.format(limit=limit, n=len(turns.splitlines()), turns=turns)
+    prompt = _PROMPT.format(limit=MAX_OPEN_THREADS, n=len(turns.splitlines()), turns=turns)
     try:
         reply = model.invoke(prompt)
     except Exception:  # noqa: BLE001 - 由头缺一个不是故障，但不能把它当成答案
         return None
-    return parse_open_threads(reply, limit=limit)
+    return parse_open_threads(reply, limit=MAX_OPEN_THREADS)
