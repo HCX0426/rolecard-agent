@@ -207,6 +207,12 @@ def main() -> None:
         default="",
         help="MEMORY_EXTRACT_BACKEND：只把「提取精华/整理记忆」交给这个后端（审计 §12.5 那一格）",
     )
+    parser.add_argument(
+        "--sampling",
+        default="",
+        help="写进副本里该后端的采样惩罚，形如 repeat_penalty=1.2,frequency_penalty=0.1"
+             "（不给 = 保持库里原样）。惩罚的**推荐档位**要用这把尺子量出来才写进界面文案",
+    )
     args = parser.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -225,9 +231,12 @@ def main() -> None:
             raise SystemExit(f"副本里没有角色卡 {args.role!r}，--model 没处落")
     if args.extract_backend:
         os.environ["MEMORY_EXTRACT_BACKEND"] = args.extract_backend
+    if args.sampling:
+        _write_sampling(args.copy, args.sampling, target=args.model)
     print(
         f"\n配置：角色 {args.role}｜对话后端 {args.model or '（跟随卡片/默认）'}"
-        f"｜提取后端 {args.extract_backend or '（未设 = 跟随会话）'}",
+        f"｜提取后端 {args.extract_backend or '（未设 = 跟随会话）'}"
+        f"｜采样惩罚 {args.sampling or '（未设 = 引擎默认）'}",
         flush=True,
     )
     # 孪生角色只在真要跑云端那一格时才建：`--side local` 的跑法不该凭空多插一行角色卡
@@ -257,6 +266,39 @@ def main() -> None:
             sides["本地"] = _run_thread(client, "本地", args.role, TURNS[: args.turns])
     _report(args.copy, args.role, sides, baseline)
     print(f"trace（含每轮 prompt/completion token 与耗时）：{trace_path}")
+
+
+_SAMPLING_COLS = ("repeat_penalty", "frequency_penalty", "presence_penalty")
+
+
+def _write_sampling(db: Path, spec: str, *, target: str) -> None:
+    """把 `repeat_penalty=1.2,frequency_penalty=0.1` 写进副本里那一行的采样惩罚。
+
+    写的是**副本的 model_backend**，所以它走的是生产同一条读路径（`effective_settings`
+    → `_init_model` 构造期传参），测到的就是界面上设成这个数之后真实的形状。
+    列名只认那三个白名单值 —— 拼 SQL 的地方不接受来路不明的字符串，脚本也不例外。
+    """
+    fields: dict[str, float] = {}
+    for part in spec.split(","):
+        key, _, raw = part.partition("=")
+        key = key.strip()
+        if key not in _SAMPLING_COLS:
+            raise SystemExit(f"未知的采样项 {key!r}，只认 {'/'.join(_SAMPLING_COLS)}")
+        fields[key] = float(raw)
+    if not fields:
+        raise SystemExit("--sampling 没解析出任何一项")
+    conn = sqlite3.connect(db)
+    try:
+        name = target or str(
+            conn.execute("SELECT name FROM model_backend ORDER BY sort_order LIMIT 1").fetchone()[0]
+        )
+        cols = ", ".join(f"{k} = ?" for k in fields)
+        cur = conn.execute(f"UPDATE model_backend SET {cols} WHERE name = ?", (*fields.values(), name))
+        conn.commit()
+        if cur.rowcount == 0:
+            raise SystemExit(f"副本里没有后端 {name!r}，--sampling 没处落")
+    finally:
+        conn.close()
 
 
 def _token_baseline(db: Path, day: str) -> tuple[int, int]:

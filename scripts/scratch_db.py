@@ -11,13 +11,25 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
 
 def copy_of_live_db(dest: Path, source: Path | None = None) -> Path:
-    """把真实库在线复制一份到 `dest`（覆盖），返回 dest。"""
-    src_path = source or Path(__file__).resolve().parents[1] / "data" / "sqlite" / "app.db"
+    """把真实库在线复制一份到 `dest`（覆盖），返回 dest。
+
+    源库默认是**开发态那一份**（`repo/data/sqlite/app.db`）。本机日常数据在 2026-09-24
+    搬进了安装包目录（`%LOCALAPPDATA%\\rolecard-agent\\sqlite\\app.db`），所以要量"她真实的
+    记忆/角色卡"时得指过去 —— 用 `LIVE_DB_PATH` 指，不改默认：默认那份对"跑通链路"仍然够用，
+    而把默认改成安装目录会让所有旧脚本突然测到用户的真数据。
+    """
+    env_src = os.environ.get("LIVE_DB_PATH", "").strip()
+    src_path = source or (
+        Path(env_src)
+        if env_src
+        else Path(__file__).resolve().parents[1] / "data" / "sqlite" / "app.db"
+    )
     if not src_path.exists():
         raise SystemExit(f"源库不存在：{src_path}")
     dest.parent.mkdir(parents=True, exist_ok=True)
