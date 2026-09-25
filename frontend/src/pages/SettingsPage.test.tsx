@@ -3,7 +3,7 @@
 // SettingsPage（设置页）接线测试。重点：切换记忆作用域时若有未保存修改，走 useConfirm
 // 二次确认 —— 点确认才切换并丢弃草稿，点取消不切换。
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -489,5 +489,105 @@ describe("记忆卡「每 N 轮自动提取」那一档（会自己花钱的行�
     render(<SettingsPage />);
     await waitFor(() => expect(cadenceSelect().value).toBe("8"));
     expect(cadenceSelect().selectedOptions[0].textContent).toContain("每 8 轮");
+  });
+});
+
+describe("记忆卡：改一条 / 合两条（S-3 界面那半）", () => {
+  const item = (id: number, text: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    text,
+    source: "chat",
+    pinned: false,
+    hit_count: 1,
+    importance: 1,
+    last_hit_at: null,
+    created_at: null,
+    ...extra,
+  });
+  const THREE = {
+    enabled: true,
+    role_id: null,
+    content: "",
+    items: [
+      item(1, "用户住在上海"),
+      item(2, "用户在上海一家医院工作"),
+      item(3, "用户养了一只猫", { pinned: true }),
+    ],
+    active_count: 3,
+    limit: 200,
+    over_limit: false,
+  };
+  const payload = (items: unknown[]) => ({ ...THREE, items, active_count: items.length });
+
+  beforeEach(() => {
+    // 只换记忆那一条分支，其余端点沿用外层 beforeEach 那份（页签要渲染就得全都齐）。
+    const base = apiMock.get.getMockImplementation() as (url: string) => Promise<unknown>;
+    apiMock.get.mockImplementation(async (url: string) =>
+      url.startsWith("/api/settings/memory") ? THREE : base(url),
+    );
+  });
+
+  it("「改」把那一行换成输入框，保存走 PATCH 且带上新句子", async () => {
+    apiMock.patch.mockResolvedValue(payload([item(1, "用户住在上海，做金融")]));
+    render(<SettingsPage />);
+    const editButtons = await screen.findAllByRole("button", { name: "改" });
+    fireEvent.click(editButtons[0]);
+    const box = (await screen.findByLabelText("改这条记忆")) as HTMLInputElement;
+    expect(box.value).toBe("用户住在上海"); // 预填的是原文，不是空框
+    fireEvent.change(box, { target: { value: "用户住在上海，做金融" } });
+    // 「保存」这一页有好几个（任务目录、整段覆写都叫这名），所以要限定在本行里找。
+    fireEvent.click(within(box.closest("li") as HTMLElement).getByRole("button", { name: "保存" }));
+    await waitFor(() =>
+      expect(apiMock.patch).toHaveBeenCalledWith("/api/settings/memory/item/1", {
+        text: "用户住在上海，做金融",
+      }),
+    );
+  });
+
+  it("一个字没改就点保存：不发这次写（保存后回到常态行）", async () => {
+    render(<SettingsPage />);
+    const editButtons = await screen.findAllByRole("button", { name: "改" });
+    fireEvent.click(editButtons[0]);
+    const editBox = (await screen.findByLabelText("改这条记忆")) as HTMLInputElement;
+    fireEvent.click(within(editBox.closest("li") as HTMLElement).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(apiMock.patch).not.toHaveBeenCalled());
+    expect(screen.queryByLabelText("改这条记忆")).toBeNull();
+  });
+
+  it("勾两条 → 预填兜底句 → 合并走 POST，留下的是先勾的那条", async () => {
+    apiMock.post.mockResolvedValue(payload([item(1, "用户住在上海；用户在上海一家医院工作")]));
+    render(<SettingsPage />);
+    const picks = await screen.findAllByLabelText("选择这条记忆用于合并");
+    fireEvent.click(picks[0]);
+    fireEvent.click(picks[1]);
+    const merged = (await screen.findByLabelText("合并后的句子")) as HTMLTextAreaElement;
+    expect(merged.value).toBe("用户住在上海；用户在上海一家医院工作");
+    fireEvent.click(screen.getByRole("button", { name: /合并（留 1 条）/ }));
+    await waitFor(() =>
+      expect(apiMock.post).toHaveBeenCalledWith("/api/settings/memory/item/1/merge/2", {
+        text: "用户住在上海；用户在上海一家医院工作",
+      }),
+    );
+  });
+
+  it("只许两条：勾第三条时挤掉最早那条，于是留下的是第 2、3 条", async () => {
+    apiMock.post.mockResolvedValue(payload([item(2, "合并结果")]));
+    render(<SettingsPage />);
+    const picks = await screen.findAllByLabelText("选择这条记忆用于合并");
+    fireEvent.click(picks[0]);
+    fireEvent.click(picks[1]);
+    fireEvent.click(picks[2]);
+    const merged = (await screen.findByLabelText("合并后的句子")) as HTMLTextAreaElement;
+    expect(merged.value).toBe("用户在上海一家医院工作；用户养了一只猫");
+    fireEvent.click(screen.getByRole("button", { name: /合并（留 1 条）/ }));
+    await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith("/api/settings/memory/item/2/merge/3", expect.anything()));
+  });
+
+  it("先勾没钉住的、后勾钉住的：要说清钉住状态不跟着搬", async () => {
+    render(<SettingsPage />);
+    const picks = await screen.findAllByLabelText("选择这条记忆用于合并");
+    fireEvent.click(picks[0]); // 1 号：未钉住
+    fireEvent.click(picks[2]); // 3 号：钉住
+    expect(await screen.findByText(/钉住状态不跟着搬/)).toBeTruthy();
   });
 });

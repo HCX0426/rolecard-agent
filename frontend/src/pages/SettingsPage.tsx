@@ -135,6 +135,10 @@ const IMPORTANCE_LABEL: Record<number, string> = { 0: "次要", 1: "一般", 2: 
 /** 界面上给的自动提取档位（"0" = 关）。env 里设成别的数仍会原样回显，不假装是这些档之一。 */
 const CADENCES = ["0", "6", "12", "24"];
 
+/** 一条记忆的字数上限（后端 `memory.MAX_ITEM_CHARS`）。**超了是被截断、不是报错**，
+ *  所以行内编辑那个计数器不是装饰 —— 它是"再打下去要被切掉"的唯一提示。 */
+const MAX_FACT = 200;
+
 function MemoryPanel() {
   // 跨会话记忆面板：enabled = 总开关（runtime 覆盖，保存即热生效）；
   // items = 事实面（逐条可钉/改/删），content = 同一批条目的渲染文本（下方"原文视图"）。
@@ -149,6 +153,14 @@ function MemoryPanel() {
   // 新增一条的草稿。逐条录入取代了"只能在 textarea 里手改整段"。
   const [newFact, setNewFact] = useState("");
   const [itemBusy, setItemBusy] = useState(false);
+  /** 行内编辑：正在改哪一条（null = 没有）+ 那一条的草稿。同一时刻只开一条 —— 两条同时
+   *  编辑会让"屏幕上哪份是真的"没有答案，而这条面板的全部意义就是它是事实面。 */
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  /** 合并的选择：**按点击顺序**排、最多两条（第三条挤掉最早那条）。顺序有含义 ——
+   *  先勾的那条是"留下的那条"（id、用过几次、钉住状态都跟着它走）。 */
+  const [mergePick, setMergePick] = useState<number[]>([]);
+  const [mergeDraft, setMergeDraft] = useState("");
   // 「整理记忆」进行中：一次真模型调用，本地卡上可能几十秒，所以按钮要有明确的进行中态。
   const [consolidating, setConsolidating] = useState(false);
   // 自动提取那一档（0 = 关）单独一个忙碌态：它走的是同一个 PUT，但保存后要读回**新有效值**。
@@ -333,7 +345,7 @@ function MemoryPanel() {
     if (!text) return;
     void withItems(
       () =>
-        api.post<MemoryPayload>(`/api/settings/memory/item${memScope ? `?role_id=${encodeURIComponent(memScope)}` : ""}`, {
+        api.post<MemoryPayload>(`/api/settings/memory/item${scopeQs()}`, {
           text,
         }),
       "已记住",
@@ -344,7 +356,7 @@ function MemoryPanel() {
     withItems(
       () =>
         api.patch<MemoryPayload>(
-          `/api/settings/memory/item/${item.id}${memScope ? `?role_id=${encodeURIComponent(memScope)}` : ""}`,
+          `/api/settings/memory/item/${item.id}${scopeQs()}`,
           { pinned: !item.pinned },
         ),
       item.pinned ? "已取消钉住" : "已钉住（不参与淘汰与整理）",
@@ -354,7 +366,7 @@ function MemoryPanel() {
     withItems(
       () =>
         api.patch<MemoryPayload>(
-          `/api/settings/memory/item/${item.id}${memScope ? `?role_id=${encodeURIComponent(memScope)}` : ""}`,
+          `/api/settings/memory/item/${item.id}${scopeQs()}`,
           { importance: tier },
         ),
       `已标为「${IMPORTANCE_LABEL[tier] ?? "一般"}」`,
@@ -371,10 +383,64 @@ function MemoryPanel() {
     await withItems(
       () =>
         api.del<MemoryPayload>(
-          `/api/settings/memory/item/${item.id}${memScope ? `?role_id=${encodeURIComponent(memScope)}` : ""}`,
+          `/api/settings/memory/item/${item.id}${scopeQs()}`,
         ),
       "已删除",
     );
+  };
+
+  // ---------------------------------------------------------------- 改一条 / 合两条（S-3）
+
+  /** 逐条操作的 URL 尾巴：作用域靠 query 传，五处拼法必须一模一样（少一处就会改到全局桶上）。 */
+  const scopeQs = () => (memScope ? `?role_id=${encodeURIComponent(memScope)}` : "");
+
+  const startEdit = (item: MemoryItem) => {
+    setEditingId(item.id);
+    setEditDraft(item.text);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditDraft("");
+  };
+
+  /** 保存行内编辑。**空文本 = 不改**（后端 `edit_item` 就是这个口径：清空交给删除去做），
+   *  所以这里在清空时把「保存」置灰而不是发一个空句子过去。 */
+  const saveEdit = (item: MemoryItem) => {
+    const text = editDraft.trim();
+    if (!text) return;
+    if (text === item.text) return cancelEdit(); // 一个字没改：不发没必要的写
+    void withItems(
+      () => api.patch<MemoryPayload>(`/api/settings/memory/item/${item.id}${scopeQs()}`, { text }),
+      "已更新这条记忆",
+    ).then(cancelEdit);
+  };
+
+  const togglePick = (id: number) =>
+    setMergePick((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id].slice(-2)));
+
+  /** 选中的两条（按点击顺序：[0] = 留下的那条）。 */
+  const picked = mergePick
+    .map((id) => (mem?.items ?? []).find((i) => i.id === id))
+    .filter((i): i is MemoryItem => Boolean(i));
+
+  // 预填那两句的拼接结果（= 后端 `merged_text` 那个兜底写法）。它是**起点不是结果**：
+  // 用户在这个框里把句子改顺，改完点「合并」才发请求。
+  useEffect(() => {
+    if (picked.length !== 2) return;
+    setMergeDraft(`${picked[0].text}；${picked[1].text}`.slice(0, MAX_FACT));
+  }, [mergePick, mem]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const doMerge = () => {
+    const [keep, drop] = picked;
+    if (!keep || !drop) return;
+    void withItems(
+      () =>
+        api.post<MemoryPayload>(`/api/settings/memory/item/${keep.id}/merge/${drop.id}${scopeQs()}`, {
+          text: mergeDraft.trim() || null,
+        }),
+      "已合并成一条（另一条只是退役，没删行）",
+    ).then(() => setMergePick([]));
   };
 
   const loadWorkspace = useCallback(async () => {
@@ -564,57 +630,168 @@ function MemoryPanel() {
             记住
           </button>
         </div>
+        {/* 合并那条工具条只在选了东西时长出来（平时列表就是列表，不摆一排永远用不上的控件）。 */}
+        {picked.length > 0 && (
+          <div className="mt-2 rounded-lg border border-blue-200 bg-blue-50/60 px-2.5 py-2 text-xs dark:border-blue-800 dark:bg-blue-900/20">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-slate-600 dark:text-slate-300">
+                已选 {picked.length} 条{picked.length < 2 ? " —— 再选一条就能合并" : ""}
+              </span>
+              <button
+                onClick={() => setMergePick([])}
+                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-200"
+              >
+                取消选择
+              </button>
+            </div>
+            {picked.length === 2 && (
+              <>
+                <label className="mt-1.5 block text-[11px] text-slate-500 dark:text-slate-400">
+                  合并成一条（先勾的那条留下，含它"用过几次"与钉住状态）
+                  {/* 钉住状态不跟着搬：留下的永远是先勾那条，所以"先勾了个没钉住的、
+                      后勾的钉住了"这个顺序会让钉住悄悄掉档 —— 说清楚比偷偷换更好。 */}
+                  {!picked[0].pinned && picked[1].pinned && (
+                    <span className="mt-0.5 block text-amber-600 dark:text-amber-400">
+                      注意：会留下「未钉住」的那条，钉住状态不跟着搬。要反过来留，先取消选择、
+                      再按你想要的顺序重选一遍。
+                    </span>
+                  )}
+                </label>
+                <textarea
+                  value={mergeDraft}
+                  onChange={(e) => setMergeDraft(e.target.value)}
+                  rows={2}
+                  maxLength={MAX_FACT}
+                  aria-label="合并后的句子"
+                  className="mt-1 w-full resize-none rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:border-blue-400 focus:outline-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+                />
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <span className="text-[10px] text-slate-400 dark:text-slate-500">
+                    {mergeDraft.length}/{MAX_FACT}
+                  </span>
+                  <button
+                    onClick={doMerge}
+                    disabled={itemBusy}
+                    className="rounded-lg bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-500 disabled:bg-slate-300 dark:disabled:bg-slate-700"
+                  >
+                    合并（留 1 条）
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
         <ul className="mt-2 max-h-56 space-y-1 overflow-y-auto">
           {(mem?.items ?? []).map((item) => (
             <li
               key={item.id}
               className="flex items-start gap-2 rounded-lg border border-slate-100 px-2 py-1.5 text-xs dark:border-slate-700"
             >
-              <span className="min-w-0 flex-1 break-words text-slate-700 dark:text-slate-200">
-                {item.text}
-                <span className="mt-0.5 block text-[10px] text-slate-400 dark:text-slate-500">
-                  {SOURCE_LABEL[item.source] ?? item.source}
-                  {" · "}用过 {item.hit_count} 次
-                  {item.pinned ? " · 已钉住" : ""}
-                  {" · "}
-                  {/* 三档做成下拉而不是"点一下循环"：这三档语义不对称（0 与 2 是两端，1 是
-                      默认），循环控件要数两下才知道自己在哪。与同一张卡里「收件箱折叠窗口」同款。 */}
-                  <label className="inline-flex items-center gap-1">
-                    要紧程度
-                    <select
-                      value={String(item.importance ?? 1)}
-                      disabled={itemBusy}
-                      onChange={(e) => void setItemImportance(item, Number(e.target.value))}
-                      title={
-                        "要紧 = 注入时带【要紧】标记、排序里权重最高；次要 = 活跃数超限时最先被退役（不删）。\n" +
-                        "与右边的「钉住」是两件事：钉住完全不进淘汰与整理，这一档只管还在池里时排多前。"
-                      }
-                      className="rounded border border-slate-200 bg-white px-1 py-0 text-[10px] text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
-                    >
-                      {[0, 1, 2].map((tier) => (
-                        <option key={tier} value={tier}>
-                          {IMPORTANCE_LABEL[tier]}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+              <input
+                type="checkbox"
+                checked={mergePick.includes(item.id)}
+                onChange={() => togglePick(item.id)}
+                disabled={itemBusy}
+                title="选来合并：一次合两条，先勾的那条留下"
+                aria-label={`选择这条记忆用于合并`}
+                className="mt-1 shrink-0"
+              />
+              {editingId === item.id ? (
+                // 行内编辑：整行换成输入框 + 计数器 + 取消/保存。不做 contenteditable ——
+                // 那一套会让"点哪儿算编辑、点哪儿算勾选"变成猜，而字数上限也没地方显示。
+                <span className="min-w-0 flex-1">
+                  <input
+                    value={editDraft}
+                    onChange={(e) => setEditDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") saveEdit(item);
+                      if (e.key === "Escape") cancelEdit();
+                    }}
+                    maxLength={MAX_FACT}
+                    disabled={itemBusy}
+                    aria-label="改这条记忆"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-blue-400 focus:outline-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+                  />
+                  <span className="mt-1 flex items-center justify-between gap-2">
+                    <span className="text-[10px] text-slate-400 dark:text-slate-500">
+                      {editDraft.length}/{MAX_FACT}
+                      {/* 超上限后端是**截断**不是报错，所以这里提前说一声。 */}
+                      {editDraft.length >= MAX_FACT ? " · 再打会被截断" : ""}
+                    </span>
+                    <span className="flex shrink-0 gap-1.5">
+                      <button
+                        onClick={cancelEdit}
+                        className="rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-200"
+                      >
+                        取消
+                      </button>
+                      <button
+                        onClick={() => saveEdit(item)}
+                        disabled={itemBusy || !editDraft.trim()}
+                        className="rounded bg-blue-600 px-2 py-0.5 text-[11px] text-white hover:bg-blue-500 disabled:bg-slate-300 dark:disabled:bg-slate-700"
+                      >
+                        保存
+                      </button>
+                    </span>
+                  </span>
                 </span>
-              </span>
-              <button
-                onClick={() => void togglePin(item)}
-                disabled={itemBusy}
-                title={item.pinned ? "取消钉住（允许被淘汰/整理）" : "钉住（不参与淘汰与整理）"}
-                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700"
-              >
-                {item.pinned ? "取消钉住" : "钉住"}
-              </button>
-              <button
-                onClick={() => void removeItem(item)}
-                disabled={itemBusy}
-                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:text-red-600 dark:hover:text-red-400"
-              >
-                删除
-              </button>
+              ) : (
+                <>
+                  <span className="min-w-0 flex-1 break-words text-slate-700 dark:text-slate-200">
+                    {item.text}
+                    <span className="mt-0.5 block text-[10px] text-slate-400 dark:text-slate-500">
+                      {SOURCE_LABEL[item.source] ?? item.source}
+                      {" · "}用过 {item.hit_count} 次
+                      {item.pinned ? " · 已钉住" : ""}
+                      {" · "}
+                      {/* 三档做成下拉而不是"点一下循环"：这三档语义不对称（0 与 2 是两端，1 是
+                          默认），循环控件要数两下才知道自己在哪。与同一张卡里「收件箱折叠窗口」同款。 */}
+                      <label className="inline-flex items-center gap-1">
+                        要紧程度
+                        <select
+                          value={String(item.importance ?? 1)}
+                          disabled={itemBusy}
+                          onChange={(e) => void setItemImportance(item, Number(e.target.value))}
+                          title={
+                            "要紧 = 注入时带【要紧】标记、排序里权重最高；次要 = 活跃数超限时最先被退役（不删）。\n" +
+                            "与右边的「钉住」是两件事：钉住完全不进淘汰与整理，这一档只管还在池里时排多前。"
+                          }
+                          className="rounded border border-slate-200 bg-white px-1 py-0 text-[10px] text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                        >
+                          {[0, 1, 2].map((tier) => (
+                            <option key={tier} value={tier}>
+                              {IMPORTANCE_LABEL[tier]}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </span>
+                  </span>
+                  <button
+                    onClick={() => startEdit(item)}
+                    disabled={itemBusy}
+                    title="改这条的文字（事实对、话说错了就用它，不用删了重记）"
+                    className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700"
+                  >
+                    改
+                  </button>
+                  <button
+                    onClick={() => void togglePin(item)}
+                    disabled={itemBusy}
+                    title={item.pinned ? "取消钉住（允许被淘汰/整理）" : "钉住（不参与淘汰与整理）"}
+                    className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700"
+                  >
+                    {item.pinned ? "取消钉住" : "钉住"}
+                  </button>
+                  <button
+                    onClick={() => void removeItem(item)}
+                    disabled={itemBusy}
+                    className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:text-red-600 dark:hover:text-red-400"
+                  >
+                    删除
+                  </button>
+                </>
+              )}
             </li>
           ))}
         </ul>
