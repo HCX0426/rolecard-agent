@@ -160,10 +160,11 @@ def check_config_contract() -> None:
     即使漏进 .env.example 也不会被发现 —— 一个只检查部分键的契约检查比没有更容易骗人
     （代码审查报告（第二轮）L4）。
     """
+    env_text = (ROOT / ".env.example").read_text(encoding="utf-8")
     env_keys = set(
         re.findall(
             r"^([A-Z][A-Z0-9_]+)=",
-            (ROOT / ".env.example").read_text(encoding="utf-8"),
+            env_text,
             flags=re.M,
         )
     )
@@ -200,6 +201,51 @@ def check_config_contract() -> None:
     out("config contract", not missing, detail)
     if missing:
         fails.append(f".env.example missing keys documented in config.py: {missing}")
+
+    # 键名对齐只保证"这一族没漏"，**保证不了值没漂**。09-26 轮 R26-10 实测：
+    # `MEMORY_EXTRACT_ROUNDS` 代码默认 5，`.env.example` 长期写着 12 —— 新克隆照抄就等于
+    # 把自动提取调回"几乎不触发"，而键名检查一路绿。所以这里把 example 的值和 `Settings`
+    # 的真实默认对一遍。真要故意给一个非默认值，就写进下面的豁免表并说清理由 ——
+    # "逼出一个书面理由"正是这条检查的全部价值。
+    _ENV_DEFAULT_EXEMPT = {
+        # 空 = 走 config 里的出厂端点（example 那三行注释就是这么解释的），不是漂移。
+        "SILICONFLOW_BASE_URL": "留空 = 用出厂默认端点（见 .env.example 该键上方注释）",
+    }
+    import sys  # noqa: PLC0415 - 与 main() 里同样的延迟导入姿势
+
+    sys.path.insert(0, str(ROOT / "src"))
+    from rolecard_agent.config import Settings  # noqa: PLC0415
+
+    def _norm(value: object) -> str:
+        text = str(value).strip().strip("\"'").replace("\\", "/")
+        return text[2:] if text.startswith("./") else text
+
+    pairs = re.findall(r'\("([A-Z][A-Z0-9_]+)",\s*"([a-z_0-9]+)"\)', cfg_text)
+    env_values = dict(re.findall(r"^([A-Z][A-Z0-9_]+)=(.*)$", env_text, flags=re.M))
+    settings = Settings()
+    drifted: list[str] = []
+    for key, field in pairs:
+        if key not in env_keys or key in _ENV_DEFAULT_EXEMPT or not hasattr(settings, field):
+            continue
+        default = getattr(settings, field)
+        example = env_values.get(key, "")
+        if isinstance(default, bool):
+            same = example.strip().lower() in ({"true", "1"} if default else {"false", "0"})
+        elif default is None:
+            same = example.strip() == ""
+        else:
+            same = _norm(default).lower() == _norm(example).lower()
+            if not same:
+                try:  # 120 与 120.0 是同一个数，不是漂移
+                    same = float(default) == float(example)
+                except (TypeError, ValueError):
+                    same = False
+        if not same:
+            drifted.append(f"{key}: example={example!r} 默认={default!r}")
+    out("env default values", not drifted, "; ".join(drifted[:4]) if drifted
+        else f"{len(pairs) - len(_ENV_DEFAULT_EXEMPT)} 个默认值与 example 一致")
+    if drifted:
+        fails.append(f".env.example values drifted from Settings defaults: {drifted}")
 
 
 def check_promised_artifacts() -> None:
@@ -565,19 +611,48 @@ def check_doc_links() -> None:
     # as `core/prompts.py`, which is not a path from the repo root - validating those
     # produced nothing but noise.
     prefixes = ("docs/", "src/", "scripts/", "tests/", "data/")
-    pattern = re.compile(r"`([A-Za-z0-9_][A-Za-z0-9_./\-]*\.(?:md|py|toml|txt|sql|json|cfg|ini))`")
+    # 字符类必须含中文：**整个中文文件名文档树原本是这条检查的盲区**。09-26 轮 R26-20 实测：
+    # 把 CJK 放进来之后立刻抓到 7 处 living docs 指着已经搬进 archive/ 的《技术评审与决策》
+    # 《实施计划》，而在此之前这条检查报的是 "all resolve"。
+    # markdown 链接的目标 `](a.md)` 也一起看 —— 那是真链接，不是包内简写，误报面为零。
+    cjk = "".join(chr(c) for c in range(0x4E00, 0xA000)) + "\uff08\uff09\u3001\u00b7\u2014"
+    name_cls = f"{cjk}A-Za-z0-9_"
+    pattern = re.compile(
+        rf"`([{name_cls}][{name_cls}.\-/]*\.(?:md|py|toml|txt|sql|json|cfg|ini))`"
+    )
+    link_pattern = re.compile(r"\]\(([^)\s#]+?\.(?:md|png|jpg|json))\)")
+
+    def resolvable(md_path: pathlib.Path, ref: str) -> bool:
+        """仓库相对路径按仓库根解；裸文件名（含 `../` 形式）按本文件所在目录解。"""
+        if (ROOT / ref).exists():
+            return True
+        return (md_path.parent / ref).exists()
 
     broken: list[str] = []
+    # 两条刻意不参与：
+    #  * `docs/archive/` 是**封存件** —— 里面的路径是"写它的那天"的事实，按 R26-19 的同一个
+    #    决定（引用可达性进门禁，但归档档里的编号与路径原地不动）不去追修它们。
+    #  * `.workbuddy/` 是另一个 IDE 的会话日志（见记忆「Parallel IDE workflow」）——
+    #    那是历史陈述句不是文档，且由另一个工具在写。
+    def out_of_scope(rel: pathlib.Path) -> bool:
+        parts = set(rel.parts)
+        return "archive" in parts or ".workbuddy" in parts
+
     for path in iter_files(".md"):
+        rel = path.relative_to(ROOT)
+        if out_of_scope(rel):
+            continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         for lineno, line in enumerate(text.splitlines(), 1):
-            for ref in pattern.findall(line):
+            for ref in pattern.findall(line) + link_pattern.findall(line):
                 if "*" in ref or ref in not_yet:
                     continue
-                if not (ref.startswith(prefixes) or ref in bare):
+                is_prefixed = ref.startswith(prefixes)
+                is_bare_md = "/" not in ref and ref.endswith(".md")
+                if not (is_prefixed or is_bare_md or ref in bare):
                     continue
-                if not (ROOT / ref).exists():
-                    broken.append(f"{path.relative_to(ROOT)}:{lineno} -> {ref}")
+                if not resolvable(path, ref):
+                    broken.append(f"{rel}:{lineno} -> {ref}")
     detail = "; ".join(broken[:4]) if broken else "all resolve"
     out("doc links", not broken, detail)
     if broken:
