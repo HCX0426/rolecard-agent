@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, streamChat, UNREAD_POLL_MS, type MessagePage, type MessageRow, type ReachoutRow, type RoleCard } from "../api";
+import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useChatStream } from "../hooks/useChatStream";
 import { shellBridge } from "../lib/shell";
 import { type StreamMeta } from "../lib/stream";
@@ -207,6 +208,14 @@ export default function PetPage() {
   const name = activeName;
   // 隐藏内容时面板要说"有几条没读"，那数的是**当前对象**的（切到别的角色就不是那一堆了）。
   const unreadOfActive = activeRole ? (unreadByRole[activeRole] ?? 0) : 0;
+
+  /**
+   * 面板列表贴着底部就跟随新内容（与对话页同一个 hook，规则也一致：用户往上翻时不拽回来）。
+   *
+   * 依赖里有 `live`：她正在回话时每一帧气泡都在长，没有这一项就是用户 2026-09-25 报的
+   * "回答时滚动条不自动到最新"—— 面板只有 300px 高，新那几行一直长在看不见的下面。
+   */
+  const scrollRef = useAutoScroll(threadId, [history, pendingUser, live]);
 
   useEffect(() => {
     if (knownThreadId || !activeRole) {
@@ -625,7 +634,10 @@ export default function PetPage() {
               </button>
             </div>
           </header>
-          <div className="max-h-[300px] min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 py-2 text-[11px] leading-relaxed">
+          <div
+            ref={scrollRef}
+            className="max-h-[300px] min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 py-2 text-[11px] leading-relaxed"
+          >
             {historyError && <p className="text-red-600 dark:text-red-400">{historyError}</p>}
             {streamError && <p className="text-red-600 dark:text-red-400">{streamError}</p>}
             {!showContent && (

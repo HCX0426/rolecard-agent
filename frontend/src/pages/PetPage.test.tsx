@@ -544,6 +544,76 @@ describe("PetPage 在桌宠上回话（③：不进控制台就能聊）", () =>
     expect(apiMock.get).toHaveBeenCalledWith("/api/session/s_proactive_wan/messages?limit=8");
   });
 
+  it("她正在回话时面板跟着滚到最新；往上翻历史则不拽回去", async () => {
+    // 用户 2026-09-25 报的那条：面板只有 300px 高，新长出来的字一直在看不见的下面，
+    // 而桌宠先前**根本没接**自动滚动（对话页接了）。这里钉的是接上之后那份规则：
+    // 贴着底才跟，翻上去的手不被抢回去 —— 与 `useAutoScroll` 一字不差，因为用的就是它。
+    let emit: ((e: unknown) => void) | null = null;
+    let finish: (() => void) | null = null;
+    streamChatMock.mockImplementation(
+      (_tid: string, _msg: string, onEvent: (e: unknown) => void) =>
+        new Promise<void>((resolve) => {
+          emit = onEvent;
+          finish = resolve;
+        }),
+    );
+    await expandPanel();
+    const list = document.querySelector(
+      "[data-pet-ui='panel'] [class*='overflow-y-auto']",
+    ) as HTMLElement;
+    expect(list).toBeTruthy();
+    // jsdom 不排版：几何与 scrollTop 都得自己造，否则"贴没贴底"这个判据根本算不出来。
+    let scrollTop = 0;
+    const geo = { scrollHeight: 900, clientHeight: 300 };
+    Object.defineProperty(list, "scrollHeight", { configurable: true, get: () => geo.scrollHeight });
+    Object.defineProperty(list, "clientHeight", { configurable: true, get: () => geo.clientHeight });
+    Object.defineProperty(list, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (v: number) => {
+        scrollTop = v;
+      },
+    });
+    // DOM 里 `scrollTo` 有两个重载，`vi.spyOn` 挑到的是 `(x, y)` 那个，而 `useAutoScroll`
+    // 传的是 `{ top }` 的对象形态 —— 按对象形态收。
+    const scrollTo = (opts: ScrollToOptions) => {
+      if (typeof opts.top === "number") scrollTop = opts.top;
+    };
+    vi.spyOn(list, "scrollTo").mockImplementation(scrollTo as unknown as () => void);
+    scrollTop = geo.scrollHeight - geo.clientHeight; // 起点：用户正贴着底看最新那一条
+
+    const box = screen.getByPlaceholderText(/跟苏晚晴说一句/) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "喂" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await act(async () => {
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+
+    // 每来一块就长一截，滚动条必须跟着到底。
+    for (const [i, chunk] of ["第一块", "第二块", "第三块"].entries()) {
+      geo.scrollHeight = 900 + i * 200;
+      // eslint-disable-next-line no-await-in-loop
+      await act(async () => {
+        emit?.({ type: "token", text: chunk });
+      });
+      expect(scrollTop).toBe(geo.scrollHeight);
+    }
+
+    // 用户往上翻着找旧的一条：字还在长，但不该被拽回底部。
+    scrollTop = 200;
+    geo.scrollHeight = 1600;
+    await act(async () => {
+      emit?.({ type: "token", text: "第四块" });
+    });
+    expect(scrollTop).toBe(200);
+
+    await act(async () => {
+      emit?.({ type: "end" });
+      finish?.();
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+  });
+
   it("Shift+Enter 是换行，不是发送", async () => {
     await expandPanel();
     const box = screen.getByPlaceholderText(/跟苏晚晴说一句/) as HTMLTextAreaElement;
