@@ -59,11 +59,13 @@ from rolecard_agent.core.memory import (
     top_active_item,
 )
 from rolecard_agent.core.observability import NullTracer, TraceEvent, Tracer
+from rolecard_agent.core.open_threads import find_open_threads
 from rolecard_agent.core.proactive_state import (
     DEFAULT_AFFINITY_THRESHOLD,
     ProactiveState,
     get_state,
     record_interaction,
+    save_open_threads,
 )
 from rolecard_agent.core.prompts import build_system_prompt
 from rolecard_agent.core.text import text_of
@@ -131,6 +133,21 @@ _RECALL_TASK_WITHOUT_MEMORY = (
 
 _TASK_PREFIX = "现在是主动开口的时刻。"
 
+# 「未收尾话题」的缓存寿命（分钟）。为什么是 90：这一源扫的是**最近那几轮对话**，
+# 而主动开口的基线间隔本身就是小时级（`REACHOUT_INTERVAL_MINUTES`）—— 比它短就是每 tick
+# 多花一次模型调用（本地 8B 一次要几十秒），比它长就出现"她记着一件三天前就翻篇的事"。
+# 判"过期"只看这一枚时刻，不看新消息数：新消息会让 `thread_lines` 自己变，扫描下次到期时
+# 自然读到新的那一窗。
+OPEN_THREADS_REFRESH_MINUTES = 90
+
+
+def open_threads_stale(state: ProactiveState, *, now: datetime) -> bool:
+    """这一角色的话题缓存该不该重扫。**从没扫过**也算该扫（`scan_at is None`）。"""
+    if state.open_threads_scan_at is None:
+        return True
+    age = (now - state.open_threads_scan_at).total_seconds() / 60.0
+    return age >= OPEN_THREADS_REFRESH_MINUTES
+
 # 开口前去重用：把该角色最近说过的几条原文带进指令。**写死成常量而不是配置项** ——
 # 它是"别复读"这个机制的实现细节，调它的人不会存在，但留一个旋钮就得多测一条路径。
 RECENT_CONTEXT_LIMIT = 5
@@ -142,6 +159,7 @@ def _task_text(
     *,
     has_memory: bool,
     material: dict[str, object] | None = None,
+    open_topics: Sequence[str] = (),
 ) -> str:
     """拼任务指令：开头按"有没有长期记忆"分叉，正文按触发口吻分叉。
 
@@ -165,6 +183,18 @@ def _task_text(
         return (
             f"{_TASK_PREFIX}{lead}{_REACHOUT_TASK_FILE_EVENT_BODY}\n\n"
             f"任务目录的变化：\n{file_list}"
+        )
+    if mode == "open_thread" and open_topics:
+        # 第五个由头。清单是"扫出来"的而不是"确定存在"的，所以留一条退路：她可以说
+        # "这些其实都翻篇了"，然后正常讲一件此刻的小事 —— 硬找话头比不找更假。
+        lines = "\n".join(f"- {t}" for t in open_topics)
+        return (
+            f"{_TASK_PREFIX}{lead}"
+            "下面这几件是对方提过、到你们上次话尾还没有收尾的事。**挑一件自然地问下去**，"
+            "只问这一件；不确定的细节不要补，也不要逐条复述这份清单：\n"
+            f"{lines}\n"
+            "如果这些事其实都已经过去了，就别硬接，正常说一句此刻值得说的小事。\n"
+            "简短、口语化；不要自我介绍、不要说教、不要长篇。"
         )
     return f"{_TASK_PREFIX}{lead}{_REACHOUT_TASK_BODY}"
 
@@ -614,6 +644,7 @@ def generate_reachout_text(
     mode: str = "general",
     file_list: str = "",
     thread_lines: str = "",
+    open_topics: Sequence[str] = (),
     tracer: Tracer | None = None,
 ) -> ReachoutDraft:
     """生成一条主动内容：人设 + 记忆 + 最近说过什么 → 单轮 → guard。
@@ -642,7 +673,10 @@ def generate_reachout_text(
     material = (
         top_active_item(conn, bucket=role_id or GLOBAL_BUCKET) if mode == "recall" else None
     )
-    task = _task_text(mode, file_list, has_memory=bool(memory.strip()), material=material)
+    task = _task_text(
+        mode, file_list, has_memory=bool(memory.strip()), material=material,
+        open_topics=open_topics,
+    )
     # E1 去重：把"最近已经说过什么"摊给它看。没有这一层，每次开口都是从零现编 ——
     # 实测同一天连发四条"花海/阳光/亮晶晶"，症状不是模型差，是上下文里没有"我刚说过"。
     if role_id:
@@ -887,7 +921,33 @@ class ReachoutScheduler:
                 or trigger_recall(role, self._conn, now_local=stamp_local)
                 or "timer"
             )
-            mode = fired if fired in ("recall", "file_event") else "general"
+            # 第五个由头「未收尾话题」：只在链子要落到最弱那一档（timer）时才去补一次扫描，
+            # 结果按 `OPEN_THREADS_REFRESH_MINUTES` 缓存 —— 一次调用换"她记得你说到一半"，
+            # 不能每个 tick 花一遍（本地 8B 一次几十秒，那是直接拖死调度线程的量）。
+            open_topics: list[str] = []
+            if fired == "timer" and self._thread_lines is not None:
+                turns = self._thread_lines(role.role_id)
+                if turns:
+                    if open_threads_stale(state, now=stamp_utc):
+                        try:
+                            scanned = find_open_threads(turns, self._model(role.model_name))
+                        except Exception as exc:  # noqa: BLE001 - 由头缺一个不是故障
+                            self._tracer.emit(
+                                TraceEvent(
+                                    event="open_threads_failed",
+                                    node="reachout",
+                                    role_id=role.role_id,
+                                    detail={"error": str(exc)[:200]},
+                                )
+                            )
+                            scanned = []
+                        state = save_open_threads(
+                            self._conn, role.role_id, scanned, now=stamp_utc
+                        )
+                    open_topics = list(state.open_threads)
+                    if open_topics:
+                        fired = "open_thread"
+            mode = fired if fired in ("recall", "file_event", "open_thread") else "general"
             try:
                 model = self._model(role.model_name)
                 draft = generate_reachout_text(
@@ -904,6 +964,7 @@ class ReachoutScheduler:
                     ),
                     # 读不到就是没有这段上下文（provider 自己吞异常），不该拦住开口。
                     thread_lines=self._thread_lines(role.role_id) if self._thread_lines else "",
+                    open_topics=open_topics,
                     tracer=self._tracer,
                 )
             except Exception as exc:  # noqa: BLE001 - 生成失败只留痕，不阻塞其它角色

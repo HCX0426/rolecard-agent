@@ -356,3 +356,10 @@ def _migrate(conn: SqlConnection) -> None:
     for name in ("repeat_penalty", "frequency_penalty", "presence_penalty"):
         if name not in _columns(conn, "model_backend"):
             conn.execute(f"ALTER TABLE model_backend ADD COLUMN {name} REAL")
+    # 11. role_proactive_state 增列「未收尾话题」缓存（设计稿 §8.2 第 5 条 / 第五个由头）。
+    #     可空：NULL = 这个角色的这一源从没扫过 —— 与"扫了但没找到"（空串）是两回事，
+    #     后者在过期之前不该再花一次调用。
+    if "open_threads" not in _columns(conn, "role_proactive_state"):
+        conn.execute("ALTER TABLE role_proactive_state ADD COLUMN open_threads TEXT")
+    if "open_threads_at" not in _columns(conn, "role_proactive_state"):
+        conn.execute("ALTER TABLE role_proactive_state ADD COLUMN open_threads_at TIMESTAMP")

@@ -113,6 +113,11 @@ CREATE TABLE IF NOT EXISTS role_proactive_state (
     affinity             REAL NOT NULL DEFAULT 0.0,
     last_interaction_utc TIMESTAMP,
     calibration_json     TEXT,
+    -- 第五个由头「未收尾话题」的缓存（设计稿 §8.2 第 5 条）：一次小模型调用的产物，
+    -- 存下来是为了**不每个 tick 都问一遍**。`open_threads_at` 是那次扫描的时刻 ——
+    -- 判"多久算过期"用（见 reachout.OPEN_THREADS_REFRESH_MINUTES）。NULL = 从没扫过。
+    open_threads         TEXT,
+    open_threads_at      TIMESTAMP,
     updated_at           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

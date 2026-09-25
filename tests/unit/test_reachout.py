@@ -957,3 +957,144 @@ def test_blocked_by_interval_backs_off_per_unread(conn) -> None:
     conn.commit()
     reason = svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local)
     assert reason is not None and "退避" in reason, "未读 1 条时 100 分钟还不够（要等 ~120 分钟）"
+
+
+# --------------------------------------------------------------- 第五个由头：未收尾话题
+
+
+class _TwoFaceModel:
+    """一个模型两用：扫描那一问回 `OPEN …`，生成那一问回一句人话。
+
+    为什么得分脸：扫描与开口都走 `model_resolver` 给的同一个模型。一份答复通吃两种问法，
+    测出来的就是"扫描结果污染了正文"或反之，接线的对错根本读不出来。
+    """
+
+    def __init__(self, topics: list[str], reply: str = "嗨，在忙什么？") -> None:
+        self.topics = topics
+        self.reply = reply
+        self.scan_calls = 0
+        self.gen_calls = 0
+        self.last_gen_prompt: list | None = None
+
+    def invoke(self, prompt: object, **kwargs: object) -> AIMessage:
+        text = prompt if isinstance(prompt, str) else " ".join(
+            str(getattr(m, "content", "")) for m in prompt  # type: ignore[union-attr]
+        )
+        if "OPEN <" in text:  # 只有扫描那份指令里有这个格式示例
+            self.scan_calls += 1
+            body = "\n".join(f"OPEN {t}" for t in self.topics) if self.topics else "NONE"
+            return AIMessage(content=body)
+        self.gen_calls += 1
+        self.last_gen_prompt = prompt
+        return AIMessage(content=self.reply)
+
+
+def _thread_scheduler(conn, model: object, lines: str) -> ReachoutScheduler:
+    return ReachoutScheduler(
+        settings_provider=lambda: _settings(),
+        roles=_Roles([_role(reachout_enabled=True)]),  # type: ignore[arg-type]
+        model_resolver=lambda _n: model,
+        conn=conn,
+        tracer=_Tracer(),
+        thread_lines=lambda _rid: lines,
+    )
+
+
+def _joined(prompt: list | None) -> str:
+    return " ".join(str(getattr(m, "content", "")) for m in prompt or [])
+
+
+def test_open_threads_replaces_the_generic_timer_and_are_cached(conn) -> None:
+    """扫到东西 ⇒ 由头从"timer"升级成"open_thread"，而那几件原样进生成指令。"""
+    model = _TwoFaceModel(["下周体检的结果"])
+    utc, local = _now()
+    scheduler = _thread_scheduler(conn, model, "- 用户：我下周要体检")
+    made = scheduler.tick_once(now_utc=utc, now_local=local)
+    assert made == 1
+    assert model.scan_calls == 1 and model.gen_calls == 1
+    assert "下周体检的结果" in _joined(model.last_gen_prompt)
+    state = get_state(conn, "active")
+    assert state.open_threads == ("下周体检的结果",)
+    assert state.open_threads_scan_at is not None, "扫过要记时刻，否则下一 tick 又问一遍"
+
+
+def test_a_fresh_cache_is_used_without_spending_another_call(conn) -> None:
+    """这一源的全部代价在那一次模型调用上：缓存没过期就**一个字节都不该问**。"""
+    from rolecard_agent.core.proactive_state import save_open_threads
+
+    utc, local = _now()
+    save_open_threads(conn, "active", ["猫绝育约上了没"], now=utc - timedelta(minutes=5))
+    model = _TwoFaceModel(["这条不该被扫出来"])
+    made = _thread_scheduler(conn, model, "- 用户：随便说点什么").tick_once(
+        now_utc=utc, now_local=local
+    )
+    assert made == 1
+    assert model.scan_calls == 0, "90 分钟窗口内重复扫描 = 每个 tick 多花一次调用"
+    assert "猫绝育约上了没" in _joined(model.last_gen_prompt)
+    assert "这条不该被扫出来" not in _joined(model.last_gen_prompt)
+
+
+def test_an_expired_cache_is_rescanned(conn) -> None:
+    from rolecard_agent.core.proactive_state import save_open_threads
+
+    utc, local = _now()
+    stale_at = utc - timedelta(minutes=svc.OPEN_THREADS_REFRESH_MINUTES + 1)
+    save_open_threads(conn, "active", ["旧话题"], now=stale_at)
+    model = _TwoFaceModel(["新扫出来的话题"])
+    _thread_scheduler(conn, model, "- 用户：最近事挺多").tick_once(now_utc=utc, now_local=local)
+    assert model.scan_calls == 1
+    assert get_state(conn, "active").open_threads == ("新扫出来的话题",)
+
+
+def test_nothing_open_still_speaks_but_says_nothing_about_topics(conn) -> None:
+    """扫不出东西是**常态**（设计稿：宁可漏报不要凑数）：照常开口，只是不提任何"没说完的事"，
+    并且把"扫过、没有"写进缓存 —— 不然下一个 tick 又去问一遍。"""
+    model = _TwoFaceModel([])
+    utc, local = _now()
+    scheduler = _thread_scheduler(conn, model, "- 用户：今天还行")
+    made = scheduler.tick_once(now_utc=utc, now_local=local)
+    assert made == 1
+    assert model.scan_calls == 1
+    joined = _joined(model.last_gen_prompt)
+    assert "未收尾" not in joined and "OPEN" not in joined
+    state = get_state(conn, "active")
+    assert state.open_threads == () and state.open_threads_scan_at is not None
+
+
+def test_no_thread_lines_means_no_scan_at_all(conn) -> None:
+    """宿主没给"你们最近聊过什么"（离线、图还没建）⇒ 不花这一次调用，也不报错。"""
+    model = _TwoFaceModel(["不该被扫"])
+    utc, local = _now()
+    scheduler = ReachoutScheduler(
+        settings_provider=lambda: _settings(),
+        roles=_Roles([_role(reachout_enabled=True)]),  # type: ignore[arg-type]
+        model_resolver=lambda _n: model,
+        conn=conn,
+        tracer=_Tracer(),
+    )
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
+    assert model.scan_calls == 0
+
+
+def test_the_open_thread_task_offers_a_way_out() -> None:
+    """指令里必须留着"这些都过去了就别硬接"那条退路 —— 硬找话头比不找更假。"""
+    text = svc._task_text(
+        "open_thread", "", has_memory=True, open_topics=["体检结果", "猫绝育"]
+    )
+    assert "体检结果" in text and "猫绝育" in text
+    assert "都已经过去" in text and "别硬接" in text
+
+
+def test_open_threads_stale_only_by_age_or_never_scanned() -> None:
+    """"从没扫过"与"扫了但没结果"必须分得开：后者在过期之前不该再花一次调用。"""
+    from rolecard_agent.core.proactive_state import ProactiveState
+
+    now = datetime.now(_UTC)
+    assert svc.open_threads_stale(ProactiveState(role_id="x"), now=now) is True
+    scanned_empty = ProactiveState(role_id="x", open_threads_scan_at=now - timedelta(minutes=10))
+    assert svc.open_threads_stale(scanned_empty, now=now) is False
+    old = ProactiveState(
+        role_id="x",
+        open_threads_scan_at=now - timedelta(minutes=svc.OPEN_THREADS_REFRESH_MINUTES),
+    )
+    assert svc.open_threads_stale(old, now=now) is True
