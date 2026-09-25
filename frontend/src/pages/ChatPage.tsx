@@ -76,11 +76,45 @@ const SAMPLING_FIELDS: {
   key: "repeat_penalty" | "frequency_penalty" | "presence_penalty";
   label: string;
   nativeOnly: boolean;
-  options: (number | null)[];
+  options: { value: number | null; label: string }[];
 }[] = [
-  { key: "repeat_penalty", label: "重复惩罚", nativeOnly: true, options: [null, 1.0, 1.1, 1.2, 1.3] },
-  { key: "frequency_penalty", label: "频率惩罚", nativeOnly: false, options: [null, 0, 0.1, 0.2, 0.3] },
-  { key: "presence_penalty", label: "存在惩罚", nativeOnly: false, options: [null, 0, 0.1, 0.2, 0.3] },
+  {
+    key: "repeat_penalty",
+    label: "重复惩罚",
+    nativeOnly: true,
+    // 标签自己拼：`String(1.0)` 在 JS 里是 "1"，混在 1.1/1.2 旁边读起来像少了一档。
+    options: [
+      { value: null, label: "未设置" },
+      { value: 1.0, label: "1.0" },
+      { value: 1.1, label: "1.1" },
+      { value: 1.2, label: "1.2" },
+      { value: 1.3, label: "1.3" },
+    ],
+  },
+  {
+    key: "frequency_penalty",
+    label: "频率惩罚",
+    nativeOnly: false,
+    options: [
+      { value: null, label: "未设置" },
+      { value: 0, label: "0.0" },
+      { value: 0.1, label: "0.1" },
+      { value: 0.2, label: "0.2" },
+      { value: 0.3, label: "0.3" },
+    ],
+  },
+  {
+    key: "presence_penalty",
+    label: "存在惩罚",
+    nativeOnly: false,
+    options: [
+      { value: null, label: "未设置" },
+      { value: 0, label: "0.0" },
+      { value: 0.1, label: "0.1" },
+      { value: 0.2, label: "0.2" },
+      { value: 0.3, label: "0.3" },
+    ],
+  },
 ];
 
 function fmtDuration(from: string, to: string): string | null {
@@ -1338,15 +1372,15 @@ export default function ChatPage({
                                   <div className="flex flex-wrap gap-1">
                                     {f.options.map((opt) => (
                                       <button
-                                        key={String(opt)}
-                                        onClick={() => void setModelSampling(b.name, f.key, opt)}
+                                        key={opt.label}
+                                        onClick={() => void setModelSampling(b.name, f.key, opt.value)}
                                         className={`rounded px-2 py-0.5 text-[11px] ${
-                                          (b[f.key] ?? null) === opt
+                                          (b[f.key] ?? null) === opt.value
                                             ? "bg-blue-600 text-white"
                                             : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700/60"
                                         }`}
                                       >
-                                        {opt === null ? "未设置" : String(opt)}
+                                        {opt.label}
                                       </button>
                                     ))}
                                   </div>
