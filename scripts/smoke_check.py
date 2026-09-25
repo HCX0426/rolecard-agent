@@ -25,6 +25,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.request
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
@@ -556,9 +558,14 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
 def console_ui_smoke() -> None:
     """用本机 Chrome/Edge 真跑一遍界面交互（scripts/ui_smoke.js）；由 main() 在末项调用。
 
-    为什么放在最后且允许跳过：它依赖**外部真实服务**（默认 http://127.0.0.1:8000）
-    与本机浏览器，不是纯离线断言。缺 node / 缺 playwright-core / 缺浏览器 / 服务没起
-    时打印跳过说明并计为通过 —— 环境差异不该把冒烟变红，但**跑到了就必须全绿**。
+    **它自己起一个后端、打的是库副本**（2026-09-25 改的，之前默认打 127.0.0.1:8000）。
+    原因不是洁癖：那一轮 full 门禁跑完，用户真库里多了三条标题为
+    "用一句话解释：为什么冬天白天比夏天短？" 的会话 —— 那是 `ui_smoke.js` 的固定问句。
+    冒烟写进真实数据，违反的是这个项目自己那条不变式（实验脚本只走副本），
+    而且它安静地改动了"她记得什么"：下一次对话她会引用这些从没发生过的提问。
+
+    为什么放在最后且允许跳过：它依赖本机浏览器（node + playwright-core + Chrome/Edge），
+    缺任何一样就打印跳过说明并计为通过 —— 环境差异不该把冒烟变红，但**跑到了就必须全绿**。
 
     `SMOKE_SKIP_UI=1`：本地快速迭代的显式逃生门（UI 段约占整套冒烟一半时长）。
     与"缺依赖"不同，这是**主动选择不跑**，所以跳过说明里必须带上原因，防止误读成全绿。
@@ -573,9 +580,35 @@ def console_ui_smoke() -> None:
     script = ROOT / "scripts" / "ui_smoke.js"
     if not script.exists():
         raise AssertionError("缺少 scripts/ui_smoke.js")
+
+    import socket  # noqa: PLC0415
+
+    import scratch_db  # noqa: PLC0415
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    copy = Path(tempfile.mkdtemp(prefix="ui_smoke_")) / "app.db"
+    scratch_db.copy_of_live_db(copy)
+    env = {
+        **os.environ,
+        "SQLITE_PATH": str(copy),
+        "RUN_API_PORT": str(port),
+        "MEMORY_EXTRACT_AUTO": "0",  # 冒烟不该顺手改她的记忆
+        "PYTHONIOENCODING": "utf-8",
+    }
+    server = subprocess.Popen(  # noqa: S603
+        [sys.executable, str(ROOT / "scripts" / "run_api.py")],
+        cwd=str(ROOT),
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     try:
-        proc = subprocess.run(
-            [node, str(script)],
+        base = f"http://127.0.0.1:{port}"
+        _wait_for_health(base, server)
+        proc = subprocess.run(  # noqa: S603
+            [node, str(script), base],
             capture_output=True,
             text=True,
             timeout=600,
@@ -583,12 +616,30 @@ def console_ui_smoke() -> None:
             encoding="utf-8",
             errors="replace",
         )
-    except subprocess.TimeoutExpired:
-        raise AssertionError("真机 UI 冒烟超时（600s）") from None
+    finally:
+        server.terminate()
+        with contextlib.suppress(Exception):
+            server.wait(timeout=15)
     out = (proc.stdout or "") + (proc.stderr or "")
     print(out.strip())
+    print(f"（UI 冒烟跑在副本上：{copy}，端口 {port}；真库一行未动）")
     if proc.returncode != 0:
         raise AssertionError("真机 UI 冒烟存在失败项（见上）")
+
+
+def _wait_for_health(base: str, server: subprocess.Popen) -> None:
+    """等自己起的那个后端就绪；它半路死了就直接失败，别把"没起来"演成"界面坏了"。"""
+    deadline = time.time() + 90
+    while time.time() < deadline:
+        if server.poll() is not None:
+            raise AssertionError(f"冒烟用的后端起不来（退出码 {server.returncode}）")
+        try:
+            with urllib.request.urlopen(f"{base}/api/health", timeout=3) as r:  # noqa: S310
+                if r.status == 200:
+                    return
+        except Exception:  # noqa: BLE001 - 还没就绪，继续等
+            time.sleep(1.0)
+    raise AssertionError("冒烟用的后端 90s 内没就绪")
 
 
 def report() -> int:
