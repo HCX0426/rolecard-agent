@@ -103,6 +103,11 @@ export function initialBounds(label: string, fallback: Rectangle): Rectangle {
  * `persistAs` 是给桌宠留的口子：它的窗口是一张**常驻画布**（560×520，比色片大一圈），
  * 而**记住的位置必须是色片那块 200×240** —— 把画布坐标落库，下次开机就是一张透明大窗贴在
  * 桌面上（内容还是小宠物，多出来的部分既看不见又挡住下面的点击）。传进来的永远是窗口当前的真实边界。
+ *
+ * **几何只在窗还活着的时候量，往下存的一律是缓存那一份**：`closed` 触发时原生窗已经销毁，
+ * 那时 `win.getBounds()` 抛 `TypeError: Object has been destroyed` —— 主进程未捕获异常会弹
+ * 一扇模态错误框，而那扇框把 `app.quit()` 的收尾整条堵住（实测：托盘点「退出」之后 80 秒
+ * 进程还在，两个窗各弹一框）。这就是"托盘退出程序有问题"的真身。
  */
 export function trackBounds(
   win: BrowserWindow,
@@ -110,23 +115,27 @@ export function trackBounds(
   options: { persistAs?: (rect: Rectangle) => Rectangle } = {},
 ): void {
   let timer: NodeJS.Timeout | null = null;
+  /** 最后一次**还量得到**的几何：往下写的一律是这一份。 */
+  let last = win.getBounds();
+  const write = (rect: Rectangle) => {
+    const states = load();
+    states[label] = options.persistAs ? options.persistAs(rect) : rect;
+    save(states);
+  };
   const persist = () => {
+    if (!win.isDestroyed()) last = win.getBounds();
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
-      const states = load();
-      states[label] = options.persistAs ? options.persistAs(win.getBounds()) : win.getBounds();
-      save(states);
+      write(last);
     }, 400);
   };
   win.on("move", persist);
   win.on("resize", persist);
   win.on("closed", () => {
     if (timer) clearTimeout(timer);
-    const states = load();
-    const rect = win.getBounds();
-    states[label] = options.persistAs ? options.persistAs(rect) : rect;
-    save(states);
+    timer = null;
+    write(last);
   });
 }
 

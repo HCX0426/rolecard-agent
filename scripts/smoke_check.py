@@ -240,6 +240,10 @@ def main() -> int:
         "真机 UI 冒烟（浏览器打开控制台：可发消息 / 思考过程保留 / 刷新后历史仍在）",
         console_ui_smoke,
     )
+    run_check(
+        "桌面壳退出冒烟（起真壳 → app.quit() → 进程必须自己收干净）",
+        console_shell_quit_smoke,
+    )
     return report()
 
 
@@ -641,6 +645,39 @@ def console_ui_smoke() -> None:
     print(f"（UI 冒烟跑在副本上：{copy}，端口 {port}；真库一行未动）")
     if proc.returncode != 0:
         raise AssertionError("真机 UI 冒烟存在失败项（见上）")
+
+
+def console_shell_quit_smoke() -> None:
+    """起一次**真壳**验退出（scripts/shell_quit_smoke.js）；与 UI 冒烟同一套"允许跳过"口径。
+
+    为什么值得单列一项：2026-09-25 用户报"托盘那个退出程序有问题"，根因是主进程在窗销毁后
+    读几何抛未捕获异常 → 弹一扇模态错误框 → 把 `app.quit()` 的收尾堵住。同一套探针实测：
+    修前 quit 之后 **80.2 秒**才走掉（6114ms → 86275ms），修后 **28 毫秒**（6116ms →
+    6144ms）。这件事 python 侧单测与前端 vitest 都够不着：要真窗、真销毁、真事件循环。
+
+    它**不碰用户那份安装实例**：自带临时 `--user-data-dir`（单实例锁按 userData 路径派生），
+    并且把后端命令指到一个不存在的程序 —— 不 spawn 后端，也就没有子进程要回收。
+    """
+    node = shutil.which("node")
+    if not node:
+        print("（跳过：未找到 node，无法起桌面壳）")
+        return
+    script = ROOT / "scripts" / "shell_quit_smoke.js"
+    if not script.exists():
+        raise AssertionError("缺少 scripts/shell_quit_smoke.js")
+    proc = subprocess.run(  # noqa: S603
+        [node, str(script)],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        cwd=str(ROOT),
+        encoding="utf-8",
+        errors="replace",
+    )
+    out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    print(out)
+    if proc.returncode != 0:
+        raise AssertionError("桌面壳退出冒烟失败（见上）")
 
 
 def _wait_for_health(base: str, server: subprocess.Popen) -> None:
