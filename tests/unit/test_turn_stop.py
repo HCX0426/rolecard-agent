@@ -236,3 +236,47 @@ def test_a_new_turn_clears_the_stale_stop(roles: RoleCardService) -> None:
     )
     assert _end_event(events).stopped is False
     assert stop_requested("t") is False
+
+
+def test_the_stale_stop_is_cleared_only_after_the_write_lock_is_held(
+    roles: RoleCardService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R26-02：擦旗必须在**拿到写锁之后**，否则新一轮会白吃上一轮补下的那个"停"。
+
+     races 的成因是顺序而不是运气：上一轮断连时那记 `request_stop` 是它自己 `finally` 里补的，
+    而它跑在 `release_thread` **之前** —— 锁还在它手里。所以"先抢锁再擦旗"就把这件事变成
+    了互斥保证的推论；反过来（原先那样先擦再抢）就留着一个窗口：擦完 → 上一轮补停 →
+    这一轮抢到锁开跑 → 内核第一次检查旗子就 `TurnStopped`，整轮零产出。
+
+    这里断的是**调用顺序**而不是并发：真起线程去踩那个窗口会是个看调度器脸色的用例，
+    而这条要钉的恰恰就是"顺序"本身。
+    """
+    from rolecard_agent.core import turn as turn_mod
+
+    order: list[str] = []
+    real_try, real_clear = turn_mod.try_thread_write, turn_mod.clear_stop
+
+    def try_w(tag: str, **kw: Any) -> bool:
+        order.append("lock")
+        return real_try(tag, **kw)
+
+    def clear(tag: str) -> None:
+        order.append("clear")
+        real_clear(tag)
+
+    monkeypatch.setattr(turn_mod, "try_thread_write", try_w)
+    monkeypatch.setattr(turn_mod, "clear_stop", clear)
+    request_stop("t")  # 上一轮留下的旗子
+
+    events = list(
+        run_turn(
+            _OneNodeGraph([AIMessageChunk(content="这一轮该跑完", id="m1")]),
+            graph_input={"messages": []},
+            config={"configurable": {"thread_id": "t"}},
+            role_summary={"role_id": "r", "role_name": "r"},
+        )
+    )
+
+    assert order[:2] == ["lock", "clear"], f"擦旗发生在抢锁之前：{order}"
+    assert _end_event(events).stopped is False
+    assert stop_requested("t") is False

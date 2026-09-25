@@ -269,8 +269,13 @@ def run_turn(
     thread_id = str((config.get("configurable") or {}).get("thread_id") or "")
     # 上一句的"停"绝不能顺延到这一句：旗子是在这一轮的开始处清，不是在上一轮的结束处清 ——
     # 结束处清会赶上"用户立刻发了下一句"那种接力，两边抢同一个键。
-    clear_stop(thread_id)
+    # 但"开始处"必须在**拿到写锁之后**（09-26 轮 R26-02）：上一轮断连时那记 `request_stop`
+    # 是它自己 `finally` 里补的，而它跑在 `release_thread` **之前** —— 也就是说锁还在它手里。
+    # 先清后抢的话，新一轮可能在自己的清理之后才看见上一轮补下的旗子，于是白吃一个"停"、
+    # 整轮什么都不产出（`nodes.py` 看见旗子就直接 `TurnStopped`）。抢到锁才清，
+    # 顺序就被互斥保证了：上一轮的收尾一定在锁里做完，它的旗子一定落在清理之前。
     held = try_thread_write(thread_id, timeout=_TURN_LOCK_WAIT)
+    clear_stop(thread_id)
     if not held and tracer is not None:
         tracer.emit(
             TraceEvent(
