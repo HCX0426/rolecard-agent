@@ -41,7 +41,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   apiMock.get.mockImplementation(async (url: string) => {
     if (url === "/api/roles") return [ROLE];
-    if (url === "/api/tools/catalog") return { tools: [] };
+    if (url === "/api/tools/catalog") return { kernel: [], domains: {} };
     if (url === "/api/settings/models") return { default: "", providers: [], fallbacks: [] };
     if (url === "/api/knowledge/scopes") return { scopes: [] };
     return {};
@@ -68,5 +68,46 @@ describe("RolesPage 删除角色卡二次确认（useConfirm）", () => {
     fireEvent.click(screen.getByText("取消"));
     await new Promise((r) => setTimeout(r, 20));
     expect(apiMock.del).not.toHaveBeenCalled();
+  });
+});
+
+describe("角色级后端选择（用户 2026-09-25：角色级 > 设置里那份优先级）", () => {
+  it("下拉按全局优先级排、标出第一档，只列参与对话的模型", async () => {
+    // 供应商分组的原始顺序故意打乱：这里要看的不是"有哪些后端"，而是"我在盖过谁"。
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/roles") return [ROLE];
+      // 编辑表单会渲染工具白名单那两块（形状是 `{kernel, domains}`，`tools` 那个键不存在）。
+      if (url === "/api/tools/catalog") return { kernel: [], domains: {} };
+      if (url === "/api/settings/models")
+        return {
+          default: "c-first",
+          fallbacks: ["b-second", "a-third"],
+          providers: [
+            {
+              models: [
+                { name: "a-third", used_by: ["chat"] },
+                { name: "embed-only", used_by: ["embedding"] },
+                { name: "c-first", used_by: ["chat"] },
+                { name: "b-second", used_by: ["chat"] },
+              ],
+            },
+          ],
+        };
+      if (url === "/api/knowledge/scopes") return { scopes: [] };
+      return {};
+    });
+    const { fireEvent } = await import("@testing-library/react");
+    render(<RolesPage />);
+    await screen.findByText("测试角色");
+    fireEvent.click(screen.getByText("编辑"));
+    const select = (await screen.findByLabelText(/模型后端/)) as HTMLSelectElement;
+    expect([...select.options].map((o) => o.value)).toEqual([
+      "",
+      "c-first",
+      "b-second",
+      "a-third",
+    ]);
+    expect(select.options[0].textContent).toBe("跟随全局优先级");
+    expect(select.options[1].textContent).toContain("全局第一档");
   });
 });

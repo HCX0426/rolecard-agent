@@ -95,6 +95,9 @@ export default function RolesPage({
   const [wlMode, setWlMode] = useState<"all" | "custom">("all");
   const [catalog, setCatalog] = useState<ToolCatalog | null>(null);
   const [backends, setBackends] = useState<string[]>([]);
+  /** 全局优先级里排第一那台（= 角色不设时接话的那台）。下拉按设置里那份顺序排，就是为了让
+   *  "我在盖过谁"看得见 —— 按供应商标题分组排会让第一档看不出来。 */
+  const [globalDefault, setGlobalDefault] = useState("");
   const confirm = useConfirm();
   const [newScope, setNewScope] = useState("");
   const [kbScopes, setKbScopes] = useState<string[]>([]);
@@ -110,14 +113,19 @@ export default function RolesPage({
       .get<ModelSettings>("/api/settings/models")
       // 角色级路由只允许指向**参与对话**的模型（`used_by` 含 chat，派生自服务页的引用行）；
       // 只服务嵌入/重排的行不是推理模型。
-      .then((s) =>
-        setBackends(
-          (s.providers ?? [])
-            .flatMap((g) => g.models)
-            .filter((m) => m.used_by.includes("chat"))
-            .map((m) => m.name),
-        ),
-      )
+      .then((s) => {
+        const chat = (s.providers ?? [])
+          .flatMap((g) => g.models)
+          .filter((m) => m.used_by.includes("chat"))
+          .map((m) => m.name);
+        // 下拉按**设置里那份优先级**排（default → fallbacks → 其余没进链的）：这里选的
+        // 正是"要不要盖过它"，顺序看不出来就等于盲选。
+        const ranked = [s.default, ...s.fallbacks].filter(
+          (n): n is string => n !== null && chat.includes(n),
+        );
+        setBackends([...ranked, ...chat.filter((n) => !ranked.includes(n))]);
+        setGlobalDefault(s.default ?? "");
+      })
       .catch(() => {});
     // 可选作用域的真实来源：已建的知识集合（RAG 真实作用域），让下拉"所见即所得"。
     api
@@ -327,17 +335,18 @@ export default function RolesPage({
               </label>
               <label className="block">
                 <span className="text-xs text-slate-500 dark:text-slate-400">
-                  模型后端（角色级路由：该角色的对话走此后端，US-8）
+                  模型后端（角色级：该角色的对话走这一台，赢过「服务」页那份全局优先级；
+                  下面按那份顺序排，留空 = 跟着它走）
                 </span>
                 <select
                   value={form.model_name}
                   onChange={(e) => setForm({ ...form, model_name: e.target.value })}
                   className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm"
                 >
-                  <option value="">默认后端</option>
+                  <option value="">跟随全局优先级</option>
                   {backends.map((b) => (
                     <option key={b} value={b}>
-                      {b}
+                      {b === globalDefault ? `${b}（全局第一档）` : b}
                     </option>
                   ))}
                 </select>
@@ -637,7 +646,9 @@ export default function RolesPage({
                 <tr key={r.role_id} className="border-b border-slate-50 last:border-0">
                   <td className="px-4 py-2.5 font-mono text-xs">{r.role_id}</td>
                   <td className="px-4 py-2.5">{r.role_name}</td>
-                  <td className="px-4 py-2.5 text-slate-500 dark:text-slate-400">{r.model_name || "默认"}</td>
+                  <td className="px-4 py-2.5 text-slate-500 dark:text-slate-400">
+                    {r.model_name || "跟随全局"}
+                  </td>
                   <td className="max-w-52 truncate px-4 py-2.5 text-slate-500 dark:text-slate-400">
                     {r.tool_whitelist === null
                       ? "（全部）"

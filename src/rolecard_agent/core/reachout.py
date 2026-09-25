@@ -734,7 +734,12 @@ def generate_reachout_text(
 
     def add_usage(usage: TokenUsage | None) -> None:
         nonlocal spent
-        record_usage(conn, backend=role.model_name, usage=usage, tracer=_tracer)
+        # 记的是**实际接话那台**：角色没声明后端时落全局默认，声明的那台被删过也落默认
+        # （`resolve_role_model` 正是这么降级的）。记成 `role.model_name` 会让这两种情况
+        # 在按后端分组的用量页上变成 NULL。
+        record_usage(
+            conn, backend=settings.backend_name(role.model_name), usage=usage, tracer=_tracer
+        )
         if usage is None:
             return
         spent = TokenUsage(

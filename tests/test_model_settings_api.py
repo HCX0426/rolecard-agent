@@ -358,6 +358,57 @@ def test_fallbacks_round_trip_and_validation(client: TestClient) -> None:
     assert res.status_code == 400
 
 
+def test_role_beats_the_global_priority_list_and_unset_defers_to_it(client: TestClient) -> None:
+    """用户 2026-09-25 拍的那句，走**整条生产链**验一遍：角色级 > 设置里那份优先级；
+    没设置就用全局的。
+
+    与 `test_config` 里那条纯函数用例的分工：那条钉"链里有哪些名字、什么顺序"，这条钉
+    "角色卡上那个下拉真的赢过全局第一那台"（`nodes.call_model` → `resolve_role_model` →
+    工厂）。链的**末端行为**（primary 挂了要换下一台）不在这里验 —— 那要真供应商包，
+    `core/graph.build_model` 的自陈也是"Not unit-tested"，别拿假工厂冒充它。
+    """
+    assert (
+        client.put(
+            "/api/settings/models",
+            json={
+                # 全局优先级：a > b > c（a 是默认，b/c 是链上的第二、第三档）
+                "default": "cloud-a",
+                "backends": [
+                    {"name": "cloud-a", "provider": "openai", "model": "m-a", "api_key": "k"},
+                    {"name": "cloud-b", "provider": "openai", "model": "m-b", "api_key": "k"},
+                    {"name": "cloud-c", "provider": "openai", "model": "m-c", "api_key": "k"},
+                ],
+                "fallbacks": ["cloud-b", "cloud-c"],
+            },
+        ).status_code
+        == 200
+    )
+    client.post(
+        "/api/roles",
+        json={
+            "role_id": "picks_last",
+            "role_name": "挑最后那台",
+            "system_prompt": "x",
+            "model_name": "cloud-c",
+        },
+    )
+    client.post(
+        "/api/roles",
+        json={"role_id": "picks_none", "role_name": "不挑", "system_prompt": "x"},
+    )
+
+    picked = client.post("/api/session", json={"role_id": "picks_last"}).json()
+    text = authoritative_text(client, str(picked["thread_id"]), "你好")
+    assert "@cloud-c" in text, f"角色挑了 c，接话的却是：{text}"
+    assert "@cloud-a" not in text  # 全局第一那台不许把它抢回来
+
+    unset = client.post("/api/session", json={"role_id": "picks_none"}).json()
+    unset_text = authoritative_text(client, str(unset["thread_id"]), "你好")
+    # 没设置 → 解析器**不点名**任何后端，由运行时按全局那份优先级自己定（工厂那侧
+    # `backend_name=None` 的标签里就没有 `@cloud-…`；`@t0.7` 是温度，别把它当后端名）。
+    assert "@cloud-" not in unset_text, f"未声明的角色没落回全局默认：{unset_text}"
+
+
 def test_role_model_name_must_be_a_configured_backend(client: TestClient) -> None:
     """**写时就大声**：角色声明一个不存在的后端名 → 400，而不是留到运行期降级。
 

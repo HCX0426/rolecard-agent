@@ -452,7 +452,9 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
                 role_summary={"role_id": role.role_id, "role_name": role.role_name},
                 tracer=ctx.tracer,
                 usage_recorder=_usage_ledger(
-                    conn, session_model or role.model_name, ctx.tracer
+                    conn,
+                    ctx.runtime.effective.backend_name(session_model or role.model_name),
+                    ctx.tracer,
                 ),
             ),
             after=(
@@ -791,7 +793,9 @@ def edit_message_and_regenerate(
             tracer=ctx.tracer,
             # 重新生成花的也是真钱：不记就等于"这一轮没发生"，账会静悄悄地少一截。
             usage_recorder=_usage_ledger(
-                ctx.conn, session_model or role.model_name, ctx.tracer
+                ctx.conn,
+                ctx.runtime.effective.backend_name(session_model or role.model_name),
+                ctx.tracer,
             ),
         ),
         media_type="text/event-stream",

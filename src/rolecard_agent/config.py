@@ -364,8 +364,24 @@ class Settings(BaseModel):
             raise KeyError(f"unknown model backend {key!r}; configured: {known}")
         return self.model_backends[key]
 
+    def backend_name(self, name: str | None = None) -> str:
+        """这一轮**实际会服务**的那台后端名：声明的还在就用它，被删了就落回默认。
+
+        与 `backend()` 的区别是**不抛**：用量账本要用它，而"角色引用了一台已被删掉的后端"
+        在账上的正确形状是"默认那台花的"，不是"那台不存在的花的"，更不是 NULL。
+        记成 NULL 会让"没设置角色级"的那些轮次在按后端分组的用量页上凭空消失 ——
+        角色级选择用得越多，那个洞越像 bug。
+        """
+        return name if name in self.model_backends else self.model_default
+
     def resolve_fallbacks(self, primary: str | None = None) -> list[str]:
         """Ordered backend names to try after the primary one fails.
+
+        候选池是**整份全局优先级**（`[model_default, *model_fallbacks]`），不是只有
+        `model_fallbacks` 那一段：角色挑了优先级里靠后的一台时，操作员排在最前面的那台
+        仍然得是它的备胎 —— 只从 fallbacks 里挑会让全局默认从这条降级路径上凭空消失，
+        而那台恰恰是用户最信任的一份。默认自己当 primary 时两者等价（默认被"不回退到自己"
+        那条规则丢掉）。
 
         Drops the primary (falling back to yourself is not a fallback), drops unknown names
         (a typo must not become a runtime crash mid-conversation), and caps the chain at
@@ -374,7 +390,7 @@ class Settings(BaseModel):
         """
         head = primary or self.model_default
         seen: list[str] = []
-        for name in self.model_fallbacks:
+        for name in (self.model_default, *self.model_fallbacks):
             if name != head and name in self.model_backends and name not in seen:
                 seen.append(name)
         return seen[:MAX_FALLBACKS]

@@ -11,7 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from rolecard_agent.config import DEFAULT_SILICONFLOW_BASE_URL, Settings
+from rolecard_agent.config import (
+    DEFAULT_SILICONFLOW_BASE_URL,
+    ModelBackend,
+    Settings,
+)
 
 
 def test_defaults_are_usable_without_any_env() -> None:
@@ -151,6 +155,40 @@ def test_chain_is_capped() -> None:
         }
     )
     assert settings.resolve_fallbacks("local") == ["a", "b"]
+
+
+def test_a_role_picking_a_lower_priority_backend_keeps_the_global_default() -> None:
+    """角色级高于全局优先级 = **换 primary**，不是把操作员排在第一那台从降级路径上删掉。
+
+    修前候选池只有 `model_fallbacks` 那一段，于是角色挑了靠后那台之后，全局默认（最被信任
+    的那台）反而不再给它兜底 —— 用户 2026-09-25 要这条时指的是"角色级 > 优先级"，而当时
+    的实现连"默认那台还在链上"一起改掉了，是顺手丢的。
+    """
+    backends = {
+        n: ModelBackend(model=f"m-{n}", provider="openai") for n in ("a", "b", "c")
+    }
+    settings = Settings(model_backends=backends, model_default="a", model_fallbacks=["b", "c"])
+    # 默认自己当 primary：与修前逐字相同（"不回退到自己"那条规则把它丢掉）
+    assert settings.resolve_fallbacks() == ["b", "c"]
+    # 角色挑了优先级里靠后那台：它当 primary，而 a 回到链首
+    assert settings.resolve_fallbacks("c") == ["a", "b"]
+    assert settings.resolve_fallbacks("b") == ["a", "c"]
+
+
+def test_backend_name_names_the_one_that_will_actually_serve() -> None:
+    """用量账本要的是"**实际接话那台**"，不是"角色卡上写的那台"，更不是 NULL。
+
+    角色级后端选择上线后，"没设置"是常态：账上若记成 NULL，按后端分组的那页就会凭空
+    少掉一批调用，看起来像 bug（而它只是没人把降级后的名字带回来）。
+    """
+    backends = {
+        "a": ModelBackend(model="m-a", provider="openai"),
+        "b": ModelBackend(model="m-b", provider="openai"),
+    }
+    settings = Settings(model_backends=backends, model_default="a")
+    assert settings.backend_name(None) == "a"  # 没声明 → 全局默认
+    assert settings.backend_name("b") == "b"  # 声明了就按声明（角色级 > 全局优先级）
+    assert settings.backend_name("gone") == "a"  # 声明的那台被删了 → 与降级同源
 
 # -- 数值型环境变量：`0` 必须被保留（代码审查报告（第二轮）L1） --------------------
 
