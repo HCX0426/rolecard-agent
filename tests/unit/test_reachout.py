@@ -1014,8 +1014,68 @@ def test_open_threads_replaces_the_generic_timer_and_are_cached(conn) -> None:
     assert model.scan_calls == 1 and model.gen_calls == 1
     assert "下周体检的结果" in _joined(model.last_gen_prompt)
     state = get_state(conn, "active")
-    assert state.open_threads == ("下周体检的结果",)
+    assert "下周体检的结果" not in state.open_threads, "用过就该清掉（见下面那条消费用例）"
     assert state.open_threads_scan_at is not None, "扫过要记时刻，否则下一 tick 又问一遍"
+
+
+def test_used_topics_are_consumed_so_they_drive_only_one_open(conn) -> None:
+    """R26-11 第二条：这批话题被这句话用掉了就要清空。
+
+    缓存寿命 90 分钟 > 开口基线间隔 60 分钟，而原先没有任何清除路径 ⇒ 同一条"下周体检"
+    可以在两次开口里各冒一次，用户读到的就是"她为同一件事找了我两次"。清空但**保留时刻**：
+    既不再重复冒，也不会下一秒又花一次模型调用。
+    """
+    from rolecard_agent.core.proactive_state import save_open_threads
+
+    utc, local = _now()
+    save_open_threads(conn, "active", ["下周体检的结果"], now=utc - timedelta(minutes=5))
+    model = _TwoFaceModel(["这条不该被再扫一遍"], reply="体检怎么样了？")
+    scheduler = ReachoutScheduler(
+        settings_provider=lambda: _settings(),
+        roles=_Roles([_role(reachout_enabled=True)]),  # type: ignore[arg-type]
+        model_resolver=lambda _n: model,
+        conn=conn,
+        tracer=_Tracer(),
+        thread_lines=lambda _rid: "- 用户：我下周要体检",
+    )
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
+    assert "下周体检的结果" in _joined(model.last_gen_prompt)
+    state = get_state(conn, "active")
+    assert state.open_threads == (), state.open_threads
+    assert state.open_threads_scan_at is not None
+    assert model.scan_calls == 0, "缓存没过期就不该再问模型"
+
+
+def test_a_failed_scan_does_not_shut_the_source_down_for_90_minutes(conn) -> None:
+    """R26-11 第一条：扫描抛一下就等于把这一源关掉一个缓存周期，那是把抖动当成答案。
+
+    这条同时暴露了原先的一处死代码：`find_open_threads` 自己把异常吞成 `[]`，所以调度器
+    那个 `try/except` 永远进不去，而"失败"与"没扫到"在库里长得一模一样。现在两者分开
+    （`None` vs `[]`），失败**不写扫描时刻** ⇒ 下一个 tick 还会重试；这一轮照常开口
+    （只少一个由头），异常也不往上抛给调度线程。
+    """
+    class _BoomModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def invoke(self, prompt: object, **kwargs: object) -> AIMessage:
+            self.calls += 1
+            if "OPEN <" in str(prompt):
+                raise RuntimeError("connection reset")
+            return AIMessage(content="嗨，在忙什么？")
+
+    model = _BoomModel()
+    utc, local = _now()
+    scheduler = _thread_scheduler(conn, model, "- 用户：我下周要体检")  # type: ignore[arg-type]
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 1  # 照常开口
+    state = get_state(conn, "active")
+    assert state.open_threads_scan_at is None, "失败也写时刻 = 一次抖动关掉这一源 90 分钟"
+    assert state.open_threads == ()
+    assert model.calls == 2, "一次扫描 + 一次开口正文"
+
+    conn.execute("DELETE FROM agent_reachout")  # 解掉间隔档，模拟"下一个 tick 到了"
+    scheduler.tick_once(now_utc=utc, now_local=local)
+    assert model.calls >= 4, "下一个 tick 必须重试，而不是把『没扫到』当成结论"
 
 
 def test_a_fresh_cache_is_used_without_spending_another_call(conn) -> None:
@@ -1043,7 +1103,10 @@ def test_an_expired_cache_is_rescanned(conn) -> None:
     model = _TwoFaceModel(["新扫出来的话题"])
     _thread_scheduler(conn, model, "- 用户：最近事挺多").tick_once(now_utc=utc, now_local=local)
     assert model.scan_calls == 1
-    assert get_state(conn, "active").open_threads == ("新扫出来的话题",)
+    # 扫出来那句被这一轮用掉了 ⇒ 消费掉（见上面那条 R26-11 第二条的用例）。
+    # 这里要验的是"过期会重扫"，所以看提示词里有没有，而不是看缓存里还剩什么。
+    assert "新扫出来的话题" in _joined(model.last_gen_prompt)
+    assert get_state(conn, "active").open_threads == ()
 
 
 def test_nothing_open_still_speaks_but_says_nothing_about_topics(conn) -> None:

@@ -79,9 +79,14 @@ def test_no_history_means_no_model_call() -> None:
     assert fake.calls == 0, "没内容就别花这一次调用"
 
 
-def test_a_failing_model_only_costs_a_missing_thread() -> None:
-    """这一源坏了的正确表现是"她这次没提这个"，不是"这一轮开口失败"。"""
-    assert find_open_threads("用户：我下周要复查", _Boom()) == []
+def test_a_failing_model_reports_none_rather_than_an_empty_answer() -> None:
+    """这一源坏了的正确表现仍然是"不抛"，但**必须与"扫过了、没有"分得开**。
+
+    `[]` = 调用成功、判没有没收尾的事；`None` = 这次调用没成功。混成一个 `[]` 的时候，
+    调用方只能"失败也写扫描时刻"，于是一次网络抖动把这一源关掉整个缓存周期
+    （09-26 轮 R26-11）。不抛这一半没变：异常绝不该让一轮开口失败。
+    """
+    assert find_open_threads("用户：我下周要复查", _Boom()) is None
 
 
 def test_the_prompt_carries_the_recent_lines_verbatim() -> None:

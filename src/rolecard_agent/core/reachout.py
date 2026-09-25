@@ -984,21 +984,25 @@ class ReachoutScheduler:
                 turns = self._thread_window(role.role_id)
                 if turns:
                     if open_threads_stale(state, now=stamp_utc):
-                        try:
-                            scanned = find_open_threads(turns, self._model(role.model_name))
-                        except Exception as exc:  # noqa: BLE001 - 由头缺一个不是故障
+                        scanned = find_open_threads(turns, self._model(role.model_name))
+                        if scanned is None:
+                            # 调用失败：**不写扫描时刻**，下一个 tick 重试。写了就等于一次抖动
+                            # 把这一源关掉 `OPEN_THREADS_REFRESH_MINUTES`（90 分 > 60 分的开口
+                            # 基线），而下个 tick 根本不会再试（R26-11 第一条）。
+                            # `find_open_threads` 不抛只回 None，所以这里没有 try/except ——
+                            # 原先那一段包着一个永远进不去的 except 分支（死代码，同族见 R26-13）。
                             self._tracer.emit(
                                 TraceEvent(
                                     event="open_threads_failed",
                                     node="reachout",
                                     role_id=role.role_id,
-                                    detail={"error": str(exc)[:200]},
+                                    detail={"error": "模型调用未成功，本轮不记扫描时刻"},
                                 )
                             )
-                            scanned = []
-                        state = save_open_threads(
-                            self._conn, role.role_id, scanned, now=stamp_utc
-                        )
+                        else:
+                            state = save_open_threads(
+                                self._conn, role.role_id, scanned, now=stamp_utc
+                            )
                     open_topics = list(state.open_threads)
                     if open_topics:
                         fired = "open_thread"
@@ -1052,6 +1056,12 @@ class ReachoutScheduler:
                 # `reachout_skipped` 不该消耗掉这一档的额度（用户看到的是"她没说话"，
                 # 而不是"她说过一次了"）。
                 record_recall_open(self._conn, role.role_id, now=stamp_utc)
+            elif fired == "open_thread":
+                # 这批话题已经被刚发出去的那句用掉了。不清的话缓存寿命（90 分）比开口
+                # 间隔（60 分）长，同一个话题会驱动两次开口（R26-11 第二条）。
+                # **时刻保留**：清空 + 留着 scan_at 才是想要的语义 —— 别立刻再花一次调用，
+                # 也别让同一个话题再冒一遍。
+                save_open_threads(self._conn, role.role_id, [], now=stamp_utc)
             # 先落收件箱（用户一定能看见），再尽力投进主动会话；投递坏了也不把消息吞掉。
             thread_id: str | None = None
             if self._deliver is not None:

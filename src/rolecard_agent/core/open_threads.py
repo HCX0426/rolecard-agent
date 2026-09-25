@@ -70,14 +70,19 @@ def parse_open_threads(reply: Any, *, limit: int = MAX_OPEN_THREADS) -> list[str
     return out
 
 
-def find_open_threads(turns: str, model: Any, *, limit: int = MAX_OPEN_THREADS) -> list[str]:
-    """一次模型调用扫这段最近对话，返回真正没收尾的那几件事（没有就 `[]`）。
+def find_open_threads(
+    turns: str, model: Any, *, limit: int = MAX_OPEN_THREADS
+) -> list[str] | None:
+    """一次模型调用扫这段最近对话，返回真正没收尾的那几件事。
+
+    **返回 `None` = 这一次调用没成功**（模型抛了），`[]` = 调用成功、判没有没收尾的事。
+    这两个值必须分得开：调用方拿它决定"要不要把这次算成扫过"——混成一个 `[]`，一次网络
+    抖动就被写成"扫过了，没有"，于是这一源被缓存关掉一个周期（09-26 轮 R26-11 的根因，
+    原先异常在这里被 `contextlib`-式吞掉，上层那个 try/except 永远是死路）。
+    仍然**不往上抛**：这一源是锦上添花，它坏了的正确表现是"她这次没提这个"，不是"这一轮开口失败"。
 
     `turns` 是宿主给的"你们最近聊过什么"那段文本（措辞与截断的唯一出处在
-    `reachout.format_thread_lines`，这里不重抄一份）。空文本 = 没东西可判 = **不发这次调用**。
-
-    调用本身失败也回 `[]` 且不往上抛：这一源是锦上添花，它坏了的正确表现是
-    "她这次没提这个"，不是"这一轮开口失败"。
+    `reachout.format_recent_window`，这里不重抄一份）。空文本 = 没东西可判 = **不发这次调用**。
     """
     turns = (turns or "").strip()
     if not turns or model is None:
@@ -85,6 +90,6 @@ def find_open_threads(turns: str, model: Any, *, limit: int = MAX_OPEN_THREADS) 
     prompt = _PROMPT.format(limit=limit, n=len(turns.splitlines()), turns=turns)
     try:
         reply = model.invoke(prompt)
-    except Exception:  # noqa: BLE001 - 由头缺一个不是故障，见上
-        return []
+    except Exception:  # noqa: BLE001 - 由头缺一个不是故障，但不能把它当成答案
+        return None
     return parse_open_threads(reply, limit=limit)
