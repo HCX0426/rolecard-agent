@@ -16,7 +16,7 @@
 
 > ⚠️ 早期评测基线（均值 90.5%~95.2%）是在 **qwen2.5:7b** 上测得的，该模型已退役；
 > **2026-09-19 已在 qwen3-vl:8b 上重跑**（`run_eval.py --runs 3`，7/7 通过），
-> 新基线见 `data/eval_baseline_2026-09-19.md` 与 `docs/需求与验收标准.md` §1.4。
+> 新基线见 `docs/需求与验收标准.md` §1.4（那份数字就写在里面；原始报告 data/eval_baseline_2026-09-19.md 是跑出来的本地产物，按 `.gitignore` 不入库 —— 干净克隆里没有它）。
 > 另：Ollama 官方 vl 版模板不支持工具调用（bind_tools 直接 400），本项目用的是 ModelScope
 > GGUF 导入的 qwen3-vl（tools + thinking + vision 三者齐全）。
 > 真机 UI 冒烟（`scripts/ui_smoke.js`）需要：服务已启动 + 本机 Chrome/Edge +

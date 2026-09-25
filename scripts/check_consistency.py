@@ -41,6 +41,11 @@ IGNORED_DIRS = {
     ".vscode",
     "data",
     "node_modules",
+    # `build/` 是本地脚手架（sidecar 解包、安装包、日志、临时克隆），`.gitignore` 整目录挡着。
+    # 09-26 干净克隆彩排时我在 build/ci-clone 里放了一份仓库副本，两条检查立刻把**副本**里
+    # 的脚本当成待检文件判红 —— 与 C24 那次"把 site-packages 数成项目代码"同一族：
+    # 尺子必须只看这一个世界。
+    "build",
 }
 
 
@@ -586,22 +591,54 @@ def check_v1_v2_boundary() -> None:
         fails.append(f"API / single-page UI still advertised as v2: {offenders}")
 
 
+def _crlf_exempt_globs() -> set[str]:
+    """`.gitattributes` 里明写了 `eol=crlf` 的那些 glob。
+
+    09-26 干净克隆实测抓出来的自相矛盾：`.gitattributes` 末尾写着
+    "Kept as-is / *.bat text eol=crlf / *.ps1 text eol=crlf"，而这条检查只看字节 ——
+    于是在**克隆**里 `scripts/*.ps1` 判红，在作者工作树里判绿（他的文件是手写的 LF，
+    从没被 checkout 覆写过）。规矩只能有一个来源：这里跟着 `.gitattributes` 走，
+    不再抄一份扩展名清单（只认按文件名匹配的 glob，如 `*.ps1`）。
+    """
+    attr = ROOT / ".gitattributes"
+    if not attr.exists():
+        return set()
+    globs: set[str] = set()
+    for line in attr.read_text(encoding="utf-8").splitlines():
+        text = line.strip()
+        if not text or text.startswith("#") or "eol=crlf" not in text:
+            continue
+        globs.add(text.split()[0])
+    return globs
+
+
 def check_line_endings() -> None:
-    """Everything under src/ tests/ scripts/ must be LF.
+    """Everything under src/ tests/ scripts/ must be LF, **except** what `.gitattributes`
+    deliberately keeps as CRLF.
 
     33 files were CRLF on the first real lint run, because PowerShell's Set-Content and
     several Windows editors default to CRLF. Mixed line endings become whole-file diffs on
     CI and make `ruff format --check` fail for reasons unrelated to the change
     (C22). .gitattributes prevents it happening again.
     """
+    import fnmatch  # noqa: PLC0415
+
+    exempt = _crlf_exempt_globs()
     offenders: list[str] = []
+    skipped = 0
     for base in ("src", "tests", "scripts"):
         for path in (ROOT / base).rglob("*"):
             if "__pycache__" in path.parts:
                 continue  # 字节码是二进制：其中偶然出现 \r\n 字节序列会造成误报
-            if path.is_file() and b"\r\n" in path.read_bytes():
+            if not path.is_file():
+                continue
+            if any(fnmatch.fnmatch(path.name, glob) for glob in exempt):
+                skipped += 1
+                continue  # .gitattributes 说了"这类就按 CRLF 检出"，那它不是缺陷
+            if b"\r\n" in path.read_bytes():
                 offenders.append(str(path.relative_to(ROOT)))
-    detail = f"CRLF in: {offenders}" if offenders else "all LF"
+    note = f"（按 .gitattributes 豁免 {skipped} 个：{'/'.join(sorted(exempt)) or '无'}）"
+    detail = f"CRLF in: {offenders}" if offenders else f"all LF {note}"
     out("line endings", not offenders, detail)
     if offenders:
         fails.append(f"CRLF line endings found: {offenders}")

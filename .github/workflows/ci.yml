@@ -29,6 +29,11 @@ jobs:
         # （看起来有兜底，其实没有）。跑起来之后第一次就报出 47 处真实问题（代码审查报告
         # （第二轮）F2），包括"28 处连接注解写的类型和实际传入的不一致"。
         run: mypy
+      - name: Type-check scripts/
+        # 取证尺子也在类型范围内：`mypy scripts/` 接进门禁的**第一天**就抓到
+        # `seed_demo_data.py` 与 `run_eval.py` 运行时已经坏了（少两个必填关键字参数）。
+        # CI 不跑它 = 只有我这台机器知道那两个脚本其实是死的（09-26 轮 R26-21/S-6′）。
+        run: mypy scripts/
       - name: Tests (offline, no Ollama needed)
         # 覆盖率阈值 85%：低于它说明有人在没补测试的情况下大幅加代码。
         # 真正的意义是"重构前的安全网"—— 拆 api/main.py 这类改动，没有覆盖数据是闭眼改。
@@ -58,3 +63,32 @@ jobs:
         run: npm test
       - name: Type-check + build
         run: npm run build
+
+  shell:
+    # 桌面壳（Electron 主进程 + preload）此前**全程无人检查**：门禁只 `cd frontend`，
+    # CI 里 shell 命中数为 0（09-26 轮 R26-21 的第一块空白）。壳那侧的类型错最典型的后果
+    # 不是编译不过，而是"装到机器上才发现"——托盘退出被一扇模态错误框堵 80 秒就是那一族。
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: shell
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        # typecheck 用不到 Electron 的二进制（那 ~100 MB 是给打包用的），跳过下载只装 tsc 与 @types。
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: npm ci --no-fund --no-audit
+      - name: Type-check
+        run: npm run typecheck
+
+  # **刻意不放进 CI 的两条**（写在这里是为了别再加回来）：
+  #   · `scripts/baseline.py --check` —— 它按构造就要读"装好的那份数据根"
+  #     （`build()` 里 `next(p for tag, p in data_roots().items() if tag.startswith("installed"))`），
+  #     runner 上没有这个根，硬塞只会 StopIteration。它的家是**本地门禁**。
+  #   · "dist 与提交一致"（门禁的 `dist 入库同步`）—— 那条比的是同一台机器同一套 node 的产物，
+  #     换 runner 的 node/minifier 版本会让哈希漂一下，于是**误报一次就没人信这条**。
+  #   · 真机冒烟（浏览器 + 桌宠 + 模型）—— 需要桌面会话与真后端，本就不是 CI 的活。
