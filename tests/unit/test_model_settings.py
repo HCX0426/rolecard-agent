@@ -20,6 +20,7 @@ from rolecard_agent.core.model_settings import (
     ModelSettingsError,
     ModelSettingsService,
     migrate_to_provider_layers,
+    unmanaged_backend_columns,
     validate_base_url,
 )
 from rolecard_agent.storage.db import bootstrap, connect
@@ -148,6 +149,77 @@ def test_save_prunes_stale_fallbacks_when_backends_shrink() -> None:
         backends=[{"name": "a", "provider": "ollama", "model": "m-a", "usage": "chat"}],
     )  # 缩容：b 没了，链缺省保留 → 修剪后为空，保存成功
     assert svc.list_fallbacks() == []
+
+
+# --------------------------------------------------------------------------- #
+# R26-01: 旧整表 PUT 会静默清零"它没写"的那些列
+# --------------------------------------------------------------------------- #
+
+def _row_values(conn: object, name: str) -> dict[str, object]:
+    row = conn.execute("SELECT * FROM model_backend WHERE name = ?", (name,)).fetchone()  # type: ignore[attr-defined]
+    assert row is not None
+    return dict(row)  # `sqlite3.Row` 直接 dict() 就是"列名 → 值"
+
+
+def _backend(svc: ModelSettingsService, name: str) -> dict[str, object]:
+    return next(b for b in svc._raw_backends() if str(b["name"]) == name)
+
+
+def test_save_preserves_the_sampling_penalties_it_does_not_manage() -> None:
+    """审计里那条实测复现：`set_sampling` 之后再走一次整表 `save()`，惩罚列不许消失。
+
+    `save()` 写的是 `DELETE FROM model_backend` + 一份手写列清单的 INSERT，所以清单外的列
+    过去会被静默清零 —— 而它**不会红**：`num_ctx` 在清单里，活着；只有惩罚三档没了。
+    """
+    svc = ModelSettingsService(_conn())
+    svc.save(
+        default="a",
+        backends=[{"name": "a", "provider": "ollama", "model": "m-a", "usage": "chat"}],
+    )
+    svc.set_sampling("a", {"repeat_penalty": 1.25, "frequency_penalty": 0.1})
+    assert svc.sampling("a")["repeat_penalty"] == 1.25  # 前置条件：确实设上了
+
+    svc.save(
+        default="a",
+        backends=[
+            {
+                "name": "a",
+                "provider": "ollama",
+                "model": "m-a",
+                "usage": "chat",
+                "num_ctx": 8192,
+            }
+        ],
+    )
+    after = svc.sampling("a")
+    assert (after["repeat_penalty"], after["frequency_penalty"]) == (1.25, 0.1), after
+    # 同一行里"它管理的"列照常按请求覆盖 —— 保留不是"整行不动"。
+    assert _backend(svc, "a")["num_ctx"] == 8192
+
+
+def test_save_carries_over_any_column_it_does_not_manage() -> None:
+    """机制而不是那三个名字：给表加一列全新的、`save()` 不认识的，它也必须原样留着。
+
+    这条是上面那条的**通用面** —— 只补三个列名等于把同一个坑留给下一列（R26-04 抓的是同一族）。
+    """
+    conn = _conn()
+    svc = ModelSettingsService(conn)
+    svc.save(
+        default="a",
+        backends=[{"name": "a", "provider": "ollama", "model": "m-a", "usage": "chat"}],
+    )
+    conn.execute("ALTER TABLE model_backend ADD COLUMN something_new REAL")  # type: ignore[attr-defined]
+    conn.execute(  # type: ignore[attr-defined]
+        "UPDATE model_backend SET something_new = 0.75 WHERE name = 'a'"
+    )
+    conn.commit()  # type: ignore[attr-defined]
+
+    assert "something_new" in unmanaged_backend_columns(conn)
+    svc.save(
+        default="a",
+        backends=[{"name": "a", "provider": "ollama", "model": "m-a", "usage": "chat"}],
+    )
+    assert _row_values(conn, "a")["something_new"] == 0.75
 
 
 def test_save_rejects_explicit_unknown_fallback() -> None:

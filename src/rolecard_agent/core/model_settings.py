@@ -46,7 +46,7 @@ from rolecard_agent.config import (
     ModelBackend,
     Settings,
 )
-from rolecard_agent.storage.db import SqlConnection
+from rolecard_agent.storage.db import SqlConnection, quote_ident
 
 
 @dataclass(slots=True)
@@ -396,6 +396,35 @@ def _kind_of_names(conn: SqlConnection, names: list[str]) -> dict[str, str]:
 
 
 # --------------------------------------------------------------------------- 服务层
+
+
+#: `save()`（旧整表 `PUT /api/settings/models` 的原语）**只管**这几列。它写的是
+#: `DELETE FROM model_backend` + 一份手写列清单的 INSERT —— 清单里没有的列不会被"保留"，
+#: 而是跟着那行一起消失（09-26 轮 R26-01 的实测：`set_sampling` 得 repeat=1.25 freq=0.1，
+#: 再 `save()` 同一行 → 两栏变 None，而同行 `num_ctx=8192` 活着）。
+#: 所以其余各列一律按后端名从删之前的快照搬回来：以后再加任何一列，落进的都是
+#: "未管理 ⇒ 原样保留"这条规则，而不是再补一次特例。
+SAVE_MANAGED_COLUMNS = frozenset(
+    {
+        "name",
+        "provider_id",
+        "model",
+        "sort_order",
+        "num_ctx",
+        "supports_vision",
+        "supports_tools",
+    }
+)
+
+
+def unmanaged_backend_columns(conn: SqlConnection) -> tuple[str, ...]:
+    """`model_backend` 里 `save()` 不写的那些列。
+
+    按**库里实际的形状**取（`PRAGMA table_info`）而不是抄一份清单：清单会漂，而漂了的清单
+    正是这次要修的那种"漏一列不会红"的形状。
+    """
+    declared = {str(r["name"]) for r in conn.execute("PRAGMA table_info(model_backend)")}
+    return tuple(sorted(declared - SAVE_MANAGED_COLUMNS))
 
 
 class ModelSettingsService:
@@ -930,6 +959,12 @@ class ModelSettingsService:
             else:
                 signals.setdefault(endpoint, "")
 
+        # 删之前先按后端名留住"这个端点不管理"的那些列（见 `SAVE_MANAGED_COLUMNS`）。
+        carried = unmanaged_backend_columns(self._conn)
+        carried_values = {
+            str(r["name"]): {c: r[c] for c in carried}
+            for r in self._conn.execute("SELECT * FROM model_backend")
+        }
         self._conn.execute("DELETE FROM model_backend")
         used_ids: set[str] = set()
         gid_of_endpoint: dict[tuple[str, str | None], str] = {}
@@ -959,11 +994,24 @@ class ModelSettingsService:
                 )
             gid_of_endpoint[endpoint] = gid
             used_ids.add(gid)
+        insert_cols = [
+            "name",
+            "provider_id",
+            "model",
+            "sort_order",
+            "num_ctx",
+            "supports_vision",
+            "supports_tools",
+            *carried,
+        ]
+        insert_sql = (
+            f"INSERT INTO model_backend ({', '.join(quote_ident(c) for c in insert_cols)}) "
+            f"VALUES ({', '.join('?' * len(insert_cols))})"
+        )
         for row in prepared:
+            keep = carried_values.get(row.name, {})
             self._conn.execute(
-                "INSERT INTO model_backend "
-                "(name, provider_id, model, sort_order, num_ctx, supports_vision, "
-                "supports_tools) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                insert_sql,
                 (
                     row.name,
                     gid_of_endpoint[row.endpoint],
@@ -972,6 +1020,7 @@ class ModelSettingsService:
                     row.num_ctx,
                     row.supports_vision,
                     row.supports_tools,
+                    *(keep.get(c) for c in carried),
                 ),
             )
         # 组里最后一个模型被删掉 = 这个端点不再存在。key 随组一起消失，不是"留着备用"：

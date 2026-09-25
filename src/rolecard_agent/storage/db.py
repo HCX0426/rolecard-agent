@@ -239,7 +239,7 @@ def bootstrap(conn: SqlConnection, enabled_domains: Iterable[str] = ()) -> list[
 _SHAPE_MIGRATED_TABLES = frozenset({"model_backend", "service_endpoint"})
 
 
-def _q(ident: object) -> str:
+def quote_ident(ident: object) -> str:
     """双引号包住标识符（SQLite 的标准引用法），内嵌的双引号按 SQL 规则翻倍。"""
     return '"' + str(ident).replace('"', '""') + '"'
 
@@ -262,7 +262,7 @@ def _declared_columns(files: Sequence[Path]) -> dict[str, dict[str, sqlite3.Row]
             )
         ]
         return {
-            t: {str(r["name"]): r for r in probe.execute(f"PRAGMA table_info({_q(t)})")}
+            t: {str(r["name"]): r for r in probe.execute(f"PRAGMA table_info({quote_ident(t)})")}
             for t in tables
         }
     finally:
@@ -276,12 +276,12 @@ def _add_column_ddl(table: str, decl: sqlite3.Row) -> str:
             f"{table}.{name} 声明成 NOT NULL 又没有默认值，SQLite 不允许 ADD COLUMN 补它。"
             "这种列必须走整表重建：把它加进 `_SHAPE_MIGRATED_TABLES` 并在 `_migrate` 里写一次。"
         )
-    spec = f"{_q(name)} {decl['type'] or 'TEXT'}"
+    spec = f"{quote_ident(name)} {decl['type'] or 'TEXT'}"
     if decl["notnull"]:
         spec += " NOT NULL"
     if decl["dflt_value"] is not None:
         spec += f" DEFAULT {decl['dflt_value']}"
-    return f"ALTER TABLE {_q(table)} ADD COLUMN {spec}"
+    return f"ALTER TABLE {quote_ident(table)} ADD COLUMN {spec}"
 
 
 def reconcile_columns(
@@ -312,7 +312,7 @@ def reconcile_columns(
     for table, cols in declared.items():
         if table in skip or table not in existing:
             continue
-        have = {str(r["name"]) for r in conn.execute(f"PRAGMA table_info({_q(table)})")}
+        have = {str(r["name"]) for r in conn.execute(f"PRAGMA table_info({quote_ident(table)})")}
         for name, decl in cols.items():
             if name in have or decl["pk"]:
                 continue
