@@ -277,3 +277,38 @@ def test_proactive_lines_only_offer_what_she_has_not_picked_up(tmp_path: Path) -
         assert "ok" not in lines, lines
     finally:
         runtime.conn.close()
+
+
+def test_proactive_window_still_has_material_when_she_has_the_last_word(tmp_path: Path) -> None:
+    """「未收尾话题」的扫描读**最近一窗**，不读"没接住那截"（09-26 轮 R26-03 的修法）。
+
+    两者差别不是宽度而是**方向**：这一源要找的是"说到一半没了下文"的事，而那件事往往
+    正是她接住过、只是没落地的那件。拿 `proactive_recent_lines` 当输入，判据与素材是反的
+    —— 实测下来她的每次投递都会把窗口关成空串，扫描一次也没发生过（生产读数见
+    `scripts/probe_open_threads_reach.py`）。同一份检查点上两个读法必须一个空一个不空，
+    这条钉的就是"分开"这件事本身。
+    """
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from rolecard_agent.core.graph import build_graph_config
+    from rolecard_agent.roles.models import RoleCard
+
+    runtime = _assemble(tmp_path)
+    try:
+        role = RoleCard(role_id="wan", role_name="苏晚晴", system_prompt="你是苏晚晴。")
+        tid = runtime.deliver_proactive(role, "外头降温了，穿上外套。")
+        graph = runtime.state["graph"]
+        cfg = build_graph_config(tid, runtime.effective)
+
+        graph.update_state(
+            cfg, {"messages": [HumanMessage(content="我下周要体检，结果出来跟你说")]}
+        )
+        graph.update_state(cfg, {"messages": [AIMessage(content="好，我等你说")]})
+
+        assert runtime.proactive_recent_lines("wan") == "", "她已经接过了，开口素材必须为空"
+        window = runtime.proactive_recent_window("wan")
+        assert "我下周要体检" in window, window
+        assert "好，我等你说" in window, window
+        assert "还没有接过话" not in window, "扫描那段不该带'没接住'的措辞，它拿的是整窗"
+    finally:
+        runtime.conn.close()

@@ -17,7 +17,7 @@ import pytest
 
 from rolecard_agent.core import memory as mem
 from rolecard_agent.core import memory_distill as distill
-from rolecard_agent.storage.db import SqlConnection, _migrate, bootstrap, connect
+from rolecard_agent.storage.db import SqlConnection, bootstrap, connect
 
 
 class _Reply:
@@ -508,16 +508,18 @@ def test_every_zero_disables_the_auto_path(conn: SqlConnection) -> None:
 
 
 def test_cursor_migration_adds_the_column(conn: SqlConnection) -> None:
-    """旧库（没有 distilled_at_seq）补列后，游标判断照跑不误。
+    """旧库（没有 distilled_at_seq）补列之后，游标判断照跑不误。
 
     在**已建好的库**上把列删掉来冒充旧库，而不是手搓一张只有 session_thread 的表：
-    `_migrate` 要读 role_card / service_endpoint / model_backend 的列，缺表直接炸。
+    升级要读 role_card / service_endpoint / model_backend 的列，缺表直接炸。
+    走 `bootstrap` 而不是直接调 `_migrate`（09-26 轮 R26-04 之后列级补齐归
+    `reconcile_columns`，而它挂在 `bootstrap` 上）—— 这条要验的是"真启动路径能不能升上来"。
     """
     _thread(conn, "t9")
     conn.execute("ALTER TABLE session_thread DROP COLUMN distilled_at_seq")
     conn.commit()
     assert "distilled_at_seq" not in _thread_cols(conn)
-    _migrate(conn)
+    bootstrap(conn, enabled_domains=("health",))
     assert "distilled_at_seq" in _thread_cols(conn)
     # 补列之后游标是 NULL ⇒ 全部消息都算"没提取过"，节奏判断照跑
     assert distill.due_for_extract(

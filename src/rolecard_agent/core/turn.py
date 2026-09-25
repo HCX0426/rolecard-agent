@@ -432,6 +432,8 @@ def _iter_turn(
                         "step": step,
                         "prompt_tokens": usage.prompt if usage is not None else None,
                         "completion_tokens": usage.completion if usage is not None else None,
+                        # completion 的子集，单独一列才看得出"这条回复有多少在想"。
+                        "reasoning_tokens": usage.reasoning if usage is not None else None,
                     },
                 )
             )

@@ -30,6 +30,7 @@ const EMPTY_FORM = {
   exemplars: [] as ExemplarDraft[],
   description: "",
   reachout_enabled: false,
+  affinity_enabled: true,
   recall_enabled: true,
   time_pattern_enabled: true,
   file_watch_enabled: true,
@@ -199,6 +200,7 @@ export default function RolesPage({
       exemplars: (r.exemplars || []).map((e) => ({ ...e, rowId: nextExemplarId() })),
       description: r.description || "",
       reachout_enabled: !!r.reachout_enabled,
+      affinity_enabled: r.affinity_enabled !== false,
       recall_enabled: r.recall_enabled !== false,
       time_pattern_enabled: r.time_pattern_enabled !== false,
       file_watch_enabled: r.file_watch_enabled !== false,
@@ -223,6 +225,7 @@ export default function RolesPage({
       exemplars: exemplars.length ? exemplars : null,
       description: form.description.trim() || null,
       reachout_enabled: form.reachout_enabled,
+      affinity_enabled: form.affinity_enabled,
       recall_enabled: form.recall_enabled,
       time_pattern_enabled: form.time_pattern_enabled,
       file_watch_enabled: form.file_watch_enabled,
@@ -352,11 +355,20 @@ export default function RolesPage({
               <label className="flex cursor-pointer items-center gap-2">
                 <input
                   type="checkbox"
+                  checked={form.affinity_enabled}
+                  disabled={!form.reachout_enabled}
+                  onChange={(e) => setForm({ ...form, affinity_enabled: e.target.checked })}
+                />
+                <span className="text-slate-600 dark:text-slate-300">关系驱动·关系数值：聊得够近就主动找你（关掉它下面几档才轮得到）</span>
+              </label>
+              <label className="flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
                   checked={form.recall_enabled}
                   disabled={!form.reachout_enabled}
                   onChange={(e) => setForm({ ...form, recall_enabled: e.target.checked })}
                 />
-                <span className="text-slate-600 dark:text-slate-300">关系驱动·回忆：记得的事会主动提起（按角色记忆隔离）</span>
+                <span className="text-slate-600 dark:text-slate-300">关系驱动·回忆：记得的事会主动提起（按角色记忆隔离，一天最多一次）</span>
               </label>
               <label className="flex cursor-pointer items-center gap-2">
                 <input

@@ -1076,6 +1076,93 @@ def test_no_thread_lines_means_no_scan_at_all(conn) -> None:
     assert model.scan_calls == 0
 
 
+def test_the_scan_reads_the_window_even_when_the_unanswered_tail_is_empty(conn) -> None:
+    """第五由头的素材是"最近一窗"，不是"没接住那截"（09-26 轮 R26-03）。
+
+    生产上后者在她每次开口之后必然为空 —— 那不是"这次没话可说"，而是**这一源从没启动过**
+    （真库 `open_threads_at` 至今为 NULL）。所以这一条要的是：开口素材为空的同时，扫描照发。
+    """
+    model = _TwoFaceModel(["下周体检的结果"])
+    utc, local = _now()
+    scheduler = ReachoutScheduler(
+        settings_provider=lambda: _settings(),
+        roles=_Roles([_role(reachout_enabled=True)]),  # type: ignore[arg-type]
+        model_resolver=lambda _n: model,
+        conn=conn,
+        tracer=_Tracer(),
+        thread_lines=lambda _rid: "",  # 她已经接过话：开口素材为空
+        thread_window=lambda _rid: "- 用户：我下周要体检，结果出来跟你说\n- 你：好，我等你说",
+    )
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
+    assert model.scan_calls == 1, "窗口非空却没扫 = 这一源仍然被「没接住」那把锁锁着"
+    assert "下周体检的结果" in _joined(model.last_gen_prompt)
+
+
+def test_affection_toggle_frees_the_rest_of_the_chain(conn) -> None:
+    """affinity 触顶之后，只有关掉这一档，排在它后面的由头才轮得到（R26-23）。
+
+    这条同时是"第五由头在生产上可达"的正证：四档全关 ⇒ `fired` 落到链尾的 timer ⇒ 扫描发生。
+    """
+    from rolecard_agent.core.proactive_state import save_state
+
+    utc, local = _now()
+    state = get_state(conn, "active")
+    state.affinity = DEFAULT_AFFINITY_THRESHOLD + 4.0
+    state.last_interaction_utc = utc
+    save_state(conn, state)
+
+    on = _role()
+    off = RoleCard(**{**_role().model_dump(), "affinity_enabled": False})
+    assert svc.trigger_affection(on, state, _settings(), now_utc=utc) == "affection"
+    assert svc.trigger_affection(off, state, _settings(), now_utc=utc) is None
+
+    quiet = RoleCard(
+        **{
+            **off.model_dump(),
+            "recall_enabled": False,
+            "time_pattern_enabled": False,
+            "file_watch_enabled": False,
+        }
+    )
+    model = _TwoFaceModel(["猫绝育约上了没"])
+    scheduler = ReachoutScheduler(
+        settings_provider=lambda: _settings(),
+        roles=_Roles([quiet]),  # type: ignore[arg-type]
+        model_resolver=lambda _n: model,
+        conn=conn,
+        tracer=_Tracer(),
+        thread_lines=lambda _rid: "",
+        thread_window=lambda _rid: "- 用户：下个月要给猫做绝育",
+    )
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
+    assert model.scan_calls == 1, "其余几档关掉之后，链尾那一档必须真的轮得到"
+
+
+def test_recall_cools_down_after_it_actually_spoke(conn) -> None:
+    """回忆档一天最多用一次：它的判据（有没有 active 记忆）只会越来越真，不冷却就永久命中。"""
+    from rolecard_agent.core.proactive_state import record_recall_open
+
+    add_item(conn, bucket="active", text="用户下周要体检")
+    local = _now_local()
+    assert svc.trigger_recall(_role(), conn, now_local=local) == "recall"
+
+    record_recall_open(conn, "active", now=local)
+    assert svc.trigger_recall(_role(), conn, now_local=local) is None, "刚以回忆开过口，该让位"
+    later = local + timedelta(hours=svc.RECALL_COOLDOWN_HOURS + 1)
+    assert svc.trigger_recall(_role(), conn, now_local=later) == "recall"
+
+
+def test_an_unsent_recall_does_not_burn_the_cooldown(conn) -> None:
+    """模型没产出正文（`draft.text is None`）不该消耗回忆额度 —— 用户看到的是她没说话，
+    而不是"她今天已经回忆过一次了"。冷却的锚点必须只跟着**真的发出去**那一句走。"""
+    model = _FakeModel(AIMessage(content=""))
+    utc, local = _now()
+    add_item(conn, bucket="active", text="用户下周要体检")
+    scheduler = _scheduler(conn, [_role()], model)
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 0
+    assert get_state(conn, "active").recall_at is None, "没发出去却记了冷却 = 静默关掉这一档一天"
+
+
 def test_the_open_thread_task_offers_a_way_out() -> None:
     """指令里必须留着"这些都过去了就别硬接"那条退路 —— 硬找话头比不找更假。"""
     text = svc._task_text(

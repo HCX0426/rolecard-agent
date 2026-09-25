@@ -23,6 +23,8 @@ export interface RoleCard {
   recall_enabled?: boolean;
   /** 关系驱动主动开口（架构计划 §5.2）：时段规律触发开关，默认开。 */
   time_pattern_enabled?: boolean;
+  /** 「关系数值到阈值就想开口」这一档的开关，默认开。关掉才轮得到后面几档（09-26 轮 R26-23）。 */
+  affinity_enabled?: boolean;
   /** 文件事件触发（架构计划 C·§5.2）：该角色可否被任务目录变化触发，默认开。 */
   file_watch_enabled?: boolean;
   /** 收件箱自动保留条数：0 = 不自动删（默认）；N>0 = 只留最近 N 条投递记录。 */

@@ -61,6 +61,52 @@ def test_parse_recovers_all_four_shapes() -> None:
     )  # ← `memory_distill` 的假模型正是这个形状；这条曾被我写漏一次，靠既有测试打红
 
 
+def test_reasoning_is_split_out_of_completion_but_stays_a_subset() -> None:
+    """思考模型：`reasoning` 单独认出来，但**总量仍然是 prompt + completion**。
+
+    实测过的那条"在吗"回 616 个输出 token、其中 590 是 reasoning（审计 §12.8 第二条）。
+    这一列存在的唯一理由就是能问出"今天花的钱里有多少在想"，而它不能把合计撑大 ——
+    想的那 590 本来就在那 616 里。两家键名各认一次：漏一家就是"这一路永远显示 0 想"。
+    """
+    lc = parse_usage(
+        _Reply(
+            usage_metadata={
+                "input_tokens": 12,
+                "output_tokens": 616,
+                "total_tokens": 628,
+                "output_token_details": {"reasoning": 590},
+            }
+        )
+    )
+    assert lc == TokenUsage(12, 616, 590)
+    assert lc.total == 628, "reasoning 不能进 total"
+    openai = parse_usage(
+        _Reply(
+            response_metadata={
+                "token_usage": {
+                    "prompt_tokens": 12,
+                    "completion_tokens": 616,
+                    "completion_tokens_details": {"reasoning_tokens": 590},
+                }
+            }
+        )
+    )
+    assert openai == TokenUsage(12, 616, 590)
+    # 没报 details 的普通模型：这一栏是 None，不是 0（0 = 报过、确实没想；None = 不知道）
+    assert parse_usage(
+        _Reply(usage_metadata={"input_tokens": 5, "output_tokens": 7})
+    ) == TokenUsage(5, 7, None)
+
+
+def test_streaming_path_carries_reasoning_too() -> None:
+    """流式那条路不走 `parse_usage`（分块累计值被逐块相加污染过，见 #8），所以它得单独认。"""
+    from rolecard_agent.core.usage import usage_from_metadata
+
+    assert usage_from_metadata(
+        {"input_tokens": 12, "output_tokens": 616, "output_token_details": {"reasoning": 590}}
+    ) == TokenUsage(12, 616, 590)
+
+
 def test_input_and_output_are_kept_apart_when_both_reported() -> None:
     """两种形状同时存在时以 `usage_metadata` 为准（它是 langchain 标准化后的那份）。"""
     reply = _Reply(
@@ -104,6 +150,17 @@ def test_record_accumulates_per_backend_per_day(conn: sqlite3.Connection) -> Non
         "local-8b",
         "cloud-a",
     ]  # 按总量倒序：花钱多的在前
+
+
+def test_reasoning_accumulates_as_its_own_column(conn: sqlite3.Connection) -> None:
+    """日表里「想」单独一列、跟着调用累加，而 `total` 一点没被它撑大。"""
+    record_usage(conn, backend="cloud-a", usage=TokenUsage(12, 616, 590), day="2026-09-23")
+    record_usage(conn, backend="cloud-a", usage=TokenUsage(8, 84, 60), day="2026-09-23")
+    (row,) = daily_usage(conn, day="2026-09-23")
+    assert (row["completion"], row["reasoning"], row["total"]) == (700, 650, 720)
+    # 没报 details 的那些调用不能把这一栏变成 0 假象之外的东西：累加里它就是 0 贡献。
+    record_usage(conn, backend="cloud-a", usage=TokenUsage(1, 1), day="2026-09-23")
+    assert daily_usage(conn, day="2026-09-23")[0]["reasoning"] == 650
 
 
 def test_unreported_calls_are_counted_separately(conn: sqlite3.Connection) -> None:

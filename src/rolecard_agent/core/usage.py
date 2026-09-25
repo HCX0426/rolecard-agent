@@ -36,10 +36,17 @@ from rolecard_agent.storage.db import SqlConnection
 
 
 class TokenUsage(NamedTuple):
-    """一次调用的用量。两个字段都是"后端报了才有"，没报就是 None（不是 0）。"""
+    """一次调用的用量。每个字段都是"后端报了才有"，没报就是 None（不是 0）。
+
+    `reasoning` 是思考模型输出里"想"的那一段，**它是 `completion` 的子集**（不是第三种开销），
+    所以 `total` 仍然只加输入与输出。单列它的唯一理由是：一条"在吗"回 616 个输出 token
+    其中 590 是想出来的（架构审计 §12.8 第二条）—— 没有这一列，账只能回答"今天花了多少"，
+    回答不了"其中多少是想出来的"，而"这个思考值不值"就是没法判。
+    """
 
     prompt: int | None
     completion: int | None
+    reasoning: int | None = None
 
     @property
     def total(self) -> int | None:
@@ -51,17 +58,33 @@ def _as_int(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def _reasoning_of(container: Any) -> int | None:
+    """从一份 `*_token_details` 里认"想"的那个键。两家的键名不同，认不出一律给 None。
+
+    单独一处的理由与 `parse_usage` 同一个：**键名认两遍就是两处事实面**，一处加了另一处
+    没加，症状就是"这一路的 reasoning 永远是 0"，而没有任何东西会红。
+    """
+    if not isinstance(container, dict):
+        return None
+    for key in ("reasoning", "reasoning_tokens"):
+        found = _as_int(container.get(key))
+        if found is not None:
+            return found
+    return None
+
+
 def parse_usage(reply: Any) -> TokenUsage | None:
     """从模型回复里认全四种形状；一个都没认出来给 None。"""
     meta = getattr(reply, "usage_metadata", None)
     if isinstance(meta, dict):
         prompt = _as_int(meta.get("input_tokens"))
         completion = _as_int(meta.get("output_tokens"))
+        reasoning = _reasoning_of(meta.get("output_token_details"))
         if prompt is not None or completion is not None:
-            return TokenUsage(prompt, completion)
+            return TokenUsage(prompt, completion, reasoning)
         total = _as_int(meta.get("total_tokens"))
         if total is not None:
-            return TokenUsage(None, total)
+            return TokenUsage(None, total, reasoning)
 
     usage = ((getattr(reply, "response_metadata", None) or {}).get("token_usage")) or {}
     if not isinstance(usage, dict):
@@ -72,6 +95,7 @@ def parse_usage(reply: Any) -> TokenUsage | None:
     completion = _as_int(usage.get("completion_tokens"))
     if completion is None:
         completion = _as_int(usage.get("eval_count"))  # 同上
+    reasoning = _reasoning_of(usage.get("completion_tokens_details"))
     total = _as_int(usage.get("total_tokens"))
     if completion is None and prompt is not None and total is not None:
         completion = max(0, total - prompt)
@@ -80,8 +104,8 @@ def parse_usage(reply: Any) -> TokenUsage | None:
         # 第一版在这里漏了分支，直接把 123 报成 None —— 而 `memory_distill` 一直依赖它，
         # 于是一次改写的回归把一条既有测试打红了。总数记在 completion 上：
         # 宁可标"分不清输入输出"，也不能把已知的量丢掉。
-        return TokenUsage(None, total) if total is not None else None
-    return TokenUsage(prompt, completion)
+        return TokenUsage(None, total, reasoning) if total is not None else None
+    return TokenUsage(prompt, completion, reasoning)
 
 
 def usage_from_metadata(meta: Any) -> TokenUsage | None:
@@ -94,10 +118,11 @@ def usage_from_metadata(meta: Any) -> TokenUsage | None:
         return None
     prompt = _as_int(meta.get("input_tokens"))
     completion = _as_int(meta.get("output_tokens"))
+    reasoning = _reasoning_of(meta.get("output_token_details"))
     if prompt is None and completion is None:
         total = _as_int(meta.get("total_tokens"))
-        return TokenUsage(None, total) if total is not None else None
-    return TokenUsage(prompt, completion)
+        return TokenUsage(None, total, reasoning) if total is not None else None
+    return TokenUsage(prompt, completion, reasoning)
 
 
 def local_day(now: datetime | None = None) -> str:
@@ -127,13 +152,15 @@ def record_usage(
         conn.execute(
             """
             INSERT INTO token_usage_day (
-                day, backend, calls, prompt_tokens, completion_tokens, unreported
+                day, backend, calls, prompt_tokens, completion_tokens,
+                reasoning_tokens, unreported
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(day, backend) DO UPDATE SET
                 calls = calls + excluded.calls,
                 prompt_tokens = prompt_tokens + excluded.prompt_tokens,
                 completion_tokens = completion_tokens + excluded.completion_tokens,
+                reasoning_tokens = reasoning_tokens + excluded.reasoning_tokens,
                 unreported = unreported + excluded.unreported
             """,
             (
@@ -142,6 +169,7 @@ def record_usage(
                 calls,
                 (usage.prompt if usage else None) or 0,
                 (usage.completion if usage else None) or 0,
+                (usage.reasoning if usage else None) or 0,
                 0 if reported else calls,  # "没数"是要单独记的一件事，不是 0 token
             ),
         )
@@ -163,7 +191,7 @@ def record_usage(
 def daily_usage(conn: SqlConnection, *, day: str | None = None) -> list[dict[str, Any]]:
     """某天各后端的累计（按总量倒序）。没数据给空表。"""
     rows = conn.execute(
-        "SELECT backend, calls, prompt_tokens, completion_tokens, unreported "
+        "SELECT backend, calls, prompt_tokens, completion_tokens, reasoning_tokens, unreported "
         "FROM token_usage_day WHERE day = ? "
         "ORDER BY (prompt_tokens + completion_tokens) DESC, backend",
         (day or local_day(),),
@@ -178,6 +206,8 @@ def daily_usage(conn: SqlConnection, *, day: str | None = None) -> list[dict[str
                 "calls": int(row["calls"] or 0),
                 "prompt": prompt,
                 "completion": completion,
+                # 子集，不进 total：读的人要的是"其中想"，不是第三段账单。
+                "reasoning": int(row["reasoning_tokens"] or 0),
                 "total": prompt + completion,
                 "unreported": int(row["unreported"] or 0),
             }
@@ -189,7 +219,8 @@ def usage_days(conn: SqlConnection, *, limit: int = 14) -> list[dict[str, Any]]:
     """最近若干天每天的总量（含"报了多少次没报"的 calls）—— 给"一天多少 token"那一问。"""
     rows = conn.execute(
         "SELECT day, SUM(calls) AS calls, SUM(prompt_tokens) AS prompt, "
-        "SUM(completion_tokens) AS completion, SUM(unreported) AS unreported "
+        "SUM(completion_tokens) AS completion, SUM(reasoning_tokens) AS reasoning, "
+        "SUM(unreported) AS unreported "
         "FROM token_usage_day GROUP BY day ORDER BY day DESC LIMIT ?",
         (limit,),
     ).fetchall()
@@ -199,6 +230,7 @@ def usage_days(conn: SqlConnection, *, limit: int = 14) -> list[dict[str, Any]]:
             "calls": int(r["calls"] or 0),
             "prompt": int(r["prompt"] or 0),
             "completion": int(r["completion"] or 0),
+            "reasoning": int(r["reasoning"] or 0),
             "total": int(r["prompt"] or 0) + int(r["completion"] or 0),
             "unreported": int(r["unreported"] or 0),
         }

@@ -33,6 +33,8 @@ class ProactiveState:
     #: 与"扫了但一条都没有"（元组为空、时刻非空）是两回事 —— 后者在过期之前不该再花调用。
     open_threads: tuple[str, ...] = ()
     open_threads_scan_at: datetime | None = None
+    #: 上一次**以回忆为由**主动开口的时刻（R26-23 的冷却锚点）。None = 从没以这一档开过。
+    recall_at: datetime | None = None
 
     def decayed_affinity(self, *, now: datetime) -> float:
         """叠加时间衰减后的关系数值（久不互动则回落）。"""
@@ -46,6 +48,16 @@ def _parse_ts(raw: object) -> datetime | None:
     if not raw:
         return None
     return datetime.strptime(str(raw), "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+
+
+def _fmt_ts(value: datetime) -> str:
+    """落库一律先转 UTC 再剥掉 tzinfo。
+
+    为什么必须在写这一侧统一：读回来的 `_parse_ts` 是无条件按 UTC 解释的，所以调用方
+    传进来一个本地时刻（`datetime.now()` 的常见形状）就会让这一列**静默偏移一个时区**
+    —— 实测过：`recall_at` 因此跑到 8 小时之后，冷却把回忆档多关了一整天还不报错。
+    """
+    return value.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _row_to_state(row: dict[str, Any]) -> ProactiveState:
@@ -70,6 +82,7 @@ def _row_to_state(row: dict[str, Any]) -> ProactiveState:
         calibration=calibration,
         open_threads=topics,
         open_threads_scan_at=_parse_ts(row["open_threads_at"]),
+        recall_at=_parse_ts(row["recall_at"]),
     )
 
 
@@ -77,7 +90,7 @@ def get_state(conn: SqlConnection, role_id: str) -> ProactiveState:
     """读某角色的主动状态；无记录 = 全新状态（affinity 0）。"""
     row = conn.execute(
         "SELECT role_id, affinity, last_interaction_utc, calibration_json, "
-        "open_threads, open_threads_at "
+        "open_threads, open_threads_at, recall_at "
         "FROM role_proactive_state WHERE role_id = ?",
         (role_id,),
     ).fetchone()
@@ -90,24 +103,22 @@ def save_state(conn: SqlConnection, state: ProactiveState) -> None:
     conn.execute(
         "INSERT INTO role_proactive_state "
         "(role_id, affinity, last_interaction_utc, calibration_json, "
-        " open_threads, open_threads_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) "
+        " open_threads, open_threads_at, recall_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) "
         "ON CONFLICT(role_id) DO UPDATE SET "
         "affinity = excluded.affinity, last_interaction_utc = excluded.last_interaction_utc, "
         "calibration_json = excluded.calibration_json, "
         "open_threads = excluded.open_threads, open_threads_at = excluded.open_threads_at, "
+        "recall_at = excluded.recall_at, "
         "updated_at = CURRENT_TIMESTAMP",
         (
             state.role_id,
             state.affinity,
-            state.last_interaction_utc.strftime("%Y-%m-%d %H:%M:%S")
-            if state.last_interaction_utc
-            else None,
+            _fmt_ts(state.last_interaction_utc) if state.last_interaction_utc else None,
             json.dumps(state.calibration, ensure_ascii=False),
             json.dumps(list(state.open_threads), ensure_ascii=False),
-            state.open_threads_scan_at.strftime("%Y-%m-%d %H:%M:%S")
-            if state.open_threads_scan_at
-            else None,
+            _fmt_ts(state.open_threads_scan_at) if state.open_threads_scan_at else None,
+            _fmt_ts(state.recall_at) if state.recall_at else None,
         ),
     )
     conn.commit()
@@ -121,6 +132,18 @@ def save_open_threads(
     state = get_state(conn, role_id)
     state.open_threads = tuple(t for t in topics if t)
     state.open_threads_scan_at = now
+    save_state(conn, state)
+    return state
+
+
+def record_recall_open(conn: SqlConnection, role_id: str, *, now: datetime) -> ProactiveState:
+    """记一笔"这次开口是以回忆为由"——`trigger_recall` 的冷却锚点（R26-23）。
+
+    只写 `recall_at` 这一列，别的状态原样留着（与 `save_open_threads` 同一个道理：
+    一处职责一个写点，别让"记时刻"顺手把 affinity 也算一遍）。
+    """
+    state = get_state(conn, role_id)
+    state.recall_at = now
     save_state(conn, state)
     return state
 
@@ -141,6 +164,7 @@ __all__ = [
     "ProactiveState",
     "get_state",
     "record_interaction",
+    "record_recall_open",
     "save_open_threads",
     "save_state",
 ]

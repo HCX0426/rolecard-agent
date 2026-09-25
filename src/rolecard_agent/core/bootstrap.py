@@ -44,6 +44,7 @@ from rolecard_agent.core.probes import ollama_keep, vision_capability
 from rolecard_agent.core.reachout import (
     ReachoutScheduler,
     ensure_proactive_thread,
+    format_recent_window,
     format_thread_lines,
     proactive_thread_id,
     unanswered_lines,
@@ -287,6 +288,7 @@ class Runtime:
                 tracer=self.tracer,
                 deliver=self.deliver_proactive,
                 thread_lines=self.proactive_recent_lines,
+                thread_window=self.proactive_recent_window,
             )
         self.reachout.start()
         if self.env_settings.model_pin_on_startup:
@@ -304,22 +306,20 @@ class Runtime:
 
     # -- 主动开口的投递（收件箱之外，还得能回话）--------------------------------
 
-    def proactive_recent_lines(self, role_id: str, *, limit: int = 6) -> str:
-        """那条主动会话里**她还没接住的那几句**（读检查点，不另存一份），拼成可进指令的上下文。
+    def _proactive_rows(self, role_id: str) -> list[tuple[str, str]]:
+        """该角色主动会话里的 `(说话人, 原文)` 序列（按时间正序，读检查点，不另存一份）。
 
-        读检查点而不是另存一份消息：会话的唯一真相就是 checkpoint（与桌宠面板读历史同源）。
-        没有这一段，用户在桌宠上回的话她下一条完全看不见 —— 实测过一句"刚跑完步"换来一句
-        逐字复读的旧台词。读不到（图没建 / 线程不存在 / 反序列化出问题）一律给空串：
+        两个读法（`proactive_recent_lines` / `proactive_recent_window`）共用这一处：
+        会话的唯一真相就是 checkpoint（与桌宠面板读历史同源），而"取哪一截"是**措辞**的事、
+        不该连带把读取逻辑抄两遍。读不到（图没建 / 线程不存在 / 反序列化出问题）一律给空表：
         少一段上下文，比不开口更不该出事。
 
-        两件事让它不再是"最后 6 条"：① 只取她**最后说过话之后**的那一截（`unanswered_lines`）——
-        她已经答过的话还会在之后每一次定时开口里被当由头重答一遍，那是用户报的"回两条"；
-        ② `ToolMessage` 不进"你说过的话"：工具结果是内核读到的东西，把它标成"她说过"
+        `ToolMessage` 不进"你说过的话"：工具结果是内核读到的东西，把它标成"她说过"
         等于让她以为自己对一段 JSON 说出口过。
         """
         graph = self.state.get("graph")
         if graph is None:
-            return ""
+            return []
         rows: list[tuple[str, str]] = []
         with contextlib.suppress(Exception):
             snap = graph.get_state(
@@ -331,7 +331,27 @@ class Runtime:
                 text = text_of(m).strip()
                 if text:
                     rows.append(("用户" if isinstance(m, HumanMessage) else "你", text))
-        return format_thread_lines(unanswered_lines(rows), limit=limit)
+        return rows
+
+    def proactive_recent_lines(self, role_id: str, *, limit: int = 6) -> str:
+        """那条主动会话里**她还没接住的那几句**，拼成开口指令里的上下文。
+
+        为什么只取她最后说过话之后的那一截（`unanswered_lines`）：她已经答过的话还会在
+        之后每一次定时开口里被当由头重答一遍，那是用户报的"回两条"（§12.11）。
+        返回空串是**常态也是正确答案** —— 她已经说过话了，这一次开口就该另找由头。
+        """
+        return format_thread_lines(unanswered_lines(self._proactive_rows(role_id)), limit=limit)
+
+    def proactive_recent_window(self, role_id: str, *, limit: int = 8) -> str:
+        """**最近这一窗**对话原样交给「未收尾话题」的扫描用（09-26 轮 R26-03 的修法）。
+
+        为什么不能复用 `proactive_recent_lines`：那一截的定义是"她还没接住的话"，而每次
+        主动开口都会把她的话写进同一条线程 ⇒ 它常态为空。可这一源要找的恰恰是"说到一半
+        没了下文"，**那件事往往正是她接住过、只是没落地的那件** —— 拿"没接住"当输入，
+        判据与素材是反的，实测下来扫描一次都不会发生。所以要的是"最近聊到什么"，不是
+        "还有什么没接"。
+        """
+        return format_recent_window(self._proactive_rows(role_id), limit=limit)
 
     def deliver_proactive(self, role: RoleCard, text: str) -> str | None:
         """把角色主动说的那句落进"该角色的主动会话"，返回线程 id（图还没建 → None）。

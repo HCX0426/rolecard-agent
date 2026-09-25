@@ -11,10 +11,11 @@ Every connection MUST enable `PRAGMA foreign_keys = ON` - SQLite ignores foreign
 default, which would silently turn the ON DELETE CASCADE in domains/health/schema.sql into
 a no-op and leave orphaned index rows behind.
 
-No migrations in v1. Every statement is `CREATE TABLE IF NOT EXISTS`, so changing a table
-does NOT update an existing database - it has to be rebuilt (`rm data/sqlite/app.db` then
-re-run `scripts/init_db.py`). That is a deliberate v1 trade-off, not an oversight; production
-would bring in Alembic. Stated here because this is where someone would look for it.
+列级迁移是**声明驱动**的：`bootstrap` 每次启动都拿 `schema.sql` 的声明形状比对这份库，
+缺列自动 `ADD COLUMN`（`reconcile_columns`），所以加一列只改 `schema.sql` 一处就够。
+只有"形状根本不同"的表才需要在 `_migrate` 里写一次整表重建。**绝不要靠删库来升级** ——
+`data/sqlite/app.db` 与安装目录下那份是真实数据，不是演示脚手架（09-26 轮 R26-05 抓到
+`CONTRIBUTING.md` 就是这么教的，那条已订正）。
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ import contextvars
 import re
 import sqlite3
 import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -214,15 +215,110 @@ def bootstrap(conn: SqlConnection, enabled_domains: Iterable[str] = ()) -> list[
     Returns the applied file names, which is what tests assert on: a silently skipped
     schema is far worse than a loud failure.
     """
+    files = schema_files(enabled_domains)
+    # 先把"声明里有、这份老库里没有"的列补上，再跑 DDL：域表的 `CREATE INDEX ... (新列)`
+    # 排在任何迁移之前执行，老库踩它必炸（09-26 轮 R26-04 的实测现场）。
+    reconcile_columns(conn, files=files)
     applied: list[str] = []
-    for path in schema_files(enabled_domains):
+    for path in files:
         if not path.exists():
             raise FileNotFoundError(f"schema file missing: {path}")
         conn.executescript(path.read_text(encoding="utf-8"))
         applied.append(str(path.relative_to(PACKAGE_ROOT)))
     _migrate(conn)
+    # 第二遍：`_migrate` 里那些 DROP/重建（service_endpoint 整表、model_backend 搬层）
+    # 会把第一遍补好的列跟着旧表一起带走，所以搬层之后再对齐一次声明。
+    reconcile_columns(conn, files=files)
     conn.commit()
     return applied
+
+
+#: 这两张表的旧形态由 `_migrate` 整表重建 / 搬层负责，通用补列器**必须避开**它们：
+#: 提前给旧形 `model_backend` 补上 `provider_id`，`_migrate` 里那句"没有 provider_id
+#: 就是旧形态"的判定当场失效 —— 搬层被跳过，旧行的凭据静静留在没人再读的列里。
+_SHAPE_MIGRATED_TABLES = frozenset({"model_backend", "service_endpoint"})
+
+
+def _q(ident: object) -> str:
+    """双引号包住标识符（SQLite 的标准引用法），内嵌的双引号按 SQL 规则翻倍。"""
+    return '"' + str(ident).replace('"', '""') + '"'
+
+
+def _declared_columns(files: Sequence[Path]) -> dict[str, dict[str, sqlite3.Row]]:
+    """当前这些 schema 文件**声明**出来的列形状：`{表: {列: PRAGMA 那一行}}`。
+
+    不去解析 SQL 文本 —— sqlite 自己就是那台解析器，再造一个解析器只会多一处会不同步的
+    事实面（这正是本模块一直在抓的那个根因）。
+    """
+    probe = sqlite3.connect(":memory:")
+    probe.row_factory = sqlite3.Row
+    try:
+        for path in files:
+            probe.executescript(path.read_text(encoding="utf-8"))
+        tables = [
+            str(r[0])
+            for r in probe.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )
+        ]
+        return {
+            t: {str(r["name"]): r for r in probe.execute(f"PRAGMA table_info({_q(t)})")}
+            for t in tables
+        }
+    finally:
+        probe.close()
+
+
+def _add_column_ddl(table: str, decl: sqlite3.Row) -> str:
+    name = str(decl["name"])
+    if decl["notnull"] and decl["dflt_value"] is None:
+        raise RuntimeError(
+            f"{table}.{name} 声明成 NOT NULL 又没有默认值，SQLite 不允许 ADD COLUMN 补它。"
+            "这种列必须走整表重建：把它加进 `_SHAPE_MIGRATED_TABLES` 并在 `_migrate` 里写一次。"
+        )
+    spec = f"{_q(name)} {decl['type'] or 'TEXT'}"
+    if decl["notnull"]:
+        spec += " NOT NULL"
+    if decl["dflt_value"] is not None:
+        spec += f" DEFAULT {decl['dflt_value']}"
+    return f"ALTER TABLE {_q(table)} ADD COLUMN {spec}"
+
+
+def reconcile_columns(
+    conn: SqlConnection,
+    *,
+    files: Sequence[Path] | None = None,
+    skip: frozenset[str] = _SHAPE_MIGRATED_TABLES,
+) -> list[str]:
+    """把"schema 里声明了、这份库里却没有"的列补齐，返回补过的 `表.列` 清单。
+
+    为什么要有这一层（09-26 轮 R26-04）：`_migrate` 原先那 12 处 ALTER 一条条手写，
+    于是"加一列"的人必须记得来这儿再写一遍 —— **忘了不会红**，只会在第一次读那一列时炸。
+    两份历史形状实测合计缺 19 列，全都能自动补（无一例 NOT NULL 无默认）。这一层把
+    "记不记得"换成"声明即事实"：以后加列只改 `schema.sql` 一处。
+
+    只对**已存在的表**补列：表整个不存在 = 那份 DDL 自己会建，不该在这儿猜形状。
+    主键列不参与（形状根本不同，那是 `_migrate` 整表重建的事）。
+    """
+    targets = list(files) if files is not None else schema_files()
+    declared = _declared_columns(targets)
+    existing = {
+        str(r[0])
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        )
+    }
+    added: list[str] = []
+    for table, cols in declared.items():
+        if table in skip or table not in existing:
+            continue
+        have = {str(r["name"]) for r in conn.execute(f"PRAGMA table_info({_q(table)})")}
+        for name, decl in cols.items():
+            if name in have or decl["pk"]:
+                continue
+            conn.execute(_add_column_ddl(table, decl))
+            added.append(f"{table}.{name}")
+    return added
 
 
 def _columns(conn: SqlConnection, table: str) -> set[str]:
@@ -230,7 +326,11 @@ def _columns(conn: SqlConnection, table: str) -> set[str]:
 
 
 def _migrate(conn: SqlConnection) -> None:
-    """演示库的幂等列级迁移（无迁移框架，ALTER/DROP 全部可重跑）。
+    """**形状**迁移：只负责"通用补列器补不了"的那些事（幂等、可重跑）。
+
+    列级缺列不再手写 ALTER —— `reconcile_columns` 每次都按 `schema.sql` 的声明比对
+    （09-26 轮 R26-04：原先 12 处手写 ALTER 全在核心表上，加列忘了写**不会红**，
+    只会在第一次读那列时炸）。这里只剩下三类真正需要人写的事：
 
     1. service_policy 已退役（策略并入 service_endpoint 行内 enabled/sort_order）→ DROP。
     2. service_endpoint 旧形态（行内嵌 key/base_url 的"实例"模型）→ 整表重建为
@@ -242,6 +342,8 @@ def _migrate(conn: SqlConnection) -> None:
        搬进两层表（凭据上收到 model_provider、用途变成 service_endpoint 的 chat 引用）。
        补列必须发生在搬层**之前**（搬层要读这些列），且必须限定"这是旧形态"才补 ——
        新库里 model_backend 已经没有 usage 列，无条件补一次就是把它加回来。
+       这两张表都在 `_SHAPE_MIGRATED_TABLES` 里，通用补列器对它们不动手，正是为了
+       不让"提前补上 provider_id"把第 3 条的形态判定当场弄失效。
     """
     cols = _columns(conn, "model_backend")
     if cols and "provider_id" not in cols:
@@ -254,54 +356,11 @@ def _migrate(conn: SqlConnection) -> None:
         }.items():
             if name not in cols:
                 conn.execute(f"ALTER TABLE model_backend ADD COLUMN {name} {ddl}")
-    # 5. session_thread 增列 agent_mode（v2.5 会话级「对话/智能体」切换）。
-    #    与 model_name 同一模式：NULL = 跟随全局默认（settings.agent_default_mode），
-    #    chat 端点每轮实时读库解析有效值注入 state，会话切模式下一轮即生效。
-    #    旧库无此列 → 补；新库建表已含 → 跳过（幂等）。
-    if "agent_mode" not in _columns(conn, "session_thread"):
-        conn.execute("ALTER TABLE session_thread ADD COLUMN agent_mode TEXT")
-    # 5b. session_thread 增列 distilled_at_seq（提取精华的游标，见 core/memory_distill.py）。
-    if "distilled_at_seq" not in _columns(conn, "session_thread"):
-        conn.execute("ALTER TABLE session_thread ADD COLUMN distilled_at_seq INTEGER")
-    # 6. role_card 增列 reachout_enabled（v2.5 角色主动开口，架构计划 B）。
-    #    NULL/DEFAULT 0 = 出厂静默；角色卡上勾选后该角色才有资格主动（还需全局开关）。
-    if "reachout_enabled" not in _columns(conn, "role_card"):
-        conn.execute("ALTER TABLE role_card ADD COLUMN reachout_enabled INTEGER NOT NULL DEFAULT 0")
-    # 6b. role_card 增列 recall_enabled / time_pattern_enabled（关系驱动主动开口，架构计划 §5.2）。
-    #     per-role 两类关系驱动触发源的开关；默认 1 = 开启 reachout_enabled 后关系驱动即生效。
-    if "recall_enabled" not in _columns(conn, "role_card"):
-        conn.execute("ALTER TABLE role_card ADD COLUMN recall_enabled INTEGER NOT NULL DEFAULT 1")
-    if "time_pattern_enabled" not in _columns(conn, "role_card"):
-        conn.execute(
-            "ALTER TABLE role_card ADD COLUMN time_pattern_enabled INTEGER NOT NULL DEFAULT 1"
-        )
-    # 6c. role_card 增列 file_watch_enabled（文件事件触发，架构计划 C·§5.2）。
-    #     per-role 闸门；默认 1 = 有主动开口资格的角色自动可被目录变化触发（还需全局闸）。
-    if "file_watch_enabled" not in _columns(conn, "role_card"):
-        conn.execute(
-            "ALTER TABLE role_card ADD COLUMN file_watch_enabled INTEGER NOT NULL DEFAULT 1"
-        )
-    # 6e. role_card 增列 reachout_keep（收件箱自动保留条数；0 = 不自动删）。
-    #     用户报"主动对话的抽屉没删除功能，越堆越多"，这是它的自动侧配套（手动侧是
-    #     DELETE /api/reachouts/…，见 core/reachout.prune_inbox 的路由）。
-    if "reachout_keep" not in _columns(conn, "role_card"):
-        conn.execute("ALTER TABLE role_card ADD COLUMN reachout_keep INTEGER NOT NULL DEFAULT 0")
-    # 6f. role_memory_item 增列 importance（召回缺的"显著性"那一维，设计稿 §8.5 的 P2）。
-    #     0 随口一提 / 1 常规 / 2 要紧。旧条目一律 1 而不是 0：把它们判成"随口说的"是替用户
-    #     做决定，而 1 正是新写入的默认 —— 老库不会因为加了这一列就丢掉原来的行为。
-    if "importance" not in _columns(conn, "role_memory_item"):
-        conn.execute(
-            "ALTER TABLE role_memory_item ADD COLUMN importance INTEGER NOT NULL DEFAULT 1"
-        )
-    # 6d. command_approval 增列 decide_token（P0-3 第一步：批准要持有凭据，不能靠猜 id）。
-    #     一次性能力令牌：submit 生成、随 pending 行下发给读侧、decide 必须带它并在决定后清空。
-    #     挡掉的是"任何能碰到 8000 的一方盲 POST 一个自增 id 就批准了命令"——尤其是浏览器里
-    #     一段跨源 JS：它读不到响应（同源策略），就拿不到令牌。旧库补列为 NULL，那几条 pending
-    #     记录会因"没有可比对的令牌"而必须重新提交，这是安全侧的默认。
-    if _columns(conn, "command_approval") and "decide_token" not in _columns(
-        conn, "command_approval"
-    ):
-        conn.execute("ALTER TABLE command_approval ADD COLUMN decide_token TEXT")
+    # 原先这里挂着 8 组手写 ALTER（session_thread 的 agent_mode/distilled_at_seq、
+    # role_card 的五个开关与 reachout_keep、role_memory_item.importance、
+    # command_approval.decide_token）—— 全部由 `reconcile_columns` 按声明补齐，
+    # `bootstrap` 在跑 DDL 前后各调一次，语义与那些 `if 缺则 ADD` 逐字相同
+    # （列的 type/NOT NULL/DEFAULT 直接取自 `schema.sql`，见 R26-04）。
     # 7. 关系驱动主动开口（架构计划 §5.2）：per-role 状态与 per-role 记忆（幂等建表）。
     if "affinity" not in _columns(conn, "role_proactive_state"):
         conn.execute(
@@ -356,10 +415,5 @@ def _migrate(conn: SqlConnection) -> None:
     for name in ("repeat_penalty", "frequency_penalty", "presence_penalty"):
         if name not in _columns(conn, "model_backend"):
             conn.execute(f"ALTER TABLE model_backend ADD COLUMN {name} REAL")
-    # 11. role_proactive_state 增列「未收尾话题」缓存（设计稿 §8.2 第 5 条 / 第五个由头）。
-    #     可空：NULL = 这个角色的这一源从没扫过 —— 与"扫了但没找到"（空串）是两回事，
-    #     后者在过期之前不该再花一次调用。
-    if "open_threads" not in _columns(conn, "role_proactive_state"):
-        conn.execute("ALTER TABLE role_proactive_state ADD COLUMN open_threads TEXT")
-    if "open_threads_at" not in _columns(conn, "role_proactive_state"):
-        conn.execute("ALTER TABLE role_proactive_state ADD COLUMN open_threads_at TIMESTAMP")
+    # 11.「未收尾话题」那两列（open_threads / open_threads_at）原先也手写在这里，现在由
+    #     `bootstrap` 补搬层**之后**的那一遍 `reconcile_columns` 按声明补齐。

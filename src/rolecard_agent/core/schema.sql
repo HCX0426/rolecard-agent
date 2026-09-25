@@ -6,6 +6,11 @@
 -- why user/tenant live here and not in any domain plugin (docs/07 A2/C6).
 --
 -- A domain plugin must never define its own user or tenant table.
+--
+-- 加一列**只改这个文件就够了**：`storage/db.py::reconcile_columns` 每次启动把这里的
+-- 声明形状与现有库比对，缺的列按声明的 type/NOT NULL/DEFAULT 自动 ADD COLUMN。
+-- 例外只有两类：NOT NULL 又没有默认值（SQLite 拒绝 ADD），以及整表形状换掉
+-- （`model_backend` 搬层、`service_endpoint` 引用化）—— 那两类写在 `_migrate` 里。
 -- ===========================================================================
 
 CREATE TABLE IF NOT EXISTS tenant (
@@ -35,11 +40,11 @@ CREATE TABLE IF NOT EXISTS session_thread (
     model_name       TEXT,
     -- 会话级对话模式（对话页「对话/智能体」切换）：NULL = 跟随全局默认
     -- （settings.agent_default_mode）；'chat' / 'agent' = 本会话显式覆盖。
-    -- 旧库要跑 core/storage.db 的 _migrate() 补列（ALTER TABLE ADD COLUMN，幂等）。
+    -- 旧库由 storage/db.py::reconcile_columns 按本文件的声明自动补列（幂等，无需写迁移）。
     agent_mode       TEXT,
     -- 提取精华的游标：上次提取时这个会话的消息条数。差值攒够 N 轮才再提一次
     -- （按消息数而非"距上次多久"：一次提取是一次真模型调用，本地卡上按时间兜底会让
-    --  连续聊天的成本不可预算）。NULL = 从未提取过。旧库由 storage/db.py::_migrate 补列。
+    --  连续聊天的成本不可预算）。NULL = 从未提取过。旧库同样由 reconcile_columns 补。
     distilled_at_seq INTEGER,
     -- Version stamp of the enabled tool set. Bumped whenever plugins are toggled.
     -- On resume, a checkpoint whose tool_epoch is older than the current one may
@@ -118,6 +123,10 @@ CREATE TABLE IF NOT EXISTS role_proactive_state (
     -- 判"多久算过期"用（见 reachout.OPEN_THREADS_REFRESH_MINUTES）。NULL = 从没扫过。
     open_threads         TEXT,
     open_threads_at      TIMESTAMP,
+    -- 上一次**以回忆为由**主动开口的时刻（R26-23：`trigger_recall` 原先没有冷却，
+    -- 判据只是"有没有一条 active 记忆"，于是记忆一长就永久压住排在它后面的定时档）。
+    -- NULL = 从没以这一档开过口。冷却长度见 reachout.RECALL_COOLDOWN_HOURS。
+    recall_at            TIMESTAMP,
     updated_at           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -230,6 +239,10 @@ CREATE TABLE IF NOT EXISTS token_usage_day (
     calls             INTEGER NOT NULL DEFAULT 0,
     prompt_tokens     INTEGER NOT NULL DEFAULT 0,
     completion_tokens INTEGER NOT NULL DEFAULT 0,
+    -- 思考模型输出里"想"的那一段（架构审计 §12.8 第二条）。**它是 completion 的子集**，
+    -- 不是第三段开销 —— 所以总量仍然是 prompt + completion，这一列只用来回答
+    -- "今天花的钱里有多少是她想出来的"。老库由 reconcile_columns 自动补，无迁移。
+    reasoning_tokens  INTEGER NOT NULL DEFAULT 0,
     -- 多少次调用**后端根本没报用量**。没有这一列，"今天 0 token"就同时意味着
     -- "今天没花钱"和"今天报了 12 次、一次都没数"两件事 —— 后者是账本坏了，不是免费。
     unreported        INTEGER NOT NULL DEFAULT 0,
@@ -358,7 +371,7 @@ CREATE TABLE IF NOT EXISTS command_approval (
     status       TEXT NOT NULL DEFAULT 'pending'
                  CHECK (status IN ('pending', 'approved', 'rejected', 'done')),
     result_json  TEXT,                     -- done 后：{exit_code, stdout, stderr, duration_ms, output_bytes}
-    decide_token TEXT,                     -- 一次性能力令牌：decide 必须持有（见 storage/db.py 6d）
+    decide_token TEXT,                     -- 一次性能力令牌：decide 必须持有（P0-3 第一步，见架构审计 §10.15）
     created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

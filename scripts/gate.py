@@ -42,6 +42,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PY = str(ROOT / ".venv" / "Scripts" / "python.exe")
+
+# 步骤名带中文与「▶」，而 Windows 控制台默认 codepage 是 GBK：不重配编码，脚本在**第一个 print**
+# 就抛 UnicodeEncodeError 退场，一步都没跑（实测在 git-bash 里中招；输出 pipe 给 tail 时
+# 退出码被 tail 吃掉，于是看起来像成功）。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 # Windows 下 npm 是 .cmd，subprocess 直调 "npm" 解析不到会抛 WinError 2（FileNotFoundError）。
 NPM = "npm.cmd" if platform.system() == "Windows" else "npm"
 
@@ -79,8 +87,21 @@ STEPS: list[tuple[str, list[str], str]] = [
 
 
 def _git(*args: str) -> str:
-    """git 查询：失败就抛（调用方按"不确定 = 保守跑"处理，绝不静默当成"没改动"）。"""
-    proc = subprocess.run(["git", *args], cwd=str(ROOT), capture_output=True, text=True)
+    """git 查询：失败就抛（调用方按"不确定 = 保守跑"处理，绝不静默当成"没改动"）。
+
+    `encoding="utf-8"` 不是可选的：本仓有中文文件名，git 吐出来的是 UTF-8，而 Windows 上
+    `text=True` 默认按 GBK 解 —— 解码在**读子进程输出的那个线程**里抛 UnicodeDecodeError，
+    主线程只会拿到一份被截断的 stdout（实测 09-25 就在 `diff --name-only` 上中招）。
+    截断不是"少几行"，`_src_changed()` 会拿着半份清单判断要不要跑覆盖率，那是一次静默失效。
+    """
+    proc = subprocess.run(
+        ["git", *args],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     if proc.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} -> {proc.returncode}")
     return proc.stdout

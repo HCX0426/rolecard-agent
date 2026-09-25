@@ -65,6 +65,7 @@ from rolecard_agent.core.proactive_state import (
     ProactiveState,
     get_state,
     record_interaction,
+    record_recall_open,
     save_open_threads,
 )
 from rolecard_agent.core.prompts import build_system_prompt
@@ -259,6 +260,10 @@ _AVOIDANCE_NOTE = (
 #: 主动开口时带进上下文的"你们聊过的最近几条"的条数。只给最后几条、每条截 120 字 ——
 #: 主动开口是"想起一件事"，不是重放整段对话；全量塞进去既贵，又会把小模型带成照着念。
 RECENT_THREAD_LIMIT = 6
+#: 「未收尾话题」扫描用的那一窗为什么比开口素材宽（8 vs 6）：扫描要看见的是"一件事从提到
+#: 到落地"的**全过程**，只看最后两句常常正好切掉"她接住过"的那半句；而开口素材要窄，
+#: 窄到只剩"此刻该接哪一句"。两个数不是一個需求。
+RECENT_WINDOW_LIMIT = 8
 
 
 def unanswered_lines(rows: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
@@ -297,6 +302,23 @@ def format_thread_lines(
         "这些是对方最近说的、你**还没有接过话**的几句（按时间正序）。**挑一件回应就好，"
         "别把它们逐条复述一遍，也不要重说你上一轮已经说过的话**：\n" + lines
     )
+
+
+def format_recent_window(
+    rows: Sequence[tuple[str, str]], *, limit: int = RECENT_WINDOW_LIMIT
+) -> str:
+    """把 `(说话人, 原文)` 序列拼成"最近聊到的这一窗"（**不做"没接住"那一刀**）。
+
+    与 `format_thread_lines` 的唯一区别就是措辞与不截尾，而这一点区别正是第五由头的生死：
+    它要找的是"说到一半没了下文"的事，那件事往往**已经被她接住过**、只是没落地。
+    放在这里同样是为了让"措辞与截断只有一处"。
+    """
+    picked = [(str(who), str(text).strip()) for who, text in rows if str(text).strip()]
+    picked = picked[-limit:]
+    if not picked:
+        return ""
+    lines = "\n".join(f"- {who}：{text[:120]}" for who, text in picked)
+    return "最近这一窗对话（按时间正序，含她已经接过话的那些句）：\n" + lines
 
 
 def _format_change_list(events: list[FileEvent] | None, *, truncated: bool = False) -> str:
@@ -697,6 +719,9 @@ def generate_reachout_text(
         spent = TokenUsage(
             _sum_or_none(spent.prompt, usage.prompt),
             _sum_or_none(spent.completion, usage.completion),
+            # 重生就是再花一次"想"：这一栏不跟着累加，`spent.reasoning` 就永远只有最后一
+            # 次的量，而 §12.8 第二条要判的恰恰是"这次开口里想占了多大比例"。
+            _sum_or_none(spent.reasoning, usage.reasoning),
         )
 
     def speak(extra: str = "") -> tuple[str, ReachoutDraft]:
@@ -755,7 +780,15 @@ def generate_reachout_text(
 def trigger_affection(
     role: RoleCard, state: ProactiveState, settings: Settings, *, now_utc: datetime
 ) -> str | None:
-    """性格·关系数值触发：互动积累的成长值（衰减后）到阈值即主动冒泡。"""
+    """性格·关系数值触发：互动积累的成长值（衰减后）到阈值即主动冒泡。
+
+    这一档原先是四档里**唯一没有 per-role 开关**的（09-26 轮 R26-23）：affinity 每次成功
+    开口 +0.2 且封顶 5.0，而"衰减"的钟又被同一次开口归零 ⇒ 触顶之后永久命中，排在它后面
+    的时段规律 / 回忆 / 定时三档一起读不到。补上 `affinity_enabled` 才让那条 `or` 链谈得上
+    "轮得到"。默认 1 = 与今天的实际行为逐字一致。
+    """
+    if not role.affinity_enabled:
+        return None
     # 阈值比较带极小 epsilon：affinity 恰为阈值、且衰减量仅浮点噪声时仍视为达标。
     if state.decayed_affinity(now=now_utc) >= DEFAULT_AFFINITY_THRESHOLD - 1e-6:
         return "affection"
@@ -786,13 +819,28 @@ def trigger_time_pattern(role: RoleCard, conn: SqlConnection, *, now_local: date
     return None
 
 
+#: 回忆档的冷却（小时）。为什么要有（09-26 轮 R26-23）：这一档的判据原先只是"有没有一条
+#: active 记忆"，而记忆条数只增不减 —— 于是它和触顶的 affinity 一样变成永久命中，把排在它
+#: 后面的定时档（以及挂在定时档上的第五由头）一起压死。锚点读 `role_proactive_state.recall_at`。
+#: 取 24 小时的理由：那是这条链上其它几档的天然周期（基线间隔 60 分钟、时段规律按小时众数），
+#: 而"想起一件往事"一天一次已经是上限，同一小时里两次"我记得你说过…"正是 §12.11 那条投诉。
+RECALL_COOLDOWN_HOURS = 24.0
+
+
 def trigger_recall(role: RoleCard, conn: SqlConnection, *, now_local: datetime) -> str | None:
-    """回忆触发：该角色有**可用的记忆条目**时才触发。无条目 / 关掉回忆 = 不触发。
+    """回忆触发：该角色有**可用的记忆条目**、且不在冷却里时才触发。
 
     判据从"有没有那段 blob"换成"有没有一条 active 条目"是必须的：同一个东西既当闸门又当素材，
     才不会"闸门说可以、素材却是空的" —— 后者正是让模型捏造的形状。
+    冷却时刻**在这里现读**而不是由调用方传：少一个参数就少一处"忘了传 ⇒ 冷却静默失效"。
+    两个 datetime 都带 tzinfo，相减是绝对时刻之差，本地/UTC 不当地。
     """
     if not role.recall_enabled:
+        return None
+    state = get_state(conn, role.role_id)
+    if state.recall_at is not None and (now_local - state.recall_at) < timedelta(
+        hours=RECALL_COOLDOWN_HOURS
+    ):
         return None
     return "recall" if top_active_item(conn, bucket=role.role_id) is not None else None
 
@@ -828,6 +876,7 @@ class ReachoutScheduler:
         tracer: Tracer,
         deliver: Callable[[RoleCard, str], str | None] | None = None,
         thread_lines: Callable[[str], str] | None = None,
+        thread_window: Callable[[str], str] | None = None,
     ) -> None:
         self._settings = settings_provider
         self._roles = roles
@@ -837,6 +886,9 @@ class ReachoutScheduler:
         self._deliver = deliver
         # "你们最近聊过什么"的取法由宿主给（它才知道图与检查点在哪）：None = 不带这段上下文。
         self._thread_lines = thread_lines
+        # 第五由头扫描用的是**最近一窗**而不是"没接住那截"（R26-03）。宿主没给独立取法时
+        # 退回 `thread_lines`：宁可这一源退化成"照样扫不到东西"，也不要新签名逼所有宿主改。
+        self._thread_window = thread_window or thread_lines
         self._stop = threading.Event()
 
     # -- 生命周期 -------------------------------------------------------
@@ -925,8 +977,11 @@ class ReachoutScheduler:
             # 结果按 `OPEN_THREADS_REFRESH_MINUTES` 缓存 —— 一次调用换"她记得你说到一半"，
             # 不能每个 tick 花一遍（本地 8B 一次几十秒，那是直接拖死调度线程的量）。
             open_topics: list[str] = []
-            if fired == "timer" and self._thread_lines is not None:
-                turns = self._thread_lines(role.role_id)
+            if fired == "timer" and self._thread_window is not None:
+                # 取"最近一窗"而不是"她还没接住的那一截"：后者在她每次开口之后必然为空，
+                # 于是这一源在生产上从没被走到过（09-26 轮 R26-03，实测见
+                # scripts/probe_open_threads_reach.py）。
+                turns = self._thread_window(role.role_id)
                 if turns:
                     if open_threads_stale(state, now=stamp_utc):
                         try:
@@ -992,6 +1047,11 @@ class ReachoutScheduler:
             text = draft.text
             record_reachout(self._conn, role, text)
             record_interaction(self._conn, role.role_id, now=stamp_utc)
+            if fired == "recall":
+                # 冷却锚点只在**真的发出去了**的时候记：被 guard 拦下、正文为空的那些
+                # `reachout_skipped` 不该消耗掉这一档的额度（用户看到的是"她没说话"，
+                # 而不是"她说过一次了"）。
+                record_recall_open(self._conn, role.role_id, now=stamp_utc)
             # 先落收件箱（用户一定能看见），再尽力投进主动会话；投递坏了也不把消息吞掉。
             thread_id: str | None = None
             if self._deliver is not None:
