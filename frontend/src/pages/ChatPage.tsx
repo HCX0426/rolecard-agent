@@ -208,10 +208,13 @@ export default function ChatPage({
   const fileRef = useRef<HTMLInputElement>(null);
   // 本轮是否收到过 error 事件（详情留到收尾时统一提示，见 applyMeta 的说明）。
   const errorRef = useRef<string>("");
+  /** 本轮是被叫停的（`End(stopped)`）：留到收尾之后还要看得见，所以是状态不是气泡字段。 */
+  const [stoppedHint, setStoppedHint] = useState(false);
 
   /** 把事件的旁路信息落到对应的界面状态上（气泡正文之外的信息）。 */
   const applyMeta = useCallback((meta: StreamMeta) => {
     if (meta.trimmed && meta.trimmed.dropped > 0) setTrim(meta.trimmed);
+    if (meta.stopped) setStoppedHint(true);
     // 错误详情必须**攒起来留到流结束后再说**：气泡会在收尾时被 checkpoint 回放整体替换，
     // 挂在气泡上的 `[错误] …` 跟着一起消失 —— 用户实际上看不到任何提示。
     if (meta.errored) errorRef.current = meta.errorDetail || "模型调用失败";
@@ -531,6 +534,7 @@ export default function ChatPage({
       }
     }
     setMessages((m) => [...m, { role: "user", content: text || "（图片）", ...(image ? { image } : {}) }]);
+    setStoppedHint(false); // 上一轮的"被叫停"不该跟着这一轮
     const controller = startBubble(tid);
     await streamChat(tid, text, onEvent, controller.signal, image);
     const aborted = controller.signal.aborted;
@@ -584,6 +588,7 @@ export default function ChatPage({
     if (!content && !image) return;
     sendingRef.current = true;
     setBusy(true);
+    setStoppedHint(false); // 同上：重新生成是新一轮
     const controller = startBubble(sessionId);
     setEditing(null);
     await streamEdit(sessionId, mid, content, onEvent, controller.signal, image);
@@ -990,6 +995,17 @@ export default function ChatPage({
                   {live.text ? <Markdown text={live.text} /> : "思考中…"}
                 </div>
               </div>
+            )}
+            {/* 这一轮是被叫停的（后端 `End(stopped)`）：屏幕上那半截不是"说完了"。
+                说它必须**在气泡之外** —— 收尾时气泡会被 checkpoint 回放整体换掉，挂在里面的字
+                跟着消失，用户其实看不到（与 `errorRef` 那笔账同一个理由）。
+                而"别的窗口按的停"（桌宠那个「停止」）正是本地 `signal.aborted` 覆盖不到的形态，
+                判据只能来自后端那句 stopped。在**这一扇窗**按的停另有那句
+                "已停止生成（已生成的内容已保留）"的提示，两边不重复说同一件事。 */}
+            {stoppedHint && (
+              <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
+                这一轮是被叫停的 —— 上面那半截停在哪儿就是哪儿，没有说完。
+              </p>
             )}
           </div>
         </div>

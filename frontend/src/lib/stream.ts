@@ -25,6 +25,8 @@ export interface ChatEventLike {
   kept?: number;
   args?: Record<string, unknown>;
   role?: { role_id: string; role_name: string };
+  /** end 事件带回的"这一轮是用户叫停的"（后端 `End(stopped=…)`，#18）。 */
+  stopped?: boolean;
 }
 
 export interface ToolStep {
@@ -44,6 +46,8 @@ export interface LiveBubble {
   thinking: string;
   tools: ToolStep[];
   streaming: boolean;
+  /** 这一轮被用户叫停过：屏幕上那半截是**停下来的**，不是说完的（#18 的 `End.stopped`）。 */
+  stopped?: boolean;
 }
 
 /** 从事件里额外要收集的旁路信息（不进入气泡本体）。 */
@@ -56,6 +60,8 @@ export interface StreamMeta {
   errored?: boolean;
   /** 错误详情原文。调用方在流结束后要用它给用户一句能看的话。 */
   errorDetail?: string;
+  /** 这一轮是**被叫停**的（后端 `End(stopped=true)`）。不是失败，但半截话不该长得像说完了。 */
+  stopped?: boolean;
 }
 
 export interface ReducedFrame {
@@ -193,8 +199,14 @@ export function reduceChatEvent(bubble: LiveBubble, ev: ChatEventLike): ReducedF
     case "context_trimmed":
       meta.trimmed = { dropped: ev.dropped ?? 0, kept: ev.kept ?? 0 };
       break;
+    case "end":
+      // 后端每轮都发 `stopped`（正常收尾是 false），所以这里**照实覆盖**而不是只认 true ——
+      // 否则一个复用出去的气泡对象会带着上一轮的"已停止"。
+      meta.stopped = Boolean(ev.stopped);
+      next = { ...bubble, stopped: Boolean(ev.stopped) };
+      break;
     default:
-      break; // "end" 与未知类型都由调用方收尾
+      break; // 未知类型由调用方收尾
   }
 
   return { bubble: next, meta };
