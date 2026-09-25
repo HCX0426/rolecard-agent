@@ -106,16 +106,42 @@ class FakeChat:
     def invoke(self, prompt, **kwargs):  # noqa: ANN001, ANN201, ARG002
         return AIMessage(content="【冒烟答复】已收到你的问题。")
 
+    def stream(self, prompt, **kwargs):  # noqa: ANN001, ANN201, ARG002
+        # 内核现在走流（#18：停止要能落在分块边界上）。一次给整块 = 累加的恒等情形。
+        yield self.invoke(prompt)
+
+
+def _flat_models(payload: dict) -> dict:
+    """分组视图 → `name → 行`（`has_key` 在组上，抄到每行，读侧写法与拆层前一致）。
+
+    GET/PUT /api/settings/models 早就只剩 `providers` 这一个视图（平铺的 `backends`
+    投影随旧界面一起删了），而写侧的请求体仍叫 `backends` —— 这里改的是**读**。
+    """
+    out: dict[str, dict] = {}
+    for group in payload["providers"]:
+        for row in group["models"]:
+            out[str(row["name"])] = {**row, "has_key": group["has_key"]}
+    return out
+
 
 RESULTS: list[tuple[str, bool, str]] = []
 
 
 def run_check(name: str, fn: Callable[[], None]) -> None:
-    """跑一项并把结论记进 RESULTS —— 冒烟要把任何异常都记成"功能断了"，而不是崩掉整轮。"""
+    """跑一项并把结论记进 RESULTS —— 冒烟要把任何异常都记成"功能断了"，而不是崩掉整轮。
+
+    失败说明里带上**断言在哪一行断的**：项内十几条断言不每条都写得出消息（写了也重复），
+    而只报"断言失败"的冒烟等于让人回去读代码才知道是哪一步断了。
+    """
     try:
         fn()
     except AssertionError as exc:
-        RESULTS.append((name, False, str(exc) or "断言失败"))
+        where = ""
+        tb = exc.__traceback__
+        while tb is not None:
+            where = f"{Path(tb.tb_frame.f_code.co_filename).name}:{tb.tb_lineno}"
+            tb = tb.tb_next
+        RESULTS.append((name, False, f"{str(exc) or '断言失败'}（{where}）"))
     except Exception as exc:  # noqa: BLE001 - 冒烟要把任何异常记为"功能断了"
         RESULTS.append((name, False, f"{type(exc).__name__}: {exc}"))
     else:
@@ -469,7 +495,7 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         assert put.status_code == 200, put.text
         got = c.get("/api/settings/models").json()
         assert got["default"] == "cloud-a" and got["fallbacks"] == ["cloud-b"], got
-        backend = {b["name"]: b for b in got["backends"]}
+        backend = _flat_models(got)
         assert backend["cloud-a"]["has_key"] is True
         assert "api_key" not in backend["cloud-a"]  # 只写不回读
         # 缺凭据的 openai 后端必须被拒（否则会存进一个"重建时才炸"的配置）。
@@ -485,15 +511,26 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
             },
         )
         assert keyless.status_code == 400 and "api_key" in keyless.json()["detail"], keyless.text
-        # 同上：已存 key 的后端不带 key 提交应通过（保留语义）
+        # 同上：已存 key 的后端不带 key 提交应通过（保留语义）。
+        # **必须带上它的 base_url**：key 挂在 (供应商, 端点) 那个组上，不是挂在名字上 ——
+        # 不带端点的那一行属于"该供应商的默认端点"，那个组确实没有 key（真实 UI 从来
+        # 不会发这种形状，它把组的 base_url 一起摊平回去）。
         keep = c.put(
             "/api/settings/models",
             json={
                 "default": "cloud-a",
-                "backends": [{"name": "cloud-a", "provider": "openai", "model": "m-a"}],
+                "backends": [
+                    {
+                        "name": "cloud-a",
+                        "provider": "openai",
+                        "base_url": "https://x/v1",
+                        "model": "m-a",
+                    }
+                ],
             },
         )
-        assert keep.status_code == 200 and keep.json()["backends"][0]["has_key"] is True, keep.text
+        assert keep.status_code == 200
+        assert _flat_models(keep.json())["cloud-a"]["has_key"] is True, keep.text
         assert (
             c.put(
                 "/api/settings/models",
