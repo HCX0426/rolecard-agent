@@ -372,6 +372,65 @@ describe("PetPage 点开面板（§7：想回话不用开控制台）", () => {
     expect(screen.queryByText(/上面还有/)).toBeNull();
   });
 
+  it("控制台那边往同一条会话写了新消息：面板开着时会在下一次轮询自己跟上", async () => {
+    // 用户 09-26 报的原话："我在对话界面对话时，桌宠打开的消息却不会更新" —— 历史原先只在
+    // **展开那一下**读一次，3 秒轮询只刷收件箱那份，于是面板停在打开它的那一瞬间。
+    const shell = withShell();
+    let server = [
+      { id: "m1", role: "user", content: "好，你也穿点" },
+      { id: "m2", role: "assistant", content: "外头降温了，穿上外套。" },
+    ];
+    let total = 2;
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/roles") return [{ role_id: "wan", role_name: "苏晚晴", model_name: "" }];
+      return { messages: server, total, limit: 30, truncated: false };
+    });
+    await mount();
+    await open(shell);
+    expect(screen.getByText(/外头降温了/)).toBeTruthy();
+
+    // 控制台上她又答了一句（同一张 checkpoint，同一个 thread_id）
+    server = [...server, { id: "m3", role: "assistant", content: "记得把阳台那盆也搬进来。" }];
+    total = 3;
+    await poll();
+    await act(async () => {
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(screen.getByText(/记得把阳台那盆/)).toBeTruthy();
+    // 顶上那句"上面还有 N 条"跟着新的 total 走，不是停在第一次那份
+    expect(screen.queryByText(/上面还有/)).toBeNull();
+  });
+
+  it("自己这一轮还在流的时候，后台刷新不许插一脚（重影那一族）", async () => {
+    const shell = withShell();
+    let server = [{ id: "m1", role: "user", content: "好，你也穿点" }];
+    apiMock.get.mockImplementation(async (url: string) =>
+      url === "/api/roles"
+        ? [{ role_id: "wan", role_name: "苏晚晴", model_name: "" }]
+        : { messages: server, total: server.length, limit: 30, truncated: false },
+    );
+    streamChatMock.mockImplementation(
+      (_tid: string, _msg: string, _onEvent: (e: unknown) => void) => new Promise<void>(() => undefined),
+    );
+    await mount();
+    await open(shell);
+
+    const box = screen.getByPlaceholderText(/跟苏晚晴说一句/) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "我发一条" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await act(async () => {
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+
+    // 流还没落地，服务端"多出来"的那一条不能盖到屏幕上：它会被 `handoff` 在收尾时一次性交出来
+    server = [...server, { id: "m9", role: "assistant", content: "这条现在还不该出现" }];
+    await poll();
+    await act(async () => {
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(screen.queryByText(/这条现在还不该出现/)).toBeNull();
+  });
+
   it("把「画了像素的那几块」报给壳，形状没变不重复发，卸载时收回（§12.3）", async () => {
     const shell = withShell();
     const send = shell.petHotRects as unknown as ReturnType<typeof vi.fn>;

@@ -134,6 +134,13 @@ export default function PetPage() {
   // 已经"见过"的最新一条 id。**在第一次真正拿到快照之前保持 null**：初始的空白状态不是
   // 一次快照，拿它当基线会让每次开机都把积压的最后一条当新消息拍出去。
   const seenNewestRef = useRef<number | null>(null);
+  /** `threadId` 的"读时不重订阅"版本：轮询回调要知道"此刻开着的是哪条会话"，
+   *  而把 threadId 放进 `load` 的依赖会让每次换角色都重建一遍 3 秒节拍。 */
+  const threadIdRef = useRef<string | null>(null);
+  // 上一次落到面板上的那份历史"长什么样"（条数 + 最后一条 id）。轮询靠它判有没有变，
+  // 没变就一次 set 都不发 —— 否则每 3 秒都算"新字长出来了"，自动滚动会把用户往上翻的
+  // 那一眼拽回底部。
+  const historyShapeRef = useRef("");
 
   // 流式那一轮：与对话页**同一份**归约（lib/stream）与同一个 hook，桌宠不写第二套。
   const { busy, setBusy, live, setLive, liveRef, onEvent, startBubble, stop, sendingRef } =
@@ -164,6 +171,40 @@ export default function PetPage() {
     [setLive, liveRef],
   );
 
+  /** 这一页面上的"多少条 + 最后一条是谁"——轮询靠它判有没有变。 */
+  function shapeOf(page: MessagePage): string {
+    return `${page.total}:${page.messages[page.messages.length - 1]?.id ?? "-"}`;
+  }
+
+  /**
+   * 面板开着的时候，把这条会话重新读一遍。
+   *
+   * 用户 09-26 报的："我在对话界面对话时，桌宠打开的消息却不会更新" —— 根因是历史只在
+   * **展开那一下**读一次（`useEffect` 依赖 `expanded`），而 3 秒轮询只刷收件箱那份 `items`。
+   * 同一条线程被两边写，面板却停在打开它的那一瞬间。
+   *
+   * 三道闸，每一道都对应一次踩过的坑：
+   *  - 没展开 / 关了显示 ⇒ 不打接口（驻留件不该为一个没被看的面板常驻轮询）；
+   *  - **自己这一轮还在流 ⇒ 不抢**。收尾归 `handoff` 管，这里插一脚就是"我发一条她回两条"
+   *    那个重影的另一版；
+   *  - 内容没变 ⇒ 一次 set 都不发。否则每 3 秒都被自动滚动当成"新字长出来了"，
+   *    把用户往上翻找旧消息的那一眼拽回底部。
+   */
+  const refreshHistory = useCallback(async () => {
+    const tid = threadIdRef.current;
+    if (!tid || !expandedRef.current || !showContentRef.current || busyRef.current) return;
+    let page: MessagePage;
+    try {
+      page = await api.get<MessagePage>(messagesPath(tid));
+    } catch {
+      return; // 读不到就留着上一份：接口抖一下不该把面板清空，那比陈旧更像"她忘了"
+    }
+    const shape = shapeOf(page);
+    if (shape === historyShapeRef.current) return;
+    historyShapeRef.current = shape;
+    handoff(page);
+  }, [handoff]);
+
   const load = useCallback(async () => {
     let page;
     try {
@@ -175,6 +216,9 @@ export default function PetPage() {
     setItems(page.items);
     setUnreadByRole(page.unread_by_role ?? {});
     setOffline(false);
+    // 同一个节拍顺带把这条会话重读一遍：面板开着的时候，控制台也在往同一条线程里写
+    // （用户 09-26 报的"对话界面对话时桌宠不更新"）。三道闸在 `refreshHistory` 里。
+    void refreshHistory();
 
     const newest = page.items[0]?.id ?? 0;
     const seen = seenNewestRef.current;
@@ -191,7 +235,7 @@ export default function PetPage() {
         arrived.thread_id,
       );
     }
-  }, []);
+  }, [refreshHistory]);
 
   useEffect(() => {
     void load();
@@ -236,6 +280,11 @@ export default function PetPage() {
    *  后端"这条线在不在"（只读，不建行：只打开面板看一眼不该在侧栏长出一条会话）。 */
   const [resolvedThreadId, setResolvedThreadId] = useState<string | null>(null);
   const threadId = knownThreadId ?? resolvedThreadId;
+  // 轮询回调读的是"此刻开着的是哪条会话"（见 `threadIdRef`）：换角色、清空抽屉、第一次
+  // 问出 id，都要让它跟着走，否则 `refreshHistory` 会去刷一条已经不是当前对象的线程。
+  useEffect(() => {
+    threadIdRef.current = threadId;
+  }, [threadId]);
   const name = activeName;
   // 隐藏内容时面板要说"有几条没读"，那数的是**当前对象**的（切到别的角色就不是那一堆了）。
   const unreadOfActive = activeRole ? (unreadByRole[activeRole] ?? 0) : 0;
@@ -490,6 +539,7 @@ export default function PetPage() {
     if (!expanded || !showContent) {
       setHistory(null);
       setHistoryTotal(0);
+      historyShapeRef.current = ""; // 收起 = 基线作废：下次展开要认新读到那份
       setHistoryError("");
       return;
     }
@@ -498,7 +548,11 @@ export default function PetPage() {
     setHistoryError("");
     api
       .get<MessagePage>(messagesPath(threadId))
-      .then((page) => alive && handoff(page))
+      .then((page) => {
+        if (!alive) return;
+        historyShapeRef.current = shapeOf(page);
+        handoff(page);
+      })
       .catch((e: Error) => alive && setHistoryError(`历史没读到：${e.message}`));
     return () => {
       alive = false;
@@ -693,6 +747,7 @@ export default function PetPage() {
                   setPicked(e.target.value);
                   setHistory(null);
                   setHistoryTotal(0); // 换角色 = 换一条会话，上一角色的"上面还有 N 条"不能跟着搬
+                  historyShapeRef.current = "";
                 }}
                 className="max-w-[150px] truncate rounded border border-slate-200 bg-white px-1 py-0.5 text-xs dark:border-slate-600 dark:bg-slate-800"
                 title="换个工作台对象（每个角色是它自己的那条主动会话）"
