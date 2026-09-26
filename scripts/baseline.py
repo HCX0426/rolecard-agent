@@ -228,6 +228,74 @@ def section_settings() -> dict[str, Any]:
     }
 
 
+def _py_files(base: Path):
+    for path in sorted(base.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        yield path
+
+
+def section_hardcoded_identity() -> dict[str, Any]:
+    """`DEFAULT_USER_ID` 被写死在多少地方 —— 审计里被手数过四次、每次都得一个新数的那个格。
+
+    为什么这里一次给**四把尺子**而不是"一个正确的数"：同一个事实先后被记成"约 15 处"（09-19
+    手估）、"22 处"（09-25，只数 `api/` 下的**行**）、"按 AST 复算 21 处"（09-26，整个 `src/`
+    的语法节点，但**把常量定义那一行也算成了一次用法** —— 这把我自己的代码第一版犯了同一个错，
+    见 `name_loads` 的注释）、以及"26"（整个 `src/` 按行，含定义与五处 import 与装配根的播种）。
+    **它们从来不是四个事实，是四把尺子** —— 分歧没发生在数据上，只发生在有没有说清怎么数。
+    于是这节把四把都算出来写进 JSON：文档引用时要么点这个键，要么就得写明用的是哪一把。
+    真开工做多租户时，"还剩多少处要改"是 `src_ast.uses`（**20**：只数真的用了它的地方）。
+    """
+    import ast  # noqa: PLC0415
+
+    api = ROOT / "src" / "rolecard_agent" / "api"
+    whole = ROOT / "src"
+
+    def grep_lines(base: Path) -> int:
+        return sum(
+            1
+            for path in _py_files(base)
+            for ln in path.read_text(encoding="utf-8").splitlines()
+            if "DEFAULT_USER_ID" in ln
+        )
+
+    def name_loads(base: Path) -> dict[str, int]:
+        """只数**真正用了这个常量**的地方：`ast.Name` 的 **Load** 上下文。
+
+        这个 `ctx` 过滤不是洁癖，是本节存在的理由：第一版没写它，于是 `core/identity.py:17`
+        那行 `DEFAULT_USER_ID = "local-user"`（定义）被算成一次用法，整个 `src/` 读出 21 ——
+        与 09-26 那句"按 AST 复算是 21 处"一字不差。**原来那个数不是数错了别的东西，
+        是把定义当成了使用**，而它当时大概也是这么产生的。
+        """
+        out = {"uses": 0, "in_call_args": 0}
+        for path in _py_files(base):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Name)
+                    and node.id == "DEFAULT_USER_ID"
+                    and isinstance(node.ctx, ast.Load)
+                ):
+                    out["uses"] += 1
+                if isinstance(node, (ast.Call, ast.keyword)):
+                    args = list(node.args) if isinstance(node, ast.Call) else [node.value]
+                    out["in_call_args"] += sum(
+                        1
+                        for a in args
+                        if isinstance(a, ast.Name) and a.id == "DEFAULT_USER_ID"
+                    )
+        return out
+
+    return {
+        "api_layer_grep_lines": grep_lines(api),
+        "src_grep_lines": grep_lines(whole),
+        "api_layer_ast": name_loads(api),
+        "src_ast": name_loads(whole),
+        "note": "四个数量问的是同一件事的四种口径：行 vs 语法节点、api/ vs 整个 src/。"
+        "引用时点名口径，别再当场 grep 出一个第五数。",
+    }
+
+
 def section_citations() -> dict[str, Any]:
     """代码里对架构审计的引用规模 —— 决定"这份文档能不能搬"的唯一依据。
 
@@ -301,6 +369,7 @@ def build() -> dict[str, Any]:
         "table_growth_installed_root": section_growth(installed),
         "artifacts": section_artifacts(),
         "audit_citations": section_citations(),
+        "hardcoded_identity": section_hardcoded_identity(),
     }
 
 
@@ -346,6 +415,10 @@ def main() -> None:
     art = data["artifacts"]
     print(f"  dist 与包内一致: {art['match']}  {art['repo_dist']} vs {art['installed_package']}")
     print(f"  审计引用文件数: {data['audit_citations']['files']}")
+    hid = data["hardcoded_identity"]
+    print(f"  DEFAULT_USER_ID：api 层按行 {hid['api_layer_grep_lines']}｜整个 src 按行 "
+          f"{hid['src_grep_lines']}｜api 层用法 {hid['api_layer_ast']['uses']}｜整个 src 用法 "
+          f"{hid['src_ast']['uses']}（多租户要改的就是这一条）")
     print(f"→ {OUT}")
 
 
