@@ -131,13 +131,20 @@ function fmtDuration(from: string, to: string): string | null {
 export default function ChatPage({
   deepThread = null,
   onDeepThreadUsed,
+  unreadByRole = {},
 }: {
   /** 深链要打开的会话（收件箱「打开对话并回复」；将来桌宠壳的通知点击同一个入口）。 */
   deepThread?: string | null;
   /** 消费完必须回销：留着不消，下次点同一条就不会再触发跳转。 */
   onDeepThreadUsed?: () => void;
+  /** 每个角色还有几条没读的主动开口。侧栏「她们」那一栏的徽章用它 —— 数的是**铃铛那次
+   *  轮询**拿到的同一份 `unread_by_role`（与桌宠红点同源），这里不再自己起一个轮询。 */
+  unreadByRole?: Record<string, number>;
 }) {
   const [roles, setRoles] = useState<RoleCard[]>([]);
+  // 「临时话题」的批量清理：选中的线程 id 集合；null = 批量模式没开（那时不画复选框）。
+  // 用户 09-26：临时话题攒了几十条，一条条删太麻烦。
+  const [tempPick, setTempPick] = useState<Set<string> | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [currentRole, setCurrentRole] = useState<string>("");
   const [messages, setMessages] = useState<MessageRow[]>([]);
@@ -322,7 +329,7 @@ export default function ChatPage({
    *  角色是可选的：不指定即用默认角色（内置「通用助手」），之后随时在功能行切换。
    *  返回可用的 thread_id（新建或复用的），失败返回 null。 */
   async function createSession(): Promise<string | null> {
-    const empty = sessions.find((s) => !s.title);
+    const empty = sessions.find((s) => s.is_blank && !s.is_proactive);
     if (empty) {
       setStatus("上一次的对话还是空白，已直接为你打开");
       if (sessionId !== empty.thread_id) await selectSession(empty.thread_id);
@@ -342,32 +349,136 @@ export default function ChatPage({
       await refreshSessions();
       return s.thread_id;
     } catch (e) {
-      setStatus(`新建对话失败：${(e as Error).message}`, "warn");
+      setStatus(`临时话题创建失败：${(e as Error).message}`, "warn");
       return null;
     }
   }
 
   /** 拿到一个会话 id：已选就用，没有就先建一个（默认角色 = 通用助手）。
-   *  让「进入时就能选角色/模型」成为可能 —— 选中即开会话，不用先点「新建对话」。 */
+   *  让「进入时就能选角色/模型」成为可能 —— 选中即开会话，不用先点「＋ 开一个临时话题」。 */
   async function ensureSession(): Promise<string | null> {
     if (sessionId) return sessionId;
     return createSession();
   }
 
-  async function switchRole(roleId: string) {
-    if (sessionId && roleId === currentRole) return;
-    const tid = await ensureSession();
-    if (!tid) return;
+  /**
+   * 打开**那个角色的固定线**（`s_proactive_<role>`）：不存在就幂等 ensure 出来。
+   * 这是"选角色"与侧栏「她们」那一栏共用的唯一入口 —— 两处各写一遍就会有一处忘了 ensure。
+   *
+   * 为什么不再用"把当前线程改挂到另一个角色名下"（旧写法，`PATCH role_id`）：一条线程的
+   * 历史只属于一个说话人。旧实现把"历史保留"当卖点，实际是把她的话和别人的话混进同一份
+   * 上下文 —— 模型下一轮读到的是前一个角色说的句子，而记忆按新角色写，两头都错。
+   * 现在控制台、桌宠、收件箱点条目，三个入口落的是同一条线（用户 09-26："这应该是一起的啊"）。
+   *
+   * **这一轮还在跑就不切**：切线程会把 live 气泡清掉，那一轮在屏幕上就什么都没有了
+   *（库里其实有），那是"话丢了"的错觉，不该由一次换人制造。
+   */
+  async function openLane(roleId: string): Promise<string | null> {
+    if (sendingRef.current) {
+      setStatus("这一轮还在跑 —— 先按「停止」或等它说完再换人", "warn");
+      return null;
+    }
     try {
-      const r = await api.patch<{ role_name: string }>(`/api/session/${tid}`, {
+      const ensured = await api.post<{ thread_id: string }>("/api/session/proactive", {
         role_id: roleId,
       });
-      setCurrentRole(roleId);
-      setStatus(`已切换角色 → ${r.role_name}（下一轮生效，历史保留）`, "ok");
+      await selectSession(ensured.thread_id);
+      await refreshSessions();
+      return ensured.thread_id;
+    } catch (e) {
+      setStatus(`打开她的对话失败：${(e as Error).message}`, "warn");
+      return null;
+    }
+  }
+
+  async function switchRole(roleId: string) {
+    const name = roles.find((r) => r.role_id === roleId)?.role_name || roleId;
+    const tid = await openLane(roleId);
+    if (tid) setStatus(`已切到${name}那条对话（原来那条留在左侧）`, "ok");
+  }
+
+  /**
+   * 清空她这条线的消息，**线程留着**。固定栏只给清空、不给删除（用户 09-26 拍的）：
+   * 删线程会让收件箱里那些行的跳转目标变空（§7.2.2 那张表就是为这件事写的），
+   * 而"清空"抹掉的只是这段对话本身 —— 她的角色、她的记忆、她哪天找过你都照旧。
+   */
+  async function clearLane(threadId: string, name: string) {
+    const ok = await confirm({
+      title: `清空与${name}的对话？`,
+      body: "这条对话的消息会全部删除，不可恢复。她这个角色、她的记忆、以及收件箱里"
+        + "「她哪天主动找过我」那些记录都不动。",
+      confirmText: "清空",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      const page = await api.get<MessagePage>(`/api/session/${threadId}/messages`);
+      const ids = page.messages
+        .map((m) => m.id)
+        .filter((x): x is string => typeof x === "string" && x !== "");
+      if (!ids.length) {
+        setStatus("这条对话本来就是空的", "ok");
+        return;
+      }
+      const r = await api.post<{ deleted: number }>(
+        `/api/session/${threadId}/messages/delete`,
+        { message_ids: ids },
+      );
+      setStatus(`已清空（删掉 ${r.deleted} 条消息）`, "ok");
+      if (sessionId === threadId) await selectSession(threadId);
       await refreshSessions();
     } catch (e) {
-      setStatus(`切换角色失败：${(e as Error).message}`, "warn");
+      setStatus(`清空失败：${(e as Error).message}`, "warn");
     }
+  }
+
+  /**
+   * 批量删临时话题：**逐条走已有的 `DELETE /api/session/{tid}`**，不新开后端口子。
+   * 那条路径已经把该做的事做了（checkpoint 一起清、按 §7.2.2 留下收件箱那几行、进审计），
+   * 批量只是省用户的手，不该顺手换一套语义。
+   */
+  async function deleteTemporaries(ids: string[]) {
+    if (!ids.length) return;
+    const ok = await confirm({
+      title: `删除 ${ids.length} 个临时话题？`,
+      body: "这些对话及其全部消息会被永久删除，不可恢复。「她们」那一栏里每个角色的固定对话"
+        + "不在这批里，删不到。",
+      confirmText: "删除",
+      danger: true,
+    });
+    if (!ok) return;
+    let done = 0;
+    const failed: string[] = [];
+    for (const id of ids) {
+      try {
+        await api.del(`/api/session/${id}`);
+        done += 1;
+      } catch {
+        failed.push(id);
+      }
+    }
+    setStatus(
+      failed.length ? `删了 ${done} 条，${failed.length} 条没删掉` : `已删除 ${done} 个临时话题`,
+      failed.length ? "warn" : "ok",
+    );
+    // 正在看的那条被删掉了：清空对话区，别把屏幕上还留着的历史当成它还存在于库里
+    if (sessionId && ids.includes(sessionId)) {
+      setSessionId(null);
+      setMessages([]);
+    }
+    setTempPick(null);
+    await refreshSessions();
+  }
+
+  /** 批量模式下的勾选。独立成一个函数是因为点击整行有两个意思：没开批量 = 打开这条，
+   *  开了批量 = 选中它（用户要的是"少点几次"，不是"多一层菜单"）。 */
+  function togglePick(threadId: string) {
+    setTempPick((prev) => {
+      const next = new Set(prev ?? []);
+      if (next.has(threadId)) next.delete(threadId);
+      else next.add(threadId);
+      return next;
+    });
   }
 
   async function doDelete(threadId: string) {
@@ -690,6 +801,24 @@ export default function ChatPage({
     }
   }
 
+  /**
+   * 侧栏分两段。固定的那一栏**列的是角色，不是线程**（用户 09-26 的提法）：每个角色一行，
+   * 从没被找过也照样在，点一下才把那条线 ensure 出来 —— "她有没有一条对话"不该取决于
+   * 用户有没有先收到过主动消息。
+   *
+   * 两个旗标都来自后端（`is_proactive` / `is_blank`），前端不猜线程 id 的形状，也不拿
+   * "有没有标题"猜空不空：前者是 `core/reachout.py` 的事实，后者会被重命名过的空线程与
+   * 深链刚建出来的线程一起骗过去。
+   */
+  const laneRows = roles.map((r) => ({
+    role: r,
+    row: sessions.find((s) => s.is_proactive && s.role_id === r.role_id) ?? null,
+  }));
+  const laneThreadIds = new Set(laneRows.map((l) => l.row?.thread_id));
+  /** 角色被删了但那条线还在：不能让它从侧栏消失，否则那段对话就找不回来了。 */
+  const orphanLanes = sessions.filter((s) => s.is_proactive && !laneThreadIds.has(s.thread_id));
+  const tempSessions = sessions.filter((s) => !s.is_proactive && !s.is_blank);
+
   return (
     <div className="relative flex h-full">
       {/* 会话列表面板 */}
@@ -702,41 +831,170 @@ export default function ChatPage({
         <div className="border-b border-slate-100 dark:border-slate-800 p-3">
           <button
             onClick={newSession}
+            title="开一条不带角色的临时话题（试个东西、测张图用）。每个角色那条固定对话不受影响。"
             className="w-full rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
           >
-            ＋ 新建对话
+            ＋ 开一个临时话题
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
-          {sessions.length === 0 && (
-            <p className="px-2 py-4 text-xs text-slate-400 dark:text-slate-500">还没有对话</p>
+          {laneRows.length === 0 && tempSessions.length === 0 && orphanLanes.length === 0 && (
+            <p className="px-2 py-4 text-xs text-slate-400 dark:text-slate-500">
+              还没有角色，也还没有对话
+            </p>
           )}
-          {sessions.map((s) => (
+          {/* 固定的那一栏：一行一个角色。没被找过也照样列着 —— 点一下才 ensure 出那条线。 */}
+          {laneRows.length > 0 && (
+            <p className="px-2 pb-1 pt-1 text-[11px] font-medium text-slate-400 dark:text-slate-500">
+              她们
+            </p>
+          )}
+          {laneRows.map(({ role, row }) => {
+            const unread = unreadByRole[role.role_id] ?? 0;
+            return (
+              <div
+                key={role.role_id}
+                onClick={() => void openLane(role.role_id)}
+                title={`与${role.role_name}的那条对话 —— 桌宠显示的就是这一条`}
+                className={`group mb-1 flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm ${
+                  row?.thread_id === sessionId
+                    ? "bg-blue-50 dark:bg-blue-900/30 text-blue-800"
+                    : "hover:bg-slate-50 dark:bg-slate-800/50 dark:hover:bg-slate-700/60"
+                }`}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="truncate">{role.role_name}</div>
+                  <div className="truncate text-[11px] text-slate-400 dark:text-slate-500">
+                    {row ? row.title || "你们的对话" : "还没开始 · 点一下就在这里"}
+                  </div>
+                </div>
+                {unread > 0 && (
+                  <span
+                    className="shrink-0 rounded-full bg-blue-600 px-1.5 text-[10px] text-white"
+                    title={`${unread} 条她主动找你，还没读`}
+                  >
+                    {unread}
+                  </span>
+                )}
+                {/* 固定栏只给「清空」，不给删除（用户 09-26 拍）：删线程会把收件箱里那些行的
+                    跳转目标掏空（§7.2.2 那张表），而清空抹掉的只是这段对话本身。 */}
+                {row && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void clearLane(row.thread_id, role.role_name);
+                    }}
+                    className="shrink-0 rounded px-1 py-0.5 text-[11px] text-slate-300 opacity-0 transition-opacity hover:bg-slate-100 hover:text-red-500 group-hover:opacity-100 dark:text-slate-600 dark:hover:bg-slate-700/50"
+                    title={`清空与${role.role_name}的对话（她的角色、记忆与收件箱记录都不动）`}
+                  >
+                    清空
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          {/* 角色被删了而那条线还在：留在栏里，否则那段对话没有任何入口了。 */}
+          {orphanLanes.map((s) => (
             <div
               key={s.thread_id}
-              className={`group mb-1 flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm ${
-                s.thread_id === sessionId ? "bg-blue-50 dark:bg-blue-900/30 text-blue-800" : "hover:bg-slate-50 dark:bg-slate-800/50 dark:hover:bg-slate-700/60"
-              }`}
-              onClick={() => selectSession(s.thread_id)}
+              onClick={() => void selectSession(s.thread_id)}
+              className="group mb-1 flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm hover:bg-slate-50 dark:bg-slate-800/50 dark:hover:bg-slate-700/60"
+              title="这个角色已经删掉了，而那段对话还在 —— 要清掉就删这一条"
             >
               <div className="min-w-0 flex-1">
-                <div className="truncate">{s.title || "新对话"}</div>
+                <div className="truncate">{s.title || "旧对话"}</div>
                 <div className="truncate text-[11px] text-slate-400 dark:text-slate-500">
-                  {s.role_name || s.role_id}
+                  {s.role_name || s.role_id} · 角色已删
                 </div>
               </div>
               <button
                 onClick={async (e) => {
                   e.stopPropagation();
-                  if (await confirm({ title: "删除这个对话？", body: "对话及其全部消息将被永久删除，不可恢复。", confirmText: "删除", danger: true })) doDelete(s.thread_id);
+                  if (await confirm({ title: "删除这条对话？", body: "对话及其全部消息将被永久删除，不可恢复。", confirmText: "删除", danger: true })) doDelete(s.thread_id);
                 }}
-                className="shrink-0 rounded px-1 py-0.5 text-xs text-slate-300 dark:text-slate-600 opacity-0 transition-opacity hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700 hover:text-red-500 group-hover:opacity-100"
+                className="shrink-0 rounded px-1 py-0.5 text-xs text-slate-300 opacity-0 transition-opacity hover:bg-slate-100 hover:text-red-500 group-hover:opacity-100 dark:text-slate-600 dark:hover:bg-slate-700/50"
                 title="删除对话"
               >
                 ✕
               </button>
             </div>
           ))}
+          {/* 临时话题那一组：批量清理在这里，一条条删太麻烦（用户 09-26 实测 23 条）。 */}
+          {tempSessions.length > 0 && (
+            <>
+              <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-3">
+                <p className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
+                  临时话题 · {tempSessions.length}
+                </p>
+                {tempPick === null ? (
+                  <button
+                    onClick={() => setTempPick(new Set())}
+                    className="text-[11px] text-slate-400 hover:text-blue-600 dark:text-slate-500 dark:hover:text-blue-400"
+                    title="勾着删，省得一条条点"
+                  >
+                    批量清理
+                  </button>
+                ) : (
+                  <span className="flex items-center gap-1.5 text-[11px]">
+                    <button
+                      onClick={() => setTempPick(new Set(tempSessions.map((s) => s.thread_id)))}
+                      className="text-slate-400 hover:text-blue-600 dark:text-slate-500"
+                    >
+                      全选
+                    </button>
+                    <button
+                      disabled={tempPick.size === 0}
+                      onClick={() => void deleteTemporaries([...tempPick])}
+                      className="rounded bg-red-600 px-1.5 py-0.5 text-white disabled:bg-slate-300 dark:disabled:bg-slate-700"
+                    >
+                      删除 {tempPick.size}
+                    </button>
+                    <button
+                      onClick={() => setTempPick(null)}
+                      className="text-slate-400 hover:text-slate-600 dark:text-slate-500"
+                    >
+                      退出
+                    </button>
+                  </span>
+                )}
+              </div>
+              {tempSessions.map((s) => (
+                <div
+                  key={s.thread_id}
+                  className={`group mb-1 flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm ${
+                    s.thread_id === sessionId ? "bg-blue-50 dark:bg-blue-900/30 text-blue-800" : "hover:bg-slate-50 dark:bg-slate-800/50 dark:hover:bg-slate-700/60"
+                  }`}
+                  onClick={() => (tempPick === null ? void selectSession(s.thread_id) : togglePick(s.thread_id))}
+                >
+                  {tempPick !== null && (
+                    <input
+                      type="checkbox"
+                      checked={tempPick.has(s.thread_id)}
+                      onChange={() => togglePick(s.thread_id)}
+                      aria-label={`选中「${s.title || "新对话"}」`}
+                      className="shrink-0"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate">{s.title || "新对话"}</div>
+                    <div className="truncate text-[11px] text-slate-400 dark:text-slate-500">
+                      {s.role_name || s.role_id}
+                    </div>
+                  </div>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      if (await confirm({ title: "删除这个对话？", body: "对话及其全部消息将被永久删除，不可恢复。", confirmText: "删除", danger: true })) doDelete(s.thread_id);
+                    }}
+                    className="shrink-0 rounded px-1 py-0.5 text-xs text-slate-300 dark:text-slate-600 opacity-0 transition-opacity hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700 hover:text-red-500 group-hover:opacity-100"
+                    title="删除对话"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       </aside>
 
@@ -838,7 +1096,7 @@ export default function ChatPage({
             <div className="mx-auto mt-8 max-w-xl rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
               <h3 className="text-sm font-medium text-slate-800 dark:text-slate-100">开始一次对话</h3>
               <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-                直接在下方输入即可（会自动创建对话），或点左上角「＋ 新建对话」。
+                直接在下方输入即可（会自动创建对话），或点左上角「＋ 开一个临时话题」。
               </p>
               <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
                 <li>
@@ -1194,7 +1452,7 @@ export default function ChatPage({
                 }}
                 aria-haspopup="true"
                 aria-expanded={roleMenuOpen}
-                title="切换当前对话的角色（下一轮生效）"
+                title="换个说话的人 —— 会打开她自己的那条对话（各人的话留在各自那条线里）"
                 className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-700"
               >
                 <IconUser />
@@ -1204,7 +1462,7 @@ export default function ChatPage({
                 <>
                   <div className="absolute bottom-full left-0 z-20 mb-2 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-600 dark:bg-slate-800">
                   <p className="bg-slate-50 px-3 py-1.5 text-[11px] font-medium text-slate-400 dark:bg-slate-800/60 dark:text-slate-500">
-                    切换角色（下一轮生效，历史保留）
+                    选角色 = 进她那条对话（原来那条留在左侧）
                   </p>
                   {roles.map((r) => (
                     <button

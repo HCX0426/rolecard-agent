@@ -38,7 +38,11 @@ from rolecard_agent.core.graph import build_graph_config
 from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.core.ingestion import INGESTION_FAILED, INGESTION_PENDING
 from rolecard_agent.core.observability import TraceEvent
-from rolecard_agent.core.reachout import ensure_proactive_thread, proactive_thread_id
+from rolecard_agent.core.reachout import (
+    PROACTIVE_THREAD_PREFIX,
+    ensure_proactive_thread,
+    proactive_thread_id,
+)
 from rolecard_agent.core.state import new_state, now_ts
 from rolecard_agent.core.text import text_of
 from rolecard_agent.core.thread_locks import (
@@ -835,13 +839,27 @@ def list_sessions(ctx: AppContext = Depends(get_context)) -> list[object]:
     """会话列表（对话页侧栏）。v1 单用户演示：只列演示身份名下的会话。"""
     rows = ctx.conn.execute(
         "SELECT s.thread_id, s.title, s.current_role_id AS role_id, r.role_name, "
-        "s.agent_mode, s.updated_at FROM session_thread s "
+        "s.agent_mode, s.updated_at, "
+        "EXISTS (SELECT 1 FROM checkpoints c WHERE c.thread_id = s.thread_id) AS has_state "
+        "FROM session_thread s "
         "LEFT JOIN role_card r ON r.role_id = s.current_role_id "
         "WHERE s.user_id = ? ORDER BY s.updated_at DESC, s.thread_id",
         (DEFAULT_USER_ID,),
     ).fetchall()
     return [
-        {**dict(r), "agent_mode": resolve_agent_mode(r["agent_mode"], ctx.settings)} for r in rows
+        {
+            **dict(r),
+            "agent_mode": resolve_agent_mode(r["agent_mode"], ctx.settings),
+            # 侧栏分"她们那条线 / 临时话题"靠的是这个旗标，而不是前端自己拼线程 id 的前缀 ——
+            # 那个形状（`s_proactive_<role>`）的事实归 `core/reachout.py`，写第二处就会漂。
+            "is_proactive": str(r["thread_id"]).startswith(PROACTIVE_THREAD_PREFIX),
+            # "这一条里一个字的对话都没有"。只给布尔，**不给条数**：一轮对话在 `checkpoints`
+            # 里是好几行（R26-07 那个平方级增长就是它），把行数当条数报出去就是骗界面；
+            # 而要真条数得逐条线程回放（N 次 msgpack 反序列化），侧栏每次刷新都付一遍不值。
+            # EXISTS 判的是"这条线写过东西没有"，正是界面要知道的那一件事。
+            "is_blank": not bool(r["has_state"]),
+        }
+        for r in rows
     ]
 
 

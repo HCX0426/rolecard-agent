@@ -590,3 +590,167 @@ describe("ChatPage 提取精华（对话 → 该角色的记忆）", () => {
     expect(screen.getByText("先聊几句再提取")).toBeTruthy();
   });
 });
+
+describe("ChatPage 换角色 = 进那条角色自己的对话（09-26：一条线程只属于一个说话人）", () => {
+  const ROLES = [
+    { role_id: "ga", role_name: "通用助手", is_builtin: true },
+    { role_id: "ly", role_name: "玲", is_builtin: false },
+  ];
+
+  /** 一条已有会话（属于通用助手）+ 两个角色。换人之后要落到 `s_proactive_ly`。 */
+  async function mountWithSession() {
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/sessions")
+        return [
+          {
+            thread_id: "s_old",
+            title: "旧的",
+            role_id: "ga",
+            role_name: "通用助手",
+            updated_at: "2026-09-26 04:00:00",
+            agent_mode: "chat",
+          },
+        ];
+      if (url === "/api/roles") return ROLES;
+      if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
+      if (url === "/api/settings/model-providers") return { providers: [] };
+      if (url.endsWith("/messages")) return { messages: [], total: 0, limit: 500, truncated: false };
+      if (url.endsWith("/context")) return { trimmed: 0, kept: 0, budget: 24000 };
+      if (url.startsWith("/api/session/")) return { model_name: null, agent_mode: "chat" };
+      return {};
+    });
+    apiMock.post.mockImplementation(async (url: string) =>
+      url === "/api/session/proactive" ? { thread_id: "s_proactive_ly", role_id: "ly" } : { thread_id: "s_new" },
+    );
+    render(
+      <ToastProvider>
+        <ChatPage />
+      </ToastProvider>,
+    );
+    await waitFor(() => expect(screen.getByText("旧的")).toBeTruthy());
+  }
+
+  function pickRole(name: string) {
+    fireEvent.click(screen.getByTitle(/换个说话的人/));
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(name) }));
+  }
+
+  it("点另一个角色：ensure 她那一条并载入，**不再把当前线程改挂到她名下**", async () => {
+    await mountWithSession();
+    pickRole("玲");
+
+    await waitFor(() =>
+      expect(apiMock.post).toHaveBeenCalledWith("/api/session/proactive", { role_id: "ly" }),
+    );
+    // 载入走的是普通会话那条路径（历史 / 明细），不是另造一套视图
+    expect(apiMock.get).toHaveBeenCalledWith("/api/session/s_proactive_ly/messages");
+    // 这一条才是这次改法的实质：旧实现是一次 PATCH role_id，等于把两个说话人的话混进同一份历史
+    const rolePatches = apiMock.patch.mock.calls.filter(
+      ([, body]) => body && "role_id" in (body as Record<string, unknown>),
+    );
+    expect(rolePatches).toEqual([]);
+  });
+
+  it("这一轮还在跑的时候不许换人 —— 换线程会把屏幕上的那一轮清空", async () => {
+    await mountWithSession();
+    streamChatMock.mockImplementation(() => new Promise<void>(() => undefined));
+    await sendMessage("还没说完的一句");
+
+    pickRole("玲");
+    await waitFor(() => expect(screen.getByText(/这一轮还在跑/)).toBeTruthy());
+    expect(apiMock.post).not.toHaveBeenCalledWith("/api/session/proactive", expect.anything());
+  });
+});
+
+describe("ChatPage 侧栏：每个角色一条固定线 + 临时话题批量清理（09-26）", () => {
+  const ROLES = [
+    { role_id: "ga", role_name: "通用助手", is_builtin: true },
+    { role_id: "ly", role_name: "玲", is_builtin: false },
+  ];
+
+  function session(
+    thread_id: string,
+    title: string | null,
+    role_id: string,
+    extra: Record<string, unknown> = {},
+  ) {
+    return {
+      thread_id,
+      title,
+      role_id,
+      role_name: ROLES.find((r) => r.role_id === role_id)?.role_name ?? role_id,
+      updated_at: "2026-09-26 04:00:00",
+      agent_mode: "chat",
+      ...extra,
+    };
+  }
+
+  async function mountSidebar() {
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/sessions")
+        return [
+          // 玲的固定线（已经有对话）
+          session("s_proactive_ly", "玲 · 主动找你", "ly", { is_proactive: true, is_blank: false }),
+          // 一条一个字都没写过的临时线程：不该再出现在列表里（旧实现靠"有没有标题"判，
+          // 重命名过的空线程与深链刚建的线程都会被骗过去）
+          session("s_blank", null, "ga", { is_proactive: false, is_blank: true }),
+          session("s_t1", "这个是啥", "ga", { is_proactive: false, is_blank: false }),
+          session("s_t2", "你好", "ga", { is_proactive: false, is_blank: false }),
+        ];
+      if (url === "/api/roles") return ROLES;
+      if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
+      if (url === "/api/settings/model-providers") return { providers: [] };
+      if (url.endsWith("/messages")) return { messages: [], total: 0, limit: 500, truncated: false };
+      if (url.endsWith("/context")) return { trimmed: 0, kept: 0, budget: 24000 };
+      if (url.startsWith("/api/session/")) return { model_name: null, agent_mode: "chat" };
+      return {};
+    });
+    apiMock.post.mockImplementation(async (url: string) =>
+      url === "/api/session/proactive" ? { thread_id: "s_proactive_ga", role_id: "ga" } : { thread_id: "s_new" },
+    );
+    render(
+      <ToastProvider>
+        <ChatPage unreadByRole={{ ly: 3 }} />,
+      </ToastProvider>,
+    );
+    await waitFor(() => expect(screen.getByText("这个是啥")).toBeTruthy());
+  }
+
+  it("「她们」一栏每个角色一行：没线的那个也列着，且固定行不给删除只给清空", async () => {
+    await mountSidebar();
+    // 通用助手一条线都还没有 —— 照样列着，副标题告诉你点下去会发生什么
+    expect(screen.getByText("还没开始 · 点一下就在这里")).toBeTruthy();
+    // 未读徽章是铃铛那次轮询的同一份数（不是自己再算一遍）
+    expect(screen.getByTitle("3 条她主动找你，还没读")).toBeTruthy();
+    // 空白线程不进列表
+    expect(screen.queryByText("新对话")).toBeNull();
+    // 删除按钮只属于那两条临时话题；固定行上一个都没有（清空另算）
+    expect(screen.getAllByTitle("删除对话")).toHaveLength(2);
+    expect(screen.getByTitle(/清空与玲的对话/)).toBeTruthy();
+  });
+
+  it("点固定行 = 幂等 ensure 出她那条线再打开", async () => {
+    await mountSidebar();
+    fireEvent.click(screen.getByText("还没开始 · 点一下就在这里"));
+    await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith("/api/session/proactive", { role_id: "ga" }));
+    expect(apiMock.get).toHaveBeenCalledWith("/api/session/s_proactive_ga/messages");
+  });
+
+  it("批量清理：全选一次点完，删的是逐条走已有端点，不新开后端口子", async () => {
+    await mountSidebar();
+    apiMock.del.mockResolvedValue(undefined);
+
+    fireEvent.click(screen.getByText("批量清理"));
+    fireEvent.click(screen.getByText("全选"));
+    fireEvent.click(screen.getByRole("button", { name: "删除 2" }));
+    const confirmBtn = await screen.findByRole("button", { name: "删除", hidden: true });
+    fireEvent.click(confirmBtn);
+
+    await waitFor(() => expect(apiMock.del).toHaveBeenCalledTimes(2));
+    const ids = apiMock.del.mock.calls.map(([url]) => url);
+    expect(ids).toContain("/api/session/s_t1");
+    expect(ids).toContain("/api/session/s_t2");
+    // 固定线绝对不在这批里
+    expect(ids).not.toContain("/api/session/s_proactive_ly");
+  });
+});

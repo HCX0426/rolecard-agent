@@ -152,6 +152,9 @@ export default function App() {
   // 页面开着时新开口 10 秒内上角标；页面关着 = 回来看到堆积（web 无常驻推送，如实降级）。
   const [reachoutOpen, setReachoutOpen] = useState(false);
   const [reachoutUnread, setReachoutUnread] = useState(0);
+  // 按角色的未读数：对话页侧栏「她们」那一栏的徽章要用它。**与铃铛红点是同一次轮询的产物**
+  // —— 两处各起一个轮询就会读到两个时刻（桌宠红点已经吃过一次这种亏，见 `api.ts` 那条注释）。
+  const [reachoutUnreadByRole, setReachoutUnreadByRole] = useState<Record<string, number>>({});
   // 命令执行审批（架构计划 C·§6.2）：待批红点 + 审批抽屉。与主动消息同一套静默轮询
   // （10s）：模型提交审批后 10 秒内红点出现 —— 后端无推送，只能如实降级为轮询。
   const [approvalOpen, setApprovalOpen] = useState(false);
@@ -163,7 +166,10 @@ export default function App() {
     const poll = async () => {
       try {
         const p = await api.getReachouts();
-        if (!cancelled) setReachoutUnread(p.unread);
+        if (!cancelled) {
+          setReachoutUnread(p.unread);
+          setReachoutUnreadByRole(p.unread_by_role ?? {});
+        }
       } catch {
         /* 静默：后端没起/网络抖动不值得打扰用户 */
       }
@@ -339,7 +345,11 @@ export default function App() {
           <Suspense
             fallback={<div className="p-6 text-sm text-slate-400 dark:text-slate-500">加载中…</div>}
           >
-            <ChatPage deepThread={deepThread} onDeepThreadUsed={clearDeepThread} />
+            <ChatPage
+              deepThread={deepThread}
+              onDeepThreadUsed={clearDeepThread}
+              unreadByRole={reachoutUnreadByRole}
+            />
           </Suspense>
         </div>
         {/* 设置页同样**常驻挂载**（hidden 隐藏）：其内部 6 个子页签都有各自的加载

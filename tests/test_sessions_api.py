@@ -144,6 +144,28 @@ def test_delete_unknown_session_404(client: TestClient) -> None:
     assert client.delete("/api/session/nope").status_code == 404
 
 
+def test_session_list_carries_the_two_flags_the_sidebar_needs(client: TestClient) -> None:
+    """`is_blank` 与 `is_proactive`：侧栏分栏与"藏掉空白线程"用的是后端旗标，不是猜的。
+
+    为什么值得钉住（`R26-06` 那一族：写进界面的推断没人复核）：旧前端拿"有没有标题"当
+    "这条是不是空的"，而重命名过的空线程、深链刚建出来的线程都会被骗过去；线程 id 那个
+    形状（`s_proactive_<role>`）的事实归 `core/reachout.py`，前端自己拼就是第二个真相源。
+    空白的判据是"这条线程写过 checkpoint 没有"—— 那个只有后端看得见。
+    """
+    blank = client.post("/api/session", json={}).json()
+    talked = client.post("/api/session", json={}).json()
+    chat(client, str(talked["thread_id"]), "帮我查一下结石直径")
+    lane = client.post("/api/session/proactive", json={"role_id": "general_assistant"}).json()
+
+    rows = {str(s["thread_id"]): s for s in client.get("/api/sessions").json()}
+    assert rows[str(blank["thread_id"])]["is_blank"] is True
+    assert rows[str(talked["thread_id"])]["is_blank"] is False
+    assert rows[str(lane["thread_id"])]["is_proactive"] is True
+    assert rows[str(talked["thread_id"])]["is_proactive"] is False
+    # 报的是布尔而不是"条数"：一轮对话在 checkpoints 里是好几行，把行数当条数报出去就是骗界面
+    assert "checkpoint_rows" not in rows[str(talked["thread_id"])]
+
+
 def test_session_list_survives_role_deletion(client: TestClient) -> None:
     """会话指向的角色被删后，列表仍在且 role_name 降级为 None（不 500）。"""
     client.post(

@@ -51,6 +51,12 @@ export interface SessionRow {
   updated_at: string;
   /** 会话级对话模式（后端返回有效值：会话覆盖 or 全局默认）。 */
   agent_mode?: string;
+  /** 这条是不是"那个角色的固定线"（`s_proactive_<role>`）。旗标由后端给 ——
+   *  那个 id 形状的事实归 `core/reachout.py`，前端自己拼就等于第二个真相源。 */
+  is_proactive?: boolean;
+  /** 这条线程一个字都还没写过。侧栏用它把空白线程藏起来（旧实现拿"有没有标题"猜，
+   *  而重命名过的空线程、以及深链刚建的线程都会猜错）。 */
+  is_blank?: boolean;
 }
 
 export interface MessageRow {
