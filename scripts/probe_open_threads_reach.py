@@ -4,8 +4,9 @@
 
 * 那份探针把**手写的对话文本**直喂 `_PROMPT`，量的是"模型会不会挖话题 / 守不守格式"；
 * 本探针一句对话都不手写，素材来自生产那条链 —— `Runtime.proactive_recent_lines`
-  （读检查点 → `unanswered_lines` → `format_thread_lines`），触发源排序与抑制层全部走真实
-  代码（`ReachoutScheduler.tick_once`）。量的是"**这一次扫描到底会不会发生**"。
+  （读检查点 → 按"最后说话的是谁"切 `unanswered_lines` / `unreplied_lines` → 对应的格式化器），
+  触发源排序与抑制层全部走真实代码（`ReachoutScheduler.tick_once`）。量的是
+  "**这一次扫描到底会不会发生**"。
 
 昨天"已验收 5/5"与真库 `open_threads_at` 至今为 NULL 能同时成立，就是因为只做过前者。
 

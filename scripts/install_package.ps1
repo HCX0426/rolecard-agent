@@ -70,7 +70,7 @@ if ($p.ExitCode -ne 0) { throw "installer returned $($p.ExitCode)" }
 $lingering = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like "rolecard-agent-0.1.0*" })
 if ($lingering.Count -gt 0) { throw "installer did not exit: $($lingering.Count) process(es) left" }
 
-# 验货：装进去的那份 dist 必须是仓库刚构建出来的那份。判据用 `index.html` 里引的
+# 验货 A：装进去的那份 dist 必须是仓库刚构建出来的那份。判据用 `index.html` 里引的
 # 入口资源哈希 —— 它比"文件存在"强，因为旧包里也有同名文件，只有哈希会随构建变。
 $want = EntryAsset (Join-Path $root "frontend\dist\index.html")
 $havePath = Join-Path $env:LOCALAPPDATA "Programs\rolecard-agent\resources\rolecard-backend\_internal\frontend\dist\index.html"
@@ -78,6 +78,20 @@ if (-not (Test-Path $havePath)) { throw "installed bundle has no frontend/dist/i
 $have = EntryAsset $havePath
 Write-Host "      entry asset: repo=$want installed=$have"
 if ($want -ne $have) { throw "installed bundle is NOT the fresh build (asset hash differs)" }
+
+# 验货 B：后端也要有它自己的判据。上面那条只证明"界面是新的" —— 一次纯后端的改动
+# （09-26 那次主动开口的闸门修法就是）重建出来的 dist 哈希**一字不差**，于是旧后端
+# 蒙混过关也会打印出一行 OK。这里比对刚构建的 sidecar exe 与装进去那份的 sha256：
+# NSIS 是逐字节复制，相等就等于"跑的就是刚从这份源码打出来的后端"。
+$bUILT = Join-Path $root "build\sidecar\rolecard-backend\rolecard-backend.exe"
+$installedBackend = Join-Path $env:LOCALAPPDATA `
+    "Programs\rolecard-agent\resources\rolecard-backend\rolecard-backend.exe"
+if (-not (Test-Path $bUILT)) { throw "sidecar build output not found: $bUILT" }
+$a = (Get-FileHash -LiteralPath $bUILT -Algorithm SHA256).Hash
+$b = (Get-FileHash -LiteralPath $installedBackend -Algorithm SHA256).Hash
+Write-Host "      backend sha256: built=$($a.Substring(0,12)) installed=$($b.Substring(0,12))"
+$why = "  —— 用 -SkipBuild 装了一份旧包时这条是预期会红的：装进去的不是 build/sidecar 那份"
+if ($a -ne $b) { throw ("installed BACKEND is not the fresh build (sha256 differs)" + $why) }
 
 if (-not $NoLaunch) {
     Write-Host "[4/4] launching"
