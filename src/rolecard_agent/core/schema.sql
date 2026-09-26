@@ -108,7 +108,12 @@ CREATE TABLE IF NOT EXISTS agent_reachout (
     -- 你想不想回"，而从前**一种结局都量不出来** —— 删除是真删行且不进 audit_log，
     -- read-all 可以批量刷所以 read≠看过。有了这三列，接话率、自说自话连击数、
     -- "看了不接"三种口径才都能算。
-    read_at     TIMESTAMP,                       -- 第一次被读到（重复标记不覆盖）
+    read_at     TIMESTAMP,                       -- 第一次被**单独点开**读到（重复标记不覆盖）
+    -- 「进对话界面就算都看过」那条口径（用户 09-23 拍的）走的是批量刷状态的路，它**不该**
+    -- 写 `read_at` —— 那会留下"他一条条点开过"的假证据。可是不写的话，库里就没有任何
+    -- "看过"的痕迹了：09-26 拿结局度量做回访时撞上的就是这个 —— ③ 报"看了不接 0 · 没看 10"，
+    -- 而那人当时正在那条会话里跟她说话。所以批量那条路写这一列：**看见过，但没一条条点开**。
+    seen_at     TIMESTAMP,
     dismissed_at TIMESTAMP,                      -- 用户把它从抽屉里划掉
     -- 这一条是**哪个由头**驱动的（file_event / affection / time_pattern / recall /
     -- open_thread / timer）。为什么要有（09-26 轮 `R26-09` 的回访）：`trigger` 原先只活在

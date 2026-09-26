@@ -407,7 +407,7 @@ def list_reachouts(
     where = "WHERE state != 'dismissed'" + (" AND role_id = ?" if role_id else "")
     params = (role_id, limit) if role_id else (limit,)
     rows = conn.execute(
-        f"SELECT id, role_id, role_name, text, state, created_at, read_at, dismissed_at "
+        f"SELECT id, role_id, role_name, text, state, created_at, read_at, seen_at, dismissed_at "
         f"FROM agent_reachout {where} ORDER BY id DESC LIMIT ?",
         params,
     ).fetchall()
@@ -487,7 +487,9 @@ def mark_role_read(conn: SqlConnection, role_id: str) -> int:
     既啰嗦又会在中途失败留下半已读状态。
     """
     cur = conn.execute(
-        "UPDATE agent_reachout SET state = 'read' WHERE role_id = ? AND state = 'unread'",
+        "UPDATE agent_reachout SET state = 'read', "
+        "seen_at = COALESCE(seen_at, CURRENT_TIMESTAMP) "
+        "WHERE role_id = ? AND state = 'unread'",
         (role_id,),
     )
     conn.commit()
@@ -501,8 +503,15 @@ def mark_all_read(conn: SqlConnection) -> int:
     角色的主动会话，别的角色攒的未读也一并算读过。代价是"另一个角色找过我"这件事会被
     这一动作抹平（抽屉里那些行还在，只是不再标未读、不再顶红点）。
     与 `mark_role_read` 的分工：那条管"这一摞我看过了"，这条管"我进入阅读状态了"。
+
+    两个都不写 `read_at`（那是"一条条点开过"的证据，批量动作不该留下它，见 `S-2`），
+    但**要写 `seen_at`**：不写的话"看过"这件事在库里就没痕迹了，结局度量只能把
+    "进过对话界面"的人全数成"没看"—— 09-26 拿这套数做回访时正是这样偏的。
     """
-    cur = conn.execute("UPDATE agent_reachout SET state = 'read' WHERE state = 'unread'")
+    cur = conn.execute(
+        "UPDATE agent_reachout SET state = 'read', "
+        "seen_at = COALESCE(seen_at, CURRENT_TIMESTAMP) WHERE state = 'unread'"
+    )
     conn.commit()
     return int(cur.rowcount)
 

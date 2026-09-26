@@ -1186,6 +1186,26 @@ def test_open_threads_replaces_the_generic_timer_and_are_cached(conn) -> None:
     assert state.open_threads_scan_at is not None, "扫过要记时刻，否则下一 tick 又问一遍"
 
 
+def test_batch_read_leaves_seen_but_not_opened(conn) -> None:
+    """批量刷已读只写 `seen_at`：它证明"进过那条界面"，不证明"一条条点开看过"。
+
+    两条路必须分开留痕（`S-2` 当初为了不留假证据干脆什么都不写，代价是"看过"这件事在库里
+    成了空白，结局度量把正在会话里说话的人也数成"没看"）。`read_at` 只属于单条点开。
+    """
+    svc.record_reachout(conn, _role(), "第一条")
+    svc.record_reachout(conn, _role(), "第二条")
+    assert svc.mark_all_read(conn) == 2
+    rows = conn.execute("SELECT read_at, seen_at FROM agent_reachout ORDER BY id").fetchall()
+    assert [r["read_at"] for r in rows] == [None, None], "批量不该留下'单独点开过'的假证据"
+    assert all(r["seen_at"] for r in rows), "但'看见过'总得留一条痕"
+    # 再来一次批量不该把时刻挪到第二次（COALESCE：留最早那一次）
+    first = rows[0]["seen_at"]
+    svc.record_reachout(conn, _role(), "第三条")
+    assert svc.mark_role_read(conn, "active") == 1
+    again = conn.execute("SELECT seen_at FROM agent_reachout ORDER BY id LIMIT 1").fetchone()
+    assert again["seen_at"] == first, "已见过的行不该被下一次批量刷改时刻"
+
+
 def test_a_reachout_without_a_known_trigger_stays_unknown(conn) -> None:
     """没传由头时那一列必须是 **NULL**，不是空串也不是某个默认源。
 
