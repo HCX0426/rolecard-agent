@@ -277,6 +277,62 @@ describe("PetPage 点开面板（§7：想回话不用开控制台）", () => {
     expect(screen.queryByText("+2")).toBeNull();
   });
 
+  it("别处那一轮正在说时这块面板也镜像出来；她不说了就收掉（R26-38）", async () => {
+    vi.useFakeTimers();
+    try {
+      const shell = withShell();
+      // 服务端的"在飞"是唯一真相源：这里只拨它，面板该跟着长出来、跟着收掉。
+      let inflight: { text: string } | null = { text: "我正说着的一截" };
+      apiMock.get.mockImplementation(async (url: string) =>
+        url === "/api/roles"
+          ? [{ role_id: "wan", role_name: "苏晚晴", model_name: "" }]
+          : {
+              messages: [{ role: "user", content: "控制台那边问的一句" }],
+              total: 1,
+              limit: 30,
+              truncated: false,
+              inflight,
+            },
+      );
+      await mount();
+      await open(shell);
+      // 用 getBy 不用 findBy：`open()` 已经把那次读的 Promise 跑完了，而假计时器下
+      // `findBy*` 的轮询等的是真定时器，会白等到超时（这条在同一天咬过对话页的用例）。
+      const box = screen.getByTestId("pet-inflight-mirror");
+      expect(box.textContent).toContain("我正说着的一截");
+      // 措辞不许替我们断言来源：登记里没有"谁发的"这一项
+      expect(box.textContent).toContain("不是这一扇窗发的");
+      expect(box.textContent).not.toContain("桌宠");
+
+      inflight = null; // 她那句落地
+      await vi.advanceTimersByTimeAsync(3_400); // 下一拍（UNREAD_POLL_MS = 3s）
+      await act(async () => {
+        for (let i = 0; i < 6; i += 1) await Promise.resolve();
+      });
+      expect(screen.queryByTestId("pet-inflight-mirror")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("一个字都还没投送时那一格也在：空串是「她在打字」，不是「没有这回事」", async () => {
+    const shell = withShell();
+    apiMock.get.mockImplementation(async (url: string) =>
+      url === "/api/roles"
+        ? [{ role_id: "wan", role_name: "苏晚晴", model_name: "" }]
+        : {
+            messages: [{ role: "user", content: "那边问的" }],
+            total: 1,
+            limit: 30,
+            truncated: false,
+            inflight: { text: "" },
+          },
+    );
+    await mount();
+    await open(shell);
+    expect(screen.getByTestId("pet-inflight-mirror").textContent).toContain("她在说");
+  });
+
   it("我说的靠右、它说的靠左（09-26 用户：像对话界面那样才有对话感）", async () => {
     const shell = withShell();
     apiMock.get.mockImplementation(async (url: string) =>

@@ -106,6 +106,11 @@ export default function PetPage() {
   const [draft, setDraft] = useState("");
   // 发出去但还没落库的那句：流结束后以服务端回放为准，所以它只活在这一轮里。
   const [pendingUser, setPendingUser] = useState("");
+
+  /** 别处（控制台那一扇窗）发起、**此刻还在生成**的那半句（R26-38 的镜像，桌宠这一侧）。
+   *  `null` = 没人在生成。不另开请求：`/messages` 那份回放里已经带着 `inflight` 了，
+   *  而这块面板本来就每 3 秒重读一次这条线程。 */
+  const [mirror, setMirror] = useState<string | null>(null);
   const [streamError, setStreamError] = useState("");
   // 右键菜单（页内自绘，见 `components/PetContextMenu`）。null = 没开。
   const [menu, setMenu] = useState<{ x: number; y: number; entries: MenuEntry[] } | null>(null);
@@ -190,20 +195,35 @@ export default function PetPage() {
    *  - 内容没变 ⇒ 一次 set 都不发。否则每 3 秒都被自动滚动当成"新字长出来了"，
    *    把用户往上翻找旧消息的那一眼拽回底部。
    */
+  /** 一份回放到手时，镜像那一格该走到哪儿。展开那一次与每 3 秒那一拍**共用这一句** ——
+   *  两处各自解释 `inflight` 的话，早晚有一处忘了接。 */
+  const setMirrorOf = useCallback(
+    (page: MessagePage) => setMirror(page.inflight ? page.inflight.text : null),
+    [],
+  );
+
   const refreshHistory = useCallback(async () => {
     const tid = threadIdRef.current;
-    if (!tid || !expandedRef.current || !showContentRef.current || busyRef.current) return;
+    if (!tid || !expandedRef.current || !showContentRef.current || busyRef.current) {
+      // 闸没开的时候这一格也不该留着：面板收起时读到的"她在说"，到展开那一刻已经作数了；
+      // 而自己这扇窗在流的时候，屏幕上已经有 `live` 那个气泡，两处都画就是重影。
+      setMirror(null);
+      return;
+    }
     let page: MessagePage;
     try {
       page = await api.get<MessagePage>(messagesPath(tid));
     } catch {
       return; // 读不到就留着上一份：接口抖一下不该把面板清空，那比陈旧更像"她忘了"
     }
+    // 在"内容没变就不 set"那道闸**之前**取：在飞的那半句每一帧都在变，
+    // 而 `shapeOf` 只看已落库的那些行，等它变了这一格就慢了一整轮。
+    setMirrorOf(page);
     const shape = shapeOf(page);
     if (shape === historyShapeRef.current) return;
     historyShapeRef.current = shape;
     handoff(page);
-  }, [handoff]);
+  }, [handoff, setMirrorOf]);
 
   const load = useCallback(async () => {
     let page;
@@ -295,7 +315,7 @@ export default function PetPage() {
    * 依赖里有 `live`：她正在回话时每一帧气泡都在长，没有这一项就是用户 2026-09-25 报的
    * "回答时滚动条不自动到最新"—— 面板只有 300px 高，新那几行一直长在看不见的下面。
    */
-  const scrollRef = useAutoScroll(threadId, [history, pendingUser, live]);
+  const scrollRef = useAutoScroll(threadId, [history, pendingUser, live, mirror]);
 
   useEffect(() => {
     if (knownThreadId || !activeRole) {
@@ -550,6 +570,9 @@ export default function PetPage() {
       .get<MessagePage>(messagesPath(threadId))
       .then((page) => {
         if (!alive) return;
+        // 与 `refreshHistory` 同一份"收到一份回放就做什么"：展开那一次也不能只画历史
+        // 不接在飞的那半句 —— 两处各写一遍的话，漂掉的总是"另一处"。
+        setMirrorOf(page);
         historyShapeRef.current = shapeOf(page);
         handoff(page);
       })
@@ -557,7 +580,7 @@ export default function PetPage() {
     return () => {
       alive = false;
     };
-  }, [expanded, threadId, showContent, handoff]);
+  }, [expanded, threadId, showContent, handoff, setMirrorOf]);
 
   // 角色表只在第一次展开时拉：面板顶上的切换要用它，而收起时没必要占一次请求。
   useEffect(() => {
@@ -859,6 +882,17 @@ export default function PetPage() {
                 />
                 <p {...rowOf(false)}>
                   {live.text || (live.streaming && !live.thinking ? "…" : "")}
+                </p>
+              </div>
+            )}
+            {/* 别处那一扇窗发起、此刻还在生成的那半句（R26-38）。与对话页那格同一个判据：
+                后端在飞登记非空 且 这一扇窗没在流。措辞只说数据支持的这一句 ——
+                登记里没有"来源"，所以不写"来自控制台"。 */}
+            {showContent && !busy && mirror !== null && (
+              <div data-testid="pet-inflight-mirror">
+                <p {...rowOf(false)}>{mirror || "她在说…"}</p>
+                <p className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">
+                  正在生成 · 不是这一扇窗发的
                 </p>
               </div>
             )}
