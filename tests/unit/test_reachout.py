@@ -803,6 +803,13 @@ def test_tick_file_event_bypasses_interval_and_records_trigger(conn, tmp_path: P
     assert "季度报告.md" in joined
     sent = [e for e in tracer.events if getattr(e, "event", "") == "reachout_sent"]
     assert sent and sent[-1].detail["trigger"] == "file_event"
+    # 由头还得**落库**：日志每次启动都被 `flags:"w"` 覆盖，而 `R26-09` 要问的是
+    # "哪一由头驱动过一次被接住的开口" —— 只活在 tracer 里就等于没有数据。
+    # 按正文取那一行：这一轮之前 `_seed_last` 还插过一条旧的（它没有由头，正是 NULL 的形状）。
+    landed = conn.execute(
+        "SELECT fired_by FROM agent_reachout WHERE text = '目录里有新文件？'"
+    ).fetchone()
+    assert landed["fired_by"] == "file_event"
     # 消费后基线推进：无新变化则下一轮静默（间隔此刻为 10 分钟前刚开口 → 被挡）
     assert fw.pending_count(conn) == 0
 
@@ -1177,6 +1184,16 @@ def test_open_threads_replaces_the_generic_timer_and_are_cached(conn) -> None:
     state = get_state(conn, "active")
     assert "下周体检的结果" not in state.open_threads, "用过就该清掉（见下面那条消费用例）"
     assert state.open_threads_scan_at is not None, "扫过要记时刻，否则下一 tick 又问一遍"
+
+
+def test_a_reachout_without_a_known_trigger_stays_unknown(conn) -> None:
+    """没传由头时那一列必须是 **NULL**，不是空串也不是某个默认源。
+
+    这一列上线之前的老行就是这个形状。读侧（`reachout_outcomes.py` 第 ④ 项）把它们单列一档，
+    前提是它们"没被替别人编一个由头" —— 落成 `''` 或 `'timer'` 就会把"不知道"混进真实分布里。
+    """
+    svc.record_reachout(conn, _role(), "她主动冒的一句")
+    assert conn.execute("SELECT fired_by FROM agent_reachout").fetchone()["fired_by"] is None
 
 
 def test_dismissing_a_reachout_keeps_the_row_so_outcomes_can_be_measured(conn) -> None:

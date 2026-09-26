@@ -557,15 +557,21 @@ def ensure_proactive_thread(
     return thread_id
 
 
-def record_reachout(conn: SqlConnection, role: RoleCard, text: str) -> None:
+def record_reachout(
+    conn: SqlConnection, role: RoleCard, text: str, *, fired_by: str | None = None
+) -> None:
     """落一条主动开口（unread）。role 冗余存角色名：角色被删后收件箱仍可读。
+
+    `fired_by` 是这一条的**由头**（`tick_once` 那条链上命中的第一个源）。不带它 = 这条
+    不知道由头（离线单测、以及这一列上线之前的老行都是 NULL）—— 读侧不许把 NULL 当成
+    任何一个具体源，理由见 `schema.sql` 那一列的注释。
 
     落完顺手按角色卡的 `reachout_keep` 修剪（0 = 不自动删）：抽屉"只增不减"是用户报的
     第二件事，而这条挂在写入点上就够了 —— 不需要为此再跑一个定时任务。
     """
     conn.execute(
-        "INSERT INTO agent_reachout (role_id, role_name, text) VALUES (?, ?, ?)",
-        (role.role_id, role.role_name, text),
+        "INSERT INTO agent_reachout (role_id, role_name, text, fired_by) VALUES (?, ?, ?, ?)",
+        (role.role_id, role.role_name, text, fired_by),
     )
     conn.commit()
     prune_inbox(conn, role.role_id, int(getattr(role, "reachout_keep", 0) or 0))
@@ -1284,7 +1290,7 @@ class ReachoutScheduler:
                 )
                 continue
             text = draft.text
-            record_reachout(self._conn, role, text)
+            record_reachout(self._conn, role, text, fired_by=fired)
             record_interaction(self._conn, role.role_id, now=stamp_utc)
             if fired == "recall":
                 # 冷却锚点只在**真的发出去了**的时候记：被 guard 拦下、正文为空的那些

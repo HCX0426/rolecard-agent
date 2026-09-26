@@ -32,6 +32,8 @@ import scratch_db  # noqa: E402
 from rolecard_agent.core.reachout import proactive_thread_id  # noqa: E402
 from rolecard_agent.storage.db import bootstrap, connect  # noqa: E402
 
+UNKNOWN_SOURCE = "（这一列上线前落的，不知道）"
+
 
 def _parse(raw: object) -> datetime | None:
     if not raw:
@@ -57,30 +59,33 @@ def _user_replies(conn: Any, role_id: str, after: datetime) -> int:
     return 1 if touched is not None and touched > after else 0
 
 
-def main() -> None:
-    src = scratch_db.resolve_live_db()
-    work = scratch_db.copy_of_live_db(ROOT / "build" / "scratch-outcomes.db", src)
-    conn = connect(work)
-    bootstrap(conn, enabled_domains=("health", "finance"))
-    print(f"源库（只读）：{src}")
-    print(f"副本（补过列之后读它）：{work}\n")
+def summarize(conn: Any) -> dict[str, Any]:
+    """算出那几个口径。**为什么要抽出来**：① 与 ④ 说的是同一批行，"接了话的由头"必须
+    跟着"接了话"的口径走。第一版把这两处各写一遍，于是 ① 报 1 条而 ④ 数出 9 条 ——
+    一个 print-only 的脚本没法被测到这种自相矛盾，抽成函数之后一条用例就够。
+    """
     rows = conn.execute(
-        "SELECT id, role_id, state, created_at, read_at, dismissed_at "
+        "SELECT id, role_id, state, created_at, read_at, dismissed_at, fired_by "
         "FROM agent_reachout ORDER BY id"
     ).fetchall()
-    print(f"主动消息 {len(rows)} 条（含已划掉的）\n")
-
     streak = worst = 0
     picked = ignored = dismissed = unseen = 0
+    by_source: dict[str, int] = {}
+    picked_sources: dict[str, int] = {}
     for r in rows:
         stamp = _parse(r["created_at"]) or datetime.min
         replied = _user_replies(conn, str(r["role_id"]), stamp) > 0
+        # NULL 单列一档：**不知道**不等于"是某个源"。把老行摊进任何一档，就是替它们编一个由头。
+        key = str(r["fired_by"]) if r["fired_by"] else UNKNOWN_SOURCE
+        by_source[key] = by_source.get(key, 0) + 1
+        # 结局四选一，判完就定；④ 那句"接了话的由头"从这里长出来，不再另算一遍。
         if r["state"] == "dismissed":
             dismissed += 1
         elif r["read_at"] is None:
             unseen += 1
         elif replied:
             picked += 1
+            picked_sources[key] = picked_sources.get(key, 0) + 1
         else:
             ignored += 1
         # 连击的判据是"**有没有后续**"，不是"看没看"：她连冒三条而用户一条都没回，
@@ -91,16 +96,55 @@ def main() -> None:
         else:
             streak += 1
             worst = max(worst, streak)
+    return {
+        "total": len(rows),
+        "picked": picked,
+        "ignored": ignored,
+        "unseen": unseen,
+        "dismissed": dismissed,
+        "worst_streak": worst,
+        "tail_streak": streak,
+        "by_source": by_source,
+        "picked_sources": picked_sources,
+    }
 
-    total = len(rows)
+
+def _spread(counts: dict[str, int]) -> str:
+    return " · ".join(f"{k} {v}" for k, v in sorted(counts.items(), key=lambda kv: -kv[1])) or "—"
+
+
+def main() -> None:
+    src = scratch_db.resolve_live_db()
+    work = scratch_db.copy_of_live_db(ROOT / "build" / "scratch-outcomes.db", src)
+    conn = connect(work)
+    # 真库那份可能还没跑过新代码：`read_at` / `dismissed_at` / `fired_by` 都靠启动时的
+    # `reconcile_columns` 补出来 —— 数据一行不改，只是把声明的列补齐。真库从头到尾只读。
+    bootstrap(conn, enabled_domains=("health", "finance"))
+    print(f"源库（只读）：{src}")
+    print(f"副本（补过列之后读它）：{work}\n")
+    s = summarize(conn)
+    total = int(s["total"])
+    print(f"主动消息 {total} 条（含已划掉的）\n")
     print("① 接话率（她冒话后用户在**同一条主动会话**里回了）")
-    print(f"   {picked} / {total} = {picked / total:.0%}  ← 会低估：人更可能在主会话回话")
+    print(f"   {s['picked']} / {total} = {s['picked'] / total:.0%}  ← 会低估：人更可能在主会话回话")
     print("② 自说自话连击数（连续多少条冒了话没有任何后续）")
-    print(f"   最长 {worst} 连击；当前链尾 {streak}")
+    print(f"   最长 {s['worst_streak']} 连击；当前链尾 {s['tail_streak']}")
     print("③ 结局分布")
-    print(f"   接了 {picked} · 看了没接 {ignored} · 没看 {unseen} · 划掉 {dismissed}")
     print(
-        "\n读法：三个数都还只是**条数口径**，样本 <20 时不要拿去做任何档位取舍 ——"
+        f"   接了 {s['picked']} · 看了没接 {s['ignored']} · "
+        f"没看 {s['unseen']} · 划掉 {s['dismissed']}"
+    )
+    print("④ 由头分布（`fired_by` 那一列上线之后才有的读法）")
+    print(f"   {_spread(s['by_source'])}")
+    print(f"   接了话的那几条由头 = {_spread(s['picked_sources'])}")
+    print(
+        "   ↑ 这一行就是 `R26-09` 的回访判据：「未收尾话题」到底有没有**真的驱动过**"
+        "\n     一次被接住的开口。在 `fired_by` 落库之前，这个数只活在 tracer 里，"
+        "\n     而桌宠日志每次启动被覆盖 —— 所以上线前那批行永远归不到由头上，"
+        "\n     只能从这一列之后重新开始攒。"
+    )
+    print(
+        "\n读法：四个数都还只是**条数口径**，样本 <20 时不要拿去做任何档位取舍 ——"
         "\n     它们的作用是把『完全量不出来』变成『有数但噪声大』。"
     )
     conn.close()

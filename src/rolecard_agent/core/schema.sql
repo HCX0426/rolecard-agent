@@ -110,6 +110,12 @@ CREATE TABLE IF NOT EXISTS agent_reachout (
     -- "看了不接"三种口径才都能算。
     read_at     TIMESTAMP,                       -- 第一次被读到（重复标记不覆盖）
     dismissed_at TIMESTAMP,                      -- 用户把它从抽屉里划掉
+    -- 这一条是**哪个由头**驱动的（file_event / affection / time_pattern / recall /
+    -- open_thread / timer）。为什么要有（09-26 轮 `R26-09` 的回访）：`trigger` 原先只活在
+    -- tracer 的 `reachout_sent` 里，而桌宠的日志**每次启动被覆盖**（`flags:"w"`），于是
+    -- "第五由头到底有没有真的驱动过一次开口"这个问题永远没有数据 —— 接话率第一次非零
+    -- （1/11）那天就是这样卡住的。NULL = 这一列上线之前落的，**不知道**，不当成任何一个源。
+    fired_by    TEXT,
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP  -- UTC（CURRENT_TIMESTAMP）
 );
 
