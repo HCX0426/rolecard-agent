@@ -818,6 +818,64 @@ RESERVED_SETTINGS = {
 DEFERRED_US = {"US-6"}
 
 
+def _unescaped_pipes(text: str) -> list[int]:
+    """每个未转义 `|` 的下标。"""
+    return [m.start() for m in re.finditer(r"(?<!\\)\|", text)]
+
+
+def _is_table_delim(line: str) -> bool:
+    body = line.strip()
+    return (
+        body.startswith("|")
+        and body.endswith("|")
+        and bool(body)
+        and set(body.replace("|", "").strip()) <= set("-: ")
+    )
+
+
+def check_markdown_table_shape() -> None:
+    """GFM 表格每一行的列数不能超过表头，且行必须自己收尾。
+
+    为什么要有这条（09-26 轮，修完 12 处之后）：**一个没转义的竖线会静悄悄地把那一格劈成
+    两格**，整行右移一列 —— 渲染出来字数对、内容看着也在，但"证据"那一列里装着"复验"的话。
+    另一种是**长行折成几个物理行**：表格在那一行就终止了，后面的续行掉成散段落，紧随其后的
+    那些正常行还会变成"没有表头的第二张表"。这两种都不报错，而《架构审计》这种**按列读**的
+    台账恰恰全靠列位对齐。`docs/archive/` 按封存件排除（与 `check_doc_links` 同一口径）。
+    """
+    offenders: list[str] = []
+    for path in iter_files(".md"):
+        rel = path.relative_to(ROOT)
+        if "archive" in rel.parts:
+            continue
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        i = 0
+        while i < len(lines):
+            if not lines[i].lstrip().startswith("|") or i + 1 >= len(lines):
+                i += 1
+                continue
+            if not _is_table_delim(lines[i + 1]):
+                i += 1
+                continue
+            header = len(_unescaped_pipes(lines[i])) - 1
+            i += 2
+            while i < len(lines) and lines[i].lstrip().startswith("|"):
+                row = lines[i]
+                cells = len(_unescaped_pipes(row)) - 1
+                if cells > header:
+                    offenders.append(f"{rel}:{i + 1} 行 {cells} 列 > 表头 {header} 列")
+                if not row.rstrip().endswith("|"):
+                    offenders.append(f"{rel}:{i + 1} 这一行没有收尾的 `|`（表格在此被折断）")
+                i += 1
+            # 表格后面紧贴着一条不是表格的行 = 上一行其实是折行的续文
+            if i < len(lines) and lines[i].strip() and not lines[i].lstrip().startswith(
+                ("|", "#", ">", "-", "*", "`", "!", "[")
+            ):
+                offenders.append(f"{rel}:{i + 1} 表后紧跟游离行（多半是折断的续文）")
+    out("markdown table shape", not offenders, "all rows match their header"
+        if not offenders else f"{len(offenders)} 处")
+    fails.extend(offenders)
+
+
 def check_dead_config() -> None:
     """Every Settings field must be read somewhere outside config.py.
 
@@ -1115,6 +1173,7 @@ def main() -> int:
     check_v1_v2_boundary()
     check_doc_references()
     check_doc_links()
+    check_markdown_table_shape()
     check_citation_reachability()
     check_version_parity()
     check_dead_config()
