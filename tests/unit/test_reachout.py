@@ -1206,6 +1206,37 @@ def test_batch_read_leaves_seen_but_not_opened(conn) -> None:
     assert again["seen_at"] == first, "已见过的行不该被下一次批量刷改时刻"
 
 
+def test_quiet_status_reads_each_number_once(conn) -> None:
+    """同一份负载里那几个数只能各查一次 —— 否则"话里说连着 2 条"和旁边那个 `streak` 能不一致。
+
+    09-26 自己埋的坑：`quiet_status` 先调 `_gate`（内部已算过 streak/unread），又把两个数
+    各查一遍填进 payload。两次查询之间被插一条开口，界面就成了自相矛盾的一句话，而这一格
+    存在的全部意义是让人信。这条用例数的是**语句次数**，不是值 —— 值一致但多读一遍也红。
+    """
+    class _Counting:
+        def __init__(self, inner: object) -> None:
+            self._inner = inner
+            self.streak_reads = 0
+
+        def execute(self, sql: str, params: object = ()) -> object:
+            if "julianday(created_at)" in sql:
+                self.streak_reads += 1
+            return self._inner.execute(sql, params)  # type: ignore[attr-defined]
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._inner, name)
+
+    _seed_last(conn, "active", minutes_ago=10)
+    # 那条线得存在，否则 `_unreplied_streak` 直接短路返回 0，一次都不查（那是另一条口径：
+    # "没建立线 = 不知道他回没回"，见 `_unreplied_streak` 的 docstring）
+    _seed_lane_activity(conn, "active", minutes_ago=200)
+    utc, local = _now()
+    wrapped = _Counting(conn)
+    rows = svc.quiet_status([_role(), _role()], _settings(), wrapped, now_utc=utc, now_local=local)
+    assert len(rows) == 2
+    assert wrapped.streak_reads == 2, f"两个角色读了 {wrapped.streak_reads} 次 streak"
+
+
 def test_a_reachout_without_a_known_trigger_stays_unknown(conn) -> None:
     """没传由头时那一列必须是 **NULL**，不是空串也不是某个默认源。
 

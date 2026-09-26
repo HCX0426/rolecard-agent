@@ -780,7 +780,21 @@ def blocked_why(
     """
     return _gate(
         role, settings, conn, now_utc=now_utc, now_local=now_local, file_event=file_event
-    )[0]
+    ).why
+
+
+class Gate(NamedTuple):
+    """一次抑制判定的全部读数。`why` 与 `next_ok_at` 与那两个计数**来自同一批查询**。
+
+    为什么连 `streak` / `unread` 也要一起带出去（09-26 自己修自己）：界面上那句
+    "她连着 2 条没被回已退避"和旁边那个 `streak` 字段若是各查一次，中间被人插一条就是
+    两个数不一致 —— 而这一格存在的全部意义是让人信。同源不只指"话与时刻"，也指"话里的数"。
+    """
+
+    why: str | None
+    next_ok_at: datetime | None
+    streak: int
+    unread: int
 
 
 def _gate(
@@ -791,12 +805,12 @@ def _gate(
     now_utc: datetime,
     now_local: datetime,
     file_event: bool = False,
-) -> tuple[str | None, datetime | None]:
-    """抑制层的唯一判定点：`(阻塞原因, 下一次大约能开口的 UTC 时刻)`。
+) -> Gate:
+    """抑制层的唯一判定点。`next_ok_at=None` = 这不是"等一会儿就好"的事
+    （未读封顶要他回话或划掉、正在对话要等这一轮跑完）。
 
-    为什么是一个函数返回两样而不是"原因一段、时间另一段"：那句话与那个时刻**必须同源**，
+    为什么是一个函数而不是"原因一段、时间另一段"：那句话与那个时刻**必须同源**，
     分两处算迟早对不上（"不足 66 分钟"配一个 40 分钟后的时刻，用户看一眼就再也不信这个界面）。
-    第二项 None = 这不是"等一会儿就好"的事（未读封顶要他回话或划掉、正在对话要等这一轮跑完）。
     """
     unread = _unread_for_role(conn, role.role_id)
     streak = _unreplied_streak(conn, role.role_id)
@@ -808,21 +822,26 @@ def _gate(
         elapsed = now_utc - last
         if elapsed < timedelta(minutes=need):
             backoff = f"，她连着 {streak} 条没被回已退避" if streak else ""
-            return (f"距上次说话不足 {need:.0f} 分钟{backoff}", last + timedelta(minutes=need))
+            return Gate(
+                f"距上次说话不足 {need:.0f} 分钟{backoff}",
+                last + timedelta(minutes=need),
+                streak,
+                unread,
+            )
     if now_local.hour >= QUIET_HOURS_START or now_local.hour < QUIET_HOURS_END:
         end = now_local.replace(hour=QUIET_HOURS_END, minute=0, second=0, microsecond=0)
         if end <= now_local:  # 23:00 之后那一段：要等到明天早上 8 点
             end += timedelta(days=1)
-        return "处于静默时段（23:00–08:00）", end.astimezone(UTC)
+        return Gate("处于静默时段（23:00–08:00）", end.astimezone(UTC), streak, unread)
     if unread >= MAX_UNREAD_PER_ROLE:
-        return "未读堆积已达上限", None
+        return Gate("未读堆积已达上限", None, streak, unread)
     # **正在聊就别插话**（审计 #12 的第二层）：这一轮用户的话还在图上跑，此时投递的那句
     # 会和它抢同一份检查点（`deliver_proactive` 那侧也有锁兜底，但"不打断"本来就是对的语义）。
     # 判据用锁的持有状态而不是"最后一条消息的时间"：后者在用户回完话、她还没答的间隙里是 False，
     # 而那恰好是最不该插嘴的一刻。
     if thread_is_busy(proactive_thread_id(role.role_id)):
-        return "这条会话正在对话中", None
-    return None, None
+        return Gate("这条会话正在对话中", None, streak, unread)
+    return Gate(None, None, streak, unread)
 
 
 def quiet_status(
@@ -850,15 +869,16 @@ def quiet_status(
     for role in roles:
         if not role.reachout_enabled:
             continue
-        why, next_ok = _gate(role, settings, conn, now_utc=stamp_utc, now_local=stamp_local)
+        gate = _gate(role, settings, conn, now_utc=stamp_utc, now_local=stamp_local)
         out.append(
             {
                 "role_id": role.role_id,
                 "role_name": role.role_name,
-                "why": why,
-                "next_ok_at": None if next_ok is None else next_ok.isoformat(),
-                "streak": _unreplied_streak(conn, role.role_id),
-                "unread": _unread_for_role(conn, role.role_id),
+                "why": gate.why,
+                "next_ok_at": None if gate.next_ok_at is None else gate.next_ok_at.isoformat(),
+                # 直接取 `_gate` 那次读的数：再查一遍就会出现"话里说连着 2 条、字段是 1"。
+                "streak": gate.streak,
+                "unread": gate.unread,
             }
         )
     return out
