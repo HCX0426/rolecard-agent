@@ -39,8 +39,11 @@ const RETUCK_MS = 900;
  */
 const HIT_SLACK_X = 96;
 const HIT_SLACK_Y = 44;
-/** 面板里摊开最近几条（再多就该去控制台翻了）。 */
-const PANEL_MESSAGES = 8;
+/** 面板里摊开最近几条。**这不是"对话的全部"** —— 一条主动会话今天实量到 44 条，
+ *  截到这儿只剩最近这一截，所以列表顶部必须说出"上面还有几条"（见 `historyTotal`），
+ *  否则驻留件就在悄悄冒充整段历史。再多就不在这里翻了：这块是透明置顶窗，
+ *  几百条的绘制与逐帧命中区上报都不该压给它，完整历史在控制台那一扇。 */
+const PANEL_MESSAGES = 30;
 
 /** 读这条主动会话的最近几条。URL 只写一处：展开时与一轮跑完两条路径必须读同一个东西。 */
 const messagesPath = (tid: string) => `/api/session/${tid}/messages?limit=${PANEL_MESSAGES}`;
@@ -94,6 +97,9 @@ export default function PetPage() {
   // 悬停展开（§7）。窗口尺寸由壳改，这里只管"面板画不画"。
   const [expanded, setExpanded] = useState(false);
   const [history, setHistory] = useState<MessageRow[] | null>(null);
+  /** 这条会话**一共有**几条（后端 `total`）。面板只画最近 `PANEL_MESSAGES` 条，
+   *  差额要在屏幕上说清楚 —— 少了这一格，面板看起来就像"你们的对话只有这几条"。 */
+  const [historyTotal, setHistoryTotal] = useState(0);
   const [historyError, setHistoryError] = useState("");
   const [roles, setRoles] = useState<RoleCard[]>([]);
   const [picked, setPicked] = useState<string | null>(null);
@@ -147,8 +153,9 @@ export default function PetPage() {
    * 直到下一次发送才被 `startBubble` 覆盖。
    */
   const handoff = useCallback(
-    (messages: MessageRow[]) => {
-      setHistory(messages);
+    (page: MessagePage) => {
+      setHistory(page.messages);
+      setHistoryTotal(page.total);
       if (busyRef.current) return; // 还在流：气泡是唯一的实时反馈，不能被一次回放吃掉
       setLive(null);
       liveRef.current = null;
@@ -482,6 +489,7 @@ export default function PetPage() {
   useEffect(() => {
     if (!expanded || !showContent) {
       setHistory(null);
+      setHistoryTotal(0);
       setHistoryError("");
       return;
     }
@@ -490,7 +498,7 @@ export default function PetPage() {
     setHistoryError("");
     api
       .get<MessagePage>(messagesPath(threadId))
-      .then((page) => alive && handoff(page.messages))
+      .then((page) => alive && handoff(page))
       .catch((e: Error) => alive && setHistoryError(`历史没读到：${e.message}`));
     return () => {
       alive = false;
@@ -555,7 +563,7 @@ export default function PetPage() {
         return;
       }
       try {
-        handoff((await api.get<MessagePage>(messagesPath(usedTid))).messages);
+        handoff(await api.get<MessagePage>(messagesPath(usedTid)));
       } catch (e) {
         // 读不到回放就**留着**气泡与乐观那条：宁可屏幕上重一遍，也不能让用户以为"我说的话没了"。
         setHistoryError(`历史没读到：${(e as Error).message}`);
@@ -592,7 +600,7 @@ export default function PetPage() {
         setBusy(false);
         busyRef.current = false;
       }
-      handoff((await api.get<MessagePage>(messagesPath(threadId))).messages);
+      handoff(await api.get<MessagePage>(messagesPath(threadId)));
     } catch (e) {
       setStreamError(`重新生成失败：${(e as Error).message}`);
     } finally {
@@ -684,6 +692,7 @@ export default function PetPage() {
                 onChange={(e) => {
                   setPicked(e.target.value);
                   setHistory(null);
+                  setHistoryTotal(0); // 换角色 = 换一条会话，上一角色的"上面还有 N 条"不能跟着搬
                 }}
                 className="max-w-[150px] truncate rounded border border-slate-200 bg-white px-1 py-0.5 text-xs dark:border-slate-600 dark:bg-slate-800"
                 title="换个工作台对象（每个角色是它自己的那条主动会话）"
@@ -746,6 +755,26 @@ export default function PetPage() {
             )}
             {showContent && threadId && history === null && !historyError && !pendingUser && (
               <p className="text-slate-400 dark:text-slate-500">读取中…</p>
+            )}
+            {/* 面板只画最近 `PANEL_MESSAGES` 条，而"一共有几条"是后端 `total` 报的。不写这一行，
+                这块小窗就在冒充"你们的全部对话"（用户 09-26 问的正是这个：那条会话实量 44 条，
+                这里只剩最近一截，还一声不吭）。没有壳（浏览器里直接开这页）就只说数目，
+                不给一个点了没反应的"打开控制台"。 */}
+            {showContent && history && historyTotal > history.length && (
+              shellBridge() ? (
+                <button
+                  type="button"
+                  onClick={() => threadId && shellBridge()?.openSession(threadId)}
+                  className="block w-full rounded border border-slate-200 bg-slate-50 px-2 py-1 text-left text-[10px] text-slate-500 hover:text-blue-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
+                  title={`这扇窗只画最近 ${PANEL_MESSAGES} 条，完整的在那条会话里（同一条，不是另一份）`}
+                >
+                  ↑ 上面还有 {historyTotal - history.length} 条 · 在控制台看全部
+                </button>
+              ) : (
+                <p className="text-[10px] text-slate-400 dark:text-slate-500">
+                  ↑ 上面还有 {historyTotal - history.length} 条（这扇窗只画最近 {PANEL_MESSAGES} 条）
+                </p>
+              )
             )}
             {showContent &&
               (history ?? [])

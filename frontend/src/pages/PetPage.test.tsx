@@ -269,7 +269,7 @@ describe("PetPage 点开面板（§7：想回话不用开控制台）", () => {
     await open(shell);
 
     expect(shell.setPetExpanded).toHaveBeenCalledWith(true);
-    expect(apiMock.get).toHaveBeenCalledWith("/api/session/s_proactive_wan/messages?limit=8");
+    expect(apiMock.get).toHaveBeenCalledWith("/api/session/s_proactive_wan/messages?limit=30");
     expect(screen.getByText(/好，你也穿点/)).toBeTruthy();
     // 工具行不进这块小面板：它是对话页的过程细节，摆在桌面上只是噪音
     expect(screen.queryByText(/工具返回/)).toBeNull();
@@ -324,6 +324,52 @@ describe("PetPage 点开面板（§7：想回话不用开控制台）", () => {
     // 根节点照旧是不选的：那条规则管的是宠物本体，不是面板
     const root = list.closest("[class*='select-none']") as HTMLElement;
     expect(root).toBeTruthy();
+  });
+
+  it("面板只画最近一截时，必须说出「上面还有 N 条」（09-26 用户：这不该是一个东西吗）", async () => {
+    // 那条会话真库实量 44 条，面板按 `PANEL_MESSAGES` 只取最近一截。以前它一声不吭，
+    // 于是驻留件看着就像"你们的全部对话"—— 差的就是这一行声明。
+    const shell = withShell();
+    apiMock.get.mockImplementation(async (url: string) =>
+      url === "/api/roles"
+        ? [{ role_id: "wan", role_name: "苏晚晴", model_name: "" }]
+        : {
+            messages: [
+              { id: "m1", role: "user", content: "好，你也穿点" },
+              { id: "m2", role: "assistant", content: "外头降温了，穿上外套。" },
+            ],
+            total: 44,
+            limit: 30,
+            truncated: true,
+          },
+    );
+    await mount();
+    await open(shell);
+
+    const more = screen.getByRole("button", { name: /上面还有 42 条/ });
+    fireEvent.click(more);
+    // 点的就是"同一条会话的完整版"：跳的是这条主动会话自己的 thread_id，不是另开一条
+    expect(shell.openSession).toHaveBeenCalledWith("s_proactive_wan");
+  });
+
+  it("全部都在屏上了就不许再喊「上面还有 N 条」", async () => {
+    const shell = withShell();
+    apiMock.get.mockImplementation(async (url: string) =>
+      url === "/api/roles"
+        ? [{ role_id: "wan", role_name: "苏晚晴", model_name: "" }]
+        : {
+            messages: [
+              { id: "m1", role: "user", content: "好，你也穿点" },
+              { id: "m2", role: "assistant", content: "外头降温了，穿上外套。" },
+            ],
+            total: 2,
+            limit: 30,
+            truncated: false,
+          },
+    );
+    await mount();
+    await open(shell);
+    expect(screen.queryByText(/上面还有/)).toBeNull();
   });
 
   it("把「画了像素的那几块」报给壳，形状没变不重复发，卸载时收回（§12.3）", async () => {
@@ -592,7 +638,7 @@ describe("PetPage 在桌宠上回话（③：不进控制台就能聊）", () =>
       expect.anything(),
     );
     // 流完以服务端回放为准：历史被重新读了一次（展开一次 + 一轮结束一次）
-    expect(apiMock.get).toHaveBeenCalledWith("/api/session/s_proactive_wan/messages?limit=8");
+    expect(apiMock.get).toHaveBeenCalledWith("/api/session/s_proactive_wan/messages?limit=30");
   });
 
   it("她正在回话时面板跟着滚到最新；往上翻历史则不拽回去", async () => {
