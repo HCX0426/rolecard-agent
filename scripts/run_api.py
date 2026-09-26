@@ -133,7 +133,30 @@ def _load_dotenv() -> None:
             os.environ[key] = value
 
 
+def force_utf8_stdio() -> None:
+    """把 stdout/stderr 钉成 UTF-8。**打包态不修这一条，日志里所有中文都是 U+FFFD。**
+
+    实测链（09-26，装在 `%APPDATA%` 那份的 `backend.log`，1622 行里带中文的 3 行全坏）：
+    壳用 `spawn(stdio:["ignore","pipe","pipe"])` 接管后端的输出，并且先
+    `stream.setEncoding("utf8")` 再落盘；而 Python 在 **stdout 不是终端** 时按 ANSI 代码页
+    编码（本机 cp936）⇒ cp936 的字节被当 UTF-8 解。受害者正是这一族里唯一"给人读"的字段：
+    主动开口那句静默原因（`S-8` 的日志出口）与启动横幅。
+
+    修在**生产端**而不是让壳改成"解不开就当 GBK"：谁接管都按 UTF-8 说得清自己，dev 终端、
+    PowerShell、Electron、Docker 四条路共用一份行为。`errors="replace"` 是为了让编码问题
+    永远只是掉个别字符，不再像 `R26-24` 那次把整次打包的退出码带崩。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if not hasattr(stream, "reconfigure"):
+            # 被换成没有 `reconfigure` 的对象（测试替身 / 已被别处重包一层）时不改，
+            # 但绝不能为这件事炸启动 —— 日志编码不值得让服务器起不来。
+            continue
+        with contextlib.suppress(Exception):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main() -> None:
+    force_utf8_stdio()
     _load_dotenv()
     _resolve_data_paths()
     _maybe_configure_cloud_backend()
