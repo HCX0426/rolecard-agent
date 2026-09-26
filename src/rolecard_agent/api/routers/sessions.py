@@ -875,6 +875,25 @@ def inflight_payload(thread_id: str) -> dict[str, object] | None:
     return None if text is None else {"text": text}
 
 
+@router.get("/api/session/{thread_id}/turn")
+def get_session_turn(
+    thread_id: str, ctx: AppContext = Depends(get_context)
+) -> dict[str, object]:
+    """"这一条此刻有没有人在说、说到哪儿了"——**只查进程内登记，不碰检查点**。
+
+    为什么单独一个端点而不是让界面多打几次 `/messages?limit=1`：那一路每次都要
+    `graph.get_state()` 把整份检查点快照反序列化回来（一条长会话的快照实测按 MB 计），
+    把它当 1 秒一拍的探针用，等于为了问一句"她在吗"每次付一遍全量读的代价。
+    这里查的是一次字典查找，跟停旗同一份进程内状态（同一个"这台上后端只有一个进程"的前提）。
+
+    代价是它**看不见已经落地的东西**：没有 `total`，所以主动开口、编辑、删除、别的窗口
+    跑完的那一轮全都问不出来 —— 那些还是得靠 `/messages` 那一拍。两个端点是**分工**不是重复：
+    这里管"她在说"（要把发现延迟压到 1 秒），`/messages` 管"说完了什么"（5 秒一拍足够）。
+    """
+    get_thread(ctx.conn, thread_id)
+    return {"inflight": inflight_payload(thread_id)}
+
+
 @router.get("/api/session/{thread_id}/messages")
 def get_session_messages(
     thread_id: str,

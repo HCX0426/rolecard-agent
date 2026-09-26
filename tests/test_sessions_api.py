@@ -142,6 +142,52 @@ def test_messages_carries_the_inflight_line_for_other_readers(
     assert client.get(f"/api/session/{tid}/messages").json()["inflight"] is None, (
         "一轮收手之后不许留痕：否则界面上会挂着一个永远不会落地的气泡"
     )
+
+
+def test_turn_probe_answers_without_touching_the_checkpointer(tmp_path: Path) -> None:
+    """`/turn` 的便宜必须是真的：把图换成"一读检查点就炸"的桩，它照答，而 `/messages` 炸。
+
+    这条测的不是功能，是**分工**。对话界面把 `/turn` 当每 0.8 秒一次的探针，看的就是
+    "她在不在说"；哪天它顺路也去读检查点，那一拍就不再便宜，而症状只会以"长会话的界面
+    开始发粘"这种查不出来的形式出现。所以把"不读检查点"钉成一条断言。
+    """
+    from rolecard_agent.core.thread_locks import (
+        inflight_append,
+        inflight_begin,
+        inflight_end,
+    )
+
+    app = create_app(sqlite_path=tmp_path / "probe.db", model=ScriptedChat([]))
+    ctx = app.state.ctx
+    with TestClient(app) as client:
+        tid = str(client.post("/api/session", json={}).json()["thread_id"])
+        assert client.get(f"/api/session/{tid}/turn").json() == {"inflight": None}
+        assert client.get("/api/session/nope/turn").status_code == 404
+
+        inflight_begin(tid)
+        inflight_append(tid, "说到一半")
+        real = ctx.app_state["graph"]
+
+        class _NoPeek:
+            def get_state(self, *_a: object, **_kw: object) -> object:
+                raise AssertionError("这一拍不许读检查点")
+
+            def __getattr__(self, name: str) -> object:
+                return getattr(real, name)
+
+        try:
+            assert client.get(f"/api/session/{tid}/turn").json() == {
+                "inflight": {"text": "说到一半"}
+            }
+            ctx.app_state["graph"] = _NoPeek()
+            assert client.get(f"/api/session/{tid}/turn").json() == {
+                "inflight": {"text": "说到一半"}
+            }, "/turn 读到了检查点 —— 它不再是一拍便宜的探针"
+            with pytest.raises(AssertionError, match="这一拍不许读检查点"):
+                client.get(f"/api/session/{tid}/messages?limit=1")
+        finally:
+            ctx.app_state["graph"] = real
+            inflight_end(tid)
     assert client.get(f"/api/session/{tid}/messages").json()["inflight"] is None
 
 

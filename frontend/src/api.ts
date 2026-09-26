@@ -89,6 +89,21 @@ export interface MessagePage {
   inflight?: { text: string } | null;
 }
 
+/** `GET /api/session/{tid}/turn` 的回体：只问"此刻有没有人在说、说到哪儿"。
+ *  与 `MessagePage.inflight` 同一个语义、同一个出处（后端那份进程内登记），
+ *  区别只在它**不碰检查点**，所以可以按心跳去问。 */
+export interface TurnProbe {
+  inflight: { text: string } | null;
+}
+
+/** `GET /api/session/{tid}/turn` 的回体：这一条此刻有没有人在说、说到哪儿了。
+ *  比 `MessagePage` 便宜一个量级（后端只查进程内登记，不做检查点反序列化），
+ *  所以对话界面拿它当每拍一次的探针；代价是它**看不见已经落地的东西**，
+ *  那些还得靠 `MessagePage` 那一拍。 */
+export interface TurnProbe {
+  inflight: { text: string } | null;
+}
+
 export interface BackendRow {
   name: string;
   provider: string;

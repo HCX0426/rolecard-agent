@@ -559,6 +559,7 @@ describe("ChatPage 镜像「她正在说的那半句」", () => {
     ];
     let inflight: { text: string } | null = null;
     let probes = 0;
+    let turns = 0;
     apiMock.get.mockImplementation(async (url: string) => {
       if (url === "/api/sessions") {
         return [
@@ -577,6 +578,10 @@ describe("ChatPage 镜像「她正在说的那半句」", () => {
       if (url === "/api/roles") return [];
       if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
       if (url === "/api/settings/model-providers") return { providers: [] };
+      if (url.endsWith("/turn")) {
+        turns += 1;
+        return { inflight };
+      }
       if (url.includes("/messages")) {
         const probe = url.includes("limit=1");
         if (probe) probes += 1;
@@ -602,8 +607,10 @@ describe("ChatPage 镜像「她正在说的那半句」", () => {
         inflight = null;
         server = [...server, { id: "m2", role: "assistant", content: text }];
       },
-      /** 探针打了多少次（`?limit=1` 那一路）。 */
+      /** 贵的那一读（`?limit=1`）打了几次。 */
       probeCount: () => probes,
+      /** 便宜的那一读（`/turn`）打了几次。 */
+      turnCount: () => turns,
     };
   }
 
@@ -620,22 +627,20 @@ describe("ChatPage 镜像「她正在说的那半句」", () => {
     return h;
   }
 
-  it("在飞的那半句画得出来，一个字还没投送时也有那一格", async () => {
+  it("她在说的那半句 0.8 秒内就画出来，一个字还没投送时也有那一格", async () => {
     vi.useFakeTimers();
     try {
       const h = await mountAndOpen();
       // 前提：静默时那一格不存在（不是"画了个空的"）
-      await vi.advanceTimersByTimeAsync(6_000);
+      await vi.advanceTimersByTimeAsync(3_000);
       expect(screen.queryByTestId("inflight-mirror")).toBeNull();
 
-      // 发现靠 5 秒那一拍：桌宠开始说的 5 秒内界面会跟上（原来这一整段是空白的）
       h.speaking("");
-      await vi.advanceTimersByTimeAsync(6_000);
+      await vi.advanceTimersByTimeAsync(1_000);
       expect(screen.getByTestId("inflight-mirror").textContent).toContain("她在说");
 
-      // 跟上之后是 800ms 的拍子：她涨出来的字一段一段进界面
       h.speaking("今天想先把那几份报告");
-      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.advanceTimersByTimeAsync(1_000);
       expect(screen.getByTestId("inflight-mirror").textContent).toContain("今天想先把那几份报告");
     } finally {
       vi.useRealTimers();
@@ -647,11 +652,11 @@ describe("ChatPage 镜像「她正在说的那半句」", () => {
     try {
       const h = await mountAndOpen();
       h.speaking("理一理，晚上再去跑步。");
-      await vi.advanceTimersByTimeAsync(6_000);
+      await vi.advanceTimersByTimeAsync(1_500);
       expect(screen.getByTestId("inflight-mirror")).toBeTruthy();
 
       h.committed("理一理，晚上再去跑步。");
-      await vi.advanceTimersByTimeAsync(3_000);
+      await vi.advanceTimersByTimeAsync(1_500);
       expect(screen.getByText("理一理，晚上再去跑步。")).toBeTruthy();
       expect(screen.queryByTestId("inflight-mirror")).toBeNull();
     } finally {
@@ -659,24 +664,25 @@ describe("ChatPage 镜像「她正在说的那半句」", () => {
     }
   });
 
-  it("她在说的时候拍子收到 800ms，落地之后回到 5 秒", async () => {
+  it("两路探针是分工：便宜那路每拍一次，贵那路只在到点与落地时付", async () => {
     vi.useFakeTimers();
     try {
       const h = await mountAndOpen();
-      h.speaking("");
-      await vi.advanceTimersByTimeAsync(6_000); // 那一拍发现她在说
-      expect(screen.getByTestId("inflight-mirror")).toBeTruthy();
-      const from = h.probeCount();
+      const turns0 = h.turnCount();
+      const probes0 = h.probeCount();
       await vi.advanceTimersByTimeAsync(4_000);
-      // 800ms 的拍子：这 4 秒里至少该有 4 次读，而不是 5 秒那一拍只有一次
-      expect(h.probeCount() - from).toBeGreaterThanOrEqual(4);
+      // 0.8 秒一拍：4 秒里便宜那路该问 4~5 次，贵那路最多一次（它 4.8 秒才轮到一次）
+      expect(h.turnCount() - turns0).toBeGreaterThanOrEqual(4);
+      expect(h.probeCount() - probes0).toBeLessThanOrEqual(1);
 
-      h.committed("说完的那句");
-      await vi.advanceTimersByTimeAsync(2_000); // 一拍：读出"没在飞了"并把整句收进历史
-      const slow = h.probeCount();
-      await vi.advanceTimersByTimeAsync(4_000);
-      // 回到 5 秒：再给 4 秒，最多再来一次
-      expect(h.probeCount() - slow).toBeLessThanOrEqual(1);
+      // 她一说起来，贵那路不必等到点：落地那一拍立刻补一次，把真消息换进来
+      h.speaking("说了一半");
+      await vi.advanceTimersByTimeAsync(1_500);
+      const beforeLanding = h.probeCount();
+      h.committed("说了一半");
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect(h.probeCount()).toBeGreaterThan(beforeLanding);
+      expect(screen.queryByTestId("inflight-mirror")).toBeNull();
     } finally {
       vi.useRealTimers();
     }

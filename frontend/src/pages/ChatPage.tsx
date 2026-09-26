@@ -10,6 +10,7 @@ import {
   type RoleCard,
   type SessionContext,
   type SessionRow,
+  type TurnProbe,
 } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
 import { useToast, type Tone } from "../components/Toast";
@@ -36,15 +37,20 @@ import ThinkingPanel from "../components/chat/ThinkingPanel";
 import { Markdown } from "../components/Markdown";
 import { Button } from "../components/ui";
 
-/** 控制台与这条会话的服务端对齐的节拍。桌宠那条是 3 秒（红点要即时），这里 5 秒就够：
- *  真切的场景是"你在桌宠上回了一句，切回控制台"—— 那一下靠 `focus` 立刻补读，节拍只是兜底。 */
-const SESSION_SYNC_MS = 5_000;
+/** 心跳。这一拍问的是 `/api/session/{tid}/turn` —— 它只查后端那份进程内登记
+ *  （一次字典查找 + 一次主键 SELECT），所以敢 0.8 秒问一次。它决定的就是
+ *  「她正在说的那半句」多久出现在这扇窗上：上限 0.8 秒。 */
+const TICK_MS = 800;
 
-/** 她在说（这一条会话有在飞的那半句）时的读拍。
- *  5 秒是"别处写完了我跟上不跟不上"的节拍，而那半句每 0.8 秒长一截才是用户盯着看的东西 ——
- *  沿用一个节拍的话，镜像出来的字是跳着涨的，看着像卡住。收进 800ms 是有界的：
- *  只有 `inflight` 非空那几秒如此，一轮落地就回到 5 秒。 */
-const MIRROR_SYNC_MS = 800;
+/** 全量探针（`?limit=1`，带 `total`）的间隔。它比 `turn` 贵一个量级 —— 每次都要把整份
+ *  检查点快照反序列化回来 —— 但**只有它看得见已经落地的东西**：主动开口、别处的编辑与
+ *  删除、任何不经过一轮生成的写入，`turn` 一概问不出来。所以两者是分工不是重复。
+ *  桌宠那条红点轮询是 3 秒，这里 5 秒：真切的场景是"你在桌宠上回了一句，切回控制台"，
+ *  那一下靠 `focus` 立刻补读，节拍只是兜底。 */
+const FULL_PROBE_MS = 5_000;
+
+/** 每隔几拍付一次全量探针的代价。整数关系写死，免得两处数字各改各的漂掉。 */
+const FULL_PROBE_EVERY_TICKS = Math.ceil(FULL_PROBE_MS / TICK_MS);
 
 /** 角色多到几个，抽屉里才出现搜索框：三五个的时候一个框只是多一个要看的控件。 */
 const ROLE_SEARCH_FROM = 6;
@@ -310,57 +316,84 @@ export default function ChatPage({
   /**
    * 别处（桌宠面板）往这条会话里写了字，控制台要跟上 —— 用户 09-26："反过来就看不到了"，
    * 当晚又报"在桌宠那发的收到回答，在对话界面同步得有些慢"。实测一轮 419 字的回答：
-   * 他那句 0.21 秒就可读、她那句 10.49 秒才进检查点，界面按 5 秒网格收到 15.0 秒 ——
-   * **12.1 秒里有 7.6 秒是"她正在说"这件事在界面上完全不可见**，那截不是轮询能治的，
-   * 所以探针顺带把在飞的那半句（`inflight.text`）读回来画成镜像气泡。
+   * 他那句 0.21 秒就可读、她那句 14.41 秒才进检查点，界面按 5 秒网格收到 15.0 秒 ——
+   * **落后的 12.03 秒里只有 0.59 秒是轮询欠的，其余全是"她正在说"对第二个读者不可见**。
+   * 所以这里读两路，各治一截：
    *
-   * 探针是 `?limit=1` 那一次读：它回的是**服务端总条数**加那半句，成本比全量重读低一个
-   * 量级，条数变了才去做全量 `selectSession`。
+   *  * `/api/session/{tid}/turn`（每拍一次，便宜）：治"看不见她在说"。回的是后端那份
+   *    进程内在飞登记，不做检查点反序列化，所以敢 0.8 秒问一次 —— 发现、跟字、落地三个
+   *    时刻的上限都是 0.8 秒。
+   *  * `/messages?limit=1`（每 `FULL_PROBE_EVERY_TICKS` 拍一次，贵）：治"看不见已落地的"。
+   *    每读一次要把整份检查点快照反序列化回来，不该当高频探针用 —— 但**她那句落地那一拍
+   *    例外**：那时立刻补一次贵读，让真消息换掉镜像气泡，而不是再等 4.8 秒。
+   *
    * 两道闸：正在流不抢（那轮的屏幕内容还没落库，抢了就是"我发一条她回两条"那个重影），
-   * 条数没变一次 set 都不发（否则每 5 秒把滚动位置与勾选状态清一遍，比"看不到新的"更烦人）。
+   * 条数没变一次 set 都不发（否则每几秒把滚动位置与勾选状态清一遍，比"看不到新的"更烦人）。
    *
    * **不看 `document.hidden`**：这是桌面 app，"控制台被别的窗盖住"是常态而不是后台标签页，
    * 而铃铛那侧的 3 秒轮询本来也不看可见性 —— 加一道只有这一半有的闸，只会造出
-   * "一处会同步一处不会"这种查不出来的差别。`focus` 那一下的立即补读留着：那是
-   * "从桌宠 Alt-Tab 回来"时不想等满 5 秒的那一截。
+   * "一处会同步一处不会"这种查不出来的差别。`focus` 那一下直接跳到一次贵读：切回这一扇窗
+   * 想立刻看到的正是已经落地的部分。
    *
-   * 节拍自己改：读到在飞就把下一拍收到 800ms，落地后回 5 秒。用 `setTimeout` 自续而不是
-   * 两个 `setInterval` 来回切，是为了**任何时刻只有一个拍在飞**。
+   * 只有一个 `setTimeout` 自续，不是两个 `setInterval` 来回切：要的是任何时刻只有一拍在飞
+   * （两拍并存时探针会以两种间隔之和的节拍打出去，看不出来也测不到）。
    */
   useEffect(() => {
     if (!sessionId) return;
+    const tid = sessionId; // 收窄成 string：闭包里 TS 不认 state 的那道判空
     let cancelled = false;
     let timer = 0;
-    const arm = (ms: number) => {
-      timer = window.setTimeout(() => void tick(), ms);
+    let ticks = 0; // 距离上一次全量探针过了几拍
+    const arm = () => {
+      timer = window.setTimeout(() => void tick(), TICK_MS);
     };
+    const setMirrorNow = (next: string | null) => {
+      if (next === mirrorRef.current) return;
+      mirrorRef.current = next;
+      setMirror(next);
+    };
+    /** 贵的那一读：带 `total`，看得见**已经落地**的东西（别处的编辑、主动开口、跑完的那一轮）。 */
+    async function heavyProbe(): Promise<void> {
+      const page = await api.get<MessagePage>(`/api/session/${tid}/messages?limit=1`);
+      if (cancelled) return;
+      const seen = seenTotalRef.current;
+      seenTotalRef.current = page.total;
+      setMirrorNow(page.inflight ? page.inflight.text : null);
+      ticks = 0;
+      if (seen !== null && seen !== page.total) await selectSession(tid);
+    }
     const tick = async () => {
-      if (sendingRef.current) {
-        // 这一扇窗自己在流：屏幕上已经有 `live` 那个气泡，镜像必须让位
-        mirrorRef.current = null;
-        setMirror(null);
-        arm(SESSION_SYNC_MS);
-        return;
-      }
       try {
-        const probe = await api.get<MessagePage>(`/api/session/${sessionId}/messages?limit=1`);
-        if (!cancelled) {
-          const seen = seenTotalRef.current;
-          seenTotalRef.current = probe.total;
-          const next = probe.inflight ? probe.inflight.text : null;
-          if (next !== mirrorRef.current) {
-            mirrorRef.current = next;
-            setMirror(next);
+        if (sendingRef.current) {
+          // 这一扇窗自己在流：屏幕上已经有 `live` 那个气泡，镜像必须让位
+          setMirrorNow(null);
+        } else if (ticks >= FULL_PROBE_EVERY_TICKS) {
+          await heavyProbe();
+        } else {
+          const cheap = await api.get<TurnProbe>(`/api/session/${tid}/turn`);
+          if (!cancelled) {
+            ticks += 1;
+            if (cheap.inflight) {
+              setMirrorNow(cheap.inflight.text);
+            } else if (mirrorRef.current !== null) {
+              // 她那句刚落地（登记清了而这边还画着气泡）：立刻补一次贵读把真消息换进来，
+              // 不等下一拍 —— 用户等的那一下就是这个时刻。
+              setMirrorNow(null);
+              await heavyProbe();
+            }
           }
-          if (seen !== null && seen !== probe.total) await selectSession(sessionId);
         }
       } catch {
         /* 探针失败就等下一次节拍：为一次网络抖动改界面无意义 */
       }
-      if (!cancelled) arm(mirrorRef.current === null ? SESSION_SYNC_MS : MIRROR_SYNC_MS);
+      if (!cancelled) arm();
     };
-    const onVisible = () => void tick();
-    arm(SESSION_SYNC_MS);
+    const onVisible = () => {
+      clearTimeout(timer);
+      ticks = FULL_PROBE_EVERY_TICKS; // 切回来这一次就读贵的
+      void tick();
+    };
+    arm();
     window.addEventListener("focus", onVisible);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
