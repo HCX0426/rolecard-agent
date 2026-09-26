@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import ThinkingPanel from "../components/chat/ThinkingPanel";
 import { api, streamChat, UNREAD_POLL_MS, type MessagePage, type MessageRow, type ReachoutRow, type RoleCard } from "../api";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useChatStream } from "../hooks/useChatStream";
@@ -61,6 +62,17 @@ function shorten(text: string): string {
 function Speaker({ mine }: { mine: boolean }) {
   return <span className="text-slate-400 dark:text-slate-500">{mine ? "你：" : "它："}</span>;
 }
+
+/** 我这一方靠右 + 一个浅蓝泡（用户 09-26："像对话界面那样我的回复显示在右边，才有对话感"）。
+ *
+ * 形状抄 `ChatPage` 那条用户气泡（`ml-auto w-fit max-w-*` + `rounded-br-sm` 的"尾巴"
+ * + 蓝边蓝底），只是这面板尺寸小，留白与字阶跟着 `text-[11px]` 那一档收一号。
+ * **说话人标签照旧留着**：位置与颜色在这么小一块面板里分不开"谁说的"（色弱用户与截图都
+ * 读不出来，见上面 `Speaker` 那条注释）—— 靠右是为了"对话感"，不是为了取代标注。
+ */
+const MINE_ROW =
+  "ml-auto w-fit max-w-[86%] break-words rounded-xl rounded-br-sm border border-blue-200" +
+  " bg-blue-50 px-1.5 py-0.5 dark:border-slate-700 dark:bg-slate-800/70";
 
 export default function PetPage() {
   const [items, setItems] = useState<ReachoutRow[]>([]);
@@ -661,22 +673,34 @@ export default function PetPage() {
               (history ?? [])
                 .filter((m) => m.role === "user" || m.role === "assistant")
                 .map((m, i) => (
-                  <p key={m.id ?? i} className="break-words">
+                  <p key={m.id ?? i} className={m.role === "user" ? MINE_ROW : "break-words"}>
                     <Speaker mine={m.role === "user"} />
                     {m.content}
                   </p>
                 ))}
             {showContent && pendingUser && (
-              <p className="break-words">
+              <p className={MINE_ROW}>
                 <Speaker mine />
                 {pendingUser}
               </p>
             )}
-            {showContent && live && (busy || live.text) && (
-              <p className="break-words">
-                <Speaker mine={false} />
-                {live.text || (live.streaming ? "…" : "")}
-              </p>
+            {showContent && live && (busy || live.text || live.thinking) && (
+              <div className="break-words">
+                {/* 思考过程与对话页**同一个组件**（用户 09-26："桌宠那侧也要看思考过程，
+                    和对话界面差不多"）：本地档那十几到几十秒全花在思考上（09-26 轮 R26-29），
+                    没有这一格就是一块不动的泡。规矩照抄对话页 —— 流式期间展开（"她在打字"
+                    本身就是信号，不再另加省略号），本轮结束就折叠。`details` 是不受控的，
+                    光改 defaultOpen 收不起来，所以用 key 让它重挂一次。 */}
+                <ThinkingPanel
+                  key={busy ? "thinking-live" : "thinking-done"}
+                  text={live.thinking}
+                  defaultOpen={busy}
+                />
+                <p>
+                  <Speaker mine={false} />
+                  {live.text || (live.streaming && !live.thinking ? "…" : "")}
+                </p>
+              </div>
             )}
           </div>
           <div className="flex shrink-0 items-end gap-1.5 border-t border-slate-100 px-2 py-2 dark:border-slate-700">

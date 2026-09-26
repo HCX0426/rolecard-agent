@@ -147,8 +147,10 @@ class Settings(BaseModel):
     # （实测 qwen2.5:7b）。**列进来不会让她变慢，不列也不会变快** —— 思考模型在引擎侧
     # 一律在想（`think:false` 与 `/no_think` 实测都关不掉，见 09-26 轮 R26-29），这一档
     # 只决定那份思考**显不显示**（不显示时它照旧生成、照旧占首字，只是屏幕上看不见）。
-    # 例：MODEL_THINKING_MODELS=qwen3:8b
-    model_thinking_models: list[str] = Field(default_factory=list)
+    # **默认就列上随包那个模型**：藏起来并不能省下一秒，只会让用户对着一块不动的泡
+    # （09-26 用户就是为这个提的"要让她看起来在打字"）。名单只对精确同名的 model 生效，
+    # 换成别的模型的人不受这颗默认值影响。例：MODEL_THINKING_MODELS=qwen3:8b
+    model_thinking_models: list[str] = Field(default_factory=lambda: ["qwen3-vl:8b"])
 
     # 思考模式**总开关**（用户 2026-09-17）：auto = 按 MODEL_THINKING_MODELS 名单自动；
     # off = 名单内的模型也不传 reasoning —— 那是**把它藏起来**，不是把它停掉（性能上

@@ -245,6 +245,20 @@ def test_web_master_switch_and_thinking_parse_from_env() -> None:
     assert defaults.model_thinking == "auto"
 
 
+def test_shipped_defaults_ask_for_reasoning_from_the_bundled_local_model() -> None:
+    """随包那个本地模型必须**正好**落在思考名单里。
+
+    名单是按 `model` 名精确匹配的（`core/graph.py`），所以"把默认后端换个模型名"会**静默**
+    把它从名单里摘出去：思考照想、那十几~几十秒照花、屏幕上一个字都不显示 —— 那正是
+    09-26 轮 `R26-29` 量出来的形状（不列名时一次回话生成 366~3809 token 而可见正文几十字），
+    也是用户提"要让她看起来在打字"的直接原因。这条断言钉的是**配对**，不是名单非空：
+    两边各自改都对，改歪一边就回到空泡。
+    """
+    shipped = Settings()
+    assert shipped.model_default
+    assert shipped.backend(shipped.model_default).model in shipped.model_thinking_models
+
+
 def test_siliconflow_endpoint_and_ocr_python_parse_from_env() -> None:
     """P1-4 + P1-5：仍归 env 的只剩两项 —— 云端兜底端点、本地 Paddle 解释器。
 

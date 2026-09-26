@@ -275,6 +275,35 @@ describe("PetPage 点开面板（§7：想回话不用开控制台）", () => {
     expect(screen.queryByText("+2")).toBeNull();
   });
 
+  it("我说的靠右、它说的靠左（09-26 用户：像对话界面那样才有对话感）", async () => {
+    const shell = withShell();
+    apiMock.get.mockImplementation(async (url: string) =>
+      url === "/api/roles"
+        ? [{ role_id: "wan", role_name: "苏晚晴", model_name: "" }]
+        : {
+            messages: [
+              { role: "assistant", content: "外头降温了，穿上外套。" },
+              { role: "user", content: "好，你也穿点" },
+            ],
+            total: 2,
+            limit: 8,
+            truncated: false,
+          },
+    );
+    await mount();
+    await open(shell);
+
+    // jsdom 不把 Tailwind 排成版，所以这里量的是"那条规则挂上了没有"；真实位置在真浏览器
+    // 里另外量过一次（我那一行的左边界确实落在它那一行的右边，见本轮验收）。
+    const mine = screen.getByText("你：").closest("p") as HTMLElement;
+    const theirs = screen.getByText("它：").closest("p") as HTMLElement;
+    expect(mine.className).toContain("ml-auto");
+    expect(mine.className).toContain("max-w-[86%]");
+    expect(theirs.className).not.toContain("ml-auto");
+    // 靠右不等于把"谁说的"标掉：这么小的面板里位置与颜色不足以分辨（见 Speaker 那条注释）
+    expect(mine.textContent).toBe("你：好，你也穿点");
+  });
+
   it("把「画了像素的那几块」报给壳，形状没变不重复发，卸载时收回（§12.3）", async () => {
     const shell = withShell();
     const send = shell.petHotRects as unknown as ReturnType<typeof vi.fn>;
@@ -612,6 +641,51 @@ describe("PetPage 在桌宠上回话（③：不进控制台就能聊）", () =>
       finish?.();
       for (let i = 0; i < 6; i += 1) await Promise.resolve();
     });
+  });
+
+  it("她的思考过程在桌宠里也看得见（09-26 用户：和对话界面差不多吧）", async () => {
+    // 实测背景（审计 R26-29）：本地档那十几~几十秒**全部**花在思考解码上，可见正文只有几十字。
+    // 桌宠先前只画 `live.text`，于是那段时间屏幕上是一个不动的空泡 —— 现在挂上对话页
+    // 同一个 `ThinkingPanel`（流式期间展开本身就是"她在打字"的信号，不再另叠省略号）。
+    let emit: ((e: unknown) => void) | null = null;
+    let finish: (() => void) | null = null;
+    streamChatMock.mockImplementation(
+      (_tid: string, _msg: string, onEvent: (e: unknown) => void) =>
+        new Promise<void>((resolve) => {
+          emit = onEvent;
+          finish = resolve;
+        }),
+    );
+    await expandPanel();
+    const box = screen.getByPlaceholderText(/跟苏晚晴说一句/) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "喂" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await act(async () => {
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+
+    await act(async () => {
+      emit?.({ type: "thinking", text: "先别急着问他在干嘛，" });
+    });
+    const panel = screen.getByText("思考过程").closest("details") as HTMLDetailsElement;
+    expect(panel.open).toBe(true); // 流式期间展开
+    await act(async () => {
+      emit?.({ type: "thinking", text: "先说今天累不累" });
+    });
+    expect(panel.textContent).toContain("先说今天累不累");
+    // 正文一个字都还没有，但屏幕上已经在长东西 —— 所以那一行不该再补一个多余的省略号。
+    const line = screen.getByText("它：").closest("p") as HTMLElement;
+    expect(line.textContent).toBe("它：");
+
+    await act(async () => {
+      emit?.({ type: "token", text: "你来啦" });
+      emit?.({ type: "end" });
+      finish?.();
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    // 一轮结束、气泡交回服务端回放之后，这一格跟着 `live` 一起收掉：桌宠面板只画最近几条
+    // 正文（`/api/session/{tid}/messages` 不带思考），要看完整的"过程"去控制台那扇对话页。
+    expect(screen.queryByText("思考过程")).toBeNull();
   });
 
   it("Shift+Enter 是换行，不是发送", async () => {
