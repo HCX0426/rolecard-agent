@@ -3,7 +3,7 @@
 这一源的成败在"她冒出来的那句你想不想回"，而从前**一种结局都量不出来**：删除是真删行、
 `read-all` 可以一刷一大片所以 read≠看过、消息时间也没人读。现在三列时刻都在库里
 （`created_at` / `read_at` / `seen_at` / `dismissed_at` / `fired_by`），本脚本只读它们，
-产出四个口径：
+产出五个口径：
 
 1. **接话率（近似）** —— 她冒话之后，那条主动会话有没有**又动过一次**。这个分子两个方向都偏：
    只认单条点开的时刻时它**低估**（09-26 报过 1/11），而 `updated_at` 会被任何一轮甚至
@@ -12,6 +12,8 @@
 3. **看了不接** —— `state='read'`（"进了对话界面就算看过"那条口径）却没有后续。
 4. **由头分布** —— 每一条是**被什么驱动的**（`fired_by`），以及接了话的那几条各由什么驱动。
    这一项是给 `R26-09` 的回访用的；该列 09-26 傍晚才加，之前的行只能算"不知道"。
+5. **攒样本进度** —— 带由头的行有几条、观测窗口多长、离"够 20 条再判"还差多少。
+   回访要等的就是条数，那就让它自己报进度；只有一条样本时**明说算不出速率**而不是外推。
 
 读的是**真库副本**：真库那份还没跑过新代码（`read_at`/`dismissed_at` 两列要靠启动时的
 `reconcile_columns` 补出来），所以这里先 `copy_of_live_db` 再 `bootstrap` 一次 —— 数据
@@ -171,6 +173,7 @@ def summarize(
         else:
             streak += 1
             worst = max(worst, streak)
+    known = [r for r in rows if r["fired_by"]]
     return {
         "total": len(rows),
         "picked": picked,
@@ -185,6 +188,12 @@ def summarize(
         "legacy_seen": legacy_seen,
         "by_source": by_source,
         "picked_sources": picked_sources,
+        # ⑤ 攒样本的进度（`R26-09` 的回访条件是"样本够 20 条再拿由头做取舍"）。
+        # 观测窗口从**第一条带由头的行**算起，而不是从"那一列上线"写死一个日期：
+        # 装好的那份是哪一版、什么时候装的，都会体现在数据里，写死的日子一定会漂。
+        "known_source": len(known),
+        "first_known_at": str(known[0]["created_at"]) if known else None,
+        "last_known_at": str(known[-1]["created_at"]) if known else None,
     }
 
 
@@ -234,6 +243,29 @@ def main() -> None:
         "\n     而桌宠日志每次启动被覆盖 —— 所以上线前那批行永远归不到由头上，"
         "\n     只能从这一列之后重新开始攒。"
     )
+    # ⑤ 攒样本的进度：回访要等的是条数，那就让它自己报还差多少，而不是下次再来翻代码。
+    kn = int(s["known_source"])
+    need = 20
+    print(f"⑤ 攒样本进度（回访条件：带由头的行 ≥ {need} 条才拿它做档位取舍）")
+    if kn == 0:
+        print("   一条都还没有 —— 装好的那份还没跑过会写 `fired_by` 的版本，回访还没开始计时。")
+    else:
+        span_h = 0.0
+        first, last = _parse(s["first_known_at"]), _parse(s["last_known_at"])
+        if first and last and last > first:
+            span_h = (last - first).total_seconds() / 3600.0
+        print(f"   带由头 {kn} / {need} 条；从 {s['first_known_at']} 攒到 {s['last_known_at']}"
+              f"（观测 {span_h:.1f} 小时）")
+        if kn >= need:
+            print("   够了 —— 可以按 ④ 的分布判第五由头有没有真驱动过一次开口。")
+        elif span_h > 0 and kn >= 2:
+            per_day = kn / (span_h / 24.0)
+            print(f"   按这个速率约 {per_day:.1f} 条/天，还差 {need - kn} 条 ≈"
+                  f" {(need - kn) / per_day:.1f} 天 —— 这只是「什么时候值得回来看一眼」，"
+                  f"\n     不是预测：开口本身被闸门压着（间隔 + 静默段 + 退避），速率不该外推。")
+        else:
+            print("   只有 1 条，**算不出速率**（一条样本推不出「每天几条」，硬推就是编）。"
+                  "\n     下次再读这一项时它会自己变准。")
     print(
         "\n读法：四个数都还只是**条数口径**，样本 <20 时不要拿去做任何档位取舍 ——"
         "\n     它们的作用是把『完全量不出来』变成『有数但噪声大』。"

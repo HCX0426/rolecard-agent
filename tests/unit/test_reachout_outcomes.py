@@ -113,3 +113,23 @@ def test_the_updated_at_proxy_is_not_the_reply(conn: Any) -> None:
     s = mod.summarize(conn, {LANE: [("你", "看过没接")]})
     assert (s["picked"], s["ignored"]) == (0, 1)
     assert s["picked_proxy"] == 1, "近似那条仍会把这行算成「接了」—— 所以才要并排印出来"
+def test_item_five_counts_only_rows_that_know_their_source(conn: Any) -> None:
+    """⑤「攒样本进度」只数**带由头**的行，并把观测窗口的两端报出来。
+
+    两个判据都要钉：
+    * 老行 `fired_by IS NULL` 不算进样本 —— 那是"不知道"，摊进去就等于替它们猜一个源；
+    * 窗口取自**带由头的那几行**的首尾，不是全表首尾 —— 否则上线前那批会把观测时长撑大，
+      "每天几条"被系统性低估，回访日期就被推远。
+    """
+    _lane(conn)
+    _seed(conn, text="单独点开且有人回", state="read", created_at="2026-09-20 01:00:00",
+          read_at="2026-09-20 02:00:00")                      # 老行：没有由头
+    _seed(conn, text="批量刷过且有人回", state="read", created_at="2026-09-26 03:00:00",
+          seen_at="2026-09-26 03:30:00", fired_by="recall")   # 窗口左端
+    _seed(conn, text="看过没接", state="read", created_at="2026-09-26 09:00:00",
+          seen_at="2026-09-26 09:10:00", fired_by="timer")    # 窗口右端
+    s = mod.summarize(conn, LANE_MSGS)
+    assert s["known_source"] == 2, "NULL 那一行不许算进样本"
+    assert s["first_known_at"] == "2026-09-26 03:00:00"
+    assert s["last_known_at"] == "2026-09-26 09:00:00"
+    assert s["by_source"][mod.UNKNOWN_SOURCE] == 1, "不知道的那一档要单独留着，别摊平"
