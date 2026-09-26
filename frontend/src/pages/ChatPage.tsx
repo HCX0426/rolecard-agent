@@ -1404,7 +1404,7 @@ export default function ChatPage({
                   {mirror ? <Markdown text={mirror} /> : "她在说…"}
                 </div>
                 <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-                  正在生成 · 来自桌宠那一轮
+                  正在生成 · 不是这一扇窗发的
                 </p>
               </div>
             )}
