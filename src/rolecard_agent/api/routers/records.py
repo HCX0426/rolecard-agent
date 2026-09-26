@@ -21,7 +21,6 @@ from rolecard_agent.api.deps import (
 from rolecard_agent.api.deps import (
     parsed_text_path as _parsed_text_path,
 )
-from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.core.ingestion import IngestionNotFound
 from rolecard_agent.core.observability import scrub_endpoints
 from rolecard_agent.domains.health.extract import (
@@ -127,7 +126,7 @@ def list_records(
     而界面一屏只看得下十几条（审查报告 P2）。切片目前发生在服务层：数据量到千级再改成
     SQL 层 `LIMIT/OFFSET`（那时候 `total` 也应改为 COUNT 查询）。
     """
-    rows = ctx.health.list_records(DEFAULT_USER_ID)
+    rows = ctx.health.list_records(ctx.current_user())
     return {
         "items": rows[offset : offset + limit],
         "total": len(rows),
@@ -149,7 +148,7 @@ def create_record_report(
     """
     try:
         report_id = ctx.health.create_report(
-            user_id=DEFAULT_USER_ID,
+            user_id=ctx.current_user(),
             report_type=body.report_type,
             check_time=body.check_time,
             institution=body.institution,
@@ -165,7 +164,7 @@ def create_record_report(
         detail={"report_type": body.report_type.strip(), "indices": len(body.indices)},
     )
     # 回整份报告（含生成的 index_id），前端可据此直接刷新列表。
-    row = ctx.health.get_record(user_id=DEFAULT_USER_ID, report_id=report_id)
+    row = ctx.health.get_record(user_id=ctx.current_user(), report_id=report_id)
     return row if row is not None else {"report_id": report_id}
 
 
@@ -234,7 +233,7 @@ def _extract_and_store(*, body: ExtractRequest, ctx: AppContext, actor: Actor) -
 
     # 幂等判据在**域**那一侧（`report_id_for_task`）：外键列住在域的表里，路由按约定既不
     # import 具体域、也不自己写它的表名（架构审计报告 P1-1）。
-    already = ctx.health.report_id_for_task(user_id=DEFAULT_USER_ID, task_id=body.task_id)
+    already = ctx.health.report_id_for_task(user_id=ctx.current_user(), task_id=body.task_id)
     if already is not None:
         return {"skipped": "already_extracted", "report_id": already}
 
@@ -261,7 +260,7 @@ def _extract_and_store(*, body: ExtractRequest, ctx: AppContext, actor: Actor) -
             text=text,
             settings=ctx.app_state["effective"],  # 设置页改了后端也立刻生效
             source=source,
-            known_history=_latest_numeric_history(ctx.health.list_records(DEFAULT_USER_ID)),
+            known_history=_latest_numeric_history(ctx.health.list_records(ctx.current_user())),
             tracer=ctx.tracer,
         )
     except ExtractConfigError as exc:
@@ -288,7 +287,7 @@ def _extract_and_store(*, body: ExtractRequest, ctx: AppContext, actor: Actor) -
     if outcome.agreed and outcome.check_time:
         try:
             report_id = ctx.health.create_report(
-                user_id=DEFAULT_USER_ID,
+                user_id=ctx.current_user(),
                 report_type=outcome.report_type or "未命名报告",
                 check_time=outcome.check_time,
                 institution=outcome.institution,
@@ -349,7 +348,9 @@ def patch_record_index(
     """F2：修正误录的指标值。变更写审计（US-3 的数据侧延伸）。"""
     changes = body.model_dump(exclude_unset=True)
     try:
-        row = ctx.health.update_index(user_id=DEFAULT_USER_ID, index_id=index_id, changes=changes)
+        row = ctx.health.update_index(
+            user_id=ctx.current_user(), index_id=index_id, changes=changes
+        )
     except HealthNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except HealthDataError as exc:
@@ -368,7 +369,7 @@ def remove_record_index(
     index_id: str, ctx: AppContext = Depends(get_context), actor: Actor = Depends(get_actor)
 ) -> None:
     try:
-        ctx.health.delete_index(user_id=DEFAULT_USER_ID, index_id=index_id)
+        ctx.health.delete_index(user_id=ctx.current_user(), index_id=index_id)
     except HealthNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     ctx.roles.audit(actor=actor.id, action="delete_index", target=index_id)
@@ -388,12 +389,12 @@ def remove_record_report(
     手工录入的报告没有 intake（`task_id=None`），跳过清理。清索引失败会直接抛错
     **且不删库行**，让用户重试，而不是留下"以为删了"的状态。
     """
-    task_id = ctx.health.report_task_id(user_id=DEFAULT_USER_ID, report_id=report_id)
+    task_id = ctx.health.report_task_id(user_id=ctx.current_user(), report_id=report_id)
     removed = 0
     if task_id is not None:
         removed = ctx.knowledge.delete_source(ctx.health.knowledge_scope, task_id)
     try:
-        ctx.health.delete_report(user_id=DEFAULT_USER_ID, report_id=report_id)
+        ctx.health.delete_report(user_id=ctx.current_user(), report_id=report_id)
     except HealthNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     ctx.roles.audit(

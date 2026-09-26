@@ -35,7 +35,6 @@ from rolecard_agent.api.deps import (
 from rolecard_agent.config import Settings
 from rolecard_agent.core import memory_distill
 from rolecard_agent.core.graph import build_graph_config
-from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.core.ingestion import INGESTION_FAILED, INGESTION_PENDING
 from rolecard_agent.core.observability import TraceEvent
 from rolecard_agent.core.reachout import (
@@ -190,7 +189,7 @@ def create_session(
     ctx.conn.execute(
         "INSERT INTO session_thread (thread_id, user_id, current_role_id, tool_epoch) "
         "VALUES (?, ?, ?, ?)",
-        (thread_id, DEFAULT_USER_ID, role_id, ctx.plugins.tool_epoch()),
+        (thread_id, ctx.current_user(), role_id, ctx.plugins.tool_epoch()),
     )
     ctx.conn.commit()
     ctx.roles.audit(
@@ -219,7 +218,7 @@ def open_proactive_session(
     except RoleNotFound as exc:
         raise role_error_to_http(exc) from exc
     thread_id = ensure_proactive_thread(
-        ctx.conn, role=role, user_id=DEFAULT_USER_ID, tool_epoch=ctx.plugins.tool_epoch()
+        ctx.conn, role=role, user_id=ctx.current_user(), tool_epoch=ctx.plugins.tool_epoch()
     )
     ctx.roles.audit(
         actor=actor.id, action="open_proactive_session", target=thread_id,
@@ -250,7 +249,7 @@ def proactive_session_of(
 
 @router.get("/api/session/{thread_id}")
 def get_session(thread_id: str, ctx: AppContext = Depends(get_context)) -> object:
-    row = get_thread(ctx.conn, thread_id)
+    row = get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
     try:
         role = ctx.roles.get(str(row["current_role_id"]))
         role_name: str | None = role.role_name
@@ -287,7 +286,7 @@ def patch_session(
     不等于任一档，静默吞掉会让前端显示与实际生效值不一致。
     """
     conn = ctx.conn
-    thread = get_thread(conn, thread_id)
+    thread = get_thread(conn, thread_id, user_id=ctx.current_user())
     touched = body.model_fields_set & {"role_id", "title", "model_name", "agent_mode"}
     if not touched:
         raise HTTPException(status_code=400, detail="没有任何要更新的字段。")
@@ -393,7 +392,7 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
     """
     conn = ctx.conn
     graph = ctx.app_state["graph"]
-    thread = get_thread(conn, body.thread_id)
+    thread = get_thread(conn, body.thread_id, user_id=ctx.current_user())
     role_id = str(thread["current_role_id"])
     user_id = str(thread["user_id"])
     session_model = thread["model_name"]  # 会话级覆盖（可 None），每轮实时读库
@@ -566,7 +565,7 @@ def _distill_after_turn(ctx: AppContext, *, thread_id: str, role_id: str) -> Non
     """每 N 轮的兜底提取（N=`MEMORY_EXTRACT_TURNS`，0 = 只留手动按钮）。"""
     conn = ctx.conn
     try:
-        thread = get_thread(conn, thread_id)
+        thread = get_thread(conn, thread_id, user_id=ctx.current_user())
         _, messages = _history_messages(ctx, thread_id)
         if not memory_distill.due_for_extract(
             conn, thread_id=thread_id, every=ctx.settings.memory_extract_turns, messages=messages
@@ -655,7 +654,7 @@ def distill_session(
             status_code=400,
             detail="跨会话记忆当前是关闭的 —— 先在「设置 → 记忆与任务目录」打开它。",
         )
-    thread = get_thread(ctx.conn, thread_id)
+    thread = get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
     _, messages = _history_messages(ctx, thread_id)
     role_id = str(thread["current_role_id"])
     # 手动按钮同一条口径：抽的是"上次提取之后"的那几条，不是整段。第一次点（游标 0）时
@@ -723,7 +722,7 @@ class DeleteMessagesBody(BaseModel):
 
 def _history_messages(ctx: AppContext, thread_id: str) -> tuple[dict, list[AnyMessage]]:
     """取会话的图配置与 checkpoint 消息列表（类型为 AnyMessage：可安全访问 .id）。"""
-    thread = get_thread(ctx.conn, thread_id)
+    thread = get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
     graph = ctx.app_state["graph"]
     # 这份 config 既用于 get_state / update_state，也直接喂给下面的 graph.stream ——
     # 所以步数上限在这里就必须带上（否则编辑重生成那条路仍是无上界的）。
@@ -752,7 +751,7 @@ def edit_message_and_regenerate(
     """
     config, messages = _history_messages(ctx, thread_id)
     graph = ctx.app_state["graph"]
-    thread = get_thread(ctx.conn, thread_id)
+    thread = get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
     role_id = str(thread["current_role_id"])
     session_model = thread["model_name"]
     session_mode = resolve_agent_mode(thread["agent_mode"], ctx.app_state["effective"])
@@ -837,7 +836,7 @@ def delete_messages(
 
 @router.get("/api/sessions")
 def list_sessions(ctx: AppContext = Depends(get_context)) -> list[object]:
-    """会话列表（对话页侧栏）。v1 单用户演示：只列演示身份名下的会话。"""
+    """会话列表（对话页侧栏）：只列**这次请求那个身份**名下的会话。"""
     rows = ctx.conn.execute(
         "SELECT s.thread_id, s.title, s.current_role_id AS role_id, r.role_name, "
         "s.agent_mode, s.updated_at, "
@@ -845,7 +844,7 @@ def list_sessions(ctx: AppContext = Depends(get_context)) -> list[object]:
         "FROM session_thread s "
         "LEFT JOIN role_card r ON r.role_id = s.current_role_id "
         "WHERE s.user_id = ? ORDER BY s.updated_at DESC, s.thread_id",
-        (DEFAULT_USER_ID,),
+        (ctx.current_user(),),
     ).fetchall()
     return [
         {
@@ -890,7 +889,7 @@ def get_session_turn(
     跑完的那一轮全都问不出来 —— 那些还是得靠 `/messages` 那一拍。两个端点是**分工**不是重复：
     这里管"她在说"（要把发现延迟压到 1 秒），`/messages` 管"说完了什么"（5 秒一拍足够）。
     """
-    get_thread(ctx.conn, thread_id)
+    get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
     return {"inflight": inflight_payload(thread_id)}
 
 
@@ -907,7 +906,7 @@ def get_session_messages(
     （界面本来也只从底部看起）；`total`/`truncated` 让前端能如实说明"只显示了最近 N 条"
     （审查报告 P2：无分页）。
     """
-    get_thread(ctx.conn, thread_id)
+    get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
     snapshot = ctx.app_state["graph"].get_state({"configurable": {"thread_id": thread_id}})
     raw = (snapshot.values or {}).get("messages", [])
     # tool_call_id → 入参：历史工具行要能显示"搜了什么"（单条 ToolMessage 看不到入参）。
@@ -986,7 +985,7 @@ def get_session_context(thread_id: str, ctx: AppContext = Depends(get_context)) 
     `budget` 回的是当前配置值：它可能和当时那一轮不同（操作员改过 `CONTEXT_MAX_CHARS`），
     所以两个数字一起给出，界面不会误导。
     """
-    get_thread(ctx.conn, thread_id)
+    get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
     snapshot = ctx.app_state["graph"].get_state({"configurable": {"thread_id": thread_id}})
     values = snapshot.values or {}
     return {
@@ -999,7 +998,7 @@ def get_session_context(thread_id: str, ctx: AppContext = Depends(get_context)) 
 @router.delete("/api/session/{thread_id}", status_code=204)
 def delete_session(thread_id: str, ctx: AppContext = Depends(get_context)) -> None:
     """删除会话：thread 行 + 该线程的 checkpoint / writes 一并清掉，不留孤儿。"""
-    get_thread(ctx.conn, thread_id)
+    get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
     ctx.conn.execute("DELETE FROM session_thread WHERE thread_id = ?", (thread_id,))
     for table in ("checkpoints", "writes"):  # langgraph SqliteSaver 的两张表
         ctx.conn.execute(f"DELETE FROM {table} WHERE thread_id = ?", (thread_id,))
@@ -1029,7 +1028,7 @@ def upload_report(
     """
     conn = ctx.conn
     settings = ctx.settings
-    thread = get_thread(conn, thread_id)
+    thread = get_thread(conn, thread_id, user_id=ctx.current_user())
     user_id = str(thread["user_id"])
     upload_dir = settings.upload_dir
     upload_dir.mkdir(parents=True, exist_ok=True)

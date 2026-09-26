@@ -101,6 +101,12 @@ def _host_registry_factory(
     `upload_dir` 是域**写**工具的路径边界：这些工具的 file_path 来自模型（因而也来自上传
     文档里的提示注入），不设边界就等于"读任意主机文件 + 在任意目录写"（审查报告 H1）。
     `current_user` 每次调用现取，模型永远不能指定"我是谁"。
+
+    **但"现取"取的是这份进程的身份，不是这次请求的** —— 工具是在图执行里被调的，那个闭包
+    在装配时就定好了，拿不到 `Request`。HTTP 层那边（`AppContext.current_user()`）已经改成
+    按请求解析，两边今天同值（`app_user` 只有播种那一行，陌生用户名只会回落到它），
+    所以**这不是一个今天会咬人的洞**；但给 `app_user` 加第二行之前，必须先把它接进图执行
+    （架构总览 §4.1 的 M3：活动身份收在一处）。这条分工有用例钉着，别靠注释自觉。
     """
     query = assembly.query
     if not isinstance(query, HealthQueryService):

@@ -23,6 +23,7 @@ from rolecard_agent.config import Settings
 from rolecard_agent.core.approvals import ApprovalService
 from rolecard_agent.core.bootstrap import Runtime
 from rolecard_agent.core.domain_service import DomainQueryService
+from rolecard_agent.core.identity import resolve_identity
 from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.core.model_settings import ModelSettingsService
 from rolecard_agent.core.observability import Tracer
@@ -46,14 +47,22 @@ from rolecard_agent.storage.db import ThreadLocalConnection
 DEFAULT_ROLE_ID = "general_assistant"
 
 
-def get_thread(conn: ThreadLocalConnection, thread_id: str):
-    """按 id 取会话行；不存在 404。多个 router 共用（sessions / chat / upload）。"""
+def get_thread(conn: ThreadLocalConnection, thread_id: str, *, user_id: str):
+    """按 id 取会话行；**不存在或不是你的**都 404。多个 router 共用（sessions / chat / upload）。
+
+    `user_id` 是必填的关键字参数，不是可选：一个"忘了传就不校验"的归属校验，早晚会在某个
+    新端点上被忘掉 —— 而这条判断恰恰是唯一挡在"任何 thread_id 都解析得开"面前的东西
+    （`session_thread.thread_id` 是 `s_<12 hex>`，形状可猜，归属此前没人查）。
+
+    为什么 404 而不是 403：403 等于承认"这条会话存在，只是你不该看"。会话 id 一旦泄露，
+    别人的线程就从一个不可知的空集变成一份可验证的清单，那是靶子而不是护栏。
+    """
     row = conn.execute(
         "SELECT thread_id, user_id, current_role_id, model_name, agent_mode "
         "FROM session_thread WHERE thread_id = ?",
         (thread_id,),
     ).fetchone()
-    if row is None:
+    if row is None or str(row["user_id"]) != user_id:
         raise HTTPException(status_code=404, detail=f"对话不存在：{thread_id}")
     return row
 
@@ -194,9 +203,37 @@ class AppContext:
     `settings` 读到的是**有效配置**（模型页 DB 配置 ⊕ 运行环境覆盖），不是裸 env 快照：
     OCR / 抽取 / 比对在请求时读它，「运行环境」页签保存后要立刻生效。
     `health` 只依赖域查询抽象，不持有具体域类（api 层不 import 具体域）。
+
+    `actor` / `_user_id` 是**每次请求一份**的那两个字段（`for_request` 填）：其余全是读穿
+    Runtime 的共享视图，只有这两个属于"这次是谁"。它们不能记在共享实例上，理由见 `for_request`。
     """
 
     runtime: Runtime
+    actor: Actor | None = None
+    _user_id: str | None = None
+
+    def for_request(self, request: Request) -> AppContext:
+        """给这次请求一个新视图：读同一份 Runtime，但带着**自己的** actor。
+
+        为什么不直接往 `app.state.ctx` 上写 actor：那个实例全应用共享，在它上面记"这次是谁"
+        等于让两个并发请求互相看见对方的身份 —— 与 `_begin_db_request` 那条注释说的
+        "在事件循环线程里 rollback，清的是别的线程的连接"是同一族错法（把请求级的东西
+        放在进程级的对象上）。
+        """
+        actor = getattr(request.state, "actor", None)
+        return AppContext(runtime=self.runtime, actor=cast("Actor | None", actor))
+
+    def current_user(self) -> str:
+        """这次请求读写数据所用的身份 —— 接入层**唯一**该用它的地方是取数据/落数据。
+
+        懒解析并备忘在本请求的视图上：常驻轮询那几个端点（红点计数、在飞探针）压根不问
+        身份，就不该为它们多付一次 `app_user` 查询。
+        """
+        if self._user_id is None:
+            actor = self.actor
+            known = None if actor is None or actor.is_anonymous else actor.id
+            self._user_id = resolve_identity(self.conn, known)
+        return self._user_id
 
     @property
     def settings(self) -> Settings:
@@ -273,10 +310,14 @@ class AppContext:
 
 
 def get_context(request: Request) -> AppContext:
-    """取应用上下文。端点通过 `Depends(get_context)` 拿到全部服务，不需闭包。"""
-    # `app.state` 上的属性在类型系统里是 Any（Starlette 的动态属性），这里显式收敛成
-    # AppContext —— 比留一个"看起来在防 Any 其实没生效"的 ignore 更诚实。
-    return cast("AppContext", request.app.state.ctx)
+    """取应用上下文。端点通过 `Depends(get_context)` 拿到全部服务，不需闭包。
+
+    `app.state` 上的属性在类型系统里是 Any（Starlette 的动态属性），这里显式收敛成
+    AppContext —— 比留一个"看起来在防 Any 其实没生效"的 ignore 更诚实。共享的那份再经
+    `for_request` 套一层**本请求**的视图（身份属于请求，不属于进程）。
+    """
+    shared = cast("AppContext", request.app.state.ctx)
+    return shared.for_request(request)
 
 
 def get_actor(request: Request) -> Actor:

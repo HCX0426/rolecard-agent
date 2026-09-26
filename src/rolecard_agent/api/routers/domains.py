@@ -23,7 +23,6 @@ from rolecard_agent.api.deps import (
     value_error_to_http,
 )
 from rolecard_agent.core.domain_data import DomainDataService
-from rolecard_agent.core.identity import DEFAULT_USER_ID
 
 router = APIRouter()
 
@@ -58,7 +57,7 @@ def list_domain_records(
 ) -> list[object]:
     """列出某域的通用记录（归属演示用户）。"""
     try:
-        return _domain_service(ctx).list_records(domain, DEFAULT_USER_ID)  # type: ignore[return-value]
+        return _domain_service(ctx).list_records(domain, ctx.current_user())  # type: ignore[return-value]
     except ValueError as exc:
         raise value_error_to_http(exc) from exc
 
@@ -74,7 +73,7 @@ def create_domain_record(
     try:
         row = _domain_service(ctx).create_record(
             domain,
-            DEFAULT_USER_ID,
+            ctx.current_user(),
             label=body.label,
             value_text=body.value_text,
             value_num=body.value_num,
@@ -103,7 +102,7 @@ def patch_domain_record(
     """修正一条通用记录（写入审计）。"""
     changes = body.model_dump(exclude_unset=True)
     try:
-        row = _domain_service(ctx).patch_record(domain, DEFAULT_USER_ID, record_id, changes)
+        row = _domain_service(ctx).patch_record(domain, ctx.current_user(), record_id, changes)
     except ValueError as exc:
         raise value_error_to_http(exc) from exc
     except KeyError:
@@ -125,7 +124,7 @@ def delete_domain_record(
     actor: Actor = Depends(get_actor),
 ) -> None:
     try:
-        _domain_service(ctx).delete_record(domain, DEFAULT_USER_ID, record_id)
+        _domain_service(ctx).delete_record(domain, ctx.current_user(), record_id)
     except ValueError as exc:
         raise value_error_to_http(exc) from exc
     except KeyError:
