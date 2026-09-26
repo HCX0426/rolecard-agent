@@ -14,6 +14,12 @@
   2. 静默时段：本地时间 23:00–08:00 不主动（与间隔的 UTC 分开，注释点明口径）；
   3. 堆积上限：同一角色未读 ≤ `MAX_UNREAD_PER_ROLE`，满了不再开（防轰炸）。
 
+  三道的判据与"下一次大约几点"都由 `_gate` **一处**算出（`blocked_why` 只是取它第 0 项的薄壳）：
+  分成两处迟早对不上，而界面那句话的全部意义是让人信。原因有两个出口 ——
+  `quiet_status()` 随收件箱那份负载给界面（`S-8`），调度器只在**原因变化的那一跳**发一条
+  `reachout_quiet` / `reachout_ready` 进 tracer（每 tick 一条会把轨迹刷满，
+  重复的同一句不带新信息）。
+
 ## 生成（一次单轮模型调用，所有安全纪律照旧）
 
   主动内容 = 角色人设 + 用户长期记忆 → 单轮生成，**输出必须过 guard**（fail-closed：
@@ -757,6 +763,26 @@ def blocked_why(
     `file_event=True`（任务目录有变化、该角色可被触发）时**豁免间隔档一次**——素材门控
     语义：变化值得即时播报；静默时段与未读堆积是用户级护栏，不豁免。
     """
+    return _gate(
+        role, settings, conn, now_utc=now_utc, now_local=now_local, file_event=file_event
+    )[0]
+
+
+def _gate(
+    role: RoleCard,
+    settings: Settings,
+    conn: SqlConnection,
+    *,
+    now_utc: datetime,
+    now_local: datetime,
+    file_event: bool = False,
+) -> tuple[str | None, datetime | None]:
+    """抑制层的唯一判定点：`(阻塞原因, 下一次大约能开口的 UTC 时刻)`。
+
+    为什么是一个函数返回两样而不是"原因一段、时间另一段"：那句话与那个时刻**必须同源**，
+    分两处算迟早对不上（"不足 66 分钟"配一个 40 分钟后的时刻，用户看一眼就再也不信这个界面）。
+    第二项 None = 这不是"等一会儿就好"的事（未读封顶要他回话或划掉、正在对话要等这一轮跑完）。
+    """
     unread = _unread_for_role(conn, role.role_id)
     streak = _unreplied_streak(conn, role.role_id)
     last = _last_speech_utc(conn, role.role_id)
@@ -767,18 +793,60 @@ def blocked_why(
         elapsed = now_utc - last
         if elapsed < timedelta(minutes=need):
             backoff = f"，她连着 {streak} 条没被回已退避" if streak else ""
-            return f"距上次说话不足 {need:.0f} 分钟{backoff}"
+            return (f"距上次说话不足 {need:.0f} 分钟{backoff}", last + timedelta(minutes=need))
     if now_local.hour >= QUIET_HOURS_START or now_local.hour < QUIET_HOURS_END:
-        return "处于静默时段（23:00–08:00）"
+        end = now_local.replace(hour=QUIET_HOURS_END, minute=0, second=0, microsecond=0)
+        if end <= now_local:  # 23:00 之后那一段：要等到明天早上 8 点
+            end += timedelta(days=1)
+        return "处于静默时段（23:00–08:00）", end.astimezone(UTC)
     if unread >= MAX_UNREAD_PER_ROLE:
-        return "未读堆积已达上限"
+        return "未读堆积已达上限", None
     # **正在聊就别插话**（审计 #12 的第二层）：这一轮用户的话还在图上跑，此时投递的那句
     # 会和它抢同一份检查点（`deliver_proactive` 那侧也有锁兜底，但"不打断"本来就是对的语义）。
     # 判据用锁的持有状态而不是"最后一条消息的时间"：后者在用户回完话、她还没答的间隙里是 False，
     # 而那恰好是最不该插嘴的一刻。
     if thread_is_busy(proactive_thread_id(role.role_id)):
-        return "这条会话正在对话中"
-    return None
+        return "这条会话正在对话中", None
+    return None, None
+
+
+def quiet_status(
+    roles: Sequence[RoleCard],
+    settings: Settings,
+    conn: SqlConnection,
+    *,
+    now_utc: datetime | None = None,
+    now_local: datetime | None = None,
+) -> list[dict[str, object]]:
+    """每个"有资格主动"的角色此刻为什么静默（`S-8`）。空表 = 没有任何角色开了主动开口。
+
+    口径要说清两件事：
+    * 这里**不判全局总闸**（调用方的路由是使用者档，读不到 operator 才有的热切视图，
+      而且"总闸关了"这件事界面上本来就看得见）；只按角色卡的 `reachout_enabled` 过滤，
+      与调度器同一句谓词。
+    * `why=None` 是"她现在随时能开口"，不是"坏了/没数据"。界面上这一格要写成肯定句，
+      否则用户读成"系统没算出来"。
+    """
+    stamp_utc = now_utc or datetime.now(UTC)
+    # **带时区的本地时刻**：只有 `.hour` 的比较不看 tz，但"下一次大约 08:00"要换算成 UTC 给
+    # 界面显示， naive 的 `astimezone` 会按跑进程的机器猜一遍。
+    stamp_local = now_local or datetime.now().astimezone()
+    out: list[dict[str, object]] = []
+    for role in roles:
+        if not role.reachout_enabled:
+            continue
+        why, next_ok = _gate(role, settings, conn, now_utc=stamp_utc, now_local=stamp_local)
+        out.append(
+            {
+                "role_id": role.role_id,
+                "role_name": role.role_name,
+                "why": why,
+                "next_ok_at": None if next_ok is None else next_ok.isoformat(),
+                "streak": _unreplied_streak(conn, role.role_id),
+                "unread": _unread_for_role(conn, role.role_id),
+            }
+        )
+    return out
 
 
 class ReachoutDraft(NamedTuple):
@@ -1039,6 +1107,9 @@ class ReachoutScheduler:
         # 第五由头扫描用的是**最近一窗**而不是"没接住那截"（R26-03）。宿主没给独立取法时
         # 退回 `thread_lines`：宁可这一源退化成"照样扫不到东西"，也不要新签名逼所有宿主改。
         self._thread_window = thread_window or thread_lines
+        # 每个角色"上一次看到的静默原因"（"" = 可开口）。只是用来判"原因变了没有"，
+        # 进程重启就清零 —— 重启后第一次 tick 重新报一句当前状态，那是对的，不是丢消息。
+        self._quiet: dict[str, str] = {}
         self._stop = threading.Event()
 
     # -- 生命周期 -------------------------------------------------------
@@ -1104,14 +1175,28 @@ class ReachoutScheduler:
             return 0
         for role in candidates:
             can_file = file_events is not None and role.file_watch_enabled
-            if blocked_why(
+            why = blocked_why(
                 role,
                 settings,
                 self._conn,
                 now_utc=stamp_utc,
                 now_local=stamp_local,
                 file_event=can_file,
-            ):
+            )
+            # **静默要有出口**（`S-8`）：这句原因以前被 `if …: continue` 直接丢掉，于是
+            # "她最近怎么不找我了"在日志里查不到任何线索。只在**原因变了的那一跳**留痕 ——
+            # 每 tick 一条会把轨迹刷满（30s × 角色数），而同一句话重复一百遍不带新信息。
+            if self._quiet.get(role.role_id, "") != (why or ""):
+                self._quiet[role.role_id] = why or ""
+                self._tracer.emit(
+                    TraceEvent(
+                        event="reachout_quiet" if why else "reachout_ready",
+                        node="reachout",
+                        role_id=role.role_id,
+                        detail={"why": why or "现在随时能开口"},
+                    )
+                )
+            if why:
                 continue
             # 关系驱动：按角色状态评估触发源，取第一个命中者决定"以什么口吻开口"。
             # file_event 居链首（素材门控：有变化先说变化）；"timer" 是基线触发。

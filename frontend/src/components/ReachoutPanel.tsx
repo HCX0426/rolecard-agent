@@ -15,6 +15,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { api, type ReachoutsPage, type ReachoutRow } from "../api";
+import { quietLine } from "../lib/quiet";
 import { useConfirm } from "../hooks/useConfirm";
 
 const DAY_MS = 86_400_000;
@@ -215,6 +216,9 @@ export default function ReachoutPanel({
   if (!open) return null;
 
   const isOpen = (s: Stack) => toggled[s.key] ?? (s.items.length === 1 || s.unread > 0);
+  // 「她此刻为什么静默」（`S-8`）：读的是这一份负载里后端已经算好的那格，不另发一次请求。
+  // 跟着「只看某角色」一起过滤 —— 否则筛了一个人却看见三个人的状态，那一格就不可信了。
+  const quietRows = (data?.quiet ?? []).filter((q) => !roleFilter || q.role_id === roleFilter);
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/40" onMouseDown={onClose}>
@@ -244,6 +248,21 @@ export default function ReachoutPanel({
             </button>
           </span>
         </div>
+        {!!quietRows.length && (
+          <div
+            data-testid="quiet-status"
+            className="border-b border-slate-100 px-4 py-2 dark:border-slate-700"
+          >
+            {quietRows.map((q) => (
+              <p
+                key={q.role_id}
+                className="text-[11px] leading-4 text-slate-400 dark:text-slate-500"
+              >
+                {quietLine(q)}
+              </p>
+            ))}
+          </div>
+        )}
         {roles.length > 1 && (
           <div className="border-b border-slate-100 px-3 py-2 dark:border-slate-700">
             <label className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">

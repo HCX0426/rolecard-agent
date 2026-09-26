@@ -196,3 +196,75 @@ describe("收件箱折叠（角色 × 时间桶）", () => {
     expect(screen.queryByText(/2 条/)).toBeNull();
   });
 });
+
+// `S-8`：闸门那句"为什么静默"以前只在后端 `if …: continue` 里被丢掉，界面上只会表现成
+// "她最近怎么不找我了"。现在它跟着收件箱那份负载一起回来（不另开一次轮询）。
+describe("抽屉那一格「她此刻为什么静默」", () => {
+  const quiet = [
+    {
+      role_id: "general_assistant",
+      role_name: "通用助手",
+      why: "距上次说话不足 66 分钟，她连着 1 条没被回已退避",
+      next_ok_at: new Date(Date.now() + 40 * 60_000).toISOString(),
+      streak: 1,
+      unread: 1,
+    },
+    {
+      role_id: "archivist",
+      role_name: "医学档案管理员",
+      why: "未读堆积已达上限",
+      next_ok_at: null,
+      streak: 0,
+      unread: 2,
+    },
+  ];
+
+  it("后端带了 quiet 就画一行，措辞是闸门原话 + 下一次大约几点", async () => {
+    apiMock.getReachouts.mockResolvedValue(page({ quiet }));
+    renderPanel();
+    const box = await screen.findByTestId("quiet-status");
+    expect(box.textContent).toContain("通用助手 静默中");
+    expect(box.textContent).toContain("距上次说话不足 66 分钟");
+    expect(box.textContent).toContain("下一次大约");
+    // 给不出时刻的那种阻塞（要他回话）不编时刻
+    expect(box.textContent).toContain("未读堆积已达上限");
+    expect((box.textContent || "").split("下一次大约").length - 1).toBe(1);
+  });
+
+  it("没有 quiet（没人开主动资格 / 老后端）时不画空壳", async () => {
+    renderPanel(); // 默认 stub 不带 quiet
+    expect(await screen.findByText("今天腰还酸吗？")).toBeTruthy();
+    expect(screen.queryByTestId("quiet-status")).toBeNull();
+  });
+
+  it("筛了「只看」某个角色，这一格也跟着只剩他 —— 否则筛一个人看三个人的状态", async () => {
+    // 后端按 `role_id` 过滤 `quiet`（判据见 `reachout._page`），前端也要跟着只画筛中那个 ——
+    // 两边各筛一半，症状就是"筛了一个人却看见三个人的状态"。
+    apiMock.getReachouts.mockImplementation((role_id?: string) =>
+      Promise.resolve(
+        role_id
+          ? page({ quiet: quiet.filter((q) => q.role_id === role_id) })
+          : page({
+              quiet,
+              items: [
+                row(),
+                row({
+                  id: 2,
+                  role_id: "archivist",
+                  role_name: "医学档案管理员",
+                  text: "管理员的那条",
+                }),
+              ],
+            }),
+      ),
+    );
+    renderPanel();
+    await screen.findByTestId("quiet-status"); // 等首轮异步加载画出来，否则 DOM 里还没有筛选下拉
+    const select = document.querySelector("select");
+    expect(select).toBeTruthy();
+    fireEvent.change(select as HTMLSelectElement, { target: { value: "archivist" } });
+    const box = await screen.findByTestId("quiet-status");
+    expect(box.textContent).toContain("未读堆积已达上限");
+    expect(box.textContent).not.toContain("通用助手");
+  });
+});

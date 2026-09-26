@@ -459,6 +459,21 @@ export interface ReachoutRow {
   thread_id: string | null;
 }
 
+/** 一个"有资格主动开口"的角色此刻的状态（`S-8`）。 */
+export interface QuietStatus {
+  role_id: string;
+  role_name: string;
+  /** 闸门那句原文（「距上次说话不足 66 分钟，她连着 1 条没被回已退避」…）。
+   *  null = **她现在随时能开口** —— 是肯定句，不是"算不出来"，界面要照这个口径写。 */
+  why: string | null;
+  /** 下一次大约能开口的时刻（ISO，带时区）。null = 这不是"等一会儿就好"的事
+   *  （未读封顶要他回话或划掉、正在对话要等这一轮跑完）。 */
+  next_ok_at: string | null;
+  /** 她连着几条开口而对方没回（退避的指数）。 */
+  streak: number;
+  unread: number;
+}
+
 export interface ReachoutsPage {
   items: ReachoutRow[];
   unread: number;
@@ -468,6 +483,9 @@ export interface ReachoutsPage {
   file_watch_pending?: number;
   /** 收件箱折叠窗口（天，1/3/7）：同一角色在一个窗口里的开口折成一行。 */
   merge_days?: number;
+  /** 每个开了主动资格的角色"此刻为什么静默"（`S-8`）。跟着这一份负载走：抽屉本来
+   *  每 3 秒就在读它，为了一句话再开一条 `/status` 等于多一次轮询 + 一个新的时刻源。 */
+  quiet?: QuietStatus[];
 }
 
 // ---- 事件簿（docs/主动消息与记忆设计稿.md §6）---------------------------------------------

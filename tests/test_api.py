@@ -584,6 +584,27 @@ def test_reachout_role_switch_and_master_runtime(client: TestClient) -> None:
     client.delete(f"/api/session/{tid}")
 
 
+def test_reachouts_page_carries_why_each_role_is_quiet(client: TestClient) -> None:
+    """`S-8`：收件箱那份负载里带一格"她此刻为什么静默"，抽屉与运行环境页共用它。
+
+    为什么不单开 `/api/reachouts/status`：抽屉本来每 3 秒就在读这个端点，再开一条等于
+    为了一句话新增一次轮询、一个新路由分级、一处会漂移的时刻源（判据见 `reachout._gate`）。
+    """
+    client.patch("/api/roles/general_assistant", json={"reachout_enabled": True})
+    quiet = client.get("/api/reachouts").json()["quiet"]
+    row = next(r for r in quiet if r["role_id"] == "general_assistant")
+    assert row["role_name"]
+    assert set(row) == {
+        "role_id", "role_name", "why", "next_ok_at", "streak", "unread",
+    }
+    # 内置角色出厂静默 ⇒ 不该出现在这一格里（出现了就是承诺"她本来会来找你"）
+    client.patch("/api/roles/general_assistant", json={"reachout_enabled": False})
+    ids = [r["role_id"] for r in client.get("/api/reachouts").json()["quiet"]]
+    assert "general_assistant" not in ids
+    # 标记已读/清空那几条写路径回的是同一份形状，前端只认一个读法
+    assert "quiet" in client.post("/api/reachouts/read-all").json()
+
+
 def test_reachouts_list_and_mark_read_404(client: TestClient) -> None:
     """收件箱读取路径：列表形状（含 unread 计数 + 折叠窗口）；标记**不存在**的记录 → 404。
 

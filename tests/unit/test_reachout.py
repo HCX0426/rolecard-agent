@@ -6,7 +6,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+import re
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 from langchain_core.messages import AIMessage
@@ -149,6 +150,95 @@ def test_blocked_by_quiet_hours(conn) -> None:
     local = datetime(2026, 9, 18, 0, 30)  # 本地 00:30 = 静默时段
     reason = svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local)
     assert reason is not None and "静默" in reason
+
+
+# ---------------------------------------------------------------- S-8：静默的出口
+
+
+def test_quiet_status_quotes_the_same_sentence_the_gate_uses(conn) -> None:
+    """界面那句原因与闸门那句**必须同源**（同一个函数算出来的），并且给的时刻要说得通。
+
+    这条断的是"两处的话迟早对不上"：分两段实现，就会有一句"不足 66 分钟"配一个 40 分钟后的
+    时刻 —— 用户看一眼就再也不信这个界面，而那一格的全部意义就是让人信。
+    """
+    _seed_last(conn, "active", minutes_ago=10)
+    utc, local = _now()
+    st = _settings()
+    row = svc.quiet_status([_role()], st, conn, now_utc=utc, now_local=local)[0]
+    reason = svc.blocked_why(_role(), st, conn, now_utc=utc, now_local=local)
+    assert reason is not None and row["why"] == reason
+    minutes = int(re.search(r"不足 (\d+) 分钟", reason).group(1))
+    nxt = datetime.fromisoformat(str(row["next_ok_at"])).astimezone(_UTC)
+    left = (nxt - utc).total_seconds() / 60.0
+    # 给的时刻必须与那句"不足 N 分钟"对得上（同源判据的另一半）
+    assert 0 < left <= minutes + 1, f"还剩 {left:.1f} 分，说要等 {minutes} 分"
+
+
+def test_quiet_status_says_ready_in_the_positive(conn) -> None:
+    """没被挡住时 `why=None` = "她现在随时能开口"，界面要写成肯定句而不是空白。"""
+    utc, local = _now()
+    row = svc.quiet_status([_role()], _settings(), conn, now_utc=utc, now_local=local)[0]
+    assert row["why"] is None and row["next_ok_at"] is None
+    assert row["streak"] == 0 and row["unread"] == 0
+
+
+def test_quiet_status_only_lists_roles_allowed_to_open(conn) -> None:
+    """没开主动资格的角色**不该出现在这一格里** —— 出现就等于承诺"她本来会来找你"。"""
+    utc, local = _now()
+    rows = svc.quiet_status(
+        [_role(reachout_enabled=False), _role()], _settings(), conn, now_utc=utc, now_local=local
+    )
+    assert [r["role_id"] for r in rows] == ["active"]
+
+
+def test_quiet_hours_point_at_the_next_morning(conn) -> None:
+    """静默时段那一格给的是**当地 08:00**（换算回 UTC），不是"不知道"。
+
+    凌晨那一段（00:30）落到**当天** 08:00，夜里那一段（23:30）必须落到**明天** —— 拿
+    "今天 08:00"当答案会给出一个已经过去的时刻，界面就成了"下一次大约 08:00"而那时她早该说话了。
+    """
+    cst = timezone(timedelta(hours=8))
+    roles, st = [_role()], _settings()
+
+    def at_local(local: datetime) -> dict[str, object]:
+        return svc.quiet_status(roles, st, conn, now_utc=local.astimezone(UTC), now_local=local)[0]
+
+    assert at_local(datetime(2026, 9, 17, 20, 30, tzinfo=cst))["why"] is None, "20:30 不该算静默"
+
+    early = at_local(datetime(2026, 9, 18, 2, 30, tzinfo=cst))
+    assert early["why"] is not None and "静默" in early["why"]
+    morning = datetime.fromisoformat(str(early["next_ok_at"])).astimezone(cst)
+    assert (morning.hour, morning.day) == (8, 18), morning
+
+    late = at_local(datetime(2026, 9, 17, 23, 30, tzinfo=cst))
+    assert late["why"] is not None and "静默" in late["why"]
+    nxt = datetime.fromisoformat(str(late["next_ok_at"]))
+    assert nxt.astimezone(cst).day == 18, f"23:30 之后要等到**明天**早上，给的是 {nxt}"
+    assert nxt > datetime(2026, 9, 17, 15, 30, tzinfo=_UTC), "给出的时刻必须在现在之后"
+
+
+def test_scheduler_reports_a_quiet_reason_once_per_change(conn) -> None:
+    """留痕只在**原因变了的那一跳**：每 tick 一条会把轨迹刷满，而重复的同一句不带新信息。"""
+    tracer = _Tracer()
+    scheduler = ReachoutScheduler(
+        settings_provider=lambda: _settings(),
+        roles=_Roles([_role()]),  # type: ignore[arg-type]
+        model_resolver=lambda _n: _FakeModel(AIMessage(content="不该发")),
+        conn=conn,
+        tracer=tracer,  # type: ignore[arg-type]
+    )
+    _seed_last(conn, "active", minutes_ago=5)  # 刚说过话 ⇒ 间隔档拦住
+    utc, local = _now()
+    for _ in range(3):
+        assert scheduler.tick_once(now_utc=utc, now_local=local) == 0
+    quiet = [e for e in tracer.events if getattr(e, "event", "") == "reachout_quiet"]
+    assert len(quiet) == 1, "同一句原因只该报一次"
+    assert "距上次说话不足" in str(quiet[0].detail["why"])
+    # 原因换了（这次是"随时能开口"）要另报一条 ready，别让人以为它还在静默
+    conn.execute("DELETE FROM agent_reachout")
+    conn.commit()
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
+    assert [getattr(e, "event", "") for e in tracer.events].count("reachout_ready") == 1
 
 
 def test_blocked_by_unread_backlog(conn) -> None:

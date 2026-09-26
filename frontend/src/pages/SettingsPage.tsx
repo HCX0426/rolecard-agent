@@ -9,6 +9,7 @@ import {
   type AuditRow,
   type ModelSettings,
   type PluginRow,
+  type QuietStatus,
   type RoleCard,
   type RuntimeItem,
   type RuntimePayload,
@@ -17,6 +18,7 @@ import {
   type WorkspaceDir,
 } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
+import { quietLine } from "../lib/quiet";
 import { Button, Card } from "../components/ui";
 
 // 设置页子页签：模型（凭据组 + 模型行，见 components/ModelsPanel）/ 服务（运行时状态与降级
@@ -1155,6 +1157,17 @@ function RuntimePanel() {
   const [err, setErr] = useState("");
   const [saved, setSaved] = useState("");
   const [busy, setBusy] = useState(false);
+  // 「她此刻为什么静默」（`S-8`）：读收件箱那份负载里后端算好的 `quiet`，不自己推时间。
+  const [quiet, setQuiet] = useState<QuietStatus[]>([]);
+
+  const loadQuiet = useCallback(
+    () =>
+      api
+        .get<{ quiet?: QuietStatus[] }>("/api/reachouts")
+        .then((p) => setQuiet(p.quiet ?? []))
+        .catch(() => setQuiet([])), // 这一格读不到就不显示，不该把整页报成"加载失败"
+    [],
+  );
 
   const absorb = useCallback((p: RuntimePayload) => {
     setData(p);
@@ -1177,7 +1190,8 @@ function RuntimePanel() {
       .get<RuntimePayload>("/api/settings/runtime")
       .then(absorb)
       .catch((e) => setErr(`加载失败：${(e as Error).message}`));
-  }, [absorb]);
+    void loadQuiet();
+  }, [absorb, loadQuiet]);
 
   const changedCount = Object.keys(draft).filter((k) => draft[k] !== baseline[k]).length;
 
@@ -1191,6 +1205,8 @@ function RuntimePanel() {
     setErr("");
     try {
       absorb(await api.put<RuntimePayload>("/api/settings/runtime", { values }));
+      // 静默状态要跟着刷一次：改了「开口间隔」，那句"不足 N 分钟"与下一次的时刻都是它算的。
+      void loadQuiet();
       setSaved("已保存并生效");
       setTimeout(() => setSaved(""), 3000);
     } catch (e) {
@@ -1335,6 +1351,20 @@ function RuntimePanel() {
               ))}
             </tbody>
           </table>
+          {/* 「她此刻为什么静默」只挂在主动开口那一组下面 —— 这一格说的就是上面那三个开关
+              此刻的效果。文案与时刻都来自后端（`core/reachout.quiet_status`），前端不自己推。 */}
+          {g.key === "reachout" && quiet.length > 0 && (
+            <ul
+              data-testid="quiet-status"
+              className="mt-3 space-y-1 border-t border-slate-100 pt-2 dark:border-slate-700"
+            >
+              {quiet.map((q) => (
+                <li key={q.role_id} className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {quietLine(q)}
+                </li>
+              ))}
+            </ul>
+          )}
         </Card>
       ))}
     </div>

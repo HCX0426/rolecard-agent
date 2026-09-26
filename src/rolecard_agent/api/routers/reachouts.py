@@ -22,16 +22,22 @@ def _pending(ctx: AppContext) -> int:
 
 
 def _page(ctx: AppContext, *, role_id: str | None = None) -> dict[str, object]:
-    """收件箱的响应 = 列表 + 折叠窗口（天）。
+    """收件箱的响应 = 列表 + 折叠窗口（天）+ **此刻谁为什么静默**。
 
     `merge_days` 为什么在这里给而不是让前端去读「运行环境」：那条路由是 **operator 档**
     （`api/access.py`），让使用者面的收件箱去读它等于给自己开一个越权依赖；而折叠窗口
     本来就是"这一摞怎么显示"的一部分，跟着列表一起给最省。分组本身仍然只做在前端
     （后端不算第二份分组逻辑，见 docs/主动消息与记忆设计稿.md §1）。
+
+    `quiet`（`S-8`）跟着这一份负载走是同一个理由的延伸：**抽屉本来每 3 秒就在读这个端点**，
+    再开一条 `/status` 就等于为一句话新增一次轮询、一个新路由分级、一处会漂移的时刻源。
+    读的是 `ctx.settings`（= 有效配置，运行环境页的热切值已折进来）—— 与调度器每 tick 现取的
+    是同一份，所以界面那句"不足 66 分钟"和它真正等的时长不可能对不上。
     """
     return {
         **svc.list_reachouts(ctx.conn, role_id=role_id, file_watch_pending=_pending(ctx)),
         "merge_days": ctx.settings.reachout_merge_days,
+        "quiet": svc.quiet_status(ctx.roles.list_roles(), ctx.settings, ctx.conn),
     }
 
 

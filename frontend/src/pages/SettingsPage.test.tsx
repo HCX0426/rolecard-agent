@@ -591,3 +591,96 @@ describe("记忆卡：改一条 / 合两条（S-3 界面那半）", () => {
     expect(await screen.findByText(/钉住状态不跟着搬/)).toBeTruthy();
   });
 });
+
+// `S-8`：运行环境页那一格「她此刻为什么静默」。它读的是收件箱那份负载里的 `quiet`
+// （后端算的），前端不自己推时间 —— 这一格的全部意义是让人信，猜的时刻一次不准就再也不信。
+describe("运行环境页的「她此刻为什么静默」", () => {
+  const quietRow = {
+    role_id: "elysia",
+    role_name: "爱莉希雅",
+    why: "距上次说话不足 66 分钟，她连着 1 条没被回已退避",
+    next_ok_at: new Date(Date.now() + 40 * 60_000).toISOString(),
+    streak: 1,
+    unread: 1,
+  };
+
+  const runtimeWithInterval = {
+    note: "",
+    groups: [
+      {
+        key: "reachout",
+        label: "主动开口",
+        items: [
+          {
+            key: "REACHOUT_INTERVAL_MINUTES",
+            field: "reachout_interval_minutes",
+            label: "开口间隔（分钟）",
+            value: "60",
+            default: "60",
+            changed: true,
+            overridden: true,
+            override_value: "60",
+            kind: "int",
+            choices: null,
+          },
+        ],
+      },
+    ],
+  };
+
+  function stubReachouts(quiet: unknown[] | undefined) {
+    const base = apiMock.get.getMockImplementation()!;
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/reachouts") return { items: [], unread: 0, quiet };
+      if (url === "/api/settings/runtime") return runtimeWithInterval;
+      return base(url);
+    });
+    // 保存也要回一份完整的 payload：面板拿它重刷草稿，给 undefined 就是 `p.groups.map` 炸。
+    apiMock.put.mockResolvedValue(runtimeWithInterval);
+  }
+
+  it("挂在「主动开口」那一组下面，一句原因 + 下一次大约几点", async () => {
+    stubReachouts([quietRow]);
+    render(
+      <SettingsPage onOpenChat={() => {}} theme="light" onToggleTheme={() => {}} />,
+    );
+    const box = await screen.findByTestId("quiet-status");
+    expect(box.textContent).toContain("爱莉希雅 静默中");
+    expect(box.textContent).toContain("距上次说话不足 66 分钟");
+    expect(box.textContent).toContain("下一次大约");
+    // 只挂一组：给「联网」「静默时段」那些组也各画一行，就成了同一句话在页面上到处复读
+    expect(screen.getAllByTestId("quiet-status")).toHaveLength(1);
+  });
+
+  it("后端没给 quiet（老后端 / 没人开主动资格）时不画空壳", async () => {
+    stubReachouts(undefined);
+    render(
+      <SettingsPage onOpenChat={() => {}} theme="light" onToggleTheme={() => {}} />,
+    );
+    expect((await screen.findAllByText("主动开口")).length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("quiet-status")).toBeNull();
+  });
+
+  it("改了「开口间隔」保存后要重读那一格 —— 那句分钟数与时刻都是它算的", async () => {
+    stubReachouts([quietRow]);
+    render(
+      <SettingsPage onOpenChat={() => {}} theme="light" onToggleTheme={() => {}} />,
+    );
+    await screen.findByTestId("quiet-status");
+    const input = screen.getByDisplayValue("60");
+    fireEvent.change(input, { target: { value: "90" } });
+    // 各页签是"同时渲染 + CSS 隐藏"，所以按钮名要挑唯一的那个：运行环境的保存键
+    // 带着改动条数（保存（1 项修改）），别的页签只写"保存"。
+    fireEvent.click(screen.getByRole("button", { name: /保存（/ }));
+    await waitFor(() =>
+      expect(apiMock.put).toHaveBeenCalledWith(
+        "/api/settings/runtime",
+        // 运行环境页发的是 **env 名**（REACHOUT_INTERVAL_MINUTES），「记忆与任务目录」那个
+        // 单写点发的是 field 名 —— 两个写点两套键，抄错的那一边看起来总是"绿的假用例"。
+        expect.objectContaining({ values: { REACHOUT_INTERVAL_MINUTES: "90" } }),
+      ),
+    );
+    const calls = apiMock.get.mock.calls.filter((c) => c[0] === "/api/reachouts").length;
+    expect(calls).toBeGreaterThanOrEqual(2);
+  });
+});
