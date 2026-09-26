@@ -197,9 +197,13 @@ def _init_model(
     if style == "native" and backend.repeat_penalty is not None:
         kwargs["repeat_penalty"] = backend.repeat_penalty
     # 思考（reasoning）模式只对**显式列出**的思考模型开启（MODEL_THINKING_MODELS），
-    # 且受总开关 MODEL_THINKING=auto|off 管制（off = 名单内也不开，临时不想要思考
-    # token 时用）：对不支持的模型传 reasoning=True 会直接 400（实测 qwen2.5:7b），
-    # 且思考 token 会显著拉长首字延迟 —— 所以按模型名精确启用 + 总闸兜底。
+    # 且受总开关 MODEL_THINKING=auto|off 管制：对不支持的模型传 reasoning=True 会直接 400
+    # （实测 qwen2.5:7b），所以按模型名精确启用 + 总闸兜底。
+    # **但这一档管的是"看不看得见"，从来不是"想不想"**：09-26 直连 Ollama 实测
+    # `think:false`、提示里写 `/no_think`、以及根本不传 `think`，qwen3-vl:8b 三样都在想
+    # （思考字符 814~2465，首字 8.3~25.1 s；同一条模型不在名单里时一次回话生成 366~3809
+    # token 而可见正文只有 51~77 字）。所以别把 off 当性能开关 —— 想少等只能换模型，
+    # 想让她"看起来在打字"才把模型列进名单（见 §8.8 与本轮 R26-29）。
     # 名单归一：字段声明是 list[str]，但运行环境覆盖路径经 model_copy 不过 pydantic 校验 →
     # 运行时可能是逗号串，直接 `x in str` 会退化成子串匹配（"qwen3" 命中 "qwen3-vl:8b"）。
     # 归一交给 _thinking_model_list（入参 object，绕开 mypy 对 isinstance(str) 的"不可达"误判）。

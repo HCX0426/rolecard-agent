@@ -144,14 +144,16 @@ class Settings(BaseModel):
     # `reasoning=True` 调用（langchain-ollama ≥1.1 把思考内容放进
     # AIMessage.additional_kwargs['reasoning_content']，由 SSE 的 thinking 事件透出）。
     # 为什么按模型名而不是全局开关：对不支持思考的模型传 reasoning=True 会直接 400
-    # （实测 qwen2.5:7b），而思考 token 会显著拉长首字延迟 —— 所以只对显式列出的
-    # 思考模型启用。例：MODEL_THINKING_MODELS=qwen3:8b
+    # （实测 qwen2.5:7b）。**列进来不会让她变慢，不列也不会变快** —— 思考模型在引擎侧
+    # 一律在想（`think:false` 与 `/no_think` 实测都关不掉，见 09-26 轮 R26-29），这一档
+    # 只决定那份思考**显不显示**（不显示时它照旧生成、照旧占首字，只是屏幕上看不见）。
+    # 例：MODEL_THINKING_MODELS=qwen3:8b
     model_thinking_models: list[str] = Field(default_factory=list)
 
     # 思考模式**总开关**（用户 2026-09-17）：auto = 按 MODEL_THINKING_MODELS 名单自动；
-    # off = 名单内的模型也不开 reasoning（临时不想要思考 token / 首字延迟时用，无需
-    # 改名单）。刻意没有裸 "on"：对不在名单里的模型传 reasoning=True 会直接 400，
-    # 想给新模型开思考 = 把它加进 MODEL_THINKING_MODELS（名单本身就是安全护栏）。
+    # off = 名单内的模型也不传 reasoning —— 那是**把它藏起来**，不是把它停掉（性能上
+    # 零收益，见上面那条）。刻意没有裸 "on"：对不在名单里的模型传 reasoning=True 会直接
+    # 400，想给新模型开思考 = 把它加进 MODEL_THINKING_MODELS（名单本身就是安全护栏）。
     model_thinking: str = "auto"
 
     # 送给模型的**历史字符预算**（近似上下文窗口，见 core/nodes.trim_history）。
