@@ -1,7 +1,7 @@
 /** 上传 → 解析 → 入索引 → 结构化抽取 这条链路（从 ChatPage 抽出）。 */
 import { useState } from "react";
 
-import { api, type ExtractResult, type MessagePage } from "../api";
+import { api, type ExtractResult } from "../api";
 import { describeExtract, describeUpload } from "../lib/uploadOutcome";
 import type { Tone } from "../components/Toast";
 
@@ -72,10 +72,4 @@ export function useUploadFlow({
   }
 
   return { uploading, handleUpload };
-}
-
-/** 重新拉取某个会话的历史（上传 / 删除后都要用）。 */
-export async function fetchMessages(threadId: string) {
-  const page = await api.get<MessagePage>(`/api/session/${threadId}/messages`);
-  return page.messages;
 }

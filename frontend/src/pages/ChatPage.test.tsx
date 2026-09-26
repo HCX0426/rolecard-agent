@@ -57,7 +57,7 @@ function stubMountCalls(
     if (url === "/api/roles") return [];
     if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
     if (url === "/api/settings/model-providers") return { providers: [] };
-    if (url.endsWith("/messages")) return { messages: replay, total: replay.length, limit: 500, truncated: false };
+    if (url.includes("/messages")) return { messages: replay, total: replay.length, limit: 500, truncated: false };
     if (url.endsWith("/context")) return contextOverride;
     if (url.startsWith("/api/session/")) return { model_name: null };
     return {};
@@ -272,7 +272,7 @@ describe("ChatPage 流式渲染", () => {
       if (url === "/api/roles") return [];
       if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
       if (url === "/api/settings/model-providers") return { providers: [] };
-      if (url.endsWith("/messages")) return { messages: replay, total: replay.length, limit: 500, truncated: false };
+      if (url.includes("/messages")) return { messages: replay, total: replay.length, limit: 500, truncated: false };
       if (url.endsWith("/context")) return { trimmed: 0, kept: 0, budget: 24000 };
       return { model_name: null };
     });
@@ -458,6 +458,88 @@ describe("ChatPage 模型菜单能力位徽章（Batch 6：supports_tools）", (
     fireEvent.click(screen.getByTitle(/采样惩罚/));
     expect(await screen.findByText("重复惩罚")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "1.2" }).length).toBeGreaterThan(0);
+  });
+});
+
+describe("ChatPage 跟着服务端走（在桌宠上回一句，切回控制台就该看到）", () => {
+  const THREAD = "s_x";
+
+  /** 一条会话 + 一个"服务端的真相"。`bump()` 模拟**别处**（桌宠面板）往同一条线程里写字。 */
+  function stubLiveSession() {
+    let server: { id?: string; role: string; content: string }[] = [
+      { id: "m1", role: "user", content: "第一句" },
+    ];
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/sessions")
+        return [
+          {
+            thread_id: THREAD,
+            title: "旧的",
+            role_id: "ga",
+            role_name: "通用助手",
+            updated_at: "2026-09-26 04:00:00",
+            agent_mode: "chat",
+            is_proactive: false,
+            is_blank: false,
+          },
+        ];
+      if (url === "/api/roles") return [];
+      if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
+      if (url === "/api/settings/model-providers") return { providers: [] };
+      if (url.includes("/messages")) {
+        const probe = url.includes("limit=1");
+        return {
+          messages: probe ? server.slice(-1) : [...server],
+          total: server.length,
+          limit: probe ? 1 : 500,
+          truncated: false,
+        };
+      }
+      if (url.endsWith("/context")) return { trimmed: 0, kept: 0, budget: 24000 };
+      if (url.startsWith(`/api/session/${THREAD}`)) return { model_name: null, agent_mode: "chat" };
+      return {};
+    });
+    return {
+      bump: () => {
+        server = [...server, { id: "m2", role: "assistant", content: "她在桌宠上答的那句" }];
+      },
+      /** 全量重读的次数（探针是 ?limit=1，不算）。 */
+      fullReads: () =>
+        apiMock.get.mock.calls.filter(
+          ([u]) => String(u).startsWith(`/api/session/${THREAD}/messages`) && !String(u).includes("limit=1"),
+        ).length,
+    };
+  }
+
+  async function mountAndOpen() {
+    const h = stubLiveSession();
+    render(
+      <ToastProvider>
+        <ChatPage />
+      </ToastProvider>,
+    );
+    await vi.waitFor(() => expect(screen.getByText("旧的")).toBeTruthy());
+    fireEvent.click(screen.getByText("旧的"));
+    await vi.waitFor(() => expect(screen.getByText("第一句")).toBeTruthy());
+    return h;
+  }
+
+  it("服务端条数一变就重读并画上新的那句；数字没变就一次都不重读", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = await mountAndOpen();
+      const before = h.fullReads();
+      await vi.advanceTimersByTimeAsync(12_000);
+      // 什么都没变的 12 秒里：只发探针，不重读、不刷界面（那会清掉滚动位置与勾选状态）
+      expect(h.fullReads()).toBe(before);
+
+      h.bump();
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(h.fullReads()).toBeGreaterThan(before);
+      expect(screen.getByText("她在桌宠上答的那句")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -727,6 +809,47 @@ describe("ChatPage 侧栏：每个角色一条固定线 + 临时话题批量清�
     // 删除按钮只属于那两条临时话题；固定行上一个都没有（清空另算）
     expect(screen.getAllByTitle("删除对话")).toHaveLength(2);
     expect(screen.getByTitle(/清空与玲的对话/)).toBeTruthy();
+    // 「删除对话」那两类按钮都长在临时话题行上；固定行一个都没有（只有上面那个「清空」）
+    expect(screen.queryByTitle("删除这个对话？")).toBeNull();
+  });
+
+  it("角色一多：抽屉里给搜索框，少的时候不给；筛完点谁都进她那条线", async () => {
+    const many = Array.from({ length: 7 }, (_, i) => ({
+      role_id: `r${i}`,
+      role_name: `角色${i}号`,
+      is_builtin: false,
+    }));
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/sessions") return [];
+      if (url === "/api/roles") return many;
+      if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
+      if (url === "/api/settings/model-providers") return { providers: [] };
+      if (url.includes("/messages")) return { messages: [], total: 0, limit: 500, truncated: false };
+      if (url.endsWith("/context")) return { trimmed: 0, kept: 0, budget: 24000 };
+      return {};
+    });
+    apiMock.post.mockResolvedValue({ thread_id: "s_proactive_r5", role_id: "r5" });
+    render(
+      <ToastProvider>
+        <ChatPage />
+      </ToastProvider>,
+    );
+    await waitFor(() => expect(screen.getByText("还没有角色，也还没有对话")).toBeTruthy());
+
+    fireEvent.click(screen.getByTitle(/换个说话的人/));
+    const box = await screen.findByLabelText("搜角色");
+    fireEvent.change(box, { target: { value: "5" } });
+    expect(screen.getByRole("button", { name: /角色5号/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /角色1号/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /角色5号/ }));
+    await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith("/api/session/proactive", { role_id: "r5" }));
+  });
+
+  it("角色不多时不出现搜索框（三五个角色不必为过滤付一个控件）", async () => {
+    await mountSidebar();
+    fireEvent.click(screen.getByTitle(/换个说话的人/));
+    expect(screen.queryByLabelText("搜角色")).toBeNull();
   });
 
   it("点固定行 = 幂等 ensure 出她那条线再打开", async () => {

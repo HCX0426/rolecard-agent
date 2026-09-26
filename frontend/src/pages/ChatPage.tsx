@@ -21,7 +21,7 @@ import { useChatStream } from "../hooks/useChatStream";
 import { useMenus } from "../hooks/useMenus";
 import { useMessageSelection } from "../hooks/useMessageSelection";
 import { useSessions } from "../hooks/useSessions";
-import { fetchMessages, useUploadFlow } from "../hooks/useUploadFlow";
+import { useUploadFlow } from "../hooks/useUploadFlow";
 import ToolStepCard from "../components/chat/ToolStepCard";
 import {
   IconClip,
@@ -35,6 +35,13 @@ import {
 import ThinkingPanel from "../components/chat/ThinkingPanel";
 import { Markdown } from "../components/Markdown";
 import { Button } from "../components/ui";
+
+/** 控制台与这条会话的服务端对齐的节拍。桌宠那条是 3 秒（红点要即时），这里 5 秒就够：
+ *  真切的场景是"你在桌宠上回了一句，切回控制台"—— 那一下靠 `focus` 立刻补读，节拍只是兜底。 */
+const SESSION_SYNC_MS = 5_000;
+
+/** 角色多到几个，抽屉里才出现搜索框：三五个的时候一个框只是多一个要看的控件。 */
+const ROLE_SEARCH_FROM = 6;
 
 /** 回答耗时：created_at 配对（用户 → 助手）换算成可读时长；无时间戳的旧消息返回 null。 */
 /** 模型设置里"这一页要显示的那些行"：只留**参与对话**的模型（`used_by` 含 chat，派生自
@@ -145,6 +152,8 @@ export default function ChatPage({
   // 「临时话题」的批量清理：选中的线程 id 集合；null = 批量模式没开（那时不画复选框）。
   // 用户 09-26：临时话题攒了几十条，一条条删太麻烦。
   const [tempPick, setTempPick] = useState<Set<string> | null>(null);
+  // 角色抽屉里的搜索词（角色少的时候不出现那个框，门槛见 `ROLE_SEARCH_FROM`）。
+  const [roleFilter, setRoleFilter] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [currentRole, setCurrentRole] = useState<string>("");
   const [messages, setMessages] = useState<MessageRow[]>([]);
@@ -270,6 +279,59 @@ export default function ChatPage({
 
   const scrollRef = useAutoScroll(sessionId, [messages, live]);
 
+  /** 服务端在**上一次我们主动读取时**报的条数。别拿 `messages.length` 当它：那里面混着
+   *  乐观发出去的那句和正在流的气泡，一比就误判成"别处写了字"。 */
+  const seenTotalRef = useRef<number | null>(null);
+
+  /** 从服务端重读这条会话并记账（要的就是那个 `total`：探针靠它判"别处有没有写字"）。 */
+  async function reloadMessages(threadId: string): Promise<void> {
+    const page = await api.get<MessagePage>(`/api/session/${threadId}/messages`);
+    seenTotalRef.current = page.total;
+    setMessages(page.messages);
+  }
+
+  /**
+   * 别处（桌宠面板）往这条会话里写了字，控制台要跟上 —— 用户 09-26："反过来就看不到了"。
+   *
+   * 探针是 `?limit=1` 那一次读：它回的是**服务端总条数**，成本比全量重读低一个量级，
+   * 数字变了才去做全量 `selectSession`。
+   * 两道闸：正在流不抢（那轮的屏幕内容还没落库，抢了就是"我发一条她回两条"那个重影），
+   * 条数没变一次 set 都不发（否则每 5 秒把滚动位置与勾选状态清一遍，比"看不到新的"更烦人）。
+   *
+   * **不看 `document.hidden`**：这是桌面 app，"控制台被别的窗盖住"是常态而不是后台标签页，
+   * 而铃铛那侧的 3 秒轮询本来也不看可见性 —— 加一道只有这一半有的闸，只会造出
+   * "一处会同步一处不会"这种查不出来的差别。`focus` 那一下的立即补读留着：那是
+   * "从桌宠 Alt-Tab 回来"时不想等满 5 秒的那一截。
+   */
+  useEffect(() => {
+    if (!sessionId) return;
+    let cancelled = false;
+    const sync = async () => {
+      if (sendingRef.current) return;
+      try {
+        const probe = await api.get<MessagePage>(`/api/session/${sessionId}/messages?limit=1`);
+        if (cancelled) return;
+        const seen = seenTotalRef.current;
+        seenTotalRef.current = probe.total;
+        if (seen !== null && seen !== probe.total) await selectSession(sessionId);
+      } catch {
+        /* 探针失败就等下一次节拍：为一次网络抖动改界面无意义 */
+      }
+    };
+    const onVisible = () => {
+      void sync();
+    };
+    const timer = setInterval(() => void sync(), SESSION_SYNC_MS);
+    window.addEventListener("focus", onVisible);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      window.removeEventListener("focus", onVisible);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function selectSession(threadId: string) {
     if (sendingRef.current) return;
     setSessionId(threadId);
@@ -291,6 +353,7 @@ export default function ChatPage({
       setMessages(page.messages);
       // 被截断时要如实说明：否则用户以为看到的是全部历史（审查报告 P2）。
       setHistoryTruncated(page.truncated ? page.total - page.messages.length : 0);
+      seenTotalRef.current = page.total; // 记账：别处的写入靠这个数与探针比对
       setSessionModel(detail.model_name);
       setSessionMode(detail.agent_mode || "chat");
       setTrim(ctxInfo.trimmed > 0 ? { dropped: ctxInfo.trimmed, kept: ctxInfo.kept } : null);
@@ -652,7 +715,7 @@ export default function ChatPage({
     abortRef.current = null;
     // 流结束：checkpoint 是唯一真相，回放覆盖乐观状态（中断时同样回放，拿到已生成的部分）
     try {
-      setMessages(await fetchMessages(tid));
+      await reloadMessages(tid);
     } catch {
       /* 会话已被删等极端情况：保留现有气泡 */
     }
@@ -676,7 +739,7 @@ export default function ChatPage({
     ensureSession: createSession,
     reloadMessages: async (tid) => {
       try {
-        setMessages(await fetchMessages(tid));
+        await reloadMessages(tid);
       } catch {
         /* 会话可能已被删除 */
       }
@@ -713,7 +776,7 @@ export default function ChatPage({
     setBusy(false);
     if (sessionId) {
       try {
-        setMessages(await fetchMessages(sessionId));
+        await reloadMessages(sessionId);
       } catch {
         /* 会话可能已删除 */
       }
@@ -730,7 +793,7 @@ export default function ChatPage({
       setSelected([]);
       setSelectMode(false);
       setStatus(`已删除所选对话`, "ok");
-      setMessages(await fetchMessages(sessionId));
+      await reloadMessages(sessionId);
     } catch (e) {
       setStatus(`删除失败：${(e as Error).message}`, "warn");
     }
@@ -818,6 +881,11 @@ export default function ChatPage({
   /** 角色被删了但那条线还在：不能让它从侧栏消失，否则那段对话就找不回来了。 */
   const orphanLanes = sessions.filter((s) => s.is_proactive && !laneThreadIds.has(s.thread_id));
   const tempSessions = sessions.filter((s) => !s.is_proactive && !s.is_blank);
+  /** 抽屉里当前列得出来的角色：按名字子串过滤（大小写不敏感）。没有搜索词时就是全量。 */
+  const roleQuery = roleFilter.trim().toLowerCase();
+  const shownRoles = roleQuery
+    ? roles.filter((r) => r.role_name.toLowerCase().includes(roleQuery))
+    : roles;
 
   return (
     <div className="relative flex h-full">
@@ -1448,6 +1516,7 @@ export default function ChatPage({
               <button
                 onClick={() => {
                   setModelMenuOpen(false); // 两个菜单互斥
+                  if (!roleMenuOpen) setRoleFilter(""); // 每次打开都是全量：上次的过滤词留着会让人以为角色变少了
                   setRoleMenuOpen((o) => !o);
                 }}
                 aria-haspopup="true"
@@ -1460,32 +1529,62 @@ export default function ChatPage({
               </button>
               {roleMenuOpen && (
                 <>
-                  <div className="absolute bottom-full left-0 z-20 mb-2 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-600 dark:bg-slate-800">
-                  <p className="bg-slate-50 px-3 py-1.5 text-[11px] font-medium text-slate-400 dark:bg-slate-800/60 dark:text-slate-500">
-                    选角色 = 进她那条对话（原来那条留在左侧）
-                  </p>
-                  {roles.map((r) => (
-                    <button
-                      key={r.role_id}
-                      onClick={() => {
-                        setRoleMenuOpen(false);
-                        switchRole(r.role_id);
-                      }}
-                      className="flex w-full items-center justify-between px-3 py-2 text-xs hover:bg-blue-50 dark:hover:bg-blue-900/30"
-                    >
-                      <span className="truncate text-slate-700 dark:text-slate-200">{r.role_name}</span>
-                      <span className="ml-2 flex shrink-0 items-center gap-1.5">
-                        {r.is_builtin && (
-                          <span className="rounded bg-slate-100 px-1 text-[10px] text-slate-400 dark:bg-slate-700/60 dark:text-slate-400">
-                            内置
-                          </span>
-                        )}
-                        {displayRole === r.role_id && (
-                          <span className="text-blue-600 dark:text-blue-400">✓</span>
-                        )}
-                      </span>
-                    </button>
-                  ))}
+                  {/* 抽屉式而非"全量浮层"（用户 09-26："角色多了咋办"）：列表封顶 60vh 内部滚动，
+                      角色一多再给一个搜索框 —— 少了这个封顶，十几个角色就能把浮层顶出屏幕，
+                      而它往上长是会被头部截掉的。 */}
+                  <div className="absolute bottom-full left-0 z-20 mb-2 flex max-h-[min(60vh,420px)] w-64 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-600 dark:bg-slate-800">
+                    <p className="shrink-0 bg-slate-50 px-3 py-1.5 text-[11px] font-medium text-slate-400 dark:bg-slate-800/60 dark:text-slate-500">
+                      选角色 = 进她那条对话（原来那条留在左侧）
+                    </p>
+                    {roles.length > ROLE_SEARCH_FROM && (
+                      <input
+                        value={roleFilter}
+                        onChange={(e) => setRoleFilter(e.target.value)}
+                        placeholder={`搜角色（${roles.length} 个）`}
+                        aria-label="搜角色"
+                        className="mx-2 mt-2 shrink-0 rounded-lg border border-slate-200 px-2 py-1 text-xs outline-none focus:border-blue-400 dark:border-slate-600 dark:bg-slate-900"
+                      />
+                    )}
+                    <div className="min-h-0 flex-1 overflow-y-auto py-1">
+                      {shownRoles.map((r) => {
+                        const unread = unreadByRole[r.role_id] ?? 0;
+                        return (
+                          <button
+                            key={r.role_id}
+                            onClick={() => {
+                              setRoleMenuOpen(false);
+                              switchRole(r.role_id);
+                            }}
+                            className="flex w-full items-center justify-between gap-2 px-3 py-2 text-xs hover:bg-blue-50 dark:hover:bg-blue-900/30"
+                          >
+                            <span className="truncate text-slate-700 dark:text-slate-200">{r.role_name}</span>
+                            <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                              {unread > 0 && (
+                                <span
+                                  className="rounded-full bg-blue-600 px-1.5 text-[10px] text-white"
+                                  title={`${unread} 条她主动找你，还没读`}
+                                >
+                                  {unread}
+                                </span>
+                              )}
+                              {r.is_builtin && (
+                                <span className="rounded bg-slate-100 px-1 text-[10px] text-slate-400 dark:bg-slate-700/60 dark:text-slate-400">
+                                  内置
+                                </span>
+                              )}
+                              {displayRole === r.role_id && (
+                                <span className="text-blue-600 dark:text-blue-400">✓</span>
+                              )}
+                            </span>
+                          </button>
+                        );
+                      })}
+                      {shownRoles.length === 0 && (
+                        <p className="px-3 py-2 text-xs text-slate-400 dark:text-slate-500">
+                          没有匹配「{roleFilter}」的角色
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </>
               )}
