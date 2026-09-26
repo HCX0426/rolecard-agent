@@ -309,6 +309,21 @@ describe("PetPage 点开面板（§7：想回话不用开控制台）", () => {
     expect(screen.queryByText("它：")).toBeNull();
   });
 
+  it("面板里的字选得中（根节点那块 select-none 不越界到面板里）", async () => {
+    // 用户 09-26："为什么桌宠框那里我不可以长按鼠标左键选中文字"。`select-none` 挂在根节点
+    // 本是为了拖宠物时不拉出橡皮筋选区，但它把"把她说的话选出来复制"一起禁了。
+    const shell = withShell();
+    await mount();
+    await open(shell);
+    const list = document.querySelector(
+      "[data-pet-ui='panel'] [class*='overflow-y-auto']",
+    ) as HTMLElement;
+    expect(list.className).toContain("select-text");
+    // 根节点照旧是不选的：那条规则管的是宠物本体，不是面板
+    const root = list.closest("[class*='select-none']") as HTMLElement;
+    expect(root).toBeTruthy();
+  });
+
   it("把「画了像素的那几块」报给壳，形状没变不重复发，卸载时收回（§12.3）", async () => {
     const shell = withShell();
     const send = shell.petHotRects as unknown as ReturnType<typeof vi.fn>;

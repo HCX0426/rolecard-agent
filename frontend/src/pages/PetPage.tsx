@@ -657,7 +657,11 @@ export default function PetPage() {
           </header>
           <div
             ref={scrollRef}
-            className="max-h-[300px] min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 py-2 text-[11px] leading-relaxed"
+            /* `select-text` 是把根节点那块 `select-none` 在面板里取消掉：根标它为了拖桌宠时
+               拖桌宠时别拉出一段橡皮筋选区，但它连"把她说的话选出来复制"一起禁了（用户
+               09-26 问的就是这个）。选中不会把宠物拖走也不会收起面板 —— `dragStart` 与
+               `rootClick` 开头都有 `insideUi` 那道闸（面板整块在 `[data-pet-ui]` 里）。 */
+            className="max-h-[300px] min-h-0 flex-1 select-text space-y-1.5 overflow-y-auto px-3 py-2 text-[11px] leading-relaxed"
           >
             {historyError && <p className="text-red-600 dark:text-red-400">{historyError}</p>}
             {streamError && <p className="text-red-600 dark:text-red-400">{streamError}</p>}
