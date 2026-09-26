@@ -110,6 +110,41 @@ def test_messages_unknown_thread_404(client: TestClient) -> None:
     assert client.get("/api/session/nope/messages").status_code == 404
 
 
+def test_messages_carries_the_inflight_line_for_other_readers(
+    client: TestClient,
+) -> None:
+    """R26-38：历史回放端点要顺带说出"这一条此刻有没有正在生成的半句"。
+
+    桌宠那一轮在飞的时候，对话界面靠的就是这一个字段 —— 它本来每 5 秒打一次
+    `?limit=1` 的探针比 `total`，而那一段里 `total` 是不动的（助手整句还没进检查点），
+    所以探针必须能读出"她在打字、打到哪儿了"，否则第二读者要空等整段生成
+    （副本实测 7.6 秒）。附带钉两件事：探针那条路径（`limit=1`）也带，以及跑完就没了。
+    """
+    from rolecard_agent.core.thread_locks import inflight_append, inflight_begin, inflight_end
+
+    session = client.post("/api/session", json={}).json()
+    tid = str(session["thread_id"])
+    assert client.get(f"/api/session/{tid}/messages").json()["inflight"] is None, (
+        "没在飞时必须回 None，不能回一个空 dict —— 那会被界面读成「她在打字」"
+    )
+
+    inflight_begin(tid)
+    try:
+        full = client.get(f"/api/session/{tid}/messages").json()["inflight"]
+        assert full == {"text": ""}, "在飞但还没投送出字：这一格要显出「她在说」"
+        inflight_append(tid, "已经投送出去的一段")
+        probe = client.get(f"/api/session/{tid}/messages?limit=1").json()["inflight"]
+        assert probe == {"text": "已经投送出去的一段"}, (
+            "探针那一路也要带 —— 对话界面每 5 秒读的就是它"
+        )
+    finally:
+        inflight_end(tid)
+    assert client.get(f"/api/session/{tid}/messages").json()["inflight"] is None, (
+        "一轮收手之后不许留痕：否则界面上会挂着一个永远不会落地的气泡"
+    )
+    assert client.get(f"/api/session/{tid}/messages").json()["inflight"] is None
+
+
 def test_delete_session_removes_thread_and_checkpoints(client: TestClient, tmp_path: Path) -> None:
     """US-9：删除会话不留孤儿 —— thread 行与 checkpoint/writes 同时消失。"""
     session = client.post("/api/session", json={}).json()

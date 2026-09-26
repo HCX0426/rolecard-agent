@@ -543,6 +543,146 @@ describe("ChatPage 跟着服务端走（在桌宠上回一句，切回控制台�
   });
 });
 
+/** R26-38：桌宠那一轮**正在生成**的那半句要在对话界面里同步显出来。
+ *
+ * 量过的账（副本库 + 自起后端一轮 419 字的回答）：他那句 0.21 秒就可读，她那句要
+ * 10.49 秒才进检查点，界面那个 5 秒网格把它推到 15.0 秒 —— 落后 12.1 秒里有 7.6 秒
+ * 是"她正在说"这件事完全不可见。所以这里钉三件事：那一格画得出来、拍子真的收紧了、
+ * 落地之后不留重影。 */
+describe("ChatPage 镜像「她正在说的那半句」", () => {
+  const THREAD = "s_m";
+
+  /** 一条会话，服务端的"在飞那句"由测试自己拨。 */
+  function stubMirror() {
+    let server: { id?: string; role: string; content: string }[] = [
+      { id: "m1", role: "user", content: "在桌宠上问的那句" },
+    ];
+    let inflight: { text: string } | null = null;
+    let probes = 0;
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/sessions") {
+        return [
+          {
+            thread_id: THREAD,
+            title: "她那条",
+            role_id: "ga",
+            role_name: "通用助手",
+            updated_at: "2026-09-26 04:00:00",
+            agent_mode: "chat",
+            is_proactive: true,
+            is_blank: false,
+          },
+        ];
+      }
+      if (url === "/api/roles") return [];
+      if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
+      if (url === "/api/settings/model-providers") return { providers: [] };
+      if (url.includes("/messages")) {
+        const probe = url.includes("limit=1");
+        if (probe) probes += 1;
+        return {
+          messages: probe ? server.slice(-1) : [...server],
+          total: server.length,
+          limit: probe ? 1 : 500,
+          truncated: false,
+          inflight,
+        };
+      }
+      if (url.endsWith("/context")) return { trimmed: 0, kept: 0, budget: 24000 };
+      if (url.startsWith(`/api/session/${THREAD}`)) return { model_name: null, agent_mode: "chat" };
+      return {};
+    });
+    return {
+      /** 她在说：登记里已经有这段了，但还没进检查点。 */
+      speaking: (text: string) => {
+        inflight = { text };
+      },
+      /** 说完了：整句落进历史，登记清空。 */
+      committed: (text: string) => {
+        inflight = null;
+        server = [...server, { id: "m2", role: "assistant", content: text }];
+      },
+      /** 探针打了多少次（`?limit=1` 那一路）。 */
+      probeCount: () => probes,
+    };
+  }
+
+  async function mountAndOpen() {
+    const h = stubMirror();
+    render(
+      <ToastProvider>
+        <ChatPage />
+      </ToastProvider>,
+    );
+    await vi.waitFor(() => expect(screen.getByText("她那条")).toBeTruthy());
+    fireEvent.click(screen.getByText("她那条"));
+    await vi.waitFor(() => expect(screen.getByText("在桌宠上问的那句")).toBeTruthy());
+    return h;
+  }
+
+  it("在飞的那半句画得出来，一个字还没投送时也有那一格", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = await mountAndOpen();
+      // 前提：静默时那一格不存在（不是"画了个空的"）
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(screen.queryByTestId("inflight-mirror")).toBeNull();
+
+      // 发现靠 5 秒那一拍：桌宠开始说的 5 秒内界面会跟上（原来这一整段是空白的）
+      h.speaking("");
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(screen.getByTestId("inflight-mirror").textContent).toContain("她在说");
+
+      // 跟上之后是 800ms 的拍子：她涨出来的字一段一段进界面
+      h.speaking("今天想先把那几份报告");
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(screen.getByTestId("inflight-mirror").textContent).toContain("今天想先把那几份报告");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("整句落地后那一格收掉，不许和已提交的那条同时在场", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = await mountAndOpen();
+      h.speaking("理一理，晚上再去跑步。");
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(screen.getByTestId("inflight-mirror")).toBeTruthy();
+
+      h.committed("理一理，晚上再去跑步。");
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(screen.getByText("理一理，晚上再去跑步。")).toBeTruthy();
+      expect(screen.queryByTestId("inflight-mirror")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("她在说的时候拍子收到 800ms，落地之后回到 5 秒", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = await mountAndOpen();
+      h.speaking("");
+      await vi.advanceTimersByTimeAsync(6_000); // 那一拍发现她在说
+      expect(screen.getByTestId("inflight-mirror")).toBeTruthy();
+      const from = h.probeCount();
+      await vi.advanceTimersByTimeAsync(4_000);
+      // 800ms 的拍子：这 4 秒里至少该有 4 次读，而不是 5 秒那一拍只有一次
+      expect(h.probeCount() - from).toBeGreaterThanOrEqual(4);
+
+      h.committed("说完的那句");
+      await vi.advanceTimersByTimeAsync(2_000); // 一拍：读出"没在飞了"并把整句收进历史
+      const slow = h.probeCount();
+      await vi.advanceTimersByTimeAsync(4_000);
+      // 回到 5 秒：再给 4 秒，最多再来一次
+      expect(h.probeCount() - slow).toBeLessThanOrEqual(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("ChatPage 提取精华（对话 → 该角色的记忆）", () => {
   /** 一份"有历史的会话"：头部那个按钮只有在**当前会话且读到了消息**时才该可点。 */
   function stubConversation(messages: { role: string; content: string }[]) {

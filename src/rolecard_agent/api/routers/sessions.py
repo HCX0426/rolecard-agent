@@ -47,6 +47,7 @@ from rolecard_agent.core.state import new_state, now_ts
 from rolecard_agent.core.text import text_of
 from rolecard_agent.core.thread_locks import (
     end_extraction,
+    inflight_text,
     request_stop,
     thread_write,
     try_extraction,
@@ -863,6 +864,17 @@ def list_sessions(ctx: AppContext = Depends(get_context)) -> list[object]:
     ]
 
 
+def inflight_payload(thread_id: str) -> dict[str, object] | None:
+    """这一条会话此刻在飞的那半句（`None` = 没人在生成）。
+
+    只从进程内的登记读，不碰检查点：LangGraph 要到超步结束才写，而"她在打字"这件事
+    恰好是那一段里唯一还活着的信息。键在不在登记里就是"在不在飞"，所以一个字都还没有时
+    它也是 dict（`text=""`），界面上那格因此能立刻显出"她在说"而不是空着。
+    """
+    text = inflight_text(thread_id)
+    return None if text is None else {"text": text}
+
+
 @router.get("/api/session/{thread_id}/messages")
 def get_session_messages(
     thread_id: str,
@@ -894,6 +906,15 @@ def get_session_messages(
         "total": total,
         "limit": limit,
         "truncated": len(rows) < total,
+        # 这一条会话此刻有没有"正在生成、还没进检查点"的那一句。`None` = 没有；
+        # 有则是 `{"text": 已经投送出去的那段}`，一个字都还没有时是 `{"text": ""}`。
+        # 为什么读它而不是把在飞的字提前写进历史：LangGraph 每个**超步**才落一次检查点，
+        # 助手整句要等 `call_model` 返回才算一条消息 —— 副本实测那一轮里第二读者要空等
+        # 7.6 秒（见 `core/thread_locks.py` 那节的数）。而这几个字是**已经过守卫投送**的，
+        # 给第二个读者看它不绕过任何 fail-closed 纪律；写进 checkpoint 才是（那会造出
+        # 一条"半句的历史"，停止生成与提取都会被它骗）。
+        # 它随 `?limit=1` 那个探针一起回，所以对话界面不用多打一次请求就能知道"她在打字"。
+        "inflight": inflight_payload(thread_id),
     }
 
 

@@ -186,9 +186,73 @@ def clear_stop(thread_id: str) -> None:
         _stopped.pop(thread_id, None)
 
 
+# ---------------------------------------------------------------- 正在生成的那一句
+#
+# 为什么需要它（2026-09-26 用户报"桌宠发的回答，对话界面同步得有些慢"，实测拆解）：
+# LangGraph 每个**超步**才写一次检查点，而助手整句要等 `call_model` 返回才算一条消息 ——
+# 副本库上自起后端量到的一轮（419 字、云端档）：他那句 0.21 秒就可读，她的整句 10.49 秒
+# 才进检查点，界面那个 5 秒网格把它推到 15.0 秒。也就是说 12.1 秒的落后里，
+# **7.6 秒是"第二个读者全程读不到她正在说"**，改轮询频率治不到它。
+#
+# 存的是**已经过守卫投送出去**的那段增量（与桌宠屏幕上已有的字严格一致），不是
+# `StreamingGuard.buffer`：尾巴那 WINDOW 个字符是还没过窗口检查的，提前让另一个读者看见
+# 就等于绕过了 fail-closed 的纪律。
+#
+# 键存在 = 这一轮在飞（哪怕还没有字），所以"她在打字"这个状态本身也是可读的。
+
+_inflight: dict[str, str] = {}
+
+
+def inflight_begin(thread_id: str) -> None:
+    """一轮开跑。与 `inflight_end` 成对，配对由 `run_turn` 的 `finally` 保证。"""
+    if not thread_id:
+        return
+    with _guard:
+        _inflight[thread_id] = ""
+
+
+def inflight_append(thread_id: str, delta: str) -> None:
+    """投送了一段正文增量。没在飞就静默（宿主可以不开这一路）。"""
+    if not thread_id or not delta:
+        return
+    with _guard:
+        if thread_id in _inflight:
+            _inflight[thread_id] += delta
+
+
+def inflight_replace(thread_id: str, text: str) -> None:
+    """权威文本整条替换（与客户端的 `MessageReplace` 同一个契约）。"""
+    if not thread_id:
+        return
+    with _guard:
+        if thread_id in _inflight:
+            _inflight[thread_id] = text
+
+
+def inflight_end(thread_id: str) -> None:
+    """一轮收尾：无论成功、失败、被停、还是没人要了，这一段都不该再被别人看见。"""
+    if not thread_id:
+        return
+    with _guard:
+        _inflight.pop(thread_id, None)
+
+
+def inflight_text(thread_id: str) -> str | None:
+    """此刻正在生成的那段字（已投送部分）。`None` = 这一轮没在飞。"""
+    if not thread_id:
+        return None
+    with _guard:
+        return _inflight.get(thread_id)
+
+
 __all__ = [
     "clear_stop",
     "end_extraction",
+    "inflight_append",
+    "inflight_begin",
+    "inflight_end",
+    "inflight_replace",
+    "inflight_text",
     "release_thread",
     "request_stop",
     "stop_requested",

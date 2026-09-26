@@ -40,6 +40,12 @@ import { Button } from "../components/ui";
  *  真切的场景是"你在桌宠上回了一句，切回控制台"—— 那一下靠 `focus` 立刻补读，节拍只是兜底。 */
 const SESSION_SYNC_MS = 5_000;
 
+/** 她在说（这一条会话有在飞的那半句）时的读拍。
+ *  5 秒是"别处写完了我跟上不跟不上"的节拍，而那半句每 0.8 秒长一截才是用户盯着看的东西 ——
+ *  沿用一个节拍的话，镜像出来的字是跳着涨的，看着像卡住。收进 800ms 是有界的：
+ *  只有 `inflight` 非空那几秒如此，一轮落地就回到 5 秒。 */
+const MIRROR_SYNC_MS = 800;
+
 /** 角色多到几个，抽屉里才出现搜索框：三五个的时候一个框只是多一个要看的控件。 */
 const ROLE_SEARCH_FROM = 6;
 
@@ -277,7 +283,14 @@ export default function ChatPage({
     setCurrentRole(cur?.role_id || "");
   }, [sessionId, sessions]);
 
-  const scrollRef = useAutoScroll(sessionId, [messages, live]);
+  /** 别处（桌宠）那一轮**正在生成、还没进检查点**的那半句（R26-38 的镜像）。
+   *  `null` = 没人在生成；字符串 = 已经投送到哪儿了（空串 = 她在打字、还没出字）。
+   *  只在这一扇窗自己没在流的时候才显 —— 那时候屏幕上已经有 `live` 那个气泡了，
+   *  再画一格就是同一个人说两遍。声明在 `useAutoScroll` 之前：滚动要跟的是这一格涨字。 */
+  const [mirror, setMirror] = useState<string | null>(null);
+  const mirrorRef = useRef<string | null>(null);
+
+  const scrollRef = useAutoScroll(sessionId, [messages, live, mirror]);
 
   /** 服务端在**上一次我们主动读取时**报的条数。别拿 `messages.length` 当它：那里面混着
    *  乐观发出去的那句和正在流的气泡，一比就误判成"别处写了字"。 */
@@ -288,13 +301,21 @@ export default function ChatPage({
     const page = await api.get<MessagePage>(`/api/session/${threadId}/messages`);
     seenTotalRef.current = page.total;
     setMessages(page.messages);
+    // 整句已经落进历史了，镜像那一格的任务就到此为止：不清的话屏幕上会同时有
+    // "她正在说的气泡"和"她说完了的那条"，那是重影。
+    mirrorRef.current = null;
+    setMirror(null);
   }
 
   /**
-   * 别处（桌宠面板）往这条会话里写了字，控制台要跟上 —— 用户 09-26："反过来就看不到了"。
+   * 别处（桌宠面板）往这条会话里写了字，控制台要跟上 —— 用户 09-26："反过来就看不到了"，
+   * 当晚又报"在桌宠那发的收到回答，在对话界面同步得有些慢"。实测一轮 419 字的回答：
+   * 他那句 0.21 秒就可读、她那句 10.49 秒才进检查点，界面按 5 秒网格收到 15.0 秒 ——
+   * **12.1 秒里有 7.6 秒是"她正在说"这件事在界面上完全不可见**，那截不是轮询能治的，
+   * 所以探针顺带把在飞的那半句（`inflight.text`）读回来画成镜像气泡。
    *
-   * 探针是 `?limit=1` 那一次读：它回的是**服务端总条数**，成本比全量重读低一个量级，
-   * 数字变了才去做全量 `selectSession`。
+   * 探针是 `?limit=1` 那一次读：它回的是**服务端总条数**加那半句，成本比全量重读低一个
+   * 量级，条数变了才去做全量 `selectSession`。
    * 两道闸：正在流不抢（那轮的屏幕内容还没落库，抢了就是"我发一条她回两条"那个重影），
    * 条数没变一次 set 都不发（否则每 5 秒把滚动位置与勾选状态清一遍，比"看不到新的"更烦人）。
    *
@@ -302,31 +323,49 @@ export default function ChatPage({
    * 而铃铛那侧的 3 秒轮询本来也不看可见性 —— 加一道只有这一半有的闸，只会造出
    * "一处会同步一处不会"这种查不出来的差别。`focus` 那一下的立即补读留着：那是
    * "从桌宠 Alt-Tab 回来"时不想等满 5 秒的那一截。
+   *
+   * 节拍自己改：读到在飞就把下一拍收到 800ms，落地后回 5 秒。用 `setTimeout` 自续而不是
+   * 两个 `setInterval` 来回切，是为了**任何时刻只有一个拍在飞**。
    */
   useEffect(() => {
     if (!sessionId) return;
     let cancelled = false;
-    const sync = async () => {
-      if (sendingRef.current) return;
+    let timer = 0;
+    const arm = (ms: number) => {
+      timer = window.setTimeout(() => void tick(), ms);
+    };
+    const tick = async () => {
+      if (sendingRef.current) {
+        // 这一扇窗自己在流：屏幕上已经有 `live` 那个气泡，镜像必须让位
+        mirrorRef.current = null;
+        setMirror(null);
+        arm(SESSION_SYNC_MS);
+        return;
+      }
       try {
         const probe = await api.get<MessagePage>(`/api/session/${sessionId}/messages?limit=1`);
-        if (cancelled) return;
-        const seen = seenTotalRef.current;
-        seenTotalRef.current = probe.total;
-        if (seen !== null && seen !== probe.total) await selectSession(sessionId);
+        if (!cancelled) {
+          const seen = seenTotalRef.current;
+          seenTotalRef.current = probe.total;
+          const next = probe.inflight ? probe.inflight.text : null;
+          if (next !== mirrorRef.current) {
+            mirrorRef.current = next;
+            setMirror(next);
+          }
+          if (seen !== null && seen !== probe.total) await selectSession(sessionId);
+        }
       } catch {
         /* 探针失败就等下一次节拍：为一次网络抖动改界面无意义 */
       }
+      if (!cancelled) arm(mirrorRef.current === null ? SESSION_SYNC_MS : MIRROR_SYNC_MS);
     };
-    const onVisible = () => {
-      void sync();
-    };
-    const timer = setInterval(() => void sync(), SESSION_SYNC_MS);
+    const onVisible = () => void tick();
+    arm(SESSION_SYNC_MS);
     window.addEventListener("focus", onVisible);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      clearTimeout(timer);
       window.removeEventListener("focus", onVisible);
       document.removeEventListener("visibilitychange", onVisible);
     };
@@ -1320,6 +1359,20 @@ export default function ChatPage({
                 <div className={live.streaming ? "caret" : ""}>
                   {live.text ? <Markdown text={live.text} /> : "思考中…"}
                 </div>
+              </div>
+            )}
+            {/* 别处（桌宠）那一轮**正在生成**的那半句（R26-38）。
+                判据只有一个：后端的在飞登记非空。不在这扇窗自己流的时候才画 —— 那时
+                `live` 已经承载同一段字了，两处都画就是重影。
+                空串显的是"她在说"而不是空白：那一段里唯一的事实就是她在打字。 */}
+            {!live && mirror !== null && (
+              <div className="w-full" data-testid="inflight-mirror">
+                <div className="caret">
+                  {mirror ? <Markdown text={mirror} /> : "她在说…"}
+                </div>
+                <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+                  正在生成 · 来自桌宠那一轮
+                </p>
               </div>
             )}
             {/* 这一轮是被叫停的（后端 `End(stopped)`）：屏幕上那半截不是"说完了"。

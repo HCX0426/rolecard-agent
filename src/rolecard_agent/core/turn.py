@@ -38,6 +38,10 @@ from rolecard_agent.core.observability import TraceEvent, Tracer, scrub_endpoint
 from rolecard_agent.core.text import text_of
 from rolecard_agent.core.thread_locks import (
     clear_stop,
+    inflight_append,
+    inflight_begin,
+    inflight_end,
+    inflight_replace,
     release_thread,
     request_stop,
     stop_requested,
@@ -290,8 +294,13 @@ def run_turn(
     # 后者要顺手把这轮叫停 —— 不然生成会继续在线程池里跑到天荒地老（#18 的另一半：
     # 用户以为"关掉窗口就停了"，实测那边还在烧）。
     ended = [False]
+    # 在飞登记挂在**这里**而不是各个投送点：`_iter_turn` 有三处发正文（增量、过审尾巴、
+    # 整条替换），漏一处就是"那个来源的字在另一个界面上永远不出现"。收成一个收口之后，
+    # 任何将来新增的投送点都自动被登记 —— 登记的内容严格等于投送出去的内容，所以那条
+    # fail-closed 的窗口纪律（`WINDOW` 个字符不提前给第二个读者看）一格不差地照用。
+    inflight_begin(thread_id)
     try:
-        yield from _iter_turn(
+        for event in _iter_turn(
             graph,
             graph_input=graph_input,
             config=config,
@@ -299,8 +308,16 @@ def run_turn(
             tracer=tracer,
             usage_recorder=usage_recorder,
             ended=ended,
-        )
+        ):
+            if isinstance(event, Token):
+                inflight_append(thread_id, event.text)
+            elif isinstance(event, MessageReplace):
+                inflight_replace(thread_id, event.text)
+            yield event
     finally:
+        # 先清登记再叫停、再放锁：另一个界面读的要是这一轮已经收手的字，
+        # 就只剩"检查点里那句已提交的"这一条真相可看。
+        inflight_end(thread_id)
         if not ended[0]:
             request_stop(thread_id)
         # 只放自己拿到的那把：等满 150 秒没拿到时锁在**别人**手里，无条件 release 会把

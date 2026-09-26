@@ -82,6 +82,11 @@ export interface MessagePage {
   total: number;
   limit: number;
   truncated: boolean;
+  /** 这一条会话此刻有没有"正在生成、还没进检查点"的那一句（R26-38）。
+   *  `null`/缺省 = 没人在生成；有则 `text` 是**已经投送出去**的那段（与桌宠屏幕上已有的
+   *  字一致，守卫扣住的尾巴不在里面）。空串是"她在打字，还没出字"。
+   *  随 `?limit=1` 那个探针一起回，所以对话界面不必多打一次请求就知道该镜像什么。 */
+  inflight?: { text: string } | null;
 }
 
 export interface BackendRow {
