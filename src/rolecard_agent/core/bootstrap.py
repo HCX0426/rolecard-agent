@@ -47,9 +47,11 @@ from rolecard_agent.core.reachout import (
     ensure_proactive_thread,
     format_recent_window,
     format_thread_lines,
+    format_unreplied_lines,
     proactive_thread_id,
     recent_reachout_lines,
     unanswered_lines,
+    unreplied_lines,
 )
 from rolecard_agent.core.services import ServiceEndpointService
 from rolecard_agent.core.state import now_ts
@@ -354,22 +356,28 @@ class Runtime:
         return rows
 
     def proactive_recent_lines(self, role_id: str, *, limit: int = 6) -> str:
-        """那条主动会话里**她还没接住的那几句**，拼成开口指令里的上下文。
+        """那条主动会话里**悬着没了结**的那一截，拼成开口指令里的上下文。
 
-        为什么只取她最后说过话之后的那一截（`unanswered_lines`）：她已经答过的话还会在
-        之后每一次定时开口里被当由头重答一遍，那是用户报的"回两条"（§12.11）。
-        返回空串是**常态也是正确答案** —— 她已经说过话了，这一次开口就该另找由头。
+        两刀互补，只看"最后说话的是谁"：
+        最后说的是他 ⇒ `unanswered_lines` 非空 ⇒ "有几句你还没接"；
+        最后说的是她 ⇒ `unreplied_lines` 非空 ⇒ "你说过这几句而他没回"。
+        以前只有前一刀，于是后一种情形在她眼里是**空白** —— 她只会另找一个由头，
+        用户读到的就是"我还没回话呢，她转头说起唱歌"（09-26）。返回空串只在线程本身
+        为空时发生，那同样是正确答案。
         """
-        return format_thread_lines(unanswered_lines(self._proactive_rows(role_id)), limit=limit)
+        rows = self._proactive_rows(role_id)
+        asked = unanswered_lines(rows)
+        if asked:
+            return format_thread_lines(asked, limit=limit)
+        return format_unreplied_lines(unreplied_lines(rows), limit=limit)
 
     def proactive_recent_window(self, role_id: str, *, limit: int = 8) -> str:
         """**最近这一窗**对话原样交给「未收尾话题」的扫描用（09-26 轮 R26-03 的修法）。
 
-        为什么不能复用 `proactive_recent_lines`：那一截的定义是"她还没接住的话"，而每次
-        主动开口都会把她的话写进同一条线程 ⇒ 它常态为空。可这一源要找的恰恰是"说到一半
-        没了下文"，**那件事往往正是她接住过、只是没落地的那件** —— 拿"没接住"当输入，
-        判据与素材是反的，实测下来扫描一次都不会发生。所以要的是"最近聊到什么"，不是
-        "还有什么没接"。
+        为什么不能复用 `proactive_recent_lines`：那一截只看"最后说话的人是谁"那一侧，
+        于是**她接住过的话一律不在里面** —— 可这一源要找的恰恰是"说到一半没了下文"，
+        那件事往往正是她接住过、只是没落地的那件。拿"还没了结"当输入，判据与素材是反的，
+        实测下来扫描一次都不会发生。所以要的是"最近聊到什么"，不是"还有什么没接"。
         """
         return format_recent_window(self._proactive_rows(role_id), limit=limit)
 

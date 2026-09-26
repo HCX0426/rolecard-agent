@@ -235,13 +235,17 @@ def test_deliver_proactive_does_not_interrupt_a_running_turn(tmp_path: Path) -> 
         runtime.conn.close()
 
 
-def test_proactive_lines_only_offer_what_she_has_not_picked_up(tmp_path: Path) -> None:
-    """主动开口的上下文只带"她还没接住的那几句"—— 这条断的是"一句话回三遍"。
+def test_proactive_lines_only_offer_what_has_not_been_settled(tmp_path: Path) -> None:
+    """主动开口的上下文只带"还没了结的那一截"—— 一刀两向，断的是两件相反的毛病。
 
-    真库实测（2026-09-22，`s_proactive_elysia`）：用户 19:13:29 说「想你了」，她 19:13:36
-    正常答了；调度器随后在 19:31 与 20:35 又各"主动"冒了一句，而两次的素材都是那条会话的
-    尾部 6 条 —— 于是两句都还在回 19:13 那句话。用户读到的是"我发一条，它回我两条重复的"，
-    而对话永远不往前走。分界线就是她自己最后说过话的位置，所以这里连**真图真检查点**一起验。
+    向他的那一刀（真库实测 2026-09-22，`s_proactive_elysia`）：用户 19:13:29 说「想你了」，
+    她 19:13:36 正常答了；调度器随后在 19:31 与 20:35 又各"主动"冒了一句，而两次的素材都是
+    那条会话的尾部 6 条 —— 于是两句都还在回 19:13 那句话。用户读到的是"我发一条，它回我两条
+    重复的"，而对话永远不往前走。分界线就是她自己最后说过话的位置。
+
+    向她的那一刀（09-26 同一条会话上用户报的"也不管之前的内容"）：只有前一刀时，"她上一条
+    还悬着、他一个字没回"在她眼里是**空白**，于是她只会另找一个由头 —— 读起来就是"我还没回话
+    呢，她转头说起唱歌"。所以线空着的那一侧必须换成"你说过而他没回"那一段，而不是空串。
     """
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -258,15 +262,18 @@ def test_proactive_lines_only_offer_what_she_has_not_picked_up(tmp_path: Path) -
         def push(*items: object) -> None:
             graph.update_state(config, {"messages": list(items)})
 
-        # 她刚说完、用户还没吭声 ⇒ 没有待接的话，这次开口只能另找由头（记忆 / 时间 / 文件事件）
-        assert runtime.proactive_recent_lines("wan") == ""
+        # 她刚说完、用户还没吭声 ⇒ 悬着的是**她那句**，素材得让她知道（不是空串）
+        hanging = runtime.proactive_recent_lines("wan")
+        assert "外头降温了" in hanging and "还没有回" in hanging, hanging
+        assert "还没有接过话" not in hanging, "这一段说的是她悬着，不是他悬着"
 
         push(HumanMessage(content="想你了"))
         lines = runtime.proactive_recent_lines("wan")
         assert "想你了" in lines and "还没有接过话" in lines
+        assert "外头降温了" not in lines, "他回过话之后，她那句就不再悬着了"
 
-        push(AIMessage(content="我也想"))  # 答过了 → 那句立刻从素材里退出去
-        assert runtime.proactive_recent_lines("wan") == ""
+        push(AIMessage(content="我也想"))  # 答过了 → 他那句立刻从素材里退出去
+        assert "想你了" not in runtime.proactive_recent_lines("wan")
 
         # 工具结果不是"她出口说的话"：既不能当她答过话（会把待接的那句抹掉），
         # 也不能当成她说过的话喂回去（那等于让她以为自己对一段 JSON 说出口过）。
@@ -283,10 +290,10 @@ def test_proactive_window_still_has_material_when_she_has_the_last_word(tmp_path
     """「未收尾话题」的扫描读**最近一窗**，不读"没接住那截"（09-26 轮 R26-03 的修法）。
 
     两者差别不是宽度而是**方向**：这一源要找的是"说到一半没了下文"的事，而那件事往往
-    正是她接住过、只是没落地的那件。拿 `proactive_recent_lines` 当输入，判据与素材是反的
-    —— 实测下来她的每次投递都会把窗口关成空串，扫描一次也没发生过（生产读数见
-    `scripts/probe_open_threads_reach.py`）。同一份检查点上两个读法必须一个空一个不空，
-    这条钉的就是"分开"这件事本身。
+    正是她接住过、只是没落地的那件。`proactive_recent_lines` 只给"还没了结"的那一截
+    （他那句她没接、或她那句他没回），接过的话一律切掉 —— 拿它当输入，判据与素材是反的，
+    实测下来扫描一次也没发生过（生产读数见 `scripts/probe_open_threads_reach.py`）。
+    同一份检查点上两个读法必须一个切掉、一个留着，这条钉的就是"分开"这件事本身。
     """
     from langchain_core.messages import AIMessage, HumanMessage
 
@@ -305,7 +312,9 @@ def test_proactive_window_still_has_material_when_she_has_the_last_word(tmp_path
         )
         graph.update_state(cfg, {"messages": [AIMessage(content="好，我等你说")]})
 
-        assert runtime.proactive_recent_lines("wan") == "", "她已经接过了，开口素材必须为空"
+        assert "还没有接过话" not in runtime.proactive_recent_lines("wan"), (
+            "她已经接过了，那一刀必须切掉他那句 —— 否则同一件事被回两遍"
+        )
         window = runtime.proactive_recent_window("wan")
         assert "我下周要体检" in window, window
         assert "好，我等你说" in window, window

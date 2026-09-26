@@ -111,6 +111,39 @@ def test_blocked_by_interval(conn) -> None:
     assert "退避" not in reason
 
 
+def _seed_lane_activity(conn, role_id: str, minutes_ago: float) -> None:
+    """给那条角色的主动会话盖一个"最后一次活动"的时刻（毫秒精度，与生产写它的语句同格式）。"""
+    ts = (datetime.now(UTC) - timedelta(minutes=minutes_ago)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    conn.execute(
+        "INSERT INTO session_thread (thread_id, user_id, current_role_id, updated_at) "
+        "VALUES (?, 'u1', ?, ?) "
+        "ON CONFLICT(thread_id) DO UPDATE SET updated_at = excluded.updated_at",
+        (svc.proactive_thread_id(role_id), role_id, ts),
+    )
+    conn.commit()
+
+
+def test_a_reply_just_given_also_counts_as_having_spoken(conn) -> None:
+    """她刚在对话里回过一句（那条回复**不进 reachout 表**）⇒ 这一轮该等用户说话。
+
+    用户 09-26 报的形状：13:52 她答完"累了就别硬撑…"，一分钟后又"主动"冒一句说起唱歌，
+    而用户一个字都还没回 —— 原先的锚点只看 `agent_reachout`，那侧"上次开口"还是几小时前，
+    间隔档于是形同虚设；素材那侧又把她刚说的当成分界，只能另找由头 ⇒ "不管刚才聊了什么"。
+    """
+    _seed_last(conn, "active", minutes_ago=300)  # 上次**主动**开口是 5 小时前（间隔 60 分钟，早过）
+    _seed_lane_activity(conn, "active", minutes_ago=1)  # 但她在对话里刚回过话
+    utc, local = _now()
+    reason = svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local)
+    assert reason is not None and "说话" in reason
+
+
+def test_stale_conversation_does_not_block_a_proactive_line(conn) -> None:
+    """反面对照：会话最后一次活动是 5 小时前 ⇒ 这条闸不该拦她（否则主动开口就此消失）。"""
+    _seed_lane_activity(conn, "active", minutes_ago=300)
+    utc, local = _now()
+    assert svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local) is None
+
+
 def test_blocked_by_quiet_hours(conn) -> None:
     utc = datetime(2026, 9, 18, 5, 0, tzinfo=_UTC)
     local = datetime(2026, 9, 18, 0, 30)  # 本地 00:30 = 静默时段
@@ -777,8 +810,43 @@ def test_unanswered_lines_stops_at_her_own_last_utterance() -> None:
     assert svc.unanswered_lines([]) == []
 
 
+def test_unreplied_lines_is_the_other_half_of_the_same_cut() -> None:
+    """两刀切在同一个位置，所以**永远只有一刀非空**：最后说的是他就前一刀有货，是她就后一刀。
+
+    这条钉的是"互补"而不是各自的行为：宿主靠 `if asked:` 二选一，两刀同时非空就会把
+    自相矛盾的指令一起喂给她（一段说"挑一件回应"，另一段说"别另起话题"）。
+    """
+    assert svc.unreplied_lines([("用户", "想你了")]) == []
+    assert svc.unreplied_lines([("用户", "想你了"), ("你", "我也想")]) == [("你", "我也想")]
+    assert svc.unreplied_lines([("你", "一句"), ("你", "两句")]) == [("你", "一句"), ("你", "两句")]
+    assert svc.unreplied_lines([]) == []
+    for rows in (
+        [("用户", "想你了")],
+        [("用户", "想你了"), ("你", "我也想")],
+        [("你", "旧台词"), ("用户", "刚跑完步"), ("你", "辛苦啦"), ("用户", "你在哪呢")],
+        [("你", "一句"), ("你", "两句")],
+    ):
+        assert bool(svc.unanswered_lines(rows)) != bool(svc.unreplied_lines(rows)), rows
+    assert svc.unanswered_lines([]) == [] and svc.unreplied_lines([]) == []
+
+
+def test_unreplied_lines_tells_her_she_is_the_one_waiting() -> None:
+    """她悬着那一截的措辞必须是"他没回"，不能复用"你还没接过话"那一段。
+
+    两个方向共用一段措辞就会自相矛盾：09-26 用户报的"也不管之前的内容"，根因正是她那一侧
+    什么都没有，于是只能另找由头。
+    """
+    out = svc.format_unreplied_lines([("你", "累了就别硬撑，好好睡一觉。")])
+    assert "累了就别硬撑" in out
+    assert "还没有回" in out and "别转头说起一件不相干的事" in out
+    assert "还没有接过话" not in out
+    # 格式化器不切刀（与 `format_thread_lines` 同一分工）：空正文的那句不该产出一段上下文。
+    rows = [("用户", "在吗"), ("你", "   ")]
+    assert svc.format_unreplied_lines(svc.unreplied_lines(rows)) == ""
+
+
 def test_thread_lines_are_empty_when_she_has_the_last_word() -> None:
-    """串起来的那条：她刚答完话的会话，主动开口拿到的上下文必须是空串而不是旧台词。"""
+    """他那一句答过之后就不再当由头（`format_thread_lines` 那一刀为空）。"""
     rows = [("你", "外头降温了，穿上外套。"), ("用户", "想你了"), ("你", "我也想你")]
     assert svc.format_thread_lines(svc.unanswered_lines(rows)) == ""
 
@@ -928,8 +996,8 @@ def test_task_text_names_the_template_explicitly(conn) -> None:
     assert '一个动作起头' not in joined
 
 
-def test_quiet_minutes_grows_with_unread_and_jitters_deterministically() -> None:
-    """退避按未读翻倍；抖动**按 (角色, 上次开口) 确定**，不是每 tick 重摇的抽签。
+def test_quiet_minutes_grows_with_unreplied_and_jitters_deterministically() -> None:
+    """退避按"她说了而他没回"的条数翻倍；抖动**按 (角色, 上次说话时刻) 确定**，不是每 tick 重摇。
 
     为什么钉"确定性"：调度器每 30 秒问一次"够久了吗"。若阈值每次重算都不同，
     "哪一刻够格"就成了一场抽签 —— 测试钉不住，真机上还会抖出谁也复现不了的时机。
@@ -943,20 +1011,23 @@ def test_quiet_minutes_grows_with_unread_and_jitters_deterministically() -> None
     assert svc._quiet_minutes(60, 0, seed.replace("00:00", "00:01")) != plain, "换开口时刻也要换"
 
 
-def test_blocked_by_interval_backs_off_per_unread(conn) -> None:
-    """她说了你没回 → 要等的间隔翻倍；这条把"退避真的进了闸门"钉住。
+def test_backoff_counts_the_lines_he_never_replied_to(conn) -> None:
+    """退避看"她开口之后他回没回话"，**不看未读状态**；这条把"退避真的进了闸门"钉住。
 
-    只改 `state`、不再插新行：新行的 `created_at` 会把"上次开口"挪到现在，那样拦截与退避
-    无关，测试就变成钉了个假东西。
+    09-26 换掉计数的那一处：`mark_all_read` 的口径是他拍的"点进对话界面就算都看过"，于是
+    未读数只要打开过一次控制台就归零 —— 最该退避的"她连发三条没人回"在库里恰是 unread=0。
+    改成比时刻之后，"回过话"这件事由那条会话的 `updated_at` 说了算，划行、读收件箱都抹不掉。
     """
-    _seed_last(conn, "active", minutes_ago=100)  # 已读，且超过基础 60 分钟
+    _seed_last(conn, "active", minutes_ago=100)  # 她 100 分钟前主动冒的那句
+    _seed_lane_activity(conn, "active", minutes_ago=200)  # 他最后一次动静在**那之前** ⇒ 悬着 1 条
     utc, local = _now()
-    assert svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local) is None
-
-    conn.execute("UPDATE agent_reachout SET state = 'unread' WHERE role_id = 'active'")
-    conn.commit()
     reason = svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local)
-    assert reason is not None and "退避" in reason, "未读 1 条时 100 分钟还不够（要等 ~120 分钟）"
+    assert reason is not None and "退避" in reason, "1 条没回 ⇒ 要等 ~120 分钟，100 分钟还不够"
+
+    _seed_lane_activity(conn, "active", minutes_ago=70)  # 他 70 分钟前回过话 ⇒ 悬着的那条归零
+    assert (
+        svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local) is None
+    ), "回过话之后不该继续退避（锚点回到 70 分钟前，基础 60 分钟那一档已经过了）"
 
 
 # --------------------------------------------------------------- 第五个由头：未收尾话题

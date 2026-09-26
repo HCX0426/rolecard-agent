@@ -7,10 +7,10 @@
 
 ## 抑制层（决定"值不值得/能不能开口"）
 
-  1. 间隔：同一角色两次开口 ≥ `REACHOUT_INTERVAL_MINUTES` **再乘退避与抖动** —— 每攒一条未读
-     乘一倍（她说了你没接，下一句就该等更久），并按 (角色, 上次开口时刻) 派生 ±12% 抖动
-     （否则"每天同一时刻"会精确成立）。间隔记录取 `agent_reachout` 的 `created_at`，
-     UTC 口径，与 CURRENT_TIMESTAMP 一致；
+  1. 间隔：同一角色两次**冒话** ≥ `REACHOUT_INTERVAL_MINUTES` **再乘退避与抖动** —— 锚点是她
+     最后一次说话（主动开口与在会话里回答都算，09-26 修的），退避看"她开口之后对方没回几句"
+     （`_unreplied_streak`：只比时刻，不被"点进对话界面就算都看过"那条已读口径抹掉），并按
+     (角色, 上次说话时刻) 派生 ±12% 抖动（否则"每天同一时刻"会精确成立）；
   2. 静默时段：本地时间 23:00–08:00 不主动（与间隔的 UTC 分开，注释点明口径）；
   3. 堆积上限：同一角色未读 ≤ `MAX_UNREAD_PER_ROLE`，满了不再开（防轰炸）。
 
@@ -280,15 +280,42 @@ def unanswered_lines(rows: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
     调度器又在 19:31 与 20:35 各"主动"冒了一句，两句都在回那同一句。用户读到的是
     "我发一条消息，它回我两条重复的"，而对话因此永远不往前走。
 
-    她说过的话（`who == "你"`）就是分界线：那条之后的才算"没接住"。返回空表是常态，
-    也是正确答案 —— 她已经说过话了，这一次开口就该另找由头（记忆 / 时间规律 / 文件事件），
-    而不是把同一句再回一遍。
+    她说过的话（`who == "你"`）就是分界线：那条之后的才算"没接住"。**返回空表不是"没话可说"，
+    而是"轮到另一截"** —— 那时悬着的是她说过而他没回的那几句，见 `unreplied_lines`。
     """
     cut = 0
     for i, (who, _) in enumerate(rows):
         if who == "你":
             cut = i + 1
     return list(rows[cut:])
+
+
+def unreplied_lines(rows: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
+    """`unanswered_lines` 的另一半：**她说了、对方还没回**的那一截（最后一条用户消息之后）。
+
+    两刀是互补的，切在同一个位置：最后说话的人是他 ⇒ 前一截非空；是她 ⇒ 后一截非空。
+    为什么要有后一截（09-26 用户报的"也不管之前的内容"）：素材原先只供给"他说了而她没接"，
+    于是"她上一条还悬着、他一个字没回"这件事在她那里是**隐形**的 —— 她只能另找由头，
+    读起来就是"转头说起一件不相干的事"。把这一截给她，她才可能接住那份安静。
+
+    一条用户消息都没有时她说的**全都算**悬着 —— 那是"他从没在这条线里开过口"，不是"没得算"。
+    """
+    cut = 0
+    for i, (who, _) in enumerate(rows):
+        if who == "用户":
+            cut = i + 1
+    return list(rows[cut:])
+
+
+def _bullets(rows: Sequence[tuple[str, str]], limit: int) -> str | None:
+    """取最后 `limit` 条非空原文拼成清单行；一条都没有给 None（让调用方决定空串）。
+
+    三个格式化器共用这一处"**截断与每行截 120 字**"：那条规矩散在三份里迟早漂。
+    """
+    picked = [(str(who), str(text).strip()) for who, text in rows if str(text).strip()]
+    if not picked:
+        return None
+    return "\n".join(f"- {who}：{text[:120]}" for who, text in picked[-limit:])
 
 
 def format_thread_lines(
@@ -298,14 +325,32 @@ def format_thread_lines(
 
     放在这里而不是调用方：**措辞与截断只该有一处**，读 checkpoint 的那一侧只负责把消息取出来。
     """
-    picked = [(str(who), str(text).strip()) for who, text in rows if str(text).strip()]
-    picked = picked[-limit:]
-    if not picked:
+    lines = _bullets(rows, limit)
+    if lines is None:
         return ""
-    lines = "\n".join(f"- {who}：{text[:120]}" for who, text in picked)
     return (
         "这些是对方最近说的、你**还没有接过话**的几句（按时间正序）。**挑一件回应就好，"
         "别把它们逐条复述一遍，也不要重说你上一轮已经说过的话**：\n" + lines
+    )
+
+
+def format_unreplied_lines(
+    rows: Sequence[tuple[str, str]], *, limit: int = RECENT_THREAD_LIMIT
+) -> str:
+    """拼成"你说过而对方还没回"的那一段；没内容给空串。
+
+    措辞与 `format_thread_lines` 相反是有意的：那一段让她"挑一件回应"，这一段让她**别另起炉灶**。
+    同一条 `recent_reachout_lines` 的"别重复说过的话"仍然生效，所以这里要写清"接住那份安静"
+    不等于"把那句再说一遍"。
+    """
+    lines = _bullets(rows, limit)
+    if lines is None:
+        return ""
+    return (
+        "这几句是**你**说的、对方到现在还没有回的话（按时间正序）。别当它们没发生过、"
+        "也别转头说起一件不相干的事：要么自然地问一句他现在在忙什么、是不是没空看手机，"
+        "要么顺着你上一句再往前说一步 —— **但不要把已经说过的这句原样再说一遍**。"
+        "如果他一直不回，这一条宜短不宜长。\n" + lines
     )
 
 
@@ -318,11 +363,9 @@ def format_recent_window(
     它要找的是"说到一半没了下文"的事，那件事往往**已经被她接住过**、只是没落地。
     放在这里同样是为了让"措辞与截断只有一处"。
     """
-    picked = [(str(who), str(text).strip()) for who, text in rows if str(text).strip()]
-    picked = picked[-limit:]
-    if not picked:
+    lines = _bullets(rows, limit)
+    if lines is None:
         return ""
-    lines = "\n".join(f"- {who}：{text[:120]}" for who, text in picked)
     return "最近这一窗对话（按时间正序，含她已经接过话的那些句）：\n" + lines
 
 
@@ -587,14 +630,89 @@ def clear_all_inboxes(conn: SqlConnection) -> int:
 # ----------------------------------------------------------- 判定与生成（可测，无线程依赖）
 
 
+def _utc_from_db(raw: object) -> datetime | None:
+    """DB 里的 UTC 时间串 → aware datetime。**两种精度都要吃**：`CURRENT_TIMESTAMP` 给秒级
+    （`... %H:%M:%S`），而会话活动时刻走 `strftime('%Y-%m-%d %H:%M:%f','now')` 给毫秒级
+    （`... %H:%M:%S.123`）。`fromisoformat` 两者都认，所以不必维护格式清单。
+    读不出来就返回 None（= 不知道），而不是猜一个 —— 猜出来的时刻会直接变成"该不该开口"的判据。
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text).replace(tzinfo=UTC)
+    except ValueError:
+        return None
+
+
 def _last_reachout_utc(conn: SqlConnection, role_id: str) -> datetime | None:
     row = conn.execute(
         "SELECT MAX(created_at) AS at FROM agent_reachout WHERE role_id = ?", (role_id,)
     ).fetchone()
-    raw = row["at"]
-    if not raw:
-        return None
-    return datetime.strptime(str(raw), "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+    return _utc_from_db(None if row is None else row["at"])
+
+
+def _lane_activity_utc(conn: SqlConnection, role_id: str) -> datetime | None:
+    """对方在那条主动会话里**最后一次有动静**的时刻（任何一轮都会推 `session_thread.updated_at`）。
+    线程还不存在给 None（这条线从没建立过 = 无从判断他回没回）。
+    """
+    lane = conn.execute(
+        "SELECT updated_at FROM session_thread WHERE thread_id = ?",
+        (proactive_thread_id(role_id),),
+    ).fetchone()
+    return None if lane is None else _utc_from_db(lane["updated_at"])
+
+
+def _last_speech_utc(conn: SqlConnection, role_id: str) -> datetime | None:
+    """她上一次**在这条线里说话**的时刻 —— 主动开口和**回答用户**都算，取较新那个。
+
+    为什么必须算上回答（09-26 用户报的"我还没回话她就换了话题"）：间隔档原先只盯
+    `agent_reachout`，于是这个场景是漏的 —— 她在对话里 13:52 刚回过一句（那轮的回复**不落
+    reachout 表**），调度器看到的"上次开口"还是几小时前 ⇒ 间隔通过 ⇒ 一两分钟后又"主动"
+    冒一句；而素材侧 `unanswered_lines` 拿她自己最后那句当分界（之后没有用户新话 = 空），
+    于是这一句只能另找由头 ⇒ 用户看到的就是"不管刚才聊的是什么，她转头说起唱歌"。
+    锚点改成"她最后一次说话"，间隔档的语义（同一角色两次冒话的最小间隔）才名副其实。
+
+    会话那一侧读的是 `session_thread.updated_at`：**任何一轮写进去都会推它**，所以"用户刚发
+    完、她还没答"那一段也在闸内（这正是 `thread_is_busy` 那道闸盖不住的间隙）。代价要说清 ——
+    重命名、改会话级模型这类 PATCH 也会推它，于是一次重命名可能压掉她一个间隔的主动开口。
+    这比"她刚答完就又冒一句"轻，接受。
+    """
+    reach = _last_reachout_utc(conn, role_id)
+    chat = _lane_activity_utc(conn, role_id)
+    if reach is None:
+        return chat
+    if chat is None:
+        return reach
+    return max(reach, chat)
+
+
+def _unreplied_streak(conn: SqlConnection, role_id: str) -> int:
+    """她主动开口之后、对方**一个字都没回**的那几条 —— 退避指数用的就是它。
+
+    为什么不用现成的 `unread`（09-26）：`mark_all_read` 的口径是用户 09-23 拍的"我点进对话
+    界面了就算都看过"，于是他只要打开过一次控制台，未读数就归零、退避失效 ——
+    "她连着冒了三条而我一条没回"这种最该退避的情形，在库里恰恰表现为 unread = 0。
+    这一条不读状态列，只比时刻：`agent_reachout.created_at > 那条会话最后一次活动`。
+    他回过一句话就会把 `updated_at` 推过那些开口 ⇒ 计数自然归零。
+    （**封顶那一道仍然看 `unread`**，两种信号各有出口：划掉抽屉里的行能立刻解掉封顶，
+    却解不掉"他没回话" —— 后者只把间隔拉长，不会把她永久关在门外。）
+
+    **那条会话还没建立时给 0 而不是"全算"**：没有线就没有"他回没回"这回事，猜成"一条都没回"
+    会把一个从没主动找过他的角色永久压在最长的退避上（同审计一贯的"不知道就放行"口径）。
+
+    用 `julianday` 而不是直接比字符串：那两列虽然都是 ISO 形状，但 `TIMESTAMP` 声明在
+    SQLite 里落进 NUMERIC 亲和，跨亲和的文本比较不是这里要的语义；换成数就只有一种读法。
+    """
+    lane = _lane_activity_utc(conn, role_id)
+    if lane is None:
+        return 0
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM agent_reachout "
+        "WHERE role_id = ? AND julianday(created_at) > julianday(?)",
+        (role_id, lane.strftime("%Y-%m-%d %H:%M:%S.%f")),
+    ).fetchone()
+    return int(row["n"])
 
 
 def _unread_for_role(conn: SqlConnection, role_id: str) -> int:
@@ -605,21 +723,21 @@ def _unread_for_role(conn: SqlConnection, role_id: str) -> int:
     return int(row["n"])
 
 
-def _quiet_minutes(base_minutes: float, unread: int, seed: str) -> float:
-    """这次该等多久（分钟）：先按未读条数退避，再乘一个**确定性**的 ±12% 抖动。
+def _quiet_minutes(base_minutes: float, streak: int, seed: str) -> float:
+    """这次该等多久（分钟）：先按"她说了而对方没回"的条数退避，再乘一个**确定性**的 ±12% 抖动。
 
     两件不同的事，各治一个实测症状：
 
-      * **退避**（`base × BACKOFF_GROWTH ** 未读`）—— 她说了你还没接，下一句就该等更久。
+      * **退避**（`base × BACKOFF_GROWTH ** streak`）—— 她说了你还没接，下一句就该等更久。
         N.E.K.O 用"级别"实现同一件事（120s 起步、按 1.09/1.55 收敛到 3600s 硬顶），我们不必
-        再造一个级别字段：**未读条数就是"她开口而用户没接"的现成计数**，而且它已经是硬闸
-        （`MAX_UNREAD_PER_ROLE`）的判据 —— 同一个信号既退避又封顶，不会出现两处各记一份。
+        再造一个级别字段：**那条会话里"她开口之后他没回过话"的条数就是现成的计数**
+        （`_unreplied_streak` —— 09-26 从 `unread` 换过来，理由写在那一处的 docstring 里）。
       * **抖动**（±12%）—— 治"每天同一时刻说一句同样的话"。抄 N.E.K.O 的注释原话是
-        "避免节奏过于机械"；它每次抽签，我们**改成按 (角色, 上次开口时刻) 派生的确定性抖动**：
+        "避免节奏过于机械"；它每次抽签，我们**改成按 (角色, 上次说话时刻) 派生的确定性抖动**：
         随机阈值会让"到底哪一秒够格"变成每 tick 重摇的抽签，既测不住也复现不了；种子只在
-        她再次开口时才变，于是时间点自然逐日错开。
+        她再次说话时才变，于是时间点自然逐日错开。
     """
-    grown = base_minutes * BACKOFF_GROWTH ** max(0, unread)
+    grown = base_minutes * BACKOFF_GROWTH ** max(0, streak)
     frac = random.Random(seed).uniform(-JITTER_FRACTION, JITTER_FRACTION)
     return grown * (1 + frac)
 
@@ -640,15 +758,16 @@ def blocked_why(
     语义：变化值得即时播报；静默时段与未读堆积是用户级护栏，不豁免。
     """
     unread = _unread_for_role(conn, role.role_id)
-    last = _last_reachout_utc(conn, role.role_id)
+    streak = _unreplied_streak(conn, role.role_id)
+    last = _last_speech_utc(conn, role.role_id)
     if last is not None and not file_event:
         need = _quiet_minutes(
-            settings.reachout_interval_minutes, unread, f"{role.role_id}|{last.isoformat()}"
+            settings.reachout_interval_minutes, streak, f"{role.role_id}|{last.isoformat()}"
         )
         elapsed = now_utc - last
         if elapsed < timedelta(minutes=need):
-            backoff = f"，未读 {unread} 条已退避" if unread else ""
-            return f"距上次开口不足 {need:.0f} 分钟{backoff}"
+            backoff = f"，她连着 {streak} 条没被回已退避" if streak else ""
+            return f"距上次说话不足 {need:.0f} 分钟{backoff}"
     if now_local.hour >= QUIET_HOURS_START or now_local.hour < QUIET_HOURS_END:
         return "处于静默时段（23:00–08:00）"
     if unread >= MAX_UNREAD_PER_ROLE:

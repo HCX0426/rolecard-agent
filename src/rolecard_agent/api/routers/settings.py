@@ -659,7 +659,7 @@ def runtime_payload(
                 "reachout_interval_minutes",
                 "REACHOUT_INTERVAL_MINUTES",
                 "开口间隔（分钟）",
-                "同一角色两次主动开口的最小间隔（防刷屏）；保存即热生效，排查时可临时调小",
+                "同一角色两次「冒话」的最小间隔（回答和主动开口都算）；保存即热生效，排查时可临时调小",
             ),
             (
                 "reachout_merge_days",
