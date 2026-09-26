@@ -35,7 +35,7 @@ function EntryAsset([string]$file) {
 
 
 if (-not $SkipBuild) {
-    Write-Host "[1/4] building (frontend -> sidecar -> nsis)"
+    Write-Host "[1/5] building (frontend -> sidecar -> nsis)"
     Push-Location (Join-Path $root "frontend")
     npm run build | Out-Null
     Pop-Location
@@ -45,11 +45,20 @@ if (-not $SkipBuild) {
     npm run package | Out-Null
     Pop-Location
 } else {
-    Write-Host "[1/4] build skipped (-SkipBuild)"
+    Write-Host "[1/5] build skipped (-SkipBuild)"
 }
+
+# 装之前先给**装着的那份**留一份能回滚的东西。这一步以前是人记着的，
+# 2026-09-26 第六次打包就漏了（装完才补，那时已经回不去了）—— 所以它进脚本而不是进备忘录。
+# sqlite 走 backup() 而不是复制：真库开着 WAL，直拷会得到主库与 -wal 不同步的半成品。
+Write-Host "[2/5] backing up the installed data root"
+$py = Join-Path $root ".venv\Scripts\python.exe"
+& $py (Join-Path $root "scripts\backup_data_root.py") --dest (Join-Path $root "build")
+if ($LASTEXITCODE -ne 0) { throw "backup failed (exit=$LASTEXITCODE) —— 没备份就别装" }
+
 if (-not (Test-Path $installer)) { throw "installer not found: $installer" }
 
-Write-Host "[2/4] closing the installed app (if running)"
+Write-Host "[3/5] closing the installed app (if running)"
 $targets = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $installedExe })
 $main = $targets | Where-Object { $_.Name -eq "rolecard-agent.exe" } | Select-Object -First 1
 if ($null -ne $main) {
@@ -61,7 +70,7 @@ if ($null -ne $main) {
     Write-Host "      not running, nothing to close"
 }
 
-Write-Host "[3/4] silent install"
+Write-Host "[4/5] silent install"
 $t0 = Get-Date
 $p = Start-Process -FilePath $installer -ArgumentList "/S" -Wait -PassThru
 $secs = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1)
@@ -94,7 +103,7 @@ $why = "  —— 用 -SkipBuild 装了一份旧包时这条是预期会红的：
 if ($a -ne $b) { throw ("installed BACKEND is not the fresh build (sha256 differs)" + $why) }
 
 if (-not $NoLaunch) {
-    Write-Host "[4/4] launching"
+    Write-Host "[5/5] launching"
     Start-Process -FilePath $installedExe | Out-Null
     Start-Sleep -Seconds 20
     try {
@@ -104,6 +113,6 @@ if (-not $NoLaunch) {
         throw "app is up but /api/health did not answer: $($_.Exception.Message)"
     }
 } else {
-    Write-Host "[4/4] not launched (-NoLaunch)"
+    Write-Host "[5/5] not launched (-NoLaunch)"
 }
 Write-Host "OK installed and verified"
