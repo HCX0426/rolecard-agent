@@ -241,12 +241,18 @@ def select_ocr_backend(
     `OcrUnavailable`（保持 pending，不假装已读）。
 
     为什么不再有"按 `Settings.ocr_backend` 走 paddle/cloud 档位"的第二条路径：`seed_once()`
-    恒播种一条启用的内置行 ⇒ 生产上 `order` 永不为空 ⇒ 那条分支**从不执行**。曾经与它一起
-    挂在 .env.example 与运行环境页"可改"清单上的 `OCR_BACKEND`/`OCR_API_KEY`/`OCR_API_URL`
-    已随该收口删除（架构审计报告 P1-5）—— 保存它们当时什么都不发生。
+    恒播种一条启用的内置行 ⇒ **走装配根的进程**里 `order` 永不为空 ⇒ 那条分支**从不执行**。
+    曾经与它一起挂在 .env.example 与运行环境页"可改"清单上的
+    `OCR_BACKEND`/`OCR_API_KEY`/`OCR_API_URL` 已随该收口删除（架构审计报告 P1-5）——
+    保存它们当时什么都不发生。
+
     凭据因此只有一个家：模型页的云端后端行（`has_key` 掩码纪律在那边）。
     云端 OCR 会把图片外发第三方 —— 它**只能**由操作员显式在模型页建凭据行、再在服务页引用，
     绝不从 env 默认启用（隐私红线，与 `seed_once` 的"OCR 默认无云端引用"同一条理由）。
+
+    ⚠️ 与 `make_embedder` 同一条限定：`storage.db.bootstrap()` 不播这些行，装配根之外要自己
+    `seed_once()`。而这里比嵌入更阴 —— 空 `order` 不抛，返回 None 降级成"OCR 不可用"，
+    报告静静留在 pending，看起来像"这张图没识别出来"。
     """
     for cid in order:
         if cid == "paddle":

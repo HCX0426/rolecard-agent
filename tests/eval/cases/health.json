@@ -161,5 +161,121 @@
       }
     ],
     "notes": "v2.1：知识检索路径——search_knowledge 命中 health_reports 作用域，回答引用库内内容"
+  },
+  {
+    "id": "cite-001",
+    "path": "citation",
+    "role_id": "medical_archivist",
+    "enabled_domains": [
+      "health"
+    ],
+    "input": "我最新一次检查的尿酸是多少？",
+    "expect_tools": [
+      "query_health_record"
+    ],
+    "expect_absent_tools": [
+      "upload_medical_report"
+    ],
+    "assertions": [
+      {
+        "kind": "tool_called",
+        "name": "query_health_record"
+      },
+      {
+        "kind": "answer_contains_value",
+        "value": 488.0,
+        "tolerance": 0.5
+      },
+      {
+        "kind": "answer_absent_value",
+        "value": 487.0,
+        "tolerance": 0.05
+      }
+    ],
+    "notes": "尿酸只许引 488。反向禁的是 487（记录里没有、也不落在任何参考区间里的数）——第一版在这里禁的是 5.0，理由是「别把另一条报告的数串过来」，但直径的参考区间是 0-5，一个照实报区间的正确回答会被判错。禁数必须确认它不出现在任何合法表述里。"
+  },
+  {
+    "id": "cite-002",
+    "path": "citation",
+    "role_id": "medical_archivist",
+    "enabled_domains": [
+      "health"
+    ],
+    "input": "2026 年 3 月那次复查，结石直径多大？",
+    "expect_tools": [
+      "query_health_record"
+    ],
+    "expect_absent_tools": [],
+    "assertions": [
+      {
+        "kind": "tool_called",
+        "name": "query_health_record"
+      },
+      {
+        "kind": "answer_value_near_marker",
+        "value": 6.0,
+        "marker": "2026",
+        "window": 40
+      },
+      {
+        "kind": "answer_absent_value",
+        "value": 6.1,
+        "tolerance": 0.02
+      }
+    ],
+    "notes": "配对断言：6.0 必须挨着 2026 出现 —— 光「文本里有 6」的话，把 6 说成 2025 年那次也算过。反向那条只禁 6.1（一个记录里不存在、也不在任何参考区间里的数）。曾经禁的是 5.0，三遍全挂且模型三遍都答对了：它照实报了「参考区间 0-5」，那个 5 是区间上限不是旧报告 —— 见 _check_assertions 里那段注释。"
+  },
+  {
+    "id": "cite-003",
+    "path": "citation",
+    "role_id": "medical_archivist",
+    "enabled_domains": [
+      "health"
+    ],
+    "input": "2025 年 5 月那次超声，结石直径是多少？",
+    "expect_tools": [
+      "query_health_record"
+    ],
+    "expect_absent_tools": [],
+    "assertions": [
+      {
+        "kind": "tool_called",
+        "name": "query_health_record"
+      },
+      {
+        "kind": "answer_value_near_marker",
+        "value": 5.0,
+        "marker": "2025",
+        "window": 40
+      }
+    ],
+    "notes": "与 cite-002 成对：同一个指标、两份报告、两个方向。只留一条的话，「总是答最新那个数」这一族错永远测不出来 —— 它对 cite-002 恰好是对的。"
+  },
+  {
+    "id": "cite-004",
+    "path": "citation_no_data",
+    "role_id": "medical_archivist",
+    "enabled_domains": [
+      "health"
+    ],
+    "input": "我血糖高不高？",
+    "expect_tools": [
+      "query_health_record"
+    ],
+    "expect_absent_tools": [],
+    "assertions": [
+      {
+        "kind": "answer_contains_marker",
+        "marker": [
+          "没有",
+          "没存",
+          "没找到",
+          "没记录",
+          "未记录",
+          "没有记录"
+        ]
+      }
+    ],
+    "notes": "库里没有血糖记录：正确答案是承认查不到。标记给一组同义说法 —— 只认「没有」的话，「档案里没存过血糖」这种完全正确的回答会判错（09-26 三遍里就错了一次）。更严的「不许出现任何数字」没做：那种回答里出现参考上限反而是对的。"
   }
 ]

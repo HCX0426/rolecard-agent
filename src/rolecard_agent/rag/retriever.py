@@ -205,10 +205,16 @@ def make_embedder(
     base_url 时回落 `Settings.siliconflow_base_url`。
 
     为什么不再有"按 `Settings.embedding_backend` 选型"的第二条路径：`seed_once()` 恒为每类
-    服务播种一条启用的内置行 ⇒ 生产上 `order` 永不为空 ⇒ 那条 env 路径**从不执行**，
-    但 `RAG_EMBEDDING` 仍出现在 .env.example 与运行环境页的"可改"清单里 —— 一个改了不生效
+    服务播种一条启用的内置行 ⇒ **走装配根的进程**里 `order` 永不为空，那条 env 路径
+    从不执行，但 `RAG_EMBEDDING` 仍出现在 .env.example 与运行环境页的"可改"清单里 —— 一个改了不生效
     的开关比没有开关更糟（同一件事在 §3 里被记为"死开关 + 重复事实面"）。
     没有可用端点时大声失败，而不是静默降级成质量很差的检索。
+
+    ⚠️ 上面那句"永不为空"只覆盖**装配根之内**。`storage.db.bootstrap()` 不播这些行，
+    播种是 `core/bootstrap.py` 的 Runtime 干的 —— 所以任何自己 `connect + bootstrap` 的脚本
+    （评测环、演示数据）必须自己补一句 `ServiceEndpointService(conn).seed_once()`，
+    否则这里就是空 `order` 直接抛。09-26 那次评测环跑不起来正是这个原因，
+    守卫在 `tests/unit/test_eval_ring.py`（不调模型，进 fast 门禁）。
     """
     for cid in order:
         if cid == "hash":

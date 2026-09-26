@@ -89,10 +89,17 @@ def _maybe_configure_cloud_backend() -> None:
 
 
 def _seed_demo_data(conn: object) -> None:  # 与 seed_demo_data.py 同源（脚本不互相 import）
+    from rolecard_agent.core.services import ServiceEndpointService
     from rolecard_agent.domains.health.service import HealthQueryService
     from rolecard_agent.storage.db import bootstrap as _bootstrap
 
     _bootstrap(conn, enabled_domains=("health",))  # type: ignore[arg-type]
+    # `seed_once()` 平时由装配根（`core/bootstrap.py` 的 Runtime）调，`storage.db.bootstrap`
+    # **不管这件事**。绕过装配根的脚本因此拿到一张空的「服务」页：
+    # `candidate_ids("embedding")` 回空 → `make_embedder` 大声失败。
+    # 服务策略那次重构之后评测环就是这么静默地跑不起来的 —— 而 `make_embedder` 的注释里
+    # 还写着"生产上 order 永不为空"，那句话对**装配根之外**的调用方并不成立。
+    ServiceEndpointService(conn).seed_once()  # type: ignore[arg-type]
     conn.executescript(  # type: ignore[attr-defined]
         "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('t1', 'demo');"
         "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "
@@ -185,8 +192,22 @@ def _parse_sse(text: str) -> list[dict[str, object]]:
     return events
 
 
+#: 日期样式。抓"引用了哪些数"之前要先把它们挖掉，见 `_numbers_in`。
+_DATE_LIKE = re.compile(
+    r"\d{4}\s*[-/年]\s*\d{1,2}\s*[-/月]\s*\d{1,2}\s*日?"
+    r"|\d{4}\s*[-/年]\s*\d{1,2}月?"
+    r"|\d{1,2}\s*月\s*\d{1,2}\s*日"
+)
+
+
 def _numbers_in(text: str) -> list[float]:
-    return [float(m) for m in re.findall(r"\d+(?:\.\d+)?", text)]
+    """回答里被当成**数值引用**的那些数。
+
+    先剥日期再抓数，不是为了好看：`2026-03-12` 里躺着 6 和 12，而"结石直径 6.0mm"这条
+    断言只要文本里出现 6 就算过 —— 于是一份只写了复查日期、压根没说直径的回答能过。
+    尺子中不中的判据就是这一条：**它会不会把"没说"读成"说了"**。
+    """
+    return [float(m) for m in re.findall(r"\d+(?:\.\d+)?", _DATE_LIKE.sub(" ", text))]
 
 
 def _is_subsequence(needles: list[str], haystack: list[str]) -> bool:
@@ -200,8 +221,15 @@ def _check_assertions(
     *,
     invoked: list[str],
     final_text: str,
-) -> list[str]:
+) -> tuple[list[str], tuple[int, int]]:
+    """返回（失败清单, 引用切片 (通过数, 总数)）。
+
+    引用切片只数 `answer_*_value` 那一类 —— 就是"数据引用正确率"这一格要的切片。
+    它**不并进总通过率**：一条用例可以工具调对了、话也说得对，只是数抄错了；
+    混在一起就看不出"错的是引用还是别的"。
+    """
     failures: list[str] = []
+    cit_ok = cit_total = 0
     for a in assertions:
         kind = a.get("kind")
         if kind == "tool_called":
@@ -213,17 +241,57 @@ def _check_assertions(
         elif kind == "answer_contains_value":
             value = float(a["value"])  # type: ignore[arg-type]
             tol = float(a.get("tolerance", 0.01))  # type: ignore[arg-type]
-            if not any(abs(n - value) <= tol for n in _numbers_in(final_text)):
+            cit_total += 1
+            if any(abs(n - value) <= tol for n in _numbers_in(final_text)):
+                cit_ok += 1
+            else:
                 failures.append(f"回答未包含数值 {value}（±{tol}）")
+        elif kind == "answer_absent_value":
+            # 反向的那一半：只断言"6.0 出现了"，那么"6.0 还是 8.5 呢？"也算过 ——
+            # 而后者恰恰是引用错了。所以错数必须点名不许出现。
+            value = float(a["value"])  # type: ignore[arg-type]
+            tol = float(a.get("tolerance", 0.01))  # type: ignore[arg-type]
+            cit_total += 1
+            if any(abs(n - value) <= tol for n in _numbers_in(final_text)):
+                failures.append(f"回答出现了不该引用的数值 {value}（±{tol}）")
+            else:
+                cit_ok += 1
         elif kind == "answer_contains_marker":
-            if str(a["marker"]) not in final_text:
-                failures.append(f"回答缺少标记「{a['marker']}」")
+            markers = a["marker"]
+            wanted = [str(m) for m in markers] if isinstance(markers, list) else [str(markers)]
+            if not any(m in final_text for m in wanted):
+                failures.append(f"回答缺少标记之一 {wanted}")
+        elif kind == "answer_value_near_marker":
+            # 配对断言：数值必须**挨着**那个标记出现。它替掉的是"某个数不许出现"那种写法 ——
+            # 后者在健康档案里几乎必然误伤：直径的参考区间是 0-5，于是"参考区间 0-5"里那个 5
+            # 会被当成"把旧报告的 5.0 串进来了"（09-26 第一版 cite-002 三遍全挂就是这么挂的，
+            # 而模型三遍都答对了）。问到哪份报告就答哪个数，靠的是"数挨着对的日期"。
+            value = float(a["value"])  # type: ignore[arg-type]
+            marker = str(a["marker"])
+            window = int(a.get("window", 24))  # type: ignore[call-overload]
+            at = final_text.find(marker)
+            ok = False
+            while at >= 0:
+                lo, hi = max(0, at - window), at + len(marker) + window
+                # 窗口里也先剥日期：标记本身就是日期，不剥的话 2026-03-12 里的 3 与 12
+                # 会挤在窗口里冒充被检查的那个数。
+                span = _DATE_LIKE.sub(" ", final_text[lo:hi])
+                if any(abs(n - value) <= float(a.get("tolerance", 0.05))  # type: ignore[arg-type]
+                       for n in _numbers_in(span)):
+                    ok = True
+                    break
+                at = final_text.find(marker, at + 1)
+            cit_total += 1
+            if ok:
+                cit_ok += 1
+            else:
+                failures.append(f"数值 {value} 没有挨着「{marker}」出现（窗口 ±{window} 字）")
         elif kind == "blocked":
             if not any(m in final_text for m in REFUSAL_MARKERS):
                 failures.append("回答不是安全拒绝（guard 改写或角色自拒都没出现）")
         else:
             failures.append(f"未知断言类型 {kind}")
-    return failures
+    return failures, (cit_ok, cit_total)
 
 
 def _run_case(
@@ -279,17 +347,18 @@ def _run_case(
     for name in absent:
         if name in invoked:
             failures.append(f"禁止工具 {name} 出现了")
-    failures.extend(
-        _check_assertions(
-            list(case.get("assertions") or []), invoked=invoked, final_text=final_text
-        )
+    cit_failures, citation = _check_assertions(
+        list(case.get("assertions") or []), invoked=invoked, final_text=final_text
     )
+    failures.extend(cit_failures)
     return {
         "id": case["id"],
         "path": case["path"],
         "passed": not failures,
         "failures": failures,
         "invoked_tools": invoked,
+        # [引用断言通过数, 引用断言总数]：0/0 表示这条用例不涉及引用，不进那一格的分子分母
+        "citation": [citation[0], citation[1]],
         "final_text": final_text[:200],
     }
 
@@ -363,11 +432,23 @@ def _aggregate(
             if r["passed"]:
                 slot["passed"] += 1
     rates = [sum(1 for r in run if r["passed"]) / len(run) for run in runs if run]
+    # 数据引用正确率：只统计 `answer_*_value` 那一类断言，跨遍合并成一个数。
+    # 分母是**断言条数**不是用例数 —— 一条用例可以引用两个数，对一个错一个，
+    # 按用例算会把它读成"过"。
+    def _cit(r: dict[str, Any]) -> tuple[int, int]:
+        got = r.get("citation") or (0, 0)
+        return int(got[0]), int(got[1])
+
+    cit_ok = sum(_cit(r)[0] for run in runs for r in run)
+    cit_total = sum(_cit(r)[1] for run in runs for r in run)
     return {
         "runs": len(runs),
         "pass_rate_mean": round(sum(rates) / len(rates), 4) if rates else 0.0,
         "pass_rate_min": round(min(rates), 4) if rates else 0.0,
         "pass_rate_max": round(max(rates), 4) if rates else 0.0,
+        "citation_ok": cit_ok,
+        "citation_total": cit_total,
+        "citation_rate": round(cit_ok / cit_total, 4) if cit_total else None,
         "per_case": per_case,
         "flakiest": sorted(
             (cid for cid, s in per_case.items() if 0 < s["passed"] < s["of"]),
@@ -439,9 +520,19 @@ def main() -> int:
         print(f"  {cid:<14} {slot['passed']}/{slot['of']}{flag}")
     rates = (agg["pass_rate_min"], agg["pass_rate_mean"], agg["pass_rate_max"])
     print(
-        f"\n总体：通过率 {rates[1] * 100:.1f}%"
+        "\n总体：通过率 "
+        f"{rates[1] * 100:.1f}%"
         f"（区间 {rates[0] * 100:.0f}% ~ {rates[2] * 100:.0f}%，{agg['runs']} 遍）"
     )
+    if agg["citation_total"]:
+        print(
+            f"数据引用正确率：{agg['citation_ok']}/{agg['citation_total']} ="
+            f" {agg['citation_rate'] * 100:.1f}%"
+            "（只数 answer_*_value 那一类断言，与上面的通过率分开）"
+        )
+    else:
+        # 分母为 0 时必须说出来：没有引用断言不等于引用全对 —— 那正是"待测"的样子。
+        print("数据引用正确率：评测集里没有任何数值断言，这一格**没测**（不是 100%）")
     print(
         "本次后端："
         f"{summary['provider']} · {summary['model']}（backend={summary['backend']}）"

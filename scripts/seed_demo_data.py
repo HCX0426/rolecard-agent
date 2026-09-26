@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rolecard_agent.config import Settings  # noqa: E402
 from rolecard_agent.core.identity import DEFAULT_TENANT_ID, DEFAULT_USER_ID  # noqa: E402
+from rolecard_agent.core.services import ServiceEndpointService  # noqa: E402
 from rolecard_agent.domains.health.service import HealthQueryService  # noqa: E402
 from rolecard_agent.storage.db import bootstrap, connect  # noqa: E402
 
@@ -26,6 +27,10 @@ def main() -> None:
     settings = Settings.from_env()
     conn = connect(settings.sqlite_path)
     bootstrap(conn, enabled_domains=("health",))
+    # 与 `run_eval.py` 同一处修补：`seed_once()` 平时在装配根里调，`storage.db.bootstrap`
+    # 不播「服务」页那些行，所以绕过装配根的脚本会拿到一张空的端点表，
+    # 后面 `make_embedder` 直接大声失败（嵌入器与 app 必须同源，维度不一致检索就废）。
+    ServiceEndpointService(conn).seed_once()
     conn.execute(
         "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES (?, '本地演示')",
         (DEFAULT_TENANT_ID,),
@@ -46,7 +51,6 @@ def main() -> None:
     # `make_embedder(settings)`，而那个签名早已改成两个必填关键字参数 —— 于是这个脚本
     # 一跑就 TypeError，却因为"scripts 不归 mypy 管"（09-26 轮 S-6）静默坏了很久。
     from rolecard_agent.core.bootstrap import candidate_ids
-    from rolecard_agent.core.services import ServiceEndpointService
     from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder
 
     services = ServiceEndpointService(conn)
