@@ -611,13 +611,13 @@ def runtime_payload(
                 "model_thinking",
                 "MODEL_THINKING",
                 "思考总开关",
-                "auto=按名单自动 / off=名单内也临时关",
+                "auto=按名单显示 / off=名单内也不显示（只是藏起来：思考照旧发生、那几十秒照旧花）",
             ),
             (
                 "model_thinking_models",
                 "MODEL_THINKING_MODELS",
                 "思考模型名单",
-                "名单内模型以 reasoning=True 调用",
+                "名单内模型以 reasoning=True 调用 ⇒ 思考显示在折叠面板；不列名它照样想，只是看不见",
             ),
         ],
     )

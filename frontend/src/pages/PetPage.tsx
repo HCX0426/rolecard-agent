@@ -56,11 +56,20 @@ function shorten(text: string): string {
 }
 
 /**
- * 一行前面的说话人。写成组件是因为这块小面板里"谁说的"不能只靠颜色区分 ——
- * 色弱用户和截图里都读不出来，而"它说的"和"我说的"混在一起正是这类气泡最容易出事的地方。
+ * 一行对话。**说话人只挂在 `aria-label` 上，不再印成"它：/你："那两个可见的字**
+ * （用户 09-26："每次对话都有个它：，你：，这是不需要的"）：
+ *
+ *   · 视觉上谁说的已经由**位置 + 泡**分开了（我的靠右带蓝泡，见 `MINE_ROW`）；
+ *   · 但"谁说的"这件事不能只靠颜色与位置 —— 读屏软件与无障碍树要看得到，
+ *     所以标注留在 `aria-label` 里，等于把原来那块可见文字降级成语义标签。
+ *
+ * 一个 helper 而不是三处各写一遍：三种来源（回放的历史 / 刚发出去还没落库的那句 /
+ * 正在流的这一轮）在数据上长得都不一样，很容易改漏一处 —— 漏了就又变成"位置说不清"。
  */
-function Speaker({ mine }: { mine: boolean }) {
-  return <span className="text-slate-400 dark:text-slate-500">{mine ? "你：" : "它："}</span>;
+function rowOf(mine: boolean): { className: string; "aria-label": string } {
+  return mine
+    ? { className: MINE_ROW, "aria-label": "我说" }
+    : { className: "break-words", "aria-label": "它说" };
 }
 
 /** 我这一方靠右 + 一个浅蓝泡（用户 09-26："像对话界面那样我的回复显示在右边，才有对话感"）。
@@ -673,19 +682,15 @@ export default function PetPage() {
               (history ?? [])
                 .filter((m) => m.role === "user" || m.role === "assistant")
                 .map((m, i) => (
-                  <p key={m.id ?? i} className={m.role === "user" ? MINE_ROW : "break-words"}>
-                    <Speaker mine={m.role === "user"} />
+                  <p key={m.id ?? i} {...rowOf(m.role === "user")}>
                     {m.content}
                   </p>
                 ))}
             {showContent && pendingUser && (
-              <p className={MINE_ROW}>
-                <Speaker mine />
-                {pendingUser}
-              </p>
+              <p {...rowOf(true)}>{pendingUser}</p>
             )}
             {showContent && live && (busy || live.text || live.thinking) && (
-              <div className="break-words">
+              <div>
                 {/* 思考过程与对话页**同一个组件**（用户 09-26："桌宠那侧也要看思考过程，
                     和对话界面差不多"）：本地档那十几到几十秒全花在思考上（09-26 轮 R26-29），
                     没有这一格就是一块不动的泡。规矩照抄对话页 —— 流式期间展开（"她在打字"
@@ -696,8 +701,7 @@ export default function PetPage() {
                   text={live.thinking}
                   defaultOpen={busy}
                 />
-                <p>
-                  <Speaker mine={false} />
+                <p {...rowOf(false)}>
                   {live.text || (live.streaming && !live.thinking ? "…" : "")}
                 </p>
               </div>

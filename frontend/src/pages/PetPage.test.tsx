@@ -295,13 +295,18 @@ describe("PetPage 点开面板（§7：想回话不用开控制台）", () => {
 
     // jsdom 不把 Tailwind 排成版，所以这里量的是"那条规则挂上了没有"；真实位置在真浏览器
     // 里另外量过一次（我那一行的左边界确实落在它那一行的右边，见本轮验收）。
-    const mine = screen.getByText("你：").closest("p") as HTMLElement;
-    const theirs = screen.getByText("它：").closest("p") as HTMLElement;
+    const mine = screen.getByLabelText("我说") as HTMLElement;
+    const theirs = screen.getByLabelText("它说") as HTMLElement;
+    expect(mine.tagName).toBe("P");
     expect(mine.className).toContain("ml-auto");
     expect(mine.className).toContain("max-w-[86%]");
     expect(theirs.className).not.toContain("ml-auto");
     // 靠右不等于把"谁说的"标掉：这么小的面板里位置与颜色不足以分辨（见 Speaker 那条注释）
-    expect(mine.textContent).toBe("你：好，你也穿点");
+    expect(mine.textContent).toBe("好，你也穿点");
+    // 说话人**不再印成可见的"你：/它："**（用户 09-26："每次对话都有个它：，你：，这是不需要的"），
+    // 但标注没有消失 —— 它降级进了 `aria-label`（上面那两个 getByLabelText 就是它）。
+    expect(screen.queryByText("你：")).toBeNull();
+    expect(screen.queryByText("它：")).toBeNull();
   });
 
   it("把「画了像素的那几块」报给壳，形状没变不重复发，卸载时收回（§12.3）", async () => {
@@ -674,8 +679,8 @@ describe("PetPage 在桌宠上回话（③：不进控制台就能聊）", () =>
     });
     expect(panel.textContent).toContain("先说今天累不累");
     // 正文一个字都还没有，但屏幕上已经在长东西 —— 所以那一行不该再补一个多余的省略号。
-    const line = screen.getByText("它：").closest("p") as HTMLElement;
-    expect(line.textContent).toBe("它：");
+    const line = screen.getByLabelText("它说") as HTMLElement;
+    expect(line.textContent).toBe("");
 
     await act(async () => {
       emit?.({ type: "token", text: "你来啦" });
