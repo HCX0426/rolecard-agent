@@ -9,10 +9,10 @@
 // 另一半钉的是"通知不能变成轰炸"：开机/重连时积压的那批一律不算新到，只有快照之间真的
 // 变大 id 的那一条才拍系统通知；以及没有主动会话可跳的老消息不能去要点跳转（死链）。
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { apiMock, streamChatMock } = vi.hoisted(() => ({
+const { apiMock, streamChatMock, streamEditMock } = vi.hoisted(() => ({
   apiMock: {
     getReachouts: vi.fn(),
     markAllReachoutsRead: vi.fn(),
@@ -22,11 +22,13 @@ const { apiMock, streamChatMock } = vi.hoisted(() => ({
   },
   // 桌宠的回话复用对话页那份 SSE 归约，所以这里也换掉 `streamChat`（不是另写一套流）。
   streamChatMock: vi.fn(),
+  // 「重新生成这一轮」也复用对话页那条通道（`POST /api/session/{tid}/messages/edit`）。
+  streamEditMock: vi.fn(),
 }));
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
-  return { ...actual, api: apiMock, streamChat: streamChatMock };
+  return { ...actual, api: apiMock, streamChat: streamChatMock, streamEdit: streamEditMock };
 });
 
 import PetPage from "./PetPage";
@@ -1009,5 +1011,102 @@ describe("PetPage 命中区与一次拖只收一次（三条都是量出来的�
     fireEvent.pointerUp(el, { pointerId: 1 });
     expect(expanded).toHaveBeenCalledTimes(1);
     expect(expanded).toHaveBeenCalledWith(false);
+  });
+});
+
+describe("PetPage 面板的右键菜单（09-26 用户选的形态：页内自绘，不用原生菜单）", () => {
+  const HISTORY = [
+    { id: "m1", role: "user", content: "你陪我嘛" },
+    { id: "m2", role: "assistant", content: "当然陪着你呀" },
+  ] as const;
+
+  async function openWithHistory() {
+    apiMock.get.mockImplementation(async (url: string) =>
+      url === "/api/roles"
+        ? [{ role_id: "wan", role_name: "苏晚晴", model_name: "" }]
+        : { messages: [...HISTORY], total: 2, limit: 8, truncated: false },
+    );
+    await mount();
+    fireEvent.click(screen.getByTitle(/点开看你们最近聊了什么/));
+    await act(async () => {
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+  }
+
+  function menuItems(): HTMLButtonElement[] {
+    const menu = document.querySelector("[data-pet-ui='menu']");
+    if (!menu) throw new Error("菜单没弹出来");
+    return within(menu as HTMLElement).getAllByRole("menuitem") as HTMLButtonElement[];
+  }
+
+  it("右键她那一句：三项按顺序在，没选区时「复制选中的文字」置灰", async () => {
+    await openWithHistory();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+
+    fireEvent.contextMenu(screen.getByLabelText("它说"));
+    const items = menuItems();
+    expect(items.map((b) => b.textContent)).toEqual([
+      "复制选中的文字",
+      "复制整条消息",
+      "重新生成这一轮",
+    ]);
+    expect(items[0].disabled).toBe(true); // 屏幕上没有选区，就不给一个点了没动作的项
+    expect(items[1].disabled).toBe(false);
+
+    fireEvent.click(items[1]);
+    expect(writeText).toHaveBeenCalledWith("当然陪着你呀");
+    // 点完自己收：透明窗上留一块浮层就是噪音，而且它会挡住下面的桌面点击
+    expect(document.querySelector("[data-pet-ui='menu']")).toBeNull();
+  });
+
+  it("重新生成走对话页那条 edit 通道，用的是触发这一轮的那句用户消息", async () => {
+    await openWithHistory();
+    streamEditMock.mockImplementation(async () => undefined);
+
+    fireEvent.contextMenu(screen.getByLabelText("它说"));
+    fireEvent.click(menuItems()[2]);
+    await act(async () => {
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+
+    expect(streamEditMock).toHaveBeenCalledWith(
+      "s_proactive_wan",
+      "m1",
+      "你陪我嘛",
+      expect.any(Function),
+      expect.anything(),
+      null,
+    );
+  });
+
+  it("我那句没有可重问的靶子：右键它只给复制，不给「重新生成」", async () => {
+    await openWithHistory();
+    fireEvent.contextMenu(screen.getByLabelText("我说"));
+    expect(menuItems().map((b) => b.textContent)).toEqual(["复制选中的文字", "复制整条消息"]);
+  });
+
+  it("正在流的那一句：多一项「停止这一轮生成」，而重问要等这一轮结束", async () => {
+    streamChatMock.mockImplementation(
+      (_tid: string, _msg: string, _onEvent: (e: unknown) => void) => new Promise<void>(() => undefined),
+    );
+    await openWithHistory();
+    const box = screen.getByPlaceholderText(/跟苏晚晴说一句/) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "喂" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await act(async () => {
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+
+    // 正在流的那一行没有 id（还没落库），所以它给"停止"而不是"重新生成"
+    const hers = screen.getAllByLabelText("它说");
+    const live = hers[hers.length - 1] as HTMLElement;
+    expect(live.getAttribute("data-mid")).toBeNull();
+    fireEvent.contextMenu(live);
+    expect(menuItems().map((b) => b.textContent)).toEqual([
+      "复制选中的文字",
+      "复制整条消息",
+      "停止这一轮生成",
+    ]);
   });
 });

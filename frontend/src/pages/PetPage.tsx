@@ -19,7 +19,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import ThinkingPanel from "../components/chat/ThinkingPanel";
-import { api, streamChat, UNREAD_POLL_MS, type MessagePage, type MessageRow, type ReachoutRow, type RoleCard } from "../api";
+import PetContextMenu, { type MenuEntry } from "../components/PetContextMenu";
+import { api, streamChat, streamEdit, UNREAD_POLL_MS, type MessagePage, type MessageRow, type ReachoutRow, type RoleCard } from "../api";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useChatStream } from "../hooks/useChatStream";
 import { shellBridge } from "../lib/shell";
@@ -76,8 +77,8 @@ function rowOf(mine: boolean): { className: string; "aria-label": string } {
  *
  * 形状抄 `ChatPage` 那条用户气泡（`ml-auto w-fit max-w-*` + `rounded-br-sm` 的"尾巴"
  * + 蓝边蓝底），只是这面板尺寸小，留白与字阶跟着 `text-[11px]` 那一档收一号。
- * **说话人标签照旧留着**：位置与颜色在这么小一块面板里分不开"谁说的"（色弱用户与截图都
- * 读不出来，见上面 `Speaker` 那条注释）—— 靠右是为了"对话感"，不是为了取代标注。
+ * 说话人不印成可见的"它：/你："（用户 09-26 撤掉的），但那条信息在 `aria-label` 里
+ * —— 见 `rowOf`：位置与颜色不足以让读屏软件与色弱用户分辨谁说的。
  */
 const MINE_ROW =
   "ml-auto w-fit max-w-[86%] break-words rounded-xl rounded-br-sm border border-blue-200" +
@@ -100,6 +101,8 @@ export default function PetPage() {
   // 发出去但还没落库的那句：流结束后以服务端回放为准，所以它只活在这一轮里。
   const [pendingUser, setPendingUser] = useState("");
   const [streamError, setStreamError] = useState("");
+  // 右键菜单（页内自绘，见 `components/PetContextMenu`）。null = 没开。
+  const [menu, setMenu] = useState<{ x: number; y: number; entries: MenuEntry[] } | null>(null);
   // 托盘「显示消息内容」的旗子。**默认显示**：拿不到旗子（浏览器里开这页、或界面跑在还没
   // 有这面旗子的旧壳里）时不该把功能藏起来，那等于用一个用户找不到的开关把他锁在门外。
   const [showContent, setShowContent] = useState(true);
@@ -560,6 +563,67 @@ export default function PetPage() {
     }
   }
 
+  /** 重新生成这一轮：走对话页**同一条通道**（`POST /api/session/{tid}/messages/edit`，
+   *  编辑保存即"从那条用户消息重问、丢弃其后的历史"），不在桌宠里另写第二套重问逻辑。
+   *  要的是"触发这一轮的那一句"，所以从右击那一行往回找最近的一条 user 消息。 */
+  async function regenerateFrom(messageId: string | undefined) {
+    if (!threadId || busy || sendingRef.current || !messageId) return;
+    const index = (history ?? []).findIndex((m) => m.id === messageId);
+    const trigger = index > 0
+      ? history?.slice(0, index).reverse().find((m) => m.role === "user" && m.id)
+      : undefined;
+    if (!trigger?.id || !trigger.content) return;
+    sendingRef.current = true;
+    setStreamError("");
+    setBusy(true);
+    busyRef.current = true;
+    try {
+      const controller = startBubble(threadId);
+      try {
+        await streamEdit(
+          threadId,
+          trigger.id,
+          trigger.content,
+          onEvent,
+          controller.signal,
+          trigger.image ?? null,
+        );
+      } finally {
+        setBusy(false);
+        busyRef.current = false;
+      }
+      handoff((await api.get<MessagePage>(messagesPath(threadId))).messages);
+    } catch (e) {
+      setStreamError(`重新生成失败：${(e as Error).message}`);
+    } finally {
+      sendingRef.current = false;
+    }
+  }
+
+  /** 右键落在哪一行：`.closest("p")`（行上有 `aria-label`，历史行还有 `data-mid`）。 */
+  function openMenu(event: React.MouseEvent<HTMLDivElement>) {
+    event.preventDefault(); // 不给浏览器/壳留默认菜单的机会
+    const row = (event.target as HTMLElement).closest("p");
+    const selected = window.getSelection()?.toString().trim() ?? "";
+    const rowText = row?.textContent?.trim() ?? "";
+    const copy = (text: string) => {
+      if (text) navigator.clipboard?.writeText(text).catch(() => setStreamError("复制没成功：剪贴板被拦了"));
+    };
+    const entries: MenuEntry[] = [
+      { label: "复制选中的文字", disabled: !selected, run: () => copy(selected) },
+      { label: "复制整条消息", disabled: !rowText, run: () => copy(rowText) },
+    ];
+    // 「重新生成」只对**已落库的她那句**提：正在流的那一行还没有 id，重问它等于打断自己；
+    // 而这一轮正在跑的时候它也在，只是点不动（灰着比消失更诚实："现在不能，等它完"）。
+    const mid = row?.getAttribute("data-mid") || undefined;
+    if (row?.getAttribute("aria-label") === "它说" && mid) {
+      entries.push({ label: "重新生成这一轮", disabled: busy, run: () => void regenerateFrom(mid) });
+    }
+    if (busy) entries.push({ label: "停止这一轮生成", run: stop });
+    if (entries.every((entry) => entry.disabled)) return; // 全灰的菜单不如不弹
+    setMenu({ x: event.clientX, y: event.clientY, entries });
+  }
+
   async function acknowledge() {
     // 先标已读再收气泡：标失败就留着，让用户知道"这条还没真被读过"。
     // 标的是**所有**未读（用户 2026-09-23 定的口径），所以这里不再需要那一条是谁的。
@@ -657,10 +721,11 @@ export default function PetPage() {
           </header>
           <div
             ref={scrollRef}
-            /* `select-text` 是把根节点那块 `select-none` 在面板里取消掉：根标它为了拖桌宠时
-               拖桌宠时别拉出一段橡皮筋选区，但它连"把她说的话选出来复制"一起禁了（用户
-               09-26 问的就是这个）。选中不会把宠物拖走也不会收起面板 —— `dragStart` 与
-               `rootClick` 开头都有 `insideUi` 那道闸（面板整块在 `[data-pet-ui]` 里）。 */
+            onContextMenu={openMenu}
+            /* `select-text` 是把根节点那块 `select-none` 在面板里取消掉：根上标它是为了拖桌宠
+               时别拉出一段橡皮筋选区，但它连"把她说的话选出来复制"一起禁了（用户 09-26 问的
+               就是这个）。选中不会把宠物拖走也不会收起面板 —— `dragStart` 与 `rootClick`
+               开头都有 `insideUi` 那道闸（面板整块在 `[data-pet-ui]` 里）。 */
             className="max-h-[300px] min-h-0 flex-1 select-text space-y-1.5 overflow-y-auto px-3 py-2 text-[11px] leading-relaxed"
           >
             {historyError && <p className="text-red-600 dark:text-red-400">{historyError}</p>}
@@ -686,7 +751,10 @@ export default function PetPage() {
               (history ?? [])
                 .filter((m) => m.role === "user" || m.role === "assistant")
                 .map((m, i) => (
-                  <p key={m.id ?? i} {...rowOf(m.role === "user")}>
+                  // `data-mid` 是给「重新生成这一轮」定位用的：编辑走的是消息 id，而这一行
+                  // 在屏幕上的位置不是 id（回放顺序会变）。只有历史行有 id，乐观那条与正在流
+                  // 的那一条没有 ⇒ 它们的菜单项自然置灰。
+                  <p key={m.id ?? i} data-mid={m.id} {...rowOf(m.role === "user")}>
                     {m.content}
                   </p>
                 ))}
@@ -794,6 +862,9 @@ export default function PetPage() {
 
       {offline && (
         <span className="text-[10px] text-amber-600 dark:text-amber-400">连不上本地服务</span>
+      )}
+      {menu && (
+        <PetContextMenu x={menu.x} y={menu.y} entries={menu.entries} onClose={() => setMenu(null)} />
       )}
     </div>
   );
