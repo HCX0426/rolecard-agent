@@ -589,7 +589,7 @@ def test_call_model_injects_memory_when_enabled(roles: RoleCardService) -> None:
     reg.register(kernel_tool)
     model = FakeModel(AIMessage(content="hi"))
     ctx = _ctx(reg, roles, model)
-    ctx.memory_provider = lambda _role_id=None: "用户住在上海。"
+    ctx.memory_provider = lambda _role_id=None, _thread_id=None: "用户住在上海。"
     call_model(
         {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"},
         ctx,
@@ -611,13 +611,20 @@ def test_call_model_asks_the_provider_for_the_current_role(roles: RoleCardServic
     reg.register(kernel_tool)
     model = FakeModel(AIMessage(content="hi"))
     ctx = _ctx(reg, roles, model)
-    asked: list[str | None] = []
-    ctx.memory_provider = lambda role_id: asked.append(role_id) or "她记得自己喜欢蒲公英。"
+    asked: list[tuple[str | None, str | None]] = []
+
+    def provider(role_id: str | None = None, thread_id: str | None = None) -> str:
+        asked.append((role_id, thread_id))
+        return "她记得自己喜欢蒲公英。"
+
+    ctx.memory_provider = provider
     call_model(
         {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"},
         ctx,
     )
-    assert asked == ["elysia"]
+    # 记的是**一对**：第二条就是本轮那条线程 —— 宿主拿它判"要不要再抄一份主动开口"，
+    # call_model 不传就等于把那个判断的输入丢了（09-26 那条跨线程记忆断口的修法依赖它）。
+    assert asked == [("elysia", "t")]
     assert "她记得自己喜欢蒲公英。" in model.last_prompt[0].content
 
 
@@ -629,7 +636,7 @@ def test_call_model_skips_memory_when_disabled(roles: RoleCardService) -> None:
     model = FakeModel(AIMessage(content="hi"))
     ctx = _ctx(reg, roles, model)
     ctx.settings = Settings(memory_enabled=False)
-    ctx.memory_provider = lambda _role_id=None: "用户住在上海。"
+    ctx.memory_provider = lambda _role_id=None, _thread_id=None: "用户住在上海。"
     call_model(
         {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"},
         ctx,

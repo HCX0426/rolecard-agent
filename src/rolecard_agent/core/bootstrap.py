@@ -42,11 +42,13 @@ from rolecard_agent.core.observability import TraceEvent, Tracer, make_tracer
 from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
 from rolecard_agent.core.probes import ollama_keep, vision_capability
 from rolecard_agent.core.reachout import (
+    CHAT_ECHO_LIMIT,
     ReachoutScheduler,
     ensure_proactive_thread,
     format_recent_window,
     format_thread_lines,
     proactive_thread_id,
+    recent_reachout_lines,
     unanswered_lines,
 )
 from rolecard_agent.core.services import ServiceEndpointService
@@ -216,6 +218,24 @@ class Runtime:
         self.role_models[cache_key] = built
         return built
 
+    def chat_memory(self, role_id: str | None, thread_id: str | None) -> str:
+        """这一轮对话她该看见什么：`memory_for_turn` 那份记忆 + 她最近**主动**说过的原话。
+
+        为什么要补那一截（用户 2026-09-26 拍的"并进来"）：主动开口的话只落进
+        `s_proactive_<role>` 那一条线程，而控制台的「新建对话」另开一条 —— 那条里她看不见
+        自己刚问过什么，"我记得我提醒过你鞋带"这种话就接不上。
+
+        在**那条主动会话里**不补：同一句话本来就在她的历史里，再抄一遍进 system 等于把
+        复读喂回给模型（`nodes._scrub_own_repeats` 治的就是这个），白花 token 还添病。
+        """
+        text = memory_for_turn(self.conn, self.effective, role_id)
+        if not role_id or thread_id == proactive_thread_id(role_id):
+            return text
+        echo = recent_reachout_lines(self.conn, role_id, limit=CHAT_ECHO_LIMIT)
+        if not echo:
+            return text
+        return f"{text}\n\n{echo}" if text else echo
+
     def build_graph(self, model: ChatLike, registry: ToolRegistry, eff: Settings) -> Any:
         """建（编译）一张对话图。`model_resolver` 指向本 Runtime，角色级路由与热重建同源。"""
         return build_kernel(
@@ -228,10 +248,10 @@ class Runtime:
             plugins=self.plugins,
             model_resolver=self.resolve_role_model,
             # 跨会话记忆的读取器：每次调用实时读库、**按本轮角色取**（该角色专属 → 无则回退
-            # 全局），与主动开口同源一个 `memory_for_turn`；总开关在 call_model 里再把关一次。
-            memory_provider=lambda role_id: memory_for_turn(
-                self.conn, self.effective, role_id
-            ),
+            # 全局），与主动开口同源一个 `memory_for_turn`；再补上她最近主动说过的原话
+            # （`chat_memory`，别的那条线程里她得知道自己提醒过什么）。总开关在 call_model
+            # 里再把关一次（闭着就不问）。
+            memory_provider=self.chat_memory,
             # 视觉能力探测（P1-2）：Ollama `/api/show` 的 capabilities，带 TTL 缓存。
             # 只有"声明不支持 + 探测确认不支持"两条同时成立才会调用前拦（见 nodes 里那段）。
             vision_probe=vision_capability,

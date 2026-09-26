@@ -79,7 +79,7 @@ def build_kernel(
     checkpointer: BaseCheckpointSaver | None = None,
     plugins: PluginService | None = None,
     model_resolver: Callable[..., ChatLike] | None = None,
-    memory_provider: Callable[[str | None], str] | None = None,
+    memory_provider: Callable[[str | None, str | None], str] | None = None,
     vision_probe: Callable[[str | None, str], bool | None] | None = None,
 ) -> Any:
     """Compile the kernel graph.
