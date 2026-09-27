@@ -21,6 +21,7 @@ from rolecard_agent.roles.service import (
     RoleNotFound,
 )
 
+ME = DEFAULT_USER_ID  # 这台实例的主人在测试里的名字（M2b 之后每次读写都要说清为谁）
 
 def cards(store: RoleCardService) -> RoleCards:
     """测试里"本机主人眼里的那些卡"的简写（M2a 之后每次读写都得说清为谁）。"""
@@ -49,8 +50,8 @@ def test_seeded_roles_are_listed_builtin_first(roles: RoleCardService) -> None:
 
 def test_seeding_is_idempotent(roles: RoleCardService) -> None:
     before = len(cards(roles).list_roles())
-    roles.seed_builtins(user_id=DEFAULT_USER_ID)
-    roles.seed_builtins(user_id=DEFAULT_USER_ID)
+    roles.seed_builtins(user_id=ME)
+    roles.seed_builtins(user_id=ME)
     assert len(cards(roles).list_roles()) == before
 
 
@@ -107,7 +108,7 @@ def test_builtin_role_cannot_be_deleted(roles: RoleCardService) -> None:
     cards(roles).delete("medical_archivist")
     assert not cards(roles).exists("medical_archivist")
     # 重启（再次播种）：缺失才补插，且不会复活为内置。
-    roles.seed_domain_roles(user_id=DEFAULT_USER_ID)
+    roles.seed_domain_roles(user_id=ME)
     assert cards(roles).exists("medical_archivist")
     assert cards(roles).get("medical_archivist").is_builtin is False
 
@@ -148,13 +149,13 @@ def test_switch_role_keeps_history_and_audits(
 
 def test_switch_to_unknown_role_leaves_the_thread_alone(roles: RoleCardService) -> None:
     with pytest.raises(RoleNotFound):
-        roles.set_thread_role("thread-1", "nope", user_id=DEFAULT_USER_ID)
+        roles.set_thread_role("thread-1", "nope", user_id=ME)
     assert roles.current_thread_role("thread-1") == "medical_archivist"
 
 
 def test_switch_on_unknown_thread_raises(roles: RoleCardService) -> None:
     with pytest.raises(RoleNotFound):
-        roles.set_thread_role("ghost-thread", "medical_archivist", user_id=DEFAULT_USER_ID)
+        roles.set_thread_role("ghost-thread", "medical_archivist", user_id=ME)
 
 
 # --------------------------------------------------------- exemplars & knowledge scopes
@@ -236,7 +237,7 @@ def test_deleting_a_role_takes_her_own_state_with_it(
     from rolecard_agent.core.proactive_state import get_state, save_state
 
     cards(roles).create(_new("ghost"))
-    add_item(conn, bucket="ghost", text="用户下周要体检")
+    add_item(conn, user_id=ME, bucket="ghost", text="用户下周要体检")
     st = get_state(conn, "ghost")
     st.affinity = 3.0
     save_state(conn, st)

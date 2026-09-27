@@ -597,6 +597,7 @@ def _distill_after_turn(ctx: AppContext, *, thread_id: str, role_id: str) -> Non
             model, backend = _thread_model(ctx, thread, role_id)
             outcome = memory_distill.extract(
                 conn,
+                user_id=str(thread["user_id"]),
                 model=model,
                 bucket=role_id,
                 messages=pending,
@@ -663,10 +664,13 @@ def distill_session(
     # 两者相等，所以行为不变；变的是"聊了一阵再点一次"——那时不该把老事实换个说法再记一遍。
     pending = memory_distill.pending_messages(ctx.conn, thread_id=thread_id, messages=messages)
     if not pending:
-        return {"report": memory_distill.nothing_new(ctx.conn, bucket=role_id), "turns_since": 0}
+        return {"report": memory_distill.nothing_new(
+            ctx.conn, user_id=str(thread["user_id"]), bucket=role_id
+        ), "turns_since": 0}
     model, backend = _thread_model(ctx, thread, role_id)
     outcome = memory_distill.extract(
         ctx.conn,
+        user_id=str(thread["user_id"]),
         model=model,
         bucket=role_id,
         messages=pending,

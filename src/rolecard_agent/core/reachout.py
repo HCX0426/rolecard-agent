@@ -940,10 +940,14 @@ def generate_reachout_text(
     `mode="file_event"` 时 `file_list` 为目录变更素材清单（只含文件名，细节由角色
     自行用 fs 工具查证 —— 素材门控语义，见架构总览 §5）。
     """
-    memory = memory_for_turn(conn, settings, role_id)
+    # 后台这条链没有「这次请求」可问：按这台实例的主人读（§4.1 的实例级身份）。
+    owner = resolve_instance_identity(settings)
+    memory = memory_for_turn(conn, settings, role_id, user_id=owner)
     # recall 档带素材：闸门与素材同源（`top_active_item` 既决定"能不能回忆"也决定"回忆哪一条"）。
     material = (
-        top_active_item(conn, bucket=role_id or GLOBAL_BUCKET) if mode == "recall" else None
+        top_active_item(conn, user_id=owner, bucket=role_id or GLOBAL_BUCKET)
+        if mode == "recall"
+        else None
     )
     task = _task_text(
         mode, file_list, has_memory=bool(memory.strip()), material=material,
@@ -1082,7 +1086,9 @@ def trigger_time_pattern(role: RoleCard, conn: SqlConnection, *, now_local: date
 RECALL_COOLDOWN_HOURS = 24.0
 
 
-def trigger_recall(role: RoleCard, conn: SqlConnection, *, now_local: datetime) -> str | None:
+def trigger_recall(
+    role: RoleCard, conn: SqlConnection, *, user_id: str, now_local: datetime
+) -> str | None:
     """回忆触发：该角色有**可用的记忆条目**、且不在冷却里时才触发。
 
     判据从"有没有那段 blob"换成"有没有一条 active 条目"是必须的：同一个东西既当闸门又当素材，
@@ -1097,7 +1103,9 @@ def trigger_recall(role: RoleCard, conn: SqlConnection, *, now_local: datetime) 
         hours=RECALL_COOLDOWN_HOURS
     ):
         return None
-    return "recall" if top_active_item(conn, bucket=role.role_id) is not None else None
+    return "recall" if top_active_item(
+        conn, user_id=user_id, bucket=role.role_id
+    ) is not None else None
 
 
 def _parse_reachout_ts(raw: object) -> datetime | None:
@@ -1249,7 +1257,7 @@ class ReachoutScheduler:
                 ("file_event" if can_file else None)
                 or trigger_affection(role, state, settings, now_utc=stamp_utc)
                 or trigger_time_pattern(role, self._conn, now_local=stamp_local)
-                or trigger_recall(role, self._conn, now_local=stamp_local)
+                or trigger_recall(role, self._conn, user_id=owner, now_local=stamp_local)
                 or "timer"
             )
             # 第五个由头「未收尾话题」：只在链子要落到最弱那一档（timer）时才去补一次扫描，

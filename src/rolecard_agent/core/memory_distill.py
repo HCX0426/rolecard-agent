@@ -139,6 +139,7 @@ def is_echo(new_text: str, known: list[str]) -> bool:
 def extract(
     conn: SqlConnection,
     *,
+    user_id: str,
     model: Any,
     bucket: str,
     messages: Sequence[Any],
@@ -157,7 +158,7 @@ def extract(
     dialogue = _turn_lines(messages)
     if not dialogue:
         return {"report": _report(noop=1, detail="这段对话没有可读取的文本。"), "ok": True}
-    active = mem.ranked_active(conn, bucket=bucket)
+    active = mem.ranked_active(conn, user_id=user_id, bucket=bucket)
     prompt = (
         _EXTRACT_PROMPT
         + "\n【已有条目】\n"
@@ -192,6 +193,7 @@ def extract(
                 continue
             fresh = mem.add_item(
                 conn,
+                user_id=user_id,
                 bucket=bucket,
                 text=proposed,
                 source=source,
@@ -205,11 +207,17 @@ def extract(
             continue
         upd = _UPDATE.match(text)
         if upd:
-            old = mem.get_item(conn, int(upd.group(1)))
+            old = mem.get_item(conn, int(upd.group(1)), user_id=user_id)
             if old is None or old["invalidated_at"] is not None:
                 report["skipped"] += 1
                 continue
-            fresh = mem.add_item(conn, bucket=bucket, text=upd.group(2), source=source)
+            fresh = mem.add_item(
+                conn,
+                user_id=user_id,
+                bucket=bucket,
+                text=upd.group(2),
+                source=source,
+            )
             if fresh is None:
                 report["skipped"] += 1
                 continue
@@ -219,24 +227,30 @@ def extract(
                 # 而界面上只会显示"更新 1 条"。
                 report["noop"] += 1
                 continue
-            mem.invalidate_item(conn, item_id=old["id"], superseded_by=int(str(fresh["id"])))
+            mem.invalidate_item(
+                conn,
+                user_id=user_id,
+                item_id=old["id"],
+                superseded_by=int(str(fresh["id"])),
+            )
             report["updated"] += 1
             continue
         report["skipped"] += 1  # 看不懂的行：忽略并计数，不猜
-    report["similar"] = count_similar(conn, bucket=bucket)
+    report["similar"] = count_similar(conn, user_id=user_id, bucket=bucket)
     return {"ok": True, "report": report}
 
 
 def consolidate(
     conn: SqlConnection,
     *,
+    user_id: str,
     model: Any,
     bucket: str,
     backend: str | None = None,
     tracer: Any = None,
 ) -> dict[str, Any]:
     """整理一个记忆桶：合并同义条目、让过时条目失效。**不物理删任何行。**"""
-    active = mem.ranked_active(conn, bucket=bucket)[:_MAX_CONSOLIDATE_ITEMS]
+    active = mem.ranked_active(conn, user_id=user_id, bucket=bucket)[:_MAX_CONSOLIDATE_ITEMS]
     if len(active) < 2:
         return {
             "ok": True,
@@ -274,6 +288,7 @@ def consolidate(
             # 早就这么说，之前这一行漏传了，于是面板上"谁写的"这一列对整理出来的条目在撒谎）。
             fresh = mem.add_item(
                 conn,
+                user_id=user_id,
                 bucket=bucket,
                 text=merge.group(2),
                 source="extract",
@@ -290,7 +305,10 @@ def consolidate(
                     # 再给它写上"被自己取代"会把合并出来的事实直接弄丢。
                     continue
                 mem.invalidate_item(
-                    conn, item_id=int(str(item["id"])), superseded_by=int(str(fresh["id"]))
+                    conn,
+                    user_id=user_id,
+                    item_id=int(str(item["id"])),
+                    superseded_by=int(str(fresh["id"])),
                 )
             report["merged"] += 1
             continue
@@ -302,9 +320,12 @@ def consolidate(
                 continue
             fresh = None
             if invalid.group(2).strip():
-                fresh = mem.add_item(conn, bucket=bucket, text=invalid.group(2))
+                fresh = mem.add_item(
+                conn, user_id=user_id, bucket=bucket, text=invalid.group(2)
+            )
             mem.invalidate_item(
                 conn,
+                user_id=user_id,
                 item_id=int(str(old["id"])),
                 superseded_by=int(str(fresh["id"])) if fresh else None,
             )
@@ -314,12 +335,12 @@ def consolidate(
             report["noop"] += 1
             continue
         report["skipped"] += 1
-    report["after"] = len(mem.ranked_active(conn, bucket=bucket))
-    report["similar"] = count_similar(conn, bucket=bucket)
+    report["after"] = len(mem.ranked_active(conn, user_id=user_id, bucket=bucket))
+    report["similar"] = count_similar(conn, user_id=user_id, bucket=bucket)
     return {"ok": True, "report": report}
 
 
-def count_similar(conn: SqlConnection, *, bucket: str) -> int:
+def count_similar(conn: SqlConnection, *, user_id: str, bucket: str) -> int:
     """桶里"字面上看着像同一件事"的条目有几条。**只用于提示，不改动任何一行。**
 
     为什么是提示而不是闸门（任务 #9 的实测结论，数据与推导写在 `docs/架构审计.md` §12.7 末）：
@@ -328,7 +349,7 @@ def count_similar(conn: SqlConnection, *, bucket: str) -> int:
     在写入路径上挡下来会**吞掉**一条真事实，而放过去只是多一条看得见重复的条目 ——
     所以这里只报数，真正判断"是不是同一件事"留给模型 + 用户发起的「整理记忆」。
     """
-    texts = [str(i["text"]) for i in mem.ranked_active(conn, bucket=bucket)]
+    texts = [str(i["text"]) for i in mem.ranked_active(conn, user_id=user_id, bucket=bucket)]
     gram_sets = [_bigrams(t) for t in texts]
     flagged = 0
     for a in range(len(texts)):
@@ -399,14 +420,16 @@ def mark_extracted(conn: SqlConnection, *, thread_id: str, message_count: int) -
     conn.commit()
 
 
-def nothing_new(conn: SqlConnection, *, bucket: str) -> dict[str, Any]:
+def nothing_new(
+    conn: SqlConnection, *, user_id: str, bucket: str
+) -> dict[str, Any]:
     """「这次没东西可抽」的报告 —— 形状归本模块管，宿主不该自己拼一份。
 
     `similar` 照样要算：按钮按下去却一条都没加时，界面上要说得出"库里有几对看着像同一件事"，
     那才是用户下一步（点「整理记忆」）的依据。
     """
     return _report(
-        similar=count_similar(conn, bucket=bucket),
+        similar=count_similar(conn, user_id=user_id, bucket=bucket),
         detail="这段会话自上次提取以来没有新内容 —— 没有要重抽的东西。",
     )
 

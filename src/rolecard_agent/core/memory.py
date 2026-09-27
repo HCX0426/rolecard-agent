@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import math
 import re
+import uuid
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
@@ -43,6 +44,7 @@ from typing import Any
 from langchain_core.tools import BaseTool, tool
 
 from rolecard_agent.config import Settings
+from rolecard_agent.core.identity import active_user_id, resolve_instance_identity
 from rolecard_agent.storage.db import SqlConnection
 
 # 当前对话角色（架构总览 §5）：execute_tools 每轮注入，memory_save 读取它把事实同时写入
@@ -61,8 +63,8 @@ MAX_ITEMS_PER_BUCKET = 200
 MAX_ITEM_CHARS = 200
 
 _COLUMNS = (
-    "id, role_id, text, source, pinned, hit_count, importance, last_hit_at, invalidated_at, "
-    "superseded_by, created_at, updated_at"
+    "id, user_id, uid, role_id, text, source, pinned, hit_count, importance, "
+    "last_hit_at, invalidated_at, superseded_by, created_at, updated_at"
 )
 
 
@@ -79,6 +81,9 @@ def _parse_ts(raw: object) -> datetime | None:
 def _row_to_item(row: Any) -> dict[str, Any]:
     return {
         "id": int(row["id"]),
+        "user_id": str(row["user_id"]),
+        # 跨机器稳定的身份（上行时对账用它，不用本机自增 id）。老行由 `_migrate` 补齐。
+        "uid": str(row["uid"] or ""),
         "role_id": str(row["role_id"]),
         "text": str(row["text"]),
         "source": str(row["source"]),
@@ -93,12 +98,20 @@ def _row_to_item(row: Any) -> dict[str, Any]:
 
 
 def list_items(
-    conn: SqlConnection, *, bucket: str, include_invalidated: bool = False
+    conn: SqlConnection, *, user_id: str, bucket: str, include_invalidated: bool = False
 ) -> list[dict[str, Any]]:
-    """某个桶的条目。默认只给 active —— 失效的留着是为了能查、能撤销，不是为了注入。"""
-    where = "role_id = ?" if include_invalidated else "role_id = ? AND invalidated_at IS NULL"
+    """某个桶的条目。默认只给 active —— 失效的留着是为了能查、能撤销，不是为了注入。
+    `user_id` 必填：记忆是"关于某个人的事实"，一条不带主人的读法就是把别人的脑子
+    接到这个人身上（注入进 prompt 之后她说的每句话都带着那份事实）。
+    """
+    where = (
+        "role_id = ? AND user_id = ?"
+        if include_invalidated
+        else "role_id = ? AND user_id = ? AND invalidated_at IS NULL"
+    )
     rows = conn.execute(
-        f"SELECT {_COLUMNS} FROM role_memory_item WHERE {where} ORDER BY id DESC", (bucket,)
+        f"SELECT {_COLUMNS} FROM role_memory_item WHERE {where} ORDER BY id DESC",
+        (bucket, user_id),
     ).fetchall()
     return [_row_to_item(r) for r in rows]
 
@@ -135,11 +148,11 @@ def _score(item: dict[str, Any], *, now: datetime) -> float:
 
 
 def ranked_active(
-    conn: SqlConnection, *, bucket: str, now: datetime | None = None
+    conn: SqlConnection, *, user_id: str, bucket: str, now: datetime | None = None
 ) -> list[dict[str, Any]]:
     """注入顺序：钉住的在前，其余按 近因×频次。"""
     stamp = now or datetime.now(UTC)
-    items = list_items(conn, bucket=bucket)
+    items = list_items(conn, user_id=user_id, bucket=bucket)
     return sorted(items, key=lambda i: (not i["pinned"], -_score(i, now=stamp), -i["id"]))
 
 
@@ -160,6 +173,7 @@ def clamp_importance(raw: object) -> int:
 def add_item(
     conn: SqlConnection,
     *,
+    user_id: str,
     bucket: str,
     text: str,
     source: str = "manual",
@@ -184,93 +198,120 @@ def add_item(
         return None
     tier = clamp_importance(importance)
     existing = conn.execute(
-        "SELECT id FROM role_memory_item WHERE role_id = ? AND text = ? AND invalidated_at IS NULL",
-        (bucket, line),
+        "SELECT id FROM role_memory_item"
+        " WHERE role_id = ? AND user_id = ? AND text = ? AND invalidated_at IS NULL",
+        (bucket, user_id, line),
     ).fetchone()
     if existing is not None:
         conn.execute(
             "UPDATE role_memory_item SET last_hit_at = CURRENT_TIMESTAMP,"
-            " updated_at = CURRENT_TIMESTAMP, importance = MAX(importance, ?) WHERE id = ?",
-            (tier, existing["id"]),
+            " updated_at = CURRENT_TIMESTAMP, importance = MAX(importance, ?)"
+            " WHERE id = ? AND user_id = ?",
+            (tier, existing["id"], user_id),
         )
         conn.commit()
-        return get_item(conn, int(existing["id"]))
+        return get_item(conn, int(existing["id"]), user_id=user_id)
+    # 每条新事实一出生就带一个跨机器稳定的 `uid`：本机自增 id 在两台机器上会各自长出
+    # "相同 id 的不同条目"，上行时任何对账都会串成别人的事实（架构总览 §4.1 那三条上行
+    # 语义全都依赖这一列，所以它必须在这里长出来，而不是等上传功能开工再补）。
     conn.execute(
-        "INSERT INTO role_memory_item (role_id, text, source, importance) VALUES (?, ?, ?, ?)",
-        (bucket, line, source, tier),
+        "INSERT INTO role_memory_item (role_id, user_id, uid, text, source, importance)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (bucket, user_id, uuid.uuid4().hex, line, source, tier),
     )
     conn.commit()
     created = conn.execute(
-        f"SELECT {_COLUMNS} FROM role_memory_item WHERE role_id = ? ORDER BY id DESC LIMIT 1",
-        (bucket,),
+        f"SELECT {_COLUMNS} FROM role_memory_item"
+        " WHERE role_id = ? AND user_id = ? ORDER BY id DESC LIMIT 1",
+        (bucket, user_id),
     ).fetchone()
-    enforce_cap(conn, bucket=bucket, now=now)
+    enforce_cap(conn, user_id=user_id, bucket=bucket, now=now)
     return _row_to_item(created) if created else None
 
 
-def get_item(conn: SqlConnection, item_id: int) -> dict[str, Any] | None:
+def get_item(conn: SqlConnection, item_id: int, *, user_id: str) -> dict[str, Any] | None:
+    """按 id 取一条。**归属跟着 WHERE 走**。
+
+    `id` 是本机自增整数：可枚举、可猜。没有这一道守卫，"知道一个整数"就能读改
+    另一个人的事实 —— 与 `api/deps.get_thread` 同一族洞，症状也一样安静。
+    """
     row = conn.execute(
-        f"SELECT {_COLUMNS} FROM role_memory_item WHERE id = ?", (item_id,)
+        f"SELECT {_COLUMNS} FROM role_memory_item WHERE id = ? AND user_id = ?",
+        (item_id, user_id),
     ).fetchone()
     return None if row is None else _row_to_item(row)
 
 
-def edit_item(conn: SqlConnection, *, item_id: int, text: str) -> dict[str, Any] | None:
+def edit_item(
+    conn: SqlConnection, *, user_id: str, item_id: int, text: str
+) -> dict[str, Any] | None:
     """人工修正一条（面板上的"编辑"）。空文本 = 不改，交给删除去做那件事。"""
     line = " ".join((text or "").split())[:MAX_ITEM_CHARS]
     if not line:
-        return get_item(conn, item_id)
+        return get_item(conn, item_id, user_id=user_id)
     conn.execute(
-        "UPDATE role_memory_item SET text = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        (line, item_id),
+        "UPDATE role_memory_item SET text = ?, updated_at = CURRENT_TIMESTAMP"
+        " WHERE id = ? AND user_id = ?",
+        (line, item_id, user_id),
     )
     conn.commit()
-    return get_item(conn, item_id)
+    return get_item(conn, item_id, user_id=user_id)
 
 
-def set_pinned(conn: SqlConnection, *, item_id: int, pinned: bool) -> dict[str, Any] | None:
+def set_pinned(
+    conn: SqlConnection, *, user_id: str, item_id: int, pinned: bool
+) -> dict[str, Any] | None:
     conn.execute(
-        "UPDATE role_memory_item SET pinned = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        (1 if pinned else 0, item_id),
+        "UPDATE role_memory_item SET pinned = ?, updated_at = CURRENT_TIMESTAMP"
+        " WHERE id = ? AND user_id = ?",
+        (1 if pinned else 0, item_id, user_id),
     )
     conn.commit()
-    return get_item(conn, item_id)
+    return get_item(conn, item_id, user_id=user_id)
 
 
 def set_importance(
-    conn: SqlConnection, *, item_id: int, importance: object
+    conn: SqlConnection, *, user_id: str, item_id: int, importance: object
 ) -> dict[str, Any] | None:
     """面板上那一档「这条要紧」。与 `pinned` 是两件事：钉住 = 不进淘汰/整理池，
     显著性 = 还在池里时排多前。坏值经 `clamp_importance` 退回中间档，不报错。"""
     conn.execute(
-        "UPDATE role_memory_item SET importance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        (clamp_importance(importance), item_id),
+        "UPDATE role_memory_item SET importance = ?, updated_at = CURRENT_TIMESTAMP"
+        " WHERE id = ? AND user_id = ?",
+        (clamp_importance(importance), item_id, user_id),
     )
     conn.commit()
-    return get_item(conn, item_id)
+    return get_item(conn, item_id, user_id=user_id)
 
 
-def delete_item(conn: SqlConnection, *, item_id: int) -> bool:
+def delete_item(conn: SqlConnection, *, user_id: str, item_id: int) -> bool:
     """用户明确删除 = **物理删**（他要它消失，留个"已删除"的行只是把隐私留在盘上）。
 
     与自动退役相反：那条走 `invalidate_item`，可撤销。
     """
-    cur = conn.execute("DELETE FROM role_memory_item WHERE id = ?", (item_id,))
+    cur = conn.execute(
+        "DELETE FROM role_memory_item WHERE id = ? AND user_id = ?",
+        (item_id, user_id),
+    )
     conn.commit()
     return cur.rowcount > 0
 
 
 def invalidate_item(
-    conn: SqlConnection, *, item_id: int, superseded_by: int | None = None
+    conn: SqlConnection,
+    *,
+    user_id: str,
+    item_id: int,
+    superseded_by: int | None = None,
 ) -> dict[str, Any] | None:
     """退役一条：只写标记，不删行 —— 整理错了能回滚，也留得下"谁取代了谁"。"""
     conn.execute(
         "UPDATE role_memory_item SET invalidated_at = CURRENT_TIMESTAMP, superseded_by = ?,"
-        " updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        (superseded_by, item_id),
+        " updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+        (superseded_by, item_id, user_id),
     )
     conn.commit()
-    return get_item(conn, item_id)
+    return get_item(conn, item_id, user_id=user_id)
 
 
 def merged_text(keep: dict[str, Any], drop: dict[str, Any]) -> str:
@@ -287,7 +328,12 @@ def merged_text(keep: dict[str, Any], drop: dict[str, Any]) -> str:
 
 
 def merge_items(
-    conn: SqlConnection, *, keep_id: int, drop_id: int, text: str | None = None
+    conn: SqlConnection,
+    *,
+    user_id: str,
+    keep_id: int,
+    drop_id: int,
+    text: str | None = None,
 ) -> dict[str, Any] | None:
     """把两条合成一条：留下的那条换上合并后的句子，被合掉的那条**退役并指向它**。
 
@@ -295,18 +341,20 @@ def merge_items(
     能回滚，而 `superseded_by` 就是这条链的来路。**同桶才许合**由调用方挡（跨角色的
     "合并"其实是把一个人的事实搬进另一个人的脑子，那是污染不是整理）。
     """
-    keep = get_item(conn, keep_id)
-    drop = get_item(conn, drop_id)
+    keep = get_item(conn, keep_id, user_id=user_id)
+    drop = get_item(conn, drop_id, user_id=user_id)
     if keep is None or drop is None:
         return None
     line = " ".join((text if text is not None else merged_text(keep, drop)).split())
-    updated = edit_item(conn, item_id=keep_id, text=line)
-    invalidate_item(conn, item_id=drop_id, superseded_by=keep_id)
+    updated = edit_item(conn, user_id=user_id, item_id=keep_id, text=line)
+    invalidate_item(
+        conn, user_id=user_id, item_id=drop_id, superseded_by=keep_id
+    )
     return updated
 
 
 def enforce_cap(
-    conn: SqlConnection, *, bucket: str, now: datetime | None = None
+    conn: SqlConnection, *, user_id: str, bucket: str, now: datetime | None = None
 ) -> list[int]:
     """把 active 条数压回上限，返回被退役的 id。
 
@@ -315,13 +363,15 @@ def enforce_cap(
     并在界面上提示"建议整理"，真正的合并是用户点「整理记忆」时发生的一次显式调用。
     """
     stamp = now or datetime.now(UTC)
-    active = [i for i in list_items(conn, bucket=bucket) if not i["pinned"]]
+    active = [
+        i for i in list_items(conn, user_id=user_id, bucket=bucket) if not i["pinned"]
+    ]
     if len(active) <= MAX_ITEMS_PER_BUCKET:
         return []
     weakest = sorted(active, key=lambda i: (_score(i, now=stamp), i["id"]))
     retired: list[int] = []
     for item in weakest[: len(active) - MAX_ITEMS_PER_BUCKET]:
-        invalidate_item(conn, item_id=item["id"])
+        invalidate_item(conn, user_id=user_id, item_id=item["id"])
         retired.append(item["id"])
     return retired
 
@@ -354,6 +404,7 @@ def _age_label(raw: object, *, now: datetime) -> str:
 def render_memory(
     conn: SqlConnection,
     *,
+    user_id: str,
     bucket: str,
     budget: int = MAX_MEMORY_CHARS,
     limit: int = MAX_ITEMS_PER_TURN,
@@ -373,7 +424,7 @@ def render_memory(
     used: list[str] = []
     ids: list[int] = []
     total = 0
-    for item in ranked_active(conn, bucket=bucket):
+    for item in ranked_active(conn, user_id=user_id, bucket=bucket):
         if len(used) >= limit:
             break
         head = _age_label(item["created_at"], now=stamp) if with_age_labels else ""
@@ -391,16 +442,18 @@ def render_memory(
     return "\n".join(used), ids
 
 
-def mark_hit(conn: SqlConnection, *, item_id: int) -> None:
+def mark_hit(conn: SqlConnection, *, user_id: str, item_id: int) -> None:
     conn.execute(
         "UPDATE role_memory_item SET hit_count = hit_count + 1, last_hit_at = CURRENT_TIMESTAMP"
-        " WHERE id = ?",
-        (item_id,),
+        " WHERE id = ? AND user_id = ?",
+        (item_id, user_id),
     )
     conn.commit()
 
 
-def memory_for_turn(conn: SqlConnection, settings: Settings, role_id: str | None) -> str:
+def memory_for_turn(
+    conn: SqlConnection, settings: Settings, role_id: str | None, *, user_id: str
+) -> str:
     """以某个角色为锚点的一轮该注入什么记忆 —— **对话与主动开口共用这一份规则**。
 
     总开关关掉 → 空串；给了角色 → 先取该角色的条目，为空则回退用户级全局桶（全局存的是
@@ -413,17 +466,21 @@ def memory_for_turn(conn: SqlConnection, settings: Settings, role_id: str | None
         return ""
     buckets = [role_id, GLOBAL_BUCKET] if role_id else [GLOBAL_BUCKET]
     for bucket in buckets:
-        text, ids = render_memory(conn, bucket=bucket, with_age_labels=True)
+        text, ids = render_memory(
+            conn, user_id=user_id, bucket=bucket, with_age_labels=True
+        )
         if text:
             for item_id in ids:
-                mark_hit(conn, item_id=item_id)
+                mark_hit(conn, user_id=user_id, item_id=item_id)
             return text
     return ""
 
 
-def top_active_item(conn: SqlConnection, *, bucket: str) -> dict[str, Any] | None:
+def top_active_item(
+    conn: SqlConnection, *, user_id: str, bucket: str
+) -> dict[str, Any] | None:
     """recall 档的素材：此刻最该被提起的那一条。没有 = None（调用方就不该走回忆口吻）。"""
-    ranked = ranked_active(conn, bucket=bucket)
+    ranked = ranked_active(conn, user_id=user_id, bucket=bucket)
     return ranked[0] if ranked else None
 
 
@@ -435,7 +492,7 @@ _BULLET = re.compile(r"^\s*(?:[-–—•*]\s*)+")
 
 
 def replace_bucket_from_text(
-    conn: SqlConnection, *, bucket: str, text: str, source: str = "manual"
+    conn: SqlConnection, *, user_id: str, bucket: str, text: str, source: str = "manual"
 ) -> list[dict[str, Any]]:
     """整段文本 → 该桶的非钉住条目（保留旧 PUT /api/settings/memory 的"覆写"语义）。
 
@@ -451,24 +508,25 @@ def replace_bucket_from_text(
     """
     tiers = {
         " ".join(str(i["text"]).split()): clamp_importance(i.get("importance"))
-        for i in list_items(conn, bucket=bucket)
+        for i in list_items(conn, user_id=user_id, bucket=bucket)
         if not i["pinned"]
     }
     conn.execute(
-        "DELETE FROM role_memory_item WHERE role_id = ? AND pinned = 0",
-        (bucket,),
+        "DELETE FROM role_memory_item WHERE role_id = ? AND user_id = ? AND pinned = 0",
+        (bucket, user_id),
     )
     conn.commit()
     for line in (text or "").splitlines():
         body = _BULLET.sub("", line)
         add_item(
             conn,
+            user_id=user_id,
             bucket=bucket,
             text=body,
             source=source,
             importance=tiers.get(" ".join(body.split()), 1),
         )
-    return [i for i in list_items(conn, bucket=bucket) if i["pinned"]]
+    return [i for i in list_items(conn, user_id=user_id, bucket=bucket) if i["pinned"]]
 
 
 def make_memory_tool(*, settings: Settings, conn: SqlConnection) -> BaseTool:
@@ -486,11 +544,19 @@ def make_memory_tool(*, settings: Settings, conn: SqlConnection) -> BaseTool:
         line = " ".join((fact or "").split())
         if not line:
             return "没有可记住的内容：传入的 fact 为空。"
-        added_global = add_item(conn, bucket=GLOBAL_BUCKET, text=line, source="chat")
+        # 这一轮在为谁记：图节点在入口绑过就是这条线程的主人（`core/identity.bound_user`），
+        # 没绑过（后台、纯内核装配）才落到这台实例的主人。工具签名里没有 user_id 是刻意的：
+        # 有它模型就能自己填"我是谁"。
+        owner = active_user_id(resolve_instance_identity(settings))
+        added_global = add_item(
+            conn, user_id=owner, bucket=GLOBAL_BUCKET, text=line, source="chat"
+        )
         role_id = current_role_id_ctx.get()
         if role_id:
-            add_item(conn, bucket=role_id, text=line, source="chat")
-        count = len(list_items(conn, bucket=role_id or GLOBAL_BUCKET))
+            add_item(conn, user_id=owner, bucket=role_id, text=line, source="chat")
+        count = len(
+            list_items(conn, user_id=owner, bucket=role_id or GLOBAL_BUCKET)
+        )
         return f"已记住：{line}（该桶现有 {count} 条事实）。" if added_global else "没有写入。"
 
     return memory_save

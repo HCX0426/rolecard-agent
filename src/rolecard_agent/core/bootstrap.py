@@ -240,7 +240,7 @@ class Runtime:
         在**那条主动会话里**不补：同一句话本来就在她的历史里，再抄一遍进 system 等于把
         复读喂回给模型（`nodes._scrub_own_repeats` 治的就是这个），白花 token 还添病。
         """
-        text = memory_for_turn(self.conn, self.effective, role_id)
+        text = memory_for_turn(self.conn, self.effective, role_id, user_id=self.identity)
         if not role_id or thread_id == proactive_thread_id(role_id):
             return text
         echo = recent_reachout_lines(self.conn, role_id, limit=CHAT_ECHO_LIMIT)

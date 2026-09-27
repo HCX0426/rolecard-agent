@@ -74,17 +74,22 @@ def test_a_new_card_always_carries_the_views_owner(store) -> None:
     assert card.user_id == "alice"
 
 
-def test_schema_default_matches_the_code_constant() -> None:
-    """`roles/schema.sql` 里那句 `DEFAULT 'local-user'` 必须仍是 `DEFAULT_USER_ID`。
+def test_every_schema_user_id_default_matches_the_code_constant() -> None:
+    """所有 schema 里 `user_id` 那个字面量默认值都必须仍是 `DEFAULT_USER_ID`。
 
-    为什么单独钉一条：SQLite 的 `ADD COLUMN` 对老库不允许带外键（见 schema 注释），所以这里
-    只能写字面量 —— 一个字面量与一个常量各说一套，就是两份事实面。漂开之后的症状是
-    "老库升完级角色列表空了"，最不像默认值出问题。
+    为什么扫全部而不是只看一张表：这些字面量是**老库升上来时用来回填**的值 —— SQLite 不允许
+    "带非常量默认的 ADD COLUMN"再挂外键，所以只能写字面量。它一旦与常量漂开，老库升完级那些行
+    就变成“没人看得见”，而症状是“列表空了” —— 最不像默认值出问题的那一类。
     """
-    sql = ROLE_SCHEMA.read_text(encoding="utf-8")
-    match = re.search(r"user_id\s+TEXT NOT NULL DEFAULT '([^']*)'", sql)
-    assert match is not None, "role_card 的 user_id 声明变了形状，这条守卫要一起改"
-    assert match.group(1) == DEFAULT_USER_ID
+    found = 0
+    for sql in sorted(Path("src/rolecard_agent").rglob("*.sql")):
+        text = sql.read_text(encoding="utf-8")
+        for m in re.finditer(r"user_id\s+TEXT NOT NULL DEFAULT '([^']*)'", text):
+            found += 1
+            assert m.group(1) == DEFAULT_USER_ID, (
+                f"{sql.name} 的 user_id 默认值与 core.identity 漂开了：{m.group(1)!r}"
+            )
+    assert found >= 2, f"只扫到 {found} 处 user_id 默认值，这条守卫该跟着形状走"
 
 
 def test_an_old_database_gets_the_column_and_keeps_its_cards(tmp_path: Path) -> None:

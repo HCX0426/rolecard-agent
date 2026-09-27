@@ -17,6 +17,7 @@ import pytest
 
 from rolecard_agent.core import memory as mem
 from rolecard_agent.core import memory_distill as distill
+from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.storage.db import SqlConnection, bootstrap, connect
 
 
@@ -41,6 +42,8 @@ class FakeModel:
         return _Reply(self.text, tokens=123)
 
 
+ME = DEFAULT_USER_ID  # 这台实例的主人在测试里的名字（M2b 之后每次读写都要说清为谁）
+
 @pytest.fixture
 def conn() -> Any:
     c = connect(":memory:")
@@ -49,7 +52,7 @@ def conn() -> Any:
 
 
 def _texts(c: SqlConnection, bucket: str) -> list[str]:
-    return [str(i["text"]) for i in mem.ranked_active(c, bucket=bucket)]
+    return [str(i["text"]) for i in mem.ranked_active(c, user_id=ME, bucket=bucket)]
 
 
 def _thread_cols(c: SqlConnection) -> set[str]:
@@ -62,7 +65,7 @@ def _thread_cols(c: SqlConnection) -> set[str]:
 def test_extract_adds_facts_as_items(conn: SqlConnection) -> None:
     model = FakeModel("ADD 用户住在上海\nADD 用户每周五要交周报")
     out = distill.extract(
-        conn,
+        conn, user_id=ME,
         model=model,
         bucket="elysia",
         messages=[
@@ -74,7 +77,8 @@ def test_extract_adds_facts_as_items(conn: SqlConnection) -> None:
     assert out["ok"] is True
     assert out["report"]["added"] == 2
     assert set(_texts(conn, "elysia")) == {"用户住在上海", "用户每周五要交周报"}
-    assert [i["source"] for i in mem.list_items(conn, bucket="elysia")] == ["extract", "extract"]
+    assert [i["source"] for i in mem.list_items(conn, user_id=ME,
+        bucket="elysia")] == ["extract", "extract"]
     # 成本可见化：模型报了 usage 就带进报告（没报就是 None，不编）
     assert out["report"]["tokens"] == 123
     # 已有条目会进 prompt —— 不然同一句事实每次提取都再 ADD 一遍
@@ -88,7 +92,7 @@ def test_extract_books_the_call_on_the_backend_that_served_it(conn: SqlConnectio
     看不见它就等于"悄悄把成本加上去"。
     """
     distill.extract(
-        conn,
+        conn, user_id=ME,
         model=FakeModel("ADD 用户住在上海"),
         bucket="elysia",
         messages=[_Msg("human", "我搬到上海了")],
@@ -100,22 +104,22 @@ def test_extract_books_the_call_on_the_backend_that_served_it(conn: SqlConnectio
 
 def test_extract_update_supersedes_instead_of_rewriting(conn: SqlConnection) -> None:
     """UPDATE 不是就地改文本：新增一条 + 把旧那条标失效（版本链是"它何时开始搞错"的证据）。"""
-    old = mem.add_item(conn, bucket="elysia", text="用户住在上海", source="manual")
+    old = mem.add_item(conn, user_id=ME, bucket="elysia", text="用户住在上海", source="manual")
     assert old is not None
     out = distill.extract(
-        conn,
+        conn, user_id=ME,
         model=FakeModel(f"UPDATE {old['id']} 用户去年搬到北京了"),
         bucket="elysia",
         messages=[_Msg("human", "我现在在北京")],
     )
     assert out["report"]["updated"] == 1
     assert _texts(conn, "elysia") == ["用户去年搬到北京了"]
-    stale = mem.get_item(conn, int(str(old["id"])))
+    stale = mem.get_item(conn, int(str(old["id"])), user_id=ME)
     assert stale is not None and stale["invalidated_at"] is not None
-    fresh = mem.get_item(conn, int(str(stale["superseded_by"])))
+    fresh = mem.get_item(conn, int(str(stale["superseded_by"])), user_id=ME)
     assert fresh is not None and fresh["text"] == "用户去年搬到北京了"
     # 旧行**还在表里**（可回滚），只是不再注入
-    assert len(mem.list_items(conn, bucket="elysia", include_invalidated=True)) == 2
+    assert len(mem.list_items(conn, user_id=ME, bucket="elysia", include_invalidated=True)) == 2
 
 
 def test_extract_update_that_repeats_the_same_fact_loses_nothing(conn: SqlConnection) -> None:
@@ -125,48 +129,48 @@ def test_extract_update_that_repeats_the_same_fact_loses_nothing(conn: SqlConnec
     会返回那一条本身；照原流程往下 `invalidate_item(old, superseded_by=old)` 就会让
     幸存者自己取代自己 ⇒ 事实从注入里消失，而界面报的还是"更新 1 条"。
     """
-    old = mem.add_item(conn, bucket="elysia", text="用户住在上海", source="manual")
+    old = mem.add_item(conn, user_id=ME, bucket="elysia", text="用户住在上海", source="manual")
     assert old is not None
     out = distill.extract(
-        conn,
+        conn, user_id=ME,
         model=FakeModel(f"UPDATE {old['id']} 用户住在上海"),
         bucket="elysia",
         messages=[_Msg("human", "我还是住在上海")],
     )
     assert out["report"]["updated"] == 0
     assert _texts(conn, "elysia") == ["用户住在上海"]  # 那条还在，也没被自己取代
-    assert mem.get_item(conn, int(str(old["id"])))["invalidated_at"] is None
+    assert mem.get_item(conn, int(str(old["id"])), user_id=ME)["invalidated_at"] is None
 
 
 def test_consolidate_keeps_the_survivor_of_a_merge(conn: SqlConnection) -> None:
     """MERGE 的结果如果就是被合并的某一条（文本逐字相同），那条是幸存者，不能把自己弄失效。"""
-    a = mem.add_item(conn, bucket="elysia", text="用户养了一只猫叫米")
-    b = mem.add_item(conn, bucket="elysia", text="用户的猫叫米")
+    a = mem.add_item(conn, user_id=ME, bucket="elysia", text="用户养了一只猫叫米")
+    b = mem.add_item(conn, user_id=ME, bucket="elysia", text="用户的猫叫米")
     assert a is not None and b is not None
     out = distill.consolidate(
-        conn,
+        conn, user_id=ME,
         model=FakeModel(f"MERGE {a['id']},{b['id']} 用户养了一只猫叫米"),
         bucket="elysia",
     )
     assert out["report"]["merged"] == 1
-    survivor = mem.get_item(conn, int(str(a["id"])))
+    survivor = mem.get_item(conn, int(str(a["id"])), user_id=ME)
     assert survivor is not None and survivor["invalidated_at"] is None, "幸存者被自己取代了"
     assert _texts(conn, "elysia") == ["用户养了一只猫叫米"]
 
 
 def test_count_similar_only_counts_and_touches_nothing(conn: SqlConnection) -> None:
     """`count_similar` 是**提示**：它报数，不新增、不失效、不改写任何一行。"""
-    mem.add_item(conn, bucket="elysia", text="用户喜欢断舍离，清理衣物上瘾")
-    mem.add_item(conn, bucket="elysia", text="用户喜欢断舍离，清理衣柜上瘾")
-    mem.add_item(conn, bucket="elysia", text="用户住在上海")
-    before = mem.list_items(conn, bucket="elysia", include_invalidated=True)
-    assert distill.count_similar(conn, bucket="elysia") == 2
-    assert mem.list_items(conn, bucket="elysia", include_invalidated=True) == before
+    mem.add_item(conn, user_id=ME, bucket="elysia", text="用户喜欢断舍离，清理衣物上瘾")
+    mem.add_item(conn, user_id=ME, bucket="elysia", text="用户喜欢断舍离，清理衣柜上瘾")
+    mem.add_item(conn, user_id=ME, bucket="elysia", text="用户住在上海")
+    before = mem.list_items(conn, user_id=ME, bucket="elysia", include_invalidated=True)
+    assert distill.count_similar(conn, user_id=ME, bucket="elysia") == 2
+    assert mem.list_items(conn, user_id=ME, bucket="elysia", include_invalidated=True) == before
 
 
 def test_extract_ignores_unparseable_lines_and_counts_them(conn: SqlConnection) -> None:
     out = distill.extract(
-        conn,
+        conn, user_id=ME,
         model=FakeModel("我觉得这个人挺有意思\nADD 用户养了一只猫\n- 随便什么\nNOOP"),
         bucket="elysia",
         messages=[_Msg("human", "我家猫又踩键盘了")],
@@ -178,16 +182,17 @@ def test_extract_ignores_unparseable_lines_and_counts_them(conn: SqlConnection) 
 
 def test_extract_noop_changes_nothing(conn: SqlConnection) -> None:
     out = distill.extract(
-        conn, model=FakeModel("NOOP"), bucket="elysia", messages=[_Msg("human", "今天天气不错")]
+        conn, user_id=ME, model=FakeModel("NOOP"), bucket="elysia", messages=[_Msg("human",
+            "今天天气不错")]
     )
     assert out["report"]["noop"] == 1 and out["report"]["added"] == 0
     assert _texts(conn, "elysia") == []
 
 
 def test_extract_model_failure_writes_nothing(conn: SqlConnection) -> None:
-    mem.add_item(conn, bucket="elysia", text="原来就有的一条", source="manual")
+    mem.add_item(conn, user_id=ME, bucket="elysia", text="原来就有的一条", source="manual")
     out = distill.extract(
-        conn,
+        conn, user_id=ME,
         model=FakeModel(error=RuntimeError("boom")),
         bucket="elysia",
         messages=[_Msg("human", "随便说点什么")],
@@ -199,7 +204,8 @@ def test_extract_model_failure_writes_nothing(conn: SqlConnection) -> None:
 def test_extract_without_text_is_not_a_model_call(conn: SqlConnection) -> None:
     """纯图片/空消息的会话不值得发一次调用（成本要花在有的可提的内容上）。"""
     model = FakeModel("ADD 不该被用到")
-    out = distill.extract(conn, model=model, bucket="elysia", messages=[_Msg("human", "")])
+    out = distill.extract(conn, user_id=ME, model=model, bucket="elysia", messages=[_Msg("human",
+        "")])
     assert out["ok"] is True and model.prompts == []
 
 
@@ -207,17 +213,20 @@ def test_extract_without_text_is_not_a_model_call(conn: SqlConnection) -> None:
 
 
 def test_consolidate_merges_synonyms_and_keeps_rows(conn: SqlConnection) -> None:
-    a = mem.add_item(conn, bucket="elysia", text="用户养了一只猫")
-    b = mem.add_item(conn, bucket="elysia", text="用户的猫叫米")
+    a = mem.add_item(conn, user_id=ME, bucket="elysia", text="用户养了一只猫")
+    b = mem.add_item(conn, user_id=ME, bucket="elysia", text="用户的猫叫米")
     assert a is not None and b is not None
     out = distill.consolidate(
-        conn, model=FakeModel(f"MERGE {a['id']},{b['id']} 用户养了一只叫米的猫"), bucket="elysia"
+        conn,
+        user_id=ME,
+        model=FakeModel(f"MERGE {a['id']},{b['id']} 用户养了一只叫米的猫"),
+        bucket="elysia",
     )
     assert out["report"]["merged"] == 1
     assert _texts(conn, "elysia") == ["用户养了一只叫米的猫"]
     # 被合并的两条只是失效，指向合并出来的那条
     for item in (a, b):
-        stale = mem.get_item(conn, int(str(item["id"])))
+        stale = mem.get_item(conn, int(str(item["id"])), user_id=ME)
         assert stale is not None and stale["invalidated_at"] is not None
         assert stale["superseded_by"] is not None
     assert out["report"]["before"] == 2 and out["report"]["after"] == 1
@@ -232,13 +241,13 @@ def test_extract_reads_the_importance_marker(conn: SqlConnection) -> None:
         "ADD [2] 用户青霉素过敏\nADD 用户住在苏州\nADD [9] 越界的档号\nADD [很要紧] 不是数字"
     )
     out = distill.extract(
-        conn,
+        conn, user_id=ME,
         model=model,
         bucket="medical_archivist",
         messages=[_Msg("human", "我青霉素过敏，住在苏州")],
     )
     assert out["report"]["added"] == 4
-    items = mem.list_items(conn, bucket="medical_archivist")
+    items = mem.list_items(conn, user_id=ME, bucket="medical_archivist")
     tiers = {str(i["text"]): int(i["importance"]) for i in items}
     assert tiers == {
         "用户青霉素过敏": 2,
@@ -302,9 +311,9 @@ def test_echo_adds_are_dropped_without_losing_information(conn: SqlConnection) -
     实测的形状（2026-09-24，本地 8B、固定八轮对话）：自动提取跑三轮，`added` 11 → 9 → 8，
     桶里 26 条而 `similar` 也涨到 26 —— 后两轮新增的基本是把清单换个长度重抄一遍。
     """
-    mem.add_item(conn, bucket="elysia", text="用户今天加班到十点才走", source="extract")
+    mem.add_item(conn, user_id=ME, bucket="elysia", text="用户今天加班到十点才走", source="extract")
     out = distill.extract(
-        conn,
+        conn, user_id=ME,
         model=FakeModel("ADD 今天加班到十点才走\nADD 用户中午和同事吵架了"),
         bucket="elysia",
         messages=[_Msg("human", "中午和同事吵架了")],
@@ -321,9 +330,11 @@ def test_a_more_specific_fact_is_never_treated_as_an_echo(conn: SqlConnection) -
 
     抹掉它是吞真事实（§12.9 那次误并的同一种错），这种收敛留给「整理记忆」。
     """
-    mem.add_item(conn, bucket="medical_archivist", text="用户有肾结石", source="extract")
+    mem.add_item(
+        conn, user_id=ME, bucket="medical_archivist", text="用户有肾结石", source="extract"
+    )
     out = distill.extract(
-        conn,
+        conn, user_id=ME,
         model=FakeModel("ADD 用户有肾结石，2026-03-12 复查直径 6 mm"),
         bucket="medical_archivist",
         messages=[_Msg("human", "复查说结石 6 毫米了")],
@@ -367,7 +378,8 @@ def test_extract_prompt_forbids_background_not_said_in_the_dialogue(conn: SqlCon
 def _extract_prompt_of(conn: SqlConnection) -> str:
     """跑一次提取，把发给模型的那段指令原样拿回来（只钉文本，不测模型行为）。"""
     model = FakeModel("NOOP")
-    distill.extract(conn, model=model, bucket="elysia", messages=[_Msg("human", "随便一句")])
+    distill.extract(conn, user_id=ME, model=model, bucket="elysia", messages=[_Msg("human",
+        "随便一句")])
     return model.prompts[0]
 
 
@@ -378,48 +390,48 @@ def test_consolidated_merge_inherits_the_highest_importance(conn: SqlConnection)
     以前这一路漏传了参数，面板上"谁写的"那一列对整理出来的条目一直在撒谎。
     """
     a = mem.add_item(
-        conn, bucket="elysia", text="用户青霉素过敏", importance=2, source="extract"
+        conn, user_id=ME, bucket="elysia", text="用户青霉素过敏", importance=2, source="extract"
     )
     b = mem.add_item(
-        conn, bucket="elysia", text="青霉素吃了会起疹子", importance=1, source="extract"
+        conn, user_id=ME, bucket="elysia", text="青霉素吃了会起疹子", importance=1, source="extract"
     )
     assert a is not None and b is not None
     out = distill.consolidate(
-        conn,
+        conn, user_id=ME,
         model=FakeModel(f"MERGE {a['id']},{b['id']} 用户青霉素过敏会起疹子"),
         bucket="elysia",
     )
     assert out["report"]["merged"] == 1
-    survivor = mem.list_items(conn, bucket="elysia")[0]
+    survivor = mem.list_items(conn, user_id=ME, bucket="elysia")[0]
     assert int(survivor["importance"]) == 2 and str(survivor["source"]) == "extract"
 
 
 def test_consolidate_never_touches_pinned_items(conn: SqlConnection) -> None:
     """钉住 = 不参与淘汰，也不被模型改写（用户对某条事实特意钉过）。"""
-    pinned = mem.add_item(conn, bucket="elysia", text="用户的全名是张三")
+    pinned = mem.add_item(conn, user_id=ME, bucket="elysia", text="用户的全名是张三")
     assert pinned is not None
-    mem.set_pinned(conn, item_id=int(str(pinned["id"])), pinned=True)
-    other = mem.add_item(conn, bucket="elysia", text="用户喜欢咖啡")
+    mem.set_pinned(conn, user_id=ME, item_id=int(str(pinned["id"])), pinned=True)
+    other = mem.add_item(conn, user_id=ME, bucket="elysia", text="用户喜欢咖啡")
     assert other is not None
     lines = f"INVALID {pinned['id']} 不该动它\nMERGE {pinned['id']},{other['id']} 混在一起"
     out = distill.consolidate(
-        conn,
+        conn, user_id=ME,
         model=FakeModel(lines),
         bucket="elysia",
     )
     assert out["report"]["invalidated"] == 0 and out["report"]["merged"] == 0
     assert out["report"]["skipped"] == 2
-    kept = mem.get_item(conn, int(str(pinned["id"])))
+    kept = mem.get_item(conn, int(str(pinned["id"])), user_id=ME)
     assert kept is not None and kept["pinned"] is True and kept["invalidated_at"] is None
 
 
 def test_consolidate_prompt_marks_pinned_rows(conn: SqlConnection) -> None:
-    pinned = mem.add_item(conn, bucket="elysia", text="钉住的那条")
+    pinned = mem.add_item(conn, user_id=ME, bucket="elysia", text="钉住的那条")
     assert pinned is not None
-    mem.set_pinned(conn, item_id=int(str(pinned["id"])), pinned=True)
-    mem.add_item(conn, bucket="elysia", text="普通的一条")
+    mem.set_pinned(conn, user_id=ME, item_id=int(str(pinned["id"])), pinned=True)
+    mem.add_item(conn, user_id=ME, bucket="elysia", text="普通的一条")
     model = FakeModel("NOOP")
-    distill.consolidate(conn, model=model, bucket="elysia")
+    distill.consolidate(conn, user_id=ME, model=model, bucket="elysia")
     prompt = model.prompts[0]
     assert f"{pinned['id']}*" in prompt
     assert "不要对它输出任何指令" in prompt
@@ -427,22 +439,22 @@ def test_consolidate_prompt_marks_pinned_rows(conn: SqlConnection) -> None:
 
 def test_consolidate_needs_at_least_two_items(conn: SqlConnection) -> None:
     """一条以下不发调用：没有可整理的东西，为什么要花一次模型调用。"""
-    mem.add_item(conn, bucket="elysia", text="只有一条")
+    mem.add_item(conn, user_id=ME, bucket="elysia", text="只有一条")
     model = FakeModel("NOOP")
-    out = distill.consolidate(conn, model=model, bucket="elysia")
+    out = distill.consolidate(conn, user_id=ME, model=model, bucket="elysia")
     assert out["ok"] is True and model.prompts == []
 
 
 def test_consolidate_invalid_creates_the_replacement(conn: SqlConnection) -> None:
-    stale = mem.add_item(conn, bucket="elysia", text="用户在读研")
+    stale = mem.add_item(conn, user_id=ME, bucket="elysia", text="用户在读研")
     assert stale is not None
-    mem.add_item(conn, bucket="elysia", text="用户已经工作了")
+    mem.add_item(conn, user_id=ME, bucket="elysia", text="用户已经工作了")
     out = distill.consolidate(
-        conn, model=FakeModel(f"INVALID {stale['id']} 用户已毕业工作"), bucket="elysia"
+        conn, user_id=ME, model=FakeModel(f"INVALID {stale['id']} 用户已毕业工作"), bucket="elysia"
     )
     assert out["report"]["invalidated"] == 1
     assert "用户已毕业工作" in _texts(conn, "elysia")
-    gone = mem.get_item(conn, int(str(stale["id"])))
+    gone = mem.get_item(conn, int(str(stale["id"])), user_id=ME)
     assert gone is not None and gone["invalidated_at"] is not None
 
 

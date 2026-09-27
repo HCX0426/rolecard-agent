@@ -25,6 +25,7 @@ import contextvars
 import re
 import sqlite3
 import threading
+import uuid
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import Any
@@ -424,3 +425,16 @@ def _migrate(conn: SqlConnection) -> None:
             conn.execute(f"ALTER TABLE model_backend ADD COLUMN {name} REAL")
     # 11.「未收尾话题」那两列（open_threads / open_threads_at）原先也手写在这里，现在由
     #     `bootstrap` 补搬层**之后**的那一遍 `reconcile_columns` 按声明补齐。
+    # 12. 记忆条目的跨机器身份 `uid`（09-27 轮 M2b）。补列器能把**列**长出来，但填什么值是
+    #     数据不是形状 —— 老行的 uid 必须在这里补上 uuid4，否则"哪些条目能跟云端对账"这件事
+    #     没有答案，上行只剩"整表覆盖"那一条会丢数据的路。幂等：只碰 NULL/空串。
+    if "uid" in _columns(conn, "role_memory_item"):
+        rows = conn.execute(
+            "SELECT id FROM role_memory_item WHERE uid IS NULL OR uid = ''"
+        ).fetchall()
+        for r in rows:
+            conn.execute(
+                "UPDATE role_memory_item SET uid = ? WHERE id = ?",
+                (uuid.uuid4().hex, int(r[0])),
+            )
+        conn.commit()

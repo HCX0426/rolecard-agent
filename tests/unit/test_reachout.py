@@ -15,6 +15,7 @@ from langchain_core.messages import AIMessage
 from rolecard_agent.config import Settings
 from rolecard_agent.core import file_watch as fw
 from rolecard_agent.core import reachout as svc
+from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.core.memory import add_item
 from rolecard_agent.core.proactive_state import DEFAULT_AFFINITY_THRESHOLD, get_state
 from rolecard_agent.core.reachout import ReachoutScheduler
@@ -23,6 +24,8 @@ from rolecard_agent.roles.models import RoleCard
 
 _UTC = UTC
 
+
+ME = DEFAULT_USER_ID  # 这台实例的主人在测试里的名字（M2b 之后每次读写都要说清为谁）
 
 def _role(reachout_enabled: bool = True) -> RoleCard:
     return RoleCard(
@@ -349,7 +352,7 @@ def test_empty_memory_does_not_claim_long_term_memory(conn) -> None:
 
 def test_memory_present_restores_the_memory_clause(conn) -> None:
     role = _role()
-    add_item(conn, bucket=role.role_id, text="用户喜欢猫")
+    add_item(conn, user_id=ME, bucket=role.role_id, text="用户喜欢猫")
     model = _FakeModel(AIMessage(content="嗨"))
     svc.generate_reachout_text(role, model, _settings(), conn, role_id=role.role_id)
     joined = _prompt_text(model)
@@ -642,23 +645,23 @@ def test_trigger_time_pattern_silent_without_history(conn) -> None:
 
 
 def test_trigger_recall_fires_when_role_memory_present(conn) -> None:
-    add_item(conn, bucket="active", text="用户上周说想学吉他。")
-    got = svc.trigger_recall(_role(), conn, now_local=_now_local())
+    add_item(conn, user_id=ME, bucket="active", text="用户上周说想学吉他。")
+    got = svc.trigger_recall(_role(), conn, user_id=ME, now_local=_now_local())
     assert got == "recall"
 
 
 def test_trigger_recall_silent_without_memory(conn) -> None:
-    got = svc.trigger_recall(_role(), conn, now_local=_now_local())
+    got = svc.trigger_recall(_role(), conn, user_id=ME, now_local=_now_local())
     assert got is None
 
 
 def test_trigger_recall_respects_role_toggle(conn) -> None:
     """回忆触发受 per-role 开关闸门：关掉后即使有专属记忆也不触发。"""
-    add_item(conn, bucket="active", text="用户上周说想学吉他。")
+    add_item(conn, user_id=ME, bucket="active", text="用户上周说想学吉他。")
     role = RoleCard(**{**_role().model_dump(), "recall_enabled": False})
-    assert svc.trigger_recall(role, conn, now_local=_now_local()) is None
+    assert svc.trigger_recall(role, conn, user_id=ME, now_local=_now_local()) is None
     # 开关开着则照常触发（对照）
-    assert svc.trigger_recall(_role(), conn, now_local=_now_local()) == "recall"
+    assert svc.trigger_recall(_role(), conn, user_id=ME, now_local=_now_local()) == "recall"
 
 
 def test_trigger_time_pattern_respects_role_toggle(conn) -> None:
@@ -688,7 +691,7 @@ def test_tick_once_runs_affection_trigger_and_bumps_affinity(conn) -> None:
 
 def test_generate_recall_mode_uses_role_memory(conn) -> None:
     """回忆触发的生成必须读该角色的专属记忆（per-role 隔离），而不是全局记忆。"""
-    add_item(conn, bucket="active", text="专属记忆：他养了只猫。")
+    add_item(conn, user_id=ME, bucket="active", text="专属记忆：他养了只猫。")
     role = _role()
     model = _FakeModel(AIMessage(content="我记得你养了猫。"))
     text = svc.generate_reachout_text(
@@ -1464,14 +1467,15 @@ def test_recall_cools_down_after_it_actually_spoke(conn) -> None:
     """回忆档一天最多用一次：它的判据（有没有 active 记忆）只会越来越真，不冷却就永久命中。"""
     from rolecard_agent.core.proactive_state import record_recall_open
 
-    add_item(conn, bucket="active", text="用户下周要体检")
+    add_item(conn, user_id=ME, bucket="active", text="用户下周要体检")
     local = _now_local()
-    assert svc.trigger_recall(_role(), conn, now_local=local) == "recall"
+    assert svc.trigger_recall(_role(), conn, user_id=ME, now_local=local) == "recall"
 
     record_recall_open(conn, "active", now=local)
-    assert svc.trigger_recall(_role(), conn, now_local=local) is None, "刚以回忆开过口，该让位"
+    assert svc.trigger_recall(_role(), conn, user_id=ME,
+        now_local=local) is None, "刚以回忆开过口，该让位"
     later = local + timedelta(hours=svc.RECALL_COOLDOWN_HOURS + 1)
-    assert svc.trigger_recall(_role(), conn, now_local=later) == "recall"
+    assert svc.trigger_recall(_role(), conn, user_id=ME, now_local=later) == "recall"
 
 
 def test_an_unsent_recall_does_not_burn_the_cooldown(conn) -> None:
@@ -1479,7 +1483,7 @@ def test_an_unsent_recall_does_not_burn_the_cooldown(conn) -> None:
     而不是"她今天已经回忆过一次了"。冷却的锚点必须只跟着**真的发出去**那一句走。"""
     model = _FakeModel(AIMessage(content=""))
     utc, local = _now()
-    add_item(conn, bucket="active", text="用户下周要体检")
+    add_item(conn, user_id=ME, bucket="active", text="用户下周要体检")
     scheduler = _scheduler(conn, [_role()], model)
     assert scheduler.tick_once(now_utc=utc, now_local=local) == 0
     assert get_state(conn, "active").recall_at is None, "没发出去却记了冷却 = 静默关掉这一档一天"

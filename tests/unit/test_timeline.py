@@ -20,10 +20,13 @@ import pytest
 
 from rolecard_agent.core import memory as mem
 from rolecard_agent.core import timeline
+from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.storage.db import SqlConnection, bootstrap, connect
 
 ROLE = "elysia"
 
+
+ME = DEFAULT_USER_ID  # 这台实例的主人在测试里的名字（M2b 之后每次读写都要说清为谁）
 
 @pytest.fixture
 def conn() -> Any:
@@ -77,7 +80,7 @@ def texts_of(page: dict[str, Any]) -> list[str]:
 def test_merges_three_sources_newest_first(conn: SqlConnection) -> None:
     add_thread(conn, "s_a", at(10, "09:00:00"), at(12, "20:00:00"), "腰疼怎么缓解")
     add_reachout(conn, "今天腰还酸吗？", at(11, "08:30:00"))
-    mem.add_item(conn, bucket=ROLE, text="用户每周三晚上练琴", source="extract")
+    mem.add_item(conn, user_id=ME, bucket=ROLE, text="用户每周三晚上练琴", source="extract")
     conn.execute(
         "UPDATE role_memory_item SET created_at = ? WHERE text = ?",
         (at(12, "10:00:00"), "用户每周三晚上练琴"),
@@ -107,7 +110,7 @@ def test_same_second_events_keep_a_stable_order(conn: SqlConnection) -> None:
     same = at(15, "10:00:00")
     add_thread(conn, "s_same", same, at(16, "10:00:00"), "同一秒的会话")
     add_reachout(conn, "同一秒的主动", same)
-    item = mem.add_item(conn, bucket=ROLE, text="用户住在上海")
+    item = mem.add_item(conn, user_id=ME, bucket=ROLE, text="用户住在上海")
     assert item is not None
     conn.execute("UPDATE role_memory_item SET created_at = ? WHERE id = ?", (same, item["id"]))
     conn.commit()
@@ -123,11 +126,12 @@ def test_same_second_events_keep_a_stable_order(conn: SqlConnection) -> None:
 
 
 def test_superseded_item_becomes_a_correction_event(conn: SqlConnection) -> None:
-    old = mem.add_item(conn, bucket=ROLE, text="用户住在上海", source="manual")
+    old = mem.add_item(conn, user_id=ME, bucket=ROLE, text="用户住在上海", source="manual")
     assert old is not None
-    fresh = mem.add_item(conn, bucket=ROLE, text="用户去年搬到北京了")
+    fresh = mem.add_item(conn, user_id=ME, bucket=ROLE, text="用户去年搬到北京了")
     assert fresh is not None
-    mem.invalidate_item(conn, item_id=int(str(old["id"])), superseded_by=int(str(fresh["id"])))
+    mem.invalidate_item(conn, user_id=ME, item_id=int(str(old["id"])),
+        superseded_by=int(str(fresh["id"])))
     conn.execute(
         "UPDATE role_memory_item SET invalidated_at = ? WHERE id = ?",
         (at(20, "10:00:00"), old["id"]),
@@ -143,9 +147,9 @@ def test_superseded_item_becomes_a_correction_event(conn: SqlConnection) -> None
 
 def test_invalidate_without_replacement_has_empty_new_text(conn: SqlConnection) -> None:
     """整理时"只作废不写替代"（INVALID 允许不带新事实）：那就显示作废了什么，不编一条"改成了"。"""
-    item = mem.add_item(conn, bucket=ROLE, text="用户在读研")
+    item = mem.add_item(conn, user_id=ME, bucket=ROLE, text="用户在读研")
     assert item is not None
-    mem.invalidate_item(conn, item_id=int(str(item["id"])), superseded_by=None)
+    mem.invalidate_item(conn, user_id=ME, item_id=int(str(item["id"])), superseded_by=None)
     page = timeline.build(conn, role_id=ROLE)
     correction = next(i for i in page["items"] if i["kind"] == "memory_correct")
     assert correction["text"] == "" and correction["from_text"] == "用户在读研"
@@ -166,9 +170,9 @@ def test_reachout_links_only_when_the_proactive_session_exists(conn: SqlConnecti
 
 
 def test_kinds_filter_keeps_corrections_with_memory(conn: SqlConnection) -> None:
-    old = mem.add_item(conn, bucket=ROLE, text="用户住在上海")
+    old = mem.add_item(conn, user_id=ME, bucket=ROLE, text="用户住在上海")
     assert old is not None
-    mem.invalidate_item(conn, item_id=int(str(old["id"])), superseded_by=None)
+    mem.invalidate_item(conn, user_id=ME, item_id=int(str(old["id"])), superseded_by=None)
     add_reachout(conn, "别的一条", at(19, "10:00:00"))
 
     only_memory = timeline.build(conn, role_id=ROLE, kinds=("memory", "memory_correct"))

@@ -803,8 +803,8 @@ def _memory_payload(ctx: AppContext, role_id: str | None = None) -> dict[str, ob
     from rolecard_agent.core import memory as mem
 
     bucket = role_id if role_id else mem.GLOBAL_BUCKET
-    items = mem.list_items(ctx.conn, bucket=bucket)
-    content, _ = mem.render_memory(ctx.conn, bucket=bucket)
+    items = mem.list_items(ctx.conn, user_id=ctx.current_user(), bucket=bucket)
+    content, _ = mem.render_memory(ctx.conn, user_id=ctx.current_user(), bucket=bucket)
     active = [i for i in items if i["invalidated_at"] is None]
     return {
         "enabled": ctx.settings.memory_enabled,
@@ -860,7 +860,12 @@ def put_memory(
             )
         if body.content is None:
             raise HTTPException(status_code=400, detail="没有要保存的内容。")
-        mem.replace_bucket_from_text(ctx.conn, bucket=bucket, text=body.content)
+        mem.replace_bucket_from_text(
+            ctx.conn,
+            user_id=ctx.current_user(),
+            bucket=bucket,
+            text=body.content,
+        )
         ctx.roles.audit(
             actor=actor.id,
             action="update_role_memory",
@@ -874,7 +879,12 @@ def put_memory(
     saved_chars = 0 if body.content is None else len(body.content)
     rebuilt = False
     if body.content is not None:
-        mem.replace_bucket_from_text(ctx.conn, bucket=mem.GLOBAL_BUCKET, text=body.content)
+        mem.replace_bucket_from_text(
+            ctx.conn,
+            user_id=ctx.current_user(),
+            bucket=mem.GLOBAL_BUCKET,
+            text=body.content,
+        )
     if body.enabled is not None:
         runtime_settings.save_overrides(ctx.conn, {"memory_enabled": "1" if body.enabled else "0"})
         rebuilt = True
@@ -936,7 +946,13 @@ def post_memory_item(
     if role_id:
         _require_role(ctx, role_id)
     bucket = role_id if role_id else mem.GLOBAL_BUCKET
-    added = mem.add_item(ctx.conn, bucket=bucket, text=body.text, source="manual")
+    added = mem.add_item(
+        ctx.conn,
+        user_id=ctx.current_user(),
+        bucket=bucket,
+        text=body.text,
+        source="manual",
+    )
     if added is None:
         raise HTTPException(status_code=400, detail="传入的记忆内容为空。")
     ctx.roles.audit(
@@ -959,15 +975,22 @@ def patch_memory_item(
     """改一条的文本、钉住状态，或显著性档位（0 次要 / 1 一般 / 2 要紧）。"""
     from rolecard_agent.core import memory as mem
 
-    if mem.get_item(ctx.conn, item_id) is None:
+    if mem.get_item(ctx.conn, item_id, user_id=ctx.current_user()) is None:
         raise HTTPException(status_code=404, detail=f"记忆条目不存在：{item_id}")
     updated: dict[str, object] = {}
+    owner = ctx.current_user()
     if body.text is not None:
-        updated = mem.edit_item(ctx.conn, item_id=item_id, text=body.text) or {}
+        updated = mem.edit_item(
+            ctx.conn, user_id=owner, item_id=item_id, text=body.text
+        ) or {}
     if body.pinned is not None:
-        updated = mem.set_pinned(ctx.conn, item_id=item_id, pinned=body.pinned) or {}
+        updated = mem.set_pinned(
+            ctx.conn, user_id=owner, item_id=item_id, pinned=body.pinned
+        ) or {}
     if body.importance is not None:
-        updated = mem.set_importance(ctx.conn, item_id=item_id, importance=body.importance) or {}
+        updated = mem.set_importance(
+            ctx.conn, user_id=owner, item_id=item_id, importance=body.importance
+        ) or {}
     if not updated:
         raise HTTPException(status_code=400, detail="没有要保存的内容。")
     ctx.roles.audit(
@@ -1013,8 +1036,8 @@ def merge_memory_item(
     """
     from rolecard_agent.core import memory as mem
 
-    keep = mem.get_item(ctx.conn, keep_id)
-    drop = mem.get_item(ctx.conn, drop_id)
+    keep = mem.get_item(ctx.conn, keep_id, user_id=ctx.current_user())
+    drop = mem.get_item(ctx.conn, drop_id, user_id=ctx.current_user())
     if keep is None or drop is None:
         raise HTTPException(
             status_code=404,
@@ -1027,7 +1050,13 @@ def merge_memory_item(
             status_code=400,
             detail="只能合并同一个记忆桶里的两条（全局与角色之间不许互搬）。",
         )
-    merged = mem.merge_items(ctx.conn, keep_id=keep_id, drop_id=drop_id, text=body.text)
+    merged = mem.merge_items(
+        ctx.conn,
+        user_id=ctx.current_user(),
+        keep_id=keep_id,
+        drop_id=drop_id,
+        text=body.text,
+    )
     if merged is None:
         raise HTTPException(status_code=400, detail="合并没做成（条目可能刚被删掉）。")
     ctx.roles.audit(
@@ -1040,7 +1069,8 @@ def merge_memory_item(
 
 
 @router.delete("/api/settings/memory/item/{item_id}")
-def remove_memory_item(    item_id: int,
+def remove_memory_item(
+    item_id: int,
     ctx: AppContext = Depends(get_context),
     actor: Actor = Depends(get_actor),
     role_id: str | None = Query(None, max_length=64),
@@ -1049,7 +1079,7 @@ def remove_memory_item(    item_id: int,
     自动退役才走 `invalidated_at`。"""
     from rolecard_agent.core import memory as mem
 
-    if not mem.delete_item(ctx.conn, item_id=item_id):
+    if not mem.delete_item(ctx.conn, user_id=ctx.current_user(), item_id=item_id):
         raise HTTPException(status_code=404, detail=f"记忆条目不存在：{item_id}")
     ctx.roles.audit(
         actor=actor.id, action="delete_memory_item", target=f"memory_item:{item_id}", detail={}
@@ -1086,6 +1116,7 @@ def consolidate_memory(
     backend = (ctx.settings.memory_extract_backend or "").strip() or None
     outcome = memory_distill.consolidate(
         ctx.conn,
+        user_id=ctx.current_user(),
         model=ctx.runtime.resolve_role_model(backend),
         bucket=bucket,
         # 后端名跟着模型一起进账：默认那条记在"未指名"下，指定了就该记在它名下（§12.8）。
@@ -1125,9 +1156,14 @@ def delete_memory(
     bucket = role_id if role_id else mem.GLOBAL_BUCKET
     if role_id:
         _require_role(ctx, role_id)
-    rows = mem.list_items(ctx.conn, bucket=bucket, include_invalidated=True)
+    rows = mem.list_items(
+        ctx.conn,
+        user_id=ctx.current_user(),
+        bucket=bucket,
+        include_invalidated=True,
+    )
     for item in rows:
-        mem.delete_item(ctx.conn, item_id=item["id"])
+        mem.delete_item(ctx.conn, user_id=ctx.current_user(), item_id=item["id"])
     ctx.roles.audit(
         actor=actor.id,
         action="clear_role_memory" if role_id else "clear_memory",

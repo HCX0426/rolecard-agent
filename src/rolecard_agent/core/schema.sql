@@ -164,6 +164,14 @@ CREATE TABLE IF NOT EXISTS role_memory (
 -- role_id='' = 用户级全局桶（与旧的 kernel_meta memory:facts 同一语义，但按同一张表管理）。
 CREATE TABLE IF NOT EXISTS role_memory_item (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- 归属：这条事实是谁的（09-27 轮 M2b）。老库靠默认值回填成本机主人；那个字面量与
+    -- `core/identity.DEFAULT_USER_ID` 不许漂，由 `tests/unit/test_identity_scoping.py` 扫全部
+    -- schema 文件钉住（漂开的症状是"升完级记忆空了"，最不像默认值出问题）。
+    user_id        TEXT NOT NULL DEFAULT 'local-user',
+    -- 跨机器稳定的身份。上行（把本机数据推到云端）的语义还没拍，但**三条语义都需要它**：
+    -- `id` 是本机 AUTOINCREMENT，两台机器会各自长出相同 id 的不同条目，于是"只追加/去重/
+    -- 重放"全部会串成别人的事实。老行的 uid 由 `storage.db._migrate` 就地补 uuid4（幂等）。
+    uid            TEXT,
     role_id        TEXT NOT NULL,
     text           TEXT NOT NULL,
     source         TEXT NOT NULL DEFAULT 'manual'
