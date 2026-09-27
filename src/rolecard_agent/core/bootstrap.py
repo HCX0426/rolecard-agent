@@ -33,7 +33,7 @@ from rolecard_agent.core.approvals import ApprovalService
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.domain_service import DomainQueryService
 from rolecard_agent.core.graph import build_graph_config, build_kernel, build_model
-from rolecard_agent.core.identity import resolve_instance_identity, seed_demo_identity
+from rolecard_agent.core.identity import ensure_identity_row, resolve_instance_identity
 from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.core.memory import memory_for_turn
 from rolecard_agent.core.model_settings import ModelSettingsService, client_style
@@ -486,11 +486,15 @@ def build_runtime(
     # 每个 REGISTERED 域的 schema 都建好，表因此永远存在，重新启用插件无需 DDL。
     apply_schema(conn, enabled_domains=domains)
     seed_plugin_rows(conn, domains)
-    seed_demo_identity(conn)
-    roles = RoleCardService(conn)
     # 出厂卡也有主人：这台实例的主人（`IDENTITY_USER_ID`，空=本机那份）。§4.1 的"两份完整
     # 数据集"落到角色卡上就是这句 —— 每张卡都有归属，读路径只认 `RoleCards` 那个按人过滤的视图。
     owner = resolve_instance_identity(settings)
+    # 外键要有对象可指：演示身份 + **这台实例的主人**各一行（同一枚名字时第二次是空转）。
+    # 只种演示身份的那一版，在 `IDENTITY_USER_ID` 真的指向第二个人时会让 `POST /api/session`
+    # 当场 IntegrityError —— 见 `core/identity.py` 里那句"为什么实例主人也要走这里"。
+    ensure_identity_row(conn)
+    ensure_identity_row(conn, owner)
+    roles = RoleCardService(conn)
     roles.seed_builtins(user_id=owner)
     roles.seed_domain_roles(user_id=owner)
     plugins = PluginService(conn, known_plugins=domains)

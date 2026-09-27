@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from rolecard_agent.core import timeline
-from rolecard_agent.core.identity import DEFAULT_USER_ID, seed_demo_identity
+from rolecard_agent.core.identity import DEFAULT_USER_ID, ensure_identity_row
 from rolecard_agent.core.memory import GLOBAL_BUCKET, add_item
 from rolecard_agent.core.reachout import (
     clear_all_inboxes,
@@ -45,9 +45,9 @@ def db(tmp_path: Path):
     conn = connect(tmp_path / "app.db")
     bootstrap(conn, enabled_domains=("health",))
     # `bootstrap` 建表但不播种身份，而 `session_thread.user_id` 是指向外键的 ——
-    # 先把默认那一份身份种下来（`seed_demo_identity` 就是装配根平时干的事），
+    # 先把默认那一份身份种下来（`ensure_identity_row` 就是装配根平时干的事），
     # 再补第二个租户/身份，测试里才真有两个主人可写。
-    seed_demo_identity(conn)
+    ensure_identity_row(conn)
     conn.execute(
         "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name)"
         " VALUES (?, 'local', '另一个')",

@@ -89,16 +89,29 @@ def resolve_identity(conn: SqlConnection, actor_id: str | None, *, fallback: str
     return str(row[0]) if row is not None else fallback
 
 
-def seed_demo_identity(conn: SqlConnection) -> None:
-    """播种 v1 演示身份。INSERT OR IGNORE：重复 bootstrap 不许复活任何东西，
-    而 `session_thread.user_id` 的外键需要这一行存在。"""
+def ensure_identity_row(conn: SqlConnection, user_id: str = DEFAULT_USER_ID) -> None:
+    """让 `app_user` 里有这个人这一行 —— `session_thread.user_id` 的外键要有对象可指。
+
+    为什么**实例主人**也要走这里，而不只是演示身份那一份：`IDENTITY_USER_ID` 指到第二个人
+    （`alice`）时，这台实例的每条会话、每个摄取任务、每条域记录都写着 `alice`，而 `app_user`
+    里只有播种的 `local-user` —— 外键当场断。2026-09-27 那支两实例端到端探针第一次真的把
+    `IDENTITY_USER_ID` 设成第二个人，症状是 `POST /api/session` 直接 500 IntegrityError，
+    不是同步才有的边角：**那台实例压根开不了新会话**。
+
+    这与 `resolve_identity` 那句"陌生用户名不许凭空造身份"不矛盾，两件事分得很清：
+      * 这里造身份的凭据是**运维改环境变量并重启**（`IDENTITY_USER_ID` 就是那句"这台实例
+        归他"），不是任何一个敲对口令的浏览器；
+      * 请求级那条仍然只在"确实有行"时才认，所以多出来的这一行不会让谁登录一下就换个身份。
+
+    `INSERT OR IGNORE`：重复 bootstrap 不许复活任何东西，同一枚名字传两次也只是第二次没做事。
+    """
+    display = "本地用户" if user_id == DEFAULT_USER_ID else user_id
     conn.execute(
         "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES (?, '本地演示')",
         (DEFAULT_TENANT_ID,),
     )
     conn.execute(
-        "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "
-        "VALUES (?, ?, '本地用户')",
-        (DEFAULT_USER_ID, DEFAULT_TENANT_ID),
+        "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) VALUES (?, ?, ?)",
+        (user_id, DEFAULT_TENANT_ID, display),
     )
     conn.commit()

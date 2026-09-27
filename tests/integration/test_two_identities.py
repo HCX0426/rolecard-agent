@@ -187,3 +187,33 @@ def test_the_timeline_of_her_card_is_not_readable(client: TestClient) -> None:
     assert client.get("/api/roles/r_a/timeline", headers=_as(B)).status_code == 404
     ok = client.get("/api/roles/r_a/timeline", headers=_as(A))
     assert ok.status_code == 200
+
+
+def test_an_instance_owned_by_the_second_person_can_talk(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`IDENTITY_USER_ID` 真的指到第二个人时，那台实例必须**开得出会话**。
+
+    上面那些用例都是"一台实例、两次登录"，主人始终是演示身份 `local-user`；M5/M7 那台
+    云端实例是另一种形状：**主人就是第二个人**。那一版 `app_user` 里只播种了演示身份，
+    而 `session_thread.user_id` 的外键指向它 —— 两实例端到端探针第一次真的把
+    `IDENTITY_USER_ID` 设成 `u1`，症状是 `POST /api/session` 当场 500 IntegrityError。
+    所以这一条测的不是同步，是"那台实例本来能不能用"。
+    """
+    monkeypatch.setenv("AUTH_MODE", "off")
+    monkeypatch.setenv("IDENTITY_USER_ID", B)
+    client = TestClient(create_app(sqlite_path=tmp_path / "cloud.db"))
+    with client:
+        conn = client.app.state.ctx.conn
+        rows = conn.execute("SELECT user_id FROM app_user").fetchall()
+        seeded = {str(r["user_id"]) for r in rows}
+        assert seeded == {A, B}, "实例主人那一行没补上，外键就没有对象可指"
+        made = client.post("/api/session", json={"role_id": "general_assistant"})
+        assert made.status_code == 201, made.text
+        owner = str(conn.execute(
+            "SELECT user_id FROM session_thread WHERE thread_id = ?",
+            (made.json()["thread_id"],),
+        ).fetchone()["user_id"])
+        assert owner == B
+        # 整份数据集都是他的：出厂卡也挂在这个主人名下（§4.1"换的是整份数据集"）
+        assert client.get("/api/roles").json(), "主人不是演示身份时，出厂卡没播种到他名下"
