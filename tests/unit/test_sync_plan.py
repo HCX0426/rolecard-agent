@@ -208,3 +208,53 @@ def test_collect_covers_exactly_the_four_shipped_kinds(tmp_path: Any) -> None:
     assert S.KIND_CARD in {i.kind for i in items}
     # 健康档案与原件这一版不搬：它们压根不在 kinds 里
     assert "report" not in S.SYNC_KINDS and "file" not in S.SYNC_KINDS
+
+
+# -- 5：登录对账的自动策略 ------------------------------------------------------------
+# 口径：只走无歧义的那半；歧义的（记忆、会话的冲突）留给人 —— 因为"两份都留"不幂等，
+# 自动档每登录一次就会把复制品当新东西再复制一遍。跑两遍第二遍是空转，这是它的命。
+
+
+def _conflict(kind: str, ident: str, at_mine: str, at_theirs: str) -> S.Conflict:
+    mine = S.SyncItem(kind=kind, ident=ident, hash="a", at=at_mine, payload={})
+    theirs = {"kind": kind, "ident": ident, "hash": "b", "at": at_theirs}
+    return S.Conflict(kind=kind, ident=ident, mine=mine, theirs=theirs)
+
+
+def test_auto_moves_takes_only_the_unambiguous() -> None:
+    plan = S.SyncPlan(
+        only_local=[S.SyncItem(kind="memory", ident="m1", hash="x", payload={})],
+        only_remote=[{"kind": "card", "ident": "c1", "hash": "y"}],
+        same=[],
+        conflicts=[
+            _conflict("memory", "m2", "2026-09-27 10:00:00", "2026-09-26 10:00:00"),
+            _conflict("thread", "s_1", "2026-09-27 10:00:00", "2026-09-26 10:00:00"),
+        ],
+        skipped=[],
+    )
+    push, pull, human = S.auto_moves(plan)
+    assert [(i.kind, i.ident) for i in push] == [("memory", "m1")]
+    assert pull == [("card", "c1")]
+    # 记忆与会话的冲突**一个都不自动动**——哪怕本机这边"看起来更新"
+    assert {(c.kind, c.ident) for c in human} == {("memory", "m2"), ("thread", "s_1")}
+
+
+def test_a_card_conflict_goes_to_whichever_side_is_newer() -> None:
+    # 本机新 ⇒ 推过去
+    push, pull, human = S.auto_moves(S.SyncPlan(
+        only_local=[], only_remote=[], same=[],
+        conflicts=[_conflict("card", "r1", "2026-09-28 08:00:00", "2026-09-27 08:00:00")],
+        skipped=[]))
+    assert [(i.kind, i.ident) for i in push] == [("card", "r1")] and pull == [] and human == []
+    # 对面新 ⇒ 取过来
+    push, pull, human = S.auto_moves(S.SyncPlan(
+        only_local=[], only_remote=[], same=[],
+        conflicts=[_conflict("card", "r1", "2026-09-27 08:00:00", "2026-09-28 08:00:00")],
+        skipped=[]))
+    assert push == [] and pull == [("card", "r1")] and human == []
+    # 读不出时刻的不许赢（空串当最旧）⇒ 留给人
+    push, pull, human = S.auto_moves(S.SyncPlan(
+        only_local=[], only_remote=[], same=[],
+        conflicts=[_conflict("card", "r1", "", "")],
+        skipped=[]))
+    assert push == [] and pull == [] and len(human) == 1

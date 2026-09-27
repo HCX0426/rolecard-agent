@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -338,3 +339,138 @@ def test_apply_sends_only_what_was_chosen_and_audits_no_text(
     assert kinds == {"memory"}, "没勾的类比也被推过去了"
     audit = client.get("/api/audit?limit=50").text
     assert "用户住在上海" not in audit and SECRET not in audit
+
+
+# -- 下行（pull）与批量载荷出口（export）----------------------------------------------
+
+
+def test_export_yields_only_the_callers_own_payloads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """清单不给载荷是对的，export 给 —— 所以它只准交**调用者自己名下**的。"""
+    client = _app(tmp_path, monkeypatch)
+    with client:
+        conn = client.app.state.ctx.conn
+        # `_app` 给的是空库：自己的、别人的各播一条，export 的"只给本人"才有对象可验
+        conn.execute(
+            "INSERT INTO role_card (role_id, user_id, role_name, system_prompt)"
+            " VALUES ('mine_a', 'local-user', '我的卡', '本机主人的')"
+        )
+        conn.execute(
+            "INSERT INTO role_card (role_id, user_id, role_name, system_prompt)"
+            " VALUES ('theirs_b', 'u1', '他的卡', '第二个身份的')"
+        )
+        conn.commit()
+        out = client.post(
+            "/api/sync/export",
+            json={"idents": [
+                {"kind": "card", "ident": "mine_a"},
+                {"kind": "card", "ident": "theirs_b"},   # 别人的 ⇒ 查无此条
+                {"kind": "card", "ident": "no_such"},     # 不存在的 ⇒ absent
+                {"kind": "memory", "ident": "uid-of-his"},
+            ]},
+        ).json()
+        idents = {(row["kind"], row["ident"]) for row in out["items"]}
+        assert ("card", "mine_a") in idents
+        assert ("card", "theirs_b") not in idents and ("memory", "uid-of-his") not in idents
+        assert out["absent"] == 3, out  # 四张里只有自己那一张在
+        payload = json.dumps(out, ensure_ascii=False)
+        assert "他不该被列出来" not in payload, "别人的记忆不许从这扇门出去"
+        # 每一次批量出口都进审计，但只记结构
+        blob = client.get("/api/audit?limit=20").text
+        assert "sync_export" in blob and "本机主人的" not in blob
+
+
+def test_export_refuses_to_dump_the_whole_identity_in_one_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _app(tmp_path, monkeypatch)
+    with client:
+        many = [{"kind": "card", "ident": f"x{i}"} for i in range(1001)]
+        assert client.post("/api/sync/export", json={"idents": many}).status_code == 409
+
+
+def test_pull_brings_the_remote_side_home_and_leaves_conflicts_shut(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """下行：本机没有的并回来；冲突默认保护**本机**；replace 这一档压根不给。"""
+    from rolecard_agent.core import memory as mem
+
+    client = _app(tmp_path, monkeypatch)
+    with client:
+        conn = client.app.state.ctx.conn
+        mem.add_item(conn, bucket=mem.GLOBAL_BUCKET, text="本机这条别动", user_id="local-user")
+        # 这张卡两边都有、内容不同 ⇒ 冲突。没有它，对面的卡就成了"本机独有缺席"会被拉过来
+        conn.execute(
+            "INSERT INTO role_card (role_id, user_id, role_name, system_prompt)"
+            " VALUES ('mine_a', 'local-user', '我的卡', '本机主人的')"
+        )
+        conn.commit()
+        mine = client.get("/api/sync/inventory").json()["items"]
+        local_mem = next(r for r in mine if r["kind"] == "memory")
+        remote = [
+            {"kind": "memory", "ident": "uid-remote-1", "hash": "a" * 16,
+             "preview": "云端那条新记忆"},
+            {"kind": "card", "ident": "mine_a", "hash": "b" * 16,
+             "at": "2026-09-28 00:00:00", "preview": "对面把这张卡也改过"},  # 冲突
+            {"kind": "memory", "ident": local_mem["ident"], "hash": "c" * 16},  # 冲突
+        ]
+        monkeypatch.setattr("httpx.get", lambda url, **kw: type("R", (), {
+            "status_code": 200,
+            "json": staticmethod(lambda: {"items": remote, "skipped": []})})())
+
+        def fake_post(url: str, **kw: Any) -> Any:
+            assert url.endswith("/api/sync/export"), url
+            asked = {(r["kind"], r["ident"]) for r in kw["json"]["idents"]}
+            payloads = []
+            if ("memory", "uid-remote-1") in asked:
+                payloads.append({"kind": "memory", "ident": "uid-remote-1",
+                                 "payload": {"text": "云端那条新记忆"}})
+            if ("card", "mine_a") in asked:
+                payloads.append({"kind": "card", "ident": "mine_a",
+                                 "payload": {"role_id": "mine_a", "role_name": "我的卡",
+                                             "system_prompt": "对面改过的那份"}})
+            if ("memory", local_mem["ident"]) in asked:
+                payloads.append({"kind": "memory", "ident": local_mem["ident"],
+                                 "payload": {"text": "对面改的那条记忆"}})
+            return type("R", (), {"status_code": 200,
+                                  "json": staticmethod(lambda: {"items": payloads})})()
+
+        monkeypatch.setattr("httpx.post", fake_post)
+        out = client.post(
+            "/api/sync/pull",
+            json={"base_url": "http://cloud.test:8123", "user": "u1", "secret": SECRET,
+                  "kinds": ["memory", "card"]},
+        ).json()
+        assert out["pulled"] == 1, out  # 只有云端独有的那条记忆过来；两个冲突都默认不动本机
+        rows = conn.execute(
+            "SELECT text FROM role_memory_item WHERE user_id='local-user'"
+        ).fetchall()
+        assert {str(r["text"]) for r in rows} == {"本机这条别动", "云端那条新记忆"}
+        assert client.get("/api/roles/mine_a").status_code in (200, 404)
+        card = next(r for r in client.get("/api/roles").json() if r["role_id"] == "mine_a")
+        assert card["system_prompt"] == "本机主人的", "没裁决的冲突不许覆盖本机"
+
+        # 裁决「按对面的」才拉；记忆裁「两份都留」走 keep_both
+        client.post(
+            "/api/sync/pull",
+            json={"base_url": "http://cloud.test:8123", "user": "u1", "secret": SECRET,
+                  "kinds": ["card", "memory"],
+                  "resolutions": {"card:mine_a": "theirs",
+                                  f"memory:{local_mem['ident']}": "both"}},
+        )
+        card = next(r for r in client.get("/api/roles").json() if r["role_id"] == "mine_a")
+        assert card["system_prompt"] == "对面改过的那份"
+        texts = [str(r["text"]) for r in conn.execute(
+            "SELECT text FROM role_memory_item WHERE user_id='local-user'").fetchall()]
+        # 两份都留 = 本机那条原样不动 + 对面那份换一枚新 uid 多出来（三条 = 原有两条 + 它）
+        assert len(texts) == 3 and texts.count("本机这条别动") == 1, texts
+        assert "对面改的那条记忆" in texts
+
+        # 下行没有整份替换：它清的是本机这份
+        denied = client.post(
+            "/api/sync/pull",
+            json={"base_url": "http://cloud.test:8123", "user": "u1", "secret": SECRET,
+                  "mode": "replace"},
+        )
+        assert denied.status_code == 400 and "整份替换" in denied.json()["detail"]

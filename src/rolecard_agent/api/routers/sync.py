@@ -8,6 +8,12 @@
     拉对面的清单、比出一个计划（多少独有 / 多少相同 / 哪几条冲突）。这一步**一个字都不写**。
   * `POST /api/sync/apply` —— 人看完计划并裁决过冲突之后，本机把选中的载荷推给
     `POST /api/sync/import`（对面写入）。
+  * `POST /api/sync/export` —— **批量载荷出口**（下行那一半的燃料）：对面从清单里挑好的
+    idents，这里交出完整载荷。全仓第一扇批量数据出口，三道闩见函数 docstring。
+  * `POST /api/sync/pull` —— 下行：把对面那份里本机没有的并回本机；写入走的还是
+    `apply_import` 那段代码。没有"整份替换"档（它清的是本机）。
+  * `POST /api/sync/reconcile` —— 登录对账：推+拉各一遍，自动策略只走无歧义的那半
+    （`core.sync.auto_moves`），歧义的留在返回值里让人去向导里挑。**必须幂等**。
 
 ## 三条安全口径
 
@@ -32,7 +38,7 @@ import httpx  # 只用它的异常类型；请求一律走 core/outbound
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from rolecard_agent.api.auth import Actor
+from rolecard_agent.api.auth import Actor, basic_header
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.core import outbound
 from rolecard_agent.core import sync as sync_lib
@@ -75,7 +81,6 @@ class TargetBody(BaseModel):
 
 
 def _remote_inventory(target: TargetBody) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    from rolecard_agent.api.auth import basic_header
 
     try:
         base = validate_base_url(target.base_url)
@@ -256,6 +261,68 @@ class ApplyBody(TargetBody):
     resolutions: dict[str, str] = Field(default_factory=dict)
 
 
+def _push(ctx: AppContext, *, base: str, user: str, secret: str, items: list[dict[str, Any]],
+          clear_kinds: list[str] | None = None) -> dict[str, Any]:
+    """把选好的载荷推给**对面**的 import 端点。凭据只在这次请求里活着。"""
+    if not items and not clear_kinds:
+        return {"written": {}, "skipped": {}, "errors": []}
+    try:
+        res = outbound.post(
+            f"{base}/api/sync/import",
+            json={"items": items, "clear_kinds": clear_kinds or [],
+                  "confirm_replace": bool(clear_kinds)},
+            headers={"Authorization": basic_header(user, secret)},
+            timeout=120.0,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail=f"写到 {base} 时断了（对面可能重启了）：{exc}"
+        ) from exc
+    if res.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"对面拒绝写入（HTTP {res.status_code}）：{res.text[:180]}",
+        )
+    out: dict[str, Any] = res.json()
+    return out
+
+
+def _fetch_remote_payloads(
+    target: TargetBody, wanted: list[tuple[str, str]]
+) -> list[dict[str, Any]]:
+    """从对面取选中条目的**完整载荷**（下行那一半的燃料）。
+
+    这是对面那台的批量数据出口 —— `inventory` 刻意不给载荷就是为了不开这扇门，
+    所以这里带三道闩：只答"调用者自己名下的"（collect 本来就按身份过滤）、
+    一次最多 `MAX_EXPORT_ITEMS` 条、每一次都进对面那台的审计（只记结构与条数）。
+    """
+    if not wanted:
+        return []
+    try:
+        base = validate_base_url(target.base_url)
+        res = outbound.post(
+            f"{base}/api/sync/export",
+            json={"idents": [{"kind": k, "ident": i} for k, i in wanted]},
+            headers={"Authorization": basic_header(target.user, target.secret)},
+            timeout=120.0,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail=f"从 {base} 取数据时断了：{exc}"
+        ) from exc
+    if res.status_code in (401, 403):
+        raise HTTPException(status_code=401, detail="对面拒了这组凭据（账号或密码不对）。")
+    if res.status_code >= 400:
+        raise HTTPException(
+            status_code=502, detail=f"对面不肯交出数据（HTTP {res.status_code}）。"
+        )
+    body: dict[str, Any] = res.json()
+    rows = body.get("items")
+    if not isinstance(rows, list):
+        raise HTTPException(status_code=502, detail="对面的回答里没有数据。")
+    return rows
+
+
 def _select(
     result: sync_lib.SyncPlan,
     mine: list[sync_lib.SyncItem],
@@ -296,7 +363,6 @@ def post_apply(
     actor: Actor = Depends(get_actor),
 ) -> dict[str, object]:
     """本机挑好要推的东西，交给对面的导入端点写。凭据只在本次请求里活着。"""
-    from rolecard_agent.api.auth import basic_header
 
     kinds = [k for k in (body.kinds or list(sync_lib.SYNC_KINDS)) if k in sync_lib.SYNC_KINDS]
     mode = body.mode if body.mode in MODES else "merge"
@@ -312,29 +378,10 @@ def post_apply(
     items = [
         {"kind": item.kind, "ident": item.ident, "payload": item.payload} for item in selected
     ]
-    payload: dict[str, Any] = {
-        "items": items,
-        "clear_kinds": clear,
-        "confirm_replace": mode == "replace",
-    }
     base = validate_base_url(body.base_url) or ""
-    try:
-        res = outbound.post(
-            f"{base}/api/sync/import",
-            json=payload,
-            headers={"Authorization": basic_header(body.user, body.secret)},
-            timeout=120.0,
-        )
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=502, detail=f"写到 {base} 时断了（对面可能重启了）：{exc}"
-        ) from exc
-    if res.status_code >= 400:
-        raise HTTPException(
-            status_code=502,
-            detail=f"对面拒绝写入（HTTP {res.status_code}）：{res.text[:180]}",
-        )
-    written: dict[str, Any] = res.json()
+    written: dict[str, Any] = _push(
+        ctx, base=base, user=body.user, secret=body.secret, items=items, clear_kinds=clear
+    )
     remote_errors = written.get("errors")
     error_count = len(remote_errors) if isinstance(remote_errors, list) else 0
     # 审计只记**结构**：几类各推了多少、什么模式。对话原文与记忆文本一条都不落。
@@ -356,4 +403,209 @@ def post_apply(
         "kinds": kinds,
         "remote": written,
         "conflicts_left": len(result.conflicts),
+    }
+
+
+#: 一次导出最多交出多少条。这扇门对面只该在自己登录后为自己开：
+#: 超了就是"这份数据大到不该一口气回家"，大声拒绝比静默截断好。
+MAX_EXPORT_ITEMS = 1000
+
+
+class ExportBody(BaseModel):
+    """对面（或本机自己）来取载荷。`idents` 是它从清单里挑好的那几张。"""
+
+    idents: list[dict[str, str]] = Field(default_factory=list)
+
+
+@router.post("/api/sync/export")
+def post_export(
+    body: ExportBody,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> dict[str, object]:
+    """交出选中条目的**完整载荷** —— 下行那一半的燃料。
+
+    这是全仓第一扇批量数据出口（`inventory` 刻意只给指纹不给载荷，就是为了不开这扇门）。
+    三道闩：只答**调用者自己名下的**（collect 按身份过滤，别人的 id 在这里就是查无此条）、
+    一次最多 `MAX_EXPORT_ITEMS` 条、每一次都进审计（只记结构与条数，**载荷一个字不落**）。
+    """
+    mine, _skipped = sync_lib.collect(
+        ctx.conn,
+        user_id=_identity(ctx),
+        graph=ctx.app_state["graph"],
+        settings=ctx.app_state["effective"],
+    )
+    if len(body.idents) > MAX_EXPORT_ITEMS:
+        raise HTTPException(
+            status_code=409,
+            detail=f"一次最多取 {MAX_EXPORT_ITEMS} 条（要了 {len(body.idents)}），分几批来。",
+        )
+    wanted = {(str(r.get("kind")), str(r.get("ident"))) for r in body.idents}
+    by_key = {(item.kind, item.ident): item for item in mine}
+    out = [
+        {"kind": item.kind, "ident": item.ident, "payload": item.payload}
+        for key, item in by_key.items()
+        if key in wanted
+    ]
+    # 审计只记结构：谁、取了几类各几条。载荷里是对话原文与记忆，一个字都不落。
+    by_kind: dict[str, int] = {}
+    for row in out:
+        by_kind[str(row["kind"])] = by_kind.get(str(row["kind"]), 0) + 1
+    ctx.roles.audit(
+        actor=actor.id,
+        action="sync_export",
+        target="cloud-export",
+        detail={"kinds": by_kind, "asked": len(wanted), "absent": len(wanted) - len(out)},
+    )
+    return {"items": out, "absent": len(wanted) - len(out)}
+
+
+class PullBody(TargetBody):
+    """下行：把**对面那份**里本机没有的并回来。
+
+    三条与上行不对称的地方，都是方向本身决定的：
+    * **没有"整份替换"这一档** —— 上行的 replace 清的是对面（你刚登录的那份），
+      下行的 replace 清的是**本机**：她这几年的记忆所在。要清本机，走界面上的删除，
+      一步一确认；同步器不背这个锅。
+    * **没裁决的冲突默认"不拉"** —— 默认保护接收侧（这里是本机）。
+      上行默认按对面的、下行默认留本机的，同一原则方向反着来。
+    * 拉回来的东西走的是**同一段写入代码**（`apply_import`）：归属盖本机解析出的章，
+      撞别人的 uid 照样什么都不写 —— 下行不因为方向反了就多一条特权。
+    """
+
+    kinds: list[str] = Field(default_factory=list)
+    mode: str = "merge"
+    resolutions: dict[str, str] = Field(default_factory=dict)
+
+
+@router.post("/api/sync/pull")
+def post_pull(
+    body: PullBody,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> dict[str, object]:
+    """把对面那份里本机没有的并回**本机**。写入走的还是 `apply_import` 那段代码。"""
+    if body.mode == "replace":
+        raise HTTPException(
+            status_code=400,
+            detail="下行的「整份替换」这一档没有：它清的是本机这份。要清本机走界面上的删除。",
+        )
+    kinds = [k for k in (body.kinds or list(sync_lib.SYNC_KINDS)) if k in sync_lib.SYNC_KINDS]
+    mine, skipped = sync_lib.collect(
+        ctx.conn,
+        user_id=_identity(ctx),
+        graph=ctx.app_state["graph"],
+        settings=ctx.app_state["effective"],
+    )
+    theirs, _ = _remote_inventory(body)
+    result = sync_lib.plan(mine, theirs, skipped=skipped)
+    wanted: list[tuple[str, str]] = [
+        (str(row.get("kind")), str(row.get("ident")))
+        for row in result.only_remote
+        if str(row.get("kind")) in kinds
+    ]
+    both: set[str] = set()
+    for conflict in result.conflicts:
+        if conflict.kind not in kinds:
+            continue
+        choice = body.resolutions.get(f"{conflict.kind}:{conflict.ident}")
+        if choice == "theirs":
+            wanted.append((conflict.kind, conflict.ident))
+        elif choice == "both" and conflict.kind == sync_lib.KIND_MEMORY:
+            wanted.append((conflict.kind, conflict.ident))
+            both.add(conflict.ident)
+    rows = _fetch_remote_payloads(body, wanted)
+    for row in rows:
+        # 「两份都留」必须**带着章**走完最后一程：export 交出来的是对面那份的原样载荷，
+        # 不盖 `keep_both` 的话，apply_import 会沿用同一个 uid 去 UPDATE —— 下行的
+        # "都留"就悄悄变成了"按对面的来"（正是单测当场抓出来的那一笔）。
+        if str(row.get("ident")) in both:
+            row["payload"] = {**(row.get("payload") or {}), "keep_both": True}
+    applied = sync_lib.apply_import(
+        ctx.conn,
+        user_id=_identity(ctx),
+        graph=ctx.app_state["graph"],
+        settings=ctx.app_state["effective"],
+        items=rows,
+    )
+    ctx.roles.audit(
+        actor=actor.id,
+        action="sync_pull",
+        target=f"{body.base_url} · {body.user}",
+        detail={"kinds": kinds, "pulled": len(rows), "written": applied["written"],
+                "errors": len(applied["errors"])},
+    )
+    return {"pulled": len(rows), "local": applied, "conflicts_left": len(result.conflicts)}
+
+
+class ReconcileBody(TargetBody):
+    """登录对账：**一次把两边的方向都走完**，用自动策略，人只在最后看一句读数。
+
+    自动策略只走无歧义的那半（`core.sync.auto_moves`）：本机独有的推上去、对面独有的并回来、
+    卡按新者胜；**记忆与会话的冲突原地不动**（"两份都留"不幂等，会每登录一次长出两条），
+    留在返回值里让人去向导里挑 —— 冲突本该是可数的少数。
+    推完再重新比对一次才拉：推上去的东西下一轮就是"两边相同"，不会自己跟自己打架。
+    """
+
+    kinds: list[str] = Field(default_factory=list)
+
+
+@router.post("/api/sync/reconcile")
+def post_reconcile(
+    body: ReconcileBody,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> dict[str, object]:
+    """登录时那一次自动对账。幂等是它的命：跑两遍，第二遍必须什么都没动。"""
+    kinds = [k for k in (body.kinds or list(sync_lib.SYNC_KINDS)) if k in sync_lib.SYNC_KINDS]
+
+    def _plan() -> sync_lib.SyncPlan:
+        mine, skipped = sync_lib.collect(
+            ctx.conn,
+            user_id=_identity(ctx),
+            graph=ctx.app_state["graph"],
+            settings=ctx.app_state["effective"],
+        )
+        theirs, _ = _remote_inventory(body)
+        return sync_lib.plan(mine, theirs, skipped=skipped)
+
+    base = validate_base_url(body.base_url) or ""
+    first = _plan()
+    push, _pull, _ = sync_lib.auto_moves(first)
+    push = [item for item in push if item.kind in kinds]
+    remote_out = _push(
+        ctx,
+        base=base,
+        user=body.user,
+        secret=body.secret,
+        items=[{"kind": i.kind, "ident": i.ident, "payload": i.payload} for i in push],
+    )
+    second = _plan()
+    _push2, pull, human = sync_lib.auto_moves(second)
+    pull = [(k, i) for k, i in pull if k in kinds]
+    rows = _fetch_remote_payloads(body, pull)
+    local_out = sync_lib.apply_import(
+        ctx.conn,
+        user_id=_identity(ctx),
+        graph=ctx.app_state["graph"],
+        settings=ctx.app_state["effective"],
+        items=rows,
+    )
+    ctx.roles.audit(
+        actor=actor.id,
+        action="sync_reconcile",
+        target=f"{base} · {body.user}",
+        detail={"pushed": len(push), "pulled": len(rows), "left": len(human),
+                "written": {"remote": remote_out.get("written"), "local": local_out["written"]}},
+    )
+    return {
+        "pushed": len(push),
+        "pulled": len(rows),
+        "written": {"remote": remote_out.get("written"), "local": local_out["written"]},
+        "left_for_human": [
+            {"kind": c.kind, "ident": c.ident,
+             "mine": {"at": c.mine.at, "preview": c.mine.preview},
+             "theirs": {"at": c.theirs.get("at", ""), "preview": c.theirs.get("preview", "")}}
+            for c in human
+        ],
     }

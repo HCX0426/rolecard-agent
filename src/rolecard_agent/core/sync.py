@@ -381,6 +381,7 @@ __all__ = [
     "Conflict",
     "SyncItem",
     "SyncPlan",
+    "auto_moves",
     "collect",
     "collect_cards",
     "collect_memories",
@@ -388,6 +389,49 @@ __all__ = [
     "collect_threads",
     "plan",
 ]
+
+
+# ------------------------------------------------------------------ 登录对账的自动策略
+
+
+def _newer(a: str, b: str) -> bool:
+    """`a` 比 `b` 新吗。两边都是同一份 SQLite 产出的时间串，按字典序比就够；
+    空串当最旧（读不到时刻的东西不该赢）。"""
+    return bool(a) and a > b
+
+
+def auto_moves(
+    result: SyncPlan,
+) -> tuple[list[SyncItem], list[tuple[str, str]], list[Conflict]]:
+    """登录对账那一轮的**自动策略**：只走无歧义的那半，其余留给人。
+
+    为什么"两份都留"不进自动策略：它**不幂等** —— 同一条记忆两边各改过一版，"都留"会让
+    下一轮对账把复制品当成新东西再复制一遍，每登录一次长出两条。自动档只允许
+    "跑两遍第二遍是空转"的那种移动，所以歧义的（记忆、会话的冲突）一律跳过，
+    原地等人在向导里裁决 —— 冲突本该是可数的少数。
+
+    卡按 `updated_at` 新者胜：卡是配置，不是回忆，后写入的赢是这一类的行业常规；
+    两边都是同一份代码写的时间串，字典序即可。会话不用比 —— 前缀规则已经把
+    "一边接着聊"判掉了，剩下的都是真分叉，不猜。
+
+    返回 (本机→对面要推的, 要从对面取的 (kind, ident), 留给人的冲突)。
+    """
+    push: list[SyncItem] = list(result.only_local)
+    pull: list[tuple[str, str]] = [
+        (str(row.get("kind")), str(row.get("ident"))) for row in result.only_remote
+    ]
+    human: list[Conflict] = []
+    for c in result.conflicts:
+        if c.kind == KIND_CARD:
+            if _newer(c.mine.at, str(c.theirs.get("at") or "")):
+                push.append(c.mine)
+            elif _newer(str(c.theirs.get("at") or ""), c.mine.at):
+                pull.append((c.kind, c.ident))
+            else:
+                human.append(c)
+        else:
+            human.append(c)
+    return push, pull, human
 
 
 # ------------------------------------------------------------------ 对面那一侧的写入

@@ -1,4 +1,4 @@
-"""上行同步的两实例端到端探针（M7）：本机实例 A 真的把这份推给云端实例 B。
+"""同步三方向的两实例端到端探针（M7 上行 + M8 下行与登录对账）。
 
 单测里那些 `monkeypatch.setattr("httpx.post", ...)` 只证明"挑对了要推什么"，
 它证明不了三件只有两台真机器才能证明的事：
@@ -307,6 +307,45 @@ def main() -> int:
         check("⑦ 对面审计不含记忆原文", MEMORY_TEXT not in blob)
         check("⑦ 对面审计不含推来的会话标题", "上行专测会话" not in blob)
         check("⑦ 对面审计不含口令", '"pw"' not in blob and "Basic " not in blob)
+
+        # ---- 下行与登录对账（M8）：同一套引擎的另外两个方向 ------------------------
+        req("POST", f"{b_base}/api/roles",
+            {"role_id": "r_his_own2", "role_name": "对面后来建的卡", "system_prompt": "云端独有的"},
+            token=token)
+        code, pulled = req("POST", f"{a_base}/api/sync/pull",
+                           {**target, "kinds": KINDS, "mode": "merge"})
+        names = json.dumps(req("GET", f"{a_base}/api/roles")[1], ensure_ascii=False)
+        check("⑧ 下行：对面那份里本机没有的并回来了",
+              code == 200 and "r_his_own2" in names, {"pulled": pulled, "roles": names[:80]})
+        _, again = req("POST", f"{a_base}/api/sync/pull",
+                       {**target, "kinds": KINDS, "mode": "merge"})
+        check("⑧ 下行也是幂等的（第二遍 pulled=0）",
+              isinstance(again, dict) and again.get("pulled") == 0, again)
+        _, denied = req("POST", f"{a_base}/api/sync/pull", {**target, "mode": "replace"})
+        check("⑧ 下行不给『整份替换』这一档（它清的是本机这份）",
+              denied == 400 or (isinstance(denied, dict)
+                                and "整份替换" in str(denied.get("detail"))), denied)
+
+        # 真分歧：同一张卡两边各改过一遍，本机最后改 ⇒ 对账按新者胜，把本机这份推回去
+        req("POST", f"{a_base}/api/sync/import", {"items": [
+            {"kind": "memory", "ident": "uid-push-2",
+             "payload": {"text": "对账前本机又写的一条", "role_id": CARD_ID}}]})
+        req("PATCH", f"{b_base}/api/roles/{CARD_ID}",
+            {"system_prompt": "对面后来又改的人设"}, token=token)
+        time.sleep(1.5)  # 新者胜按秒比：同一秒里两边都改过 = 真歧义，策略会留给人（这是对的）
+        req("PATCH", f"{a_base}/api/roles/{CARD_ID}", {"system_prompt": "本机最后改的人设"})
+        code, rec = req("POST", f"{a_base}/api/sync/reconcile", target)
+        check("⑨ 登录对账：双向都动了且卡按新者胜",
+              code == 200 and (rec or {}).get("pushed", 0) >= 1
+              and "本机最后改的人设" in json.dumps(
+                  req("GET", f"{b_base}/api/roles", token=token)[1], ensure_ascii=False), rec)
+        _, rec2 = req("POST", f"{a_base}/api/sync/reconcile", target)
+        check("⑨ 对账是幂等的（跑两遍第二遍 pushed=pulled=0）",
+              isinstance(rec2, dict) and rec2.get("pushed") == 0 and rec2.get("pulled") == 0, rec2)
+        _, audit_b = req("GET", f"{b_base}/api/audit?limit=40", token=token)
+        blob_b = json.dumps(audit_b, ensure_ascii=False)
+        check("⑨ 对面审计里有 sync_export 这扇门的记录（只记结构）",
+              "sync_export" in blob_b and "本机最后改的人设" not in blob_b)
     finally:
         for proc, log in ((a, la), (b, lb)):
             proc.terminate()
@@ -321,7 +360,7 @@ def main() -> int:
     if FAILS:
         print(f"❌ {len(FAILS)} 项未过：{FAILS}")
         return 1
-    print("✅ 上行同步两实例端到端全过")
+    print("✅ 上行/下行/对账两实例端到端全过")
     return 0
 
 
