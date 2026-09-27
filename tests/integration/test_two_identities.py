@@ -1,0 +1,189 @@
+"""两个身份互不可见（M6）：一台实例、一份库、两次登录，逐面走一遍。
+
+M1~M4 每步各自有验收，但那些是"按模块"的 —— 这一支是**按表面**的：同一个人格在
+角色卡 / 会话与检查点 / 记忆 / 收件箱 / 模型凭据 / 事件轴六个面上各留一份数据，
+然后从对面打进来，要求三件事同时成立：**看不见（列表里没有）、进不去（404 而不是 403）、
+改不掉（对方的那一份事后仍在）**。第三条是前两条的照妖镜 —— 只断言状态码，
+会把"守卫写了但写在了另一条 SQL 上"当成通过。
+
+**这一支不测的（写清楚，不含糊过去）**：`/api/knowledge*`、`/api/uploads/*`、
+`/api/services*`、插件启停、运行环境覆盖、审计流水 —— 它们今天是**设备级**的。
+在"一台实例一个主人 + 一个数据根"（M3 前半 + M4）这个形态下这是自洽的：整份根就是那个人的。
+要让同一个库里住两个身份各自的知识与文件，得先把运行期那份 `Settings` 与 chroma 的
+collection 变成按身份的（§4.1 记的那条尾巴），那时这几个面才谈得上归属。
+"""
+
+from __future__ import annotations
+
+import base64
+from pathlib import Path
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+
+from rolecard_agent.api.main import create_app
+
+A = "local-user"  # 本机那份（也是这台实例的主人）
+B = "u1"  # 第二个登录者（`app_user` 里真有这一行，否则按 M1 的语义会回落到 A）
+KEY_A = "sk-aaaaaaaaaaaaaaaa"
+KEY_B = "sk-bbbbbbbbbbbbbbbb"
+
+
+def _as(user: str) -> dict[str, str]:
+    token = base64.b64encode(f"{user}:pw".encode()).decode()
+    return {"Authorization": f"Basic {token}"}
+
+
+@pytest.fixture
+def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
+    """一台实例，两个人各建一张卡、一条会话、一条记忆、一条主动开口、一组凭据。"""
+    monkeypatch.setenv("AUTH_MODE", "on")
+    monkeypatch.setenv("AUTH_CREDENTIALS", f"{A}:pw,{B}:pw")
+    client = TestClient(create_app(sqlite_path=tmp_path / "app.db"))
+    with client:
+        conn = client.app.state.ctx.conn
+        conn.execute(
+            "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('local', '本机')"
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "
+            "VALUES (?, 'local', '第二个')",
+            (B,),
+        )
+        conn.commit()
+        for who, tag, key in ((A, "a", KEY_A), (B, "b", KEY_B)):
+            head = _as(who)
+            assert client.post(
+                "/api/roles",
+                json={"role_id": f"r_{tag}", "role_name": f"卡{tag}", "system_prompt": "x"},
+                headers=head,
+            ).status_code in (200, 201), who
+            made = client.post("/api/session", json={"role_id": f"r_{tag}"}, headers=head)
+            assert made.status_code in (200, 201), made.text
+            assert client.post(
+                "/api/settings/memory/item", json={"text": f"事实{tag}"}, headers=head
+            ).status_code == 200
+            assert client.put(
+                "/api/settings/models",
+                json={
+                    "default": f"m{tag}",
+                    "backends": [
+                        {
+                            "name": f"m{tag}",
+                            "provider": "siliconflow",
+                            "base_url": "https://api.siliconflow.cn/v1",
+                            "model": f"Model-{tag}",
+                            "api_key": key,
+                            "usage": "chat",
+                        }
+                    ],
+                    "fallbacks": [],
+                },
+                headers=head,
+            ).status_code == 200
+        # 直接写库的那一段放在所有 HTTP 之后：主线程与请求线程各持一条 sqlite 连接，
+        # 一个没提交的事务会把请求侧的写入挡成 `database is locked`。
+        for who, tag in ((A, "a"), (B, "b")):
+            conn.execute(
+                "INSERT INTO agent_reachout (role_id, role_name, text, user_id, state) "
+                "VALUES (?, ?, ?, ?, 'unread')",
+                (f"r_{tag}", f"卡{tag}", f"她主动说的{tag}", who),
+            )
+        conn.commit()
+        yield client
+
+
+def _ids(client: TestClient, user: str, path: str, key: str) -> set[str]:
+    body: Any = client.get(path, headers=_as(user)).json()
+    rows = body if isinstance(body, list) else body.get("items") or body.get("sessions") or []
+    return {str(row[key]) for row in rows}
+
+
+def test_role_cards_are_disjoint_both_ways(client: TestClient) -> None:
+    assert {r for r in _ids(client, A, "/api/roles", "role_id")} >= {"r_a"}
+    assert "r_b" not in _ids(client, A, "/api/roles", "role_id")
+    assert "r_a" not in _ids(client, B, "/api/roles", "role_id")
+    # 读、改、删三条路都要 404，而不是"承认它存在"
+    assert client.get("/api/roles/r_b", headers=_as(A)).status_code == 404
+    assert client.patch(
+        "/api/roles/r_b", json={"description": "偷改"}, headers=_as(A)
+    ).status_code == 404
+    assert client.delete("/api/roles/r_b", headers=_as(A)).status_code == 404
+    mine = [r for r in client.get("/api/roles", headers=_as(B)).json() if r["role_id"] == "r_b"]
+    assert mine and mine[0].get("description") != "偷改"
+
+
+def test_threads_and_checkpoints_do_not_leak(client: TestClient) -> None:
+    a_lines = _ids(client, A, "/api/sessions", "thread_id")
+    b_lines = _ids(client, B, "/api/sessions", "thread_id")
+    assert a_lines and b_lines and not (a_lines & b_lines)
+    foreign = next(iter(b_lines))
+    for path in (
+        f"/api/session/{foreign}",
+        f"/api/session/{foreign}/messages",
+        f"/api/session/{foreign}/context",
+        f"/api/session/{foreign}/turn",
+    ):
+        assert client.get(path, headers=_as(A)).status_code == 404, path
+    # 写侧四条路（改名 / 叫停 / 删历史 / 删会话）同样进不去
+    assert client.patch(
+        f"/api/session/{foreign}", json={"title": "偷改"}, headers=_as(A)
+    ).status_code == 404
+    assert client.post(f"/api/session/{foreign}/stop", headers=_as(A)).status_code == 404
+    assert client.post(
+        f"/api/session/{foreign}/messages/delete",
+        json={"message_ids": ["whatever"]},
+        headers=_as(A),
+    ).status_code == 404
+    assert client.delete(f"/api/session/{foreign}", headers=_as(A)).status_code == 404
+    assert foreign in _ids(client, B, "/api/sessions", "thread_id"), "他的线被删掉了"
+
+
+def test_memory_items_are_owner_scoped(client: TestClient) -> None:
+    a_view = client.get("/api/settings/memory", headers=_as(A)).json()
+    b_view = client.get("/api/settings/memory", headers=_as(B)).json()
+    assert "事实b" not in str(a_view) and "事实a" not in str(b_view)
+    b_id = next(int(str(i["id"])) for i in b_view["items"] if i["text"] == "事实b")
+    assert client.patch(
+        f"/api/settings/memory/item/{b_id}", json={"text": "偷改"}, headers=_as(A)
+    ).status_code == 404
+    assert client.delete(f"/api/settings/memory/item/{b_id}", headers=_as(A)).status_code == 404
+    after = client.get("/api/settings/memory", headers=_as(B)).json()
+    assert [i["text"] for i in after["items"] if i["id"] == b_id] == ["事实b"]
+
+
+def test_inboxes_do_not_cross_and_read_all_is_scoped(client: TestClient) -> None:
+    a_items = client.get("/api/reachouts", headers=_as(A)).json()["items"]
+    b_items = client.get("/api/reachouts", headers=_as(B)).json()["items"]
+    assert [str(i["text"]) for i in a_items] == ["她主动说的a"]
+    assert [str(i["text"]) for i in b_items] == ["她主动说的b"]
+    # A 点"全部已读"不许替 B 决定他看过了什么（M2c 那条口径，在这里从对面再验一次）
+    client.post("/api/reachouts/read-all", headers=_as(A))
+    still = client.get("/api/reachouts", headers=_as(B)).json()
+    assert still["unread"] == 1, still
+    foreign = int(str(b_items[0]["id"]))
+    assert client.post(f"/api/reachouts/{foreign}/read", headers=_as(A)).status_code == 404
+    assert client.delete(f"/api/reachouts/{foreign}", headers=_as(A)).status_code == 404
+
+
+def test_model_credentials_never_spend_the_other_key(client: TestClient) -> None:
+    a_groups = client.get("/api/settings/models", headers=_as(A)).json()["providers"]
+    b_groups = client.get("/api/settings/models", headers=_as(B)).json()["providers"]
+    assert [str(m["model"]) for g in a_groups for m in g["models"]] == ["Model-a"]
+    assert [str(m["model"]) for g in b_groups for m in g["models"]] == ["Model-b"]
+    assert KEY_B not in repr(a_groups) and KEY_A not in repr(b_groups)
+    assert client.delete("/api/settings/models/m_b", headers=_as(A)).status_code == 404
+    assert client.patch(
+        "/api/settings/models/m_b/context", json={"num_ctx": 8192}, headers=_as(A)
+    ).status_code == 404
+    left = client.get("/api/settings/models", headers=_as(B)).json()["providers"]
+    assert [str(m["model"]) for g in left for m in g["models"]] == ["Model-b"]
+    assert [g["has_key"] for g in left] == [True], "他的凭据被动过"
+
+
+def test_the_timeline_of_her_card_is_not_readable(client: TestClient) -> None:
+    assert client.get("/api/roles/r_b/timeline", headers=_as(A)).status_code == 404
+    assert client.get("/api/roles/r_a/timeline", headers=_as(B)).status_code == 404
+    ok = client.get("/api/roles/r_a/timeline", headers=_as(A))
+    assert ok.status_code == 200
