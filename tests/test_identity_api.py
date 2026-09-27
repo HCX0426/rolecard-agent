@@ -211,3 +211,31 @@ def test_an_instance_owned_by_another_user_stamps_new_threads_with_him(
     ).fetchone()[0]
     assert str(owner) == "u1"
     assert [s["thread_id"] for s in client.get("/api/sessions").json()] == [created["thread_id"]]
+
+
+def test_stopping_another_identitys_turn_is_a_404_not_an_interruption(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """「停」是按 `thread_id` 立旗的，而那个 id 是可猜的短串（M4）。
+
+    读侧的 404 纪律在这里同样适用：别人名下的线程不能承认它存在，更不能真的把别人那一轮
+    打断 —— 这一条与"能不能看到他的历史"无关，是**他能动你正在跑的那一轮**。
+    """
+    from rolecard_agent.core.thread_locks import clear_stop, stop_requested
+
+    client = _client(monkeypatch, tmp_path)
+    # 先造 u1 这个人（`app_user` 里没行的用户名会回落到本机那份，那是 M1 定的语义，
+    # 不是这道守卫的漏洞 —— 所以顺序本身是这条用例的一部分）。
+    _own_a_thread(client, "s_u1_line", "u1")
+    _own_a_thread(client, "s_local_only", "local-user")
+    foreign = {"Authorization": _basic("u1", "pw")}
+    try:
+        resp = client.post("/api/session/s_local_only/stop", headers=foreign)
+        assert resp.status_code == 404, resp.status_code
+        assert stop_requested("s_local_only") is False, "旗子真的立到别人那轮上去了"
+
+        # 自己的那条照样能停：这道守卫不许顺手把功能关掉
+        assert client.post("/api/session/s_u1_line/stop", headers=foreign).status_code == 200
+        assert stop_requested("s_u1_line") is True
+    finally:
+        clear_stop("s_u1_line")

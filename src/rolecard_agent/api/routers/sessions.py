@@ -494,7 +494,12 @@ def stop_turn(
 
     幂等：按两次停止没有额外后果。这一轮已经跑完时旗子会留到**下一轮开始**才被清
     （`run_turn` 开头），所以这里不需要去问"那轮还在不在"。
+
+    **但要先问这条线程是不是你的**（M4）：旗子是按 `thread_id` 立的，而 `s_proactive_<role_id>`
+    这种 id 是**可猜的**（角色 id 是公开短串）。不比对归属就等于"任何人都能打断别人那一轮" ——
+    读侧的 404 纪律在这里同样适用，别人名下的线程回 404，不承认它存在。
     """
+    get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
     request_stop(thread_id)
     ctx.roles.audit(actor=actor.id, action="stop_turn", target=thread_id, detail={})
     return {"thread_id": thread_id, "requested": True}

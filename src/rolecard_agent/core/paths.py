@@ -39,11 +39,12 @@ def bundle_root() -> Path:
     return repo_root()
 
 
-def user_data_root() -> Path:
-    """用户数据根，**永远可写**：sqlite / chroma / uploads 的默认父目录。
+def _platform_data_root() -> Path:
+    """没有显式覆盖时的数据根：**永远可写**，sqlite / chroma / uploads 的默认父目录。
 
     开发态保持仓库 `data/`（现有约定与测试都指这儿，改它会让"跑一次测试"污染安装包目录）；
     冻结态换到系统数据目录（Windows 用 `%LOCALAPPDATA%`，其他平台 `~/.local/share`）。
+    安装目录本身不能当数据根：它可能不可写，而且升级是整目录替换。
     """
     if not is_frozen():
         return repo_root() / "data"
@@ -51,6 +52,98 @@ def user_data_root() -> Path:
         base = os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local"
         return Path(base) / _APP_NAME
     return Path.home() / ".local" / "share" / _APP_NAME
+
+
+#: 一个数据根下的四样东西（M4）。它们**必须**同根：只换库不换索引，症状就是
+#: §4.1 那句"记忆没了、向量库还在"的半吊子状态 —— 比不换更像数据损坏。
+#: 工作区也算一样：文件工具与命令执行都落在那儿，两个实例共用它 = 第二个人读得到
+#: 第一个人的文件。
+DATA_PATH_ENVS = ("SQLITE_PATH", "CHROMA_PATH", "UPLOAD_DIR", "WORKSPACE_DIR")
+
+
+def data_paths() -> dict[str, Path]:
+    """`{环境变量名: 该数据根下的默认绝对路径}` —— 这些路径的**唯一**推导处。
+
+    以前这段推导长在 `scripts/run_api.py` 的启动器里，于是"绕过启动器直接
+    `Settings.from_env()`"的那些进程（测试、脚本、第二实例若手工起）拿到的是字段默认值
+    `./data/...`，按 CWD 解析 —— 换身份时很容易只换掉其中一条。推导下移到 `core` 之后，
+    配置层与启动器读的是同一份规则。
+    """
+    root = user_data_root()
+    return {
+        "SQLITE_PATH": root / "sqlite" / "app.db",
+        "CHROMA_PATH": root / "chroma",
+        "UPLOAD_DIR": root / "uploads",
+        "WORKSPACE_DIR": root / "workspace",
+    }
+
+
+def user_data_root() -> Path:
+    """用户数据根，可被 `DATA_ROOT` 整体搬走（M4：换身份 = 换一个根，只需要这一个变量）。
+
+    相对值按"平台根的父目录"解析（开发态=仓库根，打包态=`%LOCALAPPDATA%`），不递归回本函数，
+    所以 `DATA_ROOT=./x` 这种写法不会把自己绕死。建议给绝对路径 —— 第二实例本来就是新进程，
+    写全一个路径比记一条解析规则便宜。
+    """
+    raw = (os.environ.get("DATA_ROOT") or "").strip()
+    if not raw:
+        return _platform_data_root()
+    given = Path(raw).expanduser()
+    if given.is_absolute():
+        return given
+    base = repo_root() if not is_frozen() else _platform_data_root().parent
+    return base / given
+
+
+def split_root_notice(
+    *,
+    sqlite_path: str | Path = "",
+    chroma_path: str | Path = "",
+    upload_dir: str | Path = "",
+    workspace_dir: str | Path = "",
+) -> str | None:
+    """这些数据路径有没有"只搬走了一半"——搬走了一半就出声，别让人猜。
+
+    判据不是"路径必须等于默认布局"（合法地各自指到别处是允许的），而是**一致性**：
+    有的在这根下、有的不在，就是 §4.1 那句"记忆没了、向量库还在"的形状 —— 换身份时
+    只换了 `SQLITE_PATH`，索引、上传件与工作区还留在上一份数据那边。那种状态比不换更糟，
+    因为它看起来像数据损坏。
+
+    只出声不失败：探针与实验**故意**只换库（拿副本做实验、索引读公共那份），门禁与测试也
+    都这么跑；把"知道自己在干什么"的用法变成红，换来的只会是所有人学会忽略这行字。
+    """
+    given = dict(
+        zip(
+            DATA_PATH_ENVS,
+            (sqlite_path, chroma_path, upload_dir, workspace_dir),
+            strict=True,
+        )
+    )
+    if not any(str(v) for v in given.values()):
+        return None
+    try:
+        root = user_data_root().resolve()
+    except OSError:
+        return None
+
+    def inside(raw: str | Path) -> bool:
+        text = str(raw)
+        if not text:
+            return True  # 没配 = 用字段默认，不参与"半搬"的判定
+        try:
+            return Path(text).resolve().is_relative_to(root)
+        except OSError:
+            return False
+
+    flags = {name: inside(value) for name, value in given.items()}
+    if all(flags.values()) or not any(flags.values()):
+        return None
+    outside = [name for name, ok in flags.items() if not ok]
+    return (
+        f"数据根被搬走了一半：{', '.join(outside)} 不在 {root} 下面。"
+        f"换身份 / 起第二实例请设一个 DATA_ROOT（三样路径由它一起决定），"
+        f"或把三条都显式指到同一个根 —— 只换库会让索引与上传件留在上一份数据那边。"
+    )
 
 
 def path_from_config(value: str | Path) -> Path:

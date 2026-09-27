@@ -63,17 +63,22 @@ def _resolve_data_paths() -> None:
     `%LOCALAPPDATA%\rolecard-agent`**。后者不是可选项 —— 安装目录可能不可写，而且升级是
     整目录替换，库放进去等于"更新一次丢一次"。
 
-    规则：环境变量未设置 → 用数据根下的默认绝对路径；已设置且为绝对路径 → 原样保留
+    规则：环境变量未设置 → 用数据根下的默认绝对路径（推导在 `core/paths.data_paths()`，
+    配置层与启动器共用同一份，不再各写一遍）；已设置且为绝对路径 → 原样保留
     （用户显式覆盖优先）；已设置但为相对路径 → 按 `path_from_config` 的基准解析（CWD 无关）。
-    """
-    from rolecard_agent.core.paths import path_from_config, user_data_root
 
-    root = user_data_root()
-    defaults = {
-        "SQLITE_PATH": root / "sqlite" / "app.db",
-        "CHROMA_PATH": root / "chroma",
-        "UPLOAD_DIR": root / "uploads",
-    }
+    而那个根本身可以被 `DATA_ROOT` 整份搬走（M4）：**换身份 = 换一个根，只需要这一个变量**。
+    只换三条里的某一条，症状就是 §4.1 那句"记忆没了、向量库还在"—— 比不换更像数据损坏，
+    所以最后会出声一句（`split_root_notice`）。
+    """
+    from rolecard_agent.core.paths import (
+        DATA_PATH_ENVS,
+        data_paths,
+        path_from_config,
+        split_root_notice,
+    )
+
+    defaults = data_paths()
     for key, default_abs in defaults.items():
         val = os.environ.get(key)
         if not val:
@@ -82,9 +87,17 @@ def _resolve_data_paths() -> None:
             # 相对值按**仓库根**（开发态）解析，不是按数据根：`.env.example` 里的
             # `./data/...` 就是这么约定的，换基准会让"没改过路径"的人凭空丢库。
             os.environ[key] = str(path_from_config(val))
+    notice = split_root_notice(
+        sqlite_path=os.environ["SQLITE_PATH"],
+        chroma_path=os.environ["CHROMA_PATH"],
+        upload_dir=os.environ["UPLOAD_DIR"],
+        workspace_dir=os.environ["WORKSPACE_DIR"],
+    )
+    if notice:
+        print(f"[run_api] 注意：{notice}")
     # 确保落点目录存在：fresh clone / 首次启动时不因父目录缺失而 500（sqlite 的 connect
     # 不会自动建父目录）。
-    for key in ("SQLITE_PATH", "CHROMA_PATH", "UPLOAD_DIR"):
+    for key in DATA_PATH_ENVS:
         p = Path(os.environ[key])
         (p.parent if key == "SQLITE_PATH" else p).mkdir(parents=True, exist_ok=True)
     # 但"建出来"这件事在一种情况下必须出声：仓库那份开发态库已经在 2026-09-25 被**有意**
