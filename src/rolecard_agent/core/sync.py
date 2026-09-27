@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -387,3 +388,227 @@ __all__ = [
     "collect_threads",
     "plan",
 ]
+
+
+# ------------------------------------------------------------------ 对面那一侧的写入
+
+
+def _write_card(conn: SqlConnection, *, user_id: str, payload: dict[str, Any]) -> str:
+    """建或改一张卡。**归属由视图绑定**，载荷里没有 user_id 的容身之处。"""
+    from rolecard_agent.roles.models import RoleCardCreate, RoleCardUpdate
+    from rolecard_agent.roles.service import RoleCards
+
+    cards = RoleCards(conn, user_id)
+    body = {k: v for k, v in payload.items() if k != "role_id"}
+    role_id = str(payload["role_id"])
+    if cards.exists(role_id):
+        cards.update(role_id, RoleCardUpdate(**body))
+        return "updated"
+    cards.create(RoleCardCreate(role_id=role_id, **body))
+    return "created"
+
+
+def _write_memory(conn: SqlConnection, *, user_id: str, payload: dict[str, Any], uid: str) -> str:
+    """按 **uid** 落一条事实。同一个 uid 再来一次 = 更新文本，不是多插一条。
+
+    幂等是这条链的命：上行跑到一半断了、用户又点一次"开始上行"，绝不能长出双份记忆 ——
+    那正好是 09-24 实测里"自动提取自我叠加"那个病根的翻版。
+
+    `keep_both`（冲突裁决选了"两份都留"）走另一条路：**换一枚新 uid 插一条**，对面那条
+    一个字都不动。沿用同一个 uid 去"都留"是自我矛盾——那条 UPDATE 就是把对面那份覆盖掉。
+    """
+    text = " ".join(str(payload.get("text") or "").split())
+    if not text:
+        return "skipped"
+    if payload.get("keep_both"):
+        conn.execute(
+            "INSERT INTO role_memory_item (user_id, role_id, uid, text, source, pinned,"
+            " importance) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                user_id,
+                str(payload.get("role_id") or ""),
+                uuid.uuid4().hex,
+                text,
+                str(payload.get("source") or "manual"),
+                1 if payload.get("pinned") else 0,
+                int(payload.get("importance") or 1),
+            ),
+        )
+        return "created"
+    have = conn.execute(
+        "SELECT id, user_id FROM role_memory_item WHERE uid = ?", (uid,)
+    ).fetchone()
+    if have is None:
+        conn.execute(
+            "INSERT INTO role_memory_item (user_id, role_id, uid, text, source, pinned,"
+            " importance) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                user_id,
+                str(payload.get("role_id") or ""),
+                uid,
+                text,
+                str(payload.get("source") or "manual"),
+                1 if payload.get("pinned") else 0,
+                int(payload.get("importance") or 1),
+            ),
+        )
+        return "created"
+    if str(have["user_id"]) != user_id:
+        # uid 撞上别人名下的一条：**什么都不写**。这是 M2b 那套 uid 纪律在跨机器时
+        # 唯一必须出现的守卫 —— 随机 uuid4 撞上的概率可以忽略，但"忽略概率"不等于"不检查"。
+        return "foreign"
+    conn.execute(
+        "UPDATE role_memory_item SET text = ?, pinned = ?, importance = ?"
+        " WHERE uid = ? AND user_id = ?",
+        (
+            text,
+            1 if payload.get("pinned") else 0,
+            int(payload.get("importance") or 1),
+            uid,
+            user_id,
+        ),
+    )
+    return "updated"
+
+
+def _write_reachout(conn: SqlConnection, *, user_id: str, payload: dict[str, Any]) -> str:
+    """投递记录：同一 (角色, 时刻, 文本) 已存在就跳过（只追加，永不覆盖）。"""
+    exists = conn.execute(
+        "SELECT 1 FROM agent_reachout WHERE user_id = ? AND role_id = ? AND text = ?"
+        " AND created_at = ? LIMIT 1",
+        (user_id, str(payload.get("role_id") or ""), str(payload.get("text") or ""),
+         str(payload.get("created_at") or "")),
+    ).fetchone()
+    if exists is not None:
+        return "skipped"
+    conn.execute(
+        "INSERT INTO agent_reachout (user_id, role_id, role_name, text, fired_by, state,"
+        " created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            user_id,
+            str(payload.get("role_id") or ""),
+            str(payload.get("role_name") or ""),
+            str(payload.get("text") or ""),
+            payload.get("fired_by"),
+            str(payload.get("state") or "unread"),
+            str(payload.get("created_at") or "") or None,
+        ),
+    )
+    return "created"
+
+
+def _write_thread(
+    conn: SqlConnection,
+    *,
+    user_id: str,
+    graph: Any,
+    settings: Any,
+    payload: dict[str, Any],
+) -> str:
+    """会话 = 行 + 检查点里的消息。整段替换成推过来的那一份。
+
+    消息用 `HumanMessage` / `AIMessage` 重建，**工具调用与中间轮不重建**：对面的图会按
+    它自己的插件与工具集重新走一遍，把那边的执行结果硬塞进历史才是错的（那些工具在
+    对面可能压根不存在）。
+    """
+    from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
+    from langgraph.graph.message import REMOVE_ALL_MESSAGES
+
+    from rolecard_agent.core.graph import build_graph_config
+
+    tid = str(payload["thread_id"])
+    row = conn.execute(
+        "SELECT user_id FROM session_thread WHERE thread_id = ?", (tid,)
+    ).fetchone()
+    if row is not None and str(row["user_id"]) != user_id:
+        return "foreign"
+    if row is None:
+        conn.execute(
+            "INSERT INTO session_thread (thread_id, user_id, current_role_id, model_name,"
+            " agent_mode, title) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                tid,
+                user_id,
+                str(payload.get("current_role_id") or "general_assistant"),
+                payload.get("model_name"),
+                payload.get("agent_mode"),
+                payload.get("title"),
+            ),
+        )
+    else:
+        conn.execute(
+            "UPDATE session_thread SET title = ?, current_role_id = ?,"
+            " updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')"
+            " WHERE thread_id = ? AND user_id = ?",
+            (payload.get("title"), str(payload.get("current_role_id") or "general_assistant"),
+             tid, user_id),
+        )
+    conn.commit()
+    messages: list[Any] = []
+    for item in payload.get("messages") or []:
+        role = str(item.get("role") or "")
+        text = str(item.get("text") or "")
+        if role == "user":
+            messages.append(HumanMessage(content=text))
+        elif role == "assistant":
+            messages.append(AIMessage(content=text))
+    config = build_graph_config(tid, settings)
+    graph.update_state(config, {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *messages]})
+    return "created" if row is None else "updated"
+
+
+#: 写入顺序 = 依赖顺序：会话行引用角色卡，所以卡必须先到。
+_IMPORT_ORDER = (KIND_CARD, KIND_MEMORY, KIND_REACHOUT, KIND_THREAD)
+
+
+def apply_import(
+    conn: SqlConnection,
+    *,
+    user_id: str,
+    graph: Any,
+    settings: Any,
+    items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """把一批选中的条目写进**这台机器**（对面那一侧调的就是它）。
+
+    归属只认一个来源：`user_id` 由调用方从**这次请求解析出的身份**给（见 routers/sync.py），
+    载荷里的 `user_id` 一概不读 —— 那等于让发送方指定"这些数据属于谁"。
+    """
+    written: dict[str, int] = {}
+    skipped: dict[str, int] = {}
+    errors: list[dict[str, str]] = []
+
+    def bump(table: dict[str, int], kind: str) -> None:
+        table[kind] = table.get(kind, 0) + 1
+
+    ordered = sorted(items, key=lambda row: _IMPORT_ORDER.index(str(row.get("kind"))))
+    for row in ordered:
+        kind = str(row.get("kind") or "")
+        payload = dict(row.get("payload") or {})
+        ident = str(row.get("ident") or "")
+        try:
+            if kind == KIND_CARD:
+                outcome = _write_card(conn, user_id=user_id, payload=payload)
+            elif kind == KIND_MEMORY:
+                outcome = _write_memory(conn, user_id=user_id, payload=payload, uid=ident)
+            elif kind == KIND_REACHOUT:
+                outcome = _write_reachout(conn, user_id=user_id, payload=payload)
+            elif kind == KIND_THREAD:
+                outcome = _write_thread(
+                    conn, user_id=user_id, graph=graph, settings=settings, payload=payload
+                )
+            else:
+                outcome = "skipped"
+        except Exception as exc:  # noqa: BLE001 - 一条坏的不该让整批回滚成"什么都没发生"
+            errors.append(
+                {"kind": kind, "ident": ident, "error": f"{type(exc).__name__}: {exc}"[:200]}
+            )
+            continue
+        if outcome in {"created", "updated"}:
+            bump(written, kind)
+        else:
+            bump(skipped, kind)
+            if outcome == "foreign":
+                errors.append({"kind": kind, "ident": ident, "error": "这条身份已经属于别人"})
+    conn.commit()
+    return {"written": written, "skipped": skipped, "errors": errors}

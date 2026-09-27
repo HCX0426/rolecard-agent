@@ -24,13 +24,16 @@
 
 from __future__ import annotations
 
+import contextlib
+from dataclasses import replace
 from typing import Any
 
 import httpx  # 只用它的异常类型；请求一律走 core/outbound
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from rolecard_agent.api.deps import AppContext, get_context
+from rolecard_agent.api.auth import Actor
+from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.core import outbound
 from rolecard_agent.core import sync as sync_lib
 from rolecard_agent.core.model_settings import validate_base_url
@@ -138,4 +141,219 @@ def post_plan(
         ],
         # 只给身份，不给载荷：这一屏要列"会过去什么"，而载荷由 apply 那一步现收。
         "only_local": [item.brief() for item in result.only_local],
+    }
+
+
+class ImportBody(BaseModel):
+    """对面写入的载荷。`items` 由发起方按用户的选择挑好，这里不再判冲突。
+
+    `clear_kinds` 只服务"整份替换"那一档，且必须同时带 `confirm_replace=true`：
+    删的是**这台机器上这个身份**的该类条目，删错了没有回头路，所以宁可让协议
+    多一个显式的键，也不要"看起来只是个普通参数"。
+    """
+
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    clear_kinds: list[str] = Field(default_factory=list)
+    confirm_replace: bool = False
+
+
+def _clear_for_replace(
+    conn: Any, *, user_id: str, kinds: list[str], graph: Any, settings: Any
+) -> dict[str, int]:
+    """整份替换的前半：把这个身份名下的该类条目清掉（**只清选了的类**）。"""
+    from langchain_core.messages import RemoveMessage
+    from langgraph.graph.message import REMOVE_ALL_MESSAGES
+
+    from rolecard_agent.core.graph import build_graph_config
+
+    cleared: dict[str, int] = {}
+    if sync_lib.KIND_CARD in kinds:
+        cur = conn.execute("DELETE FROM role_card WHERE user_id = ?", (user_id,))
+        cleared[sync_lib.KIND_CARD] = max(cur.rowcount, 0)
+    if sync_lib.KIND_MEMORY in kinds:
+        cur = conn.execute("DELETE FROM role_memory_item WHERE user_id = ?", (user_id,))
+        cleared[sync_lib.KIND_MEMORY] = max(cur.rowcount, 0)
+    if sync_lib.KIND_REACHOUT in kinds:
+        cur = conn.execute("DELETE FROM agent_reachout WHERE user_id = ?", (user_id,))
+        cleared[sync_lib.KIND_REACHOUT] = max(cur.rowcount, 0)
+    if sync_lib.KIND_THREAD in kinds:
+        rows = conn.execute(
+            "SELECT thread_id FROM session_thread WHERE user_id = ?", (user_id,)
+        ).fetchall()
+        for row in rows:
+            tid = str(row["thread_id"])
+            if graph is not None:
+                with contextlib.suppress(Exception):
+                    graph.update_state(
+                        build_graph_config(tid, settings),
+                        {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES)]},
+                    )
+        cur = conn.execute("DELETE FROM session_thread WHERE user_id = ?", (user_id,))
+        cleared[sync_lib.KIND_THREAD] = max(cur.rowcount, 0)
+    conn.commit()
+    return cleared
+
+
+@router.post("/api/sync/import")
+def post_import(
+    body: ImportBody,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> dict[str, object]:
+    """对面写入：把推过来的条目落到**这台机器上这个身份**名下。"""
+    cleared: dict[str, int] = {}
+    if body.clear_kinds:
+        if not body.confirm_replace:
+            raise HTTPException(
+                status_code=400, detail="整份替换要显式确认（confirm_replace）才允许清空。"
+            )
+        cleared = _clear_for_replace(
+            ctx.conn,
+            user_id=_identity(ctx),
+            kinds=body.clear_kinds,
+            graph=ctx.app_state["graph"],
+            settings=ctx.app_state["effective"],
+        )
+    result = sync_lib.apply_import(
+        ctx.conn,
+        user_id=_identity(ctx),
+        graph=ctx.app_state["graph"],
+        settings=ctx.app_state["effective"],
+        items=body.items,
+    )
+    # 审计只记结构：几类各写了多少、清了多少。**绝不记载荷**（那里面是对话原文与记忆）。
+    ctx.roles.audit(
+        actor=actor.id,
+        action="sync_import",
+        target="cloud-import",
+        detail={
+            "written": result["written"],
+            "skipped": result["skipped"],
+            "cleared": cleared,
+            "errors": len(result["errors"]),
+        },
+    )
+    return {**result, "cleared": cleared}
+
+
+MODES = ("merge", "append", "replace")
+
+
+class ApplyBody(TargetBody):
+    """发起方的"开始上行"。
+
+    * `kinds` = 界面上勾了的同步项；**没勾的类一律不动对面**（用户 09-27：
+      「可勾选同步项，不勾选的就用云端」）。
+    * `mode`：`merge`（默认，逐条合并）/ `append`（只追加）/ `replace`（整份替换，
+      会先清对面这一身份名下被选中的那几类）。
+    * `resolutions`：冲突的裁决，键是 `kind:ident`，值 `mine` / `theirs` / `both`。
+      **没给裁决的冲突默认按对面的**（`theirs`）—— 上行是"把本机这份推过去"，
+      但没被明确挑过的东西不该顺手覆盖别人已经写好的。
+    """
+
+    kinds: list[str] = Field(default_factory=list)
+    mode: str = "merge"
+    resolutions: dict[str, str] = Field(default_factory=dict)
+
+
+def _select(
+    result: sync_lib.SyncPlan,
+    mine: list[sync_lib.SyncItem],
+    *,
+    kinds: list[str],
+    mode: str,
+    resolutions: dict[str, str],
+) -> tuple[list[sync_lib.SyncItem], list[str]]:
+    """按勾选与裁决挑出要推的条目；返回 (条目, 要清空哪几类)。"""
+    if mode == "replace":
+        return [item for item in mine if item.kind in kinds], list(kinds)
+    selected = [item for item in result.only_local if item.kind in kinds]
+    for conflict in result.conflicts:
+        if conflict.kind not in kinds:
+            continue
+        choice = resolutions.get(f"{conflict.kind}:{conflict.ident}", "theirs")
+        if choice == "mine":
+            selected.append(conflict.mine)
+        elif choice == "both":
+            # 「两份都留」只有记忆讲得通：卡与会话的身份就是那个 id，留两份 = 覆盖。
+            # 所以这里给载荷盖一个 `keep_both` 的章，对面看到它就换新 uid 插一条，
+            # 而不是沿用那个已经撞上别人的 uid（那等于把"都留"实现成"按本机的来"）。
+            if conflict.kind != sync_lib.KIND_MEMORY:
+                continue
+            selected.append(
+                replace(
+                    conflict.mine,
+                    payload={**conflict.mine.payload, "keep_both": True},
+                )
+            )
+    return selected, []
+
+
+@router.post("/api/sync/apply")
+def post_apply(
+    body: ApplyBody,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> dict[str, object]:
+    """本机挑好要推的东西，交给对面的导入端点写。凭据只在本次请求里活着。"""
+    from rolecard_agent.api.auth import basic_header
+
+    kinds = [k for k in (body.kinds or list(sync_lib.SYNC_KINDS)) if k in sync_lib.SYNC_KINDS]
+    mode = body.mode if body.mode in MODES else "merge"
+    mine, skipped = sync_lib.collect(
+        ctx.conn,
+        user_id=_identity(ctx),
+        graph=ctx.app_state["graph"],
+        settings=ctx.app_state["effective"],
+    )
+    theirs, _ = _remote_inventory(body)
+    result = sync_lib.plan(mine, theirs, skipped=skipped)
+    selected, clear = _select(result, mine, kinds=kinds, mode=mode, resolutions=body.resolutions)
+    items = [
+        {"kind": item.kind, "ident": item.ident, "payload": item.payload} for item in selected
+    ]
+    payload: dict[str, Any] = {
+        "items": items,
+        "clear_kinds": clear,
+        "confirm_replace": mode == "replace",
+    }
+    base = validate_base_url(body.base_url) or ""
+    try:
+        res = outbound.post(
+            f"{base}/api/sync/import",
+            json=payload,
+            headers={"Authorization": basic_header(body.user, body.secret)},
+            timeout=120.0,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail=f"写到 {base} 时断了（对面可能重启了）：{exc}"
+        ) from exc
+    if res.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"对面拒绝写入（HTTP {res.status_code}）：{res.text[:180]}",
+        )
+    written: dict[str, Any] = res.json()
+    remote_errors = written.get("errors")
+    error_count = len(remote_errors) if isinstance(remote_errors, list) else 0
+    # 审计只记**结构**：几类各推了多少、什么模式。对话原文与记忆文本一条都不落。
+    ctx.roles.audit(
+        actor=actor.id,
+        action="sync_apply",
+        target=f"{base} · {body.user}",
+        detail={
+            "mode": mode,
+            "kinds": kinds,
+            "sent": len(items),
+            "written": written.get("written"),
+            "errors": error_count,
+        },
+    )
+    return {
+        "sent": len(items),
+        "mode": mode,
+        "kinds": kinds,
+        "remote": written,
+        "conflicts_left": len(result.conflicts),
     }
