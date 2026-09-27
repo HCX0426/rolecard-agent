@@ -150,7 +150,14 @@ def role_timeline(
         raise HTTPException(
             status_code=400, detail=f"未知的事件种类 {bad}；可用：{' / '.join(timeline.KINDS)}"
         )
-    return timeline.build(ctx.conn, role_id=role_id, limit=limit, before=before, kinds=wanted)
+    return timeline.build(
+        ctx.conn,
+        user_id=ctx.current_user(),
+        role_id=role_id,
+        limit=limit,
+        before=before,
+        kinds=wanted,
+    )
 
 
 @router.get("/api/tools/catalog")

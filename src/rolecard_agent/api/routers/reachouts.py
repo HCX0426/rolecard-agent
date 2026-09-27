@@ -35,7 +35,12 @@ def _page(ctx: AppContext, *, role_id: str | None = None) -> dict[str, object]:
     是同一份，所以界面那句"不足 66 分钟"和它真正等的时长不可能对不上。
     """
     return {
-        **svc.list_reachouts(ctx.conn, role_id=role_id, file_watch_pending=_pending(ctx)),
+        **svc.list_reachouts(
+            ctx.conn,
+            user_id=ctx.current_user(),
+            role_id=role_id,
+            file_watch_pending=_pending(ctx),
+        ),
         "merge_days": ctx.settings.reachout_merge_days,
         "quiet": svc.quiet_status(ctx.role_cards.list_roles(), ctx.settings, ctx.conn),
     }
@@ -57,7 +62,7 @@ def mark_read(reachout_id: int, ctx: AppContext = Depends(get_context)) -> objec
     已经读过再标一次 = 幂等成功（收件箱列的是"未读 + 最近历史"，点历史条目是正常路径）；
     只有**记录真的不存在**才 404。
     """
-    if not svc.mark_read(ctx.conn, reachout_id):
+    if not svc.mark_read(ctx.conn, reachout_id, user_id=ctx.current_user()):
         raise HTTPException(status_code=404, detail=f"主动消息不存在：{reachout_id}")
     return _page(ctx)
 
@@ -73,7 +78,7 @@ def mark_role_read(
     所以那一摞未读同时就都算读过了。逐条发请求会在中途失败留下"半已读"，红点数字还骗人。
     这一条正好也是折叠要的语义：展开后点任意一条，整摞一起变已读。
     """
-    marked = svc.mark_role_read(ctx.conn, role_id)
+    marked = svc.mark_role_read(ctx.conn, role_id, user_id=ctx.current_user())
     return {"marked": marked} | _page(ctx)
 
 
@@ -84,7 +89,7 @@ def mark_all_read(ctx: AppContext = Depends(get_context)) -> object:
     桌宠上点开面板、点气泡、发一句话，以及抽屉里点任意一条，都走这条 —— 以前各走
     `read-by-role`，于是"我明明在回话了，铃铛上还有别的角色在闪"。
     """
-    marked = svc.mark_all_read(ctx.conn)
+    marked = svc.mark_all_read(ctx.conn, user_id=ctx.current_user())
     return {"marked": marked} | _page(ctx)
 
 
@@ -96,7 +101,7 @@ def delete_reachout(reachout_id: int, ctx: AppContext = Depends(get_context)) ->
     **她主动说出口的那句话不跟着消失** —— 那句在主动会话的 checkpoint 里，留着它她才记得
     自己找过你（删会话本身才会在界面上抹掉那句话，那是另一条路：DELETE /api/session/…）。
     """
-    if not svc.delete_reachout(ctx.conn, reachout_id):
+    if not svc.delete_reachout(ctx.conn, reachout_id, user_id=ctx.current_user()):
         raise HTTPException(status_code=404, detail=f"主动消息不存在：{reachout_id}")
     return {"deleted": 1} | _page(ctx)
 
@@ -110,7 +115,11 @@ def clear_inbox(
 
     同样只动投递记录，不动会话里的原话。返回删掉的条数，界面据此说"清掉了 N 条"。
     """
-    deleted = svc.clear_inbox(ctx.conn, role_id) if role_id else svc.clear_all_inboxes(ctx.conn)
+    deleted = (
+        svc.clear_inbox(ctx.conn, role_id, user_id=ctx.current_user())
+        if role_id
+        else svc.clear_all_inboxes(ctx.conn, user_id=ctx.current_user())
+    )
     return {"deleted": deleted} | _page(ctx, role_id=role_id)
 
 

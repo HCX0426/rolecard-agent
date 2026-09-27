@@ -243,7 +243,9 @@ class Runtime:
         text = memory_for_turn(self.conn, self.effective, role_id, user_id=self.identity)
         if not role_id or thread_id == proactive_thread_id(role_id):
             return text
-        echo = recent_reachout_lines(self.conn, role_id, limit=CHAT_ECHO_LIMIT)
+        echo = recent_reachout_lines(
+            self.conn, role_id, user_id=self.identity, limit=CHAT_ECHO_LIMIT
+        )
         if not echo:
             return text
         return f"{text}\n\n{echo}" if text else echo

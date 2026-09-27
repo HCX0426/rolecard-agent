@@ -100,6 +100,11 @@ INSERT OR IGNORE INTO kernel_meta (key, value) VALUES ('tool_epoch', '1');
 -- 且页面关着时也能攒下来（web 端轮询读取，回来才看到）。
 CREATE TABLE IF NOT EXISTS agent_reachout (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- 归属：这条"她主动找我"是谁的收件箱里的（09-27 轮 M2c）。`id` 是自增整数、可枚举可猜，
+    -- 所以按 id 改/删的那几条路径必须带上这一列 —— 否则"知道一个数"就能划掉别人的收件箱。
+    -- 默认值 = 老库升上来时回填的主人，与 `core/identity.DEFAULT_USER_ID` 的一致性由
+    -- `tests/unit/test_identity_scoping.py` 扫全部 schema 钉住。
+    user_id     TEXT NOT NULL DEFAULT 'local-user',
     role_id     TEXT NOT NULL,             -- 发起主动的角色
     role_name   TEXT,                      -- 展示名冗余（角色被删后仍可读）
     text        TEXT NOT NULL,             -- 主动开口的内容
@@ -131,6 +136,10 @@ CREATE INDEX IF NOT EXISTS idx_reachout_state_time ON agent_reachout(state, crea
 -- （记录哪些主动被接受/驳回，用于"该不该现在打扰"的判断）；last_interaction_utc = 最近一次
 -- 主动/被交互的 UTC 时间，用于关系数值随时间自然衰减。
 CREATE TABLE IF NOT EXISTS role_proactive_state (
+    -- 刻意**不加 `user_id`**（与 `role_memory`、健康域那张索引表同一条道理）：这张表按
+    -- `role_id` 主键，而角色卡在 M2a 之后已经有主人 —— 状态跟着角色卡走就是"一处真相"。
+    -- 要给它单独加归属，得先把主键改成 `(user_id, role_id)`（整表重建），那是"同一台库里
+    -- 住多个主人"那天的一次性工程，现在做只会被第二次迁移推翻。
     role_id               TEXT PRIMARY KEY,
     affinity             REAL NOT NULL DEFAULT 0.0,
     last_interaction_utc TIMESTAMP,

@@ -52,11 +52,13 @@ def _key(event: dict[str, Any]) -> tuple[str, int, int]:
     return (str(event["at"]), -KIND_ORDER[str(event["kind"])], int(event["ref_id"]))
 
 
-def _reachouts(conn: SqlConnection, role_id: str) -> list[dict[str, Any]]:
+def _reachouts(
+    conn: SqlConnection, role_id: str, *, user_id: str
+) -> list[dict[str, Any]]:
     rows = conn.execute(
-        "SELECT id, text, created_at FROM agent_reachout WHERE role_id = ? "
-        "ORDER BY id DESC LIMIT ?",
-        (role_id, _SCAN_CAP),
+        "SELECT id, text, created_at FROM agent_reachout"
+        " WHERE role_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?",
+        (role_id, user_id, _SCAN_CAP),
     ).fetchall()
     thread = proactive_thread_id(role_id)
     exists = conn.execute(
@@ -77,15 +79,17 @@ def _reachouts(conn: SqlConnection, role_id: str) -> list[dict[str, Any]]:
     ]
 
 
-def _memory(conn: SqlConnection, role_id: str) -> list[dict[str, Any]]:
+def _memory(
+    conn: SqlConnection, role_id: str, *, user_id: str
+) -> list[dict[str, Any]]:
     """记下 = `created_at`；更正 = 那条被取代时的 `invalidated_at`。
 
     "失效不删"此前只是库里一列，价值只在被回滚和被调试；这一条把它画成用户看得见的东西。
     """
     rows = conn.execute(
         "SELECT id, text, created_at, invalidated_at, superseded_by FROM role_memory_item "
-        "WHERE role_id = ? ORDER BY id DESC LIMIT ?",
-        (role_id, _SCAN_CAP),
+        "WHERE role_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?",
+        (role_id, user_id, _SCAN_CAP),
     ).fetchall()
     by_id = {int(str(r["id"])): r for r in rows}
     events: list[dict[str, Any]] = [
@@ -121,12 +125,14 @@ def _memory(conn: SqlConnection, role_id: str) -> list[dict[str, Any]]:
     return events
 
 
-def _threads(conn: SqlConnection, role_id: str) -> list[dict[str, Any]]:
+def _threads(
+    conn: SqlConnection, role_id: str, *, user_id: str
+) -> list[dict[str, Any]]:
     """会话只给锚点，不逐条列消息：按角色扫 checkpoint 既贵，又是把对话全文复制进第二个视图。"""
     rows = conn.execute(
         "SELECT thread_id, title, created_at, updated_at FROM session_thread "
-        "WHERE current_role_id = ? ORDER BY updated_at DESC LIMIT ?",
-        (role_id, _SCAN_CAP),
+        "WHERE current_role_id = ? AND user_id = ? ORDER BY updated_at DESC LIMIT ?",
+        (role_id, user_id, _SCAN_CAP),
     ).fetchall()
     out: list[dict[str, Any]] = []
     for r in rows:
@@ -167,6 +173,7 @@ def _thread_ref(at: str) -> int:
 def build(
     conn: SqlConnection,
     *,
+    user_id: str,
     role_id: str,
     limit: int = 50,
     before: str | None = None,
@@ -185,7 +192,7 @@ def build(
         # `memory_correct` 与 `memory` 同源，一起取回再按 wanted 过滤行。
         if kind not in wanted and not (kind == "memory" and "memory_correct" in wanted):
             continue
-        part = fetch(conn, role_id)
+        part = fetch(conn, role_id, user_id=user_id)
         truncated = truncated or len(part) >= _SCAN_CAP
         events.extend(part)
     picked = [e for e in events if e["kind"] in wanted]

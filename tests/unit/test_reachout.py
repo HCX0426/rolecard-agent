@@ -69,11 +69,11 @@ def test_mark_read_transitions_state(conn) -> None:
     conn.execute("INSERT INTO agent_reachout (role_id, role_name, text) VALUES ('a', 'x', '嗨')")
     conn.commit()
     rid = conn.execute("SELECT id FROM agent_reachout").fetchone()["id"]
-    assert svc.mark_read(conn, int(rid)) is True  # unread → read
+    assert svc.mark_read(conn, int(rid), user_id=DEFAULT_USER_ID) is True  # unread → read
     # 已读再标 = **幂等成功**（收件箱列的是"未读+最近历史"，点已读条目是正常路径）。
     # 以前这里返回 False，与"记录不存在"混成一谈，用户看到的就是"主动消息不存在"的谎话。
-    assert svc.mark_read(conn, int(rid)) is True
-    assert svc.mark_read(conn, 999_999) is False  # 真没有这条才是 False
+    assert svc.mark_read(conn, int(rid), user_id=DEFAULT_USER_ID) is True
+    assert svc.mark_read(conn, 999_999, user_id=DEFAULT_USER_ID) is False  # 真没有这条才是 False
     rows = conn.execute("SELECT state FROM agent_reachout").fetchall()
     assert rows[0]["state"] == "read"
 
@@ -504,7 +504,7 @@ def test_tick_delivers_into_the_proactive_thread(conn) -> None:
     assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
     assert seen == [("active", "今天腰还酸吗")]
 
-    items = svc.list_reachouts(conn)["items"]
+    items = svc.list_reachouts(conn, user_id=DEFAULT_USER_ID)["items"]
     assert items[0]["thread_id"] == svc.proactive_thread_id("active")
 
 
@@ -518,7 +518,7 @@ def test_old_messages_without_a_thread_are_not_links(conn) -> None:
         "INSERT INTO agent_reachout (role_id, role_name, text) VALUES ('old', '旧角色', '很久以前')"
     )
     conn.commit()
-    assert svc.list_reachouts(conn)["items"][0]["thread_id"] is None
+    assert svc.list_reachouts(conn, user_id=DEFAULT_USER_ID)["items"][0]["thread_id"] is None
 
 
 def test_deliver_failure_keeps_the_inbox_message_and_is_traced(conn) -> None:
@@ -561,9 +561,9 @@ def test_mark_role_read_clears_the_whole_bundle(conn) -> None:
     )
     conn.commit()
 
-    assert svc.mark_role_read(conn, "a") == 2
-    assert svc.list_reachouts(conn)["unread"] == 1  # 别的角色不受影响
-    assert svc.mark_role_read(conn, "a") == 0  # 再标一次没有变化
+    assert svc.mark_role_read(conn, "a", user_id=DEFAULT_USER_ID) == 2
+    assert svc.list_reachouts(conn, user_id=DEFAULT_USER_ID)["unread"] == 1  # 别的角色不受影响
+    assert svc.mark_role_read(conn, "a", user_id=DEFAULT_USER_ID) == 0  # 再标一次没有变化
 
 
 def test_tick_once_continues_after_role_failure(conn) -> None:
@@ -635,12 +635,12 @@ def test_trigger_time_pattern_fires_on_modal_hour(conn) -> None:
         )
     conn.commit()
     # 历史记录的本地小时 == 当前本地小时 → 众数即当前小时，样本足够。
-    got = svc.trigger_time_pattern(_role(), conn, now_local=_now_local())
+    got = svc.trigger_time_pattern(_role(), conn, user_id=DEFAULT_USER_ID, now_local=_now_local())
     assert got == "time_pattern"
 
 
 def test_trigger_time_pattern_silent_without_history(conn) -> None:
-    got = svc.trigger_time_pattern(_role(), conn, now_local=_now_local())
+    got = svc.trigger_time_pattern(_role(), conn, user_id=DEFAULT_USER_ID, now_local=_now_local())
     assert got is None
 
 
@@ -675,8 +675,15 @@ def test_trigger_time_pattern_respects_role_toggle(conn) -> None:
         )
     conn.commit()
     role = RoleCard(**{**_role().model_dump(), "time_pattern_enabled": False})
-    assert svc.trigger_time_pattern(role, conn, now_local=_now_local()) is None
-    assert svc.trigger_time_pattern(_role(), conn, now_local=_now_local()) == "time_pattern"
+    assert (
+        svc.trigger_time_pattern(
+            role, conn, user_id=DEFAULT_USER_ID, now_local=_now_local()
+        )
+        is None
+    )
+    assert svc.trigger_time_pattern(
+        _role(), conn, user_id=DEFAULT_USER_ID, now_local=_now_local()
+    ) == "time_pattern"
 
 
 def test_tick_once_runs_affection_trigger_and_bumps_affinity(conn) -> None:
@@ -707,9 +714,9 @@ def test_list_reachouts_filters_by_role(conn) -> None:
     conn.execute("INSERT INTO agent_reachout (role_id, role_name, text) VALUES ('a','甲','找过你')")
     conn.execute("INSERT INTO agent_reachout (role_id, role_name, text) VALUES ('b','乙','也找过')")
     conn.commit()
-    all_rows = svc.list_reachouts(conn)
+    all_rows = svc.list_reachouts(conn, user_id=DEFAULT_USER_ID)
     assert len(all_rows["items"]) == 2
-    only_a = svc.list_reachouts(conn, role_id="a")
+    only_a = svc.list_reachouts(conn, user_id=DEFAULT_USER_ID, role_id="a")
     assert len(only_a["items"]) == 1
     assert only_a["items"][0]["role_id"] == "a"
     # 未读数也按角色收敛
@@ -1199,16 +1206,16 @@ def test_batch_read_leaves_seen_but_not_opened(conn) -> None:
     两条路必须分开留痕（`S-2` 当初为了不留假证据干脆什么都不写，代价是"看过"这件事在库里
     成了空白，结局度量把正在会话里说话的人也数成"没看"）。`read_at` 只属于单条点开。
     """
-    svc.record_reachout(conn, _role(), "第一条")
-    svc.record_reachout(conn, _role(), "第二条")
-    assert svc.mark_all_read(conn) == 2
+    svc.record_reachout(conn, _role(), "第一条", user_id=DEFAULT_USER_ID)
+    svc.record_reachout(conn, _role(), "第二条", user_id=DEFAULT_USER_ID)
+    assert svc.mark_all_read(conn, user_id=DEFAULT_USER_ID) == 2
     rows = conn.execute("SELECT read_at, seen_at FROM agent_reachout ORDER BY id").fetchall()
     assert [r["read_at"] for r in rows] == [None, None], "批量不该留下'单独点开过'的假证据"
     assert all(r["seen_at"] for r in rows), "但'看见过'总得留一条痕"
     # 再来一次批量不该把时刻挪到第二次（COALESCE：留最早那一次）
     first = rows[0]["seen_at"]
-    svc.record_reachout(conn, _role(), "第三条")
-    assert svc.mark_role_read(conn, "active") == 1
+    svc.record_reachout(conn, _role(), "第三条", user_id=DEFAULT_USER_ID)
+    assert svc.mark_role_read(conn, "active", user_id=DEFAULT_USER_ID) == 1
     again = conn.execute("SELECT seen_at FROM agent_reachout ORDER BY id LIMIT 1").fetchone()
     assert again["seen_at"] == first, "已见过的行不该被下一次批量刷改时刻"
 
@@ -1250,7 +1257,7 @@ def test_a_reachout_without_a_known_trigger_stays_unknown(conn) -> None:
     这一列上线之前的老行就是这个形状。读侧（`reachout_outcomes.py` 第 ④ 项）把它们单列一档，
     前提是它们"没被替别人编一个由头" —— 落成 `''` 或 `'timer'` 就会把"不知道"混进真实分布里。
     """
-    svc.record_reachout(conn, _role(), "她主动冒的一句")
+    svc.record_reachout(conn, _role(), "她主动冒的一句", user_id=DEFAULT_USER_ID)
     assert conn.execute("SELECT fired_by FROM agent_reachout").fetchone()["fired_by"] is None
 
 
@@ -1262,22 +1269,22 @@ def test_dismissing_a_reachout_keeps_the_row_so_outcomes_can_be_measured(conn) -
     """
     from rolecard_agent.core.reachout import delete_reachout, mark_read
 
-    svc.record_reachout(conn, _role(), "她主动冒的一句")
+    svc.record_reachout(conn, _role(), "她主动冒的一句", user_id=DEFAULT_USER_ID)
     rid = int(str(conn.execute("SELECT MAX(id) AS i FROM agent_reachout").fetchone()["i"]))
-    assert mark_read(conn, rid) is True
+    assert mark_read(conn, rid, user_id=DEFAULT_USER_ID) is True
     got = conn.execute("SELECT read_at FROM agent_reachout WHERE id=?", (rid,)).fetchone()
     assert got["read_at"], "已读要留下第一次被读到的时刻"
-    assert delete_reachout(conn, rid) is True
+    assert delete_reachout(conn, rid, user_id=DEFAULT_USER_ID) is True
 
     row = conn.execute(
         "SELECT state, dismissed_at FROM agent_reachout WHERE id=?", (rid,)
     ).fetchone()
     assert row["state"] == "dismissed" and row["dismissed_at"], "行不该被物理删掉"
     # 划掉的不再出现在收件箱里（用户视角"没了"），但证据还在
-    assert svc.list_reachouts(conn)["items"] == []  # type: ignore[index]
+    assert svc.list_reachouts(conn, user_id=DEFAULT_USER_ID)["items"] == []  # type: ignore[index]
     assert conn.execute("SELECT COUNT(*) c FROM agent_reachout").fetchone()["c"] == 1
     # 再划一次 = False（幂等靠状态判，不靠"行还在不在"）
-    assert delete_reachout(conn, rid) is False
+    assert delete_reachout(conn, rid, user_id=DEFAULT_USER_ID) is False
 
 
 def test_used_topics_are_consumed_so_they_drive_only_one_open(conn) -> None:

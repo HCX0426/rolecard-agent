@@ -160,7 +160,7 @@ def test_proactive_reachouts_work_without_any_local_model(tmp_path: Path) -> Non
     now_local = datetime.now().astimezone().replace(hour=14, minute=0, second=0, microsecond=0)
     try:
         assert scheduler.tick_once(now_utc=now_utc, now_local=now_local) == 1
-        rows = svc.list_reachouts(runtime.conn)
+        rows = svc.list_reachouts(runtime.conn, user_id=DEFAULT_USER_ID)
         assert rows["unread"] == 1
         tid = rows["items"][0]["thread_id"]
         assert tid == svc.proactive_thread_id("wan")

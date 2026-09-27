@@ -209,12 +209,13 @@ def _task_text(
 
 
 def recent_reachout_lines(
-    conn: SqlConnection, role_id: str, *, limit: int = RECENT_CONTEXT_LIMIT
+    conn: SqlConnection, role_id: str, *, user_id: str, limit: int = RECENT_CONTEXT_LIMIT
 ) -> str:
     """该角色最近几轮主动说过什么（原文，按时间正序）；没有则空串。"""
     rows = conn.execute(
-        "SELECT text FROM agent_reachout WHERE role_id = ? ORDER BY id DESC LIMIT ?",
-        (role_id, limit),
+        "SELECT text FROM agent_reachout"
+        " WHERE role_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?",
+        (role_id, user_id, limit),
     ).fetchall()
     if not rows:
         return ""
@@ -238,7 +239,9 @@ def _sum_or_none(a: int | None, b: int | None) -> int | None:
     return (a or 0) + (b or 0)
 
 
-def recent_own_texts(conn: SqlConnection, role_id: str, *, limit: int = BG_LIMIT) -> list[str]:
+def recent_own_texts(
+    conn: SqlConnection, role_id: str, *, user_id: str, limit: int = BG_LIMIT
+) -> list[str]:
     """该角色最近说过的主动开口**原文**（按时间正序）。没有则空表。
 
     与 `recent_reachout_lines` 是同一批东西的两种用法：那个是渲染给她**看**的（带指令措辞、
@@ -249,8 +252,9 @@ def recent_own_texts(conn: SqlConnection, role_id: str, *, limit: int = BG_LIMIT
     那里会把她自己重复的小句从回喂副本里抹掉（`core/nodes.py:_scrub_own_repeats`）。
     """
     rows = conn.execute(
-        "SELECT text FROM agent_reachout WHERE role_id = ? ORDER BY id DESC LIMIT ?",
-        (role_id, limit),
+        "SELECT text FROM agent_reachout"
+        " WHERE role_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?",
+        (role_id, user_id, limit),
     ).fetchall()
     return [str(r["text"]).strip() for r in reversed(rows) if str(r["text"]).strip()]
 
@@ -397,6 +401,7 @@ def list_reachouts(
     conn: SqlConnection,
     limit: int = 100,
     *,
+    user_id: str,
     role_id: str | None = None,
     file_watch_pending: int = 0,
 ) -> dict[str, object]:
@@ -406,8 +411,11 @@ def list_reachouts(
     `file_watch_pending` = 当前挂起的目录变更条数（0 = 无事件或功能关闭）。
     """
     # `dismissed` 不进列表（用户已经划掉了），但**行留着** —— 那才是"她冒话而没人接"的证据。
-    where = "WHERE state != 'dismissed'" + (" AND role_id = ?" if role_id else "")
-    params = (role_id, limit) if role_id else (limit,)
+    where = (
+        "WHERE state != 'dismissed' AND user_id = ?"
+        + (" AND role_id = ?" if role_id else "")
+    )
+    params = (user_id, role_id, limit) if role_id else (user_id, limit)
     rows = conn.execute(
         f"SELECT id, role_id, role_name, text, state, created_at, read_at, seen_at, dismissed_at "
         f"FROM agent_reachout {where} ORDER BY id DESC LIMIT ?",
@@ -424,12 +432,14 @@ def list_reachouts(
     }
     if role_id:
         unread = conn.execute(
-            "SELECT COUNT(*) AS n FROM agent_reachout WHERE role_id = ? AND state = 'unread'",
-            (role_id,),
+            "SELECT COUNT(*) AS n FROM agent_reachout"
+            " WHERE role_id = ? AND user_id = ? AND state = 'unread'",
+            (role_id, user_id),
         ).fetchone()
     else:
         unread = conn.execute(
-            "SELECT COUNT(*) AS n FROM agent_reachout WHERE state = 'unread'"
+            "SELECT COUNT(*) AS n FROM agent_reachout WHERE user_id = ? AND state = 'unread'",
+            (user_id,),
         ).fetchone()
     # "某个角色有几条没读"只在这里算一次（审计 §12.11 的"三份各算"那一格）：铃铛、桌宠、
     # 抽屉以前各自 filter 一遍，其中桌宠那份连后端给的 `unread` 都不看。
@@ -437,7 +447,8 @@ def list_reachouts(
     # 分组只做在前端（设计稿 §1），后端只负责把 `merge_days` 随列表带回。
     by_role = conn.execute(
         "SELECT role_id, COUNT(*) AS n FROM agent_reachout "
-        "WHERE state = 'unread' GROUP BY role_id"
+        "WHERE state = 'unread' AND user_id = ? GROUP BY role_id",
+        (user_id,),
     ).fetchall()
     return {
         "items": [
@@ -459,7 +470,7 @@ def _opened_thread(role_id: str, opened: set[str]) -> str | None:
     return tid if tid in opened else None
 
 
-def mark_read(conn: SqlConnection, reachout_id: int) -> bool:
+def mark_read(conn: SqlConnection, reachout_id: int, *, user_id: str) -> bool:
     """把一条置为已读，返回"这条现在处于已读状态"。记录不存在才返回 False。
 
     **已读再标一次是幂等成功，不是"不存在"** —— 这两件事以前共用一个 False，于是点一条
@@ -468,20 +479,23 @@ def mark_read(conn: SqlConnection, reachout_id: int) -> bool:
     """
     cur = conn.execute(
         "UPDATE agent_reachout SET state = 'read', read_at = CURRENT_TIMESTAMP "
-        "WHERE id = ? AND state = 'unread'",
-        (reachout_id,),
+        "WHERE id = ? AND user_id = ? AND state = 'unread'",
+        (reachout_id, user_id),
     )
     if cur.rowcount > 0:
         conn.commit()
         return True
     conn.commit()
     return (
-        conn.execute("SELECT 1 FROM agent_reachout WHERE id = ?", (reachout_id,)).fetchone()
+        conn.execute(
+            "SELECT 1 FROM agent_reachout WHERE id = ? AND user_id = ?",
+            (reachout_id, user_id),
+        ).fetchone()
         is not None
     )
 
 
-def mark_role_read(conn: SqlConnection, role_id: str) -> int:
+def mark_role_read(conn: SqlConnection, role_id: str, *, user_id: str) -> int:
     """把某角色攒下的未读一次标完，返回条数。
 
     为什么单独要它：主动消息现在落在"该角色的主动会话"里（见 `proactive_thread_id`），
@@ -491,14 +505,14 @@ def mark_role_read(conn: SqlConnection, role_id: str) -> int:
     cur = conn.execute(
         "UPDATE agent_reachout SET state = 'read', "
         "seen_at = COALESCE(seen_at, CURRENT_TIMESTAMP) "
-        "WHERE role_id = ? AND state = 'unread'",
-        (role_id,),
+        "WHERE role_id = ? AND user_id = ? AND state = 'unread'",
+        (role_id, user_id),
     )
     conn.commit()
     return int(cur.rowcount)
 
 
-def mark_all_read(conn: SqlConnection) -> int:
+def mark_all_read(conn: SqlConnection, *, user_id: str) -> int:
     """把所有未读一次标完，返回条数。
 
     口径是用户 2026-09-23 拍的：**"我点进对话界面了"就等于都看过了** —— 所以打开任何一个
@@ -513,6 +527,8 @@ def mark_all_read(conn: SqlConnection) -> int:
     cur = conn.execute(
         "UPDATE agent_reachout SET state = 'read', "
         "seen_at = COALESCE(seen_at, CURRENT_TIMESTAMP) WHERE state = 'unread'"
+        " AND user_id = ?",
+        (user_id,),
     )
     conn.commit()
     return int(cur.rowcount)
@@ -569,7 +585,12 @@ def ensure_proactive_thread(
 
 
 def record_reachout(
-    conn: SqlConnection, role: RoleCard, text: str, *, fired_by: str | None = None
+    conn: SqlConnection,
+    role: RoleCard,
+    text: str,
+    *,
+    user_id: str,
+    fired_by: str | None = None,
 ) -> None:
     """落一条主动开口（unread）。role 冗余存角色名：角色被删后收件箱仍可读。
 
@@ -581,14 +602,17 @@ def record_reachout(
     第二件事，而这条挂在写入点上就够了 —— 不需要为此再跑一个定时任务。
     """
     conn.execute(
-        "INSERT INTO agent_reachout (role_id, role_name, text, fired_by) VALUES (?, ?, ?, ?)",
-        (role.role_id, role.role_name, text, fired_by),
+        "INSERT INTO agent_reachout (role_id, user_id, role_name, text, fired_by)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (role.role_id, user_id, role.role_name, text, fired_by),
     )
     conn.commit()
-    prune_inbox(conn, role.role_id, int(getattr(role, "reachout_keep", 0) or 0))
+    prune_inbox(
+        conn, role.role_id, int(getattr(role, "reachout_keep", 0) or 0), user_id=user_id
+    )
 
 
-def prune_inbox(conn: SqlConnection, role_id: str, keep: int) -> int:
+def prune_inbox(conn: SqlConnection, role_id: str, keep: int, *, user_id: str) -> int:
     """该角色的收件箱只留最近 `keep` 条，返回删掉的条数。`keep <= 0` = 什么都不做。
 
     **删的是投递记录，不是她说出口的那句话**：那句话在主动会话的 checkpoint 里，留着它
@@ -599,21 +623,22 @@ def prune_inbox(conn: SqlConnection, role_id: str, keep: int) -> int:
     before = int(
         str(conn.execute(
             "SELECT COUNT(*) AS n FROM agent_reachout "
-            "WHERE role_id = ? AND state != 'dismissed'",
-            (role_id,),
+            "WHERE role_id = ? AND user_id = ? AND state != 'dismissed'",
+            (role_id, user_id),
         ).fetchone()["n"])
     )
     conn.execute(
         "UPDATE agent_reachout SET state = 'dismissed', dismissed_at = CURRENT_TIMESTAMP "
-        "WHERE role_id = ? AND state != 'dismissed' AND id NOT IN ("
-        "  SELECT id FROM agent_reachout WHERE role_id = ? ORDER BY id DESC LIMIT ?)",
-        (role_id, role_id, keep),
+        "WHERE role_id = ? AND user_id = ? AND state != 'dismissed' AND id NOT IN ("
+        "  SELECT id FROM agent_reachout WHERE role_id = ? AND user_id = ?"
+        "  ORDER BY id DESC LIMIT ?)",
+        (role_id, user_id, role_id, user_id, keep),
     )
     conn.commit()
     return max(0, before - keep)
 
 
-def delete_reachout(conn: SqlConnection, reachout_id: int) -> bool:
+def delete_reachout(conn: SqlConnection, reachout_id: int, *, user_id: str) -> bool:
     """把抽屉里的某一行划掉（**不碰会话里的那条消息**）。False = 没有这条。
 
     软删而不是 DELETE（09-26 轮 R26-14 / S-2）：从前这一行是**真删掉且不进 audit_log**，
@@ -622,29 +647,30 @@ def delete_reachout(conn: SqlConnection, reachout_id: int) -> bool:
     """
     cur = conn.execute(
         "UPDATE agent_reachout SET state = 'dismissed', dismissed_at = CURRENT_TIMESTAMP "
-        "WHERE id = ? AND state != 'dismissed'",
-        (reachout_id,),
+        "WHERE id = ? AND user_id = ? AND state != 'dismissed'",
+        (reachout_id, user_id),
     )
     conn.commit()
     return cur.rowcount > 0
 
 
-def clear_inbox(conn: SqlConnection, role_id: str) -> int:
+def clear_inbox(conn: SqlConnection, role_id: str, *, user_id: str) -> int:
     """清空该角色的主动消息记录（同样不碰会话）。返回删掉的条数。"""
     cur = conn.execute(
         "UPDATE agent_reachout SET state = 'dismissed', dismissed_at = CURRENT_TIMESTAMP "
-        "WHERE role_id = ? AND state != 'dismissed'",
-        (role_id,),
+        "WHERE role_id = ? AND user_id = ? AND state != 'dismissed'",
+        (role_id, user_id),
     )
     conn.commit()
     return cur.rowcount
 
 
-def clear_all_inboxes(conn: SqlConnection) -> int:
+def clear_all_inboxes(conn: SqlConnection, *, user_id: str) -> int:
     """清空所有角色的主动消息记录（不给 role_id 时的那条路）。"""
     cur = conn.execute(
         "UPDATE agent_reachout SET state = 'dismissed', dismissed_at = CURRENT_TIMESTAMP "
-        "WHERE state != 'dismissed'"
+        "WHERE state != 'dismissed' AND user_id = ?",
+        (user_id,),
     )
     conn.commit()
     return cur.rowcount
@@ -668,9 +694,11 @@ def _utc_from_db(raw: object) -> datetime | None:
         return None
 
 
-def _last_reachout_utc(conn: SqlConnection, role_id: str) -> datetime | None:
+def _last_reachout_utc(conn: SqlConnection, role_id: str, *, user_id: str) -> datetime | None:
     row = conn.execute(
-        "SELECT MAX(created_at) AS at FROM agent_reachout WHERE role_id = ?", (role_id,)
+        "SELECT MAX(created_at) AS at FROM agent_reachout"
+        " WHERE role_id = ? AND user_id = ?",
+        (role_id, user_id),
     ).fetchone()
     return _utc_from_db(None if row is None else row["at"])
 
@@ -686,7 +714,9 @@ def _lane_activity_utc(conn: SqlConnection, role_id: str) -> datetime | None:
     return None if lane is None else _utc_from_db(lane["updated_at"])
 
 
-def _last_speech_utc(conn: SqlConnection, role_id: str) -> datetime | None:
+def _last_speech_utc(
+    conn: SqlConnection, role_id: str, *, user_id: str
+) -> datetime | None:
     """她上一次**在这条线里说话**的时刻 —— 主动开口和**回答用户**都算，取较新那个。
 
     为什么必须算上回答（09-26 用户报的"我还没回话她就换了话题"）：间隔档原先只盯
@@ -701,7 +731,7 @@ def _last_speech_utc(conn: SqlConnection, role_id: str) -> datetime | None:
     重命名、改会话级模型这类 PATCH 也会推它，于是一次重命名可能压掉她一个间隔的主动开口。
     这比"她刚答完就又冒一句"轻，接受。
     """
-    reach = _last_reachout_utc(conn, role_id)
+    reach = _last_reachout_utc(conn, role_id, user_id=user_id)
     chat = _lane_activity_utc(conn, role_id)
     if reach is None:
         return chat
@@ -710,7 +740,9 @@ def _last_speech_utc(conn: SqlConnection, role_id: str) -> datetime | None:
     return max(reach, chat)
 
 
-def _unreplied_streak(conn: SqlConnection, role_id: str) -> int:
+def _unreplied_streak(
+    conn: SqlConnection, role_id: str, *, user_id: str
+) -> int:
     """她主动开口之后、对方**一个字都没回**的那几条 —— 退避指数用的就是它。
 
     为什么不用现成的 `unread`（09-26）：`mark_all_read` 的口径是用户 09-23 拍的"我点进对话
@@ -732,16 +764,17 @@ def _unreplied_streak(conn: SqlConnection, role_id: str) -> int:
         return 0
     row = conn.execute(
         "SELECT COUNT(*) AS n FROM agent_reachout "
-        "WHERE role_id = ? AND julianday(created_at) > julianday(?)",
-        (role_id, lane.strftime("%Y-%m-%d %H:%M:%S.%f")),
+        "WHERE role_id = ? AND user_id = ? AND julianday(created_at) > julianday(?)",
+        (role_id, user_id, lane.strftime("%Y-%m-%d %H:%M:%S.%f")),
     ).fetchone()
     return int(row["n"])
 
 
-def _unread_for_role(conn: SqlConnection, role_id: str) -> int:
+def _unread_for_role(conn: SqlConnection, role_id: str, *, user_id: str) -> int:
     row = conn.execute(
-        "SELECT COUNT(*) AS n FROM agent_reachout WHERE role_id = ? AND state = 'unread'",
-        (role_id,),
+        "SELECT COUNT(*) AS n FROM agent_reachout"
+        " WHERE role_id = ? AND user_id = ? AND state = 'unread'",
+        (role_id, user_id),
     ).fetchone()
     return int(row["n"])
 
@@ -814,9 +847,10 @@ def _gate(
     为什么是一个函数而不是"原因一段、时间另一段"：那句话与那个时刻**必须同源**，
     分两处算迟早对不上（"不足 66 分钟"配一个 40 分钟后的时刻，用户看一眼就再也不信这个界面）。
     """
-    unread = _unread_for_role(conn, role.role_id)
-    streak = _unreplied_streak(conn, role.role_id)
-    last = _last_speech_utc(conn, role.role_id)
+    owner = resolve_instance_identity(settings)
+    unread = _unread_for_role(conn, role.role_id, user_id=owner)
+    streak = _unreplied_streak(conn, role.role_id, user_id=owner)
+    last = _last_speech_utc(conn, role.role_id, user_id=owner)
     if last is not None and not file_event:
         need = _quiet_minutes(
             settings.reachout_interval_minutes, streak, f"{role.role_id}|{last.isoformat()}"
@@ -956,7 +990,7 @@ def generate_reachout_text(
     # E1 去重：把"最近已经说过什么"摊给它看。没有这一层，每次开口都是从零现编 ——
     # 实测同一天连发四条"花海/阳光/亮晶晶"，症状不是模型差，是上下文里没有"我刚说过"。
     if role_id:
-        recent = recent_reachout_lines(conn, role_id)
+        recent = recent_reachout_lines(conn, role_id, user_id=resolve_instance_identity(settings))
         if recent:
             task = f"{task}\n\n{recent}"
     if thread_lines:
@@ -1010,7 +1044,11 @@ def generate_reachout_text(
     text, draft = speak()
     if draft.text is None:
         return draft
-    priors = recent_own_texts(conn, role_id) if role_id else []
+    priors = (
+        recent_own_texts(conn, role_id, user_id=resolve_instance_identity(settings))
+        if role_id
+        else []
+    )
     score = repeat_score(text, priors)
     if score <= REGEN_SCORE:
         return ReachoutDraft(text, "", round(score, 2), spent.total)
@@ -1054,13 +1092,16 @@ def trigger_affection(
     return None
 
 
-def trigger_time_pattern(role: RoleCard, conn: SqlConnection, *, now_local: datetime) -> str | None:
+def trigger_time_pattern(
+    role: RoleCard, conn: SqlConnection, *, user_id: str, now_local: datetime
+) -> str | None:
     """时段 / 规律 nudge：若该角色历史上主动开口的本地小时众数 == 当前小时且样本足够，触发。
     该角色关掉时段规律 = 不触发。"""
     if not role.time_pattern_enabled:
         return None
     rows = conn.execute(
-        "SELECT created_at FROM agent_reachout WHERE role_id = ?", (role.role_id,)
+        "SELECT created_at FROM agent_reachout WHERE role_id = ? AND user_id = ?",
+        (role.role_id, user_id),
     ).fetchall()
     if not rows:
         return None
@@ -1256,7 +1297,9 @@ class ReachoutScheduler:
             fired = (
                 ("file_event" if can_file else None)
                 or trigger_affection(role, state, settings, now_utc=stamp_utc)
-                or trigger_time_pattern(role, self._conn, now_local=stamp_local)
+                or trigger_time_pattern(
+                    role, self._conn, user_id=owner, now_local=stamp_local
+                )
                 or trigger_recall(role, self._conn, user_id=owner, now_local=stamp_local)
                 or "timer"
             )
@@ -1336,7 +1379,7 @@ class ReachoutScheduler:
                 )
                 continue
             text = draft.text
-            record_reachout(self._conn, role, text, fired_by=fired)
+            record_reachout(self._conn, role, text, user_id=owner, fired_by=fired)
             record_interaction(self._conn, role.role_id, now=stamp_utc)
             if fired == "recall":
                 # 冷却锚点只在**真的发出去了**的时候记：被 guard 拦下、正文为空的那些

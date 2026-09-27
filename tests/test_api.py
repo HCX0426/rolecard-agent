@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from rolecard_agent.api.main import create_app
+from rolecard_agent.core.identity import DEFAULT_USER_ID
 from tests.conftest import model_rows
 
 
@@ -780,7 +781,7 @@ def _record(conn: Any, role_id: str, text: str, *, keep: int = 0) -> None:
     from rolecard_agent.roles.models import RoleCard
 
     role = RoleCard(role_id=role_id, role_name="晚晴", system_prompt="x", reachout_keep=keep)
-    svc.record_reachout(conn, role, text)
+    svc.record_reachout(conn, role, text, user_id=DEFAULT_USER_ID)
 
 
 def test_reachout_inbox_deletes_one_row(client: TestClient, tmp_path: Path) -> None:
@@ -859,7 +860,12 @@ def test_read_all_marks_every_role(client: TestClient, tmp_path: Path) -> None:
 
     conn = connect(tmp_path / "app.db")
     for rid in ("wan", "bai"):
-        svc.record_reachout(conn, RoleCard(role_id=rid, role_name=rid, system_prompt="x"), "在吗")
+        svc.record_reachout(
+        conn,
+        RoleCard(role_id=rid, role_name=rid, system_prompt="x"),
+        "在吗",
+        user_id=DEFAULT_USER_ID,
+    )
 
     assert client.get("/api/reachouts").json()["unread"] == 2
     body0 = client.get("/api/reachouts").json()
