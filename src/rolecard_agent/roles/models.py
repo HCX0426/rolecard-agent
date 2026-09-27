@@ -48,7 +48,18 @@ MAX_EXEMPLAR_CHARS = 3000
 
 
 class RoleExemplar(BaseModel):
-    """One worked example of how this role answers."""
+    """One worked example of how this role answers.
+
+    规矩（09-27 定，`Q8`）：**范例教的是句式与边界，不是事实**。一条写着"尿酸 488.0"的
+    范例，模型有概率在**别的问句**上把那个数当事实复读出来 —— 那正是 A3 那把引用尺子里的
+    `answer_absent_value`。所以默认写法是"这一句该有什么结构、哪里要停"，数值交给工具去取。
+
+    唯一的例外要写清楚，因为出厂那张档案管理员卡就落在例外里：当一条范例的**存在理由**就是
+    教一个带格式的读数（例如结尾那句【未经人工校验】标记），数值可以给，但必须是
+    **演示数据里真实存在的那一个** —— 不许编（编的数会被当成可引用的真值），也不许是评测题的
+    答案（`check_consistency.py` 那条"范例泄漏评测答案"的机器检查治的就是这个：一旦是答案，
+    模型学会的是背范例而不是调工具）。
+    """
 
     user: str = Field(min_length=1, max_length=1000)
     assistant: str = Field(min_length=1, max_length=2000)
