@@ -137,6 +137,10 @@ def main() -> int:
             "AUTH_MODE": "on",
             "AUTH_CREDENTIALS": "u1:pw",
             "IDENTITY_USER_ID": "u1",
+            # 云端那台按设计**只存盘、不开口**（`R26-45` 之后定的部署形态：会不会说话是
+            # 实例的属性，不是浏览器的状态）。探针带着它跑，这条形态才是被真跑过的，
+            # 而不是只写在文档里。
+            "REACHOUT_ENABLED": "0",
             "API_ALLOW_ORIGINS": a_base,
         },
     )
