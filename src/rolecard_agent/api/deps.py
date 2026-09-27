@@ -232,7 +232,9 @@ class AppContext:
         if self._user_id is None:
             actor = self.actor
             known = None if actor is None or actor.is_anonymous else actor.id
-            self._user_id = resolve_identity(self.conn, known)
+            self._user_id = resolve_identity(
+                self.conn, known, fallback=self.runtime.identity
+            )
         return self._user_id
 
     @property

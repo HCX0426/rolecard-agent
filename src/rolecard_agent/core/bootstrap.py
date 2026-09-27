@@ -33,7 +33,7 @@ from rolecard_agent.core.approvals import ApprovalService
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.domain_service import DomainQueryService
 from rolecard_agent.core.graph import build_graph_config, build_kernel, build_model
-from rolecard_agent.core.identity import DEFAULT_USER_ID, seed_demo_identity
+from rolecard_agent.core.identity import resolve_instance_identity, seed_demo_identity
 from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.core.memory import memory_for_turn
 from rolecard_agent.core.model_settings import ModelSettingsService, client_style
@@ -162,6 +162,16 @@ class Runtime:
     )
 
     # -- 稳定引用的读穿 ------------------------------------------------------
+
+    @property
+    def identity(self) -> str:
+        """**这台实例的主人**（`IDENTITY_USER_ID`，空=本机那份）。
+
+        后台那条链（主动开口的投递、图里的域工具）没有"这次请求"可问，读的就是这一个。
+        请求级的解析以它为底（`AppContext.current_user()`），两层的关系写在
+        `core/identity.resolve_instance_identity` 的 docstring 里。
+        """
+        return resolve_instance_identity(self.env_settings)
 
     @property
     def conn(self) -> ThreadLocalConnection:
@@ -394,7 +404,7 @@ class Runtime:
         thread_id = ensure_proactive_thread(
             self.conn,
             role=role,
-            user_id=DEFAULT_USER_ID,
+            user_id=self.identity,
             tool_epoch=self.plugins.tool_epoch(),
         )
         graph = self.state.get("graph")

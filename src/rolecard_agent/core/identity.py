@@ -16,27 +16,47 @@
 
 from __future__ import annotations
 
+from rolecard_agent.config import Settings
 from rolecard_agent.storage.db import SqlConnection
 
 DEFAULT_TENANT_ID = "local"
 DEFAULT_USER_ID = "local-user"
 
 
-def resolve_identity(conn: SqlConnection, actor_id: str | None) -> str:
-    """把"这次请求认证到的那个凭证"落到一张 `app_user` 行上；落不上就是本机那份。
+def resolve_instance_identity(settings: Settings) -> str:
+    """**这台实例的主人是谁** —— 后台那条链（主动开口、图里的域工具）唯一能问的"谁"。
 
-    **今天它几乎总是回 `DEFAULT_USER_ID`，而这不是摆设**。`AUTH_CREDENTIALS` 里的用户名是
-    运维随手起的（`admin` 之类），压根不打算当 `user_id` 用；而 `app_user` 只有播种的那一行。
-    这条判据要买的东西是：**"身份从哪来"从此只有一处回答**。给那 15 张表补归属列、真出现
-    第二个账号的那天，改这一个函数就够了，不用回去动接入层那十几个调用点。
+    为什么需要"实例级"这一层，而不是全都按请求解析：定下来的形态是**两份完整数据集、
+    一台实例一个主人**（架构总览 §4.1，用户 09-27 拍的"默认用本机那份 + 可切云端那份"）。
+    后台调度器没有"这次请求"可问 —— 它替她冒一句话时，服务对象是**这台机器的属主**，
+    不是某个正连着的浏览器。所以身份有两层：
+
+    - **实例级**（这个函数）：装配时从 `IDENTITY_USER_ID` 读，空 = `DEFAULT_USER_ID`。
+      改它要重启：按 §4.1，"换主人"就是换一份数据集，不是热切一个过滤器。
+    - **请求级**（`AppContext.current_user()`）：认证到的用户名在 `app_user` 里**确实有行**
+      时才是另一个人，否则落回实例级这一层。
+
+    这条分层也说明了为什么它必须排在"按身份过滤那 15 张表"前面：**一条读路径若不知道自己在
+    为谁读，补上的那一列就只是假安慰** —— 看起来隔离了，实际谁都在读同一份。
+    """
+    return (settings.identity_user_id or "").strip() or DEFAULT_USER_ID
+
+
+def resolve_identity(conn: SqlConnection, actor_id: str | None, *, fallback: str) -> str:
+    """把"这次请求认证到的那个凭证"落到一张 `app_user` 行上；落不上就是这台实例那份。
+
+    **今天它几乎总是回 `fallback`，而这不是摆设**。`AUTH_CREDENTIALS` 里的用户名是运维随手
+    起的（`admin` 之类），压根不打算当 `user_id` 用；而 `app_user` 只有播种的那一行。这条判据
+    要买的东西是：**"身份从哪来"从此只有这两处回答**（实例级 + 请求级），给那 15 张表补归属列、
+    真出现第二个账号的那天，改这里就够了，不用回去动接入层那十几个调用点。
 
     认出来才算：只有 `actor_id` 在 `app_user` 里**确实有一行**时才算换到了另一个身份 ——
     否则一个陌生用户名会凭空造出一个身份，它的会话写进库里、却没有任何地方认识这个人。
     """
     if not actor_id:
-        return DEFAULT_USER_ID
+        return fallback
     row = conn.execute("SELECT user_id FROM app_user WHERE user_id = ?", (actor_id,)).fetchone()
-    return str(row[0]) if row is not None else DEFAULT_USER_ID
+    return str(row[0]) if row is not None else fallback
 
 
 def seed_demo_identity(conn: SqlConnection) -> None:

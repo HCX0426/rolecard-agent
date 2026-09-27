@@ -25,6 +25,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from rolecard_agent.api.main import create_app
+from rolecard_agent.config import Settings
 from rolecard_agent.core.identity import DEFAULT_USER_ID, resolve_identity
 
 
@@ -150,13 +151,63 @@ def test_identity_is_carried_per_request_not_on_the_shared_context(
     assert shared.current_user() == DEFAULT_USER_ID
 
 
-# -- 6：解析函数本身的三条形状 --------------------------------------------------------
+# -- 6：解析函数本身的形状 ------------------------------------------------------------
+
+
+def _settings(identity: str) -> Settings:
+    return Settings(identity_user_id=identity)
 
 
 def test_resolve_identity_only_matches_real_users(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     client = _client(monkeypatch, tmp_path)
     conn = client.app.state.ctx.conn
-    assert resolve_identity(conn, None) == DEFAULT_USER_ID
-    assert resolve_identity(conn, "ghost") == DEFAULT_USER_ID
+    assert resolve_identity(conn, None, fallback=DEFAULT_USER_ID) == DEFAULT_USER_ID
+    assert resolve_identity(conn, "ghost", fallback=DEFAULT_USER_ID) == DEFAULT_USER_ID
     _own_a_thread(client, "s_foreign_line", "u1")
-    assert resolve_identity(conn, "u1") == "u1"
+    assert resolve_identity(conn, "u1", fallback=DEFAULT_USER_ID) == "u1"
+    # 回落值不是写死的常量：它是这台实例的主人（下面两条验的就是这一层）
+    assert resolve_identity(conn, "ghost", fallback="the-owner") == "the-owner"
+
+
+# -- 7：实例级身份（后台那条链唯一能问的"谁"）----------------------------------------
+
+
+def test_the_instance_owner_defaults_to_the_local_identity() -> None:
+    """`IDENTITY_USER_ID` 空/纯空白都算"本机那份" —— 空白不该凭空造出一个主人。"""
+    from rolecard_agent.core.identity import resolve_instance_identity
+
+    assert resolve_instance_identity(_settings("")) == DEFAULT_USER_ID
+    assert resolve_instance_identity(_settings("   ")) == DEFAULT_USER_ID
+    assert resolve_instance_identity(_settings("bob")) == "bob"
+
+
+def test_an_instance_owned_by_another_user_stamps_new_threads_with_him(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """换主人之后：新建的会话落在他名下，而本机那份的线不再出现在他的列表里。
+
+    为什么这一条是 M2 的前置而不是锦上添花：主动开口、图里的域工具都没有"这次请求"可问，
+    它们必须有一个确定的"为谁读"。没有这一层，给那 15 张表补上 `user_id` 也只是**看起来**
+    隔离了 —— 一条从不被过滤的列只是假安慰。
+    """
+    monkeypatch.setenv("IDENTITY_USER_ID", "u1")
+    client = _client(monkeypatch, tmp_path, mode="off")
+    conn = client.app.state.ctx.conn
+    conn.execute(
+        "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "
+        "VALUES ('u1', 'local', 'u1')"
+    )
+    conn.execute(
+        "INSERT INTO session_thread (thread_id, user_id, current_role_id) "
+        "VALUES ('s_local_line', 'local-user', 'general_assistant')"
+    )
+    conn.commit()
+
+    assert client.app.state.ctx.runtime.identity == "u1"
+    assert [s["thread_id"] for s in client.get("/api/sessions").json()] == []
+    created = client.post("/api/session", json={"role_id": "general_assistant"}).json()
+    owner = conn.execute(
+        "SELECT user_id FROM session_thread WHERE thread_id = ?", (created["thread_id"],)
+    ).fetchone()[0]
+    assert str(owner) == "u1"
+    assert [s["thread_id"] for s in client.get("/api/sessions").json()] == [created["thread_id"]]

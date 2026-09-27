@@ -348,6 +348,11 @@ class Settings(BaseModel):
     # 为什么必须有这一项：XFF 是客户端可自由设置的头。旧实现无条件采信它，导致
     # `auto` 档被 `X-Forwarded-For: 127.0.0.1` 完全绕过（代码审查报告（第二轮）H2）。
     auth_trusted_proxies: str = ""
+    # 这台实例的主人是谁（`core/identity.resolve_instance_identity`）。空 = 本机那份
+    # (`local-user`)；把它设成 `app_user` 里的另一个 id，这台实例就替那个人服务。
+    # **刻意不做成运行期可改项**：按架构总览 §4.1，"换身份"是换一份完整数据集，
+    # 不是热切一个 `WHERE` 过滤器 —— 半换的状态（会话是 A 的、后台调度替 B 冒话）比不换更糟。
+    identity_user_id: str = ""
     # 豁免路径前缀（逗号分隔）：探活端点必须免鉴权，否则容器健康检查永远失败。
     auth_exempt_paths: str = "/api/health"
 
@@ -485,6 +490,7 @@ class Settings(BaseModel):
             ("AUTH_API_KEYS", "auth_api_keys"),
             ("AUTH_TRUSTED_PROXIES", "auth_trusted_proxies"),
             ("AUTH_EXEMPT_PATHS", "auth_exempt_paths"),
+            ("IDENTITY_USER_ID", "identity_user_id"),
             ("LANGSMITH_API_KEY", "langsmith_api_key"),
             ("LANGSMITH_PROJECT", "langsmith_project"),
         ):
