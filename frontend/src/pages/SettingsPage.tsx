@@ -18,7 +18,7 @@ import {
   type WorkspaceDir,
 } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
-import { quietLine } from "../lib/quiet";
+import QuietLine from "../components/QuietLine";
 import { Button, Card } from "../components/ui";
 
 // 设置页子页签：模型（凭据组 + 模型行，见 components/ModelsPanel）/ 服务（运行时状态与降级
@@ -1359,8 +1359,8 @@ function RuntimePanel() {
               className="mt-3 space-y-1 border-t border-slate-100 pt-2 dark:border-slate-700"
             >
               {quiet.map((q) => (
-                <li key={q.role_id} className="text-[11px] text-slate-500 dark:text-slate-400">
-                  {quietLine(q)}
+                <li key={q.role_id} className="text-slate-500 dark:text-slate-400">
+                  <QuietLine q={q} />
                 </li>
               ))}
             </ul>

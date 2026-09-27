@@ -598,7 +598,7 @@ describe("运行环境页的「她此刻为什么静默」", () => {
   const quietRow = {
     role_id: "elysia",
     role_name: "爱莉希雅",
-    why: "距上次说话不足 66 分钟，她连着 1 条没被回已退避",
+    why: "距上次说话不足 66 分钟",
     next_ok_at: new Date(Date.now() + 40 * 60_000).toISOString(),
     streak: 1,
     unread: 1,

@@ -14,7 +14,7 @@
   2. 静默时段：本地时间 23:00–08:00 不主动（与间隔的 UTC 分开，注释点明口径）；
   3. 堆积上限：同一角色未读 ≤ `MAX_UNREAD_PER_ROLE`，满了不再开（防轰炸）。
 
-  三道的判据与"下一次大约几点"都由 `_gate` **一处**算出（`blocked_why` 只是取它第 0 项的薄壳）：
+  三道的判据由 `quiet_gate` **一处**算出，并一次带出全部读数：原因、下一次的时刻、退避与未读的计数。
   分成两处迟早对不上，而界面那句话的全部意义是让人信。原因有两个出口 ——
   `quiet_status()` 随收件箱那份负载给界面（`S-8`），调度器只在**原因变化的那一跳**发一条
   `reachout_quiet` / `reachout_ready` 进 tracer（每 tick 一条会把轨迹刷满，
@@ -798,31 +798,11 @@ def _quiet_minutes(base_minutes: float, streak: int, seed: str) -> float:
     return grown * (1 + frac)
 
 
-def blocked_why(
-    role: RoleCard,
-    settings: Settings,
-    conn: SqlConnection,
-    *,
-    now_utc: datetime,
-    now_local: datetime,
-    file_event: bool = False,
-) -> str | None:
-    """决定"这个角色此刻能不能主动开口"。None = 可以；否则返回阻塞原因。
-
-    （全局开关与角色开关由调用方先过滤，这里只负责抑制层判定 —— 两层授权在主流程做。）
-    `file_event=True`（任务目录有变化、该角色可被触发）时**豁免间隔档一次**——素材门控
-    语义：变化值得即时播报；静默时段与未读堆积是用户级护栏，不豁免。
-    """
-    return _gate(
-        role, settings, conn, now_utc=now_utc, now_local=now_local, file_event=file_event
-    ).why
-
-
 class Gate(NamedTuple):
     """一次抑制判定的全部读数。`why` 与 `next_ok_at` 与那两个计数**来自同一批查询**。
 
-    为什么连 `streak` / `unread` 也要一起带出去（09-26 自己修自己）：界面上那句
-    "她连着 2 条没被回已退避"和旁边那个 `streak` 字段若是各查一次，中间被人插一条就是
+    为什么连 `streak` / `unread` 也要一起带出去（09-26 自己修自己）：界面上那句原因和旁边
+    那两枚徽章若是各查一次，中间被人插一条就是
     两个数不一致 —— 而这一格存在的全部意义是让人信。同源不只指"话与时刻"，也指"话里的数"。
     """
 
@@ -832,7 +812,7 @@ class Gate(NamedTuple):
     unread: int
 
 
-def _gate(
+def quiet_gate(
     role: RoleCard,
     settings: Settings,
     conn: SqlConnection,
@@ -857,9 +837,11 @@ def _gate(
         )
         elapsed = now_utc - last
         if elapsed < timedelta(minutes=need):
-            backoff = f"，她连着 {streak} 条没被回已退避" if streak else ""
+            # 退避**不写进这句话**：界面上它是主句旁边一枚徽章（长句在 206px 的抽屉里会
+            # 从中间折行，见 `R26-45`）。不写进句子 ≠ 不说 —— `Gate.streak` 就是那个数，
+            # 句子与徽章同源一次算出，才不会"话里说连着 2 条、徽章写着 1"。
             return Gate(
-                f"距上次说话不足 {need:.0f} 分钟{backoff}",
+                f"距上次说话不足 {need:.0f} 分钟",
                 last + timedelta(minutes=need),
                 streak,
                 unread,
@@ -905,14 +887,14 @@ def quiet_status(
     for role in roles:
         if not role.reachout_enabled:
             continue
-        gate = _gate(role, settings, conn, now_utc=stamp_utc, now_local=stamp_local)
+        gate = quiet_gate(role, settings, conn, now_utc=stamp_utc, now_local=stamp_local)
         out.append(
             {
                 "role_id": role.role_id,
                 "role_name": role.role_name,
                 "why": gate.why,
                 "next_ok_at": None if gate.next_ok_at is None else gate.next_ok_at.isoformat(),
-                # 直接取 `_gate` 那次读的数：再查一遍就会出现"话里说连着 2 条、字段是 1"。
+                # 直接取 `quiet_gate` 那次读的数：再查一遍就会出现"话里说连着 2 条、字段是 1"。
                 "streak": gate.streak,
                 "unread": gate.unread,
             }
@@ -1268,7 +1250,7 @@ class ReachoutScheduler:
             return 0
         for role in candidates:
             can_file = file_events is not None and role.file_watch_enabled
-            why = blocked_why(
+            gate = quiet_gate(
                 role,
                 settings,
                 self._conn,
@@ -1276,17 +1258,24 @@ class ReachoutScheduler:
                 now_local=stamp_local,
                 file_event=can_file,
             )
+            why = gate.why
             # **静默要有出口**（`S-8`）：这句原因以前被 `if …: continue` 直接丢掉，于是
             # "她最近怎么不找我了"在日志里查不到任何线索。只在**原因变了的那一跳**留痕 ——
             # 每 tick 一条会把轨迹刷满（30s × 角色数），而同一句话重复一百遍不带新信息。
-            if self._quiet.get(role.role_id, "") != (why or ""):
-                self._quiet[role.role_id] = why or ""
+            if self._quiet.get(role.role_id, "") != (gate.why or ""):
+                self._quiet[role.role_id] = gate.why or ""
                 self._tracer.emit(
                     TraceEvent(
-                        event="reachout_quiet" if why else "reachout_ready",
+                        event="reachout_quiet" if gate.why else "reachout_ready",
                         node="reachout",
                         role_id=role.role_id,
-                        detail={"why": why or "现在随时能开口"},
+                        # 徽章那个数一起进事件：界面上写着"连着 1 条没回"而日志里查不到，
+                        # 就是 `R26-35` 那一族"屏幕说不一致"。
+                        detail={
+                            "why": gate.why or "现在随时能开口",
+                            "streak": gate.streak,
+                            "unread": gate.unread,
+                        },
                     )
                 )
             if why:

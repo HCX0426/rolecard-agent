@@ -204,7 +204,7 @@ describe("抽屉那一格「她此刻为什么静默」", () => {
     {
       role_id: "general_assistant",
       role_name: "通用助手",
-      why: "距上次说话不足 66 分钟，她连着 1 条没被回已退避",
+      why: "距上次说话不足 66 分钟",
       next_ok_at: new Date(Date.now() + 40 * 60_000).toISOString(),
       streak: 1,
       unread: 1,
@@ -229,6 +229,9 @@ describe("抽屉那一格「她此刻为什么静默」", () => {
     // 给不出时刻的那种阻塞（要他回话）不编时刻
     expect(box.textContent).toContain("未读堆积已达上限");
     expect((box.textContent || "").split("下一次大约").length - 1).toBe(1);
+    // 退避搬进徽章之后（`R26-45`）：抽屉那一格不许再出现"句子中间断行"的长串
+    expect(box.textContent).toContain("连着 1 条没被回 · 已退避");
+    expect(box.textContent).not.toContain("分钟，她连着");
   });
 
   it("没有 quiet（没人开主动资格 / 老后端）时不画空壳", async () => {

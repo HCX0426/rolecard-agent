@@ -17,7 +17,7 @@ import subprocess
 import sys
 
 SCRIPTS = str(pathlib.Path(__file__).resolve().parents[1] / "scripts")
-SENTENCE = "距上次说话不足 266 分钟，她连着 2 条没被回已退避"
+SENTENCE = "距上次说话不足 266 分钟"
 
 
 def _spawn(code: str) -> bytes:

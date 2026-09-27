@@ -15,7 +15,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { api, type ReachoutsPage, type ReachoutRow } from "../api";
-import { quietLine } from "../lib/quiet";
+import QuietLine from "./QuietLine";
 import { useConfirm } from "../hooks/useConfirm";
 
 const DAY_MS = 86_400_000;
@@ -254,11 +254,8 @@ export default function ReachoutPanel({
             className="border-b border-slate-100 px-4 py-2 dark:border-slate-700"
           >
             {quietRows.map((q) => (
-              <p
-                key={q.role_id}
-                className="text-[11px] leading-4 text-slate-400 dark:text-slate-500"
-              >
-                {quietLine(q)}
+              <p key={q.role_id} className="text-slate-400 dark:text-slate-500">
+                <QuietLine q={q} />
               </p>
             ))}
           </div>

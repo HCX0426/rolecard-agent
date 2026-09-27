@@ -1,4 +1,4 @@
-// 静默状态那一行的措辞（`S-8`）。钉的是三件容易写歪的事：
+// 静默状态那一格的措辞（`S-8` + `R26-45`）。钉的是四件容易写歪的事：
 //   1. `why === null` 必须写成**肯定句**（"现在随时能开口"），不能留空 —— 空着用户读成「没算出来」；
 //   2. 时刻按**本地日历**说"今天/明天"，跨月才给日期 —— 后端给的是带时区的 UTC ISO，
 //      直接截字符串会在晚上显示出"昨天 23:5x"；
@@ -7,13 +7,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { QuietStatus } from "../api";
-import { formatNextOk, quietLine } from "./quiet";
+import { formatNextOk, quietParts } from "./quiet";
 
 function status(over: Partial<QuietStatus> = {}): QuietStatus {
   return {
     role_id: "elysia",
     role_name: "爱莉希雅",
-    why: "距上次说话不足 66 分钟，她连着 1 条没被回已退避",
+    why: "距上次说话不足 66 分钟",
     next_ok_at: null,
     streak: 1,
     unread: 1,
@@ -41,25 +41,36 @@ describe("formatNextOk", () => {
   });
 });
 
-describe("quietLine", () => {
-  it("静默中：原话照抄闸门那句，再挂上时刻", () => {
-    const line = quietLine(
+describe("quietParts", () => {
+  it("静默中：主句就是闸门那句，时刻另起一段", () => {
+    const p = quietParts(
       status({ next_ok_at: new Date(2026, 8, 26, 16, 34).toISOString() }),
       new Date(2026, 8, 26, 15, 21),
     );
-    expect(line).toContain("爱莉希雅 静默中");
-    expect(line).toContain("距上次说话不足 66 分钟");
-    expect(line).toContain("下一次大约 今天 16:34");
+    expect(p.head).toBe("爱莉希雅 静默中 · 距上次说话不足 66 分钟");
+    expect(p.when).toBe("今天 16:34");
+    expect(p.ready).toBe(false);
   });
 
-  it("没被挡住时写成肯定句，不留空", () => {
-    const line = quietLine(status({ why: null, next_ok_at: null, streak: 0, unread: 0 }));
-    expect(line).toBe("爱莉希雅 现在随时能开口");
+  // 这条钉的是 `R26-45` 那处改动的另一半：退避从句子搬进徽章，所以**主句里不该再有它**，
+  // 而徽章要带着那个数 —— 两处都断言，才不会哪天又拼回一条长串。
+  it("退避是徽章不是句子的尾巴", () => {
+    expect(quietParts(status()).badge).toBe("连着 1 条没被回 · 已退避");
+    expect(quietParts(status()).head).not.toContain("退避");
+    expect(quietParts(status({ streak: 0 })).badge).toBe("");
   });
 
-  it("要他回话/正在对话这类阻塞给不出时刻 —— 那一行不提「下一次大约」", () => {
-    const line = quietLine(status({ why: "未读堆积已达上限", next_ok_at: null }));
-    expect(line).toContain("未读堆积已达上限");
-    expect(line).not.toContain("下一次大约");
+  it("没被挡住时写成肯定句，不留空、也不挂徽章", () => {
+    const p = quietParts(status({ why: null, next_ok_at: null, streak: 0, unread: 0 }));
+    expect(p.head).toBe("爱莉希雅 现在随时能开口");
+    expect(p.badge).toBe("");
+    expect(p.when).toBe("");
+    expect(p.ready).toBe(true);
+  });
+
+  it("要他回话/正在对话这类阻塞给不出时刻 —— 那一段就是空，不编一个时刻", () => {
+    const p = quietParts(status({ why: "未读堆积已达上限", next_ok_at: null }));
+    expect(p.head).toContain("未读堆积已达上限");
+    expect(p.when).toBe("");
   });
 });

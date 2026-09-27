@@ -589,7 +589,7 @@ def test_reachouts_page_carries_why_each_role_is_quiet(client: TestClient) -> No
     """`S-8`：收件箱那份负载里带一格"她此刻为什么静默"，抽屉与运行环境页共用它。
 
     为什么不单开 `/api/reachouts/status`：抽屉本来每 3 秒就在读这个端点，再开一条等于
-    为了一句话新增一次轮询、一个新路由分级、一处会漂移的时刻源（判据见 `reachout._gate`）。
+    为了一句话新增一次轮询、一个新路由分级、一处会漂移的时刻源（判据见 `reachout.quiet_gate`）。
     """
     client.patch("/api/roles/general_assistant", json={"reachout_enabled": True})
     quiet = client.get("/api/reachouts").json()["quiet"]

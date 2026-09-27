@@ -78,9 +78,9 @@ def test_mark_read_transitions_state(conn) -> None:
     assert rows[0]["state"] == "read"
 
 
-def test_blocked_why_is_none_when_all_clear(conn) -> None:
+def test_quiet_gate_is_none_when_all_clear(conn) -> None:
     utc, local = _now()
-    assert svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local) is None
+    assert svc.quiet_gate(_role(), _settings(), conn, now_utc=utc, now_local=local).why is None
 
 
 def test_blocked_while_that_conversation_is_talking(conn) -> None:
@@ -99,17 +99,17 @@ def test_blocked_while_that_conversation_is_talking(conn) -> None:
     tid = svc.proactive_thread_id(role.role_id)
     assert try_thread_write(tid, timeout=0.0)
     try:
-        reason = svc.blocked_why(role, _settings(), conn, now_utc=utc, now_local=local)
+        reason = svc.quiet_gate(role, _settings(), conn, now_utc=utc, now_local=local).why
         assert reason and "正在对话" in reason
     finally:
         release_thread(tid)
-    assert svc.blocked_why(role, _settings(), conn, now_utc=utc, now_local=local) is None
+    assert svc.quiet_gate(role, _settings(), conn, now_utc=utc, now_local=local).why is None
 
 
 def test_blocked_by_interval(conn) -> None:
     _seed_last(conn, "active", minutes_ago=10)  # 间隔 60 分钟，10 分钟前刚开口
     utc, local = _now()
-    reason = svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local)
+    reason = svc.quiet_gate(_role(), _settings(), conn, now_utc=utc, now_local=local).why
     # 数字带 ±12% 抖动，所以钉"报了分钟数 + 没有未读就不提退避"，不钉 60。
     assert reason is not None and "分钟" in reason
     assert "退避" not in reason
@@ -137,7 +137,7 @@ def test_a_reply_just_given_also_counts_as_having_spoken(conn) -> None:
     _seed_last(conn, "active", minutes_ago=300)  # 上次**主动**开口是 5 小时前（间隔 60 分钟，早过）
     _seed_lane_activity(conn, "active", minutes_ago=1)  # 但她在对话里刚回过话
     utc, local = _now()
-    reason = svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local)
+    reason = svc.quiet_gate(_role(), _settings(), conn, now_utc=utc, now_local=local).why
     assert reason is not None and "说话" in reason
 
 
@@ -145,13 +145,13 @@ def test_stale_conversation_does_not_block_a_proactive_line(conn) -> None:
     """反面对照：会话最后一次活动是 5 小时前 ⇒ 这条闸不该拦她（否则主动开口就此消失）。"""
     _seed_lane_activity(conn, "active", minutes_ago=300)
     utc, local = _now()
-    assert svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local) is None
+    assert svc.quiet_gate(_role(), _settings(), conn, now_utc=utc, now_local=local).why is None
 
 
 def test_blocked_by_quiet_hours(conn) -> None:
     utc = datetime(2026, 9, 18, 5, 0, tzinfo=_UTC)
     local = datetime(2026, 9, 18, 0, 30)  # 本地 00:30 = 静默时段
-    reason = svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local)
+    reason = svc.quiet_gate(_role(), _settings(), conn, now_utc=utc, now_local=local).why
     assert reason is not None and "静默" in reason
 
 
@@ -168,7 +168,7 @@ def test_quiet_status_quotes_the_same_sentence_the_gate_uses(conn) -> None:
     utc, local = _now()
     st = _settings()
     row = svc.quiet_status([_role()], st, conn, now_utc=utc, now_local=local)[0]
-    reason = svc.blocked_why(_role(), st, conn, now_utc=utc, now_local=local)
+    reason = svc.quiet_gate(_role(), st, conn, now_utc=utc, now_local=local).why
     assert reason is not None and row["why"] == reason
     minutes = int(re.search(r"不足 (\d+) 分钟", reason).group(1))
     nxt = datetime.fromisoformat(str(row["next_ok_at"])).astimezone(_UTC)
@@ -253,13 +253,13 @@ def test_blocked_by_unread_backlog(conn) -> None:
     conn.commit()
     utc, local = _now()
     # interval=0 先放行间隔层，单独验证未读堆积这一层
-    reason = svc.blocked_why(
+    reason = svc.quiet_gate(
         _role(),
         _settings(reachout_interval_minutes=0),
         conn,
         now_utc=utc,
         now_local=local,
-    )
+    ).why
     assert reason is not None and "未读" in reason
 
 
@@ -755,24 +755,24 @@ def _prime_baseline(conn, settings: Settings, task_dir: Path, when: datetime) ->
     assert fw.check_changes(conn, resolve_task_dir(settings, conn), now_utc=when) is None
 
 
-def test_blocked_why_interval_exempt_for_file_event_only(conn) -> None:
+def test_quiet_gate_interval_exempt_for_file_event_only(conn) -> None:
     _seed_last(conn, "active", minutes_ago=10)  # 间隔 60 分钟内
     utc, local = _now()
     # 常规：被间隔挡住
-    assert svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local) is not None
+    assert svc.quiet_gate(_role(), _settings(), conn, now_utc=utc, now_local=local).why is not None
     # file_event：豁免间隔档（素材门控）
-    assert (
-        svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local, file_event=True)
-        is None
-    )
-
-
-def test_blocked_why_file_event_still_respects_quiet_hours(conn) -> None:
-    utc = datetime(2026, 9, 18, 5, 0, tzinfo=_UTC)
-    local = datetime(2026, 9, 18, 0, 30)  # 本地 00:30 = 静默时段
-    reason = svc.blocked_why(
+    gate = svc.quiet_gate(
         _role(), _settings(), conn, now_utc=utc, now_local=local, file_event=True
     )
+    assert gate.why is None
+
+
+def test_quiet_gate_file_event_still_respects_quiet_hours(conn) -> None:
+    utc = datetime(2026, 9, 18, 5, 0, tzinfo=_UTC)
+    local = datetime(2026, 9, 18, 0, 30)  # 本地 00:30 = 静默时段
+    reason = svc.quiet_gate(
+        _role(), _settings(), conn, now_utc=utc, now_local=local, file_event=True
+    ).why
     assert reason is not None and "静默" in reason  # 用户级护栏不豁免
 
 
@@ -1132,12 +1132,16 @@ def test_backoff_counts_the_lines_he_never_replied_to(conn) -> None:
     _seed_last(conn, "active", minutes_ago=100)  # 她 100 分钟前主动冒的那句
     _seed_lane_activity(conn, "active", minutes_ago=200)  # 他最后一次动静在**那之前** ⇒ 悬着 1 条
     utc, local = _now()
-    reason = svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local)
-    assert reason is not None and "退避" in reason, "1 条没回 ⇒ 要等 ~120 分钟，100 分钟还不够"
+    gate = svc.quiet_gate(_role(), _settings(), conn, now_utc=utc, now_local=local)
+    # 退避**不再写进那句话**（`R26-45`：长句在 206px 的抽屉里从中间折行，界面上它改成主句旁边
+    # 一枚徽章）。所以这条钉的是徽章那个数 + 被拉长的间隔，而不是句子里有没有"退避"两个字。
+    assert gate.streak == 1, gate
+    minutes = int(re.search(r"不足 (\d+) 分钟", str(gate.why)).group(1))
+    assert minutes > 100, f"1 条没回 ⇒ 要等 ~120 分钟，读数却只有 {minutes}（退避没进闸门）"
 
     _seed_lane_activity(conn, "active", minutes_ago=70)  # 他 70 分钟前回过话 ⇒ 悬着的那条归零
     assert (
-        svc.blocked_why(_role(), _settings(), conn, now_utc=utc, now_local=local) is None
+        svc.quiet_gate(_role(), _settings(), conn, now_utc=utc, now_local=local).why is None
     ), "回过话之后不该继续退避（锚点回到 70 分钟前，基础 60 分钟那一档已经过了）"
 
 

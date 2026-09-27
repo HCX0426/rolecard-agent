@@ -601,6 +601,8 @@ export default function RolesPage({
               <span className="mt-1 block text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
                 装配顺序：角色设定 → <b>范例</b> → 安全规则（安全规则永远最后，不可被覆盖）。
                 半填（只写一半）的范例不会被提交。
+                <b>范例教句式，不教事实</b>：别在这里写真实数值、日期或人名 ——
+                模型有概率把范例里那个数当成你的事实，在别的问句上复读出来。数值让它自己去档案里取。
               </span>
             </div>
             <label className="mt-3 block">
