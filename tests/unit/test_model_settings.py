@@ -629,3 +629,44 @@ def test_a_declared_column_without_a_reader_fails_loud(conn: object) -> None:
             _value_columns(conn)
     finally:
         ModelBackend.model_fields.pop("new_thing", None)
+
+
+def test_effective_settings_carries_every_value_column_from_the_row(conn: object) -> None:
+    """表里的值列要**原样**进 `ModelBackend`（S-1 的等价性那一半）。
+
+    上面那条用 `_value_columns` 钉"缺 reader 会抛"；这条钉"值真的流过去了" —— 把构造从
+    手写十一个字段换成 `_backend_from_row` 之后，读错列、用错转换器都会在这里现形。
+    （刻意**不**在这里模拟"加一列"：pydantic v2 里往 `model_fields` 塞一个字段不会让构造
+    真的接受它，那样写出来的是一条假绿。真加列的那条路由上面 `_value_columns` 守着。）
+    """
+    svc = ModelSettingsService(conn)  # type: ignore[arg-type]
+    svc.save(
+        user_id=OWNER,
+        default="x",
+        backends=[
+            {
+                "name": "x",
+                "provider": "ollama",
+                "base_url": "http://localhost:11434",
+                "model": "qwen3:8b",
+                "api_key": None,
+                "usage": "chat",
+            }
+        ],
+    )
+    # 采样惩罚与能力位不在 `save()` 的入参里（各有自己的写入点），所以直接写库。
+    conn.execute(  # type: ignore[attr-defined]
+        "UPDATE model_backend SET num_ctx = 8192, supports_vision = 1, supports_tools = 0,"
+        " repeat_penalty = 1.25, frequency_penalty = 0.1, presence_penalty = 0.2"
+        " WHERE name = 'x'"
+    )
+    conn.commit()  # type: ignore[attr-defined]
+
+    backend = svc.effective_settings(Settings(), user_id=OWNER).backend("x")
+    assert backend.num_ctx == 8192
+    assert backend.supports_vision is True and backend.supports_tools is False
+    assert (backend.repeat_penalty, backend.frequency_penalty, backend.presence_penalty) == (
+        1.25,
+        0.1,
+        0.2,
+    )

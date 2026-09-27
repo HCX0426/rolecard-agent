@@ -81,6 +81,7 @@ def build_kernel(
     model_resolver: Callable[..., ChatLike] | None = None,
     memory_provider: Callable[[str | None, str | None], str] | None = None,
     vision_probe: Callable[[str | None, str], bool | None] | None = None,
+    settings_resolver: Callable[[], Settings] | None = None,
 ) -> Any:
     """Compile the kernel graph.
 
@@ -114,9 +115,14 @@ def build_kernel(
     if memory_provider is not None:
         ctx.memory_provider = memory_provider
     # 视觉能力探测（P1-2）：不传 = "永远不知道" = 永远不拦（fail-open）。拦与不拦的口径
-    # 写在 core/nodes._reject_unsupported_vision，这里只负责把宿主的探测器接进来。
+    # 写在 `core/nodes._reject_unsupported_vision`，这里只负责把宿主的探测器接进来。
     if vision_probe is not None:
         ctx.vision_probe = vision_probe
+    # 「这次模型调用花谁的 key」的挂点（M2d 尾巴）：不传 = 一律用构建期那份 `settings`。
+    # 只在节点**内部**（本轮主人已绑进上下文之后）被 `turn_settings` 调用，所以 resolver
+    # 那侧读得到"这一轮是谁"；宿主没接就是单机形态，行为逐字节不变。
+    if settings_resolver is not None:
+        ctx.settings_resolver = settings_resolver
     # 历史预算与工具超时随宿主配置走（审查报告 H3 / M10）：内核不再无条件把全量历史塞进
     # prompt，也不再把工具执行交给"无限等待"。
     ctx.max_context_chars = ctx.settings.context_max_chars

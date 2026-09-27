@@ -22,7 +22,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 # Any：num_ctx 是 int|None，dict[str,str] 会让 mypy 逐字段校验失败；展开时由 pydantic 把关。
 DEFAULT_LOCAL_BACKEND: dict[str, Any] = {
@@ -66,6 +66,11 @@ class ModelBackend(BaseModel):
     package must actually be installed - a cloud backend pointing at an OpenAI-compatible
     endpoint needs `langchain-openai`, which the local-only v1 install does not ship.
     """
+
+    # `extra="forbid"`（09-26 轮 S-1）：`MODEL_BACKENDS` 是一段**手写 JSON**，从前拼错一个
+    # 字段名会被 pydantic 静默丢掉、那一项用默认值跑起来 —— 症状是"我明明设了 num_ctx"而
+    # 它从来没生效，且没有任何地方会红。改成当场报错：写配置文件的人越早听见越好。
+    model_config = ConfigDict(extra="forbid")
 
     model: str
     base_url: str | None = None
@@ -433,13 +438,18 @@ class Settings(BaseModel):
             # cloud endpoint should not silently remove the offline one, and `local` is also
             # the natural fallback target.
             merged = {"local": ModelBackend(**DEFAULT_LOCAL_BACKEND)}
-            for name, cfg in parsed.items():
-                if name == "local":
-                    # Partial override: someone writing {"local": {"model": "..."}} means
-                    # "the usual Ollama, different model" - not "and drop the base_url".
-                    merged["local"] = ModelBackend(**{**DEFAULT_LOCAL_BACKEND, **cfg})
-                else:
-                    merged[name] = ModelBackend(**cfg)
+            # 把 pydantic 的报错翻成人话（与下面 MCP_SERVERS 同形）：`extra="forbid"` 之后
+            # 一个拼错的字段名会当场抛，裸的 ValidationError 对写配置的人没有指向性。
+            try:
+                for name, cfg in parsed.items():
+                    if name == "local":
+                        # Partial override: someone writing {"local": {"model": "..."}} means
+                        # "the usual Ollama, different model" - not "and drop the base_url".
+                        merged["local"] = ModelBackend(**{**DEFAULT_LOCAL_BACKEND, **cfg})
+                    else:
+                        merged[name] = ModelBackend(**cfg)
+            except ValidationError as exc:
+                raise ValueError(f"invalid MODEL_BACKENDS config: {exc}") from exc
             data["model_backends"] = merged
 
         if raw := src.get("MCP_SERVERS"):

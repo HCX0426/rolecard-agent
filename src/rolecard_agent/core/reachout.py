@@ -82,7 +82,7 @@ from rolecard_agent.core.thread_locks import thread_is_busy
 from rolecard_agent.core.usage import TokenUsage, parse_usage, record_usage
 from rolecard_agent.core.workspace import resolve_task_dir
 from rolecard_agent.roles.models import RoleCard
-from rolecard_agent.roles.service import RoleCardService
+from rolecard_agent.roles.service import RoleCardService, RoleNotFound
 from rolecard_agent.storage.db import SqlConnection
 
 # 静默时段（本地时间）：23:00–08:00 不主动打扰。
@@ -92,6 +92,12 @@ QUIET_HOURS_END = 8
 MAX_UNREAD_PER_ROLE = 2
 # 后台轮询间隔（秒）：30s 一查足够（真正开口还受间隔/时段抑制）。
 TICK_SECONDS = 30
+# 「只进了收件箱、没落进会话」的那几条，多久之内还值得补投（R26-40 ②）。过了这个窗口就不管了
+# —— 她半小时前说的话现在才冒进会话，读起来像穿越。这个窗同时挡住"这一列上线时那批老行
+# （全为 NULL）被当成待办"。
+UNDELIVERED_RETRY_MINUTES = 30
+# 一次 tick 最多补几条：补投要拿会话写锁，积压太多会把这一 tick 拖住（别的角色还等着开口）。
+UNDELIVERED_RETRY_LIMIT = 5
 # 退避倍率：每攒一条未读，下次要等的间隔乘一次这个数（未读=2 时本来就被上限闸住）。
 BACKOFF_GROWTH = 2.0
 # 间隔抖动幅度（±比例）：让"每天同一时刻"这件事不成立。依据见 `_quiet_minutes`。
@@ -591,8 +597,8 @@ def record_reachout(
     *,
     user_id: str,
     fired_by: str | None = None,
-) -> None:
-    """落一条主动开口（unread）。role 冗余存角色名：角色被删后收件箱仍可读。
+) -> int:
+    """落一条主动开口（unread），返回它的 id。role 冗余存角色名：角色被删后收件箱仍可读。
 
     `fired_by` 是这一条的**由头**（`tick_once` 那条链上命中的第一个源）。不带它 = 这条
     不知道由头（离线单测、以及这一列上线之前的老行都是 NULL）—— 读侧不许把 NULL 当成
@@ -601,7 +607,7 @@ def record_reachout(
     落完顺手按角色卡的 `reachout_keep` 修剪（0 = 不自动删）：抽屉"只增不减"是用户报的
     第二件事，而这条挂在写入点上就够了 —— 不需要为此再跑一个定时任务。
     """
-    conn.execute(
+    cur = conn.execute(
         "INSERT INTO agent_reachout (role_id, user_id, role_name, text, fired_by)"
         " VALUES (?, ?, ?, ?, ?)",
         (role.role_id, user_id, role.role_name, text, fired_by),
@@ -610,6 +616,42 @@ def record_reachout(
     prune_inbox(
         conn, role.role_id, int(getattr(role, "reachout_keep", 0) or 0), user_id=user_id
     )
+    # 返回 id：调用方要把"投进会话了没有"写回同一行（`mark_delivered`）。
+    return int(cur.lastrowid or 0)
+
+
+def mark_delivered(conn: SqlConnection, reachout_id: int) -> None:
+    """记下"这一句真的落进她的主动会话了"（`R26-40` ②）。
+
+    只在 `deliver` 真返回了线程 id 时调 —— 把"收件箱有"与"会话里有"这两件事分开记，
+    是这一列存在的全部意义。
+    """
+    conn.execute(
+        "UPDATE agent_reachout SET delivered_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (reachout_id,),
+    )
+    conn.commit()
+
+
+def undelivered_reachouts(
+    conn: SqlConnection, *, user_id: str, within_minutes: int, limit: int
+) -> list[dict[str, Any]]:
+    """**只进了收件箱、还没落进会话**的近期开口（按时间正序），给调度器补投用。
+
+    三条限定各有理由：
+      * `delivered_at IS NULL` —— 欠的就是这些；
+      * **时间窗**（`within_minutes`）—— 这句早就过去了就不该再补（她三小时前说的话现在
+        才冒进会话，读起来像穿越）；它同时挡住"这一列上线时那批老行（全 NULL）被当成待办"；
+      * `state != 'dismissed'` —— 用户亲手划掉的那条不用补，那是"他不想看"。
+    """
+    rows = conn.execute(
+        "SELECT id, role_id, text FROM agent_reachout "
+        "WHERE user_id = ? AND delivered_at IS NULL AND state != 'dismissed' "
+        "AND created_at >= datetime('now', ?) "
+        "ORDER BY id ASC LIMIT ?",
+        (user_id, f"-{int(within_minutes)} minutes", int(limit)),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def prune_inbox(conn: SqlConnection, role_id: str, keep: int, *, user_id: str) -> int:
@@ -1209,6 +1251,61 @@ class ReachoutScheduler:
 
     # -- 主流程（可注入 now 用于测试） -------------------------------------
 
+    def _retry_undelivered(self, owner: str) -> int:
+        """把"只进了收件箱、没落进会话"的那几条补上，返回补上的条数（`R26-40` ②）。
+
+        为什么需要它：`deliver_proactive` 在"那条会话正在对话中"时拿不到写锁就放弃 ——
+        刻意不去打断用户那一轮（一轮可能跑几十秒到几分钟，本地模型更久），而收件箱那一行
+        **已经先落了**。没有这一步，那句话就永久停在收件箱里：气泡里有它、点进会话却没有。
+        补投本身也会撞上"又在忙"，那就留在原地等下一次 tick —— 不需要重试计数，
+        `undelivered_reachouts` 的时间窗会替我们收口（过期的那些自己就不再被读到）。
+        """
+        if self._deliver is None:
+            return 0
+        try:
+            rows = undelivered_reachouts(
+                self._conn,
+                user_id=owner,
+                within_minutes=UNDELIVERED_RETRY_MINUTES,
+                limit=UNDELIVERED_RETRY_LIMIT,
+            )
+        except (sqlite3.Error, OSError):
+            return 0
+        fixed = 0
+        for row in rows:
+            try:
+                role = self._roles.scoped(owner).get(str(row["role_id"]))
+            except RoleNotFound:
+                continue  # 卡被删了：这句话留在收件箱就好，没什么可投的
+            try:
+                thread_id = self._deliver(role, str(row["text"]))
+            except Exception as exc:  # noqa: BLE001 - 一个角色投不进去不该拖住别的角色
+                self._tracer.emit(
+                    TraceEvent(
+                        event="reachout_deliver_failed",
+                        node="reachout",
+                        role_id=str(row["role_id"]),
+                        detail={"error": f"{type(exc).__name__}: {exc}", "late": True},
+                    )
+                )
+                continue
+            if thread_id is None:
+                continue  # 还在忙：下一次 tick 再看
+            mark_delivered(self._conn, int(row["id"]))
+            fixed += 1
+            # 补投成功要留痕：它是"她说过的话晚了多久才落地"的唯一证据，
+            # 而"收件箱里有、会话里没有"这种观感只能靠这条读数解释。
+            self._tracer.emit(
+                TraceEvent(
+                    event="reachout_delivered_late",
+                    node="reachout",
+                    thread_id=thread_id,
+                    role_id=str(row["role_id"]),
+                    detail={"reachout_id": int(row["id"])},
+                )
+            )
+        return fixed
+
     def tick_once(
         self,
         *,
@@ -1240,6 +1337,9 @@ class ReachoutScheduler:
         try:
             # 后台这条链没有"这次请求"可问：它替**这台实例的主人**挑人开口（§4.1 的实例级身份）。
             owner = resolve_instance_identity(settings)
+            # 先把上一 tick 欠下的补上（R26-40 ②）：顺序上"她之前说过的那句"该排在"她新要
+            # 说的这句"前面，否则补投只会永远让位给新开口。
+            self._retry_undelivered(owner)
             candidates = [
                 r for r in self._roles.scoped(owner).list_roles() if r.reachout_enabled
             ]
@@ -1368,7 +1468,9 @@ class ReachoutScheduler:
                 )
                 continue
             text = draft.text
-            record_reachout(self._conn, role, text, user_id=owner, fired_by=fired)
+            reachout_id = record_reachout(
+                self._conn, role, text, user_id=owner, fired_by=fired
+            )
             record_interaction(self._conn, role.role_id, now=stamp_utc)
             if fired == "recall":
                 # 冷却锚点只在**真的发出去了**的时候记：被 guard 拦下、正文为空的那些
@@ -1382,6 +1484,9 @@ class ReachoutScheduler:
                 # 也别让同一个话题再冒一遍。
                 save_open_threads(self._conn, role.role_id, [], now=stamp_utc)
             # 先落收件箱（用户一定能看见），再尽力投进主动会话；投递坏了也不把消息吞掉。
+            # 投不进去的那些**不是丢了**：`delivered_at` 仍为空，下一 tick 由
+            # `_retry_undelivered` 补上（R26-40 ②）—— 从前那句"调度器下一轮还会再问"是错的，
+            # 下一轮是**重新生成一句新话**，上一句就此只在收件箱里。
             thread_id: str | None = None
             if self._deliver is not None:
                 try:
@@ -1395,6 +1500,8 @@ class ReachoutScheduler:
                             detail={"error": f"{type(exc).__name__}: {exc}"},
                         )
                     )
+                if thread_id is not None:
+                    mark_delivered(self._conn, reachout_id)
             self._tracer.emit(
                 TraceEvent(
                     event="reachout_sent",

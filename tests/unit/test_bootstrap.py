@@ -16,11 +16,14 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any, cast
 
-from rolecard_agent.config import Settings
+from rolecard_agent.config import ModelBackend, Settings
 from rolecard_agent.core.bootstrap import Assembly, Runtime, build_runtime
-from rolecard_agent.core.identity import DEFAULT_USER_ID
+from rolecard_agent.core.identity import DEFAULT_USER_ID, bound_user
+from rolecard_agent.core.nodes import KernelContext, _turn_backend, turn_settings
 from rolecard_agent.domains.health.service import HealthQueryService
 from rolecard_agent.domains.registry import DOMAINS, build_registry
 from rolecard_agent.storage.db import bootstrap as apply_schema
@@ -321,3 +324,202 @@ def test_proactive_window_still_has_material_when_she_has_the_last_word(tmp_path
         assert "还没有接过话" not in window, "扫描那段不该带'没接住'的措辞，它拿的是整窗"
     finally:
         runtime.conn.close()
+
+
+# -- 凭据按这一轮的主人（M2d 尾巴的收口）----------------------------------------------
+
+A_KEY = "sk-aaaaaaaaaaaaaaaa"
+B_KEY = "sk-bbbbbbbbbbbbbbbbbb"
+B_USER = "u2"
+
+
+def _settings_with_a_local_key(tmp_path: Path) -> Settings:
+    """实例主人（`local-user`）那一份走 env 播种，第二个身份走设置页写入。"""
+    return Settings(
+        sqlite_path=tmp_path / "cred.db",
+        chroma_path=tmp_path / "chroma",
+        upload_dir=tmp_path / "uploads",
+        model_backends={
+            "chat": ModelBackend(
+                model="Qwen3-8B",
+                provider="siliconflow",
+                base_url="https://api.siliconflow.cn/v1",
+                api_key=A_KEY,
+            )
+        },
+        model_default="chat",
+    )
+
+
+def _record_models(seen: list[Settings]) -> Callable[..., object]:
+    """记录型假工厂：把"构建这个模型时收到的是哪份配置"留下来，返回一个可认身份的替身。
+
+    先 `settings.backend(...)` 一次再记录：真工厂（`core.graph.build_model`）就是在这里
+    对未知后端名抛 `KeyError`，`resolve_role_model` 的降级分支认的正是那条失败。假工厂
+    若不照做，"未知后端降级"那条路径在测试里根本走不到（会静默变成"用假模型跑过去了"）。
+    """
+
+    def factory(
+        settings: Settings, backend_name: str | None = None, temperature: float | None = None
+    ) -> object:
+        settings.backend(backend_name)
+        seen.append(settings)
+        return object()
+
+    return factory
+
+
+def _save_second_identity(runtime: Runtime) -> None:
+    """第二个身份配**自己的一台**后端（`model_backend.name` 是全局唯一主键，所以名字带后缀）。
+
+    这不是测试的凑合，是真实形状：后端名全局唯一 ⇒ B 的组必然与 A 不同名。于是"照旧按
+    实例主人那份快照解析"的症状不是张冠李戴，而是 `KeyError` → **降级到 A 的默认模型** ——
+    同一件事的另一种表现，同样是他花了别人的 key。
+    """
+    runtime.model_settings.save(
+        user_id=B_USER,
+        default="chat-b",
+        backends=[
+            {
+                "name": "chat-b",
+                "provider": "siliconflow",
+                "base_url": "https://api.siliconflow.cn/v1",
+                "model": "Qwen3-32B",
+                "api_key": B_KEY,
+                "usage": "chat",
+            }
+        ],
+    )
+
+
+def test_a_turn_carries_the_key_of_the_person_who_is_talking(tmp_path: Path) -> None:
+    """这一轮花谁的 key 按**本轮主人**取，不按实例主人（M2d 尾巴的收口）。
+
+    收口前：`effective_settings` 已经按人存了配置，但运行期那份快照是**实例级**的 ——
+    第二个身份让角色卡指向自己的后端，模型构建时却在第一份快照里找不到它，于是**降级到
+    实例主人那台默认模型**：他拿到的是别人的答复，且花的是别人的 key（"每个人花自己的 key"
+    只兑现了一半）。`bound_user` 正是图节点入口绑的那一层（既有用例钉着"工具节点读到的是
+    这条线程的主人"），所以这里用同一个机制验。
+    """
+    seen: list[Settings] = []
+    runtime = build_runtime(
+        domains=DOMAINS,
+        query_factory=HealthQueryService,
+        registry_factory=_wiring,  # type: ignore[arg-type]
+        env_settings=_settings_with_a_local_key(tmp_path),
+        model_factory=_record_models(seen),
+    )
+    try:
+        _save_second_identity(runtime)
+        mine = runtime.resolve_role_model("chat")  # 不在任何一轮里 ⇒ 实例主人那份
+        with bound_user(B_USER):
+            theirs = runtime.resolve_role_model("chat-b")
+        assert seen[-2].backend("chat").api_key == A_KEY
+        last = seen[-1]
+        assert B_KEY in repr(last.model_backends), (
+            f"B 那一轮没用上自己的 key，最后一次构建拿的是 {sorted(last.model_backends)}"
+        )
+        assert mine is not theirs
+    finally:
+        runtime.conn.close()
+
+
+def test_a_default_backend_belongs_to_the_person_who_is_talking(tmp_path: Path) -> None:
+    """没指定后端（`backend_name=None`）那一条短路，从前直接回**实例主人**的默认模型。
+
+    这是最容易漏的一条：它跑在 `resolve_role_model` 的最前面、连工厂都不碰，所以
+    "角色卡留空 = 跟着全局走"的人恰恰是**每一轮都在花第一把 key** 的那一群。同一条
+    用例顺带钉住缓存仍然在人际复用（同一主人同一后端不重建）—— 缺了主人那一维，
+    B 会命中 A 那条 `(None, None)`。
+    """
+    seen: list[Settings] = []
+    runtime = build_runtime(
+        domains=DOMAINS,
+        query_factory=HealthQueryService,
+        registry_factory=_wiring,  # type: ignore[arg-type]
+        env_settings=_settings_with_a_local_key(tmp_path),
+        model_factory=_record_models(seen),
+    )
+    try:
+        _save_second_identity(runtime)
+        first_a = runtime.resolve_role_model("chat")
+        assert runtime.resolve_role_model("chat") is first_a, "同一主人同一后端被反复重建"
+        with bound_user(B_USER):
+            theirs = runtime.resolve_role_model(None)
+            assert runtime.resolve_role_model(None) is theirs
+        assert theirs is not runtime.state["default_model"], (
+            "B 什么都没选，却拿到了实例主人那台默认模型 —— 这条短路没按本轮主人分流"
+        )
+        assert B_KEY in repr(seen[-1].model_backends)
+    finally:
+        runtime.conn.close()
+
+
+def test_a_background_caller_names_the_owner_it_works_for(tmp_path: Path) -> None:
+    """跨线程的调用方要**显式**交出主人 —— `bound_user` 是 `ContextVar`，不跨线程传播。
+
+    自动提取跑在"响应流完之后"的后台线程里（`_distill_after_turn` → `_thread_model`）：
+    那边 `active_user_id` 一定是空的，所以它必须把这条线程的主人传进来。不传的症状不是报错，
+    而是**替别人抽记忆** —— 拿实例主人的凭据跑第二个人的提取，静悄悄，且花的是别人的钱。
+    这里不绑 `bound_user`，直接模拟那个后台线程。
+    """
+    seen: list[Settings] = []
+    runtime = build_runtime(
+        domains=DOMAINS,
+        query_factory=HealthQueryService,
+        registry_factory=_wiring,  # type: ignore[arg-type]
+        env_settings=_settings_with_a_local_key(tmp_path),
+        model_factory=_record_models(seen),
+    )
+    try:
+        _save_second_identity(runtime)
+        built = runtime.resolve_role_model("chat-b", user_id=B_USER)
+        assert built is not runtime.state["default_model"], "没按传进来的主人解析，降级了"
+        assert B_KEY in repr(seen[-1].model_backends)
+    finally:
+        runtime.conn.close()
+
+
+def test_an_unknown_backend_degrades_instead_of_raising(tmp_path: Path) -> None:
+    """拼错/被删掉的后端名照旧降级（可用性 fail-soft），不因收口而变成 500。
+
+    降级落在那台编译期默认模型上（它是"这台机器上一定跑得起来"的那一份）；留痕里带上
+    `user_id`，因为两个身份各配自己的组时，光看后端名分不出是谁那一轮降的级。
+    """
+    seen: list[Settings] = []
+    runtime = build_runtime(
+        domains=DOMAINS,
+        query_factory=HealthQueryService,
+        registry_factory=_wiring,  # type: ignore[arg-type]
+        env_settings=_settings_with_a_local_key(tmp_path),
+        model_factory=_record_models(seen),
+    )
+    try:
+        _save_second_identity(runtime)
+        with bound_user(B_USER):
+            degraded = runtime.resolve_role_model("no-such-backend")
+        assert degraded is runtime.state["default_model"]
+    finally:
+        runtime.conn.close()
+
+
+def test_turn_settings_reads_the_resolver_not_the_build_time_snapshot() -> None:
+    """节点侧（能力位那一处）读的是 resolver 那份，不是 `ctx.settings`。
+
+    模型凭据与"这一轮用哪个后端的能力位（工具/视觉）"必须同源：差一个人就会出现
+    "拿 B 的 key，按 A 声明的能力判要不要绑工具"。`ctx.settings` 始终是实例主人那份
+    （知识库、工具闭包那些设备级读法还在用它），所以这条钉的是**两者没有混用**。
+    """
+    build_time = Settings(model_backends={"chat": ModelBackend(model="m", api_key="sk-build")})
+    per_turn = Settings(model_backends={"chat": ModelBackend(model="m", api_key="sk-turn")})
+    ctx = KernelContext(
+        model=cast("Any", None),
+        registry=cast("Any", None),
+        roles=cast("Any", None),
+        tracer=cast("Any", None),
+        settings=build_time,
+    )
+    assert turn_settings(ctx) is build_time, "没接 resolver 就该回落构建期那份"
+    ctx.settings_resolver = lambda: per_turn
+    assert turn_settings(ctx) is per_turn
+    assert _turn_backend({"model_name": "chat"}, None, ctx).api_key == "sk-turn"

@@ -44,7 +44,7 @@ from __future__ import annotations
 import contextlib
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
@@ -1403,23 +1403,10 @@ class ModelSettingsService:
         raw = self._raw_backends(user_id=user_id)
         if not raw:
             return env_settings
+        # 值列不在这里抄清单（S-1）：`_backend_from_row` 按 `_COLUMN_READERS` 逐列读，
+        # 加一列只改 schema 声明 + 补一个读取器。这里从前手写十一个字段，漏一个不会红。
         merged: dict[str, ModelBackend] = {
-            str(row["name"]): ModelBackend(
-                model=str(row["model"]),
-                base_url=row["base_url"],  # type: ignore[arg-type]
-                api_key=row["api_key"],  # type: ignore[arg-type]
-                provider=str(row["provider"]),
-                usage=str(row["usage"]),
-                num_ctx=int(str(row["num_ctx"])) if row.get("num_ctx") is not None else None,
-                supports_vision=_vision_of(row["supports_vision"]),
-                supports_tools=_tools_of(row["supports_tools"]),
-                # 采样惩罚：NULL 一路留到工厂再判，**不在这里补 0**。Ollama 出厂
-                # repeat_penalty=1.1，把"没设"写成 0 等于替用户关掉了它。
-                repeat_penalty=_opt_float(row.get("repeat_penalty")),
-                frequency_penalty=_opt_float(row.get("frequency_penalty")),
-                presence_penalty=_opt_float(row.get("presence_penalty")),
-            )
-            for row in raw
+            str(row["name"]): _backend_from_row(row) for row in raw
         }
         default = self.default_backend()
         # 默认缺失/失效 → 退到 DB 第一个后端（首启种子已保证至少一个 chat 后端）。
@@ -1475,19 +1462,6 @@ def _opt_float(raw: object) -> float | None:
         return None
 
 
-#: "值由 `ModelBackend` 声明、又真的存在 `model_backend` 表里"的那些列怎么读出来。
-#: 读取器**缺一个就当场抛**，而不是让那一列静默变成 None —— 这就是 S-1 的全部目的：
-#: 从前加一列要手写 7 处，漏在读侧的那一处不会红，症状是"设了但看不见"。
-_COLUMN_READERS: dict[str, Callable[[Any], Any]] = {
-    "num_ctx": _opt_int,
-    "supports_vision": _tri_state,
-    "supports_tools": _tri_state,
-    "repeat_penalty": _opt_float,
-    "frequency_penalty": _opt_float,
-    "presence_penalty": _opt_float,
-}
-
-
 def _vision_of(raw: object) -> bool:
     """运行时语义：未探测 = 不支持视觉（拆层前的列默认值，行为不变）。"""
     return bool(raw) if raw is not None else False
@@ -1496,6 +1470,42 @@ def _vision_of(raw: object) -> bool:
 def _tools_of(raw: object) -> bool:
     """运行时语义：未探测 = 支持工具（与 P1-2"只拦确定的否"同一条纪律）。"""
     return bool(raw) if raw is not None else True
+
+
+#: "值由 `ModelBackend` 声明、又真的存在 `model_backend` 表里"的那些列**怎么读成运行时值**。
+#: 读取器**缺一个就当场抛**（`_value_columns`），而不是让那一列静默变成 None —— 这就是
+#: S-1 的全部目的：从前加一列要手写 7 处，漏在读侧的那一处不会红，症状是"设了但看不见"。
+#: 这份清单**有两个消费点**：`_value_columns` 拿它校验"有没有漏"，`_backend_from_row` 拿它
+#: 真的读值。两份语义刻意分开的另一半是界面的**三态**（`list_providers` 显式调 `_tri_state`
+#: 把"没测过"显示成 `?`）：这里给的是运行时二态，合并的话"没测过"会被当成"不支持"，
+#: 而"不支持"会触发调用前拦截。
+_COLUMN_READERS: dict[str, Callable[[Any], Any]] = {
+    "num_ctx": _opt_int,
+    "supports_vision": _vision_of,
+    "supports_tools": _tools_of,
+    "repeat_penalty": _opt_float,
+    "frequency_penalty": _opt_float,
+    "presence_penalty": _opt_float,
+}
+
+
+def _backend_from_row(row: Mapping[str, object]) -> ModelBackend:
+    """一行（`_raw_backends` 那份 JOIN 视图）→ `ModelBackend`（S-1）。
+
+    值列**不抄清单**：加一列只改 `schema.sql` 声明 + 在 `_COLUMN_READERS` 里补一个读取器，
+    这里自动跟上。从前这段手写十个字段，漏一个的症状是"设了但跑起来看不见"，而且不会红
+    （`_value_columns` 只管 SELECT 那一侧，管不到这个构造）。
+    """
+    fields: dict[str, object] = {
+        "model": str(row["model"]),
+        "base_url": row.get("base_url"),
+        "api_key": row.get("api_key"),
+        "provider": str(row["provider"]),
+        "usage": str(row["usage"]),
+    }
+    for column, read in _COLUMN_READERS.items():
+        fields[column] = read(row.get(column))
+    return ModelBackend(**fields)  # type: ignore[arg-type]
 
 
 def _capability_of(

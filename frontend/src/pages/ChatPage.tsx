@@ -35,7 +35,7 @@ import {
 } from "../components/chat/icons";
 import ThinkingPanel from "../components/chat/ThinkingPanel";
 import { Markdown } from "../components/Markdown";
-import { Button } from "../components/ui";
+import { Button, Tag } from "../components/ui";
 
 /** 心跳。这一拍问的是 `/api/session/{tid}/turn` —— 它只查后端那份进程内登记
  *  （一次字典查找 + 一次主键 SELECT），所以敢 0.8 秒问一次。它决定的就是
@@ -1361,6 +1361,12 @@ export default function ChatPage({
                     <>
                       <Markdown text={turn.answer.content} />
                       <div className="mt-1 flex items-center gap-3 text-[11px] text-slate-400 dark:text-slate-500">
+                        {/* 这一句是她**主动**说的（R26-40 ①）：主动开口那句与前后的提问之间
+                            没有"用户消息"作分界，`splitSegments` 已经把它切成独立一段 ——
+                            判据就是 `turn.user === null`，**不新增后端字段**（那会给同一件事
+                            造第二个事实面）。它与"这一段不出现耗时"是同一条判据，所以两者
+                            永远不会互相矛盾。 */}
+                        {!turn.user && <Tag tone="blue">她主动说的</Tag>}
                         {dur && <span>耗时 {dur}</span>}
                         <button
                           onClick={() => copyContent(turn.answer!.content, turn.key)}

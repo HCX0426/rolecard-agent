@@ -43,16 +43,18 @@ class PluginToggle(BaseModel):
 
 
 def _validate_role_model(ctx: AppContext, model_name: str | None) -> None:
-    """角色声明的模型后端必须是**已配置**的后端名。
+    """角色声明的模型后端必须是**这个人真跑得起来**的后端名。
 
     与 `PATCH /api/session` 的会话级校验同一纪律。角色侧此前不校验，拼错一个名字只能靠
     运行期的"降级 + 留痕"兜 —— 配置错误要当场大声，而不是等用户发现回答质量不对
     （审查报告 L3）。
+    按 `current_user()` 而不是实例主人：图取凭据也是按这一轮的主人（`Runtime.effective_for`），
+    两处差一个人就会放行一个"存得下、跑不动"的名字。
     """
     if not model_name:
         return
     effective = ctx.model_settings.effective_settings(
-        ctx.settings, user_id=ctx.instance_owner
+        ctx.settings, user_id=ctx.current_user()
     )
     if model_name not in effective.model_backends:
         known = ", ".join(sorted(effective.model_backends))

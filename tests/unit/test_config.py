@@ -63,6 +63,16 @@ def test_backends_must_be_an_object() -> None:
         Settings.from_env({"MODEL_BACKENDS": '["local"]'})
 
 
+def test_a_misspelled_backend_field_is_rejected_at_startup() -> None:
+    """拼错一个字段名要**当场**报错，不能静悄悄用默认值跑（S-1 加 `extra="forbid"`）。
+
+    pydantic 默认忽略未知字段，所以从前写错 `num_ct` 等于没写：那一项照常起来，只是
+    "我明明设了 num_ctx"从来没生效 —— 而写配置的人不会去查一个不存在的报错。
+    """
+    with pytest.raises(ValueError, match="invalid MODEL_BACKENDS config"):
+        Settings.from_env({"MODEL_BACKENDS": '{"cloud": {"model": "m", "num_ct": 8192}}'})
+
+
 def test_unknown_backend_raises_with_the_known_names() -> None:
     settings = Settings()
     with pytest.raises(KeyError, match="configured: local"):

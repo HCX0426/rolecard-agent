@@ -21,6 +21,7 @@ from rolecard_agent.core.proactive_state import DEFAULT_AFFINITY_THRESHOLD, get_
 from rolecard_agent.core.reachout import ReachoutScheduler
 from rolecard_agent.core.workspace import resolve_task_dir
 from rolecard_agent.roles.models import RoleCard
+from rolecard_agent.roles.service import RoleNotFound
 
 _UTC = UTC
 
@@ -399,6 +400,17 @@ class _Roles:
     def list_roles(self) -> list[RoleCard]:
         return self._roles
 
+    def get(self, role_id: str) -> RoleCard:
+        """补投要按 role_id 取回卡（`R26-40` ②）。与真服务同一份合同：找不到就抛。
+
+        桩必须跟着真签名走 —— 少一个方法在这里会表现成"补投静默不发生"，
+        而那种症状没人会往"测试桩缺方法"上想。
+        """
+        for role in self._roles:
+            if role.role_id == role_id:
+                return role
+        raise RoleNotFound(role_id)
+
 
 def _scheduler(conn, roles: list[RoleCard], model) -> ReachoutScheduler:
     return ReachoutScheduler(
@@ -541,6 +553,76 @@ def test_deliver_failure_keeps_the_inbox_message_and_is_traced(conn) -> None:
     assert conn.execute("SELECT COUNT(*) AS n FROM agent_reachout").fetchone()["n"] == 1
     events = [getattr(e, "event", "") for e in tracer.events]
     assert "reachout_deliver_failed" in events
+
+
+def test_a_message_that_missed_the_thread_is_delivered_on_a_later_tick(conn) -> None:
+    """投递失败**不是丢了**：下一 tick 补上，并把 `delivered_at` 写上（`R26-40` ②）。
+
+    真实成因是"那条会话正在对话中"（一轮可能跑几十秒到几分钟，本地模型更久），此时
+    `deliver_proactive` 拿不到写锁就放弃 —— 而收件箱那一行**已经先落了**。没有补投，
+    气泡里有这句、点进会话却没有，用户读到的是"她说的话我找不到了"。
+    从前那句"调度器下一轮还会再问"是错的：下一轮是**重新生成一句新话**，这句就此失踪。
+    """
+    busy = {"value": True}
+    tries: list[str] = []
+
+    def _deliver(role: RoleCard, text: str) -> str | None:
+        """只回答"投进去了没有"：真实落库由 `deliver_proactive` 负责（上面那条用例验它），
+        这条验的是**调度器**在第一次没投成之后会不会再试一次。"""
+        tries.append(text)
+        if busy["value"]:
+            return None  # 那条会话正在对话中
+        return svc.proactive_thread_id(role.role_id)
+
+    scheduler = ReachoutScheduler(
+        settings_provider=lambda: _settings(),
+        roles=_Roles([_role()]),  # type: ignore[arg-type]
+        model_resolver=lambda _n: _FakeModel(AIMessage(content="今天腰还酸吗")),
+        conn=conn,
+        tracer=_Tracer(),
+        deliver=_deliver,
+    )
+    utc, local = _now()
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
+    missed = conn.execute("SELECT delivered_at FROM agent_reachout").fetchone()["delivered_at"]
+    assert missed is None, "没投进去就不该写 delivered_at —— 那正是补投要认的欠账"
+
+    busy["value"] = False
+    # 同一时刻再 tick：上一句刚把间隔锚点推过，闸门会拦住新开口，所以这一轮**只**做补投。
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 0
+    assert tries == ["今天腰还酸吗", "今天腰还酸吗"], "补投要投原来那句，不是让它再生成一句"
+    late = conn.execute("SELECT delivered_at FROM agent_reachout").fetchone()["delivered_at"]
+    assert late is not None, "补投没发生 —— 那句话就永久停在收件箱里了"
+
+
+def test_only_recent_and_undismissed_rows_are_worth_redelivering(conn) -> None:
+    """补投的三条限定各挡一类骚扰：太旧的、划掉的，都不补（`R26-40` ②）。
+
+    "看过（read）"**不在**排除项里 —— 读过不等于那句话进了会话，而那正是用户点进去
+    发现"她说的没有"的那一族。划掉（dismissed）才是"他不想看"。
+    """
+    recent = (datetime.now(UTC) - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+    stale = (datetime.now(UTC) - timedelta(minutes=90)).strftime("%Y-%m-%d %H:%M:%S")
+
+    def _add(text: str, when: str, state: str) -> None:
+        conn.execute(
+            "INSERT INTO agent_reachout (role_id, role_name, text, state, created_at)"
+            " VALUES ('active', 'x', ?, ?, ?)",
+            (text, state, when),
+        )
+
+    _add("欠着的一句", recent, "unread")
+    _add("看过但没回", recent, "read")
+    _add("划掉的一句", recent, "dismissed")
+    _add("太久以前", stale, "unread")
+    conn.commit()
+
+    rows = svc.undelivered_reachouts(conn, user_id=ME, within_minutes=30, limit=10)
+    assert [r["text"] for r in rows] == ["欠着的一句", "看过但没回"]
+
+    svc.mark_delivered(conn, int(rows[0]["id"]))
+    left = svc.undelivered_reachouts(conn, user_id=ME, within_minutes=30, limit=10)
+    assert [r["text"] for r in left] == ["看过但没回"], "写过 delivered_at 的不该再出现"
 
 
 def test_without_a_deliverer_the_inbox_still_works(conn) -> None:

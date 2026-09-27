@@ -328,15 +328,36 @@ class KernelContext:
     # "永远不知道" ⇒ 永远不拦。内核不自己发 HTTP：能不能看图是**宿主环境**的事实。
     vision_probe: Callable[[str | None, str], bool | None] = _vision_unknown
 
+    # 这一轮的**有效配置**按请求身份现取（M2d 尾巴的收口，§4.1）：它回答的是"这次模型
+    # 调用花谁的 key"。**它与 `settings` 不是同一件事** —— `settings` 始终是**实例主人**
+    # 那份（编译期定下），知识库、工具闭包、历史预算这些设备级的读法从它取；resolver 只被
+    # `_turn_backend` 消费（模型凭据与能力位判定）。不接线 = 一律用构建期那份：单机形态
+    # （一台实例一个主人）下两者恒等，测试与纯内核装配就是这一档。
+    settings_resolver: Callable[[], Settings] | None = None
+
+
+def turn_settings(ctx: KernelContext) -> Settings:
+    """这一轮该按**谁**的凭据读配置（M2d 尾巴）。
+
+    接了 resolver 就现取 —— 节点入口已经把本轮主人绑进上下文（`core/identity.bound_user`），
+    所以 resolver 那侧能答出"这次调用花谁的 key"；没接（测试、纯内核装配）就是构建期那份，
+    单机形态下与实例主人那份逐字节相同。
+    """
+    if ctx.settings_resolver is None:
+        return ctx.settings
+    return ctx.settings_resolver()
+
 
 def _turn_backend(state: dict[str, Any], role: Any, ctx: KernelContext) -> Any | None:
     """这一轮**实际会用到的后端配置**（会话覆盖 > 角色 > 默认）。解析失败返回 None。
 
     能力位（工具 / 视觉）都从这里取，避免"这一轮到底用哪个后端"出现两份判定。
+    读的是 `turn_settings`（按本轮主人的那份），不是 `ctx.settings`：同一台实例上两个身份
+    各自配了同名后端、各带自己的 key 时，能力位也必须按**将要真跑的那一份**判。
     """
     name = state.get("model_name") or getattr(role, "model_name", None)
     try:
-        return ctx.settings.backend(name)
+        return turn_settings(ctx).backend(name)
     except Exception:  # noqa: BLE001 - 配置异常不该让整轮挂掉，退回默认（调用方按未知处理）
         return None
 

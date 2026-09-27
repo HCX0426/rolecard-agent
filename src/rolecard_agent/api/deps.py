@@ -240,6 +240,13 @@ class AppContext:
 
     @property
     def settings(self) -> Settings:
+        """**实例主人**那份有效配置：喂知识库、工具闭包与那些设备级的读法。
+
+        它**不是**"这一轮花谁的 key"那个答案 —— 那个问题由
+        `Runtime.effective_for(本轮主人)` 回答，图在节点内部现取（`core.nodes.turn_settings`，
+        M2d 尾巴的收口）。两者在单机形态下是同一份，所以这里一切照旧；差别只在同一个库上
+        住了两个身份、各配了自己的 provider 时才显出来。
+        """
         return self.runtime.effective
 
     @property
@@ -258,18 +265,6 @@ class AppContext:
         `ctx.role_cards.get(...)` 在拼写上就逼你回答"以谁的身份"。少一种写法就少一种忘法。
         """
         return self.roles.scoped(self.current_user())
-
-    @property
-    def instance_owner(self) -> str:
-        """**这台实例的主人** —— "现在跑得起来的那些模型是谁的、花的是谁的 key"只问这一个。
-
-        它与 `current_user()` 是两层不同的问题（§4.1）：那次请求的数据归属， vs 这个进程
-        带着的那份配置与凭据。模型层属于后者 —— 一份 `Settings` 快照喂着整张图与知识库，
-        换主人要重启（M1 那条"半换状态比不换更糟"）。所以设置页的读形状按 `current_user()`
-        过滤，而 `effective_settings` / 服务页的凭据解析按这里。两者在单机自用时常是同一个串，
-        但那是巧合，不是可以省掉一层的理由。
-        """
-        return self.runtime.identity
 
     @property
     def plugins(self) -> PluginService:

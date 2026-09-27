@@ -305,10 +305,11 @@ def patch_session(
     if "model_name" in body.model_fields_set:
         name = body.model_name
         if name is not None:
-            # 可选项来自**这台实例跑得起来的那一族**（M2d）：这个名字最终是图去花的，
-            # 按请求主人过滤会让人选到一个存得下、却跑不动的后端。
+            # 可选项来自**这次调用真会花的那一族**（M2d 尾巴收口之后）：图按本轮主人取凭据
+            # （`Runtime.effective_for`），所以校验必须按同一个人 —— 按实例主人过滤会放行一个
+            # "存得下、却跑不动"的名字（他那份快照里压根没有这个后端）。
             effective = ctx.model_settings.effective_settings(
-                ctx.settings, user_id=ctx.instance_owner
+                ctx.settings, user_id=ctx.current_user()
             )
             if name not in effective.model_backends:
                 known = ", ".join(sorted(effective.model_backends))
@@ -463,7 +464,9 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
                 tracer=ctx.tracer,
                 usage_recorder=_usage_ledger(
                     conn,
-                    ctx.runtime.effective.backend_name(session_model or role.model_name),
+                    ctx.runtime.effective_for(user_id).backend_name(
+                        session_model or role.model_name
+                    ),
                     ctx.tracer,
                 ),
             ),
@@ -524,17 +527,23 @@ def _thread_model(ctx: AppContext, thread: dict, role_id: str) -> tuple[Any, str
 
     后端名一起返回（而不是让调用方再解一遍）：token 账要按后端分（审计 §12.8），
     而"谁在用哪个后端"这件事只该有一处答案。
+
+    **模型必须按这条线程的主人构建**（显式传 `user_id`）：这个函数只从"响应流完之后"的
+    后台线程里被调（`_distill_after_turn`），而 `bound_user` 是 `ContextVar`、不跨线程
+    传播 —— 不传就会拿实例主人的凭据替别人抽记忆。`ctx.current_user()` 在这里反而是对的
+    （它是请求视图上的备忘属性），所以别把两者混起来看。
     """
+    owner = str(thread["user_id"])
     want = (ctx.settings.memory_extract_backend or "").strip()
     if want:
-        return ctx.runtime.resolve_role_model(want), want
+        return ctx.runtime.resolve_role_model(want, user_id=owner), want
     name = thread["model_name"]
     if not name:
         try:
             name = ctx.role_cards.get(role_id).model_name
         except Exception:  # noqa: BLE001 - 角色被删了就用默认，提取不该因此 500
             name = None
-    return ctx.runtime.resolve_role_model(name), name
+    return ctx.runtime.resolve_role_model(name, user_id=owner), name
 
 
 def _usage_ledger(
@@ -811,9 +820,13 @@ def edit_message_and_regenerate(
             role_summary={"role_id": role.role_id, "role_name": role.role_name},
             tracer=ctx.tracer,
             # 重新生成花的也是真钱：不记就等于"这一轮没发生"，账会静悄悄地少一截。
+            # 后端名按**这条线程的主人**那份解析：拿实例主人那份去解别人的后端名会落回默认，
+            # 账就记到别人头上了。
             usage_recorder=_usage_ledger(
                 ctx.conn,
-                ctx.runtime.effective.backend_name(session_model or role.model_name),
+                ctx.runtime.effective_for(str(thread["user_id"])).backend_name(
+                    session_model or role.model_name
+                ),
                 ctx.tracer,
             ),
         ),

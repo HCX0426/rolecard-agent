@@ -617,6 +617,27 @@ describe("ChatPage 把主动开口画成单独一条（不吞上一问的答、�
     expect(screen.getByText(/耗时 3 秒/)).toBeTruthy();
     expect(screen.queryByText(/耗时 \d+ 分/)).toBeNull();
   });
+
+  it("「她主动说的」角标只挂在主动那句上（R26-40 ①）", async () => {
+    stubProactiveThread();
+    render(
+      <ToastProvider>
+        <ChatPage />
+      </ToastProvider>,
+    );
+    await vi.waitFor(() => expect(screen.getByText("爱莉希雅 · 主动找你")).toBeTruthy());
+    fireEvent.click(screen.getByText("爱莉希雅 · 主动找你"));
+    await vi.waitFor(() => expect(screen.getByText("三月末的风")).toBeTruthy());
+
+    // 这一段两句话都是助手说的，但只有一句是她**主动**说的（另一句前面有提问）。
+    expect(screen.getAllByText("她主动说的")).toHaveLength(1);
+    // **位置也要对**：光数个数咬不住"标到了回答那一段"（那也只有一个）。
+    // 每一轮那个容器是 `div.group`（`key={turn.key}` 那个），角标必须落在主动那句里。
+    const proactive = screen.getByText("三月末的风").closest(".group");
+    const answered = screen.getByText("这话一说出口").closest(".group");
+    expect(proactive?.textContent).toContain("她主动说的");
+    expect(answered?.textContent).not.toContain("她主动说的");
+  });
 });
 
 /** R26-38：桌宠那一轮**正在生成**的那半句要在对话界面里同步显出来。

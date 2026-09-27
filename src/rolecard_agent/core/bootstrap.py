@@ -33,7 +33,11 @@ from rolecard_agent.core.approvals import ApprovalService
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.domain_service import DomainQueryService
 from rolecard_agent.core.graph import build_graph_config, build_kernel, build_model
-from rolecard_agent.core.identity import ensure_identity_row, resolve_instance_identity
+from rolecard_agent.core.identity import (
+    active_user_id,
+    ensure_identity_row,
+    resolve_instance_identity,
+)
 from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.core.memory import memory_for_turn
 from rolecard_agent.core.model_settings import ModelSettingsService, client_style
@@ -157,9 +161,14 @@ class Runtime:
     #: 主动开口调度器只在实际跑后台循环时存在（`start_background` 里建）。
     reachout: ReachoutScheduler | None = field(default=None, repr=False)
     rebuild_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
-    role_models: dict[tuple[str | None, float | None], ChatLike] = field(
+    #: 角色级模型实例缓存。键是 `(本轮主人, 后端名, 温度)` —— 主人这一维是 M2d 尾巴的
+    #: 收口：同一台实例上两个身份各配同名后端、各带自己的 key 时，**实例**必须是两个。
+    role_models: dict[tuple[str, str | None, float | None], ChatLike] = field(
         default_factory=dict, repr=False
     )
+    #: 按身份解析出来的有效配置（`effective_for`）。实例主人那一份不在这里 —— 它在
+    #: `effective`（编译期就位）。改配置走 `rebuild`，两处缓存一起清。
+    effective_by_user: dict[str, Settings] = field(default_factory=dict, repr=False)
 
     # -- 稳定引用的读穿 ------------------------------------------------------
 
@@ -202,29 +211,80 @@ class Runtime:
 
     # -- 模型解析与图 --------------------------------------------------------
 
+    def effective_for(self, user_id: str | None = None) -> Settings:
+        """**这一次模型调用花谁的 key** 的那份有效配置。
+
+        `M2d` 那句"`effective_settings` 是唯一咽喉"原先只兑现了半边：配置**按人存**了，
+        但运行期那份快照是**实例级**的（谁登录都花实例主人的 key）。这里补的是另半边 ——
+        按这次调用的人拼一份出来。
+
+        它与 `self.effective` 不是同一件事，也不该合并：`self.effective` 喂知识库、工具
+        闭包与历史预算，那些问的是"这台机器能干什么"，换个人不会变；而凭据问的是"这次谁
+        付钱"，跟着人走。单机形态（一台实例一个主人）下两者恒等，走同一条短路，零额外开销。
+
+        刻意**不写成"整份配置按请求"**：`effective_settings` 只覆盖 `model_backends` /
+        `model_default` / `model_fallbacks` 三项（其余字段来自 env 与运行环境覆盖，是设备
+        级的），所以按身份解析出来的两份，差别只在凭据那三项。名字取"这一轮的有效配置"是
+        为了让消费点只有一个问法，不是说别的字段也随人变。
+
+        缓存按主人分格。`rebuild` 整体清空 —— 与角色级模型缓存同一条纪律：配置改了必须重建。
+        """
+        owner = user_id or self.identity
+        if owner == self.identity:
+            return self.effective
+        cached = self.effective_by_user.get(owner)
+        if cached is None:
+            cached = runtime_settings.apply_overrides(
+                self.model_settings.effective_settings(self.env_settings, user_id=owner),
+                runtime_settings.load_overrides(self.conn),
+            )
+            self.effective_by_user[owner] = cached
+        return cached
+
     def resolve_role_model(
-        self, backend_name: str | None, temperature: float | None = None
+        self,
+        backend_name: str | None,
+        temperature: float | None = None,
+        *,
+        user_id: str | None = None,
     ) -> ChatLike:
         """US-8：角色声明了后端名 → 按名解析；未声明 → 默认模型。
 
+        **凭据按"这一轮的主人"取**（M2d 尾巴的收口，§4.1）：图节点入口已把本轮主人绑进
+        上下文（`core/identity.bound_user`），所以 `active_user_id` 在这里答的就是"这次该花
+        谁的 key"。不在任何一轮里（后台调度器替她冒话）则回落到**这台实例的主人** ——
+        那正是她替谁开口。
+
+        `user_id` 是给**跨线程**调用方的（`bound_user` 是 `ContextVar`，不跨线程传播）：
+        自动提取跑在"响应流完之后"的后台线程里，那边 `ctx.current_user()` 还对（那是请求
+        视图上的备忘属性），但 `active_user_id` 一定是空的 —— 知道这一轮属于谁的调用方
+        必须显式传进来，否则它就会拿实例主人的 key 去替别人抽记忆。
+
         `temperature` 参与缓存键：同一后端在不同温度下是**不同的模型实例**
-        （采样参数只能在构造期设置，见 `core.graph._init_model`）。
+        （采样参数只能在构造期设置，见 `core.graph._init_model`）。主人现在是缓存键的
+        第一维：两个身份各配同名后端时，"按后端名复用"会把 key 张冠李戴 —— 这正是这一步
+        要买的那个性质。
         未知后端名（设置页删掉了一个仍被角色引用的后端）→ 降级到默认并留痕，而不是
-        让整轮对话 500：权限 fail-closed，可用性 fail-soft。
+        让整轮对话 500：权限 fail-closed，可用性 fail-soft。降级落在**实例主人那台**编译期
+        默认模型上 —— 它是"这台机器上一定跑得起来"的那一份。
         """
         if self.injected_model is not None:
             return self.injected_model
-        if not backend_name and temperature is None:
+        user = user_id or active_user_id(self.identity)
+        if not backend_name and temperature is None and user == self.identity:
             return self.state["default_model"]
-        cache_key = (backend_name, temperature)
+        cache_key = (user, backend_name, temperature)
         cached = self.role_models.get(cache_key)
         if cached is not None:
             return cached
         try:
-            built = self.model_factory(self.effective, backend_name, temperature)
+            built = self.model_factory(self.effective_for(user), backend_name, temperature)
         except KeyError:
             self.tracer.emit(
-                TraceEvent(event="role_backend_missing", detail={"backend": backend_name})
+                TraceEvent(
+                    event="role_backend_missing",
+                    detail={"backend": backend_name, "user_id": user},
+                )
             )
             return self.state["default_model"]
         self.role_models[cache_key] = built
@@ -261,6 +321,10 @@ class Runtime:
             checkpointer=self.checkpointer,
             plugins=self.plugins,
             model_resolver=self.resolve_role_model,
+            # 「这一轮花谁的 key」的挂点（M2d 尾巴）：节点内部现取，那时本轮主人已绑进
+            # 上下文。不接这一根的话，模型凭据与能力位都会按实例主人判 —— 两个身份各配
+            # 同名后端时，B 会拿着 A 的快照去跑（`_turn_backend` 也是这么读的）。
+            settings_resolver=lambda: self.effective_for(active_user_id(self.identity)),
             # 跨会话记忆的读取器：每次调用实时读库、**按本轮角色取**（该角色专属 → 无则回退
             # 全局），与主动开口同源一个 `memory_for_turn`；再补上她最近主动说过的原话
             # （`chat_memory`，别的那条线程里她得知道自己提醒过什么）。总开关在 call_model
@@ -280,14 +344,16 @@ class Runtime:
         嵌入器/重排器是 KnowledgeBase 构造时注入的实例，引用变了必须连知识库一起重造；
         工具闭包持有知识库，所以注册表也要跟着重建 —— 顺序即依赖序。
         """
-        # 「谁的 key 被花出去」在这一步答一次就够（M2d）：整份有效配置是实例级的，
-        # 所以这里交出的是这台实例的主人 —— 不是哪个请求最近来过。
+        # 这一步建的是**实例主人**那份（`self.effective`）：知识库、注册表、工具闭包与
+        # 编译期默认模型都由它喂，问的是"这台机器能干什么"。请求级那份凭据快照不在这一步，
+        # 它按需在 `effective_for(本轮主人)` 里拼 —— 两条缓存同生共死，所以下面一起清。
         eff = runtime_settings.apply_overrides(
             self.model_settings.effective_settings(self.env_settings, user_id=self.identity),
             runtime_settings.load_overrides(self.conn),
         )
         # 构建在锁外：两个并发重建各自完整构建，后写者胜出（浪费但正确）。
         self.role_models.clear()
+        self.effective_by_user.clear()
         default_model = self.model_factory(eff, None)
         knowledge_new = build_knowledge(eff, self.services)
         registry_new = assemble_registry(self.assembly, self.registry_factory, eff, knowledge_new)
@@ -297,6 +363,7 @@ class Runtime:
             # 换装是单个临界区：模型缓存 + 可变引用 + state 槽位一起翻，杜绝"新图配旧
             # 知识库"的中间态被 SSE 请求看到。
             self.role_models.clear()
+            self.effective_by_user.clear()
             self.effective = eff
             self.knowledge = knowledge_new
             self.registry = registry_new
@@ -416,8 +483,11 @@ class Runtime:
             return None
         # 占住这条会话的写入再改检查点（审计 #12）：用户那一轮可能正在图上跑，而
         # `update_state` 读的是"它此刻认为的最新检查点"—— 两边分叉同一个父节点时后写的盖掉
-        # 先写的，用户发的那条就被吞了。拿不到锁就**这次不投递**（调度器下一轮还会再问），
-        # 而不是阻塞调度线程去等一轮对话跑完（那会拖住别的角色的开口时机）。
+        # 先写的，用户发的那条就被吞了。拿不到锁就**这次不投递**，而不是阻塞调度线程去等
+        # 一轮对话跑完（那会拖住别的角色的开口时机）。
+        # **不投不等于丢**：调度器把没投成的那些按 `delivered_at IS NULL` 认出来，下一 tick
+        # 补投（`R26-40` ②，`undelivered_reachouts`）。这里从前写的是"调度器下一轮还会再问"
+        # —— 那句是错的：下一轮是**重新生成一句新话**，这一句就此只在收件箱里停着。
         if not try_thread_write(thread_id, timeout=0.0):
             self.tracer.emit(
                 TraceEvent(

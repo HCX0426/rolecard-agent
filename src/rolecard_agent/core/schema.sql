@@ -126,6 +126,14 @@ CREATE TABLE IF NOT EXISTS agent_reachout (
     -- "第五由头到底有没有真的驱动过一次开口"这个问题永远没有数据 —— 接话率第一次非零
     -- （1/11）那天就是这样卡住的。NULL = 这一列上线之前落的，**不知道**，不当成任何一个源。
     fired_by    TEXT,
+    -- 这句**有没有真的落进她的主动会话**（09-28 补，`R26-40` ②）。NULL = 只到了收件箱。
+    -- 它存在的理由不是记账，而是**能把话说完整**：`deliver_proactive` 在"那条会话正在对话中"
+    -- 时拿不到写锁就放弃（刻意不去打断用户那一轮），而收件箱那一行**已经先落了** —— 于是
+    -- 气泡里有这句、点进那条会话却没有，用户读到的是"她说的话我找不到了"。有了这一列，
+    -- 调度器每 tick 认得出欠下的那几条并补投。
+    -- 补投不设"历史欠账"：查询带时间窗（见 `undelivered_reachouts`），所以这一列上线时
+    -- 已有的老行（NULL）不会被当成待办回填 —— 那句话早就过去了，现在补反而是骚扰。
+    delivered_at TIMESTAMP,
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP  -- UTC（CURRENT_TIMESTAMP）
 );
 

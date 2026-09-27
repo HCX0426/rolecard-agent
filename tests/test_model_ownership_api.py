@@ -123,3 +123,46 @@ def test_probing_another_identitys_group_is_refused(client: TestClient) -> None:
     )
     assert resp.status_code == 400, resp.status_code
     assert "不存在" in resp.json()["detail"]
+
+
+def test_naming_a_backend_is_scoped_to_the_caller(client: TestClient) -> None:
+    """会话与角色卡上挑后端，都要按**调用者**校验（M2d 尾巴收口之后）。
+
+    图取凭据按这一轮的主人（`Runtime.effective_for`），所以这两处校验必须是同一个人：
+    按实例主人过滤会放行一个"存得下、跑不动"的名字 —— 他那份快照里压根没有这个后端，
+    下一轮只能降级到别人的模型（也就是花别人的 key）。后端名全局唯一之后，这是两个
+    身份之间最后一条还能互相指错的线。
+    """
+    client.put("/api/settings/models", json=_cloud_body("a-chat", "Qwen3-8B", KEY_A),
+               headers=_headers("local-user"))
+    client.put("/api/settings/models", json=_cloud_body("b-chat", "Qwen3-32B", KEY_B),
+               headers=_headers("u1"))
+    # 出厂卡播给的是**实例主人**，所以 u1 得先有自己的卡（M2a 的归属读法）
+    client.post(
+        "/api/roles",
+        json={"role_id": "u1_card", "role_name": "他的卡", "system_prompt": "你是助手。"},
+        headers=_headers("u1"),
+    )
+    tid = client.post(
+        "/api/session", json={"role_id": "u1_card"}, headers=_headers("u1")
+    ).json()["thread_id"]
+
+    # 指别人的后端：400（不是"存得下就算"）
+    assert client.patch(
+        f"/api/session/{tid}", json={"model_name": "a-chat"}, headers=_headers("u1")
+    ).status_code == 400
+    # 指自己那台：200
+    assert client.patch(
+        f"/api/session/{tid}", json={"model_name": "b-chat"}, headers=_headers("u1")
+    ).status_code == 200
+    # 角色卡上写后端的那个入口同一纪律（`_validate_role_model`）
+    assert client.post(
+        "/api/roles",
+        json={
+            "role_id": "u1_card2",
+            "role_name": "卡",
+            "system_prompt": "你是助手。",
+            "model_name": "a-chat",
+        },
+        headers=_headers("u1"),
+    ).status_code == 400
