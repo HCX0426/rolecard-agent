@@ -1,5 +1,6 @@
 import { Component, Suspense, lazy, useEffect, useState, type ReactNode } from "react";
 import ReachoutPanel from "./components/ReachoutPanel";
+import DataSourceSwitch from "./components/DataSourceSwitch";
 import ApprovalPanel from "./components/ApprovalPanel";
 import { ToastProvider } from "./components/Toast";
 import { api, UNREAD_POLL_MS } from "./api";
@@ -331,6 +332,8 @@ export default function App() {
               </span>
             )}
           </button>
+          {/* 数据源那一行（M5）：本机 / 云端，常驻侧栏底部，与上面两个抽屉入口同区。 */}
+          <DataSourceSwitch />
         </div>
       </nav>
 

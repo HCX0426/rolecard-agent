@@ -269,3 +269,47 @@ def test_roles_are_declared_only_when_an_operator_entry_exists() -> None:
     assert roles_declared(Settings(auth_api_keys="k-a,k-b")) is False
     assert roles_declared(Settings(auth_credentials="alice:pw,operator:bob:pw")) is True
     assert roles_declared(Settings(auth_api_keys="operator:k-admin")) is True
+
+
+def test_non_ascii_credentials_are_a_401_not_a_500(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """中文账号 / 中文口令要走「拒绝」这条路，而不是把中间件炸掉。
+
+    `hmac.compare_digest` 对含非 ASCII 的 `str` 直接抛 `TypeError`，所以修之前：**只要
+    用户敲的口令里有一个中文字**（或操作员配的就是中文凭据），这一条请求就是 HTTP 500。
+    第一次撞上是在 M5 的双实例端到端里：切换器弹层填了个中文口令，界面报"连不上"，
+    而云端日志里一条 401 都没有，只有一段 traceback。
+    比对按 UTF-8 字节做（`auth._eq`），常量时间那个性子一点没少。
+    """
+    c = _client(monkeypatch, tmp_path, creds="爱莉:口令,demo:s3cret")
+    # 配好的中文凭据本身要登得进来 —— 只把 500 修成 401 会把登录一起修坏
+    assert c.get("/api/roles", headers={"Authorization": _basic("爱莉", "口令")}).status_code == 200
+    assert c.get("/api/roles", headers={"Authorization": _basic("爱莉", "看")}).status_code == 401
+    # ASCII 凭据 + 非 ASCII 口令：同样 401（这才是"账号或密码不对"那句话的来源）
+    assert c.get("/api/roles", headers={"Authorization": _basic("demo", "错")}).status_code == 401
+    # API Key 那条路不测非 ASCII：HTTP 头的值本身只吃 latin1，中文 key 连请求都发不出去
+    # （实测 httpx 直接 UnicodeEncodeError）。所以 `_eq` 在那一侧只是同一家族的写法统一。
+
+
+def test_the_browser_prompt_is_only_offered_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`WWW-Authenticate` 只在"客户端压根没带凭据"时给。
+
+    两条各挡一个方向：
+      * 什么都没带 → **必须**带 challenge，否则 `AUTH_MODE=on` 的控制台只剩一个干巴巴的
+        401，那个原生弹框本来就是"没有登录页"这套形态的登录页；
+      * 已经带了一枚错的 → **不许**再 challenge。Chrome 对 `fetch` 收到的 401+challenge
+        会去弹原生框：headless 下那个请求永远不返回（界面上就是"连接中…"卡死），
+        有头下是用户刚填过的框上又叠一层浏览器弹框 —— 界面那句"账号或密码不对"被吃掉。
+        M5 的双实例端到端第一次跑就撞上的是这一条。
+    """
+    c = _client(monkeypatch, tmp_path)
+    naked = c.get("/api/roles")
+    assert naked.status_code == 401
+    assert "www-authenticate" in {k.lower() for k in naked.headers}
+
+    wrong = c.get("/api/roles", headers={"Authorization": _basic("demo", "不对")})
+    assert wrong.status_code == 401
+    assert "www-authenticate" not in {k.lower() for k in wrong.headers}, "已经带凭据还弹框"

@@ -347,6 +347,11 @@ class Settings(BaseModel):
     # `X-Forwarded-For` 一律忽略（见 auth.client_ip）。
     # 为什么必须有这一项：XFF 是客户端可自由设置的头。旧实现无条件采信它，导致
     # `auto` 档被 `X-Forwarded-For: 127.0.0.1` 完全绕过（代码审查报告（第二轮）H2）。
+    #: 允许哪些**浏览器 origin** 跨域访问这套 API（M5 的本地/云端切换用）。
+    #: 空 = 不加 CORS 中间件 = 今天的默认（同源才通）。为什么默认关：一旦放开成 `*`，
+    #: 任何网页都能在你已登录的浏览器里驱动这个后端 —— 那是把桌宠变成靶子。
+    #: 逗号分隔的精确 origin（例：`http://127.0.0.1:8123`）。改了要重启。
+    api_allow_origins: str = ""
     auth_trusted_proxies: str = ""
     # 这台实例的主人是谁（`core/identity.resolve_instance_identity`）。空 = 本机那份
     # (`local-user`)；把它设成 `app_user` 里的另一个 id，这台实例就替那个人服务。
@@ -489,6 +494,7 @@ class Settings(BaseModel):
             ("AUTH_CREDENTIALS", "auth_credentials"),
             ("AUTH_API_KEYS", "auth_api_keys"),
             ("AUTH_TRUSTED_PROXIES", "auth_trusted_proxies"),
+            ("API_ALLOW_ORIGINS", "api_allow_origins"),
             ("AUTH_EXEMPT_PATHS", "auth_exempt_paths"),
             ("IDENTITY_USER_ID", "identity_user_id"),
             ("LANGSMITH_API_KEY", "langsmith_api_key"),

@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import cast
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -249,7 +250,11 @@ def create_app(
             path=req.url.path,
             exempt=exempt_paths,
         ):
-            status, headers, body = unauthorized_response()
+            # 客户端已经带了凭据（Basic 或 X-API-Key）就不再 challenge：见
+            # `auth.unauthorized_response` 的 `challenge` 一节 —— 那一次弹框会把
+            # "账号或密码不对"这句界面提示整个吃掉。
+            carried = bool(req.headers.get("authorization") or req.headers.get("x-api-key"))
+            status, headers, body = unauthorized_response(challenge=not carried)
             return PlainTextResponse(body, status_code=status, headers=headers)
         # 操作员面（`api/access.py` 那张表里没被降级的一切）：`on`/`auto` 档下必须是
         # **本机来源或操作员凭据**。这一条真正关掉的洞是"`AUTH_EXEMPT_PATHS` 配宽了一点，
@@ -276,6 +281,22 @@ def create_app(
             return PlainTextResponse(reason, status_code=403)
         req.state.actor = actor
         return await call_next(request)  # type: ignore[operator]
+
+    # 跨域放行（M5）：**默认不装**。装了才允许别的 origin 的浏览器带着凭据打这里，
+    # 而"开成 `*`"等于让任意网页在你已登录的浏览器里驱动这个后端 —— 所以这里只收
+    # 精确 origin 列表，且空列表时连中间件都不加（行为与今天逐字节相同）。
+    # 注册在认证中间件**之后** = 包在它外面：预检 OPTIONS 按规范不带凭据，
+    # 让它先被 CORS 答掉，否则 `AUTH_MODE=on` 的云端会把预检 401，症状是
+    # "切换器一直报连不上"，而对面日志里一个请求都没收到。
+    allowed = [o.strip() for o in (env_settings.api_allow_origins or "").split(",") if o.strip()]
+    if allowed:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=allowed,
+            allow_credentials=True,
+            allow_headers=["Authorization", "Content-Type", "X-API-Key"],
+            allow_methods=["*"],
+        )
 
     @app.get("/api/health")
     def health() -> object:

@@ -1,6 +1,7 @@
 // 与后端契约一一对应的类型 + fetch 封装 + SSE 流式读取。
 // 端点清单见 api/main.py 的模块 docstring —— 这里不发明第二个事实来源。
 
+import { apiBase, authHeaders } from "./lib/dataSource";
 import { parseSseFrame, splitSseFrames } from "./lib/stream";
 // 只取类型（`import type`）：upload() 的返回体形状跟上传结果解读共用一个定义，
 // 免得"接口返回什么"在两处各写一遍。uploadOutcome 不 import 本文件，不存在循环。
@@ -413,7 +414,9 @@ async function request<T>(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res: Response;
   try {
-    res = await fetch(url, { ...opt, signal: controller.signal });
+    // 数据源（M5）：本机 = 同源相对路径；云端 = 换 origin 并带上那次登录拿到的凭据。
+    opt.headers = { ...(opt.headers as Record<string, string>), ...authHeaders() };
+    res = await fetch(apiBase() + url, { ...opt, signal: controller.signal });
   } catch (e) {
     // 把超时与网络错误区分开：前者要告诉用户"后端没响应"，而不是笼统的 fetch failed。
     if ((e as Error).name === "AbortError") {
@@ -873,9 +876,9 @@ export async function streamEdit(
 ): Promise<void> {
   let res: Response;
   try {
-    res = await fetch(`/api/session/${threadId}/messages/edit`, {
+    res = await fetch(`${apiBase()}/api/session/${threadId}/messages/edit`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ message_id: messageId, content, ...(image ? { image } : {}) }),
       signal,
     });
@@ -926,9 +929,9 @@ export async function streamChat(
 ): Promise<void> {
   let res: Response;
   try {
-    res = await fetch("/api/chat", {
+    res = await fetch(`${apiBase()}/api/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ thread_id: threadId, message, ...(image ? { image } : {}) }),
       signal, // 用户点「停止」→ controller.abort()，这里会以 AbortError 结束
     });

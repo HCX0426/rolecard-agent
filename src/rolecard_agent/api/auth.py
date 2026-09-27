@@ -111,11 +111,22 @@ def roles_declared(settings: Settings) -> bool:
     return any(entry.lower().startswith(OPERATOR_PREFIX) for entry in entries)
 
 
+def _eq(a: str, b: str) -> bool:
+    """常量时间比两个字符串 —— **必须按 UTF-8 字节比**，不能把 str 直接递给
+    `hmac.compare_digest`：它对含非 ASCII 的字符串直接抛
+    `TypeError: comparing strings with non-ASCII characters is not supported`。
+    症状不是"登录失败"而是 **HTTP 500**（M5 的双实例端到端第一次跑就撞上了：
+    弹层里填一个中文口令，对面日志里一条 401 都没有，只有 traceback）。
+    中文口令与中文账号都是合法输入，"错"与"抛"必须分得开。
+    """
+    return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
+
+
 def _match_api_key(candidate: str, allowed: list[str]) -> tuple[str, str] | None:
     """常量时间比对。命中返回 (可记录的 key 前缀, 角色)。"""
     for entry in allowed:
         role, key = _entry_role(entry)
-        if key and hmac.compare_digest(candidate, key):
+        if key and _eq(candidate, key):
             return key[:4], role
     return None
 
@@ -139,9 +150,7 @@ def _parse_basic(header: str, credentials: list[str]) -> Actor | None:
         want_user, want_sep, want_pass = rest.partition(":")
         if not want_sep:
             continue
-        if hmac.compare_digest(user, want_user) and hmac.compare_digest(
-            password, want_pass
-        ):
+        if _eq(user, want_user) and _eq(password, want_pass):
             return Actor(id=user, kind=BASIC_KIND, role=role)
     return None
 
@@ -257,6 +266,14 @@ def auth_required(*, mode: str, ip: str, path: str, exempt: list[str]) -> bool:
     return True
 
 
-def unauthorized_response() -> tuple[int, dict[str, str], str]:
-    """401 响应：带 `WWW-Authenticate` 浏览器才会弹框（否则用户只会看到一个干巴巴的 401）。"""
-    return 401, {"WWW-Authenticate": _WWW_AUTHENTICATE}, "Unauthorized"
+def unauthorized_response(*, challenge: bool = True) -> tuple[int, dict[str, str], str]:
+    """401 响应：带 `WWW-Authenticate` 浏览器才会弹框（否则用户只会看到一个干巴巴的 401）。
+
+    `challenge=False` 那一支是给"**客户端已经带了凭据**"的：那枚头的全部意义是"你可以
+    重试并附上凭据"，而它已经附了 —— 再弹一次框只会盖住界面自己那句"账号或密码不对"。
+    真实代价（M5 双实例端到端量到的）：`fetch` 拿到带 challenge 的 401 时 Chrome 会去
+    弹那个原生框，headless 下那个请求**永远不返回**，界面上就是"连接中…"卡死；
+    有头下则是用户在自己刚填过的框上再叠一层浏览器弹框。
+    """
+    headers = {"WWW-Authenticate": _WWW_AUTHENTICATE} if challenge else {}
+    return 401, headers, "Unauthorized"
