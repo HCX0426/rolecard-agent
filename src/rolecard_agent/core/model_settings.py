@@ -30,6 +30,13 @@ rag 与 services 一行不改。变的是写入与迁移：这些字段不再有
   * **Plaintext at rest, stated rather than hidden.** Keys live in the local demo SQLite
     file, which never leaves the machine. Production would move to a secret manager - that
     is a v2 concern, and pretending otherwise in a demo would be worse than the limitation.
+  * **一组凭据有主人（M2d）**：`model_provider.user_id` 是这一行的归属，所以本模块每个读写
+    都要调用方交出 `user_id`。运行期"花谁的 key"只有一个答案 —— 交出这份 `Settings` 的那个人
+    （`effective_settings(..., user_id=)` 是唯一咽喉）。刻意**留着不分身份**的只有三类，各自
+    写明原因：分配主键（`_all_group_ids` / `_all_backend_names`，主键是全局的）、启动时的数据
+    卫生清扫（`normalize_providers`）、以及 `service_endpoint` 那一族引用行（那张表今天还没有
+    主人，尾巴记在 §4.1）。`model_backend` 因此**不另挂一列**：模型行的主人从它所属的组继承，
+    按名改一行的那些 UPDATE 靠 JOIN 带上主人条件，而不是多存一份冗余归属。
 """
 
 from __future__ import annotations
@@ -309,6 +316,8 @@ def migrate_to_provider_layers(conn: SqlConnection) -> int:
         group_of_name[str(row["name"])] = str(group["id"])
 
     for order, group in enumerate(groups.values()):
+        # 不写 `user_id`：这些是从**旧库**搬上来的行，旧库里没有归属这回事，所以让它们落进
+        # 列默认值指向的那个身份（与补列器给老行回填的是同一个，见 storage/db.py）。
         conn.execute(
             "INSERT OR IGNORE INTO model_provider (id, provider, base_url, api_key, sort_order) "
             "VALUES (?, ?, ?, ?, ?)",
@@ -464,6 +473,13 @@ def _value_columns(conn: SqlConnection) -> tuple[str, ...]:
     return columns
 
 
+#: 「这一行模型属于谁」的判定式：`model_backend` 不挂归属列（主人从它所属的凭据组继承，
+#: 与那几张"主人跟着父行走"的表同一条纪律），所以按名改一行的 UPDATE 一律带上它。
+#: 为什么写在 SQL 里而不是"先查一遍再决定改不改"：那两处代码会漂，而漂了的症状是
+#: "按名改到了别人的行"（记忆那侧已经数过一次同样的错）。
+_OWNED_MODEL_ROWS = "provider_id IN (SELECT id FROM model_provider WHERE user_id = ?)"
+
+
 class ModelSettingsService:
     MODEL_SEEDED_KEY = "model_backends_seeded"
 
@@ -471,13 +487,51 @@ class ModelSettingsService:
         self._conn = conn
 
     # -- reads -----------------------------------------------------------------
+    #
+    # 每个读都要求调用方交出 `user_id`，因为这一层的行有主人（M2d，§4.1「key 跟人走」）。
+    # 只有少数几处**刻意不分身份**，它们都在下面单独标了原因（主键分配、启动清扫）——
+    # 那种地方必须是"另一个具名方法"，不能是同一个方法传个 None：一旦 None 表示"全部"，
+    # "忘了过滤"就又变成一次普通的调用了。
+    # 唯一例外是 `service_endpoint` 那一族（对话默认/回退序列/引用行）：那张表今天没有
+    # 主人，所以 `default_backend` / `list_fallbacks` / `_chat_ref_names` 是设备级的，
+    # 尾巴记在 §4.1。
 
-    def _provider_rows(self) -> list[dict[str, object]]:
+    def _provider_rows(self, *, user_id: str) -> list[dict[str, object]]:
         rows = self._conn.execute(
-            "SELECT id, provider, label, base_url, api_key, sort_order "
+            "SELECT id, user_id, provider, label, base_url, api_key, sort_order "
+            "FROM model_provider WHERE user_id = ? ORDER BY sort_order, id",
+            (user_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def _all_group_ids(self) -> set[str]:
+        """**全部**身份的组键，只用来分配新键（`_group_id` 的那个 `taken` 集合）。
+
+        为什么全局：`model_provider.id` 是全局主键，两个身份各建一个硅基流动组时，若各自
+        从 `siliconflow` 起编号就是 INSERT 撞主键（一个 500，且第二次永远建不成）。
+        代价是编号会跳过别人占掉的那几个 —— 而看不见别人的组，也就看不见那些编号。
+        """
+        return {
+            str(r["id"])
+            for r in self._conn.execute("SELECT id FROM model_provider").fetchall()
+        }
+
+    def _all_provider_rows(self) -> list[dict[str, object]]:
+        """全部身份的凭据组 —— 只有启动时那次数据卫生清扫用它（`normalize_providers`）。
+        任何"给某人看"或"替某人改"的路径都不许走这里，它们走 `_provider_rows(user_id=)`。
+        """
+        rows = self._conn.execute(
+            "SELECT id, user_id, provider, label, base_url, api_key, sort_order "
             "FROM model_provider ORDER BY sort_order, id"
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def _all_backend_names(self) -> set[str]:
+        """同 `_all_group_ids`：`model_backend.name` 也是全局主键（session/角色卡引用它）。"""
+        return {
+            str(r["name"])
+            for r in self._conn.execute("SELECT name FROM model_backend").fetchall()
+        }
 
     def _usages(self) -> dict[str, list[str]]:
         """后端名 → 引用它的服务类别（chat 在前，其余按优先级序）。
@@ -496,19 +550,23 @@ class ModelSettingsService:
                 buckets.append(str(row["category"]))
         return out
 
-    def _raw_backends(self) -> list[dict[str, object]]:
+    def _raw_backends(self, *, user_id: str) -> list[dict[str, object]]:
         """两层 JOIN 出"后端行"视图 —— 内核与 services 消费的仍是拆层前那一形状。
 
         `provider`/`base_url`/`api_key` 来自凭据组，`usage`/`used_by` 派生自引用行。
+        凭据组按主人过滤，所以**模型行也跟着主人**：一个身份看不见别人的模型，
+        连"它叫什么"都拿不到（`model_backend` 没有自己的归属列，继承自所属的组）。
         """
         # 值列清单由 `_value_columns` 算（S-1）：从前这里抄一遍列名，加一列漏一处
         # 不会红，只是那一列永远读成 None。
         b_cols = ", ".join(f"b.{c}" for c in _value_columns(self._conn))
         rows = self._conn.execute(
             f"SELECT b.name, b.provider_id, b.model, b.sort_order, {b_cols}, "
-            "p.provider, p.label, p.base_url, p.api_key "
+            "p.user_id, p.provider, p.label, p.base_url, p.api_key "
             "FROM model_backend b JOIN model_provider p ON p.id = b.provider_id "
-            "ORDER BY b.sort_order, b.name"
+            "WHERE p.user_id = ? "
+            "ORDER BY b.sort_order, b.name",
+            (user_id,),
         ).fetchall()
         usages = self._usages()
         out: list[dict[str, object]] = []
@@ -520,15 +578,15 @@ class ModelSettingsService:
             out.append(item)
         return out
 
-    def raw_backends(self) -> list[dict[str, object]]:
+    def raw_backends(self, *, user_id: str) -> list[dict[str, object]]:
         """进程内配置解析用（服务引用行取凭据、工厂实例化）。
 
         含 api_key 明文 —— 只允许在服务层/工厂内部消费，**绝不**直接进任何 API 响应
         （对外形状见 `list_backends`：只回 has_key + 掩码）。
         """
-        return self._raw_backends()
+        return self._raw_backends(user_id=user_id)
 
-    def list_backends(self) -> list[dict[str, object]]:
+    def list_backends(self, *, user_id: str) -> list[dict[str, object]]:
         """过渡形状（对话页 / 角色页 / 旧模型页仍在消费）：NO api_key ever leaves the service.
 
         `usage` 现在是派生只读值；`used_by` 是它的全集（一行可同时服务多种能力）。
@@ -549,10 +607,10 @@ class ModelSettingsService:
                 "key_masked": mask_key(str(row["api_key"]) if row["api_key"] else None),
                 "used_by": _sorted_usages(usages.get(str(row["name"]), [])),
             }
-            for row in self._raw_backends()
+            for row in self._raw_backends(user_id=user_id)
         ]
 
-    def list_providers(self) -> list[dict[str, object]]:
+    def list_providers(self, *, user_id: str) -> list[dict[str, object]]:
         """「模型」页签的形状：按凭据组分层的卡片数据（key 只在组头出现一次）。
 
         能力位是**三态**（true / false / null=没测过）—— 把"没测过"显示成"不支持"是撒谎，
@@ -561,10 +619,12 @@ class ModelSettingsService:
         usages = self._usages()
         default = self.default_backend()
         models_of_group: dict[str, list[dict[str, object]]] = {}
-        value_cols = ", ".join(_value_columns(self._conn))
+        value_cols = ", ".join(f"b.{c}" for c in _value_columns(self._conn))
         for row in self._conn.execute(
-            f"SELECT name, provider_id, model, {value_cols} "
-            "FROM model_backend ORDER BY sort_order, name"
+            f"SELECT b.name, b.provider_id, b.model, {value_cols} "
+            "FROM model_backend b JOIN model_provider p ON p.id = b.provider_id "
+            "WHERE p.user_id = ? ORDER BY b.sort_order, b.name",
+            (user_id,),
         ).fetchall():
             name = str(row["name"])
             models_of_group.setdefault(str(row["provider_id"]), []).append(
@@ -584,7 +644,7 @@ class ModelSettingsService:
                 }
             )
         out: list[dict[str, object]] = []
-        for group in self._provider_rows():
+        for group in self._provider_rows(user_id=user_id):
             gid = str(group["id"])
             provider = str(group["provider"])
             out.append(
@@ -610,31 +670,38 @@ class ModelSettingsService:
         ).fetchone()
         return str(row["id"]) if row else None
 
-    def stored_api_key(self, name: str) -> str | None:
-        """已保存的 key（来自该行所属的凭据组；只在本进程内使用，绝不经 API 回传）。"""
-        for row in self._raw_backends():
+    def stored_api_key(self, name: str, *, user_id: str) -> str | None:
+        """已保存的 key（来自该行所属的凭据组；只在本进程内使用，绝不经 API 回传）。
+
+        别人的那一行在这里就是**不存在**：返回 None 而不是他的 key。
+        """
+        for row in self._raw_backends(user_id=user_id):
             if str(row["name"]) == name:
                 return row["api_key"]  # type: ignore[return-value]
         return None
 
-    def stored_group_key(self, group_id: str) -> str | None:
+    def stored_group_key(self, group_id: str, *, user_id: str) -> str | None:
         """按**组**取 key（拆层后 key 不再属于单行；添加抽屉与探测端点用）。"""
-        for group in self._provider_rows():
+        for group in self._provider_rows(user_id=user_id):
             if str(group["id"]) == group_id:
                 return group["api_key"]  # type: ignore[return-value]
         return None
 
-    def has_key_for_endpoint(self, provider: str, base_url: str | None) -> bool:
+    def has_key_for_endpoint(
+        self, provider: str, base_url: str | None, *, user_id: str
+    ) -> bool:
         """这个 (供应商, 端点) 是否已经有 key —— 决定"新增一行模型"要不要重输凭据。
 
         归一化必须与写入路径同源（都走 `endpoint_key`），否则界面上一行"看起来同一个"的
         端点会因为留空/填了默认 URL 的差别被要求重填 key。
+        只看本人的组：别人在同一端点上存过 key **不构成**"我也省一次输入"—— 那是他的凭据，
+        让他替我的调用付费才是更糟的那种省。
         """
         target = endpoint_key(provider, base_url)
         return any(
             group["api_key"]
             and endpoint_key(str(group["provider"]), group["base_url"]) == target
-            for group in self._provider_rows()
+            for group in self._provider_rows(user_id=user_id)
         )
 
     def list_fallbacks(self) -> list[str] | None:
@@ -667,7 +734,7 @@ class ModelSettingsService:
                 (CHAT_CATEGORY, name, kinds.get(name, "cloud"), name, i),
             )
 
-    def save_chat_pool(self, names: list[str]) -> None:
+    def save_chat_pool(self, names: list[str], *, user_id: str) -> None:
         """「服务」页签模型推理序列的全量写入：第 1 位 = 对话默认，其后 = 回退顺序。
 
         这一条就是"哪些模型用于对话"的事实面 —— 写它即定义它：列进来的行从此是 chat
@@ -677,12 +744,15 @@ class ModelSettingsService:
         链长不再在这里拦："最多 2 级"是运行时的截断（`Settings.resolve_fallbacks`），
         序列里第 4 位以后不参与回退，但仍然记录在案 —— 因为拖动顺序本身就是意图，
         当场拒绝对用户没有意义（他改的是第 1 位，你却告诉他"链太长"）。
+
+        校验只对**本人的**后端集：把别人的模型名塞进对话序列会写出一个他跑得起、你跑不起
+        的配置（那一名字根本不在你的有效配置里），所以它对你是 400 而不是"成功"。
         """
         if not names:
             raise ModelSettingsError("对话后端序列不能为空 —— 至少要留一个用于对话的模型。")
         if len(set(names)) != len(names):
             raise ModelSettingsError("对话序列里出现了重复的后端名。")
-        known = {str(row["name"]) for row in self._raw_backends()}
+        known = {str(row["name"]) for row in self._raw_backends(user_id=user_id)}
         unknown = [n for n in names if n not in known]
         if unknown:
             raise ModelSettingsError(
@@ -691,7 +761,7 @@ class ModelSettingsService:
         self._write_chat_refs(names)
         self._conn.commit()
 
-    def seed_from_env(self, env_settings: Settings) -> int:
+    def seed_from_env(self, env_settings: Settings, *, user_id: str) -> int:
         """First-boot migration: copy env backends into the tables ONCE, then env is out of
         the loop — the settings UI (these tables) is the single source of truth afterwards.
 
@@ -702,6 +772,10 @@ class ModelSettingsService:
 
         env 的后端按 (供应商, base_url) 归并成凭据组（同一端点的多个模型共用一把 key），
         `usage='chat'` 的行同时播 chat 引用，env 的默认后端排第 1 位。
+
+        **种子有主人 = 这台实例的主人**（M2d）：env 里的 key 是"这个进程带着的凭据"，它不属于
+        库里任何一个登录者。播种闸（`kernel_meta` 那个 flag）也因此是实例级的 —— 第二个身份
+        来了不重播 env，他在界面上自己填 key。
         """
         flag = self._conn.execute(
             "SELECT value FROM kernel_meta WHERE key = ?", (self.MODEL_SEEDED_KEY,)
@@ -709,12 +783,12 @@ class ModelSettingsService:
         if flag is not None:
             return 0
 
-        existing = {str(r["name"]) for r in self._raw_backends()}
+        existing = {str(r["name"]) for r in self._raw_backends(user_id=user_id)}
         groups = {
             endpoint_key(str(g["provider"]), g["base_url"]): str(g["id"])
-            for g in self._provider_rows()
+            for g in self._provider_rows(user_id=user_id)
         }
-        taken = {str(g["id"]) for g in self._provider_rows()}
+        taken = self._all_group_ids()
         inserted = 0
         chat_rows: list[str] = []
         for name, backend in env_settings.model_backends.items():
@@ -726,10 +800,12 @@ class ModelSettingsService:
             if endpoint not in groups:
                 gid = _group_id(taken, catalog)
                 self._conn.execute(
-                    "INSERT INTO model_provider (id, provider, base_url, api_key, sort_order) "
-                    "VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO model_provider "
+                    "(id, user_id, provider, base_url, api_key, sort_order) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
                     (
                         gid,
+                        user_id,
                         catalog,
                         base_url,
                         None if is_keyless_provider(catalog) else backend.api_key,
@@ -767,15 +843,18 @@ class ModelSettingsService:
         self._conn.commit()
         return inserted
 
-    def set_num_ctx(self, name: str, num_ctx: int | None) -> None:
+    def set_num_ctx(self, name: str, num_ctx: int | None, *, user_id: str) -> None:
         """只改一行的上下文窗口（对话菜单悬浮面板用）—— 名称不存在抛 KeyError（404）。
 
         num_ctx 语义：None = 用引擎默认；给了必须 >= 512（太小的窗口等于把历史截没）。
+        **别人的那一行也抛 KeyError**：按名改配置这条路上，"不是你的"与"不存在"是同一个回答
+        （名字是可枚举的短串，回 403 等于告诉他"这行存在"）。
         """
         if num_ctx is not None and num_ctx < 512:
             raise ModelSettingsError("num_ctx 不得小于 512（tokens）")
         cur = self._conn.execute(
-            "UPDATE model_backend SET num_ctx = ? WHERE name = ?", (num_ctx, name)
+            f"UPDATE model_backend SET num_ctx = ? WHERE name = ? AND {_OWNED_MODEL_ROWS}",
+            (num_ctx, name, user_id),
         )
         if cur.rowcount == 0:
             raise KeyError(name)
@@ -790,7 +869,9 @@ class ModelSettingsService:
         "presence_penalty": (-2.0, 2.0),
     }
 
-    def set_sampling(self, name: str, values: dict[str, float | None]) -> dict[str, float | None]:
+    def set_sampling(
+        self, name: str, values: dict[str, float | None], *, user_id: str
+    ) -> dict[str, float | None]:
         """改一行的采样惩罚（对话菜单那一栏）。给 None = 清回"不传"，不是传 0。
 
         **`repeat_penalty` 只对 native（Ollama）后端收**：OpenAI 兼容体里没有这个标准字段，
@@ -802,8 +883,8 @@ class ModelSettingsService:
             raise ModelSettingsError(f"未知的采样参数：{', '.join(unknown)}")
         row = self._conn.execute(
             "SELECT p.provider FROM model_backend b JOIN model_provider p ON p.id = b.provider_id"
-            " WHERE b.name = ?",
-            (name,),
+            " WHERE b.name = ? AND p.user_id = ?",
+            (name, user_id),
         ).fetchone()
         if row is None:
             raise KeyError(name)
@@ -819,18 +900,23 @@ class ModelSettingsService:
         for field in self.SAMPLING_RANGES:
             if field in values:
                 self._conn.execute(
-                    f"UPDATE model_backend SET {field} = ? WHERE name = ?",  # noqa: S608
-                    (values[field], name),
+                    f"UPDATE model_backend SET {field} = ? "  # noqa: S608
+                    f"WHERE name = ? AND {_OWNED_MODEL_ROWS}",
+                    (values[field], name, user_id),
                 )
         self._conn.commit()
-        return self.sampling(name)
+        return self.sampling(name, user_id=user_id)
 
-    def sampling(self, name: str) -> dict[str, float | None]:
-        """一行的三栏惩罚现值（None = 没设）。写侧的回显走它，免得前端拿旧草稿。"""
+    def sampling(self, name: str, *, user_id: str) -> dict[str, float | None]:
+        """一行的三栏惩罚现值（None = 没设）。写侧的回显走它，免得前端拿旧草稿。
+
+        回显也按主人读：不然"我设了什么"会读到别人那一行的数（同名行在两个身份下可以各有一份）。
+        """
         row = self._conn.execute(
-            "SELECT repeat_penalty, frequency_penalty, presence_penalty FROM model_backend"
-            " WHERE name = ?",
-            (name,),
+            "SELECT b.repeat_penalty, b.frequency_penalty, b.presence_penalty "
+            "FROM model_backend b JOIN model_provider p ON p.id = b.provider_id"
+            " WHERE b.name = ? AND p.user_id = ?",
+            (name, user_id),
         ).fetchone()
         if row is None:
             raise KeyError(name)
@@ -847,9 +933,13 @@ class ModelSettingsService:
         ① 云端种子把 SiliconFlow 写成 provider="openai"（只记了风格没记厂商），
            设置页因此显示"供应商：openai"这种错误身份；
         ② 无 key 供应商（Ollama）被早期测试写入了无意义的占位 key。
+
+        **这一处刻意读全部身份的行**（`_all_provider_rows`）：它是启动时的数据卫生清扫，
+        不是任何人的读写视图。按主人过滤反而漏 —— 库里躺着第二个身份的脏组就没人管了，
+        而他下一次看见自己的供应商名仍然是错的。它不改归属，所以清扫不构成越权。
         """
         changed = 0
-        for group in self._provider_rows():
+        for group in self._all_provider_rows():
             old = str(group["provider"])
             base = str(group["base_url"]) if group["base_url"] else None
             norm = normalize_provider(old, base)
@@ -869,11 +959,17 @@ class ModelSettingsService:
     def save(
         self,
         *,
+        user_id: str,
         default: str,
         backends: list[dict[str, object]],
         fallbacks: list[str] | None = None,
     ) -> None:
         """Replace the whole backend set in one transaction（过渡期：旧模型页的整表保存）。
+
+        **`user_id` 是"整表"的范围**：这里的"全量替换"替换的是**这个人**的那一集，不是库里的
+        全部。旧语义在没有归属列之前是同一件事（整个库里只有一族配置），有了主人之后它就成了
+        最危险的一处 —— 不加过滤，A 存一次盘就把 B 的模型行与 key 抹了（`DELETE FROM
+        model_backend` 无 WHERE + 末尾那句按 id 列表删组，都是全表）。
 
         入参仍是**旧形状**：每行带 provider/base_url/api_key/usage。内部按 (供应商, base_url)
         归并成凭据组，模型行只留模型名 + 能力位 + num_ctx；`usage='chat'` 翻译成 chat 引用行
@@ -885,8 +981,8 @@ class ModelSettingsService:
         """
         if not backends:
             raise ModelSettingsError("至少需要保留一个模型后端。")
-        stored_rows = {str(row["name"]): row for row in self._raw_backends()}
-        existing_groups = {str(g["id"]): g for g in self._provider_rows()}
+        stored_rows = {str(row["name"]): row for row in self._raw_backends(user_id=user_id)}
+        existing_groups = {str(g["id"]): g for g in self._provider_rows(user_id=user_id)}
         stored_gid_of_endpoint = {
             endpoint_key(str(g["provider"]), g["base_url"]): str(g["id"])
             for g in existing_groups.values()
@@ -998,12 +1094,20 @@ class ModelSettingsService:
                 signals.setdefault(endpoint, "")
 
         # 删之前先按后端名留住"这个端点不管理"的那些列（见 `SAVE_MANAGED_COLUMNS`）。
+        # 快照与删除同范围（都只碰本人的行）：全表快照会把别人的行读进来，而全表删除会
+        # 把别人的行删掉 —— 两边不一致时，症状是"我保存一次，他的配置变小了"。
         carried = unmanaged_backend_columns(self._conn)
         carried_values = {
             str(r["name"]): {c: r[c] for c in carried}
-            for r in self._conn.execute("SELECT * FROM model_backend")
+            for r in self._conn.execute(
+                "SELECT b.* FROM model_backend b JOIN model_provider p ON p.id = b.provider_id"
+                " WHERE p.user_id = ?",
+                (user_id,),
+            )
         }
-        self._conn.execute("DELETE FROM model_backend")
+        self._conn.execute(
+            f"DELETE FROM model_backend WHERE {_OWNED_MODEL_ROWS}", (user_id,)
+        )
         used_ids: set[str] = set()
         gid_of_endpoint: dict[tuple[str, str | None], str] = {}
         for endpoint, order in orders.items():
@@ -1020,15 +1124,19 @@ class ModelSettingsService:
                 gid = stored_gid
                 self._conn.execute(
                     "UPDATE model_provider SET base_url = ?, api_key = ?, sort_order = ? "
-                    "WHERE id = ?",
-                    (endpoint[1], api_key, order, gid),
+                    "WHERE id = ? AND user_id = ?",
+                    (endpoint[1], api_key, order, gid, user_id),
                 )
             else:
-                gid = _group_id(set(existing_groups) | used_ids, endpoint[0])
+                # `taken` 是**全局**的（主键是全局的，见 `_all_group_ids`）；而 gid 一旦发就
+                # 只写进本人名下。同一个 (供应商, 端点) 被两个人各配一次 = 两组各带一把 key，
+                # 而不是共享 A 的那一把 —— 这正是"key 跟人走"要的形状。
+                gid = _group_id(self._all_group_ids() | used_ids, endpoint[0])
                 self._conn.execute(
-                    "INSERT INTO model_provider (id, provider, base_url, api_key, sort_order) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (gid, endpoint[0], endpoint[1], api_key, order),
+                    "INSERT INTO model_provider "
+                    "(id, user_id, provider, base_url, api_key, sort_order) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (gid, user_id, endpoint[0], endpoint[1], api_key, order),
                 )
             gid_of_endpoint[endpoint] = gid
             used_ids.add(gid)
@@ -1063,9 +1171,12 @@ class ModelSettingsService:
             )
         # 组里最后一个模型被删掉 = 这个端点不再存在。key 随组一起消失，不是"留着备用"：
         # 界面上已经没有它，留在盘上就是一处看不见的凭据。
+        # `user_id = ?` 是这一句的范围：`used_ids` 只装了本次涉及的组，不加过滤就是
+        # "A 存一次盘，把 B 的凭据组全删了"（这是本方法最要命的那一条，也是它进验收用例的原因）。
         self._conn.execute(
-            f"DELETE FROM model_provider WHERE id NOT IN ({','.join('?' * len(used_ids))})",
-            tuple(used_ids),
+            f"DELETE FROM model_provider WHERE user_id = ? "
+            f"AND id NOT IN ({','.join('?' * len(used_ids))})",
+            (user_id, *used_ids),
         )
         # 用途（chat 引用行）：默认永远第 1 位，其后依次是回退链，再后面是其余对话后端。
         chat_names = [n for n in names if usage_by_name[n] == "chat"]
@@ -1077,6 +1188,7 @@ class ModelSettingsService:
     def group_for(
         self,
         *,
+        user_id: str,
         group_id: str | None = None,
         provider: str | None = None,
         base_url: str | None = None,
@@ -1084,8 +1196,9 @@ class ModelSettingsService:
         """按组 id 或按 (供应商, 端点) 找那条凭据组（含 api_key 明文，**只在进程内用**）。
 
         端点走 `endpoint_key` 归一，所以"没填 URL 的硅基流动"能命中"填了默认 URL 的那一组"。
+        只在这个人的组里找 —— 别人的组在这里就是不存在（探测/添加因此花不到他的 key）。
         """
-        for group in self._provider_rows():
+        for group in self._provider_rows(user_id=user_id):
             if group_id is not None:
                 if str(group["id"]) == group_id:
                     return group
@@ -1098,6 +1211,7 @@ class ModelSettingsService:
     def add_model(
         self,
         *,
+        user_id: str,
         model: str,
         provider: str | None = None,
         base_url: str | None = None,
@@ -1121,9 +1235,9 @@ class ModelSettingsService:
         model = (model or "").strip()
         if not model:
             raise ModelSettingsError("缺少模型名。")
-        group = self.group_for(group_id=group_id) if group_id else None
+        group = self.group_for(user_id=user_id, group_id=group_id) if group_id else None
         if group is None and provider:
-            group = self.group_for(provider=provider, base_url=base_url)
+            group = self.group_for(user_id=user_id, provider=provider, base_url=base_url)
         if group is None:
             if not provider:
                 raise ModelSettingsError("要么选一个已配置的供应商，要么填 provider。")
@@ -1131,16 +1245,18 @@ class ModelSettingsService:
             pinned = validate_base_url(base_url)
             if is_keyless_provider(catalog):
                 api_key = None
-            gid = _group_id({str(g["id"]) for g in self._provider_rows()}, catalog)
+            gid = _group_id(self._all_group_ids(), catalog)
             self._conn.execute(
-                "INSERT INTO model_provider (id, provider, base_url, api_key, sort_order) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO model_provider "
+                "(id, user_id, provider, base_url, api_key, sort_order) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     gid,
+                    user_id,
                     catalog,
                     pinned,
                     api_key.strip() or None if api_key else None,
-                    len(self._provider_rows()),
+                    len(self._provider_rows(user_id=user_id)),
                 ),
             )
             group = {"id": gid, "provider": catalog, "base_url": pinned, "api_key": api_key}
@@ -1151,14 +1267,19 @@ class ModelSettingsService:
                 raise ModelSettingsError(
                     f"后端名 {key!r} 不合法：小写字母开头，只含小写字母/数字/下划线/连字符。"
                 )
-            if self._has_backend(key):
+            # 冲突判定是**全局**的，不是按人的：`model_backend.name` 是全局主键，按人过滤
+            # 只会把"撞主键"变成一个 500。这里的取舍是"宁可报一次占用，也不静默改名"
+            # （改名会让用户下次找不到自己那行）。
+            if self._conn.execute(
+                "SELECT 1 FROM model_backend WHERE name = ?", (key,)
+            ).fetchone():
                 raise ModelSettingsError(
                     f"这个配置名已经存在：{key}（换一个，或直接编辑原来那行）。"
                 )
         else:
             key = self._free_name(gid, str(group["provider"]), model)
         # 能力位：探测结果原样写（None 保持"没测过"），不让一次添加把未知说成已知。
-        order = len(self._raw_backends())
+        order = len(self._raw_backends(user_id=user_id))
         self._conn.execute(
             "INSERT INTO model_backend "
             "(name, provider_id, model, sort_order, num_ctx, supports_vision, supports_tools) "
@@ -1180,37 +1301,44 @@ class ModelSettingsService:
         self._conn.commit()
         return {"name": key, "provider_id": gid}
 
-    def remove_model(self, name: str) -> None:
+    def remove_model(self, name: str, *, user_id: str) -> None:
         """删一行模型（名称不存在 → KeyError/404）。
 
         组里没别的模型了才连凭据一起删（key 不留成"看不见的凭据"）。其余服务类别的引用行
         **保持原样**并在服务页呈现「失效」—— 摘引用与删配置是两个动作，不能顺手合并；
         chat 引用则跟着这行走，并把它的位置让给序列里的下一个（默认不能悬空）。
+
+        别人的那一行在这里同样是 KeyError —— 而这一处比 404 的口径更要紧：不带主人过滤的
+        删除会连着 `DELETE FROM model_provider` 一起走，那是**删掉他的凭据**。
         """
-        row = next((r for r in self._raw_backends() if str(r["name"]) == name), None)
+        row = next((r for r in self._raw_backends(user_id=user_id) if str(r["name"]) == name), None)
         if row is None:
             raise KeyError(name)
         gid = str(row["provider_id"])
         pool = [n for n in self._chat_ref_names() if n != name]
-        self._conn.execute("DELETE FROM model_backend WHERE name = ?", (name,))
+        self._conn.execute(
+            f"DELETE FROM model_backend WHERE name = ? AND {_OWNED_MODEL_ROWS}", (name, user_id)
+        )
         left = self._conn.execute(
             "SELECT 1 FROM model_backend WHERE provider_id = ? LIMIT 1", (gid,)
         ).fetchone()
         if left is None:
-            self._conn.execute("DELETE FROM model_provider WHERE id = ?", (gid,))
+            self._conn.execute(
+                "DELETE FROM model_provider WHERE id = ? AND user_id = ?", (gid, user_id)
+            )
         # 引用行按新序重编 sort_order，所以删掉的正是默认时，下一位自动顶上（默认不会悬空）。
         self._write_chat_refs(pool)
         self._conn.commit()
 
     def set_capabilities(
-        self, name: str, capabilities: dict[str, bool | None]
+        self, name: str, capabilities: dict[str, bool | None], *, user_id: str
     ) -> None:
         """写回探测结论（三态）。字典里**出现**的键才写，缺席的键不动。
 
         为什么按"键在不在"而不是"值是不是 None"：`None` 在这三态里是一个**有内容的结论**
         ("没测过" → 界面 `?`)。把 None 当"没提交"，PATCH 就永远没法把 `✗` 改回 `?`。
         """
-        if not self._has_backend(name):
+        if not self._has_backend(name, user_id=user_id):
             raise KeyError(name)
         unknown = set(capabilities) - {"supports_vision", "supports_tools"}
         if unknown:
@@ -1224,22 +1352,31 @@ class ModelSettingsService:
         # 参数化列名来自白名单（`unknown` 已经挡掉其它键），不是用户输入。
         assignments = ", ".join(f"{field} = ?" for field in columns)
         self._conn.execute(
-            f"UPDATE model_backend SET {assignments} WHERE name = ?",
-            (*columns.values(), name),
+            f"UPDATE model_backend SET {assignments} WHERE name = ? AND {_OWNED_MODEL_ROWS}",
+            (*columns.values(), name, user_id),
         )
         self._conn.commit()
 
-    def _has_backend(self, name: str) -> bool:
+    def _has_backend(self, name: str, *, user_id: str) -> bool:
+        """这一行**在这个人眼里**存在吗（别人的行 = 不存在，不是"存在但你不能碰"）。"""
         return (
-            self._conn.execute("SELECT 1 FROM model_backend WHERE name = ?", (name,)).fetchone()
+            self._conn.execute(
+                f"SELECT 1 FROM model_backend WHERE name = ? AND {_OWNED_MODEL_ROWS}",
+                (name, user_id),
+            ).fetchone()
             is not None
         )
 
     def _free_name(self, group_id: str, provider: str, model: str) -> str:
-        """由 (供应商, 模型名) 生成一个合法且未占用的配置名，例如 `siliconflow-qwen3-vl-30b`。"""
+        """由 (供应商, 模型名) 生成一个合法且未占用的配置名，例如 `siliconflow-qwen3-vl-30b`。
+
+        `taken` 是**全局**的（`_all_backend_names`）：主键全局，按人取会生成一个撞别人
+        已占名字的键，症状是 INSERT 抛 IntegrityError —— 而这条路径是"用户没填名字"，
+        他不该为一次看不见的主键冲突负责。
+        """
         slug = re.sub(r"[^a-z0-9]+", "-", f"{provider}-{model}".lower()).strip("-")
         base = slug[:28].rstrip("-") or "model"
-        taken = {str(row["name"]) for row in self._raw_backends()}
+        taken = self._all_backend_names()
         if base not in taken:
             return base
         n = 2
@@ -1249,15 +1386,21 @@ class ModelSettingsService:
 
     # -- merge -------------------------------------------------------------------
 
-    def effective_settings(self, env_settings: Settings) -> Settings:
+    def effective_settings(self, env_settings: Settings, *, user_id: str) -> Settings:
         """DB rows are the single source of truth once seeded.
+
+        **这一句 `user_id` 就是"谁的 key 被花出去"的唯一答案**（M2d，§4.1）：拼出来的是
+        那个人名下的后端集，别人的组根本进不来，所以运行时不存在"要不要检查这把 key 是不是
+        他的"这一问 —— 图与工厂拿到的 `Settings` 里压根没有别人的凭据。咽喉只在这一处，
+        也就是 `core/graph.py` 那句 `backend.api_key` 之上再没有第二道判断要写。
+        本机单身份时这个参数恒等于"这台实例的主人"，形状与拆层前一致。
 
         H5 修复：表非空后**不再并入 env 后端**。此前 `merged = dict(env_settings.model_backends)`
         会把"UI 删掉、但 env 仍提供"的后端重新复活，与 `seed_from_env` 文档（首启后 env 出局、
         UI 删除的后端保持删除）直接矛盾。现在：表空 → 退回 env（首启前 bootstrap）；表非空 →
         仅以 DB 行为准，env 改动（首启后）一律忽略。
         """
-        raw = self._raw_backends()
+        raw = self._raw_backends(user_id=user_id)
         if not raw:
             return env_settings
         merged: dict[str, ModelBackend] = {

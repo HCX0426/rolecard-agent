@@ -23,7 +23,10 @@ from rolecard_agent.core.model_settings import (
     unmanaged_backend_columns,
     validate_base_url,
 )
-from rolecard_agent.storage.db import bootstrap, connect
+from rolecard_agent.storage.db import bootstrap, connect, reconcile_columns
+
+# 这台实例的主人 = 默认那份（M2d）：模型凭据组现在有归属，读写都要交出它是谁。
+OWNER = "local-user"
 
 
 def _conn() -> object:
@@ -49,7 +52,7 @@ def test_effective_settings_falls_back_to_env_before_seed() -> None:
     )
     svc = ModelSettingsService(_conn())
     # 表空（首启前）→ 直接退回 env 对象，不做任何合并。
-    eff = svc.effective_settings(env)
+    eff = svc.effective_settings(env, user_id=OWNER)
     assert eff is env
 
 
@@ -70,7 +73,7 @@ def test_effective_settings_does_not_revive_deleted_env_backend() -> None:
         model_fallbacks=[],
     )
     svc = ModelSettingsService(_conn())
-    svc.seed_from_env(env)  # 首启：env 后端进表
+    svc.seed_from_env(env, user_id=OWNER)  # 首启：env 后端进表
     # 操作员删除 ghost（重存为只剩 local）。
     svc.save(
         default="local",
@@ -78,9 +81,9 @@ def test_effective_settings_does_not_revive_deleted_env_backend() -> None:
             "name": "local", "provider": "ollama", "model": "qwen2.5:7b",
             "base_url": "http://localhost:11434", "api_key": "ollama",
             "usage": "chat",
-        }],
+        }], user_id=OWNER,
     )
-    eff = svc.effective_settings(env)
+    eff = svc.effective_settings(env, user_id=OWNER)
     # 关键：env 里还有 ghost，但表已删 → 绝不复活。
     assert "ghost" not in eff.model_backends
     assert set(eff.model_backends) == {"local"}
@@ -101,7 +104,7 @@ def test_save_rejects_non_chat_default() -> None:
                  "usage": "embedding"},
                 {"name": "chat", "provider": "ollama", "model": "qwen2.5:7b",
                  "usage": "chat"},
-            ],
+            ], user_id=OWNER,
         )
 
 
@@ -115,16 +118,16 @@ def test_chat_pool_rejects_unknown_backend() -> None:
              "usage": "embedding"},
             {"name": "chat", "provider": "ollama", "model": "qwen2.5:7b",
              "usage": "chat"},
-        ],
+        ], user_id=OWNER,
     )
     with pytest.raises(ModelSettingsError, match="不在模型页配置里"):
-        svc.save_chat_pool(["ghost"])
+        svc.save_chat_pool(["ghost"], user_id=OWNER)
     # 空序列也不行：那等于把对话彻底关掉，而界面上没有任何地方说得通。
     with pytest.raises(ModelSettingsError, match="不能为空"):
-        svc.save_chat_pool([])
+        svc.save_chat_pool([], user_id=OWNER)
     # 已存在的行**可以**被加进对话序列 —— 它原本"用于嵌入"不构成障碍：一行模型服务谁是
     # 服务页的决定，不是行上写死的属性（拆层前的死循环正是 usage 自己定义了自己）。
-    svc.save_chat_pool(["chat", "emb"])
+    svc.save_chat_pool(["chat", "emb"], user_id=OWNER)
     assert svc.list_fallbacks() == ["emb"]
 
 
@@ -141,12 +144,13 @@ def test_save_prunes_stale_fallbacks_when_backends_shrink() -> None:
             {"name": "a", "provider": "ollama", "model": "m-a", "usage": "chat"},
             {"name": "b", "provider": "ollama", "model": "m-b", "usage": "chat"},
         ],
-        fallbacks=["b"],
+        fallbacks=["b"], user_id=OWNER,
     )
     assert svc.list_fallbacks() == ["b"]
     svc.save(
         default="a",
         backends=[{"name": "a", "provider": "ollama", "model": "m-a", "usage": "chat"}],
+            user_id=OWNER,
     )  # 缩容：b 没了，链缺省保留 → 修剪后为空，保存成功
     assert svc.list_fallbacks() == []
 
@@ -162,7 +166,7 @@ def _row_values(conn: object, name: str) -> dict[str, object]:
 
 
 def _backend(svc: ModelSettingsService, name: str) -> dict[str, object]:
-    return next(b for b in svc._raw_backends() if str(b["name"]) == name)
+    return next(b for b in svc._raw_backends(user_id=OWNER) if str(b["name"]) == name)
 
 
 def test_save_preserves_the_sampling_penalties_it_does_not_manage() -> None:
@@ -175,9 +179,10 @@ def test_save_preserves_the_sampling_penalties_it_does_not_manage() -> None:
     svc.save(
         default="a",
         backends=[{"name": "a", "provider": "ollama", "model": "m-a", "usage": "chat"}],
+            user_id=OWNER,
     )
-    svc.set_sampling("a", {"repeat_penalty": 1.25, "frequency_penalty": 0.1})
-    assert svc.sampling("a")["repeat_penalty"] == 1.25  # 前置条件：确实设上了
+    svc.set_sampling("a", {"repeat_penalty": 1.25, "frequency_penalty": 0.1}, user_id=OWNER)
+    assert svc.sampling("a", user_id=OWNER)["repeat_penalty"] == 1.25  # 前置条件：确实设上了
 
     svc.save(
         default="a",
@@ -189,9 +194,9 @@ def test_save_preserves_the_sampling_penalties_it_does_not_manage() -> None:
                 "usage": "chat",
                 "num_ctx": 8192,
             }
-        ],
+        ], user_id=OWNER,
     )
-    after = svc.sampling("a")
+    after = svc.sampling("a", user_id=OWNER)
     assert (after["repeat_penalty"], after["frequency_penalty"]) == (1.25, 0.1), after
     # 同一行里"它管理的"列照常按请求覆盖 —— 保留不是"整行不动"。
     assert _backend(svc, "a")["num_ctx"] == 8192
@@ -207,6 +212,7 @@ def test_save_carries_over_any_column_it_does_not_manage() -> None:
     svc.save(
         default="a",
         backends=[{"name": "a", "provider": "ollama", "model": "m-a", "usage": "chat"}],
+            user_id=OWNER,
     )
     conn.execute("ALTER TABLE model_backend ADD COLUMN something_new REAL")  # type: ignore[attr-defined]
     conn.execute(  # type: ignore[attr-defined]
@@ -218,6 +224,7 @@ def test_save_carries_over_any_column_it_does_not_manage() -> None:
     svc.save(
         default="a",
         backends=[{"name": "a", "provider": "ollama", "model": "m-a", "usage": "chat"}],
+            user_id=OWNER,
     )
     assert _row_values(conn, "a")["something_new"] == 0.75
 
@@ -230,7 +237,7 @@ def test_save_rejects_explicit_unknown_fallback() -> None:
             default="a",
             backends=[{"name": "a", "provider": "ollama", "model": "m-a",
                        "usage": "chat"}],
-            fallbacks=["ghost"],
+            fallbacks=["ghost"], user_id=OWNER,
         )
 
 
@@ -264,7 +271,7 @@ def test_save_rejects_bad_base_url() -> None:
             backends=[{
                 "name": "local", "provider": "ollama", "model": "qwen2.5:7b",
                 "base_url": "file:///etc/passwd", "usage": "chat",
-            }],
+            }], user_id=OWNER,
         )
 
 
@@ -276,9 +283,9 @@ def test_num_ctx_roundtrip_and_validation() -> None:
         backends=[
             {"name": "a", "provider": "ollama", "model": "qwen3-vl:8b",
              "usage": "chat", "num_ctx": 8192},
-        ],
+        ], user_id=OWNER,
     )
-    rows = svc.list_backends()
+    rows = svc.list_backends(user_id=OWNER)
     assert rows[0]["num_ctx"] == 8192
 
     # 太小（<512）大声拒绝，不落半套配置
@@ -286,17 +293,18 @@ def test_num_ctx_roundtrip_and_validation() -> None:
         svc.save(
             default="a",
             backends=[{"name": "a", "provider": "ollama", "model": "m", "num_ctx": 128}],
+            user_id=OWNER,
         )
 
     # 单列写入：正常 / 清除回落 / 未知名称 KeyError
-    svc.set_num_ctx("a", 16384)
-    assert svc.list_backends()[0]["num_ctx"] == 16384
-    svc.set_num_ctx("a", None)
-    assert svc.list_backends()[0]["num_ctx"] is None
+    svc.set_num_ctx("a", 16384, user_id=OWNER)
+    assert svc.list_backends(user_id=OWNER)[0]["num_ctx"] == 16384
+    svc.set_num_ctx("a", None, user_id=OWNER)
+    assert svc.list_backends(user_id=OWNER)[0]["num_ctx"] is None
     with pytest.raises(KeyError):
-        svc.set_num_ctx("ghost", 4096)
+        svc.set_num_ctx("ghost", 4096, user_id=OWNER)
     with pytest.raises(ModelSettingsError, match="不得小于 512"):
-        svc.set_num_ctx("a", 100)
+        svc.set_num_ctx("a", 100, user_id=OWNER)
 
 
 def test_capability_flags_roundtrip_and_defaults() -> None:
@@ -307,9 +315,9 @@ def test_capability_flags_roundtrip_and_defaults() -> None:
         backends=[
             {"name": "vl", "provider": "siliconflow", "model": "Qwen3-VL", "usage": "chat",
              "api_key": "sk-x", "supports_vision": True, "supports_tools": False},
-        ],
+        ], user_id=OWNER,
     )
-    row = svc.list_backends()[0]
+    row = svc.list_backends(user_id=OWNER)[0]
     assert row["supports_vision"] is True
     assert row["supports_tools"] is False
 
@@ -317,8 +325,9 @@ def test_capability_flags_roundtrip_and_defaults() -> None:
     svc.save(
         default="plain",
         backends=[{"name": "plain", "provider": "ollama", "model": "m", "usage": "chat"}],
+            user_id=OWNER,
     )
-    row2 = svc.list_backends()[0]
+    row2 = svc.list_backends(user_id=OWNER)[0]
     assert row2["supports_vision"] is False
     assert row2["supports_tools"] is True
 
@@ -347,15 +356,15 @@ def test_same_endpoint_shares_one_credential_group() -> None:
              "api_key": "sk-shared", "usage": "chat"},
             {"name": "vl", "provider": "siliconflow", "usage": "chat",
              "base_url": "https://api.siliconflow.cn/v1", "model": "Qwen3-VL-30B"},
-        ],
+        ], user_id=OWNER,
     )
-    groups = svc.list_providers()
+    groups = svc.list_providers(user_id=OWNER)
     assert len(groups) == 1, "同一端点被拆成两组 = key 又有两个家"
     assert groups[0]["provider"] == "siliconflow"
     assert [m["name"] for m in groups[0]["models"]] == ["chat", "vl"]
     # 两行都"有 key"，因为 key 属于组；掩码也来自组。
-    assert {b["has_key"] for b in svc.list_backends()} == {True}
-    assert {b["key_masked"] for b in svc.list_backends()} == {groups[0]["key_masked"]}
+    assert {b["has_key"] for b in svc.list_backends(user_id=OWNER)} == {True}
+    assert {b["key_masked"] for b in svc.list_backends(user_id=OWNER)} == {groups[0]["key_masked"]}
 
 
 def test_omitted_key_keeps_the_group_key_for_a_new_model() -> None:
@@ -364,9 +373,9 @@ def test_omitted_key_keeps_the_group_key_for_a_new_model() -> None:
     svc.save(
         default="chat",
         backends=[{"name": "chat", "provider": "siliconflow", "model": "m-a",
-                   "api_key": "sk-1", "usage": "chat"}],
+                   "api_key": "sk-1", "usage": "chat"}], user_id=OWNER,
     )
-    assert svc.has_key_for_endpoint("siliconflow", "https://api.siliconflow.cn/v1")
+    assert svc.has_key_for_endpoint("siliconflow", "https://api.siliconflow.cn/v1", user_id=OWNER)
     svc.save(
         default="chat",
         backends=[
@@ -374,9 +383,9 @@ def test_omitted_key_keeps_the_group_key_for_a_new_model() -> None:
                       "base_url": "https://api.siliconflow.cn/v1", "model": "m-a"}),
             _silicon({"name": "second", "provider": "siliconflow",
                       "base_url": "https://api.siliconflow.cn/v1", "model": "m-b"}),
-        ],
+        ], user_id=OWNER,
     )
-    assert [str(g["api_key"]) for g in svc._provider_rows()] == ["sk-1"]  # noqa: SLF001
+    assert [str(g["api_key"]) for g in svc._provider_rows(user_id=OWNER)] == ["sk-1"]  # noqa: SLF001
     # 空串 = 清除，且一次清掉整组（不会出现"半组模型没 key"的状态）。
     svc.save(
         default="chat",
@@ -386,9 +395,9 @@ def test_omitted_key_keeps_the_group_key_for_a_new_model() -> None:
              "api_key": ""},
             _silicon({"name": "second", "provider": "siliconflow",
                       "base_url": "https://api.siliconflow.cn/v1", "model": "m-b"}),
-        ],
+        ], user_id=OWNER,
     )
-    assert [str(g["api_key"]) for g in svc._provider_rows()] == ["None"]  # noqa: SLF001
+    assert [str(g["api_key"]) for g in svc._provider_rows(user_id=OWNER)] == ["None"]  # noqa: SLF001
 
 
 def test_group_disappears_with_its_last_model() -> None:
@@ -401,15 +410,16 @@ def test_group_disappears_with_its_last_model() -> None:
              "api_key": "sk-1", "usage": "chat"},
             {"name": "extra", "provider": "siliconflow", "model": "m-b",
              "base_url": "https://api.siliconflow.cn/v1", "usage": "chat"},
-        ],
+        ], user_id=OWNER,
     )
-    assert len(svc.list_providers()) == 1
+    assert len(svc.list_providers(user_id=OWNER)) == 1
     svc.save(
         default="chat",
         backends=[{"name": "chat", "provider": "ollama", "model": "m-local", "usage": "chat"}],
+            user_id=OWNER,
     )
-    assert [g["provider"] for g in svc.list_providers()] == ["ollama"]
-    assert svc.list_providers()[0]["has_key"] is False
+    assert [g["provider"] for g in svc.list_providers(user_id=OWNER)] == ["ollama"]
+    assert svc.list_providers(user_id=OWNER)[0]["has_key"] is False
 
 
 def test_local_provider_never_stores_a_key() -> None:
@@ -418,9 +428,9 @@ def test_local_provider_never_stores_a_key() -> None:
     svc.save(
         default="local",
         backends=[{"name": "local", "provider": "ollama", "model": "qwen3-vl:8b",
-                   "api_key": "ollama", "usage": "chat"}],
+                   "api_key": "ollama", "usage": "chat"}], user_id=OWNER,
     )
-    group = svc.list_providers()[0]
+    group = svc.list_providers(user_id=OWNER)[0]
     assert group["has_key"] is False and group["key_masked"] is None
     assert group["needs_key"] is False
 
@@ -438,26 +448,28 @@ def test_usage_is_derived_from_service_references() -> None:
         backends=[
             {"name": "a", "provider": "ollama", "model": "m-a", "usage": "chat"},
             {"name": "b", "provider": "ollama", "model": "m-b", "usage": "chat"},
-        ],
+        ], user_id=OWNER,
     )
-    assert [b["usage"] for b in svc.list_backends()] == ["chat", "chat"]
+    assert [b["usage"] for b in svc.list_backends(user_id=OWNER)] == ["chat", "chat"]
     conn.execute(
         "INSERT INTO service_endpoint (category, id, kind, ref_backend, enabled, sort_order, "
         "builtin) VALUES ('embedding', 'b', 'cloud', 'b', 1, 0, 0)"
     )
     conn.commit()
-    by_name = {str(b["name"]): b for b in svc.list_backends()}
+    by_name = {str(b["name"]): b for b in svc.list_backends(user_id=OWNER)}
     assert by_name["b"]["used_by"] == ["chat", "embedding"]
 
-    svc.save_chat_pool(["a"])  # b 退出对话，但仍服务嵌入
+    svc.save_chat_pool(["a"], user_id=OWNER)  # b 退出对话，但仍服务嵌入
     assert svc.default_backend() == "a"
     assert svc.list_fallbacks() == []
-    by_name = {str(b["name"]): b for b in svc.list_backends()}
+    by_name = {str(b["name"]): b for b in svc.list_backends(user_id=OWNER)}
     assert by_name["b"]["usage"] == "embedding"
     assert by_name["b"]["used_by"] == ["embedding"]
     # 关键：行还在，配置没变小 —— 只是"用于对话"这件事没了。
     assert set(by_name) == {"a", "b"}
-    assert svc.effective_settings(Settings(model_backends={})).model_backends.keys() == {
+    assert svc.effective_settings(
+        Settings(model_backends={}), user_id=OWNER
+    ).model_backends.keys() == {
         "a",
         "b",
     }
@@ -476,11 +488,11 @@ def test_unassigned_model_is_not_mistaken_for_a_chat_backend() -> None:
         "VALUES ('fresh', 'deepseek', 'deepseek-chat', 0)"
     )
     conn.commit()
-    row = svc.list_backends()[0]
+    row = svc.list_backends(user_id=OWNER)[0]
     assert row["usage"] == UNASSIGNED_USAGE
     assert row["used_by"] == []
     # 服务页的模型推理候选按 usage=='chat' 过滤：它不该出现，但配置本身仍然可读。
-    assert [b["name"] for b in svc.list_backends() if b["usage"] == "chat"] == []
+    assert [b["name"] for b in svc.list_backends(user_id=OWNER) if b["usage"] == "chat"] == []
     assert svc.default_backend() is None
 
 
@@ -495,9 +507,9 @@ def test_capability_is_a_tri_state_and_survives_an_omitted_save() -> None:
     svc.save(
         default="vl",
         backends=[{"name": "vl", "provider": "siliconflow", "model": "Qwen3-VL",
-                   "api_key": "sk-x", "usage": "chat", "supports_vision": True}],
+                   "api_key": "sk-x", "usage": "chat", "supports_vision": True}], user_id=OWNER,
     )
-    assert svc.list_providers()[0]["models"][0]["supports_vision"] is True
+    assert svc.list_providers(user_id=OWNER)[0]["models"][0]["supports_vision"] is True
     # 另起一行"从没测过"的（NULL）：新添加流程就是这个状态，界面要渲染成 `?`。
     conn.execute(
         "INSERT INTO model_provider (id, provider, base_url, api_key, sort_order) "
@@ -508,11 +520,11 @@ def test_capability_is_a_tri_state_and_survives_an_omitted_save() -> None:
         "VALUES ('unprobed', 'openai', 'gpt-x', 1)"
     )
     conn.commit()
-    models = {m["name"]: m for g in svc.list_providers() for m in g["models"]}
+    models = {m["name"]: m for g in svc.list_providers(user_id=OWNER) for m in g["models"]}
     assert models["unprobed"]["supports_vision"] is None
     assert models["unprobed"]["supports_tools"] is None
     # 运行时那侧必须有确定值：未探测 = 放行（与 P1-2"只拦确定的否"同一条纪律）。
-    rows = {str(b["name"]): b for b in svc.list_backends()}
+    rows = {str(b["name"]): b for b in svc.list_backends(user_id=OWNER)}
     assert rows["unprobed"]["supports_vision"] is False
     assert rows["unprobed"]["supports_tools"] is True
 
@@ -523,9 +535,9 @@ def test_capability_is_a_tri_state_and_survives_an_omitted_save() -> None:
              "usage": "chat"},
             {"name": "unprobed", "provider": "openai", "model": "gpt-x", "usage": "chat",
              "base_url": "https://api.openai.com/v1"},
-        ],
+        ], user_id=OWNER,
     )
-    models = {m["name"]: m for g in svc.list_providers() for m in g["models"]}
+    models = {m["name"]: m for g in svc.list_providers(user_id=OWNER) for m in g["models"]}
     assert models["vl"]["supports_vision"] is True  # 没提交这一列 → 探测结论仍在
     assert models["unprobed"]["supports_vision"] is None  # NULL 也没被悄悄写成"不支持"
 
@@ -572,19 +584,22 @@ def test_legacy_db_moves_into_two_layers_without_losing_config() -> None:
                  "'[\"chat\"]')")
     conn.commit()
 
+    # 与生产同一步序：`_migrate` 先补列再搬层（`storage/db.py` 里就是这个顺序），
+    # 所以搬层之后那些组是**有主人**的 —— 老库里没有归属这回事，它们落进列默认值那份。
+    assert "model_provider.user_id" in reconcile_columns(conn)
     assert migrate_to_provider_layers(conn) == 2
     assert migrate_to_provider_layers(conn) == 0  # 幂等：搬过就不再搬
 
     svc = ModelSettingsService(conn)
-    groups = {str(g["id"]): g for g in svc._provider_rows()}  # noqa: SLF001
+    groups = {str(g["id"]): g for g in svc._provider_rows(user_id=OWNER)}  # noqa: SLF001
     assert len(groups) == 2, "同一端点的两行必须归成一个组"
     assert groups["siliconflow"]["api_key"] == "sk-shared"
-    assert [b["name"] for b in svc.list_backends()] == ["chat", "vl", "local"]
+    assert [b["name"] for b in svc.list_backends(user_id=OWNER)] == ["chat", "vl", "local"]
     # 默认与回退顺序照搬：local 仍是第 1 位，chat 第二（旧链），vl 跟在后面。
     assert svc.default_backend() == "local"
     assert svc.list_fallbacks() == ["chat", "vl"]
     # 旧列的三行用途都在：都是 chat；能力位与 num_ctx 原样跟行。
-    by_name = {str(b["name"]): b for b in svc.list_backends()}
+    by_name = {str(b["name"]): b for b in svc.list_backends(user_id=OWNER)}
     assert by_name["vl"]["supports_vision"] is True and by_name["vl"]["supports_tools"] is False
     assert by_name["local"]["num_ctx"] == 8192
     # kernel_meta 里的第二处默认/回退链被清掉（事实面只剩引用行的顺序）。

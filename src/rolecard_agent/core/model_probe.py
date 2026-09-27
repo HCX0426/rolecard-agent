@@ -108,6 +108,7 @@ def _default_root(provider: str) -> str:
 def resolve_target(
     svc: ModelSettingsService,
     *,
+    user_id: str,
     provider_id: str | None = None,
     provider: str | None = None,
     base_url: str | None = None,
@@ -123,17 +124,21 @@ def resolve_target(
         一个"让服务器替你发请求"的口子，不校验就等于把它变成内网探测器。换端点复用同一把
         key 是中转站的正常用法，这里的取舍由操作员承担（本机自用，不另外加一道确认）；
       * 请求里带了 `api_key` 时**以它为准**（抽屉里正在填一把新 key 的场景）。
+
+    探测是"让服务器替你发一次真请求"，所以它花的是**谁的凭据**必须有答案：`user_id` 把
+    取组的范围限定在这个人的组里（M2d）。别人那个端点在这里查不到 ⇒ 报"供应商组不存在"，
+    而不是替他烧一次配额。
     """
     from rolecard_agent.core.model_settings import (
         ModelSettingsError,
         validate_base_url,
     )
 
-    group = svc.group_for(group_id=provider_id) if provider_id else None
+    group = svc.group_for(user_id=user_id, group_id=provider_id) if provider_id else None
     if provider_id and group is None:
         raise ModelSettingsError(f"供应商组 {provider_id!r} 不存在。")
     if group is None and provider:
-        group = svc.group_for(provider=provider, base_url=base_url)
+        group = svc.group_for(user_id=user_id, provider=provider, base_url=base_url)
     catalog = str(group["provider"]) if group else (provider or "openai")
     raw_base = base_url or (str(group["base_url"]) if group and group["base_url"] else None)
     pinned = validate_base_url(raw_base)

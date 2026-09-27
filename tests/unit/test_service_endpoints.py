@@ -17,6 +17,9 @@ from rolecard_agent.core.model_settings import ModelSettingsService
 from rolecard_agent.core.services import ServiceEndpointService
 from rolecard_agent.storage.db import bootstrap, connect
 
+# 引用行解析凭据时的那个主人（M2d）= 这台实例默认那份。
+OWNER = "local-user"
+
 
 @pytest.fixture
 def svc() -> ServiceEndpointService:
@@ -35,9 +38,9 @@ def svc() -> ServiceEndpointService:
             },
             {"name": "local", "provider": "ollama", "model": "qwen2.5:7b"},
         ],
-        fallbacks=[],
+        fallbacks=[], user_id=OWNER,
     )
-    s = ServiceEndpointService(c)
+    s = ServiceEndpointService(c, owner=OWNER)
     s.seed_once()
     return s
 
@@ -59,7 +62,7 @@ def test_seed_does_not_revive_deleted_row(svc: ServiceEndpointService) -> None:
 def test_seed_without_backend_creates_no_reference() -> None:
     c = connect(":memory:")
     bootstrap(c, enabled_domains=())
-    s = ServiceEndpointService(c)
+    s = ServiceEndpointService(c, owner=OWNER)
     s.seed_once()  # model_backend 表为空 → 只有本地行
     assert [e.id for e in svc_rows(s, "embedding")] == ["hash"]
     assert [e.id for e in svc_rows(s, "rerank")] == ["off"]
@@ -95,7 +98,7 @@ def test_delete_reference_keeps_model_page_config(svc: ServiceEndpointService) -
     # 引用行没了，但模型页配置原样保留 —— 「删除只摘引用」的核心语义
     assert all(e.id != "siliconflow" for e in svc.rows("embedding"))
     ms = ModelSettingsService(svc._conn)  # noqa: SLF001 - 测试检视同一连接
-    assert any(b["name"] == "siliconflow" for b in ms.list_backends())
+    assert any(b["name"] == "siliconflow" for b in ms.list_backends(user_id=OWNER))
 
 
 def test_stale_reference_is_visible_not_silent(svc: ServiceEndpointService) -> None:
@@ -104,7 +107,7 @@ def test_stale_reference_is_visible_not_silent(svc: ServiceEndpointService) -> N
     ms.save(
         default="local",
         backends=[{"name": "local", "provider": "ollama", "model": "qwen2.5:7b"}],
-        fallbacks=[],
+        fallbacks=[], user_id=OWNER,
     )
     row = next(e for e in svc.rows("embedding") if e.id == "siliconflow")
     assert row.stale is True and row.api_key is None

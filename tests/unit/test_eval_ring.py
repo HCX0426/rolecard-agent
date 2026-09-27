@@ -22,6 +22,9 @@ from pathlib import Path
 
 import pytest
 
+# 评测环建的库里只有这一个演示身份（`ServiceEndpointService` 要交出主人，M2d）。
+OWNER = "local-user"
+
 ROOT = Path(__file__).resolve().parents[2]
 _spec = importlib.util.spec_from_file_location("run_eval_ring", ROOT / "scripts" / "run_eval.py")
 assert _spec and _spec.loader
@@ -40,7 +43,7 @@ def test_the_scripts_own_bootstrap_leaves_a_usable_embedding_endpoint(tmp_path: 
     conn = connect(db)
     ev._seed_demo_data(conn)  # 与 run_eval / seed_demo_data 完全同一条路径
 
-    services = ServiceEndpointService(conn)
+    services = ServiceEndpointService(conn, owner=OWNER)
     order = candidate_ids(services, "embedding")
     assert order, (
         "「服务」页是空的 —— 这就是 09-26 那次评测环跑不起来的原样。"

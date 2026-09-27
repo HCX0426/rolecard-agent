@@ -21,6 +21,7 @@ from pathlib import Path
 
 from rolecard_agent.config import Settings
 from rolecard_agent.core.graph import build_model
+from rolecard_agent.core.identity import resolve_instance_identity
 from rolecard_agent.core.model_settings import ModelSettingsService
 from rolecard_agent.core.open_threads import _PROMPT, MAX_OPEN_THREADS, parse_open_threads
 from rolecard_agent.core.text import text_of
@@ -59,7 +60,10 @@ def main() -> None:
     env = Settings.from_env()
     db = os.environ.get("SQLITE_PATH") or str(Path("build/scratch-stop.db").resolve())
     conn = connect(Path(db))
-    settings = ModelSettingsService(conn).effective_settings(env)
+    # 本机主人那一族凭据（M2d）：这台机器带着谁的 key 就花谁的。
+    settings = ModelSettingsService(conn).effective_settings(
+        env, user_id=resolve_instance_identity(env)
+    )
     name = os.environ.get("OPEN_THREADS_PROBE_BACKEND") or settings.model_default
     backend = settings.backend(name)
     model = build_model(settings, name)

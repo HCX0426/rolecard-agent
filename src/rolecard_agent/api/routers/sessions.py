@@ -305,7 +305,11 @@ def patch_session(
     if "model_name" in body.model_fields_set:
         name = body.model_name
         if name is not None:
-            effective = ctx.model_settings.effective_settings(ctx.settings)
+            # 可选项来自**这台实例跑得起来的那一族**（M2d）：这个名字最终是图去花的，
+            # 按请求主人过滤会让人选到一个存得下、却跑不动的后端。
+            effective = ctx.model_settings.effective_settings(
+                ctx.settings, user_id=ctx.instance_owner
+            )
             if name not in effective.model_backends:
                 known = ", ".join(sorted(effective.model_backends))
                 raise HTTPException(status_code=400, detail=f"未知后端 {name!r}；可用：{known}")

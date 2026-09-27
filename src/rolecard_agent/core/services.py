@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from rolecard_agent.config import Settings
+from rolecard_agent.core.identity import resolve_instance_identity
 from rolecard_agent.core.model_settings import ModelSettingsService, client_style
 from rolecard_agent.core.probes import vision_model_ready
 from rolecard_agent.storage.db import SqlConnection
@@ -150,8 +151,12 @@ class ServiceEndpointService:
 
     SEED_FLAG = "service_endpoints_seeded"
 
-    def __init__(self, conn: SqlConnection) -> None:
+    def __init__(self, conn: SqlConnection, *, owner: str) -> None:
         self._conn = conn
+        #: **这台实例的主人**（M2d）：引用行解析到 `model_backend` 时要取凭据组的 key，而
+        #: "谁的 key 可以花在这个进程里"是实例级的一件事 —— 不是每次请求现问的那种归属。
+        #: 它必须构造期交出来，不能给默认值：给了默认值就等于允许"没答过这个问题"的服务对象。
+        self._owner = owner
 
     # -- 播种 ------------------------------------------------------------------
 
@@ -173,7 +178,7 @@ class ServiceEndpointService:
         # flag 在但表全空 = 表曾被整体重建（迁移）而 flag 未清 —— 自愈重播。
         # builtin 行不可删，合法状态下表永不为空，所以这个分支不会误伤操作员。
         ms = ModelSettingsService(self._conn)
-        backends = {str(b["name"]) for b in ms.list_backends()}
+        backends = {str(b["name"]) for b in ms.list_backends(user_id=self._owner)}
         defaults: list[tuple[str, str, str, str | None, int]] = [
             ("ocr", "paddle", "local", None, 1),
             ("embedding", "hash", "local", None, 1),
@@ -204,7 +209,12 @@ class ServiceEndpointService:
     def _backend_map(self) -> dict[str, dict[str, Any]]:
         # raw_backends 含 api_key 明文：进程内解析引用行凭据用，绝不进 API 响应
         # （对外形状仍由 list_backends/to_api 的掩码纪律保证）。
-        return {str(b["name"]): b for b in ModelSettingsService(self._conn).raw_backends()}
+        # 按本机主人取：一个嵌入端点的引用行解析到别人那一组时，它取到的应当是"没有这个
+        # 后端"（呈现为失效），而不是替这台机器花别人的 key。
+        return {
+            str(b["name"]): b
+            for b in ModelSettingsService(self._conn).raw_backends(user_id=self._owner)
+        }
 
     def _resolved(self, key: str) -> list[EndpointConfig]:
         """行 + 引用解析 → EndpointConfig 列表（按优先级序，含失效引用的可见态）。"""
@@ -436,8 +446,12 @@ def service_status_view(conn: SqlConnection, settings: Settings) -> dict[str, An
 
     生效项 = 优先级第 1 位的**可用**端；第 1 位不可用则顺延到下一个可用者（降级发生在这里，
     并以 degraded_from 留痕）。模型推理类仍只读展示（编辑在「模型」页签）。
+
+    整页按**本机主人**那一族凭据呈现（M2d）：这一页说的是"这台机器现在用什么跑"，而引用行
+    解析到别人名下的组时，正确答案是"取不到凭据"（呈现为失效），不是花他的 key。
     """
-    svc = ServiceEndpointService(conn)
+    owner = resolve_instance_identity(settings)
+    svc = ServiceEndpointService(conn, owner=owner)
     out: list[dict[str, Any]] = []
     for cat in SERVICE_CATEGORIES:
         all_rows = svc.rows(cat.key)
@@ -485,7 +499,7 @@ def service_status_view(conn: SqlConnection, settings: Settings) -> dict[str, An
     # 引用行，不是某个列的取值；加入/移出也在这一节做（`order_only` 只表示"这里不编辑
     # key/base_url/模型名"，那仍然是模型页的事）。
     ms = ModelSettingsService(conn)
-    backends = ms.list_backends()
+    backends = ms.list_backends(user_id=owner)
     default = ms.default_backend() or settings.model_default
     fallbacks = ms.list_fallbacks() or []
     chat_rows = [row for row in backends if str(row.get("usage", "chat")) == "chat"]

@@ -99,7 +99,10 @@ def _seed_demo_data(conn: object) -> None:  # 与 seed_demo_data.py 同源（脚
     # `candidate_ids("embedding")` 回空 → `make_embedder` 大声失败。
     # 服务策略那次重构之后评测环就是这么静默地跑不起来的 —— 而 `make_embedder` 的注释里
     # 还写着"生产上 order 永不为空"，那句话对**装配根之外**的调用方并不成立。
-    ServiceEndpointService(conn).seed_once()  # type: ignore[arg-type]
+    # 主人 = 这支脚本自己播的那个演示身份（紧接着那两条 INSERT），与评测库同源。
+    from rolecard_agent.core.identity import DEFAULT_USER_ID
+
+    ServiceEndpointService(conn, owner=DEFAULT_USER_ID).seed_once()  # type: ignore[arg-type]
     conn.executescript(  # type: ignore[attr-defined]
         "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('t1', 'demo');"
         "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "
@@ -165,7 +168,9 @@ def _seed_knowledge(db_path: Path, settings: object) -> None:
 
     svc_conn = connect(Path(db_path))
     try:
-        services = ServiceEndpointService(svc_conn)
+        from rolecard_agent.core.identity import DEFAULT_USER_ID
+
+        services = ServiceEndpointService(svc_conn, owner=DEFAULT_USER_ID)
         embedder = make_embedder(
             settings,  # type: ignore[arg-type]
             order=candidate_ids(services, "embedding"),

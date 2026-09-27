@@ -227,10 +227,23 @@ CREATE INDEX IF NOT EXISTS idx_role_memory_item_bucket
 -- 触发调用前拦截（P1-2 只拦确定的否）。运行时消费方（core/nodes、工厂）拿到的仍是
 -- bool：unknown 一律按"放行"解释（vision=False→不拦、tools=None→绑工具），
 -- 与拆层前一致。
+--
+-- **key 跟人走（M2d，身份接缝 §4.1）**：一组凭据有主人，`user_id` 就是那一行的归属。
+-- 于是"花谁的 key"有了唯一答案：一个进程只装得下**本机主人**那一族的组
+-- （`ModelSettingsService.effective_settings(user_id=实例主人)` 是唯一咽喉，别人的组
+-- 根本进不了那份快照，所以不存在"检查一下别花他的 key"这回事）。
+-- `model_backend` 刻意**不再挂一列**：模型行的主人从它所属的组继承，与 `role_memory_item`
+-- 之外那几张"跟着父行走"的表同一条纪律（重复一份就是第二个事实面）。
+-- 代价要说清：两张表的**主键都是全局的**（`id` / `name`），所以第二个身份新建同名组时
+-- 会拿到 `siliconflow-2` 这样带后缀的键 —— 编号会跳过别人占掉的那些，这是主键性质，
+-- 不是泄漏面（他看不见你的组，也就看不见那些编号）。
 -- ===========================================================================
 
 CREATE TABLE IF NOT EXISTS model_provider (
     id         TEXT PRIMARY KEY,                    -- 组键（供应商目录 id，重名加后缀）
+    -- 无 REFERENCES：SQLite 不允许 ADD COLUMN 挂外键（除非默认值是 NULL），而这一列必须
+    -- NOT NULL 才挡得住"匿名行"。与其余补上来那几列同一形状。
+    user_id    TEXT NOT NULL DEFAULT 'local-user',  -- 这组凭据的主人（= 谁的 key）
     provider   TEXT NOT NULL,                       -- 供应商目录 id：ollama/openai/siliconflow/…
     label      TEXT,                                -- 展示名；NULL = 用目录 label
     base_url   TEXT,                                -- 端点（native 风格不带 /v1；可空=自动）

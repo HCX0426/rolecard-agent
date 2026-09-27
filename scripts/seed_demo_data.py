@@ -30,7 +30,8 @@ def main() -> None:
     # 与 `run_eval.py` 同一处修补：`seed_once()` 平时在装配根里调，`storage.db.bootstrap`
     # 不播「服务」页那些行，所以绕过装配根的脚本会拿到一张空的端点表，
     # 后面 `make_embedder` 直接大声失败（嵌入器与 app 必须同源，维度不一致检索就废）。
-    ServiceEndpointService(conn).seed_once()
+    # 这支脚本建的库里只播一个演示身份（下面那两条 INSERT 就是它），所以主人是同一个。
+    ServiceEndpointService(conn, owner=DEFAULT_USER_ID).seed_once()
     conn.execute(
         "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES (?, '本地演示')",
         (DEFAULT_TENANT_ID,),
@@ -53,7 +54,7 @@ def main() -> None:
     from rolecard_agent.core.bootstrap import candidate_ids
     from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder
 
-    services = ServiceEndpointService(conn)
+    services = ServiceEndpointService(conn, owner=DEFAULT_USER_ID)
     kb = KnowledgeBase(
         Path("data/chroma").resolve(),
         make_embedder(

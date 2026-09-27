@@ -78,7 +78,9 @@ def _effective(conn: sqlite3.Connection) -> Settings:
     ⇒ 三次里两次空正文"的假故障，就是这么造出来的）。
     """
     return runtime_settings.apply_overrides(
-        ModelSettingsService(conn).effective_settings(Settings.from_env()),
+        ModelSettingsService(conn).effective_settings(
+            Settings.from_env(), user_id=resolve_instance_identity(Settings.from_env())
+        ),
         runtime_settings.load_overrides(conn),
     )
 

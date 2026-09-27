@@ -147,7 +147,14 @@ def put_service_order(
     把某个模型拖进对话就没有入口。改动后热重建默认模型与角色级模型缓存。
     """
     if key == "models":
-        known = {str(row["name"]) for row in ctx.model_settings.list_backends()}
+        # 候选与校验都按**这次请求的主人**那一族后端（M2d）：这一页下面列出的就是这些名字，
+        # 换一个集合去校验会出现"界面上有的，保存时说不在配置里"。
+        # 写进去的序列本身仍是设备级的（`service_endpoint` 今天没有主人，§4.1 那条尾巴）——
+        # 别人名下的名字对这台实例的运行时不存在，运行时会退到他自己的第一个后端，不会悬空。
+        owner = ctx.current_user()
+        known = {
+            str(row["name"]) for row in ctx.model_settings.list_backends(user_id=owner)
+        }
         unknown = [n for n in body.order if n not in known]
         if not body.order:
             raise HTTPException(status_code=400, detail="优先级列表不能为空。")
@@ -159,7 +166,7 @@ def put_service_order(
         if len(set(body.order)) != len(body.order):
             raise HTTPException(status_code=400, detail="优先级列表出现了重复的后端名。")
         try:
-            ctx.model_settings.save_chat_pool(body.order)
+            ctx.model_settings.save_chat_pool(body.order, user_id=owner)
         except Exception as exc:  # noqa: BLE001 - 服务层异常转可读 400
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         ctx.roles.audit(

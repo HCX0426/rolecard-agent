@@ -280,8 +280,10 @@ class Runtime:
         嵌入器/重排器是 KnowledgeBase 构造时注入的实例，引用变了必须连知识库一起重造；
         工具闭包持有知识库，所以注册表也要跟着重建 —— 顺序即依赖序。
         """
+        # 「谁的 key 被花出去」在这一步答一次就够（M2d）：整份有效配置是实例级的，
+        # 所以这里交出的是这台实例的主人 —— 不是哪个请求最近来过。
         eff = runtime_settings.apply_overrides(
-            self.model_settings.effective_settings(self.env_settings),
+            self.model_settings.effective_settings(self.env_settings, user_id=self.identity),
             runtime_settings.load_overrides(self.conn),
         )
         # 构建在锁外：两个并发重建各自完整构建，后写者胜出（浪费但正确）。
@@ -494,11 +496,11 @@ def build_runtime(
     plugins = PluginService(conn, known_plugins=domains)
     ingestion = IngestionService(conn)
     model_settings = ModelSettingsService(conn)
-    services = ServiceEndpointService(conn)
+    services = ServiceEndpointService(conn, owner=owner)
     # 一次性播种默认服务端点行（幂等）：此后「服务」页是后端的唯一事实面。
     services.seed_once()
     # env 后端播种进模型设置表（幂等，此后操作员在 UI 里改），再归一历史行的 provider。
-    model_settings.seed_from_env(settings)
+    model_settings.seed_from_env(settings, user_id=owner)
     model_settings.normalize_providers()
     # 轨迹器先于注册表：`search_knowledge` 闭包要持有它，否则 rag_search / rerank_fallback
     # 两个事件永远不会被 emit（审查报告 M3）。
@@ -506,7 +508,7 @@ def build_runtime(
     # 有效配置 = 模型页（DB）配置 ⊕ 运行环境覆盖。必须先于知识库与注册表构建：嵌入器、
     # 联网与比对工具的闭包拿的都是**叠加后**的配置，而不是裸 env 快照。
     effective = runtime_settings.apply_overrides(
-        model_settings.effective_settings(settings),
+        model_settings.effective_settings(settings, user_id=owner),
         runtime_settings.load_overrides(conn),
     )
     assembly = Assembly(

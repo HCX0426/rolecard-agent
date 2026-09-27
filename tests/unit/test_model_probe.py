@@ -30,6 +30,9 @@ from rolecard_agent.core.model_settings import ModelSettingsError, ModelSettings
 from rolecard_agent.core.probes import _CAP_CACHE  # noqa: PLC2701 - 探针缓存要用例自己清
 from rolecard_agent.storage.db import bootstrap, connect
 
+# 探测花的是谁的凭据（M2d）：主人不交出来就连自己的组也查不到。
+OWNER = "local-user"
+
 
 class _Response:
     def __init__(self, payload: object, status_code: int = 200) -> None:
@@ -255,9 +258,9 @@ def test_resolve_target_uses_the_stored_group_key() -> None:
     svc.save(
         default="chat",
         backends=[{"name": "chat", "provider": "siliconflow", "model": "m",
-                   "api_key": "sk-group", "usage": "chat"}],
+                   "api_key": "sk-group", "usage": "chat"}], user_id=OWNER,
     )
-    target = resolve_target(svc, provider_id="siliconflow", model="new-model")
+    target = resolve_target(svc, provider_id="siliconflow", model="new-model", user_id=OWNER)
     assert target.api_key == "sk-group"
     assert target.base_url == "https://api.siliconflow.cn/v1"
     assert target.model == "new-model"
@@ -268,24 +271,30 @@ def test_resolve_target_body_key_wins_over_stored() -> None:
     svc.save(
         default="chat",
         backends=[{"name": "chat", "provider": "siliconflow", "model": "m",
-                   "api_key": "sk-old", "usage": "chat"}],
+                   "api_key": "sk-old", "usage": "chat"}], user_id=OWNER,
     )
-    target = resolve_target(svc, provider="siliconflow", api_key="sk-new", model="m")
+    target = resolve_target(svc, provider="siliconflow", api_key="sk-new", model="m", user_id=OWNER)
     assert target.api_key == "sk-new"
 
 
 def test_resolve_target_rejects_bad_scheme() -> None:
     svc = _service()
     with pytest.raises(ModelSettingsError, match="仅支持 http/https"):
-        resolve_target(svc, provider="openai", base_url="file:///etc/passwd", model="m")
+        resolve_target(
+            svc,
+            provider="openai",
+            base_url="file:///etc/passwd",
+            model="m",
+            user_id=OWNER,
+        )
     with pytest.raises(ModelSettingsError, match="必须包含协议"):
-        resolve_target(svc, provider="openai", base_url="10.0.0.7:1234", model="m")
+        resolve_target(svc, provider="openai", base_url="10.0.0.7:1234", model="m", user_id=OWNER)
 
 
 def test_resolve_target_unknown_group_is_a_400_not_a_silent_probe() -> None:
     svc = _service()
     with pytest.raises(ModelSettingsError, match="不存在"):
-        resolve_target(svc, provider_id="ghost", model="m")
+        resolve_target(svc, provider_id="ghost", model="m", user_id=OWNER)
 
 
 # --------------------------------------------------------------------------- 那张测试图

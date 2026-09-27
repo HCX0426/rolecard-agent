@@ -51,7 +51,9 @@ def _validate_role_model(ctx: AppContext, model_name: str | None) -> None:
     """
     if not model_name:
         return
-    effective = ctx.model_settings.effective_settings(ctx.settings)
+    effective = ctx.model_settings.effective_settings(
+        ctx.settings, user_id=ctx.instance_owner
+    )
     if model_name not in effective.model_backends:
         known = ", ".join(sorted(effective.model_backends))
         raise HTTPException(status_code=400, detail=f"未知后端 {model_name!r}；可用：{known}")

@@ -59,10 +59,15 @@ class ModelSettingsBody(BaseModel):
 
 
 def _models_payload(ctx: AppContext) -> dict[str, object]:
-    """模型页的读形状（GET 与 PUT 响应同一份，前端不必猜两次不一样）。"""
+    """模型页的读形状（GET 与 PUT 响应同一份，前端不必猜两次不一样）。
+
+    `providers` 按**这次请求的主人**过滤（M2d）：他只看得见自己的凭据组。
+    而 `default`/`fallbacks` 读的是 `service_endpoint` 的引用序列 —— 那张表今天还没有主人，
+    所以这两项是设备级的（尾巴记在 §4.1）。
+    """
     return {
         "default": ctx.model_settings.default_backend(),
-        "providers": ctx.model_settings.list_providers(),
+        "providers": ctx.model_settings.list_providers(user_id=ctx.current_user()),
         "fallbacks": ctx.model_settings.list_fallbacks() or [],
     }
 
@@ -103,7 +108,7 @@ def patch_model_context(
     配置——写放大且易把并发编辑互相覆盖。这里只改一列。名称不存在 → 404（KeyError）。
     """
     try:
-        ctx.model_settings.set_num_ctx(name, body.num_ctx)
+        ctx.model_settings.set_num_ctx(name, body.num_ctx, user_id=ctx.current_user())
     except ModelSettingsError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except KeyError:
@@ -149,7 +154,7 @@ def patch_model_sampling(
     if not given:
         raise HTTPException(status_code=400, detail="没有要保存的内容。")
     try:
-        stored = ctx.model_settings.set_sampling(name, given)
+        stored = ctx.model_settings.set_sampling(name, given, user_id=ctx.current_user())
     except ModelSettingsError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except KeyError:
@@ -180,7 +185,9 @@ def put_model_settings(
                 continue
             if b.api_key:
                 continue
-            if ctx.model_settings.has_key_for_endpoint(b.provider, b.base_url):
+            if ctx.model_settings.has_key_for_endpoint(
+                b.provider, b.base_url, user_id=ctx.current_user()
+            ):
                 continue  # 组里已有 key：这一行只是同端点的另一个模型，不必重输
             raise ModelSettingsError(
                 f"后端 {b.name} 使用 {b.provider}，缺少 api_key（本地 Ollama 无需填写）。"
@@ -188,6 +195,7 @@ def put_model_settings(
         # default/fallbacks 缺省 = 保留当前值（编辑入口已统一到「服务」页签优先级列表）。
         current_default = ctx.model_settings.default_backend() or "local"
         ctx.model_settings.save(
+            user_id=ctx.current_user(),
             default=body.default or current_default,
             backends=[b.model_dump() for b in body.backends],
             fallbacks=body.fallbacks,
@@ -258,6 +266,7 @@ def post_model_catalog(
     try:
         target = resolve_target(
             ctx.model_settings,
+            user_id=ctx.current_user(),
             provider_id=body.provider_id,
             provider=body.provider,
             base_url=body.base_url,
@@ -294,6 +303,7 @@ def post_model_probe(
     try:
         target = resolve_target(
             ctx.model_settings,
+            user_id=ctx.current_user(),
             provider_id=body.provider_id,
             provider=body.provider,
             base_url=body.base_url,
@@ -346,6 +356,7 @@ def post_add_model(
     """
     try:
         added = ctx.model_settings.add_model(
+            user_id=ctx.current_user(),
             model=body.model,
             provider=body.provider,
             base_url=body.base_url,
@@ -385,7 +396,7 @@ def delete_model(
 ) -> None:
     """删一行模型。组里没别的模型时连凭据一起删；其他服务类别的引用呈现「失效」不动。"""
     try:
-        ctx.model_settings.remove_model(name)
+        ctx.model_settings.remove_model(name, user_id=ctx.current_user())
     except KeyError:
         raise HTTPException(status_code=404, detail=f"后端 {name!r} 不存在。") from None
     ctx.roles.audit(actor=actor.id, action="delete_model", target=name, detail={})
@@ -413,7 +424,7 @@ def patch_model_capabilities(
     """写回能力位并热重建（徽标与调用前拦截都读这一处，界面不再自己判）。"""
     given = body.model_dump(exclude_unset=True)
     try:
-        ctx.model_settings.set_capabilities(name, given)
+        ctx.model_settings.set_capabilities(name, given, user_id=ctx.current_user())
     except KeyError:
         raise HTTPException(status_code=404, detail=f"后端 {name!r} 不存在。") from None
     except ModelSettingsError as exc:
@@ -426,7 +437,9 @@ def patch_model_capabilities(
     )
     ctx.rebuild_runtime()
     return next(
-        b for b in ctx.model_settings.list_backends() if str(b["name"]) == name
+        b
+        for b in ctx.model_settings.list_backends(user_id=ctx.current_user())
+        if str(b["name"]) == name
     )
 
 
