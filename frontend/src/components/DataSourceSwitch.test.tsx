@@ -91,4 +91,48 @@ describe("DataSourceSwitch", () => {
     expect(reloadAppMock).toHaveBeenCalledOnce();
     expect(localStorage.getItem(KEY)).toBeNull();
   });
+
+  // 上行入口（M7）：本机态压根没有"对面"可推，所以那一格不该出现（出现了就是死路一条）；
+  // 云端态它**常驻**（用户 09-27：「同步入口可以在登录后再常驻吧，随时可同步」）。
+  it("本机态不给上行入口，云端态常驻一个", () => {
+    render(<DataSourceSwitch />);
+    expect(screen.queryByText("把本机这份带到云端")).toBeNull();
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ mode: "cloud", base: "https://cloud.test:8123", user: "u1", secret: "pw" }),
+    );
+    render(<DataSourceSwitch />);
+    expect(screen.getByText("把本机这份带到云端")).toBeTruthy();
+  });
+
+  it("点那一行就是四屏的第一屏", () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ mode: "cloud", base: "https://cloud.test:8123", user: "u1", secret: "pw" }),
+    );
+    render(<DataSourceSwitch />);
+    fireEvent.click(screen.getByText("把本机这份带到云端"));
+    expect(screen.getByRole("heading", { name: "要把本机这份带过去吗？" })).toBeTruthy();
+  });
+
+  // 「刚登录」是一次性的：它得活过那次整页重载，但答过之后不该再弹。
+  // "答过"= 关掉弹层，**不是"挂载看过一眼"** —— 首屏这棵子树在真浏览器里会被重挂一次，
+  // 挂载即清的实现会让第二次弹层凭空消失（M7 的两实例探针实测到的就是这个）。
+  it("带着「刚登录」标记挂载 = 自动弹第一屏，关掉之后才不再弹", () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ mode: "cloud", base: "https://cloud.test:8123", user: "u1", secret: "pw" }),
+    );
+    sessionStorage.setItem("rolecard.dataSource.justLoggedIn", "1");
+    const first = render(<DataSourceSwitch />);
+    expect(screen.getByRole("heading", { name: "要把本机这份带过去吗？" })).toBeTruthy();
+    // 重挂一次（模拟首屏那棵子树被重挂）：仍然弹，而不是"第一眼看走眼就没了"
+    first.unmount();
+    render(<DataSourceSwitch />);
+    expect(screen.getByRole("heading", { name: "要把本机这份带过去吗？" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "这次先不带" }));
+    expect(sessionStorage.getItem("rolecard.dataSource.justLoggedIn")).toBeNull();
+    render(<DataSourceSwitch />);
+    expect(screen.queryByRole("heading", { name: "要把本机这份带过去吗？" })).toBeNull();
+  });
 });

@@ -12,9 +12,19 @@
  *     界面上一格常驻状态就够了，两处说同一件事只会让人两处都不信。
  *     "什么会离开这台机器"这句改到弹层里说（登录前那一刻才是它该被读到的时机）。
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { LOCAL, read, reloadApp, save, tryConnect } from "../lib/dataSource";
+import SyncWizard from "./SyncWizard";
+import {
+  LOCAL,
+  clearJustLoggedIn,
+  markJustLoggedIn,
+  peekJustLoggedIn,
+  read,
+  reloadApp,
+  save,
+  tryConnect,
+} from "../lib/dataSource";
 
 
 export default function DataSourceSwitch() {
@@ -26,6 +36,15 @@ export default function DataSourceSwitch() {
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [why, setWhy] = useState("");
+  const [wizard, setWizard] = useState(false);
+
+  // 登录后那一次自动问（设计稿①）。标记**不在这儿清**：`save()` 与整页重载之间，
+  // 当前这一页也会命中这里一次（`cloud` 由 false 变 true），挂载即取走等于把弹层留给一个
+  // 马上就要关掉的页面 —— 真浏览器里实测到的就是"点了连接并切换，什么都没弹"。
+  // 之后这条入口常驻在下面那一行（用户 09-27：「同步入口可以在登录后再常驻吧，随时可同步」）。
+  useEffect(() => {
+    if (cloud && peekJustLoggedIn()) setWizard(true);
+  }, [cloud]);
 
   function backToLocal() {
     save(LOCAL);
@@ -44,6 +63,8 @@ export default function DataSourceSwitch() {
     // 存**归一之后**的 origin（用户可能少写协议、多敲空格或带尾斜杠）：
     // 存原样的话，下一次启动 `read()` 会判它不合法而静默回落本机 —— 那是最难查的一种"没生效"。
     save({ mode: "cloud", base: probe.origin, user, secret });
+    // 状态与"刚登录"这两件事都得活过整页重载，而它们是两种寿命：前者持久，后者一次性的。
+    markJustLoggedIn();
     reloadApp();
   }
 
@@ -66,6 +87,32 @@ export default function DataSourceSwitch() {
           {cloud ? "切回" : "切换 ⇄"}
         </span>
       </button>
+
+      {/* 上行入口（M7）：只有连上云端之后才有意义 —— 本机态没有"对面"可推。
+          它刻意是**另一行**而不是这一行里的一个菜单：侧栏 206px，藏进二级菜单的入口
+          等于没有入口，而"随时可同步"是用户 09-27 明确要的那件事。 */}
+      {cloud && (
+        <button
+          onClick={() => setWizard(true)}
+          title="把本机这一份（角色卡 / 会话 / 记忆 / 主动消息）带到云端那台"
+          className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700/60"
+        >
+          <span className="shrink-0 opacity-80">⬆</span>
+          <span className="truncate">把本机这份带到云端</span>
+          <span className="ml-auto shrink-0 text-[10px] text-slate-400 dark:text-slate-500">
+            上行
+          </span>
+        </button>
+      )}
+
+      {wizard && (
+        <SyncWizard
+          onClose={() => {
+            clearJustLoggedIn();
+            setWizard(false);
+          }}
+        />
+      )}
 
       {open && (
         <div

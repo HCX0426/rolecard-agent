@@ -93,6 +93,41 @@ export function isCloud(): boolean {
   return read().mode === "cloud";
 }
 
+/** 「刚登录成功」这一件事要活过一次整页重载，所以它得有地方存 —— 但不能存进 `KEY` 那份
+ *  数据源状态里：那是"连到哪台"的持久事实，而"要不要问一句要不要上行"是一次性的。
+ *  `sessionStorage` 正好是这个语义：换一个标签页就没了，关掉窗口也不会欠用户一个问题。 */
+const JUST_LOGGED_IN = "rolecard.dataSource.justLoggedIn";
+
+export function markJustLoggedIn(): void {
+  try {
+    sessionStorage.setItem(JUST_LOGGED_IN, "1");
+  } catch {
+    /* 存不下就少问一次：上行入口仍然常驻在侧栏那一行，不会因此丢掉功能。 */
+  }
+}
+
+/** 只看，不取走。为什么"挂载即取走"是错的（真浏览器实测，两条 `getItem` 日志）：
+ *  `connect()` 里 `save(云端)` 与 `reloadApp()` 之间，React 会先把**当前这一页**重渲染一次
+ *  —— `cloud` 从 false 变 true，那个 `[cloud]` 的 effect 于是在**跳转前**就跑了一遍，
+ *  把标记吃掉；等真正加载完的新页面再去看，已经是 null，弹层永远不出现。
+ *  所以标记要活到**人真的答过这一问**为止，而不是活到第一次看见它为止。 */
+export function peekJustLoggedIn(): boolean {
+  try {
+    return sessionStorage.getItem(JUST_LOGGED_IN) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** 答过了（关掉弹层）才清。没答就关标签页 = 标记随 sessionStorage 一起没了，不会欠第二次弹窗。 */
+export function clearJustLoggedIn(): void {
+  try {
+    sessionStorage.removeItem(JUST_LOGGED_IN);
+  } catch {
+    /* 清不掉只是会多问一次，不是坏消息。 */
+  }
+}
+
 /** 请求该打到哪儿：本机 = 同源（相对路径原样用），云端 = 那个 origin。 */
 export function apiBase(): string {
   const source = read();

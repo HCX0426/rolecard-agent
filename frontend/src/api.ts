@@ -348,7 +348,7 @@ export class ApiError extends Error {
 
 /** FastAPI 的 detail 可能是字符串（业务错误）或数组（422 校验错误）——
  *  统一转成可读文本，杜绝 "[object Object]" 这种不可诊断的报错。 */
-function readableDetail(raw: unknown, fallback: string): string {
+export function readableDetail(raw: unknown, fallback: string): string {
   if (typeof raw === "string" && raw.trim()) return raw;
   if (Array.isArray(raw)) {
     const lines = raw
