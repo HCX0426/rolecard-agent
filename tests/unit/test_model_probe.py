@@ -58,7 +58,11 @@ class _Calls:
                 return value if isinstance(value, _Response) else _Response(value)
         return _Response({"error": "unexpected url"}, status_code=404)
 
-    def get(self, url: str, headers: dict[str, str] | None = None, timeout: float = 0) -> _Response:
+    # `**_` 是必须的：真 httpx 的 kwargs 会比这里列的多（例如 `trust_env=False`，
+    # 见台账 R26-43）。假客户端跟着真签名走，才不会把"代码加了一个无害参数"变成一片红。
+    def get(
+        self, url: str, headers: dict[str, str] | None = None, timeout: float = 0, **_: object
+    ) -> _Response:
         self.gets.append((url, headers or {}))
         return self._reply(url)
 
@@ -68,6 +72,7 @@ class _Calls:
         json: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         timeout: float = 0,
+        **_: object,
     ) -> _Response:
         self.posts.append((url, json or {}, headers or {}))
         return self._reply(url)

@@ -131,6 +131,17 @@ def _match_api_key(candidate: str, allowed: list[str]) -> tuple[str, str] | None
     return None
 
 
+def basic_header(user: str, secret: str) -> str:
+    """造一个 `Authorization: Basic …` 头（上行同步拿它去敲对面的门）。
+
+    与 `_parse_basic` 住在同一个文件是刻意的：两边对『user:secret 怎么变成一字节串』
+    必须同一条规则 —— 非 ASCII 的账号在浏览器侧走 TextEncoder，这里也必须 UTF-8，
+    否则就会出现『界面里登得进去、后端去敲门被拒』这种两头都自证清白的死局。
+    """
+    token = base64.b64encode(f"{user}:{secret}".encode()).decode("ascii")
+    return f"Basic {token}"
+
+
 def _parse_basic(header: str, credentials: list[str]) -> Actor | None:
     """`Authorization: Basic base64(user:pass)` —— 与 `auth_credentials` 里的 "user:pass" 比对。
 

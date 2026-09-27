@@ -58,6 +58,11 @@ USER_ROUTES: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/approvals", frozenset({"GET"})),
     # 记忆是"关于我这个人的事实"，用户可看可改可清（设置里的记忆卡）。
     ("/api/settings/memory", _ANY),
+    # 上行同步（M7）：清单/计划/导入三条都是"把自己的数据搬给自己在另一台的账号"，
+    # 写入侧盖的是**对面认出的那个人**的章，所以它是使用者动作，不是操作员动作。
+    # 反过来说，它比一般使用者端点多了"让本机去敲一个用户给的地址"这一步 —— 地址要过
+    # `validate_base_url`，凭据只在请求内存活、不进审计与日志（见 routers/sync.py 的三条口径）。
+    ("/api/sync", _ANY),
     # 模型清单与供应商模板：对话页的模型菜单要读它，不读就没法换模型。
     ("/api/settings/models", frozenset({"GET"})),
     ("/api/settings/model-providers", _ANY),

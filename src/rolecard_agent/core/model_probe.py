@@ -21,6 +21,7 @@ import zlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from rolecard_agent.core import outbound
 from rolecard_agent.core.model_settings import client_style, endpoint_key
 from rolecard_agent.core.probes import vision_capability
 
@@ -158,8 +159,6 @@ def list_models(target: ProbeTarget) -> tuple[list[str], str]:
     `/api/services/check` 的深度检测一致）。**中转站经常给不全列表**，所以"不在列表里"
     只当提示，不当否决（`model_listed` 是建议性的，见 `probe`）。
     """
-    import httpx
-
     if target.style == "native":
         url, pick = f"{target.root}/api/tags", lambda d: [
             str(m.get("name", "")) for m in d.get("models", [])
@@ -169,7 +168,8 @@ def list_models(target: ProbeTarget) -> tuple[list[str], str]:
             str(m.get("id", "")) for m in d.get("data", [])
         ]
     try:
-        res = httpx.get(url, headers=target.auth_headers(), timeout=_LIST_TIMEOUT)
+        # 走 `core/outbound`：这一发带着**已存的 api_key**，不许经手系统代理（R26-43）。
+        res = outbound.get(url, headers=target.auth_headers(), timeout=_LIST_TIMEOUT)
     except Exception as exc:  # noqa: BLE001 - 连不上本身就是结论
         return [], f"{type(exc).__name__}: {exc}"[:180]
     if res.status_code != 200:
@@ -187,8 +187,6 @@ def _chat_completion(
     target: ProbeTarget, messages: list[dict[str, object]], *, tools: bool = False
 ) -> tuple[dict[str, object], str]:
     """一次最小 chat completion → (响应 choices[0] 字典, 错误说明)。"""
-    import httpx
-
     if target.style == "native":
         # Ollama 也服务 OpenAI 兼容层（/v1），但根上不带 /v1：这里显式拼出来。
         url = f"{target.root}/v1/chat/completions"
@@ -204,7 +202,9 @@ def _chat_completion(
         body["tools"] = [_PROBE_TOOL]
         body["tool_choice"] = "auto"
     try:
-        res = httpx.post(url, json=body, headers=target.auth_headers(), timeout=_CALL_TIMEOUT)
+        res = outbound.post(
+            url, json=body, headers=target.auth_headers(), timeout=_CALL_TIMEOUT
+        )
     except Exception as exc:  # noqa: BLE001 - 调不通就是结论
         return {}, f"{type(exc).__name__}: {exc}"[:180]
     if res.status_code != 200:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import time
 
 from rolecard_agent.config import Settings
+from rolecard_agent.core import outbound
 from rolecard_agent.core.model_settings import client_style
 
 # 探活结果的短 TTL 缓存（按 base_url+model 记）。
@@ -35,9 +36,8 @@ def vision_model_ready(base_url: str | None, model: str, *, use_cache: bool = Tr
         if cached is not None and time.monotonic() - cached[1] < _PROBE_TTL:
             return cached[0]
     try:
-        import httpx
 
-        tags = httpx.get(f"{base}/api/tags", timeout=3.0).json()
+        tags = outbound.get(f"{base}/api/tags", timeout=3.0).json()
     except Exception:  # noqa: BLE001 - 探活失败 = 不在位
         _PROBE_CACHE[cache_key] = (False, time.monotonic())
         return False
@@ -73,9 +73,8 @@ def vision_capability(
             return cached[0]
     verdict: bool | None
     try:
-        import httpx
 
-        payload = httpx.post(f"{base}/api/show", json={"model": model}, timeout=3.0).json()
+        payload = outbound.post(f"{base}/api/show", json={"model": model}, timeout=3.0).json()
         caps = payload.get("capabilities")
     except Exception:  # noqa: BLE001 - 问不到就是"不知道"，不是"不能"
         caps = None
@@ -105,14 +104,13 @@ def ollama_keep(
     缺省回落到 4096。若常驻探针不带 num_ctx，就会把模型钉在 4096，随后第一条真实对话
     （带后端配置的 num_ctx）又触发一次重载——预热反而制造了一次冷加载（2026-09-19）。
     """
-    import httpx
 
     base = (base_url or _DEFAULT_OLLAMA).rstrip("/")
     payload: dict[str, object] = {"model": model, "prompt": "", "keep_alive": keep_alive}
     if num_ctx:
         payload["options"] = {"num_ctx": num_ctx}
     try:
-        r = httpx.post(f"{base}/api/generate", json=payload, timeout=120.0)
+        r = outbound.post(f"{base}/api/generate", json=payload, timeout=120.0)
         return r.status_code == 200
     except Exception:  # noqa: BLE001 - 探活/驻留失败即结果
         return False
@@ -127,11 +125,10 @@ def ollama_unload(base_url: str | None, model: str) -> bool:
     这里要**短超时**：卸载是即时动作，等久了说明服务本来就没在跑，返回 False 让调用方
     如实提示，而不是把请求线程挂住。
     """
-    import httpx
 
     base = (base_url or _DEFAULT_OLLAMA).rstrip("/")
     try:
-        r = httpx.post(
+        r = outbound.post(
             f"{base}/api/generate",
             json={"model": model, "prompt": "", "keep_alive": 0},
             timeout=10.0,
@@ -143,11 +140,10 @@ def ollama_unload(base_url: str | None, model: str) -> bool:
 
 def ollama_reachable(base_url: str | None) -> bool:
     """本地推理服务在不在跑（GET /api/tags，3s）。区分"没起"与"起了但没驻留模型"。"""
-    import httpx
 
     base = (base_url or _DEFAULT_OLLAMA).rstrip("/")
     try:
-        return httpx.get(f"{base}/api/tags", timeout=3.0).status_code == 200
+        return outbound.get(f"{base}/api/tags", timeout=3.0).status_code == 200
     except Exception:  # noqa: BLE001 - 连不上就是没在跑
         return False
 
@@ -170,11 +166,10 @@ def local_inference_base_url(settings: Settings) -> str:
 
 def ollama_loaded(base_url: str | None) -> list[dict[str, object]]:
     """当前常驻显存的模型（GET /api/ps）。失败/无 → []。用于模型页显示"是否已常驻"。"""
-    import httpx
 
     base = (base_url or _DEFAULT_OLLAMA).rstrip("/")
     try:
-        data = httpx.get(f"{base}/api/ps", timeout=5.0).json()
+        data = outbound.get(f"{base}/api/ps", timeout=5.0).json()
     except Exception:  # noqa: BLE001
         return []
     return [

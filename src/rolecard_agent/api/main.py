@@ -61,6 +61,7 @@ from rolecard_agent.api.routers import services as services_router
 from rolecard_agent.api.routers import sessions as sessions_router
 from rolecard_agent.api.routers import settings as settings_router
 from rolecard_agent.api.routers import shell_release as shell_release_router
+from rolecard_agent.api.routers import sync as sync_router
 from rolecard_agent.api.routers import workspace as workspace_router
 from rolecard_agent.config import Settings
 from rolecard_agent.core.bootstrap import Assembly, build_runtime
@@ -210,6 +211,8 @@ def create_app(
     app.include_router(mcp_router.router)
     app.include_router(local_service_router.router)
     app.include_router(shell_release_router.router)
+    # 上行同步（M7）：对面那台跑的是同一份代码，所以清单端点与计划端点住在同一个 router 里。
+    app.include_router(sync_router.router)
 
     @app.middleware("http")
     async def _begin_db_request(request: object, call_next: object) -> object:
