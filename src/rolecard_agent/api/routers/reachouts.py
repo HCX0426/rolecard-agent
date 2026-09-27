@@ -37,7 +37,7 @@ def _page(ctx: AppContext, *, role_id: str | None = None) -> dict[str, object]:
     return {
         **svc.list_reachouts(ctx.conn, role_id=role_id, file_watch_pending=_pending(ctx)),
         "merge_days": ctx.settings.reachout_merge_days,
-        "quiet": svc.quiet_status(ctx.roles.list_roles(), ctx.settings, ctx.conn),
+        "quiet": svc.quiet_status(ctx.role_cards.list_roles(), ctx.settings, ctx.conn),
     }
 
 

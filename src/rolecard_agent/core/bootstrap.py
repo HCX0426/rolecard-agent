@@ -484,8 +484,11 @@ def build_runtime(
     seed_plugin_rows(conn, domains)
     seed_demo_identity(conn)
     roles = RoleCardService(conn)
-    roles.seed_builtins()
-    roles.seed_domain_roles()
+    # 出厂卡也有主人：这台实例的主人（`IDENTITY_USER_ID`，空=本机那份）。§4.1 的"两份完整
+    # 数据集"落到角色卡上就是这句 —— 每张卡都有归属，读路径只认 `RoleCards` 那个按人过滤的视图。
+    owner = resolve_instance_identity(settings)
+    roles.seed_builtins(user_id=owner)
+    roles.seed_domain_roles(user_id=owner)
     plugins = PluginService(conn, known_plugins=domains)
     ingestion = IngestionService(conn)
     model_settings = ModelSettingsService(conn)

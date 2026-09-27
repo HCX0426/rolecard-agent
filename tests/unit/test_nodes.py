@@ -27,6 +27,7 @@ from langchain_core.tools import tool
 
 from rolecard_agent.config import ModelBackend, Settings
 from rolecard_agent.core import probes
+from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.core.nodes import (
     MAX_TOOL_RETRIES,
     TOOL_DENIED,
@@ -48,10 +49,14 @@ from rolecard_agent.core.tools.errors import ToolExecutionError  # noqa: F401 - 
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.core.tools.web import WebToolError
 from rolecard_agent.roles.models import RoleCardCreate
-from rolecard_agent.roles.service import RoleCardService
+from rolecard_agent.roles.service import RoleCards, RoleCardService
 
 # --------------------------------------------------------------------------- routing
 
+
+def cards(store: RoleCardService) -> RoleCards:
+    """测试里"本机主人眼里的那些卡"的简写（M2a 之后每次读写都得说清为谁）。"""
+    return store.scoped(DEFAULT_USER_ID)
 
 def test_route_ends_when_the_model_answers_directly() -> None:
     state = {"messages": [HumanMessage(content="hi"), AIMessage(content="hello")]}
@@ -122,7 +127,7 @@ def _ctx(
 
 
 def test_turn_context_honours_both_stages(registry: ToolRegistry, roles: RoleCardService) -> None:
-    roles.create(
+    cards(roles).create(
         RoleCardCreate(
             role_id="narrow", role_name="窄", system_prompt="x", tool_whitelist=["domain_tool"]
         )
@@ -185,7 +190,7 @@ def wide_role(roles: RoleCardService) -> str:
     role has an explicit whitelist, so a tool invented inside a test would be denied before it
     was ever invoked - which is exactly what happened the first time these were written.
     """
-    roles.create(
+    cards(roles).create(
         RoleCardCreate(role_id="wide", role_name="宽", system_prompt="x", tool_whitelist=None)
     )
     return "wide"
@@ -413,7 +418,7 @@ class RecordingTracer:
 
 
 def _role(roles: RoleCardService, role_id: str = "r", model_name: str | None = None) -> str:
-    roles.create(
+    cards(roles).create(
         RoleCardCreate(
             role_id=role_id,
             role_name=role_id,
@@ -1132,7 +1137,7 @@ def test_search_tool_sees_the_role_scopes_across_the_executor_thread(
         """Reports the scopes visible to the tool layer."""
         return ",".join(current_knowledge_scopes())
 
-    roles.create(
+    cards(roles).create(
         RoleCardCreate(
             role_id="scoped",
             role_name="带作用域",
@@ -1170,7 +1175,7 @@ def test_one_turn_writes_all_three_injected_scopes_together(roles: RoleCardServi
         parts.append(str(current_turn_image()))
         return "|".join(parts)
 
-    roles.create(
+    cards(roles).create(
         RoleCardCreate(
             role_id="scoped2",
             role_name="带作用域",
@@ -1179,7 +1184,7 @@ def test_one_turn_writes_all_three_injected_scopes_together(roles: RoleCardServi
             knowledge_scopes=["reports_2026"],
         )
     )
-    roles.create(
+    cards(roles).create(
         RoleCardCreate(role_id="plain", role_name="干净", system_prompt="x", tool_whitelist=None)
     )
     reg = ToolRegistry()

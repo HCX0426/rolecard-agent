@@ -32,7 +32,10 @@ def _current(domains: DomainsLike) -> tuple[str, ...]:
 
 
 def make_kernel_tools(
-    *, roles: RoleCardService, enabled_domains: DomainsLike = ()
+    *,
+    roles: RoleCardService,
+    current_user: Callable[[], str],
+    enabled_domains: DomainsLike = ()
 ) -> list[BaseTool]:
     """Build the kernel tools, closing over the services they need.
 
@@ -59,7 +62,7 @@ def make_kernel_tools(
     @tool("list_roles")
     def list_roles() -> str:
         """List the roles available in this deployment, one line each."""
-        cards = roles.list_roles()
+        cards = roles.scoped(current_user()).list_roles()
         if not cards:
             return "当前没有可用的角色。"
         lines = [

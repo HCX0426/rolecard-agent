@@ -22,13 +22,18 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from langchain_core.tools import tool
 
 from rolecard_agent.config import Settings
+from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.core.nodes import KernelContext, TurnStopped, call_model
 from rolecard_agent.core.observability import NullTracer
 from rolecard_agent.core.thread_locks import clear_stop, request_stop, stop_requested
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.core.turn import End, run_turn
-from rolecard_agent.roles.service import RoleCardCreate, RoleCardService
+from rolecard_agent.roles.service import RoleCardCreate, RoleCards, RoleCardService
 
+
+def cards(store: RoleCardService) -> RoleCards:
+    """测试里"本机主人眼里的那些卡"的简写（M2a 之后每次读写都得说清为谁）。"""
+    return store.scoped(DEFAULT_USER_ID)
 
 @pytest.fixture(autouse=True)
 def _clean_flags() -> Iterator[None]:
@@ -57,7 +62,7 @@ def _ctx(roles: RoleCardService, model: Any) -> KernelContext:
 
 
 def _role(roles: RoleCardService, role_id: str = "stopper") -> str:
-    roles.create(
+    cards(roles).create(
         RoleCardCreate(
             role_id=role_id,
             role_name=role_id,

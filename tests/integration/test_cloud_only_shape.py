@@ -40,6 +40,10 @@ class _Roles:
     def list_roles(self) -> list[RoleCard]:
         return self._roles
 
+    def scoped(self, user_id: str) -> _Roles:
+        """调度器会问"替哪个主人挑人开口"（§4.1 的实例级身份）。这条桩不区分主人。"""
+        return self
+
 
 def _cloud_only_settings(tmp_path: Path) -> Settings:
     """一份"这台机器没有任何本地推理服务"的配置：只有一个 OpenAI 兼容云端后端。"""

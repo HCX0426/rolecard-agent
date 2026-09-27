@@ -389,6 +389,10 @@ class _Roles:
     def __init__(self, roles: list[RoleCard]) -> None:
         self._roles = roles
 
+    def scoped(self, user_id: str) -> _Roles:
+        """调度器会问"替哪个主人挑人开口"（§4.1 的实例级身份）。桩不区分主人。"""
+        return self
+
     def list_roles(self) -> list[RoleCard]:
         return self._roles
 

@@ -60,7 +60,7 @@ def _validate_role_model(ctx: AppContext, model_name: str | None) -> None:
 @router.get("/api/roles")
 def list_roles(ctx: AppContext = Depends(get_context)) -> list[object]:
     """All role cards, built-in first."""
-    return [r.model_dump(mode="json") for r in ctx.roles.list_roles()]
+    return [r.model_dump(mode="json") for r in ctx.role_cards.list_roles()]
 
 
 @router.post("/api/roles", status_code=201)
@@ -71,7 +71,7 @@ def create_role(
 ) -> object:
     _validate_role_model(ctx, data.model_name)
     try:
-        created = ctx.roles.create(data)
+        created = ctx.role_cards.create(data)
     except RoleAlreadyExists as exc:
         raise role_error_to_http(exc) from exc
     ctx.roles.audit(
@@ -99,7 +99,7 @@ def update_role(
     if "model_name" in data.model_fields_set:
         _validate_role_model(ctx, data.model_name)
     try:
-        updated = ctx.roles.update(role_id, data)
+        updated = ctx.role_cards.update(role_id, data)
     except RoleNotFound as exc:
         raise role_error_to_http(exc) from exc
     changed = sorted(data.model_fields_set)
@@ -120,7 +120,7 @@ def delete_role(
     actor: Actor = Depends(get_actor),
 ) -> None:
     try:
-        ctx.roles.delete(role_id)
+        ctx.role_cards.delete(role_id)
     except (RoleNotFound, BuiltinRoleProtected) as exc:
         raise role_error_to_http(exc) from exc
     ctx.roles.audit(actor=actor.id, action="delete_role", target=role_id)
@@ -142,7 +142,7 @@ def role_timeline(
     与事实，写进审计流水反而是在给它们做第二份留存。
     """
     try:
-        ctx.roles.get(role_id)
+        ctx.role_cards.get(role_id)
     except RoleNotFound as exc:
         raise role_error_to_http(exc) from exc
     wanted = tuple(k.strip() for k in kinds.split(",") if k.strip()) if kinds else None

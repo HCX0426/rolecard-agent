@@ -182,7 +182,7 @@ def create_session(
     LangGraph `thread_id` answerable to "who is talking" (core/schema.sql A2)."""
     role_id = body.role_id or DEFAULT_ROLE_ID
     try:
-        role = ctx.roles.get(role_id)
+        role = ctx.role_cards.get(role_id)
     except RoleNotFound as exc:
         raise role_error_to_http(exc) from exc
     thread_id = f"s_{uuid.uuid4().hex[:12]}"
@@ -214,7 +214,7 @@ def open_proactive_session(
     （已提炼进角色记忆的事实不跟着走，那条边界有断言钉着）。
     """
     try:
-        role = ctx.roles.get(body.role_id)
+        role = ctx.role_cards.get(body.role_id)
     except RoleNotFound as exc:
         raise role_error_to_http(exc) from exc
     thread_id = ensure_proactive_thread(
@@ -251,7 +251,7 @@ def proactive_session_of(
 def get_session(thread_id: str, ctx: AppContext = Depends(get_context)) -> object:
     row = get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
     try:
-        role = ctx.roles.get(str(row["current_role_id"]))
+        role = ctx.role_cards.get(str(row["current_role_id"]))
         role_name: str | None = role.role_name
     except RoleNotFound:
         # 会话指向已被删除的角色：会话本身还在，角色信息降级为空（图侧有同样的兜底）。
@@ -293,7 +293,9 @@ def patch_session(
 
     if body.role_id:
         try:
-            ctx.roles.set_thread_role(thread_id, body.role_id, actor=actor.id)
+            ctx.roles.set_thread_role(
+            thread_id, body.role_id, user_id=ctx.current_user(), actor=actor.id
+        )
         except RoleError as exc:
             raise role_error_to_http(exc) from exc  # 角色/线程不存在都是 404
 
@@ -354,7 +356,7 @@ def patch_session(
 
     final_role_id = body.role_id or str(thread["current_role_id"])
     try:
-        role = ctx.roles.get(final_role_id)
+        role = ctx.role_cards.get(final_role_id)
     except RoleNotFound:
         # 会话指向的角色已被删除（角色 CRUD 的常规后果）：这里**必须**降级而不是抛 ——
         # `get_session` 与 `chat` 都有同样的兜底，本端点此前漏了，于是"只改个标题"也会
@@ -400,7 +402,7 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
     # 会话切「对话/智能体」或操作员改 AGENT_DEFAULT_MODE，下一轮即生效。
     session_mode = resolve_agent_mode(thread["agent_mode"], ctx.app_state["effective"])
     try:
-        role = ctx.roles.get(role_id)
+        role = ctx.role_cards.get(role_id)
     except RoleNotFound as exc:
         raise role_error_to_http(exc) from exc
 
@@ -520,7 +522,7 @@ def _thread_model(ctx: AppContext, thread: dict, role_id: str) -> tuple[Any, str
     name = thread["model_name"]
     if not name:
         try:
-            name = ctx.roles.get(role_id).model_name
+            name = ctx.role_cards.get(role_id).model_name
         except Exception:  # noqa: BLE001 - 角色被删了就用默认，提取不该因此 500
             name = None
     return ctx.runtime.resolve_role_model(name), name
@@ -756,7 +758,7 @@ def edit_message_and_regenerate(
     session_model = thread["model_name"]
     session_mode = resolve_agent_mode(thread["agent_mode"], ctx.app_state["effective"])
     try:
-        role = ctx.roles.get(role_id)
+        role = ctx.role_cards.get(role_id)
     except RoleNotFound as exc:
         raise role_error_to_http(exc) from exc
 

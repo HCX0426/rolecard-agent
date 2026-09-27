@@ -32,10 +32,14 @@ from rolecard_agent.core.state import new_state
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.core.turn import run_turn
 from rolecard_agent.roles.models import RoleCardCreate
-from rolecard_agent.roles.service import RoleCardService
+from rolecard_agent.roles.service import RoleCards, RoleCardService
 from rolecard_agent.storage.db import bootstrap, connect
 from tests.conftest import list_roles
 
+
+def cards(store: RoleCardService) -> RoleCards:
+    """测试里"本机主人眼里的那些卡"的简写（M2a 之后每次读写都得说清为谁）。"""
+    return store.scoped("u1")
 
 class _LoopingChat:
     """永远要求调用同一个工具的假模型：模拟"模型陷入了重复调用"。
@@ -83,7 +87,7 @@ def _kernel(db: Path, model: Any) -> Any:
     conn = connect(db)
     bootstrap(conn)
     roles = RoleCardService(conn)
-    roles.create(
+    cards(roles).create(
         RoleCardCreate(
             role_id="r",
             role_name="循环测试角色",

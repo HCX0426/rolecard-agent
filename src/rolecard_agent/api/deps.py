@@ -38,6 +38,7 @@ from rolecard_agent.rag.retriever import KnowledgeBase
 from rolecard_agent.roles.service import (
     BuiltinRoleProtected,
     RoleAlreadyExists,
+    RoleCards,
     RoleCardService,
     RoleNotFound,
 )
@@ -248,6 +249,15 @@ class AppContext:
     @property
     def roles(self) -> RoleCardService:
         return self.runtime.roles
+
+    @property
+    def role_cards(self) -> RoleCards:
+        """这次请求的主人眼里的那些角色卡 —— 路由碰 `role_card` 的**唯一**写法。
+
+        为什么要给视图单独开一个属性：`ctx.roles.get(...)` 长得和"能读"一样，只有
+        `ctx.role_cards.get(...)` 在拼写上就逼你回答"以谁的身份"。少一种写法就少一种忘法。
+        """
+        return self.roles.scoped(self.current_user())
 
     @property
     def plugins(self) -> PluginService:

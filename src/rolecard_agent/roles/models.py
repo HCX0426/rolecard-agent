@@ -34,6 +34,8 @@ from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel, Field, field_validator
 
+from rolecard_agent.core.identity import DEFAULT_USER_ID
+
 ROLE_ID_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
 SCOPE_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
 
@@ -81,6 +83,11 @@ class RoleCard(BaseModel):
     """A role as stored. `is_builtin` roles cannot be deleted."""
 
     role_id: str = Field(pattern=ROLE_ID_PATTERN)
+    #: 归属哪个主人（列定义见 `roles/schema.sql`）。**这是读模型上的字段，不是入参**：
+    #: 写路径由 `RoleCards` 视图绑定的那个人盖章，请求体给不了
+    #: （`RoleCardCreate` 刻意没有 `user_id`）。默认值只为让"随手构造一张卡"（内部逻辑与
+    #: 测试里造个角色）不必假装知道归属。
+    user_id: str = DEFAULT_USER_ID
     role_name: str = Field(min_length=1)
     system_prompt: str
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)

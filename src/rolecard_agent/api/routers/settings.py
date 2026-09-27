@@ -789,7 +789,7 @@ class MemoryBody(BaseModel):
 
 def _require_role(ctx: AppContext, role_id: str) -> None:
     """角色作用域的守卫：角色不存在 → 404（避免凭空造出孤立的记忆桶）。"""
-    if not ctx.roles.exists(role_id):
+    if not ctx.role_cards.exists(role_id):
         raise HTTPException(status_code=404, detail=f"角色 {role_id!r} 不存在。")
 
 

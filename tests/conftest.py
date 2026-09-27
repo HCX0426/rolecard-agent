@@ -20,12 +20,17 @@ import pytest
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.tools import BaseTool, tool
 
+from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.core.tools.registry import ToolRegistry
-from rolecard_agent.roles.service import RoleCardService
+from rolecard_agent.roles.service import RoleCards, RoleCardService
 from rolecard_agent.storage.db import bootstrap, connect
 
 # --------------------------------------------------------------------------- offline guard
 
+
+def cards(store: RoleCardService) -> RoleCards:
+    """测试里"本机主人眼里的那些卡"的简写（M2a 之后每次读写都得说清为谁）。"""
+    return store.scoped(...)
 
 @pytest.fixture(scope="session", autouse=True)
 def _no_startup_model_pin() -> Iterator[None]:
@@ -137,8 +142,11 @@ def conn(tmp_path: Any) -> Iterator[sqlite3.Connection]:
 @pytest.fixture
 def roles(conn: sqlite3.Connection) -> RoleCardService:
     service = RoleCardService(conn)
-    service.seed_builtins()
-    service.seed_domain_roles()  # medical_archivist 是域种子角色（自定义类型）
+    # 出厂卡也有主人：测试里就是本机那份。`roles` 夹具仍返回**服务**（图与内核的桩吃它），
+    # 读写用例自己 `roles.scoped(...)` 拿视图）。
+    service.seed_builtins(user_id=DEFAULT_USER_ID)
+    # medical_archivist 是域种子角色（自定义类型）
+    service.seed_domain_roles(user_id=DEFAULT_USER_ID)
     return service
 
 

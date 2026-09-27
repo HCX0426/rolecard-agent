@@ -82,9 +82,9 @@ def _kernel(db_path: Path, replies: list[Any]) -> Any:
     )
     conn.commit()
     roles = RoleCardService(conn)
-    roles.seed_builtins()
+    roles.seed_builtins(user_id="u1")
     # `medical_archivist` 是**域角色**：只 seed_builtins 的话每轮都回"角色已不存在"。
-    roles.seed_domain_roles()
+    roles.seed_domain_roles(user_id="u1")
     plugins = PluginService(conn, known_plugins=["health"])
     reg = ToolRegistry()
     reg.register(list_roles)

@@ -40,6 +40,7 @@ from rolecard_agent.config import Settings  # noqa: E402
 from rolecard_agent.core import runtime_settings  # noqa: E402
 from rolecard_agent.core.anti_repeat import repeat_score  # noqa: E402
 from rolecard_agent.core.graph import build_model  # noqa: E402
+from rolecard_agent.core.identity import resolve_instance_identity  # noqa: E402
 from rolecard_agent.core.model_settings import ModelSettingsService  # noqa: E402
 from rolecard_agent.core.prompts import (  # noqa: E402
     DEPTH_INJECT_FROM_END,
@@ -94,7 +95,7 @@ def _arms(
     "现状范例"与"无范例"两臂现在**会同源**——那不是 bug，是那一次实验留下的状态。
     要再比"有 vs 无"，拿一张还有范例的卡（`medical_archivist`）或先把 §8.12 那段贴回去。
     """
-    role = RoleCardService(conn).get(role_id)
+    role = RoleCardService(conn).scoped(resolve_instance_identity(settings)).get(role_id)
     # 后端可由 --backend 指定：**同一轮实验必须同一个后端**，否则量的就是"云端 vs 本地"
     # 而不是"这一处改动"（§8.12 那次的读数是云端，本地 8B 在同样三臂上动作开头一律 100%）。
     model = build_model(settings, backend or role.model_name, role.temperature)
@@ -138,7 +139,7 @@ def _chat_arms(
 
     历史用她**真说过的**几条：复读的压力必须在场，否则两臂都没东西可抄，A/B 就是空的。
     """
-    role = RoleCardService(conn).get(role_id)
+    role = RoleCardService(conn).scoped(resolve_instance_identity(settings)).get(role_id)
     model = build_model(settings, backend or role.model_name, role.temperature)
     hers = [
         str(r["text"]).strip()

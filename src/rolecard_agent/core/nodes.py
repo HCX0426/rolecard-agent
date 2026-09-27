@@ -33,6 +33,7 @@ from langchain_core.runnables import RunnableConfig
 from rolecard_agent.config import Settings
 from rolecard_agent.core.anti_repeat import clean_repeated_spans
 from rolecard_agent.core.guard import check
+from rolecard_agent.core.identity import resolve_instance_identity
 from rolecard_agent.core.memory import current_role_id_ctx
 from rolecard_agent.core.observability import TraceEvent, Tracer, timer
 from rolecard_agent.core.prompts import (
@@ -380,6 +381,22 @@ def _reject_unsupported_vision(
     raise VisionNotSupported(f"{backend.model} 的 capabilities 不含 vision")
 
 
+def _thread_owner(ctx: KernelContext, state: dict[str, Any]) -> str:
+    """这条线程的主人 —— 角色卡只能按他读（`roles.service.RoleCards` 是唯一读路径）。
+
+    图状态本来就带 `user_id`（`core/state.new_state` 写的），所以这不是第二份事实面。缺了它
+    宁可当场炸，也不要在"该为谁读"上猜一个：猜错的表现是"她突然不认识自己的角色卡"，
+    而那种现象会被当成模型抽风查一整天。
+    """
+    owner = state.get("user_id")
+    if owner:
+        return str(owner)
+    # 没有这一项 = 这条线程的状态是在归属落地之前写的（老检查点）。回落到**这台实例的主人**
+    # 而不是炸：一台实例一个主人（§4.1），所以这个值今天必然就是它的主人；而炸在图里会表现成
+    # "某条老会话突然发不出消息"，那种现象没人会往"历史状态少一个键"上想。
+    return resolve_instance_identity(ctx.settings)
+
+
 def turn_context(state: dict[str, Any], ctx: KernelContext) -> tuple[list[Any], list[str]]:
     """Resolve this turn's permitted tools and the plugin set they were computed against.
 
@@ -388,7 +405,7 @@ def turn_context(state: dict[str, Any], ctx: KernelContext) -> tuple[list[Any], 
     back by `call_model` - never as an input.
     """
     domains = list(ctx.enabled_domains())
-    role = ctx.roles.get(state.get("current_role_id", ""))
+    role = ctx.roles.scoped(_thread_owner(ctx, state)).get(state.get("current_role_id", ""))
     tools = ctx.registry.select(enabled_domains=domains, role_whitelist=role.tool_whitelist)
     # 后端能力位：当前模型不支持工具调用（如某些云端 VLM 一旦附 tools 就返回空）→ 本轮清空工具。
     # 放在这个**唯一入口**：call_model 的 bind 与 execute_tools 的 permitted 同源，模型即便幻觉出
@@ -585,7 +602,7 @@ def call_model(
     """
     role_id = state.get("current_role_id", "")
     try:
-        role = ctx.roles.get(role_id)
+        role = ctx.roles.scoped(_thread_owner(ctx, state)).get(role_id)
     except RoleNotFound:
         # A session pointing at a deleted role must not crash the graph; degrade to a plain
         # refusal so the user gets a sentence instead of a 500.
@@ -783,7 +800,7 @@ def execute_tools(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
     # v2.1：把当前角色已授权的知识作用域注入工具层（search_knowledge 读取）。
     # 角色缺失/无声明 → 空元组，检索工具自己给出明确拒绝。
     try:
-        _role = ctx.roles.get(state.get("current_role_id", ""))
+        _role = ctx.roles.scoped(_thread_owner(ctx, state)).get(state.get("current_role_id", ""))
         role_knowledge_scopes_ctx.set(tuple(_role.knowledge_scopes or ()))
     except RoleNotFound:
         role_knowledge_scopes_ctx.set(())

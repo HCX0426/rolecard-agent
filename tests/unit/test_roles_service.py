@@ -6,6 +6,7 @@ import sqlite3
 
 import pytest
 
+from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.roles.models import (
     MAX_EXEMPLARS,
     RoleCardCreate,
@@ -15,10 +16,15 @@ from rolecard_agent.roles.models import (
 from rolecard_agent.roles.service import (
     BuiltinRoleProtected,
     RoleAlreadyExists,
+    RoleCards,
     RoleCardService,
     RoleNotFound,
 )
 
+
+def cards(store: RoleCardService) -> RoleCards:
+    """测试里"本机主人眼里的那些卡"的简写（M2a 之后每次读写都得说清为谁）。"""
+    return store.scoped(DEFAULT_USER_ID)
 
 def _new(role_id: str = "custom", **overrides: object) -> RoleCardCreate:
     payload = {
@@ -33,85 +39,85 @@ def _new(role_id: str = "custom", **overrides: object) -> RoleCardCreate:
 
 
 def test_seeded_roles_are_listed_builtin_first(roles: RoleCardService) -> None:
-    listed = roles.list_roles()
+    listed = cards(roles).list_roles()
     # 通用助手（内置）恒在首位；档案管理员已降级为域种子角色（自定义类型）。
     assert listed[0].role_id == "general_assistant" and listed[0].is_builtin
     assert any(r.role_id == "medical_archivist" and not r.is_builtin for r in listed)
-    archivist = roles.get("medical_archivist")
+    archivist = cards(roles).get("medical_archivist")
     assert archivist.temperature == 0.3
 
 
 def test_seeding_is_idempotent(roles: RoleCardService) -> None:
-    before = len(roles.list_roles())
-    roles.seed_builtins()
-    roles.seed_builtins()
-    assert len(roles.list_roles()) == before
+    before = len(cards(roles).list_roles())
+    roles.seed_builtins(user_id=DEFAULT_USER_ID)
+    roles.seed_builtins(user_id=DEFAULT_USER_ID)
+    assert len(cards(roles).list_roles()) == before
 
 
 def test_create_and_get(roles: RoleCardService) -> None:
-    created = roles.create(_new("analyst"))
+    created = cards(roles).create(_new("analyst"))
     assert created.role_id == "analyst"
     assert created.is_builtin is False
-    assert roles.get("analyst").role_name == "自定义角色"
+    assert cards(roles).get("analyst").role_name == "自定义角色"
 
 
 def test_duplicate_create_is_rejected(roles: RoleCardService) -> None:
-    roles.create(_new("analyst"))
+    cards(roles).create(_new("analyst"))
     with pytest.raises(RoleAlreadyExists):
-        roles.create(_new("analyst"))
+        cards(roles).create(_new("analyst"))
 
 
 def test_missing_role_raises(roles: RoleCardService) -> None:
     with pytest.raises(RoleNotFound):
-        roles.get("nope")
+        cards(roles).get("nope")
 
 
 def test_update_touches_only_the_provided_fields(roles: RoleCardService) -> None:
-    roles.create(_new("analyst", description="原始说明"))
-    updated = roles.update("analyst", RoleCardUpdate(temperature=0.9))
+    cards(roles).create(_new("analyst", description="原始说明"))
+    updated = cards(roles).update("analyst", RoleCardUpdate(temperature=0.9))
     assert updated.temperature == 0.9
     assert updated.description == "原始说明"  # untouched
     assert updated.system_prompt == "只做一件事。"
 
 
 def test_update_with_nothing_to_do_is_a_noop(roles: RoleCardService) -> None:
-    roles.create(_new("analyst"))
-    assert roles.update("analyst", RoleCardUpdate()).role_id == "analyst"
+    cards(roles).create(_new("analyst"))
+    assert cards(roles).update("analyst", RoleCardUpdate()).role_id == "analyst"
 
 
 def test_update_missing_role_raises(roles: RoleCardService) -> None:
     with pytest.raises(RoleNotFound):
-        roles.update("nope", RoleCardUpdate(role_name="x"))
+        cards(roles).update("nope", RoleCardUpdate(role_name="x"))
 
 
 def test_whitelist_none_and_empty_round_trip_distinctly(roles: RoleCardService) -> None:
     """`None` = every enabled tool, `[]` = none. Confusing the two is a silent privilege
     escalation, so both directions are asserted."""
-    roles.create(_new("all_tools", tool_whitelist=None))
-    roles.create(_new("no_tools", tool_whitelist=[]))
-    assert roles.get("all_tools").tool_whitelist is None
-    assert roles.get("no_tools").tool_whitelist == []
+    cards(roles).create(_new("all_tools", tool_whitelist=None))
+    cards(roles).create(_new("no_tools", tool_whitelist=[]))
+    assert cards(roles).get("all_tools").tool_whitelist is None
+    assert cards(roles).get("no_tools").tool_whitelist == []
 
 
 def test_builtin_role_cannot_be_deleted(roles: RoleCardService) -> None:
     # 内置只剩「通用助手」；域种子角色（档案管理员）类型是自定义，可删除。
     with pytest.raises(BuiltinRoleProtected):
-        roles.delete("general_assistant")
-    assert roles.exists("general_assistant")
-    roles.delete("medical_archivist")
-    assert not roles.exists("medical_archivist")
+        cards(roles).delete("general_assistant")
+    assert cards(roles).exists("general_assistant")
+    cards(roles).delete("medical_archivist")
+    assert not cards(roles).exists("medical_archivist")
     # 重启（再次播种）：缺失才补插，且不会复活为内置。
-    roles.seed_domain_roles()
-    assert roles.exists("medical_archivist")
-    assert roles.get("medical_archivist").is_builtin is False
+    roles.seed_domain_roles(user_id=DEFAULT_USER_ID)
+    assert cards(roles).exists("medical_archivist")
+    assert cards(roles).get("medical_archivist").is_builtin is False
 
 
 def test_custom_role_can_be_deleted(roles: RoleCardService) -> None:
-    roles.create(_new("temp"))
-    roles.delete("temp")
-    assert roles.exists("temp") is False
+    cards(roles).create(_new("temp"))
+    cards(roles).delete("temp")
+    assert cards(roles).exists("temp") is False
     with pytest.raises(RoleNotFound):
-        roles.delete("temp")
+        cards(roles).delete("temp")
 
 
 def test_role_id_must_be_lowercase(roles: RoleCardService) -> None:
@@ -126,12 +132,15 @@ def test_switch_role_keeps_history_and_audits(
 
     The checkpoint table is not even referenced here, which is the point: role switching is a
     one-column update on `session_thread`.
+
+    两边都按 `thread-1` 的**主人**来（conftest 把这条线程种给 "u1"）：M2a 之后
+    `set_thread_role` 既要求目标卡在他可见范围内、也只允许改他自己那条线程 —— 用别人的
+    身份来换角色现在就是 `RoleNotFound`，那是这条判据在工作，不是用例写坏了。
     """
-    roles.create(_new("analyst"))
+    roles.scoped("u1").create(_new("analyst"))
     assert roles.current_thread_role("thread-1") == "medical_archivist"
 
-    roles.set_thread_role("thread-1", "analyst", actor="tester")
-
+    roles.set_thread_role("thread-1", "analyst", user_id="u1", actor="tester")
     assert roles.current_thread_role("thread-1") == "analyst"
     audit = conn.execute("SELECT actor, action, target FROM audit_log").fetchall()
     assert [tuple(r) for r in audit] == [("tester", "switch_role", "thread-1")]
@@ -139,13 +148,13 @@ def test_switch_role_keeps_history_and_audits(
 
 def test_switch_to_unknown_role_leaves_the_thread_alone(roles: RoleCardService) -> None:
     with pytest.raises(RoleNotFound):
-        roles.set_thread_role("thread-1", "nope")
+        roles.set_thread_role("thread-1", "nope", user_id=DEFAULT_USER_ID)
     assert roles.current_thread_role("thread-1") == "medical_archivist"
 
 
 def test_switch_on_unknown_thread_raises(roles: RoleCardService) -> None:
     with pytest.raises(RoleNotFound):
-        roles.set_thread_role("ghost-thread", "medical_archivist")
+        roles.set_thread_role("ghost-thread", "medical_archivist", user_id=DEFAULT_USER_ID)
 
 
 # --------------------------------------------------------- exemplars & knowledge scopes
@@ -156,7 +165,7 @@ def test_switch_on_unknown_thread_raises(roles: RoleCardService) -> None:
 
 
 def test_builtin_role_ships_with_examples_and_a_scope(roles: RoleCardService) -> None:
-    role = roles.get("medical_archivist")
+    role = cards(roles).get("medical_archivist")
     assert role.exemplars is not None
     # At least one example must be a refusal: imitation is the strongest signal, so a role
     # that only sees successful lookups learns to answer everything.
@@ -169,14 +178,14 @@ def test_exemplars_round_trip(roles: RoleCardService) -> None:
         RoleExemplar(user="问一", assistant="答一"),
         RoleExemplar(user="问二", assistant="答二"),
     ]
-    roles.create(_new("styled", exemplars=given))
-    loaded = roles.get("styled").exemplars
+    cards(roles).create(_new("styled", exemplars=given))
+    loaded = cards(roles).get("styled").exemplars
     assert [(e.user, e.assistant) for e in loaded] == [("问一", "答一"), ("问二", "答二")]
 
 
 def test_exemplars_are_optional_and_stay_none(roles: RoleCardService) -> None:
-    roles.create(_new("plain"))
-    assert roles.get("plain").exemplars is None
+    cards(roles).create(_new("plain"))
+    assert cards(roles).get("plain").exemplars is None
 
 
 def test_too_many_exemplars_is_rejected() -> None:
@@ -198,8 +207,8 @@ def test_exemplar_cannot_be_empty() -> None:
 
 
 def test_knowledge_scopes_round_trip(roles: RoleCardService) -> None:
-    roles.create(_new("reader", knowledge_scopes=["health_reports", "guidelines"]))
-    assert roles.get("reader").knowledge_scopes == ["health_reports", "guidelines"]
+    cards(roles).create(_new("reader", knowledge_scopes=["health_reports", "guidelines"]))
+    assert cards(roles).get("reader").knowledge_scopes == ["health_reports", "guidelines"]
 
 
 def test_bad_scope_name_is_rejected() -> None:
@@ -208,9 +217,11 @@ def test_bad_scope_name_is_rejected() -> None:
 
 
 def test_update_can_replace_exemplars(roles: RoleCardService) -> None:
-    roles.create(_new("styled", exemplars=[RoleExemplar(user="旧", assistant="旧答")]))
-    roles.update("styled", RoleCardUpdate(exemplars=[RoleExemplar(user="新", assistant="新答")]))
-    assert [e.user for e in roles.get("styled").exemplars] == ["新"]
+    cards(roles).create(_new("styled", exemplars=[RoleExemplar(user="旧", assistant="旧答")]))
+    cards(roles).update(
+        "styled", RoleCardUpdate(exemplars=[RoleExemplar(user="新", assistant="新答")])
+    )
+    assert [e.user for e in cards(roles).get("styled").exemplars] == ["新"]
 
 
 def test_deleting_a_role_takes_her_own_state_with_it(
@@ -224,14 +235,14 @@ def test_deleting_a_role_takes_her_own_state_with_it(
     from rolecard_agent.core.memory import add_item
     from rolecard_agent.core.proactive_state import get_state, save_state
 
-    roles.create(_new("ghost"))
+    cards(roles).create(_new("ghost"))
     add_item(conn, bucket="ghost", text="用户下周要体检")
     st = get_state(conn, "ghost")
     st.affinity = 3.0
     save_state(conn, st)
     assert get_state(conn, "ghost").affinity == 3.0
 
-    roles.delete("ghost")
+    cards(roles).delete("ghost")
 
     gone = conn.execute(
         "SELECT COUNT(*) c FROM role_card WHERE role_id='ghost'"
@@ -245,7 +256,7 @@ def test_deleting_a_role_takes_her_own_state_with_it(
     ).fetchone()["c"] == 0, "关系数值跟着角色走"
 
     # 同名重建：必须是一张干净的卡，不该继承任何旧状态
-    roles.create(_new("ghost", system_prompt="全新设定。"))
+    cards(roles).create(_new("ghost", system_prompt="全新设定。"))
     fresh = get_state(conn, "ghost")
     assert fresh.affinity == 0.0 and fresh.open_threads == ()
     assert conn.execute(
@@ -257,7 +268,7 @@ def test_deleting_a_role_keeps_the_users_conversation(
     conn: sqlite3.Connection, roles: RoleCardService
 ) -> None:
     """删角色销毁的是那个角色，**不是用户聊过的历史**（与"卸载不删数据"同一条理由）。"""
-    roles.create(_new("todelete"))
+    cards(roles).create(_new("todelete"))
     # 用 conftest 已经种好的 tenant/user（'t1'/'u1'）—— 外键是真开的，自己拼一份
     # 假租户只会先撞 FK。
     conn.execute(
@@ -266,7 +277,7 @@ def test_deleting_a_role_keeps_the_users_conversation(
     )
     conn.commit()
 
-    roles.delete("todelete")
+    cards(roles).delete("todelete")
 
     row = conn.execute(
         "SELECT current_role_id FROM session_thread WHERE thread_id='s_x'"

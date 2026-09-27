@@ -7,6 +7,14 @@
 
 CREATE TABLE IF NOT EXISTS role_card (
     role_id         TEXT PRIMARY KEY,               -- lowercase ASCII, e.g. medical_archivist
+    -- 归属：这张卡是"谁的"。09-27 起每台实例有自己的主人（`IDENTITY_USER_ID`，架构总览 §4.1），
+    -- 所有读路径都按它过滤 —— 包括播种出来的那几张：**内置卡今天不算公共资产**。
+    -- 为什么不留一个"公共卡"的概念：那需要"模板 + 每人一份覆盖"的语义（改一张卡到底改了几份），
+    -- 是另一件产品事；今天先按"换身份 = 换一份完整数据集"办。
+    -- 为什么默认值是字面量而没有 REFERENCES：SQLite 不允许"带非常量默认值的 ADD COLUMN"再挂外键，
+    -- 而老库升上来走的正是 ADD COLUMN。默认值与 `core/identity.DEFAULT_USER_ID` 的一致性由
+    -- `tests/unit/test_identity_scoping.py` 钉住（这两个数一旦漂，旧库读法就会静默变空）。
+    user_id         TEXT NOT NULL DEFAULT 'local-user',
     role_name       TEXT NOT NULL,
     system_prompt   TEXT NOT NULL,
     temperature     REAL NOT NULL DEFAULT 0.7

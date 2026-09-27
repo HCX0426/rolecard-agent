@@ -17,6 +17,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from rolecard_agent.config import DEFAULT_SILICONFLOW_BASE_URL, Settings
+from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.core.nodes import (
     role_knowledge_scopes_ctx,
 )
@@ -31,7 +32,12 @@ from rolecard_agent.rag.retriever import (
     make_reranker,
     make_search_tool,
 )
+from rolecard_agent.roles.service import RoleCards, RoleCardService
 
+
+def cards(store: RoleCardService) -> RoleCards:
+    """测试里"本机主人眼里的那些卡"的简写（M2a 之后每次读写都得说清为谁）。"""
+    return store.scoped(DEFAULT_USER_ID)
 
 @pytest.fixture
 def kb(tmp_path: Path) -> KnowledgeBase:
@@ -330,7 +336,7 @@ def test_execute_tools_injects_role_scopes_to_search_tool(
     kb.index("health_reports", "随访须知.md", DOC_A)
     reg = ToolRegistry()
     reg.register(make_search_tool(kb))
-    roles.create(
+    cards(roles).create(
         RoleCardCreate(
             role_id="scholar",
             role_name="学者",

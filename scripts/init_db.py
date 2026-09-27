@@ -13,6 +13,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from rolecard_agent.core.identity import resolve_instance_identity
+
 
 def _ensure_importable() -> None:
     """Make `rolecard_agent` importable when run straight from a clone.
@@ -53,8 +55,11 @@ def main() -> int:
     # failed with no such table" class of first-run bug.
     make_checkpointer(conn)
 
-    seeded = RoleCardService(conn).seed_builtins()
-    RoleCardService(conn).seed_domain_roles()
+    # 出厂卡也有主人：这台实例的主人（§4.1 的实例级身份）。空 IDENTITY_USER_ID = 本机那份。
+    owner = resolve_instance_identity(settings)
+    store = RoleCardService(conn)
+    seeded = store.seed_builtins(user_id=owner)
+    store.seed_domain_roles(user_id=owner)
 
     enabled = [
         row[0]

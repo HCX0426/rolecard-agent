@@ -38,6 +38,7 @@
 from __future__ import annotations
 
 import random
+import sqlite3
 import threading
 from collections.abc import Callable, Sequence
 from contextlib import suppress
@@ -59,6 +60,7 @@ from rolecard_agent.core.file_watch import (
     check_changes,
 )
 from rolecard_agent.core.guard import check
+from rolecard_agent.core.identity import resolve_instance_identity
 from rolecard_agent.core.memory import (
     GLOBAL_BUCKET,
     memory_for_turn,
@@ -1205,8 +1207,15 @@ class ReachoutScheduler:
                 file_events, file_truncated, file_expired = detected
         file_event_consumed = False
         try:
-            candidates = [r for r in self._roles.list_roles() if r.reachout_enabled]
-        except Exception:  # noqa: BLE001 - 读角色失败不退整个调度
+            # 后台这条链没有"这次请求"可问：它替**这台实例的主人**挑人开口（§4.1 的实例级身份）。
+            owner = resolve_instance_identity(settings)
+            candidates = [
+                r for r in self._roles.scoped(owner).list_roles() if r.reachout_enabled
+            ]
+        except (sqlite3.Error, OSError):
+            # 读角色时库/盘临时坏了：这一轮不开口，下一轮重试，**不退整个调度**。
+            # 刻意不再 `except Exception`：桩少了个方法、参数写错这类接线错曾经被这里
+            # 吞成"candidates 为空"，症状只是"她再也不主动说话了"，30 条用例一起哑掉也没人红。
             return 0
         for role in candidates:
             can_file = file_events is not None and role.file_watch_enabled

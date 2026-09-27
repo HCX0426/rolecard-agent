@@ -28,10 +28,14 @@ from rolecard_agent.core.plugins import PluginService
 from rolecard_agent.core.state import new_state
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.roles.models import RoleCardCreate
-from rolecard_agent.roles.service import RoleCardService
+from rolecard_agent.roles.service import RoleCards, RoleCardService
 from rolecard_agent.storage.db import bootstrap, connect
 from tests.conftest import ScriptedChat, compare_health_index, list_roles, query_health_record
 
+
+def cards(store: RoleCardService) -> RoleCards:
+    """测试里"本机主人眼里的那些卡"的简写（M2a 之后每次读写都得说清为谁）。"""
+    return store.scoped("u1")
 
 def _kernel(
     db_path: Path,
@@ -52,8 +56,8 @@ def _kernel(
     conn = connect(db_path)
     bootstrap(conn, enabled_domains=("health",))
     roles = RoleCardService(conn)
-    roles.seed_builtins()
-    roles.seed_domain_roles()
+    roles.seed_builtins(user_id="u1")
+    roles.seed_domain_roles(user_id="u1")
 
     plugins = PluginService(conn, known_plugins=["health"])
     plugins.register("health", display_name="Health")
@@ -180,9 +184,9 @@ def test_whitelist_is_applied_before_binding(tmp_path: Path) -> None:
     conn = connect(db)
     bootstrap(conn, enabled_domains=("health",))
     roles = RoleCardService(conn)
-    roles.seed_builtins()
-    roles.seed_domain_roles()
-    roles.create(
+    roles.seed_builtins(user_id="u1")
+    roles.seed_domain_roles(user_id="u1")
+    cards(roles).create(
         RoleCardCreate(
             role_id="narrow",
             role_name="只看对比",

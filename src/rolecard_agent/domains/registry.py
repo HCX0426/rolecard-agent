@@ -112,7 +112,10 @@ def build_registry(
     registry = _ToolRegistry()
     # Kernel tools carry domain=None and survive every plugin toggle. Both are read-only.
     registry.register_many(
-        make_kernel_tools(roles=roles, enabled_domains=enabled_domains), idempotent=True
+        make_kernel_tools(
+            roles=roles, current_user=current_user, enabled_domains=enabled_domains
+        ),
+        idempotent=True
     )
     registry.register(make_search_tool(knowledge, tracer=tracer), idempotent=True)
 
