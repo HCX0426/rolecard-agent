@@ -12,7 +12,6 @@ kernel testable without a running Ollama instance.
 # `config` parameter annotation and warns when it is a STRING (PEP 563 lazy form) instead of a
 # real type object; under Python 3.13 every annotation in this file evaluates natively anyway.
 from collections.abc import Callable
-from functools import partial
 from typing import Any, cast
 
 from langchain_core.runnables import RunnableConfig
@@ -20,6 +19,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
 from rolecard_agent.config import Settings
+from rolecard_agent.core.identity import bound_user
 from rolecard_agent.core.model_settings import client_style
 from rolecard_agent.core.nodes import (
     ChatLike,
@@ -124,19 +124,34 @@ def build_kernel(
 
     graph = StateGraph(AgentState)
 
+    def _owner_of(state: dict[str, Any]) -> str | None:
+        """这一轮在为谁读 —— 绑进上下文给域工具用（见 `core/identity.bound_user`）。
+
+        为什么在**节点入口**绑，而不是把 user_id 一路当参数传给工具：域工具的 `current_user`
+        是装配期定下的零参闭包（工具对模型必须看起来零参数，否则模型能自己填"我是谁"）。
+        主人本来就在 `state["user_id"]` 里，绑在这里，工具签名一个字都不用改。
+        老线程的状态里可能没有这一项 → 回落到实例主人，而不是让这轮炸掉。
+        """
+        return str(state.get("user_id") or "") or None
+
     def model_node(state: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
         # A closure rather than `partial(call_model, ctx=ctx)`: LangGraph passes config as the
         # SECOND POSITIONAL argument to any node that accepts two. A partial with a bound
         # keyword would let that land in `ctx`, silently swapping the context for a config
         # dict. The RunnableConfig annotation is load-bearing too: LangGraph validates it and
         # warns if a node's config parameter is typed as anything else.
-        return call_model(state, ctx=ctx, config=config)
+        with bound_user(_owner_of(state)):
+            return call_model(state, ctx=ctx, config=config)
+
+    def tools_node(state: dict[str, Any]) -> dict[str, Any]:
+        with bound_user(_owner_of(state)):
+            return execute_tools(state, ctx=ctx)
 
     # LangGraph 的 `add_node` 泛型要求节点输入是 State 类型；这里的闭包刻意接
     # `dict[str, Any]`（节点只负责把 state 透传给 call_model）。运行期正确，
     # 类型变量表达不了这件事，因此显式忽略并留下理由。
     graph.add_node(MODEL_NODE, model_node)  # type: ignore[type-var]
-    graph.add_node(TOOLS_NODE, partial(execute_tools, ctx=ctx))
+    graph.add_node(TOOLS_NODE, tools_node)
 
     graph.add_edge(START, MODEL_NODE)
     graph.add_conditional_edges(MODEL_NODE, route_after_model, {TOOLS_NODE: TOOLS_NODE, "end": END})

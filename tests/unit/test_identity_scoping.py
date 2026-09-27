@@ -118,3 +118,31 @@ def test_an_old_database_gets_the_column_and_keeps_its_cards(tmp_path: Path) -> 
     assert [r.role_id for r in cards.list_roles()] == ["wan"]
     assert cards.get("wan").user_id == DEFAULT_USER_ID
     upgraded.close()
+
+
+def test_bound_user_is_scoped_to_one_turn() -> None:
+    """绑过就是这一轮的主人，出了作用域必须复位 —— 异常路径也要复。
+
+    不复位的后果不是"读错一个人"这么轻：同一个工作线程被下一轮复用，那一轮就顶着
+    上一轮的主人跑，而表现是"偶尔串数据"，最难查的那一类。
+    """
+    from rolecard_agent.core.identity import active_user_id, bound_user
+
+    assert active_user_id("owner") == "owner"  # 没绑过 = 这台实例的主人
+    with bound_user("u1"):
+        assert active_user_id("owner") == "u1"
+        with bound_user("u2"):  # noqa: SIM117 - 嵌套本身就是要测的事
+            assert active_user_id("owner") == "u2"
+        assert active_user_id("owner") == "u1"
+    assert active_user_id("owner") == "owner"
+
+    with pytest.raises(ZeroDivisionError), bound_user("u1"):
+        raise ZeroDivisionError
+    assert active_user_id("owner") == "owner"
+
+
+def test_binding_an_empty_owner_is_the_same_as_binding_nothing() -> None:
+    from rolecard_agent.core.identity import active_user_id, bound_user
+
+    with bound_user(""):
+        assert active_user_id("owner") == "owner"

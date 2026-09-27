@@ -63,7 +63,7 @@ from rolecard_agent.api.routers import shell_release as shell_release_router
 from rolecard_agent.api.routers import workspace as workspace_router
 from rolecard_agent.config import Settings
 from rolecard_agent.core.bootstrap import Assembly, build_runtime
-from rolecard_agent.core.identity import resolve_instance_identity
+from rolecard_agent.core.identity import active_user_id, resolve_instance_identity
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.observability import Tracer
 from rolecard_agent.core.paths import bundle_root
@@ -102,12 +102,11 @@ def _host_registry_factory(
     文档里的提示注入），不设边界就等于"读任意主机文件 + 在任意目录写"（审查报告 H1）。
     `current_user` 每次调用现取，模型永远不能指定"我是谁"。
 
-    **但"现取"取的是这台实例的主人（`IDENTITY_USER_ID`，见
-    `core/identity.resolve_instance_identity`），不是这次请求的** —— 工具是在图执行里被调的，
-    那个闭包在装配时就定好了，拿不到 `Request`。默认形态（一台实例一个主人）下两边同值，
-    所以这不是一个会咬人的洞；**但只要有第二个账号真的登进同一台实例**，就会出现"界面看到的是
-    A 的会话、她调工具读到的是实例主人那份" —— 那条洞在 `app_user` 加第二行之前必须先补
-    （架构总览 §4.1 的 M3：把身份接进图执行）。这条分工有用例钉着，别靠注释自觉。
+    **这一轮到底在为谁读，由图节点在入口绑**（`core/identity.bound_user`，取
+    `state["user_id"]`）：这里给的提供者是 `active_user_id(实例主人)` —— 绑过就是
+    这条线程的主人，没绑过（后台调度、纯内核装配、老线程状态里缺这一项）才落到
+    `IDENTITY_USER_ID` 那份。之所以要在上下文里绕这一道：工具对模型必须看起来零参数，
+    把 user_id 做成工具入参等于让模型自己填"我是谁"。
     """
     query = assembly.query
     if not isinstance(query, HealthQueryService):
@@ -122,7 +121,7 @@ def _host_registry_factory(
         query=query,
         knowledge=knowledge,
         enabled_domains=enabled_domains,
-        current_user=lambda: resolve_instance_identity(settings),
+        current_user=lambda: active_user_id(resolve_instance_identity(settings)),
         upload_dir=settings.upload_dir,
         # 联网与工作区工具的后端配置（搜索后端 / TAVILY_API_KEY / WORKSPACE_DIR）：传
         # **叠加了运行环境覆盖 + MCP 合并**的有效配置，工具闭包持有它，保存后经热重建生效。

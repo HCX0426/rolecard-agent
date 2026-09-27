@@ -16,11 +16,41 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+
 from rolecard_agent.config import Settings
 from rolecard_agent.storage.db import SqlConnection
 
 DEFAULT_TENANT_ID = "local"
 DEFAULT_USER_ID = "local-user"
+
+#: 这一轮"在为谁读" —— 由图节点在入口绑上（`core/nodes`），退出时复位。
+_BOUND_USER: ContextVar[str | None] = ContextVar("rolecard_bound_user", default=None)
+
+
+def active_user_id(fallback: str) -> str:
+    """这一轮绑过的主人；没绑过就是 `fallback`（= 这台实例的主人）。"""
+    return _BOUND_USER.get() or fallback
+
+
+@contextmanager
+def bound_user(user_id: str | None) -> Iterator[None]:
+    """把这一轮的主人绑到当前执行上下文里（图节点用）。
+
+    为什么需要它：域工具的 `current_user` 是**装配时**定下的零参闭包（工具对模型必须看起来
+    零参数，否则模型就能自己填"我是谁"），它拿不到 `state`。这一层让节点在入口替它回答，
+    而工具的签名一个字都不用改。
+
+    为什么是 `ContextVar` 而不是进程全局：同一台实例上两条线程可以属于两个主人，
+    进程级会串。复位放在 `finally`，否则一次异常就把这个线程的主人留成了脏值。
+    """
+    token = _BOUND_USER.set(user_id or None)
+    try:
+        yield
+    finally:
+        _BOUND_USER.reset(token)
 
 
 def resolve_instance_identity(settings: Settings) -> str:

@@ -19,10 +19,12 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import tool
 
 from rolecard_agent.config import Settings
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.graph import build_kernel
+from rolecard_agent.core.identity import DEFAULT_USER_ID, active_user_id
 from rolecard_agent.core.observability import NullTracer
 from rolecard_agent.core.plugins import PluginService
 from rolecard_agent.core.state import new_state
@@ -277,3 +279,105 @@ def test_guard_blocks_a_diagnosing_reply_inside_the_graph(tmp_path: Path) -> Non
     final = result["messages"][-1].content
     assert "你得了" not in final
     assert "超出" in final  # the standard refusal text
+
+
+@tool
+def who_is_this_turn_for() -> str:
+    """域工具的那个形状：装配期定下的**零参**闭包，运行期才回答"在为谁读"。"""
+    return active_user_id(DEFAULT_USER_ID)
+
+
+def _only(tool_: object) -> ToolRegistry:
+    reg = ToolRegistry()
+    reg.register(tool_)  # type: ignore[arg-type]
+    return reg
+
+
+def _ask_who(user_id: str) -> str:  # pragma: no cover - 只是把两轮跑法收一处
+    return user_id
+
+
+
+def _allow_this_tool(db: Path, owner: str) -> None:
+    """造一张只授权那个探针工具的角色卡。
+
+    为什么不借内置角色：内置卡的白名单是产品事实（`roles/seed.py`），拿它测机制就等于
+    哪天白名单一改，这条机制用例跟着误红。
+    """
+    conn = connect(db)
+    RoleCardService(conn).scoped(owner).create(
+        RoleCardCreate(
+            role_id="probe",
+            role_name="探针",
+            system_prompt="只为测机制存在。",
+            tool_whitelist=["who_is_this_turn_for"],
+        )
+    )
+    conn.close()
+
+def test_a_turn_binds_its_threads_owner_for_zero_arg_tool_closures(tmp_path: Path) -> None:
+    """§4.1 的 M3 后半：她查的是**这条线程的主人**的档案，不是这台实例的主人的。
+
+    绑之前那一版是"HTTP 层按请求解析、工具层按实例主人读"—— 单机自用两者同值所以看不出来，
+    `app_user` 一加第二行就变成"界面是 A 的会话、她报出 B 的数值"。这条用例钉的就是那半步：
+    节点在入口把 `state["user_id"]` 绑进上下文（`core/identity.bound_user`），
+    而工具的签名一个字不改（工具对模型必须看起来零参数，否则模型能自己填"我是谁"）。
+    """
+    db = tmp_path / "app.db"
+    _seed_identity(db)
+    _allow_this_tool(db, "u1")
+    graph, _, _ = _kernel(
+        db,
+        [
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "who_is_this_turn_for", "args": {}, "id": "c1"}],
+            ),
+            AIMessage(content="查好了"),
+        ],
+        registry=_only(who_is_this_turn_for),
+    )
+    result = graph.invoke(
+        {
+            **new_state(
+                thread_id="thread-1", user_id="u1", current_role_id="probe"
+            ),
+            "messages": [HumanMessage(content="看下我的档案")],
+        },
+        config={"configurable": {"thread_id": "thread-1"}},
+    )
+    seen = [m.content for m in result["messages"] if isinstance(m, ToolMessage)]
+    assert seen == ["u1"], "工具读到的主人必须是这条线程的，不是实例的"
+
+
+def test_a_state_without_an_owner_falls_back_instead_of_crashing(tmp_path: Path) -> None:
+    """老线程的状态里可以没有 `user_id`（归属是 09-27 才落到角色卡上的）。
+
+    绑不上就回落到这台实例的主人，**而不是炸在图里** —— 炸的症状是"某条老会话突然发不出
+    消息"，那种现象没人会往"历史状态少一个键"上想。
+    """
+    db = tmp_path / "app.db"
+    _seed_identity(db)
+    _allow_this_tool(db, DEFAULT_USER_ID)
+    graph, _, _ = _kernel(
+        db,
+        [
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "who_is_this_turn_for", "args": {}, "id": "c1"}],
+            ),
+            AIMessage(content="查好了"),
+        ],
+        registry=_only(who_is_this_turn_for),
+    )
+    result = graph.invoke(
+        {
+            **new_state(
+                thread_id="thread-1", user_id="", current_role_id="probe"
+            ),
+            "messages": [HumanMessage(content="看下我的档案")],
+        },
+        config={"configurable": {"thread_id": "thread-1"}},
+    )
+    seen = [m.content for m in result["messages"] if isinstance(m, ToolMessage)]
+    assert seen == [DEFAULT_USER_ID]
