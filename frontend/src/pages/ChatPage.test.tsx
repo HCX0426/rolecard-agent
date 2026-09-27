@@ -27,6 +27,8 @@ const { apiMock, streamChatMock } = vi.hoisted(() => ({
     patch: vi.fn(),
     setModelSampling: vi.fn(),
     del: vi.fn(),
+    // 开口回话会把主动开口的红点一次标读（09-23 那条口径在控制台这一侧的接线）。
+    markAllReachoutsRead: vi.fn(),
     extractRecord: vi.fn(),
     distillSession: vi.fn(),
   },
@@ -62,6 +64,7 @@ function stubMountCalls(
     if (url.startsWith("/api/session/")) return { model_name: null };
     return {};
   });
+  apiMock.markAllReachoutsRead.mockResolvedValue({ items: [], unread: 0 });
   apiMock.post.mockImplementation(async (url: string) => {
     if (url === "/api/session") return { thread_id: "s_test" };
     return {};
@@ -111,6 +114,16 @@ describe("ChatPage 流式渲染", () => {
 
     expect(await screen.findByText("问一句")).toBeTruthy();
     expect(await screen.findByText("权威文本")).toBeTruthy();
+  });
+
+  it("在控制台发一句话 = 她那些主动开口都看过了（红点跟着清）", async () => {
+    // 用户在 09-23 定的口径是"进入对话界面/在回话 = 都看过了"。桌宠面板与抽屉早就走
+    // `read-all` 了，控制台这一侧漏接的症状是：我明明在这儿聊，铃铛上别的角色还在闪。
+    replay = [{ role: "user", content: "在的" }];
+    scriptedStream([{ type: "end" }]);
+    render(<ToastProvider><ChatPage /></ToastProvider>);
+    await sendMessage("在的");
+    await waitFor(() => expect(apiMock.markAllReachoutsRead).toHaveBeenCalledOnce());
   });
 
   it("工具调用先显示执行中，结果到达后显示内容", async () => {
@@ -540,6 +553,69 @@ describe("ChatPage 跟着服务端走（在桌宠上回一句，切回控制台�
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+/** 09-27 真库形状（`s_proactive_elysia`）：一问 + 她的答 + 一小时后她**主动**又开口的那句，
+ * 三条同在一轮里。从前渲染面一段只留一个回答 ⇒ 先写的那句被后写的覆盖（用户在对话界面
+ * 里看不见它，而桌宠气泡读的是原始消息列表，所以只有这一侧丢），而那一栏「耗时」取的是
+ * 段首的用户消息 → 段尾的回答 ⇒ 她的主动开口被算成「这条回答耗时 62 分 34 秒」。
+ * 两条症状一起钉。 */
+describe("ChatPage 把主动开口画成单独一条（不吞上一问的答、不算跨一小时的耗时）", () => {
+  const THREAD = "s_proactive_elysia";
+
+  function stubProactiveThread() {
+    const server = [
+      { id: "e8c2", role: "user", content: "想你了", ts: "2026-09-27 12:30:31" },
+      { id: "5761", role: "assistant", content: "这话一说出口", ts: "2026-09-27 12:30:34" },
+      { id: "2f67", role: "assistant", content: "三月末的风", ts: "2026-09-27 13:33:05" },
+    ];
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/sessions")
+        return [
+          {
+            thread_id: THREAD,
+            title: "爱莉希雅 · 主动找你",
+            role_id: "elysia",
+            role_name: "爱莉希雅",
+            updated_at: "2026-09-27 13:33:05",
+            agent_mode: "chat",
+            is_proactive: true,
+            is_blank: false,
+          },
+        ];
+      if (url === "/api/roles") return [];
+      if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
+      if (url === "/api/settings/model-providers") return { providers: [] };
+      if (url.includes("/messages")) {
+        const probe = url.includes("limit=1");
+        return {
+          messages: probe ? server.slice(-1) : [...server],
+          total: server.length,
+          limit: probe ? 1 : 500,
+          truncated: false,
+        };
+      }
+      if (url.endsWith("/context")) return { trimmed: 0, kept: 0, budget: 24000 };
+      if (url.startsWith(`/api/session/${THREAD}`)) return { model_name: null, agent_mode: "chat" };
+      return {};
+    });
+  }
+
+  it("两句都在屏幕上，而「耗时」只跟着真的那一问", async () => {
+    stubProactiveThread();
+    render(
+      <ToastProvider>
+        <ChatPage />
+      </ToastProvider>,
+    );
+    await vi.waitFor(() => expect(screen.getByText("爱莉希雅 · 主动找你")).toBeTruthy());
+    fireEvent.click(screen.getByText("爱莉希雅 · 主动找你"));
+    await vi.waitFor(() => expect(screen.getByText("这话一说出口")).toBeTruthy());
+    expect(screen.getByText("三月末的风")).toBeTruthy();
+    // 12:30:31 → 12:30:34 = 3 秒；那 62 分 34 秒是"她一小时后又开口"，不是这条回答花了这么久。
+    expect(screen.getByText(/耗时 3 秒/)).toBeTruthy();
+    expect(screen.queryByText(/耗时 \d+ 分/)).toBeNull();
   });
 });
 

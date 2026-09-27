@@ -70,36 +70,74 @@ export interface BuiltTurn<T extends TurnMessageLike> {
   answer: T | null;
 }
 
-/** 把消息序列切成"可渲染的一轮"：提问 → 过程步骤（思考/工具/中间正文）→ 最终回答。
+/** 一条"最终回答"样的消息：助手体、不是工具返回、也不还要继续调工具。 */
+function isFinalAnswer(m: TurnMessageLike): boolean {
+  return m.role !== "user" && m.role !== "tool" && !m.tools?.length;
+}
+
+/**
+ * 把消息序列切成"可渲染的一轮"：提问 → 过程步骤（思考/工具/中间正文）→ 最终回答。
  *
  * 在 `groupTurns`（下标分组，与后端 `expand_to_turns` 同规则）**之上**构建，
  * 保证"什么算一轮"只有一处定义——此前 ChatPage 内另写了一套同名分组，两处规则
  * 一旦漂移就会出现"界面选中 1 条、后端删掉 4 条"的错位。
+ *
+ * **一段只有一个回答**（`splitSegments`），所以"上一问 + 她的答 + 她后来自己又开口的一句"
+ * 会渲染成两段。这两件事都是被同一条真数据测出来的（09-27，`s_proactive_elysia`）：
+ * 一段里放两条最终回答时，后写的把先写的覆盖掉 —— 用户看见"桌宠气泡里有那句，
+ * 对话界面里没有"；而耗时取的是**这一段的第一个用户消息**到**最后一个回答**，
+ * 于是她一小时后主动开口的那句被算成"这条回答耗时 62 分 34 秒"。
  */
 export function buildTurns<T extends TurnMessageLike>(messages: T[]): BuiltTurn<T>[] {
-  return groupTurns(messages).map((idx, n) => {
-    const first = messages[idx[0]];
-    const turn: BuiltTurn<T> = {
-      key: first.id ?? `turn-${n}`,
-      user: null,
-      steps: [],
-      answer: null,
-    };
-    for (const i of idx) {
-      const m = messages[i];
-      if (m.role === "user") {
-        turn.user = m;
-      } else if (m.role === "tool") {
-        turn.steps.push({ kind: "tool", msg: m });
-      } else if (m.tools?.length) {
-        // 中间轮（还要继续调工具）：思考进过程；若有前言正文也按过程小字展示
-        if (m.reasoning) turn.steps.push({ kind: "think", text: m.reasoning });
-        if ((m.content ?? "").trim()) turn.steps.push({ kind: "text", text: m.content ?? "" });
-      } else {
-        if (m.reasoning) turn.steps.push({ kind: "think", text: m.reasoning });
-        turn.answer = m;
+  const out: BuiltTurn<T>[] = [];
+  groupTurns(messages).forEach((idx) => {
+    for (const seg of splitSegments(idx, messages)) {
+      const first = messages[seg[0]];
+      const turn: BuiltTurn<T> = {
+        key: first.id ?? `turn-${out.length}`,
+        user: null,
+        steps: [],
+        answer: null,
+      };
+      for (const i of seg) {
+        const m = messages[i];
+        if (m.role === "user") {
+          turn.user = m;
+        } else if (m.role === "tool") {
+          turn.steps.push({ kind: "tool", msg: m });
+        } else if (m.tools?.length) {
+          // 中间轮（还要继续调工具）：思考进过程；若有前言正文也按过程小字展示
+          if (m.reasoning) turn.steps.push({ kind: "think", text: m.reasoning });
+          if ((m.content ?? "").trim()) turn.steps.push({ kind: "text", text: m.content ?? "" });
+        } else {
+          if (m.reasoning) turn.steps.push({ kind: "think", text: m.reasoning });
+          turn.answer = m;
+        }
       }
+      out.push(turn);
     }
-    return turn;
   });
+  return out;
+}
+
+/**
+ * 一个 `groupTurns` 组内再切段：每条**最终回答**收尾一段，其后没有新的用户消息接着出现的
+ * 回答自成新段（她的主动开口就是这种）。
+ *
+ * 刻意不改 `groupTurns` 本身：那条规则同时是**删除**的粒度（后端 `expand_to_turns` 与它
+ * 一字不差），改它会顺带改掉"勾一条等于勾整轮"的语义。分段只是渲染面的事。
+ */
+function splitSegments<T extends TurnMessageLike>(idx: number[], messages: T[]): number[][] {
+  const segs: number[][] = [];
+  let seg: number[] = [];
+  for (const i of idx) {
+    if (seg.length && isFinalAnswer(messages[i]) && seg.some((j) => isFinalAnswer(messages[j]))) {
+      segs.push(seg);
+      seg = [i];
+    } else {
+      seg.push(i);
+    }
+  }
+  if (seg.length) segs.push(seg);
+  return segs;
 }

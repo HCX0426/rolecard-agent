@@ -780,6 +780,10 @@ export default function ChatPage({
       }
     }
     setMessages((m) => [...m, { role: "user", content: text || "（图片）", ...(image ? { image } : {}) }]);
+    // 在控制台开口回话 = 她那些主动开口"我看见了"（用户 09-23 定的口径）。桌宠面板、点气泡、
+    // 抽屉里点任意一条早就都走这一条了，只有这一处漏接 —— 漏的症状是"我明明在回话，
+    // 铃铛上别的角色还在闪"。清失败不碍这一轮：红点没清是可恢复的小毛病，答不回来才是大事。
+    void api.markAllReachoutsRead().catch(() => undefined);
     setStoppedHint(false); // 上一轮的"被叫停"不该跟着这一轮
     const controller = startBubble(tid);
     await streamChat(tid, text, onEvent, controller.signal, image);
