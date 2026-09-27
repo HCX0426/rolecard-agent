@@ -24,6 +24,7 @@ const KEY = "rolecard.dataSource.v1";
 
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.clear(); // 「刚登录」标记不能跨用例泄漏：泄漏的症状是上一个用例的对账在读数卡里炸出来
   reloadAppMock.mockReset();
   vi.unstubAllGlobals();
 });
@@ -92,47 +93,91 @@ describe("DataSourceSwitch", () => {
     expect(localStorage.getItem(KEY)).toBeNull();
   });
 
-  // 上行入口（M7）：本机态压根没有"对面"可推，所以那一格不该出现（出现了就是死路一条）；
+  // 同步入口（M7/M8）：本机态没有"对端"可言，那一格不该出现（出现了就是死路一条）；
   // 云端态它**常驻**（用户 09-27：「同步入口可以在登录后再常驻吧，随时可同步」）。
-  it("本机态不给上行入口，云端态常驻一个", () => {
+  it("本机态不给同步入口，云端态常驻一个", () => {
     render(<DataSourceSwitch />);
-    expect(screen.queryByText("把本机这份带到云端")).toBeNull();
+    expect(screen.queryByText("数据同步")).toBeNull();
     localStorage.setItem(
       KEY,
       JSON.stringify({ mode: "cloud", base: "https://cloud.test:8123", user: "u1", secret: "pw" }),
     );
     render(<DataSourceSwitch />);
-    expect(screen.getByText("把本机这份带到云端")).toBeTruthy();
+    expect(screen.getByText("数据同步")).toBeTruthy();
   });
 
-  it("点那一行就是四屏的第一屏", () => {
+  it("点那一行就是向导的第一屏（方向 + 三档）", () => {
     localStorage.setItem(
       KEY,
       JSON.stringify({ mode: "cloud", base: "https://cloud.test:8123", user: "u1", secret: "pw" }),
     );
     render(<DataSourceSwitch />);
-    fireEvent.click(screen.getByText("把本机这份带到云端"));
-    expect(screen.getByRole("heading", { name: "要把本机这份带过去吗？" })).toBeTruthy();
+    fireEvent.click(screen.getByText("数据同步"));
+    expect(screen.getByRole("heading", { name: "数据同步" })).toBeTruthy();
+    expect(screen.getByRole("radiogroup", { name: "同步方向" })).toBeTruthy();
   });
 
-  // 「刚登录」是一次性的：它得活过那次整页重载，但答过之后不该再弹。
-  // "答过"= 关掉弹层，**不是"挂载看过一眼"** —— 首屏这棵子树在真浏览器里会被重挂一次，
-  // 挂载即清的实现会让第二次弹层凭空消失（M7 的两实例探针实测到的就是这个）。
-  it("带着「刚登录」标记挂载 = 自动弹第一屏，关掉之后才不再弹", () => {
+  // 登录对账（M8）：登录后自动跑一次双向同步。机器判得了的自己搬完；
+  // 判不了的（两端均有修改）端出读数卡让人挑 —— 而不是替人决定。
+  it("带着「刚登录」标记挂载 = 自动对账，有未决冲突时出读数卡，立即处理落在裁决屏", async () => {
     localStorage.setItem(
       KEY,
       JSON.stringify({ mode: "cloud", base: "https://cloud.test:8123", user: "u1", secret: "pw" }),
     );
     sessionStorage.setItem("rolecard.dataSource.justLoggedIn", "1");
-    const first = render(<DataSourceSwitch />);
-    expect(screen.getByRole("heading", { name: "要把本机这份带过去吗？" })).toBeTruthy();
-    // 重挂一次（模拟首屏那棵子树被重挂）：仍然弹，而不是"第一眼看走眼就没了"
-    first.unmount();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown) =>
+        String(input).includes("/api/sync/reconcile")
+          ? new Response(
+              JSON.stringify({
+                pushed: 2,
+                pulled: 1,
+                written: {},
+                left_for_human: [
+                  {
+                    kind: "memory",
+                    ident: "uid-1",
+                    mine: { at: "2026-09-25 10:00:00", preview: "本机版本" },
+                    theirs: { at: "2026-09-26 10:00:00", preview: "云端版本" },
+                  },
+                ],
+              }),
+              { status: 200 },
+            )
+          : new Response(JSON.stringify({}), { status: 200 }),
+      ),
+    );
     render(<DataSourceSwitch />);
-    expect(screen.getByRole("heading", { name: "要把本机这份带过去吗？" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "这次先不带" }));
-    expect(sessionStorage.getItem("rolecard.dataSource.justLoggedIn")).toBeNull();
+    expect(await screen.findByText("同步完成")).toBeTruthy();
+    expect(screen.getByText("已上传 2 项，已下载 1 项。")).toBeTruthy();
+    expect(screen.getByText("1 项在两端均有修改，需要您确认保留哪个版本。")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "立即处理（1）" }));
+    expect(await screen.findByText("冲突 1 / 1 · 记忆")).toBeTruthy();
+    expect(screen.getByText("保留两个版本")).toBeTruthy();
+  });
+
+  it("对账没有未决冲突时不弹卡（不打扰），入口行照常在", async () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ mode: "cloud", base: "https://cloud.test:8123", user: "u1", secret: "pw" }),
+    );
+    sessionStorage.setItem("rolecard.dataSource.justLoggedIn", "1");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown) =>
+        String(input).includes("/api/sync/reconcile")
+          ? new Response(
+              JSON.stringify({ pushed: 1, pulled: 0, written: {}, left_for_human: [] }),
+              { status: 200 },
+            )
+          : new Response(JSON.stringify({}), { status: 200 }),
+      ),
+    );
     render(<DataSourceSwitch />);
-    expect(screen.queryByRole("heading", { name: "要把本机这份带过去吗？" })).toBeNull();
+    await vi.waitFor(() => {
+      expect(screen.getByText(/上次同步/)).toBeTruthy();
+    });
+    expect(screen.queryByText("同步完成")).toBeNull();
   });
 });

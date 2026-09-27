@@ -18,7 +18,10 @@ import {
   canKeepBoth,
   conflictKey,
   fetchPlan,
+  formatLastSync,
   planReads,
+  pullDownload,
+  reconcile,
   uploadTarget,
 } from "./sync";
 
@@ -112,16 +115,54 @@ describe("lib/sync", () => {
     expect(SYNC_ITEMS.some((i) => /健康|原件|档案/.test(i.label))).toBe(false);
   });
 
-  it("预检那四格：冲突永远排在最后，且只有它带 warn", () => {
-    const reads = planReads({
+  it("预检那四格：发出侧是『将同步』、接收侧是『保留』，随方向翻转", () => {
+    const plan = {
       counts: { only_local: 38, only_remote: 41, same: 17, conflicts: 3 },
       by_kind: {},
       remote_counts: {},
       skipped: [],
       conflicts: [],
       only_local: [],
+    };
+    const up = planReads(plan, "up");
+    expect(up.map((r) => r.value)).toEqual([38, 41, 17, 3]);
+    expect(up[0].label).toBe("本机独有 · 将上传");
+    expect(up[1].label).toBe("云端独有 · 保留");
+    expect(up.at(-1)?.label).toBe("冲突 · 需确认");
+    expect(up.at(-1)?.tone).toBe("warn");
+    const down = planReads(plan, "down");
+    // 下载方向的接收侧是本机：only_local（本机独有）翻转成"保留"，only_remote 才是"将下载"
+    expect(down[0].label).toBe("本机独有 · 保留");
+    expect(down[1].label).toBe("云端独有 · 将下载");
+  });
+
+  it("下载与对账打的都是本机同源，body 形状与端点一一对应", async () => {
+    saveDataSource(CLOUD); // 本文件的其他用例各自 save；这一支要 target，先落登录态
+    const target = uploadTarget();
+    await pullDownload(target, ["memory"]);
+    expect(lastCall().url).toBe("/api/sync/pull");
+    expect(JSON.parse(String(lastCall().init.body)).mode).toBe("merge");
+    await reconcile(target);
+    const rec = lastCall();
+    expect(rec.url).toBe("/api/sync/reconcile");
+    // 对账不带 kinds/mode：自动策略在后端，前端不重算
+    expect(JSON.parse(String(rec.init.body))).toEqual({
+      base_url: "https://cloud.test:8123",
+      user: "u1",
+      secret: "pw",
     });
-    expect(reads.map((r) => r.value)).toEqual([38, 41, 17, 3]);
-    expect(reads.at(-1)?.tone).toBe("warn");
+  });
+
+  it("上次同步的状态文字：今天给『今天 HH:mm』，隔天给日期，没同步过是 null", () => {
+    const now = new Date(2026, 8, 27, 22, 0);
+    expect(formatLastSync(null, now)).toBeNull();
+    expect(
+      formatLastSync({ at: new Date(2026, 8, 27, 21, 40).toISOString(), pushed: 3, pulled: 1 }, now),
+    ).toBe("上次同步：今天 21:40（↑3 ↓1）");
+    expect(
+      formatLastSync({ at: new Date(2026, 8, 20, 9, 5).toISOString(), pushed: 0, pulled: 2 }, now),
+    ).toBe("上次同步：9-20 09:05（↑0 ↓2）");
+    // 读不出的时间串如实返回 null，不编一个"刚才"
+    expect(formatLastSync({ at: "不是时间", pushed: 0, pulled: 0 }, now)).toBeNull();
   });
 });

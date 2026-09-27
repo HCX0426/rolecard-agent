@@ -12,7 +12,7 @@
  *     界面上一格常驻状态就够了，两处说同一件事只会让人两处都不信。
  *     "什么会离开这台机器"这句改到弹层里说（登录前那一刻才是它该被读到的时机）。
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import SyncWizard from "./SyncWizard";
 import {
@@ -25,6 +25,16 @@ import {
   save,
   tryConnect,
 } from "../lib/dataSource";
+import { ApiError } from "../api";
+import {
+  formatLastSync,
+  readLastSync,
+  reconcile,
+  saveLastSync,
+  uploadTarget,
+  type LeftConflict,
+  type ReconcileResult,
+} from "../lib/sync";
 
 
 export default function DataSourceSwitch() {
@@ -37,13 +47,43 @@ export default function DataSourceSwitch() {
   const [busy, setBusy] = useState(false);
   const [why, setWhy] = useState("");
   const [wizard, setWizard] = useState(false);
+  /** 登录对账（M8）：跑一次双向自动同步；有未决冲突时弹读数卡让人挑。 */
+  const [syncing, setSyncing] = useState(false);
+  const [rec, setRec] = useState<ReconcileResult | null>(null);
+  const [recWhy, setRecWhy] = useState("");
+  const [wizardConflicts, setWizardConflicts] = useState<LeftConflict[] | undefined>(undefined);
+  const [, tick] = useState(0);
+  /** connect() 自己会把状态切到云端并触发这里重渲染：那一轮**不能**跑对账 ——
+   *  它跑在马上就要被 reload 掉的页面上，真正该跑的是重载后的那次（要弹读数卡的那次）。
+   *  ref 而不是 state：同一枚实例的一次翻转就够了，不需要为它再渲染一次。 */
+  const suppressReconcile = useRef(false);
 
-  // 登录后那一次自动问（设计稿①）。标记**不在这儿清**：`save()` 与整页重载之间，
-  // 当前这一页也会命中这里一次（`cloud` 由 false 变 true），挂载即取走等于把弹层留给一个
-  // 马上就要关掉的页面 —— 真浏览器里实测到的就是"点了连接并切换，什么都没弹"。
+  // 登录后那一次自动对账（M8）。标记**不在这儿清**：`save()` 与整页重载之间，
+  // 当前这一页也会命中这里一次（`cloud` 由 false 变 true），挂载即取走等于把这件事留给一个
+  // 马上就要关掉的页面 —— 真浏览器里实测到的就是"点了连接并切换，什么都没发生"。
   // 之后这条入口常驻在下面那一行（用户 09-27：「同步入口可以在登录后再常驻吧，随时可同步」）。
   useEffect(() => {
-    if (cloud && peekJustLoggedIn()) setWizard(true);
+    if (!cloud || !peekJustLoggedIn() || syncing || suppressReconcile.current) return;
+    const target = uploadTarget();
+    if (!target) return;
+    setSyncing(true);
+    setRecWhy("");
+    reconcile(target)
+      .then((r) => {
+        setRec(r);
+        saveLastSync({ pushed: r.pushed, pulled: r.pulled });
+        tick((n) => n + 1);
+      })
+      .catch((e: unknown) =>
+        setRecWhy(
+          e instanceof ApiError
+            ? `登录同步未完成：${e.message}`
+            : `登录同步未完成：${(e as Error).message}`,
+        ),
+      )
+      .finally(() => setSyncing(false));
+    // uploadTarget/target 只依赖 localStorage 的登录态，cloud 翻转即是它的变化
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloud]);
 
   function backToLocal() {
@@ -65,6 +105,9 @@ export default function DataSourceSwitch() {
     save({ mode: "cloud", base: probe.origin, user, secret });
     // 状态与"刚登录"这两件事都得活过整页重载，而它们是两种寿命：前者持久，后者一次性的。
     markJustLoggedIn();
+    // save() 让 cloud 翻转 ⇒ 本页的 [cloud] effect 马上会命中一次。压掉它：
+    // 对账要在重载后的新页面上跑（读数卡才弹得出来），而不是在这个即将卸载的实例上跑两遍。
+    suppressReconcile.current = true;
     reloadApp();
   }
 
@@ -88,28 +131,67 @@ export default function DataSourceSwitch() {
         </span>
       </button>
 
-      {/* 上行入口（M7）：只有连上云端之后才有意义 —— 本机态没有"对面"可推。
+      {/* 数据同步（M7/M8）：只有连上云端之后才有意义 —— 本机态没有"对端"可言。
           它刻意是**另一行**而不是这一行里的一个菜单：侧栏 206px，藏进二级菜单的入口
           等于没有入口，而"随时可同步"是用户 09-27 明确要的那件事。 */}
       {cloud && (
         <button
           onClick={() => setWizard(true)}
-          title="把本机这一份（角色卡 / 会话 / 记忆 / 主动消息）带到云端那台"
+          title="双向同步：角色卡 / 会话 / 记忆 / 主动消息。登录时已自动对账一次，此后手动。"
           className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700/60"
         >
-          <span className="shrink-0 opacity-80">⬆</span>
-          <span className="truncate">把本机这份带到云端</span>
+          <span className="shrink-0 opacity-80">⇅</span>
+          <span className="truncate">
+            {syncing ? "正在同步…" : "数据同步"}
+            {!syncing && recWhy ? " · 未完成" : ""}
+          </span>
           <span className="ml-auto shrink-0 text-[10px] text-slate-400 dark:text-slate-500">
-            上行
+            {syncing ? "" : (formatLastSync(readLastSync()) ?? "未同步")}
           </span>
         </button>
       )}
 
+      {/* 登录对账后的读数卡：只把"机器判不了的"端上来，其余的已经各自到位。 */}
+      {rec && rec.left_for_human.length > 0 && (
+        <div className="mx-2 mb-1 rounded-lg border border-slate-200 bg-white p-2.5 text-[11px] shadow-sm dark:border-slate-600 dark:bg-slate-800">
+          <b className="text-slate-800 dark:text-slate-100">同步完成</b>
+          <p className="mt-0.5 leading-relaxed text-slate-500 dark:text-slate-400">
+            已上传 {rec.pushed} 项，已下载 {rec.pulled} 项。
+          </p>
+          <p className="mt-0.5 leading-relaxed text-amber-700 dark:text-amber-300">
+            {rec.left_for_human.length} 项在两端均有修改，需要您确认保留哪个版本。
+          </p>
+          <div className="mt-1.5 flex justify-end gap-2">
+            <button
+              onClick={() => {
+                clearJustLoggedIn();
+                setRec(null);
+              }}
+              className="px-2 py-1 text-[11px] text-slate-500 hover:text-slate-700 dark:text-slate-400"
+            >
+              稍后处理
+            </button>
+            <button
+              onClick={() => {
+                setWizardConflicts(rec.left_for_human);
+                setRec(null);
+                setWizard(true);
+              }}
+              className="rounded-lg bg-blue-600 px-2.5 py-1 text-[11px] text-white"
+            >
+              立即处理（{rec.left_for_human.length}）
+            </button>
+          </div>
+        </div>
+      )}
+
       {wizard && (
         <SyncWizard
+          initialConflicts={wizardConflicts}
           onClose={() => {
             clearJustLoggedIn();
             setWizard(false);
+            setWizardConflicts(undefined);
           }}
         />
       )}

@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 /**
- * 上行同步四屏的**接线**（M7）。`lib/sync.test.ts` 已经钉过"打哪儿、送什么"，
- * 这里只测那一屏一屏走得通不通，五件各有坏法的事：
+ * 同步向导的**接线**（M7 四屏 + M8 方向档）。`lib/sync.test.ts` 已经钉过"打哪儿、送什么"，
+ * 这里测那一屏一屏走得通不通，六件各有坏法的事：
  *
- *   1. 第一屏默认停在「逐条合并」，且「这次先不带」是一个正经出口（不请求任何东西）；
- *   2. 第二屏的数来自对面的计划，四类各有一个勾；
- *   3. **取消勾选的那一类不出现在上行请求里**（用户 09-27：不勾选的就用云端）；
- *   4. 冲突屏：记忆给三档、卡只给两档（"都留"对卡讲不通），跳过的默认是按对面的留着；
- *   5. 完成屏那三句话一句都不能少 —— 少了"索引是重建的"，以后检索质量对不上没人知道为什么。
+ *   1. 第一屏默认上传方向、逐条合并，「暂不同步」不发出任何请求；
+ *   2. 下载方向：整份替换以禁用态呈现并说明原因（不是悄悄消失）；
+ *   3. **取消勾选的类目不出现在请求里**（不勾的保留对端现有数据）；
+ *   4. 冲突裁决：记忆给三档、卡只给两档，默认档随方向翻转；
+ *   5. **界面语义要翻译成后端语义**：选"保留本机版本"发出去的必须是 `mine` ——
+ *      直传的话后端收到的是看不懂的键、按默认保留接收侧处理，用户的选择被静默丢弃；
+ *   6. 对账模式（登录后带着未决冲突进来）：一个选择两端各搬各的（apply 与 pull 各一发）。
  */
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -57,6 +59,12 @@ const APPLIED = {
   remote: { written: { card: 1, memory: 2, reachout: 1 }, skipped: {}, errors: [] },
 };
 
+const PULLED = {
+  pulled: 6,
+  conflicts_left: 0,
+  local: { written: { memory: 4, reachout: 2 }, skipped: {}, errors: [] },
+};
+
 function stubRoutes(bodies: Record<string, unknown>) {
   vi.stubGlobal(
     "fetch",
@@ -68,9 +76,11 @@ function stubRoutes(bodies: Record<string, unknown>) {
   );
 }
 
-function sentBody(): Record<string, unknown> {
-  const call = vi.mocked(fetch).mock.calls.at(-1) as [string, RequestInit];
-  return JSON.parse(String(call[1].body)) as Record<string, unknown>;
+function sentTo(path: string): Record<string, unknown> {
+  const calls = vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
+  const call = calls.filter(([url]) => String(url).includes(path)).at(-1);
+  expect(call, `没有发过 ${path}`).toBeTruthy();
+  return JSON.parse(String(call![1].body)) as Record<string, unknown>;
 }
 
 beforeEach(() => {
@@ -81,76 +91,121 @@ beforeEach(() => {
 });
 
 describe("SyncWizard", () => {
-  it("第一屏：三档齐、默认停在逐条合并，「这次先不带」不发出任何请求", () => {
+  it("第一屏：方向默认上传、档位默认逐条合并，「暂不同步」不发出任何请求", () => {
     stubRoutes({});
     render(<SyncWizard onClose={vi.fn()} />);
-    expect(screen.getByRole("heading", { name: "要把本机这份带过去吗？" })).toBeTruthy();
-    const radios = screen.getAllByRole("radio") as HTMLInputElement[];
-    expect(radios.map((r) => r.checked)).toEqual([true, false, false]);
-    fireEvent.click(screen.getByRole("button", { name: "这次先不带" }));
+    expect(screen.getByRole("heading", { name: "数据同步" })).toBeTruthy();
+    const directions = screen.getByRole("radiogroup", { name: "同步方向" });
+    expect(directions.textContent).toContain("上传");
+    expect(directions.textContent).toContain("下载");
+    const modes = screen.getAllByRole("radio") as HTMLInputElement[];
+    expect(modes.map((r) => r.checked)).toEqual([true, false, false]);
+    fireEvent.click(screen.getByRole("button", { name: "暂不同步" }));
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
-  it("第二屏：四格读数来自计划，四类各有一个勾，跳过的原因摆出来", async () => {
-    stubRoutes({ "/api/sync/plan": PLAN });
+  it("下载方向：整份替换以禁用态呈现并说明原因，不悄悄消失", () => {
+    stubRoutes({});
     render(<SyncWizard onClose={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "下一步：看差异" }));
-    expect(await screen.findByRole("heading", { name: "差异看完了" })).toBeTruthy();
-    expect(screen.getByText("本机独有 · 会过去")).toBeTruthy();
-    expect(screen.getByText("冲突 · 要你挑")).toBeTruthy();
-    expect(screen.getAllByRole("checkbox")).toHaveLength(4);
-    expect(screen.getByText(/这条会话里有附图或文件/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "下载云端 → 本机" }));
+    const modes = screen.getAllByRole("radio") as HTMLInputElement[];
+    expect(modes[2].disabled).toBe(true);
+    expect(screen.getByText("下载方向不可用")).toBeTruthy();
+    expect(screen.getByText(/如需清除本机数据，请使用删除功能/)).toBeTruthy();
   });
 
-  it("取消勾选的那一类，真的不在上行请求里", async () => {
+  it("上传流：预检四格随方向翻转，取消勾选的类目真的不在请求里", async () => {
     stubRoutes({ "/api/sync/plan": PLAN, "/api/sync/apply": APPLIED });
     render(<SyncWizard onClose={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "下一步：看差异" }));
-    await screen.findByRole("heading", { name: "差异看完了" });
+    fireEvent.click(screen.getByRole("button", { name: "下一步：查看差异" }));
+    expect(await screen.findByRole("heading", { name: "差异确认" })).toBeTruthy();
+    expect(screen.getByText("本机独有 · 将上传")).toBeTruthy();
+    expect(screen.getByText("云端独有 · 保留")).toBeTruthy();
+    expect(screen.getByText(/这条会话里有附图或文件/)).toBeTruthy();
     fireEvent.click(screen.getByLabelText("同步会话"));
     fireEvent.click(screen.getByLabelText("同步主动消息"));
-    fireEvent.click(screen.getByRole("button", { name: /开始上行/ }));
-    await vi.waitFor(() => expect(sentBody().kinds).toEqual(["card", "memory"]));
-    expect(sentBody().mode).toBe("merge");
+    fireEvent.click(screen.getByRole("button", { name: /开始同步/ }));
+    await vi.waitFor(() => {
+      expect(sentTo("/api/sync/apply").kinds).toEqual(["card", "memory"]);
+    });
+    expect(sentTo("/api/sync/apply").mode).toBe("merge");
   });
 
-  it("冲突屏：记忆给三档，卡只给两档；挑完两条才回得去", async () => {
+  it("冲突裁决：记忆给三档、卡只给两档；界面选择必须翻译成后端语义", async () => {
     stubRoutes({ "/api/sync/plan": PLAN, "/api/sync/apply": APPLIED });
     render(<SyncWizard onClose={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "下一步：看差异" }));
-    await screen.findByRole("heading", { name: "差异看完了" });
-    fireEvent.click(screen.getByRole("button", { name: "先处理 2 条冲突" }));
-    expect(await screen.findByText("冲突 1 / 2 · 一条记忆")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "下一步：查看差异" }));
+    await screen.findByRole("heading", { name: "差异确认" });
+    fireEvent.click(screen.getByRole("button", { name: "处理 2 项冲突" }));
+    expect(await screen.findByText("冲突 1 / 2 · 记忆")).toBeTruthy();
+    // 记忆：三个版本可选；卡：只有两档（身份即 id，两版并存不适用）
     expect(screen.getAllByRole("radio")).toHaveLength(3);
-    fireEvent.click(screen.getByRole("button", { name: "下一条" }));
-    expect(await screen.findByText("冲突 2 / 2 · 一条角色卡")).toBeTruthy();
-    // 这一类"两份都留"讲不通（身份就是那一个 id），所以第三档压根不出现
+    fireEvent.click(screen.getByRole("button", { name: "下一项" }));
+    expect(await screen.findByText("冲突 2 / 2 · 角色卡")).toBeTruthy();
     expect(screen.getAllByRole("radio")).toHaveLength(2);
-    fireEvent.click(screen.getByText("保留本机这份"));
-    fireEvent.click(screen.getByRole("button", { name: "就这么定" }));
-    await screen.findByRole("heading", { name: "差异看完了" });
-    // 文本被 <b> 切成两段，所以按那一段本身查（整句正则匹配不到任何一个元素）
-    expect(screen.getByText("0 条没挑")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /开始上行/ }));
-    await vi.waitFor(() => expect(sentBody().resolutions).toEqual({
-      "memory:uid-1": "theirs",
-      "card:e莉希雅": "mine",
-    }));
+    fireEvent.click(screen.getByText("保留本机版本"));
+    fireEvent.click(screen.getByRole("button", { name: "完成" }));
+    await screen.findByRole("heading", { name: "差异确认" });
+    expect(screen.getByText("0 项未确认")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /开始同步/ }));
+    await vi.waitFor(() => {
+      expect(sentTo("/api/sync/apply").resolutions).toEqual({ "card:e莉希雅": "mine" });
+    });
   });
 
-  it("完成屏：三句话一句都不能少", async () => {
+  it("下载流：打的是 /api/sync/pull，预检列名翻转", async () => {
+    stubRoutes({ "/api/sync/plan": PLAN, "/api/sync/pull": PULLED });
+    render(<SyncWizard onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "下载云端 → 本机" }));
+    fireEvent.click(screen.getByRole("button", { name: "下一步：查看差异" }));
+    await screen.findByRole("heading", { name: "差异确认" });
+    expect(screen.getByText("云端独有 · 将下载")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /开始同步/ }));
+    await vi.waitFor(() => expect(sentTo("/api/sync/pull").kinds).toHaveLength(4));
+    expect(await screen.findByRole("heading", { name: "同步完成" })).toBeTruthy();
+    // 计数被 <b> 切成多段，按整格文本查
+    expect(screen.getByRole("dialog").textContent).toContain("已上传 0 项，下载 6 项");
+  });
+
+  it("对账模式：一个选择两端各搬各的（apply 与 pull 各一发）", async () => {
+    stubRoutes({ "/api/sync/apply": APPLIED, "/api/sync/pull": PULLED });
+    render(
+      <SyncWizard
+        onClose={vi.fn()}
+        initialConflicts={[
+          {
+            kind: "memory",
+            ident: "uid-1",
+            mine: { at: "2026-09-25 10:00:00", preview: "本机版本" },
+            theirs: { at: "2026-09-26 10:00:00", preview: "云端版本" },
+          },
+        ]}
+      />,
+    );
+    expect(await screen.findByText("冲突 1 / 1 · 记忆")).toBeTruthy();
+    fireEvent.click(screen.getByText("保留两个版本"));
+    fireEvent.click(screen.getByRole("button", { name: "应用选择" }));
+    await vi.waitFor(() => {
+      expect(sentTo("/api/sync/apply").resolutions).toEqual({ "memory:uid-1": "both" });
+      expect(sentTo("/api/sync/pull").resolutions).toEqual({ "memory:uid-1": "both" });
+    });
+    await vi.waitFor(() => {
+      expect(screen.getByRole("dialog").textContent).toContain("已上传 4 项，下载 6 项");
+    });
+  });
+
+  it("完成屏两句必说的话一句都不能少", async () => {
     stubRoutes({ "/api/sync/plan": PLAN, "/api/sync/apply": APPLIED });
     render(<SyncWizard onClose={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "下一步：看差异" }));
-    await screen.findByRole("heading", { name: "差异看完了" });
-    fireEvent.click(screen.getByRole("button", { name: /开始上行/ }));
-    expect(await screen.findByRole("heading", { name: "上行完成" })).toBeTruthy();
-    expect(screen.getByText(/已带过去 4 项/)).toBeTruthy();
-    expect(screen.getByText(/向量索引没有搬/)).toBeTruthy();
-    expect(screen.getByText(/一个字都没改/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "下一步：查看差异" }));
+    await screen.findByRole("heading", { name: "差异确认" });
+    fireEvent.click(screen.getByRole("button", { name: /开始同步/ }));
+    expect(await screen.findByRole("heading", { name: "同步完成" })).toBeTruthy();
+    expect(screen.getByText(/向量索引未随数据迁移/)).toBeTruthy();
+    expect(screen.getByText(/同步为复制操作，非迁移/)).toBeTruthy();
   });
 
-  it("对面拒了：出声，但不许跳到完成屏（没写成就不该有「上行完成」四个字）", async () => {
+  it("对面拒了：出声，但不许跳到完成屏（没写成就不该有「同步完成」）", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: unknown) =>
@@ -162,10 +217,10 @@ describe("SyncWizard", () => {
       ),
     );
     render(<SyncWizard onClose={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "下一步：看差异" }));
-    await screen.findByRole("heading", { name: "差异看完了" });
-    fireEvent.click(screen.getByRole("button", { name: /开始上行/ }));
+    fireEvent.click(screen.getByRole("button", { name: "下一步：查看差异" }));
+    await screen.findByRole("heading", { name: "差异确认" });
+    fireEvent.click(screen.getByRole("button", { name: /开始同步/ }));
     expect(await screen.findByText(/连不上/)).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: "上行完成" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "同步完成" })).toBeNull();
   });
 });

@@ -1,27 +1,25 @@
 /**
- * 上行同步的四屏（M7，设计稿 `build/upload_mock.png` 09-27 拍板）。
- *
- * ① 询问卡（三档，默认「逐条合并」）→ ② 预检 dry-run（先给数，再要同意，最后才动手）
- * → ③ 冲突逐条裁决 → ④ 完成页。
+ * 同步向导（M7 四屏 + M8 方向档，文案 09-27 深夜定稿）。
  *
  * 三件在设计阶段就定死、代码不许自己发挥的事：
  *
- *   * **「这次先不带」是一个正经选项**。换身份与上行是两件事，点了登录不等于同意上传；
- *     选了它，界面照常进云端态，本机那份原地不动。
- *   * **③ 那一屏刻意没有"全按本机的来"的按钮**。那等于把这一屏变成一个确认框，而它存在的
- *     全部理由就是"这几条不一样，机器不该替你决定"。跳过 = 对面不动，本机那条也不删
- *     （下次上行还会再问）。
- *   * **④ 那三句必须说**：带过去了什么（可核对的数）、**向量索引是重建的不是搬的**
- *     （否则以后检索质量对不上没人知道为什么）、**本机那份没动**（上行是复制不是搬家）。
+ *   * **「暂不同步」是一个正经选项**。换身份与同步是两件事，登录不等于同意传输；
+ *     选了它，界面照常进云端态，两边数据原地不动。
+ *   * **裁决屏刻意没有"全部按一侧"的按钮**。那等于把这一屏变成确认框，而它存在的
+ *     全部理由就是"这几个条目两端均有修改，机器不该替您决定"。跳过 = 该项保持现状
+ *     （未确认的冲突将保留接收侧现有版本），下次同步仍会提示。
+ *   * **完成页那两句必须说**：向量索引未随数据迁移（云端基于其嵌入服务自行重建，
+ *     否则以后检索质量对不上没人知道为什么）、本机数据未做任何修改（同步是复制不是迁移）。
  *
- * 健康档案与上传原件这一版**不给复选框**（用户 09-27：「第二批先不需要传吧」）——
- * 没有实现的复选框比没有复选框更坏。
+ * 「整份替换」只在上传方向提供：下载方向的整份替换会以云端数据覆盖本机全部数据，
+ * 那一步应由用户逐项执行删除，不作为同步档位提供（界面上以禁用态呈现并说明）。
  */
 import { useState } from "react";
 
 import { ApiError } from "../api";
 import { read as readDataSource } from "../lib/dataSource";
 import {
+  DIRECTIONS,
   SYNC_ITEMS,
   UPLOAD_MODES,
   applyUpload,
@@ -29,9 +27,12 @@ import {
   conflictKey,
   fetchPlan,
   planReads,
+  pullDownload,
   uploadTarget,
-  type ApplyResult,
+  type Direction,
+  type LeftConflict,
   type Plan,
+  type PullResult,
   type SyncKind,
   type UploadMode,
 } from "../lib/sync";
@@ -40,23 +41,40 @@ type Step = "ask" | "dry" | "conflict" | "done";
 
 const ALL_KINDS = SYNC_ITEMS.map((i) => i.kind);
 
-export default function SyncWizard({ onClose }: { onClose: () => void }) {
-  const [step, setStep] = useState<Step>("ask");
+export default function SyncWizard({
+  onClose,
+  initialConflicts,
+}: {
+  onClose: () => void;
+  /** 登录对账留下的未决冲突：向导直接落在裁决屏，走"两端各按选择搬一次"的合成档。 */
+  initialConflicts?: LeftConflict[];
+}) {
+  const [step, setStep] = useState<Step>(initialConflicts ? "conflict" : "ask");
+  const [direction, setDirection] = useState<Direction>("up");
   const [mode, setMode] = useState<UploadMode>("merge");
   const [kinds, setKinds] = useState<SyncKind[]>(ALL_KINDS);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [resolutions, setResolutions] = useState<Record<string, string>>({});
   const [which, setWhich] = useState(0);
-  const [result, setResult] = useState<ApplyResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [why, setWhy] = useState("");
+  const [done, setDone] = useState<{ up: number; down: number; skipped: number } | null>(null);
 
   const target = uploadTarget();
   const cloud = readDataSource();
   const where = cloud.mode === "cloud" ? `${cloud.base} · ${cloud.user}` : "";
-  const undecided = plan
-    ? plan.conflicts.filter((c) => resolutions[conflictKey(c.kind, c.ident)] === undefined).length
-    : 0;
+  // 冲突两个方向看见的是同一批：裁决一次，按选择两端各搬各的。
+  const conflicts: LeftConflict[] = plan
+    ? plan.conflicts.map((c) => ({
+        kind: c.kind,
+        ident: c.ident,
+        mine: { at: c.mine.at, preview: c.mine.preview },
+        theirs: { at: c.theirs.at, preview: c.theirs.preview },
+      }))
+    : (initialConflicts ?? []);
+  const undecided = conflicts.filter(
+    (c) => resolutions[conflictKey(c.kind, c.ident)] === undefined,
+  ).length;
 
   async function lookAtDiff() {
     if (!target) return;
@@ -72,12 +90,53 @@ export default function SyncWizard({ onClose }: { onClose: () => void }) {
     }
   }
 
-  async function start() {
+  /** 裁决定稿后的执行：上传方向的归 apply，下载方向的归 pull，各跑各的。
+   *  `override`：最后一条的裁决在 ConflictScreen 的本地状态里，父层还不知道 ——
+   *  由它把定稿后的整张裁决表递上来，否则用户对最后一条的选择会被静默丢弃
+   *  （实测：应用选择显示"完成"，实际两端什么都没搬）。 */
+  async function commit(override?: Record<string, string>) {
     if (!target) return;
     setBusy(true);
     setWhy("");
     try {
-      setResult(await applyUpload(target, kinds, mode, resolutions));
+      let up = 0;
+      let down = 0;
+      let skipped = 0;
+      if (initialConflicts) {
+        // 对账的未决项：按用户对每个版本的选择，两端各搬各的。
+        const pushRes: Record<string, string> = {};
+        const pullRes: Record<string, string> = {};
+        for (const c of conflicts) {
+          const key = conflictKey(c.kind, c.ident);
+          const choice = (override ?? resolutions)[key];
+          if (choice === "keepLocal") pushRes[key] = "mine";
+          if (choice === "keepRemote") pullRes[key] = "theirs";
+          if (choice === "keepBoth") {
+            pushRes[key] = "both";
+            pullRes[key] = "both";
+          }
+          if (!choice) skipped += 1;
+        }
+        const [upResult, downResult] = await Promise.all([
+          Object.keys(pushRes).length ? applyUpload(target, ALL_KINDS, "merge", pushRes) : null,
+          Object.keys(pullRes).length ? pullDownload(target, ALL_KINDS, pullRes) : null,
+        ]);
+        up = upResult?.sent ?? 0;
+        down = downResult?.pulled ?? 0;
+      } else if (direction === "up") {
+        const r = await applyUpload(target, kinds, mode, toBackend(resolutions, "up"));
+        up = r.sent;
+        skipped = Object.values(r.remote?.skipped ?? {}).reduce((a, b) => a + b, 0);
+      } else {
+        const r: PullResult = await pullDownload(
+          target,
+          kinds,
+          toBackend(resolutions, "down"),
+        );
+        down = r.pulled;
+        skipped = Object.values(r.local?.skipped ?? {}).reduce((a, b) => a + b, 0);
+      }
+      setDone({ up, down, skipped });
       setStep("done");
     } catch (e) {
       setWhy(errText(e));
@@ -87,13 +146,15 @@ export default function SyncWizard({ onClose }: { onClose: () => void }) {
   }
 
   function decide(choice: string) {
-    const conflict = plan?.conflicts[which];
+    const conflict = conflicts[which];
     if (!conflict) return;
-    setResolutions({ ...resolutions, [conflictKey(conflict.kind, conflict.ident)]: choice });
-    // 挑完最后一条就自己回到预检那一屏：停在"冲突都挑完了"的空屏上只是多要一次点击，
-    // 而那一屏本来就没有任何信息。
-    if (which + 1 >= plan.conflicts.length) setStep("dry");
-    else setWhich(which + 1);
+    const next = { ...resolutions, [conflictKey(conflict.kind, conflict.ident)]: choice };
+    setResolutions(next);
+    // 挑完最后一条就自己回上一屏：停在"都挑完了"的空屏上只是多要一次点击。
+    if (which + 1 >= conflicts.length) {
+      if (initialConflicts) void commit(next);
+      else setStep("dry");
+    } else setWhich(which + 1);
   }
 
   return (
@@ -101,12 +162,14 @@ export default function SyncWizard({ onClose }: { onClose: () => void }) {
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
       role="dialog"
       aria-modal="true"
-      aria-label="把本机这份带到云端"
+      aria-label="数据同步"
     >
       <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-5 shadow-2xl dark:bg-slate-800">
         {step === "ask" && (
           <AskScreen
             where={where}
+            direction={direction}
+            onDirection={setDirection}
             mode={mode}
             onMode={setMode}
             onCancel={onClose}
@@ -118,6 +181,7 @@ export default function SyncWizard({ onClose }: { onClose: () => void }) {
         {step === "dry" && plan && (
           <DryScreen
             plan={plan}
+            direction={direction}
             kinds={kinds}
             onKinds={setKinds}
             mode={mode}
@@ -127,30 +191,51 @@ export default function SyncWizard({ onClose }: { onClose: () => void }) {
               setWhich(0);
               setStep("conflict");
             }}
-            onStart={() => void start()}
+            onStart={() => void commit()}
             busy={busy}
             why={why}
           />
         )}
-        {step === "conflict" && plan && (
+        {step === "conflict" && conflicts.length > 0 && (
           // key：换一条就把那一屏的本地选择状态重挂掉。留着会把上一条的选择带到下一条上，
-          // 症状是"我明明挑了对面，推过去的却是本机那份"。
+          // 症状是"我明明选了保留云端版本，推过去的却是本机那份"。
           <ConflictScreen
             key={which}
-            plan={plan}
+            conflicts={conflicts}
             which={which}
-            onBack={() => setStep("dry")}
+            direction={initialConflicts ? "reconcile" : direction}
+            onBack={() => setStep(initialConflicts ? "done" : "dry")}
             onDecide={decide}
+            busy={busy}
           />
         )}
-        {step === "done" && result && <DoneScreen result={result} onDone={onClose} />}
+        {step === "done" && done && <DoneScreen done={done} onDone={onClose} />}
       </div>
     </div>
   );
 }
 
+/** 界面语义（保留哪一版）→ 后端语义（mine/theirs/both）。没选中的键直接不发：
+ *  后端对缺失键的默认是"保留接收侧"，与界面里"跳过此项"的承诺一致。 */
+function toBackend(
+  resolutions: Record<string, string>,
+  direction: Direction,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, choice] of Object.entries(resolutions)) {
+    if (direction === "up") {
+      if (choice === "keepLocal") out[key] = "mine";
+      if (choice === "keepBoth") out[key] = "both";
+    } else {
+      if (choice === "keepRemote") out[key] = "theirs";
+      if (choice === "keepBoth") out[key] = "both";
+    }
+  }
+  return out;
+}
+
 function errText(e: unknown): string {
-  return e instanceof ApiError ? e.message : (e as Error).message || "出错了";
+  return e instanceof ApiError ? e.message : (e as Error).message || "同步失败";
 }
 
 function Title({ children }: { children: React.ReactNode }) {
@@ -163,8 +248,18 @@ function Hint({ children }: { children: React.ReactNode }) {
   return <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">{children}</p>;
 }
 
+function ErrorBox({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-[11px] leading-relaxed text-rose-800 dark:border-rose-700 dark:bg-rose-900/30 dark:text-rose-200">
+      {children}
+    </p>
+  );
+}
+
 function AskScreen({
   where,
+  direction,
+  onDirection,
   mode,
   onMode,
   onCancel,
@@ -173,6 +268,8 @@ function AskScreen({
   why,
 }: {
   where: string;
+  direction: Direction;
+  onDirection: (d: Direction) => void;
   mode: UploadMode;
   onMode: (m: UploadMode) => void;
   onCancel: () => void;
@@ -182,45 +279,73 @@ function AskScreen({
 }) {
   return (
     <>
-      <Title>要把本机这份带过去吗？</Title>
+      <Title>数据同步</Title>
       <Hint>
-        云端是另一份完整数据集。你现在连的是 <b>{where}</b>，它已经有一些东西了 ——
-        所以下面这一档会影响两边怎么并。
+        云端是另一份完整数据集。当前连接 <b>{where}</b>，选择同步方向与合并方式。
       </Hint>
-      <div className="mt-3 space-y-2">
-        {UPLOAD_MODES.map((m) => (
-          <label
-            key={m.mode}
-            className={`block rounded-lg border p-3 text-[11px] ${
-              mode === m.mode
-                ? "border-blue-500 bg-blue-50/60 dark:bg-blue-900/20"
-                : "border-slate-200 dark:border-slate-600"
+      <div
+        className="mt-3 flex rounded-lg border border-slate-200 p-1 dark:border-slate-600"
+        role="radiogroup"
+        aria-label="同步方向"
+      >
+        {DIRECTIONS.map((d) => (
+          <button
+            key={d.direction}
+            onClick={() => onDirection(d.direction)}
+            aria-pressed={direction === d.direction}
+            className={`flex-1 rounded-md px-3 py-1.5 text-xs ${
+              direction === d.direction
+                ? "bg-blue-600 text-white"
+                : "text-slate-600 dark:text-slate-300"
             }`}
           >
-            <span className="flex items-center gap-2">
-              <input
-                type="radio"
-                name="upload-mode"
-                checked={mode === m.mode}
-                onChange={() => onMode(m.mode)}
-                className="h-3.5 w-3.5"
-              />
-              <b className="text-[12px] text-slate-800 dark:text-slate-100">{m.label}</b>
-              <span
-                className={`rounded px-1.5 py-0.5 text-[10px] ${
-                  m.mode === "replace"
-                    ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
-                    : "bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300"
-                }`}
-              >
-                {m.note}
-              </span>
-            </span>
-            <span className="mt-1 block leading-relaxed text-slate-500 dark:text-slate-400">
-              {m.cost}
-            </span>
-          </label>
+            {d.label}
+            <span className="ml-1 text-[10px] opacity-70">{d.sub}</span>
+          </button>
         ))}
+      </div>
+      <div className="mt-3 space-y-2">
+        {UPLOAD_MODES.map((m) => {
+          const unavailable = Boolean(m.upOnly) && direction === "down";
+          return (
+            <label
+              key={m.mode}
+              className={`block rounded-lg border p-3 text-[11px] ${
+                unavailable
+                  ? "border-slate-200 opacity-50 dark:border-slate-600"
+                  : mode === m.mode
+                    ? "border-blue-500 bg-blue-50/60 dark:bg-blue-900/20"
+                    : "border-slate-200 dark:border-slate-600"
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name="upload-mode"
+                  checked={mode === m.mode}
+                  disabled={unavailable}
+                  onChange={() => onMode(m.mode)}
+                  className="h-3.5 w-3.5"
+                />
+                <b className="text-[12px] text-slate-800 dark:text-slate-100">{m.label}</b>
+                <span
+                  className={`rounded px-1.5 py-0.5 text-[10px] ${
+                    m.mode === "replace"
+                      ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+                      : "bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300"
+                  }`}
+                >
+                  {unavailable ? "下载方向不可用" : m.note}
+                </span>
+              </span>
+              <span className="mt-1 block leading-relaxed text-slate-500 dark:text-slate-400">
+                {unavailable
+                  ? "将以云端数据覆盖本机全部数据。如需清除本机数据，请使用删除功能。"
+                  : m.cost}
+              </span>
+            </label>
+          );
+        })}
       </div>
       {why && <ErrorBox>{why}</ErrorBox>}
       <div className="mt-3 flex items-center justify-end gap-2">
@@ -228,34 +353,27 @@ function AskScreen({
           onClick={onCancel}
           className="px-2 py-2 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400"
         >
-          这次先不带
+          暂不同步
         </button>
         <button
           onClick={onNext}
           disabled={busy}
           className="rounded-lg bg-blue-600 px-3.5 py-2 text-xs text-white disabled:opacity-50"
         >
-          {busy ? "比对中…" : "下一步：看差异"}
+          {busy ? "正在比对…" : "下一步：查看差异"}
         </button>
       </div>
       <Hint>
-        「这次先不带」是正经选项：换身份与上行是两件事，点了登录不等于同意上传。
-        选了它，界面就正常进云端态，本机那份原地不动。
+        「暂不同步」不影响登录状态：界面照常使用云端数据，两端数据保持原样。
+        未勾选的类目不会同步，保留对端现有数据。
       </Hint>
     </>
   );
 }
 
-function ErrorBox({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-[11px] leading-relaxed text-rose-800 dark:border-rose-700 dark:bg-rose-900/30 dark:text-rose-200">
-      {children}
-    </p>
-  );
-}
-
 function DryScreen({
   plan,
+  direction,
   kinds,
   onKinds,
   mode,
@@ -267,6 +385,7 @@ function DryScreen({
   why,
 }: {
   plan: Plan;
+  direction: Direction;
   kinds: SyncKind[];
   onKinds: (k: SyncKind[]) => void;
   mode: UploadMode;
@@ -281,12 +400,13 @@ function DryScreen({
     const bucket = plan.by_kind[k] ?? {};
     return n + (mode === "replace" ? totalOf(bucket) : (bucket.only_local ?? 0));
   }, 0);
+  const receiver = direction === "up" ? "云端" : "本机";
   return (
     <>
-      <Title>差异看完了</Title>
-      <Hint>这一步什么都没写。数字来自两边的实际比对，不是估算。</Hint>
+      <Title>差异确认</Title>
+      <Hint>此步骤不写入任何数据。以下数字来自两端的实际比对，非估算。</Hint>
       <div className="mt-3 grid grid-cols-4 gap-2">
-        {planReads(plan).map((r) => (
+        {planReads(plan, direction).map((r) => (
           <div
             key={r.label}
             className={`rounded-lg border p-2.5 ${
@@ -325,7 +445,7 @@ function DryScreen({
                 </td>
                 <td className="py-2 align-top text-slate-700 dark:text-slate-200">{item.label}</td>
                 <td className="py-2 align-top text-slate-500 dark:text-slate-400">
-                  本机 {totalOf(bucket)} 条
+                  本机 {totalOf(bucket)} 项
                   {bucket.only_local ? ` · 独有 ${bucket.only_local}` : ""}
                   {bucket.conflicts ? ` · 冲突 ${bucket.conflicts}` : ""}
                   {bucket.skipped ? ` · 跳过 ${bucket.skipped}` : ""}
@@ -340,25 +460,24 @@ function DryScreen({
       </table>
       {plan.skipped.length > 0 && (
         <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] leading-relaxed text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-200">
-          有 {plan.skipped.length} 条整条跳过，不搬也不猜：
+          {plan.skipped.length} 项无法同步，已整项跳过：
           {plan.skipped.slice(0, 3).map((s) => (
             <span key={`${s.kind}${s.ident}`} className="block">
               · {s.preview || s.ident} —— {s.reason}
             </span>
           ))}
           {plan.skipped.length > 3 && (
-            <span className="block">…另外 {plan.skipped.length - 3} 条同因</span>
+            <span className="block">…另有 {plan.skipped.length - 3} 项，原因相同</span>
           )}
         </p>
       )}
       {why && <ErrorBox>{why}</ErrorBox>}
       <Hint>
-        不勾的类不会碰对面 —— 那些就用云端上已有的那一份。
+        未勾选的类目不会同步，保留{receiver}现有数据。
         {mode === "merge" && plan.conflicts.length > 0 && (
           <>
-            {" "}
-            冲突 {plan.conflicts.length} 条里还有 <b>{undecided} 条没挑</b>；
-            没挑的按对面那份留着（上行不该顺手覆盖别人已经写好的）。
+            {" "}冲突 {plan.conflicts.length} 项中尚有 <b>{undecided} 项未确认</b>；
+            未确认的冲突项将保留{receiver}现有版本，不做修改。
           </>
         )}
       </Hint>
@@ -374,7 +493,7 @@ function DryScreen({
             onClick={onResolve}
             className="rounded-lg border border-blue-300 px-3.5 py-2 text-xs text-blue-700 dark:border-blue-600 dark:text-blue-300"
           >
-            先处理 {plan.conflicts.length} 条冲突
+            处理 {plan.conflicts.length} 项冲突
           </button>
         )}
         <button
@@ -382,7 +501,7 @@ function DryScreen({
           disabled={busy || kinds.length === 0}
           className="rounded-lg bg-blue-600 px-3.5 py-2 text-xs text-white disabled:opacity-50"
         >
-          {busy ? "上行中…" : `开始上行（${going} 项）`}
+          {busy ? "正在同步…" : `开始同步（${going} 项）`}
         </button>
       </div>
     </>
@@ -393,44 +512,73 @@ function totalOf(bucket: Record<string, number>): number {
   return (bucket.only_local ?? 0) + (bucket.same ?? 0) + (bucket.conflicts ?? 0);
 }
 
+type Screen3Direction = Direction | "reconcile";
+
 function ConflictScreen({
-  plan,
+  conflicts,
   which,
+  direction,
   onBack,
   onDecide,
+  busy,
 }: {
-  plan: Plan;
+  conflicts: LeftConflict[];
   which: number;
+  direction: Screen3Direction;
   onBack: () => void;
   onDecide: (choice: string) => void;
+  busy: boolean;
 }) {
-  const [choice, setChoice] = useState("theirs");
-  const conflict = plan.conflicts[which];
+  const [choice, setChoice] = useState(direction === "up" ? "keepRemote" : "keepLocal");
+  const conflict = conflicts[which];
   if (!conflict) return null; // 调用方挑完最后一条就切走了，这一屏不会拿着越界的下标渲染
   const label = SYNC_ITEMS.find((i) => i.kind === conflict.kind)?.label ?? conflict.kind;
-  const last = which + 1 >= plan.conflicts.length;
+  const last = which + 1 >= conflicts.length;
   return (
     <>
       <Title>
-        冲突 {which + 1} / {plan.conflicts.length} · 一条{label}
+        冲突 {which + 1} / {conflicts.length} · {label}
       </Title>
       <Hint>
         {canKeepBoth(conflict.kind)
-          ? "同一条事实（uid 相同）两边内容不一样。选一个，或两份都留。"
-          : "同一个身份两边内容不一样。这一类的身份就是那一个 id，所以“都留”讲不通 —— 挑一份。"}
+          ? "同一条目（标识相同）两端均有修改。请选择保留的版本，或两个版本均保留。"
+          : "同一身份两端内容不同。该类目的身份即此 id，「保留两个版本」不适用 —— 请选择其一。"}
       </Hint>
       <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
-        <Preview title="本机这份" at={conflict.mine.at} text={conflict.mine.preview} />
-        <Preview title="对面那份" at={conflict.theirs.at} text={conflict.theirs.preview} />
+        <Preview title="本机版本" at={conflict.mine.at} text={conflict.mine.preview} />
+        <Preview title="云端版本" at={conflict.theirs.at} text={conflict.theirs.preview} />
       </div>
       <div className="mt-3 space-y-2 text-[11px]">
-        <Radio value={choice} onChange={setChoice} name="theirs" title="保留对面那份"
-          note="默认。对面那条不动，本机的这条也不会被推过去。" />
-        <Radio value={choice} onChange={setChoice} name="mine" title="保留本机这份"
-          note="对面那条按本机这份改写。" />
+        <Radio
+          value={choice}
+          onChange={setChoice}
+          name="keepRemote"
+          title="保留云端版本"
+          note={
+            direction === "up"
+              ? "默认。云端版本保持不变，本机版本不会上传。"
+              : "下载该条目，覆盖本机版本。"
+          }
+        />
+        <Radio
+          value={choice}
+          onChange={setChoice}
+          name="keepLocal"
+          title="保留本机版本"
+          note={
+            direction === "up"
+              ? "以本机版本改写云端。"
+              : "默认。本机版本保持不变，云端版本不会下载。"
+          }
+        />
         {canKeepBoth(conflict.kind) && (
-          <Radio value={choice} onChange={setChoice} name="both" title="两份都留"
-            note="不判断谁对：对面那条原样留着，本机这条换一枚新身份多出来。以后可以在「整理记忆」里再分开。" />
+          <Radio
+            value={choice}
+            onChange={setChoice}
+            name="keepBoth"
+            title="保留两个版本"
+            note="两个版本均保留：本机版本保持不变，云端版本以新标识另存一份。稍后可在记忆整理中合并。"
+          />
         )}
       </div>
       <div className="mt-3 flex items-center justify-end gap-2">
@@ -438,24 +586,25 @@ function ConflictScreen({
           onClick={onBack}
           className="px-2 py-2 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400"
         >
-          先不挑了
+          返回
         </button>
         <button
-          onClick={() => onDecide("theirs")}
+          onClick={() => onDecide("skip")}
           className="rounded-lg border border-slate-200 px-3.5 py-2 text-xs text-slate-600 dark:border-slate-600 dark:text-slate-300"
         >
-          跳过这条（保持对面原样）
+          跳过此项
         </button>
         <button
           onClick={() => onDecide(choice)}
-          className="rounded-lg bg-blue-600 px-3.5 py-2 text-xs text-white"
+          disabled={busy && last && direction === "reconcile"}
+          className="rounded-lg bg-blue-600 px-3.5 py-2 text-xs text-white disabled:opacity-50"
         >
-          {last ? "就这么定" : "下一条"}
+          {last && direction === "reconcile" ? "应用选择" : last ? "完成" : "下一项"}
         </button>
       </div>
       <Hint>
-        这里刻意没有"全按本机的来"的按钮：那等于把这一屏变成一个确认框，而这一屏存在的全部理由
-        就是这几条不一样、机器不该替你决定。跳过 = 对面不动，本机那条也不删（下次上行还会再问）。
+        本屏不提供「全部按一侧处理」：两侧均有修改的条目应由您逐项确认。
+        跳过 = 该项保持现状（未确认的冲突将保留现有版本），下次同步仍会提示。
       </Hint>
     </>
   );
@@ -466,7 +615,7 @@ function Preview({ title, at, text }: { title: string; at: string; text: string 
     <div className="rounded-lg border border-slate-200 p-2.5 dark:border-slate-600">
       <div className="text-[10px] text-slate-400 dark:text-slate-500">
         {title}
-        {at ? ` · ${at.slice(0, 10)} 写下` : ""}
+        {at ? ` · ${at.slice(0, 10)}` : ""}
       </div>
       <div className="mt-1 leading-relaxed text-slate-700 dark:text-slate-200">
         {text || "（空）"}
@@ -511,48 +660,32 @@ function Radio({
   );
 }
 
-function DoneScreen({ result, onDone }: { result: ApplyResult; onDone: () => void }) {
-  const written = result.remote.written ?? {};
-  const detail = SYNC_ITEMS.filter((i) => written[i.kind]).map(
-    (i) => `${i.label} ${written[i.kind]}`,
-  );
-  const errors = result.remote.errors ?? [];
-  const skipped = Object.values(result.remote.skipped ?? {}).reduce((a, b) => a + b, 0);
+function DoneScreen({
+  done,
+  onDone,
+}: {
+  done: { up: number; down: number; skipped: number };
+  onDone: () => void;
+}) {
   return (
     <>
-      <Title>上行完成</Title>
+      <Title>同步完成</Title>
       <div className="mt-2 h-1 w-full rounded bg-emerald-500" />
       <p className="mt-3 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
-        <b className="text-emerald-700 dark:text-emerald-300">已带过去 {result.sent} 项</b>
-        {detail.length > 0 && <>（{detail.join(" · ")}）</>}
-      </p>
-      <Hint>
-        对面收了 {Object.values(written).reduce((a, b) => a + b, 0)} 项；跳过 {skipped} 项
-        （已经有的一律不重复写）。
-      </Hint>
-      <p className="mt-2 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
-        <b className="text-amber-700 dark:text-amber-300">向量索引没有搬</b> ——
-        对面那份正在按它自己的嵌入后端重建。两台的嵌入模型一旦不同，向量之间本来就不可比。
+        已上传 <b className="text-emerald-700 dark:text-emerald-300">{done.up}</b> 项，下载{" "}
+        <b className="text-emerald-700 dark:text-emerald-300">{done.down}</b> 项
+        {done.skipped > 0 && <>；{done.skipped} 项因已存在而跳过</>}。
       </p>
       <p className="mt-2 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
-        本机这一份<b className="text-emerald-700 dark:text-emerald-300">一个字都没改</b>。
-        切回「本机」时它还在原地 —— 上行是复制，不是搬家。
+        <b className="text-amber-700 dark:text-amber-300">向量索引未随数据迁移</b>
+        ——云端将基于其嵌入服务自行重建。两端嵌入服务不同时，向量之间不可直接比较。
       </p>
-      {errors.length > 0 && (
-        <ErrorBox>
-          有 {errors.length} 条对面没收下：
-          {errors.slice(0, 4).map((e) => (
-            <span key={`${e.kind}${e.ident}`} className="block">
-              · {e.kind} {e.ident} —— {e.error}
-            </span>
-          ))}
-        </ErrorBox>
-      )}
+      <p className="mt-2 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+        本机数据<b className="text-emerald-700 dark:text-emerald-300">未做任何修改</b>
+        ——同步为复制操作，非迁移。
+      </p>
       <div className="mt-3 flex justify-end">
-        <button
-          onClick={onDone}
-          className="rounded-lg bg-blue-600 px-3.5 py-2 text-xs text-white"
-        >
+        <button onClick={onDone} className="rounded-lg bg-blue-600 px-3.5 py-2 text-xs text-white">
           知道了
         </button>
       </div>

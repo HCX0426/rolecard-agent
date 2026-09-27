@@ -29,24 +29,46 @@ export const SYNC_ITEMS: { kind: SyncKind; label: string; hint: string }[] = [
 
 export type UploadMode = "merge" | "append" | "replace";
 
-export const UPLOAD_MODES: { mode: UploadMode; label: string; note: string; cost: string }[] = [
+/** 同步方向。上传 = 本机 → 云端；下载 = 云端 → 本机。
+ *  三档中「整份替换」只在上传方向可用：下载方向的整份替换会以云端数据覆盖本机全部数据，
+ *  那一步应由用户在界面上逐项执行删除，不作为同步档位提供。 */
+export type Direction = "up" | "down";
+
+export const DIRECTIONS: { direction: Direction; label: string; sub: string }[] = [
+  { direction: "up", label: "上传", sub: "本机 → 云端" },
+  { direction: "down", label: "下载", sub: "云端 → 本机" },
+];
+
+export function modeLabel(mode: UploadMode): string {
+  return { merge: "逐条合并", append: "仅上传新增", replace: "整份替换" }[mode];
+}
+
+export const UPLOAD_MODES: {
+  mode: UploadMode;
+  label: string;
+  note: string;
+  cost: string;
+  /** 下载方向不提供的档位（界面以禁用态呈现并说明原因，而不是悄悄消失）。 */
+  upOnly?: boolean;
+}[] = [
   {
     mode: "merge",
     label: "逐条合并",
-    note: "默认 · 推荐",
-    cost: "只有本机有的、只有云端有的直接过去；两边都有但内容不同的，一条条拿给你挑。",
+    note: "推荐",
+    cost: "两端各自独有的条目直接同步；两端均有修改的条目，逐项由您确认保留的版本。",
   },
   {
     mode: "append",
-    label: "只追加",
-    note: "最快、绝不丢东西",
-    cost: "只推云端还没有的，重复的让它并存。代价是以后可能看见两条相似的记忆。",
+    label: "仅上传新增",
+    note: "快速",
+    cost: "只上传对端尚不存在的条目，重复条目保持并存。",
   },
   {
     mode: "replace",
     label: "整份替换",
-    note: "会丢东西",
-    cost: "把云端那一份清掉，只留本机这份。云端上别人（或你在别处）新写的会话与记忆会直接没了。",
+    note: "将覆盖云端数据",
+    upOnly: true,
+    cost: "清除云端该账号下的所选类目，以本机数据为准。",
   },
 ];
 
@@ -93,10 +115,33 @@ export function conflictKey(kind: SyncKind, ident: string): string {
   return `${kind}:${ident}`;
 }
 
-/** 「两份都留」只对记忆讲得通：卡与会话的身份就是那个 id，留两份 = 覆盖。
- *  所以界面只在记忆那一格上给第三个选择，别的地方给了就是骗人。 */
+/** 「保留两个版本」只对记忆条目提供：角色卡与会话的身份即其 id，两版并存等于覆盖其一。 */
 export function canKeepBoth(kind: SyncKind): boolean {
   return kind === "memory";
+}
+
+export interface PullResult {
+  pulled: number;
+  conflicts_left: number;
+  local: {
+    written?: Record<string, number>;
+    skipped?: Record<string, number>;
+    errors?: { kind: string; ident: string; error: string }[];
+  };
+}
+
+export interface LeftConflict {
+  kind: SyncKind;
+  ident: string;
+  mine: { at: string; preview: string };
+  theirs: { at: string; preview: string };
+}
+
+export interface ReconcileResult {
+  pushed: number;
+  pulled: number;
+  written: { remote?: Record<string, number>; local?: Record<string, number> };
+  left_for_human: LeftConflict[];
 }
 
 const LOCAL_TIMEOUT_MS = 30_000;
@@ -165,12 +210,85 @@ export function applyUpload(
   );
 }
 
-/** 四格读数（预检那一屏）：数字来自两边的实际比对，不是估算。 */
-export function planReads(plan: Plan): { value: number; label: string; tone: string }[] {
+/** 下载：把云端那份里本机没有的并回本机。默认（未裁决的冲突）保护本机现有版本。 */
+export function pullDownload(
+  target: unknown,
+  kinds: SyncKind[],
+  resolutions: Record<string, string> = {},
+): Promise<PullResult> {
+  return toLocal<PullResult>(
+    "POST",
+    "/api/sync/pull",
+    { ...(target as object), kinds, mode: "merge", resolutions },
+    APPLY_TIMEOUT_MS,
+  );
+}
+
+/** 登录对账：双向各走一遍自动策略，歧义项留在 left_for_human 里由用户裁决。 */
+export function reconcile(target: unknown): Promise<ReconcileResult> {
+  return toLocal<ReconcileResult>(
+    "POST",
+    "/api/sync/reconcile",
+    target,
+    APPLY_TIMEOUT_MS,
+  );
+}
+
+/** 上次同步的读数（侧栏那一行）。存 localStorage：它是"发生过的事实"，重载后还要显示。 */
+const LAST_SYNC_KEY = "rolecard.sync.lastSync";
+
+export interface LastSync {
+  at: string;
+  pushed: number;
+  pulled: number;
+}
+
+export function readLastSync(): LastSync | null {
+  try {
+    const raw = localStorage.getItem(LAST_SYNC_KEY);
+    return raw ? (JSON.parse(raw) as LastSync) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLastSync(result: { pushed: number; pulled: number }): void {
+  try {
+    localStorage.setItem(
+      LAST_SYNC_KEY,
+      JSON.stringify({ at: new Date().toISOString(), ...result } satisfies LastSync),
+    );
+  } catch {
+    /* 存不下就少一行状态文字，不是坏消息。 */
+  }
+}
+
+/** 侧栏那一行的状态文字：「上次同步：09-27 21:40（↑3 ↓1）」。没同步过 = null。 */
+export function formatLastSync(s: LastSync | null, now: Date = new Date()): string | null {
+  if (!s) return null;
+  const at = new Date(s.at);
+  if (Number.isNaN(at.getTime())) return null;
+  const hm = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+  const sameDay =
+    at.getFullYear() === now.getFullYear() &&
+    at.getMonth() === now.getMonth() &&
+    at.getDate() === now.getDate();
+  const day = sameDay ? "今天" : `${at.getMonth() + 1}-${at.getDate()}`;
+  return `上次同步：${day} ${hm}（↑${s.pushed} ↓${s.pulled}）`;
+}
+
+/** 预检屏的四格读数：数字来自两边的实际比对，不是估算。列名随方向翻转 ——
+ *  接收侧一律「保留」，发出侧才是「将同步」。 */
+export function planReads(
+  plan: Plan,
+  direction: Direction,
+): { value: number; label: string; tone: string }[] {
+  const outgoing = direction === "up" ? "本机独有 · 将上传" : "云端独有 · 将下载";
+  const keep = direction === "up" ? "云端独有 · 保留" : "本机独有 · 保留";
   return [
-    { value: plan.counts.only_local ?? 0, label: "本机独有 · 会过去", tone: "plain" },
-    { value: plan.counts.only_remote ?? 0, label: "对面独有 · 不动", tone: "plain" },
-    { value: plan.counts.same ?? 0, label: "两边相同 · 跳过", tone: "plain" },
-    { value: plan.counts.conflicts ?? 0, label: "冲突 · 要你挑", tone: "warn" },
+    { value: plan.counts.only_local ?? 0, label: direction === "up" ? outgoing : keep, tone: "plain" },
+    { value: plan.counts.only_remote ?? 0, label: direction === "up" ? keep : outgoing, tone: "plain" },
+    { value: plan.counts.same ?? 0, label: "两端相同 · 跳过", tone: "plain" },
+    { value: plan.counts.conflicts ?? 0, label: "冲突 · 需确认", tone: "warn" },
   ];
 }

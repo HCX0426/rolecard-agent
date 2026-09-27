@@ -26,6 +26,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 VENV_PY = str(ROOT / ".venv" / "Scripts" / "python.exe")
@@ -99,6 +100,33 @@ def make_role(
 MEMORY_TEXT = "用户在这台机器上写过一条只有本机有的事实。"
 
 
+def patch_role(base: str, role_id: str, body: dict, token: str | None) -> None:
+    """PATCH 一张卡（`/api/roles/{id}`），用来把 updated_at 推新 —— 对账"新者胜"的方向钉子。"""
+    req = urllib.request.Request(  # noqa: S310
+        f"{base}/api/roles/{role_id}",
+        data=json.dumps(body).encode("utf-8"),
+        method="PATCH",
+        headers={"Content-Type": "application/json", **({"Authorization": token} if token else {})},
+    )
+    with urllib.request.urlopen(req, timeout=20) as r:  # noqa: S310
+        if r.status >= 400:
+            raise RuntimeError(f"PATCH {role_id} 失败: HTTP {r.status}")
+
+
+def req(method: str, url: str, body: object = None, token: str | None = None):
+    """这条探针里零散的 HTTP 调用（播种分歧记忆 / PATCH 卡）走的小助手。"""
+    data = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
+    r = urllib.request.Request(  # noqa: S310
+        url,
+        data=data,
+        method=method,
+        headers={"Content-Type": "application/json", **({"Authorization": token} if token else {})},
+    )
+    with urllib.request.urlopen(r, timeout=60) as resp:  # noqa: S310
+        raw = resp.read().decode("utf-8", "replace")
+        return resp.status, (json.loads(raw) if raw.strip().startswith("{") else raw)
+
+
 def add_memory(base: str, text: str) -> None:
     """给本机那份加一条事实（走真路由 `POST /api/settings/memory/item`）。
 
@@ -117,7 +145,7 @@ def add_memory(base: str, text: str) -> None:
             raise RuntimeError(f"加记忆失败: HTTP {r.status}")
 
 
-def get_json(url: str, token: str | None = None) -> object:
+def get_json(url: str, token: str | None = None) -> dict[str, Any]:
     req = urllib.request.Request(  # noqa: S310
         url, headers={"Authorization": token} if token else {}
     )
@@ -153,10 +181,23 @@ def main() -> int:
         make_role(a_base, "r_only_local", "只有本机的卡", None)
         make_role(a_base, "r_local", "本机专有卡", None, prompt="本机写的那份人设")
         make_role(b_base, "r_cloud", "云端专有卡", token)
-        # 同一张卡在对面被改过一遍 ⇒ 计划里必须有**一条真冲突**，
-        # 否则第三屏（逐条裁决）在这支探针里永远走不到，只剩 jsdom 那几条绿。
+        # 同一张卡在对面也改过一遍；随后把本机这张再碰一次（updated_at 变新）⇒
+        # 登录对账的"新者胜"有确定方向：把本机这份推回去，而不是撞秒数靠运气。
         make_role(b_base, "r_local", "本机专有卡", token, prompt="云端把这张卡改过了一次")
+        time.sleep(1.5)
+        patch_role(a_base, "r_local", {"system_prompt": "本机最后改的人设"}, None)
         add_memory(a_base, MEMORY_TEXT)
+        # 一条**两边同 uid、内容各改过**的记忆：记忆的冲突永远进"留给人"那一档
+        # （"两份都留"不幂等，自动档不碰它），于是登录对账的读数卡有确定的出现条件。
+        for base, tok, text in ((a_base, None, "本机那份的分歧记忆"),
+                                (b_base, token, "云端那份的分歧记忆")):
+            code_i, out_i = req(
+                "POST", f"{base}/api/sync/import",
+                {"items": [{"kind": "memory", "ident": "uid-div",
+                            "payload": {"text": text, "role_id": "r_local"}}]},
+                token=tok,
+            )
+            assert code_i == 200, out_i
         r = subprocess.run(  # noqa: S603
             ["node", "scripts/ui_data_source_switch.js", a_base + "/", b_base],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -170,14 +211,28 @@ def main() -> int:
         # 浏览器那十二步只证明"人点到了完成屏"。推过去的东西**到底落在哪儿**要在对面查：
         # 卡该在（勾了），那条记忆不该在（在预检屏被取消了勾选）。
         roles = json.dumps(get_json(f"{b_base}/api/roles", token), ensure_ascii=False)
-        pushed = "本机写的那份人设" in roles
-        print(f"{'PASS' if pushed else 'FAIL'}"
-              "  ⑭ 裁决「保留本机这份」真的写进了对面（人设换成本机那份）")
-        inv = json.dumps(get_json(f"{b_base}/api/sync/inventory", token), ensure_ascii=False)
-        quiet = MEMORY_TEXT not in inv
-        print(f"{'PASS' if quiet else 'FAIL'}"
-              "  ⑮ 没勾的「记忆」真的没碰对面")
-        return 0 if (pushed and quiet) else 1
+        card_ok = "本机最后改的人设" in roles
+        print(f"{'PASS' if card_ok else 'FAIL'}"
+              "  ⑬ 卡的分歧按『新者胜』自动推过去（本机最后改的那份在对面上）")
+        inv_raw: dict[str, Any] = get_json(f"{b_base}/api/sync/inventory", token)
+        inv = json.dumps(inv_raw, ensure_ascii=False)
+        div_ok = "本机那份的分歧记忆" in inv and "云端那份的分歧记忆" not in inv
+        print(f"{'PASS' if div_ok else 'FAIL'}"
+              "  ⑭ 裁决『保留本机版本』真的写进了对面（同 uid 那条换成机这份）")
+        if not div_ok:
+            print("   B 的记忆清单：", json.dumps(
+                [r for r in inv_raw.get("items", []) if r.get("kind") == "memory"],
+                ensure_ascii=False))
+        audit_b = json.dumps(get_json(f"{b_base}/api/audit?limit=40", token), ensure_ascii=False)
+        secrets = (MEMORY_TEXT, "本机那份的分歧记忆", "云端那份的分歧记忆")
+        # B 那侧看得到的门：sync_import（收下推送）与 sync_export（交出载荷）；
+        # sync_reconcile 记在发起方 A 那台的审计里，不会出现在 B。
+        aud_ok = "sync_import" in audit_b and "sync_export" in audit_b and all(
+            s not in audit_b for s in secrets
+        )
+        print(f"{'PASS' if aud_ok else 'FAIL'}"
+              "  ⑮ 对面审计有对账与导出的记录，而无任何原文")
+        return 0 if (card_ok and div_ok and aud_ok) else 1
     finally:
         for proc, log in ((a, la), (b, lb)):
             proc.terminate()
