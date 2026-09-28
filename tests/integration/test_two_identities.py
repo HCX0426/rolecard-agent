@@ -246,3 +246,83 @@ def test_an_instance_owned_by_the_second_person_can_talk(
         assert owner == B
         # 整份数据集都是他的：出厂卡也挂在这个主人名下（§4.1"换的是整份数据集"）
         assert client.get("/api/roles").json(), "主人不是演示身份时，出厂卡没播种到他名下"
+
+
+def test_deleting_my_session_does_not_touch_the_other_persons_checkpoints(
+    client: TestClient,
+) -> None:
+    """多租户 B3：检查点按线程走，删自己的照删、删不动别人的。
+
+    结论要钉的不是"能删"（那条早有），而是"检查点**不用加 user 列**"这句：检查点按
+    `thread_id` 键，而线程 id 本身就带着归属（`get_thread` 校验），所以"删自己的会话
+    不会清掉别人的检查点 / 自己的照删"在现有结构下自然成立。没有这一条，后人看着
+    `checkpoints` 无 user 列会以为漏了，再去给它加一列（第二份真相）。
+    """
+    from langchain_core.messages import AIMessage
+
+    from rolecard_agent.core.graph import build_graph_config
+
+    rt = client.app.state.ctx.runtime
+    graph = rt.state["graph"]
+
+    tids: dict[str, str] = {}
+    for who, tag in ((A, "a"), (B, "b")):
+        one = next(
+            r for r in client.get("/api/sessions", headers=_as(who)).json()
+        )
+        tids[tag] = str(one["thread_id"])
+        # 直写一条消息进各自的检查点（与 cloud_only_shape 同一路写法）：不跑图，只为留下
+        # 可数的 checkpoint 行。
+        graph.update_state(
+            build_graph_config(tids[tag], rt.effective),
+            {"messages": [AIMessage(content=f"线{tag}")]},
+        )
+
+    def _cp_rows(tid: str) -> int:
+        n = client.app.state.ctx.conn.execute(
+            "SELECT COUNT(*) AS n FROM checkpoints WHERE thread_id = ?", (tid,)
+        ).fetchone()["n"]
+        return int(n)
+
+    assert _cp_rows(tids["a"]) > 0 and _cp_rows(tids["b"]) > 0
+    assert client.delete(f"/api/session/{tids['a']}", headers=_as(A)).status_code == 204
+    assert _cp_rows(tids["a"]) == 0, "删自己的会话，自己的检查点没跟着清"
+    assert _cp_rows(tids["b"]) > 0, "删自己的会话把别人的检查点清掉了"
+    # 对面那条连删都进不去（404），自然更碰不到它的检查点 —— 读侧 404 纪律的老话
+    assert client.delete(f"/api/session/{tids['b']}", headers=_as(A)).status_code == 404
+    assert _cp_rows(tids["b"]) > 0
+
+
+def test_second_login_can_open_a_session_and_write_domain_records(
+    client: TestClient,
+) -> None:
+    """多租户 B4：第二个登录者**真能用** —— 开会话、写域记录各留一份自己的数据。
+
+    M1–M8 都是"看不见别人"，这一条验的是正方向：B 不是只能隔着玻璃看 A 的东西，
+    他自己该有完整的可用性（`R26-44` 留给 B4 的尾巴：会话 + 域记录两件都落在他名下）。
+    """
+    made = client.post("/api/session", json={"role_id": "r_b"}, headers=_as(B))
+    assert made.status_code == 201, made.text
+    owner = client.app.state.ctx.conn.execute(
+        "SELECT user_id FROM session_thread WHERE thread_id = ?",
+        (made.json()["thread_id"],),
+    ).fetchone()["user_id"]
+    assert str(owner) == B
+
+    rec = client.post(
+        "/api/domains/health/records",
+        json={"label": "心率", "value_text": "72", "unit": "bpm"},
+        headers=_as(B),
+    )
+    assert rec.status_code == 201, rec.text
+    rid = str(rec.json()["id"])
+    assert rid in {
+        str(r["id"]) for r in client.get(
+            "/api/domains/health/records", headers=_as(B)
+        ).json()
+    }
+    assert rid not in {
+        str(r["id"]) for r in client.get(
+            "/api/domains/health/records", headers=_as(A)
+        ).json()
+    }, "B 写的记录出现在 A 的读侧"
