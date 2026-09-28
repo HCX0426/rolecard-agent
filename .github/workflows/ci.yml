@@ -60,12 +60,6 @@ jobs:
       - name: gate.py --fast
         run: python scripts/gate.py --fast
 
-      # 诊断用（临时）：--fast 的 pytest 带 -x，在 Linux 上第一个失败就把后面全遮住。
-      # 这一步把**整份失败清单**一次数出来；全绿之后这一步整个移除。
-      - name: 诊断：完整失败清单（不带 -x）
-        if: failure()
-        run: python -m pytest -p no:cacheprovider -W ignore -q || true
-
   frontend:
     name: 前端（tsc + build + vitest）
     runs-on: ubuntu-latest
