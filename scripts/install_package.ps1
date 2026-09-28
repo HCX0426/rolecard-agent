@@ -1,4 +1,4 @@
-﻿# 装当前构建出来的 NSIS 包：静默安装 + 验货 + 装完启动。
+# 装当前构建出来的 NSIS 包：静默安装 + 验货 + 装完启动。
 #
 # 为什么要专门有这个脚本（09-26 实测，别再靠记忆）：安装包**是**认 `/S` 的 ——
 # 用 PowerShell 的 `Start-Process -ArgumentList "/S" -Wait` 传参，42.3 秒装完、
@@ -38,11 +38,17 @@ if (-not $SkipBuild) {
     Write-Host "[1/5] building (frontend -> sidecar -> nsis)"
     Push-Location (Join-Path $root "frontend")
     npm run build | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "frontend build failed (exit=$LASTEXITCODE)" }
     Pop-Location
     & (Join-Path $root ".venv\Scripts\python.exe") (Join-Path $root "scripts\build_sidecar.py")
     if ($LASTEXITCODE -ne 0) { throw "sidecar build failed (exit=$LASTEXITCODE)" }
     Push-Location (Join-Path $root "shell")
-    npm run package | Out-Null
+    # 这一步的输出**不再 Out-Null**：2026-09-28 实测它静默失败过（electron-builder 要清
+    # `release/win-unpacked` 时 `app.asar` 被别的进程占着 -> EBUSY），而退出码没被检查，于是
+    # 脚本抱着 `release/` 里上一次的旧安装包一路装到验货 A 才红，报的是"装进去的不是新构建"
+    # —— 症状离病因差了十万八千里。这里宁可多打几十行，也不让打包失败再隐身。
+    npm run package
+    if ($LASTEXITCODE -ne 0) { throw "electron-builder failed (exit=$LASTEXITCODE)" }
     Pop-Location
 } else {
     Write-Host "[1/5] build skipped (-SkipBuild)"
