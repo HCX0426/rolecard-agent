@@ -20,7 +20,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import ThinkingPanel from "../components/chat/ThinkingPanel";
 import PetContextMenu, { type MenuEntry } from "../components/PetContextMenu";
-import PetSprite, { type PetStatus } from "../components/pet/PetSprite";
+import PetSprite, {
+  DEFAULT_PACK_ROWS,
+  DEFAULT_PET_SHEET,
+  type PetStatus,
+} from "../components/pet/PetSprite";
 import QuietLine from "../components/QuietLine";
 import { api, streamChat, streamEdit, UNREAD_POLL_MS, type MessagePage, type MessageRow, type QuietStatus, type ReachoutRow, type RoleCard } from "../api";
 import { useAutoScroll } from "../hooks/useAutoScroll";
@@ -256,6 +260,8 @@ export default function PetPage() {
         showContentRef.current ? shorten(arrived.text) : "内容已隐藏",
         arrived.thread_id,
       );
+      // 语音与通知同源同时刻（都是"这次真的新到"那条）：开关与内容旗子都在 `speak` 里判。
+      speak(arrived.text);
     }
   }, [refreshHistory]);
 
@@ -571,6 +577,61 @@ export default function PetPage() {
     };
   }, []);
 
+  // 语音（系统 TTS）。托盘「朗读消息」是唯一的写入口，页面只读 —— 与内容旗子同一个形状。
+  // 为什么用 `window.speechSynthesis` 而不是引一个 TTS 库：这是**系统自带**的能力
+  // （Chromium 走 Windows SAPI / 各平台原生引擎），零依赖、零许可问题、离线可用 ——
+  // 与"复用设施"同一条纪律；要换更好的音色（Edge-TTS 等）时，换的是这一处实现。
+  const voiceRef = useRef(false);
+  useEffect(() => {
+    const bridge = shellBridge();
+    if (!bridge?.petVoiceEnabled) return;
+    let alive = true;
+    void bridge
+      .petVoiceEnabled()
+      .then((value) => {
+        if (alive) voiceRef.current = value;
+      })
+      .catch(() => undefined); // 问不到就保持"不朗读"：安静比误读好
+    bridge.onPetVoice?.((value) => {
+      voiceRef.current = value;
+    });
+    return () => {
+      alive = false;
+      bridge.onPetVoice?.(null);
+    };
+  }, []);
+
+  /** 读出这一句。**两道闸**：托盘语音开关 **且**「显示消息内容」开着 —— 声音和文字一样
+   *  会把"你们聊了什么"播给屋里的人听，只藏字不藏声等于那面隐私旗子只糊了半张脸。 */
+  function speak(text: string) {
+    if (!voiceRef.current || !showContentRef.current) return;
+    const clean = text.trim();
+    if (!clean) return;
+    const synth = window.speechSynthesis;
+    // 没有 TTS 的环境（jsdom、极简系统）静默跳过：读不出来不该影响对话框本身。
+    if (!synth || typeof SpeechSynthesisUtterance === "undefined") return;
+    try {
+      synth.cancel(); // 新的一句盖掉正在读的：两句叠着读最像故障
+      const utter = new SpeechSynthesisUtterance(clean);
+      // 语言跟着文档声明走（index.html 的 lang），不硬编码 zh-CN —— 换语言的角色卡
+      // 不必重打包也能读对。拿不到就按中文（这个项目的主语言）。
+      utter.lang = document.documentElement.lang || "zh-CN";
+      utter.rate = 1.05;
+      synth.speak(utter);
+    } catch {
+      // 系统没装语音引擎：静默 —— 出声失败不是故障级事件
+    }
+  }
+
+  /** 把一份回放里**她最后说的那句**读出来（这一轮刚跑完时用）。 */
+  function speakLastFrom(page: MessagePage) {
+    const last = [...page.messages].reverse().find((m) => m.role === "assistant" && m.content);
+    if (last?.content) speak(last.content);
+  }
+
+  // 卸载时把正在读的那句掐掉：驻留件不该在你让它消失之后还在说话。
+  useEffect(() => () => window.speechSynthesis?.cancel(), []);
+
   // 历史只在**展开时**读：驻留件不该为了一个没被看到的面板每 10 秒打一次接口。
   // 一轮跑完的那次重读在 `send()` 里 inline 做（要等它到手才敢收气泡，见 `handoff`）。
   // 关掉「显示消息内容」时连读都不读：藏起来的东西不该只是不画，还留在页面里等着被看到。
@@ -659,7 +720,11 @@ export default function PetPage() {
         return;
       }
       try {
-        handoff(await api.get<MessagePage>(messagesPath(usedTid)));
+        const page = await api.get<MessagePage>(messagesPath(usedTid));
+        handoff(page);
+        // 这轮她说的那句读出来（`speak` 里判两道闸）。与气泡收了才读同一个顺序：
+        // 回放到手 = 这一轮已经落库，读的才是"她真的说过的那一句"。
+        speakLastFrom(page);
       } catch (e) {
         // 读不到回放就**留着**气泡与乐观那条：宁可屏幕上重一遍，也不能让用户以为"我说的话没了"。
         setHistoryError(`历史没读到：${(e as Error).message}`);
@@ -696,7 +761,9 @@ export default function PetPage() {
         setBusy(false);
         busyRef.current = false;
       }
-      handoff(await api.get<MessagePage>(messagesPath(threadId)));
+      const page = await api.get<MessagePage>(messagesPath(threadId));
+      handoff(page);
+      speakLastFrom(page); // 重生那版也要读出来：屏幕上换了内容、声音还念旧的就是两份事实
     } catch (e) {
       setStreamError(`重新生成失败：${(e as Error).message}`);
     } finally {
@@ -1015,12 +1082,14 @@ export default function PetPage() {
       >
         <PetSprite
           status={petStatus}
+          rows={DEFAULT_PACK_ROWS}
           width={160}
           height={184}
           className="drop-shadow-md"
-          // 素材即插即用：放一张合法 waifu spritesheet（1536×1872，8×9 格）到
-          // `frontend/public/pets/<包>/sprite.webp`，再把地址写到这里。
-          src={undefined}
+          // 默认包（自绘，见 scripts/make_pet_sheet.py）。换装 = 往
+          // `frontend/public/pets/<包>/` 放一张 8×9 的 spritesheet，再把这里指过去；
+          // rows 同时声明那几行（协议未确认的 5–8）在这张包里各是什么动画。
+          src={DEFAULT_PET_SHEET}
         />
       </div>
 

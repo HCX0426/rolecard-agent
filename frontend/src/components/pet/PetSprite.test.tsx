@@ -49,4 +49,12 @@ describe("PetSprite", () => {
     const sprite = screen.getByTestId("pet-sprite");
     expect(bg(sprite)).toContain("-552px"); // 3 × 208（× 缩放 184/208）
   });
+
+  it("`rows` 覆盖通用表：包可以自己声明 5–8 行的语义（默认包用它把 thinking 指到第 7 行）", () => {
+    const { rerender } = render(<PetSprite src={SHEET} status="thinking" height={208} />);
+    const sprite = screen.getByTestId("pet-sprite");
+    expect(bg(sprite)).toContain("0px"); // 通用表保守：thinking 回 idle 行
+    rerender(<PetSprite src={SHEET} status="thinking" rows={{ thinking: 7 }} height={208} />);
+    expect(bg(sprite)).toContain("-1456px"); // 7 × 208
+  });
 });

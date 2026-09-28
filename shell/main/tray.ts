@@ -72,7 +72,7 @@ export function createTray(controls: TrayControls): TrayHandle {
           ? []
           : [
               new MenuItem({
-                label: "（桌宠收起中：下面四项下次放出时生效）",
+                label: "（桌宠收起中：下面五项下次放出时生效）",
                 enabled: false,
               }),
             ]),
@@ -97,6 +97,12 @@ export function createTray(controls: TrayControls): TrayHandle {
         }),
         check("显示消息内容", prefs.showContent, (next) => {
           controls.setPetPrefs({ showContent: next });
+          render();
+        }),
+        // 语音（系统 TTS）。默认关：出声是"打扰屋里人"的那个方向，必须是用户主动开的那一下。
+        // 与「显示消息内容」是两道独立的闸 —— 页面侧两个都开着才出声（见 PetPage.speak）。
+        check("朗读消息", prefs.voice, (next) => {
+          controls.setPetPrefs({ voice: next });
           render();
         }),
         check("靠边隐藏", prefs.dockEnabled, (next) => {

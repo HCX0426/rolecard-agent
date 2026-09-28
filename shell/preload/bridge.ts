@@ -18,12 +18,14 @@ import { contextBridge, ipcRenderer } from "electron";
 
 type OpenThreadHandler = (threadId: string) => void;
 type ContentVisibleHandler = (visible: boolean) => void;
+type VoiceHandler = (enabled: boolean) => void;
 type PanelShiftHandler = (px: number) => void;
 
 let onOpenThread: OpenThreadHandler | null = null;
 // 与 open-thread 同一个形状：**单个槽位**而不是监听器列表 —— 桌宠页是这面旗的唯一归属者，
 // 后注册者覆盖前者（React 严格模式下挂载两次也不留旧监听）。
 let onContentVisible: ContentVisibleHandler | null = null;
+let onVoice: VoiceHandler | null = null;
 let onPanelShift: PanelShiftHandler | null = null;
 
 ipcRenderer.on("shell:open-thread", (_event, value: unknown) => {
@@ -32,6 +34,11 @@ ipcRenderer.on("shell:open-thread", (_event, value: unknown) => {
 
 ipcRenderer.on("shell:pet-content-visible", (_event, value: unknown) => {
   if (typeof value === "boolean") onContentVisible?.(value);
+});
+// 语音旗子（托盘「朗读消息」）：与内容旗子各自一路、各自一个槽位 —— 合成一条会让
+// "只改语音"的那次也触发内容侧的处理，一对一的语义就没了。
+ipcRenderer.on("shell:pet-voice", (_event, value: unknown) => {
+  if (typeof value === "boolean") onVoice?.(value);
 });
 // 面板在画布里要水平挪多少像素（色片贴边时画布有一截在屏外，见 windows.ts 的
 // `panelShiftFor`）。窗口本身不动 —— 旧做法是推窗口再让色片自挪，那一次 setBounds
@@ -87,6 +94,11 @@ contextBridge.exposeInMainWorld("rolecardShell", {
   /** 旗子被托盘改动时收一次通知；传 null 注销。首次值仍要 pull（push 早于监听就是丢消息）。 */
   onPetContentVisible: (handler: ContentVisibleHandler | null): void => {
     onContentVisible = handler;
+  },
+  /** 托盘的「朗读消息」旗子。**同样只有读**，形状与上面那条一致。 */
+  petVoiceEnabled: (): Promise<boolean> => ipcRenderer.invoke("shell:pet-voice"),
+  onPetVoice: (handler: VoiceHandler | null): void => {
+    onVoice = handler;
   },
   /** 面板水平自挪的像素数（壳每次改展开落点时推一次）；传 null 注销。同上是单槽位。 */
   onPetPanelShift: (handler: PanelShiftHandler | null): void => {

@@ -35,6 +35,10 @@ export type PetPrefs = {
   opacity: number;
   /** 显示消息内容：关掉后桌宠只给"有 N 条"和输入框，别人站在背后读不到你们聊了什么。 */
   showContent: boolean;
+  /** 朗读消息：她刚说的那句用系统 TTS 读出来（默认关 —— 出声是"打扰屋里人"的那个方向，
+   *  必须是用户主动打开）。与 `showContent` 是**两道独立的闸**：页面侧两个都开着才出声
+   *  （声音和文字一样会泄露内容，只藏字不藏声等于旗子只糊了半张脸）。 */
+  voice: boolean;
   /** 托盘「靠边隐藏」总开关（默认开：只有"拖到边上"这一个动作会触发它，它不自己动）。 */
   dockEnabled: boolean;
   /** 上次吸在哪条边；null = 没吸。**存的是意图**，藏多深每次按当前工作区重算。 */
@@ -45,6 +49,9 @@ export const PET_PREF_DEFAULTS: PetPrefs = {
   alwaysOnTop: true,
   opacity: 1,
   showContent: true,
+  // 语音默认**关**：出声会打扰屋里人，得是用户主动打开的那一下（与"显示内容"的默认相反，
+  // 那是隐私方向、默认收紧；这是打扰方向，也默认收紧）。
+  voice: false,
   dockEnabled: true,
   docked: null,
 };
@@ -150,13 +157,14 @@ export function loadPetPrefs(): PetPrefs {
     return { ...PET_PREF_DEFAULTS };
   }
   const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-  const flag = (key: "alwaysOnTop" | "showContent" | "dockEnabled") =>
+  const flag = (key: "alwaysOnTop" | "showContent" | "dockEnabled" | "voice") =>
     typeof o[key] === "boolean" ? o[key] : PET_PREF_DEFAULTS[key];
   const opacity = typeof o.opacity === "number" && Number.isFinite(o.opacity) ? o.opacity : 1;
   const docked = o.docked;
   return {
     alwaysOnTop: flag("alwaysOnTop"),
     showContent: flag("showContent"),
+    voice: flag("voice"),
     dockEnabled: flag("dockEnabled"),
     opacity: Math.min(1, Math.max(0.2, opacity)),
     // 认不出的边（手改过文件、或上一版还不叫这个名字）一律当"没吸"，不猜。

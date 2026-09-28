@@ -85,7 +85,7 @@ let petPrefs: PetPrefs = loadPetPrefs();
 
 const prefsText = (): string =>
   `置顶=${petPrefs.alwaysOnTop}｜不透明度=${petPrefs.opacity}｜显示内容=${petPrefs.showContent}` +
-  `｜靠边隐藏=${petPrefs.dockEnabled}${petPrefs.docked ? `(${petPrefs.docked})` : ""}`;
+  `｜朗读=${petPrefs.voice}｜靠边隐藏=${petPrefs.dockEnabled}${petPrefs.docked ? `(${petPrefs.docked})` : ""}`;
 
 /** 把"窗表现在到底是什么样"记一行。**为什么值得记**：实测构造参数 `alwaysOnTop: true`
  *  和 `setAlwaysOnTop(true)`（默认 floating 档）都没能让窗真的带上 `WS_EX_TOPMOST`
@@ -109,6 +109,9 @@ function updatePetPrefs(patch: Partial<PetPrefs>): void {
   logPetWindow(petWin);
   // 「显示消息内容」是页面该画什么：告诉它一次，之后它自己 pull（见 preload）。
   petWin.webContents.send("shell:pet-content-visible", petPrefs.showContent);
+  // 语音旗子同一个形状（页面 pull 首值、push 收变更）。两条**各自独立**发：合成一条
+  // 会让"只想改语音"的那次也走一遍内容旗子的处理，语义就不再是一对一了。
+  petWin.webContents.send("shell:pet-voice", petPrefs.voice);
 }
 
 /** 桌宠/通知要求打开某个会话时，主窗的文档可能还在加载（着陆页→后端地址那次跳转）。
@@ -269,6 +272,9 @@ function boot(): void {
   // 桌宠页问"内容该不该画出来"（托盘「显示消息内容」）。**只有读**：写的那一侧只在托盘，
   // 页面能改它就不是隐私开关了，是后端托管的那个源自己把自己藏起来的手势。
   ipcMain.handle("shell:pet-content-visible", () => petPrefs.showContent);
+  // 同一个形状：桌宠页问"朗读开着吗"（托盘「朗读消息」）。读音能不能关**只有用户说了算** ——
+  // 页面拿到的是只读值，出声与否的最终裁决仍在页面侧（那还要叠上内容旗子那道闸）。
+  ipcMain.handle("shell:pet-voice", () => petPrefs.voice);
   // 本地推理服务的进程（D③-b）。**三个方法都不收参数**：起停一个本机进程能碰到的东西比
   // 打开一个会话多得多，参数一旦是路径/命令，桥就成了任意执行入口。
   ipcMain.handle("shell:ollama-owner", () => ollama.owner());

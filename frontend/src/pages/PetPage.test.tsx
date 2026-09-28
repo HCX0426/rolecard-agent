@@ -56,11 +56,12 @@ function page(items: ReturnType<typeof row>[], unread = items.length): Reachouts
 
 /** 装上"壳"：桌宠的系统通知、悬停展开与"点气泡拉起控制台"都以它存在为前提。
  *  不装的时候就是 B/S —— 同一个组件、少两样能力，其余行为必须一模一样。 */
-function withShell(contentVisible = true): ShellBridge & {
+function withShell(contentVisible = true, voice = false): ShellBridge & {
   notify: ReturnType<typeof vi.fn>;
   openSession: ReturnType<typeof vi.fn>;
   movePetBy: ReturnType<typeof vi.fn>;
   onPetContentVisible: ReturnType<typeof vi.fn>;
+  onPetVoice: ReturnType<typeof vi.fn>;
 } {
   const shell = {
     backendUrl: () => Promise.resolve("http://127.0.0.1:8000"),
@@ -76,6 +77,8 @@ function withShell(contentVisible = true): ShellBridge & {
     petHotRects: vi.fn(),
     petContentVisible: vi.fn().mockResolvedValue(contentVisible),
     onPetContentVisible: vi.fn(),
+    petVoiceEnabled: vi.fn().mockResolvedValue(voice),
+    onPetVoice: vi.fn(),
     onRequestOpenThread: vi.fn(),
     ollamaOwner: vi.fn().mockResolvedValue({ managed: false, pid: null, binary: null }),
     startOllama: vi.fn(),
@@ -84,6 +87,25 @@ function withShell(contentVisible = true): ShellBridge & {
   };
   window.rolecardShell = shell;
   return shell;
+}
+
+/** 系统 TTS 替身：jsdom 两个都没有（`speechSynthesis` / `SpeechSynthesisUtterance`）。 */
+function installTts(): { speak: ReturnType<typeof vi.fn>; cancel: ReturnType<typeof vi.fn> } {
+  const speak = vi.fn();
+  const cancel = vi.fn();
+  Object.defineProperty(window, "speechSynthesis", {
+    value: { speak, cancel },
+    configurable: true,
+  });
+  (window as unknown as { SpeechSynthesisUtterance: unknown }).SpeechSynthesisUtterance = class {
+    text: string;
+    lang = "";
+    rate = 1;
+    constructor(text: string) {
+      this.text = text;
+    }
+  };
+  return { speak, cancel };
 }
 
 beforeEach(() => {
@@ -132,14 +154,14 @@ async function poll() {
 }
 
 describe("PetPage 桌宠", () => {
-  it("只显示最新一条，其余折成 +N；形象那块是兜底角色（无素材时的默认本体）", async () => {
+  it("只显示最新一条，其余折成 +N；形象那块走素材渲染器（默认包）", async () => {
     await mount();
     expect(screen.getByText("外头降温了，穿上外套。")).toBeTruthy();
     expect(screen.queryByText("旧的一条")).toBeNull();
     expect(screen.getByText("+2")).toBeTruthy();
     expect(screen.getByTitle(/^苏晚晴/)).toBeTruthy();
-    // 色片升级成形象组件：没有 spritesheet 素材时落在 GeometricPet 兜底（data-testid）。
-    expect(screen.getByTestId("pet-figure")).toBeTruthy();
+    // 形象：有素材就画 spritesheet（默认包在 public/pets/default，构建时进 dist）。
+    expect(screen.getByTestId("pet-sprite")).toBeTruthy();
   });
 
   it("点气泡 = 进入对话即都算读过（read-all），气泡随即收起", async () => {
@@ -172,7 +194,7 @@ describe("PetPage 桌宠", () => {
   it("一条消息都没有时只剩形象，不弹空气泡", async () => {
     apiMock.getReachouts.mockResolvedValue(page([]));
     await mount();
-    expect(screen.getByTestId("pet-figure")).toBeTruthy(); // 没消息时兜底角色照常驻留
+    expect(screen.getByTestId("pet-sprite")).toBeTruthy(); // 没消息时形象照常驻留
     expect(screen.queryByText("+2")).toBeNull();
   });
 
@@ -202,6 +224,42 @@ describe("PetPage 桌宠", () => {
     apiMock.getReachouts.mockResolvedValue(page([row(4, "自己看过的话", "read")]));
     await poll();
     expect(shell.notify).not.toHaveBeenCalled();
+  });
+
+  it("朗读默认关着：新到一条只拍通知，一声不出", async () => {
+    const tts = installTts();
+    const shell = withShell(); // voice 默认 false
+    await mount();
+    apiMock.getReachouts.mockResolvedValue(page([row(4, "给你带了桂花糕。"), row(3, "外头降温了，穿上外套。")]));
+    await poll();
+    expect(shell.notify).toHaveBeenCalledTimes(1);
+    expect(tts.speak).not.toHaveBeenCalled();
+  });
+
+  it("朗读开着：新到的那条读出来（念的是原文，不是截断的预览）", async () => {
+    const tts = installTts();
+    withShell(true, true);
+    await mount();
+    await act(async () => {
+      await Promise.resolve(); // 等 pull 到的旗子落进 ref
+    });
+    apiMock.getReachouts.mockResolvedValue(page([row(4, "给你带了桂花糕。"), row(3, "外头降温了，穿上外套。")]));
+    await poll();
+    expect(tts.speak).toHaveBeenCalledTimes(1);
+    const spoken = tts.speak.mock.calls[0][0] as { text: string };
+    expect(spoken.text).toBe("给你带了桂花糕。");
+  });
+
+  it("朗读开着但「显示消息内容」关着：仍然一声不出（声音同样会泄露内容）", async () => {
+    const tts = installTts();
+    withShell(false, true); // 内容藏起来、语音开着
+    await mount();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    apiMock.getReachouts.mockResolvedValue(page([row(4, "给你带了桂花糕。"), row(3, "外头降温了，穿上外套。")]));
+    await poll();
+    expect(tts.speak).not.toHaveBeenCalled();
   });
 
   it("点气泡把那条主动会话交给壳打开（壳负责把控制台拉到前台）", async () => {

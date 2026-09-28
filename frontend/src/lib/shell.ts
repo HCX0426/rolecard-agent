@@ -52,6 +52,12 @@ export interface ShellBridge {
   petContentVisible?(): Promise<boolean>;
   /** 旗子被改动时收一次通知；传 null 注销。首值仍需 pull 一次。同样可选（旧壳没有）。 */
   onPetContentVisible?(handler: ((visible: boolean) => void) | null): void;
+  /** 托盘「朗读消息」那面旗子（系统 TTS 读她刚说的那句）。与 `petContentVisible` 同一个
+   *  形状：**页面只能读**，写它的只有用户的托盘 —— 让页面自己决定要不要出声，等于把
+   *  "屋里的人听不听得见"交给后端托管的那个源。可选：旧壳没有它就一声不出。 */
+  petVoiceEnabled?(): Promise<boolean>;
+  /** 语音旗子被改动时收一次通知；传 null 注销。首值仍需 pull 一次。 */
+  onPetVoice?(handler: ((enabled: boolean) => void) | null): void;
   /** 壳每次展开时推一次"面板在画布里要水平挪几像素"（色片贴边、画布有一截在屏外才非零）。
    *  窗口本身不动 —— 这一条就是"展开有重影"的修法（`shell/main/windows.ts:panelShiftFor`）。
    *  可选照旧：旧壳不推 ⇒ 页面按 0 画，面板居中，贴边时会偏出去一截。
