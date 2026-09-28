@@ -184,14 +184,12 @@ describe("reduceChatEvent", () => {
   it("end 把「这一轮是被叫停的」带到气泡上（#18 的 End.stopped）", () => {
     const stopped = reduceChatEvent(bubble({ text: "说到一半" }), { type: "end", stopped: true });
     expect(stopped.bubble.stopped).toBe(true);
-    expect(stopped.meta.stopped).toBe(true);
     // 正常收尾要能**覆盖**掉上一轮留下的 true：气泡对象会被复用，只认 true 就会一直挂着"已停止"。
     const clean = reduceChatEvent(bubble({ text: "说完了", stopped: true }), {
       type: "end",
       stopped: false,
     });
     expect(clean.bubble.stopped).toBe(false);
-    expect(clean.meta.stopped).toBe(false);
     // 旧后端/旧壳不带这个字段 = 没被叫停，不是"被叫停了"。
     expect(reduceChatEvent(bubble(), { type: "end" }).bubble.stopped).toBe(false);
   });

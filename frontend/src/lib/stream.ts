@@ -14,6 +14,11 @@
  * 副作用（setState）留在组件里；这里只做"输入 → 输出"的映射。
  */
 
+/** 「这一轮是被叫停的」那句话 —— 前台的 live 气泡与回放的按轮标记共用一份（R26-13 尾），
+ *  跟 `describeTrim` 同一条理由：界面文案与测试断言必须说同一句话。 */
+export const STOP_HINT =
+  "这一轮是被叫停的 —— 上面那半截停在哪儿就是哪儿，没有说完。";
+
 // 与 api.ts 的 ChatEvent 保持结构一致（此处只依赖用到的那几个字段，避免循环依赖）。
 export interface ChatEventLike {
   type: string;
@@ -46,7 +51,8 @@ export interface LiveBubble {
   thinking: string;
   tools: ToolStep[];
   streaming: boolean;
-  /** 这一轮被用户叫停过：屏幕上那半截是**停下来的**，不是说完的（#18 的 `End.stopped`）。 */
+  /** 这一轮被用户叫停过：屏幕上那半截是**停下来的**，不是说完的（#18 的 `End.stopped`）。
+   *  前台气泡拿它显示 `STOP_HINT`；reload 之后由 checkpoint 里的 `MessageRow.stopped` 接棒。 */
   stopped?: boolean;
 }
 
@@ -60,8 +66,6 @@ export interface StreamMeta {
   errored?: boolean;
   /** 错误详情原文。调用方在流结束后要用它给用户一句能看的话。 */
   errorDetail?: string;
-  /** 这一轮是**被叫停**的（后端 `End(stopped=true)`）。不是失败，但半截话不该长得像说完了。 */
-  stopped?: boolean;
 }
 
 export interface ReducedFrame {
@@ -201,8 +205,9 @@ export function reduceChatEvent(bubble: LiveBubble, ev: ChatEventLike): ReducedF
       break;
     case "end":
       // 后端每轮都发 `stopped`（正常收尾是 false），所以这里**照实覆盖**而不是只认 true ——
-      // 否则一个复用出去的气泡对象会带着上一轮的"已停止"。
-      meta.stopped = Boolean(ev.stopped);
+      // 否则一个复用出去的气泡对象会带着上一轮的"已停止"。这个事实的两个读者：live 气泡
+      // 在 reload 接棒前显示它（reload 失败时它就是兜底）；落库的半句经 `MessageRow.stopped`
+      // 随回放展示（R26-13 尾）。meta 不再另抄一份 —— 填了没人读的字段是台账里的老问题。
       next = { ...bubble, stopped: Boolean(ev.stopped) };
       break;
     default:

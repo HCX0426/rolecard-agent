@@ -117,6 +117,10 @@ def serialize_message(
         reasoning = (message.additional_kwargs or {}).get("reasoning_content")
         if reasoning:
             row["reasoning"] = reasoning
+        # "这一轮是被叫停的"随消息一起回放（R26-13 尾）：刷新前的提示挂在界面 state 上，
+        # 一刷新就没了 —— 写进检查点的才是历史的一部分。缺键 = 正常收尾，旧消息一律没有。
+        if (message.additional_kwargs or {}).get("stopped"):
+            row["stopped"] = True
     else:
         row = {
             "role": "assistant",

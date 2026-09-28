@@ -11,7 +11,7 @@ import {
 } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
 import { useToast, type Tone } from "../components/Toast";
-import { describeTrim, type StreamMeta } from "../lib/stream";
+import { describeTrim, STOP_HINT, type StreamMeta } from "../lib/stream";
 import { buildTurns, type BuiltTurn } from "../lib/turns";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useChatStream } from "../hooks/useChatStream";
@@ -90,13 +90,12 @@ export default function ChatPage({
   } = useMessageSelection(messages, () => setEditing(null));
   // 本轮是否收到过 error 事件（详情留到收尾时统一提示，见 applyMeta 的说明）。
   const errorRef = useRef<string>("");
-  /** 本轮是被叫停的（`End(stopped)`）：留到收尾之后还要看得见，所以是状态不是气泡字段。 */
-  const [stoppedHint, setStoppedHint] = useState(false);
 
   /** 把事件的旁路信息落到对应的界面状态上（气泡正文之外的信息）。 */
   const applyMeta = useCallback((meta: StreamMeta) => {
     if (meta.trimmed && meta.trimmed.dropped > 0) setTrim(meta.trimmed);
-    if (meta.stopped) setStoppedHint(true);
+    // "被叫停"不再走这里：前台那份由 live 气泡的 `stopped` 显示，回放那份由落库的
+    // `MessageRow.stopped` 按轮显示（R26-13 尾）—— 页面 state 里存一份一刷新就丢。
     // 错误详情必须**攒起来留到流结束后再说**：气泡会在收尾时被 checkpoint 回放整体替换，
     // 挂在气泡上的 `[错误] …` 跟着一起消失 —— 用户实际上看不到任何提示。
     if (meta.errored) errorRef.current = meta.errorDetail || "模型调用失败";
@@ -464,7 +463,6 @@ export default function ChatPage({
     // 抽屉里点任意一条早就都走这一条了，只有这一处漏接 —— 漏的症状是"我明明在回话，
     // 铃铛上别的角色还在闪"。清失败不碍这一轮：红点没清是可恢复的小毛病，答不回来才是大事。
     void api.markAllReachoutsRead().catch(() => undefined);
-    setStoppedHint(false); // 上一轮的"被叫停"不该跟着这一轮
     const controller = startBubble(tid);
     await streamChat(tid, text, onEvent, controller.signal, image);
     const aborted = controller.signal.aborted;
@@ -518,7 +516,6 @@ export default function ChatPage({
     if (!content && !image) return;
     sendingRef.current = true;
     setBusy(true);
-    setStoppedHint(false); // 同上：重新生成是新一轮
     const controller = startBubble(sessionId);
     setEditing(null);
     await streamEdit(sessionId, mid, content, onEvent, controller.signal, image);
@@ -774,6 +771,11 @@ export default function ChatPage({
                 <div className={live.streaming ? "caret" : ""}>
                   {live.text ? <Markdown text={live.text} /> : "思考中…"}
                 </div>
+                {/* 被叫停的半句在前台的那份：reload 接棒前它先顶上；reload 失败（会话被删等
+                    极端情况）时它就是唯一的提示 —— 落库的标记靠回放，回放失败就没有了。 */}
+                {live.stopped && (
+                  <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">{STOP_HINT}</p>
+                )}
               </div>
             )}
             {/* 别处（桌宠）那一轮**正在生成**的那半句（R26-38）。
@@ -790,17 +792,9 @@ export default function ChatPage({
                 </p>
               </div>
             )}
-            {/* 这一轮是被叫停的（后端 `End(stopped)`）：屏幕上那半截不是"说完了"。
-                说它必须**在气泡之外** —— 收尾时气泡会被 checkpoint 回放整体换掉，挂在里面的字
-                跟着消失，用户其实看不到（与 `errorRef` 那笔账同一个理由）。
-                而"别的窗口按的停"（桌宠那个「停止」）正是本地 `signal.aborted` 覆盖不到的形态，
-                判据只能来自后端那句 stopped。在**这一扇窗**按的停另有那句
-                "已停止生成（已生成的内容已保留）"的提示，两边不重复说同一件事。 */}
-            {stoppedHint && (
-              <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
-                这一轮是被叫停的 —— 上面那半截停在哪儿就是哪儿，没有说完。
-              </p>
-            )}
+            {/* 「这一轮是被叫停的」不再挂在这份列表的尾部：它随半句一起落了 checkpoint
+                （R26-13 尾），由回放按轮显示 —— 页面 state 里存一份一刷新就丢，而
+                "跟着历史走"才是这句提示本来就该有的性质。 */}
           </div>
         </div>
 

@@ -17,9 +17,16 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 
 import httpx
+
+# 结论行带「✅」，Windows 控制台默认 codepage 是 GBK：不重配编码，第一个 print 就抛
+# UnicodeEncodeError（console_encoding 那条一致性检查抓的就是这个）。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 BASE = os.environ.get("STOP_PROBE_BASE", "http://127.0.0.1:8100")
 LOCAL_BACKEND = os.environ.get("STOP_PROBE_MODEL", "qwen3-vl-8b")
@@ -71,12 +78,16 @@ def stream_chat(
     return first, time.perf_counter() - t0, "".join(parts), stopped_at
 
 
-def last_assistant(tid: str) -> str:
+def last_assistant_row(tid: str) -> dict:
     rows = httpx.get(f"{BASE}/api/session/{tid}/messages", params={"limit": 20}, timeout=60).json()
     for m in reversed(rows["messages"]):
         if m.get("role") == "assistant":
-            return str(m.get("content") or "")
-    return ""
+            return m
+    return {}
+
+
+def last_assistant(tid: str) -> str:
+    return str(last_assistant_row(tid).get("content") or "")
 
 
 def main() -> None:
@@ -102,6 +113,16 @@ def main() -> None:
     f3, total3, text3, _ = stream_chat(t3, SHORT)
     print(f"[下一句] 首帧 {f3:.1f}s，整段 {total3:.1f}s，{len(text3)} 字"
           f" —— 这里若出现几十秒，就是停止没真的停（引擎还被那一轮占着）")
+
+    # R26-13 尾：被截断的半句要**自带**"被叫停"的标记（随 checkpoint 落库）——
+    # 刷新后的回放才标得出"没说完"，而不是靠页面 state。对照的两轮是说完了的，
+    # 不许冤枉一句完整的话。
+    row = last_assistant_row(t2)
+    assert row.get("stopped") is True, f"半句没带 stopped 标记：{row}"
+    for tid in (t1, t3):
+        done = last_assistant_row(tid)
+        assert done.get("stopped") is None, f"说完的轮被冤枉了：{done}"
+    print("[标记] 截断的半句落库自带 stopped=true，对照两轮（说完了）没有 ✅")
 
 
 if __name__ == "__main__":

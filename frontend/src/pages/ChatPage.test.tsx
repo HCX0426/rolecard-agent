@@ -44,7 +44,14 @@ vi.mock("../api", async (importOriginal) => {
 import ChatPage from "./ChatPage";
 
 /** 服务端会返回的历史（checkpoint 回放）。每个测试自己设，模拟"这一轮之后服务端的真相"。 */
-let replay: { id?: string; role: string; content: string; name?: string; reasoning?: string }[] = [];
+let replay: {
+  id?: string;
+  role: string;
+  content: string;
+  name?: string;
+  reasoning?: string;
+  stopped?: boolean;
+}[] = [];
 
 /** 一份最小可用的后端应答集：会话列表 / 角色 / 模型设置 / 历史回放 / 上下文预算。 */
 function stubMountCalls(
@@ -124,6 +131,33 @@ describe("ChatPage 流式渲染", () => {
     render(<ToastProvider><ChatPage /></ToastProvider>);
     await sendMessage("在的");
     await waitFor(() => expect(apiMock.markAllReachoutsRead).toHaveBeenCalledOnce());
+  });
+
+  it("回放里带 stopped 标记的那条回答，刷新后仍显示『被叫停』（R26-13 尾）", async () => {
+    // 标记随 checkpoint 落库：这句提示原先活在页面 state 上，一刷新就丢 —— 而
+    // "跟着历史走"才是它本来该有的性质（与 reasoning 随消息回放是同一条道理）。
+    replay = [
+      { role: "user", content: "讲个长故事" },
+      { role: "assistant", content: "说到一半的", stopped: true },
+    ];
+    scriptedStream([{ type: "end" }]);
+    render(<ToastProvider><ChatPage /></ToastProvider>);
+    await sendMessage("讲个长故事");
+    expect(await screen.findByText(/这一轮是被叫停的/)).toBeTruthy();
+    // 全局的旧提示已删：只有按轮那一份，不许同一个事实说两遍。
+    expect(screen.getAllByText(/这一轮是被叫停的/)).toHaveLength(1);
+  });
+
+  it("正常收尾的回答不显示『被叫停』（不冤枉一句完整的话）", async () => {
+    replay = [
+      { role: "user", content: "问" },
+      { role: "assistant", content: "完整的回答" },
+    ];
+    scriptedStream([{ type: "end" }]);
+    render(<ToastProvider><ChatPage /></ToastProvider>);
+    await sendMessage("问");
+    expect(await screen.findByText("完整的回答")).toBeTruthy();
+    expect(screen.queryByText(/这一轮是被叫停的/)).toBeNull();
   });
 
   it("工具调用先显示执行中，结果到达后显示内容", async () => {

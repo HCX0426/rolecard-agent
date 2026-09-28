@@ -67,6 +67,9 @@ export interface MessageRow {
   id?: string;
   /** 思考过程（仅思考模型；随 checkpoint 一起回放，因此刷新后仍在）。 */
   reasoning?: string;
+  /** 这一轮是**被叫停**的半句（随 checkpoint 回放，R26-13 尾）——刷新后仍标得出"没说完"。
+   *  旧消息与正常收尾都没有这个键。 */
+  stopped?: boolean;
   tools?: (string | null)[];
   name?: string;
   /** 工具行入参摘要（AI 消息 tool_calls 按 id 配对）：历史里"搜了什么"可见。 */
@@ -830,8 +833,9 @@ export type ChatEvent =
   | { type: "tool_call"; name: string; args: Record<string, unknown> }
   | { type: "tool_result"; name: string; content: string }
   | { type: "error"; detail: string }
-  // `stopped` 是后端对"这一轮是用户叫停的"的记账（#18）。界面目前不读它 —— 客户端自己按的
-  // 停止有 `signal.aborted` 可依据，而这个字段真正回答的是"服务端认不认这个停"。
+  // `stopped` 是后端对"这一轮是用户叫停的"的记账（#18）。它有两个读者：流式那半截由
+  // `lib/stream` 的 reduce 带到 live 气泡上（reload 失败时的兜底）；落库的半句经
+  // `MessageRow.stopped` 随回放展示（R26-13 尾）。客户端自己按的停另有 `signal.aborted`。
   | { type: "end"; stopped?: boolean };
 
 /** 会话的上下文预算事实（`GET /api/session/{id}/context`）。 */

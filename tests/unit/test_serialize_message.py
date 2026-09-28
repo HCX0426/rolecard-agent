@@ -31,6 +31,22 @@ def test_thinking_is_replayed_with_the_message() -> None:
     assert row["content"] == "答：先想后答。"
 
 
+def test_stopped_marker_is_replayed_with_the_message() -> None:
+    """被叫停的半句带 stopped 标记进回放（R26-13 尾）：刷新后才标得出"没说完"。
+
+    界面那句提示原先只活在 SSE 的 `End.stopped` 与页面 state 上，一刷新就丢；
+    写进检查点的才是历史的一部分（与 reasoning 同一条道理）。
+    """
+    row = serialize_message(AIMessage(content="说到一半的", additional_kwargs={"stopped": True}))
+    assert row["stopped"] is True
+
+
+def test_finished_message_has_no_stopped_field() -> None:
+    """正常收尾不带这个键：不给前端一个要判空的字段，也不冤枉一句完整的话。"""
+    row = serialize_message(AIMessage(content="说完了。"))
+    assert "stopped" not in row
+
+
 def test_tool_calls_are_still_listed_alongside_reasoning() -> None:
     """带工具调用的思考轮次：tools 与 reasoning 要同时保留（两者都是可观测性的一部分）。"""
     message = AIMessage(

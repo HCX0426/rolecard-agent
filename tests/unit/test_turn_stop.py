@@ -155,6 +155,41 @@ def test_stop_drops_tool_calls_that_never_finished(roles: RoleCardService) -> No
     assert isinstance(message, AIMessage)
     assert not message.tool_calls
     assert "然后按了停止" in str(message.content)
+    # 丢 tool_calls 的重建不丢"被叫停"的记号 —— 标记在 call_model 里跟着收尾一起写。
+    assert message.additional_kwargs.get("stopped") is True
+
+
+def test_the_partial_committed_by_a_stop_carries_a_persistent_marker(
+    roles: RoleCardService,
+) -> None:
+    """R26-13 尾：半截进历史时**自带**"被叫停"的记号 —— 刷新后的回放才标得出来。
+
+    界面那句提示原先只活在 SSE 的 `End.stopped` 与页面 state 上，一刷新就丢；
+    写进落库那条消息的 `additional_kwargs` 才算进历史（与 reasoning 同一条道理）。
+    """
+    fake = _StreamedFake(
+        [
+            AIMessageChunk(content="雨后"),
+            AIMessageChunk(content="她走了很远"),
+            AIMessageChunk(content="这一段不该出现"),
+        ],
+        stop_after=2,
+    )
+    out = call_model(_state(_role(roles)), _ctx(roles, fake))
+    (message,) = out["messages"]
+    assert message.additional_kwargs.get("stopped") is True
+    assert message.additional_kwargs.get("created_at"), "标记不能挤掉时间戳"
+
+
+def test_a_finished_turn_carries_no_stop_marker(roles: RoleCardService) -> None:
+    """说完了就是说完了：正常收尾的消息不带"被叫停"，回放不冤枉一句完整的话。"""
+    fake = _StreamedFake(
+        [AIMessageChunk(content="说完了"), AIMessageChunk(content="，就这样。")],
+        stop_after=None,
+    )
+    out = call_model(_state(_role(roles)), _ctx(roles, fake))
+    (message,) = out["messages"]
+    assert "stopped" not in message.additional_kwargs
 
 
 def test_stop_before_the_call_raises_and_commits_nothing(roles: RoleCardService) -> None:

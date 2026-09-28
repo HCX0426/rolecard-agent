@@ -769,6 +769,12 @@ def call_model(
     # 看到了多少历史"，界面据此如实提示，而不是让用户自己猜"模型怎么忘了前面说的"
     # （审查报告 H3 的界面部分）。
     # created_at 随回复入库：历史回放显示时间（用户 2026-09-17）。
+    if stopped:
+        # R26-13 尾：把"这一轮是被叫停的"写进**落库的那条消息**本身 —— 刷新后的回放才标得
+        # 出"上面那半截没有说完"，而不是靠界面 state（一刷新就没了）。放在守卫替换**之后**：
+        # 拦截改写的是文本，改不掉"被叫停"这个事实。只标**截断的半句** —— 模型说完了、
+        # 只是工具阶段被停的那轮（`End.stopped` 同样为真），句子是完整的，不该背这个标记。
+        response.additional_kwargs["stopped"] = True
     response.additional_kwargs.setdefault("created_at", now_ts())
     return {
         "messages": [response],
