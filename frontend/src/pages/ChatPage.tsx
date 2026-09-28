@@ -3,10 +3,8 @@ import {
   api,
   streamChat,
   streamEdit,
-  type BackendRow,
   type MessagePage,
   type MessageRow,
-  type ModelSettings,
   type RoleCard,
   type SessionContext,
   type SessionRow,
@@ -18,111 +16,24 @@ import { buildTurns, type BuiltTurn } from "../lib/turns";
 import ProcessPanel from "../components/chat/ProcessPanel";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useChatStream } from "../hooks/useChatStream";
-import { useMenus } from "../hooks/useMenus";
 import { useMessageSelection } from "../hooks/useMessageSelection";
 import { useSessions } from "../hooks/useSessions";
 import { useSessionMirror } from "../hooks/useSessionMirror";
 import { useUploadFlow } from "../hooks/useUploadFlow";
+import ChatToolbar from "../components/chat/ChatToolbar";
 import ToolStepCard from "../components/chat/ToolStepCard";
 import SessionSidebar from "../components/chat/SessionSidebar";
 import {
-  IconClip,
   IconImage,
-  IconModel,
   IconSend,
   IconSparkle,
   IconStop,
-  IconUser,
 } from "../components/chat/icons";
 import ThinkingPanel from "../components/chat/ThinkingPanel";
 import { Markdown } from "../components/Markdown";
 import { Button, Tag } from "../components/ui";
 
-/** 角色多到几个，抽屉里才出现搜索框：三五个的时候一个框只是多一个要看的控件。 */
-const ROLE_SEARCH_FROM = 6;
-
 /** 回答耗时：created_at 配对（用户 → 助手）换算成可读时长；无时间戳的旧消息返回 null。 */
-/** 模型设置里"这一页要显示的那些行"：只留**参与对话**的模型（`used_by` 含 chat，派生自
- *  服务页的引用行 —— 拆层后没有 usage 列可筛了）。读的是分组视图 `providers`，把凭据组
- *  的 provider/base_url 摊平回行上，菜单那套按 provider 分组的逻辑因此一行不用改。
- *  两条拉取路径（挂载、改窗口后刷新）共用它，state 因此只有一种形状。 */
-function chatRows(settings: ModelSettings): BackendRow[] {
-  return (settings.providers ?? []).flatMap((g) =>
-    g.models
-      .filter((m) => m.used_by.includes("chat"))
-      .map((m) => ({
-        name: m.name,
-        provider: g.provider,
-        style: g.style,
-        base_url: g.base_url,
-        model: m.model,
-        sort_order: 0,
-        num_ctx: m.num_ctx,
-        supports_vision: m.supports_vision ?? false,
-        supports_tools: m.supports_tools ?? true,
-        // 采样惩罚三栏原样摊平：菜单那一栏要回显"现在是多少 / 根本没设"。
-        repeat_penalty: m.repeat_penalty,
-        frequency_penalty: m.frequency_penalty,
-        presence_penalty: m.presence_penalty,
-        has_key: g.has_key,
-        key_masked: g.key_masked,
-      })),
-  );
-}
-
-/**
- * 采样惩罚那一栏的三行（设计稿 §8.2：我们此前只露了 num_ctx / temperature）。
- *
- * 档位是**保守地照出厂区间**给的，不是"我们认为更好的值"：`null` = 不传 = 听引擎的，排在第一，
- * 而且默认就停在那儿 —— 小模型上调惩罚容易伤连贯（§8.2 原话），没量过就不替用户决定。
- * `nativeOnly` 那一行对云端根本不出现：OpenAI 兼容体没有 `repeat_penalty` 这个标准字段，
- * 给一个"设了也不知道有没有生效"的控件比不给更糟（后端 PATCH 也会 400 挡）。
- */
-const SAMPLING_FIELDS: {
-  key: "repeat_penalty" | "frequency_penalty" | "presence_penalty";
-  label: string;
-  nativeOnly: boolean;
-  options: { value: number | null; label: string }[];
-}[] = [
-  {
-    key: "repeat_penalty",
-    label: "重复惩罚",
-    nativeOnly: true,
-    // 标签自己拼：`String(1.0)` 在 JS 里是 "1"，混在 1.1/1.2 旁边读起来像少了一档。
-    options: [
-      { value: null, label: "未设置" },
-      { value: 1.0, label: "1.0" },
-      { value: 1.1, label: "1.1" },
-      { value: 1.2, label: "1.2" },
-      { value: 1.3, label: "1.3" },
-    ],
-  },
-  {
-    key: "frequency_penalty",
-    label: "频率惩罚",
-    nativeOnly: false,
-    options: [
-      { value: null, label: "未设置" },
-      { value: 0, label: "0.0" },
-      { value: 0.1, label: "0.1" },
-      { value: 0.2, label: "0.2" },
-      { value: 0.3, label: "0.3" },
-    ],
-  },
-  {
-    key: "presence_penalty",
-    label: "存在惩罚",
-    nativeOnly: false,
-    options: [
-      { value: null, label: "未设置" },
-      { value: 0, label: "0.0" },
-      { value: 0.1, label: "0.1" },
-      { value: 0.2, label: "0.2" },
-      { value: 0.3, label: "0.3" },
-    ],
-  },
-];
-
 function fmtDuration(from: string, to: string): string | null {
   if (!from || !to) return null;
   const a = new Date(from.replace(" ", "T"));
@@ -150,9 +61,10 @@ export default function ChatPage({
   // 「临时话题」的批量清理：选中的线程 id 集合；null = 批量模式没开（那时不画复选框）。
   // 用户 09-26：临时话题攒了几十条，一条条删太麻烦。
   const [tempPick, setTempPick] = useState<Set<string> | null>(null);
-  // 角色抽屉里的搜索词（角色少的时候不出现那个框，门槛见 `ROLE_SEARCH_FROM`）。
-  const [roleFilter, setRoleFilter] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
+  /** 选中会话的计数。工具条拿它当「换了一条，把菜单收掉」的扳机：菜单开合是它的私事，
+   *  而**哪一次算换会话**是页面的事 —— 发送时顺手新建一条不该收菜单（见 ChatToolbar）。 */
+  const [selectionNonce, setSelectionNonce] = useState(0);
   const [currentRole, setCurrentRole] = useState<string>("");
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [input, setInput] = useState("");
@@ -172,27 +84,8 @@ export default function ChatPage({
 
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
-  // 菜单开关与「鼠标移出后延时关闭」抽到 hooks/useMenus —— 这里只剩业务语义。
-  const {
-    modelMenuOpen,
-    setModelMenuOpen,
-    roleMenuOpen,
-    setRoleMenuOpen,
-    ctxOpen,
-    setCtxOpen,
-    sampOpen,
-    setSampOpen,
-    armMenuClose,
-    cancelMenuClose,
-    closeAllMenus,
-  } = useMenus();
-  // 对话页只关心**参与对话**的模型行；类型直接用 `api.ts` 的 `BackendRow`，不再自造窄化
-  // 形状（审计 §5）：以前挂载路径手挑 6 个字段、改窗口那条路径塞原始行 —— 同一个 state
-  // 两种形状，谁先跑过决定字段在不在，`supports_tools` 这类就这样被页面"看不见"了。
-  const [backends, setBackends] = useState<BackendRow[]>([]);
-  // 供应商 id → 中文档称（分组标题显示"硅基流动"而非原始 id）
-  const [providerLabels, setProviderLabels] = useState<Record<string, string>>({});
-  const [defaultBackend, setDefaultBackend] = useState("");
+  // 菜单开合与模型行（供应商分组 / 上下文窗口 / 采样惩罚）都在 ChatToolbar 里：那两个菜单
+  // 互斥、共用一把「鼠标移出后延时关闭」的定时器，拆成两处就守不住这个不变式。
   const [sessionModel, setSessionModel] = useState<string | null>(null);
   // 会话级对话模式（对话/智能体）：后端返回**有效值**（会话覆盖 or 全局默认）。
   const [sessionMode, setSessionMode] = useState("chat");
@@ -219,7 +112,6 @@ export default function ChatPage({
     clearSelection,
     toggleSelect,
   } = useMessageSelection(messages, () => setEditing(null));
-  const fileRef = useRef<HTMLInputElement>(null);
   // 本轮是否收到过 error 事件（详情留到收尾时统一提示，见 applyMeta 的说明）。
   const errorRef = useRef<string>("");
   /** 本轮是被叫停的（`End(stopped)`）：留到收尾之后还要看得见，所以是状态不是气泡字段。 */
@@ -261,12 +153,7 @@ export default function ChatPage({
   useEffect(() => {
     refreshSessions().catch((e) => setStatus(`加载对话失败：${e.message}`, "warn"));
     api.get<RoleCard[]>("/api/roles").then(setRoles).catch(() => {});
-    api.get<ModelSettings>("/api/settings/models").then((s) => {
-      setBackends(chatRows(s));
-      setDefaultBackend(s.default || chatRows(s)[0]?.name || "");
-      // 分组标题用供应商的中文 displayName（来自 providers 视图，不再另拉一次目录接口）
-      setProviderLabels(Object.fromEntries((s.providers ?? []).map((g) => [g.provider, g.label])));
-    }).catch(() => {});
+    // 模型行由 ChatToolbar 自己拉（hooks/useModelBackends）：这一页除了生效模型的名字不碰它。
   }, [refreshSessions]);
 
   // 头部的角色选择跟随当前会话（切会话时显示该会话自己的角色）
@@ -289,10 +176,10 @@ export default function ChatPage({
   async function selectSession(threadId: string) {
     if (sendingRef.current) return;
     setSessionId(threadId);
+    setSelectionNonce((n) => n + 1); // 收菜单：这一步原先直接写在这里
     clearSelection(); // 勾选 / 编辑态属于上一个对话，不能跟着过来
     setLive(null);
-    setModelMenuOpen(false);
-    setSessionsOpen(false); // 移动端选中后收起抽屉
+    setSessionsOpen(false); // 移动端选中后收起抽屉（菜单的开合由 ChatToolbar 跟着会话变化收掉）
     try {
       const [page, detail, ctxInfo] = await Promise.all([
         // 分页响应：只取最近 N 条（默认 500），太长的一次性全量返回既慢也没用。
@@ -532,44 +419,6 @@ export default function ChatPage({
   );
   const ctxPct = ctxBudget > 0 ? Math.min(100, Math.round((ctxUsed / ctxBudget) * 100)) : 0;
 
-  /** 设置某后端的上下文窗口（本地模型 num_ctx），保存后热重建、下一轮生效。 */
-  async function setModelCtx(name: string, numCtx: number | null) {
-    try {
-      await api.setModelContext(name, numCtx);
-      const ms = await api.get<ModelSettings>("/api/settings/models");
-      setBackends(chatRows(ms));
-    } catch (e) {
-      setStatus(`设置上下文窗口失败：${(e as Error).message}`, "warn");
-    }
-  }
-
-  /** 改一栏采样惩罚（一次只改一栏）。后端保存时已经热重建 —— 惩罚项与 temperature 同一条
-   *  铁律，只能在构造期传进客户端，所以"下一轮生效"不需要重启，也不需要前端再猜。 */
-  async function setModelSampling(
-    name: string,
-    field: "repeat_penalty" | "frequency_penalty" | "presence_penalty",
-    value: number | null,
-  ) {
-    try {
-      const stored = await api.setModelSampling(name, { [field]: value });
-      // 用后端回来的那份现值更新，而不是本地假设：它同时管住了"没提交的那栏保持原样"。
-      setBackends((rows) =>
-        rows.map((r) =>
-          r.name === stored.name
-            ? {
-                ...r,
-                repeat_penalty: stored.repeat_penalty,
-                frequency_penalty: stored.frequency_penalty,
-                presence_penalty: stored.presence_penalty,
-              }
-            : r,
-        ),
-      );
-    } catch (e) {
-      setStatus(`设置采样惩罚失败：${(e as Error).message}`, "warn");
-    }
-  }
-
   /** 增强提示词：一次纯改写模型调用，结果替换草稿（对齐 WorkBuddy）。 */
   async function enhance() {
     const draft = input.trim();
@@ -746,20 +595,22 @@ export default function ChatPage({
     }
   }
 
-  async function switchModel(name: string | null) {
+  /** 切本对话的模型覆盖。返回**是否换成**：没换成时那一侧菜单要保持打开，让失败看得见。 */
+  async function switchModel(name: string | null): Promise<boolean> {
     const tid = await ensureSession();
-    if (!tid) return;
+    if (!tid) return false;
     try {
       await api.patch(`/api/session/${tid}`, { model_name: name });
       setSessionModel(name);
-      setModelMenuOpen(false);
       setStatus(
         name ? `本对话已切换模型 → ${name}（下一轮生效）` : "已清除本对话的模型覆盖（下一轮生效）",
         "ok",
       );
       await refreshSessions();
+      return true;
     } catch (e) {
       setStatus(`切换模型失败：${(e as Error).message}`, "warn");
+      return false;
     }
   }
 
@@ -782,8 +633,6 @@ export default function ChatPage({
   }
 
   const current = sessions.find((s) => s.thread_id === sessionId);
-  const roleBackend = roles.find((r) => r.role_id === (current?.role_id || ""))?.model_name || null;
-  const effectiveBackend = sessionModel || roleBackend || defaultBackend;
   // 进入时还没有会话：角色下拉默认停在「通用助手」，让用户一眼看到默认角色且可直接选。
   const defaultRoleId =
     roles.find((r) => r.role_id === "general_assistant")?.role_id || roles[0]?.role_id || "";
@@ -791,12 +640,6 @@ export default function ChatPage({
   // 提取精华的归属说明：写进的是**这个角色**的记忆桶，所以提示里要念出它的名字。
   const roleLabel =
     roles.find((r) => r.role_id === (current?.role_id || displayRole))?.role_name || "当前角色";
-  const grouped = useMemo(() => {
-    const g: Record<string, BackendRow[]> = {};
-    // state 里已经只有**对话**后端（`chatRows` 在拉取边界就筛掉了），这里不再重复过滤。
-    for (const b of backends) (g[b.provider] ||= []).push(b);
-    return Object.entries(g).sort(([a], [z]) => a.localeCompare(z));
-  }, [backends]);
 
   async function renameSession() {
     const title = titleDraft.trim();
@@ -810,12 +653,6 @@ export default function ChatPage({
       setStatus(`重命名失败：${(e as Error).message}`, "warn");
     }
   }
-
-  /** 抽屉里当前列得出来的角色：按名字子串过滤（大小写不敏感）。没有搜索词时就是全量。 */
-  const roleQuery = roleFilter.trim().toLowerCase();
-  const shownRoles = roleQuery
-    ? roles.filter((r) => r.role_name.toLowerCase().includes(roleQuery))
-    : roles;
 
   return (
     <div className="relative flex h-full">
@@ -1281,319 +1118,31 @@ export default function ChatPage({
               </div>
             </div>
           </div>
-          {/* 功能行（对齐 WorkBuddy：输入框下方一排功能）—— 全部对接真实后端能力 */}
-          <div className="mx-auto mt-2 flex max-w-3xl items-center gap-2">
-            <span
-              className="relative"
-              onMouseEnter={cancelMenuClose}
-              onMouseLeave={() => armMenuClose(() => setRoleMenuOpen(false))}
-              onKeyDown={(e) => {
-                // 键盘用户的第二条退路：菜单靠鼠标移出关闭，Esc 必须也能关。
-                if (e.key === "Escape") closeAllMenus();
-              }}
-            >
-              {/* 角色切换（WorkBuddy 式自定义菜单）：原生 select 的弹层系统绘制、样式突兀，
-                  换成与模型菜单同款的面板——角色名 + 内置徽标 + 当前项勾选。 */}
-              <button
-                onClick={() => {
-                  setModelMenuOpen(false); // 两个菜单互斥
-                  if (!roleMenuOpen) setRoleFilter(""); // 每次打开都是全量：上次的过滤词留着会让人以为角色变少了
-                  setRoleMenuOpen((o) => !o);
-                }}
-                aria-haspopup="true"
-                aria-expanded={roleMenuOpen}
-                title="换个说话的人 —— 会打开她自己的那条对话（各人的话留在各自那条线里）"
-                className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-700"
-              >
-                <IconUser />
-                {roles.find((r) => r.role_id === displayRole)?.role_name ?? "角色"} ▾
-              </button>
-              {roleMenuOpen && (
-                <>
-                  {/* 抽屉式而非"全量浮层"（用户 09-26："角色多了咋办"）：列表封顶 60vh 内部滚动，
-                      角色一多再给一个搜索框 —— 少了这个封顶，十几个角色就能把浮层顶出屏幕，
-                      而它往上长是会被头部截掉的。 */}
-                  <div className="absolute bottom-full left-0 z-20 mb-2 flex max-h-[min(60vh,420px)] w-64 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-600 dark:bg-slate-800">
-                    <p className="shrink-0 bg-slate-50 px-3 py-1.5 text-[11px] font-medium text-slate-400 dark:bg-slate-800/60 dark:text-slate-500">
-                      选角色 = 进她那条对话（原来那条留在左侧）
-                    </p>
-                    {roles.length > ROLE_SEARCH_FROM && (
-                      <input
-                        value={roleFilter}
-                        onChange={(e) => setRoleFilter(e.target.value)}
-                        placeholder={`搜角色（${roles.length} 个）`}
-                        aria-label="搜角色"
-                        className="mx-2 mt-2 shrink-0 rounded-lg border border-slate-200 px-2 py-1 text-xs outline-none focus:border-blue-400 dark:border-slate-600 dark:bg-slate-900"
-                      />
-                    )}
-                    <div className="min-h-0 flex-1 overflow-y-auto py-1">
-                      {shownRoles.map((r) => {
-                        const unread = unreadByRole[r.role_id] ?? 0;
-                        return (
-                          <button
-                            key={r.role_id}
-                            onClick={() => {
-                              setRoleMenuOpen(false);
-                              switchRole(r.role_id);
-                            }}
-                            className="flex w-full items-center justify-between gap-2 px-3 py-2 text-xs hover:bg-blue-50 dark:hover:bg-blue-900/30"
-                          >
-                            <span className="truncate text-slate-700 dark:text-slate-200">{r.role_name}</span>
-                            <span className="ml-auto flex shrink-0 items-center gap-1.5">
-                              {unread > 0 && (
-                                <span
-                                  className="rounded-full bg-blue-600 px-1.5 text-[10px] text-white"
-                                  title={`${unread} 条她主动找你，还没读`}
-                                >
-                                  {unread}
-                                </span>
-                              )}
-                              {r.is_builtin && (
-                                <span className="rounded bg-slate-100 px-1 text-[10px] text-slate-400 dark:bg-slate-700/60 dark:text-slate-400">
-                                  内置
-                                </span>
-                              )}
-                              {displayRole === r.role_id && (
-                                <span className="text-blue-600 dark:text-blue-400">✓</span>
-                              )}
-                            </span>
-                          </button>
-                        );
-                      })}
-                      {shownRoles.length === 0 && (
-                        <p className="px-3 py-2 text-xs text-slate-400 dark:text-slate-500">
-                          没有匹配「{roleFilter}」的角色
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </>
-              )}
-            </span>
-            {/* 对话/智能体 模式切换（会话级，PATCH /api/session）：agent = 多步自主任务
-                —— 注入规划指令、步数上限自动翻倍。与角色/模型同款"下一轮生效"。 */}
-            <div
-              className="flex items-center rounded-full border border-slate-200 bg-white p-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
-              title={sessionMode === "agent" ? "智能体模式：多步自主任务" : "对话模式：一问一答"}
-            >
-              <button
-                onClick={() => switchMode("chat")}
-                className={`rounded-full px-2.5 py-1 transition-colors ${
-                  sessionMode !== "agent" ? "bg-blue-600 text-white" : "text-slate-500 dark:text-slate-400"
-                }`}
-              >
-                对话
-              </button>
-              <button
-                onClick={() => switchMode("agent")}
-                className={`rounded-full px-2.5 py-1 transition-colors ${
-                  sessionMode === "agent" ? "bg-blue-600 text-white" : "text-slate-500 dark:text-slate-400"
-                }`}
-              >
-                智能体
-              </button>
-            </div>
-            <div
-              className="relative"
-              onMouseEnter={cancelMenuClose}
-              onMouseLeave={() => armMenuClose(() => setModelMenuOpen(false))}
-            >
-              <button
-                onClick={() => {
-                  setRoleMenuOpen(false); // 两个菜单互斥
-                  setModelMenuOpen((o) => !o);
-                }}
-                aria-haspopup="true"
-                aria-expanded={modelMenuOpen}
-                title="切换本对话使用的模型（按供应商分组；选中即开对话）"
-                className="flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700"
-              >
-                <IconModel />
-                {backends.find((b) => b.name === effectiveBackend)?.model || effectiveBackend || "模型"} ▾
-              </button>
-              {modelMenuOpen && (
-                <>
-                  <div className="absolute bottom-full left-0 z-20 mb-2 max-h-72 w-72 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-lg">
-                  <button
-                    onClick={() => switchModel(null)}
-                    className="flex w-full items-center justify-between px-3 py-2 text-xs hover:bg-blue-50 dark:bg-blue-900/30"
-                  >
-                    <span>默认后端（跟随设置）</span>
-                    {sessionModel === null && <span className="text-blue-600 dark:text-blue-400">✓</span>}
-                  </button>
-                  {grouped.map(([provider, list]) => (
-                    <div key={provider}>
-                      <p className="bg-slate-50 dark:bg-slate-800/50 px-3 py-1 text-[11px] font-medium text-slate-400 dark:text-slate-500">
-                        {providerLabels[provider] ?? provider}
-                      </p>
-                      {list.map((b) => (
-                        <div key={b.name} className="relative">
-                          {/* 选择按钮与上下文按钮是**兄弟**：嵌在 button 内部的徽章点击会被
-                              父按钮的激活吞掉（实测），拆开才互不影响。 */}
-                          <div className="flex items-center">
-                            <button
-                              onClick={() => switchModel(b.name)}
-                              className="flex min-w-0 flex-1 items-center justify-between px-3 py-1.5 text-xs hover:bg-blue-50 dark:hover:bg-blue-900/30"
-                            >
-                              <span className="flex min-w-0 items-center gap-1.5">
-                                <span className="font-mono truncate">{b.model}</span>
-                                {b.supports_vision && (
-                                  <span className="shrink-0 rounded bg-emerald-100 px-1 py-0.5 text-[9px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-                                    视觉
-                                  </span>
-                                )}
-                                {b.supports_tools && (
-                                  <span className="shrink-0 rounded bg-sky-100 px-1 py-0.5 text-[9px] font-medium text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-                                    工具
-                                  </span>
-                                )}
-                              </span>
-                              <span className="ml-2 flex min-w-0 items-center gap-1.5">
-                                <span className="truncate text-slate-400 dark:text-slate-500">{b.name}</span>
-                              </span>
-                              {effectiveBackend === b.name && (
-                                <span className="ml-1 text-blue-600 dark:text-blue-400">✓</span>
-                              )}
-                            </button>
-                            {(b.style === "native") && (
-                              <button
-                                onClick={() => setCtxOpen((c) => (c === b.name ? null : b.name))}
-                                title="设置该模型的上下文窗口（num_ctx）"
-                                className="mr-2 shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 hover:bg-slate-200 dark:bg-slate-700/60 dark:text-slate-400 dark:hover:bg-slate-600"
-                              >
-                                {b.num_ctx ? `${Math.round(b.num_ctx / 1024)}k ▾` : "上下文 ▾"}
-                              </button>
-                            )}
-                            {/* 采样惩罚：两类客户端都有这一栏（重复惩罚只对本地，见
-                                `SAMPLING_FIELDS`）。徽章上的"·已设"只说"至少一栏不是默认"，
-                                具体数值在面板里逐栏回显 —— 徽章上摆三个数是给人在菜单里读表格。 */}
-                            <button
-                              onClick={() => setSampOpen((s) => (s === b.name ? null : b.name))}
-                              title="采样惩罚（重复 / 频率 / 存在）：保存即热重建，下一轮生效"
-                              className="mr-2 shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 hover:bg-slate-200 dark:bg-slate-700/60 dark:text-slate-400 dark:hover:bg-slate-600"
-                            >
-                              {b.repeat_penalty != null ||
-                              b.frequency_penalty != null ||
-                              b.presence_penalty != null
-                                ? "采样 ·已设 ▾"
-                                : "采样 ▾"}
-                            </button>
-                          </div>
-                          {/* 上下文选项：点行内「上下文」徽章展开（inline，触屏可用） */}
-                          {(b.style === "native") &&
-                            ctxOpen === b.name && (
-                            <div className="border-t border-slate-100 px-3 py-2 dark:border-slate-700/60">
-                              <p className="pb-1.5 text-[10px] font-medium text-slate-400 dark:text-slate-500">
-                                上下文窗口 · {b.model}
-                              </p>
-                              <div className="grid grid-cols-3 gap-1">
-                                {[
-                                  { label: "引擎默认", value: null },
-                                  { label: "2048", value: 2048 },
-                                  { label: "4096", value: 4096 },
-                                  { label: "8192", value: 8192 },
-                                  { label: "16384", value: 16384 },
-                                  { label: "32768", value: 32768 },
-                                ].map((opt) => (
-                                  <button
-                                    key={opt.label}
-                                    onClick={() => setModelCtx(b.name, opt.value)}
-                                    className={`rounded px-2 py-1 text-[11px] ${
-                                      (b.num_ctx ?? null) === opt.value
-                                        ? "bg-blue-600 text-white"
-                                        : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700/60"
-                                    }`}
-                                  >
-                                    {opt.label}
-                                  </button>
-                                ))}
-                              </div>
-                              <p className="mt-1.5 text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
-                                Ollama 默认仅 2048 tokens，调大才能真正用上模型窗口
-                              </p>
-                            </div>
-                          )}
-                          {/* 采样惩罚面板：一栏一行、行内点档位，第一档永远是「未设置」。 */}
-                          {sampOpen === b.name && (
-                            <div className="border-t border-slate-100 px-3 py-2 dark:border-slate-700/60">
-                              {SAMPLING_FIELDS.filter(
-                                (f) =>
-                                  !f.nativeOnly || b.style === "native",
-                              ).map((f) => (
-                                <div key={f.key} className="flex items-start gap-1.5 py-0.5">
-                                  <span className="w-16 shrink-0 pt-1 text-[10px] text-slate-400 dark:text-slate-500">
-                                    {f.label}
-                                  </span>
-                                  <div className="flex flex-wrap gap-1">
-                                    {f.options.map((opt) => (
-                                      <button
-                                        key={opt.label}
-                                        onClick={() => void setModelSampling(b.name, f.key, opt.value)}
-                                        className={`rounded px-2 py-0.5 text-[11px] ${
-                                          (b[f.key] ?? null) === opt.value
-                                            ? "bg-blue-600 text-white"
-                                            : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700/60"
-                                        }`}
-                                      >
-                                        {opt.label}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-                              ))}
-                              <p className="mt-1 text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
-                                「未设置」= 不传这项、听引擎的（Ollama 出厂重复惩罚就是 1.1）。
-                                上调能压复读，但小模型上更容易伤连贯 —— 拿不准就留未设置。
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-                  </div>
-                </>
-              )}
-            </div>
-            <button
-              onClick={() => fileRef.current?.click()}
-              disabled={uploading}
-              title="上传报告 / 图片，自动解析并入检索索引（.txt/.md/.pdf/.docx/.pptx/.xlsx + 图片 OCR）"
-              className="flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700 disabled:opacity-50"
-            >
-              <IconClip />
-              {uploading ? "上传中…" : "上传报告"}
-            </button>
-            <button
-              onClick={() => {
-                // 进出删除模式都要清掉勾选：退出去再进来时，上一轮的勾选不该还留着。
-                if (selectMode) clearSelection();
-                else setSelectMode(true);
-              }}
-              disabled={busy || !sessionId}
-              title="删除历史里的某几段问答：勾选任意一问或一答，会自动带上配对的另一侧"
-              className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs disabled:opacity-50 ${
-                selectMode
-                  ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
-                  : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:border-amber-300 hover:text-amber-600"
-              }`}
-            >
-              {selectMode ? "退出删除模式" : "删除对话"}
-            </button>
-            <input
-              ref={fileRef}
-              type="file"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) handleUpload(f);
-                e.target.value = "";
-              }}
-            />
-            <span className="ml-auto text-[11px] text-slate-300 dark:text-slate-600">
-              Enter 发送 · 生成中可停止 · 停用插件即刻生效
-            </span>
-          </div>
+          {/* 功能行（角色 / 模式 / 模型 / 上传 / 删除模式）—— 菜单开合与模型行的读写
+              都在 components/chat/ChatToolbar 里，这里只给数据与回调。 */}
+          <ChatToolbar
+            roles={roles}
+            currentRoleId={currentRole}
+            displayRole={displayRole}
+            unreadByRole={unreadByRole}
+            sessionId={sessionId}
+            selectionNonce={selectionNonce}
+            busy={busy}
+            uploading={uploading}
+            selectMode={selectMode}
+            sessionModel={sessionModel}
+            sessionMode={sessionMode}
+            onPickRole={switchRole}
+            onSwitchModel={switchModel}
+            onSwitchMode={(mode) => void switchMode(mode)}
+            onUpload={handleUpload}
+            onToggleSelectMode={() => {
+              // 进出删除模式都要清掉勾选：退出去再进来时，上一轮的勾选不该还留着。
+              if (selectMode) clearSelection();
+              else setSelectMode(true);
+            }}
+            onStatus={setStatus}
+          />
         </div>
       </section>
     </div>
