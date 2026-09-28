@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -298,9 +299,16 @@ def test_fs_write_read_roundtrip(settings: Settings) -> None:
 
 
 def test_fs_path_escape_is_rejected(settings: Settings) -> None:
-    """**H1 同款边界**：`..` 跳出工作区必须被拦 —— 这是"读写用户磁盘"的守门测试。"""
+    """**H1 同款边界**：`..` 跳出工作区必须被拦 —— 这是"读写用户磁盘"的守门测试。
+
+    绝对路径探针按平台各给各的语法：`C:/Windows/win.ini` 在 POSIX 语义里**不是**绝对路径，
+    只是沙箱里一个名字带冒号的三层子目录（`Path.resolve` 不会把它带出工作区），所以它在
+    Linux 上"不被拦"恰恰是正确行为；那边的逃逸语法是 `/etc/passwd`。拦 `..` 的那条规则
+    两个平台共用，见前两条探针。
+    """
     (fs_read, fs_write, _fs_list) = make_file_tools(settings=settings)
-    for bad in ("../outside.txt", "a/../../escape.txt", "C:/Windows/win.ini"):
+    absolute = "C:/Windows/win.ini" if sys.platform == "win32" else "/etc/passwd"
+    for bad in ("../outside.txt", "a/../../escape.txt", absolute):
         assert "路径越界" in fs_read.invoke({"path": bad}), bad
         assert "路径越界" in fs_write.invoke({"path": bad, "content": "x"}), bad
 

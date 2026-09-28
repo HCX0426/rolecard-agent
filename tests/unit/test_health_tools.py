@@ -8,6 +8,7 @@ list_reports) have their own file: tests/unit/test_health_query.py.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -76,8 +77,13 @@ def test_upload_missing_file_is_reported_not_raised(
 @pytest.mark.parametrize(
     "outside",
     [
-        "C:/Windows/win.ini",
-        "C:/Users/Public/Documents/其他用户.txt",
+        # 绝对路径探针按平台各给各的语法：`C:/...` 在 POSIX 里不是绝对路径，只是上传目录里
+        # 一个名字带冒号的子路径，"不被拦"在那边才是对的。被测的**不变式**是"绝对路径 =
+        # 逃逸"，不是某个具体的 Windows 路径。
+        "C:/Windows/win.ini" if sys.platform == "win32" else "/etc/passwd",
+        "C:/Users/Public/Documents/其他用户.txt"
+        if sys.platform == "win32"
+        else "/home/somebody-else/其他用户.txt",
     ],
 )
 def test_upload_refuses_paths_outside_the_upload_dir(
@@ -87,7 +93,8 @@ def test_upload_refuses_paths_outside_the_upload_dir(
 
     回归护栏：修复前 `p.is_file()` 是唯一前提，`C:/Windows/win.ini` 能建成 intake 任务，
     再经 `POST /api/records/extract` 的 `source_file.exists()` 分支被解析后送进模型 ——
-    一条"读任意主机文件"的完整链路。
+    一条"读任意主机文件"的完整链路（这条历史发生在 Windows 上；POSIX 的等价物是
+    `/etc/passwd`，探针跟着平台走，不变式不变）。
     """
     ing, tools, _ = env
     out = _upload(tools).invoke({"file_path": outside})
