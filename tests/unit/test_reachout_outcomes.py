@@ -85,6 +85,23 @@ def test_the_two_views_of_the_same_rows_agree(conn: Any) -> None:
     # ④ 的总数必须等于 ① 的接话数
     assert sum(s["picked_sources"].values()) == s["picked"]
     assert s["picked_sources"] == {"open_thread": 1, "timer": 1, "time_pattern": 1}
+    # ④′ 交叉表的三个不变量（09-28 拍的口径）：
+    #   ① 每格数字加起来 = 由头的总数；
+    #   ② 每格的 picked = ④ 的 picked_sources 同源（一处判据，不允许两个数打架）；
+    #   ③ 各格的 column 总数打到 ① 的四个总数上（行与列都是同一批行的两种切法）。
+    for key, cell in s["cross"].items():
+        assert cell["total"] == sum(
+            cell[k] for k in ("picked", "ignored", "unseen", "dismissed")
+        ), f"由头 {key} 的格子加起来不等于它的总数"
+        expected_picked = s["picked_sources"].get(key, 0)
+        assert cell["picked"] == expected_picked, f"由头 {key} 的 picked 与④不同源"
+    assert {k: v for k, v in s["cross"].items() if k != mod.UNKNOWN_SOURCE} == {
+        "open_thread": {"total": 1, "picked": 1, "ignored": 0, "unseen": 0, "dismissed": 0},
+        "timer": {"total": 1, "picked": 1, "ignored": 0, "unseen": 0, "dismissed": 0},
+        "recall": {"total": 1, "picked": 0, "ignored": 1, "unseen": 0, "dismissed": 0},
+        "time_pattern": {"total": 1, "picked": 1, "ignored": 0, "unseen": 0, "dismissed": 0},
+    }
+    assert s["cross"][mod.UNKNOWN_SOURCE]["unseen"] == 1
     # 没落 `fired_by` 的行单独一档，不摊进任何真实源
     assert s["by_source"][mod.UNKNOWN_SOURCE] == 1
     # "看过"看 `state`；两个时刻列只分**怎么看的**：点开 1 · 批量 2 · 老数据 1

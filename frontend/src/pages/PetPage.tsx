@@ -20,9 +20,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import ThinkingPanel from "../components/chat/ThinkingPanel";
 import PetContextMenu, { type MenuEntry } from "../components/PetContextMenu";
-import { api, streamChat, streamEdit, UNREAD_POLL_MS, type MessagePage, type MessageRow, type ReachoutRow, type RoleCard } from "../api";
+import QuietLine from "../components/QuietLine";
+import { api, streamChat, streamEdit, UNREAD_POLL_MS, type MessagePage, type MessageRow, type QuietStatus, type ReachoutRow, type RoleCard } from "../api";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useChatStream } from "../hooks/useChatStream";
+import { read as readDataSource } from "../lib/dataSource";
 import { shellBridge } from "../lib/shell";
 import { type StreamMeta } from "../lib/stream";
 
@@ -91,6 +93,9 @@ export default function PetPage() {
   const [items, setItems] = useState<ReachoutRow[]>([]);
   // "某个角色有几条没读"读后端那一份（`unread_by_role`），不在这里 filter 第二遍。
   const [unreadByRole, setUnreadByRole] = useState<Record<string, number>>({});
+  // "她此刻为什么静默"（`S-8` 的负载跟 `/api/reachouts` 一起到）—— 桌宠这侧过去压根不显示，
+  // 用户天天盯着这扇窗，查不到的地方等于没有（R26-45 那条尾巴）。
+  const [quiet, setQuiet] = useState<QuietStatus[]>([]);
   const [offline, setOffline] = useState(false);
   const [bubbleShownAt, setBubbleShownAt] = useState(0);
   const [faded, setFaded] = useState(false);
@@ -235,6 +240,9 @@ export default function PetPage() {
     }
     setItems(page.items);
     setUnreadByRole(page.unread_by_role ?? {});
+    // 静默原因跟同一份响应走（`S-8` 的负载挂在 `/api/reachouts` 上）—— 每 3 秒已经拿
+    // 到手的东西，为它再开一个轮询等于多加一个时刻源。
+    setQuiet(page.quiet ?? []);
     setOffline(false);
     // 同一个节拍顺带把这条会话重读一遍：面板开着的时候，控制台也在往同一条线程里写
     // （用户 09-26 报的"对话界面对话时桌宠不更新"）。三道闸在 `refreshHistory` 里。
@@ -287,6 +295,12 @@ export default function PetPage() {
    * 而那时 `latest` 是空的 —— 只按气泡定角色会让面板变成一只不能说话的摆件。
    */
   const activeRole = picked ?? latest?.role_id ?? roles[0]?.role_id ?? null;
+  // 数据源（本机 / 云端 · 账号）：桌宠走的是同一个 `apiBase()`，数据确实跟着切了 ——
+  // 这行只是把"连的是哪份"说出口（M5 没做三件之②）。它是 localStorage 上的纯读，渲染时取即可。
+  const source = readDataSource();
+  const cloud = source.mode === "cloud" ? source : null;
+  // 「她此刻为什么静默」按当前这个角色取（与收件箱抽屉的 quiet_status 同一份数据）。
+  const myQuiet = quiet.find((q) => q.role_id === activeRole) ?? null;
   const activeName =
     roles.find((r) => r.role_id === activeRole)?.role_name ??
     latest?.role_name ??
@@ -806,6 +820,22 @@ export default function PetPage() {
               </button>
             </div>
           </header>
+          {/* 状态行：这一格是"我在场子里连的是哪份 + 她此刻为什么没说话"。
+              只读、不点、不折叠 —— 切回本机那个开关只在侧栏（同一个开关只出现一次，M5），
+              这行只是让桌宠不再假装不存在"云端"这件事。按设计稿 §6：只在**显示内容**时画，
+              否则"内容已隐藏"那半句话的意义会被这行云端地址搅浑。 */}
+          {showContent && (
+            <div className="flex shrink-0 items-center gap-2 border-b border-slate-100 px-3 py-1 dark:border-slate-700">
+              <span className="shrink-0 text-[10px] text-slate-400 dark:text-slate-500">
+                {cloud ? `☁ 云端 · ${cloud.user}` : "● 本机"}
+              </span>
+              {myQuiet && (
+                <div className="min-w-0 flex-1 truncate">
+                  <QuietLine q={myQuiet} />
+                </div>
+              )}
+            </div>
+          )}
           <div
             ref={scrollRef}
             onContextMenu={openMenu}

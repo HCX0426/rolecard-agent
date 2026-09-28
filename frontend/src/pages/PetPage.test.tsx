@@ -1175,6 +1175,50 @@ describe("PetPage 命中区与一次拖只收一次（三条都是量出来的�
   });
 });
 
+describe("PetPage 状态行（M5 之② + R26-45：云端指示 + 为什么静默）", () => {
+  const KEY = "rolecard.dataSource.v1";
+
+  async function openPanel() {
+    await mount();
+    fireEvent.click(screen.getByTitle(/点开看你们最近聊了什么/));
+    await act(async () => {
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+  }
+
+  it("本机态：显示 ● 本机，不出现「云端」两个字", async () => {
+    localStorage.removeItem(KEY);
+    await openPanel();
+    expect(screen.getByText("● 本机")).toBeTruthy();
+    expect(screen.queryByText(/云端/)).toBeNull();
+  });
+
+  it("云端态：显示 ☁ 云端 · 账号", async () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ mode: "cloud", base: "https://cloud.test:8123", user: "u1", secret: "pw" }),
+    );
+    await openPanel();
+    expect(screen.getByText("☁ 云端 · u1")).toBeTruthy();
+  });
+
+  it("静默原因挂在当前面板角色上，别的角色那句不画", async () => {
+    localStorage.removeItem(KEY);
+    apiMock.getReachouts.mockResolvedValue({
+      items: [row(3, "外头降温了，穿上外套。")],
+      unread: 1,
+      unread_by_role: { wan: 1 },
+      quiet: [
+        { role_id: "wan", why: "距上次说话不足 66 分钟", next_ok_at: null, streak: 1, unread: 1 },
+        { role_id: "other", why: "处于静默时段", next_ok_at: null, streak: 0, unread: 0 },
+      ],
+    } as ReachoutsPage);
+    await openPanel();
+    expect(screen.getByText(/距上次说话不足 66 分钟/)).toBeTruthy();
+    expect(screen.queryByText(/静默时段/)).toBeNull();
+  });
+});
+
 describe("PetPage 面板的右键菜单（09-26 用户选的形态：页内自绘，不用原生菜单）", () => {
   const HISTORY = [
     { id: "m1", role: "user", content: "你陪我嘛" },

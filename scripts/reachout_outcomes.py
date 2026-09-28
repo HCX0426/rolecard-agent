@@ -133,6 +133,9 @@ def summarize(
     opened = batch_seen = legacy_seen = 0
     by_source: dict[str, int] = {}
     picked_sources: dict[str, int] = {}
+    # 由头 × 结局交叉（09-28 拍的口径）：每个由头一行 `total/picked/ignored/unseen/dismissed`。
+    # 有了它，"recall 档的开口 vs timer 档的开口，谁更被回"这种问题不用再跑一次脚本。
+    cross: dict[str, dict[str, int]] = {}
     for r in rows:
         stamp = _parse(r["created_at"]) or datetime.min
         text = str(r["text"])
@@ -143,6 +146,11 @@ def summarize(
         # NULL 单列一档：**不知道**不等于"是某个源"。把老行摊进任何一档，就是替它们编一个由头。
         key = str(r["fired_by"]) if r["fired_by"] else UNKNOWN_SOURCE
         by_source[key] = by_source.get(key, 0) + 1
+        cell = cross.setdefault(
+            key,
+            {"total": 0, "picked": 0, "ignored": 0, "unseen": 0, "dismissed": 0},
+        )
+        cell["total"] += 1
         # "看过"的判据是 `state`，不是那两个时刻：用户 09-23 定的口径就是"点进对话界面就算
         # 都看过"，而批量那条路走的就是这个口径 —— 只认 `read_at` 会把**正在那条会话里跟
         # 她说话的人**数成"没看"（09-26 那组"没看 10/11"就是这么来的）。
@@ -150,14 +158,18 @@ def summarize(
         seen = str(r["state"]) == "read"
         if str(r["state"]) == "dismissed":
             dismissed += 1
+            cell["dismissed"] += 1
         elif real:
             # 他回话本身就等于看过，所以这一档不再要求 `state`
             picked += 1
             picked_sources[key] = picked_sources.get(key, 0) + 1
+            cell["picked"] += 1
         elif not seen:
             unseen += 1
+            cell["unseen"] += 1
         else:
             ignored += 1
+            cell["ignored"] += 1
         if seen:
             if r["read_at"] is not None:
                 opened += 1
@@ -188,6 +200,7 @@ def summarize(
         "legacy_seen": legacy_seen,
         "by_source": by_source,
         "picked_sources": picked_sources,
+        "cross": cross,
         # ⑤ 攒样本的进度（`R26-09` 的回访条件是"样本够 20 条再拿由头做取舍"）。
         # 观测窗口从**第一条带由头的行**算起，而不是从"那一列上线"写死一个日期：
         # 装好的那份是哪一版、什么时候装的，都会体现在数据里，写死的日子一定会漂。
@@ -243,6 +256,14 @@ def main() -> None:
         "\n     而桌宠日志每次启动被覆盖 —— 所以上线前那批行永远归不到由头上，"
         "\n     只能从这一列之后重新开始攒。"
     )
+    print("④′ 由头 × 结局（09-28 拍的口径：每个由头一行，接不接都数）")
+    for key, cell in sorted(
+        s["cross"].items(), key=lambda kv: (sum(kv[1].values()), kv[0]), reverse=True
+    ):
+        print(
+            f"   {key}: {cell['total']} 条 → 接 {cell['picked']} · 看了没接 {cell['ignored']}"
+            f" · 没看 {cell['unseen']} · 划掉 {cell['dismissed']}"
+        )
     # ⑤ 攒样本的进度：回访要等的是条数，那就让它自己报还差多少，而不是下次再来翻代码。
     kn = int(s["known_source"])
     need = 20
