@@ -67,7 +67,7 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
             assert client.post(
                 "/api/settings/memory/item", json={"text": f"事实{tag}"}, headers=head
             ).status_code == 200
-            assert client.put(
+            saved = client.put(
                 "/api/settings/models",
                 json={
                     "default": f"m{tag}",
@@ -84,7 +84,10 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
                     "fallbacks": [],
                 },
                 headers=head,
-            ).status_code == 200
+            )
+            # 500 的响应体里带"模型后端构建失败：<原因>"——只断状态码会把真正的原因吞掉
+            # （CI 的 Linux runner 上就因为这行只报 500，多花一轮才拿到 traceback）。
+            assert saved.status_code == 200, saved.text
         # 直接写库的那一段放在所有 HTTP 之后：主线程与请求线程各持一条 sqlite 连接，
         # 一个没提交的事务会把请求侧的写入挡成 `database is locked`。
         for who, tag in ((A, "a"), (B, "b")):
