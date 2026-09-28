@@ -218,9 +218,20 @@ def _check_dist_sync() -> tuple[bool, float]:
     return not drift, dt
 
 
+# CI 档跳过的步骤：要么要 node/浏览器/真机环境（前端与壳各有专属 job、冒烟要本机 Chrome），
+# 要么在 runner 上与本机口径不同（dist 入库同步由 frontend job 用 git diff 把关）。
+# 名单而不是标志位：加一步新检查时默认进 CI，除非在这里点名跳过 —— 漏跑的代价比多跑大。
+CI_SKIP = frozenset({"shell typecheck", "前端 vitest", "前端 tsc+build", "真机冒烟(14 项)"})
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="分层门禁（带每步计时）")
     parser.add_argument("--fast", action="store_true", help="只跑快速层（约 1 分钟）")
+    parser.add_argument(
+        "--ci",
+        action="store_true",
+        help="CI 档：全量层但跳过需要 node/浏览器/真机的步骤，且覆盖率**必跑**",
+    )
     args = parser.parse_args()
 
     timings: list[tuple[str, float]] = []
@@ -228,12 +239,20 @@ def main() -> int:
     started = time.perf_counter()
 
     for name, cmd, mode in STEPS:
+        if args.ci and name in CI_SKIP:
+            continue  # CI 档不跑 node/真机那几步（它们各有专属 job 或要本机环境）
         if args.fast and mode not in ("fast", "both"):
             continue
-        if (not args.fast) and mode not in ("full", "both"):
+        if (not args.fast) and (not args.ci) and mode not in ("full", "both"):
             continue
-        # 覆盖率那趟：没碰 src/ 就跳过（安全网只在数字真会变时跑）
-        if (not args.fast) and name.startswith("pytest(覆盖率") and not _src_changed():
+        # 覆盖率那趟：本地全量档"没碰 src/ 就跳过"；**CI 档必跑** —— 用户 09-29 拍了
+        # "不手动"，85% 这条线从此在每次 push/PR 上设防（R28-24 的修法）。
+        if (
+            (not args.fast)
+            and (not args.ci)
+            and name.startswith("pytest(覆盖率")
+            and not _src_changed()
+        ):
             print("\n▶ pytest(覆盖率≥85%)：跳过（src/ 无改动）", flush=True)
             timings.append((name, 0.0))
             continue
@@ -272,7 +291,8 @@ def main() -> int:
     print("=" * 52)
     for name, dt in timings:
         print(f"  {name:24} {dt:6.1f}s")
-    print(f"  {'总计':24} {total:6.1f}s（模式：{'fast' if args.fast else 'full'}）")
+    tier = "fast" if args.fast else "ci" if args.ci else "full"
+    print(f"  {'总计':24} {total:6.1f}s（模式：{tier}）")
     if failures:
         print(f"  ❌ 失败步骤：{'、'.join(failures)}")
         return 1

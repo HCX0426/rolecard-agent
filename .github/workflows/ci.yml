@@ -28,7 +28,7 @@ env:
 
 jobs:
   gate:
-    name: 门禁 --fast（ruff + mypy + 单测 + 一致性）
+    name: 门禁 --ci（含覆盖率≥85% 与 baseline 比对）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,8 +57,11 @@ jobs:
           pip install -r requirements.txt -r requirements-api.txt \
             -r requirements-rag.txt -r requirements-cloud.txt -r requirements-dev.txt
 
-      - name: gate.py --fast
-        run: python scripts/gate.py --fast
+      - name: gate.py --ci
+        # 用户 09-29 拍的：覆盖率与 baseline 比对**不留在手动档**，每次 push/PR 都设防
+        # （R28-24）。--ci = 全量层去掉需要 node/浏览器/真机的那几步（它们各有专属 job），
+        # 且覆盖率不因"src 无改动"跳过。口径只在 gate.py 一处。
+        run: python scripts/gate.py --ci
 
   frontend:
     name: 前端（tsc + build + vitest）
