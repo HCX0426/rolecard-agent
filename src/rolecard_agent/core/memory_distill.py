@@ -171,7 +171,7 @@ def extract(
         raw, usage = _invoke(model, prompt)
     except Exception as exc:  # noqa: BLE001 - 提取失败不该影响任何东西，但要能查
         return {"ok": False, "report": _report(detail=f"模型调用失败：{type(exc).__name__}")}
-    record_usage(conn, backend=backend, usage=usage, tracer=tracer)
+    record_usage(conn, backend=backend, usage=usage, user_id=user_id, tracer=tracer)
     report = _report(tokens=usage.total if usage is not None else None)
     # 已存条目的文字，随本轮新增一起长：模型在同一次输出里把同一件事写两遍时也认得出回声。
     known = [str(i["text"]) for i in active]
@@ -261,7 +261,7 @@ def consolidate(
         raw, usage = _invoke(model, prompt)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "report": _report(detail=f"模型调用失败：{type(exc).__name__}")}
-    record_usage(conn, backend=backend, usage=usage, tracer=tracer)
+    record_usage(conn, backend=backend, usage=usage, user_id=user_id, tracer=tracer)
     by_id = {int(str(i["id"])): i for i in active}
     report = _report(tokens=usage.total if usage is not None else None, before=len(active))
     for line in raw.splitlines():

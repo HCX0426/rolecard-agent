@@ -31,6 +31,7 @@ import contextlib
 from datetime import datetime
 from typing import Any, NamedTuple
 
+from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.core.observability import TraceEvent
 from rolecard_agent.storage.db import SqlConnection
 
@@ -137,9 +138,14 @@ def record_usage(
     usage: TokenUsage | None = None,
     calls: int = 1,
     day: str | None = None,
+    user_id: str | None = None,
     tracer: Any = None,
 ) -> bool:
-    """把一次调用的用量累进 (今天, 这个后端)。返回 False = 没记上（本轮照样该走完）。
+    """把一次调用的用量累进 (今天, 这个身份, 这个后端)。返回 False = 没记上（本轮照样该走完）。
+
+    **`user_id` 是"这笔账花的是谁的 key"**（多租户 B1a）：运行期凭据已经按这一轮的主人解析
+    （`core/bootstrap.effective_for`），账却不分人就等于两个人混成一格。默认回落本机那份 ——
+    单人自用形态下单身份，漏传的调用点不会凭空把账记到别人头上；要真按人分格，显式交出来。
 
     失败为什么不抛：这条账是**观测**，不是业务规则。它坏了最贵的代价是"某天少了一条调用"，
     而抛出去的代价是用户这一句话没回答完 —— 两件事不在一个量级上。
@@ -147,16 +153,17 @@ def record_usage(
     那会让人以为"今天没花 token"。
     """
     stamp = day or local_day()
+    owner = user_id or DEFAULT_USER_ID
     reported = usage is not None and (usage.prompt is not None or usage.completion is not None)
     try:
         conn.execute(
             """
             INSERT INTO token_usage_day (
-                day, backend, calls, prompt_tokens, completion_tokens,
+                day, user_id, backend, calls, prompt_tokens, completion_tokens,
                 reasoning_tokens, unreported
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(day, backend) DO UPDATE SET
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(day, user_id, backend) DO UPDATE SET
                 calls = calls + excluded.calls,
                 prompt_tokens = prompt_tokens + excluded.prompt_tokens,
                 completion_tokens = completion_tokens + excluded.completion_tokens,
@@ -165,6 +172,7 @@ def record_usage(
             """,
             (
                 stamp,
+                owner,
                 backend or "",
                 calls,
                 (usage.prompt if usage else None) or 0,
@@ -182,19 +190,27 @@ def record_usage(
                     TraceEvent(
                         event="usage_record_failed",
                         node="usage",
-                        detail={"error": type(exc).__name__, "day": stamp, "calls": calls},
+                        detail={
+                            "error": type(exc).__name__,
+                            "day": stamp,
+                            "calls": calls,
+                            "user_id": owner,
+                        },
                     )
                 )
         return False
 
 
-def daily_usage(conn: SqlConnection, *, day: str | None = None) -> list[dict[str, Any]]:
-    """某天各后端的累计（按总量倒序）。没数据给空表。"""
+def daily_usage(
+    conn: SqlConnection, *, day: str | None = None, user_id: str | None = None
+) -> list[dict[str, Any]]:
+    """某天各后端的累计（按总量倒序）。`user_id=None` = 所有人合并（"今天总共花了多少"）。"""
     rows = conn.execute(
         "SELECT backend, calls, prompt_tokens, completion_tokens, reasoning_tokens, unreported "
-        "FROM token_usage_day WHERE day = ? "
-        "ORDER BY (prompt_tokens + completion_tokens) DESC, backend",
-        (day or local_day(),),
+        "FROM token_usage_day WHERE day = ?"
+        + (" AND user_id = ?" if user_id is not None else "")
+        + " ORDER BY (prompt_tokens + completion_tokens) DESC, backend",
+        (day or local_day(),) + ((user_id,) if user_id is not None else ()),
     ).fetchall()
     out: list[dict[str, Any]] = []
     for row in rows:
@@ -215,14 +231,21 @@ def daily_usage(conn: SqlConnection, *, day: str | None = None) -> list[dict[str
     return out
 
 
-def usage_days(conn: SqlConnection, *, limit: int = 14) -> list[dict[str, Any]]:
-    """最近若干天每天的总量（含"报了多少次没报"的 calls）—— 给"一天多少 token"那一问。"""
+def usage_days(
+    conn: SqlConnection, *, limit: int = 14, user_id: str | None = None
+) -> list[dict[str, Any]]:
+    """最近若干天每天的总量（含"报了多少次没报"的 calls）—— 给"一天多少 token"那一问。
+
+    `user_id=None` = 所有人合并（"这台机器今天一共跑了多少"）。
+    """
     rows = conn.execute(
         "SELECT day, SUM(calls) AS calls, SUM(prompt_tokens) AS prompt, "
         "SUM(completion_tokens) AS completion, SUM(reasoning_tokens) AS reasoning, "
         "SUM(unreported) AS unreported "
-        "FROM token_usage_day GROUP BY day ORDER BY day DESC LIMIT ?",
-        (limit,),
+        "FROM token_usage_day"
+        + (" WHERE user_id = ?" if user_id is not None else "")
+        + " GROUP BY day ORDER BY day DESC LIMIT ?",
+        ((user_id,) if user_id is not None else ()) + (limit,),
     ).fetchall()
     return [
         {

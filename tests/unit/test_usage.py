@@ -20,6 +20,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, AIMessageChunk
 
+from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.core.turn import run_turn
 from rolecard_agent.core.usage import (
     TokenUsage,
@@ -170,6 +171,27 @@ def test_unreported_calls_are_counted_separately(conn: sqlite3.Connection) -> No
     assert record_usage(conn, backend="cloud-a", usage=TokenUsage(9, 1), day=local_day())
     (row,) = daily_usage(conn, day=local_day())
     assert row["calls"] == 4 and row["total"] == 10 and row["unreported"] == 3, row
+
+
+def test_two_identities_keep_separate_ledgers(conn: sqlite3.Connection) -> None:
+    """账本按花谁的 key 分格（多租户 B1a）：同一天同一后端，两个身份各一格。
+
+    `user_id=None` 的读法保持"今天总共花了多少"（合并）；按人读时互不串。
+    """
+    record_usage(conn, backend="cloud-a", usage=TokenUsage(100, 20), day="2026-09-23", user_id="u1")
+    record_usage(
+        conn, backend="cloud-a", usage=TokenUsage(50, 5), day="2026-09-23", user_id=DEFAULT_USER_ID
+    )
+    # 同一个 (day, user_id, backend) 照旧累加
+    record_usage(conn, backend="cloud-a", usage=TokenUsage(10, 2), day="2026-09-23", user_id="u1")
+    u1 = daily_usage(conn, day="2026-09-23", user_id="u1")
+    mine = daily_usage(conn, day="2026-09-23", user_id=DEFAULT_USER_ID)
+    assert u1[0]["total"] == 132  # (100+20) + (10+2)
+    assert mine[0]["total"] == 55  # (50+5)
+    # 同一天同一后端若两个身份都花了钱，合并读数会出两行（各一格）—— 这正是"不混账"。
+    merged_rows = daily_usage(conn, day="2026-09-23")
+    assert sum(r["total"] for r in merged_rows) == 132 + 55
+    assert len(merged_rows) == 2, "两个人各一格，而不是并成一格"
 
 
 def test_broken_ledger_does_not_raise_but_leaves_a_trace(conn: sqlite3.Connection) -> None:

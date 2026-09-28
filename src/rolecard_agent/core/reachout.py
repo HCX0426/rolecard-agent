@@ -1029,7 +1029,11 @@ def generate_reachout_text(
         # （`resolve_role_model` 正是这么降级的）。记成 `role.model_name` 会让这两种情况
         # 在按后端分组的用量页上变成 NULL。
         record_usage(
-            conn, backend=settings.backend_name(role.model_name), usage=usage, tracer=_tracer
+            conn,
+            backend=settings.backend_name(role.model_name),
+            usage=usage,
+            user_id=owner,
+            tracer=_tracer,
         )
         if usage is None:
             return

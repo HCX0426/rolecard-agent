@@ -204,6 +204,48 @@ def test_shape_migrated_tables_are_left_to_migrate(tmp_path: Path) -> None:
     conn.close()
 
 
+def test_legacy_usage_rows_become_the_local_identity(tmp_path: Path) -> None:
+    """老 `token_usage_day`（旧主键 (day, backend)）升上来：重建 + 数据保留 + 归属本机那份。
+
+    主键升级不能用补列器（`ON CONFLICT(day,user_id,backend)` 对着旧 PK 永不命中），
+    `_migrate` 整表重建的语义就是这三件事 —— 丢了任何一个都是"升级把账抹了"。
+    """
+    db = tmp_path / "app.db"
+    conn = connect(db)
+    bootstrap(conn, enabled_domains=DOMAINS)
+    conn.execute("DROP TABLE token_usage_day")
+    conn.execute(
+        "CREATE TABLE token_usage_day ("
+        " day TEXT NOT NULL, backend TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0,"
+        " prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0,"
+        " reasoning_tokens INTEGER NOT NULL DEFAULT 0, unreported INTEGER NOT NULL DEFAULT 0,"
+        " PRIMARY KEY (day, backend))"
+    )
+    conn.execute(
+        "INSERT INTO token_usage_day (day, backend, calls, prompt_tokens)"
+        " VALUES ('2026-09-20', 'x', 3, 42)"
+    )
+    conn.commit()
+    # 再 bootstrap 一次 = 走一遍 _migrate（幂等前提：新库再跑一遍也不许动）
+    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(conn, enabled_domains=DOMAINS)
+
+    row = conn.execute(
+        "SELECT day, user_id, backend, calls, prompt_tokens FROM token_usage_day"
+    ).fetchone()
+    assert (row["day"], row["user_id"], row["backend"]) == (
+        "2026-09-20",
+        "local-user",
+        "x",
+    ), "旧行被重建丢了 / 归属错了"
+    assert (row["calls"], row["prompt_tokens"]) == (3, 42), "旧数据没跟着搬到新形状"
+    pk = [
+        r[1] for r in conn.execute("PRAGMA table_info(token_usage_day)") if r[5] > 0
+    ]
+    assert pk == ["day", "user_id", "backend"], f"主键没升到 (day,user_id,backend)：{pk}"
+    conn.close()
+
+
 def test_a_legacy_upgrade_leaves_the_capability_flags_unmeasured(tmp_path: Path) -> None:
     """旧形态库升上来之后，`supports_vision` / `supports_tools` 必须是 **NULL（没测过）**。
 

@@ -468,6 +468,7 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
                         session_model or role.model_name
                     ),
                     ctx.tracer,
+                    user_id=user_id,
                 ),
             ),
             after=(
@@ -547,19 +548,20 @@ def _thread_model(ctx: AppContext, thread: dict, role_id: str) -> tuple[Any, str
 
 
 def _usage_ledger(
-    conn: Any, backend: str | None, tracer: Any
+    conn: Any, backend: str | None, tracer: Any, *, user_id: str
 ) -> Callable[[TokenUsage | None], None]:
     """这一轮对话的 token 落点（审计 §12.8/#8）。
 
     为什么账要由 `core/turn.py` 递出来、而不是在 `call_model` 里记：供应商在每一个流式
     分块里都回一份"累计到此"的 usage，langchain 合并时逐块相加 —— 节点里看到的值是
     真值 × 分块数（实测一条"在吗"：26 → 272,607）。后端名用这一轮**实际服务**的那个，
-    否则云端与本地会在账上混成一行。
+    否则云端与本地会在账上混成一行。**`user_id` = 这一轮花谁的 key**（多租户 B1a）：
+    `backend` 是按 `effective_for(本轮主人)` 解析出来的，账就必须记在同一个主人名下。
     """
 
     def record(usage: TokenUsage | None) -> None:
         # 返回值不吃掉：记不上账不该影响这一轮（fail-open），而坏账的留声在 `record_usage` 里。
-        record_usage(conn, backend=backend, usage=usage, tracer=tracer)
+        record_usage(conn, backend=backend, usage=usage, user_id=user_id, tracer=tracer)
 
     return record
 
@@ -828,6 +830,7 @@ def edit_message_and_regenerate(
                     session_model or role.model_name
                 ),
                 ctx.tracer,
+                user_id=str(thread["user_id"]),
             ),
         ),
         media_type="text/event-stream",

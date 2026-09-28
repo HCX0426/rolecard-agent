@@ -234,10 +234,13 @@ def bootstrap(conn: SqlConnection, enabled_domains: Iterable[str] = ()) -> list[
     return applied
 
 
-#: 这两张表的旧形态由 `_migrate` 整表重建 / 搬层负责，通用补列器**必须避开**它们：
+#: 这几张表的旧形态由 `_migrate` 整表重建 / 搬层负责，通用补列器**必须避开**它们：
 #: 提前给旧形 `model_backend` 补上 `provider_id`，`_migrate` 里那句"没有 provider_id
 #: 就是旧形态"的判定当场失效 —— 搬层被跳过，旧行的凭据静静留在没人再读的列里。
-_SHAPE_MIGRATED_TABLES = frozenset({"model_backend", "service_endpoint"})
+#: `token_usage_day` 不是列的问题而是**主键**（B1a）：补列改不了 `(day, backend)` → 
+#: `(day, user_id, backend)`，只补列会让 `ON CONFLICT(day,user_id,backend)` 永远报
+#: "non-unique" —— 所以它同理要整表重建。
+_SHAPE_MIGRATED_TABLES = frozenset({"model_backend", "service_endpoint", "token_usage_day"})
 
 
 def quote_ident(ident: object) -> str:
@@ -401,6 +404,29 @@ def _migrate(conn: SqlConnection) -> None:
             "(role_id, invalidated_at, pinned, id DESC)"
         )
     conn.execute("DROP TABLE IF EXISTS service_policy")
+    # 4. token_usage_day 的主键升级（多租户 B1a）：(day, backend) → (day, user_id, backend)。
+    #    补列改不了主键，也没有"PRAGMA 改 PK"这回事 —— 只能整表重建。旧行全部归属本机那份
+    #    （语义 = 上线前测的本机用量，不是谁漏账）；新行由 `usage.record_usage(user_id=…)` 按
+    #    花谁的 key 落格。判断"旧形态"用有没有 user_id 列（与列级迁移同口径）。
+    if "user_id" not in _columns(conn, "token_usage_day"):
+        conn.execute(
+            "CREATE TABLE token_usage_day_new ("
+            " day TEXT NOT NULL, user_id TEXT NOT NULL DEFAULT 'local-user',"
+            " backend TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0,"
+            " prompt_tokens INTEGER NOT NULL DEFAULT 0,"
+            " completion_tokens INTEGER NOT NULL DEFAULT 0,"
+            " reasoning_tokens INTEGER NOT NULL DEFAULT 0,"
+            " unreported INTEGER NOT NULL DEFAULT 0,"
+            " PRIMARY KEY (day, user_id, backend))"
+        )
+        conn.execute(
+            "INSERT INTO token_usage_day_new (day, user_id, backend, calls, prompt_tokens,"
+            " completion_tokens, reasoning_tokens, unreported)"
+            " SELECT day, 'local-user', backend, calls, prompt_tokens, completion_tokens,"
+            " reasoning_tokens, unreported FROM token_usage_day"
+        )
+        conn.execute("DROP TABLE token_usage_day")
+        conn.execute("ALTER TABLE token_usage_day_new RENAME TO token_usage_day")
     if "api_key" in _columns(conn, "service_endpoint"):
         conn.execute("DROP TABLE service_endpoint")
         conn.execute("DELETE FROM kernel_meta WHERE key = 'service_endpoints_seeded'")
