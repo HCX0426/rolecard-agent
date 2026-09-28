@@ -279,7 +279,11 @@ def run_turn(
     # 整轮什么都不产出（`nodes.py` 看见旗子就直接 `TurnStopped`）。抢到锁才清，
     # 顺序就被互斥保证了：上一轮的收尾一定在锁里做完，它的旗子一定落在清理之前。
     held = try_thread_write(thread_id, timeout=_TURN_LOCK_WAIT)
-    clear_stop(thread_id)
+    if held:
+        # R28-01：上面那段注释说的"抢到锁才清"，代码原先是**无条件**清的 —— 等锁超时时
+        # 上一轮还在飞，这一清就把它对用户那个「停止」按钮的承诺抹掉了（症状：按了停止
+        # 她还在说，而那一轮的生成继续在线程池里烧）。没抢到锁就不清：旗子仍归在飞那轮。
+        clear_stop(thread_id)
     if not held and tracer is not None:
         tracer.emit(
             TraceEvent(

@@ -320,3 +320,31 @@ def test_the_stale_stop_is_cleared_only_after_the_write_lock_is_held(
     assert order[:2] == ["lock", "clear"], f"擦旗发生在抢锁之前：{order}"
     assert _end_event(events).stopped is False
     assert stop_requested("t") is False
+
+
+def test_a_turn_that_never_got_the_lock_does_not_clear_the_inflight_stop(
+    roles: RoleCardService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R28-01：抢锁**超时**的那一轮不许擦旗 —— 那颗旗子是上一轮还在飞时用户按下的。
+
+    上一条钉的是"抢到锁之后才清"的顺序，这一条钉它的前件：没抢到就什么都别清。
+    漏了这一半的症状是"我按了停止她还在说"（旗子被下一轮抹掉，在飞那轮再也看不见它），
+    而且下一轮还顺带在无互斥的情况下跟上一轮分叉同一个检查点。
+    """
+    from rolecard_agent.core import turn as turn_module
+
+    cleared: list[str] = []
+    monkeypatch.setattr(turn_module, "try_thread_write", lambda *a, **k: False)
+    monkeypatch.setattr(turn_module, "clear_stop", cleared.append)
+    request_stop("t")  # 上一轮按下的停
+
+    list(
+        run_turn(
+            _OneNodeGraph([AIMessageChunk(content="这一轮本来就该让路", id="m1")]),
+            graph_input={"messages": []},
+            config={"configurable": {"thread_id": "t"}},
+            role_summary={"role_id": "r", "role_name": "r"},
+        )
+    )
+
+    assert cleared == [], "没抢到锁也擦旗 = 把上一轮那个「停止」吞掉"

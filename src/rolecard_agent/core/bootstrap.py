@@ -299,12 +299,19 @@ class Runtime:
 
         在**那条主动会话里**不补：同一句话本来就在她的历史里，再抄一遍进 system 等于把
         复读喂回给模型（`nodes._scrub_own_repeats` 治的就是这个），白花 token 还添病。
+
+        **本轮主人现取**（R28-04）：以前这三处写死 `self.identity`，于是第二个身份的对话
+        读的是实例主人的记忆、回声，还把 hit_count 记到主人账上。这根管子与上面
+        `settings_resolver` 用的同一个（`active_user_id`）—— 一个"本轮为谁"的读法只留一处。
+        settings 仍取实例那份是刻意的：这里只用到 `memory_enabled`，而它是运行环境级的
+        （覆盖存在 `kernel_meta` 的 `runtime:<key>`，不分人）。
         """
-        text = memory_for_turn(self.conn, self.effective, role_id, user_id=self.identity)
-        if not role_id or thread_id == proactive_thread_id(role_id, user_id=self.identity):
+        owner = active_user_id(self.identity)
+        text = memory_for_turn(self.conn, self.effective, role_id, user_id=owner)
+        if not role_id or thread_id == proactive_thread_id(role_id, user_id=owner):
             return text
         echo = recent_reachout_lines(
-            self.conn, role_id, user_id=self.identity, limit=CHAT_ECHO_LIMIT
+            self.conn, role_id, user_id=owner, limit=CHAT_ECHO_LIMIT
         )
         if not echo:
             return text

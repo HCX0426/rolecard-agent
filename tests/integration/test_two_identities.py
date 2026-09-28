@@ -329,3 +329,22 @@ def test_second_login_can_open_a_session_and_write_domain_records(
             "/api/domains/health/records", headers=_as(A)
         ).json()
     }, "B 写的记录出现在 A 的读侧"
+
+
+def test_a_turn_reads_the_memory_of_its_own_owner(client: TestClient) -> None:
+    """R28-04：注入的记忆与回声按**本轮主人**取，不是按实例主人。
+
+    `Runtime.chat_memory` 原先三处写死 `self.identity` —— 单机形态无感，第二个身份一存在
+    就是串数据：B 的对话里被注入 A 的事实，A 的 hit_count 还替 B 的读取涨。这里绕不开的
+    只有模型（不真跑一轮），身份绑法走节点入口同一根管子 `bound_user`。
+    """
+    from rolecard_agent.core.identity import bound_user
+
+    rt = client.app.state.ctx.runtime
+    with bound_user(B):
+        for_b = rt.chat_memory("r_b", "t_not_proactive")
+    with bound_user(A):
+        for_a = rt.chat_memory("r_a", "t_not_proactive")
+
+    assert "事实b" in for_b and "事实a" not in for_b, "B 的这一轮读到了 A 的记忆"
+    assert "事实a" in for_a and "事实b" not in for_a, "A 的这一轮读到了 B 的记忆"
