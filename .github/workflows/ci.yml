@@ -44,6 +44,7 @@ jobs:
             requirements.txt
             requirements-api.txt
             requirements-rag.txt
+            requirements-cloud.txt
             requirements-dev.txt
 
       - name: 装依赖
@@ -51,8 +52,10 @@ jobs:
           python -m pip install --upgrade pip
           # rag 必须与 api 一起装：漏了它，知识库 / 上传解析 / 检索工具在用例里 ImportError
           # —— 与 Dockerfile 第 12 行记的是同一个坑。
+          # cloud 也要：集成测试里的模型后端就是 OpenAI 兼容端点（硅基流动），漏装的症状
+          # 是 PUT /api/settings/models 500 —— CI 第 1、2 发实跑抓到的就是这个。
           pip install -r requirements.txt -r requirements-api.txt \
-            -r requirements-rag.txt -r requirements-dev.txt
+            -r requirements-rag.txt -r requirements-cloud.txt -r requirements-dev.txt
 
       - name: gate.py --fast
         run: python scripts/gate.py --fast
@@ -144,7 +147,16 @@ jobs:
           curl -fsS -u ci-user:ci-pass http://127.0.0.1:8000/ | grep -q 'id="root"' || {
             echo "首页没有挂载点，dist 没进镜像或没被托管"; docker logs rc; exit 1
           }
-          echo "容器内：健康 200 / 无凭据 401 / 建会话可读回 / 首页托管自镜像内 dist"
+          # 存一个 OpenAI 兼容后端 —— 这是这个镜像的**主用例**（容器里没有 Ollama，云端 key
+          # 才是它的模型来源）。CI 第 2 发就是这条 500：镜像漏装 langchain-openai，本机没红
+          # 只是 .venv 恰好装过。构建失败的可读原因在响应体的 detail 里，所以失败时原样打印。
+          put=$(curl -s -u ci-user:ci-pass -X PUT http://127.0.0.1:8000/api/settings/models \
+            -H 'Content-Type: application/json' \
+            -d '{"default":"sf","backends":[{"name":"sf","provider":"siliconflow","base_url":"https://api.siliconflow.cn/v1","model":"ci-model","api_key":"sk-ci-not-a-real-key","usage":"chat"}],"fallbacks":[]}')
+          printf '%s' "$put" | grep -q '"default"' || {
+            echo "容器内存一个云端后端失败：$put"; docker logs rc; exit 1
+          }
+          echo "容器内：健康 200 / 无凭据 401 / 建会话可读回 / 首页托管自镜像内 dist / 可存云端后端"
 
       - name: 收尾
         if: always()
@@ -173,6 +185,7 @@ jobs:
             requirements.txt
             requirements-api.txt
             requirements-rag.txt
+            requirements-cloud.txt
             requirements-dev.txt
 
       - name: 装 Node
@@ -188,7 +201,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-api.txt \
-            -r requirements-rag.txt -r requirements-dev.txt
+            -r requirements-rag.txt -r requirements-cloud.txt -r requirements-dev.txt
           npm ci --prefix frontend
           npm ci --prefix shell
 

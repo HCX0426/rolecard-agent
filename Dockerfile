@@ -11,9 +11,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # 先装依赖（利用层缓存），再拷代码
 # requirements-rag.txt（chromadb / pypdf）必须一起装：知识库、上传解析、检索工具都依赖它，
 # 漏装会让容器内 /api/knowledge 与上传直接 ImportError（v2.4 部署前的审查发现）。
-COPY requirements.txt requirements-api.txt requirements-rag.txt ./
+# requirements-cloud.txt（langchain-openai）同理必须装：容器里没有 Ollama，云端 key 本是
+# 镜像的主用例 —— 漏装的症状是"配任何 OpenAI 兼容端点（硅基流动/DeepSeek/…）保存即 500"
+# （CI 首跑实测，run 36416026240；本机没红只是 .venv 恰好装过它）。它是可选 extra 的原因
+# 在 pyproject：纯本地安装保持离线可用 —— 那是**开发机**的取舍，不是容器的。
+COPY requirements.txt requirements-api.txt requirements-rag.txt requirements-cloud.txt ./
 RUN pip install --no-cache-dir \
-    -r requirements.txt -r requirements-api.txt -r requirements-rag.txt
+    -r requirements.txt -r requirements-api.txt -r requirements-rag.txt \
+    -r requirements-cloud.txt
 
 COPY src/ ./src/
 COPY frontend/dist/ ./frontend/dist/
