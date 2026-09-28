@@ -36,6 +36,7 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -128,14 +129,18 @@ def _terminate_tree(proc: subprocess.Popen[str]) -> None:
     """杀掉整棵进程树。Windows 的 shell=True 是 cmd → 子进程的树：只杀父进程的话，
     实测 communicate() 会干等到孙进程退完（timeout 形同虚设）。taskkill /T /F 按树杀；
     POSIX 用 start_new_session 建的独立进程组 + killpg。"""
-    if os.name == "nt":
+    if sys.platform == "win32":
         subprocess.run(
             ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
             capture_output=True,
         )
     else:
+        # 守卫用 `sys.platform` 而不是 `os.name`：mypy 只认前一种收窄。换过来之后，
+        # Windows 档看不到 killpg 这半（typeshed 里它不存在，原先那个 ignore 就是为此打的，
+        # 现在不再需要），Linux 档看得到且不带 ignore —— 这半真正的运行平台就是 Linux
+        # （容器里跑的就是它，CI 的 mypy 在那个档上查它）。
         try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)  # type: ignore[attr-defined]
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except ProcessLookupError:
             proc.kill()
 

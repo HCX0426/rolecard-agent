@@ -79,6 +79,11 @@ STEPS: list[tuple[str, list[str], str]] = [
     # 补上第一天就抓到两个运行时已经坏了的脚本（seed_demo_data / run_eval 调
     # `make_embedder` 少两个必填关键字参数 ⇒ 一跑就 TypeError），见那一轮台账 S-6 行。
     ("mypy scripts/", [PY, "-m", "mypy", "scripts/"], "both"),
+    # Linux 档的类型检查。容器跑的就是 Linux（Dockerfile `python:3.13-slim`），而本机
+    # 门禁只查 win32 档 —— CI 第一发就红在这上面（`ctypes.WinDLL` 在 Linux 档没有、
+    # POSIX 分支的 `type: ignore` 在 Linux 档成了 unused）。“本机绿”而“容器里红”属于
+    # 同一个假绿家族，两边一起查才关得掉。
+    ("mypy(linux 档)", [PY, "-m", "mypy", "--platform", "linux"], "both"),
     # shell/（Electron 壳）此前全程无人检查：它有 `npm run typecheck` 但门禁只 cd frontend。
     ("shell typecheck", [NPM, "run", "typecheck"], "full"),
     (

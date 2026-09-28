@@ -40,7 +40,12 @@ _open_process = _wait = _close_handle = None  # 惰性绑好的 kernel32 入口�
 def _win_apis() -> tuple:
     """kernel32 的三个入口，带正确的 restype/argtypes（64 位句柄不能按 int 截断）。"""
     global _open_process, _wait, _close_handle
-    if _open_process is None:
+    # 这里**要** mypy 按平台收窄（`==`，不是上面那个 startswith）：`ctypes.WinDLL`
+    # 在 Linux 的 ctypes 里根本没有这个名字，而 Linux 档不是假想敌 —— 容器跑的就是它
+    # （CI 的 docker job 已证）。用 `==` 之后，Windows 档查这半，Linux 档看不到这半；
+    # POSIX 那半不受影响，两个档都可达、都被查。所以"两半都有人查"没有被丢掉，
+    # 只是从"一台机器查两半"改成"两台机器各查各的那半"。
+    if _open_process is None and sys.platform == "win32":
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         handle = ctypes.c_void_p
         kernel32.OpenProcess.restype = handle
