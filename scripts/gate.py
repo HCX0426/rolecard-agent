@@ -34,6 +34,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import platform
 import subprocess
 import sys
@@ -41,6 +42,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+COV_MARKER = ROOT / "build" / ".cov-last-sha"
 def _venv_python() -> str:
     """按平台找虚拟环境里那个解释器，找不到就退回**调用方自己用的那个**。
 
@@ -137,36 +139,29 @@ def _git(*args: str) -> str:
 
 
 def _src_changed() -> bool:
-    """覆盖率只量 ``src/``。没碰 ``src/`` 时那趟是纯重跑，可跳过。
+    """覆盖率只量 ``src/``。自**上次覆盖率实跑**以来没碰 ``src/`` 时那趟是纯重跑，可跳过。
 
-    两条实测教训（2026-09-20，都是"安全网静默失效"的形状）：
-      * 本仓库**没有远端**且直接在 main 上提交，`merge-base HEAD main` 就是 HEAD ——
-        只看"相对基线的提交"会永远得到"没改 src"，而那恰恰是提交前该跑覆盖率的时刻；
-      * 旧实现把未跟踪文件算进来，却看不见**已修改未提交**的 `src/` 文件（最常见的情况）。
-    所以判据 = 相对基线的提交 ∪ 工作区未提交的改动 ∪ 未跟踪文件。
-    fail-safe 不变：任何不确定（无 git / 调用失败 / 找不到基线）一律 True，
-    绝不因探测失误而悄悄削弱 85% 安全网。
+    判据 2026-09-28 修过一个盲区：原版兜底看「最近一个提交」，于是「提交 src 改动 → 再提交
+    一个纯 docs 的」就把 src 的改动遮住了 —— 装前全量门禁静默跳过覆盖率，而那恰是十次打包
+    规矩里唯一必须实跑它的时刻。现改为记录**上次覆盖率实跑时的 HEAD**（build/ 不入库）：
+    marker 缺失（首次 / CI / 清过 build/）一律保守跑；git 挂了等任何不确定也一律 True
+    —— fail-safe 不变，绝不因探测失误而悄悄削弱 85% 安全网。
     """
     try:
         head = _git("rev-parse", "HEAD").strip()
-        try:
-            base = _git("merge-base", "HEAD", "origin/main").strip()
-        except RuntimeError:
-            base = ""
-        base = base or _git("merge-base", "HEAD", "main").strip()
-        changed: list[str] = []
-        if base and base != head:  # 基线存在且不同于 HEAD，跨提交的差异才有意义
-            changed += _git("diff", "--name-only", f"{base}...HEAD").splitlines()
-        else:
-            # 没有可用的跨提交基线（无远端 + 直接在 main 上提交）：退到"最近一个提交"。
-            # 否则"先提交 src 改动、再跑全量门禁"这条最常见的顺序会永远跳过覆盖率 ——
-            # 而那恰恰是唯一需要它的时刻。多跑一次只是慢，少跑一次是静默失效。
-            changed += _git("diff", "--name-only", f"{head}~1", head).splitlines()
-        changed += _git("diff", "--name-only", "HEAD").splitlines()  # 未提交（含已暂存）
-        changed += _git("ls-files", "--others", "--exclude-standard").splitlines()
+        if COV_MARKER.exists():
+            last = COV_MARKER.read_text(encoding="utf-8").strip()
+            if last == head:
+                return False  # 上次覆盖率就在这个 HEAD 上跑过
+            if last:
+                changed = _git("diff", "--name-only", f"{last}..HEAD").splitlines()
+                changed += _git("diff", "--name-only", "HEAD").splitlines()  # 未提交（含已暂存）
+                changed += _git("ls-files", "--others", "--exclude-standard").splitlines()
+                return any(p.startswith("src/") for p in changed)
+        # 没有 marker（首次 / CI / 清过 build/）：保守跑一趟并从此留下基准。
+        return True
     except Exception:
         return True
-    return any(p.startswith("src/") for p in changed)
 
 
 def _run(name: str, cmd: list[str], cwd: Path | None = None) -> tuple[bool, float]:
@@ -256,6 +251,13 @@ def main() -> int:
         if not ok:
             failures.append(name)
             break  # 失败即停：后面的步骤在同一个问题上只会重复失败
+        if name.startswith("pytest(覆盖率"):
+            # 记下"覆盖率这次是在哪个 HEAD 上实跑的"：_src_changed 的判据靠它，
+            # 纯 docs 的后续提交才不会再把 src 的改动遮住。写不了 marker 只会让
+            # 下次多跑一趟覆盖率，不是错误。
+            with contextlib.suppress(Exception):
+                COV_MARKER.parent.mkdir(parents=True, exist_ok=True)
+                COV_MARKER.write_text(_git("rev-parse", "HEAD").strip(), encoding="utf-8")
         # 构建之后才谈得上"入库的 dist 旧没旧"，所以这条挂在这里而不是一致性检查里。
         if name == "前端 tsc+build":
             ok, dt = _check_dist_sync()
