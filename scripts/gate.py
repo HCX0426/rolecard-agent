@@ -113,6 +113,10 @@ STEPS: list[tuple[str, list[str], str]] = [
     ),
     ("前端 vitest", [NPM, "test"], "full"),
     ("前端 tsc+build", [NPM, "run", "build"], "full"),
+    # README 的"快速开始"是 US-6 硬门槛（干净环境 ≤3 条命令）的唯一载体，此前没有任何
+    # 尺子看着它 —— 落档时实测第 7 步那条裸 uvicorn 在 src 布局下必挂（R28-36）。
+    # 这条探针把文档里的启动命令**原样执行一次**并等 /api/health（数据根走临时目录）。
+    ("README 可跑性", [PY, "scripts/probe_readme_quickstart.py"], "full"),
     ("真机冒烟(14 项)", [PY, "scripts/smoke_check.py"], "full"),
 ]
 

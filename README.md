@@ -131,8 +131,10 @@ python -m venv .venv
 
 # 2. 依赖（按范围镜像安装；OCR 依赖必须独立 venv，勿装进 .venv）
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt \
-    -r requirements-api.txt -r requirements-rag.txt
+    -r requirements-api.txt -r requirements-rag.txt -r requirements-cloud.txt
 #    （-rag 必须装：知识库 / 上传解析 / 检索都依赖 chromadb+pypdf，漏装会 ImportError）
+#    （-cloud 也要装：langchain-openai 是"任意 OpenAI 兼容端点"那条路的实现包，
+#      漏装的症状是在模型页配一个硅基流动/DeepSeek 后端 → 保存即 500）
 
 # 3. 本地模型（.env 里默认后端 local 指向 Ollama）
 #    qwen3-vl:8b = 对话 + 工具调用 + 识图 + 思考（ModelScope GGUF 导入，见下方说明）
@@ -142,19 +144,21 @@ ollama pull qwen3-vl:8b
 copy .env.example .env
 
 # 5. 建表 + 初始化内置角色
-python scripts/init_db.py
+.\.venv\Scripts\python.exe scripts/init_db.py
 
 # 6. 一致性自检（文档与代码是否同步，退出码可用于 CI）
-python scripts/check_consistency.py
+.\.venv\Scripts\python.exe scripts/check_consistency.py
 
 # 7. 启动控制台（管理面 + 流式对话）
-uvicorn --factory rolecard_agent.api.main:create_app --port 8000
+.\.venv\Scripts\python.exe scripts/run_api.py
+#    端口默认 8000，要换用环境变量：set RUN_API_PORT=8123（run_api.py 没有 --port 参数）
+#    为什么不是裸 uvicorn --factory：本仓是 src 布局且不装 editable，裸 uvicorn 找不到
+#    rolecard_agent 包；而 .env 也只有 run_api.py 会读（config.py 不读文件）。
 # 浏览器打开 http://127.0.0.1:8000/ ：新建会话 → 对话（SSE 流式）→ 页面切角色 → 启停插件
-# 没跑本地模型也能演示：按 scripts/smoke_chat.py 的说明配一个 OpenAI 兼容端点即可
-# （或在设置页直接添加后端，保存即热生效）
+# 没跑本地模型也能演示：在设置页直接添加一个 OpenAI 兼容后端，保存即热生效（见上面 -cloud）
 
 # 8.（可选）改动前端后重新构建 —— dist 已提交，普通演示不需要 node
-cd frontend && npm install && npm run build
+cd frontend && npm ci && npm run build
 ```
 
 ## 部署
