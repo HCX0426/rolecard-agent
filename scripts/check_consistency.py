@@ -11,6 +11,7 @@ Usage:
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import pathlib
@@ -908,6 +909,74 @@ def check_dead_config() -> None:
         fails.append(f"Settings fields never read outside their declaration: {unread}")
 
 
+def check_dependency_layering() -> None:
+    """src/ 里 import 的每一个第三方发行版，必须在六份 requirements 之一直接声明。
+
+    为什么单独立这条（2026-09-28 轮 R28-11）：那天实锤的是"层漏了"——Dockerfile/CI 没装
+    `requirements-cloud.txt`，症状是配任何 OpenAI 兼容端点保存即 500，而本机 .venv 恰好装过
+    所以门禁看不见。这条检查防的是同族的另一半：**import 了但哪层都没声明** ——
+    `httpx`（4 处顶层 import）与 `typing_extensions`（core/state.py）当时全靠
+    langchain-core / pydantic 的传递依赖兜住；传递兜住时不报错，某天上游收窄约束
+    就静默断（agent 取证时实测过 langchain-core 1.6.3 的 Requires-Dist 确实带着 httpx）。
+
+    判据：AST 扫 `src/**/*.py` 的全部 import（含函数内的 lazy import —— 那条路径被触发
+    同样 500），顶层模块名去 stdlib、去第一方后，归一化（下划线→连字符）后必须在
+    **非 dev** 的 `requirements*.txt` 里声明 —— dev 层不进随包运行树，生产 import 靠它
+    兜等于没兜（httpx 当时正是"只有 dev 声明 + langchain-core 传递"的双侥幸）。
+    声明侧不读 pyproject：依赖 parity 那条已保证 pyproject 与 requirements 一致，这里
+    只对一份事实面。import 名 ≠ 发行版名的（如 `import tavily` ← `tavily-python`）走
+    显式别名表 —— 新映射缺了就红，把表补上即可，别名表本身就是"模块↔发行版"的登记处。
+    """
+    # import 名 → 发行版名 的已知差异。命中别名后仍按发行版名去声明集里找。
+    import_dist_aliases = {"tavily": "tavily-python"}
+
+    declared: set[str] = set()
+    for req in sorted(ROOT.glob("requirements*.txt")):
+        if req.name == "requirements-dev.txt":
+            continue  # dev 依赖不进随包运行树，不能为 src 的生产 import 背书
+        for line in req.read_text(encoding="utf-8").splitlines():
+            name = line.split("#", 1)[0].strip()
+            if not name:
+                continue
+            # 去掉 extras / 版本约束 / 环境标记 / 续行残片，只留发行版名
+            name = re.split(r"[<>=!;\[\s]", name, maxsplit=1)[0].strip().lower().replace("_", "-")
+            if name:
+                declared.add(name)
+
+    first_seen: dict[str, str] = {}
+    for path in sorted((ROOT / "src").rglob("*.py")):
+        rel = path.relative_to(ROOT).as_posix()
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    first_seen.setdefault(alias.name.split(".")[0], rel)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                first_seen.setdefault(node.module.split(".")[0], rel)
+
+    stdlib = getattr(sys, "stdlib_module_names", frozenset())
+    undeclared = sorted(
+        mod
+        for mod in first_seen
+        if mod not in stdlib
+        and mod != "rolecard_agent"
+        and import_dist_aliases.get(mod, mod).lower().replace("_", "-") not in declared
+    )
+    out(
+        "dependency layering",
+        not undeclared,
+        f"{len(first_seen)} 个第三方/第一方顶层模块，{len(undeclared)} 个未声明",
+    )
+    if undeclared:
+        fails.append(
+            "src imports not declared in any requirements*.txt: "
+            + ", ".join(f"{m} ({first_seen[m]})" for m in undeclared[:8])
+        )
+
+
 def check_role_whitelists_resolve() -> None:
     """Every tool name in a built-in role's whitelist must resolve to a declared tool.
 
@@ -1179,6 +1248,7 @@ def main() -> int:
     check_citation_reachability()
     check_version_parity()
     check_dead_config()
+    check_dependency_layering()
     check_role_whitelists_resolve()
     check_us_traceability()
     check_exemplar_leaks_eval_answers()
