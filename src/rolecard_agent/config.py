@@ -366,6 +366,17 @@ class Settings(BaseModel):
     # 豁免路径前缀（逗号分隔）：探活端点必须免鉴权，否则容器健康检查永远失败。
     auth_exempt_paths: str = "/api/health"
 
+    # v2.4 限流（api/ratelimit.py）：按**身份**给"贵"的写请求封顶。
+    # 0 = 关（默认）：本产品主形态是"一个人、一台机器"，今天加节流只会误伤主人自己的
+    # 桌宠与脚本 —— 判据与 09-27 那条决定一致（限流保护的对象随"谁付钱"变），等这台
+    # 机器上真的有第二个账号再打开。
+    rate_limit_per_minute: int = 0
+    # 受管路径前缀（逗号分隔）。默认这两条盖住"驱动模型或子进程"的全部写请求：
+    # `/api/chat`（整张图 + SSE）、`/api/session/*/upload|messages/edit|distill`（解析/OCR/
+    # embedding/生成）。**只数写方法**，所以 `/api/session/{tid}/turn` 那种 0.8 秒一次的
+    # 轮询读不进门。要连域数据写入一起管就把它加在这里（如 `/api/domains`）。
+    rate_limit_paths: str = "/api/chat,/api/session"
+
     # RESERVED for the v2.4 cloud observability backend. Parsed here so the .env contract is
     # stable from day one, but nothing reads them yet - `make_tracer` only implements `local`
     # and emits a `tracer_fallback` event if you ask for anything else. Listed in
@@ -506,6 +517,8 @@ class Settings(BaseModel):
             ("AUTH_TRUSTED_PROXIES", "auth_trusted_proxies"),
             ("API_ALLOW_ORIGINS", "api_allow_origins"),
             ("AUTH_EXEMPT_PATHS", "auth_exempt_paths"),
+            ("RATE_LIMIT_PER_MINUTE", "rate_limit_per_minute"),
+            ("RATE_LIMIT_PATHS", "rate_limit_paths"),
             ("IDENTITY_USER_ID", "identity_user_id"),
             ("LANGSMITH_API_KEY", "langsmith_api_key"),
             ("LANGSMITH_PROJECT", "langsmith_project"),

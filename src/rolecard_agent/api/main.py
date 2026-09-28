@@ -43,12 +43,14 @@ from rolecard_agent.api.auth import (
     ROLE_OPERATOR,
     auth_required,
     client_ip,
+    is_loopback,
     parse_trusted_proxies,
     resolve_actor,
     roles_declared,
     unauthorized_response,
 )
 from rolecard_agent.api.deps import AppContext
+from rolecard_agent.api.ratelimit import Limiter, bucket_key, is_limited, paths_of
 from rolecard_agent.api.routers import approvals as approvals_router
 from rolecard_agent.api.routers import console as console_router
 from rolecard_agent.api.routers import domains as domains_router
@@ -234,6 +236,10 @@ def create_app(
     # 凭证分族是否生效：配置里出现过 `operator:` 凭据才生效（见 auth.roles_declared）。
     # 随进程构建，与 exempt_paths/trusted_proxies 同类 —— 改了要重启，不在界面可改。
     roles_in_effect = roles_declared(env_settings)
+    # 限流（v2.4 公网硬化）：桶长在**应用实例**上，额度随 env 构建（改了要重启）。
+    # `RATE_LIMIT_PER_MINUTE=0`（默认）时 `Limiter` 永远放行 —— 本机单人形态逐字不变。
+    limiter = Limiter(env_settings.rate_limit_per_minute)
+    limited_paths = paths_of(env_settings.rate_limit_paths)
 
     @app.middleware("http")
     async def _authenticate(request: object, call_next: object) -> object:
@@ -282,6 +288,24 @@ def create_app(
                 else "Forbidden: 这一项需要操作员凭据（当前凭据只是使用者角色）"
             )
             return PlainTextResponse(reason, status_code=403)
+        # 节流住在这里而不是另起一个中间件：**认证之后才谈"这个人能打多快"** —— 桶的键
+        # 就是刚解析出的身份。`RATE_LIMIT_PER_MINUTE=0`（默认）时下面整段是死的。
+        # **本机来源不设卡**（与认证那条"本机来源永远放行"同一份信任模型）：桌面壳、
+        # 控制台、脚本与探针全从 127.0.0.1 来，主人坐在键盘前不该被自己的机器挡在门外；
+        # 公网那档要保护的是**远端那个人**（他的服务器资源与别人 key 的额度）。
+        if not is_loopback(origin) and is_limited(req.url.path, req.method, limited_paths):
+            key = bucket_key(actor.id, anonymous=actor.is_anonymous, origin=origin)
+            ok, retry_after = limiter.hit(key)
+            if not ok:
+                # 403 与 429 分开：这一条不是"你没权限"，是"你太快了" —— 文案里带上
+                # 怎么调（配置项名），免得下一步去翻代码。
+                return PlainTextResponse(
+                    "Too Many Requests：这一身份对这类端点的请求太密，"
+                    f"{retry_after} 秒后再试。"
+                    "（上限见配置 RATE_LIMIT_PER_MINUTE，受管路径见 RATE_LIMIT_PATHS）",
+                    status_code=429,
+                    headers={"Retry-After": str(retry_after)},
+                )
         req.state.actor = actor
         return await call_next(request)  # type: ignore[operator]
 
