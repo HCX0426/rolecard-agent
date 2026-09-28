@@ -293,6 +293,76 @@ def test_reference_shape_service_endpoint_gains_a_scoped_owner(tmp_path: Path) -
     conn.close()
 
 
+def test_proactive_state_gains_a_scoped_key_and_legacy_threads_are_remapped(
+    tmp_path: Path,
+) -> None:
+    """多租户 B2：状态表主键 (role_id) → (user_id, role_id) + 主动线程 id 带身份。
+
+    `_migrate` 的这两件事是一体的：老行归属实例主人（默认部署 = 'local-user'），老线程
+    `s_proactive_<role>` 按 `session_thread.user_id` 现读归属重命名为
+    `s_proactive_<uid>_<role>`，checkpoints/writes 的 thread_id 一起改（那是她主动说过的
+    历史，不改就凭空断了上下文）。少任何一半都是"升级把记忆/状态断了"。
+    """
+    db = tmp_path / "app.db"
+    conn = connect(db)
+    bootstrap(conn, enabled_domains=DOMAINS)
+    # 造出 B2 之前的形状：状态表无 user_id；一条主动线程（含检查点）也用旧 id。
+    conn.execute("DROP TABLE role_proactive_state")
+    conn.execute(
+        "CREATE TABLE role_proactive_state ("
+        " role_id TEXT PRIMARY KEY, affinity REAL NOT NULL DEFAULT 0.0,"
+        " last_interaction_utc TIMESTAMP, calibration_json TEXT,"
+        " open_threads TEXT, open_threads_at TIMESTAMP, recall_at TIMESTAMP,"
+        " updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    )
+    conn.execute(
+        "INSERT INTO role_proactive_state (role_id, affinity)"
+        " VALUES ('she', 2.5), ('general_assistant', 0.0)"
+    )
+    # session_thread.user_id 是外键：先种上主人与本机那份演示身份（同两身份夹具的做法）。
+    conn.execute(
+        "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('local', '本机')"
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name)"
+        " VALUES ('local-user', 'local', '本机主人')"
+    )
+    conn.execute(
+        "INSERT INTO session_thread (thread_id, user_id, current_role_id, title)"
+        " VALUES ('s_proactive_she', 'local-user', 'she', '卡 · 主动找你')"
+    )
+    # 检查点表镜像 LangGraph 的形状（thread_id 是它的键列）：放一行，验证升级把它一起改名。
+    conn.execute("CREATE TABLE checkpoints (thread_id TEXT)")
+    conn.execute("CREATE TABLE writes (thread_id TEXT)")
+    conn.execute("INSERT INTO checkpoints (thread_id) VALUES ('s_proactive_she')")
+    conn.execute("INSERT INTO writes (thread_id) VALUES ('s_proactive_she')")
+    conn.commit()
+
+    # 走一遍 _migrate（幂等前提：新库再跑一遍也不许动）
+    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(conn, enabled_domains=DOMAINS)
+
+    st = conn.execute(
+        "SELECT user_id, role_id, affinity FROM role_proactive_state ORDER BY role_id"
+    ).fetchall()
+    assert [(str(r["user_id"]), str(r["role_id"]), r["affinity"]) for r in st] == [
+        ("local-user", "general_assistant", 0.0),
+        ("local-user", "she", 2.5),
+    ], "状态老行没归属实例主人 / 数据丢了"
+    pk = [r[1] for r in conn.execute("PRAGMA table_info(role_proactive_state)") if r[5] > 0]
+    assert pk == ["user_id", "role_id"], f"主键没升到 (user_id, role_id)：{pk}"
+    # 主动线程重映射：会话行 + 检查点表一起改名；已带身份的不再动（幂等）。
+    lanes = conn.execute("SELECT thread_id FROM session_thread").fetchall()
+    assert [str(r["thread_id"]) for r in lanes] == ["s_proactive_local-user_she"]
+    assert conn.execute(
+        "SELECT 1 FROM checkpoints WHERE thread_id = 's_proactive_local-user_she'"
+    ).fetchone() is not None, "检查点的 thread_id 没跟着会话改名"
+    assert conn.execute(
+        "SELECT 1 FROM writes WHERE thread_id = 's_proactive_local-user_she'"
+    ).fetchone() is not None, "writes 的 thread_id 没跟着会话改名"
+    conn.close()
+
+
 def test_a_legacy_upgrade_leaves_the_capability_flags_unmeasured(tmp_path: Path) -> None:
     """旧形态库升上来之后，`supports_vision` / `supports_tools` 必须是 **NULL（没测过）**。
 

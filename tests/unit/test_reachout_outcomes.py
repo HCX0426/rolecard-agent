@@ -26,7 +26,8 @@ assert _spec and _spec.loader
 mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(mod)
 
-LANE = "s_proactive_active"
+# 线程 id 带身份（B2）：脚本按这份库实际的主人（默认 = local-user）构造主动线程 id。
+LANE = f"s_proactive_{mod.OWNER}_active"
 # 线程最后活动 05:00：早于它的开口算"近似有人回"，晚于它的不算。
 T_TOUCHED = "2026-09-26 05:00:00.000"
 # 检查点里读出来的那条线（真判据看的就是这份）

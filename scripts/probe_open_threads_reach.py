@@ -109,7 +109,7 @@ def _one(rt: Any, sql: str, params: tuple[Any, ...] = ()) -> Any:
 def _report_state(rt: Any, roles: list[Any], now: datetime) -> None:
     print(f"{'role':16}{'affinity':>10}{'衰减后':>10}{'扫描时刻':>20}{'缓存话题':>10}{'未读':>6}")
     for role in roles:
-        st = get_state(rt.conn, role.role_id)
+        st = get_state(rt.conn, role.role_id, user_id=rt.identity)
         unread = _one(
             rt,
             "SELECT COUNT(*) FROM agent_reachout WHERE role_id=? AND state='unread'",
@@ -133,7 +133,7 @@ def _report_input_chain(rt: Any, roles: list[Any], stub: StubModel) -> None:
         cp_rows = _one(
             rt,
             "SELECT COUNT(*) FROM checkpoints WHERE thread_id=?",
-            (proactive_thread_id(role.role_id),),
+            (proactive_thread_id(role.role_id, user_id=rt.identity),),
         )
         text = rt.proactive_recent_lines(role.role_id)
         print(
@@ -153,7 +153,7 @@ def _report_delivery_effect(rt: Any, roles: list[Any]) -> None:
     `proactive_recent_lines` —— 也就是说"空"与"非空"两次都是生产那条读法给的答复。
     """
     for role in roles:
-        tid = proactive_thread_id(role.role_id)
+        tid = proactive_thread_id(role.role_id, user_id=rt.identity)
         cfg = build_graph_config(tid, rt.effective)
         rt.state["graph"].update_state(cfg, {"messages": [HumanMessage(content="我下周要体检")]})
         opened = rt.proactive_recent_lines(role.role_id)
@@ -203,12 +203,14 @@ def _force_timer_experiment(
 
     rt.conn.execute("DELETE FROM agent_reachout")  # 去掉间隔/未读两道抑制，让触发链裸露
     for role in roles:
-        st = get_state(rt.conn, role.role_id)
+        st = get_state(rt.conn, role.role_id, user_id=rt.identity)
         st.affinity = 0.0
         st.last_interaction_utc = now
         st.open_threads_scan_at = None  # 当作从没扫过
-        save_state(rt.conn, st)
-        cfg = build_graph_config(proactive_thread_id(role.role_id), rt.effective)
+        save_state(rt.conn, st, user_id=rt.identity)
+        cfg = build_graph_config(
+            proactive_thread_id(role.role_id, user_id=rt.identity), rt.effective
+        )
         rt.state["graph"].update_state(
             cfg, {"messages": [HumanMessage(content="我下周要体检，结果出来跟你说")]}
         )
@@ -281,7 +283,7 @@ def main() -> None:
     base_local = now.astimezone().replace(hour=12, minute=0, second=0, microsecond=0)
     free_days: dict[str, int | None] = {}
     for role in roles:
-        st = get_state(rt.conn, role.role_id)
+        st = get_state(rt.conn, role.role_id, user_id=rt.identity)
         free_days[role.role_id] = _first_free_day(role, st, settings, base_local)
         d = free_days[role.role_id]
         verdict = f"{d} 天之后" if d is not None else f"{SWEEP_DAYS} 天内都不让位"

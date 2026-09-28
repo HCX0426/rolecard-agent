@@ -124,15 +124,17 @@ def test_the_timeline_filters_all_three_sources_by_owner(db) -> None:
     assert "别人这条线" not in texts and "对方那条不该被看见" not in texts
 
 
-def test_proactive_state_deliberately_has_no_owner_column() -> None:
-    """它按 `role_id` 主键，归属从角色卡继承 —— 加一列就是造第二份真相。
+def test_proactive_state_owner_lives_in_the_key_since_b2() -> None:
+    """B2 之后归属写在**主键里**：`(user_id, role_id)`，不再"从角色卡继承"。
 
-    真要同一库里住多个主人，得先把主键改成 `(user_id, role_id)`（整表重建），
-    那时这张表才该有这一列。这条断言是留给那次改动的路标，不是"还没做"。
+    这条断言的前身是 `test_proactive_state_deliberately_has_no_owner_column`——那句
+    "真要同一库里住多个主人，得先把主键改成 (user_id, role_id)"写在这条 docstring 里、
+    等着的就是 B2 这一天。翻过来钉新形状：列在、而且进了主键。
     """
     conn = connect(":memory:")
     bootstrap(conn, enabled_domains=())
     cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(role_proactive_state)")}
-    assert "user_id" not in cols
-    assert "role_id" in cols
+    assert "user_id" in cols and "role_id" in cols
+    pk = [str(r[1]) for r in conn.execute("PRAGMA table_info(role_proactive_state)") if r[5] > 0]
+    assert pk == ["user_id", "role_id"], f"主键 (user_id, role_id) 没落位：{pk}"
     conn.close()

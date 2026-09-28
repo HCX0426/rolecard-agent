@@ -429,11 +429,12 @@ def list_reachouts(
     ).fetchall()
     # 只有**主动会话真的存在**才给跳转目标：这个功能上线之前落库的老消息没有对应的线程，
     # 给了 id 等于把用户送进一句"加载历史失败"。宁可只给"标记已读"。
+    # 线程集合按**这个人**过滤（B2）：线程 id 带身份了，"别人的主动会话"不该成为我的跳转对象。
     opened = {
         str(r["thread_id"])
         for r in conn.execute(
-            "SELECT thread_id FROM session_thread WHERE thread_id LIKE ?",
-            (f"{PROACTIVE_THREAD_PREFIX}%",),
+            "SELECT thread_id FROM session_thread WHERE user_id = ? AND thread_id LIKE ?",
+            (user_id, f"{PROACTIVE_THREAD_PREFIX}%"),
         )
     }
     if role_id:
@@ -461,7 +462,7 @@ def list_reachouts(
             dict(r)
             | {
                 # 点进去能翻历史、能回话的那个会话；尚未建立（老消息 / 从没投递成功）→ None。
-                "thread_id": _opened_thread(str(r["role_id"]), opened)
+                "thread_id": _opened_thread(str(r["role_id"]), opened, user_id=user_id)
             }
             for r in rows
         ],
@@ -471,8 +472,8 @@ def list_reachouts(
     }
 
 
-def _opened_thread(role_id: str, opened: set[str]) -> str | None:
-    tid = proactive_thread_id(role_id)
+def _opened_thread(role_id: str, opened: set[str], *, user_id: str) -> str | None:
+    tid = proactive_thread_id(role_id, user_id=user_id)
     return tid if tid in opened else None
 
 
@@ -543,17 +544,22 @@ def mark_all_read(conn: SqlConnection, *, user_id: str) -> int:
 # ------------------------------------------------------------------ 主动会话（可回话的落点）
 
 #: 每个角色一条固定的"主动会话"：角色开口时落进这里，用户回复走普通对话链路。
+#: 线程 id 带身份（多租户 B2）：同一个 role_id 将来可以属于两个身份（role_card 主键会
+#: 改成 (user_id, role_id)），不带身份就让两人的主动会话互相覆盖。
 PROACTIVE_THREAD_PREFIX = "s_proactive_"
 
 
-def proactive_thread_id(role_id: str) -> str:
-    """该角色主动开口的会话线程 id（**确定性**：同角色恒定，不做随机分配）。
+def proactive_thread_id(role_id: str, *, user_id: str) -> str:
+    """该角色主动开口的会话线程 id（**确定性**：同角色同主人恒定，不做随机分配）。
 
     为什么确定性而不是"首条时生成一个 uuid 存库"：主动消息与它的会话是"一个角色一条
-    对话"这一事实的两面，用一个从 role_id 推出来的 id，收件箱与写入侧就天然指同一个地方，
-    不必再加一列去记"那个 id 是哪个"（也不会出现两处各存一份、改天不同步）。
+    对话"这一事实的两面，用一个从 (主人, role_id) 推出来的 id，收件箱与写入侧就天然指
+    同一个地方，不必再加一列去记"那个 id 是哪个"（也不会出现两处各存一份、改天不同步）。
+
+    身份这一维（B2）在**前缀**而不是后缀：`user_id` 可能是任意字面量，把它放中间、
+    靠 `{prefix}{uid}_{role}` 的固定形状拼 id，从不解析回去 —— 只有"建"和"对着比"两种用法。
     """
-    return f"{PROACTIVE_THREAD_PREFIX}{role_id}"
+    return f"{PROACTIVE_THREAD_PREFIX}{user_id}_{role_id}"
 
 
 def proactive_thread_title(role_name: str) -> str:
@@ -574,7 +580,7 @@ def ensure_proactive_thread(
     删了还会再长出来：用户把这条会话从列表里删掉，下一次角色开口（或桌宠上发消息）会重新
     建一行 —— 已提炼进角色记忆的事实不跟着走（那条边界有断言钉着）。
     """
-    thread_id = proactive_thread_id(role.role_id)
+    thread_id = proactive_thread_id(role.role_id, user_id=user_id)
     conn.execute(
         "INSERT INTO session_thread (thread_id, user_id, current_role_id, tool_epoch, title)"
         " VALUES (?, ?, ?, ?, ?) ON CONFLICT(thread_id) DO NOTHING",
@@ -745,13 +751,15 @@ def _last_reachout_utc(conn: SqlConnection, role_id: str, *, user_id: str) -> da
     return _utc_from_db(None if row is None else row["at"])
 
 
-def _lane_activity_utc(conn: SqlConnection, role_id: str) -> datetime | None:
+def _lane_activity_utc(
+    conn: SqlConnection, role_id: str, *, user_id: str
+) -> datetime | None:
     """对方在那条主动会话里**最后一次有动静**的时刻（任何一轮都会推 `session_thread.updated_at`）。
     线程还不存在给 None（这条线从没建立过 = 无从判断他回没回）。
     """
     lane = conn.execute(
         "SELECT updated_at FROM session_thread WHERE thread_id = ?",
-        (proactive_thread_id(role_id),),
+        (proactive_thread_id(role_id, user_id=user_id),),
     ).fetchone()
     return None if lane is None else _utc_from_db(lane["updated_at"])
 
@@ -774,7 +782,7 @@ def _last_speech_utc(
     这比"她刚答完就又冒一句"轻，接受。
     """
     reach = _last_reachout_utc(conn, role_id, user_id=user_id)
-    chat = _lane_activity_utc(conn, role_id)
+    chat = _lane_activity_utc(conn, role_id, user_id=user_id)
     if reach is None:
         return chat
     if chat is None:
@@ -801,7 +809,7 @@ def _unreplied_streak(
     用 `julianday` 而不是直接比字符串：那两列虽然都是 ISO 形状，但 `TIMESTAMP` 声明在
     SQLite 里落进 NUMERIC 亲和，跨亲和的文本比较不是这里要的语义；换成数就只有一种读法。
     """
-    lane = _lane_activity_utc(conn, role_id)
+    lane = _lane_activity_utc(conn, role_id, user_id=user_id)
     if lane is None:
         return 0
     row = conn.execute(
@@ -899,7 +907,7 @@ def quiet_gate(
     # 会和它抢同一份检查点（`deliver_proactive` 那侧也有锁兜底，但"不打断"本来就是对的语义）。
     # 判据用锁的持有状态而不是"最后一条消息的时间"：后者在用户回完话、她还没答的间隙里是 False，
     # 而那恰好是最不该插嘴的一刻。
-    if thread_is_busy(proactive_thread_id(role.role_id)):
+    if thread_is_busy(proactive_thread_id(role.role_id, user_id=owner)):
         return Gate("这条会话正在对话中", None, streak, unread)
     return Gate(None, None, streak, unread)
 
@@ -1167,7 +1175,7 @@ def trigger_recall(
     """
     if not role.recall_enabled:
         return None
-    state = get_state(conn, role.role_id)
+    state = get_state(conn, role.role_id, user_id=user_id)
     if state.recall_at is not None and (now_local - state.recall_at) < timedelta(
         hours=RECALL_COOLDOWN_HOURS
     ):
@@ -1386,7 +1394,7 @@ class ReachoutScheduler:
                 continue
             # 关系驱动：按角色状态评估触发源，取第一个命中者决定"以什么口吻开口"。
             # file_event 居链首（素材门控：有变化先说变化）；"timer" 是基线触发。
-            state = get_state(self._conn, role.role_id)
+            state = get_state(self._conn, role.role_id, user_id=owner)
             fired = (
                 ("file_event" if can_file else None)
                 or trigger_affection(role, state, settings, now_utc=stamp_utc)
@@ -1424,7 +1432,7 @@ class ReachoutScheduler:
                             )
                         else:
                             state = save_open_threads(
-                                self._conn, role.role_id, scanned, now=stamp_utc
+                                self._conn, role.role_id, scanned, user_id=owner, now=stamp_utc
                             )
                     open_topics = list(state.open_threads)
                     if open_topics:
@@ -1475,18 +1483,18 @@ class ReachoutScheduler:
             reachout_id = record_reachout(
                 self._conn, role, text, user_id=owner, fired_by=fired
             )
-            record_interaction(self._conn, role.role_id, now=stamp_utc)
+            record_interaction(self._conn, role.role_id, user_id=owner, now=stamp_utc)
             if fired == "recall":
                 # 冷却锚点只在**真的发出去了**的时候记：被 guard 拦下、正文为空的那些
                 # `reachout_skipped` 不该消耗掉这一档的额度（用户看到的是"她没说话"，
                 # 而不是"她说过一次了"）。
-                record_recall_open(self._conn, role.role_id, now=stamp_utc)
+                record_recall_open(self._conn, role.role_id, user_id=owner, now=stamp_utc)
             elif fired == "open_thread":
                 # 这批话题已经被刚发出去的那句用掉了。不清的话缓存寿命（90 分）比开口
                 # 间隔（60 分）长，同一个话题会驱动两次开口（R26-11 第二条）。
                 # **时刻保留**：清空 + 留着 scan_at 才是想要的语义 —— 别立刻再花一次调用，
                 # 也别让同一个话题再冒一遍。
-                save_open_threads(self._conn, role.role_id, [], now=stamp_utc)
+                save_open_threads(self._conn, role.role_id, [], user_id=owner, now=stamp_utc)
             # 先落收件箱（用户一定能看见），再尽力投进主动会话；投递坏了也不把消息吞掉。
             # 投不进去的那些**不是丢了**：`delivered_at` 仍为空，下一 tick 由
             # `_retry_undelivered` 补上（R26-40 ②）—— 从前那句"调度器下一轮还会再问"是错的，

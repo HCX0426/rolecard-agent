@@ -171,7 +171,7 @@ def test_deliver_proactive_lands_in_the_roles_thread(tmp_path: Path) -> None:
     try:
         role = RoleCard(role_id="wan", role_name="苏晚晴", system_prompt="你是苏晚晴。")
         tid = runtime.deliver_proactive(role, "今天腰还酸吗？")
-        assert tid == proactive_thread_id("wan")
+        assert tid == proactive_thread_id("wan", user_id=DEFAULT_USER_ID)
 
         row = runtime.conn.execute(
             "SELECT current_role_id, user_id, title FROM session_thread WHERE thread_id = ?",
@@ -219,7 +219,7 @@ def test_deliver_proactive_does_not_interrupt_a_running_turn(tmp_path: Path) -> 
     runtime = _assemble(tmp_path)
     try:
         role = RoleCard(role_id="wan", role_name="苏晚晴", system_prompt="你是苏晚晴。")
-        tid = proactive_thread_id("wan")
+        tid = proactive_thread_id("wan", user_id=DEFAULT_USER_ID)
 
         assert try_thread_write(tid, timeout=0.0)  # 模拟：用户那一轮正在飞
         try:

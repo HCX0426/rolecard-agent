@@ -240,7 +240,7 @@ def proactive_session_of(
     不建行的理由同 `ensure_proactive_session` 的反面：只是打开面板看一眼，不该在侧栏长出
     一条"从没被找过的角色 · 主动找你"。
     """
-    tid = proactive_thread_id(role_id)
+    tid = proactive_thread_id(role_id, user_id=ctx.current_user())
     row = ctx.conn.execute(
         "SELECT thread_id FROM session_thread WHERE thread_id = ?", (tid,)
     ).fetchone()
@@ -499,9 +499,10 @@ def stop_turn(
     幂等：按两次停止没有额外后果。这一轮已经跑完时旗子会留到**下一轮开始**才被清
     （`run_turn` 开头），所以这里不需要去问"那轮还在不在"。
 
-    **但要先问这条线程是不是你的**（M4）：旗子是按 `thread_id` 立的，而 `s_proactive_<role_id>`
-    这种 id 是**可猜的**（角色 id 是公开短串）。不比对归属就等于"任何人都能打断别人那一轮" ——
-    读侧的 404 纪律在这里同样适用，别人名下的线程回 404，不承认它存在。
+    **但要先问这条线程是不是你的**（M4）：旗子是按 `thread_id` 立的，而
+    `s_proactive_<uid>_<role_id>` 这种 id 是**可猜的**（角色 id 是公开短串）。不比对归属
+    就等于"任何人都能打断别人那一轮" —— 读侧的 404 纪律在这里同样适用，别人名下的线程
+    回 404，不承认它存在。
     """
     get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
     request_stop(thread_id)
@@ -882,7 +883,8 @@ def list_sessions(ctx: AppContext = Depends(get_context)) -> list[object]:
             **dict(r),
             "agent_mode": resolve_agent_mode(r["agent_mode"], ctx.settings),
             # 侧栏分"她们那条线 / 临时话题"靠的是这个旗标，而不是前端自己拼线程 id 的前缀 ——
-            # 那个形状（`s_proactive_<role>`）的事实归 `core/reachout.py`，写第二处就会漂。
+            # 那个形状（`s_proactive_<uid>_<role>`，B2 起带身份）的事实归 `core/reachout.py`，
+            # 写第二处就会漂。
             "is_proactive": str(r["thread_id"]).startswith(PROACTIVE_THREAD_PREFIX),
             # "这一条里一个字的对话都没有"。只给布尔，**不给条数**：一轮对话在 `checkpoints`
             # 里是好几行（R26-07 那个平方级增长就是它），把行数当条数报出去就是骗界面；

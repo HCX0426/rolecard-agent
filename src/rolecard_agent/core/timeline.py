@@ -60,7 +60,7 @@ def _reachouts(
         " WHERE role_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?",
         (role_id, user_id, _SCAN_CAP),
     ).fetchall()
-    thread = proactive_thread_id(role_id)
+    thread = proactive_thread_id(role_id, user_id=user_id)
     exists = conn.execute(
         "SELECT 1 FROM session_thread WHERE thread_id = ?", (thread,)
     ).fetchone()

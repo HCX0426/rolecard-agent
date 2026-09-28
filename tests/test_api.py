@@ -666,7 +666,7 @@ def test_reachouts_point_at_the_proactive_thread_and_read_by_role(client: TestCl
 
     page = client.get("/api/reachouts").json()
     assert page["unread"] == 1
-    tid = proactive_thread_id("general_assistant")
+    tid = proactive_thread_id("general_assistant", user_id=DEFAULT_USER_ID)
     # 会话还不存在（这条消息是本功能上线前落的形状）→ 不给死链接。
     assert page["items"][0]["thread_id"] is None
     conn.execute(
@@ -701,7 +701,7 @@ def test_deleting_a_session_keeps_memory_and_the_inbox_ledger(client: TestClient
     from rolecard_agent.core.reachout import proactive_thread_id
 
     conn = client.app.state.ctx.conn
-    tid = proactive_thread_id("general_assistant")
+    tid = proactive_thread_id("general_assistant", user_id=DEFAULT_USER_ID)
     conn.execute(
         "INSERT INTO session_thread (thread_id, user_id, current_role_id, title)"
         " VALUES (?, ?, 'general_assistant', ?)",
@@ -745,7 +745,7 @@ def test_proactive_session_ensure_is_idempotent_and_recreatable(client: TestClie
     first = client.post("/api/session/proactive", json={"role_id": "general_assistant"})
     assert first.status_code == 201
     tid = first.json()["thread_id"]
-    assert tid == proactive_thread_id("general_assistant")
+    assert tid == proactive_thread_id("general_assistant", user_id=DEFAULT_USER_ID)
     assert first.json()["role_name"] == "通用助手"
 
     again = client.post("/api/session/proactive", json={"role_id": "general_assistant"})

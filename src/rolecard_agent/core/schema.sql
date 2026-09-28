@@ -144,11 +144,12 @@ CREATE INDEX IF NOT EXISTS idx_reachout_state_time ON agent_reachout(state, crea
 -- （记录哪些主动被接受/驳回，用于"该不该现在打扰"的判断）；last_interaction_utc = 最近一次
 -- 主动/被交互的 UTC 时间，用于关系数值随时间自然衰减。
 CREATE TABLE IF NOT EXISTS role_proactive_state (
-    -- 刻意**不加 `user_id`**（与 `role_memory`、健康域那张索引表同一条道理）：这张表按
-    -- `role_id` 主键，而角色卡在 M2a 之后已经有主人 —— 状态跟着角色卡走就是"一处真相"。
-    -- 要给它单独加归属，得先把主键改成 `(user_id, role_id)`（整表重建），那是"同一台库里
-    -- 住多个主人"那天的一次性工程，现在做只会被第二次迁移推翻。
-    role_id               TEXT PRIMARY KEY,
+    -- 归属（多租户 B2）：状态**跟着角色卡的主人走**。既然 `role_card` 的主键将来要改成
+    -- (user_id, role_id)（第二个身份也可能建一张叫 `she` 的卡），状态表就必须先换主键
+    -- (user_id, role_id) —— 整表重建那天是"同一台库里住多个主人"的第一步（09-27 时这条
+    -- 注释还写着"刻意不加"）。老行归属实例主人（默认部署 = 'local-user'）。
+    user_id               TEXT NOT NULL DEFAULT 'local-user',
+    role_id               TEXT NOT NULL,
     affinity             REAL NOT NULL DEFAULT 0.0,
     last_interaction_utc TIMESTAMP,
     calibration_json     TEXT,
@@ -161,7 +162,8 @@ CREATE TABLE IF NOT EXISTS role_proactive_state (
     -- 判据只是"有没有一条 active 记忆"，于是记忆一长就永久压住排在它后面的定时档）。
     -- NULL = 从没以这一档开过口。冷却长度见 reachout.RECALL_COOLDOWN_HOURS。
     recall_at            TIMESTAMP,
-    updated_at           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, role_id)
 );
 
 -- 按角色卡隔离的长期记忆（架构计划 §5.2 实现前置）：与全局 kernel_meta 的 memory:facts 分离，

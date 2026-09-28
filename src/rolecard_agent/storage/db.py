@@ -377,6 +377,8 @@ def _migrate(conn: SqlConnection) -> None:
     # `bootstrap` 在跑 DDL 前后各调一次，语义与那些 `if 缺则 ADD` 逐字相同
     # （列的 type/NOT NULL/DEFAULT 直接取自 `schema.sql`，见 R26-04）。
     # 7. 关系驱动主动开口（架构总览 §5）：per-role 状态与 per-role 记忆（幂等建表）。
+    #    这张表的列仍由 reconcile_columns 补（不在 _SHAPE_MIGRATED_TABLES 里），只有
+    #    **主键换 (user_id, role_id)** 是形状迁移，走下面 B2 的重建。
     if "affinity" not in _columns(conn, "role_proactive_state"):
         conn.execute(
             "CREATE TABLE IF NOT EXISTS role_proactive_state ("
@@ -384,6 +386,57 @@ def _migrate(conn: SqlConnection) -> None:
             " last_interaction_utc TIMESTAMP, calibration_json TEXT,"
             " updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
         )
+    # 14. role_proactive_state 的主键升级（多租户 B2）：(role_id) → (user_id, role_id)。
+    #     `role_card` 的主键将来要改成 (user_id, role_id)（第二个身份也可能建一张同名卡），
+    #     状态表不跟着换就撞行。整表重建 + 老行归属实例主人（默认部署 = 'local-user'，
+    #     与 core/identity.DEFAULT_USER_ID 一字不差）。判"老形态"用有没有 user_id 列。
+    #     顺带把**主动会话线程 id 改成带身份**（s_proactive_<role> → s_proactive_<uid>_<role>）：
+    #     同一个 role_id 将来可以属于两个人，线程 id 不带身份就会让两人的主动会话互相覆盖。
+    #     老线程的归属从 session_thread.user_id 现读（数据即真相，不必知道 IDENTITY_USER_ID）；
+    #     checkpoints/writes 的 thread_id 一起改（那是她主动说过的历史，不改就断了上下文）。
+    #     幂等：新 id == 旧 id（已带身份）的不动；新库没有 legacy 行一轮跑过。这两件是本步
+    #「换主键 + 换线程 id」两笔账，放在同一个 if 里是为了一次迁移只判断一次"是不是 B2 之前的库"。
+    if "user_id" not in _columns(conn, "role_proactive_state"):
+        conn.execute(
+            "CREATE TABLE role_proactive_state__b2 ("
+            " user_id TEXT NOT NULL DEFAULT 'local-user', role_id TEXT NOT NULL,"
+            " affinity REAL NOT NULL DEFAULT 0.0, last_interaction_utc TIMESTAMP,"
+            " calibration_json TEXT, open_threads TEXT, open_threads_at TIMESTAMP,"
+            " recall_at TIMESTAMP,"
+            " updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+            " PRIMARY KEY (user_id, role_id))"
+        )
+        conn.execute(
+            "INSERT INTO role_proactive_state__b2 (user_id, role_id, affinity,"
+            " last_interaction_utc, calibration_json, open_threads, open_threads_at, recall_at,"
+            " updated_at)"
+            " SELECT 'local-user', role_id, affinity, last_interaction_utc, calibration_json,"
+            " open_threads, open_threads_at, recall_at, updated_at FROM role_proactive_state"
+        )
+        conn.execute("DROP TABLE role_proactive_state")
+        conn.execute("ALTER TABLE role_proactive_state__b2 RENAME TO role_proactive_state")
+        cp_cols = _columns(conn, "checkpoints")
+        has_cp = bool(cp_cols)
+        for row in conn.execute(
+            "SELECT thread_id, user_id FROM session_thread "
+            "WHERE thread_id LIKE 's_proactive_%'"
+        ).fetchall():
+            tid = str(row["thread_id"])
+            uid = str(row["user_id"])
+            if tid.startswith(f"s_proactive_{uid}_"):
+                continue  # 已带身份（本步跑过 / 新库建的）
+            new_tid = f"s_proactive_{uid}_{tid[len('s_proactive_'):]}"
+            conn.execute(
+                "UPDATE session_thread SET thread_id = ? WHERE thread_id = ?",
+                (new_tid, tid),
+            )
+            if has_cp:
+                conn.execute(
+                    "UPDATE checkpoints SET thread_id = ? WHERE thread_id = ?", (new_tid, tid)
+                )
+                conn.execute(
+                    "UPDATE writes SET thread_id = ? WHERE thread_id = ?", (new_tid, tid)
+                )
     if "value" not in _columns(conn, "role_memory"):
         conn.execute(
             "CREATE TABLE IF NOT EXISTS role_memory ("

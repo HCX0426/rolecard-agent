@@ -238,10 +238,10 @@ def test_deleting_a_role_takes_her_own_state_with_it(
 
     cards(roles).create(_new("ghost"))
     add_item(conn, user_id=ME, bucket="ghost", text="用户下周要体检")
-    st = get_state(conn, "ghost")
+    st = get_state(conn, "ghost", user_id=ME)
     st.affinity = 3.0
-    save_state(conn, st)
-    assert get_state(conn, "ghost").affinity == 3.0
+    save_state(conn, st, user_id=ME)
+    assert get_state(conn, "ghost", user_id=ME).affinity == 3.0
 
     cards(roles).delete("ghost")
 
@@ -258,7 +258,7 @@ def test_deleting_a_role_takes_her_own_state_with_it(
 
     # 同名重建：必须是一张干净的卡，不该继承任何旧状态
     cards(roles).create(_new("ghost", system_prompt="全新设定。"))
-    fresh = get_state(conn, "ghost")
+    fresh = get_state(conn, "ghost", user_id=ME)
     assert fresh.affinity == 0.0 and fresh.open_threads == ()
     assert conn.execute(
         "SELECT COUNT(*) c FROM role_memory_item WHERE role_id='ghost'"

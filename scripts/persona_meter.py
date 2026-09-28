@@ -264,8 +264,15 @@ def reply_side(api: str, role_ids: Sequence[str], limit: int) -> dict[str, Any]:
     这一侧要读 checkpoint 回放，所以需要后端在跑；读不到只记一条 error，不整体失败。
     """
     out: dict[str, Any] = {}
+    from rolecard_agent.config import Settings
+    from rolecard_agent.core.identity import resolve_instance_identity
+
+    owner = resolve_instance_identity(Settings.from_env())
     for rid in role_ids:
-        url = f"{api.rstrip('/')}/api/session/{proactive_thread_id(rid)}/messages?limit={limit}"
+        url = (
+            f"{api.rstrip('/')}/api/session/"
+            f"{proactive_thread_id(rid, user_id=owner)}/messages?limit={limit}"
+        )
         try:
             with urllib.request.urlopen(url, timeout=20) as resp:  # noqa: S310 - 只连本机配置里的地址
                 data = json.load(resp)

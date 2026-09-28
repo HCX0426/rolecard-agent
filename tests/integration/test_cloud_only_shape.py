@@ -163,7 +163,7 @@ def test_proactive_reachouts_work_without_any_local_model(tmp_path: Path) -> Non
         rows = svc.list_reachouts(runtime.conn, user_id=DEFAULT_USER_ID)
         assert rows["unread"] == 1
         tid = rows["items"][0]["thread_id"]
-        assert tid == svc.proactive_thread_id("wan")
+        assert tid == svc.proactive_thread_id("wan", user_id=DEFAULT_USER_ID)
         # 会话真的建起来了、消息真的进了 checkpoint —— 桌宠点进去才有东西可看。
         state = runtime.state["graph"].get_state(build_graph_config(tid, runtime.effective))
         assert [str(m.content) for m in state.values["messages"]] == [reply]

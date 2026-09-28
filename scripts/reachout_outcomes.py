@@ -35,8 +35,14 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import scratch_db  # noqa: E402
 
-from rolecard_agent.core.reachout import proactive_thread_id  # noqa: E402
+from rolecard_agent.config import Settings  # noqa: E402
+from rolecard_agent.core.identity import resolve_instance_identity  # noqa: E402
+from rolecard_agent.core.reachout import PROACTIVE_THREAD_PREFIX, proactive_thread_id  # noqa: E402
 from rolecard_agent.storage.db import bootstrap, connect  # noqa: E402
+
+# 读的是**这份库实际的主人在用的主动线程**（B2 之后线程 id 带身份）—— 与运行中的实例
+# 一致即可：IDENTITY_USER_ID 设了就跟着它，没设就是默认那份。
+OWNER = resolve_instance_identity(Settings.from_env())
 
 UNKNOWN_SOURCE = "（这一列上线前落的，不知道）"
 
@@ -58,7 +64,7 @@ def _proxy_replies(conn: Any, role_id: str, after: datetime) -> int:
     """
     row = conn.execute(
         "SELECT updated_at FROM session_thread WHERE thread_id = ?",
-        (proactive_thread_id(role_id),),
+        (proactive_thread_id(role_id, user_id=OWNER),),
     ).fetchone()
     touched = _parse(row["updated_at"]) if row is not None else None
     return 1 if touched is not None and touched > after else 0
@@ -80,7 +86,7 @@ def read_lane_messages(conn: Any) -> dict[str, list[tuple[str, str]]]:
     out: dict[str, list[tuple[str, str]]] = {}
     lanes = conn.execute(
         "SELECT thread_id FROM session_thread WHERE thread_id LIKE ?",
-        (f"{proactive_thread_id('')}%",),
+        (f"{PROACTIVE_THREAD_PREFIX}%",),
     ).fetchall()
     for lane in lanes:
         tid = str(lane["thread_id"])
@@ -102,7 +108,7 @@ def read_lane_messages(conn: Any) -> dict[str, list[tuple[str, str]]]:
 
 def _real_replies(lane_msgs: dict[str, list[tuple[str, str]]], role_id: str, text: str) -> int:
     """真判据：**她那句之后**，那条线上有没有出现过一条用户消息。"""
-    pairs = lane_msgs.get(proactive_thread_id(role_id), [])
+    pairs = lane_msgs.get(proactive_thread_id(role_id, user_id=OWNER), [])
     at = next(
         (i for i in range(len(pairs) - 1, -1, -1) if pairs[i] == ("你", text.strip())),
         None,

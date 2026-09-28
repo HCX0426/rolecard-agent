@@ -86,32 +86,37 @@ def _row_to_state(row: dict[str, Any]) -> ProactiveState:
     )
 
 
-def get_state(conn: SqlConnection, role_id: str) -> ProactiveState:
-    """读某角色的主动状态；无记录 = 全新状态（affinity 0）。"""
+def get_state(conn: SqlConnection, role_id: str, *, user_id: str) -> ProactiveState:
+    """读某个人的某角色主动状态；无记录 = 全新状态（affinity 0）。
+
+    归属（多租户 B2）：状态表主键是 (user_id, role_id)，谁读就 WHERE 谁 —— 第二个身份
+    的同名角色状态在这里是**不存在**，不是"还搭着第一个人的那份"。调用方必须显式交主人。
+    """
     row = conn.execute(
         "SELECT role_id, affinity, last_interaction_utc, calibration_json, "
         "open_threads, open_threads_at, recall_at "
-        "FROM role_proactive_state WHERE role_id = ?",
-        (role_id,),
+        "FROM role_proactive_state WHERE user_id = ? AND role_id = ?",
+        (user_id, role_id),
     ).fetchone()
     if row is None:
         return ProactiveState(role_id=role_id)
     return _row_to_state(row)
 
 
-def save_state(conn: SqlConnection, state: ProactiveState) -> None:
+def save_state(conn: SqlConnection, state: ProactiveState, *, user_id: str) -> None:
     conn.execute(
         "INSERT INTO role_proactive_state "
-        "(role_id, affinity, last_interaction_utc, calibration_json, "
+        "(user_id, role_id, affinity, last_interaction_utc, calibration_json, "
         " open_threads, open_threads_at, recall_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) "
-        "ON CONFLICT(role_id) DO UPDATE SET "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) "
+        "ON CONFLICT(user_id, role_id) DO UPDATE SET "
         "affinity = excluded.affinity, last_interaction_utc = excluded.last_interaction_utc, "
         "calibration_json = excluded.calibration_json, "
         "open_threads = excluded.open_threads, open_threads_at = excluded.open_threads_at, "
         "recall_at = excluded.recall_at, "
         "updated_at = CURRENT_TIMESTAMP",
         (
+            user_id,
             state.role_id,
             state.affinity,
             _fmt_ts(state.last_interaction_utc) if state.last_interaction_utc else None,
@@ -125,35 +130,39 @@ def save_state(conn: SqlConnection, state: ProactiveState) -> None:
 
 
 def save_open_threads(
-    conn: SqlConnection, role_id: str, topics: list[str], *, now: datetime
+    conn: SqlConnection, role_id: str, topics: list[str], *, user_id: str, now: datetime
 ) -> ProactiveState:
     """只写「未收尾话题」那两列（其余状态原样留着）。扫到什么写什么，**空也要写**——
     写了"扫过、没有"才不会下一个 tick 又去问一遍。"""
-    state = get_state(conn, role_id)
+    state = get_state(conn, role_id, user_id=user_id)
     state.open_threads = tuple(t for t in topics if t)
     state.open_threads_scan_at = now
-    save_state(conn, state)
+    save_state(conn, state, user_id=user_id)
     return state
 
 
-def record_recall_open(conn: SqlConnection, role_id: str, *, now: datetime) -> ProactiveState:
+def record_recall_open(
+    conn: SqlConnection, role_id: str, *, user_id: str, now: datetime
+) -> ProactiveState:
     """记一笔"这次开口是以回忆为由"——`trigger_recall` 的冷却锚点（R26-23）。
 
     只写 `recall_at` 这一列，别的状态原样留着（与 `save_open_threads` 同一个道理：
     一处职责一个写点，别让"记时刻"顺手把 affinity 也算一遍）。
     """
-    state = get_state(conn, role_id)
+    state = get_state(conn, role_id, user_id=user_id)
     state.recall_at = now
-    save_state(conn, state)
+    save_state(conn, state, user_id=user_id)
     return state
 
 
-def record_interaction(conn: SqlConnection, role_id: str, *, now: datetime) -> ProactiveState:
+def record_interaction(
+    conn: SqlConnection, role_id: str, *, user_id: str, now: datetime
+) -> ProactiveState:
     """主动开口成功后调用：关系数值 +增量、刷新交互时间、写回。返回最新状态。"""
-    state = get_state(conn, role_id)
+    state = get_state(conn, role_id, user_id=user_id)
     state.affinity = min(AFFINITY_MAX, state.affinity + AFFINITY_GAIN_PER_OPEN)
     state.last_interaction_utc = now
-    save_state(conn, state)
+    save_state(conn, state, user_id=user_id)
     return state
 
 

@@ -97,7 +97,7 @@ def test_blocked_while_that_conversation_is_talking(conn) -> None:
 
     utc, local = _now()
     role = _role()
-    tid = svc.proactive_thread_id(role.role_id)
+    tid = svc.proactive_thread_id(role.role_id, user_id=ME)
     assert try_thread_write(tid, timeout=0.0)
     try:
         reason = svc.quiet_gate(role, _settings(), conn, now_utc=utc, now_local=local).why
@@ -123,7 +123,7 @@ def _seed_lane_activity(conn, role_id: str, minutes_ago: float) -> None:
         "INSERT INTO session_thread (thread_id, user_id, current_role_id, updated_at) "
         "VALUES (?, 'u1', ?, ?) "
         "ON CONFLICT(thread_id) DO UPDATE SET updated_at = excluded.updated_at",
-        (svc.proactive_thread_id(role_id), role_id, ts),
+        (svc.proactive_thread_id(role_id, user_id=ME), role_id, ts),
     )
     conn.commit()
 
@@ -492,14 +492,29 @@ def test_tick_delivers_into_the_proactive_thread(conn) -> None:
     """主动开口除了进收件箱，还要投进"该角色的主动会话"—— 否则用户回不了话。"""
     seen: list[tuple[str, str]] = []
 
+    # 生产里调度器替**本机主人**开口（这台实例默认 = local-user），而 conftest 的 `conn`
+    # 只种了 'u1' —— 主动线程的归属要按主人写，主人不在 app_user 里就是外键当场失败。
+    # 这里补齐演示身份（与核心库 `ensure_identity_row` 同一份），否则"投递建会话行"
+    # 这一半永远测不到（B2 之后线程 id 带身份，假投递必须用真的主人）。
+    conn.execute(
+        "INSERT INTO tenant (tenant_id, display_name) VALUES ('local', '本机') "
+        "ON CONFLICT(tenant_id) DO NOTHING"
+    )
+    conn.execute(
+        "INSERT INTO app_user (user_id, tenant_id, display_name) VALUES (?, 'local', '本机主人') "
+        "ON CONFLICT(user_id) DO NOTHING",
+        (ME,),
+    )
+    conn.commit()
+
     def _deliver(role: RoleCard, text: str) -> str:
         seen.append((role.role_id, text))
         # 真实投递（bootstrap.deliver_proactive）会顺手建会话行；这里照同一份合同建。
-        tid = svc.proactive_thread_id(role.role_id)
+        tid = svc.proactive_thread_id(role.role_id, user_id=ME)
         conn.execute(
             "INSERT INTO session_thread (thread_id, user_id, current_role_id, title)"
-            " VALUES (?, 'u1', ?, ?)",
-            (tid, role.role_id, svc.proactive_thread_title(role.role_name)),
+            " VALUES (?, ?, ?, ?)",
+            (tid, ME, role.role_id, svc.proactive_thread_title(role.role_name)),
         )
         conn.commit()
         return tid
@@ -517,7 +532,7 @@ def test_tick_delivers_into_the_proactive_thread(conn) -> None:
     assert seen == [("active", "今天腰还酸吗")]
 
     items = svc.list_reachouts(conn, user_id=DEFAULT_USER_ID)["items"]
-    assert items[0]["thread_id"] == svc.proactive_thread_id("active")
+    assert items[0]["thread_id"] == svc.proactive_thread_id("active", user_id=ME)
 
 
 def test_old_messages_without_a_thread_are_not_links(conn) -> None:
@@ -572,7 +587,7 @@ def test_a_message_that_missed_the_thread_is_delivered_on_a_later_tick(conn) -> 
         tries.append(text)
         if busy["value"]:
             return None  # 那条会话正在对话中
-        return svc.proactive_thread_id(role.role_id)
+        return svc.proactive_thread_id(role.role_id, user_id=ME)
 
     scheduler = ReachoutScheduler(
         settings_provider=lambda: _settings(),
@@ -685,26 +700,54 @@ def _now_local() -> datetime:
 def _seed_state(conn, role_id: str, affinity: float = 0.0) -> None:
     conn.execute(
         "INSERT INTO role_proactive_state "
-        "(role_id, affinity, last_interaction_utc) VALUES (?, ?, ?) "
-        "ON CONFLICT(role_id) DO UPDATE SET affinity = excluded.affinity",
-        (role_id, affinity, datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")),
+        "(user_id, role_id, affinity, last_interaction_utc) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(user_id, role_id) DO UPDATE SET affinity = excluded.affinity",
+        (DEFAULT_USER_ID, role_id, affinity, datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")),
     )
     conn.commit()
 
 
 def test_trigger_affection_fires_at_threshold(conn) -> None:
     _seed_state(conn, "active", DEFAULT_AFFINITY_THRESHOLD)
-    state = get_state(conn, "active")
+    state = get_state(conn, "active", user_id=ME)
     utc, _ = _now()
     got = svc.trigger_affection(_role(), state, _settings(), now_utc=utc)
     assert got == "affection"
 
 
 def test_trigger_affection_silent_when_low(conn) -> None:
-    state = get_state(conn, "active")  # affinity 0
+    state = get_state(conn, "active", user_id=ME)  # affinity 0
     utc, _ = _now()
     got = svc.trigger_affection(_role(), state, _settings(), now_utc=utc)
     assert got is None
+
+
+def test_proactive_state_is_scoped_per_person(conn) -> None:
+    """状态主键 (user_id, role_id)：两个身份可以各存一份状态，谁也看不见谁的。
+
+    角色卡今天主键仍是全局唯一的 role_id，所以这份"同名卡"只能直接写库构造 —— 这正是
+    role_card 主键改成 (user_id, role_id) 那天会自然出现的形状（B2 就是为它换的表）。
+    三个断言：各读各的、A 写不影响 B、proactive_thread_id 也带身份。
+    """
+    from rolecard_agent.core.proactive_state import (
+        record_interaction,
+        save_state,
+    )
+
+    other = "u1"
+    a = get_state(conn, "she", user_id=ME)
+    b = get_state(conn, "she", user_id=other)
+    assert a.affinity == 0.0 and b.affinity == 0.0
+    a.affinity = 2.5
+    save_state(conn, a, user_id=ME)
+    record_interaction(conn, "she", user_id=other, now=datetime.now(UTC))
+    assert get_state(conn, "she", user_id=ME).affinity == 2.5, "B 的一次交互改到 A 的状态了"
+    assert get_state(conn, "she", user_id=other).affinity == 0.2
+    # 线程 id 带身份：同一个角色，两个人的主动会话不是同一条。
+    assert (
+        svc.proactive_thread_id("she", user_id=ME)
+        != svc.proactive_thread_id("she", user_id=other)
+    )
 
 
 def test_trigger_time_pattern_fires_on_modal_hour(conn) -> None:
@@ -774,7 +817,7 @@ def test_tick_once_runs_affection_trigger_and_bumps_affinity(conn) -> None:
     scheduler = _scheduler(conn, [_role()], model)
     utc, local = _now()
     assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
-    state = get_state(conn, "active")
+    state = get_state(conn, "active", user_id=ME)
     assert state.affinity > DEFAULT_AFFINITY_THRESHOLD  # 开口后关系数值 +增量
 
 
@@ -1281,7 +1324,7 @@ def test_open_threads_replaces_the_generic_timer_and_are_cached(conn) -> None:
     assert made == 1
     assert model.scan_calls == 1 and model.gen_calls == 1
     assert "下周体检的结果" in _joined(model.last_gen_prompt)
-    state = get_state(conn, "active")
+    state = get_state(conn, "active", user_id=ME)
     assert "下周体检的结果" not in state.open_threads, "用过就该清掉（见下面那条消费用例）"
     assert state.open_threads_scan_at is not None, "扫过要记时刻，否则下一 tick 又问一遍"
 
@@ -1383,7 +1426,10 @@ def test_used_topics_are_consumed_so_they_drive_only_one_open(conn) -> None:
     from rolecard_agent.core.proactive_state import save_open_threads
 
     utc, local = _now()
-    save_open_threads(conn, "active", ["下周体检的结果"], now=utc - timedelta(minutes=5))
+    save_open_threads(
+        conn, "active", ["下周体检的结果"], user_id=ME,
+        now=utc - timedelta(minutes=5),
+    )
     model = _TwoFaceModel(["这条不该被再扫一遍"], reply="体检怎么样了？")
     scheduler = ReachoutScheduler(
         settings_provider=lambda: _settings(),
@@ -1395,7 +1441,7 @@ def test_used_topics_are_consumed_so_they_drive_only_one_open(conn) -> None:
     )
     assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
     assert "下周体检的结果" in _joined(model.last_gen_prompt)
-    state = get_state(conn, "active")
+    state = get_state(conn, "active", user_id=ME)
     assert state.open_threads == (), state.open_threads
     assert state.open_threads_scan_at is not None
     assert model.scan_calls == 0, "缓存没过期就不该再问模型"
@@ -1423,7 +1469,7 @@ def test_a_failed_scan_does_not_shut_the_source_down_for_90_minutes(conn) -> Non
     utc, local = _now()
     scheduler = _thread_scheduler(conn, model, "- 用户：我下周要体检")  # type: ignore[arg-type]
     assert scheduler.tick_once(now_utc=utc, now_local=local) == 1  # 照常开口
-    state = get_state(conn, "active")
+    state = get_state(conn, "active", user_id=ME)
     assert state.open_threads_scan_at is None, "失败也写时刻 = 一次抖动关掉这一源 90 分钟"
     assert state.open_threads == ()
     assert model.calls == 2, "一次扫描 + 一次开口正文"
@@ -1438,7 +1484,10 @@ def test_a_fresh_cache_is_used_without_spending_another_call(conn) -> None:
     from rolecard_agent.core.proactive_state import save_open_threads
 
     utc, local = _now()
-    save_open_threads(conn, "active", ["猫绝育约上了没"], now=utc - timedelta(minutes=5))
+    save_open_threads(
+        conn, "active", ["猫绝育约上了没"], user_id=ME,
+        now=utc - timedelta(minutes=5),
+    )
     model = _TwoFaceModel(["这条不该被扫出来"])
     made = _thread_scheduler(conn, model, "- 用户：随便说点什么").tick_once(
         now_utc=utc, now_local=local
@@ -1454,14 +1503,14 @@ def test_an_expired_cache_is_rescanned(conn) -> None:
 
     utc, local = _now()
     stale_at = utc - timedelta(minutes=svc.OPEN_THREADS_REFRESH_MINUTES + 1)
-    save_open_threads(conn, "active", ["旧话题"], now=stale_at)
+    save_open_threads(conn, "active", ["旧话题"], user_id=ME, now=stale_at)
     model = _TwoFaceModel(["新扫出来的话题"])
     _thread_scheduler(conn, model, "- 用户：最近事挺多").tick_once(now_utc=utc, now_local=local)
     assert model.scan_calls == 1
     # 扫出来那句被这一轮用掉了 ⇒ 消费掉（见上面那条 R26-11 第二条的用例）。
     # 这里要验的是"过期会重扫"，所以看提示词里有没有，而不是看缓存里还剩什么。
     assert "新扫出来的话题" in _joined(model.last_gen_prompt)
-    assert get_state(conn, "active").open_threads == ()
+    assert get_state(conn, "active", user_id=ME).open_threads == ()
 
 
 def test_nothing_open_still_speaks_but_says_nothing_about_topics(conn) -> None:
@@ -1475,7 +1524,7 @@ def test_nothing_open_still_speaks_but_says_nothing_about_topics(conn) -> None:
     assert model.scan_calls == 1
     joined = _joined(model.last_gen_prompt)
     assert "未收尾" not in joined and "OPEN" not in joined
-    state = get_state(conn, "active")
+    state = get_state(conn, "active", user_id=ME)
     assert state.open_threads == () and state.open_threads_scan_at is not None
 
 
@@ -1524,10 +1573,10 @@ def test_affection_toggle_frees_the_rest_of_the_chain(conn) -> None:
     from rolecard_agent.core.proactive_state import save_state
 
     utc, local = _now()
-    state = get_state(conn, "active")
+    state = get_state(conn, "active", user_id=ME)
     state.affinity = DEFAULT_AFFINITY_THRESHOLD + 4.0
     state.last_interaction_utc = utc
-    save_state(conn, state)
+    save_state(conn, state, user_id=ME)
 
     on = _role()
     off = RoleCard(**{**_role().model_dump(), "affinity_enabled": False})
@@ -1564,7 +1613,7 @@ def test_recall_cools_down_after_it_actually_spoke(conn) -> None:
     local = _now_local()
     assert svc.trigger_recall(_role(), conn, user_id=ME, now_local=local) == "recall"
 
-    record_recall_open(conn, "active", now=local)
+    record_recall_open(conn, "active", user_id=ME, now=local)
     assert svc.trigger_recall(_role(), conn, user_id=ME,
         now_local=local) is None, "刚以回忆开过口，该让位"
     later = local + timedelta(hours=svc.RECALL_COOLDOWN_HOURS + 1)
@@ -1579,7 +1628,9 @@ def test_an_unsent_recall_does_not_burn_the_cooldown(conn) -> None:
     add_item(conn, user_id=ME, bucket="active", text="用户下周要体检")
     scheduler = _scheduler(conn, [_role()], model)
     assert scheduler.tick_once(now_utc=utc, now_local=local) == 0
-    assert get_state(conn, "active").recall_at is None, "没发出去却记了冷却 = 静默关掉这一档一天"
+    assert (
+        get_state(conn, "active", user_id=ME).recall_at is None
+    ), "没发出去却记了冷却 = 静默关掉这一档一天"
 
 
 def test_the_open_thread_task_offers_a_way_out() -> None:

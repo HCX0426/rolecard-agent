@@ -196,8 +196,14 @@ class RoleCards:
         role = self.get(role_id)  # raises RoleNotFound if absent or not mine
         if role.is_builtin:
             raise BuiltinRoleProtected(f"built-in role cannot be deleted: {role_id}")
-        for table in ("role_memory_item", "role_proactive_state", "role_memory"):
+        for table in ("role_memory_item", "role_memory"):
             self.conn.execute(f"DELETE FROM {table} WHERE role_id = ?", (role_id,))
+        # role_proactive_state 的主键是 (user_id, role_id)（多租户 B2）：删除范围必须带上
+        # 主人，否则将来同名卡归别人时，删自己的这张会顺手清掉对方的状态。
+        self.conn.execute(
+            "DELETE FROM role_proactive_state WHERE role_id = ? AND user_id = ?",
+            (role_id, self.user_id),
+        )
         self.conn.execute(
             "DELETE FROM role_card WHERE role_id = ? AND user_id = ?",
             (role_id, self.user_id),

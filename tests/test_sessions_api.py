@@ -230,7 +230,8 @@ def test_session_list_carries_the_two_flags_the_sidebar_needs(client: TestClient
 
     为什么值得钉住（`R26-06` 那一族：写进界面的推断没人复核）：旧前端拿"有没有标题"当
     "这条是不是空的"，而重命名过的空线程、深链刚建出来的线程都会被骗过去；线程 id 那个
-    形状（`s_proactive_<role>`）的事实归 `core/reachout.py`，前端自己拼就是第二个真相源。
+    形状（`s_proactive_<uid>_<role>`，B2 起带身份）的事实归 `core/reachout.py`，前端自己
+    拼就是第二个真相源。
     空白的判据是"这条线程写过 checkpoint 没有"—— 那个只有后端看得见。
     """
     blank = client.post("/api/session", json={}).json()

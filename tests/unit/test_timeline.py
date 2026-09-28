@@ -164,10 +164,12 @@ def test_reachout_links_only_when_the_proactive_session_exists(conn: SqlConnecti
     add_reachout(conn, "有会话的那条", at(18, "10:00:00"))
     assert timeline.build(conn, user_id=USER, role_id=ROLE)["items"][0]["thread_id"] is None
 
-    add_thread(conn, f"s_proactive_{ROLE}", at(18, "09:00:00"), at(18, "09:30:00"), "与爱莉希雅")
+    add_thread(
+        conn, f"s_proactive_{USER}_{ROLE}", at(18, "09:00:00"), at(18, "09:30:00"), "与爱莉希雅"
+    )
     page = timeline.build(conn, user_id=USER, role_id=ROLE)
     reachout = next(i for i in page["items"] if i["kind"] == "reachout")
-    assert reachout["thread_id"] == f"s_proactive_{ROLE}"
+    assert reachout["thread_id"] == f"s_proactive_{USER}_{ROLE}"
 
 
 def test_kinds_filter_keeps_corrections_with_memory(conn: SqlConnection) -> None:

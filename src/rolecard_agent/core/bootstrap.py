@@ -294,14 +294,14 @@ class Runtime:
         """这一轮对话她该看见什么：`memory_for_turn` 那份记忆 + 她最近**主动**说过的原话。
 
         为什么要补那一截（用户 2026-09-26 拍的"并进来"）：主动开口的话只落进
-        `s_proactive_<role>` 那一条线程，而控制台的「新建对话」另开一条 —— 那条里她看不见
-        自己刚问过什么，"我记得我提醒过你鞋带"这种话就接不上。
+        `s_proactive_<uid>_<role>` 那一条线程（B2 起带身份），而控制台的「新建对话」另开一条 ——
+        那条里她看不见自己刚问过什么，"我记得我提醒过你鞋带"这种话就接不上。
 
         在**那条主动会话里**不补：同一句话本来就在她的历史里，再抄一遍进 system 等于把
         复读喂回给模型（`nodes._scrub_own_repeats` 治的就是这个），白花 token 还添病。
         """
         text = memory_for_turn(self.conn, self.effective, role_id, user_id=self.identity)
-        if not role_id or thread_id == proactive_thread_id(role_id):
+        if not role_id or thread_id == proactive_thread_id(role_id, user_id=self.identity):
             return text
         echo = recent_reachout_lines(
             self.conn, role_id, user_id=self.identity, limit=CHAT_ECHO_LIMIT
@@ -426,7 +426,9 @@ class Runtime:
         rows: list[tuple[str, str]] = []
         with contextlib.suppress(Exception):
             snap = graph.get_state(
-                build_graph_config(proactive_thread_id(role_id), self.effective)
+                build_graph_config(
+                    proactive_thread_id(role_id, user_id=self.identity), self.effective
+                )
             )
             for m in ((snap.values or {}).get("messages") or []):
                 if isinstance(m, ToolMessage):
