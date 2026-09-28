@@ -41,7 +41,24 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PY = str(ROOT / ".venv" / "Scripts" / "python.exe")
+def _venv_python() -> str:
+    """按平台找虚拟环境里那个解释器，找不到就退回**调用方自己用的那个**。
+
+    为什么不能写死 Windows 那条路径：CI 的 Linux runner 上没有 `.venv/Scripts/python.exe`，
+    每一步都会以"文件不存在"失败（`bin/python` 才是那边的形状），而那副模样看起来像
+    "门禁跑了、全红"。同理，runner 上通常压根没有 `.venv` 目录 —— 依赖是直接装进系统
+    python 的，这时用 `sys.executable` 才是对的，而不是硬凑一个不存在的虚拟环境。
+    """
+    for candidate in (
+        ROOT / ".venv" / "Scripts" / "python.exe",  # Windows
+        ROOT / ".venv" / "bin" / "python",  # Linux / macOS
+    ):
+        if candidate.exists():
+            return str(candidate)
+    return sys.executable
+
+
+PY = _venv_python()
 
 # 步骤名带中文与「▶」，而 Windows 控制台默认 codepage 是 GBK：不重配编码，脚本在**第一个 print**
 # 就抛 UnicodeEncodeError 退场，一步都没跑（实测在 git-bash 里中招；输出 pipe 给 tail 时

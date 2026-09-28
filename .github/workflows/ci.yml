@@ -1,94 +1,196 @@
 name: CI
 
+# 这套 workflow 的存在理由（v2.4 三件之一）：在此之前**仓库没有远端**，所以"CI 绿"从来
+# 只是本地推断 —— 没有任何一台机器真跑过门禁。第一次跑通之后，`架构总览 §4` 那条欠账
+# 才从"没验过"变成"验过"。
+#
+# 为什么调 `scripts/gate.py` 而不是在这儿重编一遍命令：门禁口径只有一处定义，CI 与本机
+# 跑的必须是同一套东西；否则"CI 绿"和"提交前绿"会说两套话（这条与 S-1 那个
+# "值列只有一处派生"是同一个理由）。
+
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      full_gate:
+        description: "额外跑一遍全量门禁（覆盖率≥85% + 离线冒烟 + 壳 typecheck）"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHONIOENCODING: utf-8 # 中文与「▶」在管道输出上会撞 GBK，见 gate.py 那段编码注释
+  PYTHONUNBUFFERED: "1"
 
 jobs:
-  backend:
+  gate:
+    name: 门禁 --fast（ruff + mypy + 单测 + 一致性）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+
+      - name: 装 Python
+        uses: actions/setup-python@v5
         with:
+          # 与 Dockerfile 的 `python:3.13-slim` 同一条版本线：CI 绿而镜像里是别的版本，
+          # 就等于两次实测互相不覆盖。
           python-version: "3.13"
-      # 依赖按范围拆分，要装全：内核 + 开发 + 接入层 + 检索（chromadb/pypdf）。
-      # 漏装 rag 会让 test_rag / test_parser 直接 ImportError（此前从未真正跑过 CI，故未暴露）。
-      # 注意：CI 实际装的是 requirements*.txt（无上界 pin）。2026-09-17 起弃用 uv、
-      # 删除 uv.lock —— 本仓库无任何锁文件，版本漂移由每次干净安装暴露（见
-      # docs/全项目审查报告 P1-14 与 docs/技术评审与决策.md §5 E3）。
-      # 刻意不引入工具链，只依赖 pip。
-      - name: Install dependencies
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-api.txt
+            requirements-rag.txt
+            requirements-dev.txt
+
+      - name: 装依赖
         run: |
-          pip install -r requirements.txt -r requirements-dev.txt \
-                      -r requirements-api.txt -r requirements-rag.txt
-      - name: Lint
-        run: ruff check .
-      - name: Type-check
-        # 此前 `[tool.mypy]` 配置一直躺在 pyproject.toml 里却从不运行 —— 死配置比没有更糟
-        # （看起来有兜底，其实没有）。跑起来之后第一次就报出 47 处真实问题（代码审查报告
-        # （第二轮）F2），包括"28 处连接注解写的类型和实际传入的不一致"。
-        run: mypy
-      - name: Type-check scripts/
-        # 取证尺子也在类型范围内：`mypy scripts/` 接进门禁的**第一天**就抓到
-        # `seed_demo_data.py` 与 `run_eval.py` 运行时已经坏了（少两个必填关键字参数）。
-        # CI 不跑它 = 只有我这台机器知道那两个脚本其实是死的（09-26 轮 R26-21/S-6′）。
-        run: mypy scripts/
-      - name: Tests (offline, no Ollama needed)
-        # 覆盖率阈值 85%：低于它说明有人在没补测试的情况下大幅加代码。
-        # 真正的意义是"重构前的安全网"—— 拆 api/main.py 这类改动，没有覆盖数据是闭眼改。
-        run: |
-          python -m pytest -q -p no:cacheprovider \
-            --cov=rolecard_agent --cov-report=term-missing --cov-fail-under=85
-      - name: Consistency (docs ↔ code)
-        run: python scripts/check_consistency.py
+          python -m pip install --upgrade pip
+          # rag 必须与 api 一起装：漏了它，知识库 / 上传解析 / 检索工具在用例里 ImportError
+          # —— 与 Dockerfile 第 12 行记的是同一个坑。
+          pip install -r requirements.txt -r requirements-api.txt \
+            -r requirements-rag.txt -r requirements-dev.txt
+
+      - name: gate.py --fast
+        run: python scripts/gate.py --fast
 
   frontend:
+    name: 前端（tsc + build + vitest）
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+
+      - name: 装 Node
+        uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - name: Install
-        run: npm ci --no-fund --no-audit
-      - name: Unit tests (api 层契约 + SSE 归约 + 上传三态 + ChatPage 接线)
-        # 覆盖三类，按"越靠近用户越难测"排列：
-        #   api.test.ts        请求序列化 / 错误归一化 / abort 语义（node 环境）
-        #   lib/*.test.ts      SSE 帧切分与事件归约、上传结局文案（纯函数）
-        #   pages/*.test.tsx   真实渲染 ChatPage，断言流式文本、工具卡片、上下文提示（jsdom）
-        run: npm test
-      - name: Type-check + build
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 装依赖
+        working-directory: frontend
+        run: npm ci
+
+      - name: 构建（`npm run build` 里含 tsc --noEmit）
+        working-directory: frontend
         run: npm run build
 
-  shell:
-    # 桌面壳（Electron 主进程 + preload）此前**全程无人检查**：门禁只 `cd frontend`，
-    # CI 里 shell 命中数为 0（09-26 轮 R26-21 的第一块空白）。壳那侧的类型错最典型的后果
-    # 不是编译不过，而是"装到机器上才发现"——托盘退出被一扇模态错误框堵 80 秒就是那一族。
+      - name: 用例
+        working-directory: frontend
+        run: npm test
+
+      - name: dist 必须与源码同步（入库那份不能是旧的）
+        # 后端托管的正是 `frontend/dist`，而且它被有意入库（clone 后不装 node 也能起控制台）。
+        # 改了前端却没重建 = 源码是新的、镜像与安装包带的是旧界面，而且它不报任何错。
+        run: |
+          git diff --quiet -- frontend/dist || {
+            echo "本提交里的 frontend/dist 与 frontend/src 不同步：重新 npm run build 后把 dist 一起提交";
+            git status --short frontend/dist;
+            exit 1;
+          }
+
+  docker:
+    name: 镜像真跑（build + 起 + 护栏 + 一次真 API 往返）
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: shell
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Install
-        # typecheck 用不到 Electron 的二进制（那 ~100 MB 是给打包用的），跳过下载只装 tsc 与 @types。
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-        run: npm ci --no-fund --no-audit
-      - name: Type-check
-        run: npm run typecheck
 
-  # **刻意不放进 CI 的两条**（写在这里是为了别再加回来）：
-  #   · `scripts/baseline.py --check` —— 它按构造就要读"装好的那份数据根"
-  #     （`build()` 里 `next(p for tag, p in data_roots().items() if tag.startswith("installed"))`），
-  #     runner 上没有这个根，硬塞只会 StopIteration。它的家是**本地门禁**。
-  #   · "dist 与提交一致"（门禁的 `dist 入库同步`）—— 那条比的是同一台机器同一套 node 的产物，
-  #     换 runner 的 node/minifier 版本会让哈希漂一下，于是**误报一次就没人信这条**。
-  #   · 真机冒烟（浏览器 + 桌宠 + 模型）—— 需要桌面会话与真后端，本就不是 CI 的活。
+      - name: 构建镜像
+        run: docker build -t rolecard-agent:ci .
+
+      - name: 公网护栏必须是硬的（不带鉴权就该拒绝启动，而不是默默裸奔）
+        # 这条把 `api/main.py` 那段"非回环 + AUTH_MODE=off = RuntimeError"从**读代码得到的
+        # 断言**变成**测出来的事实**。两种失败分开报：起来了 = 护栏没生效；非零退出但退因
+        # 不是那句 = 别把环境问题报成断言失败。
+        run: |
+          set +e
+          out=$(docker run --rm rolecard-agent:ci 2>&1)
+          code=$?
+          set -e
+          printf '%s\n' "$out" | tail -20
+          if [ "$code" -eq 0 ]; then
+            echo "护栏没生效：裸容器竟然起来了"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -q "拒绝启动" || {
+            echo "容器非零退出，但退因不是那条护栏 —— 看上面的日志"; exit 1
+          }
+
+      - name: 带鉴权起容器并走一遍真链路
+        run: |
+          docker run -d --name rc \
+            -e AUTH_MODE=on -e AUTH_CREDENTIALS=ci-user:ci-pass \
+            -e MODEL_BACKENDS='{"local": {"model": "none", "provider": "ollama", "base_url": "http://127.0.0.1:9"}}' \
+            -v rc-data:/app/data -p 8000:8000 rolecard-agent:ci
+          # 等就绪。/api/health 是鉴权豁免项，所以这里不带凭据 —— 顺带钉住"豁免的那条确实是豁免"。
+          for i in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:8000/api/health >/dev/null 2>&1; then break; fi
+            sleep 2
+            if [ "$i" = "45" ]; then echo "90 秒内没就绪"; docker logs rc; exit 1; fi
+          done
+          # 无凭据打数据面必须 401：认证是**中间件**，覆盖含静态资源在内的全部请求
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/sessions)
+          if [ "$code" != "401" ]; then echo "期望 401，实际 $code"; docker logs rc; exit 1; fi
+          # 开会话 → 读列表：走的是真 FastAPI + 装配根 + sqlite（挂在卷上），不是替身
+          tid=$(curl -fsS -u ci-user:ci-pass -X POST http://127.0.0.1:8000/api/session \
+            -H 'Content-Type: application/json' -d '{}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["thread_id"])')
+          echo "新建会话：$tid"
+          curl -fsS -u ci-user:ci-pass http://127.0.0.1:8000/api/sessions | grep -q "$tid" || {
+            echo "列表里读不到刚建的那条"; docker logs rc; exit 1
+          }
+          # 控制台首页由后端从**镜像里那份 dist** 托管：证明"不装 node 也能起界面"这条在容器里成立
+          curl -fsS -u ci-user:ci-pass http://127.0.0.1:8000/ | grep -q 'id="root"' || {
+            echo "首页没有挂载点，dist 没进镜像或没被托管"; docker logs rc; exit 1
+          }
+          echo "容器内：健康 200 / 无凭据 401 / 建会话可读回 / 首页托管自镜像内 dist"
+
+      - name: 收尾
+        if: always()
+        run: |
+          docker logs rc 2>&1 | tail -12 || true
+          docker rm -f rc >/dev/null 2>&1 || true
+
+  full-gate:
+    name: 全量门禁（手动触发才跑）
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_gate }}
+    needs: [gate, frontend]
+    runs-on: ubuntu-latest
+    env:
+      # 浏览器那段要本机 Chrome + playwright-core，runner 上没有对应物；显式跳过并**在日志里
+      # 带上原因**，别让"没跑到"被读成"全绿"（gate.py 与 smoke_check 都是这个口径）。
+      SMOKE_SKIP_UI: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-api.txt
+            requirements-rag.txt
+            requirements-dev.txt
+
+      - name: 装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            shell/package-lock.json
+
+      - name: 装依赖（后端 + 前端 + 壳）
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-api.txt \
+            -r requirements-rag.txt -r requirements-dev.txt
+          npm ci --prefix frontend
+          npm ci --prefix shell
+
+      - name: gate.py 全量（覆盖率≥85% + 前端 + 壳 + 离线冒烟）
+        run: python scripts/gate.py
