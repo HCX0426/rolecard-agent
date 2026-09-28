@@ -957,7 +957,7 @@ def check_dependency_layering() -> None:
             elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
                 first_seen.setdefault(node.module.split(".")[0], rel)
 
-    stdlib = getattr(sys, "stdlib_module_names", frozenset())
+    stdlib: frozenset[str] = getattr(sys, "stdlib_module_names", frozenset())
     undeclared = sorted(
         mod
         for mod in first_seen
