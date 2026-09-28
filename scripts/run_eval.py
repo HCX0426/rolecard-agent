@@ -5,7 +5,7 @@
     $env:SILICONFLOW_API_KEY = "<key>"
     .venv\\Scripts\\python.exe scripts\\run_eval.py [--strict] [--report 路径]
 
-设计要点（对应 docs/需求与验收标准.md §4）：
+设计要点（对应 docs/需求与验收标准.md §1.4 成功标准，评测基线那一小节就在它下面）：
 
   * **驱动真实 API 路径**：create_app + TestClient + /api/chat —— guard、会话管理、
     插件启停全部在被测路径上，评测不绕过任何一层。

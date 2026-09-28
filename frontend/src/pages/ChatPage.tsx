@@ -314,8 +314,8 @@ export default function ChatPage({
 
   /**
    * 批量删临时话题：**逐条走已有的 `DELETE /api/session/{tid}`**，不新开后端口子。
-   * 那条路径已经把该做的事做了（checkpoint 一起清、按 §7.2.2 留下收件箱那几行、进审计），
-   * 批量只是省用户的手，不该顺手换一套语义。
+   * 那条路径已经把该做的事做了（checkpoint 一起清、按《主动消息与记忆设计稿》§7.2.2 留下
+   * 收件箱那几行、进审计），批量只是省用户的手，不该顺手换一套语义。
    */
   async function deleteTemporaries(ids: string[]) {
     if (!ids.length) return;

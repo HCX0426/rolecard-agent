@@ -67,8 +67,10 @@ export function useToast(): ToastApi {
   return useContext(ToastContext) ?? NOOP_TOAST;
 }
 
-// 修设计稿 §1.2 点名的深色态冲突：原本 `text-slate-600 dark:text-slate-300 dark:text-slate-600`
-// 两个 dark 段重复且末尾把字色压成 slate-600（暗底上看不清）。统一成单一 dark 段。
+// 修深色态下的对比冲突（这条缺陷最早由那份已归档的 UI 整改稿点名，编号不再挂在这里：
+// 那份文档本身已作废，留着编号只会把人引向一份 superseded 的规划）。
+// 原本 `text-slate-600 dark:text-slate-300 dark:text-slate-600` 两个 dark 段重复且末尾把
+// 字色压成 slate-600（暗底上看不清），统一成单一 dark 段。
 const TONE_CLS: Record<Tone, string> = {
   info: "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300",
   ok: "border-green-200 bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300",
