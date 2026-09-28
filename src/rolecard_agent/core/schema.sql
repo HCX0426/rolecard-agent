@@ -134,6 +134,12 @@ CREATE TABLE IF NOT EXISTS agent_reachout (
     -- 补投不设"历史欠账"：查询带时间窗（见 `undelivered_reachouts`），所以这一列上线时
     -- 已有的老行（NULL）不会被当成待办回填 —— 那句话早就过去了，现在补反而是骚扰。
     delivered_at TIMESTAMP,
+    -- 这一句与"她最近说过的话"的复读重合分（口径见 `core/anti_repeat.repeat_score`，
+    -- 0 = 完全不撞，值越大越像自己）。为什么落库（N4 ①）：`reachout_sent` 审计原先只带
+    -- score，而桌宠日志每次启动被覆盖 —— "闸门会不会误伤"只能看分布，分布要跨启动攒。
+    -- 这一列让"高分占几条 / 中位几分 / 谁在复读自己"一条 SQL 聚出来。NULL = 这一列上线
+    -- 之前落的，**不知道**（不当成任何档位，与 `fired_by` 同一纪律）。
+    repeat_score REAL,
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP  -- UTC（CURRENT_TIMESTAMP）
 );
 

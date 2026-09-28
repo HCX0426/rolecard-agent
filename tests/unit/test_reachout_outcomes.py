@@ -131,6 +131,38 @@ def test_the_updated_at_proxy_is_not_the_reply(conn: Any) -> None:
     s = mod.summarize(conn, {LANE: [("你", "看过没接")]})
     assert (s["picked"], s["ignored"]) == (0, 1)
     assert s["picked_proxy"] == 1, "近似那条仍会把这行算成「接了」—— 所以才要并排印出来"
+
+
+def test_repeat_distribution_counts_only_scored_rows_and_measures_spread(conn: Any) -> None:
+    """⑥ 复读分分布（N4 ①）的读侧：NULL 不算样本，中位数/高分占比/谁在复读自己。
+
+    这一条是"落库值得"的最短断言：分数进了 `agent_reachout.repeat_score`，跨启动还在；
+    读不到它，⑥ 就又是只有当次日志、一重启就没的尺子（`reachout_sent` 的老毛病）。
+    """
+    conn.execute(
+        "INSERT INTO agent_reachout (role_id, role_name, text, repeat_score) VALUES "
+        "('a', 'A', 'x1', 0.1), "
+        "('a', 'A', 'x2', 0.2), "
+        "('b', 'B', 'y1', 0.6), "
+        "('b', 'B', 'y2', 0.9), "
+        "('c', 'C', 'z1', NULL)"
+    )
+    conn.commit()
+    d = mod.repeat_distribution(conn)
+    assert d["n"] == 4, "NULL 那一行被当成了样本"
+    assert abs(float(d["median"]) - 0.4) < 1e-9, d["median"]  # 0.1,0.2,0.6,0.9 → (0.2+0.6)/2
+    assert int(d["ge_half"]) == 2
+    by_role = {str(x["role"]): (int(x["n"]), float(x["max"])) for x in d["by_role"]}
+    assert by_role == {"a": (2, 0.2), "b": (2, 0.9)}
+    # 最差档排最前：b 的 0.9 是"谁在复读自己"的头号嫌疑人
+    assert str(d["by_role"][0]["role"]) == "b"
+
+
+def test_repeat_distribution_empty_db_reports_no_samples(conn: Any) -> None:
+    d = mod.repeat_distribution(conn)
+    assert d["n"] == 0 and d["median"] is None and d["ge_half"] is None and d["by_role"] == []
+
+
 def test_item_five_counts_only_rows_that_know_their_source(conn: Any) -> None:
     """⑤「攒样本进度」只数**带由头**的行，并把观测窗口的两端报出来。
 

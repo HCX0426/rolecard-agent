@@ -535,6 +535,25 @@ def test_tick_delivers_into_the_proactive_thread(conn) -> None:
     assert items[0]["thread_id"] == svc.proactive_thread_id("active", user_id=ME)
 
 
+def test_tick_persists_the_repeat_score_of_what_was_said(conn) -> None:
+    """复读分跟消息一起落库（N4 ①）：分布要跨启动攒，落不到行里就永远只活在当次日志。"""
+    scheduler = ReachoutScheduler(
+        settings_provider=lambda: _settings(),
+        roles=_Roles([_role()]),  # type: ignore[arg-type]
+        model_resolver=lambda _n: _FakeModel(AIMessage(content="今天腰还酸吗")),
+        conn=conn,
+        tracer=_Tracer(),
+    )
+    utc, local = _now()
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
+    row = conn.execute(
+        "SELECT repeat_score FROM agent_reachout"
+    ).fetchone()
+    score = row["repeat_score"] if row is not None else None
+    assert score is not None, "主动开口没落复读分 —— ⑥ 分布永远攒不出样本"
+    assert 0.0 <= float(score) <= 1.0
+
+
 def test_old_messages_without_a_thread_are_not_links(conn) -> None:
     """跳转目标只在会话**真的存在**时给出。
 

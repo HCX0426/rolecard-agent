@@ -220,6 +220,42 @@ def _spread(counts: dict[str, int]) -> str:
     return " · ".join(f"{k} {v}" for k, v in sorted(counts.items(), key=lambda kv: -kv[1])) or "—"
 
 
+def repeat_distribution(conn: Any) -> dict[str, Any]:
+    """复读分分布（N4 ①）：`agent_reachout.repeat_score` 这一列的读侧。
+
+    口径（`core/anti_repeat.repeat_score`）：0 = 完全不撞，越大越像自己。NULL = 列上线前
+    落的，**不算样本**（与 `fired_by` 同一纪律：不知道就不摊）。返回中位数、高分位
+    （≥0.5 = 闸门重灾区）占比、以及"谁在复读自己"按角色的最差一档 —— 前两个是分布，
+    第三个是给"该调哪个角色卡的 anti-repeat"指路。
+    """
+    rows = conn.execute(
+        "SELECT role_id, repeat_score FROM agent_reachout WHERE repeat_score IS NOT NULL"
+    ).fetchall()
+    if not rows:
+        return {"n": 0, "median": None, "ge_half": None, "by_role": []}
+    scores = sorted(float(str(r["repeat_score"])) for r in rows)
+    n = len(scores)
+    mid = n // 2
+    median = scores[mid] if n % 2 == 1 else (scores[mid - 1] + scores[mid]) / 2.0
+    ge_half = sum(1 for s in scores if s >= 0.5)
+    per_role: dict[str, list[float]] = {}
+    for r in rows:
+        per_role.setdefault(str(r["role_id"]), []).append(float(str(r["repeat_score"])))
+    by_role = sorted(
+        (
+            {
+                "role": role,
+                "n": len(v),
+                "median": sorted(v)[len(v) // 2],
+                "max": max(v),
+            }
+            for role, v in per_role.items()
+        ),
+        key=lambda kv: -float(str(kv["max"])),
+    )
+    return {"n": n, "median": median, "ge_half": ge_half, "by_role": by_role}
+
+
 def main() -> None:
     src = scratch_db.resolve_live_db()
     work = scratch_db.copy_of_live_db(ROOT / "build" / "scratch-outcomes.db", src)
@@ -293,6 +329,22 @@ def main() -> None:
         else:
             print("   只有 1 条，**算不出速率**（一条样本推不出「每天几条」，硬推就是编）。"
                   "\n     下次再读这一项时它会自己变准。")
+    rd = repeat_distribution(conn)
+    n_scored = int(rd["n"])
+    print("⑥ 复读分分布（`repeat_score` 那一列，N4 ① —— 0=不撞，越大越像自己）")
+    if n_scored == 0:
+        print("   一条都还没有 —— 装有会写这一列的版本之前，这四项都是 ——。")
+        print("   （这项要跨启动攒：`reachout_sent` 审计只在当次日志里，这才是能聚的）")
+    else:
+        print(
+            f"   有分的 {n_scored} 条 · 中位 {rd['median']:.2f} · "
+            f"≥0.5（闸门重灾）{int(rd['ge_half'])} 条 = {int(rd['ge_half']) / n_scored:.0%}"
+        )
+        worst = " · ".join(
+            f"{d['role']} {d['n']}条/中位{d['median']:.2f}/最差{d['max']:.2f}"
+            for d in rd["by_role"][:5]
+        )
+        print(f"   谁在复读自己（按最差档）：{worst}")
     print(
         "\n读法：四个数都还只是**条数口径**，样本 <20 时不要拿去做任何档位取舍 ——"
         "\n     它们的作用是把『完全量不出来』变成『有数但噪声大』。"
@@ -300,6 +352,7 @@ def main() -> None:
         "\n     （控制台默认线、临时话题降级、原话跟着角色注入都是 09-26 才落地的），"
         "\n     他回话都回在别的线程里 —— 所以『她那句之后线里没出现你的消息』是真的，"
         "\n     但那不等于他没回她。从这个语义落地那天起，① 才开始量它字面上说的东西。"
+        "\n     ⑥ 同理从装有会写 `repeat_score` 的版本那天起才开始攒。"
     )
     conn.close()
 

@@ -603,6 +603,7 @@ def record_reachout(
     *,
     user_id: str,
     fired_by: str | None = None,
+    repeat_score: float | None = None,
 ) -> int:
     """落一条主动开口（unread），返回它的 id。role 冗余存角色名：角色被删后收件箱仍可读。
 
@@ -610,13 +611,16 @@ def record_reachout(
     不知道由头（离线单测、以及这一列上线之前的老行都是 NULL）—— 读侧不许把 NULL 当成
     任何一个具体源，理由见 `schema.sql` 那一列的注释。
 
+    `repeat_score` 是这句与最近说过的话的重合分（`core/anti_repeat.repeat_score`，
+    N4 ① 开始落库）：NULL = 这条没量过（列上线前 / 调用方没给）。落的是**最后出口那版**
+    的分数——重生重写过的取最优，被 DROP 挡下的那句根本没有行可落。
     落完顺手按角色卡的 `reachout_keep` 修剪（0 = 不自动删）：抽屉"只增不减"是用户报的
     第二件事，而这条挂在写入点上就够了 —— 不需要为此再跑一个定时任务。
     """
     cur = conn.execute(
-        "INSERT INTO agent_reachout (role_id, user_id, role_name, text, fired_by)"
-        " VALUES (?, ?, ?, ?, ?)",
-        (role.role_id, user_id, role.role_name, text, fired_by),
+        "INSERT INTO agent_reachout (role_id, user_id, role_name, text, fired_by, repeat_score)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (role.role_id, user_id, role.role_name, text, fired_by, repeat_score),
     )
     conn.commit()
     prune_inbox(
@@ -1481,7 +1485,8 @@ class ReachoutScheduler:
                 continue
             text = draft.text
             reachout_id = record_reachout(
-                self._conn, role, text, user_id=owner, fired_by=fired
+                self._conn, role, text, user_id=owner, fired_by=fired,
+                repeat_score=draft.score,
             )
             record_interaction(self._conn, role.role_id, user_id=owner, now=stamp_utc)
             if fired == "recall":
