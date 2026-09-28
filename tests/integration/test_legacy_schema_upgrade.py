@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from rolecard_agent.core.model_settings import _tools_of, _vision_of
+from rolecard_agent.core.model_settings import ModelSettingsService, _tools_of, _vision_of
 from rolecard_agent.domains.registry import DOMAINS
 from rolecard_agent.storage.db import bootstrap, connect, reconcile_columns, schema_files
 
@@ -243,6 +243,53 @@ def test_legacy_usage_rows_become_the_local_identity(tmp_path: Path) -> None:
         r[1] for r in conn.execute("PRAGMA table_info(token_usage_day)") if r[5] > 0
     ]
     assert pk == ["day", "user_id", "backend"], f"主键没升到 (day,user_id,backend)：{pk}"
+    conn.close()
+
+
+def test_reference_shape_service_endpoint_gains_a_scoped_owner(tmp_path: Path) -> None:
+    """多租户 B1b：引用形态（无 api_key）的 `service_endpoint` 升上来 = 加列 + chat 行归属。
+
+    这是"缺的是一列不是形状"那一类（B1a 之后与 role_card / session_thread 同族）：
+    `_migrate` 的目标是 **chat 引用行拿到主人、能力行保持设备级** —— 少了"回填 chat 行"
+    这一半，老单身份库一升级对话默认就当场消失（按人过滤后 NULL 行不可见）。
+    """
+    db = tmp_path / "app.db"
+    conn = connect(db)
+    bootstrap(conn, enabled_domains=DOMAINS)
+    # 造出 B1b 之前的引用形态：无 user_id 列、带 chat 引用 + 一条能力端点。
+    conn.execute("DROP TABLE service_endpoint")
+    conn.execute(
+        "CREATE TABLE service_endpoint ("
+        " category TEXT NOT NULL, id TEXT NOT NULL,"
+        " kind TEXT NOT NULL DEFAULT 'cloud' CHECK (kind IN ('local','cloud')),"
+        " ref_backend TEXT, enabled INTEGER NOT NULL DEFAULT 1,"
+        " sort_order INTEGER NOT NULL DEFAULT 0, builtin INTEGER NOT NULL DEFAULT 0,"
+        " updated_at TIMESTAMP, PRIMARY KEY (category, id))"
+    )
+    conn.execute(
+        "INSERT INTO service_endpoint (category, id, kind, ref_backend, enabled, sort_order, "
+        "builtin) VALUES ('chat', 'local', 'local', NULL, 1, 0, 0),"
+        " ('embedding', 'hash', 'local', NULL, 1, 0, 1)"
+    )
+    conn.commit()
+
+    # 再 bootstrap 一次走 _migrate（幂等前提：新库再跑一遍也不许动）
+    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(conn, enabled_domains=DOMAINS)
+
+    rows = conn.execute("SELECT category, id, user_id FROM service_endpoint").fetchall()
+    owner = {str(r["id"]): str(r["user_id"]) for r in rows if str(r["category"]) == "chat"}
+    assert owner == {"local": "local-user"}, f"chat 引用行没回填本机主人：{owner}"
+    cap = {
+        str(r["id"]): r["user_id"]
+        for r in rows
+        if str(r["category"]) != "chat"
+    }
+    assert cap == {"hash": None}, f"能力行被误标主人 / 丢了：{cap}"
+    # 升级后的读侧：单身份照常解析出自己的对话默认（这是"逐字节不变"的最短断言）。
+    svc = ModelSettingsService(conn)
+    assert svc.default_backend(user_id="local-user") == "local"
+    assert svc.default_backend(user_id="u1") is None
     conn.close()
 
 

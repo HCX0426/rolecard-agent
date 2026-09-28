@@ -6,11 +6,14 @@ M1~M4 每步各自有验收，但那些是"按模块"的 —— 这一支是**�
 改不掉（对方的那一份事后仍在）**。第三条是前两条的照妖镜 —— 只断言状态码，
 会把"守卫写了但写在了另一条 SQL 上"当成通过。
 
-**这一支不测的（写清楚，不含糊过去）**：`/api/knowledge*`、`/api/uploads/*`、
-`/api/services*`、插件启停、运行环境覆盖、审计流水 —— 它们今天是**设备级**的。
+**这一支不测的**：`/api/knowledge*`、`/api/uploads/*`、插件启停、运行环境覆盖、审计流水、以及
+`/api/services` 的**能力三类（ocr/embedding/rerank）** —— 它们今天是**设备级**的。
 在"一台实例一个主人 + 一个数据根"（M3 前半 + M4）这个形态下这是自洽的：整份根就是那个人的。
 要让同一个库里住两个身份各自的知识与文件，得先把运行期那份 `Settings` 与 chroma 的
 collection 变成按身份的（§4.1 记的那条尾巴），那时这几个面才谈得上归属。
+**例外的一支（多租户 B1b 已收）**：`/api/services` 的模型推理序列 = chat 引用行，按人
+（默认/回退链花谁的 key 由谁定）—— 它是这一族里唯一跟着身份走的面，用例在
+`test_chat_pools_are_per_identity_while_capabilities_stay_device_local`。
 """
 
 from __future__ import annotations
@@ -180,6 +183,32 @@ def test_model_credentials_never_spend_the_other_key(client: TestClient) -> None
     left = client.get("/api/settings/models", headers=_as(B)).json()["providers"]
     assert [str(m["model"]) for g in left for m in g["models"]] == ["Model-b"]
     assert [g["has_key"] for g in left] == [True], "他的凭据被动过"
+
+
+def test_chat_pools_are_per_identity_while_capabilities_stay_device_local(
+    client: TestClient,
+) -> None:
+    """多租户 B1b（方案 A）：对话默认/回退链按人，能力三类仍是设备级。
+
+    夹具里各身份都已 `PUT /api/settings/models` 写了 `ma` / `mb` 两个 chat 池。这里
+    A 再动一次自己的对话序列，要求三件事同时成立：A 的序列真的变了、B 的序列一个字没动
+    （DELETE/INSERT 的范围是带主人的）、能力三类两人看到的仍是同一份（设备级没被带偏）。
+    """
+    res = client.put("/api/services/models", json={"order": ["ma"]}, headers=_as(A))
+    assert res.status_code == 200, res.text
+    aa = client.get("/api/settings/models", headers=_as(A)).json()
+    ab = client.get("/api/settings/models", headers=_as(B)).json()
+    assert aa["default"] == "ma" and aa["fallbacks"] == []
+    assert ab["default"] == "mb" and ab["fallbacks"] == [], (
+        "A 存一次对话序列把 B 的序列抹了或写成了 A 的"
+    )
+    # 服务页：模型推理节各看各的，能力三类两人一致
+    svc_a = {s["key"]: s for s in client.get("/api/services", headers=_as(A)).json()["services"]}
+    svc_b = {s["key"]: s for s in client.get("/api/services", headers=_as(B)).json()["services"]}
+    assert svc_a["models"]["effective"] == "ma"
+    assert svc_b["models"]["effective"] == "mb", "服务页的'当前默认'对不上 B 自己的序列"
+    assert svc_a["ocr"]["candidates"] == svc_b["ocr"]["candidates"]
+    assert svc_a["embedding"]["candidates"] == svc_b["embedding"]["candidates"]
 
 
 def test_the_timeline_of_her_card_is_not_readable(client: TestClient) -> None:

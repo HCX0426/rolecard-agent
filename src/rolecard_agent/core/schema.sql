@@ -392,6 +392,13 @@ CREATE INDEX IF NOT EXISTS idx_domain_data_domain ON domain_data(domain, user_id
 -- 家：列说 chat、服务页的序说别的）。**对话默认后端 = category='chat' 第一条启用的引用**，
 -- 回退链 = 其后若干条（运行时截到 MAX_FALLBACKS）；kernel_meta 里不再有 model_default /
 -- model_fallbacks（旧值由迁移写进引用行的顺序，见 storage/db.py::_migrate）。
+--
+-- `user_id`（多租户 B1b，方案 A）：**仅 chat 引用行按人归属** —— 默认/回退链回答的是
+-- "这次对话花谁的 key 由谁定"，跟着 `model_provider` 同族走。其余能力端点（ocr / embedding /
+-- rerank）回答的是"这台机器用什么解析/检索引擎"，永远设备级：`user_id` 保持 NULL，任何
+-- 读路径都不按它过滤。这一列**刻意不 NOT NULL 不给默认**：能力行的 NULL 就是"设备级"这个
+-- 语义本身。老库升级由 storage/db.py::_migrate 给 chat 引用行回填本机主人（默认部署 =
+-- 'local-user'，不许与 core/identity.DEFAULT_USER_ID 漂开），新 chat 行由写入方显式带主人。
 -- ===========================================================================
 
 CREATE TABLE IF NOT EXISTS service_endpoint (
@@ -403,6 +410,7 @@ CREATE TABLE IF NOT EXISTS service_endpoint (
     sort_order  INTEGER NOT NULL DEFAULT 0,
     builtin     INTEGER NOT NULL DEFAULT 0,
     updated_at  TIMESTAMP,
+    user_id     TEXT,
     PRIMARY KEY (category, id)
 );
 

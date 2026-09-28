@@ -241,6 +241,36 @@ def test_model_backend_deliberately_has_no_owner_column() -> None:
     assert {"name", "provider_id", "model"} <= cols
 
 
+def test_chat_usage_derivation_does_not_count_another_persons_chat_ref(
+    svc: ModelSettingsService,
+) -> None:
+    """`_usages` 的 chat 桶按主人：别人的 chat 引用不算进我的 `used_by`。
+
+    正常 API 路径造不出这种形态（模型名全局唯一、组按主人 JOIN），只能写库构造：
+    老库手改 / 备份还原时可能留下"A 的 chat 引用指向 B 也在用的模型名"。不做 `_usages`
+    过滤，B 的服务页会把那一条当成"B 用于对话"，界面列出、运行却解析不到 —— 撒谎的配置。
+    """
+    conn = svc._conn  # noqa: SLF001
+    b_gid = conn.execute(
+        "SELECT id FROM model_provider WHERE user_id = ?", (B,)
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO model_backend (name, provider_id, model, sort_order) "
+        "VALUES ('shared', ?, 'm', 99)",
+        (b_gid,),
+    )
+    # A（本机那份）有一条 chat 引用指向 shared —— 与 B 无关，B 的对话序列里没有它。
+    conn.execute(
+        "INSERT INTO service_endpoint (category, id, kind, ref_backend, enabled, sort_order, "
+        "builtin, user_id) VALUES ('chat', 'shared', 'cloud', 'shared', 1, 9, 0, 'local-user')"
+    )
+    conn.commit()
+    rows = svc.list_backends(user_id=B)
+    shared = next(r for r in rows if str(r["name"]) == "shared")
+    assert str(shared["usage"]) != "chat", "A 的 chat 引用被算成了 B 的对话用途"
+    assert "chat" not in [str(x) for x in shared["used_by"]]
+
+
 def test_seed_from_env_stamps_the_instance_owner(
     svc: ModelSettingsService,
 ) -> None:
@@ -263,3 +293,66 @@ def test_seed_from_env_stamps_the_instance_owner(
     assert ModelSettingsService(conn).stored_api_key("cloud", user_id=B) == "sk-from-env"
     # A 看不见这次播种：env 的 key 不会因为"同一个进程"就变成他的可用凭据。
     assert ModelSettingsService(conn).list_backends(user_id=A) == []
+
+
+# --------------------------------------------------------------------------- #
+# 7：chat 引用序列按人（多租户 B1b，方案 A —— service_endpoint 那族不再设备级）
+# --------------------------------------------------------------------------- #
+
+
+def test_chat_default_and_fallbacks_follow_the_person(svc: ModelSettingsService) -> None:
+    """`default_backend` / `list_fallbacks` 读**这个人的** chat 引用序列。
+
+    没有这一条，B 打开的「模型推理」序列会是 A 的 —— 界面上写着 A 的默认，跑起来却不是。
+    """
+    assert svc.default_backend(user_id=A) == "a-chat"
+    assert svc.default_backend(user_id=B) == "b-chat"
+    assert svc.default_backend(user_id="u3") is None  # 没配过 = 这台机器上"这个人"没有
+    # A 配两条 → 回退链只属于 A
+    extra = _backend_row("a-extra", "Qwen3-1B", "sk-aaaaaaaaaaaaaaaa")
+    svc.save(user_id=A, default="a-chat", backends=[
+        _backend_row("a-chat", "Qwen3-8B", KEY_A), extra,
+    ])
+    assert svc.list_fallbacks(user_id=A) == ["a-extra"]
+    assert svc.list_fallbacks(user_id=B) == []
+    assert svc.list_fallbacks(user_id=B) != svc.list_fallbacks(user_id=A)
+
+
+def test_saving_a_chat_pool_does_not_clobber_the_other_persons(svc: ModelSettingsService) -> None:
+    """A 存一次对话序列，B 的 chat 引用行一个都不能少。
+
+    这条钉的是 `_write_chat_refs` 的两处范围：删行必须带 `user_id`，插入必须带 `user_id`。
+    哪一处漏了，A 的保存要么把 B 的序列整段抹掉、要么把 B 的行写成 A 的。
+    """
+    svc.save_chat_pool(["a-chat"], user_id=A)
+    assert svc.default_backend(user_id=A) == "a-chat"
+    assert svc.list_fallbacks(user_id=A) == []
+    # B 的序列与凭据原样
+    assert svc.default_backend(user_id=B) == "b-chat"
+    assert svc.list_fallbacks(user_id=B) == []
+    conn = svc._conn  # noqa: SLF001
+    b_rows = conn.execute(
+        "SELECT id, user_id FROM service_endpoint WHERE category = 'chat' AND user_id = ?",
+        (B,),
+    ).fetchall()
+    assert [str(r[0]) for r in b_rows] == ["b-chat"]
+    assert svc.stored_api_key("b-chat", user_id=B) == KEY_B
+
+
+def test_chat_reference_rows_carry_the_owner_and_capability_rows_do_not(
+    svc: ModelSettingsService,
+) -> None:
+    """chat 引用行带主人；能力端点（设备级）的 user_id 恒为 NULL —— 两种语义写在一张表。"""
+    conn = svc._conn  # noqa: SLF001
+    chat_owner = {
+        str(r["id"]): str(r["user_id"])
+        for r in conn.execute(
+            "SELECT id, user_id FROM service_endpoint WHERE category = 'chat'"
+        ).fetchall()
+    }
+    assert chat_owner == {"a-chat": A, "b-chat": B}
+    # 能力行不该被误标主人：NULL 就是"这台机器的能力"，不是谁名下的配置。
+    assert conn.execute(
+        "SELECT COUNT(*) FROM service_endpoint "
+        "WHERE category != 'chat' AND user_id IS NOT NULL"
+    ).fetchone()[0] == 0

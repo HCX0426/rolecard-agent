@@ -441,14 +441,19 @@ def endpoint_available(e: EndpointConfig, settings: Settings) -> tuple[bool, str
     return check_availability(e.id, settings)
 
 
-def service_status_view(conn: SqlConnection, settings: Settings) -> dict[str, Any]:
+def service_status_view(
+    conn: SqlConnection, settings: Settings, *, user_id: str | None = None
+) -> dict[str, Any]:
     """「服务」页签的状态视图（每类服务：端点引用、优先级、启停、可用性、当前生效项）。
 
     生效项 = 优先级第 1 位的**可用**端；第 1 位不可用则顺延到下一个可用者（降级发生在这里，
     并以 degraded_from 留痕）。模型推理类仍只读展示（编辑在「模型」页签）。
 
-    整页按**本机主人**那一族凭据呈现（M2d）：这一页说的是"这台机器现在用什么跑"，而引用行
-    解析到别人名下的组时，正确答案是"取不到凭据"（呈现为失效），不是花他的 key。
+    归属切分（多租户 B1b，方案 A）：**能力三类（ocr/embedding/rerank）是本机主人的** ——
+    这一节说的是"这台机器现在用什么跑"，引用行解析到别人名下的组时，正确答案是"取不到凭据"
+    （呈现为失效），不是花他的 key。**模型推理那一节（chat 引用序列）跟着请求的主人走**：
+    默认/回退链花谁的 key 由谁定，所以 B 打开服务页看到的是 B 的序列。`user_id` 缺省 =
+    本机主人（单身份与旧调用点行为不变）。
     """
     owner = resolve_instance_identity(settings)
     svc = ServiceEndpointService(conn, owner=owner)
@@ -498,10 +503,14 @@ def service_status_view(conn: SqlConnection, settings: Settings) -> dict[str, An
     # 第 1 位 = 对话默认，其后 = 回退顺序（运行时截到 MAX_FALLBACKS 级）。候选来自 chat
     # 引用行，不是某个列的取值；加入/移出也在这一节做（`order_only` 只表示"这里不编辑
     # key/base_url/模型名"，那仍然是模型页的事）。
+    # 与上面三类能力不同，这一节**跟请求的主人走**（多租户 B1b，方案 A）：默认/回退链花
+    # 谁的 key 由谁定。能力三类是本机主人的（设备级），模型推理不是 —— 两个身份各配自己的
+    # 对话序列时，各看各的，换人打开服务页不会看到别人的默认。
+    user = user_id or owner
     ms = ModelSettingsService(conn)
-    backends = ms.list_backends(user_id=owner)
-    default = ms.default_backend() or settings.model_default
-    fallbacks = ms.list_fallbacks() or []
+    backends = ms.list_backends(user_id=user)
+    default = ms.default_backend(user_id=user) or settings.model_default
+    fallbacks = ms.list_fallbacks(user_id=user) or []
     chat_rows = [row for row in backends if str(row.get("usage", "chat")) == "chat"]
     ordered_names = [default, *fallbacks]
     ordered_names = [n for n in ordered_names if n] + [

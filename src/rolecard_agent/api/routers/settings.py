@@ -62,13 +62,15 @@ def _models_payload(ctx: AppContext) -> dict[str, object]:
     """模型页的读形状（GET 与 PUT 响应同一份，前端不必猜两次不一样）。
 
     `providers` 按**这次请求的主人**过滤（M2d）：他只看得见自己的凭据组。
-    而 `default`/`fallbacks` 读的是 `service_endpoint` 的引用序列 —— 那张表今天还没有主人，
-    所以这两项是设备级的（尾巴记在 §4.1）。
+    `default`/`fallbacks` 读的也是**这个人的** chat 引用序列（多租户 B1b，方案 A 收了
+    §4.1 的尾巴）：对话默认/回退链花谁的 key 由谁定 —— 界面的"当前默认"从此对得上
+    实际跑的那台。
     """
+    user = ctx.current_user()
     return {
-        "default": ctx.model_settings.default_backend(),
-        "providers": ctx.model_settings.list_providers(user_id=ctx.current_user()),
-        "fallbacks": ctx.model_settings.list_fallbacks() or [],
+        "default": ctx.model_settings.default_backend(user_id=user),
+        "providers": ctx.model_settings.list_providers(user_id=user),
+        "fallbacks": ctx.model_settings.list_fallbacks(user_id=user) or [],
     }
 
 
@@ -193,7 +195,9 @@ def put_model_settings(
                 f"后端 {b.name} 使用 {b.provider}，缺少 api_key（本地 Ollama 无需填写）。"
             )
         # default/fallbacks 缺省 = 保留当前值（编辑入口已统一到「服务」页签优先级列表）。
-        current_default = ctx.model_settings.default_backend() or "local"
+        current_default = ctx.model_settings.default_backend(
+            user_id=ctx.current_user()
+        ) or "local"
         ctx.model_settings.save(
             user_id=ctx.current_user(),
             default=body.default or current_default,

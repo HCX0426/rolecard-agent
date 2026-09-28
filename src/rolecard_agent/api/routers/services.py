@@ -55,10 +55,14 @@ def _row_or_404(ctx: AppContext, key: str, eid: str) -> object:
 
 @router.get("/api/services")
 def list_services(ctx: AppContext = Depends(get_context)) -> object:
-    """运行时状态视图（轻检测：配置齐缺 + 本地探活，不发外部请求）。"""
+    """运行时状态视图（轻检测：配置齐缺 + 本地探活，不发外部请求）。
+
+    能力三类（ocr/embedding/rerank）是本机主人的（设备级）；模型推理序列按**请求的主人**
+    过滤 chat 引用（多租户 B1b，方案 A）—— 各看各的对话默认。
+    """
     from rolecard_agent.core.services import service_status_view
 
-    return service_status_view(ctx.conn, ctx.settings)
+    return service_status_view(ctx.conn, ctx.settings, user_id=ctx.current_user())
 
 
 @router.post("/api/services/{key}/endpoints", status_code=201)
@@ -150,8 +154,8 @@ def put_service_order(
     if key == "models":
         # 候选与校验都按**这次请求的主人**那一族后端（M2d）：这一页下面列出的就是这些名字，
         # 换一个集合去校验会出现"界面上有的，保存时说不在配置里"。
-        # 写进去的序列本身仍是设备级的（`service_endpoint` 今天没有主人，§4.1 那条尾巴）——
-        # 别人名下的名字对这台实例的运行时不存在，运行时会退到他自己的第一个后端，不会悬空。
+        # 写进去的序列也归这个人（多租户 B1b，方案 A 收了 §4.1 的尾巴）：chat 引用行按人，
+        # A 存对话序列不会抹掉 B 的，B 的默认/回退各看各的。
         owner = ctx.current_user()
         known = {
             str(row["name"]) for row in ctx.model_settings.list_backends(user_id=owner)

@@ -128,7 +128,7 @@ def test_chat_pool_rejects_unknown_backend() -> None:
     # 已存在的行**可以**被加进对话序列 —— 它原本"用于嵌入"不构成障碍：一行模型服务谁是
     # 服务页的决定，不是行上写死的属性（拆层前的死循环正是 usage 自己定义了自己）。
     svc.save_chat_pool(["chat", "emb"], user_id=OWNER)
-    assert svc.list_fallbacks() == ["emb"]
+    assert svc.list_fallbacks(user_id=OWNER) == ["emb"]
 
 
 def test_save_prunes_stale_fallbacks_when_backends_shrink() -> None:
@@ -146,13 +146,13 @@ def test_save_prunes_stale_fallbacks_when_backends_shrink() -> None:
         ],
         fallbacks=["b"], user_id=OWNER,
     )
-    assert svc.list_fallbacks() == ["b"]
+    assert svc.list_fallbacks(user_id=OWNER) == ["b"]
     svc.save(
         default="a",
         backends=[{"name": "a", "provider": "ollama", "model": "m-a", "usage": "chat"}],
             user_id=OWNER,
     )  # 缩容：b 没了，链缺省保留 → 修剪后为空，保存成功
-    assert svc.list_fallbacks() == []
+    assert svc.list_fallbacks(user_id=OWNER) == []
 
 
 # --------------------------------------------------------------------------- #
@@ -460,8 +460,8 @@ def test_usage_is_derived_from_service_references() -> None:
     assert by_name["b"]["used_by"] == ["chat", "embedding"]
 
     svc.save_chat_pool(["a"], user_id=OWNER)  # b 退出对话，但仍服务嵌入
-    assert svc.default_backend() == "a"
-    assert svc.list_fallbacks() == []
+    assert svc.default_backend(user_id=OWNER) == "a"
+    assert svc.list_fallbacks(user_id=OWNER) == []
     by_name = {str(b["name"]): b for b in svc.list_backends(user_id=OWNER)}
     assert by_name["b"]["usage"] == "embedding"
     assert by_name["b"]["used_by"] == ["embedding"]
@@ -493,7 +493,7 @@ def test_unassigned_model_is_not_mistaken_for_a_chat_backend() -> None:
     assert row["used_by"] == []
     # 服务页的模型推理候选按 usage=='chat' 过滤：它不该出现，但配置本身仍然可读。
     assert [b["name"] for b in svc.list_backends(user_id=OWNER) if b["usage"] == "chat"] == []
-    assert svc.default_backend() is None
+    assert svc.default_backend(user_id=OWNER) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -554,8 +554,12 @@ CREATE TABLE model_provider (
 CREATE TABLE service_endpoint (
     category TEXT NOT NULL, id TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'cloud',
     ref_backend TEXT, enabled INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0,
-    builtin INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (category, id)
+    builtin INTEGER NOT NULL DEFAULT 0, user_id TEXT, PRIMARY KEY (category, id)
 );
+-- 上面这行 user_id 列：与"经 `_migrate` 走完形状迁移后的新表"同形（B1b 加的列，仅 chat
+-- 引用行带主人；能力行 NULL = 设备级）。真实升级路径里这一列由 `_migrate` 的 DROP+重建
+-- （老形态）或手写 ADD COLUMN（引用形态）保证存在，这里镜像成同一形状才不会把"迁移写列"
+-- 误测成"迁移失败"。
 CREATE TABLE kernel_meta (key TEXT PRIMARY KEY, value TEXT, updated_at TIMESTAMP);
 CREATE TABLE model_backend (
     name TEXT PRIMARY KEY, provider TEXT NOT NULL, base_url TEXT, model TEXT NOT NULL,
@@ -596,8 +600,8 @@ def test_legacy_db_moves_into_two_layers_without_losing_config() -> None:
     assert groups["siliconflow"]["api_key"] == "sk-shared"
     assert [b["name"] for b in svc.list_backends(user_id=OWNER)] == ["chat", "vl", "local"]
     # 默认与回退顺序照搬：local 仍是第 1 位，chat 第二（旧链），vl 跟在后面。
-    assert svc.default_backend() == "local"
-    assert svc.list_fallbacks() == ["chat", "vl"]
+    assert svc.default_backend(user_id=OWNER) == "local"
+    assert svc.list_fallbacks(user_id=OWNER) == ["chat", "vl"]
     # 旧列的三行用途都在：都是 chat；能力位与 num_ctx 原样跟行。
     by_name = {str(b["name"]): b for b in svc.list_backends(user_id=OWNER)}
     assert by_name["vl"]["supports_vision"] is True and by_name["vl"]["supports_tools"] is False

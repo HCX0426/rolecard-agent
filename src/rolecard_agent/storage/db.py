@@ -240,6 +240,10 @@ def bootstrap(conn: SqlConnection, enabled_domains: Iterable[str] = ()) -> list[
 #: `token_usage_day` 不是列的问题而是**主键**（B1a）：补列改不了 `(day, backend)` → 
 #: `(day, user_id, backend)`，只补列会让 `ON CONFLICT(day,user_id,backend)` 永远报
 #: "non-unique" —— 所以它同理要整表重建。
+#: `service_endpoint` 需要**补列 + 按行回填**两步（B1b：`user_id` 加列由 `_migrate`
+#: 手写、老 chat 引用行回填本机主人）。补列器只管加列、不负责回填数据 —— 让它自动补了
+#: 列，旧 chat 行就是 NULL，按人过滤后对话默认当场消失；把两步放在 `_migrate` 同一个
+#: 判断里才是一次完整的迁移。
 _SHAPE_MIGRATED_TABLES = frozenset({"model_backend", "service_endpoint", "token_usage_day"})
 
 
@@ -432,6 +436,19 @@ def _migrate(conn: SqlConnection) -> None:
         conn.execute("DELETE FROM kernel_meta WHERE key = 'service_endpoints_seeded'")
         core = core_schema_path()
         conn.executescript(core.read_text(encoding="utf-8"))
+    # 13. service_endpoint 的归属（多租户 B1b，方案 A）：加可空 user_id。
+    #     补列器不碰这张表（它在 `_SHAPE_MIGRATED_TABLES` 里，整表重建/搬层族），所以这里手写
+    #     一次。只对新形态库生效 —— 老形态（带 api_key）走上面那句 DROP 重建，新表已带列。
+    #     语义（schema.sql 有全文）：**仅 chat 引用行按人**（默认/回退链 = 谁花 key 由谁定），
+    #     能力端点（ocr/embedding/rerank）永远设备级、user_id 留 NULL。老 chat 行回填本机主人
+    #     （默认部署 = 'local-user'，与 `core/identity.DEFAULT_USER_ID` 一字不差 —— 漂了就是
+    #     "升级完对话默认丢失"那种最像默认值出问题的症状）。新 chat 行由 model_settings 的写
+    #     入方显式带主人，所以这里只回填历史行。
+    if "user_id" not in _columns(conn, "service_endpoint"):
+        conn.execute("ALTER TABLE service_endpoint ADD COLUMN user_id TEXT")
+        conn.execute(
+            "UPDATE service_endpoint SET user_id = 'local-user' WHERE category = 'chat'"
+        )
     # 9. model_backend 两层化（凭据上收 model_provider、usage 变成 chat 引用行）。
     #    必须排在 service_endpoint 重建**之后**：搬层要往新形态的引用表里写 chat 行。
     from rolecard_agent.core.model_settings import migrate_to_provider_layers  # noqa: PLC0415

@@ -32,11 +32,13 @@ rag 与 services 一行不改。变的是写入与迁移：这些字段不再有
     is a v2 concern, and pretending otherwise in a demo would be worse than the limitation.
   * **一组凭据有主人（M2d）**：`model_provider.user_id` 是这一行的归属，所以本模块每个读写
     都要调用方交出 `user_id`。运行期"花谁的 key"只有一个答案 —— 交出这份 `Settings` 的那个人
-    （`effective_settings(..., user_id=)` 是唯一咽喉）。刻意**留着不分身份**的只有三类，各自
+    （`effective_settings(..., user_id=)` 是唯一咽喉）。刻意**留着不分身份**的只有两类，各自
     写明原因：分配主键（`_all_group_ids` / `_all_backend_names`，主键是全局的）、启动时的数据
-    卫生清扫（`normalize_providers`）、以及 `service_endpoint` 那一族引用行（那张表今天还没有
-    主人，尾巴记在 §4.1）。`model_backend` 因此**不另挂一列**：模型行的主人从它所属的组继承，
-    按名改一行的那些 UPDATE 靠 JOIN 带上主人条件，而不是多存一份冗余归属。
+    卫生清扫（`normalize_providers`）。`service_endpoint` 的 chat 引用行**也按人**
+    （多租户 B1b，方案 A 收了 §4.1 的尾巴：对话默认/回退链花谁的 key 由谁定），能力端点
+    （ocr/embedding/rerank）仍设备级、归 `core/services.py` 管。`model_backend` 因此**不另挂
+    一列**：模型行的主人从它所属的组继承，按名改一行的那些 UPDATE 靠 JOIN 带上主人条件，
+    而不是多存一份冗余归属。
 """
 
 from __future__ import annotations
@@ -382,10 +384,14 @@ def migrate_to_provider_layers(conn: SqlConnection) -> int:
     ordered = _dedupe([*head, *chain, *chat_names], set(chat_names))
     kinds = _kind_of_names(conn, ordered)
     for order, name in enumerate(ordered):
+        # `user_id` 显式写本机主人（默认部署 = 'local-user'）：这些是从**旧库**搬上来的
+        # chat 引用行，旧库里没有归属这回事 —— 让它们落进"列默认值指向的身份"（与搬进来的
+        # model_provider 同一口径，见 storage/db.py 的补列回填）。能力类别的引用行这里
+        # 不存在：搬层只写 chat（原 usage 列只有 chat 语义进对话序列）。
         conn.execute(
             "INSERT OR IGNORE INTO service_endpoint "
-            "(category, id, kind, ref_backend, enabled, sort_order, builtin) "
-            "VALUES (?, ?, ?, ?, 1, ?, 0)",
+            "(category, id, kind, ref_backend, enabled, sort_order, builtin, user_id) "
+            "VALUES (?, ?, ?, ?, 1, ?, 0, 'local-user')",
             (CHAT_CATEGORY, name, kinds.get(name, "cloud"), name, order),
         )
     conn.execute("DELETE FROM kernel_meta WHERE key IN ('model_default', 'model_fallbacks')")
@@ -492,9 +498,10 @@ class ModelSettingsService:
     # 只有少数几处**刻意不分身份**，它们都在下面单独标了原因（主键分配、启动清扫）——
     # 那种地方必须是"另一个具名方法"，不能是同一个方法传个 None：一旦 None 表示"全部"，
     # "忘了过滤"就又变成一次普通的调用了。
-    # 唯一例外是 `service_endpoint` 那一族（对话默认/回退序列/引用行）：那张表今天没有
-    # 主人，所以 `default_backend` / `list_fallbacks` / `_chat_ref_names` 是设备级的，
-    # 尾巴记在 §4.1。
+    # `service_endpoint` 那一族不再例外（多租户 B1b，方案 A 收掉了 §4.1 的尾巴）：其中
+    # `chat` 引用行的默认/回退序列**按人**（`default_backend` / `list_fallbacks` /
+    # `_chat_ref_names` / `_usages` 的 chat 桶都要 `user_id`）；ocr/embedding/rerank 能力
+    # 端点保持设备级（那些读在 `services.py`，不归本类）。
 
     def _provider_rows(self, *, user_id: str) -> list[dict[str, object]]:
         rows = self._conn.execute(
@@ -533,15 +540,20 @@ class ModelSettingsService:
             for r in self._conn.execute("SELECT name FROM model_backend").fetchall()
         }
 
-    def _usages(self) -> dict[str, list[str]]:
+    def _usages(self, *, user_id: str) -> dict[str, list[str]]:
         """后端名 → 引用它的服务类别（chat 在前，其余按优先级序）。
 
         这就是"用途"的唯一事实面：服务页写引用行，模型页只读这张映射。
+        归属切分（多租户 B1b，方案 A）：**chat 引用行只在本人的那几条里找**（"这行用于
+        对话"是"花谁的 key 由谁定"同族的事实）；能力类别（ocr/embedding/rerank）是
+        设备级的，与 user_id 无关、一律计入。
         """
         rows = self._conn.execute(
             "SELECT ref_backend, category FROM service_endpoint "
             "WHERE builtin = 0 AND ref_backend IS NOT NULL "
-            "ORDER BY CASE WHEN category = 'chat' THEN 0 ELSE 1 END, sort_order, category"
+            "AND (category != 'chat' OR user_id = ?) "
+            "ORDER BY CASE WHEN category = 'chat' THEN 0 ELSE 1 END, sort_order, category",
+            (user_id,),
         ).fetchall()
         out: dict[str, list[str]] = {}
         for row in rows:
@@ -568,7 +580,7 @@ class ModelSettingsService:
             "ORDER BY b.sort_order, b.name",
             (user_id,),
         ).fetchall()
-        usages = self._usages()
+        usages = self._usages(user_id=user_id)
         out: list[dict[str, object]] = []
         for row in rows:
             item = dict(row)
@@ -591,7 +603,7 @@ class ModelSettingsService:
 
         `usage` 现在是派生只读值；`used_by` 是它的全集（一行可同时服务多种能力）。
         """
-        usages = self._usages()
+        usages = self._usages(user_id=user_id)
         return [
             {
                 k: row[k]
@@ -616,8 +628,8 @@ class ModelSettingsService:
         能力位是**三态**（true / false / null=没测过）—— 把"没测过"显示成"不支持"是撒谎，
         而"不支持"会触发调用前拦截。运行时那侧仍按 bool 解释（`_vision_of`/`_tools_of`）。
         """
-        usages = self._usages()
-        default = self.default_backend()
+        usages = self._usages(user_id=user_id)
+        default = self.default_backend(user_id=user_id)
         models_of_group: dict[str, list[dict[str, object]]] = {}
         value_cols = ", ".join(f"b.{c}" for c in _value_columns(self._conn))
         for row in self._conn.execute(
@@ -662,11 +674,16 @@ class ModelSettingsService:
             )
         return out
 
-    def default_backend(self) -> str | None:
-        """对话默认后端 = chat 引用行的第 1 位；None = 未配置（退回 env 的 `model_default`）。"""
+    def default_backend(self, *, user_id: str) -> str | None:
+        """对话默认后端 = **这个人的** chat 引用行的第 1 位；None = 未配置（退回 env）。
+
+        归属（多租户 B1b，方案 A）：默认/回退链回答"这次对话花谁的 key 由谁定"，按人过滤。
+        别人名下的 chat 引用对这个人不存在 —— 界面的"当前默认"对得上实际跑的那台。
+        """
         row = self._conn.execute(
-            "SELECT id FROM service_endpoint WHERE category = ? ORDER BY sort_order, id LIMIT 1",
-            (CHAT_CATEGORY,),
+            "SELECT id FROM service_endpoint WHERE category = ? AND user_id = ? "
+            "ORDER BY sort_order, id LIMIT 1",
+            (CHAT_CATEGORY, user_id),
         ).fetchone()
         return str(row["id"]) if row else None
 
@@ -704,34 +721,43 @@ class ModelSettingsService:
             for group in self._provider_rows(user_id=user_id)
         )
 
-    def list_fallbacks(self) -> list[str] | None:
+    def list_fallbacks(self, *, user_id: str) -> list[str] | None:
         """Operator-configured fallback chain, or None = not configured (use env's).
 
-        派生自 chat 引用行：第 1 位是默认（不算回退），其后就是回退链。一条 chat 引用都没有
-        = 操作员没配过 = None（env 的 `MODEL_FALLBACKS` 仍然说话）。
+        派生自**这个人的** chat 引用行：第 1 位是默认（不算回退），其后就是回退链。
+        一条 chat 引用都没有 = 操作员没配过 = None（env 的 `MODEL_FALLBACKS` 仍然说话）。
         """
-        names = self._chat_ref_names()
+        names = self._chat_ref_names(user_id=user_id)
         return names[1:] if names else None
 
     # -- chat 引用行（"这行用于对话"这件事的事实面） ---------------------------------
 
-    def _chat_ref_names(self) -> list[str]:
+    def _chat_ref_names(self, *, user_id: str) -> list[str]:
+        """**这个人的** chat 引用序列（按优先级序）；能力行的 category 与它有别，天然隔开。"""
         rows = self._conn.execute(
-            "SELECT id FROM service_endpoint WHERE category = ? ORDER BY sort_order, id",
-            (CHAT_CATEGORY,),
+            "SELECT id FROM service_endpoint WHERE category = ? AND user_id = ? "
+            "ORDER BY sort_order, id",
+            (CHAT_CATEGORY, user_id),
         ).fetchall()
         return [str(r["id"]) for r in rows]
 
-    def _write_chat_refs(self, ordered: list[str]) -> None:
-        """整体重写 chat 引用行（第 1 位 = 默认，其后 = 回退链）。"""
-        self._conn.execute("DELETE FROM service_endpoint WHERE category = ?", (CHAT_CATEGORY,))
+    def _write_chat_refs(self, ordered: list[str], *, user_id: str) -> None:
+        """整体重写**这个人的** chat 引用行（第 1 位 = 默认，其后 = 回退链）。
+
+        删除必须带 `user_id` 范围、插入必须带 `user_id` 值：不加这两处，A 存一次对话序列
+        就会把 B 的引用行一起抹掉/写成 A 的（多租户 B1b，方案 A 的"仅 chat 引用行按人"）。
+        """
+        self._conn.execute(
+            "DELETE FROM service_endpoint WHERE category = ? AND user_id = ?",
+            (CHAT_CATEGORY, user_id),
+        )
         kinds = _kind_of_names(self._conn, ordered)
         for i, name in enumerate(ordered):
             self._conn.execute(
                 "INSERT INTO service_endpoint "
-                "(category, id, kind, ref_backend, enabled, sort_order, builtin) "
-                "VALUES (?, ?, ?, ?, 1, ?, 0)",
-                (CHAT_CATEGORY, name, kinds.get(name, "cloud"), name, i),
+                "(category, id, kind, ref_backend, enabled, sort_order, builtin, user_id) "
+                "VALUES (?, ?, ?, ?, 1, ?, 0, ?)",
+                (CHAT_CATEGORY, name, kinds.get(name, "cloud"), name, i, user_id),
             )
 
     def save_chat_pool(self, names: list[str], *, user_id: str) -> None:
@@ -758,7 +784,7 @@ class ModelSettingsService:
             raise ModelSettingsError(
                 f"以下后端不在模型页配置里：{', '.join(unknown[:3])}（请先在「模型」页签添加）。"
             )
-        self._write_chat_refs(names)
+        self._write_chat_refs(names, user_id=user_id)
         self._conn.commit()
 
     def seed_from_env(self, env_settings: Settings, *, user_id: str) -> int:
@@ -835,7 +861,7 @@ class ModelSettingsService:
                 [env_settings.model_default, *env_settings.model_fallbacks, *chat_rows],
                 set(chat_rows),
             )
-            self._write_chat_refs(ordered)
+            self._write_chat_refs(ordered, user_id=user_id)
         self._conn.execute(
             "INSERT OR IGNORE INTO kernel_meta (key, value) VALUES (?, ?)",
             (self.MODEL_SEEDED_KEY, "1"),
@@ -1062,7 +1088,7 @@ class ModelSettingsService:
         # **修剪掉引用已删后端的项** —— 后端集缩小时旧链可能指向已删行，此时拒绝会让
         # 一次普通的缩容保存永远卡死；运行时 `resolve_fallbacks` 本就丢弃未知名字，
         # 保存时对齐这一语义（smoke：缩容保存 200，链被清空）。
-        kept = self.list_fallbacks() or []
+        kept = self.list_fallbacks(user_id=user_id) or []
         chain = (
             list(fallbacks) if fallbacks is not None else [n for n in kept if n in names]
         )
@@ -1180,7 +1206,9 @@ class ModelSettingsService:
         )
         # 用途（chat 引用行）：默认永远第 1 位，其后依次是回退链，再后面是其余对话后端。
         chat_names = [n for n in names if usage_by_name[n] == "chat"]
-        self._write_chat_refs(_dedupe([default, *chain, *chat_names], set(chat_names)))
+        self._write_chat_refs(
+            _dedupe([default, *chain, *chat_names], set(chat_names)), user_id=user_id
+        )
         self._conn.commit()
 
     # -- 逐条写入（新模型页的添加抽屉 / 删除 / 探测写回） -----------------------------
@@ -1297,7 +1325,7 @@ class ModelSettingsService:
         # 新行默认进对话序列的尾部（拆层前的行为：加一个模型就是为了能跟它说话）。
         # 不想让它参与对话 → 在「服务」页的模型推理序列里把它摘掉；只服务嵌入的那行
         # 也是在那里加回来（批次③ 补这个入口）。
-        self._write_chat_refs([*self._chat_ref_names(), key])
+        self._write_chat_refs([*self._chat_ref_names(user_id=user_id), key], user_id=user_id)
         self._conn.commit()
         return {"name": key, "provider_id": gid}
 
@@ -1315,7 +1343,7 @@ class ModelSettingsService:
         if row is None:
             raise KeyError(name)
         gid = str(row["provider_id"])
-        pool = [n for n in self._chat_ref_names() if n != name]
+        pool = [n for n in self._chat_ref_names(user_id=user_id) if n != name]
         self._conn.execute(
             f"DELETE FROM model_backend WHERE name = ? AND {_OWNED_MODEL_ROWS}", (name, user_id)
         )
@@ -1327,7 +1355,7 @@ class ModelSettingsService:
                 "DELETE FROM model_provider WHERE id = ? AND user_id = ?", (gid, user_id)
             )
         # 引用行按新序重编 sort_order，所以删掉的正是默认时，下一位自动顶上（默认不会悬空）。
-        self._write_chat_refs(pool)
+        self._write_chat_refs(pool, user_id=user_id)
         self._conn.commit()
 
     def set_capabilities(
@@ -1408,11 +1436,13 @@ class ModelSettingsService:
         merged: dict[str, ModelBackend] = {
             str(row["name"]): _backend_from_row(row) for row in raw
         }
-        default = self.default_backend()
+        # 默认/回退链按**这个人**的 chat 引用行取（多租户 B1b，方案 A）：这份配置是谁的 key
+        # 谁说话，对话默认就该是那个人的第一条 chat 引用。别人名下的序列对这里不存在。
+        default = self.default_backend(user_id=user_id)
         # 默认缺失/失效 → 退到 DB 第一个后端（首启种子已保证至少一个 chat 后端）。
         if default is None or default not in merged:
             default = next(iter(merged), env_settings.model_default)
-        fallbacks = self.list_fallbacks()
+        fallbacks = self.list_fallbacks(user_id=user_id)
         return env_settings.model_copy(
             update={
                 "model_backends": merged,
