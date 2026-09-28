@@ -132,13 +132,14 @@ async function poll() {
 }
 
 describe("PetPage 桌宠", () => {
-  it("只显示最新一条，其余折成 +N；色片用角色名首字", async () => {
+  it("只显示最新一条，其余折成 +N；形象那块是兜底角色（无素材时的默认本体）", async () => {
     await mount();
     expect(screen.getByText("外头降温了，穿上外套。")).toBeTruthy();
     expect(screen.queryByText("旧的一条")).toBeNull();
     expect(screen.getByText("+2")).toBeTruthy();
     expect(screen.getByTitle(/^苏晚晴/)).toBeTruthy();
-    expect(screen.getByText("苏")).toBeTruthy();
+    // 色片升级成形象组件：没有 spritesheet 素材时落在 GeometricPet 兜底（data-testid）。
+    expect(screen.getByTestId("pet-figure")).toBeTruthy();
   });
 
   it("点气泡 = 进入对话即都算读过（read-all），气泡随即收起", async () => {
@@ -168,10 +169,10 @@ describe("PetPage 桌宠", () => {
     expect(screen.queryByText("外头降温了，穿上外套。")).toBeNull();
   });
 
-  it("一条消息都没有时只剩色片，不弹空气泡", async () => {
+  it("一条消息都没有时只剩形象，不弹空气泡", async () => {
     apiMock.getReachouts.mockResolvedValue(page([]));
     await mount();
-    expect(screen.getByText("助")).toBeTruthy(); // 没消息时回落到默认名"助手"
+    expect(screen.getByTestId("pet-figure")).toBeTruthy(); // 没消息时兜底角色照常驻留
     expect(screen.queryByText("+2")).toBeNull();
   });
 
@@ -1209,8 +1210,8 @@ describe("PetPage 状态行（M5 之② + R26-45：云端指示 + 为什么静�
       unread: 1,
       unread_by_role: { wan: 1 },
       quiet: [
-        { role_id: "wan", why: "距上次说话不足 66 分钟", next_ok_at: null, streak: 1, unread: 1 },
-        { role_id: "other", why: "处于静默时段", next_ok_at: null, streak: 0, unread: 0 },
+        { role_id: "wan", role_name: "苏晚晴", why: "距上次说话不足 66 分钟", next_ok_at: null, streak: 1, unread: 1 },
+        { role_id: "other", role_name: "别的", why: "处于静默时段", next_ok_at: null, streak: 0, unread: 0 },
       ],
     } as ReachoutsPage);
     await openPanel();

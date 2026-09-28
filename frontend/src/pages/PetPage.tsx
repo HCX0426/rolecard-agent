@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import ThinkingPanel from "../components/chat/ThinkingPanel";
 import PetContextMenu, { type MenuEntry } from "../components/PetContextMenu";
+import PetSprite, { type PetStatus } from "../components/pet/PetSprite";
 import QuietLine from "../components/QuietLine";
 import { api, streamChat, streamEdit, UNREAD_POLL_MS, type MessagePage, type MessageRow, type QuietStatus, type ReachoutRow, type RoleCard } from "../api";
 import { useAutoScroll } from "../hooks/useAutoScroll";
@@ -49,13 +50,6 @@ const PANEL_MESSAGES = 30;
 
 /** 读这条主动会话的最近几条。URL 只写一处：展开时与一轮跑完两条路径必须读同一个东西。 */
 const messagesPath = (tid: string) => `/api/session/${tid}/messages?limit=${PANEL_MESSAGES}`;
-
-/** role_id → 稳定色相。同一个角色的色片跨设备/跨主题都一样，认脸靠它。 */
-function hueOf(roleId: string): number {
-  let hash = 0;
-  for (const ch of roleId) hash = (hash * 31 + ch.codePointAt(0)!) % 360;
-  return hash;
-}
 
 function shorten(text: string): string {
   return text.length > MAX_BUBBLE_CHARS ? `${text.slice(0, MAX_BUBBLE_CHARS)}…` : text;
@@ -306,7 +300,18 @@ export default function PetPage() {
     latest?.role_name ??
     latest?.role_id ??
     "助手";
-  const hue = hueOf(activeRole ?? "general_assistant");
+  // 形象的表现状态：完全由本页已有的信号推导，不另开通道。
+  //   · 自己这扇窗在流 / 她正在生成 → speaking（嘴动 + 浮沉）；
+  //   · 别处那扇窗在生成（`mirror` 是 R26-38 的镜像登记）→ thinking（"…"泡泡）；
+  //   · 你在打字 → listening；其余 → idle（呼吸 + 眨眼）。
+  const petStatus: PetStatus =
+    busy || (live && (live.text || live.streaming || live.thinking))
+      ? "speaking"
+      : mirror !== null
+        ? "thinking"
+        : draft.trim()
+          ? "listening"
+          : "idle";
   // 投递记录给的线程 id（有最近一条时用它，省一次请求）。
   const knownThreadId = latest && latest.role_id === activeRole ? latest.thread_id ?? null : null;
   /** 这条主动会话的 id。清空抽屉之后 `latest` 就没了，而**会话与历史一直在**
@@ -994,18 +999,29 @@ export default function PetPage() {
         )
       )}
 
-      {/* 色片自己**不挂**事件处理器：点击与拖拽都在根节点上（handler 只挂在色片上会变成
-          "色片从光标底下滑走之后，我点它没反应"，见 `rootClick`），挂两处会因冒泡触发两遍，
-          净效果是"点了没反应"。这个 ref 只用来量落点离它多远。 */}
+      {/* 形象本体：`PetSprite` 渲染 waifu spritesheet（素材放进 frontend/public/pets/ 即换装），
+          没有素材或加载失败时回退 `GeometricPet` —— 兜底这只同样由 `petStatus` 驱动呼吸/
+          眨眼/说话/思考。**这一块就是原来的 88 色片**：`.pet-nodrag`（命中区上报）、
+          `spriteRef`（点它算点桌宠）、title（右侧菜单与测试都按它认脸）全部原样保留。
+          尺寸从 88 提到 160×184 —— 形象本身就"大了一圈"，hit-slack 的量是按窗口能挪多远
+          算的、不随形象尺寸变，命中照旧。它自己不挂事件处理器（点/拖都在根节点，一次冒泡
+          只触发一遍）。 */}
       <div
         ref={spriteRef}
-        className="pet-nodrag grid h-[88px] w-[88px] shrink-0 cursor-grab place-items-center rounded-full text-2xl font-medium text-white shadow-md active:cursor-grabbing"
-        style={{ background: `hsl(${hue} 62% 48%)` }}
+        className="pet-nodrag shrink-0 cursor-grab active:cursor-grabbing"
         title={`${name}${offline ? " · 连不上本地服务" : ""} · 点开看你们最近聊了什么${
           showContent ? "" : "（内容已隐藏）"
         }`}
       >
-        {name.slice(0, 1)}
+        <PetSprite
+          status={petStatus}
+          width={160}
+          height={184}
+          className="drop-shadow-md"
+          // 素材即插即用：放一张合法 waifu spritesheet（1536×1872，8×9 格）到
+          // `frontend/public/pets/<包>/sprite.webp`，再把地址写到这里。
+          src={undefined}
+        />
       </div>
 
       {offline && (

@@ -71,3 +71,145 @@ html[data-page="pet"] #root {
   content: "▍";
   @apply animate-pulse text-slate-400;
 }
+
+/* ---------------------------------------------------------------------------
+ * 桌宠形象（GeometricPet 兜底本体 + PetSprite 素材渲染共用这一套"活气"）。
+ * 只靠 data-status 切表现，动画时长/曲线全在这里 —— 换手感不动逻辑。
+ * 透明窗纪律照抄：不淡入 opacity（半透明透出来的是桌面本身）；眨眼的"合眼"用
+ * scaleY 而不是 opacity（一小块也不能闪）。
+ * ------------------------------------------------------------------------- */
+
+/* 全身呼吸：无人说话时也活着。耳朵跟着轻扇。 */
+@keyframes pet-breathe {
+  0%,
+  100% {
+    scale: 1 1;
+  }
+  50% {
+    scale: 1.015 0.985;
+  }
+}
+@keyframes pet-ear-wiggle {
+  0%,
+  100% {
+    rotate: 0deg;
+  }
+  50% {
+    rotate: 3deg;
+  }
+}
+.geometric-pet .pet-body {
+  transform-origin: 50% 100%;
+  animation: pet-breathe 3s ease-in-out infinite;
+}
+.geometric-pet .pet-ear-l {
+  transform-origin: 70% 20%;
+  animation: pet-ear-wiggle 3.4s ease-in-out infinite;
+}
+.geometric-pet .pet-ear-r {
+  transform-origin: 30% 20%;
+  animation: pet-ear-wiggle 3.4s ease-in-out 0.2s infinite;
+}
+
+/* 眨眼：3.4s 一次的 150ms 合眼（见 GeometricPet 注释：不该与呼吸节拍锁死）。 */
+@keyframes pet-blink {
+  0%,
+  91%,
+  100% {
+    scale: 1 1;
+  }
+  94%,
+  96% {
+    scale: 1 0.12;
+  }
+}
+.geometric-pet .pet-eyes {
+  transform-origin: 50% 50%;
+  animation: pet-blink 3.4s infinite;
+}
+
+/* 说话/正在生成：嘴开合 + 身体一浮一沉。thinking：头顶冒出"…"泡泡，眼睛半眯。 */
+@keyframes pet-talk {
+  0%,
+  100% {
+    scale: 1 0.45;
+  }
+  50% {
+    scale: 1 1.15;
+  }
+}
+@keyframes pet-bounce {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -4px;
+  }
+}
+.geometric-pet .pet-mouth {
+  transform-origin: 50% 100%;
+}
+.geometric-pet[data-status="speaking"] .pet-mouth,
+.geometric-pet[data-status="typing"] .pet-mouth {
+  animation: pet-talk 320ms ease-in-out infinite;
+}
+.geometric-pet[data-status="speaking"] .pet-body,
+.geometric-pet[data-status="typing"] .pet-body {
+  animation: pet-bounce 520ms ease-in-out infinite, pet-breathe 3s ease-in-out infinite;
+}
+
+/* 思考泡泡：只在 thinking 出现，靠 CSS content 给那颗"…"。 */
+.pet-think {
+  display: none;
+  width: 34px;
+  height: 26px;
+  border-radius: 999px;
+  background: #fff;
+  border: 3px solid #8a7268;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  color: #4a403a;
+}
+.pet-think::after {
+  content: "⋯";
+}
+.geometric-pet[data-status="thinking"] .pet-think {
+  display: block;
+  animation: pet-think-pulse 1s ease-in-out infinite;
+}
+@keyframes pet-think-pulse {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -3px;
+  }
+}
+/* thinking 时眼睛半眯（"在想"的脸）—— 盖过眨眼的完整睁开。 */
+.geometric-pet[data-status="thinking"] .pet-eyes {
+  animation: pet-squint 900ms ease-in-out infinite;
+}
+@keyframes pet-squint {
+  0%,
+  100% {
+    scale: 1 1;
+  }
+  50% {
+    scale: 1 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .geometric-pet .pet-body,
+  .geometric-pet .pet-ear-l,
+  .geometric-pet .pet-ear-r,
+  .geometric-pet .pet-eyes,
+  .geometric-pet .pet-mouth,
+  .pet-think {
+    animation: none;
+  }
+}
