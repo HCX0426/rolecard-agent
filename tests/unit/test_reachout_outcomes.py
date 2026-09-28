@@ -183,3 +183,70 @@ def test_item_five_counts_only_rows_that_know_their_source(conn: Any) -> None:
     assert s["first_known_at"] == "2026-09-26 03:00:00"
     assert s["last_known_at"] == "2026-09-26 09:00:00"
     assert s["by_source"][mod.UNKNOWN_SOURCE] == 1, "不知道的那一档要单独留着，别摊平"
+
+
+def test_sample_table_stratifies_so_the_biggest_cell_cannot_eat_the_quota(conn: Any) -> None:
+    """⑦ 抽样表的分层：大格子（这里 8 条 `affection`）不许把名额全占了。
+
+    这条钉的是"这张表为什么存在"：一周 10 分钟要回答的是"**哪种**由头/结局的句子你想
+    不想回"，如果样本退化成"最新 20 条"，那按现状（affection 常驻命中）就等于只看
+    affection 一档 —— 其余档的句子永远没机会被人看见。
+    """
+    _lane(conn)
+    for i in range(8):  # 大格子：全是最新的、全是"没看"
+        _seed(conn, text=f"affection 第{i}条", state="unread",
+              created_at=f"2026-09-26 1{i}:00:00", fired_by="affection")
+    _seed(conn, text="recall 一条", state="read", created_at="2026-09-26 01:00:00",
+          seen_at="2026-09-26 01:05:00", fired_by="recall")  # 小格子：看着更新更弱
+    sample = mod.sample_table(conn, LANE_MSGS, n=4)
+    sources = {str(x["source"]) for x in sample}
+    assert sources == {"affection", "recall"}, f"小格子被大格子挤掉了：{sources}"
+    assert len(sample) <= 4
+    # 同一份输入两次抽样结果一致（这张表是"周五看一眼"的凭据，不许每次跑都不一样）
+    again = mod.sample_table(conn, LANE_MSGS, n=4)
+    assert [x["id"] for x in sample] == [x["id"] for x in again]
+
+
+def test_sample_table_returns_everything_when_the_corpus_is_smaller_than_n(conn: Any) -> None:
+    """库里不够 20 条时，样本就是全部 —— 不硬凑、也不因为"配额取整"漏掉尾巴。"""
+    _lane(conn)
+    _seed(conn, text="单独点开且有人回", state="read", created_at="2026-09-26 04:00:00",
+          read_at="2026-09-26 04:05:00", fired_by="timer")
+    _seed(conn, text="看过没接", state="read", created_at="2026-09-26 06:10:00",
+          seen_at="2026-09-26 06:20:00", fired_by="recall")
+    _seed(conn, text="谁都没看过也没人回", state="unread", created_at="2026-09-26 06:00:00")
+    sample = mod.sample_table(conn, LANE_MSGS, n=20)
+    assert len(sample) == 3
+
+
+def test_sample_reply_head_comes_from_the_lane_and_is_clipped(conn: Any) -> None:
+    """「你回话前 60 字」取的是**那条线上她那句之后的第一个用户消息**，不是最近一条。
+
+    `_real_replies` 只回答"有没有"，这一列回答"他当时怎么接的" —— 抽样表的最后两列是
+    人眼判断的全部输入，取错条就等于让人对着别的回合做判断。
+    """
+    _lane(conn)
+    _seed(conn, text="给你带了桂花糕", state="read", created_at="2026-09-26 04:00:00",
+          read_at="2026-09-26 04:05:00", fired_by="timer")
+    long_reply = "谢谢" + "很" * 80
+    lane = {
+        LANE: [
+            ("你", "上一条旧话"), ("用户", "这条不算"),
+            ("你", "给你带了桂花糕"), ("用户", long_reply),
+            ("你", "后来又冒的一句"), ("用户", "这条更不算"),
+        ]
+    }
+    sample = mod.sample_table(conn, lane, n=20)
+    assert len(sample) == 1
+    assert sample[0]["reply"] == long_reply, "取到了别的回合的回话"
+    rendered = mod.render_sample(sample, rows_total=1, generated_at="2026-09-28 12:00:00")
+    head = mod._clip(long_reply, 60)
+    assert head in rendered
+    assert head.endswith("…") and len(head) <= 60
+    assert "这条不算" not in rendered, "旧回合的回话混进了表里"
+    # 被划掉的格子也要能抽中（结局分布里它是一档，人眼同样要看）
+    _seed(conn, text="划掉的那条", state="dismissed", created_at="2026-09-26 05:00:00",
+          fired_by="time_pattern")
+    sample2 = mod.sample_table(conn, lane, n=20)
+    outcomes = {str(x["outcome"]) for x in sample2}
+    assert "dismissed" in outcomes and "picked" in outcomes

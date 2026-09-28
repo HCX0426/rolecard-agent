@@ -14,12 +14,17 @@
    这一项是给 `R26-09` 的回访用的；该列 09-26 傍晚才加，之前的行只能算"不知道"。
 5. **攒样本进度** —— 带由头的行有几条、观测窗口多长、离"够 20 条再判"还差多少。
    回访要等的就是条数，那就让它自己报进度；只有一条样本时**明说算不出速率**而不是外推。
+6. **人眼对照抽样表**（`S-3` 候选 ②，09-28 落地）—— 按「由头 × 结局」分层抽 20 条导出成
+   markdown（默认落 `build/`，不入库）：每行是她那句原文 + 你是否回过 + 你回话的前 60 字。
+   ①②③④ 都是**条数口径**，回答不了"这句你想不想回"；这一份是唯一直接问那个问题的判据，
+   代价是它不自动 —— 一周看一次、一次 10 分钟。
 
 读的是**真库副本**：真库那份还没跑过新代码（`read_at`/`dismissed_at` 两列要靠启动时的
 `reconcile_columns` 补出来），所以这里先 `copy_of_live_db` 再 `bootstrap` 一次 —— 数据
 一行不改，只是把声明的列补齐。真库从头到尾只读。
 
     PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe scripts/reachout_outcomes.py
+    （--n 20 抽样条数 / --out 抽样表落盘路径）
 """
 
 from __future__ import annotations
@@ -106,16 +111,51 @@ def read_lane_messages(conn: Any) -> dict[str, list[tuple[str, str]]]:
     return out
 
 
-def _real_replies(lane_msgs: dict[str, list[tuple[str, str]]], role_id: str, text: str) -> int:
-    """真判据：**她那句之后**，那条线上有没有出现过一条用户消息。"""
-    pairs = lane_msgs.get(proactive_thread_id(role_id, user_id=OWNER), [])
+def _first_reply_after(pairs: list[tuple[str, str]], text: str) -> str | None:
+    """真判据的原始形式：**她那句之后**那条线上出现的第一条用户消息（原文）。
+
+    两个 None 语义合一：她那句不在这条线里（投递失败的老消息 / 文本改过）与"没人回" ——
+    对"接了没有"这个问题两者都是"没有"，但原文给"回话前 60 字"那列用（抽样表）。
+    """
     at = next(
         (i for i in range(len(pairs) - 1, -1, -1) if pairs[i] == ("你", text.strip())),
         None,
     )
     if at is None:
-        return 0  # 那句不在这条线里（投递失败的老消息 / 文本被改过）—— 不替它编
-    return int(any(who == "用户" for who, _ in pairs[at + 1:]))
+        return None
+    return next((t for who, t in pairs[at + 1:] if who == "用户"), None)
+
+
+def classify(
+    row: Any, lane_msgs: dict[str, list[tuple[str, str]]]
+) -> dict[str, Any]:
+    """把一行主动消息归到「由头 × 结局」那一格 —— **逐行判据只此一份**。
+
+    `summarize` 的计数与抽样表都读它：两个视图可以说同一批行的不同话，但不允许对同一行
+    给出不同的桶（`S-2` 第 1 条那个教训 —— ① 报 1 条而 ④ 数出 9 条）。
+
+    结局的优先级：`dismissed`（划掉是用户主动的更强表态）> `picked`（他回话本身就等于看过，
+    所以这一档不要求 `state`）> `unseen`（`state='read'` 才算看过，判据与 ③ 一致）> `ignored`。
+    """
+    text = str(row["text"])
+    pairs = lane_msgs.get(proactive_thread_id(str(row["role_id"]), user_id=OWNER), [])
+    reply = _first_reply_after(pairs, text)
+    state = str(row["state"])
+    if state == "dismissed":
+        outcome = "dismissed"
+    elif reply is not None:
+        outcome = "picked"
+    elif state != "read":
+        outcome = "unseen"
+    else:
+        outcome = "ignored"
+    return {
+        # NULL 单列一档：**不知道**不等于"是某个源"。把老行摊进任何一档，就是替它们编一个由头。
+        "source": str(row["fired_by"]) if row["fired_by"] else UNKNOWN_SOURCE,
+        "outcome": outcome,
+        "reply": reply,
+        "real": reply is not None,
+    }
 
 
 def summarize(
@@ -142,15 +182,15 @@ def summarize(
     # 由头 × 结局交叉（09-28 拍的口径）：每个由头一行 `total/picked/ignored/unseen/dismissed`。
     # 有了它，"recall 档的开口 vs timer 档的开口，谁更被回"这种问题不用再跑一次脚本。
     cross: dict[str, dict[str, int]] = {}
+    # 逐行归类的判据**只有一份**（`classify`）：这里数格子、抽样表也读它 —— 两个视图
+    # 允许说同一批行的不同话，但不允许对同一行给出不同的桶（S-2 第 1 条的教训）。
     for r in rows:
         stamp = _parse(r["created_at"]) or datetime.min
-        text = str(r["text"])
         # 两个口径并排算：真判据用来分桶，近似那个留着**对照**（差值本身就是"这条近似有多不可信"）。
-        real = _real_replies(lane_msgs, str(r["role_id"]), text) > 0
-        proxy = _proxy_replies(conn, str(r["role_id"]), stamp) > 0
-        picked_proxy += proxy
-        # NULL 单列一档：**不知道**不等于"是某个源"。把老行摊进任何一档，就是替它们编一个由头。
-        key = str(r["fired_by"]) if r["fired_by"] else UNKNOWN_SOURCE
+        info = classify(r, lane_msgs)
+        picked_proxy += _proxy_replies(conn, str(r["role_id"]), stamp) > 0
+        key = str(info["source"])
+        outcome = str(info["outcome"])
         by_source[key] = by_source.get(key, 0) + 1
         cell = cross.setdefault(
             key,
@@ -162,20 +202,21 @@ def summarize(
         # 她说话的人**数成"没看"（09-26 那组"没看 10/11"就是这么来的）。
         # 两个时刻只用来分**怎么看的**：单条点开 / 批量刷过 / 两个列都没留下（老数据）。
         seen = str(r["state"]) == "read"
-        if str(r["state"]) == "dismissed":
+        if outcome == "dismissed":
             dismissed += 1
             cell["dismissed"] += 1
-        elif real:
-            # 他回话本身就等于看过，所以这一档不再要求 `state`
+        elif outcome == "picked":
             picked += 1
             picked_sources[key] = picked_sources.get(key, 0) + 1
             cell["picked"] += 1
-        elif not seen:
+        elif outcome == "unseen":
             unseen += 1
             cell["unseen"] += 1
-        else:
+        elif outcome == "ignored":
             ignored += 1
             cell["ignored"] += 1
+        else:  # 防御：classify 只出这四个，兜住的就是"加了个新结局忘了这里"
+            raise RuntimeError(f"unhandled outcome {outcome!r} from classify")
         if seen:
             if r["read_at"] is not None:
                 opened += 1
@@ -186,7 +227,7 @@ def summarize(
         # 连击的判据是"**有没有后续**"，不是"看没看"：她连冒三条而用户一条都没回，
         # 那就是三连击 —— 哪怕三条都还没被读到。第一版把"没看"当成断链，于是
         # ③ 报"5 条没看"而 ② 报"0 连击"，两个数互相打脸。
-        if real:
+        if info["real"]:
             streak = 0
         else:
             streak += 1
@@ -256,7 +297,120 @@ def repeat_distribution(conn: Any) -> dict[str, Any]:
     return {"n": n, "median": median, "ge_half": ge_half, "by_role": by_role}
 
 
+OUTCOME_LABEL = {
+    "picked": "接了",
+    "ignored": "看了没接",
+    "unseen": "没看",
+    "dismissed": "划掉",
+}
+
+
+def _clip(text: object, limit: int) -> str:
+    """压成一行 + 截断 + 转义管道符（markdown 表格里一竖会把格子切碎）。"""
+    flat = " ".join(str(text).split()).replace("|", "\\|")
+    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
+def sample_table(
+    conn: Any, lane_msgs: dict[str, list[tuple[str, str]]], n: int = 20
+) -> list[dict[str, Any]]:
+    """人眼对照的 n 条（`S-3` 候选 ②）：按「由头 × 结局」**分层**抽，每格取最新的。
+
+    为什么分层：一周只有那 10 分钟，最大的那格（比如 `affection` 一口吃掉半边天）不许
+    把名额全占掉 —— 看的目的是"哪种由头、哪种结局的句子你最想回"，不是复刻分布。
+    为什么不足 n 就不硬凑：库里只有 18 条时样本就是全部 18 条，多出来的名额无处可借。
+    判据读 `classify`（与 ①④′ 同一份），所以这里的"结局"与前面那几个数永远同源。
+    """
+    if n <= 0:
+        return []
+    rows = conn.execute(
+        "SELECT id, role_id, state, text, created_at, read_at, seen_at, dismissed_at, fired_by,"
+        " repeat_score FROM agent_reachout ORDER BY id"
+    ).fetchall()
+    if not rows:
+        return []
+    classified: list[dict[str, Any]] = []
+    for r in rows:
+        item = dict(classify(r, lane_msgs))
+        item.update(
+            id=int(r["id"]),
+            role_id=str(r["role_id"]),
+            text=str(r["text"]),
+            created_at=str(r["created_at"]),
+            repeat_score=(
+                float(str(r["repeat_score"])) if r["repeat_score"] is not None else None
+            ),
+        )
+        classified.append(item)
+
+    def newest_first(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return sorted(
+            items, key=lambda x: (str(x["created_at"]), int(x["id"])), reverse=True
+        )
+
+    cells: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for item in classified:
+        cells.setdefault((str(item["source"]), str(item["outcome"])), []).append(item)
+    total = len(classified)
+    chosen: dict[int, dict[str, Any]] = {}
+    for key in sorted(cells, key=lambda k: (-len(cells[k]), k)):
+        quota = max(1, int(n * len(cells[key]) / total))  # 向下取整，宁可少分不多分
+        for item in newest_first(cells[key])[:quota]:
+            chosen[int(item["id"])] = item
+    if len(chosen) < n:  # 配额取整后没分满：按时间补足（小格子先到先得由排序公平决定）
+        for item in newest_first([x for x in classified if int(x["id"]) not in chosen]):
+            chosen[int(item["id"])] = item
+            if len(chosen) == n:
+                break
+    if len(chosen) > n:  # 各格至少 1 条之后可能超员：只留最新的 n 条
+        for item in newest_first(list(chosen.values()))[n:]:
+            chosen.pop(int(item["id"]), None)
+    return newest_first(list(chosen.values()))
+
+
+def render_sample(
+    sample: list[dict[str, Any]], *, rows_total: int, generated_at: str
+) -> str:
+    """抽样表渲染成 markdown。最后一列留空给**人**填 —— 这张表的产出就是那 20 个手写值。"""
+    lines = [
+        "# 主动开口对照样本（人眼判一次）",
+        "",
+        f"生成于 {generated_at}｜从 {rows_total} 条主动消息里**分层抽样** {len(sample)} 条"
+        "（由头 × 结局 每格取最新）。",
+        "",
+        "用法：一周一次、一次 10 分钟，只看**两句 + 最后一列** —— 她那句你想不想回"
+        "（填「想回 / 不想回 / 说不清」）。「结局」那一列是真判据（她那句之后这条线里"
+        "出现过你的消息），但**接不接 ≠ 想不想回**，这一眼就是来补那个差。",
+        "",
+        "| # | 时间 | 角色 | 由头 | 结局 | 她说的 | 你回话前 60 字 | 复读分 | 你判 |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for i, item in enumerate(sample, 1):
+        score = (
+            f"{float(item['repeat_score']):.2f}"
+            if item["repeat_score"] is not None
+            else "—"
+        )
+        reply = _clip(item["reply"], 60) if item["reply"] else "—"
+        # 时间直接切片到分钟：`_clip` 会在末尾加省略号，把 "04:38" 截成 "04:3…"。
+        stamp_minute = str(item["created_at"])[:16]
+        lines.append(
+            f"| {i} | {stamp_minute} | {_clip(item['role_id'], 24)} "
+            f"| {_clip(item['source'], 24)} | {OUTCOME_LABEL.get(str(item['outcome']), '?')} "
+            f"| {_clip(item['text'], 120)} | {reply} | {score} |  |"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def main() -> None:
+    import argparse  # noqa: PLC0415 —— 只有真跑脚本时才需要它，装进测试导入也无害
+
+    ap = argparse.ArgumentParser(description="主动开口的结局度量（含人眼对照抽样表）")
+    ap.add_argument("--n", type=int, default=20, help="抽样表条数（默认 20，一周看一次的量）")
+    ap.add_argument(
+        "--out", default=None, help="抽样表落盘路径（默认 build/reachout-sample-<时间戳>.md）"
+    )
+    args = ap.parse_args()
     src = scratch_db.resolve_live_db()
     work = scratch_db.copy_of_live_db(ROOT / "build" / "scratch-outcomes.db", src)
     conn = connect(work)
@@ -265,7 +419,9 @@ def main() -> None:
     bootstrap(conn, enabled_domains=("health", "finance"))
     print(f"源库（只读）：{src}")
     print(f"副本（补过列之后读它）：{work}\n")
-    s = summarize(conn)
+    # 检查点只读一次：口径计数与 ⑦ 的抽样表都从这一份里取"她那句之后有没有人回"。
+    lane_msgs = read_lane_messages(conn)
+    s = summarize(conn, lane_msgs)
     total = int(s["total"])
     seen_total = int(s["opened"] + s["batch_seen"] + s["legacy_seen"])
     print(f"主动消息 {total} 条（含已划掉的）\n")
@@ -354,6 +510,22 @@ def main() -> None:
         "\n     但那不等于他没回她。从这个语义落地那天起，① 才开始量它字面上说的东西。"
         "\n     ⑥ 同理从装有会写 `repeat_score` 的版本那天起才开始攒。"
     )
+    # ⑦ 人眼对照抽样表（S-3 候选 ②）：①②③④ 都答不了"这句你想不想回"，这一份直接问。
+    # 落盘而不是只打印：那张表要**写**（最后一列手填），终端里写不了。
+    sample = sample_table(conn, lane_msgs, args.n)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    out_path = Path(args.out) if args.out else ROOT / "build" / f"reachout-sample-{stamp}.md"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        render_sample(sample, rows_total=total, generated_at=stamp), encoding="utf-8"
+    )
+    print("⑦ 人眼对照抽样表（唯一直接回答「这句你想不想回」的判据，代价是要人看）")
+    print(f"   落盘 {out_path}")
+    print(
+        f"   {len(sample)} 条 / 全部 {total} 条（由头 × 结局分层，每格取最新；最后一列留给你手填）"
+    )
+    if total and len(sample) < total:
+        print("   样本不是全部 —— 别拿它当统计结论，它的用途是把『这周她说得怎么样』摊在眼前。")
     conn.close()
 
 
