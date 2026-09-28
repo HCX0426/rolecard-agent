@@ -20,15 +20,10 @@ import { useSessions } from "../hooks/useSessions";
 import { useSessionMirror } from "../hooks/useSessionMirror";
 import { useUploadFlow } from "../hooks/useUploadFlow";
 import ChatToolbar from "../components/chat/ChatToolbar";
+import Composer from "../components/chat/Composer";
 import ToolStepCard from "../components/chat/ToolStepCard";
 import SessionSidebar from "../components/chat/SessionSidebar";
 import TurnRow from "../components/chat/TurnRow";
-import {
-  IconImage,
-  IconSend,
-  IconSparkle,
-  IconStop,
-} from "../components/chat/icons";
 import ThinkingPanel from "../components/chat/ThinkingPanel";
 import { Markdown } from "../components/Markdown";
 import { Button } from "../components/ui";
@@ -57,18 +52,10 @@ export default function ChatPage({
   const [currentRole, setCurrentRole] = useState<string>("");
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [input, setInput] = useState("");
+  // 这个 ref 留在页面：深链跳进一条会话时要把光标直接落在输入框。自适应高度归 Composer。
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // 多模态传图（2026-09-18）：待发送的图片（data URL），附件就绪后随消息一起发。
   const [pendingImage, setPendingImage] = useState<string | null>(null);
-  const imageInputRef = useRef<HTMLInputElement>(null);
-  const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
-  // 输入框自适应高度：内容多时长高（封顶 160px 后内部滚动），发送/清空后缩回一行。
-  useEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-  }, [input]);
   const confirm = useConfirm();
 
   const [editingTitle, setEditingTitle] = useState(false);
@@ -452,22 +439,6 @@ export default function ChatPage({
     } finally {
       setDistilling(false);
     }
-  }
-
-  function pickImage(file: File | undefined) {
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      setStatus("只支持图片文件", "warn");
-      return;
-    }
-    if (file.size > MAX_IMAGE_BYTES) {
-      setStatus(`图片超过 15MB 上限（当前 ${Math.round(file.size / 1024 / 1024)}MB）`, "warn");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => setPendingImage(String(reader.result));
-    reader.onerror = () => setStatus("图片读取失败", "warn");
-    reader.readAsDataURL(file);
   }
 
   async function send(preset?: string) {
@@ -884,119 +855,25 @@ export default function ChatPage({
               </button>
             </div>
           )}
-          {/* 输入框（WorkBuddy 式）：发送/暂停是嵌在框内的图标按钮；左下「增强提示词」，
-              右下上下文使用率（悬停看明细）。 */}
-          <div className="mx-auto max-w-3xl">
-            <div className="rounded-2xl border border-slate-200 bg-white focus-within:border-blue-400 dark:border-slate-700 dark:bg-slate-800">
-              {pendingImage && (
-                <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2 dark:border-slate-700">
-                  <img
-                    src={pendingImage}
-                    alt="待发送图片"
-                    className="h-16 w-16 rounded-lg border border-slate-200 object-cover dark:border-slate-600"
-                  />
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400">图片已附加，将随消息一起发送</span>
-                  <button
-                    onClick={() => setPendingImage(null)}
-                    disabled={busy}
-                    title="移除图片"
-                    className="ml-auto rounded px-2 py-1 text-[11px] text-red-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-900/30"
-                  >
-                    移除
-                  </button>
-                </div>
-              )}
-              <textarea
-                ref={inputRef}
-                value={input}
-                rows={1}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  // Enter 发送、Shift+Enter 换行；输入法组词中（isComposing）不触发。
-                  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                    e.preventDefault();
-                    send();
-                  }
-                }}
-                placeholder={
-                  busy
-                    ? "正在生成…（可点右下角停止）"
-                    : "输入消息，Enter 发送 / Shift+Enter 换行（没有对话会自动创建）"
-                }
-                disabled={busy}
-                className="max-h-40 w-full resize-none bg-transparent px-4 pt-3 pb-1 leading-relaxed outline-none disabled:bg-slate-50 dark:disabled:bg-slate-800/50"
-              />
-              <div className="flex items-center justify-between gap-2 px-2.5 pb-2">
-                <div className="flex items-center gap-1">
-                  <input
-                    ref={imageInputRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      pickImage(e.target.files?.[0]);
-                      e.target.value = ""; // 允许连续选同一文件
-                    }}
-                  />
-                  <button
-                    onClick={() => imageInputRef.current?.click()}
-                    disabled={busy}
-                    title="附加图片（发给当前模型识别；需视觉模型支持）"
-                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-700/60"
-                  >
-                    <IconImage />
-                    图片
-                  </button>
-                  <button
-                    onClick={enhance}
-                    disabled={busy || enhancing || !input.trim()}
-                    title="增强提示词：把草稿改写得更清晰、具体（一次模型调用）"
-                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-700/60"
-                  >
-                    <IconSparkle />
-                    {enhancing ? "增强中…" : "增强提示词"}
-                  </button>
-                </div>
-                <div className="flex items-center gap-2">
-                  {ctxBudget > 0 && (
-                    <span
-                      title={`上下文约 ${ctxUsed} 字 / 上限 ${ctxBudget} 字（${ctxPct}%）${
-                        trim ? ` · 本轮已裁 ${trim.dropped} 条` : ""
-                      }`}
-                      className="flex cursor-default items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500"
-                    >
-                      <span
-                        className={`h-1.5 w-1.5 rounded-full ${
-                          ctxPct >= 80 ? "bg-amber-400" : "bg-slate-300 dark:bg-slate-600"
-                        }`}
-                      />
-                      {ctxPct}%
-                    </span>
-                  )}
-                  {busy ? (
-                    <button
-                      onClick={stop}
-                      title="停止生成"
-                      aria-label="停止生成"
-                      className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-700 text-white hover:bg-slate-800 dark:bg-slate-600 dark:hover:bg-slate-500"
-                    >
-                      <IconStop />
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => send()}
-                      disabled={!input.trim()}
-                      title="发送（Enter）"
-                      aria-label="发送"
-                      className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-white hover:bg-blue-700 disabled:bg-slate-300 dark:disabled:bg-slate-700"
-                    >
-                      <IconSend />
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
+          {/* 输入框 + 附图 + 上下文使用率：components/chat/Composer（自适应高度与 15MB
+              那道判据都在那里）。发送/停止/增强仍然由页面执行 —— 它们要动会话与流。 */}
+          <Composer
+            input={input}
+            setInput={setInput}
+            busy={busy}
+            enhancing={enhancing}
+            pendingImage={pendingImage}
+            setPendingImage={setPendingImage}
+            ctxUsed={ctxUsed}
+            ctxBudget={ctxBudget}
+            ctxPct={ctxPct}
+            droppedThisTurn={trim ? trim.dropped : null}
+            inputRef={inputRef}
+            onSubmit={() => void send()}
+            onStop={stop}
+            onEnhance={() => void enhance()}
+            onStatus={setStatus}
+          />
           {/* 功能行（角色 / 模式 / 模型 / 上传 / 删除模式）—— 菜单开合与模型行的读写
               都在 components/chat/ChatToolbar 里，这里只给数据与回调。 */}
           <ChatToolbar
