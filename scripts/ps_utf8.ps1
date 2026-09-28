@@ -3,7 +3,7 @@
 #
 # 用法（每次命令前导，dot-source 即可）：
 #     . .\scripts\ps_utf8.ps1; <你的命令>
-#   或    . C:\Users\hcx\Desktop\rolecard-agent\scripts\ps_utf8.ps1; <你的命令>
+#   或    . <仓库根>\scripts\ps_utf8.ps1; <你的命令>
 #
 # 为什么要它：WorkBuddy 的 PowerShell 工具以 -NoProfile 启动，$PROFILE 不会被加载；
 # 而本机三个默认值都会导致中文坑：
