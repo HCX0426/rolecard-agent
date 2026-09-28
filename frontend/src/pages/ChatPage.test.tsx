@@ -376,6 +376,9 @@ describe("ChatPage 删除二次确认（useConfirm）", () => {
     // 进入选择模式后，每条消息左侧出现勾选框（这也是 selectMode 生效的信号）
     const boxes = await screen.findAllByRole("checkbox");
     expect(boxes.length).toBeGreaterThan(0);
+    // 删除模式下铅笔必须收掉：它（-left-9）与勾选框（-left-7）叠在同一片像素上，而
+    // opacity-0 的元素照样吃点击 —— 真机实测勾不上（09-28 浏览器探针抓出来的）。
+    expect(screen.queryAllByLabelText("编辑并重答")).toEqual([]);
     fireEvent.click(boxes[0]);
     fireEvent.click(await screen.findByRole("button", { name: "删除所选" }));
     expect(await screen.findByText("删除选中的消息？")).toBeTruthy();

@@ -115,8 +115,11 @@ export default function TurnRow({
             </div>
           ) : (
             <>
-              {/* 悬浮铅笔：absolute 不占布局（占位会把气泡挤到换行） */}
-              {!busy && !!userMid && (
+              {/* 悬浮铅笔：absolute 不占布局（占位会把气泡挤到换行）。
+                  删除模式下不画它：铅笔（-left-9）与轮前复选框（-left-7）叠在同一片像素上，
+                  而 opacity-0 的元素照样吃点击 —— 真机探针实测勾不上（jsdom 的 fireEvent 不做
+                  命中测试，所以这条只能靠浏览器验）。何况删除模式里意图是勾选，不是改写。 */}
+              {!busy && !selectMode && !!userMid && (
                 <button
                   onClick={() => onStartEdit(userMid, turn.user!.content, turn.user?.image)}
                   aria-label="编辑并重答"
