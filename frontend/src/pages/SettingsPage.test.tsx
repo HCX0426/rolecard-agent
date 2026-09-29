@@ -365,7 +365,7 @@ describe("记忆卡「整理记忆」（一次模型调用，只写标记）", (
     // 「没删任何一行」是这句提示的重点：整理只写失效标记
     expect(await screen.findByText(/合并 1 组/)).toBeTruthy();
     expect(screen.getByText(/没删任何一行/)).toBeTruthy();
-    expect(screen.getByText(/456 tokens/)).toBeTruthy();
+    expect(screen.getByText(/花掉 456 个 token/)).toBeTruthy();
   });
 
   it("作用域切到某角色时，整理的是那个桶（不是全局那份）", async () => {
@@ -406,7 +406,7 @@ describe("记忆卡「整理记忆」（一次模型调用，只写标记）", (
     await waitFor(() => expect(apiMock.consolidateMemory).toHaveBeenCalledWith("r1"));
     // 模型没报 usage 时不编一个数：提示里没有 tokens，也不能显示 0
     expect(await screen.findByText(/合并 1 组/)).toBeTruthy();
-    expect(screen.queryByText(/tokens/)).toBeNull();
+    expect(screen.queryByText(/个 token/)).toBeNull();
   });
 
   it("只有一条时禁用并说明原因（而不是一个点了没反应的按钮）", async () => {

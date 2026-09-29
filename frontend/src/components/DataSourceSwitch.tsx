@@ -261,7 +261,7 @@ export default function DataSourceSwitch() {
             </div>
             <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] leading-relaxed text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-200">
               连不上或账号不对 = 留在本机这一份，界面上不会出现「半截云端」。
-              <b>推理用的 key 由你自己在对面配</b>，本站不代付 token。
+              <b>推理用的 key 由你自己在对面配</b>，这个应用不代付 token。
               <br />
               切过去之后，对话内容与健康数据都会离开这台机器（侧栏那一行会一直写着「云端 ·
               账号」）。

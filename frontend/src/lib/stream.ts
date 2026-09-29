@@ -14,10 +14,11 @@
  * 副作用（setState）留在组件里；这里只做"输入 → 输出"的映射。
  */
 
-/** 「这一轮是被叫停的」那句话 —— 前台的 live 气泡与回放的按轮标记共用一份（R26-13 尾），
- *  跟 `describeTrim` 同一条理由：界面文案与测试断言必须说同一句话。 */
-export const STOP_HINT =
-  "这一轮是被叫停的 —— 上面那半截停在哪儿就是哪儿，没有说完。";
+/** 「这一轮被中途停止」那句话 —— 前台的 live 气泡与回放的按轮标记共用一份（R26-13 尾），
+ *  跟 `describeTrim` 同一条理由：界面文案与测试断言必须说同一句话。
+ *  措辞按 C 类改过（09-29）：原来那句「被叫停的 —— 上面那半截停在哪儿就是哪儿」是
+ *  本仓自己的口吻，读起来像开发者在打趣；界面只需要陈述两件事：停了、上面那些是真的。 */
+export const STOP_HINT = "已停止生成：以上是这一轮已经完成的部分。";
 
 // 与 api.ts 的 ChatEvent 保持结构一致（此处只依赖用到的那几个字段，避免循环依赖）。
 export interface ChatEventLike {
@@ -225,5 +226,5 @@ export function newLiveBubble(): LiveBubble {
 /** 上下文裁剪的人话描述 —— 界面与测试共用同一份措辞。 */
 export function describeTrim(dropped: number, kept: number): string {
   if (dropped <= 0) return "";
-  return `早期对话已折叠：本轮只把最近 ${kept} 条消息交给了模型（更早的 ${dropped} 条超出上下文预算）。对话记录本身没有丢失，仍可在上方查看。`;
+  return `已折叠早期对话：这一轮送给模型的是最近 ${kept} 条（更早的 ${dropped} 条超出上下文预算）。对话记录没有丢失，往上翻还在。`;
 }

@@ -143,9 +143,9 @@ describe("ChatPage 流式渲染", () => {
     scriptedStream([{ type: "end" }]);
     render(<ToastProvider><ChatPage /></ToastProvider>);
     await sendMessage("讲个长故事");
-    expect(await screen.findByText(/这一轮是被叫停的/)).toBeTruthy();
+    expect(await screen.findByText(/已停止生成/)).toBeTruthy();
     // 全局的旧提示已删：只有按轮那一份，不许同一个事实说两遍。
-    expect(screen.getAllByText(/这一轮是被叫停的/)).toHaveLength(1);
+    expect(screen.getAllByText(/已停止生成/)).toHaveLength(1);
   });
 
   it("正常收尾的回答不显示『被叫停』（不冤枉一句完整的话）", async () => {
@@ -157,7 +157,7 @@ describe("ChatPage 流式渲染", () => {
     render(<ToastProvider><ChatPage /></ToastProvider>);
     await sendMessage("问");
     expect(await screen.findByText("完整的回答")).toBeTruthy();
-    expect(screen.queryByText(/这一轮是被叫停的/)).toBeNull();
+    expect(screen.queryByText(/已停止生成/)).toBeNull();
   });
 
   it("工具调用先显示执行中，结果到达后显示内容", async () => {
@@ -198,7 +198,7 @@ describe("ChatPage 流式渲染", () => {
     render(<ToastProvider><ChatPage /></ToastProvider>);
     await sendMessage("长会话里的一问");
 
-    const notice = await screen.findByText(/早期对话已折叠/);
+    const notice = await screen.findByText(/已折叠早期对话/);
     expect(notice.textContent).toContain("12");
     expect(notice.textContent).toContain("6");
     expect(notice.textContent).toContain("没有丢失");
@@ -224,7 +224,7 @@ describe("ChatPage 流式渲染", () => {
     // 从侧栏点开历史会话
     fireEvent.click(await screen.findByText("旧会话"));
 
-    expect(await screen.findByText(/早期对话已折叠/)).toBeTruthy();
+    expect(await screen.findByText(/已折叠早期对话/)).toBeTruthy();
   });
 
   it("thinking 事件渲染为可折叠的思考面板（AI IDE 式）", async () => {
@@ -893,7 +893,7 @@ describe("ChatPage 提取精华（对话 → 该角色的记忆）", () => {
     await waitFor(() => expect(apiMock.distillSession).toHaveBeenCalledWith("s_d"));
     // 报的是"进了谁的记忆 + 几条 + 花多少"，不复读抽出来的事实（那归记忆卡看）
     expect(await screen.findByText(/已提取进通用助手的记忆：新增 2 条/)).toBeTruthy();
-    expect(screen.getByText(/321 tokens/)).toBeTruthy();
+    expect(screen.getByText(/花掉 321 个 token/)).toBeTruthy();
   });
 
   it("像重复的那几条只提示、不自动合并，并把「整理记忆」指给用户", async () => {
@@ -909,7 +909,7 @@ describe("ChatPage 提取精华（对话 → 该角色的记忆）", () => {
     await openConversationAndClickDistill();
 
     expect(
-      await screen.findByText(/新增 1 条 · 用去 321 tokens（另有 3 条字面上看着像同一件事/)
+      await screen.findByText(/新增 1 条 · 花掉 321 个 token（另有 3 条字面上看着像同一件事/)
     ).toBeTruthy();
   });
 

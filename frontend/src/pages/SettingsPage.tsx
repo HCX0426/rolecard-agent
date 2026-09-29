@@ -312,7 +312,7 @@ function MemoryPanel() {
         p.invalidated && `让 ${p.invalidated} 条过时事实失效`,
         p.skipped && `${p.skipped} 条没读懂，没有写入`,
       ].filter(Boolean);
-      const cost = p.tokens ? ` · 用去 ${p.tokens} tokens` : "";
+      const cost = p.tokens ? ` · 花掉 ${p.tokens} 个 token` : "";
       setMemMsg(
         parts.length
           ? `已整理：${parts.join("、")}${cost}（活跃 ${r.active_count}/${r.limit} 条，没删任何一行）`
@@ -604,7 +604,7 @@ function MemoryPanel() {
             <option value="24">每 24 轮</option>
             {/* env 里设成了别的数（比如 8）时不能显示成"每 12 轮"—— 那是假回显。 */}
             {!CADENCES.includes(cadence) && (
-              <option value={cadence}>每 {cadence} 轮（.env 里的其它值）</option>
+              <option value={cadence}>每 {cadence} 轮（默认配置里的其它值）</option>
             )}
           </select>
           <span className="text-[11px] text-slate-400 dark:text-slate-500">
@@ -936,7 +936,7 @@ function MemoryPanel() {
         </div>
         {wsDir?.overridden && (
           <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">
-            该目录仅存于本机数据库；删除即回落 .env 的 WORKSPACE_DIR。
+            该目录仅存于本机数据库；删除后回到默认的任务目录。
           </p>
         )}
       </Card>
@@ -1232,7 +1232,7 @@ function RuntimePanel() {
           onChange={(e) => set(e.target.value)}
           className="w-28 rounded border border-slate-200 px-1.5 py-1 text-xs outline-none focus:border-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
         >
-          <option value="">跟随 .env（{it.default}）</option>
+          <option value="">跟随默认（{it.default}）</option>
           <option value="1">开</option>
           <option value="0">关</option>
         </select>
@@ -1273,7 +1273,7 @@ function RuntimePanel() {
           onChange={(e) => set(e.target.value)}
           className="w-40 rounded border border-slate-200 px-1.5 py-1 text-xs outline-none focus:border-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
         >
-          <option value="">跟随 .env（{it.value}）</option>
+          <option value="">跟随默认（{it.value}）</option>
           {[...it.choices, ...extra].map((c) => (
             <option key={c} value={c}>
               {c}

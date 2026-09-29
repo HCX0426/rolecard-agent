@@ -425,7 +425,7 @@ export default function ChatPage({
         report.updated && `更新 ${report.updated} 条`,
         report.skipped && `${report.skipped} 条没读懂，没有写入`,
       ].filter(Boolean);
-      const cost = report.tokens ? ` · 用去 ${report.tokens} tokens` : "";
+      const cost = report.tokens ? ` · 花掉 ${report.tokens} 个 token` : "";
       // 像重复的只**报数**、不自动合并：字面度量分不清"换个说法"与"换个值"（实测
       // 「住在上海」与「住在苏州」比两条真同义还像），所以合并留在记忆卡的「整理记忆」里。
       const hint = report.similar

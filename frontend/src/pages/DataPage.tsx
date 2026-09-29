@@ -112,7 +112,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
     try {
       await api.patch(`/api/records/index/${indexId}`, changes);
       setEditId(null);
-      setStatus({ ok: true, msg: "已保存修正（写入审计）" });
+      setStatus({ ok: true, msg: "已保存修正" });
       await load();
     } catch (e) {
       setStatus({ ok: false, msg: `保存失败：${(e as Error).message}` });
@@ -122,7 +122,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
   async function remove(kind: "report" | "index", id: string) {
     try {
       await api.del(`/api/records/${kind}/${id}`);
-      setStatus({ ok: true, msg: "已删除（写入审计）" });
+      setStatus({ ok: true, msg: "已删除" });
       await load();
     } catch (e) {
       setStatus({ ok: false, msg: `删除失败：${(e as Error).message}` });
@@ -147,7 +147,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
         <AddReportForm
           onDone={() => {
             setAdding(false);
-            setStatus({ ok: true, msg: "已新增报告（写入审计）" });
+            setStatus({ ok: true, msg: "已新增报告" });
             load().catch(() => undefined);
           }}
         />
@@ -544,7 +544,7 @@ function GenericDomainData({
     try {
       await api.patchDomainRecord(domain, id, changes);
       setEditId(null);
-      setStatus({ ok: true, msg: "已保存（写入审计）" });
+      setStatus({ ok: true, msg: "已保存" });
       await load();
     } catch (e) {
       setStatus({ ok: false, msg: `保存失败：${(e as Error).message}` });
@@ -554,7 +554,7 @@ function GenericDomainData({
   async function remove(id: string) {
     try {
       await api.deleteDomainRecord(domain, id);
-      setStatus({ ok: true, msg: "已删除（写入审计）" });
+      setStatus({ ok: true, msg: "已删除" });
       await load();
     } catch (e) {
       setStatus({ ok: false, msg: `删除失败：${(e as Error).message}` });
@@ -580,7 +580,7 @@ function GenericDomainData({
       });
       setAdding(false);
       setDraft({ label: "", value_text: "", value_num: "", unit: "", note: "" });
-      setStatus({ ok: true, msg: "已新增（写入审计）" });
+      setStatus({ ok: true, msg: "已新增" });
       await load();
     } catch (e) {
       setStatus({ ok: false, msg: `保存失败：${(e as Error).message}` });

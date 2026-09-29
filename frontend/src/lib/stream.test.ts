@@ -181,7 +181,7 @@ describe("reduceChatEvent", () => {
     expect(ended.bubble.text).toBe("x");
   });
 
-  it("end 把「这一轮是被叫停的」带到气泡上（#18 的 End.stopped）", () => {
+  it("end 把「这一轮被中途停止」带到气泡上（#18 的 End.stopped）", () => {
     const stopped = reduceChatEvent(bubble({ text: "说到一半" }), { type: "end", stopped: true });
     expect(stopped.bubble.stopped).toBe(true);
     // 正常收尾要能**覆盖**掉上一轮留下的 true：气泡对象会被复用，只认 true 就会一直挂着"已停止"。
