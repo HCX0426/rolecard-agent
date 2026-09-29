@@ -31,4 +31,10 @@ EXPOSE 8000
 #     -v rolecard-data:/app/data <image>
 # RUN_API_HOST 让护栏看到实际绑定地址（uvicorn 的 --host 不会自动进环境变量）。
 ENV RUN_API_HOST=0.0.0.0
-CMD ["uvicorn", "--factory", "rolecard_agent.api.main:create_app", "--host", "0.0.0.0", "--port", "8000"]
+# 入口走 scripts/run_api.py，**不是**直调 uvicorn（09-28 轮 `R28-30`）：那三条启动期动作只长在
+# 启动器里 —— `_maybe_configure_cloud_backend()`（给了 SILICONFLOW_API_KEY 就注册云端后端并设为
+# 默认）、`_resolve_data_paths()`（数据路径与 CWD 解耦）、`force_utf8_stdio()`（打包/容器里
+# stdout 不是终端，不钉 UTF-8 日志里的中文全变成 U+FFFD）。CMD 直调 uvicorn 时
+# `docker run -e SILICONFLOW_API_KEY=…` **静默落回 Ollama 默认后端**：镜像里没有 Ollama，
+# 于是症状是"配了 key 但什么都调不通"，而容器日志里一句相关的话都没有。
+CMD ["python", "scripts/run_api.py"]

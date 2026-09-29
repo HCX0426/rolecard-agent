@@ -80,8 +80,21 @@ $targets = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -e
 $main = $targets | Where-Object { $_.Name -eq "rolecard-agent.exe" } | Select-Object -First 1
 if ($null -ne $main) {
     # 只发 WM_CLOSE 是关不掉这个壳的（「关闭控制台=隐藏」是设计），所以直接 /T /F 收整棵树。
+    # 输出丢掉可以（它只有 "SUCCESS: ..." 这种话），**退出码不能丢**（`R28-35`）：以前
+    # `| Out-Null` 之后直接睡 3 秒继续装，于是"进程根本没被关掉"这一件事被推给后面
+    # 一句 cryptic 的"文件被占用"。但退出码本身也不够 —— taskkill 对"找不到那个 PID"
+    # 返回的也是失败，而那种情况其实是我们想要的结果。所以判据用**它还在不在**：
+    # 轮询到没有为止，超时就把 pid 报出来。
     & taskkill /PID $main.ProcessId /T /F | Out-Null
-    Start-Sleep -Seconds 3
+    $gone = $false
+    for ($i = 0; $i -lt 10; $i++) {
+        Start-Sleep -Milliseconds 500
+        $still = @(Get-CimInstance Win32_Process -Filter "ProcessId=$($main.ProcessId)" -ErrorAction SilentlyContinue)
+        if ($still.Count -eq 0) { $gone = $true; break }
+    }
+    if (-not $gone) {
+        throw "could not close the running app (pid $($main.ProcessId) still alive after 5s) - the installer would fail on locked files; close it from the tray and re-run"
+    }
     Write-Host "      closed pid=$($main.ProcessId) and its tree"
 } else {
     Write-Host "      not running, nothing to close"

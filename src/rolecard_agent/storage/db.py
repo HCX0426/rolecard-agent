@@ -64,6 +64,13 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout = 5000")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
+    # WAL 的上限（`R28-16`）：默认行为是"自动检查点之后把 -wal 留在它长到的那个大小"，
+    # 于是 -wal 可以背着近两天的写入一直长（本机实测 6,266,552 B 而主库两天没落一笔）。
+    # 设了 `journal_size_limit` 之后，SQLite 在检查点时把 -wal **截断到这个字节数以内** ——
+    # 一次 -wal 损坏丢的是"上限那一截"，不是两天。8 MB 是刻意留的余量：日常一次会话写入
+    # 远小于它，太小的话每次检查点都要 ftruncate，反而在白盘上做无用功。
+    # 另一半在 `Runtime.shutdown()`：进程正常退出时把 -wal 直接 checkpoint(TRUNCATE) 干净。
+    conn.execute("PRAGMA journal_size_limit = 8388608")
     return conn
 
 

@@ -22,6 +22,12 @@ on:
 permissions:
   contents: read
 
+# 同一条分支上只跑最新一次：连推几发时旧的那次没有价值，而 docker job 每次都要拉基座镜像。
+# `cancel-in-progress` 只取消**同一 ref** 的旧运行，PR 与 main 互不干扰。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   PYTHONIOENCODING: utf-8 # 中文与「▶」在管道输出上会撞 GBK，见 gate.py 那段编码注释
   PYTHONUNBUFFERED: "1"
@@ -30,6 +36,10 @@ jobs:
   gate:
     name: 门禁 --ci（含覆盖率≥85% 与 baseline 比对）
     runs-on: ubuntu-latest
+    # 每条 job 都要有 timeout（09-28 轮 `R28-25`：四条无一设过，任一挂死就默认烧满 360 分钟）。
+    # 预算按**实测用时**给，不是拍脑袋：本地 --ci 档 320s，CI 上实测 5m15s，留一倍余量防抖动，
+    # 又远小于默认值 —— 挂死的作业该在几分钟内变成一次红，而不是一次"没跑完"。
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -66,6 +76,7 @@ jobs:
   frontend:
     name: 前端（tsc + build + vitest）
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -92,7 +103,12 @@ jobs:
         # 后端托管的正是 `frontend/dist`，而且它被有意入库（clone 后不装 node 也能起控制台）。
         # 改了前端却没重建 = 源码是新的、镜像与安装包带的是旧界面，而且它不报任何错。
         run: |
-          git diff --quiet -- frontend/dist || {
+          # 判据必须与 `scripts/gate.py` 那一份**逐字相同**（09-28 轮 `R28-22`）：从前这里用
+          # `git diff --quiet`，它看不见 **untracked 的新产物** —— 一次构建只净增文件时
+          # （改名后的 chunk 常见这种形状）CI 检查空过，而本机门禁红。两条命令讲两套话，
+          # 等于这个检查在 CI 上不存在。`git status --porcelain` 含未跟踪项，且与构建产物
+          # 该不该入库无关：这里要问的就是"工作树里还有没有构建出来的东西没进提交"。
+          test -z "$(git status --porcelain -- frontend/dist)" || {
             echo "本提交里的 frontend/dist 与 frontend/src 不同步：重新 npm run build 后把 dist 一起提交";
             git status --short frontend/dist;
             exit 1;
@@ -101,6 +117,8 @@ jobs:
   docker:
     name: 镜像真跑（build + 起 + 护栏 + 一次真 API 往返）
     runs-on: ubuntu-latest
+    # 构建镜像这一段本来就慢（拉基座 + pip 装四份 requirements），预算给到 25 分钟。
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -172,6 +190,8 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_gate }}
     needs: [gate, frontend]
     runs-on: ubuntu-latest
+    # 全量档含真机冒烟与壳 typecheck，本地实测 6~8 分钟；给 30 分钟。
+    timeout-minutes: 30
     env:
       # 浏览器那段要本机 Chrome + playwright-core，runner 上没有对应物；显式跳过并**在日志里
       # 带上原因**，别让"没跑到"被读成"全绿"（gate.py 与 smoke_check 都是这个口径）。

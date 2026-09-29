@@ -547,6 +547,13 @@ class Runtime:
         """
         if self.reachout is not None:
             self.reachout.stop()
+        # 关掉之前先把 WAL 落回主库（`R28-16` 的另一半）：自动检查点只在**有写**时触发，
+        # 而一台闲置的机器可能连着两天不再写一笔 —— 那近两天的数据就一直只活在 -wal 里，
+        # 而 -wal 坏掉等于那两天全没（备份走的是 sqlite `backup()`，它读得到 WAL，所以
+        # **备份不受影响**，受影响的是"盘坏 / 文件被删"这一条）。正常退出路径上做一次
+        # `TRUNCATE`，界面上就回到"主文件是最新的、WAL 是空的"这个可判断的形状。
+        with contextlib.suppress(Exception):
+            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         with contextlib.suppress(Exception):
             self.conn.close()
         with contextlib.suppress(Exception):
