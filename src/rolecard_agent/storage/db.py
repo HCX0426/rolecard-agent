@@ -63,6 +63,12 @@ def connect(path: str | Path) -> sqlite3.Connection:
     # 放在 WAL 之后等于没设）。
     conn.execute("PRAGMA busy_timeout = 5000")
     conn.execute("PRAGMA foreign_keys = ON")
+    # 空页归还能力必须在**建库那一刻**就有（`R28-17`）：`auto_vacuum` 只在 `page_count == 0`
+    # 时写得进文件头，库一旦有了第一页，这句 PRAGMA 就退回"要配一次全量 VACUUM 才生效"。
+    # 所以它必须排在 `journal_mode = WAL` **之前** —— 切 WAL 就是那"第一笔写"（实测：先 WAL
+    # 后本句，重开连接读回 0；先本句后 WAL，读回 2）。放在这里对已存在的库是无害的空操作，
+    # 老库仍由 `checkpointer._reclaim_space` 在"删完一大堆、不怕慢"那一刻转换。
+    conn.execute("PRAGMA auto_vacuum = INCREMENTAL")
     conn.execute("PRAGMA journal_mode = WAL")
     # WAL 的上限（`R28-16`）：默认行为是"自动检查点之后把 -wal 留在它长到的那个大小"，
     # 于是 -wal 可以背着近两天的写入一直长（本机实测 6,266,552 B 而主库两天没落一笔）。

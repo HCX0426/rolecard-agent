@@ -192,6 +192,87 @@ def _reclaim_space(conn: SqlConnection) -> None:
     conn.execute("PRAGMA incremental_vacuum")
 
 
+#: 空页攒到多少才值得在启动路径上回收一次。刻意是个"绝对值"而不是比例：
+#: 一个 3 MB 的库攒 86% 空洞也就几百页（本机实测 790/914），回收它几毫秒；
+#: 而真到了值得动的量级，页数本身就是那个信号。低于这个数就什么都不做 —— 启动路径上
+#: 不该为了好看去碰文件。
+_RECLAIM_MIN_FREE_PAGES = 256
+#: 空洞占到文件的比例超过它，就改用**全量** VACUUM。
+#:
+#: 这个数是被实测逼出来的（副本库，本机 2026-09-29）：真库 914 页里 790 页是 freelist，
+#: `PRAGMA incremental_vacuum` 只归还 **1 页**（914 → 913，文件一个字节没小），同一条库
+#: `VACUUM` 用 **6 ms** 把它压到 123 页 / 0.5 MB。原因在 SQLite 的语义：incremental 只能砍掉
+#: **文件尾部连续的那一段**空页，而"删掉散在中间的 127 条检查点"留下的洞本来就是散开的。
+#: 所以只挂 incremental 的回收等于挂了一个几乎从不兑现的回收 —— 那条路只在一批删除连着文件尾
+#: 时才有效，日常形态恰恰不是。
+_RECLAIM_VACUUM_RATIO = 0.5
+
+
+def _vacuum(conn: SqlConnection) -> int:
+    """一次全量 VACUUM，返回归还的页数；库被别人占着就**放弃并说清**，绝不让启动失败。
+
+    为什么要 catch：`make_checkpointer` 跑在装配期，而这台机器上可能同时开着第二个实例
+    （开发态与安装态两份库、或本机实验用的第二实例，都是日常操作）。VACUUM 要排他锁，
+    拿不到就是 `database is locked` —— 为一次磁盘整理把应用挡在门外，代价完全不成比例。
+    """
+    before = int(conn.execute("PRAGMA page_count").fetchone()[0] or 0)
+    try:
+        conn.execute("VACUUM")
+    except sqlite3.OperationalError as exc:
+        print(f"[checkpoints] 库正被别的连接占着，这次不重排文件（{exc}）", flush=True)
+        return 0
+    after = int(conn.execute("PRAGMA page_count").fetchone()[0] or 0)
+    return max(before - after, 0)
+
+
+def reclaim_if_fragmented(
+    conn: SqlConnection,
+    *,
+    min_free_pages: int = _RECLAIM_MIN_FREE_PAGES,
+    min_ratio: float = _RECLAIM_VACUUM_RATIO,
+) -> int:
+    """空闲页攒够了才把空页还给磁盘；没攒够就**什么都不做**。返回释放掉的页数。
+
+    为什么需要它（09-28 轮 `R28-17`）：`_reclaim_space` 原先只挂在修剪那两条路上，于是
+    **"日常永不回收"** —— 真库实测 914 页里 790 页是空洞（86%）。修剪只在删会话时跑，
+    而一个用得久的库大半的空洞来自检查点收口、消息删除、迁移重建这些**不叫"修剪"的路径**。
+    启动时按阈值问一句是最省事的收口点：那一刻没有别的写者。
+
+    两档，按"洞占多少"分：
+      * 洞过半 → 一次全量 VACUUM（实测本机 3.7 MB / 6 ms，且顺手把 `auto_vacuum` 转成
+        INCREMENTAL —— 那一刻本来就在重写整个文件，转换不要钱）；
+      * 洞不过半 → 只做便宜的 `incremental_vacuum`，它只砍文件尾部的连续空页，够不着散洞。
+    """
+    free = int(conn.execute("PRAGMA freelist_count").fetchone()[0] or 0)
+    pages = int(conn.execute("PRAGMA page_count").fetchone()[0] or 0)
+    if free < min_free_pages:
+        return 0
+    ratio = free / pages if pages else 0.0
+    if ratio < min_ratio:
+        before = pages
+        conn.execute("PRAGMA incremental_vacuum")
+        after = int(conn.execute("PRAGMA page_count").fetchone()[0] or 0)
+        freed = max(before - after, 0)
+        if freed:
+            print(f"[checkpoints] 归还尾部 {freed} 个空页（{before} 页 → {after} 页）", flush=True)
+        return freed
+
+    mode = int(conn.execute("PRAGMA auto_vacuum").fetchone()[0] or 0)
+    if mode == 0:
+        # 转换只在**已经要付全量 VACUUM 的这一刻**做。这句 PRAGMA 落下去靠的是紧接着的
+        # VACUUM：实测非空库上它只是"待写入的意图"（`PRAGMA auto_vacuum` 读回来还是 0、
+        # 不开 VACUUM 就重开还是 0），VACUUM 重建文件时才把它写进头。既然这一刻本来就在
+        # 重写整个文件，转换不要钱。
+        conn.execute("PRAGMA auto_vacuum = INCREMENTAL")
+    freed = _vacuum(conn)
+    if freed:
+        print(
+            f"[checkpoints] 空洞占 {ratio:.0%}（{free}/{pages} 页），全量重排归还 {freed} 页",
+            flush=True,
+        )
+    return freed
+
+
 def prune_checkpoints(
     conn: SqlConnection,
     *,
@@ -231,6 +312,10 @@ def make_checkpointer(conn: SqlConnection) -> SqliteSaver:
     ensure_checkpoint_clock(conn)
     compacted = compact_backlog_once(conn)
     pruned = prune_checkpoints(conn)
+    # 启动路径上按阈值问一句空页（`R28-17`）：修剪只在"删过会话"那天回收，而日常攒下的
+    # 空洞来自收口/删除/迁移重建 —— 本机实测 86% 的页是 freelist 就是这么来的。
+    # 放在修剪之后：修剪自己会释放页，紧接着这一步就能把它们真还给磁盘。
+    reclaim_if_fragmented(conn)
     if compacted or pruned:
         print(
             f"[checkpoints] 祖先快照收口 {compacted} 行、修剪 {pruned} 行"

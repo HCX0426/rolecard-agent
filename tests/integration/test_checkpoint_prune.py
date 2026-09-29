@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -287,3 +288,124 @@ def test_deleting_ancestors_leaves_the_visible_history_intact(tmp_path: Path) ->
     assert after[: len(before)] == before
     assert after[-1].endswith("收口之后还能接上"), after[-1]
     conn.close()
+
+
+def _holed_db(tmp_path: Path, name: str, *, rows: int, drop: str) -> tuple[Path, Any]:
+    """先把库**灌大**，再按 `drop`（一句 WHERE）删掉一批 —— 删完不再插，洞才留得住。
+
+    为什么非要"先灌后删"（本机实测逼出来的）：删掉一页之后紧接着的写入会把那页拿去用，
+    所以"边插边删"造不出 freelist；第一版就是这样，三条用例全在空转。真库那 86% 的空洞来自
+    收口时删掉散在文件**中间**的 127 条检查点，而 `PRAGMA incremental_vacuum` 只归还**文件尾部
+    连着的那一段**（那次实测：790 页洞只归还 1 页）。所以洞的位置也是量程的一部分：
+    `drop` 给奇偶交替的谓词 = 散洞，给 `rowid <= N` = 前洞、尾巴还是活的。
+    """
+    db = tmp_path / name
+    conn = connect(db)
+    # 全新库的 `auto_vacuum` 由 `connect()` 在建库那一刻就带上（排序理由见 storage/db.py）。
+    # 先问一句再往下写：不问，测到的可能是"这个库根本没能力归还空页"那条分支 —— 第一版把
+    # PRAGMA 写在 bootstrap() 之后，正是这样把用例变成空转的。
+    assert int(conn.execute("PRAGMA auto_vacuum").fetchone()[0]) != 0, "新库没开 auto_vacuum"
+    bootstrap(conn)
+    blob = "x" * 4000
+    conn.execute("CREATE TABLE filler (payload TEXT)")
+    conn.execute("BEGIN")
+    for _ in range(rows):
+        conn.execute("INSERT INTO filler (payload) VALUES (?)", (blob,))
+    conn.commit()
+    conn.execute(f"DELETE FROM filler WHERE {drop}")
+    conn.commit()
+    conn.close()
+    return db, connect(db)
+
+
+def _pragma_i(conn: Any, name: str) -> int:
+    return int(conn.execute(f"PRAGMA {name}").fetchone()[0])
+
+
+def test_startup_reclaim_shrinks_the_file_when_holes_dominate(tmp_path: Path) -> None:
+    """洞过半就必须**真把文件缩小**（`R28-17`）：跑了回收但一个字节没还，就是这条要防的。
+
+    它防两件事。一是"日常永不回收"：回收原先只挂在修剪路径上，而用得久的库大半空洞来自
+    收口 / 删消息 / 迁移重建那些不叫"修剪"的路径（本机实测 86% 的页是 freelist、文件从没
+    变小过）。二是"回收只做了 incremental"：同一次实测里 790 页散洞只归还 1 页，报出来像个成功
+    —— 所以这条断言按**归还的比例**卡，不是卡 `> 0`。
+    """
+    db, conn = _holed_db(tmp_path, "app.db", rows=1000, drop="rowid % 4 != 0")
+    grown, free = _pragma_i(conn, "page_count"), _pragma_i(conn, "freelist_count")
+    assert free >= ck._RECLAIM_MIN_FREE_PAGES, f"夹具没攒够空页（freelist={free}），这条测不出东西"
+    assert free / grown >= ck._RECLAIM_VACUUM_RATIO, f"夹具的洞不过半（{free}/{grown}）"
+
+    freed = ck.reclaim_if_fragmented(conn)
+    assert freed >= grown * 0.4, f"洞过半却只归还了 {freed}/{grown} 页 —— 只砍尾部那一段不够兑现"
+    now = _pragma_i(conn, "page_count")
+    assert now < grown // 2, f"{grown} 页 → {now} 页，没收干净"
+    assert _pragma_i(conn, "freelist_count") == 0
+
+    # 归还的是**空页**，不是内容：内核表与剩下那些行都还在、读得回来。
+    assert conn.execute("SELECT COUNT(*) FROM kernel_meta").fetchone()[0] >= 1
+    assert conn.execute("SELECT COUNT(*) FROM filler").fetchone()[0] == 250
+    conn.close()
+    # 落盘尺寸要看**关掉之后**：同一个连接里 VACUUM 刚做完时 stat 还读得到旧尺寸（本机实测）。
+    assert db.stat().st_size < grown * 4096 // 2, "逻辑页数少了，文件却没小"
+
+
+def test_startup_reclaim_stays_cheap_when_holes_are_minor(tmp_path: Path) -> None:
+    """洞不过半时不做全量重排：允许归还尾部那几页，但不许把整个文件重写一遍。
+
+    判据是**留着的洞**：一次 VACUUM 会把 freelist 清零，而这里要的就是"别碰它"。全量重排是
+    启动路径上唯一慢的那一步（实测 3.7 MB / 6 ms，随文件大小线性增长），洞不过半就不该付它。
+    """
+    db, conn = _holed_db(tmp_path, "light.db", rows=1000, drop="rowid <= 400")
+    pages, free = _pragma_i(conn, "page_count"), _pragma_i(conn, "freelist_count")
+    assert free >= ck._RECLAIM_MIN_FREE_PAGES, f"空页没攒够（{free}），这条测不出东西"
+    assert free / pages < ck._RECLAIM_VACUUM_RATIO, f"洞过半了（{free}/{pages}），量程不对"
+
+    ck.reclaim_if_fragmented(conn)
+    assert _pragma_i(conn, "freelist_count") > 0, "洞不过半却做了一次全量 VACUUM"
+    # 允许砍掉尾部连着的那几页（真库副本实测 914→913、这条夹具 1061→1060），但不许重排整个文件。
+    now = _pragma_i(conn, "page_count")
+    assert now > pages * 0.95, f"{pages} 页 → {now} 页，砍得太多了"
+    conn.close()
+
+
+def test_startup_reclaim_does_nothing_before_the_holes_are_worth_it(tmp_path: Path) -> None:
+    """攒得不够就什么都不做 —— 启动路径不为"好看"碰文件。"""
+    db, conn = _holed_db(tmp_path, "tiny.db", rows=120, drop="rowid <= 40")
+    pages, free = _pragma_i(conn, "page_count"), _pragma_i(conn, "freelist_count")
+    assert free < ck._RECLAIM_MIN_FREE_PAGES, f"夹具本来就攒够了（{free}），量程不对"
+
+    assert ck.reclaim_if_fragmented(conn) == 0
+    assert _pragma_i(conn, "page_count") == pages
+    conn.close()
+    assert db.stat().st_size > 0
+
+
+def test_startup_reclaim_converts_a_legacy_db_while_it_is_paying_anyway(tmp_path: Path) -> None:
+    """老库（`auto_vacuum=0`）洞过半时：这一步自己把 INCREMENTAL 落进文件头。
+
+    转换要么花一次全量 VACUUM，要么花在建库那一刻（就是 `storage/db.py:connect` 那句 PRAGMA
+    排在 WAL 之前的理由）。既然这一刻已经在重写整个文件，转换不要钱；不落这一句，下一次散洞
+    还得再等一次"洞过半"。
+
+    这里**故意用裸连接**跑回收，不用 `connect()`：后者每条连接都带着"待写入的 INCREMENTAL 意图"
+    （实测：`connect()` 之后不 VACUUM 的话文件头仍是 0，一 VACUUM 就变成 2），用它就分不清
+    转换到底是这一步做的还是开库时捎带的。
+    """
+    db = tmp_path / "legacy.db"
+    raw = sqlite3.connect(str(db))  # 不经 connect()：文件头里就是 auto_vacuum=0
+    raw.execute("CREATE TABLE filler (payload TEXT)")
+    blob = "x" * 4000
+    raw.execute("BEGIN")
+    for _ in range(1000):
+        raw.execute("INSERT INTO filler (payload) VALUES (?)", (blob,))
+    raw.commit()
+    raw.execute("DELETE FROM filler WHERE rowid % 4 != 0")
+    raw.commit()
+    assert int(raw.execute("PRAGMA auto_vacuum").fetchone()[0]) == 0, "夹具没造出老库形状"
+
+    assert ck.reclaim_if_fragmented(raw) > 0, "老库洞过半却没归还"
+    assert int(raw.execute("PRAGMA auto_vacuum").fetchone()[0]) != 0, "转换没落进文件头"
+    raw.close()
+    reopened = sqlite3.connect(str(db))
+    assert int(reopened.execute("PRAGMA auto_vacuum").fetchone()[0]) != 0, "重开就丢了"
+    reopened.close()
