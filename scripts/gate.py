@@ -156,18 +156,25 @@ def _src_changed() -> bool:
     规矩里唯一必须实跑它的时刻。现改为记录**上次覆盖率实跑时的 HEAD**（build/ 不入库）：
     marker 缺失（首次 / CI / 清过 build/）一律保守跑；git 挂了等任何不确定也一律 True
     —— fail-safe 不变，绝不因探测失误而悄悄削弱 85% 安全网。
+
+    同一族的第二个盲区（`R28-27`，09-29 现测复现）：HEAD 相等那条短路**排在查工作树之前**，
+    于是"覆盖率跑过 → 改 src 不提交 → 再跑一次门禁"照样返回"跳过"（marker == HEAD，直接就
+    return False 了，那几行查 `git diff HEAD` 的代码根本不执行）。修法不是补条件而是**换顺序**：
+    工作树这一趟先算，因为它要防的正是"HEAD 没动"那一刻。
     """
     try:
         head = _git("rev-parse", "HEAD").strip()
+        # 未提交（含已暂存）与未跟踪：两条都要，Vite 那类"净增新命名产物"的形状同理。
+        work = _git("diff", "--name-only", "HEAD").splitlines()
+        work += _git("ls-files", "--others", "--exclude-standard").splitlines()
+        dirty_src = any(p.startswith("src/") for p in work)
         if COV_MARKER.exists():
             last = COV_MARKER.read_text(encoding="utf-8").strip()
             if last == head:
-                return False  # 上次覆盖率就在这个 HEAD 上跑过
+                return dirty_src  # HEAD 没动：工作树里有没有 src 就是全部判据
             if last:
                 changed = _git("diff", "--name-only", f"{last}..HEAD").splitlines()
-                changed += _git("diff", "--name-only", "HEAD").splitlines()  # 未提交（含已暂存）
-                changed += _git("ls-files", "--others", "--exclude-standard").splitlines()
-                return any(p.startswith("src/") for p in changed)
+                return dirty_src or any(p.startswith("src/") for p in changed)
         # 没有 marker（首次 / CI / 清过 build/）：保守跑一趟并从此留下基准。
         return True
     except Exception:
