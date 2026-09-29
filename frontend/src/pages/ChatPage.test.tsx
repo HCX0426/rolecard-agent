@@ -993,7 +993,7 @@ describe("ChatPage 换角色 = 进那条角色自己的对话（09-26：一条�
   }
 
   function pickRole(name: string) {
-    fireEvent.click(screen.getByTitle(/换个说话的人/));
+    fireEvent.click(screen.getByTitle(/换个说话的角色/));
     fireEvent.click(screen.getByRole("button", { name: new RegExp(name) }));
   }
 
@@ -1093,7 +1093,7 @@ describe("ChatPage 侧栏：每个角色一条固定线 + 临时话题批量清�
     expect(screen.queryByTitle("删除这个对话？")).toBeNull();
   });
 
-  it("角色一多：抽屉里给搜索框，少的时候不给；筛完点谁都进她那条线", async () => {
+  it("角色一多：抽屉里给搜索框，少的时候不给；筛完点谁都进那条角色自己的线", async () => {
     const many = Array.from({ length: 7 }, (_, i) => ({
       role_id: `r${i}`,
       role_name: `角色${i}号`,
@@ -1116,7 +1116,7 @@ describe("ChatPage 侧栏：每个角色一条固定线 + 临时话题批量清�
     );
     await waitFor(() => expect(screen.getByText("还没有角色，也还没有对话")).toBeTruthy());
 
-    fireEvent.click(screen.getByTitle(/换个说话的人/));
+    fireEvent.click(screen.getByTitle(/换个说话的角色/));
     const box = await screen.findByLabelText("搜角色");
     fireEvent.change(box, { target: { value: "5" } });
     expect(screen.getByRole("button", { name: /角色5号/ })).toBeTruthy();
@@ -1128,7 +1128,7 @@ describe("ChatPage 侧栏：每个角色一条固定线 + 临时话题批量清�
 
   it("角色不多时不出现搜索框（三五个角色不必为过滤付一个控件）", async () => {
     await mountSidebar();
-    fireEvent.click(screen.getByTitle(/换个说话的人/));
+    fireEvent.click(screen.getByTitle(/换个说话的角色/));
     expect(screen.queryByLabelText("搜角色")).toBeNull();
   });
 

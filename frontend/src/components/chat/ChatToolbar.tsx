@@ -166,7 +166,7 @@ export default function ChatToolbar({
           }}
           aria-haspopup="true"
           aria-expanded={roleMenuOpen}
-          title="换个说话的人 —— 会打开她自己的那条对话（各人的话留在各自那条线里）"
+          title="换个说话的角色 —— 会打开那个角色自己的那条对话（各角色的话留在各自那条线里）"
           className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-700"
         >
           <IconUser />
@@ -179,7 +179,7 @@ export default function ChatToolbar({
                 而它往上长是会被头部截掉的。 */}
             <div className="absolute bottom-full left-0 z-20 mb-2 flex max-h-[min(60vh,420px)] w-64 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-600 dark:bg-slate-800">
               <p className="shrink-0 bg-slate-50 px-3 py-1.5 text-[11px] font-medium text-slate-400 dark:bg-slate-800/60 dark:text-slate-500">
-                选角色 = 进她那条对话（原来那条留在左侧）
+                选角色 = 进那个角色自己的那条对话（原来那条留在左侧）
               </p>
               {roles.length > ROLE_SEARCH_FROM && (
                 <input

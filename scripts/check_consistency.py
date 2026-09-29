@@ -1145,6 +1145,44 @@ def check_env_example_models() -> None:
         fails.append("env example advertises retired models: " + "; ".join(offenders))
 
 
+def check_bundled_copy() -> None:
+    """已构建的 `frontend/dist` 里不许出现写死的女性称谓（09-28 轮 `R28-44` 的事后闸）。
+
+    为什么这条查产物而不是查源码：**压缩后的 JS 里没有注释** —— 源码里那些「她在打字」
+    多半是给我们自己看的说明，只有产物里出现的字才是用户真看得见的。所以这个信号是精确的，
+    不需要一台 JSX AST 解析器去猜"这行是不是注释"。
+    它今天就有价值：B 类改完之后我自己在 `ChatToolbar` 漏了一句「会打开她自己的那条对话」，
+    是**浏览器里看一眼**才发现的（grep 的样式没覆盖"她自己"）。这条把"看一眼"变成尺子。
+    新的合法用法（比如某个角色的名字里带"她"）出现时，把它加进 `_BUNDLED_COPY_ALLOWED` 并写理由。
+    """
+    assets = sorted((ROOT / "frontend" / "dist" / "assets").glob("*.js"))
+    if not assets:
+        out("bundled copy", True, "还没有构建产物，跳过（不是负面）")
+        return
+    hits: list[str] = []
+    for path in assets:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for token in _BUNDLED_GENDERED:
+            if token in _BUNDLED_COPY_ALLOWED:
+                continue
+            at = text.find(token)
+            if at >= 0:
+                snippet = text[max(0, at - 24) : at + 24].replace("\n", " ")
+                hits.append(f"{path.name}: …{snippet}…")
+    out(
+        "bundled copy",
+        not hits,
+        "; ".join(hits[:3]) if hits else f"{len(assets)} 个产物 chunk 里没有写死的女性称谓",
+    )
+    if hits:
+        fails.append(f"gendered copy shipped in frontend/dist: {hits[:4]}")
+
+
+_BUNDLED_GENDERED = ("她", "她们")
+#: 产物里允许出现的女性称谓（键 = 那串字，值 = 为什么允许）。目前是空的。
+_BUNDLED_COPY_ALLOWED: frozenset[str] = frozenset()
+
+
 def check_role_whitelists_resolve() -> None:
     """Every tool name in a built-in role's whitelist must resolve to a declared tool.
 
@@ -1419,6 +1457,7 @@ def main() -> int:
     check_dependency_layering()
     check_env_example_models()
     check_installer_scope()
+    check_bundled_copy()
     check_role_whitelists_resolve()
     check_us_traceability()
     check_exemplar_leaks_eval_answers()

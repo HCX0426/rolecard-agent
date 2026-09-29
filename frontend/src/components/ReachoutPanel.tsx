@@ -160,7 +160,7 @@ export default function ReachoutPanel({
     if (
       !(await confirm({
         title: `清空${scope}的主动消息记录？`,
-        body: "抽屉会空出来。各条主动会话里的原话不动，她仍然记得自己主动找过你；已提炼进记忆的事实也不跟着走。",
+        body: "抽屉会空出来。各条主动会话里的原话不动（那些话本身就是下次主动开口的依据）；已提炼进记忆的事实也不跟着走。",
         confirmText: "清空",
         danger: true,
       }))
