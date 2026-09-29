@@ -88,12 +88,15 @@ def bundle_top_names(bundle: Path) -> set[str]:
     两条都要：纯 Python 包进 PYZ，而 `.pyd`（如 `_cffi_backend`）与带原生库的包是落在
     `_internal/` 目录里的，只看 PYZ 会把它们读成缺席 —— 那是假阳性，会把人推去改根本没错的 spec。
     """
-    from PyInstaller.archive.readers import CArchiveReader  # noqa: PLC0415 - 只有打包检查才需要它
-
     exe = bundle / "rolecard-backend.exe"
     if not exe.exists():
+        # 存在性判断**在 import PyInstaller 之前**：CI 的 venv 里没有打包工具（它不打 Windows 包），
+        # 先 import 会让"产物不存在"这一分支读成 ModuleNotFoundError
+        # —— 09-29 那次 CI 红就红在这个假设上，与这条尺子防的是同一件事。
         msg = f"bundle 里没有可执行文件：{exe}"
         raise FileNotFoundError(msg)
+    from PyInstaller.archive.readers import CArchiveReader  # noqa: PLC0415 - 只有打包检查才需要它
+
     archive = CArchiveReader(str(exe))
     pyz = [name for name, entry in archive.toc.items() if entry[-1] == "z"]
     if not pyz:

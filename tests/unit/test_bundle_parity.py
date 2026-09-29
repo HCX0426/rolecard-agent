@@ -93,11 +93,23 @@ def test_names_are_compared_case_insensitively(tmp_path: Path) -> None:
     assert mod.missing_from_bundle({"Pillow": "src/a.py:1"}, {"pillow"}) == {}
 
 
-def test_an_unreadable_bundle_raises_instead_of_returning_empty(tmp_path: Path) -> None:
-    """读不到就抛。静默返回空集会让"包里一个模块都没有"读成"全都缺席"，或者更糟：读成"没什么可查"。"""
+def test_a_missing_bundle_raises_instead_of_returning_empty(tmp_path: Path) -> None:
+    """产物不存在就抛。静默返回空集会让"包里一个模块都没有"读成"全都缺席"，或者更糟：读成"没什么可查"。
+
+    这一条**不碰 PyInstaller**（存在性判断在它之前，见脚本里那行注释）—— CI 的 venv 里没有打包工具，
+    09-29 那次推上去就是红在这个假设上：脚本自己的教训，测试不能再来一遍。
+    """
     with pytest.raises(FileNotFoundError):
         mod.bundle_top_names(tmp_path / "不存在的包")
 
+
+def test_an_unreadable_archive_raises(tmp_path: Path) -> None:
+    """bundle 在、archive 读不出 ⇒ 也要抛，不能回空集。要 PyInstaller，缺了就带理由 skip。"""
+    reason = (
+        "只有装过打包工具的构建机能量这条"
+        "（CI 的 ubuntu runner 不装 PyInstaller，它从不打 Windows 包）"
+    )
+    pytest.importorskip("PyInstaller.archive.readers", reason=reason)
     bundle = tmp_path / "rolecard-backend"
     bundle.mkdir()
     (bundle / "rolecard-backend.exe").write_bytes(b"not a PyInstaller archive")
