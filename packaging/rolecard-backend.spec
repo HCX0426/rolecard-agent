@@ -16,6 +16,7 @@
 chromadb / uvicorn / trafilatura 各有动态导入与自带数据目录，用 hooks-contrib 的收集器兜住。
 """
 
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -44,7 +45,37 @@ for rel in ("core", "roles", "domains/health", "domains/finance"):
         datas.append((str(sql), f"rolecard_agent/{rel}"))
 
 hiddenimports = collect_submodules("rolecard_agent")
-for pkg in ("uvicorn", "chromadb", "trafilatura", "langchain_core", "langchain", "langgraph"):
+
+# 这一族是**随包后端运行时真要用**的包，逐个 `collect_submodules` + 收数据目录。
+# MCP 那两条 09-29 补进来（审计 `R28-34`）：`core/tools/mcp.py:69` 那句
+# `from langchain_mcp_adapters.client import MultiServerMCPClient` 是**函数体内的 lazy import**，
+# 而这两个包当时在构建机的 .venv 里根本没装 ⇒ 包里 0 个模块 ⇒ 打包态的 MCP 永远 fail-open
+# （设置→扩展那面板照常摆着，工具永远加载不出来，只有日志里一句 warning）。
+# 代价实测：langchain-mcp-adapters 0.16 MB + mcp 1.71 MB = 1.87 MB，安装包 191 MB 的 1%。
+RUNTIME_PACKAGES = (
+    "uvicorn",
+    "chromadb",
+    "trafilatura",
+    "langchain_core",
+    "langchain",
+    "langgraph",
+    "langchain_mcp_adapters",
+    "mcp",
+)
+
+# **下面这段护栏是这条配置里最要紧的一行，不是装饰**：`collect_submodules()` 对没安装的包
+# 返回**空列表且不报错**（spec 开头 `sys.path` 那条注释记的是同一个坑的另一半）。少装一个包 ⇒
+# 安静地少收一族模块 ⇒ 打出来的包"看着成功"而里面缺东西，症状要等用户点到那格才出现。
+# 与其让 parity 检查在事后红（`scripts/check_bundle_parity.py`），不如在这里就不出产物。
+_missing = [pkg for pkg in RUNTIME_PACKAGES if importlib.util.find_spec(pkg) is None]
+if _missing:
+    raise SystemExit(
+        "随包后端要收的这些包没装，拒绝出一个「缺模块」的产物：" + ", ".join(_missing)
+        + "\n  装回来：.venv\\Scripts\\python.exe -m pip install -r requirements.txt "
+        "-r requirements-mcp.txt（MCP 那两条见 requirements-mcp.txt）"
+    )
+
+for pkg in RUNTIME_PACKAGES:
     hiddenimports += collect_submodules(pkg)
     datas += collect_data_files(pkg)
 

@@ -8,7 +8,7 @@
 用法：
   python scripts/gate.py --fast   # ruff + mypy + 单测(-x, 无覆盖率) + 一致性  ≈ 1.5 分钟
   python scripts/gate.py          # 全量：上面(单测换成一趟带覆盖率) + 前端 test/build
-                                  #   + dist 入库同步 + 真机冒烟
+                                  #   + dist 入库同步 + README 可跑性 + 随包后端 parity + 真机冒烟
                                   #   覆盖率那趟仅在改动 src/ 时跑（没碰 src/ 自动跳过，≈ 省 97s）
 
 任何一步失败即停（后续步骤不再跑），但已跑完步骤的耗时仍会打印。
@@ -117,6 +117,10 @@ STEPS: list[tuple[str, list[str], str]] = [
     # 尺子看着它 —— 落档时实测第 7 步那条裸 uvicorn 在 src 布局下必挂（R28-36）。
     # 这条探针把文档里的启动命令**原样执行一次**并等 /api/health（数据根走临时目录）。
     ("README 可跑性", [PY, "scripts/probe_readme_quickstart.py"], "full"),
+    # 随包后端的 import↔bundle parity（R28-34）。只在 full：它量的是**产物**，快档没有产物。
+    # `build/sidecar/` 不存在时脚本自己返回 0 并打出"没打过包不是负面"（与"未知不拦"同一条判据），
+    # 所以这一条不会因为"这轮没打包"而假红 —— 但它一旦有包就必查。
+    ("随包后端 parity", [PY, "scripts/check_bundle_parity.py"], "full"),
     ("真机冒烟(14 项)", [PY, "scripts/smoke_check.py"], "full"),
 ]
 
