@@ -532,6 +532,15 @@ class TurnStopped(Exception):
     """
 
 
+class EmptyModelStream(Exception):
+    """模型这一轮**一个块都没吐**（不是"被停在中途"，是空响应）。
+
+    为什么不把它当成一条 `AIMessage(content="")` 提交（`R28-06`）：那条空气泡会落进检查点，
+    界面上是一个点开什么都没有的气泡，下一轮的 prompt 里还带着这条空白，而日志里这次调用
+    看起来是**成功**的。空流是失败，就让它走失败那条路（`turn.model_error_detail` 给一句人话）。
+    """
+
+
 def _plain_message(chunk: AIMessageChunk) -> AIMessage:
     """分块 → 一条普通的 AI 消息（搬字段，不是转类型）。
 
@@ -589,7 +598,12 @@ def _collect_model_stream(
     if acc is None:
         # 一个块都没来就被停（或模型回了个空流）：这一轮没有内容可提交。
         if not stopped:
-            return AIMessage(content=""), False
+            # 空流**不是一条空消息**（`R28-06`）：以前这里 `return AIMessage(content="")`，
+            # 注释说的"没有内容可提交"和代码做的是两件事 —— 一条空气泡落进检查点，
+            # 界面上是一个点开什么都没有的气泡，而下一轮的 prompt 里还带着这条空白。
+            # 模型一个字都没吐 = 这次调用失败了，走 Error 那条路，别把它伪装成一次成功回答。
+            msg = "模型返回了空响应（一个块都没有）"
+            raise EmptyModelStream(msg)
         raise TurnStopped
     message = _plain_message(acc) if isinstance(acc, AIMessageChunk) else acc
     if stopped and getattr(message, "tool_calls", None):

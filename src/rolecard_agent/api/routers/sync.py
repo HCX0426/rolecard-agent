@@ -43,6 +43,7 @@ from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.core import outbound
 from rolecard_agent.core import sync as sync_lib
 from rolecard_agent.core.model_settings import validate_base_url
+from rolecard_agent.core.thread_locks import thread_write
 
 router = APIRouter()
 
@@ -188,7 +189,10 @@ def _clear_for_replace(
         for row in rows:
             tid = str(row["thread_id"])
             if graph is not None:
-                with contextlib.suppress(Exception):
+                # 锁在 suppress **外面**（R28-03）：`update_state` 自己失败（比如这条线程
+                # 从来没有检查点）照旧容忍，但"别人正持有这一会话的写锁"不能跟着被吞掉 ——
+                # 那正是整段替换最不该无互斥插进去的时刻，吞了就是分叉同一个父检查点。
+                with thread_write(tid), contextlib.suppress(Exception):
                     graph.update_state(
                         build_graph_config(tid, settings),
                         {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES)]},

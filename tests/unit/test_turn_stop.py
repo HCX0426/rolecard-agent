@@ -23,11 +23,22 @@ from langchain_core.tools import tool
 
 from rolecard_agent.config import Settings
 from rolecard_agent.core.identity import DEFAULT_USER_ID
-from rolecard_agent.core.nodes import KernelContext, TurnStopped, call_model
+from rolecard_agent.core.nodes import (
+    EmptyModelStream,
+    KernelContext,
+    TurnStopped,
+    call_model,
+)
 from rolecard_agent.core.observability import NullTracer
 from rolecard_agent.core.thread_locks import clear_stop, request_stop, stop_requested
 from rolecard_agent.core.tools.registry import ToolRegistry
-from rolecard_agent.core.turn import End, run_turn
+from rolecard_agent.core.turn import (
+    _GENERIC_MODEL_FAILURE,
+    EMPTY_STREAM_DETAIL,
+    End,
+    model_error_detail,
+    run_turn,
+)
 from rolecard_agent.roles.service import RoleCardCreate, RoleCards, RoleCardService
 
 
@@ -348,3 +359,34 @@ def test_a_turn_that_never_got_the_lock_does_not_clear_the_inflight_stop(
     )
 
     assert cleared == [], "没抢到锁也擦旗 = 把上一轮那个「停止」吞掉"
+
+
+# ------------------------------------------------------------------ 节点：空响应
+
+
+def test_an_empty_stream_raises_instead_of_committing_a_blank_message(
+    roles: RoleCardService,
+) -> None:
+    """模型一个块都没吐 ⇒ 抛 `EmptyModelStream`，**不往历史里塞空气泡**（`R28-06`）。
+
+    原来的代码在这里 `return AIMessage(content="")`，而它头顶那句注释写的是"这一轮没有内容
+    可提交" —— 注释与代码是两件事。空串能过守卫，于是检查点里落一条谁都没说过的 AI 消息：
+    界面上是一个点开什么都没有的气泡，下一轮的 prompt 还带着这条空白，而日志里这次调用
+    看起来是**成功**的。
+    """
+    fake = _StreamedFake([], thread_id="t")
+    with pytest.raises(EmptyModelStream):
+        call_model(_state(_role(roles)), _ctx(roles, fake))
+    assert fake.closed is True, "抛出去之前也要把底层那条流关掉"
+
+
+def test_the_empty_stream_says_its_own_sentence_not_the_generic_one() -> None:
+    """那句话必须是"没有返回任何内容 / 换个后端"，不是通用的"换一种问法"。
+
+    通用那句会把人推向**重复问同一个问题**，而后端一个字都没吐不是问法的问题 ——
+    这是文案，也是这条缺陷剩下的一半（另一半是不落空气泡，上面那条钉）。
+    """
+    assert model_error_detail(EmptyModelStream("模型返回了空响应（一个块都没有）")) == (
+        EMPTY_STREAM_DETAIL
+    )
+    assert model_error_detail(EmptyModelStream("…")) != _GENERIC_MODEL_FAILURE

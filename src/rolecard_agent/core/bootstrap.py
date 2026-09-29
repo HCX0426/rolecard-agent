@@ -169,6 +169,13 @@ class Runtime:
     #: 按身份解析出来的有效配置（`effective_for`）。实例主人那一份不在这里 —— 它在
     #: `effective`（编译期就位）。改配置走 `rebuild`，两处缓存一起清。
     effective_by_user: dict[str, Settings] = field(default_factory=dict, repr=False)
+    #: 上面那两份缓存的**代数**（`R28-05`）。`clear()` 只挡得住"已经进缓存的旧值"，
+    #: 挡不住"清完之后才回填的旧值"：并发那一轮在锁外拿着**旧配置快照**构建模型，
+    #: 构建要花几百毫秒到几秒，落笔时 `clear()` 已经过去了 —— 于是换装完成之后的轮次
+    #: 继续花旧 key。写者进场前记下代数、落笔时比对：对不上就丢弃（下一次调用自然重建）。
+    #: 单靠 GIL 保证的是 int 读写不会撕裂，这就够了 —— 不用再加一把锁，那会把每次
+    #: 模型解析都串到重建锁上，而"构建在锁外"是这里刻意保住的性能。
+    model_cache_generation: int = field(default=0, repr=False)
 
     # -- 稳定引用的读穿 ------------------------------------------------------
 
@@ -234,11 +241,14 @@ class Runtime:
             return self.effective
         cached = self.effective_by_user.get(owner)
         if cached is None:
+            gen = self.model_cache_generation
             cached = runtime_settings.apply_overrides(
                 self.model_settings.effective_settings(self.env_settings, user_id=owner),
                 runtime_settings.load_overrides(self.conn),
             )
-            self.effective_by_user[owner] = cached
+            # 代数没变才写回去（`R28-05`）：变了说明这期间换过一次装，手上这份是旧配置。
+            if self.model_cache_generation == gen:
+                self.effective_by_user[owner] = cached
         return cached
 
     def resolve_role_model(
@@ -277,6 +287,7 @@ class Runtime:
         cached = self.role_models.get(cache_key)
         if cached is not None:
             return cached
+        gen = self.model_cache_generation
         try:
             built = self.model_factory(self.effective_for(user), backend_name, temperature)
         except KeyError:
@@ -287,7 +298,10 @@ class Runtime:
                 )
             )
             return self.state["default_model"]
-        self.role_models[cache_key] = built
+        # 与 `effective_for` 同一条纪律：代数变了就把手上这份丢掉，别让它活过这次换装
+        # （`R28-05`）。下一次解析自然按新配置重建 —— 代价是多构造一次，不是花错 key。
+        if self.model_cache_generation == gen:
+            self.role_models[cache_key] = built
         return built
 
     def chat_memory(self, role_id: str | None, thread_id: str | None) -> str:
@@ -359,6 +373,9 @@ class Runtime:
             runtime_settings.load_overrides(self.conn),
         )
         # 构建在锁外：两个并发重建各自完整构建，后写者胜出（浪费但正确）。
+        # 代数**先加再清**：加在清之前，任何一个"清之前就进去了、清之后才落笔"的在飞写者
+        # 手上都拿着旧代数，回填会被它自己否掉（`R28-05`）。
+        self.model_cache_generation += 1
         self.role_models.clear()
         self.effective_by_user.clear()
         default_model = self.model_factory(eff, None)

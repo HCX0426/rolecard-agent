@@ -34,7 +34,7 @@ from typing import cast
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from rolecard_agent.api.access import OPERATOR, classify
@@ -71,6 +71,7 @@ from rolecard_agent.core.identity import active_user_id, resolve_instance_identi
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.observability import Tracer
 from rolecard_agent.core.paths import bundle_root
+from rolecard_agent.core.thread_locks import ThreadBusy
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.domains.health.service import HealthQueryService
 from rolecard_agent.domains.registry import DOMAINS, build_registry
@@ -194,10 +195,23 @@ def create_app(
         finally:
             runtime.shutdown()
 
-    app = FastAPI(
-        title="rolecard-agent 管理控制台", version="0.3.0", lifespan=_lifespan
+    app = FastAPI(        title="rolecard-agent 管理控制台", version="0.3.0", lifespan=_lifespan
     )
     app.state.ctx = AppContext(runtime=runtime)
+
+    # 写检查点等不到会话锁 ⇒ 409 + 一句人话（`R28-02`/`R28-03` 的出口）。
+    # 为什么注册在 app 上而不是各路由自己 try：六个写检查点的口子（改历史、删历史、两处上传
+    # 说明、同步清空、同步整段替换）要给用户的本来就该是同一句话，各写各的 try 早晚写出六种。
+    # 底层为什么不再返回布尔：`with thread_write(tid):` 这种写法没法不带上分支，
+    # 而"丢了判断"的后果是无互斥地分叉同一个父检查点 —— 那是要吞消息的，不是要"记得判一下"的。
+    @app.exception_handler(ThreadBusy)
+    async def _thread_busy(_: Request, exc: ThreadBusy) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "这一轮还在跑 —— 先按「停止」或等它说完，再改这段历史。"
+            },
+        )
 
     # C1：端点按职责分包，全部端点已迁出本文件。
     app.include_router(roles_router.router)

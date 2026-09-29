@@ -16,6 +16,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -523,3 +524,56 @@ def test_turn_settings_reads_the_resolver_not_the_build_time_snapshot() -> None:
     ctx.settings_resolver = lambda: per_turn
     assert turn_settings(ctx) is per_turn
     assert _turn_backend({"model_name": "chat"}, None, ctx).api_key == "sk-turn"
+
+
+def test_an_inflight_build_cannot_republish_a_stale_model_after_rebuild(tmp_path: Path) -> None:
+    """换装之后，**在飞的**那次模型构造不能把旧配置的产物回填进缓存（`R28-05`）。
+
+    `rebuild` 里那两句 `clear()` 只挡得住"已经进缓存的旧值"，挡不住"清完之后才落笔的旧值"：
+    并发那一轮在锁外拿着旧配置快照构造模型，构造要花几百毫秒到几秒，等它写回时 clear 早过去了。
+    症状不是报错，是**改了设置不生效** —— 换装完成之后的轮次继续花旧 key、旧 num_ctx、旧温度。
+    """
+    built: list[object] = []
+    stale: list[object] = []
+    entered = threading.Event()
+    release = threading.Event()
+
+    def factory(_settings: object, name: object = None, *_a: object, **_k: object) -> object:
+        model = object()  # 每次都造一个新对象，好认"谁进了缓存"
+        built.append(model)
+        if name == "whatever":
+            # 只有并发那一轮那一发停在构造中间，好把 rebuild 插进去
+            # （装配期自己也会构造默认模型，别把门挂在那一发上 —— 第一版就挂错了地方）。
+            stale.append(model)
+            entered.set()
+            assert release.wait(5), "放行没来 —— 用例本身卡死了"
+        return model
+
+    runtime = build_runtime(
+        domains=DOMAINS,
+        query_factory=HealthQueryService,
+        registry_factory=_wiring,  # type: ignore[arg-type]
+        env_settings=_settings(tmp_path),
+        model_factory=factory,
+    )
+    try:
+        thread = threading.Thread(
+            target=lambda: runtime.resolve_role_model(
+                "whatever", 0.5, user_id=DEFAULT_USER_ID
+            )
+        )
+        thread.start()
+        assert entered.wait(5), "并发那次构造没开始"
+
+        runtime.rebuild()          # 用户在这一刻改了设置
+        release.set()
+        thread.join(5)
+        assert not thread.is_alive(), "在飞的那次构造没跑完"
+        assert len(built) >= 2, "rebuild 自己没构造过默认模型？"
+
+        assert stale, "并发那一轮根本没走到构造"
+        assert not any(m is stale[0] for m in runtime.role_models.values()), (
+            "旧配置产物活过了这次换装 —— 缓存回填没被代数挡住，改了设置就是不生效"
+        )
+    finally:
+        runtime.conn.close()

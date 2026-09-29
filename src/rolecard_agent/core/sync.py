@@ -34,6 +34,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from rolecard_agent.core.thread_locks import thread_write
 from rolecard_agent.storage.db import SqlConnection
 
 KIND_CARD = "card"
@@ -597,7 +598,13 @@ def _write_thread(
         elif role == "assistant":
             messages.append(AIMessage(content=text))
     config = build_graph_config(tid, settings)
-    graph.update_state(config, {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *messages]})
+    # 整段替换是"先把这一会话的检查点清空、再把对面那份写进来"，它必须在锁里做完整（R28-03）：
+    # 中间插进用户那一轮的 `stream`，两边会各自基于同一个父检查点分叉，后写的把先写的盖掉
+    # —— 而这一条链路盖掉的是一整段历史，不是单条消息。
+    with thread_write(tid):
+        graph.update_state(
+            config, {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *messages]}
+        )
     return "created" if row is None else "updated"
 
 

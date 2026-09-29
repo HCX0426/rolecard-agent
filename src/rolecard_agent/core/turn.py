@@ -33,7 +33,7 @@ from langgraph.errors import GraphRecursionError
 
 from rolecard_agent.core.graph import MODEL_NODE, TOOLS_NODE
 from rolecard_agent.core.guard import check
-from rolecard_agent.core.nodes import TurnStopped, VisionNotSupported
+from rolecard_agent.core.nodes import EmptyModelStream, TurnStopped, VisionNotSupported
 from rolecard_agent.core.observability import TraceEvent, Tracer, scrub_endpoints
 from rolecard_agent.core.text import text_of
 from rolecard_agent.core.thread_locks import (
@@ -75,6 +75,9 @@ VISION_MISMATCH_DETAIL = (
 
 _GENERIC_MODEL_FAILURE = "模型调用失败，请稍后重试或换一种问法。"
 
+#: 模型一个字都没吐时该说的话：与通用的"换一种问法"刻意不同（`R28-06`）。
+EMPTY_STREAM_DETAIL = "模型这一轮没有返回任何内容。重试一次，或换一个后端 —— 不是你的问法问题。"
+
 
 def model_error_detail(exc: Exception) -> str:
     """把模型调用异常映射成给用户的可读提示。纯函数，便于脱机测试。"""
@@ -82,6 +85,10 @@ def model_error_detail(exc: Exception) -> str:
     # 差别只在轨迹里（`vision_blocked_pre_call` 只有前者才会有）。
     if isinstance(exc, VisionNotSupported):
         return VISION_MISMATCH_DETAIL
+    if isinstance(exc, EmptyModelStream):
+        # 空响应要单独立一句（R28-06）：那句通用的"换一种问法"会把人推向**重复问**，
+        # 而这一次根本不是问法的问题 —— 后端一个字都没吐，换问法照样空。
+        return EMPTY_STREAM_DETAIL
     text = str(exc).lower()
     if any(sig in text for sig in _VISION_MISMATCH_SIGNALS):
         return VISION_MISMATCH_DETAIL

@@ -67,6 +67,12 @@ from rolecard_agent.roles.service import RoleError, RoleNotFound
 
 router = APIRouter()
 
+#: 用户主动发起的**历史写**（改并重答 / 删消息 / 上传时插一条说明）最多等多久拿会话写锁。
+#: 刻意比 `thread_locks._DEFAULT_WAIT`（150 秒，那是为"整轮对话排队别丢轮"设的）短得多：
+#: 这几条路由前端本来就在忙时不给点，真撞上就是罕见竞态，让请求挂两分半比拒掉更糟。
+#: 等不到 → `ThreadBusy` → 409 + 一句人话（出口在 `api/main.py`，六个写点共用）。
+_WRITE_WAIT = 3.0
+
 
 # 文件名消毒（审查报告 A4）：模型/浏览器给的 `filename` 不可信。`Path().name` 已经挡掉
 # 路径成分，这里再处理长度与控制字符 —— 超长名或含 `\x00` 的名字会让 `write_bytes` 抛
@@ -799,7 +805,7 @@ def edit_message_and_regenerate(
     doomed = [RemoveMessage(id=m.id) for m in messages[index:] if m.id is not None]
     # 改检查点要占住这条会话（审计 #12）：紧随其后的那一轮由 `run_turn` 自己持锁，
     # 而中间这一秒若被调度线程的主动投递插进来，两边会分叉同一个父检查点。
-    with thread_write(thread_id):
+    with thread_write(thread_id, timeout=_WRITE_WAIT):
         graph.update_state(config, {"messages": doomed})
 
     graph_input: dict[str, object] = {
@@ -856,7 +862,11 @@ def delete_messages(
         raise HTTPException(status_code=404, detail=f"消息不存在：{', '.join(unknown[:3])}")
 
     doomed_ids = expand_to_turns(messages, list(body.message_ids))
-    graph.update_state(config, {"messages": [RemoveMessage(id=i) for i in doomed_ids]})
+    # 删历史也要占住这条会话（R28-03）：这一句以前是裸 `update_state`，
+    # 而用户那一轮正在往同一个父检查点追加 —— 两边后写谁赢，症状是"消息又凭空多回来一条
+    # 或者少了一条"。等不到锁就 409（`thread_write` 现在会抛，不再把布尔丢给调用方）。
+    with thread_write(thread_id, timeout=_WRITE_WAIT):
+        graph.update_state(config, {"messages": [RemoveMessage(id=i) for i in doomed_ids]})
     ctx.conn.execute(
         "UPDATE session_thread SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') "
         "WHERE thread_id = ?",
@@ -1148,9 +1158,11 @@ def upload_report(
                 "当前不能读取图片内容，不要假装已经读过。]"
             )
             graph_config = {"configurable": {"thread_id": thread_id}}
-            ctx.app_state["graph"].update_state(
-                graph_config, {"messages": [HumanMessage(content=note)]}
-            )
+            # 注入这条说明也要持锁（R28-03）：它写的就是用户这一轮正在写的同一份检查点。
+            with thread_write(thread_id, timeout=_WRITE_WAIT):
+                ctx.app_state["graph"].update_state(
+                    graph_config, {"messages": [HumanMessage(content=note)]}
+                )
             return {
                 "task_id": task_id,
                 "reused": reused,
@@ -1216,7 +1228,11 @@ def upload_report(
             "不要假装已经读过。]"
         )
     graph_config = {"configurable": {"thread_id": thread_id}}
-    ctx.app_state["graph"].update_state(graph_config, {"messages": [HumanMessage(content=note)]})
+    # 同上（R28-03）：这条"文件类型不支持解析"的说明也是往同一份检查点写。
+    with thread_write(thread_id, timeout=_WRITE_WAIT):
+        ctx.app_state["graph"].update_state(
+            graph_config, {"messages": [HumanMessage(content=note)]}
+        )
     return {
         "task_id": task_id,
         "reused": reused,

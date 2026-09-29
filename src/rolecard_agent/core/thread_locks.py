@@ -48,24 +48,44 @@ def _lock_for(thread_id: str) -> threading.Lock:
         return lock
 
 
-@contextmanager
-def thread_write(thread_id: str) -> Iterator[bool]:
-    """占住这个会话的写入。** yields** True = 拿到了；False = 没拿到（调用方自己决定等多久）。
+class ThreadBusy(RuntimeError):
+    """这个会话等不到写锁了（别人正持有超过 `thread_write` 的等待上限）。
 
-    不直接抛：拿不到锁是正常情况（用户那一轮正在跑），调度侧的正确答案是"这次不插话"，
-    而不是一句"内部错误"。
+    为什么要有这个类型而不返回布尔（09-28 轮 `R28-02`/`R28-03`）：`with thread_write(tid):`
+    这种写法**没法不带上分支**，所以六处写检查点的地方里有五处直接把 yield 的布尔丢了 ——
+    拿不到锁时 `update_state` 照样无互斥执行，正是本模块 docstring 记的那个"吞消息"形状。
+    接口能误用而调用方会误用，那就改接口：**要么拿到锁，要么在写之前炸**，
+    不给"忘了判断"留任何一条路。想自己决定等多久、拿不到就跳过的，用 `try_thread_write`。
+    """
+
+    def __init__(self, thread_id: str, *, waited: float) -> None:
+        super().__init__(f"会话 {thread_id} 等写锁等了 {waited:.0f} 秒还没轮到")
+        self.thread_id = thread_id
+        self.waited = waited
+
+
+@contextmanager
+def thread_write(thread_id: str, *, timeout: float | None = None) -> Iterator[None]:
+    """占住这个会话的写入；等不到就抛 `ThreadBusy`（**不会**带着没锁的状态往下走）。
+
+    不直接抛 HTTPException：这一层不认识 FastAPI。路由侧由 `api/main.py` 注册的处理器
+    统一翻成 409 + 一句人话 —— 六个写检查点的口子共用同一个出口，而不是各写各的 try。
+
+    `timeout=None` 用 `_DEFAULT_WAIT`（比 model_timeout 略长，保证"排队"不是"丢掉一轮"）；
+    批量清理那种希望快点失败的，自己传一个短的。
     """
     if not thread_id:
         # 没有线程 id（单测直接调节点、或内核装配阶段）⇒ 没有可串行的对象，照常跑。
-        yield True
+        yield
         return
+    wait = _DEFAULT_WAIT if timeout is None else timeout
     lock = _lock_for(thread_id)
-    acquired = lock.acquire(timeout=_DEFAULT_WAIT)
+    if not lock.acquire(timeout=wait):
+        raise ThreadBusy(thread_id, waited=wait)
     try:
-        yield acquired
+        yield
     finally:
-        if acquired:
-            lock.release()
+        lock.release()
 
 
 #: 对话那一轮等锁的默认上限：比 `model_timeout`(120s) 略长，保证"排队"不是"丢掉一轮"。
@@ -246,6 +266,7 @@ def inflight_text(thread_id: str) -> str | None:
 
 
 __all__ = [
+    "ThreadBusy",
     "clear_stop",
     "end_extraction",
     "inflight_append",

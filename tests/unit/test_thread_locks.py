@@ -14,7 +14,10 @@ import threading
 import time
 from typing import Any
 
+import pytest
+
 from rolecard_agent.core.thread_locks import (
+    ThreadBusy,
     end_extraction,
     release_thread,
     thread_is_busy,
@@ -147,3 +150,38 @@ def test_run_turn_releases_even_when_the_graph_raises() -> None:
     assert not thread_is_busy("t6")
     assert try_thread_write("t6", timeout=0.0)
     release_thread("t6")
+
+
+def test_thread_write_raises_instead_of_handing_back_a_bool() -> None:
+    """`with thread_write(tid):` 里那句写**只有在拿到锁时才会执行**（`R28-02` 的根治处）。
+
+    旧契约 yield 一个布尔，而 `with` 语句没法不带上分支就拿到它 —— 于是六个写检查点的口子里
+    有五个把布尔丢了，拿不到锁时 `update_state` 照样无互斥跑。现在拿不到就抛，
+    这条用例断的是"**函数体一次都没执行**"，不是"返回了 False"。
+    """
+    tid = "t-raise"
+    assert try_thread_write(tid, timeout=0.0)
+    ran = False
+    started = time.monotonic()
+    try:
+        with thread_write(tid, timeout=0.2):
+            ran = True
+    except ThreadBusy as exc:
+        assert exc.thread_id == tid
+        assert exc.waited == pytest.approx(0.2, abs=0.01)
+    else:
+        raise AssertionError("别人正持有这把锁，thread_write 不该放行")
+    assert ran is False, "抛了但函数体还是跑了 —— 那等于没锁"
+    assert time.monotonic() - started < 2.0, "等不到锁应该快速失败，不是挂着"
+
+    # 抛出去之后锁没被泄漏：同一会话下一位照样拿得到。
+    release_thread(tid)
+    with thread_write(tid, timeout=0.2):
+        pass
+
+
+def test_empty_thread_id_still_writes_without_a_lock() -> None:
+    """没有 thread id（单测直接调节点、内核装配阶段）⇒ 没有可串行的对象，照常放行。"""
+    with thread_write(""):
+        pass
+    assert try_thread_write("", timeout=0.0) is True
