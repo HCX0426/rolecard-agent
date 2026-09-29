@@ -1,0 +1,14 @@
+# 打包机依赖（打**镜像/安装包**那一档，不是运行时也不是日常开发）。
+# 只在要出包的那台机器上装：
+#   .venv\Scripts\python.exe -m pip install -r requirements-package.txt
+# 拿到安装包的人不需要它 —— 包里躺的是 PyInstaller 已经摊平的那份 onedir。
+#
+# 为什么不并进 requirements-dev.txt：dev 那份每条 CI job 都装，而 gate/frontend/docker
+# 三步都用不到打包器（Windows runner 的分钟还按 2× 计费，见 ci.yml 的 windows-release）。
+# 口径与 requirements-ocr.txt / requirements-mcp.txt 同源：**只有一类人装得着的那一族**。
+#
+# 下限就是 09-29 本机实测那份（6.22.3）。装它的那条 venv **必须同时装着运行时的五族**
+# （requirements / -api / -rag / -cloud / -mcp）：`packaging/rolecard-backend.spec` 会逐条
+# `find_spec`，缺一条就拒绝出产物 —— 因为 `collect_submodules()` 对没安装的包返回空列表
+# 且不报错，少装一族的代价是一个"构建成功、里面缺东西"的包。
+pyinstaller>=6.22

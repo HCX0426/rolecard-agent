@@ -18,6 +18,10 @@ on:
         description: "额外跑一遍全量门禁（覆盖率≥85% + 离线冒烟 + 壳 typecheck）"
         type: boolean
         default: true
+      build_windows:
+        description: "打一发 Windows 安装包（产物进 artifact，不装进任何机器）"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -173,6 +177,23 @@ jobs:
           printf '%s' "$put" | grep -q '"default"' || {
             echo "容器内存一个云端后端失败：$put"; docker logs rc; exit 1
           }
+          # R28-29：镜像必须以非 root 跑，而且 HEALTHCHECK 要**真报过 healthy**。
+          # 放在最后是因为上面已经往卷里写过两次（一条会话、一个后端行）—— "非 root 写得动数据"
+          # 到这一刻才是被跑出来的事实，而不是从 Dockerfile 那几行推出来的。
+          uid=$(docker exec rc python -c 'import os; print(os.getuid())')
+          if [ "$uid" = "0" ]; then echo "容器还在以 root 跑（uid=0）"; docker logs rc; exit 1; fi
+          echo "容器内进程 uid=$uid（不是 0）"
+          healthy=""
+          for i in $(seq 1 12); do
+            if [ "$(docker inspect -f '{{.State.Health.Status}}' rc)" = "healthy" ]; then healthy=1; break; fi
+            sleep 4
+            if [ "$i" = "12" ]; then echo "48 秒内 HEALTHCHECK 没报过 healthy"; fi
+          done
+          if [ -z "$healthy" ]; then
+            docker inspect -f '{{json .State.Health}}' rc
+            echo "对编排器来说它还是个黑盒 —— HEALTHCHECK 形同虚设"; exit 1
+          fi
+          echo "容器内：以 uid=$uid 运行 / HEALTHCHECK=healthy"
           echo "容器内：健康 200 / 无凭据 401 / 建会话可读回 / 首页托管自镜像内 dist / 可存云端后端"
 
       - name: 收尾
@@ -226,3 +247,133 @@ jobs:
 
       - name: gate.py 全量（覆盖率≥85% + 前端 + 壳 + 离线冒烟）
         run: python scripts/gate.py
+
+  windows-release:
+    name: 发布链（Windows 安装包，只在手动触发时跑）
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_windows }}
+    # 门禁与 dist 同步先绿：不然这条会发一个"里面是旧界面"的包出去（第十二包真踩过，
+    # 见 docs/开发流程.md 那段「② 吃的是 ① 的产物」）。
+    needs: [gate, frontend]
+    runs-on: windows-latest
+    # 为什么是 dispatch-only 而不是每次 push 都跑：Windows runner 的分钟按 Linux 的 2× 计费，
+    # 而它产出的东西不参与"CI 绿不绿" —— 它是**待发的那个包**。09-28 轮 `R28-32` 的原话是
+    # "随包后端质量只靠台账"：本机打一发要两小时，没人会每改一次打一次，于是安装包质量
+    # 全靠人记得跑那四步。现在它靠这条 job：点一下按钮就有过机器核对的一发包。
+    # 预算按各步实测给：装依赖 ≈3 分钟、PyInstaller ≈2~3 分钟（本机实测）、
+    # electron-builder ≈2~4 分钟（含下 electron 与 NSIS 二进制），留一倍余量。
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-api.txt
+            requirements-rag.txt
+            requirements-cloud.txt
+            requirements-mcp.txt
+            requirements-package.txt
+
+      - name: 装打包机依赖（运行时五族 + PyInstaller）
+        # 那五族不是罗列：`packaging/rolecard-backend.spec` 会对 RUNTIME_PACKAGES 逐条
+        # `find_spec`，缺一条就**拒绝出产物**（`R28-34`）—— 因为 `collect_submodules()`
+        # 对没安装的包返回空列表且不报错，少装一族的代价正是"构建成功、里面缺东西"。
+        # `requirements-package.txt` 就是这一条 job 的前置：PyInstaller 从前没写在任何
+        # requirements 里，所以 fresh clone + CI 根本打不出包（这轮才发现）。
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-api.txt -r requirements-rag.txt -r requirements-cloud.txt -r requirements-mcp.txt -r requirements-package.txt
+
+      - name: 装 Node（只装壳那一份）
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: shell/package-lock.json
+
+      - name: 界面产物用入库那份 dist，这里不重 build
+        # dist 是有意入库的第二份事实（clone 后不装 node 也能起控制台），而"入库那份是不是
+        # 当前的"由 frontend job 的 `check_dist_sync.py` 把关；这条 job `needs: frontend`，
+        # 走到这里时它是绿的。在这里再 build 一次是重复付费（npm ci + vite），而判据已经有人
+        # 把着 —— 口径唯一，与 `R28-31` 同一个理由。
+        # `build_sidecar.py` 自己会在缺 dist 时拒绝出产物（退出码 2），这里先说清是哪一步的锅。
+        shell: pwsh
+        run: |
+          if (-not (Test-Path frontend/dist/index.html)) {
+            throw "入库的 frontend/dist 不见了 —— ②（build_sidecar）会直接拒绝出产物"
+          }
+
+      - name: 打随包后端（②）
+        run: python scripts/build_sidecar.py
+
+      - name: 事后尺子：src import 的每一族都在包里（R28-34）
+        run: python scripts/check_bundle_parity.py
+
+      - name: 随包后端起一次并答 /api/health
+        # 整条 job 的意义就在这一步：**没装过任何依赖的机器上**，那个 exe 能不能起成一个真答话
+        # 的后端。本机验收时它是 install_package.ps1 的第④道，而 CI 上不必装进系统也能量同一
+        # 件事 —— 直接跑 build/sidecar 里那份 exe，端口与判据都跟那道一致（不另起一套口径）。
+        # 只 Stop-Process 自己 Start-Process 拿到 pid 的那个进程。
+        shell: pwsh
+        env:
+          DATA_ROOT: ${{ runner.temp }}/rc-sidecar-data
+          MODEL_PIN_ON_STARTUP: "0"
+        run: |
+          $exe = "build/sidecar/rolecard-backend/rolecard-backend.exe"
+          if (-not (Test-Path $exe)) { throw "没有 $exe —— ② 没产出可执行后端" }
+          $p = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
+          $body = ""
+          try {
+            for ($i = 1; $i -le 45; $i++) {
+              Start-Sleep -Seconds 2
+              if ($p.HasExited) { throw "随包后端起了又退（exit=$($p.ExitCode)），第 $i 次探测" }
+              try {
+                $h = Invoke-WebRequest -Uri "http://127.0.0.1:8000/api/health" -UseBasicParsing -TimeoutSec 5
+                if ($h.StatusCode -eq 200) { $body = $h.Content; break }
+              } catch { }
+            }
+            if (-not $body) { throw "90 秒内 /api/health 没答 200" }
+            Write-Host "随包后端答了：$body"
+          } finally {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: 打 NSIS 安装包（④）
+        working-directory: shell
+        # 两条命令之间**逐条查退出码**（09-28 轮 `R28-26` 那条教训的 Windows 版）：pwsh 里
+        # `a; b` 的这一步只认最后一条的返回码，于是 `npm ci` 失败被后面那条盖掉，报出来是
+        # "electron-builder 找不到目录"这种指错地方的红。
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { throw "npm ci 失败（exit=$LASTEXITCODE）—— 后面那步不该跑" }
+          npm run package
+          if ($LASTEXITCODE -ne 0) { throw "electron-builder 失败（exit=$LASTEXITCODE）" }
+
+      - name: 产物核对并上传
+        shell: pwsh
+        run: |
+          # 文件名里的版本来自 shell/package.json —— 那里禁止写死版本号（version parity 那条
+          # 断言看着呢），所以这里用通配匹配，不再造第三个版本来源。
+          $files = @(Get-ChildItem "shell/release/rolecard-agent-*-x64.exe" -ErrorAction SilentlyContinue)
+          if ($files.Count -ne 1) {
+            $seen = @(Get-ChildItem shell/release -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) -join ", "
+            throw "期望正好 1 个安装包，实际 $($files.Count)。shell/release 里是：$seen"
+          }
+          $mb = [math]::Round($files[0].Length / 1MB, 2)
+          # 体积是一条**读数**，只有低得离谱才红：那意味着随包后端根本没进 extraResources
+          # （② 成功但 ④ 指错了目录）。09-29 那一份是 192.03 MB，不拿它当断言 —— 它会随
+          # 依赖版本漂，而漂了不等于坏。
+          if ($files[0].Length -lt 60MB) { throw "安装包只有 $mb MB：随包后端多半没进 extraResources" }
+          Write-Host "安装包 $($files[0].Name) = $mb MB"
+
+      # 这条 job **不装进 runner**（装完还要起壳窗看健康，那是本机 install_package.ps1 的活，
+      # 规矩见 docs/开发流程.md）。产物进 artifact，人要装就下载它再跑那条脚本。
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rolecard-agent-installer
+          path: shell/release/rolecard-agent-*-x64.exe
+          retention-days: 14

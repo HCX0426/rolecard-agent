@@ -24,6 +24,21 @@ COPY src/ ./src/
 COPY frontend/dist/ ./frontend/dist/
 COPY scripts/ ./scripts/
 
+# 以**非 root**跑（09-28 轮 `R28-29`）。为什么现在改：镜像里那三条写入（sqlite / chroma /
+# uploads）全落在 /app/data，root 跑起来的容器对编排器是黑盒 —— 探针看不到"活着但没就绪"，
+# 而数据卷的属主是 root，等于把"这台机器上的数据归谁"写死成"归容器里那个万能账号"。
+# uid 固定成 10001 而不是让系统挑：挂卷的人要能对着这一个数字 chown。
+# ⚠️ 换这一步之前**已有的** `rolecard-data` 卷还是 root 属主，非 root 进程打不开它，
+# 症状是启动即报 sqlite 无法打开 —— 修一次就够：
+#   docker run --rm --user root -v rolecard-data:/app/data <image> \
+#     sh -c 'chown -R 10001:10001 /app/data'
+# （本仓库还没把镜像发给任何人，所以这条迁移目前没有真实受众。）
+RUN groupadd --system --gid 10001 rolecard \
+    && useradd --system --uid 10001 --gid rolecard --home-dir /app --no-create-home rolecard \
+    && mkdir -p /app/data \
+    && chown -R 10001:10001 /app/data
+USER 10001:10001
+
 EXPOSE 8000
 # 容器内绑 0.0.0.0 是标准做法；但 create_app 有公网护栏：非回环 + AUTH_MODE=off 会**拒绝启动**
 # （把"忘记配鉴权就公网裸奔"变成起不来的硬失败）。公网部署必须显式开鉴权：
@@ -31,6 +46,14 @@ EXPOSE 8000
 #     -v rolecard-data:/app/data <image>
 # RUN_API_HOST 让护栏看到实际绑定地址（uvicorn 的 --host 不会自动进环境变量）。
 ENV RUN_API_HOST=0.0.0.0
+# 存活探针（`R28-29` 的另一半）：编排器据此判断"进程在 ≠ 能服务"，`restart: unless-stopped`
+# 这类策略也才有东西可读。判据用**应用自己那条豁免路径** `/api/health`，所以：
+#   * 不需要在镜像里装 curl（slim 基座没有，装它等于给攻击面多加一个能出网的二进制）；
+#   * AUTH_MODE=on 时也不会永远 unhealthy —— `AUTH_EXEMPT_PATHS` 默认就含这一条，
+#     这条探针顺带把"豁免确实生效"钉在镜像里（CI 的 docker job 会等它变 healthy）。
+# 端口读 `RUN_API_PORT`（shell 形式才展开得到环境变量；exec 形式的 CMD 不走 shell）。
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import os,urllib.request as u; u.urlopen('http://127.0.0.1:'+os.environ.get('RUN_API_PORT','8000')+'/api/health',timeout=4)" || exit 1
 # 入口走 scripts/run_api.py，**不是**直调 uvicorn（09-28 轮 `R28-30`）：那三条启动期动作只长在
 # 启动器里 —— `_maybe_configure_cloud_backend()`（给了 SILICONFLOW_API_KEY 就注册云端后端并设为
 # 默认）、`_resolve_data_paths()`（数据路径与 CWD 解耦）、`force_utf8_stdio()`（打包/容器里

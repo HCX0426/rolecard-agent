@@ -318,9 +318,13 @@ def check_installer_scope() -> None:
     少装一族的症状永远不在装的人自己身上（他的机器早就装过了），所以这条只能机器查。
 
     判据：`RUNTIME_REQ_FILES` 是"任何一条能跑起完整产品的路径都得有"的那四份，
-    逐个入口现读它引用了哪些 `requirements*.txt`。dev / ocr / mcp **不在表内**：
-    那三份按形态有意分开装（dev 不进生产运行树、paddle 必须独立 venv、mcp 由随包后端自己带），
-    把它们一起比会天天误报。
+    逐个入口现读它引用了哪些 `requirements*.txt`。dev / ocr / mcp / package **不在表内**：
+    那几份按形态有意分开装（dev 不进生产运行树、paddle 必须独立 venv、mcp 由随包后端自己带、
+    package 只有打包机要），把它们一起比会天天误报。
+
+    另一半（同一轮 `R28-32` 加的）：**磁盘上每一份 requirements*.txt 都要在这两张表里之一**。
+    新增一族却没人分类，症状与"少装一族"完全一样而方向相反 —— 它被某条路径默默需要着，
+    却没有任何一处写着"这条路径装过它"。空理由不算理由，照样红。
     """
     # 生效行与注释行都算数：`install.bat` 的提示句里出现文件名不算"装过"，所以只取
     # 真正执行 pip 的那一行；镜像与 CI 的写法各异，统一用"这一行引用了这个文件"来判。
@@ -359,6 +363,30 @@ def check_installer_scope() -> None:
     )
     if missing:
         fails.append(f"installer surfaces miss runtime deps: {missing}")
+
+    # 另一半：磁盘上每一份 requirements*.txt 都要在两张表里之一（空理由不算理由）。
+    SEPARATE_BY_SHAPE = {
+        "requirements-dev.txt": "开发/CI 依赖，不进生产运行树",
+        "requirements-ocr.txt": "paddle 与主环境冲突，必须独立 venv（见该文件开头）",
+        "requirements-mcp.txt": "只有接入外部 MCP server 的部署要装",
+        "requirements-package.txt": "只有打包机要（PyInstaller，见 ci.yml 的 windows-release）",
+    }
+    unclassified = [
+        p.name
+        for p in sorted(ROOT.glob("requirements*.txt"))
+        if p.name not in RUNTIME_REQ_FILES and p.name not in SEPARATE_BY_SHAPE
+    ]
+    blank = [name for name, why in SEPARATE_BY_SHAPE.items() if not why.strip()]
+    ok_class = not unclassified and not blank
+    out(
+        "requirements 分类",
+        ok_class,
+        "; ".join([f"没分类：{unclassified}", f"空理由：{blank}"][:2])
+        if not ok_class
+        else f"{len(RUNTIME_REQ_FILES)} 份运行时 + {len(SEPARATE_BY_SHAPE)} 份按形态分开，都有理由",
+    )
+    if not ok_class:
+        fails.append(f"requirements files missing a classification: {unclassified or blank}")
 
 
 def check_version_parity() -> None:
@@ -1048,8 +1076,9 @@ def check_dependency_layering() -> None:
 
     判据：AST 扫 `src/**/*.py` 的全部 import（含函数内的 lazy import —— 那条路径被触发
     同样 500），顶层模块名去 stdlib、去第一方后，归一化（下划线→连字符）后必须在
-    **非 dev** 的 `requirements*.txt` 里声明 —— dev 层不进随包运行树，生产 import 靠它
-    兜等于没兜（httpx 当时正是"只有 dev 声明 + langchain-core 传递"的双侥幸）。
+    **运行层**的 `requirements*.txt` 里声明 —— dev 层与打包机层（`-package`，只有
+    PyInstaller）不进随包运行树，生产 import 靠它们兜等于没兜（httpx 当时正是"只有 dev
+    声明 + langchain-core 传递"的双侥幸）。
     声明侧不读 pyproject：依赖 parity 那条已保证 pyproject 与 requirements 一致，这里
     只对一份事实面。import 名 ≠ 发行版名的（如 `import tavily` ← `tavily-python`）走
     显式别名表 —— 新映射缺了就红，把表补上即可，别名表本身就是"模块↔发行版"的登记处。
@@ -1058,9 +1087,11 @@ def check_dependency_layering() -> None:
     import_dist_aliases = {"tavily": "tavily-python"}
 
     declared: set[str] = set()
+    # 只有**运行层**能给 src 的 import 背书：dev 与打包机（-package）两层都不在随包运行树里。
+    non_runtime = {"requirements-dev.txt", "requirements-package.txt"}
     for req in sorted(ROOT.glob("requirements*.txt")):
-        if req.name == "requirements-dev.txt":
-            continue  # dev 依赖不进随包运行树，不能为 src 的生产 import 背书
+        if req.name in non_runtime:
+            continue
         for line in req.read_text(encoding="utf-8").splitlines():
             name = line.split("#", 1)[0].strip()
             if not name:

@@ -166,7 +166,12 @@ cd frontend && npm ci && npm run build
 ```bash
 # Docker（dist 已入库，镜像里没有 node）
 docker build -t rolecard-agent .
-docker run -p 8000:8000 -v rolecard-data:/app/data rolecard-agent
+# 必须显式给鉴权：镜像里绑的是 0.0.0.0，而"非回环 + AUTH_MODE=off"是**拒绝启动**的硬护栏
+# （CI 的 docker job 就在断言这条）。容器里没有"回环"可言 —— 要给 -p 映射就得开鉴权。
+docker run -p 8000:8000 -v rolecard-data:/app/data \
+  -e AUTH_MODE=on -e AUTH_CREDENTIALS=<user>:<pass> rolecard-agent
+# 镜像以 uid 10001（非 root）跑，并对 /api/health 做 HEALTHCHECK。换到这版镜像之前
+# **已经存在**的 rolecard-data 卷还是 root 属主，要 chown 一次 —— 命令在 Dockerfile 尾注。
 
 # CI：push 即跑（GitHub Actions）—— ruff + mypy + 全量离线测试（覆盖率阈值 85%）+
 #     一致性核查 + 前端 vitest / tsc / build
