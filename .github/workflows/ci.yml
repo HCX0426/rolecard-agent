@@ -103,16 +103,12 @@ jobs:
         # 后端托管的正是 `frontend/dist`，而且它被有意入库（clone 后不装 node 也能起控制台）。
         # 改了前端却没重建 = 源码是新的、镜像与安装包带的是旧界面，而且它不报任何错。
         run: |
-          # 判据必须与 `scripts/gate.py` 那一份**逐字相同**（09-28 轮 `R28-22`）：从前这里用
-          # `git diff --quiet`，它看不见 **untracked 的新产物** —— 一次构建只净增文件时
-          # （改名后的 chunk 常见这种形状）CI 检查空过，而本机门禁红。两条命令讲两套话，
-          # 等于这个检查在 CI 上不存在。`git status --porcelain` 含未跟踪项，且与构建产物
-          # 该不该入库无关：这里要问的就是"工作树里还有没有构建出来的东西没进提交"。
-          test -z "$(git status --porcelain -- frontend/dist)" || {
-            echo "本提交里的 frontend/dist 与 frontend/src 不同步：重新 npm run build 后把 dist 一起提交";
-            git status --short frontend/dist;
-            exit 1;
-          }
+          # 这一条**不在这里写判据**（09-28 轮 `R28-31`）：从前这里是一条 `git diff --quiet`，
+          # 而本机 `gate.py` 那条是 `git status --porcelain` —— 后者看得见未跟踪的新产物，
+          # 前者看不见，于是"构建只净增改名后的 chunk"这种形状 CI 空过、本机红。
+          # 一条检查在两个地方各写一遍迟早漂开，所以现在两边调同一个脚本
+          # （runner 上的系统 python3 就够：它只跑 git，不装任何依赖）。
+          python3 scripts/check_dist_sync.py
 
   docker:
     name: 镜像真跑（build + 起 + 护栏 + 一次真 API 往返）
