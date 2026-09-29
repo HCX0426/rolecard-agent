@@ -141,7 +141,7 @@ export default function ReachoutPanel({
     if (
       !(await confirm({
         title: "从抽屉里删掉这条？",
-        body: "只是删掉这条提醒记录。她说出口的那句话仍然留在你们的对话里（那是她下次开口的依据）—— 要连话一起抹掉，去对话里删那条。",
+        body: "只是删掉这条提醒记录。那句话仍然留在对话里（它是下次主动开口的依据）—— 要连话一起抹掉，去对话里删那条。",
         confirmText: "删除",
         danger: true,
       }))
@@ -234,7 +234,7 @@ export default function ReachoutPanel({
             {!!data?.items.length && (
               <button
                 onClick={() => void clearAll()}
-                title="清空投递记录（对话里她说过的话不动）"
+                title="清空投递记录（对话里说过的话不动）"
                 className="text-xs text-slate-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400"
               >
                 清空
@@ -394,7 +394,7 @@ function MessageRow({
       </button>
       <button
         onClick={onDelete}
-        title="从抽屉里删掉这条记录（她说过的话仍留在对话里）"
+        title="从抽屉里删掉这条记录（那句话仍留在对话里）"
         className="absolute right-1 top-1 hidden h-5 w-5 place-items-center rounded text-xs text-slate-400 hover:bg-red-50 hover:text-red-500 group-hover:grid dark:hover:bg-red-900/30"
       >
         ✕

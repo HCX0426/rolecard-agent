@@ -24,7 +24,7 @@ export const SYNC_ITEMS: { kind: SyncKind; label: string; hint: string }[] = [
   { kind: "card", label: "角色卡", hint: "含你改过的人设、范例与能力开关" },
   { kind: "thread", label: "会话", hint: "整条历史搬过去，检查点在对面重建" },
   { kind: "memory", label: "记忆", hint: "关于你的长期事实，按 uid 比不按字面" },
-  { kind: "reachout", label: "主动消息", hint: "她主动找过你的那些话，只追加" },
+  { kind: "reachout", label: "主动消息", hint: "角色主动找过你的那些话，只追加" },
 ];
 
 export type UploadMode = "merge" | "append" | "replace";

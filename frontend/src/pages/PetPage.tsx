@@ -73,7 +73,7 @@ function shorten(text: string): string {
 function rowOf(mine: boolean): { className: string; "aria-label": string } {
   return mine
     ? { className: MINE_ROW, "aria-label": "我说" }
-    : { className: "break-words", "aria-label": "它说" };
+    : { className: "break-words", "aria-label": "对方说" };
 }
 
 /** 我这一方靠右 + 一个浅蓝泡（用户 09-26："像对话界面那样我的回复显示在右边，才有对话感"）。
@@ -208,7 +208,7 @@ export default function PetPage() {
   const refreshHistory = useCallback(async () => {
     const tid = threadIdRef.current;
     if (!tid || !expandedRef.current || !showContentRef.current || busyRef.current) {
-      // 闸没开的时候这一格也不该留着：面板收起时读到的"她在说"，到展开那一刻已经作数了；
+      // 闸没开的时候这一格也不该留着：面板收起时读到的"对方在说"，到展开那一刻已经作数了；
       // 而自己这扇窗在流的时候，屏幕上已经有 `live` 那个气泡，两处都画就是重影。
       setMirror(null);
       return;
@@ -787,7 +787,7 @@ export default function PetPage() {
     // 「重新生成」只对**已落库的她那句**提：正在流的那一行还没有 id，重问它等于打断自己；
     // 而这一轮正在跑的时候它也在，只是点不动（灰着比消失更诚实："现在不能，等它完"）。
     const mid = row?.getAttribute("data-mid") || undefined;
-    if (row?.getAttribute("aria-label") === "它说" && mid) {
+    if (row?.getAttribute("aria-label") === "对方说" && mid) {
       entries.push({ label: "重新生成这一轮", disabled: busy, run: () => void regenerateFrom(mid) });
     }
     if (busy) entries.push({ label: "停止这一轮生成", run: stop });
@@ -992,7 +992,7 @@ export default function PetPage() {
                 登记里没有"来源"，所以不写"来自控制台"。 */}
             {showContent && !busy && mirror !== null && (
               <div data-testid="pet-inflight-mirror">
-                <p {...rowOf(false)}>{mirror || "她在说…"}</p>
+                <p {...rowOf(false)}>{mirror || "对方在说…"}</p>
                 <p className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">
                   正在生成 · 不是这一扇窗发的
                 </p>
@@ -1056,7 +1056,7 @@ export default function PetPage() {
             // 宽度按锚点那块（200）而不是 w-full：画布是 560 宽，w-full 会把气泡拉成一条
             // 横穿桌面的白带子（它还是不透明白底 ⇒ 读起来像屏幕被划了一道）。
           >
-            {showContent ? shorten(latest.text) : "它说了话 · 内容已隐藏"}
+            {showContent ? shorten(latest.text) : "有新消息 · 内容已隐藏"}
             {unreadOfLatest > 1 && (
               <span className="ml-1 rounded-full bg-blue-600 px-1.5 text-[10px] text-white">
                 +{unreadOfLatest - 1}

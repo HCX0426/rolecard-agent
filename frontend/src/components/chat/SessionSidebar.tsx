@@ -89,10 +89,11 @@ export default function SessionSidebar({
               还没有角色，也还没有对话
             </p>
           )}
-          {/* 固定的那一栏：一行一个角色。没被找过也照样列着 —— 点一下才 ensure 出那条线。 */}
+          {/* 固定的那一栏：一行一个角色。没被找过也照样列着 —— 点一下才 ensure 出那条线。
+              组名不写「她们」（09-29 决策 3·R28-44：这一栏列的是角色，不是"女性角色"）。 */}
           {laneRows.length > 0 && (
             <p className="px-2 pb-1 pt-1 text-[11px] font-medium text-slate-400 dark:text-slate-500">
-              她们
+              角色
             </p>
           )}
           {laneRows.map(({ role, row }) => {
@@ -117,7 +118,7 @@ export default function SessionSidebar({
                 {unread > 0 && (
                   <span
                     className="shrink-0 rounded-full bg-blue-600 px-1.5 text-[10px] text-white"
-                    title={`${unread} 条她主动找你，还没读`}
+                    title={`${unread} 条主动找你，还没读`}
                   >
                     {unread}
                   </span>
@@ -131,7 +132,7 @@ export default function SessionSidebar({
                       onClearLane(row.thread_id, role.role_name);
                     }}
                     className="shrink-0 rounded px-1 py-0.5 text-[11px] text-slate-300 opacity-0 transition-opacity hover:bg-slate-100 hover:text-red-500 group-hover:opacity-100 dark:text-slate-600 dark:hover:bg-slate-700/50"
-                    title={`清空与${role.role_name}的对话（她的角色、记忆与收件箱记录都不动）`}
+                    title={`清空与${role.role_name}的对话（角色卡、记忆与收件箱记录都不动）`}
                   >
                     清空
                   </button>

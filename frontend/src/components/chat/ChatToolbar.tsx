@@ -207,7 +207,7 @@ export default function ChatToolbar({
                         {unread > 0 && (
                           <span
                             className="rounded-full bg-blue-600 px-1.5 text-[10px] text-white"
-                            title={`${unread} 条她主动找你，还没读`}
+                            title={`${unread} 条主动找你，还没读`}
                           >
                             {unread}
                           </span>

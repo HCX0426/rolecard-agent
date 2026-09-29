@@ -254,7 +254,7 @@ export default function ChatPage({
    */
   async function openLane(roleId: string): Promise<string | null> {
     if (sendingRef.current) {
-      setStatus("这一轮还在跑 —— 先按「停止」或等它说完再换人", "warn");
+      setStatus("这一轮还在跑 —— 先按「停止」或等这一轮说完再换人", "warn");
       return null;
     }
     try {
@@ -265,7 +265,7 @@ export default function ChatPage({
       await refreshSessions();
       return ensured.thread_id;
     } catch (e) {
-      setStatus(`打开她的对话失败：${(e as Error).message}`, "warn");
+      setStatus(`打开那条主动会话失败：${(e as Error).message}`, "warn");
       return null;
     }
   }
@@ -284,8 +284,8 @@ export default function ChatPage({
   async function clearLane(threadId: string, name: string) {
     const ok = await confirm({
       title: `清空与${name}的对话？`,
-      body: "这条对话的消息会全部删除，不可恢复。她这个角色、她的记忆、以及收件箱里"
-        + "「她哪天主动找过我」那些记录都不动。",
+      body: `这条对话的消息会全部删除，不可恢复。${name} 的角色卡、记忆与收件箱记录都不动，`
+        + "哪天主动找过你那些记录也不动。",
       confirmText: "清空",
       danger: true,
     });
@@ -320,7 +320,7 @@ export default function ChatPage({
     if (!ids.length) return;
     const ok = await confirm({
       title: `删除 ${ids.length} 个临时话题？`,
-      body: "这些对话及其全部消息会被永久删除，不可恢复。「她们」那一栏里每个角色的固定对话"
+      body: "这些对话及其全部消息会被永久删除，不可恢复。「角色」那一栏里每个角色的固定对话"
         + "不在这批里，删不到。",
       confirmText: "删除",
       danger: true,
@@ -781,11 +781,11 @@ export default function ChatPage({
             {/* 别处（桌宠）那一轮**正在生成**的那半句（R26-38）。
                 判据只有一个：后端的在飞登记非空。不在这扇窗自己流的时候才画 —— 那时
                 `live` 已经承载同一段字了，两处都画就是重影。
-                空串显的是"她在说"而不是空白：那一段里唯一的事实就是她在打字。 */}
+                空串显的是"对方在说"而不是空白：那一段里唯一的事实就是有人在打字。 */}
             {!live && mirror !== null && (
               <div className="w-full" data-testid="inflight-mirror">
                 <div className="caret">
-                  {mirror ? <Markdown text={mirror} /> : "她在说…"}
+                  {mirror ? <Markdown text={mirror} /> : "对方在说…"}
                 </div>
                 <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
                   正在生成 · 不是这一扇窗发的

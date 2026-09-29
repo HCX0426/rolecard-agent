@@ -168,7 +168,7 @@ describe("TimelineDrawer 事件簿", () => {
   it("空态说清「怎么才会有东西」，而不是留一块空白", async () => {
     renderDrawer();
     await waitFor(() =>
-      expect(screen.getByText(/还没有关于它的事 —— 聊几句/)).toBeTruthy(),
+      expect(screen.getByText(/还没有记录 —— 聊几句/)).toBeTruthy(),
     );
   });
 

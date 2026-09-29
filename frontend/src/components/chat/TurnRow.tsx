@@ -163,7 +163,7 @@ export default function TurnRow({
                 判据就是 `turn.user === null`，**不新增后端字段**（那会给同一件事
                 造第二个事实面）。它与"这一段不出现耗时"是同一条判据，所以两者
                 永远不会互相矛盾。 */}
-            {!turn.user && <Tag tone="blue">她主动说的</Tag>}
+            {!turn.user && <Tag tone="blue">主动说的</Tag>}
             {dur && <span>耗时 {dur}</span>}
             <button
               onClick={() => onCopy(turn.answer!.content)}

@@ -389,10 +389,10 @@ describe("PetPage 点开面板（§7：想回话不用开控制台）", () => {
     );
     await mount();
     await open(shell);
-    expect(screen.getByTestId("pet-inflight-mirror").textContent).toContain("她在说");
+    expect(screen.getByTestId("pet-inflight-mirror").textContent).toContain("对方在说");
   });
 
-  it("我说的靠右、它说的靠左（09-26 用户：像对话界面那样才有对话感）", async () => {
+  it("我说的靠右、对方说的靠左（09-26 用户：像对话界面那样才有对话感）", async () => {
     const shell = withShell();
     apiMock.get.mockImplementation(async (url: string) =>
       url === "/api/roles"
@@ -413,7 +413,7 @@ describe("PetPage 点开面板（§7：想回话不用开控制台）", () => {
     // jsdom 不把 Tailwind 排成版，所以这里量的是"那条规则挂上了没有"；真实位置在真浏览器
     // 里另外量过一次（我那一行的左边界确实落在它那一行的右边，见本轮验收）。
     const mine = screen.getByLabelText("我说") as HTMLElement;
-    const theirs = screen.getByLabelText("它说") as HTMLElement;
+    const theirs = screen.getByLabelText("对方说") as HTMLElement;
     expect(mine.tagName).toBe("P");
     expect(mine.className).toContain("ml-auto");
     expect(mine.className).toContain("max-w-[86%]");
@@ -916,7 +916,7 @@ describe("PetPage 在桌宠上回话（③：不进控制台就能聊）", () =>
     });
     expect(panel.textContent).toContain("先说今天累不累");
     // 正文一个字都还没有，但屏幕上已经在长东西 —— 所以那一行不该再补一个多余的省略号。
-    const line = screen.getByLabelText("它说") as HTMLElement;
+    const line = screen.getByLabelText("对方说") as HTMLElement;
     expect(line.textContent).toBe("");
 
     await act(async () => {
@@ -1106,7 +1106,7 @@ describe("PetPage 托盘的「显示消息内容」旗子（§7.2 第 4 条：�
     withShell(false);
     withHistory(HIDDEN);
     await mount();
-    expect(screen.getByText("它说了话 · 内容已隐藏")).toBeTruthy();
+    expect(screen.getByText("有新消息 · 内容已隐藏")).toBeTruthy();
     expect(screen.queryByText(HIDDEN)).toBeNull();
 
     await hover();
@@ -1308,7 +1308,7 @@ describe("PetPage 面板的右键菜单（09-26 用户选的形态：页内自�
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
 
-    fireEvent.contextMenu(screen.getByLabelText("它说"));
+    fireEvent.contextMenu(screen.getByLabelText("对方说"));
     const items = menuItems();
     expect(items.map((b) => b.textContent)).toEqual([
       "复制选中的文字",
@@ -1328,7 +1328,7 @@ describe("PetPage 面板的右键菜单（09-26 用户选的形态：页内自�
     await openWithHistory();
     streamEditMock.mockImplementation(async () => undefined);
 
-    fireEvent.contextMenu(screen.getByLabelText("它说"));
+    fireEvent.contextMenu(screen.getByLabelText("对方说"));
     fireEvent.click(menuItems()[2]);
     await act(async () => {
       for (let i = 0; i < 8; i += 1) await Promise.resolve();
@@ -1363,7 +1363,7 @@ describe("PetPage 面板的右键菜单（09-26 用户选的形态：页内自�
     });
 
     // 正在流的那一行没有 id（还没落库），所以它给"停止"而不是"重新生成"
-    const hers = screen.getAllByLabelText("它说");
+    const hers = screen.getAllByLabelText("对方说");
     const live = hers[hers.length - 1] as HTMLElement;
     expect(live.getAttribute("data-mid")).toBeNull();
     fireEvent.contextMenu(live);

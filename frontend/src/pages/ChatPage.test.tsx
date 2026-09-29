@@ -655,7 +655,7 @@ describe("ChatPage 把主动开口画成单独一条（不吞上一问的答、�
     expect(screen.queryByText(/耗时 \d+ 分/)).toBeNull();
   });
 
-  it("「她主动说的」角标只挂在主动那句上（R26-40 ①）", async () => {
+  it("「主动说的」角标只挂在主动那句上（R26-40 ①）", async () => {
     stubProactiveThread();
     render(
       <ToastProvider>
@@ -667,13 +667,13 @@ describe("ChatPage 把主动开口画成单独一条（不吞上一问的答、�
     await vi.waitFor(() => expect(screen.getByText("三月末的风")).toBeTruthy());
 
     // 这一段两句话都是助手说的，但只有一句是她**主动**说的（另一句前面有提问）。
-    expect(screen.getAllByText("她主动说的")).toHaveLength(1);
+    expect(screen.getAllByText("主动说的")).toHaveLength(1);
     // **位置也要对**：光数个数咬不住"标到了回答那一段"（那也只有一个）。
     // 每一轮那个容器是 `div.group`（`key={turn.key}` 那个），角标必须落在主动那句里。
     const proactive = screen.getByText("三月末的风").closest(".group");
     const answered = screen.getByText("这话一说出口").closest(".group");
-    expect(proactive?.textContent).toContain("她主动说的");
-    expect(answered?.textContent).not.toContain("她主动说的");
+    expect(proactive?.textContent).toContain("主动说的");
+    expect(answered?.textContent).not.toContain("主动说的");
   });
 });
 
@@ -761,7 +761,7 @@ describe("ChatPage 镜像「她正在说的那半句」", () => {
     return h;
   }
 
-  it("她在说的那半句 0.8 秒内就画出来，一个字还没投送时也有那一格", async () => {
+  it("对方在说的那半句 0.8 秒内就画出来，一个字还没投送时也有那一格", async () => {
     vi.useFakeTimers();
     try {
       const h = await mountAndOpen();
@@ -771,7 +771,7 @@ describe("ChatPage 镜像「她正在说的那半句」", () => {
 
       h.speaking("");
       await vi.advanceTimersByTimeAsync(1_000);
-      expect(screen.getByTestId("inflight-mirror").textContent).toContain("她在说");
+      expect(screen.getByTestId("inflight-mirror").textContent).toContain("对方在说");
 
       h.speaking("今天想先把那几份报告");
       await vi.advanceTimersByTimeAsync(1_000);
@@ -1078,12 +1078,12 @@ describe("ChatPage 侧栏：每个角色一条固定线 + 临时话题批量清�
     await waitFor(() => expect(screen.getByText("这个是啥")).toBeTruthy());
   }
 
-  it("「她们」一栏每个角色一行：没线的那个也列着，且固定行不给删除只给清空", async () => {
+  it("「角色」一栏每个角色一行：没线的那个也列着，且固定行不给删除只给清空", async () => {
     await mountSidebar();
     // 通用助手一条线都还没有 —— 照样列着，副标题告诉你点下去会发生什么
     expect(screen.getByText("还没开始 · 点一下就在这里")).toBeTruthy();
     // 未读徽章是铃铛那次轮询的同一份数（不是自己再算一遍）
-    expect(screen.getByTitle("3 条她主动找你，还没读")).toBeTruthy();
+    expect(screen.getByTitle("3 条主动找你，还没读")).toBeTruthy();
     // 空白线程不进列表
     expect(screen.queryByText("新对话")).toBeNull();
     // 删除按钮只属于那两条临时话题；固定行上一个都没有（清空另算）

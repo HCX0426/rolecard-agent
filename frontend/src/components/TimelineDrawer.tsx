@@ -188,7 +188,7 @@ export default function TimelineDrawer({
       {!error && !loading && items.length === 0 && (
         // 空态要说清"怎么才会有东西"，不然它读起来像坏了。
         <p className="text-xs text-slate-400 dark:text-slate-500">
-          还没有关于它的事 —— 聊几句，或在角色卡上让它主动找你。
+          还没有记录 —— 聊几句，或在角色卡上开启「主动找你」。
         </p>
       )}
       <div className="space-y-4">
