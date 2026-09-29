@@ -552,6 +552,10 @@ class Runtime:
         # 而 -wal 坏掉等于那两天全没（备份走的是 sqlite `backup()`，它读得到 WAL，所以
         # **备份不受影响**，受影响的是"盘坏 / 文件被删"这一条）。正常退出路径上做一次
         # `TRUNCATE`，界面上就回到"主文件是最新的、WAL 是空的"这个可判断的形状。
+        # ⚠️ 但**别把这件事只指望在这里**（`R28-48`）：这台机器的发版形态没有一条退出路径跑得
+        # 到这一行 —— 壳自己退出与安装包关旧进程都是 `taskkill /T /F`（硬杀），跑不到 lifespan
+        # 的 `finally`。真正天天兑现的那一次在启动：`checkpointer.truncate_wal_at_boot`。
+        # 这里留着，管的是能走到这一步的另外两条路（POSIX 的 SIGTERM、开发态 Ctrl+C）。
         with contextlib.suppress(Exception):
             self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         with contextlib.suppress(Exception):

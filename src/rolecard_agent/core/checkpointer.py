@@ -27,6 +27,7 @@ conversation rather than at startup, which is why the factory here always calls 
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 from typing import cast
 
@@ -273,6 +274,48 @@ def reclaim_if_fragmented(
     return freed
 
 
+#: 启动那次 WAL 截断**临时**压到的忙等上限（毫秒）。
+#: 压住它是刻意的：`connect()` 那条 5 秒 `busy_timeout` 是写给正常请求的，而有人拿着长读事务时
+#: `wal_checkpoint(TRUNCATE)` 会**一直等到超时才放弃**（实测：6.6 MB 的 -wal + 一条挂着的读事务
+#: → 返回 busy 且占住 5,038 ms）。开机不该被另一个实例扣住五秒，所以这里只等 250 ms，
+#: 拿不到就下一趟再来 —— 少收一次不影响正确性，多等五秒影响的是"打开就能用"。
+_WAL_TRUNCATE_BUSY_MS = 250
+
+
+def truncate_wal_at_boot(conn: SqlConnection) -> int:
+    """开机把 -wal 落回主库并截断；返回 -wal 里剩下的页数（0 = 收干净了；-1 = 这次没做成）。
+
+    为什么这一半要放在**启动**而不是只放在退出（`R28-48`）：这台机器的发版形态没有任何一条
+    退出路径跑到 `Runtime.shutdown()` —— 壳自己退出走 `shell/main/backend.ts` 的
+    `taskkill /PID … /T /F`，安装包关旧进程同理，两个都是硬杀；只有 POSIX 的 SIGTERM 与
+    开发态 Ctrl+C 才走得到 lifespan 那个 `finally`。于是 `R28-16` 的"正常退出时把 WAL 收干净"
+    在**装机形态上从不兑现**（本机实测读数：装包那一刻 -wal 仍是 6,266,552 B，与两天前那条
+    红项一字不差）。启动这一刻是同一份文件上唯一"确定还没有别的写者"的时刻，实测代价
+    58 ms（6.6 MB WAL、无人竞争：主库 503 KB → 7.09 MB、-wal 归零，数据一行不少）。
+    """
+    try:
+        prev = int(conn.execute("PRAGMA busy_timeout").fetchone()[0])
+    except sqlite3.Error:
+        prev = 5000
+    try:
+        conn.execute(f"PRAGMA busy_timeout = {_WAL_TRUNCATE_BUSY_MS}")
+        busy, log, _done = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    except sqlite3.OperationalError as exc:
+        print(f"[checkpoints] 这次没能收 WAL（{exc}）—— 不影响数据，下次启动再试", flush=True)
+        return -1
+    finally:
+        with contextlib.suppress(sqlite3.Error):
+            conn.execute(f"PRAGMA busy_timeout = {prev}")
+    if int(busy or 0):
+        print(
+            f"[checkpoints] WAL 没截断：有连接正读着同一份库，{int(log)} 页还压在 -wal 里"
+            f"（只等了 {_WAL_TRUNCATE_BUSY_MS} ms，开机不等第二个实例）",
+            flush=True,
+        )
+        return int(log)
+    return 0
+
+
 def prune_checkpoints(
     conn: SqlConnection,
     *,
@@ -316,6 +359,9 @@ def make_checkpointer(conn: SqlConnection) -> SqliteSaver:
     # 空洞来自收口/删除/迁移重建 —— 本机实测 86% 的页是 freelist 就是这么来的。
     # 放在修剪之后：修剪自己会释放页，紧接着这一步就能把它们真还给磁盘。
     reclaim_if_fragmented(conn)
+    # WAL 也收在这一刻（`R28-48`）：发版形态没有任何退出路径跑到 `Runtime.shutdown()`，
+    # 所以"落回主库"只能在开机这一头做。排在 VACUUM 之后：先让文件缩小，再把 -wal 归零。
+    truncate_wal_at_boot(conn)
     if compacted or pruned:
         print(
             f"[checkpoints] 祖先快照收口 {compacted} 行、修剪 {pruned} 行"

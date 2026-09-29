@@ -75,7 +75,10 @@ def connect(path: str | Path) -> sqlite3.Connection:
     # 设了 `journal_size_limit` 之后，SQLite 在检查点时把 -wal **截断到这个字节数以内** ——
     # 一次 -wal 损坏丢的是"上限那一截"，不是两天。8 MB 是刻意留的余量：日常一次会话写入
     # 远小于它，太小的话每次检查点都要 ftruncate，反而在白盘上做无用功。
-    # 另一半在 `Runtime.shutdown()`：进程正常退出时把 -wal 直接 checkpoint(TRUNCATE) 干净。
+    # 另一半在 `checkpointer.truncate_wal_at_boot()`：**开机**时把 -wal 直接 checkpoint(TRUNCATE)
+    # 干净（`R28-48`）。原先那半条挂在 `Runtime.shutdown()` 上，而装机形态没有任何一条退出路径
+    # 跑得到那里 —— 壳退出与安装包关旧进程都是 `taskkill /T /F`（硬杀），只有 POSIX 的 SIGTERM
+    # 与开发态 Ctrl+C 才走 lifespan 的 `finally`。`shutdown()` 那一半留着（那两条路仍然要收）。
     conn.execute("PRAGMA journal_size_limit = 8388608")
     return conn
 
