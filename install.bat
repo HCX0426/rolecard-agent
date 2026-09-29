@@ -14,8 +14,11 @@ if exist ".venv\Scripts\python.exe" (
   python -m venv .venv || goto :fail
 )
 
-echo [2/5] backend deps: core + api + rag
-".venv\Scripts\python.exe" -m pip install -r requirements.txt -r requirements-api.txt -r requirements-rag.txt || goto :fail
+echo [2/5] backend deps: core + api + rag + cloud
+rem cloud is installed, not just advertised (R28-12): the model page lets you add any
+rem OpenAI-compatible backend, and without langchain-openai saved = 500. Same family as the
+rem Docker image gap (R28-11) that CI caught on the first real build.
+".venv\Scripts\python.exe" -m pip install -r requirements.txt -r requirements-api.txt -r requirements-rag.txt -r requirements-cloud.txt || goto :fail
 
 echo [3/5] frontend: npm ci + build  (dist/ is what the server hosts)
 pushd frontend
@@ -28,8 +31,8 @@ echo [4/5] database schema + built-in roles (idempotent)
 
 echo [5/5] done.
 echo       Next: run start.bat  -  console opens at http://127.0.0.1:8000/
-echo       Optional: pip install -r requirements-cloud.txt  for cloud backends
-echo                 requirements-ocr.txt needs its OWN venv (see that file first)
+echo       Optional: requirements-ocr.txt needs its OWN venv (see that file first)
+echo                 requirements-mcp.txt too - but the packaged backend ships it (R28-34)
 pause
 exit /b 0
 

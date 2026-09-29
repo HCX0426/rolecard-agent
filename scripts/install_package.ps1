@@ -21,8 +21,19 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$installer = Join-Path $root "shell\release\rolecard-agent-0.1.0-x64.exe"
+# 版本号从 shell/package.json 现读，不写死（09-28 轮 `R28-26`）：这里原先有两条硬编码的
+# `0.1.0` —— 装上一步的路径，和下面那条"安装包进程退干净没有"的匹配。升版本时它们
+# **静默失效而不是报错**：路径那条会在下一个语句炸，而进程匹配那条只会一直匹配不到任何东西，
+# 于是"installer 没退出"这个检查永远通过（一个从不失败的检查比没有检查更坏）。
+$shellPkg = Get-Content -Raw -Encoding UTF8 (Join-Path $root "shell\package.json") | ConvertFrom-Json
+$shellVersion = $shellPkg.version
+$installerName = "rolecard-agent-$shellVersion-x64.exe"
+$installer = Join-Path $root "shell\release\$installerName"
 $installedExe = Join-Path $env:LOCALAPPDATA "Programs\rolecard-agent\rolecard-agent.exe"
+if (-not (Test-Path $installer)) {
+    $found = @(Get-ChildItem (Join-Path $root "shell\release") -Filter "rolecard-agent-*.exe" -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+    throw "installer not found: $installerName (shell/package.json says version=$shellVersion; present in shell\release: $($found -join ', '))"
+}
 # 打印一律用 ASCII：Windows PowerShell 在 GBK 控制台下打中文会花屏（`R26-24` 那一族）。
 
 function EntryAsset([string]$file) {
@@ -82,7 +93,7 @@ $p = Start-Process -FilePath $installer -ArgumentList "/S" -Wait -PassThru
 $secs = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1)
 Write-Host "      exit=$($p.ExitCode) elapsed=${secs}s"
 if ($p.ExitCode -ne 0) { throw "installer returned $($p.ExitCode)" }
-$lingering = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like "rolecard-agent-0.1.0*" })
+$lingering = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like "rolecard-agent-$shellVersion*" })
 if ($lingering.Count -gt 0) { throw "installer did not exit: $($lingering.Count) process(es) left" }
 
 # 验货 A：装进去的那份 dist 必须是仓库刚构建出来的那份。判据用 `index.html` 里引的

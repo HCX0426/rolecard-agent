@@ -46,6 +46,13 @@ DEFAULT_LOCAL_BACKEND: dict[str, Any] = {
 # 配置示例见 .env.example 的 MODEL_BACKENDS 注释 —— 不进默认后端集，避免
 # "定义了但没人消费"的死配置（那是 P15 类问题）。
 
+#: 已经退役、任何配置示例与文档都**不该再出现**的本地模型名（09-28 轮 `R28-09`）。
+#: 写成数据而不是散文，是为了让门禁能查：`.env.example` 曾经把 `qwen2.5vl:7b` 当示例、
+#: 又写"对话模型必须是文本版 qwen2.5:7b" —— 照官方引导配出来的第一步就是已知会 400 的
+#: `bind_tools`，而这份文件是新用户唯一会照着敲的东西。
+#: 上面那段沿革注释是**结论的来源**，这一份是它的机器可读形式；两处冲突时以这里为准。
+RETIRED_LOCAL_MODELS: tuple[str, ...] = ("qwen2.5:7b", "qwen2.5vl:7b")
+
 # Measured advice, not a hard limit of the framework: a longer chain makes a failure harder to
 # localise, and it hides "the answer got worse after degrading" from whoever reads the logs
 # (实施计划.md §8.5).

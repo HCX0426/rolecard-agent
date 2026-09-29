@@ -718,10 +718,12 @@ def runtime_payload(
         "obs",
         "观测",
         [
-            ("obs_backend", "OBS_BACKEND", "观测后端", None),
+            # 标签里就把"今天只有 local"写出来（09-28 轮 `R28-10`）：这一组是只读展示行，
+            # 但把 "LangSmith Key" 摆在那儿又什么都不说，等于邀请人填一个永远不生效的东西。
+            ("obs_backend", "OBS_BACKEND", "观测后端（只实现 local）", None),
             ("obs_emit_raw_text", "OBS_EMIT_RAW_TEXT", "记录原文", None),
-            ("langsmith_project", "LANGSMITH_PROJECT", "LangSmith 项目", None),
-            ("langsmith_api_key", "LANGSMITH_API_KEY", "LangSmith Key", None),
+            ("langsmith_project", "LANGSMITH_PROJECT", "LangSmith 项目（未实现）", None),
+            ("langsmith_api_key", "LANGSMITH_API_KEY", "LangSmith Key（未实现）", None),
         ],
     )
 

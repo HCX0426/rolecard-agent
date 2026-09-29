@@ -227,6 +227,16 @@ def check_config_contract() -> None:
         return text[2:] if text.startswith("./") else text
 
     pairs = re.findall(r'\("([A-Z][A-Z0-9_]+)",\s*"([a-z_0-9]+)"\)', cfg_text)
+    # 走 `from_env` **独立分支**的那几条（09-28 轮 `R28-14b`）：它们不在上面那张
+    # ("KEY","field") 表里，于是键名检查绿、默认值检查绿，而这一族的值漂移零兜底 ——
+    # 正是发现 9 留给门禁的那块盲区。补成表，是为了让下面那段比较**只有一份实现**，
+    # 而不是再写一套"看起来一样"的逻辑。
+    pairs += [
+        ("MODEL_THINKING", "model_thinking"),
+        ("MODEL_FALLBACKS", "model_fallbacks"),
+        ("MODEL_THINKING_MODELS", "model_thinking_models"),
+        ("MCP_SERVERS", "mcp_servers"),
+    ]
     env_values = dict(re.findall(r"^([A-Z][A-Z0-9_]+)=(.*)$", env_text, flags=re.M))
     settings = Settings()
     drifted: list[str] = []
@@ -239,6 +249,11 @@ def check_config_contract() -> None:
             same = example.strip().lower() in ({"true", "1"} if default else {"false", "0"})
         elif default is None:
             same = example.strip() == ""
+        elif isinstance(default, (list, tuple)):
+            # 逗号分隔的列表：`MODEL_FALLBACKS=` 那个空串就是"没有"，与 `[]` 同一个意思。
+            want = [str(x).strip() for x in default]
+            got = [x.strip() for x in example.split(",") if x.strip()]
+            same = want == got
         else:
             same = _norm(default).lower() == _norm(example).lower()
             if not same:
@@ -252,6 +267,98 @@ def check_config_contract() -> None:
         else f"{len(pairs) - len(_ENV_DEFAULT_EXEMPT)} 个默认值与 example 一致")
     if drifted:
         fails.append(f".env.example values drifted from Settings defaults: {drifted}")
+
+    # `MODEL_BACKENDS` / `MCP_SERVERS` 是 JSON blob，没有"默认值"可对 —— 它们能漂的是另一件事：
+    # **照着抄的那一段解析不了，或者过了 json 却过不了运行时校验**。
+    # 注释行也算（那是给人复制的那一行，不是散文）。
+    from pydantic import ValidationError  # noqa: PLC0415
+
+    from rolecard_agent.config import McpServerConfig, ModelBackend  # noqa: PLC0415
+
+    bad_json: list[str] = []
+    for line in env_text.splitlines():
+        stripped = line.lstrip("# ").strip()
+        for key, model in (("MODEL_BACKENDS", ModelBackend), ("MCP_SERVERS", McpServerConfig)):
+            if not stripped.startswith(f"{key}="):
+                continue
+            raw = stripped.split("=", 1)[1].strip()
+            if not raw:
+                continue
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                where = "注释行" if line.lstrip().startswith("#") else "生效行"
+                bad_json.append(f"{key}（{where}）不是合法 JSON：{exc}")
+                continue
+            try:
+                if isinstance(parsed, dict):
+                    {k: model(**v) for k, v in parsed.items()}
+                else:
+                    [model(**item) for item in parsed]
+            except (ValidationError, TypeError, ValueError) as exc:
+                bad_json.append(f"{key} 能解析但过不了运行时校验：{exc}")
+    ok_json = not bad_json
+    out(
+        "env example json valid",
+        ok_json,
+        "; ".join(bad_json[:2]) if bad_json else "两段 JSON 示例可解析可校验",
+    )
+    if bad_json:
+        fails.append(f".env.example JSON examples are unusable: {bad_json}")
+
+
+def check_installer_scope() -> None:
+    """四个安装入口必须装**同一组运行时依赖**（09-28 轮 `R28-11`/`R28-12` 那一族的闸）。
+
+    同一个坑这轮踩了三次，每次都是"某一条安装路径少装一族，而本机 .venv 恰好装过"：
+      * 镜像少 `requirements-cloud.txt` —— CI 第一发真跑就红在"配任何 OpenAI 兼容端点保存即 500"，
+        因为容器里没有 Ollama，云端 key 本来就是主用例；
+      * `install.bat` 只装 base+api+rag，cloud 那一族是结尾一句 `echo` 提示；
+      * README 快速开始第 2 步同病（决策 5 那轮补的）。
+    少装一族的症状永远不在装的人自己身上（他的机器早就装过了），所以这条只能机器查。
+
+    判据：`RUNTIME_REQ_FILES` 是"任何一条能跑起完整产品的路径都得有"的那四份，
+    逐个入口现读它引用了哪些 `requirements*.txt`。dev / ocr / mcp **不在表内**：
+    那三份按形态有意分开装（dev 不进生产运行树、paddle 必须独立 venv、mcp 由随包后端自己带），
+    把它们一起比会天天误报。
+    """
+    # 生效行与注释行都算数：`install.bat` 的提示句里出现文件名不算"装过"，所以只取
+    # 真正执行 pip 的那一行；镜像与 CI 的写法各异，统一用"这一行引用了这个文件"来判。
+    RUNTIME_REQ_FILES = (
+        "requirements.txt",
+        "requirements-api.txt",
+        "requirements-rag.txt",
+        "requirements-cloud.txt",
+    )
+    # 入口 → (文件, 认"装过了"的行特征)。刻意写死特征而不是通用正则：每条路径的形状本来就不一样。
+    surfaces = {
+        "install.bat": ("install.bat", "pip install"),
+        "Dockerfile": ("Dockerfile", "-r requirements"),
+        "ci.yml": (".github/workflows/ci.yml", "-r requirements"),
+        "README": ("README.md", "-r requirements"),
+    }
+    missing: list[str] = []
+    for label, (rel, marker) in surfaces.items():
+        path = ROOT / rel
+        if not path.exists():
+            missing.append(f"{label} 这个入口文件不见了（{rel}）")
+            continue
+        # README 的"快速开始"是带 \ 续行的代码块，按物理行找会漏后面几份 —— 压成一行再比。
+        # marker 单独查一次：整条 pip 行被删掉时也要红，而不是"少一份依赖"这种半句话。
+        flat = " ".join(path.read_text(encoding="utf-8", errors="ignore").split())
+        if marker not in flat:
+            missing.append(f"{label} 里找不到装依赖的那一行（没有 {marker!r}）")
+            continue
+        missing += [f"{label} 没引用 {req}" for req in RUNTIME_REQ_FILES if req not in flat]
+    out(
+        "installer scope parity",
+        not missing,
+        "; ".join(missing[:4])
+        if missing
+        else f"{len(surfaces)} 个安装入口都覆盖 {len(RUNTIME_REQ_FILES)} 份运行时依赖",
+    )
+    if missing:
+        fails.append(f"installer surfaces miss runtime deps: {missing}")
 
 
 def check_version_parity() -> None:
@@ -274,7 +381,10 @@ def check_version_parity() -> None:
     )
     api = grep_version(
         (ROOT / "src/rolecard_agent/api/main.py").read_text(encoding="utf-8"),
-        r'version="([^"]+)"',
+        # 读的是 `API_VERSION` 那个常量（`R28-26`）：从前这里是 `version="x.y.z"`，
+        # 恰好只盖住 FastAPI 那一处，而 `/api/health` 里还有一份手写副本在正则外面。
+        # 两处现在合成一份，检查也跟着读那一份。
+        r'^API_VERSION = "([^"]+)"',
     )
     shell = grep_version(
         (ROOT / "shell/package.json").read_text(encoding="utf-8"),
@@ -286,9 +396,26 @@ def check_version_parity() -> None:
     )
     bad: list[str] = []
     if py != api:
-        bad.append(f"pyproject {py} ≠ api/main.py {api}（注释承诺两者一致）")
+        bad.append(f"pyproject {py} ≠ api/main.py 的 API_VERSION {api}（注释承诺两者一致）")
     if shell != front:
         bad.append(f"shell/package.json {shell} ≠ frontend/package.json {front}")
+
+    # 安装脚本里**不许出现任何版本号字面量**（`R28-26` 的另一半）：它原来有两条硬编码的
+    # `0.1.0`，其中"installer 进程退干净没有"那条匹配的是 `rolecard-agent-0.1.0*` ——
+    # 升版本后它匹配不到任何东西，于是那个检查**永远通过**（而不是永远失败）。
+    # 结构上盖不住的检查就要求文件里没有副本可漂，这比对齐两份更稳。
+    ps1_raw = (ROOT / "scripts/install_package.ps1").read_text(encoding="utf-8", errors="ignore")
+    # 只查**代码行**：PowerShell 的 `#` 注释里写"从前这里是 0.1.0"是这件东西存在的理由，
+    # 不是可漂的副本。剥注释这件事本身就是这条检查的一半价值。
+    ps1 = "\n".join(line for line in ps1_raw.splitlines() if not line.lstrip().startswith("#"))
+    # `(?![\d.])` 是为了不把 `http://127.0.0.1:8000` 里的 "127.0.0" 当成版本号读出来 ——
+    # 第一版就被它骗过一次（报的版本字面量里有 127.0.0）。
+    literals = sorted({m.group(0) for m in re.finditer(r"(?<![\d.])\d+\.\d+\.\d+(?![\d.])", ps1)})
+    if literals:
+        bad.append(
+            f"install_package.ps1 里出现了版本号字面量 {literals} —— 版本从 shell/package.json 现读"
+        )
+
     detail = f"py={py} api={api} shell={shell} frontend={front}"
     out("version parity", not bad, "; ".join(bad) if bad else detail)
     if bad:
@@ -977,6 +1104,47 @@ def check_dependency_layering() -> None:
         )
 
 
+def check_env_example_models() -> None:
+    """.env.example 里出现的本地模型名，必须是现役的那一个 —— 退役的不许再提。
+
+    为什么单独立一条（2026-09-28 轮 `R28-09`）：这份文件是新用户唯一会照着敲的东西，
+    而它当时写的示例是 `qwen2.5vl:7b`、正文还写着"对话模型必须是**文本版 qwen2.5:7b**"，
+    对照的却是 `config.py` 里"qwen2.5 系均退役、默认 qwen3-vl:8b"——照它配出来的第一步
+    就是已知会 400 的 `bind_tools`（vl 版官方模板不支持工具调用）。
+    这不是"文档写旧了"，是**文档把人推向一个我们已经在代码里确认坏的配置**。
+
+    判据两侧都取自代码，不手抄：现役名 = `DEFAULT_LOCAL_BACKEND["model"]`，
+    退役名单 = `config.RETIRED_LOCAL_MODELS`（写在那里的理由就是这一条要能查）。
+    只看 `MODEL_BACKENDS=` 那两行与"对话模型必须是"那句 —— 注释里作为**历史沿革**提到
+    退役名的地方（比如解释为什么退役）不算，那是该留下的知识。
+    """
+    sys.path.insert(0, str(ROOT / "src"))
+    from rolecard_agent.config import DEFAULT_LOCAL_BACKEND, RETIRED_LOCAL_MODELS  # noqa: PLC0415
+
+    text = (ROOT / ".env.example").read_text(encoding="utf-8")
+    offenders: list[str] = []
+
+    # 1) 生效的 MODEL_BACKENDS 行（注释掉的示例行不算：那是"按需添加"的写法示范）
+    for line in text.splitlines():
+        if line.lstrip().startswith("#") or not line.startswith("MODEL_BACKENDS"):
+            continue
+        for retired in RETIRED_LOCAL_MODELS:
+            if retired in line:
+                offenders.append(f"{line.split('=', 1)[0]} 引用了退役模型 {retired}")
+
+    # 2) "对话模型必须是 X"那种带命令性的句子
+    for retired in RETIRED_LOCAL_MODELS:
+        if re.search(rf"(必须|应当|要用)[^。\n]*{re.escape(retired)}", text):
+            offenders.append(f"正文把退役模型 {retired} 当要求写")
+
+    if DEFAULT_LOCAL_BACKEND.get("model") in ("", None):
+        offenders.append("config.py 的默认本地后端没有 model —— 这条检查失去现役名基准")
+
+    out("env example models", not offenders, "配置示例里的模型名与代码一致")
+    if offenders:
+        fails.append("env example advertises retired models: " + "; ".join(offenders))
+
+
 def check_role_whitelists_resolve() -> None:
     """Every tool name in a built-in role's whitelist must resolve to a declared tool.
 
@@ -1249,6 +1417,8 @@ def main() -> int:
     check_version_parity()
     check_dead_config()
     check_dependency_layering()
+    check_env_example_models()
+    check_installer_scope()
     check_role_whitelists_resolve()
     check_us_traceability()
     check_exemplar_leaks_eval_answers()

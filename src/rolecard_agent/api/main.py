@@ -78,6 +78,13 @@ from rolecard_agent.domains.registry import DOMAINS, build_registry
 from rolecard_agent.rag.retriever import KnowledgeBase
 from rolecard_agent.storage.db import set_request_epoch
 
+#: 这个应用对外的**唯一版本号**：`FastAPI(version=…)` 与 `/api/health` 都读它。
+#: 从前这里是两份手写的 `"0.3.0"`（09-28 轮 `R28-26`），而 `check_version_parity` 的正则只认
+#: `version="x.y.z"` 那一形 —— 健康接口里那份**根本不在对齐检查范围内**：升版本时
+#: pyproject 与 FastAPI 跟着走，`/api/health` 继续报旧号，而没有任何东西会红。
+#: 合成一个常量之后 parity 比的是 `pyproject` ↔ 这一处，两份手写变成一份。
+API_VERSION = "0.3.0"
+
 # M5 前端构建产物的位置：开发态是仓库根下的 `frontend/dist`，打包态是随包资源里的同名目录
 # （`bundle_root()` 认得这两种落点）。可用环境变量 FRONTEND_DIST 覆盖（部署布局变化时不必移动
 # 文件）。未构建时控制台路由返回回退提示页，后端 API 不受影响。
@@ -195,7 +202,8 @@ def create_app(
         finally:
             runtime.shutdown()
 
-    app = FastAPI(        title="rolecard-agent 管理控制台", version="0.3.0", lifespan=_lifespan
+    app = FastAPI(
+        title="rolecard-agent 管理控制台", version=API_VERSION, lifespan=_lifespan
     )
     app.state.ctx = AppContext(runtime=runtime)
 
@@ -345,7 +353,7 @@ def create_app(
 
         只回状态与当前认证档位 —— 便于部署后确认"认证到底开没开"，不含任何凭证信息。
         """
-        return {"status": "ok", "version": "0.3.0", "auth_mode": env_settings.auth_mode}
+        return {"status": "ok", "version": API_VERSION, "auth_mode": env_settings.auth_mode}
 
     dist_dir = Path(os.environ.get("FRONTEND_DIST") or _DEFAULT_DIST)
     if (dist_dir / "index.html").exists():
