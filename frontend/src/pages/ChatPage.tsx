@@ -423,7 +423,7 @@ export default function ChatPage({
       const parts = [
         report.added && `新增 ${report.added} 条`,
         report.updated && `更新 ${report.updated} 条`,
-        report.skipped && `忽略 ${report.skipped} 行看不懂的输出`,
+        report.skipped && `${report.skipped} 条没读懂，没有写入`,
       ].filter(Boolean);
       const cost = report.tokens ? ` · 用去 ${report.tokens} tokens` : "";
       // 像重复的只**报数**、不自动合并：字面度量分不清"换个说法"与"换个值"（实测
@@ -788,7 +788,7 @@ export default function ChatPage({
                   {mirror ? <Markdown text={mirror} /> : "对方在说…"}
                 </div>
                 <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-                  正在生成 · 不是这一扇窗发的
+                  正在生成 · 不是这里发起的
                 </p>
               </div>
             )}

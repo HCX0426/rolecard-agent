@@ -153,20 +153,28 @@ class ApprovalService:
     def _check_token(
         approval_id: int, expected: str | None, given: str | None, age_seconds: float
     ) -> None:
-        """令牌的三件事：存在、相等、没过期。比对用常量时间比较（不比对长度）。"""
+        """令牌的三件事：存在、相等、没过期。比对用常量时间比较（不比对长度）。
+
+        这三句话会**原样出现在审批抽屉里**（面板显示后端 403 的 detail，因为它带着"下一步
+        去哪"），所以措辞按"用户看得懂、知道该做什么"写，不按内部字段名写（09-28 轮 A 类）。
+        代码里这个字段仍叫 `decide_token`，那是事实面；界面要说的是一件事：**这次批准的凭据
+        不成立了，重新打开待批列表就好**。
+        """
         if not expected:
             # 老库里补列之前的 pending 行没有令牌 —— 宁可让它重新提交，也不要"缺令牌就放行"。
             raise ApprovalUnauthorised(
-                f"审批记录 {approval_id} 没有决定令牌（早于令牌机制建立），请让角色重新提交这条命令"
+                f"这条审批（#{approval_id}）没有随附的批准凭据，比它更早就建立过 —— "
+                "请让角色重新提交一次这条命令"
             )
         if age_seconds > DECIDE_TOKEN_TTL_SECONDS:
             raise ApprovalUnauthorised(
-                f"审批记录 {approval_id} 的决定令牌已过期（超过 "
-                f"{DECIDE_TOKEN_TTL_SECONDS // 60} 分钟），请重新查看待批列表后再批"
+                f"这条审批（#{approval_id}）的批准凭据已超时（放了超过 "
+                f"{DECIDE_TOKEN_TTL_SECONDS // 60} 分钟）—— 重新打开待批列表再批一次"
             )
         if not given or not hmac.compare_digest(expected, given):
             raise ApprovalUnauthorised(
-                f"批准审批记录 {approval_id} 需要决定令牌（随待批列表下发），且必须一致"
+                f"批准这条审批（#{approval_id}）需要那条待批列表下发的批准凭据，两者必须一致 —— "
+                "列表可能已经刷新过，重新打开待批列表再批一次"
             )
 
     def finish(self, approval_id: int, result: dict[str, Any]) -> None:

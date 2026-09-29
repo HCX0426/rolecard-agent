@@ -186,7 +186,9 @@ def test_decide_without_token_403(client: TestClient, db_path: str) -> None:
     row = _insert((client, db_path), "echo no-token")
     res = _decide(client, row["id"], "approve", token=None)
     assert res.status_code == 403
-    assert "决定令牌" in res.json()["detail"]
+    # 断的是"这句话提到了批准凭据"，不是内部字段名 —— 界面会把 detail 原样显示给用户
+    # （09-28 轮 A 类：`决定令牌` 是代码里的字段名，用户看不见这个概念）。
+    assert "批准凭据" in res.json()["detail"]
     assert _approval_rows(db_path)[0]["status"] == "pending"
 
 

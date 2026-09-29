@@ -158,6 +158,6 @@ describe("ApprovalPanel 审批抽屉", () => {
       const btn = screen.getByRole("button", { name }) as HTMLButtonElement;
       expect(btn.disabled).toBe(true);
     }
-    expect(screen.getByText(/决定令牌已用掉或过期/)).toBeTruthy();
+    expect(screen.getByText(/已经批过了，或者这份列表是旧的/)).toBeTruthy();
     expect(apiMock.decideApproval).not.toHaveBeenCalled();
   });

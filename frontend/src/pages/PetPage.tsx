@@ -946,13 +946,13 @@ export default function PetPage() {
                   type="button"
                   onClick={() => threadId && shellBridge()?.openSession(threadId)}
                   className="block w-full rounded border border-slate-200 bg-slate-50 px-2 py-1 text-left text-[10px] text-slate-500 hover:text-blue-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
-                  title={`这扇窗只画最近 ${PANEL_MESSAGES} 条，完整的在那条会话里（同一条，不是另一份）`}
+                  title={`这里只放最近 ${PANEL_MESSAGES} 条 —— 点进去就是同一条会话，不是另一份`}
                 >
                   ↑ 上面还有 {historyTotal - history.length} 条 · 在控制台看全部
                 </button>
               ) : (
                 <p className="text-[10px] text-slate-400 dark:text-slate-500">
-                  ↑ 上面还有 {historyTotal - history.length} 条（这扇窗只画最近 {PANEL_MESSAGES} 条）
+                  ↑ 上面还有 {historyTotal - history.length} 条（这里只放最近 {PANEL_MESSAGES} 条）
                 </p>
               )
             )}
@@ -994,7 +994,7 @@ export default function PetPage() {
               <div data-testid="pet-inflight-mirror">
                 <p {...rowOf(false)}>{mirror || "对方在说…"}</p>
                 <p className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">
-                  正在生成 · 不是这一扇窗发的
+                  正在生成 · 不是这里发起的
                 </p>
               </div>
             )}

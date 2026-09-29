@@ -173,7 +173,7 @@ export default function ApprovalPanel({
                         与其让人点一下吃 403，不如当场说清怎么恢复（禁用必须配说明）。 */}
                     {!row.decide_token && (
                       <span className="text-[10px] leading-tight text-slate-400 dark:text-slate-500">
-                        这条的决定令牌已用掉或过期 —— 关掉重开待批列表再批
+                        这条已经批过了，或者这份列表是旧的 —— 关掉重开待批列表再批
                       </span>
                     )}
                   </div>

@@ -340,7 +340,7 @@ export function AddModelDrawer({
             <p className="mt-2 rounded-lg bg-slate-50 px-2.5 py-2 text-[11px] leading-relaxed text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
               工具：{tri(probe.tools)} · 视觉：{tri(probe.vision)}
               {probe.vision_source === "uploaded-image" && "（已外发测试图）"}
-              {probe.vision_source === "free-metadata" && "（来自 /api/show 元数据，未外发）"} ·
+              {probe.vision_source === "free-metadata" && "（来自引擎自报的能力，未外发）"} ·
               本次调用 {probe.calls_used} 次
               {probe.detail && <><br />{probe.detail}</>}
             </p>

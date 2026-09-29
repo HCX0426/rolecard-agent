@@ -359,8 +359,11 @@ describe("PetPage 点开面板（§7：想回话不用开控制台）", () => {
       // `findBy*` 的轮询等的是真定时器，会白等到超时（这条在同一天咬过对话页的用例）。
       const box = screen.getByTestId("pet-inflight-mirror");
       expect(box.textContent).toContain("我正说着的一截");
-      // 措辞不许替我们断言来源：登记里没有"谁发的"这一项
-      expect(box.textContent).toContain("不是这一扇窗发的");
+      // 措辞不许替我们断言来源：登记里没有"谁发的"这一项 —— 09-29 改文案时把它写成了
+      // "那一轮是控制台发起的"，就是这条用例挡下来的（那一扇窗可能根本没开：还有别的
+      // 标签页、脚本调用、B/S 那台）。所以只说"不是这里发起的"。
+      expect(box.textContent).toContain("不是这里发起的");
+      expect(box.textContent).not.toContain("控制台");
       expect(box.textContent).not.toContain("桌宠");
 
       inflight = null; // 她那句落地

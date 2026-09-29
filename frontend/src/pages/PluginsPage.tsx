@@ -32,25 +32,15 @@ export default function PluginsPage() {
         />
         <DomainPlugins />
 
-        <div className="mt-6 rounded-xl border border-dashed border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 p-5">
-          <h3 className="text-sm font-medium text-slate-700 dark:text-slate-200">如何新增一个领域插件？</h3>
-          <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-            <li>
-              新建 <code>src/rolecard_agent/domains/&lt;id&gt;/</code> 包：models.py /
-              service.py / tools.py / schema.sql
-            </li>
-            <li>
-              在 <code>domains/registry.py</code> 的 <code>DOMAINS</code> 追加 id，并在
-              build_registry 里接线它的工具工厂（漏接线启动即报错）
-            </li>
-            <li>重启服务：建表、插件行、工具注册自动完成；在角色卡里为角色勾选新工具</li>
-          </ol>
-          <p className="mt-2 text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
-            为什么不做界面动态安装（MCP 市场）：让运行中的 Agent 自己扩权，等于把权限边界
-            交给运行时注入——显式注册是本项目权限模型的前提。RAG 检索不受此限：
-            它是内核能力，按角色作用域授权（设置页 → 知识库）。
-          </p>
-        </div>
+        {/* 这一节原来是"如何新增一个领域插件？"的三步开发者说明（摆在用户界面上）。
+            它搬进了 docs/开发流程.md —— 使用者要知道的只有下面这一句：为什么这里没有
+            "安装"按钮。目录路径、registry 接线这些不是产品文案。 */}
+        <p className="mt-6 rounded-xl border border-dashed border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-5 py-4 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+          这里只有<b>开关</b>，没有"安装"：能力由本仓库显式注册，运行中的助手不能给自己扩权。
+          想加一个新领域插件，步骤在仓库的 <code>docs/开发流程.md</code>；
+          接入外部能力请走<b>设置 → 扩展</b>的 MCP。RAG 检索是内核能力，不属于任何插件，
+          按角色作用域授权（在角色卡页勾选）。
+        </p>
       </div>
     </div>
   );

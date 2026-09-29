@@ -310,7 +310,7 @@ function MemoryPanel() {
       const parts = [
         p.merged && `合并 ${p.merged} 组`,
         p.invalidated && `让 ${p.invalidated} 条过时事实失效`,
-        p.skipped && `忽略 ${p.skipped} 行看不懂的输出`,
+        p.skipped && `${p.skipped} 条没读懂，没有写入`,
       ].filter(Boolean);
       const cost = p.tokens ? ` · 用去 ${p.tokens} tokens` : "";
       setMemMsg(
@@ -441,7 +441,7 @@ function MemoryPanel() {
         api.post<MemoryPayload>(`/api/settings/memory/item/${keep.id}/merge/${drop.id}${scopeQs()}`, {
           text: mergeDraft.trim() || null,
         }),
-      "已合并成一条（另一条只是退役，没删行）",
+      "已合并成一条（原来那条没有删，只是不再被引用）",
     ).then(() => setMergePick([]));
   };
 
@@ -585,7 +585,7 @@ function MemoryPanel() {
         <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
           {memScope
             ? "这是该角色自己的记忆（回忆触发只读这一份），与全局记忆和其它角色隔离。编辑/清空只作用于本角色。"
-            : "全局记忆注入每个角色的对话。AI 检测到你明确说出的可复用事实（称呼 / 偏好 / 背景）会通过 memory_save 写入，并同步进当前角色的专属记忆。"}
+            : "全局记忆注入每个角色的对话。AI 检测到你明确说出的可复用事实（称呼 / 偏好 / 背景）会自己记下来，并同步进当前角色的专属记忆。"}
         </p>
         {/* 自动提取的节奏：**一个**控件同时管"要不要自动跑"和"多久跑一次"（0 = 只留手动）。
             放在记忆卡而不是运行环境页 —— 它和「整理记忆」是同一件事的两个入口，

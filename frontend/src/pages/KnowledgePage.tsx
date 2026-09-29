@@ -93,9 +93,9 @@ function KnowledgePanel() {
     <div className="mt-6">
       {status && <Notice>{status}</Notice>}
       <p className="rounded-lg bg-slate-50 dark:bg-slate-800/50 px-3 py-2.5 text-xs leading-relaxed text-slate-400 dark:text-slate-500">
-        知识库是<b>内核能力</b>（search_knowledge），不属于任何插件：库归内核，角色经
-        knowledge_scopes 声明可检索的作用域（角色卡页配置）。上传 .txt/.md/.pdf/.docx/.pptx/.xlsx
-        或图片会自动入库到 health_reports 作用域；切换嵌入后端后删除 data/chroma 目录重启即重建。
+        知识库不属于任何插件，关掉某个插件不会让它消失。某个角色能不能检索哪一处知识，
+        在<b>角色卡页</b>勾选作用域；上传 .txt/.md/.pdf/.docx/.pptx/.xlsx 或图片会自动入库。
+        换了嵌入模型之后，旧向量对新模型没有意义 —— 用下面各作用域的「重建」按钮重算一遍。
       </p>
 
       {metrics && (
@@ -139,8 +139,7 @@ function KnowledgePanel() {
       <div className="mt-3 space-y-3">
         {scopes.length === 0 && (
           <Card className="border-dashed p-8 text-center text-sm text-slate-400 dark:text-slate-500">
-            知识库还是空的：在对话页上传 .txt/.md 文档，或运行 scripts/seed_demo_data.py
-            注入演示知识。
+            知识库还是空的：在对话页上传 .txt/.md/.pdf 等文档，索引建好后这里就会列出对应作用域。
           </Card>
         )}
         {scopes.map((s) => (
