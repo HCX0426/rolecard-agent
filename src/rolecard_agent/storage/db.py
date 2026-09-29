@@ -397,6 +397,9 @@ def _migrate(conn: SqlConnection) -> None:
     #     幂等：新 id == 旧 id（已带身份）的不动；新库没有 legacy 行一轮跑过。这两件是本步
     #「换主键 + 换线程 id」两笔账，放在同一个 if 里是为了一次迁移只判断一次"是不是 B2 之前的库"。
     if "user_id" not in _columns(conn, "role_proactive_state"):
+        # 前置 DROP：与上面 B1 那一处同一个理由（`R28-15`，红档）。这一步死在半路的话，
+        # 残留的空 `__b2` 会让下次启动的 CREATE 报 `already exists`，bootstrap 永久打不开。
+        conn.execute("DROP TABLE IF EXISTS role_proactive_state__b2")
         conn.execute(
             "CREATE TABLE role_proactive_state__b2 ("
             " user_id TEXT NOT NULL DEFAULT 'local-user', role_id TEXT NOT NULL,"
@@ -466,6 +469,10 @@ def _migrate(conn: SqlConnection) -> None:
     #    （语义 = 上线前测的本机用量，不是谁漏账）；新行由 `usage.record_usage(user_id=…)` 按
     #    花谁的 key 落格。判断"旧形态"用有没有 user_id 列（与列级迁移同口径）。
     if "user_id" not in _columns(conn, "token_usage_day"):
+        # 前置 DROP（R28-15 同族）：legacy 事务模式下 DDL 立即落盘，进程死在 CREATE 与 INSERT
+        # 之间就会留下一张空暂存表，下次启动的 CREATE 直接 `already exists` —— 而这一次不是
+        # "升级没成功"，是**整个库再也打不开**。DROP IF EXISTS 让这一步可重放。
+        conn.execute("DROP TABLE IF EXISTS token_usage_day_new")
         conn.execute(
             "CREATE TABLE token_usage_day_new ("
             " day TEXT NOT NULL, user_id TEXT NOT NULL DEFAULT 'local-user',"

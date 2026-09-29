@@ -39,10 +39,17 @@ if not (DIST / "index.html").exists():
 
 datas = [(str(DIST), "frontend/dist")]
 # 建表脚本：目标目录 = 运行时 PACKAGE_ROOT 之下那个相对位置，一字不能错。
-for rel in ("core", "roles", "domains/health", "domains/finance"):
+# 内核那两份写死（它们是本仓的骨架，不会新增）；**域那一份按文件系统现数**
+# （审计 `R28-33`）：运行时走的是 `storage/db.py:domain_schema_path()` 的
+# `domains/<id>/schema.sql`，是"域目录里有 schema 就建表"的动态口径。spec 原来手抄四份，
+# 于是新增一个带 schema 的域插件 ⇒ 源码态建表正常、**打包态建表直接失败**，
+# 而构建期一句报警都没有。数文件这件事只该有一个出处。
+for rel in ("core", "roles"):
     sql = PKG / rel / "schema.sql"
     if sql.exists():
         datas.append((str(sql), f"rolecard_agent/{rel}"))
+for sql in sorted((PKG / "domains").glob("*/schema.sql")):
+    datas.append((str(sql), f"rolecard_agent/domains/{sql.parent.name}"))
 
 hiddenimports = collect_submodules("rolecard_agent")
 

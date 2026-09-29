@@ -124,6 +124,55 @@ def test_every_by_design_exception_signs_a_reason() -> None:
         assert not reason.strip().startswith("TODO"), f"{name} 的理由还是占位"
 
 
+def test_declared_schemas_follow_the_domain_directories(tmp_path: Path) -> None:
+    """新增一个带 schema 的域目录 ⇒ 声明侧自己长出来，不靠人手抄进 spec（`R28-33`）。"""
+    pkg = tmp_path / "src" / "rolecard_agent"
+    for rel in ("core", "roles", "domains/health", "domains/finance"):
+        _write(pkg / rel / "schema.sql", "CREATE TABLE t (x INTEGER);")
+    before = mod.declared_schema_files(tmp_path / "src")
+    assert before == [
+        "rolecard_agent/core/schema.sql",
+        "rolecard_agent/roles/schema.sql",
+        "rolecard_agent/domains/finance/schema.sql",
+        "rolecard_agent/domains/health/schema.sql",
+    ], before
+
+    # 新域插件落一份 schema.sql 进来
+    _write(pkg / "domains" / "sleep" / "schema.sql", "CREATE TABLE sleep_log (x INTEGER);")
+    after = mod.declared_schema_files(tmp_path / "src")
+    assert "rolecard_agent/domains/sleep/schema.sql" in after, after
+    # 没有 schema.sql 的域目录不该被硬造一份出来
+    (pkg / "domains" / "empty_domain").mkdir()
+    again = mod.declared_schema_files(tmp_path / "src")
+    assert "rolecard_agent/domains/empty_domain/schema.sql" not in again, again
+
+
+def test_bundle_schema_inventory_reads_the_internal_tree(tmp_path: Path) -> None:
+    """包内清单从 `_internal/` 现数。
+
+    目录不存在时回空集是**故意的**：那份空集对着非空声明就是红，而不是"没得查"。
+    """
+    internal = tmp_path / "_internal" / "rolecard_agent"
+    _write(internal / "core" / "schema.sql", "SELECT 1;")
+    _write(internal / "domains" / "health" / "schema.sql", "SELECT 1;")
+    found = mod.bundled_schema_files(tmp_path)
+    assert found == {
+        "rolecard_agent/core/schema.sql",
+        "rolecard_agent/domains/health/schema.sql",
+    }, found
+    assert mod.bundled_schema_files(tmp_path / "没打过的包") == set()
+
+
+def test_the_real_repo_declares_core_roles_and_every_domain() -> None:
+    """真树哨兵：这条检查读的是 `src/`，路径根漂了就等于没查。"""
+    root = Path(SCRIPT).resolve().parents[1]
+    declared = mod.declared_schema_files(root / "src")
+    assert "rolecard_agent/core/schema.sql" in declared
+    assert "rolecard_agent/roles/schema.sql" in declared
+    for domain_dir in (root / "src" / "rolecard_agent" / "domains").glob("*/schema.sql"):
+        assert f"rolecard_agent/domains/{domain_dir.parent.name}/schema.sql" in declared
+
+
 def test_the_real_repo_tree_is_scanned_by_the_gate_script() -> None:
     """整条尺子对着**真树**跑一次不崩，且 src 真 import 的那一族被扫到了（数量级哨兵）。
 

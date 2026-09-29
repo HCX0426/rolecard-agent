@@ -25,3 +25,19 @@ docs
 tests
 CONTRIBUTING.md
 README.md
+
+# 构建产物与打包链（R28-28：这一块此前完全没排除，每次 docker build 白传 ~1 GB）
+# `build/` 里不只有体积：随包后端的 sidecar、探针库副本与那份真库备份 zip 都在里面 ——
+# **她的健康数据与对话**。Dockerfile 目前是选择性 COPY（`src`/`frontend/dist`/`scripts`/
+# requirements），所以这些并没有进镜像；但上下文照样整包发给 daemon，而将来任何人把这里
+# 改成 `COPY . .` 就会一次性把它烤进镜像。这条排除是**防那一次改动**，不是防今天。
+build
+shell
+node_modules
+*.egg-info
+# 本机密钥与本地形态配置：容器一律走环境变量，不进上下文、不进镜像层。
+.env
+.env.*
+*.log
+*.zip
+.workbuddy

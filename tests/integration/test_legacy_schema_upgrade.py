@@ -431,3 +431,104 @@ def test_audited_shortfall_is_still_the_shortfall(
     ]
     assert not unaddable, f"{commit} 出现了补列器补不了的形状：{unaddable}"
     conn.close()
+
+
+def test_b1_residual_staging_table_does_not_permanently_block_boot(tmp_path: Path) -> None:
+    """B1 整表重建死在半路（暂存表已 CREATE、老表还没 DROP）⇒ 下次启动**必须能自己爬回来**。
+
+    为什么单独钉这一条（09-28 轮 `R28-15`，红档）：Python sqlite3 的 legacy 事务模式里
+    **DDL 立即落盘**，而下面那条 INSERT 才开事务 —— 进程死在两句之间，库里就留下一张空的
+    `token_usage_day_new`。老版本的 CREATE 没有 IF NOT EXISTS，于是下次启动直接
+    `OperationalError: table token_usage_day_new already exists`：这不是"这次升级没成"，
+    是**整个库从此打不开**。原有十条用例全走顺利路径，零盖半途。
+    """
+    db = tmp_path / "app.db"
+    conn = connect(db)
+    bootstrap(conn, enabled_domains=DOMAINS)
+    conn.execute("DROP TABLE token_usage_day")
+    conn.execute(
+        "CREATE TABLE token_usage_day ("
+        " day TEXT NOT NULL, backend TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0,"
+        " prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0,"
+        " reasoning_tokens INTEGER NOT NULL DEFAULT 0, unreported INTEGER NOT NULL DEFAULT 0,"
+        " PRIMARY KEY (day, backend))"
+    )
+    conn.execute(
+        "INSERT INTO token_usage_day (day, backend, calls) VALUES ('2026-09-20', 'x', 3)"
+    )
+    # 崩溃现场：暂存表建好了、老表还在、数据没搬 —— 就是"死在 CREATE 与 INSERT 之间"。
+    conn.execute(
+        "CREATE TABLE token_usage_day_new ("
+        " day TEXT NOT NULL, user_id TEXT NOT NULL DEFAULT 'local-user',"
+        " backend TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0,"
+        " PRIMARY KEY (day, user_id, backend))"
+    )
+    conn.commit()
+
+    bootstrap(conn, enabled_domains=DOMAINS)  # 修之前这一行就抛
+
+    pk = [r[1] for r in conn.execute("PRAGMA table_info(token_usage_day)") if r[5] > 0]
+    assert pk == ["day", "user_id", "backend"], f"残留清掉了但升级没跑完：{pk}"
+    row = conn.execute(
+        "SELECT day, user_id, calls FROM token_usage_day WHERE backend = 'x'"
+    ).fetchone()
+    assert (row["day"], row["user_id"], row["calls"]) == ("2026-09-20", "local-user", 3), (
+        "重放把老账抹了 —— 恢复必须是**把这一步做完**，不是把暂存表删掉就算了"
+    )
+    assert "token_usage_day_new" not in _tables(conn), "暂存表留在库里当垃圾"
+    conn.close()
+
+
+def test_b2_residual_staging_table_does_not_permanently_block_boot(tmp_path: Path) -> None:
+    """B2 同一个形状（`role_proactive_state__b2`）—— 两处都是整表重建，一条用例只证明一处修了。
+
+    这条还顺带钉住 B2 那半步不能丢：**线程 id 带身份的重映射**在重建之后。残留只清了暂存表、
+    重放却没跑到 rename，症状是状态表是新的而主动会话线程还是 `s_proactive_<role>` ——
+    两个身份同名角色时互相覆盖（正是 B2 要防的那件事）。
+    """
+    db = tmp_path / "app.db"
+    conn = connect(db)
+    bootstrap(conn, enabled_domains=DOMAINS)
+    conn.execute("DROP TABLE role_proactive_state")
+    conn.execute(
+        "CREATE TABLE role_proactive_state ("
+        " role_id TEXT PRIMARY KEY, affinity REAL NOT NULL DEFAULT 0.0,"
+        " last_interaction_utc TIMESTAMP, calibration_json TEXT,"
+        " open_threads TEXT, open_threads_at TIMESTAMP, recall_at TIMESTAMP,"
+        " updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    )
+    conn.execute("INSERT INTO role_proactive_state (role_id, affinity) VALUES ('she', 2.5)")
+    conn.execute(
+        "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('local', '本机')"
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name)"
+        " VALUES ('local-user', 'local', '本机主人')"
+    )
+    conn.execute(
+        "INSERT INTO session_thread (thread_id, user_id, current_role_id, title)"
+        " VALUES ('s_proactive_she', 'local-user', 'she', '卡 · 主动找你')"
+    )
+    conn.execute(
+        "CREATE TABLE role_proactive_state__b2 ("
+        " user_id TEXT NOT NULL DEFAULT 'local-user', role_id TEXT NOT NULL,"
+        " PRIMARY KEY (user_id, role_id))"
+    )
+    conn.commit()
+
+    bootstrap(conn, enabled_domains=DOMAINS)  # 修之前这一行就抛 already exists
+
+    pk = [r[1] for r in conn.execute("PRAGMA table_info(role_proactive_state)") if r[5] > 0]
+    assert pk == ["user_id", "role_id"], f"没升成新主键：{pk}"
+    row = conn.execute(
+        "SELECT user_id, affinity FROM role_proactive_state WHERE role_id = 'she'"
+    ).fetchone()
+    assert row is not None and float(row["affinity"]) == 2.5, "关系数值在重放里丢了"
+    tid = str(
+        conn.execute(
+            "SELECT thread_id FROM session_thread WHERE current_role_id = 'she'"
+        ).fetchone()[0]
+    )
+    assert tid == "s_proactive_local-user_she", f"线程 id 没跟着带身份：{tid}"
+    assert "role_proactive_state__b2" not in _tables(conn)
+    conn.close()

@@ -137,6 +137,37 @@ def missing_from_bundle(
     }
 
 
+def declared_schema_files(src: Path) -> list[str]:
+    """源码声明族里"运行时会在包里找"的建表脚本 → 它们在包内的相对路径。
+
+    形状照抄 spec 与 `storage/db.py:domain_schema_path()`：内核两份 + 每个域目录一份。
+    这一条防的是 `R28-33`：spec 当年手抄四份，新增一个带 schema 的域插件之后，
+    源码态建表正常、**打包态建表直接失败**，构建期一句报警都没有。
+    """
+    pkg = src / "rolecard_agent"
+    out = [
+        f"rolecard_agent/{rel}/schema.sql"
+        for rel in ("core", "roles")
+        if (pkg / rel / "schema.sql").exists()
+    ]
+    out += [
+        f"rolecard_agent/domains/{sql.parent.name}/schema.sql"
+        for sql in sorted((pkg / "domains").glob("*/schema.sql"))
+    ]
+    return out
+
+
+def bundled_schema_files(bundle: Path) -> set[str]:
+    """已打好的包里实际带着的建表脚本（相对 `_internal` 的路径，统一正斜杠）。"""
+    internal = bundle / "_internal"
+    if not internal.is_dir():
+        return set()
+    return {
+        p.relative_to(internal).as_posix()
+        for p in internal.rglob("schema.sql")
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="随包后端的 import↔bundle parity")
     parser.add_argument(
@@ -187,10 +218,30 @@ def main() -> int:
         )
         return 1
 
+    schemas = declared_schema_files(ROOT / "src")
+    have = bundled_schema_files(bundle)
+    missing_sql = [rel for rel in schemas if rel not in have]
+    if missing_sql:
+        print(
+            f"❌ 源码声明的 {len(schemas)} 份建表脚本里，{len(missing_sql)} 份不在包里：",
+            file=sys.stderr,
+        )
+        for rel in missing_sql:
+            print(f"   - {rel}", file=sys.stderr)
+        print(
+            "   症状是**打包态建表直接失败而源码态一切正常**（R28-33）：运行时按\n"
+            "   `domains/<id>/schema.sql` 现数，spec 得跟着数同一件事 —— 现在它是 glob，\n"
+            "   所以这条红通常意味着**包是旧的**：重跑 `scripts/build_sidecar.py` 即可。\n"
+            "   真的想让某个域不进包，那是另一件产品事，得写在这里而不是留给红字。",
+            file=sys.stderr,
+        )
+        return 1
+
     print(
         f"✅ 随包后端 import parity：src 的 {len(imports)} 个第三方顶层模块全在包里"
         f"（bundle 顶层名 {len(bundled)} 个）"
     )
+    print(f"   建表脚本 parity：{len(schemas)} 份声明全在包里（core / roles / 各域）")
     return 0
 
 
