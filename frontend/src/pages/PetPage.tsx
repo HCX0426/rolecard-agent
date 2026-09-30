@@ -20,11 +20,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import ThinkingPanel from "../components/chat/ThinkingPanel";
 import PetContextMenu, { type MenuEntry } from "../components/PetContextMenu";
-import PetSprite, {
-  DEFAULT_PACK_ROWS,
-  DEFAULT_PET_SHEET,
-  type PetStatus,
-} from "../components/pet/PetSprite";
+import PetSprite, { type PetStatus } from "../components/pet/PetSprite";
+import { resolvePack, type PetPackListing } from "../pets/registry";
 import QuietLine from "../components/QuietLine";
 import { api, streamChat, streamEdit, UNREAD_POLL_MS, type MessagePage, type MessageRow, type QuietStatus, type ReachoutRow, type RoleCard } from "../api";
 import { useAutoScroll } from "../hooks/useAutoScroll";
@@ -105,6 +102,8 @@ export default function PetPage() {
   const [historyTotal, setHistoryTotal] = useState(0);
   const [historyError, setHistoryError] = useState("");
   const [roles, setRoles] = useState<RoleCard[]>([]);
+  /** 形象包清单；`undefined` = 还没读，`null` = 读失败（两者都画随包那张默认图，不退化）。 */
+  const [packs, setPacks] = useState<PetPackListing | null | undefined>(undefined);
   const [picked, setPicked] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   // 发出去但还没落库的那句：流结束后以服务端回放为准，所以它只活在这一轮里。
@@ -306,6 +305,15 @@ export default function PetPage() {
     latest?.role_name ??
     latest?.role_id ??
     "助手";
+  /**
+   * 这一只画哪个包：当前角色的 `pet_pack` → 清单里的那个包。清单还没读回来时落随包那张
+   * 默认图（**不是**几何体兜底），所以起窗那一瞬与做这件事之前一字不差。三种"没配上"的
+   * 分工见 `pets/registry.ts`。
+   */
+  const looked = resolvePack(
+    packs ?? null,
+    roles.find((r) => r.role_id === activeRole)?.pet_pack,
+  );
   // 形象的表现状态：完全由本页已有的信号推导，不另开通道。
   //   · 自己这扇窗在流 / 她正在生成 → speaking（嘴动 + 浮沉）；
   //   · 别处那扇窗在生成（`mirror` 是 R26-38 的镜像登记）→ thinking（"…"泡泡）；
@@ -662,14 +670,26 @@ export default function PetPage() {
     };
   }, [expanded, threadId, showContent, handoff, setMirrorOf]);
 
-  // 角色表只在第一次展开时拉：面板顶上的切换要用它，而收起时没必要占一次请求。
+  // 角色表现在**起窗就拉**（原来等第一次展开）：形象是按角色解析的，收着的那一只也得
+  // 知道自己是谁 —— 只在展开时拉，会让"换角色换形象"在最该生效的那个形态（挂着）上失效。
   useEffect(() => {
-    if (!expanded || roles.length) return;
+    if (roles.length) return;
     api
       .get<RoleCard[]>("/api/roles")
       .then(setRoles)
       .catch(() => setRoles([])); // 拉不到就少一个切换器，不拦对话本身
-  }, [expanded, roles.length]);
+  }, [roles.length]);
+
+  // 形象包清单也是起窗一次。换数据源不用重读：那个切换是整页 reload。
+  // 读失败记 null —— 旧后端根本没有这条端点，此刻的表现必须与做这件事之前一字不差。
+  useEffect(() => {
+    api
+      .get<PetPackListing>("/api/pets")
+      // 只认"里面有 packs 数组"那一种形状：对面是旧后端 / 反代返回 HTML / 测试替身给了
+      // 空数组时，一律按"清单没读到"办（画随包默认图），而不是把垃圾喂进解析函数。
+      .then((body) => setPacks(Array.isArray(body?.packs) ? body : null))
+      .catch(() => setPacks(null));
+  }, []);
 
   /**
    * 发一条：桌宠上的回话落进**这个角色的主动会话**（§7.2.1 拍定的那条线）。
@@ -1082,16 +1102,23 @@ export default function PetPage() {
       >
         <PetSprite
           status={petStatus}
-          rows={DEFAULT_PACK_ROWS}
+          rows={looked.pack?.rows}
           width={160}
           height={184}
           className="drop-shadow-md"
-          // 默认包（自绘，见 scripts/make_pet_sheet.py）。换装 = 往
-          // `frontend/public/pets/<包>/` 放一张 8×9 的 spritesheet，再把这里指过去；
-          // rows 同时声明那几行（协议未确认的 5–8）在这张包里各是什么动画。
-          src={DEFAULT_PET_SHEET}
+          // 这个角色的形象包（`role_card.pet_pack` → `/api/pets` 那份清单）。素材有两处：
+          // 随包的 `frontend/dist/pets/`（仓库自绘，许可干净）与数据根下的 `<数据根>/pets/`
+          // （用户自己放的，升级不冲、不入库），同名时后者赢。`pack` 为 null 只在"清单读到了
+          // 而里面一个可用包都没有"时发生 —— 那才落 SVG 兜底。
+          src={looked.pack?.sheet_url}
         />
       </div>
+
+      {looked.misassigned && (
+        // 配了、但清单里没有：这一行不能省。否则症状是"我明明选了爱莉，怎么还是那只团子"，
+        // 而没有任何地方承认它听见了这个选择。
+        <span className="text-[10px] text-amber-600 dark:text-amber-400">形象包没找到，先用默认</span>
+      )}
 
       {offline && (
         <span className="text-[10px] text-amber-600 dark:text-amber-400">连不上本机程序</span>

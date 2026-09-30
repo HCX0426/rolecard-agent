@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Notice, PageHeader } from "../components/ui";
 import TimelineDrawer from "../components/TimelineDrawer";
+import type { PetPackListing } from "../pets/registry";
 import {
   api,
   type KnowledgeScopes,
@@ -35,6 +36,7 @@ const EMPTY_FORM = {
   time_pattern_enabled: true,
   file_watch_enabled: true,
   reachout_keep: 0,
+  pet_pack: "",
 };
 
 const SCOPE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
@@ -101,6 +103,8 @@ export default function RolesPage({
   const confirm = useConfirm();
   const [newScope, setNewScope] = useState("");
   const [kbScopes, setKbScopes] = useState<string[]>([]);
+  /** 可用的桌宠形象包（`/api/pets`）。读不到 = null，那一格整条不出现（不给死选项）。 */
+  const [packs, setPacks] = useState<PetPackListing | null>(null);
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
 
   async function load() {
@@ -109,6 +113,11 @@ export default function RolesPage({
   useEffect(() => {
     load().catch((e) => setStatus({ ok: false, msg: `加载失败：${e.message}` }));
     api.get<ToolCatalog>("/api/tools/catalog").then(setCatalog).catch(() => {});
+    // 同 PetPage：形状不对就当没读到，那一格整条不出现（不给一个只能选默认的死下拉）。
+    api
+      .get<PetPackListing>("/api/pets")
+      .then((body) => setPacks(Array.isArray(body?.packs) ? body : null))
+      .catch(() => setPacks(null));
     api
       .get<ModelSettings>("/api/settings/models")
       // 角色级路由只允许指向**参与对话**的模型（`used_by` 含 chat，派生自服务页的引用行）；
@@ -213,6 +222,7 @@ export default function RolesPage({
       time_pattern_enabled: r.time_pattern_enabled !== false,
       file_watch_enabled: r.file_watch_enabled !== false,
       reachout_keep: Number(r.reachout_keep ?? 0),
+      pet_pack: r.pet_pack ?? "",
     });
     setWlMode(r.tool_whitelist === null ? "all" : "custom");
   }
@@ -238,6 +248,7 @@ export default function RolesPage({
       time_pattern_enabled: form.time_pattern_enabled,
       file_watch_enabled: form.file_watch_enabled,
       reachout_keep: form.reachout_keep,
+      pet_pack: form.pet_pack,
     };
     try {
       if (editing) {
@@ -415,6 +426,32 @@ export default function RolesPage({
                   主动消息只留最近 N 条（0 = 不自动删，只手动清）
                 </span>
               </label>
+              {/* 桌宠形象：选项只来自 `/api/pets` 那份清单（真能渲染的才进来），所以一个包都没有
+                  时这一整条不出现 —— 只能选"默认"的下拉是死控件。空值 = 跟随默认包。 */}
+              {packs && packs.packs.length > 0 && (
+                <label className="flex items-center gap-2">
+                  <span className="text-slate-600 dark:text-slate-300">桌宠形象</span>
+                  <select
+                    value={form.pet_pack}
+                    onChange={(e) => setForm({ ...form, pet_pack: e.target.value })}
+                    className="rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
+                  >
+                    <option value="">跟随默认包</option>
+                    {packs.packs.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.label}
+                        {p.source === "user" ? "（本机外挂）" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-[10px] text-slate-400">
+                    自己放的素材放 {packs.user_dir}
+                    {packs.skipped.length
+                      ? ` · ${packs.skipped.length} 个目录没被认（缺图或渲染器不支持）`
+                      : ""}
+                  </span>
+                </label>
+              )}
             </div>
             <label className="mt-3 block">
               <span className="text-xs text-slate-500 dark:text-slate-400">工具权限</span>
