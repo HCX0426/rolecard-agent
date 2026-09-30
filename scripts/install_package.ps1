@@ -46,7 +46,7 @@ function EntryAsset([string]$file) {
 
 
 if (-not $SkipBuild) {
-    Write-Host "[1/5] building (frontend -> sidecar -> nsis)"
+    Write-Host "[1/6] building (frontend -> sidecar -> nsis)"
     Push-Location (Join-Path $root "frontend")
     npm run build | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "frontend build failed (exit=$LASTEXITCODE)" }
@@ -62,20 +62,20 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { throw "electron-builder failed (exit=$LASTEXITCODE)" }
     Pop-Location
 } else {
-    Write-Host "[1/5] build skipped (-SkipBuild)"
+    Write-Host "[1/6] build skipped (-SkipBuild)"
 }
 
 # 装之前先给**装着的那份**留一份能回滚的东西。这一步以前是人记着的，
 # 2026-09-26 第六次打包就漏了（装完才补，那时已经回不去了）—— 所以它进脚本而不是进备忘录。
 # sqlite 走 backup() 而不是复制：真库开着 WAL，直拷会得到主库与 -wal 不同步的半成品。
-Write-Host "[2/5] backing up the installed data root"
+Write-Host "[2/6] backing up the installed data root"
 $py = Join-Path $root ".venv\Scripts\python.exe"
 & $py (Join-Path $root "scripts\backup_data_root.py") --dest (Join-Path $root "build")
 if ($LASTEXITCODE -ne 0) { throw "backup failed (exit=$LASTEXITCODE) —— 没备份就别装" }
 
 if (-not (Test-Path $installer)) { throw "installer not found: $installer" }
 
-Write-Host "[3/5] closing the installed app (if running)"
+Write-Host "[3/6] closing the installed app (if running)"
 $targets = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $installedExe })
 $main = $targets | Where-Object { $_.Name -eq "rolecard-agent.exe" } | Select-Object -First 1
 if ($null -ne $main) {
@@ -100,7 +100,7 @@ if ($null -ne $main) {
     Write-Host "      not running, nothing to close"
 }
 
-Write-Host "[4/5] silent install"
+Write-Host "[4/6] silent install"
 $t0 = Get-Date
 $p = Start-Process -FilePath $installer -ArgumentList "/S" -Wait -PassThru
 $secs = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1)
@@ -133,7 +133,7 @@ $why = "  —— 用 -SkipBuild 装了一份旧包时这条是预期会红的：
 if ($a -ne $b) { throw ("installed BACKEND is not the fresh build (sha256 differs)" + $why) }
 
 if (-not $NoLaunch) {
-    Write-Host "[5/5] launching"
+    Write-Host "[5/6] launching"
     Start-Process -FilePath $installedExe | Out-Null
     Start-Sleep -Seconds 20
     try {
@@ -143,6 +143,21 @@ if (-not $NoLaunch) {
         throw "app is up but /api/health did not answer: $($_.Exception.Message)"
     }
 } else {
-    Write-Host "[5/5] not launched (-NoLaunch)"
+    Write-Host "[5/6] not launched (-NoLaunch)"
 }
+Write-Host "[6/6] purity of the installed data root (read-only)"
+# 为什么挂在装完之后：`R28-49` 实测过"换数据根那一刻，旧根里的测试痕迹升级成生产数据" ——
+# 真库 chroma 里躺着 8 条夹具向量（同一组假血糖数），而台账里连行都没有。装包 / 从备份恢复 /
+# 换根这三种动作之后，新根上最该有的一发读数就是这个。它**刻意不 throw**：夹具是历史事实，
+# 为一件不影响本次安装成败的事把已经装好的应用再关一次，只会逼人再去点一次「完成」。
+$liveRoot = Join-Path $env:LOCALAPPDATA "rolecard-agent"
+$py = Join-Path $PSScriptRoot "..\.venv\Scripts\python.exe"
+if ((Test-Path $py) -and (Test-Path $liveRoot)) {
+    & $py (Join-Path $PSScriptRoot "check_root_purity.py") --root $liveRoot
+    # 逐条查退出码：pwsh 里 `a; b` 只认最后一条，那是 R28-26 那族吞错的 Windows 版。
+    if ($LASTEXITCODE -ne 0) { Write-Host "      ^ 纯度尺子报红（不挡安装，但要有人看一眼上面那几行）" }
+} else {
+    Write-Host "      跳过：这台机器上没有 .venv 或安装根（CI 上就是这种形状，不算失败）"
+}
+
 Write-Host "OK installed and verified"
