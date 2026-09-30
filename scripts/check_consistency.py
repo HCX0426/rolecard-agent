@@ -1399,6 +1399,97 @@ def check_vocabulary() -> None:
         fails.append(f"mixed-layer wording shipped to users: {hits[:4]}")
 
 
+#: 公网部署面上"缺了就起不来"或"错了会静默降级"的那几条护栏：compose 里一条都不能少。
+_DEPLOY_REQUIRED_ENV = ("AUTH_MODE", "AUTH_CREDENTIALS", "AUTH_TRUSTED_PROXIES")
+
+
+def _compose_app_env(compose: str) -> list[str]:
+    """取 `services.app.environment` 那一段里的键名（纯文本解析，不引 yaml 依赖）。
+
+    为什么不扫全文：compose 的 `environment:` 每个 service 都有一段，而"这个旋钮应用读不读"
+    只对 `app` 那一段成立 —— 扫全文会把 Caddy 的 `ROLECARD_DOMAIN` 当成空转旋钮。
+    """
+    block = re.search(r"^  app:\n(.*?)(?=^  [a-z_]+:\n|^[a-z])", compose, flags=re.M | re.S)
+    if not block:
+        return []
+    env = re.search(r"^    environment:\n((?:      .+\n?|\s*\n)*)", block.group(1), flags=re.M)
+    if not env:
+        return []
+    return re.findall(r"^      ([A-Z][A-Z0-9_]+):", env.group(1), flags=re.M)
+
+
+def check_deploy_env_parity() -> None:
+    """compose / Caddyfile 上的旋钮，必须都是应用真读的那些（v2.4 收官那档的部署面）。
+
+    为什么立这条：compose 是最容易写着**没人读的环境变量**的地方，而写错的后果不是红，是
+    "配了没用" —— `AUTH_TRUSTED_PROXY` 少一个 S 就是限流整个塌成 Caddy 那一个桶，服务照样
+    200。第一趟就照出一个真的：compose 里原本写着 `DEEPSEEK_API_KEY`，而全仓只有
+    `SILICONFLOW_API_KEY` 有"启动时自动注册"那半条路（`run_api.py`），另一条是空转的旋钮。
+    """
+    compose_path = ROOT / "docker-compose.yml"
+    if not compose_path.exists():
+        out("deploy env parity", False, "docker-compose.yml 不见了（公网那一档的部署面就是它）")
+        fails.append("docker-compose.yml missing")
+        return
+    compose = compose_path.read_text(encoding="utf-8", errors="ignore")
+    cfg_text = (ROOT / "src" / "rolecard_agent" / "config.py").read_text(
+        encoding="utf-8", errors="ignore"
+    )
+    env_text = (ROOT / ".env.example").read_text(encoding="utf-8", errors="ignore")
+    # 已知旋钮 = config 的 env 映射表 ∪ `.env.example` 里已经解释过的那族（键名对齐由
+    # `config contract` 那条管，这里不另起一套口径）。
+    known = set(re.findall(r'\("([A-Z][A-Z0-9_]+)",\s*"[a-z_0-9]+"\)', cfg_text))
+    known |= set(re.findall(r"^([A-Z][A-Z0-9_]+)=.*$", env_text, flags=re.M))
+
+    problems: list[str] = []
+    # **只看 app 那一段的 environment**。第一版扫全文，于是把 caddy 的 `ROLECARD_DOMAIN`
+    # 也算成"应用不读的旋钮"报了红 —— 那不是它该管的：别的 service 的环境变量是给
+    # Caddy 读的，本来就不在这张映射表里。
+    keys = _compose_app_env(compose)
+    unknown = sorted(k for k in keys if k not in known)
+    if unknown:
+        problems.append(f"compose 写了应用不读的旋钮 {unknown}")
+    missing = [k for k in _DEPLOY_REQUIRED_ENV if f"{k}:" not in compose]
+    if missing:
+        problems.append(f"护栏缺条 {missing}")
+    mode = re.search(r'^      AUTH_MODE:\s*"?([A-Za-z]+)"?', compose, flags=re.M)
+    if mode and mode.group(1) != "on":
+        problems.append(f"AUTH_MODE={mode.group(1)}：反代之后 auto 把所有人都当回环，等于没鉴权")
+    if re.search(r'^\s*-\s*"?8000:\d+', compose, flags=re.M):
+        problems.append("应用端口被 publish 到宿主（这一档只许 443 出公网）")
+
+    caddy = ROOT / "deploy" / "Caddyfile"
+    exposed = set(re.findall(r'^\s*-\s*"?(\d{2,5})"?\s*$', compose, flags=re.M))
+    if caddy.exists() and exposed:
+        upstream = set(
+            re.findall(r"reverse_proxy\s+app:(\d+)", caddy.read_text(encoding="utf-8"))
+        )
+        if upstream and not upstream <= exposed:
+            problems.append(
+                f"Caddyfile 打到 app:{sorted(upstream)}，compose expose 的是 {sorted(exposed)}"
+            )
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8", errors="ignore")
+    required_vars = set(re.findall(r"\$\{([A-Z][A-Z0-9_]+):\?", compose))
+    must_teach = sorted(v for v in required_vars if v not in readme)
+    if must_teach:
+        problems.append(f"这几个必填变量 README 没教 {must_teach}")
+
+    out(
+        "deploy env parity",
+        not problems,
+        "; ".join(problems)
+        if problems
+        else (
+            f"compose 的 {len(keys)} 个旋钮都在 config/example 里"
+            f"；护栏 {len(_DEPLOY_REQUIRED_ENV)} 条在场"
+            "；AUTH_MODE=on、应用端口不 publish、README 教齐了必填变量"
+        ),
+    )
+    if problems:
+        fails.append(f"deploy surface drift: {problems}")
+
+
 def check_role_whitelists_resolve() -> None:
     """Every tool name in a built-in role's whitelist must resolve to a declared tool.
 
@@ -1676,6 +1767,7 @@ def main() -> int:
     check_single_source_literals()
     check_bundled_copy()
     check_vocabulary()
+    check_deploy_env_parity()
     check_role_whitelists_resolve()
     check_us_traceability()
     check_exemplar_leaks_eval_answers()

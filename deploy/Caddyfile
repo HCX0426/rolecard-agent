@@ -1,0 +1,29 @@
+# 公网入口（compose 里 caddy 那一段挂的就是这份）。
+#
+# 站点地址取自环境变量 `ROLECARD_DOMAIN`（Caddy 的 `{$VAR}` 插值），签不到证书就**不会**
+# 退化成"明文开着"—— 那是我们要的行为：宁可不服务，也不静默降级成 HTTP。
+# 反代之后的真实客户端 IP 靠 `X-Forwarded-For`，而应用只信 `AUTH_TRUSTED_PROXIES` 那个
+# 网段发来的这一抬头（见 `docker-compose.yml` 顶部第 3 条），所以下面这几条 header 不能省。
+#
+# TLS 本身不用配置：Caddy 见到 443 + 一个解析到本机域的地址就自己去签、自己续。
+
+{$ROLECARD_DOMAIN} {
+	encode zstd gzip
+
+	# 只把该带的带上，别在这里做鉴权 —— 判据只长在应用那一处（`api/auth.py`）。
+	reverse_proxy app:8000 {
+		header_up X-Forwarded-Proto https
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+	}
+
+	# **刻意没在这里写 Content-Security-Policy**。不是忘了：CSP 是唯一一条"配错就整页白屏"
+	# 的头，而它只能对着**真界面**验（Vite 产物的 module script、桌宠 canvas 的 blob:、
+	# SSE 走 'self'、Tailwind 的行内 style）。这台机器上没有域名也没有容器 ⇒ 写了就是一张
+	# 没人验过的网。要加就连着"在真浏览器里把六页 + 桌宠开一遍、看 console 有没有被 CSP 挡"
+	# 一起做，别在部署当天第一次见到它。
+}

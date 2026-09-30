@@ -125,6 +125,26 @@ jobs:
       - name: 构建镜像
         run: docker build -t rolecard-agent:ci .
 
+      - name: 部署面那份 compose 要能解析（v2.4 收官那一档）
+        # 这台 runner 才有 Docker —— 本机连 `docker` 都没有，所以 compose 的语法与"必填变量
+        # 缺了会怎样"只有在 CI 上量得到。`config -q` 顺带把 `${VAR:?}` 那几条护栏演一遍：
+        # 先不给变量 ⇒ 必须非零退出并点名缺哪个；补齐之后 ⇒ 必须安静通过。
+        run: |
+          set +e
+          out=$(docker compose config -q 2>&1); code=$?
+          set -e
+          if [ "$code" -eq 0 ]; then
+            echo "compose 在没给任何变量时竟然解析通过了 —— 那三条 :? 护栏是空的"; exit 1
+          fi
+          echo "$out" | grep -q "ROLECARD_DOMAIN" || { echo "非零退出但不是因为缺变量：$out"; exit 1; }
+          ROLECARD_DOMAIN=chat.example.invalid \
+          ROLECARD_CREDENTIALS='operator:ci:ci-pass' \
+            docker compose config -q
+          ROLECARD_DOMAIN=chat.example.invalid \
+          ROLECARD_CREDENTIALS='operator:ci:ci-pass' \
+            docker compose config --services | sort | tr '\n' ' '
+          echo
+
       - name: 公网护栏必须是硬的（不带鉴权就该拒绝启动，而不是默默裸奔）
         # 这条把 `api/main.py` 那段"非回环 + AUTH_MODE=off = RuntimeError"从**读代码得到的
         # 断言**变成**测出来的事实**。两种失败分开报：起来了 = 护栏没生效；非零退出但退因

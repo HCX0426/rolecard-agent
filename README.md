@@ -181,6 +181,39 @@ docker run -p 8000:8000 -v rolecard-data:/app/data \
 # （内核 + dev + api + rag —— 漏装 rag 会让知识库/解析测试直接 ImportError）
 ```
 
+## 挂到公网（TLS + 域名）
+
+`docker-compose.yml` + `deploy/Caddyfile` 就是这一档的全部部署面：证书与 443 归 Caddy，
+应用不在宿主机上开端口。前提是你有一台能跑 Docker 的机器和一个解析到它的域名。
+
+```bash
+# ① 域名 A/AAAA 指到这台机器，然后填四样（都在 shell 环境里，别写进文件）：
+export ROLECARD_DOMAIN=chat.example.com
+export ROLECARD_CREDENTIALS='operator:you:改成你的长密码'   # 带 operator: 前缀才有管理面
+export SILICONFLOW_API_KEY=sk-...                         # 可选：给了就启动时注册成默认后端
+export ROLECARD_RATE_LIMIT=30                             # 可选：每个身份每分钟多少贵写请求
+
+# ② 起，并确认那一串护栏都在（config 不连 Docker 也能查语法与变量）：
+docker compose config -q && docker compose up -d --build
+docker compose ps                    # app 应当是 (healthy)，caddy 在签完证书之后才起来
+
+# ③ 验三件事：证书兑现、没鉴权进不来、限流真返回 429
+curl -sI https://$ROLECARD_DOMAIN/api/health                              # 200（豁免路径）
+curl -s -o /dev/null -w '%{http_code}\n' http://$ROLECARD_DOMAIN/api/health  # 308 或 403，绝不 200
+for i in $(seq 40); do curl -s -o /dev/null -w '%{http_code} ' -u "you:改成你的长密码" \
+  -H 'Content-Type: application/json' -d '{}' \
+  https://$ROLECARD_DOMAIN/api/chat; done; echo        # 里面该出现 429（且带 Retry-After）
+```
+
+最后那一串要**带着凭证**打：没鉴权的请求在限流之前就被 401 掉了，量不出 429 —— 这条判据的
+意思是"过了鉴权的贵写请求才会被数进桶"。
+
+三处最容易踩的（细节写在 `docker-compose.yml` 顶部）：**`AUTH_MODE` 用 `on` 不用 `auto`**
+（反代之后所有请求的 TCP 对端都是 Caddy 那个容器，`auto` 会把所有人都当回环放过）；
+**`AUTH_TRUSTED_PROXIES` 要等于 compose 网络的网段**（错了不会裸奔，但限流会塌成一个桶：
+所有访客都算成 Caddy 那一个来源）；**这台开发机上没有域名也没有 Docker**，所以 ③ 那一串
+是在你自己那台机器上第一次跑的 —— 出问题先照 ③ 逐条对读，别先改代码。
+
 > v2 才需要的依赖单独安装：`requirements-rag.txt`（检索，v2.1）、`requirements-ocr.txt`
 >（OCR，**必须独立 venv**，v2.2，切勿与主服务共用环境）。HTTP 接口依赖
 > `requirements-api.txt` 属于 **v1 M4**，已在上面第 2 步装好；接入云端模型另装
@@ -264,6 +297,11 @@ rolecard-agent/
 │   ├── storage/                   # SQLite（ThreadLocalConnection）/ bootstrap
 │   └── api/                       # HTTP 壳：main（路由/中间件/静态托管/生命周期）+ 认证 + 依赖注入
 ├── frontend/                      # React 18 + Vite 控制台（6 页签；dist 有意入库）
+├── Dockerfile  docker-compose.yml  deploy/Caddyfile
+│                                  # 公网那一档：镜像非 root + HEALTHCHECK；TLS 归 Caddy，
+│                                  # 应用不 publish 到宿主（两份部署文件由第 39 条断言盯着）
+├── shell/                         # Electron 桌宠壳（随包后端打进 NSIS 安装包）
+├── packaging/                     # PyInstaller spec（RUNTIME_PACKAGES 缺族即拒绝出产物）
 ├── docs/   tests/   scripts/   data/
 ```
 

@@ -1,0 +1,63 @@
+# 公网部署（v2.4 收官那一档）：TLS 与公网入口交给 Caddy，应用不在宿主机上开端口。
+#
+# 为什么是这个形状（09-30）：
+#  * **`ports:` 只出现在 caddy 那一段** ⇒ 这台机器上能被外部打的只有 443，而 443 后面
+#    第一件事是证书、第二件事是鉴权。应用 publish 出去的话，"忘了配鉴权"只是裸奔；
+#    现在它是**起不来**（`RUN_API_HOST=0.0.0.0` + `AUTH_MODE=off` 被 `create_app` 那道
+#    公网护栏拒绝 —— 同一道由 CI 的 docker job 真跑着）。
+#  * **鉴权用 `on` 而不是 `auto`**：`auto` 认的"回环"是 TCP 对端地址，而反代之后所有请求的
+#    对端都是 Caddy 那个容器 ⇒ 全机器都成了回环，等于没鉴权。
+#  * `AUTH_TRUSTED_PROXIES` 必须等于 compose 网络的网段：只有直连方命中这里，
+#    `X-Forwarded-For` 才被当作真实客户端 IP。它错了/漏了的后果不是裸奔，而是
+#    **限流塌成一个桶**（所有访客都算成 Caddy 那一个来源），所以这条由
+#    `check_consistency.py` 的 **`deploy env parity`** 盯着，不许哪天被顺手删掉。
+#  * 限流仍然只在**应用**那一处（`RATE_LIMIT_PER_MINUTE`）：它知道哪些路径真的贵
+#    （只数写方法，0.8 秒一次的轮询读不进门）。在 Caddy 上再配一套就是两个答案。
+#
+# 要填的三样与起法：README「挂到公网（TLS + 域名）」那一节。
+
+services:
+  app:
+    build: .
+    image: rolecard-agent:deploy
+    restart: unless-stopped
+    environment:
+      AUTH_MODE: "on"
+      # 凭证从宿主环境注入，**绝不写进这个文件**（它进 git）。格式见 `.env.example`：
+      # 逗号分隔的 "user:pass"，带 `operator:` 前缀的那条才算操作员。
+      AUTH_CREDENTIALS: ${ROLECARD_CREDENTIALS:?缺少 ROLECARD_CREDENTIALS}
+      AUTH_API_KEYS: ${ROLECARD_API_KEYS:-}
+      # 与这条读出的一致（换网络就要改这里，否则 XFF 全被忽略）：
+      #   docker network inspect rolecard-agent_default -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}'
+      AUTH_TRUSTED_PROXIES: ${ROLECARD_PROXY_CIDR:-172.16.0.0/12}
+      AUTH_EXEMPT_PATHS: /api/health
+      RATE_LIMIT_PER_MINUTE: ${ROLECARD_RATE_LIMIT:-30}
+      # 给了云端 key 就在启动时注册成默认后端（`scripts/run_api.py` 的
+      # `_maybe_configure_cloud_backend()`），省掉"起来之后再进界面填一遍"。
+      # 只有这一条：别的厂商没有"启动时自动注册"这条路，要在「模型」页建行再被「服务」引用。
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+    volumes:
+      - rolecard-data:/app/data
+    expose:
+      - "8000"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      ROLECARD_DOMAIN: ${ROLECARD_DOMAIN:?缺少 ROLECARD_DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  rolecard-data:
+  caddy-data:
+  caddy-config:
