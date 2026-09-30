@@ -900,7 +900,10 @@ def check_doc_links() -> None:
     # Only repo-relative references are validated. Docs also use in-package shorthand such
     # as `core/prompts.py`, which is not a path from the repo root - validating those
     # produced nothing but noise.
-    prefixes = ("docs/", "src/", "scripts/", "tests/", "data/")
+    # `build/` 是 09-30 加进来的（`R28-47`）：文档里按文件名点名的**证据**多数长在那儿
+    # （`build/backup-liveroot-*.zip` 之类的装包前备份）。决策 4 清盘之后那些名字就悬空了，
+    # 而这条检查当时看不见它们 —— "数字仍在档里，但复跑不回来"没人报。
+    prefixes = ("docs/", "src/", "scripts/", "tests/", "data/", "build/")
     # 字符类必须含中文：**整个中文文件名文档树原本是这条检查的盲区**。09-26 轮 R26-20 实测：
     # 把 CJK 放进来之后立刻抓到 7 处 living docs 指着已经搬进 archive/ 的《技术评审与决策》
     # 《实施计划》，而在此之前这条检查报的是 "all resolve"。
@@ -908,7 +911,7 @@ def check_doc_links() -> None:
     cjk = "".join(chr(c) for c in range(0x4E00, 0xA000)) + "\uff08\uff09\u3001\u00b7\u2014"
     name_cls = f"{cjk}A-Za-z0-9_"
     pattern = re.compile(
-        rf"`([{name_cls}][{name_cls}.\-/]*\.(?:md|py|toml|txt|sql|json|cfg|ini))`"
+        rf"`([{name_cls}][{name_cls}.\-/]*\.(?:md|py|toml|txt|sql|json|cfg|ini|zip))`"
     )
     link_pattern = re.compile(r"\]\(([^)\s#]+?\.(?:md|png|jpg|json))\)")
 
@@ -1271,6 +1274,76 @@ _BUNDLED_GENDERED = ("她", "她们")
 _BUNDLED_COPY_ALLOWED: frozenset[str] = frozenset()
 
 
+#: 用户看得见的字面里不许再出现的词（`R28-45` 的事后闸）。判据分两半，各用**各自的精确信号**：
+#:  * 前端扫 `frontend/dist` 的产物 —— 压缩后的 JS 里没有注释，出现在那里的字必然是用户看得见的
+#:    （与 `bundled copy` 同一招，不需要一台 JSX 解析器去猜"这行是不是注释"）；
+#:  * 后端扫 `src/**/*.py` 的**字符串常量**，docstring 与注释不算（那些是写给开发者看的，
+#:    「后端」在那儿仍然精确指 `ModelBackend` 那一行）。
+_BANNED_USER_VISIBLE = (
+    "模型后端",      # L2 那一行在界面上叫「模型」
+    "默认后端",      # 「默认」的家是「服务」页那条优先级，不是模型页
+    "后端名",        # 字段名叫「模型名」
+    "后端序列",      # 那条叫「对话优先级」
+    "后端列表",
+    "服务地址",      # L4 那个进程叫「本机程序」，它的地址是「程序地址」
+    "本机后端",
+    "本地推理服务",
+    "Ollama 服务",
+)
+
+
+def check_vocabulary() -> None:
+    """界面上的"后端/服务"不再一词三层（红：确证的混指；warn：裸「后端」的残余计数）。"""
+    hits: list[str] = []
+    soft = 0
+
+    assets = sorted((ROOT / "frontend" / "dist" / "assets").glob("*.js"))
+    for path in assets:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for token in _BANNED_USER_VISIBLE:
+            at = text.find(token)
+            if at >= 0:
+                snippet = text[max(0, at - 26) : at + 26].replace("\n", " ")
+                hits.append(f"{path.name}: …{snippet}…")
+            soft += text.count("后端")
+
+    for path in sorted((ROOT / "src").rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except (SyntaxError, ValueError):
+            continue
+        docs = {
+            id(node.value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        }
+        rel = path.relative_to(ROOT).as_posix()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            if id(node) in docs:
+                continue  # docstring 是给开发者看的，那里「后端」仍然精确
+            for token in _BANNED_USER_VISIBLE:
+                if token in node.value:
+                    hits.append(f"{rel}:{node.lineno} …{node.value[:34]}…")
+            soft += node.value.count("后端")
+
+    out(
+        "ui vocabulary",
+        not hits,
+        "; ".join(hits[:3])
+        if hits
+        else (
+            f"产物 {len(assets)} 个 chunk + src 的字符串常量里都没有"
+            f" {len(_BANNED_USER_VISIBLE)} 个混指词（裸「后端」还剩 {soft} 处，只数不拦）"
+        ),
+    )
+    if hits:
+        fails.append(f"mixed-layer wording shipped to users: {hits[:4]}")
+
+
 def check_role_whitelists_resolve() -> None:
     """Every tool name in a built-in role's whitelist must resolve to a declared tool.
 
@@ -1547,6 +1620,7 @@ def main() -> int:
     check_installer_scope()
     check_single_source_literals()
     check_bundled_copy()
+    check_vocabulary()
     check_role_whitelists_resolve()
     check_us_traceability()
     check_exemplar_leaks_eval_answers()
