@@ -164,6 +164,52 @@ describe("PetPage 桌宠", () => {
     expect(screen.getByTestId("pet-sprite")).toBeTruthy();
   });
 
+  it("控制台那边改了角色的形象包，挂着的那一只在下一轮轮询里就换过来（不用重启）", async () => {
+    // 这一格钉的是"选了要看得见"：形象在**控制台**那一侧改，桌宠是挂着的那一只，
+    // 只在挂载时读一次角色表的话，症状就是"我明明选了雏雾，怎么还是这只"。
+    const listing = {
+      packs: [
+        {
+          id: "default",
+          label: "默认",
+          kind: "sheet",
+          rows: {},
+          motions: {},
+          source: "bundled",
+          entry: "sprite.png",
+          sheet_url: "/api/pets/default/sprite.png",
+        },
+        {
+          id: "mint",
+          label: "薄荷",
+          kind: "sheet",
+          rows: {},
+          motions: {},
+          source: "bundled",
+          entry: "sprite.png",
+          sheet_url: "/api/pets/mint/sprite.png",
+        },
+      ],
+      skipped: [],
+      user_dir: "",
+      cubism_core: false,
+      cubism_core_path: "",
+    };
+    let pack = "";
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/pets") return listing;
+      if (url === "/api/roles")
+        return [{ role_id: "wan", role_name: "苏晚晴", model_name: "", pet_pack: pack }];
+      return { messages: [], total: 0, limit: 8, truncated: false };
+    });
+    const drawn = () => String(screen.getByTestId("pet-sprite").getAttribute("style"));
+    await mount();
+    expect(drawn()).toContain("/api/pets/default/sprite.png");
+    pack = "mint";
+    await poll();
+    expect(drawn()).toContain("/api/pets/mint/sprite.png");
+  });
+
   it("点气泡 = 进入对话即都算读过（read-all），气泡随即收起", async () => {
     await mount();
     fireEvent.click(screen.getByText("外头降温了，穿上外套。"));

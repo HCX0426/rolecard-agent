@@ -688,15 +688,23 @@ export default function PetPage() {
     };
   }, [expanded, threadId, showContent, handoff, setMirrorOf]);
 
-  // 角色表现在**起窗就拉**（原来等第一次展开）：形象是按角色解析的，收着的那一只也得
-  // 知道自己是谁 —— 只在展开时拉，会让"换角色换形象"在最该生效的那个形态（挂着）上失效。
+  // 角色表跟着上面那条未读轮询一起重读（同一个 3 秒节奏，不另起一个定时器）。
+  // 为什么不能只在起窗时读一次：形象是按角色解析的，而"换哪个角色用哪个形象"这件事
+  // 是在**控制台那一侧**改的 —— 只读一次的症状就是"我明明选了雏雾，怎么还是这只"，
+  // 且没有任何地方承认它听见了那个改动（挂着的那一只才是桌宠的常态）。
+  // 拉失败**不清空**：手里那份角色表比"诚实显示成默认包"更有用，未读那条自己会说掉线。
   useEffect(() => {
-    if (roles.length) return;
-    api
-      .get<RoleCard[]>("/api/roles")
-      .then(setRoles)
-      .catch(() => setRoles([])); // 拉不到就少一个切换器，不拦对话本身
-  }, [roles.length]);
+    const pull = () =>
+      api
+        .get<RoleCard[]>("/api/roles")
+        .then(setRoles)
+        .catch(() => {
+          // 保持上一次读到的那份：少一个切换器不拦对话本身。
+        });
+    void pull();
+    const timer = setInterval(() => void pull(), UNREAD_POLL_MS);
+    return () => clearInterval(timer);
+  }, []);
 
   // 形象包清单也是起窗一次。换数据源不用重读：那个切换是整页 reload。
   // 读失败记 null —— 旧后端根本没有这条端点，此刻的表现必须与做这件事之前一字不差。
