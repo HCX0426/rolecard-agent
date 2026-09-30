@@ -13,6 +13,10 @@ data/sqlite/*.bak
 data/chroma/*
 !data/chroma/.gitkeep
 data/uploads/*
+# 用户外挂的桌宠素材（含 Cubism Core 运行时）不入库：
+# 那些东西的来源与条款由放它的人负责，而安装包是整目录替换、升级不该碰到它们。
+data/pets/*
+!data/pets/.gitkeep
 !data/uploads/.gitkeep
 
 # --- python ---

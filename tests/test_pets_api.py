@@ -51,10 +51,34 @@ def test_the_listing_names_every_pack_and_why_one_was_dropped(client: TestClient
     ]
     assert body["packs"][0]["rows"] == {"thinking": 7}
     assert body["packs"][0]["sheet_url"] == "/api/pets/elysia/sprite.png"
+    assert body["packs"][0]["entry"] == "sprite.png"
     # 没被认的那些**必须带一句为什么**：放了目录却没出现在下拉里，最坏的处理是沉默。
-    assert body["skipped"] == [{"id": "hollow", "reason": "缺 sprite.png"}]
+    assert body["skipped"] == [{"id": "hollow", "reason": "缺入口文件 sprite.png"}]
     # 说的是"该往哪儿放"那一句，所以路径必须原样递到界面手上（分隔符按平台）。
     assert Path(body["user_dir"]).as_posix().endswith("data-root/pets")
+    # 这台机器上没放 Cubism Core ⇒ 界面据此说明"为什么 live2d 的包一个都没有"。
+    assert body["cubism_core"] is False
+    core_posix = Path(body["cubism_core_path"]).as_posix()
+    assert core_posix.endswith("pets/_runtime/live2dcubismcore.min.js")
+
+
+def test_a_live2d_pack_is_listed_once_the_core_lands(tmp_path: Path, client: TestClient) -> None:
+    """模型已经在了，缺的只是运行时 —— 放上去之后它就该出现（同一次扫描，不重启）。"""
+    core = pet_packs.cubism_core_path()
+    core.parent.mkdir(parents=True, exist_ok=True)
+    core.write_text("// core", encoding="utf-8")
+    model = tmp_path / "data-root" / "pets" / "hiyori"
+    model.mkdir(parents=True)
+    (model / "hiyori.model3.json").write_text("{}", encoding="utf-8")
+    (model / pet_packs.MANIFEST_FILE).write_text(
+        '{"label": "日鞠", "kind": "live2d", "motions": {"speaking": "TapBody"}}', encoding="utf-8"
+    )
+    body = client.get("/api/pets").json()
+    assert body["cubism_core"] is True
+    entry = next(p for p in body["packs"] if p["id"] == "hiyori")
+    assert entry["kind"] == "live2d" and entry["entry"] == "hiyori.model3.json"
+    assert entry["motions"] == {"speaking": "TapBody"}
+    assert entry["sheet_url"] == "/api/pets/hiyori/hiyori.model3.json"
 
 
 def test_a_pack_serves_its_sheet(client: TestClient) -> None:
@@ -62,6 +86,16 @@ def test_a_pack_serves_its_sheet(client: TestClient) -> None:
     assert res.status_code == 200
     assert res.headers["content-type"].startswith("image/png")
     assert b"fake-sheet" in res.content
+
+
+def test_a_nested_model_asset_is_served(tmp_path: Path, client: TestClient) -> None:
+    """Live2D 的 model3.json 会引用子目录里的贴图/motion —— 那条相对路径必须能取到。"""
+    motions = tmp_path / "data-root" / "pets" / "elysia" / "motions"
+    motions.mkdir(parents=True)
+    (motions / "tap.motion3.json").write_text('{"Curves": []}', encoding="utf-8")
+    res = client.get("/api/pets/elysia/motions/tap.motion3.json")
+    assert res.status_code == 200
+    assert b"Curves" in res.content
 
 
 def test_an_unknown_pack_is_a_404_not_the_default_picture(client: TestClient) -> None:
@@ -74,6 +108,15 @@ def test_a_dropped_pack_is_also_a_404(client: TestClient) -> None:
     assert client.get("/api/pets/hollow/sprite.png").status_code == 404
 
 
-def test_a_path_shaped_name_cannot_escape(client: TestClient) -> None:
-    """`..%2Fsqlite` 这类名字在形状校验那一关就该被拒（404），不去 stat 任何东西。"""
-    assert client.get("/api/pets/..%2Fdata-root%2Fsqlite/sprite.png").status_code in (404, 400)
+@pytest.mark.parametrize(
+    "url",
+    [
+        "/api/pets/elysia/../secret.txt",
+        "/api/pets/elysia/textures/../../secret.txt",
+        "/api/pets/..%2Fdata-root%2Fsqlite/sprite.png",
+        "/api/pets/elysia/%2E%2E%2Fsecret.txt",
+    ],
+)
+def test_a_path_shaped_name_cannot_escape_the_pack(client: TestClient, url: str) -> None:
+    """包目录是唯一边界：`..` 无论以什么形式出现都拿不到东西（404 / 400，绝不 200）。"""
+    assert client.get(url).status_code in (400, 404)
