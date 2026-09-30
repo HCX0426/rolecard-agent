@@ -1,4 +1,11 @@
-"""生成桌宠默认形象素材：`frontend/public/pets/default/sprite.png`。
+"""生成**随包的**桌宠形象素材：`frontend/public/pets/<包>/sprite.png` + 同目录的 `pack.json`。
+
+跑法：`--pack mint` 出单个包，`--all` 把 `VARIANTS` 里每套都重生成一遍（默认 `default`）。
+用户自己放的素材**不落在这里** —— 那一份在 `<数据根>/pets/<包>/`（安装目录是整目录替换，
+放这儿等于"更新一次丢一次"）。两处由 `core/pet_packs.py` 一起扫，同名时数据根那份赢。
+
+`pack.json` 里写 `label` / `kind` / `rows`：行语义（协议未确认的 5–8 行在这套包里各是什么
+动画）只有生成它的脚本知道，所以它随素材走，不在 `frontend/src` 里存第二份。
 
 为什么是**自绘**而不是下载现成素材包（2026-09-28 拍）：图面协议是开源的（waifu-sprites,
 MIT-0），但集市上的宠物包多为同人/游戏角色，授权状况不明 —— 往仓库里塞一张来源不清的
@@ -20,8 +27,12 @@ MIT-0），但集市上的宠物包多为同人/游戏角色，授权状况不�
 
 from __future__ import annotations
 
+import argparse
+import io
+import json
 import math
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 # 不进主依赖：这是"生成素材的那台机器"才需要的能力，缺了它运行期一切照常。
@@ -37,10 +48,52 @@ SCALE = 2  # 超采样：先按 2 倍画，再降采样到协议格尺寸（这�
 CELL_W, CELL_H = 192, 208
 COLS, ROWS = 8, 9
 
-OUT = (
-    Path(__file__).resolve().parents[1]
-    / "frontend" / "public" / "pets" / "default" / "sprite.png"
-)
+PETS_DIR = Path(__file__).resolve().parents[1] / "frontend" / "public" / "pets"
+
+
+@dataclass(frozen=True)
+class Variant:
+    """一套包 = 一个 id、给人看的名字、调色板覆盖、有没有呆毛、它自己声明的行语义。"""
+
+    id: str
+    label: str
+    palette: dict[str, tuple[int, ...]]
+    tuft: bool
+    rows: dict[str, int]
+
+
+#: 每套包 = 一份调色板覆盖 + 一点形状差别 + 行语义。**参数即风格**（改风格只动这里）。
+VARIANTS: dict[str, Variant] = {
+    v.id: v
+    for v in (
+        Variant(id="default", label="默认团子", palette={}, tuft=False,
+                rows={"listening": 6, "thinking": 7}),
+        Variant(
+            id="mint",
+            label="薄荷",
+            palette={
+                "BODY": (206, 236, 216, 255),
+                "BODY_SHADE": (176, 216, 190, 255),
+                "OUTLINE": (96, 128, 110, 255),
+                "EAR_IN": (236, 176, 168, 255),
+            },
+            tuft=True,  # 头顶一撮呆毛：远看也能一眼分人
+            rows={"listening": 6, "thinking": 7},
+        ),
+        Variant(
+            id="rose",
+            label="霜玫",
+            palette={
+                "BODY": (244, 214, 224, 255),
+                "BODY_SHADE": (228, 186, 202, 255),
+                "OUTLINE": (132, 96, 108, 255),
+                "BLUSH": (236, 132, 132, 120),
+            },
+            tuft=False,
+            rows={"listening": 6, "thinking": 7},
+        ),
+    )
+}
 
 # 调色板：奶油系团子。**一处定义**，改风格只动这里。
 OUTLINE = (138, 114, 104, 255)
@@ -52,6 +105,9 @@ MOUTH = (181, 101, 94, 255)
 BLUSH = (242, 164, 137, 96)
 SHADOW = (60, 50, 45, 48)
 WHITE = (255, 255, 255, 150)
+#: 这一包有没有头顶那撮呆毛。素材工具一次只画一套，所以用模块级切换而不是把 9 支
+#: 颜色穿进每一个 draw_* 的签名 —— 那是为了三套配色改坏全部画函数。
+TUFT = False
 
 
 def s(v: float) -> float:
@@ -221,6 +277,10 @@ def draw_character(p: dict[str, float | str | bool]) -> Image.Image:
     # 前爪
     draw_arm(d, cx - 52, cy + 18, float(p["arm_l"]), -1, cx=cx, cy=cy)
     draw_arm(d, cx + 52, cy + 18, float(p["arm_r"]), +1, cx=cx, cy=cy)
+    # 呆毛（只有带这一标志的包画）：两根短线，压在头顶轮廓上
+    if TUFT:
+        line(d, [(cx - 2, cy - 54), (cx + 4, cy - 68)], OUTLINE, 2.6)
+        line(d, [(cx + 2, cy - 54), (cx + 12, cy - 63)], OUTLINE, 2.6)
     # 脸（眼睛/腮红/嘴）
     draw_face(d, p)
     return img
@@ -255,16 +315,53 @@ def draw_cell(row: int, i: int) -> Image.Image:
     return cell.resize((CELL_W, CELL_H), Image.LANCZOS)
 
 
-def main() -> None:
+#: 出厂调色板的快照。每套包都从这里出发，只覆盖它声明过的那几支。
+BASE: dict[str, tuple[int, ...]] = {
+    "OUTLINE": OUTLINE, "BODY": BODY, "BODY_SHADE": BODY_SHADE, "EAR_IN": EAR_IN,
+    "EYE": EYE, "MOUTH": MOUTH, "BLUSH": BLUSH, "SHADOW": SHADOW, "WHITE": WHITE,
+}
+
+
+def _png(image: Image.Image) -> bytes:
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def build(variant: Variant) -> None:
+    """按一份 `Variant` 出一套素材：sprite.png + pack.json。"""
+    global TUFT
+    # 不回到出厂色出发就会串色：第一次生成 mint 时忘了这条，rose 出来还是绿的 ——
+    # 这种错没人看得出来，除非真的看图，所以它写在注释里而不是交给某个检查去抓。
+    merged = dict(BASE)
+    merged.update(variant.palette)
+    for key, value in merged.items():
+        globals()[key] = value
+    TUFT = variant.tuft
+
     sheet = Image.new("RGBA", (CELL_W * COLS, CELL_H * ROWS), (0, 0, 0, 0))
     for row in range(ROWS):
         for i in range(COLS):
             sheet.paste(draw_cell(row, i), (i * CELL_W, row * CELL_H))
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    sheet.save(OUT)
-    print(f"wrote {OUT}")
-    print(f"sheet={sheet.width}x{sheet.height}  cell={CELL_W}x{CELL_H}  "
-          f"cols={COLS} rows={ROWS}  bytes={OUT.stat().st_size}")
+    out_dir = PETS_DIR / variant.id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    sprite = out_dir / "sprite.png"
+    sprite.write_bytes(_png(sheet))
+    manifest = {"label": variant.label, "kind": "sheet", "rows": variant.rows}
+    (out_dir / "pack.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=1) + "\n", encoding="utf-8"
+    )
+    print(f"wrote {sprite} + pack.json  {sheet.width}x{sheet.height}  "
+          f"cell={CELL_W}x{CELL_H}  cols={COLS} rows={ROWS}  bytes={sprite.stat().st_size}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="生成随包桌宠素材（sprite.png + pack.json）")
+    parser.add_argument("--pack", default=None, choices=sorted(VARIANTS))
+    parser.add_argument("--all", action="store_true", help="把 VARIANTS 里每套都重生成一遍")
+    args = parser.parse_args()
+    for name in (sorted(VARIANTS) if args.all else [args.pack or "default"]):
+        build(VARIANTS[name])
 
 
 if __name__ == "__main__":
