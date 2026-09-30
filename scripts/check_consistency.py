@@ -1032,6 +1032,63 @@ def check_markdown_table_shape() -> None:
     fails.extend(offenders)
 
 
+#: 只许在**一处**出现的那些字面量：`值 → 唯一归属文件`（`R28-13`/`R28-14` 的结构性收口）。
+#: 读的是 AST 里的字符串常量，**docstring 不算**：说明性文字里写死模型名是刻意的
+#: （`core/nodes.py` 那段"同一台机 qwen3-vl:8b 关掉连接后 0.30s"记的是当时那台机器上那个
+#: 模型的实测），而**默认值/字典里再抄一份就是第二个事实面** —— 换默认值时它静静留在原地，
+#: 症状是"改了没生效"，正是本仓这一轮抓了三次的同一族。
+SINGLE_SOURCE_LITERALS = {
+    "https://api.siliconflow.cn/v1": "src/rolecard_agent/config.py",
+    "qwen3-vl:8b": "src/rolecard_agent/config.py",
+}
+
+
+def check_single_source_literals() -> None:
+    """每个登记的字面量，代码里只许出现在它归属的那一个文件里。"""
+    # 按文件收集"非 docstring 的字符串常量"命中的字面量。docstring 的识别方式：它是
+    # `ast.Expr` 语句的值 —— 与"写在字典里的值"在 AST 上是两种位置，不是靠肉眼判的。
+    holders: dict[str, set[str]] = {}
+    for path in sorted((ROOT / "src").rglob("*.py")):
+        rel = str(path.relative_to(ROOT)).replace("\\", "/")
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except (SyntaxError, ValueError):
+            continue
+        docstrings = {
+            id(node.value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        }
+        hits: set[str] = set()
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and id(node) not in docstrings
+            ):
+                hits.update(lit for lit in SINGLE_SOURCE_LITERALS if lit in node.value)
+        if hits:
+            holders[rel] = hits
+
+    offenders: list[str] = []
+    for lit, owner in SINGLE_SOURCE_LITERALS.items():
+        where = sorted(name for name, hits in holders.items() if lit in hits)
+        extra = [name for name in where if name != owner]
+        if owner not in where:
+            offenders.append(f"{lit} 在归属文件 {owner} 里反而没有了（现出现在 {where}）")
+        elif extra:
+            offenders.append(f"{lit} 被抄进 {extra}（唯一归属应是 {owner}）")
+    out(
+        "single-source literals",
+        not offenders,
+        "; ".join(offenders[:3])
+        if offenders
+        else f"{len(SINGLE_SOURCE_LITERALS)} 个字面量各自只在一处（docstring 里的实测出处不计）",
+    )
+    if offenders:
+        fails.append(f"duplicated single-source literals: {offenders}")
 def check_dead_config() -> None:
     """Every Settings field must be read somewhere outside config.py.
 
@@ -1488,6 +1545,7 @@ def main() -> int:
     check_dependency_layering()
     check_env_example_models()
     check_installer_scope()
+    check_single_source_literals()
     check_bundled_copy()
     check_role_whitelists_resolve()
     check_us_traceability()

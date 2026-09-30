@@ -122,7 +122,10 @@ MODEL_PROVIDERS: tuple[dict[str, str], ...] = (
      "base_url_hint": "https://api.openai.com/v1", "style": "openai",
      "default_base_url": "https://api.openai.com/v1"},
     {"id": "siliconflow", "label": "硅基流动", "needs_key": "1",
-     "base_url_hint": "https://api.siliconflow.cn/v1", "style": "openai",
+     # 端点不写第二遍（`R28-14`）：这格曾经是该 URL 在 src 里的第二处字面量，而它就在
+     # `default_base_url` 隔壁一行 —— 换端点时静静留下一句过期的占位。由 single-source
+     # literals 那条门禁看着。
+     "base_url_hint": DEFAULT_SILICONFLOW_BASE_URL, "style": "openai",
      "default_base_url": DEFAULT_SILICONFLOW_BASE_URL},
     {"id": "deepseek", "label": "DeepSeek", "needs_key": "1",
      "base_url_hint": "https://api.deepseek.com/v1", "style": "openai",
