@@ -35,7 +35,9 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 
 from rolecard_agent.storage.db import SqlConnection
 
-#: 每条线程最多留几条祖先快照（**不含**最新那条 —— 最新那条永远不删）。
+#: 每条线程最多留几条检查点 —— **含**最新那条（`R28-20`：原先这行注释写着"不含最新"，
+#: 而 `rank >= keep` 那句删的是第 7 条起，实际留下的是"最新 + 5 条祖先"= 共 6 条）。
+#: 判据是实测的那条用例：10 条无过期 → 留下 6 条。
 CHECKPOINT_KEEP_PER_THREAD = 6
 #: 祖先快照的年龄上限（天）。超过就删，哪怕它还在那 6 条里。
 CHECKPOINT_KEEP_DAYS = 14
@@ -365,7 +367,7 @@ def make_checkpointer(conn: SqlConnection) -> SqliteSaver:
     if compacted or pruned:
         print(
             f"[checkpoints] 祖先快照收口 {compacted} 行、修剪 {pruned} 行"
-            f"（保留每条线程最新 1 条 + 最近 {CHECKPOINT_KEEP_PER_THREAD} 条且 "
+            f"（每条线程最多留 {CHECKPOINT_KEEP_PER_THREAD} 条（含最新那条），且只留 "
             f"{CHECKPOINT_KEEP_DAYS} 天以内）",
             flush=True,
         )

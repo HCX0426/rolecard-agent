@@ -204,6 +204,30 @@ def test_pruning_applies_both_gates_and_never_touches_the_newest(tmp_path: Path)
     conn.close()
 
 
+def test_the_count_knob_counts_checkpoints_including_the_newest(tmp_path: Path) -> None:
+    """`CHECKPOINT_KEEP_PER_THREAD=6` 数的是**含最新那条**的总数（`R28-20`）。
+
+    这条不是新行为，是把已有行为钉住：常量头顶那行注释原先写"不含最新那条"，而
+    `rank >= keep` 删的是第 7 条起 —— 留下的是"最新 + 5 条祖先"= 共 6 条，**启动打印也照旧
+    写着"最新 1 条 + 最近 6 条"**（那是同一个差一）。注释与打印都按实测改掉了，这里留一把尺：
+    以后谁改了那句 `rank >=` 的边界，或把注释又写回去，这条会红。
+
+    为什么值得单独一条而不并入上面那条两闸用例：那条故意让一条过期（留下 5 条），
+    "6"那个数被年龄闸遮住了，差一在它身上看不出来。
+    """
+    conn = _conn(tmp_path / "app.db")
+    make_checkpointer(conn)
+    for i in range(10):
+        _add_ckpt(conn, "t1", f"c-{i}")  # 都不过期：只走条数闸
+
+    assert ck.prune_checkpoints(conn, keep_per_thread=6, keep_days=14) == 4
+    assert _kept(conn, "t1") == ["c-4", "c-5", "c-6", "c-7", "c-8", "c-9"], (
+        "留下的条数与常量声明不一致：那个数含不含最新那条，现在有了唯一出处"
+    )
+    assert len(_kept(conn, "t1")) == 6
+    conn.close()
+
+
 def test_a_row_without_a_clock_survives_while_its_peers_do_not(tmp_path: Path) -> None:
     """不知道多旧 = 不删。这条要能单独成立，才说明救它的是那个 NULL 而不是"它还新"。"""
     conn = _conn(tmp_path / "app.db")

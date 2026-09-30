@@ -162,7 +162,11 @@ class Settings(BaseModel):
     # **默认就列上随包那个模型**：藏起来并不能省下一秒，只会让用户对着一块不动的泡
     # （09-26 用户就是为这个提的"要让她看起来在打字"）。名单只对精确同名的 model 生效，
     # 换成别的模型的人不受这颗默认值影响。例：MODEL_THINKING_MODELS=qwen3:8b
-    model_thinking_models: list[str] = Field(default_factory=lambda: ["qwen3-vl:8b"])
+    # 随包那个模型默认要显示思考过程（上面那段"刻意没有裸 on"的理由）。这个名字**不写第二遍**
+    # （`R28-13`）：换默认本地模型时，这里跟着 `DEFAULT_LOCAL_BACKEND` 走，不用记得改两处。
+    model_thinking_models: list[str] = Field(
+        default_factory=lambda: [str(DEFAULT_LOCAL_BACKEND["model"])]
+    )
 
     # 思考模式**总开关**（用户 2026-09-17）：auto = 按 MODEL_THINKING_MODELS 名单自动；
     # off = 名单内的模型也不传 reasoning —— 那是**把它藏起来**，不是把它停掉（性能上
