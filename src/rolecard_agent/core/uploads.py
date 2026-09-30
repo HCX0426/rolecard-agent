@@ -41,12 +41,19 @@ class OrphanFile:
 
 @dataclass(frozen=True, slots=True)
 class OrphanReport:
-    """盘点结果。`referenced` / `scanned` 让操作员能自己核对"为什么只删了这些"。"""
+    """盘点结果。`referenced` / `scanned` 让操作员能自己核对"为什么只删了这些"。
+
+    `dangling` 是**反方向**的那一半（`R28-19`）：台账写着原件、这台机器上却没有那个文件。
+    没有它，"数据根被搬走了一半"这种状态在界面上表现为"一切正常，0 个孤儿"—— 沉默就是缺陷，
+    而它当时是真的：安装根那份 `ingestion_task` 里三行 `source_file` 指仓库旧根的绝对路径，
+    而安装根的 uploads 目录是空的，扫描对这批台账一个字都不说。
+    """
 
     files: tuple[OrphanFile, ...]
     total_bytes: int
     scanned: int
     referenced: int
+    dangling: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -56,6 +63,7 @@ class OrphanReport:
             "total_bytes": self.total_bytes,
             "scanned": self.scanned,
             "referenced": self.referenced,
+            "dangling": list(self.dangling),
         }
 
 
@@ -89,10 +97,23 @@ def _inside(path: Path, root: Path) -> bool:
 
 
 def scan_orphans(upload_dir: Path, referenced: set[str]) -> OrphanReport:
-    """只读盘点：列出上传目录里没有被任何台账引用的文件。**不删任何东西。**"""
+    """只读盘点：列出上传目录里没有被任何台账引用的文件。**不删任何东西。**
+
+    认"这份原件还在不在"用的是**文件名**而不是整条路径（`R28-19`）：台账写的是它当时被
+    上传到哪个根（换过数据根之后那是另一个绝对路径），而文件就在这台机器的目录里躺着。
+    按名字认的误差方向是"多算成有引用" ⇒ 少删，不会删掉在用的文件，这比反过来安全。
+    """
     root = upload_dir
+    names = {Path(item).name for item in referenced if item}
     if not root.is_dir():
-        return OrphanReport(files=(), total_bytes=0, scanned=0, referenced=len(referenced))
+        # 目录都不在：没有可删的东西，但**台账里那些行必须说出来**，不然这一格永远空白。
+        return OrphanReport(
+            files=(),
+            total_bytes=0,
+            scanned=0,
+            referenced=len(referenced),
+            dangling=tuple(sorted(names)),
+        )
 
     entries: list[tuple[str, int, Path]] = []
     for entry in sorted(root.iterdir()):
@@ -109,15 +130,17 @@ def scan_orphans(upload_dir: Path, referenced: set[str]) -> OrphanReport:
 
     orphans: list[OrphanFile] = []
     referenced_count = 0
-    for name, size, entry in entries:
-        if normalize(entry) in referenced:
+    for name, size, _entry in entries:
+        if name in names:
             referenced_count += 1
             continue
         if name.endswith(PARSED_SUFFIX):
             # 副本：主文件被引用（或被删但台账仍在）→ 保留；主文件也不在 → 一起回收。
             base = name[: -len(PARSED_SUFFIX)]
             base_entry = root / base
-            base_referenced = base in primaries and normalize(base_entry) in referenced
+            base_referenced = base in primaries and (
+                base in names or normalize(base_entry) in referenced
+            )
             if base_referenced:
                 referenced_count += 1
                 continue
@@ -125,11 +148,15 @@ def scan_orphans(upload_dir: Path, referenced: set[str]) -> OrphanReport:
             continue
         orphans.append(OrphanFile(name=name, size=size, companion=False))
 
+    # 反方向：台账说有、目录里没有的那个原件（跨数据根搬过来的行就是这个形状）。
+    dangling = tuple(sorted(names - {name for name, _, _ in entries}))
+
     return OrphanReport(
         files=tuple(orphans),
         total_bytes=sum(f.size for f in orphans),
         scanned=len(entries),
         referenced=referenced_count,
+        dangling=dangling,
     )
 
 

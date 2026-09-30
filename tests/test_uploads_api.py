@@ -184,3 +184,47 @@ def test_remove_orphans_tolerates_a_vanishing_file(tmp_path: Path) -> None:
 
     deleted, _ = remove_orphans(uploads, report)
     assert deleted == 1  # 只有 b 被删，且不抛异常
+
+def test_a_ledger_row_from_another_data_root_still_counts_as_referenced(tmp_path: Path) -> None:
+    """跨数据根的台账行不再制造沉默（`R28-19` 的一半）。
+
+    真机形状：她的库里有三行 `source_file` 指着**仓库那个旧根**的绝对路径，而文件在安装根的
+    uploads 目录里。以前按整条路径比 ⇒ 认不出，那些文件被列成"可回收"（差点被删）；
+    反过来目录空着时又一句不说（没人知道台账指向别处）。现在按文件名认，两边都对。
+    """
+    root = tmp_path / "uploads"
+    root.mkdir()
+    (root / "47ba2914_report.txt").write_text("在用的报告", encoding="utf-8")
+    other_root = tmp_path / "old-root" / "uploads"
+    referenced = referenced_paths([str(other_root / "47ba2914_report.txt")])
+
+    report = scan_orphans(root, referenced)
+
+    assert report.files == (), f"在用文件被判成可回收（跨根的台账行没认出来）：{report.files}"
+    assert report.referenced == 1
+    assert report.dangling == (), "原件就在这台机器上，不该报悬挂"
+
+
+def test_dangling_ledger_rows_are_said_out_loud(tmp_path: Path) -> None:
+    """反方向那一半：台账说有、这台机器上没有 ⇒ 说出来，而不是"一切正常 0 个孤儿"。"""
+    root = tmp_path / "uploads"
+    root.mkdir()
+    (root / "kept.txt").write_text("别的文件", encoding="utf-8")
+    referenced = referenced_paths(
+        [str(tmp_path / "elsewhere" / "gone-a.txt"), str(tmp_path / "elsewhere" / "gone-b.txt")]
+    )
+
+    report = scan_orphans(root, referenced)
+
+    assert report.dangling == ("gone-a.txt", "gone-b.txt"), report.dangling
+    assert [f.name for f in report.files] == ["kept.txt"], "该报的孤儿也不能被 dangling 挤掉"
+
+
+def test_a_missing_upload_dir_reports_every_ledger_row_as_dangling(tmp_path: Path) -> None:
+    """目录压根没建：不是"扫描 0 个，全部被引用"，而是把台账那些行点名出来。"""
+    referenced = referenced_paths([str(tmp_path / "nope" / "uploads" / "x.txt")])
+
+    report = scan_orphans(tmp_path / "no-such-dir", referenced)
+
+    assert report.files == () and report.scanned == 0
+    assert report.dangling == ("x.txt",), "目录不在时沉默 = 这个缺陷的本尊"
