@@ -16,6 +16,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 import tomllib
 
@@ -903,6 +904,8 @@ def check_doc_links() -> None:
     # `build/` 是 09-30 加进来的（`R28-47`）：文档里按文件名点名的**证据**多数长在那儿
     # （`build/backup-liveroot-*.zip` 之类的装包前备份）。决策 4 清盘之后那些名字就悬空了，
     # 而这条检查当时看不见它们 —— "数字仍在档里，但复跑不回来"没人报。
+    # **但那个前缀只有在配合下面的 gitignore 分区之后才成立**：`build/` 整个是被忽略的暂存区，
+    # 直接按"存在吗"判，得到的结论只在这台机器上成立（本机全绿、CI 红 10 处，见 `_git_ignored`）。
     prefixes = ("docs/", "src/", "scripts/", "tests/", "data/", "build/")
     # 字符类必须含中文：**整个中文文件名文档树原本是这条检查的盲区**。09-26 轮 R26-20 实测：
     # 把 CJK 放进来之后立刻抓到 7 处 living docs 指着已经搬进 archive/ 的《技术评审与决策》
@@ -922,6 +925,7 @@ def check_doc_links() -> None:
         return (md_path.parent / ref).exists()
 
     broken: list[str] = []
+    unresolved: list[tuple[str, str]] = []
     # 两条刻意不参与：
     #  * `docs/archive/` 是**封存件** —— 里面的路径是"写它的那天"的事实，按 R26-19 的同一个
     #    决定（引用可达性进门禁，但归档档里的编号与路径原地不动）不去追修它们。
@@ -945,11 +949,62 @@ def check_doc_links() -> None:
                 if not (is_prefixed or is_bare_md or ref in bare):
                     continue
                 if not resolvable(path, ref):
-                    broken.append(f"{rel}:{lineno} -> {ref}")
-    detail = "; ".join(broken[:4]) if broken else "all resolve"
+                    unresolved.append((f"{rel}:{lineno}", ref))
+    # 判据不许落在 gitignore 的暂存区上：分不出这一半，同一条检查就会本机绿、CI 红，
+    # 而那个"红"里混着"这台机器上有过那个文件"这种不可复跑的事实 —— 比没有尺子更坏。
+    ignored, asked = _git_ignored([ref for _, ref in unresolved])
+    skipped = 0
+    for where, ref in unresolved:
+        if ref in ignored:
+            skipped += 1
+            continue
+        broken.append(f"{where} -> {ref}")
+    if broken:
+        detail = "; ".join(broken[:4])
+    else:
+        detail = "all resolve"
+        if skipped:
+            detail += f"（另有 {skipped} 处点名 gitignore 暂存区里的产物，按设计不参与判据）"
+        if not asked:
+            detail += " [警告：未能询问 git，暂存区那一半没分区]"
     out("doc links", not broken, detail)
     if broken:
         fails.append(f"broken doc references: {broken}")
+
+
+def _git_ignored(refs: list[str]) -> tuple[set[str], bool]:
+    """把"文档点名的路径"一次性问 git：哪些是**被忽略的**。返回（被忽略集合, 是否问成功）。
+
+    为什么必须有这一步：`build/` 整个目录在 `.gitignore` 里，那里的一切都是"某台机器上
+    某一刻跑出来的"。把它们和 `src/` 里的引用混在同一把尺子下，判据就从"这个引用是不是谎"
+    悄悄变成"这台机器上有没有那个文件" —— 09-30 实测：`build/` 进受验前缀的第一趟**本机全绿**，
+    推到 CI 红 10 处（`build/baseline.json` 这类"生成命令就写在同一行旁边"的暂存件，
+    runner 上当然没有）。**一条检查如果在 CI 上与在本机结论不同，它的判据里就有 gitignore 的东西**，
+    这一条现在是结构而不是靠人记。
+
+    问不到（没有 git / 超时）时返回空集合：宁可让那 10 处照样红，也不"读不到就当没有引用"。
+    """
+    paths = sorted({str(r) for r in refs})
+    if not paths:
+        return set(), True
+    try:
+        proc = subprocess.run(
+            ["git", "check-ignore", "--stdin"],
+            # **必须送 bytes**：text 模式会把 "\n" 翻成 "\r\n"，而 `--stdin` 只剥换行不剥
+            # 回车 —— git 于是收到一条带控制符的"路径"，回你一条加引号的转义名（`"a.json\r"`），
+            # 匹配不上任何真引用，这条分区就静默失效（09-30 在干净 worktree 里实测到）。
+            input="\n".join(paths).encode("utf-8"),
+            capture_output=True,
+            cwd=ROOT,
+            check=False,
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set(), False
+    if proc.returncode not in (0, 1):  # 1 = 一条都没被忽略，不是失败
+        return set(), False
+    lines = proc.stdout.decode("utf-8", "replace").splitlines()
+    return {line.strip().replace("\\", "/") for line in lines if line.strip()}, True
 
 
 # NOTE: check_python_pin was removed (2026-09-17) together with .python-version / uv.lock.
