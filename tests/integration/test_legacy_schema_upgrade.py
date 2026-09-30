@@ -293,20 +293,15 @@ def test_reference_shape_service_endpoint_gains_a_scoped_owner(tmp_path: Path) -
     conn.close()
 
 
-def test_proactive_state_gains_a_scoped_key_and_legacy_threads_are_remapped(
-    tmp_path: Path,
-) -> None:
-    """多租户 B2：状态表主键 (role_id) → (user_id, role_id) + 主动线程 id 带身份。
+def _b2_legacy_shape(tmp_path: Path) -> tuple[Path, sqlite3.Connection]:
+    """造出 B2 之前的形状：状态表无 user_id、一条主动线程（含检查点）也用旧 id。
 
-    `_migrate` 的这两件事是一体的：老行归属实例主人（默认部署 = 'local-user'），老线程
-    `s_proactive_<role>` 按 `session_thread.user_id` 现读归属重命名为
-    `s_proactive_<uid>_<role>`，checkpoints/writes 的 thread_id 一起改（那是她主动说过的
-    历史，不改就凭空断了上下文）。少任何一半都是"升级把记忆/状态断了"。
+    两个 B2 用例共用这一份夹具 —— 它们查的是同一处迁移的两面（主键升上去 + 线程 id 带着
+    所有引用走）。
     """
     db = tmp_path / "app.db"
     conn = connect(db)
     bootstrap(conn, enabled_domains=DOMAINS)
-    # 造出 B2 之前的形状：状态表无 user_id；一条主动线程（含检查点）也用旧 id。
     conn.execute("DROP TABLE role_proactive_state")
     conn.execute(
         "CREATE TABLE role_proactive_state ("
@@ -337,29 +332,93 @@ def test_proactive_state_gains_a_scoped_key_and_legacy_threads_are_remapped(
     conn.execute("INSERT INTO checkpoints (thread_id) VALUES ('s_proactive_she')")
     conn.execute("INSERT INTO writes (thread_id) VALUES ('s_proactive_she')")
     conn.commit()
+    return db, conn
 
-    # 走一遍 _migrate（幂等前提：新库再跑一遍也不许动）
+
+@pytest.mark.parametrize(
+    ("table", "column"),
+    [
+        ("model_backend", "num_ctx"),
+        ("service_endpoint", "enabled"),
+        ("token_usage_day", "reasoning_tokens"),
+    ],
+)
+def test_a_declared_column_on_a_shape_migrated_table_still_gets_added(
+    tmp_path: Path, table: str, column: str
+) -> None:
+    """**第二遍不许跳过**那一族表（`R28-21`）：将来给它们声明的新列，老库必须补得上。
+
+    上面那条用例钉的是**第一遍**必须跳过 —— 那里补出 `provider_id` 会让"没有 provider_id
+    就是旧形态"的判定当场失效、搬层被静默跳过。这条钉它的对偶：搬层做完之后那一遍也跳过，
+    等于给这三张表判了"今后声明的列永远补不上"，而它不报错，症状要等某个老库升上来那天才现形。
+
+    选列选得很讲究，第一版这条是**空用例**：它删 `frequency_penalty`，而 `_migrate` 自己就会
+    补那三列惩罚位（老库升上来后保持 NULL 那条修复），于是"第二遍仍跳过"的变异照样绿。
+    这里删的三列都实测过：**旧行为不补、新行为补** —— 每张表各留一列，是为了让"只有其中
+    一张修好了"这种半截修法也红得出来。
+
+    （同一次实测还顺手照到那条 guard 是真的：删掉 NOT NULL 又没默认值的 `model_backend.model`
+    再启动，抛的就是「这种列必须走整表重建」—— 需要回填数据的情形仍然由 `_migrate` 大声负责。）
+    """
+    db = tmp_path / "app.db"
+    conn = connect(db)
     bootstrap(conn, enabled_domains=DOMAINS)
+    assert column in _cols(conn, table), f"{table} 没有声明 {column}，这条用例的夹具是空的"
+    conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+    conn.commit()
+    assert column not in _cols(conn, table)
+
     bootstrap(conn, enabled_domains=DOMAINS)
 
-    st = conn.execute(
-        "SELECT user_id, role_id, affinity FROM role_proactive_state ORDER BY role_id"
+    assert column in _cols(conn, table), (
+        f"{table} 被补列器永久跳过：将来给这三张表声明的列，老库一个都补不上"
+    )
+    conn.close()
+
+
+def test_the_thread_rename_follows_every_table_that_holds_thread_id(tmp_path: Path) -> None:
+    """B2 改名必须带着**所有**持 `thread_id` 的表走（`R28-23`）。
+
+    原来那版写死了三张（session_thread / checkpoints / writes），漏了 `command_approval` ——
+    挂旧 id 的审批行指向一条不存在的会话：列表里点得开、命令与 decide_token 都还在，
+    但那句话的上下文没了。修法的重点不是"这次补上这一张"，是**判据换成现数**：
+    凡是带 `thread_id` 列又不是 `session_thread` 自己的表都跟着改。
+
+    所以这条用例除了查 `command_approval`，还故意建一张代码根本不知道的表 `extra_ref`：
+    它也拿到了新 id ⇒ 证明那张清单是从库的形状推出来的，而不是从这段代码里抄出来的。
+    """
+    _b2_legacy_shape(tmp_path)
+    conn = connect(tmp_path / "app.db")
+    conn.execute(
+        "INSERT INTO command_approval (command, role_id, thread_id, status, decide_token)"
+        " VALUES ('pip list', 'she', 's_proactive_she', 'pending', 'tok-1')"
+    )
+    conn.execute("CREATE TABLE extra_ref (thread_id TEXT, note TEXT)")
+    conn.execute("INSERT INTO extra_ref (thread_id, note) VALUES ('s_proactive_she', '别的引用')")
+    conn.commit()
+
+    bootstrap(conn, enabled_domains=DOMAINS)
+
+    NEW = "s_proactive_local-user_she"
+    rows = conn.execute(
+        "SELECT thread_id, command, decide_token, status FROM command_approval"
     ).fetchall()
-    assert [(str(r["user_id"]), str(r["role_id"]), r["affinity"]) for r in st] == [
-        ("local-user", "general_assistant", 0.0),
-        ("local-user", "she", 2.5),
-    ], "状态老行没归属实例主人 / 数据丢了"
-    pk = [r[1] for r in conn.execute("PRAGMA table_info(role_proactive_state)") if r[5] > 0]
-    assert pk == ["user_id", "role_id"], f"主键没升到 (user_id, role_id)：{pk}"
-    # 主动线程重映射：会话行 + 检查点表一起改名；已带身份的不再动（幂等）。
-    lanes = conn.execute("SELECT thread_id FROM session_thread").fetchall()
-    assert [str(r["thread_id"]) for r in lanes] == ["s_proactive_local-user_she"]
-    assert conn.execute(
-        "SELECT 1 FROM checkpoints WHERE thread_id = 's_proactive_local-user_she'"
-    ).fetchone() is not None, "检查点的 thread_id 没跟着会话改名"
-    assert conn.execute(
-        "SELECT 1 FROM writes WHERE thread_id = 's_proactive_local-user_she'"
-    ).fetchone() is not None, "writes 的 thread_id 没跟着会话改名"
+    assert [str(r["thread_id"]) for r in rows] == [NEW], (
+        f"审批行还挂在旧线程 id 上：{[str(r['thread_id']) for r in rows]}"
+    )
+    assert str(rows[0]["decide_token"]) == "tok-1" and str(rows[0]["status"]) == "pending", (
+        "改名顺带动了别的列 —— 令牌与状态本来不该被这次迁移碰"
+    )
+    # 这一句才是"机制通用"的证据：代码里从没出现过 extra_ref。
+    assert [str(r["thread_id"]) for r in conn.execute("SELECT thread_id FROM extra_ref")] == [NEW]
+    old_left = conn.execute(
+        "SELECT COUNT(*) FROM session_thread WHERE thread_id = 's_proactive_she'"
+    ).fetchone()[0]
+    assert old_left == 0
+    # 幂等：再跑一次不许把已带身份的 id 改成带两个身份段。
+    bootstrap(conn, enabled_domains=DOMAINS)
+    again = [str(r["thread_id"]) for r in conn.execute("SELECT thread_id FROM command_approval")]
+    assert again == [NEW], f"再跑一次把已带身份的 id 改坏了：{again}"
     conn.close()
 
 

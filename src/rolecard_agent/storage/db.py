@@ -245,7 +245,14 @@ def bootstrap(conn: SqlConnection, enabled_domains: Iterable[str] = ()) -> list[
     _migrate(conn)
     # 第二遍：`_migrate` 里那些 DROP/重建（service_endpoint 整表、model_backend 搬层）
     # 会把第一遍补好的列跟着旧表一起带走，所以搬层之后再对齐一次声明。
-    reconcile_columns(conn, files=files)
+    # 这一遍**不再跳过**那三张手形迁移的表（`R28-21`）。跳过只对**第一遍**是必要的：那里
+    # 补出 `provider_id` 会让"没有 provider_id 就是旧形态"的判定当场失效，搬层被静默跳过。
+    # 而此刻迁移已经做完、形状已经是新的 —— 继续跳过等于给这三张表判了"今后声明的新列永远
+    # 补不上"，症状要等到某个老库升上来才现形（台账原判：埋点不是事故，但它是**只会更贵**
+    # 那种埋点）。真遇到"这列必须回填数据"的情况，补列器会抛那句
+    # 「NOT NULL 又没默认值 ⇒ 必须走整表重建」并点名 `_SHAPE_MIGRATED_TABLES`，
+    # 那正是想要的大声失败，而不是静默什么都不做。
+    reconcile_columns(conn, files=files, skip=frozenset())
     conn.commit()
     return applied
 
@@ -351,6 +358,26 @@ def _columns(conn: SqlConnection, table: str) -> set[str]:
     return {str(r["name"]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
+#: 重命名一条线程时要跟着改的表：**现数**，不写死清单（`R28-23`）。
+#: 写死的那个版本列了 `session_thread` / `checkpoints` / `writes` 三张，漏了
+#: `command_approval.thread_id` —— 挂旧 id 的审批行会指向一条不存在的会话（点进去是空的，
+#: 而它自己还挂着 `decide_token`）。这类漏法不会因为"这次补上这一张"而消失：下一张带
+#: `thread_id` 的表照样被忘。所以判据交给库本身：凡是**有 `thread_id` 列又不是
+#: `session_thread` 自己**的表，都跟着改。langgraph 那两张（checkpoints / writes）本来就
+#: 在这个集合里，原来那句"表不存在就不动"的 `has_cp` 特判因此也不需要了 —— 不存在的表
+#: 根本进不了清单。
+def _thread_id_carriers(conn: SqlConnection) -> list[str]:
+    tables = [
+        str(r[0])
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        )
+    ]
+    return [
+        t for t in sorted(tables) if t != "session_thread" and "thread_id" in _columns(conn, t)
+    ]
+
+
 def _migrate(conn: SqlConnection) -> None:
     """**形状**迁移：只负责"通用补列器补不了"的那些事（幂等、可重跑）。
 
@@ -434,8 +461,7 @@ def _migrate(conn: SqlConnection) -> None:
         )
         conn.execute("DROP TABLE role_proactive_state")
         conn.execute("ALTER TABLE role_proactive_state__b2 RENAME TO role_proactive_state")
-        cp_cols = _columns(conn, "checkpoints")
-        has_cp = bool(cp_cols)
+        refs = _thread_id_carriers(conn)
         for row in conn.execute(
             "SELECT thread_id, user_id FROM session_thread "
             "WHERE thread_id LIKE 's_proactive_%'"
@@ -449,12 +475,12 @@ def _migrate(conn: SqlConnection) -> None:
                 "UPDATE session_thread SET thread_id = ? WHERE thread_id = ?",
                 (new_tid, tid),
             )
-            if has_cp:
+            # 带 thread_id 的表全跟着走（`R28-23`）：审批、检查点、writes，以及将来任何新表
+            # —— 判据是库的形状，不是这段代码记得列了几张。
+            for table in refs:
                 conn.execute(
-                    "UPDATE checkpoints SET thread_id = ? WHERE thread_id = ?", (new_tid, tid)
-                )
-                conn.execute(
-                    "UPDATE writes SET thread_id = ? WHERE thread_id = ?", (new_tid, tid)
+                    f"UPDATE {quote_ident(table)} SET thread_id = ? WHERE thread_id = ?",
+                    (new_tid, tid),
                 )
     if "value" not in _columns(conn, "role_memory"):
         conn.execute(
