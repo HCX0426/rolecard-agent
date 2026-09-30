@@ -128,7 +128,7 @@ jobs:
       - name: 部署面那份 compose 要能解析（v2.4 收官那一档）
         # 这台 runner 才有 Docker —— 本机连 `docker` 都没有，所以 compose 的语法与"必填变量
         # 缺了会怎样"只有在 CI 上量得到。`config -q` 顺带把 `${VAR:?}` 那几条护栏演一遍：
-        # 先不给变量 ⇒ 必须非零退出并点名缺哪个；补齐之后 ⇒ 必须安静通过。
+        # 先不给变量 ⇒ 必须非零退出并说"缺变量"；补齐之后 ⇒ 必须安静通过。
         run: |
           set +e
           out=$(docker compose config -q 2>&1); code=$?
@@ -136,7 +136,12 @@ jobs:
           if [ "$code" -eq 0 ]; then
             echo "compose 在没给任何变量时竟然解析通过了 —— 那三条 :? 护栏是空的"; exit 1
           fi
-          echo "$out" | grep -q "ROLECARD_DOMAIN" || { echo "非零退出但不是因为缺变量：$out"; exit 1; }
+          printf '%s\n' "$out" | grep -qi "required variable" || {
+            echo "非零退出，但不是因为那三条 :? 护栏：$out"; exit 1
+          }
+          # 判据只认"报了缺变量"这个通用形状，**不点名是哪个** —— compose 按服务顺序插值，
+          # 先撞到 app.environment 的 ROLECARD_CREDENTIALS（09-30 实测），我原先 grep 的是
+          # ROLECARD_DOMAIN，等于把判据写在"实现先碰到谁"这个细节上，一推就红。
           ROLECARD_DOMAIN=chat.example.invalid \
           ROLECARD_CREDENTIALS='operator:ci:ci-pass' \
             docker compose config -q
