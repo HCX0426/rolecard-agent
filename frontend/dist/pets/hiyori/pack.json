@@ -1,0 +1,12 @@
+{
+  "label": "雏雾",
+  "kind": "live2d",
+  "motions": {
+    "idle": "Idle",
+    "speaking": "Tap@Body",
+    "thinking": "Flick",
+    "listening": "FlickDown",
+    "typing": "Tap",
+    "success": "Flick@Body"
+  }
+}

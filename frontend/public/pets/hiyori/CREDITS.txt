@@ -1,0 +1,18 @@
+桃濑日和（Hiyori Momose）FREE 版 —— Live2D 官方无偿提供样本模型
+来源：https://www.live2d.com/zh-CHS/download/sample-data/
+插画：Kani Biimu　模型：Live2D
+
+本目录原样收录官方 zip 里 hiyori_free/runtime/ 那一层，未做任何改动（不改美术、不改参数）。
+pack.json 是我们加的清单声明（label / kind / motions 的映射），不属于素材本体。
+
+使用条款（摘自素材自带的 ReadMe.txt，随包必须带着这一段）：
+  普通用户以及小规模企业在同意授权协议的情况下可用于商业用途。
+  中/大规模的企业只能用于非公开的内部试用。
+  在使用该素材时，请确认【无偿提供素材使用授权协议】中的授权类型、Live2D 原创角色等相关内容，
+  并必须接受【Live2D Cubism 示例模型的使用授权要求】中的利用条件。
+  有关许可证的更多信息，请参阅：https://www.live2d.com/zh-CHS/download/sample-data/
+署名要求：使用了该样本数据的作品须注明其中包含株式会社 Live2D 的著作物（样本数据）。
+
+我们**不随包分发** Cubism Core（live2dcubismcore.min.js）—— 那是另一份 SDK 条款下的产物，
+要由使用者在自己这边接受条款后放进 <数据根>/pets/_runtime/。缺它时这个包不进清单，
+而 /api/pets 会回一句该往哪儿放。
