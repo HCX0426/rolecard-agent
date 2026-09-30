@@ -1,6 +1,6 @@
 """模型两层 API：添加抽屉要用的四个端点（目录 / 测连 / 加一行 / 删一行 / 写回能力）。
 
-Traceability: US-8、US-9（模型配置）+ docs/模型页设计稿.md §2/§3。
+Traceability: US-8、US-9（模型配置）+ docs/archive/模型页设计稿.md §2/§3。
 
 四条决定性断言：
 

@@ -3,7 +3,7 @@
 // ui/Button 的禁用态约定：`disabledHint` 只在真的禁用时出现，且必须出现在 DOM 里。
 //
 // 为什么单独钉这一条：全站「暂时不可用」的控件都指望这个出口说话（口径见
-// `docs/模型接入设计稿.md` §4）。而原生 `title` 在禁用按钮上 Chromium 根本不弹 ——
+// `docs/archive/模型接入设计稿.md` §4）。而原生 `title` 在禁用按钮上 Chromium 根本不弹 ——
 // 如果哪天有人把它改成 `title={hint}`，测试会红，而不是悄悄退回"灰着但没人知道为什么"。
 
 import { fireEvent, render, screen } from "@testing-library/react";

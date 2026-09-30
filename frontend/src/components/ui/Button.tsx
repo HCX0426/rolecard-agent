@@ -24,7 +24,7 @@ const SIZES: Record<Size, string> = {
 /**
  * 统一按钮：variant 决定语气，size 决定尺寸；调用方的 className 可以追加覆盖。
  *
- * `disabledHint` 是「暂时不可用」这一档的标准出口（口径见 `docs/模型接入设计稿.md` §4）：
+ * `disabledHint` 是「暂时不可用」这一档的标准出口（口径见 `docs/archive/模型接入设计稿.md` §4）：
  * 只在 `disabled` 为真时渲染一行说明，告诉用户**怎么让它可用**。
  * 为什么要单独一个属性而不是 `title`：Chromium 在禁用按钮上根本不弹原生 title，
  * 于是"禁用了但不说为什么"就成了既拦不住又查不出的死控件。
