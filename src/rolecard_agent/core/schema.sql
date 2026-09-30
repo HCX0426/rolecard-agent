@@ -144,6 +144,9 @@ CREATE TABLE IF NOT EXISTS agent_reachout (
 );
 
 CREATE INDEX IF NOT EXISTS idx_reachout_state_time ON agent_reachout(state, created_at DESC);
+-- 缺索引三条（09-28 轮 `R28-22`，当前规模无实害、登记的那笔）：按实际查询的列序补，
+-- 每次启动都执行 `IF NOT EXISTS` ⇒ 老库下一次开机就拿到，不用写迁移。
+CREATE INDEX IF NOT EXISTS idx_reachout_user_state ON agent_reachout(user_id, state);
 
 -- 关系驱动主动开口的 per-role 状态（架构计划 §5.2）：按 role_id 隔离，不复用全局状态。
 -- affinity = 关系数值（互动积累的成长值，到阈值即主动冒泡）；calibration_json = 主动度校准
@@ -267,6 +270,9 @@ CREATE TABLE IF NOT EXISTS model_provider (
     sort_order INTEGER NOT NULL DEFAULT 0,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 凭据按人过滤（`R28-22`）：`user_id` 是后补的列，当时没有建索引。
+CREATE INDEX IF NOT EXISTS idx_model_provider_user ON model_provider(user_id);
 
 -- name 仍是模型行的主键：`session_thread.model_name` 与 `role_card.model_name` 都指向它，
 -- 拆层不能断这条链（本次唯一不能破的兼容点）。
@@ -453,6 +459,7 @@ CREATE TABLE IF NOT EXISTS command_approval (
 );
 
 CREATE INDEX IF NOT EXISTS idx_command_approval_status ON command_approval(status, id DESC);
+CREATE INDEX IF NOT EXISTS idx_command_approval_thread ON command_approval(thread_id);
 
 -- ===========================================================================
 -- MCP 接入（架构计划 C·§6.1 的 operator 自助入口）。
