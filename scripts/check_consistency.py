@@ -801,6 +801,33 @@ def check_line_endings() -> None:
         fails.append(f"CRLF line endings found: {offenders}")
 
 
+def check_ps1_encoding() -> None:
+    """带非 ASCII 的 `.ps1` 必须是 **UTF-8 with BOM**。
+
+    为什么：`开发流程.md` 教的是 `powershell -File scripts\\install_package.ps1`，而 Windows
+    PowerShell 5.1 对**没有 BOM** 的文件按 ANSI 代码页解码（这台机器是 GBK）。中文注释被读成
+    半个字符时，尾字节会把紧随其后的 ASCII 一起吞掉，于是报一句跟真因毫无关系的
+    `MissingEndCurlyBrace`。实测 2026-09-30：同一份装机脚本在 5.1 下解析失败、在 pwsh 7 下正常
+    （7 默认按 UTF-8 读）—— 也就是"能不能装上"取决于用哪个 shell，这种依赖只能由尺子挡掉。
+    纯 ASCII 的文件豁免：哪种代码页读出来都一样，不必强加 BOM。
+    """
+    offenders: list[str] = []
+    for path in iter_files(".ps1"):
+        raw = path.read_bytes()
+        if all(byte < 128 for byte in raw):
+            continue
+        if raw[:3] != b"\xef\xbb\xbf":
+            offenders.append(str(path.relative_to(ROOT)))
+    detail = (
+        f"non-ASCII without BOM: {offenders}"
+        if offenders
+        else "带非 ASCII 的 .ps1 全部带 BOM（5.1 与 pwsh 读出同一份）"
+    )
+    out("ps1 encoding", not offenders, detail)
+    if offenders:
+        fails.append(f".ps1 lacks a UTF-8 BOM, PowerShell 5.1 will misread it: {offenders}")
+
+
 def check_console_encoding() -> None:
     """每个 `scripts/*.py` 入口：会打出 GBK 装不下的字符，就必须自己重配 stdout 编码。
 
@@ -1751,6 +1778,7 @@ def main() -> int:
     check_domain_isolation()
     check_safety_prompt()
     check_line_endings()
+    check_ps1_encoding()
     check_console_encoding()
     check_readme_quickstart()
     check_milestone_alignment()
