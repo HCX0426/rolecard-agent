@@ -348,8 +348,10 @@ def build(variant: Variant) -> None:
     sprite = out_dir / "sprite.png"
     sprite.write_bytes(_png(sheet))
     manifest = {"label": variant.label, "kind": "sheet", "rows": variant.rows}
-    (out_dir / "pack.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=1) + "\n", encoding="utf-8"
+    # 写 bytes 而不是 str：Windows 上 `write_text` 会把 "\n" 翻成 "\r\n"，而仓库的铁律是全部 LF
+    # （`.gitattributes` + `line endings` 那条断言）—— 素材工具也是脚本，不因"它只产图"而豁免。
+    (out_dir / "pack.json").write_bytes(
+        (json.dumps(manifest, ensure_ascii=False, indent=1) + "\n").encode("utf-8")
     )
     print(f"wrote {sprite} + pack.json  {sheet.width}x{sheet.height}  "
           f"cell={CELL_W}x{CELL_H}  cols={COLS} rows={ROWS}  bytes={sprite.stat().st_size}")
