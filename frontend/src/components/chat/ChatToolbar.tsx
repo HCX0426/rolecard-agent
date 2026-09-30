@@ -100,7 +100,7 @@ export default function ChatToolbar({
   busy: boolean;
   uploading: boolean;
   selectMode: boolean;
-  /** 会话级模型覆盖（null = 跟随设置里的默认后端）。 */
+  /** 会话级模型覆盖（null = 跟随「服务」页那条序列打头的那个）。 */
   sessionModel: string | null;
   sessionMode: string;
   onPickRole: (roleId: string) => void;
@@ -284,7 +284,7 @@ export default function ChatToolbar({
               }}
               className="flex w-full items-center justify-between px-3 py-2 text-xs hover:bg-blue-50 dark:bg-blue-900/30"
             >
-              <span>默认后端（跟随设置）</span>
+              <span>自动（跟随「服务」页的优先级）</span>
               {sessionModel === null && <span className="text-blue-600 dark:text-blue-400">✓</span>}
             </button>
             {grouped.map(([provider, list]) => (

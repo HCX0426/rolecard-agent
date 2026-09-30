@@ -463,11 +463,11 @@ export function ExtensionPanel() {
         })}
       </section>
 
-      {/* ---- ② 模型后端连通性自检 ---- */}
+      {/* ---- ② 模型连通性自检 ---- */}
       <section className="flex flex-col gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
         <div className="flex items-baseline gap-2">
-          <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">模型后端连通性自检</h3>
-          <span className="text-[11px] text-slate-400 dark:text-slate-500">对默认后端真发一次轻探活（不耗推理配额）</span>
+          <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">模型连通性自检</h3>
+          <span className="text-[11px] text-slate-400 dark:text-slate-500">对现在打头的那个模型真发一次轻探活（不耗推理配额）</span>
         </div>
         <div>
           <button
@@ -475,7 +475,7 @@ export function ExtensionPanel() {
             disabled={connBusy}
             className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
           >
-            {connBusy ? "检测中…" : "检测默认模型后端"}
+            {connBusy ? "检测中…" : "检测当前默认"}
           </button>
         </div>
         {conn &&

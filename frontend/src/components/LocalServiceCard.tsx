@@ -115,7 +115,7 @@ export function LocalServiceCard() {
                 status.running ? "bg-emerald-500" : "bg-slate-400 dark:bg-slate-600"
               }`}
             />
-            本地推理服务
+            本机 Ollama
             <span className="truncate font-mono text-[11px] font-normal text-slate-400">
               {status.base_url}
             </span>
@@ -124,7 +124,7 @@ export function LocalServiceCard() {
           {/* B/S 下不摆一个点不动的灰按钮，直接说清为什么这里没有 */}
           {status.is_local && !shell && (
             <p className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">
-              起停服务进程属于桌面壳（网页不能碰你电脑上的进程）。
+              起停 Ollama 进程属于桌面壳（网页不能碰你电脑上的进程）。
             </p>
           )}
         </div>
@@ -137,7 +137,7 @@ export function LocalServiceCard() {
                 onClick={() => void actService("start")}
                 disabled={busy !== null}
               >
-                {busy === "start" ? "启动中…" : "启动 Ollama 服务"}
+                {busy === "start" ? "启动中…" : "启动 Ollama"}
               </Button>
             )}
             {/* 只停自己起的：别人的 Ollama 不给这个按钮，而不是给了再拒绝 */}
@@ -149,7 +149,7 @@ export function LocalServiceCard() {
                 onClick={() => void actService("stop")}
                 disabled={busy !== null}
               >
-                {busy === "stop" ? "停止中…" : "停止服务（本应用起的）"}
+                {busy === "stop" ? "停止中…" : "停止 Ollama（本应用起的）"}
               </Button>
             )}
             {status.is_local && (
@@ -160,7 +160,7 @@ export function LocalServiceCard() {
                 onClick={() => void act("pin")}
                 disabled={busy !== null || !status.running}
                 disabledHint={
-                  status.running ? undefined : "本机推理服务没在跑 —— 先把它起起来才能预热"
+                  status.running ? undefined : "本机 Ollama 没在跑 —— 先把它起起来才能预热"
                 }
               >
                 {busy === "pin" ? "载入中…（可能十几秒）" : "预热 / 常驻默认模型"}

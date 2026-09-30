@@ -161,7 +161,7 @@ async function toLocal<T>(method: string, url: string, body?: unknown, timeout =
       signal: controller.signal,
     });
   } catch (e) {
-    if ((e as Error).name === "AbortError") throw new ApiError(0, "本机后端没在限时内回答。");
+    if ((e as Error).name === "AbortError") throw new ApiError(0, "本机程序没在限时内回答。");
     throw new ApiError(0, `网络错误：${(e as Error).message}`);
   } finally {
     clearTimeout(timer);

@@ -88,7 +88,7 @@ def _remote_inventory(target: TargetBody) -> tuple[list[dict[str, Any]], list[di
     except Exception as exc:  # noqa: BLE001 - ModelSettingsError 的文案已经能直接给人看
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not base:
-        raise HTTPException(status_code=400, detail="要填对面的服务地址。")
+        raise HTTPException(status_code=400, detail="要填对面那台程序的地址。")
     try:
         res = outbound.get(
             f"{base}/api/sync/inventory",

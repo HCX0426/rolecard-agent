@@ -89,7 +89,7 @@ def test_add_unknown_backend_rejected(svc: ServiceEndpointService) -> None:
 
 
 def test_add_duplicate_reference_rejected(svc: ServiceEndpointService) -> None:
-    with pytest.raises(ValueError, match="已在本服务中"):
+    with pytest.raises(ValueError, match="已经在这个顺序里了"):
         svc.add("embedding", ref_backend="siliconflow")
 
 

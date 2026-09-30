@@ -102,7 +102,7 @@ class LocalPaddleBackend:
         exe = self._exe
         if not exe or not self.available():
             raise OcrUnavailable(
-                "OCR 后端未配置：按 requirements-ocr.txt 在独立 venv 安装 paddleocr，"
+                "本地 OCR 未配置：按 requirements-ocr.txt 在独立 venv 安装 paddleocr，"
                 "并设置 OCR_PYTHON 指向其 python（默认 .venv-ocr/Scripts/python.exe）。"
             )
         try:
@@ -195,7 +195,7 @@ class CloudApiBackend:
 
     def ocr(self, image_path: Path) -> str:
         if not self._key:
-            raise OcrUnavailable("云端 OCR 未配置 API Key（去模型页为该后端填写凭据）。")
+            raise OcrUnavailable("云端 OCR 未配置 API Key（去模型页为该厂商填写凭据）。")
         try:
             b64 = _read_image_b64(image_path)
         except Exception as exc:

@@ -296,7 +296,7 @@ def _parse_image(
         backend = LocalPaddleBackend()  # 自动发现默认路径（首选）
     if not backend.available():
         raise OcrUnavailable(
-            "OCR 后端未配置：按 requirements-ocr.txt 在独立 venv 安装 paddleocr，"
+            "本地 OCR 未配置：按 requirements-ocr.txt 在独立 venv 安装 paddleocr，"
             "并设置 OCR_PYTHON 指向其 python（默认 .venv-ocr/Scripts/python.exe）；"
             "或在「服务」页把一个已配凭据的云端 OCR / 视觉模型端点排进 OCR 序。"
         )

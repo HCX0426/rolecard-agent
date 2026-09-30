@@ -319,7 +319,7 @@ def patch_session(
             )
             if name not in effective.model_backends:
                 known = ", ".join(sorted(effective.model_backends))
-                raise HTTPException(status_code=400, detail=f"未知后端 {name!r}；可用：{known}")
+                raise HTTPException(status_code=400, detail=f"未知模型 {name!r}；可用：{known}")
         conn.execute(
             "UPDATE session_thread SET model_name = ?, "
             "updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE thread_id = ?",
@@ -1153,7 +1153,7 @@ def upload_report(
             # 后端未配置：图片保持 pending，明确告知模型不可读（不把 paddle 栈拖进主环境）。
             note = (
                 f"[用户上传了图片报告：{safe_name}，已登记 intake 任务 {task_id}"
-                f"（status={existing['status']}）。OCR 后端未配置"
+                f"（status={existing['status']}）。本地 OCR 未配置"
                 "（本地 Paddle 不可用，且「服务」页没有就绪的云端 OCR / 视觉模型端点），"
                 "当前不能读取图片内容，不要假装已经读过。]"
             )

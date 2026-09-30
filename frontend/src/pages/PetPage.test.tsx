@@ -187,7 +187,7 @@ describe("PetPage 桌宠", () => {
   it("后端连不上时明说，而不是继续显示上一次的消息", async () => {
     apiMock.getReachouts.mockRejectedValue(new Error("connection refused"));
     await mount();
-    expect(screen.getByText("连不上本地服务")).toBeTruthy();
+    expect(screen.getByText("连不上本机程序")).toBeTruthy();
     expect(screen.queryByText("外头降温了，穿上外套。")).toBeNull();
   });
 

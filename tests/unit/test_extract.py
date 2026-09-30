@@ -276,7 +276,7 @@ def test_plan_respects_explicit_backend_and_off_switch() -> None:
 
 
 def test_plan_rejects_unknown_backend_loudly() -> None:
-    with pytest.raises(ExtractConfigError, match="未知的抽取后端"):
+    with pytest.raises(ExtractConfigError, match="未知的抽取模型配置"):
         plan_extractors(_settings(extract_backend="nope"))
 
 

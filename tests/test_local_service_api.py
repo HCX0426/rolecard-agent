@@ -265,7 +265,7 @@ def test_pin_reports_unconfigured_default_readable(tmp_path: Path) -> None:
     c, _ = _client(tmp_path, _BROKEN)
     res = c.post("/api/local-service/pin", json={})
     assert res.status_code == 400
-    assert "未配置" in res.json()["detail"]
+    assert "还没配置" in res.json()["detail"]
 
 
 # -- 释放 --------------------------------------------------------------------------

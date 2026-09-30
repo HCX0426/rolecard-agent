@@ -133,7 +133,7 @@ def start(
     def loop() -> None:
         while is_alive(pid):
             time.sleep(interval)
-        print(f"[parent-watch] 父进程 {pid} 已退出，后端随之结束", flush=True)
+        print(f"[parent-watch] 父进程 {pid} 已退出，本机程序随之结束", flush=True)
         on_exit()
 
     thread = threading.Thread(target=loop, name="parent-watch", daemon=True)

@@ -232,7 +232,7 @@ describe("请求超时：普通请求 30s，上传 / 抽取走长超时（P1-4�
     await expect(pending).rejects.toThrow(/300s/);
   });
 
-  it("超时提示要说「后端可能仍在处理」，而不是「已挂起」", async () => {
+  it("超时提示要说「那一端可能仍在处理」，而不是「已挂起」", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("fetch", hangingFetch());
 

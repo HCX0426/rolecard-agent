@@ -375,7 +375,7 @@ class KnowledgeDimensionMismatch(RuntimeError):
     "Collection expecting embedding with dimension of 1024, got 64"，无从下手。
     """
 
-    HINT = "嵌入后端与已有索引维度不一致。切换 RAG_EMBEDDING 后请删除 data/chroma 目录并重启重建。"
+    HINT = "嵌入模型与已有索引的维度不一致。换嵌入模型后请删除 data/chroma 目录并重启重建。"
 
 
 def _translate_dimension_error(exc: Exception) -> Exception:

@@ -154,7 +154,7 @@ export type Probe = { ok: true; origin: string; who: string } | { ok: false; why
 export async function tryConnect(base: string, user: string, secret: string): Promise<Probe> {
   const origin = normalizeBase(base);
   if (!origin) {
-    return { ok: false, why: "地址不像一个服务地址（只要 http(s)://主机[:端口]，不要带路径）。" };
+    return { ok: false, why: "地址不像一个程序地址（只要 http(s)://主机[:端口]，不要带路径）。" };
   }
   if (!user) return { ok: false, why: "要填账号。" };
   let res: Response;

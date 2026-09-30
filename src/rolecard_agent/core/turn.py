@@ -76,7 +76,7 @@ VISION_MISMATCH_DETAIL = (
 _GENERIC_MODEL_FAILURE = "模型调用失败，请稍后重试或换一种问法。"
 
 #: 模型一个字都没吐时该说的话：与通用的"换一种问法"刻意不同（`R28-06`）。
-EMPTY_STREAM_DETAIL = "模型这一轮没有返回任何内容。重试一次，或换一个后端 —— 不是你的问法问题。"
+EMPTY_STREAM_DETAIL = "模型这一轮没有返回任何内容。重试一次，或换一个模型 —— 不是你的问法问题。"
 
 
 def model_error_detail(exc: Exception) -> str:

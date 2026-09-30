@@ -100,7 +100,7 @@ describe("角色级后端选择（用户 2026-09-25：角色级 > 设置里那�
     render(<RolesPage />);
     await screen.findByText("测试角色");
     fireEvent.click(screen.getByText("编辑"));
-    const select = (await screen.findByLabelText(/模型后端/)) as HTMLSelectElement;
+    const select = (await screen.findByLabelText(/这个角色的对话用哪一个/)) as HTMLSelectElement;
     expect([...select.options].map((o) => o.value)).toEqual([
       "",
       "c-first",

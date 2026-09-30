@@ -232,7 +232,7 @@ def test_save_carries_over_any_column_it_does_not_manage() -> None:
 def test_save_rejects_explicit_unknown_fallback() -> None:
     """显式给的链仍严格校验：指向不存在的后端要大声拒绝（手滑不能静默吞掉）。"""
     svc = ModelSettingsService(_conn())
-    with pytest.raises(ModelSettingsError, match="不在已配置的后端列表里"):
+    with pytest.raises(ModelSettingsError, match="不在已配置的模型列表里"):
         svc.save(
             default="a",
             backends=[{"name": "a", "provider": "ollama", "model": "m-a",

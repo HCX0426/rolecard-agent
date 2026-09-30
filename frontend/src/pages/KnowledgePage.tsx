@@ -46,7 +46,7 @@ function KnowledgePanel() {
     load().catch((e) => setStatus(`加载失败：${e.message}`));
   }, [load]);
 
-  /** 清空一个作用域（破坏性）：换嵌入后端后维度不兼容时的重建入口，走二次确认 + 审计。 */
+  /** 清空一个作用域（破坏性）：换嵌入模型后维度不兼容时的重建入口，走二次确认 + 审计。 */
   async function resetScope(scope: string) {
     try {
       const r = await api.del<{ removed_chunks: number }>(
@@ -158,7 +158,7 @@ function KnowledgePanel() {
                 onClick={async () => {
                   if (await confirm({ title: "清空知识库作用域？", body: `将清空作用域 ${s.scope} 的 ${s.chunks} 段内容，此操作不可恢复，且写入审计。`, confirmText: "确认清空", danger: true })) resetScope(s.scope);
                 }}
-                title="删除该作用域的集合 —— 换嵌入后端后维度不兼容时用它重建（写审计）"
+                title="删除该作用域的集合 —— 换嵌入模型后维度不兼容时用它重建（写审计）"
                 className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs text-slate-500 dark:text-slate-400 hover:border-red-300 dark:hover:border-red-700 hover:text-red-600 dark:text-red-400 dark:text-red-500"
               >
                 重建（清空）
@@ -207,6 +207,14 @@ function KnowledgePanel() {
                 扫描 {orphans.scanned} 个文件，其中 {orphans.referenced} 个被台账引用；
                 可回收 <b>{orphans.orphans.length}</b> 个（{formatBytes(orphans.total_bytes)}）。
               </p>
+              {orphans.dangling.length > 0 && (
+                <p className="mt-1 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
+                  另有 <b>{orphans.dangling.length}</b> 行台账指向这台机器上不存在的原件
+                  （{orphans.dangling.slice(0, 3).join("、")}
+                  {orphans.dangling.length > 3 ? " 等" : ""}）—— 换过数据根时是这个样子，
+                  原件在另一份数据目录里。
+                </p>
+              )}
               {orphans.orphans.length > 0 && (
                 <>
                   <ul className="mt-1.5 max-h-40 space-y-0.5 overflow-y-auto">

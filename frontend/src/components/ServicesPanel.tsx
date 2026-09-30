@@ -30,7 +30,7 @@ interface ServiceCategoryView {
   effective_kind: string | null;
   degraded_from: string | null;
   readonly: boolean;
-  /** order_only = 只能调顺序（第 1 位即默认后端，其后依次回退）；增删与 key 在「模型」页签。 */
+  /** order_only = 只能调顺序（第 1 位 = 默认，其余依次回退）；增删与 key 在「模型」页签。 */
   order_only?: boolean;
   candidates: ServiceEndpoint[];
 }
@@ -128,7 +128,7 @@ export function ServicesPanel() {
    *  所以"加入对话"= 把这个名字追加到全量序里再整体写回。 */
   const addRef = (cat: ServiceCategoryView) => {
     if (!picked) {
-      setError("请先选择要引用的后端");
+      setError("请先选择要引用的模型");
       return;
     }
     if (cat.order_only) {
@@ -163,7 +163,7 @@ export function ServicesPanel() {
     <div className="flex flex-col gap-5">
       <div className="flex items-center justify-between">
         <p className="text-xs text-slate-500 dark:text-slate-400">
-          云端条目 = 对「模型」页签已配置后端的**引用**：新增在这里选，改配置去模型页，移除只影响本服务。
+          云端条目 = 引用「模型」页配好的模型：在这里排顺序，改配置去模型页，移除只影响这一页的优先级。
           按优先级依次兜底 —— <b>第 1 位即生效</b>，调前几位的顺序即可做多模型比对。
         </p>
         <button
@@ -217,7 +217,7 @@ export function ServicesPanel() {
                   }}
                   className="ml-auto shrink-0 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 hover:text-blue-600 dark:hover:text-blue-400"
                 >
-                  {adding === cat.key ? "取消" : cat.order_only ? "＋ 加入对话" : "＋ 引用后端"}
+                  {adding === cat.key ? "取消" : cat.order_only ? "＋ 加入对话" : "＋ 引用模型"}
                 </button>
               )}
             </div>
@@ -239,7 +239,7 @@ export function ServicesPanel() {
                     className="rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-xs"
                   >
                     <option value="">
-                      {cat.order_only ? "选择要用于对话的模型…" : "选择模型页已配置的后端…"}
+                      {cat.order_only ? "选择要用于对话的模型…" : "选择模型页已配置的模型…"}
                     </option>
                     {providers
                       .filter((g) => g.models.some((m) => !referenced.has(m.name)))
@@ -257,7 +257,7 @@ export function ServicesPanel() {
                   </select>
                   {selectable.length === 0 && (
                     <span className="text-[11px] text-slate-400 dark:text-slate-500">
-                      模型页还没有可加入的后端 —— 请先去「模型」页签新增
+                      模型页还没有可加入的模型 —— 请先去「模型」页新增
                     </span>
                   )}
                   <button
@@ -345,7 +345,7 @@ export function ServicesPanel() {
                                   <button
                                     disabled={busy === cat.key}
                                     onClick={async () => {
-                                      if (await confirm({ title: "从本服务移除该后端引用？", body: "仅从本服务优先级中摘除引用，模型页配置不受影响。", confirmText: "确认移除", danger: true })) remove(cat, cand);
+                                      if (await confirm({ title: "从这个服务顺序里移除这个模型？", body: "仅从本服务优先级中摘除引用，模型页配置不受影响。", confirmText: "确认移除", danger: true })) remove(cat, cand);
                                     }}
                                     title="仅从本服务移除引用，不影响模型页配置"
                                     className="rounded px-2 py-0.5 text-[11px] text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30"

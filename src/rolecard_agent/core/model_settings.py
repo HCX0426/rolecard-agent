@@ -778,14 +778,14 @@ class ModelSettingsService:
         的配置（那一名字根本不在你的有效配置里），所以它对你是 400 而不是"成功"。
         """
         if not names:
-            raise ModelSettingsError("对话后端序列不能为空 —— 至少要留一个用于对话的模型。")
+            raise ModelSettingsError("对话优先级不能为空 —— 至少要留一个用于对话的模型。")
         if len(set(names)) != len(names):
-            raise ModelSettingsError("对话序列里出现了重复的后端名。")
+            raise ModelSettingsError("对话序列里出现了重复的模型名。")
         known = {str(row["name"]) for row in self._raw_backends(user_id=user_id)}
         unknown = [n for n in names if n not in known]
         if unknown:
             raise ModelSettingsError(
-                f"以下后端不在模型页配置里：{', '.join(unknown[:3])}（请先在「模型」页签添加）。"
+                f"以下模型不在模型页配置里：{', '.join(unknown[:3])}（请先在「模型」页签添加）。"
             )
         self._write_chat_refs(names, user_id=user_id)
         self._conn.commit()
@@ -919,7 +919,9 @@ class ModelSettingsService:
             raise KeyError(name)
         native = client_style(str(row["provider"])) == "native"
         if not native and values.get("repeat_penalty") is not None:
-            raise ModelSettingsError("重复惩罚只对本地 Ollama 后端有效（OpenAI 兼容体没这个字段）")
+            raise ModelSettingsError(
+                "重复惩罚只对本地 Ollama 的模型有效（OpenAI 兼容体没这个字段）"
+            )
         for field, (low, high) in self.SAMPLING_RANGES.items():
             raw = values.get(field)
             if raw is None:
@@ -1009,7 +1011,7 @@ class ModelSettingsService:
         新值 = 清除；所有行都省略 = 保留组里已存的。无 key 供应商（Ollama）一律不存 key。
         """
         if not backends:
-            raise ModelSettingsError("至少需要保留一个模型后端。")
+            raise ModelSettingsError("至少需要保留一个模型。")
         stored_rows = {str(row["name"]): row for row in self._raw_backends(user_id=user_id)}
         existing_groups = {str(g["id"]): g for g in self._provider_rows(user_id=user_id)}
         stored_gid_of_endpoint = {
@@ -1026,17 +1028,17 @@ class ModelSettingsService:
             usage = str(item.get("usage") or "chat").strip().lower() or "chat"
             if not _NAME_RE.match(name):
                 raise ModelSettingsError(
-                    f"后端名 {name!r} 不合法：小写字母开头，只含小写字母/数字/下划线/连字符。"
+                    f"模型名 {name!r} 不合法：小写字母开头，只含小写字母/数字/下划线/连字符。"
                 )
             if name in names:
-                raise ModelSettingsError(f"后端名重复：{name}")
+                raise ModelSettingsError(f"模型名重复：{name}")
             if not provider:
-                raise ModelSettingsError(f"后端 {name} 缺少 provider（从供应商目录选择）。")
+                raise ModelSettingsError(f"模型 {name} 缺少 provider（从供应商目录选择）。")
             if not model:
-                raise ModelSettingsError(f"后端 {name} 缺少模型名。")
+                raise ModelSettingsError(f"模型 {name} 还没有填模型名。")
             if usage not in BACKEND_USAGES:
                 raise ModelSettingsError(
-                    f"后端 {name} 的用途 {usage!r} 不合法（chat/embedding/rerank/ocr）。"
+                    f"模型 {name} 的用途 {usage!r} 不合法（chat/embedding/rerank/ocr）。"
                 )
             # num_ctx（本地 Ollama 上下文窗口）：None 允许；给了必须是不小于 512 的整数
             # ——太小的窗口等于把历史截没，宁可大声拒绝。
@@ -1047,10 +1049,10 @@ class ModelSettingsService:
                     num_ctx = int(str(raw_ctx))
                 except (TypeError, ValueError) as exc:
                     raise ModelSettingsError(
-                        f"后端 {name} 的 num_ctx 必须是整数（tokens）"
+                        f"模型 {name} 的 num_ctx 必须是整数（tokens）"
                     ) from exc
                 if num_ctx < 512:
-                    raise ModelSettingsError(f"后端 {name} 的 num_ctx 不得小于 512（tokens）")
+                    raise ModelSettingsError(f"模型 {name} 的 num_ctx 不得小于 512（tokens）")
             raw_base = item.get("base_url")
             # 写入即归一：目录外的风格值（如历史 "openai"+硅基流动 URL）折叠成厂商 id。
             provider = normalize_provider(provider, str(raw_base) if raw_base else None)
@@ -1079,11 +1081,11 @@ class ModelSettingsService:
             )
 
         if default not in names:
-            raise ModelSettingsError(f"默认后端 {default!r} 不在列表里。")
+            raise ModelSettingsError(f"默认模型 {default!r} 不在列表里。")
         # M2：对话默认后端必须是 chat 用途（对话/抽取）；embedding/rerank/ocr 不能当默认。
         if usage_by_name.get(default) != "chat":
             raise ModelSettingsError(
-                f"默认后端 {default!r} 必须是 chat 用途（对话/抽取），"
+                f"默认模型 {default!r} 必须是 chat 用途（对话/抽取），"
                 f"不能是 {usage_by_name.get(default)}。"
             )
 
@@ -1098,13 +1100,13 @@ class ModelSettingsService:
         if len(chain) > MAX_FALLBACKS:
             raise ModelSettingsError(f"回退链最多 {MAX_FALLBACKS} 级（过长只会掩盖降级质量）。")
         if len(set(chain)) != len(chain):
-            raise ModelSettingsError("回退链里出现了重复的后端名。")
+            raise ModelSettingsError("回退链里出现了重复的模型名。")
         for name in chain:
             if name not in names:
-                raise ModelSettingsError(f"回退后端 {name!r} 不在已配置的后端列表里。")
+                raise ModelSettingsError(f"回退用的模型 {name!r} 不在已配置的模型列表里。")
             if usage_by_name[name] != "chat":
                 raise ModelSettingsError(
-                    f"回退后端 {name!r} 不是 chat 用途（对话/抽取），不能进回退链。"
+                    f"回退用的模型 {name!r} 不是 chat 用途（对话/抽取），不能进回退链。"
                 )
 
         # 组 key：先按端点聚合各行信号（给了新值 > 显式清除 > 保留已存的）。
@@ -1296,7 +1298,7 @@ class ModelSettingsService:
             key = name.strip()
             if not _NAME_RE.match(key):
                 raise ModelSettingsError(
-                    f"后端名 {key!r} 不合法：小写字母开头，只含小写字母/数字/下划线/连字符。"
+                    f"模型名 {key!r} 不合法：小写字母开头，只含小写字母/数字/下划线/连字符。"
                 )
             # 冲突判定是**全局**的，不是按人的：`model_backend.name` 是全局主键，按人过滤
             # 只会把"撞主键"变成一个 500。这里的取舍是"宁可报一次占用，也不静默改名"

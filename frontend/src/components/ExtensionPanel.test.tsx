@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 //
-// ExtensionPanel（设置→扩展：MCP 接入 + 模型后端连通性自检）接线测试。
+// ExtensionPanel（设置→扩展：MCP 接入 + 模型连通性自检）接线测试。
 // 重点（对齐"界面合理"与后端安全语义）：
 //   1. GET 出 server 列表；点"测试连接"→交通灯由测试中转绿、展开显示后端返回的工具；
 //   2. "粘贴 JSON" 把 mcpServers 片段逐条 POST 到 /api/mcp/servers（含 id/url/headers）；

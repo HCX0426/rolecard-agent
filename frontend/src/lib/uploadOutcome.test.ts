@@ -69,7 +69,7 @@ describe("describeExtract", () => {
     const cases: [string, string][] = [
       ["already_extracted", "此前已识别过"],
       ["no_text", "没有可抽取的文本"],
-      ["no_model", "当前没有可用的模型后端"],
+      ["no_model", "当前没有可用的模型"],
     ];
     for (const [skipped, expected] of cases) {
       const out = describeExtract({ ...empty, skipped }, "", "报告.pdf");

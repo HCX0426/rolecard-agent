@@ -132,7 +132,7 @@ describe("分组卡片：一屏读懂凭据 / 模型 / 谁在用", () => {
     expect(screen.getAllByText("对话")).toHaveLength(2);
     expect(screen.getByText("嵌入")).toBeTruthy();
     expect(screen.getByText(/这家还用于：嵌入/)).toBeTruthy();
-    expect(screen.getByText("默认")).toBeTruthy(); // sf-vl 是对话默认
+    expect(screen.getByText("第 1 位")).toBeTruthy(); // sf-vl 是对话默认
     fireEvent.click(screen.getAllByText(/在服务页调整用途/)[0]);
     expect(onOpenServices).toHaveBeenCalled();
   });

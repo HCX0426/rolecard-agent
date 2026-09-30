@@ -209,7 +209,7 @@ def make_web_tools(*, settings) -> list:
                 return _search_ddgs(query)
             if backend == "tavily":
                 if not key:
-                    return "搜索后端配置为 tavily，但未设置 TAVILY_API_KEY。"
+                    return "搜索服务配置为 tavily，但未设置 TAVILY_API_KEY。"
                 return _search_tavily(query, key)
             # auto：有 key 走云端，没 key 走本地
             if key:

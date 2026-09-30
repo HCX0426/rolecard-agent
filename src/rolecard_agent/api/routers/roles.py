@@ -58,7 +58,7 @@ def _validate_role_model(ctx: AppContext, model_name: str | None) -> None:
     )
     if model_name not in effective.model_backends:
         known = ", ".join(sorted(effective.model_backends))
-        raise HTTPException(status_code=400, detail=f"未知后端 {model_name!r}；可用：{known}")
+        raise HTTPException(status_code=400, detail=f"未知模型 {model_name!r}；可用：{known}")
 
 
 @router.get("/api/roles")

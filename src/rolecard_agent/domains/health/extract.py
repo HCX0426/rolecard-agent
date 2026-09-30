@@ -148,7 +148,7 @@ def plan_extractors(settings: Settings) -> ExtractorPlan | None:
     if want != "auto":
         if want not in backends:
             known = ", ".join(sorted(backends))
-            raise ExtractConfigError(f"未知的抽取后端 {want!r}；可用：{known}")
+            raise ExtractConfigError(f"未知的抽取模型配置 {want!r}；可用：{known}")
         primary = want
     else:
         local = [n for n, b in backends.items() if (b.provider or "").lower() == "ollama"]
@@ -182,7 +182,7 @@ def make_invoker(settings: Settings, backend_name: str) -> ModelInvoker:
     try:
         model = _init_model(settings, backend_name)
     except Exception as exc:  # noqa: BLE001 - 缺 provider 包 / 配置错 → 可读的抽取失败
-        raise ExtractError(f"无法初始化抽取后端 {backend_name!r}：{exc}") from exc
+        raise ExtractError(f"无法初始化抽取用的模型 {backend_name!r}：{exc}") from exc
 
     def invoke(prompt: str) -> str:
         try:

@@ -212,7 +212,7 @@ export default function DataSourceSwitch() {
               本机这份不动、也不删。
             </p>
             <label className="mt-3 block text-[11px] text-slate-600 dark:text-slate-300">
-              服务地址
+              程序地址
               <input
                 value={base}
                 onChange={(e) => setBase(e.target.value)}

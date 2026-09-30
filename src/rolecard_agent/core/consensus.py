@@ -65,9 +65,9 @@ def build_consensus_tool(*, settings: Any, build: Any = None) -> Any:
         try:
             model = _model(name)
             answer = text_of(model.invoke(question)).strip()
-            return name, (answer or "（该后端返回了空回答）")
+            return name, (answer or "（这个模型返回了空回答）")
         except Exception as exc:  # noqa: BLE001 - 只透出类型名，内部细节不进对话
-            return name, f"（该后端调用失败：{type(exc).__name__}，结论仅基于其余后端）"
+            return name, f"（这个模型调用失败：{type(exc).__name__}，结论仅基于其余回答）"
 
     @tool("compare_model_answers")
     def compare_model_answers(question: str) -> str:
@@ -83,8 +83,8 @@ def build_consensus_tool(*, settings: Any, build: Any = None) -> Any:
         targets = _targets()
         if len(targets) < 2:
             return (
-                f"当前只有 {len(targets)} 个对话后端，无从比对。"
-                "去「模型」页签再加一个后端（并在服务页排序）即可使用比对。"
+                f"当前只有 {len(targets)} 个可对话的模型，无从比对。"
+                "去「模型」页签再加一个（并在「服务」页排序）就能比对。"
             )
         with ThreadPoolExecutor(max_workers=len(targets)) as pool:
             answers = list(pool.map(lambda n: _ask(n, question), targets))
@@ -94,18 +94,18 @@ def build_consensus_tool(*, settings: Any, build: Any = None) -> Any:
         summary = text_of(
             aggregator.invoke(
                 "你是事实核查员。同一个问题发给了多个模型，下面是它们各自的回答。\n"
-                "请输出：1) 它们一致同意的结论；2) 任何实质分歧点；3) 若某后端调用失败，"
+                "请输出：1) 它们一致同意的结论；2) 任何实质分歧点；3) 若某个模型调用失败，"
                 "说明结论仅基于其余回答。用简洁中文，不要复述各回答全文。\n\n"
                 f"问题：{question}\n\n{joined}"
             )
         ).strip()
         # 缺席后端显式标注（带原因类型）：不依赖聚合器转述（聚合器自己也可能漏说）。
-        failed = [(n, a) for n, a in answers if a.startswith("（该后端调用失败")]
+        failed = [(n, a) for n, a in answers if a.startswith("（这个模型调用失败")]
         # 标记放在**第一行**：这段文本整体是模型产物，而比对结果常被拿去当"事实核查依据"。
         # 架构总览 §5-5 要的是"标记跟着数据走"，不是指望模型转述时记得补一句（P1 补漏）。
-        lines = [AI_TEXT_MARKER, f"参与比对的后端：{'、'.join(n for n, _ in answers)}"]
+        lines = [AI_TEXT_MARKER, f"参与比对的模型：{'、'.join(n for n, _ in answers)}"]
         if failed:
-            lines.append("缺席后端：" + "；".join(f"{n} {a}" for n, a in failed))
+            lines.append("缺席的模型：" + "；".join(f"{n} {a}" for n, a in failed))
         lines.append("")
         lines.append(summary or "（聚合比对没有返回内容）")
         return "\n".join(lines)

@@ -53,7 +53,7 @@ export function describeUpload(r: UploadResponse): Outcome | null {
 const SKIP_REASON: Record<string, string> = {
   already_extracted: "此前已识别过，不重复写入",
   no_text: "没有可抽取的文本",
-  no_model: "当前没有可用的模型后端",
+  no_model: "当前没有可用的模型",
 };
 
 /** 抽取阶段的结局。`extractError` 非空 = 抽取请求本身失败（上传仍然算成功）。 */

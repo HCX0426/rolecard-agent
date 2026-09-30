@@ -232,6 +232,9 @@ export function AddModelDrawer({
           </select>
           {source.kind === "new" && (
             <div className="mt-2 space-y-2">
+              <p className="text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
+                下面这两格存进<b>厂商</b>那一层：同一家厂商的多个模型共用一把密钥与一个端点。
+              </p>
               <input
                 value={source.base_url}
                 onChange={(e) => {

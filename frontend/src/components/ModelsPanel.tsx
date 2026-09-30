@@ -54,7 +54,7 @@ export function ModelsPanel({ onOpenServices }: { onOpenServices?: () => void })
     const ok = await confirm({
       title: `删除模型「${row.name}」？`,
       body: others.length
-        ? `这行还被「${others.map((u) => USAGE_LABEL[u] ?? u).join("、")}」用着 —— 删除后服务页那一行会显示引用已失效，需要你另选一个后端。`
+        ? `这行还被「${others.map((u) => USAGE_LABEL[u] ?? u).join("、")}」用着 —— 删除后服务页那一行会显示引用已失效，需要你另选一个模型。`
         : "只删这一行模型配置，同供应商的其他模型与凭据不受影响。",
       confirmText: "确认删除",
       danger: true,
@@ -237,7 +237,7 @@ function ProviderCard({
             <div className="min-w-0">
               <div className="truncate font-mono text-xs text-slate-700 dark:text-slate-200">
                 {row.name}
-                {row.is_default && <Chip tone="blue">默认</Chip>}
+                {row.is_default && <Chip tone="blue">第 1 位</Chip>}
               </div>
               <div className="truncate text-[11px] text-slate-400 dark:text-slate-500">
                 {row.model}

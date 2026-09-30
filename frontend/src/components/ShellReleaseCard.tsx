@@ -59,7 +59,7 @@ export function ShellReleaseCard() {
         {meta && <span className="ml-2 text-slate-400 dark:text-slate-500">{meta}</span>}
       </p>
       <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
-        包里自带一份后端，只监听 127.0.0.1；桌宠、托盘与系统通知由它管。装好后不需要再开这个网页。
+        程序就在安装包里，只监听 127.0.0.1；桌宠、托盘与系统通知由它管。装好后不需要再开这个网页。
       </p>
       <a
         href="/api/shell-release/download"

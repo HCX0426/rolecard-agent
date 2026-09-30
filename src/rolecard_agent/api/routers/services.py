@@ -166,10 +166,10 @@ def put_service_order(
         if unknown:
             raise HTTPException(
                 status_code=400,
-                detail=f"以下后端不在模型页配置里（或已被删除）：{', '.join(unknown[:3])}",
+                detail=f"以下模型不在模型页配置里（或已被删除）：{', '.join(unknown[:3])}",
             )
         if len(set(body.order)) != len(body.order):
-            raise HTTPException(status_code=400, detail="优先级列表出现了重复的后端名。")
+            raise HTTPException(status_code=400, detail="优先级列表里出现了重复的模型名。")
         try:
             ctx.model_settings.save_chat_pool(body.order, user_id=owner)
         except Exception as exc:  # noqa: BLE001 - 服务层异常转可读 400
@@ -213,7 +213,7 @@ def deep_check(ctx: AppContext = Depends(get_context)) -> object:
         # 默认后端名不在后端集里 = 配置错误。给可读的 400，而不是裸 KeyError → 500。
         raise HTTPException(
             status_code=400,
-            detail=f"默认模型后端未配置：{exc}。请在「模型」页签检查默认后端。",
+            detail=f"默认的模型没配好：{exc}。请在「服务」页检查对话优先级的第一位。",
         ) from exc
     base = (backend.base_url or "http://localhost:11434").rstrip("/")
     # provider 是供应商 id；native 风格（Ollama 及别名）探 /api/tags，openai 兼容探 /models。

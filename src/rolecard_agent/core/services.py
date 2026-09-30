@@ -308,12 +308,12 @@ class ServiceEndpointService:
         self._require_category(key)
         ref = (ref_backend or "").strip()
         if not ref:
-            raise ValueError("必须选择模型页里已配置的后端。")
+            raise ValueError("必须选择模型页里已配置的模型。")
         backends = self._backend_map()
         if ref not in backends:
-            raise ValueError(f"后端 {ref!r} 不在模型页配置里 —— 请先在「模型」页签新增。")
+            raise ValueError(f"模型 {ref!r} 不在模型页配置里 —— 请先在「模型」页新增。")
         if self._has_row(key, ref):
-            raise ValueError(f"后端 {ref!r} 已在本服务中。")
+            raise ValueError(f"模型 {ref!r} 已经在这个顺序里了。")
         order = max(
             (
                 int(r["sort_order"])
@@ -427,10 +427,10 @@ def endpoint_available(e: EndpointConfig, settings: Settings) -> tuple[bool, str
       * 纯本地实现（paddle/hash/off）→ 维持廉价静态探活。
     """
     if e.stale:
-        return False, "引用的后端已在模型页删除 —— 请移除本行或重新配置后端"
+        return False, "引用的模型已在模型页删除 —— 请移除本行或重新选一个"
     if e.kind == "cloud":
         return bool(e.api_key), (
-            "已配置 API Key" if e.api_key else "后端未配置 API Key（去模型页填写）"
+            "已配置 API Key" if e.api_key else "这个模型的厂商还没有 API Key（去模型页填）"
         )
     if e.model:
         from rolecard_agent.core.probes import vision_model_ready
@@ -567,7 +567,7 @@ def service_status_view(
         {
             "key": "models",
             "title": "模型推理（对话与抽取）",
-            "hint": "第 1 位 = 对话默认后端，其后依次回退（仅建流阶段失败会回退，最多 2 级）。"
+            "hint": "第 1 位 = 对话默认，其后依次回退（仅建流阶段失败会回退，最多 2 级）。"
             "这里的序列就是「哪些模型用于对话」；key/端点/模型名仍在「模型」页签。",
             "effective": default,
             "effective_kind": effective_kind,

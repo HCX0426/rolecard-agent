@@ -75,7 +75,7 @@ describe("KnowledgePage 上传目录回收", () => {
           ],
           total_bytes: 2148,
           scanned: 5,
-          referenced: 3,
+          referenced: 3, dangling: [],
         };
       }
       return {};
@@ -102,7 +102,7 @@ describe("KnowledgePage 上传目录回收", () => {
       if (url === "/api/knowledge") return [];
       if (url === "/api/rag/metrics") return null;
       if (url === "/api/uploads/orphans") {
-        return { orphans: [], total_bytes: 0, scanned: 4, referenced: 4 };
+        return { orphans: [], total_bytes: 0, scanned: 4, referenced: 4, dangling: [] };
       }
       return {};
     });
@@ -126,7 +126,7 @@ describe("KnowledgePage 上传目录回收", () => {
           orphans: [{ name: "x.txt", size: 4096, companion: false }],
           total_bytes: 4096,
           scanned: 2,
-          referenced: 1,
+          referenced: 1, dangling: [],
         };
       }
       return {};
@@ -135,7 +135,7 @@ describe("KnowledgePage 上传目录回收", () => {
       deleted: 1,
       freed_bytes: 4096,
       scanned: 2,
-      referenced: 1,
+      referenced: 1, dangling: [],
     });
 
     render(<KnowledgePage />);
@@ -212,3 +212,27 @@ describe("KnowledgePage 清空知识库作用域二次确认（useConfirm）", (
     ).toBeTruthy();
   });
 });
+
+  it("台账指向的原件不在这台机器上时，那一格会点名（R28-19 的可见面）", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/knowledge") return [];
+      if (url === "/api/rag/metrics") return null;
+      if (url === "/api/uploads/orphans") {
+        return {
+          orphans: [],
+          total_bytes: 0,
+          scanned: 0,
+          referenced: 0,
+          dangling: ["eac53824_冒烟报告.txt", "47ba2914_report.txt"],
+        };
+      }
+      return {};
+    });
+
+    render(<KnowledgePage />);
+    fireEvent.click(await screen.findByText("检查可回收文件"));
+
+    expect(await screen.findByText(/行台账指向这台机器上不存在的原件/)).toBeTruthy();
+    expect(screen.getByText(/47ba2914_report\.txt/)).toBeTruthy();
+  });

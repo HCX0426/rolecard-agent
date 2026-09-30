@@ -69,7 +69,7 @@ describe("ServicesPanel 移除引用二次确认（useConfirm）", () => {
     render(<ServicesPanel />);
     await screen.findByText("后端1");
     fireEvent.click(screen.getByText("移除"));
-    expect(await screen.findByText("从本服务移除该后端引用？")).toBeTruthy();
+    expect(await screen.findByText("从这个服务顺序里移除这个模型？")).toBeTruthy();
     fireEvent.click(screen.getByText("确认移除"));
     await waitFor(() =>
       expect(apiMock.del).toHaveBeenCalledWith("/api/services/ocr/endpoints/e1"),
@@ -81,7 +81,7 @@ describe("ServicesPanel 移除引用二次确认（useConfirm）", () => {
     render(<ServicesPanel />);
     await screen.findByText("后端1");
     fireEvent.click(screen.getByText("移除"));
-    expect(await screen.findByText("从本服务移除该后端引用？")).toBeTruthy();
+    expect(await screen.findByText("从这个服务顺序里移除这个模型？")).toBeTruthy();
     fireEvent.click(screen.getByText("取消"));
     await new Promise((r) => setTimeout(r, 20));
     expect(apiMock.del).not.toHaveBeenCalled();

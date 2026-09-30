@@ -53,7 +53,7 @@ def require_loopback(request: Request) -> None:
     if not is_loopback(peer):
         raise HTTPException(
             status_code=403,
-            detail="本地推理服务的控制端点只允许本机（回环）调用。",
+            detail="Ollama 的控制端点只允许本机（回环）调用。",
         )
 
 
@@ -133,11 +133,14 @@ def pin_local_model(
     """
     backend = _default_backend(ctx)
     if backend is None:
-        raise HTTPException(status_code=400, detail="默认模型后端未配置，请先在「模型」页签设置。")
+        raise HTTPException(
+            status_code=400,
+            detail="还没配置默认的模型 —— 请先在「服务」页把对话优先级的第一位选好。",
+        )
     if client_style(backend.provider) != "native":
         raise HTTPException(
             status_code=400,
-            detail="仅本地 Ollama 后端支持常驻；云端后端无 keep_alive。",
+            detail="只有本地 Ollama 的模型支持常驻；云端没有 keep_alive。",
         )
     base = local_inference_base_url(ctx.settings)
     model = (body.model or backend.model).strip()
@@ -145,7 +148,7 @@ def pin_local_model(
         raise HTTPException(
             status_code=502,
             detail=(
-                f"常驻失败：连不上本地推理服务（{base}），"
+                f"常驻失败：连不上本机 Ollama（{base}），"
                 f"或模型 {model!r} 加载不了（多为显存不足）。"
             ),
         )
@@ -182,7 +185,7 @@ def unload_local_model(
     if not done:
         raise HTTPException(
             status_code=502,
-            detail=f"释放失败：连不上本地推理服务（{base}），或模型 {targets[0]!r} 卸不掉。",
+            detail=f"释放失败：连不上本机 Ollama（{base}），或模型 {targets[0]!r} 卸不掉。",
         )
     # 审计只记"释放了哪个模型"，不记任何对话内容（与全局审计纪律一致）。
     ctx.roles.audit(

@@ -1094,7 +1094,7 @@ export default function PetPage() {
       </div>
 
       {offline && (
-        <span className="text-[10px] text-amber-600 dark:text-amber-400">连不上本地服务</span>
+        <span className="text-[10px] text-amber-600 dark:text-amber-400">连不上本机程序</span>
       )}
       {menu && (
         <PetContextMenu x={menu.x} y={menu.y} entries={menu.entries} onClose={() => setMenu(null)} />

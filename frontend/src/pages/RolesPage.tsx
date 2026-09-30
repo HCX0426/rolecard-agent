@@ -335,8 +335,8 @@ export default function RolesPage({
               </label>
               <label className="block">
                 <span className="text-xs text-slate-500 dark:text-slate-400">
-                  模型后端（角色级：该角色的对话走这一台，赢过「服务」页那份全局优先级；
-                  下面按那份顺序排，留空 = 跟着它走）
+                  模型（角色级 —— 这个角色的对话用哪一个；顺序按「服务」页那份优先级排，
+                  留空 = 跟着它走）
                 </span>
                 <select
                   value={form.model_name}
@@ -637,7 +637,7 @@ export default function RolesPage({
               <tr className="border-b border-slate-100 dark:border-slate-800 text-xs text-slate-400 dark:text-slate-500">
                 <th className="px-4 py-2.5 font-medium">role_id</th>
                 <th className="px-4 py-2.5 font-medium">名称</th>
-                <th className="px-4 py-2.5 font-medium">后端</th>
+                <th className="px-4 py-2.5 font-medium">模型</th>
                 <th className="px-4 py-2.5 font-medium">工具白名单</th>
                 <th className="px-4 py-2.5 font-medium">类型</th>
                 <th className="px-4 py-2.5"></th>
@@ -649,7 +649,7 @@ export default function RolesPage({
                   <td className="px-4 py-2.5 font-mono text-xs">{r.role_id}</td>
                   <td className="px-4 py-2.5">{r.role_name}</td>
                   <td className="px-4 py-2.5 text-slate-500 dark:text-slate-400">
-                    {r.model_name || "跟随全局"}
+                    {r.model_name || "跟随默认"}
                   </td>
                   <td className="max-w-52 truncate px-4 py-2.5 text-slate-500 dark:text-slate-400">
                     {r.tool_whitelist === null

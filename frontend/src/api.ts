@@ -428,7 +428,7 @@ async function request<T>(
       // 说成"后端已挂起"会让人以为白做了，于是重复提交。
       throw new ApiError(
         0,
-        `已等待 ${secs}s 仍未返回，前端停止等待（后端可能仍在处理：稍后刷新看看结果）`,
+        `已等待 ${secs}s 仍未返回，前端停止等待（那一端可能仍在处理：稍后刷新看看结果）`,
       );
     }
     throw new ApiError(0, `网络错误：${(e as Error).message}`);
@@ -860,6 +860,8 @@ export interface OrphanReport {
   total_bytes: number;
   scanned: number;
   referenced: number;
+  /** 反方向（`R28-19`）：台账写着原件、这台机器上没有那些文件。换过数据根时这一列不为空。 */
+  dangling: string[];
 }
 
 export interface CleanupResult {

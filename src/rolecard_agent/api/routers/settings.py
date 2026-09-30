@@ -114,7 +114,7 @@ def patch_model_context(
     except ModelSettingsError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"后端 {name!r} 不存在。") from None
+        raise HTTPException(status_code=404, detail=f"模型 {name!r} 不存在。") from None
     ctx.roles.audit(
         actor=actor.id,
         action="update_model_context",
@@ -160,7 +160,7 @@ def patch_model_sampling(
     except ModelSettingsError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"后端 {name!r} 不存在。") from None
+        raise HTTPException(status_code=404, detail=f"模型 {name!r} 不存在。") from None
     # dict 不变：`dict[str, float | None]` 不是 `dict[str, object]`，交给审计要显式过一道。
     detail: dict[str, object] = dict(given)
     ctx.roles.audit(actor=actor.id, action="update_model_sampling", target=name, detail=detail)
@@ -192,7 +192,7 @@ def put_model_settings(
             ):
                 continue  # 组里已有 key：这一行只是同端点的另一个模型，不必重输
             raise ModelSettingsError(
-                f"后端 {b.name} 使用 {b.provider}，缺少 api_key（本地 Ollama 无需填写）。"
+                f"模型 {b.name} 用的厂商 {b.provider} 还没有密钥（api_key）；本地 Ollama 无需填写。"
             )
         # default/fallbacks 缺省 = 保留当前值（编辑入口已统一到「服务」页签优先级列表）。
         current_default = ctx.model_settings.default_backend(
@@ -227,7 +227,7 @@ def put_model_settings(
     try:
         ctx.rebuild_runtime()
     except Exception as exc:  # noqa: BLE001 - 构建失败要给出可读原因，而不是 500 空壳
-        raise HTTPException(status_code=500, detail=f"模型后端构建失败：{exc}") from exc
+        raise HTTPException(status_code=500, detail=f"模型建不起来：{exc}") from exc
     return _models_payload(ctx)
 
 
@@ -402,7 +402,7 @@ def delete_model(
     try:
         ctx.model_settings.remove_model(name, user_id=ctx.current_user())
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"后端 {name!r} 不存在。") from None
+        raise HTTPException(status_code=404, detail=f"模型 {name!r} 不存在。") from None
     ctx.roles.audit(actor=actor.id, action="delete_model", target=name, detail={})
     ctx.rebuild_runtime()
 
@@ -430,7 +430,7 @@ def patch_model_capabilities(
     try:
         ctx.model_settings.set_capabilities(name, given, user_id=ctx.current_user())
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"后端 {name!r} 不存在。") from None
+        raise HTTPException(status_code=404, detail=f"模型 {name!r} 不存在。") from None
     except ModelSettingsError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     ctx.roles.audit(
@@ -544,7 +544,7 @@ def runtime_payload(
             (
                 "web_search_backend",
                 "WEB_SEARCH_BACKEND",
-                "搜索后端",
+                "搜索",
                 "auto=配了 Tavily Key 走云端搜索，否则本地 ddgs",
             ),
             (
@@ -587,14 +587,14 @@ def runtime_payload(
                 "云端嵌入/重排兜底端点",
                 "行内未填 base_url 的云端端点用它兜底；改它需重启（随进程构建）",
             ),
-            ("extract_backend", "EXTRACT_BACKEND", "抽取后端", None),
+            ("extract_backend", "EXTRACT_BACKEND", "抽取用的模型", None),
             ("extract_verify", "EXTRACT_VERIFY", "抽取校对", None),
             (
                 "memory_extract_backend",
                 "MEMORY_EXTRACT_BACKEND",
-                "记忆后端（提取精华 / 整理记忆）",
-                "空 = 跟随这条会话/角色的后端。填上一个后端名 = 只把「提取精华」和「整理记忆」"
-                "这两步交给它。实测两个后端都提得出（同一段八轮对话各 9 / 10 条），所以这不是"
+                "记忆用的模型（提取精华 / 整理记忆）",
+                "空 = 跟随这条会话/角色用的模型。填上一个模型名 = 只把「提取精华」和「整理记忆」"
+                "这两步交给它。实测两边都提得出（同一段八轮对话各 9 / 10 条），所以这不是"
                 "\"有没有记忆\"的开关，而是取舍：本地一次约 122 秒、云端 10–20 秒，而「整理记忆」"
                 "那个\"谁顶替谁\"的判断更吃模型强度。**填了才出网**，清空即回到今天的行为。",
             ),
@@ -720,7 +720,7 @@ def runtime_payload(
         [
             # 标签里就把"今天只有 local"写出来（09-28 轮 `R28-10`）：这一组是只读展示行，
             # 但把 "LangSmith Key" 摆在那儿又什么都不说，等于邀请人填一个永远不生效的东西。
-            ("obs_backend", "OBS_BACKEND", "观测后端（只实现 local）", None),
+            ("obs_backend", "OBS_BACKEND", "观测（只实现 local）", None),
             ("obs_emit_raw_text", "OBS_EMIT_RAW_TEXT", "记录原文", None),
             ("langsmith_project", "LANGSMITH_PROJECT", "LangSmith 项目（未实现）", None),
             ("langsmith_api_key", "LANGSMITH_API_KEY", "LangSmith Key（未实现）", None),
@@ -730,7 +730,7 @@ def runtime_payload(
     return {
         "note": "标「可改」的项在本页保存即热生效（DB 覆盖 env，清空即回落 env 值）；"
         "只读项（认证 / 观测 / 路径 / OCR 解释器）随进程构建，需改 .env 重启。"
-        "模型后端与服务引用请到「模型」「服务」页签。",
+        "模型本身与它连哪家厂商、以及各用途的优先顺序，在「模型」「服务」两页管。",
         "groups": groups,
     }
 

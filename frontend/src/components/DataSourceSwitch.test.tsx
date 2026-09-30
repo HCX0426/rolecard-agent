@@ -43,7 +43,7 @@ describe("DataSourceSwitch", () => {
     render(<DataSourceSwitch />);
     fireEvent.click(screen.getByText("数据源：本机"));
     expect(screen.getByRole("heading", { name: "切到云端" })).toBeTruthy();
-    expect(screen.getByLabelText("服务地址")).toBeTruthy();
+    expect(screen.getByLabelText("程序地址")).toBeTruthy();
     expect(screen.getByLabelText("账号")).toBeTruthy();
     expect(screen.getByLabelText("密码 / 访问令牌")).toBeTruthy();
   });
@@ -52,7 +52,7 @@ describe("DataSourceSwitch", () => {
     stubFetch(() => new Response("", { status: 401 }));
     render(<DataSourceSwitch />);
     fireEvent.click(screen.getByText("数据源：本机"));
-    fireEvent.change(screen.getByLabelText("服务地址"), {
+    fireEvent.change(screen.getByLabelText("程序地址"), {
       target: { value: "http://cloud.test:8123" },
     });
     fireEvent.change(screen.getByLabelText("账号"), { target: { value: "u1" } });
@@ -67,7 +67,7 @@ describe("DataSourceSwitch", () => {
     stubFetch(() => new Response(JSON.stringify([{ role_id: "r" }])));
     render(<DataSourceSwitch />);
     fireEvent.click(screen.getByText("数据源：本机"));
-    fireEvent.change(screen.getByLabelText("服务地址"), {
+    fireEvent.change(screen.getByLabelText("程序地址"), {
       target: { value: "cloud.test:8123/" },
     });
     fireEvent.change(screen.getByLabelText("账号"), { target: { value: "u1" } });

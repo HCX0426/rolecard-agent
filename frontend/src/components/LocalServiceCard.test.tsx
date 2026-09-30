@@ -98,7 +98,7 @@ describe("LocalServiceCard", () => {
     expect(screen.queryByText(/已释放/)).toBeNull();
   });
 
-  it("云端默认后端：状态与卸载照样可见，但不给「常驻」按钮", async () => {
+  it("云端默认模型：状态与卸载照样可见，但不给「常驻」按钮", async () => {
     apiMock.getLocalService.mockResolvedValue(status({ is_local: false, model: "deepseek-chat" }));
     render(<LocalServiceCard />);
     expect(await screen.findByText("释放显存（卸载模型）")).toBeTruthy();
@@ -147,31 +147,31 @@ describe("LocalServiceCard", () => {
     expect(line.textContent).toContain("默认 qwen3-vl:8b 不在显存");
   });
 
-  it("壳里 + 没在跑：给「启动 Ollama 服务」，点了就问壳", async () => {
+  it("壳里 + 没在跑：给「启动 Ollama」，点了就问壳", async () => {
     apiMock.getLocalService.mockResolvedValue(
       status({ running: false, resident: [], resident_bytes: 0, pinned: false }),
     );
     const shell = withShell({ managed: false, pid: null });
     render(<LocalServiceCard />);
-    fireEvent.click(await screen.findByText("启动 Ollama 服务"));
+    fireEvent.click(await screen.findByText("启动 Ollama"));
     expect(shell.startOllama).toHaveBeenCalled();
     expect(await screen.findByText(/已拉起本机 Ollama/)).toBeTruthy();
   });
 
-  it("运行中但不是本应用起的：不给「停止服务」，也不冒充有 pid", async () => {
+  it("运行中但不是本应用起的：不给「停止 Ollama」，也不冒充有 pid", async () => {
     withShell({ managed: false, pid: null });
     render(<LocalServiceCard />);
     expect(await screen.findByText(/合计 5\.4 GB/)).toBeTruthy();
-    expect(screen.queryByText(/停止服务/)).toBeNull();
+    expect(screen.queryByText(/停止 Ollama/)).toBeNull();
     expect(screen.queryByText(/由本应用启动/)).toBeNull();
   });
 
-  it("本应用起的：状态里点名归属，并给「停止服务」", async () => {
+  it("本应用起的：状态里点名归属，并给「停止 Ollama」", async () => {
     const shell = withShell({ managed: true, pid: 4321 });
     render(<LocalServiceCard />);
     const line = await screen.findByText(/由本应用启动（pid 4321）/);
     expect(line.textContent).toContain("合计 5.4 GB");
-    fireEvent.click(screen.getByText("停止服务（本应用起的）"));
+    fireEvent.click(screen.getByText("停止 Ollama（本应用起的）"));
     expect(shell.stopOllama).toHaveBeenCalled();
     expect(await screen.findByText(/已停掉本应用起的 Ollama/)).toBeTruthy();
   });
@@ -179,16 +179,16 @@ describe("LocalServiceCard", () => {
   it("浏览器（B/S）里不给起停按钮，只说清为什么没有", async () => {
     render(<LocalServiceCard />);
     expect(await screen.findByText(/合计 5\.4 GB/)).toBeTruthy();
-    expect(screen.queryByText(/停止服务/)).toBeNull();
-    expect(screen.queryByText("启动 Ollama 服务")).toBeNull();
-    expect(screen.getByText(/起停服务进程属于桌面壳/)).toBeTruthy();
+    expect(screen.queryByText(/停止 Ollama/)).toBeNull();
+    expect(screen.queryByText("启动 Ollama")).toBeNull();
+    expect(screen.getByText(/起停 Ollama 进程属于桌面壳/)).toBeTruthy();
   });
 
-  it("云端默认后端时不提桌面壳（那台机器上根本没有本地进程可起）", async () => {
+  it("云端默认模型时不提桌面壳（那台机器上根本没有本地进程可起）", async () => {
     apiMock.getLocalService.mockResolvedValue(status({ is_local: false, model: "deepseek-chat" }));
     render(<LocalServiceCard />);
     expect(await screen.findByText("释放显存（卸载模型）")).toBeTruthy();
-    expect(screen.queryByText(/起停服务进程属于桌面壳/)).toBeNull();
+    expect(screen.queryByText(/起停 Ollama 进程属于桌面壳/)).toBeNull();
   });
 
   it("壳说不能起时，原样转达它的理由", async () => {
@@ -198,7 +198,7 @@ describe("LocalServiceCard", () => {
     const shell = withShell({ managed: false, pid: null });
     shell.startOllama.mockResolvedValue({ ok: false, reason: "没找到 ollama 可执行文件。" });
     render(<LocalServiceCard />);
-    fireEvent.click(await screen.findByText("启动 Ollama 服务"));
+    fireEvent.click(await screen.findByText("启动 Ollama"));
     expect(await screen.findByText("没找到 ollama 可执行文件。")).toBeTruthy();
     expect(screen.queryByText(/已拉起本机 Ollama/)).toBeNull();
   });

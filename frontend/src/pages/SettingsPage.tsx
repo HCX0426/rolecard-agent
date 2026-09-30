@@ -1096,7 +1096,7 @@ function AboutPanel({
         {loadError && <p className="mt-1 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{loadError}</p>}
         <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
           <div className="flex justify-between border-b border-slate-50 py-1">
-            <dt className="text-slate-400 dark:text-slate-500">默认模型后端</dt>
+            <dt className="text-slate-400 dark:text-slate-500">对话默认（服务页第 1 位）</dt>
             <dd className="font-mono">{info.defaultBackend}</dd>
           </div>
           <div className="flex justify-between border-b border-slate-50 py-1">
@@ -1461,7 +1461,7 @@ function AuditPanel() {
         </table>
       </Card>
       <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-500">
-        审计由后端在角色切换、插件启停、对话创建、数据修正/删除时写入（US-3）；本页只读。
+        审计由程序在角色切换、插件启停、对话创建、数据修正/删除时写入（US-3）；本页只读。
       </p>
     </div>
   );

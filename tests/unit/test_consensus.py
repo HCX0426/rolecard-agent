@@ -42,7 +42,7 @@ def test_consensus_aggregates_via_default_backend() -> None:
 
     out = tool.invoke({"question": "结石 6mm 严重吗"})
 
-    assert "参与比对的后端：a、b" in out
+    assert "参与比对的模型：a、b" in out
     assert "聚合结论：两后端一致" in out  # 聚合器（默认后端 a）的产出进了结果
     # 参与者 b 收到的是**问题本身**；聚合器 a 收到的是**问题 + 各后端回答**。
     assert fakes["b"].prompts[0] == "结石 6mm 严重吗"
@@ -76,7 +76,7 @@ def test_consensus_marks_failed_backend() -> None:
     tool = build_consensus_tool(settings=_settings(fallbacks=["b"]), build=build)
     out = tool.invoke({"question": "q"})
 
-    assert "缺席后端：b" in out
+    assert "缺席的模型：b" in out
     assert "RuntimeError" in out  # 类型名可见，细节不外泄
 
 

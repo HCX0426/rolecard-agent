@@ -85,7 +85,7 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
                 },
                 headers=head,
             )
-            # 500 的响应体里带"模型后端构建失败：<原因>"——只断状态码会把真正的原因吞掉
+            # 500 的响应体里带"模型建不起来：<原因>"——只断状态码会把真正的原因吞掉
             # （CI 的 Linux runner 上就因为这行只报 500，多花一轮才拿到 traceback）。
             assert saved.status_code == 200, saved.text
         # 直接写库的那一段放在所有 HTTP 之后：主线程与请求线程各持一条 sqlite 连接，
