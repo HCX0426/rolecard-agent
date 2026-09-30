@@ -458,7 +458,7 @@ def test_a_legacy_upgrade_leaves_the_capability_flags_unmeasured(tmp_path: Path)
 
 
 @pytest.mark.parametrize(
-    ("commit", "expected_missing"), [("14cb9db", 13), ("03631c6", 10)], ids=lambda v: str(v)
+    ("commit", "expected_missing"), [("14cb9db", 14), ("03631c6", 11)], ids=lambda v: str(v)
 )
 def test_audited_shortfall_is_still_the_shortfall(
     commit: str, expected_missing: int, tmp_path: Path
@@ -467,7 +467,10 @@ def test_audited_shortfall_is_still_the_shortfall(
 
     审计当场（HEAD `e5de500`）量到的是 11 / 8，合计 19；同日补上 `affinity_enabled` 与
     `recall_at` 之后变成 12 / 9（`role_proactive_state` 在那两份形状里整表还不存在，
-    所以 `recall_at` 不进这个数）；09-27 的 M2a 给 `role_card` 加了 `user_id` ⇒ 13 / 10、合计 23。
+    所以 `recall_at` 不进这个数）；09-27 的 M2a 给 `role_card` 加了 `user_id` ⇒ 13 / 10、合计 23；
+    09-30 的桌宠形象包又给同一张表
+    加了 `pet_pack`（带默认值，SQLite 允许 ADD COLUMN）⇒ **14 / 11、合计 25**。
+    （这两个数只在测试与这份 docstring 里；审计文档当时没写它，所以不用同步别处。）
     这条红的用途不是"证明坏了"，而是**逼改 schema 的人
     回去看一眼审计文档还写着几个数** —— R26-06 犯的就是"写进文档的数没复算"这一条。
     """

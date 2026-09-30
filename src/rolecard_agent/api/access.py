@@ -53,6 +53,10 @@ USER_ROUTES: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/roles", _ANY),
     ("/api/plugins", frozenset({"GET"})),
     ("/api/tools/catalog", _ANY),
+    # 桌宠形象包的清单与素材（09-30）：只读两条，且**必须表态** —— 不写这一行它默认算
+    # operator，那么开着鉴权的远端实例上，桌宠那只形象会直接退化成 SVG 兜底（图取不到），
+    # 症状长得像"素材坏了"而不是"这条端点没表态"。
+    ("/api/pets", frozenset({"GET"})),
     # 收件箱与审批的**读侧**：红点计数是界面常驻轮询，批准/拒绝不在这一档。
     ("/api/reachouts", _ANY),
     ("/api/approvals", frozenset({"GET"})),

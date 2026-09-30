@@ -61,6 +61,15 @@ CREATE TABLE IF NOT EXISTS role_card (
     -- 只留最近 N 条。删的是**投递记录**，不是她说出口的那句话（那句在主动会话里，
     -- 是她下次开口的依据 —— 边界见 docs/主动消息与记忆设计稿.md）。旧库由 reconcile_columns 补。
     reachout_keep        INTEGER NOT NULL DEFAULT 0,
+    -- 桌宠形象包（09-30）：存的是**包名**（对应 `frontend/public/pets/<包>/`），不是图片路径。
+    -- 默认 ''（空）= 从没配过，渲染侧落"默认包"。为什么要把"没配过"和"配了但素材坏了"分开：
+    -- 后者才落那只 SVG 兜底本体（`GeometricPet`），而"新角色还没配形象"根本不算失败 —— 两件事
+    -- 挤在同一个值里，症状就是"新建的角色个个都是几何体"，没人分得清是哪一个原因。
+    -- 为什么后端不校验"这个包到底有没有图"：那份清单长在前端的资源目录里，后端没有第二个事实源
+    -- 可查；能校验的只有 slug 形状（别让它变成一条路径），"选得到才选得出效果"由界面只列注册表里
+    -- 真有的包来保证（与"能力没探测到就把控件整个拿掉"那条通则同一个口径）。
+    -- 以后上 Live2D 时改的是注册表里那条目的 kind，这一列一个字都不用动。
+    pet_pack           TEXT NOT NULL DEFAULT '',
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

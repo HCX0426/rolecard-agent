@@ -39,6 +39,16 @@ def bundle_root() -> Path:
     return repo_root()
 
 
+def console_dist_dir() -> Path:
+    """控制台构建产物（`frontend/dist`）的落点 —— **"随包素材"该去哪儿找的唯一答案**。
+
+    桌宠形象包要扫这里（随包那份 `dist/pets/`），静态托管也挂这里，所以两边必须问同一个
+    函数：各写一份 `bundle_root() / "frontend" / "dist"`，就会有"界面能打开但素材清单扫不到"
+    这种只对其中一边红的问题。`FRONTEND_DIST` 那一条部署期覆盖也在这里读一次。
+    """
+    return Path(os.environ.get("FRONTEND_DIST") or (bundle_root() / "frontend" / "dist"))
+
+
 def _platform_data_root() -> Path:
     """没有显式覆盖时的数据根：**永远可写**，sqlite / chroma / uploads 的默认父目录。
 

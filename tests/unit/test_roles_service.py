@@ -285,3 +285,27 @@ def test_deleting_a_role_keeps_the_users_conversation(
     ).fetchone()
     assert row is not None, "会话与历史必须原样留着"
     assert row["current_role_id"] == "todelete"
+
+
+def test_pet_pack_round_trips_and_empty_means_follow_default(roles: RoleCardService) -> None:
+    """桌宠形象包：新建时是**空串**（不是 None），改了读得回，传空串是"回到跟随默认"。
+
+    为什么单独钉空串这一格：`RoleCardUpdate` 的语义是"没提供的键不动"，所以
+    "清空回默认"必须能靠显式传 `""` 表达出来 —— 少这一条，界面上那个"跟随默认包"
+    的选项就是个按下去没反应的按钮。
+    """
+    created = cards(roles).create(_new("analyst"))
+    assert created.pet_pack == ""
+    assert cards(roles).update("analyst", RoleCardUpdate(pet_pack="mint")).pet_pack == "mint"
+    assert cards(roles).get("analyst").pet_pack == "mint"
+    assert cards(roles).update("analyst", RoleCardUpdate(pet_pack="")).pet_pack == ""
+    # 没提这个键 ⇒ 不动（与上面那条成对，缺一半就说明语义被写歪了）。
+    cards(roles).update("analyst", RoleCardUpdate(pet_pack="rose"))
+    assert cards(roles).update("analyst", RoleCardUpdate(role_name="改名")).pet_pack == "rose"
+
+
+@pytest.mark.parametrize("bad", ["../sqlite", "Mint", "a/b", "x" * 70])
+def test_pet_pack_rejects_path_shaped_names(roles: RoleCardService, bad: str) -> None:
+    """包名不许变成一条路径 —— 素材扫描那一边也各校验一次（两处都要，少一处另一边就是装饰）。"""
+    with pytest.raises(ValueError):
+        _new("analyst", pet_pack=bad)

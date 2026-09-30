@@ -38,6 +38,11 @@ from rolecard_agent.core.identity import DEFAULT_USER_ID
 
 ROLE_ID_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
 SCOPE_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
+#: 桌宠形象包的 slug。为什么不是 `SCOPE_PATTERN` 的复用：包名要能写成 `elysia-live2d`
+#: 这种带连字符的样子（丢进目录的那只手是人，人在起名字时用 `-`），而检索作用域名不许。
+#: 只校验形状，**不校验"这个包到底存不存在"** —— 那份清单长在素材目录里（见 `core/pet_packs.py`），
+#: 在这里再问一遍就是第二个事实源，而且改素材要重启后端才生效。
+PET_PACK_PATTERN = r"^[a-z][a-z0-9_-]{0,63}$"
 
 # Exemplar budget. Chars are used rather than tokens because it needs no tokenizer
 # dependency, and for Chinese text a character budget is a conservative proxy. The cap is
@@ -122,6 +127,8 @@ class RoleCard(BaseModel):
     #: 收件箱自动保留条数：0 = 不自动删（默认）；N>0 = 只留最近 N 条。删的是投递记录，
     #: 不是她说出口的那句话（那句留在主动会话里 —— 那是她下次开口的依据）。
     reachout_keep: int = Field(default=0, ge=0, le=1000)
+    #: 桌宠用哪个形象包（列定义见 `roles/schema.sql`）。空串 = 从没配过 → 渲染侧落默认包。
+    pet_pack: str = ""
     is_builtin: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -145,12 +152,21 @@ class RoleCardCreate(BaseModel):
     affinity_enabled: bool = True
     file_watch_enabled: bool = True
     reachout_keep: int = Field(default=0, ge=0, le=1000)
+    pet_pack: str = ""
 
     @field_validator("role_id")
     @classmethod
     def _lowercase(cls, value: str) -> str:
         if value != value.lower():
             raise ValueError("role_id must be lowercase ASCII")
+        return value
+
+    @field_validator("pet_pack")
+    @classmethod
+    def _pet_pack_slug(cls, value: str) -> str:
+        # 空串是合法值（"没配过"），所以先放行再比形状。
+        if value and not re.fullmatch(PET_PACK_PATTERN, value):
+            raise ValueError("pet_pack 只能是包名 slug（小写字母开头，a-z0-9_- 至多 64 位）")
         return value
 
 
@@ -172,6 +188,15 @@ class RoleCardUpdate(BaseModel):
     affinity_enabled: bool | None = None
     file_watch_enabled: bool | None = None
     reachout_keep: int | None = Field(default=None, ge=0, le=1000)
+    #: 改桌宠形象。传空串 = 回到"没配过"（渲染落默认包）；不传这个键 = 不动。
+    pet_pack: str | None = None
+
+    @field_validator("pet_pack")
+    @classmethod
+    def _pet_pack_slug(cls, value: str | None) -> str | None:
+        if value and not re.fullmatch(PET_PACK_PATTERN, value):
+            raise ValueError("pet_pack 只能是包名 slug（小写字母开头，a-z0-9_- 至多 64 位）")
+        return value
 
     def changes(self) -> dict[str, object]:
         """Only the fields the caller actually provided."""

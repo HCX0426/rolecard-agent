@@ -56,6 +56,7 @@ from rolecard_agent.api.routers import console as console_router
 from rolecard_agent.api.routers import domains as domains_router
 from rolecard_agent.api.routers import local_service as local_service_router
 from rolecard_agent.api.routers import mcp as mcp_router
+from rolecard_agent.api.routers import pets as pets_router
 from rolecard_agent.api.routers import reachouts as reachouts_router
 from rolecard_agent.api.routers import records as records_router
 from rolecard_agent.api.routers import roles as roles_router
@@ -70,7 +71,7 @@ from rolecard_agent.core.bootstrap import Assembly, build_runtime
 from rolecard_agent.core.identity import active_user_id, resolve_instance_identity
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.observability import Tracer
-from rolecard_agent.core.paths import bundle_root
+from rolecard_agent.core.paths import console_dist_dir
 from rolecard_agent.core.thread_locks import ThreadBusy
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.domains.health.service import HealthQueryService
@@ -85,10 +86,11 @@ from rolecard_agent.storage.db import set_request_epoch
 #: 合成一个常量之后 parity 比的是 `pyproject` ↔ 这一处，两份手写变成一份。
 API_VERSION = "0.3.0"
 
-# M5 前端构建产物的位置：开发态是仓库根下的 `frontend/dist`，打包态是随包资源里的同名目录
-# （`bundle_root()` 认得这两种落点）。可用环境变量 FRONTEND_DIST 覆盖（部署布局变化时不必移动
-# 文件）。未构建时控制台路由返回回退提示页，后端 API 不受影响。
-_DEFAULT_DIST = bundle_root() / "frontend" / "dist"
+# M5 前端构建产物的位置解析收在 `core/paths.console_dist_dir()`（09-30）：桌宠形象包
+# 也要扫那一份 `dist/pets/`，两处各写一遍路径就会有"界面打得开、素材清单扫不到"的单边红。
+# **每次 create_app 现读一次**，不在模块导入时冻成常量 —— `FRONTEND_DIST` 是部署期覆盖，
+# 设得比 import 晚也必须生效（`tests/test_api.py` 那条"dist 缺失就回退提示页"就靠这一条；
+# 我第一版把它写成了模块级 `_DEFAULT_DIST`，那条用例当场替我红了回来）。
 
 _FALLBACK_HTML = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>rolecard-agent 管理控制台</title></head>
@@ -234,6 +236,7 @@ def create_app(
     app.include_router(approvals_router.router)
     app.include_router(mcp_router.router)
     app.include_router(local_service_router.router)
+    app.include_router(pets_router.router)
     app.include_router(shell_release_router.router)
     # 上行同步（M7）：对面那台跑的是同一份代码，所以清单端点与计划端点住在同一个 router 里。
     app.include_router(sync_router.router)
@@ -355,7 +358,7 @@ def create_app(
         """
         return {"status": "ok", "version": API_VERSION, "auth_mode": env_settings.auth_mode}
 
-    dist_dir = Path(os.environ.get("FRONTEND_DIST") or _DEFAULT_DIST)
+    dist_dir = console_dist_dir()
     if (dist_dir / "index.html").exists():
         # 静态托管必须挂在 API 路由之后注册：FastAPI 按注册顺序匹配，先注册的 /api/* 优先。
         app.mount("/", StaticFiles(directory=dist_dir, html=True), name="console")
