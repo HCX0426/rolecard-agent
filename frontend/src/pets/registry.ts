@@ -18,12 +18,17 @@ import {
 export interface PetPack {
   id: string;
   label: string;
-  /** 渲染器种类。今天只有 `"sheet"`（序列帧），清单里不会给出没有渲染器的包。 */
+  /** 渲染器种类：`"sheet"`（序列帧）或 `"live2d"`（模型）。没有渲染器的包不会出现在清单里。 */
   kind: string;
-  /** 这个包自己声明的状态→行（协议主表没确认的 5–8 行归包说）。 */
+  /** 这个包自己声明的状态→行（序列帧包：协议主表没确认的 5–8 行归包说）。 */
   rows: Partial<Record<PetStatus, number>>;
+  /** Live2D 包自己声明的状态→motion 组名（`{"speaking": "TapBody"}`）；序列帧包用不上。 */
+  motions: Record<string, string>;
+  /** 入口文件在包目录里的相对路径（`sprite.png` 或 `<角色>.model3.json`）。 */
+  entry: string;
   /** "user" = 数据根下外挂的那份；"bundled" = 随包那份。 */
   source: string;
+  /** 入口文件的地址（名字留着是因为序列帧那条路已经按它写了；live2d 给的是 model3.json）。 */
   sheet_url: string;
 }
 
@@ -33,6 +38,9 @@ export interface PetPackListing {
   skipped: { id: string; reason: string }[];
   /** 外挂素材该放的那个目录（印在界面上，不让人去猜路径）。 */
   user_dir: string;
+  /** Cubism Core 在不在位 —— 不在 ⇒ live2d 包一个都不会出现在 packs 里，原因在 skipped。 */
+  cubism_core: boolean;
+  cubism_core_path: string;
 }
 
 /** 仓库自绘的默认包 id（`scripts/make_pet_sheet.py` 生成的那份）。 */
@@ -50,6 +58,8 @@ const UNLISTED_DEFAULT: PetPack = {
   label: "默认",
   kind: "sheet",
   rows: DEFAULT_PACK_ROWS,
+  motions: {},
+  entry: "sprite.png",
   source: "bundled",
   sheet_url: DEFAULT_PET_SHEET,
 };

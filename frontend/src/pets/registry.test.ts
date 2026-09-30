@@ -3,7 +3,13 @@
 
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_PACK_ID, resolvePack, type PetPack, type PetPackListing } from "./registry";
+import { motionFor } from "../components/pet/Live2dPet";
+import {
+  DEFAULT_PACK_ID,
+  resolvePack,
+  type PetPack,
+  type PetPackListing,
+} from "./registry";
 
 function pack(id: string, source = "bundled"): PetPack {
   return {
@@ -11,13 +17,21 @@ function pack(id: string, source = "bundled"): PetPack {
     label: id,
     kind: "sheet",
     rows: { thinking: 7 },
+    motions: {},
+    entry: "sprite.png",
     source,
     sheet_url: `/api/pets/${id}/sprite.png`,
   };
 }
 
 function listing(...packs: PetPack[]): PetPackListing {
-  return { packs, skipped: [], user_dir: "/tmp/pets" };
+  return {
+    packs,
+    skipped: [],
+    user_dir: "/tmp/pets",
+    cubism_core: false,
+    cubism_core_path: "/tmp/pets/_runtime/live2dcubismcore.min.js",
+  };
 }
 
 describe("resolvePack", () => {
@@ -57,5 +71,20 @@ describe("resolvePack", () => {
     const withoutDefault = resolvePack(listing(pack("mint")), "gone");
     expect(withoutDefault.pack).toBeNull();
     expect(withoutDefault.misassigned).toBe(true);
+  });
+});
+
+describe("motionFor", () => {
+  it("包没声明 motions 时什么都不触发（不打断当前动作）", () => {
+    expect(motionFor(undefined, "speaking")).toBeUndefined();
+    expect(motionFor({}, "speaking")).toBeUndefined();
+  });
+
+  it("只认包自己声明过的那个状态", () => {
+    const motions = { speaking: "TapBody", idle: "Idle" };
+    expect(motionFor(motions, "speaking")).toBe("TapBody");
+    expect(motionFor(motions, "idle")).toBe("Idle");
+    // 包没提 thinking ⇒ 不猜一个动作来"表示她在想"（猜错就是"想事情时她在打滚"）。
+    expect(motionFor(motions, "thinking")).toBeUndefined();
   });
 });

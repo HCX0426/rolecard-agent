@@ -21,7 +21,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import ThinkingPanel from "../components/chat/ThinkingPanel";
 import PetContextMenu, { type MenuEntry } from "../components/PetContextMenu";
 import PetSprite, { type PetStatus } from "../components/pet/PetSprite";
-import { resolvePack, type PetPackListing } from "../pets/registry";
+import Live2dPet from "../components/pet/Live2dPet";
+import { resolvePack, type PetPack, type PetPackListing } from "../pets/registry";
 import QuietLine from "../components/QuietLine";
 import { api, streamChat, streamEdit, UNREAD_POLL_MS, type MessagePage, type MessageRow, type QuietStatus, type ReachoutRow, type RoleCard } from "../api";
 import { useAutoScroll } from "../hooks/useAutoScroll";
@@ -314,6 +315,23 @@ export default function PetPage() {
     packs ?? null,
     roles.find((r) => r.role_id === activeRole)?.pet_pack,
   );
+  /**
+   * Live2D 模型加载失败（缺运行时 / moc3 版本对不上 / 模型自己坏了）时**退回默认包**，
+   * 并把原因留在界面上 —— 一条都不可见的坏模型比退回默认那只难查得多。
+   * 换角色（包 id 变了）就把它清掉：那是另一个包的另一件事，不该一直挂着上一只的错误。
+   */
+  const [live2dFailure, setLive2dFailure] = useState<{ id: string; reason: string } | null>(null);
+  useEffect(() => {
+    setLive2dFailure((prev) => (prev && prev.id !== looked.pack?.id ? null : prev));
+  }, [looked.pack?.id]);
+  const failedLive2d =
+    live2dFailure && looked.pack?.kind === "live2d" && live2dFailure.id === looked.pack.id
+      ? live2dFailure.reason
+      : "";
+  // 真正要画的那一份：live2d 失败时退回清单里的默认包（没有默认包就交 null ⇒ SVG 兜底）。
+  const drawn: PetPack | null = failedLive2d
+    ? (packs?.packs.find((p) => p.id === "default") ?? null)
+    : looked.pack;
   // 形象的表现状态：完全由本页已有的信号推导，不另开通道。
   //   · 自己这扇窗在流 / 她正在生成 → speaking（嘴动 + 浮沉）；
   //   · 别处那扇窗在生成（`mirror` 是 R26-38 的镜像登记）→ thinking（"…"泡泡）；
@@ -1100,9 +1118,19 @@ export default function PetPage() {
           showContent ? "" : "（内容已隐藏）"
         }`}
       >
+        {drawn?.kind === "live2d" ? (
+          <Live2dPet
+            url={drawn.sheet_url}
+            status={petStatus}
+            motions={drawn.motions}
+            width={160}
+            height={184}
+            onError={(reason) => setLive2dFailure({ id: drawn.id, reason })}
+          />
+        ) : (
         <PetSprite
           status={petStatus}
-          rows={looked.pack?.rows}
+          rows={drawn?.rows}
           width={160}
           height={184}
           className="drop-shadow-md"
@@ -1110,10 +1138,17 @@ export default function PetPage() {
           // 随包的 `frontend/dist/pets/`（仓库自绘，许可干净）与数据根下的 `<数据根>/pets/`
           // （用户自己放的，升级不冲、不入库），同名时后者赢。`pack` 为 null 只在"清单读到了
           // 而里面一个可用包都没有"时发生 —— 那才落 SVG 兜底。
-          src={looked.pack?.sheet_url}
+          src={drawn?.sheet_url}
         />
+        )}
       </div>
 
+      {failedLive2d && (
+        // 模型在清单里、画不出来：说的是原因，不是"没找到"（那是另一行）。
+        <span className="text-[10px] text-amber-600 dark:text-amber-400">
+          Live2D 没画出来：{failedLive2d}
+        </span>
+      )}
       {looked.misassigned && (
         // 配了、但清单里没有：这一行不能省。否则症状是"我明明选了爱莉，怎么还是那只团子"，
         // 而没有任何地方承认它听见了这个选择。
