@@ -490,6 +490,18 @@ describe("PetPage 点开面板（§7：想回话不用开控制台）", () => {
     expect(root).toBeTruthy();
   });
 
+  it("面板能被压矮（表头不许顶到窗口外面去）", async () => {
+    // 用户 09-30："桌宠没显示切换列表"。根节点是 `justify-end` 的一列，形象那一格 `shrink-0`，
+    // 而面板带着默认的 `min-height:auto` —— 对话一长它就压不进窗口，多出来的部分往**窗口上沿之外**
+    // 溢出，于是下拉框在 DOM 里、三个选项都在，屏幕上却一条都看不见。jsdom 不量布局，
+    // 所以这里钉的是"允许被压矮"那条规则本身（实机读数是 -143 → +1，见台账 R28-52）。
+    const shell = withShell();
+    await mount();
+    await open(shell);
+    const panel = document.querySelector("[data-pet-ui='panel']") as HTMLElement;
+    expect(panel.className).toContain("min-h-0");
+  });
+
   it("面板只画最近一截时，必须说出「上面还有 N 条」（09-26 用户：这不该是一个东西吗）", async () => {
     // 那条会话真库实量 44 条，面板按 `PANEL_MESSAGES` 只取最近一截。以前它一声不吭，
     // 于是驻留件看着就像"你们的全部对话"—— 差的就是这一行声明。

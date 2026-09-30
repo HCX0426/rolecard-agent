@@ -888,9 +888,14 @@ export default function PetPage() {
     >
       {expanded ? (
         // 展开态：面板取代气泡（气泡那条就是面板最后一条，重复摆一遍只是噪音）。
+        // `min-h-0` 是这条链路上唯一"看得见"的修复：根节点是 `justify-end` 的一列，形象那一格
+        // 已经 `shrink-0`，而面板默认 `min-height:auto` 不许被压到内容高度以下 —— 于是"面板 + 形象"
+        // 一旦高出窗口，多出来的部分是往**窗口上沿之外**溢出的，表头（连同换角色的下拉框）整条
+        // 看不见，症状是"切换不了角色"，而 DOM 里它一直都在。给了 `min-h-0` 之后溢出由面板自己
+        // 吸收（列表内部本来就能滚），内容短时仍然贴着内容长。
         <section
           data-pet-ui="panel"
-          className="pet-panel-in pet-nodrag flex max-h-full w-[380px] flex-col rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-md dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+          className="pet-panel-in pet-nodrag flex max-h-full min-h-0 w-[380px] flex-col rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-md dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
           /* 屏内对齐：见上面 `panelShift`。窗口没动，动的是这一块在画布里的位置。 */
           style={{ transform: `translateX(${panelShift}px)` }}
         >
