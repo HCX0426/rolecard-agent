@@ -44,6 +44,12 @@
 
 第 5、6 步不是可选的美化：`check_consistency.py` 专门用来抓"文档与代码不同步"和"旧命名残留"，它是这个仓库唯一的自动护栏。
 
+**第 6 步的输出不许和 `| grep`、`&&` 串在同一条命令里再决定要不要提交。** 判据要单独落盘、单独读
+退出码：`python scripts/check_consistency.py > build/cons.log 2>&1; echo exit=$?`。
+理由不是理论 —— 09-30 有两次把红的推上了 `main`，同一条形状：一次是 `... | grep FAIL && git commit`
+（`grep` 在**找到**失败行时返回 0，于是"检查没过"被翻译成"可以提交"），一次是 `... | grep assertions: && git add && git commit && git push`
+（`grep` 抓到了那行计数就返回 0，根本没看它是 38 还是 39）。**管道末端那条命令的退出码不是检查的退出码。**
+
 ---
 
 ## 3. TODO 粒度规约
