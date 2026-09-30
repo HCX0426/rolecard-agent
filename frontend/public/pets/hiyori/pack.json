@@ -3,10 +3,10 @@
   "kind": "live2d",
   "motions": {
     "idle": "Idle",
-    "speaking": "Tap@Body",
+    "speaking": "Flick@Body",
     "thinking": "Flick",
     "listening": "FlickDown",
     "typing": "Tap",
-    "success": "Flick@Body"
+    "success": "Tap@Body"
   }
 }
