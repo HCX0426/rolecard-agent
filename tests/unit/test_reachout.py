@@ -344,6 +344,78 @@ def test_recent_context_is_isolated_per_role(conn) -> None:
     assert "那是别人说的" not in _prompt_text(model)
 
 
+def test_open_topics_reach_every_tier_not_only_the_fifth(conn) -> None:
+    """「未收尾话题」是**素材**，不该只在一个由头那一档才读得到。
+
+    09-30 的生产读数：`role_proactive_state.open_threads_at` 至今是 NULL（那发扫描从没起跑），
+    因为它挂在整条链最弱那一档（timer）之下，而 9/9 次通过闸门的开口都落在 affection ——
+    于是哪怕手里有"你说到一半"的清单，affection 开口时也被整份丢掉。
+    """
+    role = _role()
+    model = _FakeModel(AIMessage(content="对了，你下周体检，结果出来记得跟我说。"))
+    svc.generate_reachout_text(
+        role,
+        model,
+        _settings(),
+        conn,
+        role_id=role.role_id,
+        mode="general",
+        open_topics=["下周要体检，结果出来跟你说"],
+    )
+    joined = _prompt_text(model)
+    assert "下周要体检，结果出来跟你说" in joined
+    assert "别硬接" in joined, "给了素材就得给退路：接不上不如不接（硬找话头比不找更假）"
+
+
+def test_exclusive_tiers_do_not_get_a_second_thread(conn) -> None:
+    """recall / file_event 两档的指令是"只说这一件"，再塞第二个话头就是让一条消息干两件事。"""
+    role = _role()
+    model = _FakeModel(AIMessage(content="你放的那份报告我看了。"))
+    svc.generate_reachout_text(
+        role,
+        model,
+        _settings(),
+        conn,
+        role_id=role.role_id,
+        mode="file_event",
+        file_list="体检报告.pdf",
+        open_topics=["下周要体检，结果出来跟你说"],
+    )
+    joined = _prompt_text(model)
+    assert "体检报告.pdf" in joined
+    assert "下周要体检" not in joined
+
+
+def test_affection_tier_tick_carries_cached_open_topics(conn) -> None:
+    """走真调度那一遍：由头**仍然是 affection**（这条改的是素材，不是档位），但提示词里
+    要带着上一轮扫出来的清单 —— 档位取舍要等样本，这里钉的是"别再丢掉算过的东西"。
+    """
+    role = _role()
+    utc, local = _now()
+    svc.save_open_threads(
+        conn, role.role_id, ["下周要体检，结果出来跟你说"], user_id=ME, now=utc
+    )
+    conn.execute(
+        "UPDATE role_proactive_state SET affinity = ? WHERE role_id = ?",
+        (DEFAULT_AFFINITY_THRESHOLD + 1.0, role.role_id),
+    )
+    conn.commit()
+    model = _FakeModel(AIMessage(content="你下周体检的事，我一直记着。"))
+    scheduler = ReachoutScheduler(
+        settings_provider=lambda: _settings(),
+        roles=_Roles([role]),  # type: ignore[arg-type]
+        model_resolver=lambda _n: model,
+        conn=conn,
+        tracer=_Tracer(),  # type: ignore[arg-type]
+    )
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
+    assert "下周要体检，结果出来跟你说" in _prompt_text(model)
+    row = conn.execute(
+        "SELECT fired_by FROM agent_reachout ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert row["fired_by"] == "affection", row["fired_by"]
+
+
 def test_empty_memory_does_not_claim_long_term_memory(conn) -> None:
     """E3：记忆槽为空时，指令不再写"结合关于用户的长期记忆"（指着空槽说话=假契约）。"""
     model = _FakeModel(AIMessage(content="嗨"))

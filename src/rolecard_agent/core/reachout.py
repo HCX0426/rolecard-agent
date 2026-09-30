@@ -211,7 +211,21 @@ def _task_text(
             "如果这些事其实都已经过去了，就别硬接，正常说一句此刻值得说的小事。\n"
             "简短、口语化；不要自我介绍、不要说教、不要长篇。"
         )
-    return f"{_TASK_PREFIX}{lead}{_REACHOUT_TASK_BODY}"
+    body = f"{_TASK_PREFIX}{lead}{_REACHOUT_TASK_BODY}"
+    # 手里有"你说到一半"的素材时，**哪一档开口都该用得上**：从前这份清单只在
+    # `mode == "open_thread"` 那一档被读，而那一档要等整条链落到最弱的 timer 才够得着 ——
+    # 于是 affection 开口时素材被整份丢掉（09-30 生产读数：`open_threads_at` 至今为 NULL，
+    # 见台账 G3.8 追记）。这里只当**可选素材**给，不改开口节奏，也明令不许硬接。
+    # recall / file_event 两档在上面就 return 了：它们的指令是"只说这一件"，
+    # 再塞第二个话头就是让同一条消息干两件事。
+    if open_topics:
+        lines = "\n".join(f"- {t}" for t in open_topics)
+        body += (
+            "\n另外，下面这几件是对方提过、你们上次话尾还没收尾的事。"
+            "**顺着说一句可以，但不顺就别硬接**，不确定的细节不要补、也不要逐条复述：\n"
+            f"{lines}\n"
+        )
+    return body
 
 
 def recent_reachout_lines(
@@ -1411,7 +1425,9 @@ class ReachoutScheduler:
             # 第五个由头「未收尾话题」：只在链子要落到最弱那一档（timer）时才去补一次扫描，
             # 结果按 `OPEN_THREADS_REFRESH_MINUTES` 缓存 —— 一次调用换"她记得你说到一半"，
             # 不能每个 tick 花一遍（本地 8B 一次几十秒，那是直接拖死调度线程的量）。
-            open_topics: list[str] = []
+            # 缓存**先接住**再谈扫描：扫描要花一次模型调用，所以它仍只挂在最弱那一档；
+            # 但"读上一轮扫出来的结果"不该跟着一起挂 —— 否则 affection 开口时素材被丢掉。
+            open_topics: list[str] = list(state.open_threads)
             if fired == "timer" and self._thread_window is not None:
                 # 取"最近一窗"而不是"她还没接住的那一截"：后者在她每次开口之后必然为空，
                 # 于是这一源在生产上从没被走到过（09-26 轮 R26-03，实测见
