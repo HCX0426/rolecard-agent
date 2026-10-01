@@ -35,7 +35,10 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import json
+import os
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -88,9 +91,14 @@ STEPS: list[tuple[str, list[str], str]] = [
     ("mypy(linux 档)", [PY, "-m", "mypy", "--platform", "linux"], "both"),
     # shell/（Electron 壳）此前全程无人检查：它有 `npm run typecheck` 但门禁只 cd frontend。
     ("shell typecheck", [NPM, "run", "typecheck"], "full"),
+    # **不在命令行再补 `-q`**：`pyproject.toml` 的 `addopts` 已经带了一个 `-q`，而 pytest 的
+    # quiet 是累加的 —— 两个 `-q` 就是 verbosity -2，会把最后那行 `1320 passed in 177.31s`
+    # 连同失败时的 `FAILED tests/...` 一起吞掉（实测：本仓整份输出到 `[100%]` 就直接收尾）。
+    # 第一版门禁就是这么写的，于是"从输出里读后端用例数"那条读数**永远读不到**，而失败步骤
+    # 也只报"这一步红了"报不出是哪条用例 —— 两件事是同一个根。
     (
         "pytest(-x, 无覆盖率)",
-        [PY, "-m", "pytest", "-p", "no:cacheprovider", "-W", "ignore", "-q", "-x"],
+        [PY, "-m", "pytest", "-p", "no:cacheprovider", "-W", "ignore", "-x"],
         "fast",
     ),
     ("consistency", [PY, "scripts/check_consistency.py"], "both"),
@@ -107,7 +115,6 @@ STEPS: list[tuple[str, list[str], str]] = [
             "ignore",
             "--cov=rolecard_agent",
             "--cov-fail-under=85",
-            "-q",
         ],
         "full",
     ),
@@ -183,13 +190,102 @@ def _src_changed() -> bool:
         return True
 
 
-def _run(name: str, cmd: list[str], cwd: Path | None = None) -> tuple[bool, float]:
+def _run(name: str, cmd: list[str], cwd: Path | None = None) -> tuple[bool, float, str]:
+    """跑一步，返回 (是否通过, 秒数, 该步的完整输出)。
+
+    输出**边跑边打在控制台上，同时留一份在内存里**（第三个返回值）—— 留这一份只为了
+    一件事：把 README 首屏那几个数变成"这一步刚才量出来的"，而不是"某人上次手抄的"。
+    流式打印不能丢（长步骤静默几分钟会被当成挂死），所以自己按行读而不是 capture_output。
+    """
     print(f"\n▶ {name}", flush=True)
     t0 = time.perf_counter()
-    proc = subprocess.run(cmd, cwd=str(cwd) if cwd else str(ROOT))
+    collected: list[str] = []
+    with subprocess.Popen(
+        cmd,
+        cwd=str(cwd) if cwd else str(ROOT),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    ) as proc:
+        for line in proc.stdout or ():
+            print(line, end="", flush=True)
+            collected.append(line)
+        code = proc.wait()
     dt = time.perf_counter() - t0
-    print(f"  ⏱ {name}: {dt:.1f}s {'✅' if proc.returncode == 0 else '❌'}", flush=True)
-    return proc.returncode == 0, dt
+    print(f"  ⏱ {name}: {dt:.1f}s {'✅' if code == 0 else '❌'}", flush=True)
+    return code == 0, dt, "".join(collected)
+
+
+#: README 首屏那组数的落点。它不是"文档的一部分"，是"上一趟门禁量到了什么"。
+#: **这份文件入库**（09-30 那条规矩：尺子的判据里不许有 gitignore 的东西 —— 判据读到暂存区，
+#: 问的就不再是"这格数是不是真的"，而是"这台机器上有没有这个文件"）。放在 `docs/` 而不是
+#: `build/` 只为了这一条：干净克隆里它必须在，CI 才有可比的东西。
+READINGS = ROOT / "docs" / "gate-readings.json"
+_READING_PATTERNS = {
+    # (读哪个步骤, 正则, 存成什么名)
+    "pytest(-x, 无覆盖率)": (r"(\d+) passed", "backend_tests"),
+    "pytest(覆盖率≥85%)": (r"Total coverage:\s*([\d.]+)%", "coverage_percent"),
+    "前端 vitest": (r"Tests\s+(\d+) passed", "frontend_tests"),
+    "consistency": (r"assertions: (\d+) passed", "consistency_assertions"),
+}
+
+
+#: 读 ANSI/VT 转义序列。读正则**前先剥色**：vitest 即便输出被 pipe 也照样上色，那行
+#: `Tests  336 passed` 在字节上是 `\x1b[2m Tests \x1b[22m \x1b[1m\x1b[32m336 passed\x1b[39m…`，
+#: 于是"数字前有两个空格"这种写法永远读不到（10-01 实测：`--only 前端` 跑完落的是
+#: `frontend_tests_unreadable`）。颜色是呈现层的事，读数不该依赖它。
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _write_readings(outputs: dict[str, str]) -> None:
+    """把这一步量到的数并进 `docs/gate-readings.json`（入库，理由见 READINGS 上方注释）。
+
+    调用点是**一步一份**（每步跑完立刻并一次，不是整趟结束再一起写）：排在建步之后的
+    `consistency` 因此能看见同一趟刚量到的数，加完用例不用跑两趟门禁才发现 README 对不上。
+
+    **合并而不是整体覆盖** —— 第一版是覆盖，当场就撞出后果：门禁会并发跑（我这边一次
+    `--fast`，同时另一次 `--ci` 还在跑），后写那趟没量覆盖率那个键，于是把先写那趟的读数
+    **整份抹掉**。"只写我量到的"这件事，只有落成合并才成立。
+
+    每个键带自己的测量时刻（`<key>_at`）：覆盖率来自 full/ci 那趟、后端测试数本趟就有，
+    两件事不该共用一个时间戳 —— 比对的那条断言靠它说清"比的是哪一趟"。
+    """
+    try:
+        loaded = json.loads(READINGS.read_text(encoding="utf-8")) if READINGS.exists() else {}
+        data: dict[str, object] = loaded if isinstance(loaded, dict) else {}
+    except (OSError, ValueError):
+        data = {}  # 坏了的产物当没有：下一次整份重写，不跟它争
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
+    data["head"] = _git("rev-parse", "HEAD").strip()[:12]
+    added: list[str] = []
+    for step, (pattern, key) in _READING_PATTERNS.items():
+        if step not in outputs:
+            continue  # 这一趟没跑那一步（档位不含它，或前一步红了就停）：不判、也不抹旧读数
+        hits = re.findall(pattern, _ANSI.sub("", outputs[step]))
+        if not hits:
+            # **跑过却没量到**是另一件事，而且是有信息量的那一件：这一步的輸出格式变了
+            # （或它的命令行参数把汇总行吞了）。落下记号让比对那条断言去红，而不是安静地
+            # 少一个键 —— 第一版就是少一个 `backend_tests` 键而全绿，README 那个数从此没人看。
+            data[f"{key}_unreadable"] = stamp
+            continue
+        data[key] = hits[-1]
+        data[f"{key}_at"] = stamp
+        data.pop(f"{key}_unreadable", None)
+        added.append(key)
+    try:
+        READINGS.parent.mkdir(parents=True, exist_ok=True)
+        READINGS.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        if added:
+            print(f"  读数已并入 {os.path.relpath(READINGS, ROOT)}：{', '.join(added)}", flush=True)
+    except OSError as exc:  # 写不了读数不该让门禁失败
+        print(f"  （读数没落盘：{exc}）", flush=True)
 
 
 # CI 档跳过的步骤：要么要 node/浏览器/真机环境（前端与壳各有专属 job、冒烟要本机 Chrome），
@@ -214,13 +310,28 @@ def main() -> int:
         action="store_true",
         help="CI 档：全量层但跳过需要 node/浏览器/真机的步骤，且覆盖率**必跑**",
     )
+    parser.add_argument(
+        "--only",
+        metavar="步骤名子串",
+        help="只跑名字含这个子串的步骤：补读一个数时不必等整趟（读数是按键合并的）",
+    )
     args = parser.parse_args()
+
+    # 读数的键按**步骤名**挂钩，而步骤名会改（改名/合并/删步）：写错的键从此永不命中，
+    # 却长得像"这一趟没跑那一步"（见 _write_readings）—— 于是一条读数静静消失、门禁照绿。
+    # 这一步先挡住，比事后从 README 的数不对倒查回来便宜得多。
+    unknown_patterns = sorted(set(_READING_PATTERNS) - {name for name, _, _ in STEPS})
+    if unknown_patterns:
+        print(f"❌ _READING_PATTERNS 引用了不存在的步骤：{unknown_patterns}", flush=True)
+        return 2
 
     timings: list[tuple[str, float]] = []
     failures: list[str] = []
     started = time.perf_counter()
 
     for name, cmd, mode in STEPS:
+        if args.only and args.only not in name:
+            continue
         if args.ci and name in CI_SKIP:
             continue  # CI 档不跑 node/真机那几步（它们各有专属 job 或要本机环境）
         if args.fast and mode not in ("fast", "both"):
@@ -247,8 +358,11 @@ def main() -> int:
             cwd = ROOT / "shell"
         else:
             cwd = None
-        ok, dt = _run(name, cmd, cwd)
+        ok, dt, output = _run(name, cmd, cwd)
         timings.append((name, dt))
+        # **一步一份，跑完立刻落**（不是整趟结束后一次性写）：否则同一趟里排在后面的
+        # `consistency` 比的是**上一趟**的读数 —— 加了六条用例要跑两趟门禁才看得见。
+        _write_readings({name: output})
         if not ok:
             failures.append(name)
             break  # 失败即停：后面的步骤在同一个问题上只会重复失败
@@ -266,6 +380,8 @@ def main() -> int:
     for name, dt in timings:
         print(f"  {name:24} {dt:6.1f}s")
     tier = "fast" if args.fast else "ci" if args.ci else "full"
+    if args.only:
+        tier += f"，只跑「{args.only}」"
     print(f"  {'总计':24} {total:6.1f}s（模式：{tier}）")
     if failures:
         print(f"  ❌ 失败步骤：{'、'.join(failures)}")

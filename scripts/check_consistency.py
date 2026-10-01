@@ -756,6 +756,93 @@ def check_artifact_single_source() -> None:
         fails.append(f"artifact literals drift: {problems}")
 
 
+def check_readme_headline_numbers() -> None:
+    """README 首屏那组数必须等于**上一趟门禁量到的**那份读数。
+
+    为什么立它（10-01，台账 `R28-55` 的第二次收口）：那条缺陷记的是"457 + 63 + 24 条断言"
+    漂成了 1301 / 336 / 40 —— 我当时只把数字重测了一遍。可同一天下午我就又把它漂了一次
+    （加完用例，1301 变 1320），说明**手抄的数字不管测得多准都会再漂**。真正的修法是把
+    "当前真值"这件事交给量它的那个人：`gate.py` 每跑一趟就写 `docs/gate-readings.json`
+    （pytest / vitest / consistency 三步的输出里现读，**按键合并**，每个键自带测量时刻），
+    这条断言拿 README 首屏去比它。
+
+    那份读数**入库**而不是放 `build/`：09-30 那条规矩说尺子的判据里不许有 gitignore 的东西 ——
+    判据一读暂存区，问的就不是"这格数是不是真的"，而是"这台机器上有没有这个文件"（CI 上它若
+    不存在，这条永远只会打印"跳过"，等于没有）。它比的是"文档 vs 最近一次实测记录"，所以
+    它拦得住"把 README 改成一个没量过的数"，拦不住"加了用例却两样都不更新" —— 后者由跑门禁
+    的那个人看见（他那一趟会把新数写进读数，于是 README 当场对不上）。
+
+    少一个键比多一个键更响：某一步**跑了却没量到**时 `gate.py` 落 `<key>_unreadable` 记号，
+    这一格判红。第一版就是少了 `backend_tests` 这个键而全绿 —— 那两个"读不到"的根（pytest 的
+    `-q` 叠成 verbosity −2、vitest 带着 ANSI 色）见 `gate.py` 的 `_ANSI` 与 STEPS 注释。
+
+    文件整个不存在才跳过并说明（与"未知不拦"同一条纪律）：没跑过门禁不是缺陷，把它判红只会让
+    人先关掉这条。跳过的条数会上屏，不会被读成"通过"。
+    """
+    readme = ROOT / "README.md"
+    readings_path = ROOT / "docs" / "gate-readings.json"
+    if not readings_path.exists():
+        out(
+            "README headline numbers",
+            True,
+            "跳过：还没有 docs/gate-readings.json —— 跑一次 scripts/gate.py 就有读数了",
+        )
+        warns.append("README headline numbers: 本趟无门禁读数可比（跳过，不代表通过）")
+        return
+    try:
+        readings = json.loads(readings_path.read_text(encoding="utf-8"))
+    except ValueError:
+        out("README headline numbers", False, "gate-readings.json 读不出 JSON（产物坏了，另说）")
+        fails.append("gate-readings.json unreadable")
+        return
+    text = readme.read_text(encoding="utf-8", errors="ignore")
+    want = {
+        "backend_tests": (r"\*\*(\d+) 个后端测试", "后端测试数"),
+        "frontend_tests": (r"(\d+) 个前端测试", "前端测试数"),
+        "consistency_assertions": (r"一致性 (\d+) 项断言", "一致性断言数"),
+        "coverage_percent": (r"覆盖率 ([\d.]+)%", "覆盖率"),
+    }
+    drift: list[str] = []
+    checked = 0
+    for key, (pattern, label) in want.items():
+        if f"{key}_unreadable" in readings:
+            # 「那一步跑了却没量到」是**确认的负面**，不是未知：与"这档没跑那一步"（键压根不在
+            # 文件里，跳过）分得很清。漏掉这一格，README 那个数就会在被废掉的尺子下面永远绿。
+            drift.append(
+                f"{label}：{readings[f'{key}_unreadable']} 那一步跑过却没读到数"
+                "（步骤的输出格式或参数变了 —— 先修读数，不要改 README）"
+            )
+            continue
+        if key not in readings:
+            continue
+        checked += 1
+        hit = re.search(pattern, text)
+        if not hit:
+            drift.append(f"README 里找不到「{label}」那一格（读数说 {readings[key]}）")
+            continue
+        if hit.group(1) != str(readings[key]):
+            drift.append(f"{label}：README 写 {hit.group(1)}，上一趟门禁量到 {readings[key]}")
+    if not checked:
+        out("README headline numbers", True, "读数文件里一个可比项都没有（跳过，不代表通过）")
+        return
+    stamps = "，".join(
+        f"{label} {readings[key]}@{readings.get(f'{key}_at', '?')}"
+        for key, (_, label) in want.items()
+        if key in readings
+    )
+    out(
+        "README headline numbers",
+        not drift,
+        # 每个键**自带**测量时刻：覆盖率只有 ci/full 那趟量得到，快门禁只更新用例数 ——
+        # 共用一个时间戳会把"上周的覆盖率"洗成"刚才量的"（`gate.py` 的 `_write_readings` 同理）。
+        f"{checked} 项与 gate-readings.json 一致（读数 HEAD {readings.get('head', '?')}）：{stamps}"
+        if not drift
+        else "; ".join(drift[:4]),
+    )
+    if drift:
+        fails.append(f"README headline numbers drift: {drift}")
+
+
 def check_promised_artifacts() -> None:
     promised = [
         "pyproject.toml",
@@ -2286,6 +2373,7 @@ def main() -> int:
     check_ps1_encoding()
     check_console_encoding()
     check_readme_quickstart()
+    check_readme_headline_numbers()
     check_milestone_alignment()
     check_v1_v2_boundary()
     check_doc_references()
