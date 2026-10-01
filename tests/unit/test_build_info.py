@@ -92,3 +92,51 @@ def test_health_reports_the_fingerprint(tmp_path: Path) -> None:
     build = body["build"]
     assert build["sha"] == build_info.read_build_info().fingerprint
     assert build["dirty"] in (True, False)
+
+
+# ---- 烤这一格的那一侧：`scripts/build_sidecar.py::_write_build_info ----
+
+_SIDECAR_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "build_sidecar.py"
+
+
+def _load_build_sidecar():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("build_sidecar_under_test", str(_SIDECAR_SCRIPT))
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_dirty_flag_only_asks_about_paths_that_go_into_the_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """10-01 第十七包就是这么被冤枉的：脏的只有装机脚本，旗却写 `dirty: true`。
+
+    这一问的本意是"装进去的那份后端是不是这个 commit"，所以它必须带 pathspec；
+    不带就是把"这台机器上还有别处在改"当成"包与 HEAD 不符"。
+    """
+    mod = _load_build_sidecar()
+    seen: list[tuple[str, ...]] = []
+
+    def fake_git(*args: str) -> str:
+        seen.append(tuple(args))
+        if args[:1] == ("rev-parse",):
+            return "deadbeefcafe"
+        if args[:1] == ("status",):
+            # 带 pathspec 的那一问：干净；整棵树那一问：脏（里面有装机脚本）。
+            return "" if "--" in args else " M scripts/install_package.ps1"
+        return ""
+
+    monkeypatch.setattr(mod, "_git", fake_git)
+    monkeypatch.setattr(mod, "BUILD_INFO", tmp_path / "build_info.json")
+    mod._write_build_info()
+
+    status_calls = [c for c in seen if c[:1] == ("status",)]
+    assert status_calls, "没有问过 git status"
+    asked = status_calls[0]
+    assert "--" in asked, "git status 没带 pathspec —— 会把包外的改动算成包不干净"
+    assert "src" in asked and "packaging" in asked
+    payload = json.loads((tmp_path / "build_info.json").read_text(encoding="utf-8"))
+    assert payload["dirty"] is False, "包外有改动不该让包变脏"

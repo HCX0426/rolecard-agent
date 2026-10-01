@@ -59,7 +59,7 @@ def test_vitest_summary_is_read_even_though_it_is_colored(tmp_path):
     # 取自实测的那一行：vitest 被 pipe 也照样上色，数字前后都是转义序列。
     prefix = "\x1b[2m      Tests \x1b[22m \x1b[1m\x1b[32m"
     colored = prefix + "336 passed\x1b[39m\x1b[90m (336)\x1b[39m\n"
-    gate._write_readings({"前端 vitest": colored})  # noqa: SLF001
+    gate._write_readings({"前端 vitest": colored}, True)  # noqa: SLF001
     assert _read(gate)["frontend_tests"] == "336"
 
 
@@ -67,7 +67,7 @@ def test_pytest_summary_yields_the_passed_count(tmp_path):
     gate = _load_gate()
     _stub(gate, tmp_path)
     out = "1319 passed, 1 skipped, 3 deselected in 134.56s\n"
-    gate._write_readings({"pytest(-x, 无覆盖率)": out})  # noqa: SLF001
+    gate._write_readings({"pytest(-x, 无覆盖率)": out}, True)  # noqa: SLF001
     data = _read(gate)
     assert data["backend_tests"] == "1319"
     # 口径钉在这里：读的是**通过**数，不是 collect-only 的收集数（两者差的正是那条 skip）。
@@ -77,20 +77,53 @@ def test_pytest_summary_yields_the_passed_count(tmp_path):
 def test_a_step_that_ran_but_matched_nothing_leaves_a_marker(tmp_path):
     gate = _load_gate()
     _stub(gate, tmp_path)
-    gate._write_readings({"consistency": "assertions: 44 passed, 0 failed\n"})  # noqa: SLF001
-    gate._write_readings({"consistency": "没有数字的一份输出\n"})  # noqa: SLF001
+    gate._write_readings({"pytest(-x, 无覆盖率)": "1326 passed, 1 skipped in 190s\n"}, True)  # noqa: SLF001
+    gate._write_readings({"pytest(-x, 无覆盖率)": "没有数字的一份输出\n"}, True)  # noqa: SLF001
     data = _read(gate)
-    assert "consistency_assertions_unreadable" in data
-    assert data["consistency_assertions"] == "44"  # 记号只说"这次没量到"，不抹掉上一次的真读数
+    assert "backend_tests_unreadable" in data
+    assert data["backend_tests"] == "1326"  # 记号只说"这次没量到"，不抹掉上一次的真读数
 
 
 def test_a_step_that_never_ran_is_left_alone(tmp_path):
     gate = _load_gate()
     _stub(gate, tmp_path)
     cov = "Required test coverage of 85% reached. Total coverage: 91.89%\n"
-    gate._write_readings({"pytest(覆盖率≥85%)": cov})  # noqa: SLF001
-    gate._write_readings({"consistency": "assertions: 45 passed, 0 failed\n"})  # noqa: SLF001
+    gate._write_readings({"pytest(覆盖率≥85%)": cov}, True)  # noqa: SLF001
+    gate._write_readings({"前端 vitest": "Tests  336 passed (336)\n"}, True)  # noqa: SLF001
     data = _read(gate)
     assert data["coverage_percent"] == "91.89"  # 并发/分档跑：后一趟没跑那一步就不该动它的键
     assert "coverage_percent_unreadable" not in data
-    assert data["consistency_assertions"] == "45"
+    assert data["frontend_tests"] == "336"
+
+
+def test_the_assertion_count_is_not_a_reading(tmp_path: Path) -> None:
+    """「一致性有几条断言」不许进读数机：那串数里含比对 README 这一条自己，是**自指**。
+
+    README 漂 ⇒ 那条断言红 ⇒ 读到的数少 1 ⇒ 那句变成两处错；把它改对，下一趟又回到原值。
+    10-01 实测打过一轮这个转圈（台账 `R28-69`），所以这一格退回门禁输出，谁都不抄。
+    """
+    gate = _load_gate()
+    keys = {key for _, key, *_ in gate._READING_PATTERNS.values()}  # noqa: SLF001
+    assert "consistency_assertions" not in keys
+    source = (ROOT / "scripts" / "check_consistency.py").read_text(encoding="utf-8")
+    start = source.index("def check_readme_headline_numbers")
+    body = source[start : start + 3000]
+    assert '"consistency_assertions"' not in body, "README 那条比对又去读自指的条数了"
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "一致性 4" not in readme and "一致性 1" not in readme, "README 首屏又抄回那串自指的数"
+
+def test_a_failed_step_produces_no_reading(tmp_path: Path) -> None:
+    """红掉的那一步**不算量到了**：`1 failed, 957 passed` 里那个 957 会被同一个正则读走。
+
+    10-01 实测撞到的：一次 chroma 偶发失败把 `backend_tests` 从 1326 洗成 957，而 README 那一格
+    才是对的 —— 于是这条守卫差一点反过来把人对的那一格判成漂移。
+    """
+    gate = _load_gate()
+    _stub(gate, tmp_path)
+    gate._write_readings({"pytest(-x, 无覆盖率)": "1326 passed, 1 skipped in 190s\n"}, True)  # noqa: SLF001
+    gate._write_readings(  # noqa: SLF001
+        {"pytest(-x, 无覆盖率)": "1 failed, 957 passed, 1 skipped in 158.34s\n"}, False
+    )
+    data = _read(gate)
+    assert data["backend_tests"] == "1326", "失败那一步的半截数字不该盖掉上一次的真读数"
+    assert "backend_tests_unreadable" not in data, "问题不在输出格式，别打'没量到'的记号"

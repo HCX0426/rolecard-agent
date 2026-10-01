@@ -30,7 +30,12 @@ $shellVersion = $shellPkg.version
 $installerName = "rolecard-agent-$shellVersion-x64.exe"
 $installer = Join-Path $root "shell\release\$installerName"
 $installedExe = Join-Path $env:LOCALAPPDATA "Programs\rolecard-agent\rolecard-agent.exe"
-if (-not (Test-Path $installer)) {
+# 这条预检**只属于 -SkipBuild**：不建的时候就装现成的那份，而"现成的那份"按名字找 ——
+# 版本号一变（10-01 `R28-62` 把两条线并成一条，0.1.0 ⇒ 0.3.0）它就该出声，而不是抱着
+# `release/` 里那份旧命名的包一路装下去。反过来，**从零打一发时这份产物本来就还不存在**，
+# 在这里拦等于把唯一一条能重打包的路堵死（实测：10-01 第十七包就是被这句拦在 [1/6] 之前的，
+# 而那句报错写的"应该叫 0.3.0、现在只有 0.1.0"当时是完全正确的诊断 —— 正确的诊断用错了时机）。
+if ($SkipBuild -and -not (Test-Path $installer)) {
     $found = @(Get-ChildItem (Join-Path $root "shell\release") -Filter "rolecard-agent-*.exe" -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
     throw "installer not found: $installerName (shell/package.json says version=$shellVersion; present in shell\release: $($found -join ', '))"
 }
@@ -89,7 +94,13 @@ $py = Join-Path $root ".venv\Scripts\python.exe"
 & $py (Join-Path $root "scripts\backup_data_root.py") --dest (Join-Path $root "build")
 if ($LASTEXITCODE -ne 0) { throw "backup failed (exit=$LASTEXITCODE) —— 没备份就别装" }
 
-if (-not (Test-Path $installer)) { throw "installer not found: $installer" }
+# 打完之后这一问才是**两边都要**的：[1/6] 的 electron-builder 若按另一个名字出产物
+# （`artifactName` 与 shell/package.json 的 version 漂开），这里必须把它实际产出了什么列出来，
+# 而不是只报"找不到路径" —— 由 `core/artifacts.py` 那侧的门禁断言问同形，人看的这一侧问事实。
+if (-not (Test-Path $installer)) {
+    $built = @(Get-ChildItem (Join-Path $root "shell\release") -Filter "rolecard-agent-*.exe" -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+    throw "build did not produce $installerName (version=$shellVersion; release/ now holds: $($built -join ', '))"
+}
 
 Write-Host "[3/6] closing the installed app (if running)"
 $targets = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $installedExe })

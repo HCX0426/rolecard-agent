@@ -799,8 +799,11 @@ def check_readme_headline_numbers() -> None:
     want = {
         "backend_tests": (r"\*\*(\d+) 个后端测试", "后端测试数"),
         "frontend_tests": (r"(\d+) 个前端测试", "前端测试数"),
-        "consistency_assertions": (r"一致性 (\d+) 项断言", "一致性断言数"),
         "coverage_percent": (r"覆盖率 ([\d.]+)%", "覆盖率"),
+        # 「一致性有几条断言」**不在这里比**：那把尺子的条数里含"比对 README"这一条自己，
+        # 于是 README 漂 ⇒ 这一条红 ⇒ 读到的条数少 1 ⇒ 那句数变成两处错。自指的东西不能当读数，
+        # 退回门禁输出里那一行 `assertions: N passed, M failed` —— 散文不抄它（`R28-69`），
+        # 而"有没有红"本来就由 `gate` 的退出码负责，写在文档里那句只是复述。
     }
     drift: list[str] = []
     checked = 0
@@ -1522,13 +1525,17 @@ def check_markdown_table_shape() -> None:
     两格**，整行右移一列 —— 渲染出来字数对、内容看着也在，但"证据"那一列里装着"复验"的话。
     另一种是**长行折成几个物理行**：表格在那一行就终止了，后面的续行掉成散段落，紧随其后的
     那些正常行还会变成"没有表头的第二张表"。这两种都不报错，而《架构审计》这种**按列读**的
-    台账恰恰全靠列位对齐。`docs/archive/` 按封存件排除（与 `check_doc_links` 同一口径）。
+    台账恰恰全靠列位对齐。
+
+    **归档件照问**（10-01 改；从前这里跟着 `check_doc_links` 豁免 `docs/archive/`）：`R28-63`
+    把三本台账全部搬进归档的那一刻，这条尺子就**从此看不见台账本身**了 —— 它防的那一类缺陷
+    住在按列读的长行里，而那种行只有台账才有。实测代价是当场照出两处：归档件里一处存量窄行，
+    以及我自己 `R28-64` 那一行被物理折成 9 行、在"45 条全绿"里过了一趟门禁。
+    封存的意思是"内容不再改写"，不是"格式不再需要成立"。
     """
     offenders: list[str] = []
     for path in iter_files(".md"):
         rel = path.relative_to(ROOT)
-        if "archive" in rel.parts:
-            continue
         lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
         i = 0
         while i < len(lines):

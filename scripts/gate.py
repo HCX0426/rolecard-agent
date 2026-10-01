@@ -229,7 +229,11 @@ _READING_PATTERNS = {
     "pytest(-x, 无覆盖率)": (r"(\d+) passed", "backend_tests"),
     "pytest(覆盖率≥85%)": (r"Total coverage:\s*([\d.]+)%", "coverage_percent"),
     "前端 vitest": (r"Tests\s+(\d+) passed", "frontend_tests"),
-    "consistency": (r"assertions: (\d+) passed", "consistency_assertions"),
+    # **一致性那把尺子有几条，不在这里读，也不在 README 抄**（10-01 撞到的自指）：那 45 条里
+    # 含"比对 README 这一条"自己 —— README 一漂就有一条红，读到的"过了几条"立刻少 1，于是那句
+    # 数变成两处错；把它改对，下一趟又回到原值。就算改读 `passed + failed` 也还在打转：
+    # 那个键只在**全绿的那一趟**才写得动（红了就不写，见 `_write_readings`），而它红的原因恰恰是
+    # 它自己。所以这一格退回它本来该在的地方 —— 门禁输出，散文不抄（`docs/开发流程.md` 那条规矩）。
 }
 
 
@@ -240,8 +244,14 @@ _READING_PATTERNS = {
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
-def _write_readings(outputs: dict[str, str]) -> None:
+def _write_readings(outputs: dict[str, str], ok: bool) -> None:
     """把这一步量到的数并进 `docs/gate-readings.json`（入库，理由见 READINGS 上方注释）。
+
+    **红了就没有读数**：一条失败的 pytest 那一步照样打 `1 failed, 957 passed in 158.34s`，
+    同一个正则会乐呵呵把那半截跑完的 957 读走 —— 实测 10-01：一次 chroma 偶发失败把
+    `backend_tests` 从 1326 洗成 957，而 README 那个数才是对的（于是这条守卫差一点反过来
+    把人对的那一格判成漂移）。所以 `ok=False` 直接返回：不写值，也不打"没量到"的记号
+    （那一步确实跑了、也确实有汇总行，问题不在输出格式上）。
 
     调用点是**一步一份**（每步跑完立刻并一次，不是整趟结束再一起写）：排在建步之后的
     `consistency` 因此能看见同一趟刚量到的数，加完用例不用跑两趟门禁才发现 README 对不上。
@@ -253,6 +263,8 @@ def _write_readings(outputs: dict[str, str]) -> None:
     每个键带自己的测量时刻（`<key>_at`）：覆盖率来自 full/ci 那趟、后端测试数本趟就有，
     两件事不该共用一个时间戳 —— 比对的那条断言靠它说清"比的是哪一趟"。
     """
+    if not ok:
+        return
     try:
         loaded = json.loads(READINGS.read_text(encoding="utf-8")) if READINGS.exists() else {}
         data: dict[str, object] = loaded if isinstance(loaded, dict) else {}
@@ -362,7 +374,7 @@ def main() -> int:
         timings.append((name, dt))
         # **一步一份，跑完立刻落**（不是整趟结束后一次性写）：否则同一趟里排在后面的
         # `consistency` 比的是**上一趟**的读数 —— 加了六条用例要跑两趟门禁才看得见。
-        _write_readings({name: output})
+        _write_readings({name: output}, ok)
         if not ok:
             failures.append(name)
             break  # 失败即停：后面的步骤在同一个问题上只会重复失败

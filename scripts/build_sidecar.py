@@ -65,15 +65,35 @@ def _git(*args: str) -> str:
     return done.stdout.strip()
 
 
+#: 会进包的路径 —— `dirty` 那一格只问这些。
+#: 理由（10-01 第十七包实测）：整棵工作树的脏一律算在包头上，产出的就是一个**说错话**的旗 ——
+#: 那次脏的只有 `scripts/install_package.ps1`（装机那一步被 PowerShell 读，根本不在 PYZ 里），
+#: 而 `/api/health` 照样回答 `dirty: true`，`probe_package_artifact` 第 ③ 层据此把这个包判红。
+#: "装进去的那份后端是不是这个 commit"才是这一问的本意，所以 pathspec 就按进包的输入给。
+BUNDLED_INPUT_PATHS = (
+    "src",
+    "packaging",
+    "frontend/dist",
+    "pyproject.toml",
+    "requirements.txt",
+    "requirements-api.txt",
+    "requirements-rag.txt",
+    "requirements-cloud.txt",
+    "requirements-mcp.txt",
+    "requirements-package.txt",
+)
+
+
 def _write_build_info() -> None:
     """把"这一包是从哪份源码打的"写进 `build/build_info.json`，由 spec 收进 `_internal/` 根。
 
     写不出 sha（不是 git 仓库 / git 不在）就老实写 `unknown` —— 让 `/api/health` 与判据自己去红，
     而不是造一个"两边都空所以相等"的绿。`dirty` 一起记：从脏工作树打出来的包，"装的就是 HEAD"
-    这句话本来就不成立，让它在产物里带着这个旗，比让文档去猜谁改过什么诚实。
+    这句话本来就不成立，让它在产物里带着这个旗，比让文档去猜谁改过什么诚实 —— 但**这一问的范围
+    是进包的那几条路径**（见 `BUNDLED_INPUT_PATHS`），不是"这台机器上此刻还有别处在改吗"。
     """
     sha = _git("rev-parse", "HEAD")
-    dirty = bool(_git("status", "--porcelain"))
+    dirty = bool(_git("status", "--porcelain", "--", *BUNDLED_INPUT_PATHS))
     payload = {
         "git_sha": sha or "unknown",
         "built_utc": datetime.now(UTC).isoformat(timespec="seconds"),
