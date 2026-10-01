@@ -47,15 +47,30 @@ def build_info_path() -> Path:
 
 
 def _git(*args: str) -> str:
-    result = subprocess.run(  # noqa: S603
-        ["git", *args],
-        cwd=str(repo_root()),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+    """问 git 要一份身份；**问不到就回空串**（调用方把它翻译成 `unknown`）。
+
+    这里必须自己接住 `FileNotFoundError`：镜像里没有 `git` 这个二进制（`python:3.13-slim` 不带，
+    `.dockerignore` 也不带 `.git`），10-01 CI 的镜像那一臂就是被这个异常打出来的 ——
+    那条探活接口抛 500、Dockerfile 里的容器探针永远不通过、编排器眼里这个容器
+    "活着但没就绪"。
+    本模块的规矩从头是"**问不到就说问不到**"（`read_build_info` 不许抛），而第一版只接住了
+    返回码非零与文件不存在两种，漏了"根本起不动子进程"这一种。
+    """
+    try:
+        result = subprocess.run(  # noqa: S603
+            ["git", *args],
+            cwd=str(repo_root()),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        # OSError 覆盖 FileNotFoundError（没装 git）与 PermissionError；
+        # SubprocessError 覆盖 timeout —— 一条探活接口不该为身份这件事等出一个 500。
+        return ""
     return result.stdout.strip()
 
 
@@ -81,15 +96,17 @@ class BuildInfo:
 
 
 @lru_cache(maxsize=1)
-def _dev_identity() -> tuple[str, bool]:
+def _dev_identity() -> tuple[str, bool | None]:
     """开发态现取：HEAD 的 sha + 工作树是否脏。
 
     一个进程算一次（`lru_cache`）：健康接口会被壳轮询，而开发态的 HEAD 不会在你眼前变。
     脏这件事**必须说出来** —— 从脏工作树打出来的包，"装的就是 HEAD"那句话本来就是假的。
+    问不到 HEAD（镜像里没 git）时脏旗回 **None** 而不是 False：「没记」与「记了说干净」
+    是两件事（同 `R28-66` 那条口径），把"问不到"写成"干净"是最省事的假绿。
     """
     sha = _git("rev-parse", "HEAD")
     if not sha:
-        return UNKNOWN, False
+        return UNKNOWN, None
     return sha, bool(_git("status", "--porcelain"))
 
 

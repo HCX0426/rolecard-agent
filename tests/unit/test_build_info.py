@@ -140,3 +140,48 @@ def test_dirty_flag_only_asks_about_paths_that_go_into_the_bundle(
     assert "src" in asked and "packaging" in asked
     payload = json.loads((tmp_path / "build_info.json").read_text(encoding="utf-8"))
     assert payload["dirty"] is False, "包外有改动不该让包变脏"
+
+
+def _no_git(monkeypatch: pytest.MonkeyPatch) -> None:
+    """把"这台机器上没有 git 这个二进制"假出来（镜像里就是这个形状）。"""
+    import subprocess
+
+    def boom(*a: object, **kw: object) -> None:
+        raise FileNotFoundError(2, "No such file or directory", "git")
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    build_info._dev_identity.cache_clear()  # noqa: SLF001
+
+
+def test_missing_git_answers_unknown_instead_of_500(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`/api/health` 抛 500 的代价在容器里是**永远不健康**，而不是"少一格信息"。
+
+    10-01 CI 镜像那一臂实测：`python:3.13-slim` 里没有 git，`.dockerignore` 也不带 `.git`，
+    于是 `read_build_info` 里那句 `subprocess.run(["git", …])` 直接穿出 ASGI，
+    `HEALTHCHECK` 每一次都拿到 500。本模块的规矩从头是"问不到就说问不到、不抛"。
+    """
+    _no_git(monkeypatch)
+    try:
+        info = build_info.read_build_info()
+    except Exception as exc:  # noqa: BLE001 - 这条用例的意义就是"这里不许抛"
+        raise AssertionError(f"问不到 git 时 read_build_info 抛了：{exc!r}") from exc
+    assert not info.known
+    assert info.fingerprint == build_info.UNKNOWN
+    # 「没记」不等于「记了说干净」：把问不到写成 False 是最省事的假绿。
+    assert info.dirty is None
+    build_info._dev_identity.cache_clear()  # noqa: SLF001
+
+
+def test_health_endpoint_answers_without_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _no_git(monkeypatch)
+    try:
+        client = TestClient(create_app(sqlite_path=tmp_path / "app.db"))
+        response = client.get("/api/health")
+    finally:
+        build_info._dev_identity.cache_clear()  # noqa: SLF001
+    assert response.status_code == 200, response.text
+    assert response.json()["build"]["sha"] == build_info.UNKNOWN
