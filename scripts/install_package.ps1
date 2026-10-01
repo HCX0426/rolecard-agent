@@ -40,15 +40,31 @@ function EntryAsset([string]$file) {
     # 用 [regex]::Match 而不是 Select-String：后者返回的是 MatchInfo **数组**，
     # 在它上面点 `.Matches[0]` 会走 PowerShell 的成员枚举，取到的不一定是那个 Match 对象
     # （实测一边取到哈希、另一边取到空串，把一次本来正确的安装判成"包不是新的"）。
-    $text = Get-Content -Raw -LiteralPath $file
+    $text = Get-Content -Raw -Encoding UTF8 -LiteralPath $file
     return [regex]::Match($text, "assets/(index-[A-Za-z0-9_-]+\.js)").Groups[1].Value
+}
+
+function ListenerOwnerPids([int]$port) {
+    # 谁在听这个端口。Get-NetTCPConnection 是 Windows 自带的，但它在有些装法里缺模块，
+    # 所以留一条 netstat 的退路 —— 两条都拿不到就报"问不出"，不假装"没人听"。
+    try {
+        $via = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction Stop |
+            ForEach-Object { $_.OwningProcess })
+        if ($via.Count -gt 0) { return @($via | Select-Object -Unique) }
+    } catch { }
+    $rows = & netstat -ano | Select-String "[:.]$port\s+\S+\s+LISTENING"
+    $pids = @($rows | ForEach-Object { ($_ -split '\s+')[-1] } | Where-Object { $_ -match '^\d+$' })
+    return @($pids | Select-Object -Unique)
 }
 
 
 if (-not $SkipBuild) {
     Write-Host "[1/6] building (frontend -> sidecar -> nsis)"
     Push-Location (Join-Path $root "frontend")
-    npm run build | Out-Null
+    # 不再 `| Out-Null`：下面 electron-builder 那一步 09-28 就是因为吞了输出而报出"装进去的不是
+    # 新构建"这种离真因十万八千里的话（`R28-35` 那一族）。退出码照样查，两件事不冲突 ——
+    # 打出来的是"失败时能看见为什么"，不是"成功时多几十行"。
+    npm run build
     if ($LASTEXITCODE -ne 0) { throw "frontend build failed (exit=$LASTEXITCODE)" }
     Pop-Location
     & (Join-Path $root ".venv\Scripts\python.exe") (Join-Path $root "scripts\build_sidecar.py")
@@ -134,13 +150,66 @@ if ($a -ne $b) { throw ("installed BACKEND is not the fresh build (sha256 differ
 
 if (-not $NoLaunch) {
     Write-Host "[5/6] launching"
+    # 端口与壳同一条口径（`shell/main/backend.ts` 的 `envPort()`：`ROLECARD_API_PORT`，默认 8000）。
+    # 这里从前**写死 8000**，而开发态那条服务也在 8000（`docs/开发流程.md` 的"换后端=换库"那节
+    # 自陈过这个撞法）—— 于是 `health=200` 完全可能是**dev 那份后端**答的：验的从来不是刚装上的东西。
+    $apiPort = 8000
+    if ($env:ROLECARD_API_PORT -and $env:ROLECARD_API_PORT -match '^\d+$') {
+        $apiPort = [int]$env:ROLECARD_API_PORT
+    }
+    $base = "http://127.0.0.1:$apiPort"
     Start-Process -FilePath $installedExe | Out-Null
-    Start-Sleep -Seconds 20
+    # 轮询而不是睡死一个没被量过的 20 秒。
+    $answer = $null
+    for ($i = 0; $i -lt 30; $i++) {
+        Start-Sleep -Seconds 2
+        try {
+            $h = Invoke-WebRequest -Uri "$base/api/health" -UseBasicParsing -TimeoutSec 5
+            if ($h.StatusCode -eq 200) { $answer = $h.Content; break }
+        } catch { }
+    }
+    if (-not $answer) {
+        throw "app is up but /api/health did not answer on :$apiPort within 60s"
+    }
+    # **谁**在答，比"有人答"重要：按端口找监听者，再问它的可执行路径在不在安装目录下。
+    $installedDir = Split-Path -Parent $installedExe
+    $owners = @(ListenerOwnerPids $apiPort)
+    if ($owners.Count -eq 0) {
+        throw "can't tell who answers :$apiPort (no listener found via Get-NetTCPConnection or netstat) - refusing to print OK"
+    }
+    $paths = @($owners | ForEach-Object {
+        (Get-CimInstance Win32_Process -Filter "ProcessId=$_" -ErrorAction SilentlyContinue).ExecutablePath
+    }) | Where-Object { $_ }
+    $mine = @($paths | Where-Object { $_ -like "$installedDir*" })
+    if ($mine.Count -eq 0) {
+        throw ("answers on :$apiPort come from a process NOT under the install dir: " +
+            ($paths -join ' | ') +
+            ' - 十有八九是开发态那条服务占着端口（docs/开发流程.md 那条「换后端=换库」）。' +
+            '先把 dev 停掉，或给这次验收设 ROLECARD_API_PORT 换一个端口再来一遍。')
+    }
+    Write-Host "      health=200 answered by pid=$($owners -join ',') :: $($mine -join ', ')"
+    # 顺带问一句"它自报是哪一版"（P0-1 那条构建指纹）：路径已经证明是装好的那个，
+    # 指纹再证明它里面跑的就是刚打的那份后端字节。两问各挡一半：
+    # 只问指纹会被"dev 也在同一个 HEAD 上"骗过去，只问路径会被"装的是上一包"骗过去。
     try {
-        $h = Invoke-WebRequest -Uri "http://127.0.0.1:8000/api/health" -UseBasicParsing -TimeoutSec 10
-        Write-Host "      health=$($h.StatusCode)"
-    } catch {
-        throw "app is up but /api/health did not answer: $($_.Exception.Message)"
+        $reported = (($answer | ConvertFrom-Json).build).sha
+    } catch { $reported = $null }
+    $builtInfo = Join-Path $root "build\build_info.json"
+    $builtSha = $null
+    if (Test-Path $builtInfo) {
+        $builtSha = ((Get-Content -Raw -Encoding UTF8 $builtInfo) | ConvertFrom-Json).git_sha
+    }
+    # 两侧都**至少 12 个字符**才比：build_info.json 里写的是 `unknown`（读不到 git 时），
+    # 直接 Substring(0,12) 会抛一个"长度不合法"的错，把一次正常的安装报成一句看不懂的栈。
+    if ($reported -and $builtSha -and $reported.Length -ge 12 -and "$builtSha".Length -ge 12) {
+        $wantSha = "$builtSha".Substring(0, 12)
+        Write-Host "      build sha: installed=$reported built=$wantSha"
+        if ($reported -ne $wantSha) {
+            throw "installed backend reports $reported while the build we just packaged is $wantSha"
+        }
+    } else {
+        Write-Host ("      ^ 没比构建指纹（installed=$reported / built=$builtSha）" +
+            " - 两侧任一是 unknown 或缺失就只打这一行，不拿它当判据，也不假装比过")
     }
 } else {
     Write-Host "[5/6] not launched (-NoLaunch)"

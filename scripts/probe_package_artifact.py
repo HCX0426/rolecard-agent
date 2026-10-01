@@ -93,6 +93,35 @@ def _free_port() -> int:
         return int(probe.getsockname()[1])
 
 
+def _terminate_own(srv: subprocess.Popen[bytes], port: int) -> bool:
+    """只回收**自己 spawn 的那个 pid**，并回读一次"真没了"。
+
+    为什么回读而不是看退出码（与 `install_package.ps1` 第 [3/5] 步同一条判据，10-01 补齐）：
+    `taskkill` 对"找不到那个 PID"也返回失败，只看退出码既会假红也会假绿；
+    唯一可靠的问法是那个进程还在不在。不在才算这一发结束 —— 留着它等于给下一发
+    探针或下一次装机留一个占着端口与临时数据根的陌生人。
+    """
+    srv.terminate()
+    try:
+        srv.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        subprocess.run(["taskkill", "/PID", str(srv.pid), "/T", "/F"], check=False)  # noqa: S603
+        time.sleep(1)
+        listed = subprocess.run(  # noqa: S603
+            ["tasklist", "/FI", f"PID eq {srv.pid}", "/NH"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        ).stdout
+        if str(srv.pid) in listed:
+            print(f"  ⚠ pid={srv.pid} 还活着（taskkill 没收掉）—— 它占着 :{port}，请手动确认")
+            return False
+    print(f"  已终止自己起的 pid={srv.pid}（未碰 :8000，未动任何装机目录）")
+    return True
+
+
 def _get(url: str) -> tuple[int, bytes]:
     with urllib.request.urlopen(url, timeout=5) as resp:
         return int(resp.status), resp.read()
@@ -257,14 +286,12 @@ def check_frozen_boot() -> bool:
         # 它证明不了"最新"，只能证明"frozen 那条码真的被执行了"（收进 PYZ ≠ frozen 可用）。
         has_dangling = "有" if "dangling" in keys else "没有"
         print(f"  或孤儿盘点的键集合 = {keys}（含 dangling：{has_dangling}）")
-        return "dangling" in keys
+        verdict = "dangling" in keys
     finally:
-        srv.terminate()
-        try:
-            srv.wait(timeout=20)
-        except subprocess.TimeoutExpired:
-            subprocess.run(["taskkill", "/PID", str(srv.pid), "/T", "/F"], check=False)
-        print(f"  已终止自己起的 pid={srv.pid}（未碰 :8000，未动任何装机目录）")
+        gone = _terminate_own(srv, port)
+    # 自己起的进程没收干净 ⇒ 这一发不算完成：留下的那个 exe 占着端口与临时数据根，
+    # 下一发探针或下一次装机读到的就是它（10-01 与 install_package.ps1 第 [3/5] 步对齐）。
+    return verdict and gone
 
 
 def main() -> int:
