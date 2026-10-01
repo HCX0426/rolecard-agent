@@ -112,6 +112,22 @@ def test_the_assertion_count_is_not_a_reading(tmp_path: Path) -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "一致性 4" not in readme and "一致性 1" not in readme, "README 首屏又抄回那串自指的数"
 
+def test_readings_path_moves_off_the_tracked_file_on_a_runner(tmp_path: Path, monkeypatch) -> None:
+    """runner 不许回写入库那份读数 —— 覆盖率是**按平台**的数（`R28-74`）。
+
+    本机 win32 量到 91.92%，Linux runner 量到 91.77%，两边都对。入库那份记的是
+    "README 抄的是谁量的那一次"，让第二个机器覆盖它，等于两份事实互相把对方判成漂移
+    （10-01 那发 CI 红就是这么来的：收尾那步拿 runner 刚写的 91.77 去比 README 的 91.92）。
+    """
+    gate = _load_gate()
+    monkeypatch.delenv("GATE_READINGS_SCRATCH", raising=False)
+    assert gate._readings_path() == gate.ROOT / "docs" / "gate-readings.json"  # noqa: SLF001
+    monkeypatch.setenv("GATE_READINGS_SCRATCH", "1")
+    scratch = gate._readings_path()  # noqa: SLF001
+    assert scratch == gate.ROOT / "build" / "gate-readings.json"  # noqa: SLF001
+    assert "docs" not in scratch.parts
+
+
 def test_a_failed_step_produces_no_reading(tmp_path: Path) -> None:
     """红掉的那一步**不算量到了**：`1 failed, 957 passed` 里那个 957 会被同一个正则读走。
 

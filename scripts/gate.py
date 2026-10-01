@@ -223,11 +223,26 @@ def _run(name: str, cmd: list[str], cwd: Path | None = None) -> tuple[bool, floa
     return code == 0, dt, "".join(collected)
 
 
-#: README 首屏那组数的落点。它不是"文档的一部分"，是"上一趟门禁量到了什么"。
-#: **这份文件入库**（09-30 那条规矩：尺子的判据里不许有 gitignore 的东西 —— 判据读到暂存区，
-#: 问的就不再是"这格数是不是真的"，而是"这台机器上有没有这个文件"）。放在 `docs/` 而不是
-#: `build/` 只为了这一条：干净克隆里它必须在，CI 才有可比的东西。
-READINGS = ROOT / "docs" / "gate-readings.json"
+def _readings_path() -> Path:
+    """读数的落点：**本机 = 入库那份，runner = 一次性产物**。
+
+    入库的理由（09-30 第六条规矩）：尺子的判据里不许有 gitignore 的东西 —— 判据读到暂存区，
+    问的就不再是"这格数是不是真的"，而是"这台机器上有没有这个文件"；放 `docs/` 而不是 `build/`
+    只为了干净克隆里它必须在，CI 才有可比的东西。
+
+    但**runner 上不许写它**（10-01 那发 CI 红换来的，`R28-74`）：覆盖率是**按平台**的数 ——
+    本机 win32 量到 91.92%，GitHub 的 Linux runner 量到 91.77%（win32/posix 那两条分支各自
+    执行不了对方的行）。入库那一份的语义是"README 抄的是谁量的那一次"，让第二个机器去覆盖它，
+    等于两份都对的数互相把对方判成漂移。所以 `GATE_READINGS_SCRATCH=1`（ci.yml 里设）时
+    落点换成 gitignore 的 `build/`：runner 照样量、照样在自己那趟里自我比对，只是不碰共同记录。
+    """
+    if os.environ.get("GATE_READINGS_SCRATCH"):
+        return ROOT / "build" / "gate-readings.json"
+    return ROOT / "docs" / "gate-readings.json"
+
+
+#: README 首屏那组数的落点。它不是"文档的一部分"，是"上一趟门禁量到了什么"（细节见上面那个函数）。
+READINGS = _readings_path()
 _READING_PATTERNS = {
     # (读哪个步骤, 正则, 存成什么名)
     "pytest(-x, 无覆盖率)": (r"(\d+) passed", "backend_tests"),
@@ -291,6 +306,10 @@ def _write_readings(outputs: dict[str, str], ok: bool) -> None:
         data[f"{key}_at"] = stamp
         data.pop(f"{key}_unreadable", None)
         added.append(key)
+        if key == "coverage_percent":
+            # 覆盖率是**按平台**的数（runner 的 Linux 与本机 win32 各执行不了对方那半条分支），
+            # 所以这个键必须带着"是哪台机器量的"，否则下一个 91.77 会被读成"覆盖率掉了"。
+            data["coverage_platform"] = sys.platform
     try:
         READINGS.parent.mkdir(parents=True, exist_ok=True)
         READINGS.write_text(
