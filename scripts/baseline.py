@@ -193,16 +193,18 @@ def section_identity() -> dict[str, Any]:
 
 def section_artifacts() -> dict[str, Any]:
     """dist 与安装包内那份是否同一版本。判据是**文件名里的 hash**，不是"我记得打过"。"""
+    sys.path.insert(0, str(ROOT / "src"))
+    from rolecard_agent.core.artifacts import installed_dist  # noqa: PLC0415
+
     def bundles(directory: Path) -> list[str]:
         if not directory.exists():
             return []
         return sorted(p.name for p in directory.glob("index-*.js"))
 
     repo_dist = bundles(ROOT / "frontend" / "dist" / "assets")
-    install_dir = (
-        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "rolecard-agent"
-        / "resources" / "rolecard-backend" / "_internal" / "frontend" / "dist" / "assets"
-    )
+    # 装后那条 `_internal\frontend\dist` 从前在三个脚本里各拼一遍（盘点 P1-5）；现在问一处。
+    local_appdata = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    install_dir = installed_dist(Path(local_appdata)) / "assets"
     in_package = bundles(install_dir)
     return {
         "repo_dist": repo_dist,

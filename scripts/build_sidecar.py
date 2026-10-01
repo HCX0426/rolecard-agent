@@ -24,8 +24,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "build" / "sidecar"
-WORK = ROOT / "build" / "sidecar-work"
+# 产物路径与名字的**唯一出处**在 `core/artifacts.py`（10-01 盘点 P1-5）：这条链上从前有六处
+# 各拼一遍 `build/sidecar/rolecard-backend`，改一次布局要在六处对齐。
+sys.path.insert(0, str(ROOT / "src"))
+from rolecard_agent.core.artifacts import (  # noqa: E402 - 要先改 sys.path 才import得到 src 里那份出处
+    SIDECAR_DIR,
+    SIDECAR_WORK_DIR,
+    sidecar_bundle,
+    sidecar_exe,
+)
+
+OUT = ROOT / SIDECAR_DIR
+WORK = ROOT / SIDECAR_WORK_DIR
 SPEC = ROOT / "packaging" / "rolecard-backend.spec"
 #: 烤进产物的那份身份文件（`core/build_info.py` 里有它的名字，两处不许各写一遍）。
 BUILD_INFO = ROOT / "build" / "build_info.json"
@@ -95,8 +105,8 @@ def main() -> int:
     ]
     print(" ".join(cmd), flush=True)
     result = subprocess.run(cmd, check=False)
-    bundle = OUT / "rolecard-backend"
-    if result.returncode != 0 or not (bundle / "rolecard-backend.exe").exists():
+    bundle = sidecar_bundle(ROOT)
+    if result.returncode != 0 or not sidecar_exe(ROOT).exists():
         print(f"PyInstaller 失败（exit={result.returncode}），见上面的日志", file=sys.stderr)
         return result.returncode or 1
     print(f"\n✅ 随包后端：{bundle}")

@@ -516,6 +516,140 @@ def check_version_parity() -> None:
         fails.append(f"version claims out of sync: {bad}")
 
 
+def _div_chain_parts(node: ast.AST) -> list[str]:
+    """一条 `X / "a" / "b"` 链上的字符串片段，按原序带回引号。
+
+    pathlib 把每一段拆成**各自独立的常量**，所以只比单个常量永远看不见 `"build" / "sidecar"`
+    —— M5 那发变异第一版就是这么蒙混过关的（它正是这条尺子要防的那一类"两处各拼一遍"）。
+    """
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        return _div_chain_parts(node.left) + _div_chain_parts(node.right)
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return [f'"{node.value}"']
+    return []
+
+
+def check_artifact_single_source() -> None:
+    """产物路径与安装包名的拼法只许有一处（`core/artifacts.py`），配置侧必须与它一致。
+
+    为什么立这条（10-01，打包链盘点 P1-5/6）：`build/sidecar/rolecard-backend` 从前由六个
+    文件各拼一遍，装后那条 `_internal\\frontend\\dist` 由三个脚本各拼一遍，安装包名模式由四个
+    地方各写一遍。漂移不会喊：`artifactName` 改了只有装机脚本那条会红，而下载卡按 glob 找 ——
+    它会安静地判断"没有可下载的包"，界面于是**照设计**不渲染入口，缺陷长得像正常行为
+    （"没有产物就不画死按钮"是刻意的，所以这个假象没有人会怀疑）。
+
+    两半：**(a)** 谁都不许在自己的码里重新拼那几条路径（按字面形状找，不看文件名）；
+    **(b)** 不能 import Python 的那两侧（`install_package.ps1` / `electron-builder.yml` /
+    `ci.yml`）写的字面量必须与这里的常量**同形** —— 它们天生只能抄，那就每次对一遍。
+    """
+    sys.path.insert(0, str(ROOT / "src"))
+    from rolecard_agent.core import artifacts  # noqa: PLC0415
+
+    owner = "src/rolecard_agent/core/artifacts.py"
+    banned = {
+        '"build" / "sidecar': "用 artifacts.sidecar_bundle(root)",
+        '"resources" / "rolecard-backend"': "用 artifacts.installed_backend_bundle",
+        '"_internal" / "frontend"': "用 artifacts.installed_dist(root)",
+        '"Programs" / "rolecard-agent"': "用 artifacts.installed_dir(local_appdata)",
+        '"rolecard-agent-*.exe"': "用 artifacts.ARTIFACT_GLOB",
+        '"rolecard-backend.exe"': "用 f\"{artifacts.BACKEND_NAME}.exe\"",
+        '"win-unpacked"': "用 artifacts.unpacked_backend(release_dir)",
+    }
+    # 读的是 **AST 里的字符串常量**，不是原文（与 `single-source literals` 同一个取向）：
+    # 注释里提一嘴"落在 build/sidecar 里"是这件东西的存在理由，不是第二处拼法。按原文比，
+    # 这把尺子第一趟就红在自己的注释与自己的禁令表上 —— "新写的尺子把它防的毛病带进实现"
+    # 这一形状本轮第三次（`R28-27` / `R28-31` / `R28-34`）。
+    # 只豁免两格：出处文件本体（它当然要有这些字面量）与本文件（一把尺子必须能说出它禁什么）。
+    exempt = {owner, pathlib.Path(__file__).relative_to(ROOT).as_posix()}
+    offenders: list[str] = []
+    for base in (ROOT / "src", ROOT / "scripts"):
+        for path in sorted(base.rglob("*.py")):
+            rel = path.relative_to(ROOT).as_posix()
+            if rel in exempt:
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                haystack: list[str] = []
+                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    haystack.append(node.value)
+                elif isinstance(node, ast.BinOp):
+                    joined = _div_chain_parts(node)
+                    if len(joined) > 1:
+                        haystack.append(" / ".join(joined))
+                for text in haystack:
+                    for literal, remedy in banned.items():
+                        if literal in text:
+                            line = getattr(node, "lineno", 0)
+                            offenders.append(f"{rel}:{line} 重拼了 {literal} —— {remedy}")
+    if offenders:
+        out("artifact single source", False, "; ".join(offenders[:4]))
+        fails.append(f"artifact paths re-spelled: {offenders[:6]}")
+        return
+
+    # (b) 配置侧同形检查
+    problems: list[str] = []
+    builder = ROOT / "shell" / "electron-builder.yml"
+    if builder.exists():
+        text = builder.read_text(encoding="utf-8", errors="ignore")
+        name_line = re.search(r"^\s*artifactName:\s*(\S+)\s*$", text, flags=re.M)
+        if not name_line or not name_line.group(1).startswith(f"{artifacts.APP_NAME}-"):
+            problems.append(
+                f"electron-builder.yml 的 artifactName 不以 {artifacts.APP_NAME}- 开头"
+                f"（读到 {name_line.group(1) if name_line else '没有这一行'}）"
+            )
+        to_line = re.search(r"^\s*to:\s*(\S+)\s*$", text, flags=re.M)
+        if to_line and to_line.group(1) != artifacts.BACKEND_NAME:
+            problems.append(
+            f"electron-builder 的 extraResources to={to_line.group(1)} ≠ {artifacts.BACKEND_NAME}"
+        )
+    ps1_path = ROOT / "scripts" / "install_package.ps1"
+    ps1_raw = ps1_path.read_text(encoding="utf-8", errors="ignore")
+
+    def ps1_shape(variable: str) -> str | None:
+        """`$X = Join-Path … "一段路径"` 里引号内那段的**归一形状**（反斜杠折叠、小写）。"""
+        match = re.search(rf"^\${variable}\s*=.*?\"([^\"]+)\"", ps1_raw, flags=re.M | re.S)
+        if not match:
+            return None
+        return re.sub(r"\\+", "/", match.group(1)).lower()
+
+    def expected(*parts: str) -> str:
+        return "/".join(part.lower() for part in parts)
+
+    got_exe = ps1_shape("installedExe")
+    want_exe = expected(*artifacts.INSTALL_SUBDIR, f"{artifacts.APP_NAME}.exe")
+    if got_exe is None:
+        problems.append("读不到 install_package.ps1 里的 $installedExe 那条 Join-Path")
+    elif got_exe != want_exe:
+        problems.append(f"装后 exe={got_exe} 与出处不同形（应为 {want_exe}）")
+    got_backend = ps1_shape("bUILT")
+    want_backend = expected(
+        "build",
+        artifacts.SIDECAR_DIR.split("/")[1],
+        artifacts.BACKEND_NAME,
+        f"{artifacts.BACKEND_NAME}.exe",
+    )
+    if got_backend is not None and got_backend != want_backend:
+        problems.append(
+            f"ps1 里「刚构建那份」= {got_backend} 与出处不同形（应为 {want_backend}）"
+        )
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8", errors="ignore")
+    globs = set(re.findall(rf"{artifacts.APP_NAME}-[^\s'\"]*\.exe", ci))
+    if globs and not all(re.match(rf"^{artifacts.APP_NAME}-[\w.*-]+\.exe$", g) for g in globs):
+        problems.append(f"ci.yml 里的安装包模式与出处不同形：{sorted(globs)}")
+    out(
+        "artifact single source",
+        not problems,
+        f"路径与名字只有一处拼法；配置侧 {artifacts.APP_NAME} / {artifacts.BACKEND_NAME} 同形"
+        if not problems
+        else "; ".join(problems[:4]),
+    )
+    if problems:
+        fails.append(f"artifact literals drift: {problems}")
+
+
 def check_promised_artifacts() -> None:
     promised = [
         "pyproject.toml",
@@ -1907,6 +2041,7 @@ def main() -> int:
     check_dependency_layering()
     check_env_example_models()
     check_installer_scope()
+    check_artifact_single_source()
     check_single_source_literals()
     check_bundled_copy()
     check_vocabulary()

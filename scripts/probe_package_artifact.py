@@ -1,6 +1,6 @@
 """打一发包之后、**不装**也能自证"这一包是这一版"：三路判据打在产物上。
 
-为什么需要这一发：`install_package.ps1` 的五道验货全都发生在**装完之后**，而用户选了
+为什么需要这一发：`install_package.ps1` 的验货全都发生在**装完之后**，而用户选了
 「先不打，攒着一起」（09-30）⇒ 有一段时间产物存在、机器上装的还是上一包。那段路上没有
 任何一条现成判据能回答"刚打出来的这份对不对"，而"构建退出码 0"从来不等于产物是当前的
 （旧轮台账 §12.4 从头在说的那件事）。
@@ -40,11 +40,16 @@ import urllib.error
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-UNPACKED = ROOT / "shell" / "release" / "win-unpacked"
-PKG_BACKEND = UNPACKED / "resources" / "rolecard-backend"
-PKG_DIST = PKG_BACKEND / "_internal" / "frontend" / "dist"
+sys.path.insert(0, str(ROOT / "src"))
+# 这几条路径从前各拼一遍（盘点 P1-5），现在只从 `core/artifacts.py` 派生。
+from rolecard_agent.core.artifacts import sidecar_exe, unpacked_backend, unpacked_dist  # noqa: E402
+
+SHELL_RELEASE = ROOT / "shell" / "release"
+UNPACKED = SHELL_RELEASE / "win-unpacked"
+PKG_BACKEND = unpacked_backend(SHELL_RELEASE)
+PKG_DIST = unpacked_dist(SHELL_RELEASE)
 REPO_DIST = ROOT / "frontend" / "dist"
-FRESH_SIDECAR = ROOT / "build" / "sidecar" / "rolecard-backend" / "rolecard-backend.exe"
+FRESH_SIDECAR = sidecar_exe(ROOT)
 LOG = ROOT / "build" / "probe_package_artifact.log"
 ENTRY_RE = re.compile(r"assets/(index-[A-Za-z0-9_\-]+\.js)")
 

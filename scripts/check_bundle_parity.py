@@ -39,8 +39,11 @@ from pathlib import Path
 from typing import cast
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+from rolecard_agent.core.artifacts import sidecar_bundle  # noqa: E402
 
-DEFAULT_BUNDLE = ROOT / "build" / "sidecar" / "rolecard-backend"
+#: sidecar 的位置只有一个拼法（`core/artifacts.py`，10-01 盘点 P1-5）。
+DEFAULT_BUNDLE = sidecar_bundle(ROOT)
 
 # 刻意不进包的第三方顶层名 → 理由。每一条都得是"想过并写下了"的理由，不是"忘了"。
 # 目前为空：唯一一条缺席（MCP）在 09-29 被判定为**该进包**（只增 1.87 MB：

@@ -19,11 +19,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
 from rolecard_agent.api.deps import AppContext, get_context
+from rolecard_agent.core.artifacts import ARTIFACT_GLOB
 
 router = APIRouter()
 
-# electron-builder 的 artifactName 约定（shell/electron-builder.yml）。
-_ARTIFACT_GLOB = "rolecard-agent-*.exe"
+# 安装包文件名的形状只有一个出处（`core/artifacts.py`）：从前这里、装机脚本、
+# electron-builder 的 artifactName、CI 的上传 glob 各写一遍"rolecard-agent-*.exe"，
+# 改名时只有装机脚本那条会红 —— 而这一格的症状是下载入口安静消失，长得像设计意图。
+_ARTIFACT_GLOB = ARTIFACT_GLOB
 
 
 def _latest_artifact(directory: Path | None) -> Path | None:
