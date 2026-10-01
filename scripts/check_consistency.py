@@ -456,12 +456,21 @@ def check_installer_scope() -> None:
 
 
 def check_version_parity() -> None:
-    """版本号各有它的"必须一致"对象，从前一处都没人比（09-26 轮 R26-21）。
+    """整个仓库只有**一个**版本号，四处声明必须相等。
 
-    三条规则来自各处注释里自己写下的承诺，不是新发明：
-      * `pyproject.toml` 的 version 承诺"与 api/main.py 的 FastAPI version 保持一致"；
-      * 壳与其托管的前端是**同一个产品版本**（安装包文件名与下载卡都按它显示），
-        所以 `shell/package.json` 与 `frontend/package.json` 必须相等。
+    从前这里比的是两对（`pyproject`↔`API_VERSION`、`shell`↔`frontend`），于是"0.3.0 与 0.1.0
+    并存"看起来像设计。它确实是当时的设计（后端与壳各自发布），但**10-01 用户拍板合并**：
+    "合并，归一化"。三条理由里最硬的一条是今天现学的 —— 那行明细印成
+    `py=0.3.0 api=0.3.0 shell=0.1.0 frontend=0.1.0`，**同一轮取证里第三次被当成缺陷报上来**，
+    一行需要读者先知道"这是两件事"才看得懂的输出，本身就是一处会反复产生误判的事实面。
+
+    合并之后各处的含义：`pyproject` = `API_VERSION` = 两份 `package.json` 的 version，
+    四处声明必须相等。
+    安装包文件名与"下载桌面壳"那张卡读 `shell/package.json`，`/api/health` 与 OpenAPI 读
+    `API_VERSION` —— 从这一版起这两个号**是同一个数**，所以"屏幕上的应用是哪一版"只有一个答案。
+    代价如实记：以后只改壳（托盘、窗口行为）也要推后端那一格版本号，`/api/health` 里的号
+    不再是"后端代码换没换"的信号 —— 那一问现在由 `build.sha` 回答（`R28-56` 那格构建指纹），
+    恰好不需要版本线替它说话。
     """
     def grep_version(text: str, pattern: str) -> str | None:
         # re.M 是必需的：三条模式都锚在 `^` 上，没有 MULTILINE 时除了文件第一行什么都匹配不到
@@ -475,7 +484,7 @@ def check_version_parity() -> None:
     )
     api = grep_version(
         (ROOT / "src/rolecard_agent/api/main.py").read_text(encoding="utf-8"),
-        # 读的是 `API_VERSION` 那个常量（`R28-26`）：从前这里是 `version="x.y.z"`，
+        # 读的是 `API_VERSION` 那个常量（`R28-26`）：这里是 `version="x.y.z"`，
         # 恰好只盖住 FastAPI 那一处，而 `/api/health` 里还有一份手写副本在正则外面。
         # 两处现在合成一份，检查也跟着读那一份。
         r'^API_VERSION = "([^"]+)"',
@@ -489,10 +498,21 @@ def check_version_parity() -> None:
         r'"version":\s*"([^"]+)"',
     )
     bad: list[str] = []
-    if py != api:
-        bad.append(f"pyproject {py} ≠ api/main.py 的 API_VERSION {api}（注释承诺两者一致）")
-    if shell != front:
-        bad.append(f"shell/package.json {shell} ≠ frontend/package.json {front}")
+    places = {
+        "pyproject": py,
+        "API_VERSION": api,
+        "shell/package.json": shell,
+        "frontend/package.json": front,
+    }
+    # 一格读不到也算不一致：从前 `grep_version` 返回 None 时两两比较会"两边都 None 所以相等"，
+    # 于是把一个声明**删掉**能让这条绿 —— 结构与形状都变了却报"版本一致"。
+    missing = sorted(name for name, value in places.items() if not value)
+    if missing:
+        bad.append(f"读不到版本声明：{missing}（读不到不算一致，None==None 会假绿）")
+    distinct = sorted({value for value in places.values() if value})
+    if len(distinct) > 1:
+        detail_pairs = "、".join(f"{name}={value}" for name, value in places.items())
+        bad.append(f"四处声明不是同一个号：{detail_pairs}（10-01 起合并成一条线）")
 
     # 安装脚本里**不许出现任何版本号字面量**（`R28-26` 的另一半）：它原来有两条硬编码的
     # `0.1.0`，其中"installer 进程退干净没有"那条匹配的是 `rolecard-agent-0.1.0*` ——
@@ -510,7 +530,15 @@ def check_version_parity() -> None:
             f"install_package.ps1 里出现了版本号字面量 {literals} —— 版本从 shell/package.json 现读"
         )
 
-    detail = f"py={py} api={api} shell={shell} frontend={front}"
+    # 明细只印**一个号**加"四处都读到了"这句话。从前它印四个数（`py=0.3.0 api=0.3.0
+    # shell=0.1.0 frontend=0.1.0`），同一轮取证里被指着报过三次"版本在漂而门禁绿" ——
+    # 一行需要读者先知道"这是两条线"才看得懂的输出，自己就是一处会反复产生误判的事实面。
+    # 10-01 用户拍板合并成一条线，所以从这一版起它本来就该只印一个数。
+    detail = (
+        f"一个号 {distinct[0] if len(distinct) == 1 else '?'}，"
+        f"四处声明（pyproject / API_VERSION / shell / frontend）全部读到且相等"
+        "｜安装包名与下载卡读 shell/package.json，/api/health 读 API_VERSION —— 同一个数"
+    )
     out("version parity", not bad, "; ".join(bad) if bad else detail)
     if bad:
         fails.append(f"version claims out of sync: {bad}")
