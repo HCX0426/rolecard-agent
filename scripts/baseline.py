@@ -17,6 +17,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,9 @@ def _scratch(name: str) -> Path:
     """暂存库的路径。**不用 TemporaryDirectory**：`create_app()` 走的是线程局部连接，
     它不会在函数返回时关掉，于是 Windows 上"退出时删临时目录"必然 PermissionError ——
     这份脚本自己就撞过。落进 `build/_baseline/`（gitignore 内），带 pid 避免同一进程内撞名。
+
+    带 pid 的代价是**每跑一次留一对**：旧写法只删"自己这一对"（同名才撞得上），于是 10-01
+    清点时这里堆了 100 个文件 / 15 MB。所以每次建路顺手扫一次龄。
     """
     directory = ROOT / "build" / "_baseline"
     directory.mkdir(parents=True, exist_ok=True)
@@ -38,7 +42,24 @@ def _scratch(name: str) -> Path:
         stale = path.with_name(path.name + suffix)
         if stale.exists():
             stale.unlink(missing_ok=True)
+    _sweep_stale_scratch(directory)
     return path
+
+
+# 两份 baseline 可以并发（本机在跑、CI 同时在跑），所以不能按 pid 删别人的，只能按**龄期**。
+# 一次跑完是几十秒量级，留 10 分钟已经宽到不可能误杀还在用的那份。
+_STALE_SCRATCH_SECONDS = 600.0
+
+
+def _sweep_stale_scratch(directory: Path) -> None:
+    """删掉超过龄期的暂存件（含 -wal / -shm）；删不动就跳过 —— 一件卫生活不该让基线跑挂。"""
+    cutoff = time.time() - _STALE_SCRATCH_SECONDS
+    for stale in directory.glob("*.db*"):
+        try:
+            if stale.stat().st_mtime < cutoff:
+                stale.unlink()
+        except OSError:
+            continue
 
 
 def _git(*args: str) -> str:
