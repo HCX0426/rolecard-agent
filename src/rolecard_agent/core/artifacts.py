@@ -63,6 +63,33 @@ def sidecar_exe(root: Path) -> Path:
 INTERNAL_DIST = ("_internal", "frontend", "dist")
 
 
+#: 内核那两份建表脚本所在子包（它们是本仓的骨架，不会新增）。域那一份按文件系统现数。
+CORE_SCHEMA_DIRS = ("core", "roles")
+
+
+def schema_package_paths(pkg: Path) -> list[tuple[Path, str]]:
+    """建表脚本 → 包内相对路径的清单，**spec 与那条 parity 尺子共用这一份**。
+
+    从前两处各写一遍同样的 glob（`packaging/rolecard-backend.spec` 与
+    `scripts/check_bundle_parity.py`）：`R28-33` 那次把 spec 里手抄的四份改成"域目录现数"，
+    尺子那边跟着改了第二次 —— 两条规则一旦分叉，症状是"源码态建表正常、打包态建表直接失败"
+    而构建期一句报警都没有。运行时读它的是 `storage/db.py:domain_schema_path()`，
+    口径同样是"域目录里有 schema.sql 就算一份"。
+    """
+    found: list[tuple[Path, str]] = [
+        (pkg / rel / "schema.sql", f"rolecard_agent/{rel}")
+        for rel in CORE_SCHEMA_DIRS
+        if (pkg / rel / "schema.sql").exists()
+    ]
+    domains = pkg / "domains"
+    if domains.is_dir():
+        found += [
+            (sql, f"rolecard_agent/domains/{sql.parent.name}")
+            for sql in sorted(domains.glob("*/schema.sql"))
+        ]
+    return found
+
+
 def unpacked_backend(shell_release_dir: Path) -> Path:
     """`electron-builder --dir` 解包产物里的后端目录（打包态、未安装）。"""
     return shell_release_dir / UNPACKED_DIR / RESOURCES_DIR / BACKEND_NAME

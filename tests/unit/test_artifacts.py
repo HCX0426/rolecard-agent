@@ -79,3 +79,42 @@ def test_the_ban_table_catches_a_plain_string_literal() -> None:
     tree = ast.parse('x = "rolecard-agent-*.exe"\n')
     node = next(n for n in ast.walk(tree) if isinstance(n, ast.Constant))
     assert isinstance(node.value, str) and "rolecard-agent-*.exe" in node.value
+
+
+def test_schema_package_paths_counts_core_roles_and_every_domain(tmp_path: Path) -> None:
+    """建表脚本那份清单只有一个出处（P1-8）：内核两份 + **每个域目录现数一份**。
+
+    这条用例钉的是 `R28-33` 那个形状：spec 从前手抄四份，新增一个带 schema 的域插件之后
+    源码态建表正常、打包态建表直接失败，而构建期一句报警都没有。现在 spec 与尺子都问这一个函数，
+    所以"漏数一个域"只剩下这一种可测的错法。
+    """
+    from rolecard_agent.core.artifacts import schema_package_paths
+
+    pkg = tmp_path / "rolecard_agent"
+    for rel in ("core", "roles"):
+        target = pkg / rel
+        target.mkdir(parents=True)
+        (target / "schema.sql").write_text("CREATE TABLE x(v INT);", encoding="utf-8")
+    for domain in ("health", "finance"):
+        target = pkg / "domains" / domain
+        target.mkdir(parents=True)
+        (target / "schema.sql").write_text("CREATE TABLE y(v INT);", encoding="utf-8")
+    # 有域目录但没有 schema 的插件不该被算进来（它不建表）
+    (pkg / "domains" / "empty_one").mkdir(parents=True)
+
+    found = schema_package_paths(pkg)
+    assert [dest for _, dest in found] == [
+        "rolecard_agent/core",
+        "rolecard_agent/roles",
+        "rolecard_agent/domains/finance",
+        "rolecard_agent/domains/health",
+    ], found
+    assert all(path.name == "schema.sql" and path.exists() for path, _ in found)
+
+
+def test_schema_rule_is_not_written_twice_anymore() -> None:
+    """spec 与尺子都不许再自己 glob 一遍 —— 那正是两条规则分叉的起点。"""
+    spec_text = (ROOT / "packaging" / "rolecard-backend.spec").read_text(encoding="utf-8")
+    parity_text = (SCRIPTS / "check_bundle_parity.py").read_text(encoding="utf-8")
+    assert "schema_package_paths" in spec_text and 'glob("*/schema.sql")' not in spec_text
+    assert "schema_package_paths" in parity_text and 'glob("*/schema.sql")' not in parity_text

@@ -237,17 +237,13 @@ def declared_schema_files(src: Path) -> list[str]:
     这一条防的是 `R28-33`：spec 当年手抄四份，新增一个带 schema 的域插件之后，
     源码态建表正常、**打包态建表直接失败**，构建期一句报警都没有。
     """
+    # 数法只有一个出处（P1-8）：`core/artifacts.py::schema_package_paths` ——
+    # 从前这里与 spec 各写一遍同样的 glob，两条规则一分叉，症状就是
+    # 「源码态建表正常、打包态建表直接失败」而构建期零报警（`R28-33`）。
+    from rolecard_agent.core.artifacts import schema_package_paths  # noqa: PLC0415
+
     pkg = src / "rolecard_agent"
-    out = [
-        f"rolecard_agent/{rel}/schema.sql"
-        for rel in ("core", "roles")
-        if (pkg / rel / "schema.sql").exists()
-    ]
-    out += [
-        f"rolecard_agent/domains/{sql.parent.name}/schema.sql"
-        for sql in sorted((pkg / "domains").glob("*/schema.sql"))
-    ]
-    return out
+    return [f"{dest}/schema.sql" for _, dest in schema_package_paths(pkg)]
 
 
 def bundled_schema_files(bundle: Path) -> set[str]:

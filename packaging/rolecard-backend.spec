@@ -57,12 +57,14 @@ datas.append((str(BUILD_INFO), "."))
 # `domains/<id>/schema.sql`，是"域目录里有 schema 就建表"的动态口径。spec 原来手抄四份，
 # 于是新增一个带 schema 的域插件 ⇒ 源码态建表正常、**打包态建表直接失败**，
 # 而构建期一句报警都没有。数文件这件事只该有一个出处。
-for rel in ("core", "roles"):
-    sql = PKG / rel / "schema.sql"
-    if sql.exists():
-        datas.append((str(sql), f"rolecard_agent/{rel}"))
-for sql in sorted((PKG / "domains").glob("*/schema.sql")):
-    datas.append((str(sql), f"rolecard_agent/domains/{sql.parent.name}"))
+# **数文件这件事只该有一个出处**（10-01 盘点 P1-8）：从前 spec 与 `check_bundle_parity.py` 各写
+# 一遍同样的 glob，两条规则一分叉，症状又是「源码态建表正常、打包态建表直接失败」而构建期零报警。
+# 现在两边都问 `core/artifacts.py::schema_package_paths`（运行时的口径是 db.py:domain_schema_path()，
+# 三处本来就是同一件事）。
+from rolecard_agent.core.artifacts import schema_package_paths  # noqa: E402 - 上面刚插过 sys.path
+
+for _sql_file, _dest in schema_package_paths(PKG):
+    datas.append((str(_sql_file), _dest))
 
 hiddenimports = collect_submodules("rolecard_agent")
 
