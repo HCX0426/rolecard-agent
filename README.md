@@ -7,7 +7,7 @@
 内核 / 角色插件 / health 查询工具 / FastAPI 接入层 + SSE 流式对话 / Vite+React 控制台（**六个页签**：
 对话 · 数据 · 知识库 · 角色卡 · 插件 · 设置；Hash 路由深链 · 深色模式 · 响应式 · 单页错误边界 ·
 **运行环境在线编辑与热生效**）；
-**1301 个后端测试（非 live 档）+ 336 个前端测试全绿、smoke 全部通过、一致性 41 项断言 0 失败、
+**1301 个后端测试（非 live 档）+ 336 个前端测试全绿、smoke 全部通过、一致性 43 项断言 0 失败、
 覆盖率 91.83%（阈值 85%），ruff + mypy（含 Linux 档）零告警**，且全部离线运行（注入脚本化模型；
 真机 UI 冒烟那段单独用 `SMOKE_SKIP_UI=1` 跳过）。
 本地模型默认 **`qwen3-vl:8b`（思考 + 识图 + 工具调用一体，8GB 显存可跑）**；云端后端
@@ -307,7 +307,7 @@ rolecard-agent/
 ├── frontend/                      # React 18 + Vite 控制台（6 页签；dist 有意入库）
 ├── Dockerfile  docker-compose.yml  deploy/Caddyfile
 │                                  # 公网那一档：镜像非 root + HEALTHCHECK；TLS 归 Caddy，
-│                                  # 应用不 publish 到宿主（两份部署文件由第 39 条断言盯着）
+│                                  # 应用不 publish 到宿主（两份部署文件由 deploy env parity 那条断言盯着）
 ├── shell/                         # Electron 桌宠壳（随包后端打进 NSIS 安装包）
 ├── packaging/                     # PyInstaller spec（RUNTIME_PACKAGES 缺族即拒绝出产物）
 ├── docs/   tests/   scripts/   data/

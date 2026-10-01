@@ -529,10 +529,87 @@ def _div_chain_parts(node: ast.AST) -> list[str]:
     return []
 
 
+#: 操作系统给的那些变量：它们不是本应用的契约，写进 .env.example 反而误导人以为可以设。
+_PLATFORM_ENV = {"LOCALAPPDATA", "APPDATA", "TEMP", "TMP", "HOME", "PATH", "USERPROFILE"}
+
+
+def _env_names_read_in_src(src: pathlib.Path) -> dict[str, str]:
+    """`src/**` 里通过 `os.environ` 读到的变量名 → 第一处 `文件:行`。
+
+    三种写法都算：`os.environ.get("X", …)`、`os.environ["X"]`、`X in os.environ`。
+    只数**字符串常量**那一种（变量名是拼出来的读不出来 —— 本仓没有那种写法，
+    真要有人写，这条尺子会漏，漏在明处）。
+    """
+    found: dict[str, str] = {}
+    for path in sorted(src.rglob("*.py")):
+        rel = path.relative_to(ROOT).as_posix()
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            name = None
+            if isinstance(node, ast.Call) and ast.unparse(node.func).endswith("environ.get"):
+                if node.args and isinstance(node.args[0], ast.Constant):
+                    name = node.args[0].value
+            elif isinstance(node, ast.Subscript) and ast.unparse(node.value).endswith("environ"):
+                if isinstance(node.slice, ast.Constant):
+                    name = node.slice.value
+            elif isinstance(node, ast.Compare) and ast.unparse(node.left).endswith("environ"):
+                for comp in [node.left, *node.comparators]:
+                    if isinstance(comp, ast.Constant):
+                        name = comp.value
+            if (
+                isinstance(name, str)
+                and re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", name)
+                and name not in found
+            ):
+                found[name] = f"{rel}:{getattr(node, 'lineno', 0)}"
+    return found
+
+
+def check_startup_env_documented() -> None:
+    """`src` 里真读的每个环境变量，都必须对谁**说出来过**。
+
+    为什么单独立一条（10-01，部署面盘点，台账 `R28-60`）：`.env.example` 头部自称
+    "契约归属：config.py"，而 `RUN_API_HOST` / `RUN_API_PORT` / `RUN_API_RELOAD` /
+    `FRONTEND_DIST` / `ROLECARD_PARENT_PID` 这一族**不经 config.py 的映射表**
+    （启动器与包内布局直接读 `os.environ`），于是它们在契约文件里一格都没有 ——
+    只在代码注释里活着。
+    已有的 `config contract` 那条查不到它们，因为它比的是 config 表 ↔ example。
+    这一条补的是"代码认但没人知道"那一半。
+
+    范围只到 `src/**`：`scripts/` 里那些 `STOP_PROBE_BASE` / `LIVE_DB_PATH` 是取证脚本的私有
+    开关，不是部署契约，写进 example 只会让人以为设了它就能改变应用行为。
+    """
+    sys.path.insert(0, str(ROOT / "src"))
+    env_text = (ROOT / ".env.example").read_text(encoding="utf-8", errors="ignore")
+    documented = set(re.findall(r"^([A-Z][A-Z0-9_]{2,})=", env_text, flags=re.M))
+    documented |= set(re.findall(r"#\s*([A-Z][A-Z0-9_]{2,})[=\s]", env_text))
+    cfg_path = ROOT / "src" / "rolecard_agent" / "config.py"
+    cfg_text = cfg_path.read_text(encoding="utf-8", errors="ignore")
+    documented |= set(re.findall(r'"([A-Z][A-Z0-9_]{2,})"', cfg_text))
+
+    read = _env_names_read_in_src(ROOT / "src" / "rolecard_agent")
+    missing = sorted(
+        f"{name}（{read[name]}）"
+        for name in read
+        if name not in documented and name not in _PLATFORM_ENV
+    )
+    detail = (
+        f"src 读的 {len(read)} 个 env 名全部在 example 或 config 映射表里说过"
+        if not missing
+        else f"代码在读、契约文件里却一格没有：{missing[:6]}"
+    )
+    out("startup env documented", not missing, detail)
+    if missing:
+        fails.append(f"undocumented env read by src: {missing}")
+
+
 def check_artifact_single_source() -> None:
     """产物路径与安装包名的拼法只许有一处（`core/artifacts.py`），配置侧必须与它一致。
 
-    为什么立这条（10-01，打包链盘点 P1-5/6）：`build/sidecar/rolecard-backend` 从前由六个
+    为什么立这条（10-01，打包链台账 `R28-59`）：`build/sidecar/rolecard-backend` 从前由六个
     文件各拼一遍，装后那条 `_internal\\frontend\\dist` 由三个脚本各拼一遍，安装包名模式由四个
     地方各写一遍。漂移不会喊：`artifactName` 改了只有装机脚本那条会红，而下载卡按 glob 找 ——
     它会安静地判断"没有可下载的包"，界面于是**照设计**不渲染入口，缺陷长得像正常行为
@@ -760,7 +837,7 @@ def check_core_no_domain_token() -> None:
 
 
 def check_single_text_extractor() -> None:
-    """消息取文本只允许一处实现：`core/text.py::text_of`（架构审计报告 P1-8）。
+    """消息取文本只允许一处实现：`core/text.py::text_of`（架构审计报告 台账 `R28-59`）。
 
     这条断言防的是两类复发：
       1. **就地复刻** —— `domains/health/extract.py` 曾抄了第二份，且用空串拼接而不是空格，
@@ -887,7 +964,7 @@ def _spec_runtime_packages() -> list[str]:
 def check_spec_runtime_vs_requirements() -> None:
     """随包后端要收的每一族**模块**，都必须在那五份运行时 requirements 里有**声明出处**。
 
-    为什么单独立一条（10-01，打包链盘点 P1-4）：这条链上已经有两张表 —— spec 的
+    为什么单独立一条（10-01，打包链台账 R28-57）：这条链上已经有两张表 —— spec 的
     `RUNTIME_PACKAGES`（模块名，决定"打进包的是哪些族"）与 `RUNTIME_REQ_FILES`（发行名，
     决定"装的时候装什么"），而**没有任何一处对读它们**。MCP 那半年的形状就是这么来的：
     spec 从 09-29 起要求 `mcp` 这个模块，`pip` 那侧却只写了 `langchain-mcp-adapters`，
@@ -1352,6 +1429,16 @@ def check_markdown_table_shape() -> None:
                 cells = len(_unescaped_pipes(row)) - 1
                 if cells > header:
                     offenders.append(f"{rel}:{i + 1} 行 {cells} 列 > 表头 {header} 列")
+                elif cells < header:
+                    # 少一格同样要报：GFM 会在**末尾**补一个空格子让它"看起来没事"，
+                    # 而按列读的台账里这意味着某一格的内容坐进了别的列。
+                    # 10-01 之前这条只判 `>` 不判 `<`，于是三行 09-26 的 S 系列条目
+                    # 与我自己刚写的 `R28-60` 都错位了而检查全绿（"all rows match their header"
+                    # 那句话当时是假的）。空格子要**显式写出来**（同表里 `S-4′` 就是那么写的）。
+                    offenders.append(
+                        f"{rel}:{i + 1} 行 {cells} 列 < 表头 {header} 列"
+                        "（少一格 = 某一格的内容坐进了别的列；不填的那格要写成空的 `| |`）"
+                    )
                 if not row.rstrip().endswith("|"):
                     offenders.append(f"{rel}:{i + 1} 这一行没有收尾的 `|`（表格在此被折断）")
                 i += 1
@@ -1750,6 +1837,84 @@ def check_deploy_env_parity() -> None:
     if must_teach:
         problems.append(f"这几个必填变量 README 没教 {must_teach}")
 
+    # —— 10-01 加的四问：这条断言从前**只问键名存不存在**，而"配了没用"这一族缺陷全都住在值里。
+    # (a) 口令不许写死在 compose 里。旧写法只查 `AUTH_CREDENTIALS:` 这个子串在不在，
+    #     于是把明文口令直接写进这份要进 git 的文件照样绿 —— 那是凭据入库，不是配置。
+    cred_line = re.search(r"^      AUTH_CREDENTIALS:\s*(.+?)\s*$", compose, flags=re.M)
+    if cred_line and not cred_line.group(1).startswith("${"):
+        problems.append(
+            f"AUTH_CREDENTIALS 写的是字面量（{cred_line.group(1)[:16]}…）—— "
+            "compose 进 git，口令不许住在里面，必须是 ${ROLECARD_CREDENTIALS:?…} 这种形状"
+        )
+    # (b) 豁免路径与镜像的存活探针必须指同一条：改了 compose 这一格而 Dockerfile 的
+    #     HEALTHCHECK 还打在 /api/health，症状是容器**永远 unhealthy**，
+    #     而应用本身好着 —— 编排器看到的是"活着但没就绪"，比崩更难查。
+    health_target = ""
+    dockerfile = ROOT / "Dockerfile"
+    if dockerfile.exists():
+        # 那条探针是 `u.urlopen('http://127.0.0.1:'+os.environ.get(...)+'/api/health',timeout=4)`，
+        # 里面**有括号**，所以不能按"从一个引号跨到另一个引号"的正则去抓 —— 第一版那么写，
+        # 读不出来就静默跳过，于是 D-b 那发变异（把豁免路径改掉）当场绿：尺子瞎了却报告正常。
+        # 改成把 HEALTHCHECK 那条 CMD 里**所有**引号串挑出来，取以 `/` 开头的那一个。
+        probe_line = ""
+        for line in dockerfile.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if "urlopen" in line:
+                probe_line = line
+                break
+        # 单引号里那条**以 / 开头**的串就是探针路径（外层双引号整段是 python -c 的码，
+        # 用它只会读到"import os,urllib…"这一大坨 —— 第一版就栽在这里，读不出来于是静默跳过）。
+        paths = re.findall(r"'(/[A-Za-z0-9_/.\-]+)'", probe_line)
+        health_target = paths[-1] if paths else ""
+    exempt = re.search(r'^      AUTH_EXEMPT_PATHS:\s*"?([^"\n]+)"?', compose, flags=re.M)
+    if not health_target:
+        problems.append("Dockerfile 里读不出 HEALTHCHECK 打的是哪条路径 —— 这一问不能静默跳过")
+    elif exempt and health_target not in exempt.group(1):
+        problems.append(
+            f"Dockerfile 的 HEALTHCHECK 打 {health_target}，而 compose 只豁免 {exempt.group(1)}"
+            " —— 那一格一改，容器就永远报 unhealthy 而应用其实好着"
+        )
+    # (c) Caddyfile 的 `{$NAME}` 占位符必须由 compose 喂给 caddy 那个服务：
+    #     键名检查从前**只扫 app 段**，caddy 段整段在范围外，改名漂移没人问。
+    caddy_file = ROOT / "deploy" / "Caddyfile"
+    caddy_block = re.search(r"^  caddy:.*?(?=^  \w|\Z)", compose, flags=re.M | re.S)
+    if caddy_file.exists() and caddy_block:
+        caddy_lines = [
+            line
+            for line in caddy_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+            if not line.lstrip().startswith("#")  # 注释里的 `{$VAR}` 是解释，不是真的插值
+        ]
+        wanted = set(re.findall(r"\{\$([A-Z][A-Z0-9_]+)", "\n".join(caddy_lines)))
+        given = set(re.findall(r"^      ([A-Z][A-Z0-9_]+):", caddy_block.group(0), flags=re.M))
+        unbound = sorted(wanted - given)
+        if wanted and unbound:
+            problems.append(f"Caddyfile 用了 ${{{unbound}}}，compose 的 caddy 段没喂这些值")
+    # (d) 同一个旋钮在两处有默认值时必须**说出为什么不同**（限流：镜像 30 / 自用 0 是两档形态
+    #     的真实差别，不是漂移 —— 但"不是漂移"这件事得写在行上，否则下一次没人分得清）。
+    #     example 里空值 = "默认不设"，那不是"另一个默认值"，不参与比对。
+    example_text = (ROOT / ".env.example").read_text(encoding="utf-8", errors="ignore")
+    example_defaults = {
+        key: value
+        for key, value in re.findall(r"^([A-Z][A-Z0-9_]+)=(.*)$", example_text, flags=re.M)
+        if value.strip()
+    }
+    compose_lines = compose.splitlines()
+    for position, line in enumerate(compose_lines):
+        match = re.search(r"([A-Z][A-Z0-9_]+):\s*\$\{[A-Z0-9_]+:-([^}]*)\}", line)
+        if not match:
+            continue
+        key, compose_default = match.group(1), match.group(2)
+        if key not in example_defaults or example_defaults[key] == compose_default:
+            continue
+        context = "\n".join(compose_lines[max(0, position - 2) : position + 1])
+        # 要求的是"这行注释**指向另一处**"，不是"出现某个词" —— 钉一个中文词等于把判据写在措辞上，
+        # 换一种说法就假红。指向 `.env.example` 才是"说出它与谁不同"这件事的最小充分形式。
+        explained = "#" in context and ".env.example" in context
+        if not explained:
+            problems.append(
+                f"{key} 在 compose 默认 {compose_default}、example 默认 {example_defaults[key]}，"
+                "而那一行没写「这两档为什么不同」—— 默认值不一致要么是设计要么是漂移，让它自己说"
+            )
+
     out(
         "deploy env parity",
         not problems,
@@ -1759,6 +1924,8 @@ def check_deploy_env_parity() -> None:
             f"compose 的 {len(keys)} 个旋钮都在 config/example 里"
             f"；护栏 {len(_DEPLOY_REQUIRED_ENV)} 条在场"
             "；AUTH_MODE=on、应用端口不 publish、README 教齐了必填变量"
+            "；口令不是字面量、豁免路径与 HEALTHCHECK 同条、"
+            "Caddyfile 的占位符有人喂、两处默认值不同那行指向了对方"
         ),
     )
     if problems:
@@ -2019,6 +2186,7 @@ def main() -> int:
     check_requirements_scope()
     check_stale_identifiers()
     check_config_contract()
+    check_startup_env_documented()
     check_dependency_parity()
     check_spec_runtime_vs_requirements()
     check_promised_artifacts()

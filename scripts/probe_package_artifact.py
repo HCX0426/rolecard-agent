@@ -41,7 +41,7 @@ import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-# 这几条路径从前各拼一遍（盘点 P1-5），现在只从 `core/artifacts.py` 派生。
+# 这几条路径从前各拼一遍（台账 R28-59），现在只从 `core/artifacts.py` 派生。
 from rolecard_agent.core.artifacts import sidecar_exe, unpacked_backend, unpacked_dist  # noqa: E402
 
 SHELL_RELEASE = ROOT / "shell" / "release"
@@ -167,7 +167,7 @@ def check_frontend() -> bool:
 def check_backend_binary() -> bool:
     """② 包内那份 exe == 刚构建的那份。**刚构建的那份不在就红**，不"跳过算过"。
 
-    10-01 改的（盘点 P0-1）：旧写法在这里 `return True`，于是"三层全绿"这句结论可以在
+    10-01 改的（台账 `R28-56`）：旧写法在这里 `return True`，于是"三层全绿"这句结论可以在
     中间一层根本没跑的情况下打印出来 —— 而这句话的全部意义就是"三层都跑过了"。
     比不了就说比不了：这一层证明的是**字节**一致，第③层证明的是**身份**一致，两件事不能互替。
     """
@@ -192,7 +192,7 @@ def check_backend_binary() -> bool:
 def check_frozen_boot() -> bool:
     """③ 起包内那个 exe：**先问它是从哪个 commit 打的**，再看界面入口与或孤儿盘点。
 
-    身份这一格是 10-01 加的决定性判据（盘点 P0-1）。旧版这一层问的是"`/api/uploads/orphans`
+    身份这一格是 10-01 加的决定性判据（台账 `R28-56`）。旧版这一层问的是"`/api/uploads/orphans`
     里有没有 `dangling` 这个键"，那只能证明"至少是 `R28-19` 之后"——第十五、十六包里它都成立，
     所以它**看不见**最近那一笔纯后端改动。前端哈希（①）也一样看不见：那一笔没动界面。
     现在它自己报 sha，判据退化成一次字符串比较，与"比对对象还在不在"无关。

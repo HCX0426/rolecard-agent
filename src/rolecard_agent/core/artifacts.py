@@ -1,10 +1,11 @@
 """打包这条链上那几个**名字与路径**的唯一出处。
 
-为什么要有这个模块（10-01，打包链盘点 P1-5/6）：同一条事实此前写在六处 ——
+为什么要有这个模块（10-01，打包链台账 `R28-59`）：同一条事实此前写在六处 ——
 `build/sidecar/rolecard-backend` 这条路径由 `build_sidecar.py`、`check_bundle_parity.py`、
-`probe_package_artifact.py`、`install_package.ps1`、`shell/electron-builder.yml`、`.github/workflows/ci.yml`
-各拼一遍；装完之后那个 `_internal\\frontend\\dist` 由 `install_package.ps1`、
-`probe_package_artifact.py`、`scripts/baseline.py` 各拼一遍；安装包文件名模式由
+`probe_package_artifact.py`、`install_package.ps1`、
+`shell/electron-builder.yml`、`.github/workflows/ci.yml` 各拼一遍；
+装后那条 `_internal\\frontend\\dist` 由 ps1、probe、`scripts/baseline.py` 各拼一遍；
+安装包文件名模式由
 `electron-builder.yml`、`install_package.ps1`、`shell_release.py`、`ci.yml` 各写一遍。
 漂移不会自己说话：`artifactName` 改了只有 ps1 那条会红（它按名字找安装包），而下载卡那一格
 按 glob 找 —— 它会安静地把新包当"没有包"，界面上那个下载入口直接消失，

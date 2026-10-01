@@ -42,7 +42,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from rolecard_agent.core.artifacts import sidecar_bundle  # noqa: E402
 
-#: sidecar 的位置只有一个拼法（`core/artifacts.py`，10-01 盘点 P1-5）。
+#: sidecar 的位置只有一个拼法（`core/artifacts.py`，10-01 台账 R28-59）。
 DEFAULT_BUNDLE = sidecar_bundle(ROOT)
 
 # 刻意不进包的第三方顶层名 → 理由。每一条都得是"想过并写下了"的理由，不是"忘了"。
@@ -237,7 +237,7 @@ def declared_schema_files(src: Path) -> list[str]:
     这一条防的是 `R28-33`：spec 当年手抄四份，新增一个带 schema 的域插件之后，
     源码态建表正常、**打包态建表直接失败**，构建期一句报警都没有。
     """
-    # 数法只有一个出处（P1-8）：`core/artifacts.py::schema_package_paths` ——
+    # 数法只有一个出处（台账 `R28-59` 的一半）：`core/artifacts.py::schema_package_paths` ——
     # 从前这里与 spec 各写一遍同样的 glob，两条规则一分叉，症状就是
     # 「源码态建表正常、打包态建表直接失败」而构建期零报警（`R28-33`）。
     from rolecard_agent.core.artifacts import schema_package_paths  # noqa: PLC0415

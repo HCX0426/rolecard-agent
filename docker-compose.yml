@@ -31,6 +31,8 @@ services:
       #   docker network inspect rolecard-agent_default -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}'
       AUTH_TRUSTED_PROXIES: ${ROLECARD_PROXY_CIDR:-172.16.0.0/12}
       AUTH_EXEMPT_PATHS: /api/health
+      # 这一档默认 30/分钟，`.env.example`（自用那一档）默认 0 = 不限流 —— **两档形态的真实差别**，
+      # 不是漂移：公网那台机器要多身份共用，自用这台只有一个人。要改就设宿主变量 ROLECARD_RATE_LIMIT。
       RATE_LIMIT_PER_MINUTE: ${ROLECARD_RATE_LIMIT:-30}
       # 给了云端 key 就在启动时注册成默认后端（`scripts/run_api.py` 的
       # `_maybe_configure_cloud_backend()`），省掉"起来之后再进界面填一遍"。

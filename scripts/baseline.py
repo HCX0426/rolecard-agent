@@ -202,7 +202,7 @@ def section_artifacts() -> dict[str, Any]:
         return sorted(p.name for p in directory.glob("index-*.js"))
 
     repo_dist = bundles(ROOT / "frontend" / "dist" / "assets")
-    # 装后那条 `_internal\frontend\dist` 从前在三个脚本里各拼一遍（盘点 P1-5）；现在问一处。
+    # 装后那条 `_internal\frontend\dist` 从前在三个脚本里各拼一遍（台账 R28-59）；现在问一处。
     local_appdata = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
     install_dir = installed_dist(Path(local_appdata)) / "assets"
     in_package = bundles(install_dir)

@@ -10,7 +10,7 @@
 产物不复制到 `shell/`：electron-builder 的 `extraResources` 直接指过来这一份（少一次复制
 就少一处"改了 spec 忘了重拷"的错位）。
 
-**打包前先把身份烤进去**（10-01，盘点 P0-1）：`build/build_info.json` 记 HEAD 与工作树脏旗，
+**打包前先把身份烤进去**（10-01，台账 `R28-56`）：`build/build_info.json` 记 HEAD 与工作树脏旗，
 spec 把它收进 `_internal/`，`/api/health` 于是能报"这一包是从哪个 commit 打的"。没有它，
 `probe_package_artifact.py` 只能比字节 —— 一次纯后端改动会让前端哈希一字不差，"全绿"就骗人。
 """
@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-# 产物路径与名字的**唯一出处**在 `core/artifacts.py`（10-01 盘点 P1-5）：这条链上从前有六处
+# 产物路径与名字的**唯一出处**在 `core/artifacts.py`（台账 `R28-59`）：这条链上从前有六处
 # 各拼一遍 `build/sidecar/rolecard-backend`，改一次布局要在六处对齐。
 sys.path.insert(0, str(ROOT / "src"))
 from rolecard_agent.core.artifacts import (  # noqa: E402 - 要先改 sys.path 才import得到 src 里那份出处
@@ -37,7 +37,7 @@ from rolecard_agent.core.artifacts import (  # noqa: E402 - 要先改 sys.path �
 OUT = ROOT / SIDECAR_DIR
 WORK = ROOT / SIDECAR_WORK_DIR
 SPEC = ROOT / "packaging" / "rolecard-backend.spec"
-#: 烤进产物的那份身份文件（`core/build_info.py` 里有它的名字，两处不许各写一遍）。
+#: 烤进产物的那份身份文件（名字的家在 `core/build_info.py`，两处不许各写一遍）。
 BUILD_INFO = ROOT / "build" / "build_info.json"
 
 # 与 `gate.py` 同一族、同一个漏网（`R26-24` 当时只修了 gate.py）：Windows 控制台默认 GBK，
