@@ -184,3 +184,56 @@ def test_the_real_repo_tree_is_scanned_by_the_gate_script() -> None:
     assert {"langchain_core", "fastapi", "chromadb"} <= set(found), sorted(found)
     assert all(where.startswith("src/") for where in found.values()), found
     assert "rolecard_agent" not in found
+
+
+def test_lazy_scan_keeps_only_function_body_imports(tmp_path: Path) -> None:
+    """懒加载那本账只数**函数体内**的 import：顶层那族 PyInstaller 的 import 图自己跟得到，
+    把它们也要求进 RUNTIME_PACKAGES 会把清单写成一张"所有依赖表"，谁都不敢删。"""
+    _write(
+        tmp_path / "src" / "pkg" / "mix.py",
+        """
+        import top_level_pkg
+
+        def load():
+            from lazy_pkg import Thing
+
+            return Thing
+        """,
+    )
+    lazy = mod.lazy_third_party_imports(tmp_path / "src")
+    all_imports = mod.scan_third_party_imports(tmp_path / "src")
+    assert "lazy_pkg" in lazy
+    assert "top_level_pkg" not in lazy, "顶层 import 不该被要求整族收集"
+    assert "top_level_pkg" in all_imports, "两个扫描器的分工：一个数全部，一个只数懒的"
+
+
+def test_spec_runtime_packages_reads_the_real_spec() -> None:
+    """对着**真 spec** 读一次：读法本身是两处尺子共用的（门禁那条 + 这条），
+    解析形状漂了必须在这里红，而不是等到某天真要补一族才发现读不出来。"""
+    listed = mod.spec_runtime_packages()
+    assert listed, "没从 packaging/rolecard-backend.spec 读出 RUNTIME_PACKAGES"
+    assert {"langchain_mcp_adapters", "mcp", "chromadb"} <= set(listed), listed
+    assert all(isinstance(item, str) for item in listed)
+
+
+def test_lazy_family_absent_from_the_spec_list_is_red(tmp_path: Path) -> None:
+    """M2 那发变异的形状：有人把一族从清单里摘掉，而 src 还在函数体里 import 它。
+
+    这条是 10-01 新加的**反向**判据。旧尺子只问"src import 的每族在不在已打好的包里"，
+    那需要产物在场，等于"打完才醒一次"；而摘掉清单的一族在包里可能还在（靠 import 图），
+    于是数据文件与子模块少收这件事**谁都看不见**。
+    """
+    gaps = mod.missing_from_spec({"some_lazy_pkg": "src/pkg/x.py:4"}, ["other_pkg"])
+    assert gaps == {"some_lazy_pkg": "src/pkg/x.py:4"}
+    assert mod.missing_from_spec({"other_pkg": "src/pkg/x.py:4"}, ["Other_Pkg"]) == {}
+
+
+def test_import_graph_exception_needs_a_non_empty_reason() -> None:
+    """"这族靠 import 图收得到"也要署名写理由，空理由不给绿 —— 与 NOT_BUNDLED_BY_DESIGN 同一条纪律。
+
+    两本账不能合成一本：一本说"刻意不进包"，一本说"进包但不必整族收"。
+    """
+    allow = {"httpx": "实测在 bundle 顶层名里，纯 Python 无数据文件"}
+    assert mod.missing_from_spec({"httpx": "src/pkg/x.py:4"}, [], allow=allow) == {}
+    blank = mod.missing_from_spec({"httpx": "src/pkg/x.py:4"}, [], allow={"httpx": "   "})
+    assert blank, "空理由等于没登记，这条必须还是缺席"

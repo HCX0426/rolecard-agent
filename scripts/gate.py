@@ -122,7 +122,9 @@ STEPS: list[tuple[str, list[str], str]] = [
     # 随包后端的 import↔bundle parity（R28-34）。只在 full：它量的是**产物**，快档没有产物。
     # `build/sidecar/` 不存在时脚本自己返回 0 并打出"没打过包不是负面"（与"未知不拦"同一条判据），
     # 所以这一条不会因为"这轮没打包"而假红 —— 但它一旦有包就必查。
-    ("随包后端 parity", [PY, "scripts/check_bundle_parity.py"], "full"),
+    # 10-01 挪进快档：它新加了**不需要产物**的那半段（spec 的收包清单 ↔ src 的懒加载），
+    # 那一半正是 M2 那发变异（把一族从清单里摘掉）唯一的探测器，只在 full 档跑等于"打完才醒"。
+    ("随包后端 parity", [PY, "scripts/check_bundle_parity.py"], "both"),
     ("真机冒烟(14 项)", [PY, "scripts/smoke_check.py"], "full"),
 ]
 

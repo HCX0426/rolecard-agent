@@ -82,6 +82,96 @@ def scan_third_party_imports(src: Path) -> dict[str, str]:
     return found
 
 
+#: 随包后端的 spec —— `RUNTIME_PACKAGES` 只有一个读法，两边（这条尺子与门禁里那条
+#: "模块↔依赖族"断言）都从这里要，别各写一遍 AST。
+SPEC_PATH = ROOT / "packaging" / "rolecard-backend.spec"
+
+
+def spec_runtime_packages() -> list[str]:
+    """spec 里 `RUNTIME_PACKAGES` 那串模块名。**AST 读，不执行 spec** ——
+    执行它要 PyInstaller 在场（`Analysis`/`PYZ` 是它注入的全名），而 CI 的 gate job 没装它。
+    """
+    if not SPEC_PATH.exists():
+        return []
+    tree = ast.parse(SPEC_PATH.read_text(encoding="utf-8", errors="ignore"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            getattr(target, "id", "") == "RUNTIME_PACKAGES" for target in node.targets
+        ):
+            return [str(item) for item in ast.literal_eval(node.value)]
+    return []
+
+
+def lazy_third_party_imports(src: Path) -> dict[str, str]:
+    """**函数体/类体内**的第三方 import → 第一条 `文件:行`。
+
+    为什么单独立一个扫描器（10-01，M2 那发变异照出来的洞）：`RUNTIME_PACKAGES` 的作用是把
+    一个包**整族**收进来（`collect_submodules` + `collect_data_files`），而"整族"这件事对
+    懒加载那几族尤其要紧 —— 它们在运行到那一行之前根本不出现在调用图里，子模块与数据文件
+    全靠这份清单。于是"有人把某族从清单里摘掉"这件事，只要 src 还在懒加载它，就是
+    **构建成功、症状等用户点到那一格才出现** —— 与 `R28-34` 那个"MCP 永远 fail-open"一字不差，
+    只是方向反过来：那次是清单少写了，这次是清单被删。
+    顶层 import 不在本条范围内（PyInstaller 的 import 图自己跟得到，不需要这份清单）。
+    """
+    found: dict[str, str] = {}
+    stdlib = cast("frozenset[str]", getattr(sys, "stdlib_module_names", frozenset()))
+    for path in sorted(src.rglob("*.py")):
+        rel = path.relative_to(src.parent).as_posix()
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except SyntaxError:
+            continue
+        for holder in ast.walk(tree):
+            if not isinstance(
+                holder, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+            ):
+                continue
+            for node in ast.walk(holder):
+                if isinstance(node, ast.Import):
+                    seen = [(alias.name, node.lineno) for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                    seen = [(node.module, node.lineno)]
+                else:
+                    continue
+                for name, lineno in seen:
+                    top = name.split(".")[0]
+                    if top in stdlib or top == "rolecard_agent" or top in found:
+                        continue
+                    found[top] = f"{rel}:{lineno}"
+    return found
+
+
+#: **靠 import 图自己就能收到、不需要整族清单**的那些族 → 理由。
+#: 与 `NOT_BUNDLED_BY_DESIGN` 是两本账，不能并成一本书：后者说"这族刻意不进包"，
+#: 这一本说"这族进包，但不用 `collect_submodules` 整族收"。并成一本书就会有一本签错字。
+#: 10-01 那两条形如实测：对刚打出的那份 bundle 读顶层名（284 个），两条都在。
+COLLECTED_BY_IMPORT_GRAPH: dict[str, str] = {
+    "httpx": "纯 Python、无数据文件、无动态子模块加载；`rag/retriever.py:154` 那句函数体内 "
+    "import 已被 import 图跟到 —— 10-01 对刚打的 bundle 实测顶层名里有它",
+    "pypdf": "同上：`rag/parser.py:97` 懒加载，10-01 实测已在 bundle 顶层名里；"
+    "它不像 chromadb 那样按 entry point 找子模块，所以不需要整族收集",
+}
+
+
+def missing_from_spec(
+    lazy: dict[str, str],
+    listed: list[str],
+    allow: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """懒加载得到、却没在 `RUNTIME_PACKAGES` 里的第三方族。
+
+    例外记在 `COLLECTED_BY_IMPORT_GRAPH`（**空理由不算理由**，与 `NOT_BUNDLED_BY_DESIGN`
+    同一条纪律）：那本账上每一条都要能说出"为什么整族收集对它不适用"。
+    """
+    allowed = allow if allow is not None else COLLECTED_BY_IMPORT_GRAPH
+    listed_lower = {name.lower() for name in listed}
+    return {
+        module: where
+        for module, where in lazy.items()
+        if module.lower() not in listed_lower and not allowed.get(module, "").strip()
+    }
+
+
 def bundle_top_names(bundle: Path) -> set[str]:
     """已打好的 sidecar 里**可用**的顶层模块名：PYZ 的 TOC ∪ `_internal/` 下的目录与扩展模块。
 
@@ -183,10 +273,42 @@ def main() -> int:
             stream.reconfigure(encoding="utf-8", errors="replace")
 
     bundle = Path(args.bundle)
+
+    # —— 这一段**不需要产物**（10-01）：spec 那份清单与 src 的懒加载对读，本机与 CI 都能天天查。
+    # 放在"没有 bundle 就跳过"那句**前面**，否则这条尺子只有打完工才醒一次，而它防的正是
+    # "打完才发现少收一族"。
+    lazy = lazy_third_party_imports(ROOT / "src")
+    listed = spec_runtime_packages()
+    if not listed:
+        print(
+            f"❌ 读不到 {SPEC_PATH.relative_to(ROOT)} 里的 RUNTIME_PACKAGES —— 这条尺子自己瞎了",
+            file=sys.stderr,
+        )
+        return 2
+    gaps = missing_from_spec(lazy, listed)
+    if gaps:
+        print(
+            f"❌ src 里**懒加载**的 {len(lazy)} 族第三方模块里，{len(gaps)} 族不在 spec 的 "
+            f"RUNTIME_PACKAGES（{len(listed)} 条）里：",
+            file=sys.stderr,
+        )
+        for module, where in sorted(gaps.items()):
+            print(f"   - {module}  ← 那一句在 {where}", file=sys.stderr)
+        print(
+            "   懒加载那一行在跑到之前不出现在调用图里，子模块与数据文件全靠这份清单：\n"
+            "     ① 该整族收 ⇒ 补进 spec 的 RUNTIME_PACKAGES（补之前先确认构建机装过它，\n"
+            "        `collect_submodules()` 对没安装的包返回空列表且不报错）；\n"
+            "     ② 刻意不整族收 ⇒ 加进 NOT_BUNDLED_BY_DESIGN 并写理由（空理由不算理由）。\n",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"✓ spec 收包清单覆盖 src 的 {len(lazy)} 族懒加载（清单 {len(listed)} 条）")
+
     if not (bundle / "rolecard-backend.exe").exists():
         print(
-            f"⏭️  没有随包后端（{bundle} 不存在或还没打出 exe）—— 没打过包不是负面，跳过。\n"
-            "    要量这件事先跑：.venv\\Scripts\\python.exe scripts\\build_sidecar.py"
+            f"⏭️  没有随包后端（{bundle} 不存在或还没打出 exe）—— 没打过包不是负面，\n"
+            "    bundle 那一半跳过；上面那半（spec 清单 ↔ src 懒加载）是不需要产物就能查的。\n"
+            "    要量 bundle 那一半先跑：.venv\\Scripts\\python.exe scripts\\build_sidecar.py"
         )
         return 0
 

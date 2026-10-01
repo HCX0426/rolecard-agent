@@ -91,8 +91,10 @@ _missing = [pkg for pkg in RUNTIME_PACKAGES if importlib.util.find_spec(pkg) is 
 if _missing:
     raise SystemExit(
         "随包后端要收的这些包没装，拒绝出一个「缺模块」的产物：" + ", ".join(_missing)
-        + "\n  装回来：.venv\\Scripts\\python.exe -m pip install -r requirements.txt "
-        "-r requirements-mcp.txt（MCP 那两条见 requirements-mcp.txt）"
+        + "\n  装回来（**一条就够**，它自己把运行时那五族带上）："
+        "\n    .venv\\Scripts\\python.exe -m pip install -r requirements-package.txt"
+        "\n  别再手抄 pip 命令：这条提示从前少写 -api/-rag/-cloud，照它装完 uvicorn/chromadb"
+        "\n  仍然缺席、第二次还是拒绝出产物（10-01 实测）。清单的内容只在一份文件里有一份。"
     )
 
 for pkg in RUNTIME_PACKAGES:

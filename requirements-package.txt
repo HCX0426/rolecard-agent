@@ -1,6 +1,10 @@
 # 打包机依赖（打**镜像/安装包**那一档，不是运行时也不是日常开发）。
-# 只在要出包的那台机器上装：
+# 只在要出包的那台机器上装，**一条命令**：
 #   .venv\Scripts\python.exe -m pip install -r requirements-package.txt
+# 这一条把"运行时要收的每一族"一起带上了 —— 下面的 `-r` 不是省事，是**把两处会漂的清单合成一处**：
+# 从前 `packaging/rolecard-backend.spec` 的报错与 `docs/开发流程.md` 都各自手抄了一份 pip 命令，
+# 而两份都少 `-api/-rag/-cloud`（10-01 实测），照它们装完 uvicorn/chromadb 仍然缺席，
+# spec 第二次拒绝出产物 —— "照着提示修"修不好。现在提示只指这一条命令，命令的内容只在这里有一份。
 # 拿到安装包的人不需要它 —— 包里躺的是 PyInstaller 已经摊平的那份 onedir。
 #
 # 为什么不并进 requirements-dev.txt：dev 那份每条 CI job 都装，而 gate/frontend/docker
@@ -8,7 +12,14 @@
 # 口径与 requirements-ocr.txt / requirements-mcp.txt 同源：**只有一类人装得着的那一族**。
 #
 # 下限就是 09-29 本机实测那份（6.22.3）。装它的那条 venv **必须同时装着运行时的五族**
-# （requirements / -api / -rag / -cloud / -mcp）：`packaging/rolecard-backend.spec` 会逐条
-# `find_spec`，缺一条就拒绝出产物 —— 因为 `collect_submodules()` 对没安装的包返回空列表
-# 且不报错，少装一族的代价是一个"构建成功、里面缺东西"的包。
+# （就是下面这几行 `-r`）：spec 会逐条 `find_spec`，缺一条就拒绝出产物 —— 因为
+# `collect_submodules()` 对没安装的包返回空列表且不报错，少装一族的代价是一个
+# "构建成功、里面缺东西"的包。谁在守这件事：门禁第 41 条 `spec runtime deps declared`
+# 把 spec 的模块清单与这五族的发行名对读，另有一条不需要产物的反向判据在
+# `check_bundle_parity.py`（src 的懒加载 ↔ spec 清单）。
+-r requirements.txt
+-r requirements-api.txt
+-r requirements-rag.txt
+-r requirements-cloud.txt
+-r requirements-mcp.txt
 pyinstaller>=6.22

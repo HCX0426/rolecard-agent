@@ -26,6 +26,40 @@ fails: list[str] = []
 warns: list[str] = []
 passed = 0
 
+#: **任何一条能跑起完整产品的路径都得装的那五族** —— 两处尺子共用一张表（10-01）：
+#: `installer scope parity` 问"每条安装路径装没装齐这五份"，
+#: `spec runtime deps declared` 问"随包后端要收的每一族模块，在这五份里有没有声明出处"。
+#: 分开写两份的话，漏的那一格恰好是 MCP 这次走的那道缝：五份对四条路径是齐的，
+#: 而 spec 要的 `mcp` 这一族只在传递依赖里活着，没有任何一处写着"这条路径装过它"。
+RUNTIME_REQ_FILES = (
+    "requirements.txt",
+    "requirements-api.txt",
+    "requirements-rag.txt",
+    "requirements-cloud.txt",
+    "requirements-mcp.txt",
+)
+
+
+def _package_names(lines: list[str]) -> set[str]:
+    """requirements 风格的那些行 → 发行包名集合（注释与 extras/版本比较符都剥掉）。"""
+    names: set[str] = set()
+    for raw in lines:
+        line = raw.split("#", 1)[0].strip()
+        if line:
+            names.add(re.split(r"[<>=!\[:]", line, maxsplit=1)[0].strip().lower())
+    return names
+
+
+def _runtime_declared_names() -> set[str]:
+    """那五份运行时 requirements 里点名装过的发行包。"""
+    declared: set[str] = set()
+    for name in RUNTIME_REQ_FILES:
+        path = ROOT / name
+        if not path.exists():
+            continue
+        declared |= _package_names(path.read_text(encoding="utf-8", errors="ignore").splitlines())
+    return declared
+
 # Directories that must never be walked. `ROOT.rglob("*.py")` happily descends into a
 # virtualenv, which made the line-budget metric report 300k lines of site-packages instead
 # of the project (C24).
@@ -338,13 +372,6 @@ def check_installer_scope() -> None:
     # `RUN pip install` 只装四份 —— 全文比的话这一路永远绿，而那正是 `R28-53` 的缺陷本尊
     # （镜像里 MCP 永远 fail-open）。所以：从 `pip install` 那一行起，把行尾 `\` 的续行接上，
     # 只对**这一条命令**问它装齐了没有；一条文件里有几条就挨个问几条（ci.yml 有三条）。
-    RUNTIME_REQ_FILES = (
-        "requirements.txt",
-        "requirements-api.txt",
-        "requirements-rag.txt",
-        "requirements-cloud.txt",
-        "requirements-mcp.txt",
-    )
     surfaces = {
         "install.bat": "install.bat",
         "Dockerfile": "Dockerfile",
@@ -668,12 +695,7 @@ def check_dependency_parity() -> None:
     """
 
     def package_names(lines: list[str]) -> set[str]:
-        names: set[str] = set()
-        for raw in lines:
-            line = raw.split("#", 1)[0].strip()
-            if line:
-                names.add(re.split(r"[<>=!\[;]", line, maxsplit=1)[0].strip().lower())
-        return names
+        return _package_names(lines)
 
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     py_deps = package_names(pyproject["project"]["dependencies"])
@@ -708,6 +730,60 @@ def check_dependency_parity() -> None:
         out(f"extra parity: {extra}", extra_ok, "in sync" if extra_ok else f"diff: {diff}")
         if not extra_ok:
             fails.append(f"extras[{extra}] vs {filename} drift: {diff}")
+
+
+#: spec 里的模块名（下划线）与发行包名（连字符）之间那点形状差。PEP 503 的归一只到
+#: "下划线/连字符等价"，这里就照那一条来，别写第二套映射表。
+def _module_to_distribution(module: str) -> str:
+    return module.lower().replace("_", "-")
+
+
+def _spec_runtime_packages() -> list[str]:
+    """spec 的 `RUNTIME_PACKAGES` —— **读法只有一个出处**：`scripts/check_bundle_parity.py`。
+
+    这条尺子与那条尺子问的是同一份清单（一条对 requirements，一条对 src 的懒加载），
+    AST 解析各写一遍就会有一边先漂。本脚本与它同在 `scripts/` 下，`python scripts/x.py`
+    时该目录已在 `sys.path[0]`，所以直接 import。
+    """
+    from check_bundle_parity import spec_runtime_packages  # noqa: PLC0415 - 同目录的尺子
+
+    return spec_runtime_packages()
+
+
+def check_spec_runtime_vs_requirements() -> None:
+    """随包后端要收的每一族**模块**，都必须在那五份运行时 requirements 里有**声明出处**。
+
+    为什么单独立一条（10-01，打包链盘点 P1-4）：这条链上已经有两张表 —— spec 的
+    `RUNTIME_PACKAGES`（模块名，决定"打进包的是哪些族"）与 `RUNTIME_REQ_FILES`（发行名，
+    决定"装的时候装什么"），而**没有任何一处对读它们**。MCP 那半年的形状就是这么来的：
+    spec 从 09-29 起要求 `mcp` 这个模块，`pip` 那侧却只写了 `langchain-mcp-adapters`，
+    `mcp` 全靠传递依赖带进来 —— 于是 Dockerfile 少一份 requirements 时，装完照样"成功"，
+    而包里的模块数是零（`R28-53`）。这与 `R28-11`（httpx 靠传递依赖兜住）是同一条病，
+    只是这次躲在打包侧。
+
+    判据方向只查一边：spec 要的每族模块必须在运行时那几份里被点名。反方向不查 ——
+    requirements 里多一条不代表 spec 就该收它（`pyinstaller`、`pytest` 那些本来就不进包）。
+    """
+    packages = _spec_runtime_packages()
+    if not packages:
+        out(
+            "spec runtime deps declared",
+            False,
+            "没从 packaging/rolecard-backend.spec 里读出 RUNTIME_PACKAGES —— 这条尺子自己看不见了",
+        )
+        fails.append("spec RUNTIME_PACKAGES unreadable")
+        return
+    declared = _runtime_declared_names()
+    missing = [pkg for pkg in packages if _module_to_distribution(pkg) not in declared]
+    declared_pairs = [_module_to_distribution(m) for m in missing]
+    detail = (
+        f"{len(packages)} 族模块全部在 {len(RUNTIME_REQ_FILES)} 份运行时 requirements 里有声明"
+        if not missing
+        else f"spec 要收却没人声明的模块：{missing}（发行名 {declared_pairs}）"
+    )
+    out("spec runtime deps declared", not missing, detail)
+    if missing:
+        fails.append(f"spec RUNTIME_PACKAGES not declared in requirements: {missing}")
 
 
 def check_safety_prompt() -> None:
@@ -1810,6 +1886,7 @@ def main() -> int:
     check_stale_identifiers()
     check_config_contract()
     check_dependency_parity()
+    check_spec_runtime_vs_requirements()
     check_promised_artifacts()
     check_core_no_domain_token()
     check_single_text_extractor()
