@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import ast
+import datetime
 import importlib.util
 import json
 import os
@@ -1590,9 +1591,18 @@ def check_single_source_literals() -> None:
     """每个登记的字面量，代码里只许出现在它归属的那一个文件里。"""
     # 按文件收集"非 docstring 的字符串常量"命中的字面量。docstring 的识别方式：它是
     # `ast.Expr` 语句的值 —— 与"写在字典里的值"在 AST 上是两种位置，不是靠肉眼判的。
+    #
+    # **扫 `src/` 也扫 `scripts/`**（10-01，`R28-14` 的①）：从前只扫 src，于是那把管"唯一出处"
+    # 的尺子正好看不见三份取证脚本各抄一遍同一个端点 —— 尺子的范围就是它的盲区。
+    # 例外只有一个：**本文件自己**（它的表里必然写着那些字面量，把扫描者算进去等于永远红，
+    # 与 `artifact single source` 豁免归属者与自身同一处理）。
+    scanned = [p for root in ("src", "scripts") for p in (ROOT / root).rglob("*.py")]
+    self_rel = pathlib.Path(__file__).relative_to(ROOT).as_posix()
     holders: dict[str, set[str]] = {}
-    for path in sorted((ROOT / "src").rglob("*.py")):
+    for path in sorted(scanned):
         rel = str(path.relative_to(ROOT)).replace("\\", "/")
+        if rel == self_rel:
+            continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
         except (SyntaxError, ValueError):
@@ -2326,6 +2336,81 @@ def check_citation_reachability() -> None:
             (fails if hard else warns).append(line)
 
 
+#: 「最后更新」那一行的日期（头部声明），与正文里出现过的日期。
+_HEADER_DATE = re.compile(r"最后更新[：:]\s*(\d{4})-(\d{1,2})-(\d{1,2})")
+_FULL_DATE = re.compile(r"(?<![\d-])(\d{4})-(\d{1,2})-(\d{1,2})(?![\d-])")
+_BARE_DATE = re.compile(r"(?<![\d-])(\d{1,2})-(\d{1,2})(?![\d-])")
+
+
+def _dates_in(text: str, today: datetime.date) -> list[datetime.date]:
+    """正文里出现过的**过去的**日期（含今天）。未来的那些是计划，不该拿去要求头部。
+
+    裸 `MM-DD` 按本年解释（本仓的散文就是这么写日期的：「09-28 那次」）。
+    `R28-17` 这类编号不会被误认：`28-17` 前面是字母 `R`，`\\b` 在那里不成边界。
+    """
+    found: list[datetime.date] = []
+    for year, month, day in _FULL_DATE.findall(text):
+        try:
+            d = datetime.date(int(year), int(month), int(day))
+        except ValueError:
+            continue
+        if d <= today:
+            found.append(d)
+    for month, day in _BARE_DATE.findall(text):
+        try:
+            d = datetime.date(today.year, int(month), int(day))
+        except ValueError:
+            continue
+        if d <= today:
+            found.append(d)
+    return found
+
+
+def check_doc_freshness() -> None:
+    """活文档头部那句「最后更新」不许比它自己正文里出现过的日期更旧。
+
+    为什么立它（10-01，`R28-41` 复核时当场抓出来的一处新漂）：`docs/前端设计.md` 与
+    `docs/架构总览.md` 头部都还写「2026-09-28」，而正文里躺着 09-29 的组名、09-30 的换形象与
+    Live2D、10-01 的一整批 —— 也就是说**这句话正在对每一个读者撒谎**，而它撒谎的方式恰好是
+    "让人以为后面的内容不用再看"。这与体积、用例数是同一族"没有尺子的数"：
+    `R28-47` 说"数会漂、物会没"，日期是第三种：**日期会过期**。
+    归档件（`docs/archive/`）照旧不问 —— 那里封的是"不再改写"，头部日期本来就是当时的快照。
+    """
+    today = datetime.date.today()
+    offenders: list[str] = []
+    checked = 0
+    for path in iter_files(".md"):
+        rel = path.relative_to(ROOT)
+        if "archive" in rel.parts:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        header = _HEADER_DATE.search(text)
+        if not header:
+            continue
+        checked += 1
+        try:
+            declared = datetime.date(*(int(g) for g in header.groups()))
+        except ValueError:
+            offenders.append(f"{rel} 头部那句「最后更新」不是个合法日期")
+            continue
+        later = [d for d in _dates_in(text, today) if d > declared]
+        if later:
+            newest = max(later)
+            offenders.append(
+                f"{rel} 头部写「最后更新 {declared.isoformat()}」，而正文里出现过 "
+                f"{newest.isoformat()}（共 {len(later)} 处比它晚）—— 这句话会让读者跳过新内容"
+            )
+    out(
+        "doc freshness",
+        not offenders,
+        f"{checked} 份带「最后更新」的活文档都比自己正文里最近的日期新"
+        if not offenders
+        else "; ".join(offenders[:4]),
+    )
+    if offenders:
+        fails.append(f"doc freshness: {offenders}")
+
+
 def check_audit_index_in_sync() -> None:
     """`docs/架构审计索引.md` 必须是"现在重算一遍"的那一份。
 
@@ -2387,6 +2472,7 @@ def main() -> int:
     check_doc_links()
     check_markdown_table_shape()
     check_citation_reachability()
+    check_doc_freshness()
     check_audit_index_in_sync()
     check_version_parity()
     check_dead_config()

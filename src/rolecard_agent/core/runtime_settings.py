@@ -16,7 +16,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from rolecard_agent.config import Settings
+from rolecard_agent.config import (
+    SECRET_FIELD_NAMES,
+    Settings,
+    env_falsy,
+    env_truthy,
+)
 from rolecard_agent.storage.db import SqlConnection
 
 _PREFIX = "runtime:"
@@ -101,6 +106,30 @@ _FIELDS_BY_NAME = {f.field: f for f in RUNTIME_FIELDS}
 # 两者都要收 → 建 env 键索引，save_overrides 统一解析到 FieldSpec 再按字段名落库。
 _FIELDS_BY_ENV = {f.env_key: f for f in RUNTIME_FIELDS}
 
+# **注册表自己校对那份「哪些是密钥」的名单**（`R28-14` 的②）：标成 `kind="secret"` 却没在
+# `config.SECRET_FIELD_NAMES` 里登记的字段，会在**导入时**抛，而不是等某次改动把它的明文
+# 送回浏览器。这一族失败一直是静默的 —— 掩码那一侧读的是另一份清单，两边都能各自自洽。
+# 写成函数而不是就地把那行推导挂在这里，是为了让用例能喂一份"故意标错"的注册表进去验它真的抛。
+def misdeclared_secrets(fields: tuple[FieldSpec, ...]) -> list[str]:
+    """被标成密钥、却没在唯一名单里登记的字段名（正常应为空表）。"""
+    return [
+        spec.field
+        for spec in fields
+        if spec.kind == "secret" and spec.field not in SECRET_FIELD_NAMES
+    ]
+
+
+def _assert_secret_registry_agrees(fields: tuple[FieldSpec, ...] = RUNTIME_FIELDS) -> None:
+    offenders = misdeclared_secrets(fields)
+    if offenders:
+        raise RuntimeError(
+            "runtime_settings 把这几个字段当密钥处理，却没在 config.SECRET_FIELD_NAMES 里登记："
+            f"{offenders}。两处名单必须同源 —— 加一处忘一处就是明文出进程。"
+        )
+
+
+_assert_secret_registry_agrees()
+
 
 def spec_of(field: str) -> FieldSpec | None:
     """查字段的可编辑规格；不可在线修改的字段返回 None（界面据此渲染只读）。"""
@@ -111,10 +140,9 @@ def _parse(spec: FieldSpec, raw: str) -> Any:
     """把界面提交的字符串解析成 Settings 字段值；不合法抛 ValueError（可读原因）。"""
     text = raw.strip()
     if spec.kind == "bool":
-        lowered = text.lower()
-        if lowered in ("1", "true", "yes", "on"):
+        if env_truthy(text):
             return True
-        if lowered in ("0", "false", "no", "off"):
+        if env_falsy(text):
             return False
         raise ValueError(f"{spec.env_key} 只接受 开/关（1/0、true/false）")
     if spec.kind == "float":

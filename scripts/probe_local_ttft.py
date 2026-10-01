@@ -21,14 +21,21 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
+import sys
 import time
 from pathlib import Path
 from typing import Any
 
 import httpx
 
+# 直跑脚本时 src/ 不在 sys.path（pytest 由 pyproject 的 pythonpath 兜底，直跑没有）。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+# 量的模型不在这里抄第二遍（`R28-14` 的①，与端点那一族同病）：抄一份旧模型名的探针，
+# 测的**不是用户实际在用的那一档**，而读数看着完全正常 —— 这正是它比报错更坏的地方。
+from rolecard_agent.config import DEFAULT_LOCAL_BACKEND  # noqa: E402
+
 OLLAMA = "http://127.0.0.1:11434"
-MODEL = "qwen3-vl:8b"
+MODEL = str(DEFAULT_LOCAL_BACKEND["model"])
 NUM_CTX = 4096
 SHORT = "用两三句话回答：你为什么喜欢下雨天？"
 #: 约 1.4k tokens 的长提示，用来把「预填」与「思考解码」分开：两者都进首字，但只有后者随

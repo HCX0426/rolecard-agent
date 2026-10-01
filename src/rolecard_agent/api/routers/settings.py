@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context, value_error_to_http
-from rolecard_agent.config import Settings
+from rolecard_agent.config import SECRET_FIELD_NAMES, Settings
 from rolecard_agent.core import runtime_settings
 from rolecard_agent.core.model_settings import (
     ModelSettingsError,
@@ -450,15 +450,9 @@ def patch_model_capabilities(
 # ---------------------------------------------------------------- 运行环境（只读展示）
 
 # 密钥类字段：只回掩码，绝不把明文送出进程（与模型页 has_key 纪律一致）。
-_SECRET_FIELDS = frozenset(
-    {
-        "tavily_api_key",
-        "saucenao_api_key",
-        "langsmith_api_key",
-        "auth_credentials",
-        "auth_api_keys",
-    }
-)
+# 名单不在这里列第二遍（`R28-14` 的②）—— 唯一出处是 `config.SECRET_FIELD_NAMES`，
+# 而 `runtime_settings` 在导入时用它校对可编辑注册表，所以这一行是引用而不是清单。
+_SECRET_FIELDS = SECRET_FIELD_NAMES
 
 
 def _display(value: object, *, secret: bool) -> str:

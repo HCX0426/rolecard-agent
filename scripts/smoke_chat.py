@@ -26,7 +26,10 @@ from pathlib import Path
 # 直跑脚本时 src/ 不在 sys.path（pytest 由 pyproject 的 pythonpath 兜底，直跑没有）。
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-DEFAULT_BASE_URL = "https://api.siliconflow.cn/v1"
+# 端点不在这里抄第二遍（`R28-14` 的①）：唯一出处是 `config.DEFAULT_SILICONFLOW_BASE_URL`。
+from rolecard_agent.config import DEFAULT_SILICONFLOW_BASE_URL  # noqa: E402
+
+DEFAULT_BASE_URL = DEFAULT_SILICONFLOW_BASE_URL
 DEFAULT_MODEL = "deepseek-ai/DeepSeek-V4-Flash"
 
 

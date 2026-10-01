@@ -64,6 +64,39 @@ MAX_FALLBACKS = 2
 # 而漏掉一处就是"有的调用走了新端点、有的没有"（架构审计报告 P1-4）。
 DEFAULT_SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
 
+#: **「哪些 Settings 字段是密钥」只在这里答一次**（`R28-14` 的②）。
+#: 从前有两份平行清单：界面侧 `_SECRET_FIELDS` 列 5 项，而可编辑注册表按
+#: `FieldSpec(kind="secret")` 标 2 项 —— 两个口径各自成立就意味着**第三个字段**（比如将来新增的
+#: 某个 key）可以只在一处被标成密钥，另一处照发明文。现在 `runtime_settings` 在装配时就拿这一份
+#: 校验自己（不在这里登记的 secret 字段 ⇒ 直接抛），界面侧只引用它。
+SECRET_FIELD_NAMES: frozenset[str] = frozenset(
+    {
+        "tavily_api_key",
+        "saucenao_api_key",
+        "langsmith_api_key",
+        "auth_credentials",
+        "auth_api_keys",
+    }
+)
+
+#: 布尔型取值的写法集合（`R28-14` 的③）：`config.py` 读 env 与 `runtime_settings` 读界面提交，
+#: 从前各列一遍同一族字符串。两处集合一旦不同，症状是"在 .env 里写 yes 有效、在界面上写 yes 报
+#: 错"（或反过来）—— 这种不一致没人会在第一次撞上时怀疑到"两份清单"上。
+TRUTHY_STRINGS: frozenset[str] = frozenset({"1", "true", "yes", "on"})
+FALSY_STRINGS: frozenset[str] = frozenset({"0", "false", "no", "off"})
+
+
+def env_truthy(raw: str) -> bool:
+    """这个字符串按 env 的写法算不算"开"。界面上那一份解析走 `runtime_settings._parse`，
+    它判的是同一组集合 —— 两处各列一遍的结果是"在 .env 里写 yes 有效、在界面上写 yes 报错"。
+    """
+    return raw.strip().lower() in TRUTHY_STRINGS
+
+
+def env_falsy(raw: str) -> bool:
+    """`env_truthy` 的另一半：三态解析（开 / 关 / 不合法）里"关"那一档也只有一个出处。"""
+    return raw.strip().lower() in FALSY_STRINGS
+
 
 class ModelBackend(BaseModel):
     """One callable model endpoint.
@@ -550,7 +583,7 @@ class Settings(BaseModel):
             data["model_thinking"] = v
 
         if raw := src.get("OBS_EMIT_RAW_TEXT"):
-            data["obs_emit_raw_text"] = raw.strip().lower() in {"1", "true", "yes", "on"}
+            data["obs_emit_raw_text"] = env_truthy(raw)
 
         try:
             # `data` 是按 env 契约逐项组装的普通 dict（值是 str / list[str] / dict …），
