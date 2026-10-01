@@ -1,4 +1,8 @@
 # MCP 扩展通道依赖（架构计划 C·§6.1，core/tools/mcp.py）
-# 仅在配置了 MCP_SERVERS 时需要。未安装不影响启动：loader 打 warning 并跳过 MCP 工具
-# （fail-open 仅影响扩展能力，不阻塞核心对话）。
+# **它是运行树的一族，不是可选 extra**（2026-10-01 改的分类，理由在 check_consistency 的
+# `installer scope parity` 那段）：随包后端自 09-29 起带它（R28-34），镜像自 10-01 起带它
+# （R28-53），源装形态（install.bat / README / CI）同一批跟上 —— 四条路径装的是同一套。
+# 装载仍然**不是"非有不可"**：未装时 loader 打 warning 并跳过 MCP 工具，核心对话照跑
+# （fail-open 只影响扩展能力）。但"界面照常摆着、工具永远加载不出来"这个形状已经红过三次，
+# 所以不再让每条安装路径自己决定装不装。
 langchain-mcp-adapters>=0.0.9

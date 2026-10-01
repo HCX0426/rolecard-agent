@@ -15,10 +15,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # 镜像的主用例 —— 漏装的症状是"配任何 OpenAI 兼容端点（硅基流动/DeepSeek/…）保存即 500"
 # （CI 首跑实测，run 36416026240；本机没红只是 .venv 恰好装过它）。它是可选 extra 的原因
 # 在 pyproject：纯本地安装保持离线可用 —— 那是**开发机**的取舍，不是容器的。
-COPY requirements.txt requirements-api.txt requirements-rag.txt requirements-cloud.txt ./
+# requirements-mcp.txt（langchain-mcp-adapters）同理要装（10-01 补）：镜像是 B/S 形态，用户在
+# 设置页接 MCP server 是合法的 operator 动作，而未装时 loader 只打一行 warning 就跳过工具 ——
+# 界面照常摆着入口、交通灯照常画，工具永远加载不出来（"格子骗人"的 fail-open）。桌面包那一侧
+# 09-29 已按同一条理由装上了（R28-34），镜像这一侧一直漏着；而对容器里的人，"pip install 那一份"
+# 不是一句能照着做完的话 —— 装完还得重建镜像。
+COPY requirements.txt requirements-api.txt requirements-rag.txt requirements-cloud.txt \
+    requirements-mcp.txt ./
 RUN pip install --no-cache-dir \
     -r requirements.txt -r requirements-api.txt -r requirements-rag.txt \
-    -r requirements-cloud.txt
+    -r requirements-cloud.txt -r requirements-mcp.txt
 
 COPY src/ ./src/
 COPY frontend/dist/ ./frontend/dist/

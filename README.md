@@ -7,8 +7,9 @@
 内核 / 角色插件 / health 查询工具 / FastAPI 接入层 + SSE 流式对话 / Vite+React 控制台（**六个页签**：
 对话 · 数据 · 知识库 · 角色卡 · 插件 · 设置；Hash 路由深链 · 深色模式 · 响应式 · 单页错误边界 ·
 **运行环境在线编辑与热生效**）；
-**457 个后端测试 + 63 个前端测试全绿、smoke 全部通过、一致性 24 项断言 0 失败、覆盖率 86.77%
-（阈值 85%），ruff + mypy 零告警**，且全部离线运行（注入脚本化模型）。
+**1301 个后端测试（非 live 档）+ 336 个前端测试全绿、smoke 全部通过、一致性 40 项断言 0 失败、
+覆盖率 91.83%（阈值 85%），ruff + mypy（含 Linux 档）零告警**，且全部离线运行（注入脚本化模型；
+真机 UI 冒烟那段单独用 `SMOKE_SKIP_UI=1` 跳过）。
 本地模型默认 **`qwen3-vl:8b`（思考 + 识图 + 工具调用一体，8GB 显存可跑）**；云端后端
 `siliconflow`（DeepSeek-V4-Flash）保留备用、可随时在界面切换。两轮全项目审查的 P0/P1/P2
 **全部修复闭环**（工具循环上界、索引身份稳定、ollama 超时、SSRF、库代际、分层、阻塞……），
@@ -25,9 +26,13 @@
 **默认角色「通用助手」＝纯对话**（不接工具与档案）；要查档案时切换到「健康档案管理员」。
 待续：**v2.4 公网部署**（功能面已部分落地，见上）。
 
-> 上面这组数字**实测于 2026-09-17**（`ruff check .` / `mypy` / `pytest --cov` /
-> `scripts/check_consistency.py` / `scripts/smoke_check.py`）。它们是"当时为真"，不是永久承诺 ——
-> CI 每次 push 都会重跑并以此为准。
+> 上面这组数字**重测于 2026-10-01**（`scripts/gate.py --ci` 整档绿：`ruff check .` / `mypy`
+> 本机档 + Linux 档 / `pytest --cov` 175.4s / `scripts/check_consistency.py` / 前端 vitest 336 条；
+> 后端那 1301 是 `pytest --collect-only` 现数，addopts 里的 `-m 'not live'` 已经把真机用例除外）。
+> 上一次写的是"457 + 63 + 一致性 24 + 覆盖率 86.77%（实测于 2026-09-17）"—— 那四个数在 09-17
+> 大概都是真的，此后三周多没有一次重测，**而门禁从来不读这一行**，所以它一路漂到只剩错误信息量。
+> 这类"首屏手写数"的守卫怎么做（读数进 `scripts/baseline.py`、README 与它对读）记在 10-01 那笔
+> 提交里，还没有落地。CI 每次 push 都会重跑并以此为准。
 
 ### 第三轮全项目审查（2026-09-17）与两轮修复清单
 
@@ -131,10 +136,13 @@ python -m venv .venv
 
 # 2. 依赖（按范围镜像安装；OCR 依赖必须独立 venv，勿装进 .venv）
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt \
-    -r requirements-api.txt -r requirements-rag.txt -r requirements-cloud.txt
+    -r requirements-api.txt -r requirements-rag.txt -r requirements-cloud.txt \
+    -r requirements-mcp.txt
 #    （-rag 必须装：知识库 / 上传解析 / 检索都依赖 chromadb+pypdf，漏装会 ImportError）
 #    （-cloud 也要装：langchain-openai 是"任意 OpenAI 兼容端点"那条路的实现包，
 #      漏装的症状是在模型页配一个硅基流动/DeepSeek 后端 → 保存即 500）
+#    （-mcp 同一条理由（10-01 起进这套清单）：随包后端与镜像都装着它，源装若不装，
+#      设置页那格照常摆着而一个工具都加载不出来）
 
 # 3. 本地模型（.env 里默认后端 local 指向 Ollama）
 #    qwen3-vl:8b = 对话 + 工具调用 + 识图 + 思考（ModelScope GGUF 导入，见下方说明）

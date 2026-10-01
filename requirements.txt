@@ -28,8 +28,12 @@ trafilatura>=2.0     # 网页正文抽取（开源事实标准）
 langchain-ollama>=1.1.0
 
 # --- 3. 会话持久化 ---------------------------------------------------------
-# 不锁版本，由 langgraph 的约束推导；InMemorySaver 仅供开发，重启即丢
-langgraph-checkpoint-sqlite
+# **锁死**（10-01 实测订正旧注释）：原来那句"不锁版本，由 langgraph 的约束推导"不成立 ——
+# langgraph 1.2.11 的 requires 里只有 langgraph-checkpoint>=4.1,<5，那是**另一个包**，sqlite saver
+# 从头到尾没有约束，等于每次重建环境都拿最新。而检查点表就是会话的全部真相（R26-07），
+# 它的形状变了在本机不会有任何信号。钉在门禁绿着的这版。
+# （这个包存在的意义：InMemorySaver 仅供开发，重启即丢。）
+langgraph-checkpoint-sqlite==3.1.1
 
 # --- 4. 数据校验 -----------------------------------------------------------
 pydantic>=2.13

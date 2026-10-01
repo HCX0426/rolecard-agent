@@ -318,43 +318,82 @@ def check_installer_scope() -> None:
       * README 快速开始第 2 步同病（决策 5 那轮补的）。
     少装一族的症状永远不在装的人自己身上（他的机器早就装过了），所以这条只能机器查。
 
-    判据：`RUNTIME_REQ_FILES` 是"任何一条能跑起完整产品的路径都得有"的那四份，
-    逐个入口现读它引用了哪些 `requirements*.txt`。dev / ocr / mcp / package **不在表内**：
-    那几份按形态有意分开装（dev 不进生产运行树、paddle 必须独立 venv、mcp 由随包后端自己带、
-    package 只有打包机要），把它们一起比会天天误报。
+    判据：`RUNTIME_REQ_FILES` 是"任何一条能跑起完整产品的路径都得有"的那五份，
+    逐个入口现读它引用了哪些 `requirements*.txt`。dev / ocr / package **不在表内**：
+    那几份按形态有意分开装（dev 不进生产运行树、paddle 必须独立 venv、package 只有打包机要）。
+
+    **`requirements-mcp.txt` 于 2026-10-01 从"按形态分开装"挪进这张表**，理由不是口味而是两个
+    出货形态都已经装了它：随包后端 09-29 起带它（`R28-34`：spec 缺一条就拒绝出产物），镜像
+    10-01 起带它（`R28-53`：这一族病第三次红，前两次都是"本机绿、产物缺"）。既然发出去的两份
+    都装着，"源装形态可以不装"就只是同一条产品能力的第三种拼法 —— 让它继续留在表外的代价，
+    正是这条检查存在要防的那件事。
 
     另一半（同一轮 `R28-32` 加的）：**磁盘上每一份 requirements*.txt 都要在这两张表里之一**。
     新增一族却没人分类，症状与"少装一族"完全一样而方向相反 —— 它被某条路径默默需要着，
     却没有任何一处写着"这条路径装过它"。空理由不算理由，照样红。
     """
-    # 生效行与注释行都算数：`install.bat` 的提示句里出现文件名不算"装过"，所以只取
-    # 真正执行 pip 的那一行；镜像与 CI 的写法各异，统一用"这一行引用了这个文件"来判。
+    # 判据读的是**每一条真跑 pip 的命令**，不是"文件里提过这个名字"。
+    # 为什么不是全文压扁比一次（第一版就是这么写的，被一次变异当场否证）：Dockerfile 的
+    # `COPY requirements.txt ... requirements-mcp.txt ./` 那一行**六个文件名都在**，而下一行
+    # `RUN pip install` 只装四份 —— 全文比的话这一路永远绿，而那正是 `R28-53` 的缺陷本尊
+    # （镜像里 MCP 永远 fail-open）。所以：从 `pip install` 那一行起，把行尾 `\` 的续行接上，
+    # 只对**这一条命令**问它装齐了没有；一条文件里有几条就挨个问几条（ci.yml 有三条）。
     RUNTIME_REQ_FILES = (
         "requirements.txt",
         "requirements-api.txt",
         "requirements-rag.txt",
         "requirements-cloud.txt",
+        "requirements-mcp.txt",
     )
-    # 入口 → (文件, 认"装过了"的行特征)。刻意写死特征而不是通用正则：每条路径的形状本来就不一样。
     surfaces = {
-        "install.bat": ("install.bat", "pip install"),
-        "Dockerfile": ("Dockerfile", "-r requirements"),
-        "ci.yml": (".github/workflows/ci.yml", "-r requirements"),
-        "README": ("README.md", "-r requirements"),
+        "install.bat": "install.bat",
+        "Dockerfile": "Dockerfile",
+        "ci.yml": ".github/workflows/ci.yml",
+        "README": "README.md",
     }
+
+    def _pip_commands(text: str) -> list[str]:
+        """每条 `pip install` 命令，续行已接上（续行符可能是 \\ 或 Windows 的 ^）。
+
+        **注释行一律跳过**：Dockerfile 里"为什么装这一族"那段散文就写着 pip install 这几个字，
+        把它当命令读，这条尺子会把自己的解释文字报成缺陷（第一趟就是这么红的）。
+        """
+        lines = text.splitlines()
+        cmds: list[str] = []
+        for i, line in enumerate(lines):
+            if "pip install" not in line:
+                continue
+            probe = line.strip()
+            if probe.startswith("#") or probe.startswith("//") or probe.lower().startswith(
+                ("rem ", "::")
+            ):
+                continue
+            buf = line
+            j = i
+            while buf.rstrip().endswith(("\\", "^")) and j + 1 < len(lines):
+                j += 1
+                buf += " " + lines[j]
+            cmds.append(" ".join(buf.split()))
+        # 只问"装一套依赖"的那些命令：`python -m pip install --upgrade pip` 提升级 pip 自己，
+        # 它本来就不该带 -r，把它算进来等于给每条 CI job 都白造一条红。
+        return [c for c in cmds if "-r requirements" in c]
+
     missing: list[str] = []
-    for label, (rel, marker) in surfaces.items():
+    for label, rel in surfaces.items():
         path = ROOT / rel
         if not path.exists():
             missing.append(f"{label} 这个入口文件不见了（{rel}）")
             continue
-        # README 的"快速开始"是带 \ 续行的代码块，按物理行找会漏后面几份 —— 压成一行再比。
-        # marker 单独查一次：整条 pip 行被删掉时也要红，而不是"少一份依赖"这种半句话。
-        flat = " ".join(path.read_text(encoding="utf-8", errors="ignore").split())
-        if marker not in flat:
-            missing.append(f"{label} 里找不到装依赖的那一行（没有 {marker!r}）")
+        cmds = _pip_commands(path.read_text(encoding="utf-8", errors="ignore"))
+        if not cmds:
+            missing.append(f"{label} 里找不到任何 pip install 命令")
             continue
-        missing += [f"{label} 没引用 {req}" for req in RUNTIME_REQ_FILES if req not in flat]
+        for cmd in cmds:
+            missing += [
+                f"{label} 有一条 pip install 没装 {req}（{cmd[:70]}…）"
+                for req in RUNTIME_REQ_FILES
+                if req not in cmd
+            ]
     out(
         "installer scope parity",
         not missing,
@@ -369,7 +408,6 @@ def check_installer_scope() -> None:
     SEPARATE_BY_SHAPE = {
         "requirements-dev.txt": "开发/CI 依赖，不进生产运行树",
         "requirements-ocr.txt": "paddle 与主环境冲突，必须独立 venv（见该文件开头）",
-        "requirements-mcp.txt": "只有接入外部 MCP server 的部署要装",
         "requirements-package.txt": "只有打包机要（PyInstaller，见 ci.yml 的 windows-release）",
     }
     unclassified = [

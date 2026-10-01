@@ -14,11 +14,14 @@ if exist ".venv\Scripts\python.exe" (
   python -m venv .venv || goto :fail
 )
 
-echo [2/5] backend deps: core + api + rag + cloud
+echo [2/5] backend deps: core + api + rag + cloud + mcp
 rem cloud is installed, not just advertised (R28-12): the model page lets you add any
 rem OpenAI-compatible backend, and without langchain-openai saved = 500. Same family as the
 rem Docker image gap (R28-11) that CI caught on the first real build.
-".venv\Scripts\python.exe" -m pip install -r requirements.txt -r requirements-api.txt -r requirements-rag.txt -r requirements-cloud.txt || goto :fail
+rem mcp joins the set on the same reasoning (R28-53): both shipped forms already carry it
+rem (bundled backend since R28-34, image since 10-01), so a source install that skips it
+rem leaves the 扩展 panel rendered with zero tools loadable.
+".venv\Scripts\python.exe" -m pip install -r requirements.txt -r requirements-api.txt -r requirements-rag.txt -r requirements-cloud.txt -r requirements-mcp.txt || goto :fail
 
 echo [3/5] frontend: npm ci + build  (dist/ is what the server hosts)
 pushd frontend

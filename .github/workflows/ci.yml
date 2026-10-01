@@ -59,6 +59,7 @@ jobs:
             requirements-api.txt
             requirements-rag.txt
             requirements-cloud.txt
+            requirements-mcp.txt
             requirements-dev.txt
 
       - name: 装依赖
@@ -68,8 +69,11 @@ jobs:
           # —— 与 Dockerfile 第 12 行记的是同一个坑。
           # cloud 也要：集成测试里的模型后端就是 OpenAI 兼容端点（硅基流动），漏装的症状
           # 是 PUT /api/settings/models 500 —— CI 第 1、2 发实跑抓到的就是这个。
+          # mcp 自 10-01 起在同一批里（`R28-53`）：随包后端与镜像都装着它，CI 环境与两条
+          # 出货路径对齐之后，`installer scope parity` 那条断言才在所有入口上同一口径。
           pip install -r requirements.txt -r requirements-api.txt \
-            -r requirements-rag.txt -r requirements-cloud.txt -r requirements-dev.txt
+            -r requirements-rag.txt -r requirements-cloud.txt \
+            -r requirements-mcp.txt -r requirements-dev.txt
 
       - name: gate.py --ci
         # 用户 09-29 拍的：覆盖率与 baseline 比对**不留在手动档**，每次 push/PR 都设防
@@ -221,6 +225,35 @@ jobs:
           echo "容器内：以 uid=$uid 运行 / HEALTHCHECK=healthy"
           echo "容器内：健康 200 / 无凭据 401 / 建会话可读回 / 首页托管自镜像内 dist / 可存云端后端"
 
+      - name: 镜像里那几族运行时依赖必须真装上了（R28-53）
+        # 同族的病已经红过三次：CI 第 2 发（镜像漏 cloud ⇒ 配任何 OpenAI 兼容端点保存即 500）、
+        # 09-29 桌面包（spec 漏 mcp ⇒ 打包态 MCP 永远 fail-open）、10-01 镜像（Dockerfile 只收四份，
+        # 而随包后端的清单是五份）。三次共同的形状是**本机绿、镜像缺**：构建机的 .venv 恰好装过。
+        # 清单不在这里重抄 —— 从 packaging/rolecard-backend.spec 现读 RUNTIME_PACKAGES，与那条
+        # "缺一条就拒绝出产物"的护栏同一个源头（口径唯一；读不到就直接红，不然这条会静默变成零判据）。
+        run: |
+          pkgs=$(python3 - <<'PY'
+          import ast, pathlib
+          tree = ast.parse(pathlib.Path("packaging/rolecard-backend.spec").read_text(encoding="utf-8"))
+          for node in ast.walk(tree):
+              if isinstance(node, ast.Assign) and any(
+                  getattr(t, "id", "") == "RUNTIME_PACKAGES" for t in node.targets
+              ):
+                  print(" ".join(ast.literal_eval(node.value)))
+                  break
+          PY
+          )
+          if [ -z "$pkgs" ]; then
+            echo "没从 spec 里读出 RUNTIME_PACKAGES —— 这条验货与 spec 里那条护栏会一起失效"; exit 1
+          fi
+          echo "要问镜像的这几族：$pkgs"
+          for m in $pkgs; do
+            if ! docker exec rc python -c "import $m" >/dev/null 2>&1; then
+              echo "镜像里 import $m 失败 —— Dockerfile 少装了它这一族"; docker logs rc 2>&1 | tail -8; exit 1
+            fi
+          done
+          echo "镜像内这几族全部可导入：$pkgs"
+
       - name: 收尾
         if: always()
         run: |
@@ -251,6 +284,7 @@ jobs:
             requirements-api.txt
             requirements-rag.txt
             requirements-cloud.txt
+            requirements-mcp.txt
             requirements-dev.txt
 
       - name: 装 Node
@@ -266,7 +300,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-api.txt \
-            -r requirements-rag.txt -r requirements-cloud.txt -r requirements-dev.txt
+            -r requirements-rag.txt -r requirements-cloud.txt \
+            -r requirements-mcp.txt -r requirements-dev.txt
           npm ci --prefix frontend
           npm ci --prefix shell
 
