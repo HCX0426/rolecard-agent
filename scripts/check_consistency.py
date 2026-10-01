@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import ast
+import importlib.util
 import json
 import os
 import pathlib
@@ -2113,12 +2114,23 @@ def report_line_budget() -> None:
 
 #: 行里出现这个词就**优先**当它指这份文档（越具体越靠前）。匹配不到词时不做假设：
 #: 直接去所有文档里找这个编号，找到谁就算谁。
-_CITATION_DOC_KEYS: tuple[tuple[str, str], ...] = (
-    ("架构计划", "docs/archive/架构计划.md"),
-    ("设计稿", "docs/主动消息与记忆设计稿.md"),
-    ("总览", "docs/架构总览.md"),
-    ("需求", "docs/需求与验收标准.md"),
-    ("审计", "docs/架构审计.md"),
+#: 行内点了某份文档时，认的是**文件名**而不是完整路径（10-01 归档之后路径都变了，
+#: 而"这句引用指的是哪份文档"问的是文档身份，不是存放地）。
+_CITATION_DOC_KEYS: tuple[tuple[str, frozenset[str]], ...] = (
+    ("架构计划", frozenset({"架构计划.md"})),
+    ("设计稿", frozenset({"主动消息与记忆设计稿.md"})),
+    ("总览", frozenset({"架构总览.md"})),
+    ("需求", frozenset({"需求与验收标准.md"})),
+    (
+        "审计",
+        frozenset(
+            {
+                "架构审计.md",
+                "架构审计（2026-09-26 轮）.md",
+                "架构审计（2026-09-28 轮）.md",
+            }
+        ),
+    ),
 )
 _SECTION_RE = re.compile(r"§\s*(\d+(?:\.\d+)*)")
 _PID_RE = re.compile(r"\b(P\d-\d+)\b")
@@ -2140,73 +2152,121 @@ def _citation_targets(path: pathlib.Path) -> set[str]:
     return found
 
 
+def _audit_index():
+    """索引生成器（同一份扫描口径的唯一出处）。"""
+    script = ROOT / "scripts" / "build_audit_index.py"
+    spec = importlib.util.spec_from_file_location("audit_index", str(script))
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def check_citation_reachability() -> None:
     """代码/测试/壳里的每一处 `§x.y` 与 `P{n}-{m}` 引用都必须真的指得到东西。
 
     为什么单独立这条（2026-09-25，审计 §12.19）：`check_doc_links` 只查 markdown 反引号里的
     **路径**，查不到 .py docstring 里"（架构审计报告 P1-5）"这种**散文引用** —— 而这类引用
-    实测 29 个文件、400 处。后果不是难看，是**文档一动就静默断链**，而断掉的正好是"这个决策
-    为什么长这样"的唯一线索（今天的误判就被一句过期的"P0-3 尚未闭环"带偏过一次）。
+    实测 29 个文件、444 处。后果不是难看，是**文档一动就静默断链**，而断掉的正好是
+    "这个决策为什么长这样"的唯一线索（今天的误判就被一句过期的"P0-3 尚未闭环"带偏过一次）。
 
-    判据按"只在确证的负面上进红"分三级（与 `fail open on uncertainty` 同一条纪律）：
-      * **红**：这个编号在**任何**一份文档里都不存在 —— 要么写错，要么那一节被删了。
-      * **黄**：只存在于 `docs/archive/` 下 —— 引用没有断，但读者拿到的已是作废的规划。
-        首跑实测 27 处指向《架构计划》的 5.2 / 5.3 两节与那份 UI 整改稿的 2.2.2 —— 那些设计
-        早已搬进架构总览。这句话刻意**不写 §**：它是在**叙述**那些编号，不是在**指向**它们，
-        而这条检查分不出这两种（这一行自己就被自己黄到过，2026-09-28 实测在列）。
-        （这里曾经写的是"94 处"——一个没复算的数。本检查存在的理由就是不许这种事发生，
-        结果它自己第一条就犯了，见架构审计（2026-09-26 轮）的 R26-06。）
-      * **黄**：行内点了某份文档、但那个编号在它里面没有而在别处有 —— 归因可疑，不武断。
+    判据在 10-01 改过一次，因为三份审计台账全部搬进了 `docs/archive/`。改之前搬一档的代价是
+    `audit citations` 从 27 条黄跳到 124 条黄（09-25 实测），于是那档一直原地不动 ——
+    根因是**判据把"存放地"当成了"身份"**：编号本身是稳定的，住哪个文件、归不归档是存放细节。
+    现在的两档：
+      * **红**：这个编号在任何一份文档里都不存在（写错了，或者那一节被删了）。
+      * **黄**：行内点了某份文档（"见架构审计报告 P1-5"），而那个编号**不在它那里** —— 归因可疑。
+        认的是**文件名**不是完整路径，所以搬档不会把这条变成噪音。
+    "住在归档里"不再单独报警，只作为元信息上屏（多少条引用落在归档件里），
+    并且由 `audit index in sync` 那条保证每条号都在索引里有地址。
     """
-    live = {p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").glob("*.md")}
-    archived = {
-        p.relative_to(ROOT).as_posix() for p in (ROOT / "docs" / "archive").glob("*.md")
-    }
-    # 一律用**仓库相对 posix 路径**当 key。第一版拿 `pathlib.Path` 绝对路径去
-    # `str(h).startswith("docs/archive")`，Windows 上永远是 False —— 于是"把审计档搬进
-    # archive/"这个本该被看见的动作，只报了 4 条可疑。是搬档模拟实验把它照出来的。
-    targets = {rel: _citation_targets(ROOT / rel) for rel in (*live, *archived)}
+    index = _audit_index()
+    _numbers, homes, _per_doc = index.scanned_citations()
 
     def _home(num: str) -> list[str]:
-        return [rel for rel, pool in targets.items() if num in pool]
+        return sorted(homes.get(num, set()))
 
     dangling: list[str] = []
-    archived_refs: list[str] = []
     doubtful: list[str] = []
+    in_archive = 0
     total = 0
     for path in iter_files(".py", ".ts", ".tsx", ".js"):
-        text = path.read_text(encoding="utf-8", errors="ignore")
         rel_file = path.relative_to(ROOT).as_posix()
+        text = path.read_text(encoding="utf-8", errors="ignore")
         for lineno, line in enumerate(text.splitlines(), 1):
             for match in _SECTION_RE.finditer(line):
                 total += 1
                 num = match.group(1)
-                homes = _home(num)
-                named = next((rel for word, rel in _CITATION_DOC_KEYS if word in line), None)
-                if not homes:
+                found = _home(num)
+                if not found:
                     dangling.append(f"{rel_file}:{lineno} §{num}")
-                elif all(h in archived for h in homes):
-                    archived_refs.append(f"{rel_file}:{lineno} §{num}→{homes[0]}")
-                elif named and named not in homes:
-                    doubtful.append(f"{rel_file}:{lineno} §{num} 点了「{named}」却在别处")
+                    continue
+                if any("/archive/" in f"/{item}" for item in found):
+                    in_archive += 1
+                named = next(
+                    (words for word, words in _CITATION_DOC_KEYS if word in line),
+                    None,
+                )
+                if named and not any(
+                    item.rsplit("/", 1)[-1] in named for item in found
+                ):
+                    doubtful.append(
+                        f"{rel_file}:{lineno} §{num} 点了那份文档，号却不在它里面"
+                    )
             for num in _PID_RE.findall(line):
                 total += 1
                 if not _home(num):
                     dangling.append(f"{rel_file}:{lineno} {num}")
 
     detail = (
-        f"{total} citations; {len(dangling)} dangling, "
-        f"{len(archived_refs)} 指向归档档, {len(doubtful)} 归因可疑"
+        f"{total} citations; {len(dangling)} dangling, {len(doubtful)} 归因可疑"
+        f"（{in_archive} 处落在归档件里，按设计：编号是身份、存放地见索引）"
     )
     out("audit citations", not dangling, detail)
-    for label, items in (
-        ("Dangling §/P citations", dangling),
-        ("Citations into archived (superseded) docs", archived_refs),
-        ("Citations whose named doc lacks the number", doubtful),
+    for label, items, hard in (
+        ("Dangling §/P citations", dangling, True),
+        ("Citations whose named doc lacks the number", doubtful, False),
     ):
         if items:
             line = f"{label} ({len(items)}): " + " | ".join(items[:8])
-            (fails if label.startswith("Dangling") else warns).append(line)
+            (fails if hard else warns).append(line)
+
+
+def check_audit_index_in_sync() -> None:
+    """`docs/架构审计索引.md` 必须是"现在重算一遍"的那一份。
+
+    为什么要有它（10-01，与归档同批）：索引是"编号 → 地址"的那张地图，地图一旦没人更新，
+    它就变成**看起来权威的假地址** —— 比没有地图更糟。所以它跟 `frontend/dist` 一样按
+    "入库的第二份事实"处理：生成物入库 + 一条比字节的断言。搬一次档之后忘了重跑生成器，
+    这里就是红，而不是三个月后有人照着索引去找一个不存在的路径。
+    """
+    index = _audit_index()
+    target = ROOT / "docs" / "架构审计索引.md"
+    if not target.exists():
+        out(
+            "audit index in sync",
+            False,
+            "docs/架构审计索引.md 不见了（跑 scripts/build_audit_index.py）",
+        )
+        fails.append("audit index missing")
+        return
+    expected = index.render()
+    current = target.read_text(encoding="utf-8")
+    if current == expected:
+        rows = sum(
+            1
+            for line in expected.splitlines()
+            if line.startswith("| ") and " | " in line[2:]
+        )
+        out("audit index in sync", True, f"{rows} 行与重算结果逐字一致")
+        return
+    delta = len(expected.splitlines()) - len(current.splitlines())
+    out(
+        "audit index in sync",
+        False,
+        f"索引与重算不一致（行数差 {delta:+}）—— 重跑 scripts/build_audit_index.py",
+    )
+    fails.append("audit index stale")
 
 
 def main() -> int:
@@ -2232,6 +2292,7 @@ def main() -> int:
     check_doc_links()
     check_markdown_table_shape()
     check_citation_reachability()
+    check_audit_index_in_sync()
     check_version_parity()
     check_dead_config()
     check_dependency_layering()
