@@ -133,6 +133,10 @@ STEPS: list[tuple[str, list[str], str]] = [
     # 那一半正是 M2 那发变异（把一族从清单里摘掉）唯一的探测器，只在 full 档跑等于"打完才醒"。
     ("随包后端 parity", [PY, "scripts/check_bundle_parity.py"], "both"),
     ("真机冒烟(14 项)", [PY, "scripts/smoke_check.py"], "full"),
+    # **末尾再问一次 README 那组数**（`R28-73`）：`consistency` 排在覆盖率与 vitest 之前，
+    # 那两个数在本趟里是"比对之后才写进去的"，于是那一格永远晚一趟才发现漂。
+    # 判据不重写第二份 —— 这个脚本直接加载 `check_consistency` 只调那一个函数。
+    ("README 数字收尾", [PY, "scripts/check_readme_numbers.py"], "both"),
 ]
 
 
