@@ -38,6 +38,19 @@ if not (DIST / "index.html").exists():
     raise SystemExit(msg)
 
 datas = [(str(DIST), "frontend/dist")]
+# **身份也要打进包**（10-01，盘点 P0-1）：`core/build_info.py` 在冻结态读
+# `_internal/build_info.json` 才知道"这一包是从哪个 commit 打的"，`/api/health` 于是能报指纹，
+# 第③层就从"问一个恰好只在新代码里存在的键"升级成"直接定版"。
+# 缺这个文件就**拒绝出产物** —— 一个不知道自己是谁的包，正是 09-26 那次"纯后端改动、前端哈希
+# 一字不差、验货照样打 OK"的形状。正常入口 `scripts/build_sidecar.py` 一定会先写它；
+# 会撞到这条的只有"直接 pyinstaller 这个 spec"的人，而那条路本来就该被拦。
+BUILD_INFO = ROOT / "build" / "build_info.json"
+if not BUILD_INFO.exists():
+    raise SystemExit(
+        f"缺 {BUILD_INFO} —— 打出来的包会没有身份（`/api/health` 只能报 unknown）。"
+        "请走 `python scripts/build_sidecar.py`，它会先写指纹再调本 spec。"
+    )
+datas.append((str(BUILD_INFO), "."))
 # 建表脚本：目标目录 = 运行时 PACKAGE_ROOT 之下那个相对位置，一字不能错。
 # 内核那两份写死（它们是本仓的骨架，不会新增）；**域那一份按文件系统现数**
 # （审计 `R28-33`）：运行时走的是 `storage/db.py:domain_schema_path()` 的

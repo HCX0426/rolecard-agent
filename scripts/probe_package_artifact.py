@@ -8,11 +8,14 @@
 三路各打**一层**，缺一层就会重演"前端是新的、后端是旧的还照样打印 OK"那次：
 ① 前端层 —— 包内 `_internal/frontend/dist` 与仓库 `frontend/dist` **逐文件 sha256 全等**，
    并核对 `GET /` 真正吐出来的入口资产（判据从仓库 dist 派生，不写死哈希）；
-② 后端层 —— 包内那份 `rolecard-backend.exe` 的 sha256 == `build/sidecar` 里刚构建的那份
-   （那份不存在就跳过并说明，不假红）；
-③ frozen 层 —— 起包内那个 exe 答一次 `/api/health`，再读一个**只可能来自新代码**的读数
-   （`/api/uploads/orphans` 的键集合：`dangling` 是 `R28-19` 才加的）。收进 PYZ ≠ frozen 可用，
-   这一层与 CI 上那条 `发布链` job 量的是同一件事。
+② 后端层 —— 包内那份 `rolecard-backend.exe` 的 sha256 == `build/sidecar` 里刚构建的那份；
+   **刚构建的那份不在就红**，不再"跳过算过"（10-01 改的：旧写法在这里 `return True`，
+   于是"三层全绿"可以在中间一层根本没跑的情况下打印出来，而这句话的全部意义就是三层都跑了）；
+③ frozen 层 —— 起包内那个 exe，问 `/api/health` 里的 **`build.sha`（这一包自报的 commit）**
+   并直接与仓库 HEAD 比 —— 这是决定性判据，与"比对对象还在不在"无关；打包那一刻工作树脏也判红
+   （"装的就是 HEAD"那句此刻不成立）。`/api/uploads/orphans` 的键集合从判据**降级为读数**：
+   `dangling` 是 `R28-19` 加的，第十五包里就有，它只证明"frozen 那份码真被执行了"（收进 PYZ ≠
+   frozen 可用），证明不了"最新"。
 
 安全边界（与探针同一套规矩）：数据根落在系统临时目录、端口现取、**绝不打 :8000**、
 只 terminate 自己 spawn 的那个 pid。
@@ -58,6 +61,20 @@ def _sha256(path: pathlib.Path) -> str:
         for block in iter(lambda: handle.read(1 << 20), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _repo_head_sha() -> str:
+    """仓库现在的 HEAD。读不到回空串 —— 调用方必须把它当"没有基准"，不许当"相等"。"""
+    done = subprocess.run(  # noqa: S603
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    return done.stdout.strip()
 
 
 def _files(root: pathlib.Path) -> dict[str, str]:
@@ -114,16 +131,21 @@ def check_frontend() -> bool:
 
 
 def check_backend_binary() -> bool:
-    """② 包内那份 exe == 刚构建的那份。刚构建的那份不在就**跳过**（不假红，但要说明）。"""
+    """② 包内那份 exe == 刚构建的那份。**刚构建的那份不在就红**，不"跳过算过"。
+
+    10-01 改的（盘点 P0-1）：旧写法在这里 `return True`，于是"三层全绿"这句结论可以在
+    中间一层根本没跑的情况下打印出来 —— 而这句话的全部意义就是"三层都跑过了"。
+    比不了就说比不了：这一层证明的是**字节**一致，第③层证明的是**身份**一致，两件事不能互替。
+    """
     inside = PKG_BACKEND / "rolecard-backend.exe"
     if not inside.exists():
         print(f"  ✗ 包里没有后端：{inside}")
         return False
     if not FRESH_SIDECAR.exists():
-        print(f"  ⚠ 跳过：{FRESH_SIDECAR.relative_to(ROOT)} 不存在 —— 这一发比不了「刚构建的那份」")
+        print(f"  ✗ 比不了：{FRESH_SIDECAR.relative_to(ROOT)} 不存在 —— 没有「刚构建的那份」当尺子")
         print(f"    包内那份 sha256 = {_sha256(inside)[:12]}…"
-              "（想比这一发就先跑 scripts/build_sidecar.py）")
-        return True
+              "（先跑 scripts/build_sidecar.py 再打这一发）")
+        return False
     a, b = _sha256(FRESH_SIDECAR), _sha256(inside)
     print(f"  刚构建 = {a[:12]}…  包内 = {b[:12]}…")
     if a != b:
@@ -134,7 +156,13 @@ def check_backend_binary() -> bool:
 
 
 def check_frozen_boot() -> bool:
-    """③ 起包内那个 exe：health 200 + `GET /` 的入口 == 仓库入口 + orphans 的键集合。"""
+    """③ 起包内那个 exe：**先问它是从哪个 commit 打的**，再看界面入口与或孤儿盘点。
+
+    身份这一格是 10-01 加的决定性判据（盘点 P0-1）。旧版这一层问的是"`/api/uploads/orphans`
+    里有没有 `dangling` 这个键"，那只能证明"至少是 `R28-19` 之后"——第十五、十六包里它都成立，
+    所以它**看不见**最近那一笔纯后端改动。前端哈希（①）也一样看不见：那一笔没动界面。
+    现在它自己报 sha，判据退化成一次字符串比较，与"比对对象还在不在"无关。
+    """
     exe = PKG_BACKEND / "rolecard-backend.exe"
     if not exe.exists():
         print(f"  ✗ 没有 {exe}")
@@ -142,6 +170,11 @@ def check_frozen_boot() -> bool:
     want = _repo_entry()
     if not want:
         print("  ✗ 仓库 frontend/dist/index.html 没数出入口文件名")
+        return False
+    head = _repo_head_sha()
+    if not head:
+        print("  ✗ 读不到仓库 HEAD —— 这一发没有比对的基准"
+                  "（不是包的问题，是这里没在 git 仓库里跑）")
         return False
     port = _free_port()
     data_root = pathlib.Path(tempfile.mkdtemp(prefix="rc_pkg_artifact_"))
@@ -179,6 +212,28 @@ def check_frozen_boot() -> bool:
             return False
         print(f"  ✓ health 200 :: {health[:120]}")
 
+        # —— 决定性的一格：这一包自报的 commit 是不是仓库现在的 HEAD。
+        try:
+            reported = (json.loads(health).get("build") or {}).get("sha") or ""
+            built_dirty = (json.loads(health).get("build") or {}).get("dirty")
+        except ValueError:
+            reported, built_dirty = "", None
+        if not reported or reported == "unknown":
+            print("  ✗ 它没报构建指纹（`build.sha` 缺失或 unknown）—— 这一包不知道自己是谁")
+            print("     两种可能：① 这一包是在指纹机制存在之前打的（那它本来就该被重打一次）；"
+                  "② 有人绕过 scripts/build_sidecar.py 直接 pyinstaller —— spec 里那道硬闸该拦住的")
+            return False
+        print(f"  这一包自报 git_sha={reported}（打包时工作树 dirty={built_dirty}）")
+        if reported != head[: len(reported)]:
+            print(f"  ✗ 包里的后端来自 {reported}，而仓库 HEAD 是 {head[: len(reported)]}"
+                  " —— 攒着没重打的那一笔就在这里")
+            return False
+        if built_dirty:
+            print("  ✗ 指纹对上了，但打包那一刻工作树是**脏**的："
+                  "「装的就是 HEAD」这句话不成立，先把改动提交再重打")
+            return False
+        print(f"  ✓ 身份一致：这一包就是 {head[:12]}")
+
         served = ""
         try:
             _, page = _get(f"{base}/")
@@ -198,11 +253,10 @@ def check_frozen_boot() -> bool:
         except (urllib.error.URLError, OSError, ValueError) as exc:
             print(f"  ✗ /api/uploads/orphans 没答：{exc}")
             return False
-        print(f"  或孤儿盘点的键集合 = {keys}")
-        if "dangling" in keys:
-            print("  ✓ 有 dangling（`R28-19` 那一笔在后端 bundle 里也活着）")
-        else:
-            print("  ✗ 没有 dangling —— 包里那份后端是旧的")
+        # 这一格从"判据"降级成"读数"（10-01）：`dangling` 是 `R28-19` 加的，第十五包里就有，
+        # 它证明不了"最新"，只能证明"frozen 那条码真的被执行了"（收进 PYZ ≠ frozen 可用）。
+        has_dangling = "有" if "dangling" in keys else "没有"
+        print(f"  或孤儿盘点的键集合 = {keys}（含 dangling：{has_dangling}）")
         return "dangling" in keys
     finally:
         srv.terminate()
@@ -216,8 +270,8 @@ def check_frozen_boot() -> bool:
 def main() -> int:
     layers = [
         ("① 前端层：包内 dist == 仓库 dist", check_frontend),
-        ("② 后端层：包内 exe == 刚构建那份", check_backend_binary),
-        ("③ frozen 层：起它、答话、读一个只可能来自新代码的数", check_frozen_boot),
+        ("② 后端层：包内 exe == 刚构建那份（缺尺子即红，不算跳过）", check_backend_binary),
+        ("③ frozen 层：起它、问它是哪个 commit、再看界面与读数", check_frozen_boot),
     ]
     failed: list[str] = []
     for title, fn in layers:

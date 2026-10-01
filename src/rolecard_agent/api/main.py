@@ -68,6 +68,7 @@ from rolecard_agent.api.routers import sync as sync_router
 from rolecard_agent.api.routers import workspace as workspace_router
 from rolecard_agent.config import Settings
 from rolecard_agent.core.bootstrap import Assembly, build_runtime
+from rolecard_agent.core.build_info import read_build_info
 from rolecard_agent.core.identity import active_user_id, resolve_instance_identity
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.observability import Tracer
@@ -354,9 +355,21 @@ def create_app(
     def health() -> object:
         """探活：容器 healthcheck 与反代探活用，**必须免鉴权**（默认在 `AUTH_EXEMPT_PATHS` 里）。
 
-        只回状态与当前认证档位 —— 便于部署后确认"认证到底开没开"，不含任何凭证信息。
+        只回状态、当前认证档位，以及**这份代码是从哪个 commit 打的** —— 便于部署后确认"认证到底
+        开没开"与"跑着的是哪一版"，不含任何凭证信息。
+
+        `build` 那一格是 10-01 补的（打包链盘点 P0-1）：`probe_package_artifact.py` 的三层判据里，
+        ① 比前端哈希、② 比刚构建的 exe 字节，一次**纯后端**改动会让 ① 一字不差地绿而 ② 在没有
+        `build/sidecar` 时比不了 —— 于是"全绿"证明不了"屏幕上的后端是最新那一笔"。事实烤进产物之后，
+        定版只需要问这一个字段。开发态现取 `git rev-parse HEAD` 与工作树脏旗；打不出来说 `unknown`，
+        **不猜**（猜出来的相等比红更难查）。
         """
-        return {"status": "ok", "version": API_VERSION, "auth_mode": env_settings.auth_mode}
+        return {
+            "status": "ok",
+            "version": API_VERSION,
+            "auth_mode": env_settings.auth_mode,
+            "build": read_build_info().as_dict(),
+        }
 
     dist_dir = console_dist_dir()
     if (dist_dir / "index.html").exists():

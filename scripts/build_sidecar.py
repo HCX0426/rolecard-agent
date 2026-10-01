@@ -9,18 +9,26 @@
 
 产物不复制到 `shell/`：electron-builder 的 `extraResources` 直接指过来这一份（少一次复制
 就少一处"改了 spec 忘了重拷"的错位）。
+
+**打包前先把身份烤进去**（10-01，盘点 P0-1）：`build/build_info.json` 记 HEAD 与工作树脏旗，
+spec 把它收进 `_internal/`，`/api/health` 于是能报"这一包是从哪个 commit 打的"。没有它，
+`probe_package_artifact.py` 只能比字节 —— 一次纯后端改动会让前端哈希一字不差，"全绿"就骗人。
 """
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "build" / "sidecar"
 WORK = ROOT / "build" / "sidecar-work"
 SPEC = ROOT / "packaging" / "rolecard-backend.spec"
+#: 烤进产物的那份身份文件（`core/build_info.py` 里有它的名字，两处不许各写一遍）。
+BUILD_INFO = ROOT / "build" / "build_info.json"
 
 # 与 `gate.py` 同一族、同一个漏网（`R26-24` 当时只修了 gate.py）：Windows 控制台默认 GBK，
 # 收尾那句「✅」在 **PyInstaller 已经全部成功之后** 抛 UnicodeEncodeError ⇒ 退出码 1，
@@ -34,10 +42,45 @@ def _size_mb(path: Path) -> float:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) / 1024 / 1024
 
 
+def _git(*args: str) -> str:
+    done = subprocess.run(  # noqa: S603
+        ["git", *args],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    return done.stdout.strip()
+
+
+def _write_build_info() -> None:
+    """把"这一包是从哪份源码打的"写进 `build/build_info.json`，由 spec 收进 `_internal/` 根。
+
+    写不出 sha（不是 git 仓库 / git 不在）就老实写 `unknown` —— 让 `/api/health` 与判据自己去红，
+    而不是造一个"两边都空所以相等"的绿。`dirty` 一起记：从脏工作树打出来的包，"装的就是 HEAD"
+    这句话本来就不成立，让它在产物里带着这个旗，比让文档去猜谁改过什么诚实。
+    """
+    sha = _git("rev-parse", "HEAD")
+    dirty = bool(_git("status", "--porcelain"))
+    payload = {
+        "git_sha": sha or "unknown",
+        "built_utc": datetime.now(UTC).isoformat(timespec="seconds"),
+        "dirty": dirty,
+    }
+    BUILD_INFO.parent.mkdir(parents=True, exist_ok=True)
+    BUILD_INFO.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
+    print(f"构建指纹 git_sha={sha[:12] or 'unknown'} dirty={dirty} → {BUILD_INFO}", flush=True)
+
+
 def main() -> int:
     if not (ROOT / "frontend" / "dist" / "index.html").exists():
         print("缺 frontend/dist：先 `cd frontend && npm run build`", file=sys.stderr)
         return 2
+    _write_build_info()
     cmd = [
         sys.executable,
         "-m",
