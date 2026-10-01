@@ -7,7 +7,7 @@ import { IconImage, IconSend, IconSparkle, IconStop } from "./icons";
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 
 /**
- * 输入框（WorkBuddy 式）：发送/暂停是嵌在框内的图标按钮；左下「增强提示词」，
+ * 输入框（紧凑 IDE 式）：发送/暂停是嵌在框内的图标按钮；左下「增强提示词」，
  * 右下上下文使用率（悬停看明细）。
  *
  * `inputRef` 由页面传进来：深链跳进一条会话时要把光标直接落在输入框（用户跳进来的目的是回话），

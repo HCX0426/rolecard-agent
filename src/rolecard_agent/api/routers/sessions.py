@@ -989,7 +989,7 @@ class PromptEnhanceBody(BaseModel):
 def enhance_prompt(
     body: PromptEnhanceBody, ctx: AppContext = Depends(get_context)
 ) -> object:
-    """增强提示词：把草稿改写得更清晰具体（对齐 WorkBuddy，用户 2026-09-17）。
+    """增强提示词：把草稿改写得更清晰具体（用户 2026-09-17 提出，照紧凑 IDE 的输入区观感）。
 
     用默认对话模型做一次纯改写调用——不建会话、不入历史。失败给可读 502，
     空文本 400。这是"工具性请求"，所以不写审计（审计留痕的是管理面变更）。

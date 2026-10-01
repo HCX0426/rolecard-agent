@@ -42,7 +42,7 @@ export const IconImage = () => (
   </svg>
 );
 
-/** 发送（上箭头）——嵌在输入框内的图标按钮（WorkBuddy 式）。 */
+/** 发送（上箭头）——嵌在输入框内的图标按钮（紧凑 IDE 式）。 */
 export const IconSend = () => (
   <svg {...ICON} className="h-4 w-4">
     <path d="M12 19V6M12 6l-5.5 5.5M12 6l5.5 5.5" />

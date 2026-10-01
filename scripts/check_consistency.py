@@ -1398,14 +1398,11 @@ def check_doc_links() -> None:
 
     broken: list[str] = []
     unresolved: list[tuple[str, str]] = []
-    # 两条刻意不参与：
+    # 一条刻意不参与：
     #  * `docs/archive/` 是**封存件** —— 里面的路径是"写它的那天"的事实，按 R26-19 的同一个
     #    决定（引用可达性进门禁，但归档档里的编号与路径原地不动）不去追修它们。
-    #  * `.workbuddy/` 是另一个 IDE 的会话日志（见记忆「Parallel IDE workflow」）——
-    #    那是历史陈述句不是文档，且由另一个工具在写。
     def out_of_scope(rel: pathlib.Path) -> bool:
-        parts = set(rel.parts)
-        return "archive" in parts or ".workbuddy" in parts
+        return "archive" in set(rel.parts)
 
     for path in iter_files(".md"):
         rel = path.relative_to(ROOT)

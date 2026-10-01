@@ -377,7 +377,7 @@ export default function ChatPage({
     );
   }
 
-  /** 重新生成：丢弃该回答及其后的历史，用触发本轮的用户消息原样重问（WorkBuddy 式）。 */
+  /** 重新生成：丢弃该回答及其后的历史，用触发本轮的用户消息原样重问（紧凑 IDE 式）。 */
   function regenerate(turn: BuiltTurn<MessageRow>) {
     const uid = turn.user?.id;
     const content = turn.user?.content ?? "";
@@ -394,7 +394,7 @@ export default function ChatPage({
   );
   const ctxPct = ctxBudget > 0 ? Math.min(100, Math.round((ctxUsed / ctxBudget) * 100)) : 0;
 
-  /** 增强提示词：一次纯改写模型调用，结果替换草稿（对齐 WorkBuddy）。 */
+  /** 增强提示词：一次纯改写模型调用，结果替换草稿（紧凑 IDE 式）。 */
   async function enhance() {
     const draft = input.trim();
     if (!draft || busy || enhancing) return;
@@ -734,7 +734,7 @@ export default function ChatPage({
             </div>
           )}
           <div className="mx-auto flex max-w-3xl flex-col gap-6">
-            {/* 按轮渲染（WorkBuddy 式）：用户气泡 → 一个「过程」折叠面板（思考/工具同框）
+            {/* 按轮渲染（紧凑 IDE 式）：用户气泡 → 一个「过程」折叠面板（思考/工具同框）
                 → 最终回答 + 操作行。逐条渲染会把一轮散成三个突兀的框（用户反馈）。 */}
             {turns.map((turn) => {
               // 勾选位：一问一答共用一个（后端也按整轮删），所以取用户那条优先。
