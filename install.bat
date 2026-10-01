@@ -8,11 +8,10 @@ setlocal
 cd /d "%~dp0"
 
 echo [1/5] Python venv (.venv)
-if exist ".venv\Scripts\python.exe" (
-  echo       already exists, skip
-) else (
-  python -m venv .venv || goto :fail
-)
+if exist ".venv\Scripts\python.exe" goto :venv_ready
+call :find_python "%~1" || goto :fail
+"%PY%" -m venv .venv || goto :fail
+:venv_ready
 
 echo [2/5] backend deps: core + api + rag + cloud + mcp
 rem cloud is installed, not just advertised (R28-12): the model page lets you add any
@@ -35,9 +34,46 @@ echo [4/5] database schema + built-in roles (idempotent)
 echo [5/5] done.
 echo       Next: run start.bat  -  console opens at http://127.0.0.1:8000/
 echo       Optional: requirements-ocr.txt needs its OWN venv (see that file first)
-echo                 requirements-mcp.txt too - but the packaged backend ships it (R28-34)
+echo       Local gate (scripts/gate.py) additionally wants requirements-dev.txt and
+echo       requirements-package.txt - deliberately NOT part of a product install: dev
+echo       deps stay out of the runtime tree, packaging only matters on a build box.
 pause
 exit /b 0
+
+rem =========================================================================
+rem Pick an interpreter that actually RUNS. Bare `python` / `python3` on PATH is
+rem frequently the Microsoft Store *alias* - a stub that exits 49 (and opens the
+rem Store page) without ever running Python - so a plain `python -m venv` can
+rem fail with no usable message. `py` is tried first because the real launcher is
+rem never shadowed by that alias. Override with either of:
+rem     install.bat "D:\path\to\python.exe"
+rem     set ROLECARD_PY=D:\path\to\python.exe  &&  install.bat
+rem Order: argument -> ROLECARD_PY -> py/python/python3 on PATH -> the two
+rem standard per-machine install dirs -> a failure message that names the alias.
+rem =========================================================================
+:find_python
+set "PY=%~1"
+if not defined PY set "PY=%ROLECARD_PY%"
+if defined PY (
+  "%PY%" -c "print(1)" >nul 2>nul && exit /b 0
+  echo [install] not a working interpreter: %PY%
+  exit /b 1
+)
+for %%C in (py python python3) do (
+  "%%C" -c "print(1)" >nul 2>nul && if not defined PY set "PY=%%C"
+)
+if defined PY exit /b 0
+for %%P in ("%LocalAppData%\Programs\Python\Python313\python.exe" "%LocalAppData%\Programs\Python\Python312\python.exe" "%ProgramFiles%\Python313\python.exe") do (
+  if not defined PY if exist %%P set "PY=%%~P"
+)
+if defined PY exit /b 0
+echo [install] No usable Python 3.13+ found on this machine.
+echo [install]   If typing "python" opens the Microsoft Store: Settings - Apps -
+echo [install]   Advanced settings - App execution aliases, turn OFF python.exe and
+echo [install]   python3.exe, install Python ticking "Add python.exe to PATH", re-run.
+echo [install]   Or point this installer at an interpreter you already have:
+echo [install]     install.bat "D:\path\to\python.exe"
+exit /b 1
 
 :fail
 echo.
