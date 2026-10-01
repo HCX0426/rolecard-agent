@@ -38,7 +38,7 @@ if not (DIST / "index.html").exists():
     raise SystemExit(msg)
 
 datas = [(str(DIST), "frontend/dist")]
-# **身份也要打进包**（10-01，盘点 P0-1）：`core/build_info.py` 在冻结态读
+# **身份也要打进包**（10-01，台账 R28-56）：`core/build_info.py` 在冻结态读
 # `_internal/build_info.json` 才知道"这一包是从哪个 commit 打的"，`/api/health` 于是能报指纹，
 # 第③层就从"问一个恰好只在新代码里存在的键"升级成"直接定版"。
 # 缺这个文件就**拒绝出产物** —— 一个不知道自己是谁的包，正是 09-26 那次"纯后端改动、前端哈希
@@ -57,7 +57,7 @@ datas.append((str(BUILD_INFO), "."))
 # `domains/<id>/schema.sql`，是"域目录里有 schema 就建表"的动态口径。spec 原来手抄四份，
 # 于是新增一个带 schema 的域插件 ⇒ 源码态建表正常、**打包态建表直接失败**，
 # 而构建期一句报警都没有。数文件这件事只该有一个出处。
-# **数文件这件事只该有一个出处**（10-01 盘点 P1-8）：从前 spec 与 `check_bundle_parity.py` 各写
+# **数文件这件事只该有一个出处**（10-01 台账 R28-59）：从前 spec 与 `check_bundle_parity.py` 各写
 # 一遍同样的 glob，两条规则一分叉，症状又是「源码态建表正常、打包态建表直接失败」而构建期零报警。
 # 现在两边都问 `core/artifacts.py::schema_package_paths`（运行时的口径是 db.py:domain_schema_path()，
 # 三处本来就是同一件事）。
