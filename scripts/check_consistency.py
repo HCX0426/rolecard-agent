@@ -84,6 +84,10 @@ IGNORED_DIRS = {
     # 的脚本当成待检文件判红 —— 与 C24 那次"把 site-packages 数成项目代码"同一族：
     # 尺子必须只看这一个世界。
     "build",
+    # `out`/`release`（`R102-35`）：shell 的构建产物目录，各自 .gitignore 挡着 —— 从前
+    # 判据读进 gitignore 的构建树，同一份码在干净 clone 打 427、在本机打 446。
+    "out",
+    "release",
 }
 
 
@@ -1384,11 +1388,15 @@ def check_doc_links() -> None:
     # 《实施计划》，而在此之前这条检查报的是 "all resolve"。
     # markdown 链接的目标 `](a.md)` 也一起看 —— 那是真链接，不是包内简写，误报面为零。
     cjk = "".join(chr(c) for c in range(0x4E00, 0xA000)) + "\uff08\uff09\u3001\u00b7\u2014"
-    name_cls = f"{cjk}A-Za-z0-9_"
+    # 半角空格进字符类（`R102-34`）：三份台账的文件名全带空格（`架构审计（2026-09-28 轮）.md`），
+    # 从前 `name_cls` 不收空格 ⇒ 引用它们的 6 处**整段吃不到** —— 把《…轮》删掉这条断言照打
+    # "all resolve"。结尾字符类不能带空格（文件名不以空格结尾），分隔符继续点横线。
+    name_cls = f"{cjk}A-Za-z0-9_ "
     pattern = re.compile(
         rf"`([{name_cls}][{name_cls}.\-/]*\.(?:md|py|toml|txt|sql|json|cfg|ini|zip))`"
     )
-    link_pattern = re.compile(r"\]\(([^)\s#]+?\.(?:md|png|jpg|json))\)")
+    # `]()` 形态同样收空格（`R102-34`）：`[^)\s#]` → `[^)#]`，锚点 `#` 与右括号仍是界。
+    link_pattern = re.compile(r"\]\(([^)#]+?\.(?:md|png|jpg|json))\)")
 
     def resolvable(md_path: pathlib.Path, ref: str) -> bool:
         """仓库相对路径按仓库根解；裸文件名（含 `../` 形式）按本文件所在目录解。"""
@@ -2386,10 +2394,17 @@ _CITATION_DOC_KEYS: tuple[tuple[str, frozenset[str]], ...] = (
     ),
 )
 _SECTION_RE = re.compile(r"§\s*(\d+(?:\.\d+)*)")
-_PID_RE = re.compile(r"\b(P\d-\d+)\b")
+# `[RP]\d+-\d+`（`R102-33`）：R 号命名空间（R26/R28/R102…）从来都在被引用，而旧正则只认
+# P 号 —— 95 个文件 290 处引用处于盲区，"有这条检查看着"是假的。宽判据实验（内存里做）：
+# R 号进来后被引用编号 92 个、悬空 2 个（见 _CITATION_PROSE_ONLY），洪峰可控。
+_PID_RE = re.compile(r"\b([RP]\d+-\d+)\b")
 #: 文档里可以当被引用目标的两种形状：标题编号（`### 12.19 …`）与台账行号（`| 12.4 |`）。
 _TARGET_HEAD_RE = re.compile(r"^#{2,5}\s+(\d+(?:\.\d+)*)\b")
-_TARGET_ROW_RE = re.compile(r"^\|\s*(P\d-\d+|\d+\.\d+)\s*\|")
+_TARGET_ROW_RE = re.compile(r"^\|\s*([RP]\d+-\d+|\d+\.\d+)\s*\|")
+#: 只活在**散文**里、从来没有台账行锚点的历史编号（同一次宽判据实验量得的全部悬空）。
+#: R28-44/45 描述的事件已并入 §10 的教训正文 —— 它们不是断链，是"正文吸收了条目"。
+#: 这份名单是**豁免登记处**：新的悬空出现时先查是不是同类，是就登记理由，不是就修引用。
+_CITATION_PROSE_ONLY = frozenset({"R28-44", "R28-45"})
 
 
 def _citation_targets(path: pathlib.Path) -> set[str]:
@@ -2468,6 +2483,8 @@ def check_citation_reachability() -> None:
                     )
             for num in _PID_RE.findall(line):
                 total += 1
+                if num in _CITATION_PROSE_ONLY:
+                    continue  # 豁免登记处：只活在散文里的历史编号（见该常量的理由）
                 if not _home(num):
                     dangling.append(f"{rel_file}:{lineno} {num}")
 

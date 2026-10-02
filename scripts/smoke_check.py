@@ -231,7 +231,11 @@ def main() -> int:
         # `model=`，于是热重建把假模型换成**真后端** —— `_settings` 那一项因此偷偷打了
         # 一次真 Ollama，与"离线冒烟"的自述不符（架构审计报告 §6））。
         app = create_app(sqlite_path=db_path, model=model, model_factory=lambda *_a, **_k: model)
-        with TestClient(app) as c:
+        # base_url 用回环（`R102-45` 护栏的冒烟覆盖）：TestClient 默认 Host 是 "testserver"，
+        # 来源标识护栏（本机形态只认回环 Host）会把它全数 403 —— 冒烟线是本机客户端形态，
+        # 本来就该以 127.0.0.1 的身份进门。护栏的**应红**形状由
+        # tests/unit/test_local_origin_guard.py 单独钉。
+        with TestClient(app, base_url="http://127.0.0.1") as c:
             run_all(c, db_path)
     # 真机 UI 冒烟放**最后**：它依赖外部服务与本机浏览器，且是整套里最贵的一项。
     # 此前它是模块级 `@check` 装饰的函数 —— 装饰即执行，于是实际跑在**最前**（顺序反了，
