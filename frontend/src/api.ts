@@ -253,6 +253,9 @@ export interface ReportRecord {
 }
 
 export interface AuditRow {
+  // 后端明确带下来的唯一 id（`R102-17`）：展开态的数据锚点就是它 —— 从前拿
+  // (ts,action) 当键，同一秒同动作的 5 条一起开。
+  id: number;
   ts: string;
   actor: string;
   action: string;

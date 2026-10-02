@@ -177,8 +177,11 @@ function MemoryPanel() {
   const [treeErr, setTreeErr] = useState("");
   // 主动开口全局总闸（覆盖运行环境的 REACHOUT_ENABLED）：rejectOn = 有效值。
   const [reachoutOn, setReachoutOn] = useState<boolean | null>(null);
-  // 收件箱折叠窗口（天，1/3/7）：与总闸同帖单写点，运行环境只读展示。
+  // 收件箱折叠窗口（天）：与总闸同帖单写点，运行环境只读展示。
+  // 档位清单跟 payload 的 `choices` 走（`R102-19`）—— 后端加一档界面跟着多一项，
+  // 从前硬编码三个 <option>，界面成了"后端加档它不知道、删档点了收 400"的谎言。
   const [mergeDays, setMergeDays] = useState<number | null>(null);
+  const [mergeChoices, setMergeChoices] = useState<string[]>(["1", "3", "7"]);
   const [reachoutMsg, setReachoutMsg] = useState("");
   const [reachoutErr, setReachoutErr] = useState("");
   const confirm = useConfirm();
@@ -498,6 +501,7 @@ function MemoryPanel() {
     // 收件箱折叠窗口：读的是**生效值**（env + 在线覆盖叠加），和总闸同一个来源。
     const merge = items.find((i) => i.field === "reachout_merge_days");
     setMergeDays(merge ? Number.parseInt(merge.value, 10) || 1 : null);
+    if (merge?.choices && merge.choices.length > 0) setMergeChoices(merge.choices);
   }, []);
 
   useEffect(() => {
@@ -870,9 +874,11 @@ function MemoryPanel() {
             onChange={(e) => void changeMergeDays(e.target.value)}
             className="rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
           >
-            <option value="1">每 1 天一摞（按天）</option>
-            <option value="3">每 3 天一摞</option>
-            <option value="7">每 7 天一摞</option>
+            {mergeChoices.map((c) => (
+              <option key={c} value={c}>
+                每 {c} 天一摞
+              </option>
+            ))}
           </select>
           {mergeDays === null && <span className="text-[10px] text-slate-400">读取中…</span>}
         </label>
@@ -1424,11 +1430,10 @@ function AuditPanel() {
                 </td>
               </tr>
             )}
-            {/* 审计行没有唯一 id（M7）：数据锚定 + 序号消歧的组合键；
-                列表整体替换不重排，同 (ts,actor,action,target) 重复行靠 i 区分。 */}
+            {/* 展开键 = 后端下发的唯一 id（`R102-17`）；行 key 仍带序号兜底渲染去歧。 */}
             {filtered.map((a, i) => (
               <tr
-                key={`${a.ts}|${a.actor}|${a.action}|${a.target ?? ""}|${i}`}
+                key={`${a.id}|${a.ts}|${a.actor}|${a.action}|${a.target ?? ""}|${i}`}
                 className="border-b border-slate-50 last:border-0"
               >
                 <td className="whitespace-nowrap px-4 py-2 font-mono text-slate-500 dark:text-slate-400">
@@ -1441,13 +1446,13 @@ function AuditPanel() {
                 <td className="max-w-40 truncate px-4 py-2 font-mono text-slate-500 dark:text-slate-400">{a.target}</td>
                 <td className="max-w-56 px-4 py-2 align-top text-slate-400 dark:text-slate-500">
                   {/* 详情可点开：截断摘要 + title 悬浮不够看全 JSON（审计走查反馈） */}
-                  {a.detail_json && expanded === `${a.ts}|${a.action}` ? (
+                  {a.detail_json && expanded === String(a.id) ? (
                     <pre className="max-w-72 whitespace-pre-wrap break-all rounded bg-slate-50 p-1.5 font-mono text-[11px] text-slate-600 dark:bg-slate-700/40 dark:text-slate-300">
                       {a.detail_json}
                     </pre>
                   ) : (
                     <button
-                      onClick={() => setExpanded(a.detail_json ? `${a.ts}|${a.action}` : null)}
+                      onClick={() => setExpanded(a.detail_json ? String(a.id) : null)}
                       className="max-w-56 cursor-pointer truncate text-left hover:text-slate-600 dark:hover:text-slate-300"
                       title="点击展开完整详情"
                     >
