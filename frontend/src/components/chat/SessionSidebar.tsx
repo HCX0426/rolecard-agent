@@ -9,7 +9,7 @@ import type { RoleCard, ThreadRow } from "../../api";
  * 用户有没有先收到过主动消息。
  *
  * 两个旗标都来自后端（`is_proactive` / `is_blank`），前端不猜线程 id 的形状，也不拿
- * "有没有标题"猜空不空：前者是 `core/reachout.py` 的事实，后者会被重命名过的空线程与
+ * "有没有标题"猜空不空：前者是 `core/reachout/inbox.py` 的事实，后者会被重命名过的空线程与
  * 深链刚建出来的线程一起骗过去。
  */
 export default function SessionSidebar({

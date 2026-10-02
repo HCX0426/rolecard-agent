@@ -66,7 +66,8 @@ _MIN_CLAUSE_GRAMS = 2
 #: 出口侧的 `repeat_score` 闸门，以及内容层（角色卡三条范例同型，设计稿 §8.2 第 3 条，要用户点头）。
 CLAUSE_DICE = 0.75
 
-#: 闸门（只用于主动开口那侧，见 `core/reachout.py`）。**定标依据**（2026-09-22 真库 elysia：
+#: 闸门（只用于主动开口那侧，见 `core/reachout/triggers.py`）。**定标依据**
+#: （2026-09-22 真库 elysia：
 #: 12 条主动开口 + 那条主动会话的回复，`repeat_score` 对"她之前说过的"）：
 #:
 #: | 案例 | 分数 |

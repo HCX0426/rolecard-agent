@@ -20,7 +20,7 @@ per-role 闸门，由调用方判定。基线时间戳只在**推进基线**时�
 角色消费）后由调用方推进基线；超过 `EVENT_EXPIRY` 无人开口则过期丢弃（重扫建基线）。
 
 领域中性纪律：本模块不感知"角色/开口"概念，check_changes 只回答"目录相对基线变了
-没有"；触发口吻与素材注入在调用方（core/reachout.py）。
+没有"；触发口吻与素材注入在调用方（core/reachout/triggers.py）。
 """
 
 from __future__ import annotations
