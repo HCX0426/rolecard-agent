@@ -57,7 +57,7 @@ describe("ShellReleaseCard", () => {
     apiMock.getShellRelease.mockResolvedValue(release());
     await mount();
     expect(screen.getByText(/rolecard-agent-0\.1\.0-x64\.exe/)).toBeTruthy();
-    expect(screen.getByText(/181 MB/)).toBeTruthy();
+    expect(screen.getByText(/181.0 MB/)).toBeTruthy();
     expect(screen.getByText(/构建于/)).toBeTruthy();
   });
 

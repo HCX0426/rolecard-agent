@@ -322,7 +322,7 @@ export default function RolesPage({
               </label>
             </div>
             <label className="mt-3 block">
-              <span className="text-xs text-slate-500 dark:text-slate-400">system_prompt（人设规则）</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">人设规则</span>
               <textarea
                 required
                 rows={3}

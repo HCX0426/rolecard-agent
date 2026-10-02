@@ -8,11 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { api, type ShellRelease } from "../api";
-
-function humanSize(bytes: number): string {
-  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
-  return `${Math.round(bytes / 1024 / 1024)} MB`;
-}
+import { formatBytes } from "../lib/bytes";
 
 function buildDay(iso?: string): string {
   if (!iso) return "";
@@ -39,7 +35,7 @@ export function ShellReleaseCard() {
   const name = release.file_name ?? "桌面壳安装包";
   const day = buildDay(release.built_at);
   const meta = [
-    release.size_bytes ? humanSize(release.size_bytes) : "",
+    release.size_bytes ? formatBytes(release.size_bytes) : "",
     day ? `构建于 ${day}` : "",
   ]
     .filter(Boolean)

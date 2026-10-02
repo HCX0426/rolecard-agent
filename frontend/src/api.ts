@@ -46,7 +46,7 @@ export interface PluginRow {
 //: 3s 与 10s 的差别只到"勉强能感知"，而上 SSE 要动三个文件一到两天再加断线重连，不值。
 export const UNREAD_POLL_MS = 3_000;
 
-export interface SessionRow {
+export interface ThreadRow {
   thread_id: string;
   title: string | null;
   role_id: string;
@@ -142,7 +142,9 @@ export interface BackendRow {
 export interface ModelProvider {
   id: string;
   label: string;
-  needs_key: string; // "0" | "1"
+  // 布尔（`R102-16`）：目录行从前发 "0"/"1" 字符串、分组行发 boolean —— JS 里 "0" 是
+  // truthy，谁把目录行当分组行用就永远"要 key"。同一契约键一种类型。
+  needs_key: boolean;
   base_url_hint: string;
   style: string; // native | openai
 }
@@ -207,6 +209,42 @@ export interface ProviderGroup {
   has_key: boolean;
   key_masked: string | null;
   models: ProviderModelRow[];
+}
+
+/** 「服务」页的载荷契约（`R102-22`：从前这 23 个键全部声明在 ServicesPanel.tsx 里，
+ * `api.ts` 自称"与后端契约一一对应"却看不见它们 —— 改一个字段名，契约测试与这里两处
+ * 都不红，界面静默显示"—"。键面 = `GET /api/services` 的实测响应。 */
+export interface ServiceEndpoint {
+  id: string;
+  label: string;
+  kind: "local" | "cloud";
+  available: boolean;
+  reason: string;
+  enabled: boolean;
+  builtin: boolean;
+  key_masked: string | null;
+  base_url: string | null;
+  model: string | null;
+  ref_backend: string | null;
+  stale: boolean;
+  order: number | null;
+}
+
+export interface ServiceCategoryView {
+  key: string;
+  title: string;
+  hint: string;
+  effective: string | null;
+  effective_kind: string | null;
+  degraded_from: string | null;
+  readonly: boolean;
+  /** order_only = 只能调顺序（第 1 位 = 默认，其余依次回退）；增删与 key 在「模型」页签。 */
+  order_only?: boolean;
+  candidates: ServiceEndpoint[];
+}
+
+export interface ServicesView {
+  services: ServiceCategoryView[];
 }
 
 /** 探测结论（`POST /api/settings/models/probe`）。三态字段 null = 不知道，不是"不行"。 */

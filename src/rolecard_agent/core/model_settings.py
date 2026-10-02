@@ -115,20 +115,20 @@ _NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 #   native = Ollama 原生端点（base_url 不带 /v1）；openai = OpenAI 兼容（带 /v1）。
 # 两者刻意分离：同一"OpenAI 兼容"风格下有很多厂商（SiliconFlow/DeepSeek/…），把厂商
 # 写进 provider 才能让界面正确显示"硅基流动"，而不是一句无意义的"openai"。
-MODEL_PROVIDERS: tuple[dict[str, str], ...] = (
-    {"id": "ollama", "label": "本地 Ollama", "needs_key": "0",
+MODEL_PROVIDERS: tuple[dict[str, object], ...] = (
+    {"id": "ollama", "label": "本地 Ollama", "needs_key": False,
      "base_url_hint": "http://localhost:11434（可留空）", "style": "native",
      "default_base_url": "http://localhost:11434"},
-    {"id": "openai", "label": "OpenAI 兼容", "needs_key": "1",
+    {"id": "openai", "label": "OpenAI 兼容", "needs_key": True,
      "base_url_hint": "https://api.openai.com/v1", "style": "openai",
      "default_base_url": "https://api.openai.com/v1"},
-    {"id": "siliconflow", "label": "硅基流动", "needs_key": "1",
+    {"id": "siliconflow", "label": "硅基流动", "needs_key": True,
      # 端点不写第二遍（`R28-14`）：这格曾经是该 URL 在 src 里的第二处字面量，而它就在
      # `default_base_url` 隔壁一行 —— 换端点时静静留下一句过期的占位。由 single-source
      # literals 那条门禁看着。
      "base_url_hint": DEFAULT_SILICONFLOW_BASE_URL, "style": "openai",
      "default_base_url": DEFAULT_SILICONFLOW_BASE_URL},
-    {"id": "deepseek", "label": "DeepSeek", "needs_key": "1",
+    {"id": "deepseek", "label": "DeepSeek", "needs_key": True,
      "base_url_hint": "https://api.deepseek.com/v1", "style": "openai",
      "default_base_url": "https://api.deepseek.com/v1"},
 )
@@ -136,7 +136,7 @@ MODEL_PROVIDERS: tuple[dict[str, str], ...] = (
 # 留空 base_url 的厂商 = 用它自己的默认端点。分组必须按**归一后的端点**算：否则
 # "硅基流动 + 留空" 与 "硅基流动 + 显式 URL" 会成两个组，于是那把 key 又有了两个家 ——
 # 正是拆层要消灭的东西（用户在旧界面加第二个模型时不重填 URL，这条路径天天会走到）。
-_DEFAULT_BASE_URLS = {p["id"]: p["default_base_url"] for p in MODEL_PROVIDERS}
+_DEFAULT_BASE_URLS = {str(p["id"]): str(p["default_base_url"]) for p in MODEL_PROVIDERS}
 
 # 历史 alias：旧数据/旧配置里的 "local" 一律视作 ollama（不再作为可选供应商出现）。
 PROVIDER_ALIASES = {"local": "ollama"}
@@ -191,7 +191,7 @@ def client_style(provider: str) -> str:
     p = _canonical(provider)
     for entry in MODEL_PROVIDERS:
         if entry["id"] == p:
-            return entry["style"]
+            return str(entry["style"])
     return "openai"
 
 
@@ -200,8 +200,10 @@ def is_keyless_provider(provider: str) -> bool:
     return _canonical(provider) in KEYLESS_PROVIDERS
 
 
-def provider_catalog() -> list[dict[str, str]]:
-    """返回供应商目录（前端下拉用）。新增供应商只改这里，无需动前端。"""
+def provider_catalog() -> list[dict[str, object]]:
+    """返回供应商目录（前端下拉用）。新增供应商只改这里，无需动前端。
+
+    值类型是 object：`needs_key` 是布尔（`R102-16`），与其余 str 字段同表。"""
     return [dict(p) for p in MODEL_PROVIDERS]
 
 
@@ -210,7 +212,7 @@ def provider_label(provider: str) -> str:
     p = _canonical(provider)
     for entry in MODEL_PROVIDERS:
         if entry["id"] == p:
-            return entry["label"]
+            return str(entry["label"])
     return p
 
 

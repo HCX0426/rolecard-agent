@@ -14,10 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type LocalServiceStatus } from "../api";
 import Button from "./ui/Button";
 import { shellBridge, type OllamaOwner } from "../lib/shell";
-
-function gb(bytes: number): string {
-  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
-}
+import { formatBytes } from "../lib/bytes";
 
 export function LocalServiceCard() {
   const [status, setStatus] = useState<LocalServiceStatus | null>(null);
@@ -100,8 +97,8 @@ export function LocalServiceCard() {
     : status.resident.length === 0
       ? `在跑，但显存里没有模型 —— 下一条消息会冷加载（较慢）${owned}`
       : `${status.resident
-          .map((m) => `${m.name} ${gb(m.size_bytes)}${m.pinned ? "（常驻）" : ""}`)
-          .join("、")} · 合计 ${gb(status.resident_bytes)}${
+          .map((m) => `${m.name} ${formatBytes(m.size_bytes)}${m.pinned ? "（常驻）" : ""}`)
+          .join("、")} · 合计 ${formatBytes(status.resident_bytes)}${
           defaultMissing ? ` · 默认 ${status.model} 不在显存` : ""
         }${owned}`;
 

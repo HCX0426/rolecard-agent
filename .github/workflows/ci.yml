@@ -220,9 +220,12 @@ jobs:
           # 存一个 OpenAI 兼容后端 —— 这是这个镜像的**主用例**（容器里没有 Ollama，云端 key
           # 才是它的模型来源）。CI 第 2 发就是这条 500：镜像漏装 langchain-openai，本机没红
           # 只是 .venv 恰好装过。构建失败的可读原因在响应体的 detail 里，所以失败时原样打印。
+          # base_url 不在这里抄第二遍（`R102-39`）：从 config.py 现读（runner 的 python3 只
+          # 做标准库 import，装不装依赖无关）。
+          SF_BASE_URL=$(python3 -c "import sys; sys.path.insert(0, 'src'); from rolecard_agent.config import DEFAULT_SILICONFLOW_BASE_URL; print(DEFAULT_SILICONFLOW_BASE_URL)")
           put=$(curl -s -u ci-user:ci-pass -X PUT http://127.0.0.1:8000/api/settings/models \
             -H 'Content-Type: application/json' \
-            -d '{"default":"sf","backends":[{"name":"sf","provider":"siliconflow","base_url":"https://api.siliconflow.cn/v1","model":"ci-model","api_key":"sk-ci-not-a-real-key","usage":"chat"}],"fallbacks":[]}')
+            -d "{\"default\":\"sf\",\"backends\":[{\"name\":\"sf\",\"provider\":\"siliconflow\",\"base_url\":\"$SF_BASE_URL\",\"model\":\"ci-model\",\"api_key\":\"sk-ci-not-a-real-key\",\"usage\":\"chat\"}],\"fallbacks\":[]}")
           printf '%s' "$put" | grep -q '"default"' || {
             echo "容器内存一个云端后端失败：$put"; docker logs rc; exit 1
           }

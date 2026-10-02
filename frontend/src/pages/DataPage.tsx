@@ -121,7 +121,11 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
 
   async function remove(kind: "report" | "index", id: string) {
     try {
-      await api.del(`/api/records/${kind}/${id}`);
+      // 后端没有 /api/records/{kind}/{id} 这条通配路由（契约尺子 `R102-50` 抓的现行）——
+      // 两类各有一条真实端点：DELETE /api/records/report/{report_id} 与 /index/{index_id}。
+      await api.del(
+        kind === "report" ? `/api/records/report/${id}` : `/api/records/index/${id}`,
+      );
       setStatus({ ok: true, msg: "已删除" });
       await load();
     } catch (e) {

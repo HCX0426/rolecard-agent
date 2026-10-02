@@ -384,12 +384,14 @@ function tri(value: boolean | null): string {
 
 function needsKey(provider: string, catalog: ModelProvider[]): boolean {
   const entry = catalog.find((p) => p.id === provider);
-  return entry ? entry.needs_key === "1" : true;
+  // needs_key 是布尔（`R102-16`）—— 从前目录行是 "0"/"1" 字符串，`=== "1"` 与分组行的
+  // truthy 判定并存，同一份事实两种读法。
+  return entry ? entry.needs_key : true;
 }
 
 function defaultSource(groups: ProviderGroup[], catalog: ModelProvider[]): Source {
   if (groups.length > 0) return { kind: "group", id: groups[0].id };
-  const first = catalog.find((p) => p.needs_key === "0") ?? catalog[0];
+  const first = catalog.find((p) => !p.needs_key) ?? catalog[0];
   return { kind: "new", provider: first?.id ?? "openai", base_url: "", api_key: "" };
 }
 

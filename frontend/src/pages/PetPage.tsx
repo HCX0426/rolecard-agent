@@ -26,6 +26,7 @@ import { resolvePack, type PetPack, type PetPackListing } from "../pets/registry
 import QuietLine from "../components/QuietLine";
 import { api, streamChat, streamEdit, UNREAD_POLL_MS, type MessagePage, type MessageRow, type QuietStatus, type ReachoutRow, type RoleCard } from "../api";
 import { useAutoScroll } from "../hooks/useAutoScroll";
+import { usePoll } from "../hooks/usePoll";
 import { useChatStream } from "../hooks/useChatStream";
 import { read as readDataSource } from "../lib/dataSource";
 import { shellBridge } from "../lib/shell";
@@ -265,11 +266,9 @@ export default function PetPage() {
     }
   }, [refreshHistory]);
 
-  useEffect(() => {
-    void load();
-    const timer = setInterval(() => void load(), UNREAD_POLL_MS);
-    return () => clearInterval(timer);
-  }, [load]);
+  // 轮询走唯一样板 usePoll（`R102-61`）：卸载后不再打拍 —— 从前这两处是同形状里
+  // 唯一没有 cancelled 旗的半边。
+  usePoll(() => load(), UNREAD_POLL_MS);
 
   const latest = items[0] ?? null;
 
@@ -693,18 +692,14 @@ export default function PetPage() {
   // 是在**控制台那一侧**改的 —— 只读一次的症状就是"我明明选了雏雾，怎么还是这只"，
   // 且没有任何地方承认它听见了那个改动（挂着的那一只才是桌宠的常态）。
   // 拉失败**不清空**：手里那份角色表比"诚实显示成默认包"更有用，未读那条自己会说掉线。
-  useEffect(() => {
-    const pull = () =>
-      api
-        .get<RoleCard[]>("/api/roles")
-        .then(setRoles)
-        .catch(() => {
-          // 保持上一次读到的那份：少一个切换器不拦对话本身。
-        });
-    void pull();
-    const timer = setInterval(() => void pull(), UNREAD_POLL_MS);
-    return () => clearInterval(timer);
-  }, []);
+  usePoll(() => {
+    api
+      .get<RoleCard[]>("/api/roles")
+      .then(setRoles)
+      .catch(() => {
+        // 保持上一次读到的那份：少一个切换器不拦对话本身。
+      });
+  }, UNREAD_POLL_MS);
 
   // 形象包清单也是起窗一次。换数据源不用重读：那个切换是整页 reload。
   // 读失败记 null —— 旧后端根本没有这条端点，此刻的表现必须与做这件事之前一字不差。
@@ -1127,7 +1122,7 @@ export default function PetPage() {
       <div
         ref={spriteRef}
         className="pet-nodrag shrink-0 cursor-grab active:cursor-grabbing"
-        title={`${name}${offline ? " · 连不上本地服务" : ""} · 点开看你们最近聊了什么${
+        title={`${name}${offline ? " · 连不上本机程序" : ""} · 点开看你们最近聊了什么${
           showContent ? "" : "（内容已隐藏）"
         }`}
       >

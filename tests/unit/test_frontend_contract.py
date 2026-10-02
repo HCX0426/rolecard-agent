@@ -57,3 +57,67 @@ def test_formdata_is_not_json_stringified() -> None:
     """FormData 必须走 multipart 原样提交 —— 序列化它会破坏文件上传的边界。"""
     src = API_TS.read_text(encoding="utf-8")
     assert "body instanceof FormData" in src, "FormData 分支丢失：multipart 上传会被当成 JSON"
+
+
+def test_every_frontend_endpoint_literal_resolves_to_a_backend_route() -> None:
+    """前端源码里的每一个 `/api/…` 字面量都必须指得到后端真路由（`R102-50`/`R102-12`）。
+
+    这把尺子收的是"改一个端点名要手找 82+31 处"的那笔形状债的**可达性半边**：从前改一条
+    router 路径，前端指不到它只有人眼能发现（界面静默显示"—"）。双向差分的另一半
+    （后端有哪些路由前端没引用）只计数不拦——脚本与探针合法引用着一批前端不用的路由。
+    变异：把任一前端字面量的路径改成不存在的 ⇒ 本条红。
+    """
+    import sys
+    from collections.abc import Iterator
+
+    frontend_src = Path(__file__).resolve().parents[2] / "frontend" / "src"
+
+    def frontend_literals() -> Iterator[tuple[str, int, str]]:
+        # 口径沿开轮批 R102-12：引号/反引号起的 `/api/…` 字面量；剔 *.test.*（mock 自足）。
+        # 块注释 /** … */ 整段剔除：api.ts 的讲解里拿 Ollama `/api/show` 当证据（`R102-50`
+        # 的取证现场），那是知识不是接线。
+        pat = re.compile(r"[\"'`](/api/[A-Za-z0-9_{}$./-]*)[\"'`]")
+        block_comment = re.compile(r"/\*.*?\*/", flags=re.S)
+        for path in sorted(frontend_src.rglob("*")):
+            if path.suffix not in {".ts", ".tsx"} or ".test." in path.name:
+                continue
+            cleaned = block_comment.sub(
+                "", path.read_text(encoding="utf-8", errors="ignore")
+            )
+            for lineno, line in enumerate(cleaned.splitlines(), 1):
+                if line.lstrip().startswith("//"):
+                    continue
+                for hit in pat.findall(line):
+                    yield str(path.relative_to(frontend_src)), lineno, hit
+
+    def normalize(literal: str) -> str:
+        # 前端模板串 `${threadId}` → 后端 `{thread_id}` 形态：段级归一，参数名不参与比对。
+        return re.sub(r"\$\{[^}]*\}", "{p}", literal)
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+    from rolecard_agent.api.main import create_app  # noqa: PLC0415
+
+    app = create_app()
+    # 口径与基线同源：`app.openapi()`（`app.routes` 在这个 FastAPI 版本里把 router 包成
+    # `_IncludedRouter`，不暴露 path —— 别换回去）。
+    backend_paths = set(app.openapi()["paths"].keys())
+    # 后端的路径参数名不参与比对：/api/session/{tid} 按"段数 + 常量段"归一
+    def shape(path: str) -> tuple[str, ...]:
+        return tuple(
+            re.sub(r"\{[^}]*\}", "{p}", seg) for seg in path.strip("/").split("/") if seg
+        )
+
+    backend_shapes = {shape(p) for p in backend_paths}
+    dangling: list[str] = []
+    checked: set[str] = set()
+    for rel, lineno, literal in frontend_literals():
+        key = normalize(literal)
+        if key in checked:
+            continue
+        checked.add(key)
+        if shape(key) not in backend_shapes:
+            dangling.append(f"{rel}:{lineno} {literal}")
+    assert not dangling, (
+        "前端有指不到后端路由的端点字面量（R102-12 的可达性半边）："
+        f"{dangling[:8]}"
+    )

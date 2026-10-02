@@ -5,6 +5,7 @@ import ApprovalPanel from "./components/ApprovalPanel";
 import { ToastProvider } from "./components/Toast";
 import { api, UNREAD_POLL_MS } from "./api";
 import { shellBridge } from "./lib/shell";
+import { usePoll } from "./hooks/usePoll";
 import { useTheme } from "./components/useTheme";
 
 // ---- 路由级代码分割：六页各自成 chunk，hover 导航时预加载 -------------------------------
@@ -161,46 +162,28 @@ export default function App() {
   const [approvalOpen, setApprovalOpen] = useState(false);
   const [approvalPending, setApprovalPending] = useState(0);
 
-  useEffect(() => {
-    if (reachoutOpen) return; // 抽屉开着时不打扰轮询，抽屉自己会刷新
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const p = await api.getReachouts();
-        if (!cancelled) {
-          setReachoutUnread(p.unread);
-          setReachoutUnreadByRole(p.unread_by_role ?? {});
-        }
-      } catch {
-        /* 静默：后端没起/网络抖动不值得打扰用户 */
+  // 轮询走唯一样板 usePoll（`R102-61`）：防竞态与"抽屉开着不打扰"都住在 hook 里，
+  // 这里只剩"拿到快照写哪几个 state"。isLive = 这一拍还没被卸载/关抽屉作废。
+  usePoll(
+    async (live) => {
+      const p = await api.getReachouts();
+      if (live()) {
+        setReachoutUnread(p.unread);
+        setReachoutUnreadByRole(p.unread_by_role ?? {});
       }
-    };
-    poll();
-    const timer = setInterval(poll, UNREAD_POLL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [reachoutOpen]);
+    },
+    UNREAD_POLL_MS,
+    !reachoutOpen,
+  );
 
-  useEffect(() => {
-    if (approvalOpen) return;
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const p = await api.getApprovals("pending");
-        if (!cancelled) setApprovalPending(p.pending);
-      } catch {
-        /* 静默 */
-      }
-    };
-    poll();
-    const timer = setInterval(poll, UNREAD_POLL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [approvalOpen]);
+  usePoll(
+    async (live) => {
+      const p = await api.getApprovals("pending");
+      if (live()) setApprovalPending(p.pending);
+    },
+    UNREAD_POLL_MS,
+    !approvalOpen,
+  );
 
   // tab → URL hash（支持深链 /#/data 等）
   useEffect(() => {

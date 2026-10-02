@@ -143,7 +143,7 @@ describe("LocalServiceCard", () => {
     );
     render(<LocalServiceCard />);
     const line = await screen.findByText(/不在显存/);
-    expect(line.textContent).toContain("other:7b 0.0 GB");
+    expect(line.textContent).toContain("other:7b 1.0 KB");
     expect(line.textContent).toContain("默认 qwen3-vl:8b 不在显存");
   });
 

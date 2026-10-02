@@ -221,7 +221,7 @@ function ProviderCard({
             ? group.has_key
               ? `key 已存 ${group.key_masked ?? "••••"}`
               : "未配置 key —— 加模型时填一把"
-            : "本地服务，无需 key"}
+            : "本机程序，无需 key"}
         </span>
       </div>
 

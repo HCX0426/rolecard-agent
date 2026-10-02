@@ -100,6 +100,14 @@ def scanned_citations() -> tuple[set[str], dict[str, set[str]], dict[str, set[st
 def render() -> str:
     """整份索引的正文。确定性输出：编号排序、路径统一 posix。"""
     numbers, homes, _ = scanned_citations()
+    # 生成物不喂自己的输入（与 dist sync 同一条纪律，`R102-33` 放宽后现形）：索引自己的
+    # 行里就写着编号，把上一趟索引当引用源会让"索引 → 引用 → 索引"的固定点在两次构建间
+    # 摇摆 —— 字节比对永远差一行，而且是哪种"差"取决于哈希种子。排除自己才确定。
+    index_rel = OUT.relative_to(ROOT).as_posix()
+    homes = {
+        number: {home for home in found if home != index_rel}
+        for number, found in homes.items()
+    }
     rows: list[tuple[str, str, str]] = []
     for number in sorted(numbers, key=lambda item: (item.split("-")[0], item)):
         found = sorted(homes[number])

@@ -882,7 +882,10 @@ def list_sessions(ctx: AppContext = Depends(get_context)) -> list[object]:
     ).fetchall()
     return [
         {
-            **dict(r),
+            # `has_state` 只当内部中间量、**不下线**（`R102-21`）：它在本仓产物/源码/壳三处
+            # 0 命中，是一个没人守的线字段 —— 下一次改名没人知道该不该同步。判据仍是
+            # "EXISTS 写过东西没有"，但暴露给界面的只有 is_blank 这一个名字。
+            **{k: v for k, v in dict(r).items() if k != "has_state"},
             "agent_mode": resolve_agent_mode(r["agent_mode"], ctx.settings),
             # 侧栏分"她们那条线 / 临时话题"靠的是这个旗标，而不是前端自己拼线程 id 的前缀 ——
             # 那个形状（`s_proactive_<uid>_<role>`，B2 起带身份）的事实归 `core/reachout.py`，

@@ -13,7 +13,7 @@ import {
   type RoleCard,
   type RuntimeItem,
   type RuntimePayload,
-  type SessionRow,
+  type ThreadRow,
   type TreeResult,
   type WorkspaceDir,
 } from "../api";
@@ -1052,7 +1052,7 @@ function AboutPanel({
       api.get<ModelSettings>("/api/settings/models"),
       api.get<PluginRow[]>("/api/plugins"),
       api.get<RoleCard[]>("/api/roles"),
-      api.get<SessionRow[]>("/api/sessions"),
+      api.get<ThreadRow[]>("/api/sessions"),
     ]);
     const enabled = plugins.filter((p) => p.enabled).length;
     setInfo({

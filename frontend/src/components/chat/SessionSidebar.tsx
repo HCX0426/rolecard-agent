@@ -1,5 +1,5 @@
 import { useConfirm } from "../../hooks/useConfirm";
-import type { RoleCard, SessionRow } from "../../api";
+import type { RoleCard, ThreadRow } from "../../api";
 
 /**
  * 会话侧栏：桌面常驻、移动端 off-canvas 抽屉。
@@ -29,7 +29,7 @@ export default function SessionSidebar({
   onDeleteMany,
 }: {
   roles: RoleCard[];
-  sessions: SessionRow[];
+  sessions: ThreadRow[];
   /** 每个角色还有几条没读的主动开口（与桌宠红点同源的那份读数）。 */
   unreadByRole: Record<string, number>;
   sessionId: string | null;

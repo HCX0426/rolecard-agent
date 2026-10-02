@@ -89,8 +89,5 @@ export function describeExtract(
 }
 
 /** 人话的字节数（上传目录回收用）。 */
-export function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
+// 唯一实现在 `lib/bytes.ts`（`R102-60`）：这里转发以保住既有 import 面不破。
+export { formatBytes } from "./bytes";

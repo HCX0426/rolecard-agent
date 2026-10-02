@@ -4,40 +4,11 @@
 // 优先级第 1 位即生效；修改立即保存并热生效（嵌入/重排后端热重建）。
 import { useCallback, useEffect, useState } from "react";
 import { api, USAGE_LABEL, type ModelSettings } from "../api";
+import type { ServiceCategoryView, ServiceEndpoint, ServicesView } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
 
-interface ServiceEndpoint {
-  id: string;
-  label: string;
-  kind: "local" | "cloud";
-  available: boolean;
-  reason: string;
-  enabled: boolean;
-  builtin: boolean;
-  key_masked: string | null;
-  base_url: string | null;
-  model: string | null;
-  ref_backend: string | null;
-  stale: boolean;
-  order: number | null;
-}
-
-interface ServiceCategoryView {
-  key: string;
-  title: string;
-  hint: string;
-  effective: string | null;
-  effective_kind: string | null;
-  degraded_from: string | null;
-  readonly: boolean;
-  /** order_only = 只能调顺序（第 1 位 = 默认，其余依次回退）；增删与 key 在「模型」页签。 */
-  order_only?: boolean;
-  candidates: ServiceEndpoint[];
-}
-
-interface ServicesView {
-  services: ServiceCategoryView[];
-}
+// 载荷契约（ServiceEndpoint/ServiceCategoryView/ServicesView）住在 `api.ts`（`R102-22`）：
+// 那里自称"与后端契约一一对应"，契约测试也只读它 —— 组件本地声明等于契约的两张脸。
 
 function KindBadge({ kind }: { kind: "local" | "cloud" }) {
   const style =

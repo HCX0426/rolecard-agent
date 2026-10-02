@@ -7,7 +7,7 @@ import {
   type MessageRow,
   type RoleCard,
   type SessionContext,
-  type SessionRow,
+  type ThreadRow,
 } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
 import { useToast, type Tone } from "../components/Toast";
@@ -215,7 +215,7 @@ export default function ChatPage({
       return empty.thread_id;
     }
     try {
-      const s = await api.post<SessionRow>("/api/session", {});
+      const s = await api.post<ThreadRow>("/api/session", {});
       setSessionId(s.thread_id);
       clearSelection();
       setMessages([]);

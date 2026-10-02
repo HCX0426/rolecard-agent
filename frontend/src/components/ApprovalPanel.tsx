@@ -11,6 +11,7 @@ import {
   type ApprovalsPage,
   type ApprovalStatus,
 } from "../api";
+import { formatBytes } from "../lib/bytes";
 import { formatUtcNaive } from "../lib/quiet";
 
 function StatusBadge({ status }: { status: ApprovalStatus }) {
@@ -44,7 +45,7 @@ function ResultBlock({ result }: { result: ApprovalResult | null }) {
       <div className="flex gap-3 text-slate-500 dark:text-slate-500">
         <span>退出码 {result.exit_code}</span>
         <span>{result.duration_ms}ms</span>
-        <span>{(result.output_bytes / 1024).toFixed(1)} KB</span>
+        <span>{formatBytes(result.output_bytes)}</span>
       </div>
       {result.output && (
         <pre className="mt-1 max-h-32 overflow-x-auto whitespace-pre-wrap break-all font-mono text-[10px] text-slate-700 dark:text-slate-300">

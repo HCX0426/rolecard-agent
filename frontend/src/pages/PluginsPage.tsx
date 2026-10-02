@@ -64,11 +64,13 @@ function DomainPlugins() {
 
   async function toggle(pluginId: string, enabled: boolean) {
     try {
-      const r = await api.post<{ tool_epoch: number }>(
+      await api.post<{ tool_epoch: number }>(
         `/api/plugins/${pluginId}/toggle`,
         { enabled },
       );
-      setStatus(`${pluginId} → ${enabled ? "已启用" : "已停用"}（tool_epoch=${r.tool_epoch}）`);
+      // 递增值属于日志不属于界面（`R102-21`）：tool_epoch 是给报障对日志用的机器标识符
+      // （接口响应与审计里都有，界面不需要它）。验收判据：产物 chunk 里 grep 不到 "tool_epoch="。
+      setStatus(`${pluginId} → ${enabled ? "已启用" : "已停用"}，模型下次开口即用新清单`);
       await load();
     } catch (e) {
       setStatus(`切换失败：${(e as Error).message}`);

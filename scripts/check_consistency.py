@@ -761,6 +761,41 @@ def check_artifact_single_source() -> None:
         fails.append(f"artifact literals drift: {problems}")
 
 
+def _readings_head_is_current(current_head: str, readings_head: str) -> bool:
+    """读数的 head 与当前 HEAD 的合法关系（见 check_readme_headline_numbers 里的两条形状）。
+
+    读数里的 head 可能是短 sha（gate 写入时截过）：按前缀比，长度以读数那格为准。
+    """
+    if current_head.startswith(readings_head):
+        return True
+    try:
+        parent = subprocess.run(
+            ["git", "rev-parse", "HEAD~1"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except Exception:  # noqa: BLE001 - 没有父提交（根提交）/没有 git：只认形状①
+        return False
+    if not parent.startswith(readings_head):
+        return False
+    changed = subprocess.run(
+        ["git", "diff", "--name-only", parent, current_head],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        # utf-8 + splitlines：本仓有**带空格的中文文件名**，默认编码/`split()` 会把
+        # `架构审计（…轮）.md` 拆成两截（`gate.py` 的 `_git` 是同一个教训，那里写着
+        # "encoding 不是可选的"）。路径一律 posix，与 `docs_only` 直接对得上。
+        encoding="utf-8",
+        errors="replace",
+        check=True,
+    ).stdout.splitlines()
+    docs_only = {"docs/gate-readings.json", "README.md", "docs/架构审计索引.md"}
+    return all(path in docs_only for path in changed)
+
+
 def check_readme_headline_numbers() -> None:
     """README 首屏那组数必须等于**上一趟门禁量到的**那份读数。
 
@@ -833,6 +868,32 @@ def check_readme_headline_numbers() -> None:
     if not checked:
         out("README headline numbers", True, "读数文件里一个可比项都没有（跳过，不代表通过）")
         return
+    # 读数属于哪个 HEAD（`R102-36` 的主体半边）：从前只比"README ↔ 旧读数"，而那份读数可能
+    # 是几个提交之前量的 —— 文档比代码旧 N 条照样打绿（实测 1343 vs 1345 就这么绿过）。
+    # 合法的两种形状（再旧就红，先重跑一趟门禁刷新读数，而不是改 README 去凑旧世界）：
+    #   ① readings.head == HEAD（读数就是在当前提交量的）；
+    #   ② readings.head == HEAD^ 且 HEAD 与父之间只动了读数/README/审计索引 ——
+    #      那是"跑完门禁、把读数与 README 对齐"的跟进提交本身。没有这半条，任何提交
+    #      都会让读数变旧一格，判据就永远差一个提交（自指死锁）。
+    readings_head = str(readings.get("head") or "")
+    if readings_head:
+        try:
+            current_head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+        except Exception:  # noqa: BLE001 - 没有 git 的环境（源码包）没法比，按跳过处理
+            current_head = ""
+        if current_head and not _readings_head_is_current(
+            current_head, readings_head
+        ):
+            drift.append(
+                f"读数的 HEAD 是 {readings_head[:12]}，当前 HEAD 是 {current_head[:12]}"
+                " —— 这份读数不属于现在的代码：先重跑一趟门禁刷新读数，再对 README"
+            )
     stamps = "，".join(
         f"{label} {readings[key]}@{readings.get(f'{key}_at', '?')}"
         for key, (_, label) in want.items()
@@ -1604,32 +1665,66 @@ def check_single_source_literals() -> None:
     # 的尺子正好看不见三份取证脚本各抄一遍同一个端点 —— 尺子的范围就是它的盲区。
     # 例外只有一个：**本文件自己**（它的表里必然写着那些字面量，把扫描者算进去等于永远红，
     # 与 `artifact single source` 豁免归属者与自身同一处理）。
-    scanned = [p for root in ("src", "scripts") for p in (ROOT / root).rglob("*.py")]
+    # **扫描根 = git 跟踪的全部文本件**（`R102-39`）：从前按目录名（src/scripts）+ `.py` 划界，
+    # shell/、tests/、packaging/、.github/ 全在界外 —— 四臂变异当场证明"抄进 tests/ 三条全绿"，
+    # 而真实照不见的那一份就住在 .github/workflows/ci.yml（已在它的使用现场改为 config 现读）。
+    # 两类豁免，各写明理由：
+    #   * 本文件自己（它的登记表里必然写着那些字面量，自指）；
+    #   * **测试件**（`*.test.*` / tests 目录）：mock 载荷里的字面量是刻意的自足，
+    #     让测试 import 生产常量等于让被测物替测试背书。
+    tracked = subprocess.run(
+        ["git", "ls-files", "*.py", "*.yml", "*.yaml", "*.ts", "*.tsx", "*.js", "*.toml"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.splitlines()
+    scanned = [
+        ROOT / rel
+        for rel in tracked
+        if rel and (ROOT / rel).exists()
+    ] or [p for root in ("src", "scripts") for p in (ROOT / root).rglob("*.py")]
     self_rel = pathlib.Path(__file__).relative_to(ROOT).as_posix()
     holders: dict[str, set[str]] = {}
     for path in sorted(scanned):
         rel = str(path.relative_to(ROOT)).replace("\\", "/")
-        if rel == self_rel:
+        is_test = (
+            rel == self_rel
+            or "/tests/" in f"/{rel}"
+            or rel.startswith("tests/")
+            or ".test." in rel
+        )
+        if is_test:
             continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
         except (SyntaxError, ValueError):
             continue
-        docstrings = {
-            id(node.value)
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Expr)
-            and isinstance(node.value, ast.Constant)
-            and isinstance(node.value.value, str)
-        }
+        text = path.read_text(encoding="utf-8", errors="ignore")
         hits: set[str] = set()
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Constant)
-                and isinstance(node.value, str)
-                and id(node) not in docstrings
-            ):
-                hits.update(lit for lit in SINGLE_SOURCE_LITERALS if lit in node.value)
+        if path.suffix == ".py":
+            try:
+                tree = ast.parse(text)
+            except (SyntaxError, ValueError):
+                continue
+            docstrings = {
+                id(node.value)
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Expr)
+                and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)
+            }
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Constant)
+                    and isinstance(node.value, str)
+                    and id(node) not in docstrings
+                ):
+                    hits.update(lit for lit in SINGLE_SOURCE_LITERALS if lit in node.value)
+        else:
+            # 非 Python 的文本件（yml/ts/js/toml…）按原文找：它们没有 docstring 的概念，
+            # 而且**注释里的出现同样算数** —— 注释也是一处"可读到的事实"。
+            hits.update(lit for lit in SINGLE_SOURCE_LITERALS if lit in text)
         if hits:
             holders[rel] = hits
 
@@ -1995,6 +2090,8 @@ _BANNED_USER_VISIBLE = (
     "本机后端",
     "本地推理服务",
     "Ollama 服务",
+    "本地服务",      # 「本机程序」的落选备选（`R102-20`：同一旗标一张屏两个名字，
+                     # 术语词表提案 §6.2 定名「本机程序」—— 从前它不在词表里，尺子照绿）
 )
 
 
@@ -2238,10 +2335,13 @@ def check_role_whitelists_resolve() -> None:
     sys.path.insert(0, str(ROOT / "src"))
     from rolecard_agent.roles.seed import BUILTIN_ROLES, DOMAIN_SEED_ROLES  # noqa: PLC0415
 
+    self_rel = pathlib.Path(__file__).relative_to(ROOT).as_posix()
     declared: set[str] = set()
     for path in iter_files(".py"):
         if "tests" in path.parts:
             continue
+        if path.relative_to(ROOT).as_posix() == self_rel:
+            continue  # 本文件 docstring 里的 `@tool("name")` 是讲解，不是声明（`R102-37` 幻影）
         declared |= set(
             re.findall(r'@tool\("(\w+)"\)', path.read_text(encoding="utf-8", errors="ignore"))
         )
@@ -2261,10 +2361,19 @@ def check_role_whitelists_resolve() -> None:
     out("role whitelists", not missing, detail)
     if missing:
         fails.append(f"built-in role whitelists name undeclared tools: {missing}")
-    # 反向也要成立：声明了工具却没人用得上 = 死工具（要么忘了写进白名单，要么忘了注册）。
+    # 反向覆盖（`R102-37` 订正：原来注释许诺"死工具也大声失败"，代码只在 wanted 整体为空
+    # 时才红 —— 那是一支**从不输出的空转臂**。真反向判（declared - wanted 非空即红）会先
+    # 照到 `run_command`：它是审批门的工具面，出厂白名单**刻意**不含它（批准语义不属于
+    # 开箱即用的对话轮）。在那次拍板之前，反向差集落 **warn**：屏幕上看得见，不假装通过。
+    unused = sorted(declared - wanted)
     if declared and not wanted:
         fails.append("tools are declared but no built-in role references any of them")
         out("role whitelist coverage", False, "no whitelist references any declared tool")
+    elif unused:
+        warns.append(
+            f"role whitelist coverage: 出厂白名单没人引用的工具 {unused}"
+            " —— 是死工具还是刻意只走审批门，需要一次拍板（R102-37）"
+        )
 
 
 def _normalise_question(text: str) -> str:

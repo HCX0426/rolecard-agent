@@ -122,7 +122,7 @@ describe("分组卡片：一屏读懂凭据 / 模型 / 谁在用", () => {
     // 整个页面里掩码只出现一次（拆层前是每行一份）
     expect(screen.getAllByText(/sk-…wixj/)).toHaveLength(1);
     // 本地组明确说"无需 key"，不是"未配置"那种吓人的口径
-    expect(screen.getByText(/本地服务，无需 key/)).toBeTruthy();
+    expect(screen.getByText(/本机程序，无需 key/)).toBeTruthy();
   });
 
   it("used_by 只读回显，并提供去服务页调整的动作", async () => {
