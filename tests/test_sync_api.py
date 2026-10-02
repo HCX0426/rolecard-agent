@@ -474,3 +474,62 @@ def test_pull_brings_the_remote_side_home_and_leaves_conflicts_shut(
                   "mode": "replace"},
         )
         assert denied.status_code == 400 and "整份替换" in denied.json()["detail"]
+
+
+def test_replace_with_unknown_kind_is_400_and_touches_nothing(client: TestClient) -> None:
+    """`R102-48`：从前 clear 已落盘、import 在排序里炸成 500 = "清了不导"。
+
+    入域校验必须站在任何清空之前。变异：把 post_import 里的 unknown 校验摘掉 ⇒
+    本条红（500，且 role_card 已被清空）。
+    """
+    before = client.app.state.ctx.conn.execute(
+        "SELECT COUNT(*) FROM role_card"
+    ).fetchone()[0]
+    res = client.post(
+        "/api/sync/import",
+        json={
+            "items": [],
+            "clear_kinds": ["card", "report"],  # "report" 是协议之外的第五类
+            "confirm_replace": True,
+        },
+    )
+    assert res.status_code == 400
+    assert "report" in res.json()["detail"]
+    after = client.app.state.ctx.conn.execute(
+        "SELECT COUNT(*) FROM role_card"
+    ).fetchone()[0]
+    assert after == before > 0, "校验失败时清空不许已经落盘"
+
+
+def test_import_with_unknown_item_kind_is_400(client: TestClient) -> None:
+    res = client.post(
+        "/api/sync/import",
+        json={"items": [{"kind": "report", "ident": "x", "payload": {}}]},
+    )
+    assert res.status_code == 400
+    assert "report" in res.json()["detail"]
+
+
+def test_replace_threads_deletes_pending_approvals(client: TestClient) -> None:
+    """`R102-26` 的第二条路径：整份替换的会话清空同样不许漏 `command_approval`。
+
+    拍板是真删 —— 检查点也不留 REMOVE_ALL 空壳（那会被修剪器永留最新一条）。
+    变异：把 `_clear_for_replace` 的级联删改回 `update_state` + 写死两张表 ⇒ 本条红。
+    """
+    tid = client.post("/api/session", json={}).json()["thread_id"]
+    conn = client.app.state.ctx.conn
+    conn.execute(
+        "INSERT INTO command_approval (command, status, thread_id) "
+        "VALUES ('echo replace-orphan', 'pending', ?)",
+        (tid,),
+    )
+    conn.commit()
+    res = client.post(
+        "/api/sync/import",
+        json={"items": [], "clear_kinds": ["thread"], "confirm_replace": True},
+    )
+    assert res.status_code == 200
+    orphans = conn.execute(
+        "SELECT COUNT(*) FROM command_approval WHERE thread_id = ?", (tid,)
+    ).fetchone()[0]
+    assert orphans == 0, "已替换会话的待批审批不许再挂在队列上"

@@ -47,6 +47,7 @@ import hmac
 import ipaddress
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from rolecard_agent.config import Settings
 
@@ -288,3 +289,54 @@ def unauthorized_response(*, challenge: bool = True) -> tuple[int, dict[str, str
     """
     headers = {"WWW-Authenticate": _WWW_AUTHENTICATE} if challenge else {}
     return 401, headers, "Unauthorized"
+
+
+# ---------------------------------------------------------------- 来源标识护栏（R102-45）
+
+#: off 档下 Host 头允许的主机名（端口一律剥掉再比）。合法客户端（壳/控制台/脚本/探针/健康检查）
+#: 全部以 `127.0.0.1` / `localhost` / `[::1]` 进来；rebinding 浏览器发的 Host 是攻击者域名。
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def hostname_of_netloc(netloc: str) -> str:
+    """`127.0.0.1:8000` → `127.0.0.1`；`[::1]:8000` → `::1`（IPv6 的方括号形态）。"""
+    if netloc.startswith("["):
+        return netloc[1 : netloc.index("]")] if "]" in netloc else netloc.lstrip("[")
+    return netloc.rsplit(":", 1)[0] if ":" in netloc else netloc
+
+
+def origin_guard_violation(
+    *,
+    host_header: str | None,
+    origin: str | None,
+    sec_fetch_site: str | None,
+    auth_mode: str,
+) -> str | None:
+    """来源标识护栏的判据：返回拒绝理由，`None` = 放行（`R102-45`）。
+
+    认证（`auth_required`）与 `client_ip` 验的是"带没带凭据 / 从哪连的"；这一层补的是
+    "**来源是谁**"。两层判定：
+
+    ① **Host 只在本机形态（off 档）校验**：rebinding 的浏览器把攻击者域名解析到 127.0.0.1，
+       发出的 Host 就是那个域名 —— 合法本机客户端的 Host 恒为回环名，两者一比即分。
+       on/auto 档跳过：那两档 Host 本来就可能是公网域名，边界是认证本身，不是 Host。
+    ② **Origin 全档校验**：带 `Origin` 的请求必须同源（origin 的主机名 == Host 的主机名）。
+       跨源盲 POST 的 Host 是对的（就是 127.0.0.1:8000），能挡它的只有 Origin。
+       `Origin: null`（file:// 壳的两扇窗是合法的 null）放行，但 `Sec-Fetch-Site: cross-site`
+       在场时仍拒 —— 沙箱 iframe 伪造的假 null 恒带这个头（Chromium 保证），合法壳不带。
+    """
+    host_name = hostname_of_netloc(host_header).lower() if host_header else None
+    if auth_mode == "off" and host_name and host_name not in _LOOPBACK_HOSTS:
+        return (
+            f"Forbidden: 本机服务只认本机来源 —— Host「{host_name}」不是回环地址。"
+            "请用 http://127.0.0.1 访问（见架构总览 §6「单机形态的可选硬化」）。"
+        )
+    if origin:
+        if origin.strip().lower() == "null":
+            if (sec_fetch_site or "").strip().lower() == "cross-site":
+                return "Forbidden: 跨源请求被拒绝（伪造的空 Origin）。"
+            return None
+        origin_host = hostname_of_netloc(urlsplit(origin.strip()).netloc).lower()
+        if host_name and origin_host != host_name:
+            return f"Forbidden: 跨源请求被拒绝 —— Origin「{origin}」不属于本服务。"
+    return None

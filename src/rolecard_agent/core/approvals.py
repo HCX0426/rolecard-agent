@@ -30,6 +30,7 @@ import hmac
 import json
 import re
 import secrets
+import sqlite3
 from typing import Any
 
 from rolecard_agent.storage.db import SqlConnection
@@ -101,12 +102,21 @@ class ApprovalService:
         if latest is not None and latest["status"] in (_PENDING, _APPROVED, _DONE, _REJECTED):
             return latest
         conn = self._conn
-        conn.execute(
-            "INSERT INTO command_approval (command, cwd, role_id, role_name, thread_id, "
-            "decide_token) VALUES (?, ?, ?, ?, ?, ?)",
-            (cmd, cwd, role_id, role_name, thread_id, _new_decide_token()),
-        )
-        conn.commit()
+        try:
+            conn.execute(
+                "INSERT INTO command_approval (command, cwd, role_id, role_name, thread_id, "
+                "decide_token) VALUES (?, ?, ?, ?, ?, ?)",
+                (cmd, cwd, role_id, role_name, thread_id, _new_decide_token()),
+            )
+            conn.commit()
+        except sqlite3.IntegrityError:
+            # 并发 submit 撞了部分唯一索引（`R102-52`）：另一个轮次已经立了一条 pending。
+            # 幂等语义就是回读**那一条**返回 —— 两条 pending 会让操作员批两次 = 命令真跑
+            # 两遍，`R102-01` 的 CAS 只守单行，守不住两行。
+            conn.rollback()
+            existing = self.latest(cmd)
+            assert existing is not None  # 撞索引 = 那条已存在，必然可查
+            return existing
         created = self.latest(cmd)
         assert created is not None  # 刚插入，必然可查
         return created
@@ -241,7 +251,11 @@ class ApprovalService:
         return self._row(row)
 
     def list_rows(
-        self, status: str | None = None, limit: int = 200
+        self,
+        status: str | None = None,
+        limit: int = 200,
+        *,
+        include_token: bool = True,
     ) -> list[dict[str, Any]]:
         """审批记录列表（默认按 id 倒序）。`status` 可按状态过滤（前端 pending / 全部）。"""
         conn = self._conn
@@ -257,16 +271,16 @@ class ApprovalService:
                 "SELECT id, command, cwd, role_id, role_name, thread_id, status, "
                 "result_json, decide_token, created_at, updated_at FROM command_approval "
                 "WHERE status = ? ORDER BY id DESC LIMIT ?",
-                (status, limit),
-            ).fetchall()
-        return [self._row(r) for r in rows]
+            (status, limit),
+        ).fetchall()
+        return [self._row(r, include_token=include_token) for r in rows]
 
     # ---------------------------------------------------------------- 内部
 
     @staticmethod
-    def _row(row: Any) -> dict[str, Any]:
+    def _row(row: Any, *, include_token: bool = True) -> dict[str, Any]:
         raw = row["result_json"]
-        return {
+        result: dict[str, Any] = {
             "id": row["id"],
             "command": row["command"],
             "cwd": row["cwd"],
@@ -275,12 +289,40 @@ class ApprovalService:
             "thread_id": row["thread_id"],
             "status": row["status"],
             "result": None if not raw else json.loads(raw),
-            # 令牌随读侧下发：持有它 = "刚才确实看到过这条待批"。决定后为 None。
-            "decide_token": row["decide_token"],
+            # 令牌是否到期的判据留在行里；凭据本身要不要下发由读侧的信任面决定
+            # （`R102-46`：off 档本机 UI 照发，on/auto 档只发给 operator —— 使用者
+            # 角色拿着它既不能决定也不能读出"批准能力"）。
+            "has_token": bool(row["decide_token"]),
             "decide_token_ttl_seconds": DECIDE_TOKEN_TTL_SECONDS,
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
+        if include_token:
+            # 持有它 = "刚才确实看到过这条待批"。决定后为 None。
+            result["decide_token"] = row["decide_token"]
+        return result
+
+
+def sweep_interrupted(conn: SqlConnection) -> int:
+    """开机清扫：把**进程退出时还停在 approved** 的执行落成终态（`R102-47` 的崩溃半边）。
+
+    终态兜底（`run_approval_execution` 的 except）盖的是"异常"路径；"进程在命令执行期间
+    被硬杀"（本仓装机路径就是 `taskkill /F`）没有异常可接 —— approved 行会永远挂着，
+    `run.py` 对它永远答"已获批准，正在执行…"。开机清扫一次把它收成 done + error，
+    模型读到的是"执行结果丢失"而不是永久的谎言。
+    """
+    cur = conn.execute(
+        "UPDATE command_approval SET status = 'done', result_json = ?, "
+        "updated_at = CURRENT_TIMESTAMP WHERE status = 'approved'",
+        (
+            json.dumps(
+                {"error": "执行结果丢失：进程在命令执行期间退出。请重新提交审批。"},
+                ensure_ascii=False,
+            ),
+        ),
+    )
+    conn.commit()
+    return max(cur.rowcount, 0)
 
 
 __all__ = [
@@ -290,4 +332,5 @@ __all__ = [
     "ApprovalUnauthorised",
     "DECIDE_TOKEN_TTL_SECONDS",
     "normalise_cmd",
+    "sweep_interrupted",
 ]

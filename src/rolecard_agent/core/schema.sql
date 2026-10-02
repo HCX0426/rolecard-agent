@@ -454,9 +454,16 @@ CREATE TABLE IF NOT EXISTS command_approval (
                  CHECK (status IN ('pending', 'approved', 'rejected', 'done')),
     result_json  TEXT,                     -- done 后：{exit_code, stdout, stderr, duration_ms, output_bytes}
     decide_token TEXT,                     -- 一次性能力令牌：decide 必须持有（P0-3 第一步，见架构审计 §10.15）
-    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 幂等下沉到库（`R102-52`）：同一条命令同时只许有一条 pending。submit 的"读—判—写"
+-- 在两个并发轮次之间不是原子的，双双 INSERT 会造出两条 pending —— 被批两次 = 命令真跑
+-- 两遍，而 `R102-01` 的 CAS 只守单行、守不住两行。撞索引的 INSERT 由 submit 捕获后回读
+-- 既有行返回；老库建索引前的清重见 `db._dedupe_pending_approvals`。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_command_approval_one_pending
+    ON command_approval(command) WHERE status = 'pending';
 
 CREATE INDEX IF NOT EXISTS idx_command_approval_status ON command_approval(status, id DESC);
 CREATE INDEX IF NOT EXISTS idx_command_approval_thread ON command_approval(thread_id);

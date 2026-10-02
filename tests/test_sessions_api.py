@@ -22,6 +22,7 @@ from langchain_core.messages import AIMessage
 
 from rolecard_agent.api.main import create_app
 from rolecard_agent.rag.parser import ParseError
+from rolecard_agent.storage.db import _thread_id_carriers
 from tests.conftest import ScriptedChat
 
 
@@ -197,13 +198,20 @@ def test_delete_session_removes_thread_and_checkpoints(client: TestClient, tmp_p
     tid = str(session["thread_id"])
     chat(client, tid, "留过历史的会话")
 
-    # 删除前确认 checkpoint 里确实有这个线程（前置自检）
+    # 前置自检 + R102-26 的孤儿现场：挂一条 pending 审批到这条会话上 ——
+    # 从前的删除写死 ("checkpoints","writes") 两张表，它恰好漏网。
     db = sqlite3.connect(tmp_path / "app.db")
-    before = db.execute("SELECT COUNT(*) FROM checkpoints WHERE thread_id = ?", (tid,)).fetchone()[
-        0
-    ]
+    before_cp = db.execute(
+        "SELECT COUNT(*) FROM checkpoints WHERE thread_id = ?", (tid,)
+    ).fetchone()[0]
+    assert before_cp > 0
+    db.execute(
+        "INSERT INTO command_approval (command, status, thread_id) "
+        "VALUES ('echo delete-orphan', 'pending', ?)",
+        (tid,),
+    )
+    db.commit()
     db.close()
-    assert before > 0
 
     res = client.delete(f"/api/session/{tid}")
     assert res.status_code == 204
@@ -213,12 +221,17 @@ def test_delete_session_removes_thread_and_checkpoints(client: TestClient, tmp_p
     assert all(s["thread_id"] != tid for s in client.get("/api/sessions").json())
 
     db = sqlite3.connect(tmp_path / "app.db")
-    left = db.execute("SELECT COUNT(*) FROM checkpoints WHERE thread_id = ?", (tid,)).fetchone()[0]
-    left_writes = db.execute("SELECT COUNT(*) FROM writes WHERE thread_id = ?", (tid,)).fetchone()[
-        0
-    ]
+    db.row_factory = sqlite3.Row  # `_thread_id_carriers` 按名取列（app 连接自带这个 row_factory）
+    # 断言对齐权威名单 `_thread_id_carriers()`（现数现用）而不是再抄一张表清单 ——
+    # R102-51 的教训：docstring 承诺"不留孤儿"，断言却只数了两张表，孤儿就在眼皮底下活着。
+    left_carriers = {
+        table: db.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE thread_id = ?", (tid,)
+        ).fetchone()[0]
+        for table in _thread_id_carriers(db)
+    }
     db.close()
-    assert left == 0 and left_writes == 0  # 没有可被"复活"的孤儿 checkpoint
+    assert all(n == 0 for n in left_carriers.values()), left_carriers
 
 
 def test_delete_unknown_session_404(client: TestClient) -> None:

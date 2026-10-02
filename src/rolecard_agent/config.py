@@ -411,6 +411,13 @@ class Settings(BaseModel):
     # 豁免路径前缀（逗号分隔）：探活端点必须免鉴权，否则容器健康检查永远失败。
     auth_exempt_paths: str = "/api/health"
 
+    # 来源标识护栏（`R102-45`，api/auth.py `origin_guard_violation`）：off 档的信任模型是
+    # "TCP 对端是 127.0.0.1 = 本人"，但浏览器发起的 DNS rebinding 与跨源请求，对端同样是
+    # 127.0.0.1 —— 实测可读全库数据并替用户批准命令（架构审计 2026-10-02 轮，主控复跑全链）。
+    # 护栏在认证**之前**再验一层"来源是谁"（off 档校验 Host 回环、全档校验 Origin 同源）。
+    # `=0` 是回滚开关，一键回旧行为；为什么默认开，见架构总览 §6「单机形态的可选硬化」。
+    local_origin_enforce: bool = True
+
     # v2.4 限流（api/ratelimit.py）：按**身份**给"贵"的写请求封顶。
     # 0 = 关（默认）：本产品主形态是"一个人、一台机器"，今天加节流只会误伤主人自己的
     # 桌宠与脚本 —— 判据与 09-27 那条决定一致（限流保护的对象随"谁付钱"变），等这台
@@ -562,6 +569,7 @@ class Settings(BaseModel):
             ("AUTH_TRUSTED_PROXIES", "auth_trusted_proxies"),
             ("API_ALLOW_ORIGINS", "api_allow_origins"),
             ("AUTH_EXEMPT_PATHS", "auth_exempt_paths"),
+            ("LOCAL_ORIGIN_ENFORCE", "local_origin_enforce"),
             ("RATE_LIMIT_PER_MINUTE", "rate_limit_per_minute"),
             ("RATE_LIMIT_PATHS", "rate_limit_paths"),
             ("IDENTITY_USER_ID", "identity_user_id"),

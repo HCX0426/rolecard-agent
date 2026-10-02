@@ -222,11 +222,18 @@ def test_each_accepted_approve_submits_exactly_one_execution(
 
     submitted: list[int] = []
 
+    class _SpyFuture:
+        """路由在 submit 之后会挂观察回调（`R102-47`）—— 桩只需要长 Future 的那个形状。"""
+
+        def add_done_callback(self, callback: object) -> None:  # noqa: ARG002
+            return None
+
     class _SpyExecutor:
-        def submit(self, *args: Any, **kwargs: Any) -> None:
+        def submit(self, *args: Any, **kwargs: Any) -> _SpyFuture:
             # 不认参数位次，只认那一枚整数 id —— 因为**第一个实参现在是"带上下文的壳"**
             # （`copy_context().run`，`R102-03` 的第二道缝），把它写进签名就等于把修法写死。
             submitted.append(next(int(a) for a in args if isinstance(a, int)))
+            return _SpyFuture()
 
     monkeypatch.setattr(run_tools, "_APPROVAL_EXECUTOR", _SpyExecutor())
 
@@ -274,3 +281,62 @@ def test_the_approval_execution_thread_sees_the_request_epoch(
         "那条线程的残留事务清理永不触发"
     )
     _t.sleep(0.05)
+
+
+def test_on_mode_token_reachability_and_operator_decides_by_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`R102-46`：on 档下列表对使用者角色只给 `has_token` 布尔、不再下发令牌本身
+    （读得到列表 ≠ 持有批准能力）；operator 拍板凭凭据、不必持令牌。
+
+    变异：把 list_approvals 的 include_token 摘成恒 True ⇒ 前半红；
+    把 decide 的 operator 分支摘掉 ⇒ 后半红。
+    """
+    monkeypatch.setenv("AUTH_MODE", "on")
+    # 凭证分族：`operator:` 前缀 = 操作员；无前缀 = 使用者（没有 "user:" 这种前缀）。
+    monkeypatch.setenv("AUTH_CREDENTIALS", "operator:bob:pw,alice:pw")
+    app = create_app(sqlite_path=tmp_path / "auth.db")
+    c = TestClient(app)
+
+    row = _insert((c, tmp_path / "auth.db"), "echo on-mode-token")
+    assert row["decide_token"], "提交时生成的令牌必须在库里"
+
+    # 匿名：on 档一律 401。
+    assert c.get("/api/approvals").status_code == 401
+    # 使用者角色：列表是 user 面（侧栏红点要用），读得到 —— 但令牌不再跟着来：
+    # 行里只有 has_token 布尔，"读得到列表 = 持有批准能力"的等式在 R102-46 断掉。
+    user = {"Authorization": "Basic YWxpY2U6cHc="}  # alice:pw
+    items = c.get("/api/approvals", headers=user).json()["items"]
+    target = next(i for i in items if i["id"] == row["id"])
+    assert "decide_token" not in target
+    assert target["has_token"] is True
+    res = c.post(
+        f"/api/approvals/{row['id']}/decide",
+        json={"decision": "approve", "token": row["decide_token"]},
+        headers=user,
+    )
+    assert res.status_code == 403
+
+    # 操作员：读列表带令牌与 has_token；拍板**凭凭据**、不带令牌 —— 200 且进 approved。
+    operator = {"Authorization": "Basic Ym9iOnB3"}  # bob:pw
+    items = c.get("/api/approvals", headers=operator).json()["items"]
+    target = next(i for i in items if i["id"] == row["id"])
+    assert target["decide_token"] == row["decide_token"]
+    assert target["has_token"] is True
+    res = c.post(
+        f"/api/approvals/{row['id']}/decide",
+        json={"decision": "approve"},
+        headers=operator,
+    )
+    assert res.status_code == 200
+    assert res.json()["status"] == "approved"
+
+def test_off_mode_list_still_carries_token_for_the_local_ui(
+    client: TestClient, db_path: str
+) -> None:
+    """off 档的本机 UI 不许被误伤：读侧照发令牌（护栏 + 确认点击 + 令牌，三样缺一不可）。"""
+    row = _insert((client, db_path), "echo off-token")
+    items = client.get("/api/approvals").json()["items"]
+    target = next(i for i in items if i["id"] == row["id"])
+    assert target["decide_token"] == row["decide_token"]
+    assert target["has_token"] is True

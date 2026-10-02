@@ -226,3 +226,77 @@ def test_a_cas_loser_does_not_leave_the_database_locked(
         checker.close()
     for conn in leaked:
         conn.close()
+
+
+def test_concurrent_submit_creates_exactly_one_pending(tmp_path: Path) -> None:
+    """`R102-52`：submit 的"读—判—写"在并发下不是原子的 —— 两个轮次双双读到 None、
+    双双 INSERT 会造出两条 pending，被批两次 = 同一命令真跑两遍（R102-01 的 CAS 只守
+    单行，守不住两行）。幂等下沉到库之后：pending 恒 ≤1，所有调用方拿到同一条。
+    变异：摘掉 schema.sql 里的部分唯一索引 ⇒ 本条红（pending=2+）。
+    """
+    path = _db(tmp_path)
+    barrier = threading.Barrier(THREADS)
+    results: list[dict[str, Any]] = []
+    errors: list[Exception] = []
+
+    def worker() -> None:
+        conn = connect(path)
+        try:
+            svc = ApprovalService(conn)
+            barrier.wait(timeout=15)
+            results.append(svc.submit("python dup.py", cwd="/task"))
+        except Exception as exc:  # noqa: BLE001 - 收集后统一断言
+            errors.append(exc)
+        finally:
+            conn.close()
+
+    threads = [threading.Thread(target=worker) for _ in range(THREADS)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert not errors, errors
+    ids = {str(r["id"]) for r in results}
+    assert len(ids) == 1, f"并发 submit 拿到了不同的待批行：{ids}"
+    conn = connect(path)
+    try:
+        pending = conn.execute(
+            "SELECT COUNT(*) FROM command_approval WHERE status = 'pending'"
+        ).fetchone()[0]
+        assert pending == 1
+    finally:
+        conn.close()
+
+
+def test_dedupe_rescues_legacy_duplicate_pending(tmp_path: Path) -> None:
+    """老库已有同命令多条 pending 时，开机先清重再建索引 —— 不许让一份遗留数据把
+    开机堵死（R28-15 的同一条死法）。保留最新一条 pending，其余收成 rejected。
+    """
+    path = tmp_path / "app.db"
+    conn = connect(path)
+    try:
+        bootstrap(conn, enabled_domains=("health",))
+        conn.execute("DROP INDEX IF EXISTS idx_command_approval_one_pending")
+        for _ in range(3):
+            conn.execute(
+                "INSERT INTO command_approval (command, status) "
+                "VALUES ('python dup.py', 'pending')"
+            )
+        conn.commit()
+        # 再开一次机：清重先跑，唯一索引才建得起来。
+        bootstrap(conn, enabled_domains=("health",))
+        statuses = [
+            str(r[0])
+            for r in conn.execute(
+                "SELECT status FROM command_approval ORDER BY id"
+            ).fetchall()
+        ]
+        assert statuses == ["rejected", "rejected", "pending"]
+        has_index = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' "
+            "AND name = 'idx_command_approval_one_pending'"
+        ).fetchone()[0]
+        assert has_index == 1
+    finally:
+        conn.close()

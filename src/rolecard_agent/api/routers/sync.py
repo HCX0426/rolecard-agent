@@ -30,7 +30,6 @@
 
 from __future__ import annotations
 
-import contextlib
 from dataclasses import replace
 from typing import Any
 
@@ -44,6 +43,7 @@ from rolecard_agent.core import outbound
 from rolecard_agent.core import sync as sync_lib
 from rolecard_agent.core.model_settings import validate_base_url
 from rolecard_agent.core.thread_locks import thread_write
+from rolecard_agent.storage.db import delete_thread_everywhere
 
 router = APIRouter()
 
@@ -164,14 +164,15 @@ class ImportBody(BaseModel):
 
 
 def _clear_for_replace(
-    conn: Any, *, user_id: str, kinds: list[str], graph: Any, settings: Any
+    conn: Any, *, user_id: str, kinds: list[str], graph: Any
 ) -> dict[str, int]:
-    """整份替换的前半：把这个身份名下的该类条目清掉（**只清选了的类**）。"""
-    from langchain_core.messages import RemoveMessage
-    from langgraph.graph.message import REMOVE_ALL_MESSAGES
+    """整份替换的前半：把这个身份名下的该类条目清掉（**只清选了的类**）。
 
-    from rolecard_agent.core.graph import build_graph_config
-
+    会话走 `storage.db.delete_thread_everywhere` 级联**真删**（2026-10-02 拍板）——
+    从前这里用 `update_state(REMOVE_ALL)` 留空壳 + 写死删两张表：`command_approval`
+    恰好漏掉（孤儿审批挂在已删会话上），空壳检查点还被修剪器**永留**最新一条。
+    锁在级联删外面（R28-03）：在飞轮次不该被从脚下抽走检查点。
+    """
     cleared: dict[str, int] = {}
     if sync_lib.KIND_CARD in kinds:
         cur = conn.execute("DELETE FROM role_card WHERE user_id = ?", (user_id,))
@@ -189,14 +190,8 @@ def _clear_for_replace(
         for row in rows:
             tid = str(row["thread_id"])
             if graph is not None:
-                # 锁在 suppress **外面**（R28-03）：`update_state` 自己失败（比如这条线程
-                # 从来没有检查点）照旧容忍，但"别人正持有这一会话的写锁"不能跟着被吞掉 ——
-                # 那正是整段替换最不该无互斥插进去的时刻，吞了就是分叉同一个父检查点。
-                with thread_write(tid), contextlib.suppress(Exception):
-                    graph.update_state(
-                        build_graph_config(tid, settings),
-                        {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES)]},
-                    )
+                with thread_write(tid):
+                    delete_thread_everywhere(conn, tid)
         cur = conn.execute("DELETE FROM session_thread WHERE user_id = ?", (user_id,))
         cleared[sync_lib.KIND_THREAD] = max(cur.rowcount, 0)
     conn.commit()
@@ -209,7 +204,27 @@ def post_import(
     ctx: AppContext = Depends(get_context),
     actor: Actor = Depends(get_actor),
 ) -> dict[str, object]:
-    """对面写入：把推过来的条目落到**这台机器上这个身份**名下。"""
+    """对面写入：把推过来的条目落到**这台机器上这个身份**名下。
+
+    入域校验在**任何清空/写入之前**（`R102-48`）：从前未知 kind 会在 apply_import 的
+    排序里炸成 ValueError → 500，而 `_clear_for_replace` 的清空已经落盘 —— 两机版本
+    偏差多出一个第五类就是"清了不导"。协议枚举只有 `sync_lib.SYNC_KINDS` 一份。
+    """
+    unknown_clear = sorted(set(body.clear_kinds) - set(sync_lib.SYNC_KINDS))
+    unknown_item_kinds = sorted(
+        {str(item.get("kind") or "") for item in body.items} - set(sync_lib.SYNC_KINDS)
+    )
+    if unknown_clear or unknown_item_kinds:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "载荷里有协议之外的 kind，什么都没动："
+                f"clear_kinds 多出 [{', '.join(unknown_clear) or '无'}]，"
+                f"items 多出 [{', '.join(unknown_item_kinds) or '无'}]"
+                f"（允许：{', '.join(sync_lib.SYNC_KINDS)}）。"
+                "两台机器的版本可能不一致 —— 先把两边都升到同一版再同步。"
+            ),
+        )
     cleared: dict[str, int] = {}
     if body.clear_kinds:
         if not body.confirm_replace:
@@ -221,7 +236,6 @@ def post_import(
             user_id=_identity(ctx),
             kinds=body.clear_kinds,
             graph=ctx.app_state["graph"],
-            settings=ctx.app_state["effective"],
         )
     result = sync_lib.apply_import(
         ctx.conn,

@@ -248,35 +248,67 @@ def run_approval_execution(
         return
     if row["status"] != "approved":
         return
-    cwd = resolve_task_dir(settings, conn)
-    if row["cwd"]:
-        try:
-            cwd = _resolve_within(cwd, row["cwd"])
-        except RunCommandError:
-            cwd = resolve_task_dir(settings, conn)
-    result = execute_command(
-        row["command"], cwd, timeout_seconds=settings.tool_timeout_seconds
-    )
-    _audit(
-        conn,
-        "run_command",
-        str(cwd),
-        {
-            "command": row["command"],
-            "exit_code": result.exit_code,
-            "output_bytes": result.output_bytes,
-            "duration_ms": result.duration_ms,
-        },
-    )
-    approvals.finish(
-        approval_id,
-        {
-            "exit_code": result.exit_code,
-            "output": result.output,
-            "output_bytes": result.output_bytes,
-            "duration_ms": result.duration_ms,
-        },
-    )
+    # 终态兜底（`R102-47`）：这个函数跑在**无人监督**的后台线程里，`_audit`/`finish` 的
+    # 写库撞上别的线程持久的写事务（busy_timeout 之后 OperationalError；`R102-44` 实测一轮
+    # 可持会话写锁 150s —— 恰是这里最易撞的时刻）就会沉进被弃置的 Future：状态机停在
+    # approved，"已获批准，正在执行…"成了永久谎言，且没有任何 API 能把它推进到 done。
+    # 所以失败本身也要落成终态（done + result.error）—— "批准=执行一次"由状态机自足，
+    # 任何路径都达终态，不靠运气。
+    try:
+        cwd = resolve_task_dir(settings, conn)
+        if row["cwd"]:
+            try:
+                cwd = _resolve_within(cwd, row["cwd"])
+            except RunCommandError:
+                cwd = resolve_task_dir(settings, conn)
+        result = execute_command(
+            row["command"], cwd, timeout_seconds=settings.tool_timeout_seconds
+        )
+        _audit(
+            conn,
+            "run_command",
+            str(cwd),
+            {
+                "command": row["command"],
+                "exit_code": result.exit_code,
+                "output_bytes": result.output_bytes,
+                "duration_ms": result.duration_ms,
+            },
+        )
+        approvals.finish(
+            approval_id,
+            {
+                "exit_code": result.exit_code,
+                "output": result.output,
+                "output_bytes": result.output_bytes,
+                "duration_ms": result.duration_ms,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 -- 兜底必须盖住一切，否则就回到"卡死在 approved"
+        _finish_terminal_error(approvals, approval_id, exc)
+
+
+def _finish_terminal_error(
+    approvals: ApprovalService, approval_id: int, exc: Exception
+) -> None:
+    """把后台执行的失败回填成终态（`R102-47`）：行进 done，result 里带 error。
+
+    连这条回填也失败（比如同一把写锁还没放）就只剩 stderr 一行日志 —— 此时行仍停在
+    approved，由**下一次开机的清扫**（`approvals.sweep_interrupted`）收尾；那是已知的
+    最坏路径，不是设计路径。
+    """
+    try:
+        approvals.finish(
+            approval_id,
+            {"error": f"{type(exc).__name__}: {exc}"},
+        )
+    except Exception:  # noqa: BLE001 -- 见上：最后只剩可观察性
+        print(
+            f"[approvals] 审批 #{approval_id} 的终态兜底也失败了，行停在 approved，"
+            f"等开机清扫收尾：{type(exc).__name__}: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def _pending_or_result(command: str, svc: ApprovalService) -> str | None:

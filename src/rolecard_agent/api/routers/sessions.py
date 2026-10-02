@@ -64,6 +64,7 @@ from rolecard_agent.rag.retriever import (
     KnowledgeDimensionMismatch,
 )
 from rolecard_agent.roles.service import RoleError, RoleNotFound
+from rolecard_agent.storage.db import delete_thread_everywhere
 
 router = APIRouter()
 
@@ -1040,12 +1041,15 @@ def get_session_context(thread_id: str, ctx: AppContext = Depends(get_context)) 
 
 @router.delete("/api/session/{thread_id}", status_code=204)
 def delete_session(thread_id: str, ctx: AppContext = Depends(get_context)) -> None:
-    """删除会话：thread 行 + 该线程的 checkpoint / writes 一并清掉，不留孤儿。"""
+    """删除会话：thread 行与**全部载体表**一并清掉，不留孤儿（`R102-26`）。
+
+    名单与删除收在 `storage.db.delete_thread_everywhere` 一处、现数现用 —— 从前这里
+    写死 `("checkpoints", "writes")` 两张表，`command_approval` 恰好漏掉，已删会话的
+    待批审批就这么永远挂在队列上（点它是对一条不存在的会话做决定）。
+    """
     get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
-    ctx.conn.execute("DELETE FROM session_thread WHERE thread_id = ?", (thread_id,))
-    for table in ("checkpoints", "writes"):  # langgraph SqliteSaver 的两张表
-        ctx.conn.execute(f"DELETE FROM {table} WHERE thread_id = ?", (thread_id,))
-    ctx.conn.commit()
+    with thread_write(thread_id, timeout=_WRITE_WAIT):
+        delete_thread_everywhere(ctx.conn, thread_id)
 
 
 @router.post("/api/session/{thread_id}/upload", status_code=201)

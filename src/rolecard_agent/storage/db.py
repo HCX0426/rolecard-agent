@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import json
 import re
 import sqlite3
 import threading
@@ -236,6 +237,10 @@ def bootstrap(conn: SqlConnection, enabled_domains: Iterable[str] = ()) -> list[
     # 先把"声明里有、这份老库里没有"的列补上，再跑 DDL：域表的 `CREATE INDEX ... (新列)`
     # 排在任何迁移之前执行，老库踩它必炸（09-26 轮 R26-04 的实测现场）。
     reconcile_columns(conn, files=files)
+    # 建部分唯一索引**之前**先清重（`R102-52`）：老库里若已躺着同命令的多条 pending
+    # （并发 submit 的历史遗留），schema.sql 里那条 UNIQUE INDEX 会当场建失败 ——
+    # 那是"库再也打不开"（R28-15）的同一条死法，不能让一份遗留数据把开机堵死。
+    _dedupe_pending_approvals(conn)
     applied: list[str] = []
     for path in files:
         if not path.exists():
@@ -376,6 +381,58 @@ def _thread_id_carriers(conn: SqlConnection) -> list[str]:
     return [
         t for t in sorted(tables) if t != "session_thread" and "thread_id" in _columns(conn, t)
     ]
+
+
+def _dedupe_pending_approvals(conn: SqlConnection) -> int:
+    """建 `idx_command_approval_one_pending` 之前的清重（`R102-52`）。
+
+    老库里若已躺着同命令的多条 pending（并发 submit 的历史遗留），那条部分唯一索引
+    会当场建失败 = "库再也打不开"（R28-15 的同一条死法）。保留**最新**一条 pending
+    （操作员的视线在那上头），其余收成 rejected 并注明理由 —— 幂等：无重复时零改动。
+    """
+    # 新库此时还没有这张表（schema 在后面才跑）—— 只有"表已在的 legacy 库"才需要清重。
+    exists = conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'command_approval'"
+    ).fetchone()[0]
+    if not exists:
+        return 0
+    cur = conn.execute(
+        "UPDATE command_approval SET status = 'rejected', result_json = ?, "
+        "updated_at = CURRENT_TIMESTAMP "
+        "WHERE status = 'pending' AND id NOT IN ("
+        "  SELECT MAX(id) FROM command_approval WHERE status = 'pending' GROUP BY command)",
+        (
+            json.dumps(
+                {"error": "并发提交产生的重复待批：同命令只保留最新一条，其余并成拒绝"},
+                ensure_ascii=False,
+            ),
+        ),
+    )
+    conn.commit()
+    return max(cur.rowcount, 0)
+
+
+def delete_thread_everywhere(conn: SqlConnection, thread_id: str) -> dict[str, int]:
+    """按 thread_id 级联删的**唯一入口**（`R102-26`/`48`；2026-10-02 拍板：真删）。
+
+    名单**现数现用**（`_thread_id_carriers()`）而不是调用点自列清单 —— 从前的两条删除
+    路径（单删会话 / 整份替换）各自写死 `("checkpoints", "writes")` 两张表，
+    `command_approval` 恰好都不在名单里，已删会话的待批审批就这么永远挂在队列上。
+    走 app 连接而不是 saver 自己的 `delete_thread`，是因为**同一连接才能把删检查点、
+    删载体行、删 thread 行包进同一个事务**（saver 是另一条连接，跨不过来 —— 那也是
+    "整份替换没法包成一个跨两连接大事务"的根源，`R102-48` 的残留窗口）。调用方负责
+    先拿 `thread_write(thread_id)`：在飞轮次不该被从脚下抽走检查点（R28-03 同类事故）。
+
+    返回每张表删掉的行数（审计与测试用）。
+    """
+    stats: dict[str, int] = {}
+    for table in _thread_id_carriers(conn):
+        cur = conn.execute(f"DELETE FROM {table} WHERE thread_id = ?", (thread_id,))
+        stats[table] = max(cur.rowcount, 0)
+    cur = conn.execute("DELETE FROM session_thread WHERE thread_id = ?", (thread_id,))
+    stats["session_thread"] = max(cur.rowcount, 0)
+    conn.commit()
+    return stats
 
 
 def _migrate(conn: SqlConnection) -> None:

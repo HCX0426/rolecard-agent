@@ -675,7 +675,14 @@ def apply_import(
     def bump(table: dict[str, int], kind: str) -> None:
         table[kind] = table.get(kind, 0) + 1
 
-    ordered = sorted(items, key=lambda row: _IMPORT_ORDER.index(str(row.get("kind"))))
+    def _rank(row: dict[str, Any]) -> int:
+        # 未知 kind 排到最后：排序本身不许再炸（`R102-48`）—— 入口的入域校验拒掉之后，
+        # 直连本函数的调用方（测试/内部）遇到的未知 kind 由下面 else 里的 raise 兜成
+        # per-item error，而不是一行 ValueError 让整批半途而废。
+        item_kind = str(row.get("kind") or "")
+        return _IMPORT_ORDER.index(item_kind) if item_kind in _IMPORT_ORDER else len(_IMPORT_ORDER)
+
+    ordered = sorted(items, key=_rank)
     for row in ordered:
         kind = str(row.get("kind") or "")
         payload = dict(row.get("payload") or {})
@@ -692,7 +699,9 @@ def apply_import(
                     conn, user_id=user_id, graph=graph, settings=settings, payload=payload
                 )
             else:
-                outcome = "skipped"
+                # 未知 kind 不是"跳过"——静默吞掉会让发送方以为写进去了（本仓判据纪律：
+                # 不把未知报成正常）。抛给上面的 per-item except，折进 errors 里回来。
+                raise ValueError(f"未知的同步 kind：{kind!r}")
         except Exception as exc:  # noqa: BLE001 - 一条坏的不该让整批回滚成"什么都没发生"
             errors.append(
                 {"kind": kind, "ident": ident, "error": f"{type(exc).__name__}: {exc}"[:200]}

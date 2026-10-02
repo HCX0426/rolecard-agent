@@ -44,6 +44,7 @@ from rolecard_agent.api.auth import (
     auth_required,
     client_ip,
     is_loopback,
+    origin_guard_violation,
     parse_trusted_proxies,
     resolve_actor,
     roles_declared,
@@ -334,6 +335,27 @@ def create_app(
                 )
         req.state.actor = actor
         return await call_next(request)  # type: ignore[operator]
+
+    # 来源标识护栏（`R102-45`）：认证只回答"带没带凭据 / 从哪连的"，这一层回答"**来源是谁**"。
+    # off 档的信任模型是"TCP 对端是 127.0.0.1 = 本人"，而 rebinding 的浏览器对端同样是
+    # 127.0.0.1 —— 实测可读全库数据并替用户批准命令。豁免路径、审批凭据这些下游防线全都
+    # 建立在这层之上，它们单独都挡不住 rebinding。注册在 `_authenticate` **之后** = 执行在
+    # 它之前（后注册者在外层）。判据见 `auth.origin_guard_violation`；
+    # `LOCAL_ORIGIN_ENFORCE=0` 是回滚开关（一键回旧行为）。
+    if env_settings.local_origin_enforce:
+
+        @app.middleware("http")
+        async def _local_origin_guard(request: object, call_next: object) -> object:
+            req = cast("Request", request)
+            reason = origin_guard_violation(
+                host_header=req.headers.get("host"),
+                origin=req.headers.get("origin"),
+                sec_fetch_site=req.headers.get("sec-fetch-site"),
+                auth_mode=env_settings.auth_mode,
+            )
+            if reason is not None:
+                return PlainTextResponse(reason, status_code=403)
+            return await call_next(request)  # type: ignore[operator]
 
     # 跨域放行（M5）：**默认不装**。装了才允许别的 origin 的浏览器带着凭据打这里，
     # 而"开成 `*`"等于让任意网页在你已登录的浏览器里驱动这个后端 —— 所以这里只收

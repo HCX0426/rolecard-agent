@@ -39,10 +39,18 @@ def _no_startup_model_pin() -> Iterator[None]:
     同时关掉**自动提取记忆**（`MEMORY_EXTRACT_AUTO=0`）：那是一次后台真模型调用，它会把
     ScriptedChat 的脚本回复吃掉一条 —— 断言"这一轮回复是 build-N"的用例就会偶发错位。
     提取自身的用例（test_memory_distill）单独把它打开再测，不在这里偷开。
+
+    同理关掉**来源标识护栏**（`LOCAL_ORIGIN_ENFORCE=0`，`R102-45`）：TestClient 的 Host 是
+    `testserver`，不是回环名 —— 全部既有 API 用例会在护栏上集体 403。护栏自己的行为由
+    `tests/unit/test_local_origin_guard.py` 单独开起来钉（含"开着时本机 Host 照常放行"）。
     """
-    previous = {key: os.environ.get(key) for key in ("MODEL_PIN_ON_STARTUP", "MEMORY_EXTRACT_AUTO")}
+    previous = {
+        key: os.environ.get(key)
+        for key in ("MODEL_PIN_ON_STARTUP", "MEMORY_EXTRACT_AUTO", "LOCAL_ORIGIN_ENFORCE")
+    }
     os.environ["MODEL_PIN_ON_STARTUP"] = "0"
     os.environ["MEMORY_EXTRACT_AUTO"] = "0"
+    os.environ["LOCAL_ORIGIN_ENFORCE"] = "0"
     try:
         yield
     finally:

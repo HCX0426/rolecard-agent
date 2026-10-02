@@ -29,7 +29,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from rolecard_agent.config import Settings
 from rolecard_agent.core import mcp_store, runtime_settings
-from rolecard_agent.core.approvals import ApprovalService
+from rolecard_agent.core.approvals import ApprovalService, sweep_interrupted
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.domain_service import DomainQueryService
 from rolecard_agent.core.graph import build_graph_config, build_kernel, build_model
@@ -601,6 +601,10 @@ def build_runtime(
     # 当场 IntegrityError —— 见 `core/identity.py` 里那句"为什么实例主人也要走这里"。
     ensure_identity_row(conn)
     ensure_identity_row(conn, owner)
+    # 终态兜底的崩溃半边（`R102-47`）：进程在命令执行期间被硬杀（本仓装机路径就是
+    # `taskkill /F`）没有异常可接，approved 行会永远挂着 —— 开机一次清扫把它收成
+    # done + error，模型读到"执行结果丢失"而不是永久的"正在执行"。
+    sweep_interrupted(conn)
     roles = RoleCardService(conn)
     roles.seed_builtins(user_id=owner)
     roles.seed_domain_roles(user_id=owner)
