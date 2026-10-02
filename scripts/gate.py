@@ -269,8 +269,12 @@ def _write_readings(outputs: dict[str, str], ok: bool) -> None:
     **红了就没有读数**：一条失败的 pytest 那一步照样打 `1 failed, 957 passed in 158.34s`，
     同一个正则会乐呵呵把那半截跑完的 957 读走 —— 实测 10-01：一次 chroma 偶发失败把
     `backend_tests` 从 1326 洗成 957，而 README 那个数才是对的（于是这条守卫差一点反过来
-    把人对的那一格判成漂移）。所以 `ok=False` 直接返回：不写值，也不打"没量到"的记号
-    （那一步确实跑了、也确实有汇总行，问题不在输出格式上）。
+    把人对的那一格判成漂移）。所以红跑**不写值**、也不打"没量到"的记号（那一步确实跑了、
+    也确实有汇总行，问题不在输出格式上）——**但要留下"这一步红过"这个事实**（`R102-36`
+    半条，10-03 收）：从前的红跑静默退场，旧读数被钉在原地而**没有任何一格说明最近一趟
+    是红的**。记号是 `<key>_red_at`；只有等这个键再量到新值（绿跑）才清掉它 —— 红被绿
+    取代才算翻篇，`check_readme_headline_numbers` 见到记号就上屏提醒"这一格还是上一次
+    绿跑量到的"。
 
     调用点是**一步一份**（每步跑完立刻并一次，不是整趟结束再一起写）：排在建步之后的
     `consistency` 因此能看见同一趟刚量到的数，加完用例不用跑两趟门禁才发现 README 对不上。
@@ -282,34 +286,40 @@ def _write_readings(outputs: dict[str, str], ok: bool) -> None:
     每个键带自己的测量时刻（`<key>_at`）：覆盖率来自 full/ci 那趟、后端测试数本趟就有，
     两件事不该共用一个时间戳 —— 比对的那条断言靠它说清"比的是哪一趟"。
     """
-    if not ok:
-        return
     try:
         loaded = json.loads(READINGS.read_text(encoding="utf-8")) if READINGS.exists() else {}
         data: dict[str, object] = loaded if isinstance(loaded, dict) else {}
     except (OSError, ValueError):
         data = {}  # 坏了的产物当没有：下一次整份重写，不跟它争
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
-    data["head"] = _git("rev-parse", "HEAD").strip()[:12]
     added: list[str] = []
-    for step, (pattern, key) in _READING_PATTERNS.items():
-        if step not in outputs:
-            continue  # 这一趟没跑那一步（档位不含它，或前一步红了就停）：不判、也不抹旧读数
-        hits = re.findall(pattern, _ANSI.sub("", outputs[step]))
-        if not hits:
-            # **跑过却没量到**是另一件事，而且是有信息量的那一件：这一步的輸出格式变了
-            # （或它的命令行参数把汇总行吞了）。落下记号让比对那条断言去红，而不是安静地
-            # 少一个键 —— 第一版就是少一个 `backend_tests` 键而全绿，README 那个数从此没人看。
-            data[f"{key}_unreadable"] = stamp
-            continue
-        data[key] = hits[-1]
-        data[f"{key}_at"] = stamp
-        data.pop(f"{key}_unreadable", None)
-        added.append(key)
-        if key == "coverage_percent":
-            # 覆盖率是**按平台**的数（runner 的 Linux 与本机 win32 各执行不了对方那半条分支），
-            # 所以这个键必须带着"是哪台机器量的"，否则下一个 91.77 会被读成"覆盖率掉了"。
-            data["coverage_platform"] = sys.platform
+    if not ok:
+        # 红跑：不写值、不碰 head，只给这一步的键落"红过"记号（合并写盘，见 docstring）。
+        for step, (_pattern, key) in _READING_PATTERNS.items():
+            if step in outputs:
+                data[f"{key}_red_at"] = stamp
+                added.append(f"{key}（红）")
+    else:
+        data["head"] = _git("rev-parse", "HEAD").strip()[:12]
+        for step, (pattern, key) in _READING_PATTERNS.items():
+            if step not in outputs:
+                continue  # 这一趟没跑那一步（档位不含它，或前一步红了就停）：不判、也不抹旧读数
+            hits = re.findall(pattern, _ANSI.sub("", outputs[step]))
+            if not hits:
+                # **跑过却没量到**是另一件事，而且是有信息量的那一件：这一步的輸出格式变了
+                # （或它的命令行参数把汇总行吞了）。落下记号让比对那条断言去红，而不是安静地
+                # 少一个键 —— 第一版就是少一个 `backend_tests` 键而全绿，README 那个数从此没人看。
+                data[f"{key}_unreadable"] = stamp
+                continue
+            data[key] = hits[-1]
+            data[f"{key}_at"] = stamp
+            data.pop(f"{key}_unreadable", None)
+            data.pop(f"{key}_red_at", None)  # 绿跑量到新值：红被取代，记号清掉
+            added.append(key)
+            if key == "coverage_percent":
+                # 覆盖率是**按平台**的数（runner 的 Linux 与本机 win32 各执行不了对方那半条分支），
+                # 所以这个键必须带着"是哪台机器量的"，否则下一个 91.77 会被读成"覆盖率掉了"。
+                data["coverage_platform"] = sys.platform
     try:
         READINGS.parent.mkdir(parents=True, exist_ok=True)
         READINGS.write_text(
@@ -318,7 +328,8 @@ def _write_readings(outputs: dict[str, str], ok: bool) -> None:
             newline="\n",
         )
         if added:
-            print(f"  读数已并入 {os.path.relpath(READINGS, ROOT)}：{', '.join(added)}", flush=True)
+            what = "读数已并入" if ok else "红跑留痕已记下"
+            print(f"  {what} {os.path.relpath(READINGS, ROOT)}：{', '.join(added)}", flush=True)
     except OSError as exc:  # 写不了读数不该让门禁失败
         print(f"  （读数没落盘：{exc}）", flush=True)
 

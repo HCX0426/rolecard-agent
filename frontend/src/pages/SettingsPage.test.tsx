@@ -93,7 +93,9 @@ beforeEach(() => {
                 overridden: true,
                 override_value: "3",
                 kind: "int",
-                choices: ["1", "3", "7"],
+                // 14 只在 payload 里、不在组件那份出厂兜底中：它是"下拉真的跟着后端清单走"
+                // 的可观察证据（`R102-19` 的守卫，见下面那条用例）。
+                choices: ["1", "3", "7", "14"],
               },
             ],
           },
@@ -183,6 +185,9 @@ describe("SettingsPage 页签拆分（Batch 5：记忆与任务目录 / 关于�
     // 窗口下拉按**生效值**选中（stub 给 3），而不是按出厂默认 1
     const select = (await screen.findByLabelText(/收件箱折叠窗口/)) as HTMLSelectElement;
     expect(select.value).toBe("3");
+    // 档位清单逐项来自 payload 的 `choices`（`R102-19`）：14 不在组件兜底的那三个里 ——
+    // 看得见它，才说明这一屏没有退回"写死三个 option、后端加档它不知道"的旧形态。
+    expect(within(select).getByRole("option", { name: "每 14 天一摞" })).toBeTruthy();
     fireEvent.change(select, { target: { value: "7" } });
     await waitFor(() =>
       expect(apiMock.put).toHaveBeenCalledWith(
@@ -199,6 +204,34 @@ describe("SettingsPage 页签拆分（Batch 5：记忆与任务目录 / 关于�
     expect(await screen.findByText("外观")).toBeTruthy();
     expect(screen.getByText("关于")).toBeTruthy();
     expect(screen.getByText("系统状态")).toBeTruthy();
+  });
+});
+
+describe("审计面板：展开键是后端下发的唯一 id（R102-17）", () => {
+  it("两行同 (ts, action)：点一行只开那一行，不再连坐多行同开", async () => {
+    // 旧实现拿 `(ts, action)` 当展开键 —— 同一秒同动作的行会一起开。这条把那个形状
+    // 原样摆出来：只有"键 = 后端下发的唯一 id"的实现能通过。
+    const base = apiMock.get.getMockImplementation()!;
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/audit?limit=200") {
+        return [
+          { id: 101, ts: "2026-10-02 03:12:42", actor: "u1", action: "set_model",
+            target: "elysia", detail_json: '{"who": "甲的详情"}' },
+          { id: 102, ts: "2026-10-02 03:12:42", actor: "u1", action: "set_model",
+            target: "elysia", detail_json: '{"who": "乙的详情"}' },
+        ];
+      }
+      return base(url);
+    });
+    render(<SettingsPage onOpenChat={() => {}} theme="light" onToggleTheme={() => {}} />);
+    const btnA = (await screen.findByText('{"who": "甲的详情"}')).closest("button");
+    const btnB = screen.getByText('{"who": "乙的详情"}').closest("button");
+    fireEvent.click(btnA!);
+
+    // 展开的只有甲：甲的 JSON 进了 <pre>，而乙那一格仍是按钮（旧实现会两格同开）。
+    expect(await screen.findAllByText(/甲的详情/, { selector: "pre" })).toHaveLength(1);
+    expect(screen.getByText('{"who": "乙的详情"}').closest("button")).toBe(btnB);
+    expect(screen.queryByText(/乙的详情/, { selector: "pre" })).toBeNull();
   });
 });
 

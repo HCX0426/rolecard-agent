@@ -29,13 +29,32 @@ import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from rolecard_agent.config import Settings
 from rolecard_agent.core.observability import TraceEvent, timer
 
 if TYPE_CHECKING:
     from langchain_core.tools import BaseTool
+
+
+class SourceProjection(Protocol):
+    """知识来源投影表的读写口（`R102-55` 根治）。实现住在 `core/knowledge_sources.py`，
+    由装配层注入 —— `rag/` 不认识 storage，依赖方向保持"装配层把具体物递给服务"。
+
+    为什么不用现成设施（ingestion 台账 / kernel_meta）：两个真根上核对过 —— 台账是空的、
+    来源可以没有任务（安装根的 `elysia_lore` 就不走上传链）、台账里也没有展示名；
+    投影表是唯一能同时保住"展示口径不变 + 读侧与分块数无关"的形状。全文见 schema.sql。
+    """
+
+    def names(self, scope: str) -> list[str]: ...
+
+    def remember(self, scope: str, source_key: str, name: str) -> None: ...
+
+    def forget(self, scope: str, source_key: str) -> None: ...
+
+    def forget_scope(self, scope: str) -> None: ...
+
 
 _CHUNK_SIZE = 500
 _CHUNK_OVERLAP = 80
@@ -405,6 +424,7 @@ class KnowledgeBase:
         embedder: Embedder,
         reranker: SiliconFlowReranker | None = None,
         min_similarity: float = 0.0,
+        sources_store: SourceProjection | None = None,
     ) -> None:
         import chromadb
 
@@ -414,14 +434,14 @@ class KnowledgeBase:
         # 绝对相似度下限（0 = 不过滤）。只在能算出余弦相似度的集合上生效 ——
         # 默认 0 是因为阈值要按嵌入器标定，见 Settings.rag_min_similarity 的实测说明。
         self._min_similarity = min_similarity
+        # 知识来源投影表（`R102-55` 根治）：来源清单的唯一读侧事实面，三个写入口
+        # （index / delete_source / reset_scope）与分块本体同一次调用里维护。
+        # None = 裸建法（单测 / 脚本）：不落投影，describe 的来源清单为空 ——
+        # 应用路径一律由 `build_knowledge` 注入（铺满全部生产入口）。
+        self._sources = sources_store
         # collection 引用缓存（`R102-65`）：`get_collection` 每次 ~0.33ms，search 的候选
         # 池逐作用域取引用 —— 缓存后这一程归零。reset_scope/delete_source 时失效。
         self._collection_cache: dict[str, Any] = {}
-        # describe 的来源清单按**分块计数**缓存（`R102-55` 的缓解，根治要 ingestion_task
-        # 补 scope 列——那一格还没做）：chroma 没有去重聚合，从前每次 `get(metadatas)`
-        # 全量倒灌（5k 分块 66.5ms，线性于分块数，设置页每开一次都付）。count() 0.9ms；
-        # 来源清单只在分块增删时变 ⇒ (name, count) 作缓存键，增删路径显式失效。
-        self._describe_cache: dict[str, tuple[int, list[str]]] = {}
         # 检索延迟滑动样本（进程内）：每次 search 追加一条阶段耗时，供 P95 细分。
         # 加锁：KnowledgeBase 是**跨线程共享**的（FastAPI 线程池 + 图执行），旧实现的
         # append + 切片裁剪在并发下会与 latency_p95() 的读取互相踩（审查报告 L2）。
@@ -520,6 +540,10 @@ class KnowledgeBase:
         if outdated:
             with contextlib.suppress(Exception):
                 collection.delete(ids=outdated)
+        if self._sources is not None:
+            # 投影表（`R102-55`）：分块已落地，接着记来源 —— 顺序是"先本体后投影"，
+            # 投影失败最坏是列表少一个名字（可自愈），不会出现"列了却没有东西"。
+            self._sources.remember(scope, source, source_name or source)
         return len(chunks)
 
     def _collection_cached(self, scope: str) -> Any | None:
@@ -532,9 +556,14 @@ class KnowledgeBase:
         return self._collection_cache[scope]
 
     def _invalidate_collection(self, scope: str) -> None:
-        """删/重建作用域后清掉引用与 describe 缓存（R102-65/R102-55 的失效半边）。"""
+        """删/重建作用域后清掉集合引用缓存（`R102-65` 的失效半边）。"""
         self._collection_cache.pop(scope, None)
-        self._describe_cache.pop(scope, None)
+
+    def _forget_source(self, scope: str, source_key: str) -> None:
+        """投影半边（裸建法 no-op）。失败**不吞**：抛给调用方重试 —— 重试路径分块已空、
+        照样走到这里把投影清掉（自愈），而不是让列表留着一个骗人的名字。"""
+        if self._sources is not None:
+            self._sources.forget(scope, source_key)
 
     def delete_source(self, scope: str, source: str) -> int:
         """按**索引身份**删除某来源的全部分块，返回删除条数（集合/来源不存在 = 0）。
@@ -549,6 +578,7 @@ class KnowledgeBase:
         try:
             collection = self._client.get_collection(name=scope)
         except Exception:  # noqa: BLE001 - 集合不存在 = 没有东西可删
+            self._forget_source(scope, source)
             return 0
         try:
             existing = collection.get(where={"source": source})
@@ -556,9 +586,12 @@ class KnowledgeBase:
             return 0
         ids = [str(i) for i in (existing.get("ids") or [])]
         if not ids:
+            # 分块本就不在：投影若还有行，这一格是来清它的（重复删除/重建后清理的自愈路）。
+            self._forget_source(scope, source)
             return 0
         collection.delete(ids=ids)
         self._invalidate_collection(scope)
+        self._forget_source(scope, source)
         return len(ids)
 
     def search(
@@ -702,35 +735,48 @@ class KnowledgeBase:
     def describe(self) -> list[dict[str, object]]:
         """知识库概览：每个作用域的分块数与来源清单（设置页知识库管理视图）。
 
-        来源清单按 (作用域, 分块数) 缓存（`R102-55` 的缓解）：chroma 没有"按元数据去重"
-        的聚合，从前每次全量 `get(metadatas)` 倒灌进 Python（5k 分块 66.5ms，线性于分块数）。
-        count() 0.9ms；来源清单只在分块增删时变，增删路径都会 `_invalidate_collection`。
-        根治（清单改从 sqlite ingestion 台账读）还差一步：ingestion_task 没有 scope 列 ——
-        补列后这条缓存撤掉，向量库降级为纯索引。
+        `R102-55` 根治后的读法：分块数出 chroma 的 `count()`，来源清单出**投影表**
+        （`knowledge_source`，由 index/delete_source/reset_scope 三入口维护、存量由
+        bootstrap 一次性种子回填）。从前那种"每开一次页面就全量倒灌分块元数据"
+        （5k 分块 66.5ms、线性于分块数）的读法已不存在 —— 本方法现在与分块数无关。
+        裸建法（`sources_store=None`）下来源清单为空：那是单测/脚本的形状，不是应用。
         """
         out: list[dict[str, object]] = []
-        for collection in self._client.list_collections():
-            count = int(collection.count())
-            cached = self._describe_cache.get(collection.name)
-            sources: list[str] | None = cached[1] if cached and cached[0] == count else None
-            if sources is None:
-                data = collection.get(include=["metadatas"])
-                sources = sorted(
-                    {
-                        str((m or {}).get("source_name") or (m or {}).get("source", "?"))
-                        for m in (data.get("metadatas") or [])
-                    }
-                )
-                self._describe_cache[collection.name] = (count, sources)
+        for scope, count in self.collection_counts():
+            sources = self._sources.names(scope) if self._sources is not None else []
             out.append(
                 {
-                    "scope": collection.name,
+                    "scope": scope,
                     "chunks": count,
                     "sources": sources,
                     "embedder": self._embedder.name,
                 }
             )
         return out
+
+    def collection_counts(self) -> list[tuple[str, int]]:
+        """(作用域, 分块数) 清单：概览与一次性种子共用同一事实面（chroma `count()`）。"""
+        return [(c.name, int(c.count())) for c in self._client.list_collections()]
+
+    def source_pairs(self, scope: str) -> list[tuple[str, str]]:
+        """((仅迁移种子用)) 某作用域**存量分块**的 (索引身份, 展示名)。
+
+        这是被淘汰的旧读法本体（全量元数据扫描），只留给 `heal_knowledge_sources`
+        的一次性回填；日常一切走投影表。取不到集合 = 空清单（种子会顺势清投影残留）。
+        """
+        try:
+            collection = self._client.get_collection(name=scope)
+        except Exception:  # noqa: BLE001 - 集合不在
+            return []
+        data = collection.get(include=["metadatas"])
+        pairs = {
+            (
+                str((m or {}).get("source") or "?"),
+                str((m or {}).get("source_name") or (m or {}).get("source") or "?"),
+            )
+            for m in (data.get("metadatas") or [])
+        }
+        return sorted(pairs)
 
     def reset_scope(self, scope: str) -> None:
         """删除整个作用域集合（embedder 切换后维度不兼容时的重建入口）。
@@ -740,6 +786,9 @@ class KnowledgeBase:
         """
         self._client.delete_collection(name=scope)
         self._invalidate_collection(scope)
+        if self._sources is not None:
+            # 投影半边（`R102-55`）：集合整个没了，来源清单也清空（同样不吞异常）。
+            self._sources.forget_scope(scope)
 
 
 # ---------------------------------------------------------------- 内核工具

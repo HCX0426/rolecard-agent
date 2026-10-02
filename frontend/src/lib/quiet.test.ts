@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { QuietStatus } from "../api";
-import { formatNextOk, quietParts } from "./quiet";
+import { formatNextOk, formatUtcNaive, quietParts } from "./quiet";
 
 function status(over: Partial<QuietStatus> = {}): QuietStatus {
   return {
@@ -38,6 +38,31 @@ describe("formatNextOk", () => {
   it("没有时刻、或读不出时刻，一律空串", () => {
     expect(formatNextOk(null, now)).toBe("");
     expect(formatNextOk("不是时间", now)).toBe("");
+  });
+});
+
+describe("formatUtcNaive（R102-18 的唯一换算出口）", () => {
+  // 期望值必须**从同一个时刻现算**（经本地时区渲染），不写死 +8 —— 这样在别的时区
+  // （CI 的 UTC runner）跑也成立；写死偏移的用例只在开发机上绿，那是假绿。
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const local = (d: Date) =>
+    `${d.getMonth() + 1}-${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+  it("库里的 UTC 裸串换算成本地展示（不是把它当本地直接读）", () => {
+    const t = new Date(Date.UTC(2026, 9, 2, 10, 32));
+    expect(formatUtcNaive("2026-10-02 10:32:00")).toBe(local(t));
+    expect(formatUtcNaive("2026-10-02T10:32:00")).toBe(local(t)); // ISO 形态同一口径
+    expect(formatUtcNaive("2026-10-02 10:32:00", true)).toBe(
+      `${pad(t.getHours())}:${pad(t.getMinutes())}`,
+    );
+  });
+
+  it("已带时区的串不再补 Z；解析不了的原样透出（不装作换过）", () => {
+    const t = new Date("2026-10-02T10:32:00+08:00");
+    expect(formatUtcNaive("2026-10-02T10:32:00+08:00")).toBe(local(t));
+    expect(formatUtcNaive("不是时间")).toBe("不是时间");
+    expect(formatUtcNaive(null)).toBe("");
+    expect(formatUtcNaive(undefined)).toBe("");
   });
 });
 

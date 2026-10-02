@@ -39,9 +39,30 @@ def cards(store: RoleCardService) -> RoleCards:
     """测试里"本机主人眼里的那些卡"的简写（M2a 之后每次读写都得说清为谁）。"""
     return store.scoped(DEFAULT_USER_ID)
 
+
+class _FakeProjection:
+    """来源投影表的内存替身（`R102-55`）：rag 单测只问"三个写入口有没有把话说给投影"；
+    真正的 SQL 与一次性种子由 tests/unit/test_knowledge_sources.py 对真 sqlite 验。"""
+
+    def __init__(self) -> None:
+        self.rows: dict[str, dict[str, str]] = {}  # scope -> {source_key: name}
+
+    def names(self, scope: str) -> list[str]:
+        return sorted(set(self.rows.get(scope, {}).values()))
+
+    def remember(self, scope: str, source_key: str, name: str) -> None:
+        self.rows.setdefault(scope, {})[source_key] = name
+
+    def forget(self, scope: str, source_key: str) -> None:
+        self.rows.get(scope, {}).pop(source_key, None)
+
+    def forget_scope(self, scope: str) -> None:
+        self.rows.pop(scope, None)
+
+
 @pytest.fixture
 def kb(tmp_path: Path) -> KnowledgeBase:
-    return KnowledgeBase(tmp_path / "chroma", HashEmbedder())
+    return KnowledgeBase(tmp_path / "chroma", HashEmbedder(), sources_store=_FakeProjection())
 
 
 DOC_A = "胆囊结石随访须知：每 3 到 6 个月复查一次超声。若出现腹痛、发热或黄疸，请及时就医。"
@@ -135,9 +156,11 @@ def test_source_name_is_only_a_label(kb: KnowledgeBase) -> None:
 
 
 def test_legacy_chunks_without_source_name_still_show_their_name(kb: KnowledgeBase) -> None:
-    """本次改动前入库的分块没有 `source_name`：展示必须退回 `source`，不能变成 "?"。
+    """本次改动前入库的分块没有 `source_name`：**检索结果**的展示必须退回 `source`。
 
     真机上就有一批这样的分块（旧索引不会自动重建），所以这条回落是必需的。
+    概览页（describe）那半边自 `R102-55` 起由投影表负责，存量分块的入库见
+    tests/unit/test_knowledge_sources.py 的一次性种子用例。
     """
     collection = kb._client.get_or_create_collection(name="health_reports")
     collection.add(  # 故意绕过 index()，模拟旧版元数据
@@ -147,10 +170,43 @@ def test_legacy_chunks_without_source_name_still_show_their_name(kb: KnowledgeBa
         metadatas=[{"source": "旧文件.txt", "scope": "health_reports", "chunk": 0}],
     )
 
-    assert kb.describe()[0]["sources"] == ["旧文件.txt"]
     hits = kb.search(["health_reports"], "随访", k=4)
     assert [h.source for h in hits] == ["旧文件.txt"]
     assert hits[0].source_key == "旧文件.txt"
+
+
+def test_projection_tracks_index_delete_and_reset(tmp_path: Path) -> None:
+    """投影表（`R102-55`）：index 记住 / delete_source 忘掉 / reset_scope 清空。
+
+    概览页的来源清单从此出投影，不再全量倒灌分块元数据 —— 三个写入口就是全部合同。
+    """
+    store = _FakeProjection()
+    kb = KnowledgeBase(tmp_path / "chroma", HashEmbedder(), sources_store=store)
+    kb.index("health_reports", "task-1", DOC_A, source_name="报告A.pdf")
+    kb.index("health_reports", "task-2", DOC_B, source_name="报告B.pdf")
+    assert store.rows["health_reports"] == {"task-1": "报告A.pdf", "task-2": "报告B.pdf"}
+    assert kb.describe()[0]["sources"] == ["报告A.pdf", "报告B.pdf"]
+
+    kb.delete_source("health_reports", "task-1")
+    assert store.rows["health_reports"] == {"task-2": "报告B.pdf"}
+
+    kb.reset_scope("health_reports")
+    assert "health_reports" not in store.rows
+
+
+def test_reindex_after_delete_restores_the_projection(tmp_path: Path) -> None:
+    """删除后再传同一份文件（状态机不推进的重用路）：分块重建，投影也必须回来。
+
+    写入口挂在 `index()` 本体上、不挂状态推进 —— 正是为了"重传同一份字节"这条真实路径：
+    那时 `advance` 一步不走（任务已是 indexed），只有 index() 会再次被调用。
+    """
+    store = _FakeProjection()
+    kb = KnowledgeBase(tmp_path / "chroma", HashEmbedder(), sources_store=store)
+    kb.index("health_reports", "task-1", DOC_A, source_name="报告A.pdf")
+    kb.delete_source("health_reports", "task-1")
+    assert store.rows.get("health_reports") == {}
+    kb.index("health_reports", "task-1", DOC_A, source_name="报告A.pdf")
+    assert store.rows["health_reports"] == {"task-1": "报告A.pdf"}
 
 
 def test_delete_source_removes_only_that_document(kb: KnowledgeBase) -> None:

@@ -128,11 +128,14 @@ def test_readings_path_moves_off_the_tracked_file_on_a_runner(tmp_path: Path, mo
     assert "docs" not in scratch.parts
 
 
-def test_a_failed_step_produces_no_reading(tmp_path: Path) -> None:
+def test_a_failed_step_produces_no_reading_but_leaves_a_red_mark(tmp_path: Path) -> None:
     """红掉的那一步**不算量到了**：`1 failed, 957 passed` 里那个 957 会被同一个正则读走。
 
     10-01 实测撞到的：一次 chroma 偶发失败把 `backend_tests` 从 1326 洗成 957，而 README 那一格
     才是对的 —— 于是这条守卫差一点反过来把人对的那一格判成漂移。
+
+    R102-36 半条（10-03 收）：红跑不写值，但要留"这一步红过"的痕 —— 从前静默退场，
+    旧读数被钉在原地而没有任何一格说明最近一趟是红的。
     """
     gate = _load_gate()
     _stub(gate, tmp_path)
@@ -143,3 +146,20 @@ def test_a_failed_step_produces_no_reading(tmp_path: Path) -> None:
     data = _read(gate)
     assert data["backend_tests"] == "1326", "失败那一步的半截数字不该盖掉上一次的真读数"
     assert "backend_tests_unreadable" not in data, "问题不在输出格式，别打'没量到'的记号"
+    assert data["backend_tests_red_at"], "红跑必须留痕：否则旧值被钉住而没人知道（R102-36 半条）"
+
+
+def test_a_green_write_clears_the_red_mark(tmp_path: Path) -> None:
+    """红被绿取代才算翻篇（`R102-36` 半条）：记号只回答"最近一趟红没红"。
+
+    下一次这个键量到新值时必须清掉 `_red_at` —— 否则它会一直喊狼来了，第二次就没人看。
+    """
+    gate = _load_gate()
+    _stub(gate, tmp_path)
+    gate._write_readings({"pytest(-x, 无覆盖率)": "1 failed, 957 passed\n"}, False)  # noqa: SLF001
+    gate._write_readings(  # noqa: SLF001
+        {"pytest(-x, 无覆盖率)": "1330 passed, 1 skipped in 190s\n"}, True
+    )
+    data = _read(gate)
+    assert data["backend_tests"] == "1330"
+    assert "backend_tests_red_at" not in data, "绿跑量到新值后红痕必须清掉"

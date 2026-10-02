@@ -371,6 +371,33 @@ CREATE INDEX IF NOT EXISTS idx_ingestion_status ON ingestion_task(status);
 CREATE INDEX IF NOT EXISTS idx_ingestion_user ON ingestion_task(user_id);
 
 -- ===========================================================================
+-- 知识来源投影（`R102-55` 根治）：每个作用域里"有哪些来源"的唯一读侧事实面。
+--
+-- WHY：这张名单从前每次打开设置页都从 chroma 的**全部分块元数据**里反推
+-- （`get(include=["metadatas"])`，5k 分块 66.5ms、线性于分块数），而它只在分块增删
+-- 时变化。于是落成一张**投影表**：
+--   * 写侧 = 索引层仅有的三个入口：`index()` 记住 / `delete_source()` 忘掉 /
+--     `reset_scope()` 清空 —— 与分块本体同一次调用里维护（经 Protocol 注入，
+--     见 rag/retriever.py；`rag/` 不认识 storage，依赖方向仍由装配层递物）；
+--   * 读侧 = 概览接口只出 `count()` + 本表，延迟与分块数**无关**（`R102-55` 验收）；
+--   * 存量/旁路数据（安装根的 `elysia_lore` 根本不走上传链、dev 根还有一批旧上传）
+--     由 bootstrap 的一次性种子从存量元数据回填（`heal_knowledge_sources`）。
+--
+-- 主键 (scope, source_key)：`source_key` 是**索引身份**（新世界 = ingestion task id，
+-- 旧世界 = 当时的文件名）——删除路径拿它精确定位；展示名（name）不参与身份，与
+-- `KnowledgeBase.index()` 的 source/source_name 区分是同一条纪律。
+-- 跨用户共享：集合本身就是全体共享的（知识库没有按人切开），本表与 chroma 同口径，
+-- **不加 user_id**。
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS knowledge_source (
+    scope       TEXT NOT NULL,   -- 作用域 = chroma 集合名
+    source_key  TEXT NOT NULL,   -- 索引身份：task_id（新）/ 文件名（旧世界）
+    name        TEXT NOT NULL,   -- 展示名（索引时的 `source_name or source`）
+    PRIMARY KEY (scope, source_key)
+);
+
+-- ===========================================================================
 -- Generic domain data (settings page,「数据」tab for domains without their own tables).
 --
 -- A domain plugin that does not need a rich report/indicator model can still

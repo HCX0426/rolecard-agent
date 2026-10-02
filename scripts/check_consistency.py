@@ -856,6 +856,16 @@ def check_readme_headline_numbers() -> None:
                 "（步骤的输出格式或参数变了 —— 先修读数，不要改 README）"
             )
             continue
+        red_at = readings.get(f"{key}_red_at")
+        if red_at:
+            # `R102-36` 半条（10-03 收）：红跑不写值、但留痕。这里只上屏提醒、不进红 ——
+            # 值本身仍是可信的（上一次**绿跑**量到的那个），病是"旧值被一次红跑钉在原地
+            # 而没有任何一格说明最近一趟是红的"；修法就是把那格说明补上（warn 即它的位置）。
+            warns.append(
+                f"{label}：最近一趟（{red_at}）这一步红过 —— 本格仍是"
+                f"{'上一次绿跑' if key in readings else '此前从未'}量到的值"
+                "（先修那一步让它重量，别改 README）"
+            )
         if key not in readings:
             continue
         checked += 1

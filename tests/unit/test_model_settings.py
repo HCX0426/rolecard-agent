@@ -20,6 +20,7 @@ from rolecard_agent.core.model_settings import (
     ModelSettingsError,
     ModelSettingsService,
     migrate_to_provider_layers,
+    provider_catalog,
     unmanaged_backend_columns,
     validate_base_url,
 )
@@ -433,6 +434,29 @@ def test_local_provider_never_stores_a_key() -> None:
     group = svc.list_providers(user_id=OWNER)[0]
     assert group["has_key"] is False and group["key_masked"] is None
     assert group["needs_key"] is False
+
+
+def test_needs_key_is_bool_and_equal_across_catalog_and_group() -> None:
+    """`R102-16`：同一契约键在**目录行**（下拉用）与**分组行**（卡片用）上必须同型同值。
+
+    从前目录行发 "0"/"1" 字符串、分组行发布尔 —— JS 里 "0" 是 truthy，"换供应商"那一屏
+    会把 Ollama 判成"要 key"（`AddModelDrawer` 曾经 `=== "1"` 判定）。这条并排钉住两处：
+    类型都是布尔、值必须相等 —— 变异（把任一处改回字符串）⇒ 本条红。
+    """
+    svc = ModelSettingsService(_conn())
+    svc.save(
+        default="local",
+        backends=[{"name": "local", "provider": "ollama", "model": "m-local", "usage": "chat"}],
+        user_id=OWNER,
+    )
+    catalog = {str(p["id"]): p for p in provider_catalog()}
+    for group in svc.list_providers(user_id=OWNER):
+        pid = str(group["provider"])
+        assert isinstance(catalog[pid]["needs_key"], bool), f"目录行 {pid} 的 needs_key 不是布尔"
+        assert isinstance(group["needs_key"], bool), f"分组行 {pid} 的 needs_key 不是布尔"
+        assert catalog[pid]["needs_key"] == group["needs_key"], f"{pid} 两处 needs_key 不同值"
+    # 再落一个具体值：Ollama 两边都不得索要 key（字符串时代的 "0" 正是这条的破法）。
+    assert catalog["ollama"]["needs_key"] is False
 
 
 # --------------------------------------------------------------------------- #

@@ -39,6 +39,7 @@ from rolecard_agent.core.identity import (
     resolve_instance_identity,
 )
 from rolecard_agent.core.ingestion import IngestionService
+from rolecard_agent.core.knowledge_sources import KnowledgeSourceStore
 from rolecard_agent.core.memory import memory_for_turn
 from rolecard_agent.core.model_settings import ModelSettingsService, client_style
 from rolecard_agent.core.nodes import ChatLike
@@ -102,8 +103,15 @@ def candidate_ids(services: ServiceEndpointService, key: str) -> list[str]:
     return [c.id for c in services.ordered_candidates(key)]
 
 
-def build_knowledge(eff: Settings, services: ServiceEndpointService) -> KnowledgeBase:
-    """按有效配置与服务页端点建知识库（嵌入器/重排器是构造期注入的实例）。"""
+def build_knowledge(
+    eff: Settings, services: ServiceEndpointService, conn: SqlConnection
+) -> KnowledgeBase:
+    """按有效配置与服务页端点建知识库（嵌入器/重排器是构造期注入的实例）。
+
+    `R102-55`：连**来源投影表**一起注入（`knowledge_source`）—— 概览页的来源清单
+    从此出它，不再全量倒灌 chroma 元数据。`conn` 是宿主那份（线程安全的
+    `ThreadLocalConnection`）；`rag/` 只认 Protocol，不认识 storage。
+    """
     return KnowledgeBase(
         eff.chroma_path,
         make_embedder(
@@ -117,7 +125,36 @@ def build_knowledge(eff: Settings, services: ServiceEndpointService) -> Knowledg
             endpoints=services.endpoint_map("rerank"),
         ),
         eff.rag_min_similarity,
+        KnowledgeSourceStore(conn),
     )
+
+
+def heal_knowledge_sources(
+    knowledge: KnowledgeBase, conn: SqlConnection, *, tracer: Tracer | None = None
+) -> int:
+    """投影表的一次性种子（`R102-55` 根治的迁移半边）：把**存量**分块的来源补进表。
+
+    为什么需要：投影表是新加的读侧事实面，而两个真根上都已经有分块 —— 安装根的
+    `elysia_lore`（16 条；走的是旁路导入，**没有 ingestion 台账**）与 dev 根的一批旧上传
+    （台账在 09-30 清过，如今 0 行）。不做种子，概览页这些来源会当场消失。
+    判据：某作用域"投影里没有名字、chroma 里有分块" ⇒ 扫一次它的元数据回填；
+    空集合反过来清掉投影里的残留行（自愈）。种子跑过之后这里只花 list + count + 点查。
+    返回本次回填的行数（0 = 无事可做）；真回填过才 emit 迁移事件（`R102-64` 的口径）。
+    """
+    store = KnowledgeSourceStore(conn)
+    seeded = 0
+    for scope, count in knowledge.collection_counts():
+        if count == 0:
+            store.forget_scope(scope)
+            continue
+        if store.names(scope):
+            continue
+        for source_key, name in knowledge.source_pairs(scope):
+            store.remember(scope, source_key, name)
+            seeded += 1
+    if seeded and tracer is not None and hasattr(tracer, "emit"):
+        tracer.emit(TraceEvent(event="knowledge_sources_seeded", detail={"rows": seeded}))
+    return seeded
 
 
 def assemble_registry(
@@ -384,7 +421,7 @@ class Runtime:
         self.role_models.clear()
         self.effective_by_user.clear()
         default_model = self.model_factory(eff, None)
-        knowledge_new = build_knowledge(eff, self.services)
+        knowledge_new = build_knowledge(eff, self.services, self.assembly.conn)
         registry_new = assemble_registry(self.assembly, self.registry_factory, eff, knowledge_new)
         graph_new = self.build_graph(default_model, registry_new, eff)
         old_knowledge = self.knowledge
@@ -657,7 +694,10 @@ def build_runtime(
         query=query_factory(conn),
         tracer=resolved_tracer,
     )
-    knowledge = build_knowledge(effective, services)
+    knowledge = build_knowledge(effective, services, conn)
+    # 投影表的一次性种子（`R102-55`）：存量分块（旁路导入的 lore、旧上传）回填来源清单。
+    # 热重建不再跑：表在库里，换装知识库实例不影响它。
+    heal_knowledge_sources(knowledge, conn, tracer=resolved_tracer)
     registry = assemble_registry(assembly, registry_factory, effective, knowledge)
     factory = model_factory or build_model
     default_model = model or factory(effective, None)
