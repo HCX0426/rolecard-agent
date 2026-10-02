@@ -7,6 +7,15 @@ name: CI
 # 为什么调 `scripts/gate.py` 而不是在这儿重编一遍命令：门禁口径只有一处定义，CI 与本机
 # 跑的必须是同一套东西；否则"CI 绿"和"提交前绿"会说两套话（这条与 S-1 那个
 # "值列只有一处派生"是同一个理由）。
+#
+# **runner 一律钉到具体版本，不用 `ubuntu-latest`**（10-02 钉的）。GitHub 公告
+# `ubuntu-latest` 将于 2026-10-19 迁到 Ubuntu 26，而这条 workflow 里有两处会跟着镜像一起漂：
+# 覆盖率是按平台量的数（入库读数就带着"哪台机器"的身份），以及 chromadb / sqlite-vec /
+# onnxruntime 这一族原生 wheel。钉死成今天实际解析到的那一版（ubuntu-24.04，2026-10-02
+# 从上一发成功 run 的日志里现读 `ImageOS` 确认）= **今天零行为变化，只把 10-19 那次静默换底
+# 挡在门外**。要升级镜像就显式改这一行并同趟重量读数，别让标签替你改。
+# `windows-latest` 刻意不钉：那一 job 只由手动 `build_windows` 触发、产物不参与 CI 绿，
+# 而且本机打的才是出货那一份。
 
 on:
   push:
@@ -39,7 +48,7 @@ env:
 jobs:
   gate:
     name: 门禁 --ci（含覆盖率≥85% 与 baseline 比对）
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 每条 job 都要有 timeout（09-28 轮 `R28-25`：四条无一设过，任一挂死就默认烧满 360 分钟）。
     # 预算按**实测用时**给，不是拍脑袋：本地 --ci 档 320s，CI 上实测 5m15s，留一倍余量防抖动，
     # 又远小于默认值 —— 挂死的作业该在几分钟内变成一次红，而不是一次"没跑完"。
@@ -88,7 +97,7 @@ jobs:
 
   frontend:
     name: 前端（tsc + build + vitest）
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -125,7 +134,7 @@ jobs:
 
   docker:
     name: 镜像真跑（build + 起 + 护栏 + 一次真 API 往返）
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 构建镜像这一段本来就慢（拉基座 + pip 装四份 requirements），预算给到 25 分钟。
     timeout-minutes: 25
     steps:
@@ -269,7 +278,7 @@ jobs:
     name: 全量门禁（手动触发才跑）
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_gate }}
     needs: [gate, frontend]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 全量档含真机冒烟与壳 typecheck，本地实测 6~8 分钟；给 30 分钟。
     timeout-minutes: 30
     env:
