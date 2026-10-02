@@ -15,6 +15,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { api, type ReachoutsPage, type ReachoutRow } from "../api";
+import { formatUtcNaive } from "../lib/quiet";
 import QuietLine from "./QuietLine";
 import { useConfirm } from "../hooks/useConfirm";
 
@@ -29,10 +30,15 @@ interface Stack {
   unread: number;
 }
 
-/** 时间戳解析：后端给的是 "YYYY-MM-DD HH:MM:SS"（或 ISO 带 T），按**本地**时间理解。 */
+/** 时间戳解析：后端给的是 **UTC** naive（"YYYY-MM-DD HH:MM:SS" 或 ISO 带 T）——
+ * 按 UTC 理解再落回本地毫秒（`R102-18`）。从前"按本地时间理解"，本地 00:00–07:59
+ * 落库的行会被折进"昨天"的桶。 */
 function stamp(row: ReachoutRow): number {
   if (!row.created_at) return Number.NaN;
-  const ms = new Date(row.created_at.replace(" ", "T")).getTime();
+  const iso = row.created_at.includes("T")
+    ? row.created_at
+    : `${row.created_at.replace(" ", "T")}Z`;
+  const ms = new Date(iso).getTime();
   return Number.isNaN(ms) ? Number.NaN : ms;
 }
 
@@ -384,7 +390,7 @@ function MessageRow({
         {row.text}
       </span>
       <span className="mt-1 flex items-center justify-between text-[10px] text-slate-400">
-        <span>{row.created_at?.replace("T", " ").slice(0, 16) || ""}</span>
+        <span>{formatUtcNaive(row.created_at)}</span>
         {row.thread_id ? (
           <span className="text-blue-600 dark:text-blue-400">打开对话并回复 →</span>
         ) : (

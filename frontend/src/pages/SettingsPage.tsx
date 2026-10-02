@@ -18,6 +18,7 @@ import {
   type WorkspaceDir,
 } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
+import { formatUtcNaive } from "../lib/quiet";
 import QuietLine from "../components/QuietLine";
 import { Button, Card } from "../components/ui";
 
@@ -1437,7 +1438,7 @@ function AuditPanel() {
                 className="border-b border-slate-50 last:border-0"
               >
                 <td className="whitespace-nowrap px-4 py-2 font-mono text-slate-500 dark:text-slate-400">
-                  {String(a.ts).replace("T", " ").slice(0, 19)}
+                  {formatUtcNaive(String(a.ts))}
                 </td>
                 <td className="px-4 py-2">{a.actor}</td>
                 <td className="px-4 py-2">

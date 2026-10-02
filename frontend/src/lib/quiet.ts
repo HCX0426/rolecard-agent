@@ -6,6 +6,24 @@ function startOfDay(d: Date): number {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 }
 
+/** 库里的 **UTC naive** 时刻（"2026-10-02 03:12:42" 或 ISO）→ 本地 "M-D HH:mm"（带日期）或 "HH:mm"。
+ *
+ * 为什么要有这一条（`R102-18`）：落库一律 UTC（`CURRENT_TIMESTAMP` / `strftime('now')`），
+ * 而收件箱/事件簿/审批面板从前直接 `.slice(0,16)` 把 UTC 当本地展示 —— 时刻恒偏 8 小时，
+ * 她"拿屏幕上的 03:12 去对托盘永远对不上"。这一条是**唯一**的换算出口：
+ * 解析不了就原样透出（不装作换过）；已带时区（Z / +08:00）的串不再补 Z。
+ */
+export function formatUtcNaive(ts: string | null | undefined, hmOnly = false): string {
+  if (!ts) return "";
+  const iso = ts.includes("T") ? ts : ts.replace(" ", "T");
+  const normalized = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : `${iso}Z`;
+  const t = new Date(normalized);
+  if (Number.isNaN(t.getTime())) return ts;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const hm = `${pad(t.getHours())}:${pad(t.getMinutes())}`;
+  return hmOnly ? hm : `${t.getMonth() + 1}-${t.getDate()} ${hm}`;
+}
+
 /** 「下一次大约 16:34 / 明天 08:00」。给不出时刻（要他回话、正在对话）就是空串。 */
 export function formatNextOk(iso: string | null, now: Date = new Date()): string {
   if (!iso) return "";

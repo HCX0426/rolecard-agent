@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type TimelineEvent, type TimelinePage } from "../api";
+import { formatUtcNaive } from "../lib/quiet";
 import { Button, Modal, Notice } from "./ui";
 
 /** 顶部那个下拉：一个控件而不是四个开关 —— "对话"锚点单独看没有意义（§6.2）。 */
@@ -207,7 +208,7 @@ export default function TimelineDrawer({
                       className={`absolute -left-[19px] top-1 h-2 w-2 rounded-full ${badge.cls} ring-2 ring-white dark:ring-slate-800`}
                     />
                     <span className="mr-1.5 text-slate-400 dark:text-slate-500">
-                      {ev.at.slice(11, 16)}
+                      {formatUtcNaive(ev.at, true)}
                     </span>
                     <span className={`mr-1.5 rounded px-1.5 py-0.5 text-[10px] ${badge.cls}`}>
                       {badge.label}

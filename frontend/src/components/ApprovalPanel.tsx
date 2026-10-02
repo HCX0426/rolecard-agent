@@ -11,6 +11,7 @@ import {
   type ApprovalsPage,
   type ApprovalStatus,
 } from "../api";
+import { formatUtcNaive } from "../lib/quiet";
 
 function StatusBadge({ status }: { status: ApprovalStatus }) {
   const style =
@@ -149,7 +150,7 @@ export default function ApprovalPanel({
               )}
               <div className="mt-1 flex items-center justify-between">
                 <span className="text-[10px] text-slate-400">
-                  #{row.id} · {row.created_at?.replace("T", " ").slice(0, 16) || ""}
+                  #{row.id} · {formatUtcNaive(row.created_at)}
                 </span>
                 {row.status === "pending" && (
                   <div className="flex flex-col items-end gap-0.5">
