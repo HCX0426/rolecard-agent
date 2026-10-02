@@ -1,10 +1,10 @@
 {
   "backend_tests": "1362",
-  "backend_tests_at": "2026-10-02T17:22:44+0800",
-  "coverage_percent": "92.19",
-  "coverage_percent_at": "2026-10-02T16:31:52+0800",
+  "backend_tests_at": "2026-10-02T17:27:18+0800",
+  "coverage_percent": "92.18",
+  "coverage_percent_at": "2026-10-02T17:42:26+0800",
   "coverage_platform": "win32",
   "frontend_tests": "338",
-  "frontend_tests_at": "2026-10-02T15:16:19+0800",
-  "head": "aafab7bbb9df"
+  "frontend_tests_at": "2026-10-02T17:43:00+0800",
+  "head": "6a4fd8e20263"
 }

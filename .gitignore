@@ -77,3 +77,8 @@ data/sqlite/*.trace.jsonl
 # 开发态数据根里被隔离出来的陈旧快照（2026-09-25，见审计 §12.19 那条数据根分叉）
 data/sqlite/_stale-dev-snapshot-*/
 build/_baseline/
+
+# --- zcode tooling ---
+# .zcodeignore 是 .gitignore 的工具派生件（上半部由 ZCode 自动同步重写）：入库等于第二份事实，
+# 且每次同步都产生噪音 diff —— 保持本地（2026-10-02 拍板，见架构审计 2026-10-02 轮 H6）。
+.zcodeignore
