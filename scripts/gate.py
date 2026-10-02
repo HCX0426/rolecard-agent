@@ -360,12 +360,35 @@ def main() -> int:
         print(f"❌ _READING_PATTERNS 引用了不存在的步骤：{unknown_patterns}", flush=True)
         return 2
 
-    # 同一个形状的第二格（10-02 轮 `R102-21`）：`--only` 的子串打错时循环一步都不进，
+    # 同一个形状的第二格（10-02 轮 `R102-38`）：`--only` 的子串打错时循环一步都不进，
     # 而末尾那句"✅ 全部通过"只看 `failures` —— 于是**零步也报绿**。补读一个数的人
     # 拿到的是"绿"，实际什么都没跑，比红贵得多。
-    if args.only and not any(args.only in name for name, _, _ in STEPS):
-        print(f"❌ --only「{args.only}」在这份步骤表里一步都没命中", flush=True)
-        print("   现有步骤：" + "、".join(name for name, _, _ in STEPS), flush=True)
+    #
+    # 同族第三格（10-03 终局序列当场撞出）：子串**命中**了名字，但那一步被档位过滤
+    # （`pytest(-x, 无覆盖率)` 是 fast 档，默认 full 档不带它）—— 循环照样一步不进、
+    # 照样报绿。实测：`gate.py --only "pytest(-x"` 0.0s 打出"✅ 全部通过"、退出 0。
+    # 修法不是再补一个条件，而是让守卫与循环共用同一条"这趟会不会跑"的判据：
+    # 零步（无论哪种零法）一律可乐回 2，并说清怎么把它真的跑起来。
+    def _will_run(name: str, mode: str) -> bool:
+        if args.only and args.only not in name:
+            return False
+        if args.ci and name in CI_SKIP:
+            return False  # CI 档不跑 node/真机那几步（它们各有专属 job 或要本机环境）
+        if args.fast:
+            return mode in ("fast", "both")
+        if args.ci:
+            return True  # CI 档到这儿只剩"档位"一层：不按快/全量筛
+        return mode in ("full", "both")
+
+    if args.only and not any(_will_run(name, mode) for name, _, mode in STEPS):
+        matched = [name for name, _, _ in STEPS if args.only in name]
+        print(f"❌ --only「{args.only}」这趟一步都不会跑（零步不许当通过）", flush=True)
+        if matched:
+            print(f"   命中了：{'、'.join(matched)} —— 但当前档位不会跑它", flush=True)
+            print("   fast 档步骤加 --fast；全量档步骤不加旗（默认）", flush=True)
+            print("   CI 跳过的步骤别加 --ci", flush=True)
+        else:
+            print("   现有步骤：" + "、".join(name for name, _, _ in STEPS), flush=True)
         return 2
 
     timings: list[tuple[str, float]] = []
@@ -373,13 +396,7 @@ def main() -> int:
     started = time.perf_counter()
 
     for name, cmd, mode in STEPS:
-        if args.only and args.only not in name:
-            continue
-        if args.ci and name in CI_SKIP:
-            continue  # CI 档不跑 node/真机那几步（它们各有专属 job 或要本机环境）
-        if args.fast and mode not in ("fast", "both"):
-            continue
-        if (not args.fast) and (not args.ci) and mode not in ("full", "both"):
+        if not _will_run(name, mode):
             continue
         # 覆盖率那趟：本地全量档"没碰 src/ 就跳过"；**CI 档必跑** —— 用户 09-29 拍了
         # "不手动"，85% 这条线从此在每次 push/PR 上设防（R28-24 的修法）。
