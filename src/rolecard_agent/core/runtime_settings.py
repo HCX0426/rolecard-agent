@@ -99,6 +99,10 @@ RUNTIME_FIELDS: tuple[FieldSpec, ...] = (
     # 命令执行（架构计划 C·§6.2）：总闸 + 审批档都允许在线热切（工具每调用读 settings）。
     FieldSpec("run_tools_enabled", "RUN_TOOLS_ENABLED", "bool"),
     FieldSpec("run_approval", "RUN_APPROVAL", "str", ("manual", "auto")),
+    # 出站目标允许清单（`R102-58`）：这一条**必须**在界面上可改，因为它的语义就是
+    # "新增一个数据出口要 operator 确认一次" —— 只活在 .env 里等于每次都要改文件加重启。
+    # 判据随请求读当前 Settings（见 `api/access.outbound_target_allowed`），保存即生效。
+    FieldSpec("sync_allowed_hosts", "SYNC_ALLOWED_HOSTS", "str"),
 )
 
 _FIELDS_BY_NAME = {f.field: f for f in RUNTIME_FIELDS}

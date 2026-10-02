@@ -293,9 +293,13 @@ def unauthorized_response(*, challenge: bool = True) -> tuple[int, dict[str, str
 
 # ---------------------------------------------------------------- 来源标识护栏（R102-45）
 
-#: off 档下 Host 头允许的主机名（端口一律剥掉再比）。合法客户端（壳/控制台/脚本/探针/健康检查）
-#: 全部以 `127.0.0.1` / `localhost` / `[::1]` 进来；rebinding 浏览器发的 Host 是攻击者域名。
-_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+#: 回环主机名（端口一律剥掉再比）。两个用法共用这一份，避免"回环叫什么"出现第二处答案：
+#:   * off 档下 Host 头允许的值（`origin_guard_violation`）—— 合法客户端（壳/控制台/脚本/
+#:     探针/健康检查）全部以 `127.0.0.1` / `localhost` / `[::1]` 进来，rebinding 浏览器发的
+#:     Host 是攻击者域名；
+#:   * 出站目标的默认放行面（`access.outbound_target_allowed`，`R102-58`）—— `AUTH_MODE`
+#:     开启后，user 档只许把数据推给回环或 operator 允许清单里的地址。
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
 def hostname_of_netloc(netloc: str) -> str:
@@ -326,7 +330,7 @@ def origin_guard_violation(
        在场时仍拒 —— 沙箱 iframe 伪造的假 null 恒带这个头（Chromium 保证），合法壳不带。
     """
     host_name = hostname_of_netloc(host_header).lower() if host_header else None
-    if auth_mode == "off" and host_name and host_name not in _LOOPBACK_HOSTS:
+    if auth_mode == "off" and host_name and host_name not in LOOPBACK_HOSTS:
         return (
             f"Forbidden: 本机服务只认本机来源 —— Host「{host_name}」不是回环地址。"
             "请用 http://127.0.0.1 访问（见架构总览 §6「单机形态的可选硬化」）。"

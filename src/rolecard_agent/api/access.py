@@ -22,7 +22,14 @@
 
 from __future__ import annotations
 
-from rolecard_agent.api.auth import ROLE_OPERATOR, ROLE_USER, is_loopback
+from urllib.parse import urlsplit
+
+from rolecard_agent.api.auth import (
+    LOOPBACK_HOSTS,
+    ROLE_OPERATOR,
+    ROLE_USER,
+    is_loopback,
+)
 
 PUBLIC = "public"
 USER = "user"
@@ -124,6 +131,66 @@ def allowed(
     if not enforce:
         return True
     if classify(path, method) != OPERATOR:
+        return True
+    if is_loopback(ip):
+        return True
+    if not authenticated:
+        return False
+    return (not roles_in_effect) or role == ROLE_OPERATOR
+
+
+# ---------------------------------------------------------------- 出站目标（R102-58）
+
+
+def allowed_hosts(raw: str) -> frozenset[str]:
+    """允许清单原文 → 主机名集合（逗号分隔，可写 `host` 或 `host:端口`，一律只取主机名）。
+
+    端口不参与判定：判的是"数据该不该去这台机器"，而端口是它可以随便换的。写成
+    `example.com:8443` 与 `example.com` 是同一台 —— 若把端口算进判据，运营方改个端口
+    就会静默失效（`R102-42` 那一族"知识只写了一半调用点"）。
+    """
+    out: set[str] = set()
+    for entry in (raw or "").split(","):
+        text = entry.strip()
+        if not text:
+            continue
+        # `urlsplit` 对**裸主机名**不认（`example.com` 会被当成 path），补 `//` 让它按 netloc
+        # 解析；已经带了 scheme 的整段 URL（`https://example.com`）必须原样解，否则
+        # `//https://example.com` 的 netloc 是 "https:" —— 主机名会变成协议名。
+        host = (urlsplit(text if "://" in text else f"//{text}").hostname or "").strip().lower()
+        if host:
+            out.add(host)
+    return frozenset(out)
+
+
+def outbound_target_allowed(
+    url: str,
+    *,
+    ip: str,
+    authenticated: bool,
+    enforce: bool,
+    role: str = ROLE_USER,
+    roles_in_effect: bool = False,
+    allowlist: str = "",
+) -> bool:
+    """这条**出站**目标这一档能不能去敲（`R102-58`）。
+
+    受管的是"把本机这份数据推到某个地址"那几条（`/api/sync/*`）—— 它们属 **user 档**
+    （见 `USER_ROUTES` 的自述："多了一样让本机去敲一个用户给的地址"），于是从前**任意公网
+    http/https 地址都收**：多凭据部署里，持 user 凭据的人可以把该身份的记忆与会话全量推到
+    自己控制的服务器。判据收在这里而不是散在路由里：`AUTH_MODE=off` 一律放行（那一档的
+    语义就是"我本机单人用"，与 `allowed()` 同一条信任模型，单机形态零感知）；开启认证后
+    按档算 —— 回环目标或落在 operator 允许清单里 → 放行；否则只有**操作员这一档**
+    （本机来源 / operator 凭据）能敲。
+
+    地址本身能不能用（scheme、空值）仍归 `validate_base_url`，这里只管"谁有资格敲它"。
+    """
+    if not enforce:
+        return True
+    host = (urlsplit(url).hostname or "").strip().lower()
+    if not host:
+        return False
+    if host in LOOPBACK_HOSTS or host in allowed_hosts(allowlist):
         return True
     if is_loopback(ip):
         return True

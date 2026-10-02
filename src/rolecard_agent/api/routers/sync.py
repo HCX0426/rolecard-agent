@@ -26,6 +26,11 @@
 3. **对面的地址要过校验**（`validate_base_url`：只认 http/https，拒 `file://` 这类）。
    这与探测端点同一条 SSRF 口径 —— 差别只在于这里连凭据一起发出去了，所以那句提示里
    写清了"发给谁由你决定"。
+4. **目的地址要过出口策略**（`_guard_target` → `access.outbound_target_allowed`，`R102-58`）：
+   这几条端点属**使用者档**（它是"搬自己的数据"这个日常动作），于是从前任意公网地址都收 ——
+   多凭据部署里，持使用者凭据者可把该身份的记忆与会话全量推到自己控制的服务器。
+   `AUTH_MODE` 开启后收窄为"回环目标或 operator 允许清单（`SYNC_ALLOWED_HOSTS`）"；
+   off 档（单机单人）逐字不变。判据收在三个出站执行器的入口，只此一处。
 """
 
 from __future__ import annotations
@@ -34,10 +39,11 @@ from dataclasses import replace
 from typing import Any
 
 import httpx  # 只用它的异常类型；请求一律走 core/outbound
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from rolecard_agent.api.auth import Actor, basic_header
+from rolecard_agent.api import access
+from rolecard_agent.api.auth import ROLE_USER, Actor, basic_header
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.core import outbound
 from rolecard_agent.core import sync as sync_lib
@@ -53,6 +59,44 @@ MAX_ITEMS = 5000
 
 def _identity(ctx: AppContext) -> str:
     return ctx.current_user()
+
+
+def _guard_target(request: Request, ctx: AppContext, base_url: str) -> str:
+    """解析并校验目标地址，再过**出站策略**（`R102-58`）。返回归一化后的 base。
+
+    两件事分工写清：地址合不合法归 `validate_base_url`（scheme / 空值），"**谁有资格敲它**"
+    归 `access.outbound_target_allowed`。三处出站执行器（`_remote_inventory` /
+    `_fetch_remote_payloads` / `_push`）都在入口调它 —— 判据只此一处，而这个文件里所有
+    发往对岸的请求都只能从这三个函数走。
+    """
+    try:
+        base = validate_base_url(base_url)
+    except Exception as exc:  # noqa: BLE001 - ModelSettingsError 的文案已经能直接给人看
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not base:
+        raise HTTPException(status_code=400, detail="要填对面那台程序的地址。")
+    actor: Actor | None = getattr(request.state, "actor", None)
+    settings = ctx.settings
+    allowed = access.outbound_target_allowed(
+        base,
+        # 来源与分族由认证中间件挂上（`api/main.py`）：XFF 只在那层按可信代理解析。
+        ip=str(getattr(request.state, "origin", "") or ""),
+        authenticated=actor is not None and not actor.is_anonymous,
+        enforce=(settings.auth_mode or "off").strip().lower() != "off",
+        role=actor.role if actor is not None else ROLE_USER,
+        roles_in_effect=bool(getattr(request.state, "roles_in_effect", False)),
+        allowlist=settings.sync_allowed_hosts,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"这一档不许把数据推到 {base} —— 它不在允许清单里。"
+                "让操作员在「设置 → 运行环境」把目的主机加进 SYNC_ALLOWED_HOSTS，"
+                "或用操作员凭据 / 本机来源发起（见架构总览 §6）。"
+            ),
+        )
+    return base
 
 
 @router.get("/api/sync/inventory")
@@ -81,14 +125,10 @@ class TargetBody(BaseModel):
     secret: str = Field(default="")
 
 
-def _remote_inventory(target: TargetBody) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-
-    try:
-        base = validate_base_url(target.base_url)
-    except Exception as exc:  # noqa: BLE001 - ModelSettingsError 的文案已经能直接给人看
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if not base:
-        raise HTTPException(status_code=400, detail="要填对面那台程序的地址。")
+def _remote_inventory(
+    target: TargetBody, *, request: Request, ctx: AppContext
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    base = _guard_target(request, ctx, target.base_url)
     try:
         res = outbound.get(
             f"{base}/api/sync/inventory",
@@ -120,7 +160,9 @@ def _remote_inventory(target: TargetBody) -> tuple[list[dict[str, Any]], list[di
 
 @router.post("/api/sync/plan")
 def post_plan(
-    target: TargetBody, ctx: AppContext = Depends(get_context)
+    target: TargetBody,
+    request: Request,
+    ctx: AppContext = Depends(get_context),
 ) -> dict[str, object]:
     """比出计划，**不写任何东西**。界面上"下一步：看差异"就是这一发。"""
     mine, skipped = sync_lib.collect(
@@ -129,7 +171,7 @@ def post_plan(
         graph=ctx.app_state["graph"],
         settings=ctx.app_state["effective"],
     )
-    theirs, _their_skipped = _remote_inventory(target)
+    theirs, _their_skipped = _remote_inventory(target, request=request, ctx=ctx)
     result = sync_lib.plan(mine, theirs, skipped=skipped)
     return {
         "counts": result.counts(),
@@ -279,11 +321,13 @@ class ApplyBody(TargetBody):
     resolutions: dict[str, str] = Field(default_factory=dict)
 
 
-def _push(ctx: AppContext, *, base: str, user: str, secret: str, items: list[dict[str, Any]],
+def _push(ctx: AppContext, *, request: Request, base: str, user: str, secret: str,
+          items: list[dict[str, Any]],
           clear_kinds: list[str] | None = None) -> dict[str, Any]:
     """把选好的载荷推给**对面**的 import 端点。凭据只在这次请求里活着。"""
     if not items and not clear_kinds:
         return {"written": {}, "skipped": {}, "errors": []}
+    base = _guard_target(request, ctx, base)
     try:
         res = outbound.post(
             f"{base}/api/sync/import",
@@ -306,7 +350,7 @@ def _push(ctx: AppContext, *, base: str, user: str, secret: str, items: list[dic
 
 
 def _fetch_remote_payloads(
-    target: TargetBody, wanted: list[tuple[str, str]]
+    target: TargetBody, wanted: list[tuple[str, str]], *, request: Request, ctx: AppContext
 ) -> list[dict[str, Any]]:
     """从对面取选中条目的**完整载荷**（下行那一半的燃料）。
 
@@ -316,8 +360,8 @@ def _fetch_remote_payloads(
     """
     if not wanted:
         return []
+    base = _guard_target(request, ctx, target.base_url)
     try:
-        base = validate_base_url(target.base_url)
         res = outbound.post(
             f"{base}/api/sync/export",
             json={"idents": [{"kind": k, "ident": i} for k, i in wanted]},
@@ -377,6 +421,7 @@ def _select(
 @router.post("/api/sync/apply")
 def post_apply(
     body: ApplyBody,
+    request: Request,
     ctx: AppContext = Depends(get_context),
     actor: Actor = Depends(get_actor),
 ) -> dict[str, object]:
@@ -390,15 +435,21 @@ def post_apply(
         graph=ctx.app_state["graph"],
         settings=ctx.app_state["effective"],
     )
-    theirs, _ = _remote_inventory(body)
+    theirs, _ = _remote_inventory(body, request=request, ctx=ctx)
     result = sync_lib.plan(mine, theirs, skipped=skipped)
     selected, clear = _select(result, mine, kinds=kinds, mode=mode, resolutions=body.resolutions)
     items = [
         {"kind": item.kind, "ident": item.ident, "payload": item.payload} for item in selected
     ]
-    base = validate_base_url(body.base_url) or ""
+    base = _guard_target(request, ctx, body.base_url)
     written: dict[str, Any] = _push(
-        ctx, base=base, user=body.user, secret=body.secret, items=items, clear_kinds=clear
+        ctx,
+        request=request,
+        base=base,
+        user=body.user,
+        secret=body.secret,
+        items=items,
+        clear_kinds=clear,
     )
     remote_errors = written.get("errors")
     error_count = len(remote_errors) if isinstance(remote_errors, list) else 0
@@ -499,6 +550,7 @@ class PullBody(TargetBody):
 @router.post("/api/sync/pull")
 def post_pull(
     body: PullBody,
+    request: Request,
     ctx: AppContext = Depends(get_context),
     actor: Actor = Depends(get_actor),
 ) -> dict[str, object]:
@@ -515,7 +567,7 @@ def post_pull(
         graph=ctx.app_state["graph"],
         settings=ctx.app_state["effective"],
     )
-    theirs, _ = _remote_inventory(body)
+    theirs, _ = _remote_inventory(body, request=request, ctx=ctx)
     result = sync_lib.plan(mine, theirs, skipped=skipped)
     wanted: list[tuple[str, str]] = [
         (str(row.get("kind")), str(row.get("ident")))
@@ -532,7 +584,7 @@ def post_pull(
         elif choice == "both" and conflict.kind == sync_lib.KIND_MEMORY:
             wanted.append((conflict.kind, conflict.ident))
             both.add(conflict.ident)
-    rows = _fetch_remote_payloads(body, wanted)
+    rows = _fetch_remote_payloads(body, wanted, request=request, ctx=ctx)
     for row in rows:
         # 「两份都留」必须**带着章**走完最后一程：export 交出来的是对面那份的原样载荷，
         # 不盖 `keep_both` 的话，apply_import 会沿用同一个 uid 去 UPDATE —— 下行的
@@ -571,6 +623,7 @@ class ReconcileBody(TargetBody):
 @router.post("/api/sync/reconcile")
 def post_reconcile(
     body: ReconcileBody,
+    request: Request,
     ctx: AppContext = Depends(get_context),
     actor: Actor = Depends(get_actor),
 ) -> dict[str, object]:
@@ -584,15 +637,16 @@ def post_reconcile(
             graph=ctx.app_state["graph"],
             settings=ctx.app_state["effective"],
         )
-        theirs, _ = _remote_inventory(body)
+        theirs, _ = _remote_inventory(body, request=request, ctx=ctx)
         return sync_lib.plan(mine, theirs, skipped=skipped)
 
-    base = validate_base_url(body.base_url) or ""
+    base = _guard_target(request, ctx, body.base_url)
     first = _plan()
     push, _pull, _ = sync_lib.auto_moves(first)
     push = [item for item in push if item.kind in kinds]
     remote_out = _push(
         ctx,
+        request=request,
         base=base,
         user=body.user,
         secret=body.secret,
@@ -601,7 +655,7 @@ def post_reconcile(
     second = _plan()
     _push2, pull, human = sync_lib.auto_moves(second)
     pull = [(k, i) for k, i in pull if k in kinds]
-    rows = _fetch_remote_payloads(body, pull)
+    rows = _fetch_remote_payloads(body, pull, request=request, ctx=ctx)
     local_out = sync_lib.apply_import(
         ctx.conn,
         user_id=_identity(ctx),

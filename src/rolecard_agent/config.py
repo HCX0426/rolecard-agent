@@ -436,6 +436,14 @@ class Settings(BaseModel):
     # 轮询读不进门。要连域数据写入一起管就把它加在这里（如 `/api/domains`）。
     rate_limit_paths: str = "/api/chat,/api/session"
 
+    # 出站目标允许清单（`R102-58`，判据在 `api/access.outbound_target_allowed`）。
+    # 受管的是"把本机这份数据推到某个地址"那几条（`/api/sync/*`）：它们属 **user 档**，
+    # 于是从前任意公网地址都收 —— 多凭据部署里，持 user 凭据者可把该身份的会话与记忆
+    # 全量推到自己控制的服务器。这里列 operator 认可的**目的主机**（逗号分隔，可带端口，
+    # 一律只比主机名）；**空 = 只允许本机回环**。只在 `AUTH_MODE` 开启后才分档：
+    # off 档（默认，单机单人形态）逐字不变。可在「运行环境」页在线改（operator 档端点）。
+    sync_allowed_hosts: str = ""
+
     # RESERVED for the v2.4 cloud observability backend. Parsed here so the .env contract is
     # stable from day one, but nothing reads them yet - `make_tracer` only implements `local`
     # and emits a `tracer_fallback` event if you ask for anything else. Listed in
@@ -579,6 +587,7 @@ class Settings(BaseModel):
             ("LOCAL_ORIGIN_ENFORCE", "local_origin_enforce"),
             ("RATE_LIMIT_PER_MINUTE", "rate_limit_per_minute"),
             ("RATE_LIMIT_PATHS", "rate_limit_paths"),
+            ("SYNC_ALLOWED_HOSTS", "sync_allowed_hosts"),
             ("IDENTITY_USER_ID", "identity_user_id"),
             ("LANGSMITH_API_KEY", "langsmith_api_key"),
             ("LANGSMITH_PROJECT", "langsmith_project"),

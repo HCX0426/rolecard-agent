@@ -334,6 +334,12 @@ def create_app(
                     headers={"Retry-After": str(retry_after)},
                 )
         req.state.actor = actor
+        # 这次请求的**档位事实**（`R102-58`）：来源 IP 与"凭据分族是否生效"，一起挂给路由层。
+        # 为什么必须由中间件给而不是让路由自己算：解析 XFF / 认证档位是这一层的职责，路由
+        # 重算一遍就是第二份实现（`X-Forwarded-For` 只在可信代理由才采信这条尤其不能漂）。
+        # 出站目标允许清单（`api/access.outbound_target_allowed`）是第一处消费者。
+        req.state.origin = origin
+        req.state.roles_in_effect = roles_in_effect
         return await call_next(request)  # type: ignore[operator]
 
     # 来源标识护栏（`R102-45`）：认证只回答"带没带凭据 / 从哪连的"，这一层回答"**来源是谁**"。

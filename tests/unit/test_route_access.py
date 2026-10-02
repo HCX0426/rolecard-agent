@@ -23,7 +23,9 @@ from rolecard_agent.api.access import (
     USER,
     USER_ROUTES,
     allowed,
+    allowed_hosts,
     classify,
+    outbound_target_allowed,
 )
 from rolecard_agent.api.main import create_app
 
@@ -281,3 +283,111 @@ def test_allowed_truth_table_with_roles() -> None:
     assert verdict(role="user", roles_in_effect=False, authenticated=True, ip="203.0.113.9")
     # 本机来源永远放行，且与"带没带凭据"无关
     assert verdict(role="user", roles_in_effect=True, authenticated=False, ip="127.0.0.1")
+
+
+# ---------------------------------------------------------------- 出站目标（R102-58）
+
+
+def test_outbound_target_truth_table() -> None:
+    """`outbound_target_allowed` 的真值表：off 档一律放行；开启后按"回环 / 清单 / 档位"分。
+
+    这一格与 `allowed()` 是**同一信任模型的两个方向**：那个判"谁能进来碰我"，这个判
+    "我能把数据送到哪去"。写成一张表而不是散在路由里，是因为它要回答的正是审计问过的
+    那句话 —— user 档凭什么等于任意地址的数据出口。
+    """
+    # `roles_in_effect=True` = 配置里写了 `operator:` 凭据、分族真的生效（与 `allowed()`
+    # 同一条兼容规则：没写 operator 凭据时，任何已认证身份都按操作员看待）。
+    far = {
+        "ip": "203.0.113.9",
+        "authenticated": True,
+        "enforce": True,
+        "roles_in_effect": True,
+    }
+    # off 档（单机单人形态）：连匿名都放行，逐字不变
+    assert outbound_target_allowed(
+        "http://anywhere.example", ip="203.0.113.9", authenticated=False, enforce=False
+    )
+    # 回环目标：它就是"本机对面那份自己"，任何档都不该拦
+    assert outbound_target_allowed("http://127.0.0.1:8123", **far)
+    assert outbound_target_allowed("http://localhost:8123", **far)
+    assert outbound_target_allowed("http://[::1]:8123", **far)
+    # 清单三种写法等价（裸主机 / 带端口 / 整段 URL），且只比主机名不比端口
+    for raw in ("cloud.test", "cloud.test:8443", "https://cloud.test"):
+        assert outbound_target_allowed("http://cloud.test:9999", allowlist=raw, **far), raw
+    # 不在清单里：user 档拒 → operator 档放行 → 本机来源放行（三条各是一次判定）
+    assert not outbound_target_allowed("http://cloud.test:8123", **far)
+    assert outbound_target_allowed("http://cloud.test:8123", role="operator", **far)
+    assert outbound_target_allowed("http://cloud.test:8123", **{**far, "ip": "127.0.0.1"})
+    # 分族未生效（没写 `operator:` 凭据）：已认证身份仍算操作员 —— 与 `allowed()` 同一条兼容
+    assert outbound_target_allowed(
+        "http://cloud.test:8123", ip="203.0.113.9", authenticated=True, enforce=True
+    )
+    # 匿名 + 非清单 = 拒（宁严：这一档本来就不该由匿名发起）
+    assert not outbound_target_allowed(
+        "http://cloud.test:8123", ip="203.0.113.9", authenticated=False, enforce=True
+    )
+    # 解析不出主机的一律拒 —— 地址合法性归 validate_base_url，但这里也不放过空值
+    assert not outbound_target_allowed("", **far)
+    assert not outbound_target_allowed("http://", **far)
+    # 清单解析：空串 / 多余逗号 / 大小写与空格都不该造出幽灵条目
+    assert allowed_hosts("") == frozenset()
+    assert allowed_hosts(" , ") == frozenset()
+    assert allowed_hosts(" Cloud.Test , ") == frozenset({"cloud.test"})
+
+
+def test_foreign_sync_target_needs_an_operator_tier(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`/api/sync/*` 属使用者档，但"把数据推到哪台机器"要 operator 认过（`R102-58`）。
+
+    `AUTH_MODE=on` + 远端对端：使用者凭据推到公网地址 = 403 且**文案点名了配置项**；
+    操作员凭据同一目标放行（走到真发请求那一步）；回环目标对使用者照常放行 ——
+    这三格合起来才是"单机形态零感知、多凭据部署有边界"。
+    """
+    client = _client(
+        monkeypatch, tmp_path, mode="on", creds="operator:bob:pw,alice:pw", peer="203.0.113.9"
+    )
+    foreign = {"base_url": "http://cloud.test:8123", "user": "alice", "secret": "s"}
+    denied = client.post("/api/sync/plan", json=foreign, auth=("alice", "pw"))
+    assert denied.status_code == 403
+    assert "允许清单" in denied.json()["detail"], denied.json()["detail"]
+
+    class _Resp:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return {"items": [], "skipped": []}
+
+    monkeypatch.setattr("httpx.get", lambda url, **kw: _Resp())
+    # 操作员凭据：同一目标放行
+    assert client.post("/api/sync/plan", json=foreign, auth=("bob", "pw")).status_code == 200
+    # 回环目标：使用者凭据也放行（在清单之外，但它是"本机对面那份自己"）
+    near = {"base_url": "http://127.0.0.1:1", "user": "alice", "secret": "s"}
+    monkeypatch.undo()  # 去掉替身，让它真的去连（连不上 = 已经过了那道闸）
+    assert client.post("/api/sync/plan", json=near, auth=("alice", "pw")).status_code == 502
+
+
+def test_sync_allowlist_lets_a_user_reach_a_named_host(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """operator 在配置里点过头的那台，使用者凭据就够（这正是允许清单的用法）。"""
+    monkeypatch.setenv("SYNC_ALLOWED_HOSTS", "cloud.test")
+    client = _client(
+        monkeypatch, tmp_path, mode="on", creds="operator:bob:pw,alice:pw", peer="203.0.113.9"
+    )
+
+    class _Resp:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return {"items": [], "skipped": []}
+
+    monkeypatch.setattr("httpx.get", lambda url, **kw: _Resp())
+    ok = client.post(
+        "/api/sync/plan",
+        json={"base_url": "http://cloud.test:8123", "user": "alice", "secret": "s"},
+        auth=("alice", "pw"),
+    )
+    assert ok.status_code == 200, ok.text
