@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 from pathlib import Path
 from typing import Any
@@ -117,6 +118,12 @@ def test_decide_reject_is_terminal_no_execution(client: TestClient, db_path: str
     time.sleep(0.2)  # 给后台池一点时间：若它错跑了，这里会查到 run_command 审计
     rows = _approval_rows(db_path)
     assert rows[0]["status"] == "rejected"
+    # `R102-51`：docstring 宣称的探测器**落成断言** —— 从前这里只查状态不查审计，
+    # 后台错跑执行本用例照样绿（审计里会留下 run_command 行）。
+    audit_runs = sqlite3.connect(db_path).execute(
+        "SELECT COUNT(*) FROM audit_log WHERE action = 'run_command'"
+    ).fetchone()[0]
+    assert audit_runs == 0, "拒绝是终态，后台不该真的执行命令（audit_log 有 run_command）"
 
 
 def test_decide_approve_executes_once_and_backfills(client: TestClient, db_path: str) -> None:

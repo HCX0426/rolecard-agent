@@ -418,6 +418,13 @@ class Settings(BaseModel):
     # `=0` 是回滚开关，一键回旧行为；为什么默认开，见架构总览 §6「单机形态的可选硬化」。
     local_origin_enforce: bool = True
 
+    # 三张只增表的 retention（`R102-29`；2026-10-02 拍板：分表定档）。0 = 该档永不清理
+    # （旧行为）。清理在 bootstrap 里做、量回报给 schema-migrate 事件流（`R102-64`）；
+    # agent_reachout 走 per-role `reachout_keep` 的既有机制（出厂默认改 200，只对新角色生效）。
+    audit_log_retention_days: int = 90
+    audit_log_max_rows: int = 10_000
+    approval_done_retention_days: int = 30
+
     # v2.4 限流（api/ratelimit.py）：按**身份**给"贵"的写请求封顶。
     # 0 = 关（默认）：本产品主形态是"一个人、一台机器"，今天加节流只会误伤主人自己的
     # 桌宠与脚本 —— 判据与 09-27 那条决定一致（限流保护的对象随"谁付钱"变），等这台

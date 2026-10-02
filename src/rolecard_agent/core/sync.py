@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from rolecard_agent.core.thread_locks import thread_write
-from rolecard_agent.storage.db import SqlConnection
+from rolecard_agent.storage.db import SqlConnection, touch_thread
 
 KIND_CARD = "card"
 KIND_THREAD = "thread"
@@ -625,12 +625,12 @@ def _write_thread(
         )
     else:
         conn.execute(
-            "UPDATE session_thread SET title = ?, current_role_id = ?,"
-            " updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')"
+            "UPDATE session_thread SET title = ?, current_role_id = ?"
             " WHERE thread_id = ? AND user_id = ?",
             (payload.get("title"), str(payload.get("current_role_id") or "general_assistant"),
              tid, user_id),
         )
+        touch_thread(conn, tid)
     conn.commit()
     messages: list[Any] = []
     for item in payload.get("messages") or []:

@@ -414,6 +414,14 @@ class KnowledgeBase:
         # 绝对相似度下限（0 = 不过滤）。只在能算出余弦相似度的集合上生效 ——
         # 默认 0 是因为阈值要按嵌入器标定，见 Settings.rag_min_similarity 的实测说明。
         self._min_similarity = min_similarity
+        # collection 引用缓存（`R102-65`）：`get_collection` 每次 ~0.33ms，search 的候选
+        # 池逐作用域取引用 —— 缓存后这一程归零。reset_scope/delete_source 时失效。
+        self._collection_cache: dict[str, Any] = {}
+        # describe 的来源清单按**分块计数**缓存（`R102-55` 的缓解，根治要 ingestion_task
+        # 补 scope 列——那一格还没做）：chroma 没有去重聚合，从前每次 `get(metadatas)`
+        # 全量倒灌（5k 分块 66.5ms，线性于分块数，设置页每开一次都付）。count() 0.9ms；
+        # 来源清单只在分块增删时变 ⇒ (name, count) 作缓存键，增删路径显式失效。
+        self._describe_cache: dict[str, tuple[int, list[str]]] = {}
         # 检索延迟滑动样本（进程内）：每次 search 追加一条阶段耗时，供 P95 细分。
         # 加锁：KnowledgeBase 是**跨线程共享**的（FastAPI 线程池 + 图执行），旧实现的
         # append + 切片裁剪在并发下会与 latency_p95() 的读取互相踩（审查报告 L2）。
@@ -444,10 +452,14 @@ class KnowledgeBase:
             {"metadata": {"hnsw:space": "cosine"}},  # 旧版写法
         ):
             try:
-                return self._client.create_collection(name=scope, **kwargs)
+                created = self._client.create_collection(name=scope, **kwargs)
+                self._invalidate_collection(scope)  # 新建/重建后引用与 describe 缓存作废
+                return created
             except Exception:  # noqa: BLE001 - 换一种写法再试；都失败就退回 get（会抛）
                 continue
-        return self._client.get_collection(name=scope)
+        collection = self._client.get_collection(name=scope)
+        self._collection_cache[scope] = collection
+        return collection
 
     def index(self, scope: str, source: str, text: str, *, source_name: str | None = None) -> int:
         """切块 -> 嵌入 -> 入库（同 source 幂等重建）。返回入库的分块数。
@@ -510,6 +522,20 @@ class KnowledgeBase:
                 collection.delete(ids=outdated)
         return len(chunks)
 
+    def _collection_cached(self, scope: str) -> Any | None:
+        """作用域集合的缓存引用；不存在返回 None（调用方决定跳过还是报错）。"""
+        if scope not in self._collection_cache:
+            try:
+                self._collection_cache[scope] = self._client.get_collection(name=scope)
+            except Exception:  # noqa: BLE001 - 作用域尚无集合
+                return None
+        return self._collection_cache[scope]
+
+    def _invalidate_collection(self, scope: str) -> None:
+        """删/重建作用域后清掉引用与 describe 缓存（R102-65/R102-55 的失效半边）。"""
+        self._collection_cache.pop(scope, None)
+        self._describe_cache.pop(scope, None)
+
     def delete_source(self, scope: str, source: str) -> int:
         """按**索引身份**删除某来源的全部分块，返回删除条数（集合/来源不存在 = 0）。
 
@@ -532,6 +558,7 @@ class KnowledgeBase:
         if not ids:
             return 0
         collection.delete(ids=ids)
+        self._invalidate_collection(scope)
         return len(ids)
 
     def search(
@@ -557,14 +584,13 @@ class KnowledgeBase:
         with timer() as t_vec:
             hits: list[Hit] = []
             for scope in scopes:
-                try:
-                    collection = self._client.get_collection(name=scope)
-                except Exception:  # noqa: BLE001 - 作用域尚无集合 = 没有知识，跳过而非报错
-                    continue
+                collection = self._collection_cached(scope)
+                if collection is None:
+                    continue  # 作用域尚无集合 = 没有知识，跳过而非报错
                 try:
                     found = collection.query(
                         # 同上：chroma 存根要求 numpy dtype，运行期接受嵌套 float 列表。
-                        query_embeddings=[vector],  # type: ignore[arg-type]
+                        query_embeddings=[vector],
                         n_results=pool_size,
                     )
                 except Exception as exc:  # noqa: BLE001 - 维度错误翻译成可操作提示（搜索时抛出，由工具层兜住）
@@ -674,20 +700,32 @@ class KnowledgeBase:
             return 0
 
     def describe(self) -> list[dict[str, object]]:
-        """知识库概览：每个作用域的分块数与来源清单（设置页知识库管理视图）。"""
+        """知识库概览：每个作用域的分块数与来源清单（设置页知识库管理视图）。
+
+        来源清单按 (作用域, 分块数) 缓存（`R102-55` 的缓解）：chroma 没有"按元数据去重"
+        的聚合，从前每次全量 `get(metadatas)` 倒灌进 Python（5k 分块 66.5ms，线性于分块数）。
+        count() 0.9ms；来源清单只在分块增删时变，增删路径都会 `_invalidate_collection`。
+        根治（清单改从 sqlite ingestion 台账读）还差一步：ingestion_task 没有 scope 列 ——
+        补列后这条缓存撤掉，向量库降级为纯索引。
+        """
         out: list[dict[str, object]] = []
         for collection in self._client.list_collections():
-            data = collection.get(include=["metadatas"])
-            sources = sorted(
-                {
-                    str((m or {}).get("source_name") or (m or {}).get("source", "?"))
-                    for m in (data.get("metadatas") or [])
-                }
-            )
+            count = int(collection.count())
+            cached = self._describe_cache.get(collection.name)
+            sources: list[str] | None = cached[1] if cached and cached[0] == count else None
+            if sources is None:
+                data = collection.get(include=["metadatas"])
+                sources = sorted(
+                    {
+                        str((m or {}).get("source_name") or (m or {}).get("source", "?"))
+                        for m in (data.get("metadatas") or [])
+                    }
+                )
+                self._describe_cache[collection.name] = (count, sources)
             out.append(
                 {
                     "scope": collection.name,
-                    "chunks": collection.count(),
+                    "chunks": count,
                     "sources": sources,
                     "embedder": self._embedder.name,
                 }
@@ -701,6 +739,7 @@ class KnowledgeBase:
         —— "以为删了"的状态比失败难查得多（审查报告 P2）。
         """
         self._client.delete_collection(name=scope)
+        self._invalidate_collection(scope)
 
 
 # ---------------------------------------------------------------- 内核工具

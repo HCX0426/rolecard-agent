@@ -25,9 +25,11 @@ import contextvars
 import json
 import re
 import sqlite3
+import sys
 import threading
 import uuid
 from collections.abc import Callable, Iterable, Sequence
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -227,12 +229,131 @@ def schema_files(enabled_domains: Iterable[str] = ()) -> list[Path]:
     return files
 
 
+#: schema 代际（`R102-54`）。每次"形状变了、旧代码读新库会炸"的迁移合并进来时 +1；
+#: bootstrap 写进 `PRAGMA user_version`，发现**库比代码新**就拒启 —— 装包回滚是本仓的
+#: 真实操作，没有这一格，旧代码读到新库的报错是散落启动链各处的 `no such column`。
+SCHEMA_VERSION = 1
+
+
+def _migrate_event(message: str) -> None:
+    """迁移事件落 stderr（`R102-64`）：backend.log 由壳转发 stderr，迁移是三类关键路径里
+    **唯一没有可追溯事件**的一类 —— R102-27 那种"半路死"发生时只有异常栈可查。排查判据
+    要进事件流，不进注释（`R102-42` 同族的另一半）。"""
+    from datetime import datetime
+
+    stamp = datetime.now(UTC).isoformat(timespec="seconds")
+    print(f"[schema-migrate] {stamp} {message}", file=sys.stderr, flush=True)
+
+
+def _check_schema_generation(conn: SqlConnection) -> None:
+    """库的代际比对（`R102-54`）：新库给旧代码 = 一句 loud 拒启，而不是散落的炸点。"""
+    version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if version > SCHEMA_VERSION:
+        raise RuntimeError(
+            f"数据库名义代际（user_version={version}）比当前代码（{SCHEMA_VERSION}）新 —— "
+            "这通常是装包回滚后用旧程序读新库。请装回新版，或从备份恢复数据根。"
+        )
+    if version < SCHEMA_VERSION:
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        conn.commit()
+
+
+def _repair_stranded_rebuild(conn: SqlConnection, *, original: str, temp: str) -> None:
+    """整表重建"死在 DROP 原表之后、RENAME 之前"的现场自愈（`R102-53`）。
+
+    判据是库的形状：原表不在、暂存表在 ⇒ 有数据就改名回原表（旧形状数据原样回来，
+    后面的"判老形态→重建"整个重跑一遍，数据一分不丢），是空的就直接 DROP（那只是
+    死在 INSERT 之前的老窗口，DROP IF EXISTS 已自愈过它）。两种现场都不许静默留着
+    —— 滞留的暂存表是一本**永远没人读**的账本，而 bootstrap 重跑不但不报错还照常绿。
+    """
+    tables = {
+        str(r[0])
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name NOT LIKE 'sqlite_%'"
+        )
+    }
+    if original in tables or temp not in tables:
+        return
+    temp_rows = int(conn.execute(f"SELECT COUNT(*) FROM {temp}").fetchone()[0])
+    if temp_rows:
+        conn.execute(f"ALTER TABLE {temp} RENAME TO {original}")
+        _migrate_event(
+            f"检测到滞留暂存表（原表 {original} 不在、{temp} 有 {temp_rows} 行）—— "
+            "已改名回原表，本次迁移整个重跑（R102-53 的第三种死法现场）"
+        )
+    else:
+        conn.execute(f"DROP TABLE {temp}")
+        _migrate_event(f"清掉空的滞留暂存表 {temp}（R28-15 的老窗口现场）")
+    conn.commit()
+
+
+def prune_retention_tables(
+    conn: SqlConnection,
+    *,
+    audit_log_days: int,
+    audit_log_max_rows: int,
+    approval_done_days: int,
+) -> dict[str, int]:
+    """三张只增表的 retention 清理（`R102-29`；2026-10-02 拍板：分表定档）。
+
+    `audit_log` 留 `audit_log_days` 天、且至多 `audit_log_max_rows` 行（两条判据任一命中
+    即清）；`command_approval` 的**终态**行留 `approval_done_days` 天 —— pending/approved
+    是活队列，retention 永不碰（卡死的行由 `R102-47` 的兜底与开机清扫负责，那是状态机的
+    职责不是保留策略的）；`agent_reachout` 走 per-role `reachout_keep` 既有机制（出厂默认
+    200 只对新角色生效）。0 或负数 = 该档永不清理（旧行为）。
+    调用点在 `core/bootstrap.py`（拿得到 Settings 的地方），清理量回报 schema-migrate 事件流。
+    """
+    pruned: dict[str, int] = {}
+    if audit_log_days > 0:
+        cur = conn.execute(
+            "DELETE FROM audit_log WHERE ts < datetime('now', ?)",
+            (f"-{audit_log_days} days",),
+        )
+        pruned["audit_log_by_days"] = max(cur.rowcount, 0)
+    if audit_log_max_rows > 0:
+        cur = conn.execute(
+            "DELETE FROM audit_log WHERE id NOT IN "
+            "(SELECT id FROM audit_log ORDER BY id DESC LIMIT ?)",
+            (audit_log_max_rows,),
+        )
+        pruned["audit_log_by_rows"] = max(cur.rowcount, 0)
+    if approval_done_days > 0:
+        cur = conn.execute(
+            "DELETE FROM command_approval WHERE status IN ('done', 'rejected') "
+            "AND updated_at < datetime('now', ?)",
+            (f"-{approval_done_days} days",),
+        )
+        pruned["approvals_done"] = max(cur.rowcount, 0)
+    conn.commit()
+    return pruned
+
+
+def touch_thread(conn: SqlConnection, thread_id: str) -> None:
+    """把会话的 `updated_at` 顶到"刚刚"（毫秒精度）—— **唯一出处**（`R102-62`）。
+
+    为什么必须毫秒、不能用 `CURRENT_TIMESTAMP`（秒级）：侧栏对同一秒内并列的会话
+    按 `updated_at` 的字符串序去歧排序（`timeline.py` 的字符串序与时间序等价性
+    建立在毫秒上），精度降回秒 = 同秒顺序不稳定。这句 SQL 从前抄在 7 处、精度依据
+    只活在 sessions.py 的注释里 —— 现在理由住进唯一出处，谁也不必再抄第二份。
+    """
+    conn.execute(
+        "UPDATE session_thread SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') "
+        "WHERE thread_id = ?",
+        (thread_id,),
+    )
+
+
 def bootstrap(conn: SqlConnection, enabled_domains: Iterable[str] = ()) -> list[str]:
     """Apply every schema file. Idempotent - all DDL uses IF NOT EXISTS.
 
     Returns the applied file names, which is what tests assert on: a silently skipped
     schema is far worse than a loud failure.
     """
+    # 代际戳（`R102-54`）：库的版本住在 `PRAGMA user_version` 里。库比代码新 = 装包
+    # 回滚后旧代码读新库 —— 两层的 `model_backend` 没有 `api_key/usage` 列，旧读法的
+    # `no such column` 会散落在启动链各处；这里一句 loud 报错把它并成一处。
+    _check_schema_generation(conn)
     files = schema_files(enabled_domains)
     # 先把"声明里有、这份老库里没有"的列补上，再跑 DDL：域表的 `CREATE INDEX ... (新列)`
     # 排在任何迁移之前执行，老库踩它必炸（09-26 轮 R26-04 的实测现场）。
@@ -241,6 +362,15 @@ def bootstrap(conn: SqlConnection, enabled_domains: Iterable[str] = ()) -> list[
     # （并发 submit 的历史遗留），schema.sql 里那条 UNIQUE INDEX 会当场建失败 ——
     # 那是"库再也打不开"（R28-15）的同一条死法，不能让一份遗留数据把开机堵死。
     _dedupe_pending_approvals(conn)
+    # 整表重建的滞留自愈（`R102-53`）**必须站在 schema DDL 之前**：executescript 的
+    # `CREATE TABLE IF NOT EXISTS` 会把被 DROP 掉的原表先建成一张空的新形表，随后
+    # `_migrate` 的"判老形态"永远为假 —— 滞留暂存表就永远没人管、还照常报绿。
+    # 三张暂存表对应 db.py 的 B2/B1a 两处整表重建与 model_settings 的搬层。
+    _repair_stranded_rebuild(
+        conn, original="role_proactive_state", temp="role_proactive_state__b2"
+    )
+    _repair_stranded_rebuild(conn, original="token_usage_day", temp="token_usage_day_new")
+    _repair_stranded_rebuild(conn, original="model_backend", temp="model_backend__layers")
     applied: list[str] = []
     for path in files:
         if not path.exists():
@@ -497,8 +627,14 @@ def _migrate(conn: SqlConnection) -> None:
     #     幂等：新 id == 旧 id（已带身份）的不动；新库没有 legacy 行一轮跑过。这两件是本步
     #「换主键 + 换线程 id」两笔账，放在同一个 if 里是为了一次迁移只判断一次"是不是 B2 之前的库"。
     if "user_id" not in _columns(conn, "role_proactive_state"):
+        # 滞留暂存表的现场自愈在 bootstrap 早期已经做过（那里才赶得在 schema DDL 前面）。
         # 前置 DROP：与上面 B1 那一处同一个理由（`R28-15`，红档）。这一步死在半路的话，
         # 残留的空 `__b2` 会让下次启动的 CREATE 报 `already exists`，bootstrap 永久打不开。
+        # 整段重建（含下面的线程 id 换名）包进**一个显式事务**：DDL 在 legacy autocommit
+        # 下逐句落盘，显式 BEGIN 让"半路死"整体回滚 —— DROP→RENAME 之间的窗口随事务消失。
+        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        _migrate_event("role_proactive_state 主键重建开始（B2，显式事务）")
         conn.execute("DROP TABLE IF EXISTS role_proactive_state__b2")
         conn.execute(
             "CREATE TABLE role_proactive_state__b2 ("
@@ -539,6 +675,8 @@ def _migrate(conn: SqlConnection) -> None:
                     f"UPDATE {quote_ident(table)} SET thread_id = ? WHERE thread_id = ?",
                     (new_tid, tid),
                 )
+        conn.commit()  # 重建原子落盘（`R102-53`）
+        _migrate_event("role_proactive_state 主键重建完成（含线程 id 换名）")
     if "value" not in _columns(conn, "role_memory"):
         conn.execute(
             "CREATE TABLE IF NOT EXISTS role_memory ("
@@ -568,9 +706,11 @@ def _migrate(conn: SqlConnection) -> None:
     #    （语义 = 上线前测的本机用量，不是谁漏账）；新行由 `usage.record_usage(user_id=…)` 按
     #    花谁的 key 落格。判断"旧形态"用有没有 user_id 列（与列级迁移同口径）。
     if "user_id" not in _columns(conn, "token_usage_day"):
-        # 前置 DROP（R28-15 同族）：legacy 事务模式下 DDL 立即落盘，进程死在 CREATE 与 INSERT
-        # 之间就会留下一张空暂存表，下次启动的 CREATE 直接 `already exists` —— 而这一次不是
-        # "升级没成功"，是**整个库再也打不开**。DROP IF EXISTS 让这一步可重放。
+        # 前置 DROP（R28-15 同族）+ 显式事务包整段重建（`R102-53`）：
+        # "半路死"要么整体回滚、要么在下一次开机被早期的自愈接住。
+        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        _migrate_event("token_usage_day 主键重建开始（B1a，显式事务）")
         conn.execute("DROP TABLE IF EXISTS token_usage_day_new")
         conn.execute(
             "CREATE TABLE token_usage_day_new ("
@@ -590,6 +730,8 @@ def _migrate(conn: SqlConnection) -> None:
         )
         conn.execute("DROP TABLE token_usage_day")
         conn.execute("ALTER TABLE token_usage_day_new RENAME TO token_usage_day")
+        conn.commit()  # 重建原子落盘（`R102-53`）
+        _migrate_event("token_usage_day 主键重建完成")
     if "api_key" in _columns(conn, "service_endpoint"):
         conn.execute("DROP TABLE service_endpoint")
         conn.execute("DELETE FROM kernel_meta WHERE key = 'service_endpoints_seeded'")

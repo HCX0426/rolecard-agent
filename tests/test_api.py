@@ -900,3 +900,20 @@ def test_stop_turn_endpoint_only_raises_the_flag(client: TestClient) -> None:
         assert "stop_turn" in actions, "停止是一个会改变系统状态的动作，得留痕"
     finally:
         clear_stop(tid)
+
+
+def test_runtime_bool_reads_back_in_wire_format(client: TestClient) -> None:
+    """`R102-15`：布尔关掉之后设置页不许显示"已开启"。
+
+    写侧收 "0"，读侧必须回 "0"（truthy/falsy 同一口径）—— 从前 `_display` 对 bool 走
+    `str(value)`，线上发 `"False"`，前端判据 `value !== "0"` 两关都过。
+    变异：把 `_display` 的 bool 分支摘掉 ⇒ 本条红（GET 回 "False"）。
+    """
+    res = client.put("/api/settings/runtime", json={"values": {"reachout_enabled": "0"}})
+    assert res.status_code == 200
+    payload = client.get("/api/settings/runtime").json()
+    groups = payload["groups"] if isinstance(payload, dict) and "groups" in payload else payload
+    rows = [r for g in groups for r in g["items"] if r["key"] == "REACHOUT_ENABLED"]
+    assert rows, [g["key"] for g in groups]
+    assert rows[0]["value"] == "0", rows[0]
+    client.put("/api/settings/runtime", json={"values": {"reachout_enabled": ""}})  # 还原

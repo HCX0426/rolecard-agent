@@ -1581,6 +1581,9 @@ def check_markdown_table_shape() -> None:
 SINGLE_SOURCE_LITERALS = {
     "https://api.siliconflow.cn/v1": "src/rolecard_agent/config.py",
     "qwen3-vl:8b": "src/rolecard_agent/config.py",
+    # 毫秒 touch 的唯一出处（`R102-62`）：从前抄在 7 处，精度依据只活在注释里 ——
+    # 谁把它"顺手改简单"成 CURRENT_TIMESTAMP（秒级），侧栏同秒去歧就静默失效。
+    "strftime('%Y-%m-%d %H:%M:%f', 'now')": "src/rolecard_agent/storage/db.py",
 }
 
 
@@ -1710,6 +1713,60 @@ def check_dangling_write_txns() -> None:
     )
     if offenders:
         fails.append(f"rowcount branches that leave a write transaction open: {offenders}")
+
+
+def check_shape_migration_ddl() -> None:
+    """搬层用的暂存表 DDL 必须与声明面**逐列同形**（架构审计 2026-10-02 轮 `R102-11`）。
+
+    `core/model_settings.py` 的 `CREATE TABLE model_backend__layers` 把 `core/schema.sql`
+    里 `model_backend` 的十列又抄了一遍，而 `_SHAPE_MIGRATED_TABLES` 让补列器对这张表
+    **不动手** —— 两份 DDL 一旦分叉，"旧库那份抄的"就赢：新库有列、搬完层的旧库没列，
+    读侧 `no such column`（`repeat_penalty` 那一发的教训，文件注释自己记着）。
+    这把尺子就是那句"逐列相等"的兑现：分叉当场红，不再等老库升上来才炸。
+    """
+    schema_text = (ROOT / "src" / "rolecard_agent" / "core" / "schema.sql").read_text(
+        encoding="utf-8"
+    )
+    ms_text = (ROOT / "src" / "rolecard_agent" / "core" / "model_settings.py").read_text(
+        encoding="utf-8"
+    )
+
+    def declared_columns(create_block: str) -> set[str]:
+        """从 CREATE TABLE 的列定义区抓列名（跳过约束行、SQL `--` 注释、python 串的引号）。"""
+        names: set[str] = set()
+        for raw in create_block.splitlines():
+            line = raw.strip()
+            if line.startswith("#"):
+                continue  # model_settings.py 的抄写现场里，python 注释行夹在串与串之间
+            line = re.sub(r"--.*$", "", line).strip().strip('"').rstrip(",").strip()
+            if not line or re.match(
+                r"^(PRIMARY|FOREIGN|UNIQUE|CHECK|CONSTRAINT)\b", line, flags=re.I
+            ):
+                continue
+            names.add(line.split()[0])
+        return names
+
+    schema_m = re.search(r"CREATE TABLE IF NOT EXISTS model_backend \((.*?)\);", schema_text, re.S)
+    layer_m = re.search(r'CREATE TABLE model_backend__layers \((.*?)\)"', ms_text, re.S)
+    if not schema_m or not layer_m:
+        fails.append("shape migration DDL: 判据的两个锚点（schema.sql / model_settings.py）没抓到")
+        out("shape migration DDL", False, "anchor missing")
+        return
+    declared = declared_columns(schema_m.group(1))
+    copied = declared_columns(layer_m.group(1))
+    drift = sorted(declared ^ copied)
+    out(
+        "shape migration DDL",
+        not drift,
+        "；".join(drift[:8])
+        if drift
+        else f"model_backend__layers 与 model_backend 逐列相等（{len(declared)} 列）",
+    )
+    if drift:
+        fails.append(
+            "model_backend__layers DDL drifted from schema.sql: "
+            f"{drift} —— 搬完层的旧库会 no such column；改列要两边一起改"
+        )
 
 
 def check_dead_config() -> None:
@@ -1847,6 +1904,27 @@ def check_env_example_models() -> None:
     for retired in RETIRED_LOCAL_MODELS:
         if re.search(rf"(必须|应当|要用)[^。\n]*{re.escape(retired)}", text):
             offenders.append(f"正文把退役模型 {retired} 当要求写")
+
+    # 3) start.bat 的 `set MODEL_THINKING_MODELS=`（`R102-23`）：它设置的是**真 env**、
+    #    优先于 .env —— 写死旧名单的话，换默认模型时走 start.bat 的人仍被钉在旧名单上，
+    #    症状是"思考过程忽然不显示"而没人改过开关。判据：必须与 config 从
+    #    `DEFAULT_LOCAL_BACKEND` 派生的名单逐字一致（R28-13 的"不写第二遍"在 cmd 这一侧的兑现）。
+    sys.path.insert(0, str(ROOT / "src"))
+    from rolecard_agent.config import Settings as _CfgSettings  # noqa: PLC0415
+
+    bat = ROOT / "start.bat"
+    if bat.exists():
+        expected_think = ",".join(_CfgSettings().model_thinking_models)
+        for line in bat.read_text(encoding="utf-8", errors="ignore").splitlines():
+            m = re.match(r"\s*set\s+MODEL_THINKING_MODELS=(.*)", line, flags=re.I)
+            if not m:
+                continue
+            value = m.group(1).strip()
+            if value != expected_think:
+                offenders.append(
+                    f"start.bat 的 MODEL_THINKING_MODELS（{value or '空'}）与派生名单"
+                    f"（{expected_think}）不一致 —— 它是真 env，会盖过 .env"
+                )
 
     if DEFAULT_LOCAL_BACKEND.get("model") in ("", None):
         offenders.append("config.py 的默认本地后端没有 model —— 这条检查失去现役名基准")
@@ -2553,6 +2631,7 @@ def main() -> int:
     check_artifact_single_source()
     check_single_source_literals()
     check_dangling_write_txns()
+    check_shape_migration_ddl()
     check_bundled_copy()
     check_vocabulary()
     check_deploy_env_parity()

@@ -65,7 +65,12 @@ from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder, make_reranker
 from rolecard_agent.roles.models import RoleCard
 from rolecard_agent.roles.service import RoleCardService
-from rolecard_agent.storage.db import SqlConnection, ThreadLocalConnection, connect_threadlocal
+from rolecard_agent.storage.db import (
+    SqlConnection,
+    ThreadLocalConnection,
+    connect_threadlocal,
+    prune_retention_tables,
+)
 from rolecard_agent.storage.db import bootstrap as apply_schema
 
 
@@ -605,6 +610,24 @@ def build_runtime(
     # `taskkill /F`）没有异常可接，approved 行会永远挂着 —— 开机一次清扫把它收成
     # done + error，模型读到"执行结果丢失"而不是永久的"正在执行"。
     sweep_interrupted(conn)
+    # 三张只增表的 retention（`R102-29`；2026-10-02 拍板：分表定档）。
+    # 0 = 该档永不清理（旧行为）。reachout 走 per-role `reachout_keep` 的既有机制。
+    # 有清理量才落事件（`R102-64` 的事件流），每次开机刷屏没有信息量。
+    pruned = prune_retention_tables(
+        conn,
+        audit_log_days=settings.audit_log_retention_days,
+        audit_log_max_rows=settings.audit_log_max_rows,
+        approval_done_days=settings.approval_done_retention_days,
+    )
+    if any(pruned.values()):
+        import sys as _sys
+
+        print(
+            "[schema-migrate] retention 清理："
+            + ", ".join(f"{key}={count}" for key, count in pruned.items()),
+            file=_sys.stderr,
+            flush=True,
+        )
     roles = RoleCardService(conn)
     roles.seed_builtins(user_id=owner)
     roles.seed_domain_roles(user_id=owner)

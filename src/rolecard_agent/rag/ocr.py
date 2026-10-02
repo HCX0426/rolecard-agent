@@ -117,6 +117,13 @@ class LocalRapidOcrBackend:
                 timeout=_OCR_PROC_TIMEOUT_SECONDS,
                 check=False,
             )
+        except subprocess.TimeoutExpired as exc:
+            # 超时不是"启动失败"（`R102-66`）：两种结局的原因与改法完全不同，折叠成一句
+            # 会把人引去查 OCR 安装；超时窗口内已产出的部分输出也不再有意义，如实丢弃。
+            raise ParseError(
+                f"OCR 子进程超时（>{_OCR_PROC_TIMEOUT_SECONDS:g}s）：换更小的图，"
+                "或加大解析超时预算。"
+            ) from exc
         except Exception as exc:  # noqa: BLE001 - 启动失败 = 解析失败，由调用方决定降级
             raise ParseError(f"OCR 子进程启动失败：{exc}") from exc
         if proc.returncode != 0:

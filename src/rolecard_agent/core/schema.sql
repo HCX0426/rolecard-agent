@@ -147,6 +147,10 @@ CREATE INDEX IF NOT EXISTS idx_reachout_state_time ON agent_reachout(state, crea
 -- 缺索引三条（09-28 轮 `R28-22`，当前规模无实害、登记的那笔）：按实际查询的列序补，
 -- 每次启动都执行 `IF NOT EXISTS` ⇒ 老库下一次开机就拿到，不用写迁移。
 CREATE INDEX IF NOT EXISTS idx_reachout_user_state ON agent_reachout(user_id, state);
+-- 收件箱/事件簿的查询形状是"按人过滤 + ORDER BY id DESC LIMIT"（`R102-49`）：现有两把
+-- 索引没有一把以 id 收尾 ⇒ 20k 行时 TEMP B-TREE 排序 21.7ms；这把索引量测对照 0.128ms。
+-- `reachout_keep` 默认 0 = 行数无界，列表延迟随行数线性走 —— 索引是那把尺子之外的第一刀。
+CREATE INDEX IF NOT EXISTS idx_reachout_user_id ON agent_reachout(user_id, id DESC);
 
 -- 关系驱动主动开口的 per-role 状态（架构计划 §5.2）：按 role_id 隔离，不复用全局状态。
 -- affinity = 关系数值（互动积累的成长值，到阈值即主动冒泡）；calibration_json = 主动度校准

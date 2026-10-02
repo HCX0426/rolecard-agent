@@ -31,10 +31,16 @@ from datetime import datetime
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
+# 安装根的名字唯一出处是 `core/paths.py` 的 `_APP_NAME`（`R102-67`）。本脚本刻意不 import
+# 本包（要在不可安装环境独立跑），但零依赖常量模块 `core/app_identity.py` 只有标准库能算
+# 的东西 —— 引用它的成本是零，改名时这里的静默失效才不会回来。
+sys.path.insert(0, str(_REPO_ROOT / "src"))
+from rolecard_agent.core.app_identity import APP_NAME  # noqa: E402
+
 #: 两个候选源（可能都不存在，也可能都存在但内容不同 —— 那正是这里的存在理由）。
 CANDIDATE_SOURCES: tuple[Path, ...] = (
     _REPO_ROOT / "data" / "sqlite" / "app.db",
-    Path.home() / "AppData" / "Local" / "rolecard-agent" / "sqlite" / "app.db",
+    Path.home() / "AppData" / "Local" / APP_NAME / "sqlite" / "app.db",
 )
 
 

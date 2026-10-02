@@ -8,7 +8,7 @@
  * 靠下面注入的 `ROLECARD_PARENT_PID`），壳没机会执行清理时它自己走。
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, existsSync } from "node:fs";
+import { createWriteStream, existsSync, renameSync, rmSync, statSync } from "node:fs";
 import { createConnection } from "node:net";
 import path from "node:path";
 
@@ -173,8 +173,19 @@ export class Backend {
     if (!logPath) return;
     let sink: ReturnType<typeof createWriteStream>;
     try {
-      // 每次启动覆盖：一个文件对应一次运行，排查时不用在一堆历史里挑，日志也不会无限长。
-      sink = createWriteStream(logPath, { flags: "w" });
+      // 追加 + 8MB 轮转留一代（`R102-64`）：旧的"每次启动覆盖"会在崩溃后壳拉起后端的
+      // 那一刻把崩溃现场日志整份抹掉 —— 抹掉的恰恰是最想看的东西。留 `.1` 一代与
+      // `core/observability.py` 的 LocalTracer 同一尺寸口径，日志也不会无限长。
+      try {
+        const stat = statSync(logPath);
+        if (stat.size > 8 * 1024 * 1024) {
+          rmSync(`${logPath}.1`, { force: true });
+          renameSync(logPath, `${logPath}.1`);
+        }
+      } catch {
+        // 文件不存在 = 第一次启动，直接追加即可
+      }
+      sink = createWriteStream(logPath, { flags: "a" });
     } catch (error) {
       console.warn(`[shell] 后端日志落不了盘：${String(error)}`);
       return;

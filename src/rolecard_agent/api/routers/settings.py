@@ -456,9 +456,16 @@ _SECRET_FIELDS = SECRET_FIELD_NAMES
 
 
 def _display(value: object, *, secret: bool) -> str:
-    """把配置值变成可展示文本：None → 未设置；密钥 → 掩码；路径/布尔原样。"""
+    """把配置值变成可展示文本：None → 未设置；密钥 → 掩码；布尔 → `"0"/"1"`。
+
+    布尔为什么不能"原样"（`str(True)` = `"True"`）：写侧收的是 `"0"/"1"`（truthy/falsy
+    同一口径），前端判据是 `value !== "0"` —— 读侧发 `"False"` 两关都过，界面显示
+    "已开启"，下一轮对话才知道没关（`R102-15`，truthy/falsy 族的第四个成员）。
+    """
     if value is None or value == "" or value == []:
         return "未设置"
+    if isinstance(value, bool):
+        return "1" if value else "0"
     text = str(value)
     if secret:
         return f"…{text[-4:]}" if len(text) > 8 else "••••"

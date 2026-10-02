@@ -64,7 +64,7 @@ from rolecard_agent.rag.retriever import (
     KnowledgeDimensionMismatch,
 )
 from rolecard_agent.roles.service import RoleError, RoleNotFound
-from rolecard_agent.storage.db import delete_thread_everywhere
+from rolecard_agent.storage.db import delete_thread_everywhere, touch_thread
 
 router = APIRouter()
 
@@ -322,10 +322,10 @@ def patch_session(
                 known = ", ".join(sorted(effective.model_backends))
                 raise HTTPException(status_code=400, detail=f"未知模型 {name!r}；可用：{known}")
         conn.execute(
-            "UPDATE session_thread SET model_name = ?, "
-            "updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE thread_id = ?",
+            "UPDATE session_thread SET model_name = ? WHERE thread_id = ?",
             (body.model_name, thread_id),
         )
+        touch_thread(conn, thread_id)
         conn.commit()
         ctx.roles.audit(
             actor=actor.id,
@@ -343,10 +343,10 @@ def patch_session(
                 status_code=400, detail=f"未知对话模式 {mode!r}；可用：{' / '.join(MODE_CHOICES)}"
             )
         conn.execute(
-            "UPDATE session_thread SET agent_mode = ?, "
-            "updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE thread_id = ?",
+            "UPDATE session_thread SET agent_mode = ? WHERE thread_id = ?",
             (mode, thread_id),
         )
+        touch_thread(conn, thread_id)
         conn.commit()
         ctx.roles.audit(
             actor=actor.id,
@@ -360,10 +360,10 @@ def patch_session(
         if not title:
             raise HTTPException(status_code=400, detail="标题不能为空。")
         conn.execute(
-            "UPDATE session_thread SET title = ?, "
-            "updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE thread_id = ?",
+            "UPDATE session_thread SET title = ? WHERE thread_id = ?",
             (title, thread_id),
         )
+        touch_thread(conn, thread_id)
         conn.commit()
 
     final_role_id = body.role_id or str(thread["current_role_id"])
@@ -419,15 +419,14 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
         raise role_error_to_http(exc) from exc
 
     # 侧栏标题：首轮消息截断生成；updated_at 每轮刷新，会话列表按它倒序。
-    # 用毫秒精度（strftime %f）而非 CURRENT_TIMESTAMP（秒级）：同一秒内创建的两个
-    # 会话需要靠"谁最近活跃"严格排序，秒级会打平、只能靠随机 thread_id 兜底。
     # 纯图消息没有文本 → 标题用 "[图片]"，COALESCE 兜底空标题（首次就覆盖）。
+    # 毫秒精度的理由与唯一出处见 `storage.db.touch_thread`（`R102-62`）。
     title_fallback = "[图片]" if not body.message.strip() else body.message[:24]
     conn.execute(
-        "UPDATE session_thread SET title = COALESCE(title, ?), "
-        "updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE thread_id = ?",
+        "UPDATE session_thread SET title = COALESCE(title, ?) WHERE thread_id = ?",
         (title_fallback, body.thread_id),
     )
+    touch_thread(conn, body.thread_id)
     conn.commit()
 
     # 步数上限随运行配置一起带上：没有它，模型持续返回 tool_calls 时这一轮不会终止。
@@ -815,11 +814,7 @@ def edit_message_and_regenerate(
         "model_name": session_model,
         "agent_mode": session_mode,
     }
-    ctx.conn.execute(
-        "UPDATE session_thread SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') "
-        "WHERE thread_id = ?",
-        (thread_id,),
-    )
+    touch_thread(ctx.conn, thread_id)
     ctx.conn.commit()
 
     return StreamingResponse(
@@ -868,11 +863,7 @@ def delete_messages(
     # 或者少了一条"。等不到锁就 409（`thread_write` 现在会抛，不再把布尔丢给调用方）。
     with thread_write(thread_id, timeout=_WRITE_WAIT):
         graph.update_state(config, {"messages": [RemoveMessage(id=i) for i in doomed_ids]})
-    ctx.conn.execute(
-        "UPDATE session_thread SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') "
-        "WHERE thread_id = ?",
-        (thread_id,),
-    )
+    touch_thread(ctx.conn, thread_id)
     ctx.conn.commit()
     return {"deleted": len(doomed_ids), "remaining": len(messages) - len(doomed_ids)}
 

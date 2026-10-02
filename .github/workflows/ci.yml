@@ -107,11 +107,17 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            frontend/package-lock.json
+            shell/package-lock.json
 
       - name: 装依赖
         working-directory: frontend
         run: npm ci
+
+      - name: 壳 typecheck（`R102-63`：此前只在手动 full 门禁跑，push 路径无人看着）
+        working-directory: shell
+        run: npm ci && npm run typecheck
 
       - name: 构建（`npm run build` 里含 tsc --noEmit）
         working-directory: frontend
