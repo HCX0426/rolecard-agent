@@ -63,7 +63,12 @@ const shellLogFile = path.join(app.getPath("userData"), "shell.log");
 
 function logLine(text: string): void {
   try {
-    appendFileSync(shellLogFile, `${new Date().toISOString()} ${text}\n`);
+    // 落盘前把换行压成空格（`R102-71`）：`notify 弹出：${title}｜${body}` 那两格来自
+    // 页面（角色名可被用户设、消息原文来自模型），都可能含换行 —— 一条消息就能在
+    // shell.log 里**伪造出额外的日志行**。压在一行里是这里唯一要的语义：
+    // 一行日志 = 一个事件；这个函数是 shell.log 的唯一写入口，收在这里就是全覆盖。
+    const oneLine = text.replace(/[\r\n]+/g, " ");
+    appendFileSync(shellLogFile, `${new Date().toISOString()} ${oneLine}\n`);
   } catch {
     /* 日志写不进去绝不该弄坏功能本身（目录被锁、磁盘满都是这里不该管的事） */
   }
