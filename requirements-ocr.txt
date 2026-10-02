@@ -1,16 +1,27 @@
-# v2.2 OCR 独立环境依赖 —— 本地 Paddle 后端（Paddle 优先路径）。
+# v2.2 OCR 独立环境依赖 —— 本地 RapidOCR 后端（onnxruntime 推理）。
 #
-# ⚠️ 必须在【独立 venv】安装，绝不能进主服务环境：
+# ⚠️ 必须在【独立 venv】安装，不要装进主服务环境：
 #
 #     python -m venv .venv-ocr
 #     .venv-ocr\Scripts\python.exe -m pip install -r requirements-ocr.txt     # Windows
 #     .venv-ocr/bin/python       -m pip install -r requirements-ocr.txt     # macOS / Linux
 #
-# 为什么隔离：PaddleOCR 自带 numpy / OpenCV / onnxruntime，与主环境（chromadb 的 numpy）
-# 版本主张冲突。主进程只通过子进程调用（scripts/ocr_worker.py），互不污染。
+# 为什么隔离（10-02 换后端时重写这段，旧理由已不成立，照旧留痕）：
+# 从前这一族是 Paddle —— 它自带 numpy / OpenCV / onnxruntime，与主环境（chromadb 的 numpy）
+# **版本主张冲突**，隔离是被迫的。换成 RapidOCR 后这条理由不再成立：rapidocr 的 numpy 约束
+# 与主环境兼容，而主环境本来就有 onnxruntime（chromadb 带的）。现在维持独立 venv 的理由只剩
+# 两条，都是选择而非被迫：① 主服务进程永不 import OCR 栈（只经 scripts/ocr_worker.py 子进程
+# 调用），运行树里不该有 cv2(113 MB)/omegaconf 这一族；② 随包后端按设计不带 OCR
+# （见 core/paths.py 的 default_ocr_python 与 packaging 的 RUNTIME_PACKAGES），并进主 venv 只会
+# 让 4 个安装入口 + Dockerfile + CI 全都得装它，换不来任何能力。
 # 主进程通过 OCR_PYTHON 指向该 venv 的 python（默认自动发现 .venv-ocr/Scripts/python.exe）。
+#
+# 实测本机（10-02，仓库外临时 venv，python 3.13.15）：site-packages 291 MB（Paddle 那份是 885 MB），
+# import 1.13 s / 引擎初始化 0.54 s / 单张首次推理 0.99 s。
 #
 # 云端 OCR 兜底（配置 OCR_API_KEY 即启用，见 rag/ocr.py 的 CloudApiBackend）**不需要**本文件
 # ——它只用主环境已有的 httpx，无重型依赖。
-paddlepaddle==3.3.1
-paddleocr>=3.0
+rapidocr>=3.9,<4
+# rapidocr 的 requires 里**没有** onnxruntime（它把自己做成后端无关的），必须自己写上；
+# 少了这一行 pip 装完 import 会得到"no available backend"，症状在第一次识别时才出现。
+onnxruntime>=1.20

@@ -350,9 +350,10 @@ class Settings(BaseModel):
     # saucenao.com（第三方），故默认不设 key、不静默上传。
     saucenao_api_key: str | None = None
 
-    # v2.2 OCR：本地 Paddle 的解释器，必须是【独立 venv / 进程】的 python。PaddleOCR 自带
-    # numpy / OpenCV / onnxruntime，与主环境依赖摩擦（见 requirements-ocr.txt），故绝不进主
-    # 环境。None = 让解析器自动发现默认路径（.venv-ocr/Scripts/python.exe）。
+    # v2.2 OCR：本地 RapidOCR 的解释器，必须是【独立 venv / 进程】的 python。OCR 那一族
+    # （cv2 / omegaconf 等）绝不进主环境（现行理由见 requirements-ocr.txt 头部：不是版本冲突，
+    # 而是运行树不该带它、且随包形态按设计不含 OCR）。None = 让解析器自动发现默认路径
+    # （.venv-ocr/Scripts/python.exe）。
     # 「用哪个 OCR 后端」不在这里配：那是「服务」页的 OCR 端点序（运行期唯一事实面，
     # 见 rag/ocr.select_ocr_backend 与架构审计报告 P1-5）。曾有过的 ocr_backend /
     # ocr_api_key / ocr_provider / ocr_api_url 四项生产上从不被读（内置行恒在 ⇒ env 分支

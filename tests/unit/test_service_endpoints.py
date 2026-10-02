@@ -47,7 +47,7 @@ def svc() -> ServiceEndpointService:
 
 def test_seed_once_is_idempotent(svc: ServiceEndpointService) -> None:
     # 本地行必有；siliconflow 后端存在 → 嵌入/重排各一条默认引用
-    assert [e.id for e in svc.rows("ocr")] == ["paddle"]
+    assert [e.id for e in svc.rows("ocr")] == ["rapidocr"]
     assert [e.id for e in svc.rows("embedding")] == ["hash", "siliconflow"]
     assert svc.seed_once() == 0  # 重跑不重复播种
 
@@ -75,7 +75,7 @@ def svc_rows(s: ServiceEndpointService, key: str) -> list:
 def test_add_reference_selects_from_model_page(svc: ServiceEndpointService) -> None:
     svc.add("ocr", ref_backend="siliconflow")  # OCR 引用对话后端 = 借凭据 + 用它的多模态模型
     ids = [e.id for e in svc.rows("ocr")]
-    assert ids == ["paddle", "siliconflow"]
+    assert ids == ["rapidocr", "siliconflow"]
     row = next(e for e in svc.rows("ocr") if e.id == "siliconflow")
     assert row.api_key == "sk-x"  # 凭据来自被引用后端（唯一配置面）
     # OCR 没有能力默认模型：引用对话后端时**保留其模型名**（视觉 LLM 直读图片），
@@ -117,7 +117,7 @@ def test_builtin_row_cannot_be_deleted_but_can_be_disabled(
     svc: ServiceEndpointService,
 ) -> None:
     with pytest.raises(ValueError, match="内置本地实现"):
-        svc.delete("embedding", "hash")  # ocr 只有 paddle 一行（禁用会触发最后一行守卫）
+        svc.delete("embedding", "hash")  # ocr 只有 rapidocr 一行（禁用会触发最后一行守卫）
     svc.patch("embedding", "hash", enabled=False)
     assert next(e for e in svc.rows("embedding") if e.id == "hash").enabled is False
 
@@ -140,7 +140,7 @@ def test_vision_reference_row_probes_the_model(
 ) -> None:
     """视觉 OCR 引用行（usage=ocr 的后端引用）的可用性 = 探测模型是否在位。
 
-    回归：探测原语此前只认识 paddle/hash/off，视觉行被判"未知本地实现/不可用"，
+    回归：探测原语此前只认识 rapidocr/hash/off，视觉行被判"未知本地实现/不可用"，
     而选择器实际会去试 —— 服务页状态与选择行为自相矛盾（用户 2026-09-17 反馈）。
     修复后判定共用 core/probes.vision_model_ready，这里 monkeypatch 它证明接线：
     探测 True → 行可用；False → 给出"模型未加载"的可读原因。
@@ -194,9 +194,9 @@ def test_unknown_endpoint_is_keyerror_but_rule_violations_are_valueerror(
         svc.patch("embedding", "ghost", enabled=True)
     with pytest.raises(KeyError, match="不存在端点"):
         svc.delete("embedding", "ghost")
-    # 规则不允许 → ValueError（400）。ocr 只有 paddle 一行，停掉它就等于该类服务没有实现。
+    # 规则不允许 → ValueError（400）。ocr 只有 rapidocr 一行，停掉它就等于该类服务没有实现。
     with pytest.raises(ValueError, match="至少保留一个"):
-        svc.patch("ocr", "paddle", enabled=False)
+        svc.patch("ocr", "rapidocr", enabled=False)
     with pytest.raises(ValueError, match="不可删除"):
         svc.delete("embedding", "hash")
     with pytest.raises(ValueError, match="全部端点"):

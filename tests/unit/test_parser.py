@@ -1,8 +1,8 @@
 """rag/parser 单测：扩展名分派、PDF 抽文本、图片 OCR 后端选择与降级、不支持类型报错。
 
-OCR 子进程路径（paddle）依赖独立 venv，本环境可能未装，故这里只测**合约**：
+OCR 子进程路径（rapidocr）依赖独立 venv，本环境可能未装，故这里只测**合约**：
 - 后端不可用（无独立 venv / 未配 key）→ OcrUnavailable 降级；
-- 选择器策略：Paddle 优先，云端 key 兜底；
+- 选择器策略：RapidOCR 优先，云端 key 兜底；
 真实 OCR 在 .venv-ocr 就绪后由集成验证（scripts/smoke_check.py / 手工上传图片）。
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ from rolecard_agent.config import Settings
 from rolecard_agent.core.services import EndpointConfig
 from rolecard_agent.rag.ocr import (
     CloudApiBackend,
-    LocalPaddleBackend,
+    LocalRapidOcrBackend,
     default_ocr_python,
     select_ocr_backend,
 )
@@ -172,33 +172,33 @@ def test_parseable_extensions_constant() -> None:
     assert ".bin" not in PARSEABLE_EXTENSIONS
 
 
-# -- OCR 后端选择策略：Paddle 优先，云端 key 兜底 ----------------------------------------
+# -- OCR 后端选择策略：RapidOCR 优先，云端 key 兜底 ----------------------------------------
 
 
-def test_paddle_interpreter_comes_from_settings_not_environ(
+def test_rapidocr_interpreter_comes_from_settings_not_environ(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """P1-4：OCR 解释器只认 `Settings.ocr_python`，构造函数不再自己 `os.environ.get`。
 
     两个事实面的症状是这样的：运行环境页/覆盖层改了 OCR_PYTHON，实际执行的却还是 .env 里
-    那把 —— 因为 `LocalPaddleBackend.__init__` 在 Settings 之外又读了一遍 env，而那条路径
+    那把 —— 因为 `LocalRapidOcrBackend.__init__` 在 Settings 之外又读了一遍 env，而那条路径
     既不受覆盖层管，也不在配置契约里。
     """
     monkeypatch.setenv("OCR_PYTHON", "C:/from/env/python.exe")
-    monkeypatch.setattr(LocalPaddleBackend, "available", lambda self: True)
+    monkeypatch.setattr(LocalRapidOcrBackend, "available", lambda self: True)
     chosen = select_ocr_backend(
-        Settings(ocr_python="C:/from/settings/python.exe"), **_ocr_strategy(_paddle_row())
+        Settings(ocr_python="C:/from/settings/python.exe"), **_ocr_strategy(_rapidocr_row())
     )
-    assert isinstance(chosen, LocalPaddleBackend)
+    assert isinstance(chosen, LocalRapidOcrBackend)
     assert chosen._exe == "C:/from/settings/python.exe"  # noqa: SLF001
     # 未显式给出解释器（None）= 自动发现默认路径，同样**不是**去读 env。
-    assert LocalPaddleBackend()._exe == default_ocr_python()  # noqa: SLF001
+    assert LocalRapidOcrBackend()._exe == default_ocr_python()  # noqa: SLF001
 
 
-def _paddle_row() -> EndpointConfig:
+def _rapidocr_row() -> EndpointConfig:
     return EndpointConfig(
-        id="paddle",
-        label="paddle",
+        id="rapidocr",
+        label="rapidocr",
         kind="local",
         base_url=None,
         api_key=None,
@@ -230,13 +230,13 @@ def _ocr_strategy(*rows: EndpointConfig) -> dict[str, Any]:
 
 
 def test_select_ocr_backend_follows_the_service_order(monkeypatch: pytest.MonkeyPatch) -> None:
-    """两者都可用时，**排在前面**的那条行被选中（出厂播种是 paddle 在前 = 离线优先）。"""
-    monkeypatch.setattr(LocalPaddleBackend, "available", lambda self: True)
+    """两者都可用时，**排在前面**的那条行被选中（出厂播种是 rapidocr 在前 = 离线优先）。"""
+    monkeypatch.setattr(LocalRapidOcrBackend, "available", lambda self: True)
     monkeypatch.setattr(CloudApiBackend, "available", lambda self: True)
-    backend = select_ocr_backend(Settings(), **_ocr_strategy(_paddle_row(), _cloud_row()))
-    assert isinstance(backend, LocalPaddleBackend)
+    backend = select_ocr_backend(Settings(), **_ocr_strategy(_rapidocr_row(), _cloud_row()))
+    assert isinstance(backend, LocalRapidOcrBackend)
 
-    flipped = select_ocr_backend(Settings(), **_ocr_strategy(_cloud_row(), _paddle_row()))
+    flipped = select_ocr_backend(Settings(), **_ocr_strategy(_cloud_row(), _rapidocr_row()))
     assert isinstance(flipped, CloudApiBackend)
     # 云端行的连接配置来自**行**（模型页的引用后端），不再来自 OCR_API_KEY 那把 env key。
     assert flipped._url == "https://ocr.example/parse"  # noqa: SLF001
@@ -245,10 +245,10 @@ def test_select_ocr_backend_follows_the_service_order(monkeypatch: pytest.Monkey
 def test_select_ocr_backend_skips_unready_row_to_next_candidate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Paddle 未装独立 venv → 顺延到下一条就绪的行（启停与优先级都在服务页）。"""
-    monkeypatch.setattr(LocalPaddleBackend, "available", lambda self: False)
+    """RapidOCR 未装独立 venv → 顺延到下一条就绪的行（启停与优先级都在服务页）。"""
+    monkeypatch.setattr(LocalRapidOcrBackend, "available", lambda self: False)
     monkeypatch.setattr(CloudApiBackend, "available", lambda self: True)
-    backend = select_ocr_backend(Settings(), **_ocr_strategy(_paddle_row(), _cloud_row()))
+    backend = select_ocr_backend(Settings(), **_ocr_strategy(_rapidocr_row(), _cloud_row()))
     assert isinstance(backend, CloudApiBackend)
 
 
@@ -256,8 +256,8 @@ def test_select_ocr_backend_none_when_nothing_is_ready(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """所有候选都不就绪 → None（调用方降级为 OcrUnavailable，不假装已读）。"""
-    monkeypatch.setattr(LocalPaddleBackend, "available", lambda self: False)
-    assert select_ocr_backend(Settings(), **_ocr_strategy(_paddle_row())) is None
+    monkeypatch.setattr(LocalRapidOcrBackend, "available", lambda self: False)
+    assert select_ocr_backend(Settings(), **_ocr_strategy(_rapidocr_row())) is None
 
 
 def test_select_ocr_backend_never_sends_images_to_a_keyless_row(
@@ -268,10 +268,10 @@ def test_select_ocr_backend_never_sends_images_to_a_keyless_row(
     取代旧的"显式 ocr_backend=paddle 时不回退云端" —— 现在这条不靠档位，而是靠
     「服务」页要不要把云端行排进序 + 模型页有没有填 key（两个动作都是显式的）。
     """
-    monkeypatch.setattr(LocalPaddleBackend, "available", lambda self: False)
+    monkeypatch.setattr(LocalRapidOcrBackend, "available", lambda self: False)
     monkeypatch.setattr(CloudApiBackend, "available", lambda self: bool(self._key))
     backend = select_ocr_backend(
-        Settings(), **_ocr_strategy(_paddle_row(), _cloud_row(api_key=None))
+        Settings(), **_ocr_strategy(_rapidocr_row(), _cloud_row(api_key=None))
     )
     assert backend is None
 
@@ -285,7 +285,7 @@ def test_settings_no_longer_advertise_ocr_backend_switches() -> None:
     """
     names = set(Settings.model_fields)
     assert not {"ocr_backend", "ocr_api_key", "ocr_api_url", "ocr_provider"} & names
-    assert "ocr_python" in names  # 唯一仍归 env 的 OCR 项：本地 Paddle 的解释器路径
+    assert "ocr_python" in names  # 唯一仍归 env 的 OCR 项：本地 RapidOCR 的解释器路径
 
 
 # -- Office OOXML：docx / pptx / xlsx（zip + XML，零依赖） --------------------------------

@@ -1,13 +1,13 @@
-"""v2.2 可插拔 OCR 后端：本地 Paddle（首选）+ 云端 API key（兜底）。
+"""v2.2 可插拔 OCR 后端：本地 RapidOCR（首选）+ 云端 API key（兜底）。
 
 设计（面试可讲，对应"离线优先 + 云端兜底 + 隐私分级"）：
 
 - OCR 是重依赖，且涉及"图片是否离开本机"的隐私问题，所以做成后端可插拔：
-  - `LocalPaddleBackend`：子进程调用**独立 venv** 里的 PaddleOCR（requirements-ocr.txt 安装
-    约定）。离线、数据不出本机；numpy/OpenCV/onnxruntime 的摩擦被隔离在独立进程之外。
+  - `LocalRapidOcrBackend`：子进程调用**独立 venv** 里的 RapidOCR（requirements-ocr.txt 安装
+    约定）。离线、数据不出本机；cv2/omegaconf 这一族因此始终不进运行树。
   - `CloudApiBackend`：走 HTTP 的 OCR API（默认 OCR.space，仅需 api_key，无 SDK）。数据会
     发往第三方——因此只作兜底，且 `available()` 严格要求显式配了 key，绝不悄悄外发。
-- 选择器 `select_ocr_backend`：按「服务」页签的 OCR 端点序逐个试可用（Paddle / 本地视觉
+- 选择器 `select_ocr_backend`：按「服务」页签的 OCR 端点序逐个试可用（本地 OCR / 本地视觉
   模型 / 云端），不可用就顺延；都没有 → 返回 None，调用方降级为 `OcrUnavailable`，而不是把重型
   依赖拖进主进程或偷偷把图片发到外网。
 
@@ -36,7 +36,7 @@ _OCR_WORKER = _PROJECT_ROOT / "scripts" / "ocr_worker.py"
 # M3：整图 base64 内联进请求体前先卡大小，避免超大扫描件爆内存/超上下文窗口。
 MAX_OCR_IMAGE_BYTES = 15 * 1024 * 1024  # 15 MB
 
-# L8：Paddle worker 的子进程超时（秒）——OCR 是重活，但也不允许无限挂起。
+# L8：OCR worker 的子进程超时（秒）——OCR 是重活，但也不允许无限挂起。
 _OCR_PROC_TIMEOUT_SECONDS = 120
 
 # L10：进程级共享 httpx 连接池 —— 此前每次调用都新建 Client，握手/TLS 成本白扔。
@@ -76,14 +76,15 @@ class OcrBackend(Protocol):
         ...
 
 
-class LocalPaddleBackend:
-    """子进程调用独立 venv 里的 PaddleOCR worker（见 scripts/ocr_worker.py）。
+class LocalRapidOcrBackend:
+    """子进程调用独立 venv 里的 RapidOCR worker（见 scripts/ocr_worker.py）。
 
-    绝不进主环境：OCR 栈的 numpy/OpenCV/onnxruntime 与主环境 chromadb 的 numpy 冲突，
-    因此只在 `OCR_PYTHON`（默认 .venv-ocr/Scripts/python.exe）指向的独立进程里跑。
+    绝不进主环境：OCR 栈那一族（cv2 / omegaconf 等）不该出现在运行树里，因此只在
+    `OCR_PYTHON`（默认 .venv-ocr/Scripts/python.exe）指向的独立进程里跑。现行理由与
+    requirements-ocr.txt 头部是同一条，别在这里另写一套口径。
     """
 
-    name = "paddle"
+    name = "rapidocr"
 
     def __init__(self, *, exe: str | None = None) -> None:
         # 只认调用方传进来的 `exe`（生产路径由 `select_ocr_backend` 交 `settings.ocr_python`），
@@ -102,7 +103,7 @@ class LocalPaddleBackend:
         exe = self._exe
         if not exe or not self.available():
             raise OcrUnavailable(
-                "本地 OCR 未配置：按 requirements-ocr.txt 在独立 venv 安装 paddleocr，"
+                "本地 OCR 未配置：按 requirements-ocr.txt 在独立 venv 安装 rapidocr，"
                 "并设置 OCR_PYTHON 指向其 python（默认 .venv-ocr/Scripts/python.exe）。"
             )
         try:
@@ -235,7 +236,7 @@ def select_ocr_backend(
 ) -> OcrBackend | None:
     """按「服务」页签的 OCR 端点序选一个就绪后端 —— **运行期唯一事实面**（架构审计报告 P1-5）。
 
-    `paddle` 探本地解释器（`Settings.ocr_python`）；带模型的本地引用行 = 本地视觉模型，
+    `rapidocr` 探本地解释器（`Settings.ocr_python`）；带模型的本地引用行 = 本地视觉模型，
     探 Ollama 与模型在位；云端行按**行内** key/api_url 实例化（可并存多个云端 OCR 账号，
     谁排前面谁先被用）。不可用的候选顺延下一个；全部不可用返回 None，调用方应降级为
     `OcrUnavailable`（保持 pending，不假装已读）。
@@ -255,10 +256,10 @@ def select_ocr_backend(
     报告静静留在 pending，看起来像"这张图没识别出来"。
     """
     for cid in order:
-        if cid == "paddle":
-            paddle = LocalPaddleBackend(exe=settings.ocr_python)
-            if paddle.available():
-                return paddle
+        if cid == "rapidocr":
+            local = LocalRapidOcrBackend(exe=settings.ocr_python)
+            if local.available():
+                return local
             continue
         cfg = endpoints.get(cid)
         if cfg is None or getattr(cfg, "stale", False):

@@ -583,3 +583,27 @@ def _migrate(conn: SqlConnection) -> None:
                 (uuid.uuid4().hex, int(r[0])),
             )
         conn.commit()
+    # 14. OCR 引擎换家（10-02：Paddle → RapidOCR）：内置行的 **id 就是事实面**。
+    #     `select_ocr_backend` 按 id 匹配候选、`check_availability` 按 id 分派探活、服务页把 id
+    #     当标签来源 —— 旧库里那行 `paddle` 不改名，症状不是报错而是**静默降级**：服务页显示
+    #     "本地 OCR 就绪"，选择器却永远匹配不上任何候选，`order` 里剩下的都是不可用的行，
+    #     图片一路停在 pending，看起来像"这张图没识别出来"（与 rag/ocr.py 里"空 order 不抛"
+    #     那条同一种阴）。
+    #     幂等：只在真存在 `paddle` 行时动手。两种终态都对 —— 已有 `rapidocr` 行（新库、或
+    #     播种已重播过）就删旧行，绝不撞 (category, id) 主键；没有就把旧行**改名带过去**，
+    #     enabled / sort_order / user_id 一字不动：操作员在这行上做过的启停与排序，不该因为
+    #     换了个引擎就被重置。
+    has_old = conn.execute(
+        "SELECT 1 FROM service_endpoint WHERE category = 'ocr' AND id = 'paddle'"
+    ).fetchone()
+    if has_old:
+        if conn.execute(
+            "SELECT 1 FROM service_endpoint WHERE category = 'ocr' AND id = 'rapidocr'"
+        ).fetchone():
+            conn.execute("DELETE FROM service_endpoint WHERE category = 'ocr' AND id = 'paddle'")
+        else:
+            conn.execute(
+                "UPDATE service_endpoint SET id = 'rapidocr'"
+                " WHERE category = 'ocr' AND id = 'paddle'"
+            )
+        conn.commit()

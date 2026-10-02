@@ -560,7 +560,7 @@ def runtime_payload(
         "ocr",
         "OCR",
         [
-            ("ocr_python", "OCR_PYTHON", "Paddle 解释器", f"Paddle 独立解释器：{ocr_python}"),
+            ("ocr_python", "OCR_PYTHON", "RapidOCR 解释器", f"RapidOCR 独立解释器：{ocr_python}"),
             # 「用哪个 OCR 后端 / 云端 OCR 的 key」这里**不再有行**（P1-5 收口）：曾有的
             # OCR_BACKEND / OCR_API_KEY / OCR_API_URL 三项在生产上从不被读（服务页恒有一条
             # 启用的内置行 ⇒ 工厂的 env 分支不可达），留着就是三个假开关。

@@ -8,7 +8,7 @@ key/base_url/model：
     服务内一后端至多一条引用）。服务页「新增」= 从模型页已配置的后端中选择；「移除」
     只删引用行，**绝不动模型页配置**；配置的编辑只在模型页。后端被模型页删除时，引用
     行在视图中呈现「失效」（不静默跳过）。
-  * **本地行**（builtin=1）：paddle / hash / off 等代码能力，id 固定、不可删，同样参与
+  * **本地行**（builtin=1）：rapidocr / hash / off 等代码能力，id 固定、不可删，同样参与
     排序与启停。
   * **优先级 = sort_order，第 1 位即生效**；启停 = enabled。没有独立的"首选"字段。
 
@@ -180,7 +180,7 @@ class ServiceEndpointService:
         ms = ModelSettingsService(self._conn)
         backends = {str(b["name"]) for b in ms.list_backends(user_id=self._owner)}
         defaults: list[tuple[str, str, str, str | None, int]] = [
-            ("ocr", "paddle", "local", None, 1),
+            ("ocr", "rapidocr", "local", None, 1),
             ("embedding", "hash", "local", None, 1),
             ("rerank", "off", "local", None, 1),
         ]
@@ -404,7 +404,7 @@ def check_availability(candidate_id: str, settings: Settings) -> tuple[bool, str
 
     云端引用行的可用性只取决于被引用后端是否配了 key（`endpoint_available`）。
     """
-    if candidate_id == "paddle":
+    if candidate_id == "rapidocr":
         from rolecard_agent.core.paths import default_ocr_python
 
         exe = settings.ocr_python or default_ocr_python()
@@ -424,7 +424,7 @@ def endpoint_available(e: EndpointConfig, settings: Settings) -> tuple[bool, str
     实现/不可用"而选择器实际会去试，服务页状态自相矛盾（用户 2026-09-17 反馈）：
       * 带模型的视觉引用行（usage=ocr 的后端引用，如 qwen3-vl）→ 探 Ollama /api/tags
         （3s 网络探测；服务页行数个位数，代价可接受）；
-      * 纯本地实现（paddle/hash/off）→ 维持廉价静态探活。
+      * 纯本地实现（rapidocr/hash/off）→ 维持廉价静态探活。
     """
     if e.stale:
         return False, "引用的模型已在模型页删除 —— 请移除本行或重新选一个"

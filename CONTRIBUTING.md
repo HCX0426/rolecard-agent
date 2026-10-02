@@ -182,10 +182,15 @@
 | 环境 | 用途 | Python | 何时需要 |
 | --- | --- | --- | --- |
 | `.venv` | 主服务（M1~M4 全部） | 3.13 | **现在** |
-| `.venv-ocr` | PaddleOCR 独立环境 | 3.13 | v2.2 |
+| `.venv-ocr` | RapidOCR 独立环境 | 3.13 | v2.2 |
 | 容器 | 部署 | — | v2.4 |
 
-**为什么 OCR 必须单独一个环境**：`paddleocr` 会拉入 `paddlex` 和一批二进制依赖（opencv / onnxruntime），装进主环境会显著拖慢每次依赖解析，并让主服务的升级被它锁住。它本来就该是独立进程。
+**为什么 OCR 必须单独一个环境**：OCR 引擎会拉入 `opencv`（本机实测 113 MB）、`onnxruntime` 与一批
+二进制依赖，装进主环境会显著拖慢每次依赖解析，并让主服务的升级被它锁住。它本来就该是独立进程。
+（2026-10-02 换后端时订正：从前这里写的是"`paddleocr` 会拉 `paddlex`…与主环境的 numpy 版本主张
+冲突"——那条**被迫**的理由在 RapidOCR 上已不成立（它的 numpy 约束与主环境兼容，主环境本来就有
+onnxruntime）。现在维持隔离的两条理由是选择：运行树不该带这一族；随包形态按设计不含 OCR。
+现行完整口径以 `requirements-ocr.txt` 开头那一段为准，别在两处各写一套。）
 
 ### 8.2 主环境：纯 `.venv` + pip（2026-09-17 定案，弃用 uv）
 
@@ -207,7 +212,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe scripts\check_consistency.py
 ```
 
-### 8.3 OCR 独立环境：`.venv-ocr`（PaddleOCR 必须隔离）
+### 8.3 OCR 独立环境：`.venv-ocr`（OCR 引擎必须隔离）
 
 ```powershell
 python -m venv .venv-ocr
@@ -218,10 +223,10 @@ python -m venv .venv-ocr
 
 ### 8.4 国内网络（很实际的一条）
 
-`paddleocr` 会拉 `paddlex` 与一批二进制包，直连 PyPI 会慢到让人以为卡死：
+OCR 那一份会拉 `onnxruntime` 与 `opencv` 两个大轮子（合计 150 MB 级），直连 PyPI 会慢到让人以为卡死：
 
 ```powershell
-# pip 走清华镜像（paddle 系包直连 PyPI 极慢）：
+# pip 走清华镜像（onnxruntime / opencv 这类大轮子直连 PyPI 极慢）：
 pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
@@ -229,7 +234,7 @@ pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 - **`pyproject.toml` 是唯一事实来源**（`dependencies` + 四组 extras：`api` / `rag` / `cloud` / `dev`）。
 - `requirements*.txt` 是 **pip 安装镜像**，按范围拆开：`requirements.txt` 只含 v1 内核，
-  `-api` 接入层 / `-rag` 向量检索 / `-cloud` 云端 provider / `-dev` 开发工具 / `-ocr` PaddleOCR（独立环境）。
+  `-api` 接入层 / `-rag` 向量检索 / `-cloud` 云端 provider / `-dev` 开发工具 / `-ocr` RapidOCR（独立环境）。
   `scripts/check_consistency.py` 会断言每一组 extras 与对应镜像文件的**包名集合一致**，改了一边不改另一边会被拦下。
 - **数据库有迁移，别再写"删库重建"**（本条 2026-09-25 订正：原文说"v1 不做迁移、改 schema 就删
   `data/sqlite/app.db`"，那句话在 `_migrate` 存在之后一直是错的，而**照做会去删一份真实数据**）。

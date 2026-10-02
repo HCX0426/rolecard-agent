@@ -183,8 +183,8 @@ def dotenv_path() -> Path:
 def default_ocr_python() -> str | None:
     """默认 OCR 解释器：项目根下的独立 venv（requirements-ocr.txt 的安装约定）。
 
-    打包态这里必然返回 None —— Paddle 按设计**不进包**（独立 venv、体积与 numpy 冲突），
-    表现是"本地 OCR 不可用"，云端 OCR（配置了 key 时）不受影响。
+    打包态这里必然返回 None —— OCR 引擎按设计**不进包**（独立 venv，cv2/omegaconf 一族
+    上百 MB），表现是"本地 OCR 不可用"，云端 OCR（配置了 key 时）不受影响。
     """
     cand = repo_root() / ".venv-ocr" / "Scripts" / "python.exe"
     return str(cand) if cand.exists() else None

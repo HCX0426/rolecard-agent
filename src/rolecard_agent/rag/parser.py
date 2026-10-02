@@ -8,9 +8,9 @@
   `xml.etree.ElementTree` 抽文本，**零新增依赖**（刻意不引 python-docx / openpyxl / lxml，
   避免再给主环境加二进制依赖 —— 与 pypdf 的取舍一致）。
 - 图片（`.png/.jpg/.jpeg/.bmp/.gif/.tiff/.webp`）：走 OCR。按 `requirements-ocr.txt` 的硬规则，
-  OCR 必须在【独立 venv / 进程】里跑（PaddleOCR 自带 numpy / OpenCV 与主环境冲突），因此通过
+  OCR 必须在【独立 venv / 进程】里跑（运行树不该带 cv2/omegaconf 那一族），因此通过
   子进程调用一个独立的 OCR Python（`OCR_PYTHON`，默认 `.venv-ocr/Scripts/python.exe`）。未配置
-  或该 venv 不可用 → 抛 `OcrUnavailable`，由上传端点降级为 pending，**绝不**把 paddle 栈拖进主环境。
+  或该 venv 不可用 → 抛 `OcrUnavailable`，由上传端点降级为 pending，**绝不**把 OCR 栈拖进主环境。
 
 解析失败一律抛 `ParseError`（可读原因、不含栈），调用方据其决定 500 还是降级。
 """
@@ -64,7 +64,7 @@ def parse_document(
 
     相对路径按当前工作目录解析；上传端点传入的是已落盘的绝对 / 相对路径。
     `backend` 为上层按策略选好的 OCR 后端（见 rag/ocr.select_ocr_backend）；未传时图片走
-    本地 Paddle 默认路径（仍离线优先）。
+    本地 RapidOCR 默认路径（仍离线优先）。
 
     **文件不存在时抛 `ParseError` 而不是让 `FileNotFoundError` 冒出去**：调用方（上传 /
     抽取端点）只把 `ParseError` 翻译成可读响应，其它异常会变成没有任何说明的 500。
@@ -281,22 +281,22 @@ def _parse_image(
     p: Path, *, ocr_python: str | None = None, backend: OcrBackend | None = None
 ) -> str:
     """图片 OCR：优先用上层按策略选好的 `backend`（见 rag/ocr.select_ocr_backend）；
-    否则按 `ocr_python` 构造本地 Paddle 后端，再不行自动发现默认 .venv-ocr 解释器（仍离线优先）。
+    否则按 `ocr_python` 构造本地 RapidOCR 后端，再不行自动发现默认 .venv-ocr 解释器（仍离线优先）。
 
     后端不可用 → 抛 `OcrUnavailable`（调用方降级为 pending）；可用但调用失败 → 抛 `ParseError`。
-    后端选择逻辑在 rag/ocr.py，避免主环境直接依赖 paddle 栈。
+    后端选择逻辑在 rag/ocr.py，避免主环境直接依赖 OCR 栈。
     """
     if backend is None and ocr_python is not None:
-        from rolecard_agent.rag.ocr import LocalPaddleBackend
+        from rolecard_agent.rag.ocr import LocalRapidOcrBackend
 
-        backend = LocalPaddleBackend(exe=ocr_python)
+        backend = LocalRapidOcrBackend(exe=ocr_python)
     if backend is None:
-        from rolecard_agent.rag.ocr import LocalPaddleBackend
+        from rolecard_agent.rag.ocr import LocalRapidOcrBackend
 
-        backend = LocalPaddleBackend()  # 自动发现默认路径（首选）
+        backend = LocalRapidOcrBackend()  # 自动发现默认路径（首选）
     if not backend.available():
         raise OcrUnavailable(
-            "本地 OCR 未配置：按 requirements-ocr.txt 在独立 venv 安装 paddleocr，"
+            "本地 OCR 未配置：按 requirements-ocr.txt 在独立 venv 安装 rapidocr，"
             "并设置 OCR_PYTHON 指向其 python（默认 .venv-ocr/Scripts/python.exe）；"
             "或在「服务」页把一个已配凭据的云端 OCR / 视觉模型端点排进 OCR 序。"
         )

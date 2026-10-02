@@ -1060,7 +1060,7 @@ def upload_report(
     线程池，事件循环只负责调度。同理用 `file.file.read()` 而不是 `await file.read()`。
 
     v2.2 起解析在此完成：.txt/.md/.pdf/.docx/.pptx/.xlsx 直接抽文本入
-    `health_reports` 检索索引；图片走 **可插拔 OCR**（本地 Paddle 优先，独立 venv 子进程；
+    `health_reports` 检索索引；图片走 **可插拔 OCR**（本地 RapidOCR 优先，独立 venv 子进程；
     排在其后的候选由「服务」页的 OCR 端点序决定，见 rag/ocr.select_ocr_backend）。
     解析失败的图片 / 不支持的类型保持 pending，并向会话注入一条说明消息（graph.update_state），
     让模型知道"有文件已登记但还不能读"，而不是假装读过。重复上传同一文件复用同一任务。
@@ -1145,16 +1145,16 @@ def upload_report(
     suffix = target.suffix.lower()
     if suffix in PARSEABLE_EXTENSIONS:
         try:
-            # 仅图片需要选 OCR 后端：按「服务」页签的端点顺序（默认 Paddle 优先）。
+            # 仅图片需要选 OCR 后端：按「服务」页签的端点顺序（默认本地 RapidOCR 优先）。
             # L3：选择逻辑收拢到 AppContext.ocr_candidates()（原与 records.py 重复）。
             backend = ctx.ocr_candidates() if suffix in IMAGE_EXTS else None
             text = parse_document(target, backend=backend)
         except OcrUnavailable:
-            # 后端未配置：图片保持 pending，明确告知模型不可读（不把 paddle 栈拖进主环境）。
+            # 后端未配置：图片保持 pending，明确告知模型不可读（不把 OCR 栈拖进主环境）。
             note = (
                 f"[用户上传了图片报告：{safe_name}，已登记 intake 任务 {task_id}"
                 f"（status={existing['status']}）。本地 OCR 未配置"
-                "（本地 Paddle 不可用，且「服务」页没有就绪的云端 OCR / 视觉模型端点），"
+                "（本地 RapidOCR 不可用，且「服务」页没有就绪的云端 OCR / 视觉模型端点），"
                 "当前不能读取图片内容，不要假装已经读过。]"
             )
             graph_config = {"configurable": {"thread_id": thread_id}}

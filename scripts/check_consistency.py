@@ -162,7 +162,7 @@ def check_requirements_scope() -> None:
         for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
     ]
     body = "\n".join(lines)
-    leaked = [d for d in ("paddle", "chromadb", "fastapi", "uvicorn") if d in body]
+    leaked = [d for d in ("rapidocr", "opencv", "chromadb", "fastapi", "uvicorn") if d in body]
     out("requirements.txt scope", not leaked, f"leaked: {leaked}" if leaked else "v1 core only")
     if leaked:
         fails.append(f"requirements.txt pulls v2-only deps: {leaked}")
@@ -356,7 +356,7 @@ def check_installer_scope() -> None:
 
     判据：`RUNTIME_REQ_FILES` 是"任何一条能跑起完整产品的路径都得有"的那五份，
     逐个入口现读它引用了哪些 `requirements*.txt`。dev / ocr / package **不在表内**：
-    那几份按形态有意分开装（dev 不进生产运行树、paddle 必须独立 venv、package 只有打包机要）。
+    那几份按形态有意分开装（dev 不进生产运行树、OCR 栈必须独立 venv、package 只有打包机要）。
 
     **`requirements-mcp.txt` 于 2026-10-01 从"按形态分开装"挪进这张表**，理由不是口味而是两个
     出货形态都已经装了它：随包后端 09-29 起带它（`R28-34`：spec 缺一条就拒绝出产物），镜像
@@ -436,7 +436,7 @@ def check_installer_scope() -> None:
     # 另一半：磁盘上每一份 requirements*.txt 都要在两张表里之一（空理由不算理由）。
     SEPARATE_BY_SHAPE = {
         "requirements-dev.txt": "开发/CI 依赖，不进生产运行树",
-        "requirements-ocr.txt": "paddle 与主环境冲突，必须独立 venv（见该文件开头）",
+        "requirements-ocr.txt": "OCR 栈不进运行树，必须独立 venv（该文件开头有现行理由）",
         "requirements-package.txt": "只有打包机要（PyInstaller，见 ci.yml 的 windows-release）",
     }
     unclassified = [

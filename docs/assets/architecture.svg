@@ -76,7 +76,7 @@
   <rect x="550" y="384" width="370" height="76" rx="8" fill="#ffffff" stroke="#a7f3d0"/>
   <text x="735" y="405" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0f172a">文档摄取 parser</text>
   <text x="735" y="423" text-anchor="middle" font-size="11.5" fill="#475569">.txt / .md / .pdf 文本抽取</text>
-  <text x="735" y="440" text-anchor="middle" font-size="11.5" fill="#475569">可插拔 OCR：本地 Paddle 优先 / 云端 key 兜底</text>
+  <text x="735" y="440" text-anchor="middle" font-size="11.5" fill="#475569">可插拔 OCR：本地 RapidOCR 优先 / 云端 key 兜底</text>
 
   <line x1="480" y1="471" x2="480" y2="486" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arw)"/>
 

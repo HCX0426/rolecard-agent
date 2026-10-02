@@ -270,7 +270,7 @@ def test_shipped_defaults_ask_for_reasoning_from_the_bundled_local_model() -> No
 
 
 def test_siliconflow_endpoint_and_ocr_python_parse_from_env() -> None:
-    """P1-4 + P1-5：仍归 env 的只剩两项 —— 云端兜底端点、本地 Paddle 解释器。
+    """P1-4 + P1-5：仍归 env 的只剩两项 —— 云端兜底端点、本地 RapidOCR 解释器。
 
     `SILICONFLOW_API_KEY` 不再是 Settings 字段：凭据的家是模型页（DB 是事实面），env 那把
     key 只被 scripts/run_api.py 用作"首启注册一个硅基流动后端行"的引导输入。

@@ -234,7 +234,7 @@ def _row(
     base_url: str | None = None,
     model: str | None = None,
 ) -> EndpointConfig:
-    """一条服务端点行的快照（工厂消费的形态）。内置行（hash/off/paddle）kind=local。"""
+    """一条服务端点行的快照（工厂消费的形态）。内置行（hash/off/rapidocr）kind=local。"""
     return EndpointConfig(
         id=eid,
         label=eid,

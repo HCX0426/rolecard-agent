@@ -119,7 +119,7 @@ GitHub 的 Linux runner 量到 91.77 —— win32/posix 两条分支各自执行
 <sub>分层：客户端 → 接入层 → 内核 harness → 能力（RAG 检索 / 文档摄取）→ 领域插件 → 外部依赖。
 核心约束：`core/` 内不出现任何**域的专有名词**（域目录名 + 各域 schema 里声明的表名，
 由 `check_consistency` 从 `domains/*/schema.sql` 推导后机器校验）；**检索是内核能力**，
-领域只声明作用域；OCR 走可插拔后端，选哪个由「服务」页的端点序决定（本地 Paddle 优先，
+领域只声明作用域；OCR 走可插拔后端，选哪个由「服务」页的端点序决定（本地 RapidOCR 优先，
 云端 OCR 必须显式配置才启用）。</sub>
 
 ---
@@ -351,7 +351,7 @@ rolecard-agent/
 | React + Vite + TypeScript | v1 · M5 | 控制台前端（`frontend/` 子项目），构建产物 `frontend/dist` 由 FastAPI 托管 |
 
 > **依赖按范围拆分，不要把 v2 的包装进 v1 环境**：
-> `requirements.txt`（v1 内核）/ `-dev`（测试工具）/ `-api`（接入层）/ `-rag`（chromadb）/ `-ocr`（paddle，独立 venv）。
+> `requirements.txt`（v1 内核）/ `-dev`（测试工具）/ `-api`（接入层）/ `-rag`（chromadb）/ `-ocr`（RapidOCR，独立 venv）。
 > 唯一事实来源是 `pyproject.toml`。版本修正依据见 `docs/archive/技术评审与决策.md`。
 
 ---
@@ -378,7 +378,7 @@ v1 同时包含：**测试与评测集（含通过率基线）**、Docker、GitH
 | 版本 | 内容 |
 | --- | --- |
 | v2.1 | 检索外挂 RAG —— **已落地**：chroma 分作用域集合、可插拔嵌入（bge-m3 / hash 离线兜底）、`search_knowledge` 内核工具（作用域由角色声明、内核注入）、上传直接入库、**rerank 默认开启**、**检索延迟 P50/P95/P99 细分** |
-| v2.2 | 文档摄取 —— **已落地**：`.txt/.md/.pdf` 解析 + **Office OOXML（`.docx/.pptx/.xlsx`，标准库 zip+XML，零新依赖）** + **可插拔 OCR（本地 Paddle 优先；云端 OCR 只有在「服务」页把已配凭据的端点排进序时才启用）** + **结构化抽取（报告文本 → 指标行：schema 约束 + 确定性校验 + 原文锚定 + 第二模型交叉验证）** |
+| v2.2 | 文档摄取 —— **已落地**：`.txt/.md/.pdf` 解析 + **Office OOXML（`.docx/.pptx/.xlsx`，标准库 zip+XML，零新依赖）** + **可插拔 OCR（本地 RapidOCR 优先；云端 OCR 只有在「服务」页把已配凭据的端点排进序时才启用）** + **结构化抽取（报告文本 → 指标行：schema 约束 + 确定性校验 + 原文锚定 + 第二模型交叉验证）** |
 | v2.3 | 完整前端 —— **已落地**：组件库 / 响应式 / 深色模式 / Hash 路由深链 / 错误边界 / 导航预加载（多页应用已提前为 M5） |
 | v2.4 | 公网部署与多后端路由 —— **部分落地**：联网总闸 + 域名白名单、思考总开关、consensus 多模型比对、运行环境在线编辑与热生效、模型失败自动回退；**公网部署（TLS + 域名）2026-10-01 定档封存**：部署面两个文件已写完且有断言把着值，欠的是"第一次真跑"（要一台能跑 Docker 的机器 + 一个解析到它的域名，这台开发机两样都没有）。**触发条件**：真有任何一个公网访客 —— 上面「挂到公网」那一节整个跑一遍，别只挑其中两条 |
 | v2.5 | 生产化替换（Postgres / Milvus / Redis） |

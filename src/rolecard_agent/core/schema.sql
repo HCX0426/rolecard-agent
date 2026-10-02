@@ -394,7 +394,7 @@ CREATE INDEX IF NOT EXISTS idx_domain_data_domain ON domain_data(domain, user_id
 --
 -- 架构归一化（引用模型）：模型页是模型与凭据配置的唯一事实面；本表只存「哪些配置参与
 -- 这类服务、以什么优先级、是否启用」—— 绝不复制 key/base_url/model。
---   本地行（builtin=1）：paddle / hash / off 等代码能力，id 固定、不可删、可排序停用；
+--   本地行（builtin=1）：rapidocr / hash / off 等代码能力，id 固定、不可删、可排序停用；
 --   引用行（builtin=0）：ref_backend → model_backend.name，id = ref_backend（每类服务
 --   内一后端至多一条引用）。删除引用行**绝不**动模型页配置；后端被模型页删除时，
 --   引用行在视图中呈现「失效」。

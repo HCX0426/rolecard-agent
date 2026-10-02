@@ -246,6 +246,55 @@ def test_legacy_usage_rows_become_the_local_identity(tmp_path: Path) -> None:
     conn.close()
 
 
+def test_ocr_builtin_row_renames_from_paddle(tmp_path: Path) -> None:
+    """10-02 换 OCR 引擎：老库里那行 `paddle` 必须升成 `rapidocr`，启停与排序原样带过去。
+
+    为什么必须是集成用例：`id` 是**事实面** —— `select_ocr_backend` 按 id 匹配候选、
+    `check_availability` 按 id 分派探活。这段迁移漏掉时症状不是报错而是静默降级：服务页照旧
+    显示"本地 OCR 就绪"，选择器却永远匹配不上任何候选，图片一路停在 pending，看起来像
+    "这张图没识别出来"（与 rag/ocr.py 里"空 order 不抛"是同一种阴）。
+    删掉 `_migrate` 里第 14 步，本用例第一行就红。
+    """
+    db = tmp_path / "app.db"
+    conn = connect(db)
+    bootstrap(conn, enabled_domains=DOMAINS)
+    # 造出换引擎之前的形态。**注意 `bootstrap` 不播种**（播种在装配根的 `seed_once`），
+    # 所以旧行必须自己插 —— 用 UPDATE 去改一条不存在的行会得到"0 行被改"，用例于是断言
+    # 一个从来没有过的东西（我第一版就是这么写出 `ids == []` 的）。
+    conn.execute("DELETE FROM service_endpoint")
+    conn.execute(
+        "INSERT INTO service_endpoint (category, id, kind, ref_backend, enabled, sort_order,"
+        " builtin) VALUES ('ocr', 'paddle', 'local', NULL, 0, 3, 1),"
+        " ('embedding', 'hash', 'local', NULL, 1, 0, 1), ('rerank', 'off', 'local', NULL, 1, 0, 1)"
+    )
+    conn.commit()
+
+    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(conn, enabled_domains=DOMAINS)  # 幂等：第二遍不许造出第二行
+
+    rows = conn.execute(
+        "SELECT id, enabled, sort_order FROM service_endpoint WHERE category = 'ocr'"
+    ).fetchall()
+    ids = [str(r["id"]) for r in rows]
+    assert ids == ["rapidocr"], f"ocr 内置行没改名，或留下了第二行：{ids}"
+    assert int(rows[0]["enabled"]) == 0 and int(rows[0]["sort_order"]) == 3, (
+        "换引擎不该重置操作员在这行上做过的启停与排序"
+    )
+
+    # 另一种终态：播种已重播过（库里已有 rapidocr），此时残留的 paddle 行要**删掉**，
+    # 而不是撞 (category, id) 主键把启动炸掉。
+    conn.execute(
+        "INSERT INTO service_endpoint (category, id, kind, enabled, sort_order, builtin)"
+        " VALUES ('ocr', 'paddle', 'local', 1, 9, 1)"
+    )
+    conn.commit()
+    bootstrap(conn, enabled_domains=DOMAINS)
+    ids = [str(r[0]) for r in conn.execute(
+        "SELECT id FROM service_endpoint WHERE category = 'ocr'"
+    )]
+    assert ids == ["rapidocr"], f"残留的 paddle 行没被清掉：{ids}"
+
+
 def test_reference_shape_service_endpoint_gains_a_scoped_owner(tmp_path: Path) -> None:
     """多租户 B1b：引用形态（无 api_key）的 `service_endpoint` 升上来 = 加列 + chat 行归属。
 

@@ -10,7 +10,7 @@ Traceability: US-9。
   2. **每类服务至少留一个启用端点**：不允许把整类服务停成不可用；
   3. **保存即热生效**：嵌入/重排变更要触发热重建（OCR 每次上传实时读）。
 
-全部离线：默认种子只包含本地实现行（paddle / hash / off），不触碰网络。
+全部离线：默认种子只包含本地实现行（rapidocr / hash / off），不触碰网络。
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def _category(body: dict[str, object], key: str) -> dict[str, object]:
 
 def test_status_view_lists_local_seed_and_the_editable_model_group(client: TestClient) -> None:
     body = client.get("/api/services").json()
-    assert _category(body, "ocr")["candidates"][0]["id"] == "paddle"
+    assert _category(body, "ocr")["candidates"][0]["id"] == "rapidocr"
     embedding = _category(body, "embedding")
     assert [c["id"] for c in embedding["candidates"]] == ["hash"]
     assert embedding["effective"] == "hash"  # 第 1 位即生效
@@ -123,7 +123,7 @@ def test_add_then_remove_a_reference_never_touches_the_model_page(client: TestCl
 
 
 def test_builtin_local_rows_cannot_be_deleted(client: TestClient) -> None:
-    """本地实现行（paddle/hash/off）固定存在：可停用、可排序，不可删。"""
+    """本地实现行（rapidocr/hash/off）固定存在：可停用、可排序，不可删。"""
     res = client.delete("/api/services/embedding/endpoints/hash")
     assert res.status_code == 400
     assert "不可删除" in res.json()["detail"]
