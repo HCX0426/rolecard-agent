@@ -148,6 +148,35 @@ def test_resolve_within_allows_inside_rejects_escape(tmp_path: Path) -> None:
         )
 
 
+def test_db_override_resolves_and_never_widens_the_boundary(conn, tmp_path: Path) -> None:
+    """`H6` 待验证清单第 5 条的复核（`R102-70`）：DB 覆盖里塞非规范值会怎样？
+
+    两问、两个断言：
+      ① `resolve_task_dir` 的 docstring 承诺"两条分支都返回规范绝对路径" —— 相对值（"."）
+         也必须是绝对路径。**从前不是**：DB 那一支原样返回，于是同一个库在壳里（CWD=安装根）
+         与服务里（CWD=仓库根）会指向不同的根；官方写入口只落规范值，所以这一句看着多余，
+         但库里的值可以由迁移/手工改库进来。
+      ② 它**不会**让路径边界变宽：`resolve_within` 自己会把根 resolve 掉，越界照样拒。
+         这一半是那条待验证项真正要问的问题（答案：没有穿越）。
+    """
+    conn.execute(
+        "INSERT INTO kernel_meta (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+        (workspace.WORKSPACE_KEY, "."),
+    )
+    conn.commit()
+    root = workspace.resolve_task_dir(Settings(), conn)
+    assert root.is_absolute(), root
+    assert root == Path(".").resolve()
+    with pytest.raises(files_mod.FsToolError):
+        workspace.resolve_within(
+            root, "../escape", error_cls=files_mod.FsToolError, what="访问任务目录内的文件"
+        )
+    # 官方写入口的形态不受影响（规范值 → resolve 是恒等）
+    saved = workspace.save_task_dir(conn, str(tmp_path / "task"))
+    resolved = workspace.resolve_task_dir(Settings(), conn)
+    assert resolved == Path(saved) == (tmp_path / "task").resolve()
+
+
 def test_files_and_run_boundaries_share_one_impl(tmp_path: Path) -> None:
     """fs 工具与 run_command 的边界委托同一实现，各自保留异常类型与文案。"""
     with pytest.raises(files_mod.FsToolError, match="只允许访问任务目录内的文件"):

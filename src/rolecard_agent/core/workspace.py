@@ -85,9 +85,15 @@ def resolve_task_dir(settings: Settings, conn: SqlConnection) -> Path:
 
     两条分支都返回**规范绝对路径**（与 save 落库值同一口径）：调用方拿到的就是
     立即可用的根，不用再猜它是相对还是绝对。
+
+    DB 那一支**也要 `resolve()`**（`R102-70`）：官方写入口（`save_task_dir`）本来就落规范值，
+    于是这一句看着多余 —— 但库里的值可以由别处进来（迁移、手工改库、将来多一份写侧），
+    而"相对路径"在这里会被解析成**相对进程 CWD**，同一个库在壳里与服务里就指向不同的根。
+    实测（`build/` 探针 + `tests/unit/test_workspace.py`）：非规范值不会让 `resolve_within`
+    放行越界（它自己会把根 resolve 掉），所以这不是穿越洞，是**这句话与实现的分歧**。
     """
     override = load_task_dir(conn)
-    return Path(override) if override else Path(settings.workspace_dir).resolve()
+    return Path(override).resolve() if override else Path(settings.workspace_dir).resolve()
 
 
 def resolve_within(
