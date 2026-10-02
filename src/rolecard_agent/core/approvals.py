@@ -141,11 +141,35 @@ class ApprovalService:
                 f"审批记录 {approval_id} 已是 {row['status']}，不能再次决定"
             )
         self._check_token(approval_id, row["decide_token"], token, float(row["age_s"] or 0.0))
-        conn.execute(
+        # **读—判—写必须在一步里完成**（`R102-01`）：上面那次读只是把 404 / 过期 / 令牌不符
+        # 这些看得懂的错误分清楚，它**不是**准入 —— 从它到这条 UPDATE 之间，别人也读到过同一条
+        # pending、也持有同一枚令牌。从前这里裸 `WHERE id = ?` 无条件覆盖，于是同一秒里
+        # N 个批准全回 200，而路由按"每个 200 提交一次执行"办事 ⇒ 那条命令真跑 N 遍
+        # （实测 12 轮 × 4 发并发：11 轮四条全 200，命令跑到 3–4 遍）。
+        # `status` 与 `decide_token` 都进守卫：令牌在决定之后清 NULL，所以拿着旧令牌来
+        # 二次决定的那一路也在同一句话里被拒掉（不是只防住"同时"那一种）。
+        cur = conn.execute(
             "UPDATE command_approval SET status = ?, decide_token = NULL, "
-            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (target, approval_id),
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status = ? AND decide_token = ?",
+            (target, approval_id, _PENDING, row["decide_token"]),
         )
+        if cur.rowcount != 1:
+            # 一行都没改到 = 在我读它和写它之间，已经有人把它决定了。
+            # 这一支抛的是与"读出来就不是 pending"**同一个异常**（同一个 400 语义），
+            # 界面与审计不必区分两种"来晚了"。
+            #
+            # **抛之前必须先回滚**：`UPDATE` 哪怕改到 0 行，也已经把这条连接推进了一个
+            # 写事务（SQLite 在写语句前隐式 BEGIN），而输家是**不会**走到 `commit()` 的。
+            # 留着它的下场是 RESERVED 锁一直握在那条线程上 —— 而线程池的线程不死，
+            # 库代际又送不进那条线程（`R102-03`），于是那把锁没有来路可解：本轮修完并发
+            # 批准之后，探针正是这么在第 3 轮撞上 `database is locked` 的（同一台机器上
+            # 所有写请求一起卡住 5 秒后超时）。
+            conn.rollback()
+            now = self.get(approval_id)
+            raise ApprovalAlreadyDecided(
+                f"审批记录 {approval_id} 已是 {now['status']}，不能再次决定（同一秒里有人先了一步）"
+            )
         conn.commit()
         return self.get(approval_id)
 

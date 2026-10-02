@@ -28,7 +28,12 @@ _COLUMNS = (
 
 # Columns stored as JSON text. For every one of them `None` and `[]` mean different things,
 # so the distinction has to survive the round trip.
-_JSON_COLUMNS = ("tool_whitelist", "exemplars", "knowledge_scopes")
+#
+# **公开名字**（10-02 轮 `R102-24`）：`core/sync.py` 交出卡的载荷时要把这三列从"行里的文本"
+# 换成"模型要的list"，那边抄一份清单就是第二个真相 —— 而那条链坏过的样子恰好是
+# "清单改了、抄的那份没改"（`R28-14` 那一族第七次）。
+CARD_JSON_COLUMNS = ("tool_whitelist", "exemplars", "knowledge_scopes")
+_JSON_COLUMNS = CARD_JSON_COLUMNS  # 本模块内的旧称，读起来更短
 
 
 class RoleError(Exception):
@@ -179,6 +184,10 @@ class RoleCards:
             params,
         )
         if cur.rowcount == 0:
+            # 改到 0 行的 UPDATE 也已经开了一个写事务，而这一路走不到 commit ——
+            # 不回滚就把 RESERVED 锁留给这条线程（`R102-42`；领域服务里那两处早就写过
+            # 这句理由，漏的是这里 —— 所以本轮给它加了一把尺子 `dangling write txn`）。
+            self.conn.rollback()
             raise RoleNotFound(f"role not found: {role_id}")
         self.conn.commit()
         return self.get(role_id)
@@ -260,7 +269,22 @@ class RoleCardService:
                 "  knowledge_scopes = excluded.knowledge_scopes, "
                 "  description = excluded.description, "
                 "  is_builtin = 1, "
-                "  updated_at = CURRENT_TIMESTAMP",
+                "  updated_at = CURRENT_TIMESTAMP "
+                # **内容真变了才盖时刻**（`R102-25`）。从前这句无条件执行，于是每次开机
+                # 都给没人动过的卡盖一个新的 `updated_at`，而卡类冲突的裁决是"新者胜且
+                # 自动执行"（`core/sync.py` 的 `auto_moves`）—— 结构上"B 只是开了机"就能
+                # 吃掉 A 的手改。`IS NOT` 是 SQLite 的空安全不等，与 `_write_memory`
+                # 那条同一个写法（那一族的幂等判据早就长这样了）。
+                "WHERE role_card.user_id IS NOT excluded.user_id "
+                "  OR role_card.role_name IS NOT excluded.role_name "
+                "  OR role_card.system_prompt IS NOT excluded.system_prompt "
+                "  OR role_card.temperature IS NOT excluded.temperature "
+                "  OR role_card.model_name IS NOT excluded.model_name "
+                "  OR role_card.tool_whitelist IS NOT excluded.tool_whitelist "
+                "  OR role_card.exemplars IS NOT excluded.exemplars "
+                "  OR role_card.knowledge_scopes IS NOT excluded.knowledge_scopes "
+                "  OR role_card.description IS NOT excluded.description "
+                "  OR role_card.is_builtin IS NOT 1",
                 (
                     role.role_id,
                     user_id,
@@ -297,8 +321,13 @@ class RoleCardService:
                 "(role_id, user_id, role_name, system_prompt, temperature, model_name, "
                 " tool_whitelist, exemplars, knowledge_scopes, description, is_builtin) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) "
+                # 这一支只做一件事：把老库里被误标成内置的行降级。降级**真的发生**才盖时刻
+                # （`R102-25` 的另一半 —— docstring 明写"已存在则一个字段都不覆盖"，
+                # 而无条件的 `updated_at = CURRENT_TIMESTAMP` 每次都覆盖了一个字段：
+                # 那张卡的"最后一次真改动"）。
                 "ON CONFLICT(role_id) DO UPDATE SET is_builtin = 0, "
-                "  updated_at = CURRENT_TIMESTAMP",
+                "  updated_at = CURRENT_TIMESTAMP "
+                "WHERE role_card.is_builtin IS NOT 0",
                 (
                     role.role_id,
                     user_id,
@@ -338,6 +367,8 @@ class RoleCardService:
             (role_id, thread_id, user_id),
         )
         if cur.rowcount == 0:
+            # 同 `update`：0 行的 UPDATE 也开了写事务，抛之前先结束它（`R102-42`）。
+            self._conn.rollback()
             raise RoleNotFound(f"thread not found: {thread_id}")
         self.audit(actor=actor, action="switch_role", target=thread_id, detail={"role_id": role_id})
         self._conn.commit()

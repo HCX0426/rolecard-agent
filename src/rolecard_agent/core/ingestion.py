@@ -219,6 +219,10 @@ class IngestionService:
             (INGESTION_FAILED, error, task_id),
         )
         if cur.rowcount == 0:
+            # 改到 0 行的 UPDATE **同样已经开了一个写事务**，而这一路要抛异常、走不到
+            # commit —— 那把 RESERVED 锁就留在调用它的那条线程上（`R102-42`，
+            # 与 `R102-01` 的修法是同一句话：先回滚再抛）。
+            self._conn.rollback()
             raise IngestionNotFound(f"ingestion task not found: {task_id}")
         self._conn.commit()
 
@@ -238,5 +242,7 @@ class IngestionService:
             (source_file, task_id),
         )
         if cur.rowcount == 0:
+            # 同 `record_failure`：0 行的 UPDATE 也开了写事务，抛之前先回滚（`R102-42`）。
+            self._conn.rollback()
             raise IngestionNotFound(f"ingestion task not found: {task_id}")
         self._conn.commit()

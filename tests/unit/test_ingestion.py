@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -119,3 +120,45 @@ def test_the_ledger_only_touches_its_own_table(
         for table in re.findall(r"\b(?:INTO|UPDATE|FROM)\s+(\w+)", stmt, flags=re.I)
     }
     assert touched <= {"ingestion_task"}, f"台账写了别的表：{sorted(touched - {'ingestion_task'})}"
+
+def test_a_miss_on_the_ledger_does_not_leave_a_write_transaction(
+    tmp_path: Path,
+) -> None:
+    """改到 0 行的 UPDATE **也开了一个写事务**，抛之前不回滚就把锁留在调用方那条线程上。
+
+    `record_failure` / `relink_source` 都是"UPDATE → rowcount==0 → 抛 `IngestionNotFound`"，
+    而那一路走不到 `commit()`。SQLite 在写语句前隐式 BEGIN，实测这条连接
+    `in_transaction=True`，而**另一条**连接连 `PRAGMA journal_mode` 都会
+    `database is locked`（5 秒后超时）—— 写请求跑在线程池里、线程不死、连接就不死，
+    这把锁没有来路可解（`R102-42`；与修 `R102-01` 时撞出来的是同一个形状）。
+
+    用文件库 + 两条真连接：`:memory:` 那条共享不了，测不出"别的连接写不动"。
+    """
+    from rolecard_agent.core.ingestion import IngestionNotFound
+
+    path = tmp_path / "ledger.db"
+    first = connect(path)
+    bootstrap(first, enabled_domains=["health"])
+    first.executescript(
+        "INSERT INTO tenant (tenant_id, display_name) VALUES ('t1', 'demo');"
+        "INSERT INTO app_user (user_id, tenant_id, display_name) VALUES ('u1', 't1', 'u1');"
+    )
+    first.commit()
+    try:
+        with pytest.raises(IngestionNotFound):
+            IngestionService(first).record_failure("不存在的任务", "ocr exploded")
+        with pytest.raises(IngestionNotFound):
+            IngestionService(first).relink_source("不存在的任务", "uploads/x.pdf")
+        # 两条都留在  上才算真测到（回滚过就测不到锁了）
+        # 故意**不** close `first`：close 会隐式回滚，把这个坑抹平，测出来的是假的
+        second = connect(path)
+        try:
+            second.execute(
+                "INSERT INTO app_user (user_id, tenant_id, display_name) "
+                "VALUES ('u9', 't1', '写进来的第三者')"
+            )
+            second.commit()
+        finally:
+            second.close()
+    finally:
+        first.close()

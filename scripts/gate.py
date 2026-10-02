@@ -360,6 +360,14 @@ def main() -> int:
         print(f"❌ _READING_PATTERNS 引用了不存在的步骤：{unknown_patterns}", flush=True)
         return 2
 
+    # 同一个形状的第二格（10-02 轮 `R102-21`）：`--only` 的子串打错时循环一步都不进，
+    # 而末尾那句"✅ 全部通过"只看 `failures` —— 于是**零步也报绿**。补读一个数的人
+    # 拿到的是"绿"，实际什么都没跑，比红贵得多。
+    if args.only and not any(args.only in name for name, _, _ in STEPS):
+        print(f"❌ --only「{args.only}」在这份步骤表里一步都没命中", flush=True)
+        print("   现有步骤：" + "、".join(name for name, _, _ in STEPS), flush=True)
+        return 2
+
     timings: list[tuple[str, float]] = []
     failures: list[str] = []
     started = time.perf_counter()

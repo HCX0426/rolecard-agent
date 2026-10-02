@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -118,6 +119,69 @@ def _columns(path: Path) -> dict[str, set[str]]:
         return out
     finally:
         conn.close()
+
+
+def declared_table_names() -> set[str]:
+    """schema 文件原文里"声明了哪些表" —— 用来盯 declared 形状有没有被建空。
+
+    读不到就抛：这个集合是 `column_drift_vs_declared` 那格的**分母**，静默回空集合会让
+    一根恒绿的尺子看起来在管事（2026-10-02 轮实测：旧写法建出的暂存库 0 张表）。
+    """
+    files = [
+        ROOT / "src" / "rolecard_agent" / "core" / "schema.sql",
+        ROOT / "src" / "rolecard_agent" / "roles" / "schema.sql",
+        *sorted((ROOT / "src" / "rolecard_agent" / "domains").glob("*/schema.sql")),
+    ]
+    names: set[str] = set()
+    for path in files:
+        if not path.exists():
+            raise FileNotFoundError(f"schema 文件不见了：{path}")
+        # 注释行里也写着 `CREATE TABLE IF NOT EXISTS`（core/schema.sql:295 就在讲这件事），
+        # 不先剔掉就会把 "IF" 当成表名数进来 —— 那不是幻影，那是把尺子的分母数脏。
+        sql = "\n".join(
+            line
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if not line.lstrip().startswith("--")
+        )
+        names.update(
+            re.findall(
+                r"CREATE TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*?)\s*\(",
+                sql,
+            )
+        )
+    if not names:
+        raise RuntimeError(f"这些 schema 里一条 CREATE TABLE 都没读到：{files}")
+    return names
+
+
+def declared_shape() -> dict[str, set[str]]:
+    """**真跑过 `bootstrap()`** 的声明形状（表 → 列名集合）—— 列漂移那格比的就是它。
+
+    这里曾经只 `connect()` 一个空库再数 `sqlite_master`：`connect()` 只设 PRAGMA、不建表
+    （`storage/db.py:50`），于是 declared 恒为空、`section_schema` 那个 for 一次都不进，
+    两根的 `column_drift_vs_declared` 恒写"无"，而门禁第 12 步 `baseline --check`
+    （R26-21 专门为"算了没人看"接进来的那半步）也从此**不可能红**。缺表就抛，不许回空。
+    """
+    sys.path.insert(0, str(ROOT / "src"))
+    from rolecard_agent.domains.registry import DOMAINS  # noqa: PLC0415
+    from rolecard_agent.storage.db import bootstrap, connect  # noqa: PLC0415
+
+    conn = connect(_scratch("declared.db"))
+    try:
+        applied = bootstrap(conn, enabled_domains=DOMAINS)
+        shape = {
+            t: {r[1] for r in conn.execute(f"PRAGMA table_info('{t}')")}
+            for (t,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+    finally:
+        conn.close()
+    missing = sorted(declared_table_names() - set(shape))
+    if missing:
+        raise RuntimeError(
+            f"声明形状建出来缺表 {missing}（跑过的 schema 文件：{applied}）—— "
+            "这一格宁可乐，也不能回一个空字典 —— 漂移那格恒等于「无」就是没量。"
+        )
+    return shape
 
 
 def data_roots() -> dict[str, Path | None]:
@@ -370,15 +434,7 @@ def section_growth(installed: Path | None) -> dict[str, Any]:
 
 
 def build() -> dict[str, Any]:
-    sys.path.insert(0, str(ROOT / "src"))
-    from rolecard_agent.storage.db import connect  # noqa: PLC0415
-
-    conn = connect(_scratch("declared.db"))
-    declared = {
-        t: {r[1] for r in conn.execute(f"PRAGMA table_info('{t}')")}
-        for (t,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    }
-    conn.close()
+    declared = declared_shape()
     installed = next(
         p for tag, p in data_roots().items() if tag.startswith("installed")
     )
@@ -388,6 +444,13 @@ def build() -> dict[str, Any]:
         "settings": section_settings(),
         "routes": section_routes(),
         "schema_per_root": section_schema(declared),
+        # 漂移那格的分母要一起上屏：`column_drift_vs_declared="无"` 在分母为 0 的时候与
+        # "真的没有漂移"长得一模一样（`R102-31`），所以这里明写" declared 有几张表几列"。
+        "schema_declared": {
+            "tables": len(declared),
+            "columns": sum(len(cols) for cols in declared.values()),
+            "built_by": "storage.db.bootstrap(enabled_domains=DOMAINS)",
+        },
         "data_identity": section_identity(),
         "table_growth_installed_root": section_growth(installed),
         "artifacts": section_artifacts(),

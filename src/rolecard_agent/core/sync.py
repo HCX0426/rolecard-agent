@@ -145,22 +145,52 @@ class SyncPlan:
 # ------------------------------------------------------------------ 本机这一侧的收集
 
 
+#: 一张卡能搬的那些列。**指纹、交出去的载荷、写入端那句"变了没有"比的是同一个形状**，
+#: 所以这份清单与下面 `_card_body` 只能有一处（`R102-24` 的修法把翻译放进 `_card_body`，
+#: 而 `R102-25` 要问的"内容真变了吗"也必须读同一个函数，否则两处迟早分叉）。
+_CARD_COLUMNS = (
+    "role_id, role_name, system_prompt, temperature, model_name, tool_whitelist,"
+    " exemplars, knowledge_scopes, description, reachout_enabled, recall_enabled,"
+    " time_pattern_enabled, affinity_enabled, file_watch_enabled, reachout_keep,"
+    " pet_pack, is_builtin, updated_at"
+)
+
+
+def _card_body(row: Any) -> dict[str, Any]:
+    """一行 `role_card` → 那张卡的可搬运体。
+
+    两处翻译都在这一个函数里：
+    ① 那三列在库里是 **JSON 文本**，而对面收下载荷的 `RoleCardUpdate` 要的是 **list** ——
+      从前没人翻译，于是每张带白名单的卡在 import 端必炸（`R102-24`：3/3 张
+      `ValidationError: tool_whitelist Input should be a valid list`、`written` 里 card
+      一格都没有、而 HTTP 200）。翻译放在**这里**而不是放在写入端，是因为指纹比的就是
+      这份 body —— 载荷与指纹必须描述同一个东西，否则"我交出去的那张"与"我宣称它长这样"分叉。
+    ② `updated_at` 与 `is_builtin` 不进指纹也不进载荷：两边都是内置卡时它是事实，
+      不是用户写的东西；时刻则由下面 `at=` 单独带着走裁决。
+    """
+    # 延迟导入与 `_write_card` 同一处理：`roles/` 不进 `core/` 的顶层依赖，
+    # 而这一列清单的唯一出处在角色服务那边（`CARD_JSON_COLUMNS`）。
+    from rolecard_agent.roles.service import CARD_JSON_COLUMNS  # noqa: PLC0415
+
+    # `dict(row)` 而不是 `{k: row[k] for k in row}`：sqlite3.Row 直接迭代给的是
+    # **下标**不是列名，那种写法会拿 `row[0]` 去查列名而 IndexError。
+    body = dict(row)
+    body.pop("updated_at", None)
+    body.pop("is_builtin", None)
+    for column in CARD_JSON_COLUMNS:
+        raw = body.get(column)
+        body[column] = None if raw is None else json.loads(raw)
+    return body
+
+
 def collect_cards(conn: SqlConnection, *, user_id: str) -> list[SyncItem]:
     rows = conn.execute(
-        "SELECT role_id, role_name, system_prompt, temperature, model_name, tool_whitelist,"
-        " exemplars, knowledge_scopes, description, reachout_enabled, recall_enabled,"
-        " time_pattern_enabled, affinity_enabled, file_watch_enabled, reachout_keep,"
-        " is_builtin, updated_at FROM role_card WHERE user_id = ? ORDER BY role_id",
+        f"SELECT {_CARD_COLUMNS} FROM role_card WHERE user_id = ? ORDER BY role_id",
         (user_id,),
     ).fetchall()
     out: list[SyncItem] = []
     for row in rows:
-        # `dict(row)` 而不是 `{k: row[k] for k in row}`：sqlite3.Row 直接迭代给的是
-        # **下标**不是列名，那种写法会拿 `row[0]` 去查列名而 IndexError。
-        body = dict(row)
-        body.pop("updated_at", None)
-        body.pop("is_builtin", None)
-        # `is_builtin` 不进指纹：两边都是内置卡时它是事实，不是用户写的东西。
+        body = _card_body(row)
         out.append(
             SyncItem(
                 kind=KIND_CARD,
@@ -439,7 +469,14 @@ def auto_moves(
 
 
 def _write_card(conn: SqlConnection, *, user_id: str, payload: dict[str, Any]) -> str:
-    """建或改一张卡。**归属由视图绑定**，载荷里没有 user_id 的容身之处。"""
+    """建或改一张卡。**归属由视图绑定**，载荷里没有 user_id 的容身之处。
+
+    已存在且**内容一字未变** ⇒ 什么都不写、回 `skipped`。这一格不是可选的礼貌：
+    `RoleCards.update` 会盖 `updated_at`，而卡类冲突的裁决是"新者胜且自动执行"，
+    于是重复导入会把对面那张的时刻顶到"刚刚"，两边在随后的每次对账里互相盖个没完
+    （`R102-25` 的乒乓形态）。判据与 `_card_body` 同源 ⇒ 指纹说"相同"与写入端说"没东西要动"
+    永远是同一句话。
+    """
     from rolecard_agent.roles.models import RoleCardCreate, RoleCardUpdate
     from rolecard_agent.roles.service import RoleCards
 
@@ -447,6 +484,12 @@ def _write_card(conn: SqlConnection, *, user_id: str, payload: dict[str, Any]) -
     body = {k: v for k, v in payload.items() if k != "role_id"}
     role_id = str(payload["role_id"])
     if cards.exists(role_id):
+        have = conn.execute(
+            f"SELECT {_CARD_COLUMNS} FROM role_card WHERE role_id = ? AND user_id = ?",
+            (role_id, user_id),
+        ).fetchone()
+        if have is not None and _card_body(have) == {**body, "role_id": role_id}:
+            return "skipped"
         cards.update(role_id, RoleCardUpdate(**body))
         return "updated"
     cards.create(RoleCardCreate(role_id=role_id, **body))

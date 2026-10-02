@@ -606,6 +606,13 @@ def post_reconcile(
         "pushed": len(push),
         "pulled": len(rows),
         "written": {"remote": remote_out.get("written"), "local": local_out["written"]},
+        # 对账是**登录时自动跑**的那一次，没有人盯着向导的两段读数 —— 两边写失败了几条
+        # 必须自己站出来（`R102-24`：那一版这一格整个缺席，于是"卡一条都没落"与
+        # "今天没有卡要动"在返回值上一字不差）。
+        "errors": {
+            "remote": remote_out.get("errors") or [],
+            "local": local_out["errors"],
+        },
         "left_for_human": [
             {"kind": c.kind, "ident": c.ident,
              "mine": {"at": c.mine.at, "preview": c.mine.preview},

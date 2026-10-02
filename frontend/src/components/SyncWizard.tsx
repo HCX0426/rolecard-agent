@@ -58,7 +58,12 @@ export default function SyncWizard({
   const [which, setWhich] = useState(0);
   const [busy, setBusy] = useState(false);
   const [why, setWhy] = useState("");
-  const [done, setDone] = useState<{ up: number; down: number; skipped: number } | null>(null);
+  const [done, setDone] = useState<{
+    up: number;
+    down: number;
+    skipped: number;
+    failed: number;
+  } | null>(null);
 
   const target = uploadTarget();
   const cloud = readDataSource();
@@ -102,6 +107,12 @@ export default function SyncWizard({
       let up = 0;
       let down = 0;
       let skipped = 0;
+      // 对面**拒收**的条数。从前这里只累加 written/skipped，于是"这一类一条都没落"
+      // 与"这一类本来就没东西要落"在屏幕上长得一模一样（`R102-24`：那一版每张带
+      // 工具白名单的卡在写入端必炸，而向导报的是"同步完成"）。
+      let failed = 0;
+      const countErrors = (rows?: { kind: string; ident: string; error: string }[]) =>
+        rows?.length ?? 0;
       if (initialConflicts) {
         // 对账的未决项：按用户对每个版本的选择，两端各搬各的。
         const pushRes: Record<string, string> = {};
@@ -123,10 +134,13 @@ export default function SyncWizard({
         ]);
         up = upResult?.sent ?? 0;
         down = downResult?.pulled ?? 0;
+        failed =
+          countErrors(upResult?.remote?.errors) + countErrors(downResult?.local?.errors);
       } else if (direction === "up") {
         const r = await applyUpload(target, kinds, mode, toBackend(resolutions, "up"));
         up = r.sent;
         skipped = Object.values(r.remote?.skipped ?? {}).reduce((a, b) => a + b, 0);
+        failed = countErrors(r.remote?.errors);
       } else {
         const r: PullResult = await pullDownload(
           target,
@@ -135,8 +149,9 @@ export default function SyncWizard({
         );
         down = r.pulled;
         skipped = Object.values(r.local?.skipped ?? {}).reduce((a, b) => a + b, 0);
+        failed = countErrors(r.local?.errors);
       }
-      setDone({ up, down, skipped });
+      setDone({ up, down, skipped, failed });
       setStep("done");
     } catch (e) {
       setWhy(errText(e));
@@ -664,17 +679,28 @@ function DoneScreen({
   done,
   onDone,
 }: {
-  done: { up: number; down: number; skipped: number };
+  done: { up: number; down: number; skipped: number; failed: number };
   onDone: () => void;
 }) {
   return (
     <>
       <Title>同步完成</Title>
-      <div className="mt-2 h-1 w-full rounded bg-emerald-500" />
+      <div className={"mt-2 h-1 w-full rounded " + (done.failed > 0 ? "bg-amber-500" : "bg-emerald-500")} />
       <p className="mt-3 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
         已上传 <b className="text-emerald-700 dark:text-emerald-300">{done.up}</b> 项，下载{" "}
         <b className="text-emerald-700 dark:text-emerald-300">{done.down}</b> 项
         {done.skipped > 0 && <>；{done.skipped} 项因已存在而跳过</>}。
+        {/* 「没收下」与"没有东西要动"必须分成两句话（`R102-24`）：对面把坏掉的那条折进
+            errors 之后照样回 200，只报"完成"就是在替它撒谎。 */}
+        {done.failed > 0 && (
+          <>
+            {" "}
+            <b className="text-amber-700 dark:text-amber-300">
+              另有 {done.failed} 项对面没收下
+            </b>
+            （那一类里可能整片都没落进去，具体哪几条看后端日志里的 sync 审计）。
+          </>
+        )}
       </p>
       <p className="mt-2 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
         <b className="text-amber-700 dark:text-amber-300">向量索引未随数据迁移</b>

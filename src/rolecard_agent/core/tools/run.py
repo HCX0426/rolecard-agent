@@ -125,8 +125,11 @@ class RunResult:
     duration_ms: int
 
 
-def _terminate_tree(proc: subprocess.Popen[str]) -> None:
-    """杀掉整棵进程树。Windows 的 shell=True 是 cmd → 子进程的树：只杀父进程的话，
+def terminate_process_tree(proc: subprocess.Popen[str]) -> None:
+    """杀掉整棵进程树。
+
+    **全仓唯一的"按树杀"**：`scripts/probe_readme_quickstart.py` 也用它（`R102-43`）。
+    Windows 的 shell=True 是 cmd → 子进程的树：只杀父进程的话，
     实测 communicate() 会干等到孙进程退完（timeout 形同虚设）。taskkill /T /F 按树杀；
     POSIX 用 start_new_session 建的独立进程组 + killpg。"""
     if sys.platform == "win32":
@@ -186,7 +189,7 @@ def execute_command(
             stdout, stderr = proc.communicate()
     except subprocess.TimeoutExpired:
         timed_out = True
-        _terminate_tree(proc)
+        terminate_process_tree(proc)
         with contextlib.suppress(OSError):
             stdout, stderr = proc.communicate()
     exit_code: int | None = proc.returncode

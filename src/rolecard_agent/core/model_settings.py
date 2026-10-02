@@ -886,6 +886,11 @@ class ModelSettingsService:
             (num_ctx, name, user_id),
         )
         if cur.rowcount == 0:
+            # **先结束事务再抛**：改到 0 行的 UPDATE 同样开了一个写事务，而这一路走不到
+            # commit —— 留着它，这条线程就把 RESERVED 锁一直握着，别人等 5 秒一起报
+            # `database is locked`（`R102-42`；领域服务里那两处早就按同一个写法收口了，
+            # 漏的是这里 —— 所以本轮给它加了断言 `dangling write txn`）。
+            self._conn.rollback()
             raise KeyError(name)
         self._conn.commit()
 

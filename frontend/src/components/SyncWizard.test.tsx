@@ -205,6 +205,29 @@ describe("SyncWizard", () => {
     expect(screen.getByText(/同步为复制操作，非迁移/)).toBeTruthy();
   });
 
+  it("对面拒了某几条：完成屏要数出来，而 200 与「一条都没落」必须分得开", async () => {
+    // `R102-24` 的界面那一半：写入端把坏掉的条目折进 errors 之后照样回 200，
+    // 而向导从前只累加 written/skipped —— 于是"每张卡都没写进去"看起来就是"今天没卡要搬"。
+    const rejected = {
+      ...APPLIED,
+      remote: {
+        written: { memory: 2 },
+        skipped: {},
+        errors: [
+          { kind: "card", ident: "e莉希雅", error: "ValidationError: tool_whitelist" },
+          { kind: "card", ident: "docs", error: "ValidationError: tool_whitelist" },
+        ],
+      },
+    };
+    stubRoutes({ "/api/sync/plan": PLAN, "/api/sync/apply": rejected });
+    render(<SyncWizard onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "下一步：查看差异" }));
+    await screen.findByRole("heading", { name: "差异确认" });
+    fireEvent.click(screen.getByRole("button", { name: /开始同步/ }));
+    expect(await screen.findByRole("heading", { name: "同步完成" })).toBeTruthy();
+    expect(screen.getByRole("dialog").textContent).toContain("另有 2 项对面没收下");
+  });
+
   it("对面拒了：出声，但不许跳到完成屏（没写成就不该有「同步完成」）", async () => {
     vi.stubGlobal(
       "fetch",
@@ -222,5 +245,15 @@ describe("SyncWizard", () => {
     fireEvent.click(screen.getByRole("button", { name: /开始同步/ }));
     expect(await screen.findByText(/连不上/)).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "同步完成" })).toBeNull();
+  });
+
+  it("全收下了：那句「没收下」不许出现（它不是常驻文案）", async () => {
+    stubRoutes({ "/api/sync/plan": PLAN, "/api/sync/apply": APPLIED });
+    render(<SyncWizard onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "下一步：查看差异" }));
+    await screen.findByRole("heading", { name: "差异确认" });
+    fireEvent.click(screen.getByRole("button", { name: /开始同步/ }));
+    expect(await screen.findByRole("heading", { name: "同步完成" })).toBeTruthy();
+    expect(screen.getByRole("dialog").textContent).not.toContain("没收下");
   });
 });

@@ -1639,6 +1639,79 @@ def check_single_source_literals() -> None:
     )
     if offenders:
         fails.append(f"duplicated single-source literals: {offenders}")
+
+def find_dangling_write_txns(root: pathlib.Path | None = None) -> list[str]:
+    """找出"判了 `rowcount` 却在那条路上不结束事务"的位置（`R102-42`）。
+
+    为什么这条需要尺子而不是注释：SQLite 在写语句前隐式 BEGIN，**改到 0 行的 `UPDATE`
+    同样开了一个写事务**；而 `if cur.rowcount == 0: raise ...` 这一路走不到 `commit()`。
+    于是那把 RESERVED 锁留在调用它的那条线程上 —— 线程池里的线程不死，锁就没有来路可解，
+    表现是同一台机器上后续所有写请求等 5 秒一起 `database is locked`。
+    本仓早就知道这件事（`domains/health/service.py:365,412` 的注释原话是"未命中也要结束事务，
+    否则悬挂的写事务会堵住别的线程"），**却只在两处做了**：同族另外五处漏着 ——
+    这正是"一个形状靠注释传下去"的下场，所以它归尺子管。
+
+    判据（只看 `if` 的测试里比较了 `X.rowcount` 的那种）：`body` 与 `orelse` 两个分支里，
+    凡在第一个 `commit()` / `rollback()` **之前**就出现 `raise` 或 `return` 的，算一条。
+    """
+    base = root if root is not None else ROOT / "src" / "rolecard_agent"
+    offenders: list[str] = []
+    for path in sorted(base.rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except (SyntaxError, ValueError):
+            continue
+        rel = path.relative_to(ROOT).as_posix() if path.is_relative_to(ROOT) else str(path)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.If):
+                continue
+            tested = {n.attr for n in ast.walk(node.test) if isinstance(n, ast.Attribute)}
+            if "rowcount" not in tested:
+                continue
+            for branch in (node.body, node.orelse):
+                ended = False
+                for stmt in branch:
+                    names = {
+                        n.attr
+                        for n in ast.walk(stmt)
+                        if isinstance(n, ast.Attribute) and isinstance(n.ctx, ast.Load)
+                    }
+                    if names & {"commit", "rollback"}:
+                        ended = True
+                    if any(isinstance(s, (ast.Raise, ast.Return)) for s in _statements_of(stmt)):
+                        if not ended:
+                            offenders.append(f"{rel}:{stmt.lineno}")
+                        break
+    return offenders
+
+
+def _statements_of(node: ast.stmt) -> list[ast.stmt]:
+    """这一个语句"自己或最前面的一层"里包含的语句 —— 用来判 `if ...: raise` 这种一行体。"""
+    if isinstance(node, (ast.If, ast.Try, ast.For, ast.While, ast.With)):
+        inner: list[ast.stmt] = [node]
+        inner.extend(getattr(node, "body", []))
+        inner.extend(getattr(node, "orelse", []))
+        for handler in getattr(node, "handlers", []):
+            inner.extend(handler.body)
+        return inner
+    return [node]
+
+
+def check_dangling_write_txns() -> None:
+    """门禁那一格：把 `find_dangling_write_txns` 的结果报出来。"""
+    offenders = find_dangling_write_txns()
+    out(
+        "dangling write txn",
+        not offenders,
+        "；".join(offenders[:6])
+        + (f"（共 {len(offenders)} 处）" if len(offenders) > 6 else "")
+        if offenders
+        else "所有判 rowcount 的分支都在抛/回之前结束了事务（写语句即便改到 0 行也开了事务）",
+    )
+    if offenders:
+        fails.append(f"rowcount branches that leave a write transaction open: {offenders}")
+
+
 def check_dead_config() -> None:
     """Every Settings field must be read somewhere outside config.py.
 
@@ -2229,6 +2302,7 @@ _CITATION_DOC_KEYS: tuple[tuple[str, frozenset[str]], ...] = (
                 "架构审计.md",
                 "架构审计（2026-09-26 轮）.md",
                 "架构审计（2026-09-28 轮）.md",
+                "架构审计（2026-10-02 轮）.md",
             }
         ),
     ),
@@ -2478,6 +2552,7 @@ def main() -> int:
     check_installer_scope()
     check_artifact_single_source()
     check_single_source_literals()
+    check_dangling_write_txns()
     check_bundled_copy()
     check_vocabulary()
     check_deploy_env_parity()

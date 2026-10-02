@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import contextvars
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -91,7 +92,12 @@ def decide_approval(
     if decision == "approve":
         # 后台执行：命令会真实落在任务目录里跑。连接是 ThreadLocalConnection，后台线程
         # 自带真实连接；settings 用 ctx.settings（当前生效配置，含运行环境覆盖）。
+        #
+        # **和 `api/chat.py` 那道缝同一个形状**（`R102-03` 的第二处）：`pool.submit` 也不传播
+        # contextvar，不带上上下文，这条执行线程的库代际就永远不变，
+        # `_current()` 那句"新请求先回滚上次残留事务"在它身上一次都不会触发。
         run_tools._APPROVAL_EXECUTOR.submit(
+            contextvars.copy_context().run,
             run_tools.run_approval_execution,
             approval_id,
             settings=ctx.settings,

@@ -208,3 +208,69 @@ def test_token_cannot_be_reused_after_decide(client: TestClient, db_path: str) -
     assert _decide(client, row["id"], "approve", token=token).status_code == 400
     time.sleep(0.3)
     assert len([r for r in _approval_rows(db_path) if r["command"] == "echo one-shot"]) == 1
+
+def test_each_accepted_approve_submits_exactly_one_execution(
+    client: TestClient, db_path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`api/routers/approvals.py:4` 那句「approve = 后台执行一次」的**另一半**。
+
+    `tests/unit/test_approval_race.py` 钉的是"并发里只有一个赢家"；这条钉的是路由那一侧的
+    等式：**提交给后台池的次数 == 被接受的决定次数**。两者合起来才是"那条命令只跑一遍"——
+    少了这一条，赢家再多也可能一发 200 提交两次执行。
+    """
+    from rolecard_agent.core.tools import run as run_tools
+
+    submitted: list[int] = []
+
+    class _SpyExecutor:
+        def submit(self, *args: Any, **kwargs: Any) -> None:
+            # 不认参数位次，只认那一枚整数 id —— 因为**第一个实参现在是"带上下文的壳"**
+            # （`copy_context().run`，`R102-03` 的第二道缝），把它写进签名就等于把修法写死。
+            submitted.append(next(int(a) for a in args if isinstance(a, int)))
+
+    monkeypatch.setattr(run_tools, "_APPROVAL_EXECUTOR", _SpyExecutor())
+
+    row = _insert((client, db_path), "echo submit-count")
+    token = _token_from_api(client, row["id"])
+    assert _decide(client, row["id"], "approve", token=token).status_code == 200
+    assert submitted == [row["id"]], f"第一发批准提交了 {submitted}"
+    # 第二次带同一枚（刚用完的）令牌：400，且**不许再往池里丢一次**
+    assert _decide(client, row["id"], "approve", token=token).status_code == 400
+    assert submitted == [row["id"]], f"被拒的那一发也安排了一次执行：{submitted}"
+    # 拒绝永远不执行
+    other = _insert((client, db_path), "echo reject-no-run")
+    assert _decide(client, other["id"], "reject").status_code == 200
+    assert submitted == [row["id"]], f"拒绝不该提交执行，但提交了：{submitted}"
+
+def test_the_approval_execution_thread_sees_the_request_epoch(
+    client: TestClient, db_path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """后台执行那条线程也得看见库代际（`R102-03` 的第二道缝，同 `api/chat.py` 那一处）。
+
+    `pool.submit` 与 `run_in_executor` 一样**不**传播 contextvar —— 不带上下文，
+    `_APPROVAL_EXECUTOR` 里那两条线程的代际一辈子不变，`ThreadLocalConnection._current()`
+    那句"新请求先回滚上次残留事务"在他们身上从不调用，于是执行完留下的未提交事务
+    会把写锁占满到那条线程再次被用到为止。这里不真跑命令，只问工作线程读到的代际。
+    """
+    import threading
+    import time as _t
+
+    from rolecard_agent.core.tools import run as run_tools
+    from rolecard_agent.storage.db import _REQUEST_EPOCH
+
+    seen: list[str] = []
+    done = threading.Event()
+
+    def _recorder(approval_id: int, **_kw: Any) -> None:  # 顶掉真执行，只量上下文
+        seen.append(_REQUEST_EPOCH.get())
+        done.set()
+
+    monkeypatch.setattr(run_tools, "run_approval_execution", _recorder)
+    row = _insert((client, db_path), "echo epoch")
+    assert _decide(client, row["id"], "approve").status_code == 200
+    assert done.wait(10), "后台那一发根本没被调用"
+    assert seen and seen[0], (
+        "后台执行线程读到的库代际是空串 —— 上下文没跟着 submit 送过去，"
+        "那条线程的残留事务清理永不触发"
+    )
+    _t.sleep(0.05)

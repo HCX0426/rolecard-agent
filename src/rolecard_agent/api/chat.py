@@ -21,6 +21,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import functools
 import json
 from collections.abc import AsyncIterator, Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -68,10 +70,23 @@ async def chat_events(
         tracer=tracer,
         usage_recorder=usage_recorder,
     ))
+    # **把本请求的上下文带进轮次线程池**（`R102-03`）。`loop.run_in_executor` 与
+    # `pool.submit` 都**不**传播 contextvar（3.13 实测：裸调时池线程只读到默认值，
+    # `asyncio.to_thread` 才会带过去），而 `ThreadLocalConnection._current()` 判
+    # "库代际变没变"读的正是 contextvar —— 不带过去，这条线程的代际永远停在它第一次
+    # 拿到的那个值，"新请求第一次用库先回滚上次残留事务"这道清理就**一次都没触发过**，
+    # 一轮中途断掉留下的未提交事务会一直占着写锁（别的连接等到 busy_timeout 才报错）。
+    # 同一个形状在 `core/nodes.py` 的线程池边界上早就做对了（`copied.run(tool.invoke, args)`，
+    # 那里的症状是权限静默失效），漏的是这道缝。
+    # 每次调用各拷一份上下文：上一轮被取消后那个 `next()` 仍在线程池里跑完（见
+    # `core/thread_locks.py` 的说明），共用一枚 Context 就会撞上"同一上下文不可重入"。
+    ctx = contextvars.copy_context()
     sentinel = object()
     while True:
         try:
-            item = await loop.run_in_executor(_CHAT_POOL, next, gen, sentinel)
+            item = await loop.run_in_executor(
+                _CHAT_POOL, functools.partial(ctx.run, next, gen, sentinel)
+            )
         except StopIteration:  # pragma: no cover - next 带 default 不会抛，双保险
             break
         if item is sentinel:

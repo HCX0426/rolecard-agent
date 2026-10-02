@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import socket
@@ -34,6 +35,9 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))  # 与其余脚本同一写法：不假设装过
+from rolecard_agent.core.tools.run import terminate_process_tree  # noqa: E402
+
 README = ROOT / "README.md"
 BLOCK_HEADING = "## 快速开始"
 
@@ -155,6 +159,17 @@ def _run_the_documented_command(cmd: str, workdir: Path, port: int) -> subproces
     )
 
 
+def _port_still_listening(port: int) -> bool:
+    """还能连上 = 还有人**在答** —— 比"杀过了"这件事本身可信。
+
+    用一次带短超时的 TCP 连接来判，不去解析 `netstat` 的列（那是另一类"读不到就当没有"
+    的坑：分隔符与本地化输出都会变，而这一句要的是"到底还有没有人应答"）。
+    """
+    with socket.socket() as probe:
+        probe.settimeout(0.6)
+        return probe.connect_ex(("127.0.0.1", port)) == 0
+
+
 def main() -> int:
     workdir = Path(os.environ.get("TEMP", "/tmp")) / "readme_quickstart_probe"
     workdir.mkdir(exist_ok=True)
@@ -200,11 +215,22 @@ def main() -> int:
         return 1
     finally:
         if server is not None:
-            server.terminate()
-            try:
+            # **按树杀，不是只杀外壳**：上面那条命令是 `shell=True` 起的，Windows 上
+            # 外壳是 cmd.exe，`terminate()` 只撤掉 cmd，真正的后端（launcher + uvicorn 子进程）
+            # 原地活着。实测这一格留了 **两个** 孤儿 python 在 127.0.0.1:62911 上答了
+            # 20 多分钟 —— 而这一步在 CI 档里每次都跑（10-02 轮 `R102-43`）。
+            # 实现仍只有 `core/tools/run.py` 那一份（那里还多一条 POSIX 的 killpg 支路）。
+            terminate_process_tree(server)
+            # 等不等得到无所谓：真正的判据是下面那一次端口回读，不是这里的返回值。
+            with contextlib.suppress(Exception):
                 server.wait(timeout=20)
-            except Exception:  # noqa: BLE001
-                server.kill()
+            if _port_still_listening(port):
+                # **可乐，不只是打印一句**：这一步宣称"不给读者的机器留东西"，
+                # 而留下一个还在答的后端是**确证的负面**（本轮就是这么留了两个孤儿）。
+                # 打印了却回 0 的格子，与"存在但从不输出的 warns 列表"是同一件事。
+                print(f"❌ 端口 {port} 上仍有监听 —— 这一趟的后端没收干净，请按 pid 查残留")
+                raise SystemExit(1)
+            print(f"✅ 端口 {port} 已腾空（整棵树收干净）")
 
 
 if __name__ == "__main__":
