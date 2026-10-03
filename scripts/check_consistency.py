@@ -1547,6 +1547,83 @@ def check_data_root_dirs_gitignored() -> None:
         )
 
 
+#: H2「状态」格里算"表过态"的字样（`R102-77` 的尺子在用）。
+_LEDGER_STATUS_MARKERS = (
+    "已收口", "未收口", "不修", "恒", "按设计", "取舍", "无需", "不动", "不改", "已处置", "已拍",
+)
+
+
+def _ledger_closure_traced(rid: str, h12: str, detail_rows: str) -> bool:
+    """在 H12 的执行记录里找这一条的出处，**认简写**：「`R102-48`+`26`」「老 `31`」都算。
+
+    也算详表那一格的出处：`R102-24`/`25`/`31` 的收口写在 H8 的开轮批详表行里（那里才是
+    逐条证据的存放地），逼 H12 再抄一句只会造出第二处会漂的真相。
+    方向按本仓"分不清就不拦"：裸数字可能把不相干的串认成出处（宽松一侧），
+    而把确实收口的行冤枉成"查无出处"只会让下一批人不去补记 —— 尺子不是鞭子。
+    """
+    if rid in h12:
+        return True
+    nn = rid.split("-")[1]
+    if re.search(rf"[+`]0*{nn}\b", h12) is not None:
+        return True
+    for line in detail_rows.splitlines():
+        if line.startswith(f"| {rid} |") and "收口" in line:
+            return True
+    return False
+
+
+def check_ledger_status_states_verdict() -> None:
+    """台账 H2 每行的「状态」格必须表态；说"已收口"的行必须在 H12 里找得出处（`R102-77`）。
+
+    10-03 那次对账照出来的不是代码没做，而是**一份文档在两处说两种话**：44 行的状态格从没随
+    批 1–5 回写，于是读汇总表的人以为还欠 44 件，读 H12 的人以为只剩 1 件。写死的数与不回的
+    状态格是同一族（`R102-36`），所以这里两臂都判：
+      · 状态格里一个表态字样都没有 ⇒ 红（沉默不许当成"没做"也不当成"做了"）；
+      · 状态格写着"已收口"、而该编号在 H12 的执行记录里查无出处 ⇒ 也红（收口要有出处）。
+    """
+    ledger = ROOT / "docs" / "架构审计（2026-10-02 轮）.md"
+    if not ledger.exists():
+        out("ledger status states a verdict", False, f"台账不在：{ledger}")
+        fails.append(f"audit ledger missing: {ledger}")
+        return
+    text = ledger.read_text(encoding="utf-8")
+    start = text.index("## H2 ")
+    end = text.index("## H3 ", start)
+    h12 = text[text.index("## H12 "):]
+    detail_rows = text[end:]  # H2 之后就是逐条详表（H7/H8）与执行记录（H12）
+    silent: list[str] = []
+    orphan: list[str] = []
+    total = 0
+    for line in text[start:end].splitlines():
+        m = re.match(r"^\|\s*(R102-\d+)\s*\|", line)
+        if not m:
+            continue
+        total += 1
+        rid = m.group(1)
+        status = line.split("|")[-2]
+        if not any(k in status for k in _LEDGER_STATUS_MARKERS):
+            silent.append(rid)
+        elif "已收口" in status and not _ledger_closure_traced(rid, h12, detail_rows):
+            orphan.append(rid)
+    ok = not silent and not orphan
+    out(
+        "ledger status states a verdict",
+        ok,
+        f"{total} 行全部表态；「已收口」都能在 H12 找到出处"
+        if ok
+        else f"没表态：{silent}；收口查无出处：{orphan}",
+    )
+    if silent:
+        fails.append(
+            f"audit ledger status cells carry no verdict: {silent} —— "
+            "状态格沉默，读表的人就分不清「没做」与「做了没回写」"
+        )
+    if orphan:
+        fails.append(
+            f"audit ledger claims 已收口 with no trace in H12: {orphan} —— 收口要写在哪一批"
+        )
+
+
 def check_single_text_extractor() -> None:
     """消息取文本只允许一处实现：`core/text.py::text_of`（架构审计报告 台账 `R28-59`）。
 
@@ -3266,6 +3343,7 @@ def main() -> int:
     check_write_txn_ownership_inventory()
     check_audit_ledger_row_count()
     check_data_root_dirs_gitignored()
+    check_ledger_status_states_verdict()
     check_single_text_extractor()
     check_domain_isolation()
     check_safety_prompt()
