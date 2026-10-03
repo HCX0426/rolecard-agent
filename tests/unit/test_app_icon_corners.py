@@ -126,3 +126,29 @@ def test_仓库里那份ico此刻四角真的透明() -> None:
         assert got is not None, f"第 {i} 帧读不出"
         corners.append(got)
     assert all(max(c) < 16 for c in corners), corners
+
+
+def test_图标层在非windows时记跳过而不是冒充过(monkeypatch) -> None:
+    """CI 的 Linux 档跑不到 PE 资源 —— 那一层必须**被念出来**，不能安静返回 True。
+
+    这条用例本身就是 10-03 那发 CI 红的另一臂：`ctypes.windll` 在 Linux 上没有，
+    我用平台合取守卫让两档 mypy 都过，但"守卫走对了分支"这件事得有人量。
+    """
+    import probe_package_artifact as probe
+
+    probe.SKIPPED.clear()
+    monkeypatch.setattr(probe, "_IS_WINDOWS", False, raising=True)
+    assert probe.check_icon_frames() is True, "跳过这一臂不该判红"
+    assert len(probe.SKIPPED) == 1 and "图标层" in probe.SKIPPED[0], probe.SKIPPED
+    probe.SKIPPED.clear()
+
+
+def test_图标层在windows上产物缺失时判红不判跳过(monkeypatch, tmp_path: pathlib.Path) -> None:
+    """另一臂：Windows 上"产物不在"是**没跑**，不是跳过，更不是过（②那层 10-01 定的形状）。"""
+    import probe_package_artifact as probe
+
+    monkeypatch.setattr(probe, "_IS_WINDOWS", True, raising=True)
+    monkeypatch.setattr(probe, "UNPACKED", tmp_path / "没有这一层", raising=True)
+    probe.SKIPPED.clear()
+    assert probe.check_icon_frames() is False
+    assert not probe.SKIPPED, "产物缺失被记成跳过 ⇒ 汇总里就成了'跳过一层'而不是'这层没过'"

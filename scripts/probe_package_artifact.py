@@ -16,6 +16,9 @@
    （"装的就是 HEAD"那句此刻不成立）。`/api/uploads/orphans` 的键集合从判据**降级为读数**：
    `dangling` 是 `R28-19` 加的，第十五包里就有，它只证明"frozen 那份码真被执行了"（收进 PYZ ≠
    frozen 可用），证明不了"最新"。
+④ 图标层 —— 壳 exe 里 `RT_ICON` 那九帧与仓库 `shell/build/icon.ico` 逐帧 sha256 对读；
+   非 Windows 上这一层**记为跳过并印在汇总里**（`ctypes.windll` 没有 Linux 对应物 ——
+   10-03 CI 的 `mypy --platform linux` 照出来的，本仓那族"本机绿、容器红"的第三次）。
 
 安全边界（与探针同一套规矩）：数据根落在系统临时目录、端口现取、**绝不打 :8000**、
 只 terminate 自己 spawn 的那个 pid。
@@ -52,6 +55,15 @@ REPO_DIST = ROOT / "frontend" / "dist"
 FRESH_SIDECAR = sidecar_exe(ROOT)
 LOG = ROOT / "build" / "probe_package_artifact.log"
 ENTRY_RE = re.compile(r"assets/(index-[A-Za-z0-9_\-]+\.js)")
+
+# 两档 mypy 都要过，所以守卫写成 `_IS_WINDOWS and sys.platform == "win32"` 这个合取：
+# 单用 `== "win32"`，Linux 档能证明整条恒假 ⇒ 那块被判 unreachable（本仓 `warn_unreachable=true`）；
+# 而 `ctypes.windll` 又恰恰要靠那次收窄才不被报成 attr-defined。合取里掺一个非常量的旗标，
+# 收窄照做、可达性不再被静态判死。与 `core/parent_watch.py` 的是同一个写法（那里注释写着理由）。
+_IS_WINDOWS = sys.platform.startswith("win")
+#: 这一趟**没跑到**的层（比如非 Windows 上的图标层）。汇总行必须把它们念出来 ——
+#: "某层没跑"被读成"全绿"是本仓反复在治的那一族（②那层 10-01 就是为此改成"缺尺子即红"）。
+SKIPPED: list[str] = []
 
 # 结论行带「✅」与「①」：Windows 控制台默认 codepage 是 GBK，不重配编码第一个 print 就抛
 # UnicodeEncodeError（console_encoding 那条一致性检查抓的就是这个）。
@@ -310,87 +322,101 @@ def check_icon_frames() -> bool:
     用 Windows 加载器枚举资源而不是手工切 PE 字节：实测这份 exe 的资源目录 RVA 落不进任何
     段（`.text` 的 VirtualSize 写着 193 MB，是打包器的形状），手工解析算出过 10 亿字节的偏移。
     `LOAD_LIBRARY_AS_DATAFILE` 不执行、不进 DLL 入口。
+
+    非 Windows 平台**显式跳过并记进汇总**（10-03 CI 第一次照出来的）：`ctypes.windll` 与
+    `WINFUNCTYPE` 只在 Windows 上有，mypy 按 `--platform linux` 直接报两条 `attr-defined`，
+    而本机默认档全绿 —— 本仓"本机绿、容器红"那一族的**第三次**
+    （前两次是 `ctypes.WinDLL` 与 killpg）。
+    跳过不等于过：它进 `SKIPPED` 并印在最后一行，免得"这层没跑到"被读成"四层全绿"。
     """
-    exe = UNPACKED / "rolecard-agent.exe"
-    ico = ROOT / "shell" / "build" / "icon.ico"
-    if not exe.is_file():
-        print(f"  ! 壳 exe 不在：{exe} —— 这一层没跑，不算过")
-        return False
-    if not ico.is_file():
-        print(f"  ! 仓库图标不在：{ico} —— 没有可比的对象")
-        return False
-    import ctypes
-    from ctypes import wintypes
+    if _IS_WINDOWS and sys.platform == "win32":
+        exe = UNPACKED / "rolecard-agent.exe"
+        ico = ROOT / "shell" / "build" / "icon.ico"
+        if not exe.is_file():
+            print(f"  ! 壳 exe 不在：{exe} —— 这一层没跑，不算过")
+            return False
+        if not ico.is_file():
+            print(f"  ! 仓库图标不在：{ico} —— 没有可比的对象")
+            return False
+        import ctypes
+        from ctypes import wintypes
 
-    k32 = ctypes.windll.kernel32
-    enum_cb = ctypes.WINFUNCTYPE(
-        ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long
-    )
-    # 每个函数都要声明签名：HMODULE/HRSRC/HGLOBAL 是 64 位句柄，ctypes 默认按 int 收发会截断
-    # （`OverflowError: int too long to convert` —— 这份探针第一次跑就是这么炸的）。
-    k32.LoadLibraryExW.restype = ctypes.c_void_p
-    k32.LoadLibraryExW.argtypes = [wintypes.LPCWSTR, ctypes.c_void_p, wintypes.DWORD]
-    k32.FreeLibrary.restype = wintypes.BOOL
-    k32.FreeLibrary.argtypes = [ctypes.c_void_p]
-    k32.EnumResourceNamesW.restype = wintypes.BOOL
-    k32.EnumResourceNamesW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, enum_cb, ctypes.c_long]
-    k32.FindResourceExW.restype = ctypes.c_void_p
-    k32.FindResourceExW.argtypes = [
-        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, wintypes.WORD
-    ]
-    k32.SizeofResource.restype = ctypes.c_size_t
-    k32.SizeofResource.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-    k32.LoadResource.restype = ctypes.c_void_p
-    k32.LoadResource.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-    k32.LockResource.restype = ctypes.c_void_p
-    k32.LockResource.argtypes = [ctypes.c_void_p]
+        k32 = ctypes.windll.kernel32
+        enum_cb = ctypes.WINFUNCTYPE(
+            ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long
+        )
+        # 每个函数都要声明签名：HMODULE/HRSRC/HGLOBAL 是 64 位句柄，ctypes 默认按 int 收发会截断
+        # （`OverflowError: int too long to convert` —— 这份探针第一次跑就是这么炸的）。
+        k32.LoadLibraryExW.restype = ctypes.c_void_p
+        k32.LoadLibraryExW.argtypes = [wintypes.LPCWSTR, ctypes.c_void_p, wintypes.DWORD]
+        k32.FreeLibrary.restype = wintypes.BOOL
+        k32.FreeLibrary.argtypes = [ctypes.c_void_p]
+        k32.EnumResourceNamesW.restype = wintypes.BOOL
+        k32.EnumResourceNamesW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, enum_cb, ctypes.c_long]
+        k32.FindResourceExW.restype = ctypes.c_void_p
+        k32.FindResourceExW.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, wintypes.WORD
+        ]
+        k32.SizeofResource.restype = ctypes.c_size_t
+        k32.SizeofResource.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        k32.LoadResource.restype = ctypes.c_void_p
+        k32.LoadResource.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        k32.LockResource.restype = ctypes.c_void_p
+        k32.LockResource.argtypes = [ctypes.c_void_p]
 
-    ids: list[int] = []
+        ids: list[int] = []
 
-    def _cb(_m: int, _t: int, name: int, _l: int) -> bool:
-        v = int(name or 0)
-        if v < 65536:
-            ids.append(v)
+        def _cb(_m: int, _t: int, name: int, _l: int) -> bool:
+            v = int(name or 0)
+            if v < 65536:
+                ids.append(v)
+            return True
+
+        hmod = k32.LoadLibraryExW(str(exe), None, 0x00000002)  # LOAD_LIBRARY_AS_DATAFILE
+        if not hmod:
+            print(f"  ! 加载失败（GetLastError={k32.GetLastError()}）：{exe}")
+            return False
+        blobs: list[bytes] = []
+        try:
+            k32.EnumResourceNamesW(hmod, ctypes.c_void_p(3), enum_cb(_cb), 0)  # 3 = RT_ICON
+            for i in sorted(set(ids)):
+                hres = k32.FindResourceExW(hmod, ctypes.c_void_p(3), ctypes.c_void_p(i), 0)
+                if not hres:
+                    continue
+                size = k32.SizeofResource(hmod, hres)
+                ptr = k32.LockResource(k32.LoadResource(hmod, hres))
+                if size and ptr:
+                    blobs.append(ctypes.string_at(ptr, size))
+        finally:
+            k32.FreeLibrary(hmod)
+
+        raw = ico.read_bytes()
+        n = int.from_bytes(raw[4:6], "little")
+        repo: list[bytes] = []
+        for i in range(n):
+            e = raw[6 + 16 * i : 22 + 16 * i]
+            ln = int.from_bytes(e[8:12], "little")
+            off = int.from_bytes(e[12:16], "little")
+            repo.append(raw[off : off + ln])
+        want = {hashlib.sha256(b).hexdigest()[:12] for b in repo}
+        got = {hashlib.sha256(b).hexdigest()[:12] for b in blobs}
+        print(f"  exe 内 RT_ICON {len(blobs)} 帧 / 仓库 ico {len(repo)} 帧")
+        if not blobs:
+            print("  ! exe 里一帧图标都没枚举到 —— 这不是「图标旧了」，是判据没法问")
+            return False
+        missing = sorted(want - got)
+        extra = sorted(got - want)
+        if missing or extra:
+            print(f"  ✗ 不一致：exe 里缺 {missing}；多出 {extra}")
+            return False
+        print("  ✓ 逐帧 sha256 全等（桌面上那九帧就是仓库那九帧，四角透明由源文件那条断言看着）")
         return True
 
-    hmod = k32.LoadLibraryExW(str(exe), None, 0x00000002)  # LOAD_LIBRARY_AS_DATAFILE
-    if not hmod:
-        print(f"  ! 加载失败（GetLastError={k32.GetLastError()}）：{exe}")
-        return False
-    blobs: list[bytes] = []
-    try:
-        k32.EnumResourceNamesW(hmod, ctypes.c_void_p(3), enum_cb(_cb), 0)  # 3 = RT_ICON
-        for i in sorted(set(ids)):
-            hres = k32.FindResourceExW(hmod, ctypes.c_void_p(3), ctypes.c_void_p(i), 0)
-            if not hres:
-                continue
-            size = k32.SizeofResource(hmod, hres)
-            ptr = k32.LockResource(k32.LoadResource(hmod, hres))
-            if size and ptr:
-                blobs.append(ctypes.string_at(ptr, size))
-    finally:
-        k32.FreeLibrary(hmod)
 
-    raw = ico.read_bytes()
-    n = int.from_bytes(raw[4:6], "little")
-    repo: list[bytes] = []
-    for i in range(n):
-        e = raw[6 + 16 * i : 22 + 16 * i]
-        ln = int.from_bytes(e[8:12], "little")
-        off = int.from_bytes(e[12:16], "little")
-        repo.append(raw[off : off + ln])
-    want = {hashlib.sha256(b).hexdigest()[:12] for b in repo}
-    got = {hashlib.sha256(b).hexdigest()[:12] for b in blobs}
-    print(f"  exe 内 RT_ICON {len(blobs)} 帧 / 仓库 ico {len(repo)} 帧")
-    if not blobs:
-        print("  ! exe 里一帧图标都没枚举到 —— 这不是「图标旧了」，是判据没法问")
-        return False
-    missing = sorted(want - got)
-    extra = sorted(got - want)
-    if missing or extra:
-        print(f"  ✗ 不一致：exe 里缺 {missing}；多出 {extra}")
-        return False
-    print("  ✓ 逐帧 sha256 全等（桌面上那九帧就是仓库那九帧，四角透明由源文件那条断言看着）")
+    # 走到这里 = 这一趟不是 Windows：那一整块 PE/加载器的读数**没有被量过**，
+    # 所以它进 SKIPPED 并被汇总行念出来，而不是安静地返回 True 冒充"这层过了"。
+    SKIPPED.append("④ 图标层（这一趟不是 Windows，PE 资源问不到）")
+    print("  ⚠ 非 Windows：这一层**没跑**，记为跳过而不是过")
     return True
 
 
@@ -407,10 +433,15 @@ def main() -> int:
         if not fn():
             failed.append(title)
     print("=" * 56)
+    note = f"（跳过 {len(SKIPPED)} 层：{'；'.join(SKIPPED)}）" if SKIPPED else ""
     if failed:
-        print(f"❌ {len(failed)}/{len(layers)} 层没过：" + "；".join(failed))
+        print(f"❌ {len(failed)}/{len(layers)} 层没过：" + "；".join(failed) + note)
         return 1
-    print(f"✅ {len(layers)} 层全过 —— 这一包就是这一版（**没有安装**，机器上那份没动）")
+    print(
+        f"✅ {len(layers)} 层全过 —— 这一包就是这一版（**没有安装**，机器上那份没动）{note}"
+    )
+    if SKIPPED:
+        print("   ⚠ 上面那句『全过』不包括被跳过的层：它们在这一趟**没量到**。")
     return 0
 
 
