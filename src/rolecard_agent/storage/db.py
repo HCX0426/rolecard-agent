@@ -120,7 +120,7 @@ class ThreadLocalConnection:
         self._path = Path(path)
         self._opener = opener
         self._local = threading.local()
-        self._created: list[sqlite3.Connection] = []
+        self._created: dict[int, sqlite3.Connection] = {}
         self._lock = threading.Lock()
 
     def _current(self) -> sqlite3.Connection:
@@ -129,7 +129,8 @@ class ThreadLocalConnection:
             conn = self._opener(self._path)
             self._local.conn = conn
             with self._lock:
-                self._created.append(conn)
+                # 账按**线程身份**记：`close()` 只认领自己这一格（`R102-02`）。
+                self._created[threading.get_ident()] = conn
         # 请求代际检查必须发生在**真正持连接的线程**里：线程池的线程会被复用，
         # 上一个请求若在事务中途异常退出，残留的 BEGIN/未提交改动会被下一个请求
         # 继承并 commit（半写入落地）。中间件只负责发代际号，清理在这里做。
@@ -169,18 +170,46 @@ class ThreadLocalConnection:
         return self._current().cursor(*args, **kwargs)
 
     def close(self) -> None:
-        """关闭本线程能安全关闭的连接。
+        """只关**本线程**那一格连接，并说清有几格留在了别人手里。
 
-        其它线程正在使用的连接**不能**在这里关（sqlite3 禁止跨线程使用连接对象），它们会
-        随线程结束被回收 —— 进程退出时由解释器统一清理。
+        `R102-02`：这一句从前是**反着写的** —— docstring 说"其它线程正在使用的连接不能在这里关"，
+        代码却把 `_created` 全量 close，外面还罩着 `contextlib.suppress(sqlite3.Error)`。
+        实测的后果不是"报个错"而是**静默丢写**：另一线程那笔未提交的写入，在主线程 close 之后
+        再 commit 不抛、回读为 None（那笔改动就这样没了）。sqlite3 本来就禁止跨线程使用连接对象，
+        跨线程 close 更是没有意义的动作。
+
+        现在：登记的账按**线程身份**存，本线程那格先 rollback 再 close（挂着写事务的连接
+        关之前必须先把事务结束掉，`R102-42` 同一条纪律）；别人那格一格都不碰，交给它们的线程
+        收（进程退出时由解释器清理，与从前 docstring 的承诺一致）。留下了几格要**出声** ——
+        一条从不报告的收尾等于一条没有的收尾。
         """
+        ident = threading.get_ident()
         with self._lock:
-            pending = list(self._created)
-            self._created.clear()
-        for conn in pending:
-            with contextlib.suppress(sqlite3.Error):
-                conn.close()
-        self._local = threading.local()
+            mine = self._created.pop(ident, None)
+            left = len(self._created)
+        if mine is not None:
+            try:
+                if mine.in_transaction:
+                    mine.rollback()
+                mine.close()
+            except sqlite3.Error as exc:
+                print(
+                    f"[conn-close] 本线程的连接没关干净：{type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        # 只清**本线程**的连接槽：`threading.local` 的属性本来就是按线程隔的，所以赋值 None
+        # 只影响自己；而整体换掉 `self._local` 会把别人那格从新对象上抹掉 —— 那条线程下一次
+        # `_current()` 会**另开一格**，它挂着的未提交写入就这么没了。这正是 `R102-02` 原本的
+        # 后果换了个来源，被本轮新加的用例当场抓到。
+        self._local.conn = None
+        self._local.epoch = None
+        if left:
+            print(
+                f"[conn-close] 留 {left} 格连接给它们各自的线程收（跨线程 close 会静默丢写）",
+                file=sys.stderr,
+                flush=True,
+            )
 
     def __getattr__(self, name: str) -> object:
         # 只在真正缺少该属性时兜底转发（row_factory / total_changes / in_transaction 等）。

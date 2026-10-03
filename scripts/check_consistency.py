@@ -1400,6 +1400,45 @@ def check_write_txn_ownership_inventory() -> None:
         )
 
 
+def check_audit_ledger_row_count() -> None:
+    """台账 H2 标题里那个"（N 条）"必须由脚本现数，不许手写（10-03 批 22 复核当场照出的）。
+
+    这一轮加进 `R102-73` 之后，标题还写着"72 条" —— 与本仓反复在治的那一件是同一件事：
+    **写死的数就是会漂的真相**（README 那组数、`R102-36` 那一族、批 12 那句"全部有结论"）。
+    所以这里现数表格行数，再读标题里那个数字，两者必须相等。
+
+    判据只看 H2 那张表（`| R102-NN | 级别 | … |` 形状的行），不看散文里的引用 —— 后者
+    由 `audit citations` 与 `audit index in sync` 管着，三把尺子各管一件事。
+    """
+    ledger = ROOT / "docs" / "架构审计（2026-10-02 轮）.md"
+    if not ledger.exists():
+        out("audit ledger row count", False, f"台账不在：{ledger}")
+        fails.append(f"audit ledger missing: {ledger}")
+        return
+    text = ledger.read_text(encoding="utf-8")
+    start = text.index("## H2 ")
+    try:
+        end = text.index("## H3 ", start)
+    except ValueError:  # pragma: no cover - 章节结构被改坏时走到这儿
+        out("audit ledger row count", False, "H2 之后找不到 H3，表格边界数不清")
+        fails.append("audit ledger: H3 heading not found after H2")
+        return
+    rows = len(re.findall(r"^\|\s*(R102-\d+)\s*\|", text[start:end], re.M))
+    stated = re.search(r"## H2 ·[^(（]*（(\d+) 条）", text[start:end])
+    if stated is None:
+        out("audit ledger row count", False, f"H2 标题里没有「（N 条）」这一格（现数 {rows} 行）")
+        fails.append("audit ledger H2 heading has no '（N 条）' cell to verify")
+        return
+    n = int(stated.group(1))
+    ok = n == rows
+    out("audit ledger row count", ok, f"表格现数 {rows} 行，标题写 {n} 条")
+    if not ok:
+        fails.append(
+            f"audit ledger H2 heading says {n} rows while the table holds {rows} —— "
+            "那个数由脚本现数，别手写"
+        )
+
+
 def check_single_text_extractor() -> None:
     """消息取文本只允许一处实现：`core/text.py::text_of`（架构审计报告 台账 `R28-59`）。
 
@@ -3117,6 +3156,7 @@ def main() -> int:
     check_session_thread_write_seam()
     check_storage_does_not_import_core()
     check_write_txn_ownership_inventory()
+    check_audit_ledger_row_count()
     check_single_text_extractor()
     check_domain_isolation()
     check_safety_prompt()
