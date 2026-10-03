@@ -858,10 +858,17 @@ def check_artifact_single_source() -> None:
         fails.append(f"artifact literals drift: {problems}")
 
 
-def _readings_head_is_current(current_head: str, readings_head: str) -> bool:
+def _readings_head_is_current(current_head: str, readings_head: str) -> bool | None:
     """读数的 head 与当前 HEAD 的合法关系（见 check_readme_headline_numbers 里的两条形状）。
 
     读数里的 head 可能是短 sha（gate 写入时截过）：按前缀比，长度以读数那格为准。
+
+    **三态**（10-03 加，因为 CI 上真退化成问不出过）：
+      * `True` —— 形状①或形状②成立；
+      * `False` —— 父提交读得到，而 HEAD 与父之间**动了代码** ⇒ 读数确实不属于现在这份代码；
+      * `None` —— 需要父提交却读不到（浅克隆 / 没有 git / 根提交）⇒ **问不出**。
+    把"问不出"报成红，就是让 CI 用它自己的环境差异指控代码陈旧（那次红的是归属，
+    而 README 与读数两边都是 1469）；按本仓口径，只有**确认负**才拦得住人。
     """
     if current_head.startswith(readings_head):
         return True
@@ -873,22 +880,27 @@ def _readings_head_is_current(current_head: str, readings_head: str) -> bool:
             text=True,
             check=True,
         ).stdout.strip()
-    except Exception:  # noqa: BLE001 - 没有父提交（根提交）/没有 git：只认形状①
-        return False
+    except Exception:  # noqa: BLE001 - 读不到父提交 ⇒ 形状②无法判定，这是"问不出"不是"不符"
+        return None
+    if not parent:
+        return None
     if not parent.startswith(readings_head):
         return False
-    changed = subprocess.run(
-        ["git", "diff", "--name-only", parent, current_head],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        # utf-8 + splitlines：本仓有**带空格的中文文件名**，默认编码/`split()` 会把
-        # `架构审计（…轮）.md` 拆成两截（`gate.py` 的 `_git` 是同一个教训，那里写着
-        # "encoding 不是可选的"）。路径一律 posix，与 `docs_only` 直接对得上。
-        encoding="utf-8",
-        errors="replace",
-        check=True,
-    ).stdout.splitlines()
+    try:
+        changed = subprocess.run(
+            ["git", "diff", "--name-only", parent, current_head],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            # utf-8 + splitlines：本仓有**带空格的中文文件名**，默认编码/`split()` 会把
+            # `架构审计（…轮）.md` 拆成两截（`gate.py` 的 `_git` 是同一个教训，那里写着
+            # "encoding 不是可选的"）。路径一律 posix，与 `docs_only` 直接对得上。
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+        ).stdout.splitlines()
+    except Exception:  # noqa: BLE001 - 同上：这条 diff 问不出，也不能判红
+        return None
     docs_only = {"docs/gate-readings.json", "README.md", "docs/架构审计索引.md"}
     return all(path in docs_only for path in changed)
 
@@ -994,13 +1006,21 @@ def check_readme_headline_numbers() -> None:
             ).stdout.strip()
         except Exception:  # noqa: BLE001 - 没有 git 的环境（源码包）没法比，按跳过处理
             current_head = ""
-        if current_head and not _readings_head_is_current(
-            current_head, readings_head
-        ):
-            drift.append(
-                f"读数的 HEAD 是 {readings_head[:12]}，当前 HEAD 是 {current_head[:12]}"
-                " —— 这份读数不属于现在的代码：先重跑一趟门禁刷新读数，再对 README"
-            )
+        if current_head:
+            verdict = _readings_head_is_current(current_head, readings_head)
+            if verdict is False:
+                drift.append(
+                    f"读数的 HEAD 是 {readings_head[:12]}，当前 HEAD 是 {current_head[:12]}"
+                    " —— 这份读数不属于现在的代码：先重跑一趟门禁刷新读数，再对 README"
+                )
+            elif verdict is None:
+                # 问不出（浅克隆读不到 HEAD~1，或没有 git）。按本仓口径这不拦，但**必须出声** ——
+                # 一声不吭地放行，下一次真漂移就混在"它本来也这样"里过去了。
+                warns.append(
+                    f"README headline numbers: 读数记在 {readings_head[:12]} 而 HEAD 是 "
+                    f"{current_head[:12]}，这一趟**读不到父提交**（浅克隆？fetch-depth<2？）"
+                    " ⇒ 归属那一问按 unknown 放行，数本身仍比过"
+                )
     stamps = "，".join(
         f"{label} {readings[key]}@{readings.get(f'{key}_at', '?')}"
         for key, (_, label) in want.items()

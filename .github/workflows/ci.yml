@@ -54,7 +54,12 @@ jobs:
     # 又远小于默认值 —— 挂死的作业该在几分钟内变成一次红，而不是一次"没跑完"。
     timeout-minutes: 15
     steps:
+      # fetch-depth 要 2：`README 数字收尾` 那条得读 HEAD~1 才认得"只含读数的跟进提交"那一半形状。
+      # 10-03 实测：默认浅克隆 1 层 ⇒ 父提交读不到 ⇒ 本地绿、CI 红，而 README 与读数两边都是 1469
+      # —— 红的是**归属**，不是数。这种"只有 CI 才退化"的判据必须由 CI 自己看着。
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: 装 Python
         uses: actions/setup-python@v5
@@ -306,7 +311,10 @@ jobs:
       # 带上原因**，别让"没跑到"被读成"全绿"（gate.py 与 smoke_check 都是这个口径）。
       SMOKE_SKIP_UI: "1"
     steps:
+      # 同上：全量档也跑 consistency，也要能读 HEAD~1。
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: 装 Python
         uses: actions/setup-python@v5
