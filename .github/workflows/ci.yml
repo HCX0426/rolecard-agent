@@ -220,9 +220,20 @@ jobs:
           # 存一个 OpenAI 兼容后端 —— 这是这个镜像的**主用例**（容器里没有 Ollama，云端 key
           # 才是它的模型来源）。CI 第 2 发就是这条 500：镜像漏装 langchain-openai，本机没红
           # 只是 .venv 恰好装过。构建失败的可读原因在响应体的 detail 里，所以失败时原样打印。
-          # base_url 不在这里抄第二遍（`R102-39`）：从 config.py 现读（runner 的 python3 只
-          # 做标准库 import，装不装依赖无关）。
-          SF_BASE_URL=$(python3 -c "import sys; sys.path.insert(0, 'src'); from rolecard_agent.config import DEFAULT_SILICONFLOW_BASE_URL; print(DEFAULT_SILICONFLOW_BASE_URL)")
+          # base_url 不在这里抄第二遍（`R102-39`）：从 config.py 现读。
+          # ⚠️ 必须在**被测的那个容器里**读，不能在 runner 宿主机上读 —— 我第一版写的是
+          # `python3 -c "…from rolecard_agent.config import…"` 并注释成"runner 只做标准库
+          # import，装不装依赖无关"，那句话是假的：`config.py` 模块级 `from pydantic import …`，
+          # 宿主机上没有 pydantic ⇒ 10-03 那趟 CI 镜像臂红在 `ModuleNotFoundError: pydantic`
+          # （而它前面四问全过，症状看着像"云端后端存不进去"）。容器里那份解释器是装齐依赖的，
+          # 从它读既是同一个事实面，也不引入"只有装了依赖的机器才成立"的前提。
+          # 读不出必须是**一条红**，不能是空串往下 PUT（同族：`R28-61` 的"读不出就静默跳过"）。
+          SF_BASE_URL=$(docker exec rc python -c "from rolecard_agent.config import DEFAULT_SILICONFLOW_BASE_URL; print(DEFAULT_SILICONFLOW_BASE_URL)")
+          if [ -z "$SF_BASE_URL" ]; then
+            echo "在容器里读不到 DEFAULT_SILICONFLOW_BASE_URL —— 不能拿着空 base_url 往下存"
+            docker logs rc; exit 1
+          fi
+          echo "容器内现读的 siliconflow 端点：$SF_BASE_URL"
           put=$(curl -s -u ci-user:ci-pass -X PUT http://127.0.0.1:8000/api/settings/models \
             -H 'Content-Type: application/json' \
             -d "{\"default\":\"sf\",\"backends\":[{\"name\":\"sf\",\"provider\":\"siliconflow\",\"base_url\":\"$SF_BASE_URL\",\"model\":\"ci-model\",\"api_key\":\"sk-ci-not-a-real-key\",\"usage\":\"chat\"}],\"fallbacks\":[]}")

@@ -463,6 +463,101 @@ def check_installer_scope() -> None:
         fails.append(f"requirements files missing a classification: {unclassified or blank}")
 
 
+def _imported_modules(code: str) -> list[str]:
+    """从一段 `python -c` 的串里只取**被 import 的模块名**。
+
+    为什么不是 `re.findall(r"(?:import|from)\\s+(\\w+)")` 一把梭：那样
+    `from rolecard_agent.config import DEFAULT_SILICONFLOW_BASE_URL` 会报出**两个**名字，
+    而后面那个是被导入的**符号**、不是模块 —— 第一版就是这么把一条正确诊断说成两条的，
+    读数里混进不属于模块的东西，下次真要查"哪个依赖漏了"时就得先分辨哪些是噪声。
+    """
+    mods: list[str] = []
+    from_pat = re.compile(r"\bfrom\s+([A-Za-z_][\w.]*)\s+import\b")
+    for m in from_pat.finditer(code):
+        mods.append(m.group(1))
+    # 把 `from X import a, b` 那一段（含 `import` 这个词本身）整段摘掉，剩下的才交给下面的
+    # 裸 `import` 匹配 —— 否则 a/b 会被当成模块再抓一遍（第一版正是这样把一条正确诊断
+    # 说成两条的）。
+    rest = from_pat.sub(" ", code)
+    for m in re.finditer(r"\bimport\s+([A-Za-z_][\w.,\s]*?)(?=[;)]|$|\bprint\b|\bimport\b)", rest):
+        for part in m.group(1).split(","):
+            name = part.strip().split(" as ")[0].strip()
+            if name:
+                mods.append(name)
+    # 顺序不承载意义（`from X import …` 要先整段摘掉才能不抓到符号名，摘的动作天然打乱原序），
+    # 所以归一化成去重排序 —— 免得调用方把"两个名字换了个位"读成一次行为变化。
+    return sorted(set(mods))
+
+
+def check_ci_host_python_stdlib_only(
+    ci_path: pathlib.Path | None = None, report: bool = True
+) -> list[str]:
+    """CI 里在 **runner 宿主机**上跑的 `python3 -c` 只许 import 标准库。
+
+    为什么有这条（10-03 我自己写出来的红）：`R102-39` 把"别在 ci.yml 里抄第二份
+    `DEFAULT_SILICONFLOW_BASE_URL`"改成"从 `config.py` 现读"，方向是对的，但落地写成了
+    宿主机 `python3 -c "…from rolecard_agent.config import…"`，还在注释里断言"runner 的
+    python3 只做标准库 import，装不装依赖无关" —— **那句是假的**：`config.py` 模块级
+    `from pydantic import …`，宿主机上没有 pydantic ⇒ 镜像臂红在 `ModuleNotFoundError:
+    No module named 'pydantic'`，而它前面四问全过，症状看着像"云端后端存不进去"。
+
+    同族第三次（`R28-53` 镜像漏装依赖、`R28-61` 读不出就静默跳过），所以是尺子而不是第三句注释。
+    判据的形状：**"唯一事实面"不许带"只有装了依赖的机器才成立"的前提** —— 要读项目的东西就在
+    被测的那个容器里读（`docker exec`）。分母一并上屏（宿主 N 处 / 容器内 M 处），因为
+    "一条都没扫到"与"扫到了都干净"长得一模一样（`R102` 轮那条分母为 0 的教训）。
+    """
+    problems: list[str] = []
+    stdlib = set(sys.stdlib_module_names)
+    ci = ci_path if ci_path is not None else ROOT / ".github" / "workflows" / "ci.yml"
+    host_hits: list[tuple[int, str]] = []
+    host_lines = 0
+    container = 0
+    if not ci.exists():
+        problems.append("找不到 .github/workflows/ci.yml，这条没法判")
+    else:
+        for lineno, line in enumerate(
+            ci.read_text(encoding="utf-8", errors="replace").splitlines(), 1
+        ):
+            if line.lstrip().startswith("#"):
+                # 注释里可以**谈**这个写法（这条尺子自己的由来就写在 ci.yml 的注释里），
+                # 它不是要执行的命令。第一版没跳过注释 ⇒ 把那句注释读成一次真 import，
+                # 当场假阳 —— 判据读错方向比不读更坏。
+                continue
+            if "python -c" not in line and "python3 -c" not in line:
+                continue
+            if "docker exec" in line:
+                container += 1
+                continue
+            host_lines += 1
+            code = line.split("-c", 1)[1]
+            for mod in _imported_modules(code):
+                top = mod.split(".")[0]
+                if top not in stdlib:
+                    host_hits.append((lineno, top))
+        if host_hits:
+            problems.extend(
+                f"ci.yml:{ln} 在宿主机上 import 了非标准库 `{mod}`" for ln, mod in host_hits
+            )
+        elif host_lines == 0 and container == 0:
+            # 分母为 0：一个 `python -c` 都没扫到。这与"扫到了、都干净"长得一模一样，所以它自己出声
+            # （`R102` 轮那条"恒绿尺子的分母是 0"的教训）。
+            problems.append("ci.yml 里一个 python -c 都没扫到 ⇒ 这条没在量任何东西")
+
+    if not report:
+        return problems
+    if problems:
+        out("ci host python imports", False, "; ".join(problems)[:240])
+        fails.append(f"ci.yml host-side python is not stdlib-only: {problems}")
+    else:
+        out(
+            "ci host python imports",
+            True,
+            f"宿主机侧 {host_lines} 处引用全在标准库内；"
+            f"容器内 {container} 处（那是被测环境，不计）",
+        )
+    return problems
+
+
 def check_version_parity() -> None:
     """整个仓库只有**一个**版本号，四处声明必须相等。
 
@@ -3479,6 +3574,7 @@ def main() -> int:
     check_dependency_layering()
     check_env_example_models()
     check_installer_scope()
+    check_ci_host_python_stdlib_only()
     check_artifact_single_source()
     check_single_source_literals()
     check_dangling_write_txns()
