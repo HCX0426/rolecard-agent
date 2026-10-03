@@ -11,6 +11,7 @@ autouse fixture 把它关掉，是这条离线铁律的最后一块（架构审�
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sqlite3
 from collections.abc import Iterator, Sequence
@@ -193,3 +194,37 @@ def model_rows(payload: dict[str, object]) -> list[dict[str, object]]:
                 }
             )
     return rows
+
+
+def _chroma_registry() -> dict | None:
+    """chroma 的进程级 system 注册表（拿不到 = 没装 chromadb，返回 None 让判据退化成不判）。"""
+    try:
+        from chromadb.api.client import SharedSystemClient
+    except Exception:  # noqa: BLE001 - 本机没装 chromadb 的测试环境
+        return None
+    return getattr(SharedSystemClient, "_identifier_to_system", None)
+
+
+@pytest.fixture(autouse=True)
+def _no_chroma_system_leak():
+    """用例里新开的 chroma system，结束时统一摘掉（`R102-74`）。
+
+    chroma 本地客户端把 system 记在进程级注册表 `SharedSystemClient._identifier_to_system`
+    里（键是 persist_directory），而实测 **`del` 客户端不会摘掉它**（注册表仍是 1），
+    只有 `Client.close()` 会。所以每开一个 `KnowledgeBase` 而没人收尾，就往这张表里堆一格，
+    sqlite 句柄与后台建索引的线程池都常驻。10-03 的探针（`build/probe_chroma_flake.py`）
+    证明"同一进程里并存多格 system"正是 `R102-41` 那记 `Nothing found on disk` 的复现形状。
+
+    放在 conftest 而不是每个用例里手写 `close()`：漏一个就是一格，而漏的那个**不会自己报告** ——
+    这正是本仓那一族"注释传知识传两处就停"的形状。
+    """
+    registry = _chroma_registry()
+    before = set(registry) if registry is not None else set()
+    yield
+    if registry is None:
+        return
+    for ident in [k for k in registry if k not in before]:
+        system = registry.pop(ident, None)
+        if system is not None:
+            with contextlib.suppress(Exception):
+                system.stop()

@@ -461,11 +461,25 @@ class KnowledgeBase:
         self._samples_lock = threading.Lock()
 
     def close(self) -> None:
-        """M1：释放嵌入/重排器持有的 httpx 连接（rebuild_runtime 换装旧实例时调用）。"""
+        """M1：释放嵌入/重排器持有的 httpx 连接（rebuild_runtime 换装旧实例时调用）。
+
+        `R102-74`：chroma 那一侧也得放。本地客户端把 system 记在**进程级注册表**里
+        （`SharedSystemClient._identifier_to_system`，键是 persist_directory），实测
+        `del` + `gc.collect()` 之后注册表**仍是 1** —— 只有 `Client.close()` 会摘掉它。
+        所以从前每次热重建（存模型设置、换嵌入器、改「运行环境」）都在进程里留一格
+        system：sqlite 句柄与后台建索引的线程池都常驻到进程结束。而 `R102-41` 那记
+        `Nothing found on disk` 的复现形状正是"同一个进程里并存好几格 system"。
+        """
         for obj in (self._embedder, self._reranker):
             if obj is not None and hasattr(obj, "close"):
                 with contextlib.suppress(Exception):
                     obj.close()
+        # chroma 的 `ClientAPI` 存根上没写 `close`（本地 `Client` 运行时确有，实测会把进程级
+        # 注册表里那一格摘干净），所以按能力探测而不是硬调 —— 换实现时这里不会炸。
+        close_chroma = getattr(self._client, "close", None)
+        if callable(close_chroma):
+            with contextlib.suppress(Exception):
+                close_chroma()
 
     def _collection_for_write(self, scope: str) -> Any:
         """写索引用的集合：不存在时**按 cosine 度量新建**。
@@ -640,6 +654,10 @@ class KnowledgeBase:
                         n_results=pool_size,
                     )
                 except Exception as exc:  # noqa: BLE001 - 维度错误翻译成可操作提示（搜索时抛出，由工具层兜住）
+                    # 这里从前有过一发"只在 Nothing found on disk 上重问一次"的兜法
+                    # （`R102-41`），**实测无收益已撤**：同一臂开/关各 400 轮，
+                    # 可见失败 6 次 vs 9 次 —— 差异不到一个标准差，第二发还同样读不到，
+                    # 说明那不是"慢一拍"。留一个说不清收益的分支，比没有分支更贵。
                     raise _translate_dimension_error(exc) from exc
                 docs = (found.get("documents") or [[]])[0]
                 metas = (found.get("metadatas") or [[]])[0]
