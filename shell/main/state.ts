@@ -43,6 +43,14 @@ export type PetPrefs = {
   dockEnabled: boolean;
   /** 上次吸在哪条边；null = 没吸。**存的是意图**，藏多深每次按当前工作区重算。 */
   docked: DockEdge | null;
+  /** 消息面板摊着多久之后自己收回去（毫秒）；**0 = 不自动收起**（点了就一直摊着）。
+   *
+   *  为什么要有这一格（用户 10-03 报的）：点开桌宠之后面板不会自己回到没点的状态，
+   *  得再点一下 —— 而这只宠物是放在桌面上一直存在的，摊着一块 380×520 的面板就等于
+   *  一直挡着那块桌面。计时**不等于到点就收**：指针在面板上、你正在输入、她正在说话
+   *  这三种时候收走等于抢你正在读的东西（判据在页面侧 `frontend/src/lib/petPanel.ts`，
+   *  那三样只有页面知道；壳只知道"面板是摊开的"）。 */
+  panelAutoHideMs: number;
 };
 
 export const PET_PREF_DEFAULTS: PetPrefs = {
@@ -54,6 +62,9 @@ export const PET_PREF_DEFAULTS: PetPrefs = {
   voice: false,
   dockEnabled: true,
   docked: null,
+  // 面板默认 15 秒自己收回去：这只宠物一直住在桌面上，摊着的面板就是块挡地方的东西；
+  // 而"不自动收起"仍在托盘档位里（有人把它当便签开着）。
+  panelAutoHideMs: 15_000,
 };
 
 function jsonFile(name: string): string {
@@ -169,6 +180,14 @@ export function loadPetPrefs(): PetPrefs {
     opacity: Math.min(1, Math.max(0.2, opacity)),
     // 认不出的边（手改过文件、或上一版还不叫这个名字）一律当"没吸"，不猜。
     docked: docked === "left" || docked === "right" || docked === "bottom" ? docked : null,
+    // 面板自动收起：只认**有限非负数**（0 是合法值 = 不自动收起），其余回默认。
+    // 不夹进档位表：档位是托盘怎么画，不是取值域 —— 手改文件挑个 20 秒不该被改回 15。
+    panelAutoHideMs:
+      typeof o.panelAutoHideMs === "number" &&
+      Number.isFinite(o.panelAutoHideMs) &&
+      o.panelAutoHideMs >= 0
+        ? Math.round(o.panelAutoHideMs)
+        : PET_PREF_DEFAULTS.panelAutoHideMs,
   };
 }
 

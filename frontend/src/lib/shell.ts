@@ -58,6 +58,10 @@ export interface ShellBridge {
   petVoiceEnabled?(): Promise<boolean>;
   /** 语音旗子被改动时收一次通知；传 null 注销。首值仍需 pull 一次。 */
   onPetVoice?(handler: ((enabled: boolean) => void) | null): void;
+  /** 托盘「面板自动收起」的毫秒数（0 = 不自动收起）。**页面只读**，写它的只有托盘。
+   *  可选：旧壳没这条通道 ⇒ 页面不启动计时（新界面跑在旧壳里不该多出"自己会收"的行为）。 */
+  petPanelAutoHideMs?(): Promise<number>;
+  onPetPanelAutoHide?(handler: ((ms: number) => void) | null): void;
   /** 壳每次展开时推一次"面板在画布里要水平挪几像素"（色片贴边、画布有一截在屏外才非零）。
    *  窗口本身不动 —— 这一条就是"展开有重影"的修法（`shell/main/windows.ts:panelShiftFor`）。
    *  可选照旧：旧壳不推 ⇒ 页面按 0 画，面板居中，贴边时会偏出去一截。

@@ -30,6 +30,7 @@ import { usePoll } from "../hooks/usePoll";
 import { useChatStream } from "../hooks/useChatStream";
 import { read as readDataSource } from "../lib/dataSource";
 import { shellBridge } from "../lib/shell";
+import { PANEL_TICK_MS, panelCountdown, panelHeld, panelTimerArmed } from "../lib/petPanel";
 import { type StreamMeta } from "../lib/stream";
 
 const BUBBLE_MS = 30_000; // 气泡到点自己收起：驻留件不该把一句话长期戳在桌面上
@@ -626,6 +627,59 @@ export default function PetPage() {
     };
   }, []);
 
+  // ---- 面板自动收起（托盘第六项，用户 10-03 报的"点开之后不收，得再点一下"）----
+  // 秒数只有托盘能写；**旧壳没这条通道 ⇒ 默认 0 = 不收**，新界面跑在旧壳里不该多出
+  // 一种"自己会收"的行为（与语音旗子同一套可选处理）。
+  const autoHideRef = useRef(0);
+  const pointerInRef = useRef(false);
+  const focusInRef = useRef(false);
+  const speakingRef = useRef(false);
+  const remainingRef = useRef(0);
+  const panelRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const bridge = shellBridge();
+    if (!bridge?.petPanelAutoHideMs) return;
+    let alive = true;
+    const accept = (ms: unknown) => {
+      autoHideRef.current = typeof ms === "number" && Number.isFinite(ms) && ms >= 0 ? ms : 0;
+    };
+    void bridge.petPanelAutoHideMs().then(accept).catch(() => undefined); // 问不到 = 不收
+    bridge.onPetPanelAutoHide?.((ms) => {
+      accept(ms);
+    });
+    return () => {
+      alive = false;
+      void alive; // 只留个引用，避免"注销了却没人说为什么还留着它"
+      bridge.onPetPanelAutoHide?.(null);
+    };
+  }, []);
+
+  // "她正在说话"由已有的 `petStatus` 推导，不另开通道（与形象那条同源）。
+  useEffect(() => {
+    speakingRef.current = petStatus === "speaking";
+  }, [petStatus]);
+
+  // 摊着的时候才计时；收起 ⇒ 定时器整个撤掉（不留一个在空转的心跳）。
+  // 占住（指针在面板上 / 焦点在里面打字 / 她在说话）时是**原地暂停**，不重新给满时长：
+  // 路过一下不该白得 15 秒，而一直看着它就该一直摊着。
+  useEffect(() => {
+    if (!expanded || !panelTimerArmed(autoHideRef.current)) return;
+    remainingRef.current = autoHideRef.current;
+    const timer = window.setInterval(() => {
+      const held = panelHeld({
+        pointerInside: pointerInRef.current,
+        focusInside: focusInRef.current,
+        speaking: speakingRef.current,
+      });
+      remainingRef.current = panelCountdown(remainingRef.current, held);
+      if (remainingRef.current <= 0) expand(false);
+    }, PANEL_TICK_MS);
+    return () => window.clearInterval(timer);
+    // 依赖只有 `expanded`：`expand` 每拍都是新函数，把它写进来会让计时器每渲染一次
+    // 就重建一次 —— 那等于"页面一动，倒数就重来"，正是要避免的那件事。
+  }, [expanded]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /** 读出这一句。**两道闸**：托盘语音开关 **且**「显示消息内容」开着 —— 声音和文字一样
    *  会把"你们聊了什么"播给屋里的人听，只藏字不藏声等于那面隐私旗子只糊了半张脸。 */
   function speak(text: string) {
@@ -890,6 +944,24 @@ export default function PetPage() {
         // 吸收（列表内部本来就能滚），内容短时仍然贴着内容长。
         <section
           data-pet-ui="panel"
+          ref={panelRef}
+          /* 自动收起的"在用"信号就三个：指针在不在、焦点在不在（打字）、她在不在说话。
+             前两个挂在这一块上 —— 面板是 `[data-pet-ui]` 里唯一会被读的那块，别去根节点上
+             听（根上还管着点击穿透的热区判定，混进来会互相污染）。 */
+          onPointerEnter={() => {
+            pointerInRef.current = true;
+          }}
+          onPointerLeave={() => {
+            pointerInRef.current = false;
+          }}
+          onFocus={() => {
+            focusInRef.current = true;
+          }}
+          onBlur={() => {
+            // 焦点在面板内部挪（输入框 → 下拉框）不算"离开"：React 的 blur 先于 focus 到达，
+            // 不在这里回看一眼 activeElement，一次 Tab 键就能把面板送走。
+            focusInRef.current = panelRef.current?.contains(document.activeElement) ?? false;
+          }}
           className="pet-panel-in pet-nodrag flex max-h-full min-h-0 w-[380px] flex-col rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-md dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
           /* 屏内对齐：见上面 `panelShift`。窗口没动，动的是这一块在画布里的位置。 */
           style={{ transform: `translateX(${panelShift}px)` }}

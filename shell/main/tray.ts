@@ -11,6 +11,16 @@ import type { PetPrefs } from "./state";
 
 const ICON = path.join(__dirname, "..", "..", "build", "icon.ico");
 
+/** 面板自动收起的档位（毫秒；0 = 不自动收起）。与透明度同一条分工：档位表住在托盘这一侧，
+ *  `state.ts` 只管取值与夹取 —— 托盘是这张表唯一的写入口。 */
+export const PANEL_AUTO_HIDE_STEPS: { label: string; value: number }[] = [
+  { label: "不自动收起", value: 0 },
+  { label: "5 秒", value: 5000 },
+  { label: "15 秒", value: 15000 },
+  { label: "30 秒", value: 30000 },
+  { label: "60 秒", value: 60000 },
+];
+
 /** 透明度档位：照 Cherry Studio 那样给几档挑，而不是拖滑块 —— 托盘菜单里放滑块要再造一扇窗。 */
 export const OPACITY_STEPS: { label: string; value: number }[] = [
   { label: "100%", value: 1 },
@@ -109,6 +119,24 @@ export function createTray(controls: TrayControls): TrayHandle {
           // 关掉时 `updatePetPrefs` 会当场把它从边上滑回来（关了却还藏着 = 开关只管下一次）。
           controls.setPetPrefs({ dockEnabled: next });
           render();
+        }),
+        new MenuItem({
+          // 面板（消息框）摊着多久之后自己收回去。用户 10-03 报的：点开之后不收，得再点一下。
+          // 「不自动收起」保留原行为（当便签一直开着的人要它）。到点**不一定**收：指针还在面板上、
+          // 你正在输入、她正在说话这三种时候收走等于抢你正在读的东西，那条判据在页面侧。
+          label: "面板自动收起",
+          submenu: Menu.buildFromTemplate(
+            PANEL_AUTO_HIDE_STEPS.map((step) => ({
+              label: step.label,
+              type: "radio" as const,
+              // 手改过偏好文件、落在档位之外时全不选中，比硬选一条诚实（与透明度同一条理由）。
+              checked: prefs.panelAutoHideMs === step.value,
+              click: () => {
+                controls.setPetPrefs({ panelAutoHideMs: step.value });
+                render();
+              },
+            })),
+          ),
         }),
         // 不给一个"看得见但永远无效"的条目：开发态整条不出现。
         ...(controls.canAutostart()

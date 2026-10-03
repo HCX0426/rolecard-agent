@@ -45,6 +45,9 @@ htmlcov/
 frontend/node_modules/
 # 兜底：任何层级的 node_modules（含 Vite 依赖预打包缓存 node_modules/.vite，Vite 会在仓库根生成）
 node_modules/
+# tsc 的增量缓存（`tsc --noEmit` 在 composite 工程里顺手写这一份）：机器相关、每次构建都变，
+# 而它不是产物 —— 上面说了，有意入库的那一份是 dist。
+*.tsbuildinfo
 
 # --- eval ---
 # 每次跑批都会重写（模型相关，数字会漂移）；基线数字固化在 docs/需求与验收标准.md

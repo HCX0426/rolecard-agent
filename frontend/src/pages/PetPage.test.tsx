@@ -56,12 +56,14 @@ function page(items: ReturnType<typeof row>[], unread = items.length): Reachouts
 
 /** 装上"壳"：桌宠的系统通知、悬停展开与"点气泡拉起控制台"都以它存在为前提。
  *  不装的时候就是 B/S —— 同一个组件、少两样能力，其余行为必须一模一样。 */
-function withShell(contentVisible = true, voice = false): ShellBridge & {
+function withShell(contentVisible = true, voice = false, autoHideMs = 0): ShellBridge & {
   notify: ReturnType<typeof vi.fn>;
   openSession: ReturnType<typeof vi.fn>;
   movePetBy: ReturnType<typeof vi.fn>;
   onPetContentVisible: ReturnType<typeof vi.fn>;
   onPetVoice: ReturnType<typeof vi.fn>;
+  petPanelAutoHideMs: ReturnType<typeof vi.fn>;
+  onPetPanelAutoHide: ReturnType<typeof vi.fn>;
 } {
   const shell = {
     backendUrl: () => Promise.resolve("http://127.0.0.1:8000"),
@@ -79,6 +81,9 @@ function withShell(contentVisible = true, voice = false): ShellBridge & {
     onPetContentVisible: vi.fn(),
     petVoiceEnabled: vi.fn().mockResolvedValue(voice),
     onPetVoice: vi.fn(),
+    // 默认 0 = 不自动收起：那 60 多条老用例测的是"点了就一直摊着"，不该被这一档改口。
+    petPanelAutoHideMs: vi.fn().mockResolvedValue(autoHideMs),
+    onPetPanelAutoHide: vi.fn(),
     onRequestOpenThread: vi.fn(),
     ollamaOwner: vi.fn().mockResolvedValue({ managed: false, pid: null, binary: null }),
     startOllama: vi.fn(),
@@ -1433,5 +1438,72 @@ describe("PetPage 面板的右键菜单（09-26 用户选的形态：页内自�
       "复制整条消息",
       "停止这一轮生成",
     ]);
+  });
+});
+
+describe("PetPage 面板自动收起（托盘第六项：用户 10-03 报的「点开之后不收，得再点一下」）", () => {
+  const panel = () => document.querySelector('[data-pet-ui="panel"]');
+
+  async function openWith(autoHideMs: number) {
+    const shell = withShell(true, false, autoHideMs);
+    await mount();
+    fireEvent.click(screen.getByTitle(/点开看你们最近聊了什么/));
+    await act(async () => {
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+    return shell;
+  }
+
+  it("到点自己收：2 秒档推进 2.5 秒 ⇒ 面板没了，桥也收到 false", async () => {
+    const shell = await openWith(2000);
+    expect(panel()).toBeTruthy();
+    await act(async () => {
+      vi.advanceTimersByTime(2500);
+    });
+    expect(panel()).toBeNull();
+    expect(shell.setPetExpanded).toHaveBeenLastCalledWith(false);
+  });
+
+  it("指针还在面板上就不收；挪开之后才把剩下的那点时间走完", async () => {
+    const shell = await openWith(2000);
+    const el = panel();
+    expect(el).toBeTruthy();
+    fireEvent.pointerOver(el as Element);
+    await act(async () => {
+      vi.advanceTimersByTime(20000);
+    });
+    expect(panel()).toBeTruthy();
+    fireEvent.pointerOut(el as Element);
+    await act(async () => {
+      vi.advanceTimersByTime(2500);
+    });
+    expect(panel()).toBeNull();
+    expect(shell.setPetExpanded).toHaveBeenLastCalledWith(false);
+  });
+
+  it("0 = 不自动收起：老行为原样保留（当便签一直开着的人要的就是这个）", async () => {
+    await openWith(0);
+    expect(panel()).toBeTruthy();
+    await act(async () => {
+      vi.advanceTimersByTime(120000);
+    });
+    expect(panel()).toBeTruthy();
+  });
+
+  it("旧壳没这条通道 ⇒ 不收（新界面跑在旧壳里不该多出「自己会收」）", async () => {
+    const shell = withShell(true, false, 2000);
+    // 假装这是一份没有该通道的旧壳：`withShell` 的返回类型把它标成必选（替身都得有），
+    // 所以这里按"页面实际会看到什么"来摘 —— 页面读的是可选属性，摘掉就是旧壳的形状。
+    delete (shell as { petPanelAutoHideMs?: unknown }).petPanelAutoHideMs;
+    await mount();
+    fireEvent.click(screen.getByTitle(/点开看你们最近聊了什么/));
+    await act(async () => {
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+    expect(panel()).toBeTruthy();
+    await act(async () => {
+      vi.advanceTimersByTime(20000);
+    });
+    expect(panel()).toBeTruthy();
   });
 });

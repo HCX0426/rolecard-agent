@@ -19,6 +19,8 @@ import { contextBridge, ipcRenderer } from "electron";
 type OpenThreadHandler = (threadId: string) => void;
 type ContentVisibleHandler = (visible: boolean) => void;
 type VoiceHandler = (enabled: boolean) => void;
+/** 面板自动收起的毫秒数（0 = 不自动收起）。 */
+type PanelAutoHideHandler = (ms: number) => void;
 type PanelShiftHandler = (px: number) => void;
 
 let onOpenThread: OpenThreadHandler | null = null;
@@ -26,6 +28,7 @@ let onOpenThread: OpenThreadHandler | null = null;
 // 后注册者覆盖前者（React 严格模式下挂载两次也不留旧监听）。
 let onContentVisible: ContentVisibleHandler | null = null;
 let onVoice: VoiceHandler | null = null;
+let onPanelAutoHide: PanelAutoHideHandler | null = null;
 let onPanelShift: PanelShiftHandler | null = null;
 
 ipcRenderer.on("shell:open-thread", (_event, value: unknown) => {
@@ -39,6 +42,11 @@ ipcRenderer.on("shell:pet-content-visible", (_event, value: unknown) => {
 // "只改语音"的那次也触发内容侧的处理，一对一的语义就没了。
 ipcRenderer.on("shell:pet-voice", (_event, value: unknown) => {
   if (typeof value === "boolean") onVoice?.(value);
+});
+// 面板自动收起的毫秒数（托盘「面板自动收起」）。又是独立一路：合成到别的通道上，
+// "只改秒数"的那次就会顺带触发内容/语音侧的处理。负数与非数一律不动。
+ipcRenderer.on("shell:pet-auto-hide", (_event, value: unknown) => {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) onPanelAutoHide?.(value);
 });
 // 面板在画布里要水平挪多少像素（色片贴边时画布有一截在屏外，见 windows.ts 的
 // `panelShiftFor`）。窗口本身不动 —— 旧做法是推窗口再让色片自挪，那一次 setBounds
@@ -99,6 +107,11 @@ contextBridge.exposeInMainWorld("rolecardShell", {
   petVoiceEnabled: (): Promise<boolean> => ipcRenderer.invoke("shell:pet-voice"),
   onPetVoice: (handler: VoiceHandler | null): void => {
     onVoice = handler;
+  },
+  /** 托盘的「面板自动收起」毫秒数（0 = 不自动收起）。**只有读**，形状同上两条。 */
+  petPanelAutoHideMs: (): Promise<number> => ipcRenderer.invoke("shell:pet-auto-hide"),
+  onPetPanelAutoHide: (handler: PanelAutoHideHandler | null): void => {
+    onPanelAutoHide = handler;
   },
   /** 面板水平自挪的像素数（壳每次改展开落点时推一次）；传 null 注销。同上是单槽位。 */
   onPetPanelShift: (handler: PanelShiftHandler | null): void => {
