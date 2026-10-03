@@ -1400,6 +1400,49 @@ def check_write_txn_ownership_inventory() -> None:
         )
 
 
+def _audit_ledger_path() -> pathlib.Path:
+    """**最新一轮**审计台账住在哪儿：先扫 `docs/`（在写的），再扫 `docs/archive/`（已封存的）。
+
+    为什么不是写死一个文件名：归档不该让尺子瞎掉 —— 本仓第九条踩过的那一发就是
+    "台账全搬进 `docs/archive/` 之后，那把管台账形状的尺子再也没看见它"。
+    按文件名里那个日期取最新的一轮，两个目录一起比；找不到就返回一个不存在的路径，
+    让调用方按"台账不在"出声，而不是悄悄一步不进。
+    """
+    cands = [
+        *sorted((ROOT / "docs").glob("架构审计（*轮）.md")),
+        *sorted((ROOT / "docs" / "archive").glob("架构审计（*轮）.md")),
+    ]
+    if not cands:
+        return ROOT / "docs" / "架构审计（*轮）.md"  # 不存在 ⇒ 调用方判红
+
+    def _date(p: pathlib.Path) -> tuple[int, int, int]:
+        m = re.search(r"（(\d{4})-(\d{2})-(\d{2}) 轮）", p.name)
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else (0, 0, 0)
+
+    return max(cands, key=_date)
+
+
+def _ledger_h2_span(text: str, ruler: str) -> tuple[int, int] | None:
+    """定位台账里 H2 那张表；结构不对就**干净判红**，不许抛 traceback（M26a 实测撞过）。
+
+    会走到这里的最真实形状：`_audit_ledger_path()` 按日期取"最新一份"，而那份其实是上一代
+    `P{n}-{m}` 结构的归档件（它没有 `## H2`）—— 这等于说当前轮的台账丢了或改了名，
+    正该出声，而不是让整趟一致性崩在半路（崩掉的门禁只留下一串 traceback，谁也读不出少了什么）。
+    """
+    try:
+        start = text.index("## H2 ")
+        return start, text.index("## H3 ", start)
+    except ValueError:
+        out(
+            ruler,
+            False,
+            "最新一份台账里没有 `## H2 … ## H3` 这张表 —— 解析器大概退回到了上一代的归档件，"
+            "也就是当前这一轮的台账丢了或改了名",
+        )
+        fails.append(f"{ruler}: newest audit ledger has no H2..H3 table (不是本轮的 H* 结构)")
+        return None
+
+
 def check_audit_ledger_row_count() -> None:
     """台账 H2 标题里那个"（N 条）"必须由脚本现数，不许手写（10-03 批 22 复核当场照出的）。
 
@@ -1410,19 +1453,16 @@ def check_audit_ledger_row_count() -> None:
     判据只看 H2 那张表（`| R102-NN | 级别 | … |` 形状的行），不看散文里的引用 —— 后者
     由 `audit citations` 与 `audit index in sync` 管着，三把尺子各管一件事。
     """
-    ledger = ROOT / "docs" / "架构审计（2026-10-02 轮）.md"
+    ledger = _audit_ledger_path()
     if not ledger.exists():
         out("audit ledger row count", False, f"台账不在：{ledger}")
         fails.append(f"audit ledger missing: {ledger}")
         return
     text = ledger.read_text(encoding="utf-8")
-    start = text.index("## H2 ")
-    try:
-        end = text.index("## H3 ", start)
-    except ValueError:  # pragma: no cover - 章节结构被改坏时走到这儿
-        out("audit ledger row count", False, "H2 之后找不到 H3，表格边界数不清")
-        fails.append("audit ledger: H3 heading not found after H2")
+    span = _ledger_h2_span(text, "audit ledger row count")
+    if span is None:
         return
+    start, end = span
     rows = len(re.findall(r"^\|\s*(R102-\d+)\s*\|", text[start:end], re.M))
     stated = re.search(r"## H2 ·[^(（]*（(\d+) 条）", text[start:end])
     if stated is None:
@@ -1581,14 +1621,24 @@ def check_ledger_status_states_verdict() -> None:
       · 状态格里一个表态字样都没有 ⇒ 红（沉默不许当成"没做"也不当成"做了"）；
       · 状态格写着"已收口"、而该编号在 H12 的执行记录里查无出处 ⇒ 也红（收口要有出处）。
     """
-    ledger = ROOT / "docs" / "架构审计（2026-10-02 轮）.md"
+    ledger = _audit_ledger_path()
     if not ledger.exists():
         out("ledger status states a verdict", False, f"台账不在：{ledger}")
         fails.append(f"audit ledger missing: {ledger}")
         return
     text = ledger.read_text(encoding="utf-8")
-    start = text.index("## H2 ")
-    end = text.index("## H3 ", start)
+    span = _ledger_h2_span(text, "ledger status states a verdict")
+    if span is None:
+        return
+    start, end = span
+    if "## H12 " not in text:  # 同一条规矩：出处无处可查要出声，不是抛 traceback
+        out(
+            "ledger status states a verdict",
+            False,
+            "最新台账里没有 H12 执行记录 —— 「已收口」的出处无处可查",
+        )
+        fails.append("newest audit ledger has no H12 execution record")
+        return
     h12 = text[text.index("## H12 "):]
     detail_rows = text[end:]  # H2 之后就是逐条详表（H7/H8）与执行记录（H12）
     silent: list[str] = []
