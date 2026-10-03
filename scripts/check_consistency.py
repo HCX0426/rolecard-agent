@@ -1484,7 +1484,7 @@ def _data_root_write_dirs() -> dict[str, str]:
         if not isinstance(node, ast.Dict):
             continue
         for key, value in zip(node.keys, node.values, strict=True):
-            if not isinstance(key, ast.Constant):
+            if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
                 continue
             parts = _path_chain_parts(value)
             if parts:
