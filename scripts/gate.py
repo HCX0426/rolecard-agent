@@ -97,8 +97,10 @@ STEPS: list[tuple[str, list[str], str]] = [
     # 第一版门禁就是这么写的，于是"从输出里读后端用例数"那条读数**永远读不到**，而失败步骤
     # 也只报"这一步红了"报不出是哪条用例 —— 两件事是同一个根。
     (
+        # 快档也套上"红跑取证"（`R102-41`）：10-03 这一档第一次报出同一签名，而它没有二跑日志
+        # —— 同一发偶发原先只在覆盖率档装了监控。判据与签名清单两档共用一份。
         "pytest(-x, 无覆盖率)",
-        [PY, "-m", "pytest", "-p", "no:cacheprovider", "-W", "ignore", "-x"],
+        [PY, "scripts/pytest_with_evidence.py", "--lane", "fast"],
         "fast",
     ),
     ("consistency", [PY, "scripts/check_consistency.py"], "both"),
@@ -106,9 +108,9 @@ STEPS: list[tuple[str, list[str], str]] = [
     (
         # 同一趟 pytest，包了一层"红跑取证"（`R102-41`）：只有失败命中在册的 chroma 偶发
         # 签名时才重跑那批文件一次，且重跑**为取证不为转绿**（首跑日志原样留着、屏幕上
-        # 大声标 FLAKY-RECORDED）。判据与签名清单在 scripts/pytest_coverage_with_evidence.py。
+        # 大声标 FLAKY-RECORDED）。判据与签名清单在 scripts/pytest_with_evidence.py。
         "pytest(覆盖率≥85%)",
-        [PY, "scripts/pytest_coverage_with_evidence.py"],
+        [PY, "scripts/pytest_with_evidence.py", "--lane", "coverage"],
         "full",
     ),
     ("前端 vitest", [NPM, "test"], "full"),
