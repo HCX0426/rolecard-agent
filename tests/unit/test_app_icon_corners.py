@@ -144,10 +144,18 @@ def test_图标层在非windows时记跳过而不是冒充过(monkeypatch) -> No
 
 
 def test_图标层在windows上产物缺失时判红不判跳过(monkeypatch, tmp_path: pathlib.Path) -> None:
-    """另一臂：Windows 上"产物不在"是**没跑**，不是跳过，更不是过（②那层 10-01 定的形状）。"""
+    """另一臂：Windows 上"产物不在"是**没跑**，不是跳过，更不是过（②那层 10-01 定的形状）。
+
+    ⚠️ 两个条件都要 patch，只 patch 旗标不够（10-03 CI 的 Linux 档照出来的一条）：守卫是
+    `_IS_WINDOWS and sys.platform == "win32"` 这个合取，Linux 上后一半永远不成立 ⇒ 这一臂
+    会走跳过分支返回 True，本地 Windows 全绿而 CI 红。把 `sys.platform` 一起钉成 win32，
+    这条臂在两台机器上都真跑到；分支里第一件事就是查 exe 是否存在，`ctypes` 的导入在后面，
+    所以 Linux 上也不会走到那个不存在的属性。
+    """
     import probe_package_artifact as probe
 
     monkeypatch.setattr(probe, "_IS_WINDOWS", True, raising=True)
+    monkeypatch.setattr(sys, "platform", "win32", raising=False)
     monkeypatch.setattr(probe, "UNPACKED", tmp_path / "没有这一层", raising=True)
     probe.SKIPPED.clear()
     assert probe.check_icon_frames() is False
