@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import contextlib
 import os
+import pathlib
 import sqlite3
+import sys
 from collections.abc import Iterator, Sequence
 from typing import Any
 
@@ -228,3 +230,37 @@ def _no_chroma_system_leak():
         if system is not None:
             with contextlib.suppress(Exception):
                 system.stop()
+# --------------------------------------------------------------- R102-41 失败时刻的现场
+_SCRIPTS_DIR = pathlib.Path(__file__).resolve().parents[1] / "scripts"
+BUILD_DIR = pathlib.Path(__file__).resolve().parents[1] / "build"
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+import chroma_flake_evidence as _flake  # noqa: E402  （取证层与门禁共用同一份签名清单）
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_runtest_makereport(item: pytest.Item, call: Any) -> None:
+    """命中在册的 chroma 偶发时，把"元数据说在、盘上没了"那一份现场钉进 `build/`。
+
+    为什么挂在 makereport 而不是用例里：这发偶发**不可请求**（约 1.3-2%/轮），而它一红，
+    `tmp_path` 在会话收尾时就被回收了 —— 于是每次红完只剩同一句 `Nothing found on disk`，
+    十五批取证批批从头。台账要的正是"一次带 chroma 侧状态的现场"（`R102-41`），这一步给它。
+
+    只认 call 阶段：setup 里的错通常是夹具自己的问题，把那条也留成现场只会教下一个人去查
+    一个不存在的方向（本仓那条"红了要能指出下一步"的口径）。
+    """
+    if call.when != "call" or call.excinfo is None:
+        return
+    try:
+        text = str(call.excinfo.value)
+    except Exception:  # noqa: BLE001 - 取证层不能因为异常没法 str 就崩掉整趟
+        return
+    if not _flake.hits_signature(text):
+        return
+    roots: list[pathlib.Path] = []
+    tmp = getattr(item, "funcargs", {}).get("tmp_path")
+    if isinstance(tmp, pathlib.Path):
+        roots.append(tmp)
+    path = _flake.dump_evidence(BUILD_DIR, item.nodeid, text, extra_roots=roots)
+    print(f"[R102-41 现场] 命中在册 chroma 偶发 ⇒ 盘上形状落到 {path}")

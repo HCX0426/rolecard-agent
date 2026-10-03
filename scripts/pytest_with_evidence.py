@@ -41,12 +41,10 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 BUILD = ROOT / "build"
 
-#: 在册的偶发签名（`R102-41`）。新增一条就等于承认"这一族我还没定位"，所以要慎。
-CHROMA_FLAKE_SIGNATURES = (
-    "Nothing found on disk",
-    "Error creating hnsw segment reader",
-    "chromadb.errors.InternalError",
-)
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+# 签名清单**只有一份出处**：conftest 的失败时刻钩子与这里问的是同一个东西，两处各抄一份
+# 就是给"改了判据漏了另一处"留门（`R102` 轮那条"同一句理由出现在第二处就该有尺子"的同族）。
+from chroma_flake_evidence import CHROMA_FLAKE_SIGNATURES, existing_evidence  # noqa: E402
 
 COMMON = [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-W", "ignore"]
 #: 两档的命令行：快档带 `-x`（红就停、不量覆盖率），覆盖率档反之。
@@ -117,10 +115,17 @@ def main() -> int:
         )
         return rc
 
+    ev = existing_evidence(BUILD)
+    ev_line = (
+        f"失败时刻的盘上现场 {len(ev)} 份（最新：{_rel(ev[-1])}）"
+        if ev
+        else "⚠️ 没有任何 r102-41 现场文件 —— conftest 那个钩子没跑到，这比偶发本身更值得查"
+    )
     print(
         f"\n⚠️  {lane} 档首跑红，且失败形状命中在册的 chroma 偶发（`R102-41`）。"
         f"重跑那 {len(failed)} 个文件一次取证：{failed}\n"
-        f"   首跑完整日志：{_rel(run1)}（不删、不改，二跑不掩盖它）",
+        f"   首跑完整日志：{_rel(run1)}（不删、不改，二跑不掩盖它）\n"
+        f"   {ev_line}",
         flush=True,
     )
     rc2, log2 = _run(
