@@ -1791,6 +1791,79 @@ def check_ledger_status_states_verdict() -> None:
         )
 
 
+def _png_corner_alphas(blob: bytes, limit: int = 512) -> list[int] | None:
+    """读一张 PNG 的**四个角**的 alpha（只用标准库：zlib 解压 + 逐行反过滤）。
+
+    为什么自己解而不是引 PIL：主 `.venv` 里没有 PIL（那是 `.venv-ocr` 才有的重依赖），
+    而这条断言跑在每一次门禁与 CI 上 —— 为一格判据把图像库拖进运行树，正是本仓反对的那种换法。
+
+    只读非隔行、8bit、color type 6 的图（图标就是这么生成的），别的形状一律返回 `None`
+    让调用方**出声**而不是猜。`limit` 是给单边像素数的兜底，防着有人把一个巨型图塞进 ICO。
+    """
+    import zlib
+
+    if blob[:8] != b"\x89PNG\r\n\x1a\n" or len(blob) < 33:
+        return None
+    width = int.from_bytes(blob[16:20], "big")
+    height = int.from_bytes(blob[20:24], "big")
+    depth, ctype, _compress, _filter, interlace = blob[24], blob[25], blob[26], blob[27], blob[28]
+    if depth != 8 or ctype != 6 or interlace != 0:
+        return None
+    if not (0 < width <= limit and 0 < height <= limit):
+        return None
+    idat = bytearray()
+    pos = 33
+    while pos + 8 <= len(blob):
+        ln = int.from_bytes(blob[pos : pos + 4], "big")
+        kind = blob[pos + 4 : pos + 8]
+        if kind == b"IEND":
+            break
+        if kind == b"IDAT":
+            idat += blob[pos + 8 : pos + 8 + ln]
+        pos += 12 + ln
+    try:
+        raw = zlib.decompress(bytes(idat))
+    except zlib.error:
+        return None
+    bpp, stride = 4, width * 4
+    need = (stride + 1) * height
+    if len(raw) < need:
+        return None
+
+    def paeth(a: int, b: int, c: int) -> int:
+        p = a + b - c
+        pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+        return a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+
+    out = bytearray()
+    prev = bytearray(stride)
+    for y in range(height):
+        base = y * (stride + 1)
+        ft = raw[base]
+        line = bytearray(raw[base + 1 : base + 1 + stride])
+        if ft == 1:
+            for x in range(bpp, stride):
+                line[x] = (line[x] + line[x - bpp]) & 0xFF
+        elif ft == 2:
+            for x in range(stride):
+                line[x] = (line[x] + prev[x]) & 0xFF
+        elif ft == 3:
+            for x in range(stride):
+                a = line[x - bpp] if x >= bpp else 0
+                line[x] = (line[x] + ((a + prev[x]) >> 1)) & 0xFF
+        elif ft == 4:
+            for x in range(stride):
+                a = line[x - bpp] if x >= bpp else 0
+                c = prev[x - bpp] if x >= bpp else 0
+                line[x] = (line[x] + paeth(a, prev[x], c)) & 0xFF
+        elif ft != 0:
+            return None
+        out += line
+        prev = line
+    idx = [0, (width - 1) * 4, (height - 1) * stride, height * stride - 4]
+    return [out[i + 3] for i in idx]
+
+
 def check_app_icon_frames() -> None:
     """应用图标必须是**多帧 + 带 alpha**（`R102` 归档后由用户报的"桌面图标有白底"换来）。
 
@@ -1825,11 +1898,20 @@ def check_app_icon_frames() -> None:
         off = int.from_bytes(e[12:16], "little")
         ln = int.from_bytes(e[8:12], "little")
         sizes.append(min(w, h))
-        blob = data[off:off + ln]
+        blob = data[off : off + ln]
         if blob[:8] != b"\x89PNG\r\n\x1a\n":
             problems.append(f"{w}px 帧不是 PNG（读不到 alpha 通道）")
         elif len(blob) < 26 or blob[25] != 6:
             problems.append(f"{w}px 帧的 PNG color type 不是 6（RGBA），没有 alpha 通道")
+        else:
+            # 第四格：光"有 alpha 通道"挡不住白底 —— 通道在、四角全不透明照样是白底。
+            # 阈值 16 是给圆角那圈抗锯齿留的余地（实测装机那份 32px 帧四角 alpha=1，
+            # 而带白底那版是 255）；判据读的是**角**，不是"平均透明度"那种会被整图摊平的数。
+            corners = _png_corner_alphas(blob)
+            if corners is None:
+                problems.append(f"{w}px 帧的角像素读不出（非 8bit/RGBA/无隔行？不能当成干净）")
+            elif max(corners) >= 16:
+                problems.append(f"{w}px 帧四角 alpha={corners} —— 白底回来了")
     if len(set(sizes)) < 6:
         problems.append(f"只有 {len(set(sizes))} 档帧，至少要 6 档")
     missing = sorted({16, 32, 48, 256} - set(sizes))

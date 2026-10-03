@@ -299,11 +299,107 @@ def check_frozen_boot() -> bool:
     return verdict and gone
 
 
+def check_icon_frames() -> bool:
+    """④ 图标层 —— 壳 exe **内嵌**的那 9 帧，必须与仓库 `shell/build/icon.ico` 逐帧字节全等。
+
+    为什么单独一层（10-03，用户报"桌面图标有白底"之后）：快捷方式那块白底取自 exe 里的
+    `RT_ICON`，而 electron-builder 会不会把新 `icon.ico` 烙进 exe、烙进去的是不是这九帧，
+    仓库侧那条断言（`app icon is multi-frame RGBA`，含四角 alpha）问不到 —— 它只看得见源文件。
+    这一层把"源文件干净"与"产物里那一帧干净"接上：逐帧 sha256 对读，一帧不一致就红。
+
+    用 Windows 加载器枚举资源而不是手工切 PE 字节：实测这份 exe 的资源目录 RVA 落不进任何
+    段（`.text` 的 VirtualSize 写着 193 MB，是打包器的形状），手工解析算出过 10 亿字节的偏移。
+    `LOAD_LIBRARY_AS_DATAFILE` 不执行、不进 DLL 入口。
+    """
+    exe = UNPACKED / "rolecard-agent.exe"
+    ico = ROOT / "shell" / "build" / "icon.ico"
+    if not exe.is_file():
+        print(f"  ! 壳 exe 不在：{exe} —— 这一层没跑，不算过")
+        return False
+    if not ico.is_file():
+        print(f"  ! 仓库图标不在：{ico} —— 没有可比的对象")
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.windll.kernel32
+    enum_cb = ctypes.WINFUNCTYPE(
+        ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long
+    )
+    # 每个函数都要声明签名：HMODULE/HRSRC/HGLOBAL 是 64 位句柄，ctypes 默认按 int 收发会截断
+    # （`OverflowError: int too long to convert` —— 这份探针第一次跑就是这么炸的）。
+    k32.LoadLibraryExW.restype = ctypes.c_void_p
+    k32.LoadLibraryExW.argtypes = [wintypes.LPCWSTR, ctypes.c_void_p, wintypes.DWORD]
+    k32.FreeLibrary.restype = wintypes.BOOL
+    k32.FreeLibrary.argtypes = [ctypes.c_void_p]
+    k32.EnumResourceNamesW.restype = wintypes.BOOL
+    k32.EnumResourceNamesW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, enum_cb, ctypes.c_long]
+    k32.FindResourceExW.restype = ctypes.c_void_p
+    k32.FindResourceExW.argtypes = [
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, wintypes.WORD
+    ]
+    k32.SizeofResource.restype = ctypes.c_size_t
+    k32.SizeofResource.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    k32.LoadResource.restype = ctypes.c_void_p
+    k32.LoadResource.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    k32.LockResource.restype = ctypes.c_void_p
+    k32.LockResource.argtypes = [ctypes.c_void_p]
+
+    ids: list[int] = []
+
+    def _cb(_m: int, _t: int, name: int, _l: int) -> bool:
+        v = int(name or 0)
+        if v < 65536:
+            ids.append(v)
+        return True
+
+    hmod = k32.LoadLibraryExW(str(exe), None, 0x00000002)  # LOAD_LIBRARY_AS_DATAFILE
+    if not hmod:
+        print(f"  ! 加载失败（GetLastError={k32.GetLastError()}）：{exe}")
+        return False
+    blobs: list[bytes] = []
+    try:
+        k32.EnumResourceNamesW(hmod, ctypes.c_void_p(3), enum_cb(_cb), 0)  # 3 = RT_ICON
+        for i in sorted(set(ids)):
+            hres = k32.FindResourceExW(hmod, ctypes.c_void_p(3), ctypes.c_void_p(i), 0)
+            if not hres:
+                continue
+            size = k32.SizeofResource(hmod, hres)
+            ptr = k32.LockResource(k32.LoadResource(hmod, hres))
+            if size and ptr:
+                blobs.append(ctypes.string_at(ptr, size))
+    finally:
+        k32.FreeLibrary(hmod)
+
+    raw = ico.read_bytes()
+    n = int.from_bytes(raw[4:6], "little")
+    repo: list[bytes] = []
+    for i in range(n):
+        e = raw[6 + 16 * i : 22 + 16 * i]
+        ln = int.from_bytes(e[8:12], "little")
+        off = int.from_bytes(e[12:16], "little")
+        repo.append(raw[off : off + ln])
+    want = {hashlib.sha256(b).hexdigest()[:12] for b in repo}
+    got = {hashlib.sha256(b).hexdigest()[:12] for b in blobs}
+    print(f"  exe 内 RT_ICON {len(blobs)} 帧 / 仓库 ico {len(repo)} 帧")
+    if not blobs:
+        print("  ! exe 里一帧图标都没枚举到 —— 这不是「图标旧了」，是判据没法问")
+        return False
+    missing = sorted(want - got)
+    extra = sorted(got - want)
+    if missing or extra:
+        print(f"  ✗ 不一致：exe 里缺 {missing}；多出 {extra}")
+        return False
+    print("  ✓ 逐帧 sha256 全等（桌面上那九帧就是仓库那九帧，四角透明由源文件那条断言看着）")
+    return True
+
+
 def main() -> int:
     layers = [
         ("① 前端层：包内 dist == 仓库 dist", check_frontend),
         ("② 后端层：包内 exe == 刚构建那份（缺尺子即红，不算跳过）", check_backend_binary),
         ("③ frozen 层：起它、问它是哪个 commit、再看界面与读数", check_frozen_boot),
+        ("④ 图标层：壳 exe 内嵌帧 == 仓库 icon.ico 逐帧", check_icon_frames),
     ]
     failed: list[str] = []
     for title, fn in layers:
