@@ -104,18 +104,11 @@ STEPS: list[tuple[str, list[str], str]] = [
     ("consistency", [PY, "scripts/check_consistency.py"], "both"),
     ("baseline --check", [PY, "scripts/baseline.py", "--check"], "full"),
     (
+        # 同一趟 pytest，包了一层"红跑取证"（`R102-41`）：只有失败命中在册的 chroma 偶发
+        # 签名时才重跑那批文件一次，且重跑**为取证不为转绿**（首跑日志原样留着、屏幕上
+        # 大声标 FLAKY-RECORDED）。判据与签名清单在 scripts/pytest_coverage_with_evidence.py。
         "pytest(覆盖率≥85%)",
-        [
-            PY,
-            "-m",
-            "pytest",
-            "-p",
-            "no:cacheprovider",
-            "-W",
-            "ignore",
-            "--cov=rolecard_agent",
-            "--cov-fail-under=85",
-        ],
+        [PY, "scripts/pytest_coverage_with_evidence.py"],
         "full",
     ),
     ("前端 vitest", [NPM, "test"], "full"),
