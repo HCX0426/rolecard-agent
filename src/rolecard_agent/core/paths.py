@@ -183,11 +183,31 @@ def dotenv_path() -> Path:
     return user_data_root().parent / f"{_APP_NAME}.env"
 
 
+def bundled_ocr_worker() -> Path | None:
+    """随包 OCR worker 的可执行文件（冻结态）；开发态返回 None。
+
+    装完的运行期布局是 `resources/rolecard-backend/_internal`（= `sys._MEIPASS`）与
+    `resources/ocr-worker/ocr-worker.exe` 并排，所以 `resources` 就是 `_MEIPASS` 往上两层。
+    找不到返回 None 而不是抛 —— "这一包没带 OCR"是一个合法状态，调用方要据此降级并说清原因。
+
+    为什么是独立 exe 而不是拷 `.venv-ocr`：venv 的 `python.exe` 依赖构建机上的 base 解释器，
+    拷进包等于把"只有我这台机器成立的前提"发给装机的人（见 `packaging/ocr-worker.spec` 头部）。
+    """
+    if not is_frozen():
+        return None
+    resources = Path(str(sys._MEIPASS)).resolve().parents[1]  # type: ignore[attr-defined]
+    name = "ocr-worker.exe" if IS_WINDOWS else "ocr-worker"
+    cand = resources / "ocr-worker" / name
+    return cand if cand.exists() else None
+
+
 def default_ocr_python() -> str | None:
     """默认 OCR 解释器：项目根下的独立 venv（requirements-ocr.txt 的安装约定）。
 
-    打包态这里必然返回 None —— OCR 引擎按设计**不进包**（独立 venv，cv2/omegaconf 一族
-    上百 MB），表现是"本地 OCR 不可用"，云端 OCR（配置了 key 时）不受影响。
+    冻结态这里仍然返回 None —— 但**那不再等于"装机版没有本地 OCR"**：装机版走
+    `bundled_ocr_worker()` 那个自包含的 exe（10-03 起随包，见 `packaging/ocr-worker.spec`）。
+    从前这一格写着"打包态必然 None，表现是本地 OCR 不可用"，那是当时的设计；
+    留着不改就是一句会说错话的注释（判据与文案同一条纪律）。
     """
     cand = repo_root() / ".venv-ocr" / "Scripts" / "python.exe"
     return str(cand) if cand.exists() else None

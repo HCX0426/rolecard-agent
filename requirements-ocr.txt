@@ -11,10 +11,15 @@
 # **版本主张冲突**，隔离是被迫的。换成 RapidOCR 后这条理由不再成立：rapidocr 的 numpy 约束
 # 与主环境兼容，而主环境本来就有 onnxruntime（chromadb 带的）。现在维持独立 venv 的理由只剩
 # 两条，都是选择而非被迫：① 主服务进程永不 import OCR 栈（只经 scripts/ocr_worker.py 子进程
-# 调用），运行树里不该有 cv2(113 MB)/omegaconf 这一族；② 随包后端按设计不带 OCR
-# （见 core/paths.py 的 default_ocr_python 与 packaging 的 RUNTIME_PACKAGES），并进主 venv 只会
-# 让 4 个安装入口 + Dockerfile + CI 全都得装它，换不来任何能力。
-# 主进程通过 OCR_PYTHON 指向该 venv 的 python（默认自动发现 .venv-ocr/Scripts/python.exe）。
+# 调用），运行树里不该有 cv2(113 MB)/omegaconf 这一族；② 装机版的那一份是**独立的第二份产物**
+# build/ocrworker/ocr-worker（scripts/build_ocr_worker.py 在【本 venv】里用 PyInstaller 打，
+# 见 packaging/ocr-worker.spec），主后端包依旧被 RUNTIME_PACKAGES 那道守卫挡着不带 OCR 依赖 ——
+# 所以并进主 venv 只会让 4 个安装入口 + Dockerfile + CI 全都得装它，换不来任何能力。
+# （10-03 订正：这里从前写的是"随包后端按设计不带 OCR"。设计改了：用户报"服务页的 OCR 咋都
+# 不可用"，拍板随包带本地 OCR，因为 venv 的 python.exe 依赖构建机的 base 解释器、拷进包等于
+# 把"只有我这台机器成立的前提"发给装机的人。）
+# 主进程通过 OCR_PYTHON 指向该 venv 的 python（默认自动发现 .venv-ocr/Scripts/python.exe）；
+# 冻结态则走 bundled_ocr_worker() 那个包内 exe —— 两条路谁在位由 rag/ocr.py 的 _launcher() 一处判。
 #
 # 实测本机（10-02，仓库外临时 venv，python 3.13.15）：site-packages 291 MB（Paddle 那份是 885 MB），
 # import 1.13 s / 引擎初始化 0.54 s / 单张首次推理 0.99 s。

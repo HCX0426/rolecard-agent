@@ -25,7 +25,6 @@ key/base_url/model：
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from rolecard_agent.config import Settings
@@ -429,12 +428,13 @@ def check_availability(candidate_id: str, settings: Settings) -> tuple[bool, str
     云端引用行的可用性只取决于被引用后端是否配了 key（`endpoint_available`）。
     """
     if candidate_id == "rapidocr":
+        # 判定只有一份：问运行时那个后端"你跑得起来吗"。从前这里自己看 `.venv-ocr` 在不在，
+        # 于是装机版明明带着随包 worker，服务页却报"未找到独立 OCR 解释器"（两处口径那一族）。
         from rolecard_agent.core.paths import default_ocr_python
+        from rolecard_agent.rag.ocr import LocalRapidOcrBackend
 
-        exe = settings.ocr_python or default_ocr_python()
-        if not exe or not Path(exe).exists():
-            return False, "未找到独立 OCR 解释器（.venv-ocr）"
-        return True, f"就绪：{Path(exe).name}"
+        backend = LocalRapidOcrBackend(exe=settings.ocr_python or default_ocr_python())
+        return backend.available(), backend.readiness()
     if candidate_id in {"hash", "off"}:
         return True, "始终可用"
     return False, f"未知本地实现 {candidate_id!r}"

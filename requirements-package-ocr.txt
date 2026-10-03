@@ -1,0 +1,11 @@
+# 随包 OCR worker 的**构建期**依赖（不是运行依赖 —— 那些在 requirements-ocr.txt 里）。
+#
+# 为什么单独一份：`.venv-ocr` 是"只装运行栈"的干净环境（rapidocr + onnxruntime + cv2 一族），
+# 把打包器混进去会让那份环境与实际随包出去的树不一致。装法（两条都要跑）：
+#
+#     .venv-ocr\Scripts\python.exe -m pip install -r requirements-ocr.txt
+#     .venv-ocr\Scripts\python.exe -m pip install -r requirements-package-ocr.txt
+#
+# 版本不钉死：与 requirements-package.txt（主后端的打包器）同一条口径 —— 钉死过一次的后果是
+# 两份 PyInstaller 版本互相漂，而 spec 的语法只跟着新版本走。
+pyinstaller

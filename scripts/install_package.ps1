@@ -74,6 +74,15 @@ if (-not $SkipBuild) {
     Pop-Location
     & (Join-Path $root ".venv\Scripts\python.exe") (Join-Path $root "scripts\build_sidecar.py")
     if ($LASTEXITCODE -ne 0) { throw "sidecar build failed (exit=$LASTEXITCODE)" }
+    # 随包本地 OCR：另一个自包含产物，**必须用 .venv-ocr 的 python 打**（主环境没有 rapidocr/cv2，
+    # 而那份 venv 的 python.exe 依赖构建机的 base 解释器 —— 所以拷 venv 不算打包，见 spec 头部）。
+    # 脚本自己会冒烟一次（造一张图认字），不过就**不产出**，这里也就不会往下装。
+    $ocrPy = Join-Path $root ".venv-ocr\Scripts\python.exe"
+    if (-not (Test-Path $ocrPy)) {
+        throw "no .venv-ocr at $ocrPy —— 装机版就没本地 OCR：先 python -m venv .venv-ocr 再 pip install -r requirements-ocr.txt -r requirements-package-ocr.txt"
+    }
+    & $ocrPy (Join-Path $root "scripts\build_ocr_worker.py")
+    if ($LASTEXITCODE -ne 0) { throw "ocr-worker build/smoke failed (exit=$LASTEXITCODE)" }
     Push-Location (Join-Path $root "shell")
     # 这一步的输出**不再 Out-Null**：2026-09-28 实测它静默失败过（electron-builder 要清
     # `release/win-unpacked` 时 `app.asar` 被别的进程占着 -> EBUSY），而退出码没被检查，于是
@@ -221,6 +230,21 @@ if (-not $NoLaunch) {
     } else {
         Write-Host ("      ^ 没比构建指纹（installed=$reported / built=$builtSha）" +
             " - 两侧任一是 unknown 或缺失就只打这一行，不拿它当判据，也不假装比过")
+    }
+    # 装机版到底有没有本地 OCR：问**刚装的那台后端**的服务页，而不是看文件在不在。
+    # 为什么必须问后端：`resources/ocr-worker/ocr-worker.exe` 躺着但跑不起来（缺 dll、被杀软拦、
+    # 路径拼错）与"随包带了本地 OCR"是同一句人话下的两种命运，只有运行时那一格知道答案。
+    try {
+        $svcJson = (Invoke-WebRequest -Uri "$base/api/services" -UseBasicParsing -TimeoutSec 30).Content
+        $svc = $svcJson | ConvertFrom-Json
+        $ocrRow = @($svc.services | Where-Object { $_.key -eq 'ocr' })[0]
+        if (-not $ocrRow) { throw "服务页里没有 ocr 那一栏" }
+        $rapid = @($ocrRow.candidates | Where-Object { $_.id -eq 'rapidocr' })[0]
+        if (-not $rapid) { throw "OCR 栏里没有 rapidocr 候选" }
+        if (-not $rapid.available) { throw "装机版本地 OCR 不可用：$($rapid.reason)" }
+        Write-Host "      本地 OCR: $($rapid.reason)（生效值=$($ocrRow.effective)）"
+    } catch {
+        throw "随包 OCR 验收失败：$_"
     }
 } else {
     Write-Host "[5/6] not launched (-NoLaunch)"

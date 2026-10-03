@@ -26,7 +26,7 @@ from typing import Any, Protocol
 import httpx
 
 from rolecard_agent.config import Settings
-from rolecard_agent.core.paths import default_ocr_python
+from rolecard_agent.core.paths import bundled_ocr_worker, default_ocr_python
 from rolecard_agent.rag.parser import OcrUnavailable, ParseError
 
 # ocr.py 位于 <root>/src/rolecard_agent/rag/，故项目根为 parents[3]；worker 在 <root>/scripts。
@@ -93,22 +93,46 @@ class LocalRapidOcrBackend:
         self._exe = exe or default_ocr_python()
 
     def available(self) -> bool:
-        if not self._exe or not Path(self._exe).exists():
-            return False
-        return _OCR_WORKER.exists()
+        return self._launcher() is not None
+
+    def readiness(self) -> str:
+        """服务页那一格的人话状态。**与 `available()` 同一份判定** —— 从前探活与选择器
+        各写一份，症状就是"界面说不可用而运行时真会去试"（`R102-56` 那一族）。"""
+        got = self._launcher()
+        if got is not None:
+            return f"就绪：{got[1]}"
+        return (
+            "本机没有可用的本地 OCR：装机版这一包没带上 `ocr-worker`（重打时跑 "
+            "scripts/build_ocr_worker.py），开发态则按 requirements-ocr.txt 装 .venv-ocr "
+            "并让 OCR_PYTHON 指到它"
+        )
+
+    def _launcher(self) -> tuple[list[str], str] | None:
+        """这一发该怎么跑：返回 `(命令前缀, 用的是哪条路)`，None = 没有可用的本地引擎。
+
+        两条路按优先级：
+          1. **随包的自包含 worker**（冻结态 `resources/ocr-worker/ocr-worker.exe`）——
+             装机版就靠它，不再依赖构建机上那个 venv 的 base 解释器；
+          2. 独立 OCR venv 的 python + `scripts/ocr_worker.py`（开发态与自装形态）。
+        """
+        worker = bundled_ocr_worker()
+        if worker is not None:
+            return [str(worker)], worker.name
+        exe = self._exe
+        if exe and Path(exe).exists() and _OCR_WORKER.exists():
+            return [str(exe), str(_OCR_WORKER)], Path(exe).name
+        return None
 
     def ocr(self, image_path: Path) -> str:
         # 把解释器路径绑成局部 str：`available()` 已经保证它存在，但 `self._exe` 的静态
         # 类型仍是 `str | None`，直接放进 argv 会过不了类型检查（而且这里确实需要一个非空值）。
-        exe = self._exe
-        if not exe or not self.available():
-            raise OcrUnavailable(
-                "本地 OCR 未配置：按 requirements-ocr.txt 在独立 venv 安装 rapidocr，"
-                "并设置 OCR_PYTHON 指向其 python（默认 .venv-ocr/Scripts/python.exe）。"
-            )
+        got = self._launcher()
+        if got is None:
+            raise OcrUnavailable(self.readiness())
+        cmd = [*got[0], str(image_path)]
         try:
             proc = subprocess.run(
-                [exe, str(_OCR_WORKER), str(image_path)],
+                cmd,
                 capture_output=True,
                 # 显式 UTF-8：worker 已 reconfigure 为 UTF-8；不能用 text=True（那样按 locale
                 # 解码，中文 Windows = GBK，中文 OCR 文本会乱码）。

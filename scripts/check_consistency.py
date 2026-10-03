@@ -442,6 +442,8 @@ def check_installer_scope() -> None:
         "requirements-dev.txt": "开发/CI 依赖，不进生产运行树",
         "requirements-ocr.txt": "OCR 栈不进运行树，必须独立 venv（该文件开头有现行理由）",
         "requirements-package.txt": "只有打包机要（PyInstaller，见 ci.yml 的 windows-release）",
+        "requirements-package-ocr.txt": "只有打随包 OCR worker 时要（PyInstaller 装进 .venv-ocr，"
+        "见 scripts/build_ocr_worker.py；10-03 起装机版靠那份产物才有本地 OCR）",
     }
     unclassified = [
         p.name

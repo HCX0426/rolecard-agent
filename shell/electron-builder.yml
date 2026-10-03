@@ -30,6 +30,12 @@ extraResources:
   # `resources/rolecard-backend/rolecard-backend.exe`，由 main/index.ts 按 app.isPackaged 拼出来。
   - from: ../build/sidecar/rolecard-backend
     to: rolecard-backend
+  # 随包本地 OCR worker（scripts/build_ocr_worker.py 的产物，258 MB 未压缩）。
+  # 少了这一条不用怕：electron-builder 会**当场报找不到源**，而不是安静地打出一个
+  # "没有本地 OCR"的包 —— 那种包要到用户传第一张图才暴露（`default_ocr_python` 的旧注释
+  # 就是这么把"装机版没有 OCR"写成设计事实的）。
+  - from: ../build/ocrworker/ocr-worker
+    to: ocr-worker
 
 win:
   target:
