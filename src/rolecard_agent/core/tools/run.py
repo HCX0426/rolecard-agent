@@ -32,7 +32,6 @@ fs 工具只是读写文件；命令是**执行任意逻辑**（装包、跑脚�
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import signal
 import subprocess
@@ -47,6 +46,7 @@ from langchain_core.tools import BaseTool, tool
 
 from rolecard_agent.config import Settings
 from rolecard_agent.core.approvals import ApprovalNotFound, ApprovalService
+from rolecard_agent.core.audit import tool_audit as _audit
 from rolecard_agent.core.tools.errors import ToolExecutionError
 from rolecard_agent.core.workspace import make_dir_resolver, resolve_task_dir, resolve_within
 from rolecard_agent.storage.db import SqlConnection
@@ -74,9 +74,7 @@ def shutdown_approval_executor() -> None:
 def _resolve_within(root: Path, rel_path: str) -> Path:
     """cwd 的路径边界：委托给 `core/workspace.resolve_within`（唯一实现），
     只把异常换成命令工具的可读失败类型。"""
-    return resolve_within(
-        root, rel_path, error_cls=RunCommandError, what="在任务目录内执行命令"
-    )
+    return resolve_within(root, rel_path, error_cls=RunCommandError, what="在任务目录内执行命令")
 
 
 def _task_venv_bin(task_dir: Path) -> str | None:
@@ -148,9 +146,7 @@ def terminate_process_tree(proc: subprocess.Popen[str]) -> None:
             proc.kill()
 
 
-def execute_command(
-    command: str, cwd: Path, *, timeout_seconds: float
-) -> RunResult:
+def execute_command(command: str, cwd: Path, *, timeout_seconds: float) -> RunResult:
     """在任务目录内执行命令并捕获输出。超时/启动失败都返回可读结果，不抛异常。
 
     用 Popen + communicate(timeout) 而不是 subprocess.run：run() 在超时时只 kill 父
@@ -208,26 +204,6 @@ def execute_command(
     )
 
 
-def _audit(
-    conn: SqlConnection | None,
-    action: str,
-    target: str,
-    detail: dict[str, object] | None = None,
-) -> None:
-    if conn is None:
-        return
-    conn.execute(
-        "INSERT INTO audit_log (actor, action, target, detail_json) VALUES (?, ?, ?, ?)",
-        (
-            "agent",
-            action,
-            target,
-            None if detail is None else json.dumps(detail, ensure_ascii=False),
-        ),
-    )
-    conn.commit()
-
-
 def run_approval_execution(
     approval_id: int,
     *,
@@ -261,9 +237,7 @@ def run_approval_execution(
                 cwd = _resolve_within(cwd, row["cwd"])
             except RunCommandError:
                 cwd = resolve_task_dir(settings, conn)
-        result = execute_command(
-            row["command"], cwd, timeout_seconds=settings.tool_timeout_seconds
-        )
+        result = execute_command(row["command"], cwd, timeout_seconds=settings.tool_timeout_seconds)
         _audit(
             conn,
             "run_command",
@@ -288,9 +262,7 @@ def run_approval_execution(
         _finish_terminal_error(approvals, approval_id, exc)
 
 
-def _finish_terminal_error(
-    approvals: ApprovalService, approval_id: int, exc: Exception
-) -> None:
+def _finish_terminal_error(approvals: ApprovalService, approval_id: int, exc: Exception) -> None:
     """把后台执行的失败回填成终态（`R102-47`）：行进 done，result 里带 error。
 
     连这条回填也失败（比如同一把写锁还没放）就只剩 stderr 一行日志 —— 此时行仍停在
@@ -321,8 +293,7 @@ def _pending_or_result(command: str, svc: ApprovalService) -> str | None:
         return None
     if status == "pending":
         return (
-            f"命令已在等待审批（#{row['id']}）：{command}\n"
-            "批准后我会执行，并把结果带回任务目录。"
+            f"命令已在等待审批（#{row['id']}）：{command}\n批准后我会执行，并把结果带回任务目录。"
         )
     if status == "rejected":
         return f"命令已被拒绝（#{row['id']}）：{command}\n请换一种做法，或由操作员重新提交审批。"

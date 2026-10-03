@@ -21,6 +21,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.config import Settings
 from rolecard_agent.core.approvals import ApprovalService
+from rolecard_agent.core.audit import AuditTrail
 from rolecard_agent.core.bootstrap import Runtime
 from rolecard_agent.core.domain_service import DomainQueryService
 from rolecard_agent.core.identity import resolve_identity
@@ -241,9 +242,7 @@ class AppContext:
         if self._user_id is None:
             actor = self.actor
             known = None if actor is None or actor.is_anonymous else actor.id
-            self._user_id = resolve_identity(
-                self.conn, known, fallback=self.runtime.identity
-            )
+            self._user_id = resolve_identity(self.conn, known, fallback=self.runtime.identity)
         return self._user_id
 
     @property
@@ -264,6 +263,11 @@ class AppContext:
     @property
     def roles(self) -> RoleCardService:
         return self.runtime.roles
+
+    @property
+    def audit(self) -> AuditTrail:
+        """审计咽喉（`R102-07`）：写审计不再借 `ctx.roles.audit` —— 那条链上没有一件是角色卡。"""
+        return self.runtime.audit
 
     @property
     def role_cards(self) -> RoleCards:

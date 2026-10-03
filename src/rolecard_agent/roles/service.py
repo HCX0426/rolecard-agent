@@ -15,6 +15,7 @@ import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from rolecard_agent.core.audit import AuditTrail
 from rolecard_agent.roles.models import RoleCard, RoleCardCreate, RoleCardUpdate
 from rolecard_agent.roles.seed import BUILTIN_ROLES, DOMAIN_SEED_ROLES
 from rolecard_agent.storage.db import SqlConnection
@@ -105,8 +106,7 @@ class RoleCards:
 
     def list_roles(self) -> list[RoleCard]:
         rows = self.conn.execute(
-            f"SELECT {_COLUMNS} FROM role_card WHERE user_id = ? "
-            "ORDER BY is_builtin DESC, role_id",
+            f"SELECT {_COLUMNS} FROM role_card WHERE user_id = ? ORDER BY is_builtin DESC, role_id",
             (self.user_id,),
         ).fetchall()
         return [_row_to_model(r) for r in rows]
@@ -235,6 +235,9 @@ class RoleCardService:
 
     def __init__(self, conn: SqlConnection) -> None:
         self._conn = conn
+        #: 审计咽喉是 `core/audit.AuditTrail`（`R102-07`）。从前这里躺着全仓第五份
+        #: `INSERT INTO audit_log`，于是 api 侧 55 处写审计都得先取角色卡服务。
+        self._audit = AuditTrail(conn)
 
     def scoped(self, user_id: str) -> RoleCards:
         """换一个主人：`ctx.current_user()`（这次请求）或 `runtime.identity`（这台实例）。"""
@@ -370,7 +373,9 @@ class RoleCardService:
             # 同 `update`：0 行的 UPDATE 也开了写事务，抛之前先结束它（`R102-42`）。
             self._conn.rollback()
             raise RoleNotFound(f"thread not found: {thread_id}")
-        self.audit(actor=actor, action="switch_role", target=thread_id, detail={"role_id": role_id})
+        self._audit.log(
+            actor=actor, action="switch_role", target=thread_id, detail={"role_id": role_id}
+        )
         self._conn.commit()
 
     def current_thread_role(self, thread_id: str) -> str:
@@ -381,24 +386,5 @@ class RoleCardService:
             raise RoleNotFound(f"thread not found: {thread_id}")
         return str(row["current_role_id"])
 
-    # -- audit ---------------------------------------------------------------
-
-    def audit(
-        self,
-        *,
-        actor: str,
-        action: str,
-        target: str | None = None,
-        detail: dict[str, object] | None = None,
-    ) -> None:
-        """Append to `audit_log`. Required by US-3 for role switches and plugin toggles."""
-        self._conn.execute(
-            "INSERT INTO audit_log (actor, action, target, detail_json) VALUES (?, ?, ?, ?)",
-            (
-                actor,
-                action,
-                target,
-                None if detail is None else json.dumps(detail, ensure_ascii=False),
-            ),
-        )
-        self._conn.commit()
+    # `audit()` 这个名字从前住在这里，而它做的事与角色卡无关（`R102-07`）：
+    # 咽喉搬到 `core/audit.py`，端点侧写审计走 `ctx.audit.log(...)`。

@@ -205,9 +205,7 @@ class ImportBody(BaseModel):
     confirm_replace: bool = False
 
 
-def _clear_for_replace(
-    conn: Any, *, user_id: str, kinds: list[str], graph: Any
-) -> dict[str, int]:
+def _clear_for_replace(conn: Any, *, user_id: str, kinds: list[str], graph: Any) -> dict[str, int]:
     """整份替换的前半：把这个身份名下的该类条目清掉（**只清选了的类**）。
 
     会话走 `storage.db.delete_thread_everywhere` 级联**真删**（2026-10-02 拍板）——
@@ -287,7 +285,7 @@ def post_import(
         items=body.items,
     )
     # 审计只记结构：几类各写了多少、清了多少。**绝不记载荷**（那里面是对话原文与记忆）。
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="sync_import",
         target="cloud-import",
@@ -321,9 +319,16 @@ class ApplyBody(TargetBody):
     resolutions: dict[str, str] = Field(default_factory=dict)
 
 
-def _push(ctx: AppContext, *, request: Request, base: str, user: str, secret: str,
-          items: list[dict[str, Any]],
-          clear_kinds: list[str] | None = None) -> dict[str, Any]:
+def _push(
+    ctx: AppContext,
+    *,
+    request: Request,
+    base: str,
+    user: str,
+    secret: str,
+    items: list[dict[str, Any]],
+    clear_kinds: list[str] | None = None,
+) -> dict[str, Any]:
     """把选好的载荷推给**对面**的 import 端点。凭据只在这次请求里活着。"""
     if not items and not clear_kinds:
         return {"written": {}, "skipped": {}, "errors": []}
@@ -331,8 +336,11 @@ def _push(ctx: AppContext, *, request: Request, base: str, user: str, secret: st
     try:
         res = outbound.post(
             f"{base}/api/sync/import",
-            json={"items": items, "clear_kinds": clear_kinds or [],
-                  "confirm_replace": bool(clear_kinds)},
+            json={
+                "items": items,
+                "clear_kinds": clear_kinds or [],
+                "confirm_replace": bool(clear_kinds),
+            },
             headers={"Authorization": basic_header(user, secret)},
             timeout=120.0,
         )
@@ -369,15 +377,11 @@ def _fetch_remote_payloads(
             timeout=120.0,
         )
     except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=502, detail=f"从 {base} 取数据时断了：{exc}"
-        ) from exc
+        raise HTTPException(status_code=502, detail=f"从 {base} 取数据时断了：{exc}") from exc
     if res.status_code in (401, 403):
         raise HTTPException(status_code=401, detail="对面拒了这组凭据（账号或密码不对）。")
     if res.status_code >= 400:
-        raise HTTPException(
-            status_code=502, detail=f"对面不肯交出数据（HTTP {res.status_code}）。"
-        )
+        raise HTTPException(status_code=502, detail=f"对面不肯交出数据（HTTP {res.status_code}）。")
     body: dict[str, Any] = res.json()
     rows = body.get("items")
     if not isinstance(rows, list):
@@ -438,9 +442,7 @@ def post_apply(
     theirs, _ = _remote_inventory(body, request=request, ctx=ctx)
     result = sync_lib.plan(mine, theirs, skipped=skipped)
     selected, clear = _select(result, mine, kinds=kinds, mode=mode, resolutions=body.resolutions)
-    items = [
-        {"kind": item.kind, "ident": item.ident, "payload": item.payload} for item in selected
-    ]
+    items = [{"kind": item.kind, "ident": item.ident, "payload": item.payload} for item in selected]
     base = _guard_target(request, ctx, body.base_url)
     written: dict[str, Any] = _push(
         ctx,
@@ -454,7 +456,7 @@ def post_apply(
     remote_errors = written.get("errors")
     error_count = len(remote_errors) if isinstance(remote_errors, list) else 0
     # 审计只记**结构**：几类各推了多少、什么模式。对话原文与记忆文本一条都不落。
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="sync_apply",
         target=f"{base} · {body.user}",
@@ -520,7 +522,7 @@ def post_export(
     by_kind: dict[str, int] = {}
     for row in out:
         by_kind[str(row["kind"])] = by_kind.get(str(row["kind"]), 0) + 1
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="sync_export",
         target="cloud-export",
@@ -598,12 +600,16 @@ def post_pull(
         settings=ctx.app_state["effective"],
         items=rows,
     )
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="sync_pull",
         target=f"{body.base_url} · {body.user}",
-        detail={"kinds": kinds, "pulled": len(rows), "written": applied["written"],
-                "errors": len(applied["errors"])},
+        detail={
+            "kinds": kinds,
+            "pulled": len(rows),
+            "written": applied["written"],
+            "errors": len(applied["errors"]),
+        },
     )
     return {"pulled": len(rows), "local": applied, "conflicts_left": len(result.conflicts)}
 
@@ -663,12 +669,16 @@ def post_reconcile(
         settings=ctx.app_state["effective"],
         items=rows,
     )
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="sync_reconcile",
         target=f"{base} · {body.user}",
-        detail={"pushed": len(push), "pulled": len(rows), "left": len(human),
-                "written": {"remote": remote_out.get("written"), "local": local_out["written"]}},
+        detail={
+            "pushed": len(push),
+            "pulled": len(rows),
+            "left": len(human),
+            "written": {"remote": remote_out.get("written"), "local": local_out["written"]},
+        },
     )
     return {
         "pushed": len(push),
@@ -682,9 +692,12 @@ def post_reconcile(
             "local": local_out["errors"],
         },
         "left_for_human": [
-            {"kind": c.kind, "ident": c.ident,
-             "mine": {"at": c.mine.at, "preview": c.mine.preview},
-             "theirs": {"at": c.theirs.get("at", ""), "preview": c.theirs.get("preview", "")}}
+            {
+                "kind": c.kind,
+                "ident": c.ident,
+                "mine": {"at": c.mine.at, "preview": c.mine.preview},
+                "theirs": {"at": c.theirs.get("at", ""), "preview": c.theirs.get("preview", "")},
+            }
             for c in human
         ],
     }

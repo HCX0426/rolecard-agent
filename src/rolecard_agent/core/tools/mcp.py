@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
-import json
 import logging
 from typing import Any, cast
 
@@ -28,6 +27,7 @@ from langchain_core.tools import BaseTool
 from pydantic import PrivateAttr
 
 from rolecard_agent.config import McpServerConfig
+from rolecard_agent.core.audit import AGENT_ACTOR, AuditTrail
 
 logger = logging.getLogger(__name__)
 
@@ -108,19 +108,15 @@ class AuditedMcpTool(BaseTool):
         self._server_id = server_id
 
     def _audit(self, phase: str, detail: dict[str, Any]) -> None:
-        if self._conn is None:
-            return
+        # 这一族动作名带 server/tool 变量，所以它不在 `AUDIT_ACTIONS` 里，而在
+        # `DYNAMIC_ACTION_PREFIXES`（`mcp:`）那一档（`R102-14`）。
         try:
-            self._conn.execute(
-                "INSERT INTO audit_log (actor, action, target, detail_json) VALUES (?, ?, ?, ?)",
-                (
-                    "agent",
-                    f"mcp:{self.name}",
-                    f"mcp:{self._server_id}",
-                    json.dumps({"phase": phase, **detail}, default=str),
-                ),
+            AuditTrail(self._conn).log(
+                actor=AGENT_ACTOR,
+                action=f"mcp:{self.name}",
+                target=f"mcp:{self._server_id}",
+                detail={"phase": phase, **detail},
             )
-            self._conn.commit()
         except Exception as exc:  # noqa: BLE001 - 审计失败绝不应影响工具结果
             logger.warning("mcp audit write failed for %s: %s", self.name, exc)
 

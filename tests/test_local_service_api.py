@@ -60,19 +60,25 @@ _BROKEN = Settings(
 
 
 @dataclass
-class _Roles:
+class _Trail:
+    """`core.audit.AuditTrail` 的替身：记下每一发留痕，不碰库。"""
+
     calls: list[dict[str, Any]] = field(default_factory=list)
 
-    def audit(self, **kwargs: Any) -> None:
+    def log(self, **kwargs: Any) -> None:
         self.calls.append(kwargs)
 
 
 @dataclass
 class _Ctx:
-    """端点只用到 `settings` 与 `roles.audit` —— 注入假上下文，避免真装配依赖 .env。"""
+    """端点只用到 `settings` 与 `audit.log` —— 注入假上下文，避免真装配依赖 .env。
+
+    从前这个替身叫 `_Roles`、审计挂在它下面（与生产同形，`R102-07`），改名之后它长得
+    就是它真正的样子：审计是审计，不是角色卡。
+    """
 
     settings: Settings
-    roles: _Roles = field(default_factory=_Roles)
+    audit: _Trail = field(default_factory=_Trail)
 
 
 def _client(
@@ -92,7 +98,7 @@ def _offline(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(svc, "ollama_loaded", lambda _b: [])
     monkeypatch.setattr(svc, "ollama_reachable", lambda _b: False)
     monkeypatch.setattr(svc, "ollama_unload", lambda _b, _m: False)
-    monkeypatch.setattr(svc, "ollama_keep", lambda _b, _m, _k = -1, **_kw: False)
+    monkeypatch.setattr(svc, "ollama_keep", lambda _b, _m, _k=-1, **_kw: False)
 
 
 # -- 状态 --------------------------------------------------------------------------
@@ -205,9 +211,7 @@ def test_ipv6_loopback_is_allowed(tmp_path: Path) -> None:
 # -- 常驻 / 预热 -------------------------------------------------------------------
 
 
-def test_pin_passes_the_configured_num_ctx(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_pin_passes_the_configured_num_ctx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """常驻必须把后端配置的 num_ctx 透传给 Ollama。
 
     漏传的后果不是"小一点"而是**多一次冷加载**：预热把模型钉在默认 4096，第一条真实
@@ -226,7 +230,7 @@ def test_pin_passes_the_configured_num_ctx(
     assert seen["model"] == "qwen3-vl:8b" and seen["keep_alive"] == -1
     assert seen["num_ctx"] is None  # 后端没配窗口就别硬塞一个数
     assert res.json()["model"] == "qwen3-vl:8b"
-    assert ctx.roles.calls[-1]["action"] == "local_service_pin"
+    assert ctx.audit.calls[-1]["action"] == "local_service_pin"
 
     # 后端把窗口抬到 8192 后，探针必须跟着改口径。
     with_num_ctx = _LOCAL.model_copy(deep=True)
@@ -234,11 +238,11 @@ def test_pin_passes_the_configured_num_ctx(
     c2, ctx2 = _client(tmp_path, with_num_ctx)
     assert c2.post("/api/local-service/pin", json={}).status_code == 200
     assert seen["num_ctx"] == 8192
-    assert ctx2.roles.calls[-1]["detail"]["num_ctx"] == 8192
+    assert ctx2.audit.calls[-1]["detail"]["num_ctx"] == 8192
 
 
 def test_pin_names_the_model_it_loaded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(svc, "ollama_keep", lambda _b, _m, _k = -1, **_kw: True)
+    monkeypatch.setattr(svc, "ollama_keep", lambda _b, _m, _k=-1, **_kw: True)
     c, _ = _client(tmp_path)
     res = c.post("/api/local-service/pin", json={"model": "other:tag"})
     assert res.status_code == 200 and res.json()["model"] == "other:tag"
@@ -250,7 +254,7 @@ def test_pin_failure_is_a_502_not_a_quiet_success(tmp_path: Path) -> None:
     res = c.post("/api/local-service/pin", json={})
     assert res.status_code == 502, res.text
     assert "常驻失败" in res.json()["detail"]
-    assert ctx.roles.calls == []  # 没发生的动作不进审计
+    assert ctx.audit.calls == []  # 没发生的动作不进审计
 
 
 def test_pin_is_refused_for_a_cloud_default_backend(tmp_path: Path) -> None:
@@ -274,7 +278,7 @@ def test_pin_reports_unconfigured_default_readable(tmp_path: Path) -> None:
 def test_unload_without_model_releases_every_resident_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """"把显存还回来"是默认诉求：不点名就卸掉全部驻留模型。"""
+    """ "把显存还回来"是默认诉求：不点名就卸掉全部驻留模型。"""
     monkeypatch.setattr(
         svc,
         "ollama_loaded",
@@ -290,7 +294,7 @@ def test_unload_without_model_releases_every_resident_one(
     assert res.status_code == 200, res.text
     assert res.json()["unloaded"] == ["a:1", "b:2"] and res.json()["skipped"] == []
     assert seen == ["a:1", "b:2"]
-    assert ctx.roles.calls[-1]["action"] == "local_service_unload"  # 影响主机的动作必须留痕
+    assert ctx.audit.calls[-1]["action"] == "local_service_unload"  # 影响主机的动作必须留痕
 
 
 def test_unload_names_only_the_requested_model(
@@ -322,7 +326,7 @@ def test_unload_is_a_noop_when_nothing_is_resident(tmp_path: Path) -> None:
     c, ctx = _client(tmp_path)
     res = c.post("/api/local-service/unload", json={})
     assert res.status_code == 200 and res.json()["unloaded"] == []
-    assert ctx.roles.calls == []
+    assert ctx.audit.calls == []
 
 
 def test_unload_reports_the_models_that_refused(

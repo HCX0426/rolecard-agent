@@ -29,7 +29,6 @@ from pathlib import Path
 from typing import Any
 
 from rolecard_agent.config import Settings
-from rolecard_agent.core.identity import resolve_instance_identity
 from rolecard_agent.core.model_settings import ModelSettingsService, client_style
 from rolecard_agent.core.probes import vision_model_ready
 from rolecard_agent.storage.db import SqlConnection
@@ -158,6 +157,15 @@ class ServiceEndpointService:
         #: 它必须构造期交出来，不能给默认值：给了默认值就等于允许"没答过这个问题"的服务对象。
         self._owner = owner
 
+    @property
+    def owner(self) -> str:
+        """**这台实例的主人**（构造期交出来的那一份）。
+
+        `R102-09`：读侧要问『这台机器的主人是谁』时不该再拿 `settings` 现推一遍 ——
+        现推与注入是两个真相，而构造期那份才是引用行解析凭据组时用着的那一份。
+        """
+        return self._owner
+
     # -- 播种 ------------------------------------------------------------------
 
     def seed_once(self) -> int:
@@ -170,9 +178,9 @@ class ServiceEndpointService:
         flag = self._conn.execute(
             "SELECT value FROM kernel_meta WHERE key = ?", (self.SEED_FLAG,)
         ).fetchone()
-        has_rows = self._conn.execute(
-            "SELECT 1 FROM service_endpoint LIMIT 1"
-        ).fetchone() is not None
+        has_rows = (
+            self._conn.execute("SELECT 1 FROM service_endpoint LIMIT 1").fetchone() is not None
+        )
         if flag is not None and has_rows:
             return 0
         # flag 在但表全空 = 表曾被整体重建（迁移）而 flag 未清 —— 自愈重播。
@@ -230,8 +238,14 @@ class ServiceEndpointService:
             if str(r["kind"]) == "local":
                 out.append(
                     EndpointConfig(
-                        id=eid, label=eid, kind="local", base_url=None, api_key=None,
-                        model=None, enabled=bool(r["enabled"]), builtin=bool(r["builtin"]),
+                        id=eid,
+                        label=eid,
+                        kind="local",
+                        base_url=None,
+                        api_key=None,
+                        model=None,
+                        enabled=bool(r["enabled"]),
+                        builtin=bool(r["builtin"]),
                     )
                 )
                 continue
@@ -240,9 +254,16 @@ class ServiceEndpointService:
             if b is None:
                 out.append(
                     EndpointConfig(
-                        id=eid, label=f"{eid}（引用已失效）", kind="cloud", base_url=None,
-                        api_key=None, model=None, enabled=bool(r["enabled"]),
-                        builtin=False, ref_backend=ref, stale=True,
+                        id=eid,
+                        label=f"{eid}（引用已失效）",
+                        kind="cloud",
+                        base_url=None,
+                        api_key=None,
+                        model=None,
+                        enabled=bool(r["enabled"]),
+                        builtin=False,
+                        ref_backend=ref,
+                        stale=True,
                     )
                 )
                 continue
@@ -256,8 +277,7 @@ class ServiceEndpointService:
             #     → 用后端模型名。这样一个对话后端可同时服务对话与视觉 OCR，无需重复建行。
             model = (
                 str(b["model"])
-                if (str(b.get("usage", "chat")) == key or default_model is None)
-                and b.get("model")
+                if (str(b.get("usage", "chat")) == key or default_model is None) and b.get("model")
                 else default_model
             )
             out.append(
@@ -314,15 +334,18 @@ class ServiceEndpointService:
             raise ValueError(f"模型 {ref!r} 不在模型页配置里 —— 请先在「模型」页新增。")
         if self._has_row(key, ref):
             raise ValueError(f"模型 {ref!r} 已经在这个顺序里了。")
-        order = max(
-            (
-                int(r["sort_order"])
-                for r in self._conn.execute(
-                    "SELECT sort_order FROM service_endpoint WHERE category = ?", (key,)
-                ).fetchall()
-            ),
-            default=-1,
-        ) + 1
+        order = (
+            max(
+                (
+                    int(r["sort_order"])
+                    for r in self._conn.execute(
+                        "SELECT sort_order FROM service_endpoint WHERE category = ?", (key,)
+                    ).fetchall()
+                ),
+                default=-1,
+            )
+            + 1
+        )
         self._conn.execute(
             "INSERT INTO service_endpoint "
             "(category, id, kind, ref_backend, enabled, sort_order, builtin) "
@@ -374,17 +397,18 @@ class ServiceEndpointService:
             raise KeyError(f"服务 {key} 下不存在端点 {eid!r}。")
         if bool(row["builtin"]):
             raise ValueError(f"端点 {eid!r} 是内置本地实现，不可删除（可停用）。")
-        self._conn.execute(
-            "DELETE FROM service_endpoint WHERE category = ? AND id = ?", (key, eid)
-        )
+        self._conn.execute("DELETE FROM service_endpoint WHERE category = ? AND id = ?", (key, eid))
         self._conn.commit()
 
     def reorder(self, key: str, order: list[str]) -> None:
         """全量写优先级：`order` 必须是该类服务全部行 id 的一个排列（大声拒绝部分序）。"""
         self._require_category(key)
-        existing = [str(r["id"]) for r in self._conn.execute(
-            "SELECT id FROM service_endpoint WHERE category = ? ORDER BY sort_order, id", (key,)
-        ).fetchall()]
+        existing = [
+            str(r["id"])
+            for r in self._conn.execute(
+                "SELECT id FROM service_endpoint WHERE category = ? ORDER BY sort_order, id", (key,)
+            ).fetchall()
+        ]
         if sorted(order) != sorted(existing):
             raise ValueError("优先级序列必须包含该服务的全部端点（且不重复）。")
         for i, eid in enumerate(order):
@@ -442,7 +466,11 @@ def endpoint_available(e: EndpointConfig, settings: Settings) -> tuple[bool, str
 
 
 def service_status_view(
-    conn: SqlConnection, settings: Settings, *, user_id: str | None = None
+    svc: ServiceEndpointService,
+    ms: ModelSettingsService,
+    settings: Settings,
+    *,
+    user_id: str | None = None,
 ) -> dict[str, Any]:
     """「服务」页签的状态视图（每类服务：端点引用、优先级、启停、可用性、当前生效项）。
 
@@ -454,9 +482,13 @@ def service_status_view(
     （呈现为失效），不是花他的 key。**模型推理那一节（chat 引用序列）跟着请求的主人走**：
     默认/回退链花谁的 key 由谁定，所以 B 打开服务页看到的是 B 的序列。`user_id` 缺省 =
     本机主人（单身份与旧调用点行为不变）。
+
+    两件服务都是**注入**进来的（`R102-09`）：从前这里每次调用现建一个
+    `ServiceEndpointService`（并用 `resolve_instance_identity(settings)` 现推主人），而调用方
+    把 `ctx` 传进来时手上已经有装配期那一份 —— 同一张表两条并行获取路径，新加状态时只会
+    有一条看见。视图现在只读注入的那一份。
     """
-    owner = resolve_instance_identity(settings)
-    svc = ServiceEndpointService(conn, owner=owner)
+    owner = svc.owner
     out: list[dict[str, Any]] = []
     for cat in SERVICE_CATEGORIES:
         all_rows = svc.rows(cat.key)
@@ -507,7 +539,6 @@ def service_status_view(
     # 谁的 key 由谁定。能力三类是本机主人的（设备级），模型推理不是 —— 两个身份各配自己的
     # 对话序列时，各看各的，换人打开服务页不会看到别人的默认。
     user = user_id or owner
-    ms = ModelSettingsService(conn)
     backends = ms.list_backends(user_id=user)
     default = ms.default_backend(user_id=user) or settings.model_default
     fallbacks = ms.list_fallbacks(user_id=user) or []
@@ -558,11 +589,15 @@ def service_status_view(
         )
     effective_backend = by_name.get(default)
     effective_kind = (
-        "local"
+        (
+            "local"
+            if effective_backend
+            and client_style(str(effective_backend.get("provider", ""))) == "native"
+            else "cloud"
+        )
         if effective_backend
-        and client_style(str(effective_backend.get("provider", ""))) == "native"
-        else "cloud"
-    ) if effective_backend else None
+        else None
+    )
     out.append(
         {
             "key": "models",

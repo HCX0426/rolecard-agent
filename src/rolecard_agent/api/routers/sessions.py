@@ -199,7 +199,7 @@ def create_session(
         (thread_id, ctx.current_user(), role_id, ctx.plugins.tool_epoch()),
     )
     ctx.conn.commit()
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id, action="create_session", target=thread_id, detail={"role_id": role_id}
     )
     return {"thread_id": thread_id, "role_id": role_id, "role_name": role.role_name}
@@ -227,8 +227,10 @@ def open_proactive_session(
     thread_id = ensure_proactive_thread(
         ctx.conn, role=role, user_id=ctx.current_user(), tool_epoch=ctx.plugins.tool_epoch()
     )
-    ctx.roles.audit(
-        actor=actor.id, action="open_proactive_session", target=thread_id,
+    ctx.audit.log(
+        actor=actor.id,
+        action="open_proactive_session",
+        target=thread_id,
         detail={"role_id": role.role_id},
     )
     return {"thread_id": thread_id, "role_id": role.role_id, "role_name": role.role_name}
@@ -301,8 +303,8 @@ def patch_session(
     if body.role_id:
         try:
             ctx.roles.set_thread_role(
-            thread_id, body.role_id, user_id=ctx.current_user(), actor=actor.id
-        )
+                thread_id, body.role_id, user_id=ctx.current_user(), actor=actor.id
+            )
         except RoleError as exc:
             raise role_error_to_http(exc) from exc  # 角色/线程不存在都是 404
 
@@ -327,7 +329,7 @@ def patch_session(
         )
         touch_thread(conn, thread_id)
         conn.commit()
-        ctx.roles.audit(
+        ctx.audit.log(
             actor=actor.id,
             action="set_session_model",
             target=thread_id,
@@ -348,7 +350,7 @@ def patch_session(
         )
         touch_thread(conn, thread_id)
         conn.commit()
-        ctx.roles.audit(
+        ctx.audit.log(
             actor=actor.id,
             action="set_session_mode",
             target=thread_id,
@@ -395,7 +397,7 @@ def patch_session(
 # checkpointer 读全量历史）。async 版本会把这些阻塞**放到事件循环上**，一次模型等待
 # 就能卡住其它会话的 SSE。同步路由由 Starlette 放进线程池执行，而返回的
 # StreamingResponse 内部是 async 生成器 —— 流式并不要求路由本身是 async
-#（审查报告 P2：异步路由内的同步阻塞）。
+# （审查报告 P2：异步路由内的同步阻塞）。
 def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> StreamingResponse:
     """SSE 流式对话。线程必须已存在（POST /api/session 创建）。
 
@@ -478,9 +480,11 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
                 ),
             ),
             after=(
-                lambda: _distill_after_turn(ctx, thread_id=body.thread_id, role_id=role_id)
-                if ctx.settings.memory_enabled and ctx.settings.memory_extract_auto
-                else None
+                lambda: (
+                    _distill_after_turn(ctx, thread_id=body.thread_id, role_id=role_id)
+                    if ctx.settings.memory_enabled and ctx.settings.memory_extract_auto
+                    else None
+                )
             ),
         ),
         media_type="text/event-stream",
@@ -512,7 +516,7 @@ def stop_turn(
     """
     get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
     request_stop(thread_id)
-    ctx.roles.audit(actor=actor.id, action="stop_turn", target=thread_id, detail={})
+    ctx.audit.log(actor=actor.id, action="stop_turn", target=thread_id, detail={})
     return {"thread_id": thread_id, "requested": True}
 
 
@@ -691,9 +695,12 @@ def distill_session(
     # 两者相等，所以行为不变；变的是"聊了一阵再点一次"——那时不该把老事实换个说法再记一遍。
     pending = memory_distill.pending_messages(ctx.conn, thread_id=thread_id, messages=messages)
     if not pending:
-        return {"report": memory_distill.nothing_new(
-            ctx.conn, user_id=str(thread["user_id"]), bucket=role_id
-        ), "turns_since": 0}
+        return {
+            "report": memory_distill.nothing_new(
+                ctx.conn, user_id=str(thread["user_id"]), bucket=role_id
+            ),
+            "turns_since": 0,
+        }
     model, backend = _thread_model(ctx, thread, role_id)
     outcome = memory_distill.extract(
         ctx.conn,
@@ -708,7 +715,7 @@ def distill_session(
     if outcome["ok"]:
         memory_distill.mark_extracted(ctx.conn, thread_id=thread_id, message_count=len(messages))
     # 审计只记**结构与条数**，绝不记提取出来的内容（那是用户的事实）。
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="extract_memory",
         target=f"memory:{role_id}",
@@ -761,9 +768,7 @@ def _history_messages(ctx: AppContext, thread_id: str) -> tuple[dict, list[AnyMe
     # 所以步数上限在这里就必须带上（否则编辑重生成那条路仍是无上界的）。
     # agent 模式上限放大一倍（与 /api/chat 同一口径，见 core/graph.build_graph_config）。
     mode = resolve_agent_mode(thread["agent_mode"], ctx.app_state["effective"])
-    config = build_graph_config(
-        thread_id, ctx.app_state["effective"], agent_mode=mode == "agent"
-    )
+    config = build_graph_config(thread_id, ctx.app_state["effective"], agent_mode=mode == "agent")
     snapshot = graph.get_state(config)
     return config, list((snapshot.values or {}).get("messages") or [])
 
@@ -913,10 +918,8 @@ def inflight_payload(thread_id: str) -> dict[str, object] | None:
 
 
 @router.get("/api/session/{thread_id}/turn")
-def get_session_turn(
-    thread_id: str, ctx: AppContext = Depends(get_context)
-) -> dict[str, object]:
-    """"这一条此刻有没有人在说、说到哪儿了"——**只查进程内登记，不碰检查点**。
+def get_session_turn(thread_id: str, ctx: AppContext = Depends(get_context)) -> dict[str, object]:
+    """ "这一条此刻有没有人在说、说到哪儿了"——**只查进程内登记，不碰检查点**。
 
     为什么单独一个端点而不是让界面多打几次 `/messages?limit=1`：那一路每次都要
     `graph.get_state()` 把整份检查点快照反序列化回来（一条长会话的快照实测按 MB 计），
@@ -981,9 +984,7 @@ class PromptEnhanceBody(BaseModel):
 
 
 @router.post("/api/prompt/enhance")
-def enhance_prompt(
-    body: PromptEnhanceBody, ctx: AppContext = Depends(get_context)
-) -> object:
+def enhance_prompt(body: PromptEnhanceBody, ctx: AppContext = Depends(get_context)) -> object:
     """增强提示词：把草稿改写得更清晰具体（用户 2026-09-17 提出，照紧凑 IDE 的输入区观感）。
 
     用默认对话模型做一次纯改写调用——不建会话、不入历史。失败给可读 502，

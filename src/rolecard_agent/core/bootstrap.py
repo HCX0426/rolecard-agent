@@ -30,6 +30,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from rolecard_agent.config import Settings
 from rolecard_agent.core import mcp_store, runtime_settings
 from rolecard_agent.core.approvals import ApprovalService, sweep_interrupted
+from rolecard_agent.core.audit import AuditTrail
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.domain_service import DomainQueryService
 from rolecard_agent.core.graph import build_graph_config, build_kernel, build_model
@@ -82,6 +83,8 @@ from rolecard_agent.storage.db import bootstrap as apply_schema
 class Assembly:
     conn: ThreadLocalConnection
     roles: RoleCardService
+    #: 审计写入的唯一咽喉（`R102-07`）：端点侧 `ctx.audit.log(...)` 走的就是这一件。
+    audit: AuditTrail
     plugins: PluginService
     ingestion: IngestionService
     #: 域查询服务（v1 单域）：由宿主注入，本模块不认识它是哪个域。
@@ -240,6 +243,10 @@ class Runtime:
         return self.assembly.roles
 
     @property
+    def audit(self) -> AuditTrail:
+        return self.assembly.audit
+
+    @property
     def plugins(self) -> PluginService:
         return self.assembly.plugins
 
@@ -366,9 +373,7 @@ class Runtime:
         text = memory_for_turn(self.conn, self.effective, role_id, user_id=owner)
         if not role_id or thread_id == proactive_thread_id(role_id, user_id=owner):
             return text
-        echo = recent_reachout_lines(
-            self.conn, role_id, user_id=owner, limit=CHAT_ECHO_LIMIT
-        )
+        echo = recent_reachout_lines(self.conn, role_id, user_id=owner, limit=CHAT_ECHO_LIMIT)
         if not echo:
             return text
         return f"{text}\n\n{echo}" if text else echo
@@ -496,7 +501,7 @@ class Runtime:
                     proactive_thread_id(role_id, user_id=self.identity), self.effective
                 )
             )
-            for m in ((snap.values or {}).get("messages") or []):
+            for m in (snap.values or {}).get("messages") or []:
                 if isinstance(m, ToolMessage):
                     continue
                 text = text_of(m).strip()
@@ -665,6 +670,7 @@ def build_runtime(
             file=_sys.stderr,
             flush=True,
         )
+    audit = AuditTrail(conn)
     roles = RoleCardService(conn)
     roles.seed_builtins(user_id=owner)
     roles.seed_domain_roles(user_id=owner)
@@ -689,6 +695,7 @@ def build_runtime(
     assembly = Assembly(
         conn=conn,
         roles=roles,
+        audit=audit,
         plugins=plugins,
         ingestion=ingestion,
         query=query_factory(conn),

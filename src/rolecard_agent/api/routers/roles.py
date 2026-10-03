@@ -53,9 +53,7 @@ def _validate_role_model(ctx: AppContext, model_name: str | None) -> None:
     """
     if not model_name:
         return
-    effective = ctx.model_settings.effective_settings(
-        ctx.settings, user_id=ctx.current_user()
-    )
+    effective = ctx.model_settings.effective_settings(ctx.settings, user_id=ctx.current_user())
     if model_name not in effective.model_backends:
         known = ", ".join(sorted(effective.model_backends))
         raise HTTPException(status_code=400, detail=f"未知模型 {model_name!r}；可用：{known}")
@@ -78,7 +76,7 @@ def create_role(
         created = ctx.role_cards.create(data)
     except RoleAlreadyExists as exc:
         raise role_error_to_http(exc) from exc
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="create_role",
         target=created.role_id,
@@ -108,7 +106,7 @@ def update_role(
         raise role_error_to_http(exc) from exc
     changed = sorted(data.model_fields_set)
     if changed:  # 空 PATCH 是"什么都没改"，不值得污染审计
-        ctx.roles.audit(
+        ctx.audit.log(
             actor=actor.id,
             action="update_role",
             target=role_id,
@@ -127,7 +125,7 @@ def delete_role(
         ctx.role_cards.delete(role_id)
     except (RoleNotFound, BuiltinRoleProtected) as exc:
         raise role_error_to_http(exc) from exc
-    ctx.roles.audit(actor=actor.id, action="delete_role", target=role_id)
+    ctx.audit.log(actor=actor.id, action="delete_role", target=role_id)
 
 
 @router.get("/api/roles/{role_id}/timeline")

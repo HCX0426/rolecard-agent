@@ -52,9 +52,7 @@ def _domain_service(ctx: AppContext) -> DomainDataService:
 
 
 @router.get("/api/domains/{domain}/records")
-def list_domain_records(
-    domain: str, ctx: AppContext = Depends(get_context)
-) -> list[object]:
+def list_domain_records(domain: str, ctx: AppContext = Depends(get_context)) -> list[object]:
     """列出某域的通用记录（归属演示用户）。"""
     try:
         return _domain_service(ctx).list_records(domain, ctx.current_user())  # type: ignore[return-value]
@@ -82,7 +80,7 @@ def create_domain_record(
         )
     except ValueError as exc:
         raise value_error_to_http(exc) from exc
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="create_domain_record",
         target=f"{domain}/{row['id']}",
@@ -107,7 +105,7 @@ def patch_domain_record(
         raise value_error_to_http(exc) from exc
     except KeyError:
         raise HTTPException(status_code=404, detail="记录不存在") from None
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="update_domain_record",
         target=f"{domain}/{record_id}",
@@ -129,7 +127,7 @@ def delete_domain_record(
         raise value_error_to_http(exc) from exc
     except KeyError:
         raise HTTPException(status_code=404, detail="记录不存在") from None
-    ctx.roles.audit(actor=actor.id, action="delete_domain_record", target=f"{domain}/{record_id}")
+    ctx.audit.log(actor=actor.id, action="delete_domain_record", target=f"{domain}/{record_id}")
 
 
 __all__ = ["router"]

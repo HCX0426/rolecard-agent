@@ -157,7 +157,7 @@ def create_record_report(
         )
     except HealthInvalidReport as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="create_report",
         target=report_id,
@@ -268,7 +268,7 @@ def _extract_and_store(*, body: ExtractRequest, ctx: AppContext, actor: Actor) -
     except ExtractError as exc:
         # 审计详情里的异常文本会被 `/api/audit` 原样回给前端，而模型调用的异常经常带着
         # 内部 base_url —— 先脱敏再落库（审查报告 A5 / M11）。
-        ctx.roles.audit(
+        ctx.audit.log(
             actor=actor.id,
             action="extract_report_failed",
             target=body.task_id,
@@ -299,7 +299,7 @@ def _extract_and_store(*, body: ExtractRequest, ctx: AppContext, actor: Actor) -
             )
         except HealthInvalidReport as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        ctx.roles.audit(
+        ctx.audit.log(
             actor=actor.id,
             action="extract_report",
             target=report_id,
@@ -355,7 +355,7 @@ def patch_record_index(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except HealthDataError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="update_index",
         target=index_id,
@@ -372,7 +372,7 @@ def remove_record_index(
         ctx.health.delete_index(user_id=ctx.current_user(), index_id=index_id)
     except HealthNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    ctx.roles.audit(actor=actor.id, action="delete_index", target=index_id)
+    ctx.audit.log(actor=actor.id, action="delete_index", target=index_id)
 
 
 @router.delete("/api/records/report/{report_id}", status_code=204)
@@ -397,7 +397,7 @@ def remove_record_report(
         ctx.health.delete_report(user_id=ctx.current_user(), report_id=report_id)
     except HealthNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="delete_report",
         target=report_id,

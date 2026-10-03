@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 
+from rolecard_agent.core.audit import AuditTrail
 from rolecard_agent.storage.db import SqlConnection
 
 TOOL_EPOCH_KEY = "tool_epoch"
@@ -57,11 +58,11 @@ def seed_plugin_rows(conn: SqlConnection, domains: Sequence[str]) -> None:
 
 
 class PluginService:
-    def __init__(
-        self, conn: SqlConnection, *, known_plugins: Sequence[str] | None = None
-    ) -> None:
+    def __init__(self, conn: SqlConnection, *, known_plugins: Sequence[str] | None = None) -> None:
         self._conn = conn
         self._known = tuple(known_plugins) if known_plugins is not None else None
+        #: 审计咽喉（`R102-07`）：这里不再自带一份 INSERT。
+        self._trail = AuditTrail(conn)
 
     # -- version ---------------------------------------------------------------
 
@@ -193,12 +194,4 @@ class PluginService:
     def _audit(
         self, actor: str, action: str, target: str, detail: dict[str, object] | None = None
     ) -> None:
-        self._conn.execute(
-            "INSERT INTO audit_log (actor, action, target, detail_json) VALUES (?, ?, ?, ?)",
-            (
-                actor,
-                action,
-                target,
-                None if detail is None else json.dumps(detail, ensure_ascii=False),
-            ),
-        )
+        self._trail.log(actor=actor, action=action, target=target, detail=detail)

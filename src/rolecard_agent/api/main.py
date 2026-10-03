@@ -50,6 +50,7 @@ from rolecard_agent.api.auth import (
     roles_declared,
     unauthorized_response,
 )
+from rolecard_agent.api.body_cap import BodyCapMiddleware
 from rolecard_agent.api.deps import AppContext
 from rolecard_agent.api.ratelimit import Limiter, bucket_key, is_limited, paths_of
 from rolecard_agent.api.routers import approvals as approvals_router
@@ -206,9 +207,7 @@ def create_app(
         finally:
             runtime.shutdown()
 
-    app = FastAPI(
-        title="rolecard-agent 管理控制台", version=API_VERSION, lifespan=_lifespan
-    )
+    app = FastAPI(title="rolecard-agent 管理控制台", version=API_VERSION, lifespan=_lifespan)
     app.state.ctx = AppContext(runtime=runtime)
 
     # 写检查点等不到会话锁 ⇒ 409 + 一句人话（`R28-02`/`R28-03` 的出口）。
@@ -220,9 +219,7 @@ def create_app(
     async def _thread_busy(_: Request, exc: ThreadBusy) -> JSONResponse:
         return JSONResponse(
             status_code=409,
-            content={
-                "detail": "这一轮还在跑 —— 先按「停止」或等它说完，再改这段历史。"
-            },
+            content={"detail": "这一轮还在跑 —— 先按「停止」或等它说完，再改这段历史。"},
         )
 
     # C1：端点按职责分包，全部端点已迁出本文件。
@@ -378,6 +375,12 @@ def create_app(
             allow_headers=["Authorization", "Content-Type", "X-API-Key"],
             allow_methods=["*"],
         )
+
+    # 请求体上限（`R102-45` 家族的收尾项，10-03 拍板：64 MiB + 413）。注册在最后 =
+    # 包在所有中间件外面：超限的请求不该先被认证、被 CORS 预检、被任何一段读 body 的代码
+    # 碰上 —— 那正是「一条大 body 就是一次无界的内存承诺」要拦的位置。
+    # 判据见 `api/body_cap.py`（两道拦法：声明的长度 + 流进来的计数）。
+    app.add_middleware(BodyCapMiddleware, limit=env_settings.max_body_bytes)
 
     @app.get("/api/health")
     def health() -> object:

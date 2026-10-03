@@ -62,7 +62,9 @@ def list_services(ctx: AppContext = Depends(get_context)) -> object:
     """
     from rolecard_agent.core.services import service_status_view
 
-    return service_status_view(ctx.conn, ctx.settings, user_id=ctx.current_user())
+    return service_status_view(
+        ctx.services, ctx.model_settings, ctx.settings, user_id=ctx.current_user()
+    )
 
 
 @router.post("/api/services/{key}/endpoints", status_code=201)
@@ -79,7 +81,7 @@ def add_service_endpoint(
         raise HTTPException(status_code=404, detail=f"未知服务类别：{key}") from None
     except ValueError as exc:
         raise value_error_to_http(exc) from exc
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="add_service_endpoint",
         target=f"{key}/{body.ref_backend}",
@@ -104,7 +106,7 @@ def patch_service_endpoint(
         raise HTTPException(status_code=404, detail=f"未知服务类别：{key}") from None
     except ValueError as exc:
         raise value_error_to_http(exc) from exc
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="update_service_endpoint",
         target=f"{key}/{eid}",
@@ -128,7 +130,7 @@ def delete_service_endpoint(
         raise HTTPException(status_code=404, detail=f"未知服务类别：{key}") from None
     except ValueError as exc:
         raise value_error_to_http(exc) from exc
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="remove_service_endpoint",
         target=f"{key}/{eid}",
@@ -157,9 +159,7 @@ def put_service_order(
         # 写进去的序列也归这个人（多租户 B1b，方案 A 收了 §4.1 的尾巴）：chat 引用行按人，
         # A 存对话序列不会抹掉 B 的，B 的默认/回退各看各的。
         owner = ctx.current_user()
-        known = {
-            str(row["name"]) for row in ctx.model_settings.list_backends(user_id=owner)
-        }
+        known = {str(row["name"]) for row in ctx.model_settings.list_backends(user_id=owner)}
         unknown = [n for n in body.order if n not in known]
         if not body.order:
             raise HTTPException(status_code=400, detail="优先级列表不能为空。")
@@ -174,7 +174,7 @@ def put_service_order(
             ctx.model_settings.save_chat_pool(body.order, user_id=owner)
         except Exception as exc:  # noqa: BLE001 - 服务层异常转可读 400
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        ctx.roles.audit(
+        ctx.audit.log(
             actor=actor.id,
             action="update_service_order",
             target=key,
@@ -189,7 +189,7 @@ def put_service_order(
         raise HTTPException(status_code=404, detail=f"未知服务类别：{key}") from None
     except ValueError as exc:
         raise value_error_to_http(exc) from exc
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="update_service_order",
         target=key,
@@ -220,9 +220,7 @@ def deep_check(ctx: AppContext = Depends(get_context)) -> object:
     is_ollama = client_style(backend.provider) == "native"
     probe_path = "/api/tags" if is_ollama else "/models"
     try:
-        headers = (
-            {"Authorization": f"Bearer {backend.api_key}"} if backend.api_key else {}
-        )
+        headers = {"Authorization": f"Bearer {backend.api_key}"} if backend.api_key else {}
         # 走 `core/outbound`：这一发可能带着**已存的 api_key**，且探的常是本机 Ollama。
         res = outbound.get(f"{base}{probe_path}", headers=headers, timeout=8.0)
         ollama["reachable"] = res.status_code == 200

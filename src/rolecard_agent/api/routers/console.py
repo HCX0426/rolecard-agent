@@ -78,7 +78,7 @@ def reset_knowledge_scope(
         ctx.knowledge.reset_scope(scope)
     except Exception as exc:  # noqa: BLE001 - 失败要可读，且**不能**写"已清空"的审计
         raise HTTPException(status_code=500, detail=f"重建作用域失败（{exc}）") from exc
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="reset_knowledge_scope",
         target=scope,
@@ -127,7 +127,7 @@ def cleanup_orphan_uploads(
     referenced = referenced_paths(ctx.ingestion.all_source_files())
     report = scan_orphans(ctx.settings.upload_dir, referenced)
     deleted, freed = remove_orphans(ctx.settings.upload_dir, report)
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="cleanup_orphan_uploads",
         target=str(ctx.settings.upload_dir),

@@ -152,7 +152,7 @@ def pin_local_model(
                 f"或模型 {model!r} 加载不了（多为显存不足）。"
             ),
         )
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="local_service_pin",
         target=model,
@@ -188,7 +188,7 @@ def unload_local_model(
             detail=f"释放失败：连不上本机 Ollama（{base}），或模型 {targets[0]!r} 卸不掉。",
         )
     # 审计只记"释放了哪个模型"，不记任何对话内容（与全局审计纪律一致）。
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="local_service_unload",
         target=base,

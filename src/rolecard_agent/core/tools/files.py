@@ -23,13 +23,13 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from pathlib import Path
 
 from langchain_core.tools import tool
 
 from rolecard_agent.config import Settings
+from rolecard_agent.core.audit import tool_audit as _audit
 from rolecard_agent.core.tools.errors import ToolExecutionError
 from rolecard_agent.core.workspace import make_dir_resolver, resolve_within
 from rolecard_agent.storage.db import SqlConnection
@@ -44,34 +44,7 @@ class FsToolError(ToolExecutionError):
 def _resolve_within(root: Path, rel_path: str) -> Path:
     """fs 工具的路径边界：委托给 `core/workspace.resolve_within`（唯一实现），
     只把它抛出的异常换成文件工具的可读失败类型。"""
-    return resolve_within(
-        root, rel_path, error_cls=FsToolError, what="访问任务目录内的文件"
-    )
-
-
-def _audit(
-    conn: SqlConnection | None,
-    action: str,
-    target: str,
-    detail: dict[str, object] | None = None,
-) -> None:
-    """写审计（actor 固定 "agent"：模型触发的工具动作，与操作员的 operator 动作区分）。
-
-    与 roles.audit 同列结构；不传 conn = 跳过（测试/未接审计的宿主，fail-open 只影响
-    留痕、不影响权限）。
-    """
-    if conn is None:
-        return
-    conn.execute(
-        "INSERT INTO audit_log (actor, action, target, detail_json) VALUES (?, ?, ?, ?)",
-        (
-            "agent",
-            action,
-            target,
-            None if detail is None else json.dumps(detail, ensure_ascii=False),
-        ),
-    )
-    conn.commit()
+    return resolve_within(root, rel_path, error_cls=FsToolError, what="访问任务目录内的文件")
 
 
 def make_file_tools(

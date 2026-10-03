@@ -421,6 +421,11 @@ class Settings(BaseModel):
     # 三张只增表的 retention（`R102-29`；2026-10-02 拍板：分表定档）。0 = 该档永不清理
     # （旧行为）。清理在 bootstrap 里做、量回报给 schema-migrate 事件流（`R102-64`）；
     # agent_reachout 走 per-role `reachout_keep` 的既有机制（出厂默认改 200，只对新角色生效）。
+    # 请求体上限（10-03 拍板）：实测 20MB body 让后端工作集 +40.7MB、进程峰值 +60.7MB
+    # （≈3× 线性），而传输层原本没有任何上限 —— 一条 POST 就是一次无界的内存承诺。
+    # 64 MiB 是「正常整份同步与图片上传远够、又把最坏那一格钉住」的那一档；0 = 不设上限。
+    max_body_bytes: int = 64 * 1024 * 1024
+
     audit_log_retention_days: int = 90
     audit_log_max_rows: int = 10_000
     approval_done_retention_days: int = 30
@@ -555,6 +560,7 @@ class Settings(BaseModel):
             ("TAVILY_API_KEY", "tavily_api_key"),
             ("SAUCENAO_API_KEY", "saucenao_api_key"),
             ("CONTEXT_MAX_CHARS", "context_max_chars"),
+            ("MAX_BODY_BYTES", "max_body_bytes"),
             ("TOOL_TIMEOUT_SECONDS", "tool_timeout_seconds"),
             ("AGENT_MAX_STEPS", "agent_max_steps"),
             ("MEMORY_ENABLED", "memory_enabled"),

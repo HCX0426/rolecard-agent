@@ -66,7 +66,7 @@ def create_mcp_server(
         )
     except ValueError as exc:
         raise value_error_to_http(exc) from exc
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="add_mcp_server",
         target=f"mcp:{row['id']}",
@@ -96,7 +96,7 @@ def patch_mcp_server(
         raise HTTPException(status_code=404, detail=f"MCP server {server_id!r} 不存在。") from None
     except ValueError as exc:
         raise value_error_to_http(exc) from exc
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="update_mcp_server",
         target=f"mcp:{server_id}",
@@ -116,9 +116,7 @@ def delete_mcp_server(
         mcp_store.delete(ctx.conn, server_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"MCP server {server_id!r} 不存在。") from None
-    ctx.roles.audit(
-        actor=actor.id, action="remove_mcp_server", target=f"mcp:{server_id}", detail={}
-    )
+    ctx.audit.log(actor=actor.id, action="remove_mcp_server", target=f"mcp:{server_id}", detail={})
     ctx.rebuild_runtime()
 
 
@@ -143,7 +141,7 @@ def test_mcp_server(
         result["tools"] = [t.name for t in tools][:50]
     except Exception as exc:  # noqa: BLE001 - 连通性失败本身就是检测结果
         result["error"] = f"{type(exc).__name__}: {exc}"[:200]
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="test_mcp_server",
         target=f"mcp:{server_id}",

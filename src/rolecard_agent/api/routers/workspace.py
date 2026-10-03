@@ -56,7 +56,7 @@ def put_workspace_dir(
         saved = workspace.save_task_dir(ctx.conn, body.path)
     except ValueError as exc:
         raise value_error_to_http(exc) from exc
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="set_task_dir",
         target="workspace",
@@ -72,7 +72,7 @@ def delete_workspace_dir(
 ) -> object:
     """清除 DB 覆盖，回落 env WORKSPACE_DIR。"""
     workspace.clear_task_dir(ctx.conn)
-    ctx.roles.audit(actor=actor.id, action="clear_task_dir", target="workspace", detail={})
+    ctx.audit.log(actor=actor.id, action="clear_task_dir", target="workspace", detail={})
     return _payload(ctx)
 
 

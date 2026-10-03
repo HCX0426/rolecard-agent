@@ -115,7 +115,7 @@ def patch_model_context(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except KeyError:
         raise HTTPException(status_code=404, detail=f"模型 {name!r} 不存在。") from None
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="update_model_context",
         target=name,
@@ -163,7 +163,7 @@ def patch_model_sampling(
         raise HTTPException(status_code=404, detail=f"模型 {name!r} 不存在。") from None
     # dict 不变：`dict[str, float | None]` 不是 `dict[str, object]`，交给审计要显式过一道。
     detail: dict[str, object] = dict(given)
-    ctx.roles.audit(actor=actor.id, action="update_model_sampling", target=name, detail=detail)
+    ctx.audit.log(actor=actor.id, action="update_model_sampling", target=name, detail=detail)
     ctx.rebuild_runtime()
     return {"name": name, **stored}
 
@@ -195,9 +195,7 @@ def put_model_settings(
                 f"模型 {b.name} 用的厂商 {b.provider} 还没有密钥（api_key）；本地 Ollama 无需填写。"
             )
         # default/fallbacks 缺省 = 保留当前值（编辑入口已统一到「服务」页签优先级列表）。
-        current_default = ctx.model_settings.default_backend(
-            user_id=ctx.current_user()
-        ) or "local"
+        current_default = ctx.model_settings.default_backend(user_id=ctx.current_user()) or "local"
         ctx.model_settings.save(
             user_id=ctx.current_user(),
             default=body.default or current_default,
@@ -207,7 +205,7 @@ def put_model_settings(
     except ModelSettingsError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     # 管理面变更必须留痕（H3）。审计只记**结构**（名称/用途/默认/回退链），绝不记 key。
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="update_model_settings",
         target=body.default or current_default,
@@ -235,7 +233,7 @@ def put_model_settings(
 
 
 class TargetBody(BaseModel):
-    """"给哪个端点问一次"的四种给法，按精确度排：
+    """ "给哪个端点问一次"的四种给法，按精确度排：
 
     1. 只给 `provider_id` —— 已配置的凭据组（key 由服务端取，从不在网络上往返）；
     2. 给 `provider` + `base_url` —— 同端点已被配置过则复用它的 key；
@@ -254,9 +252,7 @@ class CatalogBody(TargetBody):
 
 
 @router.post("/api/settings/models/catalog")
-def post_model_catalog(
-    body: CatalogBody, ctx: AppContext = Depends(get_context)
-) -> object:
+def post_model_catalog(body: CatalogBody, ctx: AppContext = Depends(get_context)) -> object:
     """这个端点提供哪些模型名（添加抽屉的第二步：选，而不是抄）。
 
     为什么是 **POST**：拉 OpenAI 兼容的 `/models` 要带 key，而 key 绝不进 query string
@@ -317,7 +313,7 @@ def post_model_probe(
     except ModelSettingsError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     result = probe(target, test_tools=body.test_tools, test_vision=body.test_vision).to_api()
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="probe_model",
         target=body.model,
@@ -373,7 +369,7 @@ def post_add_model(
         )
     except ModelSettingsError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="add_model",
         target=added["name"],
@@ -386,9 +382,7 @@ def post_add_model(
     try:
         ctx.rebuild_runtime()
     except Exception as exc:  # noqa: BLE001 - 配置已写进去，生效失败必须说清而不是静默
-        raise HTTPException(
-            status_code=500, detail=f"配置已保存，但生效失败：{exc}"
-        ) from exc
+        raise HTTPException(status_code=500, detail=f"配置已保存，但生效失败：{exc}") from exc
     return _models_payload(ctx) | {"added": added}
 
 
@@ -403,7 +397,7 @@ def delete_model(
         ctx.model_settings.remove_model(name, user_id=ctx.current_user())
     except KeyError:
         raise HTTPException(status_code=404, detail=f"模型 {name!r} 不存在。") from None
-    ctx.roles.audit(actor=actor.id, action="delete_model", target=name, detail={})
+    ctx.audit.log(actor=actor.id, action="delete_model", target=name, detail={})
     ctx.rebuild_runtime()
 
 
@@ -433,7 +427,7 @@ def patch_model_capabilities(
         raise HTTPException(status_code=404, detail=f"模型 {name!r} 不存在。") from None
     except ModelSettingsError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="update_model_capabilities",
         target=name,
@@ -596,8 +590,8 @@ def runtime_payload(
                 "记忆用的模型（提取精华 / 整理记忆）",
                 "空 = 跟随这条会话/角色用的模型。填上一个模型名 = 只把「提取精华」和「整理记忆」"
                 "这两步交给它。实测两边都提得出（同一段八轮对话各 9 / 10 条），所以这不是"
-                "\"有没有记忆\"的开关，而是取舍：本地一次约 122 秒、云端 10–20 秒，而「整理记忆」"
-                "那个\"谁顶替谁\"的判断更吃模型强度。**填了才出网**，清空即回到今天的行为。",
+                '"有没有记忆"的开关，而是取舍：本地一次约 122 秒、云端 10–20 秒，而「整理记忆」'
+                '那个"谁顶替谁"的判断更吃模型强度。**填了才出网**，清空即回到今天的行为。',
             ),
         ],
     )
@@ -794,7 +788,7 @@ def put_runtime_settings(
         runtime_settings.save_overrides(ctx.conn, body.values)
     except ValueError as exc:
         raise value_error_to_http(exc) from exc
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="update_runtime_settings",
         target="runtime",
@@ -903,7 +897,7 @@ def put_memory(
             bucket=bucket,
             text=body.content,
         )
-        ctx.roles.audit(
+        ctx.audit.log(
             actor=actor.id,
             action="update_role_memory",
             target=f"memory:{role_id}",
@@ -937,7 +931,7 @@ def put_memory(
         )
         runtime_settings.save_overrides(ctx.conn, values)
         rebuilt = True
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="update_memory",
         target="memory",
@@ -992,7 +986,7 @@ def post_memory_item(
     )
     if added is None:
         raise HTTPException(status_code=400, detail="传入的记忆内容为空。")
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="add_memory_item",
         target=f"memory:{bucket}",
@@ -1017,20 +1011,17 @@ def patch_memory_item(
     updated: dict[str, object] = {}
     owner = ctx.current_user()
     if body.text is not None:
-        updated = mem.edit_item(
-            ctx.conn, user_id=owner, item_id=item_id, text=body.text
-        ) or {}
+        updated = mem.edit_item(ctx.conn, user_id=owner, item_id=item_id, text=body.text) or {}
     if body.pinned is not None:
-        updated = mem.set_pinned(
-            ctx.conn, user_id=owner, item_id=item_id, pinned=body.pinned
-        ) or {}
+        updated = mem.set_pinned(ctx.conn, user_id=owner, item_id=item_id, pinned=body.pinned) or {}
     if body.importance is not None:
-        updated = mem.set_importance(
-            ctx.conn, user_id=owner, item_id=item_id, importance=body.importance
-        ) or {}
+        updated = (
+            mem.set_importance(ctx.conn, user_id=owner, item_id=item_id, importance=body.importance)
+            or {}
+        )
     if not updated:
         raise HTTPException(status_code=400, detail="没有要保存的内容。")
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="update_memory_item",
         target=f"memory_item:{item_id}",
@@ -1096,7 +1087,7 @@ def merge_memory_item(
     )
     if merged is None:
         raise HTTPException(status_code=400, detail="合并没做成（条目可能刚被删掉）。")
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="merge_memory_item",
         target=f"memory_item:{keep_id}",
@@ -1118,7 +1109,7 @@ def remove_memory_item(
 
     if not mem.delete_item(ctx.conn, user_id=ctx.current_user(), item_id=item_id):
         raise HTTPException(status_code=404, detail=f"记忆条目不存在：{item_id}")
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id, action="delete_memory_item", target=f"memory_item:{item_id}", detail={}
     )
     return _memory_payload(ctx, role_id)
@@ -1141,9 +1132,7 @@ def consolidate_memory(
     from rolecard_agent.core import memory_distill
 
     if not ctx.settings.memory_enabled:
-        raise HTTPException(
-            status_code=400, detail="跨会话记忆当前是关闭的 —— 先打开它再整理。"
-        )
+        raise HTTPException(status_code=400, detail="跨会话记忆当前是关闭的 —— 先打开它再整理。")
     if role_id:
         _require_role(ctx, role_id)
     bucket = role_id or mem.GLOBAL_BUCKET
@@ -1161,7 +1150,7 @@ def consolidate_memory(
         tracer=ctx.tracer,
     )
     report = outcome["report"]
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="consolidate_memory",
         target=f"memory:{bucket}",
@@ -1201,7 +1190,7 @@ def delete_memory(
     )
     for item in rows:
         mem.delete_item(ctx.conn, user_id=ctx.current_user(), item_id=item["id"])
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="clear_role_memory" if role_id else "clear_memory",
         target=f"memory:{bucket}",

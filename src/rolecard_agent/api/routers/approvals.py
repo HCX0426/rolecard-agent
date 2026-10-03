@@ -100,7 +100,7 @@ def decide_approval(
         # 这条待批下发的凭据"——身份可以匿名，凭据不行。
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
-    ctx.roles.audit(
+    ctx.audit.log(
         actor=actor.id,
         action="approve_command" if decision == "approve" else "reject_command",
         target=f"approval:{approval_id}",
@@ -133,8 +133,7 @@ def _note_approval_future(future: Future[None]) -> None:
     exc = future.exception()
     if exc is not None:
         print(
-            f"[approvals] 后台执行线程意外终止（终态由兜底/清扫负责）："
-            f"{type(exc).__name__}: {exc}",
+            f"[approvals] 后台执行线程意外终止（终态由兜底/清扫负责）：{type(exc).__name__}: {exc}",
             file=sys.stderr,
             flush=True,
         )

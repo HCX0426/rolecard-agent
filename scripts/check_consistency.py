@@ -1082,6 +1082,131 @@ def check_api_domain_seams() -> None:
         fails.append(f"api domain seams registry is stale: {stale}")
 
 
+def check_audit_action_vocabulary() -> None:
+    """审计的两侧都要有尺子（2026-10-02 轮 `R102-07` + `R102-14`）。
+
+    **第一侧：一条 INSERT 只许有一份。** 审计从前有五个写入点 —— `roles/service.py`
+    （api 侧 55 处全借它）、`core/plugins.py`、`core/tools/{files,mcp,run}.py` —— 五份
+    逐字相同的 `INSERT INTO audit_log`。改一处口径而另外四处不动，正是本仓那一族事故的
+    形状（`detail` 的编码从前真的不一致：只有 `mcp` 那份额外用 `default=str`）。
+    现在语句只住在 `core/audit.py`，出现次数必须 = 1。
+
+    计数只数**代码里的字符串常量**，不数注释与 docstring 里的引文：这条判据本尊踩过这个
+    坑 —— 它的 docstring 要解释"从前有五份"，按整文件文本计数时它把自己数成了第二份
+    （`R102-37` 的同族：尺子把分母数错）。
+
+    **第二侧：动作词表是一份清单，不是一个传说。** `R102-14` 记的是"56 处调用、55 个不同
+    动作名，没有任何一处按名字读它们"，于是改一个名就是把同一动作劈成两条历史。清单在
+    `core/audit.AUDIT_ACTIONS`；带变量的那一族（`mcp:{server}__{tool}`）按
+    `DYNAMIC_ACTION_PREFIXES` 的前缀放行。差分**两个方向都要能红**（`R102-37` 的教训：
+    只写一臂的判据是空转臂）—— 用了没登记的红，登记了没人用也红。
+    """
+    src = ROOT / "src" / "rolecard_agent"
+
+    def stmt_copies() -> list[str]:
+        copies: list[str] = []
+        for path in sorted(src.rglob("*.py")):
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+            except SyntaxError:
+                continue
+            n = sum(
+                1
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and node.value.startswith("INSERT INTO audit_log")
+            )
+            if n:
+                copies.append(f"{path.relative_to(ROOT).as_posix()}×{n}")
+        return copies
+
+    copies = stmt_copies()
+    one_throat = copies == ["src/rolecard_agent/core/audit.py×1"]
+
+    try:
+        from rolecard_agent.core.audit import (
+            AUDIT_ACTIONS,
+            DYNAMIC_ACTION_PREFIXES,
+        )
+    except Exception as exc:  # noqa: BLE001 - 清单读不到就是红，不许静默跳过
+        out("audit action vocabulary", False, f"AUDIT_ACTIONS 不可导入：{exc}")
+        fails.append(f"audit vocabulary registry unreadable: {exc}")
+        return
+
+    literal: set[str] = set()
+    dynamic: set[str] = set()
+
+    def take(node: ast.expr) -> None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            literal.add(node.value)
+        elif isinstance(node, ast.IfExp):
+            take(node.body)
+            take(node.orelse)
+        elif isinstance(node, ast.JoinedStr) and node.values:
+            head = node.values[0]
+            if isinstance(head, ast.Constant) and isinstance(head.value, str):
+                dynamic.add(head.value)
+
+    def harvest(node: ast.Call, name: str) -> None:
+        """取这一发调用带的动作名。
+
+        规则写死在这里：带 `action=` 关键字的按关键字取；`_audit(conn, "action", …)`
+        那种位置写法取第 2 个实参，**但第 1 个实参是字符串常量时跳过** —— 那是 `mcp`
+        那份额外的 `_audit(phase, detail)`，phase 不是动作名。
+        """
+        kw = next((k for k in node.keywords if k.arg == "action"), None)
+        if kw is not None:
+            take(kw.value)
+        elif name in {"_audit", "tool_audit"} and len(node.args) >= 2:
+            first = node.args[0]
+            if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                return
+            take(node.args[1])
+
+    for path in src.rglob("*.py"):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            callee = node.func
+            name = (
+                callee.attr
+                if isinstance(callee, ast.Attribute)
+                else (callee.id if isinstance(callee, ast.Name) else "")
+            )
+            if name in {"audit", "_audit", "log", "tool_audit"}:
+                harvest(node, name)
+
+    unregistered = sorted(literal - set(AUDIT_ACTIONS))
+    stale = sorted(set(AUDIT_ACTIONS) - literal)
+    bad_prefixes = sorted(dynamic - set(DYNAMIC_ACTION_PREFIXES))
+    ok = one_throat and not unregistered and not stale and not bad_prefixes
+    detail = (
+        f"{len(literal)} 个动作用词全在 {len(AUDIT_ACTIONS)} 项清单内；"
+        f"动态族 {sorted(dynamic) or '无'}；INSERT 一份"
+        if ok
+        else f"INSERT 份数={copies}；未登记动作={unregistered}；"
+        f"清单里没人用的={stale}；未登记动态前缀={bad_prefixes}"
+    )
+    out("audit action vocabulary", ok, detail)
+    if not one_throat:
+        fails.append(f"audit_log INSERT must live in exactly one place: {copies}")
+    if unregistered:
+        fails.append(f"audit actions not in AUDIT_ACTIONS: {unregistered}")
+    if stale:
+        fails.append(
+            f"AUDIT_ACTIONS entries with no call site (rename forks history): {stale}"
+        )
+    if bad_prefixes:
+        fails.append(
+            f"dynamic audit prefixes not declared in DYNAMIC_ACTION_PREFIXES: {bad_prefixes}"
+        )
+
+
 def check_single_text_extractor() -> None:
     """消息取文本只允许一处实现：`core/text.py::text_of`（架构审计报告 台账 `R28-59`）。
 
@@ -2795,6 +2920,7 @@ def main() -> int:
     check_promised_artifacts()
     check_core_no_domain_token()
     check_api_domain_seams()
+    check_audit_action_vocabulary()
     check_single_text_extractor()
     check_domain_isolation()
     check_safety_prompt()
