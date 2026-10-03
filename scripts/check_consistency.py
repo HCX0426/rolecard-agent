@@ -1439,6 +1439,114 @@ def check_audit_ledger_row_count() -> None:
         )
 
 
+#: 数据根下"会被应用写字"的目录必须整目录进 `.gitignore`（`R102-76`）。
+#:
+#: 开发态的数据根就是仓库的 `data/`（`core/paths.py::_platform_data_root` 故意如此），
+#: 所以任何新落进那一格的目录，只要没被忽略，就会被下一次 `git add` 当成源码带进库 ——
+#: 而 `data/workspace` 是 `fs_write` 工具的默认根、`retention-backups` 是被删审计行与
+#: 命令原文的 JSONL，两格内容都是真实用户数据。
+#: 例外必须写理由，且例外本身也被数：登记了却不再对应代码里的目录 ⇒ 红（防豁免名单变垃圾桶）。
+_DATA_ROOT_EXEMPT: dict[str, str] = {
+    "sqlite": "按后缀逐类忽略（*.db / -wal / -shm / -journal / *.bak / *.trace.jsonl），"
+              "`.gitkeep` 与 `_stale-dev-snapshot-*/` 各有专门条目 —— 这一格是刻意分开的",
+}
+
+
+def _path_chain_parts(node: ast.expr) -> list[str]:
+    """拆 `root / "sqlite" / "app.db"` 这种链，返回**从里到外**的字符串段。
+
+    不能靠 `ast.walk` 取"第一个常量"：那是 BFS，`app.db` 会排在 `sqlite` 前面。
+    """
+    parts: list[str] = []
+    while isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        if isinstance(node.right, ast.Constant) and isinstance(node.right.value, str):
+            parts.append(node.right.value)
+        node = node.left
+    return parts[::-1]
+
+
+def _data_root_write_dirs() -> dict[str, str]:
+    """从**代码**里数出数据根下会写字的目录名（不看文件系统：文件系统里躺着的全是被忽略的运行时件）。"""
+    dirs: dict[str, str] = {}
+    paths_py = ROOT / "src" / "rolecard_agent" / "core" / "paths.py"
+    tree = ast.parse(paths_py.read_text(encoding="utf-8"))
+    fn = next(
+        (
+            n
+            for n in tree.body
+            if isinstance(n, ast.FunctionDef) and n.name == "data_paths"
+        ),
+        None,
+    )
+    if fn is None:  # pragma: no cover - 推导处改名时先当红
+        return dirs
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.Dict):
+            continue
+        for key, value in zip(node.keys, node.values, strict=True):
+            if not isinstance(key, ast.Constant):
+                continue
+            parts = _path_chain_parts(value)
+            if parts:
+                dirs[parts[0]] = f"core/paths.py::data_paths[{key.value}]"
+    db_py = ROOT / "src" / "rolecard_agent" / "storage" / "db.py"
+    for node in ast.walk(ast.parse(db_py.read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.Assign):
+            continue
+        names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+        if "RETENTION_BACKUP_DIRNAME" not in names:
+            continue
+        value = node.value
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            dirs[value.value] = "storage/db.py::RETENTION_BACKUP_DIRNAME"
+    return dirs
+
+
+def check_data_root_dirs_gitignored() -> None:
+    """`data/<运行时目录>/*` 必须在 `.gitignore` 里，例外要带理由（`R102-76`，批 24 的尺子）。
+
+    两臂都判：新目录没被忽略 ⇒ 红；豁免名单里留着一格代码里已经不写的目录 ⇒ 也红。
+    """
+    dirs = _data_root_write_dirs()
+    if not dirs:
+        out(
+            "data root dirs are gitignored",
+            False,
+            "从代码里一个目录都没数出来（data_paths 改名了？）",
+        )
+        fails.append("data-root ruler is hollow: no directory was enumerated from core/paths.py")
+        return
+    lines = [
+        ln.strip()
+        for ln in (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+        if ln.strip() and not ln.strip().startswith("#")
+    ]
+    ungoverned = [
+        name
+        for name in dirs
+        if name not in _DATA_ROOT_EXEMPT
+        and not any(line in {f"data/{name}", f"data/{name}/*"} for line in lines)
+    ]
+    stale = [name for name in _DATA_ROOT_EXEMPT if name not in dirs]
+    ok = not ungoverned and not stale
+    detail = (
+        f"现数 {len(dirs)} 格（豁免 {len(_DATA_ROOT_EXEMPT)}）：" + ", ".join(sorted(dirs))
+        if ok
+        else f"没被忽略：{ungoverned}；豁免已失效：{stale}"
+    )
+    out("data root dirs are gitignored", ok, detail)
+    if ungoverned:
+        fails.append(
+            "data-root runtime dirs are not gitignored (dev root IS the repo's data/): "
+            f"{ungoverned} —— 用户数据会被下一次 git add 带进库"
+        )
+    if stale:
+        fails.append(
+            f"exemption list entries no longer match a code-declared dir: {stale}"
+            "（豁免要跟着实况走）"
+        )
+
+
 def check_single_text_extractor() -> None:
     """消息取文本只允许一处实现：`core/text.py::text_of`（架构审计报告 台账 `R28-59`）。
 
@@ -3157,6 +3265,7 @@ def main() -> int:
     check_storage_does_not_import_core()
     check_write_txn_ownership_inventory()
     check_audit_ledger_row_count()
+    check_data_root_dirs_gitignored()
     check_single_text_extractor()
     check_domain_isolation()
     check_safety_prompt()

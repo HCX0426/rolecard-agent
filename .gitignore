@@ -9,6 +9,12 @@ data/sqlite/*.db-shm
 data/sqlite/*.db-wal
 # 迁移前手搓的库备份（里面和 app.db 一样是真实数据与凭据，同样绝不入库）
 data/sqlite/*.bak
+# retention「先备份再删」落的那些 JSONL：内容就是被删的审计行与命令行原文，
+# 和 app.db 同一等级密（开发态数据根就是仓库 data/），绝不入库、随整目录升级不碰
+data/retention-backups/*
+# 文件工具（fs_write）与命令执行的默认工作区：装的是用户让它写出来的东西，不是素材
+# （这一格是 10-03 新断言 `data root dirs are gitignored` 上线第一次运行照出来的）
+data/workspace/*
 # keep the directory, ignore its contents (same pattern as uploads/ below)
 data/chroma/*
 !data/chroma/.gitkeep

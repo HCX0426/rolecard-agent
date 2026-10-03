@@ -29,7 +29,7 @@ import sys
 import threading
 import uuid
 from collections.abc import Callable, Iterable, Sequence
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -317,12 +317,66 @@ def _repair_stranded_rebuild(conn: SqlConnection, *, original: str, temp: str) -
     conn.commit()
 
 
+#: 删之前那一行的落盘目录（相对数据根）与保留份数 —— 备份目录自己不许变成新的只增表。
+RETENTION_BACKUP_DIRNAME = "retention-backups"
+RETENTION_BACKUP_KEEP = 5
+
+
+def _dump_before_delete(
+    conn: SqlConnection,
+    *,
+    table: str,
+    where: str,
+    params: tuple[object, ...],
+    backup_dir: Path,
+    stamp: str,
+) -> int:
+    """把**将要被删的行**先写成 JSONL，返回行数。0 行就不落文件。
+
+    顺序是判据：先落盘、再删、最后才 commit —— 中间崩掉的结果是"行还在库里 + 多一个
+    备份文件"，而不是"行没了 + 没有任何地方能找回"。这是 `R102-29` 拍板里
+    "先备份再删"那半句的实现（10-03 复核发现那半句从没落地，见台账 H12 批 24）。
+    """
+    rows = conn.execute(f"SELECT * FROM {table} {where}", params).fetchall()  # noqa: S608
+    if not rows:
+        return 0
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    out = backup_dir / f"{table}-{stamp}.jsonl"
+    with out.open("a", encoding="utf-8") as fh:
+        for row in rows:
+            record = dict(zip(row.keys(), tuple(row), strict=True))
+            fh.write(json.dumps(record, ensure_ascii=False, default=str))
+            fh.write("\n")
+    print(
+        f"[retention] 先落备份 {out.name}（{len(rows)} 行 {table}）再删",
+        file=sys.stderr,
+        flush=True,
+    )
+    return len(rows)
+
+
+def _trim_backups(backup_dir: Path) -> None:
+    """每张表各留最近 `RETENTION_BACKUP_KEEP` 份 —— 防"为了不留只增表而造出另一张只增表"。
+
+    分表裁而不是整目录一起裁：文件名是 `<表名>-<时刻>.jsonl`，字典序里 `command_approval-*`
+    永远压在 `audit_log-*` 前面 —— 整目录裁会让一批审批备份把审计备份**饿死**（删掉的恰是
+    唯一那份能找回审计行的文件）。时刻是秒级 `YYYYmmdd-HHMMSS`，同表内按名排序=按时间排序。
+    """
+    by_table: dict[str, list[Path]] = {}
+    for f in backup_dir.glob("*.jsonl"):
+        by_table.setdefault(f.name.split("-", 1)[0], []).append(f)
+    for files in by_table.values():
+        for stale in sorted(files, key=lambda p: p.name, reverse=True)[RETENTION_BACKUP_KEEP:]:
+            stale.unlink(missing_ok=True)
+
+
 def prune_retention_tables(
     conn: SqlConnection,
     *,
     audit_log_days: int,
     audit_log_max_rows: int,
     approval_done_days: int,
+    backup_dir: Path,
 ) -> dict[str, int]:
     """三张只增表的 retention 清理（`R102-29`；2026-10-02 拍板：分表定档）。
 
@@ -333,28 +387,43 @@ def prune_retention_tables(
     200 只对新角色生效）。0 或负数 = 该档永不清理（旧行为）。
     调用点在 `core/bootstrap.py`（拿得到 Settings 的地方），清理量回报 schema-migrate 事件流。
     """
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     pruned: dict[str, int] = {}
+    where: str
+    params: tuple[object, ...]
     if audit_log_days > 0:
-        cur = conn.execute(
-            "DELETE FROM audit_log WHERE ts < datetime('now', ?)",
-            (f"-{audit_log_days} days",),
+        where, params = "WHERE ts < datetime('now', ?)", (f"-{audit_log_days} days",)
+        _dump_before_delete(
+            conn, table="audit_log", where=where, params=params, backup_dir=backup_dir, stamp=stamp
         )
+        cur = conn.execute(f"DELETE FROM audit_log {where}", params)
         pruned["audit_log_by_days"] = max(cur.rowcount, 0)
     if audit_log_max_rows > 0:
-        cur = conn.execute(
-            "DELETE FROM audit_log WHERE id NOT IN "
-            "(SELECT id FROM audit_log ORDER BY id DESC LIMIT ?)",
-            (audit_log_max_rows,),
+        where = "WHERE id NOT IN (SELECT id FROM audit_log ORDER BY id DESC LIMIT ?)"
+        params = (audit_log_max_rows,)
+        _dump_before_delete(
+            conn, table="audit_log", where=where, params=params, backup_dir=backup_dir, stamp=stamp
         )
+        cur = conn.execute(f"DELETE FROM audit_log {where}", params)
         pruned["audit_log_by_rows"] = max(cur.rowcount, 0)
     if approval_done_days > 0:
-        cur = conn.execute(
-            "DELETE FROM command_approval WHERE status IN ('done', 'rejected') "
-            "AND updated_at < datetime('now', ?)",
-            (f"-{approval_done_days} days",),
+        where = (
+            "WHERE status IN ('done', 'rejected') AND updated_at < datetime('now', ?)"
         )
+        params = (f"-{approval_done_days} days",)
+        _dump_before_delete(
+            conn,
+            table="command_approval",
+            where=where,
+            params=params,
+            backup_dir=backup_dir,
+            stamp=stamp,
+        )
+        cur = conn.execute(f"DELETE FROM command_approval {where}", params)
         pruned["approvals_done"] = max(cur.rowcount, 0)
     conn.commit()
+    if any(pruned.values()):
+        _trim_backups(backup_dir)
     return pruned
 
 

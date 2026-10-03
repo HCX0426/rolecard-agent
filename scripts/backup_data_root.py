@@ -3,6 +3,7 @@
 为什么单独一个脚本而不是"手工记着备份"：2026-09-26 第六次打包时就漏这一步 —— 装完才补了一份，
 那时"装坏了拿什么回滚"已经没有了。备份是安装流程的一环，不是一个提醒。
 
+**快照与文件拷贝的先后**见下方 `backup()` 里的注释（`R102-75`）：库先、文件后。
 为什么 sqlite 三件套走 `sqlite3.backup()` 而不是直接复制：真库通常开着 WAL，
 直拷会得到一份主库与 `-wal` 不同步的半成品（表现成"备份里少了最近几条"，
 而那种备份只有在要回滚的时候才被发现是坏的）。
@@ -78,14 +79,19 @@ def backup(dest_dir: Path, *, root: Path | None = None) -> Path:
     tmp = Path(tempfile.mkdtemp(prefix="rc-backup-"))
     missing: list[str] = []
     try:
+        # 顺序是判据，不是风格（`R102-75`，就是台账里那条没编号的 DAT-06）：
+        # **先把库快照下来，再照抄其余文件。** 反过来做（从前就是这样）会得到一个
+        # "库比文件新"的 zip —— 库里写着某条分块已索引，而它的文件没进包，
+        # 还原之后检索会指到不存在的分块上（症状是"知识库里有条目却读不出内容"）。
+        # 这个顺序下最坏只会多拷几份库还不认识的孤儿文件：**多比少好**。
+        for db in dbs:
+            _snapshot_db(db, tmp / db.relative_to(src_root))
         for src in sources:
             if src in skip:
                 continue
             dst = tmp / src.relative_to(src_root)
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
-        for db in dbs:
-            _snapshot_db(db, tmp / db.relative_to(src_root))
         with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
             for f in sorted(tmp.rglob("*")):
                 if f.is_file():

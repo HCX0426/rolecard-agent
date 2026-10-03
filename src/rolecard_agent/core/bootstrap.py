@@ -49,6 +49,7 @@ from rolecard_agent.core.model_settings import (
 )
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.observability import TraceEvent, Tracer, make_tracer
+from rolecard_agent.core.paths import user_data_root
 from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
 from rolecard_agent.core.probes import ollama_keep, vision_capability
 from rolecard_agent.core.reachout import (
@@ -72,6 +73,7 @@ from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder, make_rera
 from rolecard_agent.roles.models import RoleCard
 from rolecard_agent.roles.service import RoleCardService
 from rolecard_agent.storage.db import (
+    RETENTION_BACKUP_DIRNAME,
     SqlConnection,
     ThreadLocalConnection,
     connect_threadlocal,
@@ -666,6 +668,9 @@ def build_runtime(
         audit_log_days=settings.audit_log_retention_days,
         audit_log_max_rows=settings.audit_log_max_rows,
         approval_done_days=settings.approval_done_retention_days,
+        # 「先备份再删」的那一半（`R102-29` 拍板的第三句，10-03 才补上）：要删的行先落成
+        # JSONL 再 DELETE。目录由装配根算 —— storage 不 import core（`R102-08` 的尺子）。
+        backup_dir=user_data_root() / RETENTION_BACKUP_DIRNAME,
     )
     if any(pruned.values()):
         import sys as _sys
