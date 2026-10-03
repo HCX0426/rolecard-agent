@@ -215,7 +215,7 @@ function setPetVisible(visible: boolean): void {
   }
 }
 
-/** 两扇窗共用的接线：收起而非销毁 + 显隐变化要如实反映到托盘勾选。 */
+/** 两扇窗共用的接线：收起而非销毁 + 显隐变化要如实反映到托盘勾选 + 导航护栏（`R102-56`）。 */
 function wireWindow(win: BrowserWindow): void {
   win.on("close", (event) => {
     if (quitting) return;
@@ -224,6 +224,21 @@ function wireWindow(win: BrowserWindow): void {
   });
   win.on("show", () => tray?.refresh());
   win.on("hide", () => tray?.refresh());
+  // 导航护栏（`R102-56`）：两扇窗都只该停在后端托管的本地着陆页（`file://`）。页面渲染的是
+  // **AI 生成内容**（角色卡是第三方输入），提示注入塞一个 `<a target="_blank">` 或
+  // `window.open` 就能把窗导航到远程内容 —— `sandbox: true` 挡得住代码执行，挡不住钓鱼页
+  // 与它对后端的"已登录"二次调用。合法目标只有 `loadFile(LANDING)` 那两处（含 query 变体），
+  // 所以除 file:// 一律 deny；拦截要**留一行痕**（打包态没有终端，logLine 是唯一证据）。
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    logLine(`导航被拒（新开窗）：${url}`);
+    return { action: "deny" };
+  });
+  win.webContents.on("will-navigate", (event, url) => {
+    if (!url.startsWith("file://")) {
+      event.preventDefault();
+      logLine(`导航被拒（页面跳转）：${url}`);
+    }
+  });
 }
 
 function boot(): void {

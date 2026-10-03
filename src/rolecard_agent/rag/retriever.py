@@ -404,6 +404,18 @@ def _translate_dimension_error(exc: Exception) -> Exception:
     return exc
 
 
+def _missing_collection(exc: BaseException) -> bool:
+    """这次异常是不是"集合不存在"（`R102-04` 的判据）。
+
+    为什么按需取类而不是在模块头 import：chromadb 是本模块的**可选依赖**（懒加载，
+    见 `KnowledgeBase.__init__`），而这条路径只在异常分支上走（客户端已经在了，
+    `chromadb.errors` 必然可导入）。除它之外的任何异常 = "这次问不到" —— 照抛。
+    """
+    from chromadb.errors import NotFoundError
+
+    return isinstance(exc, NotFoundError)
+
+
 def _chunk_ids(source: str, n: int) -> list[str]:
     """分块 id：由 (source, 序号) 确定性推导 —— 同 source 重索引得到同一批 id，因此 upsert
     天然幂等。故意不含内容 hash：内容变了也应该**替换**同一位置的分块，而不是留下两份。
@@ -577,13 +589,14 @@ class KnowledgeBase:
         """
         try:
             collection = self._client.get_collection(name=scope)
-        except Exception:  # noqa: BLE001 - 集合不存在 = 没有东西可删
+        except Exception as exc:  # noqa: BLE001 - 只放行"集合不存在"这一种
+            if not _missing_collection(exc):
+                raise
             self._forget_source(scope, source)
             return 0
-        try:
-            existing = collection.get(where={"source": source})
-        except Exception:  # noqa: BLE001 - 取不到就当没有（与 index() 的 stale 探测同策略）
-            return 0
+        # 取分块失败**不再当"没有"**（`R102-04`）：本方法的契约就是"删索引失败该整个失败、
+        # 让用户重试"（见上面 docstring），而从这里静默 return 0 会把一次读故障报成"删干净了"。
+        existing = collection.get(where={"source": source})
         ids = [str(i) for i in (existing.get("ids") or [])]
         if not ids:
             # 分块本就不在：投影若还有行，这一格是来清它的（重复删除/重建后清理的自愈路）。
@@ -726,11 +739,18 @@ class KnowledgeBase:
         return out
 
     def scope_count(self, scope: str) -> int:
-        """集合内分块数（集合不存在 = 0）。用于幂等判断，不抛错。"""
+        """集合内分块数（集合不存在 = 0）。用于幂等判断。
+
+        `R102-04`：**只有"集合不存在"给 0** —— 从前 `except Exception: return 0` 把
+        "客户端这次问不到"（后端忙、盘、连接坏了）也报成空库；而 0 会被上层当成正常结果
+        （界面显示空库、幂等判断以为没有）。问不到 ≠ 没有：其余异常照抛。
+        """
         try:
             return int(self._client.get_collection(name=scope).count())
-        except Exception:  # noqa: BLE001 - 集合本就不存在
-            return 0
+        except Exception as exc:  # noqa: BLE001 - 只放行"集合不存在"这一种
+            if _missing_collection(exc):
+                return 0
+            raise
 
     def describe(self) -> list[dict[str, object]]:
         """知识库概览：每个作用域的分块数与来源清单（设置页知识库管理视图）。

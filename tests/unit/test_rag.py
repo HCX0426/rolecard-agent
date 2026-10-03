@@ -143,6 +143,40 @@ def test_two_files_with_the_same_name_do_not_eat_each_other(kb: KnowledgeBase) -
     assert {h.source_key for h in hits} == {"task-1", "task-2"}  # 身份彼此独立
 
 
+def test_scope_count_only_treats_missing_collection_as_zero(
+    kb: KnowledgeBase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`R102-04`：问不到 ≠ 没有 —— 只有"集合不存在"给 0，其余异常照抛。
+
+    从前 `except Exception: return 0` 会把"客户端这次问不到"（忙、盘、连接坏了）也报成
+    空库；0 是**正常结果**，于是界面显示空库、幂等判断以为没有 —— 静默把未知报成正常。
+    """
+    assert kb.scope_count("never-created") == 0  # 真不存在仍是 0（原语义保留）
+
+    def broken(*, name: str):  # noqa: ANN202
+        raise RuntimeError("这次问不到（盘/锁/连接）")
+
+    monkeypatch.setattr(kb._client, "get_collection", broken)
+    with pytest.raises(RuntimeError, match="问不到"):
+        kb.scope_count("health_reports")
+
+
+def test_delete_source_propagates_read_failures(
+    kb: KnowledgeBase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`R102-04` 同族：删除时"取分块"失败不许报成"删干净了"（契约就是失败即失败）。"""
+    kb.index("health_reports", "task-1", DOC_A)
+
+    class _Collection:
+        @staticmethod
+        def get(*, where: dict[str, str]) -> dict[str, object]:
+            raise RuntimeError("取分块失败")
+
+    monkeypatch.setattr(kb._client, "get_collection", lambda *, name: _Collection())
+    with pytest.raises(RuntimeError, match="取分块失败"):
+        kb.delete_source("health_reports", "task-1")
+
+
 def test_source_name_is_only_a_label(kb: KnowledgeBase) -> None:
     """展示名不参与身份：同一个文档改个名重建，仍是同一份（不产生第二份）。"""
     kb.index("health_reports", "task-1", DOC_A, source_name="报告.pdf")

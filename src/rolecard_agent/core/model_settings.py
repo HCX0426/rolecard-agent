@@ -475,22 +475,31 @@ def _opt_int(raw: object) -> int | None:
 #: 但它就是一列字符串，不需要读取器（硬塞一个假 reader 只会多一处会骗人的地方）。
 _LITERAL_COLUMNS = frozenset({"model"})
 
+#: `_value_columns` 的判据边界（`R102-28` 的口径修正）：它管的是**声明进 `ModelBackend`
+#: 的值列**（"表列 ∩ 字段"）必须有读取器。**只加在 schema.sql 的列不走这条** —— 它们是
+#: `unmanaged_backend_columns` 的范围：`save()` 不认识、原样携带、不读不写，这是仓库
+#: **有意支持**的形态（R26-04 的携带机制，同文件那条 `test_save_carries_over_any_column_…`
+#: 就是钉它的）。从前那句"加列必须走 `_COLUMN_READERS`"比判据宽，红在宣称不在行为。
+
 
 def _value_columns(conn: SqlConnection) -> tuple[str, ...]:
     """两份 SELECT 的列清单由这里算，不抄清单（抄了就会漂）。
 
     交集正好排掉两类不属于值列的东西：`name`/`provider_id` 是行身份与组引用（不在
     `ModelBackend` 里），`provider`/`base_url`/`api_key`/`usage` 来自凭据组或是派生值
-    （不在 `model_backend` 表里）。
+    （不在 `model_backend` 表里）。判据只对这份交集成立（`R102-28`：宣称收窄到与判据同宽）
+    —— 加进声明却漏读取器会在这里当场抛；**只在 schema.sql 里加的列不走这条**（未管理列）。
     """
     declared = set(ModelBackend.model_fields) - _LITERAL_COLUMNS
-    columns = tuple(c for c in sorted(_table_columns(conn, "model_backend")) if c in declared)
+    table_columns = _table_columns(conn, "model_backend")
+    columns = tuple(c for c in sorted(table_columns) if c in declared)
     missing = sorted(set(columns) - set(_COLUMN_READERS))
     if missing:
         raise ModelSettingsError(
-            f"model_backend 有了新列 {missing}，但 `_COLUMN_READERS` 里没写怎么读它。"
-            " 加一列只改 schema.sql 声明就够（补列器接管），读侧必须同时补一个读取器 ——"
-            " 否则那一列会一路静默读成 None。（09-26 轮 S-1）"
+            f"`ModelBackend` 声明了 {missing}，但 `_COLUMN_READERS` 里没写怎么读它。"
+            " 声明为值列就必须同时补一个读取器 —— 否则那一列会一路静默读成 None"
+            "（09-26 轮 S-1）。**只加在 schema.sql、不进 `ModelBackend` 的列不走这条**："
+            "那是未管理列（`unmanaged_backend_columns`），原样携带、不读不写（`R102-28`）。"
         )
     return columns
 

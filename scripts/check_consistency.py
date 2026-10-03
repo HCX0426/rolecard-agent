@@ -1031,6 +1031,57 @@ def check_core_no_domain_token() -> None:
         fails.append(f"core/ mentions domain tokens: {bad}")
 
 
+#: api 层允许 import 具体域的**登记接缝**（`R102-10`：集单调最严——除这两处外即红）。
+#: 每条的"为什么"就写在这里；登记过时（那个文件不再 import 具体域了）也红 ——
+#: 与 `route access` 的"清单里没有死条目"同一条纪律。
+API_DOMAIN_SEAMS = {
+    "src/rolecard_agent/api/main.py": "宿主侧域接线：具体域类只在这里交给装配根（唯一一处）",
+    "src/rolecard_agent/api/routers/records.py": "域通用路由：按 kind 分派各域的抽取器与异常名",
+}
+
+
+def check_api_domain_seams() -> None:
+    """api 层 import 具体域只许发生在登记接缝上（`R102-10` 那把迟到的尺子）。
+
+    `deps.py` 从前自述"api 层不 import 具体域"，而 `main.py` 与 `records.py` 就在
+    import —— 分叉处正好在尺子的覆盖面外（`core no domain token` 只管 core）。修法不是
+    把那两句改没，而是承认**两个接缝是刻意的**（装配一处、分派一处），再立这把尺子把
+    "第三处"挡在门外：新增一个 import 具体域的 api 文件 = 红，必须来这里登记并写理由。
+    """
+    api_dir = ROOT / "src" / "rolecard_agent" / "api"
+    hits: dict[str, set[str]] = {}
+    for path in sorted(api_dir.rglob("*.py")):
+        rel = path.relative_to(ROOT).as_posix()
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except (SyntaxError, ValueError):
+            continue
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.level == 0
+                and node.module
+                and node.module.startswith("rolecard_agent.domains.")
+            ):
+                hits.setdefault(rel, set()).add(node.module)
+    unregistered = sorted(rel for rel in hits if rel not in API_DOMAIN_SEAMS)
+    stale = sorted(rel for rel in API_DOMAIN_SEAMS if rel not in hits)
+    ok = not unregistered and not stale
+    detail = (
+        f"{len(hits)} 处接缝全在登记内（{', '.join(sorted(hits))}）"
+        if ok
+        else f"未登记：{unregistered}；登记过时（已不再 import 具体域）：{stale}"
+    )
+    out("api domain seams", ok, detail)
+    if unregistered:
+        fails.append(
+            "api imports concrete domains outside registered seams: "
+            f"{unregistered}（登记处见 check_consistency.API_DOMAIN_SEAMS）"
+        )
+    if stale:
+        fails.append(f"api domain seams registry is stale: {stale}")
+
+
 def check_single_text_extractor() -> None:
     """消息取文本只允许一处实现：`core/text.py::text_of`（架构审计报告 台账 `R28-59`）。
 
@@ -2743,6 +2794,7 @@ def main() -> int:
     check_spec_runtime_vs_requirements()
     check_promised_artifacts()
     check_core_no_domain_token()
+    check_api_domain_seams()
     check_single_text_extractor()
     check_domain_isolation()
     check_safety_prompt()

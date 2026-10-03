@@ -659,6 +659,23 @@ def test_a_declared_column_without_a_reader_fails_loud(conn: object) -> None:
         ModelBackend.model_fields.pop("new_thing", None)
 
 
+def test_only_declared_value_columns_need_readers() -> None:
+    """`R102-28` 的边界，口径收窄后的两面各钉一次。
+
+    判据管的是**声明进 `ModelBackend` 的值列**（上面那条：漏读取器当场抛）。**只加在
+    schema.sql 的列不走这条** —— 它们是 `unmanaged_backend_columns` 的范围：原样携带、
+    不读不写，是仓库有意支持的形态（R26-04 的携带机制，见上面那条 `carries_over…`）。
+    从前那句"加列必须走 `_COLUMN_READERS`"比判据宽，红在宣称不在行为 —— 这条把边界钉住。
+    """
+    from rolecard_agent.core.model_settings import _value_columns, unmanaged_backend_columns
+
+    conn = _conn()
+    conn.execute("ALTER TABLE model_backend ADD COLUMN top_p REAL")  # type: ignore[attr-defined]
+    conn.commit()  # type: ignore[attr-defined]
+    _value_columns(conn)  # 不抛：它不是**声明的值列**
+    assert "top_p" in unmanaged_backend_columns(conn)
+
+
 def test_effective_settings_carries_every_value_column_from_the_row(conn: object) -> None:
     """表里的值列要**原样**进 `ModelBackend`（S-1 的等价性那一半）。
 
