@@ -332,6 +332,7 @@ export default function App() {
             fallback={<div className="p-6 text-sm text-slate-400 dark:text-slate-500">加载中…</div>}
           >
             <ChatPage
+              active={tab === "chat"}
               deepThread={deepThread}
               onDeepThreadUsed={clearDeepThread}
               unreadByRole={reachoutUnreadByRole}

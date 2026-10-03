@@ -29,6 +29,8 @@ const { apiMock, streamChatMock } = vi.hoisted(() => ({
     del: vi.fn(),
     // 开口回话会把主动开口的红点一次标读（09-23 那条口径在控制台这一侧的接线）。
     markAllReachoutsRead: vi.fn(),
+    // 点进某个角色的主动会话 ⇒ 只标那一摞（这条端点从前有定义、零调用者）。
+    markRoleReachoutsRead: vi.fn(),
     extractRecord: vi.fn(),
     distillSession: vi.fn(),
   },
@@ -72,6 +74,9 @@ function stubMountCalls(
     return {};
   });
   apiMock.markAllReachoutsRead.mockResolvedValue({ items: [], unread: 0 });
+  // 按角色标读那条也得有应答：`selectSession` 现在会调它，替身返回 undefined 的话
+  // `.catch` 就是在 undefined 上取属性 —— 产品代码没错，是替身缺一格。
+  apiMock.markRoleReachoutsRead.mockResolvedValue({ items: [], unread: 0 });
   apiMock.post.mockImplementation(async (url: string) => {
     if (url === "/api/session") return { thread_id: "s_test" };
     return {};
@@ -1155,5 +1160,68 @@ describe("ChatPage 侧栏：每个角色一条固定线 + 临时话题批量清�
     expect(ids).toContain("/api/session/s_t2");
     // 固定线绝对不在这批里
     expect(ids).not.toContain("/api/session/s_proactive_ly");
+  });
+});
+
+describe("进入对话界面就清未读（R26-40 尾漏的那一半：口径早就写在 api.ts 与后端 docstring 里）", () => {
+  function stubSessions() {
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/sessions")
+        return [
+          {
+            thread_id: "s_proactive_ly",
+            title: "玲 · 主动找你",
+            role_id: "ly",
+            role_name: "玲",
+            updated_at: "t",
+            is_proactive: true,
+            is_blank: false,
+          },
+        ];
+      if (url === "/api/roles") return [];
+      if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
+      if (url === "/api/settings/model-providers") return { providers: [] };
+      if (url.endsWith("/messages")) return { messages: [], total: 0, limit: 500, truncated: false };
+      if (url.endsWith("/context")) return { trimmed: 0, kept: 0, budget: 24000 };
+      if (url.startsWith("/api/session/")) return { model_name: null, agent_mode: "chat" };
+      return {};
+    });
+    apiMock.markAllReachoutsRead.mockResolvedValue({ items: [], unread: 0 });
+    apiMock.markRoleReachoutsRead.mockResolvedValue({ items: [], unread: 0 });
+  }
+
+  it("没进前台（active=false）⇒ 一条都不标", async () => {
+    stubSessions();
+    render(<ChatPage active={false} />);
+    await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith("/api/sessions"));
+    await Promise.resolve();
+    expect(apiMock.markAllReachoutsRead).not.toHaveBeenCalled();
+  });
+
+  it("进对话页那一下标一次；停在页里重渲染不重复标", async () => {
+    stubSessions();
+    const { rerender } = render(<ChatPage active />);
+    await waitFor(() => expect(apiMock.markAllReachoutsRead).toHaveBeenCalledTimes(1));
+    rerender(<ChatPage active />);
+    await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
+    expect(apiMock.markAllReachoutsRead).toHaveBeenCalledTimes(1);
+  });
+
+  it("切走再切回来 ⇒ 再标一次（中间到的那几条算看过了）", async () => {
+    stubSessions();
+    const { rerender } = render(<ChatPage active />);
+    await waitFor(() => expect(apiMock.markAllReachoutsRead).toHaveBeenCalledTimes(1));
+    rerender(<ChatPage active={false} />);
+    rerender(<ChatPage active />);
+    await waitFor(() => expect(apiMock.markAllReachoutsRead).toHaveBeenCalledTimes(2));
+  });
+
+  it("点进某角色的主动会话 ⇒ 只标那一摞（read-by-role 这条端点不再空转）", async () => {
+    stubSessions();
+    render(<ChatPage active={false} />);
+    const row = await waitFor(() => screen.getByText("玲 · 主动找你"));
+    fireEvent.click(row);
+    await waitFor(() => expect(apiMock.markRoleReachoutsRead).toHaveBeenCalledWith("ly"));
+    expect(apiMock.markAllReachoutsRead).not.toHaveBeenCalled();
   });
 });
