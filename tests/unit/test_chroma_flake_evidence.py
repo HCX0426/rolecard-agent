@@ -38,7 +38,7 @@ def ascii_root() -> Iterator[pathlib.Path]:
     ASCII 根下 vector 段目录里是 4 个 hnsw 文件，**非 ASCII 根下目录存在但一个文件都没有**，
     而 `segments` 表照旧登记那一段。也就是说拿 `tmp_path` 造 chroma 形状，造出来的是
     "元数据有段、盘上没文件"这一族，用它去测一个专门抓这族的取证层，判据当场失真。
-    这条库行为已单独记进记忆，它是 `R102-41` 的一个**相邻缺陷**，不是那一发本身
+    这条库行为已登记为台账 `R102-78`（未收口）：它是 `R102-41` 的一个**相邻缺陷**，不是那一发本身
     （在册那发发生在 ASCII 路径与 Linux runner 上）。
     """
     d = pathlib.Path(tempfile.mkdtemp(prefix="rc_cfe_"))
