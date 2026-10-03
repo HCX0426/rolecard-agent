@@ -49,7 +49,7 @@ from rolecard_agent.core import outbound
 from rolecard_agent.core import sync as sync_lib
 from rolecard_agent.core.model_settings import validate_base_url
 from rolecard_agent.core.thread_locks import thread_write
-from rolecard_agent.storage.db import delete_thread_everywhere
+from rolecard_agent.storage.threads import delete_thread_everywhere, delete_threads_for_user
 
 router = APIRouter()
 
@@ -227,13 +227,16 @@ def _clear_for_replace(conn: Any, *, user_id: str, kinds: list[str], graph: Any)
         rows = conn.execute(
             "SELECT thread_id FROM session_thread WHERE user_id = ?", (user_id,)
         ).fetchall()
+        removed = 0
         for row in rows:
             tid = str(row["thread_id"])
             if graph is not None:
                 with thread_write(tid):
-                    delete_thread_everywhere(conn, tid)
-        cur = conn.execute("DELETE FROM session_thread WHERE user_id = ?", (user_id,))
-        cleared[sync_lib.KIND_THREAD] = max(cur.rowcount, 0)
+                    removed += delete_thread_everywhere(conn, tid)["session_thread"]
+        # 收尾那一条只兜住"没有载体行的空壳"，所以两个数相加才是"清了几条会话"——
+        # 从前只取收尾那一个数，逐条级联删跑过之后它恒为 0，于是报的是"清了 0 条"。
+        removed += delete_threads_for_user(conn, user_id)
+        cleared[sync_lib.KIND_THREAD] = removed
     conn.commit()
     return cleared
 

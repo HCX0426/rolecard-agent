@@ -19,6 +19,7 @@ from rolecard_agent.core.audit import AuditTrail
 from rolecard_agent.roles.models import RoleCard, RoleCardCreate, RoleCardUpdate
 from rolecard_agent.roles.seed import BUILTIN_ROLES, DOMAIN_SEED_ROLES
 from rolecard_agent.storage.db import SqlConnection
+from rolecard_agent.storage.threads import set_current_role
 
 _COLUMNS = (
     "role_id, user_id, role_name, system_prompt, temperature, model_name, "
@@ -364,12 +365,10 @@ class RoleCardService:
         （`WHERE thread_id = ? AND user_id = ?`）。
         """
         self.scoped(user_id).get(role_id)  # fail before writing if not his to use
-        cur = self._conn.execute(
-            "UPDATE session_thread SET current_role_id = ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE thread_id = ? AND user_id = ?",
-            (role_id, thread_id, user_id),
+        changed = set_current_role(
+            self._conn, thread_id=thread_id, user_id=user_id, role_id=role_id
         )
-        if cur.rowcount == 0:
+        if changed == 0:
             # 同 `update`：0 行的 UPDATE 也开了写事务，抛之前先结束它（`R102-42`）。
             self._conn.rollback()
             raise RoleNotFound(f"thread not found: {thread_id}")

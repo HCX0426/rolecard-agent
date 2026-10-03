@@ -22,7 +22,7 @@ from langchain_core.messages import AIMessage
 
 from rolecard_agent.api.main import create_app
 from rolecard_agent.rag.parser import ParseError
-from rolecard_agent.storage.db import _thread_id_carriers
+from rolecard_agent.storage.db import thread_id_carriers
 from tests.conftest import ScriptedChat
 
 
@@ -221,14 +221,14 @@ def test_delete_session_removes_thread_and_checkpoints(client: TestClient, tmp_p
     assert all(s["thread_id"] != tid for s in client.get("/api/sessions").json())
 
     db = sqlite3.connect(tmp_path / "app.db")
-    db.row_factory = sqlite3.Row  # `_thread_id_carriers` 按名取列（app 连接自带这个 row_factory）
-    # 断言对齐权威名单 `_thread_id_carriers()`（现数现用）而不是再抄一张表清单 ——
+    db.row_factory = sqlite3.Row  # `thread_id_carriers` 按名取列（app 连接自带这个 row_factory）
+    # 断言对齐权威名单 `thread_id_carriers()`（现数现用）而不是再抄一张表清单 ——
     # R102-51 的教训：docstring 承诺"不留孤儿"，断言却只数了两张表，孤儿就在眼皮底下活着。
     left_carriers = {
         table: db.execute(
             f"SELECT COUNT(*) FROM {table} WHERE thread_id = ?", (tid,)
         ).fetchone()[0]
-        for table in _thread_id_carriers(db)
+        for table in thread_id_carriers(db)
     }
     db.close()
     assert all(n == 0 for n in left_carriers.values()), left_carriers

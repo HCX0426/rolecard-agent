@@ -16,11 +16,11 @@ import pytest
 
 from rolecard_agent.storage.db import (
     SCHEMA_VERSION,
-    _thread_id_carriers,
     bootstrap,
     connect,
-    touch_thread,
+    thread_id_carriers,
 )
+from rolecard_agent.storage.threads import touch_thread
 
 
 @pytest.fixture
@@ -120,6 +120,6 @@ def test_touch_thread_writes_millisecond_precision(db_path: Path) -> None:
         ).fetchone()[0]
         assert re.search(r"\d{2}:\d{2}:\d{2}\.\d{3}", str(stamp)), stamp
         # 载体名单是活的：touch 的表自己也在名单里（改名迁移的同一判据）。
-        assert "session_thread" not in _thread_id_carriers(conn)
+        assert "session_thread" not in thread_id_carriers(conn)
     finally:
         conn.close()

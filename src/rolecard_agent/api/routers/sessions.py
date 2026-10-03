@@ -64,7 +64,15 @@ from rolecard_agent.rag.retriever import (
     KnowledgeDimensionMismatch,
 )
 from rolecard_agent.roles.service import RoleError, RoleNotFound
-from rolecard_agent.storage.db import delete_thread_everywhere, touch_thread
+from rolecard_agent.storage.threads import (
+    create_thread,
+    delete_thread_everywhere,
+    seed_title,
+    set_mode,
+    set_model,
+    set_title,
+    touch_thread,
+)
 
 router = APIRouter()
 
@@ -193,12 +201,13 @@ def create_session(
     except RoleNotFound as exc:
         raise role_error_to_http(exc) from exc
     thread_id = f"s_{uuid.uuid4().hex[:12]}"
-    ctx.conn.execute(
-        "INSERT INTO session_thread (thread_id, user_id, current_role_id, tool_epoch) "
-        "VALUES (?, ?, ?, ?)",
-        (thread_id, ctx.current_user(), role_id, ctx.plugins.tool_epoch()),
+    create_thread(
+        ctx.conn,
+        thread_id=thread_id,
+        user_id=ctx.current_user(),
+        role_id=role_id,
+        tool_epoch=ctx.plugins.tool_epoch(),
     )
-    ctx.conn.commit()
     ctx.audit.log(
         actor=actor.id, action="create_session", target=thread_id, detail={"role_id": role_id}
     )
@@ -323,12 +332,7 @@ def patch_session(
             if name not in effective.model_backends:
                 known = ", ".join(sorted(effective.model_backends))
                 raise HTTPException(status_code=400, detail=f"未知模型 {name!r}；可用：{known}")
-        conn.execute(
-            "UPDATE session_thread SET model_name = ? WHERE thread_id = ?",
-            (body.model_name, thread_id),
-        )
-        touch_thread(conn, thread_id)
-        conn.commit()
+        set_model(conn, thread_id, body.model_name)
         ctx.audit.log(
             actor=actor.id,
             action="set_session_model",
@@ -344,12 +348,7 @@ def patch_session(
             raise HTTPException(
                 status_code=400, detail=f"未知对话模式 {mode!r}；可用：{' / '.join(MODE_CHOICES)}"
             )
-        conn.execute(
-            "UPDATE session_thread SET agent_mode = ? WHERE thread_id = ?",
-            (mode, thread_id),
-        )
-        touch_thread(conn, thread_id)
-        conn.commit()
+        set_mode(conn, thread_id, mode)
         ctx.audit.log(
             actor=actor.id,
             action="set_session_mode",
@@ -361,12 +360,7 @@ def patch_session(
         title = body.title.strip()
         if not title:
             raise HTTPException(status_code=400, detail="标题不能为空。")
-        conn.execute(
-            "UPDATE session_thread SET title = ? WHERE thread_id = ?",
-            (title, thread_id),
-        )
-        touch_thread(conn, thread_id)
-        conn.commit()
+        set_title(conn, thread_id, title)
 
     final_role_id = body.role_id or str(thread["current_role_id"])
     try:
@@ -424,12 +418,7 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
     # 纯图消息没有文本 → 标题用 "[图片]"，COALESCE 兜底空标题（首次就覆盖）。
     # 毫秒精度的理由与唯一出处见 `storage.db.touch_thread`（`R102-62`）。
     title_fallback = "[图片]" if not body.message.strip() else body.message[:24]
-    conn.execute(
-        "UPDATE session_thread SET title = COALESCE(title, ?) WHERE thread_id = ?",
-        (title_fallback, body.thread_id),
-    )
-    touch_thread(conn, body.thread_id)
-    conn.commit()
+    seed_title(conn, body.thread_id, title_fallback)
 
     # 步数上限随运行配置一起带上：没有它，模型持续返回 tool_calls 时这一轮不会终止。
     # agent 模式上限放大一倍（见 core/graph.build_graph_config）。

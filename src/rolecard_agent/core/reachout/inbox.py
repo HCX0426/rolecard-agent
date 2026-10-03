@@ -14,6 +14,7 @@ from typing import Any
 
 from rolecard_agent.roles.models import RoleCard
 from rolecard_agent.storage.db import SqlConnection
+from rolecard_agent.storage.threads import ensure_thread
 
 # 「只进了收件箱、没落进会话」的那几条，多久之内还值得补投（R26-40 ②）。过了这个窗口就不管了
 # —— 她半小时前说的话现在才冒进会话，读起来像穿越。这个窗同时挡住"这一列上线时那批老行
@@ -204,18 +205,14 @@ def ensure_proactive_thread(
     建一行 —— 已提炼进角色记忆的事实不跟着走（那条边界有断言钉着）。
     """
     thread_id = proactive_thread_id(role.role_id, user_id=user_id)
-    conn.execute(
-        "INSERT INTO session_thread (thread_id, user_id, current_role_id, tool_epoch, title)"
-        " VALUES (?, ?, ?, ?, ?) ON CONFLICT(thread_id) DO NOTHING",
-        (
-            thread_id,
-            user_id,
-            role.role_id,
-            tool_epoch,
-            proactive_thread_title(role.role_name),
-        ),
+    ensure_thread(
+        conn,
+        thread_id=thread_id,
+        user_id=user_id,
+        role_id=role.role_id,
+        tool_epoch=tool_epoch,
+        title=proactive_thread_title(role.role_name),
     )
-    conn.commit()
     return thread_id
 
 

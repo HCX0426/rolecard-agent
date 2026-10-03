@@ -27,6 +27,7 @@ from rolecard_agent.core.anti_repeat import grams, jaccard
 from rolecard_agent.core.text import text_of
 from rolecard_agent.core.usage import TokenUsage, parse_usage, record_usage
 from rolecard_agent.storage.db import SqlConnection
+from rolecard_agent.storage.threads import set_distilled_seq
 
 # 一次提取最多带多少条最近消息、每条截多长：提取要的是"关于这个人的稳定事实"，
 # 不是全文摘要 —— 给全文既贵又会让模型去总结情节而不是抽事实。
@@ -413,11 +414,7 @@ def due_for_extract(
 
 
 def mark_extracted(conn: SqlConnection, *, thread_id: str, message_count: int) -> None:
-    conn.execute(
-        "UPDATE session_thread SET distilled_at_seq = ? WHERE thread_id = ?",
-        (message_count, thread_id),
-    )
-    conn.commit()
+    set_distilled_seq(conn, thread_id=thread_id, message_count=message_count)
 
 
 def nothing_new(

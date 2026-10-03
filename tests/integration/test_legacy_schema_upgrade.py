@@ -20,7 +20,12 @@ from pathlib import Path
 
 import pytest
 
-from rolecard_agent.core.model_settings import ModelSettingsService, _tools_of, _vision_of
+from rolecard_agent.core.model_settings import (
+    ModelSettingsService,
+    _tools_of,
+    _vision_of,
+    migrate_to_provider_layers,
+)
 from rolecard_agent.domains.registry import DOMAINS
 from rolecard_agent.storage.db import bootstrap, connect, reconcile_columns, schema_files
 
@@ -76,7 +81,9 @@ def test_legacy_db_boots_without_error(commit: str, tmp_path: Path) -> None:
     missing_before = sorted(set(_declared()) - _tables(conn))
     assert missing_before, f"{commit} 那份形状不该已经是新库"
 
-    applied = bootstrap(conn, enabled_domains=DOMAINS)
+    applied = bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers
+    )
 
     assert applied, "一个 schema 文件都没应用 = 静默跳过了建表"
     conn.close()
@@ -86,7 +93,9 @@ def test_legacy_db_boots_without_error(commit: str, tmp_path: Path) -> None:
 def test_upgraded_columns_match_declaration(commit: str, tmp_path: Path) -> None:
     """逐表断言"声明里有的列，升完都在"。漏一处 ALTER 从此在这里红。"""
     conn = _build_legacy(commit, tmp_path / "app.db")
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
 
     declared = _declared()
     gaps = {
@@ -110,7 +119,9 @@ def test_upgrade_keeps_existing_rows_and_fills_defaults(tmp_path: Path) -> None:
     )
     conn.commit()
 
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
 
     row = conn.execute(
         "SELECT role_id, role_name, reachout_enabled, recall_enabled, file_watch_enabled"
@@ -137,7 +148,9 @@ def test_legacy_extra_columns_survive(tmp_path: Path) -> None:
     """
     conn = _build_legacy("14cb9db", tmp_path / "app.db")
     before = _cols(conn, "medical_report")
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
     assert before <= _cols(conn, "medical_report")
     conn.close()
 
@@ -145,9 +158,13 @@ def test_legacy_extra_columns_survive(tmp_path: Path) -> None:
 def test_bootstrap_is_idempotent_on_a_legacy_db(tmp_path: Path) -> None:
     """同一个老库连升两次不许红（真实场景：进程重启每次都跑 bootstrap）。"""
     conn = _build_legacy("03631c6", tmp_path / "app.db")
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
     first = {t: _cols(conn, t) for t in _tables(conn)}
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
     assert {t: _cols(conn, t) for t in _tables(conn)} == first
     conn.close()
 
@@ -159,7 +176,9 @@ def test_reconcile_adds_a_column_that_only_the_declaration_has(tmp_path: Path) -
     """
     db = tmp_path / "app.db"
     fresh = connect(db)
-    bootstrap(fresh, enabled_domains=DOMAINS)
+    bootstrap(
+        fresh, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
     fresh.execute("INSERT INTO role_card (role_id, role_name, system_prompt, description)"
                   " VALUES ('r', 'n', 'p', '这段说明')")
     fresh.commit()
@@ -185,7 +204,9 @@ def test_shape_migrated_tables_are_left_to_migrate(tmp_path: Path) -> None:
     """
     db = tmp_path / "app.db"
     conn = connect(db)
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
     conn.execute("DROP TABLE model_backend")
     conn.execute(
         "CREATE TABLE model_backend ("
@@ -212,7 +233,9 @@ def test_legacy_usage_rows_become_the_local_identity(tmp_path: Path) -> None:
     """
     db = tmp_path / "app.db"
     conn = connect(db)
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
     conn.execute("DROP TABLE token_usage_day")
     conn.execute(
         "CREATE TABLE token_usage_day ("
@@ -227,8 +250,12 @@ def test_legacy_usage_rows_become_the_local_identity(tmp_path: Path) -> None:
     )
     conn.commit()
     # 再 bootstrap 一次 = 走一遍 _migrate（幂等前提：新库再跑一遍也不许动）
-    bootstrap(conn, enabled_domains=DOMAINS)
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
 
     row = conn.execute(
         "SELECT day, user_id, backend, calls, prompt_tokens FROM token_usage_day"
@@ -257,7 +284,9 @@ def test_ocr_builtin_row_renames_from_paddle(tmp_path: Path) -> None:
     """
     db = tmp_path / "app.db"
     conn = connect(db)
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
     # 造出换引擎之前的形态。**注意 `bootstrap` 不播种**（播种在装配根的 `seed_once`），
     # 所以旧行必须自己插 —— 用 UPDATE 去改一条不存在的行会得到"0 行被改"，用例于是断言
     # 一个从来没有过的东西（我第一版就是这么写出 `ids == []` 的）。
@@ -269,8 +298,11 @@ def test_ocr_builtin_row_renames_from_paddle(tmp_path: Path) -> None:
     )
     conn.commit()
 
-    bootstrap(conn, enabled_domains=DOMAINS)
-    bootstrap(conn, enabled_domains=DOMAINS)  # 幂等：第二遍不许造出第二行
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
+    # 幂等：第二遍不许造出第二行
+    bootstrap(conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers)
 
     rows = conn.execute(
         "SELECT id, enabled, sort_order FROM service_endpoint WHERE category = 'ocr'"
@@ -288,7 +320,9 @@ def test_ocr_builtin_row_renames_from_paddle(tmp_path: Path) -> None:
         " VALUES ('ocr', 'paddle', 'local', 1, 9, 1)"
     )
     conn.commit()
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
     ids = [str(r[0]) for r in conn.execute(
         "SELECT id FROM service_endpoint WHERE category = 'ocr'"
     )]
@@ -304,7 +338,9 @@ def test_reference_shape_service_endpoint_gains_a_scoped_owner(tmp_path: Path) -
     """
     db = tmp_path / "app.db"
     conn = connect(db)
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
     # 造出 B1b 之前的引用形态：无 user_id 列、带 chat 引用 + 一条能力端点。
     conn.execute("DROP TABLE service_endpoint")
     conn.execute(
@@ -323,8 +359,12 @@ def test_reference_shape_service_endpoint_gains_a_scoped_owner(tmp_path: Path) -
     conn.commit()
 
     # 再 bootstrap 一次走 _migrate（幂等前提：新库再跑一遍也不许动）
-    bootstrap(conn, enabled_domains=DOMAINS)
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
 
     rows = conn.execute("SELECT category, id, user_id FROM service_endpoint").fetchall()
     owner = {str(r["id"]): str(r["user_id"]) for r in rows if str(r["category"]) == "chat"}
@@ -350,7 +390,9 @@ def _b2_legacy_shape(tmp_path: Path) -> tuple[Path, sqlite3.Connection]:
     """
     db = tmp_path / "app.db"
     conn = connect(db)
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
     conn.execute("DROP TABLE role_proactive_state")
     conn.execute(
         "CREATE TABLE role_proactive_state ("
@@ -411,13 +453,17 @@ def test_a_declared_column_on_a_shape_migrated_table_still_gets_added(
     """
     db = tmp_path / "app.db"
     conn = connect(db)
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
     assert column in _cols(conn, table), f"{table} 没有声明 {column}，这条用例的夹具是空的"
     conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
     conn.commit()
     assert column not in _cols(conn, table)
 
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
 
     assert column in _cols(conn, table), (
         f"{table} 被补列器永久跳过：将来给这三张表声明的列，老库一个都补不上"
@@ -446,7 +492,9 @@ def test_the_thread_rename_follows_every_table_that_holds_thread_id(tmp_path: Pa
     conn.execute("INSERT INTO extra_ref (thread_id, note) VALUES ('s_proactive_she', '别的引用')")
     conn.commit()
 
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
 
     NEW = "s_proactive_local-user_she"
     rows = conn.execute(
@@ -465,7 +513,9 @@ def test_the_thread_rename_follows_every_table_that_holds_thread_id(tmp_path: Pa
     ).fetchone()[0]
     assert old_left == 0
     # 幂等：再跑一次不许把已带身份的 id 改成带两个身份段。
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
     again = [str(r["thread_id"]) for r in conn.execute("SELECT thread_id FROM command_approval")]
     assert again == [NEW], f"再跑一次把已带身份的 id 改坏了：{again}"
     conn.close()
@@ -482,7 +532,9 @@ def test_a_legacy_upgrade_leaves_the_capability_flags_unmeasured(tmp_path: Path)
     """
     db = tmp_path / "app.db"
     conn = connect(db)
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
     conn.execute("DROP TABLE model_backend")
     conn.execute(
         "CREATE TABLE model_backend ("
@@ -492,7 +544,9 @@ def test_a_legacy_upgrade_leaves_the_capability_flags_unmeasured(tmp_path: Path)
     conn.execute("INSERT INTO model_backend (name, provider, model) VALUES ('old','ollama','m')")
     conn.commit()
     # 第二次启动才走得到形态判定与搬层（第一次建的是新库形状）
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
 
     row = conn.execute(
         "SELECT supports_vision, supports_tools FROM model_backend WHERE name = 'old'"
@@ -555,7 +609,9 @@ def test_b1_residual_staging_table_does_not_permanently_block_boot(tmp_path: Pat
     """
     db = tmp_path / "app.db"
     conn = connect(db)
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
     conn.execute("DROP TABLE token_usage_day")
     conn.execute(
         "CREATE TABLE token_usage_day ("
@@ -576,7 +632,8 @@ def test_b1_residual_staging_table_does_not_permanently_block_boot(tmp_path: Pat
     )
     conn.commit()
 
-    bootstrap(conn, enabled_domains=DOMAINS)  # 修之前这一行就抛
+    # 修之前这一行就抛
+    bootstrap(conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers)
 
     pk = [r[1] for r in conn.execute("PRAGMA table_info(token_usage_day)") if r[5] > 0]
     assert pk == ["day", "user_id", "backend"], f"残留清掉了但升级没跑完：{pk}"
@@ -599,7 +656,9 @@ def test_b2_residual_staging_table_does_not_permanently_block_boot(tmp_path: Pat
     """
     db = tmp_path / "app.db"
     conn = connect(db)
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(
+        conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers,
+    )
     conn.execute("DROP TABLE role_proactive_state")
     conn.execute(
         "CREATE TABLE role_proactive_state ("
@@ -627,7 +686,8 @@ def test_b2_residual_staging_table_does_not_permanently_block_boot(tmp_path: Pat
     )
     conn.commit()
 
-    bootstrap(conn, enabled_domains=DOMAINS)  # 修之前这一行就抛 already exists
+    # 修之前这一行就抛 already exists
+    bootstrap(conn, enabled_domains=DOMAINS, provider_layers=migrate_to_provider_layers)
 
     pk = [r[1] for r in conn.execute("PRAGMA table_info(role_proactive_state)") if r[5] > 0]
     assert pk == ["user_id", "role_id"], f"没升成新主键：{pk}"

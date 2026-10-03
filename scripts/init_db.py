@@ -32,6 +32,7 @@ def main() -> int:
 
     from rolecard_agent.config import Settings
     from rolecard_agent.core.checkpointer import make_checkpointer
+    from rolecard_agent.core.model_settings import migrate_to_provider_layers
     from rolecard_agent.core.plugins import seed_plugin_rows
     from rolecard_agent.domains.registry import DOMAINS
     from rolecard_agent.roles.service import RoleCardService
@@ -42,7 +43,12 @@ def main() -> int:
 
     # Schemas are applied for every REGISTERED domain, not only the enabled ones: the table
     # should exist regardless, so that toggling a plugin never requires DDL.
-    applied = bootstrap(conn, enabled_domains=DOMAINS)
+    applied = bootstrap(
+        conn,
+        enabled_domains=DOMAINS,
+        # 旧库要搬层：动作从 model_settings 交进来（`R102-08`，storage 不再反向 import）。
+        provider_layers=migrate_to_provider_layers,
+    )
 
     # ENABLED state lives in the database, not in this script. A fresh database starts with
     # every registered domain on; from then on the table is the source of truth and re-running

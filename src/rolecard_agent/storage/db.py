@@ -329,22 +329,12 @@ def prune_retention_tables(
     return pruned
 
 
-def touch_thread(conn: SqlConnection, thread_id: str) -> None:
-    """把会话的 `updated_at` 顶到"刚刚"（毫秒精度）—— **唯一出处**（`R102-62`）。
-
-    为什么必须毫秒、不能用 `CURRENT_TIMESTAMP`（秒级）：侧栏对同一秒内并列的会话
-    按 `updated_at` 的字符串序去歧排序（`timeline.py` 的字符串序与时间序等价性
-    建立在毫秒上），精度降回秒 = 同秒顺序不稳定。这句 SQL 从前抄在 7 处、精度依据
-    只活在 sessions.py 的注释里 —— 现在理由住进唯一出处，谁也不必再抄第二份。
-    """
-    conn.execute(
-        "UPDATE session_thread SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') "
-        "WHERE thread_id = ?",
-        (thread_id,),
-    )
-
-
-def bootstrap(conn: SqlConnection, enabled_domains: Iterable[str] = ()) -> list[str]:
+def bootstrap(
+    conn: SqlConnection,
+    enabled_domains: Iterable[str] = (),
+    *,
+    provider_layers: Callable[[SqlConnection], int] | None = None,
+) -> list[str]:
     """Apply every schema file. Idempotent - all DDL uses IF NOT EXISTS.
 
     Returns the applied file names, which is what tests assert on: a silently skipped
@@ -377,7 +367,7 @@ def bootstrap(conn: SqlConnection, enabled_domains: Iterable[str] = ()) -> list[
             raise FileNotFoundError(f"schema file missing: {path}")
         conn.executescript(path.read_text(encoding="utf-8"))
         applied.append(str(path.relative_to(PACKAGE_ROOT)))
-    _migrate(conn)
+    _migrate(conn, provider_layers=provider_layers)
     # 第二遍：`_migrate` 里那些 DROP/重建（service_endpoint 整表、model_backend 搬层）
     # 会把第一遍补好的列跟着旧表一起带走，所以搬层之后再对齐一次声明。
     # 这一遍**不再跳过**那三张手形迁移的表（`R28-21`）。跳过只对**第一遍**是必要的：那里
@@ -501,7 +491,7 @@ def _columns(conn: SqlConnection, table: str) -> set[str]:
 #: `session_thread` 自己**的表，都跟着改。langgraph 那两张（checkpoints / writes）本来就
 #: 在这个集合里，原来那句"表不存在就不动"的 `has_cp` 特判因此也不需要了 —— 不存在的表
 #: 根本进不了清单。
-def _thread_id_carriers(conn: SqlConnection) -> list[str]:
+def thread_id_carriers(conn: SqlConnection) -> list[str]:
     tables = [
         str(r[0])
         for r in conn.execute(
@@ -542,30 +532,20 @@ def _dedupe_pending_approvals(conn: SqlConnection) -> int:
     return max(cur.rowcount, 0)
 
 
-def delete_thread_everywhere(conn: SqlConnection, thread_id: str) -> dict[str, int]:
-    """按 thread_id 级联删的**唯一入口**（`R102-26`/`48`；2026-10-02 拍板：真删）。
+def _needs_provider_layers(conn: SqlConnection) -> bool:
+    """这库里有一张旧形态的 model_backend 等着搬吗？
 
-    名单**现数现用**（`_thread_id_carriers()`）而不是调用点自列清单 —— 从前的两条删除
-    路径（单删会话 / 整份替换）各自写死 `("checkpoints", "writes")` 两张表，
-    `command_approval` 恰好都不在名单里，已删会话的待批审批就这么永远挂在队列上。
-    走 app 连接而不是 saver 自己的 `delete_thread`，是因为**同一连接才能把删检查点、
-    删载体行、删 thread 行包进同一个事务**（saver 是另一条连接，跨不过来 —— 那也是
-    "整份替换没法包成一个跨两连接大事务"的根源，`R102-48` 的残留窗口）。调用方负责
-    先拿 `thread_write(thread_id)`：在飞轮次不该被从脚下抽走检查点（R28-03 同类事故）。
-
-    返回每张表删掉的行数（审计与测试用）。
+    判据与 `migrate_to_provider_layers` 自己的第一句完全同一把尺（列清单里没有
+    `provider_id` 就是旧形态），所以两边永远不会对『要不要搬』给出不同答案 ——
+    两处判断不同步就是「该搬的没搬、不该搬的搬了」的那种错。
     """
-    stats: dict[str, int] = {}
-    for table in _thread_id_carriers(conn):
-        cur = conn.execute(f"DELETE FROM {table} WHERE thread_id = ?", (thread_id,))
-        stats[table] = max(cur.rowcount, 0)
-    cur = conn.execute("DELETE FROM session_thread WHERE thread_id = ?", (thread_id,))
-    stats["session_thread"] = max(cur.rowcount, 0)
-    conn.commit()
-    return stats
+    cols = _columns(conn, "model_backend")
+    return bool(cols) and "provider_id" not in cols
 
 
-def _migrate(conn: SqlConnection) -> None:
+def _migrate(
+    conn: SqlConnection, *, provider_layers: Callable[[SqlConnection], int] | None = None
+) -> None:
     """**形状**迁移：只负责"通用补列器补不了"的那些事（幂等、可重跑）。
 
     列级缺列不再手写 ALTER —— `reconcile_columns` 每次都按 `schema.sql` 的声明比对
@@ -654,7 +634,7 @@ def _migrate(conn: SqlConnection) -> None:
         )
         conn.execute("DROP TABLE role_proactive_state")
         conn.execute("ALTER TABLE role_proactive_state__b2 RENAME TO role_proactive_state")
-        refs = _thread_id_carriers(conn)
+        refs = thread_id_carriers(conn)
         for row in conn.execute(
             "SELECT thread_id, user_id FROM session_thread "
             "WHERE thread_id LIKE 's_proactive_%'"
@@ -752,9 +732,24 @@ def _migrate(conn: SqlConnection) -> None:
         )
     # 9. model_backend 两层化（凭据上收 model_provider、usage 变成 chat 引用行）。
     #    必须排在 service_endpoint 重建**之后**：搬层要往新形态的引用表里写 chat 行。
-    from rolecard_agent.core.model_settings import migrate_to_provider_layers  # noqa: PLC0415
-
-    migrate_to_provider_layers(conn)
+    # 搬层这一步**由调用方交进来**（`R102-08`：从前这里是 `storage/db.py` 惰性
+    # import `core.model_settings`，而 `model_settings` 顶层 import `storage.db` ——
+    # 全仓唯一一条模块级真环，底层反向依赖上层）。它必须留在 `_migrate` 这个位置上：
+    # 排在 service_endpoint 重建**之后**、`idx_model_backend_provider` 创建**之前**
+    # —— 搬层会 DROP/RENAME 重建 model_backend，先建的索引跟着表一起没了。顺序是承重的，
+    # 所以不是"调用方在 bootstrap 之后自己搬一次"，而是把那个动作传到这里来。
+    #
+    # 旧库却没人传 = 静默不搬 = 配置变小，所以这里判一下现场：真需要搬而没交动作，
+    # 就当众失败，而不是留下一个"读出来比升级前少"的库。
+    if _needs_provider_layers(conn):
+        if provider_layers is None:
+            raise RuntimeError(
+                "model_backend 还是旧形态（没有 provider_id），需要搬层却没交 "
+                "provider_layers：走 core/bootstrap.py 那条链，或显式传 "
+                "provider_layers=rolecard_agent.core.model_settings"
+                ".migrate_to_provider_layers。"
+            )
+        provider_layers(conn)
     # 索引在搬层之后建：搬层会 DROP/RENAME 重建 model_backend，先建的索引跟着表一起没了。
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_model_backend_provider ON model_backend"

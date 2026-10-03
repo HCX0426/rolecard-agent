@@ -1207,6 +1207,199 @@ def check_audit_action_vocabulary() -> None:
         )
 
 
+def check_session_thread_write_seam() -> None:
+    """`session_thread` 的写 SQL 只许住在 storage 层（`R102-05` 第二步的尺子）。
+
+    这条表从前有七个写入者：`api/routers/sessions.py`（5 处）、`core/sync.py`（2）、
+    `core/reachout/inbox.py`、`core/memory_distill.py`、`roles/service.py`、
+    `api/routers/sync.py` 各 1 —— 而它的每一条写都有道理（毫秒 `updated_at` 是为了侧栏同秒
+    能分先后、`title` 的 `COALESCE` 是"只兜第一次"、`distilled_at_seq` 是游标不是计数）。
+    道理散在七处，就等于哪一处都没有：`R102-62` 抄 7 遍的那条 SQL 是同一件事。
+
+    判据只数**代码里的字符串常量**（与 `audit action vocabulary` 同一条纪律：注释里提到
+    "从前有七处"不该把自己数成第八处）。允许的两份是 `storage/threads.py`（产品写链）与
+    `storage/db.py`（形状迁移与身份重命名 —— 那是 schema 的事，不是会话的事）。
+    反向还有一臂：repository 里必须**真的**躺着这些写点，不然"只许住在这里"会被掏空成
+    一条永不说话的判据。
+    """
+    seam = {"src/rolecard_agent/storage/threads.py", "src/rolecard_agent/storage/db.py"}
+    markers = ("INSERT INTO session_thread", "UPDATE session_thread", "DELETE FROM session_thread")
+    offenders: list[str] = []
+    in_seam = 0
+    for path in sorted((ROOT / "src" / "rolecard_agent").rglob("*.py")):
+        rel = path.relative_to(ROOT).as_posix()
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except SyntaxError:
+            continue
+        found = [
+            node.lineno
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and any(marker in node.value for marker in markers)
+        ]
+        if not found:
+            continue
+        if rel in seam:
+            in_seam += len(found)
+        else:
+            offenders.extend(f"{rel}:{line}" for line in found)
+
+    hollow = in_seam < 5
+    ok = not offenders and not hollow
+    detail = (
+        f"repository 里 {in_seam} 条写语句，登记接缝外 0 条"
+        if ok
+        else (
+            f"越层写 session_thread：{offenders}"
+            if offenders
+            else f"接缝被掏空：repository 里只剩 {in_seam} 条写语句（<5）"
+        )
+    )
+    out("session_thread write seam", ok, detail)
+    if offenders:
+        fails.append(
+            "session_thread is written outside the storage repository: "
+            f"{offenders}（写链唯一出处见 storage/threads.py）"
+        )
+    if hollow:
+        fails.append(
+            "session_thread write seam is hollow: storage/threads.py must hold the "
+            "write statements it claims to own"
+        )
+
+
+def check_storage_does_not_import_core() -> None:
+    """storage 层不许 import core（`R102-08` 断开的那条环不许回来）。
+
+    从前全仓只有这一条模块级真环：`storage/db.py::_migrate` 惰性 import
+    `core.model_settings.migrate_to_provider_layers`，而 `core/model_settings.py` 顶层
+    import `storage.db`。惰性 import 让导入不炸，但方向仍是**底层反向依赖上层**——
+    "搬层"这一步现在由调用方（`core/bootstrap.py` / `scripts/init_db.py`）传进来，
+    storage 侧对"要不要搬"只保留现场判断，旧库没交动作就当众失败。
+    """
+    offenders: list[str] = []
+    for path in sorted((ROOT / "src" / "rolecard_agent" / "storage").rglob("*.py")):
+        rel = path.relative_to(ROOT).as_posix()
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
+                "rolecard_agent.core"
+            ):
+                offenders.append(f"{rel}:{node.lineno}")
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.startswith("rolecard_agent.core"):
+                        offenders.append(f"{rel}:{node.lineno}")
+
+    ok = not offenders
+    detail = "storage 层 0 处 import core（环已断）" if ok else f"反向依赖回来了：{offenders}"
+    out("storage does not import core", ok, detail)
+    if offenders:
+        fails.append(
+            "storage layer imports upward from core (module-level cycle): "
+            f"{offenders}（搬层动作请由调用方传 bootstrap(provider_layers=...)）"
+        )
+
+
+#: 写语句所在、但**本函数自己不结束事务**的那九个位置（`R102-03` 沿袭项的盘点结果）。
+#:
+#: 逐处读过才登记：每一条都是"辅助函数由调用方收口"的形状 —— 写在这里的意义不是
+#: "这些地方可以悬挂"，而是**新增一处这样的写法必须先过一道判断**（要么自己 commit，
+#: 要么进这份名单并说清调用方在哪一步收口）。`R102-42` 那族（0 行的写也开了事务、
+#: 抛之前不结束）的教训就是"同一句理由散在几处、注释传到第二处就停"；这份名单把
+#: "谁收口"变成判据而不是记忆。
+#:
+#: 判据只数**代码里的字符串常量**（注释/docstring 里提到表名不算），并跳过协议声明
+#: （函数体只有 `...` 或 `pass` —— 那是契约，不是写点：`DomainQueryService.create_report`
+#: 就是被这样误收过一次）。
+WRITE_TXN_HELPERS = frozenset(
+    {
+        "src/rolecard_agent/core/checkpointer.py::_set_flag",
+        "src/rolecard_agent/core/checkpointer.py::_drop_orphan_writes",
+        "src/rolecard_agent/core/memory_distill.py::extract",
+        "src/rolecard_agent/core/model_settings.py::_write_chat_refs",
+        "src/rolecard_agent/core/plugins.py::_bump_tool_epoch",
+        "src/rolecard_agent/core/sync.py::_write_memory",
+        "src/rolecard_agent/core/sync.py::_write_reachout",
+        "src/rolecard_agent/storage/threads.py::delete_threads_for_user",
+        "src/rolecard_agent/storage/threads.py::set_current_role",
+    }
+)
+
+
+def check_write_txn_ownership_inventory() -> None:
+    """"哪个产品写点会留未提交事务"从此有一份被看着的名单（`R102-03` 沿袭的那一角）。
+
+    第 47 条断言 `dangling write txn` 管的是"判了 rowcount 那一支有没有先结束事务"；
+    这一条管的是**另一支**：函数体里有写语句、而本函数既不 commit 也不 rollback ——
+    这类写法本身不坏（helper 交给调用方收口是常见形状），坏的是**没人知道有几处**。
+    10-03 的盘点给出 10 个候选，逐个读上下文后 9 处登记、1 处是协议声明（不是写点）。
+
+    两个方向都要能红：新增了没登记的红，登记着却已经不在了也红（`R102-37` 的空转臂教训）。
+    """
+    src = ROOT / "src" / "rolecard_agent"
+    found: set[str] = set()
+    for path in sorted(src.rglob("*.py")):
+        rel = path.relative_to(ROOT).as_posix()
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except SyntaxError:
+            continue
+        for fn in ast.walk(tree):
+            if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            writes = [
+                n
+                for n in ast.walk(fn)
+                if isinstance(n, ast.Constant)
+                and isinstance(n.value, str)
+                and re.search(r"\b(INSERT INTO|UPDATE\s+\w+|DELETE FROM)\b", n.value)
+            ]
+            if not writes:
+                continue
+            ends = any(
+                isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute)
+                and n.func.attr in {"commit", "rollback"}
+                for n in ast.walk(fn)
+            )
+            if ends:
+                continue
+            real_body = [
+                n
+                for n in fn.body
+                if not (isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant))
+            ]
+            if not real_body or (len(real_body) == 1 and isinstance(real_body[0], ast.Pass)):
+                continue  # 协议/抽象声明：契约不是写点
+            found.add(f"{rel}::{fn.name}")
+
+    unregistered = sorted(found - WRITE_TXN_HELPERS)
+    stale = sorted(WRITE_TXN_HELPERS - found)
+    ok = not unregistered and not stale
+    detail = (
+        f"{len(found)} 个「写而不收口」的位置全在名单内"
+        if ok
+        else f"未登记：{unregistered}；名单里已经不在了：{stale}"
+    )
+    out("write txn ownership inventory", ok, detail)
+    if unregistered:
+        fails.append(
+            "new function writes without ending the transaction and is not registered: "
+            f"{unregistered}（要么自己 commit/rollback，要么进 "
+            "check_consistency.WRITE_TXN_HELPERS 并说清调用方在哪一步收口）"
+        )
+    if stale:
+        fails.append(
+            f"WRITE_TXN_HELPERS has entries that no longer match a write site: {stale}"
+        )
+
+
 def check_single_text_extractor() -> None:
     """消息取文本只允许一处实现：`core/text.py::text_of`（架构审计报告 台账 `R28-59`）。
 
@@ -1838,7 +2031,7 @@ SINGLE_SOURCE_LITERALS = {
     "qwen3-vl:8b": "src/rolecard_agent/config.py",
     # 毫秒 touch 的唯一出处（`R102-62`）：从前抄在 7 处，精度依据只活在注释里 ——
     # 谁把它"顺手改简单"成 CURRENT_TIMESTAMP（秒级），侧栏同秒去歧就静默失效。
-    "strftime('%Y-%m-%d %H:%M:%f', 'now')": "src/rolecard_agent/storage/db.py",
+    "strftime('%Y-%m-%d %H:%M:%f', 'now')": "src/rolecard_agent/storage/threads.py",
 }
 
 
@@ -2921,6 +3114,9 @@ def main() -> int:
     check_core_no_domain_token()
     check_api_domain_seams()
     check_audit_action_vocabulary()
+    check_session_thread_write_seam()
+    check_storage_does_not_import_core()
+    check_write_txn_ownership_inventory()
     check_single_text_extractor()
     check_domain_isolation()
     check_safety_prompt()

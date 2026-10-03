@@ -35,7 +35,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from rolecard_agent.core.thread_locks import thread_write
-from rolecard_agent.storage.db import SqlConnection, touch_thread
+from rolecard_agent.storage.db import SqlConnection
+from rolecard_agent.storage.threads import (
+    insert_imported_thread,
+    update_imported_thread,
+)
 
 KIND_CARD = "card"
 KIND_THREAD = "thread"
@@ -611,27 +615,9 @@ def _write_thread(
     if row is not None and str(row["user_id"]) != user_id:
         return "foreign"
     if row is None:
-        conn.execute(
-            "INSERT INTO session_thread (thread_id, user_id, current_role_id, model_name,"
-            " agent_mode, title) VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                tid,
-                user_id,
-                str(payload.get("current_role_id") or "general_assistant"),
-                payload.get("model_name"),
-                payload.get("agent_mode"),
-                payload.get("title"),
-            ),
-        )
+        insert_imported_thread(conn, thread_id=tid, user_id=user_id, payload=payload)
     else:
-        conn.execute(
-            "UPDATE session_thread SET title = ?, current_role_id = ?"
-            " WHERE thread_id = ? AND user_id = ?",
-            (payload.get("title"), str(payload.get("current_role_id") or "general_assistant"),
-             tid, user_id),
-        )
-        touch_thread(conn, tid)
-    conn.commit()
+        update_imported_thread(conn, thread_id=tid, user_id=user_id, payload=payload)
     messages: list[Any] = []
     for item in payload.get("messages") or []:
         role = str(item.get("role") or "")
