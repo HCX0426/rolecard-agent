@@ -18,6 +18,7 @@ import path from "node:path";
 import { Backend, consoleUrl, endpoint, serving, type BackendOptions, type Outcome } from "./backend";
 import { canManageLoginItem, loginItemEnabled, setLoginItemEnabled, startedByLoginItem } from "./autostart";
 import { Ollama } from "./ollama";
+import { isAllowedNavigation } from "./navigation";
 import {
   applyPetPrefs,
   createMainWindow,
@@ -227,17 +228,25 @@ function wireWindow(win: BrowserWindow): void {
   // 导航护栏（`R102-56`）：两扇窗都只该停在后端托管的本地着陆页（`file://`）。页面渲染的是
   // **AI 生成内容**（角色卡是第三方输入），提示注入塞一个 `<a target="_blank">` 或
   // `window.open` 就能把窗导航到远程内容 —— `sandbox: true` 挡得住代码执行，挡不住钓鱼页
-  // 与它对后端的"已登录"二次调用。合法目标只有 `loadFile(LANDING)` 那两处（含 query 变体），
-  // 所以除 file:// 一律 deny；拦截要**留一行痕**（打包态没有终端，logLine 是唯一证据）。
+  // 与它对后端的"已登录"二次调用。**合法目标不止着陆页**：探活成功后窗要导航去后端那一格
+  // （控制台 `http://127.0.0.1:<端口>/`、桌宠同一 origin 的 `#/pet`）—— 批 13 只放 file://
+  // 就把这条主路径拦死了（`R102-73`，第二十包装完控制台停在「正在打开控制台…」）。
+  // 判据收在 `navigation.ts::isAllowedNavigation`：file:// 与后端那一个 origin 放行，其余拦，
+  // 拦与放都留一行痕（打包态没有终端，logLine 是唯一证据）。
   win.webContents.setWindowOpenHandler(({ url }) => {
     logLine(`导航被拒（新开窗）：${url}`);
     return { action: "deny" };
   });
   win.webContents.on("will-navigate", (event, url) => {
-    if (!url.startsWith("file://")) {
-      event.preventDefault();
-      logLine(`导航被拒（页面跳转）：${url}`);
+    if (isAllowedNavigation(url, consoleUrl())) {
+      // 放行也留一行痕：真机冒烟靠这句判"控制台确实到了后端那一格"。批 13 那版把这条
+      // 合法路径当成注入拦掉了（`R102-73`），而拦截有痕、放行无痕 ⇒ 屏幕上只剩一个转圈，
+      // 日志里却看不出是护栏自己拦错了。
+      logLine(`导航放行（页面跳转）：${url}`);
+      return;
     }
+    event.preventDefault();
+    logLine(`导航被拒（页面跳转）：${url}`);
   });
 }
 

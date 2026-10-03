@@ -245,7 +245,7 @@ def main() -> int:
         console_ui_smoke,
     )
     run_check(
-        "桌面壳退出冒烟（起真壳 → app.quit() → 进程必须自己收干净）",
+        "桌面壳冒烟（起真壳 → 控制台导航到后端那一格 → app.quit() → 进程必须自己收干净）",
         console_shell_quit_smoke,
     )
     return report()

@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 /**
- * 桌面壳的「退出」冒烟：证明 `app.quit()` 真能把进程收掉，而不是停在半路。
+ * 桌面壳的冒烟：证明 ① 控制台**真的导航到了后端那一格**，② `app.quit()` 真能把进程收掉。
+ *
+ * ① 是 10-03 补上的（`R102-73`）：批 13 的导航护栏写的是"除 `file://` 一律 deny"，
+ * 而着陆页探活成功后本来就要导航去 `http://127.0.0.1:<端口>/` —— 第二十包装完，屏幕上只剩
+ * 「正在打开控制台…」转圈。那种病单测与真机 UI 冒烟都抓不到（它不起真壳），只有起一次真壳、
+ * 看 `shell.log` 里那句「导航放行」有没有落下来才看得见。本冒烟因此自己起一个假后端
+ * （只答 HTTP 200，不碰 Python 后端），把这条主路径走通。
  *
  * 用法：
  *   node scripts/shell_quit_smoke.js
@@ -29,6 +35,7 @@
  *   SHELL_SMOKE_HARD_MS       整轮的上限，超了就判死（默认 30000）
  */
 
+const http = require("http");
 const { spawn, spawnSync } = require("child_process");
 const fs = require("fs");
 const os = require("os");
@@ -111,6 +118,16 @@ async function main() {
     }
   }
 
+  // 假后端：只为"控制台要能导航到它那一格"这件事存在。着陆页的探活是 TCP 层的，
+  // 导航过去之后页面自己发的请求拿到 200 就够了，不需要真的模型或库。
+  const stub = http.createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    res.end("<!doctype html><title>shell smoke stub</title>");
+  });
+  await new Promise((resolve) => stub.listen(0, "127.0.0.1", resolve));
+  const stubPort = stub.address().port;
+  const backendUrl = `http://127.0.0.1:${stubPort}`;
+
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "rolecard-shell-smoke-"));
   const logFile = path.join(profile, "quit.log");
   const original = fs.readFileSync(MAIN_JS, "utf8");
@@ -127,6 +144,9 @@ async function main() {
         ...process.env,
         // 指到一个不可能存在的程序：壳判定"拉不起后端"就照常开窗，退出时也没有子进程要收。
         ROLECARD_BACKEND_CMD: path.join(profile, "no-such-backend.exe"),
+        // 指到本冒烟自己起的那一发假后端：壳判定"端口上已有人应答"就不 spawn，
+        // 退出时也没有子进程要收（与上面那条同一意图），而窗能真的导航过去。
+        ROLECARD_BACKEND_URL: backendUrl,
         SHELL_SMOKE_LOG: logFile,
         SHELL_SMOKE_QUIT_MS: String(QUIT_MS),
       },
@@ -146,6 +166,7 @@ async function main() {
         resolve(code);
       });
     });
+    stub.close();
     const raw = fs.existsSync(logFile) ? fs.readFileSync(logFile, "utf8") : "";
     const at = (needle) => {
       const line = raw.split("\n").find((l) => l.includes(needle));
@@ -162,8 +183,32 @@ async function main() {
     if (quitAt !== null && exitAt !== null && exitAt - quitAt > BUDGET_MS)
       failures.push(`quit→退出用了 ${exitAt - quitAt}ms，超过预算 ${BUDGET_MS}ms`);
 
+    // ① 导航这条主路径（`R102-73` 的回归位）：shell.log 里必须有一句"放行到后端那一格"，
+    // 而且不能有"拒绝到自家 origin"—— 后者就是第二十包那次的病状。
+    const shellLogPath = path.join(profile, "shell.log");
+    const navLog = fs.existsSync(shellLogPath) ? fs.readFileSync(shellLogPath, "utf8") : "";
+    const allowedNav = navLog.split("\n").filter((l) => l.includes("导航放行") && l.includes(backendUrl));
+    const deniedHome = navLog
+      .split("\n")
+      .filter((l) => l.includes("导航被拒") && l.includes(backendUrl));
+    if (!fs.existsSync(shellLogPath)) {
+      failures.push(`壳没写 ${shellLogPath}（导航判据没跑起来还是日志换了地方？）`);
+    } else if (deniedHome.length) {
+      failures.push(`护栏把自家 origin 拦了：${deniedHome.join(" / ")}`);
+    } else if (allowedNav.length === 0) {
+      failures.push(
+        `控制台没导航到后端那一格（${backendUrl}）——shell.log 尾部：${navLog
+          .split("\n")
+          .slice(-3)
+          .join(" / ")}`
+      );
+    }
+
     const secs = quitAt !== null && exitAt !== null ? ((exitAt - quitAt) / 1000).toFixed(3) : "-";
-    console.log(`[${stamp()}] shell quit smoke: quit→进程退出 ${secs}s（预算 ${BUDGET_MS}ms）`);
+    console.log(
+      `[${stamp()}] shell smoke: 导航到后端 ${allowedNav.length} 次放行 / quit→进程退出 ${secs}s` +
+        `（预算 ${BUDGET_MS}ms，假后端 ${backendUrl}）`
+    );
     if (failures.length) {
       for (const f of failures) console.error(`FAIL ${f}`);
       console.error(`--- 探针日志 ---\n${raw}`);
