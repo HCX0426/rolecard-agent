@@ -1674,6 +1674,67 @@ def check_ledger_status_states_verdict() -> None:
         )
 
 
+def check_app_icon_frames() -> None:
+    """应用图标必须是**多帧 + 带 alpha**（`R102` 归档后由用户报的"桌面图标有白底"换来）。
+
+    装机版快捷方式的图标取自 exe 内嵌的那份 `shell/build/icon.ico`，而它从壳选型那次起
+    就没人重生成过：**只有一帧 256、四角全不透明**（源图是"圆角方块摆在白画布上"的展示图，
+    外圈留白被原样烙进来，右下角还带着生成器水印）。16/32/48 全靠硬缩，托盘与任务栏因此发糊。
+    产物由 `scripts/make_app_icon.py` 生成，这条只验结果，三格都判：
+      · 帧数与档位：至少 6 帧，且 16/32/48/256 都在；
+      · 每帧必须是 PNG 编码且 **color type = 6（RGBA）** —— 没有 alpha 通道就不可能透明；
+      · 母图 `shell/app-icon-master.png` 必须在（图标要能重生成，不是手画的孤品）。
+    """
+    ico = ROOT / "shell" / "build" / "icon.ico"
+    master = ROOT / "shell" / "app-icon-master.png"
+    if not ico.exists():
+        out("app icon is multi-frame RGBA", False, f"图标不在：{ico}")
+        fails.append(f"app icon missing: {ico}")
+        return
+    data = ico.read_bytes()
+    problems: list[str] = []
+    if len(data) < 6 or int.from_bytes(data[2:4], "little") != 1:
+        out("app icon is multi-frame RGBA", False, "不是 ICO（类型字段不是 1）")
+        fails.append("shell/build/icon.ico is not an ICO")
+        return
+    count = int.from_bytes(data[4:6], "little")
+    sizes: list[int] = []
+    for i in range(count):
+        e = data[6 + 16 * i: 22 + 16 * i]
+        if len(e) < 16:
+            break
+        w = 256 if e[0] == 0 else e[0]
+        h = 256 if e[1] == 0 else e[1]
+        off = int.from_bytes(e[12:16], "little")
+        ln = int.from_bytes(e[8:12], "little")
+        sizes.append(min(w, h))
+        blob = data[off:off + ln]
+        if blob[:8] != b"\x89PNG\r\n\x1a\n":
+            problems.append(f"{w}px 帧不是 PNG（读不到 alpha 通道）")
+        elif len(blob) < 26 or blob[25] != 6:
+            problems.append(f"{w}px 帧的 PNG color type 不是 6（RGBA），没有 alpha 通道")
+    if len(set(sizes)) < 6:
+        problems.append(f"只有 {len(set(sizes))} 档帧，至少要 6 档")
+    missing = sorted({16, 32, 48, 256} - set(sizes))
+    if missing:
+        problems.append(f"缺档位 {missing}")
+    if not master.exists():
+        problems.append(f"母图不在：{master.relative_to(ROOT)}")
+    ok = not problems
+    out(
+        "app icon is multi-frame RGBA",
+        ok,
+        f"{len(set(sizes))} 档帧（{sorted(set(sizes))}），全部 PNG-RGBA"
+        if ok
+        else "；".join(problems),
+    )
+    if problems:
+        fails.append(
+            "app icon is not a clean multi-frame RGBA set: " + "；".join(problems)
+            + " —— 重跑 .venv-ocr\\Scripts\\python.exe scripts/make_app_icon.py"
+        )
+
+
 def check_single_text_extractor() -> None:
     """消息取文本只允许一处实现：`core/text.py::text_of`（架构审计报告 台账 `R28-59`）。
 
@@ -3394,6 +3455,7 @@ def main() -> int:
     check_audit_ledger_row_count()
     check_data_root_dirs_gitignored()
     check_ledger_status_states_verdict()
+    check_app_icon_frames()
     check_single_text_extractor()
     check_domain_isolation()
     check_safety_prompt()
