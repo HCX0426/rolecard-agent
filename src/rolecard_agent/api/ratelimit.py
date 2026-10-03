@@ -30,6 +30,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 
 #: 会真正花掉资源的方法。读（GET/HEAD）一律不进门。
@@ -73,6 +74,12 @@ class Limiter:
     def __init__(self, per_minute: int) -> None:
         self.per_minute = per_minute
         self._window: dict[str, tuple[int, int]] = {}  # 键 -> (窗口号, 本窗口已用)
+        # 读-改-写必须原子（`R102-72`）：`hit` 从 FastAPI 线程池被并发调用，而
+        # "get 计数 → 判断 → set 计数+1"之间会被切走 —— 实测（`build/` 探针，16 线程 ×
+        # 2000 发，切换间隔压到 1µs）**丢了 70% 以上的计数**，方向恰恰是最坏的那个：
+        # 丢计数 = 少算 = 配额被并发打穿（限流转而过宽），而且额度越大丢得越多。
+        # 锁只包这一段临界区；`per_minute <= 0` 的短路在锁外（默认关闭时连锁都不碰）。
+        self._lock = threading.Lock()
 
     def hit(self, key: str, now: float | None = None) -> tuple[bool, int]:
         """记一次并回答 `(放行?, 还要等几秒)`。`per_minute <= 0` = 关着，永远放行。
@@ -83,18 +90,19 @@ class Limiter:
             return True, 0
         stamp = time.monotonic() if now is None else now
         bucket = int(stamp // 60)
-        window, used = self._window.get(key, (bucket, 0))
-        if window != bucket:
-            window, used = bucket, 0
-        if used >= self.per_minute:
-            # 窗口余量取整后可能是 0（比如离切换只剩 10 毫秒），但 `Retry-After: 0`
-            # 等于让客户端立刻重试 —— 那正是要挡的行为，所以下限给 1 秒。
-            return False, int(60 - (stamp % 60)) or 1
-        if len(self._window) >= _MAX_KEYS:
-            # 清掉已经翻篇的窗口；当前窗口的桶留着（正在被数的那批不因清理而清零）。
-            self._window = {k: v for k, v in self._window.items() if v[0] == bucket}
-        self._window[key] = (window, used + 1)
-        return True, 0
+        with self._lock:
+            window, used = self._window.get(key, (bucket, 0))
+            if window != bucket:
+                window, used = bucket, 0
+            if used >= self.per_minute:
+                # 窗口余量取整后可能是 0（比如离切换只剩 10 毫秒），但 `Retry-After: 0`
+                # 等于让客户端立刻重试 —— 那正是要挡的行为，所以下限给 1 秒。
+                return False, int(60 - (stamp % 60)) or 1
+            if len(self._window) >= _MAX_KEYS:
+                # 清掉已经翻篇的窗口；当前窗口的桶留着（正在被数的那批不因清理而清零）。
+                self._window = {k: v for k, v in self._window.items() if v[0] == bucket}
+            self._window[key] = (window, used + 1)
+            return True, 0
 
 
 def bucket_key(actor_id: str, *, anonymous: bool, origin: str) -> str:

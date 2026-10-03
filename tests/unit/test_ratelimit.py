@@ -15,6 +15,8 @@ Traceability: 架构总览 §4「尚未关闭 / 待办」（v2.4 公网部署：
 
 from __future__ import annotations
 
+import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -69,6 +71,47 @@ def test_limiter_is_off_when_quota_is_zero_and_never_counts() -> None:
 def test_bucket_key_follows_the_identity_and_falls_back_to_ip() -> None:
     assert bucket_key("alice", anonymous=False, origin="203.0.113.9") == "id:alice"
     assert bucket_key("anonymous", anonymous=True, origin="203.0.113.9") == "ip:203.0.113.9"
+
+
+def test_concurrent_hits_do_not_lose_counts() -> None:
+    """并发下计数不许丢（`R102-72`）：丢计数 = 少算 = 配额被并发打穿，限流转而过宽。
+
+    复现手法与取证探针同形：**把线程切换间隔压到 1µs**（不加这一句，纯 Python 的紧循环
+    在一整个循环里都不会被切走 —— 那个"无丢失"是假的，探针先量到过一次），然后 16 条
+    线程同时打同一个键，配额取总量的一半。判据是**放行数恰好等于配额**：无锁时读-改-写
+    被切走、计数丢七成，放行会远多于配额（探针实测配额 32001 时桶里只剩 6.6k~9.7k）。
+    """
+    per_minute = 200
+    runners = 16
+    per_thread = 40
+    lim = Limiter(per_minute)
+    start = threading.Barrier(runners)
+    outcomes: list[bool] = []
+    collect = threading.Lock()
+
+    def worker() -> None:
+        local: list[bool] = []
+        start.wait()  # 尽量让所有线程真的同时打
+        for _ in range(per_thread):
+            local.append(lim.hit("id:same", now=1000.0)[0])
+        with collect:
+            outcomes.extend(local)
+
+    old_interval = sys.getswitchinterval()
+    sys.setswitchinterval(0.000001)
+    try:
+        threads = [threading.Thread(target=worker) for _ in range(runners)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        sys.setswitchinterval(old_interval)
+
+    total = runners * per_thread
+    allowed = sum(outcomes)
+    assert allowed == per_minute, f"放行 {allowed} ≠ 配额 {per_minute}（丢计数就是放多了）"
+    assert total - allowed == total - per_minute  # 其余全被拒：一个不丢、一个不多
 
 
 # -- 准入链那一层 -------------------------------------------------------------------
