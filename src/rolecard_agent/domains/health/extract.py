@@ -37,9 +37,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from rolecard_agent.base.observability import TraceEvent
+from rolecard_agent.base.text import text_of
 from rolecard_agent.config import Settings
-from rolecard_agent.core.observability import TraceEvent
-from rolecard_agent.core.text import text_of
 
 # 一次模型调用：prompt -> 原始文本回复。注入式，便于单测。
 ModelInvoker = Callable[[str], str]

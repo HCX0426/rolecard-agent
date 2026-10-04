@@ -430,7 +430,7 @@ def check_availability(candidate_id: str, settings: Settings) -> tuple[bool, str
     if candidate_id == "rapidocr":
         # 判定只有一份：问运行时那个后端"你跑得起来吗"。从前这里自己看 `.venv-ocr` 在不在，
         # 于是装机版明明带着随包 worker，服务页却报"未找到独立 OCR 解释器"（两处口径那一族）。
-        from rolecard_agent.core.paths import default_ocr_python
+        from rolecard_agent.base.paths import default_ocr_python
         from rolecard_agent.rag.ocr import LocalRapidOcrBackend
 
         backend = LocalRapidOcrBackend(exe=settings.ocr_python or default_ocr_python())
@@ -444,8 +444,8 @@ def endpoint_available(e: EndpointConfig, settings: Settings) -> tuple[bool, str
     """端点的可用性：失效引用 > 云端 key 齐缺 > 本地探活。
 
     本地引用行分两种，探测必须与 `select_ocr_backend` 的选择语义**同一份判定**
-    （原语在 core/probes.py）——此前探测不认识视觉模型引用行，UI 显示"未知本地
-    实现/不可用"而选择器实际会去试，服务页状态自相矛盾（用户 2026-09-17 反馈）：
+    （原语在 `base/probes.py`，`core/probes.py` 只是再导出）——此前探测不认识视觉模型引用行，
+    UI 显示"未知本地实现/不可用"而选择器实际会去试，服务页状态自相矛盾（用户 2026-09-17 反馈）：
       * 带模型的视觉引用行（usage=ocr 的后端引用，如 qwen3-vl）→ 探 Ollama /api/tags
         （3s 网络探测；服务页行数个位数，代价可接受）；
       * 纯本地实现（rapidocr/hash/off）→ 维持廉价静态探活。

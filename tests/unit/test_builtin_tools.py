@@ -7,7 +7,7 @@ while `core/tools/builtin.py` was still an empty docstring - the whitelist point
 
 from __future__ import annotations
 
-from rolecard_agent.core.identity import DEFAULT_USER_ID
+from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.core.tools.builtin import make_kernel_tools
 from rolecard_agent.roles.service import RoleCards, RoleCardService
 

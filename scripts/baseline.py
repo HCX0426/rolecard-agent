@@ -349,7 +349,7 @@ def section_hardcoded_identity() -> dict[str, Any]:
     def name_loads(base: Path) -> dict[str, int]:
         """只数**真正用了这个常量**的地方：`ast.Name` 的 **Load** 上下文。
 
-        这个 `ctx` 过滤不是洁癖，是本节存在的理由：第一版没写它，于是 `core/identity.py:17`
+        这个 `ctx` 过滤不是洁癖，是本节存在的理由：第一版没写它，于是 `base/identity.py:17`
         那行 `DEFAULT_USER_ID = "local-user"`（定义）被算成一次用法，整个 `src/` 读出 21 ——
         与 09-26 那句"按 AST 复算是 21 处"一字不差。**原来那个数不是数错了别的东西，
         是把定义当成了使用**，而它当时大概也是这么产生的。

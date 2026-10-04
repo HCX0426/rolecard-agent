@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.config import Settings
-from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.core.memory import (
     GLOBAL_BUCKET,
     MAX_ITEMS_PER_BUCKET,

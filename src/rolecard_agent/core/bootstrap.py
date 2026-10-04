@@ -27,18 +27,21 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from rolecard_agent.config import Settings
-from rolecard_agent.core import mcp_store, runtime_settings
-from rolecard_agent.core.approvals import ApprovalService, sweep_interrupted
-from rolecard_agent.core.audit import AuditTrail
-from rolecard_agent.core.checkpointer import make_checkpointer
-from rolecard_agent.core.domain_service import DomainQueryService
-from rolecard_agent.core.graph import build_graph_config, build_kernel, build_model
-from rolecard_agent.core.identity import (
+from rolecard_agent.base.audit import AuditTrail
+from rolecard_agent.base.identity import (
     active_user_id,
     ensure_identity_row,
     resolve_instance_identity,
 )
+from rolecard_agent.base.observability import TraceEvent, Tracer, make_tracer
+from rolecard_agent.base.paths import user_data_root
+from rolecard_agent.base.text import text_of
+from rolecard_agent.config import Settings
+from rolecard_agent.core import mcp_store, runtime_settings
+from rolecard_agent.core.approvals import ApprovalService, sweep_interrupted
+from rolecard_agent.core.checkpointer import make_checkpointer
+from rolecard_agent.core.domain_service import DomainQueryService
+from rolecard_agent.core.graph import build_graph_config, build_kernel, build_model
 from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.core.knowledge_sources import KnowledgeSourceStore
 from rolecard_agent.core.memory import memory_for_turn
@@ -48,8 +51,6 @@ from rolecard_agent.core.model_settings import (
     migrate_to_provider_layers,
 )
 from rolecard_agent.core.nodes import ChatLike
-from rolecard_agent.core.observability import TraceEvent, Tracer, make_tracer
-from rolecard_agent.core.paths import user_data_root
 from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
 from rolecard_agent.core.probes import ollama_keep, vision_capability
 from rolecard_agent.core.reachout import (
@@ -66,7 +67,6 @@ from rolecard_agent.core.reachout import (
 )
 from rolecard_agent.core.services import ServiceEndpointService
 from rolecard_agent.core.state import now_ts
-from rolecard_agent.core.text import text_of
 from rolecard_agent.core.thread_locks import release_thread, try_thread_write
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder, make_reranker
@@ -236,7 +236,7 @@ class Runtime:
 
         后台那条链（主动开口的投递、图里的域工具）没有"这次请求"可问，读的就是这一个。
         请求级的解析以它为底（`AppContext.current_user()`），两层的关系写在
-        `core/identity.resolve_instance_identity` 的 docstring 里。
+        `base/identity.resolve_instance_identity` 的 docstring 里。
         """
         return resolve_instance_identity(self.env_settings)
 
@@ -316,7 +316,7 @@ class Runtime:
         """US-8：角色声明了后端名 → 按名解析；未声明 → 默认模型。
 
         **凭据按"这一轮的主人"取**（M2d 尾巴的收口，§4.1）：图节点入口已把本轮主人绑进
-        上下文（`core/identity.bound_user`），所以 `active_user_id` 在这里答的就是"这次该花
+        上下文（`base/identity.bound_user`），所以 `active_user_id` 在这里答的就是"这次该花
         谁的 key"。不在任何一轮里（后台调度器替她冒话）则回落到**这台实例的主人** ——
         那正是她替谁开口。
 
@@ -653,7 +653,7 @@ def build_runtime(
     owner = resolve_instance_identity(settings)
     # 外键要有对象可指：演示身份 + **这台实例的主人**各一行（同一枚名字时第二次是空转）。
     # 只种演示身份的那一版，在 `IDENTITY_USER_ID` 真的指向第二个人时会让 `POST /api/session`
-    # 当场 IntegrityError —— 见 `core/identity.py` 里那句"为什么实例主人也要走这里"。
+    # 当场 IntegrityError —— 见 `base/identity.py` 里那句"为什么实例主人也要走这里"。
     ensure_identity_row(conn)
     ensure_identity_row(conn, owner)
     # 终态兜底的崩溃半边（`R102-47`）：进程在命令执行期间被硬杀（本仓装机路径就是

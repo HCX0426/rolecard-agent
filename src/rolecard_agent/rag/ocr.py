@@ -25,9 +25,9 @@ from typing import Any, Protocol
 
 import httpx
 
+from rolecard_agent.base.paths import bundled_ocr_worker, default_ocr_python
 from rolecard_agent.config import Settings
-from rolecard_agent.core.paths import bundled_ocr_worker, default_ocr_python
-from rolecard_agent.rag.parser import OcrUnavailable, ParseError
+from rolecard_agent.rag.errors import OcrUnavailable, ParseError
 
 # ocr.py 位于 <root>/src/rolecard_agent/rag/，故项目根为 parents[3]；worker 在 <root>/scripts。
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -175,8 +175,8 @@ class VisionModelBackend:
         self._timeout = timeout
 
     def available(self) -> bool:
-        # 判定原语在 core/probes.py（与服务页探测共用一份，防止两处答案打架）。
-        from rolecard_agent.core.probes import vision_model_ready
+        # 判定原语在 base/probes.py（服务页探测与 OCR 选择器共用一份，防止两处答案打架）。
+        from rolecard_agent.base.probes import vision_model_ready
 
         return vision_model_ready(self._base, self._model)
 

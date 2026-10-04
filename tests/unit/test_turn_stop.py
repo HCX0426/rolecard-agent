@@ -21,15 +21,15 @@ import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from langchain_core.tools import tool
 
+from rolecard_agent.base.identity import DEFAULT_USER_ID
+from rolecard_agent.base.observability import NullTracer
 from rolecard_agent.config import Settings
-from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.core.nodes import (
     EmptyModelStream,
     KernelContext,
     TurnStopped,
     call_model,
 )
-from rolecard_agent.core.observability import NullTracer
 from rolecard_agent.core.thread_locks import clear_stop, request_stop, stop_requested
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.core.turn import (

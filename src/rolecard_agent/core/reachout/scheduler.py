@@ -16,14 +16,14 @@ from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
 
+from rolecard_agent.base.identity import resolve_instance_identity
+from rolecard_agent.base.observability import TraceEvent, Tracer
 from rolecard_agent.config import Settings
 from rolecard_agent.core.file_watch import (
     FileEvent,
     advance_baseline,
     check_changes,
 )
-from rolecard_agent.core.identity import resolve_instance_identity
-from rolecard_agent.core.observability import TraceEvent, Tracer
 from rolecard_agent.core.open_threads import find_open_threads
 from rolecard_agent.core.proactive_state import (
     get_state,

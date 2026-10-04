@@ -44,9 +44,9 @@ from pathlib import Path
 
 from langchain_core.tools import BaseTool, tool
 
+from rolecard_agent.base.audit import tool_audit as _audit
 from rolecard_agent.config import Settings
 from rolecard_agent.core.approvals import ApprovalNotFound, ApprovalService
-from rolecard_agent.core.audit import tool_audit as _audit
 from rolecard_agent.core.tools.errors import ToolExecutionError
 from rolecard_agent.core.workspace import make_dir_resolver, resolve_task_dir, resolve_within
 from rolecard_agent.storage.db import SqlConnection

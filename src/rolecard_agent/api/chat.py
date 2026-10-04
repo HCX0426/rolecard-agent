@@ -30,7 +30,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from typing import Any, cast
 
-from rolecard_agent.core.observability import Tracer
+from rolecard_agent.base.observability import Tracer
 from rolecard_agent.core.turn import Error, TurnEvent, run_turn
 from rolecard_agent.core.usage import TokenUsage
 

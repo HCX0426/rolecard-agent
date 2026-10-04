@@ -15,9 +15,9 @@ import os
 import sys
 from pathlib import Path
 
-# 唯一出处是 `core/app_identity.py`（`R102-67`）：那个零依赖常量模块还要喂给
+# 唯一出处是 `base/app_identity.py`（`R102-67`）：那个零依赖常量模块还要喂给
 # scripts/scratch_db.py（它必须在不可安装环境独立跑，只能 import 零依赖件）。
-from rolecard_agent.core.app_identity import APP_NAME as _APP_NAME  # noqa: E402
+from rolecard_agent.base.app_identity import APP_NAME as _APP_NAME  # noqa: E402
 
 IS_WINDOWS = sys.platform.startswith("win")
 
@@ -28,7 +28,7 @@ def is_frozen() -> bool:
 
 
 def repo_root() -> Path:
-    """仓库根（开发态）：本文件在 `<root>/src/rolecard_agent/core/paths.py`。"""
+    """仓库根（开发态）：本文件在 `<root>/src/rolecard_agent/base/paths.py`。"""
     return Path(__file__).resolve().parents[3]
 
 

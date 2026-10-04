@@ -13,7 +13,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from rolecard_agent.core.identity import resolve_instance_identity
+from rolecard_agent.base.identity import resolve_instance_identity
 
 
 def _ensure_importable() -> None:

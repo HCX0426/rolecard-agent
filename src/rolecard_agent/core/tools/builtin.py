@@ -16,15 +16,39 @@ search_knowledge is NOT here - it belongs to rag/ and is registered in v2.1.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import Protocol
 
 from langchain_core.tools import BaseTool, tool
-
-from rolecard_agent.roles.service import RoleCardService
 
 # Either a snapshot (tests) or a live provider like `PluginService.enabled_domains` (the app).
 # The callable form is what keeps `list_domains` honest across plugin toggles: the tool reports
 # what is enabled NOW, not what was enabled when the graph was compiled.
 DomainsLike = Sequence[str] | Callable[[], Sequence[str]]
+
+
+class RoleSummary(Protocol):
+    """`list_roles` 这一条工具真正要读的三格。角色卡的其余字段与它无关。"""
+
+    role_id: str
+    role_name: str
+    description: str | None
+
+
+class RoleCardView(Protocol):
+    """`scoped(user_id)` 换出来的那个视图：本工具只问它要清单。"""
+
+    def list_roles(self) -> Sequence[RoleSummary]: ...
+
+
+class RoleReader(Protocol):
+    """内核工具对"角色卡服务"的全部要求：换个主人，列出角色。
+
+    为什么是 Protocol 而不是 `roles.service.RoleCardService`：`core` 去 import 一个具体的
+    上层服务类，等于让内核认识实现者（本仓的横向抓取就是这么长出来的）。按形状要东西，
+    实现方无需知道自己被谁用，测试也能直接喂一个假视图。
+    """
+
+    def scoped(self, user_id: str) -> RoleCardView: ...
 
 
 def _current(domains: DomainsLike) -> tuple[str, ...]:
@@ -33,7 +57,7 @@ def _current(domains: DomainsLike) -> tuple[str, ...]:
 
 def make_kernel_tools(
     *,
-    roles: RoleCardService,
+    roles: RoleReader,
     current_user: Callable[[], str],
     enabled_domains: DomainsLike = ()
 ) -> list[BaseTool]:

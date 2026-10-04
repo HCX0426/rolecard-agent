@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from rolecard_agent.core.identity import DEFAULT_USER_ID
+from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.roles.models import (
     MAX_EXEMPLARS,
     RoleCardCreate,

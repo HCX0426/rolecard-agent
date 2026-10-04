@@ -23,13 +23,13 @@ from typing import Any
 import pytest
 
 from rolecard_agent.api.deps import AppContext
-from rolecard_agent.core.audit import (
+from rolecard_agent.base.audit import (
     AUDIT_ACTIONS,
     DYNAMIC_ACTION_PREFIXES,
     AuditTrail,
     tool_audit,
 )
-from rolecard_agent.core.identity import DEFAULT_TENANT_ID, DEFAULT_USER_ID
+from rolecard_agent.base.identity import DEFAULT_TENANT_ID, DEFAULT_USER_ID
 from rolecard_agent.roles.models import RoleCardCreate
 from rolecard_agent.roles.service import RoleCardService
 from rolecard_agent.storage.db import bootstrap, connect

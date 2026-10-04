@@ -19,8 +19,8 @@ from typing import Any
 
 import pytest
 
+from rolecard_agent.base.scopes import turn_image_ctx
 from rolecard_agent.config import Settings
-from rolecard_agent.core.nodes import turn_image_ctx
 from rolecard_agent.core.tools.files import make_file_tools
 from rolecard_agent.core.tools.web import make_web_tools
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from rolecard_agent.core.text import text_of
+from rolecard_agent.base.text import text_of
 
 #: 至多几条。设计稿给的是 3，而实践中 1 条就够她开口 —— 多了读起来像清单不像话。
 MAX_OPEN_THREADS = 3

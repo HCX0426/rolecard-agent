@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context, value_error_to_http
+from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.config import SECRET_FIELD_NAMES, Settings
 from rolecard_agent.core import runtime_settings
 from rolecard_agent.core.model_settings import (
@@ -20,7 +21,6 @@ from rolecard_agent.core.model_settings import (
     is_keyless_provider,
     provider_catalog,
 )
-from rolecard_agent.core.observability import TraceEvent
 
 router = APIRouter()
 

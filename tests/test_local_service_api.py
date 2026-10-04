@@ -61,7 +61,7 @@ _BROKEN = Settings(
 
 @dataclass
 class _Trail:
-    """`core.audit.AuditTrail` 的替身：记下每一发留痕，不碰库。"""
+    """`base.audit.AuditTrail` 的替身：记下每一发留痕，不碰库。"""
 
     calls: list[dict[str, Any]] = field(default_factory=list)
 

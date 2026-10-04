@@ -23,26 +23,26 @@ import json
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
-from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from langchain_core.messages import AIMessage, AIMessageChunk, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 
+from rolecard_agent.base.identity import resolve_instance_identity
+from rolecard_agent.base.observability import TraceEvent, Tracer, timer
+from rolecard_agent.base.scopes import role_knowledge_scopes_ctx, turn_image_ctx
+from rolecard_agent.base.text import text_of
 from rolecard_agent.config import Settings
 from rolecard_agent.core.anti_repeat import clean_repeated_spans
 from rolecard_agent.core.guard import check
-from rolecard_agent.core.identity import resolve_instance_identity
 from rolecard_agent.core.memory import current_role_id_ctx
-from rolecard_agent.core.observability import TraceEvent, Tracer, timer
 from rolecard_agent.core.prompts import (
     DEPTH_INJECT_FROM_END,
     VOICE_DEPTH_PROMPT,
     build_system_prompt,
 )
 from rolecard_agent.core.state import now_ts
-from rolecard_agent.core.text import text_of
 from rolecard_agent.core.thread_locks import stop_requested
 from rolecard_agent.core.tools.errors import ToolExecutionError
 from rolecard_agent.core.tools.registry import ToolRegistry
@@ -111,29 +111,10 @@ def _invoke_tool(tool: Any, args: dict[str, Any], timeout_seconds: float) -> Any
         future.cancel()
         raise ToolTimeout(f"工具执行超过 {timeout_seconds:g}s 未返回") from exc
 
-# v2.1 RAG 的作用域注入：execute_tools 在调用工具前，把**当前角色已授权的知识作用域**
-# 放进这里；search_knowledge 工具在调用瞬间读取。作用域从不出现在模型的参数里 ——
-# 模型不能指定检索哪个集合（US-8：角色只声明，内核掌库）。
-role_knowledge_scopes_ctx: ContextVar[Sequence[str]] = ContextVar(
-    "role_knowledge_scopes", default=()
-)
-
-
-def current_knowledge_scopes() -> Sequence[str]:
-    """工具层读取：本轮角色已授权的知识作用域（execute_tools 每轮注入）。"""
-    return role_knowledge_scopes_ctx.get()
-
-
-# 反向图搜（image_search）的图片来源注入：与 role_knowledge_scopes_ctx 同一机制。
-# execute_tools 在跑工具前把**本轮最近一张图的 data URL** 放进这里；image_search 在调用
-# 瞬间读取，模型无需（也不能）把巨大的 base64 塞进工具参数里。无图 → None，工具自降级。
-turn_image_ctx: ContextVar[str | None] = ContextVar("turn_image", default=None)
-
-
-def current_turn_image() -> str | None:
-    """工具层读取：本轮最近一张图片的 data URL（execute_tools 每轮注入；无图为 None）。"""
-    return turn_image_ctx.get()
-
+# v2.1 RAG 的作用域注入（role_knowledge_scopes_ctx / current_knowledge_scopes）与反向图搜的
+# 图片来源注入（turn_image_ctx / current_turn_image）已下沉到 `base/scopes.py`：它们是内核
+# 节点注入、rag 工具层读取的共享状态，住 base 层才能让 `rag` 合法依赖、不反向 import `core`
+# （依赖方向收口，2026-10-04 轮）。本模块只负责注入端；读取端见 rag/retriever.py。
 
 # Bounded retry, per call, same arguments. Honest about what this can and cannot do: retrying
 # an identical call only helps with transient failures (IO, a cold model, a locked file), and
@@ -339,7 +320,7 @@ class KernelContext:
 def turn_settings(ctx: KernelContext) -> Settings:
     """这一轮该按**谁**的凭据读配置（M2d 尾巴）。
 
-    接了 resolver 就现取 —— 节点入口已经把本轮主人绑进上下文（`core/identity.bound_user`），
+    接了 resolver 就现取 —— 节点入口已经把本轮主人绑进上下文（`base/identity.bound_user`），
     所以 resolver 那侧能答出"这次调用花谁的 key"；没接（测试、纯内核装配）就是构建期那份，
     单机形态下与实例主人那份逐字节相同。
     """

@@ -10,7 +10,7 @@
 
 ## 为什么"选哪份当源"要在这里判定，而不是留给调用方
 
-本机有**两个数据根**（`core/paths.user_data_root()`：开发态 = 仓库 `data/`，打包态 =
+本机有**两个数据根**（`base/paths.user_data_root()`：开发态 = 仓库 `data/`，打包态 =
 `%LOCALAPPDATA%\\rolecard-agent`）。2026-09-24 把日常数据搬进了安装目录，而仓库那份**被复制
 而非移走** —— 于是它成了一份"看着完全合理、但停在 09-23"的快照：会话数与真库一样是 24 条，
 主动消息却少一条，最后更新差两天。
@@ -31,11 +31,11 @@ from datetime import datetime
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-# 安装根的名字唯一出处是 `core/paths.py` 的 `_APP_NAME`（`R102-67`）。本脚本刻意不 import
-# 本包（要在不可安装环境独立跑），但零依赖常量模块 `core/app_identity.py` 只有标准库能算
+# 安装根的名字唯一出处是 `base/paths.py` 的 `_APP_NAME`（`R102-67`）。本脚本刻意不 import
+# 本包（要在不可安装环境独立跑），但零依赖常量模块 `base/app_identity.py` 只有标准库能算
 # 的东西 —— 引用它的成本是零，改名时这里的静默失效才不会回来。
 sys.path.insert(0, str(_REPO_ROOT / "src"))
-from rolecard_agent.core.app_identity import APP_NAME  # noqa: E402
+from rolecard_agent.base.app_identity import APP_NAME  # noqa: E402
 
 #: 两个候选源（可能都不存在，也可能都存在但内容不同 —— 那正是这里的存在理由）。
 CANDIDATE_SOURCES: tuple[Path, ...] = (

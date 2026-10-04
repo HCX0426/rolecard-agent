@@ -22,9 +22,9 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
+from rolecard_agent.base.text import text_of
 from rolecard_agent.core import memory as mem
 from rolecard_agent.core.anti_repeat import grams, jaccard
-from rolecard_agent.core.text import text_of
 from rolecard_agent.core.usage import TokenUsage, parse_usage, record_usage
 from rolecard_agent.storage.db import SqlConnection
 from rolecard_agent.storage.threads import set_distilled_seq

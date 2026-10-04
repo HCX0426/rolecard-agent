@@ -14,7 +14,7 @@ import sys
 
 import pytest
 
-from rolecard_agent.core.paths import IS_WINDOWS, bundled_ocr_worker
+from rolecard_agent.base.paths import IS_WINDOWS, bundled_ocr_worker
 from rolecard_agent.core.services import check_availability
 from rolecard_agent.rag import ocr as ocr_mod
 from rolecard_agent.rag.ocr import LocalRapidOcrBackend
@@ -87,7 +87,7 @@ def test_服务页那一格与运行时同一份判定(monkeypatch, tmp_path: pa
 
 
 def test_冻结态才找包内产物_开发态返回_none(monkeypatch, tmp_path: pathlib.Path) -> None:
-    monkeypatch.setattr("rolecard_agent.core.paths.is_frozen", lambda: False, raising=True)
+    monkeypatch.setattr("rolecard_agent.base.paths.is_frozen", lambda: False, raising=True)
     assert bundled_ocr_worker() is None, "开发态不该去找 resources/ocr-worker（它有 .venv-ocr）"
 
 
@@ -103,7 +103,7 @@ def test_冻结态认得到包内那一格(monkeypatch, tmp_path: pathlib.Path) 
     exe = tmp_path / "resources" / "ocr-worker" / ("ocr-worker.exe" if IS_WINDOWS else "ocr-worker")
     exe.parent.mkdir(parents=True)
     exe.write_text("", encoding="utf-8")
-    monkeypatch.setattr("rolecard_agent.core.paths.is_frozen", lambda: True, raising=True)
+    monkeypatch.setattr("rolecard_agent.base.paths.is_frozen", lambda: True, raising=True)
     monkeypatch.setattr(sys, "_MEIPASS", str(internal), raising=False)
     found = bundled_ocr_worker()
     assert found is not None

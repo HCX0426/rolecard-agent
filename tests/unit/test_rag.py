@@ -16,11 +16,11 @@ from pathlib import Path
 import pytest
 from langchain_core.messages import AIMessage
 
-from rolecard_agent.config import DEFAULT_SILICONFLOW_BASE_URL, Settings
-from rolecard_agent.core.identity import DEFAULT_USER_ID
-from rolecard_agent.core.nodes import (
+from rolecard_agent.base.identity import DEFAULT_USER_ID
+from rolecard_agent.base.scopes import (
     role_knowledge_scopes_ctx,
 )
+from rolecard_agent.config import DEFAULT_SILICONFLOW_BASE_URL, Settings
 from rolecard_agent.core.services import EndpointConfig
 from rolecard_agent.rag.retriever import (
     _EMBED_BATCH,
@@ -418,8 +418,8 @@ def test_execute_tools_injects_role_scopes_to_search_tool(
     """最小闭环：index → execute_tools 调 search_knowledge → 命中授权作用域内容。"""
     from langchain_core.messages import ToolMessage
 
+    from rolecard_agent.base.observability import NullTracer
     from rolecard_agent.core.nodes import KernelContext, execute_tools
-    from rolecard_agent.core.observability import NullTracer
     from rolecard_agent.core.tools.registry import ToolRegistry
     from rolecard_agent.roles.models import RoleCardCreate
 

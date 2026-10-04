@@ -175,7 +175,7 @@ export class Backend {
     try {
       // 追加 + 8MB 轮转留一代（`R102-64`）：旧的"每次启动覆盖"会在崩溃后壳拉起后端的
       // 那一刻把崩溃现场日志整份抹掉 —— 抹掉的恰恰是最想看的东西。留 `.1` 一代与
-      // `core/observability.py` 的 LocalTracer 同一尺寸口径，日志也不会无限长。
+      // `base/observability.py` 的 LocalTracer 同一尺寸口径，日志也不会无限长。
       try {
         const stat = statSync(logPath);
         if (stat.size > 8 * 1024 * 1024) {

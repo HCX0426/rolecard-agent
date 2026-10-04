@@ -21,9 +21,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
+from rolecard_agent.base.identity import DEFAULT_USER_ID, bound_user
 from rolecard_agent.config import ModelBackend, Settings
 from rolecard_agent.core.bootstrap import Assembly, Runtime, build_runtime
-from rolecard_agent.core.identity import DEFAULT_USER_ID, bound_user
 from rolecard_agent.core.nodes import KernelContext, _turn_backend, turn_settings
 from rolecard_agent.domains.health.service import HealthQueryService
 from rolecard_agent.domains.registry import DOMAINS, build_registry

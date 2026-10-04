@@ -34,7 +34,7 @@ from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel, Field, field_validator
 
-from rolecard_agent.core.identity import DEFAULT_USER_ID
+from rolecard_agent.base.identity import DEFAULT_USER_ID
 
 ROLE_ID_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
 SCOPE_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"

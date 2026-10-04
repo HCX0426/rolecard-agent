@@ -21,8 +21,8 @@ from rolecard_agent.api.deps import (
 from rolecard_agent.api.deps import (
     parsed_text_path as _parsed_text_path,
 )
+from rolecard_agent.base.observability import scrub_endpoints
 from rolecard_agent.core.ingestion import IngestionNotFound
-from rolecard_agent.core.observability import scrub_endpoints
 from rolecard_agent.domains.health.extract import (
     ExtractConfigError,
     ExtractError,

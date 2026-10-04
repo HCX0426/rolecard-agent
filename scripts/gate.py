@@ -90,6 +90,10 @@ STEPS: list[tuple[str, list[str], str]] = [
     # POSIX 分支的 `type: ignore` 在 Linux 档成了 unused）。“本机绿”而“容器里红”属于
     # 同一个假绿家族，两边一起查才关得掉。
     ("mypy(linux 档)", [PY, "-m", "mypy", "--platform", "linux"], "both"),
+    # 依赖方向契约（import-linter，判据与豁免纪律在 pyproject 的 [tool.importlinter]）。
+    # 同进程跑而不是直接调 CLI：契约名是中文的，子进程按 GBK 写管道、这一步按 UTF-8 解
+    # 就会成一串问号，而 src 布局还要先把 src 放进 sys.path（两件事都在包装脚本里做掉）。
+    ("依赖方向", [PY, "scripts/check_import_layers.py"], "both"),
     # shell/（Electron 壳）此前全程无人检查：它有 `npm run typecheck` 但门禁只 cd frontend。
     ("shell typecheck", [NPM, "run", "typecheck"], "full"),
     # **不在命令行再补 `-q`**：`pyproject.toml` 的 `addopts` 已经带了一个 `-q`，而 pytest 的
@@ -444,12 +448,12 @@ def main() -> int:
     # 先算出这一趟真正会跑的步骤（档位过滤只有这一处判据，循环与 --only 守卫共用它）。
     runnable = [(name, cmd, mode) for name, cmd, mode in STEPS if _will_run(name, mode)]
 
-    # 头部的静态四步（ruff + 三档 mypy）互不依赖、输出互不读，**并发跑**
+    # 头部的静态五步（ruff + 三档 mypy + 依赖方向）互不依赖、输出互不读，**并发跑**
     # （2026-10-04 审查快照的 CI 门禁条目②）：三遍 mypy 在 runner 上是 60-120s 的串行
     # 冷启动，并发 + 缓存后归到一路。失败语义不变：整组跑完后**按序**处理结果，
     # 任何一步红 → 不再启动后面的步骤（后面的步骤在同一个问题上只会重复失败）。
     # 静态组各自捕获输出、跑完再打（并发流式打印会互相穿插，读不了）。
-    _STATIC_HEAD = ("ruff", "mypy", "mypy scripts/", "mypy(linux 档)")
+    _STATIC_HEAD = ("ruff", "mypy", "mypy scripts/", "mypy(linux 档)", "依赖方向")
     head = [e for e in runnable if e[0] in _STATIC_HEAD]
     parallel_ran = False
     rest = runnable

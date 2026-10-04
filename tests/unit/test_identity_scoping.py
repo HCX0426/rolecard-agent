@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from rolecard_agent.core.identity import DEFAULT_USER_ID
+from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.roles.models import RoleCardCreate, RoleCardUpdate
 from rolecard_agent.roles.service import RoleCards, RoleNotFound
 from rolecard_agent.storage.db import connect, reconcile_columns
@@ -87,7 +87,7 @@ def test_every_schema_user_id_default_matches_the_code_constant() -> None:
         for m in re.finditer(r"user_id\s+TEXT NOT NULL DEFAULT '([^']*)'", text):
             found += 1
             assert m.group(1) == DEFAULT_USER_ID, (
-                f"{sql.name} 的 user_id 默认值与 core.identity 漂开了：{m.group(1)!r}"
+                f"{sql.name} 的 user_id 默认值与 base.identity 漂开了：{m.group(1)!r}"
             )
     assert found >= 2, f"只扫到 {found} 处 user_id 默认值，这条守卫该跟着形状走"
 
@@ -131,7 +131,7 @@ def test_bound_user_is_scoped_to_one_turn() -> None:
     不复位的后果不是"读错一个人"这么轻：同一个工作线程被下一轮复用，那一轮就顶着
     上一轮的主人跑，而表现是"偶尔串数据"，最难查的那一类。
     """
-    from rolecard_agent.core.identity import active_user_id, bound_user
+    from rolecard_agent.base.identity import active_user_id, bound_user
 
     assert active_user_id("owner") == "owner"  # 没绑过 = 这台实例的主人
     with bound_user("u1"):
@@ -147,7 +147,7 @@ def test_bound_user_is_scoped_to_one_turn() -> None:
 
 
 def test_binding_an_empty_owner_is_the_same_as_binding_nothing() -> None:
-    from rolecard_agent.core.identity import active_user_id, bound_user
+    from rolecard_agent.base.identity import active_user_id, bound_user
 
     with bound_user(""):
         assert active_user_id("owner") == "owner"

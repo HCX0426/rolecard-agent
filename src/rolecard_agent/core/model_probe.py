@@ -21,7 +21,7 @@ import zlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from rolecard_agent.core import outbound
+from rolecard_agent.base import outbound
 from rolecard_agent.core.model_settings import client_style, endpoint_key
 from rolecard_agent.core.probes import vision_capability
 
@@ -168,7 +168,7 @@ def list_models(target: ProbeTarget) -> tuple[list[str], str]:
             str(m.get("id", "")) for m in d.get("data", [])
         ]
     try:
-        # 走 `core/outbound`：这一发带着**已存的 api_key**，不许经手系统代理（R26-43）。
+        # 走 `base/outbound`：这一发带着**已存的 api_key**，不许经手系统代理（R26-43）。
         res = outbound.get(url, headers=target.auth_headers(), timeout=_LIST_TIMEOUT)
     except Exception as exc:  # noqa: BLE001 - 连不上本身就是结论
         return [], f"{type(exc).__name__}: {exc}"[:180]

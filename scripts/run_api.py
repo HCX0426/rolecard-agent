@@ -63,11 +63,11 @@ def _resolve_data_paths() -> None:
     知识全空"等假性故障——审计中已踩到并定位。落进启动器，保证无论从哪里启动都指向同一
     份真实数据。
 
-    数据根由 `core/paths.user_data_root()` 决定：**开发态是仓库 `data/`，打包态是
+    数据根由 `base/paths.user_data_root()` 决定：**开发态是仓库 `data/`，打包态是
     `%LOCALAPPDATA%\rolecard-agent`**。后者不是可选项 —— 安装目录可能不可写，而且升级是
     整目录替换，库放进去等于"更新一次丢一次"。
 
-    规则：环境变量未设置 → 用数据根下的默认绝对路径（推导在 `core/paths.data_paths()`，
+    规则：环境变量未设置 → 用数据根下的默认绝对路径（推导在 `base/paths.data_paths()`，
     配置层与启动器共用同一份，不再各写一遍）；已设置且为绝对路径 → 原样保留
     （用户显式覆盖优先）；已设置但为相对路径 → 按 `path_from_config` 的基准解析（CWD 无关）。
 
@@ -75,7 +75,7 @@ def _resolve_data_paths() -> None:
     只换三条里的某一条，症状就是 §4.1 那句"记忆没了、向量库还在"—— 比不换更像数据损坏，
     所以最后会出声一句（`split_root_notice`）。
     """
-    from rolecard_agent.core.paths import (
+    from rolecard_agent.base.paths import (
         DATA_PATH_ENVS,
         data_paths,
         path_from_config,
@@ -129,10 +129,10 @@ def _load_dotenv() -> None:
     ① 真实环境变量优先（`.env` 只填空位，不覆盖已在 shell 里 export 的值）；
     ② 空值/注释跳过；③ 剥一层成对引号。`.env` 已在 .gitignore，密钥不会入库。
 
-    落点由 `core/paths.dotenv_path()` 决定：开发态是仓库根，打包态是用户数据目录旁边
+    落点由 `base/paths.dotenv_path()` 决定：开发态是仓库根，打包态是用户数据目录旁边
     （安装目录既可能不可写，也会被升级整目录替换，不能当配置位）。
     """
-    from rolecard_agent.core.paths import dotenv_path
+    from rolecard_agent.base.paths import dotenv_path
 
     env_file = dotenv_path()
     if not env_file.exists():

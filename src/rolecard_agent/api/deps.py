@@ -19,18 +19,18 @@ from fastapi import HTTPException, Request
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from rolecard_agent.api.auth import Actor
+from rolecard_agent.base.audit import AuditTrail
+from rolecard_agent.base.identity import resolve_identity
+from rolecard_agent.base.observability import Tracer
+from rolecard_agent.base.text import text_of
 from rolecard_agent.config import Settings
 from rolecard_agent.core.approvals import ApprovalService
-from rolecard_agent.core.audit import AuditTrail
 from rolecard_agent.core.bootstrap import Runtime
 from rolecard_agent.core.domain_service import DomainQueryService
-from rolecard_agent.core.identity import resolve_identity
 from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.core.model_settings import ModelSettingsService
-from rolecard_agent.core.observability import Tracer
 from rolecard_agent.core.plugins import PluginError, PluginService, UnknownPlugin
 from rolecard_agent.core.services import ServiceEndpointService
-from rolecard_agent.core.text import text_of
 from rolecard_agent.core.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:

@@ -25,8 +25,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from rolecard_agent.api.main import create_app
+from rolecard_agent.base.identity import DEFAULT_USER_ID, resolve_identity
 from rolecard_agent.config import Settings
-from rolecard_agent.core.identity import DEFAULT_USER_ID, resolve_identity
 
 
 def _basic(user: str, password: str) -> str:
@@ -174,7 +174,7 @@ def test_resolve_identity_only_matches_real_users(monkeypatch: pytest.MonkeyPatc
 
 def test_the_instance_owner_defaults_to_the_local_identity() -> None:
     """`IDENTITY_USER_ID` 空/纯空白都算"本机那份" —— 空白不该凭空造出一个主人。"""
-    from rolecard_agent.core.identity import resolve_instance_identity
+    from rolecard_agent.base.identity import resolve_instance_identity
 
     assert resolve_instance_identity(_settings("")) == DEFAULT_USER_ID
     assert resolve_instance_identity(_settings("   ")) == DEFAULT_USER_ID

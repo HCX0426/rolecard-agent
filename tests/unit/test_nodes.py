@@ -25,9 +25,10 @@ from langchain_core.messages import (
 )
 from langchain_core.tools import tool
 
+from rolecard_agent.base.identity import DEFAULT_USER_ID
+from rolecard_agent.base.observability import NullTracer
 from rolecard_agent.config import ModelBackend, Settings
 from rolecard_agent.core import probes
-from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.core.nodes import (
     MAX_TOOL_RETRIES,
     TOOL_DENIED,
@@ -43,7 +44,6 @@ from rolecard_agent.core.nodes import (
     trim_history,
     turn_context,
 )
-from rolecard_agent.core.observability import NullTracer
 from rolecard_agent.core.prompts import VOICE_DEPTH_PROMPT
 from rolecard_agent.core.tools.errors import ToolExecutionError  # noqa: F401 - 文档化分界用
 from rolecard_agent.core.tools.registry import ToolRegistry
@@ -1130,7 +1130,7 @@ def test_search_tool_sees_the_role_scopes_across_the_executor_thread(
     `copy_context()` 的话，检索工具会看到空作用域、直接回答"当前角色未授权任何知识作用域"
     —— 一个由并发实现引入的、**与权限相关**的静默故障。
     """
-    from rolecard_agent.core.nodes import current_knowledge_scopes
+    from rolecard_agent.base.scopes import current_knowledge_scopes
 
     @tool("scope_probe")
     def scope_probe() -> str:
@@ -1165,8 +1165,8 @@ def test_one_turn_writes_all_three_injected_scopes_together(roles: RoleCardServi
     残留。所以这里钉的是同一个快照的两半：一轮跑完，三个读侧在**工具自己的线程里**看都与 state
     一致；换一轮（换角色、去掉图片）之后**一个都不许留**。
     """
+    from rolecard_agent.base.scopes import current_knowledge_scopes, current_turn_image
     from rolecard_agent.core.memory import current_role_id_ctx
-    from rolecard_agent.core.nodes import current_knowledge_scopes, current_turn_image
 
     @tool("turn_scope_probe")
     def turn_scope_probe() -> str:

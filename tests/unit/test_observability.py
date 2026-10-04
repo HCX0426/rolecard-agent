@@ -12,8 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from rolecard_agent.config import Settings
-from rolecard_agent.core.observability import (
+from rolecard_agent.base.observability import (
     IMPLEMENTED_BACKENDS,
     LocalTracer,
     NullTracer,
@@ -22,6 +21,7 @@ from rolecard_agent.core.observability import (
     redact,
     timer,
 )
+from rolecard_agent.config import Settings
 
 
 def _lines(path: Path) -> list[dict[str, object]]:
@@ -171,7 +171,7 @@ def test_background_emits_to_stderr_do_not_rotate(tmp_path: Path) -> None:
 
 def test_scrub_endpoints_hides_urls_in_audit_text() -> None:
     """`/api/audit` 是前端可见的接口，入库的异常文本不该带着内网地址。"""
-    from rolecard_agent.core.observability import scrub_endpoints
+    from rolecard_agent.base.observability import scrub_endpoints
 
     raw = "ExtractError: 模型调用失败：Connection refused to http://localhost:11434/api/chat"
     cleaned = scrub_endpoints(raw)

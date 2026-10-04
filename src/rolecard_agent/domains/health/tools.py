@@ -24,8 +24,8 @@ from pathlib import Path
 
 from langchain_core.tools import BaseTool, tool
 
+from rolecard_agent.base.markers import UNVERIFIED_MARKER
 from rolecard_agent.core.ingestion import IngestionService
-from rolecard_agent.core.markers import UNVERIFIED_MARKER
 from rolecard_agent.domains.health.service import HealthQueryService
 
 # The names this domain contributes. The single source of truth for the built-in role's

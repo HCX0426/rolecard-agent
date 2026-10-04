@@ -68,13 +68,13 @@ from rolecard_agent.api.routers import settings as settings_router
 from rolecard_agent.api.routers import shell_release as shell_release_router
 from rolecard_agent.api.routers import sync as sync_router
 from rolecard_agent.api.routers import workspace as workspace_router
+from rolecard_agent.base.identity import active_user_id, resolve_instance_identity
+from rolecard_agent.base.observability import Tracer
+from rolecard_agent.base.paths import console_dist_dir
 from rolecard_agent.config import Settings
 from rolecard_agent.core.bootstrap import Assembly, build_runtime
 from rolecard_agent.core.build_info import read_build_info
-from rolecard_agent.core.identity import active_user_id, resolve_instance_identity
 from rolecard_agent.core.nodes import ChatLike
-from rolecard_agent.core.observability import Tracer
-from rolecard_agent.core.paths import console_dist_dir
 from rolecard_agent.core.thread_locks import ThreadBusy
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.domains.health.service import HealthQueryService
@@ -89,7 +89,7 @@ from rolecard_agent.storage.db import set_request_epoch
 #: 合成一个常量之后 parity 比的是 `pyproject` ↔ 这一处，两份手写变成一份。
 API_VERSION = "0.3.0"
 
-# M5 前端构建产物的位置解析收在 `core/paths.console_dist_dir()`（09-30）：桌宠形象包
+# M5 前端构建产物的位置解析收在 `base/paths.console_dist_dir()`（09-30）：桌宠形象包
 # 也要扫那一份 `dist/pets/`，两处各写一遍路径就会有"界面打得开、素材清单扫不到"的单边红。
 # **每次 create_app 现读一次**，不在模块导入时冻成常量 —— `FRONTEND_DIST` 是部署期覆盖，
 # 设得比 import 晚也必须生效（`tests/test_api.py` 那条"dist 缺失就回退提示页"就靠这一条；
@@ -119,7 +119,7 @@ def _host_registry_factory(
     文档里的提示注入），不设边界就等于"读任意主机文件 + 在任意目录写"（审查报告 H1）。
     `current_user` 每次调用现取，模型永远不能指定"我是谁"。
 
-    **这一轮到底在为谁读，由图节点在入口绑**（`core/identity.bound_user`，取
+    **这一轮到底在为谁读，由图节点在入口绑**（`base/identity.bound_user`，取
     `state["user_id"]`）：这里给的提供者是 `active_user_id(实例主人)` —— 绑过就是
     这条线程的主人，没绑过（后台调度、纯内核装配、老线程状态里缺这一项）才落到
     `IDENTITY_USER_ID` 那份。之所以要在上下文里绕这一道：工具对模型必须看起来零参数，

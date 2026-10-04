@@ -25,7 +25,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from rolecard_agent.core.paths import console_dist_dir, user_data_root
+from rolecard_agent.base.paths import console_dist_dir, user_data_root
 
 #: 序列帧素材的文件名（协议：8 列 × 9 行、单格 192×208，见 `PetSprite.tsx`）。
 SHEET_FILE = "sprite.png"

@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from rolecard_agent.api.main import create_app
-from rolecard_agent.core.identity import DEFAULT_USER_ID
+from rolecard_agent.base.identity import DEFAULT_USER_ID
 from tests.conftest import model_rows
 
 
@@ -654,7 +654,7 @@ def test_reachouts_point_at_the_proactive_thread_and_read_by_role(client: TestCl
     为什么在 API 层再钉一次：单测证明了写入侧落了会话，而用户点的是这里的 `thread_id`
     —— 它一旦改名字或漏字段，前端只会表现成"点了没反应"，正是要修的那个症状。
     """
-    from rolecard_agent.core.identity import DEFAULT_USER_ID
+    from rolecard_agent.base.identity import DEFAULT_USER_ID
     from rolecard_agent.core.reachout import proactive_thread_id
 
     conn = client.app.state.ctx.conn
@@ -697,7 +697,7 @@ def test_deleting_a_session_keeps_memory_and_the_inbox_ledger(client: TestClient
       会话没了之后它们不再有跳转目标（`thread_id` 回落 None），点一下只标已读，不给死链；
     - 走掉的只有 thread 行与它的 checkpoint / writes（不留可被复活的孤儿）。
     """
-    from rolecard_agent.core.identity import DEFAULT_USER_ID
+    from rolecard_agent.base.identity import DEFAULT_USER_ID
     from rolecard_agent.core.reachout import proactive_thread_id
 
     conn = client.app.state.ctx.conn

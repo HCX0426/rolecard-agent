@@ -7,9 +7,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from rolecard_agent.base.markers import AI_TEXT_MARKER
 from rolecard_agent.config import ModelBackend, Settings
 from rolecard_agent.core.consensus import build_consensus_tool
-from rolecard_agent.core.markers import AI_TEXT_MARKER
 
 
 class FakeLLM:

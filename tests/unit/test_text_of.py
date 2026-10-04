@@ -1,4 +1,4 @@
-"""`core/text.py::text_of` —— 全项目唯一的消息取文本实现。  Traceability: US-4（对话渲染）, US-7。
+"""`base/text.py::text_of` —— 全项目唯一的消息取文本实现。  Traceability: US-4（对话渲染）, US-7。
 
 钉的是"同一句话在各条路径上必须是同一个字符串"（架构审计报告 P1-8）：流式输出、历史回放、
 结构化抽取、比对聚合、主动开口、"增强提示词"以前各有取法，其中几处把分块列表直接
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from langchain_core.messages import AIMessage, AIMessageChunk
 
-from rolecard_agent.core.text import text_of
+from rolecard_agent.base.text import text_of
 
 
 def test_plain_string_content_passes_through() -> None:
@@ -71,8 +71,8 @@ def test_kernel_modules_reuse_the_single_implementation() -> None:
 
     私有副本曾从 `core.nodes` 被 api 层跨层 import，是"各自就地再写一份"的起点。
     """
+    from rolecard_agent.base import text as text_module
     from rolecard_agent.core import nodes
-    from rolecard_agent.core import text as text_module
 
     assert not hasattr(nodes, "_text_of")
     assert nodes.text_of is text_module.text_of

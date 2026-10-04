@@ -286,8 +286,8 @@ def make_web_tools(*, settings) -> list:
         （这是文字搜不出来的"看图认角色"专用能力。）"""
         if note := _disabled_note():
             return note
-        # 局部导入：core.nodes ← 本模块存在潜在环依赖，仿 search_knowledge 的做法在调用期取。
-        from rolecard_agent.core.nodes import current_turn_image
+        # 局部导入：注入端的 ContextVar 已下沉到 base.scopes，工具层在调用期取，不反向 import core。
+        from rolecard_agent.base.scopes import current_turn_image
 
         data_url = current_turn_image()
         if not data_url:

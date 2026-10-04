@@ -1,4 +1,4 @@
-"""打包态路径发现（core/paths.py）。
+"""打包态路径发现（base/paths.py）。
 
 D②-4 把后端打进桌面安装包，全部风险都集中在"路径解析错"这一族，而且它错得很安静：
 数据根指到安装目录 → 装到 Program Files 时第一次写库就崩；相对路径基准换掉 → 用户
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from rolecard_agent.core import paths
+from rolecard_agent.base import paths
 
 
 @pytest.fixture

@@ -36,11 +36,12 @@ import persona_meter as pm  # noqa: E402
 import scratch_db  # noqa: E402
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage  # noqa: E402
 
+from rolecard_agent.base.identity import resolve_instance_identity  # noqa: E402
+from rolecard_agent.base.text import text_of  # noqa: E402
 from rolecard_agent.config import Settings  # noqa: E402
 from rolecard_agent.core import runtime_settings  # noqa: E402
 from rolecard_agent.core.anti_repeat import repeat_score  # noqa: E402
 from rolecard_agent.core.graph import build_model  # noqa: E402
-from rolecard_agent.core.identity import resolve_instance_identity  # noqa: E402
 from rolecard_agent.core.model_settings import ModelSettingsService  # noqa: E402
 from rolecard_agent.core.prompts import (  # noqa: E402
     DEPTH_INJECT_FROM_END,
@@ -48,7 +49,6 @@ from rolecard_agent.core.prompts import (  # noqa: E402
     build_system_prompt,
 )
 from rolecard_agent.core.reachout import generate_reachout_text  # noqa: E402
-from rolecard_agent.core.text import text_of  # noqa: E402
 from rolecard_agent.roles.models import RoleCard  # noqa: E402
 from rolecard_agent.roles.service import RoleCardService  # noqa: E402
 

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from rolecard_agent.core.paths import (
+from rolecard_agent.base.paths import (
     DATA_PATH_ENVS,
     data_paths,
     split_root_notice,

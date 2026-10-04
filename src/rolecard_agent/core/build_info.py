@@ -28,7 +28,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from .paths import bundle_root, is_frozen, repo_root
+from rolecard_agent.base.paths import bundle_root, is_frozen, repo_root
 
 #: 烤进产物的那份文件叫什么（`packaging/rolecard-backend.spec` 与 `scripts/build_sidecar.py`
 #: 都从这里取名字，两处各写一遍就会有"打了但读不到"的单边瞎）。

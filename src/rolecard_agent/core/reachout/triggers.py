@@ -16,6 +16,9 @@ from typing import Any, NamedTuple
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from rolecard_agent.base.identity import resolve_instance_identity
+from rolecard_agent.base.observability import NullTracer, Tracer
+from rolecard_agent.base.text import text_of
 from rolecard_agent.config import Settings
 from rolecard_agent.core.anti_repeat import (
     BG_LIMIT,
@@ -25,20 +28,17 @@ from rolecard_agent.core.anti_repeat import (
 )
 from rolecard_agent.core.file_watch import FileEvent
 from rolecard_agent.core.guard import check
-from rolecard_agent.core.identity import resolve_instance_identity
 from rolecard_agent.core.memory import (
     GLOBAL_BUCKET,
     memory_for_turn,
     top_active_item,
 )
-from rolecard_agent.core.observability import NullTracer, Tracer
 from rolecard_agent.core.proactive_state import (
     DEFAULT_AFFINITY_THRESHOLD,
     ProactiveState,
     get_state,
 )
 from rolecard_agent.core.prompts import build_system_prompt
-from rolecard_agent.core.text import text_of
 from rolecard_agent.core.usage import TokenUsage, parse_usage, record_usage
 from rolecard_agent.roles.models import RoleCard
 from rolecard_agent.storage.db import SqlConnection

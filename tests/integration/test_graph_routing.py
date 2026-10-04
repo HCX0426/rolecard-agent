@@ -21,11 +21,11 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 
+from rolecard_agent.base.identity import DEFAULT_USER_ID, active_user_id
+from rolecard_agent.base.observability import NullTracer
 from rolecard_agent.config import Settings
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.graph import build_kernel
-from rolecard_agent.core.identity import DEFAULT_USER_ID, active_user_id
-from rolecard_agent.core.observability import NullTracer
 from rolecard_agent.core.plugins import PluginService
 from rolecard_agent.core.state import new_state
 from rolecard_agent.core.tools.registry import ToolRegistry
@@ -320,7 +320,7 @@ def test_a_turn_binds_its_threads_owner_for_zero_arg_tool_closures(tmp_path: Pat
 
     绑之前那一版是"HTTP 层按请求解析、工具层按实例主人读"—— 单机自用两者同值所以看不出来，
     `app_user` 一加第二行就变成"界面是 A 的会话、她报出 B 的数值"。这条用例钉的就是那半步：
-    节点在入口把 `state["user_id"]` 绑进上下文（`core/identity.bound_user`），
+    节点在入口把 `state["user_id"]` 绑进上下文（`base/identity.bound_user`），
     而工具的签名一个字不改（工具对模型必须看起来零参数，否则模型能自己填"我是谁"）。
     """
     db = tmp_path / "app.db"

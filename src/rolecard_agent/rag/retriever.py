@@ -31,8 +31,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from rolecard_agent.base.observability import TraceEvent, timer
 from rolecard_agent.config import Settings
-from rolecard_agent.core.observability import TraceEvent, timer
 
 if TYPE_CHECKING:
     from langchain_core.tools import BaseTool
@@ -846,7 +846,7 @@ def make_search_tool(kb: KnowledgeBase, *, tracer: object | None = None) -> Base
     """
     from langchain_core.tools import tool
 
-    from rolecard_agent.core.nodes import current_knowledge_scopes
+    from rolecard_agent.base.scopes import current_knowledge_scopes
 
     @tool("search_knowledge")
     def search_knowledge(query: str) -> str:

@@ -40,7 +40,7 @@ rag = ["chromadb>=1.5.9", "pypdf>=4.0"]
 # this one provider package. Kept optional so a local-only install stays offline-capable.
 cloud = ["langchain-openai>=1.6.2"]
 # OCR is deliberately NOT an extra: the OCR engine must run in a separate venv/process.
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-cov>=7", "pytest-timeout>=2.3", "pytest-xdist>=3.6", "ruff>=0.6", "mypy>=1.11", "httpx>=0.27"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-cov>=7", "pytest-timeout>=2.3", "pytest-xdist>=3.6", "ruff>=0.6", "mypy>=1.11", "import-linter>=2.15", "httpx>=0.27"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/rolecard_agent"]
@@ -98,3 +98,60 @@ warn_redundant_casts = true
 warn_unreachable = true
 check_untyped_defs = true
 no_implicit_optional = true
+
+# ---------------------------------------------------------------- 依赖方向契约（import-linter）
+#
+# 为什么要有这一段：`core ↔ rag`、`core ↔ roles` 两条双向边是审查点名要收口的横向抓取，
+# 而它们当时**靠函数里的延迟 import 压着不炸环** —— 于是"顺手把 import 提到模块顶层"
+# 这种看起来无害的重构就能引爆循环导入，没有任何尺子会提前出声。这一段把方向从口头约定
+# 变成必须评审的机器门禁（判据：`docs/架构总览.md` §5 第 1 条）。
+#
+# 分层（高层可以 import 低层，反过来一律红）：
+#     api → domains → [features] → core → {roles | rag} → base → storage → config
+# 两个刻意的取向：
+#   * `roles | rag` 那一行的 `|` 是 import-linter 的**同层互不依赖**语法 —— 插件包彼此
+#     不许打听（`rag` 用 `roles` 的卡、`roles` 用 `rag` 的库，都是把换掉一个包的成本
+#     藏进另一个包）。
+#   * `base` 在 `core` **之下**：它收的是"谁都要问一遍"的零业务知识原语（文本取值 /
+#     来源标记 / 路径发现 / 观测出口 / 身份 / 审计咽喉 / 执行期注入的 ContextVar）。
+#     这些件从前住在 core，于是 rag / roles 想借一把就得反向 import 内核 —— 两条双向边
+#     就是这么长出来的。放到底层之后"反向"在结构上构不出来。
+#   * `domains` 现在还在 `core` 之上，因为 `domains/registry.py` 点名具体域去装配工具，
+#     而 `core/ no domain token` 那条尺子禁止内核出现域专名。P1-5（DomainSpec + registry
+#     目录枚举）把域名单从装配点里拿掉之后，这一格会翻到 core 之下 —— 契约跟着改那一行。
+#   * `(features)` 是 proactive / sync / pets 拆出来之后的位置（P2-1），现在还不存在，
+#     写成 optional 让契约先于施工生效。
+#
+# 豁免纪律：`ignore_imports` 只许用来**固化现状**，每一条都要写清"哪一步会把它删掉"；
+# 删干净之后这一段应当是空的。`unmatched_ignore_imports_alerting = error` 是配套的：
+# 豁免名单里留着一条已经不再存在的边，同样红 —— 防止它变成垃圾桶。
+[tool.importlinter]
+root_packages = ["rolecard_agent"]
+
+[[tool.importlinter.contracts]]
+name = "依赖方向：api → domains → core → {roles|rag} → base → storage → config"
+type = "layers"
+layers = [
+    "rolecard_agent.api",
+    "rolecard_agent.domains",
+    "rolecard_agent.core",
+    "(rolecard_agent.features)",
+    "rolecard_agent.roles | rolecard_agent.rag",
+    "rolecard_agent.base",
+    "rolecard_agent.storage",
+    "rolecard_agent.config",
+]
+unmatched_ignore_imports_alerting = "error"
+ignore_imports = []
+
+# 第二条契约：包内**任何两个模块之间都不许有环**。
+# 上面那条管的是"包与包的方向"，这一条管的是"同一个包内部不许靠延迟 import 压环" ——
+# `rag/ocr.py ↔ rag/parser.py` 正是后者的形状：parser 只在 `TYPE_CHECKING` 里 import ocr
+# 拿 `OcrBackend` 做标注，ocr 顶层 import parser 拿两个异常名。导入不炸，但方向是环，
+# 而"谁先 import 谁"这件事从此取决于调用顺序 —— 一次顺手把 lazy import 提到顶层的
+# 重构就会炸，而且炸在运行时而不是评审时。判据：把类型协议挪到被依赖的一侧，环自然消失。
+[[tool.importlinter.contracts]]
+name = "包内无循环导入（延迟 import 压住的环也算）"
+type = "acyclic_siblings"
+ancestors = ["rolecard_agent"]
+depth = 12

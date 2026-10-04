@@ -338,7 +338,7 @@ def test_a_turn_reads_the_memory_of_its_own_owner(client: TestClient) -> None:
     就是串数据：B 的对话里被注入 A 的事实，A 的 hit_count 还替 B 的读取涨。这里绕不开的
     只有模型（不真跑一轮），身份绑法走节点入口同一根管子 `bound_user`。
     """
-    from rolecard_agent.core.identity import bound_user
+    from rolecard_agent.base.identity import bound_user
 
     rt = client.app.state.ctx.runtime
     with bound_user(B):

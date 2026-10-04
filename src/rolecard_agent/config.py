@@ -403,7 +403,7 @@ class Settings(BaseModel):
     #: 逗号分隔的精确 origin（例：`http://127.0.0.1:8123`）。改了要重启。
     api_allow_origins: str = ""
     auth_trusted_proxies: str = ""
-    # 这台实例的主人是谁（`core/identity.resolve_instance_identity`）。空 = 本机那份
+    # 这台实例的主人是谁（`base/identity.resolve_instance_identity`）。空 = 本机那份
     # (`local-user`)；把它设成 `app_user` 里的另一个 id，这台实例就替那个人服务。
     # **刻意不做成运行期可改项**：按架构总览 §4.1，"换身份"是换一份完整数据集，
     # 不是热切一个 `WHERE` 过滤器 —— 半换的状态（会话是 A 的、后台调度替 B 冒话）比不换更糟。

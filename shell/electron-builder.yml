@@ -47,7 +47,7 @@ win:
 nsis:
   oneClick: false
   # 装到用户目录：不需要 UAC，也不会有"Program Files 不可写"那一类坑（数据本来就在
-  # %LOCALAPPDATA%，见 core/paths.py）
+  # %LOCALAPPDATA%，见 base/paths.py）
   perMachine: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true

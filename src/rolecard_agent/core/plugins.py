@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 
-from rolecard_agent.core.audit import AuditTrail
+from rolecard_agent.base.audit import AuditTrail
 from rolecard_agent.storage.db import SqlConnection
 
 TOOL_EPOCH_KEY = "tool_epoch"

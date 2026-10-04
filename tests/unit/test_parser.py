@@ -147,7 +147,7 @@ def test_image_without_configured_backend_raises_ocr_unavailable(
     强制"自动发现不到默认解释器"，使断言不依赖本机是否装了 .venv-ocr。
     """
     monkeypatch.delenv("OCR_PYTHON", raising=False)
-    # 注意：ocr.py 现以 `from rolecard_agent.core.paths import default_ocr_python` 绑定，
+    # 注意：ocr.py 现以 `from rolecard_agent.base.paths import default_ocr_python` 绑定，
     # 必须 patch ocr 模块里的引用，patch parser 里的原函数不会生效。
     monkeypatch.setattr("rolecard_agent.rag.ocr.default_ocr_python", lambda: None)
     img = tmp_path / "scan.png"

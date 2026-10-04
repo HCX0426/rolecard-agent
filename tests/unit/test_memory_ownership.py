@@ -17,8 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from rolecard_agent.base.identity import DEFAULT_USER_ID, bound_user
 from rolecard_agent.config import Settings
-from rolecard_agent.core.identity import DEFAULT_USER_ID, bound_user
 from rolecard_agent.core.memory import (
     GLOBAL_BUCKET,
     add_item,
@@ -132,7 +132,7 @@ def test_the_memory_tool_writes_for_whomever_this_turn_belongs_to(db) -> None:
     """`memory_save` 的归属来自这一轮的绑定，不来自实例默认。
 
     这条同时是 M3 后半的验收：工具签名里没有 `user_id`（有它模型就能自己填"我是谁"），
-    所以主人只能由节点入口绑进来（`core/identity.bound_user`）。
+    所以主人只能由节点入口绑进来（`base/identity.bound_user`）。
     """
     tool = make_memory_tool(settings=Settings(memory_enabled=True), conn=db)
     with bound_user("u1"):

@@ -41,17 +41,17 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
-import httpx  # 只用它的异常类型；请求一律走 core/outbound
+import httpx  # 只用它的异常类型；请求一律走 base/outbound
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from rolecard_agent.api import access
 from rolecard_agent.api.auth import ROLE_USER, Actor, basic_header
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
-from rolecard_agent.core import outbound
+from rolecard_agent.base import outbound
+from rolecard_agent.base.paths import user_data_root
 from rolecard_agent.core import sync as sync_lib
 from rolecard_agent.core.model_settings import validate_base_url
-from rolecard_agent.core.paths import user_data_root
 from rolecard_agent.core.thread_locks import thread_write
 from rolecard_agent.storage.db import RETENTION_BACKUP_DIRNAME
 from rolecard_agent.storage.threads import delete_thread_everywhere, delete_threads_for_user

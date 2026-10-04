@@ -22,10 +22,13 @@ import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from rolecard_agent.rag.errors import OcrUnavailable, ParseError
+
 if TYPE_CHECKING:
-    # 只在类型检查时导入：`rag/ocr.py` 在运行期 import 本模块，反向依赖必须留在这里
-    # 以免形成循环导入。有了它，`backend` 参数才能标注成 `OcrBackend | None` 而不是
-    # `object`（后者让 mypy 完全看不到 `available()` / `ocr()` 这两个方法）。
+    # 只在类型检查时导入：ocr 反过来还要用本模块的 backend 协议，把具体后端留在类型侧，
+    # 运行期只在函数里取 `LocalRapidOcrBackend`（见 `_ocr_text`）。有了它，`backend`
+    # 参数才能标注成 `OcrBackend | None` 而不是 `object`（后者让 mypy 完全看不到
+    # `available()` / `ocr()` 这两个方法）。
     from rolecard_agent.rag.ocr import OcrBackend
 
 TEXT_EXTS: frozenset[str] = frozenset({".txt", ".md"})
@@ -47,14 +50,6 @@ _SS_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 # 部件名 → 编号（排序用）。见 `_numbered`：字典序会把 slide10 排到 slide2 前面。
 _SLIDE_RE = re.compile(r"ppt/slides/slide(\d+)\.xml")
 _SHEET_RE = re.compile(r"xl/worksheets/sheet(\d+)\.xml")
-
-
-class ParseError(Exception):
-    """解析失败（含 OCR 不可用）。携带可读原因，绝不含栈或内部路径。"""
-
-
-class OcrUnavailable(ParseError):
-    """OCR 后端未配置 / 不可用：图片当前无法解析，应保持 pending。"""
 
 
 def parse_document(
@@ -268,11 +263,11 @@ def _parse_xlsx(p: Path) -> str:
 
 
 def _default_ocr_python() -> str | None:
-    """向后兼容别名：路径发现已下沉到 core.paths（M10 解耦 core→rag）。
+    """向后兼容别名：路径发现已下沉到 base.paths（M10 解耦 core→rag）。
 
-    新代码请直接用 `from rolecard_agent.core.paths import default_ocr_python`。
+    新代码请直接用 `from rolecard_agent.base.paths import default_ocr_python`。
     """
-    from rolecard_agent.core.paths import default_ocr_python as _impl
+    from rolecard_agent.base.paths import default_ocr_python as _impl
 
     return _impl()
 

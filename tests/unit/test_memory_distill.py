@@ -15,9 +15,9 @@ from typing import Any
 
 import pytest
 
+from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.core import memory as mem
 from rolecard_agent.core import memory_distill as distill
-from rolecard_agent.core.identity import DEFAULT_USER_ID
 from rolecard_agent.storage.db import SqlConnection, bootstrap, connect
 
 

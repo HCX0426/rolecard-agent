@@ -31,8 +31,8 @@ import contextlib
 from datetime import datetime
 from typing import Any, NamedTuple
 
-from rolecard_agent.core.identity import DEFAULT_USER_ID
-from rolecard_agent.core.observability import TraceEvent
+from rolecard_agent.base.identity import DEFAULT_USER_ID
+from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.storage.db import SqlConnection
 
 

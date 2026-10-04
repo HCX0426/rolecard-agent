@@ -26,8 +26,8 @@ from typing import Any, cast
 from langchain_core.tools import BaseTool
 from pydantic import PrivateAttr
 
+from rolecard_agent.base.audit import AGENT_ACTOR, AuditTrail
 from rolecard_agent.config import McpServerConfig
-from rolecard_agent.core.audit import AGENT_ACTOR, AuditTrail
 
 logger = logging.getLogger(__name__)
 

@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context, value_error_to_http
-from rolecard_agent.core import outbound
+from rolecard_agent.base import outbound
 from rolecard_agent.core.model_settings import client_style
 
 router = APIRouter()
@@ -221,7 +221,7 @@ def deep_check(ctx: AppContext = Depends(get_context)) -> object:
     probe_path = "/api/tags" if is_ollama else "/models"
     try:
         headers = {"Authorization": f"Bearer {backend.api_key}"} if backend.api_key else {}
-        # 走 `core/outbound`：这一发可能带着**已存的 api_key**，且探的常是本机 Ollama。
+        # 走 `base/outbound`：这一发可能带着**已存的 api_key**，且探的常是本机 Ollama。
         res = outbound.get(f"{base}{probe_path}", headers=headers, timeout=8.0)
         ollama["reachable"] = res.status_code == 200
         ollama["detail"] = f"{res.status_code}"

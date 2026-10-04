@@ -31,11 +31,11 @@ from typing import Any, ClassVar
 from langchain_core.messages import AIMessageChunk, ToolMessage
 from langgraph.errors import GraphRecursionError
 
+from rolecard_agent.base.observability import TraceEvent, Tracer, scrub_endpoints
+from rolecard_agent.base.text import text_of
 from rolecard_agent.core.graph import MODEL_NODE, TOOLS_NODE
 from rolecard_agent.core.guard import check
 from rolecard_agent.core.nodes import EmptyModelStream, TurnStopped, VisionNotSupported
-from rolecard_agent.core.observability import TraceEvent, Tracer, scrub_endpoints
-from rolecard_agent.core.text import text_of
 from rolecard_agent.core.thread_locks import (
     ThreadBusy,
     clear_stop,

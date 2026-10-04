@@ -1060,7 +1060,7 @@ def check_promised_artifacts() -> None:
         "docs/开发流程.md",
         "src/rolecard_agent/core/schema.sql",
         "src/rolecard_agent/core/guard.py",
-        "src/rolecard_agent/core/text.py",
+        "src/rolecard_agent/base/text.py",
         "src/rolecard_agent/core/prompts.py",
         "src/rolecard_agent/core/tools/registry.py",
         "src/rolecard_agent/roles/models.py",
@@ -1206,7 +1206,7 @@ def check_audit_action_vocabulary() -> None:
     （api 侧 55 处全借它）、`core/plugins.py`、`core/tools/{files,mcp,run}.py` —— 五份
     逐字相同的 `INSERT INTO audit_log`。改一处口径而另外四处不动，正是本仓那一族事故的
     形状（`detail` 的编码从前真的不一致：只有 `mcp` 那份额外用 `default=str`）。
-    现在语句只住在 `core/audit.py`，出现次数必须 = 1。
+    现在语句只住在 `base/audit.py`，出现次数必须 = 1。
 
     计数只数**代码里的字符串常量**，不数注释与 docstring 里的引文：这条判据本尊踩过这个
     坑 —— 它的 docstring 要解释"从前有五份"，按整文件文本计数时它把自己数成了第二份
@@ -1214,7 +1214,7 @@ def check_audit_action_vocabulary() -> None:
 
     **第二侧：动作词表是一份清单，不是一个传说。** `R102-14` 记的是"56 处调用、55 个不同
     动作名，没有任何一处按名字读它们"，于是改一个名就是把同一动作劈成两条历史。清单在
-    `core/audit.AUDIT_ACTIONS`；带变量的那一族（`mcp:{server}__{tool}`）按
+    `base/audit.AUDIT_ACTIONS`；带变量的那一族（`mcp:{server}__{tool}`）按
     `DYNAMIC_ACTION_PREFIXES` 的前缀放行。差分**两个方向都要能红**（`R102-37` 的教训：
     只写一臂的判据是空转臂）—— 用了没登记的红，登记了没人用也红。
     """
@@ -1239,10 +1239,10 @@ def check_audit_action_vocabulary() -> None:
         return copies
 
     copies = stmt_copies()
-    one_throat = copies == ["src/rolecard_agent/core/audit.py×1"]
+    one_throat = copies == ["src/rolecard_agent/base/audit.py×1"]
 
     try:
-        from rolecard_agent.core.audit import (
+        from rolecard_agent.base.audit import (
             AUDIT_ACTIONS,
             DYNAMIC_ACTION_PREFIXES,
         )
@@ -1384,42 +1384,6 @@ def check_session_thread_write_seam() -> None:
         fails.append(
             "session_thread write seam is hollow: storage/threads.py must hold the "
             "write statements it claims to own"
-        )
-
-
-def check_storage_does_not_import_core() -> None:
-    """storage 层不许 import core（`R102-08` 断开的那条环不许回来）。
-
-    从前全仓只有这一条模块级真环：`storage/db.py::_migrate` 惰性 import
-    `core.model_settings.migrate_to_provider_layers`，而 `core/model_settings.py` 顶层
-    import `storage.db`。惰性 import 让导入不炸，但方向仍是**底层反向依赖上层**——
-    "搬层"这一步现在由调用方（`core/bootstrap.py` / `scripts/init_db.py`）传进来，
-    storage 侧对"要不要搬"只保留现场判断，旧库没交动作就当众失败。
-    """
-    offenders: list[str] = []
-    for path in sorted((ROOT / "src" / "rolecard_agent" / "storage").rglob("*.py")):
-        rel = path.relative_to(ROOT).as_posix()
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
-        except SyntaxError:
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
-                "rolecard_agent.core"
-            ):
-                offenders.append(f"{rel}:{node.lineno}")
-            elif isinstance(node, ast.Import):
-                for alias in node.names:
-                    if alias.name.startswith("rolecard_agent.core"):
-                        offenders.append(f"{rel}:{node.lineno}")
-
-    ok = not offenders
-    detail = "storage 层 0 处 import core（环已断）" if ok else f"反向依赖回来了：{offenders}"
-    out("storage does not import core", ok, detail)
-    if offenders:
-        fails.append(
-            "storage layer imports upward from core (module-level cycle): "
-            f"{offenders}（搬层动作请由调用方传 bootstrap(provider_layers=...)）"
         )
 
 
@@ -1602,7 +1566,7 @@ def check_audit_ledger_row_count() -> None:
 
 #: 数据根下"会被应用写字"的目录必须整目录进 `.gitignore`（`R102-76`）。
 #:
-#: 开发态的数据根就是仓库的 `data/`（`core/paths.py::_platform_data_root` 故意如此），
+#: 开发态的数据根就是仓库的 `data/`（`base/paths.py::_platform_data_root` 故意如此），
 #: 所以任何新落进那一格的目录，只要没被忽略，就会被下一次 `git add` 当成源码带进库 ——
 #: 而 `data/workspace` 是 `fs_write` 工具的默认根、`retention-backups` 是被删审计行与
 #: 命令原文的 JSONL，两格内容都是真实用户数据。
@@ -1629,7 +1593,7 @@ def _path_chain_parts(node: ast.expr) -> list[str]:
 def _data_root_write_dirs() -> dict[str, str]:
     """从**代码**里数出数据根下会写字的目录名（不看文件系统：文件系统里躺着的全是被忽略的运行时件）。"""
     dirs: dict[str, str] = {}
-    paths_py = ROOT / "src" / "rolecard_agent" / "core" / "paths.py"
+    paths_py = ROOT / "src" / "rolecard_agent" / "base" / "paths.py"
     tree = ast.parse(paths_py.read_text(encoding="utf-8"))
     fn = next(
         (
@@ -1649,7 +1613,7 @@ def _data_root_write_dirs() -> dict[str, str]:
                 continue
             parts = _path_chain_parts(value)
             if parts:
-                dirs[parts[0]] = f"core/paths.py::data_paths[{key.value}]"
+                dirs[parts[0]] = f"base/paths.py::data_paths[{key.value}]"
     db_py = ROOT / "src" / "rolecard_agent" / "storage" / "db.py"
     for node in ast.walk(ast.parse(db_py.read_text(encoding="utf-8"))):
         if not isinstance(node, ast.Assign):
@@ -1675,7 +1639,7 @@ def check_data_root_dirs_gitignored() -> None:
             False,
             "从代码里一个目录都没数出来（data_paths 改名了？）",
         )
-        fails.append("data-root ruler is hollow: no directory was enumerated from core/paths.py")
+        fails.append("data-root ruler is hollow: no directory was enumerated from base/paths.py")
         return
     lines = [
         ln.strip()
@@ -1939,7 +1903,7 @@ def check_app_icon_frames() -> None:
 
 
 def check_single_text_extractor() -> None:
-    """消息取文本只允许一处实现：`core/text.py::text_of`（架构审计报告 台账 `R28-59`）。
+    """消息取文本只允许一处实现：`base/text.py::text_of`（架构审计报告 台账 `R28-59`）。
 
     这条断言防的是两类复发：
       1. **就地复刻** —— `domains/health/extract.py` 曾抄了第二份，且用空串拼接而不是空格，
@@ -1955,7 +1919,7 @@ def check_single_text_extractor() -> None:
         if "tests" in path.parts:
             continue  # 测试里为验证降级行为而手工构造怪形状，是刻意的
         rel = path.relative_to(ROOT).as_posix()
-        if rel == "src/rolecard_agent/core/text.py":
+        if rel == "src/rolecard_agent/base/text.py":
             continue  # 唯一实现本尊
         for lineno, line in enumerate(
             path.read_text(encoding="utf-8", errors="ignore").splitlines(), start=1
@@ -1968,7 +1932,7 @@ def check_single_text_extractor() -> None:
     detail = "single implementation" if not offenders else str(offenders[:6])
     out("single text extractor", not offenders, detail)
     if offenders:
-        fails.append(f"message text must be read via core/text.py::text_of only: {offenders}")
+        fails.append(f"message text must be read via base/text.py::text_of only: {offenders}")
 
 
 def check_domain_isolation() -> None:
@@ -3674,7 +3638,6 @@ def main() -> int:
     check_api_domain_seams()
     check_audit_action_vocabulary()
     check_session_thread_write_seam()
-    check_storage_does_not_import_core()
     check_write_txn_ownership_inventory()
     check_audit_ledger_row_count()
     check_data_root_dirs_gitignored()

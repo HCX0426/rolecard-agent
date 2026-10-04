@@ -21,8 +21,8 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Protocol
 
-from rolecard_agent.core.markers import AI_TEXT_MARKER
-from rolecard_agent.core.text import text_of
+from rolecard_agent.base.markers import AI_TEXT_MARKER
+from rolecard_agent.base.text import text_of
 
 MAX_CONSENSUS_BACKENDS = 3
 

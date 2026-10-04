@@ -18,8 +18,9 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
+from rolecard_agent.base.identity import bound_user
+from rolecard_agent.base.observability import Tracer, make_tracer
 from rolecard_agent.config import Settings
-from rolecard_agent.core.identity import bound_user
 from rolecard_agent.core.model_settings import client_style
 from rolecard_agent.core.nodes import (
     ChatLike,
@@ -28,7 +29,6 @@ from rolecard_agent.core.nodes import (
     execute_tools,
     route_after_model,
 )
-from rolecard_agent.core.observability import Tracer, make_tracer
 from rolecard_agent.core.plugins import PluginService
 from rolecard_agent.core.state import AgentState
 from rolecard_agent.core.tools.registry import ToolRegistry
@@ -131,7 +131,7 @@ def build_kernel(
     graph = StateGraph(AgentState)
 
     def _owner_of(state: dict[str, Any]) -> str | None:
-        """这一轮在为谁读 —— 绑进上下文给域工具用（见 `core/identity.bound_user`）。
+        """这一轮在为谁读 —— 绑进上下文给域工具用（见 `base/identity.bound_user`）。
 
         为什么在**节点入口**绑，而不是把 user_id 一路当参数传给工具：域工具的 `current_user`
         是装配期定下的零参闭包（工具对模型必须看起来零参数，否则模型能自己填"我是谁"）。

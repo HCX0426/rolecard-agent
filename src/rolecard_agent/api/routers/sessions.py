@@ -33,18 +33,18 @@ from rolecard_agent.api.deps import (
     role_error_to_http,
     serialize_message,
 )
+from rolecard_agent.base.observability import TraceEvent
+from rolecard_agent.base.text import text_of
 from rolecard_agent.config import Settings
 from rolecard_agent.core import memory_distill
 from rolecard_agent.core.graph import build_graph_config
 from rolecard_agent.core.ingestion import INGESTION_FAILED, INGESTION_PENDING
-from rolecard_agent.core.observability import TraceEvent
 from rolecard_agent.core.reachout import (
     PROACTIVE_THREAD_PREFIX,
     ensure_proactive_thread,
     proactive_thread_id,
 )
 from rolecard_agent.core.state import new_state, now_ts
-from rolecard_agent.core.text import text_of
 from rolecard_agent.core.thread_locks import (
     end_extraction,
     inflight_text,

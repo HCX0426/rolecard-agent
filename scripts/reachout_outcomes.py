@@ -40,8 +40,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import scratch_db  # noqa: E402
 
+from rolecard_agent.base.identity import resolve_instance_identity  # noqa: E402
 from rolecard_agent.config import Settings  # noqa: E402
-from rolecard_agent.core.identity import resolve_instance_identity  # noqa: E402
 from rolecard_agent.core.reachout import PROACTIVE_THREAD_PREFIX, proactive_thread_id  # noqa: E402
 from rolecard_agent.storage.db import bootstrap, connect  # noqa: E402
 
@@ -84,8 +84,8 @@ def read_lane_messages(conn: Any) -> dict[str, list[tuple[str, str]]]:
     """
     from langchain_core.messages import HumanMessage, ToolMessage  # noqa: PLC0415
 
+    from rolecard_agent.base.text import text_of  # noqa: PLC0415
     from rolecard_agent.core.checkpointer import make_checkpointer  # noqa: PLC0415
-    from rolecard_agent.core.text import text_of  # noqa: PLC0415
 
     saver = make_checkpointer(conn)
     out: dict[str, list[tuple[str, str]]] = {}

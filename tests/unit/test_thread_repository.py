@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from rolecard_agent.core.identity import DEFAULT_TENANT_ID, DEFAULT_USER_ID
+from rolecard_agent.base.identity import DEFAULT_TENANT_ID, DEFAULT_USER_ID
 from rolecard_agent.storage.db import bootstrap, connect, thread_id_carriers
 from rolecard_agent.storage.threads import (
     create_thread,

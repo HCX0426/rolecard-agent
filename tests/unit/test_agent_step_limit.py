@@ -23,10 +23,10 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.errors import GraphRecursionError
 
 from rolecard_agent.api.chat import sse
+from rolecard_agent.base.observability import NullTracer
 from rolecard_agent.config import Settings
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.graph import DEFAULT_AGENT_MAX_STEPS, build_graph_config, build_kernel
-from rolecard_agent.core.observability import NullTracer
 from rolecard_agent.core.plugins import PluginService
 from rolecard_agent.core.state import new_state
 from rolecard_agent.core.tools.registry import ToolRegistry

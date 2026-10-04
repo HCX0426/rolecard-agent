@@ -43,8 +43,8 @@ from typing import Any
 
 from langchain_core.tools import BaseTool, tool
 
+from rolecard_agent.base.identity import active_user_id, resolve_instance_identity
 from rolecard_agent.config import Settings
-from rolecard_agent.core.identity import active_user_id, resolve_instance_identity
 from rolecard_agent.storage.db import SqlConnection
 
 # 当前对话角色（架构总览 §5）：execute_tools 每轮注入，memory_save 读取它把事实同时写入
@@ -561,7 +561,7 @@ def make_memory_tool(*, settings: Settings, conn: SqlConnection) -> BaseTool:
         line = " ".join((fact or "").split())
         if not line:
             return "没有可记住的内容：传入的 fact 为空。"
-        # 这一轮在为谁记：图节点在入口绑过就是这条线程的主人（`core/identity.bound_user`），
+        # 这一轮在为谁记：图节点在入口绑过就是这条线程的主人（`base/identity.bound_user`），
         # 没绑过（后台、纯内核装配）才落到这台实例的主人。工具签名里没有 user_id 是刻意的：
         # 有它模型就能自己填"我是谁"。
         owner = active_user_id(resolve_instance_identity(settings))

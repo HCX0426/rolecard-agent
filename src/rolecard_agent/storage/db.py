@@ -755,7 +755,7 @@ def _migrate(
     # 14. role_proactive_state 的主键升级（多租户 B2）：(role_id) → (user_id, role_id)。
     #     `role_card` 的主键将来要改成 (user_id, role_id)（第二个身份也可能建一张同名卡），
     #     状态表不跟着换就撞行。整表重建 + 老行归属实例主人（默认部署 = 'local-user'，
-    #     与 core/identity.DEFAULT_USER_ID 一字不差）。判"老形态"用有没有 user_id 列。
+    #     与 base/identity.DEFAULT_USER_ID 一字不差）。判"老形态"用有没有 user_id 列。
     #     顺带把**主动会话线程 id 改成带身份**（s_proactive_<role> → s_proactive_<uid>_<role>）：
     #     同一个 role_id 将来可以属于两个人，线程 id 不带身份就会让两人的主动会话互相覆盖。
     #     老线程的归属从 session_thread.user_id 现读（数据即真相，不必知道 IDENTITY_USER_ID）；
@@ -889,7 +889,7 @@ def _migrate(
     #     一次。只对新形态库生效 —— 老形态（带 api_key）走上面那句 DROP 重建，新表已带列。
     #     语义（schema.sql 有全文）：**仅 chat 引用行按人**（默认/回退链 = 谁花 key 由谁定），
     #     能力端点（ocr/embedding/rerank）永远设备级、user_id 留 NULL。老 chat 行回填本机主人
-    #     （默认部署 = 'local-user'，与 `core/identity.DEFAULT_USER_ID` 一字不差 —— 漂了就是
+    #     （默认部署 = 'local-user'，与 `base/identity.DEFAULT_USER_ID` 一字不差 —— 漂了就是
     #     "升级完对话默认丢失"那种最像默认值出问题的症状）。新 chat 行由 model_settings 的写
     #     入方显式带主人，所以这里只回填历史行。
     if "user_id" not in _columns(conn, "service_endpoint"):
