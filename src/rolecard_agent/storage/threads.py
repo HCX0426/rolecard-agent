@@ -29,7 +29,7 @@ from typing import Any
 from rolecard_agent.storage.db import (
     SqlConnection,
     quote_ident,
-    thread_id_carriers,
+    table_columns,
 )
 
 #: `touch_thread` 的线格式必须是毫秒（`R102-62`）：侧栏按 `updated_at` 排序，两次改动落在
@@ -38,6 +38,33 @@ _TOUCH_SQL = (
     "UPDATE session_thread SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now') "
     "WHERE thread_id = ?"
 )
+
+
+def thread_id_carriers(conn: SqlConnection) -> list[str]:
+    """哪些表带着 `thread_id` 列（**现数**，不写死清单）。
+
+    写死的那个版本列了 `session_thread` / `checkpoints` / `writes` 三张，漏了
+    `command_approval.thread_id` —— 挂旧 id 的审批行会指向一条不存在的会话（命令、状态、
+    `decide_token` 都还在，但那句话的上下文没了）。这类漏法不会因为"这次补上这一张"而
+    消失：下一张带 `thread_id` 的表照样被忘。所以判据交给库本身：凡是**有 `thread_id`
+    列又不是 `session_thread` 自己**的表，都跟着改。langgraph 那两张（checkpoints / writes）
+    本来就在集合里，原来那句"表不存在就不动"的 `has_cp` 特判因此也不需要了 —— 不存在的表
+    根本进不了清单。
+
+    住在**线程的 repository** 而不是 `storage/db.py`：db.py 只留连接与声明引擎，不点名
+    任何业务表（2026-10-04 审查快照 P1-6）。
+    """
+    tables = [
+        str(r[0])
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        )
+    ]
+    return [
+        t
+        for t in sorted(tables)
+        if t != "session_thread" and "thread_id" in set(table_columns(conn, t))
+    ]
 
 
 def touch_thread(conn: SqlConnection, thread_id: str) -> None:

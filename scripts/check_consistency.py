@@ -1407,6 +1407,85 @@ def check_session_thread_write_seam() -> None:
         )
 
 
+def _declared_table_names() -> set[str]:
+    """schema 里声明的**全部**表名（core / roles / 各域）—— 业务表名的唯一来源。
+
+    与 `_domain_private_tokens` 同一条规矩：名字从声明里推，不手写清单 —— 手写清单就是
+    第二份事实面，而"清单漏了"的表现是这条尺子照常打绿。
+    """
+    src = ROOT / "src" / "rolecard_agent"
+    names = _sql_table_names(src / "core" / "schema.sql") | _sql_table_names(
+        src / "roles" / "schema.sql"
+    )
+    for schema in sorted((src / "domains").glob("*/schema.sql")):
+        names |= _sql_table_names(schema)
+    return names
+
+
+def _code_strings(path: pathlib.Path) -> list[tuple[int, str]]:
+    """文件里的字符串常量（**扣掉 docstring**，注释本来就不是常量）。"""
+    tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+    docstring_lines: set[int] = set()
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if not (isinstance(body, list) and body):
+            continue
+        first = body[0]
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            docstring_lines.update(range(first.lineno, (first.end_lineno or first.lineno) + 1))
+    return [
+        (node.lineno, node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.lineno not in docstring_lines
+    ]
+
+
+def check_storage_db_has_no_business_tables() -> None:
+    """`storage/db.py` 里不许出现业务表名（2026-10-04 审查快照 P1-6 的验收句）。
+
+    为什么单立这一格：迁移引擎从 `_migrate` 收成 `core/migrations.py` 的步骤注册表、
+    retention 策略搬进 `core/retention.py`、`thread_id_carriers` 归 `storage/threads.py`
+    之后，**连接 + 声明引擎 + 执行入口**这层在语义上再也不需要点名任何一张表 ——
+    剩下的每一处点名都意味着"策略/业务语义偷偷留在了 storage"。
+
+    判据只管**字符串常量**（注释不算：注释里的表名单是解释，不是耦合），并扣掉
+    docstring（模块/函数顶那段散文里讲"哪些表"是必要的说明）。反向一臂：声明出来的表名
+    必须够多，否则这条尺子会因为"declared 为空"而永远绿。
+    """
+    rel = "src/rolecard_agent/storage/db.py"
+    tables = sorted(_declared_table_names())
+    if len(tables) < 10:  # 反向臂：判据被掏空就该红，而不是"零命中=通过"
+        out("storage db has no business tables", False, f"只推出 {len(tables)} 个表名（<10）")
+        fails.append(
+            "storage db: declared table names look empty — the check would pass vacuously"
+        )
+        return
+    pattern = re.compile(rf"\b({'|'.join(sorted(tables, key=len, reverse=True))})\b")
+    hits = [
+        f"{rel}:{lineno} {m.group(1)}"
+        for lineno, text in _code_strings(ROOT / rel)
+        if (m := pattern.search(text))
+    ]
+    ok = not hits
+    detail = (
+        f"db.py 里 0 处点名业务表（声明里 {len(tables)} 张表）"
+        if ok
+        else "; ".join(hits[:4])
+    )
+    out("storage db has no business tables", ok, detail)
+    if hits:
+        fails.append(
+            "storage/db.py names business tables: "
+            f"{hits} —— 策略/业务语义应住 core（migrations / retention）或 storage 的 repository"
+        )
+
+
 #: `api/` 里出现下面任一形状即红：直连执行（`.execute(`）或**以 SQL 开头的字符串常量**。
 #: 两臂各挡一类回流：只查 `.execute(` 会被"把语句写成常量再传出去"绕过；只查常量会被
 #: `conn.execute(变量)` 漏掉（变量那一形靠 execute 臂抓）。
@@ -3826,6 +3905,7 @@ def main() -> int:
     check_api_domain_seams()
     check_audit_action_vocabulary()
     check_session_thread_write_seam()
+    check_storage_db_has_no_business_tables()
     check_api_holds_no_sql()
     check_sync_write_ownership()
     check_write_txn_ownership_inventory()

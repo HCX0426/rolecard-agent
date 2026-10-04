@@ -63,6 +63,7 @@ from rolecard_agent.core.reachout import (
     unanswered_lines,
     unreplied_lines,
 )
+from rolecard_agent.core.retention import prune_retention_tables
 from rolecard_agent.core.services import ServiceEndpointService
 from rolecard_agent.core.state import now_ts
 from rolecard_agent.core.thread_locks import release_thread, try_thread_write
@@ -75,7 +76,6 @@ from rolecard_agent.storage.db import (
     SqlConnection,
     ThreadLocalConnection,
     connect_threadlocal,
-    prune_retention_tables,
 )
 from rolecard_agent.storage.db import bootstrap as apply_schema
 

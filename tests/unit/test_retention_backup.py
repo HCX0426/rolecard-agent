@@ -27,11 +27,11 @@ from typing import Any
 
 import pytest
 
+from rolecard_agent.core.retention import prune_retention_tables
 from rolecard_agent.storage.db import (
     RETENTION_BACKUP_KEEP,
     bootstrap,
     connect,
-    prune_retention_tables,
 )
 
 

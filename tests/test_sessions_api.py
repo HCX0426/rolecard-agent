@@ -22,7 +22,7 @@ from langchain_core.messages import AIMessage
 
 from rolecard_agent.api.main import create_app
 from rolecard_agent.rag.parser import ParseError
-from rolecard_agent.storage.db import thread_id_carriers
+from rolecard_agent.storage.threads import thread_id_carriers
 from tests.conftest import ScriptedChat
 
 

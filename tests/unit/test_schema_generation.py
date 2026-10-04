@@ -20,9 +20,8 @@ from rolecard_agent.storage.db import (
     SCHEMA_VERSION,
     bootstrap,
     connect,
-    thread_id_carriers,
 )
-from rolecard_agent.storage.threads import touch_thread
+from rolecard_agent.storage.threads import thread_id_carriers, touch_thread
 
 
 @pytest.fixture

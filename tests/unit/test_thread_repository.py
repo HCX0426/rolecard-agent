@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from rolecard_agent.base.identity import DEFAULT_TENANT_ID, DEFAULT_USER_ID
-from rolecard_agent.storage.db import bootstrap, connect, thread_id_carriers
+from rolecard_agent.storage.db import bootstrap, connect
 from rolecard_agent.storage.threads import (
     create_thread,
     delete_thread_everywhere,
@@ -33,6 +33,7 @@ from rolecard_agent.storage.threads import (
     set_distilled_seq,
     set_model,
     set_title,
+    thread_id_carriers,
     touch_thread,
 )
 

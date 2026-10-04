@@ -284,7 +284,6 @@ def migrate_event(message: str) -> None:
 
     **公开给 core**：步骤的清单与顺序住在 `core/migrations.py`，那边执行一步就念一声 ——
     同一条事件流，不另起炉灶（storage 里再长一个私有出口就是第二个真相）。"""
-    from datetime import datetime
 
     stamp = datetime.now(UTC).isoformat(timespec="seconds")
     print(f"[schema-migrate] {stamp} {message}", file=sys.stderr, flush=True)
@@ -399,7 +398,7 @@ def trim_backups(backup_dir: Path, *, keep: int = RETENTION_BACKUP_KEEP) -> None
             stale.unlink(missing_ok=True)
 
 
-def _dump_before_delete(
+def dump_before_delete(
     conn: SqlConnection,
     *,
     table: str,
@@ -413,6 +412,10 @@ def _dump_before_delete(
     顺序是判据：先落盘、再删、最后才 commit —— 中间崩掉的结果是"行还在库里 + 多一个
     备份文件"，而不是"行没了 + 没有任何地方能找回"。这是 `R102-29` 拍板里
     "先备份再删"那半句的实现（10-03 复核发现那半句从没落地，见台账 H12 批 24）。
+
+    **公开给 core**：`table` / `where` 是**策略**（哪张表、留多久），住 `core/retention.py`；
+    本模块只提供"按给定条件先备份再交出去"这台机械 —— 与 `prune_retention_tables` 搬家
+    同一批（2026-10-04 审查快照 P1-6：storage 不留业务表名）。
     """
     rows = conn.execute(f"SELECT * FROM {table} {where}", params).fetchall()  # noqa: S608
     n = dump_rows_to_jsonl(
@@ -421,63 +424,6 @@ def _dump_before_delete(
         notice=f"[retention] 先落备份 {table}-{stamp}.jsonl（{len(rows)} 行 {table}）再删",
     )
     return n
-
-
-def prune_retention_tables(
-    conn: SqlConnection,
-    *,
-    audit_log_days: int,
-    audit_log_max_rows: int,
-    approval_done_days: int,
-    backup_dir: Path,
-) -> dict[str, int]:
-    """三张只增表的 retention 清理（`R102-29`；2026-10-02 拍板：分表定档）。
-
-    `audit_log` 留 `audit_log_days` 天、且至多 `audit_log_max_rows` 行（两条判据任一命中
-    即清）；`command_approval` 的**终态**行留 `approval_done_days` 天 —— pending/approved
-    是活队列，retention 永不碰（卡死的行由 `R102-47` 的兜底与开机清扫负责，那是状态机的
-    职责不是保留策略的）；`agent_reachout` 走 per-role `reachout_keep` 既有机制（出厂默认
-    200 只对新角色生效）。0 或负数 = 该档永不清理（旧行为）。
-    调用点在 `core/bootstrap.py`（拿得到 Settings 的地方），清理量回报 schema-migrate 事件流。
-    """
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    pruned: dict[str, int] = {}
-    where: str
-    params: tuple[object, ...]
-    if audit_log_days > 0:
-        where, params = "WHERE ts < datetime('now', ?)", (f"-{audit_log_days} days",)
-        _dump_before_delete(
-            conn, table="audit_log", where=where, params=params, backup_dir=backup_dir, stamp=stamp
-        )
-        cur = conn.execute(f"DELETE FROM audit_log {where}", params)
-        pruned["audit_log_by_days"] = max(cur.rowcount, 0)
-    if audit_log_max_rows > 0:
-        where = "WHERE id NOT IN (SELECT id FROM audit_log ORDER BY id DESC LIMIT ?)"
-        params = (audit_log_max_rows,)
-        _dump_before_delete(
-            conn, table="audit_log", where=where, params=params, backup_dir=backup_dir, stamp=stamp
-        )
-        cur = conn.execute(f"DELETE FROM audit_log {where}", params)
-        pruned["audit_log_by_rows"] = max(cur.rowcount, 0)
-    if approval_done_days > 0:
-        where = (
-            "WHERE status IN ('done', 'rejected') AND updated_at < datetime('now', ?)"
-        )
-        params = (f"-{approval_done_days} days",)
-        _dump_before_delete(
-            conn,
-            table="command_approval",
-            where=where,
-            params=params,
-            backup_dir=backup_dir,
-            stamp=stamp,
-        )
-        cur = conn.execute(f"DELETE FROM command_approval {where}", params)
-        pruned["approvals_done"] = max(cur.rowcount, 0)
-    conn.commit()
-    if any(pruned.values()):
-        trim_backups(backup_dir)
-    return pruned
 
 
 class MigrationPlanLike(Protocol):
@@ -703,23 +649,8 @@ def _columns(conn: SqlConnection, table: str) -> set[str]:
     return {str(r["name"]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
-#: 重命名一条线程时要跟着改的表：**现数**，不写死清单（`R28-23`）。
-#: 写死的那个版本列了 `session_thread` / `checkpoints` / `writes` 三张，漏了
-#: `command_approval.thread_id` —— 挂旧 id 的审批行会指向一条不存在的会话（点进去是空的，
-#: 而它自己还挂着 `decide_token`）。这类漏法不会因为"这次补上这一张"而消失：下一张带
-#: `thread_id` 的表照样被忘。所以判据交给库本身：凡是**有 `thread_id` 列又不是
-#: `session_thread` 自己**的表，都跟着改。langgraph 那两张（checkpoints / writes）本来就
-#: 在这个集合里，原来那句"表不存在就不动"的 `has_cp` 特判因此也不需要了 —— 不存在的表
-#: 根本进不了清单。
-def thread_id_carriers(conn: SqlConnection) -> list[str]:
-    tables = [
-        str(r[0])
-        for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
-        )
-    ]
-    return [
-        t for t in sorted(tables) if t != "session_thread" and "thread_id" in _columns(conn, t)
-    ]
+#: 「带 `thread_id` 的表有哪些」的**现数**判据住在 `storage/threads.py`（线程的 repository）——
+#: 写死清单那一版漏过 `command_approval.thread_id`（R28-23），判据交给库本身才不会复发；
+#: 而 db.py 只留连接与声明引擎，不点名任何表（2026-10-04 审查快照 P1-6）。
 
 
