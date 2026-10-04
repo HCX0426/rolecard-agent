@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
+from rolecard_agent.base.audit import read_audit_page
 from rolecard_agent.base.observability import scrub_endpoints
 from rolecard_agent.core.uploads import referenced_paths, remove_orphans, scan_orphans
 
@@ -34,18 +35,7 @@ def list_audit(
     （`OFFSET` 在大表上会退化成全扫描）。
     """
     capped = max(1, min(limit, _AUDIT_PAGE_MAX))
-    if before_id is None:
-        rows = ctx.conn.execute(
-            "SELECT id, ts, actor, action, target, detail_json FROM audit_log "
-            "ORDER BY id DESC LIMIT ?",
-            (capped,),
-        ).fetchall()
-    else:
-        rows = ctx.conn.execute(
-            "SELECT id, ts, actor, action, target, detail_json FROM audit_log "
-            "WHERE id < ? ORDER BY id DESC LIMIT ?",
-            (before_id, capped),
-        ).fetchall()
+    rows = read_audit_page(ctx.conn, limit=capped, before_id=before_id)
     return [dict(r) | {"detail_json": scrub_endpoints(r["detail_json"])} for r in rows]
 
 

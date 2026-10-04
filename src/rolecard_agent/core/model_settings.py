@@ -415,6 +415,21 @@ def migrate_to_provider_layers(conn: SqlConnection) -> int:
     return len(groups)
 
 
+def declared_model_names(conn: SqlConnection) -> list[str]:
+    """用户在模型页配过的**全部模型名**（去重、按名排序）。
+
+    两个消费点：「运行环境」页那些动态下拉的选项源（思考名单等），以及保存时的合法性参照。
+    从前这份 SELECT 长在 `api/routers/settings.py::_model_names` 里，还带一个
+    `conn: object` + `# type: ignore` —— 因为路由不想 import 模型配置模块，于是把连接
+    降级成 `object` 再让类型检查闭嘴：**那条注解是在藏一次越层，不是在描述形状**。
+    归位到本模块之后签名是真的 `SqlConnection`，ignore 一起删掉。
+    """
+    rows = conn.execute(
+        "SELECT DISTINCT model FROM model_backend WHERE model IS NOT NULL ORDER BY model"
+    ).fetchall()
+    return [str(row["model"]) for row in rows]
+
+
 def _kind_of_names(conn: SqlConnection, names: list[str]) -> dict[str, str]:
     """引用行的 kind 跟随凭据组风格（native = 本地类，数据不出机）。"""
     rows = conn.execute(

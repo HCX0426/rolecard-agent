@@ -18,6 +18,7 @@ from rolecard_agent.config import SECRET_FIELD_NAMES, Settings
 from rolecard_agent.core import runtime_settings
 from rolecard_agent.core.model_settings import (
     ModelSettingsError,
+    declared_model_names,
     is_keyless_provider,
     provider_catalog,
 )
@@ -753,16 +754,8 @@ def get_runtime_settings(ctx: AppContext = Depends(get_context)) -> object:
     return runtime_payload(
         ctx.settings,
         runtime_settings.load_overrides(ctx.conn),
-        _model_names(ctx.conn),
+        declared_model_names(ctx.conn),
     )
-
-
-def _model_names(conn: object) -> list[str]:
-    """用户在模型页配置的全部模型名（去重）：思考名单等动态下拉的选项源。"""
-    rows = conn.execute(  # type: ignore[attr-defined]
-        "SELECT DISTINCT model FROM model_backend WHERE model IS NOT NULL ORDER BY model"
-    ).fetchall()
-    return [str(r["model"]) for r in rows]
 
 
 class RuntimeUpdateBody(BaseModel):
@@ -798,7 +791,7 @@ def put_runtime_settings(
     return runtime_payload(
         ctx.settings,
         runtime_settings.load_overrides(ctx.conn),
-        _model_names(ctx.conn),
+        declared_model_names(ctx.conn),
     )
 
 

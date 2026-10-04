@@ -1387,6 +1387,93 @@ def check_session_thread_write_seam() -> None:
         )
 
 
+#: `api/` 里出现下面任一形状即红：直连执行（`.execute(`）或**以 SQL 开头的字符串常量**。
+#: 两臂各挡一类回流：只查 `.execute(` 会被"把语句写成常量再传出去"绕过；只查常量会被
+#: `conn.execute(变量)` 漏掉（变量那一形靠 execute 臂抓）。
+#: **锚在串首**不是随手写的：本仓同族那把 `audit action vocabulary` 最初按子串数，
+#: 把 `audit.py` 自己 docstring 里那句"从前有五份"数成了第二份语句（`R102-37` 记过），
+#: 改法就是换成"以该语句开头的常量"。这里同病同治：注释与 docstring 里提一句
+#: "从前这里是 SELECT …"不该把自己数成越层者。
+_SQL_SHAPE = re.compile(
+    r"^\s*(SELECT\b|INSERT\s+INTO\s+\w|UPDATE\s+\w+\s+SET|DELETE\s+FROM\s+\w|PRAGMA\s+\w)",
+    re.IGNORECASE,
+)
+
+
+def check_api_holds_no_sql() -> None:
+    """HTTP 层不许自己碰 SQL（2026-10-04 service 收口的尺子，`R102-05` 那条纪律的另一半）。
+
+    为什么单独立一条：从前 `api/routers/` 是**事实上的 service 层** —— 12 处裸 SQL、
+    整份替换的事务与回滚决定、完整一段记忆提取状态机都长在路由里。越层的代价不是读不出来，
+    是**非 HTTP 宿主复用不了**：桌宠壳与 `scripts/` 的取证脚本想要同一条链，只能再抄一遍，
+    而抄的那一份不跟着事务边界一起改（本仓那一族事故的正面描述）。
+
+    两条判据写成一条 if/elif 链 —— 不嵌套（嵌套撞 ruff 的 SIM102），也不把 `isinstance`
+    先取到局部 bool 再判（那会让 mypy 丢掉类型收窄，实测 `"AST" has no attribute "value"`）。
+    两种都试过，这条链是唯一同时过两关的形状。
+      * `.execute(` 调用点：不论参数是字面量还是变量，HTTP 层握着连接发语句即红；
+      * 以 SQL 关键字开头的文本常量：抓"语句写在路由里、执行在别处"那一形。
+    两臂各挡一条绕路：只查 execute 会被"常量放模块顶、别处执行"绕过，只查常量会被
+    `conn.execute(变量)` 漏掉。**拼接（f-string）那一形没算进第二臂**：要在 `api/` 里真的
+    发出语句必须握着连接，而握连接就是第一臂 —— 第二臂只是提前一步的哨兵，够用。
+
+    串首锚定 + 排除 docstring 两样一起，为的是让"解释这句话"不污染判据：docstring 在 AST
+    里也是 `ast.Constant`，一句"从前这里是 SELECT …"会把尺子变成自指导弹（`R102-37`
+    那把 `audit action vocabulary` 最初就栽在同一件事上，改法是锚语句首）。
+
+    这一条按定义就该是 0：`grep -rn "\\.execute(" api/` 为零是它的验收口径，所以**不设
+    豁免名单** —— 要往回加 SQL，得先说服这条判据改掉。
+    反向还有一臂（防空转）：`api/` 必须真的扫到文件，否则"0 处"是扫了个空。
+    """
+    offenders: list[str] = []
+    scanned = 0
+    for path in sorted((ROOT / "src" / "rolecard_agent" / "api").rglob("*.py")):
+        rel = path.relative_to(ROOT).as_posix()
+        scanned += 1
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except SyntaxError:
+            continue
+        # 裸字符串语句 = docstring 的位置。它不是代码（与 `write txn ownership inventory`
+        # 把协议声明排除掉是同一条道理）。
+        prose = {
+            id(node.value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        }
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and id(node) not in prose
+                and _SQL_SHAPE.search(node.value)
+            ):
+                offenders.append(f"{rel}:{node.lineno} 裸 SQL 常量")
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "execute"
+            ):
+                offenders.append(f"{rel}:{node.lineno} 直连 execute(")
+    hollow = scanned == 0
+    ok = not offenders and not hollow
+    detail = (
+        f"api/ {scanned} 个模块，SQL 与 execute 0 处（都走 service / storage）"
+        if ok
+        else (f"越层：{offenders}" if offenders else "api/ 一个文件都没扫到（判据在空转）")
+    )
+    out("api holds no sql", ok, detail)
+    if offenders:
+        fails.append(
+            "the HTTP layer is talking to SQL directly: "
+            f"{offenders[:6]}（业务与语句归 service / storage，路由只留校验、异常映射、投送）"
+        )
+    if hollow:
+        fails.append("api-holds-no-sql is hollow: nothing under src/rolecard_agent/api was scanned")
+
+
 #: 写语句所在、但**本函数自己不结束事务**的那九个位置（`R102-03` 沿袭项的盘点结果）。
 #:
 #: 逐处读过才登记：每一条都是"辅助函数由调用方收口"的形状 —— 写在这里的意义不是
@@ -3641,6 +3728,7 @@ def main() -> int:
     check_api_domain_seams()
     check_audit_action_vocabulary()
     check_session_thread_write_seam()
+    check_api_holds_no_sql()
     check_write_txn_ownership_inventory()
     check_audit_ledger_row_count()
     check_data_root_dirs_gitignored()

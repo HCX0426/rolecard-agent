@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from rolecard_agent.storage.db import SqlConnection
 
@@ -153,3 +154,32 @@ def tool_audit(
     那条判断），这里收一份 —— 两个模块 `import tool_audit as _audit`，调用点一字不动。
     """
     AuditTrail(conn).log(actor=AGENT_ACTOR, action=action, target=target, detail=detail)
+
+
+#: 审计**读侧**要的列。与 `AuditTrail.log` 的写列集放同一模块是刻意的：从前读投影长在
+#: `api/routers/console.py` 里，加一列（或改 `detail_json` 的脱敏口径）要跨两层记得改这里。
+AUDIT_READ_COLUMNS = "id, ts, actor, action, target, detail_json"
+
+
+def read_audit_page(
+    conn: SqlConnection, *, limit: int, before_id: int | None = None
+) -> list[Any]:
+    """审计日志的一页（游标分页，**倒序按自增主键**）。
+
+    为什么游标用 `id` 而不是 `OFFSET`：`audit_log` 只增不减，深分页的 `OFFSET` 会退化成
+    全扫描；`id` 是 PRIMARY KEY、单调、天然有索引。`ts` 不能当游标（同秒多条会打平）。
+    上限由调用方夹 —— "这个端点最多给多少"是接入层的策略，不是这张表的事实。
+    """
+    if before_id is None:
+        return list(
+            conn.execute(
+                f"SELECT {AUDIT_READ_COLUMNS} FROM audit_log ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        )
+    return list(
+        conn.execute(
+            f"SELECT {AUDIT_READ_COLUMNS} FROM audit_log WHERE id < ? ORDER BY id DESC LIMIT ?",
+            (before_id, limit),
+        ).fetchall()
+    )

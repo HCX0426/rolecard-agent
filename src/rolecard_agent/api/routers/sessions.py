@@ -69,9 +69,12 @@ from rolecard_agent.storage.threads import (
     create_thread,
     delete_thread_everywhere,
     seed_title,
+    session_list_rows,
     set_mode,
     set_model,
     set_title,
+    thread_display_state,
+    thread_exists,
     touch_thread,
 )
 
@@ -260,10 +263,7 @@ def proactive_session_of(
     一条"从没被找过的角色 · 主动找你"。
     """
     tid = proactive_thread_id(role_id, user_id=ctx.current_user())
-    row = ctx.conn.execute(
-        "SELECT thread_id FROM session_thread WHERE thread_id = ?", (tid,)
-    ).fetchone()
-    return {"thread_id": None if row is None else str(row["thread_id"]), "role_id": role_id}
+    return {"thread_id": tid if thread_exists(ctx.conn, tid) else None, "role_id": role_id}
 
 
 @router.get("/api/session/{thread_id}")
@@ -373,10 +373,7 @@ def patch_session(
         role_name: str | None = None
     else:
         role_name = role.role_name
-    row = conn.execute(
-        "SELECT title, model_name, agent_mode FROM session_thread WHERE thread_id = ?",
-        (thread_id,),
-    ).fetchone()
+    row = thread_display_state(conn, thread_id)
     return {
         "thread_id": thread_id,
         "role_id": final_role_id,
@@ -868,15 +865,7 @@ def delete_messages(
 @router.get("/api/sessions")
 def list_sessions(ctx: AppContext = Depends(get_context)) -> list[object]:
     """会话列表（对话页侧栏）：只列**这次请求那个身份**名下的会话。"""
-    rows = ctx.conn.execute(
-        "SELECT s.thread_id, s.title, s.current_role_id AS role_id, r.role_name, "
-        "s.agent_mode, s.updated_at, "
-        "EXISTS (SELECT 1 FROM checkpoints c WHERE c.thread_id = s.thread_id) AS has_state "
-        "FROM session_thread s "
-        "LEFT JOIN role_card r ON r.role_id = s.current_role_id "
-        "WHERE s.user_id = ? ORDER BY s.updated_at DESC, s.thread_id",
-        (ctx.current_user(),),
-    ).fetchall()
+    rows = session_list_rows(ctx.conn, ctx.current_user())
     return [
         {
             # `has_state` 只当内部中间量、**不下线**（`R102-21`）：它在本仓产物/源码/壳三处
