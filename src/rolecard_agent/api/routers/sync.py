@@ -13,7 +13,7 @@
   * `POST /api/sync/pull` —— 下行：把对面那份里本机没有的并回本机；写入走的还是
     `apply_import` 那段代码。没有"整份替换"档（它清的是本机）。
   * `POST /api/sync/reconcile` —— 登录对账：推+拉各一遍，自动策略只走无歧义的那半
-    （`core.sync.auto_moves`），歧义的留在返回值里让人去向导里挑。**必须幂等**。
+    （`features.sync.auto_moves`），歧义的留在返回值里让人去向导里挑。**必须幂等**。
 
 ## 三条安全口径
 
@@ -46,9 +46,9 @@ from rolecard_agent.api import access
 from rolecard_agent.api.auth import ROLE_USER, Actor, basic_header
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.base import outbound
-from rolecard_agent.core import sync as sync_lib
-from rolecard_agent.core import sync_service
 from rolecard_agent.core.model_settings import validate_base_url
+from rolecard_agent.features import sync as sync_lib
+from rolecard_agent.features import sync_service
 
 router = APIRouter()
 
@@ -621,7 +621,7 @@ def post_pull(
 class ReconcileBody(TargetBody):
     """登录对账：**一次把两边的方向都走完**，用自动策略，人只在最后看一句读数。
 
-    自动策略只走无歧义的那半（`core.sync.auto_moves`）：本机独有的推上去、对面独有的并回来、
+    自动策略只走无歧义的那半（`features.sync.auto_moves`）：本机独有的推上去、对面独有的并回来、
     卡按新者胜；**记忆与会话的冲突原地不动**（"两份都留"不幂等，会每登录一次长出两条），
     留在返回值里让人去向导里挑 —— 冲突本该是可数的少数。
     推完再重新比对一次才拉：推上去的东西下一轮就是"两边相同"，不会自己跟自己打架。

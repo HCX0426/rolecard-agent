@@ -3,7 +3,7 @@ sync 写入口条目的验收现场）。
 
 快照给这条的验收原文是「给 role_memory_item 加测试列时 sync 路径自动带上」——
 第一支用例就是它的现场：**加列不许再改同步的代码**。从前 INSERT 的列集是
-`core/sync.py` 里手抄的第二份事实面，表加了列而清单没跟上，这条链静默少列。
+`core/sync.py`（后迁 `features/`）里手抄的第二份事实面，表加了列而清单没跟上，这条链静默少列。
 
 第二支钉搬迁的语义不变：`restore_row` 是从 `_write_memory` / `_write_reachout` 逐条
 搬回来的（empty→skipped、同 uid→updated、异主→foreign、keep_both 换新 uid），

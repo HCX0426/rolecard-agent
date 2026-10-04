@@ -282,7 +282,7 @@ def restore_row(conn: SqlConnection, *, user_id: str, uid: str, payload: dict[st
     不必回来改同步的代码。
 
     **不 commit**：整份替换的清空与导入共一个事务，收口在调用方
-    （`core/sync_service.run_import`；单独跑 `apply_import` 时由它默认的 commit 收口）。
+    （`features/sync_service.run_import`；单独跑 `apply_import` 时由它默认的 commit 收口）。
     """
     text = " ".join(str(payload.get("text") or "").split())
     if not text:

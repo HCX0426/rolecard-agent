@@ -22,7 +22,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from rolecard_agent.api.main import create_app
-from rolecard_agent.core import sync as S
+from rolecard_agent.features import sync as S
 
 SECRET = "sk-secret-不该出现在任何回答里"
 

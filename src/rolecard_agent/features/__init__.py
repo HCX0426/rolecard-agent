@@ -16,6 +16,8 @@
     会话的线程 id 算法、把会话行切成 prompt 素材的纯函数）要下沉到 `core/`，否则内核
     就只能反向 import 功能。搬过一次的教训写在 `docs/修复交接（2026-10-04）.md`。
 
-当前居民：`pet_packs`（桌宠形象包的发现与解析）。`reachout` / `sync` 的迁入要先解决
-"内核与功能对功能的两条 import"，按序推进，不抢进度。
+当前居民：`pet_packs`（桌宠形象包的发现与解析）、`sync` + `sync_service`（M7 上行同步的
+数据层与事务性写入侧）。`reachout` 的迁入还差一步：内核的 `core/proactive.py` 要读它的
+`recent_reachout_lines`（回声），那条边得先降级成"功能对功能"，别让 core 反向 import
+一个功能包 —— 这也是"内核要认识某功能只能走注册表"那条纪律的用武之地。
 """

@@ -149,7 +149,7 @@ def test_foreign_owner_returns_zero_without_hanging_a_write_txn(conn) -> None:
 
 
 def test_replace_path_reports_the_true_thread_count(conn) -> None:
-    """走 `core/sync_service.py::clear_threads_for_replace` 那条真路径：报的必须是真条数。
+    """走 `features/sync_service.py::clear_threads_for_replace` 那条真路径：报的必须是真条数。
 
     `graph` 给了非 None 就会逐条级联删（那正是生产形状），于是收尾那句
     `DELETE ... WHERE user_id` 恒为 0 行 —— 从前 `cleared["thread"]` 只取那一个数，
@@ -159,7 +159,7 @@ def test_replace_path_reports_the_true_thread_count(conn) -> None:
     `from api.routers.sync import _clear_threads_for_replace`，即测试伸手进路由的私有函数，
     那本身就是"业务逻辑住在 HTTP 层"的症状。）
     """
-    from rolecard_agent.core.sync_service import clear_threads_for_replace
+    from rolecard_agent.features.sync_service import clear_threads_for_replace
 
     for tid in ("s_x", "s_y", "s_z"):
         create_thread(conn, thread_id=tid, user_id=DEFAULT_USER_ID, role_id="girl", tool_epoch=1)

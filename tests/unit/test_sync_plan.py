@@ -19,7 +19,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from rolecard_agent.core import sync as S
+from rolecard_agent.features import sync as S
 from rolecard_agent.storage.db import connect
 
 

@@ -219,7 +219,7 @@ def restore_row(conn: SqlConnection, *, user_id: str, payload: dict[str, Any]) -
     payload 带来的键），其余列（`id` 自增、各 `*_at` 的表默认）整列不出现，schema 说了算。
 
     **不 commit**：整份替换的清空与导入共一个事务，收口在调用方
-    （`core/sync_service.run_import`；单独跑 `apply_import` 时由它默认的 commit 收口）。
+    （`features/sync_service.run_import`；单独跑 `apply_import` 时由它默认的 commit 收口）。
     """
     exists = conn.execute(
         "SELECT 1 FROM agent_reachout WHERE user_id = ? AND role_id = ? AND text = ?"

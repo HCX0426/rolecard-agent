@@ -1,7 +1,8 @@
 """`session_thread` 读写的**唯一 repository**（2026-10-02 轮 `R102-05` 第二步，`R102-62` 的归宿）。
 
 第一步（批 2）收的是两件公共动作：`touch_thread` 唯一出处 + 按 thread_id 级联删唯一入口。
-第二步收的是**剩下的全部写点**：从前 `api/routers/sessions.py` 里 5 处、`core/sync.py` 2 处、
+第二步收的是**剩下的全部写点**：从前 `api/routers/sessions.py` 里 5 处、`core/sync.py`
+2 处（后迁 `features/`）、
 `core/reachout/inbox.py` 1 处、`core/memory_distill.py` 1 处、`roles/service.py` 1 处、
 `api/routers/sync.py` 1 处 —— 一层之上一把六个写入者，而这张表的形状（毫秒 `updated_at`、
 `title` 的 COALESCE 语义、`distilled_at_seq` 是游标不是计数）每一条都有它的道理。

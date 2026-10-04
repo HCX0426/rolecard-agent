@@ -31,7 +31,7 @@ _COLUMNS = (
 # Columns stored as JSON text. For every one of them `None` and `[]` mean different things,
 # so the distinction has to survive the round trip.
 #
-# **公开名字**（10-02 轮 `R102-24`）：`core/sync.py` 交出卡的载荷时要把这三列从"行里的文本"
+# **公开名字**（10-02 轮 `R102-24`）：`features/sync.py` 交出卡的载荷时要把这三列从"行里的文本"
 # 换成"模型要的list"，那边抄一份清单就是第二个真相 —— 而那条链坏过的样子恰好是
 # "清单改了、抄的那份没改"（`R28-14` 那一族第七次）。
 CARD_JSON_COLUMNS = ("tool_whitelist", "exemplars", "knowledge_scopes")
@@ -276,7 +276,7 @@ class RoleCardService:
                 "  updated_at = CURRENT_TIMESTAMP "
                 # **内容真变了才盖时刻**（`R102-25`）。从前这句无条件执行，于是每次开机
                 # 都给没人动过的卡盖一个新的 `updated_at`，而卡类冲突的裁决是"新者胜且
-                # 自动执行"（`core/sync.py` 的 `auto_moves`）—— 结构上"B 只是开了机"就能
+                # 自动执行"（`features/sync.py` 的 `auto_moves`）—— 结构上"B 只是开了机"就能
                 # 吃掉 A 的手改。`IS NOT` 是 SQLite 的空安全不等，与 `memory.restore_row`
                 # 那条同一个写法（那一族的幂等判据早就长这样了）。
                 "WHERE role_card.user_id IS NOT excluded.user_id "

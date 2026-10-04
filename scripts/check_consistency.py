@@ -1347,7 +1347,8 @@ def check_audit_action_vocabulary() -> None:
 def check_session_thread_write_seam() -> None:
     """`session_thread` 的写 SQL 只许住在 storage 层（`R102-05` 第二步的尺子）。
 
-    这条表从前有七个写入者：`api/routers/sessions.py`（5 处）、`core/sync.py`（2）、
+    这条表从前有七个写入者：`api/routers/sessions.py`（5 处）、`core/sync.py`（2，该模块
+    后迁 `features/`）、
     `core/reachout/inbox.py`、`core/memory_distill.py`、`roles/service.py`、
     `api/routers/sync.py` 各 1 —— 而它的每一条写都有道理（毫秒 `updated_at` 是为了侧栏同秒
     能分先后、`title` 的 `COALESCE` 是"只兜第一次"、`distilled_at_seq` 是游标不是计数）。
@@ -1574,11 +1575,11 @@ def check_api_holds_no_sql() -> None:
 
 
 def check_sync_write_ownership() -> None:
-    """`core/sync.py` 里不许再有 INSERT 字面量 —— 写入口归各自的 owner service。
+    """`features/sync.py` 里不许再有 INSERT 字面量 —— 写入口归各自的 owner service。
 
     同步那条链的四类写入各有主人：card → `RoleCards`、thread → `storage/threads`、
     memory → `core/memory.restore_row`、reachout → `core/reachout/inbox.restore_row`；
-    `core/sync.py` 只剩"顺序与结果语义"（created/updated/foreign/skipped 的分派）。
+    `features/sync.py` 只剩"顺序与结果语义"（created/updated/foreign/skipped 的分派）。
     这条判据防的正是搬走的那半回来：**列集从前是手抄的第二份事实面** —— 表加了列而
     手抄清单没跟上，这条链静默少那一列（owner 里现在按 PRAGMA 现算，与 schema 同源）。
 
@@ -1603,13 +1604,13 @@ def check_sync_write_ownership() -> None:
                 found.append(f"{path.relative_to(ROOT).as_posix()}:{node.lineno}")
         return found
 
-    sync_writes = insert_literals(src / "core" / "sync.py")
+    sync_writes = insert_literals(src / "features" / "sync.py")
     memory_writes = insert_literals(src / "core" / "memory.py")
     inbox_writes = insert_literals(src / "core" / "reachout" / "inbox.py")
     hollow = not memory_writes or not inbox_writes
     ok = not sync_writes and not hollow
     detail = (
-        "core/sync.py 0 处 INSERT，memory/inbox 两个 owner 各自的写入都在"
+        "features/sync.py 0 处 INSERT，memory/inbox 两个 owner 各自的写入都在"
         if ok
         else (
             f"sync 里回来了：{sync_writes}" if sync_writes else f"owner 被掏空：{hollow}"
@@ -1618,7 +1619,7 @@ def check_sync_write_ownership() -> None:
     out("sync write ownership", ok, detail)
     if sync_writes:
         fails.append(
-            "core/sync.py is hand-writing SQL again: "
+            "features/sync.py is hand-writing SQL again: "
             f"{sync_writes}（写入口归 owner：memory/inbox 的 restore_row 按现算列集落库）"
         )
     if hollow:
@@ -1649,8 +1650,9 @@ WRITE_TXN_HELPERS = frozenset(
         "src/rolecard_agent/core/model_settings/read.py::_write_chat_refs",
         "src/rolecard_agent/core/plugins.py::_bump_tool_epoch",
         # 2026-10-04 sync 写入口归 owner：这两段从 `core/sync.py` 的 `_write_memory` /
-        # `_write_reachout` 搬进各自的 owner，**不收口**的性质不变 —— 与随后的导入共用
-        # 一个事务，收口点仍是 `core/sync_service.run_import`。memory 的插入半边是
+        # `_write_reachout`（该模块后迁 `features/`）搬进各自的 owner，**不收口**的性质不变
+        # —— 与随后的导入共用
+        # 一个事务，收口点仍是 `features/sync_service.run_import`。memory 的插入半边是
         # 模块级 `_restore_insert`（写语句在它体内；闭包的名字进不了这份名单）。
         "src/rolecard_agent/core/memory.py::_restore_insert",
         "src/rolecard_agent/core/memory.py::restore_row",
@@ -1662,7 +1664,7 @@ WRITE_TXN_HELPERS = frozenset(
         "src/rolecard_agent/core/migrations.py::_rebuild_legacy_service_endpoint",
         "src/rolecard_agent/core/reachout/inbox.py::restore_row",
         # 2026-10-04 service 收口：replace 档的行类清空**刻意不收口** —— 与随后的导入共用
-        # 一个事务，成败一体。收口点在 `core/sync_service.py::run_import`（导入有失败即
+        # 一个事务，成败一体。收口点在 `features/sync_service.py::run_import`（导入有失败即
         # rollback + 抛 ReplaceAborted 交路由翻 400，成功则统一 commit）。从前这段 SQL 住在
         # `api/routers/sync.py` 里 —— 那正是 router 长成事实 service 的那一格。
         # 注：登记的是**含写语句字面量的那一个函数**（判据按 AST 里的 SQL 常量数），

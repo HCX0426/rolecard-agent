@@ -1,4 +1,4 @@
-"""`core/sync_service.py` 的形状（2026-10-04 service 收口第一步的回归钉子）。
+"""`features/sync_service.py` 的形状（2026-10-04 service 收口第一步的回归钉子）。
 
 这批用例存在的理由不是"覆盖率"，而是**这条链的两条判据必须被钉住**，否则下一次有人
 "顺手简化"就会把它们拆掉，而拆掉的后果只在真机上以"数据没了"的形式出现：
@@ -24,8 +24,8 @@ from typing import Any
 import pytest
 
 from rolecard_agent.base.identity import DEFAULT_TENANT_ID, DEFAULT_USER_ID
-from rolecard_agent.core import sync_service
 from rolecard_agent.core.checkpointer import make_checkpointer
+from rolecard_agent.features import sync_service
 from rolecard_agent.storage.db import bootstrap, connect
 
 KINDS = ("card", "memory", "reachout", "thread")
