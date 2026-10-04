@@ -30,6 +30,9 @@ SECRET = "sk-secret-不该出现在任何回答里"
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("AUTH_MODE", "off")
+    # 整份替换的删前备份落在 user_data_root() 下（2026-10-04 审查快照的数据丢失条目）：
+    # 不重定向就会写进开发者真实的用户数据目录。sqlite 路径由 create_app 显式传入，不受影响。
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data-root"))
     c = TestClient(create_app(sqlite_path=tmp_path / "app.db"))
     with c:
         conn = c.app.state.ctx.conn
@@ -123,6 +126,8 @@ def test_plan_reports_counts_and_conflicts_without_writing(
 
 def _app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("AUTH_MODE", "off")
+    # 整份替换的删前备份落在 user_data_root() 下，不重定向就会写进真实用户目录。
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data-root"))
     return TestClient(create_app(sqlite_path=tmp_path / "app.db"))
 
 
@@ -186,14 +191,34 @@ def test_import_refuses_to_clear_without_confirmation(
         assert denied.status_code == 400 and "confirm" in denied.json()["detail"]
         conn = client.app.state.ctx.conn
         before = int(conn.execute("SELECT COUNT(*) AS n FROM role_card").fetchone()[0])
+        # 2026-10-04 审查快照起，空载荷 + 清空指令会被 400 拒（"清了不导"），所以这里的
+        # replace 带上一张真实要导入的卡 —— 本条真正要守的是"只清选中的类 + 播种不复活"。
         ok = client.post(
             "/api/sync/import",
-            json={"items": [], "clear_kinds": ["card"], "confirm_replace": True},
+            json={
+                "items": [
+                    {
+                        "kind": "card",
+                        "ident": "imported_c1",
+                        "payload": {
+                            "role_id": "imported_c1",
+                            "role_name": "对岸的卡",
+                            "system_prompt": "对岸推来的系统提示",
+                        },
+                    }
+                ],
+                "clear_kinds": ["card"],
+                "confirm_replace": True,
+            },
         ).json()
         assert ok["cleared"].get("card", 0) == before
-        assert int(conn.execute("SELECT COUNT(*) AS n FROM role_card").fetchone()[0]) == 0
-        # 只清选中的类：内置卡被清掉后，出厂播种不会在同一个请求里复活它们
-        assert client.get("/api/roles").json() == []
+        assert int(conn.execute("SELECT COUNT(*) AS n FROM role_card").fetchone()[0]) == 0 + 1
+        # 只清选中的类：内置卡被清掉后，出厂播种不会在同一个请求里复活它们；
+        # 卡里只剩载荷推来的那一张。
+        left_ids = {
+            str(r["role_id"]) for r in conn.execute("SELECT role_id FROM role_card").fetchall()
+        }
+        assert left_ids == {"imported_c1"}
 
 
 def test_import_never_overwrites_another_users_row_by_uid(
@@ -510,11 +535,32 @@ def test_import_with_unknown_item_kind_is_400(client: TestClient) -> None:
     assert "report" in res.json()["detail"]
 
 
+def _thread_item(tid: str) -> dict[str, object]:
+    """一条最小可导入的 thread 载荷（`_write_thread` 只认这几个字段）。"""
+    return {
+        "kind": "thread",
+        "ident": tid,
+        "payload": {
+            "thread_id": tid,
+            "title": "对岸推来的",
+            "current_role_id": None,
+            "model_name": None,
+            "agent_mode": None,
+            "messages": [
+                {"role": "user", "text": "你好"},
+                {"role": "assistant", "text": "在的"},
+            ],
+        },
+    }
+
+
 def test_replace_threads_deletes_pending_approvals(client: TestClient) -> None:
     """`R102-26` 的第二条路径：整份替换的会话清空同样不许漏 `command_approval`。
 
     拍板是真删 —— 检查点也不留 REMOVE_ALL 空壳（那会被修剪器永留最新一条）。
     变异：把 `_clear_for_replace` 的级联删改回 `update_state` + 写死两张表 ⇒ 本条红。
+    （2026-10-04 审查快照起，空载荷 + 清空指令会被 400 拒绝 —— 见下一条 —— 所以
+    本条带上一条真实要导入的 thread 载荷，孤儿清理路径照旧被走通。）
     """
     tid = client.post("/api/session", json={}).json()["thread_id"]
     conn = client.app.state.ctx.conn
@@ -526,10 +572,90 @@ def test_replace_threads_deletes_pending_approvals(client: TestClient) -> None:
     conn.commit()
     res = client.post(
         "/api/sync/import",
-        json={"items": [], "clear_kinds": ["thread"], "confirm_replace": True},
+        json={
+            "items": [_thread_item("imported-t1")],
+            "clear_kinds": ["thread"],
+            "confirm_replace": True,
+        },
     )
-    assert res.status_code == 200
+    assert res.status_code == 200, res.text
     orphans = conn.execute(
         "SELECT COUNT(*) FROM command_approval WHERE thread_id = ?", (tid,)
     ).fetchone()[0]
     assert orphans == 0, "已替换会话的待批审批不许再挂在队列上"
+    imported = conn.execute(
+        "SELECT COUNT(*) FROM session_thread WHERE thread_id = 'imported-t1'"
+    ).fetchone()[0]
+    assert imported == 1, "清空之后，载荷里的那条会话必须真的被导入"
+
+
+def test_import_rejects_empty_payload_with_clear(client: TestClient) -> None:
+    """空载荷 + 清空指令 = "清了不导"（2026-10-04 审查快照的数据丢失条目）→ 400，什么都没动。"""
+    tid = client.post("/api/session", json={}).json()["thread_id"]
+    res = client.post(
+        "/api/sync/import",
+        json={"items": [], "clear_kinds": ["thread"], "confirm_replace": True},
+    )
+    assert res.status_code == 400
+    assert "清了不导" in res.json()["detail"]
+    still_there = client.app.state.ctx.conn.execute(
+        "SELECT COUNT(*) FROM session_thread WHERE thread_id = ?", (tid,)
+    ).fetchone()[0]
+    assert still_there == 1, "拒绝的同时必须什么都没删"
+
+
+def test_import_rejects_empty_payload_on_the_push_side(client: TestClient) -> None:
+    """发起侧同一道闸：本机该类为空 + replace 档的 clear 指令，在 `_push` 前就被拒。
+
+    `plan → apply` 的真实链路里 `_select` 会对 replace 档无条件返回 clear —— 本机为空
+    时那就是"把对面清成空、什么都不推"。没有对岸可打，直接断言 _push 的 400 出口。
+    """
+    from fastapi import HTTPException
+
+    from rolecard_agent.api.routers import sync as sync_router
+
+    request = type("R", (), {})()  # _push 在这一步之前就拒绝，不会用到 request
+    with pytest.raises(HTTPException) as excinfo:
+        sync_router._push(
+            client.app.state.ctx,
+            request=request,
+            base="http://127.0.0.1:9",
+            user="u",
+            secret="s",
+            items=[],
+            clear_kinds=["memory"],
+        )
+    assert excinfo.value.status_code == 400
+    assert "对面清成空" in excinfo.value.detail  # 发起侧的人话：说的是对面的下场
+
+
+def test_replace_backs_up_rows_before_clearing(client: TestClient, tmp_path: Path) -> None:
+    """清空**之前**必须先落删前备份（2026-10-04 审查快照的数据丢失条目）。
+
+    顺序是判据：备份文件里要有将被删掉的那一行；清空后库里的行没了、备份还在 ——
+    中途崩掉的最坏结果是"行还在库里 + 多一个备份文件"，而不是"行没了 + 无处可找"。
+    """
+    conn = client.app.state.ctx.conn
+    conn.execute(
+        "INSERT INTO role_memory_item (role_id, user_id, uid, text) "
+        "VALUES ('', 'local-user', 'uid-doomed', '这句要被整份替换清掉')"
+    )
+    conn.commit()
+    res = client.post(
+        "/api/sync/import",
+        json={
+            "items": [_thread_item("imported-t2")],
+            "clear_kinds": ["memory", "thread"],
+            "confirm_replace": True,
+        },
+    )
+    assert res.status_code == 200, res.text
+    left = conn.execute(
+        "SELECT COUNT(*) FROM role_memory_item WHERE uid = 'uid-doomed'"
+    ).fetchone()[0]
+    assert left == 0, "前置：清空确实发生了"
+    backup_dir = tmp_path / "data-root" / "retention-backups" / "sync"
+    backups = list(backup_dir.glob("role_memory_item-*.jsonl"))
+    assert backups, f"删前备份不存在：{sorted(p.name for p in backup_dir.glob('*'))}"
+    body = backups[0].read_text(encoding="utf-8")
+    assert "这句要被整份替换清掉" in body, "备份里必须找得回被删的那一行"

@@ -35,7 +35,10 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from dataclasses import replace
+from datetime import datetime
 from typing import Any
 
 import httpx  # 只用它的异常类型；请求一律走 core/outbound
@@ -48,13 +51,19 @@ from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.core import outbound
 from rolecard_agent.core import sync as sync_lib
 from rolecard_agent.core.model_settings import validate_base_url
+from rolecard_agent.core.paths import user_data_root
 from rolecard_agent.core.thread_locks import thread_write
+from rolecard_agent.storage.db import RETENTION_BACKUP_DIRNAME
 from rolecard_agent.storage.threads import delete_thread_everywhere, delete_threads_for_user
 
 router = APIRouter()
 
 #: 一次比对最多看多少条。超了就是"这份数据大到不该走这条路"，大声拒绝比静默截断好。
 MAX_ITEMS = 5000
+
+#: 整份替换的删前备份，每张表各留几份（与 retention 的 `_trim_backups` 同一套哲学，
+#: 但落在 `sync/` 子目录 —— 那边只 glob 顶层，互不清对方的账）。
+_SYNC_BACKUP_KEEP = 5
 
 
 def _identity(ctx: AppContext) -> str:
@@ -192,6 +201,79 @@ def post_plan(
     }
 
 
+def _b64_json(obj: Any) -> Any:
+    """JSONL 序列化的兜底：blob 走 base64（可无损还原 msgpack），其余 str 化。"""
+    if isinstance(obj, (bytes, bytearray, memoryview)):
+        return {"__base64__": base64.b64encode(bytes(obj)).decode("ascii")}
+    return str(obj)
+
+
+def _write_jsonl(path: Any, rows: list[Any]) -> int:
+    if not rows:
+        return 0
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        for row in rows:
+            record = dict(zip(row.keys(), tuple(row), strict=True))
+            fh.write(json.dumps(record, ensure_ascii=False, default=_b64_json))
+            fh.write("\n")
+    return len(rows)
+
+
+def _dump_before_clear(conn: Any, *, user_id: str, kinds: list[str]) -> dict[str, int]:
+    """整份替换清空**之前**，把将要被删的行先落成 JSONL（2026-10-04 审查快照的数据丢失条目）。
+
+    从前 `_clear_for_replace` 直接 DELETE 并 commit：清空落盘、导入逐条尽力，两段之间没有
+    事务边界 —— 导入中断时对面就只剩"清了不导"。备份兜住最坏情况：`checkpoints` 的 blob
+    是 msgpack，base64 原样落盘，配上同目录的 `session_thread` 行足以人工重放。顺序沿用
+    retention 的纪律：先落盘、再删，中间崩掉的结果是"行还在库里 + 多一个备份文件"。
+
+    落在 `retention-backups/sync/` 子目录：retention 的 `_trim_backups` 只 glob 顶层，
+    两边互不清账；本函数按表各留最近 `_SYNC_BACKUP_KEEP` 份。
+    """
+    backup_dir = user_data_root() / RETENTION_BACKUP_DIRNAME / "sync"
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    dumped: dict[str, int] = {}
+    tables = [
+        table
+        for table, kind in (
+            ("role_card", sync_lib.KIND_CARD),
+            ("role_memory_item", sync_lib.KIND_MEMORY),
+            ("agent_reachout", sync_lib.KIND_REACHOUT),
+            ("session_thread", sync_lib.KIND_THREAD),
+        )
+        if kind in kinds
+    ]
+    for table in tables:
+        rows = conn.execute(
+            f"SELECT * FROM {table} WHERE user_id = ?", (user_id,)  # noqa: S608
+        ).fetchall()
+        dumped[table] = _write_jsonl(backup_dir / f"{table}-{stamp}.jsonl", list(rows))
+    if sync_lib.KIND_THREAD in kinds:
+        tid_rows = conn.execute(
+            "SELECT thread_id FROM session_thread WHERE user_id = ?", (user_id,)
+        ).fetchall()
+        tids = [str(r["thread_id"]) for r in tid_rows]
+        # 会话的正文在 langgraph 的检查点表里（blob），载体行只是元数据 —— 两样都要。
+        for table in ("checkpoints", "writes"):
+            if not tids:
+                dumped[table] = 0
+                continue
+            placeholders = ",".join("?" for _ in tids)
+            rows = conn.execute(
+                f"SELECT * FROM {table} WHERE thread_id IN ({placeholders})",  # noqa: S608
+                tids,
+            ).fetchall()
+            dumped[table] = _write_jsonl(backup_dir / f"{table}-{stamp}.jsonl", list(rows))
+    by_table: dict[str, list[Any]] = {}
+    for f in backup_dir.glob("*.jsonl"):
+        by_table.setdefault(f.name.split("-", 1)[0], []).append(f)
+    for files in by_table.values():
+        for stale in sorted(files, key=lambda p: p.name, reverse=True)[_SYNC_BACKUP_KEEP:]:
+            stale.unlink(missing_ok=True)
+    return dumped
+
+
 class ImportBody(BaseModel):
     """对面写入的载荷。`items` 由发起方按用户的选择挑好，这里不再判冲突。
 
@@ -269,11 +351,25 @@ def post_import(
             ),
         )
     cleared: dict[str, int] = {}
+    backed_up: dict[str, int] = {}
     if body.clear_kinds:
         if not body.confirm_replace:
             raise HTTPException(
                 status_code=400, detail="整份替换要显式确认（confirm_replace）才允许清空。"
             )
+        if not body.items:
+            # 空载荷 + 清空指令 = "清了不导"（2026-10-04 审查快照的数据丢失条目）：
+            # 发起方该类为空时选 replace，会把这台机器清成空、却什么都不进来 —— 而且从前
+            # 连备份都没有。宁可让用户显式重试，也不接这种一眼就是事故形状的请求。
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "载荷里一条数据都没有，却要求整份替换清空 —— 这一趟会把本机选中的类"
+                    "清成空、什么都不导入（清了不导）。请先确认发起方真的有要推的条目；"
+                    "若确实想清空这一类，请在本机逐条删除。"
+                ),
+            )
+        backed_up = _dump_before_clear(ctx.conn, user_id=_identity(ctx), kinds=body.clear_kinds)
         cleared = _clear_for_replace(
             ctx.conn,
             user_id=_identity(ctx),
@@ -287,7 +383,8 @@ def post_import(
         settings=ctx.app_state["effective"],
         items=body.items,
     )
-    # 审计只记结构：几类各写了多少、清了多少。**绝不记载荷**（那里面是对话原文与记忆）。
+    # 审计只记结构：几类各写了多少、清了多少、删前备份了几行。
+    # **绝不记载荷**（那里面是对话原文与记忆）。
     ctx.audit.log(
         actor=actor.id,
         action="sync_import",
@@ -296,6 +393,7 @@ def post_import(
             "written": result["written"],
             "skipped": result["skipped"],
             "cleared": cleared,
+            "backed_up": backed_up,
             "errors": len(result["errors"]),
         },
     )
@@ -335,6 +433,17 @@ def _push(
     """把选好的载荷推给**对面**的 import 端点。凭据只在这次请求里活着。"""
     if not items and not clear_kinds:
         return {"written": {}, "skipped": {}, "errors": []}
+    if not items and clear_kinds:
+        # 发起侧的同一道闸（2026-10-04 审查快照的数据丢失条目）：replace 档 `_select` 会
+        # 无条件返回 clear，本机该类为空时就成了"清对面、不推任何东西"。在离用户最近
+        # 的这一端拒绝，比让对面的 400 兜底多一句人话。
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "本机选中的条目为空、却带着整份替换的清空指令 —— 这会把对面清成空、"
+                "什么都不推（清了不导）。请确认本机这一类真的有数据，或改用逐条删除。"
+            ),
+        )
     base = _guard_target(request, ctx, base)
     try:
         res = outbound.post(
