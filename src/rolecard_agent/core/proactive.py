@@ -37,19 +37,21 @@ from rolecard_agent.config import Settings
 from rolecard_agent.core.graph import build_graph_config
 from rolecard_agent.core.memory import memory_for_turn
 from rolecard_agent.core.plugins import PluginService
-from rolecard_agent.core.reachout import (
-    CHAT_ECHO_LIMIT,
+from rolecard_agent.core.proactive_thread import (
     ensure_proactive_thread,
+    proactive_thread_id,
+)
+from rolecard_agent.core.reachout import recent_reachout_lines
+from rolecard_agent.core.state import now_ts
+from rolecard_agent.core.thread_locks import release_thread, try_thread_write
+from rolecard_agent.core.thread_transcript import (
+    CHAT_ECHO_LIMIT,
     format_recent_window,
     format_thread_lines,
     format_unreplied_lines,
-    proactive_thread_id,
-    recent_reachout_lines,
     unanswered_lines,
     unreplied_lines,
 )
-from rolecard_agent.core.state import now_ts
-from rolecard_agent.core.thread_locks import release_thread, try_thread_write
 from rolecard_agent.roles.models import RoleCard
 from rolecard_agent.storage.db import ThreadLocalConnection
 

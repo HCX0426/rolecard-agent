@@ -1,8 +1,9 @@
-"""信箱投递：收件箱读写与「主动会话」落点（`R102-59` 从 `core/reachout.py` 拆出的四模块之一）。
+"""信箱投递：收件箱读写与「主动会话」的落点（`R102-59` 从 `core/reachout.py` 拆出的四模块之一）。
 
 "她说出口的那句话去了哪里"在本模块答完：落一条 `agent_reachout`（unread）→ 标已读 / 划掉 /
-清理，按人（多租户）按角色列收件箱；以及"能继续谈"的那一侧 —— 每个角色一条确定性的主动会话
-（`proactive_thread_id`），投递成功与否以 `delivered_at` 记，欠投的按时间窗补投。
+清理，按人（多租户）按角色列收件箱；"能继续谈"的那一侧是每条确定性的主动会话（id 的算法
+在 `core/proactive_thread.py` —— 那条约定跨模块共用，不属本功能私有），投递成功与否以
+`delivered_at` 记，欠投的按时间窗补投。
 
 抑制判定不在这里（`quiet.py`），触发评估与生成不在这里（`triggers.py`），
 编排不在这里（`scheduler.py`）。纯搬层，行为与拆分前逐字一致。
@@ -12,9 +13,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from rolecard_agent.core.proactive_thread import (
+    PROACTIVE_THREAD_PREFIX,
+    proactive_thread_id,
+)
 from rolecard_agent.roles.models import RoleCard
 from rolecard_agent.storage.db import SqlConnection, quote_ident, table_columns
-from rolecard_agent.storage.threads import ensure_thread
 
 # 「只进了收件箱、没落进会话」的那几条，多久之内还值得补投（R26-40 ②）。过了这个窗口就不管了
 # —— 她半小时前说的话现在才冒进会话，读起来像穿越。这个窗同时挡住"这一列上线时那批老行
@@ -163,57 +167,6 @@ def mark_all_read(conn: SqlConnection, *, user_id: str) -> int:
     )
     conn.commit()
     return int(cur.rowcount)
-
-
-# ------------------------------------------------------------------ 主动会话（可回话的落点）
-
-#: 每个角色一条固定的"主动会话"：角色开口时落进这里，用户回复走普通对话链路。
-#: 线程 id 带身份（多租户 B2）：同一个 role_id 将来可以属于两个身份（role_card 主键会
-#: 改成 (user_id, role_id)），不带身份就让两人的主动会话互相覆盖。
-PROACTIVE_THREAD_PREFIX = "s_proactive_"
-
-
-def proactive_thread_id(role_id: str, *, user_id: str) -> str:
-    """该角色主动开口的会话线程 id（**确定性**：同角色同主人恒定，不做随机分配）。
-
-    为什么确定性而不是"首条时生成一个 uuid 存库"：主动消息与它的会话是"一个角色一条
-    对话"这一事实的两面，用一个从 (主人, role_id) 推出来的 id，收件箱与写入侧就天然指
-    同一个地方，不必再加一列去记"那个 id 是哪个"（也不会出现两处各存一份、改天不同步）。
-
-    身份这一维（B2）在**前缀**而不是后缀：`user_id` 可能是任意字面量，把它放中间、
-    靠 `{prefix}{uid}_{role}` 的固定形状拼 id，从不解析回去 —— 只有"建"和"对着比"两种用法。
-    """
-    return f"{PROACTIVE_THREAD_PREFIX}{user_id}_{role_id}"
-
-
-def proactive_thread_title(role_name: str) -> str:
-    """会话列表里显示的名字 —— 一眼看出"这是角色主动找我的那条"，不是自己开的对话。"""
-    return f"{role_name} · 主动找你"
-
-
-def ensure_proactive_thread(
-    conn: SqlConnection, *, role: RoleCard, user_id: str, tool_epoch: int
-) -> str:
-    """确保该角色的主动会话存在（幂等），返回线程 id。
-
-    为什么单独一个函数：**这条线的创建只能有一处逻辑**。今天有三方需要它 —— 角色开口时投递
-    （`bootstrap.deliver_proactive`）、收件箱点进来（只读，不建）、桌宠面板要接着聊
-    （设计稿 §7.2.1，用户从没被主动找过的角色也能先聊起来）。三处各写一条 INSERT 的话，
-    `title` 或 `tool_epoch` 迟早有一处漏掉，而那条会话的行是收件箱跳转的判据。
-
-    删了还会再长出来：用户把这条会话从列表里删掉，下一次角色开口（或桌宠上发消息）会重新
-    建一行 —— 已提炼进角色记忆的事实不跟着走（那条边界有断言钉着）。
-    """
-    thread_id = proactive_thread_id(role.role_id, user_id=user_id)
-    ensure_thread(
-        conn,
-        thread_id=thread_id,
-        user_id=user_id,
-        role_id=role.role_id,
-        tool_epoch=tool_epoch,
-        title=proactive_thread_title(role.role_name),
-    )
-    return thread_id
 
 
 def record_reachout(

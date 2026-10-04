@@ -29,7 +29,7 @@ from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.base.text import text_of
 from rolecard_agent.core import memory_distill, session_service, upload_service
 from rolecard_agent.core.graph import build_graph_config
-from rolecard_agent.core.reachout import (
+from rolecard_agent.core.proactive_thread import (
     PROACTIVE_THREAD_PREFIX,
     ensure_proactive_thread,
     proactive_thread_id,

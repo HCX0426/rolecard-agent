@@ -81,7 +81,8 @@ def find_open_threads(turns: str, model: Any) -> list[str] | None:
     仍然**不往上抛**：这一源是锦上添花，它坏了的正确表现是"她这次没提这个"，不是"这一轮开口失败"。
 
     `turns` 是宿主给的"你们最近聊过什么"那段文本（措辞与截断的唯一出处在
-    `reachout.format_recent_window`，这里不重抄一份）。空文本 = 没东西可判 = **不发这次调用**。
+    `core/thread_transcript.py::format_recent_window`，这里不重抄一份）。空文本 = 没东西可判
+    = **不发这次调用**。
     """
     turns = (turns or "").strip()
     if not turns or model is None:

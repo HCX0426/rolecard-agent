@@ -41,28 +41,36 @@
 
   * `triggers.py` —— 触发评估与开口生成（任务指令拼装、四类触发源、去重复测）；
   * `quiet.py` —— 静默策略（`quiet_gate` / `quiet_status` 与度量助手）；
-  * `inbox.py` —— 信箱投递（收件箱读写、主动会话落点、欠投补投查询）；
+  * `inbox.py` —— 信箱投递（收件箱读写、欠投补投查询）；
   * `scheduler.py` —— 调度（`ReachoutScheduler` 与每 tick 流水线）。
+
+  **另有两件"看起来属于本包、其实是被别人共用"的约定住在 core**（2026-10-04 审查快照
+  "core 装了产品功能"那一刀的逆向解法 —— 内核与接入层都要用它们，留在功能包里就得让
+  core 反向 import 一个功能）：`core/proactive_thread.py`（主动会话的 id/标题/建行）与
+  `core/thread_transcript.py`（把 `(说话人, 原文)` 切成 prompt 素材的纯函数）。本包仍从
+  这两处 re-export 那些名字，**旧命名空间逐字可用**（测试与脚本按 `reachout.xxx` 调用）。
 """
 
 from __future__ import annotations
 
 from rolecard_agent.core.proactive_state import save_open_threads
-from rolecard_agent.core.reachout.inbox import (
+from rolecard_agent.core.proactive_thread import (
     PROACTIVE_THREAD_PREFIX,
+    ensure_proactive_thread,
+    proactive_thread_id,
+    proactive_thread_title,
+)
+from rolecard_agent.core.reachout.inbox import (
     UNDELIVERED_RETRY_LIMIT,
     UNDELIVERED_RETRY_MINUTES,
     clear_all_inboxes,
     clear_inbox,
     delete_reachout,
-    ensure_proactive_thread,
     list_reachouts,
     mark_all_read,
     mark_delivered,
     mark_read,
     mark_role_read,
-    proactive_thread_id,
-    proactive_thread_title,
     prune_inbox,
     record_reachout,
     undelivered_reachouts,
@@ -80,20 +88,14 @@ from rolecard_agent.core.reachout.quiet import (
 )
 from rolecard_agent.core.reachout.scheduler import TICK_SECONDS, ReachoutScheduler
 from rolecard_agent.core.reachout.triggers import (
-    CHAT_ECHO_LIMIT,
     DROP_SCORE,
     OPEN_THREADS_REFRESH_MINUTES,
     RECALL_COOLDOWN_HOURS,
     RECENT_CONTEXT_LIMIT,
-    RECENT_THREAD_LIMIT,
-    RECENT_WINDOW_LIMIT,
     REGEN_SCORE,
     ReachoutDraft,
     _format_change_list,
     _task_text,
-    format_recent_window,
-    format_thread_lines,
-    format_unreplied_lines,
     generate_reachout_text,
     open_threads_stale,
     recent_own_texts,
@@ -101,6 +103,14 @@ from rolecard_agent.core.reachout.triggers import (
     trigger_affection,
     trigger_recall,
     trigger_time_pattern,
+)
+from rolecard_agent.core.thread_transcript import (
+    CHAT_ECHO_LIMIT,
+    RECENT_THREAD_LIMIT,
+    RECENT_WINDOW_LIMIT,
+    format_recent_window,
+    format_thread_lines,
+    format_unreplied_lines,
     unanswered_lines,
     unreplied_lines,
 )
