@@ -554,6 +554,19 @@ def quote_ident(ident: object) -> str:
     return '"' + str(ident).replace('"', '""') + '"'
 
 
+def table_columns(conn: SqlConnection, table: str) -> list[str]:
+    """这张表**当前真实**的列名（`PRAGMA table_info`，现算不缓存）。
+
+    为什么是现算而不是一张手写的列清单：清单就是第二份事实面 —— 表加了列而清单没跟上，
+    那边的 INSERT 永远少那一列，症状是"写路径静默少列"（同步导入那条链踩过，见
+    `core/memory.restore_row` / `core/reachout.inbox.restore_row`）。
+    表名走 `quote_ident`：这张表名来自代码常量，但"现算"的机制不该给调用方留一个
+    直接把变量拼进 PRAGMA 的口子。
+    """
+    rows = conn.execute(f"PRAGMA table_info({quote_ident(table)})").fetchall()
+    return [str(r["name"]) for r in rows]
+
+
 def _declared_columns(files: Sequence[Path]) -> dict[str, dict[str, sqlite3.Row]]:
     """当前这些 schema 文件**声明**出来的列形状：`{表: {列: PRAGMA 那一行}}`。
 

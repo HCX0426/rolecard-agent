@@ -161,8 +161,8 @@ def seed_a(a_base: str) -> None:
     """在 A 上造出要上行的一份数据。
 
     走 A 自己的 `/api/sync/import`：那正是 B 稍后要走的同一段代码（`_write_card` /
-    `_write_memory` / `_write_reachout` / `_write_thread`），比手工 INSERT 更接近真链路，
-    而且**会话历史只有这条路能不接模型就落进检查点**。
+    `memory.restore_row` / `inbox.restore_row` / `_write_thread`），比手工 INSERT 更
+    接近真链路，而且**会话历史只有这条路能不接模型就落进检查点**。
     """
     code, out = req(
         "POST",

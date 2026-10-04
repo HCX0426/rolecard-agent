@@ -30,10 +30,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from rolecard_agent.core.memory import restore_row as restore_memory
+from rolecard_agent.core.reachout.inbox import restore_row as restore_reachout
 from rolecard_agent.core.thread_locks import thread_write
 from rolecard_agent.storage.db import SqlConnection
 from rolecard_agent.storage.threads import (
@@ -500,95 +501,6 @@ def _write_card(conn: SqlConnection, *, user_id: str, payload: dict[str, Any]) -
     return "created"
 
 
-def _write_memory(conn: SqlConnection, *, user_id: str, payload: dict[str, Any], uid: str) -> str:
-    """按 **uid** 落一条事实。同一个 uid 再来一次 = 更新文本，不是多插一条。
-
-    幂等是这条链的命：上行跑到一半断了、用户又点一次"开始上行"，绝不能长出双份记忆 ——
-    那正好是 09-24 实测里"自动提取自我叠加"那个病根的翻版。
-
-    `keep_both`（冲突裁决选了"两份都留"）走另一条路：**换一枚新 uid 插一条**，对面那条
-    一个字都不动。沿用同一个 uid 去"都留"是自我矛盾——那条 UPDATE 就是把对面那份覆盖掉。
-    """
-    text = " ".join(str(payload.get("text") or "").split())
-    if not text:
-        return "skipped"
-    if payload.get("keep_both"):
-        conn.execute(
-            "INSERT INTO role_memory_item (user_id, role_id, uid, text, source, pinned,"
-            " importance) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                user_id,
-                str(payload.get("role_id") or ""),
-                uuid.uuid4().hex,
-                text,
-                str(payload.get("source") or "manual"),
-                1 if payload.get("pinned") else 0,
-                int(payload.get("importance") or 1),
-            ),
-        )
-        return "created"
-    have = conn.execute(
-        "SELECT id, user_id FROM role_memory_item WHERE uid = ?", (uid,)
-    ).fetchone()
-    if have is None:
-        conn.execute(
-            "INSERT INTO role_memory_item (user_id, role_id, uid, text, source, pinned,"
-            " importance) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                user_id,
-                str(payload.get("role_id") or ""),
-                uid,
-                text,
-                str(payload.get("source") or "manual"),
-                1 if payload.get("pinned") else 0,
-                int(payload.get("importance") or 1),
-            ),
-        )
-        return "created"
-    if str(have["user_id"]) != user_id:
-        # uid 撞上别人名下的一条：**什么都不写**。这是 M2b 那套 uid 纪律在跨机器时
-        # 唯一必须出现的守卫 —— 随机 uuid4 撞上的概率可以忽略，但"忽略概率"不等于"不检查"。
-        return "foreign"
-    conn.execute(
-        "UPDATE role_memory_item SET text = ?, pinned = ?, importance = ?"
-        " WHERE uid = ? AND user_id = ?",
-        (
-            text,
-            1 if payload.get("pinned") else 0,
-            int(payload.get("importance") or 1),
-            uid,
-            user_id,
-        ),
-    )
-    return "updated"
-
-
-def _write_reachout(conn: SqlConnection, *, user_id: str, payload: dict[str, Any]) -> str:
-    """投递记录：同一 (角色, 时刻, 文本) 已存在就跳过（只追加，永不覆盖）。"""
-    exists = conn.execute(
-        "SELECT 1 FROM agent_reachout WHERE user_id = ? AND role_id = ? AND text = ?"
-        " AND created_at = ? LIMIT 1",
-        (user_id, str(payload.get("role_id") or ""), str(payload.get("text") or ""),
-         str(payload.get("created_at") or "")),
-    ).fetchone()
-    if exists is not None:
-        return "skipped"
-    conn.execute(
-        "INSERT INTO agent_reachout (user_id, role_id, role_name, text, fired_by, state,"
-        " created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (
-            user_id,
-            str(payload.get("role_id") or ""),
-            str(payload.get("role_name") or ""),
-            str(payload.get("text") or ""),
-            payload.get("fired_by"),
-            str(payload.get("state") or "unread"),
-            str(payload.get("created_at") or "") or None,
-        ),
-    )
-    return "created"
-
-
 def _write_thread(
     conn: SqlConnection,
     *,
@@ -682,9 +594,9 @@ def apply_import(
             if kind == KIND_CARD:
                 outcome = _write_card(conn, user_id=user_id, payload=payload)
             elif kind == KIND_MEMORY:
-                outcome = _write_memory(conn, user_id=user_id, payload=payload, uid=ident)
+                outcome = restore_memory(conn, user_id=user_id, payload=payload, uid=ident)
             elif kind == KIND_REACHOUT:
-                outcome = _write_reachout(conn, user_id=user_id, payload=payload)
+                outcome = restore_reachout(conn, user_id=user_id, payload=payload)
             elif kind == KIND_THREAD:
                 outcome = _write_thread(
                     conn, user_id=user_id, graph=graph, settings=settings, payload=payload

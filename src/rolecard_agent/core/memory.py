@@ -45,7 +45,7 @@ from langchain_core.tools import BaseTool, tool
 
 from rolecard_agent.base.identity import active_user_id, resolve_instance_identity
 from rolecard_agent.config import Settings
-from rolecard_agent.storage.db import SqlConnection
+from rolecard_agent.storage.db import SqlConnection, quote_ident, table_columns
 
 # 当前对话角色（架构总览 §5）：execute_tools 每轮注入，memory_save 读取它把事实同时写入
 # 该角色专属记忆。默认空串 = 无角色上下文，此时只写全局桶。与 role_knowledge_scopes_ctx
@@ -227,6 +227,95 @@ def add_item(
     ).fetchone()
     enforce_cap(conn, user_id=user_id, bucket=bucket, now=now)
     return _row_to_item(created) if created else None
+
+
+def _restore_insert(
+    conn: SqlConnection, *, user_id: str, uid: str, text: str, payload: dict[str, Any]
+) -> str:
+    """`restore_row` 的插入半边：**列集现算**的 INSERT（表加了列、payload 带了键就跟着走）。
+
+    单独一个模块级函数而不是闭包：写语句字面量要能被 `write txn ownership` 那把尺子按
+    `file::name` 登记，闭包的名字（`restore_row.<locals>._insert`）在名单里读不出来。
+    不 commit（与清空共事务），收口见 `restore_row` 的文档。
+    """
+    value_map: dict[str, Any] = {
+        "user_id": user_id,
+        "uid": uid,
+        "role_id": str(payload.get("role_id") or ""),
+        "text": text,
+        "source": str(payload.get("source") or "manual"),
+        "pinned": 1 if payload.get("pinned") else 0,
+        "importance": int(payload.get("importance") or 1),
+    }
+    cols = [
+        col
+        for col in table_columns(conn, "role_memory_item")
+        if col in value_map or col in payload
+    ]
+    placeholders = ", ".join("?" for _ in cols)
+    conn.execute(
+        f"INSERT INTO role_memory_item ({', '.join(quote_ident(c) for c in cols)})"
+        f" VALUES ({placeholders})",
+        tuple(value_map.get(col, payload.get(col)) for col in cols),
+    )
+    return "created"
+
+
+def restore_row(conn: SqlConnection, *, user_id: str, uid: str, payload: dict[str, Any]) -> str:
+    """同步下行导入：按 **uid** 落一条事实（upsert），列集**现算**。返回
+    created / updated / foreign / skipped。
+
+    这个函数就是 `core/sync` 从前直写 `role_memory_item` 的那段（`_write_memory`）搬回
+    主人家：**写入口归 owner**，同步链拿结果语义（created/updated/foreign/skipped），
+    不再自己拼表结构。语义逐条对着原件搬：
+
+      * 幂等按 uid —— 上行跑到一半断了再点一次，绝不能长出双份记忆（09-24 实测里
+        "自动提取自我叠加"那个病根的翻版）；
+      * `keep_both` 换一枚新 uid 插一条、对面那条不动（沿用同一 uid 去"都留"是自我矛盾）；
+      * uid 撞上别人名下 → `foreign` 什么都不写（M2b 的 uid 纪律在跨机器时的唯一守卫）。
+
+    **列集现算（`storage.db.table_columns`）而不是抄一张清单**：抄清单就是第二份事实面 ——
+    表加了列而清单没跟上，这条写路径会静默少那一列（2026-10-04 快照的 sync 写入口条目）。
+    取列规则只有一句：**只写"我们有值的列"** —— `value_map` 里的语义列 + payload 里
+    带来的键，其余列（`id` 自增、`created_at` 的表默认）**整列不出现**，让 schema 说了算。
+    反过来也成立：wire 将来多送一个键（对端也加了列），这张表就有这一列时它自动跟着走，
+    不必回来改同步的代码。
+
+    **不 commit**：整份替换的清空与导入共一个事务，收口在调用方
+    （`core/sync_service.run_import`；单独跑 `apply_import` 时由它默认的 commit 收口）。
+    """
+    text = " ".join(str(payload.get("text") or "").split())
+    if not text:
+        return "skipped"
+
+    if payload.get("keep_both"):
+        # 冲突裁决选了"两份都留"：换一枚新 uid 插一条，对面那条一个字都不动
+        # （沿用同一个 uid 去"都留"是自我矛盾 —— 那条 UPDATE 就是把对面那份覆盖掉）。
+        _restore_insert(
+            conn, user_id=user_id, uid=uuid.uuid4().hex, text=text, payload=payload
+        )
+        return "created"
+    have = conn.execute(
+        "SELECT id, user_id FROM role_memory_item WHERE uid = ?", (uid,)
+    ).fetchone()
+    if have is None:
+        return _restore_insert(conn, user_id=user_id, uid=uid, text=text, payload=payload)
+    if str(have["user_id"]) != user_id:
+        # uid 撞上别人名下的一条：**什么都不写**。这是 M2b 那套 uid 纪律在跨机器时
+        # 唯一必须出现的守卫 —— 随机 uuid4 撞上的概率可以忽略，但"忽略概率"不等于"不检查"。
+        return "foreign"
+    conn.execute(
+        "UPDATE role_memory_item SET text = ?, pinned = ?, importance = ?"
+        " WHERE uid = ? AND user_id = ?",
+        (
+            text,
+            1 if payload.get("pinned") else 0,
+            int(payload.get("importance") or 1),
+            uid,
+            user_id,
+        ),
+    )
+    return "updated"
 
 
 def get_item(conn: SqlConnection, item_id: int, *, user_id: str) -> dict[str, Any] | None:

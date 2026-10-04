@@ -277,7 +277,7 @@ class RoleCardService:
                 # **内容真变了才盖时刻**（`R102-25`）。从前这句无条件执行，于是每次开机
                 # 都给没人动过的卡盖一个新的 `updated_at`，而卡类冲突的裁决是"新者胜且
                 # 自动执行"（`core/sync.py` 的 `auto_moves`）—— 结构上"B 只是开了机"就能
-                # 吃掉 A 的手改。`IS NOT` 是 SQLite 的空安全不等，与 `_write_memory`
+                # 吃掉 A 的手改。`IS NOT` 是 SQLite 的空安全不等，与 `memory.restore_row`
                 # 那条同一个写法（那一族的幂等判据早就长这样了）。
                 "WHERE role_card.user_id IS NOT excluded.user_id "
                 "  OR role_card.role_name IS NOT excluded.role_name "

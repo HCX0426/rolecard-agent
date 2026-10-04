@@ -1474,6 +1474,62 @@ def check_api_holds_no_sql() -> None:
         fails.append("api-holds-no-sql is hollow: nothing under src/rolecard_agent/api was scanned")
 
 
+def check_sync_write_ownership() -> None:
+    """`core/sync.py` 里不许再有 INSERT 字面量 —— 写入口归各自的 owner service。
+
+    同步那条链的四类写入各有主人：card → `RoleCards`、thread → `storage/threads`、
+    memory → `core/memory.restore_row`、reachout → `core/reachout/inbox.restore_row`；
+    `core/sync.py` 只剩"顺序与结果语义"（created/updated/foreign/skipped 的分派）。
+    这条判据防的正是搬走的那半回来：**列集从前是手抄的第二份事实面** —— 表加了列而
+    手抄清单没跟上，这条链静默少那一列（owner 里现在按 PRAGMA 现算，与 schema 同源）。
+
+    两臂都判（`R102-37` 的"空转臂"纪律）：sync 里出现 `INSERT INTO` 常量即红；
+    **两个 owner 的 INSERT 也必须真的在** —— 否则"sync 干净"是因为没人写了，
+    那是另一场事故，不许绿。
+    """
+    src = ROOT / "src" / "rolecard_agent"
+
+    def insert_literals(path: pathlib.Path) -> list[str]:
+        found: list[str] = []
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except SyntaxError:
+            return found
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and node.value.lstrip().upper().startswith("INSERT INTO")
+            ):
+                found.append(f"{path.relative_to(ROOT).as_posix()}:{node.lineno}")
+        return found
+
+    sync_writes = insert_literals(src / "core" / "sync.py")
+    memory_writes = insert_literals(src / "core" / "memory.py")
+    inbox_writes = insert_literals(src / "core" / "reachout" / "inbox.py")
+    hollow = not memory_writes or not inbox_writes
+    ok = not sync_writes and not hollow
+    detail = (
+        "core/sync.py 0 处 INSERT，memory/inbox 两个 owner 各自的写入都在"
+        if ok
+        else (
+            f"sync 里回来了：{sync_writes}" if sync_writes else f"owner 被掏空：{hollow}"
+        )
+    )
+    out("sync write ownership", ok, detail)
+    if sync_writes:
+        fails.append(
+            "core/sync.py is hand-writing SQL again: "
+            f"{sync_writes}（写入口归 owner：memory/inbox 的 restore_row 按现算列集落库）"
+        )
+    if hollow:
+        fails.append(
+            "sync write ownership is hollow: owner INSERT literals missing "
+            f"(memory={len(memory_writes)}, inbox={len(inbox_writes)}) —— "
+            "'sync 干净'若是因为没人写了，那是另一场事故"
+        )
+
+
 #: 写语句所在、但**本函数自己不结束事务**的那九个位置（`R102-03` 沿袭项的盘点结果）。
 #:
 #: 逐处读过才登记：每一条都是"辅助函数由调用方收口"的形状 —— 写在这里的意义不是
@@ -1492,8 +1548,13 @@ WRITE_TXN_HELPERS = frozenset(
         "src/rolecard_agent/core/memory_distill.py::extract",
         "src/rolecard_agent/core/model_settings.py::_write_chat_refs",
         "src/rolecard_agent/core/plugins.py::_bump_tool_epoch",
-        "src/rolecard_agent/core/sync.py::_write_memory",
-        "src/rolecard_agent/core/sync.py::_write_reachout",
+        # 2026-10-04 sync 写入口归 owner：这两段从 `core/sync.py` 的 `_write_memory` /
+        # `_write_reachout` 搬进各自的 owner，**不收口**的性质不变 —— 与随后的导入共用
+        # 一个事务，收口点仍是 `core/sync_service.run_import`。memory 的插入半边是
+        # 模块级 `_restore_insert`（写语句在它体内；闭包的名字进不了这份名单）。
+        "src/rolecard_agent/core/memory.py::_restore_insert",
+        "src/rolecard_agent/core/memory.py::restore_row",
+        "src/rolecard_agent/core/reachout/inbox.py::restore_row",
         # 2026-10-04 service 收口：replace 档的行类清空**刻意不收口** —— 与随后的导入共用
         # 一个事务，成败一体。收口点在 `core/sync_service.py::run_import`（导入有失败即
         # rollback + 抛 ReplaceAborted 交路由翻 400，成功则统一 commit）。从前这段 SQL 住在
@@ -3729,6 +3790,7 @@ def main() -> int:
     check_audit_action_vocabulary()
     check_session_thread_write_seam()
     check_api_holds_no_sql()
+    check_sync_write_ownership()
     check_write_txn_ownership_inventory()
     check_audit_ledger_row_count()
     check_data_root_dirs_gitignored()

@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from rolecard_agent.roles.models import RoleCard
-from rolecard_agent.storage.db import SqlConnection
+from rolecard_agent.storage.db import SqlConnection, quote_ident, table_columns
 from rolecard_agent.storage.threads import ensure_thread
 
 # 「只进了收件箱、没落进会话」的那几条，多久之内还值得补投（R26-40 ②）。过了这个窗口就不管了
@@ -248,6 +248,59 @@ def record_reachout(
     )
     # 返回 id：调用方要把"投进会话了没有"写回同一行（`mark_delivered`）。
     return int(cur.lastrowid or 0)
+
+
+def restore_row(conn: SqlConnection, *, user_id: str, payload: dict[str, Any]) -> str:
+    """同步下行导入：投递记录的**只追加**落库，列集现算。返回 created / skipped。
+
+    这就是 `core/sync` 从前直写 `agent_reachout` 的那段（`_write_reachout`）搬回主人家：
+    写入口归 owner，同步链只拿"插了 / 已存在"这个结果。语义逐条对着原件搬：
+
+      * 同 (身份, 时刻, 文本) 已存在 → `skipped`（只追加，永不覆盖 —— 身份含文本，
+        改一个字就是另一条）；
+      * `state` 缺省 `unread`、`created_at` 空串落 NULL —— 与搬迁前逐字一致。
+
+    **列集现算（`storage.db.table_columns`）而不是抄一张清单**：抄清单就是第二份事实面，
+    表加了列而清单没跟上，这条写路径会静默少那一列（2026-10-04 快照的 sync 写入口条目）。
+    取列规则与 `memory.restore_row` 同一句：只写"我们有值的列"（`value_map` 的语义列 +
+    payload 带来的键），其余列（`id` 自增、各 `*_at` 的表默认）整列不出现，schema 说了算。
+
+    **不 commit**：整份替换的清空与导入共一个事务，收口在调用方
+    （`core/sync_service.run_import`；单独跑 `apply_import` 时由它默认的 commit 收口）。
+    """
+    exists = conn.execute(
+        "SELECT 1 FROM agent_reachout WHERE user_id = ? AND role_id = ? AND text = ?"
+        " AND created_at = ? LIMIT 1",
+        (
+            user_id,
+            str(payload.get("role_id") or ""),
+            str(payload.get("text") or ""),
+            str(payload.get("created_at") or ""),
+        ),
+    ).fetchone()
+    if exists is not None:
+        return "skipped"
+    value_map: dict[str, Any] = {
+        "user_id": user_id,
+        "role_id": str(payload.get("role_id") or ""),
+        "role_name": str(payload.get("role_name") or ""),
+        "text": str(payload.get("text") or ""),
+        "fired_by": payload.get("fired_by"),
+        "state": str(payload.get("state") or "unread"),
+        "created_at": str(payload.get("created_at") or "") or None,
+    }
+    cols = [
+        col
+        for col in table_columns(conn, "agent_reachout")
+        if col in value_map or col in payload
+    ]
+    placeholders = ", ".join("?" for _ in cols)
+    conn.execute(
+        f"INSERT INTO agent_reachout ({', '.join(quote_ident(c) for c in cols)})"
+        f" VALUES ({placeholders})",
+        tuple(value_map.get(col, payload.get(col)) for col in cols),
+    )
+    return "created"
 
 
 def mark_delivered(conn: SqlConnection, reachout_id: int) -> None:
