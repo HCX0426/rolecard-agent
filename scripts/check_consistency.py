@@ -1645,7 +1645,8 @@ WRITE_TXN_HELPERS = frozenset(
         "src/rolecard_agent/core/checkpointer.py::_set_flag",
         "src/rolecard_agent/core/checkpointer.py::_drop_orphan_writes",
         "src/rolecard_agent/core/memory_distill.py::extract",
-        "src/rolecard_agent/core/model_settings.py::_write_chat_refs",
+        # model_settings 拆包后（2026-10-04 审查快照 P1-6）这个方法住在 read mixin 里。
+        "src/rolecard_agent/core/model_settings/read.py::_write_chat_refs",
         "src/rolecard_agent/core/plugins.py::_bump_tool_epoch",
         # 2026-10-04 sync 写入口归 owner：这两段从 `core/sync.py` 的 `_write_memory` /
         # `_write_reachout` 搬进各自的 owner，**不收口**的性质不变 —— 与随后的导入共用
@@ -2984,8 +2985,8 @@ def check_dangling_write_txns() -> None:
 def check_shape_migration_ddl() -> None:
     """搬层用的暂存表 DDL 必须与声明面**逐列同形**（架构审计 2026-10-02 轮 `R102-11`）。
 
-    `core/model_settings.py` 的 `CREATE TABLE model_backend__layers` 把 `core/schema.sql`
-    里 `model_backend` 的十列又抄了一遍，而 `_SHAPE_MIGRATED_TABLES` 让补列器对这张表
+    `core/model_settings/migration.py` 的 `CREATE TABLE model_backend__layers` 把
+    `core/schema.sql` 里 `model_backend` 的十列又抄了一遍，而 `SHAPE_TABLES` 让补列器对这张表
     **不动手** —— 两份 DDL 一旦分叉，"旧库那份抄的"就赢：新库有列、搬完层的旧库没列，
     读侧 `no such column`（`repeat_penalty` 那一发的教训，文件注释自己记着）。
     这把尺子就是那句"逐列相等"的兑现：分叉当场红，不再等老库升上来才炸。
@@ -2993,9 +2994,9 @@ def check_shape_migration_ddl() -> None:
     schema_text = (ROOT / "src" / "rolecard_agent" / "core" / "schema.sql").read_text(
         encoding="utf-8"
     )
-    ms_text = (ROOT / "src" / "rolecard_agent" / "core" / "model_settings.py").read_text(
-        encoding="utf-8"
-    )
+    ms_text = (
+        ROOT / "src" / "rolecard_agent" / "core" / "model_settings" / "migration.py"
+    ).read_text(encoding="utf-8")
 
     def declared_columns(create_block: str) -> set[str]:
         """从 CREATE TABLE 的列定义区抓列名（跳过约束行、SQL `--` 注释、python 串的引号）。"""
