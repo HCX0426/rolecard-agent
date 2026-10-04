@@ -26,8 +26,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-
 from rolecard_agent.base.audit import AuditTrail
 from rolecard_agent.base.identity import (
     active_user_id,
@@ -36,38 +34,26 @@ from rolecard_agent.base.identity import (
 )
 from rolecard_agent.base.observability import TraceEvent, Tracer, make_tracer
 from rolecard_agent.base.paths import user_data_root
-from rolecard_agent.base.text import text_of
 from rolecard_agent.config import Settings
 from rolecard_agent.core import mcp_store, runtime_settings
 from rolecard_agent.core.approvals import ApprovalService, sweep_interrupted
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.domain_service import DomainQueryService
-from rolecard_agent.core.graph import build_graph_config, build_kernel, build_model
+from rolecard_agent.core.graph import build_kernel, build_model
 from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.core.knowledge_sources import KnowledgeSourceStore
-from rolecard_agent.core.memory import memory_for_turn
 from rolecard_agent.core.migrations import MIGRATION_PLAN
 from rolecard_agent.core.model_resolver import ModelResolver
 from rolecard_agent.core.model_settings import ModelSettingsService, client_style
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
+from rolecard_agent.core.proactive import ProactiveGateway
 from rolecard_agent.core.probes import ollama_keep, vision_capability
 from rolecard_agent.core.reachout import (
-    CHAT_ECHO_LIMIT,
     ReachoutScheduler,
-    ensure_proactive_thread,
-    format_recent_window,
-    format_thread_lines,
-    format_unreplied_lines,
-    proactive_thread_id,
-    recent_reachout_lines,
-    unanswered_lines,
-    unreplied_lines,
 )
 from rolecard_agent.core.retention import prune_retention_tables
 from rolecard_agent.core.services import ServiceEndpointService
-from rolecard_agent.core.state import now_ts
-from rolecard_agent.core.thread_locks import release_thread, try_thread_write
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder, make_reranker
 from rolecard_agent.roles.models import RoleCard, RoleCardCreate
@@ -216,6 +202,10 @@ class Runtime:
     #: `resolve_role_model` 两个**转调**方法（对外形状不变，调用方与代数测试零改）。
     #: 装配末尾在 `build_runtime` 里挂上（它要读实例主人那份配置，构造期还没有）。
     models: ModelResolver = field(init=False, repr=False)
+    #: 主动开口的投递与会话上下文那一族（`_proactive_rows` / `proactive_recent_*` /
+    #: `deliver_proactive` / `chat_memory` 的回声半边）搬进 `core/proactive.py`（同一格
+    #: 审查快照的第二刀）：本对象只留**转调**，调度器与端点的调用形状不变。
+    proactive: ProactiveGateway = field(init=False, repr=False)
 
     # -- 稳定引用的读穿 ------------------------------------------------------
 
@@ -306,29 +296,12 @@ class Runtime:
         return self.models.role_models
 
     def chat_memory(self, role_id: str | None, thread_id: str | None) -> str:
-        """这一轮对话她该看见什么：`memory_for_turn` 那份记忆 + 她最近**主动**说过的原话。
+        """这一轮她该看见什么：记忆 + 最近主动说过的原话（转调 `ProactiveGateway`）。
 
-        为什么要补那一截（用户 2026-09-26 拍的"并进来"）：主动开口的话只落进
-        `s_proactive_<uid>_<role>` 那一条线程（B2 起带身份），而控制台的「新建对话」另开一条 ——
-        那条里她看不见自己刚问过什么，"我记得我提醒过你鞋带"这种话就接不上。
-
-        在**那条主动会话里**不补：同一句话本来就在她的历史里，再抄一遍进 system 等于把
-        复读喂回给模型（`nodes._scrub_own_repeats` 治的就是这个），白花 token 还添病。
-
-        **本轮主人现取**（R28-04）：以前这三处写死 `self.identity`，于是第二个身份的对话
-        读的是实例主人的记忆、回声，还把 hit_count 记到主人账上。这根管子与上面
-        `settings_resolver` 用的同一个（`active_user_id`）—— 一个"本轮为谁"的读法只留一处。
-        settings 仍取实例那份是刻意的：这里只用到 `memory_enabled`，而它是运行环境级的
-        （覆盖存在 `kernel_meta` 的 `runtime:<key>`，不分人）。
+        回声那半边的全部道理（为什么补、什么时候**不**补、本轮主人现取）写在
+        `core/proactive.py::chat_memory`；这里是图装配用的挂点，形状不动。
         """
-        owner = active_user_id(self.identity)
-        text = memory_for_turn(self.conn, self.effective, role_id, user_id=owner)
-        if not role_id or thread_id == proactive_thread_id(role_id, user_id=owner):
-            return text
-        echo = recent_reachout_lines(self.conn, role_id, user_id=owner, limit=CHAT_ECHO_LIMIT)
-        if not echo:
-            return text
-        return f"{text}\n\n{echo}" if text else echo
+        return self.proactive.chat_memory(role_id, thread_id)
 
     def build_graph(self, model: ChatLike, registry: ToolRegistry, eff: Settings) -> Any:
         """建（编译）一张对话图。`model_resolver` 指向本 Runtime，角色级路由与热重建同源。"""
@@ -428,111 +401,20 @@ class Runtime:
             if client_style(backend.provider) == "native":
                 ollama_keep(backend.base_url, backend.model, -1, num_ctx=backend.num_ctx)
 
-    # -- 主动开口的投递（收件箱之外，还得能回话）--------------------------------
-
-    def _proactive_rows(self, role_id: str) -> list[tuple[str, str]]:
-        """该角色主动会话里的 `(说话人, 原文)` 序列（按时间正序，读检查点，不另存一份）。
-
-        两个读法（`proactive_recent_lines` / `proactive_recent_window`）共用这一处：
-        会话的唯一真相就是 checkpoint（与桌宠面板读历史同源），而"取哪一截"是**措辞**的事、
-        不该连带把读取逻辑抄两遍。读不到（图没建 / 线程不存在 / 反序列化出问题）一律给空表：
-        少一段上下文，比不开口更不该出事。
-
-        `ToolMessage` 不进"你说过的话"：工具结果是内核读到的东西，把它标成"她说过"
-        等于让她以为自己对一段 JSON 说出口过。
-        """
-        graph = self.state.get("graph")
-        if graph is None:
-            return []
-        rows: list[tuple[str, str]] = []
-        with contextlib.suppress(Exception):
-            snap = graph.get_state(
-                build_graph_config(
-                    proactive_thread_id(role_id, user_id=self.identity), self.effective
-                )
-            )
-            for m in (snap.values or {}).get("messages") or []:
-                if isinstance(m, ToolMessage):
-                    continue
-                text = text_of(m).strip()
-                if text:
-                    rows.append(("用户" if isinstance(m, HumanMessage) else "你", text))
-        return rows
+    # -- 主动开口的投递与会话上下文（转调 `ProactiveGateway`）---------------------
+    #
+    # 实现与它买的那些道理（checkpoint 是唯一真相 / 不跑图 / 拿不到锁就不投但不算丢 /
+    # 本轮主人现取）都住在 `core/proactive.py`。这里留门面，是因为它们是调度器、端点与
+    # 探针脚本的稳定调用形状 —— 拆职责不该让调用方跟着搬家。
 
     def proactive_recent_lines(self, role_id: str, *, limit: int = 6) -> str:
-        """那条主动会话里**悬着没了结**的那一截，拼成开口指令里的上下文。
-
-        两刀互补，只看"最后说话的是谁"：
-        最后说的是他 ⇒ `unanswered_lines` 非空 ⇒ "有几句你还没接"；
-        最后说的是她 ⇒ `unreplied_lines` 非空 ⇒ "你说过这几句而他没回"。
-        以前只有前一刀，于是后一种情形在她眼里是**空白** —— 她只会另找一个由头，
-        用户读到的就是"我还没回话呢，她转头说起唱歌"（09-26）。返回空串只在线程本身
-        为空时发生，那同样是正确答案。
-        """
-        rows = self._proactive_rows(role_id)
-        asked = unanswered_lines(rows)
-        if asked:
-            return format_thread_lines(asked, limit=limit)
-        return format_unreplied_lines(unreplied_lines(rows), limit=limit)
+        return self.proactive.recent_lines(role_id, limit=limit)
 
     def proactive_recent_window(self, role_id: str, *, limit: int = 8) -> str:
-        """**最近这一窗**对话原样交给「未收尾话题」的扫描用（09-26 轮 R26-03 的修法）。
-
-        为什么不能复用 `proactive_recent_lines`：那一截只看"最后说话的人是谁"那一侧，
-        于是**她接住过的话一律不在里面** —— 可这一源要找的恰恰是"说到一半没了下文"，
-        那件事往往正是她接住过、只是没落地的那件。拿"还没了结"当输入，判据与素材是反的，
-        实测下来扫描一次都不会发生。所以要的是"最近聊到什么"，不是"还有什么没接"。
-        """
-        return format_recent_window(self._proactive_rows(role_id), limit=limit)
+        return self.proactive.recent_window(role_id, limit=limit)
 
     def deliver_proactive(self, role: RoleCard, text: str) -> str | None:
-        """把角色主动说的那句落进"该角色的主动会话"，返回线程 id（图还没建 → None）。
-
-        为什么需要这一步：主动消息原先只进 `agent_reachout`，于是"角色找我，我却回不了、
-        也点不开历史"（用户 2026-09-19）。落进会话后，回复与历史都直接复用既有对话链路，
-        不需要再造一套消息通道；角色下一次生成时也能在自己的历史里看到说过什么。
-
-        写检查点用 `graph.update_state`（与上传说明、图片注入同一路数）而**不跑图**：
-        这句是角色"已经出口"的话，不是让它接着想 —— 跑图会变成替用户自言自语。
-        """
-        thread_id = ensure_proactive_thread(
-            self.conn,
-            role=role,
-            user_id=self.identity,
-            tool_epoch=self.plugins.tool_epoch(),
-        )
-        graph = self.state.get("graph")
-        if graph is None:  # 还没有图（纯内核装配 / 装配失败）：收件箱那条照样有效
-            return None
-        # 占住这条会话的写入再改检查点（审计 #12）：用户那一轮可能正在图上跑，而
-        # `update_state` 读的是"它此刻认为的最新检查点"—— 两边分叉同一个父节点时后写的盖掉
-        # 先写的，用户发的那条就被吞了。拿不到锁就**这次不投递**，而不是阻塞调度线程去等
-        # 一轮对话跑完（那会拖住别的角色的开口时机）。
-        # **不投不等于丢**：调度器把没投成的那些按 `delivered_at IS NULL` 认出来，下一 tick
-        # 补投（`R26-40` ②，`undelivered_reachouts`）。这里从前写的是"调度器下一轮还会再问"
-        # —— 那句是错的：下一轮是**重新生成一句新话**，这一句就此只在收件箱里停着。
-        if not try_thread_write(thread_id, timeout=0.0):
-            self.tracer.emit(
-                TraceEvent(
-                    event="reachout_skipped",
-                    node="reachout",
-                    thread_id=thread_id,
-                    role_id=role.role_id,
-                    detail={"why": "这条会话正在对话中"},
-                )
-            )
-            return None
-        try:
-            graph.update_state(
-                build_graph_config(thread_id, self.effective),
-                # created_at 与内核节点那条同一口径（`additional_kwargs`）：这句是"她已经说出口"的
-                # 消息，没带时间就会在回放里悬着不知排在哪一轮 —— 而她什么时候说的恰恰是要判断的
-                # 东西（2026-09-22 那次"一句话回三遍"的取证只能靠 id 前缀区分主动投递与图内回复）。
-                {"messages": [AIMessage(content=text, additional_kwargs={"created_at": now_ts()})]},
-            )
-        finally:
-            release_thread(thread_id)
-        return thread_id
+        return self.proactive.deliver(role, text)
 
     def shutdown(self) -> None:
         """释放本运行时持有的资源：sqlite 连接、知识库的 httpx 客户端、调度线程。
@@ -702,6 +584,15 @@ def build_runtime(
         tracer=resolved_tracer,
         identity=lambda: runtime.identity,
         injected_model=model,
+    )
+    # 主动开口那一格（同一审查快照的第二刀）：连接、插件表（tool_epoch）与那份共享槽位
+    # 都在装配末尾就位，`identity` 同样走闭包 —— 实例主人的解析只留一处。
+    runtime.proactive = ProactiveGateway(
+        conn=conn,
+        tracer=resolved_tracer,
+        plugins=plugins,
+        state=state,
+        identity=lambda: runtime.identity,
     )
     state["graph"] = runtime.build_graph(default_model, registry, effective)
     return runtime
