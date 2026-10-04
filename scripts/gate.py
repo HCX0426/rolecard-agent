@@ -314,6 +314,12 @@ def _write_readings(outputs: dict[str, str], ok: bool) -> None:
     调用点是**一步一份**（每步跑完立刻并一次，不是整趟结束再一起写）：排在建步之后的
     `consistency` 因此能看见同一趟刚量到的数，加完用例不用跑两趟门禁才发现 README 对不上。
 
+    第三类是**绿了但量不到**（10-04 撞出来的）：chroma 偶发命中在册签名时二跑取证、按未知
+    放行（`pytest_with_evidence.py` 的 FLAKY-RECORDED），但首跑带 `-x` 已截断、二跑只跑
+    子集 —— 全量那条汇总行这趟根本没打出来。读数机如果照常取匹配，会把子集的数（实测 32）
+    写进去，让一致性把**对的** README 判漂。这一档的处理是"不写这个键"：旧值连旧 `_at` 一起
+    留着（诚实性在时间戳上），下一趟干净绿跑刷新；head 照常更新 —— 这一步确实绿了。
+
     **合并而不是整体覆盖** —— 第一版是覆盖，当场就撞出后果：门禁会并发跑（我这边一次
     `--fast`，同时另一次 `--ci` 还在跑），后写那趟没量覆盖率那个键，于是把先写那趟的读数
     **整份抹掉**。"只写我量到的"这件事，只有落成合并才成立。
@@ -339,7 +345,18 @@ def _write_readings(outputs: dict[str, str], ok: bool) -> None:
         for step, (pattern, key) in _READING_PATTERNS.items():
             if step not in outputs:
                 continue  # 这一趟没跑那一步（档位不含它，或前一步红了就停）：不判、也不抹旧读数
-            hits = re.findall(pattern, _ANSI.sub("", outputs[step]))
+            stripped = _ANSI.sub("", outputs[step])
+            if "FLAKY-RECORDED" in stripped:
+                # **取证放行的那趟量不到这个键**：首跑带 `-x`、偶发即截断（`1 failed,
+                # 1139 passed` 不是全量），二跑只重跑命中在册签名的那几个文件（`32 passed`
+                # 是子集）—— 两行都读不得（10-04 实测把 backend_tests 洗成 32，一致性
+                # 当场把**对的** README 判漂）。全量没跑完 = 这一趟没量到：旧值与旧 `_at`
+                # 原样留着（读数的诚实性就在时间戳上），下一趟干净的绿跑自然刷新；
+                # 也不打"没量到"的记号 —— 这一步绿了，只是这个键这趟没数，打记号会
+                # 让一致性去红，而取证放行本来就该按未知通过。`head` 照常更新（上一段）。
+                added.append(f"{key}（取证放行未量，沿用上一趟）")
+                continue
+            hits = re.findall(pattern, stripped)
             if not hits:
                 # **跑过却没量到**是另一件事，而且是有信息量的那一件：这一步的輸出格式变了
                 # （或它的命令行参数把汇总行吞了）。落下记号让比对那条断言去红，而不是安静地

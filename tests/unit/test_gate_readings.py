@@ -163,3 +163,39 @@ def test_a_green_write_clears_the_red_mark(tmp_path: Path) -> None:
     data = _read(gate)
     assert data["backend_tests"] == "1330"
     assert "backend_tests_red_at" not in data, "绿跑量到新值后红痕必须清掉"
+
+
+def test_evidence_retry_does_not_poison_the_count(tmp_path: Path) -> None:
+    """取证放行的那趟**量不到全量数**：不写这个键，旧值连旧 `_at` 一起留着。
+
+    现场（10-04 实测，输入照抄那次门禁的 stdout）：chroma 偶发命中在册签名 → 首跑带
+    `-x` 截断在 `1 failed, 1139 passed`，二跑只跑那一个文件打出 `32 passed`，两行**都
+    不是全量**（真值 1524 这趟根本没出现）。读数机从前取匹配的最后一条，把
+    `backend_tests` 洗成 32 —— 一致性拿它去比 README 1524，把**对的**那一格判漂。
+    读数的诚实性在时间戳上：这趟没量到就不动 `_at`，下一趟干净绿跑刷新；`head` 照常
+    更新（这一步确实绿了，只是这个键没数）。
+    """
+    gate = _load_gate()
+    _stub(gate, tmp_path)
+    gate._write_readings(  # noqa: SLF001
+        {"pytest(-x, 无覆盖率)": "1524 passed, 1 skipped in 60.1s\n"}, True
+    )
+    before = _read(gate)
+    assert before["backend_tests"] == "1524"
+
+    evidence_output = (
+        "⚠️  fast 档首跑红，且失败形状命中在册的 chroma 偶发（`R102-41`）。"
+        "重跑那 1 个文件一次取证：['tests/unit/test_rag.py']\n"
+        "1 failed, 1139 passed, 1 skipped in 58.75s\n"
+        "⚠️  FLAKY-RECORDED：同一批文件二跑绿。这一趟按「未知」放行。\n"
+        "32 passed in 2.05s\n"
+    )
+    gate._write_readings({"pytest(-x, 无覆盖率)": evidence_output}, True)  # noqa: SLF001
+    after = _read(gate)
+    assert after["backend_tests"] == "1524", "取证子集的 32 不许盖掉上一趟的全量读数"
+    assert after["backend_tests_at"] == before["backend_tests_at"], "没量到就不许挪时间戳"
+    assert after["head"] == "0123456789ab", "head 照常更新：这一步确实绿了"
+    assert "backend_tests_unreadable" not in after, (
+        "这不是'输出格式读不出'，是'这趟没量到' —— 打 unreadable 记号会让一致性去红，"
+        "而取证放行本来就该按未知通过"
+    )
