@@ -211,6 +211,19 @@ def client_ip(headers: Any, *, peer: str = "", trusted: Any = ()) -> str:
     反代场景下 `request.client.host` 是反代自己，此时才需要 XFF。做法是把反代的网段显式
     配进 `AUTH_TRUSTED_PROXIES`：只有直连对端命中该网段（即"这个请求确实是从我们的反代
     进来的"）才解析 XFF。配置为空 = 谁都不信，XFF 被完全忽略。
+
+    ## 链内怎么取（2026-10-04 审查快照的来源 IP 条目）
+
+    XFF 是"客户端可整条伪造、代理只会**追加**"的头。追加式反代（nginx 默认
+    `$proxy_add_x_forwarded_for`）下，链**尾**才是离本机最近的可信跳，真实客户端在右侧
+    某处 —— 旧实现取链首，攻击者带 `X-Forwarded-For: 127.0.0.1` 穿过追加式反代
+    （链变成 "127.0.0.1, 真实IP"）就被当成了本机来源，operator 面（改配置 / 审批 /
+    全盘浏览）全部放行。因此：
+
+    * 链长 ≥2：**右向左**跳过可信代理，第一个不可信跳即真实来源；它是回环 ⇒ 伪造签名
+      （注入的回环 + 代理追加的真实 IP），整条链作废、退回对端判定。
+    * 链长 =1：单跳只可能来自"清洗型反代（覆盖式写 XFF）"或"追加式反代 + 客户端没带
+      XFF"——两种情况这一跳都真实可信，照旧采信（含回环：同机反代转发本机客户端）。
     """
     if not is_trusted_peer(peer, trusted):
         return peer
@@ -219,8 +232,19 @@ def client_ip(headers: Any, *, peer: str = "", trusted: Any = ()) -> str:
         forwarded = headers.get("x-forwarded-for") or ""
     except Exception:  # noqa: BLE001 - headers 形态异常时退回直接连接
         return peer
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    if not forwarded:
+        return peer
+    hops = [hop.strip() for hop in forwarded.split(",") if hop.strip()]
+    if not hops:
+        return peer
+    if len(hops) == 1:
+        return hops[0]
+    for hop in reversed(hops):
+        if is_trusted_peer(hop, trusted):
+            continue
+        if is_loopback(hop):
+            return peer
+        return hop
     return peer
 
 

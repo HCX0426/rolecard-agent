@@ -313,3 +313,49 @@ def test_the_browser_prompt_is_only_offered_once(
     wrong = c.get("/api/roles", headers={"Authorization": _basic("demo", "不对")})
     assert wrong.status_code == 401
     assert "www-authenticate" not in {k.lower() for k in wrong.headers}, "已经带凭据还弹框"
+
+
+def test_client_ip_right_to_left_rejects_injected_loopback() -> None:
+    """2026-10-04 审查快照的来源 IP 条目：追加式反代下的伪造链必须作废。
+
+    攻击者带 `X-Forwarded-For: 127.0.0.1` 穿过追加式反代（nginx 默认追加），链变成
+    "127.0.0.1, 真实IP" —— 右向左第一个不可信跳是真实 IP，绝不是链首那个回环。
+    """
+    from rolecard_agent.api.auth import client_ip, parse_trusted_proxies
+
+    trusted = parse_trusted_proxies("10.0.0.0/8")
+    headers = {"x-forwarded-for": "127.0.0.1, 203.0.113.9"}
+    assert client_ip(headers, peer="10.1.2.3", trusted=trusted) == "203.0.113.9"
+    # 注入的回环绝不能作为来源返回（operator 判定看的是它是不是回环）
+    assert client_ip(headers, peer="10.1.2.3", trusted=trusted) != "127.0.0.1"
+
+
+def test_client_ip_multi_hop_clean_chain_resolves_the_client() -> None:
+    """合法多级代理：客户端 → 反代A(10.1.2.3，追加) → 反代B(10.2.3.4，直连对端)。
+
+    右向左：10.1.2.3 是可信代理跳过，第一个不可信跳 203.0.113.9 就是真实客户端。
+    """
+    from rolecard_agent.api.auth import client_ip, parse_trusted_proxies
+
+    trusted = parse_trusted_proxies("10.0.0.0/8")
+    headers = {"x-forwarded-for": "203.0.113.9, 10.1.2.3"}
+    assert client_ip(headers, peer="10.2.3.4", trusted=trusted) == "203.0.113.9"
+
+
+def test_client_ip_all_trusted_chain_falls_back_to_peer() -> None:
+    """整条链都在可信网段（没有可判定的客户端跳）→ 退回对端，不猜。"""
+    from rolecard_agent.api.auth import client_ip, parse_trusted_proxies
+
+    trusted = parse_trusted_proxies("10.0.0.0/8")
+    headers = {"x-forwarded-for": "10.1.2.3, 10.9.9.9"}
+    assert client_ip(headers, peer="10.2.3.4", trusted=trusted) == "10.2.3.4"
+
+
+def test_client_ip_single_hop_from_clean_proxy_still_trusted() -> None:
+    """清洗型反代（覆盖式写 XFF）转发的本机客户端：单跳回环照旧采信（既有合法路径不回退）。"""
+    from rolecard_agent.api.auth import client_ip, parse_trusted_proxies
+
+    trusted = parse_trusted_proxies("10.0.0.0/8")
+    assert client_ip({"x-forwarded-for": "127.0.0.1"}, peer="10.1.2.3", trusted=trusted) == (
+        "127.0.0.1"
+    )
