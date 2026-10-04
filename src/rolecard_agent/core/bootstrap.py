@@ -47,6 +47,7 @@ from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.core.knowledge_sources import KnowledgeSourceStore
 from rolecard_agent.core.memory import memory_for_turn
 from rolecard_agent.core.migrations import MIGRATION_PLAN
+from rolecard_agent.core.model_resolver import ModelResolver
 from rolecard_agent.core.model_settings import ModelSettingsService, client_style
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
@@ -205,28 +206,16 @@ class Runtime:
     #: 端点/图共享的可变槽位：graph / effective / default_model。
     state: dict[str, Any]
     registry_factory: RegistryFactory
-    #: 测试注入的模型实例（None = 按配置构建）。注入了它就不再有"角色级后端"这回事。
-    injected_model: ChatLike | None = None
     model_factory: Callable[..., ChatLike] = build_model
     checkpointer: Any = None
     #: 主动开口调度器只在实际跑后台循环时存在（`start_background` 里建）。
     reachout: ReachoutScheduler | None = field(default=None, repr=False)
     rebuild_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
-    #: 角色级模型实例缓存。键是 `(本轮主人, 后端名, 温度)` —— 主人这一维是 M2d 尾巴的
-    #: 收口：同一台实例上两个身份各配同名后端、各带自己的 key 时，**实例**必须是两个。
-    role_models: dict[tuple[str, str | None, float | None], ChatLike] = field(
-        default_factory=dict, repr=False
-    )
-    #: 按身份解析出来的有效配置（`effective_for`）。实例主人那一份不在这里 —— 它在
-    #: `effective`（编译期就位）。改配置走 `rebuild`，两处缓存一起清。
-    effective_by_user: dict[str, Settings] = field(default_factory=dict, repr=False)
-    #: 上面那两份缓存的**代数**（`R28-05`）。`clear()` 只挡得住"已经进缓存的旧值"，
-    #: 挡不住"清完之后才回填的旧值"：并发那一轮在锁外拿着**旧配置快照**构建模型，
-    #: 构建要花几百毫秒到几秒，落笔时 `clear()` 已经过去了 —— 于是换装完成之后的轮次
-    #: 继续花旧 key。写者进场前记下代数、落笔时比对：对不上就丢弃（下一次调用自然重建）。
-    #: 单靠 GIL 保证的是 int 读写不会撕裂，这就够了 —— 不用再加一把锁，那会把每次
-    #: 模型解析都串到重建锁上，而"构建在锁外"是这里刻意保住的性能。
-    model_cache_generation: int = field(default=0, repr=False)
+    #: 模型解析那一格（两份缓存 + 代数）搬进 `core/model_resolver.py`（2026-10-04 审查
+    #: 快照里"Runtime 单对象多职责"那一格）：本对象只留 `effective_for` /
+    #: `resolve_role_model` 两个**转调**方法（对外形状不变，调用方与代数测试零改）。
+    #: 装配末尾在 `build_runtime` 里挂上（它要读实例主人那份配置，构造期还没有）。
+    models: ModelResolver = field(init=False, repr=False)
 
     # -- 稳定引用的读穿 ------------------------------------------------------
 
@@ -284,37 +273,13 @@ class Runtime:
     # -- 模型解析与图 --------------------------------------------------------
 
     def effective_for(self, user_id: str | None = None) -> Settings:
-        """**这一次模型调用花谁的 key** 的那份有效配置。
+        """**这一次模型调用花谁的 key** 的那份有效配置（转调 `ModelResolver`）。
 
-        `M2d` 那句"`effective_settings` 是唯一咽喉"原先只兑现了半边：配置**按人存**了，
-        但运行期那份快照是**实例级**的（谁登录都花实例主人的 key）。这里补的是另半边 ——
-        按这次调用的人拼一份出来。
-
-        它与 `self.effective` 不是同一件事，也不该合并：`self.effective` 喂知识库、工具
-        闭包与历史预算，那些问的是"这台机器能干什么"，换个人不会变；而凭据问的是"这次谁
-        付钱"，跟着人走。单机形态（一台实例一个主人）下两者恒等，走同一条短路，零额外开销。
-
-        刻意**不写成"整份配置按请求"**：`effective_settings` 只覆盖 `model_backends` /
-        `model_default` / `model_fallbacks` 三项（其余字段来自 env 与运行环境覆盖，是设备
-        级的），所以按身份解析出来的两份，差别只在凭据那三项。名字取"这一轮的有效配置"是
-        为了让消费点只有一个问法，不是说别的字段也随人变。
-
-        缓存按主人分格。`rebuild` 整体清空 —— 与角色级模型缓存同一条纪律：配置改了必须重建。
+        实现与它买的那两条纪律（按人取凭据 / 缓存代数）都在 `core/model_resolver.py`；
+        这里保留方法本身，是因为它是 Runtime 的稳定对外形状（节点、调度器、端点都调它），
+        拆职责不该让调用方跟着搬家。
         """
-        owner = user_id or self.identity
-        if owner == self.identity:
-            return self.effective
-        cached = self.effective_by_user.get(owner)
-        if cached is None:
-            gen = self.model_cache_generation
-            cached = runtime_settings.apply_overrides(
-                self.model_settings.effective_settings(self.env_settings, user_id=owner),
-                runtime_settings.load_overrides(self.conn),
-            )
-            # 代数没变才写回去（`R28-05`）：变了说明这期间换过一次装，手上这份是旧配置。
-            if self.model_cache_generation == gen:
-                self.effective_by_user[owner] = cached
-        return cached
+        return self.models.effective_for(user_id)
 
     def resolve_role_model(
         self,
@@ -323,51 +288,22 @@ class Runtime:
         *,
         user_id: str | None = None,
     ) -> ChatLike:
-        """US-8：角色声明了后端名 → 按名解析；未声明 → 默认模型。
+        """US-8：角色声明了后端名 → 按名解析；未声明 → 默认模型（转调 `ModelResolver`）。
 
-        **凭据按"这一轮的主人"取**（M2d 尾巴的收口，§4.1）：图节点入口已把本轮主人绑进
-        上下文（`base/identity.bound_user`），所以 `active_user_id` 在这里答的就是"这次该花
-        谁的 key"。不在任何一轮里（后台调度器替她冒话）则回落到**这台实例的主人** ——
-        那正是她替谁开口。
-
-        `user_id` 是给**跨线程**调用方的（`bound_user` 是 `ContextVar`，不跨线程传播）：
-        自动提取跑在"响应流完之后"的后台线程里，那边 `ctx.current_user()` 还对（那是请求
-        视图上的备忘属性），但 `active_user_id` 一定是空的 —— 知道这一轮属于谁的调用方
-        必须显式传进来，否则它就会拿实例主人的 key 去替别人抽记忆。
-
-        `temperature` 参与缓存键：同一后端在不同温度下是**不同的模型实例**
-        （采样参数只能在构造期设置，见 `core.graph._init_model`）。主人现在是缓存键的
-        第一维：两个身份各配同名后端时，"按后端名复用"会把 key 张冠李戴 —— 这正是这一步
-        要买的那个性质。
-        未知后端名（设置页删掉了一个仍被角色引用的后端）→ 降级到默认并留痕，而不是
-        让整轮对话 500：权限 fail-closed，可用性 fail-soft。降级落在**实例主人那台**编译期
-        默认模型上 —— 它是"这台机器上一定跑得起来"的那一份。
+        凭据按本轮主人取、未知后端降级留痕、缓存代数挡旧值 —— 三条都住在
+        `core/model_resolver.py::resolve_role_model`，本方法只是门面。
         """
-        if self.injected_model is not None:
-            return self.injected_model
-        user = user_id or active_user_id(self.identity)
-        if not backend_name and temperature is None and user == self.identity:
-            return self.state["default_model"]
-        cache_key = (user, backend_name, temperature)
-        cached = self.role_models.get(cache_key)
-        if cached is not None:
-            return cached
-        gen = self.model_cache_generation
-        try:
-            built = self.model_factory(self.effective_for(user), backend_name, temperature)
-        except KeyError:
-            self.tracer.emit(
-                TraceEvent(
-                    event="role_backend_missing",
-                    detail={"backend": backend_name, "user_id": user},
-                )
-            )
-            return self.state["default_model"]
-        # 与 `effective_for` 同一条纪律：代数变了就把手上这份丢掉，别让它活过这次换装
-        # （`R28-05`）。下一次解析自然按新配置重建 —— 代价是多构造一次，不是花错 key。
-        if self.model_cache_generation == gen:
-            self.role_models[cache_key] = built
-        return built
+        return self.models.resolve_role_model(backend_name, temperature, user_id=user_id)
+
+    @property
+    def role_models(self) -> dict[tuple[str, str | None, float | None], ChatLike]:
+        """角色级模型缓存的**只读穿**（转调 `ModelResolver`）。
+
+        为什么留这一格而不是让调用方去摸 `models.role_models`：缓存本体搬了家，但钉它
+        那条纪律的代数测试（`R28-05`，`test_an_inflight_build_...`）不该跟着搬 —— 拆职责
+        的验收就是"守语义的用例一行不改仍然绿"。写路径只有 `models` 自己与 `rebuild`。
+        """
+        return self.models.role_models
 
     def chat_memory(self, role_id: str | None, thread_id: str | None) -> str:
         """这一轮对话她该看见什么：`memory_for_turn` 那份记忆 + 她最近**主动**说过的原话。
@@ -436,11 +372,9 @@ class Runtime:
             runtime_settings.load_overrides(self.conn),
         )
         # 构建在锁外：两个并发重建各自完整构建，后写者胜出（浪费但正确）。
-        # 代数**先加再清**：加在清之前，任何一个"清之前就进去了、清之后才落笔"的在飞写者
-        # 手上都拿着旧代数，回填会被它自己否掉（`R28-05`）。
-        self.model_cache_generation += 1
-        self.role_models.clear()
-        self.effective_by_user.clear()
+        # 代数**先加再清**（`ModelResolver.invalidate`）：加在清之前，任何一个"清之前就
+        # 进去了、清之后才落笔"的在飞写者手上都拿着旧代数，回填会被它自己否掉（`R28-05`）。
+        self.models.invalidate()
         default_model = self.model_factory(eff, None)
         knowledge_new = build_knowledge(eff, self.services, self.assembly.conn)
         registry_new = assemble_registry(self.assembly, self.registry_factory, eff, knowledge_new)
@@ -449,8 +383,8 @@ class Runtime:
         with self.rebuild_lock:
             # 换装是单个临界区：模型缓存 + 可变引用 + state 槽位一起翻，杜绝"新图配旧
             # 知识库"的中间态被 SSE 请求看到。
-            self.role_models.clear()
-            self.effective_by_user.clear()
+            # 只清不加代数：第一次清到这一刻之间，可能有写者拿着**换装前**的配置回填过。
+            self.models.clear_caches()
             self.effective = eff
             self.knowledge = knowledge_new
             self.registry = registry_new
@@ -753,9 +687,21 @@ def build_runtime(
         approvals=ApprovalService(conn),
         state=state,
         registry_factory=registry_factory,
-        injected_model=model,
         model_factory=factory,
         checkpointer=make_checkpointer(conn),
+    )
+    # 模型解析那一格（审查快照的"Runtime 拆 ModelResolver"）：它要读**实例主人**那份
+    # 当前配置，而配置的家在 Runtime 上，所以挂在对象建好之后 —— `identity` 也走闭包，
+    # 实例主人的解析只留一处。
+    runtime.models = ModelResolver(
+        model_settings=model_settings,
+        model_factory=factory,
+        env_settings=settings,
+        conn=conn,
+        state=state,
+        tracer=resolved_tracer,
+        identity=lambda: runtime.identity,
+        injected_model=model,
     )
     state["graph"] = runtime.build_graph(default_model, registry, effective)
     return runtime
