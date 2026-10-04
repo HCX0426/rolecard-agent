@@ -25,6 +25,7 @@ from langchain_core.tools import BaseTool, tool
 
 from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.core.tools.registry import ToolRegistry
+from rolecard_agent.domains.registry import domain_seed_roles
 from rolecard_agent.roles.service import RoleCards, RoleCardService
 from rolecard_agent.storage.db import bootstrap, connect
 
@@ -156,8 +157,8 @@ def roles(conn: sqlite3.Connection) -> RoleCardService:
     # 出厂卡也有主人：测试里就是本机那份。`roles` 夹具仍返回**服务**（图与内核的桩吃它），
     # 读写用例自己 `roles.scoped(...)` 拿视图）。
     service.seed_builtins(user_id=DEFAULT_USER_ID)
-    # medical_archivist 是域种子角色（自定义类型）
-    service.seed_domain_roles(user_id=DEFAULT_USER_ID)
+    # medical_archivist 是域种子角色（自定义类型）—— 清单由各域 SPEC 聚合给出
+    service.seed_domain_roles(domain_seed_roles(), user_id=DEFAULT_USER_ID)
     return service
 
 

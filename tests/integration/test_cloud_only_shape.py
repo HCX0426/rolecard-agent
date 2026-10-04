@@ -25,8 +25,12 @@ from rolecard_agent.core.bootstrap import Assembly, build_runtime
 from rolecard_agent.core.graph import build_graph_config
 from rolecard_agent.core.model_settings import client_style
 from rolecard_agent.core.probes import local_inference_base_url
-from rolecard_agent.domains.health.service import HealthQueryService
-from rolecard_agent.domains.registry import DOMAINS, build_registry
+from rolecard_agent.domains.registry import (
+    DOMAINS,
+    build_query_services,
+    build_registry,
+    domain_seed_roles,
+)
 from rolecard_agent.roles.models import RoleCard
 from tests.conftest import ScriptedChat
 
@@ -69,7 +73,7 @@ def _wiring(
     return build_registry(
         roles=assembly.roles,
         ingestion=assembly.ingestion,
-        query=assembly.query,
+        query_services=assembly.queries,
         knowledge=knowledge,  # type: ignore[arg-type]
         enabled_domains=enabled_domains,  # type: ignore[arg-type]
         current_user=lambda: DEFAULT_USER_ID,
@@ -84,7 +88,8 @@ def _wiring(
 def _runtime(tmp_path: Path, **kw: object) -> bootstrap.Runtime:
     return build_runtime(  # type: ignore[return-value]
         domains=DOMAINS,
-        query_factory=HealthQueryService,
+        query_services_factory=build_query_services,
+        domain_seed_roles=domain_seed_roles(),
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_cloud_only_settings(tmp_path),
         model_factory=lambda *_a, **_k: None,

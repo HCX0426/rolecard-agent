@@ -77,8 +77,12 @@ from rolecard_agent.core.bootstrap import Assembly, build_runtime
 from rolecard_agent.core.build_info import read_build_info
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.tools.registry import ToolRegistry
-from rolecard_agent.domains.health.service import HealthQueryService
-from rolecard_agent.domains.registry import DOMAINS, build_registry
+from rolecard_agent.domains.registry import (
+    DOMAINS,
+    build_query_services,
+    build_registry,
+    domain_seed_roles,
+)
 from rolecard_agent.rag.retriever import KnowledgeBase
 from rolecard_agent.storage.db import set_request_epoch
 
@@ -125,17 +129,10 @@ def _host_registry_factory(
     `IDENTITY_USER_ID` 那份。之所以要在上下文里绕这一道：工具对模型必须看起来零参数，
     把 user_id 做成工具入参等于让模型自己填"我是谁"。
     """
-    query = assembly.query
-    if not isinstance(query, HealthQueryService):
-        # v1 只接一个域，装配注入的就是它。将来多域时这里要换成"按域取各自的查询服务"，
-        # 而不是悄悄把不匹配的服务喂给 health 的工具工厂。
-        raise RuntimeError(
-            f"域接线只认识 {HealthQueryService.__name__}，注入的是 {type(query).__name__}"
-        )
     return build_registry(
         roles=assembly.roles,
         ingestion=assembly.ingestion,
-        query=query,
+        query_services=assembly.queries,
         knowledge=knowledge,
         enabled_domains=enabled_domains,
         current_user=lambda: active_user_id(resolve_instance_identity(settings)),
@@ -183,10 +180,13 @@ def create_app(
 
     runtime = build_runtime(
         domains=DOMAINS,
-        # 具体域在本文件只出现这一处：查询服务以工厂形式交给装配根（它需要装配过程中建好的
-        # 连接）。端点层从头到尾只见到 `DomainQueryService` 抽象。
-        query_factory=HealthQueryService,
+        # 域接线三件全部来自**域自己的声明**（`domains/registry.py` 的目录枚举）：查询服务
+        # 按域 id 建一张映射、种子角色把各域 SPEC.seed_roles 聚成一沓、工具工厂读各域 SPEC。
+        # 本文件因此不再 import 任何具体域类 —— 那句"isinstance 不匹配就拒绝启动"的检查
+        # 随之搬进了域自己的工具工厂（喂错域在域那一侧 loud）。
+        query_services_factory=build_query_services,
         registry_factory=_host_registry_factory,
+        domain_seed_roles=domain_seed_roles(),
         sqlite_path=sqlite_path,
         env_settings=env_settings,
         model=model,

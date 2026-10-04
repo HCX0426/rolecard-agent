@@ -1148,11 +1148,20 @@ def check_core_no_domain_token() -> None:
         fails.append(f"core/ mentions domain tokens: {bad}")
 
 
-#: api 层允许 import 具体域的**登记接缝**（`R102-10`：集单调最严——除这两处外即红）。
+#: `domains` 包里**通用**的模块（域契约与注册表）。api 层 import 它们不算"耦合具体域" ——
+#: 恰恰相反，它们就是"中心代码不点名任何域"的那一层（2026-10-04 域机制收口：`api/main.py`
+#: 从此只读各域的 `SPEC`，那半边接缝随之消失）。
+GENERIC_DOMAIN_MODULES = frozenset(
+    {
+        "rolecard_agent.domains.registry",
+        "rolecard_agent.domains.spec",
+    }
+)
+
+#: api 层允许 import 具体域的**登记接缝**（`R102-10`：集单调最严——除登记处外即红）。
 #: 每条的"为什么"就写在这里；登记过时（那个文件不再 import 具体域了）也红 ——
 #: 与 `route access` 的"清单里没有死条目"同一条纪律。
 API_DOMAIN_SEAMS = {
-    "src/rolecard_agent/api/main.py": "宿主侧域接线：具体域类只在这里交给装配根（唯一一处）",
     "src/rolecard_agent/api/routers/records.py": "域通用路由：按 kind 分派各域的抽取器与异常名",
 }
 
@@ -1162,8 +1171,13 @@ def check_api_domain_seams() -> None:
 
     `deps.py` 从前自述"api 层不 import 具体域"，而 `main.py` 与 `records.py` 就在
     import —— 分叉处正好在尺子的覆盖面外（`core no domain token` 只管 core）。修法不是
-    把那两句改没，而是承认**两个接缝是刻意的**（装配一处、分派一处），再立这把尺子把
-    "第三处"挡在门外：新增一个 import 具体域的 api 文件 = 红，必须来这里登记并写理由。
+    把那两句改没，而是承认**接缝是刻意的**（分派一处），再立这把尺子把"第二处"挡在门外：
+    新增一个 import 具体域的 api 文件 = 红，必须来这里登记并写理由。
+
+    2026-10-04 域机制收口后名单从两条收到一条：`main.py` 不再 import 任何具体域类
+    （域接线改读各域 `SPEC`），`api/main.py` 与其余 api 文件 import 的
+    `domains.registry` / `domains.spec` 属于**通用**模块，不计入（见 `GENERIC_DOMAIN_MODULES`
+    —— 把它们算成"具体域"会让这把尺子天天喊狼来了，喊多了就没人看）。
     """
     api_dir = ROOT / "src" / "rolecard_agent" / "api"
     hits: dict[str, set[str]] = {}
@@ -1179,6 +1193,7 @@ def check_api_domain_seams() -> None:
                 and node.level == 0
                 and node.module
                 and node.module.startswith("rolecard_agent.domains.")
+                and node.module not in GENERIC_DOMAIN_MODULES
             ):
                 hits.setdefault(rel, set()).add(node.module)
     unregistered = sorted(rel for rel in hits if rel not in API_DOMAIN_SEAMS)
@@ -3386,7 +3401,8 @@ def check_role_whitelists_resolve() -> None:
     （代码审查报告（第二轮）L4）。工具名在代码里只有一个权威声明处：`@tool("name")`。
     """
     sys.path.insert(0, str(ROOT / "src"))
-    from rolecard_agent.roles.seed import BUILTIN_ROLES, DOMAIN_SEED_ROLES  # noqa: PLC0415
+    from rolecard_agent.domains.registry import domain_seed_roles  # noqa: PLC0415
+    from rolecard_agent.roles.seed import BUILTIN_ROLES  # noqa: PLC0415
 
     self_rel = pathlib.Path(__file__).relative_to(ROOT).as_posix()
     declared: set[str] = set()
@@ -3399,10 +3415,11 @@ def check_role_whitelists_resolve() -> None:
             re.findall(r'@tool\("(\w+)"\)', path.read_text(encoding="utf-8", errors="ignore"))
         )
 
-    # 域种子角色（DOMAIN_SEED_ROLES）与内置角色同样随代码出厂：白名单写错名字要在这里
-    # 大声失败，反向覆盖（声明了却没人引用）也要把它们的引用算进去。
+    # 域种子角色（各域 `DomainSpec.seed_roles` 聚合，2026-10-04 起住在域自己包里）与
+    # 内置角色同样随代码出厂：白名单写错名字要在这里大声失败，反向覆盖（声明了却没人
+    # 引用）也要把它们的引用算进去。
     wanted: set[str] = set()
-    for role in (*BUILTIN_ROLES, *DOMAIN_SEED_ROLES):
+    for role in (*BUILTIN_ROLES, *domain_seed_roles()):
         wanted |= set(role.tool_whitelist or [])
 
     missing = sorted(wanted - declared)
@@ -3450,6 +3467,7 @@ def check_exemplar_leaks_eval_answers() -> None:
     提问重叠才是"把答案递给模型"的可判定信号。
     """
     sys.path.insert(0, str(ROOT / "src"))
+    from rolecard_agent.domains.registry import domain_seed_roles  # noqa: PLC0415
     from rolecard_agent.roles.seed import BUILTIN_ROLES  # noqa: PLC0415
 
     case_path = ROOT / "tests" / "eval" / "cases" / "health.json"
@@ -3459,8 +3477,11 @@ def check_exemplar_leaks_eval_answers() -> None:
     cases = json.loads(case_path.read_text(encoding="utf-8"))
     eval_inputs = {_normalise_question(str(c.get("input") or "")) for c in cases if c.get("input")}
 
+    # 域种子角色一并查：出过事故的那张卡（`medical_archivist`）恰恰是域角色 —— 从前这里
+    # 只遍历 BUILTIN_ROLES，于是"范例不能是评测答案"这条规则对**真正高危的那张卡**是空转
+    # （2026-10-04 域机制收口时补上：`DomainSpec.seed_roles` 聚合后与内置角色同一视界）。
     leaked: list[str] = []
-    for role in BUILTIN_ROLES:
+    for role in (*BUILTIN_ROLES, *domain_seed_roles()):
         for ex in role.exemplars or []:
             q = _normalise_question(ex.user)
             if q and q in eval_inputs:

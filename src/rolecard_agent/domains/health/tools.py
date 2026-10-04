@@ -28,19 +28,9 @@ from rolecard_agent.base.markers import UNVERIFIED_MARKER
 from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.domains.health.service import HealthQueryService
 
-# The names this domain contributes. The single source of truth for the built-in role's
-# whitelist (`roles/seed.py`) and for `tests/unit/test_builtin_tools.py`'s resolution check.
-DOMAIN_TOOL_NAMES: tuple[str, ...] = (
-    "query_health_record",
-    "compare_health_index",
-    "list_reports",
-    "upload_medical_report",
-)
-
-# 有副作用的工具：**不允许执行器重试**。`upload_medical_report` 会写 ingestion 台账，
-# 重试一次就多一条记录。装配点（domains/registry.build_registry）据此分流注册。
-# 声明在域自身而不是装配点：谁能安全重试是工具的性质，不是宿主的知识。
-WRITE_TOOL_NAMES: frozenset[str] = frozenset({"upload_medical_report"})
+# 本域贡献的工具名（`DOMAIN_TOOL_NAMES`）与写工具名单（`WRITE_TOOL_NAMES`）住在
+# `domains/health/names.py`：它们是**声明**，被包级 SPEC 与角色白名单在导入期读，放这里
+# 会让 `names -> tools -> service` 与 `__init__ -> names` 缠成一个环。
 
 
 def resolve_upload_target(file_path: str, upload_dir: str | Path) -> Path | None:

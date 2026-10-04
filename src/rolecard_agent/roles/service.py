@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from rolecard_agent.base.audit import AuditTrail
 from rolecard_agent.roles.models import RoleCard, RoleCardCreate, RoleCardUpdate
-from rolecard_agent.roles.seed import BUILTIN_ROLES, DOMAIN_SEED_ROLES
+from rolecard_agent.roles.seed import BUILTIN_ROLES
 from rolecard_agent.storage.db import SqlConnection
 from rolecard_agent.storage.threads import set_current_role
 
@@ -307,9 +307,15 @@ class RoleCardService:
         return count
 
     def seed_domain_roles(
-        self, roles: Iterable[RoleCardCreate] = DOMAIN_SEED_ROLES, *, user_id: str
+        self, roles: Iterable[RoleCardCreate], *, user_id: str
     ) -> int:
         """播种域角色：类型是**自定义**（is_builtin=0），已存在则一个字段都不覆盖。
+
+        `roles` **没有默认值**：域角色清单不再住在本包里（2026-10-04 审查快照的域机制
+        条目 —— 内核点名具体域的工具名与知识作用域就是概念泄漏），调用方从各域的
+        `DomainSpec.seed_roles` 聚合后传进来（`domains.registry.domain_seed_roles()`；
+        装配根拿宿主注入的那一份）。给个空默认值会让"忘了接"变成静默不播种，所以宁可
+        让漏接在签名上就炸。
 
         与 `seed_builtins` 的全字段 upsert 刻意不同（用户 2026-09-17 反馈"健康档案管理员
         改成自定义"）：域角色是领域概念，不该由内核在每次重启时把操作员的改名/改提示词

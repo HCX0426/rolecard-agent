@@ -1,9 +1,10 @@
 """Bootstrap SQLite: apply schema in the fixed order (see storage/db.py), then seed the
-built-in roles from roles/seed.py.
+built-in roles from roles/seed.py and each domain's seed roles from its own `DomainSpec`.
 
-Built-in roles live in CODE, not in a SQL fixture: `medical_archivist` is undeletable
-(role_card.is_builtin = 1) and its tool whitelist is a security boundary, so it must not be
-ordinary editable data.
+Built-in roles live in CODE, not in a SQL fixture: they are undeletable
+(role_card.is_builtin = 1) and their tool whitelist is a security boundary, so it must not be
+ordinary editable data. 域角色同理是代码出厂（类型是自定义，可改可删），只是清单住在
+各自的域包里 —— 见 `domains/registry.domain_seed_roles`。
 
 Run:  python scripts/init_db.py
 """
@@ -34,7 +35,7 @@ def main() -> int:
     from rolecard_agent.core.checkpointer import make_checkpointer
     from rolecard_agent.core.model_settings import migrate_to_provider_layers
     from rolecard_agent.core.plugins import seed_plugin_rows
-    from rolecard_agent.domains.registry import DOMAINS
+    from rolecard_agent.domains.registry import DOMAINS, domain_seed_roles
     from rolecard_agent.roles.service import RoleCardService
     from rolecard_agent.storage.db import bootstrap, connect
 
@@ -65,7 +66,9 @@ def main() -> int:
     owner = resolve_instance_identity(settings)
     store = RoleCardService(conn)
     seeded = store.seed_builtins(user_id=owner)
-    store.seed_domain_roles(user_id=owner)
+    # 域种子角色由**各域自己的声明**给出（`DomainSpec.seed_roles` 聚合）：本脚本不点名
+    # 任何域 —— 新增一个带角色的域，这里一个字都不用改。
+    store.seed_domain_roles(domain_seed_roles(), user_id=owner)
 
     enabled = [
         row[0]

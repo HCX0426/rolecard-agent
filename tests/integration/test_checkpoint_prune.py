@@ -24,6 +24,7 @@ from rolecard_agent.core.graph import build_kernel
 from rolecard_agent.core.plugins import PluginService
 from rolecard_agent.core.state import new_state
 from rolecard_agent.core.tools.registry import ToolRegistry
+from rolecard_agent.domains.registry import domain_seed_roles
 from rolecard_agent.roles.service import RoleCardService
 from rolecard_agent.storage.db import bootstrap, connect
 from tests.conftest import ScriptedChat, list_roles
@@ -85,7 +86,7 @@ def _kernel(db_path: Path, replies: list[Any]) -> Any:
     roles = RoleCardService(conn)
     roles.seed_builtins(user_id="u1")
     # `medical_archivist` 是**域角色**：只 seed_builtins 的话每轮都回"角色已不存在"。
-    roles.seed_domain_roles(user_id="u1")
+    roles.seed_domain_roles(domain_seed_roles(), user_id="u1")
     plugins = PluginService(conn, known_plugins=["health"])
     reg = ToolRegistry()
     reg.register(list_roles)

@@ -25,15 +25,16 @@ from pathlib import Path
 
 from rolecard_agent.core.bootstrap import build_runtime
 from rolecard_agent.core.checkpointer import truncate_wal_at_boot
-from rolecard_agent.domains.registry import DOMAINS
+from rolecard_agent.domains.registry import DOMAINS, build_query_services, domain_seed_roles
 from rolecard_agent.storage.db import bootstrap, connect
-from tests.unit.test_bootstrap import HealthQueryService, _settings, _wiring
+from tests.unit.test_bootstrap import _settings, _wiring
 
 
 def _runtime(tmp_path: Path):
     return build_runtime(
         domains=DOMAINS,
-        query_factory=HealthQueryService,
+        query_services_factory=build_query_services,
+        domain_seed_roles=domain_seed_roles(),
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_settings(tmp_path),
         model_factory=lambda *_a, **_k: None,

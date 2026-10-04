@@ -26,7 +26,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import date, timedelta
 
-from rolecard_agent.domains.health import KNOWLEDGE_SCOPE
+from rolecard_agent.domains.health.names import KNOWLEDGE_SCOPE
 from rolecard_agent.storage.db import SqlConnection
 
 # A report check date the tool layer accepts: YYYY-MM-DD (or just YYYY-MM). Anything else is

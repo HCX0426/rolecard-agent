@@ -29,7 +29,7 @@ def test_kernel_tool_names_are_stable(roles: RoleCardService) -> None:
 def test_builtin_role_whitelist_resolves(roles: RoleCardService) -> None:
     """Every name in the seeded whitelist must be a kernel tool, a declared domain tool,
     or the kernel search_knowledge capability (v2.1: retrieval lives in rag/)."""
-    from rolecard_agent.domains.health.tools import DOMAIN_TOOL_NAMES
+    from rolecard_agent.domains.health.names import DOMAIN_TOOL_NAMES
     from rolecard_agent.rag.retriever import make_search_tool
 
     resolvable = {t.name for t in make_kernel_tools(current_user=_who, roles=roles)}

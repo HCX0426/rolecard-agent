@@ -6,9 +6,10 @@
 import FastAPI。抽出来之后 `api/main.py` 只剩 HTTP 绑定：路由、中间件、鉴权、静态托管、
 生命周期。
 
-本模块**不知道任何具体域**：域查询服务与工具注册表由宿主注入（`query_factory` /
-`registry_factory`）。这既是分层的硬要求（`check_core_no_domain_token` 会拦下 core 里出现
-域专名），也让"哪些域存在"继续只有一个声明处（`domains/registry.py` 的 `DOMAINS`）。
+本模块**不知道任何具体域**：域名单、各域查询服务、域种子角色与工具注册表都由宿主注入
+（`domains` / `query_services_factory` / `domain_seed_roles` / `registry_factory`）。这既是
+分层的硬要求（`check_core_no_domain_token` 会拦下 core 里出现域专名），也让"哪些域存在"
+继续只有一个声明处（`domains/registry.py` 的目录枚举，2026-10-04 审查快照的域机制条目）。
 
 热重建（`Runtime.rebuild`）的并发纪律沿用原实现：**构建在锁外、换装在锁内**。两个并发
 重建各自完整构建（后写者胜出，浪费但正确），而三个可变引用 + 模型缓存的换装是单个临界区
@@ -20,7 +21,7 @@ from __future__ import annotations
 
 import contextlib
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -70,7 +71,7 @@ from rolecard_agent.core.state import now_ts
 from rolecard_agent.core.thread_locks import release_thread, try_thread_write
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder, make_reranker
-from rolecard_agent.roles.models import RoleCard
+from rolecard_agent.roles.models import RoleCard, RoleCardCreate
 from rolecard_agent.roles.service import RoleCardService
 from rolecard_agent.storage.db import (
     RETENTION_BACKUP_DIRNAME,
@@ -93,8 +94,10 @@ class Assembly:
     audit: AuditTrail
     plugins: PluginService
     ingestion: IngestionService
-    #: 域查询服务（v1 单域）：由宿主注入，本模块不认识它是哪个域。
-    query: DomainQueryService
+    #: 各域自己的查询服务（域 id → 服务；无查询服务的域不进这张表）。由宿主按域自描述
+    #: 声明逐个建（`domains.registry.build_query_services`），本模块不认识其中任何一个
+    #: 具体域 —— 从此也不存在"把唯一一个服务喂给唯一一个工具工厂"的喂错域中间态。
+    queries: Mapping[str, DomainQueryService]
     tracer: Tracer
 
 
@@ -260,9 +263,19 @@ class Runtime:
     def ingestion(self) -> IngestionService:
         return self.assembly.ingestion
 
-    @property
-    def query(self) -> DomainQueryService:
-        return self.assembly.query
+    def query_service(self, domain_id: str) -> DomainQueryService:
+        """按域 id 取**该域自己的**查询服务 —— 缺域就 loud，不回落到别的域。
+
+        为什么不留一个"唯一查询服务"的属性：v1 只有一个富域时那样写省事，但第二个域
+        一来它就变成"谁碰到谁拿走"的共享槽（拿错域的服务 = 读写落进另一套表）。域名单
+        来自宿主注入的映射，本模块仍然不认识任何域名。
+        """
+        try:
+            return self.assembly.queries[domain_id]
+        except KeyError:
+            raise KeyError(
+                f"域 {domain_id!r} 没有查询服务（已装配：{sorted(self.assembly.queries)}）"
+            ) from None
 
     @property
     def tracer(self) -> Tracer:
@@ -621,8 +634,9 @@ class Runtime:
 def build_runtime(
     *,
     domains: Sequence[str],
-    query_factory: Callable[[SqlConnection], DomainQueryService],
+    query_services_factory: Callable[[SqlConnection], Mapping[str, DomainQueryService]],
     registry_factory: RegistryFactory,
+    domain_seed_roles: Sequence[RoleCardCreate],
     sqlite_path: Path | None = None,
     env_settings: Settings | None = None,
     model: ChatLike | None = None,
@@ -631,8 +645,11 @@ def build_runtime(
 ) -> Runtime:
     """装配内核：建库 → 播种 → 服务实例化 → 知识库/注册表/图 → 可热重建的 `Runtime`。
 
-    `domains` / `query_factory` / `registry_factory` 由宿主给出（本模块不认识任何具体域；
-    查询服务以**工厂**传入，因为它要拿装配过程中建好的连接）。
+    `domains` / `query_services_factory` / `registry_factory` / `domain_seed_roles` 由宿主
+    给出（本模块不认识任何具体域）：各域的查询服务以**工厂**传入（它要拿装配过程中建好的
+    连接），域种子角色是**已经聚合好的一沓卡**（宿主从各域 `SPEC.seed_roles` 聚出来，见
+    `domains.registry.domain_seed_roles`）—— 这一项刻意**没有默认值**：给了默认 `()` 就
+    等于允许某个宿主"忘了接域角色"而没有任何声音，那是本项目最不接受的静默降级。
     `sqlite_path` 可注入便于测试用临时库，省略时回退 `Settings.sqlite_path`。
     `model` / `tracer` / `model_factory` 同理：测试注入替身即可全离线跑通对话链路
     （本项目铁律：测内核行为，不测 LLM 本身）。`model_factory` 会在**默认模型构建、
@@ -684,7 +701,9 @@ def build_runtime(
     audit = AuditTrail(conn)
     roles = RoleCardService(conn)
     roles.seed_builtins(user_id=owner)
-    roles.seed_domain_roles(user_id=owner)
+    # 域种子角色是**宿主聚合好的**（各域 SPEC.seed_roles）：内核不认识任何域名，也就
+    # 无从自己列出"该播种哪些域角色"。参见 `domains.registry.domain_seed_roles`。
+    roles.seed_domain_roles(domain_seed_roles, user_id=owner)
     plugins = PluginService(conn, known_plugins=domains)
     ingestion = IngestionService(conn)
     model_settings = ModelSettingsService(conn)
@@ -709,7 +728,7 @@ def build_runtime(
         audit=audit,
         plugins=plugins,
         ingestion=ingestion,
-        query=query_factory(conn),
+        queries=query_services_factory(conn),
         tracer=resolved_tracer,
     )
     knowledge = build_knowledge(effective, services, conn)

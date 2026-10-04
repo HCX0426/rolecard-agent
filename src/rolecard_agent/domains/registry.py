@@ -1,18 +1,20 @@
-"""Explicit domain plugin list - no dynamic loading, no discovery magic.
+"""域注册表：**目录枚举 + 每域自描述 `SPEC`** —— 中心代码从此不点名任何具体域。
 
-Two different things, deliberately kept apart:
+两件不同的事仍刻意分开（原实现如此，本文件保持）：
 
-  * **REGISTERED** - which domains exist, i.e. which code is present. This file. Changing it
-    is a commit.
-  * **ENABLED** - which registered domains are currently switched on. The `plugin` table.
-    Changing it is an operator action.
+  * **REGISTERED** —— 哪些域存在，即哪些代码在场。判据是 `domains/` 下的**目录**：每个
+    子包导出一份 `DomainSpec`（`SPEC`），由 `discover_specs()` 枚举出来。新增一个域 =
+    新增一个目录，本文件、`api/main.py`、`core/bootstrap.py`、`roles/seed.py` 一行不改；
+    目录缺 `SPEC` 或 `spec.id` 与目录名不等 ⇒ **启动即红**（域的工具永远绑不上是本项目
+    最不能接受的那种静默失败）。
+  * **ENABLED** —— 注册域里哪些当前被打开。`plugin` 表，操作员动作。
 
-`scripts/init_db.py` applies the schema of every REGISTERED domain, so a table always exists
-and re-enabling a plugin never needs DDL.
+`scripts/init_db.py` 与 `storage.db.bootstrap` 对每个注册域套用其 `schema.sql`，表因此
+永远存在，重新启用插件不需要 DDL。
 
-To add a domain: implement models.py / service.py / tools.py / schema.sql under
-domains/<name>/ and append its id to DOMAINS below. M3 adds the tool registry on top of this;
-today it is the id list only.
+To add a domain: implement models / service / tools / schema.sql under `domains/<name>/`,
+add a `seed.py` if it ships roles, and export `SPEC` from `domains/<name>/__init__.py`.
+Nothing outside that directory needs to change.
 
 IMPORTANT: runtime enable/disable is an OPERATOR action backed by the plugin table.
 It is never exposed as an LLM-callable tool (self-authorization risk, same as switch_role).
@@ -20,28 +22,99 @@ It is never exposed as an LLM-callable tool (self-authorization risk, same as sw
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import importlib
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from rolecard_agent.domains.spec import DomainSpec, DomainToolContext
+
 if TYPE_CHECKING:
-    # Annotation-only names: the runtime imports live inside build_registry, keeping this
-    # module's import cost at "id list only" for callers (init_db) that only need DOMAINS.
+    from rolecard_agent.core.domain_service import DomainQueryService
     from rolecard_agent.core.ingestion import IngestionService
     from rolecard_agent.core.tools.builtin import DomainsLike
     from rolecard_agent.core.tools.registry import ToolRegistry
-    from rolecard_agent.domains.health.service import HealthQueryService
     from rolecard_agent.rag.retriever import KnowledgeBase
+    from rolecard_agent.roles.models import RoleCardCreate
     from rolecard_agent.roles.service import RoleCardService
+    from rolecard_agent.storage.db import SqlConnection
 
-# Registered domain ids. Each MUST match a directory under domains/ and the plugin.plugin_id
-# in core/schema.sql. This is the single source of truth - previously scripts/init_db.py kept
-# its own hardcoded copy, which is how two lists drift apart (技术评审与决策.md §9 A3).
-#
-# `finance` is a data-only domain (no LLM tools): it exists to exercise the generic
-# `domain_data` CRUD path (前端 `GenericDomainData`) so multi-domain data management is real,
-# not health-only. Add richer domains here the same way (models/service/tools/schema + factory).
-DOMAINS: tuple[str, ...] = ("health", "finance")
+#: 本包在 `sys.modules` 里的名字 —— 目录枚举按 `<本包>.<目录名>` 导入各域。
+_PACKAGE = __package__ or "rolecard_agent.domains"
+_PACKAGE_DIR = Path(__file__).resolve().parent
+
+
+def _domain_dirs(root: Path | None = None) -> list[Path]:
+    """`domains/` 下的候选目录（排序稳定 ⇒ 域顺序稳定）。
+
+    下划线/点开头的一律跳过（`__pycache__` 与约定俗成的私有目录）；其余每个目录都**必须
+    是包** —— 一个只有 schema.sql 却没有 `__init__.py` 的域会在这里报错，而不是等到
+    `schema_files()` 才 FileNotFoundError。
+    """
+    base = root or _PACKAGE_DIR
+    dirs: list[Path] = []
+    for child in sorted(base.iterdir()):
+        if not child.is_dir() or child.name.startswith((".", "_")):
+            continue
+        if not (child / "__init__.py").is_file():
+            raise ValueError(
+                f"域目录 {child.name!r} 不是包（缺 __init__.py）—— "
+                "注册域必须导出 DomainSpec，见 domains/spec.py"
+            )
+        dirs.append(child)
+    return dirs
+
+
+def _load_spec(name: str) -> DomainSpec:
+    """导入一个域包并取它的 `SPEC`。缺声明 / id 对不上目录名一律 loud。"""
+    module = importlib.import_module(f"{_PACKAGE}.{name}")
+    spec = getattr(module, "SPEC", None)
+    if not isinstance(spec, DomainSpec):
+        raise ValueError(
+            f"域包 {name!r} 没有导出 SPEC（DomainSpec）—— "
+            "注册域必须自描述（工具工厂 / 查询服务 / 种子角色 / 写工具名），见 domains/spec.py"
+        )
+    if spec.id != name:
+        raise ValueError(f"域 {name!r} 的 SPEC.id={spec.id!r} 与目录名不一致")
+    return spec
+
+
+def discover_specs(root: Path | None = None) -> tuple[DomainSpec, ...]:
+    """目录枚举出全部注册域的 `SPEC`（按目录名排序；重复 id 不可能出现，id 即目录名）。"""
+    specs = tuple(_load_spec(d.name) for d in _domain_dirs(root))
+    ids = [s.id for s in specs]
+    if len(set(ids)) != len(ids):
+        raise ValueError(f"重复的域 id: {ids}")
+    return specs
+
+
+#: 注册域 id。**不是手写清单** —— 它是 `discover_specs()` 的投影（2026-10-04 审查快照的
+#: 域机制条目：从前这里是一行手写元组，与 factories 字典、`api/main.py` 的接线、
+#: `roles/seed.py` 的工具名共六处登记，新增一域要改六处）。每个 id 必须同时匹配
+#: `domains/<id>/` 目录与 `core/schema.sql` 的 plugin 表（后者由 `seed_plugin_rows` 播种）。
+DOMAINS: tuple[str, ...] = tuple(spec.id for spec in discover_specs())
+
+
+def domain_seed_roles() -> tuple[RoleCardCreate, ...]:
+    """全部注册域的出厂种子角色 —— 由各域 `SPEC.seed_roles` 聚合。
+
+    `roles/seed.py` 从此前的域角色清单里解放出来：内核不认识任何域名，域角色是**域的
+    概念**，跟着自己的 SPEC 出厂。装配根（`core.bootstrap`）拿宿主注入的这一份去播种。
+    """
+    return tuple(role for spec in discover_specs() for role in spec.seed_roles)
+
+
+def build_query_services(conn: SqlConnection) -> dict[str, DomainQueryService]:
+    """按域 id 建各自的查询服务（无查询服务的域不进这张映射）。
+
+    这是 `api/main.py` 里那句 isinstance 接线的替身：装配点不再"把唯一一个服务喂给唯一
+    一个工厂"，每个域的工具工厂按自己的 `spec.id` 取自己那份 —— 喂错域没有中间态。
+    """
+    return {
+        spec.id: spec.query_service_factory(conn)
+        for spec in discover_specs()
+        if spec.query_service_factory is not None
+    }
 
 
 def _lazy_settings() -> Any:
@@ -55,7 +128,7 @@ def build_registry(
     *,
     roles: RoleCardService,
     ingestion: IngestionService,
-    query: HealthQueryService,
+    query_services: Mapping[str, DomainQueryService],
     knowledge: KnowledgeBase,
     enabled_domains: DomainsLike,
     current_user: Callable[[], str],
@@ -64,13 +137,16 @@ def build_registry(
     settings: Any = None,
     memory_conn: Any = None,
     fs_conn: Any = None,
+    specs: Sequence[DomainSpec] | None = None,
 ) -> ToolRegistry:
     """Assemble the full tool registry: kernel tools + every registered domain's tools.
 
-    This is the ONE place that knows how each domain's tool factory is wired, so the API layer
-    never imports a concrete domain (that would re-couple the app surface to `health`).
-    Registering a domain id without adding its factory here fails LOUDLY at startup - a domain
-    whose tools silently never bind is the failure mode this project exists to prevent.
+    各域的工具怎么拼，是**该域自己的 `SPEC.tool_factory`** 说的（本文件只照单执行）；
+    装配点不再 import 任何具体域，也不再维护 factories 字典 —— 那份字典正是"注册了 id
+    却忘了接工厂"的静默失败源，如今缺声明在 `discover_specs()` 就已经红了。
+
+    `query_services` 是"域 id → 该域查询服务"的映射（宿主用 `build_query_services` 建）：
+    每个域的工厂只拿到**自己 id** 下的那一件，喂错域没有中间态。
 
     `current_user` is resolved per tool invocation inside the factories; the model can never
     name who it is acting as. `knowledge` backs the kernel search_knowledge tool (v2.1):
@@ -95,6 +171,8 @@ def build_registry(
     （保存即生效，见 core/workspace.py），也供 fs 工具的**审计写入**（actor="agent"）。
     None = fs 工具回落 env workspace_dir 且不审计（测试场景）。
 
+    `specs` 缺省时现场目录枚举；测试可用它注入一个假域，验证"新增域零改中心代码"。
+
     工具的 `idempotent` 标记是**执行器的重试开关**：只有显式声明"重复调用无副作用"的
     只读工具才允许重试（审查报告 M10 —— 旧实现对所有工具都重试 2 次，包括会写台账的
     `upload_medical_report`）。
@@ -106,7 +184,6 @@ def build_registry(
     from rolecard_agent.core.tools.registry import ToolRegistry as _ToolRegistry
     from rolecard_agent.core.tools.run import make_run_tool
     from rolecard_agent.core.tools.web import make_web_tools
-    from rolecard_agent.domains.health.tools import WRITE_TOOL_NAMES, make_domain_tools
     from rolecard_agent.rag.retriever import make_search_tool
 
     registry = _ToolRegistry()
@@ -158,30 +235,25 @@ def build_registry(
         idempotent=False,
     )
 
-    # Explicit per-domain wiring: what each domain needs to construct its tools, visible here.
-    factories = {
-        "health": lambda: make_domain_tools(
-            ingestion, query, current_user=current_user, upload_dir=upload_dir
-        ),
-        # Data-only domain: no LLM tools, just a `domain_data` bucket the UI manages directly.
-        "finance": lambda: [],
-    }
-    for domain in DOMAINS:
-        if domain not in factories:
-            raise ValueError(
-                f"domain {domain!r} is registered but has no tool factory in build_registry()"
+    # 每个域的工具由**它自己的 SPEC** 声明：这里只负责按域分流注册（读工具可重试，
+    # `spec.write_tool_names` 里的写工具不重试）。分流判据来自域自身，装配点不抄清单。
+    for spec in specs if specs is not None else discover_specs():
+        domain_tools = spec.tool_factory(
+            DomainToolContext(
+                ingestion=ingestion,
+                query=query_services.get(spec.id),
+                current_user=current_user,
+                upload_dir=upload_dir,
             )
-        # 读写分开注册：写工具的重试开关必须关掉（见上）。声明式的名字清单来自域自身，
-        # 装配点只做分流，不重复维护列表。
-        domain_tools = factories[domain]()
+        )
         registry.register_many(
-            [t for t in domain_tools if t.name not in WRITE_TOOL_NAMES],
-            domain=domain,
+            [t for t in domain_tools if t.name not in spec.write_tool_names],
+            domain=spec.id,
             idempotent=True,
         )
         registry.register_many(
-            [t for t in domain_tools if t.name in WRITE_TOOL_NAMES],
-            domain=domain,
+            [t for t in domain_tools if t.name in spec.write_tool_names],
+            domain=spec.id,
             idempotent=False,
         )
 
@@ -195,3 +267,13 @@ def build_registry(
         if mcp_tools:
             registry.register_many(mcp_tools, domain="mcp", idempotent=False)
     return registry
+
+
+__all__ = [
+    "DOMAINS",
+    "DomainSpec",
+    "build_query_services",
+    "build_registry",
+    "discover_specs",
+    "domain_seed_roles",
+]

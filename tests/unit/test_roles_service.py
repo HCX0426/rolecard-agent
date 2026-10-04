@@ -7,6 +7,7 @@ import sqlite3
 import pytest
 
 from rolecard_agent.base.identity import DEFAULT_USER_ID
+from rolecard_agent.domains.registry import domain_seed_roles
 from rolecard_agent.roles.models import (
     MAX_EXEMPLARS,
     RoleCardCreate,
@@ -108,7 +109,7 @@ def test_builtin_role_cannot_be_deleted(roles: RoleCardService) -> None:
     cards(roles).delete("medical_archivist")
     assert not cards(roles).exists("medical_archivist")
     # 重启（再次播种）：缺失才补插，且不会复活为内置。
-    roles.seed_domain_roles(user_id=ME)
+    roles.seed_domain_roles(domain_seed_roles(), user_id=ME)
     assert cards(roles).exists("medical_archivist")
     assert cards(roles).get("medical_archivist").is_builtin is False
 

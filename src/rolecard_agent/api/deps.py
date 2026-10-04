@@ -192,11 +192,12 @@ class AppContext:
 
     `settings` 读到的是**有效配置**（模型页 DB 配置 ⊕ 运行环境覆盖），不是裸 env 快照：
     OCR / 抽取 / 比对在请求时读它，「运行环境」页签保存后要立刻生效。
-    `health` 只依赖域查询抽象，不持有具体域类。**"api 层不 import 具体域"这句话要修正**
-    （`R102-10`）：api 层有**两个登记过的接缝**会 import 具体域 —— `main.py` 的域接线
-    （宿主侧组装，具体域类只在那里出现一处）与 `routers/records.py`（域通用路由按 kind
-    分派到各域的抽取器与异常名）。除这两处外的 api 文件 import 具体域即红：核心纪律在
-    `core/` 那半边由 `core no domain token` 管，api 这半边由 `api domain seams` 管。
+    `health` 是按域 id 取的**那份**域查询服务（`runtime.query_service("health")`）——
+    **"api 层不 import 具体域"这句话要修正**（`R102-10`）：api 层现在只剩**一个**登记过的
+    接缝会 import 具体域（`routers/records.py`，域通用路由按 kind 分派到各域的抽取器与
+    异常名）。宿主侧接线（main.py）在 2026-10-04 域机制收口后只读各域的 `SPEC`，不再 import
+    任何具体域类，因此从接缝名单里除名。除 records.py 外的 api 文件 import 具体域即红：
+    核心纪律在 `core/` 那半边由 `core no domain token` 管，api 这半边由 `api domain seams` 管。
 
     `actor` / `_user_id` 是**每次请求一份**的那两个字段（`for_request` 填）：其余全是读穿
     Runtime 的共享视图，只有这两个属于"这次是谁"。它们不能记在共享实例上，理由见 `for_request`。
@@ -272,7 +273,12 @@ class AppContext:
 
     @property
     def health(self) -> DomainQueryService:
-        return self.runtime.query
+        """health 域的查询服务（按域 id 取，见 `Runtime.query_service`）。
+
+        属性名保留 `health`：端点侧写的是"我在用哪个域"，这一层点名是**刻意的**（路由本来
+        就为这个域服务）。不认识的域 id 会 loud 报错，不会静默拿到别域的服务。
+        """
+        return self.runtime.query_service("health")
 
     @property
     def model_settings(self) -> ModelSettingsService:

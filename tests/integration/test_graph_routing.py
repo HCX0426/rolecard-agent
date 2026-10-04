@@ -29,6 +29,7 @@ from rolecard_agent.core.graph import build_kernel
 from rolecard_agent.core.plugins import PluginService
 from rolecard_agent.core.state import new_state
 from rolecard_agent.core.tools.registry import ToolRegistry
+from rolecard_agent.domains.registry import domain_seed_roles
 from rolecard_agent.roles.models import RoleCardCreate
 from rolecard_agent.roles.service import RoleCards, RoleCardService
 from rolecard_agent.storage.db import bootstrap, connect
@@ -59,7 +60,7 @@ def _kernel(
     bootstrap(conn, enabled_domains=("health",))
     roles = RoleCardService(conn)
     roles.seed_builtins(user_id="u1")
-    roles.seed_domain_roles(user_id="u1")
+    roles.seed_domain_roles(domain_seed_roles(), user_id="u1")
 
     plugins = PluginService(conn, known_plugins=["health"])
     plugins.register("health", display_name="Health")
@@ -187,7 +188,7 @@ def test_whitelist_is_applied_before_binding(tmp_path: Path) -> None:
     bootstrap(conn, enabled_domains=("health",))
     roles = RoleCardService(conn)
     roles.seed_builtins(user_id="u1")
-    roles.seed_domain_roles(user_id="u1")
+    roles.seed_domain_roles(domain_seed_roles(), user_id="u1")
     cards(roles).create(
         RoleCardCreate(
             role_id="narrow",

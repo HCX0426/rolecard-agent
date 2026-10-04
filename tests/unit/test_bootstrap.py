@@ -26,7 +26,12 @@ from rolecard_agent.config import ModelBackend, Settings
 from rolecard_agent.core.bootstrap import Assembly, Runtime, build_runtime
 from rolecard_agent.core.nodes import KernelContext, _turn_backend, turn_settings
 from rolecard_agent.domains.health.service import HealthQueryService
-from rolecard_agent.domains.registry import DOMAINS, build_registry
+from rolecard_agent.domains.registry import (
+    DOMAINS,
+    build_query_services,
+    build_registry,
+    domain_seed_roles,
+)
 from rolecard_agent.storage.db import bootstrap as apply_schema
 from rolecard_agent.storage.db import connect
 
@@ -51,7 +56,7 @@ def _wiring(
     return build_registry(
         roles=assembly.roles,
         ingestion=assembly.ingestion,
-        query=assembly.query,
+        query_services=assembly.queries,
         knowledge=knowledge,  # type: ignore[arg-type]
         enabled_domains=enabled_domains,  # type: ignore[arg-type]
         current_user=lambda: DEFAULT_USER_ID,
@@ -66,7 +71,8 @@ def _wiring(
 def _assemble(tmp_path: Path) -> Runtime:
     return build_runtime(
         domains=DOMAINS,
-        query_factory=HealthQueryService,
+        query_services_factory=build_query_services,
+        domain_seed_roles=domain_seed_roles(),
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_settings(tmp_path),
         model_factory=lambda *_a, **_k: None,
@@ -106,7 +112,7 @@ def test_kernel_assembles_without_an_app(tmp_path: Path) -> None:
         assert runtime.state["graph"] is not None, "没起 app 就该没有图 —— 装配根漏了东西"
         # 内核工具 + 各域工具都在（启用域是闭包，插件启停实时生效）。
         assert runtime.registry.names(), "注册表是空的：宿主接线没生效"
-        assert isinstance(runtime.query, HealthQueryService)
+        assert isinstance(runtime.query_service("health"), HealthQueryService)
         # 模型页 DB 为空表 ⇒ 有效配置此刻与 env 一致；两者仍是**不同对象**，
         # 重建时换的是 effective，env 快照不受污染。
         assert runtime.effective.sqlite_path == runtime.env_settings.sqlite_path
@@ -119,13 +125,13 @@ def test_rebuild_swaps_every_mutable_slot(tmp_path: Path) -> None:
     """热重建之后可变引用必须**全部**换新 —— 少换任何一个就是"改了不生效"的接缝。"""
     runtime = _assemble(tmp_path)
     try:
-        before_query = runtime.query
+        before_query = runtime.query_service("health")
         before = (runtime.effective, runtime.knowledge, runtime.registry, runtime.state["graph"])
         runtime.rebuild()
         after = (runtime.effective, runtime.knowledge, runtime.registry, runtime.state["graph"])
         assert all(new is not old for new, old in zip(after, before, strict=True))
         # 域查询服务只持有连接，是稳定引用：不随重建换（换了反而会丢掉在途请求的引用）。
-        assert runtime.query is before_query
+        assert runtime.query_service("health") is before_query
     finally:
         runtime.conn.close()
 
@@ -138,7 +144,8 @@ def test_assembly_seeds_schema_and_demo_identity(tmp_path: Path) -> None:
     for _ in range(2):
         runtime = build_runtime(
             domains=DOMAINS,
-            query_factory=HealthQueryService,
+            query_services_factory=build_query_services,
+        domain_seed_roles=domain_seed_roles(),
             registry_factory=_wiring,  # type: ignore[arg-type]
             env_settings=settings,
             model_factory=lambda *_a, **_k: None,
@@ -405,7 +412,8 @@ def test_a_turn_carries_the_key_of_the_person_who_is_talking(tmp_path: Path) -> 
     seen: list[Settings] = []
     runtime = build_runtime(
         domains=DOMAINS,
-        query_factory=HealthQueryService,
+        query_services_factory=build_query_services,
+        domain_seed_roles=domain_seed_roles(),
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_settings_with_a_local_key(tmp_path),
         model_factory=_record_models(seen),
@@ -436,7 +444,8 @@ def test_a_default_backend_belongs_to_the_person_who_is_talking(tmp_path: Path) 
     seen: list[Settings] = []
     runtime = build_runtime(
         domains=DOMAINS,
-        query_factory=HealthQueryService,
+        query_services_factory=build_query_services,
+        domain_seed_roles=domain_seed_roles(),
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_settings_with_a_local_key(tmp_path),
         model_factory=_record_models(seen),
@@ -467,7 +476,8 @@ def test_a_background_caller_names_the_owner_it_works_for(tmp_path: Path) -> Non
     seen: list[Settings] = []
     runtime = build_runtime(
         domains=DOMAINS,
-        query_factory=HealthQueryService,
+        query_services_factory=build_query_services,
+        domain_seed_roles=domain_seed_roles(),
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_settings_with_a_local_key(tmp_path),
         model_factory=_record_models(seen),
@@ -490,7 +500,8 @@ def test_an_unknown_backend_degrades_instead_of_raising(tmp_path: Path) -> None:
     seen: list[Settings] = []
     runtime = build_runtime(
         domains=DOMAINS,
-        query_factory=HealthQueryService,
+        query_services_factory=build_query_services,
+        domain_seed_roles=domain_seed_roles(),
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_settings_with_a_local_key(tmp_path),
         model_factory=_record_models(seen),
@@ -551,7 +562,8 @@ def test_an_inflight_build_cannot_republish_a_stale_model_after_rebuild(tmp_path
 
     runtime = build_runtime(
         domains=DOMAINS,
-        query_factory=HealthQueryService,
+        query_services_factory=build_query_services,
+        domain_seed_roles=domain_seed_roles(),
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_settings(tmp_path),
         model_factory=factory,
