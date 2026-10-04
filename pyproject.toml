@@ -116,9 +116,12 @@ no_implicit_optional = true
 #     来源标记 / 路径发现 / 观测出口 / 身份 / 审计咽喉 / 执行期注入的 ContextVar）。
 #     这些件从前住在 core，于是 rag / roles 想借一把就得反向 import 内核 —— 两条双向边
 #     就是这么长出来的。放到底层之后"反向"在结构上构不出来。
-#   * `domains` 现在还在 `core` 之上，因为 `domains/registry.py` 点名具体域去装配工具，
-#     而 `core/ no domain token` 那条尺子禁止内核出现域专名。P1-5（DomainSpec + registry
-#     目录枚举）把域名单从装配点里拿掉之后，这一格会翻到 core 之下 —— 契约跟着改那一行。
+#   * `domains` 现在还在 `core` 之上。P1-5 的阶段一（`fc4e222`：DomainSpec + registry
+#     目录枚举）已经把域名单从装配点里拿掉，但**翻格到 core 之下还差前置条件**：
+#     `domains/registry.py` 拼的是内核工具（core.tools.* / core.memory / core.consensus）、
+#     `domains/health/tools.py` 用 core 的件 —— 现在翻会让这些 `domains → core` 当场变红。
+#     翻层要与「core 经 Spec 认域」（core 侧自己 discover_specs）一起做；在那之前这一行
+#     不动，`core/ no domain token` 继续替内核把关。判据见 docs/修复交接（2026-10-04）第四节 3-②。
 #   * `(features)` 是 proactive / sync / pets 拆出来之后的位置（P2-1），现在还不存在，
 #     写成 optional 让契约先于施工生效。
 #
