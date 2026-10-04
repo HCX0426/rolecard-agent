@@ -19,7 +19,6 @@ from rolecard_agent.api.deps import (
     get_context,
 )
 from rolecard_agent.base.observability import scrub_endpoints
-from rolecard_agent.core.ingestion import IngestionNotFound
 from rolecard_agent.core.upload_service import read_source_text, source_kind
 from rolecard_agent.core.uploads import parsed_text_path as _parsed_text_path
 from rolecard_agent.domains.health.extract import (
@@ -224,10 +223,7 @@ def _extract_and_store(*, body: ExtractRequest, ctx: AppContext, actor: Actor) -
     与路由分开只是为了让上面那层互斥有个干净的 try/finally —— 原实现是一个 120 行的
     路由函数，互斥逻辑塞进去要整段重排缩进（审查报告 P2：路由过大）。
     """
-    try:
-        task = ctx.ingestion.get(body.task_id)
-    except IngestionNotFound as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    task = ctx.ingestion.get(body.task_id)
 
     # 幂等判据在**域**那一侧（`report_id_for_task`）：外键列住在域的表里，路由按约定既不
     # import 具体域、也不自己写它的表名（架构审计报告 P1-1）。

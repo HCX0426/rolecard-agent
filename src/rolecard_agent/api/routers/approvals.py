@@ -24,11 +24,6 @@ from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import ROLE_OPERATOR, Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
-from rolecard_agent.core.approvals import (
-    ApprovalAlreadyDecided,
-    ApprovalNotFound,
-    ApprovalUnauthorised,
-)
 from rolecard_agent.core.tools import run as run_tools
 
 router = APIRouter()
@@ -82,23 +77,14 @@ def decide_approval(
             status_code=400,
             detail=f"decision 只接受 approve / reject，收到：{body.decision!r}",
         )
-    try:
-        token = body.token
-        if token is None and actor.role == ROLE_OPERATOR:
-            # 凭据做第二因子（`R102-46`）：operator 本来就是决定者，不该再被"令牌只从
-            # 列表下发"这张网兜住 —— 那张网如今只罩使用者角色，而他们本来就决定不了。
-            # off 档的匿名调用方（role=user）仍必须持令牌：确认点击 + 来源护栏 + 令牌，
-            # 三样缺一不可，这是给"猜自增 id 就批"留的最后一道。
-            token = ctx.approvals.get(approval_id).get("decide_token")
-        record = ctx.approvals.decide(approval_id, decision, token=token)
-    except ApprovalNotFound as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ApprovalAlreadyDecided as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except ApprovalUnauthorised as exc:
-        # 403 而不是 401：这里的缺口不是"没登录"（单机形态本来就不登录），而是"没持有
-        # 这条待批下发的凭据"——身份可以匿名，凭据不行。
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    token = body.token
+    if token is None and actor.role == ROLE_OPERATOR:
+        # 凭据做第二因子（`R102-46`）：operator 本来就是决定者，不该再被"令牌只从
+        # 列表下发"这张网兜住 —— 那张网如今只罩使用者角色，而他们本来就决定不了。
+        # off 档的匿名调用方（role=user）仍必须持令牌：确认点击 + 来源护栏 + 令牌，
+        # 三样缺一不可，这是给"猜自增 id 就批"留的最后一道。
+        token = ctx.approvals.get(approval_id).get("decide_token")
+    record = ctx.approvals.decide(approval_id, decision, token=token)
 
     ctx.audit.log(
         actor=actor.id,

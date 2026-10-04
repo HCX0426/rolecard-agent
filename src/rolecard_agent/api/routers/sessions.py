@@ -23,7 +23,6 @@ from rolecard_agent.api.deps import (
     get_actor,
     get_context,
     get_thread,
-    role_error_to_http,
     serialize_message,
 )
 from rolecard_agent.base.observability import TraceEvent
@@ -42,7 +41,6 @@ from rolecard_agent.core.thread_locks import (
     thread_write,
 )
 from rolecard_agent.core.usage import TokenUsage, record_usage
-from rolecard_agent.roles.service import RoleError, RoleNotFound
 
 router = APIRouter()
 
@@ -126,10 +124,7 @@ def create_session(
     """Create a session thread bound to a role. The thread row is what makes the
     LangGraph `thread_id` answerable to "who is talking" (core/schema.sql A2)."""
     role_id = body.role_id or DEFAULT_ROLE_ID
-    try:
-        role = ctx.role_cards.get(role_id)
-    except RoleNotFound as exc:
-        raise role_error_to_http(exc) from exc
+    role = ctx.role_cards.get(role_id)
     thread_id = session_service.create(
         ctx.conn,
         user_id=ctx.current_user(),
@@ -157,10 +152,7 @@ def open_proactive_session(
     幂等：从没被主动找过的角色也能先在桌宠上聊起来；被删掉后再调一次会长回同一行
     （已提炼进角色记忆的事实不跟着走，那条边界有断言钉着）。
     """
-    try:
-        role = ctx.role_cards.get(body.role_id)
-    except RoleNotFound as exc:
-        raise role_error_to_http(exc) from exc
+    role = ctx.role_cards.get(body.role_id)
     thread_id = ensure_proactive_thread(
         ctx.conn, role=role, user_id=ctx.current_user(), tool_epoch=ctx.plugins.tool_epoch()
     )
@@ -232,12 +224,11 @@ def patch_session(
         raise HTTPException(status_code=400, detail="没有任何要更新的字段。")
 
     if body.role_id:
-        try:
-            ctx.roles.set_thread_role(
-                thread_id, body.role_id, user_id=ctx.current_user(), actor=actor.id
-            )
-        except RoleError as exc:
-            raise role_error_to_http(exc) from exc  # 角色/线程不存在都是 404
+        # 角色/线程不存在都抛 RoleNotFound → 注册表给 404（`api/errors.py` 的
+        # `_FAMILIES`）；这里不再自己 catch —— 漏 catch 的下场是 500 空壳。
+        ctx.roles.set_thread_role(
+            thread_id, body.role_id, user_id=ctx.current_user(), actor=actor.id
+        )
 
     if body.model_name is not None and body.model_name.strip() == "":
         body.model_name = None  # 空串 = 清除覆盖
@@ -331,10 +322,7 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
     session_mode = session_service.resolve_agent_mode(
         thread["agent_mode"], ctx.app_state["effective"]
     )
-    try:
-        role = ctx.role_cards.get(role_id)
-    except RoleNotFound as exc:
-        raise role_error_to_http(exc) from exc
+    role = ctx.role_cards.get(role_id)
 
     # 侧栏标题：首轮消息截断生成；updated_at 每轮刷新，会话列表按它倒序。
     # 纯图消息没有文本 → 标题用 "[图片]"，COALESCE 兜底空标题（首次就覆盖）。
@@ -640,10 +628,7 @@ def edit_message_and_regenerate(
     session_mode = session_service.resolve_agent_mode(
         thread["agent_mode"], ctx.app_state["effective"]
     )
-    try:
-        role = ctx.role_cards.get(role_id)
-    except RoleNotFound as exc:
-        raise role_error_to_http(exc) from exc
+    role = ctx.role_cards.get(role_id)
 
     target = next((m for m in messages if getattr(m, "id", None) == body.message_id), None)
     if target is None:
@@ -908,23 +893,18 @@ def upload_report(
     判据见那边的模块文档（先 spill 再幂等、OcrUnavailable≠ParseError 等四条）。
     """
     thread = get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
-    try:
-        outcome = upload_service.ingest_upload(
-            reader=file.file,
-            filename=file.filename or "report.bin",
-            thread_id=thread_id,
-            user_id=str(thread["user_id"]),
-            upload_dir=ctx.settings.upload_dir,
-            ingestion=ctx.ingestion,
-            knowledge=ctx.knowledge,
-            knowledge_scope=ctx.health.knowledge_scope,
-            ocr_candidates=ctx.ocr_candidates,
-            tracer=ctx.tracer,
-        )
-    except upload_service.UploadRejected as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except upload_service.UploadUnreadable as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    outcome = upload_service.ingest_upload(
+        reader=file.file,
+        filename=file.filename or "report.bin",
+        thread_id=thread_id,
+        user_id=str(thread["user_id"]),
+        upload_dir=ctx.settings.upload_dir,
+        ingestion=ctx.ingestion,
+        knowledge=ctx.knowledge,
+        knowledge_scope=ctx.health.knowledge_scope,
+        ocr_candidates=ctx.ocr_candidates,
+        tracer=ctx.tracer,
+    )
 
     with thread_write(thread_id, timeout=session_service.WRITE_WAIT):
         ctx.app_state["graph"].update_state(

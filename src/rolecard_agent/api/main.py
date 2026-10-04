@@ -34,7 +34,7 @@ from typing import cast
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from rolecard_agent.api.access import OPERATOR, classify
@@ -52,6 +52,7 @@ from rolecard_agent.api.auth import (
 )
 from rolecard_agent.api.body_cap import BodyCapMiddleware
 from rolecard_agent.api.deps import AppContext
+from rolecard_agent.api.errors import error_response, register_error_handlers
 from rolecard_agent.api.ratelimit import Limiter, bucket_key, is_limited, paths_of
 from rolecard_agent.api.routers import approvals as approvals_router
 from rolecard_agent.api.routers import console as console_router
@@ -75,7 +76,6 @@ from rolecard_agent.config import Settings
 from rolecard_agent.core.bootstrap import Assembly, build_runtime
 from rolecard_agent.core.build_info import read_build_info
 from rolecard_agent.core.nodes import ChatLike
-from rolecard_agent.core.thread_locks import ThreadBusy
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.domains.health.service import HealthQueryService
 from rolecard_agent.domains.registry import DOMAINS, build_registry
@@ -210,17 +210,11 @@ def create_app(
     app = FastAPI(title="rolecard-agent 管理控制台", version=API_VERSION, lifespan=_lifespan)
     app.state.ctx = AppContext(runtime=runtime)
 
-    # 写检查点等不到会话锁 ⇒ 409 + 一句人话（`R28-02`/`R28-03` 的出口）。
-    # 为什么注册在 app 上而不是各路由自己 try：六个写检查点的口子（改历史、删历史、两处上传
-    # 说明、同步清空、同步整段替换）要给用户的本来就该是同一句话，各写各的 try 早晚写出六种。
-    # 底层为什么不再返回布尔：`with thread_write(tid):` 这种写法没法不带上分支，
-    # 而"丢了判断"的后果是无互斥地分叉同一个父检查点 —— 那是要吞消息的，不是要"记得判一下"的。
-    @app.exception_handler(ThreadBusy)
-    async def _thread_busy(_: Request, exc: ThreadBusy) -> JSONResponse:
-        return JSONResponse(
-            status_code=409,
-            content={"detail": "这一轮还在跑 —— 先按「停止」或等它说完，再改这段历史。"},
-        )
+    # 错误响应的唯一出口：正文工厂 + 异常族→状态码注册表（HTTPException / ThreadBusy /
+    # 角色卡、插件、模型配置、审批、摄取、上传各族）。从前 ThreadBusy 的 409 handler
+    # 注册在这儿、而认证/限流/分级/来源护栏四个中间件自己拼裸文本 —— 两半形状不一致，
+    # 中文文案到不了前端（它只读 JSON detail）。判据见 `api/errors.py` 的模块文档。
+    register_error_handlers(app)
 
     # C1：端点按职责分包，全部端点已迁出本文件。
     app.include_router(roles_router.router)
@@ -288,7 +282,7 @@ def create_app(
             # "账号或密码不对"这句界面提示整个吃掉。
             carried = bool(req.headers.get("authorization") or req.headers.get("x-api-key"))
             status, headers, body = unauthorized_response(challenge=not carried)
-            return PlainTextResponse(body, status_code=status, headers=headers)
+            return error_response(status, body, headers)
         # 操作员面（`api/access.py` 那张表里没被降级的一切）：`on`/`auto` 档下必须是
         # **本机来源或操作员凭据**。这一条真正关掉的洞是"`AUTH_EXEMPT_PATHS` 配宽了一点，
         # 于是管理端点变成免凭据可达" —— 认证那一步会因豁免直接放过，分级这里补上。
@@ -311,7 +305,7 @@ def create_app(
                 if user_is_authenticated_operator
                 else "Forbidden: 这一项需要操作员凭据（当前凭据只是使用者角色）"
             )
-            return PlainTextResponse(reason, status_code=403)
+            return error_response(403, reason)
         # 节流住在这里而不是另起一个中间件：**认证之后才谈"这个人能打多快"** —— 桶的键
         # 就是刚解析出的身份。`RATE_LIMIT_PER_MINUTE=0`（默认）时下面整段是死的。
         # **本机来源不设卡**（与认证那条"本机来源永远放行"同一份信任模型）：桌面壳、
@@ -323,11 +317,11 @@ def create_app(
             if not ok:
                 # 403 与 429 分开：这一条不是"你没权限"，是"你太快了" —— 文案里带上
                 # 怎么调（配置项名），免得下一步去翻代码。
-                return PlainTextResponse(
+                return error_response(
+                    429,
                     "Too Many Requests：这一身份对这类端点的请求太密，"
                     f"{retry_after} 秒后再试。"
                     "（上限见配置 RATE_LIMIT_PER_MINUTE，受管路径见 RATE_LIMIT_PATHS）",
-                    status_code=429,
                     headers={"Retry-After": str(retry_after)},
                 )
         req.state.actor = actor
@@ -357,7 +351,7 @@ def create_app(
                 auth_mode=env_settings.auth_mode,
             )
             if reason is not None:
-                return PlainTextResponse(reason, status_code=403)
+                return error_response(403, reason)
             return await call_next(request)  # type: ignore[operator]
 
     # 跨域放行（M5）：**默认不装**。装了才允许别的 origin 的浏览器带着凭据打这里，

@@ -20,8 +20,8 @@ from rolecard_agent.api.deps import (
     AppContext,
     get_actor,
     get_context,
-    value_error_to_http,
 )
+from rolecard_agent.api.errors import value_error_to_http
 from rolecard_agent.core.domain_data import DomainDataService
 
 router = APIRouter()

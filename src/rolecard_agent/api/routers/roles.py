@@ -21,17 +21,9 @@ from rolecard_agent.api.deps import (
     AppContext,
     get_actor,
     get_context,
-    plugin_error_to_http,
-    role_error_to_http,
 )
 from rolecard_agent.core import timeline
-from rolecard_agent.core.plugins import PluginError
 from rolecard_agent.roles.models import RoleCardCreate, RoleCardUpdate
-from rolecard_agent.roles.service import (
-    BuiltinRoleProtected,
-    RoleAlreadyExists,
-    RoleNotFound,
-)
 
 router = APIRouter()
 
@@ -72,10 +64,7 @@ def create_role(
     actor: Actor = Depends(get_actor),
 ) -> object:
     _validate_role_model(ctx, data.model_name)
-    try:
-        created = ctx.role_cards.create(data)
-    except RoleAlreadyExists as exc:
-        raise role_error_to_http(exc) from exc
+    created = ctx.role_cards.create(data)
     ctx.audit.log(
         actor=actor.id,
         action="create_role",
@@ -100,10 +89,7 @@ def update_role(
 ) -> object:
     if "model_name" in data.model_fields_set:
         _validate_role_model(ctx, data.model_name)
-    try:
-        updated = ctx.role_cards.update(role_id, data)
-    except RoleNotFound as exc:
-        raise role_error_to_http(exc) from exc
+    updated = ctx.role_cards.update(role_id, data)
     changed = sorted(data.model_fields_set)
     if changed:  # 空 PATCH 是"什么都没改"，不值得污染审计
         ctx.audit.log(
@@ -121,10 +107,7 @@ def delete_role(
     ctx: AppContext = Depends(get_context),
     actor: Actor = Depends(get_actor),
 ) -> None:
-    try:
-        ctx.role_cards.delete(role_id)
-    except (RoleNotFound, BuiltinRoleProtected) as exc:
-        raise role_error_to_http(exc) from exc
+    ctx.role_cards.delete(role_id)
     ctx.audit.log(actor=actor.id, action="delete_role", target=role_id)
 
 
@@ -143,10 +126,7 @@ def role_timeline(
     纯读，所以不写审计 —— "谁翻了时间线"不是运维要关心的事，而这条轴的内容全是用户自己的对话
     与事实，写进审计流水反而是在给它们做第二份留存。
     """
-    try:
-        ctx.role_cards.get(role_id)
-    except RoleNotFound as exc:
-        raise role_error_to_http(exc) from exc
+    ctx.role_cards.get(role_id)
     wanted = tuple(k.strip() for k in kinds.split(",") if k.strip()) if kinds else None
     if bad := [k for k in wanted or () if k not in timeline.KINDS]:
         raise HTTPException(
@@ -195,10 +175,7 @@ def toggle_plugin(
     ctx: AppContext = Depends(get_context),
     actor: Actor = Depends(get_actor),
 ) -> object:
-    try:
-        epoch = ctx.plugins.set_enabled(plugin_id, body.enabled, actor=actor.id)
-    except PluginError as exc:
-        raise plugin_error_to_http(exc) from exc
+    epoch = ctx.plugins.set_enabled(plugin_id, body.enabled, actor=actor.id)
     return {"plugin_id": plugin_id, "enabled": body.enabled, "tool_epoch": epoch}
 
 

@@ -28,7 +28,7 @@ from rolecard_agent.core.bootstrap import Runtime
 from rolecard_agent.core.domain_service import DomainQueryService
 from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.core.model_settings import ModelSettingsService
-from rolecard_agent.core.plugins import PluginError, PluginService, UnknownPlugin
+from rolecard_agent.core.plugins import PluginService
 from rolecard_agent.core.services import ServiceEndpointService
 from rolecard_agent.core.tools.registry import ToolRegistry
 
@@ -37,11 +37,8 @@ if TYPE_CHECKING:
 from rolecard_agent.core.session_service import get_row
 from rolecard_agent.rag.retriever import KnowledgeBase
 from rolecard_agent.roles.service import (
-    BuiltinRoleProtected,
-    RoleAlreadyExists,
     RoleCards,
     RoleCardService,
-    RoleNotFound,
 )
 from rolecard_agent.storage.db import ThreadLocalConnection
 
@@ -343,30 +340,3 @@ def get_actor(request: Request) -> Actor:
     from rolecard_agent.api.auth import Actor as _Actor
 
     return getattr(request.state, "actor", _Actor())
-
-
-# ---------------------------------------------------------------- 领域错误 → HTTP
-
-
-def role_error_to_http(exc: Exception) -> HTTPException:
-    """Map a domain error to the right HTTP status. Never leaks a stack trace."""
-    if isinstance(exc, RoleNotFound):
-        return HTTPException(status_code=404, detail=str(exc))
-    if isinstance(exc, (RoleAlreadyExists, BuiltinRoleProtected)):
-        return HTTPException(status_code=409, detail=str(exc))
-    return HTTPException(status_code=400, detail=str(exc))
-
-
-def plugin_error_to_http(exc: PluginError) -> HTTPException:
-    if isinstance(exc, UnknownPlugin):
-        return HTTPException(status_code=404, detail=str(exc))
-    return HTTPException(status_code=400, detail=str(exc))
-
-
-def value_error_to_http(exc: ValueError) -> HTTPException:
-    """路由层的 `ValueError`（可读的用户输入/业务错误）统一翻译成 400。
-
-    与 `role_error_to_http` / `plugin_error_to_http` 同族；收口各路由里重复了十几遍的
-    `raise HTTPException(status_code=400, detail=str(exc)) from exc`。
-    """
-    return HTTPException(status_code=400, detail=str(exc))

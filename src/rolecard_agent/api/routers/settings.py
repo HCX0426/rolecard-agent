@@ -12,7 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor
-from rolecard_agent.api.deps import AppContext, get_actor, get_context, value_error_to_http
+from rolecard_agent.api.deps import AppContext, get_actor, get_context
+from rolecard_agent.api.errors import value_error_to_http
 from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.config import SECRET_FIELD_NAMES, Settings
 from rolecard_agent.core import runtime_settings
@@ -112,8 +113,6 @@ def patch_model_context(
     """
     try:
         ctx.model_settings.set_num_ctx(name, body.num_ctx, user_id=ctx.current_user())
-    except ModelSettingsError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except KeyError:
         raise HTTPException(status_code=404, detail=f"模型 {name!r} 不存在。") from None
     ctx.audit.log(
@@ -158,8 +157,6 @@ def patch_model_sampling(
         raise HTTPException(status_code=400, detail="没有要保存的内容。")
     try:
         stored = ctx.model_settings.set_sampling(name, given, user_id=ctx.current_user())
-    except ModelSettingsError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except KeyError:
         raise HTTPException(status_code=404, detail=f"模型 {name!r} 不存在。") from None
     # dict 不变：`dict[str, float | None]` 不是 `dict[str, object]`，交给审计要显式过一道。
@@ -180,31 +177,28 @@ def put_model_settings(
     api_key 语义：缺省/None = 保留**该凭据组**已存的 key；空串 = 清除 —— 否则每次没重输
     key 的保存都会把 key 抹掉。同一 (供应商, 端点) 下的多个模型共用一把 key，所以"在已有
     供应商下再加一个模型"不需要重填凭据。fallbacks = 失败自动回退链（≤2 级，按序尝试）。"""
-    try:
-        # 凭据校验前置：需要 key 的端点没有 key 时，保存即拒绝 —— 否则会存进一个
-        # "重建时才炸"的配置（实测：热重建抛 Missing credentials）。
-        for b in body.backends:
-            if is_keyless_provider(b.provider):
-                continue
-            if b.api_key:
-                continue
-            if ctx.model_settings.has_key_for_endpoint(
-                b.provider, b.base_url, user_id=ctx.current_user()
-            ):
-                continue  # 组里已有 key：这一行只是同端点的另一个模型，不必重输
-            raise ModelSettingsError(
-                f"模型 {b.name} 用的厂商 {b.provider} 还没有密钥（api_key）；本地 Ollama 无需填写。"
-            )
-        # default/fallbacks 缺省 = 保留当前值（编辑入口已统一到「服务」页签优先级列表）。
-        current_default = ctx.model_settings.default_backend(user_id=ctx.current_user()) or "local"
-        ctx.model_settings.save(
-            user_id=ctx.current_user(),
-            default=body.default or current_default,
-            backends=[b.model_dump() for b in body.backends],
-            fallbacks=body.fallbacks,
+    # 凭据校验前置：需要 key 的端点没有 key 时，保存即拒绝 —— 否则会存进一个
+    # "重建时才炸"的配置（实测：热重建抛 Missing credentials）。
+    for b in body.backends:
+        if is_keyless_provider(b.provider):
+            continue
+        if b.api_key:
+            continue
+        if ctx.model_settings.has_key_for_endpoint(
+            b.provider, b.base_url, user_id=ctx.current_user()
+        ):
+            continue  # 组里已有 key：这一行只是同端点的另一个模型，不必重输
+        raise ModelSettingsError(
+            f"模型 {b.name} 用的厂商 {b.provider} 还没有密钥（api_key）；本地 Ollama 无需填写。"
         )
-    except ModelSettingsError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # default/fallbacks 缺省 = 保留当前值（编辑入口已统一到「服务」页签优先级列表）。
+    current_default = ctx.model_settings.default_backend(user_id=ctx.current_user()) or "local"
+    ctx.model_settings.save(
+        user_id=ctx.current_user(),
+        default=body.default or current_default,
+        backends=[b.model_dump() for b in body.backends],
+        fallbacks=body.fallbacks,
+    )
     # 管理面变更必须留痕（H3）。审计只记**结构**（名称/用途/默认/回退链），绝不记 key。
     ctx.audit.log(
         actor=actor.id,
@@ -264,17 +258,14 @@ def post_model_catalog(body: CatalogBody, ctx: AppContext = Depends(get_context)
     """
     from rolecard_agent.core.model_probe import list_models, resolve_target
 
-    try:
-        target = resolve_target(
-            ctx.model_settings,
-            user_id=ctx.current_user(),
-            provider_id=body.provider_id,
-            provider=body.provider,
-            base_url=body.base_url,
-            api_key=body.api_key,
-        )
-    except ModelSettingsError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    target = resolve_target(
+        ctx.model_settings,
+        user_id=ctx.current_user(),
+        provider_id=body.provider_id,
+        provider=body.provider,
+        base_url=body.base_url,
+        api_key=body.api_key,
+    )
     names, error = list_models(target)
     return {"models": names, "reachable": not error, "detail": error}
 
@@ -301,18 +292,15 @@ def post_model_probe(
     """
     from rolecard_agent.core.model_probe import probe, resolve_target
 
-    try:
-        target = resolve_target(
-            ctx.model_settings,
-            user_id=ctx.current_user(),
-            provider_id=body.provider_id,
-            provider=body.provider,
-            base_url=body.base_url,
-            api_key=body.api_key,
-            model=body.model,
-        )
-    except ModelSettingsError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    target = resolve_target(
+        ctx.model_settings,
+        user_id=ctx.current_user(),
+        provider_id=body.provider_id,
+        provider=body.provider,
+        base_url=body.base_url,
+        api_key=body.api_key,
+        model=body.model,
+    )
     result = probe(target, test_tools=body.test_tools, test_vision=body.test_vision).to_api()
     ctx.audit.log(
         actor=actor.id,
@@ -355,21 +343,18 @@ def post_add_model(
     加完热重建，下一轮对话就能选到它；如果这是整套配置里的第一行，它同时成为对话默认
     （否则"加完模型仍然不能对话"是最难查的那种空配置）。
     """
-    try:
-        added = ctx.model_settings.add_model(
-            user_id=ctx.current_user(),
-            model=body.model,
-            provider=body.provider,
-            base_url=body.base_url,
-            api_key=body.api_key,
-            group_id=body.provider_id,
-            name=body.name,
-            num_ctx=body.num_ctx,
-            supports_vision=body.supports_vision,
-            supports_tools=body.supports_tools,
-        )
-    except ModelSettingsError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    added = ctx.model_settings.add_model(
+        user_id=ctx.current_user(),
+        model=body.model,
+        provider=body.provider,
+        base_url=body.base_url,
+        api_key=body.api_key,
+        group_id=body.provider_id,
+        name=body.name,
+        num_ctx=body.num_ctx,
+        supports_vision=body.supports_vision,
+        supports_tools=body.supports_tools,
+    )
     ctx.audit.log(
         actor=actor.id,
         action="add_model",
@@ -426,8 +411,6 @@ def patch_model_capabilities(
         ctx.model_settings.set_capabilities(name, given, user_id=ctx.current_user())
     except KeyError:
         raise HTTPException(status_code=404, detail=f"模型 {name!r} 不存在。") from None
-    except ModelSettingsError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     ctx.audit.log(
         actor=actor.id,
         action="update_model_capabilities",
