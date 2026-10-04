@@ -81,3 +81,40 @@ def test_epoch_change_commits_nothing_hidden(tmp_path: Path) -> None:
     count = conn.execute("SELECT COUNT(*) FROM tenant").fetchone()[0]
 
     assert count == 2, "已提交的数据被代际切换弄丢了"
+
+
+def test_dedupe_ingestion_removes_duplicates_keeps_latest(tmp_path) -> None:
+    """老库的重复台账在唯一索引建起前必须清掉（2026-10-04 审查快照的上传幂等条目）。
+
+    保留 updated_at 最新的一条、删掉同 (user_id, file_hash) 的旧影子 —— 被删的都是
+    同字节的旧影子，最新那条承载全部语义；无重复时零改动（幂等）。
+    """
+    import sqlite3
+
+    from rolecard_agent.storage.db import _dedupe_ingestion_tasks
+
+    conn = sqlite3.connect(tmp_path / "legacy.db")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE ingestion_task (task_id TEXT PRIMARY KEY, user_id TEXT, "
+        "source_file TEXT, file_hash TEXT, status TEXT, updated_at TIMESTAMP)"
+    )
+    rows = [
+        ("t-old", "u1", "a.txt", "hash-x", "indexed", "2026-01-01 00:00:00"),
+        ("t-new", "u1", "b.txt", "hash-x", "pending", "2026-06-01 00:00:00"),
+        ("t-other", "u1", "c.txt", "hash-y", "pending", "2026-01-01 00:00:00"),
+    ]
+    conn.executemany(
+        "INSERT INTO ingestion_task VALUES (?, ?, ?, ?, ?, ?)", rows
+    )
+    conn.commit()
+
+    removed = _dedupe_ingestion_tasks(conn)
+    assert removed == 1
+    left = {
+        str(r["task_id"])
+        for r in conn.execute("SELECT task_id FROM ingestion_task").fetchall()
+    }
+    assert left == {"t-new", "t-other"}, left
+    assert _dedupe_ingestion_tasks(conn) == 0, "幂等：第二遍必须零改动"
+    conn.close()

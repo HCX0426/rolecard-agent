@@ -369,6 +369,10 @@ CREATE TABLE IF NOT EXISTS ingestion_task (
 
 CREATE INDEX IF NOT EXISTS idx_ingestion_status ON ingestion_task(status);
 CREATE INDEX IF NOT EXISTS idx_ingestion_user ON ingestion_task(user_id);
+-- 表级 UNIQUE 只在新建库上存在（reconcile 补列不补约束）；这条命名索引让老库也拿到
+-- 同一保证。老库若躺着重复行，建索引前由 db._dedupe_ingestion_tasks 清重（R102-52 同款）。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ingestion_user_file
+    ON ingestion_task(user_id, file_hash);
 
 -- ===========================================================================
 -- 知识来源投影（`R102-55` 根治）：每个作用域里"有哪些来源"的唯一读侧事实面。

@@ -1134,8 +1134,16 @@ def upload_report(
         task_id = ctx.ingestion.create(
             user_id=user_id, source_file=str(target), file_hash=file_hash
         )
-        reused = False
         existing = ctx.ingestion.get(task_id)
+        if str(existing["source_file"] or "") != str(target):
+            # 输掉了并发竞态（2026-10-04 审查快照的上传幂等条目）：另一路上传先立了台账，
+            # create 的约束回读返回的是**它的**行 —— 自己刚落盘的那份就是孤儿文件，丢弃，
+            # 统一用赢家的那份。没这一步，并发双击/前端重试会各留一份文件。
+            target.unlink(missing_ok=True)
+            target = Path(str(existing["source_file"]))
+            reused = True
+        else:
+            reused = False
 
     # v2.2：统一解析入口——.txt/.md/.pdf 直接抽文本入检索索引；图片走 OCR 子进程
     # （独立 venv，见 requirements-ocr.txt）；其余类型保持 pending。

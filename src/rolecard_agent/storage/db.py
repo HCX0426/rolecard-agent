@@ -464,6 +464,9 @@ def bootstrap(
     # （并发 submit 的历史遗留），schema.sql 里那条 UNIQUE INDEX 会当场建失败 ——
     # 那是"库再也打不开"（R28-15）的同一条死法，不能让一份遗留数据把开机堵死。
     _dedupe_pending_approvals(conn)
+    # 同族前置（2026-10-04 审查快照的上传幂等条目）：老库的重复台账会让下面的
+    # 唯一索引当场建失败。
+    _dedupe_ingestion_tasks(conn)
     # 整表重建的滞留自愈（`R102-53`）**必须站在 schema DDL 之前**：executescript 的
     # `CREATE TABLE IF NOT EXISTS` 会把被 DROP 掉的原表先建成一张空的新形表，随后
     # `_migrate` 的"判老形态"永远为假 —— 滞留暂存表就永远没人管、还照常报绿。
@@ -649,6 +652,40 @@ def _dedupe_pending_approvals(conn: SqlConnection) -> int:
     )
     conn.commit()
     return max(cur.rowcount, 0)
+
+
+def _dedupe_ingestion_tasks(conn: SqlConnection) -> int:
+    """建 `idx_ingestion_user_file` 之前的清重（2026-10-04 审查快照的上传幂等条目）。
+
+    老库的 `ingestion_task` 若在拿到唯一索引前躺了同 (user_id, file_hash) 的重复行，
+    建索引会当场失败 = 库打不开（R28-15 同族）。台账语义 = "同一份字节一个任务"，
+    所以保留 `updated_at` 最新的一条、**删掉**其余（与审批清重的"收成 rejected"不同：
+    这里的索引不带 WHERE，任何状态的重复行都违例；而被删的都是同字节的旧影子，
+    最新那条承载全部语义）。幂等：无重复时零改动。
+    """
+    exists = conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'ingestion_task'"
+    ).fetchone()[0]
+    if not exists:
+        return 0
+    has_index = conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index'"
+        " AND name = 'idx_ingestion_user_file'"
+    ).fetchone()[0]
+    if has_index:
+        return 0  # 索引已在：库里不可能再有重复行，扫描是白费
+    cur = conn.execute(
+        "DELETE FROM ingestion_task WHERE rowid NOT IN ("
+        "  SELECT rowid FROM ingestion_task i"
+        "  WHERE i.rowid = (SELECT x.rowid FROM ingestion_task x"
+        "                   WHERE x.user_id = i.user_id AND x.file_hash = i.file_hash"
+        "                   ORDER BY x.updated_at DESC, x.rowid DESC LIMIT 1))"
+    )
+    conn.commit()
+    removed = max(cur.rowcount, 0)
+    if removed:
+        _migrate_event(f"清掉重复的 ingestion_task {removed} 行（保留每组最新一条）")
+    return removed
 
 
 def _needs_provider_layers(conn: SqlConnection) -> bool:
