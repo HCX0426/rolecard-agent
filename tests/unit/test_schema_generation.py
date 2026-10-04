@@ -3,7 +3,8 @@
 
 变异对照：
 * 摘掉 `_check_schema_generation` 的拒启分支 ⇒ `test_user_version_refuses_newer_db` 红；
-* 摘掉 `_repair_stranded_rebuild` 调用 ⇒ `test_strand_repair_*` 两条红（滞留现场重跑仍静默）；
+* 摘掉计划里 `pre.repair_stranded_rebuilds` 那一步 ⇒ `test_strand_repair_*` 两条红
+  （滞留现场重跑仍静默）；
 * 把 `touch_thread` 里的 `%f` 改回秒级 ⇒ 毫秒精度那条红。
 """
 
@@ -14,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from rolecard_agent.core.migrations import MIGRATION_PLAN
 from rolecard_agent.storage.db import (
     SCHEMA_VERSION,
     bootstrap,
@@ -68,7 +70,7 @@ def test_strand_repair_restores_rows_and_reruns_migration(db_path: Path) -> None
         # 手工构造"死在 DROP 之后、RENAME 之前"的现场：
         conn.execute("ALTER TABLE role_proactive_state RENAME TO role_proactive_state__b2")
         conn.commit()
-        bootstrap(conn, enabled_domains=("health",))
+        bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
         cols = {row[1] for row in conn.execute("PRAGMA table_info(role_proactive_state)")}
         assert "user_id" in cols, "自愈后迁移必须整个重跑（新形状到位）"
         rows = conn.execute(
@@ -88,7 +90,7 @@ def test_strand_repair_drops_empty_temp(db_path: Path) -> None:
             "CREATE TABLE role_proactive_state__b2 (user_id TEXT, role_id TEXT)"
         )
         conn.commit()
-        bootstrap(conn, enabled_domains=("health",))
+        bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
         stranded = conn.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE name = 'role_proactive_state__b2'"
         ).fetchone()[0]

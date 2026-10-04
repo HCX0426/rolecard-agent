@@ -15,6 +15,7 @@ from __future__ import annotations
 import pytest
 
 from rolecard_agent.config import ModelBackend, Settings
+from rolecard_agent.core.migrations import MIGRATION_PLAN, SHAPE_TABLES
 from rolecard_agent.core.model_settings import (
     UNASSIGNED_USAGE,
     ModelSettingsError,
@@ -32,7 +33,7 @@ OWNER = "local-user"
 
 def _conn() -> object:
     c = connect(":memory:")
-    bootstrap(c, enabled_domains=())
+    bootstrap(c, enabled_domains=(), plan=MIGRATION_PLAN)
     return c
 
 
@@ -612,9 +613,10 @@ def test_legacy_db_moves_into_two_layers_without_losing_config() -> None:
                  "'[\"chat\"]')")
     conn.commit()
 
-    # 与生产同一步序：`_migrate` 先补列再搬层（`storage/db.py` 里就是这个顺序），
+    # 与生产同一步序：形状迁移先补列再搬层（`core/migrations.py` 的 step 顺序就是这个），
     # 所以搬层之后那些组是**有主人**的 —— 老库里没有归属这回事，它们落进列默认值那份。
-    assert "model_provider.user_id" in reconcile_columns(conn)
+    # `skip=SHAPE_TABLES` 是第一遍补列的规矩（`model_backend` 那些列由整表重建负责）。
+    assert "model_provider.user_id" in reconcile_columns(conn, skip=SHAPE_TABLES)
     assert migrate_to_provider_layers(conn) == 2
     assert migrate_to_provider_layers(conn) == 0  # 幂等：搬过就不再搬
 
@@ -648,7 +650,7 @@ def test_a_declared_column_without_a_reader_fails_loud(conn: object) -> None:
     from rolecard_agent.config import ModelBackend
     from rolecard_agent.core.model_settings import _value_columns
 
-    bootstrap(conn, enabled_domains=())  # type: ignore[attr-defined]
+    bootstrap(conn, enabled_domains=(), plan=MIGRATION_PLAN)  # type: ignore[attr-defined]
     conn.execute("ALTER TABLE model_backend ADD COLUMN new_thing REAL")  # type: ignore[attr-defined]
     conn.commit()  # type: ignore[attr-defined]
     ModelBackend.model_fields["new_thing"] = ModelBackend.model_fields["num_ctx"]

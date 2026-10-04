@@ -30,6 +30,7 @@ from rolecard_agent.core.memory import (
     memory_for_turn,
     render_memory,
 )
+from rolecard_agent.core.migrations import MIGRATION_PLAN
 from rolecard_agent.storage.db import bootstrap, connect
 
 OLD_ITEM_TABLE = """
@@ -52,7 +53,7 @@ CREATE TABLE role_memory_item (
 @pytest.fixture
 def db(tmp_path: Path):
     conn = connect(tmp_path / "app.db")
-    bootstrap(conn, enabled_domains=("health",))
+    bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
     yield conn
     conn.close()
 
@@ -117,13 +118,13 @@ def test_an_old_database_gets_uid_backfilled_once(tmp_path: Path) -> None:
     conn.close()
 
     upgraded = connect(db)
-    bootstrap(upgraded, enabled_domains=("health",))
+    bootstrap(upgraded, enabled_domains=("health",), plan=MIGRATION_PLAN)
     rows = list_items(upgraded, user_id=DEFAULT_USER_ID, bucket=GLOBAL_BUCKET)
     assert [r["text"] for r in rows] == ["老库里的事实"]
     first = rows[0]["uid"]
     assert first, "老行没被补上 uid，上行时它就永远对不上账"
 
-    bootstrap(upgraded, enabled_domains=("health",))  # 再启动一次
+    bootstrap(upgraded, enabled_domains=("health",), plan=MIGRATION_PLAN)  # 再启动一次
     assert list_items(upgraded, user_id=DEFAULT_USER_ID, bucket=GLOBAL_BUCKET)[0]["uid"] == first
     upgraded.close()
 

@@ -28,6 +28,7 @@ from typing import Any
 
 from rolecard_agent.storage.db import (
     SqlConnection,
+    quote_ident,
     thread_id_carriers,
 )
 
@@ -65,6 +66,23 @@ def delete_thread_everywhere(conn: SqlConnection, thread_id: str) -> dict[str, i
     stats["session_thread"] = max(cur.rowcount, 0)
     conn.commit()
     return stats
+
+
+def rename_thread_id(conn: SqlConnection, *, old: str, new: str) -> None:
+    """把一条 thread_id 换成新 id，**带 thread_id 列的表一起走**（`R28-23` 的现数名单）。
+
+    名单仍然现数（`thread_id_carriers`），所以将来新增一张带 `thread_id` 的表不必记得改
+    这里。写 `session_thread` 的动作收在本模块：`session_thread write seam` 那把尺子只认
+    storage（越层写这张表即红），而"谁该改 id"的判断（改名规则、哪些会话要改）住
+    `core/migrations.py` 的形状迁移步骤里 —— 判断在 core，落笔在 owner。
+
+    不 commit：整段重建的原子性由调用方的显式事务负责（B2 那一步首尾 BEGIN/COMMIT）。
+    """
+    conn.execute("UPDATE session_thread SET thread_id = ? WHERE thread_id = ?", (new, old))
+    for table in thread_id_carriers(conn):
+        conn.execute(
+            f"UPDATE {quote_ident(table)} SET thread_id = ? WHERE thread_id = ?", (new, old)
+        )
 
 
 def delete_threads_for_user(conn: SqlConnection, user_id: str) -> int:

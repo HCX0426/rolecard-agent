@@ -33,7 +33,7 @@ def main() -> int:
 
     from rolecard_agent.config import Settings
     from rolecard_agent.core.checkpointer import make_checkpointer
-    from rolecard_agent.core.model_settings import migrate_to_provider_layers
+    from rolecard_agent.core.migrations import MIGRATION_PLAN
     from rolecard_agent.core.plugins import seed_plugin_rows
     from rolecard_agent.domains.registry import DOMAINS, domain_seed_roles
     from rolecard_agent.roles.service import RoleCardService
@@ -47,8 +47,9 @@ def main() -> int:
     applied = bootstrap(
         conn,
         enabled_domains=DOMAINS,
-        # 旧库要搬层：动作从 model_settings 交进来（`R102-08`，storage 不再反向 import）。
-        provider_layers=migrate_to_provider_layers,
+        # 业务迁移（清重 / 整表重建 / 搬层）的计划从 core 交进来（`R102-08` +
+        # 2026-10-04 审查快照 P1-6：storage 不再反向 import，也不再认识业务表名）。
+        plan=MIGRATION_PLAN,
     )
 
     # ENABLED state lives in the database, not in this script. A fresh database starts with

@@ -21,6 +21,7 @@ from rolecard_agent.config import Settings
 from rolecard_agent.core import checkpointer as ck
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.graph import build_kernel
+from rolecard_agent.core.migrations import MIGRATION_PLAN
 from rolecard_agent.core.plugins import PluginService
 from rolecard_agent.core.state import new_state
 from rolecard_agent.core.tools.registry import ToolRegistry
@@ -36,7 +37,7 @@ _OLD = "2020-01-01T00:00:00.000Z"
 
 def _conn(db_path: Path) -> Any:
     conn = connect(db_path)
-    bootstrap(conn, enabled_domains=("health",))
+    bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
     return conn
 
 
@@ -330,7 +331,7 @@ def _holed_db(tmp_path: Path, name: str, *, rows: int, drop: str) -> tuple[Path,
     # 先问一句再往下写：不问，测到的可能是"这个库根本没能力归还空页"那条分支 —— 第一版把
     # PRAGMA 写在 bootstrap() 之后，正是这样把用例变成空转的。
     assert int(conn.execute("PRAGMA auto_vacuum").fetchone()[0]) != 0, "新库没开 auto_vacuum"
-    bootstrap(conn)
+    bootstrap(conn, plan=MIGRATION_PLAN)
     blob = "x" * 4000
     conn.execute("CREATE TABLE filler (payload TEXT)")
     conn.execute("BEGIN")

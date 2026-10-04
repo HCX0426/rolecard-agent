@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from rolecard_agent.api.main import create_app
 from rolecard_agent.base.identity import DEFAULT_USER_ID
+from rolecard_agent.core.migrations import MIGRATION_PLAN
 from tests.conftest import model_rows
 
 
@@ -169,7 +170,7 @@ def test_records_patch_and_audit_and_delete(
 
         conn = s3.connect(tmp_path / "rec.db")
         conn.row_factory = s3.Row
-        bootstrap(conn, enabled_domains=("health",))
+        bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
         conn.executescript(
             "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('local', 'd');"
             "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "

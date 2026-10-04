@@ -1574,6 +1574,12 @@ WRITE_TXN_HELPERS = frozenset(
         # 模块级 `_restore_insert`（写语句在它体内；闭包的名字进不了这份名单）。
         "src/rolecard_agent/core/memory.py::_restore_insert",
         "src/rolecard_agent/core/memory.py::restore_row",
+        # 2026-10-04 P1-6（迁移注册表）：形状迁移从 `storage/db.py::_migrate` 搬进
+        # `core/migrations.py` 的步骤，**收口纪律随代码一起搬** —— 每步自己收口（上面
+        # `_backfill_service_endpoint_owner` 那一族）或点名收口点（下面两条）。
+        # 这一步的 COMMIT 活在 executescript 里（`… ;COMMIT;` 首尾 BEGIN IMMEDIATE 包死），
+        # 正是"端点配置不许半路清空"那条迁移的核心设计 —— AST 只看得见函数调用，所以登记。
+        "src/rolecard_agent/core/migrations.py::_rebuild_legacy_service_endpoint",
         "src/rolecard_agent/core/reachout/inbox.py::restore_row",
         # 2026-10-04 service 收口：replace 档的行类清空**刻意不收口** —— 与随后的导入共用
         # 一个事务，成败一体。收口点在 `core/sync_service.py::run_import`（导入有失败即
@@ -1584,6 +1590,11 @@ WRITE_TXN_HELPERS = frozenset(
         "src/rolecard_agent/storage/sync_rows.py::delete_rows_for_user",
         "src/rolecard_agent/storage/threads.py::delete_threads_for_user",
         "src/rolecard_agent/storage/threads.py::set_current_role",
+        # 换线程 id 的落笔（2026-10-04 P1-6 从 `storage/db.py::_migrate` 搬来）：
+        # **刻意不收口** —— 它跑在整表重建的显式事务里（core/migrations.py 的 B2 步骤
+        # 首尾 BEGIN/COMMIT），自己 commit 会把 DROP→RENAME 之间的窗口重新打开。
+        # 与 `set_current_role` 同族：不收口是因为调用方要用 rowcount/事务判成败。
+        "src/rolecard_agent/storage/threads.py::rename_thread_id",
     }
 )
 

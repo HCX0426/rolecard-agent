@@ -26,6 +26,7 @@ from rolecard_agent.base.observability import NullTracer
 from rolecard_agent.config import Settings
 from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.graph import build_kernel
+from rolecard_agent.core.migrations import MIGRATION_PLAN
 from rolecard_agent.core.plugins import PluginService
 from rolecard_agent.core.state import new_state
 from rolecard_agent.core.tools.registry import ToolRegistry
@@ -57,7 +58,7 @@ def _kernel(
     C14 design. `enable_health=False` simulates "the operator switched the domain off".
     """
     conn = connect(db_path)
-    bootstrap(conn, enabled_domains=("health",))
+    bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
     roles = RoleCardService(conn)
     roles.seed_builtins(user_id="u1")
     roles.seed_domain_roles(domain_seed_roles(), user_id="u1")
@@ -86,7 +87,7 @@ def _kernel(
 
 def _seed_identity(db_path: Path) -> None:
     conn = connect(db_path)
-    bootstrap(conn, enabled_domains=("health",))
+    bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
     conn.executescript(
         """
         INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('t1', 'demo');
@@ -185,7 +186,7 @@ def test_whitelist_is_applied_before_binding(tmp_path: Path) -> None:
     db = tmp_path / "app.db"
     _seed_identity(db)
     conn = connect(db)
-    bootstrap(conn, enabled_domains=("health",))
+    bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
     roles = RoleCardService(conn)
     roles.seed_builtins(user_id="u1")
     roles.seed_domain_roles(domain_seed_roles(), user_id="u1")

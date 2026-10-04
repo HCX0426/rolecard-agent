@@ -18,6 +18,7 @@ import pytest
 from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.core import memory as mem
 from rolecard_agent.core import memory_distill as distill
+from rolecard_agent.core.migrations import MIGRATION_PLAN
 from rolecard_agent.storage.db import SqlConnection, bootstrap, connect
 
 
@@ -47,7 +48,7 @@ ME = DEFAULT_USER_ID  # 这台实例的主人在测试里的名字（M2b 之后�
 @pytest.fixture
 def conn() -> Any:
     c = connect(":memory:")
-    bootstrap(c, enabled_domains=())
+    bootstrap(c, enabled_domains=(), plan=MIGRATION_PLAN)
     return c
 
 
@@ -531,7 +532,7 @@ def test_cursor_migration_adds_the_column(conn: SqlConnection) -> None:
     conn.execute("ALTER TABLE session_thread DROP COLUMN distilled_at_seq")
     conn.commit()
     assert "distilled_at_seq" not in _thread_cols(conn)
-    bootstrap(conn, enabled_domains=("health",))
+    bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
     assert "distilled_at_seq" in _thread_cols(conn)
     # 补列之后游标是 NULL ⇒ 全部消息都算"没提取过"，节奏判断照跑
     assert distill.due_for_extract(

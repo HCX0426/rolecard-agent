@@ -13,9 +13,11 @@ a no-op and leave orphaned index rows behind.
 
 列级迁移是**声明驱动**的：`bootstrap` 每次启动都拿 `schema.sql` 的声明形状比对这份库，
 缺列自动 `ADD COLUMN`（`reconcile_columns`），所以加一列只改 `schema.sql` 一处就够。
-只有"形状根本不同"的表才需要在 `_migrate` 里写一次整表重建。**绝不要靠删库来升级** ——
-`data/sqlite/app.db` 与安装目录下那份是真实数据，不是演示脚手架（09-26 轮 R26-05 抓到
-`CONTRIBUTING.md` 就是这么教的，那条已订正）。
+只有"形状根本不同"的表才需要一步整表重建 —— 那些是**业务语义**，住
+`core/migrations.py` 的注册表里，经 `bootstrap(plan=…)` 交进来：本模块不认识任何业务表名，
+也不再有一段 `_migrate`（2026-10-04 审查快照 P1-6 的 split-brain 收口）。**绝不要靠删库来
+升级** —— `data/sqlite/app.db` 与安装目录下那份是真实数据，不是演示脚手架（09-26 轮
+R26-05 抓到 `CONTRIBUTING.md` 就是这么教的，那条已订正）。
 """
 
 from __future__ import annotations
@@ -28,11 +30,10 @@ import re
 import sqlite3
 import sys
 import threading
-import uuid
 from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 
@@ -276,10 +277,13 @@ def schema_files(enabled_domains: Iterable[str] = ()) -> list[Path]:
 SCHEMA_VERSION = 1
 
 
-def _migrate_event(message: str) -> None:
+def migrate_event(message: str) -> None:
     """迁移事件落 stderr（`R102-64`）：backend.log 由壳转发 stderr，迁移是三类关键路径里
     **唯一没有可追溯事件**的一类 —— R102-27 那种"半路死"发生时只有异常栈可查。排查判据
-    要进事件流，不进注释（`R102-42` 同族的另一半）。"""
+    要进事件流，不进注释（`R102-42` 同族的另一半）。
+
+    **公开给 core**：步骤的清单与顺序住在 `core/migrations.py`，那边执行一步就念一声 ——
+    同一条事件流，不另起炉灶（storage 里再长一个私有出口就是第二个真相）。"""
     from datetime import datetime
 
     stamp = datetime.now(UTC).isoformat(timespec="seconds")
@@ -291,7 +295,7 @@ def _check_schema_generation(conn: SqlConnection) -> None:
 
     只在这里**拒新**；把 user_version 推到当前值的动作移到了 bootstrap 的最后
     （2026-10-04 审查快照的迁移事务条目）：从前戳在迁移执行**之前**，中途崩掉就留下
-    一个"名义代际是新的、形状还是旧的"的库 —— `_repair_stranded_rebuild` 只自愈
+    一个"名义代际是新的、形状还是旧的"的库 —— `repair_stranded_rebuild` 只自愈
     三张已知暂存表，盖不住其它半途形状。
     """
     version = int(conn.execute("PRAGMA user_version").fetchone()[0])
@@ -302,13 +306,16 @@ def _check_schema_generation(conn: SqlConnection) -> None:
         )
 
 
-def _repair_stranded_rebuild(conn: SqlConnection, *, original: str, temp: str) -> None:
+def repair_stranded_rebuild(conn: SqlConnection, *, original: str, temp: str) -> None:
     """整表重建"死在 DROP 原表之后、RENAME 之前"的现场自愈（`R102-53`）。
 
     判据是库的形状：原表不在、暂存表在 ⇒ 有数据就改名回原表（旧形状数据原样回来，
     后面的"判老形态→重建"整个重跑一遍，数据一分不丢），是空的就直接 DROP（那只是
     死在 INSERT 之前的老窗口，DROP IF EXISTS 已自愈过它）。两种现场都不许静默留着
     —— 滞留的暂存表是一本**永远没人读**的账本，而 bootstrap 重跑不但不报错还照常绿。
+
+    **点名哪三对**（原表 / 暂存表）的是 `core/migrations.py` 的 `STRANDED_REBUILDS`：
+    storage 只回答"怎么修"，不记得"修谁"（P1-6：业务表名不住在 storage）。
     """
     tables = {
         str(r[0])
@@ -322,13 +329,13 @@ def _repair_stranded_rebuild(conn: SqlConnection, *, original: str, temp: str) -
     temp_rows = int(conn.execute(f"SELECT COUNT(*) FROM {temp}").fetchone()[0])
     if temp_rows:
         conn.execute(f"ALTER TABLE {temp} RENAME TO {original}")
-        _migrate_event(
+        migrate_event(
             f"检测到滞留暂存表（原表 {original} 不在、{temp} 有 {temp_rows} 行）—— "
             "已改名回原表，本次迁移整个重跑（R102-53 的第三种死法现场）"
         )
     else:
         conn.execute(f"DROP TABLE {temp}")
-        _migrate_event(f"清掉空的滞留暂存表 {temp}（R28-15 的老窗口现场）")
+        migrate_event(f"清掉空的滞留暂存表 {temp}（R28-15 的老窗口现场）")
     conn.commit()
 
 
@@ -473,13 +480,68 @@ def prune_retention_tables(
     return pruned
 
 
+class MigrationPlanLike(Protocol):
+    """storage 认识的**迁移计划形状**（`core.migrations.MigrationPlan` 结构性满足它）。
+
+    storage 只问三件事：DDL 之前跑什么、DDL 之后跑什么、通用补列器第一遍避开哪些表。
+    它不认识 `Step`、不认识任何业务表名 —— 步骤的清单与顺序住在 `core/migrations.py`
+    （2026-10-04 审查快照 P1-6：形状迁移的语义从 storage 收回 core，storage 只留
+    连接 + 声明引擎 + 执行入口）。
+    """
+
+    @property
+    def shape_tables(self) -> frozenset[str]:
+        """通用补列器第一遍必须避开的表（每张对应 core 那边一步整表重建/搬层）。"""
+        ...
+
+    def run_pre_ddl(self, conn: SqlConnection) -> None:
+        """schema DDL **之前**的步骤（清重 / 滞留暂存表自愈）。"""
+        ...
+
+    def run_shape(self, conn: SqlConnection) -> None:
+        """schema DDL **之后**、第二遍补列**之前**的步骤（整表重建 / 搬层族）。"""
+        ...
+
+
+def _require_plan_for_existing_db(conn: SqlConnection, *, plan: MigrationPlanLike | None) -> None:
+    """**已经存在的库**必须显式交迁移计划，否则当众失败 —— 不做任何启发式判断。
+
+    为什么是"非空库一律要计划"而不是"落后于声明才要"（2026-10-04 审查快照 P1-6 的落地
+    取舍）：判"这份库需要哪些业务步骤"的知识住在 `core/migrations.py`（清重、滞留自愈、
+    整表重建、搬层），storage 拿不到 —— 任何"我看它像不需要"的猜测都会把**该搬的没搬**
+    变成静默事故（症状：配置变小 / 主键没换 / 暂存表里的数据再没人读），而那正是搬家前
+    `provider_layers is None` 那句 RuntimeError 要拦的东西。判据换成"库是不是空的"有三个
+    好处：不点名任何表、不解析声明（省一次内存探针）、**新建库零负担**（空库没有历史，
+    本来也没有东西可搬）。
+
+    生产入口（`core/bootstrap.py`、`scripts/init_db.py`）永远交 `MIGRATION_PLAN`；会撞上
+    这句的只有"拿已有库却忘了交计划"的接线 —— 那正该红。
+    """
+    if plan is not None:
+        return
+    existing = conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+    ).fetchone()[0]
+    if existing:
+        raise RuntimeError(
+            "数据库已存在，业务迁移计划必须显式交进来（清重 / 滞留自愈 / 整表重建 / 搬层"
+            "这些步骤住 core/migrations.py，storage 不认识它们）：显式传 "
+            "plan=rolecard_agent.core.migrations.MIGRATION_PLAN；新建空库可以不传。"
+        )
+
+
 def bootstrap(
     conn: SqlConnection,
     enabled_domains: Iterable[str] = (),
     *,
-    provider_layers: Callable[[SqlConnection], int] | None = None,
+    plan: MigrationPlanLike | None = None,
 ) -> list[str]:
     """Apply every schema file. Idempotent - all DDL uses IF NOT EXISTS.
+
+    `plan` 是**业务迁移的全部**：DDL 之前的清重/自愈与 DDL 之后的整表重建/搬层都由它交
+    （见 `MigrationPlanLike`）。None 只对**新建空库**合法 —— 库里已有表时会被
+    `_require_plan_for_existing_db` 当众拦下（业务步骤住 core，storage 猜不到这份库该搬
+    什么，静默跳过正是"配置变小"那种最难查的事故）。
 
     Returns the applied file names, which is what tests assert on: a silently skipped
     schema is far worse than a loud failure.
@@ -488,43 +550,41 @@ def bootstrap(
     # 回滚后旧代码读新库 —— 两层的 `model_backend` 没有 `api_key/usage` 列，旧读法的
     # `no such column` 会散落在启动链各处；这里一句 loud 报错把它并成一处。
     _check_schema_generation(conn)
+    _require_plan_for_existing_db(conn, plan=plan)
     files = schema_files(enabled_domains)
+    # 声明形状只解析一次（内存探针把整套 DDL 跑一遍），两遍补列共用它。
+    declared = _declared_columns(files)
     # 先把"声明里有、这份老库里没有"的列补上，再跑 DDL：域表的 `CREATE INDEX ... (新列)`
     # 排在任何迁移之前执行，老库踩它必炸（09-26 轮 R26-04 的实测现场）。
-    reconcile_columns(conn, files=files)
-    # 建部分唯一索引**之前**先清重（`R102-52`）：老库里若已躺着同命令的多条 pending
-    # （并发 submit 的历史遗留），schema.sql 里那条 UNIQUE INDEX 会当场建失败 ——
-    # 那是"库再也打不开"（R28-15）的同一条死法，不能让一份遗留数据把开机堵死。
-    _dedupe_pending_approvals(conn)
-    # 同族前置（2026-10-04 审查快照的上传幂等条目）：老库的重复台账会让下面的
-    # 唯一索引当场建失败。
-    _dedupe_ingestion_tasks(conn)
-    # 整表重建的滞留自愈（`R102-53`）**必须站在 schema DDL 之前**：executescript 的
-    # `CREATE TABLE IF NOT EXISTS` 会把被 DROP 掉的原表先建成一张空的新形表，随后
-    # `_migrate` 的"判老形态"永远为假 —— 滞留暂存表就永远没人管、还照常报绿。
-    # 三张暂存表对应 db.py 的 B2/B1a 两处整表重建与 model_settings 的搬层。
-    _repair_stranded_rebuild(
-        conn, original="role_proactive_state", temp="role_proactive_state__b2"
+    reconcile_columns(
+        conn,
+        files=files,
+        declared=declared,
+        skip=frozenset() if plan is None else plan.shape_tables,
     )
-    _repair_stranded_rebuild(conn, original="token_usage_day", temp="token_usage_day_new")
-    _repair_stranded_rebuild(conn, original="model_backend", temp="model_backend__layers")
+    # 业务阶段（core 交进来的步骤，顺序与名字都在 core/migrations.py）：
+    # pre_ddl 必须站在 DDL 之前（唯一索引踩重复行 = 库打不开，R28-15）；
+    # shape 必须站在 DDL 之后（重建会 DROP/RENAME，先补的列与先建的索引跟着旧表没）。
+    if plan is not None:
+        plan.run_pre_ddl(conn)
     applied: list[str] = []
     for path in files:
         if not path.exists():
             raise FileNotFoundError(f"schema file missing: {path}")
         conn.executescript(path.read_text(encoding="utf-8"))
         applied.append(str(path.relative_to(PACKAGE_ROOT)))
-    _migrate(conn, provider_layers=provider_layers)
-    # 第二遍：`_migrate` 里那些 DROP/重建（service_endpoint 整表、model_backend 搬层）
+    if plan is not None:
+        plan.run_shape(conn)
+    # 第二遍：形状迁移里那些 DROP/重建（service_endpoint 整表、model_backend 搬层）
     # 会把第一遍补好的列跟着旧表一起带走，所以搬层之后再对齐一次声明。
     # 这一遍**不再跳过**那三张手形迁移的表（`R28-21`）。跳过只对**第一遍**是必要的：那里
     # 补出 `provider_id` 会让"没有 provider_id 就是旧形态"的判定当场失效，搬层被静默跳过。
     # 而此刻迁移已经做完、形状已经是新的 —— 继续跳过等于给这三张表判了"今后声明的新列永远
     # 补不上"，症状要等到某个老库升上来才现形（台账原判：埋点不是事故，但它是**只会更贵**
     # 那种埋点）。真遇到"这列必须回填数据"的情况，补列器会抛那句
-    # 「NOT NULL 又没默认值 ⇒ 必须走整表重建」并点名 `_SHAPE_MIGRATED_TABLES`，
+    # 「NOT NULL 又没默认值 ⇒ 必须走整表重建」并点名 core 的 `SHAPE_TABLES`，
     # 那正是想要的大声失败，而不是静默什么都不做。
-    reconcile_columns(conn, files=files, skip=frozenset())
+    reconcile_columns(conn, files=files, declared=declared, skip=frozenset())
     conn.commit()
     # 代际戳在**迁移全部完成后**才推进（2026-10-04 审查快照的迁移事务条目）：中途崩掉
     # 留下的是"user_version 还是旧的"，下一次启动会原样重跑一遍幂等 bootstrap —— 而不是
@@ -532,21 +592,8 @@ def bootstrap(
     if int(conn.execute("PRAGMA user_version").fetchone()[0]) != SCHEMA_VERSION:
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         conn.commit()
-        _migrate_event(f"user_version 戳到 {SCHEMA_VERSION}（bootstrap 全部完成后）")
+        migrate_event(f"user_version 戳到 {SCHEMA_VERSION}（bootstrap 全部完成后）")
     return applied
-
-
-#: 这几张表的旧形态由 `_migrate` 整表重建 / 搬层负责，通用补列器**必须避开**它们：
-#: 提前给旧形 `model_backend` 补上 `provider_id`，`_migrate` 里那句"没有 provider_id
-#: 就是旧形态"的判定当场失效 —— 搬层被跳过，旧行的凭据静静留在没人再读的列里。
-#: `token_usage_day` 不是列的问题而是**主键**（B1a）：补列改不了 `(day, backend)` → 
-#: `(day, user_id, backend)`，只补列会让 `ON CONFLICT(day,user_id,backend)` 永远报
-#: "non-unique" —— 所以它同理要整表重建。
-#: `service_endpoint` 需要**补列 + 按行回填**两步（B1b：`user_id` 加列由 `_migrate`
-#: 手写、老 chat 引用行回填本机主人）。补列器只管加列、不负责回填数据 —— 让它自动补了
-#: 列，旧 chat 行就是 NULL，按人过滤后对话默认当场消失；把两步放在 `_migrate` 同一个
-#: 判断里才是一次完整的迁移。
-_SHAPE_MIGRATED_TABLES = frozenset({"model_backend", "service_endpoint", "token_usage_day"})
 
 
 def quote_ident(ident: object) -> str:
@@ -597,7 +644,8 @@ def _add_column_ddl(table: str, decl: sqlite3.Row) -> str:
     if decl["notnull"] and decl["dflt_value"] is None:
         raise RuntimeError(
             f"{table}.{name} 声明成 NOT NULL 又没有默认值，SQLite 不允许 ADD COLUMN 补它。"
-            "这种列必须走整表重建：把它加进 `_SHAPE_MIGRATED_TABLES` 并在 `_migrate` 里写一次。"
+            "这种列必须走整表重建：把它加进 core/migrations.py 的 `SHAPE_TABLES`，"
+            "并在那边的 shape 阶段写一次重建步骤。"
         )
     spec = f"{quote_ident(name)} {decl['type'] or 'TEXT'}"
     if decl["notnull"]:
@@ -611,22 +659,27 @@ def reconcile_columns(
     conn: SqlConnection,
     *,
     files: Sequence[Path] | None = None,
-    skip: frozenset[str] = _SHAPE_MIGRATED_TABLES,
+    skip: frozenset[str] = frozenset(),
+    declared: dict[str, dict[str, sqlite3.Row]] | None = None,
 ) -> list[str]:
     """把"schema 里声明了、这份库里却没有"的列补齐，返回补过的 `表.列` 清单。
 
-    为什么要有这一层（09-26 轮 R26-04）：`_migrate` 原先那 12 处 ALTER 一条条手写，
+    为什么要有这一层（09-26 轮 R26-04）：形状迁移原先那 12 处 ALTER 一条条手写，
     于是"加一列"的人必须记得来这儿再写一遍 —— **忘了不会红**，只会在第一次读那一列时炸。
     两份历史形状当时合计缺 19 列，全都能自动补（无一例 NOT NULL 无默认；09-27 的 M2a 给
     `role_card` 加了 `user_id` 之后这组数变成 23 —— 它本来就该随 schema 长，钉住它、逼改 schema
     的人回来看一眼这行注释的用例是 `test_audited_shortfall_is_still_the_shortfall`）。这一层把
     "记不记得"换成"声明即事实"：以后加列只改 `schema.sql` 一处。
 
+    `skip` 由调用方按计划给（`plan.shape_tables` = 那些要走整表重建/搬层的表，第一遍必须
+    避开）；`declared` 供 `bootstrap` 复用同一份解析结果（内存探针跑整套 DDL 不便宜）。
+
     只对**已存在的表**补列：表整个不存在 = 那份 DDL 自己会建，不该在这儿猜形状。
-    主键列不参与（形状根本不同，那是 `_migrate` 整表重建的事）。
+    主键列不参与（形状根本不同，那是 core 那边整表重建的事）。
     """
     targets = list(files) if files is not None else schema_files()
-    declared = _declared_columns(targets)
+    if declared is None:
+        declared = _declared_columns(targets)
     existing = {
         str(r[0])
         for r in conn.execute(
@@ -670,346 +723,3 @@ def thread_id_carriers(conn: SqlConnection) -> list[str]:
     ]
 
 
-def _dedupe_pending_approvals(conn: SqlConnection) -> int:
-    """建 `idx_command_approval_one_pending` 之前的清重（`R102-52`）。
-
-    老库里若已躺着同命令的多条 pending（并发 submit 的历史遗留），那条部分唯一索引
-    会当场建失败 = "库再也打不开"（R28-15 的同一条死法）。保留**最新**一条 pending
-    （操作员的视线在那上头），其余收成 rejected 并注明理由 —— 幂等：无重复时零改动。
-    """
-    # 新库此时还没有这张表（schema 在后面才跑）—— 只有"表已在的 legacy 库"才需要清重。
-    exists = conn.execute(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'command_approval'"
-    ).fetchone()[0]
-    if not exists:
-        return 0
-    cur = conn.execute(
-        "UPDATE command_approval SET status = 'rejected', result_json = ?, "
-        "updated_at = CURRENT_TIMESTAMP "
-        "WHERE status = 'pending' AND id NOT IN ("
-        "  SELECT MAX(id) FROM command_approval WHERE status = 'pending' GROUP BY command)",
-        (
-            json.dumps(
-                {"error": "并发提交产生的重复待批：同命令只保留最新一条，其余并成拒绝"},
-                ensure_ascii=False,
-            ),
-        ),
-    )
-    conn.commit()
-    return max(cur.rowcount, 0)
-
-
-def _dedupe_ingestion_tasks(conn: SqlConnection) -> int:
-    """建 `idx_ingestion_user_file` 之前的清重（2026-10-04 审查快照的上传幂等条目）。
-
-    老库的 `ingestion_task` 若在拿到唯一索引前躺了同 (user_id, file_hash) 的重复行，
-    建索引会当场失败 = 库打不开（R28-15 同族）。台账语义 = "同一份字节一个任务"，
-    所以保留 `updated_at` 最新的一条、**删掉**其余（与审批清重的"收成 rejected"不同：
-    这里的索引不带 WHERE，任何状态的重复行都违例；而被删的都是同字节的旧影子，
-    最新那条承载全部语义）。幂等：无重复时零改动。
-    """
-    exists = conn.execute(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'ingestion_task'"
-    ).fetchone()[0]
-    if not exists:
-        return 0
-    has_index = conn.execute(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index'"
-        " AND name = 'idx_ingestion_user_file'"
-    ).fetchone()[0]
-    if has_index:
-        return 0  # 索引已在：库里不可能再有重复行，扫描是白费
-    cur = conn.execute(
-        "DELETE FROM ingestion_task WHERE rowid NOT IN ("
-        "  SELECT rowid FROM ingestion_task i"
-        "  WHERE i.rowid = (SELECT x.rowid FROM ingestion_task x"
-        "                   WHERE x.user_id = i.user_id AND x.file_hash = i.file_hash"
-        "                   ORDER BY x.updated_at DESC, x.rowid DESC LIMIT 1))"
-    )
-    conn.commit()
-    removed = max(cur.rowcount, 0)
-    if removed:
-        _migrate_event(f"清掉重复的 ingestion_task {removed} 行（保留每组最新一条）")
-    return removed
-
-
-def _needs_provider_layers(conn: SqlConnection) -> bool:
-    """这库里有一张旧形态的 model_backend 等着搬吗？
-
-    判据与 `migrate_to_provider_layers` 自己的第一句完全同一把尺（列清单里没有
-    `provider_id` 就是旧形态），所以两边永远不会对『要不要搬』给出不同答案 ——
-    两处判断不同步就是「该搬的没搬、不该搬的搬了」的那种错。
-    """
-    cols = _columns(conn, "model_backend")
-    return bool(cols) and "provider_id" not in cols
-
-
-def _migrate(
-    conn: SqlConnection, *, provider_layers: Callable[[SqlConnection], int] | None = None
-) -> None:
-    """**形状**迁移：只负责"通用补列器补不了"的那些事（幂等、可重跑）。
-
-    列级缺列不再手写 ALTER —— `reconcile_columns` 每次都按 `schema.sql` 的声明比对
-    （09-26 轮 R26-04：原先 12 处手写 ALTER 全在核心表上，加列忘了写**不会红**，
-    只会在第一次读那列时炸）。这里只剩下三类真正需要人写的事：
-
-    1. service_policy 已退役（策略并入 service_endpoint 行内 enabled/sort_order）→ DROP。
-    2. service_endpoint 旧形态（行内嵌 key/base_url 的"实例"模型）→ 整表重建为
-       「引用 model_backend」的新形态；旧行配置属演示数据且引用化后由模型页承接，
-       直接弃用。**必须连 seed flag 一起清**，否则 seed_once 会以为播过种而跳过，
-       留下一张空表（实测踩过：引用行全部缺失）。
-    3. model_backend 旧形态（一张表混装供应商凭据与模型，每行自带 provider/base_url/
-       api_key/usage）→ 先补齐历史列，再由 `model_settings.migrate_to_provider_layers`
-       搬进两层表（凭据上收到 model_provider、用途变成 service_endpoint 的 chat 引用）。
-       补列必须发生在搬层**之前**（搬层要读这些列），且必须限定"这是旧形态"才补 ——
-       新库里 model_backend 已经没有 usage 列，无条件补一次就是把它加回来。
-       这两张表都在 `_SHAPE_MIGRATED_TABLES` 里，通用补列器对它们不动手，正是为了
-       不让"提前补上 provider_id"把第 3 条的形态判定当场弄失效。
-    """
-    cols = _columns(conn, "model_backend")
-    if cols and "provider_id" not in cols:
-        # 旧形态库：先把历史缺列补齐（这些列曾经分三次 ALTER 加过），再交给搬层迁移。
-        for name, ddl in {
-            "usage": "TEXT NOT NULL DEFAULT 'chat'",
-            "num_ctx": "INTEGER",
-            # 能力位**必须留 NULL**：NULL 是"没测过"，而 `schema.sql` 与界面（`?`）都按这个
-            # 口径走。旧写法回填成 `NOT NULL DEFAULT 0/1`，等于替每个升级上来的用户回答了两
-            # 个没人问过的问题 —— 界面上从此显示"✗ 不支持视觉 / ✓ 支持工具"，看着像测过。
-            # 运行时不受影响（`_vision_of(NULL)=False`、`_tools_of(NULL)=True` 与旧默认同值），
-            # 所以这是一次纯"别撒谎"的修正。（09-26 把本轮猜测区那条量实之后改的。）
-            "supports_vision": "INTEGER",
-            "supports_tools": "INTEGER",
-        }.items():
-            if name not in cols:
-                conn.execute(f"ALTER TABLE model_backend ADD COLUMN {name} {ddl}")
-    # 原先这里挂着 8 组手写 ALTER（session_thread 的 agent_mode/distilled_at_seq、
-    # role_card 的五个开关与 reachout_keep、role_memory_item.importance、
-    # command_approval.decide_token）—— 全部由 `reconcile_columns` 按声明补齐，
-    # `bootstrap` 在跑 DDL 前后各调一次，语义与那些 `if 缺则 ADD` 逐字相同
-    # （列的 type/NOT NULL/DEFAULT 直接取自 `schema.sql`，见 R26-04）。
-    # 7. 关系驱动主动开口（架构总览 §5）：per-role 状态与 per-role 记忆（幂等建表）。
-    #    这张表的列仍由 reconcile_columns 补（不在 _SHAPE_MIGRATED_TABLES 里），只有
-    #    **主键换 (user_id, role_id)** 是形状迁移，走下面 B2 的重建。
-    if "affinity" not in _columns(conn, "role_proactive_state"):
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS role_proactive_state ("
-            " role_id TEXT PRIMARY KEY, affinity REAL NOT NULL DEFAULT 0.0,"
-            " last_interaction_utc TIMESTAMP, calibration_json TEXT,"
-            " updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
-        )
-    # 14. role_proactive_state 的主键升级（多租户 B2）：(role_id) → (user_id, role_id)。
-    #     `role_card` 的主键将来要改成 (user_id, role_id)（第二个身份也可能建一张同名卡），
-    #     状态表不跟着换就撞行。整表重建 + 老行归属实例主人（默认部署 = 'local-user'，
-    #     与 base/identity.DEFAULT_USER_ID 一字不差）。判"老形态"用有没有 user_id 列。
-    #     顺带把**主动会话线程 id 改成带身份**（s_proactive_<role> → s_proactive_<uid>_<role>）：
-    #     同一个 role_id 将来可以属于两个人，线程 id 不带身份就会让两人的主动会话互相覆盖。
-    #     老线程的归属从 session_thread.user_id 现读（数据即真相，不必知道 IDENTITY_USER_ID）；
-    #     checkpoints/writes 的 thread_id 一起改（那是她主动说过的历史，不改就断了上下文）。
-    #     幂等：新 id == 旧 id（已带身份）的不动；新库没有 legacy 行一轮跑过。这两件是本步
-    #「换主键 + 换线程 id」两笔账，放在同一个 if 里是为了一次迁移只判断一次"是不是 B2 之前的库"。
-    if "user_id" not in _columns(conn, "role_proactive_state"):
-        # 滞留暂存表的现场自愈在 bootstrap 早期已经做过（那里才赶得在 schema DDL 前面）。
-        # 前置 DROP：与上面 B1 那一处同一个理由（`R28-15`，红档）。这一步死在半路的话，
-        # 残留的空 `__b2` 会让下次启动的 CREATE 报 `already exists`，bootstrap 永久打不开。
-        # 整段重建（含下面的线程 id 换名）包进**一个显式事务**：DDL 在 legacy autocommit
-        # 下逐句落盘，显式 BEGIN 让"半路死"整体回滚 —— DROP→RENAME 之间的窗口随事务消失。
-        conn.commit()
-        conn.execute("BEGIN IMMEDIATE")
-        _migrate_event("role_proactive_state 主键重建开始（B2，显式事务）")
-        conn.execute("DROP TABLE IF EXISTS role_proactive_state__b2")
-        conn.execute(
-            "CREATE TABLE role_proactive_state__b2 ("
-            " user_id TEXT NOT NULL DEFAULT 'local-user', role_id TEXT NOT NULL,"
-            " affinity REAL NOT NULL DEFAULT 0.0, last_interaction_utc TIMESTAMP,"
-            " calibration_json TEXT, open_threads TEXT, open_threads_at TIMESTAMP,"
-            " recall_at TIMESTAMP,"
-            " updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
-            " PRIMARY KEY (user_id, role_id))"
-        )
-        conn.execute(
-            "INSERT INTO role_proactive_state__b2 (user_id, role_id, affinity,"
-            " last_interaction_utc, calibration_json, open_threads, open_threads_at, recall_at,"
-            " updated_at)"
-            " SELECT 'local-user', role_id, affinity, last_interaction_utc, calibration_json,"
-            " open_threads, open_threads_at, recall_at, updated_at FROM role_proactive_state"
-        )
-        conn.execute("DROP TABLE role_proactive_state")
-        conn.execute("ALTER TABLE role_proactive_state__b2 RENAME TO role_proactive_state")
-        refs = thread_id_carriers(conn)
-        for row in conn.execute(
-            "SELECT thread_id, user_id FROM session_thread "
-            "WHERE thread_id LIKE 's_proactive_%'"
-        ).fetchall():
-            tid = str(row["thread_id"])
-            uid = str(row["user_id"])
-            if tid.startswith(f"s_proactive_{uid}_"):
-                continue  # 已带身份（本步跑过 / 新库建的）
-            new_tid = f"s_proactive_{uid}_{tid[len('s_proactive_'):]}"
-            conn.execute(
-                "UPDATE session_thread SET thread_id = ? WHERE thread_id = ?",
-                (new_tid, tid),
-            )
-            # 带 thread_id 的表全跟着走（`R28-23`）：审批、检查点、writes，以及将来任何新表
-            # —— 判据是库的形状，不是这段代码记得列了几张。
-            for table in refs:
-                conn.execute(
-                    f"UPDATE {quote_ident(table)} SET thread_id = ? WHERE thread_id = ?",
-                    (new_tid, tid),
-                )
-        conn.commit()  # 重建原子落盘（`R102-53`）
-        _migrate_event("role_proactive_state 主键重建完成（含线程 id 换名）")
-    if "value" not in _columns(conn, "role_memory"):
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS role_memory ("
-            " role_id TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '',"
-            " updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
-        )
-    # 8. role_memory_item（记忆条目表）：记忆从"一坨文本"升级为可逐条退役的条目。
-    #    老库里的 role_memory / memory:facts 两块 blob **不迁移**（用户 2026-09-20："旧的记忆
-    #    数据也可以不要了"）—— 旧表原样留着不删列（迁移纪律），只是不再是事实面。
-    if "text" not in _columns(conn, "role_memory_item"):
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS role_memory_item ("
-            " id INTEGER PRIMARY KEY AUTOINCREMENT, role_id TEXT NOT NULL,"
-            " text TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'manual',"
-            " pinned INTEGER NOT NULL DEFAULT 0, hit_count INTEGER NOT NULL DEFAULT 0,"
-            " last_hit_at TIMESTAMP, invalidated_at TIMESTAMP, superseded_by INTEGER,"
-            " created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
-            " updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_role_memory_item_bucket ON role_memory_item"
-            "(role_id, invalidated_at, pinned, id DESC)"
-        )
-    conn.execute("DROP TABLE IF EXISTS service_policy")
-    # 4. token_usage_day 的主键升级（多租户 B1a）：(day, backend) → (day, user_id, backend)。
-    #    补列改不了主键，也没有"PRAGMA 改 PK"这回事 —— 只能整表重建。旧行全部归属本机那份
-    #    （语义 = 上线前测的本机用量，不是谁漏账）；新行由 `usage.record_usage(user_id=…)` 按
-    #    花谁的 key 落格。判断"旧形态"用有没有 user_id 列（与列级迁移同口径）。
-    if "user_id" not in _columns(conn, "token_usage_day"):
-        # 前置 DROP（R28-15 同族）+ 显式事务包整段重建（`R102-53`）：
-        # "半路死"要么整体回滚、要么在下一次开机被早期的自愈接住。
-        conn.commit()
-        conn.execute("BEGIN IMMEDIATE")
-        _migrate_event("token_usage_day 主键重建开始（B1a，显式事务）")
-        conn.execute("DROP TABLE IF EXISTS token_usage_day_new")
-        conn.execute(
-            "CREATE TABLE token_usage_day_new ("
-            " day TEXT NOT NULL, user_id TEXT NOT NULL DEFAULT 'local-user',"
-            " backend TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0,"
-            " prompt_tokens INTEGER NOT NULL DEFAULT 0,"
-            " completion_tokens INTEGER NOT NULL DEFAULT 0,"
-            " reasoning_tokens INTEGER NOT NULL DEFAULT 0,"
-            " unreported INTEGER NOT NULL DEFAULT 0,"
-            " PRIMARY KEY (day, user_id, backend))"
-        )
-        conn.execute(
-            "INSERT INTO token_usage_day_new (day, user_id, backend, calls, prompt_tokens,"
-            " completion_tokens, reasoning_tokens, unreported)"
-            " SELECT day, 'local-user', backend, calls, prompt_tokens, completion_tokens,"
-            " reasoning_tokens, unreported FROM token_usage_day"
-        )
-        conn.execute("DROP TABLE token_usage_day")
-        conn.execute("ALTER TABLE token_usage_day_new RENAME TO token_usage_day")
-        conn.commit()  # 重建原子落盘（`R102-53`）
-        _migrate_event("token_usage_day 主键重建完成")
-    if "api_key" in _columns(conn, "service_endpoint"):
-        # 重建段包进**单个事务**（2026-10-04 审查快照的迁移事务条目；B1a :790 同款）：
-        # 从前 DROP 与 executescript 分属两个隐式事务，死在中间 = 下次启动靠
-        # IF NOT EXISTS 重建出**空表**、seed 标志已删照常重播 —— 端点配置静默清空，
-        # 无人被提示。executescript 会先隐式 COMMIT，所以把 DROP/清标志与整份 core schema
-        # 拼成一段脚本、首尾 BEGIN IMMEDIATE/COMMIT 包死（schema.sql 无 TRIGGER/PRAGMA，
-        # 逐条语句在 SQLite 里本就事务化）。崩掉要么整体回滚（配置还在）、要么全成。
-        core = core_schema_path()
-        conn.executescript(
-            "BEGIN IMMEDIATE;"
-            "DROP TABLE service_endpoint;"
-            "DELETE FROM kernel_meta WHERE key = 'service_endpoints_seeded';"
-            + core.read_text(encoding="utf-8")
-            + ";COMMIT;"
-        )
-        _migrate_event("service_endpoint 整表重建完成（单事务，配置零丢失）")
-    # 13. service_endpoint 的归属（多租户 B1b，方案 A）：加可空 user_id。
-    #     补列器不碰这张表（它在 `_SHAPE_MIGRATED_TABLES` 里，整表重建/搬层族），所以这里手写
-    #     一次。只对新形态库生效 —— 老形态（带 api_key）走上面那句 DROP 重建，新表已带列。
-    #     语义（schema.sql 有全文）：**仅 chat 引用行按人**（默认/回退链 = 谁花 key 由谁定），
-    #     能力端点（ocr/embedding/rerank）永远设备级、user_id 留 NULL。老 chat 行回填本机主人
-    #     （默认部署 = 'local-user'，与 `base/identity.DEFAULT_USER_ID` 一字不差 —— 漂了就是
-    #     "升级完对话默认丢失"那种最像默认值出问题的症状）。新 chat 行由 model_settings 的写
-    #     入方显式带主人，所以这里只回填历史行。
-    if "user_id" not in _columns(conn, "service_endpoint"):
-        conn.execute("ALTER TABLE service_endpoint ADD COLUMN user_id TEXT")
-        conn.execute(
-            "UPDATE service_endpoint SET user_id = 'local-user' WHERE category = 'chat'"
-        )
-    # 9. model_backend 两层化（凭据上收 model_provider、usage 变成 chat 引用行）。
-    #    必须排在 service_endpoint 重建**之后**：搬层要往新形态的引用表里写 chat 行。
-    # 搬层这一步**由调用方交进来**（`R102-08`：从前这里是 `storage/db.py` 惰性
-    # import `core.model_settings`，而 `model_settings` 顶层 import `storage.db` ——
-    # 全仓唯一一条模块级真环，底层反向依赖上层）。它必须留在 `_migrate` 这个位置上：
-    # 排在 service_endpoint 重建**之后**、`idx_model_backend_provider` 创建**之前**
-    # —— 搬层会 DROP/RENAME 重建 model_backend，先建的索引跟着表一起没了。顺序是承重的，
-    # 所以不是"调用方在 bootstrap 之后自己搬一次"，而是把那个动作传到这里来。
-    #
-    # 旧库却没人传 = 静默不搬 = 配置变小，所以这里判一下现场：真需要搬而没交动作，
-    # 就当众失败，而不是留下一个"读出来比升级前少"的库。
-    if _needs_provider_layers(conn):
-        if provider_layers is None:
-            raise RuntimeError(
-                "model_backend 还是旧形态（没有 provider_id），需要搬层却没交 "
-                "provider_layers：走 core/bootstrap.py 那条链，或显式传 "
-                "provider_layers=rolecard_agent.core.model_settings"
-                ".migrate_to_provider_layers。"
-            )
-        provider_layers(conn)
-    # 索引在搬层之后建：搬层会 DROP/RENAME 重建 model_backend，先建的索引跟着表一起没了。
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_model_backend_provider ON model_backend"
-        "(provider_id, sort_order, name)"
-    )
-    # 10. model_backend 增列采样惩罚三档（设计稿 §8.2 的补课：只露过 num_ctx/temperature）。
-    #     排在搬层**之后**：搬层会重建这张表，先补的列跟着旧表一起没了（与上面那条索引同理）。
-    #     三档都可空，NULL = 不传该参数 = 引擎默认（Ollama 出厂 repeat_penalty=1.1，
-    #     写成 0 是"把它关了"，与"没设"是两种行为 —— 所以这里不用 DEFAULT 0）。
-    for name in ("repeat_penalty", "frequency_penalty", "presence_penalty"):
-        if name not in _columns(conn, "model_backend"):
-            conn.execute(f"ALTER TABLE model_backend ADD COLUMN {name} REAL")
-    # 11.「未收尾话题」那两列（open_threads / open_threads_at）原先也手写在这里，现在由
-    #     `bootstrap` 补搬层**之后**的那一遍 `reconcile_columns` 按声明补齐。
-    # 12. 记忆条目的跨机器身份 `uid`（09-27 轮 M2b）。补列器能把**列**长出来，但填什么值是
-    #     数据不是形状 —— 老行的 uid 必须在这里补上 uuid4，否则"哪些条目能跟云端对账"这件事
-    #     没有答案，上行只剩"整表覆盖"那一条会丢数据的路。幂等：只碰 NULL/空串。
-    if "uid" in _columns(conn, "role_memory_item"):
-        rows = conn.execute(
-            "SELECT id FROM role_memory_item WHERE uid IS NULL OR uid = ''"
-        ).fetchall()
-        for r in rows:
-            conn.execute(
-                "UPDATE role_memory_item SET uid = ? WHERE id = ?",
-                (uuid.uuid4().hex, int(r[0])),
-            )
-        conn.commit()
-    # 14. OCR 引擎换家（10-02：Paddle → RapidOCR）：内置行的 **id 就是事实面**。
-    #     `select_ocr_backend` 按 id 匹配候选、`check_availability` 按 id 分派探活、服务页把 id
-    #     当标签来源 —— 旧库里那行 `paddle` 不改名，症状不是报错而是**静默降级**：服务页显示
-    #     "本地 OCR 就绪"，选择器却永远匹配不上任何候选，`order` 里剩下的都是不可用的行，
-    #     图片一路停在 pending，看起来像"这张图没识别出来"（与 rag/ocr.py 里"空 order 不抛"
-    #     那条同一种阴）。
-    #     幂等：只在真存在 `paddle` 行时动手。两种终态都对 —— 已有 `rapidocr` 行（新库、或
-    #     播种已重播过）就删旧行，绝不撞 (category, id) 主键；没有就把旧行**改名带过去**，
-    #     enabled / sort_order / user_id 一字不动：操作员在这行上做过的启停与排序，不该因为
-    #     换了个引擎就被重置。
-    has_old = conn.execute(
-        "SELECT 1 FROM service_endpoint WHERE category = 'ocr' AND id = 'paddle'"
-    ).fetchone()
-    if has_old:
-        if conn.execute(
-            "SELECT 1 FROM service_endpoint WHERE category = 'ocr' AND id = 'rapidocr'"
-        ).fetchone():
-            conn.execute("DELETE FROM service_endpoint WHERE category = 'ocr' AND id = 'paddle'")
-        else:
-            conn.execute(
-                "UPDATE service_endpoint SET id = 'rapidocr'"
-                " WHERE category = 'ocr' AND id = 'paddle'"
-            )
-        conn.commit()

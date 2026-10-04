@@ -91,7 +91,7 @@ def test_dedupe_ingestion_removes_duplicates_keeps_latest(tmp_path) -> None:
     """
     import sqlite3
 
-    from rolecard_agent.storage.db import _dedupe_ingestion_tasks
+    from rolecard_agent.core.migrations import dedupe_ingestion_tasks
 
     conn = sqlite3.connect(tmp_path / "legacy.db")
     conn.row_factory = sqlite3.Row
@@ -109,12 +109,12 @@ def test_dedupe_ingestion_removes_duplicates_keeps_latest(tmp_path) -> None:
     )
     conn.commit()
 
-    removed = _dedupe_ingestion_tasks(conn)
+    removed = dedupe_ingestion_tasks(conn)
     assert removed == 1
     left = {
         str(r["task_id"])
         for r in conn.execute("SELECT task_id FROM ingestion_task").fetchall()
     }
     assert left == {"t-new", "t-other"}, left
-    assert _dedupe_ingestion_tasks(conn) == 0, "幂等：第二遍必须零改动"
+    assert dedupe_ingestion_tasks(conn) == 0, "幂等：第二遍必须零改动"
     conn.close()

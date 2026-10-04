@@ -1,12 +1,13 @@
-"""`R102-08`：storage 不再反向 import core，而旧库没人传搬层动作时当众失败。
+"""`R102-08` + 2026-10-04 审查快照 P1-6：storage 不反向 import core，业务迁移由计划交进来。
 
 三条判据：
 
   1. **方向不许反过来** —— storage 层任何一处 import `rolecard_agent.core`（含函数体里的
      惰性 import）即红；惰性 import 只是让导入不炸，环还在。
-  2. **旧形态现场 + 没交动作 = 大声失败**，不是"静默不搬"：那一步的代价是用户配置变小
-     （凭据组没建、chat 引用行没写），而症状长得像"我明明配过模型"。
-  3. **动作真的被调用**，并且是在 `bootstrap` 内部那个位置（顺序承重：搬层要排在
+  2. **旧形态现场 + 没交计划 = 大声失败**，不是"静默不搬"：那一步的代价是用户配置变小
+     （凭据组没建、chat 引用行没写），而症状长得像"我明明配过模型"。判据是**通用**的
+     （声明 vs 实况，storage 里不点名任何表）—— 步骤清单住 `core/migrations.py`。
+  3. **计划真的被执行**，并且是在 `bootstrap` 内部那个位置（顺序承重：搬层要排在
      service_endpoint 重建之后、`idx_model_backend_provider` 创建之前 —— 先建的索引会跟着
      DROP/RENAME 一起没了）。这条用"索引最后还在"来证。
 """
@@ -18,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from rolecard_agent.core.migrations import build_plan
 from rolecard_agent.storage.db import _columns, bootstrap, connect
 
 REPO = Path(__file__).resolve().parents[2]
@@ -69,9 +71,10 @@ def _legacy_conn(tmp_path: Path):
 
 
 def test_legacy_db_without_the_hook_fails_loud(tmp_path: Path) -> None:
+    """没交 `plan` 的旧形态现场 = RuntimeError（消息点名 `MIGRATION_PLAN`）。"""
     conn = _legacy_conn(tmp_path)
     try:
-        with pytest.raises(RuntimeError, match="provider_layers"):
+        with pytest.raises(RuntimeError, match="MIGRATION_PLAN"):
             bootstrap(conn, enabled_domains=())
     finally:
         conn.close()
@@ -88,7 +91,9 @@ def test_the_injected_action_runs_in_place(tmp_path: Path) -> None:
 
     conn = _legacy_conn(tmp_path)
     try:
-        bootstrap(conn, enabled_domains=("health",), provider_layers=fake_layers)
+        bootstrap(
+            conn, enabled_domains=("health",), plan=build_plan(provider_layers=fake_layers)
+        )
         assert calls == ["moved"]
         # 顺序承重的证据：索引是在搬层**之后**建的，所以它此刻必须真的存在。
         indexes = {
@@ -105,6 +110,10 @@ def test_new_shape_db_needs_no_action(tmp_path: Path) -> None:
     """新库（有 provider_id）不该要求调用方传动作，也不该调用它。"""
     conn = connect(tmp_path / "fresh.db")
     calls: list[str] = []
-    bootstrap(conn, enabled_domains=("health",), provider_layers=lambda _c: calls.append("x") or 0)
+    bootstrap(
+        conn,
+        enabled_domains=("health",),
+        plan=build_plan(provider_layers=lambda _c: calls.append("x") or 0),
+    )
     assert calls == []
     conn.close()

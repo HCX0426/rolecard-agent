@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rolecard_agent.core.migrations import MIGRATION_PLAN
 from rolecard_agent.domains.registry import DOMAINS
 from rolecard_agent.storage.db import bootstrap, connect
 
@@ -25,7 +26,7 @@ def _indexes(conn, table: str) -> set[str]:
 
 def test_the_registered_indexes_ship_with_the_schema(tmp_path: Path) -> None:
     conn = connect(tmp_path / "app.db")
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
     for table, index in REGISTERED.items():
         assert index in _indexes(conn, table), f"{table} 上没有 {index}"
     conn.close()
@@ -39,7 +40,7 @@ def test_an_old_db_gets_them_on_the_next_boot(tmp_path: Path) -> None:
     """
     db = tmp_path / "old.db"
     conn = connect(db)
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
     for index in REGISTERED.values():
         conn.execute(f"DROP INDEX IF EXISTS {index}")
     conn.commit()
@@ -47,7 +48,7 @@ def test_an_old_db_gets_them_on_the_next_boot(tmp_path: Path) -> None:
         index not in _indexes(conn, table) for table, index in REGISTERED.items()
     ), "夹具没能把索引去掉"
 
-    bootstrap(conn, enabled_domains=DOMAINS)
+    bootstrap(conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
     for table, index in REGISTERED.items():
         assert index in _indexes(conn, table), f"老库升上来之后还是没有 {index}"
     conn.close()

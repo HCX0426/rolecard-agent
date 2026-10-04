@@ -46,11 +46,8 @@ from rolecard_agent.core.graph import build_graph_config, build_kernel, build_mo
 from rolecard_agent.core.ingestion import IngestionService
 from rolecard_agent.core.knowledge_sources import KnowledgeSourceStore
 from rolecard_agent.core.memory import memory_for_turn
-from rolecard_agent.core.model_settings import (
-    ModelSettingsService,
-    client_style,
-    migrate_to_provider_layers,
-)
+from rolecard_agent.core.migrations import MIGRATION_PLAN
+from rolecard_agent.core.model_settings import ModelSettingsService, client_style
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
 from rolecard_agent.core.probes import ollama_keep, vision_capability
@@ -663,7 +660,9 @@ def build_runtime(
     # 每个 REGISTERED 域的 schema 都建好，表因此永远存在，重新启用插件无需 DDL。
     # 搬层那一步由装配根交给 storage（`R102-08`）：内核认识自己的上层形状，storage 不必
     # 反过来 import core —— 全仓那条唯一的模块级真环就此断开。
-    apply_schema(conn, enabled_domains=domains, provider_layers=migrate_to_provider_layers)
+    # `plan` 是业务迁移的**全部**（清重 / 滞留自愈 / 整表重建 / 搬层）：步骤的清单与顺序
+    # 住在 `core/migrations.py`，storage 只认这个形状（P1-6 的 split-brain 收口）。
+    apply_schema(conn, enabled_domains=domains, plan=MIGRATION_PLAN)
     seed_plugin_rows(conn, domains)
     # 出厂卡也有主人：这台实例的主人（`IDENTITY_USER_ID`，空=本机那份）。§4.1 的"两份完整
     # 数据集"落到角色卡上就是这句 —— 每张卡都有归属，读路径只认 `RoleCards` 那个按人过滤的视图。
