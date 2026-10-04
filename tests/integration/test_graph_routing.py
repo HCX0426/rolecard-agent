@@ -352,6 +352,49 @@ def test_a_turn_binds_its_threads_owner_for_zero_arg_tool_closures(tmp_path: Pat
     assert seen == ["u1"], "工具读到的主人必须是这条线程的，不是实例的"
 
 
+def test_a_bound_turn_never_needs_the_identity_fallback(tmp_path: Path) -> None:
+    """同一轮再问一次哨兵：**绑齐的那条路径一次都不许悄悄回落**（快照"身份显式化"那一格
+    的"哨兵"验收现场）。
+
+    上面那条用例证的是"回落的方向对"（读到了这条线程的主人），它证不了另一件事：
+    这一轮里是不是**有别的地方没绑**、靠 fallback 兜过去还在照跑 —— 那种缺陷的症状是
+    "偶尔读到别人的记忆/花别人的 key"，不报错，最难查。哨兵把它变成一条断言：
+    带着 `user_id` 的一轮整程跑完，收集器必须是空的。
+
+    这条用例同时也是那把尺子的形状示范：以后新增一条读身份的同步路径，可以要求它
+    "在这个块里跑、`fell` 必须为空"，而不是等人肉去读代码有没有绑。
+    """
+    from rolecard_agent.base.identity import capturing_identity_fallback
+
+    db = tmp_path / "app.db"
+    _seed_identity(db)
+    _allow_this_tool(db, "u1")
+    graph, _, _ = _kernel(
+        db,
+        [
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "who_is_this_turn_for", "args": {}, "id": "c1"}],
+            ),
+            AIMessage(content="查好了"),
+        ],
+        registry=_only(who_is_this_turn_for),
+    )
+    with capturing_identity_fallback() as fell:
+        result = graph.invoke(
+            {
+                **new_state(
+                    thread_id="thread-1", user_id="u1", current_role_id="probe"
+                ),
+                "messages": [HumanMessage(content="看下我的档案")],
+            },
+            config={"configurable": {"thread_id": "thread-1"}},
+        )
+    seen = [m.content for m in result["messages"] if isinstance(m, ToolMessage)]
+    assert seen == ["u1"]
+    assert fell == [], f"这一轮里出现了不该有的静默回落：{fell}"
+
+
 def test_a_state_without_an_owner_falls_back_instead_of_crashing(tmp_path: Path) -> None:
     """老线程的状态里可以没有 `user_id`（归属是 09-27 才落到角色卡上的）。
 

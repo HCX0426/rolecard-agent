@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 
@@ -29,10 +29,55 @@ DEFAULT_USER_ID = "local-user"
 #: 这一轮"在为谁读" —— 由图节点在入口绑上（`core/nodes`），退出时复位。
 _BOUND_USER: ContextVar[str | None] = ContextVar("rolecard_bound_user", default=None)
 
+#: 「没绑过就回落」的**哨兵钩子**（住在 ContextVar 里 = 天然按执行上下文隔离）。默认
+#: `None` = 不记，生产热路径零额外开销。测试装一个收集器（`capturing_identity_fallback`），
+#: 就能把"这条路径到底有没有悄悄回落"变成**能断言**的事实（2026-10-04 审查快照
+#: "身份显式化"那一格的"fallback 加哨兵"）。
+#: 为什么是 ContextVar 而不是模块全局：全局会被同一进程里并发的另一条线程污染计数，而
+#: `bound_user` 本身就是 ContextVar —— 钩子要跟它同一套隔离语义。
+#: 为什么这里**不**再打一条日志：回落在生产里是**常态而不是异常**（后台调度器每个 tick 替
+#: 实例主人冒话都走这一支，10-05 实测一轮 18 次触发全是这一类或测试自证），给它配日志等于
+#: 每 30 秒刷一行；而"三条日志通道并存"是另一格（§5 第 18 条）正在收口的病 —— 这一格只加
+#: 一个**测试可注入的钩子**，不新增一处日志出口。真要在生产里查回落，那个出口归收口那格定。
+_FALLBACK_HOOK: ContextVar[Callable[[str], None] | None] = ContextVar(
+    "rolecard_identity_fallback_hook", default=None
+)
+
 
 def active_user_id(fallback: str) -> str:
     """这一轮绑过的主人；没绑过就是 `fallback`（= 这台实例的主人）。"""
-    return _BOUND_USER.get() or fallback
+    bound = _BOUND_USER.get()
+    if bound:
+        return bound
+    hook = _FALLBACK_HOOK.get()
+    if hook is not None:
+        hook(fallback)
+    return fallback
+
+
+@contextmanager
+def capturing_identity_fallback() -> Iterator[list[str]]:
+    """在这个块里每一次"未绑定→回落"都收进返回列表（供测试断言"这条路径身份是显式的"）。
+
+    用法::
+
+        with capturing_identity_fallback() as fell:
+            ...  # 跑一条应当全程绑定了主人的同步路径
+        assert fell == []        # 零回落 = 这条路径不靠静默兜底
+
+    收的是 `fallback` 值而不是纯计数：测试要能说"回落到了谁"，而不只是"回落了几次"。
+    复位在 `finally`：一次异常不许把这个上下文里的钩子留成脏值（与 `bound_user` 同纪律）。
+
+    它能穿透线程池不是巧合：`core/nodes.execute_tools` 提交工具时走
+    `contextvars.copy_context().run(...)`（`R102-03` 那条修复），复制的是**整个上下文**，
+    所以这条钩子与 `bound_user` 一起被带进池线程 —— 一条没绑主人的工具调用照样会被抓到。
+    """
+    collected: list[str] = []
+    token = _FALLBACK_HOOK.set(collected.append)
+    try:
+        yield collected
+    finally:
+        _FALLBACK_HOOK.reset(token)
 
 
 @contextmanager

@@ -151,3 +151,34 @@ def test_binding_an_empty_owner_is_the_same_as_binding_nothing() -> None:
 
     with bound_user(""):
         assert active_user_id("owner") == "owner"
+
+
+def test_fallback_sentinel_catches_quiet_fallbacks_and_stays_silent_when_bound() -> None:
+    """「没绑过→静默回落实例主人」这条**能被抓到**（快照"身份显式化"那格的哨兵）。
+
+    这一族缺陷最怕的不是回落本身（后台调度器替实例主人冒话时回落是**设计如此**，
+    交接第四节量过 18 次触发全是这一类或测试自证），而是**该绑的没绑**：请求期漏了
+    图入口的绑定，症状是"偶尔读到别人的记忆/花别人的 key"，而它不报错、只悄悄换个人。
+    哨兵把"这条同步路径有没有回落"变成能断言的事实：绑齐了零记录，漏绑了记录到回落的那个
+    fallback 值 —— 于是新加一条读路径时可以要求它"在这个块里跑、fell 必须为空"。
+    """
+    from rolecard_agent.base.identity import (
+        active_user_id,
+        bound_user,
+        capturing_identity_fallback,
+    )
+
+    # 全程绑定了主人：哨兵一次都不响。
+    with capturing_identity_fallback() as fell, bound_user("alice"):
+        assert active_user_id("local-user") == "alice"
+    assert fell == []
+
+    # 没绑：回落到 fallback，且**回落到了谁**被如实记下来。
+    with capturing_identity_fallback() as fell:
+        assert active_user_id("local-user") == "local-user"
+    assert fell == ["local-user"]
+
+    # 出了作用域钩子必须复位：下一条路径的回落不该记进上一条的收集器。
+    with capturing_identity_fallback() as second:
+        assert second == []
+    active_user_id("local-user")  # 没有活动收集器，也不许炸
