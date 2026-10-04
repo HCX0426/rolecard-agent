@@ -26,8 +26,19 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-# 解析文本副本的后缀（与 api/deps.py 的 parsed_text_path 约定一致）。
+# 解析文本副本的后缀。落点由下面的 `parsed_text_path` 定 —— 后缀与落点从此同一处，
+# 从前副本函数住在 `api/deps.py`，本文件只剩这行后缀加一句"与那边一致"：隔着一层
+# 互相望着的两处事实面，而 core 想知道副本长什么样反而够不到 api。
 PARSED_SUFFIX = ".parsed.txt"
+
+
+def parsed_text_path(target: Path) -> Path:
+    """解析文本副本的落点：主文件同目录 `<原名>.parsed.txt`（随 uploads/ 一起被 gitignore）。
+
+    为什么落盘：结构化抽取需要原文，而图片的解析要走 OCR 子进程（很贵）。上传时顺手存一份，
+    抽取就不必再跑一次 OCR。
+    """
+    return target.with_name(target.name + PARSED_SUFFIX)
 
 
 @dataclass(frozen=True, slots=True)

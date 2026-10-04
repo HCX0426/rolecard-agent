@@ -7,12 +7,8 @@
 from __future__ import annotations
 
 import contextlib
-import hashlib
-import re
-import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
@@ -29,15 +25,13 @@ from rolecard_agent.api.deps import (
     get_actor,
     get_context,
     get_thread,
-    parsed_text_path,
     role_error_to_http,
     serialize_message,
 )
 from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.base.text import text_of
-from rolecard_agent.core import memory_distill, session_service
+from rolecard_agent.core import memory_distill, session_service, upload_service
 from rolecard_agent.core.graph import build_graph_config
-from rolecard_agent.core.ingestion import INGESTION_FAILED, INGESTION_PENDING
 from rolecard_agent.core.reachout import (
     PROACTIVE_THREAD_PREFIX,
     ensure_proactive_thread,
@@ -52,38 +46,9 @@ from rolecard_agent.core.thread_locks import (
     try_extraction,
 )
 from rolecard_agent.core.usage import TokenUsage, record_usage
-from rolecard_agent.rag.parser import (
-    IMAGE_EXTS,
-    PARSEABLE_EXTENSIONS,
-    OcrUnavailable,
-    ParseError,
-    parse_document,
-)
-from rolecard_agent.rag.retriever import (
-    EmbedError,
-    KnowledgeDimensionMismatch,
-)
 from rolecard_agent.roles.service import RoleError, RoleNotFound
 
 router = APIRouter()
-
-# 文件名消毒（审查报告 A4）：模型/浏览器给的 `filename` 不可信。`Path().name` 已经挡掉
-# 路径成分，这里再处理长度与控制字符 —— 超长名或含 `\x00` 的名字会让 `write_bytes` 抛
-# OSError，用户拿到的是一个没有任何说明的 500。
-_FILENAME_MAX = 120
-_UNSAFE_NAME_CHARS = re.compile(r"[\x00-\x1f\x7f<>:\"|?*\\/]")
-
-
-def _sanitize_filename(name: str) -> str:
-    cleaned = _UNSAFE_NAME_CHARS.sub("_", name).strip(" .")
-    if not cleaned:
-        cleaned = "report.bin"
-    if len(cleaned) <= _FILENAME_MAX:
-        return cleaned
-    # 截断但保住扩展名：解析分派完全依赖后缀，丢后缀等于把文件变成"不支持的类型"。
-    suffix = Path(cleaned).suffix[:16]
-    return cleaned[: _FILENAME_MAX - len(suffix)] + suffix
-
 
 class SessionCreate(BaseModel):
     """Create-session request. Omitting `role_id` binds the default assistant."""
@@ -129,10 +94,6 @@ class ChatMessage(BaseModel):
         if (info.data.get("image") or "").strip():
             return v
         raise ValueError("message 为空且未附图片")
-
-
-# 上传大小上限：请求体整个读进内存算哈希，20MB 是演示负载的合理护栏。
-UPLOAD_MAX_BYTES = 20 * 1024 * 1024
 
 
 def _user_message(text: str, image: str | None, *, created_at: str) -> HumanMessage:
@@ -1001,201 +962,48 @@ def delete_session(thread_id: str, ctx: AppContext = Depends(get_context)) -> No
 def upload_report(
     thread_id: str, file: UploadFile, ctx: AppContext = Depends(get_context)
 ) -> object:
-    """US-7 上传入口的真实落点：存文件 + 登记 intake 任务（幂等键 sha256）。
+    """US-7 上传入口：归属校验 → service 落盘/登记/解析/建索引 → 说明插回会话。
 
     **刻意声明为同步 `def`**：本端的重活（OCR 子进程最长 120 秒、嵌入、落盘）全是
     **阻塞式**调用。若写成 `async def`，它们会跑在事件循环里 —— 上传一张图片的几十秒
     内，整个进程（含其他会话的 SSE 对话）都不再响应。同步 `def` 让 FastAPI 把它丢进
-    线程池，事件循环只负责调度。同理用 `file.file.read()` 而不是 `await file.read()`。
+    线程池，事件循环只负责调度。同理传给 service 的是 `file.file`（原样字节流），
+    不 `await file.read()`。
 
-    v2.2 起解析在此完成：.txt/.md/.pdf/.docx/.pptx/.xlsx 直接抽文本入
-    `health_reports` 检索索引；图片走 **可插拔 OCR**（本地 RapidOCR 优先，独立 venv 子进程；
-    排在其后的候选由「服务」页的 OCR 端点序决定，见 rag/ocr.select_ocr_backend）。
-    解析失败的图片 / 不支持的类型保持 pending，并向会话注入一条说明消息（graph.update_state），
-    让模型知道"有文件已登记但还不能读"，而不是假装读过。重复上传同一文件复用同一任务。
+    路由在这一层只做三件事：
+      * 归属校验（不是你的会话 → 404，`get_thread` 统一判）；
+      * 异常映射（超限/空文件 → 400；登记了但读不出来 → 500）；
+      * 把 service 给的那句说明插回**这条会话**的检查点 —— 注入与用户这一轮写的是
+        同一份，必须持写锁（R28-03）。
 
-    **落盘顺序（审查报告 M4）**：先算 sha256 → 查幂等键 → 只有确实是新文件才落盘。
-    旧实现每次上传都无条件写一份 `<uuid8>_<原名>`，于是"重复上传"会不断往 uploads/
-    里堆同样的字节、永不回收。现在重复上传不产生新文件。
+    落盘幂等、文件名消毒、OCR 编排、intake 状态机推进全在 `core/upload_service`，
+    判据见那边的模块文档（先 spill 再幂等、OcrUnavailable≠ParseError 等四条）。
     """
-    conn = ctx.conn
-    settings = ctx.settings
-    thread = get_thread(conn, thread_id, user_id=ctx.current_user())
-    user_id = str(thread["user_id"])
-    upload_dir = settings.upload_dir
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = Path(file.filename or "report.bin").name  # 去掉任何路径成分
-    # 文件名消毒（审查报告 A4）：截断 + 去掉控制字符/分隔符 —— 超长名会让文件系统直接报错，
-    # 而报错发生在写盘之后就成了 500 而不是可读的 400。
-    safe_name = _sanitize_filename(safe_name)
-
-    # M5：流式读 + 增量哈希 + 增量落盘到临时 spill，**不再把整文件读进内存**（20MB 峰值消失）。
-    # 先落 spill 是为了拿到 sha256 去做幂等查重；最终按幂等结果 rename 到正式路径或丢弃，
-    # 避免重复落盘（正常重复上传零写入）。
-    spill = upload_dir / f".{uuid.uuid4().hex[:12]}.part"
-    hasher = hashlib.sha256()
-    size = 0
+    thread = get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
     try:
-        with spill.open("wb") as out:
-            while True:
-                chunk = file.file.read(1 << 20)  # 1 MB 一块
-                if not chunk:
-                    break
-                size += len(chunk)
-                if size > UPLOAD_MAX_BYTES:
-                    raise HTTPException(status_code=400, detail="文件超过 20MB 上限。")
-                hasher.update(chunk)
-                out.write(chunk)
-    except HTTPException:
-        spill.unlink(missing_ok=True)
-        raise
-    except Exception:
-        spill.unlink(missing_ok=True)
-        raise
-    if size == 0:
-        spill.unlink(missing_ok=True)
-        raise HTTPException(status_code=400, detail="空文件。")
-    file_hash = hasher.hexdigest()
-
-    # 幂等：同一份字节只登记一次、只落盘一次。
-    prior = ctx.ingestion.find_by_hash(user_id, file_hash)
-    if prior is not None:
-        task_id = str(prior["task_id"])
-        reused = True
-        existing = prior
-        target = Path(str(prior["source_file"] or ""))
-        if not target.is_file():
-            # 台账在、文件没了（人工删除 / 数据卷重置）。**自愈**：把这次上传的字节写下来，
-            # 并把台账指过去 —— 否则"重复上传同一个文件"会一路走到解析失败（实测 500）。
-            # 注意这不是"重复落盘"：只有在原文件确实缺失时才写，正常重复上传仍然零写入。
-            target = upload_dir / f"{uuid.uuid4().hex[:8]}_{safe_name}"
-            spill.replace(target)  # 原子改名到正式路径
-            ctx.ingestion.relink_source(task_id, str(target))
-        else:
-            spill.unlink(missing_ok=True)  # 已有文件：丢弃 spill（零写入）
-        if existing["status"] == INGESTION_FAILED:
-            # **failed 必须是一条可走出的路**：重传同一份文件 = 用户在重试。状态机唯一允许的
-            # 回边是 failed → pending，而此前没有任何代码执行它 —— 于是任务永远停在 failed，
-            # 哪怕这次已经重新解析并入库成功，台账还在说"失败"（与事实背离）。
-            # 显式重启后走下面的正常推进链。
-            ctx.ingestion.advance(task_id, INGESTION_PENDING)
-            existing["status"] = INGESTION_PENDING
-    else:
-        target = upload_dir / f"{uuid.uuid4().hex[:8]}_{safe_name}"
-        spill.replace(target)
-        task_id = ctx.ingestion.create(
-            user_id=user_id, source_file=str(target), file_hash=file_hash
+        outcome = upload_service.ingest_upload(
+            reader=file.file,
+            filename=file.filename or "report.bin",
+            thread_id=thread_id,
+            user_id=str(thread["user_id"]),
+            upload_dir=ctx.settings.upload_dir,
+            ingestion=ctx.ingestion,
+            knowledge=ctx.knowledge,
+            knowledge_scope=ctx.health.knowledge_scope,
+            ocr_candidates=ctx.ocr_candidates,
+            tracer=ctx.tracer,
         )
-        existing = ctx.ingestion.get(task_id)
-        if str(existing["source_file"] or "") != str(target):
-            # 输掉了并发竞态（2026-10-04 审查快照的上传幂等条目）：另一路上传先立了台账，
-            # create 的约束回读返回的是**它的**行 —— 自己刚落盘的那份就是孤儿文件，丢弃，
-            # 统一用赢家的那份。没这一步，并发双击/前端重试会各留一份文件。
-            target.unlink(missing_ok=True)
-            target = Path(str(existing["source_file"]))
-            reused = True
-        else:
-            reused = False
+    except upload_service.UploadRejected as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except upload_service.UploadUnreadable as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    # v2.2：统一解析入口——.txt/.md/.pdf 直接抽文本入检索索引；图片走 OCR 子进程
-    # （独立 venv，见 requirements-ocr.txt）；其余类型保持 pending。
-    suffix = target.suffix.lower()
-    if suffix in PARSEABLE_EXTENSIONS:
-        try:
-            # 仅图片需要选 OCR 后端：按「服务」页签的端点顺序（默认本地 RapidOCR 优先）。
-            # L3：选择逻辑收拢到 AppContext.ocr_candidates()（原与 records.py 重复）。
-            backend = ctx.ocr_candidates() if suffix in IMAGE_EXTS else None
-            text = parse_document(target, backend=backend)
-        except OcrUnavailable:
-            # 后端未配置：图片保持 pending，明确告知模型不可读（不把 OCR 栈拖进主环境）。
-            note = (
-                f"[用户上传了图片报告：{safe_name}，已登记 intake 任务 {task_id}"
-                f"（status={existing['status']}）。本地 OCR 未配置"
-                "（本地 RapidOCR 不可用，且「服务」页没有就绪的云端 OCR / 视觉模型端点），"
-                "当前不能读取图片内容，不要假装已经读过。]"
-            )
-            graph_config = {"configurable": {"thread_id": thread_id}}
-            # 注入这条说明也要持锁（R28-03）：它写的就是用户这一轮正在写的同一份检查点。
-            with thread_write(thread_id, timeout=session_service.WRITE_WAIT):
-                ctx.app_state["graph"].update_state(
-                    graph_config, {"messages": [HumanMessage(content=note)]}
-                )
-            return {
-                "task_id": task_id,
-                "reused": reused,
-                "file": safe_name,
-                "status": existing["status"],
-                "parsed": False,
-            }
-        except ParseError as exc:
-            # 解析硬失败 → 任务标记 failed（否则永远停在 pending），并返回可读的 500
-            ctx.ingestion.record_failure(task_id, str(exc))
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-        if text.strip():
-            # 存一份解析文本：结构化抽取复用它，避免对同一张图片再跑一次 OCR（OCR 很贵）。
-            try:
-                parsed_text_path(target).write_text(text, encoding="utf-8")
-            except OSError as exc:
-                # 不再静默吞掉（审查报告 E2）：有现场重解析兜底，但"为什么抽取又跑了 OCR"
-                # 必须能在轨迹里查到原因。
-                ctx.tracer.emit(
-                    TraceEvent(
-                        event="parsed_text_write_failed",
-                        thread_id=thread_id,
-                        error=f"{type(exc).__name__}: {exc}",
-                        detail={"target": target.name},
-                    )
-                )
-            try:
-                # 索引身份用 task_id（按内容 hash 去重 → 同一份字节重建、不同内容彼此
-                # 独立），**不能用 safe_name**：同名文件会互相覆盖，旧文档索引静默丢失
-                # （审查报告 P0）。文件名只作展示名，引用里显示的仍是它。
-                chunks = ctx.knowledge.index(
-                    ctx.health.knowledge_scope, task_id, text, source_name=safe_name
-                )
-            except (KnowledgeDimensionMismatch, EmbedError) as exc:
-                # 两者都是"管理员可修复"的状态，且都发生在**索引没被破坏**之后
-                # （index() 已改为先嵌入再写库，见审查报告 M4）。给出可操作的原因。
-                ctx.ingestion.record_failure(task_id, str(exc))
-                raise HTTPException(status_code=500, detail=str(exc)) from exc
-            chain: tuple[str, ...] = ("parsed", "extracted", "indexed")
-            note = (
-                f"[用户上传了文档：{safe_name}（{chunks} 段），已建立检索索引"
-                f"（任务 {task_id}，status=indexed）。注意：能否检索到取决于当前角色的"
-                "knowledge_scopes 授权；未授权时请提示用户切换角色，不要假装已经读过。]"
-            )
-        else:
-            # 解析出空文本（扫描件 / 无文本层的 PDF）：解析到 parsed 即止，不入索引。
-            chain = ("parsed",)
-            note = (
-                f"[用户上传了文件：{safe_name}，已解析但未提取到文本（可能为扫描件）。"
-                f"已登记任务 {task_id}（status={existing['status']}），暂不入检索。]"
-            )
-        if (existing["status"] or "pending") == "pending":
-            # 幂等：重复上传同一文件会复用已 indexed 的任务，不能再推进状态机。
-            for next_status in chain:
-                ctx.ingestion.advance(task_id, next_status)
-            existing = ctx.ingestion.get(task_id)
-    else:
-        note = (
-            f"[用户上传了报告文件：{safe_name}，已登记 intake 任务 {task_id}"
-            f"（status={existing['status']}）。文件类型暂不支持自动解析（v2.2 支持 "
-            ".txt/.md/.pdf/.docx/.pptx/.xlsx 及图片 OCR），当前不能读取其中内容，"
-            "不要假装已经读过。]"
-        )
-    graph_config = {"configurable": {"thread_id": thread_id}}
-    # 同上（R28-03）：这条"文件类型不支持解析"的说明也是往同一份检查点写。
     with thread_write(thread_id, timeout=session_service.WRITE_WAIT):
         ctx.app_state["graph"].update_state(
-            graph_config, {"messages": [HumanMessage(content=note)]}
+            {"configurable": {"thread_id": thread_id}},
+            {"messages": [HumanMessage(content=outcome.note)]},
         )
-    return {
-        "task_id": task_id,
-        "reused": reused,
-        "file": safe_name,
-        "status": existing["status"],
-    }
+    return outcome.response()
 
 
 __all__ = ["router"]

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import HTTPException, Request
@@ -183,15 +182,6 @@ def expand_to_turns(messages: Sequence[object], ids: Sequence[str]) -> list[str]
     # 保持原有顺序，便于按序删除
     order = {getattr(m, "id", None): n for n, m in enumerate(messages)}
     return sorted(set(out), key=lambda i: order.get(i, 0))
-
-
-def parsed_text_path(target: Path) -> Path:
-    """解析文本的落点：`<上传文件>.parsed.txt`（与上传文件同目录，随 uploads/ 一起被 gitignore）。
-
-    为什么落盘：结构化抽取需要原文，而图片的解析要走 OCR 子进程（很贵）。上传时顺手存一份，
-    抽取就不必再跑一次 OCR。
-    """
-    return target.with_name(target.name + ".parsed.txt")
 
 
 @dataclass(slots=True)

@@ -116,7 +116,7 @@ def test_parsed_companion_survives_while_its_primary_is_referenced(
 ) -> None:
     """主文件在用 → `.parsed.txt` 副本保留（结构化抽取要复用它，删了会白跑一次 OCR）。
 
-    注意副本的**真实落盘名**是 `<uuid8>_<原名>.parsed.txt`（见 `deps.parsed_text_path`），
+    注意副本的**真实落盘名**是 `<uuid8>_<原名>.parsed.txt`（见 `core/uploads.parsed_text_path`），
     响应里的 `file` 字段只有原名 —— 测试必须按真实名字构造，否则测的不是那条规则。
     """
     uploads = tmp_path / "uploads"

@@ -531,9 +531,11 @@ def test_failed_task_recovers_when_the_same_file_is_reuploaded(
     app = create_app(sqlite_path=tmp_path / "retry.db")
     body = b"Follow-up: glucose 6.1."
 
-    import rolecard_agent.api.routers.sessions as sessions_mod
+    # 解析编排随 upload_report 收进了 service（Router 不再认识 parse_document）——
+    # 打靶点跟着搬家，这里瞄的就是"服务真的在用这条解析路"。
+    import rolecard_agent.core.upload_service as upload_mod
 
-    real_parse = sessions_mod.parse_document
+    real_parse = upload_mod.parse_document
     calls = {"n": 0}
 
     def flaky_parse(*args: object, **kwargs: object) -> str:
@@ -542,7 +544,7 @@ def test_failed_task_recovers_when_the_same_file_is_reuploaded(
             raise ParseError("第一次解析失败（模拟环境问题）")
         return real_parse(*args, **kwargs)  # 第二次：环境修好了
 
-    monkeypatch.setattr(sessions_mod, "parse_document", flaky_parse)
+    monkeypatch.setattr(upload_mod, "parse_document", flaky_parse)
 
     with TestClient(app) as c:
         tid = str(c.post("/api/session", json={}).json()["thread_id"])

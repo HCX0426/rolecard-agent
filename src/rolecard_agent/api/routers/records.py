@@ -18,11 +18,10 @@ from rolecard_agent.api.deps import (
     get_actor,
     get_context,
 )
-from rolecard_agent.api.deps import (
-    parsed_text_path as _parsed_text_path,
-)
 from rolecard_agent.base.observability import scrub_endpoints
 from rolecard_agent.core.ingestion import IngestionNotFound
+from rolecard_agent.core.upload_service import read_source_text, source_kind
+from rolecard_agent.core.uploads import parsed_text_path as _parsed_text_path
 from rolecard_agent.domains.health.extract import (
     ExtractConfigError,
     ExtractError,
@@ -34,7 +33,6 @@ from rolecard_agent.domains.health.service import (
     HealthInvalidReport,
     HealthNotFound,
 )
-from rolecard_agent.rag.parser import IMAGE_EXTS, OcrUnavailable, ParseError, parse_document
 
 router = APIRouter()
 
@@ -244,17 +242,15 @@ def _extract_and_store(*, body: ExtractRequest, ctx: AppContext, actor: Actor) -
         text = parsed.read_text(encoding="utf-8", errors="ignore")
     elif source_file.exists():
         # 兜底：本次改动之前上传的文件没有 .parsed.txt，现场再解析一次。
-        try:
-            is_image = source_file.suffix.lower() in IMAGE_EXTS
-            # L3：OCR 后端选择收拢到 AppContext.ocr_candidates()（原与 sessions.py 重复）。
-            ocr = ctx.ocr_candidates() if is_image else None
-            text = parse_document(source_file, backend=ocr)
-        except (ParseError, OcrUnavailable):
-            text = ""
+        # OCR 没配 / 解析失败都算"没有文本"，下面那句 skipped 会如实说出来（read_source_text
+        # 把这两种失败吞成 None —— 这条路不需要区分，跳过与 500 的分界在调用方）。
+        # L3：OCR 后端选择收拢到 AppContext.ocr_candidates()（原与 sessions.py 重复）。
+        backend = ctx.ocr_candidates() if source_kind(source_file) == "ocr" else None
+        text = read_source_text(source_file, backend=backend) or ""
     if not text.strip():
         return {"skipped": "no_text", "detail": "没有可抽取的文本（未解析成功或内容为空）"}
 
-    source = "ocr" if source_file.suffix.lower() in IMAGE_EXTS else "parsed"
+    source = source_kind(source_file)
     try:
         outcome = run_extraction(
             text=text,
