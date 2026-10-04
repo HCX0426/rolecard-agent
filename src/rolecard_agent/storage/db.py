@@ -83,6 +83,12 @@ def connect(path: str | Path) -> sqlite3.Connection:
     # 跑得到那里 —— 壳退出与安装包关旧进程都是 `taskkill /T /F`（硬杀），只有 POSIX 的 SIGTERM
     # 与开发态 Ctrl+C 才走 lifespan 的 `finally`。`shutdown()` 那一半留着（那两条路仍然要收）。
     conn.execute("PRAGMA journal_size_limit = 8388608")
+    # synchronous=NORMAL 是 WAL 的官方推荐档（2026-10-04 审查快照的写放大条目）：默认 FULL
+    # 意味着**每次 commit 都 fsync**，而记忆注入一轮就 commit 8 次 —— 全部排进首 token 前的
+    # 等待里。NORMAL 在断电时可能丢最近一个已提交事务，但已 checkpoint 的数据不受影响；
+    # 本库唯一的逐轮高频 commit 恰恰是统计性的 hit_count，丢一格可接受。要绝对不丢用
+    # backup，不要把 synchronous 钉回 FULL。
+    conn.execute("PRAGMA synchronous = NORMAL")
     return conn
 
 
@@ -204,9 +210,14 @@ class ThreadLocalConnection:
         # 后果换了个来源，被本轮新加的用例当场抓到。
         self._local.conn = None
         self._local.epoch = None
-        if left:
+        if mine is None and left:
+            # 只对"可疑"的那一出声（2026-10-04 审查快照的连接泄漏条目改）：本线程**没有
+            # 自己的槽**却在 close，才是跨线程误用的签名。线程归还自己的槽（fire-and-forget
+            # 短命线程用完即还，正是泄漏修复要的正常路径）与进程收尾都不是可疑形态 ——
+            # 从前每次都打印，等于把"每轮对话刷一行"当成了日志。
             print(
-                f"[conn-close] 留 {left} 格连接给它们各自的线程收（跨线程 close 会静默丢写）",
+                f"[conn-close] 留 {left} 格连接给它们各自的线程收（本线程没有自己的槽却调了 close"
+                "—— 疑似跨线程误用，请检查调用方）",
                 file=sys.stderr,
                 flush=True,
             )

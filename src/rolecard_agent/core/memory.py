@@ -451,6 +451,24 @@ def mark_hit(conn: SqlConnection, *, user_id: str, item_id: int) -> None:
     conn.commit()
 
 
+def mark_hits(conn: SqlConnection, *, user_id: str, item_ids: list[int]) -> None:
+    """一批命中**一次事务**记完（单条版 `mark_hit` 留给真正的单条场景）。
+
+    从前 `memory_for_turn` 逐条调 `mark_hit`，每条各自 commit —— 一轮注入 8 条就是 8 个
+    独立写事务、8 次 fsync，全部排在首 token 前面（2026-10-04 审查快照的写放大条目）。
+    命中记账是统计性数据，批量一次提交没有任何语义损失。
+    """
+    if not item_ids:
+        return
+    placeholders = ",".join("?" for _ in item_ids)
+    conn.execute(
+        "UPDATE role_memory_item SET hit_count = hit_count + 1, last_hit_at = CURRENT_TIMESTAMP"
+        f" WHERE id IN ({placeholders}) AND user_id = ?",
+        (*item_ids, user_id),
+    )
+    conn.commit()
+
+
 def memory_for_turn(
     conn: SqlConnection, settings: Settings, role_id: str | None, *, user_id: str
 ) -> str:
@@ -470,8 +488,7 @@ def memory_for_turn(
             conn, user_id=user_id, bucket=bucket, with_age_labels=True
         )
         if text:
-            for item_id in ids:
-                mark_hit(conn, user_id=user_id, item_id=item_id)
+            mark_hits(conn, user_id=user_id, item_ids=ids)
             return text
     return ""
 
