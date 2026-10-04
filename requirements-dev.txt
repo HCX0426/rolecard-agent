@@ -7,6 +7,8 @@ pytest-asyncio>=0.23
 pytest-cov>=7
 # 单条用例挂死不许烧穿整个 CI 预算（2026-10-04 审查快照）：pyproject 里 timeout=60 / method=thread。
 pytest-timeout>=2.3
+# 用例内并行（2026-10-04 重测翻案：1514 条套件 -n 4 从 188s 到 ~70s，见 pytest_with_evidence 注记）。
+pytest-xdist>=3.6
 ruff>=0.6
 mypy>=1.11
 httpx>=0.27

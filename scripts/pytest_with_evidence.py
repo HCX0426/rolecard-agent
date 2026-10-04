@@ -47,9 +47,14 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from chroma_flake_evidence import CHROMA_FLAKE_SIGNATURES, existing_evidence  # noqa: E402
 
 COMMON = [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-W", "ignore"]
-#: 两档的命令行：快档带 `-x`（红就停、不量覆盖率），覆盖率档反之。
+#: 两档的命令行：快档带 `-x`（红就停、不量覆盖率）+ 4 worker 并行；覆盖率档反之（保守
+#: 串行，夜间臂再评估）。xdist 的旧结论是"反而更慢"（gate.py 09-19 记录：47s 套件上
+#: worker 建库开销吃掉收益）—— 2026-10-04 重测：套件 1514 条、串行 188s，`-n 4` 实测
+#: 68~72s（提速 62%，连续两趟全绿），远超采纳门槛 35%，旧结论正式翻案。偶发签名
+#: （chroma 首跑 InternalError 一发）与下面的在册取证判据同族，红跑取证照常兜底。
+_XDIST = ["-n", "4"]
 LANES: dict[str, tuple[list[str], str, str]] = {
-    "fast": (COMMON + ["-x"], "gate-fast-run1.log", "gate-fast-run2-retry.log"),
+    "fast": (COMMON + _XDIST + ["-x"], "gate-fast-run1.log", "gate-fast-run2-retry.log"),
     "coverage": (
         COMMON + ["--cov=rolecard_agent", "--cov-fail-under=85"],
         "gate-coverage-run1.log",
