@@ -9,7 +9,6 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import re
-import threading
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -453,23 +452,23 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
         }
 
     return StreamingResponse(
-        _stream_then(
-            chat_events(
-                graph,
-                graph_input=graph_input,
-                config=graph_config,
-                role_summary={"role_id": role.role_id, "role_name": role.role_name},
-                tracer=ctx.tracer,
-                usage_recorder=_usage_ledger(
-                    conn,
-                    ctx.runtime.effective_for(user_id).backend_name(
-                        session_model or role.model_name
-                    ),
-                    ctx.tracer,
-                    user_id=user_id,
+        chat_events(
+            graph,
+            graph_input=graph_input,
+            config=graph_config,
+            role_summary={"role_id": role.role_id, "role_name": role.role_name},
+            tracer=ctx.tracer,
+            usage_recorder=_usage_ledger(
+                conn,
+                ctx.runtime.effective_for(user_id).backend_name(
+                    session_model or role.model_name
                 ),
+                ctx.tracer,
+                user_id=user_id,
             ),
-            after=(
+            # 轮后钩子（自动记忆提取）由 run_turn 的 finally 统一执行：断线轮次与正常
+            # 轮次行为一致（从前挂在 async 生成器尾部，断线即丢 —— 收尾不对称条目）。
+            after_turn=(
                 lambda: (
                     _distill_after_turn(ctx, thread_id=body.thread_id, role_id=role_id)
                     if ctx.settings.memory_enabled and ctx.settings.memory_extract_auto
@@ -565,23 +564,6 @@ def _usage_ledger(
         record_usage(conn, backend=backend, usage=usage, user_id=user_id, tracer=tracer)
 
     return record
-
-
-def _stream_then(events: Any, *, after: Any) -> Any:
-    """把一次后台动作挂在"响应已经流完"之后。
-
-    为什么是 fire-and-forget 线程而不是 `await`：await 会让 SSE 响应在提取期间保持打开 ——
-    客户端看到的还是"这一轮变慢了"。后台跑的代价是它可以失败得安静，所以它必须
-    **只写 trace、绝不影响对话**（这是 §2 那条"提取失败不影响开口"的实现方式）。
-    """
-
-    async def pump() -> Any:
-        async for chunk in events:
-            yield chunk
-        if after is not None:
-            threading.Thread(target=after, daemon=True, name="memory-distill").start()
-
-    return pump()
 
 
 def _distill_after_turn(ctx: AppContext, *, thread_id: str, role_id: str) -> None:

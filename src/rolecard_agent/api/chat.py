@@ -24,16 +24,22 @@ import asyncio
 import contextvars
 import functools
 import json
+import threading
 from collections.abc import AsyncIterator, Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from typing import Any, cast
 
 from rolecard_agent.core.observability import Tracer
-from rolecard_agent.core.turn import TurnEvent, run_turn
+from rolecard_agent.core.turn import Error, TurnEvent, run_turn
 from rolecard_agent.core.usage import TokenUsage
 
 _CHAT_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="chat-stream")
+#: 与池等量的"占位"信号量：提交前非阻塞 acquire，拿不到 = 8 个 worker 全忙 ——
+#: 从前第 9 个并发轮次在队列里**无限等**、SSE 无任何输出也不报错（用户感知"发出去
+#: 没反应"）。现在立刻给一句人话的 error 帧（2026-10-04 审查快照的池满盲区条目）。
+#: 池子只服务这条链，信号量与 worker 一一对应。
+_CHAT_SLOTS = threading.BoundedSemaphore(8)
 
 
 def frame(event: TurnEvent) -> dict[str, Any]:
@@ -54,13 +60,27 @@ async def chat_events(
     role_summary: dict[str, str],
     tracer: Tracer | None = None,
     usage_recorder: Callable[[TokenUsage | None], None] | None = None,
+    after_turn: Callable[[], None] | None = None,
 ) -> AsyncIterator[str]:
     """异步投送 `core.turn.run_turn` 的事件流：逐事件从专属线程池取出，块间让出事件循环。
 
     对外 SSE 协议与直接跑同步版完全一致（start / thinking / token / tool_call / tool_result /
     message_replace / context_trimmed / error / end）。调用方（端点）需用 `async def` +
     `StreamingResponse(async_gen)`。
+
+    池满（8 个 worker 全忙）时不再无限排队：立刻 yield 一条 error 帧收场 —— 排队本身
+    不报错也不可观测，是用户感知"发出去没反应"的那个盲区。
     """
+    if not _CHAT_SLOTS.acquire(blocking=False):
+        yield sse(
+            Error(
+                detail=(
+                    "这一路已经有 8 轮对话在跑，新的这一轮进不来了 —— "
+                    "等一句话说完再发，或稍后再试。"
+                )
+            )
+        )
+        return
     loop = asyncio.get_event_loop()
     gen: Iterator[str] = (sse(ev) for ev in run_turn(
         graph,
@@ -69,6 +89,7 @@ async def chat_events(
         role_summary=role_summary,
         tracer=tracer,
         usage_recorder=usage_recorder,
+        after_turn=after_turn,
     ))
     # **把本请求的上下文带进轮次线程池**（`R102-03`）。`loop.run_in_executor` 与
     # `pool.submit` 都**不**传播 contextvar（3.13 实测：裸调时池线程只读到默认值，
@@ -82,13 +103,18 @@ async def chat_events(
     # `core/thread_locks.py` 的说明），共用一枚 Context 就会撞上"同一上下文不可重入"。
     ctx = contextvars.copy_context()
     sentinel = object()
-    while True:
-        try:
-            item = await loop.run_in_executor(
-                _CHAT_POOL, functools.partial(ctx.run, next, gen, sentinel)
-            )
-        except StopIteration:  # pragma: no cover - next 带 default 不会抛，双保险
-            break
-        if item is sentinel:
-            break
-        yield cast("str", item)
+    try:
+        while True:
+            try:
+                item = await loop.run_in_executor(
+                    _CHAT_POOL, functools.partial(ctx.run, next, gen, sentinel)
+                )
+            except StopIteration:  # pragma: no cover - next 带 default 不会抛，双保险
+                break
+            if item is sentinel:
+                break
+            yield cast("str", item)
+    finally:
+        # 客户端断线时 async 生成器被 aclose()：GeneratorExit 从 yield 处抛出，
+        # 这里是唯一保证 release 的位置（池位漏一个，以后每次第 8 轮就误报忙）。
+        _CHAT_SLOTS.release()

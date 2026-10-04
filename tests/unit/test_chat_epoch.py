@@ -132,3 +132,37 @@ def test_residue_from_the_previous_turn_does_not_ride_into_the_next(
         )
     finally:
         one_worker.shutdown(wait=True)
+
+
+def test_chat_events_rejects_when_pool_is_saturated() -> None:
+    """第 9 个并发轮次立刻收到 error 帧，而不是无限排队无输出（2026-10-04 审查快照）。"""
+    import asyncio
+
+    from rolecard_agent.api import chat as chat_mod
+
+    async def _collect() -> list[str]:
+        slots = chat_mod._CHAT_SLOTS
+        # 把 8 个占位全部吃掉，模拟 8 轮在飞
+        acquired = [slots.acquire(blocking=False) for _ in range(8)]
+        try:
+            assert all(acquired), "夹具没能占满池位（有别的测试漏还？）"
+            return [
+                frame
+                async for frame in chat_mod.chat_events(
+                    graph=None,
+                    graph_input={},
+                    config={"configurable": {"thread_id": "t-full"}},
+                    role_summary={"role_id": "r", "role_name": "n"},
+                )
+            ]
+        finally:
+            for _ in acquired:
+                slots.release()
+
+    frames = asyncio.run(_collect())
+    assert len(frames) == 1, frames
+    assert '"type": "error"' in frames[0] or '"type":"error"' in frames[0], frames[0]
+    assert "8 轮对话在跑" in frames[0]
+
+    # 池位守恒由 BoundedSemaphore 本身兜底：任何一次多 release 都会在上面夹具的
+    # release 循环里抛 ValueError —— 测试能绿就说明数目没有多也没有少。

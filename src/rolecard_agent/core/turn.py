@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -269,6 +270,7 @@ def run_turn(
     role_summary: dict[str, str],
     tracer: Tracer | None = None,
     usage_recorder: Callable[[TokenUsage | None], None] | None = None,
+    after_turn: Callable[[], None] | None = None,
 ) -> Iterator[TurnEvent]:
     """把一个用户轮次跑过内核图，产出结构化事件流（同步，宿主无关）。
 
@@ -345,6 +347,13 @@ def run_turn(
         # 走到这里 held 恒为 True（拿不到锁的那条路在上面已经 yield Error 返回），
         # 只放自己持有的这把。
         release_thread(thread_id)
+        # 轮后钩子（自动记忆提取）从投送层挪到这里 —— **单一收尾点**（2026-10-04 审查
+        # 快照的收尾不对称条目）：从前它挂在 async 生成器的正常完成路径上，客户端断线
+        # 抛 GeneratorExit 时被跳过，断线轮次的提取静默缺失；而锁与停止旗的收尾都在
+        # 这里、断线时照跑。现在三件事同一层：无论正常结束、失败还是断线，钩子都会执行。
+        # 检查点此刻已提交（stream 已走完），提取看到的是完整一轮。
+        if after_turn is not None:
+            threading.Thread(target=after_turn, daemon=True, name="memory-distill").start()
 
 
 #: 一轮等锁的上限（秒）：短等待。拿不到就明确拒绝（error 帧，409 的 SSE 形态），
