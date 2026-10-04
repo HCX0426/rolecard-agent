@@ -140,11 +140,55 @@ def test_upgrade_keeps_existing_rows_and_fills_defaults(tmp_path: Path) -> None:
     conn.close()
 
 
+#: 迁移**必须守恒**行数的表（2026-10-04 审查快照 P1-6 的验收项）。刻意不含：
+#: `service_endpoint`（老形态那批行是"弃用 + 重播"的演示数据，重建本来就丢行）与
+#: `model_backend` / `model_provider`（搬层按 (供应商, 端点) 归并，行数从 N 变组数 ——
+#: 那两处的语义写在 `core/migrations.py` 各自那一步的 docstring 里）。
+CONSERVED_TABLES = (
+    "role_card",
+    "session_thread",
+    "role_memory_item",
+    "ingestion_task",
+    "command_approval",
+    "audit_log",
+    "plugin",
+)
+
+
+def _rows(conn: sqlite3.Connection, table: str) -> int:
+    return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+
+
+def test_migration_conserves_rows_of_the_tables_it_must_keep(tmp_path: Path) -> None:
+    """升级不许把行弄丢：这些表的行数迁移前后**逐表相等**。
+
+    "升完再加一句列集合对得上"只证明了形状，不证明数据还在 —— 整表重建那几步（B1a / B2）
+    是 DROP → INSERT → RENAME，写错一个 WHERE 就是把整张表搬空，而 bootstrap 照样绿。
+    """
+    conn = _build_legacy("14cb9db", tmp_path / "app.db")
+    # 造一行"老库里真有数据"的现场
+    conn.execute(
+        "INSERT INTO role_card (role_id, role_name, system_prompt)"
+        " VALUES ('u', '旧卡', '旧设定')"
+    )
+    conn.commit()
+    before = {t: _rows(conn, t) for t in CONSERVED_TABLES if t in _tables(conn)}
+    assert before, "这份老形状里一张守恒表都没有 = 这条断言在空转"
+
+    bootstrap(
+        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+    )
+
+    after = {t: _rows(conn, t) for t in before}
+    assert after == before, f"迁移丢了行：{before} → {after}"
+    conn.close()
+
+
 def test_legacy_extra_columns_survive(tmp_path: Path) -> None:
     """声明里没有的旧列**不删**：那是"退成只读"还是"删掉"的决定，不是升级该顺手做的事。
 
     14cb9db 的 `medical_report` 带着 `source_file`/`status`/`file_hash` 三列，现版声明已经
-    没有它们。补列器只管补缺，不管理赔 —— 删列要走 `_migrate` 里那种显式整表重建。
+    没有它们。补列器只管补缺，不管理赔 —— 删列要走显式整表重建（core/migrations.py）。
     """
     conn = _build_legacy("14cb9db", tmp_path / "app.db")
     before = _cols(conn, "medical_report")
