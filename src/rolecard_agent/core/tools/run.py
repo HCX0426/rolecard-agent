@@ -346,6 +346,14 @@ def make_run_tool(
             return str(exc)
         if not target.is_dir():
             return f"目录不存在：{cwd or '.'}"
+        if settings.run_approval != "auto" and svc is None:
+            # fail-closed（2026-10-04 审查快照的审批条目）：审批档开着的却没接审批服务 ——
+            # 从前这一格直接落到底部"未接审批连接：直接执行"，等于任何忘传 conn/approvals 的
+            # 新接线或测试路径都会**静默失去审批门**。宁可拒绝执行让配置问题当场现形。
+            return (
+                "命令审批服务未接（数据库连接缺失），而当前配置要求审批 —— 命令被拒绝执行。"
+                "这是装配问题，请检查 run_command 工具的接线（RUN_APPROVAL != auto 时必须提供审批服务）。"
+            )
         if settings.run_approval != "auto" and svc is not None:
             gate = _pending_or_result(cmd, svc)
             if gate is not None:

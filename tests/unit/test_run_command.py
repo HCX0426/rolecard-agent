@@ -282,3 +282,16 @@ def test_truncate_keeps_suffix_note() -> None:
 
 def test_tool_execution_error_maps_to_readable() -> None:
     assert issubclass(RunCommandError, ToolExecutionError)
+
+def test_approval_mode_without_service_fails_closed() -> None:
+    """审批档开着的却没接审批服务 → 拒绝执行（2026-10-04 审查快照的审批条目）。
+
+    从前 `svc is None` 会静默落到底部直接执行 —— 任何忘传 conn/approvals 的新接线
+    都等于把审批门整个摘掉还不出声。fail-closed：让装配问题当场现形。
+    """
+    from rolecard_agent.core.tools.run import make_run_tool
+
+    settings = Settings(run_tools_enabled=True, run_approval="manual")
+    tool = make_run_tool(settings=settings, conn=None, approvals=None)
+    out = str(tool.invoke({"command": "echo should-not-run"}))
+    assert "命令审批服务未接" in out, out
