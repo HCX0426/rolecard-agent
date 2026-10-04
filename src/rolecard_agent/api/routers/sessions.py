@@ -11,6 +11,7 @@ import hashlib
 import re
 import uuid
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -468,12 +469,9 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
             ),
             # 轮后钩子（自动记忆提取）由 run_turn 的 finally 统一执行：断线轮次与正常
             # 轮次行为一致（从前挂在 async 生成器尾部，断线即丢 —— 收尾不对称条目）。
-            after_turn=(
-                lambda: (
-                    _distill_after_turn(ctx, thread_id=body.thread_id, role_id=role_id)
-                    if ctx.settings.memory_enabled and ctx.settings.memory_extract_auto
-                    else None
-                )
+            # 提交进进程级提取池（连接复用、槽有界），run_turn 的收尾线程不背 122s 的提取。
+            after_turn=lambda: _schedule_distill(
+                ctx, thread_id=body.thread_id, role_id=role_id
             ),
         ),
         media_type="text/event-stream",
@@ -564,6 +562,20 @@ def _usage_ledger(
         record_usage(conn, backend=backend, usage=usage, user_id=user_id, tracer=tracer)
 
     return record
+
+
+#: 提取的**进程级单 worker 池**（2026-10-04 审查快照的连接泄漏条目，根因修复）：
+#: 从前每轮对话 fire-and-forget 起一个线程，ThreadLocalConnection 为它各开一条真连接
+#: 且无人归还（Windows 线程 ident 单调递增，槽永远等不到覆写）—— 每轮对话泄一个 fd。
+#: 池化后提取固定落到这 1~2 条长命线程上，连接复用、槽有界；`try_extraction` 的在飞
+#: 标记与 `due_for_extract` 的游标判断原样生效，排队到的前置作业都是廉价 no-op。
+_DISTILL_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="memory-distill")
+
+
+def _schedule_distill(ctx: AppContext, *, thread_id: str, role_id: str) -> None:
+    """把这一轮的兜底提取提交进池（总闸关闭时是 no-op）。"""
+    if ctx.settings.memory_enabled and ctx.settings.memory_extract_auto:
+        _DISTILL_POOL.submit(_distill_after_turn, ctx, thread_id=thread_id, role_id=role_id)
 
 
 def _distill_after_turn(ctx: AppContext, *, thread_id: str, role_id: str) -> None:

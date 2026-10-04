@@ -24,7 +24,6 @@
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -353,7 +352,11 @@ def run_turn(
         # 这里、断线时照跑。现在三件事同一层：无论正常结束、失败还是断线，钩子都会执行。
         # 检查点此刻已提交（stream 已走完），提取看到的是完整一轮。
         if after_turn is not None:
-            threading.Thread(target=after_turn, daemon=True, name="memory-distill").start()
+            # 钩子**同步**交还调用方（宿主自己决定怎么跑：后台池、线程、原地）。内核
+            # 不再自己起线程 —— 提取宿主给一个池，提取宿主就用固定几个线程的连接，
+            # ThreadLocalConnection 的槽从此有界（fire-and-forget 线程的每轮一格
+            # 正是连接泄漏的根，2026-10-04 审查快照的连接泄漏条目）。
+            after_turn()
 
 
 #: 一轮等锁的上限（秒）：短等待。拿不到就明确拒绝（error 帧，409 的 SSE 形态），
