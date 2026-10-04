@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from rolecard_agent.api.routers import pets as pets_router
-from rolecard_agent.core import pet_packs
+from rolecard_agent.features import pet_packs
 
 
 @pytest.fixture

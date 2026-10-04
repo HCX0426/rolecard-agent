@@ -1,4 +1,4 @@
-"""`core/pet_packs.py`：桌宠形象包的扫描与解析（全程对着临时目录，不碰任何真素材）。
+"""`features/pet_packs.py`：桌宠形象包的扫描与解析（全程对着临时目录，不碰任何真素材）。
 
 钉的是 09-30 那套"两处素材 + 一包一目录"的规矩（`role_card.pet_pack` 那一条的读侧）：
 
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from rolecard_agent.core import pet_packs
+from rolecard_agent.features import pet_packs
 
 
 def _pack(

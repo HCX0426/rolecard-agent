@@ -107,7 +107,7 @@ no_implicit_optional = true
 # 变成必须评审的机器门禁（判据：`docs/架构总览.md` §5 第 1 条）。
 #
 # 分层（高层可以 import 低层，反过来一律红）：
-#     api → domains → [features] → core → {roles | rag} → base → storage → config
+#     api → domains → (features) → core → {roles | rag} → base → storage → config
 # 两个刻意的取向：
 #   * `roles | rag` 那一行的 `|` 是 import-linter 的**同层互不依赖**语法 —— 插件包彼此
 #     不许打听（`rag` 用 `roles` 的卡、`roles` 用 `rag` 的库，都是把换掉一个包的成本
@@ -124,7 +124,11 @@ no_implicit_optional = true
 #     侧自己 discover_specs）一起做；在那之前这一行不动，`core/ no domain token` 继续替内核
 #     把关。判据见 docs/修复交接（2026-10-04）第四节第 3 条末尾的「残留」。
 #   * `(features)` 是 proactive / sync / pets 拆出来之后的位置（P2-1），现在还不存在，
-#     写成 optional 让契约先于施工生效。
+#     写成 optional 让契约先于施工生效。**方向以探针实测过（03:4x）**：功能包 import
+#     内核必须放行、内核 import 功能包必须红 —— 这一格因此排在 `core` **之上**（快照
+#     §7 终态图里 api→features→core）。从前它被写在 `core` 之下，等于契约替施工预先
+#     判红：谁真把 reachout/sync 迁进 features/，第一趟 import-linter 就炸在方向上。
+#     （optional 的意思是"包不存在时这一格不参与判定"，不是"方向还没定"。）
 #
 # 豁免纪律：`ignore_imports` 只许用来**固化现状**，每一条都要写清"哪一步会把它删掉"；
 # 删干净之后这一段应当是空的。`unmatched_ignore_imports_alerting = error` 是配套的：
@@ -133,13 +137,13 @@ no_implicit_optional = true
 root_packages = ["rolecard_agent"]
 
 [[tool.importlinter.contracts]]
-name = "依赖方向：api → domains → core → {roles|rag} → base → storage → config"
+name = "依赖方向：api → domains → (features 可选) → core → {roles|rag} → base → storage → config"
 type = "layers"
 layers = [
     "rolecard_agent.api",
     "rolecard_agent.domains",
-    "rolecard_agent.core",
     "(rolecard_agent.features)",
+    "rolecard_agent.core",
     "rolecard_agent.roles | rolecard_agent.rag",
     "rolecard_agent.base",
     "rolecard_agent.storage",

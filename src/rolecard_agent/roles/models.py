@@ -40,8 +40,8 @@ ROLE_ID_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
 SCOPE_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
 #: 桌宠形象包的 slug。为什么不是 `SCOPE_PATTERN` 的复用：包名要能写成 `elysia-live2d`
 #: 这种带连字符的样子（丢进目录的那只手是人，人在起名字时用 `-`），而检索作用域名不许。
-#: 只校验形状，**不校验"这个包到底存不存在"** —— 那份清单长在素材目录里（见 `core/pet_packs.py`），
-#: 在这里再问一遍就是第二个事实源，而且改素材要重启后端才生效。
+#: 只校验形状，**不校验"这个包到底存不存在"** —— 那份清单长在素材目录里
+#: （见 `features/pet_packs.py`），在这里再问一遍就是第二个事实源，而且改素材要重启后端才生效。
 PET_PACK_PATTERN = r"^[a-z][a-z0-9_-]{0,63}$"
 
 # Exemplar budget. Chars are used rather than tokens because it needs no tokenizer
