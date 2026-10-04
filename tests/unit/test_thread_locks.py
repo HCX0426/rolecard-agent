@@ -185,3 +185,40 @@ def test_empty_thread_id_still_writes_without_a_lock() -> None:
     with thread_write(""):
         pass
     assert try_thread_write("", timeout=0.0) is True
+
+
+def test_run_turn_rejects_instead_of_forking_when_busy() -> None:
+    """忙时的轮次必须明确拒绝，绝不无锁分叉（2026-10-04 审查快照、用户拍板）。
+
+    旧语义等锁 150s 后"照样往下跑并留痕"——本地 8B 长轮 + 双窗口下就是消息被
+    静默覆盖。现在：yield 一条 error 帧（409 的 SSE 形态）、图一次都不跑、锁不占。
+    """
+    from rolecard_agent.core.turn import Error as TurnError
+
+    assert try_thread_write("t-busy", timeout=0.0), "夹具没能占住锁"
+    try:
+        class _NeverCalled:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def stream(self, *_a: Any, **_kw: Any) -> Any:
+                self.calls += 1
+                return iter(())
+
+        graph = _NeverCalled()
+        events = list(
+            run_turn(
+                graph,
+                graph_input={},
+                config={"configurable": {"thread_id": "t-busy"}},
+                role_summary={"role_id": "r", "role_name": "忙拒绝测试"},
+            )
+        )
+        assert len(events) == 1 and isinstance(events[0], TurnError), events
+        assert "还没轮到" in events[0].detail, events[0].detail
+        assert graph.calls == 0, "忙时图一次都不该跑 —— 跑了就是无锁分叉"
+    finally:
+        release_thread("t-busy")
+    # 拒绝路径绝不占锁：释放之后锁立即可得（它根本没拿过）
+    assert try_thread_write("t-busy", timeout=0.0)
+    release_thread("t-busy")

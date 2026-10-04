@@ -37,6 +37,7 @@ from rolecard_agent.core.nodes import EmptyModelStream, TurnStopped, VisionNotSu
 from rolecard_agent.core.observability import TraceEvent, Tracer, scrub_endpoints
 from rolecard_agent.core.text import text_of
 from rolecard_agent.core.thread_locks import (
+    ThreadBusy,
     clear_stop,
     inflight_append,
     inflight_begin,
@@ -273,9 +274,13 @@ def run_turn(
 
     **整轮占住这个会话的写入锁**（`core/thread_locks.py`，审计 #12）：调度线程的主动投递
     走的是 `graph.update_state`，它读的可能是这一轮开始**之前**的检查点，两边分叉同一个父节点
-    时后写的会盖掉先写的 —— 用户报的"我发的一条消息被吞了"就是这么来的。等锁超过 150 秒
-    （只有"同一会话同时开两轮"这种极端情况做得到）时**照样往下跑并留痕**：宁可罕见地分叉，
-    也不因为一把拿不到的锁把用户这句话拒掉。
+    时后写的会盖掉先写的 —— 用户报的"我发的一条消息被吞了"就是这么来的。
+
+    等锁超过 `_TURN_LOCK_WAIT` 时**明确拒绝**而不是无锁照跑（2026-10-04 审查快照、用户
+    拍板）：旧语义"宁可罕见地分叉，也不拒掉用户这句话"在本地 8B 长轮（>150s 常见）+
+    双窗口同发的现实下，就是消息被静默覆盖 —— 而且发生时没有任何信号。现在短等待后给
+    一句人话的 `Error` 帧（SSE 已 200，状态码改不了；前端照 error 帧显示），用户重发即可
+    —— edit/delete 走 409、chat 走 error 帧，同一把锁同一套兜底哲学。
     """
     thread_id = str((config.get("configurable") or {}).get("thread_id") or "")
     # 上一句的"停"绝不能顺延到这一句：旗子是在这一轮的开始处清，不是在上一轮的结束处清 ——
@@ -291,15 +296,21 @@ def run_turn(
         # 上一轮还在飞，这一清就把它对用户那个「停止」按钮的承诺抹掉了（症状：按了停止
         # 她还在说，而那一轮的生成继续在线程池里烧）。没抢到锁就不清：旗子仍归在飞那轮。
         clear_stop(thread_id)
-    if not held and tracer is not None:
-        tracer.emit(
-            TraceEvent(
-                event="thread_lock_timeout",
-                node="run_turn",
-                thread_id=thread_id,
-                detail={"waited_s": _TURN_LOCK_WAIT},
+    if not held:
+        # 拿不到锁 = 上一轮还在飞：明确拒绝，绝不无锁分叉（2026-10-04 审查快照、用户拍板，
+        # 翻掉旧 docstring"宁可罕见地分叉"的取舍）。SSE 已 200 状态码改不了，409 的语义
+        # 走 error 帧表达 —— detail 与 HTTP 409 的 ThreadBusy 文案同源，前端照 error 帧显示。
+        if tracer is not None:
+            tracer.emit(
+                TraceEvent(
+                    event="thread_lock_timeout",
+                    node="run_turn",
+                    thread_id=thread_id,
+                    detail={"waited_s": _TURN_LOCK_WAIT, "action": "rejected"},
+                )
             )
-        )
+        yield Error(detail=str(ThreadBusy(thread_id, waited=_TURN_LOCK_WAIT)))
+        return
     # `ended[0]` 由正文在发出 `End` 的那一刻立起来。它留着的唯一用途是分辨
     # **"这一轮自己跑完了"** 与 **"没人要它了"**（客户端关页面 / 断连）：
     # 后者要顺手把这轮叫停 —— 不然生成会继续在线程池里跑到天荒地老（#18 的另一半：
@@ -331,14 +342,14 @@ def run_turn(
         inflight_end(thread_id)
         if not ended[0]:
             request_stop(thread_id)
-        # 只放自己拿到的那把：等满 150 秒没拿到时锁在**别人**手里，无条件 release 会把
-        # 那一轮的互斥提前解开 —— 正是要防的那个分叉。
-        if held:
-            release_thread(thread_id)
+        # 走到这里 held 恒为 True（拿不到锁的那条路在上面已经 yield Error 返回），
+        # 只放自己持有的这把。
+        release_thread(thread_id)
 
 
-#: 一轮等锁的上限（秒）：比 `model_timeout` 略长，"排队"才不等于"丢掉这一轮"。
-_TURN_LOCK_WAIT = 150
+#: 一轮等锁的上限（秒）：短等待。拿不到就明确拒绝（error 帧，409 的 SSE 形态），
+#: 不再"等满 150s 后无锁照跑"—— 那在本地 8B 长轮 + 双窗口下就是消息静默覆盖。
+_TURN_LOCK_WAIT = 5
 
 
 def _iter_turn(
