@@ -72,9 +72,10 @@ from rolecard_agent.base.identity import active_user_id, resolve_instance_identi
 from rolecard_agent.base.observability import Tracer
 from rolecard_agent.base.paths import console_dist_dir
 from rolecard_agent.config import Settings
-from rolecard_agent.core.bootstrap import Assembly, build_runtime
+from rolecard_agent.core.bootstrap import Assembly, Runtime, build_runtime
 from rolecard_agent.core.build_info import read_build_info
 from rolecard_agent.core.nodes import ChatLike
+from rolecard_agent.core.reachout import ReachoutScheduler
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.domains.registry import (
     DOMAINS,
@@ -147,6 +148,29 @@ def _host_registry_factory(
     )
 
 
+def _register_background_tasks(runtime: Runtime) -> None:
+    """宿主接线：**后台任务由这里建并注册**，装配根只统一启停（快照"后台任务改宿主注册"）。
+
+    主动开口的调度器是一件产品功能：它要的每一件都是 Runtime 对外的形状 —— 有效配置、
+    角色服务、按本轮主人取模型、投递与会话上下文读法。从前这些零件在装配根里拼，内核
+    因此认识了这个功能；搬到这里之后，内核只剩"注册表 + 退出顺序"两件事。
+    """
+    runtime.register_background(
+        "reachout",
+        ReachoutScheduler(
+            # 每次 tick 现取**有效配置**：全局总闸热切即时生效。
+            settings_provider=lambda: runtime.effective,
+            roles=runtime.roles,
+            model_resolver=runtime.resolve_role_model,
+            conn=runtime.conn,
+            tracer=runtime.tracer,
+            deliver=runtime.deliver_proactive,
+            thread_lines=runtime.proactive_recent_lines,
+            thread_window=runtime.proactive_recent_window,
+        ),
+    )
+
+
 def create_app(
     sqlite_path: Path | None = None,
     *,
@@ -194,6 +218,7 @@ def create_app(
         model_factory=model_factory,
         tracer=tracer,
     )
+    _register_background_tasks(runtime)
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -201,6 +226,11 @@ def create_app(
 
         释放动作本身在装配根（`Runtime.shutdown`）：被热重建换掉的知识库连着 httpx 客户端与
         sqlite 连接，那些是内核持有的对象，HTTP 层不该认识它们的细节。
+
+        **后台任务是宿主注册的**（2026-10-04 审查快照"后台任务改宿主注册"那一格）：主动
+        开口调度器是一件产品功能，内核不该认识它。装配根只提供统一启停与退出顺序，功能
+        接线住在这里 —— 调度器要的每一件都是内核对外形状（有效配置、角色服务、模型解析、
+        投递与会话读法），接线动作即"把功能的零件拼回去"。
         """
         try:
             runtime.start_background()

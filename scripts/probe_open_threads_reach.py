@@ -177,12 +177,23 @@ def _first_free_day(role: Any, st: Any, settings: Any, base_local: datetime) -> 
     return None
 
 
+def _scheduler(rt: Any) -> Any:
+    """生产接线的那台调度器：由**宿主**在 `create_app` 里注册到运行时（后台任务宿主注册）。
+
+    断言而不是回落一个手拼的调度器：探针要量的是生产那条链，注册没接上就该立刻知道，
+    而不是拿一份自己拼的接线量出个好看的数。
+    """
+    scheduler = rt.background_task("reachout")
+    assert scheduler is not None, "宿主没注册主动开口调度器：这条链在生产里是断的"
+    return scheduler
+
+
 def _run_tick(rt: Any, stub: StubModel, rec: Recorder, roles: list[Any], label: str,
               when_utc: datetime, when_local: datetime) -> None:
     for role in roles:
         rt.conn.execute("UPDATE agent_reachout SET state='read' WHERE role_id=?", (role.role_id,))
     before = _scans(stub)
-    made = rt.reachout.tick_once(now_utc=when_utc, now_local=when_local)
+    made = _scheduler(rt).tick_once(now_utc=when_utc, now_local=when_local)
     traces = [
         f"{e.event}:{e.detail.get('trigger') or e.detail.get('why') or e.detail.get('mode')}"
         for e in rec.events
@@ -215,7 +226,7 @@ def _force_timer_experiment(
             cfg, {"messages": [HumanMessage(content="我下周要体检，结果出来跟你说")]}
         )
         before = _scans(stub)
-        made = rt.reachout.tick_once(now_utc=now, now_local=now.astimezone())
+        made = _scheduler(rt).tick_once(now_utc=now, now_local=now.astimezone())
         fired = [
             e.detail.get("trigger")
             for e in rec.events
@@ -243,7 +254,7 @@ def _clear_all_shadows(
     )
     rt.conn.commit()
     before = _scans(stub)
-    made = rt.reachout.tick_once(now_utc=now, now_local=now.astimezone())
+    made = _scheduler(rt).tick_once(now_utc=now, now_local=now.astimezone())
     fired = [
         e.detail.get("trigger")
         for e in rec.events
@@ -295,9 +306,10 @@ def main() -> None:
     first_free = min(reachable) if reachable else None
 
     _head("⑤ 真实调度器各跑一次 tick：现在，与 timer 第一次可达的那天")
-    rt.start_background()  # 生产接线：调度器拿的就是 rt.proactive_recent_lines
-    assert rt.reachout is not None
-    rt.reachout.stop()  # 只要它把调度器建出来，不要让后台循环抢跑
+    # 生产接线：调度器由宿主在 create_app 里注册，读法就是 Runtime 上那几个门面
+    # （`proactive_recent_lines` / `proactive_recent_window` / `deliver_proactive`）。
+    # 这里**不 start**：只取同一台对象手动跑 tick，不让后台循环抢跑。
+    _scheduler(rt)
     _run_tick(rt, stub, rec, roles, "现在", now, now.astimezone())
     later_local = base_local + timedelta(days=first_free if first_free is not None else SWEEP_DAYS)
     _run_tick(

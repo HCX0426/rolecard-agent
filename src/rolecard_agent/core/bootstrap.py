@@ -24,7 +24,7 @@ import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from rolecard_agent.base.audit import AuditTrail
 from rolecard_agent.base.identity import (
@@ -49,9 +49,6 @@ from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
 from rolecard_agent.core.proactive import ProactiveGateway
 from rolecard_agent.core.probes import ollama_keep, vision_capability
-from rolecard_agent.core.reachout import (
-    ReachoutScheduler,
-)
 from rolecard_agent.core.retention import prune_retention_tables
 from rolecard_agent.core.services import ServiceEndpointService
 from rolecard_agent.core.tools.registry import ToolRegistry
@@ -175,6 +172,20 @@ def assemble_registry(
     return registry_factory(assembly, eff_for_tools, knowledge, enabled_domains)
 
 
+class BackgroundTask(Protocol):
+    """宿主注册给内核的后台任务**形状**（内核只认两个动作，不认它是什么功能）。
+
+    为什么要有这一格（2026-10-04 审查快照"后台任务改宿主注册"）：主动开口的调度器是一件
+    **产品功能**，从前由装配根自己 new 出来 —— 于是内核认识这个功能，而快照要的终态是
+    `features/` 单向依赖 core。把形状收到"能 start / 能 stop"这一层，内核就只负责统一
+    启停与**退出顺序**（先 stop 再关连接，R26 那族停机竞态），功能归宿主接线。
+    """
+
+    def start(self) -> None: ...
+
+    def stop(self) -> None: ...
+
+
 @dataclass
 class Runtime:
     """装配完成的内核运行时。可变量（effective / knowledge / registry / state）只有这一份。"""
@@ -194,8 +205,12 @@ class Runtime:
     registry_factory: RegistryFactory
     model_factory: Callable[..., ChatLike] = build_model
     checkpointer: Any = None
-    #: 主动开口调度器只在实际跑后台循环时存在（`start_background` 里建）。
-    reachout: ReachoutScheduler | None = field(default=None, repr=False)
+    #: **宿主注册**的后台任务（名字 → 任务；名字由宿主定，内核不认识任何功能）。
+    #: 内核不建、也不认识它们（2026-10-04 审查快照"后台任务改宿主注册"那一格）：这里只
+    #: 留"统一启停"与"退出前逐个 stop 排在关连接之前"那条承重顺序（R26 的停机竞态）。
+    background: dict[str, BackgroundTask] = field(default_factory=dict, repr=False)
+    #: `start_background` 只认第一次（见该方法 docstring 里"两条循环"那条症状）。
+    _background_started: bool = field(default=False, repr=False)
     rebuild_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     #: 模型解析那一格（两份缓存 + 代数）搬进 `core/model_resolver.py`（2026-10-04 审查
     #: 快照里"Runtime 单对象多职责"那一格）：本对象只留 `effective_for` /
@@ -371,23 +386,35 @@ class Runtime:
 
     # -- 进程生命周期（宿主在自己的启动/退出路径里调用）------------------------
 
+    def register_background(self, name: str, task: BackgroundTask) -> None:
+        """宿主把一件后台任务交给内核**统一启停**（名字由宿主定，内核不认识功能）。
+
+        为什么不在装配根里 new 调度器：那是把一件产品功能焊进内核（快照"后台任务改宿主
+        注册"那一格）。内核在这里只买两样东西：统一的 start/stop 入口，以及**退出顺序**
+        —— 必须"先 stop 任务、再 checkpoint/关连接"（R26 那族停机竞态：一次 tick 里
+        有真模型调用与 `graph.update_state` 写库，先关连接就是让它往已关的连接上写）。
+        """
+        self.background[name] = task
+
+    def background_task(self, name: str) -> BackgroundTask | None:
+        """按名字取宿主注册的那件后台任务（没注册 = None，不猜也不报错）。
+
+        探针脚本用它拿调度器跑单次 tick；名字是宿主注册时给的那个 —— 内核不持有功能名。
+        """
+        return self.background.get(name)
+
     def start_background(self) -> None:
-        """起主动开口调度；按配置决定要不要把默认本地模型预热进显存。"""
-        if self.reachout is None:
-            # 调度器需要 `resolve_role_model`（角色可按 model_name 路由），而那是本对象的
-            # 方法 —— 所以它在这里建，而不是在装配时塞进构造函数。
-            # settings_provider 每次 tick 现取**有效配置**：总闸热切即时生效。
-            self.reachout = ReachoutScheduler(
-                settings_provider=lambda: self.effective,
-                roles=self.roles,
-                model_resolver=self.resolve_role_model,
-                conn=self.conn,
-                tracer=self.tracer,
-                deliver=self.deliver_proactive,
-                thread_lines=self.proactive_recent_lines,
-                thread_window=self.proactive_recent_window,
-            )
-        self.reachout.start()
+        """起宿主注册的全部后台任务；按配置决定要不要把默认本地模型预热进显存。
+
+        **幂等**：从前那份惰性构造顺带挡住了重复启动，改成注册表之后这层得自己守住 ——
+        同一个任务被 start 两次就是两条循环（两个调度器各 tick 各写库，症状是"同一句
+        主动消息冒两遍"，与 R26-40 那族同形）。预热那一路同理，只跑一次。
+        """
+        if self._background_started:
+            return
+        self._background_started = True
+        for task in self.background.values():
+            task.start()
         if self.env_settings.model_pin_on_startup:
             threading.Thread(target=self.pin_default_model, daemon=True).start()
 
@@ -424,8 +451,11 @@ class Runtime:
         （测试就是这么互相干扰的）—— 它的释放放在真实的进程退出路径
         （`scripts/run_api.py` 里 uvicorn.run 返回之后）。
         """
-        if self.reachout is not None:
-            self.reachout.stop()
+        # **顺序承重**：先停全部宿主注册的任务，再做 WAL checkpoint 与关连接。一次 tick 里
+        # 有真模型调用与 `graph.update_state` 写库，先关连接就是让它往已关的连接上写
+        # （`scheduler.stop` 自带 join，见 R26 那族停机竞态）。
+        for task in self.background.values():
+            task.stop()
         # 关掉之前先把 WAL 落回主库（`R28-16` 的另一半）：自动检查点只在**有写**时触发，
         # 而一台闲置的机器可能连着两天不再写一笔 —— 那近两天的数据就一直只活在 -wal 里，
         # 而 -wal 坏掉等于那两天全没（备份走的是 sqlite `backup()`，它读得到 WAL，所以

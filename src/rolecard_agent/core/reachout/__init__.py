@@ -31,8 +31,9 @@
 
 ## 运行形态
 
-  后台 daemon 线程按固定 tick 轮询（`ReachoutScheduler`），由 api/main.py 的 lifespan
-  启停；单个角色的生成失败只记 tracer、不重试、不阻塞下一轮。
+  后台 daemon 线程按固定 tick 轮询（`ReachoutScheduler`），由**宿主**在 `api/main.py` 里
+  建好并 `register_background("reachout", …)`，内核只统一启停与保证退出顺序（先 stop 再
+  关连接）；单个角色的生成失败只记 tracer、不重试、不阻塞下一轮。
 
 ## 模块划分（`R102-59`：1571 行拆四模块，纯搬层）
 
