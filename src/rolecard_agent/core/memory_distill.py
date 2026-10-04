@@ -18,13 +18,17 @@
 
 from __future__ import annotations
 
+import contextlib
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.base.text import text_of
 from rolecard_agent.core import memory as mem
 from rolecard_agent.core.anti_repeat import grams, jaccard
+from rolecard_agent.core.thread_locks import end_extraction, try_extraction
 from rolecard_agent.core.usage import TokenUsage, parse_usage, record_usage
 from rolecard_agent.storage.db import SqlConnection
 from rolecard_agent.storage.threads import set_distilled_seq
@@ -452,7 +456,117 @@ def pending_messages(conn: SqlConnection, *, thread_id: str, messages: list[Any]
     return list(messages[cursor:])
 
 
+#: 提取的**进程级单 worker 池**（连接泄漏那条的根因修复）：从前每轮对话 fire-and-forget
+#: 起一个线程，ThreadLocalConnection 为它各开一条真连接且无人归还（Windows 线程 ident
+#: 单调递增，槽永远等不到覆写）—— 每轮对话泄一个 fd。池化后提取固定落到这 1~2 条长命
+#: 线程上，连接槽有界；`try_extraction` 的在飞标记与 `due_for_extract` 的游标判断原样
+#: 生效，排队到的前置作业都是廉价 no-op。
+DISTILL_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="memory-distill")
+
+
+def after_turn(
+    conn: SqlConnection,
+    *,
+    thread_id: str,
+    role_id: str,
+    extract_turns: int,
+    tracer: Any,
+    load_context: Callable[[], tuple[Any, list[Any]]],
+    resolve_model: Callable[[Any], tuple[Any, str | None]],
+) -> None:
+    """每 N 轮的兜底提取（N=`extract_turns`，0 = 只留手动按钮）的**完整状态机**。
+
+    从前整段（约 85 行）是 `api/routers/sessions.py` 的私有函数：取行、读历史、判游标、
+    在飞闸、提取、推进游标、两条留痕、收尾归还 —— 每一步都与 HTTP 无关，而它长在路由里
+    的代价是**非 HTTP 宿主复用不了**（桌宠壳的会话收尾、`scripts/` 的提取探针要跑同一条
+    状态机只能抄一遍）。现在宿主只交两样**数据**，不认识 AppContext：
+
+      * `load_context()` → (会话行, 历史消息)：要 graph 与连接、要做归属校验，那是宿主的活；
+      * `resolve_model(会话行)` → (模型, 后端名)：要 runtime 的有效配置，也是宿主的活。
+      两个回调都**在池线程里**按需执行（模型解析必须发生在提取那一刻，而不是提交那一刻）。
+
+    判据（搬家时逐条对着原件搬）：
+
+      * **在飞闸挡并发提取**：提取是 120 秒级调用而游标只在结束时推进 —— 没有它，用户
+        继续聊的每一轮都会看到"该提取了"，同一个窗口被并发提取多次（2026-09-24 实测：
+        八轮对话 4 次自动提取同时跑，桶里 32 条 / 23 对同义，`fed` 一直是全量）。挡住
+        就是了 —— 兜底下一轮还会再问；挡的标记是提取自己的在飞位而不是会话写锁
+        （后者一占 120 秒，用户下一句就得排队）。
+      * **失败只留痕，绝不打扰对话**（外层 except → `fatal: False`）：对话侧那一轮已经
+        正常结束了，提取崩了也轮不到它报错。
+      * **连接用完即还**（外层 finally close）：槽按线程身份记账，close 认领自己这一格。
+    """
+    try:
+        thread, messages = load_context()
+        if not due_for_extract(
+            conn, thread_id=thread_id, every=extract_turns, messages=messages
+        ):
+            return
+        pending = pending_messages(conn, thread_id=thread_id, messages=messages)
+        if not pending:
+            return
+        if not try_extraction(thread_id):
+            tracer.emit(
+                TraceEvent(
+                    event="memory_extract",
+                    node="memory",
+                    thread_id=thread_id,
+                    role_id=role_id,
+                    detail={"trigger": "auto", "skipped": "上一次提取还在跑"},
+                )
+            )
+            return
+        try:
+            model, backend = resolve_model(thread)
+            outcome = extract(
+                conn,
+                user_id=str(thread["user_id"]),
+                model=model,
+                bucket=role_id,
+                messages=pending,
+                backend=backend,
+                tracer=tracer,
+            )
+            report = outcome["report"]
+            if outcome["ok"]:
+                mark_extracted(conn, thread_id=thread_id, message_count=len(messages))
+            tracer.emit(
+                TraceEvent(
+                    event="memory_extract",
+                    node="memory",
+                    thread_id=thread_id,
+                    role_id=role_id,
+                    tokens=report.get("tokens"),
+                    detail={
+                        "trigger": "auto",
+                        # `fed` = 这一轮真的喂进去几条消息。没有它，"游标到底有没有推进"
+                        # 只能靠猜 —— 而那次"每轮都在抄清单"的读数，判据就是这个数。
+                        "fed": len(pending),
+                        **{k: v for k, v in report.items() if v},
+                    },
+                )
+            )
+        finally:
+            end_extraction(thread_id)
+    except Exception as exc:  # noqa: BLE001 - 后台提取失败只留痕，绝不打扰对话
+        tracer.emit(
+            TraceEvent(
+                event="memory_extract",
+                node="memory",
+                thread_id=thread_id,
+                role_id=role_id,
+                error=f"{type(exc).__name__}: {exc}"[:200],
+                detail={"trigger": "auto", "fatal": False},
+            )
+        )
+    finally:
+        with contextlib.suppress(Exception):
+            conn.close()
+
+
 __all__ = [
+    "DISTILL_POOL",
+    "after_turn",
     "consolidate",
     "count_similar",
     "due_for_extract",

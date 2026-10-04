@@ -459,7 +459,7 @@ def test_a_default_backend_belongs_to_the_person_who_is_talking(tmp_path: Path) 
 def test_a_background_caller_names_the_owner_it_works_for(tmp_path: Path) -> None:
     """跨线程的调用方要**显式**交出主人 —— `bound_user` 是 `ContextVar`，不跨线程传播。
 
-    自动提取跑在"响应流完之后"的后台线程里（`_distill_after_turn` → `_thread_model`）：
+    自动提取跑在"响应流完之后"的池线程里（`memory_distill.after_turn` → `_thread_model`）：
     那边 `active_user_id` 一定是空的，所以它必须把这条线程的主人传进来。不传的症状不是报错，
     而是**替别人抽记忆** —— 拿实例主人的凭据跑第二个人的提取，静悄悄，且花的是别人的钱。
     这里不绑 `bound_user`，直接模拟那个后台线程。

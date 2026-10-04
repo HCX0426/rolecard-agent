@@ -6,9 +6,7 @@
 
 from __future__ import annotations
 
-import contextlib
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
@@ -39,11 +37,9 @@ from rolecard_agent.core.reachout import (
 )
 from rolecard_agent.core.state import new_state, now_ts
 from rolecard_agent.core.thread_locks import (
-    end_extraction,
     inflight_text,
     request_stop,
     thread_write,
-    try_extraction,
 )
 from rolecard_agent.core.usage import TokenUsage, record_usage
 from rolecard_agent.roles.service import RoleError, RoleNotFound
@@ -452,10 +448,11 @@ def _thread_model(ctx: AppContext, thread: dict, role_id: str) -> tuple[Any, str
     后端名一起返回（而不是让调用方再解一遍）：token 账要按后端分（审计 §12.8），
     而"谁在用哪个后端"这件事只该有一处答案。
 
-    **模型必须按这条线程的主人构建**（显式传 `user_id`）：这个函数只从"响应流完之后"的
-    后台线程里被调（`_distill_after_turn`），而 `bound_user` 是 `ContextVar`、不跨线程
-    传播 —— 不传就会拿实例主人的凭据替别人抽记忆。`ctx.current_user()` 在这里反而是对的
-    （它是请求视图上的备忘属性），所以别把两者混起来看。
+    **模型必须按这条线程的主人构建**（用 `thread["user_id"]`）：这个函数从"响应流完之后"
+    的**池线程**里被调（`memory_distill.after_turn`，经 `_schedule_distill` 提交），
+    而 `bound_user` 是 `ContextVar`、不跨线程传播 —— 不显式传就会拿实例主人的凭据替别人
+    抽记忆。`ctx.current_user()` 在这里反而是对的（它是请求视图上的备忘属性），
+    所以别把两者混起来看。
     """
     owner = str(thread["user_id"])
     want = (ctx.settings.memory_extract_backend or "").strip()
@@ -489,103 +486,34 @@ def _usage_ledger(
     return record
 
 
-#: 提取的**进程级单 worker 池**（2026-10-04 审查快照的连接泄漏条目，根因修复）：
-#: 从前每轮对话 fire-and-forget 起一个线程，ThreadLocalConnection 为它各开一条真连接
-#: 且无人归还（Windows 线程 ident 单调递增，槽永远等不到覆写）—— 每轮对话泄一个 fd。
-#: 池化后提取固定落到这 1~2 条长命线程上，连接复用、槽有界；`try_extraction` 的在飞
-#: 标记与 `due_for_extract` 的游标判断原样生效，排队到的前置作业都是廉价 no-op。
-_DISTILL_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="memory-distill")
-
-
 def _schedule_distill(ctx: AppContext, *, thread_id: str, role_id: str) -> None:
-    """把这一轮的兜底提取提交进池（总闸关闭时是 no-op）。"""
-    if ctx.settings.memory_enabled and ctx.settings.memory_extract_auto:
-        _DISTILL_POOL.submit(_distill_after_turn, ctx, thread_id=thread_id, role_id=role_id)
+    """把这一轮的兜底提取提交进池（总闸关闭时是 no-op）。
 
+    状态机整段在 `memory_distill.after_turn`（取行 → 历史 → 游标 → 在飞闸 → 提取 →
+    留痕 → 归还），这里只绑它要的两样**数据**并按下提交：取历史要 graph、解析模型要
+    runtime，那都是宿主的活；池线程里跑的是回调，不借 AppContext 的任何其它部分。
+    池本身也归了服务（`memory_distill.DISTILL_POOL`）。
+    """
+    if not (ctx.settings.memory_enabled and ctx.settings.memory_extract_auto):
+        return
 
-def _distill_after_turn(ctx: AppContext, *, thread_id: str, role_id: str) -> None:
-    """每 N 轮的兜底提取（N=`MEMORY_EXTRACT_TURNS`，0 = 只留手动按钮）。"""
-    conn = ctx.conn
-    try:
-        thread = get_thread(conn, thread_id, user_id=ctx.current_user())
+    def load_context() -> tuple[Any, list[Any]]:
+        # 归属校验与历史读取按原顺序在**池线程里**做（改模型的时机必须是提取那一刻，
+        # 不是提交那一刻 —— 用户提交后、提取前换了模型，按提取时的算）。
+        thread = get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
         _, messages = _history_messages(ctx, thread_id)
-        if not memory_distill.due_for_extract(
-            conn, thread_id=thread_id, every=ctx.settings.memory_extract_turns, messages=messages
-        ):
-            return
-        pending = memory_distill.pending_messages(conn, thread_id=thread_id, messages=messages)
-        if not pending:
-            return
-        # 一次提取 = 一次真模型调用（云端 10–20s、本地 8B 约 122s），而**游标只在那次调用结束时
-        # 才推进**。用户在这期间继续聊，每一轮都会看到"该提取了"，同一个窗口于是被并发提取多次，
-        # 每次都把 prompt 里那份【已有条目】抄一点回来（2026-09-24 副本实测：八轮对话 4 次自动
-        # 提取同时跑，桶里 32 条 / 23 对同义，而 `fed` 一直是全量）。
-        # 用提取自己的在飞标记而不是会话写入锁：后者一占 120 秒，用户下一句就得排队（见
-        # `thread_locks.try_extraction` 那段）。挡住就是了 —— 兜底下一轮还会再问。
-        if not try_extraction(thread_id):
-            ctx.tracer.emit(
-                TraceEvent(
-                    event="memory_extract",
-                    node="memory",
-                    thread_id=thread_id,
-                    role_id=role_id,
-                    detail={"trigger": "auto", "skipped": "上一次提取还在跑"},
-                )
-            )
-            return
-        try:
-            model, backend = _thread_model(ctx, thread, role_id)
-            outcome = memory_distill.extract(
-                conn,
-                user_id=str(thread["user_id"]),
-                model=model,
-                bucket=role_id,
-                messages=pending,
-                backend=backend,
-                tracer=ctx.tracer,
-            )
-            report = outcome["report"]
-            if outcome["ok"]:
-                memory_distill.mark_extracted(
-                    conn, thread_id=thread_id, message_count=len(messages)
-                )
-            ctx.tracer.emit(
-                TraceEvent(
-                    event="memory_extract",
-                    node="memory",
-                    thread_id=thread_id,
-                    role_id=role_id,
-                    tokens=report.get("tokens"),
-                    detail={
-                        "trigger": "auto",
-                        # `fed` = 这一轮真的喂进去几条消息。没有它，"游标到底有没有推进"只能靠
-                        # 猜 —— 而那次"每轮都在抄清单"的读数，判据就是这个数。
-                        "fed": len(pending),
-                        **{k: v for k, v in report.items() if v},
-                    },
-                )
-            )
-        finally:
-            end_extraction(thread_id)
-    except Exception as exc:  # noqa: BLE001 - 后台提取失败只留痕，绝不打扰对话
-        ctx.tracer.emit(
-            TraceEvent(
-                event="memory_extract",
-                node="memory",
-                thread_id=thread_id,
-                role_id=role_id,
-                error=f"{type(exc).__name__}: {exc}"[:200],
-                detail={"trigger": "auto", "fatal": False},
-            )
-        )
-    finally:
-        # 临时缓解（2026-10-04 审查快照的连接泄漏条目，**不解决根因**）：distill 线程是
-        # fire-and-forget 起的（`_stream_then`），从前它经 ThreadLocalConnection 开的连接
-        # 无人归还 —— Windows 线程 ID 近似单调递增，`_created` 的槽永远等不到被同 ident
-        # 覆写，等于**每轮对话泄漏一个 fd**。这里用完即还。根因修复是把 distill 池化
-        # （复用固定几个线程的连接），在后续批次。
-        with contextlib.suppress(Exception):
-            conn.close()
+        return thread, messages
+
+    memory_distill.DISTILL_POOL.submit(
+        memory_distill.after_turn,
+        ctx.conn,
+        thread_id=thread_id,
+        role_id=role_id,
+        extract_turns=ctx.settings.memory_extract_turns,
+        tracer=ctx.tracer,
+        load_context=load_context,
+        resolve_model=lambda thread: _thread_model(ctx, thread, role_id),
+    )
 
 
 @router.post("/api/session/{thread_id}/distill")
