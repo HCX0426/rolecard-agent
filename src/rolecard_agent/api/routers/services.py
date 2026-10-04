@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.api.errors import value_error_to_http
-from rolecard_agent.base import outbound
+from rolecard_agent.core.model_probe import ProbeTarget, list_models
 from rolecard_agent.core.model_settings import client_style
 
 router = APIRouter()
@@ -206,8 +206,13 @@ def deep_check(ctx: AppContext = Depends(get_context)) -> object:
 
     嵌入 / OCR 云端的真实连通性**刻意不在这里自动发起** —— 那会向第三方发请求并消耗
     配额；页面的轻检测（配置齐缺 + 本地探活）已覆盖绝大多数排查场景。
+
+    **这一段从前自己写一遍"探端点 + 列模型"**（审查快照的"三处实现已漂出行为差"那条：
+    `base/probes.py` 的 `vision_model_ready` / `core/model_probe.list_models` / 这里）。
+    漂出来的第一处实际差别就在这：这里取模型名时**没有过滤空名**，端点回一行缺 `name`
+    的怪形状就会在界面上显示出一个空位，而模型页那条路径同一次探测显示的是干净的列表。
+    现在这里只负责"探哪一个后端"，**怎么探归 `core.model_probe.list_models` 一处**。
     """
-    ollama: dict[str, object] = {"reachable": False, "detail": ""}
     try:
         backend = ctx.app_state["effective"].backend(None)
     except KeyError as exc:
@@ -216,35 +221,24 @@ def deep_check(ctx: AppContext = Depends(get_context)) -> object:
             status_code=400,
             detail=f"默认的模型没配好：{exc}。请在「服务」页检查对话优先级的第一位。",
         ) from exc
-    base = (backend.base_url or "http://localhost:11434").rstrip("/")
     # provider 是供应商 id；native 风格（Ollama 及别名）探 /api/tags，openai 兼容探 /models。
+    # 这个判定在 `list_models` 的靶子里（`ProbeTarget.style`），这里只留响应键名要用的一面。
     is_ollama = client_style(backend.provider) == "native"
-    probe_path = "/api/tags" if is_ollama else "/models"
-    try:
-        headers = {"Authorization": f"Bearer {backend.api_key}"} if backend.api_key else {}
-        # 走 `base/outbound`：这一发可能带着**已存的 api_key**，且探的常是本机 Ollama。
-        res = outbound.get(f"{base}{probe_path}", headers=headers, timeout=8.0)
-        ollama["reachable"] = res.status_code == 200
-        ollama["detail"] = f"{res.status_code}"
-        try:
-            payload = res.json()
-        except ValueError:
-            payload = {}
-        models: list[str] = []
-        if is_ollama:
-            models = [m.get("name") for m in payload.get("models", [])][:10]
-        elif isinstance(payload.get("data"), list):
-            models = [m.get("id") for m in payload["data"]][:10]
-        if models:
-            ollama["models"] = models
-        if res.status_code != 200:
-            ollama["detail"] = f"{res.status_code}（{backend.provider} · {probe_path}）"
-    except Exception as exc:  # noqa: BLE001 - 探活失败本身就是检测结果
-        ollama["detail"] = f"{type(exc).__name__}: {exc}"[:200]
+    names, error = list_models(
+        ProbeTarget(
+            provider=str(backend.provider),
+            base_url=backend.base_url,
+            api_key=backend.api_key,
+            model=backend.model or "",
+        )
+    )
+    probe: dict[str, object] = {"reachable": not error, "detail": error or "200"}
+    if names:
+        probe["models"] = names[:10]
     # M4：键名按 provider 语义返回（ollama / openai_compatible），不再一律叫 `ollama`，
     # 前端可按 provider 取对应字段，避免错取。
     probe_key = "ollama" if is_ollama else "openai_compatible"
-    return {probe_key: ollama}
+    return {probe_key: probe}
 
 
 __all__ = ["router"]

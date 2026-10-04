@@ -295,6 +295,40 @@ def test_deep_check_reports_unreachable_backend_instead_of_raising(client: TestC
     assert res.json()["ollama"]["reachable"] is False
 
 
+def test_deep_check_shares_the_one_probe_implementation(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """深度检测**不再自己写第二份"探端点 + 列模型"**（审查快照的三处已漂那条的验收现场）。
+
+    从前这里手抄过一份与 `core/model_probe.list_models` 平行的实现，而它已经漂出行为差：
+    取名字时**没过滤空名**。假端点故意回一行缺 `name` 的怪模型 —— 抄的那份会在列表里留一个
+    `None`（界面显出一个空位），共用的一份不会。这一支护的是"两页对同一次探测说同一句话"。
+    """
+
+    class _Resp:
+        status_code = 200
+        text = "{}"
+
+        def json(self) -> object:
+            return {"models": [{"name": "qwen3-vl:8b"}, {"name": ""}, {"no_name": 1}]}
+
+    seen: list[str] = []
+
+    def fake_get(url: str, **_kw: object) -> _Resp:
+        seen.append(url)
+        return _Resp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    body = client.post("/api/services/check").json()
+    probe = body["ollama"]
+    assert probe["reachable"] is True
+    # 空名与缺名都被滤掉：只剩那一条真有名字的（`/api/tags` 的路径判定也在这条里照到）。
+    assert probe["models"] == ["qwen3-vl:8b"]
+    assert seen and seen[0].endswith("/api/tags")
+
+
 # -- 审计 ----------------------------------------------------------------------
 
 
