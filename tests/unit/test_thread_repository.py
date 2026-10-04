@@ -148,22 +148,21 @@ def test_foreign_owner_returns_zero_without_hanging_a_write_txn(conn) -> None:
 
 
 def test_replace_path_reports_the_true_thread_count(conn) -> None:
-    """走 `api/routers/sync.py::_clear_for_replace` 那条真路径：报的必须是真条数。
+    """走 `api/routers/sync.py::_clear_threads_for_replace` 那条真路径：报的必须是真条数。
 
     `graph` 给了非 None 就会逐条级联删（那正是生产形状），于是收尾那句
     `DELETE ... WHERE user_id` 恒为 0 行 —— 从前 `cleared["thread"]` 只取那一个数，
     清了 3 条也报 0 条。变异：把相加那句改回只取 rowcount ⇒ 这条红。
+    （2026-10-04 审查快照：清空拆成行类（与导入共事务）与 thread 类（本函数）两半，
+    thread 的真删与提交住在这一个函数里。）
     """
-    from rolecard_agent.api.routers.sync import _clear_for_replace
-    from rolecard_agent.core import sync as sync_lib
+    from rolecard_agent.api.routers.sync import _clear_threads_for_replace
 
     for tid in ("s_x", "s_y", "s_z"):
         create_thread(conn, thread_id=tid, user_id=DEFAULT_USER_ID, role_id="girl", tool_epoch=1)
 
-    cleared = _clear_for_replace(
-        conn, user_id=DEFAULT_USER_ID, kinds=[sync_lib.KIND_THREAD], graph=object()
-    )
-    assert cleared[sync_lib.KIND_THREAD] == 3, cleared
+    cleared = _clear_threads_for_replace(conn, user_id=DEFAULT_USER_ID, graph=object())
+    assert cleared["thread"] == 3, cleared
     assert conn.execute("SELECT COUNT(*) FROM session_thread").fetchone()[0] == 0
 
 

@@ -42,6 +42,7 @@ import re
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -187,6 +188,41 @@ def _src_changed() -> bool:
         return True
     except Exception:
         return True
+
+
+def _cwd_for(name: str) -> Path | None:
+    """步骤跑在哪个目录按名字前缀定（比在元组里再加一个字段少一处噪声）。第一版
+    我把 shell 那步写成"全局 npm run typecheck"，于是它在仓库根跑、根本没有这个
+    script —— 报错的样子像"壳的类型检查挂了"，其实是步目录错了。"""
+    if name.startswith("前端"):
+        return ROOT / "frontend"
+    if name.startswith("shell"):
+        return ROOT / "shell"
+    return None
+
+
+def _run_captured(name: str, cmd: list[str], cwd: Path | None = None) -> tuple[bool, float, str]:
+    """并发组专用的运行器：**捕获**输出、跑完一次打出（流式打印并发会互相穿插）。
+
+    与 `_run` 同一个返回契约（ok, 秒数, 完整输出），只是 io 模式不同 —— 静态四步都
+    很快（本机 <30s / runner 带缓存更短），不存在"长步骤静默被当挂死"的顾虑。
+    """
+    print(f"\n▶ {name}（并发）", flush=True)
+    t0 = time.perf_counter()
+    proc = subprocess.run(
+        cmd,
+        cwd=str(cwd) if cwd else str(ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    dt = time.perf_counter() - t0
+    output = proc.stdout + (proc.stderr or "")
+    code = proc.returncode
+    print(output, end="", flush=True)
+    print(f"  ⏱ {name}: {dt:.1f}s {'✅' if code == 0 else '❌'}", flush=True)
+    return code == 0, dt, output
 
 
 def _run(name: str, cmd: list[str], cwd: Path | None = None) -> tuple[bool, float, str]:
@@ -405,9 +441,35 @@ def main() -> int:
     failures: list[str] = []
     started = time.perf_counter()
 
-    for name, cmd, mode in STEPS:
-        if not _will_run(name, mode):
-            continue
+    # 先算出这一趟真正会跑的步骤（档位过滤只有这一处判据，循环与 --only 守卫共用它）。
+    runnable = [(name, cmd, mode) for name, cmd, mode in STEPS if _will_run(name, mode)]
+
+    # 头部的静态四步（ruff + 三档 mypy）互不依赖、输出互不读，**并发跑**
+    # （2026-10-04 审查快照的 CI 门禁条目②）：三遍 mypy 在 runner 上是 60-120s 的串行
+    # 冷启动，并发 + 缓存后归到一路。失败语义不变：整组跑完后**按序**处理结果，
+    # 任何一步红 → 不再启动后面的步骤（后面的步骤在同一个问题上只会重复失败）。
+    # 静态组各自捕获输出、跑完再打（并发流式打印会互相穿插，读不了）。
+    _STATIC_HEAD = ("ruff", "mypy", "mypy scripts/", "mypy(linux 档)")
+    head = [e for e in runnable if e[0] in _STATIC_HEAD]
+    parallel_ran = False
+    rest = runnable
+    if len(head) >= 2:
+        parallel_ran = True
+        rest = [e for e in runnable if e[0] not in _STATIC_HEAD]
+        with ThreadPoolExecutor(max_workers=len(head)) as pool:
+            outcomes = list(pool.map(lambda e: _run_captured(e[0], e[1], _cwd_for(e[0])), head))
+        for (name, _cmd, _mode), (ok, dt, output) in zip(head, outcomes, strict=True):
+            timings.append((name, dt))
+            _write_readings({name: output}, ok)
+            if not ok:
+                failures.append(name)
+                break  # 静态组内失败：不进后续步骤（组内其余步骤已跑完，照常报读数）
+        if not failures:
+            print(f"  ⏱ 静态组（{'、'.join(n for n, _, _ in head)}）并发完成", flush=True)
+
+    for name, cmd, _mode in rest:
+        if parallel_ran and name in _STATIC_HEAD:
+            continue  # 静态组已在上面并发跑过（--only 只点名静态步时不会走到这）
         # 覆盖率那趟：本地全量档"没碰 src/ 就跳过"。CI 档已在 CI_SKIP 里整步跳过
         # （2026-10-04 起覆盖率移到本机全量档与夜间臂；从前这里写着"CI 必跑"—— 用户 09-29
         # 的拍板 R28-24，被审查快照的 CI 门禁条目修订：双趟 pytest 是 CI 预算顶穿的主因）。
