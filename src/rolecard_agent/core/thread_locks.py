@@ -23,27 +23,39 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-#: 一个会话最多攒多少把锁：条目只增不减会漏内存，所以清掉没人持有的；见 `_lock_for`。
-_MAX_TRACKED = 512
+#: 锁表条目的告警阈值。**只告警，不回收**（2026-10-04 审查快照的锁表竞态条目）：旧实现会在超限时
+# 回收"当前没被持有"的锁，而"取出锁对象→acquire"之间没有任何引用计数 —— 另一线程恰在
+# 这个间隙把锁 pop 掉，第三个线程就会为同一 thread_id setdefault 出**新锁**，两把锁同时
+# 写同一检查点，互斥瓦解（后写盖先写，与 docstring 记的"吞消息"同型）。每把锁 ~48 字节，
+# 一万个会话不到 1MB：宁可无界增长到告警，也不换互斥性。哪天真要省内存，做引用计数
+# （refs==0 且 !locked() 才可回收），不要按 locked() 现场判断。
+_MAX_TRACKED = 65536
 
 _locks: dict[str, threading.Lock] = {}
 _guard = threading.Lock()
+_warned_full = False
 
 
 def _lock_for(thread_id: str) -> threading.Lock:
+    global _warned_full
     with _guard:
         lock = _locks.get(thread_id)
         if lock is None:
-            if len(_locks) >= _MAX_TRACKED:
-                # 只回收"当前没被持有"的：正在跑的那一轮的锁绝不能抽走，否则两边各拿一把
-                # 新锁，互斥就没了（这正是要修的那个 bug）。
-                free = [tid for tid, held in _locks.items() if not held.locked()]
-                for stale in free[: len(_locks) // 2]:
-                    _locks.pop(stale, None)
+            if len(_locks) >= _MAX_TRACKED and not _warned_full:
+                # 只响一次：这是"锁表大得反常"的信号（一万+ 个 thread_id），不是常规路径。
+                _warned_full = True
+                print(
+                    f"[thread-locks] 锁表达到 {_MAX_TRACKED} 条且不再回收"
+                    "（2026-10-04 审查快照：按 locked() 回收有互斥竞态）"
+                    " —— 检查是不是 thread_id 在无界生成",
+                    file=sys.stderr,
+                    flush=True,
+                )
             lock = _locks.setdefault(thread_id, threading.Lock())
         return lock
 
