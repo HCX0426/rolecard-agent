@@ -34,7 +34,13 @@ from rolecard_agent.domains.registry import (
     discover_specs,
     domain_seed_roles,
 )
-from rolecard_agent.domains.spec import DomainSpec, DomainToolContext
+from rolecard_agent.domains.spec import (
+    ActorLike,
+    DomainSpec,
+    DomainToolContext,
+    RouterDeps,
+    RouterHost,
+)
 from rolecard_agent.rag.retriever import KnowledgeBase
 from rolecard_agent.roles.models import RoleCardCreate
 from rolecard_agent.roles.service import RoleCardService
@@ -166,6 +172,35 @@ def test_the_real_domains_still_declare_themselves() -> None:
     )
     with pytest.raises(RuntimeError, match="HealthQueryService"):
         health.tool_factory(ctx)
+
+
+def test_domain_routes_are_mounted_from_their_own_spec(conn: object) -> None:
+    """`router_contrib` 是那族端点的**住址**：宿主只靠这份声明挂路由，api 层零 import 具体域。
+
+    为什么值得单独立一条：搬迁之后再没有任何 import 关系能证明 `/api/records` 还在 ——
+    少交一份路由**不会报错**，只会静默缺一族端点（前端数据页整页 404）。这里钉住"真的交回来
+    了、路径对得上"，顺带钉住数据型域不交路由（None 是合法值，不是漏写）。
+    """
+    from rolecard_agent.domains.health import SPEC
+    from rolecard_agent.domains.health.service import HealthQueryService
+
+    deps = RouterDeps(
+        get_context=lambda: cast("RouterHost", None),
+        get_actor=lambda: cast("ActorLike", None),
+        query_services={"health": HealthQueryService(cast("SqlConnection", conn))},
+    )
+    routers = SPEC.router_contrib(deps)  # 联合类型里 None 那一半由下一条 finance 用例钉住
+    paths = {route.path for router in routers for route in router.routes}
+    assert paths == {
+        "/api/records",
+        "/api/records/report",
+        "/api/records/extract",
+        "/api/records/index/{index_id}",
+        "/api/records/report/{report_id}",
+    }, paths
+
+    finance = next(spec for spec in discover_specs() if spec.id == "finance")
+    assert finance.router_contrib is None, "数据型域没有专属路由（数据走通用 domain_data CRUD）"
 
 
 def test_a_domain_package_without_a_spec_fails_loudly() -> None:

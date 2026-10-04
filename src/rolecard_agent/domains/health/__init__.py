@@ -20,9 +20,10 @@ from rolecard_agent.domains.health.names import (
     WRITE_TOOL_NAMES,
 )
 from rolecard_agent.domains.health.seed import DOMAIN_SEED_ROLES
-from rolecard_agent.domains.spec import DomainSpec, DomainToolContext
+from rolecard_agent.domains.spec import DomainSpec, DomainToolContext, RouterDeps
 
 if TYPE_CHECKING:
+    from fastapi import APIRouter
     from langchain_core.tools import BaseTool
 
     from rolecard_agent.core.domain_service import DomainQueryService
@@ -63,10 +64,22 @@ def _make_query_service(conn: SqlConnection) -> DomainQueryService:
     return HealthQueryService(conn)
 
 
+def _make_records_router(deps: RouterDeps) -> Sequence[APIRouter]:
+    """本域的专属路由（`DomainSpec.router_contrib`）：记录补录 / 抽取 / 修正 / 删除。
+
+    **惰性 import** 与 `_make_tools` 同一条理由：包导入只付常量与角色卡的钱，fastapi 与
+    抽取编排等到宿主要挂路由时才进来（`scripts/init_db.py` 这类入口不白付）。
+    """
+    from rolecard_agent.domains.health.records import build_records_router
+
+    return (build_records_router(deps),)
+
+
 SPEC: DomainSpec = DomainSpec(
     id="health",
     tool_factory=_make_tools,
     query_service_factory=_make_query_service,
     seed_roles=DOMAIN_SEED_ROLES,
     write_tool_names=WRITE_TOOL_NAMES,
+    router_contrib=_make_records_router,
 )

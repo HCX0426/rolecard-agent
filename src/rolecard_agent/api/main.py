@@ -51,7 +51,7 @@ from rolecard_agent.api.auth import (
     unauthorized_response,
 )
 from rolecard_agent.api.body_cap import BodyCapMiddleware
-from rolecard_agent.api.deps import AppContext
+from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.api.errors import error_response, register_error_handlers
 from rolecard_agent.api.ratelimit import Limiter, bucket_key, is_limited, paths_of
 from rolecard_agent.api.routers import approvals as approvals_router
@@ -61,7 +61,6 @@ from rolecard_agent.api.routers import local_service as local_service_router
 from rolecard_agent.api.routers import mcp as mcp_router
 from rolecard_agent.api.routers import pets as pets_router
 from rolecard_agent.api.routers import reachouts as reachouts_router
-from rolecard_agent.api.routers import records as records_router
 from rolecard_agent.api.routers import roles as roles_router
 from rolecard_agent.api.routers import services as services_router
 from rolecard_agent.api.routers import sessions as sessions_router
@@ -81,8 +80,10 @@ from rolecard_agent.domains.registry import (
     DOMAINS,
     build_query_services,
     build_registry,
+    discover_specs,
     domain_seed_roles,
 )
+from rolecard_agent.domains.spec import RouterDeps
 from rolecard_agent.rag.retriever import KnowledgeBase
 from rolecard_agent.storage.db import set_request_epoch
 
@@ -219,7 +220,6 @@ def create_app(
     # C1：端点按职责分包，全部端点已迁出本文件。
     app.include_router(roles_router.router)
     app.include_router(sessions_router.router)
-    app.include_router(records_router.router)
     app.include_router(console_router.router)
     app.include_router(settings_router.router)
     app.include_router(services_router.router)
@@ -233,6 +233,21 @@ def create_app(
     app.include_router(shell_release_router.router)
     # 上行同步（M7）：对面那台跑的是同一份代码，所以清单端点与计划端点住在同一个 router 里。
     app.include_router(sync_router.router)
+
+    # 域专属路由（2026-10-04 域机制收口，快照 P1-5）：宿主只交**请求期依赖**——上下文、
+    # 身份与按域取查询服务的映射，路由本体由各域自己的 `DomainSpec.router_contrib` 交回来。
+    # 从前这里是 `api/routers/records.py` 直接 import 具体域（`R102-10` 登记过的接缝）；
+    # 搬回域内之后，api 层对具体域的 import 归零 —— `api domain seams` 名单为空是目标态。
+    router_deps = RouterDeps(
+        get_context=get_context,
+        get_actor=get_actor,
+        query_services=runtime.assembly.queries,
+    )
+    for spec in discover_specs():
+        if spec.router_contrib is None:
+            continue
+        for domain_router in spec.router_contrib(router_deps):
+            app.include_router(domain_router)
 
     @app.middleware("http")
     async def _begin_db_request(request: object, call_next: object) -> object:

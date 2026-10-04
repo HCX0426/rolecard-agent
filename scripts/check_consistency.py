@@ -1161,9 +1161,12 @@ GENERIC_DOMAIN_MODULES = frozenset(
 #: api 层允许 import 具体域的**登记接缝**（`R102-10`：集单调最严——除登记处外即红）。
 #: 每条的"为什么"就写在这里；登记过时（那个文件不再 import 具体域了）也红 ——
 #: 与 `route access` 的"清单里没有死条目"同一条纪律。
-API_DOMAIN_SEAMS = {
-    "src/rolecard_agent/api/routers/records.py": "域通用路由：按 kind 分派各域的抽取器与异常名",
-}
+#:
+#: **现在是空的，这正是目标态**（2026-10-04 域机制收口，快照 P1-5）：域专属路由（记录补录 /
+#: 抽取 / 修正 / 删除那一族）搬回域内，由 `DomainSpec.router_contrib` 交回宿主挂载，api 层
+#: 连最后一条具体域 import 也归零。空名单**不是这条尺子退休**：谁再往 api 里 import 一个
+#: 具体域，照样红，那时必须来这里登记并写清"这道接缝为什么是刻意的"。
+API_DOMAIN_SEAMS: dict[str, str] = {}
 
 
 def check_api_domain_seams() -> None:
@@ -1171,13 +1174,14 @@ def check_api_domain_seams() -> None:
 
     `deps.py` 从前自述"api 层不 import 具体域"，而 `main.py` 与 `records.py` 就在
     import —— 分叉处正好在尺子的覆盖面外（`core no domain token` 只管 core）。修法不是
-    把那两句改没，而是承认**接缝是刻意的**（分派一处），再立这把尺子把"第二处"挡在门外：
-    新增一个 import 具体域的 api 文件 = 红，必须来这里登记并写理由。
+    把那两句改没，而是立这把尺子把接缝摆到台面上：新增一个 import 具体域的 api 文件 =
+    红，必须登记并写理由。
 
-    2026-10-04 域机制收口后名单从两条收到一条：`main.py` 不再 import 任何具体域类
-    （域接线改读各域 `SPEC`），`api/main.py` 与其余 api 文件 import 的
-    `domains.registry` / `domains.spec` 属于**通用**模块，不计入（见 `GENERIC_DOMAIN_MODULES`
-    —— 把它们算成"具体域"会让这把尺子天天喊狼来了，喊多了就没人看）。
+    收口过程（快照 P1-5，两步走）：① 域接线改读各域 `SPEC`（`main.py` 除名）；② 域专属
+    路由改由 `router_contrib` 交回宿主挂载（`routers/records.py` 搬进域内，名单就此**清空**）。
+    `api/main.py` 与其余 api 文件 import 的 `domains.registry` / `domains.spec` 属于
+    **通用**模块，不计入（见 `GENERIC_DOMAIN_MODULES` —— 把它们算成"具体域"会让这把尺子
+    天天喊狼来了，喊多了就没人看）。
     """
     api_dir = ROOT / "src" / "rolecard_agent" / "api"
     hits: dict[str, set[str]] = {}
@@ -1199,11 +1203,12 @@ def check_api_domain_seams() -> None:
     unregistered = sorted(rel for rel in hits if rel not in API_DOMAIN_SEAMS)
     stale = sorted(rel for rel in API_DOMAIN_SEAMS if rel not in hits)
     ok = not unregistered and not stale
-    detail = (
-        f"{len(hits)} 处接缝全在登记内（{', '.join(sorted(hits))}）"
-        if ok
-        else f"未登记：{unregistered}；登记过时（已不再 import 具体域）：{stale}"
-    )
+    if not ok:
+        detail = f"未登记：{unregistered}；登记过时（已不再 import 具体域）：{stale}"
+    elif not hits:
+        detail = "api 层零处 import 具体域（目标态；登记名单为空）"
+    else:
+        detail = f"{len(hits)} 处接缝全在登记内（{', '.join(sorted(hits))}）"
     out("api domain seams", ok, detail)
     if unregistered:
         fails.append(
