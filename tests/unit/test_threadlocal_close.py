@@ -7,7 +7,9 @@
 四条判据：
 
   1. 别的线程挂着未提交的写，主线程 `close()` 之后那笔写**还能落库**（这条就是从前会输的那一发）；
-  2. `close()` 必须**出声**说留下了几格（一条从不报告的收尾等于一条没有的收尾）；
+  2. `close()` 在**可疑形态**下必须出声（2026-10-04 审查快照起：本线程没有自己的槽却调
+     close = 跨线程误用签名）；线程归还**自己的**槽是正常路径，安静 —— fire-and-forget
+     线程用完即还不该每轮刷一行日志；
   3. 本线程那格若挂着事务，关之前先 rollback（`R102-42` 同一条纪律：不能把写锁留在已关闭的连接上）；
   4. 账是按线程身份记的，不是按"创建顺序"记的。
 """
@@ -76,7 +78,9 @@ def test_other_threads_pending_write_survives_my_close(tmp_path: Path, capsys) -
         "另一线程未提交的写入被主线程 close() 带走了（R102-02 的原始后果）"
     )
     err = capsys.readouterr().err
-    assert "留 1 格连接" in err, f"close 没报告留下了几格：{err!r}"
+    assert "[conn-close]" not in err, (
+        f"线程归还自己的槽是正常路径，不该刷告警：{err!r}"
+    )
 
 
 def test_close_ends_my_own_open_transaction_before_closing(tmp_path: Path) -> None:
@@ -129,8 +133,8 @@ def test_registry_is_keyed_by_thread_not_by_creation_order(tmp_path: Path) -> No
     leftover.close()
 
 
-def test_close_is_safe_when_this_thread_never_opened_one(tmp_path: Path) -> None:
-    """没开过连接的线程调 close()：不炸、也不该顺手清掉别人那一格。"""
+def test_close_is_safe_when_this_thread_never_opened_one(tmp_path: Path, capsys) -> None:
+    """没开过连接的线程调 close()：不炸、也不该顺手清掉别人那一格 —— 但**必须出声**。"""
     path = _seed(tmp_path)
     tl = connect_threadlocal(path)
     tl.execute("SELECT 1")
@@ -143,6 +147,36 @@ def test_close_is_safe_when_this_thread_never_opened_one(tmp_path: Path) -> None
     t.start()
     t.join(5)
     assert tl._created.get(threading.get_ident()) is holder
+    err = capsys.readouterr().err
+    assert "疑似跨线程误用" in err, f"跨线程 close 是可疑形态，必须告警：{err!r}"
     holder.close()
     with pytest.raises(sqlite3.ProgrammingError):
         holder.execute("SELECT 1")
+
+
+def test_short_lived_thread_returns_its_connection_quietly(tmp_path: Path, capsys) -> None:
+    """fire-and-forget 线程"开一格 → 用 → close 归还"：零残留、零噪音。
+
+    这是 distill 后台线程的标准生命周期（2026-10-04 审查快照的连接泄漏条目）：从前没人
+    归还，Windows 线程 ID 近似单调递增，`_created` 的槽永远等不到同 ident 覆写 —— 每轮
+    对话泄漏一个 fd。修复后线程 finally 里 `close()`，这条用例钉住"还了且不刷日志"。
+    """
+    path = _seed(tmp_path)
+    tl = connect_threadlocal(path)
+    tl.execute("SELECT 1")  # 主线程持一格，好证明工作线程的槽确实**各自独立**地被归还了
+    worker_ident = threading.get_ident()  # 占位，worker 里覆盖
+
+    def worker() -> None:
+        nonlocal worker_ident
+        worker_ident = threading.get_ident()
+        tl.execute("SELECT 1")
+        tl.close()  # ← distill finally 里那一句的等价物
+
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join(5)
+    assert worker_ident not in tl._created, "工作线程归还后，它的槽还在账上（泄漏没修）"
+    assert threading.get_ident() in tl._created, "工作线程的归还误伤了主线程的槽"
+    err = capsys.readouterr().err
+    assert "[conn-close]" not in err, f"正常归还路径不该有告警：{err!r}"
+    tl.close()  # 主线程自己收尾

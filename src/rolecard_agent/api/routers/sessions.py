@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import re
 import threading
@@ -658,6 +659,14 @@ def _distill_after_turn(ctx: AppContext, *, thread_id: str, role_id: str) -> Non
                 detail={"trigger": "auto", "fatal": False},
             )
         )
+    finally:
+        # 临时缓解（2026-10-04 审查快照的连接泄漏条目，**不解决根因**）：distill 线程是
+        # fire-and-forget 起的（`_stream_then`），从前它经 ThreadLocalConnection 开的连接
+        # 无人归还 —— Windows 线程 ID 近似单调递增，`_created` 的槽永远等不到被同 ident
+        # 覆写，等于**每轮对话泄漏一个 fd**。这里用完即还。根因修复是把 distill 池化
+        # （复用固定几个线程的连接），在后续批次。
+        with contextlib.suppress(Exception):
+            conn.close()
 
 
 @router.post("/api/session/{thread_id}/distill")
