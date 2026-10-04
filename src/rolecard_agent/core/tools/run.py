@@ -352,7 +352,8 @@ def make_run_tool(
             # 新接线或测试路径都会**静默失去审批门**。宁可拒绝执行让配置问题当场现形。
             return (
                 "命令审批服务未接（数据库连接缺失），而当前配置要求审批 —— 命令被拒绝执行。"
-                "这是装配问题，请检查 run_command 工具的接线（RUN_APPROVAL != auto 时必须提供审批服务）。"
+                "这是装配问题，请检查 run_command 工具的接线"
+                "（RUN_APPROVAL != auto 时必须提供审批服务）。"
             )
         if settings.run_approval != "auto" and svc is not None:
             gate = _pending_or_result(cmd, svc)
