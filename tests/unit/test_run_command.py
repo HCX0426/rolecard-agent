@@ -283,15 +283,23 @@ def test_truncate_keeps_suffix_note() -> None:
 def test_tool_execution_error_maps_to_readable() -> None:
     assert issubclass(RunCommandError, ToolExecutionError)
 
-def test_approval_mode_without_service_fails_closed() -> None:
+
+def test_approval_mode_without_service_fails_closed(task_dir: Path) -> None:
     """审批档开着的却没接审批服务 → 拒绝执行（2026-10-04 审查快照的审批条目）。
 
     从前 `svc is None` 会静默落到底部直接执行 —— 任何忘传 conn/approvals 的新接线
     都等于把审批门整个摘掉还不出声。fail-closed：让装配问题当场现形。
+
+    `dir_resolver` 要显式给：不给就回落到 `settings.workspace_dir`，而默认值是仓库的
+    `data/workspace/` —— 那一格是 gitignore 的运行时目录，全新 clone 上根本不存在，
+    于是这条用例会先撞"目录不存在"那道闸、报不出它真正要断言的那一句（本仓另六条
+    同族用例都传了 `dir_resolver`，只有这条漏了）。
     """
     from rolecard_agent.core.tools.run import make_run_tool
 
     settings = Settings(run_tools_enabled=True, run_approval="manual")
-    tool = make_run_tool(settings=settings, conn=None, approvals=None)
+    tool = make_run_tool(
+        settings=settings, conn=None, approvals=None, dir_resolver=lambda: task_dir
+    )
     out = str(tool.invoke({"command": "echo should-not-run"}))
     assert "命令审批服务未接" in out, out
