@@ -19,7 +19,7 @@ import pytest
 
 from rolecard_agent.base.identity import DEFAULT_USER_ID, ensure_identity_row
 from rolecard_agent.core.memory import restore_row as restore_memory
-from rolecard_agent.core.reachout.inbox import restore_row as restore_reachout
+from rolecard_agent.features.reachout.inbox import restore_row as restore_reachout
 from rolecard_agent.storage.db import bootstrap, connect
 
 OTHER = "intruder"

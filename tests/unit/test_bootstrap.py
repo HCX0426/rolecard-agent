@@ -32,6 +32,7 @@ from rolecard_agent.domains.registry import (
     build_registry,
     domain_seed_roles,
 )
+from rolecard_agent.features.proactive import build_gateway
 from rolecard_agent.storage.db import bootstrap as apply_schema
 from rolecard_agent.storage.db import connect
 
@@ -73,6 +74,7 @@ def _assemble(tmp_path: Path) -> Runtime:
         domains=DOMAINS,
         query_services_factory=build_query_services,
         domain_seed_roles=domain_seed_roles(),
+        proactive_factory=build_gateway,
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_settings(tmp_path),
         model_factory=lambda *_a, **_k: None,
@@ -146,6 +148,7 @@ def test_assembly_seeds_schema_and_demo_identity(tmp_path: Path) -> None:
             domains=DOMAINS,
             query_services_factory=build_query_services,
         domain_seed_roles=domain_seed_roles(),
+        proactive_factory=build_gateway,
             registry_factory=_wiring,  # type: ignore[arg-type]
             env_settings=settings,
             model_factory=lambda *_a, **_k: None,
@@ -172,7 +175,7 @@ def test_deliver_proactive_lands_in_the_roles_thread(tmp_path: Path) -> None:
     断了也照样绿，而用户碰到的正是"点进去是空的、回不了"。
     """
     from rolecard_agent.core.graph import build_graph_config
-    from rolecard_agent.core.reachout import proactive_thread_id
+    from rolecard_agent.features.reachout import proactive_thread_id
     from rolecard_agent.roles.models import RoleCard
 
     runtime = _assemble(tmp_path)
@@ -216,12 +219,12 @@ def test_deliver_proactive_does_not_interrupt_a_running_turn(tmp_path: Path) -> 
     这里用真图真检查点验两件事：拿不到锁 ⇒ 一句都不写；放了锁 ⇒ 正常落进去。
     """
     from rolecard_agent.core.graph import build_graph_config
-    from rolecard_agent.core.reachout import proactive_thread_id
     from rolecard_agent.core.thread_locks import (
         release_thread,
         thread_is_busy,
         try_thread_write,
     )
+    from rolecard_agent.features.reachout import proactive_thread_id
     from rolecard_agent.roles.models import RoleCard
 
     runtime = _assemble(tmp_path)
@@ -414,6 +417,7 @@ def test_a_turn_carries_the_key_of_the_person_who_is_talking(tmp_path: Path) -> 
         domains=DOMAINS,
         query_services_factory=build_query_services,
         domain_seed_roles=domain_seed_roles(),
+        proactive_factory=build_gateway,
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_settings_with_a_local_key(tmp_path),
         model_factory=_record_models(seen),
@@ -446,6 +450,7 @@ def test_a_default_backend_belongs_to_the_person_who_is_talking(tmp_path: Path) 
         domains=DOMAINS,
         query_services_factory=build_query_services,
         domain_seed_roles=domain_seed_roles(),
+        proactive_factory=build_gateway,
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_settings_with_a_local_key(tmp_path),
         model_factory=_record_models(seen),
@@ -478,6 +483,7 @@ def test_a_background_caller_names_the_owner_it_works_for(tmp_path: Path) -> Non
         domains=DOMAINS,
         query_services_factory=build_query_services,
         domain_seed_roles=domain_seed_roles(),
+        proactive_factory=build_gateway,
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_settings_with_a_local_key(tmp_path),
         model_factory=_record_models(seen),
@@ -502,6 +508,7 @@ def test_an_unknown_backend_degrades_instead_of_raising(tmp_path: Path) -> None:
         domains=DOMAINS,
         query_services_factory=build_query_services,
         domain_seed_roles=domain_seed_roles(),
+        proactive_factory=build_gateway,
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_settings_with_a_local_key(tmp_path),
         model_factory=_record_models(seen),
@@ -564,6 +571,7 @@ def test_an_inflight_build_cannot_republish_a_stale_model_after_rebuild(tmp_path
         domains=DOMAINS,
         query_services_factory=build_query_services,
         domain_seed_roles=domain_seed_roles(),
+        proactive_factory=build_gateway,
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_settings(tmp_path),
         model_factory=factory,

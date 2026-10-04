@@ -717,8 +717,8 @@ def list_sessions(ctx: AppContext = Depends(get_context)) -> list[object]:
             **{k: v for k, v in dict(r).items() if k != "has_state"},
             "agent_mode": session_service.resolve_agent_mode(r["agent_mode"], ctx.settings),
             # 侧栏分"她们那条线 / 临时话题"靠的是这个旗标，而不是前端自己拼线程 id 的前缀 ——
-            # 那个形状（`s_proactive_<uid>_<role>`，B2 起带身份）的事实归 `core/reachout/inbox.py`，
-            # 写第二处就会漂。
+            # 那个形状（`s_proactive_<uid>_<role>`，B2 起带身份）的事实归
+            # `features/reachout/inbox.py`，写第二处就会漂。
             "is_proactive": str(r["thread_id"]).startswith(PROACTIVE_THREAD_PREFIX),
             # "这一条里一个字的对话都没有"。只给布尔，**不给条数**：一轮对话在 `checkpoints`
             # 里是好几行（R26-07 那个平方级增长就是它），把行数当条数报出去就是骗界面；

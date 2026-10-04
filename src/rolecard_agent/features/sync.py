@@ -34,8 +34,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from rolecard_agent.core.memory import restore_row as restore_memory
-from rolecard_agent.core.reachout.inbox import restore_row as restore_reachout
 from rolecard_agent.core.thread_locks import thread_write
+from rolecard_agent.features.reachout.inbox import restore_row as restore_reachout
 from rolecard_agent.storage.db import SqlConnection
 from rolecard_agent.storage.threads import (
     insert_imported_thread,

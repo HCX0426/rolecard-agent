@@ -656,7 +656,7 @@ def test_reachouts_point_at_the_proactive_thread_and_read_by_role(client: TestCl
     —— 它一旦改名字或漏字段，前端只会表现成"点了没反应"，正是要修的那个症状。
     """
     from rolecard_agent.base.identity import DEFAULT_USER_ID
-    from rolecard_agent.core.reachout import proactive_thread_id
+    from rolecard_agent.features.reachout import proactive_thread_id
 
     conn = client.app.state.ctx.conn
     conn.execute(
@@ -699,7 +699,7 @@ def test_deleting_a_session_keeps_memory_and_the_inbox_ledger(client: TestClient
     - 走掉的只有 thread 行与它的 checkpoint / writes（不留可被复活的孤儿）。
     """
     from rolecard_agent.base.identity import DEFAULT_USER_ID
-    from rolecard_agent.core.reachout import proactive_thread_id
+    from rolecard_agent.features.reachout import proactive_thread_id
 
     conn = client.app.state.ctx.conn
     tid = proactive_thread_id("general_assistant", user_id=DEFAULT_USER_ID)
@@ -741,7 +741,7 @@ def test_proactive_session_ensure_is_idempotent_and_recreatable(client: TestClie
     幂等要能扛住两件事：角色从没主动说过话（桌宠上先聊起来）、以及用户把这条会话删了
     （下一条主动消息或下一次桌宠发消息会把它长回来 —— 记忆不跟着走，见上一条用例）。
     """
-    from rolecard_agent.core.reachout import proactive_thread_id
+    from rolecard_agent.features.reachout import proactive_thread_id
 
     first = client.post("/api/session/proactive", json={"role_id": "general_assistant"})
     assert first.status_code == 201
@@ -778,7 +778,7 @@ def _inbox_conn(tmp_path: Path) -> Any:
 
 
 def _record(conn: Any, role_id: str, text: str, *, keep: int = 0) -> None:
-    from rolecard_agent.core import reachout as svc
+    from rolecard_agent.features import reachout as svc
     from rolecard_agent.roles.models import RoleCard
 
     role = RoleCard(role_id=role_id, role_name="晚晴", system_prompt="x", reachout_keep=keep)
@@ -855,7 +855,7 @@ def test_proactive_thread_lookup_is_read_only(client: TestClient) -> None:
 
 def test_read_all_marks_every_role(client: TestClient, tmp_path: Path) -> None:
     """进入对话界面 = 都看过了（用户 2026-09-23 定的口径）：read-all 跨角色一次标完。"""
-    from rolecard_agent.core import reachout as svc
+    from rolecard_agent.features import reachout as svc
     from rolecard_agent.roles.models import RoleCard
     from rolecard_agent.storage.db import connect
 

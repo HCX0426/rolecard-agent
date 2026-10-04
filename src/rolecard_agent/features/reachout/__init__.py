@@ -60,7 +60,17 @@ from rolecard_agent.core.proactive_thread import (
     proactive_thread_id,
     proactive_thread_title,
 )
-from rolecard_agent.core.reachout.inbox import (
+from rolecard_agent.core.thread_transcript import (
+    CHAT_ECHO_LIMIT,
+    RECENT_THREAD_LIMIT,
+    RECENT_WINDOW_LIMIT,
+    format_recent_window,
+    format_thread_lines,
+    format_unreplied_lines,
+    unanswered_lines,
+    unreplied_lines,
+)
+from rolecard_agent.features.reachout.inbox import (
     UNDELIVERED_RETRY_LIMIT,
     UNDELIVERED_RETRY_MINUTES,
     clear_all_inboxes,
@@ -75,7 +85,7 @@ from rolecard_agent.core.reachout.inbox import (
     record_reachout,
     undelivered_reachouts,
 )
-from rolecard_agent.core.reachout.quiet import (
+from rolecard_agent.features.reachout.quiet import (
     BACKOFF_GROWTH,
     JITTER_FRACTION,
     MAX_UNREAD_PER_ROLE,
@@ -86,8 +96,8 @@ from rolecard_agent.core.reachout.quiet import (
     quiet_gate,
     quiet_status,
 )
-from rolecard_agent.core.reachout.scheduler import TICK_SECONDS, ReachoutScheduler
-from rolecard_agent.core.reachout.triggers import (
+from rolecard_agent.features.reachout.scheduler import TICK_SECONDS, ReachoutScheduler
+from rolecard_agent.features.reachout.triggers import (
     DROP_SCORE,
     OPEN_THREADS_REFRESH_MINUTES,
     RECALL_COOLDOWN_HOURS,
@@ -103,16 +113,6 @@ from rolecard_agent.core.reachout.triggers import (
     trigger_affection,
     trigger_recall,
     trigger_time_pattern,
-)
-from rolecard_agent.core.thread_transcript import (
-    CHAT_ECHO_LIMIT,
-    RECENT_THREAD_LIMIT,
-    RECENT_WINDOW_LIMIT,
-    format_recent_window,
-    format_thread_lines,
-    format_unreplied_lines,
-    unanswered_lines,
-    unreplied_lines,
 )
 
 __all__ = [

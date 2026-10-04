@@ -1,12 +1,10 @@
-"""主动开口的**投递与会话上下文读法**（`ProactiveGateway`）—— Runtime 的第三格职责。
+"""主动开口的**投递与会话上下文读法**（`ProactiveGateway`）—— 一件产品功能，宿主接线。
 
-为什么单拎出来（2026-10-04 审查快照"Runtime 单对象多职责"那一格）：`_proactive_rows` /
-`proactive_recent_lines` / `proactive_recent_window` / `deliver_proactive` / `chat_memory`
-这一族全是**主动开口**这件事的零件（读那条主动会话的检查点、把她说的那句落回同一条线程、
-以及在别的线程里给她补回声），过去和图装配、模型解析、热重建挤在同一个 `Runtime` 里。
-
-搬出来之后 `Runtime` 只留四个**转调**门面（调用方 —— 调度器、端点、探针脚本、
-`tests/unit/test_bootstrap.py` 那批用例 —— 一行不改）。
+这一族零件（`thread_rows` / `recent_lines` / `recent_window` / `deliver` / `chat_memory`）
+全是"主动开口"这件事的半边：读那条主动会话的检查点、把她说的那句落回同一条线程、在别的
+线程里给她补回声。内核只要用这四下，所以 `core/bootstrap.py` 里定的是**形状**
+（`ProactiveGatewayLike`）而不是这个类 —— 实例由宿主经 `build_runtime(proactive_factory=…)`
+交进来，方向保持 features→core 单向（2026-10-04 审查快照"core 装了产品功能"那一格）。
 
 四件依赖的形状值得单独说，它们是这一族全部的正确性所在：
 
@@ -34,6 +32,7 @@ from rolecard_agent.base.identity import active_user_id
 from rolecard_agent.base.observability import TraceEvent, Tracer
 from rolecard_agent.base.text import text_of
 from rolecard_agent.config import Settings
+from rolecard_agent.core.bootstrap import GatewayContext
 from rolecard_agent.core.graph import build_graph_config
 from rolecard_agent.core.memory import memory_for_turn
 from rolecard_agent.core.plugins import PluginService
@@ -41,7 +40,6 @@ from rolecard_agent.core.proactive_thread import (
     ensure_proactive_thread,
     proactive_thread_id,
 )
-from rolecard_agent.core.reachout import recent_reachout_lines
 from rolecard_agent.core.state import now_ts
 from rolecard_agent.core.thread_locks import release_thread, try_thread_write
 from rolecard_agent.core.thread_transcript import (
@@ -52,6 +50,7 @@ from rolecard_agent.core.thread_transcript import (
     unanswered_lines,
     unreplied_lines,
 )
+from rolecard_agent.features.reachout import recent_reachout_lines
 from rolecard_agent.roles.models import RoleCard
 from rolecard_agent.storage.db import ThreadLocalConnection
 
@@ -207,4 +206,20 @@ class ProactiveGateway:
         return thread_id
 
 
-__all__ = ["ProactiveGateway"]
+__all__ = ["ProactiveGateway", "build_gateway"]
+
+
+def build_gateway(ctx: GatewayContext) -> ProactiveGateway:
+    """宿主接线工厂：装配根交出 `GatewayContext`，这里建出网关实例。
+
+    它是 `core.bootstrap.build_runtime(proactive_factory=…)` 的实参 —— 内核只认
+    `ProactiveGatewayLike` 那个形状，不认识这个类（features→core 单向，快照那一格的
+    终态）。与调度器走 `register_background` 是同一条纪律的两个方向用法。
+    """
+    return ProactiveGateway(
+        conn=ctx.conn,
+        tracer=ctx.tracer,
+        plugins=ctx.plugins,
+        state=ctx.state,
+        identity=ctx.identity,
+    )

@@ -15,11 +15,11 @@ from langchain_core.messages import AIMessage
 from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.config import Settings
 from rolecard_agent.core import file_watch as fw
-from rolecard_agent.core import reachout as svc
 from rolecard_agent.core.memory import add_item
 from rolecard_agent.core.proactive_state import DEFAULT_AFFINITY_THRESHOLD, get_state
-from rolecard_agent.core.reachout import ReachoutScheduler
 from rolecard_agent.core.workspace import resolve_task_dir
+from rolecard_agent.features import reachout as svc
+from rolecard_agent.features.reachout import ReachoutScheduler
 from rolecard_agent.roles.models import RoleCard
 from rolecard_agent.roles.service import RoleNotFound
 
@@ -1487,7 +1487,7 @@ def test_dismissing_a_reachout_keeps_the_row_so_outcomes_can_be_measured(conn) -
     从前这是 `DELETE`，而且主动消息**不进 audit_log** —— 于是"她冒了话而用户把它划掉"
     这一种结局查无痕迹，接话率 / 看了不接 / 自说自话连击数三种口径一个都算不出来。
     """
-    from rolecard_agent.core.reachout import delete_reachout, mark_read
+    from rolecard_agent.features.reachout import delete_reachout, mark_read
 
     svc.record_reachout(conn, _role(), "她主动冒的一句", user_id=DEFAULT_USER_ID)
     rid = int(str(conn.execute("SELECT MAX(id) AS i FROM agent_reachout").fetchone()["i"]))

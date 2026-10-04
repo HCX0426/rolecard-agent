@@ -20,7 +20,6 @@ from langchain_core.messages import AIMessage
 from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.config import Settings
 from rolecard_agent.core import bootstrap
-from rolecard_agent.core import reachout as svc
 from rolecard_agent.core.bootstrap import Assembly, build_runtime
 from rolecard_agent.core.graph import build_graph_config
 from rolecard_agent.core.model_settings import client_style
@@ -31,6 +30,8 @@ from rolecard_agent.domains.registry import (
     build_registry,
     domain_seed_roles,
 )
+from rolecard_agent.features import reachout as svc
+from rolecard_agent.features.proactive import build_gateway
 from rolecard_agent.roles.models import RoleCard
 from tests.conftest import ScriptedChat
 
@@ -90,6 +91,7 @@ def _runtime(tmp_path: Path, **kw: object) -> bootstrap.Runtime:
         domains=DOMAINS,
         query_services_factory=build_query_services,
         domain_seed_roles=domain_seed_roles(),
+        proactive_factory=build_gateway,
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_cloud_only_settings(tmp_path),
         model_factory=lambda *_a, **_k: None,
@@ -139,7 +141,7 @@ def test_proactive_reachouts_work_without_any_local_model(tmp_path: Path) -> Non
     """主动开口（桌宠的驱动源）在纯云形态下整条链路照常：生成 → 收件箱 → 投进主动会话。"""
     from datetime import UTC, datetime
 
-    from rolecard_agent.core.reachout import ReachoutScheduler
+    from rolecard_agent.features.reachout import ReachoutScheduler
     from rolecard_agent.roles.models import RoleCard
 
     reply = "外头降温了，穿上外套。"

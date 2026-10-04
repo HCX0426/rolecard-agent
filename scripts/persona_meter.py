@@ -65,8 +65,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from rolecard_agent.core.reachout import proactive_thread_id  # noqa: E402
 from rolecard_agent.core.usage import daily_usage, local_day, usage_days  # noqa: E402
+from rolecard_agent.features.reachout import proactive_thread_id  # noqa: E402
 
 FIRST_CHARS = 6  # 开场复读看前几个字
 NGRAM = 4  # 复读判定的 n-gram 长度

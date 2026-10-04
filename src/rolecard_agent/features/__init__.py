@@ -17,7 +17,9 @@
     就只能反向 import 功能。搬过一次的教训写在 `docs/修复交接（2026-10-04）.md`。
 
 当前居民：`pet_packs`（桌宠形象包的发现与解析）、`sync` + `sync_service`（M7 上行同步的
-数据层与事务性写入侧）。`reachout` 的迁入还差一步：内核的 `core/proactive.py` 要读它的
-`recent_reachout_lines`（回声），那条边得先降级成"功能对功能"，别让 core 反向 import
-一个功能包 —— 这也是"内核要认识某功能只能走注册表"那条纪律的用武之地。
+数据层与事务性写入侧）、`reachout`（主动开口的触发/静默/信箱/调度四子模块）、
+`proactive`（主动开口的投递与会话上下文网关 —— 内核经 `ProactiveGatewayLike` 那个形状用
+它的四下，实例由宿主经 `build_runtime(proactive_factory=…)` 交进来）。
+"内核要认识某功能只能走注册表/形状"这条到这里是**全部兑现**的状态：core 里已经没有一处
+import features（依赖方向契约机器看着，反向那条边构造不出来）。
 """

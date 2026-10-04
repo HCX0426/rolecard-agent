@@ -42,7 +42,10 @@ import scratch_db  # noqa: E402
 
 from rolecard_agent.base.identity import resolve_instance_identity  # noqa: E402
 from rolecard_agent.config import Settings  # noqa: E402
-from rolecard_agent.core.reachout import PROACTIVE_THREAD_PREFIX, proactive_thread_id  # noqa: E402
+from rolecard_agent.features.reachout import (  # noqa: E402
+    PROACTIVE_THREAD_PREFIX,
+    proactive_thread_id,
+)
 from rolecard_agent.storage.db import bootstrap, connect  # noqa: E402
 
 # 读的是**这份库实际的主人在用的主动线程**（B2 之后线程 id 带身份）—— 与运行中的实例

@@ -31,15 +31,16 @@ from rolecard_agent.core.proactive_state import (
     record_recall_open,
     save_open_threads,
 )
-from rolecard_agent.core.reachout.inbox import (
+from rolecard_agent.core.workspace import resolve_task_dir
+from rolecard_agent.features.reachout.inbox import (
     UNDELIVERED_RETRY_LIMIT,
     UNDELIVERED_RETRY_MINUTES,
     mark_delivered,
     record_reachout,
     undelivered_reachouts,
 )
-from rolecard_agent.core.reachout.quiet import quiet_gate
-from rolecard_agent.core.reachout.triggers import (
+from rolecard_agent.features.reachout.quiet import quiet_gate
+from rolecard_agent.features.reachout.triggers import (
     _format_change_list,
     generate_reachout_text,
     open_threads_stale,
@@ -47,7 +48,6 @@ from rolecard_agent.core.reachout.triggers import (
     trigger_recall,
     trigger_time_pattern,
 )
-from rolecard_agent.core.workspace import resolve_task_dir
 from rolecard_agent.roles.models import RoleCard
 from rolecard_agent.roles.service import RoleCardService, RoleNotFound
 from rolecard_agent.storage.db import SqlConnection

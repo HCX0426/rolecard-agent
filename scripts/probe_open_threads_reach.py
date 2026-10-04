@@ -50,7 +50,7 @@ from rolecard_agent.core.proactive_state import (  # noqa: E402
     AFFINITY_DECAY_PER_DAY,
     get_state,
 )
-from rolecard_agent.core.reachout import (  # noqa: E402
+from rolecard_agent.features.reachout import (  # noqa: E402
     OPEN_THREADS_REFRESH_MINUTES,
     proactive_thread_id,
     trigger_affection,

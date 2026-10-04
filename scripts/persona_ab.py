@@ -48,7 +48,7 @@ from rolecard_agent.core.prompts import (  # noqa: E402
     VOICE_DEPTH_PROMPT,
     build_system_prompt,
 )
-from rolecard_agent.core.reachout import generate_reachout_text  # noqa: E402
+from rolecard_agent.features.reachout import generate_reachout_text  # noqa: E402
 from rolecard_agent.roles.models import RoleCard  # noqa: E402
 from rolecard_agent.roles.service import RoleCardService  # noqa: E402
 

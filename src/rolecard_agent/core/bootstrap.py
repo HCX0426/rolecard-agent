@@ -47,7 +47,6 @@ from rolecard_agent.core.model_resolver import ModelResolver
 from rolecard_agent.core.model_settings import ModelSettingsService, client_style
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
-from rolecard_agent.core.proactive import ProactiveGateway
 from rolecard_agent.core.probes import ollama_keep, vision_capability
 from rolecard_agent.core.retention import prune_retention_tables
 from rolecard_agent.core.services import ServiceEndpointService
@@ -172,6 +171,21 @@ def assemble_registry(
     return registry_factory(assembly, eff_for_tools, knowledge, enabled_domains)
 
 
+@dataclass(frozen=True, slots=True)
+class GatewayContext:
+    """交给宿主"主动开口接线工厂"的那几件**只读**引用。
+
+    与 `Assembly` 同一条理由：接线只需要这几件，不该拿到能换图、能触发重建的可变运行时。
+    `identity` 是闭包而不是值 —— 实例主人的解析只留 `Runtime.identity` 那一处。
+    """
+
+    conn: ThreadLocalConnection
+    tracer: Tracer
+    plugins: PluginService
+    state: dict[str, Any]
+    identity: Callable[[], str]
+
+
 class BackgroundTask(Protocol):
     """宿主注册给内核的后台任务**形状**（内核只认两个动作，不认它是什么功能）。
 
@@ -184,6 +198,25 @@ class BackgroundTask(Protocol):
     def start(self) -> None: ...
 
     def stop(self) -> None: ...
+
+
+class ProactiveGatewayLike(Protocol):
+    """主动开口的投递与会话上下文那一族的**形状**（同上，但四个方法都是内核自己要用的）。
+
+    内核确实要用它：图装配时的 `memory_provider`（本轮她该看见什么）与端点/调度器读的
+    三个上下文取法。所以不能像调度器那样只在宿主用 —— 那就得让内核反向 import 功能。
+    解法与 `BackgroundTask` 同一形状：**内核只认这四下**，实现在 `features/proactive.py`，
+    由宿主经 `build_runtime(proactive_factory=…)` 交进来。四下的语义（checkpoint 是唯一
+    真相 / 投递不跑图 / 本轮主人现取）写在实现那侧。
+    """
+
+    def chat_memory(self, role_id: str | None, thread_id: str | None) -> str: ...
+
+    def recent_lines(self, role_id: str, *, limit: int = 6) -> str: ...
+
+    def recent_window(self, role_id: str, *, limit: int = 8) -> str: ...
+
+    def deliver(self, role: RoleCard, text: str) -> str | None: ...
 
 
 @dataclass
@@ -217,10 +250,11 @@ class Runtime:
     #: `resolve_role_model` 两个**转调**方法（对外形状不变，调用方与代数测试零改）。
     #: 装配末尾在 `build_runtime` 里挂上（它要读实例主人那份配置，构造期还没有）。
     models: ModelResolver = field(init=False, repr=False)
-    #: 主动开口的投递与会话上下文那一族（`_proactive_rows` / `proactive_recent_*` /
-    #: `deliver_proactive` / `chat_memory` 的回声半边）搬进 `core/proactive.py`（同一格
-    #: 审查快照的第二刀）：本对象只留**转调**，调度器与端点的调用形状不变。
-    proactive: ProactiveGateway = field(init=False, repr=False)
+    #: 主动开口的投递与会话上下文那一族（`recent_lines` / `recent_window` / `deliver` /
+    #: `chat_memory`）的**实现**住在 `features/proactive.py`：本对象只认 `ProactiveGatewayLike`
+    #: 那个形状，实例由宿主经 `build_runtime(proactive_factory=…)` 交进来（同一格的调度器
+    #: 走 `register_background`）。本对象只留**转调**，调度器与端点的调用形状不变。
+    proactive: ProactiveGatewayLike = field(init=False, repr=False)
 
     # -- 稳定引用的读穿 ------------------------------------------------------
 
@@ -311,10 +345,10 @@ class Runtime:
         return self.models.role_models
 
     def chat_memory(self, role_id: str | None, thread_id: str | None) -> str:
-        """这一轮她该看见什么：记忆 + 最近主动说过的原话（转调 `ProactiveGateway`）。
+        """这一轮她该看见什么：记忆 + 最近主动说过的原话（转调宿主交进来的网关实现）。
 
-        回声那半边的全部道理（为什么补、什么时候**不**补、本轮主人现取）写在
-        `core/proactive.py::chat_memory`；这里是图装配用的挂点，形状不动。
+        回声那半边的全部道理（为什么补、什么时候**不**补、本轮主人现取）住在
+        `features/proactive.py::chat_memory`；这里是图装配用的挂点，形状不动。
         """
         return self.proactive.chat_memory(role_id, thread_id)
 
@@ -428,10 +462,10 @@ class Runtime:
             if client_style(backend.provider) == "native":
                 ollama_keep(backend.base_url, backend.model, -1, num_ctx=backend.num_ctx)
 
-    # -- 主动开口的投递与会话上下文（转调 `ProactiveGateway`）---------------------
+    # -- 主动开口的投递与会话上下文（转调宿主交进来的网关实现）--------------------
     #
     # 实现与它买的那些道理（checkpoint 是唯一真相 / 不跑图 / 拿不到锁就不投但不算丢 /
-    # 本轮主人现取）都住在 `core/proactive.py`。这里留门面，是因为它们是调度器、端点与
+    # 本轮主人现取）都住在 `features/proactive.py`。这里留门面，是因为它们是调度器、端点与
     # 探针脚本的稳定调用形状 —— 拆职责不该让调用方跟着搬家。
 
     def proactive_recent_lines(self, role_id: str, *, limit: int = 6) -> str:
@@ -480,6 +514,7 @@ def build_runtime(
     query_services_factory: Callable[[SqlConnection], Mapping[str, DomainQueryService]],
     registry_factory: RegistryFactory,
     domain_seed_roles: Sequence[RoleCardCreate],
+    proactive_factory: Callable[[GatewayContext], ProactiveGatewayLike],
     sqlite_path: Path | None = None,
     env_settings: Settings | None = None,
     model: ChatLike | None = None,
@@ -488,11 +523,14 @@ def build_runtime(
 ) -> Runtime:
     """装配内核：建库 → 播种 → 服务实例化 → 知识库/注册表/图 → 可热重建的 `Runtime`。
 
-    `domains` / `query_services_factory` / `registry_factory` / `domain_seed_roles` 由宿主
-    给出（本模块不认识任何具体域）：各域的查询服务以**工厂**传入（它要拿装配过程中建好的
-    连接），域种子角色是**已经聚合好的一沓卡**（宿主从各域 `SPEC.seed_roles` 聚出来，见
-    `domains.registry.domain_seed_roles`）—— 这一项刻意**没有默认值**：给了默认 `()` 就
-    等于允许某个宿主"忘了接域角色"而没有任何声音，那是本项目最不接受的静默降级。
+    `domains` / `query_services_factory` / `registry_factory` / `domain_seed_roles` /
+    `proactive_factory` 由宿主给出（本模块不认识任何具体域，也不认识任何产品功能）：各域的
+    查询服务以**工厂**传入（它要拿装配过程中建好的连接），域种子角色是**已经聚合好的一沓
+    卡**（宿主从各域 `SPEC.seed_roles` 聚出来，见 `domains.registry.domain_seed_roles`）——
+    这些刻意**没有默认值**：给个默认就等于允许某个宿主"忘了接"而没有任何声音，那是本项目
+    最不接受的静默降级。`proactive_factory` 拿一个 `GatewayContext`（装配到这里都建好了的
+    那几件只读引用），交回实现 `ProactiveGatewayLike` 的对象 —— 主动开口的实现在
+    `features/`，内核只认形状。
     `sqlite_path` 可注入便于测试用临时库，省略时回退 `Settings.sqlite_path`。
     `model` / `tracer` / `model_factory` 同理：测试注入替身即可全离线跑通对话链路
     （本项目铁律：测内核行为，不测 LLM 本身）。`model_factory` 会在**默认模型构建、
@@ -616,13 +654,15 @@ def build_runtime(
         injected_model=model,
     )
     # 主动开口那一格（同一审查快照的第二刀）：连接、插件表（tool_epoch）与那份共享槽位
-    # 都在装配末尾就位，`identity` 同样走闭包 —— 实例主人的解析只留一处。
-    runtime.proactive = ProactiveGateway(
-        conn=conn,
-        tracer=resolved_tracer,
-        plugins=plugins,
-        state=state,
-        identity=lambda: runtime.identity,
+    # 都在装配末尾就位，交给宿主的接线工厂；`identity` 同样走闭包 —— 实例主人的解析只留一处。
+    runtime.proactive = proactive_factory(
+        GatewayContext(
+            conn=conn,
+            tracer=resolved_tracer,
+            plugins=plugins,
+            state=state,
+            identity=lambda: runtime.identity,
+        )
     )
     state["graph"] = runtime.build_graph(default_model, registry, effective)
     return runtime

@@ -1349,7 +1349,7 @@ def check_session_thread_write_seam() -> None:
 
     这条表从前有七个写入者：`api/routers/sessions.py`（5 处）、`core/sync.py`（2，该模块
     后迁 `features/`）、
-    `core/reachout/inbox.py`、`core/memory_distill.py`、`roles/service.py`、
+    `core/reachout/inbox.py`（后迁 `features/`）、`core/memory_distill.py`、`roles/service.py`、
     `api/routers/sync.py` 各 1 —— 而它的每一条写都有道理（毫秒 `updated_at` 是为了侧栏同秒
     能分先后、`title` 的 `COALESCE` 是"只兜第一次"、`distilled_at_seq` 是游标不是计数）。
     道理散在七处，就等于哪一处都没有：`R102-62` 抄 7 遍的那条 SQL 是同一件事。
@@ -1578,7 +1578,7 @@ def check_sync_write_ownership() -> None:
     """`features/sync.py` 里不许再有 INSERT 字面量 —— 写入口归各自的 owner service。
 
     同步那条链的四类写入各有主人：card → `RoleCards`、thread → `storage/threads`、
-    memory → `core/memory.restore_row`、reachout → `core/reachout/inbox.restore_row`；
+    memory → `core/memory.restore_row`、reachout → `features/reachout/inbox.restore_row`；
     `features/sync.py` 只剩"顺序与结果语义"（created/updated/foreign/skipped 的分派）。
     这条判据防的正是搬走的那半回来：**列集从前是手抄的第二份事实面** —— 表加了列而
     手抄清单没跟上，这条链静默少那一列（owner 里现在按 PRAGMA 现算，与 schema 同源）。
@@ -1606,7 +1606,7 @@ def check_sync_write_ownership() -> None:
 
     sync_writes = insert_literals(src / "features" / "sync.py")
     memory_writes = insert_literals(src / "core" / "memory.py")
-    inbox_writes = insert_literals(src / "core" / "reachout" / "inbox.py")
+    inbox_writes = insert_literals(src / "features" / "reachout" / "inbox.py")
     hollow = not memory_writes or not inbox_writes
     ok = not sync_writes and not hollow
     detail = (
@@ -1662,7 +1662,7 @@ WRITE_TXN_HELPERS = frozenset(
         # 这一步的 COMMIT 活在 executescript 里（`… ;COMMIT;` 首尾 BEGIN IMMEDIATE 包死），
         # 正是"端点配置不许半路清空"那条迁移的核心设计 —— AST 只看得见函数调用，所以登记。
         "src/rolecard_agent/core/migrations.py::_rebuild_legacy_service_endpoint",
-        "src/rolecard_agent/core/reachout/inbox.py::restore_row",
+        "src/rolecard_agent/features/reachout/inbox.py::restore_row",
         # 2026-10-04 service 收口：replace 档的行类清空**刻意不收口** —— 与随后的导入共用
         # 一个事务，成败一体。收口点在 `features/sync_service.py::run_import`（导入有失败即
         # rollback + 抛 ReplaceAborted 交路由翻 400，成功则统一 commit）。从前这段 SQL 住在

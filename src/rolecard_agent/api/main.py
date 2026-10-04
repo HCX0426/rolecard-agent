@@ -75,7 +75,6 @@ from rolecard_agent.config import Settings
 from rolecard_agent.core.bootstrap import Assembly, Runtime, build_runtime
 from rolecard_agent.core.build_info import read_build_info
 from rolecard_agent.core.nodes import ChatLike
-from rolecard_agent.core.reachout import ReachoutScheduler
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.domains.registry import (
     DOMAINS,
@@ -85,6 +84,8 @@ from rolecard_agent.domains.registry import (
     domain_seed_roles,
 )
 from rolecard_agent.domains.spec import RouterDeps
+from rolecard_agent.features.proactive import build_gateway
+from rolecard_agent.features.reachout import ReachoutScheduler
 from rolecard_agent.rag.retriever import KnowledgeBase
 from rolecard_agent.storage.db import set_request_epoch
 
@@ -212,6 +213,9 @@ def create_app(
         query_services_factory=build_query_services,
         registry_factory=_host_registry_factory,
         domain_seed_roles=domain_seed_roles(),
+        # 主动开口的网关由宿主接进装配根：内核只认 `ProactiveGatewayLike` 那个形状，
+        # 实现在 `features/proactive.py`（features→core 单向，内核不认识功能）。
+        proactive_factory=build_gateway,
         sqlite_path=sqlite_path,
         env_settings=env_settings,
         model=model,

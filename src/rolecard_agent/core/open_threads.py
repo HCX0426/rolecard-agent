@@ -8,8 +8,8 @@
 往对话里塞不存在的事（§12.5 那条"提取侧不许补背景"是同一件事的另一面）。
 
 所以这里的形状是：**判据写在提示里、条数封顶写在解析里、失败一律退回空**。
-缓存与"什么时候值得花这一次调用"在 `core/reachout/scheduler.py` 与 `core/reachout/triggers.py`
-（那是调度侧的开销问题），
+缓存与"什么时候值得花这一次调用"在 `features/reachout/scheduler.py` 与
+`features/reachout/triggers.py`（那是调度侧的开销问题），
 这个模块只管"看着这段对话，说出真正没收尾的那几件"。
 """
 
