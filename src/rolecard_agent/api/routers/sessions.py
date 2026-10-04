@@ -35,8 +35,7 @@ from rolecard_agent.api.deps import (
 )
 from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.base.text import text_of
-from rolecard_agent.config import Settings
-from rolecard_agent.core import memory_distill
+from rolecard_agent.core import memory_distill, session_service
 from rolecard_agent.core.graph import build_graph_config
 from rolecard_agent.core.ingestion import INGESTION_FAILED, INGESTION_PENDING
 from rolecard_agent.core.reachout import (
@@ -65,27 +64,8 @@ from rolecard_agent.rag.retriever import (
     KnowledgeDimensionMismatch,
 )
 from rolecard_agent.roles.service import RoleError, RoleNotFound
-from rolecard_agent.storage.threads import (
-    create_thread,
-    delete_thread_everywhere,
-    seed_title,
-    session_list_rows,
-    set_mode,
-    set_model,
-    set_title,
-    thread_display_state,
-    thread_exists,
-    touch_thread,
-)
 
 router = APIRouter()
-
-#: 用户主动发起的**历史写**（改并重答 / 删消息 / 上传时插一条说明）最多等多久拿会话写锁。
-#: 刻意比 `thread_locks._DEFAULT_WAIT`（150 秒，那是为"整轮对话排队别丢轮"设的）短得多：
-#: 这几条路由前端本来就在忙时不给点，真撞上就是罕见竞态，让请求挂两分半比拒掉更糟。
-#: 等不到 → `ThreadBusy` → 409 + 一句人话（出口在 `api/main.py`，六个写点共用）。
-_WRITE_WAIT = 3.0
-
 
 # 文件名消毒（审查报告 A4）：模型/浏览器给的 `filename` 不可信。`Path().name` 已经挡掉
 # 路径成分，这里再处理长度与控制字符 —— 超长名或含 `\x00` 的名字会让 `write_bytes` 抛
@@ -127,17 +107,6 @@ class SessionPatch(BaseModel):
     # 会话级对话模式：'chat' / 'agent'（显式设置）；null / 空串 = 清除，回落全局默认
     # （settings.agent_default_mode）。
     agent_mode: str | None = None
-
-
-MODE_CHOICES = ("chat", "agent")
-
-
-def resolve_agent_mode(raw: object, settings: Settings) -> str:
-    """会话级 agent_mode 的有效值：显式设置('chat'/'agent') 优先生效；
-    NULL / 未知值 = 回落全局默认（settings.agent_default_mode）。"""
-    if str(raw or "") in MODE_CHOICES:
-        return str(raw)
-    return settings.agent_default_mode
 
 
 class ChatMessage(BaseModel):
@@ -204,10 +173,8 @@ def create_session(
         role = ctx.role_cards.get(role_id)
     except RoleNotFound as exc:
         raise role_error_to_http(exc) from exc
-    thread_id = f"s_{uuid.uuid4().hex[:12]}"
-    create_thread(
+    thread_id = session_service.create(
         ctx.conn,
-        thread_id=thread_id,
         user_id=ctx.current_user(),
         role_id=role_id,
         tool_epoch=ctx.plugins.tool_epoch(),
@@ -263,18 +230,15 @@ def proactive_session_of(
     一条"从没被找过的角色 · 主动找你"。
     """
     tid = proactive_thread_id(role_id, user_id=ctx.current_user())
-    return {"thread_id": tid if thread_exists(ctx.conn, tid) else None, "role_id": role_id}
+    return {"thread_id": tid if session_service.exists(ctx.conn, tid) else None, "role_id": role_id}
 
 
 @router.get("/api/session/{thread_id}")
 def get_session(thread_id: str, ctx: AppContext = Depends(get_context)) -> object:
     row = get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
-    try:
-        role = ctx.role_cards.get(str(row["current_role_id"]))
-        role_name: str | None = role.role_name
-    except RoleNotFound:
-        # 会话指向已被删除的角色：会话本身还在，角色信息降级为空（图侧有同样的兜底）。
-        role_name = None
+    # 会话指向已被删除的角色：会话本身还在，角色信息降级为空（图侧有同样的兜底）。
+    # 降级在 service 里收成一处 —— patch 端点当年漏了这格，"只改个标题"也会 500。
+    role_name = session_service.role_name_of(ctx.role_cards, str(row["current_role_id"]))
     return {
         "thread_id": row["thread_id"],
         "user_id": row["user_id"],
@@ -282,7 +246,7 @@ def get_session(thread_id: str, ctx: AppContext = Depends(get_context)) -> objec
         "role_name": role_name,
         "model_name": row["model_name"],
         # 返回**有效**模式（会话覆盖 or 全局默认）：前端切换钮直接按它渲染当前状态。
-        "agent_mode": resolve_agent_mode(row["agent_mode"], ctx.settings),
+        "agent_mode": session_service.resolve_agent_mode(row["agent_mode"], ctx.settings),
     }
 
 
@@ -333,7 +297,7 @@ def patch_session(
             if name not in effective.model_backends:
                 known = ", ".join(sorted(effective.model_backends))
                 raise HTTPException(status_code=400, detail=f"未知模型 {name!r}；可用：{known}")
-        set_model(conn, thread_id, body.model_name)
+        session_service.set_model(conn, thread_id, body.model_name)
         ctx.audit.log(
             actor=actor.id,
             action="set_session_model",
@@ -345,11 +309,14 @@ def patch_session(
         mode = body.agent_mode
         if mode is not None and mode.strip() == "":
             mode = None  # 空串 = 清除覆盖，回落全局默认
-        if mode is not None and mode not in MODE_CHOICES:
+        if mode is not None and mode not in session_service.MODE_CHOICES:
             raise HTTPException(
-                status_code=400, detail=f"未知对话模式 {mode!r}；可用：{' / '.join(MODE_CHOICES)}"
+                status_code=400,
+                detail=(
+                    f"未知对话模式 {mode!r}；可用：{' / '.join(session_service.MODE_CHOICES)}"
+                ),
             )
-        set_mode(conn, thread_id, mode)
+        session_service.set_mode(conn, thread_id, mode)
         ctx.audit.log(
             actor=actor.id,
             action="set_session_mode",
@@ -361,26 +328,24 @@ def patch_session(
         title = body.title.strip()
         if not title:
             raise HTTPException(status_code=400, detail="标题不能为空。")
-        set_title(conn, thread_id, title)
+        session_service.set_title(conn, thread_id, title)
 
     final_role_id = body.role_id or str(thread["current_role_id"])
-    try:
-        role = ctx.role_cards.get(final_role_id)
-    except RoleNotFound:
-        # 会话指向的角色已被删除（角色 CRUD 的常规后果）：这里**必须**降级而不是抛 ——
-        # `get_session` 与 `chat` 都有同样的兜底，本端点此前漏了，于是"只改个标题"也会
-        # 500（审查报告 M1，已复现）。降级后角色信息为空，会话本身仍然可用。
-        role_name: str | None = None
-    else:
-        role_name = role.role_name
-    row = thread_display_state(conn, thread_id)
+    # 角色已被删除（角色 CRUD 的常规后果）：必须降级而不是抛 —— 从前 get_session 与这里
+    # 各写一份 try/except，本端点漏了那份，于是"只改个标题"也会 500（审查报告 M1，已复现）。
+    role_name = session_service.role_name_of(ctx.role_cards, final_role_id)
+    row = session_service.display_row(conn, thread_id)
     return {
         "thread_id": thread_id,
         "role_id": final_role_id,
         "role_name": role_name,
         "title": row["title"] if row else None,
         "model_name": row["model_name"] if row else None,
-        "agent_mode": resolve_agent_mode(row["agent_mode"], ctx.settings) if row else "chat",
+        "agent_mode": (
+            session_service.resolve_agent_mode(row["agent_mode"], ctx.settings)
+            if row
+            else "chat"
+        ),
     }
 
 
@@ -406,7 +371,9 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
     session_model = thread["model_name"]  # 会话级覆盖（可 None），每轮实时读库
     # 会话级对话模式（有效值 = 会话覆盖 or 全局默认），每轮实时读库 + 实时回落：
     # 会话切「对话/智能体」或操作员改 AGENT_DEFAULT_MODE，下一轮即生效。
-    session_mode = resolve_agent_mode(thread["agent_mode"], ctx.app_state["effective"])
+    session_mode = session_service.resolve_agent_mode(
+        thread["agent_mode"], ctx.app_state["effective"]
+    )
     try:
         role = ctx.role_cards.get(role_id)
     except RoleNotFound as exc:
@@ -414,9 +381,9 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
 
     # 侧栏标题：首轮消息截断生成；updated_at 每轮刷新，会话列表按它倒序。
     # 纯图消息没有文本 → 标题用 "[图片]"，COALESCE 兜底空标题（首次就覆盖）。
-    # 毫秒精度的理由与唯一出处见 `storage.db.touch_thread`（`R102-62`）。
+    # 毫秒精度的理由与唯一出处见 `storage/threads._TOUCH_SQL`（`R102-62`），经 service 转发。
     title_fallback = "[图片]" if not body.message.strip() else body.message[:24]
-    seed_title(conn, body.thread_id, title_fallback)
+    session_service.seed_title(conn, body.thread_id, title_fallback)
 
     # 步数上限随运行配置一起带上：没有它，模型持续返回 tool_calls 时这一轮不会终止。
     # agent 模式上限放大一倍（见 core/graph.build_graph_config）。
@@ -756,7 +723,7 @@ def _history_messages(ctx: AppContext, thread_id: str) -> tuple[dict, list[AnyMe
     # 这份 config 既用于 get_state / update_state，也直接喂给下面的 graph.stream ——
     # 所以步数上限在这里就必须带上（否则编辑重生成那条路仍是无上界的）。
     # agent 模式上限放大一倍（与 /api/chat 同一口径，见 core/graph.build_graph_config）。
-    mode = resolve_agent_mode(thread["agent_mode"], ctx.app_state["effective"])
+    mode = session_service.resolve_agent_mode(thread["agent_mode"], ctx.app_state["effective"])
     config = build_graph_config(thread_id, ctx.app_state["effective"], agent_mode=mode == "agent")
     snapshot = graph.get_state(config)
     return config, list((snapshot.values or {}).get("messages") or [])
@@ -781,7 +748,9 @@ def edit_message_and_regenerate(
     thread = get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
     role_id = str(thread["current_role_id"])
     session_model = thread["model_name"]
-    session_mode = resolve_agent_mode(thread["agent_mode"], ctx.app_state["effective"])
+    session_mode = session_service.resolve_agent_mode(
+        thread["agent_mode"], ctx.app_state["effective"]
+    )
     try:
         role = ctx.role_cards.get(role_id)
     except RoleNotFound as exc:
@@ -799,7 +768,7 @@ def edit_message_and_regenerate(
     doomed = [RemoveMessage(id=m.id) for m in messages[index:] if m.id is not None]
     # 改检查点要占住这条会话（审计 #12）：紧随其后的那一轮由 `run_turn` 自己持锁，
     # 而中间这一秒若被调度线程的主动投递插进来，两边会分叉同一个父检查点。
-    with thread_write(thread_id, timeout=_WRITE_WAIT):
+    with thread_write(thread_id, timeout=session_service.WRITE_WAIT):
         graph.update_state(config, {"messages": doomed})
 
     graph_input: dict[str, object] = {
@@ -808,7 +777,7 @@ def edit_message_and_regenerate(
         "model_name": session_model,
         "agent_mode": session_mode,
     }
-    touch_thread(ctx.conn, thread_id)
+    session_service.touch(ctx.conn, thread_id)
     ctx.conn.commit()
 
     return StreamingResponse(
@@ -855,9 +824,9 @@ def delete_messages(
     # 删历史也要占住这条会话（R28-03）：这一句以前是裸 `update_state`，
     # 而用户那一轮正在往同一个父检查点追加 —— 两边后写谁赢，症状是"消息又凭空多回来一条
     # 或者少了一条"。等不到锁就 409（`thread_write` 现在会抛，不再把布尔丢给调用方）。
-    with thread_write(thread_id, timeout=_WRITE_WAIT):
+    with thread_write(thread_id, timeout=session_service.WRITE_WAIT):
         graph.update_state(config, {"messages": [RemoveMessage(id=i) for i in doomed_ids]})
-    touch_thread(ctx.conn, thread_id)
+    session_service.touch(ctx.conn, thread_id)
     ctx.conn.commit()
     return {"deleted": len(doomed_ids), "remaining": len(messages) - len(doomed_ids)}
 
@@ -865,14 +834,14 @@ def delete_messages(
 @router.get("/api/sessions")
 def list_sessions(ctx: AppContext = Depends(get_context)) -> list[object]:
     """会话列表（对话页侧栏）：只列**这次请求那个身份**名下的会话。"""
-    rows = session_list_rows(ctx.conn, ctx.current_user())
+    rows = session_service.list_rows(ctx.conn, ctx.current_user())
     return [
         {
             # `has_state` 只当内部中间量、**不下线**（`R102-21`）：它在本仓产物/源码/壳三处
             # 0 命中，是一个没人守的线字段 —— 下一次改名没人知道该不该同步。判据仍是
             # "EXISTS 写过东西没有"，但暴露给界面的只有 is_blank 这一个名字。
             **{k: v for k, v in dict(r).items() if k != "has_state"},
-            "agent_mode": resolve_agent_mode(r["agent_mode"], ctx.settings),
+            "agent_mode": session_service.resolve_agent_mode(r["agent_mode"], ctx.settings),
             # 侧栏分"她们那条线 / 临时话题"靠的是这个旗标，而不是前端自己拼线程 id 的前缀 ——
             # 那个形状（`s_proactive_<uid>_<role>`，B2 起带身份）的事实归 `core/reachout/inbox.py`，
             # 写第二处就会漂。
@@ -1019,13 +988,13 @@ def get_session_context(thread_id: str, ctx: AppContext = Depends(get_context)) 
 def delete_session(thread_id: str, ctx: AppContext = Depends(get_context)) -> None:
     """删除会话：thread 行与**全部载体表**一并清掉，不留孤儿（`R102-26`）。
 
-    名单与删除收在 `storage.db.delete_thread_everywhere` 一处、现数现用 —— 从前这里
-    写死 `("checkpoints", "writes")` 两张表，`command_approval` 恰好漏掉，已删会话的
-    待批审批就这么永远挂在队列上（点它是对一条不存在的会话做决定）。
+    名单与删除收在 `storage/threads.delete_thread_everywhere` 一处、现数现用，经
+    `session_service.delete_everywhere` 持锁调用 —— 从前这里写死 `("checkpoints",
+    "writes")` 两张表，`command_approval` 恰好漏掉，已删会话的待批审批就这么永远挂在
+    队列上（点它是对一条不存在的会话做决定）。
     """
     get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
-    with thread_write(thread_id, timeout=_WRITE_WAIT):
-        delete_thread_everywhere(ctx.conn, thread_id)
+    session_service.delete_everywhere(ctx.conn, thread_id)
 
 
 @router.post("/api/session/{thread_id}/upload", status_code=201)
@@ -1147,7 +1116,7 @@ def upload_report(
             )
             graph_config = {"configurable": {"thread_id": thread_id}}
             # 注入这条说明也要持锁（R28-03）：它写的就是用户这一轮正在写的同一份检查点。
-            with thread_write(thread_id, timeout=_WRITE_WAIT):
+            with thread_write(thread_id, timeout=session_service.WRITE_WAIT):
                 ctx.app_state["graph"].update_state(
                     graph_config, {"messages": [HumanMessage(content=note)]}
                 )
@@ -1217,7 +1186,7 @@ def upload_report(
         )
     graph_config = {"configurable": {"thread_id": thread_id}}
     # 同上（R28-03）：这条"文件类型不支持解析"的说明也是往同一份检查点写。
-    with thread_write(thread_id, timeout=_WRITE_WAIT):
+    with thread_write(thread_id, timeout=session_service.WRITE_WAIT):
         ctx.app_state["graph"].update_state(
             graph_config, {"messages": [HumanMessage(content=note)]}
         )

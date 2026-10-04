@@ -35,6 +35,7 @@ from rolecard_agent.core.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
     from rolecard_agent.rag.ocr import OcrBackend
+from rolecard_agent.core.session_service import get_row
 from rolecard_agent.rag.retriever import KnowledgeBase
 from rolecard_agent.roles.service import (
     BuiltinRoleProtected,
@@ -44,7 +45,6 @@ from rolecard_agent.roles.service import (
     RoleNotFound,
 )
 from rolecard_agent.storage.db import ThreadLocalConnection
-from rolecard_agent.storage.threads import thread_row
 
 # 默认"无角色"：纯对话，不接工具与检索。
 DEFAULT_ROLE_ID = "general_assistant"
@@ -60,7 +60,7 @@ def get_thread(conn: ThreadLocalConnection, thread_id: str, *, user_id: str):
     为什么 404 而不是 403：403 等于承认"这条会话存在，只是你不该看"。会话 id 一旦泄露，
     别人的线程就从一个不可知的空集变成一份可验证的清单，那是靶子而不是护栏。
     """
-    row = thread_row(conn, thread_id)
+    row = get_row(conn, thread_id)
     if row is None or str(row["user_id"]) != user_id:
         raise HTTPException(status_code=404, detail=f"对话不存在：{thread_id}")
     return row

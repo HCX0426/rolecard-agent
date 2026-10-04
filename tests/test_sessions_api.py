@@ -275,6 +275,32 @@ def test_session_list_survives_role_deletion(client: TestClient) -> None:
     assert row["role_id"] == "temp" and row["role_name"] is None
 
 
+def test_role_name_degrades_on_get_and_patch_alike(client: TestClient) -> None:
+    """读会话的两个端点在角色被删后**行为一致**：都回 200、role_name 都降级为 None。
+
+    这是 M1 的两个现场：从前降级逻辑在 `get_session` 与 `patch_session` 各手写一份
+    try/except，patch 漏了那格 ⇒ 用户"只改个标题"就撞上 500。收进
+    `session_service.role_name_of` 之后两个端点共用一处，这条用例钉的是它们**同进同出** ——
+    将来加第三个显示 role_name 的端点，忘了降级会先在这里红。
+    """
+    client.post(
+        "/api/roles",
+        json={"role_id": "soon_gone", "role_name": "将被删", "system_prompt": "x"},
+    )
+    session = client.post("/api/session", json={"role_id": "soon_gone"}).json()
+    assert client.delete("/api/roles/soon_gone").status_code == 204
+    tid = session["thread_id"]
+
+    detail = client.get(f"/api/session/{tid}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["role_name"] is None
+
+    patched = client.patch(f"/api/session/{tid}", json={"title": "改个标题"})
+    assert patched.status_code == 200, patched.text  # M1：这一步从前 500
+    assert patched.json()["role_name"] is None
+    assert patched.json()["title"] == "改个标题"  # 角色没了不影响会话本身可用
+
+
 # -- upload（US-7 上传入口的真实落点） --------------------------------------------------
 
 
