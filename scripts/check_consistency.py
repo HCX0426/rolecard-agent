@@ -1407,10 +1407,13 @@ WRITE_TXN_HELPERS = frozenset(
         "src/rolecard_agent/core/plugins.py::_bump_tool_epoch",
         "src/rolecard_agent/core/sync.py::_write_memory",
         "src/rolecard_agent/core/sync.py::_write_reachout",
-        # 2026-10-04 审查快照：replace 档的行类清空**刻意不收口** —— 与随后的导入共用
-        # 一个事务，成败一体；调用方 api/routers/sync.py::post_import 收口（导入有失败
-        # 即 rollback + 400，成功则统一 commit）。
-        "src/rolecard_agent/api/routers/sync.py::_clear_rows_for_replace",
+        # 2026-10-04 service 收口：replace 档的行类清空**刻意不收口** —— 与随后的导入共用
+        # 一个事务，成败一体。收口点在 `core/sync_service.py::run_import`（导入有失败即
+        # rollback + 抛 ReplaceAborted 交路由翻 400，成功则统一 commit）。从前这段 SQL 住在
+        # `api/routers/sync.py` 里 —— 那正是 router 长成事实 service 的那一格。
+        # 注：登记的是**含写语句字面量的那一个函数**（判据按 AST 里的 SQL 常量数），
+        # `sync_service.clear_rows_for_replace` 只是转调，它自己不带语句所以不进名单。
+        "src/rolecard_agent/storage/sync_rows.py::delete_rows_for_user",
         "src/rolecard_agent/storage/threads.py::delete_threads_for_user",
         "src/rolecard_agent/storage/threads.py::set_current_role",
     }

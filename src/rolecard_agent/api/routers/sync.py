@@ -35,10 +35,7 @@
 
 from __future__ import annotations
 
-import base64
-import json
 from dataclasses import replace
-from datetime import datetime
 from typing import Any
 
 import httpx  # 只用它的异常类型；请求一律走 base/outbound
@@ -49,12 +46,9 @@ from rolecard_agent.api import access
 from rolecard_agent.api.auth import ROLE_USER, Actor, basic_header
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.base import outbound
-from rolecard_agent.base.paths import user_data_root
 from rolecard_agent.core import sync as sync_lib
+from rolecard_agent.core import sync_service
 from rolecard_agent.core.model_settings import validate_base_url
-from rolecard_agent.core.thread_locks import thread_write
-from rolecard_agent.storage.db import RETENTION_BACKUP_DIRNAME
-from rolecard_agent.storage.threads import delete_thread_everywhere, delete_threads_for_user
 
 router = APIRouter()
 
@@ -201,79 +195,6 @@ def post_plan(
     }
 
 
-def _b64_json(obj: Any) -> Any:
-    """JSONL 序列化的兜底：blob 走 base64（可无损还原 msgpack），其余 str 化。"""
-    if isinstance(obj, (bytes, bytearray, memoryview)):
-        return {"__base64__": base64.b64encode(bytes(obj)).decode("ascii")}
-    return str(obj)
-
-
-def _write_jsonl(path: Any, rows: list[Any]) -> int:
-    if not rows:
-        return 0
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as fh:
-        for row in rows:
-            record = dict(zip(row.keys(), tuple(row), strict=True))
-            fh.write(json.dumps(record, ensure_ascii=False, default=_b64_json))
-            fh.write("\n")
-    return len(rows)
-
-
-def _dump_before_clear(conn: Any, *, user_id: str, kinds: list[str]) -> dict[str, int]:
-    """整份替换清空**之前**，把将要被删的行先落成 JSONL（2026-10-04 审查快照的数据丢失条目）。
-
-    从前 `_clear_for_replace` 直接 DELETE 并 commit：清空落盘、导入逐条尽力，两段之间没有
-    事务边界 —— 导入中断时对面就只剩"清了不导"。备份兜住最坏情况：`checkpoints` 的 blob
-    是 msgpack，base64 原样落盘，配上同目录的 `session_thread` 行足以人工重放。顺序沿用
-    retention 的纪律：先落盘、再删，中间崩掉的结果是"行还在库里 + 多一个备份文件"。
-
-    落在 `retention-backups/sync/` 子目录：retention 的 `_trim_backups` 只 glob 顶层，
-    两边互不清账；本函数按表各留最近 `_SYNC_BACKUP_KEEP` 份。
-    """
-    backup_dir = user_data_root() / RETENTION_BACKUP_DIRNAME / "sync"
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    dumped: dict[str, int] = {}
-    tables = [
-        table
-        for table, kind in (
-            ("role_card", sync_lib.KIND_CARD),
-            ("role_memory_item", sync_lib.KIND_MEMORY),
-            ("agent_reachout", sync_lib.KIND_REACHOUT),
-            ("session_thread", sync_lib.KIND_THREAD),
-        )
-        if kind in kinds
-    ]
-    for table in tables:
-        rows = conn.execute(
-            f"SELECT * FROM {table} WHERE user_id = ?", (user_id,)  # noqa: S608
-        ).fetchall()
-        dumped[table] = _write_jsonl(backup_dir / f"{table}-{stamp}.jsonl", list(rows))
-    if sync_lib.KIND_THREAD in kinds:
-        tid_rows = conn.execute(
-            "SELECT thread_id FROM session_thread WHERE user_id = ?", (user_id,)
-        ).fetchall()
-        tids = [str(r["thread_id"]) for r in tid_rows]
-        # 会话的正文在 langgraph 的检查点表里（blob），载体行只是元数据 —— 两样都要。
-        for table in ("checkpoints", "writes"):
-            if not tids:
-                dumped[table] = 0
-                continue
-            placeholders = ",".join("?" for _ in tids)
-            rows = conn.execute(
-                f"SELECT * FROM {table} WHERE thread_id IN ({placeholders})",  # noqa: S608
-                tids,
-            ).fetchall()
-            dumped[table] = _write_jsonl(backup_dir / f"{table}-{stamp}.jsonl", list(rows))
-    by_table: dict[str, list[Any]] = {}
-    for f in backup_dir.glob("*.jsonl"):
-        by_table.setdefault(f.name.split("-", 1)[0], []).append(f)
-    for files in by_table.values():
-        for stale in sorted(files, key=lambda p: p.name, reverse=True)[_SYNC_BACKUP_KEEP:]:
-            stale.unlink(missing_ok=True)
-    return dumped
-
-
 class ImportBody(BaseModel):
     """对面写入的载荷。`items` 由发起方按用户的选择挑好，这里不再判冲突。
 
@@ -285,53 +206,6 @@ class ImportBody(BaseModel):
     items: list[dict[str, Any]] = Field(default_factory=list)
     clear_kinds: list[str] = Field(default_factory=list)
     confirm_replace: bool = False
-
-
-def _clear_rows_for_replace(
-    conn: Any, *, user_id: str, kinds: list[str]
-) -> dict[str, int]:
-    """card/memory/reachout 三类的清空，**不 commit** —— 与后面的导入同一个事务。
-
-    （2026-10-04 审查快照的数据丢失条目：replace 档"清了不导"的原子化，分两步走。
-    这三类是纯 DB 行，清空与导入能共事务：导入有任何一条失败就整批回滚、什么都没动；
-    thread 类涉及检查点/图侧删除，事务罩不住，留在 `_clear_threads_for_replace` 里先清，
-    由删前备份兜底。card 的写入器（RoleCards）内部自 commit —— 它的导入一旦成功就
-    落盘，回滚收不回来；这一格等写入口收口（批次 2）后并入同一事务。）
-    """
-    cleared: dict[str, int] = {}
-    tables = (
-        (sync_lib.KIND_CARD, "role_card"),
-        (sync_lib.KIND_MEMORY, "role_memory_item"),
-        (sync_lib.KIND_REACHOUT, "agent_reachout"),
-    )
-    for kind, table in tables:
-        if kind in kinds:
-            cur = conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))  # noqa: S608
-            cleared[kind] = max(cur.rowcount, 0)
-    return cleared
-
-
-def _clear_threads_for_replace(conn: Any, *, user_id: str, graph: Any) -> dict[str, int]:
-    """thread 类的清空：级联**真删**（2026-10-02 拍板）并提交 —— 图侧罩不进事务。
-
-    从前这里用 `update_state(REMOVE_ALL)` 留空壳 + 写死删两张表：`command_approval`
-    恰好漏掉（孤儿审批挂在已删会话上），空壳检查点还被修剪器**永留**最新一条。
-    锁在级联删外面（R28-03）：在飞轮次不该被从脚下抽走检查点。
-    """
-    rows = conn.execute(
-        "SELECT thread_id FROM session_thread WHERE user_id = ?", (user_id,)
-    ).fetchall()
-    removed = 0
-    for row in rows:
-        tid = str(row["thread_id"])
-        if graph is not None:
-            with thread_write(tid):
-                removed += delete_thread_everywhere(conn, tid)["session_thread"]
-    # 收尾那一条只兜住"没有载体行的空壳"，所以两个数相加才是"清了几条会话"——
-    # 从前只取收尾那一个数，逐条级联删跑过之后它恒为 0，于是报的是"清了 0 条"。
-    removed += delete_threads_for_user(conn, user_id)
-    conn.commit()
-    return {sync_lib.KIND_THREAD: removed}
 
 
 @router.post("/api/sync/import")
@@ -361,9 +235,6 @@ def post_import(
                 "两台机器的版本可能不一致 —— 先把两边都升到同一版再同步。"
             ),
         )
-    cleared: dict[str, int] = {}
-    backed_up: dict[str, int] = {}
-    row_cleared: dict[str, int] = {}
     if body.clear_kinds:
         if not body.confirm_replace:
             raise HTTPException(
@@ -381,41 +252,29 @@ def post_import(
                     "若确实想清空这一类，请在本机逐条删除。"
                 ),
             )
-        backed_up = _dump_before_clear(ctx.conn, user_id=_identity(ctx), kinds=body.clear_kinds)
-        # thread 先清（图侧罩不进事务，由删前备份兜底）；行类清空不 commit，进导入事务。
-        cleared = _clear_threads_for_replace(
-            ctx.conn, user_id=_identity(ctx), graph=ctx.app_state["graph"]
-        ) if sync_lib.KIND_THREAD in body.clear_kinds else {}
-        row_cleared = _clear_rows_for_replace(
-            ctx.conn, user_id=_identity(ctx), kinds=body.clear_kinds
+    # 备份 → 清 thread → 清行类 → 导入 → 收口：整条链的事务边界在 service 里，
+    # 这里只做协议校验与"异常 → 状态码"的翻译。
+    try:
+        outcome = sync_service.run_import(
+            ctx.conn,
+            user_id=_identity(ctx),
+            graph=ctx.app_state["graph"],
+            settings=ctx.app_state["effective"],
+            items=body.items,
+            clear_kinds=body.clear_kinds,
         )
-        cleared = {**row_cleared, **cleared}
-    # commit=False：行类清空与导入共用一个事务，成败一体 —— 见 _clear_rows_for_replace。
-    result = sync_lib.apply_import(
-        ctx.conn,
-        user_id=_identity(ctx),
-        graph=ctx.app_state["graph"],
-        settings=ctx.app_state["effective"],
-        items=body.items,
-        commit=False,
-    )
-    if row_cleared and result["errors"]:
-        # replace 档导入有任何一条失败 = "清了部分不导"，整批回滚：清空与已导入的行
-        # 一起还原，对面什么都没少，发起方拿到明确的 400 去排查（两机版本偏差是常见因）。
-        # card 的写入器内部自 commit，它那部分收不回来 —— detail 里如实点名。
-        ctx.conn.rollback()
-        card_note = (
-            "；card 类写入自提交、无法随回滚还原" if sync_lib.KIND_CARD in row_cleared else ""
-        )
+    except sync_service.ReplaceAborted as exc:
+        # replace 档导入有失败 = "清了部分不导"，已整批回滚。card 的写入器自提交，
+        # 它那一部分收不回来 —— 所以那句"全部还原"必须点名 card，不能说满。
+        card_note = "；card 类写入自提交、无法随回滚还原" if exc.card_partial else ""
         raise HTTPException(
             status_code=400,
             detail=(
-                f"整份替换的导入有 {len(result['errors'])} 条失败，已整批回滚 —— "
-                f"本机清掉的 {sum(row_cleared.values())} 行全部还原、导入的条目全部撤销"
-                f"{card_note}。第一条错误：{result['errors'][0].get('error', '')[:120]}"
+                f"整份替换的导入有 {exc.failed} 条失败，已整批回滚 —— "
+                f"本机清掉的 {exc.cleared_rows} 行全部还原、导入的条目全部撤销"
+                f"{card_note}。第一条错误：{exc.first_error}"
             ),
-        )
-    ctx.conn.commit()
+        ) from exc
     # 审计只记结构：几类各写了多少、清了多少、删前备份了几行。
     # **绝不记载荷**（那里面是对话原文与记忆）。
     ctx.audit.log(
@@ -423,14 +282,14 @@ def post_import(
         action="sync_import",
         target="cloud-import",
         detail={
-            "written": result["written"],
-            "skipped": result["skipped"],
-            "cleared": cleared,
-            "backed_up": backed_up,
-            "errors": len(result["errors"]),
+            "written": outcome.written,
+            "skipped": outcome.skipped,
+            "cleared": outcome.cleared,
+            "backed_up": outcome.backed_up,
+            "errors": len(outcome.errors),
         },
     )
-    return {**result, "cleared": cleared}
+    return {**outcome.as_dict(), "cleared": outcome.cleared}
 
 
 MODES = ("merge", "append", "replace")

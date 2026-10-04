@@ -20,6 +20,7 @@ a no-op and leave orphaned index rows behind.
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import contextvars
 import json
@@ -336,6 +337,61 @@ RETENTION_BACKUP_DIRNAME = "retention-backups"
 RETENTION_BACKUP_KEEP = 5
 
 
+def _json_cell(value: object) -> object:
+    """一格的 JSON 可表示形式：**bytes 走 base64 包**，其余交给 `default=str`。
+
+    为什么必须这样：blob 列（langgraph 检查点的 msgpack、图片指纹那族）按 `str()` 落盘是
+    **不可逆**的 —— 备份的整个意义是"删错了还能拿回原样"，而 `str(b'\\x00...')` 拿回来的是
+    一段 `"b'\\x00...'"` 文本，重放时没人能还原那 40 个字节。从前这一族有两份实现
+    （retention 用 `default=str`、sync 的删前备份用 base64），而**需要无损的那一侧恰好是
+    检查点**，所以 sync 那份才是对的。合并成一份按对的来，retention 那三张表没有 bytes 列，
+    行为逐字不变（用例 `test_doomed_rows_are_dumped_column_by_column_before_they_vanish`
+    断的就是逐列原样，两版都过 —— 过了才敢说非回归）。
+    """
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return {"__base64__": base64.b64encode(bytes(value)).decode("ascii")}
+    return str(value)
+
+
+def dump_rows_to_jsonl(
+    path: Path,
+    rows: Sequence[sqlite3.Row],
+    *,
+    notice: str | None = None,
+) -> int:
+    """把给定的行逐列写成 JSONL（追加语义），返回写出的行数。0 行不碰文件系统。
+
+    `notice` 给就顺带往 stderr 念一声（retention 用它报"先落备份再删"）：备份这件事
+    **必须让人看见**，静默写一份没人知道存在的文件，等价于没有备份。
+    """
+    if not rows:
+        return 0
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        for row in rows:
+            record = dict(zip(row.keys(), tuple(row), strict=True))
+            fh.write(json.dumps(record, ensure_ascii=False, default=_json_cell))
+            fh.write("\n")
+    if notice:
+        print(notice, file=sys.stderr, flush=True)
+    return len(rows)
+
+
+def trim_backups(backup_dir: Path, *, keep: int = RETENTION_BACKUP_KEEP) -> None:
+    """每张表各留最近 `keep` 份 —— 防"为了不留只增表而造出另一张只增表"。
+
+    分表裁而不是整目录一起裁：文件名是 `<表名>-<时刻>.jsonl`，字典序里 `command_approval-*`
+    永远压在 `audit_log-*` 前面 —— 整目录裁会让一批审批备份把审计备份**饿死**（删掉的恰是
+    唯一那份能找回审计行的文件）。时刻是秒级 `YYYYmmdd-HHMMSS`，同表内按名排序=按时间排序。
+    """
+    by_table: dict[str, list[Path]] = {}
+    for f in backup_dir.glob("*.jsonl"):
+        by_table.setdefault(f.name.split("-", 1)[0], []).append(f)
+    for files in by_table.values():
+        for stale in sorted(files, key=lambda p: p.name, reverse=True)[keep:]:
+            stale.unlink(missing_ok=True)
+
+
 def _dump_before_delete(
     conn: SqlConnection,
     *,
@@ -352,36 +408,12 @@ def _dump_before_delete(
     "先备份再删"那半句的实现（10-03 复核发现那半句从没落地，见台账 H12 批 24）。
     """
     rows = conn.execute(f"SELECT * FROM {table} {where}", params).fetchall()  # noqa: S608
-    if not rows:
-        return 0
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    out = backup_dir / f"{table}-{stamp}.jsonl"
-    with out.open("a", encoding="utf-8") as fh:
-        for row in rows:
-            record = dict(zip(row.keys(), tuple(row), strict=True))
-            fh.write(json.dumps(record, ensure_ascii=False, default=str))
-            fh.write("\n")
-    print(
-        f"[retention] 先落备份 {out.name}（{len(rows)} 行 {table}）再删",
-        file=sys.stderr,
-        flush=True,
+    n = dump_rows_to_jsonl(
+        backup_dir / f"{table}-{stamp}.jsonl",
+        rows,
+        notice=f"[retention] 先落备份 {table}-{stamp}.jsonl（{len(rows)} 行 {table}）再删",
     )
-    return len(rows)
-
-
-def _trim_backups(backup_dir: Path) -> None:
-    """每张表各留最近 `RETENTION_BACKUP_KEEP` 份 —— 防"为了不留只增表而造出另一张只增表"。
-
-    分表裁而不是整目录一起裁：文件名是 `<表名>-<时刻>.jsonl`，字典序里 `command_approval-*`
-    永远压在 `audit_log-*` 前面 —— 整目录裁会让一批审批备份把审计备份**饿死**（删掉的恰是
-    唯一那份能找回审计行的文件）。时刻是秒级 `YYYYmmdd-HHMMSS`，同表内按名排序=按时间排序。
-    """
-    by_table: dict[str, list[Path]] = {}
-    for f in backup_dir.glob("*.jsonl"):
-        by_table.setdefault(f.name.split("-", 1)[0], []).append(f)
-    for files in by_table.values():
-        for stale in sorted(files, key=lambda p: p.name, reverse=True)[RETENTION_BACKUP_KEEP:]:
-            stale.unlink(missing_ok=True)
+    return n
 
 
 def prune_retention_tables(
@@ -437,7 +469,7 @@ def prune_retention_tables(
         pruned["approvals_done"] = max(cur.rowcount, 0)
     conn.commit()
     if any(pruned.values()):
-        _trim_backups(backup_dir)
+        trim_backups(backup_dir)
     return pruned
 
 
