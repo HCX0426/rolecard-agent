@@ -1746,3 +1746,32 @@ def test_open_threads_stale_only_by_age_or_never_scanned() -> None:
         open_threads_scan_at=now - timedelta(minutes=svc.OPEN_THREADS_REFRESH_MINUTES),
     )
     assert svc.open_threads_stale(old, now=now) is True
+
+
+def test_stop_joins_the_scheduler_thread(conn) -> None:
+    """stop() 必须等线程真的退出（2026-10-04 审查快照的停机竞态条目）。
+
+    从前只置旗不 join：优雅退出路径上 Runtime.shutdown 紧跟着做 WAL checkpoint 与
+    close，调度线程可能正持另一线程连接写库。置旗会让 `Event.wait` 立刻醒来，
+    join 应当在远小于一个 tick（30s）的时间内返回。
+    """
+    model = _FakeModel(AIMessage(content="嗨"))
+    scheduler = _scheduler(conn, [_role(reachout_enabled=True)], model)
+    scheduler.start()
+    import time as _time
+
+    t0 = _time.perf_counter()
+    scheduler.stop(join_timeout=10)
+    elapsed = _time.perf_counter() - t0
+    assert elapsed < 10, "stop() 没等到线程退出"
+    assert not scheduler._thread.is_alive(), "join 之后线程还活着"
+
+
+def test_stop_cancels_pending_generation_cooperatively(conn) -> None:
+    """置旗后的 tick 不再发起生成：正在评估的角色主动收手，join 才等得到头。"""
+    model = _FakeModel(AIMessage(content="嗨"))
+    scheduler = _scheduler(conn, [_role(reachout_enabled=True)], model)
+    scheduler.stop()  # 只置旗，不 start —— tick_once 内部应看到旗子直接收手
+    utc, local = _now()
+    made = scheduler.tick_once(now_utc=utc, now_local=local)
+    assert made == 0, "置旗后的 tick 不该产出任何开口"

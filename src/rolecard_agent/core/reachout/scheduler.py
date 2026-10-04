@@ -104,9 +104,25 @@ class ReachoutScheduler:
     def start(self) -> None:
         thread = threading.Thread(target=self._loop, name="reachout-scheduler", daemon=True)
         thread.start()
+        self._thread = thread
 
-    def stop(self) -> None:
+    def stop(self, *, join_timeout: float = 35.0) -> None:
+        """停调度：置旗后**等线程真的退出**（2026-10-04 审查快照的停机竞态条目）。
+
+        从前只 `set()` 不 join：一次 tick 内含逐角色的真模型调用（本地 8B 每次 10~120s）
+        与 `graph.update_state` 投递，而 `Runtime.shutdown` 在 stop 之后马上就做
+        WAL checkpoint 与 conn.close() —— 优雅退出路径（POSIX SIGTERM / 开发态 Ctrl+C）
+        上调度线程可能正持另一线程连接写库，撞出 busy 噪音甚至 close 后写库异常。
+        join 超时给足一次 tick（TICK_SECONDS=30）+ 余量；超时后仍强收（与旧行为同：
+        daemon 线程随进程走），只是至少给了它一次干净收场的机会。
+
+        tick 内的协作式取消配合这里：每次**模型调用前**查旗，正在生成的那个角色这一轮
+        主动放弃 —— 等它生成完（最长 120s）再 join 会把退出拖到不可接受。
+        """
         self._stop.set()
+        thread = getattr(self, "_thread", None)
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=join_timeout)
 
     def _loop(self) -> None:
         while not self._stop.wait(TICK_SECONDS):
@@ -125,6 +141,12 @@ class ReachoutScheduler:
                         },
                     )
                 )
+            if self._stop.is_set():
+                break  # stop() 置旗后不再开下一轮 tick：join 才等得到头
+
+    def _stopping(self) -> bool:
+        """tick 内部的协作式取消点：True = 该收手了（正在生成的这轮主动放弃）。"""
+        return self._stop.is_set()
 
     # -- 主流程（可注入 now 用于测试） -------------------------------------
 
@@ -226,6 +248,8 @@ class ReachoutScheduler:
             # 吞成"candidates 为空"，症状只是"她再也不主动说话了"，30 条用例一起哑掉也没人红。
             return 0
         for role in candidates:
+            if self._stopping():
+                return made  # 停机：没评估完的角色等下一个进程周期
             can_file = file_events is not None and role.file_watch_enabled
             gate = quiet_gate(
                 role,
@@ -305,6 +329,8 @@ class ReachoutScheduler:
                     if open_topics:
                         fired = "open_thread"
             mode = fired if fired in ("recall", "file_event", "open_thread") else "general"
+            if self._stopping():
+                return made  # 停机：正在生成的这轮主动放弃（join 才等得到头）
             try:
                 model = self._model(role.model_name)
                 draft = generate_reachout_text(
