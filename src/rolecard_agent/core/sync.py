@@ -648,11 +648,16 @@ def apply_import(
     graph: Any,
     settings: Any,
     items: list[dict[str, Any]],
+    commit: bool = True,
 ) -> dict[str, Any]:
     """把一批选中的条目写进**这台机器**（对面那一侧调的就是它）。
 
     归属只认一个来源：`user_id` 由调用方从**这次请求解析出的身份**给（见 routers/sync.py），
     载荷里的 `user_id` 一概不读 —— 那等于让发送方指定"这些数据属于谁"。
+
+    `commit=False`：不在结尾提交，由调用方把本批写入与其事务里的其它写（整份替换的
+    行类清空）一起收口 —— 2026-10-04 审查快照的数据丢失条目：replace 档"清了不导"
+    要能整批回滚，清空与导入必须共事务。
     """
     written: dict[str, int] = {}
     skipped: dict[str, int] = {}
@@ -699,5 +704,6 @@ def apply_import(
             bump(skipped, kind)
             if outcome == "foreign":
                 errors.append({"kind": kind, "ident": ident, "error": "这条身份已经属于别人"})
-    conn.commit()
+    if commit:
+        conn.commit()
     return {"written": written, "skipped": skipped, "errors": errors}

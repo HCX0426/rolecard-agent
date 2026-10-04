@@ -659,3 +659,59 @@ def test_replace_backs_up_rows_before_clearing(client: TestClient, tmp_path: Pat
     assert backups, f"删前备份不存在：{sorted(p.name for p in backup_dir.glob('*'))}"
     body = backups[0].read_text(encoding="utf-8")
     assert "这句要被整份替换清掉" in body, "备份里必须找得回被删的那一行"
+
+
+def test_replace_rolls_back_everything_when_any_item_fails(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """replace 档导入有一条失败 = 整批回滚，"清了不导"从此没有半途形态。
+
+    thread 的清空在图侧、罩不进事务（先清 + 删前备份兜底）；memory 的清空与导入
+    同事务 —— 一条 foreign 身份的条目让整批 400，清掉的行全部还原。
+    """
+    tid = client.post("/api/session", json={}).json()["thread_id"]
+    conn = client.app.state.ctx.conn
+    # foreign thread：同一 thread_id 已挂在第二个身份名下 ⇒ _write_thread 回 "foreign"
+    conn.execute(
+        "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "
+        "VALUES ('u1', 'local', '第二个')"
+    )
+    conn.execute(
+        "INSERT INTO session_thread (thread_id, user_id, title, current_role_id) "
+        "VALUES ('foreign-t', 'u1', '别人的', 'general_assistant')"
+    )
+    conn.execute(
+        "INSERT INTO role_memory_item (role_id, user_id, uid, text) "
+        "VALUES ('', 'local-user', 'uid-keep-me', '这条必须还在')"
+    )
+    conn.commit()
+
+    res = client.post(
+        "/api/sync/import",
+        json={
+            "items": [
+                _thread_item("foreign-t"),
+                {
+                    "kind": "memory",
+                    "ident": "uid-incoming",
+                    "payload": {"text": "新来的记忆", "role_id": ""},
+                },
+            ],
+            "clear_kinds": ["memory", "thread"],
+            "confirm_replace": True,
+        },
+    )
+    assert res.status_code == 400, res.text
+    assert "已整批回滚" in res.json()["detail"]
+    kept = conn.execute(
+        "SELECT COUNT(*) FROM role_memory_item WHERE uid = 'uid-keep-me'"
+    ).fetchone()[0]
+    assert kept == 1, "回滚必须把清掉的记忆行还原"
+    incoming = conn.execute(
+        "SELECT COUNT(*) FROM role_memory_item WHERE uid = 'uid-incoming'"
+    ).fetchone()[0]
+    assert incoming == 0, "回滚必须撤销已导入的条目"
+    # thread 清空不回滚（图侧已删，删前备份兜底）—— 但本地那条 tid 的载体行也该没了
+    assert conn.execute(
+        "SELECT COUNT(*) FROM session_thread WHERE thread_id = ?", (tid,)
+    ).fetchone()[0] == 0

@@ -287,40 +287,51 @@ class ImportBody(BaseModel):
     confirm_replace: bool = False
 
 
-def _clear_for_replace(conn: Any, *, user_id: str, kinds: list[str], graph: Any) -> dict[str, int]:
-    """整份替换的前半：把这个身份名下的该类条目清掉（**只清选了的类**）。
+def _clear_rows_for_replace(
+    conn: Any, *, user_id: str, kinds: list[str]
+) -> dict[str, int]:
+    """card/memory/reachout 三类的清空，**不 commit** —— 与后面的导入同一个事务。
 
-    会话走 `storage.db.delete_thread_everywhere` 级联**真删**（2026-10-02 拍板）——
+    （2026-10-04 审查快照的数据丢失条目：replace 档"清了不导"的原子化，分两步走。
+    这三类是纯 DB 行，清空与导入能共事务：导入有任何一条失败就整批回滚、什么都没动；
+    thread 类涉及检查点/图侧删除，事务罩不住，留在 `_clear_threads_for_replace` 里先清，
+    由删前备份兜底。card 的写入器（RoleCards）内部自 commit —— 它的导入一旦成功就
+    落盘，回滚收不回来；这一格等写入口收口（批次 2）后并入同一事务。）
+    """
+    cleared: dict[str, int] = {}
+    tables = (
+        (sync_lib.KIND_CARD, "role_card"),
+        (sync_lib.KIND_MEMORY, "role_memory_item"),
+        (sync_lib.KIND_REACHOUT, "agent_reachout"),
+    )
+    for kind, table in tables:
+        if kind in kinds:
+            cur = conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))  # noqa: S608
+            cleared[kind] = max(cur.rowcount, 0)
+    return cleared
+
+
+def _clear_threads_for_replace(conn: Any, *, user_id: str, graph: Any) -> dict[str, int]:
+    """thread 类的清空：级联**真删**（2026-10-02 拍板）并提交 —— 图侧罩不进事务。
+
     从前这里用 `update_state(REMOVE_ALL)` 留空壳 + 写死删两张表：`command_approval`
     恰好漏掉（孤儿审批挂在已删会话上），空壳检查点还被修剪器**永留**最新一条。
     锁在级联删外面（R28-03）：在飞轮次不该被从脚下抽走检查点。
     """
-    cleared: dict[str, int] = {}
-    if sync_lib.KIND_CARD in kinds:
-        cur = conn.execute("DELETE FROM role_card WHERE user_id = ?", (user_id,))
-        cleared[sync_lib.KIND_CARD] = max(cur.rowcount, 0)
-    if sync_lib.KIND_MEMORY in kinds:
-        cur = conn.execute("DELETE FROM role_memory_item WHERE user_id = ?", (user_id,))
-        cleared[sync_lib.KIND_MEMORY] = max(cur.rowcount, 0)
-    if sync_lib.KIND_REACHOUT in kinds:
-        cur = conn.execute("DELETE FROM agent_reachout WHERE user_id = ?", (user_id,))
-        cleared[sync_lib.KIND_REACHOUT] = max(cur.rowcount, 0)
-    if sync_lib.KIND_THREAD in kinds:
-        rows = conn.execute(
-            "SELECT thread_id FROM session_thread WHERE user_id = ?", (user_id,)
-        ).fetchall()
-        removed = 0
-        for row in rows:
-            tid = str(row["thread_id"])
-            if graph is not None:
-                with thread_write(tid):
-                    removed += delete_thread_everywhere(conn, tid)["session_thread"]
-        # 收尾那一条只兜住"没有载体行的空壳"，所以两个数相加才是"清了几条会话"——
-        # 从前只取收尾那一个数，逐条级联删跑过之后它恒为 0，于是报的是"清了 0 条"。
-        removed += delete_threads_for_user(conn, user_id)
-        cleared[sync_lib.KIND_THREAD] = removed
+    rows = conn.execute(
+        "SELECT thread_id FROM session_thread WHERE user_id = ?", (user_id,)
+    ).fetchall()
+    removed = 0
+    for row in rows:
+        tid = str(row["thread_id"])
+        if graph is not None:
+            with thread_write(tid):
+                removed += delete_thread_everywhere(conn, tid)["session_thread"]
+    # 收尾那一条只兜住"没有载体行的空壳"，所以两个数相加才是"清了几条会话"——
+    # 从前只取收尾那一个数，逐条级联删跑过之后它恒为 0，于是报的是"清了 0 条"。
+    removed += delete_threads_for_user(conn, user_id)
     conn.commit()
-    return cleared
+    return {sync_lib.KIND_THREAD: removed}
 
 
 @router.post("/api/sync/import")
@@ -352,6 +363,7 @@ def post_import(
         )
     cleared: dict[str, int] = {}
     backed_up: dict[str, int] = {}
+    row_cleared: dict[str, int] = {}
     if body.clear_kinds:
         if not body.confirm_replace:
             raise HTTPException(
@@ -370,19 +382,40 @@ def post_import(
                 ),
             )
         backed_up = _dump_before_clear(ctx.conn, user_id=_identity(ctx), kinds=body.clear_kinds)
-        cleared = _clear_for_replace(
-            ctx.conn,
-            user_id=_identity(ctx),
-            kinds=body.clear_kinds,
-            graph=ctx.app_state["graph"],
+        # thread 先清（图侧罩不进事务，由删前备份兜底）；行类清空不 commit，进导入事务。
+        cleared = _clear_threads_for_replace(
+            ctx.conn, user_id=_identity(ctx), graph=ctx.app_state["graph"]
+        ) if sync_lib.KIND_THREAD in body.clear_kinds else {}
+        row_cleared = _clear_rows_for_replace(
+            ctx.conn, user_id=_identity(ctx), kinds=body.clear_kinds
         )
+        cleared = {**row_cleared, **cleared}
+    # commit=False：行类清空与导入共用一个事务，成败一体 —— 见 _clear_rows_for_replace。
     result = sync_lib.apply_import(
         ctx.conn,
         user_id=_identity(ctx),
         graph=ctx.app_state["graph"],
         settings=ctx.app_state["effective"],
         items=body.items,
+        commit=False,
     )
+    if row_cleared and result["errors"]:
+        # replace 档导入有任何一条失败 = "清了部分不导"，整批回滚：清空与已导入的行
+        # 一起还原，对面什么都没少，发起方拿到明确的 400 去排查（两机版本偏差是常见因）。
+        # card 的写入器内部自 commit，它那部分收不回来 —— detail 里如实点名。
+        ctx.conn.rollback()
+        card_note = (
+            "；card 类写入自提交、无法随回滚还原" if sync_lib.KIND_CARD in row_cleared else ""
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"整份替换的导入有 {len(result['errors'])} 条失败，已整批回滚 —— "
+                f"本机清掉的 {sum(row_cleared.values())} 行全部还原、导入的条目全部撤销"
+                f"{card_note}。第一条错误：{result['errors'][0].get('error', '')[:120]}"
+            ),
+        )
+    ctx.conn.commit()
     # 审计只记结构：几类各写了多少、清了多少、删前备份了几行。
     # **绝不记载荷**（那里面是对话原文与记忆）。
     ctx.audit.log(
