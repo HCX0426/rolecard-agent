@@ -1995,34 +1995,61 @@ def check_domain_isolation() -> None:
         fails.append(f"domain layer references kernel identity concepts: {bad}")
 
 
+def _package_constraints(lines: list[str]) -> dict[str, str]:
+    """requirements 风格的行 → {发行包名: 版本约束原文}（"" = 无约束）。
+
+    2026-10-04 审查快照的升级：此前 parity 只比**包名集合**，版本约束被
+    `re.split` 剥掉 —— 同一包两处钉版不一致（langgraph-checkpoint-sqlite 一处
+    `==3.1.1`、一处裸奔）就这样绿着进了仓库。约束逐字比对才是"镜像"的完整语义。
+    """
+    pins: dict[str, str] = {}
+    for raw in lines:
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        m = re.match(r"([^<>=!\[:]+)\s*(.*)", line)
+        base = m.group(1).strip().lower() if m else line.lower()
+        rest = m.group(2).strip() if m else ""
+        pins[base] = rest
+    return pins
+
+
 def check_dependency_parity() -> None:
     """pyproject.toml is the single source of truth; requirements*.txt mirror it.
 
     Drift between the two is silent: it only shows up for whoever installs the *other*
     way. That is precisely the class of mistake a weaker model introduces, so it gets an
     assertion rather than a convention.
+
+    2026-10-04（审查快照）：比对从"包名集合"升级为"包名 → 约束"全字典 ——
+    名字集合相等而约束漂移（`==3.1.1` vs 裸名）从此必红。
     """
-
-    def package_names(lines: list[str]) -> set[str]:
-        return _package_names(lines)
-
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    py_deps = package_names(pyproject["project"]["dependencies"])
-    req_deps = package_names((ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines())
 
-    only_py = sorted(py_deps - req_deps)
-    only_req = sorted(req_deps - py_deps)
-    ok = not only_py and not only_req
-    detail = (
-        "in sync" if ok else f"only in pyproject: {only_py} | only in requirements.txt: {only_req}"
-    )
-    out("dependency parity", ok, detail)
-    if not ok:
-        fails.append(f"pyproject.toml / requirements.txt drift: {detail}")
+    def _diff(label: str, py_lines: list[str], req_file: str) -> None:
+        py_pins = _package_constraints(py_lines)
+        req_pins = _package_constraints(
+            (ROOT / req_file).read_text(encoding="utf-8").splitlines()
+        )
+        drift = {
+            name: {"pyproject": py_pins.get(name), "requirements": req_pins.get(name)}
+            for name in sorted(set(py_pins) | set(req_pins))
+            if py_pins.get(name) != req_pins.get(name)
+        }
+        ok = not drift
+        detail = "in sync" if ok else "; ".join(
+            f"{n}: {d['pyproject']!r} vs {d['requirements']!r}" for n, d in drift.items()
+        )
+        out(label, ok, detail)
+        if not ok:
+            fails.append(f"pyproject.toml / {req_file} drift: {detail}")
+
+    _diff("dependency parity", list(pyproject["project"]["dependencies"]), "requirements.txt")
 
     # The extras map to their own requirement files. Without this the api / rag / dev
     # mirrors can drift unnoticed - the earlier version of this check covered only the base
-    # set, which is precisely how a mirror silently becomes wrong.
+    # set, which is precisely how a mirror silently becomes wrong. Since 2026-10-04 the
+    # comparison is per-constraint, not name-sets (2026-10-04 审查快照).
     extras = pyproject["project"].get("optional-dependencies", {})
     for extra, filename in (
         ("api", "requirements-api.txt"),
@@ -2032,13 +2059,7 @@ def check_dependency_parity() -> None:
     ):
         if extra not in extras:
             continue
-        extra_set = package_names(list(extras[extra]))
-        mirror_set = package_names((ROOT / filename).read_text(encoding="utf-8").splitlines())
-        diff = sorted(extra_set ^ mirror_set)
-        extra_ok = not diff
-        out(f"extra parity: {extra}", extra_ok, "in sync" if extra_ok else f"diff: {diff}")
-        if not extra_ok:
-            fails.append(f"extras[{extra}] vs {filename} drift: {diff}")
+        _diff(f"extra parity: {extra}", list(extras[extra]), filename)
 
 
 #: spec 里的模块名（下划线）与发行包名（连字符）之间那点形状差。PEP 503 的归一只到

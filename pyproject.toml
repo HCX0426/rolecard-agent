@@ -18,7 +18,10 @@ dependencies = [
   "langgraph==1.2.11",
   "langchain-core>=1.6.0",
   "langchain-ollama>=1.1.0",
-  "langgraph-checkpoint-sqlite",
+  # 与 requirements.txt 同一条钉版口径（那边记着钉版原因）：检查点表是"会话的全部真相"，
+  # 上游 layout 变更在本机不会有任何信号。两处约束必须逐字一致 —— parity 尺子比的就是这个
+  # （2026-10-04 审查快照：此前这里裸奔，而 requirements 钉 ==3.1.1，漂移已实际发生）。
+  "langgraph-checkpoint-sqlite==3.1.1",
   "pydantic>=2.13",
   # v2.4 联网与工作区工具（core/tools/web.py / files.py）：
   # 全部用活跃维护的独立轮子，不走已 sunset 的 langchain-community。
@@ -37,7 +40,7 @@ rag = ["chromadb>=1.5.9", "pypdf>=4.0"]
 # this one provider package. Kept optional so a local-only install stays offline-capable.
 cloud = ["langchain-openai>=1.6.2"]
 # OCR is deliberately NOT an extra: the OCR engine must run in a separate venv/process.
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-cov>=7", "ruff>=0.6", "mypy>=1.11", "httpx>=0.27"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-cov>=7", "pytest-timeout>=2.3", "ruff>=0.6", "mypy>=1.11", "httpx>=0.27"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/rolecard_agent"]
@@ -65,6 +68,12 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
 addopts = "-q -m 'not live'"
+# 单条用例挂死的保险丝（2026-10-04 审查快照）：从前唯一防线是 job 级 30 分钟，
+# 一条用例挂死就烧穿整个预算且 cancel 日志不指认元凶。60s 覆盖实测最重的离线用例
+# （~7s）还有十倍余量；真要更长的用例单独 @pytest.mark.timeout(180)。thread 法不依赖
+# 信号 —— Windows 上 signal 法不可用，而本仓 Windows-first。
+timeout = 60
+timeout_method = "thread"
 # `live` = 需要**真实模型/真实服务**的用例（一次 8B 抽取比其余 640 个用例加起来还贵，
 # 且结果随模型版本漂移）。默认整条排除（见 addopts 与 scripts/gate.py），要跑它们用
 # `pytest -m live`。登记在此是为了让拼错标记名直接报错，而不是静默地一个都不跑。
