@@ -286,16 +286,19 @@ def _migrate_event(message: str) -> None:
 
 
 def _check_schema_generation(conn: SqlConnection) -> None:
-    """库的代际比对（`R102-54`）：新库给旧代码 = 一句 loud 拒启，而不是散落的炸点。"""
+    """库的代际比对（`R102-54`）：新库给旧代码 = 一句 loud 拒启，而不是散落的炸点。
+
+    只在这里**拒新**；把 user_version 推到当前值的动作移到了 bootstrap 的最后
+    （2026-10-04 审查快照的迁移事务条目）：从前戳在迁移执行**之前**，中途崩掉就留下
+    一个"名义代际是新的、形状还是旧的"的库 —— `_repair_stranded_rebuild` 只自愈
+    三张已知暂存表，盖不住其它半途形状。
+    """
     version = int(conn.execute("PRAGMA user_version").fetchone()[0])
     if version > SCHEMA_VERSION:
         raise RuntimeError(
             f"数据库名义代际（user_version={version}）比当前代码（{SCHEMA_VERSION}）新 —— "
             "这通常是装包回滚后用旧程序读新库。请装回新版，或从备份恢复数据根。"
         )
-    if version < SCHEMA_VERSION:
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-        conn.commit()
 
 
 def _repair_stranded_rebuild(conn: SqlConnection, *, original: str, temp: str) -> None:
@@ -488,6 +491,13 @@ def bootstrap(
     # 那正是想要的大声失败，而不是静默什么都不做。
     reconcile_columns(conn, files=files, skip=frozenset())
     conn.commit()
+    # 代际戳在**迁移全部完成后**才推进（2026-10-04 审查快照的迁移事务条目）：中途崩掉
+    # 留下的是"user_version 还是旧的"，下一次启动会原样重跑一遍幂等 bootstrap —— 而不是
+    # 一个"名义代际已新、形状未完成"的假新库。
+    if int(conn.execute("PRAGMA user_version").fetchone()[0]) != SCHEMA_VERSION:
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        conn.commit()
+        _migrate_event(f"user_version 戳到 {SCHEMA_VERSION}（bootstrap 全部完成后）")
     return applied
 
 
@@ -822,10 +832,21 @@ def _migrate(
         conn.commit()  # 重建原子落盘（`R102-53`）
         _migrate_event("token_usage_day 主键重建完成")
     if "api_key" in _columns(conn, "service_endpoint"):
-        conn.execute("DROP TABLE service_endpoint")
-        conn.execute("DELETE FROM kernel_meta WHERE key = 'service_endpoints_seeded'")
+        # 重建段包进**单个事务**（2026-10-04 审查快照的迁移事务条目；B1a :790 同款）：
+        # 从前 DROP 与 executescript 分属两个隐式事务，死在中间 = 下次启动靠
+        # IF NOT EXISTS 重建出**空表**、seed 标志已删照常重播 —— 端点配置静默清空，
+        # 无人被提示。executescript 会先隐式 COMMIT，所以把 DROP/清标志与整份 core schema
+        # 拼成一段脚本、首尾 BEGIN IMMEDIATE/COMMIT 包死（schema.sql 无 TRIGGER/PRAGMA，
+        # 逐条语句在 SQLite 里本就事务化）。崩掉要么整体回滚（配置还在）、要么全成。
         core = core_schema_path()
-        conn.executescript(core.read_text(encoding="utf-8"))
+        conn.executescript(
+            "BEGIN IMMEDIATE;"
+            "DROP TABLE service_endpoint;"
+            "DELETE FROM kernel_meta WHERE key = 'service_endpoints_seeded';"
+            + core.read_text(encoding="utf-8")
+            + ";COMMIT;"
+        )
+        _migrate_event("service_endpoint 整表重建完成（单事务，配置零丢失）")
     # 13. service_endpoint 的归属（多租户 B1b，方案 A）：加可空 user_id。
     #     补列器不碰这张表（它在 `_SHAPE_MIGRATED_TABLES` 里，整表重建/搬层族），所以这里手写
     #     一次。只对新形态库生效 —— 老形态（带 api_key）走上面那句 DROP 重建，新表已带列。
