@@ -1443,6 +1443,10 @@ WRITE_TXN_HELPERS = frozenset(
         "src/rolecard_agent/core/plugins.py::_bump_tool_epoch",
         "src/rolecard_agent/core/sync.py::_write_memory",
         "src/rolecard_agent/core/sync.py::_write_reachout",
+        # 2026-10-04 审查快照：replace 档的行类清空**刻意不收口** —— 与随后的导入共用
+        # 一个事务，成败一体；调用方 api/routers/sync.py::post_import 收口（导入有失败
+        # 即 rollback + 400，成功则统一 commit）。
+        "src/rolecard_agent/api/routers/sync.py::_clear_rows_for_replace",
         "src/rolecard_agent/storage/threads.py::delete_threads_for_user",
         "src/rolecard_agent/storage/threads.py::set_current_role",
     }
