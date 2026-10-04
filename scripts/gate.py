@@ -330,7 +330,10 @@ def _write_readings(outputs: dict[str, str], ok: bool) -> None:
 
 
 # CI 档跳过的步骤：要么要 node/浏览器/真机环境（前端与壳各有专属 job、冒烟要本机 Chrome），
-# "dist 入库同步"在 CI 上由 frontend job 跑**同一个脚本**（那个 job 才装 node、才真的重建）。
+# "dist 入库同步"在 CI 上由 frontend job 跑**同一个脚本**（那个 job 才装 node、才真的重建）；
+# 覆盖率档自 2026-10-04 起也跳过（审查快照的 CI 门禁条目 + 用户拍板）：此前 --ci 把 fast 与
+# coverage **两趟** pytest 全跑（同一套 1490 条用例每次 push 重复一遍），正是 CI 门禁臂两次
+# 顶穿 20 分钟的直接构成。现在 CI 只留单趟（无覆盖率），覆盖率档移到本机全量档与夜间臂。
 # 名单而不是标志位：加一步新检查时默认进 CI，除非在这里点名跳过 —— 漏跑的代价比多跑大。
 CI_SKIP = frozenset(
     {
@@ -339,6 +342,7 @@ CI_SKIP = frozenset(
         "前端 tsc+build",
         "dist 入库同步",
         "真机冒烟(14 项)",
+        "pytest(覆盖率≥85%)",
     }
 )
 
@@ -349,7 +353,7 @@ def main() -> int:
     parser.add_argument(
         "--ci",
         action="store_true",
-        help="CI 档：全量层但跳过需要 node/浏览器/真机的步骤，且覆盖率**必跑**",
+        help="CI 档：全量层但跳过需要 node/浏览器/真机/覆盖率档的步骤（单趟 pytest，无覆盖率）",
     )
     parser.add_argument(
         "--only",
@@ -404,8 +408,9 @@ def main() -> int:
     for name, cmd, mode in STEPS:
         if not _will_run(name, mode):
             continue
-        # 覆盖率那趟：本地全量档"没碰 src/ 就跳过"；**CI 档必跑** —— 用户 09-29 拍了
-        # "不手动"，85% 这条线从此在每次 push/PR 上设防（R28-24 的修法）。
+        # 覆盖率那趟：本地全量档"没碰 src/ 就跳过"。CI 档已在 CI_SKIP 里整步跳过
+        # （2026-10-04 起覆盖率移到本机全量档与夜间臂；从前这里写着"CI 必跑"—— 用户 09-29
+        # 的拍板 R28-24，被审查快照的 CI 门禁条目修订：双趟 pytest 是 CI 预算顶穿的主因）。
         if (
             (not args.fast)
             and (not args.ci)

@@ -47,17 +47,15 @@ env:
 
 jobs:
   gate:
-    name: 门禁 --ci（含覆盖率≥85% 与 baseline 比对）
+    name: 门禁 --ci（单趟 pytest + baseline 比对）
     runs-on: ubuntu-24.04
     # 每条 job 都要有 timeout（09-28 轮 `R28-25`：四条无一设过，任一挂死就默认烧满 360 分钟）。
-    # 预算按**实测用时**给，而那个实测要跟着套件长：这里从前写 15 分钟，理由是那阵子"CI 上实测
-    # 5m15s，留一倍余量"—— 那是 1300 条用例、没有 `mypy scripts/`、没有取证包装层、没有
-    # `随包后端 parity` 那两步时候的数。10-03 连着两次把它顶穿：`15e2f77` 那趟跑满 20.0 分钟被
-    # cancel、`f1e06b3` 那趟同样 20 分钟被 cancel，而**两次都没有任何一步失败**（另两臂都 success，
-    # 日志里没有 FAILED/ERROR）—— 症状与"挂死"长得一样，读数不一样：这次是慢，不是卡。
-    # 抬到 30 分钟（与 full 档同值），仍远小于 360 的默认值；下面那两臂（前端/镜像）实测都在
-    # 7 分钟内，预算不动 —— 挂死的作业该在几分钟内变成一次红，这条只对短 job 才叫省。
-    timeout-minutes: 30
+    # 预算按**实测用时**给：从前 15 分钟两次被 20 分钟顶穿（`15e2f77`/`f1e06b3`，无一失败 ——
+    # 是慢不是卡），抬到 30 仍只是兜底。2026-10-04 砍掉双趟 pytest（fast + coverage 两趟全跑
+    # 是顶穿的直接构成，见 gate.py 的 CI_SKIP 注记与审查快照）之后回到单趟，预算收回到
+    # 15 分钟 —— 挂死的作业该在几分钟内变成一次红，这条只对短 job 才叫省。批次 1 的
+    # 步骤并发 + xdist 重测落地后再按新实测往下收。
+    timeout-minutes: 15
     steps:
       # fetch-depth 要 2：`README 数字收尾` 那条得读 HEAD~1 才认得"只含读数的跟进提交"那一半形状。
       # 10-03 实测：默认浅克隆 1 层 ⇒ 父提交读不到 ⇒ 本地绿、CI 红，而 README 与读数两边都是 1469
@@ -81,6 +79,16 @@ jobs:
             requirements-mcp.txt
             requirements-dev.txt
 
+      - name: mypy 增量缓存
+        # 2026-10-04 审查快照的 CI 门禁条目：runner 上从前每次冷跑三遍 mypy（win/linux/scripts
+        # 三档），60-120s 全是重复劳动。挂上增量缓存后二次跑只剩真正变更的模块。
+        # pyproject 变了（mypy 配置在那里）或依赖变了就换 key，restore-keys 兜住小改动。
+        uses: actions/cache@v4
+        with:
+          path: .mypy_cache
+          key: mypy-${{ runner.os }}-py3.13-${{ hashFiles('pyproject.toml', 'requirements*.txt') }}
+          restore-keys: mypy-${{ runner.os }}-py3.13-
+
       - name: 装依赖
         run: |
           python -m pip install --upgrade pip
@@ -90,14 +98,18 @@ jobs:
           # 是 PUT /api/settings/models 500 —— CI 第 1、2 发实跑抓到的就是这个。
           # mcp 自 10-01 起在同一批里（`R28-53`）：随包后端与镜像都装着它，CI 环境与两条
           # 出货路径对齐之后，`installer scope parity` 那条断言才在所有入口上同一口径。
+          # pytest-timeout 自 2026-10-04 起在 dev 批里：单条用例挂死 60s 内红，不烧穿 job 预算。
           pip install -r requirements.txt -r requirements-api.txt \
             -r requirements-rag.txt -r requirements-cloud.txt \
             -r requirements-mcp.txt -r requirements-dev.txt
 
       - name: gate.py --ci
-        # 用户 09-29 拍的：覆盖率与 baseline 比对**不留在手动档**，每次 push/PR 都设防
-        # （R28-24）。--ci = 全量层去掉需要 node/浏览器/真机的那几步（它们各有专属 job），
-        # 且覆盖率不因"src 无改动"跳过。口径只在 gate.py 一处。
+        # 用户 09-29 拍的（R28-24）："覆盖率与 baseline 比对不留在手动档，每次 push/PR 设防"
+        # —— 其中**覆盖率那一半被 2026-10-04 的拍板修订**（审查快照的 CI 门禁条目）：
+        # --ci 从前把 fast 与 coverage 两趟 pytest 全跑，同一套 1490 条用例每次 push 重复一遍，
+        # 是门禁臂两次顶穿 20 分钟的直接构成；现在 CI 只留单趟（无覆盖率），覆盖率档回到
+        # 本机全量档与夜间臂（85% 这条线仍由本地 gate 全量档与 nightly 设防）。
+        # baseline 比对便宜，留在 CI。口径只在 gate.py 一处。
         # GATE_READINGS_SCRATCH：runner 的读数写进 gitignore 的 build/，**不覆盖入库那份**
         # （R28-74）。覆盖率是按平台的数 —— 本机 win32 91.92% / runner Linux 91.77%，
         # 让 runner 回写就等于两份都对的数互相把对方判成漂移。
