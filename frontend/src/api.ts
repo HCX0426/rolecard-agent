@@ -102,14 +102,6 @@ export interface TurnProbe {
   inflight: { text: string } | null;
 }
 
-/** `GET /api/session/{tid}/turn` 的回体：这一条此刻有没有人在说、说到哪儿了。
- *  比 `MessagePage` 便宜一个量级（后端只查进程内登记，不做检查点反序列化），
- *  所以对话界面拿它当每拍一次的探针；代价是它**看不见已经落地的东西**，
- *  那些还得靠 `MessagePage` 那一拍。 */
-export interface TurnProbe {
-  inflight: { text: string } | null;
-}
-
 export interface BackendRow {
   name: string;
   provider: string;
@@ -914,74 +906,29 @@ export interface CleanupResult {
   referenced: number;
 }
 
-/** 编辑一条自己发过的消息并从那里重新生成（SSE 事件流与 streamChat 完全一致）。 */
-export async function streamEdit(
-  threadId: string,
-  messageId: string,
-  content: string,
+/** POST 一条 SSE 请求，把响应流按帧交给 `onEvent` —— `streamChat` / `streamEdit` 的公共体。
+ *
+ *  为什么抽出来（2026-10-04 审查快照"streamChat/streamEdit 逐行复制 55 行 SSE 循环"）：
+ *  两条各带一份 fetch-失败处理 + `!res.ok` 详情提取 + 读流循环，共 55 行**逐行相同** ——
+ *  改一处不改另一处的症状是"编辑那条路的错误处理渐渐跟对话那条不一样"，而且没人会发现
+ *  （两边跑起来都"看着正常"）。现在帧切分与解析（`lib/stream.ts` 的可测纯函数）只有一处。
+ *
+ *  语义合并自两份原件：中止（`AbortError`）**不是**错误 —— 静默结束并补发 `end`，
+ *  由调用方做收尾（回放 checkpoint 拿到已生成的部分）；HTTP 非 2xx 时尽力读 `detail`
+ *  给用户一句话，读不出就退回 `HTTP <code>`。
+ */
+async function postSse(
+  path: string,
+  body: unknown,
   onEvent: (ev: ChatEvent) => void,
   signal?: AbortSignal,
-  image?: string | null, // 重新生成/编辑时保留原图（多模态传图，2026-09-18）
 ): Promise<void> {
   let res: Response;
   try {
-    res = await fetch(`${apiBase()}/api/session/${threadId}/messages/edit`, {
+    res = await fetch(`${apiBase()}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ message_id: messageId, content, ...(image ? { image } : {}) }),
-      signal,
-    });
-  } catch (e) {
-    if ((e as Error).name !== "AbortError") onEvent({ type: "error", detail: (e as Error).message });
-    onEvent({ type: "end" });
-    return;
-  }
-  if (!res.ok || !res.body) {
-    let detail = `HTTP ${res.status}`;
-    try {
-      detail = ((await res.json()) as { detail?: string }).detail || detail;
-    } catch {
-      /* keep */
-    }
-    onEvent({ type: "error", detail });
-    onEvent({ type: "end" });
-    return;
-  }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const { frames, rest } = splitSseFrames(buf);
-      buf = rest;
-      for (const frame of frames) {
-        const ev = parseSseFrame(frame);
-        if (ev) onEvent(ev as ChatEvent);
-      }
-    }
-  } catch (e) {
-    if ((e as Error).name !== "AbortError") {
-      onEvent({ type: "error", detail: (e as Error).message });
-    }
-  }
-}
-
-export async function streamChat(
-  threadId: string,
-  message: string,
-  onEvent: (ev: ChatEvent) => void,
-  signal?: AbortSignal,
-  image?: string | null, // 多模态传图：data URL（None = 纯文本）
-): Promise<void> {
-  let res: Response;
-  try {
-    res = await fetch(`${apiBase()}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ thread_id: threadId, message, ...(image ? { image } : {}) }),
+      body: JSON.stringify(body),
       signal, // 用户点「停止」→ controller.abort()，这里会以 AbortError 结束
     });
   } catch (e) {
@@ -1025,4 +972,36 @@ export async function streamChat(
       onEvent({ type: "error", detail: (e as Error).message });
     }
   }
+}
+
+/** 编辑一条自己发过的消息并从那里重新生成（SSE 事件流与 streamChat 完全一致 —— 同一个 `postSse`）。 */
+export async function streamEdit(
+  threadId: string,
+  messageId: string,
+  content: string,
+  onEvent: (ev: ChatEvent) => void,
+  signal?: AbortSignal,
+  image?: string | null, // 重新生成/编辑时保留原图（多模态传图，2026-09-18）
+): Promise<void> {
+  await postSse(
+    `/api/session/${threadId}/messages/edit`,
+    { message_id: messageId, content, ...(image ? { image } : {}) },
+    onEvent,
+    signal,
+  );
+}
+
+export async function streamChat(
+  threadId: string,
+  message: string,
+  onEvent: (ev: ChatEvent) => void,
+  signal?: AbortSignal,
+  image?: string | null, // 多模态传图：data URL（None = 纯文本）
+): Promise<void> {
+  await postSse(
+    "/api/chat",
+    { thread_id: threadId, message, ...(image ? { image } : {}) },
+    onEvent,
+    signal,
+  );
 }
