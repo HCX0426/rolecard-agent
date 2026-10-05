@@ -6,7 +6,7 @@
   * 没有**每步计时**，慢了也不知道慢在哪、该优化谁。本脚本每步打印耗时并汇总。
 
 用法：
-  python scripts/gate.py --fast   # ruff + mypy + 单测(-x, 无覆盖率) + 一致性  ≈ 1.5 分钟
+  python scripts/gate.py --fast   # ruff + mypy + 单测(-x, 无覆盖率) + 一致性 + 前端 test ≈ 2 分钟
   python scripts/gate.py          # 全量：上面(单测换成一趟带覆盖率) + 前端 test/build
                                   #   + dist 入库同步 + README 可跑性 + 随包后端 parity + 真机冒烟
                                   #   覆盖率那趟仅在改动 src/ 时跑（没碰 src/ 自动跳过，≈ 省 97s）
@@ -118,7 +118,14 @@ STEPS: list[tuple[str, list[str], str]] = [
         [PY, "scripts/pytest_with_evidence.py", "--lane", "coverage"],
         "full",
     ),
-    ("前端 vitest", [NPM, "test"], "full"),
+    # 快档也跑前端计数（2026-10-04 审查快照"读数漂移窗"那条的落地）：readings 的
+    # `frontend_tests` 从前只在全量档刷新 —— 加了前端用例而几天不跑全量，README/读数就
+    # 静静停在旧数（实测现场：读数 355 停在 10-03，真实 359，差了两天，是撞上别的事才查
+    # 出来的）。翻成 both 之后**每趟快档都把这把尺子对到现值**：改前端忘跑全量档，
+    # 下一趟快档的"README 数字收尾"当场红，而不是两天后人肉撞见。
+    # CI 档不受影响（`CI_SKIP` 已点名它 + 前端 tsc+build，CI 的前端各归专属 job）；
+    # 本机代价约 +10s（vitest 热跑实测 9.7s）—— 这一格买的就是漂移当场红。
+    ("前端 vitest", [NPM, "test"], "both"),
     ("前端 tsc+build", [NPM, "run", "build"], "full"),
     # README 的"快速开始"是 US-6 硬门槛（干净环境 ≤3 条命令）的唯一载体，此前没有任何
     # 尺子看着它 —— 落档时实测第 7 步那条裸 uvicorn 在 src 布局下必挂（R28-36）。
