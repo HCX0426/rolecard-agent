@@ -28,7 +28,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from langchain_core.messages import AIMessageChunk, ToolMessage
+from langchain_core.messages import AIMessageChunk, RemoveMessage, ToolMessage
 from langgraph.errors import GraphRecursionError
 
 from rolecard_agent.base.observability import TraceEvent, Tracer, scrub_endpoints
@@ -269,7 +269,7 @@ def run_turn(
     role_summary: dict[str, str],
     tracer: Tracer | None = None,
     usage_recorder: Callable[[TokenUsage | None], None] | None = None,
-    after_turn: Callable[[], None] | None = None,
+    after_turn: Callable[[int], None] | None = None,
 ) -> Iterator[TurnEvent]:
     """把一个用户轮次跑过内核图，产出结构化事件流（同步，宿主无关）。
 
@@ -317,6 +317,10 @@ def run_turn(
     # 后者要顺手把这轮叫停 —— 不然生成会继续在线程池里跑到天荒地老（#18 的另一半：
     # 用户以为"关掉窗口就停了"，实测那边还在烧）。
     ended = [False]
+    # 本轮**追加进检查点**的消息数：graph_input 里那条用户输入 + 各超步 updates 的增量
+    # （在 _iter_turn 里累加）。finally 里随 after_turn 交给宿主 —— session_thread 的
+    # 冗余计数就在这一刻维护，宿主不用再为它读检查点。
+    appended = [len(graph_input.get("messages") or [])]
     # 在飞登记挂在**这里**而不是各个投送点：`_iter_turn` 有三处发正文（增量、过审尾巴、
     # 整条替换），漏一处就是"那个来源的字在另一个界面上永远不出现"。收成一个收口之后，
     # 任何将来新增的投送点都自动被登记 —— 登记的内容严格等于投送出去的内容，所以那条
@@ -331,6 +335,7 @@ def run_turn(
             tracer=tracer,
             usage_recorder=usage_recorder,
             ended=ended,
+            appended=appended,
         ):
             if isinstance(event, Token):
                 inflight_append(thread_id, event.text)
@@ -356,7 +361,9 @@ def run_turn(
             # 不再自己起线程 —— 提取宿主给一个池，提取宿主就用固定几个线程的连接，
             # ThreadLocalConnection 的槽从此有界（fire-and-forget 线程的每轮一格
             # 正是连接泄漏的根，2026-10-04 审查快照的连接泄漏条目）。
-            after_turn()
+            # 实参 = 本轮追加进检查点的消息数（含输入那条用户消息）；断线/失败轮次
+            # 数的是**实际已提交**的部分 —— 计数永远贴着检查点的真相。
+            after_turn(appended[0])
 
 
 #: 一轮等锁的上限（秒）：短等待。拿不到就明确拒绝（error 帧，409 的 SSE 形态），
@@ -373,6 +380,7 @@ def _iter_turn(
     tracer: Tracer | None = None,
     usage_recorder: Callable[[TokenUsage | None], None] | None = None,
     ended: list[bool] | None = None,
+    appended: list[int] | None = None,
 ) -> Iterator[TurnEvent]:
     """`run_turn` 的正文：一轮事件流本身（锁与"没人要了就叫停"在外层那半边，见上）。
 
@@ -407,6 +415,17 @@ def _iter_turn(
                 yield from _from_message_chunk(payload, guard=guard, usage_seen=usage_seen)
                 continue
             for node, update in (payload or {}).items():
+                # 冗余计数的增量来源（2026-10-04 审查快照「5 秒贵探针」那条）：每个超步
+                # 真正追加进检查点的消息数就在 updates 里，数一遍即可，宿主无需再为
+                # 维护 session_thread.message_count 去全量反序列化。RemoveMessage 形态
+                # 的条目是删除不是追加，不计。
+                added = sum(
+                    1
+                    for m in (update or {}).get("messages") or []
+                    if not isinstance(m, RemoveMessage)
+                )
+                if appended is not None:
+                    appended[0] += added
                 if node == MODEL_NODE:
                     messages = (update or {}).get("messages") or []
                     if not messages:

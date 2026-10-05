@@ -184,12 +184,48 @@ def test_turn_probe_answers_without_touching_the_checkpointer(tmp_path: Path) ->
             assert client.get(f"/api/session/{tid}/turn").json() == {
                 "inflight": {"text": "说到一半"}
             }, "/turn 读到了检查点 —— 它不再是一拍便宜的探针"
+            # 空会话（计数从未对账，NULL）的 limit=1 仍会真读：探针的便宜只对
+            # "计数已知"的会话成立，见 test_message_probe_reads_the_redundant_count。
             with pytest.raises(AssertionError, match="这一拍不许读检查点"):
                 client.get(f"/api/session/{tid}/messages?limit=1")
         finally:
             ctx.app_state["graph"] = real
             inflight_end(tid)
     assert client.get(f"/api/session/{tid}/messages").json()["inflight"] is None
+
+
+def test_message_probe_reads_the_redundant_count_not_the_checkpointer(
+    client: TestClient,
+) -> None:
+    """聊过一轮的会话，`?limit=1` 探针读 session_thread.message_count，不碰检查点。
+
+    前端镜像对每条后台会话周期性打这一拍，只为 total 与在飞半句 —— 从前每拍都把
+    MB 级快照反序列化一遍再丢弃（2026-10-04 审查快照「5 秒贵探针」条的主修）。
+    五个检查点写入口（chat 轮 / 编辑重生成 / 删除 / 上传说明 / 主动投递）在写检查点
+    的同一步维护冗余计数；探针只 SELECT 那一格。把图换成"一读就炸"的桩钉住。
+    """
+    session = client.post("/api/session", json={}).json()
+    tid = str(session["thread_id"])
+    chat(client, tid, "第一问")  # 一轮 = 用户一条 + 助手一条
+    real = client.app.state.ctx.app_state["graph"]
+
+    class _NoPeek:
+        def get_state(self, *_a: object, **_kw: object) -> object:
+            raise AssertionError("探针这一拍不许读检查点")
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(real, name)
+
+    client.app.state.ctx.app_state["graph"] = _NoPeek()
+    try:
+        page = client.get(f"/api/session/{tid}/messages?limit=1").json()
+        assert page["total"] == 2
+        assert page["messages"] == [], "探针不载内容 —— 要内容走全量那一拍"
+        assert page["inflight"] is None
+    finally:
+        client.app.state.ctx.app_state["graph"] = real
+    # 全量真读那一路照常工作，并把冗余计数对账回检查点的真相
+    assert client.get(f"/api/session/{tid}/messages").json()["total"] == 2
 
 
 def test_delete_session_removes_thread_and_checkpoints(client: TestClient, tmp_path: Path) -> None:

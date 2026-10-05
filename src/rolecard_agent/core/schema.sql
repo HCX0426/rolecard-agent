@@ -46,6 +46,11 @@ CREATE TABLE IF NOT EXISTS session_thread (
     -- （按消息数而非"距上次多久"：一次提取是一次真模型调用，本地卡上按时间兜底会让
     --  连续聊天的成本不可预算）。NULL = 从未提取过。旧库同样由 reconcile_columns 补。
     distilled_at_seq INTEGER,
+    -- 消息条数的冗余计数（2026-10-04 审查快照「5 秒贵探针」那条）：五个检查点写入口
+    -- （chat 轮 / 编辑重生成 / 删除 / 上传说明 / 主动投递）在写检查点的同一步顺手维护，
+    -- `?limit=1` 的镜像探针只读这一列，不再为算一个 total 全量反序列化检查点。
+    -- NULL = 未对账；第一次全量 /messages 真读时回填校准。
+    message_count    INTEGER,
     -- Version stamp of the enabled tool set. Bumped whenever plugins are toggled.
     -- On resume, a checkpoint whose tool_epoch is older than the current one may
     -- reference tools that no longer exist; the executor must answer

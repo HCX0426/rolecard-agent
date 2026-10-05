@@ -52,6 +52,7 @@ from rolecard_agent.core.thread_transcript import (
 )
 from rolecard_agent.features.reachout import recent_reachout_lines
 from rolecard_agent.roles.models import RoleCard
+from rolecard_agent.storage import threads as threads_store
 from rolecard_agent.storage.db import ThreadLocalConnection
 
 
@@ -204,6 +205,9 @@ class ProactiveGateway:
                 # 区分主动投递与图内回复）。
                 {"messages": [AIMessage(content=text, additional_kwargs={"created_at": now_ts()})]},
             )
+            # 冗余计数与检查点改动同锁同批维护（镜像探针靠它免掉全量反序列化）。
+            threads_store.bump_message_count(self.conn, thread_id, 1)
+            self.conn.commit()
         finally:
             release_thread(thread_id)
         return thread_id

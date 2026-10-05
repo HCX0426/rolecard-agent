@@ -73,6 +73,32 @@ def touch_thread(conn: SqlConnection, thread_id: str) -> None:
     conn.execute(_TOUCH_SQL, (thread_id,))
 
 
+def message_count(conn: SqlConnection, thread_id: str) -> int | None:
+    """冗余计数的现值；NULL = 从未对账（旧会话 / 没人维护过）。"""
+    row = conn.execute(
+        "SELECT message_count FROM session_thread WHERE thread_id = ?", (thread_id,)
+    ).fetchone()
+    if row is None or row["message_count"] is None:
+        return None
+    return int(row["message_count"])
+
+
+def bump_message_count(conn: SqlConnection, thread_id: str, delta: int) -> None:
+    """检查点写入口顺手维护的增量（chat 轮 / 编辑重生成 / 删除 / 上传说明 / 主动投递）。"""
+    conn.execute(
+        "UPDATE session_thread SET message_count = COALESCE(message_count, 0) + ?"
+        " WHERE thread_id = ?",
+        (delta, thread_id),
+    )
+
+
+def record_message_count(conn: SqlConnection, thread_id: str, count: int) -> None:
+    """绝对值对账：全量 /messages 真读过一遍时把列校准到真相。"""
+    conn.execute(
+        "UPDATE session_thread SET message_count = ? WHERE thread_id = ?", (count, thread_id)
+    )
+
+
 def delete_thread_everywhere(conn: SqlConnection, thread_id: str) -> dict[str, int]:
     """按 thread_id 级联删的**唯一入口**（`R102-26`/`48`；2026-10-02 拍板：真删）。
 

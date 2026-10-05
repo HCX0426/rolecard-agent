@@ -60,7 +60,7 @@ async def chat_events(
     role_summary: dict[str, str],
     tracer: Tracer | None = None,
     usage_recorder: Callable[[TokenUsage | None], None] | None = None,
-    after_turn: Callable[[], None] | None = None,
+    after_turn: Callable[[int], None] | None = None,
 ) -> AsyncIterator[str]:
     """异步投送 `core.turn.run_turn` 的事件流：逐事件从专属线程池取出，块间让出事件循环。
 

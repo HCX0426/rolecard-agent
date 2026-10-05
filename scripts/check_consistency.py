@@ -1910,6 +1910,14 @@ WRITE_TXN_HELPERS = frozenset(
         "src/rolecard_agent/storage/sync_rows.py::delete_rows_for_user",
         "src/rolecard_agent/storage/threads.py::delete_threads_for_user",
         "src/rolecard_agent/storage/threads.py::set_current_role",
+        # 2026-10-05 冗余计数（镜像探针那条）：两个写函数**刻意不收口** —— 增量与
+        # 真相同批：bump 由检查点写入口的调用方收口（chat 轮走 `_after_turn_chat` /
+        # 编辑重生成钩子 `_bump_count_committed`，编辑与删除 rides `delete_messages`
+        # 的 touch+commit，上传说明与主动投递各自紧跟 commit）；record 由全量
+        # `/messages` 真读后的对账点（`get_session_messages`）commit。分开收口是
+        # 刻意的：调用方各自的检查点写与计数写要能落进同一个本地事务。
+        "src/rolecard_agent/storage/threads.py::bump_message_count",
+        "src/rolecard_agent/storage/threads.py::record_message_count",
         # 换线程 id 的落笔（2026-10-04 P1-6 从 `storage/db.py::_migrate` 搬来）：
         # **刻意不收口** —— 它跑在整表重建的显式事务里（core/migrations.py 的 B2 步骤
         # 首尾 BEGIN/COMMIT），自己 commit 会把 DROP→RENAME 之间的窗口重新打开。

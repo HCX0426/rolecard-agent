@@ -124,6 +124,21 @@ def touch(conn: SqlConnection, thread_id: str) -> None:
     _threads.touch_thread(conn, thread_id)
 
 
+def message_count(conn: SqlConnection, thread_id: str) -> int | None:
+    """冗余计数的现值；NULL = 未对账（探针据此决定走便宜路还是真读校准）。"""
+    return _threads.message_count(conn, thread_id)
+
+
+def bump_message_count(conn: SqlConnection, thread_id: str, delta: int) -> None:
+    """检查点写入口（chat 轮 / 编辑重生成 / 删除 / 上传说明 / 主动投递）同一步的增量维护。"""
+    _threads.bump_message_count(conn, thread_id, delta)
+
+
+def record_message_count(conn: SqlConnection, thread_id: str, count: int) -> None:
+    """全量 /messages 真读之后的对账写回。"""
+    _threads.record_message_count(conn, thread_id, count)
+
+
 def delete_everywhere(conn: SqlConnection, thread_id: str) -> dict[str, int]:
     """删会话：thread 行 + 全部载体表一并清，**持写锁**（在飞轮次不该被抽走检查点）。
 

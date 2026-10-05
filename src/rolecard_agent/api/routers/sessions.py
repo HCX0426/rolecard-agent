@@ -384,19 +384,16 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
                 ctx.tracer,
                 user_id=user_id,
             ),
-            # 轮后钩子（自动记忆提取）由 run_turn 的 finally 统一执行：断线轮次与正常
-            # 轮次行为一致（从前挂在 async 生成器尾部，断线即丢 —— 收尾不对称条目）。
-            # 提交进进程级提取池（连接复用、槽有界），run_turn 的收尾线程不背 122s 的提取。
-            # pending_humans：快照在手，+1 算上本轮这条还没进检查点的用户消息 ——
-            # 没到提取节奏的轮次不进池、后台那次全量 get_state 整轮省掉。
-            after_turn=lambda: _schedule_distill(
+            # 轮后钩子（冗余计数 + 自动记忆提取）由 run_turn 的 finally 统一执行：断线
+            # 轮次与正常轮次行为一致（从前挂在 async 生成器尾部，断线即丢 —— 收尾不对称
+            # 条目）。提交进进程级提取池（连接复用、槽有界），run_turn 的收尾线程不背
+            # 122s 的提取。appended = 本轮真进检查点的消息数（含输入那条）。
+            after_turn=lambda appended: _after_turn_chat(
                 ctx,
                 thread_id=body.thread_id,
                 role_id=role_id,
-                pending_humans=memory_distill.pending_humans(
-                    conn, thread_id=body.thread_id, messages=pre_turn_messages
-                )
-                + 1,
+                appended=appended,
+                pre_turn_messages=pre_turn_messages,
             ),
         ),
         media_type="text/event-stream",
@@ -488,6 +485,42 @@ def _usage_ledger(
         record_usage(conn, backend=backend, usage=usage, user_id=user_id, tracer=tracer)
 
     return record
+
+
+def _bump_count_committed(ctx: AppContext, *, thread_id: str, delta: int) -> None:
+    """计数增量 + 当场提交 —— 给不落 ctx.conn 事务的调用方（after_turn 钩子、上传尾）用。"""
+    session_service.bump_message_count(ctx.conn, thread_id, delta)
+    ctx.conn.commit()
+
+
+def _after_turn_chat(
+    ctx: AppContext,
+    *,
+    thread_id: str,
+    role_id: str,
+    appended: int,
+    pre_turn_messages: list[Any],
+) -> None:
+    """chat 轮的统一收尾：冗余计数的增量维护 + 轮前节奏判断后的提取提交。
+
+    `appended` 由内核递出来（本轮真进检查点的消息数，断线轮次数的是实际已提交的
+    部分）；`pending_humans` 的 +1 算的是本轮那条用户消息 —— AI/工具消息不进
+    「用户轮次」的账。没到提取节奏的轮次不进池：后台那次全量 get_state 整轮省掉
+    （2026-10-04 审查快照「每轮两次全量反序列化」条的临时缓解）。
+    """
+    session_service.bump_message_count(ctx.conn, thread_id, appended)
+    # 计数写在**请求线程**的连接槽上：不提交就会握着写锁 until 天荒地老，别的
+    # 连接（探针、别的会话）全部 busy 到超时。顺带把缓冲以最短窗口落库。
+    ctx.conn.commit()
+    _schedule_distill(
+        ctx,
+        thread_id=thread_id,
+        role_id=role_id,
+        pending_humans=memory_distill.pending_humans(
+            ctx.conn, thread_id=thread_id, messages=pre_turn_messages
+        )
+        + 1,
+    )
 
 
 def _schedule_distill(
@@ -670,6 +703,8 @@ def edit_message_and_regenerate(
     # 而中间这一秒若被调度线程的主动投递插进来，两边会分叉同一个父检查点。
     with thread_write(thread_id, timeout=session_service.WRITE_WAIT):
         graph.update_state(config, {"messages": doomed})
+        # 冗余计数与检查点改动同锁同批维护（后面那一轮的 after_turn 只管它自己的增量）。
+        session_service.bump_message_count(ctx.conn, thread_id, -len(doomed))
 
     graph_input: dict[str, object] = {
         "messages": [_user_message(body.content, body.image, created_at=now_ts())],
@@ -697,6 +732,11 @@ def edit_message_and_regenerate(
                 ),
                 ctx.tracer,
                 user_id=str(thread["user_id"]),
+            ),
+            # 重新生成这一轮同样追加消息：冗余计数由同一机制维护（编辑端不跑提取，
+            # 不带 _schedule_distill —— 它的节奏账归 chat 主链路管）。
+            after_turn=lambda appended: _bump_count_committed(
+                ctx, thread_id=thread_id, delta=appended
             ),
         ),
         media_type="text/event-stream",
@@ -726,6 +766,8 @@ def delete_messages(
     # 或者少了一条"。等不到锁就 409（`thread_write` 现在会抛，不再把布尔丢给调用方）。
     with thread_write(thread_id, timeout=session_service.WRITE_WAIT):
         graph.update_state(config, {"messages": [RemoveMessage(id=i) for i in doomed_ids]})
+        # 冗余计数与检查点改动同锁同批维护。
+        session_service.bump_message_count(ctx.conn, thread_id, -len(doomed_ids))
     session_service.touch(ctx.conn, thread_id)
     ctx.conn.commit()
     return {"deleted": len(doomed_ids), "remaining": len(messages) - len(doomed_ids)}
@@ -798,6 +840,20 @@ def get_session_messages(
     （审查报告 P2：无分页）。
     """
     get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
+    # 探针那一路（前端镜像对每条后台会话周期性打 `?limit=1`，只为 total 与在飞半句）
+    # 读冗余计数，**不碰检查点**：一次全量反序列化对"数一下有多少条"是几个数量级的
+    # 浪费（2026-10-04 审查快照「5 秒贵探针」条的主修）。NULL = 从未对账（旧会话 /
+    # 升级上来的库）：这一趟照旧真读，顺手把列校准 —— 以后每一拍都是廉价的。
+    if limit == 1:
+        known = session_service.message_count(ctx.conn, thread_id)
+        if known is not None:
+            return {
+                "messages": [],
+                "total": known,
+                "limit": limit,
+                "truncated": False,
+                "inflight": inflight_payload(thread_id),
+            }
     snapshot = ctx.app_state["graph"].get_state({"configurable": {"thread_id": thread_id}})
     raw = (snapshot.values or {}).get("messages", [])
     # tool_call_id → 入参：历史工具行要能显示"搜了什么"（单条 ToolMessage 看不到入参）。
@@ -810,6 +866,9 @@ def get_session_messages(
     total = len(rows)
     if limit and total > limit:
         rows = rows[-limit:]
+    # 真读过的这一趟顺手对账：冗余计数校准到检查点的真相（写探针依赖它不走漂）。
+    session_service.record_message_count(ctx.conn, thread_id, total)
+    ctx.conn.commit()
     return {
         "messages": rows,
         "total": total,
@@ -937,6 +996,8 @@ def upload_report(
             {"configurable": {"thread_id": thread_id}},
             {"messages": [HumanMessage(content=outcome.note)]},
         )
+        # 冗余计数与检查点改动同锁同批维护：说明消息也是一条。
+        _bump_count_committed(ctx, thread_id=thread_id, delta=1)
     return outcome.response()
 
 
