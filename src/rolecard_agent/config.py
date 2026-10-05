@@ -408,7 +408,8 @@ class Settings(BaseModel):
     # **刻意不做成运行期可改项**：按架构总览 §4.1，"换身份"是换一份完整数据集，
     # 不是热切一个 `WHERE` 过滤器 —— 半换的状态（会话是 A 的、后台调度替 B 冒话）比不换更糟。
     identity_user_id: str = ""
-    # 豁免路径前缀（逗号分隔）：探活端点必须免鉴权，否则容器健康检查永远失败。
+    # 豁免路径（逗号分隔，精确路径或 "GET /path" 限定单方法）：探活端点必须免鉴权，
+    # 否则容器健康检查永远失败。命中操作员级端点时启动会打告警（见 api/access.py）。
     auth_exempt_paths: str = "/api/health"
 
     # 来源标识护栏（`R102-45`，api/auth.py `origin_guard_violation`）：off 档的信任模型是

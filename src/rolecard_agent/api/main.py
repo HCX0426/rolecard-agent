@@ -37,7 +37,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from rolecard_agent.api.access import OPERATOR, classify
+from rolecard_agent.api.access import OPERATOR, classify, operator_level_exempts
 from rolecard_agent.api.access import allowed as access_allowed
 from rolecard_agent.api.auth import (
     ROLE_OPERATOR,
@@ -69,7 +69,7 @@ from rolecard_agent.api.routers import shell_release as shell_release_router
 from rolecard_agent.api.routers import sync as sync_router
 from rolecard_agent.api.routers import workspace as workspace_router
 from rolecard_agent.base.identity import active_user_id, resolve_instance_identity
-from rolecard_agent.base.observability import Tracer
+from rolecard_agent.base.observability import Tracer, logline
 from rolecard_agent.base.paths import console_dist_dir
 from rolecard_agent.config import Settings
 from rolecard_agent.core.bootstrap import Assembly, Runtime, build_runtime
@@ -299,6 +299,14 @@ def create_app(
     exempt_paths = [
         p.strip() for p in (env_settings.auth_exempt_paths or "").split(",") if p.strip()
     ]
+    # 豁免名单让到管理面上要**大声说**（warning 落 stderr）：让"匿名可达"扩到
+    # operator 级端点无法悄悄发生。报警不拦 —— 分级那层还有 403 兜着。
+    for flagged in operator_level_exempts(exempt_paths):
+        logline(
+            "warning",
+            "auth-exempt-operator-path",
+            f"AUTH_EXEMPT_PATHS 里的 {flagged} 是操作员级端点 —— 确认这是刻意的让步",
+        )
     trusted_proxies = parse_trusted_proxies(env_settings.auth_trusted_proxies)
     # 凭证分族是否生效：配置里出现过 `operator:` 凭据才生效（见 auth.roles_declared）。
     # 随进程构建，与 exempt_paths/trusted_proxies 同类 —— 改了要重启，不在界面可改。
@@ -325,6 +333,7 @@ def create_app(
             ip=origin,
             path=req.url.path,
             exempt=exempt_paths,
+            method=req.method,
         ):
             # 客户端已经带了凭据（Basic 或 X-API-Key）就不再 challenge：见
             # `auth.unauthorized_response` 的 `challenge` 一节 —— 那一次弹框会把

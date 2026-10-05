@@ -29,6 +29,7 @@ from rolecard_agent.api.auth import (
     ROLE_OPERATOR,
     ROLE_USER,
     is_loopback,
+    split_exempt_entry,
 )
 
 PUBLIC = "public"
@@ -102,6 +103,21 @@ def classify(path: str, method: str = "GET") -> str:
     if not path.startswith("/api/"):
         return PUBLIC  # 控制台页面与静态资源
     return OPERATOR
+
+
+def operator_level_exempts(entries: list[str]) -> list[str]:
+    """`AUTH_EXEMPT_PATHS` 里命中**操作员级**端点的那几条（原样返回，供启动告警点名）。
+
+    豁免是"匿名可达"的显式让步，让步让到管理面上必须**大声说**：这条检查在启动时
+    跑一遍名单，命中 operator 档（按 `classify` 的口径，非回环来源必须持 operator
+    凭据的那些）就把条目交回去打告警 —— 报警不拦，宽豁免还有 403 分级层兜着。
+    """
+    hits: list[str] = []
+    for entry in entries:
+        _, path = split_exempt_entry(entry)
+        if classify(path) == OPERATOR:
+            hits.append(entry)
+    return hits
 
 
 def allowed(

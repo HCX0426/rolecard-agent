@@ -283,16 +283,49 @@ def is_loopback(ip: str) -> bool:
     return addr is not None and addr.is_loopback
 
 
-def auth_required(*, mode: str, ip: str, path: str, exempt: list[str]) -> bool:
+def split_exempt_entry(entry: str) -> tuple[str | None, str]:
+    """拆一条豁免配置 → (限定的方法或 None, 路径)。
+
+    两种合法形态：`/api/health`（精确路径，任何方法）与 `GET /api/health`
+    （只豁免这一个方法）。方法记号必须是全大写字母 —— 写错形态的条目按整串
+    当路径比，永远匹配不上，等于配置了条不存在的豁免（fail-closed）。
+    """
+    head, sep, rest = entry.partition(" ")
+    if sep and head.isalpha() and head.isupper():
+        return head, rest.strip()
+    return None, entry
+
+
+def _exempt_hit(path: str, method: str, exempt: list[str]) -> bool:
+    """豁免名单命中与否 —— **精确路径**，不再按前缀放行。
+
+    `startswith` 曾是默认：一条宽前缀（`/api/`）能把整族端点豁免成匿名可达，
+    放大面与配置者以为的"就豁免这一条"完全不同。精确匹配下想豁免一族只能
+    一行一行写，每一行都是一次显式决定；配置收紧只会让原先放行的请求改成
+    要凭据 —— 永远往 fail-closed 方向错，不需要迁移。
+    """
+    for entry in exempt:
+        wanted_method, exempt_path = split_exempt_entry(entry)
+        if path != exempt_path:
+            continue
+        if wanted_method is None or wanted_method == method.upper():
+            return True
+    return False
+
+
+def auth_required(
+    *, mode: str, ip: str, path: str, exempt: list[str], method: str = "GET"
+) -> bool:
     """这个请求是否必须带凭证。
 
     fail-closed：`on` 档即使一个凭证都没配，也照样要求 —— 那样所有人都会被拒，
-    但"配置了认证却因配置不全而静默放行"是更糟的结果。
+    但"配置了认证却因配置不全而静默放行"是更糟的结果。豁免名单按精确路径
+    （或「METHOD 路径」限定单方法）判，见 `_exempt_hit`。
     """
     normalized = (mode or "off").strip().lower()
     if normalized == "off":
         return False
-    if any(path.startswith(prefix) for prefix in exempt):
+    if _exempt_hit(path, method, exempt):
         return False
     if normalized == "on":
         return True

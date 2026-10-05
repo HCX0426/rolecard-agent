@@ -209,6 +209,56 @@ def test_loopback_peer_reaches_the_operator_tier_without_credentials(
     assert client.get("/api/settings/runtime").status_code == 200
 
 
+def test_exempt_matching_is_exact_not_prefix(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """豁免按**精确路径**判：`/api/session` 不再顺带豁免 `/api/sessions`。
+
+    前缀匹配的放大面：一条"就豁免开会话"的配置把整个会话清单端点也变成匿名可达。
+    收紧后同一条配置只对写下的那一条生效 —— 别的路径回到"必须带凭据"（401）。
+    """
+    client = _client(monkeypatch, tmp_path, mode="on", creds="op:pw", exempt="/api/session")
+    assert client.get("/api/sessions").status_code == 401
+    assert client.get("/api/sessions", auth=("op", "pw")).status_code == 200
+
+
+def test_method_scoped_exempt_entry_only_frees_that_method(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`GET /api/settings/memory` 形态只豁免这一个方法：别的动词照旧要凭据。"""
+    client = _client(
+        monkeypatch, tmp_path, mode="on", creds="op:pw", exempt="GET /api/settings/memory"
+    )
+    assert client.get("/api/settings/memory").status_code == 200
+    assert client.post("/api/settings/memory", json={}).status_code == 401
+
+
+def test_operator_level_exempt_entry_warns_at_startup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """豁免名单命中操作员级端点时启动**大声说**，默认名单（探活）不吵。
+
+    豁免是"匿名可达"的显式让步 —— 让到管理面上必须无法悄悄发生。报警不拦：
+    分级那层还有 403 兜着，这里只负责让配置者在自己 stderr 里看见。
+    """
+    import rolecard_agent.api.main as main_module
+
+    calls: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(main_module, "logline", lambda *a: calls.append(a))
+
+    monkeypatch.setenv("AUTH_MODE", "on")
+    monkeypatch.setenv("AUTH_CREDENTIALS", "op:pw")
+    monkeypatch.setenv("AUTH_EXEMPT_PATHS", "/api/settings/runtime,/api/health")
+    create_app(sqlite_path=tmp_path / "warn.db")
+    assert any(c[0] == "warning" and "/api/settings/runtime" in c[2] for c in calls)
+    assert not any("/api/health" in c[2] for c in calls)  # 探活是 public 档，不告警
+
+    calls.clear()
+    monkeypatch.setenv("AUTH_EXEMPT_PATHS", "/api/health")
+    create_app(sqlite_path=tmp_path / "quiet.db")
+    assert calls == []
+
+
 # ------------------------------------------------------------------ 凭证分族（c）
 
 
