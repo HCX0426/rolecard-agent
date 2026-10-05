@@ -19,12 +19,11 @@ from rolecard_agent.api.chat import chat_events
 from rolecard_agent.api.deps import (
     DEFAULT_ROLE_ID,
     AppContext,
-    expand_to_turns,
     get_actor,
     get_context,
     get_thread,
-    serialize_message,
 )
+from rolecard_agent.api.message_view import expand_to_turns, serialize_message
 from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.base.text import text_of
 from rolecard_agent.core import memory_distill, session_service, upload_service

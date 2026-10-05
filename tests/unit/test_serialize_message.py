@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from rolecard_agent.api.deps import serialize_message
+from rolecard_agent.api.message_view import serialize_message
 
 
 def test_plain_ai_message_has_no_reasoning_field() -> None:
