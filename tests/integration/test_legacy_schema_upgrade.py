@@ -27,7 +27,13 @@ from rolecard_agent.core.model_settings import (
     _vision_of,
 )
 from rolecard_agent.domains.registry import DOMAINS
-from rolecard_agent.storage.db import bootstrap, connect, reconcile_columns, schema_files
+from rolecard_agent.storage.db import (
+    SCHEMA_VERSION,
+    bootstrap,
+    connect,
+    reconcile_columns,
+    schema_files,
+)
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "legacy_schemas"
 
@@ -746,4 +752,131 @@ def test_b2_residual_staging_table_does_not_permanently_block_boot(tmp_path: Pat
     )
     assert tid == "s_proactive_local-user_she", f"线程 id 没跟着带身份：{tid}"
     assert "role_proactive_state__b2" not in _tables(conn)
+    conn.close()
+
+
+# -- 升级路径的实弹演练 + 代际推进留痕（快照"升级演练"条目） -------------------------------
+
+#: 这两份 fixture 带的、**当前声明里已经没有**的旧列（14cb9db 那份的 `medical_report`
+#: 三个"拆表前"的列）。"升级不删列"是既定取向 —— `test_legacy_extra_columns_survive`
+#: 钉着那一半；这份名单是另一半的**边界**：出现名单外的多余列 = 升级路径留下了没人
+#: 决定过的东西，同样红（要留，就来这里把名字加上并写清为什么留）。
+LEGACY_EXTRA_COLUMNS = {"medical_report": {"file_hash", "source_file", "status"}}
+
+
+def _shape(conn: sqlite3.Connection) -> dict[str, object]:
+    """库形状指纹：代际戳 + 每表**逐列属性**（按列名对齐）+ 命名索引（含定义 SQL）。
+
+    两处刻意的取舍（都在实弹里量过，不是想当然）：
+
+    * **列顺序不进指纹**：SQLite 的 `ALTER TABLE ADD COLUMN` 只能追加，升上来的库列
+      **顺序**必然是"旧列在前、新列按补列顺序追加"，与 fresh DDL 的声明顺序不同
+      （`role_card` / `session_thread` 实测如此）——重排要整表重建，而所有读写都按列名
+      （`sqlite3.Row` / 显式列名），顺序差在生产里本来就与 fresh 库共存着。
+    * **多余列由 `LEGACY_EXTRA_COLUMNS` 点名**而不是直接放行（见那份名单的注释）。
+
+    与 `_declared()`（只比列**名**、对着内存里的声明）的区别：声明是理想态，索引与列
+    属性（type/notnull/default/pk）不在它的比较面里 —— 这条比的是两座**真库**。
+    """
+    return {
+        "user_version": int(conn.execute("PRAGMA user_version").fetchone()[0]),
+        "columns": {
+            table: {
+                str(c["name"]): (
+                    str(c["type"]),
+                    str(c["notnull"]),
+                    str(c["dflt_value"]),
+                    str(c["pk"]),
+                )
+                for c in conn.execute(f'PRAGMA table_info("{table}")')
+            }
+            for table in sorted(_tables(conn))
+        },
+        "indexes": sorted(
+            (str(r["name"]), str(r["tbl_name"]), str(r["sql"]))
+            for r in conn.execute(
+                "SELECT name, tbl_name, sql FROM sqlite_master"
+                " WHERE type='index' AND name NOT LIKE 'sqlite_%'"
+            )
+        ),
+    }
+
+
+@pytest.mark.parametrize("commit", sorted(LEGACY_SHAPES))
+def test_upgraded_legacy_db_converges_to_the_fresh_bootstrap_shape(
+    commit: str, tmp_path: Path
+) -> None:
+    """升级路径的实弹演练：降级老库经 bootstrap 后**与 fresh 库逐列一致**。
+
+    为什么单立这条：`SCHEMA_VERSION` 从前只有**拒启**语义（库比代码新 → loud 拒启），
+    而"升上来的库到底对不对"只对着**声明**比过列名（`test_upgraded_columns_match_declaration`
+    那条）—— 声明是理想态，列属性、表集合、索引都不在它的比较面里。这条两边都是**真跑
+    一遍 bootstrap 的库**：fresh 的路径与老库升上来的路径只差起点，终点必须收敛到同一个
+    形状（例外只有 `_shape` docstring 与 `LEGACY_EXTRA_COLUMNS` 写明的两类）。
+
+    失败信息逐项列（这条的输出会很长，别再倒整库进去）。
+    """
+    fresh_conn = connect(tmp_path / "fresh.db")
+    bootstrap(fresh_conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
+
+    legacy = _build_legacy(commit, tmp_path / "old.db")
+    before = int(legacy.execute("PRAGMA user_version").fetchone()[0])
+    assert before < SCHEMA_VERSION, f"{commit} 的 fixture 不是降级库（user_version={before}）"
+    bootstrap(legacy, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
+
+    fresh_shape, upgraded_shape = _shape(fresh_conn), _shape(legacy)
+    problems: list[str] = []
+    fresh_ver, upgraded_ver = fresh_shape["user_version"], upgraded_shape["user_version"]
+    if fresh_ver != upgraded_ver:
+        problems.append(f"代际不同代：fresh={fresh_ver} upgraded={upgraded_ver}")
+    fresh_tables = fresh_shape["columns"]
+    upgraded_tables = upgraded_shape["columns"]
+    assert isinstance(fresh_tables, dict) and isinstance(upgraded_tables, dict)
+    if set(fresh_tables) != set(upgraded_tables):
+        problems.append(
+            f"表集合分叉：fresh-only={sorted(set(fresh_tables) - set(upgraded_tables))}"
+            f" upgraded-only={sorted(set(upgraded_tables) - set(fresh_tables))}"
+        )
+    for table, fcols in fresh_tables.items():
+        ucols = upgraded_tables.get(table, {})
+        assert isinstance(fcols, dict) and isinstance(ucols, dict)
+        missing = [c for c in fcols if c not in ucols]
+        if missing:
+            problems.append(f"{table} 升完缺列 {missing}")
+        drifted = [c for c in fcols if c in ucols and fcols[c] != ucols[c]]
+        if drifted:
+            problems.append(
+                f"{table} 列属性分叉 { {c: (fcols[c], ucols[c]) for c in drifted} }"
+            )
+        extra = set(ucols) - set(fcols)
+        allowed = LEGACY_EXTRA_COLUMNS.get(table, set())
+        if extra - allowed:
+            problems.append(f"{table} 出现名单外的遗留列 {sorted(extra - allowed)}")
+    if fresh_shape["indexes"] != upgraded_shape["indexes"]:
+        problems.append(
+            f"索引分叉：fresh={fresh_shape['indexes']} upgraded={upgraded_shape['indexes']}"
+        )
+    assert not problems, f"{commit} 升级未收敛（实弹演练）：" + "；".join(problems)
+    fresh_conn.close()
+    legacy.close()
+
+
+def test_user_version_advance_is_traced_exactly_once(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """代际推进留痕的正反两臂（快照"升级演练"条目的另一半）：
+    推进落一行 schema-migrate 事件，**且只在真的推进时落**。
+
+    没有留痕的推进是查不到的：老库升上来那次"从哪代到哪代"在日志里查无此话，排障时与
+    "本来就是新库"分不开。反向一臂同样要红：每次启动都落 = 一天刷一行没信息量的行
+    （与"有清理量才落事件"那条同纪律）——所以幂等重跑之后必须**没有**这一行。
+    """
+    conn = _build_legacy("14cb9db", tmp_path / "app.db")
+    bootstrap(conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
+    first = capsys.readouterr().err  # `migrate_event` 落 stderr
+    assert f"user_version 戳到 {SCHEMA_VERSION}" in first, "代际推进没有留痕"
+
+    bootstrap(conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)  # 进程重启的幂等重跑
+    second = capsys.readouterr().err
+    assert "user_version 戳到" not in second, "没有推进却落事件 = 每次启动刷屏"
     conn.close()
