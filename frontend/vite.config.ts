@@ -11,4 +11,15 @@ export default defineConfig({
       "/api": "http://127.0.0.1:8000",
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // react/react-dom 单独成 vendor 块：它们的版本变化频率远低于业务代码，
+        // 拆开后业务改动的失效面不再裹挟框架本身（浏览器缓存可用期更长）。
+        manualChunks: {
+          react: ["react", "react-dom"],
+        },
+      },
+    },
+  },
 });
