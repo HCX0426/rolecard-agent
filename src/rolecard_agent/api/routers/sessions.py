@@ -998,6 +998,9 @@ def upload_report(
         )
         # 冗余计数与检查点改动同锁同批维护：说明消息也是一条。
         _bump_count_committed(ctx, thread_id=thread_id, delta=1)
+        # 说明消息也是会话内容：updated_at 要动 —— 侧栏"刚刚"、同步指纹都指着它。
+        session_service.touch(ctx.conn, thread_id)
+        ctx.conn.commit()
     return outcome.response()
 
 

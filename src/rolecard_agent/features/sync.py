@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -48,6 +49,17 @@ KIND_MEMORY = "memory"
 KIND_REACHOUT = "reachout"
 #: 这一版真的搬的四类。加一类要同时动 `collect` 与对面的导入端点，两边一起红才有意义。
 SYNC_KINDS: tuple[str, ...] = (KIND_CARD, KIND_THREAD, KIND_MEMORY, KIND_REACHOUT)
+
+#: 会话指纹备忘（见 collect_threads 的 docstring）：键 = (主人, 线程, updated_at,
+#: message_count)，值 = ("item", 摘要, 头指纹, 条数, pairs) 或 ("skip", 理由)。
+#: 上限防内存无界；LRU 淘汰。`thread_memo_clear()` 给测试与热排障用。
+_THREAD_MEMO: OrderedDict[tuple[str, str, str, int], tuple[Any, ...]] = OrderedDict()
+_THREAD_MEMO_MAX = 512
+
+
+def thread_memo_clear() -> None:
+    """清空会话指纹备忘（测试与热排障用；生产进程无需调用）。"""
+    _THREAD_MEMO.clear()
 
 #: 会话"头多少条"用来判前缀：20 条足够分开两个真实分叉的对话，又不至于把整段历史
 #: 塞进清单端点的响应里。
@@ -283,54 +295,80 @@ def collect_threads(
 
     跳过只有一种理由：**这条里有附图/附件**（原件这一版不传）。不做"搬文字丢图"那种
     半搬 —— 症状是"她记得那张单子，你这边却没有"，比不搬更难解释。
+
+    指纹备忘（2026-10-04 审查快照「上行同步逐条全量 get_state」条的增量那半）：
+    两个检查点写入口若都没动过（updated_at 与 message_count 组成的指纹不变），
+    这条的摘要与载荷直接取上一次的结果，不再反序列化检查点 —— 五个写入口
+    （chat 轮 / 编辑重生成 / 删除 / 上传说明 / 主动投递）每个都会动这两个值，
+    所以"指纹没变 ⇒ 内容没变"成立。进程内缓存与后端同生命周期；重启即冷，
+    只慢第一趟。
     """
     from rolecard_agent.core.graph import build_graph_config
 
     rows = conn.execute(
-        "SELECT thread_id, title, current_role_id, model_name, agent_mode, updated_at"
-        " FROM session_thread WHERE user_id = ? ORDER BY thread_id",
+        "SELECT thread_id, title, current_role_id, model_name, agent_mode, updated_at,"
+        " message_count FROM session_thread WHERE user_id = ? ORDER BY thread_id",
         (user_id,),
     ).fetchall()
     out: list[SyncItem] = []
     skipped: list[dict[str, Any]] = []
     for row in rows:
         tid = str(row["thread_id"])
-        try:
-            snapshot = graph.get_state(build_graph_config(tid, settings))
-        except Exception as exc:  # noqa: BLE001 - 读不到检查点就不搬这条，不拖垮整份计划
-            skipped.append({"kind": KIND_THREAD, "ident": tid, "reason": f"读不到历史：{exc}"})
+        mc = row["message_count"]
+        fingerprint = (
+            user_id,
+            tid,
+            str(row["updated_at"] or ""),
+            int(mc) if mc is not None else -1,
+        )
+        memo = _THREAD_MEMO.get(fingerprint)
+        if memo is not None:
+            _THREAD_MEMO.move_to_end(fingerprint)
+        else:
+            try:
+                snapshot = graph.get_state(build_graph_config(tid, settings))
+            except Exception as exc:  # noqa: BLE001 - 读不到检查点就不搬这条，不拖垮整份计划
+                skipped.append({"kind": KIND_THREAD, "ident": tid, "reason": f"读不到历史：{exc}"})
+                continue
+            messages = list((snapshot.values or {}).get("messages") or [])
+            pairs: list[dict[str, Any]] = []
+            has_media = False
+            for message in messages:
+                kind = getattr(message, "type", None)
+                if kind not in ("human", "ai"):
+                    continue  # 工具消息与中间轮不搬：对面的图会自己重跑
+                raw = getattr(message, "content", "")
+                if isinstance(raw, list):
+                    has_media = True
+                    break
+                text = str(raw or "")
+                if "data:image" in text or "data:application" in text:
+                    has_media = True
+                    break
+                pairs.append({"role": "user" if kind == "human" else "assistant", "text": text})
+            if has_media:
+                memo = ("skip", SKIP_HAS_IMAGE)
+            elif not pairs:
+                memo = ("skip", "这条会话还没有内容")
+            else:
+                memo = ("item", _digest(pairs), _digest(pairs[:HEAD_MESSAGES]), len(pairs), pairs)
+            _THREAD_MEMO[fingerprint] = memo
+            while len(_THREAD_MEMO) > _THREAD_MEMO_MAX:
+                _THREAD_MEMO.popitem(last=False)
+        if memo[0] == "skip":
+            skipped.append(
+                {"kind": KIND_THREAD, "ident": tid, "reason": memo[1],
+                 "preview": _preview(row["title"] or tid)}
+            )
             continue
-        messages = list((snapshot.values or {}).get("messages") or [])
-        pairs: list[dict[str, Any]] = []
-        has_media = False
-        for message in messages:
-            kind = getattr(message, "type", None)
-            if kind not in ("human", "ai"):
-                continue  # 工具消息与中间轮不搬：对面的图会自己重跑
-            raw = getattr(message, "content", "")
-            if isinstance(raw, list):
-                has_media = True
-                break
-            text = str(raw or "")
-            if "data:image" in text or "data:application" in text:
-                has_media = True
-                break
-            pairs.append({"role": "user" if kind == "human" else "assistant", "text": text})
-        if has_media:
-            skipped.append({"kind": KIND_THREAD, "ident": tid, "reason": SKIP_HAS_IMAGE,
-                            "preview": _preview(row["title"] or tid)})
-            continue
-        if not pairs:
-            skipped.append({"kind": KIND_THREAD, "ident": tid, "reason": "这条会话还没有内容",
-                            "preview": _preview(row["title"] or tid)})
-            continue
+        _, digest, head, count, pairs = memo
         out.append(
             SyncItem(
                 kind=KIND_THREAD,
                 ident=tid,
-                hash=_digest(pairs),
-                head=_digest(pairs[:HEAD_MESSAGES]),
-                count=len(pairs),
+                hash=digest,
+                head=head,
+                count=count,
                 at=str(row["updated_at"] or ""),
                 preview=_preview(row["title"] or pairs[0]["text"]),
                 payload={

@@ -195,6 +195,51 @@ def test_thread_with_an_image_is_skipped_whole_not_half_carried(tmp_path: Any) -
     assert {row["reason"] for row in empty_skipped} == {S.SKIP_HAS_IMAGE, "这条会话还没有内容"}
 
 
+def test_thread_memo_serves_unchanged_and_refreshes_on_change(tmp_path: Any) -> None:
+    """指纹备忘的两臂：指纹没变不反序列化、指纹变了必须刷新。
+
+    两个检查点写入口若都没动（updated_at 与 message_count 组成的指纹），collect
+    直接用上一次的摘要 —— 二次调用从 N 次全量反序列化降为零次。反之，指纹一动
+    就必须看到新内容，否则上行同步会静默推旧数据。
+    """
+    S.thread_memo_clear()
+    conn = _conn(tmp_path)
+    _seed(conn, user="local-user")
+    conn.execute(
+        "INSERT INTO session_thread (thread_id, user_id, current_role_id, title) "
+        "VALUES ('s_m', 'local-user', 'general_assistant', '备忘')"
+    )
+    conn.commit()
+    msgs = [HumanMessage(content="一问"), AIMessage(content="一答")]
+    items, _ = S.collect_threads(
+        conn, user_id="local-user", graph=_Graph({"s_m": msgs}), settings=None
+    )
+    assert items[0].count == 2
+
+    class _NoPeek:
+        def get_state(self, *_a: object, **_kw: object) -> object:
+            raise AssertionError("指纹没变就不该再读检查点")
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self, name)
+
+    again, _ = S.collect_threads(conn, user_id="local-user", graph=_NoPeek(), settings=None)
+    assert again[0].count == 2 and again[0].hash == items[0].hash
+
+    # 指纹动了（两处都动才是真实写入的形状）→ 必须重读并给出新摘要
+    conn.execute(
+        "UPDATE session_thread SET updated_at = '2030-01-01 00:00:00.000',"
+        " message_count = 3 WHERE thread_id = 's_m'"
+    )
+    conn.commit()
+    grown = [*msgs, HumanMessage(content="新问")]
+    third, _ = S.collect_threads(
+        conn, user_id="local-user", graph=_Graph({"s_m": grown}), settings=None
+    )
+    assert third[0].count == 3 and third[0].hash != items[0].hash
+    S.thread_memo_clear()
+
+
 def test_collect_covers_exactly_the_four_shipped_kinds(tmp_path: Any) -> None:
     conn = _conn(tmp_path)
     _seed(conn, user="local-user")
