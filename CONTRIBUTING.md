@@ -172,6 +172,9 @@
 - [ ] 没有新增依赖；如新增，已同步 `pyproject.toml` 与对应的 `requirements-*.txt`
 - [ ] 没有改动第 4 节的任何文件
 - [ ] 提交信息符合 Conventional Commits（`feat:` / `fix:` / `docs:` / `test:` / `refactor:` / `chore:`）
+- [ ] 已启用本地 git 钩子（一次性：`git config core.hooksPath .githooks`）—— 改前端源码时
+      pre-commit 会自动重建 `frontend/dist` 并随提交入库；dist 必须与源码同一次提交
+      （clone 免 node 可跑 + 随包后端托管都靠它，CI 的回写 bot 只兜 main）。
 
 ---
 

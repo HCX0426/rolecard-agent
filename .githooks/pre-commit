@@ -1,0 +1,31 @@
+#!/bin/sh
+# dist 入库同步的**本地即时拦截**（2026-10-04 审查快照「dist 入库」条，决策六的另一半；
+# CI 上由 frontend job 的回写 bot 与 check_dist_sync 兜底，这一半拦在本机提交的瞬间）。
+#
+# 启用（每台克隆机一次性）：
+#     git config core.hooksPath .githooks
+#
+# 行为：本次提交动了前端源码而 dist 没跟着重建 ⇒ 当场重建并把 dist 一起 add 进提交。
+# 没装 node / 构建失败时只提醒、不拦 —— "拦不住就别假装拦了"，后面还有 CI 两道。
+
+set -e
+cd "$(git rev-parse --show-toplevel)"
+
+changed="$(git diff --cached --name-only -- frontend/src frontend/index.html frontend/package.json frontend/package-lock.json frontend/vite.config.ts)"
+[ -z "$changed" ] && exit 0
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "pre-commit：改了前端但本机没有 npm，跳过 dist 预检 —— 提交前请记得 npm run build 并带上 frontend/dist"
+  exit 0
+fi
+
+echo "pre-commit：前端源码有改动，重建 dist ..."
+(cd frontend && npm run build >/dev/null) || {
+  echo "pre-commit：构建失败 —— 本次提交不带重建的 dist（CI 的 check_dist_sync 会拦）"
+  exit 1
+}
+
+if git status --porcelain -- frontend/dist | grep -q .; then
+  git add frontend/dist
+  echo "pre-commit：dist 已重建并随本次提交一起入库"
+fi

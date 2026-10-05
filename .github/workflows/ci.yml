@@ -121,8 +121,14 @@ jobs:
     name: 前端（tsc + build + vitest）
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    permissions:
+      contents: write # 仅 dist 回写 bot 用（main push 漂移时自动重建回写）；其余步骤只读
     steps:
       - uses: actions/checkout@v4
+        # fetch-depth 2 与 gate job 同理：bot 回写时要把读数 head 推进到刚建的提交，
+        # 没有历史就没有"这个提交的父是谁"可言。
+        with:
+          fetch-depth: 2
 
       - name: 装 Node
         uses: actions/setup-node@v4
@@ -149,9 +155,41 @@ jobs:
         working-directory: frontend
         run: npm test
 
+      - name: dist 漂移自动回写（CI bot，仅 main push）
+        # 2026-10-04 审查快照「dist 入库」条的拍板（决策六）：main 上检出漂移时**自动重建
+        # 回写**，而不是把 main 推红。三处形状都有讲究：
+        #   * 只在 main push 跑 —— PR 上漂移照样红（提交者必须带着 dist 走完评审）；
+        #   * 第一笔只含 frontend/dist；第二笔把 docs/gate-readings.json 的 head 推进到
+        #     第一笔 —— 复用「读数收尾」提交的形状，check_readme_headline_numbers 的
+        #     归属判据（head=HEAD，或 HEAD~1 加纯文档改动）才认得这两笔；
+        #   * 用 GITHUB_TOKEN 推送不再触发新一轮 CI（GitHub 既定行为），结构上无回环。
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          if python3 scripts/check_dist_sync.py; then
+            echo "dist 无漂移，bot 不动作"
+            exit 0
+          fi
+          git config user.name "rolecard-dist-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/dist
+          git commit -m "chore(dist): CI bot 自动回写 —— 前端源码改动后重建入库产物"
+          export BOT_HEAD="$(git rev-parse HEAD)"
+          python3 - <<'PY'
+          import json, os, pathlib
+
+          p = pathlib.Path("docs/gate-readings.json")
+          data = json.loads(p.read_text(encoding="utf-8"))
+          data["head"] = os.environ["BOT_HEAD"][:12]
+          p.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+          PY
+          git add docs/gate-readings.json
+          git commit -m "chore(读数收尾): 读数 head 推进到 dist 回写提交"
+          git push
+
       - name: dist 必须与源码同步（入库那份不能是旧的）
         # 后端托管的正是 `frontend/dist`，而且它被有意入库（clone 后不装 node 也能起控制台）。
         # 改了前端却没重建 = 源码是新的、镜像与安装包带的是旧界面，而且它不报任何错。
+        # bot 只在 main push 生效；PR 与手动触发时这一步红 = 提交者得自己带上 dist。
         run: |
           # 这一条**不在这里写判据**（09-28 轮 `R28-31`）：从前这里是一条 `git diff --quiet`，
           # 而本机 `gate.py` 那条是 `git status --porcelain` —— 后者看得见未跟踪的新产物，
