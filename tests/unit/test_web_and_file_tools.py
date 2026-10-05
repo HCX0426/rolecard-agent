@@ -327,6 +327,27 @@ def test_fs_read_missing_file_is_readable_error(settings: Settings) -> None:
     assert "文件不存在" in fs_read.invoke({"path": "没有.txt"})
 
 
+def test_fs_write_over_limit_is_refunded_without_touching_disk(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """超限写入**整笔拒绝**：一行不落盘、不建目录 —— 上限判在落盘之前。
+
+    被注入的角色拿着 fs_write 应当写不出无限大的文件（agent 磁盘面唯一没有
+    上限的入口就是它）。用 monkeypatch 把上限缩到 10 字节来测，不为一条用例
+    真造 5 MB 字符串；上限值本身在文件里是常量，与读侧的 READ_MAX_CHARS 同风格。
+    """
+    import rolecard_agent.core.tools.files as files_module
+
+    monkeypatch.setattr(files_module, "WRITE_MAX_BYTES", 10)
+    (_read, fs_write, _list) = make_file_tools(settings=settings)
+    out = fs_write.invoke({"path": "big/overflow.txt", "content": "这一行超过十个字节"})
+    assert "写入被拒绝" in out
+    assert not (Path(settings.workspace_dir) / "big").exists()  # 目录都没建
+
+    boundary = fs_write.invoke({"path": "ok.txt", "content": "1234567890"})  # 恰 10 字节
+    assert "已写入" in boundary
+
+
 # -- 联网总闸 + 域名白名单（用户 2026-09-17 开工的功能①） --------------------------
 
 

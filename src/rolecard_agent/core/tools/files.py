@@ -17,6 +17,8 @@
   * `..` 与符号链接都被 resolve 收敛后由 is_relative_to 拦下 —— 与上传路径守卫同一套 rigor；
   * `fs_read` 有单文件大小上限（读进 prompt 的东西都要有上界）；
   * `fs_write` **不声明幂等**（执行器不会重试它），创建父目录，写入即真实落盘；
+    单次写入有字节上限（WRITE_MAX_BYTES）—— 超限**整笔拒绝、一行不落盘**：
+    默认配置安全不等于"角色被注入后可以写穿磁盘"；
   * 全部操作**写审计**（actor="agent"，action=fs_*，路径与字节数，不记内容）——
     "角色碰电脑"必须可追溯（架构计划 A·§4.2；仅传入 conn 时启用，测试可不传）。
 """
@@ -35,6 +37,7 @@ from rolecard_agent.core.workspace import make_dir_resolver, resolve_within
 from rolecard_agent.storage.db import SqlConnection
 
 READ_MAX_CHARS = 200_000  # 单文件读入 prompt 的字符上限（约 20 万字符）
+WRITE_MAX_BYTES = 5_000_000  # 单次写入的 UTF-8 字节上限（5 MB）—— 被注入的角色写不出无限大的文件
 
 
 class FsToolError(ToolExecutionError):
@@ -93,12 +96,18 @@ def make_file_tools(
             target = _resolve_within(root, path)
         except FsToolError as exc:
             return str(exc)
+        bytes_written = len(content.encode("utf-8"))
+        # 上限在**落盘之前**判：超限请求一行都不写（不是写一半再截）。
+        if bytes_written > WRITE_MAX_BYTES:
+            return (
+                f"写入被拒绝：{bytes_written} 字节超过单次写入上限 {WRITE_MAX_BYTES} 字节。"
+                "请拆成多次小写入（如逐段追加），或把大内容交给上传/导出通道。"
+            )
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8", newline="\n")
         except OSError as exc:
             return f"写入失败：{exc}"
-        bytes_written = len(content.encode("utf-8"))
         _audit(conn, "fs_write", str(target), {"bytes": bytes_written})
         return f"已写入 {path}（{bytes_written} 字节）。"
 
