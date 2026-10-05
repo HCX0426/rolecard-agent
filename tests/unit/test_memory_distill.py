@@ -520,6 +520,35 @@ def test_every_zero_disables_the_auto_path(conn: SqlConnection) -> None:
     assert distill.due_for_extract(conn, thread_id="t1", every=0, messages=msgs) is False
 
 
+def test_pre_turn_gate_agrees_with_the_post_turn_verdict(conn: SqlConnection) -> None:
+    """轮前同义判断 ≡ 轮后判据：pending_humans(轮前) + 本轮那条 ≥ every ⇔ 轮后 due。
+
+    chat 入口只有轮前的快照在手（省掉后台那次全量 get_state 的整个前提），所以
+    "轮前数一遍 + 1"必须与"轮后真读一遍"给出同一个答案 —— 追加式流量下两条路
+    数的是同一批消息。两边都贴着 every−1 / every 的边界各钉一格。
+    """
+    _thread(conn)
+
+    def convo(humans: int) -> list[_Msg]:
+        msgs: list[_Msg] = []
+        for i in range(humans):
+            msgs.append(_Msg("human", f"问 {i}"))
+            msgs.append(_Msg("ai", f"答 {i}"))
+        return msgs
+
+    pre = convo(11)  # 轮前 11 个用户轮，全部在游标之后
+    assert distill.pending_humans(conn, thread_id="t1", messages=pre) + 1 >= 12
+    assert distill.due_for_extract(
+        conn, thread_id="t1", every=12, messages=[*pre, _Msg("human", "第 12 问")]
+    )
+
+    pre = convo(10)  # 差一轮：轮前判据说"不提取"，轮后判据必须同样说"不"
+    assert distill.pending_humans(conn, thread_id="t1", messages=pre) + 1 < 12
+    assert not distill.due_for_extract(
+        conn, thread_id="t1", every=12, messages=[*pre, _Msg("human", "第 11 问")]
+    )
+
+
 def test_cursor_migration_adds_the_column(conn: SqlConnection) -> None:
     """旧库（没有 distilled_at_seq）补列之后，游标判断照跑不误。
 

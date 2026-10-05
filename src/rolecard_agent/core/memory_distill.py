@@ -396,6 +396,17 @@ def _report(**fields: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------- 自动兜底的节奏
 
 
+def pending_humans(conn: SqlConnection, *, thread_id: str, messages: Sequence[Any]) -> int:
+    """游标之后的人类消息数 —— "攒够了几个用户轮"的唯一算术。
+
+    `due_for_extract` 用它判节奏；chat 入口在**快照已经在手**时也用它做轮前同义判断
+    （2026-10-04 审查快照「每轮两次全量反序列化」条的临时缓解）：游标之后数几个人类
+    消息只是一条廉价 SQL + 一个列表扫描，不用为它把 MB 级检查点反序列化一遍。
+    """
+    pending = pending_messages(conn, thread_id=thread_id, messages=list(messages))
+    return sum(1 for m in pending if str(getattr(m, "type", "") or "").lower() == "human")
+
+
 def due_for_extract(
     conn: SqlConnection, *, thread_id: str, every: int, messages: Sequence[Any]
 ) -> bool:
@@ -412,9 +423,7 @@ def due_for_extract(
     """
     if every <= 0 or not messages:
         return False
-    pending = pending_messages(conn, thread_id=thread_id, messages=list(messages))
-    turns = sum(1 for m in pending if str(getattr(m, "type", "") or "").lower() == "human")
-    return turns >= every
+    return pending_humans(conn, thread_id=thread_id, messages=messages) >= every
 
 
 def mark_extracted(conn: SqlConnection, *, thread_id: str, message_count: int) -> None:

@@ -347,6 +347,7 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
     snapshot = graph.get_state(graph_config)
     # created_at 随消息入库（additional_kwargs）：历史回放显示时间（用户 2026-09-17）。
     created_at = now_ts()
+    pre_turn_messages = list((snapshot.values or {}).get("messages") or [])
     if snapshot.values:
         graph_input: dict[str, object] = {
             "messages": [_user_message(body.message, body.image, created_at=created_at)],
@@ -386,8 +387,16 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
             # 轮后钩子（自动记忆提取）由 run_turn 的 finally 统一执行：断线轮次与正常
             # 轮次行为一致（从前挂在 async 生成器尾部，断线即丢 —— 收尾不对称条目）。
             # 提交进进程级提取池（连接复用、槽有界），run_turn 的收尾线程不背 122s 的提取。
+            # pending_humans：快照在手，+1 算上本轮这条还没进检查点的用户消息 ——
+            # 没到提取节奏的轮次不进池、后台那次全量 get_state 整轮省掉。
             after_turn=lambda: _schedule_distill(
-                ctx, thread_id=body.thread_id, role_id=role_id
+                ctx,
+                thread_id=body.thread_id,
+                role_id=role_id,
+                pending_humans=memory_distill.pending_humans(
+                    conn, thread_id=body.thread_id, messages=pre_turn_messages
+                )
+                + 1,
             ),
         ),
         media_type="text/event-stream",
@@ -481,15 +490,25 @@ def _usage_ledger(
     return record
 
 
-def _schedule_distill(ctx: AppContext, *, thread_id: str, role_id: str) -> None:
+def _schedule_distill(
+    ctx: AppContext, *, thread_id: str, role_id: str, pending_humans: int | None = None
+) -> None:
     """把这一轮的兜底提取提交进池（总闸关闭时是 no-op）。
 
     状态机整段在 `memory_distill.after_turn`（取行 → 历史 → 游标 → 在飞闸 → 提取 →
     留痕 → 归还），这里只绑它要的两样**数据**并按下提交：取历史要 graph、解析模型要
     runtime，那都是宿主的活；池线程里跑的是回调，不借 AppContext 的任何其它部分。
     池本身也归了服务（`memory_distill.DISTILL_POOL`）。
+
+    `pending_humans` = 轮前同义判断（2026-10-04 审查快照「每轮两次全量反序列化」条的
+    临时缓解）：chat 入口为构造 graph_input 本来就 get_state 过一次，那份快照 + 一条
+    廉价游标 SQL 就能算出"轮结束后攒够用户轮没有"。没到节奏就**不提交** —— 后台
+    那次 MB 级 get_state 在大多数轮次整轮省掉；到节奏的那一轮才进池、由状态机重读
+    **真实**列表（truth 仍以那一刻的检查点为准，这里的判断只省成本不改变提取内容）。
     """
     if not (ctx.settings.memory_enabled and ctx.settings.memory_extract_auto):
+        return
+    if pending_humans is not None and pending_humans < ctx.settings.memory_extract_turns:
         return
 
     def load_context() -> tuple[Any, list[Any]]:
