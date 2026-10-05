@@ -18,6 +18,7 @@
  * 真要收紧，正确的做法是服务端发短期令牌，而不是在这里少存一个字段。
  */
 
+import { describeError } from '../lib/errors';
 const KEY = "rolecard.dataSource.v1";
 
 export type DataSource =
@@ -172,7 +173,7 @@ export async function tryConnect(base: string, user: string, secret: string): Pr
       ok: false,
       why:
         `连不上 ${origin}（网络不通，或对面没放行这个来源的跨域访问 —— ` +
-        `云端那台要设 API_ALLOW_ORIGINS）。${(e as Error).message}`,
+        `云端那台要设 API_ALLOW_ORIGINS）。${describeError(e)}`,
     };
   }
   if (res.status === 401 || res.status === 403) {

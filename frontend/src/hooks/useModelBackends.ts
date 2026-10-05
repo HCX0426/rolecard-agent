@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api, type BackendRow, type ModelSettings } from "../api";
 import type { Tone } from "../components/Toast";
+import { describeError } from '../lib/errors';
 
 /** 模型设置里"这一页要显示的那些行"：只留**参与对话**的模型（`used_by` 含 chat，派生自
  *  服务页的引用行 —— 拆层后没有 usage 列可筛了）。读的是分组视图 `providers`，把凭据组
@@ -64,7 +65,7 @@ export function useModelBackends(onStatus: (text: string, tone?: Tone) => void) 
       await api.setModelContext(name, numCtx);
       await reload();
     } catch (e) {
-      onStatus(`设置上下文窗口失败：${(e as Error).message}`, "warn");
+      onStatus(`设置上下文窗口失败：${describeError(e)}`, "warn");
     }
   }
 
@@ -87,7 +88,7 @@ export function useModelBackends(onStatus: (text: string, tone?: Tone) => void) 
         ),
       );
     } catch (e) {
-      onStatus(`设置采样惩罚失败：${(e as Error).message}`, "warn");
+      onStatus(`设置采样惩罚失败：${describeError(e)}`, "warn");
     }
   }
 

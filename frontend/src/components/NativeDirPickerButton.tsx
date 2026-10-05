@@ -8,6 +8,7 @@
 import { useState } from "react";
 
 import { shellBridge } from "../lib/shell";
+import { describeError } from '../lib/errors';
 
 export function NativeDirPickerButton({
   disabled,
@@ -28,7 +29,7 @@ export function NativeDirPickerButton({
       const picked = await bridge.pickDirectory();
       if (picked) onPicked(picked); // 取消 = null：什么都不改，也不报错
     } catch (e) {
-      setErr(`系统对话框没打开：${(e as Error).message}`);
+      setErr(`系统对话框没打开：${describeError(e)}`);
     }
   }
 

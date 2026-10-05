@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type TimelineEvent, type TimelinePage } from "../api";
 import { formatUtcNaive } from "../lib/quiet";
 import { Button, Modal, Notice } from "./ui";
+import { describeError } from '../lib/errors';
 
 /** 顶部那个下拉：一个控件而不是四个开关 —— "对话"锚点单独看没有意义（§6.2）。 */
 const FILTERS: { key: string; label: string; kinds: string | null }[] = [
@@ -116,7 +117,7 @@ export default function TimelineDrawer({
         setTruncated(page.truncated);
       } catch (e) {
         if (req !== reqRef.current) return;
-        setError((e as Error).message);
+        setError(describeError(e));
         if (!append) {
           setItems([]);
           setCursor(null);

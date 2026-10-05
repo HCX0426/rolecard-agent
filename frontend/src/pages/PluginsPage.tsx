@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type PluginRow, type ToolCatalog } from "../api";
 import { PageHeader, Switch } from "../components/ui";
+import { describeError } from '../lib/errors';
 
 /**
  * 插件页 = 纯领域插件。
@@ -73,7 +74,7 @@ function DomainPlugins() {
       setStatus(`${pluginId} → ${enabled ? "已启用" : "已停用"}，模型下次开口即用新清单`);
       await load();
     } catch (e) {
-      setStatus(`切换失败：${(e as Error).message}`);
+      setStatus(`切换失败：${describeError(e)}`);
       await load();
     }
   }

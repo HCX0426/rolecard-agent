@@ -36,6 +36,7 @@ import {
   type SyncKind,
   type UploadMode,
 } from "../lib/sync";
+import { describeError } from '../lib/errors';
 
 type Step = "ask" | "dry" | "conflict" | "done";
 
@@ -250,7 +251,7 @@ function toBackend(
 }
 
 function errText(e: unknown): string {
-  return e instanceof ApiError ? e.message : (e as Error).message || "同步失败";
+  return e instanceof ApiError ? e.message : describeError(e) || "同步失败";
 }
 
 function Title({ children }: { children: React.ReactNode }) {

@@ -13,6 +13,7 @@ import {
   type McpTestResult,
 } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
+import { describeError } from '../lib/errors';
 
 /** 每行的连接态：交通灯 + 展开时显示的工具/错误。 */
 type RowTest = { phase: "idle" } | { phase: "testing" } | { phase: "done"; result: McpTestResult };
@@ -77,7 +78,7 @@ export function ExtensionPanel() {
   }, []);
 
   useEffect(() => {
-    load().catch((e) => setStatus({ ok: false, msg: `加载失败：${(e as Error).message}` }));
+    load().catch((e) => setStatus({ ok: false, msg: `加载失败：${describeError(e)}` }));
   }, [load]);
 
   function openAdd() {
@@ -123,7 +124,7 @@ export function ExtensionPanel() {
       setStatus({ ok: true, msg: "已保存并热生效；正在自动测试连接…" });
       void test(saved); // 添加即自动测；连不上保留该行、交通灯标红
     } catch (e) {
-      setStatus({ ok: false, msg: `保存失败：${(e as Error).message}` });
+      setStatus({ ok: false, msg: `保存失败：${describeError(e)}` });
     } finally {
       setBusy(null);
     }
@@ -135,7 +136,7 @@ export function ExtensionPanel() {
       await api.patch(`/api/mcp/servers/${encodeURIComponent(s.id)}`, { enabled: !s.enabled });
       await load();
     } catch (e) {
-      setStatus({ ok: false, msg: `操作失败：${(e as Error).message}` });
+      setStatus({ ok: false, msg: `操作失败：${describeError(e)}` });
     } finally {
       setBusy(null);
     }
@@ -150,7 +151,7 @@ export function ExtensionPanel() {
     } catch (e) {
       setTests((t) => ({
         ...t,
-        [s.id]: { phase: "done", result: { id: s.id, ok: false, tool_count: 0, tools: [], error: (e as Error).message } },
+        [s.id]: { phase: "done", result: { id: s.id, ok: false, tool_count: 0, tools: [], error: describeError(e) } },
       }));
     }
   }
@@ -162,7 +163,7 @@ export function ExtensionPanel() {
       await load();
       setStatus({ ok: true, msg: `已移除 ${s.display_name}。` });
     } catch (e) {
-      setStatus({ ok: false, msg: `删除失败：${(e as Error).message}` });
+      setStatus({ ok: false, msg: `删除失败：${describeError(e)}` });
     } finally {
       setBusy(null);
     }
@@ -174,7 +175,7 @@ export function ExtensionPanel() {
     try {
       parsed = JSON.parse(pasteText) as Record<string, unknown>;
     } catch (e) {
-      setStatus({ ok: false, msg: `JSON 解析失败：${(e as Error).message}` });
+      setStatus({ ok: false, msg: `JSON 解析失败：${describeError(e)}` });
       return;
     }
     const map = (parsed.mcpServers ?? parsed) as Record<string, { url?: string; headers?: Record<string, string>; name?: string }>;
@@ -197,7 +198,7 @@ export function ExtensionPanel() {
         });
         n += 1;
       } catch (e) {
-        errs.push(`${id}: ${(e as Error).message}`);
+        errs.push(`${id}: ${describeError(e)}`);
       }
     }
     await load();
@@ -217,7 +218,7 @@ export function ExtensionPanel() {
     try {
       setConn(await api.post<ConnectivityResult>("/api/services/check"));
     } catch (e) {
-      setStatus({ ok: false, msg: `检测失败：${(e as Error).message}` });
+      setStatus({ ok: false, msg: `检测失败：${describeError(e)}` });
     } finally {
       setConnBusy(false);
     }

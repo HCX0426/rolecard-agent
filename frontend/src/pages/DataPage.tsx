@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type GenericRecord, type PluginRow, type ReportRecord } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
 import { Card, Notice, PageHeader, Tag } from "../components/ui";
+import { describeError } from '../lib/errors';
 
 // 数据 —— 领域数据的唯一归属地（自"插件 → 详情"里升为独立顶层页）。
 // 数据随领域归属：未来新增领域插件时，这里自动多出一个分组。
@@ -115,7 +116,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
       setStatus({ ok: true, msg: "已保存修正" });
       await load();
     } catch (e) {
-      setStatus({ ok: false, msg: `保存失败：${(e as Error).message}` });
+      setStatus({ ok: false, msg: `保存失败：${describeError(e)}` });
     }
   }
 
@@ -129,7 +130,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
       setStatus({ ok: true, msg: "已删除" });
       await load();
     } catch (e) {
-      setStatus({ ok: false, msg: `删除失败：${(e as Error).message}` });
+      setStatus({ ok: false, msg: `删除失败：${describeError(e)}` });
     }
   }
 
@@ -386,7 +387,7 @@ function AddReportForm({ onDone }: { onDone: () => void }) {
       });
       onDone();
     } catch (e) {
-      setErr(`保存失败：${(e as Error).message}`);
+      setErr(`保存失败：${describeError(e)}`);
     } finally {
       setBusy(false);
     }
@@ -551,7 +552,7 @@ function GenericDomainData({
       setStatus({ ok: true, msg: "已保存" });
       await load();
     } catch (e) {
-      setStatus({ ok: false, msg: `保存失败：${(e as Error).message}` });
+      setStatus({ ok: false, msg: `保存失败：${describeError(e)}` });
     }
   }
 
@@ -561,7 +562,7 @@ function GenericDomainData({
       setStatus({ ok: true, msg: "已删除" });
       await load();
     } catch (e) {
-      setStatus({ ok: false, msg: `删除失败：${(e as Error).message}` });
+      setStatus({ ok: false, msg: `删除失败：${describeError(e)}` });
     }
   }
 
@@ -587,7 +588,7 @@ function GenericDomainData({
       setStatus({ ok: true, msg: "已新增" });
       await load();
     } catch (e) {
-      setStatus({ ok: false, msg: `保存失败：${(e as Error).message}` });
+      setStatus({ ok: false, msg: `保存失败：${describeError(e)}` });
     }
   }
 

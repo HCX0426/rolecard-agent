@@ -22,6 +22,7 @@ import { AddModelDrawer } from "./AddModelDrawer";
 import { LocalServiceCard } from "./LocalServiceCard";
 import { useConfirm } from "../hooks/useConfirm";
 import { Button, Card, Modal, Notice } from "./ui";
+import { describeError } from '../lib/errors';
 
 type ProbeTarget = { group: ProviderGroup; row: ProviderModelRow };
 
@@ -42,7 +43,7 @@ export function ModelsPanel({ onOpenServices }: { onOpenServices?: () => void })
   }, []);
 
   useEffect(() => {
-    load().catch((e) => setStatus({ ok: false, msg: `加载失败：${(e as Error).message}` }));
+    load().catch((e) => setStatus({ ok: false, msg: `加载失败：${describeError(e)}` }));
     api
       .get<{ providers: ModelProvider[] }>("/api/settings/model-providers")
       .then((s) => setCatalog(s.providers ?? []))
@@ -65,7 +66,7 @@ export function ModelsPanel({ onOpenServices }: { onOpenServices?: () => void })
       await load();
       setStatus({ ok: true, msg: `已删除 ${row.name}（下一轮对话起生效）。` });
     } catch (e) {
-      setStatus({ ok: false, msg: `删除失败：${(e as Error).message}` });
+      setStatus({ ok: false, msg: `删除失败：${describeError(e)}` });
     }
   }
 
@@ -95,7 +96,7 @@ export function ModelsPanel({ onOpenServices }: { onOpenServices?: () => void })
           : `端点不通：${outcome.detail || "没有响应"}`,
       });
     } catch (e) {
-      setStatus({ ok: false, msg: `探测失败：${(e as Error).message}` });
+      setStatus({ ok: false, msg: `探测失败：${describeError(e)}` });
     } finally {
       setProbing(false);
     }
@@ -167,7 +168,7 @@ export function ModelsPanel({ onOpenServices }: { onOpenServices?: () => void })
         catalog={catalog}
         onAdded={(name) => {
           setJustAdded(name);
-          load().catch((e) => setStatus({ ok: false, msg: `刷新失败：${(e as Error).message}` }));
+          load().catch((e) => setStatus({ ok: false, msg: `刷新失败：${describeError(e)}` }));
         }}
       />
 

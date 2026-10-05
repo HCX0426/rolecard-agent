@@ -10,6 +10,7 @@ import {
 } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
 import { formatBytes } from "../lib/uploadOutcome";
+import { describeError } from '../lib/errors';
 
 // ---------------------------------------------------------------- 知识库（v2.1 RAG）
 
@@ -55,7 +56,7 @@ function KnowledgePanel() {
       setStatus(`已清空作用域 ${scope}（移除 ${r.removed_chunks} 段，写入审计）`);
       await load();
     } catch (e) {
-      setStatus(`清空失败：${(e as Error).message}`);
+      setStatus(`清空失败：${describeError(e)}`);
     }
   }
 
@@ -65,7 +66,7 @@ function KnowledgePanel() {
     try {
       setOrphans(await api.get<OrphanReport>("/api/uploads/orphans"));
     } catch (e) {
-      setStatus(`盘点失败：${(e as Error).message}`);
+      setStatus(`盘点失败：${describeError(e)}`);
     } finally {
       setBusy(false);
     }
@@ -83,7 +84,7 @@ function KnowledgePanel() {
           : `已回收 ${r.deleted} 个文件，释放 ${formatBytes(r.freed_bytes)}（写入审计）`,
       );
     } catch (e) {
-      setStatus(`回收失败：${(e as Error).message}`);
+      setStatus(`回收失败：${describeError(e)}`);
     } finally {
       setBusy(false);
     }

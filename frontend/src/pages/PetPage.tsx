@@ -32,6 +32,7 @@ import { read as readDataSource } from "../lib/dataSource";
 import { shellBridge } from "../lib/shell";
 import { PANEL_TICK_MS, panelCountdown, panelHeld, panelTimerArmed } from "../lib/petPanel";
 import { type StreamMeta } from "../lib/stream";
+import { describeError } from '../lib/errors';
 
 const BUBBLE_MS = 30_000; // 气泡到点自己收起：驻留件不该把一句话长期戳在桌面上
 // （不做淡出：这扇窗是透明窗，半透明的每一毫秒透出来的都是桌面本身 —— 那正是"重影"）
@@ -805,7 +806,7 @@ export default function PetPage() {
         busyRef.current = false;
       }
     } catch (e) {
-      setStreamError((e as Error).message);
+      setStreamError(describeError(e));
     } finally {
       sendingRef.current = false;
       // 服务端 checkpoint 是对话的唯一真相：一轮跑完重读一次，面板显示的就是库里真存下的东西。
@@ -822,7 +823,7 @@ export default function PetPage() {
         speakLastFrom(page);
       } catch (e) {
         // 读不到回放就**留着**气泡与乐观那条：宁可屏幕上重一遍，也不能让用户以为"我说的话没了"。
-        setHistoryError(`历史没读到：${(e as Error).message}`);
+        setHistoryError(`历史没读到：${describeError(e)}`);
       }
     }
   }
@@ -860,7 +861,7 @@ export default function PetPage() {
       handoff(page);
       speakLastFrom(page); // 重生那版也要读出来：屏幕上换了内容、声音还念旧的就是两份事实
     } catch (e) {
-      setStreamError(`重新生成失败：${(e as Error).message}`);
+      setStreamError(`重新生成失败：${describeError(e)}`);
     } finally {
       sendingRef.current = false;
     }

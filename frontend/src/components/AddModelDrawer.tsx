@@ -17,6 +17,7 @@ import {
   type ProviderGroup,
 } from "../api";
 import { Button, Modal } from "./ui";
+import { describeError } from '../lib/errors';
 
 /** 供应商来源：已配置的凭据组（沿用 key）或目录里的新供应商（要填 key）。 */
 type Source =
@@ -103,7 +104,7 @@ export function AddModelDrawer({
           : `拉列表失败：${res.detail || "端点没有响应"} —— 确认名称无误可以直接手填。`,
       );
     } catch (e) {
-      setError(`拉取模型列表失败：${(e as Error).message}`);
+      setError(`拉取模型列表失败：${describeError(e)}`);
     } finally {
       setBusy(false);
     }
@@ -119,7 +120,7 @@ export function AddModelDrawer({
           : { phase: "failed", detail: res.detail || "端点没有响应" },
       );
     } catch (e) {
-      setTest({ phase: "failed", detail: (e as Error).message });
+      setTest({ phase: "failed", detail: describeError(e) });
     }
   }
 
@@ -137,7 +138,7 @@ export function AddModelDrawer({
         res.reachable ? { phase: "ok", listed: res.model_listed, detail: res.detail } : test,
       );
     } catch (e) {
-      setError(`探测失败：${(e as Error).message}`);
+      setError(`探测失败：${describeError(e)}`);
     } finally {
       setProbing(false);
     }
@@ -161,7 +162,7 @@ export function AddModelDrawer({
       onAdded(name);
       onClose();
     } catch (e) {
-      setError(`加入失败：${(e as Error).message}`);
+      setError(`加入失败：${describeError(e)}`);
       setBusy(false);
     }
   }

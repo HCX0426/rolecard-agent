@@ -18,6 +18,7 @@ import { api, type ReachoutsPage, type ReachoutRow } from "../api";
 import { formatUtcNaive } from "../lib/quiet";
 import QuietLine from "./QuietLine";
 import { useConfirm } from "../hooks/useConfirm";
+import { describeError } from '../lib/errors';
 
 const DAY_MS = 86_400_000;
 
@@ -133,7 +134,7 @@ export default function ReachoutPanel({
         setData(p);
         onUnreadChange(p.unread);
       })
-      .catch((e) => setErr(`加载失败：${(e as Error).message}`));
+      .catch((e) => setErr(`加载失败：${describeError(e)}`));
   }
 
   useEffect(() => {
@@ -157,7 +158,7 @@ export default function ReachoutPanel({
       await api.deleteReachout(row.id);
       await reload();
     } catch (e) {
-      setErr(`删除失败：${(e as Error).message}`);
+      setErr(`删除失败：${describeError(e)}`);
     }
   }
 
@@ -176,7 +177,7 @@ export default function ReachoutPanel({
       await api.clearReachouts(roleFilter ?? undefined);
       await reload();
     } catch (e) {
-      setErr(`清空失败：${(e as Error).message}`);
+      setErr(`清空失败：${describeError(e)}`);
     }
   }
 
@@ -202,7 +203,7 @@ export default function ReachoutPanel({
         setData(p);
         onUnreadChange(p.unread);
       } catch (e) {
-        setErr(`操作失败：${(e as Error).message}`);
+        setErr(`操作失败：${describeError(e)}`);
       }
       return;
     }

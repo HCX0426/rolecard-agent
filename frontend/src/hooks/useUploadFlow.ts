@@ -4,6 +4,7 @@ import { useState } from "react";
 import { api, type ExtractResult } from "../api";
 import { describeExtract, describeUpload } from "../lib/uploadOutcome";
 import type { Tone } from "../components/Toast";
+import { describeError } from '../lib/errors';
 
 interface UploadFlowDeps {
   /** 当前会话；没有时由 `ensureSession` 现开一个。 */
@@ -59,12 +60,12 @@ export function useUploadFlow({
       try {
         result = await api.extractRecord(r.task_id);
       } catch (e) {
-        extractError = (e as Error).message;
+        extractError = describeError(e);
       }
       const outcome = describeExtract(result, extractError, r.file);
       onStatus(outcome.text, outcome.tone);
     } catch (e) {
-      onStatus(`上传失败：${(e as Error).message}`, "warn");
+      onStatus(`上传失败：${describeError(e)}`, "warn");
     } finally {
       setUploading(false);
       await reloadMessages(tid);

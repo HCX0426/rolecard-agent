@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, USAGE_LABEL, type ModelSettings } from "../api";
 import type { ServiceCategoryView, ServiceEndpoint, ServicesView } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
+import { describeError } from '../lib/errors';
 
 // 载荷契约（ServiceEndpoint/ServiceCategoryView/ServicesView）住在 `api.ts`（`R102-22`）：
 // 那里自称"与后端契约一一对应"，契约测试也只读它 —— 组件本地声明等于契约的两张脸。
@@ -59,7 +60,7 @@ export function ServicesPanel() {
   }, []);
 
   useEffect(() => {
-    load().catch((e) => setError(`加载失败：${(e as Error).message}`));
+    load().catch((e) => setError(`加载失败：${describeError(e)}`));
   }, [load]);
 
   const run = async (id: string, fn: () => Promise<void>, okMsg: string) => {
@@ -70,7 +71,7 @@ export function ServicesPanel() {
       await load();
       setFlash(`${okMsg}· ${new Date().toLocaleTimeString()}`);
     } catch (e) {
-      setError(`保存失败：${(e as Error).message}`);
+      setError(`保存失败：${describeError(e)}`);
     } finally {
       setBusy(null);
     }

@@ -15,6 +15,7 @@
 
 import { ApiError, readableDetail } from "../api";
 import { read as readDataSource } from "./dataSource";
+import { describeError } from '../lib/errors';
 
 export type SyncKind = "card" | "thread" | "memory" | "reachout";
 
@@ -162,7 +163,7 @@ async function toLocal<T>(method: string, url: string, body?: unknown, timeout =
     });
   } catch (e) {
     if ((e as Error).name === "AbortError") throw new ApiError(0, "本机程序没在限时内回答。");
-    throw new ApiError(0, `网络错误：${(e as Error).message}`);
+    throw new ApiError(0, `网络错误：${describeError(e)}`);
   } finally {
     clearTimeout(timer);
   }

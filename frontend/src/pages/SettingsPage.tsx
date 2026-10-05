@@ -21,6 +21,7 @@ import { useConfirm } from "../hooks/useConfirm";
 import { formatUtcNaive } from "../lib/quiet";
 import QuietLine from "../components/QuietLine";
 import { Button, Card } from "../components/ui";
+import { describeError } from '../lib/errors';
 
 // 设置页子页签：模型（凭据组 + 模型行，见 components/ModelsPanel）/ 服务（运行时状态与降级
 // 策略）/ 记忆与任务目录 / 关于 / 扩展 / 运行环境 / 审计。知识库已升为独立顶层页 ——
@@ -205,7 +206,7 @@ function MemoryPanel() {
 
   useEffect(() => {
     loadRoles().catch(() => {});
-    loadMemory(memScope).catch((e) => setMemErr(`加载失败：${(e as Error).message}`));
+    loadMemory(memScope).catch((e) => setMemErr(`加载失败：${describeError(e)}`));
   }, [loadRoles, loadMemory, memScope]);
 
   async function changeMemScope(next: string) {
@@ -235,7 +236,7 @@ function MemoryPanel() {
       setMemDraft(m.content);
       setMemMsg(m.enabled ? "已开启（此后的对话会带上记忆）" : "已关闭");
     } catch (e) {
-      setMemErr(`保存失败：${(e as Error).message}`);
+      setMemErr(`保存失败：${describeError(e)}`);
     }
   }
 
@@ -250,7 +251,7 @@ function MemoryPanel() {
       setMemDraft(m.content);
       setMemMsg("已保存");
     } catch (e) {
-      setMemErr(`保存失败：${(e as Error).message}`);
+      setMemErr(`保存失败：${describeError(e)}`);
     }
   }
 
@@ -263,7 +264,7 @@ function MemoryPanel() {
       setMemDraft(m.content);
       setMemMsg("已清空");
     } catch (e) {
-      setMemErr(`清空失败：${(e as Error).message}`);
+      setMemErr(`清空失败：${describeError(e)}`);
     }
   }
 
@@ -290,7 +291,7 @@ function MemoryPanel() {
           : "已关掉自动提取：只留对话页那个「提取精华」按钮",
       );
     } catch (e) {
-      setMemErr(`保存失败：${(e as Error).message}`);
+      setMemErr(`保存失败：${describeError(e)}`);
     } finally {
       setExtractBusy(false);
     }
@@ -323,7 +324,7 @@ function MemoryPanel() {
           : p.detail || "没有需要整理的条目。",
       );
     } catch (e) {
-      setMemErr(`整理失败：${(e as Error).message}`);
+      setMemErr(`整理失败：${describeError(e)}`);
     } finally {
       setConsolidating(false);
     }
@@ -340,7 +341,7 @@ function MemoryPanel() {
       setMemDraft(m.content);
       setMemMsg(ok);
     } catch (e) {
-      setMemErr(`操作失败：${(e as Error).message}`);
+      setMemErr(`操作失败：${describeError(e)}`);
     } finally {
       setItemBusy(false);
     }
@@ -456,7 +457,7 @@ function MemoryPanel() {
   }, []);
 
   useEffect(() => {
-    loadWorkspace().catch((e) => setWsErr(`加载任务目录失败：${(e as Error).message}`));
+    loadWorkspace().catch((e) => setWsErr(`加载任务目录失败：${describeError(e)}`));
   }, [loadWorkspace]);
 
   async function saveWorkspace() {
@@ -468,7 +469,7 @@ function MemoryPanel() {
       setWsDraft(d.path);
       setWsMsg("已设置（保存即对角色下一轮生效）");
     } catch (e) {
-      setWsErr(`保存失败：${(e as Error).message}`);
+      setWsErr(`保存失败：${describeError(e)}`);
     }
   }
 
@@ -481,7 +482,7 @@ function MemoryPanel() {
       setWsDraft(d.path);
       setWsMsg("已清除，回落 env 默认目录");
     } catch (e) {
-      setWsErr(`清除失败：${(e as Error).message}`);
+      setWsErr(`清除失败：${describeError(e)}`);
     }
   }
 
@@ -490,7 +491,7 @@ function MemoryPanel() {
     try {
       setTree(await api.browseTree(path));
     } catch (e) {
-      setTreeErr(`浏览失败：${(e as Error).message}`);
+      setTreeErr(`浏览失败：${describeError(e)}`);
     }
   }
 
@@ -521,7 +522,7 @@ function MemoryPanel() {
         `收件箱已改为每 ${next} 天一摞：同一角色在这个窗口里的主动开口会折成一行`,
       );
     } catch (e) {
-      setReachoutErr(`保存失败：${(e as Error).message}`);
+      setReachoutErr(`保存失败：${describeError(e)}`);
     }
   }
 
@@ -535,7 +536,7 @@ function MemoryPanel() {
       setReachoutOn(!reachoutOn);
       setReachoutMsg(reachoutOn ? "已关闭：所有角色都不会主动找你" : "已开启：角色可以主动找你（还需各角色卡的开关）");
     } catch (e) {
-      setReachoutErr(`保存失败：${(e as Error).message}`);
+      setReachoutErr(`保存失败：${describeError(e)}`);
     }
   }
 
@@ -1064,7 +1065,7 @@ function AboutPanel({
   }, []);
 
   useEffect(() => {
-    loadInfo().catch((e) => setLoadError(`加载失败：${(e as Error).message}`));
+    loadInfo().catch((e) => setLoadError(`加载失败：${describeError(e)}`));
   }, [loadInfo]);
 
   return (
@@ -1197,7 +1198,7 @@ function RuntimePanel() {
     api
       .get<RuntimePayload>("/api/settings/runtime")
       .then(absorb)
-      .catch((e) => setErr(`加载失败：${(e as Error).message}`));
+      .catch((e) => setErr(`加载失败：${describeError(e)}`));
     void loadQuiet();
   }, [absorb, loadQuiet]);
 
@@ -1218,7 +1219,7 @@ function RuntimePanel() {
       setSaved("已保存并生效");
       setTimeout(() => setSaved(""), 3000);
     } catch (e) {
-      setErr(`保存失败：${(e as Error).message}`);
+      setErr(`保存失败：${describeError(e)}`);
     } finally {
       setBusy(false);
     }

@@ -35,6 +35,7 @@ import {
   type LeftConflict,
   type ReconcileResult,
 } from "../lib/sync";
+import { describeError } from '../lib/errors';
 
 
 export default function DataSourceSwitch() {
@@ -78,7 +79,7 @@ export default function DataSourceSwitch() {
         setRecWhy(
           e instanceof ApiError
             ? `登录同步未完成：${e.message}`
-            : `登录同步未完成：${(e as Error).message}`,
+            : `登录同步未完成：${describeError(e)}`,
         ),
       )
       .finally(() => setSyncing(false));

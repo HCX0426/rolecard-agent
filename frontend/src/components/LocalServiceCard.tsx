@@ -15,6 +15,7 @@ import { api, type LocalServiceStatus } from "../api";
 import Button from "./ui/Button";
 import { shellBridge, type OllamaOwner } from "../lib/shell";
 import { formatBytes } from "../lib/bytes";
+import { describeError } from '../lib/errors';
 
 export function LocalServiceCard() {
   const [status, setStatus] = useState<LocalServiceStatus | null>(null);
@@ -59,7 +60,7 @@ export function LocalServiceCard() {
       }
     } catch (e) {
       // 失败句子由后端给（502 的 detail 说清了"连不上"还是"加载不了/多为显存不足"）。
-      setMsg({ ok: false, text: (e as Error).message });
+      setMsg({ ok: false, text: describeError(e) });
     } finally {
       setBusy(null);
       await load();
@@ -79,7 +80,7 @@ export function LocalServiceCard() {
           : { ok: false, text: attempt.reason ?? "壳没有理由就给回失败" },
       );
     } catch (e) {
-      setMsg({ ok: false, text: (e as Error).message });
+      setMsg({ ok: false, text: describeError(e) });
     } finally {
       setBusy(null);
       await load();

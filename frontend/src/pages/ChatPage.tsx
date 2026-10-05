@@ -27,6 +27,7 @@ import TurnRow from "../components/chat/TurnRow";
 import ThinkingPanel from "../components/chat/ThinkingPanel";
 import { Markdown } from "../components/Markdown";
 import { Button } from "../components/ui";
+import { describeError } from '../lib/errors';
 
 export default function ChatPage({
   deepThread = null,
@@ -203,7 +204,7 @@ export default function ChatPage({
       setCtxBudget(ctxInfo.budget);
       setStatus("");
     } catch (e) {
-      setStatus(`加载历史失败：${(e as Error).message}`, "warn");
+      setStatus(`加载历史失败：${describeError(e)}`, "warn");
     }
   }
 
@@ -255,7 +256,7 @@ export default function ChatPage({
       await refreshSessions();
       return s.thread_id;
     } catch (e) {
-      setStatus(`临时话题创建失败：${(e as Error).message}`, "warn");
+      setStatus(`临时话题创建失败：${describeError(e)}`, "warn");
       return null;
     }
   }
@@ -292,7 +293,7 @@ export default function ChatPage({
       await refreshSessions();
       return ensured.thread_id;
     } catch (e) {
-      setStatus(`打开那条主动会话失败：${(e as Error).message}`, "warn");
+      setStatus(`打开那条主动会话失败：${describeError(e)}`, "warn");
       return null;
     }
   }
@@ -334,7 +335,7 @@ export default function ChatPage({
       if (sessionId === threadId) await selectSession(threadId);
       await refreshSessions();
     } catch (e) {
-      setStatus(`清空失败：${(e as Error).message}`, "warn");
+      setStatus(`清空失败：${describeError(e)}`, "warn");
     }
   }
 
@@ -386,7 +387,7 @@ export default function ChatPage({
       }
       await refreshSessions();
     } catch (e) {
-      setStatus(`删除失败：${(e as Error).message}`, "warn");
+      setStatus(`删除失败：${describeError(e)}`, "warn");
     }
   }
 
@@ -430,7 +431,7 @@ export default function ChatPage({
       const r = await api.enhancePrompt(draft);
       setInput(r.text);
     } catch (e) {
-      setStatus(`增强提示词失败：${(e as Error).message}`, "warn");
+      setStatus(`增强提示词失败：${describeError(e)}`, "warn");
     } finally {
       setEnhancing(false);
     }
@@ -461,7 +462,7 @@ export default function ChatPage({
       if (parts.length) setStatus(`已提取进${roleLabel}的记忆：${parts.join("、")}${cost}${hint}`);
       else setStatus(report.detail || "这段对话里没有值得新记的事实。", "info");
     } catch (e) {
-      setStatus(`提取失败：${(e as Error).message}`, "warn");
+      setStatus(`提取失败：${describeError(e)}`, "warn");
     } finally {
       setDistilling(false);
     }
@@ -575,7 +576,7 @@ export default function ChatPage({
       setStatus(`已删除所选对话`, "ok");
       await reloadMessages(sessionId);
     } catch (e) {
-      setStatus(`删除失败：${(e as Error).message}`, "warn");
+      setStatus(`删除失败：${describeError(e)}`, "warn");
     }
   }
 
@@ -593,7 +594,7 @@ export default function ChatPage({
       await refreshSessions();
       return true;
     } catch (e) {
-      setStatus(`切换模型失败：${(e as Error).message}`, "warn");
+      setStatus(`切换模型失败：${describeError(e)}`, "warn");
       return false;
     }
   }
@@ -612,7 +613,7 @@ export default function ChatPage({
         "ok",
       );
     } catch (e) {
-      setStatus(`切换模式失败：${(e as Error).message}`, "warn");
+      setStatus(`切换模式失败：${describeError(e)}`, "warn");
     }
   }
 
@@ -634,7 +635,7 @@ export default function ChatPage({
       setStatus("已重命名", "ok");
       await refreshSessions();
     } catch (e) {
-      setStatus(`重命名失败：${(e as Error).message}`, "warn");
+      setStatus(`重命名失败：${describeError(e)}`, "warn");
     }
   }
 

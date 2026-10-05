@@ -13,6 +13,7 @@ import {
 } from "../api";
 import { formatBytes } from "../lib/bytes";
 import { formatUtcNaive } from "../lib/quiet";
+import { describeError } from '../lib/errors';
 
 function StatusBadge({ status }: { status: ApprovalStatus }) {
   const style =
@@ -77,7 +78,7 @@ export default function ApprovalPanel({
         setData(p);
         onPendingChange(p.pending);
       })
-      .catch((e) => setErr(`加载失败：${(e as Error).message}`));
+      .catch((e) => setErr(`加载失败：${describeError(e)}`));
   }, [open, onPendingChange]);
 
   async function decide(row: ApprovalRow, decision: "approve" | "reject") {
@@ -94,7 +95,7 @@ export default function ApprovalPanel({
         return { ...prev, items, pending };
       });
     } catch (e) {
-      setErr(`操作失败：${(e as Error).message}`);
+      setErr(`操作失败：${describeError(e)}`);
     }
   }
 

@@ -11,6 +11,7 @@ import {
   type ToolEntry,
 } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
+import { describeError } from '../lib/errors';
 
 // 范例草稿行：rowId 是稳定 React key（M7），删行/插行时输入框状态不串行；
 // 提交时只挑 user/assistant，rowId 不会外泄。
@@ -262,7 +263,7 @@ export default function RolesPage({
       setEditing(null);
       await load();
     } catch (e) {
-      setStatus({ ok: false, msg: `保存失败：${(e as Error).message}` });
+      setStatus({ ok: false, msg: `保存失败：${describeError(e)}` });
     }
   }
 
@@ -272,7 +273,7 @@ export default function RolesPage({
       setStatus({ ok: true, msg: `已删除 ${roleId}` });
       await load();
     } catch (e) {
-      setStatus({ ok: false, msg: `删除失败：${(e as Error).message}` });
+      setStatus({ ok: false, msg: `删除失败：${describeError(e)}` });
     }
   }
 
