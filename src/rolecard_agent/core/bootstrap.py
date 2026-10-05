@@ -28,7 +28,7 @@ from typing import Any, Protocol
 
 from rolecard_agent.base.audit import AuditTrail
 from rolecard_agent.base.identity import ensure_identity_row, resolve_instance_identity
-from rolecard_agent.base.observability import TraceEvent, Tracer, make_tracer
+from rolecard_agent.base.observability import TraceEvent, Tracer, logline, make_tracer
 from rolecard_agent.base.paths import user_data_root
 from rolecard_agent.config import Settings
 from rolecard_agent.core import mcp_store, runtime_settings
@@ -574,13 +574,10 @@ def build_runtime(
         backup_dir=user_data_root() / RETENTION_BACKUP_DIRNAME,
     )
     if any(pruned.values()):
-        import sys as _sys
-
-        print(
-            "[schema-migrate] retention 清理："
-            + ", ".join(f"{key}={count}" for key, count in pruned.items()),
-            file=_sys.stderr,
-            flush=True,
+        logline(
+            "notice",
+            "schema-migrate",
+            "retention 清理：" + ", ".join(f"{key}={count}" for key, count in pruned.items()),
         )
     audit = AuditTrail(conn)
     roles = RoleCardService(conn)

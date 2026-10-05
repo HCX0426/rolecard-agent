@@ -1700,6 +1700,118 @@ def check_api_holds_no_sql() -> None:
         fails.append("api-holds-no-sql is hollow: nothing under src/rolecard_agent/api was scanned")
 
 
+#: 裸 `print` 的**豁免表**（2026-10-04 审查快照"三条日志通道并存"那格的验收：
+#: "grep src 无 print(（豁免外）"）。键 = 文件，值 = 允许的**精确数量** ——
+#: 多一处（有人新开口）与少一处（已迁移却没更新名单，名单在说谎）都红。
+RAW_PRINT_ALLOWLIST: dict[str, int] = {
+    # 观测出口自己：`base/observability.logline` 的唯一实现处，全仓的人读日志从这一句出去。
+    "src/rolecard_agent/base/observability.py": 1,
+    # storage 在 base 之下，观测出口在结构上不可达（`test_import_floor` 的
+    # ALLOWED_DOWNWARD：storage 只许 import config/storage）—— 这 4 处是启动期通道：
+    # conn-close 两处诊断 + `migrate_event`（schema-migrate 事件流的 storage 侧写手，
+    # db.py 自己的 docstring 写着"不另起炉灶"）+ 备份删除的 notice。要迁它们得先动分层
+    # 契约，不该在日志这一格里顺手翻尺。
+    "src/rolecard_agent/storage/db.py": 4,
+}
+#: 反向防空转：`logline` 在 src 里的真实调用点少于这个数 = 迁移压根没发生（或被拆回去了）。
+LOGLINE_MIN_CALLS = 10
+
+
+def check_log_channels_unified() -> None:
+    """人读日志只有一条通道：裸 `print` 只许在豁免表里，stdlib `logging` 在 src 归零。
+
+    为什么单立这一格：从前三条人读通道并存 —— Tracer 的结构化事件（机器读）、17 处裸
+    `print`（各写各的前缀、stdout/stderr 混着来）、`core/tools/mcp.py` 一份英文
+    stdlib logging。代价不是难看，是**排障要先猜消息在哪条通道**。收口后分工两句话：
+    结构化归 `Tracer.emit`，人读的一句话归 `base/observability.logline`。
+
+    四臂判据（少一臂都会空转）：
+      * 豁免表外的文件出现 print 即红（抓"再开一个口"）；
+      * 豁免表里的数量**精确相等**：多 = 新开口；少 = 已迁移却没更新名单（名单说谎）；
+      * src 里任何 `import logging` / `from logging import` 即红（mcp 那三行已迁）；
+      * `logline` 调用点 ≥ `LOGLINE_MIN_CALLS`（防空转：一条都没有说明"迁移"是假的）。
+    AST 找调用而非 grep 文本：docstring 里那句"从前 17 处裸 print"是解释，不是出口
+    （同 `api holds no sql` 的"字符串常量 + 扣 docstring"那条纪律）。
+    """
+    src = ROOT / "src" / "rolecard_agent"
+    counts: dict[str, int] = {}
+    logging_hits: list[str] = []
+    logline_calls = 0
+    scanned = 0
+    for path in sorted(src.rglob("*.py")):
+        rel = path.relative_to(ROOT).as_posix()
+        scanned += 1
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except (SyntaxError, ValueError):
+            continue
+        prints = 0
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                if node.func.id == "print":
+                    prints += 1
+                elif node.func.id == "logline":
+                    logline_calls += 1
+            elif isinstance(node, ast.Import):
+                if any(a.name == "logging" or a.name.startswith("logging.") for a in node.names):
+                    logging_hits.append(f"{rel}:{node.lineno} import logging")
+            elif (
+                isinstance(node, ast.ImportFrom)
+                and node.module
+                and (node.module == "logging" or node.module.startswith("logging."))
+            ):
+                logging_hits.append(f"{rel}:{node.lineno} from logging import …")
+        if prints:
+            counts[rel] = prints
+
+    unregistered = sorted(
+        f"{rel}×{n}" for rel, n in counts.items() if rel not in RAW_PRINT_ALLOWLIST
+    )
+    stale = sorted(
+        f"{rel}（登记 {RAW_PRINT_ALLOWLIST[rel]}，现 {counts.get(rel, 0)}）"
+        for rel in RAW_PRINT_ALLOWLIST
+        if counts.get(rel, 0) != RAW_PRINT_ALLOWLIST[rel]
+    )
+    hollow = logline_calls < LOGLINE_MIN_CALLS
+    ok = not unregistered and not stale and not logging_hits and not hollow
+    if ok:
+        detail = (
+            f"{scanned} 个模块：裸 print 全在豁免内（{sum(RAW_PRINT_ALLOWLIST.values())} 处）、"
+            f"logging 0 处、logline {logline_calls} 个调用点"
+        )
+    else:
+        detail = "; ".join(
+            part
+            for part in (
+                f"豁免外裸 print：{unregistered}" if unregistered else "",
+                f"豁免数量对不上：{stale}" if stale else "",
+                f"src 里还有 logging：{logging_hits}" if logging_hits else "",
+                f"logline 只有 {logline_calls} 个调用点（<{LOGLINE_MIN_CALLS}，判据在空转）"
+                if hollow
+                else "",
+            )
+            if part
+        )
+    out("log channels unified", ok, detail)
+    if unregistered:
+        fails.append(
+            "raw print outside the logline allowlist: "
+            f"{unregistered}（人读日志归 base/observability.logline；"
+            "确有结构性理由的加进 RAW_PRINT_ALLOWLIST 并写清理由）"
+        )
+    if stale:
+        fails.append(
+            f"raw-print allowlist out of date: {stale}（迁移了就更新数量，别留说谎的名单）"
+        )
+    if logging_hits:
+        fails.append(f"stdlib logging survives in src: {logging_hits}（迁到 logline）")
+    if hollow:
+        fails.append(
+            "log-channels check is hollow: logline call sites "
+            f"{logline_calls} < {LOGLINE_MIN_CALLS}"
+        )
+
+
 def check_sync_write_ownership() -> None:
     """`features/sync.py` 里不许再有 INSERT 字面量 —— 写入口归各自的 owner service。
 
@@ -4037,6 +4149,7 @@ def main() -> int:
     check_session_thread_write_seam()
     check_storage_db_has_no_business_tables()
     check_api_holds_no_sql()
+    check_log_channels_unified()
     check_sync_write_ownership()
     check_write_txn_ownership_inventory()
     check_audit_ledger_row_count()

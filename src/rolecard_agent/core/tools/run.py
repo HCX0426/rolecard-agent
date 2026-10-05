@@ -45,6 +45,7 @@ from pathlib import Path
 from langchain_core.tools import BaseTool, tool
 
 from rolecard_agent.base.audit import tool_audit as _audit
+from rolecard_agent.base.observability import logline
 from rolecard_agent.config import Settings
 from rolecard_agent.core.approvals import ApprovalNotFound, ApprovalService
 from rolecard_agent.core.tools.errors import ToolExecutionError
@@ -275,11 +276,11 @@ def _finish_terminal_error(approvals: ApprovalService, approval_id: int, exc: Ex
             {"error": f"{type(exc).__name__}: {exc}"},
         )
     except Exception:  # noqa: BLE001 -- 见上：最后只剩可观察性
-        print(
-            f"[approvals] 审批 #{approval_id} 的终态兜底也失败了，行停在 approved，"
+        logline(
+            "error",
+            "approvals",
+            f"审批 #{approval_id} 的终态兜底也失败了，行停在 approved，"
             f"等开机清扫收尾：{type(exc).__name__}: {exc}",
-            file=sys.stderr,
-            flush=True,
         )
 
 

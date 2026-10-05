@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import contextvars
-import sys
 from concurrent.futures import Future
 from typing import Annotated
 
@@ -24,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import ROLE_OPERATOR, Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
+from rolecard_agent.base.observability import logline
 from rolecard_agent.core.tools import run as run_tools
 
 router = APIRouter()
@@ -115,13 +115,13 @@ def decide_approval(
 
 
 def _note_approval_future(future: Future[None]) -> None:
-    """后台审批执行 Future 的收口：有意外就落一行 stderr，没有就什么都不做。"""
+    """后台审批执行 Future 的收口：有意外就落一行日志，没有就什么都不做。"""
     exc = future.exception()
     if exc is not None:
-        print(
-            f"[approvals] 后台执行线程意外终止（终态由兜底/清扫负责）：{type(exc).__name__}: {exc}",
-            file=sys.stderr,
-            flush=True,
+        logline(
+            "error",
+            "approvals",
+            f"后台执行线程意外终止（终态由兜底/清扫负责）：{type(exc).__name__}: {exc}",
         )
 
 

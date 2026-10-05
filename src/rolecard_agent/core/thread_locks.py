@@ -23,10 +23,11 @@
 
 from __future__ import annotations
 
-import sys
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+
+from rolecard_agent.base.observability import logline
 
 #: 锁表条目的告警阈值。**只告警，不回收**（2026-10-04 审查快照的锁表竞态条目）：旧实现会在超限时
 # 回收"当前没被持有"的锁，而"取出锁对象→acquire"之间没有任何引用计数 —— 另一线程恰在
@@ -49,12 +50,12 @@ def _lock_for(thread_id: str) -> threading.Lock:
             if len(_locks) >= _MAX_TRACKED and not _warned_full:
                 # 只响一次：这是"锁表大得反常"的信号（一万+ 个 thread_id），不是常规路径。
                 _warned_full = True
-                print(
-                    f"[thread-locks] 锁表达到 {_MAX_TRACKED} 条且不再回收"
+                logline(
+                    "warning",
+                    "thread-locks",
+                    f"锁表达到 {_MAX_TRACKED} 条且不再回收"
                     "（2026-10-04 审查快照：按 locked() 回收有互斥竞态）"
                     " —— 检查是不是 thread_id 在无界生成",
-                    file=sys.stderr,
-                    flush=True,
                 )
             lock = _locks.setdefault(thread_id, threading.Lock())
         return lock

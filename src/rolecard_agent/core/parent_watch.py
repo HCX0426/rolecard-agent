@@ -19,6 +19,8 @@ import time
 from collections.abc import Callable
 from typing import NoReturn
 
+from rolecard_agent.base.observability import logline
+
 #: 轮询间隔。2s 足够：父没了以后，端口多占两秒没有任何后果，而更密的轮询要一直花 CPU。
 DEFAULT_INTERVAL = 2.0
 
@@ -124,16 +126,17 @@ def start(
     if not pid or pid <= 0:
         return None
     if not is_alive(pid):
-        print(
-            f"[parent-watch] 启动时看不到父进程 {pid}，不装看门狗（宁可少一道保险，不误杀）",
-            flush=True,
+        logline(
+            "warning",
+            "parent-watch",
+            f"启动时看不到父进程 {pid}，不装看门狗（宁可少一道保险，不误杀）",
         )
         return None
 
     def loop() -> None:
         while is_alive(pid):
             time.sleep(interval)
-        print(f"[parent-watch] 父进程 {pid} 已退出，本机程序随之结束", flush=True)
+        logline("info", "parent-watch", f"父进程 {pid} 已退出，本机程序随之结束")
         on_exit()
 
     thread = threading.Thread(target=loop, name="parent-watch", daemon=True)

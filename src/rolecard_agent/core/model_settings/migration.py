@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import contextlib
 import json
-import sys
 
+from rolecard_agent.base.observability import logline
 from rolecard_agent.core.model_settings.rows import _kind_of_names, _table_columns
 from rolecard_agent.core.model_settings.rules import (
     _DEFAULT_BASE_URLS,
@@ -120,11 +120,11 @@ def migrate_to_provider_layers(conn: SqlConnection) -> int:
     # 前置 DROP（`R102-27`，与 db.py 同族三处的同一个理由 R28-15）：这一步死在半路，
     # 残留的暂存表会让下次启动的 CREATE 报 `already exists` —— 整个库再也打不开。
     # DROP IF EXISTS 让这一步可重放：INSERT 是单句原子，重跑从源表整表重灌，数据不丢。
-    # 迁移事件落 stderr（`R102-64`）：搬层是唯一没有可追溯事件的迁移路径。
-    print(
-        "[schema-migrate] model_backend 搬层开始（provider 两层化，暂存表 __layers）",
-        file=sys.stderr,
-        flush=True,
+    # 迁移事件走 `notice` 档落 stderr（`R102-64` 的旧约定由这一档承接，见 `logline`）。
+    logline(
+        "notice",
+        "schema-migrate",
+        "model_backend 搬层开始（provider 两层化，暂存表 __layers）",
     )
     conn.execute("DROP TABLE IF EXISTS model_backend__layers")
     conn.execute(

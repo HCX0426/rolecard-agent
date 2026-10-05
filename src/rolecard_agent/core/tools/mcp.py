@@ -20,16 +20,14 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
-import logging
 from typing import Any, cast
 
 from langchain_core.tools import BaseTool
 from pydantic import PrivateAttr
 
 from rolecard_agent.base.audit import AGENT_ACTOR, AuditTrail
+from rolecard_agent.base.observability import logline
 from rolecard_agent.config import McpServerConfig
-
-logger = logging.getLogger(__name__)
 
 # bind_tools 把每个工具的 name + description + JSON schema 一起发给模型。描述过长会白白
 # 撑大每轮 prompt 载荷；截断到一个够用的上限即可（架构计划 §6.1 治理项）。
@@ -118,7 +116,7 @@ class AuditedMcpTool(BaseTool):
                 detail={"phase": phase, **detail},
             )
         except Exception as exc:  # noqa: BLE001 - 审计失败绝不应影响工具结果
-            logger.warning("mcp audit write failed for %s: %s", self.name, exc)
+            logline("warning", "mcp", f"审计写入失败：{self.name}: {exc}")
 
     def _run(self, **kwargs: Any) -> Any:
         self._audit("invoke", {"args": kwargs})
@@ -167,9 +165,11 @@ def load_mcp_tools(servers: list[McpServerConfig], *, conn: Any = None) -> list[
     if not servers:
         return []
     if importlib.util.find_spec("langchain_mcp_adapters") is None:
-        logger.warning(
-            "MCP_SERVERS is set but langchain_mcp_adapters is not installed; "
-            "skipping MCP tools (pip install -r requirements-mcp.txt)"
+        logline(
+            "warning",
+            "mcp",
+            "配了 MCP_SERVERS 但没装 langchain-mcp-adapters，MCP 工具跳过"
+            "（pip install -r requirements-mcp.txt）",
         )
         return []
 
@@ -179,7 +179,7 @@ def load_mcp_tools(servers: list[McpServerConfig], *, conn: Any = None) -> list[
             try:
                 raw_tools = await _fetch_one(cfg)
             except Exception as exc:  # noqa: BLE001 - 隔离单个 server 故障
-                logger.warning("MCP server %s failed to load: %s", cfg.id, exc)
+                logline("warning", "mcp", f"MCP server {cfg.id} 加载失败：{exc}")
                 continue
             for raw in raw_tools:
                 out.append(AuditedMcpTool(raw, conn=conn, server_id=cfg.id))

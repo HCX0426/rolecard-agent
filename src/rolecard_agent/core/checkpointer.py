@@ -33,6 +33,7 @@ from typing import cast
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
+from rolecard_agent.base.observability import logline
 from rolecard_agent.storage.db import SqlConnection
 
 #: 每条线程最多留几条检查点 —— **含**最新那条（`R28-20`：原先这行注释写着"不含最新"，
@@ -222,7 +223,7 @@ def _vacuum(conn: SqlConnection) -> int:
     try:
         conn.execute("VACUUM")
     except sqlite3.OperationalError as exc:
-        print(f"[checkpoints] 库正被别的连接占着，这次不重排文件（{exc}）", flush=True)
+        logline("warning", "checkpoints", f"库正被别的连接占着，这次不重排文件（{exc}）")
         return 0
     after = int(conn.execute("PRAGMA page_count").fetchone()[0] or 0)
     return max(before - after, 0)
@@ -257,7 +258,11 @@ def reclaim_if_fragmented(
         after = int(conn.execute("PRAGMA page_count").fetchone()[0] or 0)
         freed = max(before - after, 0)
         if freed:
-            print(f"[checkpoints] 归还尾部 {freed} 个空页（{before} 页 → {after} 页）", flush=True)
+            logline(
+                "info",
+                "checkpoints",
+                f"归还尾部 {freed} 个空页（{before} 页 → {after} 页）",
+            )
         return freed
 
     mode = int(conn.execute("PRAGMA auto_vacuum").fetchone()[0] or 0)
@@ -269,9 +274,10 @@ def reclaim_if_fragmented(
         conn.execute("PRAGMA auto_vacuum = INCREMENTAL")
     freed = _vacuum(conn)
     if freed:
-        print(
-            f"[checkpoints] 空洞占 {ratio:.0%}（{free}/{pages} 页），全量重排归还 {freed} 页",
-            flush=True,
+        logline(
+            "info",
+            "checkpoints",
+            f"空洞占 {ratio:.0%}（{free}/{pages} 页），全量重排归还 {freed} 页",
         )
     return freed
 
@@ -303,16 +309,17 @@ def truncate_wal_at_boot(conn: SqlConnection) -> int:
         conn.execute(f"PRAGMA busy_timeout = {_WAL_TRUNCATE_BUSY_MS}")
         busy, log, _done = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
     except sqlite3.OperationalError as exc:
-        print(f"[checkpoints] 这次没能收 WAL（{exc}）—— 不影响数据，下次启动再试", flush=True)
+        logline("warning", "checkpoints", f"这次没能收 WAL（{exc}）—— 不影响数据，下次启动再试")
         return -1
     finally:
         with contextlib.suppress(sqlite3.Error):
             conn.execute(f"PRAGMA busy_timeout = {prev}")
     if int(busy or 0):
-        print(
-            f"[checkpoints] WAL 没截断：有连接正读着同一份库，{int(log)} 页还压在 -wal 里"
+        logline(
+            "warning",
+            "checkpoints",
+            f"WAL 没截断：有连接正读着同一份库，{int(log)} 页还压在 -wal 里"
             f"（只等了 {_WAL_TRUNCATE_BUSY_MS} ms，开机不等第二个实例）",
-            flush=True,
         )
         return int(log)
     return 0
@@ -365,10 +372,11 @@ def make_checkpointer(conn: SqlConnection) -> SqliteSaver:
     # 所以"落回主库"只能在开机这一头做。排在 VACUUM 之后：先让文件缩小，再把 -wal 归零。
     truncate_wal_at_boot(conn)
     if compacted or pruned:
-        print(
-            f"[checkpoints] 祖先快照收口 {compacted} 行、修剪 {pruned} 行"
+        logline(
+            "info",
+            "checkpoints",
+            f"祖先快照收口 {compacted} 行、修剪 {pruned} 行"
             f"（每条线程最多留 {CHECKPOINT_KEEP_PER_THREAD} 条（含最新那条），且只留 "
             f"{CHECKPOINT_KEEP_DAYS} 天以内）",
-            flush=True,
         )
     return saver

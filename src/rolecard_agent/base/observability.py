@@ -58,6 +58,37 @@ class Tracer(Protocol):
     def emit(self, event: TraceEvent) -> None: ...
 
 
+#: 人读日志走 stdout 的级档（其余一律 stderr）。`notice` 这一档是为迁移事件留的
+#: （R102-64"迁移事件落 stderr"的旧约定由它承接 —— 拆成两处各自 print(file=sys.stderr)
+#: 才是那条约定当初要防的"第二个出口"）。
+_LOG_STDOUT_LEVELS = frozenset({"debug", "info"})
+
+
+def logline(level: str, event: str, text: str) -> None:
+    """**人读日志的唯一出口**（2026-10-04 审查快照"三条日志通道并存"那一格收口）。
+
+    从前这个仓库有三条并存的人读日志通道：Tracer 的结构化事件（机器读）、17 处裸 `print`
+    （各写各的前缀，stdout/stderr 混着来）、`core/tools/mcp.py` 里一份 stdlib `logging`
+    （英文、又是另一套格式）。三条并存的代价不是难看，是**排障时要先猜消息在哪条通道**：
+    "Ollama 挂起"那次读日志就得人肉合流。收口之后分工是两句话：
+
+      * **结构化事件归 `Tracer.emit`**（机器读：审计、仪表、按 event 过滤）；
+      * **人读的一句话归这里** —— 一行 = 级档 + 事件名 + 内容，`[{level}] [{event}] {text}`。
+
+    级档决定走哪条流：`debug`/`info` → stdout；`notice`/`warning`/`error` **以及任何拼错的
+    档** → stderr。拼错不炸是刻意的：这个函数会被包在 `except` 里调（迁移失败、审批线程
+    死掉），日志函数自己抛异常是比漏一条日志更坏的故障；拼错的档按字面打出来，第一行就
+    能看出档名不对。
+
+    门禁 `log channels unified`（`check_consistency.py`）看着两条纪律：src 里除本文件
+    （唯一写手，1 处）与 `storage/db.py`（4 处豁免，理由在那张表里）外不许再有裸 `print`；
+    stdlib `logging` 在 src 归零。**`scripts/` 不在此列** —— 那些是一次性取证与启动脚本，
+    `print` 就是它们的输出界面。
+    """
+    stream = sys.stdout if level in _LOG_STDOUT_LEVELS else sys.stderr
+    print(f"[{level}] [{event}] {text}", file=stream, flush=True)
+
+
 def redact(value: Any) -> Any:
     """Replace sensitive payloads with a length marker, keeping everything else readable.
 
