@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any
 
 from rolecard_agent.base.observability import TraceEvent
+from rolecard_agent.config import Settings
 from rolecard_agent.core.ingestion import (
     INGESTION_FAILED,
     INGESTION_PENDING,
@@ -48,8 +49,9 @@ from rolecard_agent.rag.retriever import EmbedError, KnowledgeDimensionMismatch
 if TYPE_CHECKING:
     from rolecard_agent.rag.retriever import KnowledgeBase
 
-#: 单次上传的字节上限（与 OCR / 抽取的输入闸同量级：base64 再放大 33% 也吃得下）。
-UPLOAD_MAX_BYTES = 20 * 1024 * 1024
+#: 单次上传的字节上限 —— 唯一出处是 `config.Settings.max_upload_bytes`；这里读它的
+#: 出厂默认兜底（非 HTTP 宿主不经 Settings 实例时同值），HTTP 路由显式传现值。
+UPLOAD_MAX_BYTES = int(Settings.model_fields["max_upload_bytes"].default)
 
 #: 文件名消毒（审查报告 A4）：模型/浏览器给的 `filename` 不可信。截断 + 去掉控制字符/
 #: 分隔符 —— 超长名或含 `NUL` 的名字会让 `write_bytes` 抛 OSError，用户拿到的是一个

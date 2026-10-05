@@ -427,6 +427,12 @@ class Settings(BaseModel):
     # 64 MiB 是「正常整份同步与图片上传远够、又把最坏那一格钉住」的那一档；0 = 不设上限。
     max_body_bytes: int = 64 * 1024 * 1024
 
+    # 上限常量的单一出处（2026-10-04 审查快照「20MB/15MB 六处散布」那条的收口）：
+    # max_upload_bytes 管上传文件，max_image_bytes 管**单张图片的原始字节**（聊天附图
+    # 与 OCR 共用一档；base64 载荷的 4/3 放大由消费方显式换算，前端从 /api/health 现读）。
+    max_upload_bytes: int = 20 * 1024 * 1024
+    max_image_bytes: int = 15 * 1024 * 1024
+
     audit_log_retention_days: int = 90
     audit_log_max_rows: int = 10_000
     approval_done_retention_days: int = 30
@@ -594,6 +600,8 @@ class Settings(BaseModel):
             ("LOCAL_ORIGIN_ENFORCE", "local_origin_enforce"),
             ("RATE_LIMIT_PER_MINUTE", "rate_limit_per_minute"),
             ("RATE_LIMIT_PATHS", "rate_limit_paths"),
+            ("MAX_UPLOAD_BYTES", "max_upload_bytes"),
+            ("MAX_IMAGE_BYTES", "max_image_bytes"),
             ("SYNC_ALLOWED_HOSTS", "sync_allowed_hosts"),
             ("IDENTITY_USER_ID", "identity_user_id"),
             ("LANGSMITH_API_KEY", "langsmith_api_key"),

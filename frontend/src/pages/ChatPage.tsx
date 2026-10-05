@@ -876,8 +876,8 @@ export default function ChatPage({
               </button>
             </div>
           )}
-          {/* 输入框 + 附图 + 上下文使用率：components/chat/Composer（自适应高度与 15MB
-              那道判据都在那里）。发送/停止/增强仍然由页面执行 —— 它们要动会话与流。 */}
+          {/* 输入框 + 附图 + 上下文使用率：components/chat/Composer（自适应高度与附图
+              大小判据〔/api/health 现读〕都在那里）。发送/停止/增强仍然由页面执行 —— 它们要动会话与流。 */}
           <Composer
             input={input}
             setInput={setInput}

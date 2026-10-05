@@ -34,7 +34,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _OCR_WORKER = _PROJECT_ROOT / "scripts" / "ocr_worker.py"
 
 # M3：整图 base64 内联进请求体前先卡大小，避免超大扫描件爆内存/超上下文窗口。
-MAX_OCR_IMAGE_BYTES = 15 * 1024 * 1024  # 15 MB
+# 单张图片原始上限的唯一出处是 `config.Settings.max_image_bytes`（聊天附图同一档）。
+MAX_OCR_IMAGE_BYTES = int(Settings.model_fields["max_image_bytes"].default)
 
 # L8：OCR worker 的子进程超时（秒）——OCR 是重活，但也不允许无限挂起。
 _OCR_PROC_TIMEOUT_SECONDS = 120

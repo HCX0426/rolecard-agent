@@ -1,10 +1,8 @@
 import { useEffect, useRef } from "react";
 
+import { fetchLimits } from "../../lib/limits";
 import type { Tone } from "../Toast";
 import { IconImage, IconSend, IconSparkle, IconStop } from "./icons";
-
-/** 待发送图片的大小上限：再大基本是手机原图，模型那边也会被缩，传输与 base64 白付两倍钱。 */
-const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 
 /**
  * 输入框（紧凑 IDE 式）：发送/暂停是嵌在框内的图标按钮；左下「增强提示词」，
@@ -58,14 +56,17 @@ export default function Composer({
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [input, inputRef]);
 
-  function pickImage(file: File | undefined) {
+  async function pickImage(file: File | undefined) {
     if (!file) return;
     if (!file.type.startsWith("image/")) {
       onStatus("只支持图片文件", "warn");
       return;
     }
-    if (file.size > MAX_IMAGE_BYTES) {
-      onStatus(`图片超过 15MB 上限（当前 ${Math.round(file.size / 1024 / 1024)}MB）`, "warn");
+    // 上限从后端 /api/health 现读（config.max_image_bytes 的镜像），不在前端手抄。
+    const limits = await fetchLimits();
+    if (file.size > limits.image) {
+      const mb = Math.round(limits.image / 1024 / 1024);
+      onStatus(`图片超过 ${mb}MB 上限（当前 ${Math.round(file.size / 1024 / 1024)}MB）`, "warn");
       return;
     }
     const reader = new FileReader();

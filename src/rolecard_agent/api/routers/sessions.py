@@ -26,6 +26,7 @@ from rolecard_agent.api.deps import (
 from rolecard_agent.api.message_view import expand_to_turns, serialize_message
 from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.base.text import text_of
+from rolecard_agent.config import Settings
 from rolecard_agent.core import memory_distill, session_service, upload_service
 from rolecard_agent.core.graph import build_graph_config
 from rolecard_agent.core.proactive_thread import (
@@ -42,6 +43,12 @@ from rolecard_agent.core.thread_locks import (
 from rolecard_agent.core.usage import TokenUsage, record_usage
 
 router = APIRouter()
+
+# 单张图片原始上限的唯一出处是 `config.Settings.max_image_bytes`；base64 载荷按
+# 3 字节 → 4 字符放大（15MB → 20MB，整除无余），Field 的静态边界在导入期定死 ——
+# 运行时用 env 覆盖 max_image_bytes 不会改它（要动就得换模型形状，刻意省略）。
+_IMAGE_B64_LIMIT = int(Settings.model_fields["max_image_bytes"].default) * 4 // 3
+
 
 class SessionCreate(BaseModel):
     """Create-session request. Omitting `role_id` binds the default assistant."""
@@ -73,9 +80,10 @@ class ChatMessage(BaseModel):
     thread_id: str
     message: str = Field(default="", max_length=8000)
     # 多模态传图（用户 2026-09-18）：data URL（data:image/...;base64, ...）。
-    # None = 纯文本。上限 15MB（与 OCR 上传一致）：base64 会放大 ~33%，前端读文件前检查。
+    # None = 纯文本。原始上限与 OCR 同一档（config.max_image_bytes）：base64 放大 4/3
+    # 见 _IMAGE_B64_LIMIT；前端读文件前先行检查（同源现读 /api/health）。
     # 是否真正接受取决于**当前生效后端**是否支持视觉 —— 由模型能力决定，界面按探测禁用。
-    image: str | None = Field(default=None, max_length=20 * 1024 * 1024)
+    image: str | None = Field(default=None, max_length=_IMAGE_B64_LIMIT)
 
     @field_validator("message")
     @classmethod
@@ -578,7 +586,7 @@ class _MessageTarget(BaseModel):
 class EditMessageBody(_MessageTarget):
     content: str = Field(default="", max_length=8000)  # 与新消息同一上限
     # 编辑/重新生成时保留原图（多模态传图，2026-09-18）：编辑只改文本，图随原消息走。
-    image: str | None = Field(default=None, max_length=20 * 1024 * 1024)
+    image: str | None = Field(default=None, max_length=_IMAGE_B64_LIMIT)
 
     @field_validator("content")
     @classmethod

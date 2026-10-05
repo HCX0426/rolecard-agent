@@ -452,6 +452,10 @@ def create_app(
             "version": API_VERSION,
             "auth_mode": env_settings.auth_mode,
             "build": read_build_info().as_dict(),
+            # 上限常量给前端现读（Composer 的附图预检等）—— 前端不再手抄数字，
+            # 改这里一处即可（2026-10-04 审查快照「上限常量散布」那条的出口）。
+            "max_upload_bytes": env_settings.max_upload_bytes,
+            "max_image_bytes": env_settings.max_image_bytes,
         }
 
     dist_dir = console_dist_dir()

@@ -178,6 +178,23 @@ def test_health_endpoint_is_always_reachable(
     assert res.json()["status"] == "ok"
 
 
+def test_health_reports_size_limits_the_frontend_reads(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """/api/health 把两个大小上限报出去：前端附图预检现读，不再手抄数字。
+
+    这是"上限单一出处"契约的前端那一半 —— config.max_upload_bytes /
+    max_image_bytes 改了，health 就跟着变；断言钉住"health 报的 = Settings 出厂值"
+    这一对应关系（前端 limits.ts 的回落默认只兜后端不可达，不参与契约）。
+    """
+    from rolecard_agent.config import Settings
+
+    c = _client(monkeypatch, tmp_path, mode="on")
+    body = c.get("/api/health").json()
+    assert body["max_upload_bytes"] == int(Settings.model_fields["max_upload_bytes"].default)
+    assert body["max_image_bytes"] == int(Settings.model_fields["max_image_bytes"].default)
+
+
 # -- 凭证形态 -----------------------------------------------------------------------
 
 
