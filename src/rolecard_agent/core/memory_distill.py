@@ -27,8 +27,8 @@ from typing import Any
 from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.base.text import text_of
 from rolecard_agent.core import memory as mem
-from rolecard_agent.core.anti_repeat import grams, jaccard
-from rolecard_agent.core.thread_locks import end_extraction, try_extraction
+from rolecard_agent.core.anti_repeat import dice, grams, jaccard
+from rolecard_agent.core.thread_locks import any_turn_busy, end_extraction, try_extraction
 from rolecard_agent.core.usage import TokenUsage, parse_usage, record_usage
 from rolecard_agent.storage.db import SqlConnection
 from rolecard_agent.storage.threads import set_distilled_seq
@@ -39,6 +39,10 @@ _MAX_MESSAGES = 24
 _MAX_LINE_CHARS = 300
 # 整理一次最多看这么多条（超出的按注入序留下次）：一次调用要能装进小上下文模型的窗口。
 _MAX_CONSOLIDATE_ITEMS = 60
+# 提取 prompt 里【已有条目】的固定上限（2026-10-04 审查快照「prompt 线性膨胀」条）：
+# 全量活跃条目（≤200 条）跟着每一轮走 = prompt 无上界。选 top-K 个与这段对话最相关的
+# 候选（`_top_k_candidates`），prompt 长度从此有界；report 的 `existing_items` 是埋点。
+_EXTRACT_TOP_K = 40
 
 _OPS = "ADD / UPDATE / MERGE / INVALID / NOOP"
 
@@ -113,6 +117,27 @@ def _existing_block(items: list[dict[str, Any]], *, mark_pinned: bool) -> str:
     )
 
 
+def _top_k_candidates(
+    active: list[dict[str, Any]], dialogue: str, *, k: int = _EXTRACT_TOP_K
+) -> list[dict[str, Any]]:
+    """活跃条目里挑 top-K 个与这段对话最相关的候选（进 prompt 的那批）。
+
+    相关性 = 4-gram Dice（`anti_repeat.grams`，与回声抑制、persona_meter 同一口径）
+    在条目全文与整段对话之间算；零重叠（对话引入全新话题）时**回落 ranked 次序**
+    —— ranked 本身是"钉住在前、近因×频次"，那就是没有词汇线索时最好的默认。
+    排序稳定：同分保持 ranked 的相对次序。k 条上限就是"prompt 长度有界"的那道闸。
+    """
+    if len(active) <= k:
+        return active
+    d_grams = grams(dialogue)
+
+    def score(index: int, item: dict[str, Any]) -> tuple[float, int]:
+        return (-dice(grams(str(item["text"])), d_grams), index)
+
+    ranked = sorted(enumerate(active), key=lambda pair: score(*pair))
+    return [item for _, item in ranked[:k]]
+
+
 def _invoke(model: Any, prompt: str) -> tuple[str, TokenUsage | None]:
     """跑一次提取/整理调用，带回正文与**这次花掉的 token**（后端没报就是 None）。"""
     reply = model.invoke(prompt)
@@ -151,6 +176,7 @@ def extract(
     source: str = "extract",
     backend: str | None = None,
     tracer: Any = None,
+    include_similar: bool = True,
 ) -> dict[str, Any]:
     """从一段对话里提事实，按 ADD/UPDATE 落进某个记忆桶。
 
@@ -159,15 +185,25 @@ def extract(
 
     `backend`/`tracer` 只为一件事：提取也花真钱（本地实测一次约 122 秒 / 248 token），
     所以它进同一本 token 账（审计 §12.8）。没给 backend 就记在"未指名"下，不假装免费。
+
+    【已有条目】只带 top-K 个与这段对话最相关的候选（2026-10-04 审查快照「prompt
+    线性膨胀」条）：全量活跃条目最多 200 条跟着每一轮走，长度无上界。相关性用
+    `anti_repeat` 的 4-gram Dice（与回声抑制同口径），零重叠时回落 ranked 次序 ——
+    两种选法都固定 ≤ EXTRACT_TOP_K 条，report 里的 `existing_items` 就是那个埋点。
+    回声判重（`known`）仍看**全量**条目：少喂 prompt 不等于少认回声。
+
+    `include_similar=False` 给自动路径用：`count_similar` 是 O(n²) 的界面数字，
+    自动提取没人看它，不值一趟全桶两两比对。
     """
     dialogue = _turn_lines(messages)
     if not dialogue:
         return {"report": _report(noop=1, detail="这段对话没有可读取的文本。"), "ok": True}
     active = mem.ranked_active(conn, user_id=user_id, bucket=bucket)
+    selected = _top_k_candidates(active, dialogue)
     prompt = (
         _EXTRACT_PROMPT
         + "\n【已有条目】\n"
-        + _existing_block(active, mark_pinned=False)
+        + _existing_block(selected, mark_pinned=False)
         + "\n\n【最近对话】\n"
         + dialogue
         + "\n"
@@ -178,6 +214,7 @@ def extract(
         return {"ok": False, "report": _report(detail=f"模型调用失败：{type(exc).__name__}")}
     record_usage(conn, backend=backend, usage=usage, user_id=user_id, tracer=tracer)
     report = _report(tokens=usage.total if usage is not None else None)
+    report["existing_items"] = len(selected)
     # 已存条目的文字，随本轮新增一起长：模型在同一次输出里把同一件事写两遍时也认得出回声。
     known = [str(i["text"]) for i in active]
     for line in raw.splitlines():
@@ -241,7 +278,9 @@ def extract(
             report["updated"] += 1
             continue
         report["skipped"] += 1  # 看不懂的行：忽略并计数，不猜
-    report["similar"] = count_similar(conn, user_id=user_id, bucket=bucket)
+    report["similar"] = (
+        count_similar(conn, user_id=user_id, bucket=bucket) if include_similar else 0
+    )
     return {"ok": True, "report": report}
 
 
@@ -482,6 +521,7 @@ def after_turn(
     tracer: Any,
     load_context: Callable[[], tuple[Any, list[Any]]],
     resolve_model: Callable[[Any], tuple[Any, str | None]],
+    is_local_backend: Callable[[str], bool] | None = None,
 ) -> None:
     """每 N 轮的兜底提取（N=`extract_turns`，0 = 只留手动按钮）的**完整状态机**。
 
@@ -514,6 +554,26 @@ def after_turn(
         pending = pending_messages(conn, thread_id=thread_id, messages=messages)
         if not pending:
             return
+        # 模型解析提到在飞标记之前：资源闸要先知道"这一趟提取用谁"才判得出来。
+        model, backend = resolve_model(thread)
+        # **资源闸**（2026-10-04 审查快照「提取与对话争抢本地 GPU」条）：提取跑在本机
+        # GPU 上时，与正在进行的对话轮是同一块显存 —— 触发那一刻有任何对话轮在跑
+        # （本线程或别的窗口/角色）就**推迟**。推迟不丢：游标没动，下一轮兜底照常再问。
+        # 云端后端不占本地 GPU，不参与这道闸。
+        gate_on = (
+            is_local_backend is not None and backend and is_local_backend(backend)
+        ) and any_turn_busy()
+        if gate_on:
+            tracer.emit(
+                TraceEvent(
+                    event="memory_extract",
+                    node="memory",
+                    thread_id=thread_id,
+                    role_id=role_id,
+                    detail={"trigger": "auto", "skipped": "本机 GPU 正在对话，本轮提取推迟"},
+                )
+            )
+            return
         if not try_extraction(thread_id):
             tracer.emit(
                 TraceEvent(
@@ -526,7 +586,6 @@ def after_turn(
             )
             return
         try:
-            model, backend = resolve_model(thread)
             outcome = extract(
                 conn,
                 user_id=str(thread["user_id"]),
@@ -535,6 +594,7 @@ def after_turn(
                 messages=pending,
                 backend=backend,
                 tracer=tracer,
+                include_similar=False,
             )
             report = outcome["report"]
             if outcome["ok"]:

@@ -34,6 +34,7 @@ from rolecard_agent.core.model_settings.rows import (
     _tri_state,
     _value_columns,
     _vision_of,
+    backend_is_local,
     declared_model_names,
     unmanaged_backend_columns,
 )
@@ -58,6 +59,7 @@ from rolecard_agent.core.model_settings.service import ModelSettingsService
 
 __all__ = [
     "BACKEND_USAGES",
+    "backend_is_local",
     "CHAT_CATEGORY",
     "KEYLESS_PROVIDERS",
     "MODEL_PROVIDERS",

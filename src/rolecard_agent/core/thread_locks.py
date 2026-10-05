@@ -134,6 +134,17 @@ def thread_is_busy(thread_id: str) -> bool:
     return bool(lock and lock.locked())
 
 
+def any_turn_busy() -> bool:
+    """全进程此刻有没有**任何**对话轮在跑（提取的资源闸用：本机 GPU 同时只伺候一件）。
+
+    提取与对话在同一块本地 GPU 上是竞争者 —— 自动提取触发的那一刻只要有哪个窗口
+    / 哪个角色的轮次在跑，这一轮提取就推迟（游标不动，下一轮兜底照常再问）。
+    云端后端的提取不经这道闸。
+    """
+    with _guard:
+        return any(lock.locked() for lock in _locks.values())
+
+
 # ---------------------------------------------------------------- 提取的"在飞"标记
 #
 # 故意**不是** `thread_write` 的那把锁：后台提取要跑 10–120 秒，如果它去抢会话写入锁，

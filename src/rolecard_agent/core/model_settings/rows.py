@@ -66,6 +66,21 @@ def _kind_of_names(conn: SqlConnection, names: list[str]) -> dict[str, str]:
     }
 
 
+def backend_is_local(conn: SqlConnection, backend_name: str) -> bool:
+    """这个后端是否跑在本机 GPU 上（provider 的客户端风格是 native）。
+
+    2026-10-04 审查快照「提取与对话争抢本地 GPU」那条的资源闸要问的第一件事：
+    "这一趟提取用谁、它吃不吃本机显存"。查不到（后端已删）= 不是本地，宁可让闸
+    少拦 —— 推迟只是优化，误放行不该发生，误推迟也只是下一轮再来。
+    """
+    row = conn.execute(
+        "SELECT p.provider FROM model_backend b JOIN model_provider p "
+        "ON p.id = b.provider_id WHERE b.name = ?",
+        (backend_name,),
+    ).fetchone()
+    return row is not None and client_style(str(row["provider"])) == "native"
+
+
 # --------------------------------------------------------------------------- 服务层
 
 

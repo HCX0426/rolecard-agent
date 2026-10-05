@@ -27,7 +27,7 @@ from rolecard_agent.api.message_view import expand_to_turns, serialize_message
 from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.base.text import text_of
 from rolecard_agent.config import Settings
-from rolecard_agent.core import memory_distill, session_service, upload_service
+from rolecard_agent.core import memory_distill, model_settings, session_service, upload_service
 from rolecard_agent.core.graph import build_graph_config
 from rolecard_agent.core.proactive_thread import (
     PROACTIVE_THREAD_PREFIX,
@@ -560,6 +560,8 @@ def _schedule_distill(
         tracer=ctx.tracer,
         load_context=load_context,
         resolve_model=lambda thread: _thread_model(ctx, thread, role_id),
+        # 资源闸的判据由宿主供给：后端名 → 是否本机 GPU（native provider）。
+        is_local_backend=lambda backend: model_settings.backend_is_local(ctx.conn, backend),
     )
 
 

@@ -593,3 +593,131 @@ def test_turn_lines_skips_tools_and_truncates() -> None:
     assert "工具返回" not in block
     assert len([ln for ln in block.splitlines()]) == 2
     assert max(len(ln) for ln in block.splitlines()) < 400
+
+
+# ---------------------------------------------------------------- 提取的资源闸与 top-K
+
+
+class _RecordingTracer:
+    """只记录事件的假 tracer（after_turn 的推迟/跳过都靠事件点名）。"""
+
+    def __init__(self) -> None:
+        self.events: list[Any] = []
+
+    def emit(self, event: Any) -> None:
+        self.events.append(event)
+
+
+def _run_after_turn(
+    conn: SqlConnection, tracer: Any, model: Any, backend: str, *, local: bool
+) -> None:
+    """跑一遍 after_turn 状态机；包一层 close 为空的连接 ——
+    生产里"用完即还"还的是池线程自己的连接槽，测试夹具的连接归夹具管。"""
+
+    class _NoCloseConn:
+        def execute(self, *a: Any, **k: Any) -> Any:
+            return conn.execute(*a, **k)
+
+        def commit(self) -> None:
+            conn.commit()
+
+        def rollback(self) -> None:
+            conn.rollback()
+
+        def close(self) -> None:
+            pass  # 夹具连接不能真被关掉
+
+    distill.after_turn(
+        _NoCloseConn(),  # type: ignore[arg-type]
+        thread_id="t1",
+        role_id="general_assistant",
+        extract_turns=1,
+        tracer=tracer,
+        load_context=lambda: ({"user_id": ME}, [_Msg("human", "问"), _Msg("ai", "答")]),
+        resolve_model=lambda _thread: (model, backend),
+        is_local_backend=(lambda _backend: local),
+    )
+
+
+def test_resource_gate_defers_extraction_while_any_turn_is_busy(conn: SqlConnection) -> None:
+    """资源闸：本机后端 + 任何对话轮在飞 ⇒ 这一轮提取推迟。
+
+    推迟的形状：不调模型、游标不动（下一轮兜底照常再问 —— 所以只断言"这轮没发生"）、
+    留痕点名"GPU 忙"。对照臂：没有轮在飞时同一配置照常提取。
+    """
+    from rolecard_agent.core import thread_locks as locks
+
+    _thread(conn, "t1")
+    tracer = _RecordingTracer()
+
+    def _busy() -> None:
+        with locks.thread_write("别的窗口的会话"):
+            _run_after_turn(conn, tracer, FakeModel(), "本地 8B", local=True)
+
+    _busy()
+    assert not _extract_invoked(tracer)
+    assert any("GPU" in str(e.detail.get("skipped", "")) for e in tracer.events)
+    cursor = conn.execute(
+        "SELECT distilled_at_seq FROM session_thread WHERE thread_id = 't1'"
+    ).fetchone()["distilled_at_seq"]
+    assert cursor is None, "推迟不能动游标 —— 动了就真的丢了这一轮"
+
+    # 对照臂：GPU 空闲 → 同一配置照常提取
+    model = FakeModel("NOOP")
+    _run_after_turn(conn, tracer, model, "本地 8B", local=True)
+    assert model.prompts, "空闲时闸不该拦"
+
+
+def test_resource_gate_never_gates_a_cloud_backend(conn: SqlConnection) -> None:
+    """云端提取不占本机显存：轮次在飞也照常提取（闸只管本地后端）。"""
+    from rolecard_agent.core import thread_locks as locks
+
+    _thread(conn, "t1")
+    tracer = _RecordingTracer()
+    model = FakeModel("NOOP")
+    with locks.thread_write("别的窗口的会话"):
+        _run_after_turn(conn, tracer, model, "siliconflow", local=False)
+    assert model.prompts, "云端后端不该被本地资源闸拦"
+
+
+def _extract_invoked(tracer: _RecordingTracer) -> bool:
+    """有没有真的走到模型调用：skip 事件全部点名了理由，没有 skip = 走到了。"""
+    return not any(
+        "skipped" in getattr(e, "detail", {}) for e in tracer.events
+    )
+
+
+def test_extract_prompt_carries_top_k_not_the_whole_bucket(conn: SqlConnection) -> None:
+    """【已有条目】有固定上限：60 条活跃条目只带 ≤K 个候选，且相关的那条必须在场。
+
+    上限就是"prompt 长度有界"的那道闸；相关性用与回声抑制同一口径的 4-gram Dice。
+    回声判重仍看全量 —— 这里顺带钉住"喂得少"不改变"认得准"。
+    """
+    _thread(conn, "t1")
+    for i in range(60):
+        mem.add_item(
+            conn,
+            user_id=ME,
+            bucket="general_assistant",
+            text=f"无关记录{chr(0x4E00 + i)}号：关于杂项{chr(0x4E00 + i)}的备注",
+            source="seed",
+        )
+    relevant = mem.add_item(
+        conn,
+        user_id=ME,
+        bucket="general_assistant",
+        text="用户的生日在十月",
+        source="seed",
+    )
+    assert relevant is not None
+    model = FakeModel("NOOP")
+    out = distill.extract(
+        conn,
+        user_id=ME,
+        model=model,
+        bucket="general_assistant",
+        messages=[_Msg("human", "我们聊聊生日在十月这件事吧")],
+    )
+    assert out["ok"]
+    assert out["report"]["existing_items"] <= distill._EXTRACT_TOP_K
+    assert "生日在十月" in model.prompts[0], "最相关的候选不该被截掉"
