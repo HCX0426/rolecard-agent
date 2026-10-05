@@ -15,8 +15,9 @@
   * **拿不到写锁就这次不投**（审计 #12）：用户那一轮可能正在图上跑，两边分叉同一个父节点
     时后写会盖掉先写。不投 ≠ 丢 —— 收件箱按 `delivered_at IS NULL` 认出来，下一 tick
     补投（`R26-40` ②）。
-  * **本轮主人现取**（R28-04）：`chat_memory` 里三处 `user_id` 都问 `active_user_id`，
-    与 `settings_resolver` 同一根管子 —— 一个"本轮为谁"的读法只留一处。
+  * **本轮主人显式传**（R28-04 的收拢，2026-10-04 审查快照"身份显式化"）：`chat_memory`
+    的 `user_id` 由图从 `state["user_id"]` 现传 —— 身份随 graph state 走，这里不再自己问
+    ContextVar（没传 = 直连门面/老线程，落实例主人）。
 """
 
 from __future__ import annotations
@@ -28,7 +29,6 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from rolecard_agent.base.identity import active_user_id
 from rolecard_agent.base.observability import TraceEvent, Tracer
 from rolecard_agent.base.text import text_of
 from rolecard_agent.config import Settings
@@ -128,7 +128,9 @@ class ProactiveGateway:
         """
         return format_recent_window(self.thread_rows(role_id), limit=limit)
 
-    def chat_memory(self, role_id: str | None, thread_id: str | None) -> str:
+    def chat_memory(
+        self, role_id: str | None, thread_id: str | None, user_id: str | None = None
+    ) -> str:
         """这一轮对话她该看见什么：`memory_for_turn` 那份记忆 + 她最近**主动**说过的原话。
 
         为什么要补那一截（用户 2026-09-26 拍的"并进来"）：主动开口的话只落进
@@ -138,13 +140,14 @@ class ProactiveGateway:
         在**那条主动会话里**不补：同一句话本来就在她的历史里，再抄一遍进 system 等于把
         复读喂回给模型（`nodes._scrub_own_repeats` 治的就是这个），白花 token 还添病。
 
-        **本轮主人现取**（R28-04）：以前这三处写死实例主人，于是第二个身份的对话读的是
-        实例主人的记忆、回声，还把 hit_count 记到主人账上。这根管子与 `settings_resolver`
-        用的同一个（`active_user_id`）—— 一个"本轮为谁"的读法只留一处。
+        **本轮主人由调用方传**（R28-04 的收拢，"身份显式随 state 走"）：以前这三处写死
+        实例主人，后来改问 ContextVar，现在由图从 `state["user_id"]` 显式传进来 ——
+        第二个身份的对话读的是她自己的记忆、回声，hit_count 也记到她账上。
+        没传（直连门面、老线程 state 缺这一项）落实例主人，与从前的回落语义逐字节相同。
         settings 仍取实例那份是刻意的：这里只用到 `memory_enabled`，而它是运行环境级的
         （覆盖存在 `kernel_meta` 的 `runtime:<key>`，不分人）。
         """
-        owner = active_user_id(self.identity())
+        owner = user_id or self.identity()
         settings: Settings = self.state["effective"]
         text = memory_for_turn(self.conn, settings, role_id, user_id=owner)
         if not role_id or thread_id == proactive_thread_id(role_id, user_id=owner):

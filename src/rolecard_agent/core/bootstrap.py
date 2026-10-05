@@ -27,11 +27,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from rolecard_agent.base.audit import AuditTrail
-from rolecard_agent.base.identity import (
-    active_user_id,
-    ensure_identity_row,
-    resolve_instance_identity,
-)
+from rolecard_agent.base.identity import ensure_identity_row, resolve_instance_identity
 from rolecard_agent.base.observability import TraceEvent, Tracer, make_tracer
 from rolecard_agent.base.paths import user_data_root
 from rolecard_agent.config import Settings
@@ -207,10 +203,12 @@ class ProactiveGatewayLike(Protocol):
     三个上下文取法。所以不能像调度器那样只在宿主用 —— 那就得让内核反向 import 功能。
     解法与 `BackgroundTask` 同一形状：**内核只认这四下**，实现在 `features/proactive.py`，
     由宿主经 `build_runtime(proactive_factory=…)` 交进来。四下的语义（checkpoint 是唯一
-    真相 / 投递不跑图 / 本轮主人现取）写在实现那侧。
+    真相 / 投递不跑图 / 本轮主人显式传）写在实现那侧。
     """
 
-    def chat_memory(self, role_id: str | None, thread_id: str | None) -> str: ...
+    def chat_memory(
+        self, role_id: str | None, thread_id: str | None, user_id: str | None = None
+    ) -> str: ...
 
     def recent_lines(self, role_id: str, *, limit: int = 6) -> str: ...
 
@@ -344,13 +342,16 @@ class Runtime:
         """
         return self.models.role_models
 
-    def chat_memory(self, role_id: str | None, thread_id: str | None) -> str:
+    def chat_memory(
+        self, role_id: str | None, thread_id: str | None, user_id: str | None = None
+    ) -> str:
         """这一轮她该看见什么：记忆 + 最近主动说过的原话（转调宿主交进来的网关实现）。
 
-        回声那半边的全部道理（为什么补、什么时候**不**补、本轮主人现取）住在
-        `features/proactive.py::chat_memory`；这里是图装配用的挂点，形状不动。
+        `user_id` 是**本轮主人**（图从 `state["user_id"]` 现传；None = 老线程/直连门面，
+        实现侧落实例主人）。回声那半边的全部道理（为什么补、什么时候**不**补）住在
+        `features/proactive.py::chat_memory`；这里是图装配用的挂点。
         """
-        return self.proactive.chat_memory(role_id, thread_id)
+        return self.proactive.chat_memory(role_id, thread_id, user_id)
 
     def build_graph(self, model: ChatLike, registry: ToolRegistry, eff: Settings) -> Any:
         """建（编译）一张对话图。`model_resolver` 指向本 Runtime，角色级路由与热重建同源。"""
@@ -363,10 +364,10 @@ class Runtime:
             checkpointer=self.checkpointer,
             plugins=self.plugins,
             model_resolver=self.resolve_role_model,
-            # 「这一轮花谁的 key」的挂点（M2d 尾巴）：节点内部现取，那时本轮主人已绑进
-            # 上下文。不接这一根的话，模型凭据与能力位都会按实例主人判 —— 两个身份各配
-            # 同名后端时，B 会拿着 A 的快照去跑（`_turn_backend` 也是这么读的）。
-            settings_resolver=lambda: self.effective_for(active_user_id(self.identity)),
+            # 「这一轮花谁的 key」的挂点（M2d 尾巴）：owner 由 `_turn_backend` 从 state 现传
+            # 进来（显式，不问 ContextVar）。不接这一根的话，模型凭据与能力位都会按实例主人
+            # 判 —— 两个身份各配同名后端时，B 会拿着 A 的快照去跑（`_turn_backend` 也是这么读的）。
+            settings_resolver=lambda owner: self.effective_for(owner or self.identity),
             # 跨会话记忆的读取器：每次调用实时读库、**按本轮角色取**（该角色专属 → 无则回退
             # 全局），与主动开口同源一个 `memory_for_turn`；再补上她最近主动说过的原话
             # （`chat_memory`，别的那条线程里她得知道自己提醒过什么）。总开关在 call_model

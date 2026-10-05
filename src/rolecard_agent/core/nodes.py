@@ -226,7 +226,9 @@ class ChatLike(Protocol):
     def stream(self, input: Any, **kwargs: Any) -> Any: ...
 
 
-def _no_memory(_role_id: str | None = None, _thread_id: str | None = None) -> str:
+def _no_memory(
+    _role_id: str | None = None, _thread_id: str | None = None, _user_id: str | None = None
+) -> str:
     """Default memory provider: no memory.
 
     Fails closed on purpose. A context built without a provider injects no memory, rather
@@ -302,7 +304,10 @@ class KernelContext:
     # 用 ctx.settings.memory_enabled 把关（双保险：这里 fail-closed，门再闭一次）。
     # **第二个参数是本轮那条线程**：宿主拿它判"这句是不是就在她那条主动会话里"，
     # 是的话就不必再把主动开口的原话抄进 system（同一句话在她历史里已经有一份了）。
-    memory_provider: Callable[[str | None, str | None], str] = _no_memory
+    # **第三个参数是本轮主人**（`state["user_id"]`，可能 None=老线程）：宿主按它读记忆，
+    # 不再自己问 ContextVar —— "本轮为谁"从此只有 graph state 这一个来源
+    # （2026-10-04 审查快照"身份显式化"的收拢：调用点 5→3 的其中一刀）。
+    memory_provider: Callable[[str | None, str | None, str | None], str] = _no_memory
 
     # 视觉能力探测（P1-2）：给 (base_url, model) 返回 True/False/**None**。宿主接线到
     # `core/probes.vision_capability`（Ollama `/api/show` 的 capabilities）；没接线就是
@@ -314,19 +319,22 @@ class KernelContext:
     # 那份（编译期定下），知识库、工具闭包、历史预算这些设备级的读法从它取；resolver 只被
     # `_turn_backend` 消费（模型凭据与能力位判定）。不接线 = 一律用构建期那份：单机形态
     # （一台实例一个主人）下两者恒等，测试与纯内核装配就是这一档。
-    settings_resolver: Callable[[], Settings] | None = None
+    # **owner 由调用方从 `state["user_id"]` 现传**（不问 ContextVar）：身份显式随 state 走，
+    # resolver 只回答"给我 owner 的配置"，"本轮为谁"的判定留在 node 入口那一处。
+    settings_resolver: Callable[[str | None], Settings] | None = None
 
 
-def turn_settings(ctx: KernelContext) -> Settings:
+def turn_settings(ctx: KernelContext, owner: str | None = None) -> Settings:
     """这一轮该按**谁**的凭据读配置（M2d 尾巴）。
 
-    接了 resolver 就现取 —— 节点入口已经把本轮主人绑进上下文（`base/identity.bound_user`），
-    所以 resolver 那侧能答出"这次调用花谁的 key"；没接（测试、纯内核装配）就是构建期那份，
-    单机形态下与实例主人那份逐字节相同。
+    接了 resolver 就把 `owner` 传进去现取（没传 = None，resolver 侧按实例主人处理）；
+    没接（测试、纯内核装配）就是构建期那份，单机形态下与实例主人那份逐字节相同。
+    owner 从哪来：`_turn_backend` 从 `state["user_id"]` 取 —— 与图入口 `bound_user`
+    绑的是同一个值，但这里**显式传**而不是再问一次上下文（身份显式随 state 走）。
     """
     if ctx.settings_resolver is None:
         return ctx.settings
-    return ctx.settings_resolver()
+    return ctx.settings_resolver(owner)
 
 
 def _turn_backend(state: dict[str, Any], role: Any, ctx: KernelContext) -> Any | None:
@@ -338,7 +346,9 @@ def _turn_backend(state: dict[str, Any], role: Any, ctx: KernelContext) -> Any |
     """
     name = state.get("model_name") or getattr(role, "model_name", None)
     try:
-        return turn_settings(ctx).backend(name)
+        # owner 从 state 现取（与图入口 `bound_user` 同一个值）：resolver 只认显式传进来的
+        # owner，不问 ContextVar —— 身份随 graph state 走（身份显式化的收拢）。
+        return turn_settings(ctx, state.get("user_id") or None).backend(name)
     except Exception:  # noqa: BLE001 - 配置异常不该让整轮挂掉，退回默认（调用方按未知处理）
         return None
 
@@ -663,8 +673,11 @@ def call_model(
     # the provider itself is fail-closed (returns "" by default). Agent mode is a per-session
     # state the chat endpoint resolves live from session_thread (NULL = global default).
     # 记忆**按当前角色取**（该角色专属 → 无则回退全局），与主动开口共用一条规则。
+    # 第三个参数是本轮主人（`state["user_id"]`）：宿主按它读记忆，不再自己问 ContextVar。
     memory_text = (
-        ctx.memory_provider(role_id, state.get("thread_id")) if ctx.settings.memory_enabled else ""
+        ctx.memory_provider(role_id, state.get("thread_id"), state.get("user_id"))
+        if ctx.settings.memory_enabled
+        else ""
     )
     # 历史按字符预算裁剪（H3）。裁剪只影响"送给模型的内容"，checkpoint 里的完整历史不动 ——
     # 界面回放、审计、下次裁剪都仍然看得到全量对话。先裁剪，再据此判断本轮模型能否看到图片。

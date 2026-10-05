@@ -594,7 +594,7 @@ def test_call_model_injects_memory_when_enabled(roles: RoleCardService) -> None:
     reg.register(kernel_tool)
     model = FakeModel(AIMessage(content="hi"))
     ctx = _ctx(reg, roles, model)
-    ctx.memory_provider = lambda _role_id=None, _thread_id=None: "用户住在上海。"
+    ctx.memory_provider = lambda _role_id=None, _thread_id=None, _user_id=None: "用户住在上海。"
     call_model(
         {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"},
         ctx,
@@ -610,26 +610,40 @@ def test_call_model_asks_the_provider_for_the_current_role(roles: RoleCardServic
     对话侧以前只取全局记忆，于是"设置→记忆里给某角色写的内容，聊天时模型看不到"
     （审计 §3 台账）。角色专属 → 全局的取法在 `core/memory.memory_for_turn`，与主动开口同源，
     这里只钉"内核把角色传出来了"这一环。
+
+    顺带钉住**第三个参数**：本轮主人（`state["user_id"]`）也随调用显式传给 provider ——
+    宿主按它读记忆，不再自己问 ContextVar（身份显式随 state 走的那一刀）。
     """
     rid = _role(roles, role_id="elysia")
     reg = ToolRegistry()
     reg.register(kernel_tool)
     model = FakeModel(AIMessage(content="hi"))
     ctx = _ctx(reg, roles, model)
-    asked: list[tuple[str | None, str | None]] = []
+    asked: list[tuple[str | None, str | None, str | None]] = []
 
-    def provider(role_id: str | None = None, thread_id: str | None = None) -> str:
-        asked.append((role_id, thread_id))
+    def provider(
+        role_id: str | None = None,
+        thread_id: str | None = None,
+        user_id: str | None = None,
+    ) -> str:
+        asked.append((role_id, thread_id, user_id))
         return "她记得自己喜欢蒲公英。"
 
     ctx.memory_provider = provider
     call_model(
-        {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"},
+        {
+            "messages": [HumanMessage(content="q")],
+            "current_role_id": rid,
+            "thread_id": "t",
+            # 用卡所在那个主人（`cards()` 按 DEFAULT_USER_ID 建）：role lookup 按
+            # state["user_id"] 走 scoped，随便写一个就会撞 role_missing 提前返回。
+            "user_id": DEFAULT_USER_ID,
+        },
         ctx,
     )
-    # 记的是**一对**：第二条就是本轮那条线程 —— 宿主拿它判"要不要再抄一份主动开口"，
-    # call_model 不传就等于把那个判断的输入丢了（09-26 那条跨线程记忆断口的修法依赖它）。
-    assert asked == [("elysia", "t")]
+    # 记的是**三元组**：第二条是本轮那条线程 —— 宿主拿它判"要不要再抄一份主动开口"
+    # （09-26 那条跨线程记忆断口的修法依赖它）；第三条是本轮主人（state 里有就传值）。
+    assert asked == [("elysia", "t", DEFAULT_USER_ID)]
     assert "她记得自己喜欢蒲公英。" in model.last_prompt[0].content
 
 
@@ -641,7 +655,7 @@ def test_call_model_skips_memory_when_disabled(roles: RoleCardService) -> None:
     model = FakeModel(AIMessage(content="hi"))
     ctx = _ctx(reg, roles, model)
     ctx.settings = Settings(memory_enabled=False)
-    ctx.memory_provider = lambda _role_id=None, _thread_id=None: "用户住在上海。"
+    ctx.memory_provider = lambda _role_id=None, _thread_id=None, _user_id=None: "用户住在上海。"
     call_model(
         {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"},
         ctx,

@@ -336,15 +336,13 @@ def test_a_turn_reads_the_memory_of_its_own_owner(client: TestClient) -> None:
 
     `Runtime.chat_memory` 原先三处写死 `self.identity` —— 单机形态无感，第二个身份一存在
     就是串数据：B 的对话里被注入 A 的事实，A 的 hit_count 还替 B 的读取涨。这里绕不开的
-    只有模型（不真跑一轮），身份绑法走节点入口同一根管子 `bound_user`。
+    只有模型（不真跑一轮）。**身份走显式参数**（快照"身份显式化"的收拢）：生产路径上这个
+    参数由图从 `state["user_id"]` 传进来，与图入口绑的是同一个值 —— 绑不绑不再是这条
+    路径的判据，显式传才是。
     """
-    from rolecard_agent.base.identity import bound_user
-
     rt = client.app.state.ctx.runtime
-    with bound_user(B):
-        for_b = rt.chat_memory("r_b", "t_not_proactive")
-    with bound_user(A):
-        for_a = rt.chat_memory("r_a", "t_not_proactive")
+    for_b = rt.chat_memory("r_b", "t_not_proactive", B)
+    for_a = rt.chat_memory("r_a", "t_not_proactive", A)
 
     assert "事实b" in for_b and "事实a" not in for_b, "B 的这一轮读到了 A 的记忆"
     assert "事实a" in for_a and "事实b" not in for_a, "A 的这一轮读到了 B 的记忆"

@@ -539,9 +539,14 @@ def test_turn_settings_reads_the_resolver_not_the_build_time_snapshot() -> None:
         settings=build_time,
     )
     assert turn_settings(ctx) is build_time, "没接 resolver 就该回落构建期那份"
-    ctx.settings_resolver = lambda: per_turn
-    assert turn_settings(ctx) is per_turn
-    assert _turn_backend({"model_name": "chat"}, None, ctx).api_key == "sk-turn"
+    # resolver 收的是**显式传进来的 owner**（身份随 state 走，不问 ContextVar）：
+    # 记下它收到什么，顺带钉住 `_turn_backend` 会从 `state["user_id"]` 取了再传。
+    seen: list[str | None] = []
+    ctx.settings_resolver = lambda owner: seen.append(owner) or per_turn
+    assert turn_settings(ctx, "u2") is per_turn
+    assert seen == ["u2"], "owner 必须原样传进 resolver"
+    assert _turn_backend({"model_name": "chat", "user_id": "u2"}, None, ctx).api_key == "sk-turn"
+    assert seen == ["u2", "u2"], "_turn_backend 没有从 state 取 owner 传下去"
 
 
 def test_an_inflight_build_cannot_republish_a_stale_model_after_rebuild(tmp_path: Path) -> None:

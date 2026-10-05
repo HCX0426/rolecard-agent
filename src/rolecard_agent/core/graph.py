@@ -79,9 +79,9 @@ def build_kernel(
     checkpointer: BaseCheckpointSaver | None = None,
     plugins: PluginService | None = None,
     model_resolver: Callable[..., ChatLike] | None = None,
-    memory_provider: Callable[[str | None, str | None], str] | None = None,
+    memory_provider: Callable[[str | None, str | None, str | None], str] | None = None,
     vision_probe: Callable[[str | None, str], bool | None] | None = None,
-    settings_resolver: Callable[[], Settings] | None = None,
+    settings_resolver: Callable[[str | None], Settings] | None = None,
 ) -> Any:
     """Compile the kernel graph.
 
@@ -96,9 +96,9 @@ def build_kernel(
     `model_resolver` 是角色级路由（US-8 后半）的挂点：给定 `role_card.model_name`（后端名或
     None）返回该轮要用的模型。由宿主提供缓存与降级；不传 = 全部走默认模型。
 
-    `memory_provider` 是跨会话记忆的读取器（每次调用实时取，**参数是本轮的角色 id**：
-    给了就取该角色专属记忆、没有则回退全局），由宿主注入连接；缺省
-    fail-closed（无记忆）。
+    `memory_provider` 是跨会话记忆的读取器（每次调用实时取，**三个参数是本轮的角色 id /
+    线程 id / 主人**：角色给了就取该角色专属记忆、没有则回退全局；主人按 state 现传），
+    由宿主注入连接；缺省 fail-closed（无记忆）。
     """
     ctx = KernelContext(
         model=model,
@@ -119,8 +119,8 @@ def build_kernel(
     if vision_probe is not None:
         ctx.vision_probe = vision_probe
     # 「这次模型调用花谁的 key」的挂点（M2d 尾巴）：不传 = 一律用构建期那份 `settings`。
-    # 只在节点**内部**（本轮主人已绑进上下文之后）被 `turn_settings` 调用，所以 resolver
-    # 那侧读得到"这一轮是谁"；宿主没接就是单机形态，行为逐字节不变。
+    # 只在节点内部被 `turn_settings` 调用，**owner 由 `_turn_backend` 从 state 现传**
+    # （身份显式随 graph state 走，不问 ContextVar）；宿主没接就是单机形态，行为逐字节不变。
     if settings_resolver is not None:
         ctx.settings_resolver = settings_resolver
     # 历史预算与工具超时随宿主配置走（审查报告 H3 / M10）：内核不再无条件把全量历史塞进

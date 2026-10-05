@@ -1224,35 +1224,31 @@ def check_api_domain_seams() -> None:
 #: 判据只认 `active_user_id(...)` 这一种调用形状 —— 它是那枚 ContextVar 唯一的读侧，
 #: 而它的 `fallback` 实参就是"没绑过就悄悄用实例主人"这件事发生的地方。
 #:
-#: 这五条都是**真接缝**，各写清为什么：
+#: **从 5 条收到 3 条（快照验收"调用点 ≤3"达标）**，收掉的两条按"身份显式随 state 走"改：
+#:   ① `features/proactive.py::chat_memory` → `memory_provider` 第三个参数显式收
+#:      `state["user_id"]`（图从 state 现传，没传 = 直连门面/老线程，落实例主人 ——
+#:      与从前回落语义逐字节相同）；
+#:   ② `core/bootstrap.py::build_graph` 的 `settings_resolver` → 签名改
+#:      `Callable[[str | None], Settings]`，owner 由 `_turn_backend` 从 state 取了现传。
+#: 收拢时**尺子自己作证了它在工作**：代码改完、名单未改的那一刻跑一致性，stale 臂精确点名
+#: 这两条（`build_graph` / `chat_memory`）而"未登记"臂是空的 —— 即搬动没有引入新的隐式读。
+#:
+#: 留下的 3 条都是**结构上挪不动**的（各写清为什么）：
 #:   * `core/graph.py` 那两个 `bound_user(...)` 不算在内 —— 那是**绑**的一侧，不是读；
 #:   * `api/main.py::_host_registry_factory`：域工具对模型必须看起来**零参数**（否则模型能
 #:     自己填"我是谁"），所以工具的 `current_user` 只能是装配期定下的零参闭包，运行期现问；
-#:   * `core/bootstrap.py::build_graph`：同上那条管子的宿主接线位（`settings_resolver`），
-#:     图节点里取"本轮主人的那份有效配置"；
 #:   * `core/model_resolver.py::resolve_role_model`：凭据按本轮主人取（M2d），且它带
 #:     `user_id` 显式入参给跨线程调用方 —— **只有没传且没绑**才走这里；
-#:   * `features/proactive.py::chat_memory`：R28-04 那条"本轮主人现取"，同一个读法只留一处；
 #:   * `core/memory.py::make_memory_tool.memory_save`：工具签名里刻意没有 user_id（同上那条
-#:     零参纪律），所以只能在运行期现问。
+#:     零参纪律），调用方（tools 节点）手里有 state 却没法塞进工具入参 —— 这是①收拢后
+#:     **唯一**留下的现问点，也是"为什么不直接改图入口就完事"的答案。
 #:
-#: **快照给这一格写的验收是"调用点 ≤3"，现在 5 条 —— 这条尺子不假装已经达标**，它做的事是
-#: 把现状**钉住**：多一处即红（隐式读身份不许继续扩散），少一处也红（删掉了必须把这条的
-#: "为什么"一并删掉，不许留死条目 —— 与 `api domain seams` 的"清单里没有死条目"同纪律）。
-#: 往下收的**两个已定方向**（各自要独立一刀，别混进别的改动里）：
-#:   ① `chat_memory` 与 `memory_save` 那两处可以**并进 `resolve_role_model` 那条管子**：
-#:      两处读的都是同一个"本轮为谁"，而 `ProactiveGateway` 已经拿到 `identity` 闭包、
-#:      `memory_save` 已经有 `settings` 与 `conn`，缺的只是把 owner 从调用侧传进来；
-#:   ② `build_graph` 那一处**不该自己算**：它的 `settings_resolver` 由宿主接（`api/main.py`
-#:      那一处同形），接进去之后 resolver 只该读一个**已经定好的值**，而不是再问一次上下文。
-#: 收完之后这条应当剩 3 条：`_host_registry_factory` / `resolve_role_model` / 以及 ① 里
-#: 留下来的那唯一一处现问点。
+#: 判据两臂都红：多一处即红（隐式读身份不许扩散），登记了而调用已不在也红（连"为什么"
+#: 一并删，不许留死条目 —— 与 `api domain seams` 的"清单里没有死条目"同纪律）。
 IDENTITY_IMPLICIT_READS: dict[str, str] = {
     "src/rolecard_agent/api/main.py::_host_registry_factory": "工具对模型零参",
-    "src/rolecard_agent/core/bootstrap.py::build_graph": "settings_resolver 的宿主接线位",
     "src/rolecard_agent/core/model_resolver.py::resolve_role_model": "凭据按本轮主人取",
     "src/rolecard_agent/core/memory.py::make_memory_tool.memory_save": "工具签名里没有 user_id",
-    "src/rolecard_agent/features/proactive.py::chat_memory": "R28-04 本轮主人现取",
 }
 
 
