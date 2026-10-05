@@ -1219,6 +1219,136 @@ def check_api_domain_seams() -> None:
         fails.append(f"api domain seams registry is stale: {stale}")
 
 
+#: 「这一轮在为谁」的**隐式读取点登记处**（2026-10-04 审查快照"身份显式化"那一格的尺子）。
+#: 键 = `文件::所属函数`（**不写行号**：行号会随任何一次编辑漂，名字不会）。
+#: 判据只认 `active_user_id(...)` 这一种调用形状 —— 它是那枚 ContextVar 唯一的读侧，
+#: 而它的 `fallback` 实参就是"没绑过就悄悄用实例主人"这件事发生的地方。
+#:
+#: 这五条都是**真接缝**，各写清为什么：
+#:   * `core/graph.py` 那两个 `bound_user(...)` 不算在内 —— 那是**绑**的一侧，不是读；
+#:   * `api/main.py::_host_registry_factory`：域工具对模型必须看起来**零参数**（否则模型能
+#:     自己填"我是谁"），所以工具的 `current_user` 只能是装配期定下的零参闭包，运行期现问；
+#:   * `core/bootstrap.py::build_graph`：同上那条管子的宿主接线位（`settings_resolver`），
+#:     图节点里取"本轮主人的那份有效配置"；
+#:   * `core/model_resolver.py::resolve_role_model`：凭据按本轮主人取（M2d），且它带
+#:     `user_id` 显式入参给跨线程调用方 —— **只有没传且没绑**才走这里；
+#:   * `features/proactive.py::chat_memory`：R28-04 那条"本轮主人现取"，同一个读法只留一处；
+#:   * `core/memory.py::make_memory_tool.memory_save`：工具签名里刻意没有 user_id（同上那条
+#:     零参纪律），所以只能在运行期现问。
+#:
+#: **快照给这一格写的验收是"调用点 ≤3"，现在 5 条 —— 这条尺子不假装已经达标**，它做的事是
+#: 把现状**钉住**：多一处即红（隐式读身份不许继续扩散），少一处也红（删掉了必须把这条的
+#: "为什么"一并删掉，不许留死条目 —— 与 `api domain seams` 的"清单里没有死条目"同纪律）。
+#: 往下收的**两个已定方向**（各自要独立一刀，别混进别的改动里）：
+#:   ① `chat_memory` 与 `memory_save` 那两处可以**并进 `resolve_role_model` 那条管子**：
+#:      两处读的都是同一个"本轮为谁"，而 `ProactiveGateway` 已经拿到 `identity` 闭包、
+#:      `memory_save` 已经有 `settings` 与 `conn`，缺的只是把 owner 从调用侧传进来；
+#:   ② `build_graph` 那一处**不该自己算**：它的 `settings_resolver` 由宿主接（`api/main.py`
+#:      那一处同形），接进去之后 resolver 只该读一个**已经定好的值**，而不是再问一次上下文。
+#: 收完之后这条应当剩 3 条：`_host_registry_factory` / `resolve_role_model` / 以及 ① 里
+#: 留下来的那唯一一处现问点。
+IDENTITY_IMPLICIT_READS: dict[str, str] = {
+    "src/rolecard_agent/api/main.py::_host_registry_factory": "工具对模型零参",
+    "src/rolecard_agent/core/bootstrap.py::build_graph": "settings_resolver 的宿主接线位",
+    "src/rolecard_agent/core/model_resolver.py::resolve_role_model": "凭据按本轮主人取",
+    "src/rolecard_agent/core/memory.py::make_memory_tool.memory_save": "工具签名里没有 user_id",
+    "src/rolecard_agent/features/proactive.py::chat_memory": "R28-04 本轮主人现取",
+}
+
+
+def _enclosing_func(tree: ast.Module) -> dict[int, str]:
+    """每个节点的** enclosing 函数链**（`a.b` 形式，模块级记 `<module>`）。
+
+    从节点往上走 parent 链，遇到函数就收名字，最后倒序拼接：嵌套函数（工具闭包、
+    节点闭包）会带上外层，`make_memory_tool.memory_save` 这种就是靠它认出来的。
+    """
+    parents: dict[ast.AST, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+    out_map: dict[int, str] = {}
+    for node in ast.walk(tree):
+        chain: list[str] = []
+        cur: ast.AST = node
+        while cur in parents:
+            cur = parents[cur]
+            if isinstance(cur, ast.FunctionDef | ast.AsyncFunctionDef):
+                chain.append(cur.name)
+        out_map[id(node)] = ".".join(reversed(chain)) or "<module>"
+    return out_map
+
+
+def check_identity_implicit_reads_are_registered() -> None:
+    """`active_user_id` 的每一处调用都得在登记名单里（身份不许继续隐式传播）。
+
+    为什么立这把尺子：这一族缺陷的症状不是报错，是**悄悄换了一个人** —— 请求期漏了图入口
+    的绑定，那条路径就读别人的记忆、花别人的 key，而它跑得很好。10-05 实测整套用例共
+    触发回落 18 次，逐条归因后**没有一次是现行缺陷**（10 次是测试故意自证、6 次是后台
+    调度器替实例主人冒话=设计如此、2 次是测试直接调工具函数不经图节点）；所以这一格的
+    价值不在"修一个 bug"，在于**把扩散钉住**：以后谁再新加一处隐式读身份，必须来说清
+    为什么这根管子只能这样接。
+
+    判据用 AST 找**调用**（`ast.Call` 的函数名是 `active_user_id`），不是 grep 文本：
+    本仓那几处 docstring/注释里提"active_user_id(实例主人)"是必要的说明，按文本数会把
+    解释者数成越层者（`audit action vocabulary` 与 `api holds no sql` 都栽过一次，
+    改法都是"读 AST 的常量/调用位置"）。
+    两臂都要红：出现没登记的红；登记了而那处调用已经不在，也红。
+    反向防空转：一条都没扫到 = 这个函数被改名或删了，尺子不该安静地绿。
+    """
+    src = ROOT / "src" / "rolecard_agent"
+    found: dict[str, str] = {}
+    for path in sorted(src.rglob("*.py")):
+        rel = path.relative_to(ROOT).as_posix()
+        # 定义那一侧自己不算（`base/identity.py` 里的 def 与被包住的实现不是"读"）。
+        if rel.endswith("base/identity.py"):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except (SyntaxError, ValueError):
+            continue
+        funcs = _enclosing_func(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            if isinstance(fn, ast.Name):
+                name = fn.id
+            elif isinstance(fn, ast.Attribute):
+                name = fn.attr
+            else:
+                name = ""
+            if name != "active_user_id":
+                continue
+            found[f"{rel}::{funcs[id(node)]}"] = rel
+
+    unregistered = sorted(k for k in found if k not in IDENTITY_IMPLICIT_READS)
+    stale = sorted(k for k in IDENTITY_IMPLICIT_READS if k not in found)
+    hollow = not found
+    ok = not unregistered and not stale and not hollow
+    if hollow:
+        detail = "src 里一处 `active_user_id` 调用都没扫到（函数被改名/删除？判据在空转）"
+    elif ok:
+        detail = f"{len(found)} 处隐式读身份全在登记内"
+    else:
+        detail = f"未登记：{unregistered}；登记过时：{stale}"
+    out("identity implicit reads registered", ok, detail)
+    if unregistered:
+        fails.append(
+            "active_user_id() called outside the registered seams: "
+            f"{unregistered}（登记处见 check_consistency.IDENTITY_IMPLICIT_READS；"
+            "新加一处隐式读身份要先说清为什么不能显式传）"
+        )
+    if stale:
+        fails.append(
+            f"identity implicit-read registry is stale: {stale} —— 那几处调用已经不在，"
+            "把登记与它的'为什么'一起删掉，别留死条目"
+        )
+    if hollow:
+        fails.append(
+            "identity-implicit-reads check is hollow: no active_user_id() call found in src"
+        )
+
+
 def check_audit_action_vocabulary() -> None:
     """审计的两侧都要有尺子（2026-10-02 轮 `R102-07` + `R102-14`）。
 
@@ -3906,6 +4036,7 @@ def main() -> int:
     check_promised_artifacts()
     check_core_no_domain_token()
     check_api_domain_seams()
+    check_identity_implicit_reads_are_registered()
     check_audit_action_vocabulary()
     check_session_thread_write_seam()
     check_storage_db_has_no_business_tables()
