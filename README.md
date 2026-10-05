@@ -25,9 +25,9 @@ push 才刷新 —— 引用它之前先去 run 里读现值）—— win32/posi
 > 新基线见 `docs/需求与验收标准.md` §1.4（那份数字就写在里面；原始报告 data/eval_baseline_2026-09-19.md 是跑出来的本地产物，按 `.gitignore` 不入库 —— 干净克隆里没有它）。
 > 另：Ollama 官方 vl 版模板不支持工具调用（bind_tools 直接 400），本项目用的是 ModelScope
 > GGUF 导入的 qwen3-vl（tools + thinking + vision 三者齐全）。
-> 真机 UI 冒烟（`scripts/ui_smoke.js`）需要：服务已启动 + 本机 Chrome/Edge +
+> 真机 UI 冒烟（`scripts/js/ui_smoke.js`）需要：服务已启动 + 本机 Chrome/Edge +
 > `npm i -D playwright-core`（不下载浏览器）；缺任一条件打印"跳过"并计为通过。
-> 单独跑：`node scripts/ui_smoke.js [base_url]`（`UI_SMOKE_HEADLESS=0` 可看窗口）。
+> 单独跑：`node scripts/js/ui_smoke.js [base_url]`（`UI_SMOKE_HEADLESS=0` 可看窗口）。
 **默认角色「通用助手」＝纯对话**（不接工具与档案）；要查档案时切换到「健康档案管理员」。
 待续：**v2.4 公网部署**（功能面已部分落地，见上）。
 

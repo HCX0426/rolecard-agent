@@ -42,7 +42,7 @@ import time
 import urllib.error
 import urllib.request
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 # 这几条路径从前各拼一遍（台账 R28-59），现在只从 `core/artifacts.py` 派生。
 from rolecard_agent.core.artifacts import sidecar_exe, unpacked_backend, unpacked_dist  # noqa: E402

@@ -29,9 +29,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "scripts" / "forensics"))
 
 # Windows 控制台默认 GBK：本探针打「｜」「▸」这类字符（`R26-24` 那一族，
 # `check_consistency.py` 的 `console encoding` 盯着这条）。

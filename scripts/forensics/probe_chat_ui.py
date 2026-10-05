@@ -18,8 +18,8 @@ import time
 import urllib.request
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts" / "forensics"))
 sys.path.insert(0, str(ROOT / "src"))
 
 import scratch_db  # noqa: E402
@@ -73,7 +73,7 @@ def main() -> int:
             return 1
 
         proc = subprocess.run(  # noqa: S603
-            ["node", str(ROOT / "scripts" / "probe_chat_ui.js"), base],
+            ["node", str(ROOT / "scripts" / "js" / "probe_chat_ui.js"), base],
             capture_output=True,
             text=True,
             timeout=600,

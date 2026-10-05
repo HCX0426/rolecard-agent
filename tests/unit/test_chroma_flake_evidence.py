@@ -22,6 +22,7 @@ import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "scripts" / "forensics"))
 
 import chroma_flake_evidence as cfe  # noqa: E402
 import pytest_with_evidence as pwe  # noqa: E402

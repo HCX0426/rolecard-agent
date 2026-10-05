@@ -16,8 +16,8 @@ import time
 import urllib.request
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts" / "forensics"))
 sys.path.insert(0, str(ROOT / "src"))
 
 import scratch_db  # noqa: E402
@@ -71,7 +71,7 @@ def main() -> int:
 
         model = os.environ.get("STOP_PROBE_MODEL", "siliconflow")
         proc = subprocess.run(  # noqa: S603
-            [sys.executable, str(ROOT / "scripts" / "probe_stop_live.py")],
+            [sys.executable, str(ROOT / "scripts" / "forensics" / "probe_stop_live.py")],
             capture_output=True,
             text=True,
             timeout=900,

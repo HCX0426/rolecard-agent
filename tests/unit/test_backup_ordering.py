@@ -25,7 +25,7 @@ def _load_backup_module():
         if p not in sys.path:
             sys.path.insert(0, p)
     spec = importlib.util.spec_from_file_location(
-        "backup_data_root_under_test", str(ROOT / "scripts" / "backup_data_root.py")
+        "backup_data_root_under_test", str(ROOT / "scripts" / "tools" / "backup_data_root.py")
     )
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)

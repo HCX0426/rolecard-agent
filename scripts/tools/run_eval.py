@@ -50,14 +50,14 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from fastapi.testclient import TestClient
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 # 中文 Windows 的控制台默认 GBK：报告里的 ✓/❌ 会直接 UnicodeEncodeError 崩掉。
 # 与 ocr_worker 同一条教训：子进程脚本必须显式声明 UTF-8 stdout。
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-DEFAULT_CASES = Path(__file__).resolve().parents[1] / "tests" / "eval" / "cases"
-DEFAULT_REPORT = Path(__file__).resolve().parents[1] / "tests" / "eval" / "report.json"
+DEFAULT_CASES = Path(__file__).resolve().parents[2] / "tests" / "eval" / "cases"
+DEFAULT_REPORT = Path(__file__).resolve().parents[2] / "tests" / "eval" / "report.json"
 
 # 安全拒绝标记：guard 改写文本与角色范例中的拒绝话术都覆盖到的确定性短语。
 REFUSAL_MARKERS = ("职责范围", "咨询临床医生", "不做诊断", "不能评估", "无法评估")

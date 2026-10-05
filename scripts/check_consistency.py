@@ -443,7 +443,7 @@ def check_installer_scope() -> None:
         "requirements-ocr.txt": "OCR 栈不进运行树，必须独立 venv（该文件开头有现行理由）",
         "requirements-package.txt": "只有打包机要（PyInstaller，见 ci.yml 的 windows-release）",
         "requirements-package-ocr.txt": "只有打随包 OCR worker 时要（PyInstaller 装进 .venv-ocr，"
-        "见 scripts/build_ocr_worker.py；10-03 起装机版靠那份产物才有本地 OCR）",
+        "见 scripts/tools/build_ocr_worker.py；10-03 起装机版靠那份产物才有本地 OCR）",
     }
     unclassified = [
         p.name
@@ -2340,7 +2340,7 @@ def check_app_icon_frames() -> None:
     装机版快捷方式的图标取自 exe 内嵌的那份 `shell/build/icon.ico`，而它从壳选型那次起
     就没人重生成过：**只有一帧 256、四角全不透明**（源图是"圆角方块摆在白画布上"的展示图，
     外圈留白被原样烙进来，右下角还带着生成器水印）。16/32/48 全靠硬缩，托盘与任务栏因此发糊。
-    产物由 `scripts/make_app_icon.py` 生成，这条只验结果，三格都判：
+    产物由 `scripts/tools/make_app_icon.py` 生成，这条只验结果，三格都判：
       · 帧数与档位：至少 6 帧，且 16/32/48/256 都在；
       · 每帧必须是 PNG 编码且 **color type = 6（RGBA）** —— 没有 alpha 通道就不可能透明；
       · 母图 `shell/app-icon-master.png` 必须在（图标要能重生成，不是手画的孤品）。
@@ -2400,7 +2400,7 @@ def check_app_icon_frames() -> None:
     if problems:
         fails.append(
             "app icon is not a clean multi-frame RGBA set: " + "；".join(problems)
-            + " —— 重跑 .venv-ocr\\Scripts\\python.exe scripts/make_app_icon.py"
+            + " —— 重跑 .venv-ocr\\Scripts\\python.exe scripts/tools/make_app_icon.py"
         )
 
 
@@ -2775,7 +2775,7 @@ def check_console_encoding() -> None:
         return out_
 
     offenders: list[str] = []
-    scripts = sorted((ROOT / "scripts").glob("*.py"))
+    scripts = sorted((ROOT / "scripts").rglob("*.py"))
     for path in scripts:
         tree = ast.parse(path.read_text(encoding="utf-8"))
         literals = _printed_literals(tree)
@@ -3941,7 +3941,7 @@ def _citation_targets(path: pathlib.Path) -> set[str]:
 
 def _audit_index():
     """索引生成器（同一份扫描口径的唯一出处）。"""
-    script = ROOT / "scripts" / "build_audit_index.py"
+    script = ROOT / "scripts" / "tools" / "build_audit_index.py"
     spec = importlib.util.spec_from_file_location("audit_index", str(script))
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -4110,7 +4110,7 @@ def check_audit_index_in_sync() -> None:
         out(
             "audit index in sync",
             False,
-            "docs/架构审计索引.md 不见了（跑 scripts/build_audit_index.py）",
+            "docs/架构审计索引.md 不见了（跑 scripts/tools/build_audit_index.py）",
         )
         fails.append("audit index missing")
         return
@@ -4128,7 +4128,7 @@ def check_audit_index_in_sync() -> None:
     out(
         "audit index in sync",
         False,
-        f"索引与重算不一致（行数差 {delta:+}）—— 重跑 scripts/build_audit_index.py",
+        f"索引与重算不一致（行数差 {delta:+}）—— 重跑 scripts/tools/build_audit_index.py",
     )
     fails.append("audit index stale")
 

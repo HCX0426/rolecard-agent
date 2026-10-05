@@ -4,7 +4,7 @@
 const path = require("path");
 const { existsSync } = require("fs");
 
-const ROOT = path.join(__dirname, "..");
+const ROOT = path.join(__dirname, "..", "..");
 const OUT = path.join(ROOT, "build");
 const [localBase, cloudBase] = process.argv.slice(2);
 if (!localBase || !cloudBase) {

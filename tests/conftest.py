@@ -234,8 +234,10 @@ def _no_chroma_system_leak():
 # --------------------------------------------------------------- R102-41 失败时刻的现场
 _SCRIPTS_DIR = pathlib.Path(__file__).resolve().parents[1] / "scripts"
 BUILD_DIR = pathlib.Path(__file__).resolve().parents[1] / "build"
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
+# 取证层住 forensics/（脚本分层后各归其层）；签名清单与门禁共用同一份。
+_FORENSICS_DIR = _SCRIPTS_DIR / "forensics"
+if str(_FORENSICS_DIR) not in sys.path:
+    sys.path.insert(0, str(_FORENSICS_DIR))
 
 import chroma_flake_evidence as _flake  # noqa: E402  （取证层与门禁共用同一份签名清单）
 

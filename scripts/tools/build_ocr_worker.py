@@ -26,7 +26,7 @@ for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 SPEC = ROOT / "packaging" / "ocr-worker.spec"
 OUT = ROOT / "build" / "ocrworker"
 WORK = ROOT / "build" / "ocrworker-work"

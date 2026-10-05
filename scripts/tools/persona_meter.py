@@ -62,7 +62,7 @@ from math import ceil
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
 from rolecard_agent.core.usage import daily_usage, local_day, usage_days  # noqa: E402
@@ -413,7 +413,7 @@ def main() -> None:
     if args.db:
         db = Path(args.db)
     else:
-        sys.path.insert(0, str(ROOT / "scripts"))
+        sys.path.insert(0, str(ROOT / "scripts" / "forensics"))
         import scratch_db  # noqa: PLC0415
 
         db = scratch_db.resolve_live_db()

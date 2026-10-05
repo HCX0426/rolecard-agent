@@ -49,7 +49,7 @@ const STATUS_ROW: Record<PetStatus, number> = {
   thinking: 0, // 通用表不猜 5–8：想想时的动作由包声明（默认包在 DEFAULT_PACK_ROWS 里改到 7）
 };
 
-/** 默认形象包（`scripts/make_pet_sheet.py` 生成的那份）自带的额外声明。
+/** 默认形象包（`scripts/tools/make_pet_sheet.py` 生成的那份）自带的额外声明。
  *  rows 5–8 的语义是**这份包定的**：5=晕、6=等待、7=琢磨、8=睡 —— 协议主表没确认，
  *  所以它不进通用映射表，只随这张包走。 */
 export const DEFAULT_PACK_ROWS: Partial<Record<PetStatus, number>> = {

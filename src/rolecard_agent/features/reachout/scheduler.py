@@ -302,7 +302,7 @@ class ReachoutScheduler:
             if fired == "timer" and self._thread_window is not None:
                 # 取"最近一窗"而不是"她还没接住的那一截"：后者在她每次开口之后必然为空，
                 # 于是这一源在生产上从没被走到过（09-26 轮 R26-03，实测见
-                # scripts/probe_open_threads_reach.py）。
+                # scripts/forensics/probe_open_threads_reach.py）。
                 turns = self._thread_window(role.role_id)
                 if turns:
                     if open_threads_stale(state, now=stamp_utc):

@@ -28,8 +28,9 @@ import zipfile
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(_HERE))  # 拿 scratch_db（同一份"两个数据根"的判定）
-_REPO_ROOT = _HERE.parent
+_REPO_ROOT = _HERE.parent.parent
+# scratch_db 住 forensics/（脚本分层后各归其层）——同一份"两个数据根"的判定。
+sys.path.insert(0, str(_REPO_ROOT / "scripts" / "forensics"))
 
 
 def installed_data_root() -> Path:

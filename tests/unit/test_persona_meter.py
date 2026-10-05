@@ -12,7 +12,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "persona_meter.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "tools" / "persona_meter.py"
 
 
 def _meter():

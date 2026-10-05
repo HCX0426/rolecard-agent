@@ -1,4 +1,4 @@
-"""`scripts/backup_data_root.py` —— 装包之前那份"能不能回滚"的备份。
+"""`scripts/tools/backup_data_root.py` —— 装包之前那份"能不能回滚"的备份。
 
 第一版就带着一个真缺陷跑了一次真装机：它用 `base.paths.user_data_root()` 找数据根，
 而那个函数**在开发态故意**返回仓库的 `data/`（"跑一次测试不该污染安装包目录"，那条理由
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "backup_data_root.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "tools" / "backup_data_root.py"
 
 
 def _load():

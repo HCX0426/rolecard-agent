@@ -43,7 +43,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const ROOT = path.resolve(__dirname, "..");
+const ROOT = path.resolve(__dirname, "..", "..");
 const SHELL = path.join(ROOT, "shell");
 const MAIN_JS = path.join(SHELL, "out", "main", "index.js");
 const QUIT_MS = Number(process.env.SHELL_SMOKE_QUIT_MS || 4000);

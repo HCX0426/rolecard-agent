@@ -192,7 +192,7 @@ def data_roots() -> dict[str, Path | None]:
     # `$LOCALAPPDATA` 自己拼一遍，那边按 `Path.home()/AppData` 硬编码一遍，
     # `persona_meter` 再按 `Settings.sqlite_path` 走第三套 —— 三套规则并存时，
     # "改前/改后"的尺子与被量的 A/B 看的可以不是同一个世界。规则只留一处。
-    sys.path.insert(0, str(ROOT / "scripts"))
+    sys.path.insert(0, str(ROOT / "scripts" / "forensics"))
     import scratch_db  # noqa: PLC0415
 
     labels = ("dev(repo/data)", "installed(%LOCALAPPDATA%)")

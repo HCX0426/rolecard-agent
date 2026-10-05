@@ -1375,7 +1375,7 @@ def test_real_backend_accepts_a_mid_conversation_system_message() -> None:
     Ollama 没跑，请求被本地代理挡成 502，那不是消息序列的问题）。
 
     这条只证明"发得出去"。"她是否因此少说几句模板腔"不由断言管，那是
-    `scripts/persona_meter.py` 的活（一次采样不足以判质量）。
+    `scripts/tools/persona_meter.py` 的活（一次采样不足以判质量）。
     """
     backend = Settings.from_env().backend()
     if not backend.base_url or "11434" not in backend.base_url:

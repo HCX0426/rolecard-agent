@@ -103,7 +103,7 @@ class LocalRapidOcrBackend:
             return f"就绪：{got[1]}"
         return (
             "本机没有可用的本地 OCR：装机版这一包没带上 `ocr-worker`（重打时跑 "
-            "scripts/build_ocr_worker.py），开发态则按 requirements-ocr.txt 装 .venv-ocr "
+            "scripts/tools/build_ocr_worker.py），开发态则按 requirements-ocr.txt 装 .venv-ocr "
             "并让 OCR_PYTHON 指到它"
         )
 

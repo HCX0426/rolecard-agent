@@ -43,7 +43,7 @@ export interface PetPackListing {
   cubism_core_path: string;
 }
 
-/** 仓库自绘的默认包 id（`scripts/make_pet_sheet.py` 生成的那份）。 */
+/** 仓库自绘的默认包 id（`scripts/tools/make_pet_sheet.py` 生成的那份）。 */
 export const DEFAULT_PACK_ID = "default";
 
 /**

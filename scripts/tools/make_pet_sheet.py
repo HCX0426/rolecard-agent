@@ -48,7 +48,7 @@ SCALE = 2  # 超采样：先按 2 倍画，再降采样到协议格尺寸（这�
 CELL_W, CELL_H = 192, 208
 COLS, ROWS = 8, 9
 
-PETS_DIR = Path(__file__).resolve().parents[1] / "frontend" / "public" / "pets"
+PETS_DIR = Path(__file__).resolve().parents[2] / "frontend" / "public" / "pets"
 
 
 @dataclass(frozen=True)

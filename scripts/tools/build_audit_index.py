@@ -14,8 +14,8 @@
 所以它不会是又一份"写了没人更新"的目录：更新它是红的事，不更新才是。
 
 跑法：
-    .venv\\Scripts\\python.exe scripts/build_audit_index.py          # 写文件
-    .venv\\Scripts\\python.exe scripts/build_audit_index.py --check   # 只问要不要重生成
+    .venv\\Scripts\\python.exe scripts/tools/build_audit_index.py          # 写文件
+    .venv\\Scripts\\python.exe scripts/tools/build_audit_index.py --check   # 只问要不要重生成
 """
 
 from __future__ import annotations
@@ -25,13 +25,13 @@ import importlib.util
 import pathlib
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 OUT = ROOT / "docs" / "架构审计索引.md"
 
 #: 索引头部这段是给人读的规矩，不参与逐行比对之外的任何逻辑。
 HEADER = """# 审计编号索引
 
-> **这份文件由 `scripts/build_audit_index.py` 生成，不要手改。**
+> **这份文件由 `scripts/tools/build_audit_index.py` 生成，不要手改。**
 > 门禁的 `audit index in sync` 那条断言会重算一遍并与这份入库件比字节，不一致就红 ——
 > 让索引成为一份会报警的产物，而不是一张"写了三个月就没人更新"的目录。
 
@@ -126,7 +126,7 @@ def render() -> str:
     out.append("")
     out.append(
         f"共 {len(rows)} 条编号。生成方式：`.venv\\\\Scripts\\\\python.exe "
-        "scripts/build_audit_index.py`（`--check` 只问要不要重生成）。"
+        "scripts/tools/build_audit_index.py`（`--check` 只问要不要重生成）。"
     )
     out.append("")
     return "\n".join(out)

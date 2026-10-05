@@ -306,7 +306,7 @@ def test_proactive_window_still_has_material_when_she_has_the_last_word(tmp_path
     两者差别不是宽度而是**方向**：这一源要找的是"说到一半没了下文"的事，而那件事往往
     正是她接住过、只是没落地的那件。`proactive_recent_lines` 只给"还没了结"的那一截
     （他那句她没接、或她那句他没回），接过的话一律切掉 —— 拿它当输入，判据与素材是反的，
-    实测下来扫描一次也没发生过（生产读数见 `scripts/probe_open_threads_reach.py`）。
+    实测下来扫描一次也没发生过（生产读数见 `scripts/forensics/probe_open_threads_reach.py`）。
     同一份检查点上两个读法必须一个切掉、一个留着，这条钉的就是"分开"这件事本身。
     """
     from langchain_core.messages import AIMessage, HumanMessage

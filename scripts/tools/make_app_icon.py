@@ -32,7 +32,7 @@ for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "shell" / "app-icon.png"
 MASTER = ROOT / "shell" / "app-icon-master.png"
 ICO = ROOT / "shell" / "build" / "icon.ico"

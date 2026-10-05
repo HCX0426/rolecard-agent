@@ -21,9 +21,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 VENV_PY = str(ROOT / ".venv" / "Scripts" / "python.exe")
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "scripts" / "forensics"))
 sys.path.insert(0, str(ROOT / "src"))
 
 THREAD_ID = "s_proactive_elysia"

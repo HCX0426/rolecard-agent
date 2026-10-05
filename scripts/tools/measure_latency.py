@@ -32,9 +32,9 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 VENV_PY = str(ROOT / ".venv" / "Scripts" / "python.exe")
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "scripts" / "forensics"))
 
 THREAD = "s_proactive_elysia"
 PROMPT = "解释一下为什么冬天白天比夏天短，说清楚原因，一百字左右。"

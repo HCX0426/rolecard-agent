@@ -28,9 +28,10 @@ from typing import Any
 
 os.environ.setdefault("NO_PROXY", "*")
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "scripts" / "tools"))
+sys.path.insert(0, str(ROOT / "scripts" / "forensics"))
 
 import persona_meter as pm  # noqa: E402
 import scratch_db  # noqa: E402

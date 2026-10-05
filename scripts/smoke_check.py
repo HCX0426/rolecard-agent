@@ -38,7 +38,7 @@ if TYPE_CHECKING:  # 只为类型存在：cast 的字符串形式不在运行时
 #: `check()` 是装饰器而不是"跑完给 None"：被装饰的函数必须原样返回（见 `check` 的 docstring）。
 _F = TypeVar("_F", bound=Callable[..., object])
 
-# 仓库根：真机 UI 冒烟需要以仓库根为 cwd 调用 scripts/ui_smoke.js
+# 仓库根：真机 UI 冒烟需要以仓库根为 cwd 调用 scripts/js/ui_smoke.js
 ROOT = Path(__file__).resolve().parents[1]
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -580,7 +580,7 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
 
 
 def console_ui_smoke() -> None:
-    """用本机 Chrome/Edge 真跑一遍界面交互（scripts/ui_smoke.js）；由 main() 在末项调用。
+    """用本机 Chrome/Edge 真跑一遍界面交互（scripts/js/ui_smoke.js）；由 main() 在末项调用。
 
     **它自己起一个后端、打的是库副本**（2026-09-25 改的，之前默认打 127.0.0.1:8000）。
     原因不是洁癖：那一轮 full 门禁跑完，用户真库里多了三条标题为
@@ -601,12 +601,14 @@ def console_ui_smoke() -> None:
     if not node:
         print("（跳过：未找到 node，无法跑真机 UI 冒烟）")
         return
-    script = ROOT / "scripts" / "ui_smoke.js"
+    script = ROOT / "scripts" / "js" / "ui_smoke.js"
     if not script.exists():
-        raise AssertionError("缺少 scripts/ui_smoke.js")
+        raise AssertionError("缺少 scripts/js/ui_smoke.js")
 
     import socket  # noqa: PLC0415
 
+    # scratch_db 住 forensics/（脚本分层后取证件各归其层）：这里显式把层目录摆上 sys.path。
+    sys.path.insert(0, str(ROOT / "scripts" / "forensics"))
     import scratch_db  # noqa: PLC0415
 
     with socket.socket() as probe:
@@ -666,9 +668,9 @@ def console_shell_quit_smoke() -> None:
     if not node:
         print("（跳过：未找到 node，无法起桌面壳）")
         return
-    script = ROOT / "scripts" / "shell_quit_smoke.js"
+    script = ROOT / "scripts" / "js" / "shell_quit_smoke.js"
     if not script.exists():
-        raise AssertionError("缺少 scripts/shell_quit_smoke.js")
+        raise AssertionError("缺少 scripts/js/shell_quit_smoke.js")
     proc = subprocess.run(  # noqa: S603
         [node, str(script)],
         capture_output=True,

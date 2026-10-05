@@ -1,6 +1,6 @@
 """评测环自己能不能立起来 —— 一条不花模型调用的守卫。
 
-来历（2026-09-26）：填"数据引用正确率"那格时才发觉 `scripts/run_eval.py` **从服务策略那次
+来历（2026-09-26）：填"数据引用正确率"那格时才发觉 `scripts/tools/run_eval.py` **从服务策略那次
 重构起就跑不起来**了。成因不在评测环里，在一句被当真的话：`make_embedder` 的注释写着
 "`seed_once()` 恒为每类服务播种一条启用的内置行 ⇒ 生产上 `order` 永不为空"。
 那句话对**走装配根的进程**成立，而 `run_eval.py` 与 `seed_demo_data.py` 是自己
@@ -26,7 +26,9 @@ import pytest
 OWNER = "local-user"
 
 ROOT = Path(__file__).resolve().parents[2]
-_spec = importlib.util.spec_from_file_location("run_eval_ring", ROOT / "scripts" / "run_eval.py")
+_spec = importlib.util.spec_from_file_location(
+    "run_eval_ring", ROOT / "scripts" / "tools" / "run_eval.py"
+)
 assert _spec and _spec.loader
 ev = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ev)

@@ -30,7 +30,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 # 安装根的名字唯一出处是 `base/paths.py` 的 `_APP_NAME`（`R102-67`）。本脚本刻意不 import
 # 本包（要在不可安装环境独立跑），但零依赖常量模块 `base/app_identity.py` 只有标准库能算
 # 的东西 —— 引用它的成本是零，改名时这里的静默失效才不会回来。

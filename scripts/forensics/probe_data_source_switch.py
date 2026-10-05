@@ -28,7 +28,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 VENV_PY = str(ROOT / ".venv" / "Scripts" / "python.exe")
 
 # 读数行里有「⑬⑭」这类 GBK 装不下的带圈数字：不重配编码，最后一句 print 会抛

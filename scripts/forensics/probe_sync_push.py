@@ -34,7 +34,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 VENV_PY = str(ROOT / ".venv" / "Scripts" / "python.exe")
 
 # 结论行带对勾，而 Windows 控制台默认 codepage 是 GBK：不重配编码，最后一句 print 会抛

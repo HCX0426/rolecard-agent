@@ -81,7 +81,7 @@ if (-not $SkipBuild) {
     if (-not (Test-Path $ocrPy)) {
         throw "no .venv-ocr at $ocrPy —— 装机版就没本地 OCR：先 python -m venv .venv-ocr 再 pip install -r requirements-ocr.txt -r requirements-package-ocr.txt"
     }
-    & $ocrPy (Join-Path $root "scripts\build_ocr_worker.py")
+    & $ocrPy (Join-Path $root "scripts\tools\build_ocr_worker.py")
     if ($LASTEXITCODE -ne 0) { throw "ocr-worker build/smoke failed (exit=$LASTEXITCODE)" }
     Push-Location (Join-Path $root "shell")
     # 这一步的输出**不再 Out-Null**：2026-09-28 实测它静默失败过（electron-builder 要清
@@ -100,7 +100,7 @@ if (-not $SkipBuild) {
 # sqlite 走 backup() 而不是复制：真库开着 WAL，直拷会得到主库与 -wal 不同步的半成品。
 Write-Host "[2/6] backing up the installed data root"
 $py = Join-Path $root ".venv\Scripts\python.exe"
-& $py (Join-Path $root "scripts\backup_data_root.py") --dest (Join-Path $root "build")
+& $py (Join-Path $root "scripts\tools\backup_data_root.py") --dest (Join-Path $root "build")
 if ($LASTEXITCODE -ne 0) { throw "backup failed (exit=$LASTEXITCODE) —— 没备份就别装" }
 
 # 打完之后这一问才是**两边都要**的：[1/6] 的 electron-builder 若按另一个名字出产物

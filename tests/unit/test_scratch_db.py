@@ -1,4 +1,4 @@
-"""`scripts/scratch_db.py` 选源逻辑的测试 —— 它决定"每个实验看到的是哪一天的世界"。
+"""`scripts/forensics/scratch_db.py` 选源逻辑的测试 —— 它决定"每个实验看到的是哪一天的世界"。
 
 为什么要给一个脚本助手写测试：本机有两个数据根（开发态仓库 `data/`、打包态
 `%LOCALAPPDATA%`），而 2026-09-24 那次搬迁把仓库那份**复制**而非移走，于是留下一个
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "scratch_db.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "forensics" / "scratch_db.py"
 
 
 def _load(monkeypatch, tmp_path: Path):

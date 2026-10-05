@@ -17,7 +17,9 @@ import importlib.util
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-_spec = importlib.util.spec_from_file_location("run_eval_u", ROOT / "scripts" / "run_eval.py")
+_spec = importlib.util.spec_from_file_location(
+    "run_eval_u", ROOT / "scripts" / "tools" / "run_eval.py"
+)
 assert _spec and _spec.loader
 ev = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ev)

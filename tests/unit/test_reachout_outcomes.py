@@ -20,7 +20,7 @@ from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 _spec = importlib.util.spec_from_file_location(
-    "reachout_outcomes", ROOT / "scripts" / "reachout_outcomes.py"
+    "reachout_outcomes", ROOT / "scripts" / "tools" / "reachout_outcomes.py"
 )
 assert _spec and _spec.loader
 mod = importlib.util.module_from_spec(_spec)

@@ -41,7 +41,7 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 BUILD = ROOT / "build"
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "forensics"))
 # 签名清单**只有一份出处**：conftest 的失败时刻钩子与这里问的是同一个东西，两处各抄一份
 # 就是给"改了判据漏了另一处"留门（`R102` 轮那条"同一句理由出现在第二处就该有尺子"的同族）。
 from chroma_flake_evidence import CHROMA_FLAKE_SIGNATURES, existing_evidence  # noqa: E402
