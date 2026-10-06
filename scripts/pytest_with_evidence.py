@@ -102,6 +102,37 @@ def _lane_from_argv(argv: list[str]) -> str | None:
     return None
 
 
+#: 这一步自己的开关：带它就表示"这是一趟子集跑"（`gate.py --fast` 的受影响选择走这条）。
+#: 它**不是** pytest 的参数，必须在本文件里摘掉；它同时决定要不要打那行给读数机看的记号。
+_SUBSET_FLAG = "--affected-subset"
+
+
+def _extra_from_argv(argv: list[str]) -> list[str]:
+    """`--lane X` 与 `--affected-subset` 之外的位置参数，原样转给 pytest。
+
+    受影响子集（`gate.py --fast` 那条路）靠它把文件清单交进来。为什么不另起一个入口：
+    "红跑取证"的判据与签名清单两档共用一份，多一个入口就多一处会漂的事实面。
+
+    `--affected-subset` 是**这一步自己的**开关（只为了在输出里留个记号），必须在这里摘掉：
+    第一版忘了摘，它被当成文件清单的第一项转给 pytest，pytest 当场
+    `unrecognized arguments: --affected-subset`（真跑一趟才看见 —— 纯函数用例只测到
+    "挑哪些文件"，测不到"命令行最后长什么样"）。
+    """
+    extra: list[str] = []
+    skip_next = False
+    for arg in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--lane":
+            skip_next = True
+            continue
+        if arg.startswith("--lane=") or arg == _SUBSET_FLAG:
+            continue
+        extra.append(arg)
+    return extra
+
+
 def main() -> int:
     lane = _lane_from_argv(sys.argv[1:]) or "coverage"
     if lane not in LANES:
@@ -110,7 +141,17 @@ def main() -> int:
     base, run1_name, run2_name = LANES[lane]
     run1, run2 = BUILD / run1_name, BUILD / run2_name
 
-    rc, log = _run(base)
+    extra = _extra_from_argv(sys.argv[1:])
+    if extra or _SUBSET_FLAG in sys.argv[1:]:
+        # 这个记号是给 `gate.py._write_readings` 读的：子集跑的 "N passed" 不是全套的数，
+        # 读成 backend_tests 就是一次静默漂（同族现场 10-04 出过一次，把 1595 洗成 32）。
+        print(
+            f"[AFFECTED-SUBSET] 这一趟只跑 {len(extra)} 个受影响文件（{lane} 档）—— "
+            "全量读数这趟不刷新（子集不是全量）",
+            flush=True,
+        )
+
+    rc, log = _run(base, extra)
     run1.write_text(log, encoding="utf-8", newline="\n")
     if rc == 0:
         return 0

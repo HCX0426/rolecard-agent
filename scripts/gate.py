@@ -201,6 +201,106 @@ def _src_changed() -> bool:
         return True
 
 
+#: 受影响用例选择（2026-10-04 快照的 CI 压缩方案第 ⑤ 步）。
+#:
+#: 为什么只在改了 src/ 时挑，且**挑不出来就退回全量**：这一步买的是一分钟量级的本地反馈，
+#: 代价是"少跑的那些文件里可能有一条本来会红"。所以判据全部朝保守一侧倒 ——
+#: 任何一处不确定（git 查不动、改了横切面、模块找不到同名测试、挑出来的比例太高）
+#: 都退回全量。这条纪律与 `_src_changed()` 是同一条：**探测失误只许让门禁更慢，不许让它更弱**。
+_SRC_PREFIX = "src/rolecard_agent/"
+#: 地基包：上下各层都 import 它们，"改了它只跑同名的测试"是错的（`base/paths` 一次改动
+#: 就牵动装配、打包、OCR 三条线）。
+_FOUNDATION_PREFIXES = ("src/rolecard_agent/base/", "src/rolecard_agent/storage/")
+#: 固定常跑集：与改动无关、但守的正是"全仓性质"的那几支，且便宜（<1s）。
+_ALWAYS_RUN_TESTS = ("tests/unit/test_import_floor.py",)
+#: 挑出来超过这个比例就不挑了：省不下多少，还白白换来一次"我到底跑全了没有"的疑问。
+_MAX_AFFECTED_SHARE = 0.6
+#: **机器自己写的东西不算"你改了什么"**。`docs/gate-readings.json` 是门禁每跑完一步就写的
+#: 读数文件：它必然出现在改动清单里，而它按规矩属于"src/ 与 tests/ 之外"⇒ 一律退回全量。
+#: 实测第一趟演示就是这么退回全量的（工作树里只有它 + 一处 src 改动），也就是说
+#: 没有这一格，这条特性**永远不会生效** —— 单元用例量不到，只有真跑一趟才看得见。
+_MACHINE_ARTIFACTS = frozenset({"docs/gate-readings.json"})
+
+
+def _changed_paths() -> list[str]:
+    """工作树里的改动（未提交含已暂存 + 未跟踪），与 `_src_changed` 同一口径。
+
+    `_git` 失败会抛 —— 调用方按"不确定 = 跑全量"处理，不在这里吞掉。
+    """
+    changed = _git("diff", "--name-only", "HEAD").splitlines()
+    changed += _git("ls-files", "--others", "--exclude-standard").splitlines()
+    return [p.strip().replace("\\", "/") for p in changed if p.strip()]
+
+
+def _test_files() -> list[str]:
+    return sorted(
+        str(p.relative_to(ROOT)).replace("\\", "/") for p in ROOT.glob("tests/**/test_*.py")
+    )
+
+
+def select_affected(changed: list[str], tests: list[str]) -> tuple[list[str], str]:
+    """把改动的文件映射成"该跑哪些测试文件"；**空列表 = 退回全量**（理由写在第二项里）。
+
+    判据按保守程度排（任一命中即全量）：
+      1. 改动里有 `src/` 与 `tests/` 之外的东西（pyproject、conftest、CI 工作流…）——
+         那些文件能影响整套用例的收集与运行方式；
+      2. 改的是 `src/rolecard_agent/` 下的**包顶层模块**（`config.py` 这类）—— 谁都可能 import；
+      3. 改的是地基包 `base/` 或 `storage/`—— 同上，只是理由更具体；
+      4. 某个改动模块**找不到同名测试**（零命中）—— 这正是"宁可慢不可漏"那一句；
+      5. 挑出来的文件超过全集六成 —— 省不下多少。
+
+    这条路的产出**只有本地 `--fast` 用**：CI 与全量档永远跑全套，读数也从不采信子集
+    （见 `_write_readings` 里 `AFFECTED-SUBSET` 那一支）。
+    """
+    # 先摘掉机器自己写的文件（读数是门禁每步在写的，不是"你在改的代码"）。
+    changed = [p for p in changed if p not in _MACHINE_ARTIFACTS]
+    src = sorted(p for p in changed if p.startswith(_SRC_PREFIX) and p.endswith(".py"))
+    if not src:
+        return [], "工作树里没有 src/ 的改动（受影响选择只在改了 src/ 时生效）"
+    outside = sorted(
+        p for p in changed if not p.startswith(_SRC_PREFIX) and not p.startswith("tests/")
+    )
+    if outside:
+        return [], f"改动里有 src/ 与 tests/ 之外的文件（{outside[0]}）—— 横切面，全量"
+    # `src/rolecard_agent/<mod>.py` 只有两段斜杠；再深一层才是子包里的模块。
+    shallow = [p for p in src if p.count("/") == 2]
+    if shallow:
+        return [], f"改的是 {shallow[0]}（包顶层模块，谁都可能 import）—— 全量"
+    foundation = [p for p in src if p.startswith(_FOUNDATION_PREFIXES)]
+    if foundation:
+        return [], f"改的是 {foundation[0]}（地基包，上下各层都 import）—— 全量"
+    picked: set[str] = set(_ALWAYS_RUN_TESTS)
+    for path in src:
+        stem = Path(path).stem
+        hits = [t for t in tests if stem in Path(t).name]
+        if not hits:
+            return [], f"{path} 找不到同名测试（映射零命中）—— 宁可慢不可漏，全量"
+        picked.update(hits)
+    # 改到的测试文件本身一定要跑（按词干匹配可能匹配不到它自己，例如改了
+    # `test_ocr_bundled_worker.py` 而没改任何 `ocr*` 模块）。
+    picked.update(p for p in changed if p.startswith("tests/") and p.endswith(".py"))
+    chosen = sorted(picked)
+    if len(chosen) > len(tests) * _MAX_AFFECTED_SHARE:
+        return [], f"映射出 {len(chosen)}/{len(tests)} 个文件，省不下多少 —— 全量"
+    return chosen, f"改了 {len(src)} 个模块 → 跑 {len(chosen)}/{len(tests)} 个测试文件"
+
+
+def _affected_pytest_command(
+    base: list[str], changed: list[str] | None
+) -> tuple[list[str], str]:
+    """快档那趟 pytest 的命令：能挑就挑（并在输出里留下 `AFFECTED-SUBSET` 记号）。
+
+    `changed` 由 `main()` 在**开跑之前**取一次（`None` = 没取到）。不在这里现取，是因为
+    门禁自己每跑完一步就往读数文件里写 —— 边跑边取会把机器刚写的文件读成"你改的东西"。
+    """
+    if changed is None:
+        return base, "全量（git 查询失败：不确定就保守跑）"
+    picked, why = select_affected(changed, _test_files())
+    if not picked:
+        return base, f"全量（{why}）"
+    return [*base, "--affected-subset", *picked], f"受影响子集：{why}"
+
+
 def _cwd_for(name: str) -> Path | None:
     """步骤跑在哪个目录按名字前缀定（比在元组里再加一个字段少一处噪声）。第一版
     我把 shell 那步写成"全局 npm run typecheck"，于是它在仓库根跑、根本没有这个
@@ -363,6 +463,13 @@ def _write_readings(outputs: dict[str, str], ok: bool) -> None:
                 # 让一致性去红，而取证放行本来就该按未知通过。`head` 照常更新（上一段）。
                 added.append(f"{key}（取证放行未量，沿用上一趟）")
                 continue
+            if "AFFECTED-SUBSET" in stripped:
+                # 受影响子集跑：这一趟只跑了一部分文件，`N passed` 当然不是全套的数。
+                # 与上面取证放行**同一处理**（不写值、不碰 `_at`，下一趟干净的绿跑自然刷新）
+                # —— 同族的现场已经出过一次：10-04 把 backend_tests 洗成 32，一致性当场把
+                # **对的** README 判漂。加"受影响选择"不能顺手制造第二个。
+                added.append(f"{key}（受影响子集未量，沿用上一趟）")
+                continue
             hits = re.findall(pattern, stripped)
             if not hits:
                 # **跑过却没量到**是另一件事，而且是有信息量的那一件：这一步的輸出格式变了
@@ -424,7 +531,20 @@ def main() -> int:
         metavar="步骤名子串",
         help="只跑名字含这个子串的步骤：补读一个数时不必等整趟（读数是按键合并的）",
     )
+    parser.add_argument(
+        "--full-tests",
+        action="store_true",
+        help="快档也跑全套用例（关掉受影响选择；提交前那趟建议带上）",
+    )
     args = parser.parse_args()
+
+    # 受影响选择的改动清单：**开跑前**取一次。门禁自己每跑完一步就往 `docs/gate-readings.json`
+    # 写读数，边跑边取会把机器刚写的文件当成"你改的东西"（实测第一趟演示就是这么退回全量的）。
+    # 取不到（不是 git 工作树、git 挂了）记 None —— 下游按"不确定 = 全量"处理。
+    try:
+        _changed_at_start: list[str] | None = _changed_paths()
+    except Exception:
+        _changed_at_start = None
 
     # 读数的键按**步骤名**挂钩，而步骤名会改（改名/合并/删步）：写错的键从此永不命中，
     # 却长得像"这一趟没跑那一步"（见 _write_readings）—— 于是一条读数静静消失、门禁照绿。
@@ -519,7 +639,13 @@ def main() -> int:
             cwd = ROOT / "shell"
         else:
             cwd = None
-        ok, dt, output = _run(name, cmd, cwd)
+        # 受影响用例选择（快档专属）：**只有本地 `--fast` 会走这条路**，CI 与全量档
+        # 永远跑全套。命令换掉、显示名带上理由，但 `name` 不动 —— 读数的键挂在步骤名上。
+        display, run_cmd = name, cmd
+        if args.fast and not args.full_tests and name.startswith("pytest(-x"):
+            run_cmd, note = _affected_pytest_command(cmd, _changed_at_start)
+            display = f"{name}｜{note}"
+        ok, dt, output = _run(display, run_cmd, cwd)
         timings.append((name, dt))
         # **一步一份，跑完立刻落**（不是整趟结束后一次性写）：否则同一趟里排在后面的
         # `consistency` 比的是**上一趟**的读数 —— 加了六条用例要跑两趟门禁才看得见。

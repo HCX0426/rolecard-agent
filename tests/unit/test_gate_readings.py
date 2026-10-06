@@ -199,3 +199,28 @@ def test_evidence_retry_does_not_poison_the_count(tmp_path: Path) -> None:
         "这不是'输出格式读不出'，是'这趟没量到' —— 打 unreadable 记号会让一致性去红，"
         "而取证放行本来就该按未知通过"
     )
+
+
+def test_affected_subset_does_not_poison_the_count(tmp_path: Path) -> None:
+    """受影响子集那趟**量不到全量数**：与取证放行同一处理（不写值、不挪时间戳）。
+
+    同族的现场刚出过一次（上一条用例）：子集跑的 `N passed` 与全量的数长得一模一样，
+    读错就是把 README 那一格**对的**数判成漂。加了"受影响用例选择"之后，快档在改了 src/
+    时默认只跑一部分文件 —— 那条路的输出里带 `[AFFECTED-SUBSET]` 记号，读数机必须认它。
+    """
+    gate = _load_gate()
+    _stub(gate, tmp_path)
+    gate._write_readings({"pytest(-x, 无覆盖率)": "1595 passed, 1 skipped in 80.0s\n"}, True)  # noqa: SLF001
+    before = _read(gate)
+    subset_output = (
+        "[AFFECTED-SUBSET] 这一趟只跑 7 个受影响文件（fast 档）—— 全量读数这趟不刷新\n"
+        "42 passed, 1 skipped in 6.10s\n"
+    )
+    gate._write_readings({"pytest(-x, 无覆盖率)": subset_output}, True)  # noqa: SLF001
+    after = _read(gate)
+    assert after["backend_tests"] == "1595", "子集的 42 不许盖掉上一趟的全量读数"
+    assert after["backend_tests_at"] == before["backend_tests_at"], "没量到就不许挪时间戳"
+    assert after["head"] == "0123456789ab", "head 照常更新：这一步确实绿了"
+    assert "backend_tests_unreadable" not in after, (
+        "这不是'输出格式读不出'：打 unreadable 记号会让一致性去红，而子集绿本来就该按未知通过"
+    )
