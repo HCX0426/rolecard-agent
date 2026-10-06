@@ -64,6 +64,10 @@ _STORAGE_TROUBLE = (
     "database table is locked",
     "disk i/o error",
     "unable to open database file",
+    # 库文件不是 sqlite 库（被覆盖 / 截断）：与上面几条同族 —— 都是"这台机器现在的状态"。
+    # 启动期它会被 `storage.db` 先翻成一句人话（`StorageUnreadable`，点名文件与怎么办）；
+    # 运行期掉到这里的，是同一族故障的运行时那一面。
+    "file is not a database",
 )
 
 

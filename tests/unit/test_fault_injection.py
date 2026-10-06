@@ -107,3 +107,52 @@ def test_真_app_上挂着的那个_handler_把环境故障翻成可读的_503(t
     bug = asyncio.run(handler(None, sqlite3.OperationalError("no such table: nope")))
     assert bug.status_code == 500, "编程错不许伪装成'临时故障、重试就好'"
     assert "不该出现" in bug.body.decode("utf-8")
+
+
+def test_坏库在开连接那一步就给出人话(tmp_path: pathlib.Path) -> None:
+    """快照后半句"坏库启动有明确诊断"：从前抛的是 `sqlite3.DatabaseError: file is not a
+    database` —— 没说哪个文件、没说能做什么，而**启动期是唯一还来得及说人话的时刻**。"""
+    db.clear_faults()
+    broken = tmp_path / "app.db"
+    broken.write_bytes("这不是一个 sqlite 库".encode() * 200)
+    with pytest.raises(db.StorageUnreadable) as got:
+        db.connect(broken)
+    message = str(got.value)
+    assert str(broken) in message, "要点名是哪个文件"
+    assert "不是 SQLite 库" in message
+    assert "备份" in message or "留证" in message, "要给一句能照着做的"
+    # 原始原因也要留着（认不出来的形态靠它排查），不许被我们自己那句话盖掉
+    assert "not a database" in message.lower()
+
+
+def test_坏库的三种形态各说各的话(tmp_path: pathlib.Path) -> None:
+    """三条分支不许合并成一句：损坏 / 打不开 / 被占着，用户要做的事完全不同。"""
+    target = tmp_path / "app.db"
+    corrupt = db._connect_hint(target, sqlite3.DatabaseError("file is not a database"))  # noqa: SLF001
+    denied = db._connect_hint(  # noqa: SLF001
+        target, sqlite3.OperationalError("unable to open database file")
+    )
+    locked = db._connect_hint(target, sqlite3.OperationalError("database is locked"))  # noqa: SLF001
+    assert "不是 SQLite 库" in corrupt
+    assert "权限" in denied
+    assert "第二个实例" in locked
+    assert len({corrupt, denied, locked}) == 3
+
+
+def test_坏库让应用起不来且报的是那句话(tmp_path: pathlib.Path) -> None:
+    """端到端：坏库时 `create_app` 抛的是**我们的**诊断，不是裸的 sqlite 异常。
+
+    这条才是"启动期"三个字的意思 —— 库坏了不该表现为"跑起来之后某个请求 500"。
+    """
+    from rolecard_agent.api.main import create_app
+
+    broken = tmp_path / "app.db"
+    broken.write_bytes(b"garbage" * 500)
+    with pytest.raises(db.StorageUnreadable) as got:
+        create_app(sqlite_path=broken)
+    assert "不是 SQLite 库" in str(got.value)
+
+
+def test_运行期的坏库也算环境故障() -> None:
+    """启动期有专门的翻法，运行期走错误族那一条 —— 两处都别漏。"""
+    assert storage_trouble_status(sqlite3.DatabaseError("file is not a database")) == 503

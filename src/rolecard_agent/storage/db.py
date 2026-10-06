@@ -63,6 +63,21 @@ def connect(path: str | Path) -> sqlite3.Connection:
         target.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(target), check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    try:
+        _apply_pragmas(conn)
+    except sqlite3.DatabaseError as exc:
+        # **坏库的启动诊断**（2026-10-04 快照"零故障注入"那一格的后半）：库文件不是 sqlite
+        # 库（被覆盖/截断）、打不开（权限/路径）、被别的进程独占 —— 这三种在**开连接**这一步就
+        # 会炸，而从前抛出去的是 `sqlite3.DatabaseError: file is not a database`：一句话，
+        # 没说哪个文件、没说什么能做。启动期是唯一还来得及说人话的时刻，这一格就是那句话。
+        with contextlib.suppress(sqlite3.Error):
+            conn.close()
+        raise StorageUnreadable(_connect_hint(target, exc)) from exc
+    return conn
+
+
+def _apply_pragmas(conn: sqlite3.Connection) -> None:
+    """建连接时必须钉上的那几档 PRAGMA（顺序承重，逐条理由见下）。"""
     # busy_timeout 必须是**第一个** PRAGMA：切换 journal_mode 本身要拿排他锁，而并发首次
     # 建连接时如果超时还没生效，就会直接抛 "database is locked"（实测踩到过 —— 把这条
     # 放在 WAL 之后等于没设）。
@@ -91,7 +106,33 @@ def connect(path: str | Path) -> sqlite3.Connection:
     # 本库唯一的逐轮高频 commit 恰恰是统计性的 hit_count，丢一格可接受。要绝对不丢用
     # backup，不要把 synchronous 钉回 FULL。
     conn.execute("PRAGMA synchronous = NORMAL")
-    return conn
+
+
+class StorageUnreadable(RuntimeError):
+    """库文件在**开连接**那一步就读不出来 —— 启动期唯一还来得及说人话的时刻。
+
+    它不是"某个请求失败了"，是"这台机器上的库现在打不开"：损坏（不是 sqlite 文件）、
+    权限/路径不对、被别的进程独占。所以它带一句可操作的话（哪个文件、能做什么），
+    而不是把 `sqlite3.DatabaseError` 原样扔给一个正在看控制台的人。
+    """
+
+
+def _connect_hint(target: Path, exc: sqlite3.DatabaseError) -> str:
+    """把三类"开不了库"翻成一句能照着做的话（认不出来就照原样带上原文，不猜）。"""
+    raw = str(exc) or type(exc).__name__
+    lowered = raw.lower()
+    if "not a database" in lowered or "malformed" in lowered or "encrypted" in lowered:
+        what = (
+            "这个文件不是 SQLite 库（被覆盖、截断，或根本不是库文件）——"
+            "**先别删它**，原地留证：换一份备份的库接着跑，再慢慢查它是怎么坏的"
+        )
+    elif "unable to open" in lowered or "readonly" in lowered or "permission" in lowered:
+        what = "打不开这个文件 —— 查一下路径是否存在、进程有没有读写权限"
+    elif "locked" in lowered or "busy" in lowered:
+        what = "被别的进程占着 —— 先确认没有第二个实例在跑同一个数据根"
+    else:
+        what = "开库失败（原因见下），先按数据安全处理：留证、换备份、再排查"
+    return f"库文件打不开：{target}\n  原因：{raw}\n  怎么办：{what}"
 
 
 #: 测试态故障注入（2026-10-04 快照「零故障注入」那一格）：`{操作名: 剩余次数}`。
