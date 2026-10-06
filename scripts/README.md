@@ -40,6 +40,7 @@
 | `scripts/tools/backup_data_root.py` | 装机前把在用数据根整体备份成 zip | 2026-09-26 装机轮（装机链第 2 步） | 是 |
 | `scripts/tools/build_audit_index.py` | 生成 docs/架构审计索引.md（编号当身份，位置只是存放地） | 2026-09-25 审计轮 | 是 |
 | `scripts/tools/build_ocr_worker.py` | 打随包 OCR worker（PyInstaller onedir） | 2026-10-03 装机版本地 OCR | 是 |
+| `scripts/tools/bump_version.py` | 版本单源改号（pyproject → 另三处）+ CHANGELOG 草稿生成 | 2026-10-04 审查快照（版本四处手抄那格） | 是 |
 | `scripts/tools/make_app_icon.py` | 重生成应用图标（多帧 RGBA .ico） | 2026-10-03 图标糊底修复 | 是 |
 | `scripts/tools/make_pet_sheet.py` | 生成随包桌宠形象素材（sprite.png + pack.json） | 2026-09-28 形象层（自绘默认包） | 是 |
 | `scripts/tools/measure_latency.py` | 首字/完整回答 P95 量尺（自起隔离实例） | 2026-09-26 延迟验收 | 是 |

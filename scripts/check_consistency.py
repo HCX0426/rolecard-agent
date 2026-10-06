@@ -803,6 +803,51 @@ def check_version_parity() -> None:
         fails.append(f"version claims out of sync: {bad}")
 
 
+def check_changelog() -> None:
+    """当前版本必须在 `CHANGELOG.md` 里有一节 —— "tag 与 CHANGELOG 节共存"的本地代理。
+
+    2026-10-04 快照「版本四处手抄、无 CHANGELOG」那一格的验收是"bump 0.4.0 后四处一致
+    门禁绿；tag 与 CHANGELOG 节共存"。tag 那一半归发布链（本机既没有 tag 也没有可推的
+    远端），能在门禁里判的是另一半：**改了号就得有那一节**。没有这条尺子，
+    `bump_version.py` 生成的草稿只是"好心"，而好心拦不住"只改号、不写变更史" ——
+    847 条提交零变更史就是这么长出来的。
+
+    判据只问三件文件级事实（不猜语义、不检查文笔）：文件在、有 `## [Unreleased]`
+    这个落点、有当前 `pyproject` 版本那一节。
+    """
+    path = ROOT / "CHANGELOG.md"
+    problems: list[str] = []
+    pyproject = ROOT / "pyproject.toml"
+    version = None
+    if pyproject.exists():
+        found = re.search(
+            r'(?m)^version = "([^"]+)"', pyproject.read_text(encoding="utf-8")
+        )
+        version = found.group(1) if found else None
+    if not path.exists():
+        problems.append("CHANGELOG.md 不见了（版本改了却没有变更史）")
+    else:
+        text = path.read_text(encoding="utf-8")
+        if not re.search(r"(?m)^## \[Unreleased\]", text):
+            problems.append("`## [Unreleased]` 那一节不见了（新条目没有落点）")
+        released = re.findall(r"(?m)^## \[([^\]]+)\]", text)
+        if version and version not in released:
+            problems.append(
+                f"当前版本 {version} 在 CHANGELOG 里没有节（现有的：{released or '无'}）"
+                " —— 跑 scripts/tools/bump_version.py 会连草稿一起生成"
+            )
+    ok = not problems
+    out(
+        "changelog",
+        ok,
+        "; ".join(problems[:3])
+        if problems
+        else f"当前版本 {version} 有节，`## [Unreleased]` 在（机械草稿 + 人工编辑）",
+    )
+    if not ok:
+        fails.append(f"changelog missing: {problems}")
+
+
 def _div_chain_parts(node: ast.AST) -> list[str]:
     """一条 `X / "a" / "b"` 链上的字符串片段，按原序带回引号。
 
@@ -4337,6 +4382,7 @@ def main() -> int:
     check_doc_freshness()
     check_audit_index_in_sync()
     check_version_parity()
+    check_changelog()
     check_dead_config()
     check_dependency_layering()
     check_env_example_models()
