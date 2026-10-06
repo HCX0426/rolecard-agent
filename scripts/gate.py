@@ -594,16 +594,42 @@ def main() -> int:
 
     # 头部的静态五步（ruff + 三档 mypy + 依赖方向）互不依赖、输出互不读，**并发跑**
     # （2026-10-04 审查快照的 CI 门禁条目②）：三遍 mypy 在 runner 上是 60-120s 的串行
-    # 冷启动，并发 + 缓存后归到一路。失败语义不变：整组跑完后**按序**处理结果，
-    # 任何一步红 → 不再启动后面的步骤（后面的步骤在同一个问题上只会重复失败）。
-    # 静态组各自捕获输出、跑完再打（并发流式打印会互相穿插，读不了）。
+    # 冷启动，并发 + 缓存后归到一路。静态组各自捕获输出、跑完再打（并发流式打印会互相穿插）。
+    #
+    # **试过、被数据否决的一步**（2026-10-07 实测，当天改完当天退回）：把 pytest（独立线程、
+    # 流式）与前端计数也拉进这趟并发 —— 想法是"让它们藏在 mypy 那 29s 底下"。实测**反而更慢**：
+    # 整趟 142s → 254s，pytest 88s → 244s、vitest 9s → 61s、随包 parity 1.3s → 16.6s
+    # （本机 16GB 且常态 70% 占用：三档 mypy + pytest -n 4 + node 同时跑是明显超额认购，
+    # 抢 CPU 的代价远大于重叠省下的那点时间）。所以这一格保持"静态组并发、其余串行"，
+    # 不为纸面上的重叠去抢 CPU。要再动它，先在**满载**的机器上量一遍再说话。
     _STATIC_HEAD = ("ruff", "mypy", "mypy scripts/", "mypy(linux 档)", "依赖方向")
+
+    def _cov_lane_skipped(name: str) -> bool:
+        """覆盖率那条：本地全量档"没碰 src/ 就跳过"（CI 档已在 `CI_SKIP` 里整步跳过 ——
+        2026-10-04 起覆盖率移到本机全量档与夜间臂：从前这里写着"CI 必跑"，是被审查快照的
+        CI 门禁条目修订掉的（双趟 pytest 是 CI 预算顶穿的主因，`R28-24`）。"""
+        return (
+            (not args.fast)
+            and (not args.ci)
+            and name.startswith("pytest(覆盖率")
+            and not _src_changed()
+        )
+
+    def _resolve(name: str, cmd: list[str]) -> tuple[str, list[str]]:
+        """一步最终的（显示名，命令行）—— 受影响用例选择只在这一处发生。"""
+        if args.fast and not args.full_tests and name.startswith("pytest(-x"):
+            run_cmd, note = _affected_pytest_command(cmd, _changed_at_start)
+            return f"{name}｜{note}", run_cmd
+        return name, cmd
+
     head = [e for e in runnable if e[0] in _STATIC_HEAD]
     parallel_ran = False
-    rest = runnable
+    rest = [e for e in runnable if e[0] not in _STATIC_HEAD]
+
+    # 失败语义不变：整组跑完后**按序**处理结果，任何一步红 → 不再启动后面的步骤
+    # （后面的步骤在同一个问题上只会重复失败）。
     if len(head) >= 2:
         parallel_ran = True
-        rest = [e for e in runnable if e[0] not in _STATIC_HEAD]
         with ThreadPoolExecutor(max_workers=len(head)) as pool:
             outcomes = list(pool.map(lambda e: _run_captured(e[0], e[1], _cwd_for(e[0])), head))
         for (name, _cmd, _mode), (ok, dt, output) in zip(head, outcomes, strict=True):
@@ -611,23 +637,27 @@ def main() -> int:
             _write_readings({name: output}, ok)
             if not ok:
                 failures.append(name)
-                break  # 静态组内失败：不进后续步骤（组内其余步骤已跑完，照常报读数）
         if not failures:
             print(f"  ⏱ 静态组（{'、'.join(n for n, _, _ in head)}）并发完成", flush=True)
+
+    # **失败即停**：静态组红了就不再往下走（后面几步在同一个问题上只会重复失败）。
+    # 这一格从前漏着 —— 静态组红了 `rest` 照样跑（ruff 报个错还要把整套用例烧完），是"加并发组"
+    # 那次留下的缝：`break` 只跳出了**结算循环**，没挡住后面的步骤。文档写着"任何一步失败即停"，
+    # 而那句话没有判据看着 —— 这半句就是被判据抓住之前的样子。
+    if failures:
+        print(
+            f"  ⏭️  失败即停：后续 {len(rest)} 步不再跑"
+            f"（{'、'.join(n for n, _, _ in rest)}）",
+            flush=True,
+        )
+        rest = []
 
     for name, cmd, _mode in rest:
         if parallel_ran and name in _STATIC_HEAD:
             continue  # 静态组已在上面并发跑过（--only 只点名静态步时不会走到这）
-        # 覆盖率那趟：本地全量档"没碰 src/ 就跳过"。CI 档已在 CI_SKIP 里整步跳过
-        # （2026-10-04 起覆盖率移到本机全量档与夜间臂；从前这里写着"CI 必跑"—— 用户 09-29
-        # 的拍板 R28-24，被审查快照的 CI 门禁条目修订：双趟 pytest 是 CI 预算顶穿的主因）。
-        if (
-            (not args.fast)
-            and (not args.ci)
-            and name.startswith("pytest(覆盖率")
-            and not _src_changed()
-        ):
-            print("\n▶ pytest(覆盖率≥85%)：跳过（src/ 无改动）", flush=True)
+        # 覆盖率那条：本地全量档"没碰 src/ 就跳过"（判据在 `_cov_lane_skipped`）。
+        if _cov_lane_skipped(name):
+            print(f"\n▶ {name}：跳过（src/ 无改动）", flush=True)
             timings.append((name, 0.0))
             continue
         # 步骤跑在哪个目录按名字前缀定（比在元组里再加一个字段少一处噪声）。第一版
@@ -639,12 +669,7 @@ def main() -> int:
             cwd = ROOT / "shell"
         else:
             cwd = None
-        # 受影响用例选择（快档专属）：**只有本地 `--fast` 会走这条路**，CI 与全量档
-        # 永远跑全套。命令换掉、显示名带上理由，但 `name` 不动 —— 读数的键挂在步骤名上。
-        display, run_cmd = name, cmd
-        if args.fast and not args.full_tests and name.startswith("pytest(-x"):
-            run_cmd, note = _affected_pytest_command(cmd, _changed_at_start)
-            display = f"{name}｜{note}"
+        display, run_cmd = _resolve(name, cmd)
         ok, dt, output = _run(display, run_cmd, cwd)
         timings.append((name, dt))
         # **一步一份，跑完立刻落**（不是整趟结束后一次性写）：否则同一趟里排在后面的
@@ -654,7 +679,7 @@ def main() -> int:
             failures.append(name)
             break  # 失败即停：后面的步骤在同一个问题上只会重复失败
         if name.startswith("pytest(覆盖率"):
-            # 记下"覆盖率这次是在哪个 HEAD 上实跑的"：_src_changed 的判据靠它，
+            # 记下"覆盖率这次是在哪个 HEAD 上实跑的"：`_src_changed` 的判据靠它，
             # 纯 docs 的后续提交才不会再把 src 的改动遮住。写不了 marker 只会让
             # 下次多跑一趟覆盖率，不是错误。
             with contextlib.suppress(Exception):

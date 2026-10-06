@@ -21,6 +21,7 @@ import re
 import subprocess
 import sys
 import tomllib
+from collections import Counter
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -3504,9 +3505,14 @@ def check_dead_config() -> None:
     # Count across production code INCLUDING config.py, and require more than the declaration
     # line itself. Excluding config.py looked right but produced a false positive:
     # `model_backends` is read by `backend()` and `resolve_fallbacks()` in that same file.
-    unread = sorted(
-        f for f in fields if f not in RESERVED_SETTINGS and len(re.findall(rf"\b{f}\b", others)) < 2
-    )
+    #
+    # **一次扫完再查表**（2026-10-07 实测改的）：从前是每个字段跑一遍
+    # `re.findall(rf"\b{f}\b", others)` —— 54 个字段 × 整份 corpus，cProfile 里
+    # `re.findall` 那 33 万次调用大半来自这一格，它单独占掉整个一致性检查的 2.1s（总计 12.8s）。
+    # 词元计数与 `\b` 计数在这里**等价**：字段名是 `[a-z][a-z0-9_]*`，而标识符边界恰好就是
+    # `\b` 的边界（`my_api_key` 里数不出 `api_key`，两种写法一致）。
+    seen = Counter(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", others))
+    unread = sorted(f for f in fields if f not in RESERVED_SETTINGS and seen[f] < 2)
     detail = (
         f"unread: {unread}"
         if unread
