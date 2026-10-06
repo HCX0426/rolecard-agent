@@ -29,6 +29,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Mapping
 from typing import Any
 
@@ -51,6 +52,30 @@ from rolecard_agent.roles.service import (
     RoleError,
     RoleNotFound,
 )
+
+#: 存储层里属于"**这台机器现在的状态**"的错误（2026-10-04 快照的故障注入那一格）。
+#: 按**消息**认而不是按类型认：`sqlite3.OperationalError` 是个大杂烩，里面既有环境故障
+#: （磁盘满 / 写锁等不到 / IO 错 / 库文件打不开），也有编程错（`no such table`）。
+#: 把整族映射成 503，等于让真 bug 伪装成"临时故障、重试就好" —— 那是本仓最恨的那种格子。
+#: 认不出来的照旧 500，让人去看栈。
+_STORAGE_TROUBLE = (
+    "database or disk is full",
+    "database is locked",
+    "database table is locked",
+    "disk i/o error",
+    "unable to open database file",
+)
+
+
+def storage_trouble_status(exc: BaseException) -> int | None:
+    """环境型存储故障 → 503；不是它 → `None`（调用方按 500 走）。
+
+    为什么是 503 而不是行内写的 502：502 在本仓的含义是"**上游**（模型端点）答得不对"
+    （见 `services` 探活那一族）；磁盘满/写锁是本机自己的状态，客户端重试或运维去看
+    `/api/health/deep` 才有用 —— 那是 503 的语义。
+    """
+    text = str(exc).lower()
+    return 503 if any(marker in text for marker in _STORAGE_TROUBLE) else None
 
 
 def error_response(
@@ -117,6 +142,21 @@ def register_error_handlers(app: FastAPI) -> None:
         return error_response(
             409, "这一轮还在跑 —— 先按「停止」或等它说完，再改这段历史。"
         )
+
+    # 存储层的环境型故障：读得懂的 503 + 一句可操作的话（从前它落到泛化的 500 空壳上，
+    # 而"磁盘满了"与"我们写错了"对用户是两件完全不同的事）。认不出来的照旧 500 ——
+    # 见 `_STORAGE_TROUBLE` 上面那段：不许把真 bug 伪装成临时故障。
+    @app.exception_handler(sqlite3.OperationalError)
+    async def _storage(_: Request, exc: sqlite3.OperationalError) -> JSONResponse:
+        status = storage_trouble_status(exc) or 500
+        if status == 503:
+            detail = (
+                f"存储层现在写不进去（{exc}）—— 这不是这次请求的问题，"
+                "看一眼磁盘空间，或问 /api/health/deep 要一张依赖体检表。"
+            )
+        else:
+            detail = f"存储层报了一个不该出现的错：{exc}"
+        return error_response(status, detail)
 
     for family, status, _why in _FAMILIES:
 

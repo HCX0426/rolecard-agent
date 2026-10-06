@@ -94,6 +94,37 @@ def connect(path: str | Path) -> sqlite3.Connection:
     return conn
 
 
+#: 测试态故障注入（2026-10-04 快照「零故障注入」那一格）：`{操作名: 剩余次数}`。
+#: **生产路径上它永远是空的 dict** —— 这一层不读配置、不看环境变量，只有测试会写它。
+#:
+#: 为什么要有它，而不是在用例里 monkeypatch `sqlite3.Connection.commit`：那样改的是**别人的
+#: 库**（补丁装在标准库类上，撤不干净就会漏到别的用例里），而这里注入的是本仓自己的那一格，
+#: 复位是同一条命令。为什么用"剩余次数"而不是开关：一个会一直生效的故障注入，第二个用例
+#: 撞上它时红得莫名其妙 —— "测试互相下毒"是这一族最容易长出来的形状。
+_INJECTED_FAULTS: dict[str, int] = {}
+
+
+def inject_fault(op: str, *, times: int = 1) -> None:
+    """让接下来 `times` 次 `op`（`execute` / `executemany` / `executescript` / `commit`）
+    抛一条**真形状**的 `sqlite3.OperationalError`（磁盘满那一句，与 ENOSPC 实测同文本）。"""
+    _INJECTED_FAULTS[op] = _INJECTED_FAULTS.get(op, 0) + times
+
+
+def clear_faults() -> None:
+    _INJECTED_FAULTS.clear()
+
+
+def _maybe_fault(op: str) -> None:
+    remaining = _INJECTED_FAULTS.get(op, 0)
+    if remaining <= 0:
+        return
+    if remaining == 1:
+        _INJECTED_FAULTS.pop(op, None)
+    else:
+        _INJECTED_FAULTS[op] = remaining - 1
+    raise sqlite3.OperationalError("database or disk is full")
+
+
 class ThreadLocalConnection:
     """一条"逻辑连接"，内部为**每个线程**各持一条真实连接。
 
@@ -160,15 +191,19 @@ class ThreadLocalConnection:
     # 参数类型用 Any 而不是 object：这是**纯透传**，sqlite3 的 execute/cursor 都有重载，
     # 写 object 会让 mypy 挑不出匹配的重载（报 call-overload），而这里并不打算约束参数形状。
     def execute(self, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+        _maybe_fault("execute")
         return self._current().execute(*args, **kwargs)
 
     def executemany(self, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+        _maybe_fault("executemany")
         return self._current().executemany(*args, **kwargs)
 
     def executescript(self, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+        _maybe_fault("executescript")
         return self._current().executescript(*args, **kwargs)
 
     def commit(self) -> None:
+        _maybe_fault("commit")
         self._current().commit()
 
     def rollback(self) -> None:
