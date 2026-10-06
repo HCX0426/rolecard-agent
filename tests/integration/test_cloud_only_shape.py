@@ -154,6 +154,7 @@ def test_proactive_reachouts_work_without_any_local_model(tmp_path: Path) -> Non
     settings = _cloud_only_settings(tmp_path).model_copy(update={"reachout_enabled": True})
     runtime = _runtime(tmp_path)
     scheduler = ReachoutScheduler(
+        inline_generation=True,
         settings_provider=lambda: settings,
         roles=_Roles([role]),  # type: ignore[arg-type]
         model_resolver=lambda _name: ScriptedChat([AIMessage(content=reply)]),

@@ -188,12 +188,24 @@ def _scheduler(rt: Any) -> Any:
     return scheduler
 
 
+def _tick(rt: Any, *, when_utc: datetime, when_local: datetime) -> int:
+    """跑一拍并**等生成收尾**（`wait_idle`），返回交出去的条数。
+
+    生产形状下生成在池里跑：`tick_once` 返回的是入队数，留痕与落库都稍后才发生 ——
+    不等就去读 `rec.events` 与行，量到的是上一拍的残影（探针在异步化之后必须收口）。
+    """
+    scheduler = _scheduler(rt)
+    made = scheduler.tick_once(now_utc=when_utc, now_local=when_local)
+    assert scheduler.wait_idle(120), "生成没收尾（模型卡住？）—— 继续读会量到空留痕"
+    return made
+
+
 def _run_tick(rt: Any, stub: StubModel, rec: Recorder, roles: list[Any], label: str,
               when_utc: datetime, when_local: datetime) -> None:
     for role in roles:
         rt.conn.execute("UPDATE agent_reachout SET state='read' WHERE role_id=?", (role.role_id,))
     before = _scans(stub)
-    made = _scheduler(rt).tick_once(now_utc=when_utc, now_local=when_local)
+    made = _tick(rt, when_utc=when_utc, when_local=when_local)
     traces = [
         f"{e.event}:{e.detail.get('trigger') or e.detail.get('why') or e.detail.get('mode')}"
         for e in rec.events
@@ -226,7 +238,7 @@ def _force_timer_experiment(
             cfg, {"messages": [HumanMessage(content="我下周要体检，结果出来跟你说")]}
         )
         before = _scans(stub)
-        made = _scheduler(rt).tick_once(now_utc=now, now_local=now.astimezone())
+        made = _tick(rt, when_utc=now, when_local=now.astimezone())
         fired = [
             e.detail.get("trigger")
             for e in rec.events
@@ -254,7 +266,7 @@ def _clear_all_shadows(
     )
     rt.conn.commit()
     before = _scans(stub)
-    made = _scheduler(rt).tick_once(now_utc=now, now_local=now.astimezone())
+    made = _tick(rt, when_utc=now, when_local=now.astimezone())
     fired = [
         e.detail.get("trigger")
         for e in rec.events

@@ -7,8 +7,11 @@
 from __future__ import annotations
 
 import re
+import threading
+import time
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 from langchain_core.messages import AIMessage
 
@@ -225,6 +228,7 @@ def test_scheduler_reports_a_quiet_reason_once_per_change(conn) -> None:
     """留痕只在**原因变了的那一跳**：每 tick 一条会把轨迹刷满，而重复的同一句不带新信息。"""
     tracer = _Tracer()
     scheduler = ReachoutScheduler(
+        inline_generation=True,
         settings_provider=lambda: _settings(),
         roles=_Roles([_role()]),  # type: ignore[arg-type]
         model_resolver=lambda _n: _FakeModel(AIMessage(content="不该发")),
@@ -402,6 +406,7 @@ def test_affection_tier_tick_carries_cached_open_topics(conn) -> None:
     conn.commit()
     model = _FakeModel(AIMessage(content="你下周体检的事，我一直记着。"))
     scheduler = ReachoutScheduler(
+        inline_generation=True,
         settings_provider=lambda: _settings(),
         roles=_Roles([role]),  # type: ignore[arg-type]
         model_resolver=lambda _n: model,
@@ -486,6 +491,7 @@ class _Roles:
 
 def _scheduler(conn, roles: list[RoleCard], model) -> ReachoutScheduler:
     return ReachoutScheduler(
+        inline_generation=True,
         settings_provider=lambda: _settings(),
         roles=_Roles(roles),  # type: ignore[arg-type]
         model_resolver=lambda _name: model,
@@ -516,6 +522,7 @@ def test_tick_once_enables_role_and_respects_fields(conn) -> None:
 def test_tick_once_respects_master_switch(conn) -> None:
     off = _settings(reachout_enabled=False)
     scheduler = ReachoutScheduler(
+        inline_generation=True,
         settings_provider=lambda: off,
         roles=_Roles([_role()]),  # type: ignore[arg-type]
         model_resolver=lambda _n: _FakeModel(AIMessage(content="不该发")),
@@ -544,6 +551,7 @@ def test_an_empty_generation_leaves_a_trace_saying_why(conn) -> None:
     """
     tracer = _Tracer()
     scheduler = ReachoutScheduler(
+        inline_generation=True,
         settings_provider=lambda: _settings(),
         roles=_Roles([_role(reachout_enabled=True)]),  # type: ignore[arg-type]
         model_resolver=lambda _n: _FakeModel(AIMessage(content="   ")),
@@ -592,6 +600,7 @@ def test_tick_delivers_into_the_proactive_thread(conn) -> None:
         return tid
 
     scheduler = ReachoutScheduler(
+        inline_generation=True,
         settings_provider=lambda: _settings(),
         roles=_Roles([_role()]),  # type: ignore[arg-type]
         model_resolver=lambda _n: _FakeModel(AIMessage(content="今天腰还酸吗")),
@@ -610,6 +619,7 @@ def test_tick_delivers_into_the_proactive_thread(conn) -> None:
 def test_tick_persists_the_repeat_score_of_what_was_said(conn) -> None:
     """复读分跟消息一起落库（N4 ①）：分布要跨启动攒，落不到行里就永远只活在当次日志。"""
     scheduler = ReachoutScheduler(
+        inline_generation=True,
         settings_provider=lambda: _settings(),
         roles=_Roles([_role()]),  # type: ignore[arg-type]
         model_resolver=lambda _n: _FakeModel(AIMessage(content="今天腰还酸吗")),
@@ -647,6 +657,7 @@ def test_deliver_failure_keeps_the_inbox_message_and_is_traced(conn) -> None:
 
     tracer = _Tracer()
     scheduler = ReachoutScheduler(
+        inline_generation=True,
         settings_provider=lambda: _settings(),
         roles=_Roles([_role()]),  # type: ignore[arg-type]
         model_resolver=lambda _n: _FakeModel(AIMessage(content="嗨")),
@@ -681,6 +692,7 @@ def test_a_message_that_missed_the_thread_is_delivered_on_a_later_tick(conn) -> 
         return svc.proactive_thread_id(role.role_id, user_id=ME)
 
     scheduler = ReachoutScheduler(
+        inline_generation=True,
         settings_provider=lambda: _settings(),
         roles=_Roles([_role()]),  # type: ignore[arg-type]
         model_resolver=lambda _n: _FakeModel(AIMessage(content="今天腰还酸吗")),
@@ -770,6 +782,7 @@ def test_tick_once_continues_after_role_failure(conn) -> None:
 
     pick = _Pick()
     scheduler = ReachoutScheduler(
+        inline_generation=True,
         settings_provider=lambda: _settings(),
         roles=_Roles(roles),  # type: ignore[arg-type]
         model_resolver=pick,
@@ -956,6 +969,7 @@ def _file_scheduler(conn, roles: list[RoleCard], model, task_dir: Path, **skw: o
     settings = _fw_settings(task_dir, **skw)
     tracer = _Tracer()
     scheduler = ReachoutScheduler(
+        inline_generation=True,
         settings_provider=lambda: settings,
         roles=_Roles(roles),  # type: ignore[arg-type]
         model_resolver=lambda _name: model,
@@ -1393,6 +1407,7 @@ class _TwoFaceModel:
 
 def _thread_scheduler(conn, model: object, lines: str) -> ReachoutScheduler:
     return ReachoutScheduler(
+        inline_generation=True,
         settings_provider=lambda: _settings(),
         roles=_Roles([_role(reachout_enabled=True)]),  # type: ignore[arg-type]
         model_resolver=lambda _n: model,
@@ -1523,6 +1538,7 @@ def test_used_topics_are_consumed_so_they_drive_only_one_open(conn) -> None:
     )
     model = _TwoFaceModel(["这条不该被再扫一遍"], reply="体检怎么样了？")
     scheduler = ReachoutScheduler(
+        inline_generation=True,
         settings_provider=lambda: _settings(),
         roles=_Roles([_role(reachout_enabled=True)]),  # type: ignore[arg-type]
         model_resolver=lambda _n: model,
@@ -1624,6 +1640,7 @@ def test_no_thread_lines_means_no_scan_at_all(conn) -> None:
     model = _TwoFaceModel(["不该被扫"])
     utc, local = _now()
     scheduler = ReachoutScheduler(
+        inline_generation=True,
         settings_provider=lambda: _settings(),
         roles=_Roles([_role(reachout_enabled=True)]),  # type: ignore[arg-type]
         model_resolver=lambda _n: model,
@@ -1643,6 +1660,7 @@ def test_the_scan_reads_the_window_even_when_the_unanswered_tail_is_empty(conn) 
     model = _TwoFaceModel(["下周体检的结果"])
     utc, local = _now()
     scheduler = ReachoutScheduler(
+        inline_generation=True,
         settings_provider=lambda: _settings(),
         roles=_Roles([_role(reachout_enabled=True)]),  # type: ignore[arg-type]
         model_resolver=lambda _n: model,
@@ -1684,6 +1702,7 @@ def test_affection_toggle_frees_the_rest_of_the_chain(conn) -> None:
     )
     model = _TwoFaceModel(["猫绝育约上了没"])
     scheduler = ReachoutScheduler(
+        inline_generation=True,
         settings_provider=lambda: _settings(),
         roles=_Roles([quiet]),  # type: ignore[arg-type]
         model_resolver=lambda _n: model,
@@ -1775,3 +1794,266 @@ def test_stop_cancels_pending_generation_cooperatively(conn) -> None:
     utc, local = _now()
     made = scheduler.tick_once(now_utc=utc, now_local=local)
     assert made == 0, "置旗后的 tick 不该产出任何开口"
+
+
+# -- 默认（异步）形状：生成出循环的专属用例 --------------------------------------
+#
+# 存量用例全部传 `inline_generation=True` 要回同步旧形（旧语义由它们守）；这一组钉的是
+# **新的默认形状**：tick 只判定与入队，生成在独立单 worker 池里跑。
+# 收尾纪律（接手实测过的 0xC0000005）：池线程必须先收干净再交还 fixture —— 池线程还在
+# 写库时 `conn` teardown 会在 **C 层**打出 access violation，断言与 `-x` 都拦不住它。
+
+
+def _blocking_resolver(
+    gate: threading.Event, entered: threading.Event, model: object
+) -> Any:
+    """模型解析：进池线程先亮牌、再卡在 gate 上 —— 模拟"本地 8B 一次几十秒"。"""
+
+    def resolve(_name: str | None) -> object:
+        entered.set()
+        assert gate.wait(10), "测试没放行：生成卡超时（gate 泄漏？）"
+        return model
+
+    return resolve
+
+
+def _async_scheduler(
+    conn, roles: list[RoleCard], model: object, gate: threading.Event, entered: threading.Event
+) -> ReachoutScheduler:
+    """构造**默认**（异步）形状：不传 `inline_generation` —— 那正是被测对象。"""
+    return ReachoutScheduler(
+        settings_provider=lambda: _settings(),
+        roles=_Roles(roles),  # type: ignore[arg-type]
+        model_resolver=_blocking_resolver(gate, entered, model),
+        conn=conn,
+        tracer=_Tracer(),  # type: ignore[arg-type]
+    )
+
+
+def _drain(scheduler: ReachoutScheduler) -> None:
+    """放行后把池收干净（可重复调用）：fixture 关连接之前，池线程必须已经退干净。
+
+    **不许 cancel_futures**：排队中的那一笔是被测对象（"放行后每角色各一条、A 先 B 后"），
+    取消它等于把断言要的那行直接吞掉 —— 槽位不还、行不落，红得还看不出是谁的错。
+    先 `wait_idle` 等任务收尾（done 回调归还槽位），再 join 线程。
+    """
+    assert scheduler.wait_idle(15), f"池没收干净，槽位还占着：{scheduler._queued}"
+    scheduler._gen_pool.shutdown(wait=True)
+
+
+def test_async_tick_enqueues_without_waiting_for_generation(conn) -> None:
+    """tick 不等生成：模型还卡着时 tick 必须已经返回，放行后消息照常落库（不阻塞 + 不丢）。
+
+    这条是验收"tick P95 <200ms"的硬性质版（单支用例留足 CI 抖动余量，但"比生成短一个
+    量级"是硬的）：旧形状下模型卡住 = 整个调度线程陪它等，评估/补投/下一拍全部冻结。
+    """
+    gate, entered = threading.Event(), threading.Event()
+    scheduler = _async_scheduler(
+        conn, [_role()], _FakeModel(AIMessage(content="嗨")), gate, entered
+    )
+    try:
+        utc, local = _now()
+        t0 = time.monotonic()
+        made = scheduler.tick_once(now_utc=utc, now_local=local)
+        elapsed = time.monotonic() - t0
+        assert made == 1, "判定与入队发生在 tick 内"
+        assert elapsed < 1.0, f"tick 等了生成 {elapsed:.2f}s —— 生成应卡在池里"
+        assert entered.wait(5), "池线程没开跑（提交没生效？）"
+        # 模型还卡着：消息当然还没落库 —— "tick 返回 ≠ 已完成"的可观察面。
+        assert conn.execute("SELECT COUNT(*) FROM agent_reachout").fetchone()[0] == 0
+
+        gate.set()
+        _drain(scheduler)
+        rows = conn.execute("SELECT role_id FROM agent_reachout").fetchall()
+        assert [r["role_id"] for r in rows] == ["active"], "放行后消息照常落库"
+    finally:
+        gate.set()
+        _drain(scheduler)
+
+
+def test_async_keeps_evaluating_other_roles_while_one_is_generating(conn) -> None:
+    """A 卡在生成里时，B 的判定与入队**照常发生** —— 这正是"开口时机漂移"要治的病。
+
+    旧形状：A 的几十秒把 tick 钉死，B 的条件判定排在 A 说完之后；新形状里同一段时间的
+    第二个 tick 照常跑 —— B 入队成功即为证据。收尾顺带钉两条纪律：
+    A 在飞时自己再触发一次**不重复入队**（per-role 去重）；放行后每角色各一条、
+    A 先 B 后（单 worker 按入队序串行，`_queued` 队位在 finally 里归还）。
+    """
+    gate, entered = threading.Event(), threading.Event()
+    second = RoleCard(
+        role_id="second", role_name="第二角色", system_prompt="x", reachout_enabled=True
+    )
+    scheduler = _async_scheduler(
+        conn, [_role(), second], _FakeModel(AIMessage(content="嗨")), gate, entered
+    )
+    try:
+        # B 先按间隔档压住（刚"说过话"）：第一拍只有 A 该出手。
+        _seed_last(conn, "second", minutes_ago=5)
+        utc, local = _now()
+        assert scheduler.tick_once(now_utc=utc, now_local=local) == 1  # A 入队并卡住
+        assert entered.wait(5), "池线程没开跑"
+
+        # 让 B 恰好在这一拍之间变成熟（删掉那条压档）：A 还卡在生成里。
+        conn.execute("DELETE FROM agent_reachout WHERE role_id = 'second'")
+        conn.commit()
+        # A 在飞时自己再触发 → per-role 队位挡下；B 则被判定并入队 —— 评估没被 A 冻结。
+        assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
+        with scheduler._queued_guard:
+            assert scheduler._queued == {"active", "second"}, scheduler._queued
+
+        gate.set()
+        _drain(scheduler)
+        rows = [
+            r["role_id"]
+            for r in conn.execute("SELECT role_id FROM agent_reachout ORDER BY id").fetchall()
+        ]
+        assert rows == ["active", "second"], f"每角色一条且按入队序：{rows}"
+    finally:
+        gate.set()
+        _drain(scheduler)
+
+
+def test_stop_drains_the_pool_and_releases_every_slot(conn) -> None:
+    """stop 后台收干净：排队的被取消（不落库），在飞的自己收尾，槽位与线程一个不留。
+
+    取消路径正是 done 回调存在的理由 —— 被取消的任务**永远不会执行**，收尾若挂在任务
+    自己身上，槽位就永久占死（下一个进程周期这个角色再也不会开口）。
+    """
+    gate, entered = threading.Event(), threading.Event()
+    second = RoleCard(
+        role_id="second", role_name="第二角色", system_prompt="x", reachout_enabled=True
+    )
+    scheduler = _async_scheduler(
+        conn, [_role(), second], _FakeModel(AIMessage(content="嗨")), gate, entered
+    )
+    try:
+        # 第一拍 A 卡在生成里；B 压档不触发。
+        _seed_last(conn, "second", minutes_ago=5)
+        utc, local = _now()
+        assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
+        assert entered.wait(5), "池线程没开跑"
+
+        # 第二拍 B 成熟入队（排在 A 后面，单 worker 还没轮到它）。
+        conn.execute("DELETE FROM agent_reachout WHERE role_id = 'second'")
+        conn.commit()
+        assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
+        with scheduler._queued_guard:
+            assert scheduler._queued == {"active", "second"}, scheduler._queued
+
+        scheduler.stop()  # 取消排队的 B，在飞的 A 放它自己收尾
+        gate.set()
+        assert scheduler.wait_idle(15), f"槽位没收干净：{scheduler._queued}"
+        scheduler._gen_pool.shutdown(wait=True)
+        with scheduler._queued_guard:
+            assert scheduler._queued == set(), f"取消的槽位泄漏：{scheduler._queued}"
+        rows = [
+            r["role_id"]
+            for r in conn.execute("SELECT role_id FROM agent_reachout ORDER BY id").fetchall()
+        ]
+        assert rows == ["active"], f"取消的不落库、在飞的照落：{rows}"
+        assert not any(
+            t.is_alive() for t in scheduler._gen_pool._threads
+        ), "stop 之后池线程没退净"
+    finally:
+        gate.set()
+        _drain(scheduler)
+
+
+def test_in_flight_row_is_not_redelivered_by_the_next_tick(conn) -> None:
+    """池线程刚落库、还没 `mark_delivered` 的那一行，补投不许碰 —— 否则同句进会话两遍。
+
+    窗口是真的：`record_reachout`（commit）与 `mark_delivered` 之间隔着投递本身，
+    补投的查询正好扫得到它。判据 = 角色在 `_queued` 内就跳过；投不成的行
+    `delivered_at` 仍空，队位归还后的下一拍照投。
+    """
+    gate = threading.Event()  # 卡住投递，把窗口撑开
+    entered = threading.Event()  # 池线程进了 deliver
+    calls: list[str] = []
+
+    def _deliver(role: object, text: str) -> str:
+        calls.append(text)
+        entered.set()
+        gate.wait(10)
+        return "thread-9"
+
+    scheduler = ReachoutScheduler(
+        settings_provider=lambda: _settings(),
+        roles=_Roles([_role()]),  # type: ignore[arg-type]
+        model_resolver=lambda _n: _FakeModel(AIMessage(content="今天腰还酸吗")),
+        conn=conn,
+        tracer=_Tracer(),  # type: ignore[arg-type]
+        deliver=_deliver,
+    )
+    try:
+        utc, local = _now()
+        assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
+        assert entered.wait(5), "池线程没进投递"
+        row = conn.execute("SELECT delivered_at FROM agent_reachout").fetchone()
+        assert row["delivered_at"] is None, "行已落库、投递未收口 —— 补投的查询正看得见它"
+
+        # 同一时刻再拍：补投必须被在飞队位挡下（上一行就是它要补的欠账）。
+        assert scheduler.tick_once(now_utc=utc, now_local=local) == 0
+        assert calls == ["今天腰还酸吗"], f"在飞的行被补投重了一份：{calls}"
+
+        gate.set()
+        assert scheduler.wait_idle(15)
+        scheduler._gen_pool.shutdown(wait=True)
+        assert len(calls) == 1, f"收口后不该再多投：{calls}"
+        late = conn.execute("SELECT delivered_at FROM agent_reachout").fetchone()
+        assert late["delivered_at"] is not None, "池线程自己那一投没写回 delivered_at"
+    finally:
+        gate.set()
+        _drain(scheduler)
+
+
+def test_file_event_is_not_replayed_for_a_role_waking_mid_flight(
+    conn, tmp_path: Path
+) -> None:
+    """上一批素材还在池里飞时，下一拍不许把同一批事件再播给刚醒的角色。
+
+    `check_changes` 对挂起事件是**原样再报**（基线没推），所以异步形状下"生成几十秒"
+    会让同一变化跨拍存活 —— 同步形状一个 tick 内就消费完，没有这个窗口。判据：
+    醒来的第二个角色开口只能是别的由头（timer），事件消费权仍归在飞的那一批，
+    收尾后基线照推（`pending_count` 归零）。
+    """
+    task_dir = tmp_path / "wd"
+    task_dir.mkdir()
+    gate, entered = threading.Event(), threading.Event()
+    # B 第一拍**不在候选里**（file_event 豁免间隔档，_seed_last 压不住它）：靠开关中途放进来。
+    second = RoleCard(
+        role_id="second", role_name="第二角色", system_prompt="x", reachout_enabled=False
+    )
+    roles = [_role(), second]
+    settings = _fw_settings(task_dir)
+    scheduler = ReachoutScheduler(
+        settings_provider=lambda: settings,
+        roles=_Roles(roles),  # type: ignore[arg-type]
+        model_resolver=_blocking_resolver(
+            gate, entered, _FakeModel(AIMessage(content="目录有动静"))
+        ),
+        conn=conn,
+        tracer=_Tracer(),  # type: ignore[arg-type]
+    )
+    try:
+        utc, local = _now()
+        _prime_baseline(conn, settings, task_dir, utc)
+        (task_dir / "季度报告.md").write_text("x", encoding="utf-8")
+        assert scheduler.tick_once(now_utc=utc, now_local=local) == 1  # 只有 A：B 关着
+        assert entered.wait(5), "池线程没开跑"
+
+        # A 还在飞（基线未推、事件仍挂起），B 此刻被打开 —— 它面对的是一批"没人消费完"的旧事件。
+        roles[1] = RoleCard(**{**second.model_dump(), "reachout_enabled": True})
+        scheduler.tick_once(now_utc=utc, now_local=local)
+
+        gate.set()
+        _drain(scheduler)
+        fired = {
+            r["role_id"]: r["fired_by"]
+            for r in conn.execute("SELECT role_id, fired_by FROM agent_reachout").fetchall()
+        }
+        assert fired.get("active") == "file_event", fired
+        assert fired.get("second") != "file_event", f"同一批事件被跨拍重播了：{fired}"
+        assert fw.pending_count(conn) == 0, "在飞那批收尾后基线没推（事件白挂着）"
+    finally:
+        gate.set()
+        _drain(scheduler)

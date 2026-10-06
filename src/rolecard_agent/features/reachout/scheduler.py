@@ -4,16 +4,21 @@
 按需补扫未收尾话题（triggers）→ 生成 → 落收件箱并尽力投进主动会话（inbox）→ 文件事件基线
 推进。由 api/main.py 的 lifespan 启停。
 
-纯搬层，行为与拆分前逐字一致。
+生成默认**不在调度线程里跑**（2026-10-04 审查快照 PERF-5 条）：tick 只判定与入队，真正的
+模型调用排在独立单 worker 池里（per-role 队位保序）。测试可传 `inline_generation=True`
+要回同步旧形 —— 存量用例守的正是那套语义。
 """
 
 from __future__ import annotations
 
 import sqlite3
 import threading
+import time
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import suppress
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any
 
 from rolecard_agent.base.identity import resolve_instance_identity
@@ -23,6 +28,9 @@ from rolecard_agent.core.file_watch import (
     FileEvent,
     advance_baseline,
     check_changes,
+)
+from rolecard_agent.core.file_watch import (
+    pending_count as fw_pending_count,
 )
 from rolecard_agent.core.open_threads import find_open_threads
 from rolecard_agent.core.proactive_state import (
@@ -82,6 +90,7 @@ class ReachoutScheduler:
         deliver: Callable[[RoleCard, str], str | None] | None = None,
         thread_lines: Callable[[str], str] | None = None,
         thread_window: Callable[[str], str] | None = None,
+        inline_generation: bool = False,
     ) -> None:
         self._settings = settings_provider
         self._roles = roles
@@ -98,6 +107,23 @@ class ReachoutScheduler:
         # 进程重启就清零 —— 重启后第一次 tick 重新报一句当前状态，那是对的，不是丢消息。
         self._quiet: dict[str, str] = {}
         self._stop = threading.Event()
+        # 生成出循环（2026-10-04 审查快照 PERF-5 条）：默认把生成投给独立单 worker 池，
+        # tick 线程只做判定与入队；测试可用 inline_generation=True 要回旧的同步形状。
+        # 池**恒建**（类型上因此不是 Optional）：ThreadPoolExecutor 惰性起线程，inline 形状
+        # 从不 submit 就一个线程都没有，stop() 空关一次也无害 —— 这换来 tick 里少一处
+        # "池可能不存在"的分叉（mypy 的 union-attr 与 E501 折行都消在这里）。
+        self._inline_generation = inline_generation
+        self._gen_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reachout-gen")
+        self._queued: set[str] = set()
+        self._queued_guard = threading.Lock()
+        # 文件事件（素材门控）在异步形状下的消费账，两者都由 `_queued_guard` 护着：
+        #   * _file_inflight —— 池里还挂着几笔 file_event 任务。>0 时下一轮 tick **跳过**
+        #     check_changes：否则同一批挂起事件会跨拍被第二个角色再播一遍（同步形状下
+        #     一个 tick 内就消费完了，不存在这个窗口）。
+        #   * _file_consumed —— 这一批里至少有一笔真的落了话。全部失败/被取消时它是 False，
+        #     **不推基线**，事件留到下一拍重试 —— 与同步形状"成功 OR 才推进"同一条语义。
+        self._file_inflight = 0
+        self._file_consumed = False
 
     # -- 生命周期 -------------------------------------------------------
 
@@ -123,6 +149,26 @@ class ReachoutScheduler:
         thread = getattr(self, "_thread", None)
         if thread is not None and thread.is_alive() and thread is not threading.current_thread():
             thread.join(timeout=join_timeout)
+        # 还没开跑的任务直接取消（它们的 done 回调会归还 per-role 队位）；正在生成的那一个
+        # 带着协作式取消旗跑完或随进程收 —— `wait=False`：stop 不等生成，等的是调度线程。
+        # 注意解释器退出时 `concurrent.futures` 的 atexit 会 join 池线程：最坏多等一次在飞
+        # 生成的时长，比旧形状（join 35s 后 daemon 线程被硬杀在写库半途）干净。
+        self._gen_pool.shutdown(wait=False, cancel_futures=True)
+
+    def wait_idle(self, timeout: float = 10.0) -> bool:
+        """等池里的生成全部收尾（测试与探针用），True = 时限内收干净。
+
+        异步形状下 `tick_once` 返回的是**入队**数，行是稍后落的：断言"落了什么"之前
+        必须先到这里收口。生产不调用它 —— 调度循环本来就不等生成。
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._queued_guard:
+                if not self._queued:
+                    return True
+            time.sleep(0.02)
+        with self._queued_guard:
+            return not self._queued
 
     def _loop(self) -> None:
         while not self._stop.wait(TICK_SECONDS):
@@ -176,6 +222,13 @@ class ReachoutScheduler:
                 role = self._roles.scoped(owner).get(str(row["role_id"]))
             except RoleNotFound:
                 continue  # 卡被删了：这句话留在收件箱就好，没什么可投的
+            with self._queued_guard:
+                if role.role_id in self._queued:
+                    # 池线程正在为这个角色干活：它可能刚 `record_reachout` 完、还没走到
+                    # `mark_delivered`，这一行正落在本查询的窗口里 —— 补投再投一遍就是
+                    # 同一句话进会话两次。它投不成会留着 delivered_at=NULL，下一拍
+                    # （队位已归还）这里照投。inline 形状槽位恒空，此分支不参与。
+                    continue
             try:
                 thread_id = self._deliver(role, str(row["text"]))
             except Exception as exc:  # noqa: BLE001 - 一个角色投不进去不该拖住别的角色
@@ -205,13 +258,215 @@ class ReachoutScheduler:
             )
         return fixed
 
+    def _generate_and_deliver(
+        self,
+        *,
+        role: Any,
+        owner: str,
+        fired: str,
+        mode: str,
+        open_topics: list[str],
+        file_list: str,
+        stamp_utc: datetime,
+    ) -> int:
+        """为已命中的角色生成一句、落收件箱、尽力投递（`tick_once` 的重活，可入池）。
+
+        返回 1 = 真的落了一句话；0 = 没落（生成失败 / 空正文被挡）。文件事件的**基线推进
+        不在这里**：多角色共享同一事件时它要等这一批全部收尾（谁都不能在别人生成到一半
+        时把事件扫进新基线），收口在 `_on_job_done` 与 tick 末尾两处。
+        """
+        try:
+            model = self._model(role.model_name)
+            draft = generate_reachout_text(
+                role,
+                model,
+                self._settings(),
+                self._conn,
+                role_id=role.role_id,
+                mode=mode,
+                file_list=file_list,
+                # 读不到就是没有这段上下文（provider 自己吞异常），不该拦住开口。
+                thread_lines=self._thread_lines(role.role_id) if self._thread_lines else "",
+                open_topics=open_topics,
+                tracer=self._tracer,
+            )
+        except Exception as exc:  # noqa: BLE001 - 生成失败只留痕，不阻塞其它角色
+            self._tracer.emit(
+                TraceEvent(
+                    event="reachout_failed",
+                    node="reachout",
+                    role_id=role.role_id,
+                    detail={"error": str(exc)},
+                )
+            )
+            return 0
+        if draft.text is None:
+            # 不发，也不重试 —— 但要留痕：空输出与 guard 拦下是两件不同的事
+            # （前者要去修模型配置，后者是护栏在正常工作）。
+            self._tracer.emit(
+                TraceEvent(
+                    event="reachout_skipped",
+                    node="reachout",
+                    role_id=role.role_id,
+                    detail={"why": draft.why, "trigger": fired, "score": draft.score},
+                )
+            )
+            return 0
+        text = draft.text
+        reachout_id = record_reachout(
+            self._conn, role, text, user_id=owner, fired_by=fired,
+            repeat_score=draft.score,
+        )
+        record_interaction(self._conn, role.role_id, user_id=owner, now=stamp_utc)
+        if fired == "recall":
+            # 冷却锚点只在**真的发出去了**的时候记：被 guard 拦下、正文为空的那些
+            # `reachout_skipped` 不该消耗掉这一档的额度（用户看到的是"她没说话"，
+            # 而不是"她说过一次了"）。
+            record_recall_open(self._conn, role.role_id, user_id=owner, now=stamp_utc)
+        elif fired == "open_thread":
+            # 这批话题已经被刚发出去的那句用掉了。不清的话缓存寿命（90 分）比开口
+            # 间隔（60 分）长，同一个话题会驱动两次开口（R26-11 第二条）。
+            # **时刻保留**：清空 + 留着 scan_at 才是想要的语义 —— 别立刻再花一次调用，
+            # 也别让同一个话题再冒一遍。
+            save_open_threads(self._conn, role.role_id, [], user_id=owner, now=stamp_utc)
+        # 先落收件箱（用户一定能看见），再尽力投进主动会话；投递坏了也不把消息吞掉。
+        # 投不进去的那些**不是丢了**：`delivered_at` 仍为空，下一 tick 由
+        # `_retry_undelivered` 补上（R26-40 ②）—— 从前那句"调度器下一轮还会再问"是错的，
+        # 下一轮是**重新生成一句新话**，上一句就此只在收件箱里。
+        thread_id: str | None = None
+        if self._deliver is not None:
+            try:
+                thread_id = self._deliver(role, text)
+            except Exception as exc:  # noqa: BLE001 - 投递失败只留痕，不回滚收件箱
+                self._tracer.emit(
+                    TraceEvent(
+                        event="reachout_deliver_failed",
+                        node="reachout",
+                        role_id=role.role_id,
+                        detail={"error": f"{type(exc).__name__}: {exc}"},
+                    )
+                )
+            if thread_id is not None:
+                mark_delivered(self._conn, reachout_id)
+        self._tracer.emit(
+            TraceEvent(
+                event="reachout_sent",
+                node="reachout",
+                role_id=role.role_id,
+                detail={
+                    "chars": len(text),
+                    "trigger": fired,
+                    "thread_id": thread_id,
+                    # 复读分带进审计：闸门会不会误伤只能看分布，而分布要在真机上一天天攒。
+                    "score": draft.score,
+                    # 一句主动开口花了多少 token（重生过就是两次）。`chars` 是字数，不是钱。
+                    "tokens": draft.tokens,
+                },
+            )
+        )
+        return 1
+
+    def _generation_job(
+        self,
+        role: Any,
+        owner: str,
+        fired: str,
+        mode: str,
+        open_topics: list[str],
+        file_list: str,
+        stamp_utc: datetime,
+    ) -> int:
+        """池线程的入口：跑 `_generate_and_deliver`，返回它落了几条。
+
+        **不归还队位** —— 归还在 `tick_once` 挂的 done 回调里（`_on_job_done`）：只有那
+        一处能同时接到"被 stop 取消"的分支，把 finally 留在这里会让取消的槽位永久占死。
+        """
+        if self._stopping():
+            return 0  # 停机：还没开跑的任务直接放弃（join 才等得到头）
+        try:
+            return self._generate_and_deliver(
+                role=role,
+                owner=owner,
+                fired=fired,
+                mode=mode,
+                open_topics=open_topics,
+                file_list=file_list,
+                stamp_utc=stamp_utc,
+            )
+        except Exception as exc:  # noqa: BLE001 - 池里无声消失比失败更难查
+            self._tracer.emit(
+                TraceEvent(
+                    event="reachout_failed",
+                    node="reachout",
+                    role_id=role.role_id,
+                    detail={"error": f"{type(exc).__name__}: {exc}"},
+                )
+            )
+            return 0
+
+    def _on_job_done(
+        self,
+        role_id: str,
+        changed: int,
+        stamped: datetime,
+        future: Future[int],
+    ) -> None:
+        """done 回调（完成/异常/取消三路都走这里）：归还队位，收口文件事件的消费账。
+
+        成功判据用 `cancelled()` / `exception()` / `result()` 三段式，不写裸 except ——
+        取消的那条要**原样报 0**（`result()` 在取消态会抛 `CancelledError`）。
+
+        **锁只护账不护 I/O**：回调可能在 `shutdown(cancel_futures=True)` 持执行器锁时
+        被同步触发，若在 `_queued_guard` 里再做任何可能取执行器锁/做磁盘的事，锁序就
+        反了（tick 那边是"先放 guard 再 submit"）。所以推进与留痕都在放锁之后做。
+        """
+        produced = 0
+        if not future.cancelled() and future.exception() is None:
+            produced = future.result()
+        with self._queued_guard:
+            self._queued.discard(role_id)
+            advance = False
+            consumed = False
+            if changed:  # 这笔是共享素材门控事件的一票
+                self._file_inflight -= 1
+                if produced:
+                    self._file_consumed = True
+                # 这一批（共享同一事件的全部角色）收尾了才谈推进：还有在飞的等它。
+                if self._file_inflight == 0:
+                    advance = True
+                    consumed = self._file_consumed
+                    self._file_consumed = False
+        if not advance:
+            return
+        if consumed:
+            # 真推基线：失败/被取消的一批**不推**，事件留着下一拍重试（同步语义）。
+            # 用 pending_count 复核而不是无条件推 —— 只在挂起事件还在时才收口，避免
+            # 把两次扫描之间落进目录的新文件扫进新基线（那会让它永不被播报）。
+            with suppress(OSError):
+                if fw_pending_count(self._conn):
+                    advance_baseline(
+                        self._conn, resolve_task_dir(self._settings(), self._conn),
+                        now_utc=stamped,
+                    )
+                    self._tracer.emit(
+                        TraceEvent(
+                            event="file_watch_advance",
+                            node="reachout",
+                            detail={"changed": changed, "expired": False},
+                        )
+                    )
+
     def tick_once(
         self,
         *,
         now_utc: datetime | None = None,
         now_local: datetime | None = None,
     ) -> int:
-        """跑一轮检查，返回本轮实际落库的主动消息条数（测试与统计都用它）。"""
+        """跑一轮检查，返回本轮交出去的主动消息条数。
+
+        **同步形状**（`inline_generation=True`，测试缝）= 本轮真落库的条数；**异步形状**
+        （生产默认）= 本轮入队的条数 —— 行是稍后在池里落的，断言"落了什么"先 `wait_idle()`。
+        """
         settings = self._settings()
         if not settings.reachout_enabled:
             return 0  # 全局总闸关闭：全部静默
@@ -220,10 +475,14 @@ class ReachoutScheduler:
         made = 0
         # 文件事件（架构总览 §5 素材门控）：全局侦测一次，任何合格角色共享同一事件；
         # 谁都没开口且未过期 → 事件挂起到下一 tick（基线不推进，变化不会被吞掉）。
+        # **上一批还在池里飞时整段跳过**：`check_changes` 对挂起事件是"原样再报一遍"，
+        # 不跳就会让第二个角色拿同一批事件跨拍再播一次（同步形状一个 tick 内就消费完，
+        # 不存在这个窗口）。`file_event_consumed` 记同步路径这批是否真落了话。
         file_events: list[FileEvent] | None = None
         file_truncated = False
         file_expired = False
-        if settings.file_watch_enabled:
+        file_event_consumed = False
+        if settings.file_watch_enabled and self._file_inflight == 0:
             try:
                 detected = check_changes(
                     self._conn, resolve_task_dir(settings, self._conn), now_utc=stamp_utc
@@ -232,7 +491,6 @@ class ReachoutScheduler:
                 detected = None  # 目录暂时不可达：静默，下一轮重试
             if detected is not None:
                 file_events, file_truncated, file_expired = detected
-        file_event_consumed = False
         try:
             # 后台这条链没有"这次请求"可问：它替**这台实例的主人**挑人开口（§4.1 的实例级身份）。
             owner = resolve_instance_identity(settings)
@@ -331,102 +589,68 @@ class ReachoutScheduler:
             mode = fired if fired in ("recall", "file_event", "open_thread") else "general"
             if self._stopping():
                 return made  # 停机：正在生成的这轮主动放弃（join 才等得到头）
-            try:
-                model = self._model(role.model_name)
-                draft = generate_reachout_text(
-                    role,
-                    model,
-                    settings,
-                    self._conn,
-                    role_id=role.role_id,
-                    mode=mode,
-                    file_list=(
-                        _format_change_list(file_events, truncated=file_truncated)
-                        if can_file
-                        else ""
-                    ),
-                    # 读不到就是没有这段上下文（provider 自己吞异常），不该拦住开口。
-                    thread_lines=self._thread_lines(role.role_id) if self._thread_lines else "",
-                    open_topics=open_topics,
-                    tracer=self._tracer,
-                )
-            except Exception as exc:  # noqa: BLE001 - 生成失败只留痕，不阻塞其它角色
-                self._tracer.emit(
-                    TraceEvent(
-                        event="reachout_failed",
-                        node="reachout",
-                        role_id=role.role_id,
-                        detail={"error": str(exc)},
-                    )
-                )
-                continue
-            if draft.text is None:
-                # 不发，也不重试 —— 但要留痕：空输出与 guard 拦下是两件不同的事
-                # （前者要去修模型配置，后者是护栏在正常工作）。
-                self._tracer.emit(
-                    TraceEvent(
-                        event="reachout_skipped",
-                        node="reachout",
-                        role_id=role.role_id,
-                        detail={"why": draft.why, "trigger": fired, "score": draft.score},
-                    )
-                )
-                continue
-            text = draft.text
-            reachout_id = record_reachout(
-                self._conn, role, text, user_id=owner, fired_by=fired,
-                repeat_score=draft.score,
+            file_list = (
+                _format_change_list(file_events, truncated=file_truncated)
+                if can_file
+                else ""
             )
-            record_interaction(self._conn, role.role_id, user_id=owner, now=stamp_utc)
-            if fired == "recall":
-                # 冷却锚点只在**真的发出去了**的时候记：被 guard 拦下、正文为空的那些
-                # `reachout_skipped` 不该消耗掉这一档的额度（用户看到的是"她没说话"，
-                # 而不是"她说过一次了"）。
-                record_recall_open(self._conn, role.role_id, user_id=owner, now=stamp_utc)
-            elif fired == "open_thread":
-                # 这批话题已经被刚发出去的那句用掉了。不清的话缓存寿命（90 分）比开口
-                # 间隔（60 分）长，同一个话题会驱动两次开口（R26-11 第二条）。
-                # **时刻保留**：清空 + 留着 scan_at 才是想要的语义 —— 别立刻再花一次调用，
-                # 也别让同一个话题再冒一遍。
-                save_open_threads(self._conn, role.role_id, [], user_id=owner, now=stamp_utc)
-            # 先落收件箱（用户一定能看见），再尽力投进主动会话；投递坏了也不把消息吞掉。
-            # 投不进去的那些**不是丢了**：`delivered_at` 仍为空，下一 tick 由
-            # `_retry_undelivered` 补上（R26-40 ②）—— 从前那句"调度器下一轮还会再问"是错的，
-            # 下一轮是**重新生成一句新话**，上一句就此只在收件箱里。
-            thread_id: str | None = None
-            if self._deliver is not None:
-                try:
-                    thread_id = self._deliver(role, text)
-                except Exception as exc:  # noqa: BLE001 - 投递失败只留痕，不回滚收件箱
-                    self._tracer.emit(
-                        TraceEvent(
-                            event="reachout_deliver_failed",
-                            node="reachout",
-                            role_id=role.role_id,
-                            detail={"error": f"{type(exc).__name__}: {exc}"},
-                        )
-                    )
-                if thread_id is not None:
-                    mark_delivered(self._conn, reachout_id)
-            self._tracer.emit(
-                TraceEvent(
-                    event="reachout_sent",
-                    node="reachout",
-                    role_id=role.role_id,
-                    detail={
-                        "chars": len(text),
-                        "trigger": fired,
-                        "thread_id": thread_id,
-                        # 复读分带进审计：闸门会不会误伤只能看分布，而分布要在真机上一天天攒。
-                        "score": draft.score,
-                        # 一句主动开口花了多少 token（重生过就是两次）。`chars` 是字数，不是钱。
-                        "tokens": draft.tokens,
-                    },
+            # 生成与投递**不再占调度线程**（2026-10-04 审查快照 PERF-5 条）：
+            # tick 只做判定与入队，真正的模型调用在独立单 worker 池里排队 ——
+            # 一个角色生成几十秒时，其余角色的评估、补投与静默留痕照常走。
+            if self._inline_generation:
+                # 测试缝：与旧版同形的同步执行（返回值 = 真落库条数）。
+                produced = self._generate_and_deliver(
+                    role=role,
+                    owner=owner,
+                    fired=fired,
+                    mode=mode,
+                    open_topics=open_topics,
+                    file_list=file_list,
+                    stamp_utc=stamp_utc,
                 )
+                made += produced
+                if produced and fired == "file_event":
+                    file_event_consumed = True  # 推进收在 tick 末尾（一批一次）
+                continue
+            # `fired == "file_event"` 必然意味着 file_events 非 None（它就排在链首），
+            # 但 mypy 不跟着推 —— 显式带上，顺手挡住将来把链序调乱的那个人。
+            changed = len(file_events) if fired == "file_event" and file_events else 0
+            with self._queued_guard:
+                if role.role_id in self._queued:
+                    continue  # per-role 保序：同一角色的上一条还在生成，不再入队
+                # 账**先于 submit 记**：任务可能跑得比 add_done_callback 还快，反过来会漏。
+                # 持锁到此为止 —— submit 与回调都可能碰执行器内部锁，别跟 shutdown 的
+                # "先拿执行器锁、回调再拿这把"排出反向锁序。
+                self._queued.add(role.role_id)
+                if changed:
+                    self._file_inflight += 1
+            try:
+                future = self._gen_pool.submit(
+                    self._generation_job,
+                    role,
+                    owner,
+                    fired,
+                    mode,
+                    open_topics,
+                    file_list,
+                    stamp_utc,
+                )
+            except RuntimeError:
+                # 池已随 stop() 关口（关池与入队撞车）：把刚记的账当场撤掉再收手 ——
+                # 留着就是永久占位，下一个进程周期这个角色再也不会开口。
+                with self._queued_guard:
+                    self._queued.discard(role.role_id)
+                    if changed:
+                        self._file_inflight -= 1
+                return made
+            future.add_done_callback(
+                partial(self._on_job_done, role.role_id, changed, stamp_utc)
             )
             made += 1
-            file_event_consumed = file_event_consumed or fired == "file_event"
         if file_events is not None and (file_event_consumed or file_expired):
+            # 同步形状的推进收口（一批一次）：真消费 OR 过期。异步形状消费侧的推进在
+            # `_on_job_done`（谁都没落话就不推，事件留着下一拍重试）；这里顺带兜
+            # "过期了就别再挂" —— 异步在飞时 expire 不会在本轮出现（起点整段跳过了）。
             with suppress(OSError):  # 推进失败：事件仍在，下一 tick 重试
                 advance_baseline(
                     self._conn, resolve_task_dir(settings, self._conn), now_utc=stamp_utc
@@ -439,3 +663,5 @@ class ReachoutScheduler:
                 )
             )
         return made
+
+
