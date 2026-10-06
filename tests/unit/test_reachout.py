@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+import sqlite3
 import threading
 import time
 from datetime import UTC, datetime, timedelta, timezone
@@ -2057,3 +2058,257 @@ def test_file_event_is_not_replayed_for_a_role_waking_mid_flight(
     finally:
         gate.set()
         _drain(scheduler)
+
+
+# -- 调度循环保命性（tick 抛错 → 留痕 → 下一拍仍跑）--------------------------------
+#
+# 「调度循环绝不能被一个错误打死」此前是**没有机器守护**的保命性质 —— 容错分支恰好
+# 就是覆盖率缺口。`tick_interval` 测试缝让 `_loop` 的节拍可注入毫秒级，否则这条用例
+# 要真等两个 30s 拍。
+
+
+def test_loop_survives_a_throwing_tick_and_keeps_polling(conn, monkeypatch) -> None:
+    """tick 抛错不杀循环：留一行 `reachout_tick_error`（带异常文本），下一拍照常跑。
+
+    判据不是"循环没崩"（线程死了 `stop` 也看不出来），而是"抛错之后**又进了一次**
+    tick" —— 用调用计数钉住；异常文本进 detail 是"角色找你了你却点不开"那族故障
+    唯一的现场线索。
+    """
+    tracer = _Tracer()
+    scheduler = ReachoutScheduler(
+        inline_generation=True,
+        settings_provider=lambda: _settings(),
+        roles=_Roles([_role()]),  # type: ignore[arg-type]
+        model_resolver=lambda _n: _FakeModel(AIMessage(content="嗨")),
+        conn=conn,
+        tracer=tracer,  # type: ignore[arg-type]
+        tick_interval=0.02,
+    )
+    calls = {"n": 0}
+
+    def flaky_tick(**_kw: object) -> int:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("桩里炸一下")
+        return 0
+
+    monkeypatch.setattr(scheduler, "tick_once", flaky_tick)
+    scheduler.start()
+    deadline = time.monotonic() + 5.0
+    while calls["n"] < 2 and time.monotonic() < deadline:
+        time.sleep(0.02)
+    scheduler.stop(join_timeout=5)
+
+    assert calls["n"] >= 2, "第一拍抛错后循环没再进第二拍 —— 保命性质破了"
+    errors = [e for e in tracer.events if getattr(e, "event", "") == "reachout_tick_error"]
+    assert errors, "抛错没留痕"
+    assert "桩里炸一下" in str(errors[0].detail["error"]), errors[0].detail
+
+
+def test_wait_idle_reports_timeout(conn) -> None:
+    """放行前池没空 —— `wait_idle` 到时限如实返回 False（不是永远阻塞，也不是谎报收干净）。"""
+    gate, entered = threading.Event(), threading.Event()
+    scheduler = _async_scheduler(
+        conn, [_role()], _FakeModel(AIMessage(content="嗨")), gate, entered
+    )
+    try:
+        utc, local = _now()
+        assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
+        assert entered.wait(5)
+        assert scheduler.wait_idle(timeout=0.2) is False, "生成还卡着，不该说收干净"
+    finally:
+        gate.set()
+        _drain(scheduler)
+
+
+def test_retry_tolerates_a_broken_catalog_read(conn) -> None:
+    """补投查欠账时库/盘临时坏了 → 这一轮不补、返回 0，而不是把 tick 带崩。"""
+    boom = ReachoutScheduler(
+        inline_generation=True,
+        settings_provider=lambda: _settings(),
+        roles=_Roles([_role()]),  # type: ignore[arg-type]
+        model_resolver=lambda _n: _FakeModel(AIMessage(content="x")),
+        conn=conn,
+        tracer=_Tracer(),  # type: ignore[arg-type]
+        deliver=lambda _r, _t: "thread-1",
+    )
+    orig = boom._conn
+
+    class _BadCatalog:
+        def execute(self, *_a: object, **_k: object) -> object:
+            raise sqlite3.Error("catalog busy")
+
+    object.__setattr__(boom, "_conn", _BadCatalog())
+    try:
+        assert boom._retry_undelivered(ME) == 0
+    finally:
+        object.__setattr__(boom, "_conn", orig)
+
+
+def test_retry_skips_deleted_cards_and_busy_threads_without_crashing(conn) -> None:
+    """补投三分支：卡被删（RoleNotFound）跳过、会话正忙（deliver 回 None）留待下拍、
+    投递抛异常只留痕不回滚别的角色 —— 三条都不能把补投整体打死。"""
+    utc, _local = _now()
+    conn.execute(
+        "INSERT INTO agent_reachout (role_id, role_name, text, state, created_at, user_id)"
+        " VALUES ('active','主动角色','欠着的一句','unread',?,?)",
+        ((utc - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S"), ME),
+    )
+    conn.execute(
+        "INSERT INTO agent_reachout (role_id, role_name, text, state, created_at, user_id)"
+        " VALUES ('active','主动角色','会忙的一句','unread',?,?)",
+        ((utc - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S"), ME),
+    )
+    conn.execute(
+        "INSERT INTO agent_reachout (role_id, role_name, text, state, created_at, user_id)"
+        " VALUES ('ghost','幽灵','卡没了','unread',?,?)",
+        ((utc - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S"), ME),
+    )
+    conn.commit()
+
+    seen: list[str] = []
+    tracer = _Tracer()
+
+    def _deliver(role: object, text: str) -> str | None:
+        seen.append(text)
+        if text == "会忙的一句":
+            return None  # 那条会话正在对话中
+        if text == "欠着的一句":
+            raise RuntimeError("投递炸了")  # 只留痕，别拖住别的
+        return "thread-1"
+
+    # 'ghost' 卡在 _Roles 里没有 → get 抛 RoleNotFound → 跳过。
+    scheduler = ReachoutScheduler(
+        inline_generation=True,
+        settings_provider=lambda: _settings(),
+        roles=_Roles([_role()]),  # type: ignore[arg-type]  只注册 active，ghost 找不到
+        model_resolver=lambda _n: _FakeModel(AIMessage(content="x")),
+        conn=conn,
+        tracer=tracer,  # type: ignore[arg-type]
+        deliver=_deliver,
+    )
+    fixed = scheduler._retry_undelivered(ME)
+    assert fixed == 0, "两笔都该没补成（一笔抛、一笔忙），ghost 找不到"
+    assert "ghost" not in "".join(seen)
+    fails = [e for e in tracer.events if getattr(e, "event", "") == "reachout_deliver_failed"]
+    assert fails, "投递抛异常没留痕"
+
+
+def test_tick_recall_lands_the_message_and_burns_the_cooldown(conn) -> None:
+    """recall 档真的落话时记冷却锚点（那一档的"说过一次了"只在这一刻成立）。"""
+    add_item(conn, user_id=ME, bucket="active", text="用户上周说想学吉他。")
+    scheduler = _scheduler(conn, [_role()], _FakeModel(AIMessage(content="你吉他学得咋样了")))
+    utc, local = _now()
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
+    row = conn.execute("SELECT fired_by FROM agent_reachout WHERE role_id='active'").fetchone()
+    assert row["fired_by"] == "recall"
+    assert get_state(conn, "active", user_id=ME).recall_at is not None
+
+
+def test_tick_bails_quietly_when_the_role_read_breaks(conn, monkeypatch) -> None:
+    """读角色时库/盘坏了 → 这一轮不开口、返回 0，**不退整个调度**（下一轮重试）。"""
+
+    class _BrokenRoles:
+        def scoped(self, _user_id: str) -> _BrokenRoles:
+            return self
+
+        def list_roles(self) -> list[RoleCard]:
+            raise sqlite3.OperationalError("database is locked")
+
+    scheduler = ReachoutScheduler(
+        inline_generation=True,
+        settings_provider=lambda: _settings(),
+        roles=_BrokenRoles(),  # type: ignore[arg-type]
+        model_resolver=lambda _n: _FakeModel(AIMessage(content="不该发")),
+        conn=conn,
+        tracer=_Tracer(),  # type: ignore[arg-type]
+    )
+    assert scheduler.tick_once() == 0
+
+
+def test_tick_tolerates_an_unreadable_task_dir(conn, monkeypatch) -> None:
+    """素材门控扫描时目录不可达 → 这一拍静默（事件不丢、下一拍重试），不把 tick 带崩。"""
+    import rolecard_agent.features.reachout.scheduler as sched_mod
+
+    task_dir = Path(".")
+    monkeypatch.setattr(
+        sched_mod,
+        "check_changes",
+        lambda *_a, **_k: (_ for _ in ()).throw(OSError("盘没挂好")),
+    )
+    scheduler, _settings_, _tracer = _file_scheduler(
+        conn, [_role()], _FakeModel(AIMessage(content="目录有动静")), task_dir
+    )
+    utc, local = _now()
+    # 判据是"没抛出来"：目录坏了这一拍不开口没关系，把调度打死才是事故。
+    assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
+
+
+def test_pool_job_exception_is_traced_not_swallowed(conn) -> None:
+    """池任务整体抛异常 → done 回调原样报 0（不推基线）且留 `reachout_failed` 一行。"""
+    boom = ReachoutScheduler(
+        settings_provider=lambda: _settings(),
+        roles=_Roles([_role()]),  # type: ignore[arg-type]
+        model_resolver=lambda _n: _FakeModel(AIMessage(content="嗨")),
+        conn=conn,
+        tracer=_Tracer(),  # type: ignore[arg-type]
+    )
+
+    def _explode(**_kw: object) -> int:
+        raise RuntimeError("落库炸了")
+
+    boom._generate_and_deliver = _explode  # type: ignore[method-assign]
+    utc, local = _now()
+    try:
+        assert boom.tick_once(now_utc=utc, now_local=local) == 1
+        assert boom.wait_idle(10), "任务没收尾"
+        boom._gen_pool.shutdown(wait=True)
+        errors = [e for e in boom._tracer.events if getattr(e, "event", "") == "reachout_failed"]
+        assert errors, "池里的异常没留痕（池里无声消失比失败更难查）"
+        assert conn.execute("SELECT COUNT(*) FROM agent_reachout").fetchone()[0] == 0
+    finally:
+        boom._gen_pool.shutdown(wait=True)
+
+
+def test_submit_after_pool_close_returns_the_slot(conn) -> None:
+    """关池与入队撞车的窄窗口：submit 抛 RuntimeError 时当场撤账，不给角色留永久占位。
+
+    留着槽位 = 这个角色**再也不会开口**（每拍都被自己的幽灵队位挡下），而这正是
+    那条永不复现的"她突然不说话了"的形态。
+    """
+    scheduler = ReachoutScheduler(
+        settings_provider=lambda: _settings(),
+        roles=_Roles([_role()]),  # type: ignore[arg-type]
+        model_resolver=lambda _n: _FakeModel(AIMessage(content="嗨")),
+        conn=conn,
+        tracer=_Tracer(),  # type: ignore[arg-type]
+    )
+    scheduler.stop()  # 置旗 + 关池
+    # 只留"池已关"这一个事实，绕开 tick 顶部的停机判据（生产里这就是 stop 与入队之间
+    # 那点微秒级的撞车窗口）。
+    scheduler._stopping = lambda: False  # type: ignore[method-assign]
+    try:
+        assert scheduler.tick_once() == 0
+        assert scheduler._queued == set(), f"submit 失败没撤账：{scheduler._queued}"
+    finally:
+        scheduler._gen_pool.shutdown(wait=True)
+
+
+def test_generation_job_abandons_before_generating_when_stopped(conn) -> None:
+    """还没开跑的池任务看见停机旗就原样放弃（一条都不发，也不推任何账）。"""
+    scheduler = ReachoutScheduler(
+        settings_provider=lambda: _settings(),
+        roles=_Roles([_role()]),  # type: ignore[arg-type]
+        model_resolver=lambda _n: _FakeModel(AIMessage(content="嗨")),
+        conn=conn,
+        tracer=_Tracer(),  # type: ignore[arg-type]
+    )
+    scheduler._stop.set()
+    try:
+        produced = scheduler._generation_job(
+            _role(), ME, "timer", "general", [], "", datetime.now(UTC)
+        )
+        assert produced == 0
+        assert conn.execute("SELECT COUNT(*) FROM agent_reachout").fetchone()[0] == 0
+    finally:
+        scheduler._gen_pool.shutdown(wait=True)

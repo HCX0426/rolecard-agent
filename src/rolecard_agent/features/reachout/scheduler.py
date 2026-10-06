@@ -91,6 +91,7 @@ class ReachoutScheduler:
         thread_lines: Callable[[str], str] | None = None,
         thread_window: Callable[[str], str] | None = None,
         inline_generation: bool = False,
+        tick_interval: float = TICK_SECONDS,
     ) -> None:
         self._settings = settings_provider
         self._roles = roles
@@ -107,6 +108,9 @@ class ReachoutScheduler:
         # 进程重启就清零 —— 重启后第一次 tick 重新报一句当前状态，那是对的，不是丢消息。
         self._quiet: dict[str, str] = {}
         self._stop = threading.Event()
+        # 每拍间隔：生产用默认 30s，测试注入毫秒级让 `_loop` 的"抛错→留痕→继续"在
+        # 秒内跑完（不注入就得真 sleep 两个 30s 拍，那条循环保命性的守护用例等不起）。
+        self._tick_interval = tick_interval
         # 生成出循环（2026-10-04 审查快照 PERF-5 条）：默认把生成投给独立单 worker 池，
         # tick 线程只做判定与入队；测试可用 inline_generation=True 要回旧的同步形状。
         # 池**恒建**（类型上因此不是 Optional）：ThreadPoolExecutor 惰性起线程，inline 形状
@@ -171,7 +175,7 @@ class ReachoutScheduler:
             return not self._queued
 
     def _loop(self) -> None:
-        while not self._stop.wait(TICK_SECONDS):
+        while not self._stop.wait(self._tick_interval):
             try:
                 self.tick_once()
             except Exception as exc:  # noqa: BLE001 - 调度循环绝不能被一个错误打死
