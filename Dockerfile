@@ -26,6 +26,14 @@ RUN pip install --no-cache-dir \
     -r requirements.txt -r requirements-api.txt -r requirements-rag.txt \
     -r requirements-cloud.txt -r requirements-mcp.txt
 
+# 形态自报（审查快照决策七"容器无本地 OCR"那一格的收口）：容器里没有 .venv-ocr、也没有随包
+# worker，所以"本地 OCR 不可用"在这里是**设计**而不是缺装 —— rag/ocr.py 据此把服务页那格的
+# 指引换成可操作的那条：模型页建云端 OCR 凭据行 → 服务页的 OCR 端点序里引用它（图片会外发
+# 第三方，只允许操作员显式配置，绝不从 env 默认启用）。删掉这一行谁都不会当场炸，只会让容器
+# 里的人重新拿到"装 .venv-ocr / 重打这一包"这种在镜像里做不到的建议 —— 所以
+# capability-matrix 那条尺子盯着这一个字面量，它必须与 base/paths.py 的常量同名。
+ENV ROLECARD_RUNTIME_FORM=container
+
 COPY src/ ./src/
 COPY frontend/dist/ ./frontend/dist/
 COPY scripts/ ./scripts/

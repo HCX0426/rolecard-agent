@@ -25,7 +25,8 @@ from typing import Any, Protocol
 
 import httpx
 
-from rolecard_agent.base.paths import bundled_ocr_worker, default_ocr_python
+from rolecard_agent.base.observability import logline
+from rolecard_agent.base.paths import bundled_ocr_worker, default_ocr_python, runtime_form
 from rolecard_agent.config import Settings
 from rolecard_agent.rag.errors import OcrUnavailable, ParseError
 
@@ -77,6 +78,33 @@ class OcrBackend(Protocol):
         ...
 
 
+#: 容器提示只打一次（进程级）：服务页探活会反复问 `readiness()`，每次都往 stderr 甩同一段话
+#: 不是"有提示"，是把日志淹掉（判据同 `logline` 那条：通道要能让人一眼读到）。
+_container_hint_emitted = False
+
+
+def _container_readiness() -> str:
+    """容器形态下"本地 OCR 不可用"的人话指引 —— **唯一指向云端兜底那条路的地方**。
+
+    容器里没有 `.venv-ocr`、也没有随包 worker，那是**设计**（镜像按设计不装 OCR 那一族，
+    见 `capability-matrix.json` 的 container 那一列），所以这句既不说"没装"也不说"重打"——
+    那两句在镜像里都做不到，读了只会让人去查一个容器里根本不存在的东西。
+    能做的只有一条：模型页建云端凭据行 → 服务页可引用它。图片会外发第三方，所以那条路
+    **只允许操作员显式配置**（与 `select_ocr_backend` 的隐私红线是同一条）。
+    """
+    global _container_hint_emitted
+    text = (
+        "容器形态不带本地 OCR 栈（镜像是按设计不装 OCR 那一族，见 capability-matrix.json）——"
+        "没有 `.venv-ocr`、也没有随包 worker，这不是缺装。要用 OCR 请走云端兜底："
+        "模型页建一条云端 OCR 凭据行，再到服务页的 OCR 端点序里引用它"
+        "（图片会外发第三方，只允许操作员显式配置，绝不从 env 默认启用）"
+    )
+    if not _container_hint_emitted:
+        _container_hint_emitted = True
+        logline("warning", "ocr.container_no_local", text)
+    return text
+
+
 class LocalRapidOcrBackend:
     """子进程调用独立 venv 里的 RapidOCR worker（见 scripts/ocr_worker.py）。
 
@@ -98,10 +126,16 @@ class LocalRapidOcrBackend:
 
     def readiness(self) -> str:
         """服务页那一格的人话状态。**与 `available()` 同一份判定** —— 从前探活与选择器
-        各写一份，症状就是"界面说不可用而运行时真会去试"（`R102-56` 那一族）。"""
+        各写一份，症状就是"界面说不可用而运行时真会去试"（`R102-56` 那一族）。
+
+        形态分岔（决策七那一格）：容器态下"装 `.venv-ocr`"与"重打这一包"两句都不可操作，
+        改指云端兜底 —— 判据是 `runtime_form()` 的自报标记，不是猜。
+        """
         got = self._launcher()
         if got is not None:
             return f"就绪：{got[1]}"
+        if runtime_form() == "container":
+            return _container_readiness()
         return (
             "本机没有可用的本地 OCR：装机版这一包没带上 `ocr-worker`（重打时跑 "
             "scripts/tools/build_ocr_worker.py），开发态则按 requirements-ocr.txt 装 .venv-ocr "

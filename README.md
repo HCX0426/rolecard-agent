@@ -7,7 +7,7 @@
 内核 / 角色插件 / health 查询工具 / FastAPI 接入层 + SSE 流式对话 / Vite+React 控制台（**六个页签**：
 对话 · 数据 · 知识库 · 角色卡 · 插件 · 设置；Hash 路由深链 · 深色模式 · 响应式 · 单页错误边界 ·
 **运行环境在线编辑与热生效**）；
-**1582 个后端测试通过（另 1 条按环境跳过、3 条 `live` 用例不在门禁内）+ 379 个前端测试全绿、
+**1586 个后端测试通过（另 1 条按环境跳过、3 条 `live` 用例不在门禁内）+ 379 个前端测试全绿、
 smoke 全部通过、一致性断言零失败（**它有几条只写在门禁输出里**，散文不抄 —— 那串数里含
 "比对本文这一格"自己，抄一次就自指一次）、覆盖率 93.44%（**这一格是按平台的**：本机 win32 量到 93.44，
 GitHub 的 Linux runner 上一次量到的是 91.77（10-01 那一趟，此后代码又动了几笔，那一格要等下一次
@@ -193,6 +193,12 @@ docker run -p 8000:8000 -v rolecard-data:/app/data \
   -e AUTH_MODE=on -e AUTH_CREDENTIALS=<user>:<pass> rolecard-agent
 # 镜像以 uid 10001（非 root）跑，并对 /api/health 做 HEALTHCHECK。换到这版镜像之前
 # **已经存在**的 rolecard-data 卷还是 root 属主，要 chown 一次 —— 命令在 Dockerfile 尾注。
+# ⚠️ 容器形态**不带本地 OCR**：镜像是按设计不装 OCR 那一族（省下一整套 cv2/omegaconf 栈，
+# 机器可读的能力矩阵在 capability-matrix.json，有断言把着"镜像 = 声明能力集合"）。容器里
+# `.venv-ocr` 与随包 worker 都不存在，所以要用 OCR 请走**云端兜底**：模型页建一条云端 OCR
+# 凭据行，再到「服务」页的 OCR 端点序里引用它（图片会外发第三方，只允许操作员显式配置，
+# 绝不从 env 默认启用）。镜像自报形态（ROLECARD_RUNTIME_FORM=container），所以「服务」页
+# 那一格给的指引就是这条，而不是"去装个 venv"——那在镜像里做不到。
 
 # CI：push 即跑（GitHub Actions）—— ruff + mypy + 全量离线测试（覆盖率阈值 85%）+
 #     一致性核查 + 前端 vitest / tsc / build

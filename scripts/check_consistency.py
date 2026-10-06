@@ -463,6 +463,162 @@ def check_installer_scope() -> None:
         fails.append(f"requirements files missing a classification: {unclassified or blank}")
 
 
+_家_RE = re.compile(r"-r requirements(?:-([a-z_]+))?\.txt")
+
+
+def _installed_families(text: str, *, where: str) -> set[str]:
+    """这条安装路径**实际**装了哪几族（`-r requirements-<族>.txt`）。
+
+    与上面那条尺子同一个纪律：只认**真跑 pip 的那条命令**，跳过注释、接上行尾续行 ——
+    否则 Dockerfile 的散文（解释为什么要装这一族）会被当成命令，尺子把自己的说明
+    报成缺陷。
+
+    `-r requirements.txt`（base 那一族，没有 `-<族>` 后缀）归到族名 `txt`：第一趟跑的时候
+    尺子把它整个漏掉，于是"容器少装 txt"这条假红 —— 而 base 恰恰是每一份形态都装的那族，
+    漏了它等于矩阵里永远少一格。
+    """
+    cmds: list[str] = []
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if "pip install" not in line:
+            continue
+        probe = line.strip()
+        if probe.startswith(("#", "//")) or probe.lower().startswith(("rem ", "::")):
+            continue  # 注释行：Dockerfile 的"为什么装"那几段里就有 pip install 这串字
+        buf = line
+        j = i
+        while buf.rstrip().endswith(("\\", "^")) and j + 1 < len(lines):
+            j += 1
+            buf += " " + lines[j]
+        cmds.append(buf)
+    families: set[str] = set()
+    for cmd in cmds:
+        families |= {(m or "txt") for m in _家_RE.findall(cmd)}
+    if not families:
+        raise ValueError(f"{where} 里找不到任何 `-r requirements-*.txt`（判据在空转）")
+    return families
+
+
+def _runtime_form_marker() -> str:
+    """形态自报标记的**唯一出处**是 `base/paths.py` 的常量，所以这里 import 它，不抄字面量。
+
+    抄一份的代价是具体的：哪天常量改了名，这条尺子会继续盯着 Dockerfile 里那个旧名字报"在"，
+    而真正读它的代码已经改口 —— 守着一个没人读的字符串，比没有这条尺子更坏（判据与事实面
+    必须是同一个，同 `check_installer_scope` 那条"只认真跑 pip 的命令"）。
+    """
+    sys.path.insert(0, str(ROOT / "src"))
+    from rolecard_agent.base.paths import RUNTIME_FORM_ENV
+
+    return RUNTIME_FORM_ENV
+
+
+def check_capability_matrix() -> None:
+    """形态 × 能力 × 依赖出处：镜像里有什么、缺什么，由**一份矩阵**说了算。
+
+    审查快照「容器形态静默缺本地 OCR」那一格（决策七）：镜像没有 ocr 那一族，于是容器里
+    的 OCR 只能走云端兜底 —— 但"缺"这件事从前**没有任何一处写着**，parity 那条守卫也
+    因此查不出（它只问"五个入口装齐运行时五族了吗"，而 ocr 是按形态分开装的那一族）。
+    现在矩阵把每个形态声明的能力写成布尔，`能力 = 它依赖的那些族是否都装上了`，于是
+    "镜像没有本地 OCR"从静默变成**声明过的决定**；谁往镜像里加一族，这条断言会立刻
+    逼他回来更新矩阵（反之亦然 —— 矩阵写了 true 而实际没装，这也红）。
+
+    为什么矩阵是 JSON 而不是 YAML：PyYAML 不在任何 requirements 里、scripts/ 也没有
+    一处 import 它，用 YAML 会让本机（.venv 恰好有）绿而 CI（按 requirements 装）在
+    import 那一行炸 —— 正是本仓反复挨打的形状。矩阵要的是机器可读，不是某个格式。
+
+    覆盖声明：硬断言只覆盖 **container**（Dockerfile，也就是这一格要管的地方）；
+    installer / dev 两列是矩阵里的数据，等下一刀再接上机器检查（与本仓"起步先落一半、
+    账本写明欠什么"那条规矩一致）。
+    """
+    path = ROOT / "capability-matrix.json"
+    if not path.exists():
+        out("capability matrix", False, "矩阵文件不见了（capability-matrix.json）")
+        fails.append("capability-matrix.json is missing")
+        return
+    try:
+        matrix = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        out("capability matrix", False, f"矩阵读不出来：{exc}")
+        fails.append(f"capability-matrix.json is unreadable: {exc}")
+        return
+
+    problems: list[str] = []
+    families = matrix.get("families") or {}
+    forms = matrix.get("forms") or {}
+    caps = matrix.get("capabilities") or {}
+
+    # 1) 矩阵自检：每一族都得有对应文件、每一形态都得有 requires 与来源。
+    for family, filename in sorted(families.items()):
+        if not (ROOT / filename).exists():
+            problems.append(f"矩阵里的族 {family} 指向 {filename}，磁盘上没有这份文件")
+    for form, spec in sorted(forms.items()):
+        if not (spec.get("requires") or []):
+            problems.append(f"形态 {form} 没写 requires（空矩阵等于没有矩阵）")
+        if not (spec.get("来源") or "").strip():
+            problems.append(f"形态 {form} 没写来源（谁装出来的？）")
+
+    # 2) 硬断言：容器那一形态，实际装了什么 == 矩阵声明了什么。
+    dockerfile = ROOT / "Dockerfile"
+    if not dockerfile.exists():
+        problems.append("Dockerfile 不见了，容器那一形态无从比对")
+    else:
+        text = dockerfile.read_text(encoding="utf-8", errors="ignore")
+        try:
+            installed = _installed_families(text, where="Dockerfile")
+        except ValueError as exc:
+            problems.append(str(exc))
+            installed = set()
+        declared = set((forms.get("container") or {}).get("requires") or [])
+        if installed != declared:
+            problems.append(
+                "容器实际装 "
+                f"{sorted(installed)}，矩阵声明 {sorted(declared)}"
+                f"（多出来的：{sorted(installed - declared)}；"
+                f"缺的：{sorted(declared - installed)}）"
+            )
+        # 2b) 形态自报那一行也得在：`rag/ocr.py` 的容器文案照它分岔。删了不会有谁当场炸，
+        # 只会让容器里的人重新拿到"装 .venv-ocr / 重打这一包"这种镜像里做不到的建议 ——
+        # 正是这一格当初"静默"的形状，所以它归这条尺子管。
+        marker = _runtime_form_marker()
+        # 值的边界要看死：`=container-MUTATED` 也含 `=container` 这个子串，用 `in` 判会绿 ——
+        # 变异实测第一趟就是这么漏过去的，而值写坏的后果是形态判据运行期根本不成立
+        # （容器里照旧拿到"装 .venv-ocr"那句），正是这一格要防的"静默"。
+        if not re.search(rf"(?m)^\s*ENV\s+.*\b{re.escape(marker)}=container(?=[\s\\]|$)", text):
+            problems.append(
+                f"Dockerfile 里找不到 `ENV {marker}=container`"
+                "（形态自报，值必须正好是 container）；"
+                "没有它，容器里的 OCR 指引会退回开发态/装机版那两句"
+            )
+        # 3) 能力层：一个能力在容器里"有"，当且仅当它依赖的那些族都被装上了。
+        for cap, spec in sorted(caps.items()):
+            need = set(spec.get("families") or [])
+            unknown = need - set(families)
+            if unknown:
+                problems.append(f"能力 {cap} 依赖未登记的族 {sorted(unknown)}")
+                continue
+            has = need <= installed
+            said = bool(spec.get("container", False))
+            if has != said:
+                problems.append(
+                    f"能力 {cap}：容器里实际{'有' if has else '没有'}"
+                    f"（依赖 {sorted(need)}），矩阵却写着 {said}"
+                )
+
+    ok = not problems
+    out(
+        "capability matrix",
+        ok,
+        "; ".join(problems[:3])
+        if problems
+        else (
+            f"{len(forms)} 个形态 × {len(caps)} 项能力：容器那一形态与矩阵一致"
+            f"（本地 OCR 声明为缺，走云端兜底）"
+        ),
+    )
+    if problems:
+        fails.append(f"capability matrix out of sync: {problems}")
+
+
 def _imported_modules(code: str) -> list[str]:
     """从一段 `python -c` 的串里只取**被 import 的模块名**。
 
@@ -4185,6 +4341,7 @@ def main() -> int:
     check_dependency_layering()
     check_env_example_models()
     check_installer_scope()
+    check_capability_matrix()
     check_ci_host_python_stdlib_only()
     check_artifact_single_source()
     check_single_source_literals()

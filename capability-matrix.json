@@ -1,0 +1,83 @@
+{
+  "为什么是 JSON 而不是 YAML": "审查快照决策七写的是『能力矩阵 YAML』，但 PyYAML 没有出现在任何 requirements 里、scripts/ 里也没有一处 import yaml —— 用 YAML 写它，本机（.venv 恰好有）能跑而 CI（按 requirements 装）会在 import 那一行炸，正是本仓反复挨打的那个形状。矩阵要的是**机器可读**，不是某个具体文件格式；json 是标准库且 check_consistency.py 已经在用它。",
+  "families": {
+    "txt": "requirements.txt",
+    "api": "requirements-api.txt",
+    "rag": "requirements-rag.txt",
+    "cloud": "requirements-cloud.txt",
+    "mcp": "requirements-mcp.txt",
+    "package": "requirements-package.txt",
+    "dev": "requirements-dev.txt",
+    "ocr": "requirements-ocr.txt",
+    "package_ocr": "requirements-package-ocr.txt"
+  },
+  "forms": {
+    "container": {
+      "requires": ["txt", "api", "rag", "cloud", "mcp"],
+      "来源": "Dockerfile 的 RUN pip install",
+      "形态自报": "Dockerfile 里那行 ENV（常量在 base/paths.py，rag/ocr.py 据此把服务页那格的指引换成云端兜底；尺子盯着这一行，值必须正好是 container）",
+      "说明": "镜像是 B/S 形态：不带本地 OCR 栈（决策七，省 258MB+），OCR 走云端兜底。"
+    },
+    "installer": {
+      "requires": ["txt", "api", "rag", "cloud", "mcp", "package", "dev"],
+      "来源": ".github/workflows/ci.yml 的 windows-release job（dev 是 2026-10-06 加的 Windows 测试臂）",
+      "说明": "桌面安装包；OCR worker 由 packaging/ 那边单独打，不在这条 pip install 里。"
+    },
+    "dev": {
+      "requires": ["txt", "api", "rag", "cloud", "mcp", "dev"],
+      "来源": ".github/workflows/ci.yml 的 gate job",
+      "说明": "开发/CI 态；本地 OCR 另按 requirements-ocr.txt 装独立 .venv-ocr（可选）。"
+    }
+  },
+  "capabilities": {
+    "knowledge_rag": {
+      "families": ["rag"],
+      "说明": "知识库 / 上传解析 / 检索工具（chromadb、pypdf）。",
+      "container": true,
+      "installer": true,
+      "dev": true
+    },
+    "cloud_backend": {
+      "families": ["cloud"],
+      "说明": "OpenAI 兼容端点（langchain-openai）：容器里没有 Ollama，云端 key 本是镜像的主用例。",
+      "container": true,
+      "installer": true,
+      "dev": true
+    },
+    "mcp_tools": {
+      "families": ["mcp"],
+      "说明": "MCP server 接入；未装时 loader 只打一行 warning 就跳过（界面照摆入口、工具永远加载不出来）。",
+      "container": true,
+      "installer": true,
+      "dev": true
+    },
+    "tests": {
+      "families": ["dev"],
+      "说明": "能跑 pytest 全家（timeout / xdist）。",
+      "container": false,
+      "installer": true,
+      "dev": true
+    },
+    "packaging": {
+      "families": ["package"],
+      "说明": "PyInstaller：只有打桌面包那条路需要。",
+      "container": false,
+      "installer": true,
+      "dev": false
+    },
+    "ocr_local": {
+      "families": ["ocr"],
+      "说明": "本地 RapidOCR（独立 OCR venv / 随包 ocr-worker.exe）。**容器不带这一族**——这就是审查快照『容器形态静默缺本地 OCR』那一格：矩阵把它写成 false，于是『缺』是声明过的决定，不再是静默。",
+      "container": false,
+      "installer": false,
+      "dev": true
+    },
+    "ocr_cloud": {
+      "families": ["cloud"],
+      "说明": "云端 OCR 兜底：容器里要用 OCR，由操作员在模型页建云端凭据行、再在服务页引用（绝不从 env 默认启用，见 select_ocr_backend 的隐私红线）。它只依赖 cloud 那一族，所以容器**有**。",
+      "container": true,
+      "installer": true,
+      "dev": true
+    }
+  }
+}

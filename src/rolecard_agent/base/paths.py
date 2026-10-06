@@ -27,6 +27,33 @@ def is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False)) and hasattr(sys, "_MEIPASS")
 
 
+#: 运行形态的自报标记，唯一写手是 `Dockerfile` 的那行 `ENV`（门禁的形态矩阵那条尺子盯着它）。
+#: **刻意不写进 `.env.example`**：它是形态自报，不是给人调的旋钮 —— 让操作员能改，等于让人
+#: 能把"我在容器里"这件事说错，而 `rag/ocr.py` 服务页那格的文案正是照它分岔的。
+RUNTIME_FORM_ENV = "ROLECARD_RUNTIME_FORM"
+
+
+def runtime_form() -> str:
+    """这一进程跑在哪种形态里：`container` / `desktop`（冻结态装机版）/ `source`（开发态）。
+
+    为什么要一个形态判据（2026-10-04 快照"容器形态静默缺本地 OCR"那一格，决策七）：
+    "本地 OCR 不可用"在三种形态里**原因不同、可操作的路也不同** —— 开发态是没装 `.venv-ocr`
+    （能装）、装机版是这一包没带 worker（重打）、容器里是镜像**按设计**不装 OCR 那一族
+    （装不了，唯一的路是云端兜底）。从前服务页那格只写前两种，容器里的人拿到的是一句
+    在镜像里做不到的建议。
+
+    判据是**自报**而不是探测，两条理由都是硬的：
+      * `/proc/1/cgroup` 那类探测在 cgroup v2 下已经不区分容器与宿主 —— 看着更硬，
+        其实更容易说错话；
+      * `/.dockerenv` 会让答案取决于**宿主环境**：门禁自己的 CI job 若在容器里跑，
+        "开发态"的用例会被判成容器态 —— 一个换台机器就换答案的判据写不出可复现的用例。
+    自报 + 尺子盯住 Dockerfile 那一行，才是可测的那一种（判据与文案同一条纪律）。
+    """
+    if os.environ.get(RUNTIME_FORM_ENV, "").strip().lower() == "container":
+        return "container"
+    return "desktop" if is_frozen() else "source"
+
+
 def repo_root() -> Path:
     """仓库根（开发态）：本文件在 `<root>/src/rolecard_agent/base/paths.py`。"""
     return Path(__file__).resolve().parents[3]
