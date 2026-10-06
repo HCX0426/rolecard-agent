@@ -179,6 +179,20 @@ class LocalTracer:
         self._stream = self._path.open("a", encoding="utf-8")
         return self._stream
 
+    def close(self) -> None:
+        """收掉文件句柄（幂等）。长跑进程由解释器退出时收，但**调用方要能显式收**：
+
+        没有这一格时，测试里每个 `LocalTracer(path=…)` 都会在 GC 那一刻留下一句
+        `ResourceWarning: unclosed file` —— 那正是"警告摘要"里最该没有的一族噪声
+        （真有句柄没关的地方会被它一起淹掉）。轮转那条路上的旧句柄本来就是显式
+        close 的（`_rotate_locked`），所以这只收"当前这一条"。
+        """
+        with self._lock:
+            if self._stream is not None:
+                with contextlib.suppress(OSError):
+                    self._stream.close()
+                self._stream = None
+
     def emit(self, event: TraceEvent) -> None:
         try:
             payload = asdict(event)

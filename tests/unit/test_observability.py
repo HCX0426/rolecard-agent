@@ -36,6 +36,7 @@ def test_local_tracer_writes_one_json_line_per_event(tmp_path: Path) -> None:
     tracer = LocalTracer(path=log)
     tracer.emit(TraceEvent(event="node_end", node="call_model", latency_ms=12.5))
     tracer.emit(TraceEvent(event="tool_call", tool="list_roles"))
+    tracer.close()  # 句柄显式收：留着就是 GC 时一句 ResourceWarning
 
     records = _lines(log)
     assert [r["event"] for r in records] == ["node_end", "tool_call"]
@@ -45,9 +46,11 @@ def test_local_tracer_writes_one_json_line_per_event(tmp_path: Path) -> None:
 def test_redaction_is_on_by_default(tmp_path: Path) -> None:
     """A 412-character answer must not appear in the log; its shape may."""
     log = tmp_path / "trace.jsonl"
-    LocalTracer(path=log).emit(
+    tracer = LocalTracer(path=log)
+    tracer.emit(
         TraceEvent(event="node_end", detail={"content": "患者" * 6, "tools_visible": 2})
     )
+    tracer.close()
     detail = _lines(log)[0]["detail"]
     assert detail["content"] == "<redacted:12 chars>"
     assert detail["tools_visible"] == 2  # non-sensitive values survive
@@ -55,9 +58,9 @@ def test_redaction_is_on_by_default(tmp_path: Path) -> None:
 
 def test_redaction_can_be_disabled_for_fictional_demo_data(tmp_path: Path) -> None:
     log = tmp_path / "trace.jsonl"
-    LocalTracer(emit_raw_text=True, path=log).emit(
-        TraceEvent(event="node_end", detail={"content": "虚构数据"})
-    )
+    tracer = LocalTracer(emit_raw_text=True, path=log)
+    tracer.emit(TraceEvent(event="node_end", detail={"content": "虚构数据"}))
+    tracer.close()
     assert _lines(log)[0]["detail"]["content"] == "虚构数据"
 
 
@@ -68,14 +71,14 @@ def test_redact_walks_nested_structures() -> None:
 
 def test_local_backend_is_silent(tmp_path: Path) -> None:
     log = tmp_path / "trace.jsonl"
-    make_tracer(Settings(obs_backend="local", obs_log_path=log))
+    make_tracer(Settings(obs_backend="local", obs_log_path=log)).close()
     assert _lines(log) == []
 
 
 def test_unimplemented_backend_falls_back_loudly(tmp_path: Path) -> None:
     """Silently downgrading would let someone believe they have cloud traces."""
     log = tmp_path / "trace.jsonl"
-    make_tracer(Settings(obs_backend="langsmith", obs_log_path=log))
+    make_tracer(Settings(obs_backend="langsmith", obs_log_path=log)).close()
 
     records = _lines(log)
     assert len(records) == 1
@@ -88,6 +91,7 @@ def test_unimplemented_backend_falls_back_loudly(tmp_path: Path) -> None:
 def test_typo_in_backend_name_does_not_raise(tmp_path: Path) -> None:
     tracer = make_tracer(Settings(obs_backend="langsmit", obs_log_path=tmp_path / "t.jsonl"))
     assert isinstance(tracer, LocalTracer)
+    tracer.close()
 
 
 def test_only_local_is_implemented() -> None:
@@ -101,7 +105,9 @@ def test_emit_never_raises_on_unserializable_detail(tmp_path: Path) -> None:
         def __repr__(self) -> str:
             raise RuntimeError("no repr for you")
 
-    LocalTracer(path=tmp_path / "t.jsonl").emit(TraceEvent(event="x", detail={"o": Opaque()}))
+    tracer = LocalTracer(path=tmp_path / "t.jsonl")
+    tracer.emit(TraceEvent(event="x", detail={"o": Opaque()}))
+    tracer.close()
     # reaching here is the assertion
 
 
@@ -139,6 +145,7 @@ def test_concurrent_emits_produce_only_valid_json_lines(tmp_path: Path) -> None:
         t.start()
     for t in threads:
         t.join()
+    tracer.close()  # 收句柄：留着就是 GC 时一句 ResourceWarning
 
     lines = path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == n_threads * per_thread  # 一行不多、一行不少
@@ -153,6 +160,7 @@ def test_log_file_rotates_instead_of_growing_forever(tmp_path: Path) -> None:
     tracer._MAX_LOG_BYTES = 512  # type: ignore[misc]  # 便于用小数据触发轮转
     for i in range(40):
         tracer.emit(TraceEvent(event=f"e{i}", detail={"pad": "y" * 100}))
+    tracer.close()
 
     assert path.exists()
     assert path.with_name(path.name + ".1").exists()

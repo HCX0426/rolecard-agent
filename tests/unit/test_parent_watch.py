@@ -46,8 +46,10 @@ def test_startup_refuses_to_watch_a_pid_it_cannot_see() -> None:
     fired = threading.Event()
 
     def _on_exit() -> None:
+        # 只置事件不抛异常：真实 on_exit 是 `os._exit`（永不返回、也从不 raise），
+        # 而在看门狗线程里抛 SystemExit 会被 pytest 包成
+        # PytestUnhandledThreadExceptionWarning —— 自己造的假异常不该占用警告摘要。
         fired.set()
-        raise SystemExit
 
     assert watch.start(parent_pid=_reaped_pid(), on_exit=_on_exit) is None
     assert not fired.wait(0.3)
@@ -59,8 +61,9 @@ def test_watchdog_fires_when_the_parent_really_goes_away() -> None:
     fired = threading.Event()
 
     def _on_exit() -> None:
+        # 同上一支的理由：置事件就是"开火了"的完整证据，抛 SystemExit 只会给
+        # 警告摘要添一条自己造的噪音（父消失后 loop() 走到 on_exit 返回，线程自然退）。
         fired.set()
-        raise SystemExit  # 只在这个测试线程里；真的 on_exit 是 os._exit
 
     thread = watch.start(
         parent_pid=int(parent.pid), on_exit=_on_exit, interval=0.1, is_alive=watch.process_alive

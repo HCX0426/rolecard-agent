@@ -46,7 +46,11 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "forensics"))
 # 就是给"改了判据漏了另一处"留门（`R102` 轮那条"同一句理由出现在第二处就该有尺子"的同族）。
 from chroma_flake_evidence import CHROMA_FLAKE_SIGNATURES, existing_evidence  # noqa: E402
 
-COMMON = [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-W", "ignore"]
+# 警告政策住在 `pyproject.toml` 的 `filterwarnings`（全仓唯一出处：自有代码弃用即红、
+# 已知 ResourceWarning 按消息精确放行）。这里从前挂着一句 `-W ignore` 把整条政策连同
+# langchain/langgraph 升级唯一的预警信号一起吞掉（2026-10-04 审查快照的吞警告条目）—— 删了，
+# 命令行不再有任何吞警告的口子。
+COMMON = [sys.executable, "-m", "pytest", "-p", "no:cacheprovider"]
 #: 两档的命令行：快档带 `-x`（红就停、不量覆盖率）+ 4 worker 并行；覆盖率档反之（保守
 #: 串行，夜间臂再评估）。xdist 的旧结论是"反而更慢"（gate.py 09-19 记录：47s 套件上
 #: worker 建库开销吃掉收益）—— 2026-10-04 重测：套件 1514 条、串行 188s，`-n 4` 实测

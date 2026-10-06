@@ -68,6 +68,31 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
 addopts = "-q -m 'not live'"
+# 警告政策（2026-10-04 审查快照「-W ignore 全局吞警告」那条的落地）：门禁那层从前挂着一句
+# `-W ignore`，把 langchain/langgraph 升级唯一的预警信号整条吃掉 —— 升级后 DeprecationWarning
+# 刷满屏也没人红。现在政策住在这里（全仓唯一出处），**顺序承重**：后定义的条目优先级更高，
+# 所以"把整类点亮"的 default 在前、"点名处置"的 error/ignore 在后 ——
+#   1) 四类警告先按 default 点亮（Python 全局默认对 Deprecation/Resource 是 ignore：不点亮
+#      就等于没有摘要，"白名单之外照旧可见"就是空话）。
+#   2) 自有代码的弃用/前瞻警告**直接红**（module 匹配的是警告被归因的那个模块：stacklevel
+#      指到我们调用点的，就是我们该改的）；三方自己的内部弃用停在摘要里 —— 看得见、不拦路。
+#      将来真吵到没法看，往这里加带"谁的/为什么/何时删"三件事的白名单，不许无条件 ignore。
+#   3) ResourceWarning 按**消息**精确放行两类已知形态，而不是整类吞掉：
+#      - `unclosed database`：`ThreadLocalConnection` 把分线程的槽交给各线程自己收
+#        （R102-02 的设计），另有若干用例故意造"父进程被硬杀"的现场。实测 740 条全在这一句上。
+#      - `unclosed file ... trace.log/jsonl`：文件型 tracer 在实例活着期间持有句柄（设计如此）。
+#      新出现的别的 ResourceWarning（比如某个我们自己该关没关的句柄）照旧进摘要。
+filterwarnings = [
+    "default::DeprecationWarning",
+    "default::PendingDeprecationWarning",
+    "default::FutureWarning",
+    "default::ResourceWarning",
+    "error::DeprecationWarning:rolecard_agent.*",
+    "error::PendingDeprecationWarning:rolecard_agent.*",
+    "error::FutureWarning:rolecard_agent.*",
+    "ignore:unclosed database.*:ResourceWarning",
+    "ignore:unclosed file .*trace\\.(log|jsonl).*:ResourceWarning",
+]
 # 单条用例挂死的保险丝（2026-10-04 审查快照）：从前唯一防线是 job 级 30 分钟，
 # 一条用例挂死就烧穿整个预算且 cancel 日志不指认元凶。60s 覆盖实测最重的离线用例
 # （~7s）还有十倍余量；真要更长的用例单独 @pytest.mark.timeout(180)。thread 法不依赖
