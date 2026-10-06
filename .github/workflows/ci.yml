@@ -437,6 +437,7 @@ jobs:
             requirements-cloud.txt
             requirements-mcp.txt
             requirements-package.txt
+            requirements-dev.txt
 
       - name: 装打包机依赖（运行时五族 + PyInstaller）
         # 那五族不是罗列：`packaging/rolecard-backend.spec` 会对 RUNTIME_PACKAGES 逐条
@@ -444,9 +445,26 @@ jobs:
         # 对没安装的包返回空列表且不报错，少装一族的代价正是"构建成功、里面缺东西"。
         # `requirements-package.txt` 就是这一条 job 的前置：PyInstaller 从前没写在任何
         # requirements 里，所以 fresh clone + CI 根本打不出包（这轮才发现）。
+        # dev 那一族也**装在同一条命令里**（`installer scope parity` 那条尺子要求 ci.yml 里
+        # 每一条 pip install 都带齐运行时五族：分开装一次 `-r requirements-dev.txt` 会被它判成
+        # "一次只装了 dev" —— 那正是"构建成功、里面缺东西"的形状）。pytest 全家（timeout /
+        # xdist）都在 dev 里，下面那条 Windows 臂要用。
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-api.txt -r requirements-rag.txt -r requirements-cloud.txt -r requirements-mcp.txt -r requirements-package.txt
+          pip install -r requirements.txt -r requirements-api.txt -r requirements-rag.txt -r requirements-cloud.txt -r requirements-mcp.txt -r requirements-package.txt -r requirements-dev.txt
+
+      - name: Windows 臂跑一遍用例
+        # 平台覆盖倒挂（审查快照的 Windows 测试臂条目）：CI 测试从前只跑 ubuntu-24.04，
+        # 而 `ctypes.WinDLL`、图标层这类 Windows 专属分支在 Linux 全部 skip ——
+        # test_app_icon_corners.py:150 的合取条件正是为此红过一次，而那次只能在
+        # 本机撞见。这条 job 已经在 Windows runner 上、手动触发、零新增 runner 成本，
+        # 于是它就是那条"起步臂"（决策四）：**在这里报红 = Windows 分支改动被机器接住**。
+        # 跑的是与本机快档同一条命令（`pytest_with_evidence.py --lane fast`），
+        # 判据只有一份；它只写 `build/` 下的取证日志，**不动入库那份读数**
+        # （读数是按平台的：本机 win32 与 runner Linux 两个数互相判对方漂，见 gate.py）。
+        # 位置刻意排在打包之前：Windows runner 分钟按 2× 计费，用例红了就该在
+        # PyInstaller / electron-builder 之前停，而不是先烧十几分钟再出一个坏包。
+        run: python scripts/pytest_with_evidence.py --lane fast
 
       - name: 装 Node（只装壳那一份）
         uses: actions/setup-node@v4
