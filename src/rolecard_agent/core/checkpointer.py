@@ -29,7 +29,9 @@ from __future__ import annotations
 
 import contextlib
 import sqlite3
-from typing import cast
+import threading
+import time
+from typing import Any, cast
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
@@ -45,6 +47,80 @@ CHECKPOINT_KEEP_DAYS = 14
 #: 一次性收口的记账键（`kernel_meta`）。没有它，每次启动都会把"只留最新一条"重演一遍，
 #: 那等于把用户新攒的最近几轮也吃掉。
 _BACKLOG_KEY = "checkpoint_backlog_compacted_at"
+#: 锁等待的告警阈值（毫秒）。单次拿锁等过它就落一行人读日志 —— 正常的微秒级拿锁
+#: 不该刷屏，但"排在别人的大快照后面"必须出声（观测的全部意义就在那一行）。
+LOCK_WAIT_WARN_MS = 100.0
+
+
+class ObservedLock:
+    """包住 `threading.Lock` 的观测层：拿锁等了多久，从此可断言、可告警。
+
+    为什么要它（2026-10-04 审查快照的 saver 全局锁条目，"先包锁等待观测再拆"）：
+    langgraph 的 `SqliteSaver` 用**一把**全局锁串行化全进程所有会话的 checkpoint
+    读写 —— 会话 A 写 26 轮大快照期间，B 的历史回放/红点轮询全部排队。但"排队排了
+    多久"此前没有任何读数，拆连接族（每线程一条）值不值、拆完有没有真变快，全都
+    只能靠感觉。这一层把等待变成事实：
+
+      * `stats()` 给累计读数（次数 / 最长 / 平均，测试与探针直接断言）；
+      * 单次等待 ≥ `LOCK_WAIT_WARN_MS` 时 `logline(warning)` 出一行 —— 真机日志
+        里自己会报告"谁在等、等了多久"，不需要谁记得去开探针。
+
+    契约与 `threading.Lock` 同形（acquire / release / 上下文管理器），语义逐字不变：
+    互斥照旧、非重入照旧。计数用一把私有锁保护 —— 它不能复用被观测的那把（在
+    acquire 里再 acquire 同一把锁 = 自己等死自己）。
+    """
+
+    def __init__(self, warn_ms: float = LOCK_WAIT_WARN_MS) -> None:
+        self._lock = threading.Lock()
+        self._warn_ms = warn_ms
+        self._count_lock = threading.Lock()
+        self._acquires = 0
+        self._total_wait_ms = 0.0
+        self._max_wait_ms = 0.0
+
+    def acquire(self, *args: Any, **kwargs: Any) -> bool:
+        t0 = time.perf_counter()
+        got = self._lock.acquire(*args, **kwargs)
+        waited_ms = (time.perf_counter() - t0) * 1000.0
+        with self._count_lock:
+            self._acquires += 1
+            self._total_wait_ms += waited_ms
+            self._max_wait_ms = max(self._max_wait_ms, waited_ms)
+            acquires, total, worst = (
+                self._acquires,
+                self._total_wait_ms,
+                self._max_wait_ms,
+            )
+        if waited_ms >= self._warn_ms:
+            # 只在超阈值时出声：常态的亚毫秒拿锁每次一行会把日志刷成噪音，而这一行
+            # 恰恰是"拆连接族"要拿去对数的那个证据（谁在等、等了多久、这是第几次）。
+            logline(
+                "warning",
+                "checkpoints",
+                f"checkpoint 锁等待 {waited_ms:.0f}ms（累计 {acquires} 次拿锁、"
+                f"最长 {worst:.0f}ms、平均 {total / acquires:.1f}ms）——"
+                "另一会话正持锁写检查点，本次读写在排队",
+            )
+        return got
+
+    def release(self) -> None:
+        self._lock.release()
+
+    def __enter__(self) -> ObservedLock:
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.release()
+
+    def stats(self) -> dict[str, float | int]:
+        """累计读数：拿锁次数 / 总等待毫秒 / 最长等待毫秒（测试与探针的断言面）。"""
+        with self._count_lock:
+            return {
+                "acquires": self._acquires,
+                "total_wait_ms": round(self._total_wait_ms, 3),
+                "max_wait_ms": round(self._max_wait_ms, 3),
+            }
 
 
 def _has_column(conn: SqlConnection, table: str, column: str) -> bool:
@@ -360,6 +436,16 @@ def make_checkpointer(conn: SqlConnection) -> SqliteSaver:
     # 运行期成立、类型系统表达不了 —— 显式 cast 并留下理由，而不是把签名放宽成 Any
     # 让整个模块失去检查。
     saver = SqliteSaver(cast("sqlite3.Connection", conn))
+    # 锁等待观测（2026-10-04 审查快照的 saver 全局锁条目，第一步"先观测"）：
+    # langgraph 的 saver 用**一把**全局锁串行化全进程所有会话的 checkpoint 读写，
+    # "会话 A 写大快照期间 B 的历史回放/红点轮询全部排队"此前只有源码证据、没有现场
+    # 读数。换上观测锁，语义逐字不变（同一把互斥、同样的 acquire/release 契约），
+    # 但"等锁等了多久"从此可断言、超阈值自动出声 —— 拆不拆连接族等它说话。
+    # 经 Any 赋值而不是 setattr/B010 那对互斥的规矩：`lock` 在 langgraph 侧被推断成
+    # `_thread.LockType`，直接赋协议同形的观测锁会被 mypy 拒，cast 到 LockType 又是
+    # 撒谎。这一处的形状契约由 ObservedLock 自己保证（acquire/release/with 同形），
+    # 类型系统看不见它 —— cast(Any) 是"我知道、我负责"的如实写法。
+    cast(Any, saver).lock = ObservedLock()
     saver.setup()
     ensure_checkpoint_clock(conn)
     compacted = compact_backlog_once(conn)
@@ -380,3 +466,4 @@ def make_checkpointer(conn: SqlConnection) -> SqliteSaver:
             f"{CHECKPOINT_KEEP_DAYS} 天以内）",
         )
     return saver
+
