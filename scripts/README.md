@@ -66,6 +66,7 @@
 | `scripts/forensics/probe_open_threads_live.py` | 未收尾话题的实机验收（真模型三份对话） | 2026-09-26 轮 | 留档 |
 | `scripts/forensics/probe_open_threads_reach.py` | 未收尾话题的可达性验收（生产读数出处） | 2026-09-26 轮 | 留档 |
 | `scripts/forensics/probe_package_artifact.py` | 打包后不装自证"这一包是这一版"（三路判据） | 2026-09-30 打包轮 | 留档 |
+| `scripts/forensics/probe_startup_timing.py` | 启动各步耗时分布（build_runtime 逐段打点，真库副本） | 2026-10-06 审查修复轮（启动短路那条的"先测量"） | 留档 |
 | `scripts/forensics/probe_stop_live.py` | 停止生成的实机端到端（库副本，不写真库） | 2026-09 下旬停旗轮 | 留档 |
 | `scripts/forensics/probe_stop_marker.py` | 被叫停半句落库带标记的真链路驱动 | 2026-09-26 轮 | 留档 |
 | `scripts/forensics/probe_sync_push.py` | 同步三方向两实例端到端（上行+下行+对账） | M7/M8（2026-09 下旬） | 留档 |
