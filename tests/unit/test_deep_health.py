@@ -147,3 +147,38 @@ def test_门禁只放操作员与本地匿名() -> None:
     with pytest.raises(HTTPException) as got:
         require_operator(SimpleNamespace(is_anonymous=False, role="user"))  # type: ignore[arg-type]
     assert got.value.status_code == 403
+
+
+def test_验收_chroma_改坏后_health_仍_200_而深探报红(
+    tmp_path: pathlib.Path, monkeypatch
+) -> None:
+    """快照那句验收的**端到端**版本，两半放进同一个进程里量。
+
+    坏法用的是"软损坏"：目录形状还在、里面那个 sqlite 不再是库（覆盖成垃圾）。
+    这一版是被现实改出来的 —— 第一版我把"本该是目录的位置放一个文件"，结果**应用根本起不来**
+    （bootstrap 里建向量库那一步就抛 `os error 183`）。那是有价值的发现，也是判据的一部分：
+    **最狠的坏法是 loud 的**（进程起不来，容器会明确失败），深探要接住的是**起得来但用不了**
+    那一类 —— 磁盘写坏、卷没挂上、库文件被截断。所以下面两段都在：先断言"起得来"，
+    再断言"起来之后改坏，免鉴权那条不受影响、深探报红"。
+    """
+    from fastapi.testclient import TestClient
+
+    from rolecard_agent.api.main import create_app
+
+    chroma = tmp_path / "chroma"
+    monkeypatch.setenv("CHROMA_PATH", str(chroma))
+    app = create_app(sqlite_path=tmp_path / "app.db")
+    with TestClient(app) as client:
+        inner = chroma / "chroma.sqlite3"
+        assert inner.exists(), "bootstrap 应当已经把向量库建出来（否则这条用例的前提不成立）"
+        inner.write_bytes(b"garbage" * 200)  # 软损坏：目录还在，内容不是库
+
+        alive = client.get("/api/health")
+        deep = client.get("/api/health/deep")
+    assert alive.status_code == 200, alive.text
+    assert alive.json()["status"] == "ok", "免鉴权那条答的是另一个问题，不许被向量库牵连"
+    assert deep.status_code == 503, deep.text
+    body = deep.json()
+    assert body["status"] == "degraded"
+    assert body["checks"]["chroma"]["ok"] is False, body
+    assert body["checks"]["chroma"]["detail"], "红要说得出为什么"

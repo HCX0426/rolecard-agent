@@ -28,6 +28,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from rolecard_agent.base.metrics import COUNTS
 from rolecard_agent.config import Settings
 
 # Anything a caller might pass under these keys is dropped unless raw emission is enabled.
@@ -194,6 +195,10 @@ class LocalTracer:
                 self._stream = None
 
     def emit(self, event: TraceEvent) -> None:
+        # 先计数再落盘：`/api/metrics` 读的就是这一份（**只数事件名，不碰 detail** ——
+        # 见 `base/metrics` 的模块注释：那是"metrics 不含用户文本"这条验收的落点）。
+        # 放在 try 外面是刻意的：`bump` 自己绝不抛，而写盘那一段失败不该让计数跟着丢。
+        COUNTS.bump(event.event)
         try:
             payload = asdict(event)
             if not self._emit_raw:

@@ -7,10 +7,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from rolecard_agent.api.auth import ROLE_OPERATOR, Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
+from rolecard_agent.base.metrics import COUNTS
 from rolecard_agent.base.observability import logline
 from rolecard_agent.core.readiness import readiness_report
 
@@ -53,3 +54,16 @@ def health_deep(ctx: AppContext = Depends(get_context)) -> object:
     if report["status"] != "ok":
         return JSONResponse(status_code=503, content=report)
     return report
+
+
+@router.get("/api/metrics", dependencies=[Depends(require_operator)])
+def metrics() -> PlainTextResponse:
+    """Prometheus 文本（`text/plain; version=0.0.4`）。
+
+    与深探同一条门禁：它暴露的是**运行时形状**（哪些事件在发生、多频繁、有没有异常尖峰），
+    而那对未鉴权的公网访客没有理由可见。格式与"为什么只有计数没有直方图"写在
+    `base/metrics` 的模块注释里；`Content-Type` 里必须带版本号 —— Prometheus 认它。
+    """
+    return PlainTextResponse(
+        COUNTS.render(), media_type="text/plain; version=0.0.4; charset=utf-8"
+    )
