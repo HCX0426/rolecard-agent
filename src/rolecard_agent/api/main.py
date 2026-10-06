@@ -57,6 +57,7 @@ from rolecard_agent.api.ratelimit import Limiter, bucket_key, is_limited, paths_
 from rolecard_agent.api.routers import approvals as approvals_router
 from rolecard_agent.api.routers import console as console_router
 from rolecard_agent.api.routers import domains as domains_router
+from rolecard_agent.api.routers import health as health_router
 from rolecard_agent.api.routers import local_service as local_service_router
 from rolecard_agent.api.routers import mcp as mcp_router
 from rolecard_agent.api.routers import pets as pets_router
@@ -253,6 +254,9 @@ def create_app(
 
     # C1：端点按职责分包，全部端点已迁出本文件。
     app.include_router(roles_router.router)
+    # 诊断端点（深探，随后还有指标）：**不是**免鉴权那条 /api/health —— 它要操作员，
+    # 因为它回的是内部状态（库健全性、向量库开不开、配了几条后端）。
+    app.include_router(health_router.router)
     app.include_router(sessions_router.router)
     app.include_router(console_router.router)
     app.include_router(settings_router.router)
