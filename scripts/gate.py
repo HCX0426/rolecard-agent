@@ -156,6 +156,13 @@ STEPS: list[tuple[str, list[str], str]] = [
     # 10-01 挪进快档：它新加了**不需要产物**的那半段（spec 的收包清单 ↔ src 的懒加载），
     # 那一半正是 M2 那发变异（把一族从清单里摘掉）唯一的探测器，只在 full 档跑等于"打完才醒"。
     ("随包后端 parity", [PY, "scripts/check_bundle_parity.py"], "both"),
+    # **依赖漏洞扫描**（ENGI-15 ①，2026-10-07 锁文件落地后接线）：`audit_deps.py` 出网问
+    # OSV，所以它**不进快档**（本仓"测试全离线"的铁律），mode=full 落在本地全量档与
+    # `--ci`（--ci 是 full 减 CI_SKIP，而它**刻意不在 CI_SKIP**）—— 每次 push 的 CI 红
+    # 线从这条起成立。判据在 dependency-audit-allowlist.json：新出现的告警 = 红；
+    # 在册豁免带"上游已给修复版本"前提，前提消失会**反过来红**（豁免不是永久通行证）。
+    # 退出码 fail-closed：扫不成（断网/接口变更）退 2，门禁同样红 —— 扫不成不等于干净。
+    ("依赖审计", [PY, "scripts/tools/audit_deps.py"], "full"),
     ("真机冒烟(14 项)", [PY, "scripts/smoke_check.py"], "full"),
     # 「README 数字收尾」这一步已随拍板"数字移出散文"整个删除：README 不再抄数 ⇒ 没有
     # 数要"收尾"，反向断言（首屏不许有数 + 引用必须在）本就排在 `consistency` 里、不依赖
