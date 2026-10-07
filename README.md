@@ -15,7 +15,7 @@ push 才刷新 —— 引用它之前先去 run 里读现值）—— win32/posi
 **2026-10-07 起口径含分支**（`pyproject` 的 `[tool.coverage] branch=true`）：这一格与**此前那些
 纯行覆盖的数不可比**（93.44 与上面那个 91.77 都是旧口径），别读成"覆盖率掉了"——尺子变严了，
 不是代码变差了；两个口径之间没有换算关系，要比较只能同尺子前后两量）；
-阈值 85% 两边都设防，而入库那份读数记的是"哪台机器量的"），ruff + mypy（含 Linux 档）零告警**，且全部离线运行（注入脚本化模型；
+阈值 90% 两边都设防，而入库那份读数记的是"哪台机器量的"），ruff + mypy（含 Linux 档）零告警**，且全部离线运行（注入脚本化模型；
 真机 UI 冒烟那段单独用 `SMOKE_SKIP_UI=1` 跳过）。
 本地模型默认 **`qwen3-vl:8b`（思考 + 识图 + 工具调用一体，8GB 显存可跑）**；云端后端
 `siliconflow`（DeepSeek-V4-Flash）保留备用、可随时在界面切换。两轮全项目审查的 P0/P1/P2
@@ -211,8 +211,8 @@ docker run -p 8000:8000 -v rolecard-data:/app/data \
 # 绝不从 env 默认启用）。镜像自报形态（ROLECARD_RUNTIME_FORM=container），所以「服务」页
 # 那一格给的指引就是这条，而不是"去装个 venv"——那在镜像里做不到。
 
-# CI：push 即跑（GitHub Actions）—— ruff + mypy + 全量离线测试（覆盖率阈值 85%）+
-#     一致性核查 + 前端 vitest / tsc / build
+# CI：push 即跑（GitHub Actions）—— ruff + mypy + 全量离线测试 + 一致性核查 +
+#     前端 vitest / tsc / build；覆盖率只在手动全量档与夜间臂量（阈值 90%）
 # 依赖安装：CI 与 Docker 实际使用 requirements*.txt（无上界 pin，镜像自 pyproject.toml，
 # 由 check_consistency.py 的 dependency parity 断言保证同步）。仓库无 uv.lock ——
 # 依赖管理统一为 .venv + pip（见 CONTRIBUTING.md 第 8 节）。

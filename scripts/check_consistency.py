@@ -849,6 +849,82 @@ def check_changelog() -> None:
         fails.append(f"changelog missing: {problems}")
 
 
+def check_coverage_threshold() -> None:
+    """覆盖率阈值只有一处（pyproject 的 ``fail_under``），三份活文档抄它，读数不许低于它。
+
+    覆盖率基线补完、阈值从 85 抬到 90 那一刀先盘点了这个数字住过几处家：配置、门禁步骤名、
+    读数键、测试断言、散文 —— 抬一次要同步改七八处，漏一处就是静默漂。那一刀把身份与政策
+    分了家（步骤名不再带数字：名字是身份，政策只归 ``fail_under``；断言由测试逼着改在配置
+    那一处），剩三份散文由这条尺子管：
+
+    ① README / 架构总览 / 开发流程里每个「阈值 N%」或「覆盖率≥N%」短语必须等于配置，
+       **每个文件至少命中一处** —— 整个短语被删掉同样红：尺子失去主体，比数字错更难发现
+       （形状上正是"缺一个键"与"这档本来不量"长得一样那一族）；
+    ② 上一趟读数的 ``coverage_percent`` 不许低于阈值 —— "先落基线读数再定新阈值"这句
+       规矩的机器化：线抬到读数之上，当场红，不必等下一次覆盖率实跑才发现判据立错了。
+
+    两臂变异照红：只改散文的数字 → ①红；改配置到高于现读数的值 → ①②都红。
+    读数文件不存在则②跳过（没跑过门禁不是缺陷，与"未知不拦"同一条纪律）。
+
+    已知的假阳性面，记在这里而不是等人当缺陷报：README 若出现与覆盖率无关的「阈值 N%」
+    （比如某个演示参数），这条也会要求它等于 ``fail_under`` —— 那时红是提醒来收窄这条
+    规则，而不是悄悄放行。归档文档不扫：历史记录保持原样是原则。
+    """
+    problems: list[str] = []
+    threshold: int | None = None
+    pyproject = ROOT / "pyproject.toml"
+    if pyproject.exists():
+        cfg = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        threshold = cfg.get("tool", {}).get("coverage", {}).get("report", {}).get("fail_under")
+    if threshold is None:
+        # 配置里没有这一格是确认的负面：coverage.py 缺 fail_under 等于不设防，而命令行里
+        # 那份副本早被"不许有第二份"的判据禁掉了 —— 所以这里必须响，不能当未知跳过。
+        problems.append("pyproject 的 [tool.coverage.report] 没有 fail_under（阈值静默消失）")
+    else:
+        pattern = re.compile(r"阈值\s*(\d+)%|覆盖率≥\s*(\d+)%")
+        for rel in ("README.md", "docs/架构总览.md", "docs/开发流程.md"):
+            path = ROOT / rel
+            if not path.exists():
+                problems.append(f"{rel} 不见了（里面抄着覆盖率阈值）")
+                continue
+            hits = [
+                g1 or g2
+                for g1, g2 in pattern.findall(
+                    path.read_text(encoding="utf-8", errors="ignore")
+                )
+            ]
+            if not hits:
+                problems.append(f"{rel} 里找不到阈值短语（尺子失去主体 —— 是短语变了形吗）")
+            bad = sorted({h for h in hits if int(h) != int(threshold)})
+            if bad:
+                problems.append(
+                    f"{rel} 写的阈值 {bad} 与 pyproject 的 fail_under {threshold} 不一致"
+                )
+        readings_path = ROOT / "docs" / "gate-readings.json"
+        if readings_path.exists():
+            try:
+                readings = json.loads(readings_path.read_text(encoding="utf-8"))
+            except ValueError:
+                problems.append("gate-readings.json 读不出 JSON（产物坏了，另说）")
+            else:
+                cov = readings.get("coverage_percent")
+                if cov is not None and float(cov) < float(threshold):
+                    problems.append(
+                        f"上一趟读数覆盖率 {cov}% 低于阈值 {threshold}%"
+                        "（线抬到读数之上了 —— 先补用例把读数抬过线，或把线降回去）"
+                    )
+    ok = not problems
+    out(
+        "coverage threshold",
+        ok,
+        "; ".join(problems[:4])
+        if problems
+        else f"阈值 {threshold}% 单源于 pyproject，三份散文各至少一处且一致，读数高于它",
+    )
+    if not ok:
+        fails.append(f"coverage threshold: {problems}")
+
+
 def _div_chain_parts(node: ast.AST) -> list[str]:
     """一条 `X / "a" / "b"` 链上的字符串片段，按原序带回引号。
 
@@ -4389,6 +4465,7 @@ def main() -> int:
     check_audit_index_in_sync()
     check_version_parity()
     check_changelog()
+    check_coverage_threshold()
     check_dead_config()
     check_dependency_layering()
     check_env_example_models()

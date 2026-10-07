@@ -24,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       full_gate:
-        description: "额外跑一遍全量门禁（覆盖率≥85% + 离线冒烟 + 壳 typecheck）"
+        description: "额外跑一遍全量门禁（覆盖率 + 离线冒烟 + 壳 typecheck）"
         type: boolean
         default: true
       build_windows:
@@ -402,7 +402,7 @@ jobs:
           npm ci --prefix frontend
           npm ci --prefix shell
 
-      - name: gate.py 全量（覆盖率≥85% + 前端 + 壳 + 离线冒烟）
+      - name: gate.py 全量（覆盖率 + 前端 + 壳 + 离线冒烟）
         # 同 `--ci` 那一步：runner 的读数不落进入库那份（R28-74，理由写在那儿）
         env:
           GATE_READINGS_SCRATCH: "1"

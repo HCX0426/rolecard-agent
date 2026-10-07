@@ -67,7 +67,9 @@ def test_the_coverage_config_lives_in_pyproject(monkeypatch, tmp_path) -> None:
     report = cfg["tool"]["coverage"]["report"]
     assert run["branch"] is True, "branch 关掉就没有【失败路径只走过一边】的信号"
     assert run["source"] == ["src/rolecard_agent"], "范围换了，历史读数就不可比"
-    assert report["fail_under"] == 85, "阈值不能住在别处"
+    # 阈值活在这里一处（第七刀 85→90）。这条断言的作用是逼下一个人**来这里改**，
+    # 而不是在别处加第二份配置 —— "搬了个家"是否搬全，就看改完这里红不红。
+    assert report["fail_under"] == 90, "阈值不能住在别处"
     # 反向臂：命令行里不许留任何一份副本（上面那条判"在不在配置里"，这条判"有没有第二份"）
     joined = " ".join(mod.LANES["coverage"][0])
     assert "--cov-fail-under" not in joined and "rolecard_agent" not in joined

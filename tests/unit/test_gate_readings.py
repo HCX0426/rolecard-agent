@@ -88,7 +88,7 @@ def test_a_step_that_never_ran_is_left_alone(tmp_path):
     gate = _load_gate()
     _stub(gate, tmp_path)
     cov = "Required test coverage of 85% reached. Total coverage: 91.89%\n"
-    gate._write_readings({"pytest(覆盖率≥85%)": cov}, True)  # noqa: SLF001
+    gate._write_readings({"pytest(覆盖率)": cov}, True)  # noqa: SLF001
     gate._write_readings({"前端 vitest": "Tests  336 passed (336)\n"}, True)  # noqa: SLF001
     data = _read(gate)
     assert data["coverage_percent"] == "91.89"  # 并发/分档跑：后一趟没跑那一步就不该动它的键

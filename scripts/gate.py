@@ -114,7 +114,10 @@ STEPS: list[tuple[str, list[str], str]] = [
         # 同一趟 pytest，包了一层"红跑取证"（`R102-41`）：只有失败命中在册的 chroma 偶发
         # 签名时才重跑那批文件一次，且重跑**为取证不为转绿**（首跑日志原样留着、屏幕上
         # 大声标 FLAKY-RECORDED）。判据与签名清单在 scripts/pytest_with_evidence.py。
-        "pytest(覆盖率≥85%)",
+        # 步骤名**不含阈值数字**（2026-10-07 抬阈值时摘的）：它是身份（读数键、CI_SKIP
+        # 成员），政策归 pyproject 的 fail_under —— 数字住在名字里，每抬一次都要同步改
+        # 三处身份，漏一处就断（读数键查主、CI 跳过表照旧按名匹配）。
+        "pytest(覆盖率)",
         [PY, "scripts/pytest_with_evidence.py", "--lane", "coverage"],
         "full",
     ),
@@ -175,7 +178,8 @@ def _src_changed() -> bool:
     一个纯 docs 的」就把 src 的改动遮住了 —— 装前全量门禁静默跳过覆盖率，而那恰是十次打包
     规矩里唯一必须实跑它的时刻。现改为记录**上次覆盖率实跑时的 HEAD**（build/ 不入库）：
     marker 缺失（首次 / CI / 清过 build/）一律保守跑；git 挂了等任何不确定也一律 True
-    —— fail-safe 不变，绝不因探测失误而悄悄削弱 85% 安全网。
+    —— fail-safe 不变，绝不因探测失误而悄悄削弱覆盖率安全网（具体那条线是多少见
+    pyproject 的 ``fail_under``，本函数不读它）。
 
     同一族的第二个盲区（`R28-27`，09-29 现测复现）：HEAD 相等那条短路**排在查工作树之前**，
     于是"覆盖率跑过 → 改 src 不提交 → 再跑一次门禁"照样返回"跳过"（marker == HEAD，直接就
@@ -388,7 +392,7 @@ READINGS = _readings_path()
 _READING_PATTERNS = {
     # (读哪个步骤, 正则, 存成什么名)
     "pytest(-x, 无覆盖率)": (r"(\d+) passed", "backend_tests"),
-    "pytest(覆盖率≥85%)": (r"Total coverage:\s*([\d.]+)%", "coverage_percent"),
+    "pytest(覆盖率)": (r"Total coverage:\s*([\d.]+)%", "coverage_percent"),
     "前端 vitest": (r"Tests\s+(\d+) passed", "frontend_tests"),
     # **一致性那把尺子有几条，不在这里读，也不在 README 抄**（10-01 撞到的自指）：那 45 条里
     # 含"比对 README 这一条"自己 —— README 一漂就有一条红，读到的"过了几条"立刻少 1，于是那句
@@ -513,7 +517,7 @@ CI_SKIP = frozenset(
         "前端 tsc+build",
         "dist 入库同步",
         "真机冒烟(14 项)",
-        "pytest(覆盖率≥85%)",
+        "pytest(覆盖率)",
     }
 )
 

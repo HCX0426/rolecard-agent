@@ -1,6 +1,6 @@
 """覆盖率该不该重跑（`R28-27`）：marker 等于 HEAD 时**看工作树**，不看就静默跳过。
 
-这条防的是「85% 那条线假绿」：`gate.py` 的判据是「自上次覆盖率实跑以来 src 有没有变」，
+这条防的是「覆盖率那条线假绿」：`gate.py` 的判据是「自上次覆盖率实跑以来 src 有没有变」，
 而它原先把 `last == head` 那条短路排在查工作树**之前** —— 于是最常见的那个形状
 （跑过覆盖率 → 改 src 但不提交 → 再跑一次门禁，正是「装前全量」那一步）返回「跳过」，
 而下面那几行 `git diff HEAD` 根本没执行过。09-29 现测复现：marker 设成 HEAD、
@@ -85,7 +85,7 @@ def test_dirty_src_forces_a_rerun_even_when_head_has_not_moved(repo: Path) -> No
     """**这条就是缺陷本尊**：marker == HEAD 且 src 有未提交改动 ⇒ 必须重跑。"""
     _mark_head(repo)
     (repo / "src" / "app.py").write_text("VALUE = 3\n", encoding="utf-8")
-    assert gate._src_changed() is True, "HEAD 没动就被判成「没变化」，那一趟 85% 是假绿"
+    assert gate._src_changed() is True, "HEAD 没动就被判成「没变化」，那一趟覆盖率是假绿"
 
 
 def test_untracked_new_file_in_src_counts(repo: Path) -> None:
