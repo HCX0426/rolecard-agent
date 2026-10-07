@@ -11,7 +11,9 @@
 from __future__ import annotations
 
 import ast
+import importlib
 import importlib.util
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,11 +21,10 @@ SCRIPTS = ROOT / "scripts"
 
 
 def _load(name: str):
-    spec = importlib.util.spec_from_file_location(f"art_{name}", str(SCRIPTS / f"{name}.py"))
-    assert spec and spec.loader
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    # 按**模块名**导入（不是按路径 exec）：check_consistency 拆包后是 consistency 包的
+    # 薄包装器，包装器的读/写转发挂在 sys.modules 里那个实例上 —— 合成名实例拿不到。
+    sys.path.insert(0, str(SCRIPTS))
+    return importlib.import_module(name)
 
 
 consistency = _load("check_consistency")

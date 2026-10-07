@@ -18,6 +18,7 @@
 | `scripts/gate.py` | 分层门禁：--fast 日常迭代，全量档提交/发布前跑 | 2026-09-18，用户拍"别每次都跑全量" | 是 |
 | `scripts/pytest_with_evidence.py` | pytest 红跑取证包装层，快档与覆盖率档共用 | 2026-10-02 轮（chroma 偶发在册修法） | 是 |
 | `scripts/check_consistency.py` | 60+ 条一致性断言（账本哈希、写事务、豁免表、分层…） | 2026-09-22 起，逐轮增补 | 是 |
+| `scripts/consistency/` | 上面的判据本体包（core 状态 / checks 正文 / registry 顺序表）；2026-10-07 拆包第一刀，按主题细分是后续刀 | 2026-10-07 拆包刀 | 是 |
 | `scripts/check_import_layers.py` | 依赖方向契约（import-linter）的运行包装 | 2026-10-04（base/ 收口那一刀） | 是 |
 | `scripts/check_bundle_parity.py` | 随包后端 import↔bundle parity + spec 收包清单 | 2026-09-30 打包轮 | 是 |
 | `scripts/check_dist_sync.py` | frontend/dist 入库同步检查（本机与 CI 共用一份实现） | 2026-09-29 前端入库轮 | 是 |

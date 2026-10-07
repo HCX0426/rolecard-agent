@@ -21,7 +21,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import pathlib
 import sys
 
@@ -45,13 +44,15 @@ HEADER = """# 审计编号索引
 
 
 def _load_ruler():
-    """借 `check_consistency.py` 的扫描器 —— 判据只能有一份，否则索引与断言会各自漂。"""
-    script = ROOT / "scripts" / "check_consistency.py"
-    spec = importlib.util.spec_from_file_location("cc_for_index", str(script))
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    """借 `check_consistency.py` 的扫描器 —— 判据只能有一份，否则索引与断言会各自漂。
+
+    拆包（2026-10-07）后按**模块名**导入（不是按路径 exec）：包装器的属性读/写转发挂
+    在 sys.modules 里那个实例上，合成名实例拿不到转发。
+    """
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import check_consistency  # noqa: PLC0415
+
+    return check_consistency
 
 
 def _heading_text(path: pathlib.Path, number: str) -> str:

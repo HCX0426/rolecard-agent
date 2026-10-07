@@ -111,7 +111,8 @@ def test_the_assertion_count_is_not_a_reading(tmp_path: Path) -> None:
     gate = _load_gate()
     keys = {key for _, key, *_ in gate._READING_PATTERNS.values()}  # noqa: SLF001
     assert "consistency_assertions" not in keys
-    source = (ROOT / "scripts" / "check_consistency.py").read_text(encoding="utf-8")
+    # 判据本体住 consistency 包（拆包第一刀后）；包装器只是入口。
+    source = (ROOT / "scripts" / "consistency" / "checks.py").read_text(encoding="utf-8")
     start = source.index("def check_readme_headline_numbers")
     body = source[start : start + 3000]
     assert '"consistency_assertions"' not in body, "README 那条比对又去读自指的条数了"
