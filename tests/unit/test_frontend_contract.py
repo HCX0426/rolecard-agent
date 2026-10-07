@@ -1,11 +1,17 @@
 """前后端接线的静态护栏。
 
-为什么需要：`frontend/src/api.ts` 的 `request()` 曾经只设 `Content-Type` 却没有
+为什么需要：`frontend/src/api/` 的 `request()` 曾经只设 `Content-Type` 却没有
 `JSON.stringify(body)` —— 于是 fetch 把对象 body 退化成 `"[object Object]"`，
 **页面 GET 全正常、所有写操作静默 422**。pytest 与 smoke_check 都直接打 API，
 对"前端接线"这一类故障完全看不见（README 截图也看不出来，因为截图都是只读视图）。
 
 这条断言把该故障钉死：谁把序列化删掉，测试立刻红。
+
+住址：`api.ts` 现为 `api/index.ts`（快照 P3-1 第三刀的启用步）。67 处消费者写的是
+`./api`/`../api`，靠 bundler 的目录解析接上，调用点没动 —— 所以**这个路径常量是仓库里
+唯一一处按全路径钉着前端出口的地方**，搬家时只有它会脱靶。脱靶的形状已实测：
+`read_text()` 抛 `FileNotFoundError` ⇒ 大声红（不是静默绿），但仍然是"护栏不再看东西"，
+所以它必须跟着改，不能靠"反正会红"混过去。
 """
 
 from __future__ import annotations
@@ -13,7 +19,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-API_TS = Path(__file__).resolve().parents[2] / "frontend" / "src" / "api.ts"
+API_TS = Path(__file__).resolve().parents[2] / "frontend" / "src" / "api" / "index.ts"
+# `ChatEvent` 联合随 P3-1 第三刀搬进 `api/sse.ts`（SSE 那一族的住址）。**按声明处读，
+# 不按再导出处读**：index 里那行 `export type { ChatEvent } from "./sse"` 只是个转发面，
+# 拿它当源头会让这条差分读到接口面而不是实现面 —— 哪天有人改了转发的目标，词表就没人查了。
+API_SSE_TS = Path(__file__).resolve().parents[2] / "frontend" / "src" / "api" / "sse.ts"
 STREAM_TS = Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib" / "stream.ts"
 
 
@@ -23,13 +33,13 @@ def test_sse_event_vocabulary_matches_the_parser() -> None:
     为什么单独钉这条（架构审计报告 §7 / D 的前置）：事件名是**跨语言的线协议**，改一边不会
     让另一边编译失败，症状只是"那一类东西再也不显示了"——比如 guard 改写后不替换气泡，
     用户看到半截违规文本还以为是模型的问题。`core/turn.py` 的 `EVENT_TYPES` 与
-    `frontend/src/api.ts` 的 `ChatEvent` 各自是唯一声明处，这里做双向差分。
+    `frontend/src/api/sse.ts` 的 `ChatEvent` 各自是唯一声明处，这里做双向差分。
     """
     from rolecard_agent.core.turn import EVENT_TYPES
 
-    api_src = API_TS.read_text(encoding="utf-8")
+    api_src = API_SSE_TS.read_text(encoding="utf-8")
     block = re.search(r"export type ChatEvent =(.+?\};)", api_src, flags=re.S)
-    assert block, "frontend/src/api.ts 里找不到 ChatEvent 联合 —— 词表源头挪位置了？"
+    assert block, "frontend/src/api/sse.ts 里找不到 ChatEvent 联合 —— 词表源头挪位置了？"
     declared_frontend = set(re.findall(r'type:\s*"([a-z_]+)"', block.group(1)))
     assert set(EVENT_TYPES) == declared_frontend, (
         f"内核发了前端没声明的：{sorted(set(EVENT_TYPES) - declared_frontend)}；"
@@ -48,7 +58,7 @@ def test_json_request_bodies_are_serialised() -> None:
     """JSON 请求体必须显式序列化 —— 否则写操作（启停插件 / 改角色 / 切模型）全部 422。"""
     src = API_TS.read_text(encoding="utf-8")
     assert "JSON.stringify(body)" in src, (
-        "frontend/src/api.ts 的 request() 缺少 JSON.stringify(body)：fetch 不会自动序列化"
+        "frontend/src/api/index.ts 的 request() 缺少 JSON.stringify(body)：fetch 不会自动序列化"
         "对象，body 会变成 '[object Object]'，服务端 JSON 解析失败 → 所有写操作 422。"
     )
 
@@ -74,7 +84,7 @@ def test_every_frontend_endpoint_literal_resolves_to_a_backend_route() -> None:
 
     def frontend_literals() -> Iterator[tuple[str, int, str]]:
         # 口径沿开轮批 R102-12：引号/反引号起的 `/api/…` 字面量；剔 *.test.*（mock 自足）。
-        # 块注释 /** … */ 整段剔除：api.ts 的讲解里拿 Ollama `/api/show` 当证据（`R102-50`
+        # 块注释 /** … */ 整段剔除：api 层的讲解里拿 Ollama `/api/show` 当证据（`R102-50`
         # 的取证现场），那是知识不是接线。
         pat = re.compile(r"[\"'`](/api/[A-Za-z0-9_{}$./-]*)[\"'`]")
         block_comment = re.compile(r"/\*.*?\*/", flags=re.S)

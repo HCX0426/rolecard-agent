@@ -1,11 +1,17 @@
-// 与后端契约一一对应的类型 + fetch 封装 + SSE 流式读取。
+// 与后端契约一一对应的类型 + fetch 封装（SSE 流式读取在 `./sse`，本文件末尾再导出）。
 // 端点清单见 api/main.py 的模块 docstring —— 这里不发明第二个事实来源。
+//
+// 住址说明（快照 P3-1 第三刀）：本文件从前是 `src/api.ts`，现为 `src/api/index.ts`。
+// 消费者写的都是 `./api` / `../api`（不认文件名），bundler 解析认目录 index ⇒
+// **调用点一字未动**（条数刻意不写在这里：它会随每次新增消费者漂，同"行号不进名单"那条理由）；
+// 真正需要改的是本文件**自己向外**的三条 `./lib/*`（搬进目录后深度 +1 ⇒ `../lib/*`）。
+// 这条不对称是本刀的全部风险：向内引用靠解析器兜住，向外引用不会报错在消费者身上，
+// 而是报错在本文件里 —— 少改一条，tsc 当场 TS2307（实测过）。
 
-import { apiBase, authHeaders } from "./lib/dataSource";
-import { parseSseFrame, splitSseFrames } from "./lib/stream";
+import { apiBase, authHeaders } from "../lib/dataSource";
 // 只取类型（`import type`）：upload() 的返回体形状跟上传结果解读共用一个定义，
 // 免得"接口返回什么"在两处各写一遍。uploadOutcome 不 import 本文件，不存在循环。
-import type { UploadResponse } from "./lib/uploadOutcome";
+import type { UploadResponse } from "../lib/uploadOutcome";
 
 export interface RoleCard {
   role_id: string;
@@ -856,22 +862,6 @@ export interface ConsolidateOutcome extends DistillOutcome {
   extract_turns: number;
 }
 
-// ---- SSE 对话流 ----------------------------------------------------------------
-// 事件协议与 api/chat.py 一一对应；前端永远以 message_replace / 权威文本为最终真相。
-
-export type ChatEvent =
-  | { type: "start"; role: { role_id: string; role_name: string } }
-  | { type: "token"; text: string }
-  | { type: "thinking"; text: string }
-  | { type: "message_replace"; text: string }
-  | { type: "context_trimmed"; dropped: number; kept: number }
-  | { type: "tool_call"; name: string; args: Record<string, unknown> }
-  | { type: "tool_result"; name: string; content: string }
-  | { type: "error"; detail: string }
-  // `stopped` 是后端对"这一轮是用户叫停的"的记账（#18）。它有两个读者：流式那半截由
-  // `lib/stream` 的 reduce 带到 live 气泡上（reload 失败时的兜底）；落库的半句经
-  // `MessageRow.stopped` 随回放展示（R26-13 尾）。客户端自己按的停另有 `signal.aborted`。
-  | { type: "end"; stopped?: boolean };
 
 /** 会话的上下文预算事实（`GET /api/session/{id}/context`）。 */
 export interface SessionContext {
@@ -906,102 +896,7 @@ export interface CleanupResult {
   referenced: number;
 }
 
-/** POST 一条 SSE 请求，把响应流按帧交给 `onEvent` —— `streamChat` / `streamEdit` 的公共体。
- *
- *  为什么抽出来（2026-10-04 审查快照"streamChat/streamEdit 逐行复制 55 行 SSE 循环"）：
- *  两条各带一份 fetch-失败处理 + `!res.ok` 详情提取 + 读流循环，共 55 行**逐行相同** ——
- *  改一处不改另一处的症状是"编辑那条路的错误处理渐渐跟对话那条不一样"，而且没人会发现
- *  （两边跑起来都"看着正常"）。现在帧切分与解析（`lib/stream.ts` 的可测纯函数）只有一处。
- *
- *  语义合并自两份原件：中止（`AbortError`）**不是**错误 —— 静默结束并补发 `end`，
- *  由调用方做收尾（回放 checkpoint 拿到已生成的部分）；HTTP 非 2xx 时尽力读 `detail`
- *  给用户一句话，读不出就退回 `HTTP <code>`。
- */
-async function postSse(
-  path: string,
-  body: unknown,
-  onEvent: (ev: ChatEvent) => void,
-  signal?: AbortSignal,
-): Promise<void> {
-  let res: Response;
-  try {
-    res = await fetch(`${apiBase()}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify(body),
-      signal, // 用户点「停止」→ controller.abort()，这里会以 AbortError 结束
-    });
-  } catch (e) {
-    if ((e as Error).name !== "AbortError") {
-      onEvent({ type: "error", detail: (e as Error).message });
-    }
-    onEvent({ type: "end" });
-    return;
-  }
-  if (!res.ok || !res.body) {
-    let detail = `HTTP ${res.status}`;
-    try {
-      detail = ((await res.json()) as { detail?: string }).detail || detail;
-    } catch {
-      /* keep */
-    }
-    onEvent({ type: "error", detail });
-    onEvent({ type: "end" });
-    return;
-  }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      // 帧切分与解析走 lib/stream.ts 的纯函数（可测）：半帧留在缓冲里，
-      // 坏帧被消化成"这一帧没有事件"而不是抛异常中断整条流。
-      const { frames, rest } = splitSseFrames(buf);
-      buf = rest;
-      for (const frame of frames) {
-        const ev = parseSseFrame(frame);
-        if (ev) onEvent(ev as ChatEvent);
-      }
-    }
-  } catch (e) {
-    // 中断不是错误：静默结束，由调用方做收尾（回放 checkpoint 拿到已生成的部分）
-    if ((e as Error).name !== "AbortError") {
-      onEvent({ type: "error", detail: (e as Error).message });
-    }
-  }
-}
-
-/** 编辑一条自己发过的消息并从那里重新生成（SSE 事件流与 streamChat 完全一致 —— 同一个 `postSse`）。 */
-export async function streamEdit(
-  threadId: string,
-  messageId: string,
-  content: string,
-  onEvent: (ev: ChatEvent) => void,
-  signal?: AbortSignal,
-  image?: string | null, // 重新生成/编辑时保留原图（多模态传图，2026-09-18）
-): Promise<void> {
-  await postSse(
-    `/api/session/${threadId}/messages/edit`,
-    { message_id: messageId, content, ...(image ? { image } : {}) },
-    onEvent,
-    signal,
-  );
-}
-
-export async function streamChat(
-  threadId: string,
-  message: string,
-  onEvent: (ev: ChatEvent) => void,
-  signal?: AbortSignal,
-  image?: string | null, // 多模态传图：data URL（None = 纯文本）
-): Promise<void> {
-  await postSse(
-    "/api/chat",
-    { thread_id: threadId, message, ...(image ? { image } : {}) },
-    onEvent,
-    signal,
-  );
-}
+// SSE 那一族住在 `./sse`（按主题拆出，理由写在那文件头部）。这里再导出，消费者照旧
+// `from "../api"` 拿得到 —— 搬家不改接口面。
+export { streamChat, streamEdit } from "./sse";
+export type { ChatEvent } from "./sse";
