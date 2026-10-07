@@ -5,14 +5,14 @@
 """
 from __future__ import annotations
 
-from . import checks, checks_install
+from . import checks, checks_config, checks_install
 
 CHECKS = (
     checks_install.check_pyproject,
     checks_install.check_requirements_scope,
     checks.check_stale_identifiers,
-    checks.check_config_contract,
-    checks.check_startup_env_documented,
+    checks_config.check_config_contract,
+    checks_config.check_startup_env_documented,
     checks_install.check_dependency_parity,
     checks_install.check_spec_runtime_vs_requirements,
     checks.check_promised_artifacts,
@@ -49,9 +49,9 @@ CHECKS = (
     checks.check_version_parity,
     checks.check_changelog,
     checks.check_coverage_threshold,
-    checks.check_dead_config,
+    checks_config.check_dead_config,
     checks.check_dependency_layering,
-    checks.check_env_example_models,
+    checks_config.check_env_example_models,
     checks_install.check_installer_scope,
     checks_install.check_lockfile_parity,
     checks_install.check_capability_matrix,
