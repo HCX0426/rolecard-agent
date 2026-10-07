@@ -57,12 +57,10 @@ jobs:
     # 步骤并发 + xdist 重测落地后再按新实测往下收。
     timeout-minutes: 15
     steps:
-      # fetch-depth 要 2：`README 数字收尾` 那条得读 HEAD~1 才认得"只含读数的跟进提交"那一半形状。
-      # 10-03 实测：默认浅克隆 1 层 ⇒ 父提交读不到 ⇒ 本地绿、CI 红，而 README 与读数两边都是 1469
-      # —— 红的是**归属**，不是数。这种"只有 CI 才退化"的判据必须由 CI 自己看着。
+      # fetch-depth 从前钉 2：head 归属判据要读 HEAD~1 才认得"只含读数的跟进提交"那一半
+      # 形状（10-03 那发 CI 假阳的修法：默认浅克隆父提交读不到 ⇒ 本地绿、CI 红）。判据随
+      # "数字移出散文"退役 —— 读数不再被拿去比 README、head 已搬出入库文件，特例同拆。
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
 
       - name: 装 Python
         uses: actions/setup-python@v5
@@ -125,10 +123,9 @@ jobs:
       contents: write # 仅 dist 回写 bot 用（main push 漂移时自动重建回写）；其余步骤只读
     steps:
       - uses: actions/checkout@v4
-        # fetch-depth 2 与 gate job 同理：bot 回写时要把读数 head 推进到刚建的提交，
-        # 没有历史就没有"这个提交的父是谁"可言。
-        with:
-          fetch-depth: 2
+        # fetch-depth 从前钉 2：bot 回写的第二笔要把读数 head 推进到刚建的提交，需要知道
+        # "这个提交的父是谁"。那一笔随 head 归属判据退役整个删除（head 已搬出入库读数、
+        # 落 gitignore 的 scratch），浅克隆默认 1 层够 bot 提交与推送用。
 
       - name: 装 Node
         uses: actions/setup-node@v4
@@ -157,12 +154,12 @@ jobs:
 
       - name: dist 漂移自动回写（CI bot，仅 main push）
         # 2026-10-04 审查快照「dist 入库」条的拍板（决策六）：main 上检出漂移时**自动重建
-        # 回写**，而不是把 main 推红。三处形状都有讲究：
+        # 回写**，而不是把 main 推红。形状：
         #   * 只在 main push 跑 —— PR 上漂移照样红（提交者必须带着 dist 走完评审）；
-        #   * 第一笔只含 frontend/dist；第二笔把 docs/gate-readings.json 的 head 推进到
-        #     第一笔 —— 复用「读数收尾」提交的形状，check_readme_headline_numbers 的
-        #     归属判据（head=HEAD，或 HEAD~1 加纯文档改动）才认得这两笔；
         #   * 用 GITHUB_TOKEN 推送不再触发新一轮 CI（GitHub 既定行为），结构上无回环。
+        #   * 从前还有第二笔"把 docs/gate-readings.json 的 head 推进到刚建的提交"（复用
+        #     「读数收尾」形状、给 head 归属判据看）—— 判据随"数字移出散文"退役，head
+        #     已搬出入库读数（落 gitignore 的 scratch 槽），那一笔整个删除。
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           if python3 scripts/check_dist_sync.py; then
@@ -173,17 +170,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add frontend/dist
           git commit -m "chore(dist): CI bot 自动回写 —— 前端源码改动后重建入库产物"
-          export BOT_HEAD="$(git rev-parse HEAD)"
-          python3 - <<'PY'
-          import json, os, pathlib
-
-          p = pathlib.Path("docs/gate-readings.json")
-          data = json.loads(p.read_text(encoding="utf-8"))
-          data["head"] = os.environ["BOT_HEAD"][:12]
-          p.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-          PY
-          git add docs/gate-readings.json
-          git commit -m "chore(读数收尾): 读数 head 推进到 dist 回写提交"
           git push
 
       - name: dist 必须与源码同步（入库那份不能是旧的）
@@ -366,10 +352,9 @@ jobs:
       # 带上原因**，别让"没跑到"被读成"全绿"（gate.py 与 smoke_check 都是这个口径）。
       SMOKE_SKIP_UI: "1"
     steps:
-      # 同上：全量档也跑 consistency，也要能读 HEAD~1。
+      # fetch-depth 从前钉 2（"全量档也跑 consistency，也要能读 HEAD~1"）—— 那是 head
+      # 归属判据的特例，判据退役后同拆，浅克隆默认 1 层够用。
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
 
       - name: 装 Python
         uses: actions/setup-python@v5

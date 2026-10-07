@@ -1199,185 +1199,70 @@ def check_artifact_single_source() -> None:
         fails.append(f"artifact literals drift: {problems}")
 
 
-def _readings_head_is_current(current_head: str, readings_head: str) -> bool | None:
-    """读数的 head 与当前 HEAD 的合法关系（见 check_readme_headline_numbers 里的两条形状）。
-
-    读数里的 head 可能是短 sha（gate 写入时截过）：按前缀比，长度以读数那格为准。
-
-    **三态**（10-03 加，因为 CI 上真退化成问不出过）：
-      * `True` —— 形状①或形状②成立；
-      * `False` —— 父提交读得到，而 HEAD 与父之间**动了代码** ⇒ 读数确实不属于现在这份代码；
-      * `None` —— 需要父提交却读不到（浅克隆 / 没有 git / 根提交）⇒ **问不出**。
-    把"问不出"报成红，就是让 CI 用它自己的环境差异指控代码陈旧（那次红的是归属，
-    而 README 与读数两边都是 1469）；按本仓口径，只有**确认负**才拦得住人。
-    """
-    if current_head.startswith(readings_head):
-        return True
-    try:
-        parent = subprocess.run(
-            ["git", "rev-parse", "HEAD~1"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-    except Exception:  # noqa: BLE001 - 读不到父提交 ⇒ 形状②无法判定，这是"问不出"不是"不符"
-        return None
-    if not parent:
-        return None
-    if not parent.startswith(readings_head):
-        return False
-    try:
-        changed = subprocess.run(
-            ["git", "diff", "--name-only", parent, current_head],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            # utf-8 + splitlines：本仓有**带空格的中文文件名**，默认编码/`split()` 会把
-            # `架构审计（…轮）.md` 拆成两截（`gate.py` 的 `_git` 是同一个教训，那里写着
-            # "encoding 不是可选的"）。路径一律 posix，与 `docs_only` 直接对得上。
-            encoding="utf-8",
-            errors="replace",
-            check=True,
-        ).stdout.splitlines()
-    except Exception:  # noqa: BLE001 - 同上：这条 diff 问不出，也不能判红
-        return None
-    docs_only = {"docs/gate-readings.json", "README.md", "docs/架构审计索引.md"}
-    return all(path in docs_only for path in changed)
+#: 首屏"头条数字"的守卫范围：前 35 行（标题到机制引言块之前）。范围之外的历史引文
+#: （比如"当年那组数从 457 漂到…"）刻意不设防 —— 那是记录，不是现值。
+_HEADLINE_ZONE_LINES = 35
+#: 数字的家：README 必须给出的可点击引用（改版后连引用都丢了 = 这条尺子没了主体）。
+_READINGS_LINK = "[docs/gate-readings.json](docs/gate-readings.json)"
 
 
 def check_readme_headline_numbers() -> None:
-    """README 首屏那组数必须等于**上一趟门禁量到的**那份读数。
+    """README 首屏**不许再出现那三个数**，且必须给出读数文件的链接 —— 数字的家搬到了那边。
 
-    为什么立它（10-01，台账 `R28-55` 的第二次收口）：那条缺陷记的是"457 + 63 + 24 条断言"
-    漂成了 1301 / 336 / 40 —— 我当时只把数字重测了一遍。可同一天下午我就又把它漂了一次
-    （加完用例，1301 变 1320），说明**手抄的数字不管测得多准都会再漂**。真正的修法是把
-    "当前真值"这件事交给量它的那个人：`gate.py` 每跑一趟就写 `docs/gate-readings.json`
-    （pytest / vitest / consistency 三步的输出里现读，**按键合并**，每个键自带测量时刻），
-    这条断言拿 README 首屏去比它。
+    这条尺子的形状被同一句话逼着换过两次："手抄的数不管测得多准都会再漂"。
 
-    那份读数**入库**而不是放 `build/`：09-30 那条规矩说尺子的判据里不许有 gitignore 的东西 ——
-    判据一读暂存区，问的就不是"这格数是不是真的"，而是"这台机器上有没有这个文件"（CI 上它若
-    不存在，这条永远只会打印"跳过"，等于没有）。它比的是"文档 vs 最近一次实测记录"，所以
-    它拦得住"把 README 改成一个没量过的数"，拦不住"加了用例却两样都不更新" —— 后者由跑门禁
-    的那个人看见（他那一趟会把新数写进读数，于是 README 当场对不上）。
+      * 第一次（读数机之前）：数在散文里，漂了没人知道（那组数三周漂了 2.8 倍而无尺子）；
+      * 第二次（对读时期）：数交给 `docs/gate-readings.json`、由这把尺子拿首屏去比 ——
+        拦住了手抄，却养出一整条流水线：head 归属那一问、末尾的收尾步、以及**每轮一笔
+        纯数字提交**（一个会话 13+ 笔，其中一半是"把一个还对的数改成另一个还对的数"）。
+        对读治好了"漂"，没治"吵"；
+      * 现在（拍板的"数字移出散文改 badge/引用"——**引用**半边；badge 半边依赖仓库公开
+        状态、离线不可得，记在账本）：首屏连"要更新的字段"都不再有。数字只活在
+        `docs/gate-readings.json`（门禁自己写：覆盖率家族入库，用例数与 head 落 gitignore
+        的 scratch —— 快档每跑一趟都改它们，留在入库文件里就是每轮一笔纯数字提交）。
+        判据随之**反过来**：
 
-    少一个键比多一个键更响：某一步**跑了却没量到**时 `gate.py` 落 `<key>_unreadable` 记号，
-    这一格判红。第一版就是少了 `backend_tests` 这个键而全绿 —— 那两个"读不到"的根（pytest 的
-    `-q` 叠成 verbosity −2、vitest 带着 ANSI 色）见 `gate.py` 的 `_ANSI` 与 STEPS 注释。
+        ① 首屏 35 行内三个头条形状**不许出现**（有人抄回来就红 —— 这一条会拦住下一个
+           把数写回去的人，包括我）；
+        ② 链接**必须在**（连引用都丢了 = 数字的家没了门牌，读者找不到现值）。
 
-    文件整个不存在才跳过并说明（与"未知不拦"同一条纪律）：没跑过门禁不是缺陷，把它判红只会让
-    人先关掉这条。跳过的条数会上屏，不会被读成"通过"。
+    历史引文刻意只圈首屏：首屏之外那句"当年 457 漂成…"是记录，不是现值，给它设防
+    等于让这把尺子去起诉历史。
     """
     readme = ROOT / "README.md"
-    readings_path = ROOT / "docs" / "gate-readings.json"
-    if not readings_path.exists():
-        out(
-            "README headline numbers",
-            True,
-            "跳过：还没有 docs/gate-readings.json —— 跑一次 scripts/gate.py 就有读数了",
+    lines = readme.read_text(encoding="utf-8", errors="ignore").splitlines()
+    zone = "\n".join(lines[:_HEADLINE_ZONE_LINES])
+    problems: list[str] = []
+    for pattern, label in (
+        (r"\*\*\d+ 个后端测试", "后端测试数"),
+        (r"\d+ 个前端测试", "前端测试数"),
+        (r"覆盖率 \d+\.\d+%", "覆盖率值"),
+    ):
+        hit = re.search(pattern, zone)
+        if hit:
+            line_no = zone[: hit.start()].count("\n") + 1
+            problems.append(
+                f"首屏第 {line_no} 行又抄回了{label}（{hit.group(0)!r}）"
+                " —— 这一格的家在 docs/gate-readings.json，散文里出现即漂"
+            )
+    if _READINGS_LINK not in zone:
+        problems.append(
+            f"首屏没有指向读数文件的链接（需要 {_READINGS_LINK} 这个形状）"
+            " —— 数字的家不能没有门牌"
         )
-        warns.append("README headline numbers: 本趟无门禁读数可比（跳过，不代表通过）")
-        return
-    try:
-        readings = json.loads(readings_path.read_text(encoding="utf-8"))
-    except ValueError:
-        out("README headline numbers", False, "gate-readings.json 读不出 JSON（产物坏了，另说）")
-        fails.append("gate-readings.json unreadable")
-        return
-    text = readme.read_text(encoding="utf-8", errors="ignore")
-    want = {
-        "backend_tests": (r"\*\*(\d+) 个后端测试", "后端测试数"),
-        "frontend_tests": (r"(\d+) 个前端测试", "前端测试数"),
-        "coverage_percent": (r"覆盖率 ([\d.]+)%", "覆盖率"),
-        # 「一致性有几条断言」**不在这里比**：那把尺子的条数里含"比对 README"这一条自己，
-        # 于是 README 漂 ⇒ 这一条红 ⇒ 读到的条数少 1 ⇒ 那句数变成两处错。自指的东西不能当读数，
-        # 退回门禁输出里那一行 `assertions: N passed, M failed` —— 散文不抄它（`R28-69`），
-        # 而"有没有红"本来就由 `gate` 的退出码负责，写在文档里那句只是复述。
-    }
-    drift: list[str] = []
-    checked = 0
-    for key, (pattern, label) in want.items():
-        if f"{key}_unreadable" in readings:
-            # 「那一步跑了却没量到」是**确认的负面**，不是未知：与"这档没跑那一步"（键压根不在
-            # 文件里，跳过）分得很清。漏掉这一格，README 那个数就会在被废掉的尺子下面永远绿。
-            drift.append(
-                f"{label}：{readings[f'{key}_unreadable']} 那一步跑过却没读到数"
-                "（步骤的输出格式或参数变了 —— 先修读数，不要改 README）"
-            )
-            continue
-        red_at = readings.get(f"{key}_red_at")
-        if red_at:
-            # `R102-36` 半条（10-03 收）：红跑不写值、但留痕。这里只上屏提醒、不进红 ——
-            # 值本身仍是可信的（上一次**绿跑**量到的那个），病是"旧值被一次红跑钉在原地
-            # 而没有任何一格说明最近一趟是红的"；修法就是把那格说明补上（warn 即它的位置）。
-            warns.append(
-                f"{label}：最近一趟（{red_at}）这一步红过 —— 本格仍是"
-                f"{'上一次绿跑' if key in readings else '此前从未'}量到的值"
-                "（先修那一步让它重量，别改 README）"
-            )
-        if key not in readings:
-            continue
-        checked += 1
-        hit = re.search(pattern, text)
-        if not hit:
-            drift.append(f"README 里找不到「{label}」那一格（读数说 {readings[key]}）")
-            continue
-        if hit.group(1) != str(readings[key]):
-            drift.append(f"{label}：README 写 {hit.group(1)}，上一趟门禁量到 {readings[key]}")
-    if not checked:
-        out("README headline numbers", True, "读数文件里一个可比项都没有（跳过，不代表通过）")
-        return
-    # 读数属于哪个 HEAD（`R102-36` 的主体半边）：从前只比"README ↔ 旧读数"，而那份读数可能
-    # 是几个提交之前量的 —— 文档比代码旧 N 条照样打绿（实测 1343 vs 1345 就这么绿过）。
-    # 合法的两种形状（再旧就红，先重跑一趟门禁刷新读数，而不是改 README 去凑旧世界）：
-    #   ① readings.head == HEAD（读数就是在当前提交量的）；
-    #   ② readings.head == HEAD^ 且 HEAD 与父之间只动了读数/README/审计索引 ——
-    #      那是"跑完门禁、把读数与 README 对齐"的跟进提交本身。没有这半条，任何提交
-    #      都会让读数变旧一格，判据就永远差一个提交（自指死锁）。
-    readings_head = str(readings.get("head") or "")
-    if readings_head:
-        try:
-            current_head = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-                check=True,
-            ).stdout.strip()
-        except Exception:  # noqa: BLE001 - 没有 git 的环境（源码包）没法比，按跳过处理
-            current_head = ""
-        if current_head:
-            verdict = _readings_head_is_current(current_head, readings_head)
-            if verdict is False:
-                drift.append(
-                    f"读数的 HEAD 是 {readings_head[:12]}，当前 HEAD 是 {current_head[:12]}"
-                    " —— 这份读数不属于现在的代码：先重跑一趟门禁刷新读数，再对 README"
-                )
-            elif verdict is None:
-                # 问不出（浅克隆读不到 HEAD~1，或没有 git）。按本仓口径这不拦，但**必须出声** ——
-                # 一声不吭地放行，下一次真漂移就混在"它本来也这样"里过去了。
-                warns.append(
-                    f"README headline numbers: 读数记在 {readings_head[:12]} 而 HEAD 是 "
-                    f"{current_head[:12]}，这一趟**读不到父提交**（浅克隆？fetch-depth<2？）"
-                    " ⇒ 归属那一问按 unknown 放行，数本身仍比过"
-                )
-    stamps = "，".join(
-        f"{label} {readings[key]}@{readings.get(f'{key}_at', '?')}"
-        for key, (_, label) in want.items()
-        if key in readings
-    )
+    ok = not problems
     out(
         "README headline numbers",
-        not drift,
-        # 每个键**自带**测量时刻：覆盖率只有 ci/full 那趟量得到，快门禁只更新用例数 ——
-        # 共用一个时间戳会把"上周的覆盖率"洗成"刚才量的"（`gate.py` 的 `_write_readings` 同理）。
-        f"{checked} 项与 gate-readings.json 一致（读数 HEAD {readings.get('head', '?')}）：{stamps}"
-        if not drift
-        else "; ".join(drift[:4]),
+        ok,
+        "; ".join(problems[:3])
+        if problems
+        else (
+            f"首屏 {_HEADLINE_ZONE_LINES} 行内零头条数字、引用在"
+            "（现值见 docs/gate-readings.json，由门禁自己写）"
+        ),
     )
-    if drift:
-        fails.append(f"README headline numbers drift: {drift}")
+    if problems:
+        fails.append(f"README headline literals: {problems}")
 
 
 def check_promised_artifacts() -> None:

@@ -19,7 +19,6 @@
 | `scripts/pytest_with_evidence.py` | pytest 红跑取证包装层，快档与覆盖率档共用 | 2026-10-02 轮（chroma 偶发在册修法） | 是 |
 | `scripts/check_consistency.py` | 60+ 条一致性断言（账本哈希、写事务、豁免表、分层…） | 2026-09-22 起，逐轮增补 | 是 |
 | `scripts/check_import_layers.py` | 依赖方向契约（import-linter）的运行包装 | 2026-10-04（base/ 收口那一刀） | 是 |
-| `scripts/check_readme_numbers.py` | README 首屏数字 ↔ 刚落盘读数的收尾比对 | 2026-09-24 读数收尾流水线 | 是 |
 | `scripts/check_bundle_parity.py` | 随包后端 import↔bundle parity + spec 收包清单 | 2026-09-30 打包轮 | 是 |
 | `scripts/check_dist_sync.py` | frontend/dist 入库同步检查（本机与 CI 共用一份实现） | 2026-09-29 前端入库轮 | 是 |
 | `scripts/check_root_purity.py` | 真库纯度检查：找出被当成用户数据留下的测试夹具行 | 2026-09-28 数据根轮 | 是 |

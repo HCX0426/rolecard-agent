@@ -137,10 +137,9 @@ STEPS: list[tuple[str, list[str], str]] = [
         "full",
     ),
     # 快档也跑前端计数（2026-10-04 审查快照"读数漂移窗"那条的落地）：readings 的
-    # `frontend_tests` 从前只在全量档刷新 —— 加了前端用例而几天不跑全量，README/读数就
-    # 静静停在旧数（实测现场：读数 355 停在 10-03，真实 359，差了两天，是撞上别的事才查
-    # 出来的）。翻成 both 之后**每趟快档都把这把尺子对到现值**：改前端忘跑全量档，
-    # 下一趟快档的"README 数字收尾"当场红，而不是两天后人肉撞见。
+    # `frontend_tests` 从前只在全量档刷新 —— 加了前端用例而几天不跑全量，读数（scratch 槽）
+    # 就静静停在旧数（实测现场：读数 355 停在 10-03，真实 359，差了两天，是撞上别的事才查
+    # 出来的）。翻成 both 之后**每趟快档都把它对到现值**：前端用例与读数都随每趟走。
     # CI 档不受影响（`CI_SKIP` 已点名它 + 前端 tsc+build，CI 的前端各归专属 job）；
     # 本机代价约 +10s（vitest 热跑实测 9.7s）—— 这一格买的就是漂移当场红。
     ("前端 vitest", [NPM, "test"], "both"),
@@ -158,10 +157,9 @@ STEPS: list[tuple[str, list[str], str]] = [
     # 那一半正是 M2 那发变异（把一族从清单里摘掉）唯一的探测器，只在 full 档跑等于"打完才醒"。
     ("随包后端 parity", [PY, "scripts/check_bundle_parity.py"], "both"),
     ("真机冒烟(14 项)", [PY, "scripts/smoke_check.py"], "full"),
-    # **末尾再问一次 README 那组数**（`R28-73`）：`consistency` 排在覆盖率与 vitest 之前，
-    # 那两个数在本趟里是"比对之后才写进去的"，于是那一格永远晚一趟才发现漂。
-    # 判据不重写第二份 —— 这个脚本直接加载 `check_consistency` 只调那一个函数。
-    ("README 数字收尾", [PY, "scripts/check_readme_numbers.py"], "both"),
+    # 「README 数字收尾」这一步已随拍板"数字移出散文"整个删除：README 不再抄数 ⇒ 没有
+    # 数要"收尾"，反向断言（首屏不许有数 + 引用必须在）本就排在 `consistency` 里、不依赖
+    # 覆盖率/vitest 之后才写进读数 —— R28-73 那条"晚一趟"的病灶连根没了。
 ]
 
 
@@ -235,9 +233,11 @@ _ALWAYS_RUN_TESTS = ("tests/unit/test_import_floor.py",)
 #: 挑出来超过这个比例就不挑了：省不下多少，还白白换来一次"我到底跑全了没有"的疑问。
 _MAX_AFFECTED_SHARE = 0.6
 #: **机器自己写的东西不算"你改了什么"**。`docs/gate-readings.json` 是门禁每跑完一步就写的
-#: 读数文件：它必然出现在改动清单里，而它按规矩属于"src/ 与 tests/ 之外"⇒ 一律退回全量。
+#: 读数文件（入库槽）：它必然出现在改动清单里，而它按规矩属于"src/ 与 tests/ 之外"⇒ 一律退回全量。
 #: 实测第一趟演示就是这么退回全量的（工作树里只有它 + 一处 src 改动），也就是说
 #: 没有这一格，这条特性**永远不会生效** —— 单元用例量不到，只有真跑一趟才看得见。
+#: scratch 槽（`build/gate-readings-scratch.json`）在 gitignore 的 build/ 下，根本进不了
+#: `git status`/`ls-files` 的清单，不用列。
 _MACHINE_ARTIFACTS = frozenset({"docs/gate-readings.json"})
 
 
@@ -384,26 +384,37 @@ def _run(name: str, cmd: list[str], cwd: Path | None = None) -> tuple[bool, floa
     return code == 0, dt, "".join(collected)
 
 
-def _readings_path() -> Path:
-    """读数的落点：**本机 = 入库那份，runner = 一次性产物**。
+def _readings_paths() -> tuple[Path, Path]:
+    """读数**两槽**的落点：入库槽（慢数）在前，scratch 槽（快数）在后。
 
-    入库的理由（09-30 第六条规矩）：尺子的判据里不许有 gitignore 的东西 —— 判据读到暂存区，
-    问的就不再是"这格数是不是真的"，而是"这台机器上有没有这个文件"；放 `docs/` 而不是 `build/`
-    只为了干净克隆里它必须在，CI 才有可比的东西。
+    分槽的判据只有一条 —— **这格数多久变一次**（哪些键归哪槽见 `_write_readings` 的
+    `slot_of`）。这是拍板"数字移出散文"的另一半：README 改成引用不抄数之后，若读数本身
+    还整份入库，快档每跑一趟（head、用例数、各自的 `_at` 必刷新）工作树照样每轮弄脏、
+    纯数字提交照旧 —— 实测一个会话 13+ 笔"读数收尾"，其中不少是把一个还对的数改成另一个
+    还对的数。所以快家当搬去 gitignore 的 scratch，覆盖率家族（只有全量档量它、src 没动时
+    整步跳过）留下入库 —— 它才是"入库不吵"的。
 
-    但**runner 上不许写它**（10-01 那发 CI 红换来的，`R28-74`）：覆盖率是**按平台**的数 ——
-    本机 win32 量到 91.92%，GitHub 的 Linux runner 量到 91.77%（win32/posix 那两条分支各自
-    执行不了对方的行）。入库那一份的语义是"README 抄的是谁量的那一次"，让第二个机器去覆盖它，
-    等于两份都对的数互相把对方判成漂移。所以 `GATE_READINGS_SCRATCH=1`（ci.yml 里设）时
-    落点换成 gitignore 的 `build/`：runner 照样量、照样在自己那趟里自我比对，只是不碰共同记录。
+    入库槽**入库**的理由（09-30 第六条规矩）：尺子的判据里不许有 gitignore 的东西 —— 判据
+    读到暂存区，问的就不再是"这格数是不是真的"，而是"这台机器上有没有这个文件"；放 `docs/`
+    而不是 `build/` 只为了干净克隆里它必须在（README 链接它，`coverage-threshold` 尺子读它）。
+
+    但 **runner 上不许写入库那份**（10-01 那发 CI 红换来的，`R28-74`）：覆盖率是**按平台**
+    的数 —— 本机 win32 与 GitHub 的 Linux runner 各量各的（win32/posix 那两条分支各自执行
+    不了对方的行），让第二个机器覆盖入库那份，等于两份都对的数互相把对方判成漂移。所以
+    `GATE_READINGS_SCRATCH=1`（ci.yml 里设）时入库槽落点换成 gitignore 的 `build/`：runner
+    照样量、照样在自己那趟里自我比对，只是不碰共同记录。scratch 槽永远在 `build/` ——
+    它存在的意义就是不入库。
     """
     if os.environ.get("GATE_READINGS_SCRATCH"):
-        return ROOT / "build" / "gate-readings.json"
-    return ROOT / "docs" / "gate-readings.json"
+        committed = ROOT / "build" / "gate-readings.json"
+    else:
+        committed = ROOT / "docs" / "gate-readings.json"
+    return committed, ROOT / "build" / "gate-readings-scratch.json"
 
 
-#: README 首屏那组数的落点。它不是"文档的一部分"，是"上一趟门禁量到了什么"（细节见上面那个函数）。
-READINGS = _readings_path()
+#: 入库槽（覆盖率家族；README 链接它，`coverage-threshold` 那条尺子读它）与
+#: scratch 槽（后端/前端用例数、head 与各自的记号 —— 本机的"上一趟量到了什么"）。
+READINGS, READINGS_SCRATCH = _readings_paths()
 _READING_PATTERNS = {
     # (读哪个步骤, 正则, 存成什么名)
     "pytest(-x, 无覆盖率)": (r"(\d+) passed", "backend_tests"),
@@ -424,99 +435,127 @@ _READING_PATTERNS = {
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
+def _load_slot(path: Path) -> dict[str, object]:
+    """读一个槽的现值；坏了当没有 —— 下一次整份重写，不跟它争。"""
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        return dict(loaded) if isinstance(loaded, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 def _write_readings(outputs: dict[str, str], ok: bool) -> None:
-    """把这一步量到的数并进 `docs/gate-readings.json`（入库，理由见 READINGS 上方注释）。
+    """把这一步量到的数**分槽**并进两份读数文件（落点见 `_readings_paths`）。
+
+    分槽是拍板"数字移出散文"的另一半：README 那头改成引用不抄数之后，这一头的键按
+    "多久变一次"分两家 —— 覆盖率家族住**入库槽**（README 链接它、`coverage-threshold`
+    尺子读它），后端/前端用例数与 head 住 **scratch 槽**。住在入库文件里的快数，每刷新
+    一次就是一笔纯数字提交；搬走之后，入库槽只在全量档真的重量了覆盖率时才动，工作树
+    平时是干净的。scratch 槽没有机器读者（拿读数比 README 的旧尺子已随对读时期退役），
+    它就是本机的"上一趟量到了什么"。
 
     **红了就没有读数**：一条失败的 pytest 那一步照样打 `1 failed, 957 passed in 158.34s`，
     同一个正则会乐呵呵把那半截跑完的 957 读走 —— 实测 10-01：一次 chroma 偶发失败把
-    `backend_tests` 从 1326 洗成 957，而 README 那个数才是对的（于是这条守卫差一点反过来
-    把人对的那一格判成漂移）。所以红跑**不写值**、也不打"没量到"的记号（那一步确实跑了、
-    也确实有汇总行，问题不在输出格式上）——**但要留下"这一步红过"这个事实**（`R102-36`
-    半条，10-03 收）：从前的红跑静默退场，旧读数被钉在原地而**没有任何一格说明最近一趟
-    是红的**。记号是 `<key>_red_at`；只有等这个键再量到新值（绿跑）才清掉它 —— 红被绿
-    取代才算翻篇，`check_readme_headline_numbers` 见到记号就上屏提醒"这一格还是上一次
-    绿跑量到的"。
+    `backend_tests` 从 1326 洗成 957。所以红跑**不写值**、也不打"没量到"的记号（那一步
+    确实跑了、也确实有汇总行，问题不在输出格式上）——**但要留下"这一步红过"这个事实**
+    （`R102-36` 半条，10-03 收）：从前的红跑静默退场，旧读数被钉在原地而**没有任何一格
+    说明最近一趟是红的**。记号是 `<key>_red_at`；只有等这个键再量到新值（绿跑）才清掉
+    它 —— 红被绿取代才算翻篇。
 
-    调用点是**一步一份**（每步跑完立刻并一次，不是整趟结束再一起写）：排在建步之后的
-    `consistency` 因此能看见同一趟刚量到的数，加完用例不用跑两趟门禁才发现 README 对不上。
+    调用点是**一步一份**（每步跑完立刻并一次，不是整趟结束再一起写）：一趟中途断掉，
+    前几步量到的数已经落盘，不用整趟白跑陪葬。"consistency 与读数的先后"那层关系随
+    对读尺子退役一并消失 —— 它不再读这里写的任何键；`coverage-threshold` 读的覆盖率
+    排在它**后面**才量，那格的当趟拦阻由 pytest 自己的 `fail_under` 负责（读数 ≥ 阈值
+    那条尺子退为下一趟的复核，晚一趟的缝隙有人兜底）。
 
     第三类是**绿了但量不到**（10-04 撞出来的）：chroma 偶发命中在册签名时二跑取证、按未知
     放行（`pytest_with_evidence.py` 的 FLAKY-RECORDED），但首跑带 `-x` 已截断、二跑只跑
     子集 —— 全量那条汇总行这趟根本没打出来。读数机如果照常取匹配，会把子集的数（实测 32）
-    写进去，让一致性把**对的** README 判漂。这一档的处理是"不写这个键"：旧值连旧 `_at` 一起
-    留着（诚实性在时间戳上），下一趟干净绿跑刷新；head 照常更新 —— 这一步确实绿了。
+    写进去。这一档的处理是"不写这个键"：旧值连旧 `_at` 一起留着（诚实性在时间戳上），
+    下一趟干净绿跑刷新；head 照常更新 —— 这一步确实绿了。受影响子集（AFFECTED-SUBSET）
+    完全同一处理 —— 同族现场已经出过一次，加"受影响选择"不许顺手制造第二个。
 
     **合并而不是整体覆盖** —— 第一版是覆盖，当场就撞出后果：门禁会并发跑（我这边一次
     `--fast`，同时另一次 `--ci` 还在跑），后写那趟没量覆盖率那个键，于是把先写那趟的读数
     **整份抹掉**。"只写我量到的"这件事，只有落成合并才成立。
 
     每个键带自己的测量时刻（`<key>_at`）：覆盖率来自 full/ci 那趟、后端测试数本趟就有，
-    两件事不该共用一个时间戳 —— 比对的那条断言靠它说清"比的是哪一趟"。
+    两件事不该共用一个时间戳。
     """
-    try:
-        loaded = json.loads(READINGS.read_text(encoding="utf-8")) if READINGS.exists() else {}
-        data: dict[str, object] = loaded if isinstance(loaded, dict) else {}
-    except (OSError, ValueError):
-        data = {}  # 坏了的产物当没有：下一次整份重写，不跟它争
+    committed = _load_slot(READINGS)
+    scratch = _load_slot(READINGS_SCRATCH)
+    slots: dict[Path, dict[str, object]] = {READINGS: committed, READINGS_SCRATCH: scratch}
+    added: dict[Path, list[str]] = {READINGS: [], READINGS_SCRATCH: []}
+
+    def slot_of(key: str) -> Path:
+        # 一格数住哪个槽，判据只有"多久变一次"（见 `_readings_paths`）：快档每跑一趟都要
+        # 刷新的（用例数与 head，连带各自的 `_at`/记号）落 scratch，其余（覆盖率家族）入库。
+        if key == "head" or key.startswith(("backend_tests", "frontend_tests")):
+            return READINGS_SCRATCH
+        return READINGS
+
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
-    added: list[str] = []
     if not ok:
         # 红跑：不写值、不碰 head，只给这一步的键落"红过"记号（合并写盘，见 docstring）。
         for step, (_pattern, key) in _READING_PATTERNS.items():
             if step in outputs:
-                data[f"{key}_red_at"] = stamp
-                added.append(f"{key}（红）")
+                path = slot_of(f"{key}_red_at")
+                slots[path][f"{key}_red_at"] = stamp
+                added[path].append(f"{key}（红）")
     else:
-        data["head"] = _git("rev-parse", "HEAD").strip()[:12]
+        slots[READINGS_SCRATCH]["head"] = _git("rev-parse", "HEAD").strip()[:12]
         for step, (pattern, key) in _READING_PATTERNS.items():
             if step not in outputs:
                 continue  # 这一趟没跑那一步（档位不含它，或前一步红了就停）：不判、也不抹旧读数
+            path = slot_of(key)
+            data = slots[path]
             stripped = _ANSI.sub("", outputs[step])
             if "FLAKY-RECORDED" in stripped:
                 # **取证放行的那趟量不到这个键**：首跑带 `-x`、偶发即截断（`1 failed,
                 # 1139 passed` 不是全量），二跑只重跑命中在册签名的那几个文件（`32 passed`
-                # 是子集）—— 两行都读不得（10-04 实测把 backend_tests 洗成 32，一致性
-                # 当场把**对的** README 判漂）。全量没跑完 = 这一趟没量到：旧值与旧 `_at`
-                # 原样留着（读数的诚实性就在时间戳上），下一趟干净的绿跑自然刷新；
-                # 也不打"没量到"的记号 —— 这一步绿了，只是这个键这趟没数，打记号会
-                # 让一致性去红，而取证放行本来就该按未知通过。`head` 照常更新（上一段）。
-                added.append(f"{key}（取证放行未量，沿用上一趟）")
+                # 是子集）—— 两行都读不得（10-04 实测把 backend_tests 洗成 32）。全量没
+                # 跑完 = 这一趟没量到：旧值与旧 `_at` 原样留着，也不打"没量到"的记号 ——
+                # 这一步绿了，只是这个键这趟没数。`head` 照常更新（见上）。
+                added[path].append(f"{key}（取证放行未量，沿用上一趟）")
                 continue
             if "AFFECTED-SUBSET" in stripped:
                 # 受影响子集跑：这一趟只跑了一部分文件，`N passed` 当然不是全套的数。
-                # 与上面取证放行**同一处理**（不写值、不碰 `_at`，下一趟干净的绿跑自然刷新）
-                # —— 同族的现场已经出过一次：10-04 把 backend_tests 洗成 32，一致性当场把
-                # **对的** README 判漂。加"受影响选择"不能顺手制造第二个。
-                added.append(f"{key}（受影响子集未量，沿用上一趟）")
+                # 与取证放行**同一处理**（不写值、不碰 `_at`，下一趟干净的绿跑自然刷新）。
+                added[path].append(f"{key}（受影响子集未量，沿用上一趟）")
                 continue
             hits = re.findall(pattern, stripped)
             if not hits:
                 # **跑过却没量到**是另一件事，而且是有信息量的那一件：这一步的輸出格式变了
-                # （或它的命令行参数把汇总行吞了）。落下记号让比对那条断言去红，而不是安静地
-                # 少一个键 —— 第一版就是少一个 `backend_tests` 键而全绿，README 那个数从此没人看。
+                # （或它的命令行参数把汇总行吞了）。落下记号 —— 少一个键必须比多一个键响，
+                # 第一版就是少一个 `backend_tests` 键而全绿，那个数从此没人看。
                 data[f"{key}_unreadable"] = stamp
                 continue
             data[key] = hits[-1]
             data[f"{key}_at"] = stamp
             data.pop(f"{key}_unreadable", None)
             data.pop(f"{key}_red_at", None)  # 绿跑量到新值：红被取代，记号清掉
-            added.append(key)
+            added[path].append(key)
             if key == "coverage_percent":
                 # 覆盖率是**按平台**的数（runner 的 Linux 与本机 win32 各执行不了对方那半条分支），
-                # 所以这个键必须带着"是哪台机器量的"，否则下一个 91.77 会被读成"覆盖率掉了"。
+                # 所以这个键必须带着"是哪台机器量的"，否则另一台机器的数会被读成"覆盖率掉了"。
                 data["coverage_platform"] = sys.platform
-    try:
-        READINGS.parent.mkdir(parents=True, exist_ok=True)
-        READINGS.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-            newline="\n",
-        )
-        if added:
-            what = "读数已并入" if ok else "红跑留痕已记下"
-            print(f"  {what} {os.path.relpath(READINGS, ROOT)}：{', '.join(added)}", flush=True)
-    except OSError as exc:  # 写不了读数不该让门禁失败
-        print(f"  （读数没落盘：{exc}）", flush=True)
+    for path, data, notes in (
+        (READINGS, committed, added[READINGS]),
+        (READINGS_SCRATCH, scratch, added[READINGS_SCRATCH]),
+    ):
+        payload = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        try:
+            unchanged = path.exists() and path.read_text(encoding="utf-8") == payload
+            if not unchanged and (data or path.exists()):
+                # 内容没变就不重写；**空槽且盘上没有**也不写 —— 这一趟一步快数都没量到时
+                # （比如 --only ruff 的绿跑，head 都没轮到），不该凭空落一份 "{}" 出来。
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(payload, encoding="utf-8", newline="\n")
+            if notes:
+                what = "读数已并入" if ok else "红跑留痕已记下"
+                print(f"  {what} {os.path.relpath(path, ROOT)}：{', '.join(notes)}", flush=True)
+        except OSError as exc:  # 写不了读数不该让门禁失败
+            print(f"  （读数没落盘：{exc}）", flush=True)
 
 
 # CI 档跳过的步骤：要么要 node/浏览器/真机环境（前端与壳各有专属 job、冒烟要本机 Chrome），
@@ -559,8 +598,9 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    # 受影响选择的改动清单：**开跑前**取一次。门禁自己每跑完一步就往 `docs/gate-readings.json`
-    # 写读数，边跑边取会把机器刚写的文件当成"你改的东西"（实测第一趟演示就是这么退回全量的）。
+    # 受影响选择的改动清单：**开跑前**取一次。门禁自己每跑完一步就往读数槽写读数（入库
+    # 那份 `docs/gate-readings.json`；scratch 槽在 gitignore 的 build/ 下、进不了清单），
+    # 边跑边取会把机器刚写的文件当成"你改的东西"（实测第一趟演示就是这么退回全量的）。
     # 取不到（不是 git 工作树、git 挂了）记 None —— 下游按"不确定 = 全量"处理。
     try:
         _changed_at_start: list[str] | None = _changed_paths()

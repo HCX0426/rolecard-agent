@@ -1,18 +1,20 @@
 """`scripts/gate.py` 那台"读数机"的测试：它安静地少一个键，比它报错更坏。
 
-为什么单给这段写用例（与 `test_bundle_parity.py` 同一个理由）：它防的是 **README 首屏那组数没人量**
+为什么单给这段写用例（与 `test_bundle_parity.py` 同一个理由）：它防的是**读数静默烂掉**
 （审计 `R28-55` 的第二次收口 `R28-64`）。而它已经以两种互不相同的方式失败过一次 ——
 pytest 的 quiet 是累加的，命令行再补一个 `-q` 就是 verbosity −2，那行 `N passed` 连同失败时的
 `FAILED tests/...` 一起被吞；vitest 的输出被 pipe 也照样带 ANSI，`Tests  336 passed` 在字节上
 读不出 336。两种故障的**症状都是"少一个键"**，而少一个键与"这一档本来不量它"长得一模一样：
-门禁全绿、README 一路漂。所以这里钉的是三件事：命令行的形状、剥色之后再匹配、"没跑"与
-"跑了没量到"必须分成两种落点。
+门禁全绿、数字的家一路停在旧值。所以这里钉的是四件事：命令行的形状、剥色之后再匹配、
+"没跑"与"跑了没量到"必须分成两种落点、以及**分槽的纯度**（快数与慢数不许住进同一份
+文件 —— 拍板"数字移出散文"的另一半，判据见 `test_fast_steps_leave_the_committed_slot_alone`）。
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -28,13 +30,16 @@ def _load_gate():
 
 
 def _stub(mod, tmp_path: Path):
-    """把读数写到 tmp，并掐掉真实 git（读数机不该依赖仓库状态才有测试意义）。"""
+    """把两个槽都写到 tmp，并掐掉真实 git（读数机不该依赖仓库状态才有测试意义）。"""
     mod.READINGS = tmp_path / "gate-readings.json"
+    mod.READINGS_SCRATCH = tmp_path / "gate-readings-scratch.json"
     mod._git = lambda *a: "0123456789abcdef"  # noqa: SLF001
 
 
-def _read(mod):
-    return json.loads(mod.READINGS.read_text(encoding="utf-8"))
+def _read(mod, slot: str = "scratch"):
+    """读一个槽：默认 scratch（用例数/head 住那边），入库槽显式点名。"""
+    path = mod.READINGS_SCRATCH if slot == "scratch" else mod.READINGS
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def test_pytest_steps_do_not_stack_quiet_flags():
@@ -90,10 +95,11 @@ def test_a_step_that_never_ran_is_left_alone(tmp_path):
     cov = "Required test coverage of 85% reached. Total coverage: 91.89%\n"
     gate._write_readings({"pytest(覆盖率)": cov}, True)  # noqa: SLF001
     gate._write_readings({"前端 vitest": "Tests  336 passed (336)\n"}, True)  # noqa: SLF001
-    data = _read(gate)
-    assert data["coverage_percent"] == "91.89"  # 并发/分档跑：后一趟没跑那一步就不该动它的键
-    assert "coverage_percent_unreadable" not in data
-    assert data["frontend_tests"] == "336"
+    committed = _read(gate, "committed")
+    scratch = _read(gate, "scratch")
+    assert committed["coverage_percent"] == "91.89"  # 并发/分档跑：后一趟没跑那一步就不该动它的键
+    assert "coverage_percent_unreadable" not in committed
+    assert scratch["frontend_tests"] == "336"
 
 
 def test_the_assertion_count_is_not_a_reading(tmp_path: Path) -> None:
@@ -112,20 +118,80 @@ def test_the_assertion_count_is_not_a_reading(tmp_path: Path) -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "一致性 4" not in readme and "一致性 1" not in readme, "README 首屏又抄回那串自指的数"
 
-def test_readings_path_moves_off_the_tracked_file_on_a_runner(tmp_path: Path, monkeypatch) -> None:
+def test_readings_paths_move_off_the_tracked_file_on_a_runner(monkeypatch) -> None:
     """runner 不许回写入库那份读数 —— 覆盖率是**按平台**的数（`R28-74`）。
 
-    本机 win32 量到 91.92%，Linux runner 量到 91.77%，两边都对。入库那份记的是
-    "README 抄的是谁量的那一次"，让第二个机器覆盖它，等于两份事实互相把对方判成漂移
-    （10-01 那发 CI 红就是这么来的：收尾那步拿 runner 刚写的 91.77 去比 README 的 91.92）。
+    本机 win32 与 GitHub 的 Linux runner 各量各的，两边都对。入库那份记的是
+    "哪台机器量的那一次"，让第二个机器覆盖它，等于两份事实互相把对方判成漂移。
+    scratch 槽则永远在 gitignore 的 build/ 下 —— 它存在的意义就是不入库。
     """
     gate = _load_gate()
     monkeypatch.delenv("GATE_READINGS_SCRATCH", raising=False)
-    assert gate._readings_path() == gate.ROOT / "docs" / "gate-readings.json"  # noqa: SLF001
+    committed, scratch = gate._readings_paths()  # noqa: SLF001
+    assert committed == gate.ROOT / "docs" / "gate-readings.json"  # noqa: SLF001
+    assert scratch == gate.ROOT / "build" / "gate-readings-scratch.json"  # noqa: SLF001
+    assert "build" in scratch.parts
     monkeypatch.setenv("GATE_READINGS_SCRATCH", "1")
-    scratch = gate._readings_path()  # noqa: SLF001
-    assert scratch == gate.ROOT / "build" / "gate-readings.json"  # noqa: SLF001
-    assert "docs" not in scratch.parts
+    committed, scratch = gate._readings_paths()  # noqa: SLF001
+    assert committed == gate.ROOT / "build" / "gate-readings.json"  # noqa: SLF001
+    for path in (committed, scratch):
+        assert "docs" not in path.parts, "runner 的任何一槽都不许碰入库那份"
+
+
+def test_fast_steps_leave_the_committed_slot_alone(tmp_path: Path) -> None:
+    """分槽的**主体判据**：快档的任何一步都不许写入库槽 —— 它每被写一次，工作树就脏一次。
+
+    churn 的根（每绿跑必写的 head、每键 `_at`）现在全在 scratch；入库槽只由覆盖率那一步
+    （全量档，且 src 有改动时才真跑）动。读数键连带的记号（`_unreadable`/`_red_at`）跟着
+    各自的键走 —— 快数的记号不许落回入库文件。
+    """
+    gate = _load_gate()
+    _stub(gate, tmp_path)
+    gate._write_readings({"ruff": "All checks passed!\n"}, True)  # noqa: SLF001
+    gate._write_readings(  # noqa: SLF001
+        {"pytest(-x, 无覆盖率)": "1319 passed, 1 skipped in 134.56s\n"}, True
+    )
+    gate._write_readings({"前端 vitest": "Tests  336 passed (336)\n"}, True)  # noqa: SLF001
+    gate._write_readings(  # noqa: SLF001
+        {"pytest(-x, 无覆盖率)": "没有数字的一份输出\n"}, True
+    )
+    gate._write_readings(  # noqa: SLF001
+        {"pytest(-x, 无覆盖率)": "1 failed, 957 passed in 158.34s\n"}, False
+    )
+    assert not gate.READINGS.exists(), (  # noqa: SLF001
+        "快档跑完入库槽根本不该存在 —— 它被写出来的那一刻就是一笔纯数字提交的开始"
+    )
+    scratch = _read(gate)
+    assert scratch["backend_tests"] == "1319"
+    assert "backend_tests_unreadable" in scratch  # 记号跟着键住进同一个槽
+    assert "backend_tests_red_at" in scratch  # 红跑留痕也在 scratch
+    assert scratch["frontend_tests"] == "336"
+    assert scratch["head"] == "0123456789ab"
+
+
+def test_slots_never_leak_into_each_other(tmp_path: Path) -> None:
+    """两槽的**纯度**：快数（用例数/head/记号）与慢数（覆盖率家族）不许住进同一份文件。
+
+    分槽的判据是"多久变一次"，没有机器看门（README 那头只认链接、不读值）—— 两槽的
+    边界由这条用例钉住：哪天有人给快键换槽或给入库槽添快键，这里当场红。
+    """
+    gate = _load_gate()
+    _stub(gate, tmp_path)
+    gate._write_readings(  # noqa: SLF001
+        {"pytest(-x, 无覆盖率)": "1319 passed, 1 skipped in 134.56s\n"}, True
+    )
+    cov = "Required test coverage of 90% reached. Total coverage: 91.89%\n"
+    gate._write_readings({"pytest(覆盖率)": cov}, True)  # noqa: SLF001
+    committed = _read(gate, "committed")
+    scratch = _read(gate, "scratch")
+    coverage_family = {"coverage_percent", "coverage_percent_at", "coverage_platform"}
+    assert committed == {
+        "coverage_percent": "91.89",
+        "coverage_percent_at": committed["coverage_percent_at"],
+        "coverage_platform": sys.platform,
+    }, f"入库槽只许住覆盖率家族，多了：{sorted(set(committed) - coverage_family)}"
+    assert scratch["backend_tests"] == "1319" and scratch["head"] == "0123456789ab"
+    assert "coverage_percent" not in scratch and "coverage_platform" not in scratch
 
 
 def test_a_failed_step_produces_no_reading_but_leaves_a_red_mark(tmp_path: Path) -> None:
