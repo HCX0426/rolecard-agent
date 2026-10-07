@@ -38,6 +38,7 @@
 | 脚本 | 用途 | 出处轮次 | 长期 |
 |---|---|---|---|
 | `scripts/tools/backup_data_root.py` | 装机前把在用数据根整体备份成 zip | 2026-09-26 装机轮（装机链第 2 步） | 是 |
+| `scripts/tools/audit_deps.py` | 依赖漏洞扫描（对照带复查条件的在册豁免） | 2026-10-04 审查快照（CI 无 pip-audit 那格） | 是 |
 | `scripts/tools/build_audit_index.py` | 生成 docs/架构审计索引.md（编号当身份，位置只是存放地） | 2026-09-25 审计轮 | 是 |
 | `scripts/tools/build_ocr_worker.py` | 打随包 OCR worker（PyInstaller onedir） | 2026-10-03 装机版本地 OCR | 是 |
 | `scripts/tools/bump_version.py` | 版本单源改号（pyproject → 另三处）+ CHANGELOG 草稿生成 | 2026-10-04 审查快照（版本四处手抄那格） | 是 |

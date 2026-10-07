@@ -15,5 +15,11 @@ mypy>=1.11
 # 判据与豁免纪律写在 pyproject 的 [tool.importlinter]，跑法是 scripts/check_import_layers.py。
 import-linter>=2.15
 httpx>=0.27
+# 依赖漏洞扫描（2026-10-04 快照「CI 无 pip-audit」那一格）：跑法
+# `python scripts/tools/audit_deps.py`（扫当前环境，对照 dependency-audit-allowlist.json）。
+# 刻意**不是**一条用例：它要出网问 OSV，而本仓铁律是测试全离线。这里先把它声明进来是为了
+# "fresh CI 环境也装得到这把尺子"；把它接成 CI 的红线要等锁文件落地（基线稳定，见快照那一行
+# 自己的条件），所以**现在还没有**每次 push 都扫 —— 别把这一行读成已经在扫了。
+pip-audit>=2.10
 
 # 测试里要 mock 掉 LLM，不需要真实模型；若要跑端到端再用真 Ollama
