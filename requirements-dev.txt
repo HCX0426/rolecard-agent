@@ -21,5 +21,14 @@ httpx>=0.27
 # "fresh CI 环境也装得到这把尺子"；把它接成 CI 的红线要等锁文件落地（基线稳定，见快照那一行
 # 自己的条件），所以**现在还没有**每次 push 都扫 —— 别把这一行读成已经在扫了。
 pip-audit>=2.10
+# 桌面打包（PyInstaller，随包后端 sidecar）：从前住 requirements-package.txt，锁文件落地
+# 那一轮收进 dev 族 —— 它是构建工具不是运行树，且 windows 打包臂本来就装着 dev。
+pyinstaller>=6.22
+# 锁文件生成（pip-compile）：requirements.lock / requirements-runtime.lock 由它产出，
+# 刷新命令写在两份锁文件的头部注释里。进 dev 是为了 fresh CI 环境也拿得到生成器。
+pip-tools>=7.4
+# 锁与镜像的对账（check_consistency 的 `lockfile parity`）：判"镜像的约束区间 ∈ 锁的 pin"
+# 需要 specifier 引擎 —— 显式声明，不走传递依赖兜住（R28-11 同一条教训）。
+packaging>=24.0
 
 # 测试里要 mock 掉 LLM，不需要真实模型；若要跑端到端再用真 Ollama

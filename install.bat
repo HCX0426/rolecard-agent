@@ -13,14 +13,13 @@ call :find_python "%~1" || goto :fail
 "%PY%" -m venv .venv || goto :fail
 :venv_ready
 
-echo [2/5] backend deps: core + api + rag + cloud + mcp
-rem cloud is installed, not just advertised (R28-12): the model page lets you add any
-rem OpenAI-compatible backend, and without langchain-openai saved = 500. Same family as the
-rem Docker image gap (R28-11) that CI caught on the first real build.
-rem mcp joins the set on the same reasoning (R28-53): both shipped forms already carry it
-rem (bundled backend since R28-34, image since 10-01), so a source install that skips it
-rem leaves the 扩展 panel rendered with zero tools loadable.
-".venv\Scripts\python.exe" -m pip install -r requirements.txt -r requirements-api.txt -r requirements-rag.txt -r requirements-cloud.txt -r requirements-mcp.txt || goto :fail
+echo [2/5] backend deps: runtime lock (core + api + rag + cloud + mcp)
+rem **Locked install** (2026-10-07): requirements-runtime.lock is pip-compiled from the
+rem five runtime requirement mirrors; its coverage is pinned by the `lockfile parity`
+rem ruler in check_consistency.py. The "why all five families" history lives in the
+rem Dockerfile comments (R28-11/R28-12/R28-53) - a lock cures version drift, not a
+rem missing family, and that remains the rulers' job.
+".venv\Scripts\python.exe" -m pip install -r requirements-runtime.lock || goto :fail
 
 echo [3/5] frontend: npm ci + build  (dist/ is what the server hosts)
 pushd frontend
@@ -34,9 +33,9 @@ echo [4/5] database schema + built-in roles (idempotent)
 echo [5/5] done.
 echo       Next: run start.bat  -  console opens at http://127.0.0.1:8000/
 echo       Optional: requirements-ocr.txt needs its OWN venv (see that file first)
-echo       Local gate (scripts/gate.py) additionally wants requirements-dev.txt and
-echo       requirements-package.txt - deliberately NOT part of a product install: dev
-echo       deps stay out of the runtime tree, packaging only matters on a build box.
+echo       Local gate (scripts/gate.py) additionally wants requirements-dev.txt -
+echo       deliberately NOT part of a product install: dev deps (incl. PyInstaller)
+echo       stay out of the runtime tree.
 pause
 exit /b 0
 

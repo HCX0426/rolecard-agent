@@ -195,20 +195,26 @@
 onnxruntime）。现在维持隔离的两条理由是选择：运行树不该带这一族；随包形态按设计不含 OCR。
 现行完整口径以 `requirements-ocr.txt` 开头那一段为准，别在两处各写一套。）
 
-### 8.2 主环境：纯 `.venv` + pip（2026-09-17 定案，弃用 uv）
+### 8.2 主环境：`.venv` + pip + 锁安装（2026-10-07 拍板「上锁文件」）
 
-> 历史：曾推荐 uv 并提交 `uv.lock`。本机无 uv、锁文件无法维护（死资产），CI/Docker 实际安装的
-> 也一直是 `requirements*.txt`。**统一为 `.venv` + pip**，`uv.lock`/`.python-version` 已删除，
-> `check_consistency.py` 的 `check_python_pin` 断言一并移除。版本不锁是刻意取舍：
-> 范围镜像 + `dependency parity` 断言保证 packages 一致，但版本漂移由 CI 每次重装暴露。
+> 历史：曾推荐 uv 并提交 `uv.lock`（2026-09-17 弃用——本机无 uv、锁死资产）；此后一段时间
+> 版本不锁是刻意取舍，范围镜像 + `dependency parity` 保证包集合一致，版本漂移由 CI 每次
+> 重装暴露。**那段取舍已废止**：无锁时代的真代价是「fresh install 不可重现」——CI 装到的
+> 版本与本机、与上周各不相同，坏在传递依赖的升级上时无人能指认。现在的口径：**镜像管
+> "要什么"，锁管"装什么"** —— `requirements*.txt` 仍是唯一事实来源 pyproject 的 pip 安装
+> 镜像（dependency parity 看着），`pip-compile` 从它们产出两把锁：
+> `requirements.lock`（运行时五族 + dev，README / CI 三臂用）、`requirements-runtime.lock`
+> （纯运行时五族，install.bat / Dockerfile 用）。改了 requirements*.txt **必须重新 compile**
+> 刷新锁，`lockfile parity` 尺子逐约束比对（镜像的每条约束 ∈ 锁的 pin）会当场红。
+> ⚠️ 刷新后若头部被本机 pip 配置写进 `--index-url`/`--trusted-host`，删掉再提交——锁不钉镜像源。
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -U pip
 
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt `
-    -r requirements-api.txt -r requirements-rag.txt
-# （-rag 必须装：知识库/解析/检索依赖 chromadb+pypdf，漏装直接 ImportError）
+.\.venv\Scripts\python.exe -m pip install -r requirements.lock
+# （锁覆盖运行时五族 + dev，含 pyinstaller / pip-tools / packaging；缺族的的历史教训
+#   记在 Dockerfile 注释与 installer scope parity 尺子里 —— 锁治版本漂，不治漏装一族）
 
 .\.venv\Scripts\python.exe scripts\init_db.py
 .\.venv\Scripts\python.exe -m pytest
@@ -238,7 +244,11 @@ pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 - **`pyproject.toml` 是唯一事实来源**（`dependencies` + 四组 extras：`api` / `rag` / `cloud` / `dev`）。
 - `requirements*.txt` 是 **pip 安装镜像**，按范围拆开：`requirements.txt` 只含 v1 内核，
   `-api` 接入层 / `-rag` 向量检索 / `-cloud` 云端 provider / `-dev` 开发工具 / `-ocr` RapidOCR（独立环境）。
-  `scripts/check_consistency.py` 会断言每一组 extras 与对应镜像文件的**包名集合一致**，改了一边不改另一边会被拦下。
+  `scripts/check_consistency.py` 会断言每一组 extras 与对应镜像文件的**约束逐条一致**，改了一边不改另一边会被拦下。
+- **锁文件（2026-10-07 起）**：`requirements.lock` 与 `requirements-runtime.lock` 由
+  `pip-compile` 从镜像产出（刷新：`.venv\Scripts\python.exe -m piptools compile --output-file=requirements.lock requirements.txt requirements-api.txt requirements-rag.txt requirements-cloud.txt requirements-mcp.txt requirements-dev.txt`，runtime 锁去掉 dev 那份；生成后删掉本机 pip 配置写进来的 `--index-url`/`--trusted-host` 两行）。
+  CI / 镜像 / 打包臂只从锁安装；镜像与锁的覆盖关系钉在 `check_consistency.py` 的
+  `LOCK_SURFACES`，由 `lockfile parity` 尺子逐约束对账。
 - **数据库有迁移，别再写"删库重建"**（本条 2026-09-25 订正"v1 不做迁移"；2026-10-02 再订正：
   下面三句教的是上一代机制——`R102-30`）。现行机制分两层：
   ① **列级迁移全部声明驱动**：`storage/db.py::reconcile_columns` 按 `core/schema.sql` 与

@@ -80,7 +80,7 @@ BUNDLED_INPUT_PATHS = (
     "requirements-rag.txt",
     "requirements-cloud.txt",
     "requirements-mcp.txt",
-    "requirements-package.txt",
+    "requirements.lock",
 )
 
 

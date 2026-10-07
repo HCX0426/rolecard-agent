@@ -84,22 +84,18 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .mypy_cache
-          key: mypy-${{ runner.os }}-py3.13-${{ hashFiles('pyproject.toml', 'requirements*.txt') }}
+          key: mypy-${{ runner.os }}-py3.13-${{ hashFiles('pyproject.toml', 'requirements*.txt', 'requirements*.lock') }}
           restore-keys: mypy-${{ runner.os }}-py3.13-
 
       - name: 装依赖
         run: |
           python -m pip install --upgrade pip
-          # rag 必须与 api 一起装：漏了它，知识库 / 上传解析 / 检索工具在用例里 ImportError
-          # —— 与 Dockerfile 第 12 行记的是同一个坑。
-          # cloud 也要：集成测试里的模型后端就是 OpenAI 兼容端点（硅基流动），漏装的症状
-          # 是 PUT /api/settings/models 500 —— CI 第 1、2 发实跑抓到的就是这个。
-          # mcp 自 10-01 起在同一批里（`R28-53`）：随包后端与镜像都装着它，CI 环境与两条
-          # 出货路径对齐之后，`installer scope parity` 那条断言才在所有入口上同一口径。
-          # pytest-timeout 自 2026-10-04 起在 dev 批里：单条用例挂死 60s 内红，不烧穿 job 预算。
-          pip install -r requirements.txt -r requirements-api.txt \
-            -r requirements-rag.txt -r requirements-cloud.txt \
-            -r requirements-mcp.txt -r requirements-dev.txt
+          # **锁安装**（2026-10-07 拍板「上锁文件」）：这一把锁覆盖运行时五族 + dev（它的
+          # 输入面钉在 check_consistency 的 LOCK_SURFACES，`lockfile parity` 尺子逐约束
+          # 比对「镜像的每个约束 ∈ 锁的 pin」—— requirements*.txt 改了不重新 compile，
+          # 这条尺子当场红）。从前散装 -r 五份时版本漂移由 CI 每次重装暴露，那是没锁
+          # 时代的取舍；fresh install 逐字节可重现从这条起成立。
+          pip install -r requirements.lock
 
       - name: gate.py --ci
         # 用户 09-29 拍的（R28-24）："覆盖率与 baseline 比对不留在手动档，每次 push/PR 设防"
@@ -381,9 +377,8 @@ jobs:
       - name: 装依赖（后端 + 前端 + 壳）
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-api.txt \
-            -r requirements-rag.txt -r requirements-cloud.txt \
-            -r requirements-mcp.txt -r requirements-dev.txt
+          # 同 gate job：锁安装（requirements.lock 覆盖运行时五族 + dev）。
+          pip install -r requirements.lock
           npm ci --prefix frontend
           npm ci --prefix shell
 
@@ -416,27 +411,18 @@ jobs:
           python-version: "3.13"
           cache: pip
           cache-dependency-path: |
-            requirements.txt
-            requirements-api.txt
-            requirements-rag.txt
-            requirements-cloud.txt
-            requirements-mcp.txt
-            requirements-package.txt
-            requirements-dev.txt
+            requirements.lock
 
-      - name: 装打包机依赖（运行时五族 + PyInstaller）
+      - name: 装打包机依赖（运行时五族 + dev，一把锁）
         # 那五族不是罗列：`packaging/rolecard-backend.spec` 会对 RUNTIME_PACKAGES 逐条
         # `find_spec`，缺一条就**拒绝出产物**（`R28-34`）—— 因为 `collect_submodules()`
         # 对没安装的包返回空列表且不报错，少装一族的代价正是"构建成功、里面缺东西"。
-        # `requirements-package.txt` 就是这一条 job 的前置：PyInstaller 从前没写在任何
-        # requirements 里，所以 fresh clone + CI 根本打不出包（这轮才发现）。
-        # dev 那一族也**装在同一条命令里**（`installer scope parity` 那条尺子要求 ci.yml 里
-        # 每一条 pip install 都带齐运行时五族：分开装一次 `-r requirements-dev.txt` 会被它判成
-        # "一次只装了 dev" —— 那正是"构建成功、里面缺东西"的形状）。pytest 全家（timeout /
-        # xdist）都在 dev 里，下面那条 Windows 臂要用。
+        # **锁安装**（2026-10-07 拍板）：requirements.lock 覆盖运行时五族 + dev，
+        # PyInstaller 也在 dev 族里（从前住 requirements-package.txt，那份文件已删）——
+        # 打包臂与 gate 臂从此装**同一把锁**，"打包机上的依赖形状"不再是一份独立清单。
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-api.txt -r requirements-rag.txt -r requirements-cloud.txt -r requirements-mcp.txt -r requirements-package.txt -r requirements-dev.txt
+          pip install -r requirements.lock
 
       - name: Windows 臂跑一遍用例
         # 平台覆盖倒挂（审查快照的 Windows 测试臂条目）：CI 测试从前只跑 ubuntu-24.04，

@@ -23,6 +23,10 @@ import sys
 import tomllib
 from collections import Counter
 
+# 锁与镜像对账（`lockfile parity`）要判"约束区间 ∈ pin"：specifier 引擎走 packaging，
+# 它在 dev 依赖里**显式声明**（不走传递依赖兜住，R28-11 同一条教训）。
+from packaging.requirements import InvalidRequirement, Requirement
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 fails: list[str] = []
@@ -41,6 +45,31 @@ RUNTIME_REQ_FILES = (
     "requirements-cloud.txt",
     "requirements-mcp.txt",
 )
+
+#: **锁与镜像的对账表**（2026-10-07 拍板「上锁文件」）：每个锁声明它由哪几份 requirements
+#: 镜像产出。三处尺子共用这一张表，分开写就会漂：
+#:   * `lockfile parity` —— 镜像的每条约束必须被该锁的 pin 满足（requirements*.txt 改了
+#:     不重新 compile，这里当场红；反向，锁里某包被镜面的约束区间抛弃，同样红）；
+#:   * `installer scope parity` / `_installed_families` —— 一条 `pip install -r <锁>`
+#:     命令按这张表记它"覆盖了哪几族"（锁治版本漂，不治漏装一族：覆盖判定仍以五族为底）。
+#: 表里的每一份镜像文件都必须真实存在 —— 锁的覆盖面声明不许指向不存在的家。
+LOCK_SURFACES: dict[str, tuple[str, ...]] = {
+    "requirements.lock": (
+        "requirements.txt",
+        "requirements-api.txt",
+        "requirements-rag.txt",
+        "requirements-cloud.txt",
+        "requirements-mcp.txt",
+        "requirements-dev.txt",
+    ),
+    "requirements-runtime.lock": (
+        "requirements.txt",
+        "requirements-api.txt",
+        "requirements-rag.txt",
+        "requirements-cloud.txt",
+        "requirements-mcp.txt",
+    ),
+}
 
 
 def _package_names(lines: list[str]) -> set[str]:
@@ -349,6 +378,18 @@ def check_config_contract() -> None:
         fails.append(f".env.example JSON examples are unusable: {bad_json}")
 
 
+def _cmd_covers(req: str, cmd: str) -> bool:
+    """这条 pip install 命令装没装 `req` 这一份：点名了它，或点了覆盖它的锁。
+
+    锁时代（2026-10-07 拍板「上锁文件」）：一条 `pip install -r <锁>` 命令按 LOCK_SURFACES
+    记它覆盖的镜像 —— 锁治"版本会漂"，"漏装一族"仍由安装面看着（LOCK_SURFACES 声明的
+    覆盖面由 `lockfile parity` 对着真锁逐约束对账，这里只是消费那份声明）。
+    """
+    if req in cmd:
+        return True
+    return any(lock in cmd and req in surface for lock, surface in LOCK_SURFACES.items())
+
+
 def check_installer_scope() -> None:
     """四个安装入口必须装**同一组运行时依赖**（09-28 轮 `R28-11`/`R28-12` 那一族的闸）。
 
@@ -426,7 +467,7 @@ def check_installer_scope() -> None:
             missing += [
                 f"{label} 有一条 pip install 没装 {req}（{cmd[:70]}…）"
                 for req in RUNTIME_REQ_FILES
-                if req not in cmd
+                if not _cmd_covers(req, cmd)
             ]
     out(
         "installer scope parity",
@@ -440,9 +481,8 @@ def check_installer_scope() -> None:
 
     # 另一半：磁盘上每一份 requirements*.txt 都要在两张表里之一（空理由不算理由）。
     SEPARATE_BY_SHAPE = {
-        "requirements-dev.txt": "开发/CI 依赖，不进生产运行树",
+        "requirements-dev.txt": "开发/CI 依赖，不进生产运行树（含 PyInstaller 与 pip-tools）",
         "requirements-ocr.txt": "OCR 栈不进运行树，必须独立 venv（该文件开头有现行理由）",
-        "requirements-package.txt": "只有打包机要（PyInstaller，见 ci.yml 的 windows-release）",
         "requirements-package-ocr.txt": "只有打随包 OCR worker 时要（PyInstaller 装进 .venv-ocr，"
         "见 scripts/tools/build_ocr_worker.py；10-03 起装机版靠那份产物才有本地 OCR）",
     }
@@ -495,9 +535,111 @@ def _installed_families(text: str, *, where: str) -> set[str]:
     families: set[str] = set()
     for cmd in cmds:
         families |= {(m or "txt") for m in _家_RE.findall(cmd)}
+        # 锁时代：`-r <锁>` 命令按 LOCK_SURFACES 记它覆盖的族（族名与 `-r` 镜像同名提取，
+        # requirements.txt → "txt" 的口径不变）。
+        for lock, surface in LOCK_SURFACES.items():
+            if lock in cmd:
+                families |= {_family_of(fname) for fname in surface}
     if not families:
         raise ValueError(f"{where} 里找不到任何 `-r requirements-*.txt`（判据在空转）")
     return families
+
+
+def _family_of(filename: str) -> str:
+    """requirements 镜像文件名 → 族名（与 `_家_RE` 的提取口径一致：requirements.txt → "txt"）。"""
+    m = re.match(r"requirements(?:-([a-z_]+))?\.txt$", filename)
+    if not m:
+        raise ValueError(f"{filename} 不是 requirements 镜像文件的形状")
+    return m.group(1) or "txt"
+
+
+def _lock_pins(text: str) -> dict[str, str]:
+    """锁文件 → {归一化包名: pin 版本}。`name==ver ; marker` 行才收；注释与 `--` 选项跳过。
+
+    名字只留 `[]` 前的基名并按 PEP 503 归一：锁里 extras 会跟着 pin 走
+    （`uvicorn[standard]==0.52.2`），镜像那侧 `Requirement.name` 本就不含 extras ——
+    对账的键必须同侧剥干净，否则带 extras 的包永远"缺"。
+    """
+    pins: dict[str, str] = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("-"):
+            continue
+        body = stripped.split(";", 1)[0].strip()  # 环境标记不参与对账
+        if "==" not in body:
+            continue
+        name, _, version = body.partition("==")
+        base = name.split("[", 1)[0].strip()
+        pins[re.sub(r"[-_.]+", "-", base.lower())] = version.strip()
+    return pins
+
+
+def check_lockfile_parity() -> None:
+    """每把锁必须覆盖 LOCK_SURFACES 声明的镜像面：镜像的每条约束 ∈ 锁的 pin，缺包即红。
+
+    为什么需要（拍板「上锁文件」的另一半）：锁治"版本会漂"，可 requirements*.txt 改了
+    而忘了重新 compile，CI/镜像/打包装的仍是旧世界 —— 那种漂是**静默**的（pip 不会提醒
+    你锁旧了）。判据按**约束区间**比：`pydantic>=2.13` 只要求锁里 pin 的版本落进区间，
+    不是逐字相等 —— 镜像管"要什么"，锁管"装什么"，两边的关系是满足而不是相同
+    （逐字相等只会把"锁比镜像新了一个补丁版"这种健康状态也打成红）。
+
+    另外两格：锁文件整个不见也红（入库产物不许静默消失）；锁头部 provenance（pip-compile
+    写下的生成命令）必须包含声明的每一份输入 —— 防止有人手改覆盖面、让 LOCK_SURFACES
+    说一套锁实际又是另一套。
+    """
+    problems: list[str] = []
+    for lock_name, surface in LOCK_SURFACES.items():
+        lock_path = ROOT / lock_name
+        if not lock_path.exists():
+            problems.append(f"{lock_name} 不见了（入库产物，pip-compile 重新生成）")
+            continue
+        lock_text = lock_path.read_text(encoding="utf-8", errors="ignore")
+        header = "\n".join(line for line in lock_text.splitlines() if line.startswith("#"))
+        pins = _lock_pins(lock_text)
+        if not pins:
+            problems.append(f"{lock_name} 里一个 pin 都读不到（空锁或形状变了）")
+            continue
+        for mirror in surface:
+            mirror_path = ROOT / mirror
+            if not mirror_path.exists():
+                problems.append(f"{lock_name} 声明覆盖 {mirror}，那份文件不见了")
+                continue
+            if mirror not in header:
+                problems.append(
+                    f"{lock_name} 的生成命令里没有 {mirror}（头部 provenance 与 LOCK_SURFACES"
+                    "不符 —— 覆盖面被手改过？重新 pip-compile）"
+                )
+                continue
+            mirror_text = mirror_path.read_text(encoding="utf-8", errors="ignore")
+            for raw in mirror_text.splitlines():
+                text = raw.split("#", 1)[0].strip()
+                if not text or text.startswith("-"):
+                    continue
+                try:
+                    req = Requirement(text)
+                except InvalidRequirement:
+                    problems.append(f"{mirror} 有一行解析不成约束：{raw.strip()!r}")
+                    continue
+                name = re.sub(r"[-_.]+", "-", req.name.lower())
+                pin = pins.get(name)
+                if pin is None:
+                    problems.append(f"{lock_name} 缺 {req.name}（{mirror} 声明了它）")
+                    continue
+                if not req.specifier.contains(pin, prereleases=True):
+                    problems.append(
+                        f"{req.name}：{mirror} 要 {req.specifier}，{lock_name} pin 的是 {pin}"
+                        " —— 镜像改了没重新 compile"
+                    )
+    out(
+        "lockfile parity",
+        not problems,
+        "; ".join(problems[:4])
+        if problems
+        else f"{len(LOCK_SURFACES)} 把锁的 pin 全部落进声明镜像的约束区间"
+        f"（{sum(len(s) for s in LOCK_SURFACES.values())} 份输入对过账）",
+    )
+    if problems:
+        fails.append(f"lockfile parity drift: {problems}")
 
 
 def _runtime_form_marker() -> str:
@@ -3605,9 +3747,10 @@ def check_dependency_layering() -> None:
 
     判据：AST 扫 `src/**/*.py` 的全部 import（含函数内的 lazy import —— 那条路径被触发
     同样 500），顶层模块名去 stdlib、去第一方后，归一化（下划线→连字符）后必须在
-    **运行层**的 `requirements*.txt` 里声明 —— dev 层与打包机层（`-package`，只有
-    PyInstaller）不进随包运行树，生产 import 靠它们兜等于没兜（httpx 当时正是"只有 dev
-    声明 + langchain-core 传递"的双侥幸）。
+    **运行层**的 `requirements*.txt` 里声明 —— dev 层（含 PyInstaller；它从前独占
+    `requirements-package.txt`，2026-10-07 锁文件落地时并进 dev）不进随包运行树，
+    生产 import 靠它们兜等于没兜（httpx 当时正是"只有 dev 声明 + langchain-core 传递"
+    的双侥幸）。
     声明侧不读 pyproject：依赖 parity 那条已保证 pyproject 与 requirements 一致，这里
     只对一份事实面。import 名 ≠ 发行版名的（如 `import tavily` ← `tavily-python`）走
     显式别名表 —— 新映射缺了就红，把表补上即可，别名表本身就是"模块↔发行版"的登记处。
@@ -3616,8 +3759,8 @@ def check_dependency_layering() -> None:
     import_dist_aliases = {"tavily": "tavily-python"}
 
     declared: set[str] = set()
-    # 只有**运行层**能给 src 的 import 背书：dev 与打包机（-package）两层都不在随包运行树里。
-    non_runtime = {"requirements-dev.txt", "requirements-package.txt"}
+    # 只有**运行层**能给 src 的 import 背书：dev 层（连带 PyInstaller）不在随包运行树里。
+    non_runtime = {"requirements-dev.txt"}
     for req in sorted(ROOT.glob("requirements*.txt")):
         if req.name in non_runtime:
             continue
@@ -4464,6 +4607,7 @@ def main() -> int:
     check_dependency_layering()
     check_env_example_models()
     check_installer_scope()
+    check_lockfile_parity()
     check_capability_matrix()
     check_ci_host_python_stdlib_only()
     check_artifact_single_source()

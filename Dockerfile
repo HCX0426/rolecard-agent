@@ -1,6 +1,8 @@
 # rolecard-agent 运行时镜像。
 # 前端构建产物 frontend/dist 已入库，所以镜像里不需要 node —— 构建一次产物，处处可跑。
-# 依赖用 requirements（v1 无锁文件工具链约束）；数据目录挂卷，绝不把演示库打进镜像。
+# 依赖**锁安装**（2026-10-07 拍板「上锁文件」）：requirements-runtime.lock 由 pip-compile
+# 从运行时五族的 requirements 镜像产出（输入面钉在 check_consistency 的 LOCK_SURFACES），
+# fresh install 逐字节可重现；数据目录挂卷，绝不把演示库打进镜像。
 FROM python:3.13-slim
 
 WORKDIR /app
@@ -8,23 +10,20 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app/src
 
-# 先装依赖（利用层缓存），再拷代码
-# requirements-rag.txt（chromadb / pypdf）必须一起装：知识库、上传解析、检索工具都依赖它，
+# 先装依赖（利用层缓存），再拷代码。装的是**锁**（requirements-runtime.lock = 运行时五族
+# 的全量 pin），但"为什么五族一份都不能少"的历史还在下面 —— 锁治的是"装到的版本会漂"，
+# 治不了"某条路径忘了装某一族"，那是 installer scope parity / 能力矩阵两条尺子的辖区。
+# requirements-rag（chromadb / pypdf）必须一起装：知识库、上传解析、检索工具都依赖它，
 # 漏装会让容器内 /api/knowledge 与上传直接 ImportError（v2.4 部署前的审查发现）。
-# requirements-cloud.txt（langchain-openai）同理必须装：容器里没有 Ollama，云端 key 本是
+# requirements-cloud（langchain-openai）同理必须装：容器里没有 Ollama，云端 key 本是
 # 镜像的主用例 —— 漏装的症状是"配任何 OpenAI 兼容端点（硅基流动/DeepSeek/…）保存即 500"
 # （CI 首跑实测，run 36416026240；本机没红只是 .venv 恰好装过它）。它是可选 extra 的原因
 # 在 pyproject：纯本地安装保持离线可用 —— 那是**开发机**的取舍，不是容器的。
-# requirements-mcp.txt（langchain-mcp-adapters）同理要装（10-01 补）：镜像是 B/S 形态，用户在
+# requirements-mcp（langchain-mcp-adapters）同理要装（10-01 补）：镜像是 B/S 形态，用户在
 # 设置页接 MCP server 是合法的 operator 动作，而未装时 loader 只打一行 warning 就跳过工具 ——
-# 界面照常摆着入口、交通灯照常画，工具永远加载不出来（"格子骗人"的 fail-open）。桌面包那一侧
-# 09-29 已按同一条理由装上了（R28-34），镜像这一侧一直漏着；而对容器里的人，"pip install 那一份"
-# 不是一句能照着做完的话 —— 装完还得重建镜像。
-COPY requirements.txt requirements-api.txt requirements-rag.txt requirements-cloud.txt \
-    requirements-mcp.txt ./
-RUN pip install --no-cache-dir \
-    -r requirements.txt -r requirements-api.txt -r requirements-rag.txt \
-    -r requirements-cloud.txt -r requirements-mcp.txt
+# 界面照常摆着入口、交通灯照常画，工具永远加载不出来（"格子骗人"的 fail-open）。
+COPY requirements-runtime.lock ./
+RUN pip install --no-cache-dir -r requirements-runtime.lock
 
 # 形态自报（审查快照决策七"容器无本地 OCR"那一格的收口）：容器里没有 .venv-ocr、也没有随包
 # worker，所以"本地 OCR 不可用"在这里是**设计**而不是缺装 —— rag/ocr.py 据此把服务页那格的

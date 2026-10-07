@@ -149,15 +149,12 @@ ruff + mypy（含 Linux 档）零告警**，且全部离线运行（注入脚本
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -U pip
 
-# 2. 依赖（按范围镜像安装；OCR 依赖必须独立 venv，勿装进 .venv）
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt \
-    -r requirements-api.txt -r requirements-rag.txt -r requirements-cloud.txt \
-    -r requirements-mcp.txt
-#    （-rag 必须装：知识库 / 上传解析 / 检索都依赖 chromadb+pypdf，漏装会 ImportError）
-#    （-cloud 也要装：langchain-openai 是"任意 OpenAI 兼容端点"那条路的实现包，
-#      漏装的症状是在模型页配一个硅基流动/DeepSeek 后端 → 保存即 500）
-#    （-mcp 同一条理由（10-01 起进这套清单）：随包后端与镜像都装着它，源装若不装，
-#      设置页那格照常摆着而一个工具都加载不出来）
+# 2. 依赖（**锁安装**：requirements.lock 覆盖运行时五族 + dev，由 pip-compile 产出；
+#    OCR 依赖必须独立 venv，勿装进 .venv）
+.\.venv\Scripts\python.exe -m pip install -r requirements.lock
+#    （五族一份不能少的理由记在 Dockerfile 注释与 installer scope parity 尺子里 —— 锁治
+#      "版本会漂"，不治"漏装一族"；改了 requirements*.txt 要重新 compile 刷新锁，否则
+#      `lockfile parity` 尺子当场红）
 
 # 3. 本地模型（.env 里默认后端 local 指向 Ollama）
 #    qwen3-vl:8b = 对话 + 工具调用 + 识图 + 思考（ModelScope GGUF 导入，见下方说明）
@@ -212,9 +209,11 @@ docker run -p 8000:8000 -v rolecard-data:/app/data \
 
 # CI：push 即跑（GitHub Actions）—— ruff + mypy + 全量离线测试 + 一致性核查 +
 #     前端 vitest / tsc / build；覆盖率只在手动全量档与夜间臂量（阈值 90%）
-# 依赖安装：CI 与 Docker 实际使用 requirements*.txt（无上界 pin，镜像自 pyproject.toml，
-# 由 check_consistency.py 的 dependency parity 断言保证同步）。仓库无 uv.lock ——
-# 依赖管理统一为 .venv + pip（见 CONTRIBUTING.md 第 8 节）。
+# 依赖安装：CI 与 Docker 走**锁安装**（requirements.lock / requirements-runtime.lock，
+# 由 pip-compile 从 requirements*.txt 产出；`lockfile parity` 尺子逐约束比对「镜像的
+# 每个约束 ∈ 锁的 pin」，requirements*.txt 仍是唯一事实来源 pyproject 的 pip 安装镜像，
+# 由 dependency parity 断言保证同步）。依赖管理统一为 .venv + pip + pip-compile
+# （见 CONTRIBUTING.md 第 8 节）。
 # （内核 + dev + api + rag —— 漏装 rag 会让知识库/解析测试直接 ImportError）
 ```
 

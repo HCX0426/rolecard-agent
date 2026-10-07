@@ -6,77 +6,118 @@
     "rag": "requirements-rag.txt",
     "cloud": "requirements-cloud.txt",
     "mcp": "requirements-mcp.txt",
-    "package": "requirements-package.txt",
     "dev": "requirements-dev.txt",
     "ocr": "requirements-ocr.txt",
     "package_ocr": "requirements-package-ocr.txt"
   },
   "forms": {
     "container": {
-      "requires": ["txt", "api", "rag", "cloud", "mcp"],
+      "requires": [
+        "txt",
+        "api",
+        "rag",
+        "cloud",
+        "mcp"
+      ],
       "来源": "Dockerfile 的 RUN pip install",
-      "检查点": {"文件": "Dockerfile"},
+      "检查点": {
+        "文件": "Dockerfile"
+      },
       "形态自报": "Dockerfile 里那行 ENV（常量在 base/paths.py，rag/ocr.py 据此把服务页那格的指引换成云端兜底；尺子盯着这一行，值必须正好是 container）",
       "说明": "镜像是 B/S 形态：不带本地 OCR 栈（决策七，省 258MB+），OCR 走云端兜底。"
     },
     "installer": {
-      "requires": ["txt", "api", "rag", "cloud", "mcp", "package", "dev"],
-      "来源": ".github/workflows/ci.yml 的 windows-release job（dev 是 2026-10-06 加的 Windows 测试臂）",
-      "检查点": {"文件": ".github/workflows/ci.yml", "job": "windows-release"},
+      "requires": [
+        "txt",
+        "api",
+        "rag",
+        "cloud",
+        "mcp",
+        "dev"
+      ],
+      "来源": ".github/workflows/ci.yml 的 windows-release job（装 requirements.lock；dev 是 2026-10-06 加的 Windows 测试臂）",
+      "检查点": {
+        "文件": ".github/workflows/ci.yml",
+        "job": "windows-release"
+      },
       "说明": "桌面安装包；OCR worker 由 packaging/ 那边单独打，不在这条 pip install 里。"
     },
     "dev": {
-      "requires": ["txt", "api", "rag", "cloud", "mcp", "dev"],
+      "requires": [
+        "txt",
+        "api",
+        "rag",
+        "cloud",
+        "mcp",
+        "dev"
+      ],
       "来源": ".github/workflows/ci.yml 的 gate job",
-      "检查点": {"文件": ".github/workflows/ci.yml", "job": "gate"},
+      "检查点": {
+        "文件": ".github/workflows/ci.yml",
+        "job": "gate"
+      },
       "说明": "开发/CI 态；本地 OCR 另按 requirements-ocr.txt 装独立 .venv-ocr（可选）。"
     }
   },
   "capabilities": {
     "knowledge_rag": {
-      "families": ["rag"],
+      "families": [
+        "rag"
+      ],
       "说明": "知识库 / 上传解析 / 检索工具（chromadb、pypdf）。",
       "container": true,
       "installer": true,
       "dev": true
     },
     "cloud_backend": {
-      "families": ["cloud"],
+      "families": [
+        "cloud"
+      ],
       "说明": "OpenAI 兼容端点（langchain-openai）：容器里没有 Ollama，云端 key 本是镜像的主用例。",
       "container": true,
       "installer": true,
       "dev": true
     },
     "mcp_tools": {
-      "families": ["mcp"],
+      "families": [
+        "mcp"
+      ],
       "说明": "MCP server 接入；未装时 loader 只打一行 warning 就跳过（界面照摆入口、工具永远加载不出来）。",
       "container": true,
       "installer": true,
       "dev": true
     },
     "tests": {
-      "families": ["dev"],
+      "families": [
+        "dev"
+      ],
       "说明": "能跑 pytest 全家（timeout / xdist）。",
       "container": false,
       "installer": true,
       "dev": true
     },
     "packaging": {
-      "families": ["package"],
-      "说明": "PyInstaller：只有打桌面包那条路需要。",
+      "families": [
+        "dev"
+      ],
+      "说明": "PyInstaller：只有打桌面包那条路需要。2026-10-07 起它住 dev 族（requirements-package.txt 已删，打包臂与 gate 臂装同一把锁），所以按「能力 = requires 里那些族都装上了」的定义，dev 态也能打。",
       "container": false,
       "installer": true,
-      "dev": false
+      "dev": true
     },
     "ocr_local": {
-      "families": ["ocr"],
+      "families": [
+        "ocr"
+      ],
       "说明": "本地 RapidOCR（独立 OCR venv / 随包 ocr-worker.exe）。**容器不带这一族**——这就是审查快照『容器形态静默缺本地 OCR』那一格：矩阵把它写成 false，于是『缺』是声明过的决定，不再是静默。**dev 那格 2026-10-07 按定义校正为 false**：本形态的 requires（gate job 的 pip 清单）不含 ocr 族，本地 OCR 是表外的独立 venv、可选另装 —— 按『能力 = requires 里那些族都装上了』的定义它就是 false；此前这列没有机器检查，写反了也看不见（三列检查上线的第一趟就把这条撞了出来）。",
       "container": false,
       "installer": false,
       "dev": false
     },
     "ocr_cloud": {
-      "families": ["cloud"],
+      "families": [
+        "cloud"
+      ],
       "说明": "云端 OCR 兜底：容器里要用 OCR，由操作员在模型页建云端凭据行、再在服务页引用（绝不从 env 默认启用，见 select_ocr_backend 的隐私红线）。它只依赖 cloud 那一族，所以容器**有**。",
       "container": true,
       "installer": true,
