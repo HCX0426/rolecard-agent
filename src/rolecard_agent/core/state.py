@@ -15,12 +15,13 @@ Two invariants the rest of the kernel depends on:
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Annotated, Any
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
+
+from rolecard_agent.core.clock import utc_now
 
 
 class AgentState(TypedDict, total=False):
@@ -57,13 +58,15 @@ class AgentState(TypedDict, total=False):
 
 
 def now_ts() -> str:
-    """消息创建时间（本地时间，秒级字符串）。
+    """消息创建时间。UTC ISO-Z 形状（`2026-10-07T02:30:00Z`）—— 政策与纪元见 `core/clock.py`。
 
     随消息存进 `additional_kwargs["created_at"]`（HumanMessage 在会话路由创建、
     AIMessage/ToolMessage 在内核节点创建），历史回放据此显示时间（用户 2026-09-17）。
-    存本地时间字符串即可：自用单时区，且 checkpoint 里旧消息天然没有该字段（不显示）。
+    从前存本地 naive 串，docstring 的理由是"自用单时区"—— checkpoint 跨机同步与
+    跨表比较把这两句话变成了 lie（时区错位静默算错），2026-10-07 起一律 UTC；
+    纪元前的存量串（空格分隔、本地）由消费侧按形状分族解析，互相比对仍然正确。
     """
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return utc_now()
 
 
 def new_state(

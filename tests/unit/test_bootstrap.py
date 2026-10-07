@@ -198,10 +198,12 @@ def test_deliver_proactive_lands_in_the_roles_thread(tmp_path: Path) -> None:
         assert [str(m.content) for m in messages] == ["今天腰还酸吗？"]
         # 主动投递也要带时间：没带的话，回放里她"什么时候说的"就查不出来，
         # 而"她是不是一句话说了好几遍"只能靠时间分辨（2026-09-22 取证时只能靠 id 前缀猜）。
+        # 形状是 UTC ISO-Z（"格式即纪元"，政策见 core/clock.py）—— 纪元前的存量
+        # 串是空格分隔的本地 naive，消费侧按形状分族解析。
         assert re.fullmatch(
-            r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}",
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z",
             str(messages[0].additional_kwargs.get("created_at") or ""),
-        ), "主动投递的消息没带 created_at"
+        ), "主动投递的消息没带 created_at（或形状退回了旧纪元的本地 naive）"
 
         # 第二条：建行幂等（不冲突），历史按顺序累积 —— 角色下一次看得见自己说过什么。
         runtime.deliver_proactive(role, "记得喝水")

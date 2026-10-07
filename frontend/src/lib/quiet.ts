@@ -36,6 +36,21 @@ export function formatNextOk(iso: string | null, now: Date = new Date()): string
   return `${t.getMonth() + 1}月${t.getDate()}日 ${hm}`;
 }
 
+/** 消息时间串 → Date；解析不了返回 null。**格式即纪元**（后端 `core/clock.py` 同一政策）：
+ *
+ * 消息的 `created_at` 有两族 —— 2026-10-07 起新写入是 UTC ISO-Z（带 T 带 Z），
+ * 纪元前是**本地** naive（空格、无时区）。两族各按真实语义解（带 T 当 UTC、
+ * 空格当本地），同一时刻两种写法解析出同一瞬间，所以跨族配对（升级前后的
+ * 同一条线程里算"回答耗时"）仍然正确。这条与 `formatUtcNaive` **不合并**：
+ * 那个伺候的是库表族（空格 = UTC，`CURRENT_TIMESTAMP` 给的），这里伺候消息族
+ * （空格 = 旧本地）—— 同一个形状在两族里语义相反，硬合一个解析器才是错的。
+ */
+export function parseMessageTs(ts: string | null | undefined): Date | null {
+  if (!ts) return null;
+  const parsed = new Date(ts.includes("T") ? ts : ts.replace(" ", "T"));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 /** 一个角色此刻的静默状态 → 界面上的**三段**（运行环境页与收件箱抽屉共用同一个组件）。
  *
  * 为什么是三段而不是一句话（`R26-45`）：旧版把「距上次说话不足 66 分钟，她连着 1 条没被回

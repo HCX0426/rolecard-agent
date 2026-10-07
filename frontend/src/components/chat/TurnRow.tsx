@@ -1,16 +1,20 @@
 import type { BuiltTurn } from "../../lib/turns";
 import { STOP_HINT } from "../../lib/stream";
+import { parseMessageTs } from "../../lib/quiet";
 import type { MessageRow } from "../../api";
 import { Markdown } from "../Markdown";
 import { Tag } from "../ui";
 import ProcessPanel from "./ProcessPanel";
 
-/** 回答耗时：created_at 配对（用户 → 助手）换算成可读时长；无时间戳的旧消息返回 null。 */
+/** 回答耗时：created_at 配对（用户 → 助手）换算成可读时长；无时间戳的旧消息返回 null。
+ *
+ * 解析走 `parseMessageTs`（格式即纪元，`lib/quiet.ts`）：升级前后的同一条线程里
+ * 两族并存（旧消息本地 naive、新消息 UTC ISO-Z），配对差值跨族也必须正确。
+ */
 function fmtDuration(from: string, to: string): string | null {
-  if (!from || !to) return null;
-  const a = new Date(from.replace(" ", "T"));
-  const b = new Date(to.replace(" ", "T"));
-  if (isNaN(a.getTime()) || isNaN(b.getTime())) return null;
+  const a = parseMessageTs(from);
+  const b = parseMessageTs(to);
+  if (!a || !b) return null;
   const s = Math.max(0, Math.round((b.getTime() - a.getTime()) / 1000));
   if (s < 60) return `${s} 秒`;
   return `${Math.floor(s / 60)} 分 ${s % 60} 秒`;

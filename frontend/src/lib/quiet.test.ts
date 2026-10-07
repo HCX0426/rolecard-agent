@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { QuietStatus } from "../api";
-import { formatNextOk, formatUtcNaive, quietParts } from "./quiet";
+import { formatNextOk, formatUtcNaive, parseMessageTs, quietParts } from "./quiet";
 
 function status(over: Partial<QuietStatus> = {}): QuietStatus {
   return {
@@ -63,6 +63,34 @@ describe("formatUtcNaive（R102-18 的唯一换算出口）", () => {
     expect(formatUtcNaive("不是时间")).toBe("不是时间");
     expect(formatUtcNaive(null)).toBe("");
     expect(formatUtcNaive(undefined)).toBe("");
+  });
+});
+
+describe("parseMessageTs（消息时间戳，格式即纪元 —— 后端 core/clock.py 同一政策）", () => {
+  it("纪元后的 UTC ISO-Z 按它自己带的时区解；空串/解析不了是 null", () => {
+    expect(parseMessageTs("2026-10-07T02:30:00Z")?.getTime()).toBe(
+      new Date("2026-10-07T02:30:00Z").getTime(),
+    );
+    expect(parseMessageTs("")).toBeNull();
+    expect(parseMessageTs("不是时间")).toBeNull();
+    expect(parseMessageTs(null)).toBeNull();
+  });
+
+  it("纪元前的本地 naive 串按**本地**解（旧写法的真实语义，别把它当 UTC）", () => {
+    expect(parseMessageTs("2026-10-07 10:30:00")?.getTime()).toBe(
+      new Date(2026, 9, 7, 10, 30, 0).getTime(),
+    );
+  });
+
+  it("同一时刻两种写法解析出同一瞬间 —— 切版本瞬间的跨族配对（回答耗时）才不是碰运气", () => {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const d = new Date();
+    const legacy =
+      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+      `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    const modern = d.toISOString().replace(/\.\d{3}Z$/, "Z");
+    const gap = Math.abs(parseMessageTs(modern)!.getTime() - parseMessageTs(legacy)!.getTime());
+    expect(gap).toBeLessThan(2000);
   });
 });
 
