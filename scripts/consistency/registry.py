@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from . import checks, checks_audit, checks_config, checks_install
+from . import checks, checks_audit, checks_config, checks_docs, checks_install
 
 CHECKS = (
     checks_install.check_pyproject,
@@ -15,7 +15,7 @@ CHECKS = (
     checks_config.check_startup_env_documented,
     checks_install.check_dependency_parity,
     checks_install.check_spec_runtime_vs_requirements,
-    checks.check_promised_artifacts,
+    checks_docs.check_promised_artifacts,
     checks.check_core_no_domain_token,
     checks.check_api_domain_seams,
     checks.check_identity_implicit_reads_are_registered,
@@ -36,15 +36,15 @@ CHECKS = (
     checks.check_line_endings,
     checks.check_ps1_encoding,
     checks.check_console_encoding,
-    checks.check_readme_quickstart,
-    checks.check_readme_headline_numbers,
+    checks_docs.check_readme_quickstart,
+    checks_docs.check_readme_headline_numbers,
     checks.check_milestone_alignment,
     checks.check_v1_v2_boundary,
-    checks.check_doc_references,
-    checks.check_doc_links,
-    checks.check_markdown_table_shape,
+    checks_docs.check_doc_references,
+    checks_docs.check_doc_links,
+    checks_docs.check_markdown_table_shape,
     checks_audit.check_citation_reachability,
-    checks.check_doc_freshness,
+    checks_docs.check_doc_freshness,
     checks_audit.check_audit_index_in_sync,
     checks.check_version_parity,
     checks.check_changelog,
