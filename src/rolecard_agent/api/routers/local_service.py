@@ -32,7 +32,7 @@ from rolecard_agent.api.auth import Actor, is_loopback
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.config import ModelBackend
 from rolecard_agent.core.model_settings import client_style
-from rolecard_agent.core.probes import (
+from rolecard_agent.core.telemetry.probes import (
     local_inference_base_url,
     ollama_keep,
     ollama_loaded,

@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from rolecard_agent.core.ingestion import IngestionService
+from rolecard_agent.core.ingest.ingestion import IngestionService
 from rolecard_agent.domains.health.service import (
     HealthInvalidReport,
     HealthNotFound,

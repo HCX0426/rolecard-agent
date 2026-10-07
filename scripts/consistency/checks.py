@@ -2168,8 +2168,8 @@ def check_sync_write_ownership() -> None:
 #: 就是被这样误收过一次）。
 WRITE_TXN_HELPERS = frozenset(
     {
-        "src/rolecard_agent/core/checkpointer.py::_set_flag",
-        "src/rolecard_agent/core/checkpointer.py::_drop_orphan_writes",
+        "src/rolecard_agent/core/storage/checkpointer.py::_set_flag",
+        "src/rolecard_agent/core/storage/checkpointer.py::_drop_orphan_writes",
         "src/rolecard_agent/core/memory_distill.py::extract",
         # model_settings 拆包后（2026-10-04 审查快照 P1-6）这个方法住在 read mixin 里。
         "src/rolecard_agent/core/model_settings/read.py::_write_chat_refs",
@@ -2186,7 +2186,7 @@ WRITE_TXN_HELPERS = frozenset(
         # `_backfill_service_endpoint_owner` 那一族）或点名收口点（下面两条）。
         # 这一步的 COMMIT 活在 executescript 里（`… ;COMMIT;` 首尾 BEGIN IMMEDIATE 包死），
         # 正是"端点配置不许半路清空"那条迁移的核心设计 —— AST 只看得见函数调用，所以登记。
-        "src/rolecard_agent/core/migrations.py::_rebuild_legacy_service_endpoint",
+        "src/rolecard_agent/core/storage/migrations.py::_rebuild_legacy_service_endpoint",
         "src/rolecard_agent/features/reachout/inbox.py::restore_row",
         # 2026-10-04 service 收口：replace 档的行类清空**刻意不收口** —— 与随后的导入共用
         # 一个事务，成败一体。收口点在 `features/sync_service.py::run_import`（导入有失败即

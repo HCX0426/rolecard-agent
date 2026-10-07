@@ -41,11 +41,11 @@ from rolecard_agent.core.approvals import (
     ApprovalNotFound,
     ApprovalUnauthorised,
 )
-from rolecard_agent.core.ingestion import IngestionNotFound
+from rolecard_agent.core.ingest.ingestion import IngestionNotFound
+from rolecard_agent.core.ingest.upload_service import UploadRejected, UploadUnreadable
 from rolecard_agent.core.model_settings import ModelSettingsError
 from rolecard_agent.core.plugins import PluginError, UnknownPlugin
 from rolecard_agent.core.thread_locks import ThreadBusy
-from rolecard_agent.core.upload_service import UploadRejected, UploadUnreadable
 from rolecard_agent.roles.service import (
     BuiltinRoleProtected,
     RoleAlreadyExists,

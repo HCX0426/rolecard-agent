@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from rolecard_agent.core.migrations import build_plan
+from rolecard_agent.core.storage.migrations import build_plan
 from rolecard_agent.storage.db import _columns, bootstrap, connect
 
 REPO = Path(__file__).resolve().parents[2]

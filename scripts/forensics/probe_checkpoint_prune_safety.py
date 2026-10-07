@@ -36,7 +36,7 @@ os.environ.setdefault("MEMORY_EXTRACT_AUTO", "0")  # 更不许顺手改她的记
 from fastapi.testclient import TestClient  # noqa: E402
 
 from rolecard_agent.api.main import create_app  # noqa: E402
-from rolecard_agent.core import checkpointer as ck  # noqa: E402
+from rolecard_agent.core.storage import checkpointer as ck  # noqa: E402
 
 
 def _read_history(db: Path) -> dict[str, list[tuple[Any, ...]]]:

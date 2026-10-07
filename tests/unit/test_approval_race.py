@@ -25,7 +25,7 @@ from rolecard_agent.core.approvals import (
     ApprovalAlreadyDecided,
     ApprovalService,
 )
-from rolecard_agent.core.migrations import MIGRATION_PLAN
+from rolecard_agent.core.storage.migrations import MIGRATION_PLAN
 from rolecard_agent.storage.db import bootstrap, connect
 
 THREADS = 4

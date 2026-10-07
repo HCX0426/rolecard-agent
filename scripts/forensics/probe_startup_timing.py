@@ -56,7 +56,7 @@ from langchain_core.messages import AIMessage  # noqa: E402
 from rolecard_agent.api import main as api_main  # noqa: E402
 from rolecard_agent.base.observability import TraceEvent  # noqa: E402
 from rolecard_agent.core import bootstrap as core_bootstrap  # noqa: E402
-from rolecard_agent.core import checkpointer as core_checkpointer  # noqa: E402
+from rolecard_agent.core.storage import checkpointer as core_checkpointer  # noqa: E402
 from rolecard_agent.storage import db as storage_db  # noqa: E402
 
 COPY = ROOT / "build" / "scratch-startup.db"

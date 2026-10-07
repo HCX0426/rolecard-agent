@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from rolecard_agent.base.audit import AuditTrail
     from rolecard_agent.base.observability import Tracer
     from rolecard_agent.core.domain_service import DomainQueryService
-    from rolecard_agent.core.ingestion import IngestionService
+    from rolecard_agent.core.ingest.ingestion import IngestionService
     from rolecard_agent.rag.ocr import OcrBackend
     from rolecard_agent.rag.retriever import KnowledgeBase
     from rolecard_agent.roles.models import RoleCardCreate

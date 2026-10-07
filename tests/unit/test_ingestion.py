@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from rolecard_agent.core.ingestion import (
+from rolecard_agent.core.ingest.ingestion import (
     INGESTION_FAILED,
     INGESTION_INDEXED,
     INGESTION_PENDING,
@@ -134,7 +134,7 @@ def test_a_miss_on_the_ledger_does_not_leave_a_write_transaction(
 
     用文件库 + 两条真连接：`:memory:` 那条共享不了，测不出"别的连接写不动"。
     """
-    from rolecard_agent.core.ingestion import IngestionNotFound
+    from rolecard_agent.core.ingest.ingestion import IngestionNotFound
 
     path = tmp_path / "ledger.db"
     first = connect(path)

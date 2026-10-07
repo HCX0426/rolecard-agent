@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rolecard_agent.core.migrations import MIGRATION_PLAN
+from rolecard_agent.core.storage.migrations import MIGRATION_PLAN
 from rolecard_agent.domains.registry import DOMAINS
 from rolecard_agent.storage.db import bootstrap, connect
 

@@ -20,7 +20,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from rolecard_agent.api.main import create_app
-from rolecard_agent.core.uploads import referenced_paths, remove_orphans, scan_orphans
+from rolecard_agent.core.ingest.uploads import referenced_paths, remove_orphans, scan_orphans
 
 
 @pytest.fixture

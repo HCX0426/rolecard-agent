@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from rolecard_agent.core.ingestion import IngestionService
+from rolecard_agent.core.ingest.ingestion import IngestionService
 from rolecard_agent.domains.health.service import HealthQueryService
 from rolecard_agent.domains.health.tools import make_domain_tools
 from rolecard_agent.storage.db import bootstrap, connect

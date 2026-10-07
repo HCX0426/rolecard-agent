@@ -19,8 +19,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from rolecard_agent.base.observability import scrub_endpoints
-from rolecard_agent.core.upload_service import read_source_text, source_kind
-from rolecard_agent.core.uploads import parsed_text_path as _parsed_text_path
+from rolecard_agent.core.ingest.upload_service import read_source_text, source_kind
+from rolecard_agent.core.ingest.uploads import parsed_text_path as _parsed_text_path
 from rolecard_agent.domains.health.extract import (
     ExtractConfigError,
     ExtractError,

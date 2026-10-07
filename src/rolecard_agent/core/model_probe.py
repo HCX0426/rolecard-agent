@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 from rolecard_agent.base import outbound
 from rolecard_agent.config import DEFAULT_LOCAL_BASE_URL
 from rolecard_agent.core.model_settings import client_style, endpoint_key
-from rolecard_agent.core.probes import vision_capability
+from rolecard_agent.core.telemetry.probes import vision_capability
 
 if TYPE_CHECKING:
     from rolecard_agent.core.model_settings import ModelSettingsService

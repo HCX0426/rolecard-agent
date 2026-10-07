@@ -16,7 +16,7 @@ from __future__ import annotations
 import threading
 import time
 
-from rolecard_agent.core.checkpointer import ObservedLock, make_checkpointer
+from rolecard_agent.core.storage.checkpointer import ObservedLock, make_checkpointer
 
 
 def test_observed_lock_keeps_mutual_exclusion() -> None:

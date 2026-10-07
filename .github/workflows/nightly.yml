@@ -1,0 +1,74 @@
+name: Nightly
+
+# 夜间臂（审查快照 P2-27 + P3-17，决策八）：self-hosted runner 上跑真机/真模型验收。
+#
+# 为什么单独一条 workflow + 用 `schedule`（而非并进 ci.yml）：
+#   * 它跑 `pytest -m live`（真 8B 抽取，比其余用例加起来还贵） + smoke_check + run_eval，
+#     需要一台**常开、装了 Ollama + Chrome** 的开发机 —— 这正是「用户侧待办」那一格；
+#   * 失败只报警不拦 PR（决策八原话）：夜里的偶发红不该把白天在飞的 PR 卡住，但证据要落盘
+#     （docs/eval/ 的 JSON）让人第二天能查。
+#
+# **没有 self-hosted runner 时这条 job 自动 skip**（不是红）：`self-hosted` 标签的 runner
+# 没注册时 GitHub 会把 job 标成「waiting」，永远不会自己变绿也不变红，于是这里用
+# `if: github.repository_owner == 'HCX0426'` 这种廉价门槛 + `continue-on-error` 都拦不住「等不到
+# runner」那件事 —— 真正的解法是：**在你那台常开机器上注册一个 labels 含 `self-hosted`
+# 的 GitHub Actions runner**（见 docs/开发流程.md 的那一节），注册了才会接、没注册就永远 skip。
+# 本 workflow 的 `runs-on: [self-hosted, windows]` 故意写成数组：只匹配带这两个 label 的
+# runner，匹配不到 = 没人接 = 安静地 skip，不污染日常 CI。
+
+on:
+  schedule:
+    # 每天 UTC 18:00 跑（北京次日 02:00，开发机常开时段）。
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 证据 JSON 落 docs/eval/ 并提交（失败也留痕，方便回看）
+
+env:
+  PYTHONIOENCODING: utf-8
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  live:
+    name: 夜间真机验收（self-hosted）
+    # 单引号字符串数组 label：只有你注册的、带 self-hosted + windows 两个 label 的 runner 会接。
+    # 没注册时 GitHub 不会报错，job 停在 queued 直到超时——为避免「永远在等」把 nightly 页
+    # 弄脏，这里允许它在超时/无 runner 时当作**成功跳过**（证据照常，只是这一晚没机器跑）。
+    runs-on: [self-hosted, windows]
+    timeout-minutes: 120
+    continue-on-error: true   # 决策八：失败只报警不拦 PR（本 job 不进任何 PR 的 needs）
+    if: ${{ github.event_name == 'workflow_dispatch' || true }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - name: 装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+      - name: 真机冒烟 + 真模型评测（live 用例 + run_eval）
+        env:
+          # 缺 Ollama / Chrome / 真 key 时这些会失败 —— 但本 job continue-on-error，
+          # 失败只报警；证据照落。
+          SMOKE_SKIP_UI: "0"
+        run: |
+          python scripts/smoke_check.py
+          python scripts/tools/run_eval.py --strict --report docs/eval/nightly-${{ github.run_id }}.json
+      - name: 证据落盘
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path docs/eval) {
+            git config user.name "rolecard-nightly-bot"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add docs/eval
+            if (git diff --cached --quiet) { Write-Host "今晚无新证据" } else {
+              git commit -m "chore(eval): 夜间臂证据落盘（run_id=${{ github.run_id }}）"
+              git push
+            }
+          }

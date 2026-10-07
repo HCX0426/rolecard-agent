@@ -25,7 +25,7 @@ from pathlib import Path
 from langchain_core.tools import BaseTool, tool
 
 from rolecard_agent.base.markers import UNVERIFIED_MARKER
-from rolecard_agent.core.ingestion import IngestionService
+from rolecard_agent.core.ingest.ingestion import IngestionService
 from rolecard_agent.domains.health.service import HealthQueryService
 
 # 本域贡献的工具名（`DOMAIN_TOOL_NAMES`）与写工具名单（`WRITE_TOOL_NAMES`）住在

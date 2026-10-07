@@ -23,7 +23,7 @@ from rolecard_agent.core import bootstrap
 from rolecard_agent.core.bootstrap import Assembly, build_runtime
 from rolecard_agent.core.graph import build_graph_config
 from rolecard_agent.core.model_settings import client_style
-from rolecard_agent.core.probes import local_inference_base_url
+from rolecard_agent.core.telemetry.probes import local_inference_base_url
 from rolecard_agent.domains.registry import (
     DOMAINS,
     build_query_services,

@@ -31,12 +31,12 @@ from typing import IO, TYPE_CHECKING, Any
 
 from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.config import Settings
-from rolecard_agent.core.ingestion import (
+from rolecard_agent.core.ingest.ingestion import (
     INGESTION_FAILED,
     INGESTION_PENDING,
     IngestionService,
 )
-from rolecard_agent.core.uploads import parsed_text_path
+from rolecard_agent.core.ingest.uploads import parsed_text_path
 from rolecard_agent.rag.parser import (
     IMAGE_EXTS,
     PARSEABLE_EXTENSIONS,

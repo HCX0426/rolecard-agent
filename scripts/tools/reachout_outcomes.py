@@ -88,7 +88,7 @@ def read_lane_messages(conn: Any) -> dict[str, list[tuple[str, str]]]:
     from langchain_core.messages import HumanMessage, ToolMessage  # noqa: PLC0415
 
     from rolecard_agent.base.text import text_of  # noqa: PLC0415
-    from rolecard_agent.core.checkpointer import make_checkpointer  # noqa: PLC0415
+    from rolecard_agent.core.storage.checkpointer import make_checkpointer  # noqa: PLC0415
 
     saver = make_checkpointer(conn)
     out: dict[str, list[tuple[str, str]]] = {}

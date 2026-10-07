@@ -163,6 +163,14 @@ STEPS: list[tuple[str, list[str], str]] = [
     # 在册豁免带"上游已给修复版本"前提，前提消失会**反过来红**（豁免不是永久通行证）。
     # 退出码 fail-closed：扫不成（断网/接口变更）退 2，门禁同样红 —— 扫不成不等于干净。
     ("依赖审计", [PY, "scripts/tools/audit_deps.py"], "full"),
+    # **密钥扫描**（ENGI-15 ②，可选档但本仓已接）：`scan_secrets.py` 包装 gitleaks，默认只扫
+    # 当前工作树（`--no-git`，离线可跑），不碰网络历史。**不进快档**（与 ① 同一条「测试全离线」
+    # 铁律），mode=full 落在本地全量档与 `--ci`（--ci 是 full 减 CI_SKIP，而它**刻意不在
+    # CI_SKIP**）—— 每次 push 的 CI 红线从这条起成立。退出码 fail-closed：gitleaks 装不到 /
+    # 扫不成（断网）退 2，门禁同样红 —— 扫不成不等于干净。放行判据集中在 `.gitleaks.toml`
+    # （本仓经 git grep 全量核查，tracked 文件里没有任何真密钥，allowlist 只为挡默认规则对
+    # 良性内容：.env.example 空值、文档示例 endpoint、CI 假 token、data URL、测试 fixture 的误报）。
+    ("密钥扫描", [PY, "scripts/tools/scan_secrets.py"], "full"),
     ("真机冒烟(14 项)", [PY, "scripts/smoke_check.py"], "full"),
     # 「README 数字收尾」这一步已随拍板"数字移出散文"整个删除：README 不再抄数 ⇒ 没有
     # 数要"收尾"，反向断言（首屏不许有数 + 引用必须在）本就排在 `consistency` 里、不依赖

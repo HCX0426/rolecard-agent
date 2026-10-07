@@ -29,7 +29,7 @@ from typing import Any
 
 from rolecard_agent.config import Settings
 from rolecard_agent.core.model_settings import ModelSettingsService, client_style
-from rolecard_agent.core.probes import vision_model_ready
+from rolecard_agent.core.telemetry.probes import vision_model_ready
 from rolecard_agent.storage.db import SqlConnection
 
 # ---------------------------------------------------------------- 服务类别定义
@@ -457,7 +457,7 @@ def endpoint_available(e: EndpointConfig, settings: Settings) -> tuple[bool, str
             "已配置 API Key" if e.api_key else "这个模型的厂商还没有 API Key（去模型页填）"
         )
     if e.model:
-        from rolecard_agent.core.probes import vision_model_ready
+        from rolecard_agent.core.telemetry.probes import vision_model_ready
 
         if vision_model_ready(e.base_url, e.model):
             return True, f"就绪：本地视觉模型 {e.model}"

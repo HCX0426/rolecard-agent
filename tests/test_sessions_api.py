@@ -569,7 +569,7 @@ def test_failed_task_recovers_when_the_same_file_is_reuploaded(
 
     # 解析编排随 upload_report 收进了 service（Router 不再认识 parse_document）——
     # 打靶点跟着搬家，这里瞄的就是"服务真的在用这条解析路"。
-    import rolecard_agent.core.upload_service as upload_mod
+    import rolecard_agent.core.ingest.upload_service as upload_mod
 
     real_parse = upload_mod.parse_document
     calls = {"n": 0}

@@ -11,7 +11,7 @@ from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.base.audit import read_audit_page
 from rolecard_agent.base.observability import scrub_endpoints
-from rolecard_agent.core.uploads import referenced_paths, remove_orphans, scan_orphans
+from rolecard_agent.core.ingest.uploads import referenced_paths, remove_orphans, scan_orphans
 
 router = APIRouter()
 

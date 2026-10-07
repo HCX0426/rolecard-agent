@@ -388,6 +388,34 @@ jobs:
           GATE_READINGS_SCRATCH: "1"
         run: python scripts/gate.py
 
+  windows-test:
+    name: Windows 测试臂（每次 push/PR）
+    # 升级路径（审查快照 P1-13 决策四）：起步臂 `windows-release` 只在手动 `build_windows` 跑，
+    # 这一条补上「每次 push/PR 都跑的 Windows 测试臂」—— 平台覆盖倒挂（Windows-first 产品
+    # 却只有 ubuntu 测试臂）的正式收口。它**只跑用例、不打包**：Windows runner 分钟按 2× 计费，
+    # 打包那一半仍是手动 `windows-release` 的职责，这里只保证「Windows 专属分支（ctypes.WinDLL、
+    # 图标层、PowerShell 改写）被机器接住」。判据与本地快档同一份（`pytest_with_evidence.py
+    # --lane fast`），只读 build/ 下的取证日志、不动入库读数（读数是按平台的，见 gate.py）。
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.lock
+
+      - name: 装依赖（锁）
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+
+      - name: Windows 臂跑一遍快档用例
+        run: python scripts/pytest_with_evidence.py --lane fast
+
   windows-release:
     name: 发布链（Windows 安装包，只在手动触发时跑）
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_windows }}

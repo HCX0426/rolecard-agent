@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 
 from rolecard_agent.core.bootstrap import build_runtime
-from rolecard_agent.core.checkpointer import truncate_wal_at_boot
+from rolecard_agent.core.storage.checkpointer import truncate_wal_at_boot
 from rolecard_agent.domains.registry import DOMAINS, build_query_services, domain_seed_roles
 from rolecard_agent.features.proactive import build_gateway
 from rolecard_agent.storage.db import bootstrap, connect

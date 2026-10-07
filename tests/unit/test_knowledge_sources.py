@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from rolecard_agent.core.bootstrap import heal_knowledge_sources
-from rolecard_agent.core.knowledge_sources import KnowledgeSourceStore
+from rolecard_agent.core.ingest.knowledge_sources import KnowledgeSourceStore
 from rolecard_agent.rag.retriever import HashEmbedder, KnowledgeBase
 from rolecard_agent.storage.db import bootstrap, connect
 

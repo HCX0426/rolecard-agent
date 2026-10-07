@@ -32,9 +32,9 @@ def main() -> int:
     _ensure_importable()
 
     from rolecard_agent.config import Settings
-    from rolecard_agent.core.checkpointer import make_checkpointer
-    from rolecard_agent.core.migrations import MIGRATION_PLAN
     from rolecard_agent.core.plugins import seed_plugin_rows
+    from rolecard_agent.core.storage.checkpointer import make_checkpointer
+    from rolecard_agent.core.storage.migrations import MIGRATION_PLAN
     from rolecard_agent.domains.registry import DOMAINS, domain_seed_roles
     from rolecard_agent.roles.service import RoleCardService
     from rolecard_agent.storage.db import bootstrap, connect

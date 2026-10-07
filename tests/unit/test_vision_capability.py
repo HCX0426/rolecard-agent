@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 import pytest
 
-from rolecard_agent.core import probes
+from rolecard_agent.core.telemetry import probes
 
 
 class _Response:

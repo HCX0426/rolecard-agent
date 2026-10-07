@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from rolecard_agent.api.main import create_app
 from rolecard_agent.base.identity import DEFAULT_USER_ID
-from rolecard_agent.core.migrations import MIGRATION_PLAN
+from rolecard_agent.core.storage.migrations import MIGRATION_PLAN
 from tests.conftest import model_rows
 
 

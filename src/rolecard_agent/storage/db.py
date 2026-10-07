@@ -553,7 +553,7 @@ def _require_plan_for_existing_db(conn: SqlConnection, *, plan: MigrationPlanLik
         raise RuntimeError(
             "数据库已存在，业务迁移计划必须显式交进来（清重 / 滞留自愈 / 整表重建 / 搬层"
             "这些步骤住 core/migrations.py，storage 不认识它们）：显式传 "
-            "plan=rolecard_agent.core.migrations.MIGRATION_PLAN；新建空库可以不传。"
+            "plan=rolecard_agent.core.storage.migrations.MIGRATION_PLAN；新建空库可以不传。"
         )
 
 

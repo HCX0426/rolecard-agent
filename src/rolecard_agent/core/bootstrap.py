@@ -33,19 +33,19 @@ from rolecard_agent.base.paths import user_data_root
 from rolecard_agent.config import Settings
 from rolecard_agent.core import mcp_store, runtime_settings
 from rolecard_agent.core.approvals import ApprovalService, sweep_interrupted
-from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.domain_service import DomainQueryService
 from rolecard_agent.core.graph import build_kernel, build_model
-from rolecard_agent.core.ingestion import IngestionService
-from rolecard_agent.core.knowledge_sources import KnowledgeSourceStore
-from rolecard_agent.core.migrations import MIGRATION_PLAN
+from rolecard_agent.core.ingest.ingestion import IngestionService
+from rolecard_agent.core.ingest.knowledge_sources import KnowledgeSourceStore
 from rolecard_agent.core.model_resolver import ModelResolver
 from rolecard_agent.core.model_settings import ModelSettingsService, client_style
 from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
-from rolecard_agent.core.probes import ollama_keep, vision_capability
 from rolecard_agent.core.retention import prune_retention_tables
 from rolecard_agent.core.services import ServiceEndpointService
+from rolecard_agent.core.storage.checkpointer import make_checkpointer
+from rolecard_agent.core.storage.migrations import MIGRATION_PLAN
+from rolecard_agent.core.telemetry.probes import ollama_keep, vision_capability
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder, make_reranker
 from rolecard_agent.roles.models import RoleCard, RoleCardCreate

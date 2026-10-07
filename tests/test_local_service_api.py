@@ -357,7 +357,7 @@ def test_local_endpoint_follows_the_configured_native_backend() -> None:
     为什么单独钉：把 Ollama 装在别的端口上是真实用法，而"卸哪个服务的显存"问错地址就是
     一次静默失败（连不上 → 报"释放失败"，用户以为是模型的问题）。
     """
-    from rolecard_agent.core.probes import local_inference_base_url
+    from rolecard_agent.core.telemetry.probes import local_inference_base_url
 
     native = Settings(
         model_backends={

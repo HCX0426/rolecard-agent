@@ -28,7 +28,6 @@ from langchain_core.tools import tool
 from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.base.observability import NullTracer
 from rolecard_agent.config import ModelBackend, Settings
-from rolecard_agent.core import probes
 from rolecard_agent.core.nodes import (
     MAX_TOOL_RETRIES,
     TOOL_DENIED,
@@ -45,6 +44,7 @@ from rolecard_agent.core.nodes import (
     turn_context,
 )
 from rolecard_agent.core.prompts import VOICE_DEPTH_PROMPT
+from rolecard_agent.core.telemetry import probes
 from rolecard_agent.core.tools.errors import ToolExecutionError  # noqa: F401 - 文档化分界用
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.core.tools.web import WebToolError

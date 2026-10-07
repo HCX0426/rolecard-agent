@@ -30,7 +30,7 @@ from rolecard_agent.core.memory import (
     memory_for_turn,
     render_memory,
 )
-from rolecard_agent.core.migrations import MIGRATION_PLAN
+from rolecard_agent.core.storage.migrations import MIGRATION_PLAN
 from rolecard_agent.storage.db import bootstrap, connect
 
 OLD_ITEM_TABLE = """

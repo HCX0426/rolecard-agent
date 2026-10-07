@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 
 from rolecard_agent.base.identity import DEFAULT_TENANT_ID, DEFAULT_USER_ID
-from rolecard_agent.core.checkpointer import make_checkpointer
+from rolecard_agent.core.storage.checkpointer import make_checkpointer
 from rolecard_agent.features import sync_service
 from rolecard_agent.storage.db import bootstrap, connect
 

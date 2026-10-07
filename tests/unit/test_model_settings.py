@@ -15,7 +15,6 @@ from __future__ import annotations
 import pytest
 
 from rolecard_agent.config import ModelBackend, Settings
-from rolecard_agent.core.migrations import MIGRATION_PLAN, SHAPE_TABLES
 from rolecard_agent.core.model_settings import (
     UNASSIGNED_USAGE,
     ModelSettingsError,
@@ -25,6 +24,7 @@ from rolecard_agent.core.model_settings import (
     unmanaged_backend_columns,
     validate_base_url,
 )
+from rolecard_agent.core.storage.migrations import MIGRATION_PLAN, SHAPE_TABLES
 from rolecard_agent.storage.db import bootstrap, connect, reconcile_columns
 
 # 这台实例的主人 = 默认那份（M2d）：模型凭据组现在有归属，读写都要交出它是谁。

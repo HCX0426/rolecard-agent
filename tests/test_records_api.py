@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from rolecard_agent.api.main import create_app
-from rolecard_agent.core.ingestion import IngestionService
+from rolecard_agent.core.ingest.ingestion import IngestionService
 from rolecard_agent.domains.health import records as records_router
 from rolecard_agent.domains.health.service import HealthQueryService
 from rolecard_agent.storage.db import bootstrap, connect

@@ -91,7 +91,7 @@ def test_dedupe_ingestion_removes_duplicates_keeps_latest(tmp_path) -> None:
     """
     import sqlite3
 
-    from rolecard_agent.core.migrations import dedupe_ingestion_tasks
+    from rolecard_agent.core.storage.migrations import dedupe_ingestion_tasks
 
     conn = sqlite3.connect(tmp_path / "legacy.db")
     conn.row_factory = sqlite3.Row

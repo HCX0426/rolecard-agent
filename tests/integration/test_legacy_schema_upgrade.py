@@ -20,12 +20,12 @@ from pathlib import Path
 
 import pytest
 
-from rolecard_agent.core.migrations import MIGRATION_PLAN, SHAPE_TABLES
 from rolecard_agent.core.model_settings import (
     ModelSettingsService,
     _tools_of,
     _vision_of,
 )
+from rolecard_agent.core.storage.migrations import MIGRATION_PLAN, SHAPE_TABLES
 from rolecard_agent.domains.registry import DOMAINS
 from rolecard_agent.storage.db import (
     SCHEMA_VERSION,

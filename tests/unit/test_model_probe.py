@@ -27,7 +27,7 @@ from rolecard_agent.core.model_probe import (
     resolve_target,
 )
 from rolecard_agent.core.model_settings import ModelSettingsError, ModelSettingsService
-from rolecard_agent.core.probes import _CAP_CACHE  # noqa: PLC2701 - 探针缓存要用例自己清
+from rolecard_agent.core.telemetry.probes import _CAP_CACHE  # noqa: PLC2701 - 探针缓存要用例自己清
 from rolecard_agent.storage.db import bootstrap, connect
 
 # 探测花的是谁的凭据（M2d）：主人不交出来就连自己的组也查不到。

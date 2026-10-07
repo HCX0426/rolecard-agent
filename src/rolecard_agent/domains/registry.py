@@ -31,7 +31,7 @@ from rolecard_agent.domains.spec import DomainSpec, DomainToolContext
 
 if TYPE_CHECKING:
     from rolecard_agent.core.domain_service import DomainQueryService
-    from rolecard_agent.core.ingestion import IngestionService
+    from rolecard_agent.core.ingest.ingestion import IngestionService
     from rolecard_agent.core.tools.builtin import DomainsLike
     from rolecard_agent.core.tools.registry import ToolRegistry
     from rolecard_agent.rag.retriever import KnowledgeBase

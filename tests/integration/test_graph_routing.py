@@ -24,11 +24,11 @@ from langchain_core.tools import tool
 from rolecard_agent.base.identity import DEFAULT_USER_ID, active_user_id
 from rolecard_agent.base.observability import NullTracer
 from rolecard_agent.config import Settings
-from rolecard_agent.core.checkpointer import make_checkpointer
 from rolecard_agent.core.graph import build_kernel
-from rolecard_agent.core.migrations import MIGRATION_PLAN
 from rolecard_agent.core.plugins import PluginService
 from rolecard_agent.core.state import new_state
+from rolecard_agent.core.storage.checkpointer import make_checkpointer
+from rolecard_agent.core.storage.migrations import MIGRATION_PLAN
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.domains.registry import domain_seed_roles
 from rolecard_agent.roles.models import RoleCardCreate

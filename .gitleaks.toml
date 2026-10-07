@@ -1,0 +1,51 @@
+# gitleaks 放行清单（ENGI-15 ②）。
+#
+# 设计原则（与 ① 依赖审计的「豁免表即凭证」同一套纪律）：
+#   * 这里列出的每一项都是**已确认无害**的形状 —— 要么是 .env.example 里的空值/占位，
+#     要么是文档里的示例 endpoint，要么是测试 fixture 的假 token / data URL。
+#   * 放行**只按形状**，不按「这个 key 我认识」：任何不在下面形状里的真实密钥，
+#     仍然会被 gitleaks 抓出来（fail-closed）。
+#   * 不要为「省事」把某把真 key 的形状加进来 —— 那是把红线开洞。真要放行，
+#     先确认它是 fixture / 文档样例 / 公开 endpoint 三者之一。
+#   * 改完这一份要**两臂变异实测照红**（删一条放行→该形状红；加一条假放行→确认真的漏网）。
+#
+# 说明：本仓经 git grep 全量核查，tracked 文件里**没有**任何真密钥
+# （无 sk-/ghp_/AKIA 等实时字符串、无 PEM 私钥文件、无 .env 入库）。所以下面
+# 的 allowlist 纯粹是「挡住默认规则对良性内容的误报」，不是隐蔽真密钥。
+
+title = "rolecard-agent gitleaks 放行清单"
+
+[extend]
+# 继承 gitleaks 官方默认规则集（含 generic-api-key / private-key / aws / github / 等）。
+# 我们只用 allowlist 收窄误报，不重写 detector 本身 —— detector 写错了会漏报真密钥。
+useDefault = true
+
+# 关闭「通用 API key」这一条：本项目所有真凭据来源（Ollama 本地 / 云端后端凭证明文只写不回读）
+# 都不会以 gitleaks 默认能识别的「赋值给 *_KEY / *_TOKEN 变量名」形状出现；开启它只会
+# 在 .env.example 与各类文档示例上刷一堆假阳。真密钥靠下面 allowlist 挡不住的其它规则兜底。
+[[rules]]
+id = "generic-api-key"
+description = "本项目关闭默认 generic-api-key（凭据不以此形状入库，留其它规则兜底真密钥）"
+allowed = true
+
+[global]
+# 全局放行：正则命中即**整行/整块**不当密钥。下面每条都配注释说明它挡的是哪类良性内容。
+allowlist = [
+    # .env.example 的空值行：AUTH_CREDENTIALS= / SILICONFLOW_API_KEY= / TAVILY_API_KEY= 等
+    # 等号后为空，不是密钥。
+    '''^[A-Z_]+=$''',
+    # .env.example 里「=空」之外的占位形状：api_key":"" / base_url":"https://... 等文档样例。
+    '''api_key"?\s*[:=]\s*""?''',
+    # 文档/示例里的公开 endpoint（不含任何 key）：deepseek / siliconflow / saucenao / arxiv / wikipedia。
+    '''https?://(api\.deepseek\.com|api\.siliconflow\.cn|siliconflow|saucenao\.com|arxiv\.org|wikipedia\.org)[^\s"']*''',
+    # CI 里出现的假凭证（docker job / release 的 ci-user:ci-pass、sk-ci-not-a-real-key）：
+    # 这些是测试夹具，绝不可当真。
+    '''(ci-user|ci-pass|sk-ci-not-a-real-key|operator:ci)''',
+    # 数据 URL 占位（前端/测试里 image_search 的 data:image/...;base64,XXXX 形），长 base64 块
+    # 会触发 private-key / base64 规则，但这是内嵌图片、不是密钥。
+    '''data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+''',
+    # 测试 fixture 里的假 token 形状（如 "Bearer fake-jwt..."、test_token、dummy_token）。
+    '''(test_token|dummy_token|fake[-_]?token|not-a-real)''',
+    # 已知公开示例域名（docker-compose 的 chat.example.invalid、example.com）。
+    '''(example\.invalid|example\.com)''',
+]
