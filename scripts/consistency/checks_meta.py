@@ -272,10 +272,17 @@ def check_changelog() -> None:
     pyproject = ROOT / "pyproject.toml"
     version = None
     if pyproject.exists():
-        found = re.search(
-            r'(?m)^version = "([^"]+)"', pyproject.read_text(encoding="utf-8")
-        )
-        version = found.group(1) if found else None
+        # 走 tomllib 而不是 `re.search(r'^version = "…"')`（P3-9「tomllib 化」）：
+        # 正则要求**行首零缩进**且恰好是双引号 —— 版本一旦缩进、换单引号、或别的表里
+        # 先出现一个 `version = …`，它要么匹配错那一格，要么干脆匹配不到而**静默返回
+        # None**（于是这一条"版本必须有 CHANGELOG 节"就变成了恒绿 —— 判据变摆设，
+        # 与 `_imported_modules` AST 化那次是同一个坑）。按 TOML 结构读 `[project].version`
+        # 才是在问"这一格的值"，而不是在文本里找一个长得像的行。
+        try:
+            parsed = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+            version = parsed.get("project", {}).get("version")
+        except (tomllib.TOMLDecodeError, OSError):
+            version = None
     if not path.exists():
         problems.append("CHANGELOG.md 不见了（版本改了却没有变更史）")
     else:
