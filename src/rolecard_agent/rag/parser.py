@@ -176,19 +176,25 @@ def _reject_doctype(xml: bytes, part: str) -> None:
 
 
 def _xml_root(xml: bytes, *, part: str = "?") -> ET.Element:
-    """解析 XML 部件：先拒声明，再解析。规模上限见 `_open_ooxml`。"""
+    """解析 XML 部件：先拒声明，再解析。规模上限见 `_open_ooxml`。
+
+    `part` 两处的报错都用它 —— 从前只有 `_reject_doctype` 用了，损坏那支的消息漏了它，
+    于是"是哪个文件坏了"这个唯一可操作的信息在最常见的失败里反而丢掉（补错误路径用例
+    时按 docstring 的许诺断言，当场撞红）。
+    """
     _reject_doctype(xml, part)
     try:
         return ET.fromstring(xml)
     except ET.ParseError as exc:
-        raise ParseError(f"OOXML 部件 XML 损坏：{exc}") from exc
+        raise ParseError(f"OOXML 部件 {part} XML 损坏：{exc}") from exc
 
 
 def _text_from_xml(xml: bytes, *, para_tag: str, text_tag: str, part: str) -> str:
     """按段落聚合：每段落内所有 <t> 顺序拼接为一行，丢弃空段落。docx 与 pptx 共用此式。
 
-    `part` 只用于报错信息：出问题时告诉操作员**是哪个部件**有问题，比一句
-    "OOXML 部件 XML 损坏" 有用得多。
+    `part` 只用于报错信息：DTD 拒绝与 XML 损坏两条消息都带上它（补错误路径用例时发现
+    "损坏"那支从前漏传了 —— 于是"是哪个部件坏了"这个唯一可操作的信息，反而在最常见的
+    那种失败里丢掉）。告诉操作员**是哪个部件**有问题，比一句笼统的"XML 损坏"有用得多。
     """
     lines: list[str] = []
     for para in _xml_root(xml, part=part).iter(para_tag):
@@ -260,16 +266,6 @@ def _parse_xlsx(p: Path) -> str:
                 if s:
                     lines.append(s)
     return "\n".join(lines)
-
-
-def _default_ocr_python() -> str | None:
-    """向后兼容别名：路径发现已下沉到 base.paths（M10 解耦 core→rag）。
-
-    新代码请直接用 `from rolecard_agent.base.paths import default_ocr_python`。
-    """
-    from rolecard_agent.base.paths import default_ocr_python as _impl
-
-    return _impl()
 
 
 def _parse_image(

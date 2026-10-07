@@ -460,3 +460,240 @@ def test_a_literal_doctype_in_escaped_text_is_not_mistaken_for_markup(tmp_path: 
     f.write_bytes(_zip_bytes({"word/document.xml": doc}))
     out = parse_document(f)
     assert "DOCTYPE" in out  # 文本被正常抽出（转义还原）
+
+
+# -- 失败路径补测（覆盖率基线点名的 parser 84%）：形状各不相同，不能互相顶替 --------------
+
+
+def test_pdf_internal_error_becomes_readable_and_keeps_cause(tmp_path: Path) -> None:
+    """PDF 坏了（加密 / 内部错）⇒ `ParseError` 带原因，而且**原始异常留在 __cause__**。
+
+    包成可读消息是为了给用户看；留下 cause 是为了运维能查到真因 —— 两者缺一个都是缺陷：
+    只有 cause 用户看到 traceback，只有消息运维查不到 pypdf 到底说了什么。
+    """
+    broken = tmp_path / "broken.pdf"
+    broken.write_bytes("这不是一个真的 PDF 结构".encode() + b"\x00" * 200)
+    with pytest.raises(ParseError) as got:
+        parse_document(broken)
+    assert "PDF 解析失败" in str(got.value), str(got.value)
+    assert got.value.__cause__ is not None, "真因不许被抹掉"
+
+
+def test_pypdf_import_missing_says_which_requirements(tmp_path: Path, monkeypatch) -> None:
+    """没装 pypdf ⇒ 报错要指名装哪一份 requirements，而不是裸 ModuleNotFoundError。
+
+    这一族在本仓出现过（OCR / chromadb / mcp 都有同一条"给下一步"的约定）：用户看到
+    `No module named pypdf` 不知道要装 `requirements-rag.txt`，就会以为程序坏了。
+    用真实 import 机制（`builtins.__import__` 拦截）而不是 patch 一个模块内的假函数 ——
+    那样测的是"我 patch 了什么"，不是"没装时会怎样"。
+    """
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):  # noqa: ANN001, ANN003
+        if name == "pypdf" or name.startswith("pypdf."):
+            raise ImportError(f"No module named {name!r}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(_make_pdf_bytes("ASCII only"))  # 这个 helper 的流是 latin-1 编码
+    with pytest.raises(ParseError) as got:
+        parse_document(f)
+    assert "requirements-rag.txt" in str(got.value), str(got.value)
+
+
+def test_zip_bomb_ratio_rejected_before_any_decompression(tmp_path: Path) -> None:
+    """zip 炸弹的压缩比那一臂：总 uncompressed 没超 64MB，但**比例**超限也要拒。
+
+    两条判据（绝对大小 / 压缩比）各测一次：只测绝对大小，攻击者就压一个 3MB 的 zip
+    解出 600MB（比例 200x 以下、总量没爆）—— 而那正是这类攻击的常规形状，
+    因为攻击者控制的恰恰是比例。
+    """
+    body = "A" * (4 * 1024 * 1024)  # 高度可压缩：几 KB 存 4MB
+    f = tmp_path / "bomb.docx"
+    f.write_bytes(_make_docx_bytes([body]))
+    with pytest.raises(ParseError) as got:
+        parse_document(f)
+    assert "解压规模异常" in str(got.value) and "压缩比" in str(got.value), str(got.value)
+
+
+def test_malformed_ooxml_part_reports_which_part_broke(tmp_path: Path) -> None:
+    """OOXML 部件 XML 损坏 ⇒ 报错里要带**部件名**（三个文件的部件名各不同）。
+
+    "OOXML 部件 XML 损坏"这种笼统一句等于没说：用户不知道该重导哪个文件，运维不知道
+    去哪一层查。部件名是唯一能指向真因的东西。
+    """
+    docx = tmp_path / "坏.docx"
+    docx.write_bytes(
+        _zip_bytes(
+            {
+                "word/document.xml": '<w:document xmlns:w="urn:w"><w:p><w:t>没闭合',
+            }
+        )
+    )
+    with pytest.raises(ParseError) as got:
+        parse_document(docx)
+    assert "XML 损坏" in str(got.value) and "word/document.xml" in str(got.value), str(got.value)
+
+
+def test_pptx_without_any_slide_is_rejected_naming_the_missing_layout(tmp_path: Path) -> None:
+    """pptx 里没有 slide 部件（改了扩展名的 docx 就是这形状）⇒ 要说清缺什么。"""
+    f = tmp_path / "空.pptx"
+    f.write_bytes(_zip_bytes({"word/document.xml": "<x/>"}))
+    with pytest.raises(ParseError, match="没有 ppt/slides"):
+        parse_document(f)
+
+
+def test_xlsx_without_any_sheet_is_rejected_naming_the_missing_layout(tmp_path: Path) -> None:
+    f = tmp_path / "空.xlsx"
+    f.write_bytes(_zip_bytes({"xl/workbook.xml": "<x/>"}))
+    with pytest.raises(ParseError, match="没有 xl/worksheets"):
+        parse_document(f)
+
+
+def test_xlsx_inline_strings_are_read_when_there_is_no_shared_table(tmp_path: Path) -> None:
+    """内联字符串（少数写入器的形状）：没有 `sharedStrings.xml` 也要抽得出文本。
+
+    只测共享表那条路的话，"内联"那一支就是死代码 —— 而它遇到的是真实文件
+    （部分导出器与 Google Sheets 的某些导出形状）。空串那格也要过：不许往结果里
+    塞空行（索引侧会把空段落当成有内容的块）。
+    """
+    sheet = (
+        '<?xml version="1.0"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        "<sheetData><row><c t=\"inlineStr\"><is><t>收缩压</t></is></c>"
+        "<c t=\"inlineStr\"><is><t></t></is></c>"
+        "<c t=\"inlineStr\"><is><t>118</t></is></c></row></sheetData></worksheet>"
+    )
+    f = tmp_path / "内联.xlsx"
+    f.write_bytes(_zip_bytes({"xl/worksheets/sheet1.xml": sheet}))
+    assert parse_document(f) == "收缩压\n118"
+
+
+def test_empty_paragraphs_are_dropped_from_both_office_paths(tmp_path: Path) -> None:
+    """空段落与"只含空白的段落"两条支路都要走到：`if line:` 的假侧。
+
+    空行留在结果里，索引侧会把空块当成有内容的分块（检索命中一条空文本，
+    而用户看到的是"搜什么都有一条空结果"）。docx 与 pptx 共用同一个函数，
+    两边各测一次 —— 只测一个的话另一边的调用改了也不会有人红。
+    """
+    docx = tmp_path / "空段.docx"
+    docx.write_bytes(_make_docx_bytes(["有内容", "", "   ", "也有内容"]))
+    assert parse_document(docx) == "有内容\n也有内容"
+
+    pptx = tmp_path / "空页.pptx"
+    pptx.write_bytes(_make_pptx_bytes([["第一页"], ["   ", ""], ["第三页"]]))
+    assert parse_document(pptx) == "第一页\n\n第三页"
+
+
+def test_pptx_part_that_is_not_a_slide_is_ignored(tmp_path: Path) -> None:
+    """`slideLayout*.xml` 之类不该混进 slide 名单（`fullmatch`，不是 `search`）。
+
+    只用前缀匹配的话，母版/版式的 XML 会被当成一页抽进正文 —— 那带来的是**静默**的
+    重复内容，检索命中一堆模板文字，而没有任何一处会红。
+    """
+    a_ns = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    p_ns = "http://schemas.openxmlformats.org/presentationml/2006/main"
+    one = (
+        '<?xml version="1.0"?>'
+        f'<p:sld xmlns:a="{a_ns}" xmlns:p="{p_ns}">'
+        "<p:cSld><p:spTree><p:sp><p:txBody>"
+        "<a:p><a:r><a:t>{}</a:t></a:r></a:p>"
+        "</p:txBody></p:sp></p:spTree></p:cSld></p:sld>"
+    )
+    files = {
+        "ppt/slides/slide1.xml": one.format("真的一页"),
+        # 名字里也含 "slide"，但不是 slide<N>.xml：不许被当成一页抽进正文
+        "ppt/slideLayouts/slideLayout1.xml": one.format("模板文字不该进来"),
+    }
+    f = tmp_path / "混版式.pptx"
+    f.write_bytes(_zip_bytes(files))
+    out = parse_document(f)
+    assert out == "真的一页", out
+
+
+def test_parse_image_generic_backend_failure_becomes_parse_error(tmp_path: Path) -> None:
+    """后端抛来的意外异常（不是 OcrUnavailable / ParseError）⇒ 统一成可读的"OCR 失败"。
+
+    两条已知的路本来就该原样透（上面两个用例已经钉过）；这一条钉的是第三条：
+    调用方只认 `ParseError`，让一个裸 AttributeError 冒出去就变成没有说明的 500。
+    """
+
+    class _Surprise:
+        def available(self) -> bool:
+            return True
+
+        def ocr(self, _p: Path) -> str:
+            raise AttributeError("后端内部坏了")
+
+    img = tmp_path / "scan.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    with pytest.raises(ParseError, match="OCR 失败"):
+        parse_document(img, backend=_Surprise())  # type: ignore[arg-type]
+
+
+def test_ocr_backend_that_reports_unavailable_is_not_called(tmp_path: Path) -> None:
+    """`available()` 为假时**根本不该去调 ocr()**：那是"未配置"与"配置了但坏了"的分界。
+
+    分界混掉的后果是上传端点把 pending 报成 failed（用户以为文件有问题，其实是没装 OCR）。
+    """
+    calls: list[str] = []
+
+    class _Unavailable:
+        def available(self) -> bool:
+            return False
+
+        def ocr(self, _p: Path) -> str:
+            calls.append("不该被调用")
+            return ""
+
+    img = tmp_path / "scan.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    with pytest.raises(OcrUnavailable):
+        parse_document(img, backend=_Unavailable())  # type: ignore[arg-type]
+    assert calls == [], "不可用的后端被调用了：降级与失败两格就混了"
+
+
+def test_backend_that_goes_away_mid_call_stays_a_degradation(tmp_path: Path) -> None:
+    """`available()` 说行、`ocr()` 才发现不行 ⇒ 仍是 `OcrUnavailable`，**不许被改写成 ParseError**。
+
+    这不是假想的形状：独立 OCR venv 可以在检查与调用之间被卸载/重装（装机版升级、
+    `.venv-ocr` 被清理）。两格的差别是有下游后果的 —— `OcrUnavailable` 让上传留在 pending
+    （等 OCR 回来再读），`ParseError` 直接把那份文件标成失败并告诉用户"读不出来"。
+    把前者折叠成后者，就是"其实只是没装好"被报成"你的文件有问题"。
+    """
+    from rolecard_agent.rag.errors import OcrUnavailable as _OcrGone
+
+    class _Vanishing:
+        def available(self) -> bool:
+            return True
+
+        def ocr(self, _p: Path) -> str:
+            raise _OcrGone("worker 没了")
+
+    img = tmp_path / "scan.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    with pytest.raises(OcrUnavailable, match="worker 没了"):
+        parse_document(img, backend=_Vanishing())  # type: ignore[arg-type]
+
+
+def test_backend_parse_error_passes_through_untouched(tmp_path: Path) -> None:
+    """后端自己给的 `ParseError`（已经带人话原因）原样透传，不再套一层"OCR 失败"。
+
+    与 round 13 在 ocr.py 那条同一个道理：套一层会把真原因包成第二句更笼统的话。
+    """
+
+    class _Fails:
+        def available(self) -> bool:
+            return True
+
+        def ocr(self, _p: Path) -> str:
+            raise ParseError("图里没有任何文字")
+
+    img = tmp_path / "scan.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    with pytest.raises(ParseError) as got:
+        parse_document(img, backend=_Fails())  # type: ignore[arg-type]
+    assert str(got.value) == "图里没有任何文字", str(got.value)
