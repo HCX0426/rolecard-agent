@@ -25,6 +25,7 @@ Usage:
 
 from __future__ import annotations
 
+import importlib
 import sys
 import types
 
@@ -37,11 +38,39 @@ from consistency.registry import CHECKS
 
 
 class _ForwardingModule(types.ModuleType):
-    """读与写都转发到 checks：既有测试不止**读**属性（``cc._png_corner_alphas``），还
-    **写**（``monkeypatch.setattr(cc, "ROOT", repo)``、``cc.out = …``）—— 只转发读，
-    替身就打不到判据真正住的那一侧，测试会假绿。按"checks 里已有这个名字就写过去"
-    分流，其余照常落在本模块（main/CHECKS 等自己的名字）。
+    """读与写都转发到判据真正住的那些模块。
+
+    既有测试不止**读**属性（``cc._png_corner_alphas``），还**写**
+    （``monkeypatch.setattr(cc, "ROOT", repo)``、``cc.out = …``、``cc.fails.clear()``）——
+    只转发读，替身就打不到判据那一侧，测试会假绿。
+
+    **P3-9 按主题细分之后，写必须广播**：判据正文散在 `checks_install` / `checks_audit`
+    / … 八个模块里，每个模块 `from .core import ROOT, fails, out` 是**把名字绑进自己的
+    命名空间** —— 只改 `checks`（聚合面）或只改 `.core`（对象持有者），`check_app_icon_frames`
+    读到的仍是它自己模块里那个旧 `ROOT`。所以：凡是名字出现在这些模块里的，逐个写过去；
+    一个都没有才落在本模块（main/CHECKS 等自己的名字）。
     """
+
+    def _targets(self) -> list:
+        import consistency.core as _core
+
+        mods = [_core]
+        for name in (
+            "checks",
+            "checks_audit",
+            "checks_config",
+            "checks_docs",
+            "checks_domain",
+            "checks_install",
+            "checks_meta",
+            "checks_runtime",
+            "checks_storage",
+        ):
+            try:
+                mods.append(importlib.import_module(f"consistency.{name}"))
+            except Exception:  # noqa: BLE001 - 少一个族不该让转发整个炸掉
+                continue
+        return mods
 
     def __getattr__(self, name: str):  # PEP 562
         import consistency.checks as _checks
@@ -49,11 +78,12 @@ class _ForwardingModule(types.ModuleType):
         return getattr(_checks, name)
 
     def __setattr__(self, name: str, value: object) -> None:
-        import consistency.checks as _checks
-
-        if hasattr(_checks, name):
-            setattr(_checks, name, value)
-        else:
+        wrote = False
+        for mod in self._targets():
+            if hasattr(mod, name):
+                setattr(mod, name, value)
+                wrote = True
+        if not wrote:
             super().__setattr__(name, value)
 
 

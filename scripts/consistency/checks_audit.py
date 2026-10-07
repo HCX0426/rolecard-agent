@@ -333,6 +333,13 @@ def _git_ignored(refs: list[str]) -> tuple[set[str], bool]:
     lines = proc.stdout.decode("utf-8", "replace").splitlines()
     return {line.strip().replace("\\", "/") for line in lines if line.strip()}, True
 
+# User stories that are explicitly NOT covered by automated tests yet. They are deferred to a
+# later milestone, not forgotten - the traceability check still requires them to be *named* here
+# so the gap stays visible (技术评审与决策.md §9 D3).
+# US-9 (console frontend) was covered once M5 landed -> removed from this set (2026-09-15).
+# US-6 (quick reproduce: 3 commands / lock file / demo video) still has no *test*; the non-video
+# parts are guarded by readme_quickstart / dependency_parity / python_pin, and the 60s demo
+# video was dropped by decision (2026-09-15).
 DEFERRED_US = {"US-6"}
 
 #: 用户看得见的字面里不许再出现的词（`R28-45` 的事后闸）。判据分两半，各用**各自的精确信号**：
@@ -432,6 +439,9 @@ _CITATION_DOC_KEYS: tuple[tuple[str, frozenset[str]], ...] = (
 )
 _SECTION_RE = re.compile(r"§\s*(\d+(?:\.\d+)*)")
 
+# `[RP]\d+-\d+`（`R102-33`）：R 号命名空间（R26/R28/R102…）从来都在被引用，而旧正则只认
+# P 号 —— 95 个文件 290 处引用处于盲区，"有这条检查看着"是假的。宽判据实验（内存里做）：
+# R 号进来后被引用编号 92 个、悬空 2 个（见 _CITATION_PROSE_ONLY），洪峰可控。
 _PID_RE = re.compile(r"\b([RP]\d+-\d+)\b")
 
 #: 文档里可以当被引用目标的两种形状：标题编号（`### 12.19 …`）与台账行号（`| 12.4 |`）。

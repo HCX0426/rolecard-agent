@@ -237,6 +237,9 @@ def check_startup_env_documented() -> None:
     if missing:
         fails.append(f"undocumented env read by src: {missing}")
 
+# Settings fields that are parsed on purpose but not read yet. Declaring them here is the
+# point: a field that is merely forgotten and a field that is deliberately forward-looking
+# look identical in the source, so the difference has to be written down somewhere.
 RESERVED_SETTINGS = {
     "langsmith_api_key",  # v2.4 cloud observability
     "langsmith_project",  # v2.4 cloud observability
