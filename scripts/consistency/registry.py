@@ -5,16 +5,16 @@
 """
 from __future__ import annotations
 
-from . import checks
+from . import checks, checks_install
 
 CHECKS = (
-    checks.check_pyproject,
-    checks.check_requirements_scope,
+    checks_install.check_pyproject,
+    checks_install.check_requirements_scope,
     checks.check_stale_identifiers,
     checks.check_config_contract,
     checks.check_startup_env_documented,
-    checks.check_dependency_parity,
-    checks.check_spec_runtime_vs_requirements,
+    checks_install.check_dependency_parity,
+    checks_install.check_spec_runtime_vs_requirements,
     checks.check_promised_artifacts,
     checks.check_core_no_domain_token,
     checks.check_api_domain_seams,
@@ -52,9 +52,9 @@ CHECKS = (
     checks.check_dead_config,
     checks.check_dependency_layering,
     checks.check_env_example_models,
-    checks.check_installer_scope,
-    checks.check_lockfile_parity,
-    checks.check_capability_matrix,
+    checks_install.check_installer_scope,
+    checks_install.check_lockfile_parity,
+    checks_install.check_capability_matrix,
     checks.check_ci_host_python_stdlib_only,
     checks.check_artifact_single_source,
     checks.check_single_source_literals,
