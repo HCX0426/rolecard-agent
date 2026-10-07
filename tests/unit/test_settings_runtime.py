@@ -1,9 +1,15 @@
 """运行环境只读视图（GET /api/settings/runtime）的单元测试。
 
-验证三点：密钥只出掩码不出明文；分组齐全；与默认不同的行有 changed 标记。
+验证五点：密钥只出掩码不出明文；分组齐全；与默认不同的行有 changed 标记；
+**渲染与冻结金样逐字节一致**；**注册表新条目自动进视图**（单注册表的两把守卫）。
 """
 
 from __future__ import annotations
+
+import json
+import pathlib
+
+import pytest
 
 from rolecard_agent.api.routers.settings import runtime_payload
 from rolecard_agent.config import ModelBackend, Settings
@@ -111,3 +117,51 @@ def test_file_watch_row_editable_in_reachout_group() -> None:
     assert rows["FILE_WATCH_ENABLED"]["kind"] == "bool"
     assert rows["FILE_WATCH_ENABLED"]["field"] == "file_watch_enabled"
     assert rows["FILE_WATCH_ENABLED"]["default"] == rows["FILE_WATCH_ENABLED"]["value"]
+
+
+# -- 单注册表：派生视图的两把守卫 ----------------------------------------------------------
+
+
+def test_runtime_view_matches_frozen_golden() -> None:
+    """**渲染快照不变**：视图从手写清单改为注册表派生，payload 必须逐字节等价。
+
+    金样是迁移前的 HEAD 代码导出的（`runtime_view_golden.json`，11 组 32 行）。行序、
+    label、note、kind、choices 全在其中 —— 派生实现错任何一处（顺序、只读标记、动态
+    文案）这里就红。**有意变更界面时**重新导出金样并在同一笔提交里把 diff 说清楚：
+    金样是"这一页长什么样"的合同，不是绊脚石。
+    """
+    golden_path = pathlib.Path(__file__).parent / "runtime_view_golden.json"
+    golden = json.loads(golden_path.read_text(encoding="utf-8"))
+    now = runtime_payload(Settings())
+    assert now == golden, (
+        "运行环境视图与冻结金样不一致 —— 是注册表派生错了，还是有人有意改了界面"
+        "（后者请同笔更新金样并写明变更）"
+    )
+
+
+def test_a_new_registry_entry_reaches_the_view_without_touching_the_router(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """验收「新增配置项只改 config.py + FieldSpec 两处」的机器化那一半。
+
+    从前手写第三份行清单在 settings.py：新增字段漏改它，页面只是**静默缺一行**，
+    没有任何信号。现在行由注册表派生 —— 这条用例往注册表末尾塞一个新条目（模拟
+    "config.py 里已有字段 + FieldSpec 登记"这两处），断言视图**自己**多出这一行。
+    """
+    from rolecard_agent.core import runtime_settings as rs
+
+    extra = rs.FieldSpec(
+        "max_image_bytes",
+        "MAX_IMAGE_BYTES",
+        "int",
+        label="图片大小上限",
+        note="上传原图的字节上限",
+        group="limit",
+    )
+    monkeypatch.setattr(rs, "RUNTIME_FIELDS", rs.RUNTIME_FIELDS + (extra,))
+    payload = runtime_payload(Settings())
+    groups = {g["key"]: g for g in payload["groups"]}  # type: ignore[index]
+    rows = {r["key"]: r for r in groups["limit"]["items"]}  # type: ignore[index]
+    assert "MAX_IMAGE_BYTES" in rows, "新登记的条目没出现在视图里 —— 视图还在手抄？"
+    assert rows["MAX_IMAGE_BYTES"]["label"] == "图片大小上限"
+    assert rows["MAX_IMAGE_BYTES"]["kind"] == "int"

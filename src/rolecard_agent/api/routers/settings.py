@@ -464,265 +464,49 @@ def runtime_payload(
     """
     overrides = overrides or {}
     defaults = Settings()
+    # 动态文案占位（注册表里目前只有 {ocr_python} 一处）：填当前值，其余 note 一律字面量。
+    dynamic = {"ocr_python": settings.ocr_python or "(自动发现 .venv-ocr)"}
     groups: list[dict[str, object]] = []
-
-    def add(group_key: str, label: str, items: list[tuple[str, str, str, str | None]]) -> None:
-        """items: (settings 字段名, env 键名, 中文名, 说明)。"""
-        rows = []
-        for field, env_key, row_label, note in items:
+    for group_key, group_label in runtime_settings.RUNTIME_GROUPS:
+        rows: list[dict[str, object]] = []
+        for spec in runtime_settings.RUNTIME_FIELDS:
+            if spec.group != group_key or not spec.show:
+                continue
+            field = spec.field
             value = getattr(settings, field)
-            spec = runtime_settings.spec_of(field)
             secret = field in _SECRET_FIELDS
             overridden = field in overrides
             shown = _display(value, secret=secret)
-            # 动态选项源：choices_from="models" → 用户配置的模型名（下拉/勾选不再手打）；
-            # ="backends" → **后端名**（`Settings.model_backends` 的键，即 `resolve_role_model()`
-            # 认的那一份）。两者不能互相顶替：模型列可重名，填错后端名是静默回落默认模型。
+            default_shown = _display(getattr(defaults, field), secret=secret)
             choices: list[str] | None = None
-            if spec and spec.choices:
+            if spec.choices:
                 choices = list(spec.choices)
-            elif spec and spec.choices_from == "models":
+            elif spec.choices_from == "models":
                 choices = model_names or []
-            elif spec and spec.choices_from == "backends":
+            elif spec.choices_from == "backends":
                 choices = sorted(settings.model_backends)
+            note = spec.note
+            for placeholder, current in dynamic.items():
+                note = note.replace("{" + placeholder + "}", current)
             rows.append(
                 {
-                    "key": env_key,
+                    "key": spec.env_key,
                     "field": field,
-                    "label": row_label,
+                    "label": spec.label,
                     "value": shown,
-                    "default": _display(getattr(defaults, field), secret=secret),
-                    "changed": shown != _display(getattr(defaults, field), secret=secret),
-                    # overridden = DB 覆盖在位（≠ changed：env 也可能和出厂默认不同）
+                    "default": default_shown,
+                    # changed = 与出厂默认不同；overridden = DB 覆盖在位（≠ changed：
+                    # env 也可能与出厂默认不同）
+                    "changed": shown != default_shown,
                     "overridden": overridden,
                     # 秘钥永不出明文：覆盖在位时前端输入框只显示占位
                     "override_value": None if (secret or not overridden) else str(overrides[field]),
-                    "kind": spec.kind if spec else "ro",
+                    "kind": spec.kind,
                     "choices": choices,
-                    "note": note or "",
+                    "note": note,
                 }
             )
-        groups.append({"key": group_key, "label": label, "items": rows})
-
-    add(
-        "web",
-        "联网",
-        [
-            (
-                "web_search_enabled",
-                "WEB_SEARCH_ENABLED",
-                "联网总闸",
-                "0 = web_search / web_fetch 一律返回关闭说明",
-            ),
-            (
-                "web_allowed_domains",
-                "WEB_ALLOWED_DOMAINS",
-                "域名白名单",
-                "web_fetch 只允许名单内域名（子域匹配），空 = 不限",
-            ),
-            (
-                "web_search_backend",
-                "WEB_SEARCH_BACKEND",
-                "搜索",
-                "auto=配了 Tavily Key 走云端搜索，否则本地 ddgs",
-            ),
-            (
-                "tavily_api_key",
-                "TAVILY_API_KEY",
-                "Tavily 云端搜索 Key",
-                "本地搜索超时时配它（当前搜索走哪条路看上一行）",
-            ),
-            (
-                "saucenao_api_key",
-                "SAUCENAO_API_KEY",
-                "SauceNAO 反向图搜 Key",
-                "image_search 工具用（识别动漫/插画角色）；不配则该工具返回未配置提示",
-            ),
-        ],
-    )
-    ocr_python = settings.ocr_python or "(自动发现 .venv-ocr)"
-    add(
-        "ocr",
-        "OCR",
-        [
-            ("ocr_python", "OCR_PYTHON", "RapidOCR 解释器", f"RapidOCR 独立解释器：{ocr_python}"),
-            # 「用哪个 OCR 后端 / 云端 OCR 的 key」这里**不再有行**（P1-5 收口）：曾有的
-            # OCR_BACKEND / OCR_API_KEY / OCR_API_URL 三项在生产上从不被读（服务页恒有一条
-            # 启用的内置行 ⇒ 工厂的 env 分支不可达），留着就是三个假开关。
-            # 事实面在「服务」页的 OCR 端点序 + 模型页的云端后端凭据（图片会外发第三方，
-            # 只允许操作员显式配置，绝不从 env 默认启用）。
-        ],
-    )
-    add(
-        "rag",
-        "检索与抽取",
-        [
-            # 嵌入/重排的**选型**同样不在这里：「服务」页的端点序是唯一事实面。
-            # 这里只留一个真正被读的部署值 —— 云端行未填 base_url 时的兜底端点。
-            # 凭据不出现在任何运行环境行里：模型页的 api_key 只写不回读（`has_key` 掩码）。
-            (
-                "siliconflow_base_url",
-                "SILICONFLOW_BASE_URL",
-                "云端嵌入/重排兜底端点",
-                "行内未填 base_url 的云端端点用它兜底；改它需重启（随进程构建）",
-            ),
-            ("extract_backend", "EXTRACT_BACKEND", "抽取用的模型", None),
-            ("extract_verify", "EXTRACT_VERIFY", "抽取校对", None),
-            (
-                "memory_extract_backend",
-                "MEMORY_EXTRACT_BACKEND",
-                "记忆用的模型（提取精华 / 整理记忆）",
-                "空 = 跟随这条会话/角色用的模型。填上一个模型名 = 只把「提取精华」和「整理记忆」"
-                "这两步交给它。实测两边都提得出（同一段八轮对话各 9 / 10 条），所以这不是"
-                '"有没有记忆"的开关，而是取舍：本地一次约 122 秒、云端 10–20 秒，而「整理记忆」'
-                '那个"谁顶替谁"的判断更吃模型强度。**填了才出网**，清空即回到今天的行为。',
-            ),
-        ],
-    )
-    add(
-        "limit",
-        "超时与预算",
-        [
-            ("model_timeout_seconds", "MODEL_TIMEOUT_SECONDS", "模型调用超时（秒）", "0=不限"),
-            (
-                "tool_timeout_seconds",
-                "TOOL_TIMEOUT_SECONDS",
-                "工具执行上限（秒）",
-                "单次工具总时长",
-            ),
-            ("context_max_chars", "CONTEXT_MAX_CHARS", "历史字符预算", "送模型的历史上限"),
-            (
-                "consensus_enabled",
-                "CONSENSUS_ENABLED",
-                "多模型比对总闸",
-                "0 = compare_model_answers 返回关闭说明（一次≈N 次调用，且发给多个供应商）",
-            ),
-        ],
-    )
-    add(
-        "think",
-        "思考模式",
-        [
-            (
-                "model_thinking",
-                "MODEL_THINKING",
-                "思考总开关",
-                "auto=按名单显示 / off=名单内也不显示（只是藏起来：思考照旧发生、那几十秒照旧花）",
-            ),
-            (
-                "model_thinking_models",
-                "MODEL_THINKING_MODELS",
-                "思考模型名单",
-                "名单内模型以 reasoning=True 调用 ⇒ 思考显示在折叠面板；不列名它照样想，只是看不见",
-            ),
-        ],
-    )
-    add(
-        "agent",
-        "对话模式",
-        [
-            (
-                "agent_default_mode",
-                "AGENT_DEFAULT_MODE",
-                "全局默认模式",
-                "chat=一问一答 / agent=多步自主任务（步数上限放大、注入规划指令）",
-            ),
-            (
-                "agent_max_steps",
-                "AGENT_MAX_STEPS",
-                "步数上限（对话档）",
-                "单轮允许的图步数；agent 模式自动翻倍，0=库默认",
-            ),
-        ],
-    )
-    add(
-        "reachout",
-        "主动开口",
-        [
-            (
-                "reachout_enabled",
-                "REACHOUT_ENABLED",
-                "全局总闸",
-                "角色主动找你的总开关；谁真有资格主动看各角色卡的开关",
-            ),
-            (
-                "file_watch_enabled",
-                "FILE_WATCH_ENABLED",
-                "文件事件触发",
-                "开 = 轮询任务目录，有变化时该次开口先说变化（绕间隔一次，静默时段不放松）",
-            ),
-            (
-                "reachout_interval_minutes",
-                "REACHOUT_INTERVAL_MINUTES",
-                "开口间隔（分钟）",
-                "同一角色两次「冒话」的最小间隔（回答和主动开口都算）；保存即热生效，排查时可临时调小",
-            ),
-            (
-                "reachout_merge_days",
-                "REACHOUT_MERGE_DAYS",
-                "收件箱合并窗口（天）",
-                "1/3/7 天：同一角色在一个窗口里的开口折成一行（未读数上角标）。"
-                "**改它在「记忆与任务目录」的主动开口卡**，这里只读——一个设置只有一个写点。",
-            ),
-        ],
-    )
-    add(
-        "run",
-        "命令执行",
-        [
-            (
-                "run_tools_enabled",
-                "RUN_TOOLS_ENABLED",
-                "命令执行总闸",
-                "关掉 = run_command 一律返回关闭说明（1=开，0=关）",
-            ),
-            (
-                "run_approval",
-                "RUN_APPROVAL",
-                "审批模式",
-                "manual=命令要人批准才跑（推荐）；auto=无审批直接跑（仅自研/可信目录用）",
-            ),
-        ],
-    )
-    add(
-        "auth",
-        "访问控制",
-        [
-            ("auth_mode", "AUTH_MODE", "认证模式", "off / auto / on"),
-            ("auth_credentials", "AUTH_CREDENTIALS", "Basic 凭据", None),
-            ("auth_api_keys", "AUTH_API_KEYS", "API Key 列表", None),
-        ],
-    )
-    # 单独一组而不是塞进「访问控制」：那一组是**只读**的（随进程构建，改了要重启），
-    # 而这一条是**可改**的（判据随请求读当前 Settings）。混在一组里，同一个组标题下
-    # 一半能改一半不能，比多一组难读（`R102-58`）。
-    add(
-        "egress",
-        "数据出口",
-        [
-            (
-                "sync_allowed_hosts",
-                "SYNC_ALLOWED_HOSTS",
-                "同步目标允许清单",
-                "上行同步（/api/sync/*）能推到哪些主机，逗号分隔；空 = 只允许本机回环。"
-                "那几条端点属使用者档，开启认证后不在此清单、也不是回环的目的地址一律 403"
-                "（AUTH_MODE=off 时不分档，单机形态逐字不变）",
-            ),
-        ],
-    )
-    add(
-        "obs",
-        "观测",
-        [
-            # 标签里就把"今天只有 local"写出来（09-28 轮 `R28-10`）：这一组是只读展示行，
-            # 但把 "LangSmith Key" 摆在那儿又什么都不说，等于邀请人填一个永远不生效的东西。
-            ("obs_backend", "OBS_BACKEND", "观测（只实现 local）", None),
-            ("obs_emit_raw_text", "OBS_EMIT_RAW_TEXT", "记录原文", None),
-            ("langsmith_project", "LANGSMITH_PROJECT", "LangSmith 项目（未实现）", None),
-            ("langsmith_api_key", "LANGSMITH_API_KEY", "LangSmith Key（未实现）", None),
-        ],
-    )
-
+        groups.append({"key": group_key, "label": group_label, "items": rows})
     return {
         "note": "标「可改」的项在本页保存即热生效（DB 覆盖 env，清空即回落 env 值）；"
         "只读项（认证 / 观测 / 路径 / OCR 解释器）随进程构建，需改 .env 重启。"

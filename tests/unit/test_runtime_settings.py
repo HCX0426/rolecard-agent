@@ -67,6 +67,11 @@ def test_empty_value_clears_override(conn) -> None:
 def test_validation_rejects_all_or_nothing(conn) -> None:
     with pytest.raises(ValueError, match="不支持在线修改"):
         rs.save_overrides(conn, {"sqlite_path": "/x"})
+    # 只读展示行（OCR_PYTHON / AUTH_MODE）**在注册表里**但不在可编辑索引里：
+    # 单注册表改造后这条必须照旧拒绝 —— 展示进册不等于可写（两个索引过滤 ro）。
+    for ro_key in ("OCR_PYTHON", "AUTH_MODE", "OBS_BACKEND"):
+        with pytest.raises(ValueError, match="不支持在线修改"):
+            rs.save_overrides(conn, {ro_key: "x"})
     with pytest.raises(ValueError, match="只支持"):
         rs.save_overrides(conn, {"web_search_backend": "baidu"})
     with pytest.raises(ValueError, match="必须是数字"):
