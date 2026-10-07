@@ -1,0 +1,18 @@
+refactor(一致性): P3-9 解析器化第三格 —— compose 那批认死缩进的正则换成 YAML 子集读法
+
+- 新 `core.simple_yaml`：刻意很小的 YAML 子集读法（缩进映射 / 标量序列 / 引号标量 /
+  `#` 注释）。**刻意不引 PyYAML** —— 它不在任何 requirements 里，判据 import 它会
+  本机绿（.venv 恰好有）、CI 红（按 requirements 装），正是 P2-25 给能力矩阵记过的陷阱。
+- 换掉 `_compose_app_env` 的三条嵌套正则与 `^  app:`/`^      AUTH_MODE:`/
+  `^      AUTH_CREDENTIALS:`/`^      AUTH_EXEMPT_PATHS:`/`^  caddy:` 那批**认死缩进**的抓取：
+  认死缩进 ⇒ 缩进一变就整段取不到而**静默返回空 ⇒ 判据恒绿**（与 _imported_modules、
+  check_changelog 那两次同一个坑）。改为按 `services.<svc>.environment` 这一格取值。
+- 两个真踩到的点：
+  ① 端口 `8000:8000` 冒号后无空格，按 YAML 规矩是**标量**不是映射 —— 判错会把
+     `expose: ["8000"]` 读成 `{"8000": "8000"}`，端口那条尺子读到的形状整个不对。
+  ② 超出子集（流式 `{a: 1}` / 锚点 / 块标量）必须**大声抛**，不能静默收成标量 ——
+     读出错的值还报告正常，比读不出来更坏（第一版正是这么静默收下的，用例当场照出）。
+- 9 支用例钉住上述形状 + 真仓库 compose 必须解析得出 app 段。
+- 验证：全量单测通过；ruff/mypy(60+139)/import-layers(两契约 KEPT)/consistency 67 断言
+  全绿；build_audit_index --check「逐字一致」；deploy env parity 读数与换前一致
+- 余下未动：compose 里几处**跨文件**正则（Caddy 的 reverse_proxy、README 必填变量两问）

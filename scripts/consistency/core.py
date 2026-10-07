@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]  # 本文件住 scripts/consistency/，比旧位置深一层
 
@@ -90,3 +91,118 @@ def out(label: str, ok: bool, detail: str = "") -> None:
     if ok:
         passed += 1
     print(f"{'OK  ' if ok else 'FAIL'} {label}{(' :: ' + detail) if detail else ''}")
+
+
+# --------------------------------------------------------------- YAML subset
+
+
+class YamlSubsetError(ValueError):
+    """文件用了本读法之外的 YAML（锚点/流式/块标量……）—— 宁可大声说不行，不要猜。"""
+
+
+def _strip_comment(line: str) -> str:
+    """去掉行尾 `#` 注释，但认引号（字符串里的 `#` 是数据不是注释）。"""
+    out_chars: list[str] = []
+    quote: str | None = None
+    for ch in line:
+        if quote:
+            out_chars.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in "\"'":
+            quote = ch
+            out_chars.append(ch)
+            continue
+        if ch == "#":
+            break
+        out_chars.append(ch)
+    return "".join(out_chars).rstrip()
+
+
+def _scalar(text: str) -> str:
+    text = text.strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        return text[1:-1]
+    return text
+
+
+def _parse_block(lines: list[tuple[int, str]], indent: int) -> Any:
+    """解析缩进 >= indent 的那一段（映射或序列）。"""
+    # 同一个累加器先当 dict、遇到 `- ` 再变 list —— 这两个形状在运行期互斥（同一层不可能
+    # 又是映射又是序列），但静态上是一个名字两种类型，所以按 Any 累加、出参由调用方判形状。
+    result: Any = {}
+    i = 0
+    while i < len(lines):
+        line_indent, text = lines[i]
+        if line_indent < indent:
+            break
+        if line_indent > indent:
+            raise YamlSubsetError(f"unexpected indentation: {text!r}")
+        if text.startswith("- "):
+            if not isinstance(result, list):
+                if result:
+                    raise YamlSubsetError("mapping and list mixed at the same level")
+                result = []
+            item = text[2:].strip()
+            # YAML 自己的规矩：`key: value` 的冒号后面要有空格（或到行尾）。没有就是数据——
+            # `8000:8000` 是**端口映射这一个标量**，不是映射。判错会把 `expose: ["8000"]`
+            # 读成 `{"8000": "8000"}`，端口那条尺子读到的形状整个不对。
+            if not item.startswith(("\"", "'")) and (": " in item or item.endswith(":")):
+                key, _, val = item.partition(":")
+                result.append({key.strip(): _scalar(val)})
+            else:
+                result.append(_scalar(item))
+            i += 1
+            continue
+        key, sep, val = text.partition(":")
+        if not sep:
+            raise YamlSubsetError(f"expected 'key:' : {text!r}")
+        key = key.strip()
+        body = val.strip()
+        if body:
+            # 流式（`{a: 1}` / `[1, 2]`）、锚点别名（`&x` / `*x`）、块标量（`|` / `>`）
+            # 都不在子集里 —— **必须大声抛**：把它们当标量静默收下，等于读出一个错的值
+            # 还报告正常，比读不出来更坏（这条尺子要防的正是"配了没用"那一族）。
+            if body[0] in "{[" or body.startswith(("&", "*", "|", ">")):
+                raise YamlSubsetError(f"flow/anchor/block scalar not supported: {text!r}")
+            result[key] = _scalar(body)
+            i += 1
+            continue
+        children: list[tuple[int, str]] = []
+        j = i + 1
+        while j < len(lines) and lines[j][0] > indent:
+            children.append(lines[j])
+            j += 1
+        if not children:
+            result[key] = None
+        else:
+            child_indent = min(c[0] for c in children)
+            result[key] = _parse_block(children, child_indent)
+        i = j
+    return result
+
+
+def simple_yaml(text: str) -> dict:
+    """读一个**YAML 子集**文档（缩进映射 / 标量序列 / 引号标量 / `#` 注释）成嵌套 dict。
+
+    为什么不引 PyYAML：它不在任何 requirements 里 —— 判据 import 它会**本机绿（.venv 恰好
+    有）、CI 红（按 requirements 装）**，正是 P2-25 给能力矩阵记过的那个陷阱。为了让一条
+    *尺子*跑起来而加依赖不值当，何况要解析的文件只用到 YAML 的一成。
+
+    **刻意不支持**：锚点/别名、流式 `{a: 1}`、块标量（`|` / `>`）、多文档。哪天真需要，
+    诚实的做法是**把 PyYAML 进 requirements 然后删掉本函数**，而不是悄悄把它长大。
+    """
+    lines: list[tuple[int, str]] = []
+    for raw in text.splitlines():
+        stripped = _strip_comment(raw)
+        if not stripped.strip():
+            continue
+        indent = len(stripped) - len(stripped.lstrip(" "))
+        lines.append((indent, stripped.strip()))
+    if not lines:
+        return {}
+    root = _parse_block(lines, min(i for i, _ in lines))
+    if not isinstance(root, dict):
+        raise YamlSubsetError("document root must be a mapping")
+    return root

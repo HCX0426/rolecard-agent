@@ -15,7 +15,7 @@ import sys
 
 # 跨族共享助手：唯一定义在别的族模块，按「谁在用谁 import」接线（不复制定义）。
 from .checks_audit import _BANNED_USER_VISIBLE  # noqa: F401
-from .core import ROOT, fails, iter_files, out, warns
+from .core import ROOT, fails, iter_files, out, simple_yaml, warns
 
 
 def _div_chain_parts(node: ast.AST) -> list[str]:
@@ -913,19 +913,33 @@ def check_vocabulary() -> None:
 _DEPLOY_REQUIRED_ENV = ("AUTH_MODE", "AUTH_CREDENTIALS", "AUTH_TRUSTED_PROXIES")
 
 
+def _compose_service_env(compose: str, service: str) -> dict[str, object] | None:
+    """`services.<service>.environment` 这一格（按结构取），没有这一段返回 None。
+
+    `None` 与 `{}` 是两件事：前者是"这一段不存在"（调用方该出声），后者是"存在但为空"。
+    旧版正则分不出这两个，取不到就统一返回 []，于是"缺护栏"那一问静默变绿。
+    """
+    doc = simple_yaml(compose)
+    svc = (doc.get("services") or {}).get(service) or {}
+    env = svc.get("environment")
+    return env if isinstance(env, dict) else None
+
+
 def _compose_app_env(compose: str) -> list[str]:
-    """取 `services.app.environment` 那一段里的键名（纯文本解析，不引 yaml 依赖）。
+    """取 `services.app.environment` 那一段里的键名（走 `simple_yaml`，不引 PyYAML）。
 
     为什么不扫全文：compose 的 `environment:` 每个 service 都有一段，而"这个旋钮应用读不读"
     只对 `app` 那一段成立 —— 扫全文会把 Caddy 的 `ROLECARD_DOMAIN` 当成空转旋钮。
+
+    为什么从正则换成按结构取（P3-9「解析器化」的第三格）：旧版是三条正连环环相扣，
+    `app:` 认死两空格、`environment:` 认死四空格、键认死六空格 —— **缩进一变就整段取不到
+    而静默返回 []**，于是"compose 里不许有没人读的旋钮"这条就恒绿了（判据变摆设，与
+    `_imported_modules` / `check_changelog` 那两次同一个坑）。按 `services.app.environment`
+    取是在问"这一格的值"，不是在文本里找一个长得像的行。
+
+    解析不了（用了子集之外的 YAML）时**不静默判绿**：`simple_yaml` 直接抛，比假装没这段更诚实。
     """
-    block = re.search(r"^  app:\n(.*?)(?=^  [a-z_]+:\n|^[a-z])", compose, flags=re.M | re.S)
-    if not block:
-        return []
-    env = re.search(r"^    environment:\n((?:      .+\n?|\s*\n)*)", block.group(1), flags=re.M)
-    if not env:
-        return []
-    return re.findall(r"^      ([A-Z][A-Z0-9_]+):", env.group(1), flags=re.M)
+    return list(_compose_service_env(compose, "app") or {})
 
 
 def check_deploy_env_parity() -> None:
@@ -959,12 +973,15 @@ def check_deploy_env_parity() -> None:
     unknown = sorted(k for k in keys if k not in known)
     if unknown:
         problems.append(f"compose 写了应用不读的旋钮 {unknown}")
-    missing = [k for k in _DEPLOY_REQUIRED_ENV if f"{k}:" not in compose]
+    # 值也是从 `app.environment` 这一格读（不再 `^      AUTH_MODE:` 满文件找）：
+    # 认死六空格的正则既会**匹配到别的服务**同缩进的键，缩进一变又整条取不到而静默判绿。
+    app_env = _compose_service_env(compose, "app") or {}
+    missing = [k for k in _DEPLOY_REQUIRED_ENV if k not in app_env]
     if missing:
         problems.append(f"护栏缺条 {missing}")
-    mode = re.search(r'^      AUTH_MODE:\s*"?([A-Za-z]+)"?', compose, flags=re.M)
-    if mode and mode.group(1) != "on":
-        problems.append(f"AUTH_MODE={mode.group(1)}：反代之后 auto 把所有人都当回环，等于没鉴权")
+    mode = app_env.get("AUTH_MODE")
+    if mode is not None and mode != "on":
+        problems.append(f"AUTH_MODE={mode}：反代之后 auto 把所有人都当回环，等于没鉴权")
     if re.search(r'^\s*-\s*"?8000:\d+', compose, flags=re.M):
         problems.append("应用端口被 publish 到宿主（这一档只许 443 出公网）")
 
@@ -988,10 +1005,10 @@ def check_deploy_env_parity() -> None:
     # —— 10-01 加的四问：这条断言从前**只问键名存不存在**，而"配了没用"这一族缺陷全都住在值里。
     # (a) 口令不许写死在 compose 里。旧写法只查 `AUTH_CREDENTIALS:` 这个子串在不在，
     #     于是把明文口令直接写进这份要进 git 的文件照样绿 —— 那是凭据入库，不是配置。
-    cred_line = re.search(r"^      AUTH_CREDENTIALS:\s*(.+?)\s*$", compose, flags=re.M)
-    if cred_line and not cred_line.group(1).startswith("${"):
+    cred = app_env.get("AUTH_CREDENTIALS")
+    if cred is not None and not str(cred).startswith("${"):
         problems.append(
-            f"AUTH_CREDENTIALS 写的是字面量（{cred_line.group(1)[:16]}…）—— "
+            f"AUTH_CREDENTIALS 写的是字面量（{str(cred)[:16]}…）—— "
             "compose 进 git，口令不许住在里面，必须是 ${ROLECARD_CREDENTIALS:?…} 这种形状"
         )
     # (b) 豁免路径与镜像的存活探针必须指同一条：改了 compose 这一格而 Dockerfile 的
@@ -1013,26 +1030,28 @@ def check_deploy_env_parity() -> None:
         # 用它只会读到"import os,urllib…"这一大坨 —— 第一版就栽在这里，读不出来于是静默跳过）。
         paths = re.findall(r"'(/[A-Za-z0-9_/.\-]+)'", probe_line)
         health_target = paths[-1] if paths else ""
-    exempt = re.search(r'^      AUTH_EXEMPT_PATHS:\s*"?([^"\n]+)"?', compose, flags=re.M)
+    exempt_value = app_env.get("AUTH_EXEMPT_PATHS")
     if not health_target:
         problems.append("Dockerfile 里读不出 HEALTHCHECK 打的是哪条路径 —— 这一问不能静默跳过")
-    elif exempt and health_target not in exempt.group(1):
+    elif exempt_value is not None and health_target not in str(exempt_value):
         problems.append(
-            f"Dockerfile 的 HEALTHCHECK 打 {health_target}，而 compose 只豁免 {exempt.group(1)}"
+            f"Dockerfile 的 HEALTHCHECK 打 {health_target}，而 compose 只豁免 {exempt_value}"
             " —— 那一格一改，容器就永远报 unhealthy 而应用其实好着"
         )
     # (c) Caddyfile 的 `{$NAME}` 占位符必须由 compose 喂给 caddy 那个服务：
     #     键名检查从前**只扫 app 段**，caddy 段整段在范围外，改名漂移没人问。
     caddy_file = ROOT / "deploy" / "Caddyfile"
-    caddy_block = re.search(r"^  caddy:.*?(?=^  \w|\Z)", compose, flags=re.M | re.S)
-    if caddy_file.exists() and caddy_block:
+    # 同样按结构取 `services.caddy.environment`，不再 `^  caddy:` 认死两空格地切块
+    # （缩进一变就切不到而**静默不问**这一格 —— 与上面几处同一个坑）。
+    caddy_env = _compose_service_env(compose, "caddy")
+    if caddy_file.exists() and caddy_env is not None:
         caddy_lines = [
             line
             for line in caddy_file.read_text(encoding="utf-8", errors="ignore").splitlines()
             if not line.lstrip().startswith("#")  # 注释里的 `{$VAR}` 是解释，不是真的插值
         ]
         wanted = set(re.findall(r"\{\$([A-Z][A-Z0-9_]+)", "\n".join(caddy_lines)))
-        given = set(re.findall(r"^      ([A-Z][A-Z0-9_]+):", caddy_block.group(0), flags=re.M))
+        given = set(caddy_env)
         unbound = sorted(wanted - given)
         if wanted and unbound:
             problems.append(f"Caddyfile 用了 ${{{unbound}}}，compose 的 caddy 段没喂这些值")
