@@ -513,6 +513,31 @@ def _runtime_form_marker() -> str:
     return RUNTIME_FORM_ENV
 
 
+def _job_block(text: str, job: str) -> str | None:
+    """ci.yml 里一个 job 的整块（`  <job>:` 起，到下一个同级键为止）；找不到返回 None。
+
+    **刻意不引 PyYAML** —— 矩阵文件头写着的同一条理由：YAML 库不在任何 requirements 里，
+    本机绿 CI 炸就是这么来的。ci.yml 的缩进是稳定的：`jobs:` 下每个 job 键恰好 2 空格，
+    job 体内至少 4 空格，所以"下一个 2 空格的 `键:`"就是块边界；扫描从 `jobs:` 那行开始
+    （`on:` 的子键也是 2 空格，先到先切会切错块）。
+    """
+    lines = text.splitlines()
+    jobs_at = next(
+        (i for i, ln in enumerate(lines) if re.match(r"^jobs:\s*$", ln)), None
+    )
+    if jobs_at is None:
+        return None
+    key = re.compile(rf"^  {re.escape(job)}:\s*(?:#.*)?$")
+    start = next((i for i in range(jobs_at + 1, len(lines)) if key.match(lines[i])), None)
+    if start is None:
+        return None
+    sibling = re.compile(r"^  [A-Za-z0-9_-]+:")
+    for j in range(start + 1, len(lines)):
+        if sibling.match(lines[j]):
+            return "\n".join(lines[start:j])
+    return "\n".join(lines[start:])
+
+
 def check_capability_matrix() -> None:
     """形态 × 能力 × 依赖出处：镜像里有什么、缺什么，由**一份矩阵**说了算。
 
@@ -527,9 +552,13 @@ def check_capability_matrix() -> None:
     一处 import 它，用 YAML 会让本机（.venv 恰好有）绿而 CI（按 requirements 装）在
     import 那一行炸 —— 正是本仓反复挨打的形状。矩阵要的是机器可读，不是某个格式。
 
-    覆盖声明：硬断言只覆盖 **container**（Dockerfile，也就是这一格要管的地方）；
-    installer / dev 两列是矩阵里的数据，等下一刀再接上机器检查（与本仓"起步先落一半、
-    账本写明欠什么"那条规矩一致）。
+    覆盖声明：三个形态**全部**接上机器检查（2026-10-07 收掉"等下一刀"那笔欠）——
+    每个形态的矩阵条目带一个机器可读的 `检查点`（文件 + 可选 job 名），尺子按它去
+    对应位置现读 pip install：container 对整个 Dockerfile，dev/installer 对 ci.yml 里
+    **具名 job 的块**（`_job_block`，纯缩进规则不引 PyYAML）。能力层也从只有容器
+    扩成三列逐格比（`installer`/`dev` 两个布尔从前只是矩阵里的数据，现在各自对着
+    自己形态的实际安装问"有/没有"）。`检查点` 缺失或 job 不在文件里都判红 ——
+    新增形态却不接线，这条路从此走不通。
     """
     path = ROOT / "capability-matrix.json"
     if not path.exists():
@@ -548,7 +577,9 @@ def check_capability_matrix() -> None:
     forms = matrix.get("forms") or {}
     caps = matrix.get("capabilities") or {}
 
-    # 1) 矩阵自检：每一族都得有对应文件、每一形态都得有 requires 与来源。
+    # 1) 矩阵自检：每一族都得有对应文件；每一形态都得有 requires、来源与**检查点**。
+    #    检查点缺失 = 矩阵声明了却没人机器查（白声明）—— 这条正是把"installer/dev 两列
+    #    是纯数据"接成机器检查后留下的反向闸：新增形态却不接线，走不通。
     for family, filename in sorted(families.items()):
         if not (ROOT / filename).exists():
             problems.append(f"矩阵里的族 {family} 指向 {filename}，磁盘上没有这份文件")
@@ -557,29 +588,52 @@ def check_capability_matrix() -> None:
             problems.append(f"形态 {form} 没写 requires（空矩阵等于没有矩阵）")
         if not (spec.get("来源") or "").strip():
             problems.append(f"形态 {form} 没写来源（谁装出来的？）")
+        spot = spec.get("检查点") or {}
+        if not (spot.get("文件") or "").strip():
+            problems.append(f"形态 {form} 没写检查点的文件（矩阵声明了却没人机器查）")
 
-    # 2) 硬断言：容器那一形态，实际装了什么 == 矩阵声明了什么。
-    dockerfile = ROOT / "Dockerfile"
-    if not dockerfile.exists():
-        problems.append("Dockerfile 不见了，容器那一形态无从比对")
-    else:
-        text = dockerfile.read_text(encoding="utf-8", errors="ignore")
+    # 2) 每个形态按自己的检查点现读**实际**装了什么，与 requires 逐族比。
+    #    container 对整个 Dockerfile；dev / installer 对 ci.yml 里具名 job 的块
+    #    （`_job_block`：纯缩进规则，不引 PyYAML —— 理由在矩阵文件头）。
+    installed_by_form: dict[str, set[str]] = {}
+    for form, spec in sorted(forms.items()):
+        spot = spec.get("检查点") or {}
+        rel = (spot.get("文件") or "").strip()
+        if not rel:
+            continue  # 上面已判红
+        path = ROOT / rel
+        if not path.exists():
+            problems.append(f"形态 {form} 的检查点 {rel} 不见了")
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        job = (spot.get("job") or "").strip()
+        where = f"{form} 的检查点 {rel}" + (f" 的 {job} job" if job else "")
+        if job:
+            block = _job_block(text, job)
+            if block is None:
+                problems.append(f"{where} 里找不到这个 job（矩阵漂了）")
+                continue
+            text = block
         try:
-            installed = _installed_families(text, where="Dockerfile")
+            installed = _installed_families(text, where=where)
         except ValueError as exc:
             problems.append(str(exc))
-            installed = set()
-        declared = set((forms.get("container") or {}).get("requires") or [])
+            continue
+        installed_by_form[form] = installed
+        declared = set(spec.get("requires") or [])
         if installed != declared:
             problems.append(
-                "容器实际装 "
-                f"{sorted(installed)}，矩阵声明 {sorted(declared)}"
+                f"形态 {form} 实际装 {sorted(installed)}，矩阵声明 {sorted(declared)}"
                 f"（多出来的：{sorted(installed - declared)}；"
                 f"缺的：{sorted(declared - installed)}）"
             )
-        # 2b) 形态自报那一行也得在：`rag/ocr.py` 的容器文案照它分岔。删了不会有谁当场炸，
-        # 只会让容器里的人重新拿到"装 .venv-ocr / 重打这一包"这种镜像里做不到的建议 ——
-        # 正是这一格当初"静默"的形状，所以它归这条尺子管。
+
+    # 2b) 形态自报那一行也得在：`rag/ocr.py` 的容器文案照它分岔。删了不会有谁当场炸，
+    # 只会让容器里的人重新拿到"装 .venv-ocr / 重打这一包"这种镜像里做不到的建议 ——
+    # 正是这一格当初"静默"的形状，所以它归这条尺子管。（container 专属，与安装清单无关。）
+    dockerfile = ROOT / "Dockerfile"
+    if dockerfile.exists():
+        text = dockerfile.read_text(encoding="utf-8", errors="ignore")
         marker = _runtime_form_marker()
         # 值的边界要看死：`=container-MUTATED` 也含 `=container` 这个子串，用 `in` 判会绿 ——
         # 变异实测第一趟就是这么漏过去的，而值写坏的后果是形态判据运行期根本不成立
@@ -590,18 +644,27 @@ def check_capability_matrix() -> None:
                 "（形态自报，值必须正好是 container）；"
                 "没有它，容器里的 OCR 指引会退回开发态/装机版那两句"
             )
-        # 3) 能力层：一个能力在容器里"有"，当且仅当它依赖的那些族都被装上了。
-        for cap, spec in sorted(caps.items()):
-            need = set(spec.get("families") or [])
-            unknown = need - set(families)
-            if unknown:
-                problems.append(f"能力 {cap} 依赖未登记的族 {sorted(unknown)}")
+
+    # 3) 能力层三列全覆盖：一个能力在某形态"有" ⇔ 它依赖的族都在该形态实际装上，
+    #    且矩阵在**这一列**写着的那个布尔必须逐格相等。从前只有 container 列被这样问过，
+    #    installer / dev 两个布尔只是数据 —— 现在它们各自对着自己的检查点。
+    for cap, spec in sorted(caps.items()):
+        need = set(spec.get("families") or [])
+        unknown = need - set(families)
+        if unknown:
+            problems.append(f"能力 {cap} 依赖未登记的族 {sorted(unknown)}")
+            continue
+        for form in sorted(forms):
+            if form not in spec:
+                problems.append(f"能力 {cap} 没写形态 {form}（矩阵必须逐列齐全）")
                 continue
-            has = need <= installed
-            said = bool(spec.get("container", False))
+            if form not in installed_by_form:
+                continue  # 该形态的检查点坏了，上面已判红；对它无从判断能力
+            has = need <= installed_by_form[form]
+            said = bool(spec.get(form))
             if has != said:
                 problems.append(
-                    f"能力 {cap}：容器里实际{'有' if has else '没有'}"
+                    f"能力 {cap}：{form} 形态里实际{'有' if has else '没有'}"
                     f"（依赖 {sorted(need)}），矩阵却写着 {said}"
                 )
 
@@ -612,8 +675,8 @@ def check_capability_matrix() -> None:
         "; ".join(problems[:3])
         if problems
         else (
-            f"{len(forms)} 个形态 × {len(caps)} 项能力：容器那一形态与矩阵一致"
-            f"（本地 OCR 声明为缺，走云端兜底）"
+            f"{len(forms)} 个形态（各按检查点现读）× {len(caps)} 项能力三列逐格：一致"
+            f"（容器本地 OCR 声明为缺、走云端兜底）"
         ),
     )
     if problems:

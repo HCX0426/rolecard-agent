@@ -15,17 +15,20 @@
     "container": {
       "requires": ["txt", "api", "rag", "cloud", "mcp"],
       "来源": "Dockerfile 的 RUN pip install",
+      "检查点": {"文件": "Dockerfile"},
       "形态自报": "Dockerfile 里那行 ENV（常量在 base/paths.py，rag/ocr.py 据此把服务页那格的指引换成云端兜底；尺子盯着这一行，值必须正好是 container）",
       "说明": "镜像是 B/S 形态：不带本地 OCR 栈（决策七，省 258MB+），OCR 走云端兜底。"
     },
     "installer": {
       "requires": ["txt", "api", "rag", "cloud", "mcp", "package", "dev"],
       "来源": ".github/workflows/ci.yml 的 windows-release job（dev 是 2026-10-06 加的 Windows 测试臂）",
+      "检查点": {"文件": ".github/workflows/ci.yml", "job": "windows-release"},
       "说明": "桌面安装包；OCR worker 由 packaging/ 那边单独打，不在这条 pip install 里。"
     },
     "dev": {
       "requires": ["txt", "api", "rag", "cloud", "mcp", "dev"],
       "来源": ".github/workflows/ci.yml 的 gate job",
+      "检查点": {"文件": ".github/workflows/ci.yml", "job": "gate"},
       "说明": "开发/CI 态；本地 OCR 另按 requirements-ocr.txt 装独立 .venv-ocr（可选）。"
     }
   },
@@ -67,10 +70,10 @@
     },
     "ocr_local": {
       "families": ["ocr"],
-      "说明": "本地 RapidOCR（独立 OCR venv / 随包 ocr-worker.exe）。**容器不带这一族**——这就是审查快照『容器形态静默缺本地 OCR』那一格：矩阵把它写成 false，于是『缺』是声明过的决定，不再是静默。",
+      "说明": "本地 RapidOCR（独立 OCR venv / 随包 ocr-worker.exe）。**容器不带这一族**——这就是审查快照『容器形态静默缺本地 OCR』那一格：矩阵把它写成 false，于是『缺』是声明过的决定，不再是静默。**dev 那格 2026-10-07 按定义校正为 false**：本形态的 requires（gate job 的 pip 清单）不含 ocr 族，本地 OCR 是表外的独立 venv、可选另装 —— 按『能力 = requires 里那些族都装上了』的定义它就是 false；此前这列没有机器检查，写反了也看不见（三列检查上线的第一趟就把这条撞了出来）。",
       "container": false,
       "installer": false,
-      "dev": true
+      "dev": false
     },
     "ocr_cloud": {
       "families": ["cloud"],
