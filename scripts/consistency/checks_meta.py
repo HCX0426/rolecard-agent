@@ -47,28 +47,50 @@ def check_stale_identifiers() -> None:
 
 
 def _imported_modules(code: str) -> list[str]:
-    """从一段 `python -c` 的串里只取**被 import 的模块名**。
+    """从一段 `python -c` 的串里只取**被 import 的模块名**（走 AST，不是正则）。
 
-    为什么不是 `re.findall(r"(?:import|from)\\s+(\\w+)")` 一把梭：那样
-    `from rolecard_agent.config import DEFAULT_SILICONFLOW_BASE_URL` 会报出**两个**名字，
-    而后面那个是被导入的**符号**、不是模块 —— 第一版就是这么把一条正确诊断说成两条的，
-    读数里混进不属于模块的东西，下次真要查"哪个依赖漏了"时就得先分辨哪些是噪声。
+    为什么走 AST（P3-9「解析器 AST/tomllib 化」）：正则版**两度把一条正确诊断说成两条**——
+    `from rolecard_agent.config import DEFAULT_SILICONFLOW_BASE_URL` 里那个 `DEFAULT_…`
+    是被导入的**符号**而不是模块，靠 `import` 后面那段模式去"绕开"它，绕法本身还要再
+    猜一层（`;` `)` 换行、`as` 别名、逗号续行……每加一种写法就多一处猜错）。而 AST 里
+    `ImportFrom.module` 与 `Import.names` 是**两种节点**，模块与符号在结构上是分开的，
+    不需要猜：from-import 只认 `node.module`，裸 import 只认 `alias.name`。
+    `from . import x` 这种（`node.module is None`、level>0）是相对导入，按"不给模块名"跳过。
+
+    顺序仍不承载意义，去重排序与旧版一致 —— 免得调用方把"两个名字换了个位"读成行为变化。
     """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        # 调用方喂进来的是 **ci.yml 里 `-c` 后面的整段**，带着缩进与 shell/YAML 的外层
+        # 引号括号（`… -c "import os")"`）—— 正则版能"透过"这些噪声匹配，AST 不行。
+        # 所以先做一次**保守归一化**再解析：去缩进 + 剥掉最外层配对的引号/圆括号。
+        normalized = code.strip()
+        while len(normalized) >= 2 and normalized[0] in "\"'" and normalized[-1] in "\"')":
+            # 只剥"确实成对"的那一层，且不剥到内容里自己的引号里去
+            if normalized[-1] in "\"'" and normalized[0] == normalized[-1]:
+                normalized = normalized[1:-1].strip()
+            elif normalized[-1] == ")":
+                normalized = normalized[:-1].strip()
+            else:
+                break
+        try:
+            tree = ast.parse(normalized)
+        except SyntaxError:
+            # **不能静默返回 []**：那等于"解析失败 ⇒ 判绿"，而这条尺子的存在意义就是
+            # "宿主机 import 项目包必须红" —— 解析不出就当没看见，恰恰把它变成了摆设
+            # （第一版 AST 化就是这么把一支必红的用例变绿的）。解析不了就**如实回一个
+            # 让调用方判红的信号**：返回原始串里像模块名的那一段，交上层继续判。
+            m = re.search(r"\bfrom\s+([A-Za-z_][\w.]*)\s+import\b", code)
+            return [m.group(1)] if m else []
     mods: list[str] = []
-    from_pat = re.compile(r"\bfrom\s+([A-Za-z_][\w.]*)\s+import\b")
-    for m in from_pat.finditer(code):
-        mods.append(m.group(1))
-    # 把 `from X import a, b` 那一段（含 `import` 这个词本身）整段摘掉，剩下的才交给下面的
-    # 裸 `import` 匹配 —— 否则 a/b 会被当成模块再抓一遍（第一版正是这样把一条正确诊断
-    # 说成两条的）。
-    rest = from_pat.sub(" ", code)
-    for m in re.finditer(r"\bimport\s+([A-Za-z_][\w.,\s]*?)(?=[;)]|$|\bprint\b|\bimport\b)", rest):
-        for part in m.group(1).split(","):
-            name = part.strip().split(" as ")[0].strip()
-            if name:
-                mods.append(name)
-    # 顺序不承载意义（`from X import …` 要先整段摘掉才能不抓到符号名，摘的动作天然打乱原序），
-    # 所以归一化成去重排序 —— 免得调用方把"两个名字换了个位"读成一次行为变化。
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.module:  # 相对导入（level>0 且 module 为空）没有可判的模块名
+                mods.append(node.module)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                mods.append(alias.name)
     return sorted(set(mods))
 
 

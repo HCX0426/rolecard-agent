@@ -111,10 +111,18 @@ def test_the_assertion_count_is_not_a_reading(tmp_path: Path) -> None:
     gate = _load_gate()
     keys = {key for _, key, *_ in gate._READING_PATTERNS.values()}  # noqa: SLF001
     assert "consistency_assertions" not in keys
-    # 判据本体住 consistency 包（拆包第一刀后）；包装器只是入口。
-    source = (ROOT / "scripts" / "consistency" / "checks.py").read_text(encoding="utf-8")
-    start = source.index("def check_readme_headline_numbers")
-    body = source[start : start + 3000]
+    # 判据本体住 consistency 包；按主题细分（P3-9 第二刀）后它搬进了 `checks_docs.py`，
+    # 而 `checks.py` 只剩兼容聚合面 —— 所以按**族模块逐个找**，别写死某一个文件名，
+    # 免得下一刀搬家又把这条用例变成找不到（本趟正是这样红过一次）。
+    pkg = ROOT / "scripts" / "consistency"
+    body = ""
+    for candidate in sorted(pkg.glob("checks_*.py")):
+        text = candidate.read_text(encoding="utf-8")
+        if "def check_readme_headline_numbers" in text:
+            start = text.index("def check_readme_headline_numbers")
+            body = text[start : start + 3000]
+            break
+    assert body, "没在任何 checks_* 模块里找到 check_readme_headline_numbers"
     assert '"consistency_assertions"' not in body, "README 那条比对又去读自指的条数了"
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "一致性 4" not in readme and "一致性 1" not in readme, "README 首屏又抄回那串自指的数"
