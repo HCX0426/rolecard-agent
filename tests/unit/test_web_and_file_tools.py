@@ -17,6 +17,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 from rolecard_agent.base.scopes import turn_image_ctx
@@ -171,6 +172,167 @@ def test_fetch_rejects_loopback_and_private_targets(settings: Settings) -> None:
         "http://10.0.0.5/x",
     ):
         assert "已拒绝" in fetch.invoke({"url": url}), url
+
+
+# -- P2-5：rebinding 的 TOCTOU 窗口（校验用的解析 == 建连用的解析）------------------
+
+# 这族用例的共同打法：**生产实现整个跑起来**（`_PinningTransport.handle_request` 里的
+# 解析、校验、SNI、URL 重写一步不落），只把"真去建连"那一格 —— 基类
+# `httpx.HTTPTransport.handle_request` —— 换成记录器。判据本体若被替成假 Transport，
+# 测的就不是生产那几行（生产改了形状也不会红），所以换的是最外层的那一步。
+
+
+def _record_connecting(monkeypatch) -> list[tuple[str, str]]:
+    """把基类"建连"那一步换成记录器；返回记下 (重写后 host, sni_hostname) 的 list。"""
+    connected: list[tuple[str, str]] = []
+
+    def fake_handle(self: httpx.HTTPTransport, request: httpx.Request) -> httpx.Response:
+        connected.append((str(request.url.host), str(request.extensions.get("sni_hostname"))))
+        return httpx.Response(200, content=b"<html></html>", request=request)
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", fake_handle)
+    return connected
+
+
+def test_rebinding_between_check_and_connect_is_blocked(monkeypatch) -> None:
+    """**rebinding 的签名形状**：请求前的检查解析出公网、建连时解析出内网 ⇒ 必须拒。
+
+    改前是"各解析一次"：`_host_is_public` 那次答 `93.184.216.34`（放行），httpx 建连
+    这次答 `169.254.169.254`（劫持成真）—— 两次之间没有任何约束，60s TTL 的常见配置
+    足够翻脸（快照 P2-5 记的 TOCTOU）。收口后校验与建连共用**同一次解析**：Transport
+    拿到的那批地址就是建连要用的，第 2 次解析是内网 ⇒ `SsrfBlocked`，压根不建连。
+
+    `getaddrinfo` 换成"第一次公网、之后全内网"的脚本化替身 —— 正是老代码会被劫持的
+    那个世界，而被测的是生产 Transport 本体。
+    """
+    import socket as _socket
+
+    from rolecard_agent.core.tools import web
+
+    answers = iter(
+        [
+            [(2, 1, 6, "", ("93.184.216.34", 443))],  # 请求前那层：公网，放行
+            [(2, 1, 6, "", ("169.254.169.254", 443))],  # 建连时这次：云元数据
+        ]
+    )
+    monkeypatch.setattr(_socket, "getaddrinfo", lambda *_a, **_k: next(answers))
+    connected = _record_connecting(monkeypatch)
+
+    # 老代码的终点就在这里：`_host_is_public` 答 True 之后就没人再查过第二次解析。
+    assert web._host_is_public("https://evil.example/x") is True, "夹具：请求前那层应当放行"
+    with pytest.raises(web.SsrfBlocked):
+        web._PinningTransport().handle_request(httpx.Request("GET", "https://evil.example/x"))
+    assert connected == [], "被劫持的解析居然走到了建连那一步"
+
+
+def test_pinned_transport_resolves_once_per_request(monkeypatch) -> None:
+    """**窗口消掉的正向证据**：一个请求里 `getaddrinfo` 只被调用一次。
+
+    改前每个请求两次（检查 + 建连各一次）—— 两次之间没人约束，那正是窗口的定义。
+    现在校验用的就是建连要用的那批地址，一次解析闭合两件事。这一格不测"拒了什么"，
+    测"为什么拒得对"：把解析拆回两次，这格立刻红。
+    """
+    import socket as _socket
+
+    from rolecard_agent.core.tools import web
+
+    calls: list[str] = []
+
+    def fake(host, port, *_a, **_k):  # noqa: ANN001
+        calls.append(str(host))
+        return [(2, 1, 6, "", ("93.184.216.34", port))]
+
+    monkeypatch.setattr(_socket, "getaddrinfo", fake)
+    _record_connecting(monkeypatch)
+
+    web._PinningTransport().handle_request(httpx.Request("GET", "https://example.com/elysia"))
+    assert calls == ["example.com"], f"一个请求解析了 {len(calls)} 次（老形状=各解析一次）"
+
+
+def test_pinned_transport_keeps_sni_and_original_host(monkeypatch) -> None:
+    """**别修 SSRF 修坏公网**：URL 的 host 换成 IP，但 SNI 与 Host 头仍是原域名。
+
+    TLS 证书校验与 SNI 必须跟着**原始域名**走，否则验的是 IP、CDN 路由与虚拟主机全塌
+    —— 这是快照点名的"SNI/Host 保留"。Host 头由 httpx 在建 Request 时按当时的 URL
+    生成（Transport 的重写发生在其后），这格把它钉成断言：哪天 httpx 改了生成时机，
+    先红在这里。
+    """
+    import socket as _socket
+
+    from rolecard_agent.core.tools import web
+
+    monkeypatch.setattr(
+        _socket,
+        "getaddrinfo",
+        lambda host, port, *_a, **_k: [(2, 1, 6, "", ("93.184.216.34", port))],
+    )
+    connected = _record_connecting(monkeypatch)
+
+    req = httpx.Request("GET", "https://example.com/elysia")
+    web._PinningTransport().handle_request(req)
+    assert connected == [("93.184.216.34", "example.com")]
+    assert req.headers["host"] == "example.com"
+
+
+def test_ipv6_pin_leaves_the_bare_literal_to_httpx(monkeypatch) -> None:
+    """IPv6 钉的是**裸地址**：httpcore 拿 `.host`/`raw_host` 喂 getaddrinfo（带方括号
+    反而解析失败），而 URL 渲染时才由 httpx 自己补上括号 —— 生产别再包一层。
+
+    （夹具选 Cloudflare 的 2606:4700::/32，不是文档段 2001:db8::/32 —— 后者被
+    `ipaddress` 归入 private，拿它当"公网 IPv6"会被判据正确地拒掉。）
+    """
+    import socket as _socket
+
+    from rolecard_agent.core.tools import web
+
+    monkeypatch.setattr(
+        _socket,
+        "getaddrinfo",
+        lambda host, port, *_a, **_k: [(10, 1, 6, "", ("2606:4700:4700::1111", port))],
+    )
+    connected = _record_connecting(monkeypatch)
+    req = httpx.Request("GET", "https://v6.example/x")
+    web._PinningTransport().handle_request(req)
+    assert connected == [("2606:4700:4700::1111", "v6.example")]
+    assert str(req.url) == "https://[2606:4700:4700::1111]/x"  # 渲染由 httpx 补括号
+
+
+def test_host_is_public_and_transport_share_one_ruler(monkeypatch) -> None:
+    """`_host_is_public` 与 Transport **用同一份公网判据**（`_public_addresses`）。
+
+    两份口径迟早漂（本仓"两份实现"的老下场）：同一批"混一个私网"的解析同时喂给请求前
+    那层（False）与建连那层（raise）—— 哪天有人只改了一处判据，这格立刻红。
+    """
+    import socket as _socket
+
+    from rolecard_agent.core.tools import web
+
+    def mixed(*_a, **_k):
+        return [(2, 1, 6, "", ("93.184.216.34", 443)), (2, 1, 6, "", ("127.0.0.1", 443))]
+
+    monkeypatch.setattr(_socket, "getaddrinfo", mixed)
+    assert web._host_is_public("https://multi-a.example") is False
+    with pytest.raises(web.SsrfBlocked):
+        web._public_addresses("multi-a.example", 443)
+
+
+def test_ssrf_blocked_surfaces_as_refused_not_generic_failure(settings, monkeypatch) -> None:
+    """`SsrfBlocked` 不许被"网络失败"那一族 except 吞成通用文案（安全事件要能读出来）。"""
+    import rolecard_agent.core.tools.web as web
+
+    class _Boom:
+        is_closed = False  # 共享 client 的 getter 会先问这个（_FakeStreamingClient 同款）
+
+        def stream(self, *_a, **_k):
+            raise web.SsrfBlocked("evil.example 解析到了非公网地址（169.254.169.254），已拒绝。")
+
+    monkeypatch.setattr(web, "_host_is_public", lambda url: True)  # 请求前那层放行
+    monkeypatch.setattr(web, "_HTTP_CLIENT", _Boom())
+    (_search, fetch, _img) = make_web_tools(settings=settings)
+    out = fetch.invoke({"url": "https://evil.example/x"})
+    assert "已拒绝" in out and "169.254.169.254" in out, out
+    assert "网页读取失败" not in out, "把安全边界报成连通性问题，正是住在值里那一族缺陷"
+
 
 
 def test_fetch_extracts_main_text(settings: Settings, monkeypatch) -> None:

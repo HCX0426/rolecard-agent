@@ -16,6 +16,9 @@
 
 1. **SSRF**：`web_fetch` 的 URL 来自模型（因而也来自网页/文档里的提示注入）。只允许
    http/https，且拒绝回环 / 私网 / 本地域名 —— 否则"读网页"会变成"读内网服务"。
+   这条边界现在是**两层**，各挡各的：请求前的 `_host_is_public`（可读的"已拒绝"文案）
+   与建连时的 `_PinningTransport`（校验用的解析 = 建连用的解析，rebinding 的 TOCTOU
+   窗口由构造消掉，快照 P2-5）—— 两层都在才闭合，详见各自的 docstring。
 2. **不可信内容**：搜索结果与网页正文都会进入 prompt，等于把提示注入的攻击面从用户消息
    扩大到"模型读到的任何内容"（这是接任何外部知识源的通病，不止 MCP）。缓解：结果带来源
    标注、正文按字符截断、工具只读（idempotent=True，执行器不重试也无副作用）。
@@ -51,13 +54,25 @@ _IMAGE_SEARCH_RESULTS = 5
 
 # L10：进程级共享 httpx 连接池 —— web_fetch 此前每次新建 Client，握手/TLS 成本白扔。
 # httpx.Client 并发请求安全；单请求 timeout / follow_redirects 覆盖默认值。
+#
+# P2-5 改了这里的形状：共享 client 挂 `_PinningTransport`（SSRF rebinding 的收口点，
+# 见类 docstring），并**关掉跨请求 keepalive**（`max_keepalive_connections=0`）。
+# 为什么关：钉 IP 之后连接池按"重写过的 URL origin"匹配连接，origin 里的 host 已经是
+# **IP** —— 两个不同域名解析到同一个 IP（CDN 共享 IP 是常态）会撞进同一条空闲连接，
+# 第二个请求就走在第一条请求握手、并按第一条的域名验过证书的 TLS 会话上。证书验的是
+# 别人、Host 头写的是自己 —— TLS 身份被串了。每次请求重新握手换来的是"这一条 TLS 会话
+# 从头到尾只服务这一个 origin"。代价（web_fetch 低频，省一次 TLS 换正确性，值）；
+# 同 host 连续抓多跳重定向因此也各握一次手 —— 与正确性比仍是次要的。
 _HTTP_CLIENT: httpx.Client | None = None
 
 
 def _http() -> httpx.Client:
     global _HTTP_CLIENT
     if _HTTP_CLIENT is None or _HTTP_CLIENT.is_closed:
-        _HTTP_CLIENT = httpx.Client(timeout=20.0)
+        _HTTP_CLIENT = httpx.Client(
+            timeout=20.0,
+            transport=_PinningTransport(limits=httpx.Limits(max_keepalive_connections=0)),
+        )
     return _HTTP_CLIENT
 
 
@@ -65,21 +80,92 @@ class WebToolError(ToolExecutionError):
     """联网工具的可读失败。message 面向操作员，绝不含内部栈。"""
 
 
+class SsrfBlocked(Exception):
+    """解析结果落在公网边界之外（回环/私网/link-local/保留）。
+
+    与 `_host_is_public` 的"False"区分开：那条是**请求前**的检查（先拒，报"已拒绝"）；
+    这个异常是 **Transport 在建连那一刻**的复检 —— 走到这里说明"检查时说公网、建连时
+    解析出了非公网"（DNS rebinding，快照 P2-5 的 TOCTOU 窗口），或干脆是检查与建连
+    之间答案翻了。它必须一路传到调用方，不许被"网络失败"那一族 except 吞成一句通用
+    的"读取失败"。
+    """
+
+
+def _public_addresses(host: str, port: int) -> list[str]:
+    """一条域名在这一刻的全部解析地址，逐个过公网边界；任一不可达公网即拒。
+
+    与 `_host_is_public` 同一条判据（loopback/private/link_local/reserved），刻意不
+    写成两份：这里返回地址列表是给 Transport 建连用的，那边 True/False 是给请求前的
+    快速拒绝用的 —— 同一份 `ipaddress` 判据只此一处口径。多地址里混一个私网就整体拒
+    （对齐"所有 infos 都必须公网"的既有语义，不放宽成"挑一个安全的用"）。
+    """
+    infos = socket.getaddrinfo(host, port)
+    addrs: list[str] = []
+    for info in infos:
+        addr_str = str(info[4][0])  # getaddrinfo 的地址元组第 0 位按类型为 str|int
+        addr = ipaddress.ip_address(addr_str)
+        if addr.is_loopback or addr.is_private or addr.is_link_local or addr.is_reserved:
+            raise SsrfBlocked(f"{host} 解析到了非公网地址（{addr_str}），已拒绝。")
+        addrs.append(addr_str)
+    if not addrs:
+        raise SsrfBlocked(f"{host} 解析不出任何地址。")
+    return addrs
+
+
 def _host_is_public(url: str) -> bool:
-    """只允许公网 http(s)。拒绝 file:// 等 scheme 与回环 / 私网目标（SSRF 边界）。"""
+    """只允许公网 http(s)。拒绝 file:// 等 scheme 与回环 / 私网目标（SSRF 边界）。
+
+    这一层是**请求前**的快速拒绝（给出"已拒绝"的模型可读文案）。它自己解析一次 DNS，
+    而那次答案与建连时的那一次**不是同一次** —— 这正是快照 P2-5 记的 rebinding TOCTOU
+    窗口；收口不靠这里"解析得更准"，靠 `_PinningTransport` 让"校验用的解析"与"建连
+    用的解析"合成同一次（校验过的那批地址就是用来建连的那批）。两层都在，缺一层都不行：
+    只有这层 = 检查过了照样被建连时的新答案劫持；只有那层 = 每个私网目标都要走到
+    Transport 才拒，文案也少了"已拒绝"那格可读性。
+    """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         return False
     try:
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        infos = socket.getaddrinfo(parsed.hostname, port)
-    except (socket.gaierror, OSError):
+        _public_addresses(parsed.hostname, port)
+    except (socket.gaierror, OSError, SsrfBlocked):
         return False
-    for info in infos:
-        addr = ipaddress.ip_address(info[4][0])
-        if addr.is_loopback or addr.is_private or addr.is_link_local or addr.is_reserved:
-            return False
     return True
+
+
+class _PinningTransport(httpx.HTTPTransport):
+    """SSRF rebinding 的收口点（快照 P2-5）：解析一次 → 校验 → **按这份答案建连**，
+    SNI 与 Host 仍是原域名。
+
+    检查（`_host_is_public`）与请求各解析一次 DNS，两次答案之间没有约束 —— 窗口在
+    "合法答案在校验那一刻、劫持答案在建连那一刻"（60 秒 TTL 的常见配置下完全够用）。
+    这个 Transport 把"校验用的解析"与"建连用的解析"做成**一次**：`_public_addresses`
+    返回的地址就是 `request.url` 重写后 httpcore 拿去建连的那一个，窗口由构造消掉，
+    不是把两次靠得近一点。
+
+    两个保留件（缺任何一个就是"修 SSRF 修坏公网"，真实现场比漏窗口更糟）：
+      * `extensions["sni_hostname"]` = 原域名 —— httpcore 用它做 TLS 的
+        `server_hostname`（连接对象已换成 IP 后，证书校验与 SNI 都跟着原域名走；
+        2026-10-08 本机对 https://example.com/ 实弹验证 200，证书链校验未降级）；
+      * Host 头 = 原域名：httpx 在建 Request 时按**当时的 URL** 生成 Host，我们只在
+        super() 之前重写 host，所以它天然留在原域名（`_models.py` 的 auto_host 只认
+        请求自己的 url，不认 Transport 的重写）。
+
+    与 `follow_redirects` 的配合：web_fetch 是手动逐跳（P1-3），每一跳各自进这个
+    handle_request 重新解析 + 校验 —— 跳转后的新域名不吃上一跳的旧答案。
+    """
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        if host:
+            port = request.url.port or (443 if request.url.scheme == "https" else 80)
+            pinned = _public_addresses(host, port)[0]
+            request.extensions["sni_hostname"] = host
+            # 不自己加 IPv6 的方括号：httpx 的 URL 已经管着这件事 —— `.host`/`raw_host`
+            # 存裸地址（httpcore 拿它喂 getaddrinfo，带方括号反而解析失败），
+            # `str(url)` 渲染时才补上方括号。手写一层包裹 = 替 httpx 再做一遍它自己的事。
+            request.url = request.url.copy_with(host=pinned)
+        return super().handle_request(request)
 
 
 def _search_ddgs(query: str) -> str:
@@ -268,6 +354,12 @@ def make_web_tools(*, settings) -> list:
                 )
         except WebToolError:
             raise
+        except SsrfBlocked as exc:
+            # **不许和"网络失败"混成一句**：一个是"这跳解析到了内网/保留地址"（安全
+            # 事件，该让操作员知道发生了什么），一个是"连不上"。第一版让它落进下面的
+            # 通用 except，模型与操作员看到的是 `网页读取失败（SsrfBlocked）：…` ——
+            # 把安全边界报成连通性问题，正是"配了没用那族缺陷全都住在值里"的同族形状。
+            return f"已拒绝：{exc}"
         except Exception as exc:  # noqa: BLE001 - 网络失败要变成可读答复
             raise WebToolError(f"网页读取失败（{type(exc).__name__}）：{exc}") from exc
 
