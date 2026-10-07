@@ -26,6 +26,7 @@ import hashlib
 import math
 import re
 import threading
+from array import array
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -162,6 +163,17 @@ class EmbedError(RuntimeError):
 # 结果是"整个上传以解析失败告终"，而失败原因与文档质量毫无关系。
 _EMBED_BATCH = 64
 _EMBED_RETRIES = 2
+
+#: 入库（chroma `upsert`）的单批分块数 —— 与 `_EMBED_BATCH` 是**两个数**：64 管的是云端
+#: 一次 POST 的条数上限（网络形状），这里管的是 chroma 单包大小。取值来自实测扫描
+#: （2000 分块、假 1024 维嵌入器，**只计 upsert 那一程**：`scripts/forensics/`
+#: 曾以临时脚本扫过 64/128/256/512/1024/整发）：
+#:   64 → 7.0s / 峰值 2.3MB；256 → 4.5s / 9.2MB；整发 → 3.6s / 71.8MB。
+#: 全路读数（含嵌入程）：256 时 index() 一趟墙钟 6.8s、Python 峰值 19.2MB
+#: （`probe_rag_index_memory.py` 两份 JSON 留档）。256 是"墙钟比整发贵 ~1s、
+#: 驻留降到 1/4"的拐点；拿 64 去 upsert 只是把 chroma 调用数涨回 32，多花的 2.5s
+#: 全是它的固定开销。两个数各钉各的事，别合并。
+_UPSERT_BATCH = 256
 
 
 class SiliconFlowEmbedder(Embedder):
@@ -516,8 +528,15 @@ class KnowledgeBase:
         self._collection_cache[scope] = collection
         return collection
 
-    def index(self, scope: str, source: str, text: str, *, source_name: str | None = None) -> int:
-        """切块 -> 嵌入 -> 入库（同 source 幂等重建）。返回入库的分块数。
+    def index(
+        self,
+        scope: str,
+        source: str,
+        text: str,
+        *,
+        source_name: str | None = None,
+    ) -> int:
+        """切块 -> 分批嵌入 -> 分批入库（同 source 幂等重建）。返回入库的分块数。
 
         **`source` 是索引身份，`source_name` 只是展示名** —— 这个区分是审查报告 P0 的核心：
         分块 id 由 `source` 确定性推导、旧分块也按 `source` 清理，所以身份一旦与别的文档
@@ -532,9 +551,28 @@ class KnowledgeBase:
         已经被删掉 —— 检索里凭空少一份文档，而 ingestion 台账那边还写着 `indexed`。
         这是"状态与事实背离"，比单纯报错难查得多。
 
-        现在的顺序：**先嵌入**（最可能失败的一步，失败则库完全没动）→ `upsert` 新分块
-        （同 id 覆盖）→ 删掉本次不再出现的旧 id（文档变短时清理残留）。
+        现在的顺序：**先把全部嵌入做完**（最可能失败的一步，失败则库完全没动）→ 分批
+        `upsert` 新分块（同 id 覆盖）→ 删掉本次不再出现的旧 id（文档变短时清理残留）。
         任何一步失败都不会让既有索引消失。
+
+        ## 分批嵌入为什么还是"先全量后写"（快照 P3-3，探针 `probe_rag_index_memory`）
+
+        条目原文写的是"每批 embed 完立即 upsert"—— **没照做，这是刻意的**：upsert 按 id
+        覆盖旧向量，第 2 批嵌入失败时第 1 批已经把旧分块盖掉了 —— 库里从此是"前半新后半旧"
+        的混合体，检索照样出结果，没有任何一处报错。那正是 M4 花掉一整条用例钉死的"状态与
+        事实背离"。（旧用例只让**第一批**失败，测不出这个形状；新用例 `test_index_late_batch_
+        embed_failure_*` 钉的是后面的批次。）
+
+        驻留内存那一半照修了，而且不动顺序纪律：每批嵌入回来就折进 `array("f")`（float32，
+        每向量 4KB@1024 维）—— 云端返回的那一堆 Python float 对象**批批即时释放**，峰值
+        从"整份文档的 list[list[float]]"降到"float32 缓冲 + 当前批"。实测（假 1024 维
+        嵌入器、2000 分块，`scripts/forensics/probe_rag_index_memory.py` 两份 JSON 留档）：
+        峰值 **74.8MB → 19.2MB**（3.9 倍），墙钟 **4.4s → 6.8s** —— 多出来的 2.4s 全在
+        假嵌入器"32 次调用 + float→array→list 的往返"上，真云端路径里它摊在一次 HTTP 的
+        秒级耗时旁边可以忽略；用真实网络嵌入的档位请重跑探针复核，别拿这组读数外推。
+        upsert 中途失败的"新旧混合"窗口是**既有形状**（旧实现一整发 upsert 在 chroma
+        记录粒度上同样可半途而废），且重传按同一批 id 幂等重建即可自愈 —— 这一格没有
+        因为分批变得更坏，分批只是让"发出去的最大单包"从全量降到一批。
         """
         chunks = chunk_text(text)
         if not chunks:
@@ -544,33 +582,43 @@ class KnowledgeBase:
             self.delete_source(scope, source)
             return 0
         collection = self._collection_for_write(scope)
-        vectors = self._embedder.embed(chunks)  # 先做最容易失败的一步
         ids = _chunk_ids(source, len(chunks))
+        # ---- 第一阶段：分批嵌入，逐批折进 float32 缓冲（不写库，M4 的"先全量"不变）----
+        vectors: list[Sequence[float]] = []
+        for start in range(0, len(chunks), _EMBED_BATCH):
+            batch = chunks[start : start + _EMBED_BATCH]
+            for vec in self._embedder.embed(batch):
+                # array("f") 是 stdlib：不引 numpy —— 它在镜像里只是 chromadb 的传递依赖，
+                # src/ 直接 import 传递依赖正是 `RUNTIME_REQ_FILES` 那两行注释点名的 MCP 陷阱。
+                vectors.append(array("f", vec))
         try:
             existing = collection.get(where={"source": source})
             stale = [str(i) for i in (existing.get("ids") or [])]
         except Exception:  # noqa: BLE001 - 取不到旧 id 只是少一次清理，不该让入库失败
             stale = []
-        try:
-            # 注：集合对象在类型上收敛成 Any（见 _collection_for_write）——
-            # chroma 的存根要求 numpy ndarray 的具体 dtype，而"嵌套 float 列表"在运行期
-            # 完全被接受，也是 chroma 自己的文档示例写法。存根比实现更严，不改数据形状。
-            collection.upsert(
-                ids=ids,
-                embeddings=vectors,
-                documents=chunks,
-                metadatas=[
-                    {
-                        "source": source,
-                        "source_name": source_name or source,
-                        "scope": scope,
-                        "chunk": i,
-                    }
-                    for i in range(len(chunks))
-                ],
-            )
-        except Exception as exc:  # noqa: BLE001 - 维度错误要翻译成可操作提示
-            raise _translate_dimension_error(exc) from exc
+        # ---- 第二阶段：分批 upsert（批次大小 `_UPSERT_BATCH`，与嵌入批次各管各的：
+        # 64 管网络条数、256 管 chroma 单包大小，理由与实测扫描都写在那两个常量旁边）。
+        # 存根要求 numpy ndarray 的具体 dtype，运行期接受嵌套 float 序列（chroma 自己的
+        # 文档示例如此）—— 逐批现展开成 list 交出去，展开件只活一批，缓冲仍是 float32。 ----
+        for start in range(0, len(chunks), _UPSERT_BATCH):
+            stop = min(start + _UPSERT_BATCH, len(chunks))
+            try:
+                collection.upsert(
+                    ids=ids[start:stop],
+                    embeddings=[list(v) for v in vectors[start:stop]],
+                    documents=chunks[start:stop],
+                    metadatas=[
+                        {
+                            "source": source,
+                            "source_name": source_name or source,
+                            "scope": scope,
+                            "chunk": i,
+                        }
+                        for i in range(start, stop)
+                    ],
+                )
+            except Exception as exc:  # noqa: BLE001 - 维度错误要翻译成可操作提示
+                raise _translate_dimension_error(exc) from exc
         outdated = sorted(set(stale) - set(ids))
         if outdated:
             with contextlib.suppress(Exception):

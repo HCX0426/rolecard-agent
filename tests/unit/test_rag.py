@@ -639,6 +639,43 @@ class _RagResp:
         return self._json
 
 
+def test_index_late_batch_embed_failure_leaves_no_half_written_index(tmp_path: Path) -> None:
+    """M4 的补格：失败发生在**第二批**嵌入时，库里必须一格都没被新的盖掉。
+
+    旧用例只让第一批失败（`fail_after` 大到第一次整发 `embed()` 全量就炸），测不出
+    "每批 embed 完立即 upsert"那种流水线的洞：第 1 批已经按 id 盖掉旧向量，第 2 批才失败
+    ⇒ 库里躺着一份"前半新、后半旧"的混合文档，检索照常出结果、台账照常 indexed，
+    没有任何一处报错 —— 正是 M4 那句话（状态与事实背离）。`index()` 因此刻意保留
+    "先把全部嵌入做完、再动库"的顺序（P3-3 没有照原文做流水线化，理由写在那段的 docstring）。
+
+    这一格同时钉住两个方向：失败后**旧的还在**（search 得到旧分块），且**新的没进去**
+    （新文档独有的词查不到 —— 半份写入恰恰会漏在这里）。
+    """
+    # 造一份**跨两个嵌入批次**的文档（每批 ≤ _EMBED_BATCH 块）
+    big = "\n\n".join(f"批次外测试段落 u{i:04d}：" + "随访记录内容要素" * 30 for i in range(200))
+    assert len(chunk_text(big)) > _EMBED_BATCH, "夹具必须跨批，否则这一格测不到形状"
+
+    embedder = _FailingEmbedder(fail_after=1)  # 第一批嵌入成功，第二批起失败
+    kb = KnowledgeBase(tmp_path / "chroma", embedder)
+    kb.index("health_reports", "a.txt", DOC_A)  # 旧文档先落库
+    embedder._left = 1  # 重置换回"第一批 OK、之后炸"
+    with pytest.raises(RuntimeError):
+        kb.index("health_reports", "a.txt", big)
+
+    # 嵌入器修好（search 也要嵌入查询），才能验证库里两件事同时成立：
+    embedder._left = 99
+    # 旧分块原样还在（M4 的正面），且新内容一格都没写进去（没有半份索引）
+    hits = kb.search(["health_reports"], "随访")
+    assert hits, "第二批嵌入失败把旧索引弄丢了 —— M4 的洞"
+    assert all("批次外测试段落" not in str(h) for h in hits), (
+        "检索里出现了新文档的分块 —— 流水线化留下的半份索引就是这个形状"
+    )
+    # 嵌入器修好后重传：同一批 id 幂等重建，新内容完整可查
+    n = kb.index("health_reports", "a.txt", big)
+    assert n > _EMBED_BATCH
+    assert kb.search(["health_reports"], "批次外测试段落 u0107"), "重传应当完整重建"
+
+
 def test_embeddings_are_sent_in_batches() -> None:
     """长文档必须分批嵌入（修复前一次 POST 全部 chunk，顶到超时就是整篇上传失败）。"""
     embedder = _CountingEmbedder()
