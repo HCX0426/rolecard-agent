@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from rolecard_agent.base import outbound
+from rolecard_agent.config import DEFAULT_LOCAL_BASE_URL
 from rolecard_agent.core.model_settings import client_style, endpoint_key
 from rolecard_agent.core.probes import vision_capability
 
@@ -103,7 +104,7 @@ class ProbeResult:
 
 def _default_root(provider: str) -> str:
     """留空 base_url 时该问哪个端点：与分组同一份归一（`endpoint_key`）。"""
-    return endpoint_key(provider, None)[1] or "http://127.0.0.1:11434"
+    return endpoint_key(provider, None)[1] or DEFAULT_LOCAL_BASE_URL
 
 
 def resolve_target(

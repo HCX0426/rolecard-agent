@@ -27,7 +27,7 @@ import httpx
 
 from rolecard_agent.base.observability import logline
 from rolecard_agent.base.paths import bundled_ocr_worker, default_ocr_python, runtime_form
-from rolecard_agent.config import Settings
+from rolecard_agent.config import DEFAULT_LOCAL_BASE_URL, Settings
 from rolecard_agent.rag.errors import OcrUnavailable, ParseError
 
 # ocr.py 位于 <root>/src/rolecard_agent/rag/，故项目根为 parents[3]；worker 在 <root>/scripts。
@@ -205,7 +205,7 @@ class VisionModelBackend:
     name = "vl"
 
     def __init__(self, *, base_url: str | None, model: str, timeout: float = 90.0) -> None:
-        self._base = (base_url or "http://127.0.0.1:11434").rstrip("/")
+        self._base = (base_url or DEFAULT_LOCAL_BASE_URL).rstrip("/")
         self._model = model
         self._timeout = timeout
 

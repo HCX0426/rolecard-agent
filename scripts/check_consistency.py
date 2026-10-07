@@ -3499,6 +3499,52 @@ def check_single_source_literals() -> None:
     if offenders:
         fails.append(f"duplicated single-source literals: {offenders}")
 
+
+def check_local_service_port_single_source() -> None:
+    """本机推理服务端口（11434）在 src/ 与 scripts/ 里只许出现在 config.py。
+
+    两个主机形制（`localhost` 与 `127.0.0.1`）并存的那段时间，"默认地址"在仓库里有五个
+    各写各的主人：种子、模型页提示、探针兜底、模型探测兜底、OCR 兜底 —— 归一的难点从来
+    不是替换那几行，而是**下次有人抄第二遍时没人拦**。判据因此长这样：
+
+      * 扫 `src/` 与 `scripts/`：两处都能 import 包、都有条件用常量（取证探针本来就现读
+        config，它的注释自己写着端点那一族同病）；
+      * 归属文件缺失同样判红：单源被删 = 机制空转，与"配置缺失"那一族同款；
+      * **Electron 壳与 .bat 刻意不在范围**：跨语言拿不到 Python 常量，那是启动侧自己的
+        默认（独立事实面）；散文与测试同理 —— 测试里的载荷是自足的假数据。
+      * 主机形制（为什么是 127.0.0.1 不是 localhost）的理由只写在常量旁边，这里不重复第二份。
+    """
+    owner = "src/rolecard_agent/config.py"
+    self_rel = pathlib.Path(__file__).relative_to(ROOT).as_posix().replace("\\", "/")
+    offenders: list[str] = []
+    owner_has = False
+    for pkg in ("src", "scripts"):
+        for path in sorted((ROOT / pkg).rglob("*.py")):
+            rel = path.relative_to(ROOT).as_posix().replace("\\", "/")
+            if rel == self_rel:
+                continue  # 本文件的表里必然写着这个端口（自指，同 single-source 的豁免）
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            if "11434" not in text:
+                continue
+            if rel == owner:
+                owner_has = True
+            else:
+                offenders.append(rel)
+    if not owner_has:
+        offenders.insert(0, f"{owner} 里反而没有了 11434（单源被删 = 机制空转）")
+    out(
+        "local service port single source",
+        not offenders,
+        "; ".join(offenders[:4])
+        if offenders
+        else f"11434 只在 {owner}（口径与理由都在常量注释里）",
+    )
+    if offenders:
+        fails.append(f"local service port duplicated: {offenders}")
+
 def find_dangling_write_txns(root: pathlib.Path | None = None) -> list[str]:
     """找出"判了 `rowcount` 却在那条路上不结束事务"的位置（`R102-42`）。
 
@@ -4537,6 +4583,7 @@ def main() -> int:
     check_ci_host_python_stdlib_only()
     check_artifact_single_source()
     check_single_source_literals()
+    check_local_service_port_single_source()
     check_dangling_write_txns()
     check_shape_migration_ddl()
     check_bundled_copy()

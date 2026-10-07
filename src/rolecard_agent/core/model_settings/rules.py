@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-from rolecard_agent.config import DEFAULT_SILICONFLOW_BASE_URL
+from rolecard_agent.config import DEFAULT_LOCAL_BASE_URL, DEFAULT_SILICONFLOW_BASE_URL
 
 
 class ModelSettingsError(Exception):
@@ -45,9 +45,9 @@ MODEL_PROVIDERS: tuple[dict[str, object], ...] = (
         "id": "ollama",
         "label": "本地 Ollama",
         "needs_key": False,
-        "base_url_hint": "http://localhost:11434（可留空）",
+        "base_url_hint": f"{DEFAULT_LOCAL_BASE_URL}（可留空）",
         "style": "native",
-        "default_base_url": "http://localhost:11434",
+        "default_base_url": DEFAULT_LOCAL_BASE_URL,
     },
     {
         "id": "openai",

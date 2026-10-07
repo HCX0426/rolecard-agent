@@ -19,9 +19,11 @@ from __future__ import annotations
 import time
 
 from rolecard_agent.base import outbound
+from rolecard_agent.config import DEFAULT_LOCAL_BASE_URL
 
-#: 出厂的本地推理服务地址（Ollama 默认端口）。
-DEFAULT_OLLAMA = "http://127.0.0.1:11434"
+#: 出厂的本地推理服务地址。值从 config 现读（端口单源）—— 本模块只保留这个名字，
+#: 因为它是 `core/probes.py` 对外再导出的既有称呼，改名的收益是零、涟漪是所有调用方。
+DEFAULT_OLLAMA = DEFAULT_LOCAL_BASE_URL
 
 # 探活结果的短 TTL 缓存（按 base_url+model 记）。
 # 为什么需要：服务页一次渲染会对同一 (base_url, model) 探测多次（状态行 + 生效判定），

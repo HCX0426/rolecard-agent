@@ -49,7 +49,8 @@ def test_parses_backends_from_json() -> None:
         }
     )
     assert settings.backend().model == "deepseek-chat"
-    assert settings.backend("local").base_url == "http://localhost:11434"
+    # 默认地址现读 config 的单源常量（127.0.0.1 形制，口径注释在常量旁边）
+    assert settings.backend("local").base_url == "http://127.0.0.1:11434"
     assert settings.backend("cloud").api_key == "sk-x"
 
 

@@ -25,12 +25,20 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 # Any：num_ctx 是 int|None，dict[str,str] 会让 mypy 逐字段校验失败；展开时由 pydantic 把关。
+#: 本机推理服务（Ollama）默认地址 —— **全仓 `src/` 里 11434 的唯一出处**（端口单源那条尺子盯着）。
+#: 口径取 `127.0.0.1` 而不是 `localhost`：起服务的那一侧（壳 `shell/main/ollama.ts`、
+#: `start.bat` 的探活、文档里的 curl 示例、探针与 OCR 的兜底）用的全是这个形制，Ollama 自己
+#: 的默认绑定（`OLLAMA_HOST`）也是 IPv4 回环；`localhost` 可能先解析成 `::1`（IPv6），两个
+#: 形制并存时"到底哪个在听"要靠解析顺序碰运气。**存量库不迁移**：种子只管新库（seed_once），
+#: 已经写进旧库的 localhost 行照常工作（两形制在本机都通），改默认不改用户已有数据。
+DEFAULT_LOCAL_BASE_URL: str = "http://127.0.0.1:11434"
+
 DEFAULT_LOCAL_BACKEND: dict[str, Any] = {
     "provider": "ollama",
     # provider=ollama 走 langchain-ollama 的 Ollama 原生端点（/api/chat），base_url 不带 /v1；
-    # OpenAI 兼容端点（http://localhost:11434/v1/chat/completions）是 provider=openai 时用的。
+    # OpenAI 兼容端点（http://127.0.0.1:11434/v1/chat/completions）是 provider=openai 时用的。
     # 带错 /v1 的症状是 Ollama 返回 "404 page not found"——端点风格由 provider 决定。
-    "base_url": "http://localhost:11434",
+    "base_url": DEFAULT_LOCAL_BASE_URL,
     # 2026-09-17 终版：默认本地模型 = **qwen3-vl:8b**（对话 + 工具调用 + 识图 + 思考一体，
     # 一行多用，不再为"视觉"单独配后端行）。
     # 沿革（结论，不是过程）：qwen2.5:7b / qwen2.5vl:7b / local_vl **均已退役** ——

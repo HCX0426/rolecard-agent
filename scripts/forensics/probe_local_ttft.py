@@ -30,11 +30,11 @@ import httpx
 
 # 直跑脚本时 src/ 不在 sys.path（pytest 由 pyproject 的 pythonpath 兜底，直跑没有）。
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
-# 量的模型不在这里抄第二遍（`R28-14` 的①，与端点那一族同病）：抄一份旧模型名的探针，
-# 测的**不是用户实际在用的那一档**，而读数看着完全正常 —— 这正是它比报错更坏的地方。
-from rolecard_agent.config import DEFAULT_LOCAL_BACKEND  # noqa: E402
+# 量的对象不在这里抄第二遍（单源那一族）：模型名已经现读 config，端点此前还留着自己的一份
+# —— 抄一份旧值的探针，测的**不是用户实际在用的那一档**，而读数看着完全正常。
+from rolecard_agent.config import DEFAULT_LOCAL_BACKEND, DEFAULT_LOCAL_BASE_URL  # noqa: E402
 
-OLLAMA = "http://127.0.0.1:11434"
+OLLAMA = DEFAULT_LOCAL_BASE_URL
 MODEL = str(DEFAULT_LOCAL_BACKEND["model"])
 NUM_CTX = 4096
 SHORT = "用两三句话回答：你为什么喜欢下雨天？"
