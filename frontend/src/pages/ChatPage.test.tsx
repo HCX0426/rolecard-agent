@@ -1163,7 +1163,7 @@ describe("ChatPage 侧栏：每个角色一条固定线 + 临时话题批量清�
   });
 });
 
-describe("进入对话界面就清未读（R26-40 尾漏的那一半：口径早就写在 api.ts 与后端 docstring 里）", () => {
+describe("进入对话界面就清未读（R26-40 尾漏的那一半：口径早就写在 api 层与后端 docstring 里）", () => {
   function stubSessions() {
     apiMock.get.mockImplementation(async (url: string) => {
       if (url === "/api/sessions")

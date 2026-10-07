@@ -36,7 +36,7 @@ export function chatRows(settings: ModelSettings): BackendRow[] {
 export type SamplingField = "repeat_penalty" | "frequency_penalty" | "presence_penalty";
 
 export function useModelBackends(onStatus: (text: string, tone?: Tone) => void) {
-  // 对话页只关心**参与对话**的模型行；类型直接用 `api.ts` 的 `BackendRow`，不再自造窄化
+  // 对话页只关心**参与对话**的模型行；类型直接用 `api/models.ts` 的 `BackendRow`，不再自造窄化
   // 形状（审计 §5）：以前挂载路径手挑 6 个字段、改窗口那条路径塞原始行 —— 同一个 state
   // 两种形状，谁先跑过决定字段在不在，`supports_tools` 这类就这样被页面"看不见"了。
   const [backends, setBackends] = useState<BackendRow[]>([]);

@@ -155,7 +155,8 @@ export default function App() {
   const [reachoutOpen, setReachoutOpen] = useState(false);
   const [reachoutUnread, setReachoutUnread] = useState(0);
   // 按角色的未读数：对话页侧栏「她们」那一栏的徽章要用它。**与铃铛红点是同一次轮询的产物**
-  // —— 两处各起一个轮询就会读到两个时刻（桌宠红点已经吃过一次这种亏，见 `api.ts` 那条注释）。
+  // —— 两处各起一个轮询就会读到两个时刻（桌宠红点已经吃过一次这种亏，见
+  // `api/reachouts.ts` 里 `UNREAD_POLL_MS` 那条注释）。
   const [reachoutUnreadByRole, setReachoutUnreadByRole] = useState<Record<string, number>>({});
   // 命令执行审批（架构计划 C·§6.2）：待批红点 + 审批抽屉。与主动消息同一套静默轮询
   // （10s）：模型提交审批后 10 秒内红点出现 —— 后端无推送，只能如实降级为轮询。

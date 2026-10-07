@@ -8,7 +8,7 @@ import type { ServiceCategoryView, ServiceEndpoint, ServicesView } from "../api"
 import { useConfirm } from "../hooks/useConfirm";
 import { describeError } from '../lib/errors';
 
-// 载荷契约（ServiceEndpoint/ServiceCategoryView/ServicesView）住在 `api.ts`（`R102-22`）：
+// 载荷契约（ServiceEndpoint/ServiceCategoryView/ServicesView）住在 `api/services.ts`（`R102-22`）：
 // 那里自称"与后端契约一一对应"，契约测试也只读它 —— 组件本地声明等于契约的两张脸。
 
 function KindBadge({ kind }: { kind: "local" | "cloud" }) {

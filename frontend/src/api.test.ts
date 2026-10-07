@@ -1,4 +1,4 @@
-// api.ts 的运行时测试（vitest，node 环境，mock fetch —— 不需要浏览器）。
+// api 层（`api/index.ts` + `api/sse.ts`）的运行时测试（vitest，node 环境，mock fetch —— 不需要浏览器）。
 //
 // 为什么这些测试存在：当年发生过「request() 只设 Content-Type 不 JSON.stringify」
 // 的事故 —— 页面 GET 全正常，所有写操作静默 422，纯靠人眼看代码漏掉的。
@@ -134,7 +134,8 @@ describe("streamChat：SSE 解析与 abort 语义", () => {
 
   it("事件跨 chunk 到达也能解析（后端契约：每帧一条 data: 行）", async () => {
     // 三个帧从中间切开 —— reader 每次拿到半个帧，解析必须靠 buf 累积 + \n\n 分帧。
-    // 注意 api.ts 的契约是「一帧一条 data:」（后端 sse() 就这么发）；一帧多行只取第一条。
+    // 注意读流那半（`api/sse.ts` 的 postSse 走 lib/stream 的帧解析）的契约是
+    // 「一帧一条 data:」（后端 sse() 就这么发）；一帧多行只取第一条。
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
@@ -181,7 +182,7 @@ describe("streamChat：SSE 解析与 abort 语义", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(stream, { status: 200 })));
     const events: { type: string }[] = [];
     await streamChat("t1", "问", (ev) => events.push(ev));
-    // 契约（api.ts 读流阶段的 catch）：「停止生成」不是错误，静默结束且**不补发 end** ——
+    // 契约（`api/sse.ts` 读流阶段的 catch）：「停止生成」不是错误，静默结束且**不补发 end** ——
     // 调用方收尾走 checkpoint 回放（ChatPage 的实现）。注意与 fetch 阶段失败不同，
     // 那里会补发一个 end（见上一个测试）。
     expect(events.map((e) => e.type)).toEqual(["token"]);
