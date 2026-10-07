@@ -24,12 +24,13 @@ from rolecard_agent.storage.db import SqlConnection, quote_ident
 ROW_TABLES: frozenset[str] = frozenset({"role_card", "role_memory_item", "agent_reachout"})
 
 #: 允许**按身份整类读出来**的表。比白名单宽一格：删前备份必须带上会话的载体行
-#: （检查点表只有 blob 与 thread_id，重放一条会话还靠这行元数据），而那一格不许被删。
+#: （检查点那些表只有 blob 与 thread_id，重放一条会话还靠这行元数据），而那一格不许被删。
 #: 读与删是两个判据，所以是两张名单 —— 合成一张迟早会因为"备份少一行"而被迫放宽删侧。
+#: 注意这张名单**只管按 user_id 读的那几张**：按 thread_id 归的那一族由库的形状决定，
+#: 名单在 `threads.thread_id_carriers`（现数），备份与级联删共用它 —— 这里再抄一份就是
+#: 第二个事实面，而抄的那份会漏（见 sync_service 备份那一段）。
+#: 检查点两张表因此不在这里列名：它们进 `thread_id_carriers` 的结果里（各有 thread_id 列）。
 READ_TABLES: frozenset[str] = ROW_TABLES | {"session_thread"}
-
-#: 会话正文真正住在的那两张检查点表（langgraph 的载体，blob 列是 msgpack）。
-CHECKPOINT_TABLES: tuple[str, ...] = ("checkpoints", "writes")
 
 
 def _require(table: str, allowed: frozenset[str]) -> str:
@@ -55,8 +56,14 @@ def thread_ids_for_user(conn: SqlConnection, user_id: str) -> list[str]:
     return [str(row["thread_id"]) for row in rows]
 
 
-def checkpoint_rows(conn: SqlConnection, table: str, thread_ids: list[str]) -> list[Any]:
-    """某张检查点表里属于这些会话的行。空列表 = 一条都不读（不拼出 `IN ()`）。"""
+def rows_for_threads(conn: SqlConnection, table: str, thread_ids: list[str]) -> list[Any]:
+    """某张**按 `thread_id` 归**的表里属于这些会话的行。空列表 = 一条都不读（不拼 `IN ()`）。
+
+    表名不设白名单是刻意的：能按 thread_id 读的表由库自己的形状决定（调用方给的是
+    `threads.thread_id_carriers` 那份**现数**名单，不是手抄清单），这里再列一份就变成
+    第三个事实面 —— 加一张带 `thread_id` 的表时，那份名单会自己长出来，而任何手抄的
+    清单不会（本模块顶部那条"备份少一族"讲的正是抄的代价）。
+    """
     if not thread_ids:
         return []
     placeholders = ",".join("?" for _ in thread_ids)

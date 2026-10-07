@@ -158,6 +158,47 @@ def test_thread_backup_covers_both_checkpoint_tables(
     assert dumped["checkpoints"] == 0, "空结果不该落文件（0 行 = 连目录都不碰）"
 
 
+def test_every_table_the_cascade_deletes_must_have_been_back_upped(
+    conn: sqlite3.Connection, data_root: Path
+) -> None:
+    """级联删**动过的每一张表**，备份里都得有 —— 两份名单必须是同一份（对盘量出的缺口）。
+
+    这条刻意不点名 `command_approval`：判据写成"塞过行的载体表，删之前都落了文件"，
+    所以将来再多一张带 `thread_id` 的表照样会被它抓住（当初立"现数名单"就是为了这个）。
+    备份用静态两张检查点表、删除用现数名单那一阵，审批行就是"被删了但没人备份"，
+    而这条会红 —— 症状不是报错，是"整份替换之后找不回那条待批审批"。
+    """
+    from rolecard_agent.storage.threads import thread_id_carriers
+
+    conn.execute(
+        "INSERT INTO session_thread (thread_id, user_id, current_role_id, tool_epoch) "
+        "VALUES ('s_engi', ?, 'girl', 1)",
+        (DEFAULT_USER_ID,),
+    )
+    conn.execute(
+        "INSERT INTO command_approval (command, thread_id, role_id, status) "
+        "VALUES ('ls -l', 's_engi', 'girl', 'pending')"
+    )
+    conn.commit()
+
+    seeded_carriers = [t for t in thread_id_carriers(conn) if _count_by_thread(conn, t, "s_engi")]
+    assert "command_approval" in seeded_carriers, "名单没数到审批表，这条会在空转"
+
+    dumped = sync_service.dump_before_clear(conn, user_id=DEFAULT_USER_ID, kinds=["thread"])
+    backup_dir = data_root / "retention-backups" / "sync"
+    for table in seeded_carriers:
+        assert dumped.get(table, 0) >= 1, f"{table} 会被级联删掉，备份里却什么都没有：{dumped}"
+        files = list(backup_dir.glob(f"{table}-*.jsonl"))
+        assert files, f"{table} 的备份没落盘"
+    approval_backup = next(backup_dir.glob("command_approval-*.jsonl"))
+    assert "ls -l" in approval_backup.read_text(encoding="utf-8")
+
+
+def _count_by_thread(conn: sqlite3.Connection, table: str, tid: str) -> int:
+    row = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE thread_id = ?", (tid,)).fetchone()
+    return int(row[0])
+
+
 def test_backup_files_are_trimmed_per_table(
     conn: sqlite3.Connection, data_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

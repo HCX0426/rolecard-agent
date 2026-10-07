@@ -131,12 +131,12 @@ def delete_thread_everywhere(
     retention 同一套：路径与策略在上，机械在这里）。传 `None` = 这里不备份，只有一处这么传：
     `features/sync_service.clear_threads_for_replace`，它在删之前先跑过 `dump_before_clear`。
 
-    **那一处并不等价，如实记下**：`dump_before_clear` 的名单是两份**静态**映射
-    （`KIND_TABLE` 四类 + `CHECKPOINT_TABLES` 两张），而这里的名单是**现数**的
-    （`thread_id_carriers`，含 `command_approval`）—— 所以整份替换那条路会删掉审批行而
-    不备份它们，正是 sync 模块自己注释里警告的"备份少一族"。修法不是在这里补一份名单
-    （那会造出第三份事实面，而且 -checkpoints/writes 两表会被两个 stamp 各写一遍），
-    而是让清空侧也改用现数名单 —— 已作为独立一格记进账本，不在这一刀里顺手改。
+    **那一处是等价的，判据是"两边共用同一份现数名单"**：`dump_before_clear` 备份的表集合
+    就是 `thread_id_carriers(conn)`（与这里循环删的完全同一份），所以"级联删动过却没备份"
+    这种形状结构性地不成立。它从前成立过 —— 备份侧抄着两张检查点表的静态名单、删侧数库的
+    形状，于是 `command_approval` 被删而不备份（2026-10-04 快照对盘会话备份那一格时量出、
+    立案后由 `sync_service` 那侧改成共用现数名单）。**别把它改回抄的**：加一张带 `thread_id`
+    的表时数的这份会自己长出来，抄的那份不会。
 
     返回每张表删掉的行数（审计与测试用）。备份的行数**不进**这个 dict —— 这个形状的
     键是"表名"，混进 `backup:` 之类的键会让按表名读数的调用方（sync 那边把

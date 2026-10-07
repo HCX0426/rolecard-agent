@@ -37,16 +37,23 @@ from rolecard_agent.storage.db import (
     dump_rows_to_jsonl,
     trim_backups,
 )
-from rolecard_agent.storage.threads import delete_thread_everywhere, delete_threads_for_user
+from rolecard_agent.storage.threads import (
+    delete_thread_everywhere,
+    delete_threads_for_user,
+    thread_id_carriers,
+)
 
 #: 整份替换的删前备份每张表各留几份。与 retention 同一套哲学，但落在 `sync/` 子目录：
 #: `trim_backups` 按目录 glob，两边互不清对方的账（谁裁谁的备份必须只有一处答案）。
 SYNC_BACKUP_KEEP = 5
 
-#: 协议里每一类**住在哪张表**。一份映射两用：备份按它读、清空按它删。
+#: 协议里每一类**住在哪张表**。这份映射管两类：按身份的清空按它删（`DELETABLE_KINDS` 是它的
+#: 子集）、按身份的备份按它读（card/memory/reachout 三类 + 会话载体行 `session_thread`）。
+#: **唯独"按 thread_id 归的那一族"不在这里数** —— 备份与级联删共用 `thread_id_carriers`
+#: （现数），因为那张名单会跟着库的形状自己长，而手抄的清单不会（抄的那份迟早"备份少一族"）。
 #: 从前这里躺着三份手写字典（备份三张表、清空三张表、会话那半又四张表）—— 加一类时
 #: 漏改哪一份都不报错，症状是"备份少一族"或"清空漏一族"，只有真跑一次整份替换才看得见。
-#: `session_thread` 在备份里是必须的：检查点两张表只有 blob 与 thread_id，少这一行元数据
+#: `session_thread` 在备份里是必须的：检查点那些表只有 blob 与 thread_id，少这一行元数据
 #: 就还原不出归属 —— 备份齐不齐的判据是"能不能重放"，不是"表数对不对"。
 KIND_TABLE: dict[str, str] = {
     sync_lib.KIND_CARD: "role_card",
@@ -124,10 +131,14 @@ def dump_before_clear(
         rows = sync_rows.rows_for_user(conn, table, user_id)
         dumped[table] = dump_rows_to_jsonl(backup_dir / f"{table}-{stamp}.jsonl", rows)
     if sync_lib.KIND_THREAD in kinds:
-        # 正文住在 langgraph 那两张表里，按 thread_id 归（它们不认 user_id，所以先换一道）。
+        # 会话族的行按 thread_id 归（那几张表不认 user_id，所以先从 session_thread 换一道）。
+        # **名单与级联删共用同一份现数的**（`thread_id_carriers`）：从前这里抄着两张检查点表，
+        # 而删侧数的是库的形状 —— 于是 `command_approval` 这种"带 thread_id、但没人会想起
+        # 要抄进备份清单"的表被删掉而不备份。抄的那份迟早漏，数的这份不会（2026-10-04
+        # 快照对盘会话备份那一格时量出并立案）。
         tids = sync_rows.thread_ids_for_user(conn, user_id)
-        for table in sync_rows.CHECKPOINT_TABLES:
-            rows = sync_rows.checkpoint_rows(conn, table, tids)
+        for table in thread_id_carriers(conn):
+            rows = sync_rows.rows_for_threads(conn, table, tids)
             dumped[table] = dump_rows_to_jsonl(backup_dir / f"{table}-{stamp}.jsonl", rows)
     trim_backups(backup_dir, keep=SYNC_BACKUP_KEEP)
     return dumped
