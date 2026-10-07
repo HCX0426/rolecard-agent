@@ -215,6 +215,7 @@ def check_audit_ledger_row_count() -> None:
             "那个数由脚本现数，别手写"
         )
 
+#: H2「状态」格里算"表过态"的字样（`R102-77` 的尺子在用）。
 _LEDGER_STATUS_MARKERS = (
     "已收口", "未收口", "不修", "恒", "按设计", "取舍", "无需", "不动", "不改", "已处置", "已拍",
 )
@@ -334,6 +335,11 @@ def _git_ignored(refs: list[str]) -> tuple[set[str], bool]:
 
 DEFERRED_US = {"US-6"}
 
+#: 用户看得见的字面里不许再出现的词（`R28-45` 的事后闸）。判据分两半，各用**各自的精确信号**：
+#:  * 前端扫 `frontend/dist` 的产物 —— 压缩后的 JS 里没有注释，出现在那里的字必然是用户看得见的
+#:    （与 `bundled copy` 同一招，不需要一台 JSX 解析器去猜"这行是不是注释"）；
+#:  * 后端扫 `src/**/*.py` 的**字符串常量**，docstring 与注释不算（那些是写给开发者看的，
+#:    「后端」在那儿仍然精确指 `ModelBackend` 那一行）。
 _BANNED_USER_VISIBLE = (
     "模型后端",      # L2 那一行在界面上叫「模型」
     "默认后端",      # 「默认」的家是「服务」页那条优先级，不是模型页
@@ -403,6 +409,10 @@ def report_line_budget() -> None:
     if md > py * 5:
         print("note: docs still outweigh code - expected during planning, watch it after M1")
 
+#: 行里出现这个词就**优先**当它指这份文档（越具体越靠前）。匹配不到词时不做假设：
+#: 直接去所有文档里找这个编号，找到谁就算谁。
+#: 行内点了某份文档时，认的是**文件名**而不是完整路径（10-01 归档之后路径都变了，
+#: 而"这句引用指的是哪份文档"问的是文档身份，不是存放地）。
 _CITATION_DOC_KEYS: tuple[tuple[str, frozenset[str]], ...] = (
     ("架构计划", frozenset({"架构计划.md"})),
     ("设计稿", frozenset({"主动消息与记忆设计稿.md"})),
@@ -424,6 +434,10 @@ _SECTION_RE = re.compile(r"§\s*(\d+(?:\.\d+)*)")
 
 _PID_RE = re.compile(r"\b([RP]\d+-\d+)\b")
 
+#: 文档里可以当被引用目标的两种形状：标题编号（`### 12.19 …`）与台账行号（`| 12.4 |`）。
+#: 只活在**散文**里、从来没有台账行锚点的历史编号（同一次宽判据实验量得的全部悬空）。
+#: R28-44/45 描述的事件已并入 §10 的教训正文 —— 它们不是断链，是"正文吸收了条目"。
+#: 这份名单是**豁免登记处**：新的悬空出现时先查是不是同类，是就登记理由，不是就修引用。
 _TARGET_HEAD_RE = re.compile(r"^#{2,5}\s+(\d+(?:\.\d+)*)\b")
 _TARGET_ROW_RE = re.compile(r"^\|\s*([RP]\d+-\d+|\d+\.\d+)\s*\|")
 

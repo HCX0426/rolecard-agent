@@ -340,6 +340,7 @@ def _citation_targets(path: pathlib.Path) -> set[str]:
 
 _HEADER_DATE = re.compile(r"最后更新[：:]\s*(\d{4})-(\d{1,2})-(\d{1,2})")
 _FULL_DATE = re.compile(r"(?<![\d-])(\d{4})-(\d{1,2})-(\d{1,2})(?![\d-])")
+#: 「最后更新」那一行的日期（头部声明），与正文里出现过的日期。
 _BARE_DATE = re.compile(r"(?<![\d-])(\d{1,2})-(\d{1,2})(?![\d-])")
 
 def _dates_in(text: str, today: datetime.date) -> list[datetime.date]:

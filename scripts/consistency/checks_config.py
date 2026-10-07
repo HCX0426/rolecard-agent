@@ -163,6 +163,7 @@ def check_config_contract() -> None:
     if bad_json:
         fails.append(f".env.example JSON examples are unusable: {bad_json}")
 
+#: 操作系统给的那些变量：它们不是本应用的契约，写进 .env.example 反而误导人以为可以设。
 _PLATFORM_ENV = {"LOCALAPPDATA", "APPDATA", "TEMP", "TMP", "HOME", "PATH", "USERPROFILE"}
 
 def _env_names_read_in_src(src: pathlib.Path) -> dict[str, str]:

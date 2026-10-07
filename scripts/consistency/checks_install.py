@@ -594,6 +594,8 @@ def check_dependency_parity() -> None:
             continue
         _diff(f"extra parity: {extra}", list(extras[extra]), filename)
 
+#: spec 里的模块名（下划线）与发行包名（连字符）之间那点形状差。PEP 503 的归一只到
+#: "下划线/连字符等价"，这里就照那一条来，别写第二套映射表。
 def _module_to_distribution(module: str) -> str:
     return module.lower().replace("_", "-")
 
