@@ -129,6 +129,13 @@ STEPS: list[tuple[str, list[str], str]] = [
         [PY, "scripts/coverage_floor.py"],
         "full",
     ),
+    (
+        # 改动行覆盖率（diff-cover）排在地板之后：两步共用覆盖率那步刚写的 `.coverage`。
+        # 基线 origin/main，与覆盖率步同进 CI_SKIP —— CI 上没有覆盖率数据，这步只是噪音。
+        "改动行覆盖率",
+        [PY, "scripts/diff_coverage.py"],
+        "full",
+    ),
     # 快档也跑前端计数（2026-10-04 审查快照"读数漂移窗"那条的落地）：readings 的
     # `frontend_tests` 从前只在全量档刷新 —— 加了前端用例而几天不跑全量，README/读数就
     # 静静停在旧数（实测现场：读数 355 停在 10-03，真实 359，差了两天，是撞上别的事才查
@@ -527,6 +534,7 @@ CI_SKIP = frozenset(
         "真机冒烟(14 项)",
         "pytest(覆盖率)",
         "覆盖率分模块地板",
+        "改动行覆盖率",
     }
 )
 

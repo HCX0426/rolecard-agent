@@ -139,6 +139,12 @@ fail_under = 90
 # CoverageWarning（实测确认）；本表在 coverage 的命名空间之外，tomllib 照读、coverage 无视。
 # 这个数字**不进散文**（README/总览/流程只写全局阈值）—— 少一处家就少一处要同步的漂点。
 coverage_floor = 85
+# 改动行覆盖率（2026-10-07，diff-cover 那半，scripts/diff_coverage.py 执行）：基线
+# origin/main，只问"这堆要进 main 的改动被验过没有" —— 全局与地板都看不见"新分支一条没测"
+# 这件事。95 = 落地当天实测（2840 可测改动行、138 行零星欠账 → 95.14%），量出来的现状
+# 下限；push 后基线自动前移、规则不改。与 coverage_floor 同在本表：同一条"配置在 coverage
+# 命名空间之外 + 数字不进散文"的纪律。
+diff_coverage_floor = 95
 
 [tool.mypy]
 python_version = "3.13"
