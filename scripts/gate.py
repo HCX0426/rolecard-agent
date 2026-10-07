@@ -121,6 +121,14 @@ STEPS: list[tuple[str, list[str], str]] = [
         [PY, "scripts/pytest_with_evidence.py", "--lane", "coverage"],
         "full",
     ),
+    (
+        # 分模块地板紧跟覆盖率那一步（数据是它刚写的 `.coverage`）。名字与覆盖率步同前缀，
+        # 与它同进退：CI 不跑覆盖率（CI_SKIP 含覆盖率步），地板也整步跳过 —— 没有数据的
+        # 判据在 CI 上只会是噪音。配置缺失/文件跌破都由 scripts/coverage_floor.py 自己判红。
+        "覆盖率分模块地板",
+        [PY, "scripts/coverage_floor.py"],
+        "full",
+    ),
     # 快档也跑前端计数（2026-10-04 审查快照"读数漂移窗"那条的落地）：readings 的
     # `frontend_tests` 从前只在全量档刷新 —— 加了前端用例而几天不跑全量，README/读数就
     # 静静停在旧数（实测现场：读数 355 停在 10-03，真实 359，差了两天，是撞上别的事才查
@@ -518,6 +526,7 @@ CI_SKIP = frozenset(
         "dist 入库同步",
         "真机冒烟(14 项)",
         "pytest(覆盖率)",
+        "覆盖率分模块地板",
     }
 )
 

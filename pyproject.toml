@@ -131,6 +131,15 @@ source = ["src/rolecard_agent"]
 # 执行 —— 真要进 CI 臂，先去量一发 Linux 读数。
 fail_under = 90
 
+[tool.rolecard]
+# 分模块地板（2026-10-07 覆盖率体系第八刀）：全局 fail_under 管平均，这里管**单文件**。
+# 85 = 当天全仓最低值量出来的现状下限（core/tools/files.py 84.95 补齐后其余都 ≥85.19），
+# 不是拍的数；此后新文件/新分支跌破即红（scripts/coverage_floor.py 执行，紧跟门禁覆盖率步）。
+# **刻意不放 [tool.coverage.report]**：coverage.py 对自家表里不认识的键每个用例都报
+# CoverageWarning（实测确认）；本表在 coverage 的命名空间之外，tomllib 照读、coverage 无视。
+# 这个数字**不进散文**（README/总览/流程只写全局阈值）—— 少一处家就少一处要同步的漂点。
+coverage_floor = 85
+
 [tool.mypy]
 python_version = "3.13"
 packages = ["rolecard_agent"]

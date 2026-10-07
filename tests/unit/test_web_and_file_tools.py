@@ -348,6 +348,82 @@ def test_fs_write_over_limit_is_refunded_without_touching_disk(
     assert "已写入" in boundary
 
 
+# -- 分模块地板的靶子（2026-10-07 覆盖率地板刀） -------------------------------------
+# 全局 fail_under 管平均，地板管单文件：files.py 曾是全仓最低（84.95%，差 0.05 过 85 线）。
+# 下面每条都是"磁盘出错/边界输入时对模型说人话"的路径 —— 平均值看不见它们，地板会。
+
+
+def test_fs_tools_bind_to_the_resolved_task_dir(settings: Settings, tmp_path: Path) -> None:
+    """`dir_resolver` 每次调用实时解析任务目录 —— 两个任务共用一套工具靠它分家。
+
+    不传时回落 settings.workspace_dir（其余用例走的都是那条路）；这条钉的是
+    "范围跟着用户授权走"的那条主路径：工具**建成后**目录还能换，写与读都跟着走。
+    """
+    (fs_read, fs_write, _fs_list) = make_file_tools(
+        settings=settings, dir_resolver=lambda: tmp_path / "另一个任务"
+    )
+    assert "已写入" in fs_write.invoke({"path": "a.txt", "content": "x"})
+    assert (tmp_path / "另一个任务" / "a.txt").exists(), "写进了回落目录 —— dir_resolver 没生效"
+    assert "文件不存在" in fs_read.invoke({"path": "b.txt"})  # 读也走同一个根
+
+
+def test_fs_read_garbled_bytes_becomes_a_readable_error(settings: Settings) -> None:
+    """读到非法 UTF-8 ⇒ "读取失败：…"，不许裸抛 `UnicodeDecodeError`。
+
+    下载/粘贴来的"文本文件"里混进二进制字节是真实形状；裸异常到了模型眼里只是一串
+    traceback，到人眼里是一次 500。
+    """
+    (fs_read, fs_write, _list) = make_file_tools(settings=settings)
+    root = Path(settings.workspace_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "坏.txt").write_bytes(b"\xff\xfe\x00\x89PNG")
+    assert "读取失败" in fs_read.invoke({"path": "坏.txt"})
+
+
+def test_fs_read_long_file_is_truncated_with_a_notice(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """超长文件截断必须带"已截断、共约 N 字符"的告示 —— 模型得知道自己看到的不是全文。
+
+    上限用 monkeypatch 缩小（与 `WRITE_MAX_BYTES` 那条同风格），不为一条用例造 20 万字符。
+    """
+    import rolecard_agent.core.tools.files as files_module
+
+    monkeypatch.setattr(files_module, "READ_MAX_CHARS", 10)
+    (fs_read, fs_write, _list) = make_file_tools(settings=settings)
+    fs_write.invoke({"path": "long.txt", "content": "一二三四五六七八九十一二三"})
+    out = fs_read.invoke({"path": "long.txt"})
+    assert "已截断" in out and "共约 13" in out
+
+
+def test_fs_write_disk_error_is_reported_not_raised(settings: Settings) -> None:
+    """父路径本身是个**文件**时 mkdir 必然失败 ⇒ "写入失败：…"，不许裸 OSError 冒出去。
+
+    真实形状：工作目录某一级被手工建成了文件（或上次异常留下的半成品）——
+    工具的可读失败是它对模型的全部输出，抛异常等于把执行器打红。
+    """
+    (_read, fs_write, _list) = make_file_tools(settings=settings)
+    root = Path(settings.workspace_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "挡路.txt").write_text("我是文件", encoding="utf-8")
+    assert "写入失败" in fs_write.invoke({"path": "挡路.txt/深层.txt", "content": "x"})
+
+
+def test_fs_list_reports_escape_a_file_and_an_empty_dir(settings: Settings) -> None:
+    """`fs_list` 三支可读失败各是各的话：越界 / 指向文件 / 空目录。
+
+    "指向文件"必须说"目录不存在"而不是返回空列表（空列表 = 模型以为里面没东西）；
+    空目录要有显式告示，别与"出错"混成一个形状。
+    """
+    (fs_read, fs_write, fs_list) = make_file_tools(settings=settings)
+    assert "路径越界" in fs_list.invoke({"path": "../"})
+    fs_write.invoke({"path": "单文件.txt", "content": "x"})
+    assert "目录不存在" in fs_list.invoke({"path": "单文件.txt"})
+    root = Path(settings.workspace_dir)
+    (root / "空目录").mkdir(parents=True, exist_ok=True)
+    assert "（空目录）" in fs_list.invoke({"path": "空目录"})
+
+
 # -- 联网总闸 + 域名白名单（用户 2026-09-17 开工的功能①） --------------------------
 
 
