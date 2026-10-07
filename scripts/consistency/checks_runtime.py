@@ -925,6 +925,80 @@ def _compose_service_env(compose: str, service: str) -> dict[str, object] | None
     return env if isinstance(env, dict) else None
 
 
+def _deploy_port_findings(compose: str, caddy_text: str) -> list[str]:
+    """端口这一问的两条规矩，按结构问（P3-9 解析器化的第四格）。
+
+    为什么换掉两条正则（**先量过的缺陷**，不是猜的：把现网 compose 临时改成三发变异跑
+    整份一致性 —— `ports: - "8080:8000"`、`ports: - "127.0.0.1:8000:8000"`、以及整段删掉
+    `expose:` —— 旧尺子**三发全绿**；那三发现在钉在 `tests/unit/test_deploy_port_guard.py`
+    里，改名 M1/M2/M3，与本文件同一条 commit 落盘）：
+
+      旧 A `re.search(r'^\\s*-\\s*"?8000:\\d+', compose)` —— 锚在"冒号左边字面是 8000"，
+         于是 `- "8080:8000"`（把应用容器口挂到宿主 8080）与 `- "127.0.0.1:8000:8000"`
+         都从它底下滑过去，而这条断言的**结论文本当时就在说"应用端口不 publish"** ——
+         判据是摆设，报告还照样绿。
+      旧 B `re.findall(r'^\\s*-\\s*"?(\\d{2,5})"?\\s*$', compose)` 扫全文取 expose，
+         整段 `expose:` 删掉时取到空集，而下面写的是 `if exposed and upstream:` ——
+         **取不到 = 不问**，于是"删掉 expose 而 Caddyfile 还打着 app:8000"也静默绿。
+
+    现在的问法贴着 compose 文件头那句真正的规矩（"ports 只出现在 caddy 那一段"）：
+
+      ① 除 caddy 之外的任何 service **不许有 `ports:` 这一格**（宿主侧暴露与端口号无关，
+         绑回环也是暴露）；
+      ② Caddyfile 的 `reverse_proxy app:<port>` 必须出现在 `services.app.expose` 里，
+         而**那段读不出序列不再等于"没东西可查"** —— 缺就是红，并把当时的形状写出来。
+
+    序列里的 `- "8000"` 被 `simple_yaml` 读成字符串 `"8000"`（不是 `{"8000": None}`：
+    端口映射冒号后没空格，按 YAML 的规矩是一个标量），所以下面统一按字符串比。
+    """
+    problems: list[str] = []
+    services = (simple_yaml(compose).get("services") or {}) if compose else {}
+    if not isinstance(services, dict):
+        return [f"compose 的 services 读不出映射（形状是 {type(services).__name__}）—— "
+                "这一问不能静默跳过"]
+
+    published = sorted(
+        name
+        for name, node in services.items()
+        if name != "caddy" and isinstance(node, dict) and node.get("ports")
+    )
+    if published:
+        problems.append(
+            f"这些 service 把端口 publish 到了宿主：{published}（这一档只许 caddy 出公网；"
+            "应用一旦被 publish，「忘了配鉴权」就只是裸奔而不是起不来）"
+        )
+
+    upstream = {f"app:{m}" for m in re.findall(r"reverse_proxy\s+app:(\d+)", caddy_text)}
+    # 先绑一个名字再 isinstance：写成 `X if isinstance(X, dict) else {}` 里那两次 X 是
+    # 两个独立的调用，mypy 不会把前一次的判据递到后一次（`union-attr` 就是这么来的）。
+    app_raw = services.get("app")
+    app_node = app_raw if isinstance(app_raw, dict) else {}
+    raw_expose = app_node.get("expose")
+    if not isinstance(raw_expose, list):
+        # 读不出序列的三种形状都到这里：没这一段（None）、写了 `expose:` 而下面没条目
+        # （也是 None）、以及形状根本是标量。**没有一种等于"没东西可查"**：旧写法取到
+        # 空集就 `if exposed and upstream:` 跳过，于是删掉 expose 那一格是绿的。
+        # 刻意不写 `raw_expose or []`：`simple_yaml` 交不出空列表（子节点为空就是 None，
+        # `[]` 属于流式语法、直接抛），那条分支**守不住任何东西** —— 写它就是把防线
+        # 当装饰，而本函数要治的正是装饰。（这条是把自己的变异测试装回旧写法时量出来的：
+        # 旧写法能骗过当时全部用例，于是补了 `test_deploy_port_guard.py` 的形状那几发。）
+        if upstream:
+            shape = "这一段不存在或下面是空的" if raw_expose is None else repr(raw_expose)[:40]
+            problems.append(
+                f"services.app 读不出 expose 序列（实际形状：{shape}），而 Caddyfile 打着 "
+                f"{'、'.join(sorted(upstream))} —— 容器间端口没暴露，反代打不通；"
+                "这一问不许因为读不出就跳过"
+            )
+        return problems
+    exposed = {f"app:{item}" for item in raw_expose}
+    if upstream and not upstream <= exposed:
+        problems.append(
+            f"Caddyfile 打到 {'、'.join(sorted(upstream))}，compose expose 的是 "
+            f"{'、'.join(sorted(exposed))}"
+        )
+    return problems
+
+
 def _compose_app_env(compose: str) -> list[str]:
     """取 `services.app.environment` 那一段里的键名（走 `simple_yaml`，不引 PyYAML）。
 
@@ -982,19 +1056,11 @@ def check_deploy_env_parity() -> None:
     mode = app_env.get("AUTH_MODE")
     if mode is not None and mode != "on":
         problems.append(f"AUTH_MODE={mode}：反代之后 auto 把所有人都当回环，等于没鉴权")
-    if re.search(r'^\s*-\s*"?8000:\d+', compose, flags=re.M):
-        problems.append("应用端口被 publish 到宿主（这一档只许 443 出公网）")
 
     caddy = ROOT / "deploy" / "Caddyfile"
-    exposed = set(re.findall(r'^\s*-\s*"?(\d{2,5})"?\s*$', compose, flags=re.M))
-    if caddy.exists() and exposed:
-        upstream = set(
-            re.findall(r"reverse_proxy\s+app:(\d+)", caddy.read_text(encoding="utf-8"))
-        )
-        if upstream and not upstream <= exposed:
-            problems.append(
-                f"Caddyfile 打到 app:{sorted(upstream)}，compose expose 的是 {sorted(exposed)}"
-            )
+    caddy_text = caddy.read_text(encoding="utf-8", errors="ignore") if caddy.exists() else ""
+    # 端口这两问按结构问（旧两条正则有**实测的三发漏检**，见 `_deploy_port_findings`）。
+    problems.extend(_deploy_port_findings(compose, caddy_text))
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8", errors="ignore")
     required_vars = set(re.findall(r"\$\{([A-Z][A-Z0-9_]+):\?", compose))
