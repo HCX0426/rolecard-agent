@@ -216,7 +216,16 @@ class VisionModelBackend:
         return vision_model_ready(self._base, self._model)
 
     def ocr(self, image_path: Path) -> str:
-        b64 = _read_image_b64(image_path)
+        try:
+            b64 = _read_image_b64(image_path)
+        except ParseError:
+            raise  # "图片过大，请压缩后重试"这类话本来就是给人看的，别再包一层糊掉它
+        except Exception as exc:  # noqa: BLE001 - 与云端那一格同口径（见下）
+            # 从前这里不包：文件不在/不可读会把**裸 FileNotFoundError** 抛给调用方，而本模块的
+            # 契约只有两条路（不可用→OcrUnavailable、可用但失败→ParseError）；第三条裸异常会被
+            # 调用方按"意外错误"处理（500），而它其实就是"这张图读不出来"。云端那一格本来就包了
+            # —— 同一个失败在两个后端给出两种形状，补齐成一种。
+            raise ParseError(f"读取图片失败：{exc}") from exc
         payload = {
             "model": self._model,
             "messages": [
@@ -265,7 +274,9 @@ class CloudApiBackend:
             raise OcrUnavailable("云端 OCR 未配置 API Key（去模型页为该厂商填写凭据）。")
         try:
             b64 = _read_image_b64(image_path)
-        except Exception as exc:
+        except ParseError:
+            raise  # 与视觉模型那一格同口径：本来就写给人看的话，别套一层"读取图片失败"
+        except Exception as exc:  # noqa: BLE001 - 网络/HTTP 失败 = 解析失败
             raise ParseError(f"读取图片失败：{exc}") from exc
         try:
             res = _http().post(
