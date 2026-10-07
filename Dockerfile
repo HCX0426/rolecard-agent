@@ -3,7 +3,17 @@
 # 依赖**锁安装**（2026-10-07 拍板「上锁文件」）：requirements-runtime.lock 由 pip-compile
 # 从运行时五族的 requirements 镜像产出（输入面钉在 check_consistency 的 LOCK_SURFACES），
 # fresh install 逐字节可重现；数据目录挂卷，绝不把演示库打进镜像。
-FROM python:3.13-slim
+# ---------------------------------------------------------------------------
+# 基座钉 digest（快照 P3-14，2026-10-08 落地）：CI 那条线自己论证了"runner 要钉版本"，
+# 却没把同一条纪律下沉到镜像层 —— 浮动 tag 意味着今天能构建、明天同一行可能拉到带新
+# 补丁的 python:3.13-slim，装了个没人验证过的基座还全绿（与"锁只锁直接依赖"同族）。
+# 取的是 **index** 的 digest（多架构清单，正是 `docker build` 按平台解析前看到的那一格），
+# 不是某个架构的 manifest digest —— 钉后者会让 arm 机器拉到错的东西。
+# digest 的实时性交给 Renovate 的 docker datasource（`renovate.json`：pinDigests=true，
+# 周一凌晨一跑就把这一格追到 python:3.13-slim 的最新 digest），人不抄数。
+# 对照值（2026-10-08 用 auth.docker.io 匿名 token 实拉核验，按 digest 解析回同一值）：
+#   sha256:bf44cdfcb76cd3b41e879bc058fc37ec5872002ccfde7fcb765e218cde0cd79c
+FROM python:3.13-slim@sha256:bf44cdfcb76cd3b41e879bc058fc37ec5872002ccfde7fcb765e218cde0cd79c
 
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
