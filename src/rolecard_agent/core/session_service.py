@@ -22,13 +22,15 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any
 
+from rolecard_agent.base.paths import user_data_root
 from rolecard_agent.config import Settings
 from rolecard_agent.core.thread_locks import thread_write
 from rolecard_agent.roles.service import RoleCards, RoleNotFound
 from rolecard_agent.storage import threads as _threads
-from rolecard_agent.storage.db import SqlConnection
+from rolecard_agent.storage.db import RETENTION_BACKUP_DIRNAME, SqlConnection
 
 #: 会话级对话模式的两个合法档（`Settings.agent_default_mode` 与前端切换钮共用这套词汇）。
 MODE_CHOICES = ("chat", "agent")
@@ -145,6 +147,18 @@ def delete_everywhere(conn: SqlConnection, thread_id: str) -> dict[str, int]:
     名单现数现用（`storage.db.thread_id_carriers`），从前写死 `("checkpoints","writes")`
     两张表时 `command_approval` 恰好漏掉 —— 已删会话的待批审批永远挂在队列上。
     拿不到锁抛 `ThreadBusy` → 路由/处理器翻 409，绝不"没锁照删"。
+
+    **删之前先落备份**（2026-10-04 快照「会话删除无先备份」那一格）：这是三条删会话路径里
+    唯一没接备份的那条 —— 整份替换有 `dump_before_clear`、retention 有 `dump_before_delete`，
+    而"用户在界面上删掉一段对话"是最常见也最不可逆的那个动作。目录与时刻在这里算：
+    storage 在 base 之下够不到 `user_data_root()`（与 retention 的分工同一套，路径与策略在上、
+    机械在下），而时刻**一次算好**传下去，让同一次删除写出的几个备份文件共用一个后缀
+    （各表自己取时间会写出四个不同文件名，还原时得靠猜哪几个是同一次）。
     """
     with thread_write(thread_id, timeout=WRITE_WAIT):
-        return _threads.delete_thread_everywhere(conn, thread_id)
+        return _threads.delete_thread_everywhere(
+            conn,
+            thread_id,
+            backup_dir=user_data_root() / RETENTION_BACKUP_DIRNAME,
+            stamp=datetime.now().strftime("%Y%m%d-%H%M%S"),
+        )

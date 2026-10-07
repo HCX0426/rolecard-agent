@@ -482,12 +482,17 @@ def dump_before_delete(
     params: tuple[object, ...],
     backup_dir: Path,
     stamp: str,
+    source: str = "retention",
 ) -> int:
     """把**将要被删的行**先写成 JSONL，返回行数。0 行就不落文件。
 
     顺序是判据：先落盘、再删、最后才 commit —— 中间崩掉的结果是"行还在库里 + 多一个
     备份文件"，而不是"行没了 + 没有任何地方能找回"。这是 `R102-29` 拍板里
     "先备份再删"那半句的实现（10-03 复核发现那半句从没落地，见台账 H12 批 24）。
+
+    `source` 进日志前缀（默认 `retention`）：那一声"[retention]"从前是唯一调用点留下的，
+    而现在删会话也走这台机械 —— 备份是谁触发的必须说对，排障时"retention 删了这些行"
+    与"用户删了会话"是两件完全不同的事（同一个 prefix 会让人去查保留策略而看不到是谁按了键）。
 
     **公开给 core**：`table` / `where` 是**策略**（哪张表、留多久），住 `core/retention.py`；
     本模块只提供"按给定条件先备份再交出去"这台机械 —— 与 `prune_retention_tables` 搬家
@@ -497,7 +502,7 @@ def dump_before_delete(
     n = dump_rows_to_jsonl(
         backup_dir / f"{table}-{stamp}.jsonl",
         rows,
-        notice=f"[retention] 先落备份 {table}-{stamp}.jsonl（{len(rows)} 行 {table}）再删",
+        notice=f"[{source}] 先落备份 {table}-{stamp}.jsonl（{len(rows)} 行 {table}）再删",
     )
     return n
 

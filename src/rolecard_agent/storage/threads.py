@@ -25,12 +25,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from rolecard_agent.storage.db import (
     SqlConnection,
+    dump_before_delete,
     quote_ident,
     table_columns,
+    trim_backups,
 )
 
 #: `touch_thread` 的线格式必须是毫秒（`R102-62`）：侧栏按 `updated_at` 排序，两次改动落在
@@ -99,7 +102,13 @@ def record_message_count(conn: SqlConnection, thread_id: str, count: int) -> Non
     )
 
 
-def delete_thread_everywhere(conn: SqlConnection, thread_id: str) -> dict[str, int]:
+def delete_thread_everywhere(
+    conn: SqlConnection,
+    thread_id: str,
+    *,
+    backup_dir: Path | None = None,
+    stamp: str | None = None,
+) -> dict[str, int]:
     """按 thread_id 级联删的**唯一入口**（`R102-26`/`48`；2026-10-02 拍板：真删）。
 
     名单**现数现用**（`thread_id_carriers()`）而不是调用点自列清单 —— 从前的两条删除
@@ -110,15 +119,66 @@ def delete_thread_everywhere(conn: SqlConnection, thread_id: str) -> dict[str, i
     "整份替换没法包成一个跨两连接大事务"的根源，`R102-48` 的残留窗口）。调用方负责
     先拿 `thread_write(thread_id)`：在飞轮次不该被从脚下抽走检查点（R28-03 同类事故）。
 
-    返回每张表删掉的行数（审计与测试用）。
+    **给了 `backup_dir` 就先落备份再删**（2026-10-04 快照「会话删除（单删/清空/修剪）
+    无先备份」那一格）：这是三条删会话路径里唯一没接备份的那条 —— 整份替换有
+    `dump_before_clear`、retention 有 `dump_before_delete`，而"用户在界面上删掉一段对话"
+    这个**最常见也最不可逆**的动作反倒什么都没有。要备份的表与要删的表**天然是同一份**
+    （就在同一个循环里，名单现数现用）：另列一份清单就是第二份事实面，漏一张 = 静默丢
+    一类数据。顺序照 retention 那台机械：先落盘、再删、最后 commit —— 中途崩掉的后果是
+    "行还在库里 + 多一个备份文件"，而不是"行没了 + 没有任何地方能找回"。
+
+    目录由**调用方**算：storage 在 base 之下，`user_data_root()` 它结构上够不到（分工与
+    retention 同一套：路径与策略在上，机械在这里）。传 `None` = 这里不备份，只有一处这么传：
+    `features/sync_service.clear_threads_for_replace`，它在删之前先跑过 `dump_before_clear`。
+
+    **那一处并不等价，如实记下**：`dump_before_clear` 的名单是两份**静态**映射
+    （`KIND_TABLE` 四类 + `CHECKPOINT_TABLES` 两张），而这里的名单是**现数**的
+    （`thread_id_carriers`，含 `command_approval`）—— 所以整份替换那条路会删掉审批行而
+    不备份它们，正是 sync 模块自己注释里警告的"备份少一族"。修法不是在这里补一份名单
+    （那会造出第三份事实面，而且 -checkpoints/writes 两表会被两个 stamp 各写一遍），
+    而是让清空侧也改用现数名单 —— 已作为独立一格记进账本，不在这一刀里顺手改。
+
+    返回每张表删掉的行数（审计与测试用）。备份的行数**不进**这个 dict —— 这个形状的
+    键是"表名"，混进 `backup:` 之类的键会让按表名读数的调用方（sync 那边把
+    `["session_thread"]` 直接求和）当场 KeyError。备份条数走日志（那台机械自己念）。
     """
     stats: dict[str, int] = {}
+    if backup_dir is not None and not stamp:
+        # 时刻由调用方**一次算好**传进来（与 retention 同一口径）：一次删会话会连写
+        # 四五张表的备份，各表自己取 now 就会写出四个不同文件名 —— 还原时要靠猜哪几个文件
+        # 是同一次删除。
+        raise ValueError("给了 backup_dir 就必须给 stamp（同一次删除共用一个时刻）")
+    where, params = "WHERE thread_id = ?", (thread_id,)
     for table in thread_id_carriers(conn):
+        if backup_dir is not None:
+            dump_before_delete(
+                conn,
+                table=table,
+                where=where,
+                params=params,
+                backup_dir=backup_dir,
+                stamp=stamp or "",
+                source="session-delete",
+            )
         cur = conn.execute(f"DELETE FROM {table} WHERE thread_id = ?", (thread_id,))
         stats[table] = max(cur.rowcount, 0)
+    if backup_dir is not None:
+        dump_before_delete(
+            conn,
+            table="session_thread",
+            where=where,
+            params=params,
+            backup_dir=backup_dir,
+            stamp=stamp or "",
+            source="session-delete",
+        )
     cur = conn.execute("DELETE FROM session_thread WHERE thread_id = ?", (thread_id,))
     stats["session_thread"] = max(cur.rowcount, 0)
     conn.commit()
+    if backup_dir is not None:
+        # 轮转跟着写备份的这一方做，不交给调用方记着调：一个"只增不减"的备份目录，
+        # 是拿另一个只增表换掉刚修好的那张（retention 那三张表的清理正是为此存在）。
+        trim_backups(backup_dir)
     return stats
 
 
