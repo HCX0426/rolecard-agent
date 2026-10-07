@@ -146,14 +146,22 @@ def _run_async(coro: Any) -> Any:
     fresh `asyncio.run`. But under pytest-asyncio or other already-async callers, `asyncio.run`
     raises "cannot run loop while another loop is running" - in that case run it on a dedicated
     thread so an external tool load never blocks startup.
+
+    **先问"有没有 loop 在场"，而不是靠 catch RuntimeError 分流**（覆盖率补错误路径时抓出来的）：
+    从前写成 `try: asyncio.run(coro) except RuntimeError: 换线程重试`，而**工具自己抛的
+    `RuntimeError`**（上游 5xx、连接断、库内部几乎都用这个类）会被同一个 except 接住，
+    于是拿一条已经 await 过的协程去重跑 —— 调用方最后看到的是
+    `cannot reuse already awaited coroutine`，真正的错**连人带审计记录一起被抹掉**。
+    这条支路只在真连 MCP 时暴露，而那时最不该丢的就是原始异常。
     """
     try:
-        return asyncio.run(coro)
+        asyncio.get_running_loop()
     except RuntimeError:
-        import concurrent.futures as _cf
+        return asyncio.run(coro)  # 没有 loop 在场：正常跑，工具的异常原样往上抛
+    import concurrent.futures as _cf
 
-        with _cf.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(lambda: asyncio.run(coro)).result()
+    with _cf.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(lambda: asyncio.run(coro)).result()
 
 
 def load_mcp_tools(servers: list[McpServerConfig], *, conn: Any = None) -> list[BaseTool]:

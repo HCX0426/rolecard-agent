@@ -1,6 +1,6 @@
-"""`/api/pets` 两条只读端点（09-30，配合 `role_card.pet_pack`）。
+"""`/api/pets` 三条只读端点（09-30 起）：清单 / Cubism 运行时 / 包内素材。
 
-只挂这一张 router，不跑整套装配：这两条不依赖 `AppContext`，把它们绑在全量 bootstrap 上
+只挂这一张 router，不跑整套装配：这三条都不依赖 `AppContext`，把它们绑在全量 bootstrap 上
 只会让用例变慢、变脆。分级那一半由 `tests/unit/test_route_access.py` 枚举真实路由去钉
 （**没表态的端点默认算 operator**，`/api/pets` 已登记成 user 级只读）。
 
@@ -120,3 +120,27 @@ def test_a_dropped_pack_is_also_a_404(client: TestClient) -> None:
 def test_a_path_shaped_name_cannot_escape_the_pack(client: TestClient, url: str) -> None:
     """包目录是唯一边界：`..` 无论以什么形式出现都拿不到东西（404 / 400，绝不 200）。"""
     assert client.get(url).status_code in (400, 404)
+
+
+def test_missing_cubism_runtime_is_a_404_not_an_empty_script(client: TestClient) -> None:
+    """没放运行时 ⇒ 404 且**不返回空 JS**。
+
+    空 body 会让浏览器那侧 `<script>` 加载"成功"，Live2D 于是报一个跟真原因（缺运行时）
+    毫无关系的错，而清单里那句"cubism_core: false"就白写了 —— 这条路径的沉默比 404 贵。
+    它是用户自己接受条款后才放进来的东西，我们**不随包分发**，所以缺是常态、不是错误。
+    """
+    res = client.get("/api/pets/_runtime/live2dcubismcore.min.js")
+    assert res.status_code == 404, res.text
+    assert "Cubism Core" in res.json()["detail"], res.text
+
+
+def test_the_cubism_runtime_is_served_as_javascript(tmp_path: Path, client: TestClient) -> None:
+    """放上去之后就该以 JS 发出去 —— 界面那句"为什么 live2d 一个都没有"随之翻成有。"""
+    core = pet_packs.cubism_core_path()
+    core.parent.mkdir(parents=True, exist_ok=True)
+    core.write_text("window.CubismFramework = {};", encoding="utf-8")
+    res = client.get("/api/pets/_runtime/live2dcubismcore.min.js")
+    assert res.status_code == 200, res.text
+    assert res.headers["content-type"].startswith("application/javascript"), res.headers
+    assert b"CubismFramework" in res.content
+    assert client.get("/api/pets").json()["cubism_core"] is True
