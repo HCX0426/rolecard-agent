@@ -41,9 +41,36 @@ def test_the_two_lanes_differ_only_in_cov_and_stop_on_first_failure(monkeypatch,
     mod = _load(monkeypatch, tmp_path)
     fast, f1, f2 = mod.LANES["fast"]
     cov, c1, c2 = mod.LANES["coverage"]
-    assert "-x" in fast and "--cov=rolecard_agent" not in fast, "快档该是裸跑 -x，不该量覆盖率"
-    assert "--cov-fail-under=85" in cov and "-x" not in cov, "覆盖率档该量到底、不该一红就停"
+    assert "-x" in fast and "--cov" not in fast, "快档该是裸跑 -x，不该量覆盖率"
+    # 覆盖率档只说"量"（`--cov`）：**量什么范围、多少算过全在 pyproject 的 [tool.coverage.*]**。
+    # 判据因此从"命令里有没有那串字面量"改成"命令里不许再有那些字面量" —— 谁把它们抄回
+    # 命令行，就会再造出第二个事实面（CI/夜间臂/人肉各抄一份，漏抄的安静地量出另一个数）。
+    assert "--cov" in cov and "-x" not in cov, "覆盖率档该量到底、不该一红就停"
+    for banned in ("--cov-fail-under", "--cov=", "--cov-branch"):
+        assert banned not in cov, f"覆盖率口径又回到命令行了（{banned}）：它住在 pyproject"
     assert len({f1, f2, c1, c2}) == 4, f"两档日志撞名了：{f1} {f2} {c1} {c2}"
+
+
+def test_the_coverage_config_lives_in_pyproject(monkeypatch, tmp_path) -> None:
+    """口径搬进配置之后，**配置里那三件必须在**：少了任何一件，读数就悄悄换范围。
+
+    这一条不是给 pyproject 上保险，是给"搬了个家"这件事本身上保险：搬家时最容易
+    只搬一半（比如只搬 `source` 忘了 `fail_under`，命令行删了、配置里没有 ⇒ 阈值静默消失，
+    覆盖率再差也不会红 —— 那正是"看起来绿比红贵"那一族）。
+    """
+    import tomllib
+
+    mod = _load(monkeypatch, tmp_path)
+    assert "--cov" in mod.LANES["coverage"][0], "前提：命令只说量"
+    cfg = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    run = cfg["tool"]["coverage"]["run"]
+    report = cfg["tool"]["coverage"]["report"]
+    assert run["branch"] is True, "branch 关掉就没有【失败路径只走过一边】的信号"
+    assert run["source"] == ["src/rolecard_agent"], "范围换了，历史读数就不可比"
+    assert report["fail_under"] == 85, "阈值不能住在别处"
+    # 反向臂：命令行里不许留任何一份副本（上面那条判"在不在配置里"，这条判"有没有第二份"）
+    joined = " ".join(mod.LANES["coverage"][0])
+    assert "--cov-fail-under" not in joined and "rolecard_agent" not in joined
 
 
 def test_unknown_lane_is_a_loud_failure_not_a_default(monkeypatch, tmp_path, capsys) -> None:
@@ -99,7 +126,7 @@ def test_the_second_run_going_red_stays_red(monkeypatch, tmp_path, capsys) -> No
     monkeypatch.setattr(sys, "argv", ["x", "--lane", "coverage"])
 
     def fake_run(cmd, extra=None):  # noqa: ANN001, ANN002, ANN003
-        return (1, FLAKE_LOG) if "--cov=rolecard_agent" in cmd else (1, FLAKE_LOG)
+        return (1, FLAKE_LOG) if "--cov" in cmd else (1, FLAKE_LOG)
 
     monkeypatch.setattr(mod, "_run", fake_run)
     assert mod.main() == 1

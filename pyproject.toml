@@ -106,6 +106,27 @@ markers = [
     "live: 真机/真模型用例，默认不跑（pytest -m live 显式执行）",
 ]
 
+[tool.coverage.run]
+# 覆盖率口径的唯一出处（2026-10-04 审查快照「口径硬编码在脚本 + 只看行覆盖」那一格的落地）。
+# 从前这些数字挂在 `scripts/pytest_with_evidence.py` 的命令行上（`--cov=rolecard_agent
+# --cov-fail-under=85`），于是"量什么范围、量到多少算过"住在**跑它的那条命令**里 ——
+# CI、夜间臂、人肉重跑各抄一份，漏抄的那份会安静地量出另一个数。现在只有一处声明。
+branch = true  # 口径含分支：只看行覆盖会放过"if 只走过一边"那一大族失败路径 —— 正是那条
+#               快照点名的现场（OCR 子进程超时、嵌入重试耗尽、rerank 降级全在低覆盖处）。
+source = ["src/rolecard_agent"]
+# **刻意没有 omit，也没有 precision**：`source` 已把范围钉死在这个包里（测试与 `__main__`
+# 都不在其中，实测 `src/**/__main__.py` 根本不存在），再写一条匹配不到东西的 omit 就是
+# 本仓反复收口的 dead config；小数位同理 —— 迁移前那条命令行什么都没写也是两位（pytest-cov
+# 的默认值），写进配置只是把默认值伪装成政策。真有人改了默认精度，读数机那格会落成
+# `coverage_percent_unreadable` 并让一致性红 —— 形状由那里守，不由一行配置守。
+# 快照那行原写"source/omit 显式声明"，落的是"口径进配置 + 开 branch"这半句，差异记进账本。
+
+[tool.coverage.report]
+# 阈值 85 与迁移前**逐字相同**：开 branch 之后重量的基线是 **92.39%**（2026-10-07 全量档
+# 实跑，1664 条用例）—— 抬到 90 是下一刀的事（那条快照的顺序就是"先落基线读数再定新阈值"）。
+# 搬配置的这一刀不改判据，否则"口径变了"与"代码变差了"会混成一件事。
+fail_under = 85
+
 [tool.mypy]
 python_version = "3.13"
 packages = ["rolecard_agent"]

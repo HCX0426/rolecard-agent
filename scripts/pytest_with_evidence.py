@@ -60,7 +60,11 @@ _XDIST = ["-n", "4"]
 LANES: dict[str, tuple[list[str], str, str]] = {
     "fast": (COMMON + _XDIST + ["-x"], "gate-fast-run1.log", "gate-fast-run2-retry.log"),
     "coverage": (
-        COMMON + ["--cov=rolecard_agent", "--cov-fail-under=85"],
+        # 只说"量"，不说"量什么、量到多少"：source / branch / fail_under 全在
+        # `pyproject.toml` 的 `[tool.coverage.*]`（2026-10-04 审查快照「口径硬编码在脚本」
+        # 那一格的迁移）。从前这两个数挂在命令上，于是"覆盖率的范围与阈值"住在跑它的那条
+        # 命令里 —— CI、夜间臂、人肉重跑各抄一份，漏抄的那份会安静地量出另一个数。
+        COMMON + ["--cov"],
         "gate-coverage-run1.log",
         "gate-coverage-run2-retry.log",
     ),
