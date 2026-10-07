@@ -143,7 +143,8 @@ export default function ChatPage({
     setCurrentRole(cur?.role_id || "");
   }, [sessionId, sessions]);
 
-  // 进入对话界面 = 那些主动消息都看过了。口径不是今天定的：`api.ts:773` 与后端
+  // 进入对话界面 = 那些主动消息都看过了。口径不是今天定的：`api.ts` 的
+  // `markAllReachoutsRead` 与后端
   // `/api/reachouts/read-all` 的 docstring 都写着"进入对话界面"，可前端原先只在 `send()`
   // 里调过一次 —— R26-40 尾当年记的就是"进入那一半从来没接线"。
   // 只在**由不可见变可见**那一下清：人一直停在页里时新到的消息不该被顺手清掉，
@@ -173,7 +174,8 @@ export default function ChatPage({
   async function selectSession(threadId: string) {
     if (sendingRef.current) return;
     setSessionId(threadId);
-    // 点进某个角色的「主动会话」= 那一摞看过了（`api.ts:767` 这条端点一直有定义、零调用者）。
+    // 点进某个角色的「主动会话」= 那一摞看过了（`api.ts` 的 `markRoleReachoutsRead`
+    // 这条端点一直有定义、零调用者）。
     // 只认 `is_proactive` 的行：普通话题会话不欠谁一个已读。
     const row = sessions.find((s) => s.thread_id === threadId);
     if (row?.is_proactive && row.role_id) {
