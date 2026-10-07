@@ -11,6 +11,7 @@ Traceability: US-8（知识作用域 —— 角色只声明，内核掌库）。
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -24,9 +25,12 @@ from rolecard_agent.config import DEFAULT_SILICONFLOW_BASE_URL, Settings
 from rolecard_agent.core.services import EndpointConfig
 from rolecard_agent.rag.retriever import (
     _EMBED_BATCH,
+    _EMBED_RETRIES,
+    EmbedError,
     HashEmbedder,
     KnowledgeBase,
     SiliconFlowEmbedder,
+    SiliconFlowReranker,
     chunk_text,
     make_embedder,
     make_reranker,
@@ -583,6 +587,58 @@ class _CountingEmbedder(SiliconFlowEmbedder):
         return [[0.0] * 4 for _ in texts]
 
 
+# -- 嵌入重试与重排降级的**真实**失败路径（覆盖率基线最后一格：retriever 82%） ----------
+#
+# 上面的 `_CountingEmbedder` / `_FailingReranker` 都把"发请求那一层"整个换掉了，
+# 于是重试循环与降级判定这两个函数体**从没跑过**。这一族恰好全是"只有真失败才暴露"的形状：
+#
+#   * 重试次数有上限（上游挂了不能把一次上传吊死），而耗尽后必须报 `EmbedError` 并带上
+#     **最后一次的真因**；
+#   * "宁可不入库，也不要半份索引"：第一批成功、第二批失败 ⇒ 整次失败，一条向量都不返回
+#     （半份索引会让检索静默只查到文件前半，而没有任何地方说"这份文档少了后半"）；
+#   * 重排失败必须是 None（降级）而**不能是空列表** —— 调用方把空列表读成"精排后一条不剩"，
+#     一次响应格式漂移就能把检索打成静默无结果（探针实测：同库同查询 2 条 → 0 条）；
+#   * 成功路径要按**后端给的顺序**返回，不许在客户端悄悄重排。
+
+
+class _RetryClient:
+    """假 httpx 客户端：前 fail_times 次抛错，之后成功。用来数真实重试次数的边界。"""
+
+    def __init__(self, fail_times: int, *, payload: dict | None = None) -> None:
+        self._fail = fail_times
+        self.calls = 0
+        self._payload = payload or {
+            "data": [{"embedding": [0.5]}, {"embedding": [0.25]}]
+        }
+
+    def post(self, *_a: object, **_k: object) -> object:
+        self.calls += 1
+        if self.calls <= self._fail:
+            raise ConnectionError(f"上游挂了第 {self.calls} 次")
+        return _RagResp(json_body=self._payload)
+
+
+def _embedder_with(client: object) -> SiliconFlowEmbedder:
+    emb = SiliconFlowEmbedder.__new__(SiliconFlowEmbedder)  # 不建真 httpx 客户端
+    emb._client = client  # type: ignore[assignment]
+    emb._model = "m"
+    return emb
+
+
+class _RagResp:
+    """假 httpx 响应：够 `raise_for_status()` 与 `json()` 两件事就够测试用。"""
+
+    def __init__(self, json_body: dict, status: int = 200) -> None:
+        self._json, self.status_code = json_body, status
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise ConnectionError(f"HTTP {self.status_code}")
+
+    def json(self) -> dict:
+        return self._json
+
+
 def test_embeddings_are_sent_in_batches() -> None:
     """长文档必须分批嵌入（修复前一次 POST 全部 chunk，顶到超时就是整篇上传失败）。"""
     embedder = _CountingEmbedder()
@@ -591,3 +647,165 @@ def test_embeddings_are_sent_in_batches() -> None:
 
     assert len(vectors) == total
     assert embedder.batches == [_EMBED_BATCH, _EMBED_BATCH, 5], embedder.batches
+
+
+def test_嵌入重试成功时不该把失败报出去(monkeypatch: pytest.MonkeyPatch) -> None:
+    """第一次失败、第二次成功 = 一次普通的瞬时故障，结果必须正常返回。
+
+    `sleep` 打桩掉：这里判的是"重试了几次、最后成没成"，不是退避时长；不桩掉的话
+    每次跑这套用例都要真等 0.5s + 1s（退避本身另有一条用例单独判）。
+    """
+    slept: list[float] = []
+    import time as _time
+
+    monkeypatch.setattr(_time, "sleep", lambda s: slept.append(s), raising=True)
+    client = _RetryClient(fail_times=1)
+    emb = _embedder_with(client)
+    assert emb._embed_chunk(["a", "b"]) == [[0.5], [0.25]]  # noqa: SLF001
+    assert client.calls == 2, "失败一次就该再试一次"
+    assert slept == [0.5], f"退避应当从 0.5s 起、且真的睡了：{slept}"
+
+
+def test_嵌入重试耗尽报的是带次数的可读错误(monkeypatch: pytest.MonkeyPatch) -> None:
+    """重试上限是有的（否则一次上传会吊死到 job 超时），耗尽后要说清几次、为什么。"""
+    import time as _time
+
+    monkeypatch.setattr(_time, "sleep", lambda _s: None, raising=True)
+    client = _RetryClient(fail_times=99)
+    emb = _embedder_with(client)
+    with pytest.raises(EmbedError) as got:
+        emb._embed_chunk(["a", "b"])  # noqa: SLF001
+    assert f"重试 {_EMBED_RETRIES} 次后仍失败" in str(got.value), str(got.value)
+    assert "上游挂了第 3 次" in str(got.value), "最后一次的真因必须带出来"
+    # 1 次首发 + _EMBED_RETRIES 次重试，不多不少
+    assert client.calls == _EMBED_RETRIES + 1, client.calls
+
+
+def test_退避是指数而不是固定值(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`0.5 * 2**attempt`：固定值会在上游过载时越重试越糟（同一时刻挤更多请求）。"""
+    import time as _time
+
+    slept: list[float] = []
+    monkeypatch.setattr(_time, "sleep", lambda s: slept.append(s), raising=True)
+    emb = _embedder_with(_RetryClient(fail_times=99))
+    with pytest.raises(EmbedError):
+        emb._embed_chunk(["a"])  # noqa: SLF001
+    assert slept == [0.5, 1.0], slept
+
+
+def test_一批失败不许返回半份向量(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**"宁可不入库，也不要半份索引"**：第二批失败 ⇒ 整次失败，一条都不返回。
+
+    若这里返回第一批的结果，调用方会把"只索引了前半"的文档当成索引成功 ——
+    检索永远查不到后半部分内容，而没有任何一处会报错或留痕。
+    """
+    import time as _time
+
+    monkeypatch.setattr(_time, "sleep", lambda _s: None, raising=True)
+
+    class _SecondBatchFails:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def post(self, *_a: object, **_k: object) -> object:
+            self.calls += 1
+            if self.calls > 1:  # 第一批成功、第二批怎么试都失败
+                raise ConnectionError("第二批炸了")
+            return _RagResp(
+                json_body={"data": [{"embedding": [0.5]}] * _EMBED_BATCH}
+            )
+
+    emb = _embedder_with(_SecondBatchFails())
+    total = _EMBED_BATCH * 2
+    with pytest.raises(EmbedError):
+        emb.embed(["文" * 30] * total)
+
+
+# -- rerank 真实函数体：降级与成功两路 ------------------------------------------------
+
+
+def _reranker_body(client: object) -> SiliconFlowReranker:
+    rr = SiliconFlowReranker.__new__(SiliconFlowReranker)  # 不建真 httpx 客户端
+    rr._client = client  # type: ignore[assignment]
+    rr._model = "m"
+    return rr
+
+
+class _OneShotClient:
+    """一个只回固定响应体的假 httpx 客户端（`rerank` 要的是客户端，不是响应）。"""
+
+    def __init__(self, body: dict, status: int = 200) -> None:
+        self._resp = _RagResp(body, status)
+
+    def post(self, *_a: object, **_k: object) -> _RagResp:
+        return self._resp
+
+
+def test_重排成功按后端给的顺序返回不自己排序() -> None:
+    """后端已经按相关性排好了；客户端再排一次会打乱它的序（分数与索引都可能不同源）。"""
+    r = _reranker_body(
+        _OneShotClient(
+            {
+                "results": [
+                    {"index": 1, "relevance_score": 0.9},
+                    {"index": 0, "relevance_score": 0.1},
+                ]
+            }
+        )
+    )
+    assert r.rerank("q", ["A", "B"]) == [(1, 0.9), (0, 0.1)]
+
+
+def test_重排响应缺结果按降级处理而不是零条命中() -> None:
+    """200 但没有 results ⇒ **None**（调用方回退向量序），不能是 `[]`。
+
+    探针实测的落差：同一个库、同一个查询，不挂重排器命中 2 条，挂上"返回 [] 的重排器"
+    命中 0 条 —— 一次响应格式漂移就足以让知识库**静默查无结果**，而界面上看起来一切正常。
+    """
+    for body in ({}, {"results": []}, {"results": None}):
+        r = _reranker_body(_OneShotClient(body))
+        assert r.rerank("q", ["A", "B"]) is None, f"{body} 应降级为 None"
+
+
+def test_重排器字段残缺或状态码异常都走降级() -> None:
+    """后端给了 results 但字段不对、或 HTTP 4xx/5xx：都不能让一次"质量增强"打挂检索。"""
+    missing = _reranker_body(_OneShotClient({"results": [{"nope": 1}]}))
+    assert missing.rerank("q", ["A", "B"]) is None
+    err = _reranker_body(_OneShotClient({"results": []}, status=503))
+    assert err.rerank("q", ["A", "B"]) is None
+
+
+def test_重排器失败时整条检索仍有结果() -> None:
+    """端到端一臂：**真**重排器（连不上 ⇒ 走真实 except 分支返回 None）下检索照常。
+
+    现有的那条回退用例把重排器整个换成了返回 None 的假对象，所以真实的异常分支从没跑过。
+    这里用真的 `SiliconFlowReranker` 指到一个必然失败的地址，让异常→None→回退向量序
+    这条链完整地走一遍。
+    """
+    tmp = Path(tempfile.mkdtemp())
+    rr = SiliconFlowReranker(api_key="k", base_url="http://127.0.0.1:9")  # 端口 9 必拒
+    kb = KnowledgeBase(tmp / "chroma", HashEmbedder(), rr)
+    kb.index("health_reports", "a.md", DOC_A)
+    kb.index("health_reports", "b.md", DOC_B)
+    hits = kb.search(["health_reports"], "复查频率", k=3)
+    assert len(hits) == 2, f"重排器连不上时检索必须照旧出结果：{hits}"
+    rr.close()
+
+
+def test_响应缺results时端到端仍能查到东西(tmp_path: Path) -> None:
+    """**这一格的回归钉子**：200 但响应没有 `results` ⇒ 检索照常命中，不是查无结果。
+
+    修之前这一条会拿到 0 命中（探针实测：同一个库同一个查询，不挂重排器 2 条、挂上这个
+    0 条）—— 界面上看起来一切正常，用户只看到"没搜到相关内容"。所以这条必须端到端测：
+    单独测 `rerank()` 返回 None 只能证明函数自己变了，证明不了调用方真的回退了。
+    """
+    builder = KnowledgeBase(tmp_path / "chroma", HashEmbedder())
+    builder.index("health_reports", "a.md", DOC_A)
+    builder.index("health_reports", "b.md", DOC_B)
+    plain = KnowledgeBase(tmp_path / "chroma", HashEmbedder())
+    assert len(plain.search(["health_reports"], "复查频率", k=3)) == 2, "基线自己就不成立"
+
+    drift = _reranker_body(_OneShotClient({}))  # 状态 200，body 里没有 results
+    kb = KnowledgeBase(tmp_path / "chroma", HashEmbedder(), drift)
+    hits = kb.search(["health_reports"], "复查频率", k=3)
+    assert len(hits) == 2, f"一次响应形状漂移不该把检索打成空：{hits}"

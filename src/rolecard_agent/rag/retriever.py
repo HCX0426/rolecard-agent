@@ -274,14 +274,23 @@ class SiliconFlowReranker:
         self._model = model
 
     def rerank(self, query: str, documents: list[str]) -> list[tuple[int, float]] | None:
-        """返回 [(原索引, 相关性分数)] 按分数降序；失败返回 None（调用方回退向量序）。"""
+        """返回 [(原索引, 相关性分数)] 按分数降序；失败返回 None（调用方回退向量序）。
+
+        **`results` 缺失或为空按"失败"处理，不按"零条相关"**：那几乎总是响应形状漂移
+        （网关改写、服务端版本变更），而调用方拿到一个**空列表**会当成"精排后一条都不剩"
+        —— 检索从此**静默查无结果**。补错误路径用例时探针实测过这个落差：同一个库、同一个
+        查询，不挂重排器命中 2 条，挂上"200 但无 results"这一个命中 0 条。按本类契约
+        （"重排是质量增强，不能变成可用性故障"）这条路只能是降级。
+        """
         try:
             res = self._client.post(
                 "/rerank",
                 json={"model": self._model, "query": query, "documents": documents},
             )
             res.raise_for_status()
-            results = res.json().get("results", [])
+            results = res.json().get("results") or []
+            if not results:
+                return None
             return [(int(r["index"]), float(r["relevance_score"])) for r in results]
         except Exception:  # noqa: BLE001 - 重排失败 = 降级，不是故障
             return None
