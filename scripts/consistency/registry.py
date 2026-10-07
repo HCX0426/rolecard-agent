@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from . import checks, checks_config, checks_install
+from . import checks, checks_audit, checks_config, checks_install
 
 CHECKS = (
     checks_install.check_pyproject,
@@ -19,16 +19,16 @@ CHECKS = (
     checks.check_core_no_domain_token,
     checks.check_api_domain_seams,
     checks.check_identity_implicit_reads_are_registered,
-    checks.check_audit_action_vocabulary,
+    checks_audit.check_audit_action_vocabulary,
     checks.check_session_thread_write_seam,
     checks.check_storage_db_has_no_business_tables,
     checks.check_api_holds_no_sql,
     checks.check_log_channels_unified,
     checks.check_sync_write_ownership,
     checks.check_write_txn_ownership_inventory,
-    checks.check_audit_ledger_row_count,
+    checks_audit.check_audit_ledger_row_count,
     checks.check_data_root_dirs_gitignored,
-    checks.check_ledger_status_states_verdict,
+    checks_audit.check_ledger_status_states_verdict,
     checks.check_app_icon_frames,
     checks.check_single_text_extractor,
     checks.check_domain_isolation,
@@ -43,9 +43,9 @@ CHECKS = (
     checks.check_doc_references,
     checks.check_doc_links,
     checks.check_markdown_table_shape,
-    checks.check_citation_reachability,
+    checks_audit.check_citation_reachability,
     checks.check_doc_freshness,
-    checks.check_audit_index_in_sync,
+    checks_audit.check_audit_index_in_sync,
     checks.check_version_parity,
     checks.check_changelog,
     checks.check_coverage_threshold,
@@ -65,7 +65,7 @@ CHECKS = (
     checks.check_vocabulary,
     checks.check_deploy_env_parity,
     checks.check_role_whitelists_resolve,
-    checks.check_us_traceability,
+    checks_audit.check_us_traceability,
     checks.check_exemplar_leaks_eval_answers,
-    checks.report_line_budget,
+    checks_audit.report_line_budget,
 )

@@ -32,7 +32,7 @@ from consistency import core
 
 # 唯一的静态 from-import 消费者（build_audit_index.py）要的两个正则 —— 显式再导出，
 # mypy 才看得见；其余历史消费者走下面的转发。
-from consistency.checks import _TARGET_HEAD_RE, _TARGET_ROW_RE  # noqa: F401
+from consistency.checks_audit import _TARGET_HEAD_RE, _TARGET_ROW_RE  # noqa: F401
 from consistency.registry import CHECKS
 
 
