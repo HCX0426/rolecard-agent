@@ -140,6 +140,29 @@ def test_扫不成不等于干净(monkeypatch, capsys) -> None:
     assert "跑不起来" in err and "不等于没漏洞" in err
 
 
+def test_挂死变一次干净的红而不是无限等(monkeypatch) -> None:
+    """OSV 抽风吊着不动时，`run_pip_audit` 必须有界地退成"扫不成"。
+
+    2026-10-09 的形状：这一步从前**没有超时**，吊着整条 CI job 直到顶穿被杀，而 GitHub 对
+    cancelled job 不上传日志（run 37804463056 的现场就这么没了）。600s 到点必须变成
+    `(None, 说明, 124)` 走既有的退 2 通道 —— 判据不新立，把"问不到"归进"扫不成"。
+    """
+    import subprocess as sp
+
+    audit = _load()
+
+    def hang(*_a: object, **_k: object) -> None:
+        raise sp.TimeoutExpired(cmd="pip_audit", timeout=600)
+
+    monkeypatch.setattr(audit.subprocess, "run", hang)
+    payload, message, rc = audit.run_pip_audit()
+    assert payload is None and rc == 124
+    assert "600s" in message
+    # 整条命令的出口形状仍是 fail-closed 的 2（不是 traceback，不是 0）。
+    monkeypatch.setattr(audit, "run_pip_audit", lambda: (None, message, rc))
+    assert audit.main([]) == 2
+
+
 def test_有红项时退出码为_1(monkeypatch) -> None:
     audit = _load()
     monkeypatch.setattr(audit, "run_pip_audit", lambda: (_finding("x", "PYSEC-NEW-1"), "", 1))

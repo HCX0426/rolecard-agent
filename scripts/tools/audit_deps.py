@@ -136,9 +136,24 @@ def run_pip_audit() -> tuple[dict[str, Any] | None, str, int]:
         "-f",
         "json",
     ]
-    proc = subprocess.run(
-        cmd, cwd=str(ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace"
-    )
+    # **挂死必须变成一次干净的 2，不是 traceback，更不是无限等**（2026-10-09）：这一步与
+    # 密钥扫描同形状地没有超时，OSV 抽风时它吊着整条 CI job 直到 25 分钟被杀 —— 而 GitHub
+    # 对 cancelled job **不上传日志**，现场直接没了（run 37804463056 就是这么死的，只能倒推）。
+    # 「扫不成不等于干净」这条判据早就写在文件头，缺的只是把"问不到"也归进扫不成的形状。
+    # 600s：本机实测全环境审计 54s（180 个包逐个问 OSV），十倍余量给 OSV 慢，但绝不无限。
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=600,
+        )
+    except subprocess.TimeoutExpired:
+        # rc 用 pip-audit 自己的约定里"它自己没跑成"那一类（非 0/1），文案接管解释。
+        return None, "pip-audit 600s 没答完（OSV 不可达/慢），按扫不成处理", 124
     if proc.returncode not in (RC_CLEAN, RC_FOUND):
         return None, (proc.stderr or proc.stdout).strip(), proc.returncode
     try:

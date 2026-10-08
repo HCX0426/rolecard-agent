@@ -127,7 +127,19 @@ def main(argv: list[str] | None = None) -> int:
         cmd.append("--no-git")
     scope = "全量历史" if args.history else "当前工作树"
     print(f"[scan_secrets] {scope}扫描：{' '.join(cmd)}", file=sys.stderr)
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    # 300s 硬超时（2026-10-09）：与依赖审计同一条纪律 —— 挂死必须变成一次**干净的红**，
+    # 而不是把整条 CI job 吊到顶穿。顶穿的 run GitHub 不传日志，现场直接消失
+    # （run 37804463056 就是这么失去证据的）。`--history` 那档本来就标了"较慢"，
+    # 它由调用方自己决定跑不跑；CI 红线路径（工作树）5 分钟绰绰有余。
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        print(
+            "[scan_secrets] ❌ gitleaks 300s 没扫完，按扫不成当红（exit=2）——"
+            "挂死不该把整条 job 拖到被杀",
+            file=sys.stderr,
+        )
+        return 2
     out = (proc.stdout or "") + (proc.stderr or "")
 
     if proc.returncode == 0:
