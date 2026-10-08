@@ -32,7 +32,7 @@ FLAKE_TEXT = "Error creating hnsw segment reader: Nothing found on disk"
 
 @pytest.fixture
 def ascii_root() -> Iterator[pathlib.Path]:
-    """一个**纯 ASCII** 的临时根。
+    """一个**纯 ASCII** 的临时根（resolve 之后的形状 —— 也就是真正交给 chroma 的那一条）。
 
     为什么不用 pytest 的 `tmp_path`（10-03 现学的，代价是一次假诊断）：`tmp_path` 按测试函数名
     生成，而本仓用例名是中文 ⇒ 路径里带非 ASCII。A/B 实测（同机同版本 chromadb）：
@@ -41,10 +41,28 @@ def ascii_root() -> Iterator[pathlib.Path]:
     "元数据有段、盘上没文件"这一族，用它去测一个专门抓这族的取证层，判据当场失真。
     这条库行为已登记为台账 `R102-78`（未收口）：它是 `R102-41` 的一个**相邻缺陷**，不是那一发本身
     （在册那发发生在 ASCII 路径与 Linux runner 上）。
+
+    **两侧都 resolve**（2026-10-08 CI 的 Windows 臂照出来的第二发）：runner 的 `TEMP` 是 **8.3
+    短名** —— `gettempdir()` 给 `C:\\Users\\RUNNER~1\\…`，`resolve()` 展开成长名
+    `C:\\Users\\runneradmin\\…`。原版拿**未 resolve 的 `d`** 去比**已 resolve 的基目录**，两条
+    形状对不上 ⇒ `is_relative_to` 恒 False，夹具在测试第一行之前就炸（本机用户名短名与长名相同，
+    所以这一发只在别人机器上照得出来）。
+
+    为什么判 ASCII 也判 resolve 之后的那条：chroma 拿到的就是**交出去的那个字符串**，判据必须问
+    被测系统真正会读的那一条。短名 ASCII **不等于**长名 ASCII —— 中文用户名的 8.3 短名可能是
+    `张~1`，长名也可能整段非 ASCII。所以这里先 resolve、再判、再把 resolve 后的那条交出去。
+    判不出 ASCII 根时**跳过并写明缺什么**（与"环境不满足时 skip 而非红"同一条口径）：这台机器的
+    临时根天生不 ASCII，是环境不给这条用例的地基，不是取证层坏了 —— 报成断言失败只会让它在别人的
+    机器上变成没人看的噪音。
     """
-    d = pathlib.Path(tempfile.mkdtemp(prefix="rc_cfe_"))
-    assert d.is_relative_to(pathlib.Path(tempfile.gettempdir()).resolve())
-    assert all(ord(ch) < 128 for ch in str(d)), f"夹具根路径不是 ASCII：{d}"
+    base = pathlib.Path(tempfile.gettempdir()).resolve()
+    d = pathlib.Path(tempfile.mkdtemp(prefix="rc_cfe_")).resolve()
+    if not d.is_relative_to(base):
+        shutil.rmtree(d, ignore_errors=True)
+        pytest.skip(f"mkdtemp 没落在临时根里：{d}（基：{base}）—— 环境形状不对，不拿来当真诊断")
+    if not all(ord(ch) < 128 for ch in str(d)):
+        shutil.rmtree(d, ignore_errors=True)
+        pytest.skip(f"临时根解析后不是 ASCII：{d} —— 这台机器给不出这条用例要的形状")
     try:
         yield d
     finally:
