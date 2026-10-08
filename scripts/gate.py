@@ -175,13 +175,17 @@ STEPS: list[tuple[str, list[str], str]] = [
     # 在册豁免带"上游已给修复版本"前提，前提消失会**反过来红**（豁免不是永久通行证）。
     # 退出码 fail-closed：扫不成（断网/接口变更）退 2，门禁同样红 —— 扫不成不等于干净。
     ("依赖审计", [PY, "scripts/tools/audit_deps.py"], "full"),
-    # **密钥扫描**（ENGI-15 ②，可选档但本仓已接）：`scan_secrets.py` 包装 gitleaks，默认只扫
-    # 当前工作树（`--no-git`，离线可跑），不碰网络历史。**不进快档**（与 ① 同一条「测试全离线」
+    # **密钥扫描**（审查快照（2026-10-04）#ENGI-15 ②，可选档但本仓已接）：`scan_secrets.py`
+    # 包装 gitleaks，扫的是**由 git 名单圈出的影子树**（tracked + 未忽略的未跟踪 = 本次要发的
+    # 那份源码；2026-10-09 订正 —— 从前这里写的是"只扫当前工作树（`--no-git`，离线可跑）"，
+    # 而 `--no-git` 其实是**盘上全扫、根本不看 .gitignore**，注释与代码互相矛盾了半年）。
+    # 不碰网络历史。**不进快档**（与 ① 同一条「测试全离线」
     # 铁律），mode=full 落在本地全量档与 `--ci`（--ci 是 full 减 CI_SKIP，而它**刻意不在
     # CI_SKIP**）—— 每次 push 的 CI 红线从这条起成立。退出码 fail-closed：gitleaks 装不到 /
-    # 扫不成（断网）退 2，门禁同样红 —— 扫不成不等于干净。放行判据集中在 `.gitleaks.toml`
-    # （本仓经 git grep 全量核查，tracked 文件里没有任何真密钥，allowlist 只为挡默认规则对
-    # 良性内容：.env.example 空值、文档示例 endpoint、CI 假 token、data URL、测试 fixture 的误报）。
+    # 定不出名单 / 扫不成（断网）都退 2，门禁同样红 —— 扫不成不等于干净。放行判据集中在
+    # `.gitleaks.toml`（本仓经 git grep 全量核查，tracked 文件里没有任何真密钥，allowlist 只为
+    # 挡默认规则对良性内容：.env.example 空值、文档示例 endpoint、CI 假 token、data URL、
+    # 测试 fixture 的误报）。
     ("密钥扫描", [PY, "scripts/tools/scan_secrets.py"], "full"),
     ("真机冒烟(14 项)", [PY, "scripts/smoke_check.py"], "full"),
     # 「README 数字收尾」这一步已随拍板"数字移出散文"整个删除：README 不再抄数 ⇒ 没有
@@ -578,6 +582,11 @@ def _run_captured(
             text=True,
             encoding="utf-8",
             errors="replace",
+            # **必须独立成组**：到点 `_terminate_step` 在 POSIX 上走 killpg，孩子若还住在
+            # 继承来的组里，那一刀连 bash + `timeout` + gate.py 自己一起杀（2026-10-09
+            # run 37842997481 的现场：起服务后 2 秒整步 SIGKILL，被杀名单里连外层 `timeout`
+            # 都在）。Windows 上这条是 no-op（走 taskkill 按树），所以本机永远照不出来。
+            start_new_session=os.name != "nt",
         )
         with _ACTIVE_LOCK:
             _ACTIVE.add(popen)
@@ -645,6 +654,8 @@ def _run(
         encoding="utf-8",
         errors="replace",
         bufsize=1,
+        # 同上：这条也是会走 `_terminate_step`（killpg）的孩子，必须自己成组。
+        start_new_session=os.name != "nt",
     ) as proc:
         with _ACTIVE_LOCK:
             _ACTIVE.add(proc)  # 挂死时看门狗要能收掉**活着的孩子**，不是只退自己

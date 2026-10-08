@@ -153,9 +153,22 @@ jobs:
           # ⇒ **防线开了火、job 却是绿的**。取中间这种：`||` 让 -e 不中止（条件列表的一部分），
           # code 又真的是 timeout 的退码。
           code=0
+          t0=$(date +%s)
           timeout --kill-after=30s 1320s python scripts/gate.py --ci --deadline-minutes 21 || code=$?
+          spent=$(( $(date +%s) - t0 ))
           if [ "$code" = 124 ] || [ "$code" = 137 ]; then
-            echo "❌ 外部墙钟（timeout 22m）把这趟杀了：进程内的看门狗没做到 —— 见上面 ③"
+            # **不许把"我打印的那句"当成"已证实的归因"**（run 37842997481 的教训）：那一趟
+            # 这句照旧打了"外部墙钟把这趟杀了"，而步骤时间戳实测只跑 106s（预算 1320s）——
+            # 根本不是这层开的火，日志里从此留了一条假事实。124 才是 `timeout` 自己的码；
+            # 137 可能是它的 SIGKILL 补刀，**也可能是 runner 或内核 OOM**。拿耗时分边：
+            # 耗时逼近预算才算这层开的火，否则如实说"外部杀手，身份未定"。
+            if [ "$spent" -ge 1250 ]; then
+              echo "❌ 外部墙钟（timeout 22m）开火，跑满 ${spent}s：进程内看门狗没做到 —— 见上面 ③"
+            else
+              echo "❌ 这一步在 ${spent}s 时被 SIGKILL（外部墙钟预算是 1320s，**不是它开的火**）——" \
+                "杀手身份未定：runner 取消传播 / 内核 OOM 都发这个信号。dmesg 与进程 RSS 读数" \
+                "打在本步骤末尾（见下一步的取证块），别急着归因。"
+            fi
           fi
           exit "$code"
 

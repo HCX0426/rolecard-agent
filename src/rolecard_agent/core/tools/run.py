@@ -124,13 +124,32 @@ class RunResult:
     duration_ms: int
 
 
+def _child_owns_its_process_group(pid: int) -> bool:
+    """这孩子是不是**它自己那个组的组长**（POSIX 才有这回事，Windows 恒 False）。
+
+    单列成函数有两个理由：① 它是上面那段"连坐"的形状里**唯一可移植判的那半** —— Windows
+    上没有 `getpgid`，这一句直接 False，于是同一个函数在两台机器上都能测（本机测 False 支、
+    Linux 臂测真组语义）；② "问一句"这件事本来藏在 `terminate_process_tree` 的 else 分支里，
+    Windows 档根本走不到 —— 抽出来才有分母。
+    """
+    getpgid = getattr(os, "getpgid", None)
+    if getpgid is None:  # Windows：没有进程组这回事
+        return False
+    try:
+        return getpgid(pid) == pid
+    except OSError:  # 进程已经不在了（ProcessLookupError 是它的子类）
+        return False
+
+
 def terminate_process_tree(proc: subprocess.Popen[str]) -> None:
     """杀掉整棵进程树。
 
     **全仓唯一的"按树杀"**：`scripts/probe_readme_quickstart.py` 也用它（`R102-43`）。
     Windows 的 shell=True 是 cmd → 子进程的树：只杀父进程的话，
     实测 communicate() 会干等到孙进程退完（timeout 形同虚设）。taskkill /T /F 按树杀；
-    POSIX 用 start_new_session 建的独立进程组 + killpg。"""
+    POSIX 用 **killpg，但前提是那个孩子确实是它自己那个组的组长** —— 不是组长就只杀它自己
+    （见下面那段，2026-10-09 的 CI 现场就是栽在这句没被执行）。
+    """
     if sys.platform == "win32":
         subprocess.run(
             ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
@@ -141,9 +160,22 @@ def terminate_process_tree(proc: subprocess.Popen[str]) -> None:
         # Windows 档看不到 killpg 这半（typeshed 里它不存在，原先那个 ignore 就是为此打的，
         # 现在不再需要），Linux 档看得到且不带 ignore —— 这半真正的运行平台就是 Linux
         # （容器里跑的就是它，CI 的 mypy 在那个档上查它）。
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except ProcessLookupError:
+        #
+        # **`killpg` 之前必须问一句"这孩子是不是它自己那个组的组长"**（2026-10-09 CI 现场
+        # 换来的，`run 37842997481`）：本函数的契约是"孩子住在 `start_new_session` 建出来的
+        # 独立组里"，可**契约不在这里被执行过**。调用点漏掉 `start_new_session` 时，
+        # `getpgid(pid)` 返回的是**继承来的那个组** —— 于是 `killpg` 打中的是父进程自己那串
+        # （bash + `timeout` + 调用方），一次"收个后端"变成 **SIGKILL 整条 CI 步骤**。
+        # README 可跑性那一步就是这么在起服务后 2 秒把整步杀掉的（Linux 独有：Windows 走
+        # taskkill 按树、不碰进程组，所以本机跑半年都没事 —— 又一个"只有某个平台才暴露"）。
+        # 现在非组长就**只杀那一个 pid**：宁可少杀（留孤儿，端口回读那格会把它照出来并判红），
+        # 也不要多杀（把调用方连坐 = 无声的假死，比孤儿难查一个数量级）。
+        if _child_owns_its_process_group(proc.pid):
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                proc.kill()
+        else:
             proc.kill()
 
 

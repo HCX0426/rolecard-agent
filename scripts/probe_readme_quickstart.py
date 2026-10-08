@@ -156,6 +156,12 @@ def _run_the_documented_command(cmd: str, workdir: Path, port: int) -> subproces
         text=True,
         encoding="utf-8",
         errors="replace",
+        # 独立进程组是**收尾那句 killpg 的前提**：`terminate_process_tree` 在 POSIX 上按
+        # 组杀，孩子若不搬家，`getpgid` 给回来的就是**调用方自己的组** —— 于是"收一个后端"
+        # 变成 SIGKILL 整条 CI 步骤（2026-10-09 run 37842997481 实测：起服务后 2 秒整步没，
+        # 被杀名单里连 `timeout` 的外壳都在）。Windows 上这条不生效也不需要（走 taskkill
+        # 按树杀），所以本机跑半年照不出它。
+        start_new_session=os.name != "nt",
     )
 
 
