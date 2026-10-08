@@ -43,6 +43,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -204,6 +205,13 @@ def _git(*args: str) -> str:
         text=True,
         encoding="utf-8",
         errors="replace",
+        # 60s 上限（2026-10-09）：`_git` 是全部门禁里**唯一没有超时**的 subprocess，而它跑在
+        # 每一步之前（改动清单、`_src_changed`、dist 同步、parity…）。git 在坏 lockfile/超大
+        # 未跟踪树/凭据助手弹窗上就是能吊住不动的 —— 那正好是"每步预算都界得住，整趟却照样
+        # 被杀"的形状（run 37823819338）。超时抛 TimeoutExpired，调用方各有兜底：`_changed_paths`
+        # 的兜底是 None→保守全量，`_src_changed` 的兜底是 True→照跑覆盖率 —— 全是**变慢不变弱**，
+        # 而"吊死整条 job"是变没证据。
+        timeout=60,
     )
     if proc.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} -> {proc.returncode}")
@@ -426,6 +434,70 @@ def _remaining_seconds(started: float, deadline: float | None) -> float | None:
     return max(deadline - (time.perf_counter() - started), 0.0)
 
 
+#: 挂死时看门狗要能点名"此刻在跑哪一步"。runner 在 job 预算上杀进程时 GitHub 不传日志，
+#: 而**步级的 timeout 管不到步骤之外的无界调用**（`_git()` 没有超时、读数落盘、导入替身
+#: …）。run 37823819338 就是这么证明的：deadline 21 分钟、每步预算全界得住，job 照样被
+#: 杀在 25 分钟上、现场照样丢 —— 挂死根本不在步的等待里。所以最后这道防线必须是一把
+#: **独立的刀**：看门狗线程到点自己打出汇总并 `os._exit`，主线程哪怕焊死也拦不住它留现场。
+_ACTIVE: set[subprocess.Popen[str]] = set()
+_ACTIVE_LOCK = threading.Lock()
+#: 主循环开步前写这一步的名字；看门狗读它来点名。字符串赋值在 CPython 下原子，够用。
+_CURRENT: list[str] = ["（还没开步）"]
+
+
+#: 看门狗结束进程的那把刀。单列成变量只为测试能换掉它 —— 默认 `os._exit` 是真必须的
+#: （触发场景 = 主线程卡在无界调用上，`SystemExit` 走不到解释器），而它连正在跑本脚本的
+#: pytest 一起带走，用例不换掉就没法断言"它打了什么"。
+_WATCHDOG_EXIT = os._exit
+
+
+def _arm_watchdog(started: float, deadline: float, timings: list[tuple[str, float]]) -> None:
+    """到点把现场打在 stdout 上然后**自己**结束进程（退 3）。
+
+    为什么非 `os._exit` 不可：触发场景就是主线程卡在某个无界调用上，`SystemExit` 要等主
+    线程回到解释器 —— 那等于没有。为什么还要**打主线程栈**：run 37823819338 证明挂死不在
+    步骤里（每步预算都界得住，趟却照样被杀在 job 预算上），"此刻在跑哪一步"不足以定位，
+    栈才足 —— 那一行就是下一个要修的东西。打栈用的是 `sys._current_frames`，不依赖主线程
+    配合（它正是配合不了的那个）。
+    收尾顺序刻意：**先打现场、再杀孩子**（杀孩子会往管道里回话，把证据搅浑）；CI 的
+    stdout 进这一步的日志 —— 这一步带日志地红，而不是 job 无声地被杀。
+    """
+    if deadline <= 0:
+        return
+
+    def _watch() -> None:
+        while True:
+            left = deadline - (time.perf_counter() - started)
+            if left <= 0:
+                break
+            time.sleep(min(left, 1.0))
+        print(
+            f"\n⛔ 被全局墙钟掐停（{deadline / 60:.1f} 分钟，起算于开跑第一行）。"
+            f"此刻在跑：{_CURRENT[0]}",
+            flush=True,
+        )
+        main_id = threading.main_thread().ident
+        frame = sys._current_frames().get(main_id) if main_id is not None else None
+        if frame is not None:
+            print("   主线程卡在这一行（这就是挂点，别再从相邻臂倒推）：", flush=True)
+            for line in traceback.format_stack(frame):
+                print("   " + line.rstrip().replace("\n", "\n   "), flush=True)
+        print("=" * 52, flush=True)
+        print("门禁计时汇总（被掐停的这趟）", flush=True)
+        print("=" * 52, flush=True)
+        for name, dt in timings:
+            print(f"  {name:24} {dt:6.1f}s", flush=True)
+        print("  ❌ 失败步骤：全局墙钟（被掐停）", flush=True)
+        with _ACTIVE_LOCK:
+            victims = list(_ACTIVE)
+        for popen in victims:
+            with contextlib.suppress(Exception):
+                _terminate_step(popen)
+        _WATCHDOG_EXIT(3)
+
+    threading.Thread(target=_watch, name="gate-watchdog", daemon=True).start()
+
+
 def _terminate_step(proc: subprocess.Popen[str]) -> None:
     """把挂死的一步**整棵树**收掉。只 `terminate()` 外壳不够 —— 本仓实测过两次"杀了外壳、
     真后端原地活着答了二十分钟"（`probe_readme_quickstart` 与 `run_api` 各一发）。实现只有
@@ -455,27 +527,45 @@ def _run_captured(
     t0 = time.perf_counter()
     budget = _budgeted(timeout if timeout is not None else _step_timeout(name), remaining)
     try:
-        proc = subprocess.run(
+        # `Popen + communicate(timeout)` 而不是 `subprocess.run(timeout=...)`：要的那个
+        # 孩子句柄只有前者给得到 —— 看门狗到点要能把它收掉（`communicate` 自己会并发读
+        # 两路管道，不存在主线程干等的死锁问题，这正是 `subprocess.run` 内部的做法）。
+        popen = subprocess.Popen(
             cmd,
             cwd=str(cwd) if cwd else str(ROOT),
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=budget,
         )
-    except subprocess.TimeoutExpired as exc:
+        with _ACTIVE_LOCK:
+            _ACTIVE.add(popen)
+        stdout: str | None = None
+        stderr: str | None = None
+        try:
+            stdout, stderr = popen.communicate(timeout=budget)
+        except subprocess.TimeoutExpired:
+            # communicate 超时后孩子还活着；先收树再二次 communicate 把管道里的余货清掉。
+            _terminate_step(popen)
+            with contextlib.suppress(Exception):
+                stdout, stderr = popen.communicate(timeout=15)
+            dt = time.perf_counter() - t0
+            partial = (stdout or "") if isinstance(stdout, str) else ""
+            output = partial + _timeout_note(budget)
+            print(output, end="", flush=True)
+            print(f"  ⏱ {name}: {dt:.1f}s ❌（步超时上限 {budget:.0f}s）", flush=True)
+            return False, dt, output
+        finally:
+            with _ACTIVE_LOCK:
+                _ACTIVE.discard(popen)
+    except OSError as exc:  # 命令本身起不来（找不到解释器之类）—— 也算这一步的红
         dt = time.perf_counter() - t0
-        partial = exc.stdout or ""
-        if isinstance(partial, bytes):
-            partial = partial.decode("utf-8", "replace")
-        output = str(partial) + _timeout_note(budget)
-        print(output, end="", flush=True)
-        print(f"  ⏱ {name}: {dt:.1f}s ❌（步超时上限 {budget:.0f}s）", flush=True)
-        return False, dt, output
+        print(f"  ⏱ {name}: {dt:.1f}s ❌（起不来：{exc}）", flush=True)
+        return False, dt, f"起不来：{exc}\n"
     dt = time.perf_counter() - t0
-    output = proc.stdout + (proc.stderr or "")
-    code = proc.returncode
+    output = (stdout or "") + (stderr or "")
+    code = popen.returncode
     print(output, end="", flush=True)
     print(f"  ⏱ {name}: {dt:.1f}s {'✅' if code == 0 else '❌'}", flush=True)
     return code == 0, dt, output
@@ -505,6 +595,7 @@ def _run(
     budget = _budgeted(timeout if timeout is not None else _step_timeout(name), remaining)
     collected: list[str] = []
     timed_out = False
+    _CURRENT[0] = name.split("｜", 1)[0]  # 看门狗点名用（快档那步带显示后缀，摘掉）
     with subprocess.Popen(
         cmd,
         cwd=str(cwd) if cwd else str(ROOT),
@@ -515,6 +606,8 @@ def _run(
         errors="replace",
         bufsize=1,
     ) as proc:
+        with _ACTIVE_LOCK:
+            _ACTIVE.add(proc)  # 挂死时看门狗要能收掉**活着的孩子**，不是只退自己
         # 读流必须与等待**并发**。主线程 `wait(timeout)` 而没人读管道 = 经典死锁：子进程
         # 写满几 KB 的管道缓冲后阻塞在 write 上，wait 会**把超时当挂死等到点** —— pytest 那
         # 一步的输出远超管道容量，这把尺子会把正常慢读成挂死。读泵放线程里，主线程只持 deadline。
@@ -532,6 +625,9 @@ def _run(
             timed_out = True
             _terminate_step(proc)  # 整棵树：外壳收了、真后端原地活着是本仓实测过两次的孤儿形状
             code = -1
+        finally:
+            with _ACTIVE_LOCK:
+                _ACTIVE.discard(proc)
         # 到点后管道的 EOF 由杀进程树保证；join 给足 10s，读不完的部分随 daemon 线程收。
         reader.join(timeout=10.0)
     dt = time.perf_counter() - t0
@@ -783,6 +879,22 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # 墙钟从 `main()` 的第一行起算，**排在第一个 git 调用之前**：从前 `started` 在这里往下
+    # 四十行（守卫、读数键检查之后），于是 `_changed_paths()` 那第一批 `_git()` —— 全门禁里
+    # 唯一没有超时的 subprocess —— 整个跑在预算外。run 37823819338 的"每步预算都界得住、
+    # 趟却照样被杀在 25 分钟"就是这么留出门缝的。现在看门狗先上膛，后面任何无界卡死都会
+    # 换来一次**带主线程栈的红**。
+    timings: list[tuple[str, float]] = []
+    failures: list[str] = []
+    started = time.perf_counter()
+    # 全局墙钟的**总秒数**（`--deadline-minutes` 没设 = None = 不约束，本机默认只受每步上限
+    # 管）。它存在只为一件事：runner 杀 job 时 GitHub **不上传日志**（连续两趟挂死的现场就
+    # 是这么丢的），而这趟自己到点收摊会打出**完整汇总 + 失败步骤点名** —— 现场留得下来。
+    # 之后所有步共用 `_remaining_seconds(started, deadline)` 这一条口径，别让第二处自己起表。
+    deadline = args.deadline_minutes * 60.0 if args.deadline_minutes else None
+    if deadline is not None:
+        _arm_watchdog(started, deadline, timings)
+
     # 受影响选择的改动清单：**开跑前**取一次。门禁自己每跑完一步就往读数槽写读数（入库
     # 那份 `docs/gate-readings.json`；scratch 槽在 gitignore 的 build/ 下、进不了清单），
     # 边跑边取会把机器刚写的文件当成"你改的东西"（实测第一趟演示就是这么退回全量的）。
@@ -831,16 +943,8 @@ def main() -> int:
             print("   现有步骤：" + "、".join(name for name, _, _ in STEPS), flush=True)
         return 2
 
-    timings: list[tuple[str, float]] = []
-    failures: list[str] = []
-    started = time.perf_counter()
-    # 全局墙钟的**总秒数**（从 `started` 起算；`--deadline-minutes` 没设 = None = 不约束，
-    # 本机默认只受每步上限管）。它存在只为一件事：runner 杀 job 时 GitHub **不上传日志**
-    # （连续两趟挂死的现场就是这么丢的），而这趟自己到点收摊会打出**完整汇总 + 失败步骤
-    # 点名** —— 现场留得下来。之后所有步共用 `_remaining_seconds(started, deadline)`
-    # 这一条口径，别让第二处自己再起一次表。
-    deadline = args.deadline_minutes * 60.0 if args.deadline_minutes else None
-
+    # （`timings`/`failures`/`started`/`deadline` 只在 `main()` 顶上那一份里定义与起表，
+    #  这里不再重开一份：重开会把 `started` 推到守卫之后，看门狗与各步剩余各读各的表。）
     # 先算出这一趟真正会跑的步骤（档位过滤只有这一处判据，循环与 --only 守卫共用它）。
     runnable = [(name, cmd, mode) for name, cmd, mode in STEPS if _will_run(name, mode)]
 
