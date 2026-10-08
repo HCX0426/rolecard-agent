@@ -11,6 +11,8 @@ from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.base.audit import read_audit_page
 from rolecard_agent.base.observability import scrub_endpoints
+from rolecard_agent.core.ingest import upload_service
+from rolecard_agent.core.ingest.ingestion import IngestionNotFound
 from rolecard_agent.core.ingest.uploads import referenced_paths, remove_orphans, scan_orphans
 
 router = APIRouter()
@@ -128,6 +130,34 @@ def cleanup_orphan_uploads(
         "freed_bytes": freed,
         "scanned": report.scanned,
         "referenced": report.referenced,
+    }
+
+
+@router.get("/api/uploads/tasks/{task_id}")
+def upload_task_progress(task_id: str, ctx: AppContext = Depends(get_context)) -> object:
+    """P3-3 进度查询：这个上传任务**现在到哪一步了**（后台解析的对外可见面）。
+
+    两个事实并集，缺一不可：
+      * `status` —— intake 台账（pending/parsed/extracted/indexed/failed，进程重启也在）；
+      * `running` —— 这台进程里有没有后台任务正在跑它（内存事实，重启即 False）。
+
+    为什么要 `running`：`pending` 一个词同时盖着三种情形 —— 还在排队跑、可解析但没
+    跑过、OCR 未配置那条**终局** pending。只给 status 的话，前端把"OCR 没配"读成
+    "还在忙"就又是状态与事实背离；`running=False && status=pending` 才是终局。
+    进程崩溃留下的悬空 pending 也靠这个组合如实呈现（`running=False` → 按终局读，
+    重传会自愈 —— 既有语义）。
+
+    归属：不是本人的任务 → 与"不存在"同一个 404（`IngestionNotFound`），不泄露存在性。
+    """
+    row = ctx.ingestion.get(task_id)
+    if str(row["user_id"]) != ctx.current_user():
+        raise IngestionNotFound(task_id)
+    return {
+        "task_id": task_id,
+        "status": row["status"],
+        "running": upload_service.is_running(task_id),
+        "error": row["last_error"] or None,
+        "updated_at": row["updated_at"],
     }
 
 

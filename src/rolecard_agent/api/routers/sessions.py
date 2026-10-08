@@ -963,48 +963,80 @@ def delete_session(thread_id: str, ctx: AppContext = Depends(get_context)) -> No
 def upload_report(
     thread_id: str, file: UploadFile, ctx: AppContext = Depends(get_context)
 ) -> object:
-    """US-7 上传入口：归属校验 → service 落盘/登记/解析/建索引 → 说明插回会话。
+    """US-7 上传入口：归属校验 → 落盘/登记（同步）→ 解析/建索引（**后台**，P3-3）。
 
-    **刻意声明为同步 `def`**：本端的重活（OCR 子进程最长 120 秒、嵌入、落盘）全是
-    **阻塞式**调用。若写成 `async def`，它们会跑在事件循环里 —— 上传一张图片的几十秒
-    内，整个进程（含其他会话的 SSE 对话）都不再响应。同步 `def` 让 FastAPI 把它丢进
-    线程池，事件循环只负责调度。同理传给 service 的是 `file.file`（原样字节流），
-    不 `await file.read()`。
+    **同步 `def`** 仍然保留：落盘是流式磁盘 IO、登记是 sqlite，都在本请求里做 ——
+    400（超限/空文件）必须当场回答。改掉的是**重活的去向**：OCR 子进程（最长 120 秒）
+    与嵌入入索引从"让这个 HTTP 请求挂着等"改成 `submit_processing` 后台跑，201 先回
+    `status=processing`，终局说明由后台经 sink 补投回这条会话（进度看
+    `GET /api/uploads/tasks/{task_id}`）。事件循环从来不是问题（同步 def 走线程池）——
+    这一刀买的是**进度可见**：从前用户只能对着一个挂着的请求干等 120 秒。
 
-    路由在这一层只做三件事：
-      * 归属校验（不是你的会话 → 404，`get_thread` 统一判）；
-      * 异常映射（超限/空文件 → 400；登记了但读不出来 → 500）；
-      * 把 service 给的那句说明插回**这条会话**的检查点 —— 注入与用户这一轮写的是
-        同一份，必须持写锁（R28-03）。
+    三条分路（判据都在 `upload_service`）：
+      * 不可解析（后缀不在白名单）→ 同步算说明并答终局（与旧行为逐键一致，不进后台）；
+      * 同字节且台账已过重活（indexed/parsed/extracted）→ 同步答终局，**不再重跑**
+        （索引按 task_id 幂等，OCR 重传白跑 120 秒没有意义）；
+      * 其余（可解析、failed 重试、pending 补跑）→ 受理说明先注入，**再**起后台 ——
+        顺序反了的话，极快完成的后台可能把终局说明抢在受理说明前面写进会话。
 
-    落盘幂等、文件名消毒、OCR 编排、intake 状态机推进全在 `core/upload_service`，
-    判据见那边的模块文档（先 spill 再幂等、OcrUnavailable≠ParseError 等四条）。
+    异常映射（超限/空文件 → 400）与归属校验（非本人会话 → 404）不变；登记了但解析
+    硬失败从前是本请求翻 500，现在落台账 failed、由进度端点读出（同样的信息，从
+    响应头挪进轮询）。
     """
     thread = get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
-    outcome = upload_service.ingest_upload(
+    persisted = upload_service.persist_upload(
         reader=file.file,
         filename=file.filename or "report.bin",
-        thread_id=thread_id,
         user_id=str(thread["user_id"]),
         upload_dir=ctx.settings.upload_dir,
+        ingestion=ctx.ingestion,
+    )
+
+    def _inject_note(outcome: upload_service.UploadOutcome) -> None:
+        """把这句说明插回**这条会话**的检查点（注入与用户写的是同一份，须持写锁 R28-03）。
+
+        同步答复与后台终局共用这一处：闭包只捕获 `ctx`（属性读穿到 Runtime，热重建后
+        读到的是新配置）与 `thread_id`；连接是 `ThreadLocalConnection`，后台线程拿的是
+        自己那条 —— 与 reachout 网关把 `conn` 放在数据类字段里给多线程共用同一依据。
+        """
+        with thread_write(thread_id, timeout=session_service.WRITE_WAIT):
+            ctx.app_state["graph"].update_state(
+                {"configurable": {"thread_id": thread_id}},
+                {"messages": [HumanMessage(content=outcome.note)]},
+            )
+            # 冗余计数与检查点改动同锁同批维护：说明消息也是一条。
+            _bump_count_committed(ctx, thread_id=thread_id, delta=1)
+            # 说明消息也是会话内容：updated_at 要动 —— 侧栏"刚刚"、同步指纹都指着它。
+            session_service.touch(ctx.conn, thread_id)
+            ctx.conn.commit()
+
+    outcome = upload_service.terminal_outcome(persisted)
+    if outcome is None and not persisted.parseable:
+        outcome = upload_service.process_upload(
+            persisted,
+            thread_id=thread_id,
+            ingestion=ctx.ingestion,
+            knowledge=ctx.knowledge,
+            knowledge_scope=ctx.health.knowledge_scope,
+            ocr_candidates=ctx.ocr_candidates,
+            tracer=ctx.tracer,
+        )
+    if outcome is not None:
+        _inject_note(outcome)
+        return outcome.response()
+
+    _inject_note(upload_service.processing_outcome(persisted))
+    upload_service.submit_processing(
+        persisted,
+        thread_id=thread_id,
         ingestion=ctx.ingestion,
         knowledge=ctx.knowledge,
         knowledge_scope=ctx.health.knowledge_scope,
         ocr_candidates=ctx.ocr_candidates,
         tracer=ctx.tracer,
+        sink=_inject_note,
     )
-
-    with thread_write(thread_id, timeout=session_service.WRITE_WAIT):
-        ctx.app_state["graph"].update_state(
-            {"configurable": {"thread_id": thread_id}},
-            {"messages": [HumanMessage(content=outcome.note)]},
-        )
-        # 冗余计数与检查点改动同锁同批维护：说明消息也是一条。
-        _bump_count_committed(ctx, thread_id=thread_id, delta=1)
-        # 说明消息也是会话内容：updated_at 要动 —— 侧栏"刚刚"、同步指纹都指着它。
-        session_service.touch(ctx.conn, thread_id)
-        ctx.conn.commit()
-    return outcome.response()
+    return upload_service.processing_outcome(persisted).response()
 
 
 __all__ = ["router"]

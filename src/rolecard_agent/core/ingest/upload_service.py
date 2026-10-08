@@ -21,10 +21,13 @@ HTTP 语义（400/500/201、说明往哪条会话插）留在路由。
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import re
+import threading
 import uuid
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any
@@ -128,26 +131,45 @@ def read_source_text(path: Path, *, backend: Any = None) -> str | None:
         return None
 
 
-def ingest_upload(
+#: 重复上传**不必重跑**的台账终态（结构化提取在另一条路上，见 ingestion.py 的注释）：
+#: 同字节再传时重解析不改变任何事实 —— 索引按 task_id 幂等，而 OCR 图片白跑一次
+#: 120 秒。failed/pending 不在此列：failed 是"用户在重试"，pending 是"还没跑完/没跑"。
+_REUSABLE_TERMINAL = ("indexed", "parsed", "extracted")
+
+
+@dataclass(frozen=True, slots=True)
+class PersistedUpload:
+    """落盘与登记完成、**还没动重活**的那一格（P3-3 后台化的第一半）。
+
+    拆开的判据：流式落盘/幂等/登记是毫秒级、必须与请求同生共死（400 要同步回来）；
+    解析（OCR 子进程最长 120 秒）与嵌入入索引是分钟级，走后台（`submit_processing`）。
+    `ingest_upload` 仍然是两段的同步组合 —— 非 HTTP 宿主（桌宠壳、探针）要的还是
+    "一次调用拿到结果"，两条路共用同一个 `process_upload`，不给第二份实现留门。
+    """
+
+    task_id: str
+    reused: bool
+    target: Path
+    safe_name: str
+    status: str  #: persist 时的台账状态（复用/自愈判断的输入）
+    parseable: bool  #: 后缀在解析白名单里（决定走不走后台）
+
+
+def persist_upload(
     *,
     reader: IO[bytes],
     filename: str,
-    thread_id: str,
     user_id: str,
     upload_dir: Path,
     ingestion: IngestionService,
-    knowledge: KnowledgeBase,
-    knowledge_scope: str,
-    ocr_candidates: Callable[[], Any] | None,
-    tracer: Any,
     max_bytes: int = UPLOAD_MAX_BYTES,
-) -> UploadOutcome:
-    """存文件 + 登记 intake 任务（幂等键 sha256），并把**能读的**部分一路推到 indexed。
+) -> PersistedUpload:
+    """存文件 + 登记 intake 任务（幂等键 sha256）—— **到落盘为止**，不做解析与索引。
 
     `reader` 是原样的字节流（FastAPI 的 `UploadFile.file`）：本模块不认识 UploadFile，
     非 HTTP 宿主给一个 `open(...)` 的句柄一样跑。
-    `ocr_candidates` 是**延迟求值**的 OCR 后端工厂（只有图片才问，且答案可能每次不同）。
-    `thread_id` 只服务一处：解析副本写失败那条 tracer 事件要带"这是谁的会话"。
+    超限/空文件在这里就抛 `UploadRejected`（路由翻 400，什么都没登记）—— 同步语义，
+    与后台化无关：这两类问题必须当场告诉用户改文件，而不是让他等一轮进度。
     """
     upload_dir.mkdir(parents=True, exist_ok=True)
     # 去掉任何路径成分再消毒（审查报告 A4）。
@@ -216,10 +238,44 @@ def ingest_upload(
         else:
             reused = False
 
-    # v2.2：统一解析入口——.txt/.md/.pdf 直接抽文本入检索索引；图片走 OCR 子进程
-    # （独立 venv，见 requirements-ocr.txt）；其余类型保持 pending。
+    # v2.2：统一解析入口的白名单判定（.txt/.md/.pdf 直接抽文本入检索索引；图片走 OCR
+    # 子进程，见 requirements-ocr.txt；其余类型保持 pending）。判定是纯后缀查表，
+    # 毫秒级 —— 留在 persist 里，路由据此决定"同步答终局"还是"交后台"。
     suffix = target.suffix.lower()
-    if suffix in PARSEABLE_EXTENSIONS:
+    return PersistedUpload(
+        task_id=task_id,
+        reused=reused,
+        target=target,
+        safe_name=safe_name,
+        status=str(existing["status"] or "pending"),
+        parseable=suffix in PARSEABLE_EXTENSIONS,
+    )
+
+
+def process_upload(
+    p: PersistedUpload,
+    *,
+    thread_id: str,
+    ingestion: IngestionService,
+    knowledge: KnowledgeBase,
+    knowledge_scope: str,
+    ocr_candidates: Callable[[], Any] | None,
+    tracer: Any,
+) -> UploadOutcome:
+    """解析 → 建索引 → 状态机推进 → 说明文案（P3-3 后台化的第二半，重活全在这）。
+
+    与 `persist_upload` 合起来就是原来的 `ingest_upload`（后者现在是两者的同步组合）。
+    台账状态**现读**（`ingestion.get`）而不是从 persist 带过来：后台排队期间状态可能
+    已经被另一路（自愈/重试）推进过，拿着 persist 时的快照推进状态机会撞非法跃迁。
+    `ocr_candidates` 是**延迟求值**的 OCR 后端工厂（只有图片才问，且答案可能每次不同）。
+    `thread_id` 只服务一处：解析副本写失败那条 tracer 事件要带"这是谁的会话"。
+    """
+    existing = ingestion.get(p.task_id)
+    task_id = p.task_id
+    target = p.target
+    safe_name = p.safe_name
+    suffix = target.suffix.lower()
+    if p.parseable:
         try:
             # 仅图片需要选 OCR 后端：按「服务」页签的端点顺序（默认本地 RapidOCR 优先）。
             backend = (
@@ -232,7 +288,7 @@ def ingest_upload(
             # 后端未配置：图片保持 pending，明确告知模型不可读（不把 OCR 栈拖进主环境）。
             return UploadOutcome(
                 task_id=task_id,
-                reused=reused,
+                reused=p.reused,
                 file=safe_name,
                 status=str(existing["status"]),
                 note=(
@@ -302,8 +358,174 @@ def ingest_upload(
         )
     return UploadOutcome(
         task_id=task_id,
-        reused=reused,
+        reused=p.reused,
         file=safe_name,
         status=str(existing["status"]),
         note=note,
     )
+
+
+def terminal_outcome(p: PersistedUpload) -> UploadOutcome | None:
+    """同字节且台账已走过重活 → 直接给终局说明，**不再重跑**（None = 该跑）。
+
+    为什么砍掉重跑：索引按 task_id 幂等（同 task_id 的分块整体覆盖，事实不变），而
+    OCR 图片每重传一次就白跑一次 120 秒。`again → indexed + reused` 的既有语义原样
+    保留，只是不再花那份钱。failed/pending 不在此列：failed 是用户在重试（要重跑），
+    pending 是没跑完/没跑过（要补跑）。
+    """
+    if p.status not in _REUSABLE_TERMINAL:
+        return None
+    return UploadOutcome(
+        task_id=p.task_id,
+        reused=p.reused,
+        file=p.safe_name,
+        status=p.status,
+        note=(
+            f"[用户再次上传了 {p.safe_name}：同一文件此前已入索引"
+            f"（任务 {p.task_id}，status={p.status}），无需重复处理。]"
+        ),
+    )
+
+
+def processing_outcome(p: PersistedUpload) -> UploadOutcome:
+    """"已登记、后台跑着"的即时答复（响应 status=`processing`，新状态值）。
+
+    这个值**只存在于响应**，不进 intake 状态机：`pending` 是台账事实（"还没走完/
+    走不了"），与"正在跑"是两件事 —— 混用会让 OCR 未配置那条终局 pending 被前端
+    读成"还在忙"。前端的口径：响应 processing → 轮询进度端点拿 `running` + `status`
+    两个事实，终局再按既有三态措辞出话。
+    """
+    return UploadOutcome(
+        task_id=p.task_id,
+        reused=p.reused,
+        file=p.safe_name,
+        status="processing",
+        note=(
+            f"[用户上传了文档：{p.safe_name}，已登记后台解析任务 {p.task_id}"
+            "（正在解析入索引）。完成后会再补一条说明 —— 在那之前，"
+            "不要假设它已经可以检索。]"
+        ),
+    )
+
+
+def ingest_upload(
+    *,
+    reader: IO[bytes],
+    filename: str,
+    thread_id: str,
+    user_id: str,
+    upload_dir: Path,
+    ingestion: IngestionService,
+    knowledge: KnowledgeBase,
+    knowledge_scope: str,
+    ocr_candidates: Callable[[], Any] | None,
+    tracer: Any,
+    max_bytes: int = UPLOAD_MAX_BYTES,
+) -> UploadOutcome:
+    """两段的**同步**组合 —— 非 HTTP 宿主（桌宠壳、真机探针）要的形状。
+
+    HTTP 路由不再走这里：它把 `persist_upload` 与 `process_upload` 拆开用，重活交
+    `submit_processing` 后台（P3-3）。**重活只有一份实现**（`process_upload`），
+    同步/后台两条路不许各长一份 —— 那就是"改一边漏一边"的老形状。
+    """
+    p = persist_upload(
+        reader=reader,
+        filename=filename,
+        user_id=user_id,
+        upload_dir=upload_dir,
+        ingestion=ingestion,
+        max_bytes=max_bytes,
+    )
+    reused = terminal_outcome(p)
+    if reused is not None:
+        return reused
+    return process_upload(
+        p,
+        thread_id=thread_id,
+        ingestion=ingestion,
+        knowledge=knowledge,
+        knowledge_scope=knowledge_scope,
+        ocr_candidates=ocr_candidates,
+        tracer=tracer,
+    )
+
+
+#: 后台解析池：**单 worker**（P3-3）。OCR 是子进程重活（单张最长 120 秒）、嵌入也吃
+#: 带宽 —— 并发只会把子进程数与内存一起顶上去，而上传是低频动作，排队不伤体验。
+#: `memory-distill` 同款形状：池恒建（惰性起线程，从不 submit 就零线程）；解释器退出时
+#: `concurrent.futures` 的 atexit 会 join 在飞任务（与 reachout 池同一条已记录取舍）。
+_UPLOAD_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="upload-process")
+_RUNNING: dict[str, Future[None]] = {}
+_RUNNING_GUARD = threading.Lock()
+
+
+def is_running(task_id: str) -> bool:
+    """这个任务有没有正在后台跑 —— 进度端点与"别重复起一个"两处共用同一事实。"""
+    with _RUNNING_GUARD:
+        future = _RUNNING.get(task_id)
+        return future is not None and not future.done()
+
+
+def submit_processing(
+    p: PersistedUpload,
+    *,
+    thread_id: str,
+    ingestion: IngestionService,
+    knowledge: KnowledgeBase,
+    knowledge_scope: str,
+    ocr_candidates: Callable[[], Any] | None,
+    tracer: Any,
+    sink: Callable[[UploadOutcome], None],
+) -> bool:
+    """把 `process_upload` 丢给后台池；已有一个在跑就不再起（返回 False）。
+
+    `sink` 是宿主给的说明投送口（HTTP 路由闭包着 `thread_write` + 图 + 计数维护）——
+    与 reachout 调度器拿宿主 `deliver` 同一形状：本模块不认识会话，后台只负责跑完
+    重活并把**要插回会话的那句**交出去。
+
+    失败分工：解析/索引硬失败已在 `process_upload` 里 `record_failure`（台账 failed →
+    进度端点读得到，前端出 toast —— 与从前"路由翻 500 给同一个人看"的信息量相同，
+    只是从请求头挪进了轮询）；**投送说明失败不许把成功记成失败**（索引已建成、台账
+    indexed 是真相），只在轨迹里留痕。
+    """
+    with _RUNNING_GUARD:
+        existing = _RUNNING.get(p.task_id)
+        if existing is not None and not existing.done():
+            return False
+
+        def _run() -> None:
+            try:
+                outcome = process_upload(
+                    p,
+                    thread_id=thread_id,
+                    ingestion=ingestion,
+                    knowledge=knowledge,
+                    knowledge_scope=knowledge_scope,
+                    ocr_candidates=ocr_candidates,
+                    tracer=tracer,
+                )
+            except UploadUnreadable:
+                return  # 台账已 failed：进度端点读得到
+            except Exception as exc:  # noqa: BLE001 — 后台兜底：编程错也要落成 failed，
+                # 不留"running 永远 True、台账永远 pending"的悬空形状。
+                # 连记账都失败就留 pending：重传这条路会自愈（既有语义），这里只管别悬空。
+                with contextlib.suppress(Exception):
+                    ingestion.record_failure(p.task_id, f"{type(exc).__name__}: {exc}")
+                return
+            try:
+                sink(outcome)
+            except Exception as exc:  # noqa: BLE001
+                tracer.emit(
+                    TraceEvent(
+                        event="upload_completion_note_failed",
+                        thread_id=thread_id,
+                        error=f"{type(exc).__name__}: {exc}",
+                        detail={"task_id": p.task_id},
+                    )
+                )
+            finally:
+                with _RUNNING_GUARD:
+                    _RUNNING.pop(p.task_id, None)
+
+        _RUNNING[p.task_id] = _UPLOAD_POOL.submit(_run)
+    return True

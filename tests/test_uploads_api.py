@@ -228,3 +228,98 @@ def test_a_missing_upload_dir_reports_every_ledger_row_as_dangling(tmp_path: Pat
 
     assert report.files == () and report.scanned == 0
     assert report.dangling == ("x.txt",), "目录不在时沉默 = 这个缺陷的本尊"
+
+
+# -- 后台解析的进度端点（P3-3） ----------------------------------------------------
+
+
+def test_progress_unknown_task_is_404(client: TestClient) -> None:
+    assert client.get("/api/uploads/tasks/ing_nope").status_code == 404
+
+
+def test_progress_hides_tasks_owned_by_someone_else(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """不是你的任务 → 与"不存在"同一个 404（不泄露存在性）。
+
+    直改 sqlite 的 user_id 换主人是本仓既有做法（test_records_api 的同款）——
+    两个身份的完整链路由 tests/integration/test_two_identities 覆盖，这里只钉
+    归属判断这一格。
+    """
+    import sqlite3
+
+    body = _upload(client, "私有.txt", "只有我能看的内容".encode())
+    task_id = str(body["task_id"])
+    conn = sqlite3.connect(tmp_path / "uploads.db")
+    conn.execute(
+        "UPDATE ingestion_task SET user_id = 'someone_else' WHERE task_id = ?", (task_id,)
+    )
+    conn.commit()
+    conn.close()
+    assert client.get(f"/api/uploads/tasks/{task_id}").status_code == 404
+
+
+def test_processing_response_then_terminal_via_progress(
+    client: TestClient, wait_upload
+) -> None:
+    """P3-3 的对外形状：201 只是受理（新状态值 `processing`），终局由进度端点读出。
+
+    `processing` 不进 intake 状态机（它只存在于响应）—— 断言钉的正是这条边界：
+    POST 的 status 与 GET 的 status 是两个口径的词表，混一个进去这条就会红。
+    """
+    body = _upload(client, "随访须知.txt", "每半年复查一次。".encode())
+    assert body["status"] == "processing", body
+
+    done = wait_upload(client, str(body["task_id"]))
+    assert done["running"] is False
+    assert done["status"] == "indexed", done
+    assert done["error"] is None
+    assert done["updated_at"] is not None
+
+
+def test_completion_note_lands_after_the_processing_note(
+    client: TestClient, wait_upload
+) -> None:
+    """两句说明的顺序是判据：先"已登记后台解析任务"，跑完再补"已建立检索索引"。
+
+    顺序反了（后台抢在受理说明前面写进会话）在 UI 上就是"先说建好了、再说正在建"。
+    """
+    tid = str(client.post("/api/session", json={}).json()["thread_id"])
+    res = client.post(
+        f"/api/session/{tid}/upload",
+        files={"file": ("顺序.txt", "内容足够索引。".encode(), "text/plain")},
+    )
+    assert res.status_code == 201
+    wait_upload(client, str(res.json()["task_id"]))
+
+    texts = [
+        str(m["content"])
+        for m in client.get(f"/api/session/{tid}/messages").json()["messages"]
+    ]
+    accepted = next((i for i, t in enumerate(texts) if "后台解析任务" in t), None)
+    final = next((i for i, t in enumerate(texts) if "已建立检索索引" in t), None)
+    assert accepted is not None, texts
+    assert final is not None, texts
+    assert accepted < final, f"受理说明必须先于终局说明落进会话：{texts}"
+
+
+def test_failed_processing_reads_back_through_progress(
+    client: TestClient, wait_upload
+) -> None:
+    """解析失败：进度端点给出 failed + 错误原文（取代从前"本请求 500"的信息通道）。"""
+    import rolecard_agent.core.ingest.upload_service as upload_mod
+
+    real_parse = upload_mod.parse_document
+
+    def boom(*args: object, **kwargs: object) -> str:
+        raise upload_mod.ParseError("解析炸了（进度端点要读到这句）")
+
+    upload_mod.parse_document = boom
+    try:
+        body = _upload(client, "会炸.txt", b"x")
+        assert body["status"] == "processing"
+        done = wait_upload(client, str(body["task_id"]))
+        assert done["status"] == "failed", done
+        assert "解析炸了" in str(done["error"]), done
+    finally:
+        upload_mod.parse_document = real_parse

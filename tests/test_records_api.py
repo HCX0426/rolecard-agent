@@ -137,7 +137,9 @@ def test_created_report_appears_in_records(client: TestClient) -> None:
 # -- 知识作用域重建 --------------------------------------------------------------------
 
 
-def test_reset_knowledge_scope_removes_and_audits(client: TestClient) -> None:
+def test_reset_knowledge_scope_removes_and_audits(
+    client: TestClient, wait_upload
+) -> None:
     """清空作用域是破坏性动作：删掉集合 + 写审计（含清掉的分块数）。"""
     tid = client.post("/api/session", json={}).json()["thread_id"]
     uploaded = client.post(
@@ -145,6 +147,10 @@ def test_reset_knowledge_scope_removes_and_audits(client: TestClient) -> None:
         files={"file": ("须知.md", "每半年复查一次超声。".encode(), "text/markdown")},
     )
     assert uploaded.status_code == 201
+    # 分块是后台建的（P3-3）：清空要清的是**已入索引**的分块，先等终局 ——
+    # 这条断言问的是 chroma 里有没有块，不等就是撞池线程的时序。
+    done = wait_upload(client, uploaded.json()["task_id"])
+    assert done["status"] == "indexed", done
     assert client.get("/api/knowledge").json(), "上传后应已有作用域"
 
     res = client.delete("/api/knowledge/health_reports")

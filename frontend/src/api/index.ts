@@ -1,7 +1,10 @@
 // 后端调用的唯一出口：transport 核心（`request`/`upload`/`ApiError`）+ `api` 对象。
 // 契约类型按路由域住在隔壁 15 个文件、SSE 一族在 `./sse`，本文件末尾用 `export *`
 // 把它们并成同一个接口面 —— 消费者只认 `../api`，不认哪个名字住在哪个文件。
-// 端点清单见 api/main.py 的模块 docstring —— 这里不发明第二个事实来源。
+// 与后端契约一一对应：端点的事实面是 `api/routers/` 各文件里的路由声明（FastAPI 注册
+// 即真值），每个路由的 docstring 讲它自己的口径 —— 这里不发明第二个事实来源。
+// （从前这行指的"api/main.py 的模块 docstring 端点清单"并不存在，2026-10-08 加进度
+// 端点时核对发现：指针指向了没有的东西，按"living 引用"的规矩改指真住址。）
 //
 // 住址说明（快照 P3-1 第三、四刀）：本文件从前是 `src/api.ts`，先成 `src/api/index.ts`，
 // 契约类型再按路由域拆进隔壁 15 个文件（本文件只留 transport 核心 + `api` 对象 + 再导出面）。
@@ -14,7 +17,7 @@
 import { apiBase, authHeaders } from "../lib/dataSource";
 // 只取类型（`import type`）：upload() 的返回体形状跟上传结果解读共用一个定义，
 // 免得"接口返回什么"在两处各写一遍。uploadOutcome 不 import 本文件，不存在循环。
-import type { UploadResponse } from "../lib/uploadOutcome";
+import type { UploadResponse, UploadTaskProgress } from "../lib/uploadOutcome";
 import type { LocalServiceStatus, ResidentModel } from "./models";
 import type { ExtractResult } from "./knowledge";
 import type { GenericRecord } from "./records";
@@ -159,7 +162,7 @@ export const api = {
       { task_id: taskId },
       LONG_REQUEST_TIMEOUT_MS,
     ),
-  /** 上传文件到某个对话（解析 + 入检索索引）。走长超时：OCR 子进程本身就允许 120s。 */
+  /** 上传文件到某个对话（P3-3：201 只是受理，解析/入索引在后台 —— 终局问 uploadTask）。 */
   upload: (threadId: string, form: FormData) =>
     request<UploadResponse>(
       "POST",
@@ -167,6 +170,9 @@ export const api = {
       form,
       LONG_REQUEST_TIMEOUT_MS,
     ),
+  /** 上传进度查询：`running`（后台是否在跑）+ `status`（台账终态）并读才不含糊。 */
+  uploadTask: (taskId: string) =>
+    request<UploadTaskProgress>("GET", `/api/uploads/tasks/${taskId}`),
   /** 模型供应商目录（设置页下拉动态来源）。 */
   setModelContext: (name: string, numCtx: number | null) =>
     request<{ name: string; num_ctx: number | null }>(

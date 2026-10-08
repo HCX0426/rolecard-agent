@@ -367,7 +367,7 @@ def _make_pdf_bytes(text: str) -> bytes:
 
 
 def test_upload_pdf_indexed_and_idempotent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wait_upload
 ) -> None:
     """US-7 / A1 / v2.2：PDF 上传 → 真实解析入检索索引（status=indexed），且同一文件
     再传复用同一 intake 任务（不产生重复行）。"""
@@ -386,7 +386,9 @@ def test_upload_pdf_indexed_and_idempotent(
         assert first.status_code == 201
         body = first.json()
         assert body["task_id"].startswith("ing_") and body["reused"] is False
-        assert body["status"] == "indexed"
+        # P3-3：201 只是受理（解析/建索引已交后台），终局要轮进度端点。
+        done = wait_upload(c, body["task_id"])
+        assert done["status"] == "indexed", done
 
         again = c.post(
             f"/api/session/{tid}/upload",
@@ -394,6 +396,8 @@ def test_upload_pdf_indexed_and_idempotent(
         )
         assert again.json()["reused"] is True
         assert again.json()["task_id"] == body["task_id"]  # 同一任务，不是新行
+        # 终局复用同步答：台账已过重活，不再重跑（也不必轮询）。
+        assert again.json()["status"] == "indexed"
 
         # 注入的说明消息进入 checkpoint 历史，模型后续轮次能看到
         messages = c.get(f"/api/session/{tid}/messages").json()["messages"]
@@ -549,7 +553,7 @@ def test_reupload_self_heals_when_the_stored_file_vanished(
 
 
 def test_failed_task_recovers_when_the_same_file_is_reuploaded(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wait_upload
 ) -> None:
     """**failed 不能是死胡同**：解析失败后重传同一份文件，任务必须能回到 indexed。
 
@@ -585,16 +589,21 @@ def test_failed_task_recovers_when_the_same_file_is_reuploaded(
     with TestClient(app) as c:
         tid = str(c.post("/api/session", json={}).json()["thread_id"])
         first = c.post(f"/api/session/{tid}/upload", files={"file": ("a.txt", body, "text/plain")})
-        assert first.status_code == 500  # 解析失败以可读 500 呈现（而不是别的异常）
-        assert "第一次解析失败" in first.json()["detail"]
+        # P3-3：解析在后台跑，受理先回 201。解析失败从前以本请求的 500 呈现，现在落台账
+        # failed 由进度端点读出 —— 错误原文一字不少，只是从响应头挪进了轮询。
+        assert first.status_code == 201, first.text
+        failed = wait_upload(c, first.json()["task_id"])
+        assert failed["status"] == "failed", failed
+        assert "第一次解析失败" in str(failed["error"])
         assert c.get(f"/api/session/{tid}/context").status_code == 200  # 站得住的失败
 
         again = c.post(f"/api/session/{tid}/upload", files={"file": ("a.txt", body, "text/plain")})
         assert again.status_code == 201, again.text
-        assert again.json()["status"] == "indexed", (
+        assert again.json()["reused"] is True  # 同一份字节，仍是同一个任务
+        done = wait_upload(c, again.json()["task_id"])
+        assert done["status"] == "indexed", (
             "重传成功后任务必须回到 indexed —— failed 不能是终点"
         )
-        assert again.json()["reused"] is True  # 同一份字节，仍是同一个任务
         assert calls["n"] == 2
 
 
@@ -665,7 +674,7 @@ def test_upload_rejects_empty_file(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
 
 def test_upload_txt_indexed_and_reupload_keeps_status(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wait_upload
 ) -> None:
     """v2.1：.txt 上传直接建索引；重复上传复用任务且**不再推进状态机**
     （'indexed' -> 'parsed' 是非法跃迁，曾导致 500）。"""
@@ -679,13 +688,16 @@ def test_upload_txt_indexed_and_reupload_keeps_status(
         first = c.post(
             f"/api/session/{tid}/upload", files={"file": ("须知.md", payload[0], payload[1])}
         )
-        assert first.status_code == 201 and first.json()["status"] == "indexed"
+        assert first.status_code == 201
+        # P3-3：受理即回 processing，终局轮出来。
+        assert wait_upload(c, first.json()["task_id"])["status"] == "indexed"
         again = c.post(
             f"/api/session/{tid}/upload", files={"file": ("须知.md", payload[0], payload[1])}
         )
         assert again.status_code == 201
         assert again.json()["reused"] is True
-        assert again.json()["status"] == "indexed"  # 幂等：不重新解析、不非法跃迁
+        # 幂等：终局复用同步答、不重新解析、不非法跃迁（P3-3 后同样成立，且不再重跑）。
+        assert again.json()["status"] == "indexed"
 
         knowledge = c.get("/api/knowledge").json()
         assert any("须知.md" in s["sources"] for s in knowledge)

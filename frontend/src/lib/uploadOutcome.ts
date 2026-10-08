@@ -20,6 +20,23 @@ export interface UploadResponse {
   parsed?: boolean;
 }
 
+/** `GET /api/uploads/tasks/{task_id}` 的载荷（P3-3 后台化）。
+ *
+ * 两个字段必须**并读**（后端端点 docstring 的同一条口径）：`pending` 一个词盖着
+ * "还在排队跑 / 可解析但没跑过 / OCR 未配置那条**终局**"三种情形，只有
+ * `running === false` 才说明它真的停了；`error` 是解析失败时的原文（取代了从前
+ * "上传请求直接 500"那条信息通道）。
+ */
+export interface UploadTaskProgress {
+  task_id: string;
+  /** intake 台账状态：pending/parsed/extracted/indexed/failed（进程重启也在）。 */
+  status: string;
+  /** 本进程里有没有后台任务正在跑它（重启即 false —— 悬空 pending 按终局读）。 */
+  running: boolean;
+  error: string | null;
+  updated_at: string | null;
+}
+
 export interface ExtractLike {
   skipped?: string | null;
   written: { index_name: string }[];
@@ -35,6 +52,14 @@ export interface Outcome {
 /** 上传本身的结局（还没走抽取）。返回 null = 已入索引，需要继续看抽取结果。 */
 export function describeUpload(r: UploadResponse): Outcome | null {
   const suffix = r.reused ? "（同一文件此前已登记）" : "";
+  if (r.status === "processing") {
+    // P3-3 新增的一态：**受理了、后台在跑**。必须排在 pending 分支前面 ——
+    // 挤进 pending 就会说成"当前无法解析"（恰恰是反的：正在解析）。
+    return {
+      tone: "info",
+      text: `「${r.file}」已登记，正在解析入索引…${suffix}`,
+    };
+  }
   if (!r.status || r.status === "pending") {
     return {
       tone: "warn",
@@ -86,6 +111,29 @@ export function describeExtract(
   }
   if (result.notes.length > 0) text += `　备注：${result.notes.join("；")}`;
   return { tone, text };
+}
+
+/** 轮询到后台**停下来**（`running === false`）—— 唯一可靠的完成信号。
+ *
+ * `fetchOne` 由调用方注入（这里不 import `../api`：lib 层保持无依赖的纯逻辑，
+ * 也于是可以拿假实现单测）。超时**抛**而不返回半截状态：拿"还在跑"当终局读
+ * 就是这函数要防的那类状态与事实背离。默认上限覆盖 OCR 的 120s + 单 worker 排队。
+ */
+export async function pollUploadProgress(
+  fetchOne: () => Promise<UploadTaskProgress>,
+  opts: { intervalMs?: number; timeoutMs?: number } = {},
+): Promise<UploadTaskProgress> {
+  const intervalMs = opts.intervalMs ?? 500;
+  const timeoutMs = opts.timeoutMs ?? 240_000;
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const prog = await fetchOne();
+    if (!prog.running) return prog;
+    if (Date.now() >= deadline) {
+      throw new Error(`上传后台解析超时（${Math.round(timeoutMs / 1000)}s 还没停）`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
 }
 
 /** 人话的字节数（上传目录回收用）。 */

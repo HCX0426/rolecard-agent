@@ -1,15 +1,28 @@
-// lib/uploadOutcome.ts 的测试：上传的三种结局 + 抽取阶段的四种结局。
+// lib/uploadOutcome.ts 的测试：上传的四种结局 + 抽取阶段的四种结局 + 进度轮询。
 //
-// 为什么值得表驱动地测：上传是"用户最怕出错"的动作，而这三种结局的文案此前内联在
+// 为什么值得表驱动地测：上传是"用户最怕出错"的动作，而这几种结局的文案此前内联在
 // ChatPage 的 60 行 if/else 里，只能靠人工点页面验。最坏的情况不是报错，而是
 // **上传其实成功了、用户却以为失败了**（或反过来）—— 那会让人不敢用这个功能。
 
 import { describe, expect, it } from "vitest";
-import { describeExtract, describeUpload, formatBytes } from "./uploadOutcome";
+import {
+  describeExtract,
+  describeUpload,
+  formatBytes,
+  pollUploadProgress,
+  type UploadTaskProgress,
+} from "./uploadOutcome";
 
 const base = { task_id: "ing_1", reused: false, file: "报告.pdf" };
 
 describe("describeUpload", () => {
+  it("processing：受理了、后台在跑 —— 不许滑进 pending 那句「无法解析」（语义正好相反）", () => {
+    const out = describeUpload({ ...base, status: "processing" });
+    expect(out?.tone).toBe("info");
+    expect(out?.text).toContain("正在解析入索引");
+    expect(out?.text).not.toContain("无法解析");
+  });
+
   it("pending（未给 status）：登记成功但读不了 —— 必须说清「没读到」而不是「成功了」", () => {
     const out = describeUpload({ ...base, status: "pending" });
     expect(out?.tone).toBe("warn");
@@ -35,6 +48,50 @@ describe("describeUpload", () => {
   it("重复上传带出处说明，但不改变语气", () => {
     const out = describeUpload({ ...base, status: "pending", reused: true });
     expect(out?.text).toContain("此前已登记");
+  });
+});
+
+const prog = (over: Partial<UploadTaskProgress> = {}): UploadTaskProgress => ({
+  task_id: "ing_1",
+  status: "pending",
+  running: true,
+  error: null,
+  updated_at: null,
+  ...over,
+});
+
+describe("pollUploadProgress", () => {
+  it("第一次就已停 → 直接回终局", async () => {
+    const out = await pollUploadProgress(
+      async () => prog({ running: false, status: "indexed" }),
+      { intervalMs: 0 },
+    );
+    expect(out.status).toBe("indexed");
+  });
+
+  it("running 的一路跳过，直到停下来才返回（轮询的本职）", async () => {
+    const queue = [prog(), prog(), prog({ running: false, status: "failed", error: "炸了" })];
+    const out = await pollUploadProgress(async () => queue.shift()!, { intervalMs: 0 });
+    expect(queue).toHaveLength(0);
+    expect(out.status).toBe("failed");
+    expect(out.error).toBe("炸了");
+  });
+
+  it("永远不停 → 超时**抛**，绝不把「还在跑」当终局返回", async () => {
+    await expect(
+      pollUploadProgress(async () => prog(), { intervalMs: 0, timeoutMs: 0 }),
+    ).rejects.toThrow("超时");
+  });
+
+  it("查询本身失败（网络/404）原样抛出，不吞掉", async () => {
+    await expect(
+      pollUploadProgress(
+        async () => {
+          throw new Error("fetch failed");
+        },
+        { intervalMs: 0 },
+      ),
+    ).rejects.toThrow("fetch failed");
   });
 });
 

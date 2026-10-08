@@ -65,6 +65,33 @@ def _no_startup_model_pin() -> Iterator[None]:
                 os.environ[key] = value
 
 
+@pytest.fixture
+def wait_upload():
+    """等一次上传**走完后台**（P3-3 后台化：201 只是受理，终局要轮询进度端点）。
+
+    为什么必须显式等：解析/建索引现在在池线程里跑，POST 返回 `status=processing`。
+    不等就断言终局 = 撞运气（曾有三支 records 用例"碰巧"过了 —— 池线程比下一发
+    请求快），那是按机器时序通过的测试，不是按判据通过的。
+
+    `running=False` 是唯一的完成信号：`status=pending` 可能是"还没跑"也可能是
+    OCR 未配置那条**终局** pending，只有与 running 并读才不含糊（进度端点的 docstring
+    讲了这条口径）。超时给足 OCR 上限（120s）+ 余量 —— 真超时就是断言失败，不静默。
+    """
+    import time as _time
+
+    def _wait(client, task_id: str, *, timeout: float = 150.0) -> dict[str, Any]:
+        deadline = _time.monotonic() + timeout
+        while True:
+            body = client.get(f"/api/uploads/tasks/{task_id}").json()
+            if not body["running"]:
+                return body
+            if _time.monotonic() > deadline:
+                raise AssertionError(f"upload task never finished: {task_id} -> {body}")
+            _time.sleep(0.05)
+
+    return _wait
+
+
 # --------------------------------------------------------------------------- model fake
 
 

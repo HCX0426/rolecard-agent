@@ -2,7 +2,7 @@
 import { useState } from "react";
 
 import { api, type ExtractResult } from "../api";
-import { describeExtract, describeUpload } from "../lib/uploadOutcome";
+import { describeExtract, describeUpload, pollUploadProgress } from "../lib/uploadOutcome";
 import type { Tone } from "../components/Toast";
 import { describeError } from '../lib/errors';
 
@@ -41,9 +41,31 @@ export function useUploadFlow({
     try {
       const fd = new FormData();
       fd.append("file", file);
-      // 走 api.upload（长超时）：OCR 子进程本身允许 120s，30s 会把界面切成「假失败」，
-      // 而后端其实已经把文件落盘并入索引了（审查报告 P1-4）。
-      const r = await api.upload(tid, fd);
+      // 走 api.upload（长超时）：落盘与登记在本请求里，重活已交后台（P3-3），
+      // 但 400（超限/空文件）仍是当场回答 —— 这个超时仍然按最坏的网络留。
+      let r = await api.upload(tid, fd);
+
+      if (r.status === "processing") {
+        // 受理即报一句（文案在 describeUpload 里，单测钉着），然后轮到后台停下来。
+        const accepted = describeUpload(r);
+        if (accepted) onStatus(accepted.text, accepted.tone);
+        try {
+          const prog = await pollUploadProgress(() => api.uploadTask(r.task_id));
+          if (prog.status === "failed") {
+            // 解析失败的信息通道从前是"上传请求直接 500"，现在从进度端点读出 ——
+            // 错误原文一字不少（台账 last_error），语气与旧 catch 路径同款。
+            onStatus(
+              `「${r.file}」解析失败：${prog.error ?? "未知原因"}（可修正环境后重传）`,
+              "warn",
+            );
+            return;
+          }
+          r = { ...r, status: prog.status }; // 终局塞回既有三态措辞，不新造文案
+        } catch (e) {
+          onStatus(`上传进度查询失败：${describeError(e)}`, "warn");
+          return;
+        }
+      }
 
       // 三态反馈（登记但读不了 / 解析了没文本 / 已入索引）：判断逻辑在
       // lib/uploadOutcome.ts 并被单测覆盖 —— 这段分支以前只能靠人工点页面验。
