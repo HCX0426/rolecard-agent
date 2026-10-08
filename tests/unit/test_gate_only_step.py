@@ -45,7 +45,7 @@ def _main_with(gate, steps, argv, tmp_path, run=None):
     )
     gate.STEPS = steps
     gate._READING_PATTERNS = {}
-    gate._run = run or (lambda name, cmd, cwd=None: (True, 0.01, ""))
+    gate._run = run or (lambda name, cmd, cwd=None, **_k: (True, 0.01, ""))
     gate._write_readings = lambda *a, **k: None
     gate.READINGS = tmp_path / "readings.json"
     sys.argv = ["gate.py", *argv]
@@ -76,7 +76,7 @@ def test_a_matching_substring_still_runs_that_step(tmp_path):
     gate = _load_gate()
     ran: list[str] = []
 
-    def spy(name, cmd, cwd=None):
+    def spy(name, cmd, cwd=None, timeout=None, remaining=None):
         ran.append(name)
         return True, 0.01, ""
 
@@ -84,6 +84,27 @@ def test_a_matching_substring_still_runs_that_step(tmp_path):
     code = _main_with(gate, steps, ["--only", "一致性"], tmp_path, run=spy)
     assert code == 0, f"命中了步骤却可乐：{code}"
     assert ran == ["一致性 检查"], f"该跑的没跑或跑多了：{ran}"
+
+
+def test_one_static_step_alone_still_runs(tmp_path) -> None:
+    """命中静态组里的**一步**时不许零步当绿 —— 2026-10-09 实测撞出来的第四种零法。
+
+    现场：\gate.py --ci --only "mypy(linux"\ 打出"✅ 全部通过"、退出 0、总计 0.0s。并发组的
+    启动条件是 \len(head) >= 2\，只命中一步时并发不启动，而那一步又被旧写法
+    est = [非静态]\ 从串行名单里摘掉了 —— 分组的账漏了人。上面那道 \--only\ 守卫拦不住
+    它：守卫问"这趟会不会跑"（答"会"），这里的账是"谁真的跑了"（一个都没有）。
+    """
+    gate = _load_gate()
+    ran: list[str] = []
+
+    def spy(name, cmd, cwd=None, timeout=None, remaining=None):
+        ran.append(name)
+        return True, 0.01, ""
+
+    steps = [("mypy", ["x"], "both"), ("ruff", ["y"], "both"), ("依赖方向", ["z"], "both")]
+    code = _main_with(gate, steps, ["--ci", "--only", "mypy"], tmp_path, run=spy)
+    assert code == 0, f"命中了静态组里的一步却可乐：{code}"
+    assert ran == ["mypy"], f"这一步该被真跑（从前零步当绿）：{ran}"
 
 
 def test_only_hitting_a_step_this_tier_filters_out_is_not_green(tmp_path, capsys):
@@ -95,7 +116,7 @@ def test_only_hitting_a_step_this_tier_filters_out_is_not_green(tmp_path, capsys
     gate = _load_gate()
     ran: list[str] = []
 
-    def spy(name, cmd, cwd=None):
+    def spy(name, cmd, cwd=None, timeout=None, remaining=None):
         ran.append(name)
         return True, 0.01, ""
 
@@ -112,7 +133,7 @@ def test_fast_flag_makes_the_fast_step_runnable(tmp_path):
     gate = _load_gate()
     ran: list[str] = []
 
-    def spy(name, cmd, cwd=None):
+    def spy(name, cmd, cwd=None, timeout=None, remaining=None):
         ran.append(name)
         return True, 0.01, ""
 

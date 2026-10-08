@@ -41,6 +41,7 @@ import platform
 import re
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -356,22 +357,122 @@ def _cwd_for(name: str) -> Path | None:
     return None
 
 
-def _run_captured(name: str, cmd: list[str], cwd: Path | None = None) -> tuple[bool, float, str]:
+#: 每一步的墙钟上限（秒）。2026-10-09 装的，根因是那两趟 **"什么都没报错"的 cancel**：
+#: 一个步骤吊住不动 → runner 把整个 job 杀在预算上 → GitHub 对 cancelled job **不上传日志**
+#: （run 37804463056 与 37815831250 连续两趟，现场两次都拿不回来，只能从相邻臂倒推）。
+#: 挂死必须变成**这一步的红**（带 ⏱ 与点名信息、整趟照常打出汇总、日志照常上传），而不是
+#: 整条 job 陪葬。数值按本机实测放宽：本机全绿时最长的一步是 pytest ~86s，这里最少的档也
+#: 给了 4 倍余量 —— 超时红是"吊死了"的强信号，不是"机器慢"的常见信号；CI 冷启动的抖动
+#: 由余量吃，真到上限的那一步就是坏了。`--deadline-minutes`（CI 传 22）再兜一层：
+#: 就算每步都在自己的上限里慢慢走，总量也不能越过 runner 预算（见 _budgeted）。
+DEFAULT_STEP_TIMEOUT = 900.0
+STEP_TIMEOUTS: dict[str, float] = {
+    "ruff": 180.0,
+    "mypy": 420.0,
+    "mypy scripts/": 420.0,
+    "mypy(linux 档)": 420.0,
+    "依赖方向": 180.0,
+    "shell typecheck": 420.0,
+    "pytest(-x, 无覆盖率)": 900.0,
+    "consistency": 300.0,
+    "baseline --check": 300.0,
+    "pytest(覆盖率)": 1500.0,
+    "覆盖率分模块地板": 120.0,
+    "改动行覆盖率": 120.0,
+    "前端 vitest": 420.0,
+    "前端 tsc+build": 600.0,
+    "dist 入库同步": 120.0,
+    "README 可跑性": 420.0,  # 脚本内自己只等 90s 健康 + 收尾，这里给它起停的余量
+    "随包后端 parity": 300.0,
+    "依赖审计": 700.0,  # 脚本内 pip-audit 硬超时 600s，这里留善后余量
+    "密钥扫描": 420.0,  # 脚本内 gitleaks 硬超时 300s + 首跑下载
+    "真机冒烟(14 项)": 900.0,
+}
+
+
+def _step_timeout(name: str) -> float:
+    # 快档的 pytest 那一步到 `_run` 手里时带着"｜受影响子集…"的显示后缀（`_resolve` 加的），
+    # 直接查表会掉进 DEFAULT —— 查不到不报错，只是每步上限**静默失效**。先摘掉后缀再查。
+    return STEP_TIMEOUTS.get(name.split("｜", 1)[0], DEFAULT_STEP_TIMEOUT)
+
+
+def _timeout_note(budget: float) -> str:
+    """挂死当红时补的那句 —— 它存在的意义就是**别再丢现场**：红一步带日志上传，
+    而不是把整条 job 吊到预算外被杀（cancelled job 不传日志，连续两趟现场是这么丢的）。"""
+    return (
+        f"\n（这一步在 {budget:.0f}s 上限里没跑完 —— 按挂死当红。截止此刻的输出原样留在上方；"
+        "宁可红一步，不要让整条 job 被杀后什么都不剩。）\n"
+    )
+
+
+def _budgeted(step_timeout: float, remaining: float | None) -> float:
+    """单步真正可用的墙钟：步自身上限与**全局剩余**取小（CI 传 `--deadline-minutes`）。
+    `remaining=None`（本机默认）→ 只受步上限管。下限 1s：剩余哪怕只够一步开个头，
+    也要跑出一次**带日志的红**，而不是无声跳过。
+    """
+    if remaining is None:
+        return step_timeout
+    return max(min(step_timeout, remaining), 1.0)
+
+
+def _remaining_seconds(started: float, deadline: float | None) -> float | None:
+    """全局墙钟还剩多少秒；`deadline=None` → None（不约束）。
+
+    住在函数里而不是散在循环里：静态并发组**进池前算一次**、串行步**开跑前各算一次**，
+    两处共用这同一条"从趟开始起算"的口径，别让第二处自己再拿 `time.monotonic()` 起算。
+    """
+    if deadline is None:
+        return None
+    return max(deadline - (time.perf_counter() - started), 0.0)
+
+
+def _terminate_step(proc: subprocess.Popen[str]) -> None:
+    """把挂死的一步**整棵树**收掉。只 `terminate()` 外壳不够 —— 本仓实测过两次"杀了外壳、
+    真后端原地活着答了二十分钟"（`probe_readme_quickstart` 与 `run_api` 各一发）。实现只有
+    一份（`core/tools/run.py`，POSIX 走 killpg、Windows 走 taskkill /T），这里与那两处同
+    一个 src 布局写法：不假设装过。
+    """
+    sys.path.insert(0, str(ROOT / "src"))
+    from rolecard_agent.core.tools.run import terminate_process_tree  # noqa: PLC0415
+
+    terminate_process_tree(proc)
+
+
+def _run_captured(
+    name: str,
+    cmd: list[str],
+    cwd: Path | None = None,
+    timeout: float | None = None,
+    remaining: float | None = None,
+) -> tuple[bool, float, str]:
     """并发组专用的运行器：**捕获**输出、跑完一次打出（流式打印并发会互相穿插）。
 
-    与 `_run` 同一个返回契约（ok, 秒数, 完整输出），只是 io 模式不同 —— 静态四步都
-    很快（本机 <30s / runner 带缓存更短），不存在"长步骤静默被当挂死"的顾虑。
+    与 `_run` 同一个返回契约（ok, 秒数, 完整输出），只是 io 模式不同。超时语义同 `_run`：
+    到点红给这一步、带上截止此刻的输出，不 traceback、不吊整条 job。静态组的 `remaining`
+    在**进池前算一次**（五并发共用同一个剩余预算 —— 它们本来就同时跑，不该各拿一份全额）。
     """
     print(f"\n▶ {name}（并发）", flush=True)
     t0 = time.perf_counter()
-    proc = subprocess.run(
-        cmd,
-        cwd=str(cwd) if cwd else str(ROOT),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    budget = _budgeted(timeout if timeout is not None else _step_timeout(name), remaining)
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(cwd) if cwd else str(ROOT),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=budget,
+        )
+    except subprocess.TimeoutExpired as exc:
+        dt = time.perf_counter() - t0
+        partial = exc.stdout or ""
+        if isinstance(partial, bytes):
+            partial = partial.decode("utf-8", "replace")
+        output = str(partial) + _timeout_note(budget)
+        print(output, end="", flush=True)
+        print(f"  ⏱ {name}: {dt:.1f}s ❌（步超时上限 {budget:.0f}s）", flush=True)
+        return False, dt, output
     dt = time.perf_counter() - t0
     output = proc.stdout + (proc.stderr or "")
     code = proc.returncode
@@ -380,16 +481,30 @@ def _run_captured(name: str, cmd: list[str], cwd: Path | None = None) -> tuple[b
     return code == 0, dt, output
 
 
-def _run(name: str, cmd: list[str], cwd: Path | None = None) -> tuple[bool, float, str]:
+def _run(
+    name: str,
+    cmd: list[str],
+    cwd: Path | None = None,
+    timeout: float | None = None,
+    remaining: float | None = None,
+) -> tuple[bool, float, str]:
     """跑一步，返回 (是否通过, 秒数, 该步的完整输出)。
 
     输出**边跑边打在控制台上，同时留一份在内存里**（第三个返回值）—— 留这一份只为了
     一件事：把 README 首屏那几个数变成"这一步刚才量出来的"，而不是"某人上次手抄的"。
     流式打印不能丢（长步骤静默几分钟会被当成挂死），所以自己按行读而不是 capture_output。
+
+    `remaining` 是**全局剩余**（`--deadline-minutes` 设的墙钟；None = 不约束）。步的预算取
+    `_budgeted(步上限, remaining)`：就算每一步都在自己的上限里慢慢走，总量也不许越过 runner
+    预算（那两次"什么都没报错的 cancel"就是这么烧掉的 —— 预算死在 job 上时 GitHub 不传日志，
+    现场没了；预算死在步上时这是一次带日志的红）。到点**整棵树**收掉（只 terminate 外壳是
+    本仓实测过两次的孤儿后端形状），已打出的输出原样保留。
     """
     print(f"\n▶ {name}", flush=True)
     t0 = time.perf_counter()
+    budget = _budgeted(timeout if timeout is not None else _step_timeout(name), remaining)
     collected: list[str] = []
+    timed_out = False
     with subprocess.Popen(
         cmd,
         cwd=str(cwd) if cwd else str(ROOT),
@@ -400,11 +515,32 @@ def _run(name: str, cmd: list[str], cwd: Path | None = None) -> tuple[bool, floa
         errors="replace",
         bufsize=1,
     ) as proc:
-        for line in proc.stdout or ():
-            print(line, end="", flush=True)
-            collected.append(line)
-        code = proc.wait()
+        # 读流必须与等待**并发**。主线程 `wait(timeout)` 而没人读管道 = 经典死锁：子进程
+        # 写满几 KB 的管道缓冲后阻塞在 write 上，wait 会**把超时当挂死等到点** —— pytest 那
+        # 一步的输出远超管道容量，这把尺子会把正常慢读成挂死。读泵放线程里，主线程只持 deadline。
+        def _pump() -> None:
+            for line in proc.stdout or ():
+                print(line, end="", flush=True)
+                collected.append(line)
+
+        reader = threading.Thread(target=_pump, daemon=True)
+        reader.start()
+        code: int | None
+        try:
+            code = proc.wait(timeout=budget)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            _terminate_step(proc)  # 整棵树：外壳收了、真后端原地活着是本仓实测过两次的孤儿形状
+            code = -1
+        # 到点后管道的 EOF 由杀进程树保证；join 给足 10s，读不完的部分随 daemon 线程收。
+        reader.join(timeout=10.0)
     dt = time.perf_counter() - t0
+    if timed_out:
+        note = _timeout_note(budget)
+        print(note, end="", flush=True)
+        collected.append(note)
+        print(f"  ⏱ {name}: {dt:.1f}s ❌（步超时上限 {budget:.0f}s）", flush=True)
+        return False, dt, "".join(collected)
     print(f"  ⏱ {name}: {dt:.1f}s {'✅' if code == 0 else '❌'}", flush=True)
     return code == 0, dt, "".join(collected)
 
@@ -637,6 +773,14 @@ def main() -> int:
         action="store_true",
         help="快档也跑全套用例（关掉受影响选择；提交前那趟建议带上）",
     )
+    parser.add_argument(
+        "--deadline-minutes",
+        type=float,
+        default=None,
+        help="整趟的墙钟预算：到点前门禁自己收摊并报红（CI 传 runner timeout 减几分钟）。"
+        "存在的理由：runner 杀 job 时 GitHub **不上传日志** —— 连续两趟挂死的现场就是这么丢的；"
+        "死在自己的 deadline 上则是一次**带完整汇总的红**。不设 = 只受每步上限管（本机默认）。",
+    )
     args = parser.parse_args()
 
     # 受影响选择的改动清单：**开跑前**取一次。门禁自己每跑完一步就往读数槽写读数（入库
@@ -690,6 +834,12 @@ def main() -> int:
     timings: list[tuple[str, float]] = []
     failures: list[str] = []
     started = time.perf_counter()
+    # 全局墙钟的**总秒数**（从 `started` 起算；`--deadline-minutes` 没设 = None = 不约束，
+    # 本机默认只受每步上限管）。它存在只为一件事：runner 杀 job 时 GitHub **不上传日志**
+    # （连续两趟挂死的现场就是这么丢的），而这趟自己到点收摊会打出**完整汇总 + 失败步骤
+    # 点名** —— 现场留得下来。之后所有步共用 `_remaining_seconds(started, deadline)`
+    # 这一条口径，别让第二处自己再起一次表。
+    deadline = args.deadline_minutes * 60.0 if args.deadline_minutes else None
 
     # 先算出这一趟真正会跑的步骤（档位过滤只有这一处判据，循环与 --only 守卫共用它）。
     runnable = [(name, cmd, mode) for name, cmd, mode in STEPS if _will_run(name, mode)]
@@ -725,15 +875,25 @@ def main() -> int:
         return name, cmd
 
     head = [e for e in runnable if e[0] in _STATIC_HEAD]
-    parallel_ran = False
-    rest = [e for e in runnable if e[0] not in _STATIC_HEAD]
-
-    # 失败语义不变：整组跑完后**按序**处理结果，任何一步红 → 不再启动后面的步骤
-    # （后面的步骤在同一个问题上只会重复失败）。
-    if len(head) >= 2:
-        parallel_ran = True
+    # 并发组只有**凑得齐两个**才成立；凑不齐时静态步不许从名单里消失。
+    # 这一格是 2026-10-09 拿 `--only "mypy(linux"` 实测撞出来的第四种"零步当绿"：
+    # 从前写的是 `rest = [非静态]`，于是 `head` 只剩一步时并发不启动、那一步又不在 `rest` 里
+    # —— **一步被选中、零步实际跑过、末尾照样"✅ 全部通过"**。上面那道 `--only` 守卫拦不住
+    # 它：守卫问的是"这趟会不会跑"，而这里的账是"分组的名单漏了人"，两回事。
+    # 所以名单只有一份（`runnable`），并发跑过的那几步在串行循环里按 `parallel_ran` 跳过。
+    parallel_ran = len(head) >= 2
+    if parallel_ran:
+        # 失败语义不变：整组跑完后**按序**处理结果，任何一步红 → 不再启动后面的步骤
+        # （后面的步骤在同一个问题上只会重复失败）。
+        # 并发五步共用**同一份**剩余预算（它们同时跑，各拿一份全额等于允许总量翻倍）。
+        head_remaining = _remaining_seconds(started, deadline)
         with ThreadPoolExecutor(max_workers=len(head)) as pool:
-            outcomes = list(pool.map(lambda e: _run_captured(e[0], e[1], _cwd_for(e[0])), head))
+            outcomes = list(
+                pool.map(
+                    lambda e: _run_captured(e[0], e[1], _cwd_for(e[0]), remaining=head_remaining),
+                    head,
+                )
+            )
         for (name, _cmd, _mode), (ok, dt, output) in zip(head, outcomes, strict=True):
             timings.append((name, dt))
             _write_readings({name: output}, ok)
@@ -742,6 +902,7 @@ def main() -> int:
         if not failures:
             print(f"  ⏱ 静态组（{'、'.join(n for n, _, _ in head)}）并发完成", flush=True)
 
+    rest = [e for e in runnable if not (parallel_ran and e[0] in _STATIC_HEAD)]
     # **失败即停**：静态组红了就不再往下走（后面几步在同一个问题上只会重复失败）。
     # 这一格从前漏着 —— 静态组红了 `rest` 照样跑（ruff 报个错还要把整套用例烧完），是"加并发组"
     # 那次留下的缝：`break` 只跳出了**结算循环**，没挡住后面的步骤。文档写着"任何一步失败即停"，
@@ -755,8 +916,6 @@ def main() -> int:
         rest = []
 
     for name, cmd, _mode in rest:
-        if parallel_ran and name in _STATIC_HEAD:
-            continue  # 静态组已在上面并发跑过（--only 只点名静态步时不会走到这）
         # 覆盖率那条：本地全量档"没碰 src/ 就跳过"（判据在 `_cov_lane_skipped`）。
         if _cov_lane_skipped(name):
             print(f"\n▶ {name}：跳过（src/ 无改动）", flush=True)
@@ -772,7 +931,9 @@ def main() -> int:
         else:
             cwd = None
         display, run_cmd = _resolve(name, cmd)
-        ok, dt, output = _run(display, run_cmd, cwd)
+        ok, dt, output = _run(
+            display, run_cmd, cwd, remaining=_remaining_seconds(started, deadline)
+        )
         timings.append((name, dt))
         # **一步一份，跑完立刻落**（不是整趟结束后一次性写）：否则同一趟里排在后面的
         # `consistency` 比的是**上一趟**的读数 —— 加了六条用例要跑两趟门禁才看得见。
