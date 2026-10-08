@@ -14,7 +14,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from rolecard_agent.api.main import create_app
+from rolecard_agent.config import Settings
 from rolecard_agent.core.ingest.ingestion import IngestionService
+from rolecard_agent.core.telemetry import probes
 from rolecard_agent.domains.health import records as records_router
 from rolecard_agent.domains.health.service import HealthQueryService
 from rolecard_agent.storage.db import bootstrap, connect
@@ -311,11 +313,24 @@ def test_extract_with_a_real_model_writes_an_unverified_report(
 
     为什么单独一个标记而不是塞进常规套件：一次 8B 抽取实测 90~130s，比其余 640 个用例
     加起来还贵，而且结果取决于模型版本 —— 它是**验收**（scripts/run_eval.py 同一性质），
-    不是回归门禁。需要本机 Ollama + 已拉取的默认模型。
+    不是回归门禁。
+
+    **环境不满足时 skip，而不是失败**（2026-10-09，用户拍板卸掉本机 Ollama 后实测照出来
+    那一发：`pytest -m live` 报 `1 failed, 2 skipped` —— 本文件这条硬打 502，而
+    `tests/unit/test_nodes.py` 那两条真机用例都会 skip）。这里原先写着"需要本机 Ollama"
+    却没有兜住那个前提，等于把"环境没给地基"报成"产品坏了"；夜间臂（`nightly.yml` 的
+    `-m live` 那一步）就此每夜红一发，而决策八明写「环境不满足时 skip 而非红」。
+    缺的是**探针问不到**，不是抽取路径坏了 —— 所以跳过并说清缺什么。真模型后端本身
+    仍在产品里（`provider=ollama` 那条路一字未动），换台装着模型的机器照跑。
     """
     monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
     monkeypatch.delenv("MODEL_BACKENDS", raising=False)  # 回落到出厂默认后端（真 Ollama）
+    backend = Settings.from_env().backend()
+    if not probes.ollama_reachable(backend.base_url):
+        pytest.skip(f"默认后端 {backend.base_url} 连不上（本机没跑 Ollama）—— 这条要真模型")
+    if not probes.vision_model_ready(backend.base_url, backend.model, use_cache=False):
+        pytest.skip(f"{backend.model} 不在 {backend.base_url} 的模型表里（没拉取）—— 这条要真模型")
     client = TestClient(create_app(sqlite_path=tmp_path / "app.db"))
     tid = client.post("/api/session", json={}).json()["thread_id"]
     report = (

@@ -156,8 +156,11 @@ python -m venv .venv
 #      "版本会漂"，不治"漏装一族"；改了 requirements*.txt 要重新 compile 刷新锁，否则
 #      `lockfile parity` 尺子当场红）
 
-# 3. 本地模型（.env 里默认后端 local 指向 Ollama）
+# 3. 本地模型（**可选步骤**：不装 Ollama 也是完整可用的一等形态）
 #    qwen3-vl:8b = 对话 + 工具调用 + 识图 + 思考（ModelScope GGUF 导入，见下方说明）
+#    不想跑本地模型：跳过这一步，在设置页加一个 OpenAI 兼容后端，或 .env 的
+#    MODEL_BACKENDS 直接配云端行（见 .env.example 注释）；"数据不出机器"这条边界
+#    由这个默认后端承担，装了 Ollama 随时可用，不装则由云端形态补位。
 ollama pull qwen3-vl:8b
 
 # 4. 配置
