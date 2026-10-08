@@ -399,6 +399,22 @@ def _run(name: str, cmd: list[str], cwd: Path | None = None) -> tuple[bool, floa
     return code == 0, dt, "".join(collected)
 
 
+def _for_display(path: Path) -> str:
+    """读数文件在屏幕上怎么称呼：能相对仓库根就用相对路径，**跨盘符就用绝对路径**。
+
+    为什么不是直接 `os.path.relpath`：Windows 上两个盘之间没有相对路径可言，`relpath` 抛
+    `ValueError`（不是 `OSError`）—— 而这一句住在"写不了读数不该让门禁失败"那个 `try` 里，
+    兜的偏偏只有 `OSError`。CI 的 Windows 臂就是这么红的：runner 的检出在 `D:`、临时目录在
+    `C:`，于是一句**纯打印**把整趟用例带崩（2026-10-08 实测，本机照不出：仓库与 temp 同盘）。
+    这条路径本来就是"给人看一眼写在哪"的，展示不了相对形状就退回绝对形状 —— 它没有任何
+    一句是在判据上，不值得为它把门禁弄红。
+    """
+    try:
+        return os.path.relpath(path, ROOT)
+    except ValueError:
+        return str(path)
+
+
 def _readings_paths() -> tuple[Path, Path]:
     """读数**两槽**的落点：入库槽（慢数）在前，scratch 槽（快数）在后。
 
@@ -568,7 +584,7 @@ def _write_readings(outputs: dict[str, str], ok: bool) -> None:
                 path.write_text(payload, encoding="utf-8", newline="\n")
             if notes:
                 what = "读数已并入" if ok else "红跑留痕已记下"
-                print(f"  {what} {os.path.relpath(path, ROOT)}：{', '.join(notes)}", flush=True)
+                print(f"  {what} {_for_display(path)}：{', '.join(notes)}", flush=True)
         except OSError as exc:  # 写不了读数不该让门禁失败
             print(f"  （读数没落盘：{exc}）", flush=True)
 

@@ -14,8 +14,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -145,6 +148,53 @@ def test_readings_paths_move_off_the_tracked_file_on_a_runner(monkeypatch) -> No
     assert committed == gate.ROOT / "build" / "gate-readings.json"  # noqa: SLF001
     for path in (committed, scratch):
         assert "docs" not in path.parts, "runner 的任何一槽都不许碰入库那份"
+
+
+#: Windows 上跨盘符那一发的原文（runner 检出在 `D:`、临时目录在 `C:`）。
+def _cross_drive_raiser(*_a: object, **_k: object) -> str:
+    raise ValueError("path is on mount 'C:', start on mount 'D:'")
+
+
+def test_a_reading_line_never_asks_for_a_cross_drive_relative_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """写完之后那句"落在哪儿"的打印**不许把门禁弄红**（2026-10-08 Windows 臂实测）。
+
+    形状：`os.path.relpath(path, ROOT)` 在 Windows 上跨盘符抛 `ValueError`（不是 `OSError`），
+    而那句打印住在"写不了读数不该让门禁失败"的 `try` 里 —— 兜的偏偏只有 `OSError`，于是一句
+    纯打印崩掉整趟用例。
+
+    **不靠造一个真跨盘路径**：本机仓库与临时目录同盘，硬造出来的断言会在这台机器上根本
+    不测那件事（换个盘符布局的机器上才测到 = 平时是条空跑的用例）。直接把失败形状喂进去。
+    """
+    gate = _load_gate()
+    target = tmp_path / "gate-readings.json"
+    monkeypatch.setattr(os.path, "relpath", _cross_drive_raiser)
+    assert gate._for_display(target) == str(target), "跨盘符时必须退回绝对路径，不许抛"  # noqa: SLF001
+
+
+def test_for_display_still_uses_the_relative_shape_when_it_can() -> None:
+    """兜底不许把正常情况也搞坏：同盘时照旧给相对路径（那才是这句打印存在的意义）。"""
+    gate = _load_gate()
+    inside = gate.ROOT / "docs" / "gate-readings.json"  # noqa: SLF001
+    assert gate._for_display(inside) == os.path.relpath(inside, gate.ROOT)  # noqa: SLF001
+
+
+def test_the_printed_note_survives_a_cross_drive_scratch(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """调用点的回归：读数落在另一个形状的位子上，`_write_readings` 照样跑完并落盘。
+
+    只测函数不测调用点是没用的 —— 修的时候改了 `_for_display`、忘了那句 print 还自己写着
+    `os.path.relpath`，上面两条照样绿。
+    """
+    gate = _load_gate()
+    _stub(gate, tmp_path)
+    monkeypatch.setattr(os.path, "relpath", _cross_drive_raiser)
+    gate._write_readings({"pytest(-x, 无覆盖率)": "1319 passed in 134s\n"}, True)  # noqa: SLF001
+    assert _read(gate)["backend_tests"] == "1319", "打印那一句崩了，读数却没写下去"
+    out = capsys.readouterr().out
+    assert "读数已并入" in out and str(gate.READINGS_SCRATCH) in out  # noqa: SLF001
 
 
 def test_fast_steps_leave_the_committed_slot_alone(tmp_path: Path) -> None:
