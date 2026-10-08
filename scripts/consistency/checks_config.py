@@ -18,10 +18,19 @@ from .core import ROOT, fails, iter_files, out
 def check_config_contract() -> None:
     """.env.example must expose every key config.py advertises.
 
-    正则覆盖的**全部**前缀都要在这里列出来。此前只覆盖 MODEL_ / OBS_ / 路径三项，
-    于是 `CONTEXT_MAX_CHARS` / `TOOL_TIMEOUT_SECONDS` / `AUTH_TRUSTED_PROXIES` 这类新键
-    即使漏进 .env.example 也不会被发现 —— 一个只检查部分键的契约检查比没有更容易骗人
-    （代码审查报告（第二轮）L4）。
+    怎么"读 config"（P3-9 第五格，2026-10-08）：从前是一张 20 个前缀 + 3 个例外名的白名单
+    在**原文**上正则扫，两类洞都是拿现网文件量出来的：
+      **漏盖** —— RUN_/MAX_/RATE_/SYNC_/API_/IDENTITY_/CONSENSUS_/LOCAL_/OBS_ 这些没有
+        前缀的键，config 读了也没人问（AST 化后多出 12 个被盖住的键，夹具钉着）；
+      **虚盖** —— SILICONFLOW_API_KEY 被前缀正则"覆盖"，靠的是 config.py 里那句**删除
+        说明**（`曾经并存的 … 随 P1-5 一并去掉`）：注释在替契约背书。AST 不看注释，
+        它归 `check_entrypoint_env_documented` 管 —— 那把钥匙是 run_api.py 的。
+    现在按 AST 读 `from_env` 的映射表与分支 `src.get`，键名从结构里长出来，加键不再需要
+    来这里补白名单（旧 docstring 的"正则覆盖的全部前缀都要在这里列出来"那条纪律随白名单
+    一起退休 —— 不用记，就不会漏）。
+    暴露口径 = 活键**或**注释行（`.env.example` 自己在文件头宣布过："活键或注释都算说出
+    来过"）：MAX_UPLOAD_BYTES 这族出厂默认与代码一致、以注释行给抄写形状。
+    值漂移那一问仍然只看活键 —— 注释行没有"出厂默认"可比，两问口径不同是故意的。
     """
     env_text = (ROOT / ".env.example").read_text(encoding="utf-8")
     env_keys = set(
@@ -32,35 +41,24 @@ def check_config_contract() -> None:
         )
     )
     cfg_text = (ROOT / "src" / "rolecard_agent" / "config.py").read_text(encoding="utf-8")
-    prefixes = (
-        "MODEL_[A-Z_]+",
-        "OBS_[A-Z_]+",
-        "AUTH_[A-Z_]+",
-        "CONTEXT_[A-Z_]+",
-        "TOOL_[A-Z_]+",
-        "WEB_[A-Z_]+",
-        "WORKSPACE_[A-Z_]+",
-        "TAVILY_[A-Z_]+",
-        "SAUCENAO_[A-Z_]+",
-        "OCR_[A-Z_]+",
-        "RAG_[A-Z_]+",
-        # 这两个前缀此前漏在表外：SILICONFLOW_API_KEY / MCP_SERVERS 明明在 config.py 里解析，
-        # 却从不被契约检查覆盖 —— 漏一个前缀就是"这一族键可以随便漂"（架构审计报告 §3）。
-        "SILICONFLOW_[A-Z_]+",
-        "MCP_[A-Z_]+",
-        "EXTRACT_[A-Z_]+",
-        "LANGSMITH_[A-Z_]+",
-        "MEMORY_[A-Z_]+",
-        "AGENT_[A-Z_]+",
-        "REACHOUT_[A-Z_]+",
-        "FILE_WATCH_[A-Z_]+",
-        # D②-4 起新增的一族：桌面壳安装包的托管目录（SHELL_RELEASE_DIR）。
-        "SHELL_[A-Z_]+",
-    )
-    pattern = r"\b(" + "|".join(prefixes) + r"|SQLITE_PATH|CHROMA_PATH|UPLOAD_DIR)\b"
-    cfg_keys = set(re.findall(pattern, cfg_text))
-    missing = sorted(k for k in cfg_keys if k not in env_keys and k != "LANGSMITH_PROJECT")
-    detail = f"missing: {missing}" if missing else f"{len(env_keys)} keys aligned"
+    table, cfg_keys = config_env_contract(cfg_text)
+    # 读法金丝雀：现网表 51 对、下限 40。config.py 一旦换形状（把表挪出 `for … in (…)` 的
+    # 元组字面量、改成别的构造），这里会塌 —— 而"键变少"的契约**只会变绿**（要问的键变
+    # 少了），塌了却全绿正是最坏的那种坏。所以给读法本身上一条下限：读不出结构 = 红，
+    # 而不是安静地少盖一半。
+    if len(table) < _MIN_MAPPING_PAIRS:
+        out(
+            "config contract",
+            False,
+            f"映射表只读出 {len(table)} 对（下限 {_MIN_MAPPING_PAIRS}）—— "
+            "config.py 结构变了？读法没跟上",
+        )
+        fails.append(f"config mapping table unreadable: {len(table)} pairs")
+        return
+    # 活键 ∪ 注释键（口径见 docstring；两个 pattern 在现网文件上实测等价，54=54 对称差空）
+    env_keys_doc = env_keys | set(re.findall(r"#\s*([A-Z][A-Z0-9_]{2,})[=\s]", env_text))
+    missing = sorted(k for k in cfg_keys if k not in env_keys_doc)
+    detail = f"missing: {missing}" if missing else f"{len(cfg_keys)} keys covered"
     out("config contract", not missing, detail)
     if missing:
         fails.append(f".env.example missing keys documented in config.py: {missing}")
@@ -83,17 +81,24 @@ def check_config_contract() -> None:
         text = str(value).strip().strip("\"'").replace("\\", "/")
         return text[2:] if text.startswith("./") else text
 
-    pairs = re.findall(r'\("([A-Z][A-Z0-9_]+)",\s*"([a-z_0-9]+)"\)', cfg_text)
-    # 走 `from_env` **独立分支**的那几条（09-28 轮 `R28-14b`）：它们不在上面那张
-    # ("KEY","field") 表里，于是键名检查绿、默认值检查绿，而这一族的值漂移零兜底 ——
-    # 正是发现 9 留给门禁的那块盲区。补成表，是为了让下面那段比较**只有一份实现**，
-    # 而不是再写一套"看起来一样"的逻辑。
-    pairs += [
-        ("MODEL_THINKING", "model_thinking"),
-        ("MODEL_FALLBACKS", "model_fallbacks"),
-        ("MODEL_THINKING_MODELS", "model_thinking_models"),
-        ("MCP_SERVERS", "mcp_servers"),
-    ]
+    # 映射表对（AST，与键名同一份读法 —— 旧版这里另有一条自己的正则，正是"同一结构两条
+    # 读法、改一边漏一边"的形状）+ 走 `from_env` 独立分支的那几条（09-28 轮 `R28-14b`）。
+    pairs = list(table) + list(_ENV_BRANCH_PAIRS)
+    # 分支键的覆盖是**断言**，不是清单：`src.get("K")` 独立分支的键必须要么在 pairs
+    # （有默认值可比）、要么在 JSON 豁免表（另一把尺子管），否则红。旧版靠手写清单兜着，
+    # 清单漏一个洞就是静默的 —— 实测就漏了 OBS_EMIT_RAW_TEXT（R28-14b 那族的第五个），
+    # 加键时不再靠人记得来补，漏了当场红。
+    branch_keys = cfg_keys - {k for k, _ in table}
+    uncovered = sorted(branch_keys - {k for k, _ in pairs} - _JSON_BLOB_EXEMPT)
+    out(
+        "config branch coverage",
+        not uncovered,
+        f"分支键 {len(branch_keys)} 个各有归属"
+        if not uncovered
+        else f"没人管的分支键：{uncovered}",
+    )
+    if uncovered:
+        fails.append(f"config branch keys with no value pair or exemption: {uncovered}")
     env_values = dict(re.findall(r"^([A-Z][A-Z0-9_]+)=(.*)$", env_text, flags=re.M))
     settings = Settings()
     drifted: list[str] = []
@@ -166,15 +171,105 @@ def check_config_contract() -> None:
 #: 操作系统给的那些变量：它们不是本应用的契约，写进 .env.example 反而误导人以为可以设。
 _PLATFORM_ENV = {"LOCALAPPDATA", "APPDATA", "TEMP", "TMP", "HOME", "PATH", "USERPROFILE"}
 
+
+def config_env_contract(cfg_text: str) -> tuple[list[tuple[str, str]], set[str]]:
+    """config.py 的 env 契约按 AST 读：（映射表 `(KEY, field)` 对，config 认的全部键）。
+
+    两处结构都收：`for env_key, field in (("KEY", "field"), …)` 那张表，和走
+    `src.get("KEY")` / `src["KEY"]` 的**独立分支**（MODEL_BACKENDS 那族）。旧版的两条
+    正则一条只认表、一条靠前缀白名单扫原文 —— 同一结构两条读法，改一边漏一边。
+
+    只数字符串常量且键名要长成 `KEY` 样子：变量拼出来的键读不出来，本仓没有那种写法，
+    真要有人写，这条尺子会**漏在明处**（下一次契约红会把人引到这里）。
+    表的匹配**限定在 For 节点的元组里**，不全文件乱认 —— 文件里任何别的
+    ("ALLCAPS", "snake") 二元组不是契约（现网 51 对与表行数正好对上，量过）。
+    """
+    tree = ast.parse(cfg_text)
+    table: list[tuple[str, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.For) or not isinstance(node.iter, ast.Tuple):
+            continue
+        for elt in node.iter.elts:
+            if not (isinstance(elt, ast.Tuple) and len(elt.elts) == 2):
+                continue
+            a, b = elt.elts
+            if (
+                isinstance(a, ast.Constant)
+                and isinstance(b, ast.Constant)
+                and isinstance(a.value, str)
+                and re.fullmatch(r"[A-Z][A-Z0-9_]+", a.value)
+                and isinstance(b.value, str)
+                and re.fullmatch(r"[a-z_][a-z0-9_]*", b.value)
+            ):
+                table.append((a.value, b.value))
+    branch: set[str] = set()
+    for node in ast.walk(tree):
+        name = None
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+        ):
+            name = node.args[0].value
+        elif isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
+            name = node.slice.value
+        if isinstance(name, str) and re.fullmatch(r"[A-Z][A-Z0-9_]+", name):
+            branch.add(name)
+    keys = {k for k, _ in table} | branch
+    return table, keys
+
+
+#: 映射表可读性的下限（现网 51 对）。写成常量而不是散在断言里，是因为夹具要复现
+#: 同一个判据 —— 两处各写一个数字就是给"改了判据漏了另一处"留门。
+_MIN_MAPPING_PAIRS = 40
+
+
+def _env_example_documented(env_text: str, cfg_text: str) -> set[str]:
+    """"说出来过"的三处来源：活键、注释键、config 文本里带引号的键。
+
+    口径与 `check_startup_env_documented` 同源（.env.example 文件头宣布的"活键或注释都
+    算"），从前两处各写一遍三条正则 —— 改口径只改这里。**契约检查不用它**：那条的方向是
+    config → example，把 config 自己的引号算进"已暴露"等于自己给自己背书（循环）。
+    """
+    return (
+        set(re.findall(r"^([A-Z][A-Z0-9_]{2,})=", env_text, flags=re.M))
+        | set(re.findall(r"#\s*([A-Z][A-Z0-9_]{2,})[=\s]", env_text))
+        | set(re.findall(r'"([A-Z][A-Z0-9_]{2,})"', cfg_text))
+    )
+
+
+# 走 `from_env` 独立分支的键 →（字段, 默认值可比）。表里没有它们，但它们是 env 契约的
+# 一部分 —— 谁不在这里也不在 JSON 豁免表，`config branch coverage` 当场红（清单是断言
+# 不是备忘：R28-14b 那族从前手写漏了 OBS_EMIT_RAW_TEXT，洞静默了一个月）。
+_ENV_BRANCH_PAIRS: list[tuple[str, str]] = [
+    ("MODEL_THINKING", "model_thinking"),
+    ("MODEL_FALLBACKS", "model_fallbacks"),
+    ("MODEL_THINKING_MODELS", "model_thinking_models"),
+    ("MCP_SERVERS", "mcp_servers"),
+    # 实测加入后两臂都绿：example `false` vs Settings 默认 False（bool 分支认 false/0）。
+    ("OBS_EMIT_RAW_TEXT", "obs_emit_raw_text"),
+]
+
+#: JSON blob 那些键没有"一个出厂默认值"可比；能漂的是"抄下来解析不了"，
+#: 那半边由 `check_config_contract` 里的 `env example json valid` 那条管（原话在它上面）。
+_JSON_BLOB_EXEMPT = {"MODEL_BACKENDS"}
+
 def _env_names_read_in_src(src: pathlib.Path) -> dict[str, str]:
-    """`src/**` 里通过 `os.environ` 读到的变量名 → 第一处 `文件:行`。
+    """通过 `os.environ` 读到的变量名 → 第一处 `文件:行`。
 
     三种写法都算：`os.environ.get("X", …)`、`os.environ["X"]`、`X in os.environ`。
     只数**字符串常量**那一种（变量名是拼出来的读不出来 —— 本仓没有那种写法，
     真要有人写，这条尺子会漏，漏在明处）。
+
+    入参可以是目录（`src/**`，尺子的常规用法）或**单个文件**（入口那条尺子只问
+    `scripts/run_api.py` 一个）。只给目录时 `path.rglob` 对文件返回空 —— 实测过：
+    把文件当目录传，得到的是"没读到"而不是报错，而"没读到"在断言里就是恒绿。
     """
+    paths = [src] if src.is_file() else sorted(src.rglob("*.py"))
     found: dict[str, str] = {}
-    for path in sorted(src.rglob("*.py")):
+    for path in paths:
         rel = path.relative_to(ROOT).as_posix()
         try:
             tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
@@ -216,11 +311,9 @@ def check_startup_env_documented() -> None:
     """
     sys.path.insert(0, str(ROOT / "src"))
     env_text = (ROOT / ".env.example").read_text(encoding="utf-8", errors="ignore")
-    documented = set(re.findall(r"^([A-Z][A-Z0-9_]{2,})=", env_text, flags=re.M))
-    documented |= set(re.findall(r"#\s*([A-Z][A-Z0-9_]{2,})[=\s]", env_text))
     cfg_path = ROOT / "src" / "rolecard_agent" / "config.py"
     cfg_text = cfg_path.read_text(encoding="utf-8", errors="ignore")
-    documented |= set(re.findall(r'"([A-Z][A-Z0-9_]{2,})"', cfg_text))
+    documented = _env_example_documented(env_text, cfg_text)
 
     read = _env_names_read_in_src(ROOT / "src" / "rolecard_agent")
     missing = sorted(
@@ -236,6 +329,49 @@ def check_startup_env_documented() -> None:
     out("startup env documented", not missing, detail)
     if missing:
         fails.append(f"undocumented env read by src: {missing}")
+
+
+#: run_api.py 的 `--smoke` 校对参数：只在跑冒烟时读，不是部署契约 —— 与
+#: `check_startup_env_documented` 豁免取证私有开关同一口径（写进 example 反而让人以为
+#: 设了它就能改变应用行为；用法在 run_api.py 自己的模块 docstring 里）。
+_SMOKE_PROBE_ENV = {"SMOKE_BASE_URL", "SMOKE_MODEL"}
+
+
+def check_entrypoint_env_documented() -> None:
+    """生产入口 `scripts/run_api.py` 读的每个 env，都必须说过（example 或 config 文本）。
+
+    为什么不并进 `startup env documented`：那条**刻意只管 `src/**`**（见其 docstring：
+    scripts 里其余是取证私有开关）。但 run_api.py 不是探针 —— README 与冒烟起的就是它，
+    它读 12 个 env，其中 `SILICONFLOW_API_KEY` 是"启动时注册云后端"那半条路的钥匙。
+
+    为什么现在必须立（不是顺手加的）：`check_config_contract` 的 AST 化让
+    `SILICONFLOW_API_KEY ∈ .env.example` 这条断言**失去了它意外的宿主** —— 从前靠前缀
+    正则撞上 config.py 里那句删除说明才顺带管着它（注释替契约背书，不是判据）。断言不许
+    随宿主消失：搬到真正的主人名下，这一条就是那个宿主。
+    """
+    entrypoint = ROOT / "scripts" / "run_api.py"
+    env_text = (ROOT / ".env.example").read_text(encoding="utf-8", errors="ignore")
+    cfg_text = (ROOT / "src" / "rolecard_agent" / "config.py").read_text(
+        encoding="utf-8", errors="ignore"
+    )
+    documented = _env_example_documented(env_text, cfg_text)
+    read = _env_names_read_in_src(entrypoint) if entrypoint.exists() else {}
+    # 读不到 ≠ 没人读：文件在却一个 env 名都解析不出来（路径错/语法错被跳过）时，
+    # 空集合会把下面算成全绿 —— 那是恒绿尺子，这里先掐掉。
+    if not read:
+        out("entrypoint env documented", False, f"{entrypoint.name} 读不到 env 名 —— 不许静默绿")
+        fails.append(f"entrypoint unreadable: {entrypoint.name}")
+        return
+    missing = sorted(k for k in read if k not in documented and k not in _SMOKE_PROBE_ENV)
+    out(
+        "entrypoint env documented",
+        not missing,
+        f"入口读的 {len(read)} 个 env 全说过（豁免冒烟参数 {sorted(_SMOKE_PROBE_ENV)}）"
+        if not missing
+        else f"入口在读、没人说过：{missing}",
+    )
+    if missing:
+        fails.append(f"undocumented env read by run_api.py: {missing}")
 
 # Settings fields that are parsed on purpose but not read yet. Declaring them here is the
 # point: a field that is merely forgotten and a field that is deliberately forward-looking

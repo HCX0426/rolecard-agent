@@ -15,6 +15,7 @@ import sys
 
 # 跨族共享助手：唯一定义在别的族模块，按「谁在用谁 import」接线（不复制定义）。
 from .checks_audit import _BANNED_USER_VISIBLE  # noqa: F401
+from .checks_config import config_env_contract
 from .core import ROOT, fails, iter_files, out, simple_yaml, warns
 
 
@@ -1034,9 +1035,11 @@ def check_deploy_env_parity() -> None:
         encoding="utf-8", errors="ignore"
     )
     env_text = (ROOT / ".env.example").read_text(encoding="utf-8", errors="ignore")
-    # 已知旋钮 = config 的 env 映射表 ∪ `.env.example` 里已经解释过的那族（键名对齐由
-    # `config contract` 那条管，这里不另起一套口径）。
-    known = set(re.findall(r'\("([A-Z][A-Z0-9_]+)",\s*"[a-z_0-9]+"\)', cfg_text))
+    # 已知旋钮 = config 认的**全部**键（映射表 + `src.get` 独立分支，AST 一份读法，
+    # P3-9 第五格：从前这里自己再抄一条 `\("KEY", "field"\)` 正则 —— 同一结构两条读法、
+    # 改一边漏一边，且它只认表、认不出 MODEL_BACKENDS 那族分支键）∪ `.env.example`
+    # 里已经解释过的那族（键名对齐由 `config contract` 那条管，这里不另起一套口径）。
+    known = set(config_env_contract(cfg_text)[1])
     known |= set(re.findall(r"^([A-Z][A-Z0-9_]+)=.*$", env_text, flags=re.M))
 
     problems: list[str] = []

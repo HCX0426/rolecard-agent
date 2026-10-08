@@ -22,6 +22,7 @@ CHECKS = (
     checks_meta.check_stale_identifiers,
     checks_config.check_config_contract,
     checks_config.check_startup_env_documented,
+    checks_config.check_entrypoint_env_documented,
     checks_install.check_dependency_parity,
     checks_install.check_spec_runtime_vs_requirements,
     checks_docs.check_promised_artifacts,
