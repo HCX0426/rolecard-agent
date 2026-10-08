@@ -1,4 +1,4 @@
-"""Rule-layer tests for core/guard.py. No model needed - this is the easy layer to test.
+"""Rule-layer tests for core/agent/guard.py. No model needed - this is the easy layer to test.
 
 Traceability: US-4.
 """
@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import pytest
 
-from rolecard_agent.core import guard
-from rolecard_agent.core.prompts import GLOBAL_SAFETY_PROMPT
+from rolecard_agent.core.agent import guard
+from rolecard_agent.core.agent.prompts import GLOBAL_SAFETY_PROMPT
 
 
 def test_plain_summary_is_allowed() -> None:

@@ -32,16 +32,16 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from rolecard_agent.base.observability import TraceEvent, Tracer
 from rolecard_agent.base.text import text_of
 from rolecard_agent.config import Settings
+from rolecard_agent.core.agent.graph import build_graph_config
+from rolecard_agent.core.agent.state import now_ts
 from rolecard_agent.core.bootstrap import GatewayContext
-from rolecard_agent.core.graph import build_graph_config
+from rolecard_agent.core.common.thread_locks import release_thread, try_thread_write
 from rolecard_agent.core.memory import memory_for_turn
 from rolecard_agent.core.plugins import PluginService
 from rolecard_agent.core.proactive_thread import (
     ensure_proactive_thread,
     proactive_thread_id,
 )
-from rolecard_agent.core.state import now_ts
-from rolecard_agent.core.thread_locks import release_thread, try_thread_write
 from rolecard_agent.core.thread_transcript import (
     CHAT_ECHO_LIMIT,
     format_recent_window,

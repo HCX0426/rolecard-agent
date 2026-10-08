@@ -28,7 +28,7 @@ from langchain_core.tools import tool
 from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.base.observability import NullTracer
 from rolecard_agent.config import ModelBackend, Settings
-from rolecard_agent.core.nodes import (
+from rolecard_agent.core.agent.nodes import (
     MAX_TOOL_RETRIES,
     TOOL_DENIED,
     TOOL_FAILED,
@@ -43,7 +43,7 @@ from rolecard_agent.core.nodes import (
     trim_history,
     turn_context,
 )
-from rolecard_agent.core.prompts import VOICE_DEPTH_PROMPT
+from rolecard_agent.core.agent.prompts import VOICE_DEPTH_PROMPT
 from rolecard_agent.core.telemetry import probes
 from rolecard_agent.core.tools.errors import ToolExecutionError  # noqa: F401 - 文档化分界用
 from rolecard_agent.core.tools.registry import ToolRegistry
@@ -490,7 +490,7 @@ def test_call_model_leaves_usage_out_of_node_end(roles: RoleCardService) -> None
 
     不是"取不到"——是这里取到的一定是错的：后端在每一个流式分块里都回一份"累计到此"的
     usage，langchain 合并时逐块相加，所以合并值 = 真值 × 分块数（实测一条"在吗"：
-    非流式 26 token，流式合并后 272,607）。真值只有在分块层（`core/turn.py`）才看得见。
+    非流式 26 token，流式合并后 272,607）。真值只有在分块层（`core/agent/turn.py`）才看得见。
     一个错的数比没有数有害：它会安静地喂给"今天花了多少"那个问题。
     """
     rid = _role(roles, "cloudy", model_name="cloud-a")

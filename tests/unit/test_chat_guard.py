@@ -11,9 +11,9 @@ Traceability: US-4（输出侧安全）在流式场景下的延续。整段审�
 
 from __future__ import annotations
 
-from rolecard_agent.core.guard import check
-from rolecard_agent.core.nodes import VisionNotSupported
-from rolecard_agent.core.turn import (
+from rolecard_agent.core.agent.guard import check
+from rolecard_agent.core.agent.nodes import VisionNotSupported
+from rolecard_agent.core.agent.turn import (
     VISION_MISMATCH_DETAIL,
     WINDOW,
     StreamingGuard,

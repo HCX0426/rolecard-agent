@@ -121,7 +121,11 @@ def test_messages_carries_the_inflight_line_for_other_readers(
     所以探针必须能读出"她在打字、打到哪儿了"，否则第二读者要空等整段生成
     （副本实测 7.6 秒）。附带钉两件事：探针那条路径（`limit=1`）也带，以及跑完就没了。
     """
-    from rolecard_agent.core.thread_locks import inflight_append, inflight_begin, inflight_end
+    from rolecard_agent.core.common.thread_locks import (
+        inflight_append,
+        inflight_begin,
+        inflight_end,
+    )
 
     session = client.post("/api/session", json={}).json()
     tid = str(session["thread_id"])
@@ -152,7 +156,7 @@ def test_turn_probe_answers_without_touching_the_checkpointer(tmp_path: Path) ->
     "她在不在说"；哪天它顺路也去读检查点，那一拍就不再便宜，而症状只会以"长会话的界面
     开始发粘"这种查不出来的形式出现。所以把"不读检查点"钉成一条断言。
     """
-    from rolecard_agent.core.thread_locks import (
+    from rolecard_agent.core.common.thread_locks import (
         inflight_append,
         inflight_begin,
         inflight_end,

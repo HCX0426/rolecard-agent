@@ -28,7 +28,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from rolecard_agent.core.thread_locks import thread_write
+from rolecard_agent.core.common.thread_locks import thread_write
 from rolecard_agent.features import sync as sync_lib
 from rolecard_agent.storage import sync_rows
 from rolecard_agent.storage.db import (

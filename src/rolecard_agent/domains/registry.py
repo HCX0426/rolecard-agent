@@ -168,7 +168,7 @@ def build_registry(
     模型本轮看不到它，执行器按"未启用"处理 —— fail-closed。
 
     `fs_conn` = 工作区文件工具的 SQLite 连接：既供「任务目录」DB 覆盖的**实时解析**
-    （保存即生效，见 core/workspace.py），也供 fs 工具的**审计写入**（actor="agent"）。
+    （保存即生效，见 core/common/workspace.py），也供 fs 工具的**审计写入**（actor="agent"）。
     None = fs 工具回落 env workspace_dir 且不审计（测试场景）。
 
     `specs` 缺省时现场目录枚举；测试可用它注入一个假域，验证"新增域零改中心代码"。
@@ -199,7 +199,7 @@ def build_registry(
     # 联网与工作区工具（v2.4）：全部只读除 fs_write 外。web_search 后端缺失时仍注册，
     # 运行期返回可读的未配置说明 —— 白名单引用的工具必须真实存在（一致性校验的前提）。
     # fs 工具在 v2.5 file1 升级：根 = 每调用实时解析的「任务目录」（DB 覆盖 or env），
-    # 且全部操作写审计（actor="agent"）—— 见 core/workspace.py 与 core/tools/files.py。
+    # 且全部操作写审计（actor="agent"）—— 见 core/common/workspace.py 与 core/tools/files.py。
     effective_settings = settings or _lazy_settings()
     for web_tool in make_web_tools(settings=effective_settings):
         registry.register(web_tool, idempotent=True)

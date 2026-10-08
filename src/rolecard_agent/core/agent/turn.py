@@ -33,10 +33,10 @@ from langgraph.errors import GraphRecursionError
 
 from rolecard_agent.base.observability import TraceEvent, Tracer, scrub_endpoints
 from rolecard_agent.base.text import text_of
-from rolecard_agent.core.graph import MODEL_NODE, TOOLS_NODE
-from rolecard_agent.core.guard import check
-from rolecard_agent.core.nodes import EmptyModelStream, TurnStopped, VisionNotSupported
-from rolecard_agent.core.thread_locks import (
+from rolecard_agent.core.agent.graph import MODEL_NODE, TOOLS_NODE
+from rolecard_agent.core.agent.guard import check
+from rolecard_agent.core.agent.nodes import EmptyModelStream, TurnStopped, VisionNotSupported
+from rolecard_agent.core.common.thread_locks import (
     ThreadBusy,
     clear_stop,
     inflight_append,
@@ -48,7 +48,7 @@ from rolecard_agent.core.thread_locks import (
     stop_requested,
     try_thread_write,
 )
-from rolecard_agent.core.usage import TokenUsage, usage_from_metadata
+from rolecard_agent.core.common.usage import TokenUsage, usage_from_metadata
 
 # 回扣不投送的字符数。必须 >= 最长触发式（最宽约 21 字：主语 + 8 填充 + 能愿动词 + 8 填充
 # + 动作动词），32 留足余量又察觉不到渲染延迟。
@@ -273,7 +273,7 @@ def run_turn(
 ) -> Iterator[TurnEvent]:
     """把一个用户轮次跑过内核图，产出结构化事件流（同步，宿主无关）。
 
-    **整轮占住这个会话的写入锁**（`core/thread_locks.py`，审计 #12）：调度线程的主动投递
+    **整轮占住这个会话的写入锁**（`core/common/thread_locks.py`，审计 #12）：调度线程的主动投递
     走的是 `graph.update_state`，它读的可能是这一轮开始**之前**的检查点，两边分叉同一个父节点
     时后写的会盖掉先写的 —— 用户报的"我发的一条消息被吞了"就是这么来的。
 

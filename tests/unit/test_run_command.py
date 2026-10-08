@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from rolecard_agent.config import Settings
-from rolecard_agent.core.approvals import ApprovalService
+from rolecard_agent.core.common.approvals import ApprovalService
 from rolecard_agent.core.tools import run as run_module
 from rolecard_agent.core.tools.errors import ToolExecutionError
 from rolecard_agent.core.tools.run import (

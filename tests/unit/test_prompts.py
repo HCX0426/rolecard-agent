@@ -1,4 +1,4 @@
-"""Ordering tests for core/prompts.py.  Traceability: US-4, US-8.
+"""Ordering tests for core/agent/prompts.py.  Traceability: US-4, US-8.
 
 These guard the *ordering* invariant, which IS the safety mechanism: if the global rules
 ever end up before the role prompt, the safety layer silently stops working and nothing
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-from rolecard_agent.core import prompts
+from rolecard_agent.core.agent import prompts
 
 
 def test_safety_rules_come_last() -> None:

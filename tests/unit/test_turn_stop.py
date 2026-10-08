@@ -24,21 +24,21 @@ from langchain_core.tools import tool
 from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.base.observability import NullTracer
 from rolecard_agent.config import Settings
-from rolecard_agent.core.nodes import (
+from rolecard_agent.core.agent.nodes import (
     EmptyModelStream,
     KernelContext,
     TurnStopped,
     call_model,
 )
-from rolecard_agent.core.thread_locks import clear_stop, request_stop, stop_requested
-from rolecard_agent.core.tools.registry import ToolRegistry
-from rolecard_agent.core.turn import (
+from rolecard_agent.core.agent.turn import (
     _GENERIC_MODEL_FAILURE,
     EMPTY_STREAM_DETAIL,
     End,
     model_error_detail,
     run_turn,
 )
+from rolecard_agent.core.common.thread_locks import clear_stop, request_stop, stop_requested
+from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.roles.service import RoleCardCreate, RoleCards, RoleCardService
 
 
@@ -302,7 +302,7 @@ def test_the_stale_stop_is_cleared_only_after_the_write_lock_is_held(
     这里断的是**调用顺序**而不是并发：真起线程去踩那个窗口会是个看调度器脸色的用例，
     而这条要钉的恰恰就是"顺序"本身。
     """
-    from rolecard_agent.core import turn as turn_mod
+    from rolecard_agent.core.agent import turn as turn_mod
 
     order: list[str] = []
     real_try, real_clear = turn_mod.try_thread_write, turn_mod.clear_stop
@@ -342,7 +342,7 @@ def test_a_turn_that_never_got_the_lock_does_not_clear_the_inflight_stop(
     漏了这一半的症状是"我按了停止她还在说"（旗子被下一轮抹掉，在飞那轮再也看不见它），
     而且下一轮还顺带在无互斥的情况下跟上一轮分叉同一个检查点。
     """
-    from rolecard_agent.core import turn as turn_module
+    from rolecard_agent.core.agent import turn as turn_module
 
     cleared: list[str] = []
     monkeypatch.setattr(turn_module, "try_thread_write", lambda *a, **k: False)

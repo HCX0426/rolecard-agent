@@ -645,7 +645,7 @@ def test_resource_gate_defers_extraction_while_any_turn_is_busy(conn: SqlConnect
     推迟的形状：不调模型、游标不动（下一轮兜底照常再问 —— 所以只断言"这轮没发生"）、
     留痕点名"GPU 忙"。对照臂：没有轮在飞时同一配置照常提取。
     """
-    from rolecard_agent.core import thread_locks as locks
+    from rolecard_agent.core.common import thread_locks as locks
 
     _thread(conn, "t1")
     tracer = _RecordingTracer()
@@ -670,7 +670,7 @@ def test_resource_gate_defers_extraction_while_any_turn_is_busy(conn: SqlConnect
 
 def test_resource_gate_never_gates_a_cloud_backend(conn: SqlConnection) -> None:
     """云端提取不占本机显存：轮次在飞也照常提取（闸只管本地后端）。"""
-    from rolecard_agent.core import thread_locks as locks
+    from rolecard_agent.core.common import thread_locks as locks
 
     _thread(conn, "t1")
     tracer = _RecordingTracer()

@@ -21,7 +21,7 @@ from typing import Any
 
 import pytest
 
-from rolecard_agent.core.approvals import (
+from rolecard_agent.core.common.approvals import (
     ApprovalAlreadyDecided,
     ApprovalService,
 )

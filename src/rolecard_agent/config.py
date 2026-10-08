@@ -144,7 +144,7 @@ class ModelBackend(BaseModel):
     # 采样惩罚（设计稿 §8.2 那条"我们只暴露了 num_ctx/temperature，惩罚项没露"的补课）。
     # **三个都默认 None = 不传 = 引擎默认**，不是"出厂给个更聪明的值"：小模型上调惩罚容易
     # 伤连贯（§8.2 原话），所以界面只负责"能设"，推荐值得等 `persona_meter` 的数出来再说。
-    # 语义按 provider 分家，见 `core/graph.py::_init_model`：
+    # 语义按 provider 分家，见 `core/agent/graph.py::_init_model`：
     # - repeat_penalty：Ollama 专有（≥0，1=不惩罚）。OpenAI 兼容体里没有这个标准字段，
     #   给云端传它等于赌服务商实现 —— 所以云端那一栏在界面上**不出现**。
     # - frequency_penalty / presence_penalty：两类都有，但区间不同（Ollama ≥0；
@@ -227,7 +227,7 @@ class Settings(BaseModel):
     # 设成 0 或负数 = 不设上限（仅调试用）。
     tool_timeout_seconds: float = 120.0
 
-    # v2.5 跨会话记忆（core/memory.py + core/prompts.py）总开关。True = 面板可管理记忆、
+    # v2.5 跨会话记忆（core/memory.py + core/agent/prompts.py）总开关。True = 面板可管理记忆、
     # 记忆文本注入每轮 system prompt、memory_save 工具可用（AI 检测到用户明确说出的
     # 可复用事实时写入）；False = 上述全部关闭。默认开：记忆是本项目"跨会话"体验的
     # 一部分，关闭是显式选择（隐私 / 干净上下文）。
@@ -327,7 +327,7 @@ class Settings(BaseModel):
     # - run_tools_enabled：**总闸**。False = run_command 一律返回可读的关闭说明
     #   （注册不受影响，白名单引用的工具必须真实存在 —— 与 web_search 同一哲学）。
     # - run_approval：manual（默认）—— 模型提议的命令先进审批队列，人批准后才在后台
-    #   执行一次（状态机见 core/approvals.py）；auto = 绿色通道，无审批直接执行
+    #   执行一次（状态机见 core/common/approvals.py）；auto = 绿色通道，无审批直接执行
     #   （仅自研/可信任务目录用）。两条都可经「运行环境」页热切。
     run_tools_enabled: bool = True
     run_approval: str = "manual"

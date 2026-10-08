@@ -29,7 +29,7 @@
     （`MAX_MEMORY_CHARS`）。记忆是 system prompt 的一部分，没有上界迟早挤掉对话本身。
   * "哪一轮该注入什么"只有 `memory_for_turn` 一处实现（对话与主动开口同源）。
   * 记忆区在 prompt 里自带"以用户最新说法为准"的降权声明：一条被提示注入污染的记忆
-    不会压过用户当下的明确说法（软层规则，硬门仍是 core/guard.py）。
+    不会压过用户当下的明确说法（软层规则，硬门仍是 core/agent/guard.py）。
 """
 
 from __future__ import annotations

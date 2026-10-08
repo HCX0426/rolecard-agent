@@ -24,6 +24,7 @@ from typing import Any
 from rolecard_agent.base.identity import resolve_instance_identity
 from rolecard_agent.base.observability import TraceEvent, Tracer
 from rolecard_agent.config import Settings
+from rolecard_agent.core.common.workspace import resolve_task_dir
 from rolecard_agent.core.file_watch import (
     FileEvent,
     advance_baseline,
@@ -39,7 +40,6 @@ from rolecard_agent.core.proactive_state import (
     record_recall_open,
     save_open_threads,
 )
-from rolecard_agent.core.workspace import resolve_task_dir
 from rolecard_agent.features.reachout.inbox import (
     UNDELIVERED_RETRY_LIMIT,
     UNDELIVERED_RETRY_MINUTES,

@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from rolecard_agent.core.approvals import (
+from rolecard_agent.core.common.approvals import (
     DECIDE_TOKEN_TTL_SECONDS,
     ApprovalAlreadyDecided,
     ApprovalNotFound,

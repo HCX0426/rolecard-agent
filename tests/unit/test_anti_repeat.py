@@ -1,4 +1,4 @@
-"""复读的度量与清洗（`core/anti_repeat.py`）。
+"""复读的度量与清洗（`core/common/anti_repeat.py`）。
 
 钉三件事：
   1. **阈值是量出来的** —— 用真库里那三条原文当夹具（逐字复读 1.000 / 口癖最重 0.472 /
@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from rolecard_agent.core.anti_repeat import (
+from rolecard_agent.core.common.anti_repeat import (
     BG_LIMIT,
     CLAUSE_DICE,
     DROP_SCORE,

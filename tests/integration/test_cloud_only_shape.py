@@ -20,8 +20,8 @@ from langchain_core.messages import AIMessage
 from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.config import Settings
 from rolecard_agent.core import bootstrap
+from rolecard_agent.core.agent.graph import build_graph_config
 from rolecard_agent.core.bootstrap import Assembly, build_runtime
-from rolecard_agent.core.graph import build_graph_config
 from rolecard_agent.core.model_settings import client_style
 from rolecard_agent.core.telemetry.probes import local_inference_base_url
 from rolecard_agent.domains.registry import (

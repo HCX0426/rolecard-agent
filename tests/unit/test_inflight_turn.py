@@ -18,15 +18,15 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, AIMessageChunk
 
-from rolecard_agent.core.graph import MODEL_NODE
-from rolecard_agent.core.thread_locks import (
+from rolecard_agent.core.agent.graph import MODEL_NODE
+from rolecard_agent.core.agent.turn import MessageReplace, run_turn
+from rolecard_agent.core.common.thread_locks import (
     inflight_append,
     inflight_begin,
     inflight_end,
     inflight_replace,
     inflight_text,
 )
-from rolecard_agent.core.turn import MessageReplace, run_turn
 
 
 def _run(graph: Any, tid: str) -> list[Any]:
@@ -126,7 +126,7 @@ def test_the_guarded_tail_never_enters_the_registry() -> None:
     变异核验的靶子：把 `run_turn` 改成登记守卫的原始累加器（`guard.buffer`）而不是投送
     出去的增量，这条当场红 —— 症状是"另一个界面先看见了还没过审的字"。
     """
-    from rolecard_agent.core.turn import WINDOW
+    from rolecard_agent.core.agent.turn import WINDOW
 
     body = "一二三四五六七八九十" * 6  # 60 字，跨过 WINDOW
     # 只投块、不给提交：这样 End 之前最后一次读数就是"投送出多少、登记里有多少"

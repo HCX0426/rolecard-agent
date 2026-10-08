@@ -12,7 +12,7 @@ class _EffectiveMixin(_ReadMixin):
         **这一句 `user_id` 就是"谁的 key 被花出去"的唯一答案**（M2d，§4.1）：拼出来的是
         那个人名下的后端集，别人的组根本进不来，所以运行时不存在"要不要检查这把 key 是不是
         他的"这一问 —— 图与工厂拿到的 `Settings` 里压根没有别人的凭据。咽喉只在这一处，
-        也就是 `core/graph.py` 那句 `backend.api_key` 之上再没有第二道判断要写。
+        也就是 `core/agent/graph.py` 那句 `backend.api_key` 之上再没有第二道判断要写。
         本机单身份时这个参数恒等于"这台实例的主人"，形状与拆层前一致。
 
         H5 修复：表非空后**不再并入 env 后端**。此前 `merged = dict(env_settings.model_backends)`

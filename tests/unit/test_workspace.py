@@ -1,4 +1,4 @@
-"""任务目录（core/workspace.py + 升级后的 fs 工具）的单元测试。
+"""任务目录（core/common/workspace.py + 升级后的 fs 工具）的单元测试。
 
 覆盖五件事：读写往返与环境回落、实时解析（保存即生效）、目录树浏览的边界、
 fs 工具用「任务目录」做根（越界仍拒）、以及 fs 操作写审计（actor="agent"）。
@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from rolecard_agent.config import Settings
-from rolecard_agent.core import workspace
+from rolecard_agent.core.common import workspace
 from rolecard_agent.core.tools import files as files_mod
 from rolecard_agent.core.tools import run as run_mod
 from rolecard_agent.core.tools.files import make_file_tools

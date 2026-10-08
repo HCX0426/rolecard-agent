@@ -21,7 +21,7 @@ from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
-from rolecard_agent.core.clock import utc_now
+from rolecard_agent.core.common.clock import utc_now
 
 
 class AgentState(TypedDict, total=False):
@@ -58,7 +58,8 @@ class AgentState(TypedDict, total=False):
 
 
 def now_ts() -> str:
-    """消息创建时间。UTC ISO-Z 形状（`2026-10-07T02:30:00Z`）—— 政策与纪元见 `core/clock.py`。
+    """消息创建时间。UTC ISO-Z 形状（`2026-10-07T02:30:00Z`）—— 政策与纪元见
+    `core/common/clock.py`。
 
     随消息存进 `additional_kwargs["created_at"]`（HumanMessage 在会话路由创建、
     AIMessage/ToolMessage 在内核节点创建），历史回放据此显示时间（用户 2026-09-17）。

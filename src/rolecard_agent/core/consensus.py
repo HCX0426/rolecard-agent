@@ -37,7 +37,7 @@ def build_consensus_tool(*, settings: Any, build: Any = None) -> Any:
     """构建比对工具。`build(backend_name) -> _Chat` 可注入（测试用假模型）。"""
     from langchain_core.tools import tool
 
-    from rolecard_agent.core.graph import build_model
+    from rolecard_agent.core.agent.graph import build_model
 
     model_builder = build or (lambda name: build_model(settings, name))
 

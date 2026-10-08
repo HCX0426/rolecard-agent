@@ -411,7 +411,7 @@ def check_safety_prompt() -> None:
     treated them as a shipped requirement. Safety-critical code is deliberately not
     delegated (CONTRIBUTING section 1).
     """
-    path = ROOT / "src" / "rolecard_agent" / "core" / "prompts.py"
+    path = ROOT / "src" / "rolecard_agent" / "core" / "agent" / "prompts.py"
     text = path.read_text(encoding="utf-8") if path.exists() else ""
     has_const = bool(re.search(r"^GLOBAL_SAFETY_PROMPT\s*=", text, flags=re.M))
     has_builder = "def build_system_prompt" in text
@@ -419,7 +419,7 @@ def check_safety_prompt() -> None:
     ok = has_const and has_builder and has_rules
     out("safety prompt", ok, f"const={has_const} builder={has_builder} rules={has_rules}")
     if not ok:
-        fails.append("GLOBAL_SAFETY_PROMPT is not concretely defined in core/prompts.py")
+        fails.append("GLOBAL_SAFETY_PROMPT is not concretely defined in core/agent/prompts.py")
 
 
 def check_milestone_alignment() -> None:
@@ -599,7 +599,7 @@ def check_console_encoding() -> None:
 
 #: 只许在**一处**出现的那些字面量：`值 → 唯一归属文件`（`R28-13`/`R28-14` 的结构性收口）。
 #: 读的是 AST 里的字符串常量，**docstring 不算**：说明性文字里写死模型名是刻意的
-#: （`core/nodes.py` 那段"同一台机 qwen3-vl:8b 关掉连接后 0.30s"记的是当时那台机器上那个
+#: （`core/agent/nodes.py` 那段"同一台机 qwen3-vl:8b 关掉连接后 0.30s"记的是当时那台机器上那个
 #: 模型的实测），而**默认值/字典里再抄一份就是第二个事实面** —— 换默认值时它静静留在原地，
 #: 症状是"改了没生效"，正是本仓这一轮抓了三次的同一族。
 SINGLE_SOURCE_LITERALS = {
@@ -754,7 +754,7 @@ def check_dependency_layering() -> None:
     为什么单独立这条（2026-09-28 轮 R28-11）：那天实锤的是"层漏了"——Dockerfile/CI 没装
     `requirements-cloud.txt`，症状是配任何 OpenAI 兼容端点保存即 500，而本机 .venv 恰好装过
     所以门禁看不见。这条检查防的是同族的另一半：**import 了但哪层都没声明** ——
-    `httpx`（4 处顶层 import）与 `typing_extensions`（core/state.py）当时全靠
+    `httpx`（4 处顶层 import）与 `typing_extensions`（core/agent/state.py）当时全靠
     langchain-core / pydantic 的传递依赖兜住；传递兜住时不报错，某天上游收窄约束
     就静默断（agent 取证时实测过 langchain-core 1.6.3 的 Requires-Dist 确实带着 httpx）。
 

@@ -36,16 +36,16 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from rolecard_agent.core.approvals import (
+from rolecard_agent.core.common.approvals import (
     ApprovalAlreadyDecided,
     ApprovalNotFound,
     ApprovalUnauthorised,
 )
+from rolecard_agent.core.common.thread_locks import ThreadBusy
 from rolecard_agent.core.ingest.ingestion import IngestionNotFound
 from rolecard_agent.core.ingest.upload_service import UploadRejected, UploadUnreadable
 from rolecard_agent.core.model_settings import ModelSettingsError
 from rolecard_agent.core.plugins import PluginError, UnknownPlugin
-from rolecard_agent.core.thread_locks import ThreadBusy
 from rolecard_agent.roles.service import (
     BuiltinRoleProtected,
     RoleAlreadyExists,

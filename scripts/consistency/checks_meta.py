@@ -398,7 +398,7 @@ def check_coverage_threshold() -> None:
 #: 这两条（`build_graph` / `chat_memory`）而"未登记"臂是空的 —— 即搬动没有引入新的隐式读。
 #:
 #: 留下的 3 条都是**结构上挪不动**的（各写清为什么）：
-#:   * `core/graph.py` 那两个 `bound_user(...)` 不算在内 —— 那是**绑**的一侧，不是读；
+#:   * `core/agent/graph.py` 那两个 `bound_user(...)` 不算在内 —— 那是**绑**的一侧，不是读；
 #:   * `api/main.py::_host_registry_factory`：域工具对模型必须看起来**零参数**（否则模型能
 #:     自己填"我是谁"），所以工具的 `current_user` 只能是装配期定下的零参闭包，运行期现问；
 #:   * `core/model_resolver.py::resolve_role_model`：凭据按本轮主人取（M2d），且它带

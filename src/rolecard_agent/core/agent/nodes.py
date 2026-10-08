@@ -34,16 +34,16 @@ from rolecard_agent.base.observability import TraceEvent, Tracer, timer
 from rolecard_agent.base.scopes import role_knowledge_scopes_ctx, turn_image_ctx
 from rolecard_agent.base.text import text_of
 from rolecard_agent.config import Settings
-from rolecard_agent.core.anti_repeat import clean_repeated_spans
-from rolecard_agent.core.guard import check
-from rolecard_agent.core.memory import current_role_id_ctx
-from rolecard_agent.core.prompts import (
+from rolecard_agent.core.agent.guard import check
+from rolecard_agent.core.agent.prompts import (
     DEPTH_INJECT_FROM_END,
     VOICE_DEPTH_PROMPT,
     build_system_prompt,
 )
-from rolecard_agent.core.state import now_ts
-from rolecard_agent.core.thread_locks import stop_requested
+from rolecard_agent.core.agent.state import now_ts
+from rolecard_agent.core.common.anti_repeat import clean_repeated_spans
+from rolecard_agent.core.common.thread_locks import stop_requested
+from rolecard_agent.core.memory import current_role_id_ctx
 from rolecard_agent.core.tools.errors import ToolExecutionError
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.roles.service import RoleCardService, RoleNotFound
@@ -85,7 +85,7 @@ class ToolTimeout(Exception):
 class VisionNotSupported(Exception):
     """这一轮要送出去的内容含图片，而当前后端**被确认**看不了图（P1-2 的调用前拦截）。
 
-    抛而不是返回一句假回答：`core/turn.py` 的错误路径会把它翻译成与"供应商 400 后识别出来"
+    抛而不是返回一句假回答：`core/agent/turn.py` 的错误路径会把它翻译成与"供应商 400 后识别出来"
     **同一句**用户提示（`VISION_MISMATCH_DETAIL`）—— 一个条件一个句子，不分两处各写一遍。
     """
 
@@ -614,8 +614,9 @@ def call_model(
 ) -> dict[str, Any]:
     """Assemble the prompt, bind exactly the permitted tools, call the model, gate the answer.
 
-    `config` is the LangGraph `RunnableConfig` (injected automatically when the node is wired
-    with the config-aware wrapper in `core/graph.py`). Forwarding it is what makes TWO features
+    `config` is the LangGraph `RunnableConfig` (injected automatically when the node is
+    wired with the config-aware wrapper in `core/agent/graph.py`). Forwarding it is what
+    makes TWO features
     possible at once, because both ride on callback propagation:
 
       * SSE token streaming (M4): the streaming handler LangGraph attaches travels inside
@@ -736,7 +737,7 @@ def call_model(
     # 这里**不记 token 账，也不往 `node_end` 写用量**（审计 §12.8/#8）。原因不是"取不到"，
     # 而是取到的必然错：挂了 SSE 回调时 langchain 走的也是流式路径，而供应商每个分块都回一份
     # "累计到此"的 usage、合并时逐块相加 —— 实测一条"在吗"非流式 26 token、流式合并后 272,607。
-    # 真值只有在分块层看得见，所以记账搬到了 `core/turn.py`（事件 `llm_usage`，按 (节点,步)
+    # 真值只有在分块层看得见，所以记账搬到了 `core/agent/turn.py`（事件 `llm_usage`，按 (节点,步)
     # 取最后一次）。一个错的数比没有数有害：它会安静地喂给"今天花了多少"那个问题。
 
     verdict = check(text_of(response))
@@ -761,7 +762,7 @@ def call_model(
             role_id=role_id,
             node="call_model",
             latency_ms=elapsed["ms"],
-            # 用量不在这里（见上）：真值由 `core/turn.py` 的 `llm_usage` 事件带。
+            # 用量不在这里（见上）：真值由 `core/agent/turn.py` 的 `llm_usage` 事件带。
             # 这里留 null 是**如实**——不是"取不到"，是"这个位置上取到的一定是错的"。
             detail={
                 "tools_visible": len(tools),

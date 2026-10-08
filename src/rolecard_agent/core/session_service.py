@@ -27,7 +27,7 @@ from typing import Any
 
 from rolecard_agent.base.paths import user_data_root
 from rolecard_agent.config import Settings
-from rolecard_agent.core.thread_locks import thread_write
+from rolecard_agent.core.common.thread_locks import thread_write
 from rolecard_agent.roles.service import RoleCards, RoleNotFound
 from rolecard_agent.storage import threads as _threads
 from rolecard_agent.storage.db import RETENTION_BACKUP_DIRNAME, SqlConnection

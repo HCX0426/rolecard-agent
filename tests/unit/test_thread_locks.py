@@ -1,4 +1,4 @@
-"""会话写入锁（`core/thread_locks.py`，审计 #12）。
+"""会话写入锁（`core/common/thread_locks.py`，审计 #12）。
 
 用户报的症状："我在'主动找我'那条会话里回话时正好触发了她的主动开口，我发的一条消息就没了。"
 这里钉的是让那句话不再消失的四件事：
@@ -17,7 +17,8 @@ from typing import Any
 
 import pytest
 
-from rolecard_agent.core.thread_locks import (
+from rolecard_agent.core.agent.turn import run_turn
+from rolecard_agent.core.common.thread_locks import (
     ThreadBusy,
     end_extraction,
     release_thread,
@@ -26,7 +27,6 @@ from rolecard_agent.core.thread_locks import (
     try_extraction,
     try_thread_write,
 )
-from rolecard_agent.core.turn import run_turn
 
 
 def _hold(tid: str, seconds: float) -> None:
@@ -195,7 +195,7 @@ def test_run_turn_rejects_instead_of_forking_when_busy() -> None:
     旧语义等锁 150s 后"照样往下跑并留痕"——本地 8B 长轮 + 双窗口下就是消息被
     静默覆盖。现在：yield 一条 error 帧（409 的 SSE 形态）、图一次都不跑、锁不占。
     """
-    from rolecard_agent.core.turn import Error as TurnError
+    from rolecard_agent.core.agent.turn import Error as TurnError
 
     assert try_thread_write("t-busy", timeout=0.0), "夹具没能占住锁"
     try:

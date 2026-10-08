@@ -23,8 +23,8 @@ from typing import Any, cast
 
 from rolecard_agent.base.identity import DEFAULT_USER_ID, bound_user
 from rolecard_agent.config import ModelBackend, Settings
+from rolecard_agent.core.agent.nodes import KernelContext, _turn_backend, turn_settings
 from rolecard_agent.core.bootstrap import Assembly, Runtime, build_runtime
-from rolecard_agent.core.nodes import KernelContext, _turn_backend, turn_settings
 from rolecard_agent.domains.health.service import HealthQueryService
 from rolecard_agent.domains.registry import (
     DOMAINS,
@@ -174,7 +174,7 @@ def test_deliver_proactive_lands_in_the_roles_thread(tmp_path: Path) -> None:
     用装配出来的**真图与真检查点**验（不起 app）：只验 SQL 行的话，checkpoint 那条腿
     断了也照样绿，而用户碰到的正是"点进去是空的、回不了"。
     """
-    from rolecard_agent.core.graph import build_graph_config
+    from rolecard_agent.core.agent.graph import build_graph_config
     from rolecard_agent.features.reachout import proactive_thread_id
     from rolecard_agent.roles.models import RoleCard
 
@@ -198,7 +198,7 @@ def test_deliver_proactive_lands_in_the_roles_thread(tmp_path: Path) -> None:
         assert [str(m.content) for m in messages] == ["今天腰还酸吗？"]
         # 主动投递也要带时间：没带的话，回放里她"什么时候说的"就查不出来，
         # 而"她是不是一句话说了好几遍"只能靠时间分辨（2026-09-22 取证时只能靠 id 前缀猜）。
-        # 形状是 UTC ISO-Z（"格式即纪元"，政策见 core/clock.py）—— 纪元前的存量
+        # 形状是 UTC ISO-Z（"格式即纪元"，政策见 core/common/clock.py）—— 纪元前的存量
         # 串是空格分隔的本地 naive，消费侧按形状分族解析。
         assert re.fullmatch(
             r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z",
@@ -220,8 +220,8 @@ def test_deliver_proactive_does_not_interrupt_a_running_turn(tmp_path: Path) -> 
     用户刚发的那条就从界面上消失了（检查点里那条分支还在，所以翻不到也说不清）。
     这里用真图真检查点验两件事：拿不到锁 ⇒ 一句都不写；放了锁 ⇒ 正常落进去。
     """
-    from rolecard_agent.core.graph import build_graph_config
-    from rolecard_agent.core.thread_locks import (
+    from rolecard_agent.core.agent.graph import build_graph_config
+    from rolecard_agent.core.common.thread_locks import (
         release_thread,
         thread_is_busy,
         try_thread_write,
@@ -265,7 +265,7 @@ def test_proactive_lines_only_offer_what_has_not_been_settled(tmp_path: Path) ->
     """
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-    from rolecard_agent.core.graph import build_graph_config
+    from rolecard_agent.core.agent.graph import build_graph_config
     from rolecard_agent.roles.models import RoleCard
 
     runtime = _assemble(tmp_path)
@@ -313,7 +313,7 @@ def test_proactive_window_still_has_material_when_she_has_the_last_word(tmp_path
     """
     from langchain_core.messages import AIMessage, HumanMessage
 
-    from rolecard_agent.core.graph import build_graph_config
+    from rolecard_agent.core.agent.graph import build_graph_config
     from rolecard_agent.roles.models import RoleCard
 
     runtime = _assemble(tmp_path)

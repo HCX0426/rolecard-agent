@@ -13,7 +13,7 @@
 
   * 所有路径**必须落在根目录内**。根不再是 build 时固定的 `WORKSPACE_DIR` 快照，而是
     `dir_resolver()` 每次调用实时解析的任务目录（DB「设置→通用」可配，保存即生效，
-    见 core/workspace.py）—— 这样"角色读写的范围"跟着用户的授权走；
+    见 core/common/workspace.py）—— 这样"角色读写的范围"跟着用户的授权走；
   * `..` 与符号链接都被 resolve 收敛后由 is_relative_to 拦下 —— 与上传路径守卫同一套 rigor；
   * `fs_read` 有单文件大小上限（读进 prompt 的东西都要有上界）；
   * `fs_write` **不声明幂等**（执行器不会重试它），创建父目录，写入即真实落盘；
@@ -32,8 +32,8 @@ from langchain_core.tools import tool
 
 from rolecard_agent.base.audit import tool_audit as _audit
 from rolecard_agent.config import Settings
+from rolecard_agent.core.common.workspace import make_dir_resolver, resolve_within
 from rolecard_agent.core.tools.errors import ToolExecutionError
-from rolecard_agent.core.workspace import make_dir_resolver, resolve_within
 from rolecard_agent.storage.db import SqlConnection
 
 READ_MAX_CHARS = 200_000  # 单文件读入 prompt 的字符上限（约 20 万字符）

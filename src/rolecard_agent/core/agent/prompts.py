@@ -12,7 +12,7 @@ INVARIANT (do not break this, ever):
 This module is deliberately implemented rather than left as a TODO: it is on the
 safety-critical path, and safety-critical code should not be delegated.
 
-Scope note: this is the *soft* layer. The hard gate is core/guard.py.
+Scope note: this is the *soft* layer. The hard gate is core/agent/guard.py.
 """
 
 from __future__ import annotations

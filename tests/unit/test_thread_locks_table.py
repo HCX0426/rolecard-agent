@@ -8,7 +8,7 @@ thread_id 拿到**新锁**，同会话互斥瓦解（后写盖先写）。修复
 
 from __future__ import annotations
 
-from rolecard_agent.core import thread_locks as tl
+from rolecard_agent.core.common import thread_locks as tl
 
 
 def test_lock_object_survives_table_growth_while_held(monkeypatch) -> None:

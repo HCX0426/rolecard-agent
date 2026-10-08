@@ -19,9 +19,9 @@ from langchain_core.messages import AIMessage
 from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.config import Settings
 from rolecard_agent.core import file_watch as fw
+from rolecard_agent.core.common.workspace import resolve_task_dir
 from rolecard_agent.core.memory import add_item
 from rolecard_agent.core.proactive_state import DEFAULT_AFFINITY_THRESHOLD, get_state
-from rolecard_agent.core.workspace import resolve_task_dir
 from rolecard_agent.features import reachout as svc
 from rolecard_agent.features.reachout import ReachoutScheduler
 from rolecard_agent.roles.models import RoleCard
@@ -94,7 +94,7 @@ def test_blocked_while_that_conversation_is_talking(conn) -> None:
     判据是"那条会话的写入锁正被持有"，不是"最后一条消息过了多久"：后者在她答完、
     用户还没回的间隙里也是 False，而那同样不该再冒一句。
     """
-    from rolecard_agent.core.thread_locks import (
+    from rolecard_agent.core.common.thread_locks import (
         release_thread,
         try_thread_write,
     )

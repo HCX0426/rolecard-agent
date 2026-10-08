@@ -72,7 +72,7 @@ def test_kernel_modules_reuse_the_single_implementation() -> None:
     私有副本曾从 `core.nodes` 被 api 层跨层 import，是"各自就地再写一份"的起点。
     """
     from rolecard_agent.base import text as text_module
-    from rolecard_agent.core import nodes
+    from rolecard_agent.core.agent import nodes
 
     assert not hasattr(nodes, "_text_of")
     assert nodes.text_of is text_module.text_of

@@ -45,7 +45,7 @@ from langchain_core.messages import AIMessage, HumanMessage  # noqa: E402
 
 from rolecard_agent.api.main import create_app  # noqa: E402
 from rolecard_agent.base.observability import TraceEvent  # noqa: E402
-from rolecard_agent.core.graph import build_graph_config  # noqa: E402
+from rolecard_agent.core.agent.graph import build_graph_config  # noqa: E402
 from rolecard_agent.core.proactive_state import (  # noqa: E402
     AFFINITY_DECAY_PER_DAY,
     get_state,

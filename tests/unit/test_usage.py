@@ -1,4 +1,4 @@
-"""token 账（core/usage.py，审计 §12.8）。
+"""token 账（core/common/usage.py，审计 §12.8）。
 
 钉五件事：
   1. **四种键名形状都要认出来** —— Ollama 报 `prompt_eval_count`，OpenAI 兼容口报
@@ -21,8 +21,8 @@ from typing import Any
 from langchain_core.messages import AIMessage, AIMessageChunk
 
 from rolecard_agent.base.identity import DEFAULT_USER_ID
-from rolecard_agent.core.turn import run_turn
-from rolecard_agent.core.usage import (
+from rolecard_agent.core.agent.turn import run_turn
+from rolecard_agent.core.common.usage import (
     TokenUsage,
     daily_usage,
     local_day,
@@ -101,7 +101,7 @@ def test_reasoning_is_split_out_of_completion_but_stays_a_subset() -> None:
 
 def test_streaming_path_carries_reasoning_too() -> None:
     """流式那条路不走 `parse_usage`（分块累计值被逐块相加污染过，见 #8），所以它得单独认。"""
-    from rolecard_agent.core.usage import usage_from_metadata
+    from rolecard_agent.core.common.usage import usage_from_metadata
 
     assert usage_from_metadata(
         {"input_tokens": 12, "output_tokens": 616, "output_token_details": {"reasoning": 590}}
@@ -216,8 +216,8 @@ def test_usage_days_totals_by_day(conn: sqlite3.Connection) -> None:
 
 # -- 流式那条路：账上的数必须是真值（#8）---------------------------------------
 #
-# `core/nodes.py` 里合并出来的那份 usage 是 真值 × 分块数，所以记账搬到了
-# `core/turn.py`（只有那儿看得见单个分块）。下面这三条钉的就是搬过去之后仍然成立的
+# `core/agent/nodes.py` 里合并出来的那份 usage 是 真值 × 分块数，所以记账搬到了
+# `core/agent/turn.py`（只有那儿看得见单个分块）。下面这三条钉的就是搬过去之后仍然成立的
 # 那三件事：取最后一次累计、每次调用各记一笔、没报也要算一次调用。
 
 

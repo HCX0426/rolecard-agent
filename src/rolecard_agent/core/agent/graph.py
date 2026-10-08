@@ -21,16 +21,16 @@ from langgraph.graph import END, START, StateGraph
 from rolecard_agent.base.identity import bound_user
 from rolecard_agent.base.observability import Tracer, make_tracer
 from rolecard_agent.config import Settings
-from rolecard_agent.core.model_settings import client_style
-from rolecard_agent.core.nodes import (
+from rolecard_agent.core.agent.nodes import (
     ChatLike,
     KernelContext,
     call_model,
     execute_tools,
     route_after_model,
 )
+from rolecard_agent.core.agent.state import AgentState
+from rolecard_agent.core.model_settings import client_style
 from rolecard_agent.core.plugins import PluginService
-from rolecard_agent.core.state import AgentState
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.roles.service import RoleCardService
 
@@ -58,7 +58,7 @@ def build_graph_config(
     `agent_mode=True`（智能体模式）把上限**放大一倍**：多步自主任务需要更多次的
     "模型 → 工具 → 模型"，对话档的 25 步（≈12 轮工具）对完整任务经常不够；放大有界、
     不放开无界 —— 熔断的语义（工具循环必被截停）在两档下都成立（审查报告 P0-1 的
-    配套，见 core/nodes.py 的 MAX_REPEATED_TOOL_CALLS 说明）。
+    配套，见 core/agent/nodes.py 的 MAX_REPEATED_TOOL_CALLS 说明）。
     """
     limit = DEFAULT_AGENT_MAX_STEPS if settings is None else settings.agent_max_steps
     if agent_mode and limit > 0:

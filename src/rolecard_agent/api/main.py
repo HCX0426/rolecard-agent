@@ -73,9 +73,9 @@ from rolecard_agent.base.identity import active_user_id, resolve_instance_identi
 from rolecard_agent.base.observability import Tracer, logline
 from rolecard_agent.base.paths import console_dist_dir
 from rolecard_agent.config import Settings
+from rolecard_agent.core.agent.nodes import ChatLike
 from rolecard_agent.core.bootstrap import Assembly, Runtime, build_runtime
 from rolecard_agent.core.build_info import read_build_info
-from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.domains.registry import (
     DOMAINS,

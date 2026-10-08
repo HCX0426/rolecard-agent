@@ -100,9 +100,9 @@ def check_promised_artifacts() -> None:
         "docs/前端设计.md",
         "docs/开发流程.md",
         "src/rolecard_agent/core/schema.sql",
-        "src/rolecard_agent/core/guard.py",
+        "src/rolecard_agent/core/agent/guard.py",
         "src/rolecard_agent/base/text.py",
-        "src/rolecard_agent/core/prompts.py",
+        "src/rolecard_agent/core/agent/prompts.py",
         "src/rolecard_agent/core/tools/registry.py",
         "src/rolecard_agent/roles/models.py",
         "src/rolecard_agent/roles/seed.py",
@@ -184,7 +184,7 @@ def check_doc_links() -> None:
     }
     bare = {"pyproject.toml", "README.md", "CONTRIBUTING.md", "LICENSE"}
     # Only repo-relative references are validated. Docs also use in-package shorthand such
-    # as `core/prompts.py`, which is not a path from the repo root - validating those
+    # as `core/agent/prompts.py`, which is not a path from the repo root - validating those
     # produced nothing but noise.
     # `build/` 是 09-30 加进来的（`R28-47`）：文档里按文件名点名的**证据**多数长在那儿
     # （`build/backup-liveroot-*.zip` 之类的装包前备份）。决策 4 清盘之后那些名字就悬空了，

@@ -16,7 +16,7 @@
 | # | 规则 | 为什么 |
 | --- | --- | --- |
 | 1 | **不改公共函数签名**（名字、参数、返回类型） | 签名是文件之间唯一的契约。改了它，别的文件就静默错位 |
-| 2 | **不改 `core/prompts.py` 的 `GLOBAL_SAFETY_PROMPT`，也不改它的拼接顺序** | 顺序反了 = 安全层静默失效，而且不会有任何报错 |
+| 2 | **不改 `core/agent/prompts.py` 的 `GLOBAL_SAFETY_PROMPT`，也不改它的拼接顺序** | 顺序反了 = 安全层静默失效，而且不会有任何报错 |
 | 3 | **不改表结构与列名** | 改了要动 DDL、模型、服务三层，且已入库数据会失配 |
 | 4 | **不在 `domains/` 下定义 user / tenant** | 它们是内核概念，只存在 `core/schema.sql` |
 | 5 | **不让 LLM 调用 `switch_role` 或插件启停** | 自我授权：让被约束方改自己的权限边界 |
@@ -71,10 +71,10 @@
 
 | 路径 | 为什么不能动 |
 | --- | --- |
-| `core/prompts.py` | 安全规则的唯一来源与拼接顺序 |
+| `core/agent/prompts.py` | 安全规则的唯一来源与拼接顺序 |
 | `core/schema.sql` | 内核数据契约（identity / session / plugin / audit） |
 | `roles/schema.sql` | 角色卡数据契约 |
-| `core/guard.py` 的 `check()` 契约 | 硬拦截的接口；改语义会让 fail-closed 失效 |
+| `core/agent/guard.py` 的 `check()` 契约 | 硬拦截的接口；改语义会让 fail-closed 失效 |
 | `pyproject.toml` 的 `[tool.*]` 段 | 工具链配置；改了全仓库行为都会变 |
 | `scripts/check_consistency.py` 的断言集合 | 护栏本身；要放宽必须单独说明理由 |
 

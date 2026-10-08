@@ -25,8 +25,8 @@ from rolecard_agent.base.identity import active_user_id
 from rolecard_agent.base.observability import TraceEvent, Tracer
 from rolecard_agent.config import Settings
 from rolecard_agent.core import runtime_settings
+from rolecard_agent.core.agent.nodes import ChatLike
 from rolecard_agent.core.model_settings import ModelSettingsService
-from rolecard_agent.core.nodes import ChatLike
 from rolecard_agent.storage.db import ThreadLocalConnection
 
 

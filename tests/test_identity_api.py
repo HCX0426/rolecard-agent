@@ -221,7 +221,7 @@ def test_stopping_another_identitys_turn_is_a_404_not_an_interruption(
     读侧的 404 纪律在这里同样适用：别人名下的线程不能承认它存在，更不能真的把别人那一轮
     打断 —— 这一条与"能不能看到他的历史"无关，是**他能动你正在跑的那一轮**。
     """
-    from rolecard_agent.core.thread_locks import clear_stop, stop_requested
+    from rolecard_agent.core.common.thread_locks import clear_stop, stop_requested
 
     client = _client(monkeypatch, tmp_path)
     # 先造 u1 这个人（`app_user` 里没行的用户名会回落到本机那份，那是 M1 定的语义，

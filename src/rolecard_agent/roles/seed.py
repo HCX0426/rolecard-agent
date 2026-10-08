@@ -11,7 +11,7 @@ Why code rather than a SQL fixture:
     "健康档案管理员改成自定义"）。内核点名具体域的工具名与知识作用域就是概念泄漏，
     所以这份文件此后只装**与领域无关**的内置角色。
 
-`GLOBAL_SAFETY_PROMPT` is NOT duplicated here. It lives in core/prompts.py and is appended at
+`GLOBAL_SAFETY_PROMPT` is NOT duplicated here. It lives in core/agent/prompts.py and is appended at
 call time, after the role prompt, so no role - built-in or custom - can override it.
 
 `scripts/init_db.py` / `create_app` upsert built-ins and insert domain seeds on every run;

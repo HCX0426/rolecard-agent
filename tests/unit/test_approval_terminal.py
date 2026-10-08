@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from rolecard_agent.config import Settings
-from rolecard_agent.core.approvals import ApprovalService, sweep_interrupted
+from rolecard_agent.core.common.approvals import ApprovalService, sweep_interrupted
 from rolecard_agent.core.tools import run as run_tools
 from rolecard_agent.core.tools.run import RunResult
 from rolecard_agent.storage.db import bootstrap, connect

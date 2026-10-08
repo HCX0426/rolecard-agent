@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 
 from rolecard_agent.api.main import create_app
-from rolecard_agent.core.thread_locks import release_thread, try_thread_write
+from rolecard_agent.core.common.thread_locks import release_thread, try_thread_write
 from tests.conftest import ScriptedChat
 
 

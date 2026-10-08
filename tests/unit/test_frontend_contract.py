@@ -32,10 +32,10 @@ def test_sse_event_vocabulary_matches_the_parser() -> None:
 
     为什么单独钉这条（架构审计报告 §7 / D 的前置）：事件名是**跨语言的线协议**，改一边不会
     让另一边编译失败，症状只是"那一类东西再也不显示了"——比如 guard 改写后不替换气泡，
-    用户看到半截违规文本还以为是模型的问题。`core/turn.py` 的 `EVENT_TYPES` 与
+    用户看到半截违规文本还以为是模型的问题。`core/agent/turn.py` 的 `EVENT_TYPES` 与
     `frontend/src/api/sse.ts` 的 `ChatEvent` 各自是唯一声明处，这里做双向差分。
     """
-    from rolecard_agent.core.turn import EVENT_TYPES
+    from rolecard_agent.core.agent.turn import EVENT_TYPES
 
     api_src = API_SSE_TS.read_text(encoding="utf-8")
     block = re.search(r"export type ChatEvent =(.+?\};)", api_src, flags=re.S)

@@ -1,4 +1,4 @@
-"""`core/clock.py` 的政策与分族解析（"双时区体系"那一格的判据）。
+"""`core/common/clock.py` 的政策与分族解析（"双时区体系"那一格的判据）。
 
 为什么单给这一小段写用例：它守的是**形状**与**跨族可比**两件静默的东西。消息时间戳
 从前是本地 naive 串（docstring 写着"自用单时区"），换 UTC 之后存量数据里两族并存 ——
@@ -12,8 +12,8 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 
-from rolecard_agent.core import clock
-from rolecard_agent.core.state import now_ts
+from rolecard_agent.core.agent.state import now_ts
+from rolecard_agent.core.common import clock
 
 
 def test_utc_now_shape_and_value() -> None:

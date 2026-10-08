@@ -263,7 +263,7 @@ def test_deleting_my_session_does_not_touch_the_other_persons_checkpoints(
     """
     from langchain_core.messages import AIMessage
 
-    from rolecard_agent.core.graph import build_graph_config
+    from rolecard_agent.core.agent.graph import build_graph_config
 
     rt = client.app.state.ctx.runtime
     graph = rt.state["graph"]

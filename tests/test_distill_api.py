@@ -272,7 +272,7 @@ def test_auto_extract_does_not_stack_up_while_one_is_running(
     —— 第一版我正是这么写的，于是这一句 chat 等了 158 秒才回来（`run_turn` 等锁上限 150s），
     把 §12.7 量过的"自动提取不拖慢下一轮"直接弄坏。那条误设计就是这条断言要挡的。
     """
-    from rolecard_agent.core.thread_locks import end_extraction, try_extraction
+    from rolecard_agent.core.common.thread_locks import end_extraction, try_extraction
 
     with auto_client(tmp_path, model, monkeypatch, turns="1") as client:
         tid, role_id = new_session(client)

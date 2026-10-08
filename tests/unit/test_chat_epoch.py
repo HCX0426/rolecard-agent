@@ -8,7 +8,7 @@
 （模型报错 / 停止生成 / 客户端断开），它留下的未提交事务就把写锁占死，别的连接要等到
 `busy_timeout`(5s) 才报 `database is locked`。
 
-同一个形状在 `core/nodes.py` 的线程池边界上早就做对了（`copied.run(tool.invoke, args)`，
+同一个形状在 `core/agent/nodes.py` 的线程池边界上早就做对了（`copied.run(tool.invoke, args)`，
 那里的症状是权限静默失效），漏的是 SSE 这道缝。
 
 两条用例各挡一面：① 代际真的送进了工作线程；② 上一轮残留的未提交写入不会跟着下一轮落库。
@@ -26,7 +26,7 @@ import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk
 
 from rolecard_agent.api import chat as chat_mod
-from rolecard_agent.core.graph import MODEL_NODE
+from rolecard_agent.core.agent.graph import MODEL_NODE
 from rolecard_agent.storage.db import (
     _REQUEST_EPOCH,
     ThreadLocalConnection,

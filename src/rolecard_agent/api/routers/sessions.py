@@ -28,20 +28,20 @@ from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.base.text import text_of
 from rolecard_agent.config import Settings
 from rolecard_agent.core import memory_distill, model_settings, session_service
-from rolecard_agent.core.graph import build_graph_config
+from rolecard_agent.core.agent.graph import build_graph_config
+from rolecard_agent.core.agent.state import new_state, now_ts
+from rolecard_agent.core.common.thread_locks import (
+    inflight_text,
+    request_stop,
+    thread_write,
+)
+from rolecard_agent.core.common.usage import TokenUsage, record_usage
 from rolecard_agent.core.ingest import upload_service
 from rolecard_agent.core.proactive_thread import (
     PROACTIVE_THREAD_PREFIX,
     ensure_proactive_thread,
     proactive_thread_id,
 )
-from rolecard_agent.core.state import new_state, now_ts
-from rolecard_agent.core.thread_locks import (
-    inflight_text,
-    request_stop,
-    thread_write,
-)
-from rolecard_agent.core.usage import TokenUsage, record_usage
 
 router = APIRouter()
 
@@ -474,7 +474,7 @@ def _usage_ledger(
 ) -> Callable[[TokenUsage | None], None]:
     """这一轮对话的 token 落点（审计 §12.8/#8）。
 
-    为什么账要由 `core/turn.py` 递出来、而不是在 `call_model` 里记：供应商在每一个流式
+    为什么账要由 `core/agent/turn.py` 递出来、而不是在 `call_model` 里记：供应商在每一个流式
     分块里都回一份"累计到此"的 usage，langchain 合并时逐块相加 —— 节点里看到的值是
     真值 × 分块数（实测一条"在吗"：26 → 272,607）。后端名用这一轮**实际服务**的那个，
     否则云端与本地会在账上混成一行。**`user_id` = 这一轮花谁的 key**（多租户 B1a）：
@@ -881,7 +881,7 @@ def get_session_messages(
         # 有则是 `{"text": 已经投送出去的那段}`，一个字都还没有时是 `{"text": ""}`。
         # 为什么读它而不是把在飞的字提前写进历史：LangGraph 每个**超步**才落一次检查点，
         # 助手整句要等 `call_model` 返回才算一条消息 —— 副本实测那一轮里第二读者要空等
-        # 7.6 秒（见 `core/thread_locks.py` 那节的数）。而这几个字是**已经过守卫投送**的，
+        # 7.6 秒（见 `core/common/thread_locks.py` 那节的数）。而这几个字是**已经过守卫投送**的，
         # 给第二个读者看它不绕过任何 fail-closed 纪律；写进 checkpoint 才是（那会造出
         # 一条"半句的历史"，停止生成与提取都会被它骗）。
         # 它随 `?limit=1` 那个探针一起回，所以对话界面不用多打一次请求就能知道"她在打字"。

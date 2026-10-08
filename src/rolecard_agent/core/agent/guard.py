@@ -2,7 +2,7 @@
 
 The safety design has two layers, and the project originally only had the first:
 
-  Layer 1 - core/prompts.py GLOBAL_SAFETY_PROMPT
+  Layer 1 - core/agent/prompts.py GLOBAL_SAFETY_PROMPT
             A *soft* constraint. It raises the cost of a bad answer but the model can
             be talked out of it. Never treat it as a security boundary.
 

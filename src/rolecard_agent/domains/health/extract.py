@@ -177,7 +177,7 @@ def make_invoker(settings: Settings, backend_name: str) -> ModelInvoker:
     """
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    from rolecard_agent.core.graph import _init_model
+    from rolecard_agent.core.agent.graph import _init_model
 
     try:
         model = _init_model(settings, backend_name)

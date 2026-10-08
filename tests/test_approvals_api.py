@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from rolecard_agent.api.main import create_app
-from rolecard_agent.core.approvals import ApprovalService
+from rolecard_agent.core.common.approvals import ApprovalService
 from rolecard_agent.storage.db import connect
 
 

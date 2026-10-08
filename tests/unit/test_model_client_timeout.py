@@ -18,7 +18,7 @@ from __future__ import annotations
 import httpx
 
 from rolecard_agent.config import ModelBackend, Settings
-from rolecard_agent.core import graph
+from rolecard_agent.core.agent import graph
 
 
 def _settings(provider: str, **backend_kwargs: object) -> Settings:

@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from rolecard_agent.config import ModelBackend, Settings
-from rolecard_agent.core import graph
+from rolecard_agent.core.agent import graph
 
 captured: dict[str, Any] = {}
 

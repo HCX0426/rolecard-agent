@@ -1,7 +1,7 @@
-"""SSE 投送层：把内核的轮次事件（`core/turn.py`）帧成 Server-Sent Event，并桥到事件循环。
+"""SSE 投送层：把内核的轮次事件（`core/agent/turn.py`）帧成 Server-Sent Event，并桥到事件循环。
 
 这里**只有投送**：轮次语义（流式审核、已提交文本对账、思考分流、失败翻译）全部在
-`core/turn.py`。拆分的动机见那个模块的开头 —— 桌宠壳（里程碑 D）要消费同一份事件流，
+`core/agent/turn.py`。拆分的动机见那个模块的开头 —— 桌宠壳（里程碑 D）要消费同一份事件流，
 但不该被迫吃 SSE。
 
 两个只属于这一层的决定：
@@ -31,8 +31,8 @@ from dataclasses import asdict
 from typing import Any, cast
 
 from rolecard_agent.base.observability import Tracer
-from rolecard_agent.core.turn import Error, TurnEvent, run_turn
-from rolecard_agent.core.usage import TokenUsage
+from rolecard_agent.core.agent.turn import Error, TurnEvent, run_turn
+from rolecard_agent.core.common.usage import TokenUsage
 
 _CHAT_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="chat-stream")
 #: 与池等量的"占位"信号量：提交前非阻塞 acquire，拿不到 = 8 个 worker 全忙 ——
@@ -97,10 +97,10 @@ async def chat_events(
     # "库代际变没变"读的正是 contextvar —— 不带过去，这条线程的代际永远停在它第一次
     # 拿到的那个值，"新请求第一次用库先回滚上次残留事务"这道清理就**一次都没触发过**，
     # 一轮中途断掉留下的未提交事务会一直占着写锁（别的连接等到 busy_timeout 才报错）。
-    # 同一个形状在 `core/nodes.py` 的线程池边界上早就做对了（`copied.run(tool.invoke, args)`，
+    # 同一个形状在 `core/agent/nodes.py` 的线程池边界上早就做对了（`copied.run(tool.invoke, args)`，
     # 那里的症状是权限静默失效），漏的是这道缝。
     # 每次调用各拷一份上下文：上一轮被取消后那个 `next()` 仍在线程池里跑完（见
-    # `core/thread_locks.py` 的说明），共用一枚 Context 就会撞上"同一上下文不可重入"。
+    # `core/common/thread_locks.py` 的说明），共用一枚 Context 就会撞上"同一上下文不可重入"。
     ctx = contextvars.copy_context()
     sentinel = object()
     try:

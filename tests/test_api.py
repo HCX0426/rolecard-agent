@@ -887,7 +887,7 @@ def test_stop_turn_endpoint_only_raises_the_flag(client: TestClient) -> None:
     开始时会被清掉（`run_turn` 开头），所以这里没有需要清理的状态。真正收手的是
     `call_model` 里那个分块循环 —— 由 `tests/unit/test_turn_stop.py` 钉住。
     """
-    from rolecard_agent.core.thread_locks import clear_stop, stop_requested
+    from rolecard_agent.core.common.thread_locks import clear_stop, stop_requested
 
     tid = client.post("/api/session", json={"role_id": "general_assistant"}).json()["thread_id"]
     try:

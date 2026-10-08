@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar, cast
 
 if TYPE_CHECKING:  # 只为类型存在：cast 的字符串形式不在运行时求值
-    from rolecard_agent.core.nodes import ChatLike
+    from rolecard_agent.core.agent.nodes import ChatLike
 
 #: `check()` 是装饰器而不是"跑完给 None"：被装饰的函数必须原样返回（见 `check` 的 docstring）。
 _F = TypeVar("_F", bound=Callable[..., object])

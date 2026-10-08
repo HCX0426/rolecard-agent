@@ -47,9 +47,9 @@ from langchain_core.tools import BaseTool, tool
 from rolecard_agent.base.audit import tool_audit as _audit
 from rolecard_agent.base.observability import logline
 from rolecard_agent.config import Settings
-from rolecard_agent.core.approvals import ApprovalNotFound, ApprovalService
+from rolecard_agent.core.common.approvals import ApprovalNotFound, ApprovalService
+from rolecard_agent.core.common.workspace import make_dir_resolver, resolve_task_dir, resolve_within
 from rolecard_agent.core.tools.errors import ToolExecutionError
-from rolecard_agent.core.workspace import make_dir_resolver, resolve_task_dir, resolve_within
 from rolecard_agent.storage.db import SqlConnection
 
 # 单条命令返回给模型 / 审批记录的输出上限（字符，近似字节）。命令的输出能被塞进

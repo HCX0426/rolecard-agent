@@ -122,7 +122,7 @@ class AuditedMcpTool(BaseTool):
         self._audit("invoke", {"args": kwargs})
         try:
             # MCP 工具是 async-only（StructuredTool.invoke 会 NotImplementedError）。
-            # 而本项目的执行器**同步**调 tool.invoke(...)（core/nodes.py），故同步路径必须
+            # 而本项目的执行器**同步**调 tool.invoke(...)（core/agent/nodes.py），故同步路径必须
             # 桥接到 raw 的 ainvoke —— 在调用方线程里跑一个事件循环（_run_async 已处理"已在
             # loop 中"的情况）。真连开源 MCP server 才发现，mock 的假工具带 sync _run 掩盖了它。
             return _run_async(self._raw.ainvoke(kwargs))

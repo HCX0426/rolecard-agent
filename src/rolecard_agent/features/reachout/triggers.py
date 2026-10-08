@@ -20,14 +20,16 @@ from rolecard_agent.base.identity import resolve_instance_identity
 from rolecard_agent.base.observability import NullTracer, Tracer
 from rolecard_agent.base.text import text_of
 from rolecard_agent.config import Settings
-from rolecard_agent.core.anti_repeat import (
+from rolecard_agent.core.agent.guard import check
+from rolecard_agent.core.agent.prompts import build_system_prompt
+from rolecard_agent.core.common.anti_repeat import (
     BG_LIMIT,
     DROP_SCORE,
     REGEN_SCORE,
     repeat_score,
 )
+from rolecard_agent.core.common.usage import TokenUsage, parse_usage, record_usage
 from rolecard_agent.core.file_watch import FileEvent
-from rolecard_agent.core.guard import check
 from rolecard_agent.core.memory import (
     GLOBAL_BUCKET,
     memory_for_turn,
@@ -38,8 +40,6 @@ from rolecard_agent.core.proactive_state import (
     ProactiveState,
     get_state,
 )
-from rolecard_agent.core.prompts import build_system_prompt
-from rolecard_agent.core.usage import TokenUsage, parse_usage, record_usage
 from rolecard_agent.roles.models import RoleCard
 from rolecard_agent.storage.db import SqlConnection
 
@@ -207,7 +207,7 @@ def recent_own_texts(
 
     语料只有"主动开口"这一份，不含她在会话里答的话：那部分要读检查点，而这一侧没有那个
     入口（只有调度器预先渲染好的 `thread_lines` 字符串）。答过的话的复读由对话侧那层管 ——
-    那里会把她自己重复的小句从回喂副本里抹掉（`core/nodes.py:_scrub_own_repeats`）。
+    那里会把她自己重复的小句从回喂副本里抹掉（`core/agent/nodes.py:_scrub_own_repeats`）。
     """
     rows = conn.execute(
         "SELECT text FROM agent_reachout"

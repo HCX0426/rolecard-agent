@@ -423,7 +423,7 @@ def test_execute_tools_injects_role_scopes_to_search_tool(
     from langchain_core.messages import ToolMessage
 
     from rolecard_agent.base.observability import NullTracer
-    from rolecard_agent.core.nodes import KernelContext, execute_tools
+    from rolecard_agent.core.agent.nodes import KernelContext, execute_tools
     from rolecard_agent.core.tools.registry import ToolRegistry
     from rolecard_agent.roles.models import RoleCardCreate
 

@@ -34,8 +34,8 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
+from rolecard_agent.core.common.thread_locks import thread_write
 from rolecard_agent.core.memory import restore_row as restore_memory
-from rolecard_agent.core.thread_locks import thread_write
 from rolecard_agent.features.reachout.inbox import restore_row as restore_reachout
 from rolecard_agent.storage.db import SqlConnection
 from rolecard_agent.storage.threads import (
@@ -303,7 +303,7 @@ def collect_threads(
     所以"指纹没变 ⇒ 内容没变"成立。进程内缓存与后端同生命周期；重启即冷，
     只慢第一趟。
     """
-    from rolecard_agent.core.graph import build_graph_config
+    from rolecard_agent.core.agent.graph import build_graph_config
 
     rows = conn.execute(
         "SELECT thread_id, title, current_role_id, model_name, agent_mode, updated_at,"
@@ -556,7 +556,7 @@ def _write_thread(
     from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
     from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
-    from rolecard_agent.core.graph import build_graph_config
+    from rolecard_agent.core.agent.graph import build_graph_config
 
     tid = str(payload["thread_id"])
     row = conn.execute(
