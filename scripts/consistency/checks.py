@@ -93,6 +93,7 @@ from .checks_install import (  # noqa: F401
     check_capability_matrix,
     check_dependency_parity,
     check_installer_scope,
+    check_lock_platform_markers,
     check_lockfile_parity,
     check_pyproject,
     check_requirements_scope,

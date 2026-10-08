@@ -64,6 +64,7 @@ CHECKS = (
     checks_config.check_env_example_models,
     checks_install.check_installer_scope,
     checks_install.check_lockfile_parity,
+    checks_install.check_lock_platform_markers,
     checks_install.check_capability_matrix,
     checks_meta.check_ci_host_python_stdlib_only,
     checks_runtime.check_artifact_single_source,

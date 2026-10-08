@@ -13,7 +13,8 @@ import tomllib
 
 from packaging.requirements import InvalidRequirement, Requirement
 
-from .core import ROOT, fails, out
+from .core import ROOT, fails, out, warns
+from .platform_pins import CRASHES_ELSEWHERE, installed_edges, lock_findings, parse_lock
 
 RUNTIME_REQ_FILES = (
     "requirements.txt",
@@ -348,6 +349,66 @@ def check_lockfile_parity() -> None:
     )
     if problems:
         fails.append(f"lockfile parity drift: {problems}")
+
+def check_lock_platform_markers() -> None:
+    """锁里的**平台标记**：Windows 上解析出的锁，Linux 也装得上吗（2026-10-08 实撞立案）。
+
+    病根（实测，非推测）：两把锁由 `pip-compile` 在 Windows 解析（P1-12 拍板「Windows-first，
+    锁在生成机平台解析」），而 pip-compile 把**传递依赖**写进锁时丢掉上游的环境标记。于是锁里
+    躺着一条裸的 `pywin32==312`，Linux 侧（CI 门禁臂、镜像、发布链）`pip install -r` 在解析期
+    就退 1 —— `No matching distribution found for pywin32==312 (from versions: none)`。
+    当天首次 push 才照出来：锁是 10-07 落的，而 Linux 臂此前从没装过这把锁。
+
+    判据读的是**已安装分包的元数据**（谁在什么标记下声明了谁），不是一张手抄包名名单 ——
+    名单朝两个方向烂：上游改成跨平台而名单还钉着，就把那一侧该装的钉没了；上游新增一个
+    Windows-only 二进制依赖而名单没它，Linux 又炸。取数与补钉的实现在 `platform_pins`。
+
+    只判**会崩**那一族（`CRASHES_ELSEWHERE`，按 wheel 可得性实测得出）：`pefile` /
+    `pywin32-ctypes` / `colorama` / `tzdata` 同样是 Windows-only 声明，但 Linux 装得上，
+    漏钉只是多装一个用不上的东西。给它们顺手钉标记会**删掉 Linux 现在实际拿到的东西**
+    （`tzdata` 还兜着 slim 镜像的 `zoneinfo`），那是没量过的环境改动，不归这一刀 ——
+    与本仓「测量否决了修法就照实记、不在修 bug 的那把刀里顺手改运行环境」同一条纪律。
+
+    第四格（warn 不红）：某个 pin 声明了"另一侧才装"的依赖而锁里整条没有它 —— 本轮量到的
+    `uvicorn[standard]` → `uvloop` 就是这一形状。它不能判红，因为**Windows 解析根本不产出这一行**
+    （实测：把这行带标记写进输入 requirements，重新 compile 之后**整条消失**，连标记都不留），
+    判红等于要求一条这台机器造不出来的行；手工补进去又会被周更锁静默剥掉。所以它如实出声、
+    由 ENGI-18 立案（修法在解析侧：要么跨平台合并两把锁，要么镜像自己声明带标记的 uvloop ——
+    而后者对 `uvicorn[standard]` 的 extras 门无效，已实测）。
+
+    变异实测见 `tests/unit/test_lock_platform_markers.py`（三臂：剥掉标记→点名那行；钉反方向
+    →红；上游无条件声明却带标记→红），不靠"看起来对"。
+    """
+    edges = installed_edges()
+    problems: list[str] = []
+    notes: list[str] = []
+    for lock_name in LOCK_SURFACES:
+        path = ROOT / lock_name
+        if not path.exists():
+            problems.append(f"{lock_name} 不见了")
+            continue
+        p, n = lock_findings(path.read_text(encoding="utf-8", errors="ignore"), edges, lock_name)
+        problems.extend(p)
+        notes.extend(n)
+    ok = not problems
+    pinned = [
+        pin.name
+        for lock_name in LOCK_SURFACES
+        if (ROOT / lock_name).exists()
+        for pin in parse_lock((ROOT / lock_name).read_text(encoding="utf-8", errors="ignore"))
+        if pin.marker
+    ]
+    detail = "; ".join(problems[:4]) if problems else (
+        f"{len(LOCK_SURFACES)} 把锁的平台标记都判过（会崩那族 {sorted(CRASHES_ELSEWHERE)}；"
+        f"带标记的行 {len(pinned)} 条）"
+    )
+    out("lock platform markers", ok, detail)
+    if problems:
+        fails.append(f"lock platform markers: {problems}")
+    for note in notes:
+        warns.append(f"lock platform markers (仅提示，不拦): {note}")
+        print(f"WARN lock platform markers :: {note}")
+
 
 def _runtime_form_marker() -> str:
     """形态自报标记的**唯一出处**是 `base/paths.py` 的常量，所以这里 import 它，不抄字面量。

@@ -12,3 +12,13 @@ langchain-mcp-adapters>=0.0.9
 # 症状是设置页那格照常摆着、一个工具都加载不出来。新那条门禁断言（spec 要收的每一族都得
 # 在这五份里有声明出处）也靠这一行才绿。
 mcp>=1.30
+# **`pywin32` 也要点名，并且带标记**（2026-10-08 CI 实撞立案）：它是 `mcp` 的传递依赖，而
+# `pip-compile` 把传递依赖写进锁时**丢掉上游的环境标记** —— 于是 Windows 上解析出的锁躺着
+# 一条裸的 `pywin32==312`，Linux 用同一把锁装（CI 门禁臂、镜像、发布链）第一步就崩：
+# `No matching distribution found for pywin32==312 (from versions: none)`。
+# 为什么必须住在**这一侧**而不是手改锁：实测过两条相反的路 —— 输入里带标记的行，标记**会活进
+# 锁**（`pywin32==312 ; sys_platform == "win32"`）；而手工把标记加到锁里、再跑一轮 compile，
+# 标记被**重新剥掉**（周更锁 `lock-refresh.yml` 会静默 revert 那种改法）。判据 `lock platform
+# markers` 盯着这件事：镜像带标记而锁里裸着 ⇒ 红。
+# 与上面 `mcp` 那条同一条纪律：靠传递依赖带进来的东西，装法由别人的一句话决定。
+pywin32>=310 ; sys_platform == "win32"
