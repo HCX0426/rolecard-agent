@@ -15,8 +15,8 @@ from pydantic import BaseModel, Field
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.api.errors import value_error_to_http
-from rolecard_agent.core.model_probe import ProbeTarget, list_models
 from rolecard_agent.core.model_settings import client_style
+from rolecard_agent.core.probes.model_probe import ProbeTarget, list_models
 
 router = APIRouter()
 
@@ -61,7 +61,7 @@ def list_services(ctx: AppContext = Depends(get_context)) -> object:
     能力三类（ocr/embedding/rerank）是本机主人的（设备级）；模型推理序列按**请求的主人**
     过滤 chat 引用（多租户 B1b，方案 A）—— 各看各的对话默认。
     """
-    from rolecard_agent.core.services import service_status_view
+    from rolecard_agent.core.models.services import service_status_view
 
     return service_status_view(
         ctx.services, ctx.model_settings, ctx.settings, user_id=ctx.current_user()

@@ -24,11 +24,11 @@ import sqlite3
 import pytest
 
 from rolecard_agent.config import ModelBackend, Settings
-from rolecard_agent.core.model_probe import resolve_target
 from rolecard_agent.core.model_settings import (
     ModelSettingsError,
     ModelSettingsService,
 )
+from rolecard_agent.core.probes.model_probe import resolve_target
 from rolecard_agent.storage.db import bootstrap, connect
 
 A = "local-user"  # 这台实例默认那份

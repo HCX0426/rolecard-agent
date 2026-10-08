@@ -23,16 +23,16 @@ from rolecard_agent.base.observability import Tracer
 from rolecard_agent.config import Settings
 from rolecard_agent.core.bootstrap import Runtime
 from rolecard_agent.core.common.approvals import ApprovalService
-from rolecard_agent.core.domain_service import DomainQueryService
+from rolecard_agent.core.domain.domain_service import DomainQueryService
 from rolecard_agent.core.ingest.ingestion import IngestionService
 from rolecard_agent.core.model_settings import ModelSettingsService
+from rolecard_agent.core.models.services import ServiceEndpointService
 from rolecard_agent.core.plugins import PluginService
-from rolecard_agent.core.services import ServiceEndpointService
 from rolecard_agent.core.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
     from rolecard_agent.rag.ocr import OcrBackend
-from rolecard_agent.core.session_service import get_row
+from rolecard_agent.core.sessions.session_service import get_row
 from rolecard_agent.rag.retriever import KnowledgeBase
 from rolecard_agent.roles.service import (
     RoleCards,

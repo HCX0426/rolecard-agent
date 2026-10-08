@@ -1,4 +1,4 @@
-"""通用领域数据服务层（core/domain_data.py，H4）的单元测试。
+"""通用领域数据服务层（core/domain/domain_data.py，H4）的单元测试。
 
 验证路由下沉到服务层后的契约：校验/增删改查 + 异常类型语义
 （找不到 = KeyError → 404；规则不允许 = ValueError → 400）。
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from rolecard_agent.core.domain_data import DomainDataService
+from rolecard_agent.core.domain.domain_data import DomainDataService
 from rolecard_agent.storage.db import bootstrap, connect
 
 

@@ -256,7 +256,7 @@ def post_model_catalog(body: CatalogBody, ctx: AppContext = Depends(get_context)
     **拉不到不是错误**：中转站经常给不全列表，所以这里回 200 + `detail`，界面据此退回
     "手填模型名"，而不是把一次列表失败显示成配置失败。
     """
-    from rolecard_agent.core.model_probe import list_models, resolve_target
+    from rolecard_agent.core.probes.model_probe import list_models, resolve_target
 
     target = resolve_target(
         ctx.model_settings,
@@ -290,7 +290,7 @@ def post_model_probe(
     uploaded-image / not-tested）是给人看的代价账：确认卡上写的"会发几次请求、发不发图片"
     与这里同源，不另编一份。
     """
-    from rolecard_agent.core.model_probe import probe, resolve_target
+    from rolecard_agent.core.probes.model_probe import probe, resolve_target
 
     target = resolve_target(
         ctx.model_settings,

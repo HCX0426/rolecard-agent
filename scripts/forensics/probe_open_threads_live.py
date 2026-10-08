@@ -24,7 +24,7 @@ from rolecard_agent.base.text import text_of
 from rolecard_agent.config import Settings
 from rolecard_agent.core.agent.graph import build_model
 from rolecard_agent.core.model_settings import ModelSettingsService
-from rolecard_agent.core.open_threads import _PROMPT, MAX_OPEN_THREADS, parse_open_threads
+from rolecard_agent.core.proactive.open_threads import _PROMPT, MAX_OPEN_THREADS, parse_open_threads
 from rolecard_agent.storage.db import connect
 
 CASES: list[tuple[str, str, bool]] = [

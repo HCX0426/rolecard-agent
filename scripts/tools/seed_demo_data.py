@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from rolecard_agent.base.identity import DEFAULT_TENANT_ID, DEFAULT_USER_ID  # noqa: E402
 from rolecard_agent.config import Settings  # noqa: E402
-from rolecard_agent.core.services import ServiceEndpointService  # noqa: E402
+from rolecard_agent.core.models.services import ServiceEndpointService  # noqa: E402
 from rolecard_agent.domains.health.service import HealthQueryService  # noqa: E402
 from rolecard_agent.storage.db import bootstrap, connect  # noqa: E402
 

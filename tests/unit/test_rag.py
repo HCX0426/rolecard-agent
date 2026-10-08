@@ -22,7 +22,7 @@ from rolecard_agent.base.scopes import (
     role_knowledge_scopes_ctx,
 )
 from rolecard_agent.config import DEFAULT_SILICONFLOW_BASE_URL, Settings
-from rolecard_agent.core.services import EndpointConfig
+from rolecard_agent.core.models.services import EndpointConfig
 from rolecard_agent.rag.retriever import (
     _EMBED_BATCH,
     _EMBED_RETRIES,

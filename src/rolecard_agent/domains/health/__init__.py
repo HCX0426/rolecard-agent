@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from fastapi import APIRouter
     from langchain_core.tools import BaseTool
 
-    from rolecard_agent.core.domain_service import DomainQueryService
+    from rolecard_agent.core.domain.domain_service import DomainQueryService
     from rolecard_agent.storage.db import SqlConnection
 
 __all__ = [

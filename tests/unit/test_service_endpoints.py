@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 
 from rolecard_agent.core.model_settings import ModelSettingsService
-from rolecard_agent.core.services import ServiceEndpointService
+from rolecard_agent.core.models.services import ServiceEndpointService
 from rolecard_agent.storage.db import bootstrap, connect
 
 # 引用行解析凭据时的那个主人（M2d）= 这台实例默认那份。
@@ -145,7 +145,7 @@ def test_vision_reference_row_probes_the_model(
     修复后判定共用 core/probes.vision_model_ready，这里 monkeypatch 它证明接线：
     探测 True → 行可用；False → 给出"模型未加载"的可读原因。
     """
-    from rolecard_agent.core.services import EndpointConfig, endpoint_available
+    from rolecard_agent.core.models.services import EndpointConfig, endpoint_available
     from rolecard_agent.core.telemetry import probes
 
     # 直接构造视觉引用行（不依赖 Ollama）：frozen dataclass，字段即 to_api 的来源。

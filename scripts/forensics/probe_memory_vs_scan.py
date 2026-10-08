@@ -43,7 +43,7 @@ import scratch_db  # noqa: E402
 
 from rolecard_agent.api.main import create_app  # noqa: E402
 from rolecard_agent.core.memory import GLOBAL_BUCKET, memory_for_turn  # noqa: E402
-from rolecard_agent.core.open_threads import find_open_threads  # noqa: E402
+from rolecard_agent.core.proactive.open_threads import find_open_threads  # noqa: E402
 from rolecard_agent.features.reachout import OPEN_THREADS_REFRESH_MINUTES  # noqa: E402
 from rolecard_agent.storage.db import bootstrap, connect  # noqa: E402
 

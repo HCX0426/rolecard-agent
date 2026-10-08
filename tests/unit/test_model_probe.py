@@ -1,4 +1,4 @@
-"""探测原语（core/model_probe.py）的用例：全部走假 httpx，一次真请求都不发。
+"""探测原语（core/probes/model_probe.py）的用例：全部走假 httpx，一次真请求都不发。
 
 钉的是四条承诺：
 
@@ -19,14 +19,14 @@ from typing import Any
 
 import pytest
 
-from rolecard_agent.core import model_probe
-from rolecard_agent.core.model_probe import (
+from rolecard_agent.core.model_settings import ModelSettingsError, ModelSettingsService
+from rolecard_agent.core.probes import model_probe
+from rolecard_agent.core.probes.model_probe import (
     ProbeTarget,
     list_models,
     probe,
     resolve_target,
 )
-from rolecard_agent.core.model_settings import ModelSettingsError, ModelSettingsService
 from rolecard_agent.core.telemetry.probes import _CAP_CACHE  # noqa: PLC2701 - 探针缓存要用例自己清
 from rolecard_agent.storage.db import bootstrap, connect
 

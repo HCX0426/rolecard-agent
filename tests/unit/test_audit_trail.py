@@ -185,7 +185,7 @@ def test_status_view_builds_no_second_service(
     """
     from rolecard_agent.config import Settings
     from rolecard_agent.core.model_settings import ModelSettingsService
-    from rolecard_agent.core.services import ServiceEndpointService, service_status_view
+    from rolecard_agent.core.models.services import ServiceEndpointService, service_status_view
 
     c = connect(tmp_path / "view.db")
     bootstrap(c, enabled_domains=("health",))
@@ -203,7 +203,7 @@ def test_status_view_builds_no_second_service(
     # 探活会真等网络超时（不可达的 Ollama 每次 3s）：本条判据看的是"谁建了服务"，
     # 不是"端点在不在跑"，所以替身掉。
     monkeypatch.setattr(
-        "rolecard_agent.core.services.endpoint_available", lambda _e, _s: (True, "")
+        "rolecard_agent.core.models.services.endpoint_available", lambda _e, _s: (True, "")
     )
 
     view = service_status_view(svc, ms, Settings(), user_id=None)

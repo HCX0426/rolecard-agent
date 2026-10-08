@@ -1,7 +1,7 @@
 """"本机推理服务该问哪个地址" —— 这一条要读供应商目录，所以它留在 core。
 
 探活原语本身（模型在不在位、能不能看图、驻留/卸载/列出）是**纯 httpx + `base.outbound`**
-的判定，已下沉到 `base/probes.py`：服务页探测（`core/services.py`）与 OCR 选择器
+的判定，已下沉到 `base/probes.py`：服务页探测（`core/models/services.py`）与 OCR 选择器
 （`rag/ocr.py`）要用同一个答案，而 `rag` 借内核的东西就是反向依赖（2026-10-04 依赖收口）。
 这里 `from ... import *` 之外的显式再导出是为了让既有调用点（含 monkeypatch 的靶位）
 一个字都不必改 —— 判定只有一份住在 base，本模块不复制实现。

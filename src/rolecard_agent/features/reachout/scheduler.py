@@ -25,20 +25,20 @@ from rolecard_agent.base.identity import resolve_instance_identity
 from rolecard_agent.base.observability import TraceEvent, Tracer
 from rolecard_agent.config import Settings
 from rolecard_agent.core.common.workspace import resolve_task_dir
-from rolecard_agent.core.file_watch import (
-    FileEvent,
-    advance_baseline,
-    check_changes,
-)
-from rolecard_agent.core.file_watch import (
-    pending_count as fw_pending_count,
-)
-from rolecard_agent.core.open_threads import find_open_threads
+from rolecard_agent.core.proactive.open_threads import find_open_threads
 from rolecard_agent.core.proactive.proactive_state import (
     get_state,
     record_interaction,
     record_recall_open,
     save_open_threads,
+)
+from rolecard_agent.core.watch.file_watch import (
+    FileEvent,
+    advance_baseline,
+    check_changes,
+)
+from rolecard_agent.core.watch.file_watch import (
+    pending_count as fw_pending_count,
 )
 from rolecard_agent.features.reachout.inbox import (
     UNDELIVERED_RETRY_LIMIT,

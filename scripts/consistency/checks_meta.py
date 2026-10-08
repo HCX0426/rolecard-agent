@@ -401,7 +401,7 @@ def check_coverage_threshold() -> None:
 #:   * `core/agent/graph.py` 那两个 `bound_user(...)` 不算在内 —— 那是**绑**的一侧，不是读；
 #:   * `api/main.py::_host_registry_factory`：域工具对模型必须看起来**零参数**（否则模型能
 #:     自己填"我是谁"），所以工具的 `current_user` 只能是装配期定下的零参闭包，运行期现问；
-#:   * `core/model_resolver.py::resolve_role_model`：凭据按本轮主人取（M2d），且它带
+#:   * `core/models/model_resolver.py::resolve_role_model`：凭据按本轮主人取（M2d），且它带
 #:     `user_id` 显式入参给跨线程调用方 —— **只有没传且没绑**才走这里；
 #:   * `core/memory/::make_memory_tool.memory_save`：工具签名里刻意没有 user_id（同上那条
 #:     零参纪律），调用方（tools 节点）手里有 state 却没法塞进工具入参 —— 这是①收拢后
@@ -411,7 +411,7 @@ def check_coverage_threshold() -> None:
 #: 一并删，不许留死条目 —— 与 `api domain seams` 的"清单里没有死条目"同纪律）。
 IDENTITY_IMPLICIT_READS: dict[str, str] = {
     "src/rolecard_agent/api/main.py::_host_registry_factory": "工具对模型零参",
-    "src/rolecard_agent/core/model_resolver.py::resolve_role_model": "凭据按本轮主人取",
+    "src/rolecard_agent/core/models/model_resolver.py::resolve_role_model": "凭据按本轮主人取",
     "src/rolecard_agent/core/memory/__init__.py::make_memory_tool.memory_save": (
         "工具签名里没有 user_id"
     ),

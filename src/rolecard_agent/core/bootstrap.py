@@ -35,14 +35,14 @@ from rolecard_agent.core import runtime_settings
 from rolecard_agent.core.agent.graph import build_kernel, build_model
 from rolecard_agent.core.agent.nodes import ChatLike
 from rolecard_agent.core.common.approvals import ApprovalService, sweep_interrupted
-from rolecard_agent.core.domain_service import DomainQueryService
+from rolecard_agent.core.domain.domain_service import DomainQueryService
 from rolecard_agent.core.ingest.ingestion import IngestionService
 from rolecard_agent.core.ingest.knowledge_sources import KnowledgeSourceStore
-from rolecard_agent.core.model_resolver import ModelResolver
 from rolecard_agent.core.model_settings import ModelSettingsService, client_style
+from rolecard_agent.core.models.model_resolver import ModelResolver
+from rolecard_agent.core.models.services import ServiceEndpointService
 from rolecard_agent.core.plugins import PluginService, mcp_store, seed_plugin_rows
 from rolecard_agent.core.retention import prune_retention_tables
-from rolecard_agent.core.services import ServiceEndpointService
 from rolecard_agent.core.storage.checkpointer import make_checkpointer
 from rolecard_agent.core.storage.migrations import MIGRATION_PLAN
 from rolecard_agent.core.telemetry.probes import ollama_keep, vision_capability
@@ -243,7 +243,7 @@ class Runtime:
     #: `start_background` 只认第一次（见该方法 docstring 里"两条循环"那条症状）。
     _background_started: bool = field(default=False, repr=False)
     rebuild_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
-    #: 模型解析那一格（两份缓存 + 代数）搬进 `core/model_resolver.py`（2026-10-04 审查
+    #: 模型解析那一格（两份缓存 + 代数）搬进 `core/models/model_resolver.py`（2026-10-04 审查
     #: 快照里"Runtime 单对象多职责"那一格）：本对象只留 `effective_for` /
     #: `resolve_role_model` 两个**转调**方法（对外形状不变，调用方与代数测试零改）。
     #: 装配末尾在 `build_runtime` 里挂上（它要读实例主人那份配置，构造期还没有）。
@@ -312,7 +312,7 @@ class Runtime:
     def effective_for(self, user_id: str | None = None) -> Settings:
         """**这一次模型调用花谁的 key** 的那份有效配置（转调 `ModelResolver`）。
 
-        实现与它买的那两条纪律（按人取凭据 / 缓存代数）都在 `core/model_resolver.py`；
+        实现与它买的那两条纪律（按人取凭据 / 缓存代数）都在 `core/models/model_resolver.py`；
         这里保留方法本身，是因为它是 Runtime 的稳定对外形状（节点、调度器、端点都调它），
         拆职责不该让调用方跟着搬家。
         """
@@ -328,7 +328,7 @@ class Runtime:
         """US-8：角色声明了后端名 → 按名解析；未声明 → 默认模型（转调 `ModelResolver`）。
 
         凭据按本轮主人取、未知后端降级留痕、缓存代数挡旧值 —— 三条都住在
-        `core/model_resolver.py::resolve_role_model`，本方法只是门面。
+        `core/models/model_resolver.py::resolve_role_model`，本方法只是门面。
         """
         return self.models.resolve_role_model(backend_name, temperature, user_id=user_id)
 

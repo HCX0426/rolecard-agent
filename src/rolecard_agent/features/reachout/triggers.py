@@ -29,7 +29,6 @@ from rolecard_agent.core.common.anti_repeat import (
     repeat_score,
 )
 from rolecard_agent.core.common.usage import TokenUsage, parse_usage, record_usage
-from rolecard_agent.core.file_watch import FileEvent
 from rolecard_agent.core.memory import (
     GLOBAL_BUCKET,
     memory_for_turn,
@@ -40,6 +39,7 @@ from rolecard_agent.core.proactive.proactive_state import (
     ProactiveState,
     get_state,
 )
+from rolecard_agent.core.watch.file_watch import FileEvent
 from rolecard_agent.roles.models import RoleCard
 from rolecard_agent.storage.db import SqlConnection
 

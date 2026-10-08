@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from rolecard_agent.api.deps import AppContext, get_context
-from rolecard_agent.core.file_watch import pending_count
+from rolecard_agent.core.watch.file_watch import pending_count
 from rolecard_agent.features import reachout as svc
 
 router = APIRouter()

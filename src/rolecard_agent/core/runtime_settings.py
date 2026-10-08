@@ -134,7 +134,7 @@ RUNTIME_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("context_max_chars", "CONTEXT_MAX_CHARS", "int",
               label="历史字符预算", note="送模型的历史上限", group="limit"),
     # 多模型比对总闸：关 = `compare_model_answers` 一律返回关闭说明（一次 = N 次真调用，
-    # 且同一问题会发给多个供应商；成本与隐私同一类，见 core/consensus.py）。
+    # 且同一问题会发给多个供应商；成本与隐私同一类，见 core/models/consensus.py）。
     FieldSpec("consensus_enabled", "CONSENSUS_ENABLED", "bool",
               label="多模型比对总闸",
               note="0 = compare_model_answers 返回关闭说明（一次≈N 次调用，且发给多个供应商）",

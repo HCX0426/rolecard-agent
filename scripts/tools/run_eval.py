@@ -92,7 +92,7 @@ def _maybe_configure_cloud_backend() -> None:
 
 
 def _seed_demo_data(conn: object) -> None:  # 与 seed_demo_data.py 同源（脚本不互相 import）
-    from rolecard_agent.core.services import ServiceEndpointService
+    from rolecard_agent.core.models.services import ServiceEndpointService
     from rolecard_agent.domains.health.service import HealthQueryService
     from rolecard_agent.storage.db import bootstrap as _bootstrap
 
@@ -165,7 +165,7 @@ def _seed_knowledge(db_path: Path, settings: object) -> None:
     （scripts 从前不进 mypy，见 09-26 轮 S-6）。
     """
     from rolecard_agent.core.bootstrap import candidate_ids
-    from rolecard_agent.core.services import ServiceEndpointService
+    from rolecard_agent.core.models.services import ServiceEndpointService
     from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder
     from rolecard_agent.storage.db import connect
 

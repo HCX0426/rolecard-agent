@@ -47,7 +47,7 @@
   **另有两件"看起来属于本包、其实是被别人共用"的约定住在 core**（2026-10-04 审查快照
   "core 装了产品功能"那一刀的逆向解法 —— 内核与接入层都要用它们，留在功能包里就得让
   core 反向 import 一个功能）：`core/proactive/proactive_thread.py`（主动会话的 id/标题/建行）与
-  `core/thread_transcript.py`（把 `(说话人, 原文)` 切成 prompt 素材的纯函数）。本包仍从
+  `core/sessions/thread_transcript.py`（把 `(说话人, 原文)` 切成 prompt 素材的纯函数）。本包仍从
   这两处 re-export 那些名字，**旧命名空间逐字可用**（测试与脚本按 `reachout.xxx` 调用）。
 """
 
@@ -60,7 +60,7 @@ from rolecard_agent.core.proactive.proactive_thread import (
     proactive_thread_id,
     proactive_thread_title,
 )
-from rolecard_agent.core.thread_transcript import (
+from rolecard_agent.core.sessions.thread_transcript import (
     CHAT_ECHO_LIMIT,
     RECENT_THREAD_LIMIT,
     RECENT_WINDOW_LIMIT,

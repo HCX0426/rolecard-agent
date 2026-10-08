@@ -1,4 +1,4 @@
-"""任务目录变化侦测（core/file_watch.py）的单元测试。
+"""任务目录变化侦测（core/watch/file_watch.py）的单元测试。
 
 钉住四件事：快照口径（只收元数据、跳过噪声）、diff 三分类（增/改/删）、
 事件生命周期（首建不触发 / 挂起不续期 / 过期由调用方推进 / 根热切重建基线）、
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from rolecard_agent.core import file_watch as fw
+from rolecard_agent.core.watch import file_watch as fw
 
 
 def _write(root: Path, rel: str, content: str = "x") -> None:

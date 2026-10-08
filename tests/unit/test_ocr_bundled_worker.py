@@ -21,7 +21,7 @@ from rolecard_agent.base.paths import (
     bundled_ocr_worker,
     runtime_form,
 )
-from rolecard_agent.core.services import check_availability
+from rolecard_agent.core.models.services import check_availability
 from rolecard_agent.rag import ocr as ocr_mod
 from rolecard_agent.rag.ocr import LocalRapidOcrBackend
 from rolecard_agent.rag.parser import OcrUnavailable

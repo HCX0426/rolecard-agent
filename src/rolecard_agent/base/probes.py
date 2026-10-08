@@ -1,6 +1,6 @@
 """本地推理服务的探活原语（base 层：只认 httpx + `base.outbound`，不认任何上层）。
 
-为什么在 base 而不是 core：服务页的可用性探测（`core/services.py`）、OCR 后端选择器
+为什么在 base 而不是 core：服务页的可用性探测（`core/models/services.py`）、OCR 后端选择器
 （`rag/ocr.py`）、主动开口的驻留/卸载（`api/routers/local_service.py`）必须对"这个本地
 实现能不能用"给出**同一个答案** —— 此前两处各自实现且不同步，服务页显示"未知本地实现/
 不可用"、选择器却真的会去试，用户看到自相矛盾的状态（2026-09-17）。

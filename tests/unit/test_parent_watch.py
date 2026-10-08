@@ -1,4 +1,4 @@
-"""父进程看门狗（core/parent_watch.py）。
+"""父进程看门狗（core/watch/parent_watch.py）。
 
 这条逻辑的全部风险都在**误杀**：健康的服务器被判成"父没了"就地自尽，用户看到的是
 "服务随机消失"。所以测试的重心不是"能触发"，而是"什么情况下绝不触发"。
@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from rolecard_agent.core import parent_watch as watch
+from rolecard_agent.core.watch import parent_watch as watch
 
 
 def _reaped_pid() -> int:

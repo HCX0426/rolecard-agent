@@ -18,10 +18,10 @@ from langchain_core.messages import AIMessage
 
 from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.config import Settings
-from rolecard_agent.core import file_watch as fw
 from rolecard_agent.core.common.workspace import resolve_task_dir
 from rolecard_agent.core.memory import add_item
 from rolecard_agent.core.proactive.proactive_state import DEFAULT_AFFINITY_THRESHOLD, get_state
+from rolecard_agent.core.watch import file_watch as fw
 from rolecard_agent.features import reachout as svc
 from rolecard_agent.features.reachout import ReachoutScheduler
 from rolecard_agent.roles.models import RoleCard

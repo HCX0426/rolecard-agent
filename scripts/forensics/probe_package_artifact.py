@@ -59,7 +59,8 @@ ENTRY_RE = re.compile(r"assets/(index-[A-Za-z0-9_\-]+\.js)")
 # 两档 mypy 都要过，所以守卫写成 `_IS_WINDOWS and sys.platform == "win32"` 这个合取：
 # 单用 `== "win32"`，Linux 档能证明整条恒假 ⇒ 那块被判 unreachable（本仓 `warn_unreachable=true`）；
 # 而 `ctypes.windll` 又恰恰要靠那次收窄才不被报成 attr-defined。合取里掺一个非常量的旗标，
-# 收窄照做、可达性不再被静态判死。与 `core/parent_watch.py` 的是同一个写法（那里注释写着理由）。
+# 收窄照做、可达性不再被静态判死。与 `core/watch/parent_watch.py` 的是同一个写法
+# （那里注释写着理由）。
 _IS_WINDOWS = sys.platform.startswith("win")
 #: 这一趟**没跑到**的层（比如非 Windows 上的图标层）。汇总行必须把它们念出来 ——
 #: "某层没跑"被读成"全绿"是本仓反复在治的那一族（②那层 10-01 就是为此改成"缺尺子即红"）。

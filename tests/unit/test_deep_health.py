@@ -15,7 +15,7 @@ from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
 from rolecard_agent.api.routers.health import health_deep, require_operator
-from rolecard_agent.core.readiness import _models_check, readiness_report
+from rolecard_agent.core.probes.readiness import _models_check, readiness_report
 
 
 def _good_db(path: pathlib.Path) -> pathlib.Path:
@@ -90,7 +90,7 @@ def test_模型配置读不出来与一条都没配是两种话() -> None:
 
 def test_长异常文本被截断但结论不丢() -> None:
     """detail 有长度上限（异常里可能带整条路径与栈），截断只针对文本，`ok` 照样在。"""
-    from rolecard_agent.core.readiness import _DETAIL_MAX, _detail
+    from rolecard_agent.core.probes.readiness import _DETAIL_MAX, _detail
 
     assert len(_detail("x" * 5000)) == _DETAIL_MAX
 

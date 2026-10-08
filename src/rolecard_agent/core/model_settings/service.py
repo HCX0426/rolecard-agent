@@ -36,7 +36,7 @@ rag 与 services 一行不改。变的是写入与迁移：这些字段不再有
     写明原因：分配主键（`_all_group_ids` / `_all_backend_names`，主键是全局的）、启动时的数据
     卫生清扫（`normalize_providers`）。`service_endpoint` 的 chat 引用行**也按人**
     （多租户 B1b，方案 A 收了 §4.1 的尾巴：对话默认/回退链花谁的 key 由谁定），能力端点
-    （ocr/embedding/rerank）仍设备级、归 `core/services.py` 管。`model_backend` 因此**不另挂
+    （ocr/embedding/rerank）仍设备级、归 `core/models/services.py` 管。`model_backend` 因此**不另挂
     一列**：模型行的主人从它所属的组继承，按名改一行的那些 UPDATE 靠 JOIN 带上主人条件，
     而不是多存一份冗余归属。
 

@@ -1,4 +1,4 @@
-"""`core/open_threads.py` 的解析与失败面。
+"""`core/proactive/open_threads.py` 的解析与失败面。
 
 钉的是这一源唯一要紧的品格：**不凑数**。所以断言几乎全在"什么情况下必须返回空"上，
 而不是"能不能挖出话题"上 —— 挖得出来挖不出来是模型的事，那是提示词的活；
@@ -11,7 +11,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage
 
-from rolecard_agent.core.open_threads import (
+from rolecard_agent.core.proactive.open_threads import (
     MAX_OPEN_THREADS,
     find_open_threads,
     parse_open_threads,

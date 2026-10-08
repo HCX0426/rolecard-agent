@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 from rolecard_agent.domains.spec import DomainSpec, DomainToolContext
 
 if TYPE_CHECKING:
-    from rolecard_agent.core.domain_service import DomainQueryService
+    from rolecard_agent.core.domain.domain_service import DomainQueryService
     from rolecard_agent.core.ingest.ingestion import IngestionService
     from rolecard_agent.core.tools.builtin import DomainsLike
     from rolecard_agent.core.tools.registry import ToolRegistry
@@ -177,8 +177,8 @@ def build_registry(
     只读工具才允许重试（审查报告 M10 —— 旧实现对所有工具都重试 2 次，包括会写台账的
     `upload_medical_report`）。
     """
-    from rolecard_agent.core.consensus import build_consensus_tool
     from rolecard_agent.core.memory import make_memory_tool
+    from rolecard_agent.core.models.consensus import build_consensus_tool
     from rolecard_agent.core.tools.builtin import make_kernel_tools
     from rolecard_agent.core.tools.files import make_file_tools
     from rolecard_agent.core.tools.registry import ToolRegistry as _ToolRegistry

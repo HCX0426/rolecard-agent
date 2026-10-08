@@ -1,7 +1,7 @@
 """通用领域记录那族端点的错误映射（覆盖率基线点名的 `api/routers/domains.py` 65%）。
 
 路由文件自己 docstring 写的契约是 **找不到 = KeyError → 404、规则不允许 = ValueError → 400**。
-这个文件不测领域服务（那半住在 `core/domain_data.py` 的用例里），只钉**这条 HTTP 边界上
+这个文件不测领域服务（那半住在 `core/domain/domain_data.py` 的用例里），只钉**这条 HTTP 边界上
 两种异常确实翻成了两个码** —— 因为翻错的时候没人会看见：
 
 * 把 KeyError 也翻成 400：界面弹"请输入正确的域"，而用户什么都没输错，是记录不在；

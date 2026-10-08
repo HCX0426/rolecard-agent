@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from rolecard_agent.config import Settings
-from rolecard_agent.core.services import EndpointConfig
+from rolecard_agent.core.models.services import EndpointConfig
 from rolecard_agent.rag.ocr import (
     CloudApiBackend,
     LocalRapidOcrBackend,

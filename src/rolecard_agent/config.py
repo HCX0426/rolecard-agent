@@ -262,7 +262,7 @@ class Settings(BaseModel):
     # **"没配就是不动"** —— 填了才出网，不填行为与今天完全一致。
     memory_extract_backend: str = ""
 
-    # 多模型比对（`compare_model_answers`，core/consensus.py）**全局总闸**。开 = 白名单里
+    # 多模型比对（`compare_model_answers`，core/models/consensus.py）**全局总闸**。开 = 白名单里
     # 有它的角色可以一次问 N 个后端并聚合；关 = 工具一律返回关闭说明。
     # 为什么值得一个闸（而不是只靠角色白名单）：一次调用 = N 次真实模型调用 + 1 次聚合，
     # 且同一问题会被发给**多个供应商**（含云端）—— 成本与隐私都是"联网总闸"同一类。
@@ -294,7 +294,7 @@ class Settings(BaseModel):
     # 后端不参与分组：`created_at` 已经在响应里，折叠只做在界面（理由见设计稿 §1）。
     reachout_merge_days: int = 1
 
-    # 文件事件触发（架构总览 §5 第四类触发源，core/file_watch.py）：全局总闸。
+    # 文件事件触发（架构总览 §5 第四类触发源，core/watch/file_watch.py）：全局总闸。
     # True = 每 tick 轮询任务目录（size+mtime 基线 diff），有变化时该次开口以 file_event
     # 触发（绕过 per-role 间隔一次，静默时段/未读上限不放松），变更清单作为说话素材。
     # 默认关 —— 扫描有 IO 成本，且主动素材门控是显式选择；「运行环境」页可热切。

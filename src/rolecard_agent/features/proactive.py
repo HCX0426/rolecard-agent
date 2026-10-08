@@ -42,7 +42,7 @@ from rolecard_agent.core.proactive.proactive_thread import (
     ensure_proactive_thread,
     proactive_thread_id,
 )
-from rolecard_agent.core.thread_transcript import (
+from rolecard_agent.core.sessions.thread_transcript import (
     CHAT_ECHO_LIMIT,
     format_recent_window,
     format_thread_lines,

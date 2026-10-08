@@ -6,7 +6,7 @@
 简单记录（标签 + 数值/文本 + 单位 + 备注），无需再写一套领域服务。这让「数据」页真正多领域
 化：页签按 `/api/plugins` 遍历，有专属路由的域用原视图，其它域用这里的通用视图。
 
-H4：路由只做"参数映射 + 异常→HTTP 映射"，所有 SQL 在 `core/domain_data.py`。异常语义：
+H4：路由只做"参数映射 + 异常→HTTP 映射"，所有 SQL 在 `core/domain/domain_data.py`。异常语义：
 **找不到 = KeyError → 404**，**规则不允许 = ValueError → 400**。
 """
 
@@ -22,7 +22,7 @@ from rolecard_agent.api.deps import (
     get_context,
 )
 from rolecard_agent.api.errors import value_error_to_http
-from rolecard_agent.core.domain_data import DomainDataService
+from rolecard_agent.core.domain.domain_data import DomainDataService
 
 router = APIRouter()
 

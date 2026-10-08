@@ -180,7 +180,7 @@ def main() -> None:
     # 桌面壳 spawn 时会注入 ROLECARD_PARENT_PID：壳被硬杀/崩溃时，这里负责让后端跟着走，
     # 不留孤儿占着端口（本地模型场景还占着几 GB 显存）。没注入 = 不装，人手工起的服务器
     # 不该被一个看门狗杀掉。
-    from rolecard_agent.core import parent_watch
+    from rolecard_agent.core.watch import parent_watch
 
     parent_watch.start()
     import uvicorn

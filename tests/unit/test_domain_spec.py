@@ -24,7 +24,7 @@ import pytest
 from langchain_core.tools import tool
 
 from rolecard_agent.base.identity import DEFAULT_USER_ID
-from rolecard_agent.core.domain_service import DomainQueryService
+from rolecard_agent.core.domain.domain_service import DomainQueryService
 from rolecard_agent.core.ingest.ingestion import IngestionService
 from rolecard_agent.domains import registry as registry_mod
 from rolecard_agent.domains.registry import (

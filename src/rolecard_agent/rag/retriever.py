@@ -231,7 +231,7 @@ def make_embedder(
 ) -> Embedder:
     """按「服务」页签的端点序构建嵌入器 —— **运行期唯一事实面**（架构审计报告 P1-5）。
 
-    `order` + `endpoints`（core/services.py 的端点行）按序取第一个可用者：`hash` 恒可用；
+    `order` + `endpoints`（core/models/services.py 的端点行）按序取第一个可用者：`hash` 恒可用；
     云端行按**行内** base_url/api_key/model 实例化（多云端实例各用各的 key），行内未填
     base_url 时回落 `Settings.siliconflow_base_url`。
 

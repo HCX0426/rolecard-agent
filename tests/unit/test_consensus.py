@@ -1,4 +1,4 @@
-"""多模型比对工具（core/consensus.py，用户 2026-09-17 开工）的单元测试。
+"""多模型比对工具（core/models/consensus.py，用户 2026-09-17 开工）的单元测试。
 
 全离线：build 注入假模型，验证并行收集、聚合接线、缺席标注与"单后端无从比对"。
 """
@@ -9,7 +9,7 @@ from typing import Any
 
 from rolecard_agent.base.markers import AI_TEXT_MARKER
 from rolecard_agent.config import ModelBackend, Settings
-from rolecard_agent.core.consensus import build_consensus_tool
+from rolecard_agent.core.models.consensus import build_consensus_tool
 
 
 class FakeLLM:
