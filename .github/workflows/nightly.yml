@@ -59,6 +59,52 @@ jobs:
         run: |
           python scripts/smoke_check.py
           python scripts/tools/run_eval.py --strict --report docs/eval/nightly-${{ github.run_id }}.json
+      # ── P3-17：质量验收脚本三件 + live 用例（此前**只写在本文件头的注释里、steps 没接** ——
+      # 注释与现实对不上这件事本身就是 bug：这次把线接上，注释才成真。）
+      - name: live 用例（真 8B 抽取，P2-27/决策八 声称的 live 臂）
+        run: python -m pytest tests -m live -q --no-header
+      - name: 质量验收脚本三件（persona_meter / measure_latency / persona_ab）
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path docs/eval | Out-Null
+          $rid = "${{ github.run_id }}"
+          # persona_meter：只读库；--json 出机器可读（便于改前改后 diff）。
+          python scripts/tools/persona_meter.py --json > "$env:TEMP\pm-$rid.json"
+          if ($LASTEXITCODE -eq 0 -and (Get-Item "$env:TEMP\pm-$rid.json").Length -gt 2) {
+            Move-Item "$env:TEMP\pm-$rid.json" "docs\eval\persona_meter-$rid.json" -Force
+          } else {
+            Write-Host "persona_meter 这晚没产出（不拦：决策八失败只报警）"
+            Remove-Item "$env:TEMP\pm-$rid.json" -ErrorAction SilentlyContinue
+          }
+          # measure_latency：自带起停服务，stdout 即证据；n=5 控夜间成本。
+          python scripts/tools/measure_latency.py --n 5 > "$env:TEMP\ml-$rid.txt"
+          if ($LASTEXITCODE -eq 0 -and (Get-Item "$env:TEMP\ml-$rid.txt").Length -gt 0) {
+            Move-Item "$env:TEMP\ml-$rid.txt" "docs\eval\measure_latency-$rid.txt" -Force
+          } else {
+            Write-Host "measure_latency 这晚没产出"
+            Remove-Item "$env:TEMP\ml-$rid.txt" -ErrorAction SilentlyContinue
+          }
+          # persona_ab：要对着 8000 端口的 API —— 起一个、等健康、打完即杀（n=3×2 臂）。
+          $srv = Start-Process python -ArgumentList "scripts\run_api.py" -PassThru -WindowStyle Hidden
+          $ok = $false
+          foreach ($i in 1..90) {
+            try {
+              Invoke-WebRequest -Uri "http://127.0.0.1:8000/api/health" -UseBasicParsing -TimeoutSec 2 | Out-Null
+              $ok = $true; break
+            } catch { Start-Sleep -Seconds 2 }
+          }
+          if ($ok) {
+            python scripts/tools/persona_ab.py --n 3 > "$env:TEMP\pa-$rid.txt"
+            if ($LASTEXITCODE -eq 0 -and (Get-Item "$env:TEMP\pa-$rid.txt").Length -gt 0) {
+              Move-Item "$env:TEMP\pa-$rid.txt" "docs\eval\persona_ab-$rid.txt" -Force
+            } else {
+              Write-Host "persona_ab 这晚没产出"
+              Remove-Item "$env:TEMP\pa-$rid.txt" -ErrorAction SilentlyContinue
+            }
+          } else {
+            Write-Host "run_api 90×2s 等不到健康 —— persona_ab 这晚不量（不拦）"
+          }
+          if ($srv -and -not $srv.HasExited) { Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue }
       - name: 证据落盘
         if: always()
         shell: pwsh
