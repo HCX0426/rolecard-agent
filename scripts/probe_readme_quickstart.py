@@ -165,6 +165,37 @@ def _run_the_documented_command(cmd: str, workdir: Path, port: int) -> subproces
     )
 
 
+def _who_listens(port: int) -> str:
+    """把"还在听这个端口的是谁"打出来 —— 只说"仍有监听"不够定位。
+
+    2026-10-09 的 CI 现场就是这句孤立无援：Linux 上 `killpg` 之后端口仍应答，而本机（Windows）
+    永远复现不出来，日志里除了"仍监听"一个字都没有 ⇒ 又一次只能倒推。判据负责说"红"，
+    现场负责说"为什么"，两件事都得有。
+    """
+    if os.name == "nt":
+        cmds: list[list[str]] = [
+            ["netstat", "-ano", "-p", "TCP"],
+        ]
+    else:
+        cmds = [["ss", "-ltnp"], ["netstat", "-ltnp"]]
+    for cmd in cmds:
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue  # 这个工具不在这台机器上：换下一个，别把取证本身弄炸
+        if proc.returncode != 0:
+            continue
+        needle = f":{port}"
+        hits = [ln.strip() for ln in (proc.stdout or "").splitlines() if needle in ln]
+        if hits:
+            return f"{Path(cmd[0]).name}：" + " | ".join(hits[:4])
+        return f"{Path(cmd[0]).name} 里没有 :{port} 的 LISTEN 行（应答可能是 TIME_WAIT 残连）"
+    return "（这台机器上没有 netstat/ss，拿不到持有者）"
+
+
 def _port_still_listening(port: int) -> bool:
     """还能连上 = 还有人**在答** —— 比"杀过了"这件事本身可信。
 
@@ -234,9 +265,31 @@ def main() -> int:
                 # **可乐，不只是打印一句**：这一步宣称"不给读者的机器留东西"，
                 # 而留下一个还在答的后端是**确证的负面**（本轮就是这么留了两个孤儿）。
                 # 打印了却回 0 的格子，与"存在但从不输出的 warns 列表"是同一件事。
-                print(f"❌ 端口 {port} 上仍有监听 —— 这一趟的后端没收干净，请按 pid 查残留")
-                raise SystemExit(1)
-            print(f"✅ 端口 {port} 已腾空（整棵树收干净）")
+                #
+                # 先分两种可能，别把"内核回收滞后"报成"留了孤儿"（2026-10-09 CI 上这一格
+                # 在 Linux 臂红、Windows 臂绿，而两边日志里除了一句"仍监听"什么都不知道）：
+                # 给 3 次、每次 1 秒的宽限 —— 还在答就点名是谁在答。真凶与滞后从此分得开。
+                grace = 0
+                while grace < 3 and _port_still_listening(port):
+                    time.sleep(1.0)
+                    grace += 1
+                if _port_still_listening(port):
+                    who = _who_listens(port)
+                    if server.poll() is None:
+                        shell_state = "还活着（收树没收到它）"
+                    else:
+                        shell_state = f"已退（code={server.returncode}）"
+                    print(
+                        f"❌ 端口 {port} 上仍有监听（宽限 {grace}s 后照旧）—— "
+                        f"这一趟的后端没收干净。\n"
+                        f"   外壳进程状态：{shell_state}\n"
+                        f"   持有者：{who}\n"
+                        f"   （本机/该平台的收树形状与此不同 —— 别按另一侧的绿推断这一侧。）"
+                    )
+                    raise SystemExit(1)
+                print(f"✅ 端口 {port} 在宽限 {grace}s 后腾空（内核回收滞后，不是孤儿）")
+            else:
+                print(f"✅ 端口 {port} 已腾空（整棵树收干净）")
 
 
 if __name__ == "__main__":
