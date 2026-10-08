@@ -252,6 +252,24 @@ def main() -> int:
 
 
 def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本宁可平铺
+    def _wait_upload_terminal(task_id: str, timeout: float = 60.0) -> dict:
+        """等后台解析把任务推到终局 —— `7711e2d` 之后上传的返回形状是 `processing`。
+
+        进度端点的两半各管一件事：`running`（内存事实：这任务的 Future 还没完）与
+        `status`（台账事实：进程重启也在）。冒烟要的是"别把还在跑读成完事了"，所以
+        轮询的退出条件是 **running=False**（终局，含 failed），不是"status 变好了"。
+        超时不退绿：照红，并带上最后读到的那份 —— 后台池是 max_workers=1 的同进程
+        线程池，卡满 60 秒不是"环境慢"，是这条链真的坏了。
+        """
+        deadline = time.time() + timeout
+        seen: dict = {}
+        while time.time() < deadline:
+            seen = c.get(f"/api/uploads/tasks/{task_id}").json()
+            if not seen.get("running", False):
+                return seen
+            time.sleep(0.2)
+        raise AssertionError(f"后台任务没在 {timeout:.0f}s 内落终局，最后读数：{seen}")
+
     @check("控制台页面（静态托管 SPA）")
     def _console() -> None:
         res = c.get("/")
@@ -336,12 +354,20 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
             f"/api/session/{tid}/upload",
             files={"file": ("须知.md", doc, "text/markdown")},
         )
-        assert first.status_code == 201 and first.json()["status"] == "indexed", first.text
+        # 后台化（`7711e2d`）之后 201 答的是 `processing`，终局看进度端点 —— 从前这里直接
+        # 断响应体的 `indexed`，产品契约换了而尺子没换，三处冒烟一起红（2026-10-09 实测
+        # `processing`）。等的是**终局**（running=False），把"还在跑"读成"完事了"或"坏了"都不干。
+        assert first.status_code == 201, first.text
+        got = _wait_upload_terminal(first.json()["task_id"])
+        assert got["status"] == "indexed", got
         again = c.post(
             f"/api/session/{tid}/upload",
             files={"file": ("须知.md", doc, "text/markdown")},
         )
+        # 终局复用短路：同字节且台账已过重活 → 同步答终局、不再重跑。上面已等到 indexed，
+        # 所以这里响应的**就该**是终局 —— 这条断言同时钉住"复用不重跑"那一半契约。
         assert again.json()["reused"] is True and again.json()["task_id"] == first.json()["task_id"]
+        assert again.json()["status"] == "indexed", again.text
         # v2.2：PDF 真实解析入索引（不再是 pending）
         pdf = c.post(
             f"/api/session/{tid}/upload",
@@ -353,7 +379,7 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
                 )
             },
         )
-        assert pdf.json()["status"] == "indexed", pdf.text
+        assert _wait_upload_terminal(pdf.json()["task_id"])["status"] == "indexed", pdf.text
         # v2.2：Office（.docx）文本抽取入索引（OOXML = zip + XML，零依赖）
         docx = c.post(
             f"/api/session/{tid}/upload",
@@ -365,7 +391,7 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
                 )
             },
         )
-        assert docx.json()["status"] == "indexed", docx.text
+        assert _wait_upload_terminal(docx.json()["task_id"])["status"] == "indexed", docx.text
         empty = c.post(f"/api/session/{tid}/upload", files={"file": ("a.txt", b"", "text/plain")})
         assert empty.status_code == 400
         # 注入的说明消息应进入会话历史（模型下一轮知道有文件已索引）
@@ -420,6 +446,12 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         # 内容不同 → 不是同一次上传，不能被去重成同一个任务（那也会让两份合成一份）
         assert first.json()["reused"] is False and second.json()["reused"] is False
         assert first.json()["task_id"] != second.json()["task_id"]
+
+        # 两份都要等到终局再数分块：后台化（`7711e2d`）之后 201 只答 `processing`，
+        # 不等就直接数分块，数到的可以是 0 —— 那条"同名覆盖"的回归位会退化成一个
+        # 时机问题而不是形状问题（10-09 实测：`分块数 0 → 1`）。
+        _wait_upload_terminal(first.json()["task_id"])
+        _wait_upload_terminal(second.json()["task_id"])
 
         after = scope_chunks("health_reports")
         assert after - before >= 2, f"同名文件互相覆盖了：分块数 {before} → {after}"
