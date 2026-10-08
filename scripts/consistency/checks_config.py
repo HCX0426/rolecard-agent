@@ -383,17 +383,44 @@ RESERVED_SETTINGS = {
     # upload_dir left the reserved set in M5: the chat upload entry reads it for real.
 }
 
+def _settings_field_names(cfg_text: str) -> list[str]:
+    """类体里 `name: type` 注解字段（AnnAssign）的名字，按声明顺序。
+
+    为什么不用旧的 `^\\s{4}name:` 正则：认死四空格 —— 缩进一变整段取不到，而"字段变少"
+    对 `dead config` 这条断言**只会更绿**（没人读的字段跟一起消失，红臂再也红不了）。
+    实测两种读法在现网文件上取到的 78 个字段**集合完全相等**（Settings 60 +
+    ModelBackend 12 + McpServerConfig 7），所以这一刀是语义不变的换底；AST 还多给一个
+    诚实性：无注解的类级赋值（pydantic 的 `model_config` 机器配置）本来就不该算字段，
+    AnnAssign-only 正好把它挡在外面，而旧正则靠"那行没有冒号"的巧合才没数到它。
+    """
+    tree = ast.parse(cfg_text)
+    names: list[str] = []
+    for cls in (n for n in tree.body if isinstance(n, ast.ClassDef)):
+        for stmt in cls.body:
+            if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+                names.append(stmt.target.id)
+    return names
+
+
 def check_dead_config() -> None:
-    """Every Settings field must be read somewhere outside config.py.
+    """Every parsed field must be read somewhere outside config.py.
 
     A parsed-but-unread setting is worse than a missing one: `.env.example` advertises it, so
     someone configures it and believes it took effect. That is how `langsmith_api_key` and
     `model_fallbacks` sat unused (技术评审与决策.md §9 A2 / A4).
+
+    字段范围比这句 docstring 说的宽：Settings、ModelBackend、McpServerConfig 三类的注解
+    字段都算（旧正则的 4 空格扫到的就是这三类，实测 78=78）—— 模型页配置里的字段照样
+    是"配了没用"，少盖一类没有道理。
     """
     cfg_path = ROOT / "src" / "rolecard_agent" / "config.py"
-    fields = re.findall(
-        r"^\s{4}([a-z][a-z0-9_]*)\s*:", cfg_path.read_text(encoding="utf-8"), flags=re.M
-    )
+    fields = _settings_field_names(cfg_path.read_text(encoding="utf-8"))
+    # 一个字段都没读出来 = 解析没跟上（文件没了/结构换了），而空字段集对这条断言恒绿 ——
+    # 与 entrypoint 那条"读不到就红"同一条纪律：先掐掉恒绿的形状。
+    if not fields:
+        out("dead config", False, "config.py 一个注解字段都没读出来 —— 结构变了？不许恒绿")
+        fails.append(f"settings fields unreadable: {cfg_path.name}")
+        return
     others = "\n".join(
         p.read_text(encoding="utf-8", errors="ignore")
         for p in iter_files(".py")

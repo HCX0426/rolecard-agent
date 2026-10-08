@@ -237,16 +237,51 @@ def test_冒烟参数豁免_但读不到名字时必须红(tmp_path, monkeypatch
     assert any("entrypoint unreadable" in f for f in ccfg.fails), ccfg.fails
 
 
+# ------------------------------------------------- E. dead config 的字段提取（换底）
+
+
+def test_字段提取认缩进_八空格的类体也读得到(tmp_path, monkeypatch) -> None:
+    """旧 `^\\s{4}name:` 认死四空格：缩进一变读不到，而"字段变少"对 dead config
+    **只会更绿**（没人读的字段跟一起消失）。夹具故意一个 4 空格（真语料里被读着，
+    不许它变红）+ 一个 8 空格（旧正则漏、AST 必须读出并判红）。"""
+    _silence(monkeypatch)
+    monkeypatch.setattr(ccfg, "ROOT", tmp_path)
+    cfg = (
+        "class Settings:\n"
+        "    sqlite_path: str\n"  # 真语料里读着（seen ≥ 2）→ 不是 unread
+        "class Nested:\n"
+        "        orphan_knob_xyz: str\n"  # 8 空格类体：旧正则漏，AST 必须抓到
+    )
+    _write_repo(tmp_path, cfg, example="ANY=1\n")
+    ccfg.fails.clear()
+    ccfg.check_dead_config()
+    assert any("orphan_knob_xyz" in f for f in ccfg.fails), (
+        f"8 空格字段没被判红（提取还认死缩进？）: {ccfg.fails}"
+    )
+    assert not any("sqlite_path" in f for f in ccfg.fails), "4 空格那个被读着，不许红"
+
+
+def test_一个字段都没读出来时红而不是绿(tmp_path, monkeypatch) -> None:
+    """空字段集对 dead config 恒绿（`unread = []`）—— 与 entrypoint"读不到就红"同纪律。"""
+    _silence(monkeypatch)
+    monkeypatch.setattr(ccfg, "ROOT", tmp_path)
+    _write_repo(tmp_path, cfg="class Settings:\n    pass\n", example="ANY=1\n")
+    ccfg.fails.clear()
+    ccfg.check_dead_config()
+    assert any("settings fields unreadable" in f for f in ccfg.fails), ccfg.fails
+
+
 # --------------------------------------------------------------- D. 真仓库那一臂
 
 
-def test_真仓库此刻三条断言全绿(monkeypatch) -> None:
+def test_真仓库此刻四条断言全绿(monkeypatch) -> None:
     """正向那一半：夹具全绿而真文件红 = 判据是在夹具上调出来的假绿。"""
     _silence(monkeypatch)
     ccfg.fails.clear()
     ccfg.check_config_contract()
     ccfg.check_startup_env_documented()
     ccfg.check_entrypoint_env_documented()
+    ccfg.check_dead_config()
     assert not ccfg.fails, ccfg.fails
 
 
