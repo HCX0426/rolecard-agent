@@ -122,6 +122,37 @@ def test_flake_retries_for_evidence_and_keeps_both_logs(monkeypatch, tmp_path, c
     assert FLAKE_LOG in (tmp_path / "gate-fast-run1.log").read_text(encoding="utf-8")
 
 
+def test_a_fresh_checkout_without_build_still_gets_its_evidence(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """`build/` 是 gitignore 的 —— 全新检出里**没有**这个目录，取证日志不许因此崩。
+
+    2026-10-09 Windows 臂实测：首跑撞上在册 chroma 偶发，本该走"重跑取证"通道，结果
+    `run1.write_text` 先炸在 `FileNotFoundError: …\\build\\gate-fast-run1.log` 上 —— 取证层
+    自己成了新的红，重跑根本没发生。门禁 `--ci` 照不出它纯属顺序运气（静态组的读数那一步
+    先把 build/ mkdir 了），这一条臂只跑本脚本就撞上了。上面的既有用例都拿 `tmp_path`
+    当 BUILD —— 那是 pytest 建好的目录，**永远照不出"目录不存在"这一格**，所以这里刻意
+    指到一个不存在的子目录。
+    """
+    mod = _load(monkeypatch, tmp_path)
+    fresh = tmp_path / "checkout-without-build"  # 刻意不建：模拟全新检出
+    assert not fresh.exists()
+    monkeypatch.setattr(mod, "BUILD", fresh)
+    monkeypatch.setattr(sys, "argv", ["x", "--lane", "fast"])
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, extra=None):  # noqa: ANN001, ANN002, ANN003
+        calls.append(cmd)
+        return (1, FLAKE_LOG) if len(calls) == 1 else (0, "1 passed\n")
+
+    monkeypatch.setattr(mod, "_run", fake_run)
+    assert mod.main() == 0  # 从前这一行之前就先抛 FileNotFoundError
+    assert (fresh / "gate-fast-run1.log").exists(), "首跑日志必须在（目录是被这层自己建的）"
+    assert (fresh / "gate-fast-run2-retry.log").exists()
+    assert "FLAKY-RECORDED" in capsys.readouterr().out
+
+
 def test_the_second_run_going_red_stays_red(monkeypatch, tmp_path, capsys) -> None:
     """反向臂：二跑仍红 ⇒ 退出非 0，且不写"未知放行"那句话。"""
     mod = _load(monkeypatch, tmp_path)

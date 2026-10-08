@@ -143,6 +143,12 @@ def main() -> int:
         print(f"未知的 --lane：{lane!r}（可选：{sorted(LANES)}）", file=sys.stderr)
         return 2
     base, run1_name, run2_name = LANES[lane]
+    # `build/` 是 gitignore 的 —— **全新检出里没有这个目录**，而取证日志必须落在它里面。
+    # 不 mkdir 的代价由 CI 付过（2026-10-09 Windows 臂）：首跑撞上在册 chroma 偶发本来是
+    # 走"重跑取证"通道的，结果 `run1.write_text` 先炸在 `FileNotFoundError` 上 —— 取证层
+    # 自己崩在写第一份日志那一行，重跑根本没发生，红报成了崩溃。门禁的 `--ci` 照不出它
+    # 纯属顺序运气（静态组先跑、读数那一步把 build/ 建出来了），这条臂只跑本脚本，就撞上了。
+    BUILD.mkdir(parents=True, exist_ok=True)
     run1, run2 = BUILD / run1_name, BUILD / run2_name
 
     extra = _extra_from_argv(sys.argv[1:])

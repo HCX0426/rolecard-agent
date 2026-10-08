@@ -89,10 +89,10 @@ def test_a_matching_substring_still_runs_that_step(tmp_path):
 def test_one_static_step_alone_still_runs(tmp_path) -> None:
     """命中静态组里的**一步**时不许零步当绿 —— 2026-10-09 实测撞出来的第四种零法。
 
-    现场：\gate.py --ci --only "mypy(linux"\ 打出"✅ 全部通过"、退出 0、总计 0.0s。并发组的
-    启动条件是 \len(head) >= 2\，只命中一步时并发不启动，而那一步又被旧写法
-    est = [非静态]\ 从串行名单里摘掉了 —— 分组的账漏了人。上面那道 \--only\ 守卫拦不住
-    它：守卫问"这趟会不会跑"（答"会"），这里的账是"谁真的跑了"（一个都没有）。
+    现场：`gate.py --ci --only "mypy(linux"` 打出「✅ 全部通过」、退出 0、总计 0.0s。
+    并发组的启动条件是 `len(head) >= 2`，只命中一步时并发不启动，而那一步又被旧写法
+    `rest = [非静态]` 从串行名单里摘掉了 —— 分组的账漏了人。上面那道 `--only` 守卫拦不住
+    它：守卫问「这趟会不会跑」（答「会」），这里的账是「谁真的跑了」（一个都没有）。
     """
     gate = _load_gate()
     ran: list[str] = []
