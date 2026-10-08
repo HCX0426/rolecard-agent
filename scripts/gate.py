@@ -80,16 +80,26 @@ NPM = "npm.cmd" if platform.system() == "Windows" else "npm"
 # 覆盖率那趟只在 full 跑，且 _src_changed() 为 False 时跳过（见 main）。
 STEPS: list[tuple[str, list[str], str]] = [
     ("ruff", [PY, "-m", "ruff", "check", "."], "both"),
-    ("mypy", [PY, "-m", "mypy"], "both"),
+    # 三档 mypy 各用各的缓存目录（`--cache-dir`）。并发共写一份 `.mypy_cache` 是 2026-10-08
+    # CI 红的那一发的形状：静态组三发**同时冷启动**（CI 缓存 miss）共写一个目录，
+    # `mypy scripts/` 在 1.0s 抛 INTERNAL ERROR（编译器崩溃，不是类型错），另两档同一棵树却
+    # 39.6s 干净通过。本机 Windows 上 4 轮并发压不出来（本地 venv 是 mypy 2.3.1、锁里 pin 的
+    # 是 2.4.0 —— 本地绿根本没过 CI 用的那台编译器），但"多个写者共写一份缓存"这件事本身
+    # 就不成立，不必先定罪再拆。ci.yml 的缓存 `path: .mypy_cache` 整目录收，子目录照缓存。
+    ("mypy", [PY, "-m", "mypy", "--cache-dir", ".mypy_cache/src"], "both"),
     # scripts/ 是 2957 行**取证尺子**，从前只过 ruff 不过 mypy（09-26 轮 R26-21）。
     # 补上第一天就抓到两个运行时已经坏了的脚本（seed_demo_data / run_eval 调
     # `make_embedder` 少两个必填关键字参数 ⇒ 一跑就 TypeError），见那一轮台账 S-6 行。
-    ("mypy scripts/", [PY, "-m", "mypy", "scripts/"], "both"),
+    ("mypy scripts/", [PY, "-m", "mypy", "scripts/", "--cache-dir", ".mypy_cache/scripts"], "both"),
     # Linux 档的类型检查。容器跑的就是 Linux（Dockerfile `python:3.13-slim`），而本机
     # 门禁只查 win32 档 —— CI 第一发就红在这上面（`ctypes.WinDLL` 在 Linux 档没有、
     # POSIX 分支的 `type: ignore` 在 Linux 档成了 unused）。“本机绿”而“容器里红”属于
     # 同一个假绿家族，两边一起查才关得掉。
-    ("mypy(linux 档)", [PY, "-m", "mypy", "--platform", "linux"], "both"),
+    (
+        "mypy(linux 档)",
+        [PY, "-m", "mypy", "--platform", "linux", "--cache-dir", ".mypy_cache/linux"],
+        "both",
+    ),
     # 依赖方向契约（import-linter，判据与豁免纪律在 pyproject 的 [tool.importlinter]）。
     # 同进程跑而不是直接调 CLI：契约名是中文的，子进程按 GBK 写管道、这一步按 UTF-8 解
     # 就会成一串问号，而 src 布局还要先把 src 放进 sys.path（两件事都在包装脚本里做掉）。
