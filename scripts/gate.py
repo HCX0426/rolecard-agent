@@ -450,20 +450,69 @@ _CURRENT: list[str] = ["（还没开步）"]
 #: pytest 一起带走，用例不换掉就没法断言"它打了什么"。
 _WATCHDOG_EXIT = os._exit
 
+#: 打现场的时间上限（秒）。到点**照样退**，见 `_arm_watchdog` 里那一段为什么这是整件事的要点。
+_SCENE_BUDGET_SECONDS = 10.0
+
+
+def _emit(line: str = "") -> None:
+    """看门狗唯一的出口写法（单独成函数只为测试能把它换成一个会堵的替身）。"""
+    print(line, flush=True)
+
 
 def _arm_watchdog(started: float, deadline: float, timings: list[tuple[str, float]]) -> None:
     """到点把现场打在 stdout 上然后**自己**结束进程（退 3）。
 
     为什么非 `os._exit` 不可：触发场景就是主线程卡在某个无界调用上，`SystemExit` 要等主
-    线程回到解释器 —— 那等于没有。为什么还要**打主线程栈**：run 37823819338 证明挂死不在
-    步骤里（每步预算都界得住，趟却照样被杀在 job 预算上），"此刻在跑哪一步"不足以定位，
-    栈才足 —— 那一行就是下一个要修的东西。打栈用的是 `sys._current_frames`，不依赖主线程
-    配合（它正是配合不了的那个）。
-    收尾顺序刻意：**先打现场、再杀孩子**（杀孩子会往管道里回话，把证据搅浑）；CI 的
-    stdout 进这一步的日志 —— 这一步带日志地红，而不是 job 无声地被杀。
+    线程回到解释器 —— 那等于没有。
+
+    为什么现场要放进**另一个线程里限时等**（10-09 第四趟换来的，这条是本机制的要点）：
+    run 37830147312 带着 21 分钟的 deadline 照样被杀在 25 分钟，说明看门狗到点**没能退出**。
+    它当时做的每件事都可能把自己卡在那儿：① `print(flush=True)` 往 runner 的日志管道写 ——
+    管道没人消化就是**阻塞在 write 里**，而"打现场"这件事自己堵住，恰恰是三趟里唯一还没
+    排除的形状；② 收孩子前那句惰性 import 也可能排在主线程握着的 import 锁后面。
+    所以现在的形状是：**打现场尽力而为、最多等十秒，退出这条路上一个可阻塞的调用都不留**。
+    宁可丢掉栈那一行，也要换来 job 自己结束 —— `failure` 会上传日志（前面已经打出的每一步
+    输出、以及"此刻在跑哪一步"全都在），而等下去是 `cancelled` + 什么都没剩。
+    那句惰性 import **留着**：它在一条"可以被放弃"的线程里，卡住也只是丢掉收孩子这一步，
+    不再拖住退出；而上膛就取实测要 454ms、还会把 15 个 app 模块拖进门禁进程，不值。
     """
     if deadline <= 0:
         return
+
+    def _scene() -> None:
+        _emit(
+            f"\n⛔ 被全局墙钟掐停（{deadline / 60:.1f} 分钟，起算于开跑第一行）。"
+            f"此刻在跑：{_CURRENT[0]}"
+        )
+        main_id = threading.main_thread().ident
+        frame = sys._current_frames().get(main_id) if main_id is not None else None
+        if frame is not None:
+            _emit("   主线程卡在这一行（这就是挂点，别再从相邻臂倒推）：")
+            for line in traceback.format_stack(frame):
+                _emit("   " + line.rstrip().replace("\n", "\n   "))
+        _emit("=" * 52)
+        _emit("门禁计时汇总（被掐停的这趟）")
+        _emit("=" * 52)
+        for name, dt in timings:
+            _emit(f"  {name:24} {dt:6.1f}s")
+        _emit("  ❌ 失败步骤：全局墙钟（被掐停）")
+
+    def _kill_children() -> None:
+        with _ACTIVE_LOCK:
+            victims = list(_ACTIVE)
+        for popen in victims:
+            with contextlib.suppress(Exception):
+                # 走 `_terminate_step`：它里面那句惰性 import 现在**允许**存在 —— 这条线程
+                # 整个可以被放弃（join 超时就走），卡住只丢"收孩子"这一步，不再拖住退出。
+                _terminate_step(popen)
+
+    def _report_then_kill() -> None:
+        """现场 + 收孩子都在**这一条**线程里 —— 它卡住也无所谓，见 `_watch`。
+
+        顺序刻意：先打再收，收孩子会往管道回话，把证据搅浑。
+        """
+        _scene()
+        _kill_children()
 
     def _watch() -> None:
         while True:
@@ -471,28 +520,13 @@ def _arm_watchdog(started: float, deadline: float, timings: list[tuple[str, floa
             if left <= 0:
                 break
             time.sleep(min(left, 1.0))
-        print(
-            f"\n⛔ 被全局墙钟掐停（{deadline / 60:.1f} 分钟，起算于开跑第一行）。"
-            f"此刻在跑：{_CURRENT[0]}",
-            flush=True,
-        )
-        main_id = threading.main_thread().ident
-        frame = sys._current_frames().get(main_id) if main_id is not None else None
-        if frame is not None:
-            print("   主线程卡在这一行（这就是挂点，别再从相邻臂倒推）：", flush=True)
-            for line in traceback.format_stack(frame):
-                print("   " + line.rstrip().replace("\n", "\n   "), flush=True)
-        print("=" * 52, flush=True)
-        print("门禁计时汇总（被掐停的这趟）", flush=True)
-        print("=" * 52, flush=True)
-        for name, dt in timings:
-            print(f"  {name:24} {dt:6.1f}s", flush=True)
-        print("  ❌ 失败步骤：全局墙钟（被掐停）", flush=True)
-        with _ACTIVE_LOCK:
-            victims = list(_ACTIVE)
-        for popen in victims:
-            with contextlib.suppress(Exception):
-                _terminate_step(popen)
+        reporter = threading.Thread(target=_report_then_kill, name="gate-scene", daemon=True)
+        reporter.start()
+        reporter.join(_SCENE_BUDGET_SECONDS)
+        # 下面这三行**不许有任何可能阻塞的东西**（不 print、不 import、不等锁）：这一行的
+        # 唯一职责是"无论如何把进程结束掉"。前面那发 join 有超时，所以它顶多晚到十秒。
+        # 现场全丢也认 —— `failure` 至少把**已经打出来的每一步输出**留下来，而等下去是
+        # `cancelled` + 什么都没剩（run 37830147312 实测：带看门狗仍被杀在 25 分钟）。
         _WATCHDOG_EXIT(3)
 
     threading.Thread(target=_watch, name="gate-watchdog", daemon=True).start()
@@ -503,6 +537,12 @@ def _terminate_step(proc: subprocess.Popen[str]) -> None:
     真后端原地活着答了二十分钟"（`probe_readme_quickstart` 与 `run_api` 各一发）。实现只有
     一份（`core/tools/run.py`，POSIX 走 killpg、Windows 走 taskkill /T），这里与那两处同
     一个 src 布局写法：不假设装过。
+
+    看门狗也用这一个函数（10-09 定过一次"上膛时就取实现"，实测代价 454ms + 把 15 个 app
+    模块拖进门禁进程，撤了）—— 撤得掉的理由是形状变了：现在收孩子跑在一条**可以被放弃**
+    的线程里（`_arm_watchdog` 的 join 超时），这句 import 排在主线程的 import 锁后面也只
+    丢"收孩子"这一步，不再拖住退出。留孤儿的后果（下一次 push 自己会撞上）比看门狗不退出
+    的后果（现场又丢一次）轻，排序就是这么定的。
     """
     sys.path.insert(0, str(ROOT / "src"))
     from rolecard_agent.core.tools.run import terminate_process_tree  # noqa: PLC0415

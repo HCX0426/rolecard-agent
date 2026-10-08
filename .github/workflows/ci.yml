@@ -116,11 +116,48 @@ jobs:
         # 让 runner 回写就等于两份都对的数互相把对方判成漂移。
         env:
           GATE_READINGS_SCRATCH: "1"
-        # --deadline-minutes 21：整趟自己到点收摊 = **带完整汇总的红**；runner 杀 job =
-        # **什么都没有**（2026-10-09 连续两趟挂死就是这么丢现场的：cancelled job 不传日志）。
-        # 21 = 25 分钟预算 − 实测 setup 62s（job 开始→装依赖完，run 2ae2e98 现读）− 缓存回写
-        # 与收尾的余量。每步另有各自上限（STEP_TIMEOUTS），这里兜的是"每步都慢但都没超限"的总量。
-        run: python scripts/gate.py --ci --deadline-minutes 21
+        # 三层墙钟，**顺序是判据的一部分**：内部 1260s(21m) < 外部 1320s(22m) < job 1500s(25m)。
+        # ① 每步上限（STEP_TIMEOUTS）：单步吊住 → 那一步红，别的照常。
+        # ② `--deadline-minutes 21`：进程内看门狗到点自己收摊 = **带完整汇总 + 主线程栈的红**。
+        # ③ `timeout`（GNU coreutils，ubuntu runner 自带）：**兜"② 自己没做到"这件事**。
+        #    run 37830147312 是活证据：那趟带着 deadline 21 照样被杀在 job 预算上、看门狗到点
+        #    没退出 —— 往 runner 的日志管道写会**阻塞在 write 里**，而钟、线程、锁全都归同一个
+        #    进程管，进程自己 wedged 时它救不了自己。`timeout` 是**另一个进程**：GIL/管道/锁都
+        #    拦不住它。它开火 ⇒ 这一步退 124 ⇒ job 是 `failure` ⇒ **日志上传**（GitHub 只在
+        #    `cancelled` 那一档不传：三趟现场全这么丢的）。要点就在这儿：就算进程内那把刀落不
+        #    下来，也一定留下一次有声的红 —— `-e` 中止也把 124 带出去（实测：形状 A 退 124）。
+        # 数字按实测（`build/probe_job_steps.py` 现读三趟绿 run）：gate 那一步**之前**
+        # （checkout+装 Python+装依赖）= 42~63s，**之后**（Post 各步）= 1~4s。于是
+        # 63 + 1320 + 30(kill-after) = 1413s < 1500s，还剩 87s。**job 预算不用抬**——
+        # 我先前写下"必须抬到 35m"，用的是还没量的开销数（118~146s），那组数错了 2~3 倍；
+        # 记在这儿是为了让下一个读到的人知道这格被订正过，而不是"一直是 1320s"。
+        # 留给 runner 的余量按**被杀的那几趟**那一侧取（63s 不是绿趟的 42s）：这一层就是为
+        # 病态形状存在的，界要按病态那一侧算。
+        # 21m 那一档还是没底气的：tail 四步（密钥扫描/依赖审计/README 可跑性/baseline）上线
+        # 之后，健康趟到底几分钟**还没有一个读数**（三趟绿 run 都在它们之前）。这里不放宽，
+        # 是因为放宽的对面不是"更安全的红"而是"更晚知道的红"；等第一趟绿 run 的每步 ⏱ 回来
+        # 再照实调（P2-16 的 P95 ≤5min 读数只从健康绿趟身上取，与本层无关）。
+        run: |
+          # 这一发先存在：ubuntu runner 有没有 GNU `timeout` 我**没实测过**，而"这层不存在"
+          # 与"这层存在但没开火"在一趟绿 run 里长得一模一样 —— 本仓刚在 `.gitleaks.toml` 的
+          # `[global]` 死表上为同一件事付过一次账（七条放行从没跑过，而 CI 一直绿）。
+          # 所以这里宁可红在"工具不在"，也不要一条静默失效的防线。
+          command -v timeout >/dev/null || {
+            echo '❌ runner 上没有 GNU timeout：外部墙钟这一层根本没建立 —— 这不等于"没问题"'
+            exit 3
+          }
+          # `|| code=$?` 那一格不是风格问题，是三形状对照实测出来的：Actions 的 `run:` 默认带
+          # `-e`，写成「`timeout …` 换行 `code=$?`」会在 124 那一刻**当场中止脚本** —— job 照样
+          # 红、日志照样传，但下一句点名"是外部层开的火"永远打不出来，读日志的人只看见 exit 124。
+          # 另一种更坏的 `if ! timeout …; then code=$?` 实测把 `$?` 读成 **0**（被条件本身重置）
+          # ⇒ **防线开了火、job 却是绿的**。取中间这种：`||` 让 -e 不中止（条件列表的一部分），
+          # code 又真的是 timeout 的退码。
+          code=0
+          timeout --kill-after=30s 1320s python scripts/gate.py --ci --deadline-minutes 21 || code=$?
+          if [ "$code" = 124 ] || [ "$code" = 137 ]; then
+            echo "❌ 外部墙钟（timeout 22m）把这趟杀了：进程内的看门狗没做到 —— 见上面 ③"
+          fi
+          exit "$code"
 
   frontend:
     name: 前端（tsc + build + vitest）
@@ -353,7 +390,11 @@ jobs:
     needs: [gate, frontend]
     runs-on: ubuntu-24.04
     # 全量档含真机冒烟与壳 typecheck，本地实测 6~8 分钟；给 30 分钟。
-    timeout-minutes: 30
+    # 2026-10-09 抬到 35：不是放松判据，是为了让**外部墙钟塞得进 job 之前**。原来 30m 装
+    # 不下"setup 估 6m + 外部 27m + kill-after 30s + 收尾"（=33.5m）—— 塞不进去那这层就
+    # 永远晚于 runner 动手，等于不存在（正是 `--ci` 那三趟丢现场的机制）。这一档**手动触发
+    # 才跑**，分钟数不影响每次 push；内部 deadline 照旧 24m 没动。
+    timeout-minutes: 35
     env:
       # 浏览器那段要本机 Chrome + playwright-core，runner 上没有对应物；显式跳过并**在日志里
       # 带上原因**，别让"没跑到"被读成"全绿"（gate.py 与 smoke_check 都是这个口径）。
@@ -395,11 +436,27 @@ jobs:
 
       - name: gate.py 全量（覆盖率 + 前端 + 壳 + 离线冒烟）
         # 同 `--ci` 那一步：runner 的读数不落进入库那份（R28-74，理由写在那儿）
-        # deadline 24 的算法同 `--ci` 那一步（setup 这一趟更重：pip + 两份 npm ci，按 6min 估
-        # —— 这一半是**估**的，不是实测；下一趟绿 run 的每步 ⏱ 读数回来再换成实数）。
         env:
           GATE_READINGS_SCRATCH: "1"
-        run: python scripts/gate.py --deadline-minutes 24
+        # 同 `--ci` 那一步的三层（③ 存在的理由与那句"没实测过 runner 有没有 timeout"都在那儿，
+        # 这里只重算数字）。这一档从前是 deadline 24 + job 30：setup（pip + 两份 npm ci，按
+        # 6min **估**、从没实测过这一档的每步 ⏱）加上 24m **正好顶到 30m 上限** —— 内部那层
+        # 永远轮不到先说话，到点是被 runner 无声杀掉，与 `--ci` 那三趟同一个后果。
+        # 现在：内部 24m（不动，我没资格把没量过的界往里收）< 外部 1620s(27m) < job 35m。
+        # 余量按估的那一侧算：360(估 setup) + 1620 + 30(kill-after) = 2010s < 2100s。
+        # job 预算 30→35 不是放松判据：这一档**手动触发才跑**，抬高只为让外部层能塞进 job
+        # 之前（塞不进去那层就等于不存在）。真健康时长仍等第一趟绿 run 的每步 ⏱ 来说话。
+        run: |
+          command -v timeout >/dev/null || {
+            echo '❌ runner 上没有 GNU timeout：外部墙钟这一层根本没建立 —— 这不等于"没问题"'
+            exit 3
+          }
+          code=0
+          timeout --kill-after=30s 1620s python scripts/gate.py --deadline-minutes 24 || code=$?
+          if [ "$code" = 124 ] || [ "$code" = 137 ]; then
+            echo "❌ 外部墙钟（timeout 27m）把这趟杀了：进程内的看门狗没做到 —— 见 --ci 那一步的 ③"
+          fi
+          exit "$code"
 
   windows-test:
     name: Windows 测试臂（每次 push/PR）

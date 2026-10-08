@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -77,12 +78,89 @@ def test_the_watchdog_fires_while_the_main_thread_is_stuck(
     monkeypatch.setattr(gate, "_WATCHDOG_EXIT", lambda code: fired.append(code))
     gate._CURRENT[0] = "演示：卡住的这步"
     gate._arm_watchdog(time.perf_counter(), 0.3, [("pytest(-x, 无覆盖率)", 12.3)])
-    time.sleep(1.0)
+    out = ""
+    # 现场打在**另一条线程**上（那条线程可以卡住、可以被打断，见下面那一格），所以这里
+    # 轮询到"最后一行出现"为止，不能睡固定时长就断言 —— 那是给自己造一条抖动的用例。
+    stop = time.perf_counter() + 6.0
+    while time.perf_counter() < stop:
+        out += capsys.readouterr().out
+        if "失败步骤：全局墙钟" in out and fired:
+            break
+        time.sleep(0.05)
     assert fired == [3], f"到点没退出（或退错码）：{fired}"
-    out = capsys.readouterr().out
     assert "被全局墙钟掐停" in out and "演示：卡住的这步" in out, "要点名此刻在跑哪一步"
     assert "卡在这一行" in out and "test_gate_step_timeout" in out, "栈要点名卡住的调用处"
     assert "pytest(-x, 无覆盖率)" in out, "已完成步骤的汇总不能丢 —— 那是唯一的时间线"
+
+
+def test_the_watchdog_exits_even_when_the_scene_itself_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """打现场这件事**自己**卡住时，退出照样发生 —— 这条是 run 37830147312 的直接教训。
+
+    那一趟带着 21 分钟的 deadline 仍被杀在 25 分钟（日志照旧没上传）。看门狗到点后原本
+    做三件事：`print` 现场（往 runner 日志管道写：管道没人消化就是阻塞在 write 里）、
+    一次**惰性 import**（主线程卡在 import 上时它握着 import 锁，看门狗排在锁后面）、然后
+    才 `os._exit` —— 前两件任意一件卡住，那把刀就永远轮不到，而这恰恰是"最需要它退出"的
+    那种现场。现在：现场与收孩子放进另一条线程、join 有超时，退出这条路上**一个可阻塞的
+    调用都不留**。宁可丢掉栈那一行，也要换 job 自己结束（failure 上传日志，cancelled 什么都不剩）。
+
+    这一格就是把"现场"换成一个永不返回的替身：到点必须仍然退，且不退在现场线程身上。
+    """
+    gate = _load_gate()
+    fired: list[int] = []
+    stuck = threading.Event()
+
+    def never_returns(_line: str = "") -> None:
+        stuck.wait()  # 永不返回：扮演"管道堵死"
+
+    monkeypatch.setattr(gate, "_WATCHDOG_EXIT", lambda code: fired.append(code))
+    monkeypatch.setattr(gate, "_emit", never_returns)
+    # join 预算缩到 0.5s：这一格要量的不是"十秒够不够"，是"等不到也照退"。
+    monkeypatch.setattr(gate, "_SCENE_BUDGET_SECONDS", 0.5)
+    gate._arm_watchdog(time.perf_counter(), 0.3, [("pytest(-x, 无覆盖率)", 12.3)])
+    deadline = time.perf_counter() + 8.0  # 0.3 上膛 + 0.5 预算，本机 ~0.9s；8s 是给慢机器留的
+    while not fired and time.perf_counter() < deadline:
+        time.sleep(0.05)
+    assert fired == [3], f"现场卡住 ⇒ 看门狗也跟着不退出（这就是那一趟的形状）：{fired}"
+    assert not stuck.is_set(), "现场线程不该被谁等到底 —— 它是可以放弃的"
+
+
+def test_a_hanging_child_killer_does_not_stall_the_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """收孩子卡住（那句惰性 import 排在主线程的 import 锁后面就是这种形状）也不许拖住退出。
+
+    10-09 定过一次"上膛时就把整树终止的实现取到手"，实测代价 454ms + 把 15 个 app 模块拖进
+    门禁进程，撤了；撤的依据不是"卡住不要紧"，而是**形状变了**：收孩子现在跑在一条可以被
+    放弃的线程里。这条用例量的就是这个依据 —— 把 `_terminate_step` 换成永不返回的替身、
+    注册一个"活着的孩子"，到点必须仍然退。谁把收孩子挪回退出那条路上，这条红。
+    """
+    gate = _load_gate()
+    fired: list[int] = []
+    hung = threading.Event()
+
+    class FakeProc:
+        pid = 4242
+
+    def never_finishes(_proc: object) -> None:
+        hung.wait()
+
+    monkeypatch.setattr(gate, "_WATCHDOG_EXIT", lambda code: fired.append(code))
+    monkeypatch.setattr(gate, "_terminate_step", never_finishes)
+    monkeypatch.setattr(gate, "_SCENE_BUDGET_SECONDS", 0.5)
+    with gate._ACTIVE_LOCK:
+        gate._ACTIVE.add(FakeProc())  # type: ignore[arg-type]
+    try:
+        gate._arm_watchdog(time.perf_counter(), 0.3, [])
+        stop = time.perf_counter() + 8.0
+        while not fired and time.perf_counter() < stop:
+            time.sleep(0.05)
+    finally:
+        with gate._ACTIVE_LOCK:
+            gate._ACTIVE.clear()
+        hung.set()  # 放掉那条线程，别让它挂在测试进程里
+    assert fired == [3], f"收孩子卡住把退出一起拖住了：{fired}"
 
 
 def test_the_watchdog_is_not_armed_without_a_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
