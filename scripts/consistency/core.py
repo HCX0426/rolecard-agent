@@ -17,14 +17,9 @@ warns: list[str] = []
 passed = 0
 
 
-# Directories that must never be walked. `ROOT.rglob("*.py")` happily descends into a
-# virtualenv, which made the line-budget metric report 300k lines of site-packages instead
-# of the project (C24).
+#: 遍历时要剪掉的目录名（精确匹配的那批）。
 IGNORED_DIRS = {
     ".git",
-    ".venv",
-    ".venv-dev",
-    ".venv-ocr",
     "venv",
     "__pycache__",
     ".pytest_cache",
@@ -49,6 +44,19 @@ IGNORED_DIRS = {
 _file_walk_cache: dict[tuple[str, ...], list[pathlib.Path]] = {}
 
 
+#: 目录名的**前缀**规则：与 `.gitignore` 的 `.venv*/` 同一条纪律，逐名点名不行（见下面注释）。
+IGNORED_DIR_PREFIXES = (".venv",)
+
+
+def _prune(dirnames: list[str]) -> list[str]:
+    """剪掉不该进的子树：精确名 + `.venv` 前缀。**唯一出处**，两处遍历都调它。"""
+    return [
+        d
+        for d in dirnames
+        if d not in IGNORED_DIRS and not d.startswith(IGNORED_DIR_PREFIXES)
+    ]
+
+
 def iter_files(*suffixes: str) -> list[pathlib.Path]:
     """Repo files, skipping environments, caches and generated data.
 
@@ -63,7 +71,7 @@ def iter_files(*suffixes: str) -> list[pathlib.Path]:
     found: list[pathlib.Path] = []
     for dirpath, dirnames, filenames in os.walk(ROOT):
         # 原地剪枝：巨树（node_modules / .venv / data …）整个不进入，而不是进入后再过滤。
-        dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS]
+        dirnames[:] = _prune(dirnames)
         for name in filenames:
             if suffixes and pathlib.Path(name).suffix not in suffixes:
                 continue
