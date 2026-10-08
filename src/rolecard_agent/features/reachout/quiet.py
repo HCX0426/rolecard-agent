@@ -17,7 +17,7 @@ from typing import NamedTuple
 from rolecard_agent.base.identity import resolve_instance_identity
 from rolecard_agent.config import Settings
 from rolecard_agent.core.common.thread_locks import thread_is_busy
-from rolecard_agent.core.proactive_thread import proactive_thread_id
+from rolecard_agent.core.proactive.proactive_thread import proactive_thread_id
 from rolecard_agent.roles.models import RoleCard
 from rolecard_agent.storage.db import SqlConnection
 

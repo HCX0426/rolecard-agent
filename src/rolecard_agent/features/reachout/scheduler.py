@@ -34,7 +34,7 @@ from rolecard_agent.core.file_watch import (
     pending_count as fw_pending_count,
 )
 from rolecard_agent.core.open_threads import find_open_threads
-from rolecard_agent.core.proactive_state import (
+from rolecard_agent.core.proactive.proactive_state import (
     get_state,
     record_interaction,
     record_recall_open,

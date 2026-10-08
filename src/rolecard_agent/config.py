@@ -227,7 +227,7 @@ class Settings(BaseModel):
     # 设成 0 或负数 = 不设上限（仅调试用）。
     tool_timeout_seconds: float = 120.0
 
-    # v2.5 跨会话记忆（core/memory.py + core/agent/prompts.py）总开关。True = 面板可管理记忆、
+    # v2.5 跨会话记忆（core/memory/ + core/agent/prompts.py）总开关。True = 面板可管理记忆、
     # 记忆文本注入每轮 system prompt、memory_save 工具可用（AI 检测到用户明确说出的
     # 可复用事实时写入）；False = 上述全部关闭。默认开：记忆是本项目"跨会话"体验的
     # 一部分，关闭是显式选择（隐私 / 干净上下文）。

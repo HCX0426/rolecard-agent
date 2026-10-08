@@ -1,4 +1,4 @@
-"""提取精华 / 整理记忆（core/memory_distill.py）的用例：全部离线，假模型给固定文本。
+"""提取精华 / 整理记忆（core/memory/memory_distill.py）的用例：全部离线，假模型给固定文本。
 
 四条必须钉住的性质（都是"改用户记忆"这类功能最容易做错的地方）：
 
@@ -17,7 +17,7 @@ import pytest
 
 from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.core import memory as mem
-from rolecard_agent.core import memory_distill as distill
+from rolecard_agent.core.memory import memory_distill as distill
 from rolecard_agent.core.storage.migrations import MIGRATION_PLAN
 from rolecard_agent.storage.db import SqlConnection, bootstrap, connect
 

@@ -2,7 +2,7 @@
 
 "她说出口的那句话去了哪里"在本模块答完：落一条 `agent_reachout`（unread）→ 标已读 / 划掉 /
 清理，按人（多租户）按角色列收件箱；"能继续谈"的那一侧是每条确定性的主动会话（id 的算法
-在 `core/proactive_thread.py` —— 那条约定跨模块共用，不属本功能私有），投递成功与否以
+在 `core/proactive/proactive_thread.py` —— 那条约定跨模块共用，不属本功能私有），投递成功与否以
 `delivered_at` 记，欠投的按时间窗补投。
 
 抑制判定不在这里（`quiet.py`），触发评估与生成不在这里（`triggers.py`），
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from rolecard_agent.core.proactive_thread import (
+from rolecard_agent.core.proactive.proactive_thread import (
     PROACTIVE_THREAD_PREFIX,
     proactive_thread_id,
 )

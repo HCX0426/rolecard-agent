@@ -2,7 +2,7 @@
 
 为什么住在 core 而不是主动开口那个功能包里（2026-10-04 审查快照"core 装了产品功能"那一族）：
 这条线程的 id 是**跨模块的事实面** —— 内核的主动开口投递（`core/proactive.py`）、会话时间线
-（`core/timeline.py`）、接入层的收件箱跳转与桌宠落点（`api/routers/sessions.py`）都要认同一条
+（`core/proactive/timeline.py`）、接入层的收件箱跳转与桌宠落点（`api/routers/sessions.py`）都要认同一条
 线。把 id 的算法放在其中任何一个消费方里，剩下几个就得反向 import 那个模块；放进 core，
 方向就统一成"功能与接入层都往下认这份约定"。
 

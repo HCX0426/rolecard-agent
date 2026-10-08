@@ -18,8 +18,8 @@ from pathlib import Path
 import pytest
 
 from rolecard_agent.base.identity import DEFAULT_USER_ID, ensure_identity_row
-from rolecard_agent.core import timeline
 from rolecard_agent.core.memory import GLOBAL_BUCKET, add_item
+from rolecard_agent.core.proactive import timeline
 from rolecard_agent.features.reachout import (
     clear_all_inboxes,
     delete_reachout,

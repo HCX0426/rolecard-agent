@@ -35,7 +35,7 @@ from rolecard_agent.core.memory import (
     memory_for_turn,
     top_active_item,
 )
-from rolecard_agent.core.proactive_state import (
+from rolecard_agent.core.proactive.proactive_state import (
     DEFAULT_AFFINITY_THRESHOLD,
     ProactiveState,
     get_state,

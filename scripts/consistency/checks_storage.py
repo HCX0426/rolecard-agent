@@ -324,7 +324,9 @@ def check_sync_write_ownership() -> None:
         return found
 
     sync_writes = insert_literals(src / "features" / "sync.py")
-    memory_writes = insert_literals(src / "core" / "memory.py")
+    # memory.py 的正文随 P3-7 第三刀成为 `core/memory/__init__.py`（路径按件拼装，
+    # prose 级 `core/…` 扫描看不见这一处 —— 崩在 FileNotFoundError 才被点名）。
+    memory_writes = insert_literals(src / "core" / "memory" / "__init__.py")
     inbox_writes = insert_literals(src / "features" / "reachout" / "inbox.py")
     hollow = not memory_writes or not inbox_writes
     ok = not sync_writes and not hollow
@@ -364,17 +366,17 @@ WRITE_TXN_HELPERS = frozenset(
     {
         "src/rolecard_agent/core/storage/checkpointer.py::_set_flag",
         "src/rolecard_agent/core/storage/checkpointer.py::_drop_orphan_writes",
-        "src/rolecard_agent/core/memory_distill.py::extract",
+        "src/rolecard_agent/core/memory/memory_distill.py::extract",
         # model_settings 拆包后（2026-10-04 审查快照 P1-6）这个方法住在 read mixin 里。
         "src/rolecard_agent/core/model_settings/read.py::_write_chat_refs",
-        "src/rolecard_agent/core/plugins.py::_bump_tool_epoch",
+        "src/rolecard_agent/core/plugins/__init__.py::_bump_tool_epoch",
         # 2026-10-04 sync 写入口归 owner：这两段从 `core/sync.py` 的 `_write_memory` /
         # `_write_reachout`（该模块后迁 `features/`）搬进各自的 owner，**不收口**的性质不变
         # —— 与随后的导入共用
         # 一个事务，收口点仍是 `features/sync_service.run_import`。memory 的插入半边是
         # 模块级 `_restore_insert`（写语句在它体内；闭包的名字进不了这份名单）。
-        "src/rolecard_agent/core/memory.py::_restore_insert",
-        "src/rolecard_agent/core/memory.py::restore_row",
+        "src/rolecard_agent/core/memory/__init__.py::_restore_insert",
+        "src/rolecard_agent/core/memory/__init__.py::restore_row",
         # 2026-10-04 P1-6（迁移注册表）：形状迁移从 `storage/db.py::_migrate` 搬进
         # `core/migrations.py` 的步骤，**收口纪律随代码一起搬** —— 每步自己收口（上面
         # `_backfill_service_endpoint_owner` 那一族）或点名收口点（下面两条）。

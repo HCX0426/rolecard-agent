@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from rolecard_agent.core.proactive_thread import proactive_thread_id
+from rolecard_agent.core.proactive.proactive_thread import proactive_thread_id
 from rolecard_agent.storage.db import SqlConnection
 
 #: 每个源最多扫这么多行（倒序取新的）。轴是给人翻"最近的事"，不是全量归档；

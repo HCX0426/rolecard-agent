@@ -38,7 +38,7 @@ from rolecard_agent.core.bootstrap import GatewayContext
 from rolecard_agent.core.common.thread_locks import release_thread, try_thread_write
 from rolecard_agent.core.memory import memory_for_turn
 from rolecard_agent.core.plugins import PluginService
-from rolecard_agent.core.proactive_thread import (
+from rolecard_agent.core.proactive.proactive_thread import (
     ensure_proactive_thread,
     proactive_thread_id,
 )

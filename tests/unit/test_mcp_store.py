@@ -1,4 +1,4 @@
-"""MCP 接入存储层（core/mcp_store.py）的单元测试（全离线，无网络）。
+"""MCP 接入存储层（core/plugins/mcp_store.py）的单元测试（全离线，无网络）。
 
 钉住四件事：CRUD 与局部更新 round-trip（headers 省略=保留、传{}=清空）、id/URL 校验
 （尤其 SSRF：拒回环/私网/link-local）、env ∪ 表 的合并语义（表覆盖、禁用行抑制）、
@@ -12,7 +12,7 @@ import sqlite3
 import pytest
 
 from rolecard_agent.config import McpServerConfig
-from rolecard_agent.core import mcp_store
+from rolecard_agent.core.plugins import mcp_store
 
 
 def test_create_get_list_delete(conn: sqlite3.Connection) -> None:

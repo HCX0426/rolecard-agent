@@ -889,7 +889,7 @@ def consolidate_memory(
     只写 `invalidated_at` / `superseded_by`，不物理删任何行 —— 整理坏了最坏是回滚一个标记。
     """
     from rolecard_agent.core import memory as mem
-    from rolecard_agent.core import memory_distill
+    from rolecard_agent.core.memory import memory_distill
 
     if not ctx.settings.memory_enabled:
         raise HTTPException(status_code=400, detail="跨会话记忆当前是关闭的 —— 先打开它再整理。")

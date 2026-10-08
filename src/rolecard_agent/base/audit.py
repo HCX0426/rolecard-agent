@@ -1,7 +1,7 @@
 """审计写入的**唯一咽喉**（2026-10-02 轮 `R102-07`）。
 
 从前这条链上有**五份**逐字相同的 `INSERT INTO audit_log`：`roles/service.py`（api 侧 55 处
-全借它，于是"审计的咽喉挂在一个名字只谈角色卡的服务上"）、`core/plugins.py`，以及
+全借它，于是"审计的咽喉挂在一个名字只谈角色卡的服务上"）、`core/plugins/`，以及
 `core/tools/{files,mcp,run}.py` 三个工具模块。同一条留痕语句抄五遍的代价就是本仓那一族
 事故的形状：改一处口径（actor 怎么填、detail 怎么编码、写完要不要 commit），另外四处静默
 不动 —— 而 `detail` 的编码从前真的不一致（`mcp` 那份额外用 `default=str`，另外四份遇到

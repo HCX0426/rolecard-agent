@@ -19,7 +19,7 @@ def check_audit_action_vocabulary() -> None:
     """审计的两侧都要有尺子（2026-10-02 轮 `R102-07` + `R102-14`）。
 
     **第一侧：一条 INSERT 只许有一份。** 审计从前有五个写入点 —— `roles/service.py`
-    （api 侧 55 处全借它）、`core/plugins.py`、`core/tools/{files,mcp,run}.py` —— 五份
+    （api 侧 55 处全借它）、`core/plugins/`、`core/tools/{files,mcp,run}.py` —— 五份
     逐字相同的 `INSERT INTO audit_log`。改一处口径而另外四处不动，正是本仓那一族事故的
     形状（`detail` 的编码从前真的不一致：只有 `mcp` 那份额外用 `default=str`）。
     现在语句只住在 `base/audit.py`，出现次数必须 = 1。

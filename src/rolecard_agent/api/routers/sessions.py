@@ -27,7 +27,7 @@ from rolecard_agent.api.message_view import expand_to_turns, serialize_message
 from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.base.text import text_of
 from rolecard_agent.config import Settings
-from rolecard_agent.core import memory_distill, model_settings, session_service
+from rolecard_agent.core import model_settings, session_service
 from rolecard_agent.core.agent.graph import build_graph_config
 from rolecard_agent.core.agent.state import new_state, now_ts
 from rolecard_agent.core.common.thread_locks import (
@@ -37,7 +37,8 @@ from rolecard_agent.core.common.thread_locks import (
 )
 from rolecard_agent.core.common.usage import TokenUsage, record_usage
 from rolecard_agent.core.ingest import upload_service
-from rolecard_agent.core.proactive_thread import (
+from rolecard_agent.core.memory import memory_distill
+from rolecard_agent.core.proactive.proactive_thread import (
     PROACTIVE_THREAD_PREFIX,
     ensure_proactive_thread,
     proactive_thread_id,

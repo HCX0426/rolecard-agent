@@ -46,7 +46,7 @@ from langchain_core.messages import AIMessage, HumanMessage  # noqa: E402
 from rolecard_agent.api.main import create_app  # noqa: E402
 from rolecard_agent.base.observability import TraceEvent  # noqa: E402
 from rolecard_agent.core.agent.graph import build_graph_config  # noqa: E402
-from rolecard_agent.core.proactive_state import (  # noqa: E402
+from rolecard_agent.core.proactive.proactive_state import (  # noqa: E402
     AFFINITY_DECAY_PER_DAY,
     get_state,
 )
@@ -222,7 +222,9 @@ def _force_timer_experiment(
     这一格量的是**修法值不值**：如果 R26-03 的修法（给 affection 加开关/衰减、把扫描窗口
     从"没接住那截"改成"最近一窗"）落地，扫描实际会拿到什么素材、又是被哪一档抢先。
     """
-    from rolecard_agent.core.proactive_state import save_state  # 局部导入：只有这格要写状态
+    from rolecard_agent.core.proactive.proactive_state import (
+        save_state,  # 局部导入：只有这格要写状态
+    )
 
     rt.conn.execute("DELETE FROM agent_reachout")  # 去掉间隔/未读两道抑制，让触发链裸露
     for role in roles:

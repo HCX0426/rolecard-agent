@@ -403,7 +403,7 @@ def check_coverage_threshold() -> None:
 #:     自己填"我是谁"），所以工具的 `current_user` 只能是装配期定下的零参闭包，运行期现问；
 #:   * `core/model_resolver.py::resolve_role_model`：凭据按本轮主人取（M2d），且它带
 #:     `user_id` 显式入参给跨线程调用方 —— **只有没传且没绑**才走这里；
-#:   * `core/memory.py::make_memory_tool.memory_save`：工具签名里刻意没有 user_id（同上那条
+#:   * `core/memory/::make_memory_tool.memory_save`：工具签名里刻意没有 user_id（同上那条
 #:     零参纪律），调用方（tools 节点）手里有 state 却没法塞进工具入参 —— 这是①收拢后
 #:     **唯一**留下的现问点，也是"为什么不直接改图入口就完事"的答案。
 #:
@@ -412,7 +412,9 @@ def check_coverage_threshold() -> None:
 IDENTITY_IMPLICIT_READS: dict[str, str] = {
     "src/rolecard_agent/api/main.py::_host_registry_factory": "工具对模型零参",
     "src/rolecard_agent/core/model_resolver.py::resolve_role_model": "凭据按本轮主人取",
-    "src/rolecard_agent/core/memory.py::make_memory_tool.memory_save": "工具签名里没有 user_id",
+    "src/rolecard_agent/core/memory/__init__.py::make_memory_tool.memory_save": (
+        "工具签名里没有 user_id"
+    ),
 }
 
 
@@ -514,9 +516,10 @@ def check_session_thread_write_seam() -> None:
 
     这条表从前有七个写入者：`api/routers/sessions.py`（5 处）、`core/sync.py`（2，该模块
     后迁 `features/`）、
-    `core/reachout/inbox.py`（后迁 `features/`）、`core/memory_distill.py`、`roles/service.py`、
-    `api/routers/sync.py` 各 1 —— 而它的每一条写都有道理（毫秒 `updated_at` 是为了侧栏同秒
-    能分先后、`title` 的 `COALESCE` 是"只兜第一次"、`distilled_at_seq` 是游标不是计数）。
+    `core/reachout/inbox.py`（后迁 `features/`）、`core/memory/memory_distill.py`、
+    `roles/service.py`、`api/routers/sync.py` 各 1 —— 而它的每一条写都有道理（毫秒
+    `updated_at` 是为了侧栏同秒能分先后、`title` 的 `COALESCE` 是"只兜第一次"、
+    `distilled_at_seq` 是游标不是计数）。
     道理散在七处，就等于哪一处都没有：`R102-62` 抄 7 遍的那条 SQL 是同一件事。
 
     判据只数**代码里的字符串常量**（与 `audit action vocabulary` 同一条纪律：注释里提到

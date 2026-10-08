@@ -31,7 +31,7 @@ from rolecard_agent.base.identity import ensure_identity_row, resolve_instance_i
 from rolecard_agent.base.observability import TraceEvent, Tracer, logline, make_tracer
 from rolecard_agent.base.paths import user_data_root
 from rolecard_agent.config import Settings
-from rolecard_agent.core import mcp_store, runtime_settings
+from rolecard_agent.core import runtime_settings
 from rolecard_agent.core.agent.graph import build_kernel, build_model
 from rolecard_agent.core.agent.nodes import ChatLike
 from rolecard_agent.core.common.approvals import ApprovalService, sweep_interrupted
@@ -40,7 +40,7 @@ from rolecard_agent.core.ingest.ingestion import IngestionService
 from rolecard_agent.core.ingest.knowledge_sources import KnowledgeSourceStore
 from rolecard_agent.core.model_resolver import ModelResolver
 from rolecard_agent.core.model_settings import ModelSettingsService, client_style
-from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
+from rolecard_agent.core.plugins import PluginService, mcp_store, seed_plugin_rows
 from rolecard_agent.core.retention import prune_retention_tables
 from rolecard_agent.core.services import ServiceEndpointService
 from rolecard_agent.core.storage.checkpointer import make_checkpointer

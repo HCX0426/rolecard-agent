@@ -1,4 +1,4 @@
-"""事件簿那条轴（`core/timeline.py`）的用例。
+"""事件簿那条轴（`core/proactive/timeline.py`）的用例。
 
 钉的是四件容易做错的事：
 
@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from rolecard_agent.core import memory as mem
-from rolecard_agent.core import timeline
+from rolecard_agent.core.proactive import timeline
 from rolecard_agent.storage.db import SqlConnection, bootstrap, connect
 
 ROLE = "elysia"

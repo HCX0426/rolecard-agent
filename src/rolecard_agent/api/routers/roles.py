@@ -22,7 +22,7 @@ from rolecard_agent.api.deps import (
     get_actor,
     get_context,
 )
-from rolecard_agent.core import timeline
+from rolecard_agent.core.proactive import timeline
 from rolecard_agent.roles.models import RoleCardCreate, RoleCardUpdate
 
 router = APIRouter()

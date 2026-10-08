@@ -21,7 +21,7 @@ from rolecard_agent.config import Settings
 from rolecard_agent.core import file_watch as fw
 from rolecard_agent.core.common.workspace import resolve_task_dir
 from rolecard_agent.core.memory import add_item
-from rolecard_agent.core.proactive_state import DEFAULT_AFFINITY_THRESHOLD, get_state
+from rolecard_agent.core.proactive.proactive_state import DEFAULT_AFFINITY_THRESHOLD, get_state
 from rolecard_agent.features import reachout as svc
 from rolecard_agent.features.reachout import ReachoutScheduler
 from rolecard_agent.roles.models import RoleCard
@@ -834,7 +834,7 @@ def test_proactive_state_is_scoped_per_person(conn) -> None:
     role_card 主键改成 (user_id, role_id) 那天会自然出现的形状（B2 就是为它换的表）。
     三个断言：各读各的、A 写不影响 B、proactive_thread_id 也带身份。
     """
-    from rolecard_agent.core.proactive_state import (
+    from rolecard_agent.core.proactive.proactive_state import (
         record_interaction,
         save_state,
     )
@@ -1530,7 +1530,7 @@ def test_used_topics_are_consumed_so_they_drive_only_one_open(conn) -> None:
     可以在两次开口里各冒一次，用户读到的就是"她为同一件事找了我两次"。清空但**保留时刻**：
     既不再重复冒，也不会下一秒又花一次模型调用。
     """
-    from rolecard_agent.core.proactive_state import save_open_threads
+    from rolecard_agent.core.proactive.proactive_state import save_open_threads
 
     utc, local = _now()
     save_open_threads(
@@ -1589,7 +1589,7 @@ def test_a_failed_scan_does_not_shut_the_source_down_for_90_minutes(conn) -> Non
 
 def test_a_fresh_cache_is_used_without_spending_another_call(conn) -> None:
     """这一源的全部代价在那一次模型调用上：缓存没过期就**一个字节都不该问**。"""
-    from rolecard_agent.core.proactive_state import save_open_threads
+    from rolecard_agent.core.proactive.proactive_state import save_open_threads
 
     utc, local = _now()
     save_open_threads(
@@ -1607,7 +1607,7 @@ def test_a_fresh_cache_is_used_without_spending_another_call(conn) -> None:
 
 
 def test_an_expired_cache_is_rescanned(conn) -> None:
-    from rolecard_agent.core.proactive_state import save_open_threads
+    from rolecard_agent.core.proactive.proactive_state import save_open_threads
 
     utc, local = _now()
     stale_at = utc - timedelta(minutes=svc.OPEN_THREADS_REFRESH_MINUTES + 1)
@@ -1680,7 +1680,7 @@ def test_affection_toggle_frees_the_rest_of_the_chain(conn) -> None:
 
     这条同时是"第五由头在生产上可达"的正证：四档全关 ⇒ `fired` 落到链尾的 timer ⇒ 扫描发生。
     """
-    from rolecard_agent.core.proactive_state import save_state
+    from rolecard_agent.core.proactive.proactive_state import save_state
 
     utc, local = _now()
     state = get_state(conn, "active", user_id=ME)
@@ -1718,7 +1718,7 @@ def test_affection_toggle_frees_the_rest_of_the_chain(conn) -> None:
 
 def test_recall_cools_down_after_it_actually_spoke(conn) -> None:
     """回忆档一天最多用一次：它的判据（有没有 active 记忆）只会越来越真，不冷却就永久命中。"""
-    from rolecard_agent.core.proactive_state import record_recall_open
+    from rolecard_agent.core.proactive.proactive_state import record_recall_open
 
     add_item(conn, user_id=ME, bucket="active", text="用户下周要体检")
     local = _now_local()
@@ -1755,7 +1755,7 @@ def test_the_open_thread_task_offers_a_way_out() -> None:
 
 def test_open_threads_stale_only_by_age_or_never_scanned() -> None:
     """"从没扫过"与"扫了但没结果"必须分得开：后者在过期之前不该再花一次调用。"""
-    from rolecard_agent.core.proactive_state import ProactiveState
+    from rolecard_agent.core.proactive.proactive_state import ProactiveState
 
     now = datetime.now(_UTC)
     assert svc.open_threads_stale(ProactiveState(role_id="x"), now=now) is True

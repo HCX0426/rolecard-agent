@@ -235,7 +235,7 @@ def test_deleting_a_role_takes_her_own_state_with_it(
     用户读到的是"我删掉的角色还记得我从没说过的事"。
     """
     from rolecard_agent.core.memory import add_item
-    from rolecard_agent.core.proactive_state import get_state, save_state
+    from rolecard_agent.core.proactive.proactive_state import get_state, save_state
 
     cards(roles).create(_new("ghost"))
     add_item(conn, user_id=ME, bucket="ghost", text="用户下周要体检")
