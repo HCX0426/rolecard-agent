@@ -23,11 +23,14 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
+import zipfile
 from pathlib import Path
 
 # pinned gitleaks release（与 ① 的依赖审计同样的「锁版本」思路：不追 latest，
@@ -41,13 +44,16 @@ for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
-# 从官方源拉二进制的回退地址（主 + 镜像）。都是静态 release 资产，与 py 包无关。
-_GITLEAKS_URLS = [
-    f"https://github.com/gitleaks/gitleaks/releases/download/{GITLEAKS_VERSION}"
-    "/gitleaks_{GITLEAKS_VERSION[1:]}_windows_x86_64.tar.gz",
-    f"https://github.com/gitleaks/gitleaks/releases/download/{GITLEAKS_VERSION}"
-    "/gitleaks_{GITLEAKS_VERSION[1:]}_linux_x86_64.tar.gz",
-]
+#: 按平台的 release 资产：`(文件名, 归档格式)`。名字**照 GitHub 上真有的抄**（10-09 用 API
+#: 现读出来的：Windows 那份是 `.zip`、后缀 `x64`；Linux/Darwin 才是 `.tar.gz`）。我第一版
+#: 按"以为的形状"写成 `windows_x86_64.tar.gz` ⇒ 404 —— 而 404 在 fail-closed 下与"离线"长得
+#: 一模一样，这种错只能靠**真装一次**照出来，读代码读不出来。
+_VER = GITLEAKS_VERSION[1:]  # v8.18.4 → 8.18.4（资产名里的版本号不带 v）
+_ASSET_BY_OS = {
+    "Windows": (f"gitleaks_{_VER}_windows_x64.zip", "zip"),
+    "Linux": (f"gitleaks_{_VER}_linux_x64.tar.gz", "tar"),
+    "Darwin": (f"gitleaks_{_VER}_darwin_x64.tar.gz", "tar"),
+}
 
 
 def _tool_path() -> Path | None:
@@ -57,41 +63,158 @@ def _tool_path() -> Path | None:
     return None
 
 
+def _extract_binary(archive: Path, fmt: str, binary_name: str) -> bytes | None:
+    """从归档里取那一个二进制的内容；取不到返回 None（调用方如实失败）。
+
+    只**读**那一个成员进内存，从不 `extractall` —— 所以归档里写什么逃逸路径都到不了盘上，
+    落点永远是调用方给的 `cache/binary_name`。这比"解出来再防逃逸"少一层可以出错的机制。
+    """
+    if fmt == "zip":
+        with zipfile.ZipFile(archive) as zf:
+            for info in zf.infolist():
+                if Path(info.filename).name == binary_name and not info.is_dir():
+                    return zf.read(info)
+        return None
+    with tarfile.open(archive) as tf:
+        for member in tf.getmembers():
+            if Path(member.name).name == binary_name and member.isfile():
+                src = tf.extractfile(member)
+                if src is None:
+                    # 名义上是文件却取不出内容：如实失败，不猜成"空的也能用"。
+                    return None
+                return src.read()
+    return None
+
+
+def _download_asset(cache: Path, binary_name: str) -> Path | None:
+    """按平台直连官方 release 资产；离线/失败/解不出都返回 None（交给 fail-closed）。
+
+    Windows 上这条路从前**根本不存在**：`_install_to` 的注释写着"Windows 走 git-bash 或跳过"，
+    而代码是 `installer = which(bash) if system != Windows else None` —— Windows 直接被设成
+    None，git-bash 从来没被尝试过。后果不是崩，是**这台机器上 `密钥扫描` 恒退 2**：本地全量
+    档的红线从此永远踩不动（"扫不成"的红与"从没扫过"在退出码上长得一模一样，正是本仓最忌讳
+    的那种像）。`_GITLEAKS_URLS` 那两条地址从前写了没人用 —— 死代码也是第二份事实面，删了。
+    """
+    import platform
+    import urllib.request
+
+    picked = _ASSET_BY_OS.get(platform.system())
+    if picked is None:
+        print(f"[scan_secrets] 这个平台没有现成的 gitleaks 资产：{platform.system()}",
+              file=sys.stderr)
+        return None
+    asset, fmt = picked
+    url = f"https://github.com/gitleaks/gitleaks/releases/download/{GITLEAKS_VERSION}/{asset}"
+    print(f"[scan_secrets] 直连拉取 {asset}（离线会失败，按红线当红）", file=sys.stderr)
+    tmp = cache / asset
+    target = cache / binary_name
+    data: bytes | None = None
+    try:
+        with urllib.request.urlopen(url, timeout=120) as resp, tmp.open("wb") as fh:
+            shutil.copyfileobj(resp, fh)
+        data = _extract_binary(tmp, fmt, binary_name)
+    except Exception as exc:  # noqa: BLE001 — 装不到就是装不到，如实交给 fail-closed
+        print(f"[scan_secrets] 直连拉取失败：{type(exc).__name__}: {exc}", file=sys.stderr)
+        return None
+    finally:
+        tmp.unlink(missing_ok=True)
+    if data is None:
+        print(f"[scan_secrets] 资产里没有 {binary_name}：{asset}", file=sys.stderr)
+        return None
+    target.write_bytes(data)
+    with contextlib.suppress(OSError):  # Windows 上执行位是个装饰，不该为此丢这次扫描
+        target.chmod(0o755)
+    return target
+
+
 def _install_to(cache: Path) -> Path | None:
     """联网时拉一个临时副本到缓存目录；离线或失败都返回 None（交给 fail-closed）。
 
-    用 gitleaks 官方 install 脚本（按平台解析正确的 release 资产，避免手拼 URL 404）。
-    CI 的 Linux runner 上这一段能真正装到（有网络），于是红线可达；本机离线时
-    install 脚本也装不到，按 fail-closed 退 2。
+    两条路：非 Windows 先试官方 install 脚本（按平台解析资产，省事）；任何一条路最后都
+    还有 `_download_asset` 的直连兜底。**Windows 只有直连这一条**（没有可靠的 bash）。
+    CI 的 Linux runner 上这两条都通，红线可达。
     """
     import platform
-    import shutil
 
     cache.mkdir(parents=True, exist_ok=True)
-    target = cache / ("gitleaks.exe" if platform.system() == "Windows" else "gitleaks")
+    binary = "gitleaks.exe" if platform.system() == "Windows" else "gitleaks"
+    target = cache / binary
     if target.exists():
         return target
-    # 先试官方 install 脚本（Linux/macOS 走 bash；Windows 走 git-bash 或跳过）。
-    installer = shutil.which("bash") if platform.system() != "Windows" else None
-    if installer:
-        msg = "[scan_secrets] 本地无 gitleaks，用官方 install 脚本拉取（离线会失败，按红线当红）"
-        print(msg, file=sys.stderr)
-        try:
-            script = "https://raw.githubusercontent.com/gitleaks/gitleaks/master/scripts/install.sh"
-            cmd_line = f"curl -sSfL {script} | bash -s -- -b {cache} {GITLEAKS_VERSION}"
-            proc = subprocess.run(
-                [installer, "-c", cmd_line],
-                capture_output=True, text=True, timeout=120,
+    if platform.system() != "Windows":
+        installer = shutil.which("bash")
+        if installer:
+            print(
+                "[scan_secrets] 本地无 gitleaks，用官方 install 脚本拉取（离线会失败，按红线当红）",
+                file=sys.stderr,
             )
-            if proc.returncode == 0 and target.exists():
-                return target
-            tail = proc.stderr.strip()[-500:]
-            print(f"[scan_secrets] install 脚本失败：{tail}", file=sys.stderr)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[scan_secrets] install 脚本异常：{exc}", file=sys.stderr)
-    msg = "[scan_secrets] 装不到 gitleaks（离线或网络不可达），按红线当红（exit=2）"
-    print(msg, file=sys.stderr)
-    return None
+            try:
+                script = "https://raw.githubusercontent.com/gitleaks/gitleaks/master/scripts/install.sh"
+                cmd_line = f"curl -sSfL {script} | bash -s -- -b {cache} {GITLEAKS_VERSION}"
+                proc = subprocess.run(
+                    [installer, "-c", cmd_line],
+                    capture_output=True, text=True, timeout=120,
+                )
+                if proc.returncode == 0 and target.exists():
+                    return target
+                tail = proc.stderr.strip()[-500:]
+                print(f"[scan_secrets] install 脚本失败：{tail}", file=sys.stderr)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[scan_secrets] install 脚本异常：{exc}", file=sys.stderr)
+    return _download_asset(cache, binary)
+
+
+def _tracked_files(repo: Path) -> list[str]:
+    """"这份要发出去的源码"= tracked + 没被忽略的未跟踪。由 git 自己答，不抄第二份规则。
+
+    从前这里靠 `--no-git` 直扫工作树 + 配置里一份目录黑名单去逼近同一个语义 —— 两处都是假的：
+    `--no-git` 是**盘上全扫、根本不看 .gitignore**，而黑名单两种写法实测都 over-match
+    （`[/\\]build[/\\]` 与裸 `build/` 一样都命中 `shell/build/icon.ico` —— 那是 tracked 的
+    出货图标，实测过匹配）。影子树的范围由名单**正向**圈定，仓内 `.venv` 那 23 条第三方
+    假阳连进范围的机会都没有；判据也不再需要任何目录形状。
+    """
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "ls-files", "--cached", "--others", "--exclude-standard"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"git ls-files -> {proc.returncode}：{proc.stderr.strip()[:200]}")
+    return [ln for ln in proc.stdout.splitlines() if ln.strip()]
+
+
+def _shadow_tree(repo: Path, files: list[str]) -> Path:
+    """按名单拷一份影子树进临时目录（保留相对结构）；扫描跑在这份上。
+
+    **拷不动就抛**，不许静默跳过：名单里有一个文件没进影子树，就等于那份源码**免检** ——
+    这条红线最坏的形状正是"扫过了、绿了、其实少扫了一个文件"。`is_file()` 为假的那几种
+    （竞态下刚被删、目录项）不在此列：它们本来就没有内容可扫，数出来报给调用方看。
+    """
+    root = Path(tempfile.mkdtemp(prefix="gitleaks-scope-"))
+    missing: list[str] = []
+    try:
+        for rel in files:
+            src = repo / rel
+            if not src.is_file():
+                missing.append(rel)
+                continue
+            dst = root / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)  # 抛出去：按"扫不成"处理，而不是按"没这个文件"处理
+    except Exception:
+        # 影子树含的是**要发布的源码副本**，建到一半失败也不能把它留在 %TEMP% 里等回收。
+        shutil.rmtree(root, ignore_errors=True)
+        raise
+    if missing:
+        print(
+            f"[scan_secrets] 名单里有 {len(missing)} 项此刻不在盘上（竞态/目录项），"
+            f"举例：{missing[:3]}",
+            file=sys.stderr,
+        )
+    return root
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -118,28 +241,66 @@ def main(argv: list[str] | None = None) -> int:
         print(msg, file=sys.stderr)
         return 2
 
-    # 只扫 tracked 的源码树（排除 node_modules / 大二进制）。gitleaks 自带的 .gitignore
-    # 尊重 + .gitleaks.toml 里再点一遍 allowlist/paths。
-    cmd = [str(tool), "detect", "--source", str(repo), "--config", str(config),
-           "--no-banner", "--exit-code", "1", "--redact"]
+    # 范围：**git 的名单**（tracked + 未忽略的未跟踪）搬进影子树。`--history` 那一档例外 ——
+    # 它扫提交历史，范围本来就是 git 给的（`.venv` 从没被提交过，所以那边也扫不到）。
+    # 名单拿不到（没装 git / 不是工作树 / 空仓库）一律按"扫不成"退 2：范围定不下来不等于干净。
+    shadow: Path | None = None
+    source = repo
     if not args.history:
-        # 当前工作树：不需要 git 历史，离线可跑。
+        try:
+            files = _tracked_files(repo)
+        except Exception as exc:  # noqa: BLE001 — 任何拿不到名单的原因都是同一个后果
+            print(
+                f"[scan_secrets] ❌ 定不出扫描范围：{exc}（扫不成 ≠ 干净，退 2）",
+                file=sys.stderr,
+            )
+            return 2
+        if not files:
+            print("[scan_secrets] ❌ git 名单是空的 —— 不像一份仓库，按扫不成退 2", file=sys.stderr)
+            return 2
+        shadow = _shadow_tree(repo, files)
+        source = shadow
+        print(f"[scan_secrets] 范围 = git 名单 {len(files)} 个文件（影子树）", file=sys.stderr)
+
+    cmd = [str(tool), "detect", "--source", str(source), "--config", str(config),
+           "--no-banner", "--exit-code", "1", "--redact"]
+    if shadow is not None:
+        # 影子树里没有 .git，也不该回头去读原仓库的历史 —— `--no-git` 在这里终于名副其实：
+        # 扫的就是"本次要发出去的那一份源码"。
         cmd.append("--no-git")
-    scope = "全量历史" if args.history else "当前工作树"
-    print(f"[scan_secrets] {scope}扫描：{' '.join(cmd)}", file=sys.stderr)
+    label = "全量历史" if args.history else "本次要发的源码"
+    print(f"[scan_secrets] {label}扫描：{' '.join(cmd)}", file=sys.stderr)
     # 300s 硬超时（2026-10-09）：与依赖审计同一条纪律 —— 挂死必须变成一次**干净的红**，
     # 而不是把整条 CI job 吊到顶穿。顶穿的 run GitHub 不传日志，现场直接消失
     # （run 37804463056 就是这么失去证据的）。`--history` 那档本来就标了"较慢"，
-    # 它由调用方自己决定跑不跑；CI 红线路径（工作树）5 分钟绰绰有余。
+    # 它由调用方自己决定跑不跑；CI 红线路径（本次要发的源码）5 分钟绰绰有余。
+    #
+    # `finally` 那一段是影子树带来的新义务，不是装饰：扫完/超时/任何异常都得把那份
+    # 临时树收掉 —— 里面是**要发布的源码本身**，留在 %TEMP% 里等系统回收，等于让这条
+    # 安全红线自己往外泄一份副本。`ignore_errors` 沿用本仓那两次实测（Windows 上临时
+    # 目录里的句柄删不动、但内容已经不再被读）：收摊失败不该把一次扫完的结论弄没。
+    #
+    # 两条 except 各是一格 fail-closed：`TimeoutExpired` = 吊死；`OSError` = 工具压根起不来
+    # （缓存里那个文件被截断/权限不对）。从前只有前者，后者会让本脚本**抛 traceback** ——
+    # 门禁把 traceback 读成"这一步红了"是对的，但退码就不是约定的 2 了，而这条线的退出码
+    # 是判据（0 干净 / 1 发现 / 2 扫不成）， traceback 那条形状等于新造第四种。
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-    except subprocess.TimeoutExpired:
-        print(
-            "[scan_secrets] ❌ gitleaks 300s 没扫完，按扫不成当红（exit=2）——"
-            "挂死不该把整条 job 拖到被杀",
-            file=sys.stderr,
-        )
-        return 2
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        except subprocess.TimeoutExpired:
+            print(
+                "[scan_secrets] ❌ gitleaks 300s 没扫完，按扫不成当红（exit=2）——"
+                "挂死不该把整条 job 拖到被杀",
+                file=sys.stderr,
+            )
+            return 2
+        except OSError as exc:
+            print(f"[scan_secrets] ❌ gitleaks 起不来：{exc}（扫不成 ≠ 干净，退 2）",
+                  file=sys.stderr)
+            return 2
+    finally:
+        if shadow is not None:
+            shutil.rmtree(shadow, ignore_errors=True)
     out = (proc.stdout or "") + (proc.stderr or "")
 
     if proc.returncode == 0:

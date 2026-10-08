@@ -8,10 +8,11 @@
 #   * 不要为「省事」把某把真 key 的形状加进来 —— 那是把红线开洞。真要放行，
 #     先确认它是 fixture / 文档样例 / 公开 endpoint 三者之一。
 #   * 改完这一份要**两臂变异实测照红**（删一条放行→该形状红；加一条假放行→确认真的漏网）。
+#     2026-10-09 第一次真做了这两臂（见下面 ⚠️ 段），此前的版本从没跑过它。
 #
 # 说明：本仓经 git grep 全量核查，tracked 文件里**没有**任何真密钥
-# （无 sk-/ghp_/AKIA 等实时字符串、无 PEM 私钥文件、无 .env 入库）。所以下面
-# 的 allowlist 纯粹是「挡住默认规则对良性内容的误报」，不是隐蔽真密钥。
+# （无 sk-/ghp_/AKIA 等实时字符串、无 PEM 私钥文件、无 .env 入库）。所以下面的
+# allowlist 纯粹是「挡住默认规则对良性内容的误报」，不是隐蔽真密钥。
 
 title = "rolecard-agent gitleaks 放行清单"
 
@@ -23,15 +24,42 @@ useDefault = true
 # 关闭「通用 API key」这一条：本项目所有真凭据来源（Ollama 本地 / 云端后端凭证明文只写不回读）
 # 都不会以 gitleaks 默认能识别的「赋值给 *_KEY / *_TOKEN 变量名」形状出现；开启它只会
 # 在 .env.example 与各类文档示例上刷一堆假阳。真密钥靠下面 allowlist 挡不住的其它规则兜底。
+# 这一块 2026-10-09 A/B 实测**有效**：不带它 ⇒ 样本命中 generic-api-key，带上 ⇒ 归零。
 [[rules]]
 id = "generic-api-key"
 description = "本项目关闭默认 generic-api-key（凭据不以此形状入库，留其它规则兜底真密钥）"
 allowed = true
 
-[global]
-# 全局放行：正则命中即**整行/整块**不当密钥。下面每条都配注释说明它挡的是哪类良性内容。
-allowlist = [
-    # .env.example 的空值行：AUTH_CREDENTIALS= / SILICONFLOW_API_KEY= / TAVILY_API_KEY= 等
+# 全局放行清单。
+#
+# ⚠️ **表名这一条是 2026-10-09 实测换来的，分量最重**：从前这份把放行写在 `[global]` 下面的
+# `allowlist = [...]` —— 那是 viper 时代的形状，gitleaks v8.18.4 对未知表**静默忽略**。
+# A/B 喂一个必中样本（公开示例 AWS key `AKIAIOSFODNN7EXAMPLE`）：旧写法报 1 条（放行一条都没
+# 跑），顶层 `[allowlist]` 报 0 条。也就是说这条线从前绿着，跟放行配得好不好**没有因果关系** ——
+# 而"没有因果关系的绿"就是没有判据（与本仓 `R102-38` 那一族同一个形状）。
+#
+# 归因也照实测写，不含糊（四臂各跑一遍，都是真配置的内容）：
+#   * 只留上面那块 `[[rules]]`、七条 regex 全没 ⇒ **0 条**；
+#   * `[[rules]]` 与 `[allowlist]` 两块全没 ⇒ **1 条**（`generic-api-key@test_settings_runtime.py`）；
+#   * 只删 `[allowlist]` 里的某一条 regex ⇒ 0 条，看不出差异。
+#  ⇒ **当下真正在挡东西的是 `[[rules]]` 那一块**（关掉 generic-api-key，实测有效，与 A/B 结论一致）；
+#  下面这七条 regex 在当前内容上一条都没在挡 —— 它们是**预防**：将来有文档样例/fixture 撞进
+#  默认规则时不必临时改配置。它们从这一笔起才真的会被读（以前住在死表里）。写在这儿而不是
+#  删掉，是因为"删掉一条没人依赖的放行"与"删掉一条正在挡东西的放行"在两臂实测之前长得一样。
+#
+# **这里没有 `paths` 黑名单，是刻意的**（10-09 实测之后撤掉的）：从前想用目录黑名单挡掉仓内
+# `.venv` 那 23 条第三方假阳，四种候选形状各跑一遍的结果是 —— 锚点 `^\.venv/` 打不中
+# （paths 匹配的是**绝对路径** `C:/…/.venv/Lib/…`），而不带锚点的 `.venv` 与 `[/\\]build[/\\]`
+# 两条**都**连带命中 `shell/build/icon.ico`（那是 tracked 的出货图标，实测过匹配）：黑名单的
+# 过度匹配会把该扫的东西静默免检，比假阳更危险。真正的修法在范围那一侧 ——
+# `scan_secrets.py` 现在扫的是**由 git 名单圈出的影子树**（tracked + 未忽略的未跟踪），
+# `.venv` 与根 `build/` 从来不在名单里（实测：名单 700 个文件里 `.venv` 0 条、根 `build/` 0 条，
+# 而 `shell/build/icon.ico` 1 条与 `frontend/dist` 41 条**在**），所以这一侧不需要目录形状。
+[allowlist]
+  description = "已确认无害的形状（fixture / 文档样例 / 公开 endpoint）"
+
+  regexes = [
+    # .env.example 的空值行：AUTH_CREDENTIALS= / SILICONFLOW_API_KEY= / TAVILY_API_KEY= 等，
     # 等号后为空，不是密钥。
     '''^[A-Z_]+=$''',
     # .env.example 里「=空」之外的占位形状：api_key":"" / base_url":"https://... 等文档样例。
@@ -48,4 +76,4 @@ allowlist = [
     '''(test_token|dummy_token|fake[-_]?token|not-a-real)''',
     # 已知公开示例域名（docker-compose 的 chat.example.invalid、example.com）。
     '''(example\.invalid|example\.com)''',
-]
+  ]
