@@ -20,6 +20,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -97,4 +99,59 @@ def test_前缀规则与gitignore的那条同纪律() -> None:
     )
     assert ".venv-lock" not in src and ".venv-tasks" not in src.split("IGNORED_DIR_PREFIXES")[0], (
         "不许把具体 venv 名再加回点名表 —— 那是第二份事实面"
+    )
+
+
+def test_被剪掉的入库文件里不许藏着引用形状() -> None:
+    r"""**把一次审计落成常驻断言**（2026-10-09 现读：704 个入库文件里有 10 个住在被剪的目录下
+    —— 5 份角色设定 lore、4 个 `.gitkeep`、1 个 `shell/build/icon.ico`；其中含快照编号引用的
+    **0 个**）。
+
+    "现况无害"是巧合而不是设计：`docs/` 那 43 个入库文件在尺子视野内，而同为文档的
+    `data/lore/*.md` 不在 —— 谁往 lore 里写一个能归位的快照编号（举一个不存在的号当例），
+    `audit citations` 与 `audit index in sync` 就**静默看不见它**（剪枝按目录名一刀切，
+    不看里面是不是文档）。
+    这条把那个"暂时没人踩"的形状钉住：要么别在被剪的目录里写编号，要么把它挪进 `docs/`；
+    出现引用又不处理，这里红。
+
+    编号形状**复用尺子自己的 `_PID_RE`**，不自造第二份正则（替身必须跟真签名那条老规矩 ——
+    我第一版顺手写了 `[PR]\d{1,3}-\d{1,3}|R102-\d+|ENGI-\d+`，那是"我以为尺子在用什么"；
+    尺子真用的是 `\b([RP]\d+-\d+)\b`，口径不同，我那条自造的会多抓/少抓，红得就不是同一件事）。
+    """
+    import subprocess
+
+    from consistency.checks_audit import _PID_RE  # 真尺子用的那一条
+
+    tracked = subprocess.run(
+        ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
+    ).stdout.splitlines()
+    if not tracked:
+        pytest.fail("git ls-files 空：这条断言没有分母，不等于通过")
+
+    scan = {".md", ".py", ".toml", ".txt"}
+    offenders: list[tuple[str, list[str]]] = []
+    buried_seen = 0
+    for rel in tracked:
+        parts = rel.split("/")
+        buried = any(
+            p in core.IGNORED_DIRS or p.startswith(core.IGNORED_DIR_PREFIXES)
+            for p in parts[:-1]
+        )
+        if not buried or Path(rel).suffix not in scan:
+            continue
+        buried_seen += 1
+        body = (ROOT / rel).read_text(encoding="utf-8", errors="ignore")
+        hits = sorted(set(_PID_RE.findall(body)))
+        if hits:
+            offenders.append((rel, hits))
+    # 分母哨兵：现况是 10 个入库文件住在被剪的目录下（lore/.gitkeep/icon）。剪枝逻辑哪天
+    # 缩到"什么都没剪"，这条会因 `buried_seen == 0` 当场红 —— 而不是空转"通过"：
+    # 没有分母的绿灯与"量了说干净"长得一样（本仓为这一族立过三次尺子）。
+    assert buried_seen > 0, (
+        "被剪目录下没有任何入库文件可查：分母为 0，这条断言已经不再量任何东西"
+    )
+    assert not offenders, (
+        f"被剪目录里出现了快照编号引用（{buried_seen} 个可查文件之中），两条审计尺子会静默"
+        f"漏看它们：{offenders} —— 挪进 docs/，或者在 core._prune 里为它开一个**有主的**例外"
     )
