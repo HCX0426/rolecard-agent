@@ -102,14 +102,14 @@ def _scans(stub: StubModel) -> int:
 
 
 def _one(rt: Any, sql: str, params: tuple[Any, ...] = ()) -> Any:
-    row = rt.conn.execute(sql, params).fetchone()
+    row = rt.assembly.conn.execute(sql, params).fetchone()
     return list(row).pop() if row is not None else None
 
 
 def _report_state(rt: Any, roles: list[Any], now: datetime) -> None:
     print(f"{'role':16}{'affinity':>10}{'衰减后':>10}{'扫描时刻':>20}{'缓存话题':>10}{'未读':>6}")
     for role in roles:
-        st = get_state(rt.conn, role.role_id, user_id=rt.identity)
+        st = get_state(rt.assembly.conn, role.role_id, user_id=rt.identity)
         unread = _one(
             rt,
             "SELECT COUNT(*) FROM agent_reachout WHERE role_id=? AND state='unread'",
@@ -203,7 +203,9 @@ def _tick(rt: Any, *, when_utc: datetime, when_local: datetime) -> int:
 def _run_tick(rt: Any, stub: StubModel, rec: Recorder, roles: list[Any], label: str,
               when_utc: datetime, when_local: datetime) -> None:
     for role in roles:
-        rt.conn.execute("UPDATE agent_reachout SET state='read' WHERE role_id=?", (role.role_id,))
+        rt.assembly.conn.execute(
+            "UPDATE agent_reachout SET state='read' WHERE role_id=?", (role.role_id,)
+        )
     before = _scans(stub)
     made = _tick(rt, when_utc=when_utc, when_local=when_local)
     traces = [
@@ -226,13 +228,13 @@ def _force_timer_experiment(
         save_state,  # 局部导入：只有这格要写状态
     )
 
-    rt.conn.execute("DELETE FROM agent_reachout")  # 去掉间隔/未读两道抑制，让触发链裸露
+    rt.assembly.conn.execute("DELETE FROM agent_reachout")  # 去掉间隔/未读两道抑制，让触发链裸露
     for role in roles:
-        st = get_state(rt.conn, role.role_id, user_id=rt.identity)
+        st = get_state(rt.assembly.conn, role.role_id, user_id=rt.identity)
         st.affinity = 0.0
         st.last_interaction_utc = now
         st.open_threads_scan_at = None  # 当作从没扫过
-        save_state(rt.conn, st, user_id=rt.identity)
+        save_state(rt.assembly.conn, st, user_id=rt.identity)
         cfg = build_graph_config(
             proactive_thread_id(role.role_id, user_id=rt.identity), rt.effective
         )
@@ -263,10 +265,10 @@ def _clear_all_shadows(
     `trigger_recall` 没有冷却，判据只是"该角色有没有一条 active 记忆" —— 也就是说只要
     记忆在长，这一档就永久压在 timer 头上。这是 R26-03 原来没点出的第二道遮蔽。
     """
-    rt.conn.execute(
+    rt.assembly.conn.execute(
         "UPDATE role_card SET recall_enabled=0, time_pattern_enabled=0, file_watch_enabled=0"
     )
-    rt.conn.commit()
+    rt.assembly.conn.commit()
     before = _scans(stub)
     made = _tick(rt, when_utc=now, when_local=now.astimezone())
     fired = [
@@ -291,7 +293,7 @@ def main() -> None:
     app = create_app(sqlite_path=COPY, model=stub, tracer=rec)  # type: ignore[arg-type]
     rt = app.state.ctx.runtime
     settings = rt.effective
-    roles = [r for r in rt.roles.list_roles() if r.reachout_enabled]
+    roles = [r for r in rt.assembly.roles.list_roles() if r.reachout_enabled]
     print(f"全局总闸 reachout_enabled = {settings.reachout_enabled}；"
           f"可主动开口的角色 = {[r.role_id for r in roles]}")
 
@@ -308,7 +310,7 @@ def main() -> None:
     base_local = now.astimezone().replace(hour=12, minute=0, second=0, microsecond=0)
     free_days: dict[str, int | None] = {}
     for role in roles:
-        st = get_state(rt.conn, role.role_id, user_id=rt.identity)
+        st = get_state(rt.assembly.conn, role.role_id, user_id=rt.identity)
         free_days[role.role_id] = _first_free_day(role, st, settings, base_local)
         d = free_days[role.role_id]
         verdict = f"{d} 天之后" if d is not None else f"{SWEEP_DAYS} 天内都不让位"

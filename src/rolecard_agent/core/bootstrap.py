@@ -31,9 +31,20 @@ from rolecard_agent.base.identity import ensure_identity_row, resolve_instance_i
 from rolecard_agent.base.observability import TraceEvent, Tracer, logline, make_tracer
 from rolecard_agent.base.paths import user_data_root
 from rolecard_agent.config import Settings
-from rolecard_agent.core import runtime_settings
-from rolecard_agent.core.agent.graph import build_kernel, build_model
+
+# P2-1 Assembler 刀（2026-10-09）：装配件形状与装配/热重建的实现住 `core/assembler.py`
+# （bootstrap → assembler 单向；Runtime 的形状在 assembler 只以 Protocol 出现 —— 依赖方向
+# 那把尺子连 TYPE_CHECKING 反指都算环，首版就是这么被它抓的）。
+from rolecard_agent.core import assembler, runtime_settings
+from rolecard_agent.core.agent.graph import build_model
 from rolecard_agent.core.agent.nodes import ChatLike
+
+# 装配件形状的家在 assembler；这里**再导出**（deps / main / tests 的
+# `from core.bootstrap import Assembly` 一行不改 —— 它们要的是这个名字，不是这个住址）。
+from rolecard_agent.core.assembler import (  # noqa: F401
+    Assembly,
+    RegistryFactory,
+)
 from rolecard_agent.core.common.approvals import ApprovalService, sweep_interrupted
 from rolecard_agent.core.domain.domain_service import DomainQueryService
 from rolecard_agent.core.ingest.ingestion import IngestionService
@@ -41,13 +52,13 @@ from rolecard_agent.core.ingest.knowledge_sources import KnowledgeSourceStore
 from rolecard_agent.core.model_settings import ModelSettingsService, client_style
 from rolecard_agent.core.models.model_resolver import ModelResolver
 from rolecard_agent.core.models.services import ServiceEndpointService
-from rolecard_agent.core.plugins import PluginService, mcp_store, seed_plugin_rows
+from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
 from rolecard_agent.core.retention import prune_retention_tables
 from rolecard_agent.core.storage.checkpointer import make_checkpointer
 from rolecard_agent.core.storage.migrations import MIGRATION_PLAN
-from rolecard_agent.core.telemetry.probes import ollama_keep, vision_capability
+from rolecard_agent.core.telemetry.probes import ollama_keep
 from rolecard_agent.core.tools.registry import ToolRegistry
-from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder, make_reranker
+from rolecard_agent.rag.retriever import KnowledgeBase
 from rolecard_agent.roles.models import RoleCard, RoleCardCreate
 from rolecard_agent.roles.service import RoleCardService
 from rolecard_agent.storage.db import (
@@ -58,63 +69,7 @@ from rolecard_agent.storage.db import (
 )
 from rolecard_agent.storage.db import bootstrap as apply_schema
 
-
-#: 装配过程中已经建好的内核件。它是宿主"域接线工厂"的输入，也是 `Runtime` 上那些
-#: 稳定引用的来源。单独一个类型而不是把 `Runtime` 本身传出去，是因为接线只需要这几个
-#: 只读引用，不该拿到能换图、能触发重建的可变运行时。
-@dataclass(frozen=True, slots=True)
-class Assembly:
-    conn: ThreadLocalConnection
-    roles: RoleCardService
-    #: 审计写入的唯一咽喉（`R102-07`）：端点侧 `ctx.audit.log(...)` 走的就是这一件。
-    audit: AuditTrail
-    plugins: PluginService
-    ingestion: IngestionService
-    #: 各域自己的查询服务（域 id → 服务；无查询服务的域不进这张表）。由宿主按域自描述
-    #: 声明逐个建（`domains.registry.build_query_services`），本模块不认识其中任何一个
-    #: 具体域 —— 从此也不存在"把唯一一个服务喂给唯一一个工具工厂"的喂错域中间态。
-    queries: Mapping[str, DomainQueryService]
-    tracer: Tracer
-
-
-#: 宿主提供的注册表工厂：拿到装配件、**当前有效配置**、当前知识库与"启用域"的实时读取器，
-#: 返回工具注册表。各域的 tool factory 怎么接、上传目录从哪来，全留在宿主那一侧。
-RegistryFactory = Callable[
-    [Assembly, Settings, KnowledgeBase, Callable[[], list[str]]], ToolRegistry
-]
-
 EnabledDomains = Callable[[], list[str]]
-
-
-def candidate_ids(services: ServiceEndpointService, key: str) -> list[str]:
-    """某类服务当前启用的端点 id（按「服务」页的序）—— 后端选型的唯一事实面。"""
-    return [c.id for c in services.ordered_candidates(key)]
-
-
-def build_knowledge(
-    eff: Settings, services: ServiceEndpointService, conn: SqlConnection
-) -> KnowledgeBase:
-    """按有效配置与服务页端点建知识库（嵌入器/重排器是构造期注入的实例）。
-
-    `R102-55`：连**来源投影表**一起注入（`knowledge_source`）—— 概览页的来源清单
-    从此出它，不再全量倒灌 chroma 元数据。`conn` 是宿主那份（线程安全的
-    `ThreadLocalConnection`）；`rag/` 只认 Protocol，不认识 storage。
-    """
-    return KnowledgeBase(
-        eff.chroma_path,
-        make_embedder(
-            eff,
-            order=candidate_ids(services, "embedding"),
-            endpoints=services.endpoint_map("embedding"),
-        ),
-        make_reranker(
-            eff,
-            order=candidate_ids(services, "rerank"),
-            endpoints=services.endpoint_map("rerank"),
-        ),
-        eff.rag_min_similarity,
-        KnowledgeSourceStore(conn),
-    )
 
 
 def heal_knowledge_sources(
@@ -143,28 +98,6 @@ def heal_knowledge_sources(
     if seeded and tracer is not None and hasattr(tracer, "emit"):
         tracer.emit(TraceEvent(event="knowledge_sources_seeded", detail={"rows": seeded}))
     return seeded
-
-
-def assemble_registry(
-    assembly: Assembly,
-    registry_factory: RegistryFactory,
-    eff: Settings,
-    knowledge: KnowledgeBase,
-) -> ToolRegistry:
-    """按有效配置拼工具注册表。
-
-    MCP 生效集每次重解析（表行可能在两次重建之间被改动）；有生效 server 才把 "mcp" 加进
-    启用域 —— 初始装配与热重建必须同构，否则改一次运行环境会让 MCP 工具已加载却被启用域
-    挡掉。启用域本身是**闭包**，所以插件启停即刻生效。
-    """
-    mcp_eff = mcp_store.effective_servers(assembly.conn, eff.mcp_servers)
-    eff_for_tools = eff.model_copy(update={"mcp_servers": mcp_eff})
-    plugins = assembly.plugins
-
-    def enabled_domains() -> list[str]:
-        return [*plugins.enabled_domains(), *(["mcp"] if mcp_eff else [])]
-
-    return registry_factory(assembly, eff_for_tools, knowledge, enabled_domains)
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,6 +188,19 @@ class Runtime:
     proactive: ProactiveGatewayLike = field(init=False, repr=False)
 
     # -- 稳定引用的读穿 ------------------------------------------------------
+    #
+    # 从前这里有 7 个 `assembly.*` 转调门面（conn / roles / audit / plugins / ingestion /
+    # tracer / query_service / candidate_ids 共 8 名成员）。P2-1「门面收掉」那刀（2026-10-09）
+    # 把它们删了：调用方一律走 `rt.assembly.conn` / `runtime.assembly.queries[...]` ——
+    # Assembly 本来就是"装配完成后那几件只读引用"的容器（它自己的 docstring 说的），
+    # Runtime 再转调一遍 = 同一句"稳定引用"两张事实面，41 个调用点改完后全部直读容器。
+    # **模型与网关那两族转调刻意保留**（`effective_for` / `resolve_role_model` / `role_models`
+    # / `chat_memory` / `deliver_proactive` / `proactive_recent_*`）：它们是行内验收
+    # "代数测试不改一行仍绿"的承重面（R28-05 那条代数钉在 `runtime.role_models` 上），
+    # 不是本刀的对象。`identity` 是实例主人解析的唯一出处，也留。
+    #
+    # `candidate_ids` 是例外：它不是"读穿一个引用"而是转调 assembler 的纯函数
+    # （`assembler.candidate_ids(self.services, key)`），保留方法形状 —— deps 端点用它。
 
     @property
     def identity(self) -> str:
@@ -262,36 +208,21 @@ class Runtime:
 
         后台那条链（主动开口的投递、图里的域工具）没有"这次请求"可问，读的就是这一个。
         请求级的解析以它为底（`AppContext.current_user()`），两层的关系写在
-        `base/identity.resolve_instance_identity` 的 docstring 里。
+        `base/identity.resolve_instance_identity` 的 docstring 里。**保留**：实例主人解析
+        的唯一出处（`build_runtime` 的两处闭包与 assembler.rebuild 都读它），不是读穿门面。
         """
         return resolve_instance_identity(self.env_settings)
 
-    @property
-    def conn(self) -> ThreadLocalConnection:
-        return self.assembly.conn
-
-    @property
-    def roles(self) -> RoleCardService:
-        return self.assembly.roles
-
-    @property
-    def audit(self) -> AuditTrail:
-        return self.assembly.audit
-
-    @property
-    def plugins(self) -> PluginService:
-        return self.assembly.plugins
-
-    @property
-    def ingestion(self) -> IngestionService:
-        return self.assembly.ingestion
+    def candidate_ids(self, key: str) -> list[str]:
+        return assembler.candidate_ids(self.services, key)
 
     def query_service(self, domain_id: str) -> DomainQueryService:
         """按域 id 取**该域自己的**查询服务 —— 缺域就 loud，不回落到别的域。
 
         为什么不留一个"唯一查询服务"的属性：v1 只有一个富域时那样写省事，但第二个域
         一来它就变成"谁碰到谁拿走"的共享槽（拿错域的服务 = 读写落进另一套表）。域名单
-        来自宿主注入的映射，本模块仍然不认识任何域名。
+        来自宿主注入的映射，本模块仍然不认识任何域名。**保留方法而非删掉**：它有真逻辑
+        （缺域 loud 的 KeyError 措辞是判据），不是一个纯读穿。
         """
         try:
             return self.assembly.queries[domain_id]
@@ -299,13 +230,6 @@ class Runtime:
             raise KeyError(
                 f"域 {domain_id!r} 没有查询服务（已装配：{sorted(self.assembly.queries)}）"
             ) from None
-
-    @property
-    def tracer(self) -> Tracer:
-        return self.assembly.tracer
-
-    def candidate_ids(self, key: str) -> list[str]:
-        return candidate_ids(self.services, key)
 
     # -- 模型解析与图 --------------------------------------------------------
 
@@ -353,71 +277,18 @@ class Runtime:
         """
         return self.proactive.chat_memory(role_id, thread_id, user_id)
 
-    def build_graph(self, model: ChatLike, registry: ToolRegistry, eff: Settings) -> Any:
-        """建（编译）一张对话图。`model_resolver` 指向本 Runtime，角色级路由与热重建同源。"""
-        return build_kernel(
-            model=model,
-            registry=registry,
-            roles=self.roles,
-            tracer=self.tracer,
-            settings=eff,
-            checkpointer=self.checkpointer,
-            plugins=self.plugins,
-            model_resolver=self.resolve_role_model,
-            # 「这一轮花谁的 key」的挂点（M2d 尾巴）：owner 由 `_turn_backend` 从 state 现传
-            # 进来（显式，不问 ContextVar）。不接这一根的话，模型凭据与能力位都会按实例主人
-            # 判 —— 两个身份各配同名后端时，B 会拿着 A 的快照去跑（`_turn_backend` 也是这么读的）。
-            settings_resolver=lambda owner: self.effective_for(owner or self.identity),
-            # 跨会话记忆的读取器：每次调用实时读库、**按本轮角色取**（该角色专属 → 无则回退
-            # 全局），与主动开口同源一个 `memory_for_turn`；再补上她最近主动说过的原话
-            # （`chat_memory`，别的那条线程里她得知道自己提醒过什么）。总开关在 call_model
-            # 里再把关一次（闭着就不问）。
-            memory_provider=self.chat_memory,
-            # 视觉能力探测（P1-2）：Ollama `/api/show` 的 capabilities，带 TTL 缓存。
-            # 只有"声明不支持 + 探测确认不支持"两条同时成立才会调用前拦（见 nodes 里那段）。
-            vision_probe=vision_capability,
-        )
-
     # -- 热重建 --------------------------------------------------------------
+    #
+    # `build_graph` 与 `rebuild` 的实现搬进 `core/assembler.py`（P2-1「Runtime ≤150」那刀的
+    # Assembler 半边，2026-10-09）：类上只留**绑定转调**（形状不变，`deps.rebuild_runtime`
+    # 返回的正是这个绑定；`build_runtime` 构造序里的 `runtime.build_graph(...)` 也照旧）。
+    # 实现的搬移注释与全部判据编号（R28-05 / R26 等）现在住 assembler 那边。
+
+    def build_graph(self, model: ChatLike, registry: ToolRegistry, eff: Settings) -> Any:
+        return assembler.build_graph(self, model, registry, eff)
 
     def rebuild(self) -> None:
-        """按当前设置与服务端点引用重建全部运行时对象：模型、知识库、注册表、图。
-
-        由两条路径触发：模型设置保存（settings 端点）与服务端点变更（services 端点）。
-        嵌入器/重排器是 KnowledgeBase 构造时注入的实例，引用变了必须连知识库一起重造；
-        工具闭包持有知识库，所以注册表也要跟着重建 —— 顺序即依赖序。
-        """
-        # 这一步建的是**实例主人**那份（`self.effective`）：知识库、注册表、工具闭包与
-        # 编译期默认模型都由它喂，问的是"这台机器能干什么"。请求级那份凭据快照不在这一步，
-        # 它按需在 `effective_for(本轮主人)` 里拼 —— 两条缓存同生共死，所以下面一起清。
-        eff = runtime_settings.apply_overrides(
-            self.model_settings.effective_settings(self.env_settings, user_id=self.identity),
-            runtime_settings.load_overrides(self.conn),
-        )
-        # 构建在锁外：两个并发重建各自完整构建，后写者胜出（浪费但正确）。
-        # 代数**先加再清**（`ModelResolver.invalidate`）：加在清之前，任何一个"清之前就
-        # 进去了、清之后才落笔"的在飞写者手上都拿着旧代数，回填会被它自己否掉（`R28-05`）。
-        self.models.invalidate()
-        default_model = self.model_factory(eff, None)
-        knowledge_new = build_knowledge(eff, self.services, self.assembly.conn)
-        registry_new = assemble_registry(self.assembly, self.registry_factory, eff, knowledge_new)
-        graph_new = self.build_graph(default_model, registry_new, eff)
-        old_knowledge = self.knowledge
-        with self.rebuild_lock:
-            # 换装是单个临界区：模型缓存 + 可变引用 + state 槽位一起翻，杜绝"新图配旧
-            # 知识库"的中间态被 SSE 请求看到。
-            # 只清不加代数：第一次清到这一刻之间，可能有写者拿着**换装前**的配置回填过。
-            self.models.clear_caches()
-            self.effective = eff
-            self.knowledge = knowledge_new
-            self.registry = registry_new
-            self.state["effective"] = eff
-            self.state["default_model"] = default_model
-            self.state["graph"] = graph_new
-        # 旧实例换装完成后才关闭（旧嵌入器/重排器持有的 httpx 连接在此释放）。
-        if old_knowledge is not None and old_knowledge is not self.knowledge:
-            with contextlib.suppress(Exception):
-                old_knowledge.close()
+        assembler.rebuild(self)
 
     # -- 进程生命周期（宿主在自己的启动/退出路径里调用）------------------------
 
@@ -501,9 +372,9 @@ class Runtime:
         # 的 `finally`。真正天天兑现的那一次在启动：`checkpointer.truncate_wal_at_boot`。
         # 这里留着，管的是能走到这一步的另外两条路（POSIX 的 SIGTERM、开发态 Ctrl+C）。
         with contextlib.suppress(Exception):
-            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self.assembly.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         with contextlib.suppress(Exception):
-            self.conn.close()
+            self.assembly.conn.close()
         with contextlib.suppress(Exception):
             if hasattr(self.knowledge, "close"):
                 self.knowledge.close()
@@ -612,11 +483,11 @@ def build_runtime(
         queries=query_services_factory(conn),
         tracer=resolved_tracer,
     )
-    knowledge = build_knowledge(effective, services, conn)
+    knowledge = assembler.build_knowledge(effective, services, conn)
     # 投影表的一次性种子（`R102-55`）：存量分块（旁路导入的 lore、旧上传）回填来源清单。
     # 热重建不再跑：表在库里，换装知识库实例不影响它。
     heal_knowledge_sources(knowledge, conn, tracer=resolved_tracer)
-    registry = assemble_registry(assembly, registry_factory, effective, knowledge)
+    registry = assembler.assemble_registry(assembly, registry_factory, effective, knowledge)
     factory = model_factory or build_model
     default_model = model or factory(effective, None)
     state: dict[str, Any] = {
@@ -662,5 +533,5 @@ def build_runtime(
             identity=lambda: runtime.identity,
         )
     )
-    state["graph"] = runtime.build_graph(default_model, registry, effective)
+    state["graph"] = assembler.build_graph(runtime, default_model, registry, effective)
     return runtime

@@ -95,7 +95,7 @@ def main() -> int:
     total_topics = 0
     # 这台实例的主人（M2b 之后记忆与角色卡都按归属读；探针跑在真库副本上，主人就是本机那份）
     owner = rt.identity
-    for role in rt.roles.scoped(owner).list_roles():
+    for role in rt.assembly.roles.scoped(owner).list_roles():
         rid = str(role.role_id)
         name = str(role.role_name or rid)
         mem = memory_for_turn(conn, rt.effective, rid, user_id=owner)

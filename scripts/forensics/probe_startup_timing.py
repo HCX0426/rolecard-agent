@@ -55,6 +55,7 @@ from langchain_core.messages import AIMessage  # noqa: E402
 
 from rolecard_agent.api import main as api_main  # noqa: E402
 from rolecard_agent.base.observability import TraceEvent  # noqa: E402
+from rolecard_agent.core import assembler as core_assembler  # noqa: E402
 from rolecard_agent.core import bootstrap as core_bootstrap  # noqa: E402
 from rolecard_agent.core.storage import checkpointer as core_checkpointer  # noqa: E402
 from rolecard_agent.storage import db as storage_db  # noqa: E402
@@ -95,9 +96,11 @@ TARGETS: list[tuple[Any, str, str]] = [
     (core_bootstrap, "apply_schema", "④ apply_schema（含 ①②③ 与 DDL 脚本执行）"),
     (core_bootstrap, "seed_plugin_rows", "⑤ 插件播种"),
     (core_bootstrap, "prune_retention_tables", "⑥ retention 清理"),
-    (core_bootstrap, "build_knowledge", "⑦ 知识库装配"),
+    # core.assembler 侧：build_knowledge / assemble_registry 搬去了 assembler（P2-1 Assembler
+    # 刀，2026-10-09），build_runtime 以 `assembler.xxx(...)` 模块限定调用 ⇒ 打定义处即生效。
+    (core_assembler, "build_knowledge", "⑦ 知识库装配"),
     (core_bootstrap, "heal_knowledge_sources", "⑧ 知识来源回填"),
-    (core_bootstrap, "assemble_registry", "⑨ 注册表装配"),
+    (core_assembler, "assemble_registry", "⑨ 注册表装配"),
     (core_bootstrap, "make_checkpointer", "⑮ make_checkpointer（⑩-⑭ 的总和容器）"),
     # checkpointer 内部互调：打在定义处
     (core_checkpointer, "ensure_checkpoint_clock", "⑩ 检查点补钟"),

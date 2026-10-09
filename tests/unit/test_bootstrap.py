@@ -120,7 +120,7 @@ def test_kernel_assembles_without_an_app(tmp_path: Path) -> None:
         assert runtime.effective.sqlite_path == runtime.env_settings.sqlite_path
         assert runtime.effective is not runtime.env_settings
     finally:
-        runtime.conn.close()
+        runtime.assembly.conn.close()
 
 
 def test_rebuild_swaps_every_mutable_slot(tmp_path: Path) -> None:
@@ -135,7 +135,7 @@ def test_rebuild_swaps_every_mutable_slot(tmp_path: Path) -> None:
         # 域查询服务只持有连接，是稳定引用：不随重建换（换了反而会丢掉在途请求的引用）。
         assert runtime.query_service("health") is before_query
     finally:
-        runtime.conn.close()
+        runtime.assembly.conn.close()
 
 
 def test_assembly_seeds_schema_and_demo_identity(tmp_path: Path) -> None:
@@ -153,7 +153,7 @@ def test_assembly_seeds_schema_and_demo_identity(tmp_path: Path) -> None:
             env_settings=settings,
             model_factory=lambda *_a, **_k: None,
         )
-        runtime.conn.close()
+        runtime.assembly.conn.close()
 
     conn = connect(db)
     try:
@@ -184,7 +184,7 @@ def test_deliver_proactive_lands_in_the_roles_thread(tmp_path: Path) -> None:
         tid = runtime.deliver_proactive(role, "今天腰还酸吗？")
         assert tid == proactive_thread_id("wan", user_id=DEFAULT_USER_ID)
 
-        row = runtime.conn.execute(
+        row = runtime.assembly.conn.execute(
             "SELECT current_role_id, user_id, title FROM session_thread WHERE thread_id = ?",
             (tid,),
         ).fetchone()
@@ -209,7 +209,7 @@ def test_deliver_proactive_lands_in_the_roles_thread(tmp_path: Path) -> None:
         runtime.deliver_proactive(role, "记得喝水")
         assert len(graph.get_state(config).values["messages"]) == 2
     finally:
-        runtime.conn.close()
+        runtime.assembly.conn.close()
 
 
 def test_deliver_proactive_does_not_interrupt_a_running_turn(tmp_path: Path) -> None:
@@ -248,7 +248,7 @@ def test_deliver_proactive_does_not_interrupt_a_running_turn(tmp_path: Path) -> 
         ).values["messages"]
         assert [str(m.content) for m in messages] == ["这轮说完了才说"]
     finally:
-        runtime.conn.close()
+        runtime.assembly.conn.close()
 
 
 def test_proactive_lines_only_offer_what_has_not_been_settled(tmp_path: Path) -> None:
@@ -299,7 +299,7 @@ def test_proactive_lines_only_offer_what_has_not_been_settled(tmp_path: Path) ->
         assert "你在哪呢" in lines, lines
         assert "ok" not in lines, lines
     finally:
-        runtime.conn.close()
+        runtime.assembly.conn.close()
 
 
 def test_proactive_window_still_has_material_when_she_has_the_last_word(tmp_path: Path) -> None:
@@ -336,7 +336,7 @@ def test_proactive_window_still_has_material_when_she_has_the_last_word(tmp_path
         assert "好，我等你说" in window, window
         assert "还没有接过话" not in window, "扫描那段不该带'没接住'的措辞，它拿的是整窗"
     finally:
-        runtime.conn.close()
+        runtime.assembly.conn.close()
 
 
 # -- 凭据按这一轮的主人（M2d 尾巴的收口）----------------------------------------------
@@ -436,7 +436,7 @@ def test_a_turn_carries_the_key_of_the_person_who_is_talking(tmp_path: Path) -> 
         )
         assert mine is not theirs
     finally:
-        runtime.conn.close()
+        runtime.assembly.conn.close()
 
 
 def test_a_default_backend_belongs_to_the_person_who_is_talking(tmp_path: Path) -> None:
@@ -469,7 +469,7 @@ def test_a_default_backend_belongs_to_the_person_who_is_talking(tmp_path: Path) 
         )
         assert B_KEY in repr(seen[-1].model_backends)
     finally:
-        runtime.conn.close()
+        runtime.assembly.conn.close()
 
 
 def test_a_background_caller_names_the_owner_it_works_for(tmp_path: Path) -> None:
@@ -496,7 +496,7 @@ def test_a_background_caller_names_the_owner_it_works_for(tmp_path: Path) -> Non
         assert built is not runtime.state["default_model"], "没按传进来的主人解析，降级了"
         assert B_KEY in repr(seen[-1].model_backends)
     finally:
-        runtime.conn.close()
+        runtime.assembly.conn.close()
 
 
 def test_an_unknown_backend_degrades_instead_of_raising(tmp_path: Path) -> None:
@@ -521,7 +521,7 @@ def test_an_unknown_backend_degrades_instead_of_raising(tmp_path: Path) -> None:
             degraded = runtime.resolve_role_model("no-such-backend")
         assert degraded is runtime.state["default_model"]
     finally:
-        runtime.conn.close()
+        runtime.assembly.conn.close()
 
 
 def test_turn_settings_reads_the_resolver_not_the_build_time_snapshot() -> None:
@@ -603,4 +603,4 @@ def test_an_inflight_build_cannot_republish_a_stale_model_after_rebuild(tmp_path
             "旧配置产物活过了这次换装 —— 缓存回填没被代数挡住，改了设置就是不生效"
         )
     finally:
-        runtime.conn.close()
+        runtime.assembly.conn.close()

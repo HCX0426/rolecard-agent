@@ -51,7 +51,7 @@ def main() -> None:
     # 选型必须走「服务」页那份事实面（`candidate_ids`/`endpoint_map`）：这里曾经直接
     # `make_embedder(settings)`，而那个签名早已改成两个必填关键字参数 —— 于是这个脚本
     # 一跑就 TypeError，却因为"scripts 不归 mypy 管"（09-26 轮 S-6）静默坏了很久。
-    from rolecard_agent.core.bootstrap import candidate_ids
+    from rolecard_agent.core.assembler import candidate_ids
     from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder
 
     services = ServiceEndpointService(conn, owner=DEFAULT_USER_ID)

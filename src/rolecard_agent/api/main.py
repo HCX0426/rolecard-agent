@@ -162,10 +162,10 @@ def _register_background_tasks(runtime: Runtime) -> None:
         ReachoutScheduler(
             # 每次 tick 现取**有效配置**：全局总闸热切即时生效。
             settings_provider=lambda: runtime.effective,
-            roles=runtime.roles,
+            roles=runtime.assembly.roles,
             model_resolver=runtime.resolve_role_model,
-            conn=runtime.conn,
-            tracer=runtime.tracer,
+            conn=runtime.assembly.conn,
+            tracer=runtime.assembly.tracer,
             deliver=runtime.deliver_proactive,
             thread_lines=runtime.proactive_recent_lines,
             thread_window=runtime.proactive_recent_window,

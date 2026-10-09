@@ -164,7 +164,7 @@ def _seed_knowledge(db_path: Path, settings: object) -> None:
     跑批直接 TypeError —— 与 `seed_demo_data.py` 同源，同一个静默坏掉的根因
     （scripts 从前不进 mypy，见 09-26 轮 S-6）。
     """
-    from rolecard_agent.core.bootstrap import candidate_ids
+    from rolecard_agent.core.assembler import candidate_ids
     from rolecard_agent.core.models.services import ServiceEndpointService
     from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder
     from rolecard_agent.storage.db import connect

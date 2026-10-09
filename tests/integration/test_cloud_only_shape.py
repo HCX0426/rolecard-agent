@@ -109,7 +109,7 @@ def test_cloud_only_config_assembles_a_working_kernel(tmp_path: Path) -> None:
         backend = runtime.effective.backend(None)
         assert client_style(backend.provider) != "native"
     finally:
-        runtime.conn.close()
+        runtime.assembly.conn.close()
 
 
 def test_startup_warmup_does_not_touch_ollama_for_a_cloud_default(
@@ -123,7 +123,7 @@ def test_startup_warmup_does_not_touch_ollama_for_a_cloud_default(
         runtime.pin_default_model()
         assert calls == []
     finally:
-        runtime.conn.close()
+        runtime.assembly.conn.close()
 
 
 def test_local_service_address_still_resolves_when_there_is_no_local_backend(
@@ -158,8 +158,8 @@ def test_proactive_reachouts_work_without_any_local_model(tmp_path: Path) -> Non
         settings_provider=lambda: settings,
         roles=_Roles([role]),  # type: ignore[arg-type]
         model_resolver=lambda _name: ScriptedChat([AIMessage(content=reply)]),
-        conn=runtime.conn,
-        tracer=runtime.tracer,
+        conn=runtime.assembly.conn,
+        tracer=runtime.assembly.tracer,
         deliver=runtime.deliver_proactive,
     )
     # 静默时段（本地 23:00–08:00）按真实时钟判：不给一个安全的本地时刻，半夜跑这条
@@ -168,7 +168,7 @@ def test_proactive_reachouts_work_without_any_local_model(tmp_path: Path) -> Non
     now_local = datetime.now().astimezone().replace(hour=14, minute=0, second=0, microsecond=0)
     try:
         assert scheduler.tick_once(now_utc=now_utc, now_local=now_local) == 1
-        rows = svc.list_reachouts(runtime.conn, user_id=DEFAULT_USER_ID)
+        rows = svc.list_reachouts(runtime.assembly.conn, user_id=DEFAULT_USER_ID)
         assert rows["unread"] == 1
         tid = rows["items"][0]["thread_id"]
         assert tid == svc.proactive_thread_id("wan", user_id=DEFAULT_USER_ID)
@@ -176,4 +176,4 @@ def test_proactive_reachouts_work_without_any_local_model(tmp_path: Path) -> Non
         state = runtime.state["graph"].get_state(build_graph_config(tid, runtime.effective))
         assert [str(m.content) for m in state.values["messages"]] == [reply]
     finally:
-        runtime.conn.close()
+        runtime.assembly.conn.close()

@@ -121,16 +121,16 @@ class AppContext:
 
     @property
     def conn(self) -> ThreadLocalConnection:
-        return self.runtime.conn
+        return self.runtime.assembly.conn
 
     @property
     def roles(self) -> RoleCardService:
-        return self.runtime.roles
+        return self.runtime.assembly.roles
 
     @property
     def audit(self) -> AuditTrail:
         """审计咽喉（`R102-07`）：写审计不再借 `ctx.roles.audit` —— 那条链上没有一件是角色卡。"""
-        return self.runtime.audit
+        return self.runtime.assembly.audit
 
     @property
     def role_cards(self) -> RoleCards:
@@ -143,11 +143,11 @@ class AppContext:
 
     @property
     def plugins(self) -> PluginService:
-        return self.runtime.plugins
+        return self.runtime.assembly.plugins
 
     @property
     def ingestion(self) -> IngestionService:
-        return self.runtime.ingestion
+        return self.runtime.assembly.ingestion
 
     @property
     def health(self) -> DomainQueryService:
@@ -176,7 +176,7 @@ class AppContext:
 
     @property
     def tracer(self) -> Tracer:
-        return self.runtime.tracer
+        return self.runtime.assembly.tracer
 
     @property
     def approvals(self) -> ApprovalService:

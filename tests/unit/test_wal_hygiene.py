@@ -69,11 +69,11 @@ def test_shutdown_checkpoints_the_wal_back_into_the_main_db(tmp_path: Path) -> N
 
     lingering = connect(db)  # 第二条连接：全程不开事务，也不关
     try:
-        runtime.conn.execute(
+        runtime.assembly.conn.execute(
             "INSERT INTO session_thread (thread_id, user_id, current_role_id, title)"
             " VALUES ('s_walprobe', 'local-user', 'general_assistant', '落盘检查')"
         )
-        runtime.conn.commit()
+        runtime.assembly.conn.commit()
         assert wal.exists() and wal.stat().st_size > 0, "WAL 模式却没写出 -wal，用例量程是空的"
         main_before = db.stat().st_size
 

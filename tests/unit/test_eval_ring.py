@@ -36,7 +36,7 @@ _spec.loader.exec_module(ev)
 
 def test_the_scripts_own_bootstrap_leaves_a_usable_embedding_endpoint(tmp_path: Path) -> None:
     """脚本自己建的那份库里，嵌入端点必须挑得出来（`seed_once()` 不能只由装配根调）。"""
-    from rolecard_agent.core.bootstrap import candidate_ids
+    from rolecard_agent.core.assembler import candidate_ids
     from rolecard_agent.core.models.services import ServiceEndpointService
     from rolecard_agent.rag.retriever import HashEmbedder, make_embedder
     from rolecard_agent.storage.db import connect
