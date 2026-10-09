@@ -139,6 +139,10 @@ def check_audit_action_vocabulary() -> None:
             f"dynamic audit prefixes not declared in DYNAMIC_ACTION_PREFIXES: {bad_prefixes}"
         )
 
+#: 22 份归档散件合并后的汇编（2026-10-09 用户拍板：散件删除、内容逐字保留 + 来源头）。
+_MERGED_ARCHIVE = ROOT / "docs" / "archive" / "审计台账汇编.md"
+
+
 def _audit_ledger_path() -> pathlib.Path:
     """**最新一轮**审计台账住在哪儿：先扫 `docs/`（在写的），再扫 `docs/archive/`（已封存的）。
 
@@ -149,7 +153,10 @@ def _audit_ledger_path() -> pathlib.Path:
     """
     cands = [
         *sorted((ROOT / "docs").glob("架构审计（*轮）.md")),
-        *sorted((ROOT / "docs" / "archive").glob("架构审计（*轮）.md")),
+        # 2026-10-09：22 份归档散件按用户拍板合并为一份汇编（散件删除、内容逐字保留 +
+        # 来源头）。台账定位随之指向汇编 —— 编号（R26/R28/R102…）全部仍在盘上，
+        # `audit citations` 的可达性不受影响。
+        _MERGED_ARCHIVE,
     ]
     if not cands:
         return ROOT / "docs" / "架构审计（*轮）.md"  # 不存在 ⇒ 调用方判红

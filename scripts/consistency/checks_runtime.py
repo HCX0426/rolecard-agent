@@ -423,9 +423,11 @@ def check_safety_prompt() -> None:
 
 
 def check_milestone_alignment() -> None:
-    """Milestone ids in the README must match the plan (now docs/archive/实施计划.md)."""
+    """Milestone ids in the README must match the plan (now in 审计台账汇编.md — the 22
+    archived files were merged into one on 2026-10-09 by user decision; the plan's text
+    lives there verbatim under its own source header)."""
     readme_ids = set(re.findall(r"\*\*M(\d)", (ROOT / "README.md").read_text(encoding="utf-8")))
-    plan_path = ROOT / "docs" / "archive" / "实施计划.md"
+    plan_path = ROOT / "docs" / "archive" / "审计台账汇编.md"
     plan_ids = set(re.findall(r"\*\*M(\d)", plan_path.read_text(encoding="utf-8")))
     ok = readme_ids == plan_ids and bool(plan_ids)
     detail = f"README={sorted(readme_ids)} plan={sorted(plan_ids)}"
