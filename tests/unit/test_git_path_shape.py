@@ -37,10 +37,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-#: 锁形状的两种写法（`-c` 参数或 `-z` 分隔），任一都算数 —— 但必须**显式出现**在站点上。
-SHAPE_GUARDS = ('"core.quotepath=false"', '"-z"')
-
-
 def _src(rel: str) -> str:
     return (ROOT / rel).read_text(encoding="utf-8")
 
