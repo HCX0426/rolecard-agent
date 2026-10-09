@@ -66,6 +66,22 @@ from rolecard_agent.core.artifacts import schema_package_paths  # noqa: E402 - �
 for _sql_file, _dest in schema_package_paths(PKG):
     datas.append((str(_sql_file), _dest))
 
+# **域包的 `__init__.py` 必须落盘，不是可选项**（2026-10-09 v0.3.0 发布链第③处"首次实跑
+# 才暴露"）：PyInstaller 把纯模块收进 PYZ 归档（不落盘），而 `domains/registry.py::
+# _domain_dirs()` 在运行时**扫文件系统**找域目录（`iterdir()` + 查 `__init__.py`）——
+# 于是冻结态每个域目录里只剩 schema.sql 数据文件，`__init__.py` 在归档里 ⇒ 每个域都被判
+# 「不是包（缺 __init__.py）」，exe 起来就退（本地源码态永远复现不出来：那边扫的是真源码树）。
+# schema.sql 走 add-data 是既有机制，这里把**包标记文件**同一口径收进同一路径。
+# 首版传错根（把 `src/rolecard_agent` 传给了只认 `domains/` 的 `_domain_dirs` ⇒ 扫出
+# api/base/core… 八个顶层包、一个域都没收）—— 函数自己的默认值 `_PACKAGE_DIR` 就是
+# domains/，不传根才是对的用法。
+from rolecard_agent.domains import registry as _domain_registry  # noqa: E402
+
+for _domain_dir in _domain_registry._domain_dirs():
+    _init = _domain_dir / "__init__.py"
+    if _init.is_file():
+        datas.append((str(_init), f"rolecard_agent/domains/{_domain_dir.name}"))
+
 hiddenimports = collect_submodules("rolecard_agent")
 
 # 这一族是**随包后端运行时真要用**的包，逐个 `collect_submodules` + 收数据目录。
