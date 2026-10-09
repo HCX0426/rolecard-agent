@@ -180,6 +180,12 @@ def create_app(
     # 温度参与缓存键，工厂可能被传第三个参数 —— 签名放宽为可变参数（见 P1-2）。
     model_factory: Callable[..., ChatLike] | None = None,
     tracer: Tracer | None = None,
+    # 限流器的时间源（默认真实墙钟）。**测试注入口，不是配置面**：固定窗口按整分钟切，
+    # 端到端用例三连发只要跨过真实墙钟的整分钟边界，"第三发该被拦"就会落进新窗口拿到
+    # 新配额（2026-10-09 Windows 臂实测：期待 429 拿到 404 —— 十余趟 CI 的首次边界命中，
+    # 赌墙钟的用例迟早赌输）。`Limiter.hit(now=…)` 只够纯函数层，端到端过中间件碰不到，
+    # 所以注入口上移到这里。生产路径不传 = 真实墙钟，零行为变化。
+    limiter_clock: Callable[[], float] | None = None,
 ) -> FastAPI:
     """Build the FastAPI app on top of a `core.bootstrap` runtime.
 
@@ -317,7 +323,7 @@ def create_app(
     roles_in_effect = roles_declared(env_settings)
     # 限流（v2.4 公网硬化）：桶长在**应用实例**上，额度随 env 构建（改了要重启）。
     # `RATE_LIMIT_PER_MINUTE=0`（默认）时 `Limiter` 永远放行 —— 本机单人形态逐字不变。
-    limiter = Limiter(env_settings.rate_limit_per_minute)
+    limiter = Limiter(env_settings.rate_limit_per_minute, clock=limiter_clock)
     limited_paths = paths_of(env_settings.rate_limit_paths)
 
     @app.middleware("http")

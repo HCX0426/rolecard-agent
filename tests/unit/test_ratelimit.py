@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import sys
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -124,18 +125,27 @@ def _client(
     per_minute: int,
     paths: str = "/api/chat,/api/session",
     peer: tuple[str, int] = ("203.0.113.9", 50000),
+    clock: Callable[[], float] | None = None,
 ) -> TestClient:
     """一个"公网来源"的客户端：`AUTH_MODE=on` + 使用者凭据，对端是外部 IP。
 
     对端刻意用文档地址段（203.0.113.x）而不是 127.0.0.1：本机回环在这个产品里从不设卡，
     要验的就是"远端那个人"这一路。
+
+    `clock`：限流器的时间源注入。**固定窗口按整分钟切** —— 端到端三连发只要跨过真实
+    墙钟的整分钟边界，"第三发该被拦"就落进新窗口拿到新配额（2026-10-09 Windows 臂实测：
+    期待 429 拿到 404，十余趟 CI 的首次边界命中 —— 赌墙钟的用例迟早赌输）。要验
+    "超额度被拦"的用例必须给冻结钟；不传 = 真实墙钟。
     """
     monkeypatch.setenv("AUTH_MODE", "on")
     monkeypatch.setenv("AUTH_CREDENTIALS", "alice:pw")
     monkeypatch.setenv("AUTH_API_KEYS", "k-abcdef")
     monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", str(per_minute))
     monkeypatch.setenv("RATE_LIMIT_PATHS", paths)
-    return TestClient(create_app(sqlite_path=tmp_path / "app.db"), client=peer)
+    app_kwargs: dict[str, object] = {"sqlite_path": tmp_path / "app.db"}
+    if clock is not None:
+        app_kwargs["limiter_clock"] = clock
+    return TestClient(create_app(**app_kwargs), client=peer)
 
 
 def test_over_quota_gets_a_readable_429_with_retry_after(
@@ -144,9 +154,12 @@ def test_over_quota_gets_a_readable_429_with_retry_after(
     """超额度 = 429 + `Retry-After`，**读请求照旧**（限的是"太密"，不是"这个人"）。
 
     `/api/chat` 这里不真发（那要一个模型），只发它会先撞上限流 —— 正是要顺序正确：
-    挡住一个"贵"请求必须在它开始驱动图**之前**。
+    挡住一个"贵"请求必须在它开始驱动图**之前**。时间源注入（冻结钟）—— 三发必须落进
+    同一个窗口，否则这条在赌真实墙钟不跨整分钟边界（2026-10-09 Windows 臂就输过一次）。
     """
-    c = _client(monkeypatch, tmp_path, per_minute=2)
+    t = 1_000_000.0  # 窗口号 = int(t // 60)，离边界远到三连发不可能跨窗
+    clock = lambda: t  # noqa: E731 - 冻结钟，三发同窗
+    c = _client(monkeypatch, tmp_path, per_minute=2, clock=clock)
     auth = ("alice", "pw")
     assert c.post("/api/chat", json={"thread_id": "t", "text": "hi"}, auth=auth).status_code != 429
     assert c.post("/api/chat", json={"thread_id": "t", "text": "hi"}, auth=auth).status_code != 429

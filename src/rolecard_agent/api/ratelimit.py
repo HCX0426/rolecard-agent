@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 
 #: 会真正花掉资源的方法。读（GET/HEAD）一律不进门。
 WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -71,7 +72,7 @@ class Limiter:
     而后者不是这里的目标（真计费看 `token_usage_day` 那本账）。
     """
 
-    def __init__(self, per_minute: int) -> None:
+    def __init__(self, per_minute: int, *, clock: Callable[[], float] | None = None) -> None:
         self.per_minute = per_minute
         self._window: dict[str, tuple[int, int]] = {}  # 键 -> (窗口号, 本窗口已用)
         # 读-改-写必须原子（`R102-72`）：`hit` 从 FastAPI 线程池被并发调用，而
@@ -80,6 +81,12 @@ class Limiter:
         # 丢计数 = 少算 = 配额被并发打穿（限流转而过宽），而且额度越大丢得越多。
         # 锁只包这一段临界区；`per_minute <= 0` 的短路在锁外（默认关闭时连锁都不碰）。
         self._lock = threading.Lock()
+        # 时间源可注入：`hit(now=…)` 只够纯函数层用，**端到端层（TestClient 过中间件）
+        # 碰不到那个参数** —— 固定窗口按整分钟切，测试三连发只要跨过真实墙钟的整分钟
+        # 边界，第三发就落进新窗口拿到新配额（2026-10-09 Windows 臂实测：第三发期待 429
+        # 拿到 404）。中间件默认真实墙钟，测试经 `create_app` 的同款 env 无法注入 ——
+        # 所以把注入口上移到构造参数。
+        self._clock = clock or time.monotonic
 
     def hit(self, key: str, now: float | None = None) -> tuple[bool, int]:
         """记一次并回答 `(放行?, 还要等几秒)`。`per_minute <= 0` = 关着，永远放行。
@@ -88,7 +95,7 @@ class Limiter:
         """
         if self.per_minute <= 0:
             return True, 0
-        stamp = time.monotonic() if now is None else now
+        stamp = self._clock() if now is None else now
         bucket = int(stamp // 60)
         with self._lock:
             window, used = self._window.get(key, (bucket, 0))
