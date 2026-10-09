@@ -88,6 +88,52 @@ def _executable(run: str) -> str:
     )
 
 
+def test_gate步骤不许挂step级超时() -> None:
+    """**step 级 `timeout-minutes` 是第四把刀，而且它最钝**（2026-10-09 悬案，10-10 定案）。
+
+    形状（`ENGI-34` 的取证结论）：ci.yml 那年代的三层是 job `25m` / **step `15m`** /
+    内部 `--deadline-minutes 21` —— step 15m 先于内部 21m 开火，而 **GitHub 在 step 超时
+    那一刻直接杀、不改判 failure、日志不入库**（同一个 run 37830147312：门禁 job 卡在
+    `gate.py --ci` 那一步整整 30 分钟、`conclusion=cancelled`、日志端点是 404 BlobNotFound）。
+    三层本意是「内层先动、外层兜底」，多出这一层之后变成「最弱（无日志）那层先动」——
+    整晚丢掉的四份现场里就有它一份。
+
+    所以这条钉的是**这一层不存在**：调 `gate.py` 的步骤要么不设 step 级 timeout，要么设得
+    **严格晚于外部那层**（外部开火 → 退 124 → job 是 failure → 日志一定上传；step 开火 →
+    什么都不会留下）。两个当前步骤都是 `None`，但没有机器看着它 —— 这条用例就是那个机器。
+
+    为什么它值得独立一支而不是并进上面那条：上面那条量的是「内→外→job」三段数的**大小关系**，
+    而这一条量的是**这一层压根不该在**（多一层 = 多一个能抢先杀 job 的东西）。两者的反面
+    形状不同，红起来指向的修法也不同。
+    """
+    import yaml
+
+    wf = yaml.safe_load(CI.read_text(encoding="utf-8"))
+    offenders: list[str] = []
+    for job_name, job in wf["jobs"].items():
+        budget = job.get("timeout-minutes")
+        for step in job.get("steps") or []:
+            run = step.get("run")
+            if not isinstance(run, str) or "scripts/gate.py" not in run:
+                continue
+            st = step.get("timeout-minutes")
+            if st is None:
+                continue
+            # 允许的唯一形状：设得**晚于**外部那层（那等于给外部层再兜一道，不影响取证）。
+            external = re.search(r"timeout\s+--kill-after=(\d+)s\s+(\d+)s", _executable(run))
+            ext_total = (float(external.group(2)) + float(external.group(1))) if external else None
+            if ext_total is None or float(st) * 60.0 <= ext_total:
+                offenders.append(
+                    f"[{job_name}] 步骤 {str(step.get('name'))[:36]!r} 挂 step 级 "
+                    f"timeout-minutes={st}（job={budget}，外部层合计 {ext_total}s）"
+                )
+    assert not offenders, (
+        "调 gate.py 的步骤挂上了 step 级超时 —— GitHub 在那一刻**直接杀、不传日志**，"
+        "这一层会抢在内部看门狗与外部墙钟之前把现场吃掉（ENGI-34 定案）：\n  "
+        + "\n  ".join(offenders)
+    )
+
+
 def test_外部开火时点名那句走得到了() -> None:
     """`|| code=$?` 那一格是实测换来的，不是风格。
 
