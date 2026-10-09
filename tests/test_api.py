@@ -441,16 +441,26 @@ def test_role_memory_rejects_unknown_role_and_global_toggle(client: TestClient) 
 
 
 def test_session_agent_mode_patch_roundtrip(client: TestClient) -> None:
-    """会话级「对话/智能体」切换：PATCH 生效、明细返回有效值、非法值 400、清空回落全局。"""
+    """会话级模式覆盖：PATCH 生效、明细返回有效值、非法值 400、清空回落全局。
+
+    出厂默认 2026-10-10 起是 `agent`（用户拍板统一走智能体，对话页那个二选一已移除）——
+    这条用例因此**不再拿出厂值当垫脚石**：用一个与默认相反的显式值（chat）验往返，
+    最后清空时断言"回落到全局默认"（现读 `Settings().agent_default_mode`，不写死）。
+    """
+    from rolecard_agent.config import Settings
+
+    default = Settings().agent_default_mode
     tid = client.post("/api/session", json={}).json()["thread_id"]
 
     d0 = client.get(f"/api/session/{tid}").json()
-    assert d0["agent_mode"] == "chat"  # 出厂默认（AGENT_DEFAULT_MODE=chat）
+    assert d0["agent_mode"] == default  # 新会话（未覆盖）= 跟随全局默认
 
-    r = client.patch(f"/api/session/{tid}", json={"agent_mode": "agent"})
+    # 显式覆盖成**与默认相反**的那一档，验往返（默认是 agent 时覆盖成 chat）
+    other = "chat" if default == "agent" else "agent"
+    r = client.patch(f"/api/session/{tid}", json={"agent_mode": other})
     assert r.status_code == 200
-    assert r.json()["agent_mode"] == "agent"
-    assert client.get(f"/api/session/{tid}").json()["agent_mode"] == "agent"
+    assert r.json()["agent_mode"] == other
+    assert client.get(f"/api/session/{tid}").json()["agent_mode"] == other
 
     # 非法值 400：未知字符串既不是清除也不是任一档，静默吞掉会造成前端显示与实际不一致
     assert client.patch(f"/api/session/{tid}", json={"agent_mode": "robot"}).status_code == 400
@@ -458,7 +468,7 @@ def test_session_agent_mode_patch_roundtrip(client: TestClient) -> None:
     # 显式置空 = 清除覆盖，回落全局默认
     r2 = client.patch(f"/api/session/{tid}", json={"agent_mode": None})
     assert r2.status_code == 200
-    assert r2.json()["agent_mode"] == "chat"
+    assert r2.json()["agent_mode"] == default
 
     # 管理动作留痕
     actions = [row["action"] for row in client.get("/api/audit?limit=50").json()]

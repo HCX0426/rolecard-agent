@@ -28,13 +28,15 @@ def test_defaults_are_usable_without_any_env() -> None:
     assert settings.obs_backend == "local"
     assert settings.obs_emit_raw_text is False  # redacted by default
     assert settings.memory_enabled is True
-    assert settings.agent_default_mode == "chat"  # 出厂默认 = 普通对话
+    assert settings.agent_default_mode == "agent"  # 出厂默认 = 智能体（2026-10-10 统一走智能体）
 
 
 def test_agent_default_mode_from_env() -> None:
     assert Settings.from_env({"AGENT_DEFAULT_MODE": "agent"}).agent_default_mode == "agent"
     # 空串 = 未设置（回落默认），不能被当成非法值炸启动
-    assert Settings.from_env({"AGENT_DEFAULT_MODE": ""}).agent_default_mode == "chat"
+    assert Settings.from_env({"AGENT_DEFAULT_MODE": ""}).agent_default_mode == "agent"
+    # 想回到一问一答：显式给 chat（出厂默认虽已是 agent，本项仍可覆盖）
+    assert Settings.from_env({"AGENT_DEFAULT_MODE": "chat"}).agent_default_mode == "chat"
 
 
 def test_parses_backends_from_json() -> None:

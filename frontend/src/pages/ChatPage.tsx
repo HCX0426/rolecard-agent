@@ -69,8 +69,8 @@ export default function ChatPage({
   // 菜单开合与模型行（供应商分组 / 上下文窗口 / 采样惩罚）都在 ChatToolbar 里：那两个菜单
   // 互斥、共用一把「鼠标移出后延时关闭」的定时器，拆成两处就守不住这个不变式。
   const [sessionModel, setSessionModel] = useState<string | null>(null);
-  // 会话级对话模式（对话/智能体）：后端返回**有效值**（会话覆盖 or 全局默认）。
-  const [sessionMode, setSessionMode] = useState("chat");
+  // 会话模式（对话/智能体）**不再由界面切换**（2026-10-10 用户拍板：统一走智能体）——
+  // 有效值由后端 `agent_default_mode`（现为 "agent"）与会话覆盖列决定，前端不持有它。
   // 上下文预算事实（H3 的界面部分）：>0 时提示"早期对话已折叠"。
   // 单独放在 state 而不是气泡里，是因为气泡在流结束时会被 checkpoint 回放**整体替换** ——
   // 挂在气泡上的提示会在回答刚结束时消失，用户根本来不及看到。
@@ -189,7 +189,7 @@ export default function ChatPage({
       const [page, detail, ctxInfo] = await Promise.all([
         // 分页响应：只取最近 N 条（默认 500），太长的一次性全量返回既慢也没用。
         api.get<MessagePage>(`/api/session/${threadId}/messages`),
-        api.get<{ model_name: string | null; agent_mode: string }>(`/api/session/${threadId}`),
+        api.get<{ model_name: string | null }>(`/api/session/${threadId}`),
         // 上下文预算事实：刷新页面后「早期对话已折叠」这条提示同样要能显示出来
         // （它不是一次性的 SSE 事件，而是一个持续为真的状态）。
         api
@@ -201,7 +201,6 @@ export default function ChatPage({
       setHistoryTruncated(page.truncated ? page.total - page.messages.length : 0);
       seenTotalRef.current = page.total; // 记账：别处的写入靠这个数与探针比对
       setSessionModel(detail.model_name);
-      setSessionMode(detail.agent_mode || "chat");
       setTrim(ctxInfo.trimmed > 0 ? { dropped: ctxInfo.trimmed, kept: ctxInfo.kept } : null);
       setCtxBudget(ctxInfo.budget);
       setStatus("");
@@ -253,7 +252,6 @@ export default function ChatPage({
       setLive(null);
       liveRef.current = null;
       setTrim(null); // 新会话没有历史，也就谈不上"折叠"
-      setSessionMode("chat"); // 新会话先按对话档渲染；首次加载明细时会刷新为后端的有效值
       setStatus("");
       await refreshSessions();
       return s.thread_id;
@@ -601,24 +599,6 @@ export default function ChatPage({
     }
   }
 
-  /** 会话级切换「对话 / 智能体」：agent = 多步自主任务（规划指令 + 步数上限放大）。 */
-  async function switchMode(mode: "chat" | "agent") {
-    const tid = await ensureSession();
-    if (!tid) return;
-    try {
-      await api.patch(`/api/session/${tid}`, { agent_mode: mode });
-      setSessionMode(mode);
-      setStatus(
-        mode === "agent"
-          ? "已切换为智能体模式：多步自主任务，规划 + 反复调用工具（下一轮生效）"
-          : "已切换为对话模式（下一轮生效）",
-        "ok",
-      );
-    } catch (e) {
-      setStatus(`切换模式失败：${describeError(e)}`, "warn");
-    }
-  }
-
   const current = sessions.find((s) => s.thread_id === sessionId);
   // 进入时还没有会话：角色下拉默认停在「通用助手」，让用户一眼看到默认角色且可直接选。
   const defaultRoleId =
@@ -753,7 +733,7 @@ export default function ChatPage({
               </p>
               <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
                 <li>
-                  · <b>上传报告 / 图片</b> —— 自动解析并入检索索引（.pdf/.docx/.pptx/.xlsx + 图片 OCR）
+                  · <b>上传文件 / 图片</b> —— 自动解析并入检索索引（.pdf/.docx/.pptx/.xlsx + 图片 OCR）
                 </li>
                 <li>
                   · <b>需要某类专业能力时</b> —— 切换角色；每个角色只调用自己白名单内的
@@ -911,10 +891,8 @@ export default function ChatPage({
             uploading={uploading}
             selectMode={selectMode}
             sessionModel={sessionModel}
-            sessionMode={sessionMode}
             onPickRole={switchRole}
             onSwitchModel={switchModel}
-            onSwitchMode={(mode) => void switchMode(mode)}
             onUpload={handleUpload}
             onToggleSelectMode={() => {
               // 进出删除模式都要清掉勾选：退出去再进来时，上一轮的勾选不该还留着。

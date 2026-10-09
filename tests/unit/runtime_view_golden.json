@@ -256,7 +256,7 @@
             "chat",
             "agent"
           ],
-          "default": "chat",
+          "default": "agent",
           "field": "agent_default_mode",
           "key": "AGENT_DEFAULT_MODE",
           "kind": "str",
@@ -264,7 +264,7 @@
           "note": "chat=一问一答 / agent=多步自主任务（步数上限放大、注入规划指令）",
           "overridden": false,
           "override_value": null,
-          "value": "chat"
+          "value": "agent"
         },
         {
           "changed": false,

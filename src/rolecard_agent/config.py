@@ -271,9 +271,13 @@ class Settings(BaseModel):
 
     # v2.5 Agent 模式的**全局默认**：chat = 普通对话（每轮一问一答）/
     # agent = 多步自主任务（规划 → 调工具 → 总结，步数上限放大、注入规划指令）。
-    # 会话可单独覆盖（对话页切换，session_thread.agent_mode）；
-    # 值为 NULL 的会话 = 跟随本项，改这里对所有"没单独设过"的会话即时生效。
-    agent_default_mode: str = "chat"
+    # 会话可单独覆盖（`session_thread.agent_mode`）；值为 NULL 的会话 = 跟随本项。
+    #
+    # **2026-10-10 默认改 agent（用户拍板：统一走智能体）**：对话页那个「对话/智能体」
+    # 二选一切换已从界面移除 —— 不再要求用户理解两个模式的差别，agent 是唯一体验路径。
+    # 会话级覆盖列保留：存量行里**显式**写过 'chat' 的仍按它跑（不静默改写用户数据）；
+    # 想让某台实例回到一问一答改这一项即可，CI 与用例也照旧能构造两种模式。
+    agent_default_mode: str = "agent"
 
     # v2.5 角色主动开口（架构计划 B）**全局总闸**：True = 允许角色主动来找用户
     # （是否真的开口还要看该角色卡 reachout_enabled）；False = 所有角色都不主动

@@ -80,10 +80,8 @@ export default function ChatToolbar({
   uploading,
   selectMode,
   sessionModel,
-  sessionMode,
   onPickRole,
   onSwitchModel,
-  onSwitchMode,
   onUpload,
   onToggleSelectMode,
   onStatus,
@@ -102,11 +100,9 @@ export default function ChatToolbar({
   selectMode: boolean;
   /** 会话级模型覆盖（null = 跟随「服务」页那条序列打头的那个）。 */
   sessionModel: string | null;
-  sessionMode: string;
   onPickRole: (roleId: string) => void;
   /** 返回是否切换成功 —— 失败时菜单保持打开，让用户看得见没换成。 */
   onSwitchModel: (name: string | null) => Promise<boolean>;
-  onSwitchMode: (mode: "chat" | "agent") => void;
   onUpload: (file: File) => void;
   onToggleSelectMode: () => void;
   onStatus: (text: string, tone?: Tone) => void;
@@ -234,29 +230,11 @@ export default function ChatToolbar({
           </>
         )}
       </span>
-      {/* 对话/智能体 模式切换（会话级，PATCH /api/session）：agent = 多步自主任务
-          —— 注入规划指令、步数上限自动翻倍。与角色/模型同款"下一轮生效"。 */}
-      <div
-        className="flex items-center rounded-full border border-slate-200 bg-white p-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
-        title={sessionMode === "agent" ? "智能体模式：多步自主任务" : "对话模式：一问一答"}
-      >
-        <button
-          onClick={() => onSwitchMode("chat")}
-          className={`rounded-full px-2.5 py-1 transition-colors ${
-            sessionMode !== "agent" ? "bg-blue-600 text-white" : "text-slate-500 dark:text-slate-400"
-          }`}
-        >
-          对话
-        </button>
-        <button
-          onClick={() => onSwitchMode("agent")}
-          className={`rounded-full px-2.5 py-1 transition-colors ${
-            sessionMode === "agent" ? "bg-blue-600 text-white" : "text-slate-500 dark:text-slate-400"
-          }`}
-        >
-          智能体
-        </button>
-      </div>
+      {/* 「对话/智能体」二选一切换**已移除**（2026-10-10 用户拍板：统一走智能体）。
+          不再要求用户理解两个模式的差别 —— 全局默认 `agent_default_mode="agent"`，
+          存量里显式设过 'chat' 的会话仍按自己的值跑（后端 resolve_agent_mode 那侧管）。
+          这里刻意不留一个"只读徽标"：模式不再是用户要操心的东西，摆个标签只会让人问
+          "为什么是智能体、我能改吗"。 */}
       <div
         className="relative"
         onMouseEnter={cancelMenuClose}
@@ -426,11 +404,11 @@ export default function ChatToolbar({
       <button
         onClick={() => fileRef.current?.click()}
         disabled={uploading}
-        title="上传报告 / 图片，自动解析并入检索索引（.txt/.md/.pdf/.docx/.pptx/.xlsx + 图片 OCR）"
+        title="上传文件，自动解析并入检索索引（.txt/.md/.pdf/.docx/.pptx/.xlsx + 图片 OCR）"
         className="flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700 disabled:opacity-50"
       >
         <IconClip />
-        {uploading ? "上传中…" : "上传报告"}
+        {uploading ? "上传中…" : "上传文件"}
       </button>
       <button
         onClick={onToggleSelectMode}
