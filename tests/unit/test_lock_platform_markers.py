@@ -229,15 +229,28 @@ def test_三个Linux装配面挂约束_两个Windows面不挂() -> None:
 
     Windows 面（windows-test / windows-release）**刻意不挂**：win32 根本不请求 uvloop，
     挂了是 no-op；不挂是因为文件名与语义都写着 linux —— 这条断言钉的就是"别哪天顺手挂满"。
+
+    2026-10-10 认两种安装器（`pip install` / `uv pip install`）：CI 四臂改用 uv 提速
+    （冷装 303.9s → 27.8s，本机实测），这条断言原来逐字匹配 `pip install …`，当场红在
+    "带 -c 的应为 2，实为 0"——**它红得对**（形状确实变了），改的是判据不是现实：现在按
+    "哪一种安装器"都算，钉的仍是"哪几个面挂了约束"这个结构事实。
     """
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    # 归一成"去掉安装器前缀（含 uv 的 --system）"的命令体，两种安装器等价看待。
+    def _body(line: str) -> str:
+        s = line.strip()
+        for verb in ("uv pip install --system ", "uv pip install ", "pip install "):
+            if s.startswith(verb):
+                return s[len(verb):]
+        return ""
+
     guarded = [
         ln for ln in ci.splitlines()
-        if ln.strip() == "pip install -r requirements.lock -c constraints-linux.txt"
+        if _body(ln) == "-r requirements.lock -c constraints-linux.txt"
     ]
     unguarded = [
         ln for ln in ci.splitlines()
-        if ln.strip() == "pip install -r requirements.lock"
+        if _body(ln) == "-r requirements.lock"
     ]
     assert len(guarded) == 2, f"带 -c 的锁安装应为 2 个 ubuntu job，实为 {len(guarded)}"
     assert len(unguarded) == 2, f"不带 -c 的应为 2 个 windows job，实为 {len(unguarded)}"
