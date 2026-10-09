@@ -149,11 +149,14 @@ def test_ci的paths忽略名单只许含散文类() -> None:
     d = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
     push = d[True]["push"] if True in d else d["on"]["push"]
     ignore = push.get("paths-ignore") or []
-    allowed = {"docs/**", "**.md"}
+    allowed = {"docs/**"}
     assert set(ignore) <= allowed, (
-        f"paths-ignore 混进了非散文条目：{sorted(set(ignore) - allowed)} —— "
+        f"paths-ignore 混进了非 docs 条目：{sorted(set(ignore) - allowed)} —— "
         "名单每加一行都在缩小 CI 的看守范围，只许显式过这一格"
     )
+    # README.md **刻意不豁免**：它是门面文档，quickstart/里程碑/公网变量/首屏数字六条尺子
+    # 把着它 —— 2026-10-09 首版把 `**.md` 放进来，README 重写那笔被整个吞掉（CI 一行没跑）。
+    assert "**.md" not in ignore, "README.md 不能豁免：改它就是改被测物"
     # 反向：真正影响被测物的东西绝不该出现在忽略名单
     for forbidden in ("pyproject.toml", "requirements", "src/**", "tests/**", ".github/**"):
         assert not any(forbidden in e for e in ignore), f"{forbidden} 不许被忽略"
