@@ -122,10 +122,15 @@ def test_被剪掉的入库文件里不许藏着引用形状() -> None:
 
     from consistency.checks_audit import _PID_RE  # 真尺子用的那一条
 
-    tracked = subprocess.run(
-        ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True,
-        encoding="utf-8", errors="replace",
-    ).stdout.splitlines()
+    # `-z` 不是风格：CI（Linux）的 `core.quotepath` 默认 true，`git ls-files` 会把非 ASCII
+    # 路径输出成 `"data/lore/01-\345\237…"` —— 那个假名字切出来的第一段是 `"data`，匹配不上
+    # `IGNORED_DIRS` 里的 `data` ⇒ **本档在 CI 上分母直接变 0**，被下面那句哨兵抓出来
+    # （run 37860489135 实测：本地 5 支全绿、CI 红在这一格）。本机 Git-for-Windows 默认
+    # false 所以永远复现不出来。`-z` 输出原始字节，两平台同形。
+    raw = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=False,
+    ).stdout
+    tracked = [n.decode("utf-8", "replace") for n in raw.split(b"\x00") if n.strip()]
     if not tracked:
         pytest.fail("git ls-files 空：这条断言没有分母，不等于通过")
 

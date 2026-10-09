@@ -627,11 +627,20 @@ def check_single_source_literals() -> None:
     #   * 本文件自己（它的登记表里必然写着那些字面量，自指）；
     #   * **测试件**（`*.test.*` / tests 目录）：mock 载荷里的字面量是刻意的自足，
     #     让测试 import 生产常量等于让被测物替测试背书。
+    # `-c core.quotepath=false` 是**这条尺子在 Linux 上的形状修正**（与 `gate.py` 的 `_git()`、
+    # `scan_secrets.py` 的 `-z` 同一根因，2026-10-09 CI 现场量出）：CI 的 `core.quotepath`
+    # 默认 **true**，git 会把非 ASCII 路径输出成带双引号的八进制转义 ⇒ 这一族文件"看着在
+    # tracked 里、其实 `(ROOT / rel).exists()` 永远假"，被 `if ... .exists()` 静默丢掉。
+    # 今天恰好为 0 命中（本仓非 ASCII 路径都是 `.md`，不在这些扩展名里）—— 那是巧合，
+    # 不是安全：任何一份中文命名的 `.py`/`.toml` 一进来，这条判据就会静默看不见它。
     tracked = subprocess.run(
-        ["git", "ls-files", "*.py", "*.yml", "*.yaml", "*.ts", "*.tsx", "*.js", "*.toml"],
+        ["git", "-c", "core.quotepath=false", "ls-files",
+         "*.py", "*.yml", "*.yaml", "*.ts", "*.tsx", "*.js", "*.toml"],
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     ).stdout.splitlines()
     scanned = [

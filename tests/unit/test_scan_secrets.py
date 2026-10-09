@@ -41,10 +41,22 @@ def _load():
 
 
 class Proc:
-    """顶替 `subprocess.CompletedProcess` 的最小形状。"""
+    """顶替 `subprocess.CompletedProcess` 的最小形状（文本输出那几发用它）。"""
 
     def __init__(self, code: int, out: str = "", err: str = "") -> None:
         self.returncode, self.stdout, self.stderr = code, out, err
+
+
+class RawProc:
+    """`-z` 那一发的形状：**字节**输出（NUL 分隔），不是文本行。
+
+    真实现走 `capture_output=True` 不带 `text=`，拿到的就是 bytes；替身给字符串会让
+    `_tracked_files` 里那句 `split(b"\x00")` 抛 TypeError —— 那正是"替身不跟真签名"
+    会造出的假红/假绿（本仓为这一族立过规矩）。
+    """
+
+    def __init__(self, out: bytes) -> None:
+        self.returncode, self.stdout, self.stderr = 0, out, b""
 
 
 def _fake_repo(tmp_path: Path) -> Path:
@@ -147,18 +159,23 @@ def test_名单由_git_现答而不是抄一份规则(
     少了 `--others --exclude-standard` 就漏掉本次要发但还没入库的文件（那种文件恰恰最可能
     带刚贴进去的 key）；少了 `--exclude-standard` 就把 .gitignore 的东西扫进来，退回上一版
     那个"盘上全扫"的形状。
+
+    **`-z` 也在断言之列**（2026-10-09 由 CI 现场换来的）：Linux 上 `core.quotepath` 默认
+    true，普通输出会把非 ASCII 路径转义成 `"data/lore/01-\345…"` —— 那种假名字在影子树里
+    找不到文件，于是 37 个要扫的文件静默不进扫描而**退出码照旧 0**。替身必须按真实现的形状
+    给（NUL 分隔的**字节**，不是文本行）：替身与真签名不一致是本仓的老规矩。
     """
     scan = _load()
     seen: list[list[str]] = []
 
-    def fake_run(cmd: list[str], **_k: object) -> Proc:
+    def fake_run(cmd: list[str], **_k: object) -> RawProc:
         seen.append(list(cmd))
-        return Proc(0, "a.py\npkg/b.py\n")
+        return RawProc(b"a.py\x00pkg/b.py\x00")
 
     monkeypatch.setattr(scan.subprocess, "run", fake_run)
     assert scan._tracked_files(tmp_path) == ["a.py", "pkg/b.py"]
     joined = " ".join(seen[0])
-    for flag in ("ls-files", "--cached", "--others", "--exclude-standard"):
+    for flag in ("ls-files", "--cached", "--others", "--exclude-standard", "-z"):
         assert flag in joined, f"范围的定义少了 {flag}：{joined}"
 
 
@@ -212,15 +229,36 @@ def test_影子树按名单建且保留结构(tmp_path: Path) -> None:
     (repo / "a.py").write_text("A", encoding="utf-8")
     (repo / "pkg" / "b.py").write_text("B", encoding="utf-8")
     (repo / "不在名单里.py").write_text("NO", encoding="utf-8")
-    root = scan._shadow_tree(repo, ["a.py", "pkg/b.py", "ghost.py"])
+    (repo / "sub").mkdir()  # 目录项也在名单里 = 名单被别处弄脏了（见下：现在这**是**红）
+    root = scan._shadow_tree(repo, ["a.py", "pkg/b.py"])
     try:
         assert (root / "a.py").read_text(encoding="utf-8") == "A"
         assert (root / "pkg" / "b.py").read_text(encoding="utf-8") == "B"
         assert not (root / "不在名单里.py").exists(), "名单外的东西不该进范围"
+        assert not (root / "sub").exists(), "目录项不该被复制进影子树"
     finally:
         import shutil
 
         shutil.rmtree(root, ignore_errors=True)
+    # 新契约：名单里任何一项落不进树都抛（旧版只对 `is_file()` 为假的打一声就继续，
+    # 那正是 CI 上 37 个文件被静默漏掉的通道 —— 见 `test_git_path_shape.py`）
+    with pytest.raises(scan.ScopeMismatch):
+        scan._shadow_tree(repo, ["a.py", "sub"])
+
+
+def test_范围缺项退码走2而不是traceback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                     capsys: pytest.CaptureFixture[str]) -> None:
+    """`ScopeMismatch` 必须被 `main()` 收成语义明确的 **2**（0 干净 / 1 发现 / 2 扫不成）。
+
+    抛出去也是一种红，但退码是这条线的判据本体：traceback 等于给判据新造第四种码
+    （本仓在 `OSError` 那一格已经为同一件事补过一次）。
+    """
+    scan = _load()
+    repo = _fake_repo(tmp_path)
+    monkeypatch.setattr(scan, "_tool_path", lambda: repo / "gitleaks")
+    monkeypatch.setattr(scan, "_tracked_files", lambda _r: ["ghost.py"])
+    assert scan.main(["--repo", str(repo)]) == 2
+    assert "影子树建不起来" in capsys.readouterr().err
 
 
 def test_拷不动的文件不许被静默跳过(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

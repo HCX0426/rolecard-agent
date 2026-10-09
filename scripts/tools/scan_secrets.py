@@ -172,26 +172,48 @@ def _tracked_files(repo: Path) -> list[str]:
     （`[/\\]build[/\\]` 与裸 `build/` 一样都命中 `shell/build/icon.ico` —— 那是 tracked 的
     出货图标，实测过匹配）。影子树的范围由名单**正向**圈定，仓内 `.venv` 那 23 条第三方
     假阳连进范围的机会都没有；判据也不再需要任何目录形状。
+
+    **`-z` 不是风格**：`core.quotepath` 在 Linux 上默认 **true**，`git ls-files` 于是把非
+    ASCII 路径输出成**带双引号的八进制转义**（`"data/lore/01-\345\237\272…md"`）。影子树拿这种
+    假名字去 `is_file()` 当然找不到 ⇒ 本次要发的源码里 37 个文件一个都没扫，而那一步照样退 0、
+    绿（run 37852226595 实测，见 `_shadow_tree` 那段）。本机 Git-for-Windows 默认
+    `core.quotepath=false` ⇒ 永远复现不出来，直到我用 `git -c core.quotepath=true` 当场打出来。
+    `-z` 走 NUL 分隔、输出**原始路径字节**，与 quotepath 无关，两平台同形。
     """
     proc = subprocess.run(
-        ["git", "-C", str(repo), "ls-files", "--cached", "--others", "--exclude-standard"],
+        [
+            "git", "-C", str(repo), "ls-files", "--cached", "--others",
+            "--exclude-standard", "-z",
+        ],
         capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
         timeout=60,
     )
     if proc.returncode != 0:
-        raise RuntimeError(f"git ls-files -> {proc.returncode}：{proc.stderr.strip()[:200]}")
-    return [ln for ln in proc.stdout.splitlines() if ln.strip()]
+        err = proc.stderr.decode("utf-8", "replace").strip()[:200]
+        raise RuntimeError(f"git ls-files -> {proc.returncode}：{err}")
+    # 路径按字节切、再解码：git 输出的就是文件系统那一份名字。`errors="replace"` 只在路径
+    # 本身是坏字节时产生 U+FFFD —— 那种名字 `is_file()` 也会假，而少文件这件事现在会**抛**
+    # （见 `_shadow_tree`），不会再被当成"绿"。
+    return [name.decode("utf-8", "replace") for name in proc.stdout.split(b"\x00") if name.strip()]
+
+
+class ScopeMismatch(RuntimeError):
+    """名单里有项在盘上找不到 —— 范围**没定下来**，不等于"这些文件不存在"。
+
+    单独一个类型只为让 `main()` 能按约定的退 2 收（而不是抛 traceback = 第四种码）。
+    """
 
 
 def _shadow_tree(repo: Path, files: list[str]) -> Path:
     """按名单拷一份影子树进临时目录（保留相对结构）；扫描跑在这份上。
 
-    **拷不动就抛**，不许静默跳过：名单里有一个文件没进影子树，就等于那份源码**免检** ——
-    这条红线最坏的形状正是"扫过了、绿了、其实少扫了一个文件"。`is_file()` 为假的那几种
-    （竞态下刚被删、目录项）不在此列：它们本来就没有内容可扫，数出来报给调用方看。
+    **名单里有任何一项进不了树就抛**，不许静默跳过、也不许只是打印一声：少一个文件就等于
+    那份源码**免检**，而这条红线最坏的形状正是"扫过了、绿了、其实少扫了一个文件"。
+    我第一版给 `is_file()` 为假的那几种留了一个"竞态/目录项"的网开一面（只 print），
+    **那一面正是 CI 上 37 个文件被整体漏掉的掩体**（run 37852226595）：非 ASCII 路径被
+    `core.quotepath=true` 转义成 `"data/lore/01-\345…"`，`is_file()` 必然为假 ⇒ 37 项全
+    missing ⇒ 日志里一行小字 ⇒ 照样退 0。真竞态是罕见的，系统性转义是每天发生的；
+    两者都在这一格里被同一句"竞态/目录项"盖住。现在一律红，由人去看是哪一种。
     """
     root = Path(tempfile.mkdtemp(prefix="gitleaks-scope-"))
     missing: list[str] = []
@@ -209,10 +231,11 @@ def _shadow_tree(repo: Path, files: list[str]) -> Path:
         shutil.rmtree(root, ignore_errors=True)
         raise
     if missing:
-        print(
-            f"[scan_secrets] 名单里有 {len(missing)} 项此刻不在盘上（竞态/目录项），"
-            f"举例：{missing[:3]}",
-            file=sys.stderr,
+        shutil.rmtree(root, ignore_errors=True)
+        raise ScopeMismatch(
+            f"名单里 {len(missing)}/{len(files)} 项在盘上找不到，举例 "
+            f"{missing[:3]} —— 范围没定下来（多半是路径被 git 输出转义了，见 "
+            f"`_tracked_files` 里 `-z` 那段），而不是『这些文件不存在』"
         )
     return root
 
@@ -258,7 +281,15 @@ def main(argv: list[str] | None = None) -> int:
         if not files:
             print("[scan_secrets] ❌ git 名单是空的 —— 不像一份仓库，按扫不成退 2", file=sys.stderr)
             return 2
-        shadow = _shadow_tree(repo, files)
+        try:
+            shadow = _shadow_tree(repo, files)
+        except Exception as exc:  # noqa: BLE001 — 范围建不起来 = 扫不成，退 2 而不是抛 traceback
+            # 这一格就是 CI 上那 37 个文件本来该走的路：`ScopeMismatch` 从 `_shadow_tree`
+            # 抛出来，如果这里不接，脚本就抛 traceback 冲出 —— 门禁确实会红，但退码就不是
+            # 约定的 2 了（0 干净 / 1 发现 / 2 扫不成），而这条线的**退出码本身就是判据**。
+            print(f"[scan_secrets] ❌ 影子树建不起来：{exc}（扫不成 ≠ 干净，退 2）",
+                  file=sys.stderr)
+            return 2
         source = shadow
         print(f"[scan_secrets] 范围 = git 名单 {len(files)} 个文件（影子树）", file=sys.stderr)
 

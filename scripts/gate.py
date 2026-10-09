@@ -201,9 +201,17 @@ def _git(*args: str) -> str:
     `text=True` 默认按 GBK 解 —— 解码在**读子进程输出的那个线程**里抛 UnicodeDecodeError，
     主线程只会拿到一份被截断的 stdout（实测 09-25 就在 `diff --name-only` 上中招）。
     截断不是"少几行"，`_src_changed()` 会拿着半份清单判断要不要跑覆盖率，那是一次静默失效。
+
+    `-c core.quotepath=false` 是**同一条病的另一半**（2026-10-09 由 CI 现场照出，
+    run 37852226595）：这个配置在 Linux 上默认 **true**（Git for Windows 默认 false），true 时
+    git 把非 ASCII 路径输出成**带双引号的八进制转义** —— `"data/lore/01-\345\237\272…"`。
+    于是 `p.startswith("src/")` 对中文路径**永远判假**：改动清单里那些文件既不算"改了 src"、
+    也不算"改了别的"，而是直接从判据眼里消失。`_src_changed()` 中招就是覆盖率被静默跳过
+    （= 变弱，正是本函数上面那段注释不许发生的事）。本机复现不出来，只在 CI 上发作 ——
+    关掉它对 ASCII 路径毫无影响，所以这是一处零成本的收口。
     """
     proc = subprocess.run(
-        ["git", *args],
+        ["git", "-c", "core.quotepath=false", *args],
         cwd=str(ROOT),
         capture_output=True,
         text=True,
