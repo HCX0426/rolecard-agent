@@ -1,5 +1,9 @@
 # rolecard-agent
 
+[![CI](https://github.com/HCX0426/rolecard-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/HCX0426/rolecard-agent/actions/workflows/ci.yml)
+[![Release](https://github.com/HCX0426/rolecard-agent/actions/workflows/release.yml/badge.svg)](https://github.com/HCX0426/rolecard-agent/releases)
+![GitHub Release](https://img.shields.io/github/v/release/HCX0426/rolecard-agent)
+
 > **角色卡驱动的对话 Agent 内核 + 可插拔领域插件**
 > 运行时切换人设与权限，工具与知识检索以插件方式注册，本地优先、可公网部署。
 
