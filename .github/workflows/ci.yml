@@ -95,9 +95,9 @@ jobs:
 
       - name: 装 uv
         # 冷装 pip 303.9s → uv 27.8s（本机实测，同一把锁）。pin 到主版本 v10（GitHub API
-        # 实读 2026-10-10 最新 v10.2.0）；`enable-cache` 的 key 含 requirements.lock ——
+        # 实读 2026-10-10 最新 v10.2.0）。**这个 action 没有 v10 浮动标签**（实测 gh api `repos/astral-sh/setup-uv/git/ref/tags/v10` 返 404；第一版按惯例写 `@v10`，整趟 CI 红在 Set up job 的「Unable to resolve action」）—— 只能钉精确 tag，升级时改这一处。`enable-cache` 的 key 含 requirements.lock ——
         # 锁变了缓存自动失效，不会拿旧缓存装出新世界。
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
           cache-dependency-glob: |
@@ -460,7 +460,7 @@ jobs:
             requirements-dev.txt
 
       - name: 装 uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
           cache-dependency-glob: |
@@ -531,7 +531,7 @@ jobs:
       - name: 装 uv
         # **本臂提速的主角**（2026-10-10）：实测装依赖 70~119s（8 趟逐趟读数），冷装
         # pip 303.9s vs uv 27.8s。Windows runner 分钟按 2× 计费，这一段省下的是双倍账。
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
           cache-dependency-glob: |
@@ -575,7 +575,7 @@ jobs:
       - name: 装 uv
         # 与 windows-test 同一条口径（2026-10-10）：打包机的装依赖也是冷装，
         # 换成 uv 后这一段同样从分钟级降到秒级；锁与约束一行没动。
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
           cache-dependency-glob: |
