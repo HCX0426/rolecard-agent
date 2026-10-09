@@ -70,7 +70,21 @@ LANES: dict[str, tuple[list[str], str, str]] = {
     ),
 }
 
-_FAILED_RE = re.compile(r"^FAILED (\S+?)::", re.M)
+#: 短摘要里"这一条红"的两种行首形状：`FAILED 文件::用例 - 原因`（断言失败）与
+#: `ERROR 文件::用例 - 原因`（**fixture/收集期**炸，chroma 这个偶发最常见的形态）。
+#: 从前只认 `FAILED` —— 2026-10-09 Windows 臂就是这么漏的：签名在册、`chroma_flake` 也判了
+#: 真，摘要是 `ERROR tests/test_api_edges.py::…` ⇒ 旧正则抓不到 ⇒ `failed` 为空 ⇒ 走了
+#: 「不在在册签名里，不重跑」那条分支按原样红。**两个半边各对一半，合起来是错结论。**
+#:
+#: 形状是拿 `build/ci-log/` 下 15 条真摘要行对的（不是照"我以为摘要长什么样"写的）：
+#: 两种都是 `kind` + 单个空格 + **以 `.py` 结尾的路径**；`[gwN]` 前缀只出现在 verbose 行里，
+#: 短摘要行**一条都没有**（实测计数 0），所以这里不为主观臆想的形状开口子 —— 开了就会把
+#: pip 的 `ERROR: Could not find a version…`、docker 的 `ERROR: failed to build…` 也吞进来
+#: （这两族同样真实存在于日志里），而那是**别的工具的报错**，不是本层的取证对象。
+#: `(?:::|$)` 与 `\.py` 双锚一起挡住它们：既要求"路径后紧跟 `::` 或到行尾"，也要求"确实是个 .py"。
+_SUMMARY_LINE_RE = re.compile(
+    r"^(?:FAILED|ERROR)\s+(\S+\.py)(?:::|\s|$)(.*)$", re.M
+)
 
 
 def _rel(path: pathlib.Path) -> str:
@@ -93,8 +107,53 @@ def _run(cmd: list[str], extra: list[str] | None = None) -> tuple[int, str]:
     return proc.returncode, out
 
 
-def _failing_files(log: str) -> list[str]:
-    return sorted({m.split("::")[0] for m in _FAILED_RE.findall(log)})
+def _failures(log: str) -> list[tuple[str, str]]:
+    """短摘要里每一条红：`(文件, 该条自带的原因文本)`。
+
+    两件事在这一个出处里办完，不留"看起来收了其实没收"的空隙：
+
+    1. `FAILED 文件::…` 与 `ERROR 文件::…` **两族都要**。从前只认 `FAILED`，于是
+       fixture/收集期炸掉的那些（chroma 这个偶发最常见的形态）一个都摘不出来 ⇒ 明明签名
+       在册却走「按原样红，不重跑」（2026-10-09 Windows 臂实测）。
+    2. 认不出文件的摘要行**大声打出来**，不静默丢：重跑名单少一个文件 = 那一半失败没被
+       取证，而"取证跑过了"看起来照样成立 —— 与本轮修的"扫不到也算扫过"同一族。
+
+    原因文本必须**逐条**取，不能"整份日志里出现过签名"就算 —— 见 `main()` 里那段
+    「文档比实现严、实现却更松」的订正。
+    """
+    out: list[tuple[str, str]] = []
+    unparsed: list[str] = []
+    for m in _SUMMARY_LINE_RE.finditer(log):
+        name = m.group(1).replace("\\", "/")
+        out.append((name, m.group(2)))
+    # `FAILED|ERROR` 打头却不是 `.py` 路径的行（收集期 `ERROR tests/x.py` 带 `::`、
+    # 也可能整个文件炸）：这一族真日志里没有，但一旦 pytest 改了摘要形状，宁可打出来也别
+    # 静默少取证。识别口径只有一处（上面的正则），这里只补"看到红行却没抓到文件"的警报。
+    for ln in log.splitlines():
+        s = ln.strip()
+        if s.startswith(("FAILED ", "ERROR ")) and not _SUMMARY_LINE_RE.match(s):
+            unparsed.append(s[:120])
+    if unparsed:
+        print(
+            f"⚠️ 摘要里有 {len(unparsed)} 行认不出文件（不重跑它们，也不假装收全）：",
+            *[f"   {u}" for u in unparsed[:5]],
+            sep="\n",
+            flush=True,
+        )
+    return out
+
+
+def _is_chroma_flake(reason: str) -> bool:
+    """这一条红是不是在册的 chroma 偶发。**空原因 = 不在册**（fail-closed）。
+
+    摘要行不是每条都带 ` - 原因`（截断、或某些 pytest 版本不打）。那种情况下我们**不知道**
+    它为什么红，而"不知道"不许换来一次重跑放行 —— 与 ① 依赖审计、② 密钥扫描同一条铁律：
+    判据取不到证据时按不通过算。
+    """
+    text = reason.strip()
+    if not text:
+        return False
+    return any(sig in text for sig in CHROMA_FLAKE_SIGNATURES)
 
 
 def _lane_from_argv(argv: list[str]) -> str | None:
@@ -166,14 +225,24 @@ def main() -> int:
     if rc == 0:
         return 0
 
-    failed = _failing_files(log)
-    chroma_flake = any(sig in log for sig in CHROMA_FLAKE_SIGNATURES)
-    if not failed or not chroma_flake:
+    failures = _failures(log)
+    if not failures or not all(_is_chroma_flake(reason) for _f, reason in failures):
+        # 判据是**逐条**问的，问的就是本文件开头「判据」那一节写死的第 1 条：
+        # 「只有当**全部**失败都带着在册的 chroma 偶发签名时，才重跑那些文件一次」。
+        # 从前这里是 `any(sig in log …)` —— 扫整份日志：只要**任何一处**出现过 chroma 签名，
+        # 一起红的真 bug 也就跟着进重跑，而二跑只跑失败的那几个文件 ⇒ 一个"只有全套语境下
+        # 才成立"的真红（跨用例污染正是这种）可以二跑绿、被记成 FLAKY-RECORDED 放行。
+        # 那正是同节第 4 条自己警告的「万能遮羞布」，而它当时已经写死在判据里了 ——
+        # **文档比实现严、实现却更松**，这一族最阴的地方是两边各自看起来都对。
+        # （不写行号：这文件一直在长，行号会变成第二个会漂的事实面。）
+        unknown = [f for f, r in failures if not _is_chroma_flake(r)]
         print(
-            f"❌ {lane} 档这趟红了，而失败不在在册的 chroma 偶发签名里 —— 按原样红，不重跑。",
+            f"❌ {lane} 档这趟红了，而失败不在册的 chroma 偶发签名里 —— 按原样红，不重跑。"
+            + (f"\n   不在册的那几条：{unknown[:6]}" if unknown else ""),
             flush=True,
         )
         return rc
+    failed = sorted({f for f, _r in failures})
 
     ev = existing_evidence(BUILD)
     ev_line = (

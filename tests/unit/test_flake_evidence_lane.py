@@ -100,6 +100,87 @@ def test_a_non_signature_failure_is_never_retried(monkeypatch, tmp_path, capsys)
     assert "不重跑" in capsys.readouterr().out
 
 
+#: fixture/收集期炸掉的形状（2026-10-09 Windows 臂真发生）：短摘要打的是 `ERROR …`，
+#: 而且**原因带在册签名**。旧正则只认 `FAILED` ⇒ 一条都摘不出来 ⇒ 明明该重跑取证，
+#: 却走了「不在在册签名里，不重跑」那条分支按原样红。
+ERROR_LOG = (
+    "ERROR tests/unit/test_api_edges.py::test_upload_stays_pending - "
+    "chromadb.errors.InternalError: Query error: Database error: "
+    "error returned from database: (code: 5) database is locked\n"
+    "354 passed, 1 error in 233.83s\n"
+)
+
+
+def test_an_error_at_setup_line_is_retried_like_a_failed_one(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """chroma 这个偶发**最常以 ERROR 出现**（fixture 期就炸），重跑通道不能只接 `FAILED`。"""
+    mod = _load(monkeypatch, tmp_path)
+    monkeypatch.setattr(sys, "argv", ["x", "--lane", "fast"])
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, extra=None):  # noqa: ANN001, ANN002, ANN003
+        calls.append(cmd)
+        if len(calls) == 1:
+            return 1, ERROR_LOG
+        assert "tests/unit/test_api_edges.py" in cmd, f"二跑该只跑红的那个文件：{cmd}"
+        return 0, "1 passed\n"
+
+    monkeypatch.setattr(mod, "_run", fake_run)
+    assert mod.main() == 0
+    assert "FLAKY-RECORDED" in capsys.readouterr().out
+
+
+#: 混合形状：一条在册 + 一条**真红**。旧实现问的是"整份日志里出现过签名吗"（`any`），
+#: 于是这一发会整批进重跑；而重跑只跑失败的那几个文件 —— 一个"只有全套语境下才成立"的
+#: 真红（跨用例污染正是这种）可以二跑绿、被记成 FLAKY-RECORDED 放行。
+#: 文件头部第 1 条判据写的是「**全部**失败都带签名」，实现却更松 —— 这就是那条遮羞布。
+MIXED_LOG = (
+    "FAILED tests/unit/test_rag.py::test_scope_isolation - "
+    "chromadb.errors.InternalError: Nothing found on disk\n"
+    "FAILED tests/unit/test_x.py::y - AssertionError: 真的红了\n"
+    "2 failed, 900 passed\n"
+)
+
+
+def test_a_mixed_batch_retries_nothing_even_with_one_flake(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    mod = _load(monkeypatch, tmp_path)
+    monkeypatch.setattr(sys, "argv", ["x", "--lane", "fast"])
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, extra=None):  # noqa: ANN001, ANN002, ANN003
+        calls.append(cmd)
+        return 1, MIXED_LOG if len(calls) == 1 else ""
+
+    monkeypatch.setattr(mod, "_run", fake_run)
+    assert mod.main() == 1
+    assert len(calls) == 1, "混进真红的一批被整批重跑了：签名判据从「全部」退成了「任一」"
+    out = capsys.readouterr().out
+    assert "不重跑" in out
+    # 不在册的那几条要**点名**，否则下一个人只能自己去 900 行里找是哪条挡了重跑
+    assert "tests/unit/test_x.py" in out, out[-400:]
+
+
+def test_an_unreasoned_summary_line_is_not_treated_as_a_flake(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """空原因 = 不知道它为什么红 ⇒ 按不在册算（fail-closed），不许换来一次重跑放行。"""
+    mod = _load(monkeypatch, tmp_path)
+    bare = "FAILED tests/unit/test_z.py::w\n1 failed\n"
+    calls: list[list[str]] = []
+    monkeypatch.setattr(sys, "argv", ["x", "--lane", "fast"])
+
+    def fake_run(cmd, extra=None):  # noqa: ANN001, ANN002, ANN003
+        calls.append(cmd)
+        return 1, bare if len(calls) == 1 else ""
+
+    monkeypatch.setattr(mod, "_run", fake_run)
+    assert mod.main() == 1
+    assert len(calls) == 1, "没原因文本的一条红被当成 chroma 偶发重跑了"
+
+
 def test_flake_retries_for_evidence_and_keeps_both_logs(monkeypatch, tmp_path, capsys) -> None:
     mod = _load(monkeypatch, tmp_path)
     monkeypatch.setattr(sys, "argv", ["x", "--lane", "fast"])
