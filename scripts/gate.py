@@ -871,6 +871,21 @@ def _write_readings(outputs: dict[str, str], ok: bool) -> None:
                 # 覆盖率是**按平台**的数（runner 的 Linux 与本机 win32 各执行不了对方那半条分支），
                 # 所以这个键必须带着"是哪台机器量的"，否则另一台机器的数会被读成"覆盖率掉了"。
                 data["coverage_platform"] = sys.platform
+                # README 的覆盖率徽章（shields endpoint 格式）在同一现场生成 —— 与 gate-readings
+                # 共命运：只有真量到才刷新，红的/子集的/取证放行的趟都不碰它。它**只在本机全量档**
+                # 落入库槽（scratch 槽是 runner 的，公开 badge 的数来自入库那台）。
+                if path is READINGS:
+                    badge = {
+                        "schemaVersion": 1,
+                        "label": "coverage",
+                        "message": f"{data[key]}%",
+                        "color": "brightgreen" if float(data[key]) >= 90.0 else "yellow",
+                    }
+                    (ROOT / "docs" / "coverage-badge.json").write_text(
+                        json.dumps(badge, ensure_ascii=False, indent=2) + "\n",
+                        encoding="utf-8",
+                        newline="\n",
+                    )
     for path, data, notes in (
         (READINGS, committed, added[READINGS]),
         (READINGS_SCRATCH, scratch, added[READINGS_SCRATCH]),

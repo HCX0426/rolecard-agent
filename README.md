@@ -3,6 +3,10 @@
 [![CI](https://github.com/HCX0426/rolecard-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/HCX0426/rolecard-agent/actions/workflows/ci.yml)
 [![Release](https://github.com/HCX0426/rolecard-agent/actions/workflows/release.yml/badge.svg)](https://github.com/HCX0426/rolecard-agent/releases)
 ![GitHub Release](https://img.shields.io/github/v/release/HCX0426/rolecard-agent)
+<!-- 覆盖率徽章走 shields endpoint，数据文件 coverage-badge.json 由门禁在写 gate-readings.json
+     的同一现场自动生成（shields 格式），本页不手抄数字 —— "数字移出散文"对 badge 同样适用。
+     现值见 docs/gate-readings.json（页内有链接与"按平台、阈值 90%"口径）。 -->
+[![coverage](https://img.shields.io/endpoint?url=HCX0426.github.io/rolecard-agent/coverage-badge.json)](docs/gate-readings.json)
 
 > **角色卡驱动的对话 Agent 内核 + 可插拔领域插件**
 > 运行时切换人设与权限，工具与知识检索以插件方式注册，本地优先、可公网部署。
