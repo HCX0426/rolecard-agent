@@ -352,6 +352,7 @@ def lock_findings(
     edges: Mapping[str, list[Edge]],
     label: str,
     requires: Callable[[str, Iterable[str]], list[tuple[str, str | None]]] | None = None,
+    extra_pins: Iterable[str] = (),
 ) -> tuple[list[str], list[str]]:
     """一把锁的 (判红的, 只出声不拦的)。
 
@@ -364,7 +365,10 @@ def lock_findings(
     只出声不拦（改它 = 换另一侧平台实际装的东西，是没量过的环境改动，留给独立一刀）：
       4. 某个 pin 声明了"另一侧才装"的依赖，而锁里**整条没有**它 —— 那一侧只能拿到
          没锁版本的它（本轮实测到的 `uvicorn[standard]` → `uvloop` 就是这一形状；
-         Windows 解析把它整条剥掉，补标记救不回来）。
+         Windows 解析把它整条剥掉，补标记救不回来）。**`extra_pins` 是这格的第二个读数面**
+         （ENGI-18 第三路，2026-10-09 拍板）：被 `constraints-linux.txt` 约束面钉住的包
+         视为"已有锁版"，本格不再出声 —— 判据从"锁里没有就响"变成"哪儿都没有才响"，
+         谁删约束行，noise 当场回来。
     """
     problems: list[str] = []
     noise: list[str] = []
@@ -372,6 +376,7 @@ def lock_findings(
     if not pins:
         return [f"{label} 里一个 pin 都读不到（空锁或形状变了）"], noise
     present = {p.name for p in pins}
+    covered = {str(n).replace("_", "-").lower() for n in extra_pins}
     for pin in pins:
         cls = classify(pin.name, edges)
         if cls == "required" and pin.marker:
@@ -406,7 +411,9 @@ def lock_findings(
             )
     for pin in pins:
         for dep, marker_text in (requires or installed_requires)(pin.name, pin.extras):
-            if marker_text is None or dep in present:
+            # `covered`：constraints-linux.txt 已钉住的包视为"有锁版"（ENGI-18 第三路）——
+            # 删掉那条约束行，`dep in covered` 立刻为假、noise 当场回来，判据不会被静默绕过。
+            if marker_text is None or dep in present or dep in covered:
                 continue
             shape = platform_of(marker_text, pin.extras)
             if shape in (SHAPE_WIN, SHAPE_UNIX):

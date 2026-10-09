@@ -102,7 +102,12 @@ jobs:
           # 比对「镜像的每个约束 ∈ 锁的 pin」—— requirements*.txt 改了不重新 compile，
           # 这条尺子当场红）。从前散装 -r 五份时版本漂移由 CI 每次重装暴露，那是没锁
           # 时代的取舍；fresh install 逐字节可重现从这条起成立。
-          pip install -r requirements.lock
+          # 挂 `-c constraints-linux.txt`（ENGI-18 第三路，2026-10-09 拍板）：Windows 侧解析的
+          # 锁天生没有 uvloop（uvicorn[standard] 的 sys_platform 门，pip-compile 在 win32 上整条
+          # 剥掉），不加 `-c` 则本臂每次现场解析**没锁版本**的它。约束行由
+          # `scripts/tools/refresh_constraints.py` 在 Linux 上按锁里的 uvicorn pin 实测 resolve、
+          # 周更 lock-refresh 刷新；Windows 面（windows-test/release）不挂 —— win32 不请求 uvloop。
+          pip install -r requirements.lock -c constraints-linux.txt
 
       - name: gate.py --ci
         # 用户 09-29 拍的（R28-24）："覆盖率与 baseline 比对不留在手动档，每次 push/PR 设防"
@@ -442,8 +447,8 @@ jobs:
       - name: 装依赖（后端 + 前端 + 壳）
         run: |
           python -m pip install --upgrade pip
-          # 同 gate job：锁安装（requirements.lock 覆盖运行时五族 + dev）。
-          pip install -r requirements.lock
+          # 同 gate job：锁安装（requirements.lock 覆盖运行时五族 + dev）+ 同一份 Linux 约束。
+          pip install -r requirements.lock -c constraints-linux.txt
           npm ci --prefix frontend
           npm ci --prefix shell
 

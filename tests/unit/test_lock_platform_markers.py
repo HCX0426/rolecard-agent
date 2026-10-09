@@ -16,6 +16,10 @@
   * **过度钉**（上游无条件声明却带标记）→ 红（那一侧会静默不装，比崩更难查）；
   * **uvloop 那一族**（声明了"另一侧才装"的成员而锁里整条没有）→ **只出声不拦**：
     实测过 Windows 解析根本不产出这一行，判红等于要求一台机器造不出来的东西。
+
+2026-10-09 追加第五族（ENGI-18 第三路，用户拍板）：第四格从"锁里没有就响"扩成
+"**哪儿都没有**才响" —— `extra_pins`（`constraints-linux.txt` 的 pin 集合）兜住就闭嘴，
+外加三支结构/在场臂：三个 Linux 装配面必须挂 `-c`、约束文件本体必须可被 `parse_lock` 读。
 """
 
 from __future__ import annotations
@@ -192,3 +196,65 @@ def test_parse_lock认pin行_不认注释与缩进() -> None:
     assert py.marker == 'sys_platform == "win32"'
     bare = parse_lock(_LOCK_BARE)
     assert next(p for p in bare if p.name == "pywin32").marker is None
+
+
+# ---- ENGI-18 第三路（2026-10-09 拍板）：约束面是第四格的第二个读数面 ---------------------
+
+def test_约束面兜住uvloop时第四格闭嘴_拿掉就回来() -> None:
+    """`extra_pins` = `constraints-linux.txt` 的 pin 集合（ENGI-18 第三路）。
+
+    判据语义从「锁里没有就响」变成「**哪儿都没有**才响」：约束在 → 闭嘴（出声处不再空响）；
+    约束拿掉 → 同一发 noise 当场回来（谁删约束行都删不掉这条警告，绕不过去）。
+    """
+    _p0, noise0 = lock_findings(_LOCK_PINNED, FAKE_EDGES, "t.lock", fake_requires)
+    assert any("uvloop" in n for n in noise0), "前提：无约束时必须响"
+    _p1, noise1 = lock_findings(
+        _LOCK_PINNED, FAKE_EDGES, "t.lock", fake_requires, extra_pins={"uvloop"}
+    )
+    assert not any("uvloop" in n for n in noise1), noise1
+    # 名字形状不整齐也认（与锁里 pin 同一口径的归一：大小写折叠）
+    _p2, noise2 = lock_findings(
+        _LOCK_PINNED, FAKE_EDGES, "t.lock", fake_requires, extra_pins={"UVLOOP"}
+    )
+    assert not any("uvloop" in n for n in noise2), noise2
+    # 约束兜的是"另一侧没锁版"那一格；判红三格不受影响（漏钉仍点名）
+    problems, _ = lock_findings(
+        _LOCK_BARE, FAKE_EDGES, "t.lock", fake_requires, extra_pins={"uvloop"}
+    )
+    assert len(problems) == 1 and "解析期就崩" in problems[0], problems
+
+
+def test_三个Linux装配面挂约束_两个Windows面不挂() -> None:
+    """结构臂：`-c constraints-linux.txt` 只挂 Linux 装配面（gate / full-gate / Dockerfile）。
+
+    Windows 面（windows-test / windows-release）**刻意不挂**：win32 根本不请求 uvloop，
+    挂了是 no-op；不挂是因为文件名与语义都写着 linux —— 这条断言钉的就是"别哪天顺手挂满"。
+    """
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    guarded = [
+        ln for ln in ci.splitlines()
+        if ln.strip() == "pip install -r requirements.lock -c constraints-linux.txt"
+    ]
+    unguarded = [
+        ln for ln in ci.splitlines()
+        if ln.strip() == "pip install -r requirements.lock"
+    ]
+    assert len(guarded) == 2, f"带 -c 的锁安装应为 2 个 ubuntu job，实为 {len(guarded)}"
+    assert len(unguarded) == 2, f"不带 -c 的应为 2 个 windows job，实为 {len(unguarded)}"
+    docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert "COPY constraints-linux.txt ./" in docker, "镜像里没有约束文件可 -c"
+    assert "-r requirements-runtime.lock -c constraints-linux.txt" in docker
+
+
+def test_入库的约束文件只有一条uvloop_pin() -> None:
+    """约束文件本体：parse_lock 认得、pin 就是 uvloop 一条、版本是实测数字。
+
+    它**不是** pip-compile 的产物（头注释写明来源与刷新器）——这条断言钉住"文件在场且
+    形状可被 `lock platform markers` 读"，空文件/被清成注释都会在这里红。
+    """
+    path = ROOT / "constraints-linux.txt"
+    assert path.exists(), "约束文件不见了：Linux 装配面的 -c 会把 CI/镜像装红"
+    pins = parse_lock(path.read_text(encoding="utf-8"))
+    assert [p.name for p in pins] == ["uvloop"], [p.name for p in pins]
+    assert pins[0].version[0].isdigit(), pins[0].version
+    assert pins[0].marker is None, "这行不带标记：文件只挂 Linux 面，行内不必再判平台"

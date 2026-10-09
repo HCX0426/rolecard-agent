@@ -43,6 +43,93 @@ concurrency:
   cancel-in-progress: false # 正在跑的这一周别被后来的排期掐掉：它要么给 PR，要么给一次红
 
 jobs:
+  refresh-constraints:
+    # ENGI-18 第三路（2026-10-09 拍板）：约束行必须在 **Linux** 上实测 resolve —— 与上面那把
+    # Windows 锁**刻意分开两条 job**：uvloop 的声明带 sys_platform 门，win32 永远解析不出它，
+    # 放进 windows job 会把「没有」写成「上游改了」并静默删掉约束（脚本自己也退 2 挡这一步）。
+    # 两个 PR 各答各的问题（锁更新 / Linux 约束更新），罕见同周都变时开两张，不互相绑。
+    name: 刷新 Linux 约束行（Linux 实测 resolve）
+    runs-on: ubuntu-24.04
+    # 估的，与上面那把同一句话：只保证卡死不躺到 GitHub 默认 360 分钟；真跑过再按实测收回。
+    timeout-minutes: 15
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.lock
+
+      - name: 解析约束行（0=没变 / 1=变了 / 2=跑不动）
+        id: resolve
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          rc=0
+          python scripts/tools/refresh_constraints.py || rc=$?
+          if [ "$rc" -eq 0 ]; then echo "changed=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [ "$rc" -eq 1 ]; then echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          echo "::error::刷不动约束行（exit=$rc）：这一趟必须红，不许当成‘本周无事’"
+          exit "$rc"
+
+      - name: 变了 → 在新约束上装锁 + 快档用例
+        if: steps.resolve.outputs.changed == 'true'
+        id: validate
+        shell: bash
+        run: |
+          pip install -r requirements.lock -c constraints-linux.txt
+          python scripts/pytest_with_evidence.py --lane fast
+
+      - name: 验绿才开 PR
+        # validate 红 ⇒ 这一步不跑，作业红：与上面那把锁同一个纪律 ——
+        # 宁可见红，不见"没被机器看过的版本变更 PR"。
+        if: steps.resolve.outputs.changed == 'true' && steps.validate.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIFF="$(git diff -- constraints-linux.txt | grep -E '^[+-]uvloop==' || true)"
+          if [ -z "$DIFF" ]; then
+            echo "::error::工具说有变化，diff 却挑不出 uvloop 行 —— 不开 PR，红在这里"
+            exit 1
+          fi
+          SHA="$(git rev-parse --short HEAD)"
+          BRANCH="bot/lock-refresh/constraints-${SHA}"
+          git config user.name "rolecard-lock-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add constraints-linux.txt
+          git commit -m "chore(deps): 刷新 Linux 约束行 uvloop（run_id=${{ github.run_id }}）"
+          git push -u origin "$BRANCH"
+          {
+            echo "## Linux 约束行刷新（uvloop）"
+            echo
+            echo "由 \`scripts/tools/refresh_constraints.py\` 在 **Ubuntu runner** 上按锁里的"
+            echo "uvicorn pin 实测 \`pip --dry-run --report\` 产出（Windows 侧解析不出这条，"
+            echo "这正是 ENGI-18 单立一条 Linux job 的原因）。"
+            echo
+            echo "### 版本变化"
+            echo '```'
+            echo "${DIFF}"
+            echo '```'
+            echo
+            echo "### 已验证"
+            echo "- \`pip install -r requirements.lock -c constraints-linux.txt\` 装得上；"
+            echo "- \`scripts/pytest_with_evidence.py --lane fast\` 绿。"
+            echo "- 本 PR 由 \`GITHUB_TOKEN\` 开出，**不会自动触发 checks**（GitHub 既定行为），"
+            echo "  所以证据是上面这一条 job 里跑的；需要远端门禁请手动 dispatch 一次 CI。"
+          } > "$RUNNER_TEMP/pr-body.md"
+          gh pr create --base main --head "$BRANCH" \
+            --title "chore(deps): 刷新 Linux 约束行（uvloop）" \
+            --body-file "$RUNNER_TEMP/pr-body.md" \
+            --repo "${{ github.repository }}"
+
   refresh:
     name: 重解析锁 + 验一遍 + 开 PR
     runs-on: windows-latest

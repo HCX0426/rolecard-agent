@@ -33,7 +33,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # 设置页接 MCP server 是合法的 operator 动作，而未装时 loader 只打一行 warning 就跳过工具 ——
 # 界面照常摆着入口、交通灯照常画，工具永远加载不出来（"格子骗人"的 fail-open）。
 COPY requirements-runtime.lock ./
-RUN pip install --no-cache-dir -r requirements-runtime.lock
+# ENGI-18 第三路（2026-10-09 拍板）：Windows 侧解析的锁天生没有 uvloop（uvicorn[standard] 的
+# sys_platform 门，pip-compile 在 win32 上整条剥掉），不挂 `-c` 则镜像现场解析**没锁版本**的它。
+# 约束行由 scripts/tools/refresh_constraints.py 在 Linux 上按锁里的 uvicorn pin 实测 resolve、
+# 周更 lock-refresh 刷新（版本事实只此一处，见 constraints-linux.txt 头部）。
+COPY constraints-linux.txt ./
+RUN pip install --no-cache-dir -r requirements-runtime.lock -c constraints-linux.txt
 
 # 形态自报（审查快照决策七"容器无本地 OCR"那一格的收口）：容器里没有 .venv-ocr、也没有随包
 # worker，所以"本地 OCR 不可用"在这里是**设计**而不是缺装 —— rag/ocr.py 据此把服务页那格的

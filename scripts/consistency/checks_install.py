@@ -382,12 +382,31 @@ def check_lock_platform_markers() -> None:
     edges = installed_edges()
     problems: list[str] = []
     notes: list[str] = []
+    # ENGI-18 第三路（2026-10-09 拍板）：约束面是第四格（warn）的第二个读数面。文件**必须在** ——
+    # Linux 装配面（ci.yml gate/full-gate、Dockerfile）的 `-c constraints-linux.txt` 引用着它，
+    # 删文件不删引用，下一次 CI 装配当场红；删干净（文件+引用+本判据）才算回到"没锁版本"的旧世界，
+    # 那时第四格的 noise 会自己回来。
+    constraints_path = ROOT / "constraints-linux.txt"
+    covered: set[str] = set()
+    if constraints_path.exists():
+        covered = {
+            p.name
+            for p in parse_lock(constraints_path.read_text(encoding="utf-8", errors="ignore"))
+        }
+    else:
+        problems.append(
+            "constraints-linux.txt 不见了 —— Linux 装配面的 `-c` 还引用着它"
+            "（要删必须连装配面与本判据一起改，否则镜像/CI 装配当场红）"
+        )
     for lock_name in LOCK_SURFACES:
         path = ROOT / lock_name
         if not path.exists():
             problems.append(f"{lock_name} 不见了")
             continue
-        p, n = lock_findings(path.read_text(encoding="utf-8", errors="ignore"), edges, lock_name)
+        p, n = lock_findings(
+            path.read_text(encoding="utf-8", errors="ignore"), edges, lock_name,
+            extra_pins=covered,
+        )
         problems.extend(p)
         notes.extend(n)
     ok = not problems
@@ -400,7 +419,9 @@ def check_lock_platform_markers() -> None:
     ]
     detail = "; ".join(problems[:4]) if problems else (
         f"{len(LOCK_SURFACES)} 把锁的平台标记都判过（会崩那族 {sorted(CRASHES_ELSEWHERE)}；"
-        f"带标记的行 {len(pinned)} 条）"
+        f"带标记的行 {len(pinned)} 条"
+        + (f"；constraints 兜住 {sorted(covered)}" if covered else "")
+        + "）"
     )
     out("lock platform markers", ok, detail)
     if problems:

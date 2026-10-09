@@ -1,0 +1,17 @@
+# Linux 装配面的约束（ENGI-18 第三路，2026-10-09 拍板：install 侧，不碰锁生成 / P1-12 口径）。
+#
+# 为什么存在：两把锁都在 Windows 上由 pip-compile 解析（P1-12 拍板的「Windows-first」），
+# 而 `uvicorn[standard]` 对 uvloop 的声明带 `sys_platform != "win32"` 门 —— Windows 解析时
+# 整条把它剥掉（实测：带标记写进输入，重新 compile 后那行连标记都不留）。于是 Linux 侧
+# （镜像 / CI 门禁臂 / 全量门禁臂）`pip install -r 锁` 时，uvloop 由 pip **现场解析、没有锁版**
+# —— 「requirements 逐字节可重现」只对 Windows 那一半成立（ENGI-18 立案的原话）。
+#
+# 这一行钉的就是那一半：`-c constraints-linux.txt` 只挂在 Linux 装配面（ci.yml 的 gate 与
+# full-gate 两个 job、Dockerfile），Windows 面不挂（uvloop 在 win32 根本不被请求，挂了也是
+# no-op —— 不挂是因为文件名与语义都写着 linux，两处口径不必绕）。
+#
+# 版本怎么来：`scripts/tools/refresh_constraints.py` 在 **Linux** 上按锁里的 uvicorn pin 跑
+# `pip install --dry-run --report` 实测 resolve（首版 0.23.0 = 2026-10-09 六趟 CI 日志里
+# Linux 实装的那个版本），周更 `lock-refresh.yml` 刷新、PR 先验证后开。
+# 本文件**不是** pip-compile 的产物：谁手改它而不动 uvicorn pin，周更会把它刷回来。
+uvloop==0.23.0
