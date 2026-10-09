@@ -874,12 +874,15 @@ def _write_readings(outputs: dict[str, str], ok: bool) -> None:
                 # README 的覆盖率徽章（shields endpoint 格式）在同一现场生成 —— 与 gate-readings
                 # 共命运：只有真量到才刷新，红的/子集的/取证放行的趟都不碰它。它**只在本机全量档**
                 # 落入库槽（scratch 槽是 runner 的，公开 badge 的数来自入库那台）。
+                # `hits[-1]` 是 str（float() 在这吃它没问题）；从 `data[key]` 取会拿到 object
+                # 类型（CI 冷缓存 mypy 实测，2026-10-09）。
                 if path is READINGS:
+                    coverage_value = hits[-1]
                     badge = {
                         "schemaVersion": 1,
                         "label": "coverage",
-                        "message": f"{data[key]}%",
-                        "color": "brightgreen" if float(data[key]) >= 90.0 else "yellow",
+                        "message": f"{coverage_value}%",
+                        "color": "brightgreen" if float(coverage_value) >= 90.0 else "yellow",
                     }
                     (ROOT / "docs" / "coverage-badge.json").write_text(
                         json.dumps(badge, ensure_ascii=False, indent=2) + "\n",
