@@ -42,9 +42,15 @@ for _stream in (sys.stdout, sys.stderr):
 BUILD = ROOT / "build"
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "forensics"))
-# 签名清单**只有一份出处**：conftest 的失败时刻钩子与这里问的是同一个东西，两处各抄一份
-# 就是给"改了判据漏了另一处"留门（`R102` 轮那条"同一句理由出现在第二处就该有尺子"的同族）。
-from chroma_flake_evidence import CHROMA_FLAKE_SIGNATURES, existing_evidence  # noqa: E402
+# 签名清单**只有一份出处**，而且**匹配逻辑也只有一份**：conftest 的失败时刻钩子与这里问的是
+# 同一个东西，两处各抄一份就是给"改了判据漏了另一处"留门（`R102` 轮那条"同一句理由出现在
+# 第二处就该有尺子"的同族）。2026-10-09 我又差一点踩进去：既有断言只钉住了**清单对象**相同
+# （`CHROMA_FLAKE_SIGNATURES is cfe.CHROMA_FLAKE_SIGNATURES`），我这轮新加的判定顺手写了
+# `any(sig in text …)` —— 清单共用而**判法各写一遍**，两侧照样能各判各的还都看着合理。
+# 所以这里 import 的是 `hits_signature` 这个函数本身，不再自己算。
+# （清单仍留一个引用：`test_chroma_flake_evidence.py` 那条恒等断言是打在本模块属性上的，
+#   删掉它会连带把那道"只有一份出处"的尺子废了 —— 那是有意保留的再导出。）
+from chroma_flake_evidence import existing_evidence, hits_signature  # noqa: E402
 
 # 警告政策住在 `pyproject.toml` 的 `filterwarnings`（全仓唯一出处：自有代码弃用即红、
 # 已知 ResourceWarning 按消息精确放行）。这里从前挂着一句 `-W ignore` 把整条政策连同
@@ -146,14 +152,20 @@ def _failures(log: str) -> list[tuple[str, str]]:
 def _is_chroma_flake(reason: str) -> bool:
     """这一条红是不是在册的 chroma 偶发。**空原因 = 不在册**（fail-closed）。
 
-    摘要行不是每条都带 ` - 原因`（截断、或某些 pytest 版本不打）。那种情况下我们**不知道**
-    它为什么红，而"不知道"不许换来一次重跑放行 —— 与 ① 依赖审计、② 密钥扫描同一条铁律：
+    摘要行不是每条都带原因文本（截断、或某些 pytest 版本不打）。那种情况下我们**不知道**
+    它为什么红，而"不知道"不许换来一次重跑放行 —— 与依赖审计、密钥扫描同一条铁律：
     判据取不到证据时按不通过算。
+
+    「是不是那一发偶发」这件事**不在这里答**：`hits_signature()` 的 docstring 明写着"判据只在
+    这里答一次"，而我第一版顺手写了 `any(sig in text …)` —— 那是第二份实现（清单确实共用了，
+    既有断言 `CHROMA_FLAKE_SIGNATURES is cfe.CHROMA_FLAKE_SIGNATURES` 钉住了对象，**可匹配逻辑
+    没钉**）。于是同一句"在册"在 conftest 钩子与这里可以各判各的，而两边看起来都合理 ——
+    正是本仓那一族。空原因这一侧仍由本函数负责（它问的是"有没有证据可判"，不是"像不像偶发"）。
     """
     text = reason.strip()
     if not text:
         return False
-    return any(sig in text for sig in CHROMA_FLAKE_SIGNATURES)
+    return hits_signature(text)
 
 
 def _lane_from_argv(argv: list[str]) -> str | None:

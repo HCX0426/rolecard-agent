@@ -277,13 +277,27 @@ def pytest_runtest_makereport(item: pytest.Item, call: Any) -> None:
     `tmp_path` 在会话收尾时就被回收了 —— 于是每次红完只剩同一句 `Nothing found on disk`，
     十五批取证批批从头。台账要的正是"一次带 chroma 侧状态的现场"（`R102-41`），这一步给它。
 
-    只认 call 阶段：setup 里的错通常是夹具自己的问题，把那条也留成现场只会教下一个人去查
-    一个不存在的方向（本仓那条"红了要能指出下一步"的口径）。
+    **2026-10-09 改掉的两处（原来是两处叠着的缺陷，实测都在这发偶发身上）**：
+
+    ① 从前有一句 `if call.when != "call": return`，理由是"setup 里的错通常是夹具自己的问题"。
+       这个闸门是**多余的、而且是错的**：多余因为签名判据本来就会把"不是那一发"的挡掉；
+       错因为 run 37860489135 的 Windows 臂那次 chroma `(code: 5) database is locked`
+       **正是发生在 setup**（`ERROR at setup of test_…`，fixture 里建 client 就炸了）——
+       守卫在它最该起作用的那一形状上失明，"红跑不许没有现场"当场落空。现在**只由签名决定**。
+
+    ② 从前喂判据的是 `str(exc)`，而 `CHROMA_FLAKE_SIGNATURES` 里有一条是**类名**
+       （`chromadb.errors.InternalError`）—— `str()` 永远不含自己的类名 ⇒ 那一条签名
+       在这个调用点上**物理不可能命中**（实测：同一发偶发，门禁 wrapper 读的日志含类名行 ⇒
+       认；钩子读 `str(exc)` ⇒ 不认）。这就是账本 ENGI-24① 记的"两台机器各读半张"的**真机制**，
+       而它的解不是"两处各写一份判据"（判据早已共用），是让两处**读到语义相同的文本**：
+       这里补上限定类名，与 pytest 打报告时的那一行同形。
     """
-    if call.when != "call" or call.excinfo is None:
+    if call.excinfo is None:
         return
+    exc = call.excinfo.value
     try:
-        text = str(call.excinfo.value)
+        kind = f"{type(exc).__module__}.{type(exc).__qualname__}"
+        text = f"{kind}: {exc}"
     except Exception:  # noqa: BLE001 - 取证层不能因为异常没法 str 就崩掉整趟
         return
     if not _flake.hits_signature(text):
@@ -293,4 +307,5 @@ def pytest_runtest_makereport(item: pytest.Item, call: Any) -> None:
     if isinstance(tmp, pathlib.Path):
         roots.append(tmp)
     path = _flake.dump_evidence(BUILD_DIR, item.nodeid, text, extra_roots=roots)
-    print(f"[R102-41 现场] 命中在册 chroma 偶发 ⇒ 盘上形状落到 {path}")
+    phase = "" if call.when == "call" else f"（{call.when} 阶段）"
+    print(f"[R102-41 现场] 命中在册 chroma 偶发{phase} ⇒ 盘上形状落到 {path}")
