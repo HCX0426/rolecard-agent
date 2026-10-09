@@ -3,8 +3,10 @@
 用法：python scripts/tools/ledger_apply.py <spec.json> [--probe]
 
 规格文件形状：{"edits": [{"id", "old", "new", "must_contain": [...]}]}
-纪律：锚点 count==1 才写；new 不许含换行（表格行不许劈开）；must_contain 逐条到位；
-写完独立结构自检（ENGI 表行数 / 编号连续 / 每行分割计数 5），不过就整体还原。
+纪律：锚点 count==1 才写；new 含换行须显式 multi_line（默认禁止，防把表格行劈成两半）；
+must_contain 逐条到位；写完独立结构自检（ENGI 表行数只增不减 / 编号连续 / 各行格数一致），
+不过就整体还原。**锚点必须包含目标行的结尾**（锚在行中间会把新行内容塞进行内、挤成多格 ——
+2026-10-10 实测踩过，自检"格数不齐"当场拦下）。
 
 为什么从 build/ 挪进来：它此前躺在 gitignore 的临时目录里，一次"删临时文档"把它连带删掉
 而 git 救不回来（未入库）。入库后与其它 scripts 同受管理，并被 `console encoding` 那条尺子
@@ -56,9 +58,24 @@ for e in SPEC:
     if n != 1:
         print(f"[{e['id']}] 锚点 {n} 次，整笔不写盘")
         sys.exit(1)
-    if "\n" in e["new"]:
-        print(f"[{e['id']}] 新文本含换行，会劈开表格行，不写盘")
+    # 含换行的新文本只在**显式声明**时才允许（`multi_line: true`）：它用来整块插入新行
+    # （如新增一条 ENGI 记录），而默认禁止是防"顺手把表格行劈成两半"那个老坑。
+    if "\n" in e["new"] and not e.get("multi_line"):
+        print(f"[{e['id']}] 新文本含换行，会劈开表格行；确实要插入整块就写 multi_line: true")
         sys.exit(1)
+    if e.get("multi_line") and e["new"].strip("\n").splitlines() and any(
+        ln.strip() and not ln.lstrip().startswith(("|", "#", ">", "-", "*")) and "：" not in ln
+        for ln in e["new"].splitlines()
+    ):
+        # 多行块的每一行要么是表格行/标题/引用，要么是纯散文段落 —— 不允许出现"半截表格行"
+        # （以 `|` 开头却不以 `|` 结尾）那种最容易劈坏文件的形状。
+        half = [
+            ln for ln in e["new"].splitlines()
+            if ln.lstrip().startswith("|") and not ln.rstrip().endswith("|")
+        ]
+        if half:
+            print(f"[{e['id']}] 多行块里有半截表格行（以 | 开头却不以 | 结尾），不写盘")
+            sys.exit(1)
     text = text.replace(e["old"], e["new"])
     for token in e["must_contain"]:
         if token not in text:
@@ -75,17 +92,21 @@ for ln in rows:
     d = "".join(ch for ch in first.split("（")[0] if ch.isdigit())
     if d:
         nums.append(int(d))
-widths = {len(re.split(r"(?<!\\)\|", ln)) for ln in rows}
+widths = {len(re.split(r"(?<!\\)\|", ln.strip("|"))) for ln in rows}
 bad: list[str] = []
-if nums != list(range(15, 15 + len(nums))):
+# 编号必须连续（从第一个 ENGI 行起）：这条是"编号是身份"的机器化那一半。
+if nums and nums != list(range(nums[0], nums[0] + len(nums))):
     bad.append(f"编号不连续：{nums}")
-if widths != {5}:
+# 格数必须**全体一致**（不写死具体几格：表格形状本身可能演进）。基准取改动前的第一条 ENGI 行。
+if len(widths) != 1:
     bad.append(f"格数不齐（新文本里混进了裸竖线）：{widths}")
-if len(rows) != 18:
-    bad.append(f"表行数 {len(rows)}（应 18）")
+# 行数只许**增加**（落账是追加，不是改写历史）。
+was = len([ln for ln in before.splitlines() if ln.startswith("| ENGI-")])
+if len(rows) < was:
+    bad.append(f"ENGI 表行数从 {was} 减到 {len(rows)}（落账只该追加）")
 if bad:
     LED.write_text(before, encoding="utf-8", newline="\n")
     print("自检不过，已还原：", bad)
     sys.exit(1)
-print(f"✅ 落账完成：{len(rows)} 行（{nums[0]}→{nums[-1]}）、每行分割计数 5、"
-      f"文件 {len(lines)} 行（原 {len(before.splitlines())}）")
+print(f"✅ 落账完成：{was} → {len(rows)} 行（编号 {nums[0]}→{nums[-1]}）、"
+      f"每行 {widths.pop()} 格、文件 {len(lines)} 行（原 {len(before.splitlines())}）")
