@@ -19,6 +19,13 @@
 所以这里钉**形状**（每个站点都带开关），真行为臂住在 `test_scan_secrets_path_scope.py`：
 那里用 `tmp_path` 建真仓库 + `git config core.quotepath true`，把 CI 的形状搬进用例，
 并做过撤 `-z` 的变异实测。最后那一支用真子进程问一遍本机，堵"源码里写了开关而实际没生效"。
+
+**10-09 晚补（全仓 23 个 git 调用点盘完之后）**：`checks_audit._git_ignored` 与 `diff_coverage._git`
+两处判定受影响的站点也进了本档。`_git_ignored` 那支是**真行为臂**（临时仓 + 仓内
+`git config core.quotepath true` = CI 形状，不赌环境变量）：这条分区的立身之本是"送进去什么、
+回出来什么逐字相等"，quotepath 开着就整体失效 —— 该函数已经栽过一次同款（`text=True` 的 `\r\n`），
+这是第二次。`diff_coverage` 的判据方向是**静默变弱**（`+++ b/` 头认不出 ⇒ 文件从分母消失 ⇒
+改动行覆盖率地板在它身上失效）。
 """
 
 from __future__ import annotations
@@ -84,3 +91,50 @@ def test_本机真实仓在当前配置下确实拿得到原名() -> None:
     assert len(names) > 500, f"名单才 {len(names)} 条：不像这份仓库，分母可疑"
     mangled = [n for n in names if n.startswith('"') or "\\3" in n]
     assert not mangled, f"名单里有转义形状（说明开关没生效）：{mangled[:3]}"
+
+
+def test_diff_coverage的git也锁形状() -> None:
+    """`diff_coverage._git` 是它全部 git 查询的单点；`git diff` 的 `+++ b/` 头在 quotepath
+    开启时整体加引号+转义 ⇒ `parse_changed_lines` 认不出那条头 ⇒ **文件从分母里静默消失**，
+    改动行覆盖率的地板（`diff_coverage_floor`）在它身上失效 —— 判据方向是"变弱"。"""
+    src = _src("scripts/diff_coverage.py")
+    total = src.count('["git"')
+    guarded = src.count('["git", "-c", "core.quotepath=false"')
+    assert total == guarded > 0, (
+        f"diff_coverage 里 {total} 处起 git、{guarded} 处锁了形状："
+        "漏网那处的 diff 头会在 Linux 上被转义，改动行静默少算"
+    )
+
+
+def test_git_ignored在quotepath开启时仍分区得动(tmp_path: Path, monkeypatch) -> None:
+    """**真行为臂**：临时仓把 `core.quotepath` 设成 true（= CI 的 Linux 形状），把一个**中文命名
+    的被忽略文件**点名给 `_git_ignored` —— 它必须仍然把这条从判据里分区出去。
+
+    这条函数的立身之本就是"送进去什么、回出来什么逐字相等"（docstring 里已记过一次同款事故：
+    `text=True` 的 `\r\n` 让 git 回 `"a.json\r"` ⇒ 分区静默失效、本机看不出来）。quotepath 是
+    同一条病的第二个入口：命令行 `-c core.quotepath=false` 压过仓内 true，撤掉开关这发就红。
+    """
+    repo = tmp_path / "repo"
+    (repo / "build").mkdir(parents=True)
+    (repo / ".gitignore").write_text("build/\n", encoding="utf-8")
+    (repo / "build" / "中文暂存件.json").write_text("{}", encoding="utf-8")
+
+    def git(*a: str) -> None:
+        subprocess.run(["git", "-C", str(repo), *a], capture_output=True, check=True)
+
+    git("init", "-q")
+    git("config", "user.email", "probe@example.invalid")
+    git("config", "user.name", "probe")
+    git("config", "core.quotepath", "true")  # CI 的 Linux 默认形状
+    git("add", ".gitignore")
+    git("commit", "-qm", "base")
+
+    from consistency import checks_audit as audit
+
+    monkeypatch.setattr(audit, "ROOT", repo)
+    ignored, asked = audit._git_ignored(["build/中文暂存件.json", "src/real.py"])
+    assert asked, "问 git 失败（这条哨兵自己先要有分母）"
+    assert "build/中文暂存件.json" in ignored, (
+        f"中文忽略路径没被分区出去（quotepath 又把回信转义了？）：{ignored}"
+    )
+    assert "src/real.py" not in ignored, f"没被忽略的路径混进来了：{ignored}"

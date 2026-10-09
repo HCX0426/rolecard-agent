@@ -316,7 +316,14 @@ def _git_ignored(refs: list[str]) -> tuple[set[str], bool]:
         return set(), True
     try:
         proc = subprocess.run(
-            ["git", "check-ignore", "--stdin"],
+            # `-c core.quotepath=false`：**这条分区的立身之本是「送进去什么、回出来什么必须逐字
+            # 相等」**，而 Linux 上 `core.quotepath` 默认 true 时 git 回的是带双引号的八进制转义名
+            # （2026-10-09 用真仓库两种配置各跑一遍实测：true 下回 `"build/\344…"`，false 下回原名）
+            # ⇒ 集合里的每个成员都匹配不上任何真引用 ⇒ 分区**静默退化成"一个都认不出"**，
+            # 本机 Git-for-Windows 默认 false ⇒ 这台机器永远是绿的。与 ENGI-31 那族同根因，
+            # 这是它的第 5 处（也是这处函数**第二次**栽在"回信对不上送信"上 —— 第一次是
+            # `text=True` 把 \n 翻成 \r\n，见下一条注释）。
+            ["git", "-c", "core.quotepath=false", "check-ignore", "--stdin"],
             # **必须送 bytes**：text 模式会把 "\n" 翻成 "\r\n"，而 `--stdin` 只剥换行不剥
             # 回车 —— git 于是收到一条带控制符的"路径"，回你一条加引号的转义名（`"a.json\r"`），
             # 匹配不上任何真引用，这条分区就静默失效（09-30 在干净 worktree 里实测到）。

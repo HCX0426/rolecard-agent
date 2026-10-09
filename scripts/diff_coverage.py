@@ -110,8 +110,13 @@ def summarize(
 
 
 def _git(root: pathlib.Path, *args: str) -> subprocess.CompletedProcess[str]:
+    # `-c core.quotepath=false`：`git diff` 的 `+++ b/<路径>` 头在 quotepath=true（Linux 默认）
+    # 下对非 ASCII 路径**整体加引号+八进制转义** ⇒ `parse_changed_lines` 认不出那条头 ⇒
+    # 这个文件的改动行**整个从分母里消失** ⇒ 改动行覆盖率的地板在它身上静默失效（ENGI-31 同根因
+    # 的第 6 处，2026-10-09 晚盘全仓 23 个 git 调用点时盘出来的 —— 盘的时候本仓 src 下恰好没有
+    # 非 ASCII 文件，所以今天是**潜伏**不是已发作：判据在这里是"改一行就少测一行"的静默方向）。
     return subprocess.run(
-        ["git", *args],
+        ["git", "-c", "core.quotepath=false", *args],
         cwd=root,
         capture_output=True,
         text=True,
