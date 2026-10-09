@@ -92,22 +92,27 @@ jobs:
         id: meta
         shell: bash
         run: |
-          # refs/tags/v0.3.0 -> 0.3.0；手动触发时用输入版本
+          # refs/tags/v0.3.0 -> 0.3.0；手动触发时用输入版本。
+          # 镜像名**整体小写**：ghcr 仓库名不许大写（`ghcr.io/HCX0426/...` 会报
+          # "repository name must be lowercase"，2026-10-09 v0.3.0 首次实跑红在这里 ——
+          # `${{ github.repository }}` 原样带出 owner 的大写，echo 里手工转一次）。
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VER="${{ inputs.version }}"
           else
             VER="${GITHUB_REF_NAME#v}"
           fi
+          IMAGE="$(echo '${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')"
           echo "version=$VER" >> "$GITHUB_OUTPUT"
-          echo "发布版本：$VER"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "发布版本：$VER / 镜像：$IMAGE"
       - name: 构建并推送
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: |
-            ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
-            ${{ env.IMAGE_NAME }}:latest
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
+            ${{ steps.meta.outputs.image }}:latest
           # 把版本写进 OCI 标签，方便 traceability
           labels: |
             org.opencontainers.image.version=${{ steps.meta.outputs.version }}
@@ -240,4 +245,4 @@ jobs:
             --generate-notes \
             --repo "${{ github.repository }}" \
             "$EXE"
-          echo "Release v${{ steps.meta.outputs.version }} 已建，镜像已 push 至 ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}"
+          echo "Release v${{ steps.meta.outputs.version }} 已建，镜像已 push 至 ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}"
