@@ -134,3 +134,26 @@ def test_git_ignored在quotepath开启时仍分区得动(tmp_path: Path, monkeyp
         f"中文忽略路径没被分区出去（quotepath 又把回信转义了？）：{ignored}"
     )
     assert "src/real.py" not in ignored, f"没被忽略的路径混进来了：{ignored}"
+
+
+def test_ci的paths忽略名单只许含散文类() -> None:
+    """`paths-ignore` 是**静默生效**的：glob 写错 = 永远不触发 CI，最坏的静默失效形状。
+
+    所以名单的内容要钉死 —— 只许"绝不影响被测物"的散文类（docs/** 与 **.md）；
+    pyproject / 锁 / 工作流 / 源码 / 测试**绝不该进**名单（它们改一行就真能改行为，
+    被这份名单吞掉的 push 连一个红都不会给你）。账本尺子（audit citations 等）在
+    下一笔碰代码的 push 里照跑，漏不了。
+    """
+    import yaml
+
+    d = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
+    push = d[True]["push"] if True in d else d["on"]["push"]
+    ignore = push.get("paths-ignore") or []
+    allowed = {"docs/**", "**.md"}
+    assert set(ignore) <= allowed, (
+        f"paths-ignore 混进了非散文条目：{sorted(set(ignore) - allowed)} —— "
+        "名单每加一行都在缩小 CI 的看守范围，只许显式过这一格"
+    )
+    # 反向：真正影响被测物的东西绝不该出现在忽略名单
+    for forbidden in ("pyproject.toml", "requirements", "src/**", "tests/**", ".github/**"):
+        assert not any(forbidden in e for e in ignore), f"{forbidden} 不许被忽略"

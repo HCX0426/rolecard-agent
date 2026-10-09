@@ -20,6 +20,15 @@ name: CI
 on:
   push:
     branches: [main]
+    # **纯账本提交不烧 CI**（2026-10-09，今天 23 笔 docs/ 提交每笔烧了 7 分钟整趟 = 2.7 小时
+    # 的 runner 时间在量"账本文字有没有写错格式"—— 那件事由 `check_consistency` 在**下一次**
+    # 碰代码的 push 里照跑，漏不了）。忽略名单按"绝不影响被测物"的口径收窄：
+    # docs/**（账本与报告）、**.md（README 等散文）—— 但 pyproject/锁/工作流**不在**忽略内
+    # （它们改一行就真能改行为）。这层是省时间不是降防线：账本尺子（audit citations /
+    # index in sync / markdown table shape）在下一笔代码提交里全量照跑。
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
   pull_request:
   workflow_dispatch:
     inputs:
