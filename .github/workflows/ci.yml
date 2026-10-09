@@ -82,7 +82,9 @@ jobs:
           # 与 Dockerfile 的 `python:3.13-slim` 同一条版本线：CI 绿而镜像里是别的版本，
           # 就等于两次实测互相不覆盖。
           python-version: "3.13"
-          cache: pip
+          # 不再挂 `cache: pip`（2026-10-10 换 uv）：缓存的是 pip 的 wheel 缓存，而这一臂
+          # 已经不跑 pip 了 —— 留着它只会让"装了缓存"这句话在日志里显得还对。uv 自己的
+          # 缓存由下一步的 `enable-cache` 提供（key 里带 requirements.lock，锁变了自动换）。
           cache-dependency-path: |
             requirements.txt
             requirements-api.txt
@@ -90,6 +92,17 @@ jobs:
             requirements-cloud.txt
             requirements-mcp.txt
             requirements-dev.txt
+
+      - name: 装 uv
+        # 冷装 pip 303.9s → uv 27.8s（本机实测，同一把锁）。pin 到主版本 v10（GitHub API
+        # 实读 2026-10-10 最新 v10.2.0）；`enable-cache` 的 key 含 requirements.lock ——
+        # 锁变了缓存自动失效，不会拿旧缓存装出新世界。
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            requirements*.lock
+            requirements*.txt
 
       - name: mypy 增量缓存
         # 2026-10-04 审查快照的 CI 门禁条目：runner 上从前每次冷跑三遍 mypy（win/linux/scripts
@@ -103,18 +116,23 @@ jobs:
 
       - name: 装依赖
         run: |
-          python -m pip install --upgrade pip
-          # **锁安装**（2026-10-07 拍板「上锁文件」）：这一把锁覆盖运行时五族 + dev（它的
-          # 输入面钉在 check_consistency 的 LOCK_SURFACES，`lockfile parity` 尺子逐约束
-          # 比对「镜像的每个约束 ∈ 锁的 pin」—— requirements*.txt 改了不重新 compile，
-          # 这条尺子当场红）。从前散装 -r 五份时版本漂移由 CI 每次重装暴露，那是没锁
-          # 时代的取舍；fresh install 逐字节可重现从这条起成立。
-          # 挂 `-c constraints-linux.txt`（ENGI-18 第三路，2026-10-09 拍板）：Windows 侧解析的
-          # 锁天生没有 uvloop（uvicorn[standard] 的 sys_platform 门，pip-compile 在 win32 上整条
-          # 剥掉），不加 `-c` 则本臂每次现场解析**没锁版本**的它。约束行由
-          # `scripts/tools/refresh_constraints.py` 在 Linux 上按锁里的 uvicorn pin 实测 resolve、
-          # 周更 lock-refresh 刷新；Windows 面（windows-test/release）不挂 —— win32 不请求 uvloop。
-          pip install -r requirements.lock -c constraints-linux.txt
+          # **uv 装锁**（2026-10-10，用户要求「CI 的 Windows 臂提速」）：锁文件的契约（P1-12
+          # 拍板「上锁文件」）钉的是**锁这个产物 + 按锁安装**，安装器不是契约面 —— 那条决策的
+          # 备注里本来就写着「其定案理由『本机无 uv』已不成立」。本机对照实测（同一把锁、
+          # PIP_CONFIG_FILE=NUL）：冷装 pip 303.9s vs uv 27.8s（约 11×），包集逐条比对**零缺包、
+          # 零版本差异**（`ast_serialize` vs `ast-serialize` 只是 pip list 的连字符规范化），
+          # 且 uv 装出的 venv 上 pytest / consistency 70/70 / create_app(22 routes) 全部真跑通。
+          # CI 每次 push 都是冷装，这是 Windows 臂 70~119s 与门禁臂 31~41s 的来源。
+          #
+          # 为什么不是 `python -m pip install --upgrade pip` 那句：uv 自带解析器，pip 自己不参与
+          # 安装；保留 setup-python 是因为后面所有步骤（gate.py / pytest）都直接调 `python`，
+          # `--system` 让 uv 装进 setup-python 建的那个解释器里 —— 两条 arm 的 Python 版本线
+          # 仍钉在 3.13（与 Dockerfile 的 python:3.13-slim 同线）。
+          #
+          # 锁与约束一行没动：`-r requirements.lock`（运行时五族 + dev，输入面钉在
+          # check_consistency 的 LOCK_SURFACES，`lockfile parity` 尺子逐约束比对）+
+          # `-c constraints-linux.txt`（ENGI-18 第三路：Windows 侧解析的锁天生没有 uvloop）。
+          uv pip install --system -r requirements.lock -c constraints-linux.txt
 
       - name: gate.py --ci
         # 用户 09-29 拍的（R28-24）："覆盖率与 baseline 比对不留在手动档，每次 push/PR 设防"
@@ -433,7 +451,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-          cache: pip
           cache-dependency-path: |
             requirements.txt
             requirements-api.txt
@@ -441,6 +458,14 @@ jobs:
             requirements-cloud.txt
             requirements-mcp.txt
             requirements-dev.txt
+
+      - name: 装 uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            requirements*.lock
+            requirements*.txt
 
       - name: 装 Node
         uses: actions/setup-node@v4
@@ -453,9 +478,9 @@ jobs:
 
       - name: 装依赖（后端 + 前端 + 壳）
         run: |
-          python -m pip install --upgrade pip
-          # 同 gate job：锁安装（requirements.lock 覆盖运行时五族 + dev）+ 同一份 Linux 约束。
-          pip install -r requirements.lock -c constraints-linux.txt
+          # 同 gate job：uv 装锁（P1-12 钉的是锁与"按锁安装"，安装器不是契约面）
+          # + 同一份 Linux 约束（ENGI-18 第三路）。
+          uv pip install --system -r requirements.lock -c constraints-linux.txt
           npm ci --prefix frontend
           npm ci --prefix shell
 
@@ -500,13 +525,24 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-          cache: pip
+          # 不再挂 `cache: pip`：这一臂已改用 uv（见下），缓存对象变得没有意义。
           cache-dependency-path: requirements.lock
+
+      - name: 装 uv
+        # **本臂提速的主角**（2026-10-10）：实测装依赖 70~119s（8 趟逐趟读数），冷装
+        # pip 303.9s vs uv 27.8s。Windows runner 分钟按 2× 计费，这一段省下的是双倍账。
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            requirements*.lock
+            requirements*.txt
 
       - name: 装依赖（锁）
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.lock
+          # Windows 面不挂 `-c constraints-linux.txt`（uvloop 在 win32 根本不被请求，
+          # 文件名与语义都写着 linux —— 两处口径不必绕）。
+          uv pip install --system -r requirements.lock
 
       - name: Windows 臂跑一遍快档用例
         run: python scripts/pytest_with_evidence.py --lane fast
@@ -532,9 +568,19 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-          cache: pip
+          # 不再挂 `cache: pip`：这一臂已改用 uv（见下）。
           cache-dependency-path: |
             requirements.lock
+
+      - name: 装 uv
+        # 与 windows-test 同一条口径（2026-10-10）：打包机的装依赖也是冷装，
+        # 换成 uv 后这一段同样从分钟级降到秒级；锁与约束一行没动。
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            requirements*.lock
+            requirements*.txt
 
       - name: 装打包机依赖（运行时五族 + dev，一把锁）
         # 那五族不是罗列：`packaging/rolecard-backend.spec` 会对 RUNTIME_PACKAGES 逐条
@@ -544,8 +590,8 @@ jobs:
         # PyInstaller 也在 dev 族里（从前住 requirements-package.txt，那份文件已删）——
         # 打包臂与 gate 臂从此装**同一把锁**，"打包机上的依赖形状"不再是一份独立清单。
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.lock
+          # 同 windows-test：Windows 面不挂 Linux 约束文件。
+          uv pip install --system -r requirements.lock
 
       - name: Windows 臂跑一遍用例
         # 平台覆盖倒挂（审查快照的 Windows 测试臂条目）：CI 测试从前只跑 ubuntu-24.04，

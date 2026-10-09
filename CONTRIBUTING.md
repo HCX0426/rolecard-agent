@@ -207,6 +207,16 @@ onnxruntime）。现在维持隔离的两条理由是选择：运行树不该带
 > （纯运行时五族，install.bat / Dockerfile 用）。改了 requirements*.txt **必须重新 compile**
 > 刷新锁，`lockfile parity` 尺子逐约束比对（镜像的每条约束 ∈ 锁的 pin）会当场红。
 > ⚠️ 刷新后若头部被本机 pip 配置写进 `--index-url`/`--trusted-host`，删掉再提交——锁不钉镜像源。
+>
+> **安装器可以不同，锁必须同一把（2026-10-10）**：CI 四个 arm 改用
+> `uv pip install --system -r <锁>` 提速 —— 本机对照实测冷装 pip 303.9s vs uv 27.8s（约
+> 11×），包集逐条比对零缺包零版本差异，uv 装出的 venv 上 pytest / 一致性 70/70 /
+> `create_app` 全部真跑通。**本地开发路径（README / install.bat / Dockerfile / 你自己的
+> `.venv`）仍用 pip**：锁的契约本来就是"pip 装得上"，`lock-refresh` 那两条验证作业也照旧
+> 用 pip（那是它的职责）。P1-12 钉的是**锁这个产物与"按锁安装"**，安装器不是契约面 ——
+> 那条决策的备注里原话就是「其定案理由『本机无 uv』已不成立」。`installer scope parity`
+> 那条尺子认的是"被认识的安装器 verb"（`_INSTALL_VERBS`），换第三个安装器时它会红，
+> 提醒你把 verb 登记进去 —— 不要让它靠子串侥幸通过。
 
 ```powershell
 python -m venv .venv

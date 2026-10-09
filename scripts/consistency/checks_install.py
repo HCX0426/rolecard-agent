@@ -24,6 +24,13 @@ RUNTIME_REQ_FILES = (
     "requirements-mcp.txt",
 )
 
+#: 被认识的**安装器 verb**（2026-10-10 加 uv）：这条尺子问的是"这条安装命令装齐了没有"，
+#: 而"用哪个安装器装"是装配面的自由（P1-12 钉的是锁与"按锁安装"）。列在这里而不是继续
+#: 靠 `pip install` 子串，是为了让"换一个尺子不认识的安装器"变成**红**而不是静默跳过 ——
+#: 反面用例：把 CI 那条改成 `poetry install -r requirements.lock`，installer scope 必须红。
+#: `uv pip install` 含 `pip install` 子串，写一条就够；分开写只是把"两个都算"讲明白。
+_INSTALL_VERBS = ("pip install",)
+
 LOCK_SURFACES: dict[str, tuple[str, ...]] = {
     "requirements.lock": (
         "requirements.txt",
@@ -142,15 +149,21 @@ def check_installer_scope() -> None:
     }
 
     def _pip_commands(text: str) -> list[str]:
-        """每条 `pip install` 命令，续行已接上（续行符可能是 \\ 或 Windows 的 ^）。
+        """每条 `pip install` / `uv pip install` 命令，续行已接上（续行符 \\ 或 Windows 的 ^）。
 
         **注释行一律跳过**：Dockerfile 里"为什么装这一族"那段散文就写着 pip install 这几个字，
         把它当命令读，这条尺子会把自己的解释文字报成缺陷（第一趟就是这么红的）。
+
+        2026-10-10 加 uv：CI 四臂改用 `uv pip install --system -r <锁>` 提速（冷装 pip 303.9s
+        vs uv 27.8s，本机实测；锁与约束一行没动）。**判据从"必须含 `pip install` 字面"改成
+        "含一个被认识的安装器 verb"** —— 前者当时确实是靠 `uv pip install` 里那个 `pip install`
+        子串侥幸通过的，那等于"换了安装器还能绿"是靠巧合而不是靠设计；后者的反面才是这条
+        尺子要的：装的东西变了没被认出来，必须红。
         """
         lines = text.splitlines()
         cmds: list[str] = []
         for i, line in enumerate(lines):
-            if "pip install" not in line:
+            if not any(v in line for v in _INSTALL_VERBS):
                 continue
             probe = line.strip()
             if probe.startswith("#") or probe.startswith("//") or probe.lower().startswith(
@@ -167,13 +180,49 @@ def check_installer_scope() -> None:
         # 它本来就不该带 -r，把它算进来等于给每条 CI job 都白造一条红。
         return [c for c in cmds if "-r requirements" in c]
 
+    def _unrecognized(text: str) -> list[str]:
+        """**装了依赖却没被认识的安装器 verb 认出来**的命令（2026-10-10 加 uv 时补的这一半）。
+
+        为什么必须有：这条尺子按 `pip install` 子串收集命令，而"某一条命令换了安装器"时，
+        这一条会被**静默跳过** —— 同一个文件里其余几条照旧被收集，于是 scope 公平照样绿。
+        （正面例子：`uv pip install` 恰好含子串所以过得来；反面例子：`poetry install -r
+        requirements.lock` 会被整个漏掉。靠子串活着的是巧合，不是判据。）
+        判据：任何含 `-r requirements` 的行，若不匹配 `_INSTALL_VERBS` 里的任一 verb → 报出来。
+        """
+        out: list[str] = []
+        lines = text.splitlines()
+        for i, line in enumerate(lines):
+            if "-r requirements" not in line:
+                continue
+            probe = line.strip()
+            if probe.startswith("#") or probe.startswith("//") or probe.lower().startswith(
+                ("rem ", "::")
+            ):
+                continue
+            buf = line
+            j = i
+            while buf.rstrip().endswith(("\\", "^")) and j + 1 < len(lines):
+                j += 1
+                buf += " " + lines[j]
+            cmd = " ".join(buf.split())
+            if not any(v in cmd for v in _INSTALL_VERBS):
+                out.append(cmd)
+        return out
+
     missing: list[str] = []
     for label, rel in surfaces.items():
         path = ROOT / rel
         if not path.exists():
             missing.append(f"{label} 这个入口文件不见了（{rel}）")
             continue
-        cmds = _pip_commands(path.read_text(encoding="utf-8", errors="ignore"))
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        unrecognized = _unrecognized(text)
+        if unrecognized:
+            missing.append(
+                f"{label} 有装依赖的命令没被认识的安装器认出来（{unrecognized[0][:70]}…）—— "
+                f"请把 verb 加进 _INSTALL_VERBS，否则这条命令装了什么没人查"
+            )
+        cmds = _pip_commands(text)
         if not cmds:
             missing.append(f"{label} 里找不到任何 pip install 命令")
             continue
