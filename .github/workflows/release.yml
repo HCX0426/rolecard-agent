@@ -54,6 +54,20 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.lock
+      # Node + npm ci：`gate.py --fast` 的「前端 vitest」步骤要它。2026-10-09 v0.3.0 首次
+      # 打 tag 时这条链第一次真跑，当场红在 `vitest: not found` —— 这条 workflow 从前只在
+      # 文档里活着（与 ENGI-23 那族"从未跑过的尾巴"同形状：没有读数的步骤是猜的）。
+      # 装 Node 的形状与 ci.yml frontend job 一致（22 + npm 缓存 + 双 package-lock）。
+      - name: 装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            shell/package-lock.json
+      - name: 装前端依赖
+        run: npm ci --prefix frontend
       - name: gate.py --fast
         env:
           GATE_READINGS_SCRATCH: "1"
