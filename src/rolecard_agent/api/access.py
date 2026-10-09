@@ -58,6 +58,9 @@ USER_ROUTES: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/uploads", _ANY),
     ("/api/rag/metrics", _ANY),
     # 角色卡与插件目录：建角色、改角色是这产品的日常用法（插件启停在下面另论）。
+    # **角色卡是实例级资源**（`role_cards` 表无 user 归属列，2026-10-09 权限审查确认）：
+    # 多凭据部署下 user 档能编辑的是这台实例上的全部卡 —— 这是刻意取舍不是疏漏，多凭据
+    # 按人隔离角色卡需要 schema 动作，产品上未必想要（审查报告 §4 观察项 1）。
     ("/api/roles", _ANY),
     ("/api/plugins", frozenset({"GET"})),
     ("/api/tools/catalog", _ANY),
@@ -77,6 +80,9 @@ USER_ROUTES: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/sync", _ANY),
     # 模型清单与供应商模板：对话页的模型菜单要读它，不读就没法换模型。
     ("/api/settings/models", frozenset({"GET"})),
+    # model-providers 也是 _ANY（2026-10-09 权限审查观察项 2）：供应商模板行 user 可增删。
+    # 含 key 的行归属哪一档待定 —— 真收紧是一行摘出 + 用例改一行，但"哪些行带 key"要先量
+    # （模板行本身存的是 provider/base_url 形状还是凭据引用），先记账不预判。
     ("/api/settings/model-providers", _ANY),
 )
 
