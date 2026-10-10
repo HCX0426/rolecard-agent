@@ -8,9 +8,7 @@
 
 from __future__ import annotations
 
-import contextlib
 import importlib.util
-import io
 import pathlib
 import re
 import subprocess
@@ -261,71 +259,72 @@ PROD_CHROMA_ERROR = (
     "Error creating hnsw segment reader: Nothing found on disk"
 )
 
+#: 那次现场里判据**实际吃到**的那条短摘要行（80 字，原因被按宽度截断后的样子）。出处是本会话
+#: 当时的取证读数（`build/gate-fast-run1.log` 那一步的 `FAILED` 行，量过 len=80；那份日志随后
+#: 被绿色趟覆盖，所以这里存的才是证据）。三个在册签名在这一行里一个都不剩 —— 于是
+#: "闸不在了会怎样"能用纯函数钉死，不必起子进程去赌这台宿主会不会截。
+TRUNCATED_SUMMARY_LINE = (
+    "FAILED tests/unit/test_rag.py::test_scope_isolation - chromadb.errors.Interna...\n"
+)
 
-def test_a_real_long_flake_still_matches_after_pytest_truncates(monkeypatch, tmp_path) -> None:
-    """真子进程回归：**在册签名必须穿过 pytest 的列宽截断活着到达判据**。
 
-    病根（`_run` 那行 `env=` 就是它的修法）：短摘要行 `FAILED … - 原因` 按**终端宽度**截断，
-    而 captured 输出不是 tty ⇒ pytest 回落 80 列，那条 126 字的在册偶发被切成
-    `chromadb.errors.Interna...`，三个签名一个不剩 ⇒ `_is_chroma_flake` 逐条问就答"不在册"
-    ⇒ **该发的重跑取证从来没发生过**，而屏幕上那句"不在在册签名里，不重跑"看着完全合理
-    （2026-10-10 门禁当场撞出，`build/gate-fast-run1.log` 原文为证）。
+def test_run_pins_the_summary_width_that_keeps_signatures_readable(monkeypatch, tmp_path) -> None:
+    """`_run` 必须**显式钉住**子进程的终端宽度，且钉的那个宽度装得下现场那一行。
 
-    为什么必须跑**真子进程**：既有用例全喂**手写**日志，而手写的 `FLAKE_LOG` 恰好短到签名
-    没被截过 —— 这层守卫在它最该守住的那件事上从没被测过（"恒绿尺子的分母是 0"那一族）。
+    病根：判据读的是短摘要行 `FAILED … - 原因`，而这一行按**终端宽度**截断；captured 输出不是
+    tty ⇒ 宽度由宿主说了算，那条 126 字的在册偶发于是被切成 `chromadb.errors.Interna...`，
+    三个签名一个不剩 ⇒ `_is_chroma_flake` 答"不在册"⇒ **该发的重跑取证从来没发生过**，
+    而屏幕上那句"不在在册签名里，不重跑"看着完全合理（2026-10-10 门禁当场撞出）。
 
-    **三条腿都是刻意做成跨机器确定的**（CI 第一次跑就把我第一版的两个机器假设当场照出来了，
-    正是 ENGI-19 那一族，改法是量出来的不是想出来的）：
-      * 整条用例先 `setenv("COLUMNS", "80")` —— 不指望"各机默认就是 80"（CI 的默认探测并不
-        截断，那是机器的慷慨不是判据的形状），也不指望"各机默认很宽"；窄是钉出来的。
-        于是判据腿**只在 `_run` 那道 `env=` 存在时**才读得到全签名 —— 修复在 CI 上也是有牙的；
-      * 合成用例以 `tmp_path` 为 cwd、命令行用**相对文件名** —— Windows runner 上绝对路径落在
-        rootdir 之外时摘要行会塌成 `FAILED ::test_it`（路径整段没了），`_failures` 那个要求
-        文件名以 `.py` 结尾的锚点就什么都抓不到；
-      * 判据腿把 `_run` 的回显**接进管道里**：子进程那条红若原样进父进程 stdout，会被门禁
-        自己的 `_failures` 读成"又一发红"并拉进重跑清单（那个文件在仓库里根本不存在 ⇒ 收集错
-        ⇒ 真红）。测一条注定失败的用例，不该在套房日志里留下它的尸体。
+    **为什么不"真跑一趟看会不会截"**（我前两版就是这么写的，CI 连着两次打回来）：截断这件事
+    **跨机器不一致** —— 我这台 Windows 开发机默认会截，GitHub 的 Linux 与 Windows runner 上
+    同一个用例同样不截（把 `COLUMNS=80` 显式钉进去也不截）。拿"宿主碰巧多宽、会不会截"当判据
+    的形状，就是把一次环境快照烤进守卫 —— 正是 ENGI-19 那一族我自己又踩了一遍。
+    所以这里钉的是**闸在不在**（`_run` 有没有把宽度交进子进程环境），外加一句算术：钉的那个宽度
+    必须容得下现场那一行，否则闸是装样子的。摘掉 `_run` 的 `env=` ⇒ 本条当场红，且在哪台机器都红。
     """
     mod = _load(monkeypatch, tmp_path)
-    monkeypatch.setenv("COLUMNS", "80")
-    case = tmp_path / "test_the_real_shape.py"
-    case.write_text(
-        f"def test_it() -> None:\n    assert False, {PROD_CHROMA_ERROR!r}\n",
-        encoding="utf-8",
-    )
-    argv = [
-        sys.executable, "-m", "pytest", "test_the_real_shape.py",
-        "-q", "-p", "no:cacheprovider",
-    ]
-    monkeypatch.chdir(tmp_path)  # `_run` 不接 cwd，靠进程 cwd 把相对文件名与 rootdir 对齐
+    seen: dict[str, object] = {}
 
-    # 判据腿：走真 `_run`（它带着那道 env=），回显不许漏进套房日志
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        rc, log = mod._run(argv)
-    assert rc != 0, "造出来的那条红没红，后面就不用判了"
+    def fake_run(cmd, **kwargs):  # noqa: ANN001, ANN003
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-    # 前提腿：同一个用例在**同样钉成 80 列**的裸子进程里确实被截（否则判据没在量截断这件事）
-    narrow = subprocess.run(
-        argv,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        cwd=str(tmp_path),
-    )
-    narrow_summary = "\n".join(
-        ln for ln in (narrow.stdout + narrow.stderr).splitlines() if ln.startswith("FAILED ")
-    )
-    assert "Nothing found on disk" not in narrow_summary, (
-        "80 列这一腿没复现出截断 ⇒ 判据吃的宽度形状不存在，本用例作废：" + narrow_summary[:220]
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    mod._run(["pytest", "x"])
+
+    env = seen.get("env")
+    assert isinstance(env, dict), f"`_run` 没把 env 交进子进程 ⇒ 宽度这道闸不存在：{seen.keys()}"
+    pinned = env.get("COLUMNS")
+    assert pinned is not None, "子进程环境里没有 COLUMNS ⇒ 判据吃的短摘要行退回宿主默认宽度"
+    line = f"FAILED tests/unit/test_rag.py::test_scope_isolation - {PROD_CHROMA_ERROR}"
+    assert len(line) < int(pinned), (
+        f"钉的宽度 {pinned} 装不下现场那一行（{len(line)} 字）⇒ 签名照样会被截掉"
     )
 
-    failures = mod._failures(log)
-    assert failures, f"短摘要行没被抓到（形状变了？）：\n{log[-600:]}"
-    for name, reason in failures:
-        assert name.endswith("test_the_real_shape.py"), f"抓错了文件：{name}"
-        assert mod._is_chroma_flake(reason), f"{name} 的判据读不到在册签名：{reason!r}"
+
+def test_a_truncated_summary_line_makes_the_registered_flake_read_as_unregistered(
+    monkeypatch, tmp_path
+) -> None:
+    """**同一份签名**：装得下就在册、被截就不在册 —— 差别只有宽度，所以宽度属于判据输入。
+
+    `TRUNCATED_SUMMARY_LINE` 逐字取自那次现场的 `build/gate-fast-run1.log`，不是编的形状。
+    这条把"闸不在了会怎样"钉成纯函数断言（不起子进程，因此与宿主无关）：既有的 `FLAKE_LOG`
+    用的是**短到没被截**的手写样本，所以这层守卫在它最该守住的那件事上从没被测过
+    —— 与本仓"恒绿尺子的分母是 0"那一族同形。两臂都在：截断 ⇒ 不在册（拒绝重跑的那个错判），
+    未截 ⇒ 在册（上面那些用例已覆盖，这里再补半臂防止判据被改宽到把真红也放行）。
+    """
+    mod = _load(monkeypatch, tmp_path)
+    failures = mod._failures(TRUNCATED_SUMMARY_LINE)
+    assert failures, "现场那条真摘要行没被抓到 ⇒ 摘要形状变了，本条要跟着改而不是放它过去"
+    name, reason = failures[0]
+    assert name == "tests/unit/test_rag.py"
+    assert not mod._is_chroma_flake(reason), (
+        f"被截断的原因居然判成在册 ⇒ 遮羞布更宽了：{reason!r}"
+    )
+    whole = f"FAILED {name}::test_scope_isolation - {PROD_CHROMA_ERROR}\n1 failed\n"
+    n2, r2 = mod._failures(whole)[0]
+    assert n2 == name and mod._is_chroma_flake(r2), r2
 
 
 # -- 分片（ENGI-35 B：Windows 臂拆并行 job）--------------------------------------
