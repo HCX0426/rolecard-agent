@@ -84,25 +84,25 @@ jobs:
           python-version: "3.13"
           # 不再挂 `cache: pip`（2026-10-10 换 uv）：缓存的是 pip 的 wheel 缓存，而这一臂
           # 已经不跑 pip 了 —— 留着它只会让"装了缓存"这句话在日志里显得还对。uv 自己的
-          # 缓存由下一步的 `enable-cache` 提供（key 里带 requirements.lock，锁变了自动换）。
+          # 缓存由下一步的 `enable-cache` 提供（key 里带 requirements/requirements.lock，锁变了自动换）。
           cache-dependency-path: |
-            requirements.txt
-            requirements-api.txt
-            requirements-rag.txt
-            requirements-cloud.txt
-            requirements-mcp.txt
-            requirements-dev.txt
+            requirements/requirements.txt
+            requirements/requirements-api.txt
+            requirements/requirements-rag.txt
+            requirements/requirements-cloud.txt
+            requirements/requirements-mcp.txt
+            requirements/requirements-dev.txt
 
       - name: 装 uv
         # 冷装 pip 303.9s → uv 27.8s（本机实测，同一把锁）。pin 到主版本 v10（GitHub API
-        # 实读 2026-10-10 最新 v10.2.0）。**这个 action 没有 v10 浮动标签**（实测 gh api `repos/astral-sh/setup-uv/git/ref/tags/v10` 返 404；第一版按惯例写 `@v10`，整趟 CI 红在 Set up job 的「Unable to resolve action」）—— 只能钉精确 tag，升级时改这一处。`enable-cache` 的 key 含 requirements.lock ——
+        # 实读 2026-10-10 最新 v10.2.0）。**这个 action 没有 v10 浮动标签**（实测 gh api `repos/astral-sh/setup-uv/git/ref/tags/v10` 返 404；第一版按惯例写 `@v10`，整趟 CI 红在 Set up job 的「Unable to resolve action」）—— 只能钉精确 tag，升级时改这一处。`enable-cache` 的 key 含 requirements/requirements.lock ——
         # 锁变了缓存自动失效，不会拿旧缓存装出新世界。
         uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
           cache-dependency-glob: |
-            requirements*.lock
-            requirements*.txt
+            requirements/requirements*.lock
+            requirements/requirements*.txt
 
       - name: mypy 增量缓存
         # 2026-10-04 审查快照的 CI 门禁条目：runner 上从前每次冷跑三遍 mypy（win/linux/scripts
@@ -111,7 +111,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .mypy_cache
-          key: mypy-${{ runner.os }}-py3.13-${{ hashFiles('pyproject.toml', 'requirements*.txt', 'requirements*.lock') }}
+          key: mypy-${{ runner.os }}-py3.13-${{ hashFiles('pyproject.toml', 'requirements/requirements*.txt', 'requirements/requirements*.lock') }}
           restore-keys: mypy-${{ runner.os }}-py3.13-
 
       - name: 装依赖
@@ -129,10 +129,10 @@ jobs:
           # `--system` 让 uv 装进 setup-python 建的那个解释器里 —— 两条 arm 的 Python 版本线
           # 仍钉在 3.13（与 Dockerfile 的 python:3.13-slim 同线）。
           #
-          # 锁与约束一行没动：`-r requirements.lock`（运行时五族 + dev，输入面钉在
+          # 锁与约束一行没动：`-r requirements/requirements.lock`（运行时五族 + dev，输入面钉在
           # check_consistency 的 LOCK_SURFACES，`lockfile parity` 尺子逐约束比对）+
-          # `-c constraints-linux.txt`（ENGI-18 第三路：Windows 侧解析的锁天生没有 uvloop）。
-          uv pip install --system -r requirements.lock -c constraints-linux.txt
+          # `-c config/constraints-linux.txt`（ENGI-18 第三路：Windows 侧解析的锁天生没有 uvloop）。
+          uv pip install --system -r requirements/requirements.lock -c config/constraints-linux.txt
 
       - name: gate.py --ci
         # 用户 09-29 拍的（R28-24）："覆盖率与 baseline 比对不留在手动档，每次 push/PR 设防"
@@ -452,20 +452,20 @@ jobs:
         with:
           python-version: "3.13"
           cache-dependency-path: |
-            requirements.txt
-            requirements-api.txt
-            requirements-rag.txt
-            requirements-cloud.txt
-            requirements-mcp.txt
-            requirements-dev.txt
+            requirements/requirements.txt
+            requirements/requirements-api.txt
+            requirements/requirements-rag.txt
+            requirements/requirements-cloud.txt
+            requirements/requirements-mcp.txt
+            requirements/requirements-dev.txt
 
       - name: 装 uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
           cache-dependency-glob: |
-            requirements*.lock
-            requirements*.txt
+            requirements/requirements*.lock
+            requirements/requirements*.txt
 
       - name: 装 Node
         uses: actions/setup-node@v4
@@ -480,7 +480,7 @@ jobs:
         run: |
           # 同 gate job：uv 装锁（P1-12 钉的是锁与"按锁安装"，安装器不是契约面）
           # + 同一份 Linux 约束（ENGI-18 第三路）。
-          uv pip install --system -r requirements.lock -c constraints-linux.txt
+          uv pip install --system -r requirements/requirements.lock -c config/constraints-linux.txt
           npm ci --prefix frontend
           npm ci --prefix shell
 
@@ -543,7 +543,7 @@ jobs:
         with:
           python-version: "3.13"
           # 不再挂 `cache: pip`：这一臂已改用 uv（见下），缓存对象变得没有意义。
-          cache-dependency-path: requirements.lock
+          cache-dependency-path: requirements/requirements.lock
 
       - name: 装 uv
         # **本臂提速的主角**（2026-10-10）：实测装依赖 70~119s（8 趟逐趟读数），冷装
@@ -552,17 +552,17 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: |
-            requirements*.lock
-            requirements*.txt
+            requirements/requirements*.lock
+            requirements/requirements*.txt
 
       - name: 装依赖（锁）
         run: |
-          # Windows 面不挂 `-c constraints-linux.txt`（uvloop 在 win32 根本不被请求，
+          # Windows 面不挂 `-c config/constraints-linux.txt`（uvloop 在 win32 根本不被请求，
           # 文件名与语义都写着 linux —— 两处口径不必绕）。
           # 这一行**逐字保持原样**：`test_lock_platform_markers` 按行的字面文本数"挂了约束/
           # 没挂约束"各几条（ubuntu 2 条、windows 2 条）。矩阵只是把同一条命令在 4 台机器上
           # 各跑一次，YAML 里仍是一行 —— 判据量的就是这个形状，别"顺手"改成 per-shard 变量。
-          uv pip install --system -r requirements.lock
+          uv pip install --system -r requirements/requirements.lock
 
       - name: Windows 臂跑一遍快档用例（本片）
         # 分片逻辑住在脚本里而**不在这里**（`--shard i/N`：按路径哈希取模，并集==pytest 实际
@@ -594,7 +594,7 @@ jobs:
           python-version: "3.13"
           # 不再挂 `cache: pip`：这一臂已改用 uv（见下）。
           cache-dependency-path: |
-            requirements.lock
+            requirements/requirements.lock
 
       - name: 装 uv
         # 与 windows-test 同一条口径（2026-10-10）：打包机的装依赖也是冷装，
@@ -603,19 +603,19 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: |
-            requirements*.lock
-            requirements*.txt
+            requirements/requirements*.lock
+            requirements/requirements*.txt
 
       - name: 装打包机依赖（运行时五族 + dev，一把锁）
         # 那五族不是罗列：`packaging/rolecard-backend.spec` 会对 RUNTIME_PACKAGES 逐条
         # `find_spec`，缺一条就**拒绝出产物**（`R28-34`）—— 因为 `collect_submodules()`
         # 对没安装的包返回空列表且不报错，少装一族的代价正是"构建成功、里面缺东西"。
-        # **锁安装**（2026-10-07 拍板）：requirements.lock 覆盖运行时五族 + dev，
+        # **锁安装**（2026-10-07 拍板）：requirements/requirements.lock 覆盖运行时五族 + dev，
         # PyInstaller 也在 dev 族里（从前住 requirements-package.txt，那份文件已删）——
         # 打包臂与 gate 臂从此装**同一把锁**，"打包机上的依赖形状"不再是一份独立清单。
         run: |
           # 同 windows-test：Windows 面不挂 Linux 约束文件。
-          uv pip install --system -r requirements.lock
+          uv pip install --system -r requirements/requirements.lock
 
       - name: Windows 臂跑一遍用例
         # 平台覆盖倒挂（审查快照的 Windows 测试臂条目）：CI 测试从前只跑 ubuntu-24.04，

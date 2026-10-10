@@ -2,7 +2,8 @@
 # v1 内核依赖（Agent 编排 + 校验 + 会话持久化 + 可观测）
 #
 # 版本依据：2026-09-14 对照 PyPI 线上元数据实测，已交叉核对依赖约束冲突。
-# 详见 docs/技术评审与决策.md。
+# 历史依据见《技术评审与决策》（已并入 docs/archive/审计台账汇编.md，编号经
+# docs/架构审计索引.md 解析）。
 #
 # 其余依赖已按范围拆分，不要往这个文件里加：
 #   requirements-dev.txt  pytest / ruff / mypy（开发与 CI）
@@ -17,8 +18,7 @@ langgraph==1.2.11
 langchain-core>=1.6.0
 
 # --- 1.5 联网与工作区工具（core/tools/web.py / files.py，v2.4） -----------------
-# 选型依据见 docs/MCP接入与思考过程评估.md：全部用活跃维护的独立轮子，
-# 不走已 sunset 的 langchain-community。
+# 选型口径：全部用活跃维护的独立轮子，不走已 sunset 的 langchain-community。
 ddgs>=9.0            # 本地搜索（DuckDuckGo，免 key）
 tavily-python>=0.8   # 云端搜索（配 TAVILY_API_KEY 时启用）
 trafilatura>=2.0     # 网页正文抽取（开源事实标准）

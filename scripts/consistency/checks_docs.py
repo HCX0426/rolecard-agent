@@ -89,12 +89,12 @@ def check_promised_artifacts() -> None:
         ".gitattributes",
         ".gitignore",
         ".env.example",
-        "requirements.txt",
-        "requirements-dev.txt",
-        "requirements-api.txt",
-        "requirements-rag.txt",
-        "requirements-cloud.txt",
-        "requirements-ocr.txt",
+        "requirements/requirements.txt",
+        "requirements/requirements-dev.txt",
+        "requirements/requirements-api.txt",
+        "requirements/requirements-rag.txt",
+        "requirements/requirements-cloud.txt",
+        "requirements/requirements-ocr.txt",
         "docs/需求与验收标准.md",
         "docs/架构总览.md",
         "docs/前端设计.md",
@@ -134,7 +134,7 @@ def check_readme_quickstart() -> None:
         "## 快速开始",
         "scripts/init_db.py",
         "scripts/check_consistency.py",
-        "requirements.txt",
+        "requirements/requirements.lock",
     ]
     absent = [r for r in required if r not in readme]
     out("readme quickstart", not absent, f"missing: {absent}" if absent else "present")
@@ -177,7 +177,7 @@ def check_doc_links() -> None:
     # 自检），全新 clone 里本来就不存在 —— 它们是"跑出来的"而不是"仓库里的"，因此不参与
     # "文档里的路径必须存在"这条校验。
     not_yet = {
-        "requirements.lock",
+        "requirements/requirements.lock",
         ".env",
         "data/sqlite/app.db",
         "tests/eval/report.json",
@@ -191,7 +191,10 @@ def check_doc_links() -> None:
     # 而这条检查当时看不见它们 —— "数字仍在档里，但复跑不回来"没人报。
     # **但那个前缀只有在配合下面的 gitignore 分区之后才成立**：`build/` 整个是被忽略的暂存区，
     # 直接按"存在吗"判，得到的结论只在这台机器上成立（本机全绿、CI 红 10 处，见 `_git_ignored`）。
-    prefixes = ("docs/", "src/", "scripts/", "tests/", "data/", "build/")
+    prefixes = (
+        "docs/", "src/", "scripts/", "tests/", "data/", "build/",
+        "config/", "requirements/",
+    )
     # 字符类必须含中文：**整个中文文件名文档树原本是这条检查的盲区**。09-26 轮 R26-20 实测：
     # 把 CJK 放进来之后立刻抓到 7 处 living docs 指着已经搬进 archive/ 的《技术评审与决策》
     # 《实施计划》，而在此之前这条检查报的是 "all resolve"。
@@ -330,9 +333,15 @@ def _citation_targets(path: pathlib.Path) -> set[str]:
     """一份文档里所有"能被指到"的编号。"""
     if not path.exists():
         return set()
+    # 快照第五节的 P0/P1 条目是**散文形状**（行首粗体编号 + 全角括号里的原始维度 ID），
+    # 不是表格行 —— 旧判据只认标题与表格行，P1-12（依赖策略那条）因此无家可归（索引里成了
+    # 一行 "(没有任何文档里有这一号)"占位，而 audit citations 又靠索引自己放行 —— 自指）。
+    # 2026-10-10 补上第三种形状：行首粗体编号。捕获组只取首格，括号里的合并说明不算定义，
+    # 与表格行那条纪律同一边。
+    prose_head = re.compile(r"^\*\*(P[0-3]-\d+|ENGI-\d+)(?:[（(][^）)]*[)）])?")
     found: set[str] = set()
     for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        for regex in (_TARGET_HEAD_RE, _TARGET_ROW_RE):
+        for regex in (_TARGET_HEAD_RE, _TARGET_ROW_RE, prose_head):
             hit = regex.match(line)
             if hit:
                 found.add(hit.group(1))

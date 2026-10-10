@@ -193,7 +193,7 @@
 （2026-10-02 换后端时订正：从前这里写的是"`paddleocr` 会拉 `paddlex`…与主环境的 numpy 版本主张
 冲突"——那条**被迫**的理由在 RapidOCR 上已不成立（它的 numpy 约束与主环境兼容，主环境本来就有
 onnxruntime）。现在维持隔离的两条理由是选择：运行树不该带这一族；随包形态按设计不含 OCR。
-现行完整口径以 `requirements-ocr.txt` 开头那一段为准，别在两处各写一套。）
+现行完整口径以 `requirements/requirements-ocr.txt` 开头那一段为准，别在两处各写一套。）
 
 ### 8.2 主环境：`.venv` + pip + 锁安装（2026-10-07 拍板「上锁文件」）
 
@@ -203,7 +203,7 @@ onnxruntime）。现在维持隔离的两条理由是选择：运行树不该带
 > 版本与本机、与上周各不相同，坏在传递依赖的升级上时无人能指认。现在的口径：**镜像管
 > "要什么"，锁管"装什么"** —— `requirements*.txt` 仍是唯一事实来源 pyproject 的 pip 安装
 > 镜像（dependency parity 看着），`pip-compile` 从它们产出两把锁：
-> `requirements.lock`（运行时五族 + dev，README / CI 三臂用）、`requirements-runtime.lock`
+> `requirements/requirements.lock`（运行时五族 + dev，README / CI 三臂用）、`requirements/requirements-runtime.lock`
 > （纯运行时五族，install.bat / Dockerfile 用）。改了 requirements*.txt **必须重新 compile**
 > 刷新锁，`lockfile parity` 尺子逐约束比对（镜像的每条约束 ∈ 锁的 pin）会当场红。
 > ⚠️ 刷新后若头部被本机 pip 配置写进 `--index-url`/`--trusted-host`，删掉再提交——锁不钉镜像源。
@@ -222,7 +222,7 @@ onnxruntime）。现在维持隔离的两条理由是选择：运行树不该带
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -U pip
 
-.\.venv\Scripts\python.exe -m pip install -r requirements.lock
+.\.venv\Scripts\python.exe -m pip install -r requirements/requirements.lock
 # （锁覆盖运行时五族 + dev，含 pyinstaller / pip-tools / packaging；缺族的的历史教训
 #   记在 Dockerfile 注释与 installer scope parity 尺子里 —— 锁治版本漂，不治漏装一族）
 
@@ -236,7 +236,7 @@ python -m venv .venv
 ```powershell
 python -m venv .venv-ocr
 .\.venv-ocr\Scripts\python.exe -m pip install -U pip
-.\.venv-ocr\Scripts\python.exe -m pip install -r requirements-ocr.txt
+.\.venv-ocr\Scripts\python.exe -m pip install -r requirements/requirements-ocr.txt
 # 主服务通过 OCR_PYTHON=/path/to/.venv-ocr/Scripts/python.exe 调用（默认自动发现）
 ```
 
@@ -252,11 +252,11 @@ pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 ### 8.5 依赖的单一事实来源
 
 - **`pyproject.toml` 是唯一事实来源**（`dependencies` + 四组 extras：`api` / `rag` / `cloud` / `dev`）。
-- `requirements*.txt` 是 **pip 安装镜像**，按范围拆开：`requirements.txt` 只含 v1 内核，
+- `requirements*.txt` 是 **pip 安装镜像**，按范围拆开：`requirements/requirements.txt` 只含 v1 内核，
   `-api` 接入层 / `-rag` 向量检索 / `-cloud` 云端 provider / `-dev` 开发工具 / `-ocr` RapidOCR（独立环境）。
   `scripts/check_consistency.py` 会断言每一组 extras 与对应镜像文件的**约束逐条一致**，改了一边不改另一边会被拦下。
-- **锁文件（2026-10-07 起）**：`requirements.lock` 与 `requirements-runtime.lock` 由
-  `pip-compile` 从镜像产出（刷新：`.venv\Scripts\python.exe -m piptools compile --output-file=requirements.lock requirements.txt requirements-api.txt requirements-rag.txt requirements-cloud.txt requirements-mcp.txt requirements-dev.txt`，runtime 锁去掉 dev 那份；生成后删掉本机 pip 配置写进来的 `--index-url`/`--trusted-host` 两行）。
+- **锁文件（2026-10-07 起）**：`requirements/requirements.lock` 与 `requirements/requirements-runtime.lock` 由
+  `pip-compile` 从镜像产出（刷新：`.venv\Scripts\python.exe -m piptools compile --output-file=requirements/requirements.lock requirements/requirements.txt requirements/requirements-api.txt requirements/requirements-rag.txt requirements/requirements-cloud.txt requirements/requirements-mcp.txt requirements/requirements-dev.txt`，runtime 锁去掉 dev 那份；生成后删掉本机 pip 配置写进来的 `--index-url`/`--trusted-host` 两行）。
   CI / 镜像 / 打包臂只从锁安装；镜像与锁的覆盖关系钉在 `check_consistency.py` 的
   `LOCK_SURFACES`，由 `lockfile parity` 尺子逐约束对账。
 - **数据库有迁移，别再写"删库重建"**（本条 2026-09-25 订正"v1 不做迁移"；2026-10-02 再订正：
@@ -276,5 +276,8 @@ pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 - ❌ 不要把 OCR 依赖装进 `.venv`
 - ❌ 不要把 `.venv` 当部署产物（部署走容器）
-- ❌ 不要提交锁文件，也不要在两处维护依赖清单（依赖只在 `pyproject.toml` + 镜像里维护）
-- ❌ 不要引入 uv.lock / .python-version（本机无 uv，已是死资产）
+- ❌ 不要在两处维护依赖清单（依赖只在 `pyproject.toml` + 镜像 `requirements*.txt` 里维护；
+  两把锁 `requirements/requirements.lock` / `requirements/requirements-runtime.lock` 是 `pip-compile` 的**产物**，
+  改了镜像必须重新 compile 刷新——手改锁文件等于伪造事实面，`lockfile parity` 尺子会红）
+- ❌ 不要绕过锁安装（CI / 镜像 / 打包臂只从锁装；安装器用 pip 还是 uv 都行——见 §8.2
+  「安装器可以不同，锁必须同一把」）

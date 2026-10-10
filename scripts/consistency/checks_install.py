@@ -17,11 +17,11 @@ from .core import ROOT, fails, out, warns
 from .platform_pins import CRASHES_ELSEWHERE, installed_edges, lock_findings, parse_lock
 
 RUNTIME_REQ_FILES = (
-    "requirements.txt",
-    "requirements-api.txt",
-    "requirements-rag.txt",
-    "requirements-cloud.txt",
-    "requirements-mcp.txt",
+    "requirements/requirements.txt",
+    "requirements/requirements-api.txt",
+    "requirements/requirements-rag.txt",
+    "requirements/requirements-cloud.txt",
+    "requirements/requirements-mcp.txt",
 )
 
 #: 被认识的**安装器 verb**（2026-10-10 加 uv）：这条尺子问的是"这条安装命令装齐了没有"，
@@ -32,20 +32,20 @@ RUNTIME_REQ_FILES = (
 _INSTALL_VERBS = ("pip install",)
 
 LOCK_SURFACES: dict[str, tuple[str, ...]] = {
-    "requirements.lock": (
-        "requirements.txt",
-        "requirements-api.txt",
-        "requirements-rag.txt",
-        "requirements-cloud.txt",
-        "requirements-mcp.txt",
-        "requirements-dev.txt",
+    "requirements/requirements.lock": (
+        "requirements/requirements.txt",
+        "requirements/requirements-api.txt",
+        "requirements/requirements-rag.txt",
+        "requirements/requirements-cloud.txt",
+        "requirements/requirements-mcp.txt",
+        "requirements/requirements-dev.txt",
     ),
-    "requirements-runtime.lock": (
-        "requirements.txt",
-        "requirements-api.txt",
-        "requirements-rag.txt",
-        "requirements-cloud.txt",
-        "requirements-mcp.txt",
+    "requirements/requirements-runtime.lock": (
+        "requirements/requirements.txt",
+        "requirements/requirements-api.txt",
+        "requirements/requirements-rag.txt",
+        "requirements/requirements-cloud.txt",
+        "requirements/requirements-mcp.txt",
     ),
 }
 
@@ -89,10 +89,12 @@ def check_pyproject() -> None:
         fails.append("pyproject.toml is missing ruff / pytest config")
 
 def check_requirements_scope() -> None:
-    """requirements.txt is the v1 kernel set. v2 deps must stay out of it."""
+    """requirements/requirements.txt is the v1 kernel set. v2 deps must stay out of it."""
     lines = [
         line.split("#", 1)[0]
-        for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        for line in (ROOT / "requirements" / "requirements.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
     ]
     body = "\n".join(lines)
     leaked = [d for d in ("rapidocr", "opencv", "chromadb", "fastapi", "uvicorn") if d in body]
@@ -243,16 +245,21 @@ def check_installer_scope() -> None:
         fails.append(f"installer surfaces miss runtime deps: {missing}")
 
     # 另一半：磁盘上每一份 requirements*.txt 都要在两张表里之一（空理由不算理由）。
+    # 键是相对仓库根的路径（2026-10-10 起这批文件住 requirements/ 子目录）。
     SEPARATE_BY_SHAPE = {
-        "requirements-dev.txt": "开发/CI 依赖，不进生产运行树（含 PyInstaller 与 pip-tools）",
-        "requirements-ocr.txt": "OCR 栈不进运行树，必须独立 venv（该文件开头有现行理由）",
-        "requirements-package-ocr.txt": "只有打随包 OCR worker 时要（PyInstaller 装进 .venv-ocr，"
-        "见 scripts/tools/build_ocr_worker.py；10-03 起装机版靠那份产物才有本地 OCR）",
+        "requirements/requirements-dev.txt":
+            "开发/CI 依赖，不进生产运行树（含 PyInstaller 与 pip-tools）",
+        "requirements/requirements-ocr.txt":
+            "OCR 栈不进运行树，必须独立 venv（该文件开头有现行理由）",
+        "requirements/requirements-package-ocr.txt":
+            "只有打随包 OCR worker 时要（PyInstaller 装进 .venv-ocr，"
+            "见 scripts/tools/build_ocr_worker.py；10-03 起装机版靠那份产物才有本地 OCR）",
     }
     unclassified = [
-        p.name
-        for p in sorted(ROOT.glob("requirements*.txt"))
-        if p.name not in RUNTIME_REQ_FILES and p.name not in SEPARATE_BY_SHAPE
+        p.relative_to(ROOT).as_posix()
+        for p in sorted((ROOT / "requirements").glob("requirements*.txt"))
+        if p.relative_to(ROOT).as_posix() not in RUNTIME_REQ_FILES
+        and p.relative_to(ROOT).as_posix() not in SEPARATE_BY_SHAPE
     ]
     blank = [name for name, why in SEPARATE_BY_SHAPE.items() if not why.strip()]
     ok_class = not unclassified and not blank
@@ -266,7 +273,7 @@ def check_installer_scope() -> None:
     if not ok_class:
         fails.append(f"requirements files missing a classification: {unclassified or blank}")
 
-_家_RE = re.compile(r"-r requirements(?:-([a-z_]+))?\.txt")
+_家_RE = re.compile(r"-r (?:requirements/)?requirements(?:-([a-z_]+))?\.txt")
 
 def _installed_families(text: str, *, where: str) -> set[str]:
     """这条安装路径**实际**装了哪几族（`-r requirements-<族>.txt`）。
@@ -306,8 +313,11 @@ def _installed_families(text: str, *, where: str) -> set[str]:
     return families
 
 def _family_of(filename: str) -> str:
-    """requirements 镜像文件名 → 族名（与 `_家_RE` 的提取口径一致：requirements.txt → "txt"）。"""
-    m = re.match(r"requirements(?:-([a-z_]+))?\.txt$", filename)
+    """requirements 镜像文件名 → 族名（与 `_家_RE` 的提取口径一致：requirements.txt → "txt"）。
+
+    接受裸名与 `requirements/` 前缀两种形状（LOCK_SURFACES 的值自 2026-10-10 起带前缀）。
+    """
+    m = re.search(r"(?:^|/)requirements(?:-([a-z_]+))?\.txt$", filename)
     if not m:
         raise ValueError(f"{filename} 不是 requirements 镜像文件的形状")
     return m.group(1) or "txt"
@@ -435,7 +445,7 @@ def check_lock_platform_markers() -> None:
     # Linux 装配面（ci.yml gate/full-gate、Dockerfile）的 `-c constraints-linux.txt` 引用着它，
     # 删文件不删引用，下一次 CI 装配当场红；删干净（文件+引用+本判据）才算回到"没锁版本"的旧世界，
     # 那时第四格的 noise 会自己回来。
-    constraints_path = ROOT / "constraints-linux.txt"
+    constraints_path = ROOT / "config" / "constraints-linux.txt"
     covered: set[str] = set()
     if constraints_path.exists():
         covered = {
@@ -538,7 +548,7 @@ def check_capability_matrix() -> None:
     自己形态的实际安装问"有/没有"）。`检查点` 缺失或 job 不在文件里都判红 ——
     新增形态却不接线，这条路从此走不通。
     """
-    path = ROOT / "capability-matrix.json"
+    path = ROOT / "config" / "capability-matrix.json"
     if not path.exists():
         out("capability matrix", False, "矩阵文件不见了（capability-matrix.json）")
         fails.append("capability-matrix.json is missing")
@@ -708,7 +718,11 @@ def check_dependency_parity() -> None:
         if not ok:
             fails.append(f"pyproject.toml / {req_file} drift: {detail}")
 
-    _diff("dependency parity", list(pyproject["project"]["dependencies"]), "requirements.txt")
+    _diff(
+        "dependency parity",
+        list(pyproject["project"]["dependencies"]),
+        "requirements/requirements.txt",
+    )
 
     # The extras map to their own requirement files. Without this the api / rag / dev
     # mirrors can drift unnoticed - the earlier version of this check covered only the base
@@ -716,10 +730,10 @@ def check_dependency_parity() -> None:
     # comparison is per-constraint, not name-sets (2026-10-04 审查快照).
     extras = pyproject["project"].get("optional-dependencies", {})
     for extra, filename in (
-        ("api", "requirements-api.txt"),
-        ("rag", "requirements-rag.txt"),
-        ("cloud", "requirements-cloud.txt"),
-        ("dev", "requirements-dev.txt"),
+        ("api", "requirements/requirements-api.txt"),
+        ("rag", "requirements/requirements-rag.txt"),
+        ("cloud", "requirements/requirements-cloud.txt"),
+        ("dev", "requirements/requirements-dev.txt"),
     ):
         if extra not in extras:
             continue

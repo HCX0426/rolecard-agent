@@ -63,7 +63,7 @@ RETIRED_LOCAL_MODELS: tuple[str, ...] = ("qwen2.5:7b", "qwen2.5vl:7b")
 
 # Measured advice, not a hard limit of the framework: a longer chain makes a failure harder to
 # localise, and it hides "the answer got worse after degrading" from whoever reads the logs
-# (实施计划.md §8.5).
+# （架构总览 §5 不变式 17：回退链 ≤2 的取舍记录在那里）.
 MAX_FALLBACKS = 2
 
 #: 回退链的**去向策略**（ENGI-36 C，2026-10-10 用户拍板）。两个合法档：
@@ -385,8 +385,8 @@ class Settings(BaseModel):
     saucenao_api_key: str | None = None
 
     # v2.2 OCR：本地 RapidOCR 的解释器，必须是【独立 venv / 进程】的 python。OCR 那一族
-    # （cv2 / omegaconf 等）绝不进主环境（现行理由见 requirements-ocr.txt 头部：不是版本冲突，
-    # 而是运行树不该带它、且随包形态按设计不含 OCR）。None = 让解析器自动发现默认路径
+    # （cv2 / omegaconf 等）绝不进主环境（现行理由见 requirements/requirements-ocr.txt 头部：
+    # 不是版本冲突，而是运行树不该带它、且随包形态按设计不含 OCR）。None = 让解析器自动发现默认路径
     # （.venv-ocr/Scripts/python.exe）。
     # 「用哪个 OCR 后端」不在这里配：那是「服务」页的 OCR 端点序（运行期唯一事实面，
     # 见 rag/ocr.select_ocr_backend 与架构审计报告 P1-5）。曾有过的 ocr_backend /

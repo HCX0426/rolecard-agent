@@ -46,11 +46,11 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: requirements.lock
+          cache-dependency-path: requirements/requirements.lock
       - name: 装依赖
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.lock
+          pip install -r requirements/requirements.lock
       - name: 真机冒烟 + 真模型评测（live 用例 + run_eval）
         env:
           # 缺 Ollama / Chrome / 真 key 时这些会失败 —— 但本 job continue-on-error，

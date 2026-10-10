@@ -79,7 +79,7 @@ if (-not $SkipBuild) {
     # 脚本自己会冒烟一次（造一张图认字），不过就**不产出**，这里也就不会往下装。
     $ocrPy = Join-Path $root ".venv-ocr\Scripts\python.exe"
     if (-not (Test-Path $ocrPy)) {
-        throw "no .venv-ocr at $ocrPy —— 装机版就没本地 OCR：先 python -m venv .venv-ocr 再 pip install -r requirements-ocr.txt -r requirements-package-ocr.txt"
+        throw "no .venv-ocr at $ocrPy —— 装机版就没本地 OCR：先 python -m venv .venv-ocr 再 pip install -r requirements/requirements-ocr.txt -r requirements-package-ocr.txt"
     }
     & $ocrPy (Join-Path $root "scripts\tools\build_ocr_worker.py")
     if ($LASTEXITCODE -ne 0) { throw "ocr-worker build/smoke failed (exit=$LASTEXITCODE)" }

@@ -3,8 +3,9 @@
 设计（面试可讲，对应"离线优先 + 云端兜底 + 隐私分级"）：
 
 - OCR 是重依赖，且涉及"图片是否离开本机"的隐私问题，所以做成后端可插拔：
-  - `LocalRapidOcrBackend`：子进程调用**独立 venv** 里的 RapidOCR（requirements-ocr.txt 安装
-    约定）。离线、数据不出本机；cv2/omegaconf 这一族因此始终不进运行树。
+  - `LocalRapidOcrBackend`：子进程调用**独立 venv** 里的 RapidOCR
+    （requirements/requirements-ocr.txt 安装约定）。离线、数据不出本机；
+    cv2/omegaconf 这一族因此始终不进运行树。
   - `CloudApiBackend`：走 HTTP 的 OCR API（默认 OCR.space，仅需 api_key，无 SDK）。数据会
     发往第三方——因此只作兜底，且 `available()` 严格要求显式配了 key，绝不悄悄外发。
 - 选择器 `select_ocr_backend`：按「服务」页签的 OCR 端点序逐个试可用（本地 OCR / 本地视觉
@@ -110,7 +111,7 @@ class LocalRapidOcrBackend:
 
     绝不进主环境：OCR 栈那一族（cv2 / omegaconf 等）不该出现在运行树里，因此只在
     `OCR_PYTHON`（默认 .venv-ocr/Scripts/python.exe）指向的独立进程里跑。现行理由与
-    requirements-ocr.txt 头部是同一条，别在这里另写一套口径。
+    requirements/requirements-ocr.txt 头部是同一条，别在这里另写一套口径。
     """
 
     name = "rapidocr"
@@ -138,8 +139,8 @@ class LocalRapidOcrBackend:
             return _container_readiness()
         return (
             "本机没有可用的本地 OCR：装机版这一包没带上 `ocr-worker`（重打时跑 "
-            "scripts/tools/build_ocr_worker.py），开发态则按 requirements-ocr.txt 装 .venv-ocr "
-            "并让 OCR_PYTHON 指到它"
+            "scripts/tools/build_ocr_worker.py），开发态则按 requirements/requirements-ocr.txt "
+            "装 .venv-ocr 并让 OCR_PYTHON 指到它"
         )
 
     def _launcher(self) -> tuple[list[str], str] | None:

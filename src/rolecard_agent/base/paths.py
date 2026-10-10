@@ -229,7 +229,7 @@ def bundled_ocr_worker() -> Path | None:
 
 
 def default_ocr_python() -> str | None:
-    """默认 OCR 解释器：项目根下的独立 venv（requirements-ocr.txt 的安装约定）。
+    """默认 OCR 解释器：项目根下的独立 venv（requirements/requirements-ocr.txt 的安装约定）。
 
     冻结态这里仍然返回 None —— 但**那不再等于"装机版没有本地 OCR"**：装机版走
     `bundled_ocr_worker()` 那个自包含的 exe（10-03 起随包，见 `packaging/ocr-worker.spec`）。

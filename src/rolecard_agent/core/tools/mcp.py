@@ -12,7 +12,7 @@
 - 单个 server 连接失败 → 隔离，不拖垮其余 server、不阻塞启动；
 - 每个 MCP 工具调用前后写 audit_log（actor="agent"）。
 
-依赖：langchain_mcp_adapters（见 requirements-mcp.txt）。未安装时即便配置了
+依赖：langchain_mcp_adapters（见 requirements/requirements-mcp.txt）。未安装时即便配置了
 MCP_SERVERS 也只打 warning 跳过，不阻塞启动（fail-open 仅影响扩展能力）。
 """
 
@@ -35,7 +35,7 @@ MAX_MCP_DESC = 1024
 
 # MCP 是**可选扩展层**（与 OCR/RAG 同层，不进 requirements.txt 内核）。没装 adapters 时
 # 一律给这条可操作提示，而不是裸 ModuleNotFoundError（用户点"测试连接"时看得懂下一步）。
-MISSING_ADAPTER_HINT = "MCP 依赖未安装：运行 pip install -r requirements-mcp.txt"
+MISSING_ADAPTER_HINT = "MCP 依赖未安装：运行 pip install -r requirements/requirements-mcp.txt"
 
 
 def _adapters_installed() -> bool:
@@ -177,7 +177,7 @@ def load_mcp_tools(servers: list[McpServerConfig], *, conn: Any = None) -> list[
             "warning",
             "mcp",
             "配了 MCP_SERVERS 但没装 langchain-mcp-adapters，MCP 工具跳过"
-            "（pip install -r requirements-mcp.txt）",
+            "（pip install -r requirements/requirements-mcp.txt）",
         )
         return []
 

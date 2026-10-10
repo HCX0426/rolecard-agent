@@ -34,8 +34,8 @@ if _missing:
         "\n随包 OCR worker 拒绝出产物：当前解释器里没有 "
         + ", ".join(_missing)
         + "\n  这一份必须用【独立 OCR venv】的 python 来打，装齐运行依赖与打包器：\n"
-        "    .venv-ocr\\Scripts\\python.exe -m pip install -r requirements-ocr.txt\n"
-        "    .venv-ocr\\Scripts\\python.exe -m pip install -r requirements-package-ocr.txt\n"
+        "    .venv-ocr\\Scripts\\python.exe -m pip install -r requirements/requirements-ocr.txt\n"
+        "    .venv-ocr\\Scripts\\python.exe -m pip install -r requirements/requirements-package-ocr.txt\n"
         f"  现在跑的是：{sys.executable}\n"
     )
     raise SystemExit(msg)

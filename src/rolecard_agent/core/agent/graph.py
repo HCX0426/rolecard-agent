@@ -264,7 +264,7 @@ def build_model(
     identical from inside the process - a connection error mid-conversation.
     `with_fallbacks` turns that into "the cloud backend answered" instead of a dead turn.
 
-    Two limits worth knowing before relying on it (实施计划.md §8.5):
+    Two limits worth knowing before relying on it (架构总览 §5 不变式 17 记了链长取舍):
       * When streaming, fallbacks only cover failures during *stream creation*. An error
         after the first chunk does not fall back - the caller needs its own retry affordance.
       * The chain is capped at two (`Settings.resolve_fallbacks`); longer chains make failures

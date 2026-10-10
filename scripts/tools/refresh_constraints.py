@@ -1,4 +1,4 @@
-"""按 **Linux 侧实测 resolve** 刷新 `constraints-linux.txt`（ENGI-18 第三路的刷新器）。
+"""按 **Linux 侧实测 resolve** 刷新 `config/constraints-linux.txt`（ENGI-18 第三路的刷新器）。
 
 跑法（**必须在 Linux 上跑**，CI 的 ubuntu job 用；在 Windows 上跑是错平台的读数，退 2）：
 
@@ -34,8 +34,8 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-CONSTRAINTS = ROOT / "constraints-linux.txt"
-LOCK = ROOT / "requirements.lock"
+CONSTRAINTS = ROOT / "config/constraints-linux.txt"
+LOCK = ROOT / "requirements/requirements.lock"
 
 #: 锁里 `uvicorn[standard]==X` 那一行（pin 行永不缩进；extras 在名字后面）。
 _UVICORN = re.compile(r"^uvicorn\[standard\]==(\S+)", re.M)
@@ -93,7 +93,7 @@ def render(uvicorn_ver: str, uvloop_ver: str) -> str:
 
 def main(argv: list[str] | None = None, *, platform: str | None = None) -> int:
     """`platform` 可注入（默认 `os.name`）—— 让"错平台退 2"这条判据能在任何机器上测。"""
-    ap = argparse.ArgumentParser(description="刷新 constraints-linux.txt")
+    ap = argparse.ArgumentParser(description="刷新 config/constraints-linux.txt")
     ap.add_argument("--check", action="store_true", help="只问变没变，不写盘")
     args = ap.parse_args(argv)
     plat = platform if platform is not None else os.name
@@ -106,7 +106,7 @@ def main(argv: list[str] | None = None, *, platform: str | None = None) -> int:
         )
         return 2
     if not LOCK.exists():
-        print("refresh_constraints: requirements.lock 不见了 —— 退 2", file=sys.stderr)
+        print("refresh_constraints: requirements/requirements.lock 不见了 —— 退 2", file=sys.stderr)
         return 2
     m = _UVICORN.search(LOCK.read_text(encoding="utf-8", errors="ignore"))
     if not m:
@@ -124,14 +124,14 @@ def main(argv: list[str] | None = None, *, platform: str | None = None) -> int:
     old_text = CONSTRAINTS.read_text(encoding="utf-8") if CONSTRAINTS.exists() else ""
     old_v = _UVLOOP.search(old_text)
     if old_v and old_v.group(1) == uvloop_ver:
-        print(f"constraints-linux.txt 没变（uvloop=={uvloop_ver}，uvicorn=={uvicorn_ver}）")
+        print(f"config/constraints-linux.txt 没变（uvloop=={uvloop_ver}，uvicorn=={uvicorn_ver}）")
         return 0
     if args.check:
-        print(f"constraints-linux.txt 有变化：uvloop → {uvloop_ver}（--check 不写盘）")
+        print(f"config/constraints-linux.txt 有变化：uvloop → {uvloop_ver}（--check 不写盘）")
         return 1
     CONSTRAINTS.write_text(render(uvicorn_ver, uvloop_ver), encoding="utf-8", newline="\n")
     print(
-        f"constraints-linux.txt 已更新：uvloop "
+        f"config/constraints-linux.txt 已更新：uvloop "
         f"{old_v.group(1) if old_v else '（无此行）'} → {uvloop_ver}"
         f"（按锁里 uvicorn=={uvicorn_ver} 在 Linux 上实测 resolve）"
     )

@@ -7,7 +7,8 @@
 - Office OOXML（`.docx` / `.pptx` / `.xlsx`）：本质是 ZIP + XML，用**标准库** `zipfile` +
   `xml.etree.ElementTree` 抽文本，**零新增依赖**（刻意不引 python-docx / openpyxl / lxml，
   避免再给主环境加二进制依赖 —— 与 pypdf 的取舍一致）。
-- 图片（`.png/.jpg/.jpeg/.bmp/.gif/.tiff/.webp`）：走 OCR。按 `requirements-ocr.txt` 的硬规则，
+- 图片（`.png/.jpg/.jpeg/.bmp/.gif/.tiff/.webp`）：走 OCR。按
+  `requirements/requirements-ocr.txt` 的硬规则，
   OCR 必须在【独立 venv / 进程】里跑（运行树不该带 cv2/omegaconf 那一族），因此通过
   子进程调用一个独立的 OCR Python（`OCR_PYTHON`，默认 `.venv-ocr/Scripts/python.exe`）。未配置
   或该 venv 不可用 → 抛 `OcrUnavailable`，由上传端点降级为 pending，**绝不**把 OCR 栈拖进主环境。
@@ -91,7 +92,7 @@ def _parse_pdf(p: Path) -> str:
     try:
         from pypdf import PdfReader
     except ImportError as exc:  # pragma: no cover - 依赖缺失由 requirements 保证
-        raise ParseError("未安装 pypdf：pip install -r requirements-rag.txt") from exc
+        raise ParseError("未安装 pypdf：pip install -r requirements/requirements-rag.txt") from exc
     try:
         reader = PdfReader(str(p))
         parts: list[str] = []
@@ -287,7 +288,7 @@ def _parse_image(
         backend = LocalRapidOcrBackend()  # 自动发现默认路径（首选）
     if not backend.available():
         raise OcrUnavailable(
-            "本地 OCR 未配置：按 requirements-ocr.txt 在独立 venv 安装 rapidocr，"
+            "本地 OCR 未配置：按 requirements/requirements-ocr.txt 在独立 venv 安装 rapidocr，"
             "并设置 OCR_PYTHON 指向其 python（默认 .venv-ocr/Scripts/python.exe）；"
             "或在「服务」页把一个已配凭据的云端 OCR / 视觉模型端点排进 OCR 序。"
         )

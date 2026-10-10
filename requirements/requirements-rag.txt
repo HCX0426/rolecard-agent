@@ -2,7 +2,7 @@
 # 安装：pip install -r requirements.txt -r requirements-rag.txt
 #
 # 注意：chromadb 会带入自己的 numpy / onnxruntime / tokenizers 依赖树。
-# 这就是 v1 不把它放进 requirements.txt 的原因（见 C2）。
+# 这就是 v1 不把它放进 requirements.txt 的原因。
 
 chromadb>=1.5.9
 pypdf>=4.0  # v2.2 文档解析（纯 Python，可与主环境共存；OCR 栈另见 requirements-ocr.txt）

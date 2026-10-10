@@ -6,6 +6,6 @@
 #     .venv-ocr\Scripts\python.exe -m pip install -r requirements-ocr.txt
 #     .venv-ocr\Scripts\python.exe -m pip install -r requirements-package-ocr.txt
 #
-# 版本不钉死：与 requirements-package.txt（主后端的打包器）同一条口径 —— 钉死过一次的后果是
-# 两份 PyInstaller 版本互相漂，而 spec 的语法只跟着新版本走。
+# 版本不钉死：与 requirements-dev.txt 里的 pyinstaller（主后端的打包器）同一条口径 ——
+# 钉死过一次的后果是两份 PyInstaller 版本互相漂，而 spec 的语法只跟着新版本走。
 pyinstaller

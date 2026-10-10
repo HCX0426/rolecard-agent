@@ -58,7 +58,7 @@ def evaluate(
 
 def _report_entries(root: pathlib.Path) -> list[tuple[str, int, float]] | None:
     """把 ``.coverage`` 数据变成 entries；数据不存在返回 None（调用方大声跳过）。"""
-    data_file = root / ".coverage"
+    data_file = root / "build" / ".coverage"
     if not data_file.exists():
         return None
     out_json = root / "build" / "coverage_floor_report.json"

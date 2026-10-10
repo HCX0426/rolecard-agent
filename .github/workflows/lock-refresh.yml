@@ -63,7 +63,7 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: requirements.lock
+          cache-dependency-path: requirements/requirements.lock
 
       - name: 解析约束行（0=没变 / 1=变了 / 2=跑不动）
         id: resolve
@@ -82,7 +82,7 @@ jobs:
         id: validate
         shell: bash
         run: |
-          pip install -r requirements.lock -c constraints-linux.txt
+          pip install -r requirements/requirements.lock -c config/constraints-linux.txt
           python scripts/pytest_with_evidence.py --lane fast
 
       - name: 验绿才开 PR
@@ -94,7 +94,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          DIFF="$(git diff -- constraints-linux.txt | grep -E '^[+-]uvloop==' || true)"
+          DIFF="$(git diff -- config/constraints-linux.txt | grep -E '^[+-]uvloop==' || true)"
           if [ -z "$DIFF" ]; then
             echo "::error::工具说有变化，diff 却挑不出 uvloop 行 —— 不开 PR，红在这里"
             exit 1
@@ -104,7 +104,7 @@ jobs:
           git config user.name "HCX0426"
           git config user.email "chongxuan-huang@outlook.com"
           git checkout -b "$BRANCH"
-          git add constraints-linux.txt
+          git add config/constraints-linux.txt
           git commit -m "chore(deps): 刷新 Linux 约束行 uvloop（run_id=${{ github.run_id }}）"
           git push -u origin "$BRANCH"
           {
@@ -120,7 +120,7 @@ jobs:
             echo '```'
             echo
             echo "### 已验证"
-            echo "- \`pip install -r requirements.lock -c constraints-linux.txt\` 装得上；"
+            echo "- \`pip install -r requirements/requirements.lock -c config/constraints-linux.txt\` 装得上；"
             echo "- \`scripts/pytest_with_evidence.py --lane fast\` 绿。"
             echo "- 本 PR 由 \`GITHUB_TOKEN\` 开出，**不会自动触发 checks**（GitHub 既定行为），"
             echo "  所以证据是上面这一条 job 里跑的；需要远端门禁请手动 dispatch 一次 CI。"
@@ -149,14 +149,14 @@ jobs:
         with:
           python-version: "3.13" # 与 Dockerfile 基座、ci.yml 同一条版本线
           cache: pip
-          cache-dependency-path: requirements.lock
+          cache-dependency-path: requirements/requirements.lock
 
       - name: 装当前锁
-        # 装锁而不是 requirements-dev.txt：pip-tools 的版本要和锁里记的那份一致
+        # 装锁而不是 requirements/requirements-dev.txt：pip-tools 的版本要和锁里记的那份一致
         # （`pip-tools==7.6.2`）—— 解析器换版本可能整把锁重排，那就不是"依赖更新"了。
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.lock
+          pip install -r requirements/requirements.lock
 
       - name: 重新解析两把锁（0=没变 / 1=变了 / 2=跑不动）
         id: recompile
@@ -179,7 +179,7 @@ jobs:
         id: validate
         shell: bash
         run: |
-          pip install -r requirements.lock
+          pip install -r requirements/requirements.lock
           python scripts/pytest_with_evidence.py --lane fast
 
       - name: 用例绿了才开 PR
@@ -194,7 +194,7 @@ jobs:
           # `git diff HEAD~1` 在这里会 "bad revision" 失败，而 `|| true` 把它吞成一份
           # **空白的版本变化**——那张 PR 的正文就会写着"没变化"，正是本条 workflow
           # 从头防的那个失效形状，换了个入口再来一次。
-          DIFF="$(git diff -- requirements.lock requirements-runtime.lock \
+          DIFF="$(git diff -- requirements/requirements.lock requirements/requirements-runtime.lock \
                   | grep -E '^[+-][A-Za-z0-9._-]+==' | sort || true)"
           if [ -z "$DIFF" ]; then
             echo "::error::工具说有变化，diff 却挑不出任何 pin 行 —— 不开 PR，红在这里"
@@ -205,7 +205,7 @@ jobs:
           git config user.name "HCX0426"
           git config user.email "chongxuan-huang@outlook.com"
           git checkout -b "$BRANCH"
-          git add requirements.lock requirements-runtime.lock
+          git add requirements/requirements.lock requirements/requirements-runtime.lock
           git commit -m "chore(deps): 每周重解析两把锁（run_id=${{ github.run_id }}）"
           git push -u origin "$BRANCH"
           # 正文两样东西：变了哪些 pin（上面那份差异清单），以及"本条 job 已在新锁上
@@ -222,7 +222,7 @@ jobs:
             echo '```'
             echo
             echo "### 已验证"
-            echo "- 新锁 \`pip install -r requirements.lock\` 装得上；"
+            echo "- 新锁 \`pip install -r requirements/requirements.lock\` 装得上；"
             echo "- \`scripts/pytest_with_evidence.py --lane fast\` 绿"
             echo "  （与 Windows 测试臂同一入口、同一份判据）。"
             echo "- 本 PR 由 \`GITHUB_TOKEN\` 开出，**不会自动触发 checks**（GitHub 既定行为），"

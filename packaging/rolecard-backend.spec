@@ -110,7 +110,7 @@ if _missing:
     raise SystemExit(
         "随包后端要收的这些包没装，拒绝出一个「缺模块」的产物：" + ", ".join(_missing)
         + "\n  装回来（**一条就够**，锁覆盖运行时五族 + dev，README/CONTRIBUTING 同一条）："
-        "\n    .venv\\Scripts\\python.exe -m pip install -r requirements.lock"
+        "\n    .venv\\Scripts\\python.exe -m pip install -r requirements/requirements.lock"
         "\n  别再手抄 pip 命令：这条提示从前少写 -api/-rag/-cloud，照它装完 uvicorn/chromadb"
         "\n  仍然缺席、第二次还是拒绝出产物（10-01 实测）。清单的内容只在一份文件里有一份。"
         "\n  （2026-10-10 订正：这条提示从前指向 requirements-package.txt —— 那份文件在"

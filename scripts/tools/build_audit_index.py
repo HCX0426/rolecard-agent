@@ -57,8 +57,12 @@ def _load_ruler():
 
 def _heading_text(path: pathlib.Path, number: str) -> str:
     """该文档里这一号那一行的文字（标题行取标题，表格行取第二格），压掉竖线与多余空白。"""
+    import re  # noqa: PLC0415
+
     from check_consistency import _TARGET_HEAD_RE, _TARGET_ROW_RE  # noqa: PLC0415
 
+    # 与 _citation_targets 的第三种形状同源：快照第五节的散文条目（行首粗体编号）。
+    prose_head = re.compile(r"^\*\*(?:P[0-3]-\d+|ENGI-\d+)(?:[（(][^）)]*[)）])?\s*")
     for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
         head = _TARGET_HEAD_RE.match(line)
         if head and head.group(1) == number:
@@ -68,6 +72,10 @@ def _heading_text(path: pathlib.Path, number: str) -> str:
             cells = [c.strip() for c in line.strip().strip("|").split("|")]
             body = cells[1] if len(cells) > 1 else ""
             cleaned = body.replace("\\|", "｜").replace("**", "").replace("`", "").strip()
+            return (cleaned[:70] + "…") if len(cleaned) > 71 else (cleaned or "(空)")
+        prose = prose_head.match(line)
+        if prose and number in line[: len(prose.group(0)) + 4]:
+            cleaned = line.lstrip("*").strip()
             return (cleaned[:70] + "…") if len(cleaned) > 71 else (cleaned or "(空)")
     return "(找不到那一行)"
 

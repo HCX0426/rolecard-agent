@@ -89,12 +89,25 @@ def test_真正则在全仓真数据上只增不减() -> None:
         if (m := OLD_STRICT.match(ln))
     }
     assert before <= now, f"有号失去归属：{sorted(before - now)}"
-    # 新增的每一条都必须真的以该号开头（不是顺带提到）
+    # 新增的每一条都必须真的以该号开头（不是顺带提到）。取证循环认尺子的全部三种
+    # 定义形状（标题 / 表格行 / 行首粗体散文条目 —— 第三种是 2026-10-10 补的，快照
+    # 第五节的 P0/P1 条目住在那里），缺任何一种都会在这里 StopIteration。
+    prose_head = re.compile(r"^\*\*(P[0-3]-\d+|ENGI-\d+)(?:[（(][^）)]*[)）])?")
+    lines = doc.read_text(encoding="utf-8", errors="ignore").splitlines()
+
+    def _def_line(num: str) -> str | None:
+        for ln in lines:
+            row = _TARGET_ROW_RE.match(ln)
+            if row and row.group(1) == num:
+                return ln
+            prose = prose_head.match(ln)
+            if prose and num in ln[: len(prose.group(0)) + 4]:
+                return ln
+        return None
+
     for num in now - before:
-        line = next(
-            ln for ln in doc.read_text(encoding="utf-8", errors="ignore").splitlines()
-            if _TARGET_ROW_RE.match(ln) and _TARGET_ROW_RE.match(ln).group(1) == num
-        )
+        line = _def_line(num)
+        assert line is not None, f"{num} 的新家找不到定义行（尺子与取证循环形状不同步）"
         first = re.split(r"(?<!\\)\|", line.strip("|"))[0].strip().strip("*").strip()
         assert first.startswith(num), f"{num} 的新家来自非定义行：{first[:60]!r}"
 

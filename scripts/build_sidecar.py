@@ -75,12 +75,12 @@ BUNDLED_INPUT_PATHS = (
     "packaging",
     "frontend/dist",
     "pyproject.toml",
-    "requirements.txt",
-    "requirements-api.txt",
-    "requirements-rag.txt",
-    "requirements-cloud.txt",
-    "requirements-mcp.txt",
-    "requirements.lock",
+    "requirements/requirements.txt",
+    "requirements/requirements-api.txt",
+    "requirements/requirements-rag.txt",
+    "requirements/requirements-cloud.txt",
+    "requirements/requirements-mcp.txt",
+    "requirements/requirements.lock",
 )
 
 

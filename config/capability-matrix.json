@@ -1,14 +1,14 @@
 {
   "为什么是 JSON 而不是 YAML": "审查快照决策七写的是『能力矩阵 YAML』，但 PyYAML 没有出现在任何 requirements 里、scripts/ 里也没有一处 import yaml —— 用 YAML 写它，本机（.venv 恰好有）能跑而 CI（按 requirements 装）会在 import 那一行炸，正是本仓反复挨打的那个形状。矩阵要的是**机器可读**，不是某个具体文件格式；json 是标准库且 check_consistency.py 已经在用它。",
   "families": {
-    "txt": "requirements.txt",
-    "api": "requirements-api.txt",
-    "rag": "requirements-rag.txt",
-    "cloud": "requirements-cloud.txt",
-    "mcp": "requirements-mcp.txt",
-    "dev": "requirements-dev.txt",
-    "ocr": "requirements-ocr.txt",
-    "package_ocr": "requirements-package-ocr.txt"
+    "txt": "requirements/requirements.txt",
+    "api": "requirements/requirements-api.txt",
+    "rag": "requirements/requirements-rag.txt",
+    "cloud": "requirements/requirements-cloud.txt",
+    "mcp": "requirements/requirements-mcp.txt",
+    "dev": "requirements/requirements-dev.txt",
+    "ocr": "requirements/requirements-ocr.txt",
+    "package_ocr": "requirements/requirements-package-ocr.txt"
   },
   "forms": {
     "container": {

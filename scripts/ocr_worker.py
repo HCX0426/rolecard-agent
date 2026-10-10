@@ -67,7 +67,7 @@ def main() -> int:
         lines = _texts_from_result(raw)
     except ImportError:
         print(
-            "rapidocr 未安装：在独立 venv 中执行 pip install -r requirements-ocr.txt",
+            "rapidocr 未安装：在独立 venv 中执行 pip install -r requirements/requirements-ocr.txt",
             file=sys.stderr,
         )
         return 3

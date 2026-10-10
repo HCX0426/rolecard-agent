@@ -246,17 +246,19 @@ def test_三个Linux装配面挂约束_两个Windows面不挂() -> None:
 
     guarded = [
         ln for ln in ci.splitlines()
-        if _body(ln) == "-r requirements.lock -c constraints-linux.txt"
+        if _body(ln) == "-r requirements/requirements.lock -c config/constraints-linux.txt"
     ]
     unguarded = [
         ln for ln in ci.splitlines()
-        if _body(ln) == "-r requirements.lock"
+        if _body(ln) == "-r requirements/requirements.lock"
     ]
     assert len(guarded) == 2, f"带 -c 的锁安装应为 2 个 ubuntu job，实为 {len(guarded)}"
     assert len(unguarded) == 2, f"不带 -c 的应为 2 个 windows job，实为 {len(unguarded)}"
     docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-    assert "COPY constraints-linux.txt ./" in docker, "镜像里没有约束文件可 -c"
-    assert "-r requirements-runtime.lock -c constraints-linux.txt" in docker
+    assert "COPY config/constraints-linux.txt" in docker, "镜像里没有约束文件可 -c"
+    assert (
+        "-r requirements/requirements-runtime.lock -c config/constraints-linux.txt" in docker
+    )
 
 
 def test_入库的约束文件只有一条uvloop_pin() -> None:
@@ -265,7 +267,7 @@ def test_入库的约束文件只有一条uvloop_pin() -> None:
     它**不是** pip-compile 的产物（头注释写明来源与刷新器）——这条断言钉住"文件在场且
     形状可被 `lock platform markers` 读"，空文件/被清成注释都会在这里红。
     """
-    path = ROOT / "constraints-linux.txt"
+    path = ROOT / "config" / "constraints-linux.txt"
     assert path.exists(), "约束文件不见了：Linux 装配面的 -c 会把 CI/镜像装红"
     pins = parse_lock(path.read_text(encoding="utf-8"))
     assert [p.name for p in pins] == ["uvloop"], [p.name for p in pins]

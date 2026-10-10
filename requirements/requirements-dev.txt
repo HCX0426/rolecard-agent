@@ -29,5 +29,3 @@ pip-tools>=7.4
 # 锁与镜像的对账（check_consistency 的 `lockfile parity`）：判"镜像的约束区间 ∈ 锁的 pin"
 # 需要 specifier 引擎 —— 显式声明，不走传递依赖兜住（R28-11 同一条教训）。
 packaging>=24.0
-
-# 测试里要 mock 掉 LLM，不需要真实模型；若要跑端到端再用真 Ollama

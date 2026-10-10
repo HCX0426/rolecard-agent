@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS role_card (
     --   knowledge_scopes JSON ["health_reports"] - which retrieval scopes this role may read.
     --                    The role DECLARES scopes; it does not own a vector store. Owning one
     --                    would give N roles x M collections, duplicated indexes and no single
-    --                    source of truth (docs/archive/技术评审与决策.md A1).
+    --                    source of truth (merged audit ledger, 技术评审与决策 A1).
     --
     -- Exemplars are trusted content: writable only by an operator, never generated from
     -- conversation, otherwise a user could steer the persona through chat.

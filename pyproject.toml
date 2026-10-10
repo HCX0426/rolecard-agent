@@ -107,6 +107,8 @@ markers = [
 ]
 
 [tool.coverage.run]
+# 数据文件住 build/（gitignore）：根目录少一个 774KB 的本地产物（2026-10-10 根目录整理）。
+data_file = "build/.coverage"
 # 覆盖率口径的唯一出处（2026-10-04 审查快照「口径硬编码在脚本 + 只看行覆盖」那一格的落地）。
 # 从前这些数字挂在 `scripts/pytest_with_evidence.py` 的命令行上（`--cov=rolecard_agent
 # --cov-fail-under=85`），于是"量什么范围、量到多少算过"住在**跑它的那条命令**里 ——

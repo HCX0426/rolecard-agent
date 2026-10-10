@@ -127,7 +127,7 @@ def _git(root: pathlib.Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 def _has_coverage_data(root: pathlib.Path) -> pathlib.Path | None:
     """跑一次 `coverage json` 出报告文件；数据不存在返回 None（大声跳过）。"""
-    if not (root / ".coverage").exists():
+    if not (root / "build" / ".coverage").exists():
         return None
     out_json = root / "build" / "diff_coverage_report.json"
     out_json.parent.mkdir(parents=True, exist_ok=True)

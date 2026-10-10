@@ -24,9 +24,9 @@
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -U pip
 
-# 2. 依赖（锁安装：requirements.lock 覆盖全部运行时族，pip-compile 从 requirements.txt 等
-#    五份输入产出；改了它们要重新 compile，lockfile parity 尺子盯着）
-.\.venv\Scripts\python.exe -m pip install -r requirements.lock
+# 2. 依赖（锁安装：requirements/requirements.lock 覆盖全部运行时族，pip-compile 从 requirements/ 下的
+#    五份镜像产出；改了它们要重新 compile，lockfile parity 尺子盯着）
+.\.venv\Scripts\python.exe -m pip install -r requirements/requirements.lock
 
 # 3. 本地模型（可选 —— 不装 Ollama 也是完整可用的一等形态，
 #    在设置页加一个 OpenAI 兼容后端即可；数据不出机器的边界由默认本地后端承担）
@@ -127,7 +127,8 @@ v2 系列：RAG 检索（v2.1）、文档摄取与可插拔 OCR（v2.2）、前�
   限流、来源标识护栏；密钥只写不回读，凭据不进审计与日志。
 - **运维接口**：`/api/health`（免鉴权探活，编排器用）与 `/api/health/deep`（真依赖逐项，
   operator 凭据）刻意分开；`/api/metrics` 输出 Prometheus 文本（只数事件名，不含用户文本）。
-- **依赖**：锁安装（`requirements.lock`），`pyproject.toml` 是唯一事实来源；OCR 依赖独立 venv。
+- **依赖**：锁安装（`requirements/requirements.lock`，镜像住 `requirements/`），
+  `pyproject.toml` 是唯一事实来源；OCR 依赖独立 venv。
 
 ---
 

@@ -134,7 +134,7 @@ STEPS: list[tuple[str, list[str], str]] = [
         "full",
     ),
     (
-        # 分模块地板紧跟覆盖率那一步（数据是它刚写的 `.coverage`）。名字与覆盖率步同前缀，
+        # 分模块地板紧跟覆盖率那一步（数据是它刚写的 `build/.coverage`）。名字与覆盖率步同前缀，
         # 与它同进退：CI 不跑覆盖率（CI_SKIP 含覆盖率步），地板也整步跳过 —— 没有数据的
         # 判据在 CI 上只会是噪音。配置缺失/文件跌破都由 scripts/coverage_floor.py 自己判红。
         "覆盖率分模块地板",
@@ -142,7 +142,7 @@ STEPS: list[tuple[str, list[str], str]] = [
         "full",
     ),
     (
-        # 改动行覆盖率（diff-cover）排在地板之后：两步共用覆盖率那步刚写的 `.coverage`。
+        # 改动行覆盖率（diff-cover）排在地板之后：两步共用覆盖率那步刚写的 `build/.coverage`。
         # 基线 origin/main，与覆盖率步同进 CI_SKIP —— CI 上没有覆盖率数据，这步只是噪音。
         "改动行覆盖率",
         [PY, "scripts/diff_coverage.py"],
@@ -671,9 +671,17 @@ def _run(
     collected: list[str] = []
     timed_out = False
     _CURRENT[0] = name.split("｜", 1)[0]  # 看门狗点名用（快档那步带显示后缀，摘掉）
+    # 子进程的 stdout 编码锁成 UTF-8（2026-10-10 根目录整理那一轮顺手收口）：我们按
+    # `encoding="utf-8"` 读（本仓文件名全是中文，git/pytest 的输出都是 UTF-8），但子进程自己
+    # 的 stdout 编码跟着**它的**控制台走 —— GBK 控制台上的 `python -c "print('中文')"` 吐的是
+    # GBK 字节，被这边按 UTF-8 解就成了每字一个替换符，"挂死前留现场"那段输出变成乱码
+    # （test_gate_step_timeout 在干净 HEAD 上就能复现）。PYTHONIOENCODING 对 python/pytest
+    # 子进程一把锁死；对 node 等非 python 步骤是无害的未知变量。
+    step_env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     with subprocess.Popen(
         cmd,
         cwd=str(cwd) if cwd else str(ROOT),
+        env=step_env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

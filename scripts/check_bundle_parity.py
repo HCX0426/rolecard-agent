@@ -6,7 +6,8 @@
 `sys.path` 那一行记的就是这个坑的另一半）。于是"随包后端里有没有某个模块"这件事，从此没有任何
 尺子量过。实锤的那一条：`langchain_mcp_adapters` 在 .venv 里根本没装 ⇒ 包里 0 个模块 ⇒
 **打包态的 MCP 永远 fail-open**：设置→扩展那面板照常能增删 server、交通灯照常画，而工具永远
-加载不出来，日志里只有一句 warning。B/S 形态还能靠 `pip install -r requirements-mcp.txt` 自救，
+加载不出来，日志里只有一句 warning。B/S 形态还能靠
+`pip install -r requirements/requirements-mcp.txt` 自救，
 桌面包里的人没有 pip —— 那句提示对他是一句不可执行的建议。
 
 判据：AST 扫 `src/**/*.py` 的全部 import（**含函数体内的 lazy import** —— MCP 那一条正是

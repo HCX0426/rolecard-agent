@@ -443,7 +443,7 @@ def check_v1_v2_boundary() -> None:
     So no live document may still advertise them as a v2 roadmap item. This rule exists
     because pulling scope forward left exactly such a leftover behind twice.
     """
-    scanned = ("README.md", "docs/archive/实施计划.md", "docs/需求与验收标准.md")
+    scanned = ("README.md", "docs/archive/审计台账汇编.md", "docs/需求与验收标准.md")
     offenders: list[str] = []
     for name in scanned:
         path = ROOT / name
@@ -763,15 +763,15 @@ def check_dependency_layering() -> None:
     """src/ 里 import 的每一个第三方发行版，必须在六份 requirements 之一直接声明。
 
     为什么单独立这条（2026-09-28 轮 R28-11）：那天实锤的是"层漏了"——Dockerfile/CI 没装
-    `requirements-cloud.txt`，症状是配任何 OpenAI 兼容端点保存即 500，而本机 .venv 恰好装过
-    所以门禁看不见。这条检查防的是同族的另一半：**import 了但哪层都没声明** ——
+    `requirements/requirements-cloud.txt`，症状是配任何 OpenAI 兼容端点保存即 500，
+    而本机 .venv 恰好装过所以门禁看不见。这条检查防的是同族的另一半：**import 了但哪层都没声明** ——
     `httpx`（4 处顶层 import）与 `typing_extensions`（core/agent/state.py）当时全靠
     langchain-core / pydantic 的传递依赖兜住；传递兜住时不报错，某天上游收窄约束
     就静默断（agent 取证时实测过 langchain-core 1.6.3 的 Requires-Dist 确实带着 httpx）。
 
     判据：AST 扫 `src/**/*.py` 的全部 import（含函数内的 lazy import —— 那条路径被触发
     同样 500），顶层模块名去 stdlib、去第一方后，归一化（下划线→连字符）后必须在
-    **运行层**的 `requirements*.txt` 里声明 —— dev 层（含 PyInstaller；它从前独占
+    **运行层**的 `requirements/requirements*.txt` 里声明 —— dev 层（含 PyInstaller；它从前独占
     `requirements-package.txt`，2026-10-07 锁文件落地时并进 dev）不进随包运行树，
     生产 import 靠它们兜等于没兜（httpx 当时正是"只有 dev 声明 + langchain-core 传递"
     的双侥幸）。
@@ -784,8 +784,8 @@ def check_dependency_layering() -> None:
 
     declared: set[str] = set()
     # 只有**运行层**能给 src 的 import 背书：dev 层（连带 PyInstaller）不在随包运行树里。
-    non_runtime = {"requirements-dev.txt"}
-    for req in sorted(ROOT.glob("requirements*.txt")):
+    non_runtime = {"requirements/requirements-dev.txt"}
+    for req in sorted(ROOT.glob("requirements/requirements*.txt")):
         if req.name in non_runtime:
             continue
         for line in req.read_text(encoding="utf-8").splitlines():
@@ -826,7 +826,7 @@ def check_dependency_layering() -> None:
     )
     if undeclared:
         fails.append(
-            "src imports not declared in any requirements*.txt: "
+            "src imports not declared in any requirements/requirements*.txt: "
             + ", ".join(f"{m} ({first_seen[m]})" for m in undeclared[:8])
         )
 

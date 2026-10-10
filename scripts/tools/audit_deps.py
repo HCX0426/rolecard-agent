@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
-ALLOWLIST_PATH = ROOT / "dependency-audit-allowlist.json"
+ALLOWLIST_PATH = ROOT / "config" / "dependency-audit-allowlist.json"
 
 # Windows 控制台默认 GBK，而这份输出里有 ❌/⚠️ 这类 GBK 装不下的字符 —— 不重配编码，
 # 判据读到的是问号，最坏是 print 那一句自己抛 UnicodeEncodeError 退出码 1（门禁

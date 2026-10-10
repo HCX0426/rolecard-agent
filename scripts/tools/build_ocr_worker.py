@@ -2,7 +2,7 @@
 
 **必须用独立 OCR venv 的解释器跑**（那份环境里才有 rapidocr / cv2 / onnxruntime）：
 
-    .venv-ocr\\Scripts\\python.exe -m pip install -r requirements-package-ocr.txt   # 只装打包器
+    .venv-ocr\\Scripts\\python.exe -m pip install -r requirements/requirements-package-ocr.txt
     .venv-ocr\\Scripts\\python.exe scripts\\build_ocr_worker.py
 
 打完**自己冒烟一次**：造一张写着 `HELLO-OCR-2026` 的图，直接跑产物 exe，
@@ -101,7 +101,8 @@ def main() -> int:
     if importlib.util.find_spec("PyInstaller") is None:
         print(
             "这个 venv 里没有 PyInstaller：\n"
-            "  .venv-ocr\\Scripts\\python.exe -m pip install -r requirements-package-ocr.txt",
+            "  .venv-ocr\\Scripts\\python.exe -m pip install"
+            " -r requirements/requirements-package-ocr.txt",
             file=sys.stderr,
         )
         return 2
