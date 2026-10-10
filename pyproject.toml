@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rolecard-agent"
-version = "0.4.0"  # 版本单源：另三处（api/main.py 的 API_VERSION、两份 package.json）由 scripts/tools/bump_version.py 派生，四处一致性归门禁的 version parity
+version = "0.4.1"  # 版本单源：另三处（api/main.py 的 API_VERSION、两份 package.json）由 scripts/tools/bump_version.py 派生，四处一致性归门禁的 version parity
 description = "Role-card driven conversational agent kernel with pluggable domain modules"
 readme = "README.md"
 # Declared floor = what we actually test. Development and CI run 3.13 (C:\.venv & CI images).

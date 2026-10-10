@@ -95,7 +95,7 @@ from rolecard_agent.storage.db import set_request_epoch
 #: `version="x.y.z"` 那一形 —— 健康接口里那份**根本不在对齐检查范围内**：升版本时
 #: pyproject 与 FastAPI 跟着走，`/api/health` 继续报旧号，而没有任何东西会红。
 #: 合成一个常量之后 parity 比的是 `pyproject` ↔ 这一处，两份手写变成一份。
-API_VERSION = "0.4.0"
+API_VERSION = "0.4.1"
 
 # M5 前端构建产物的位置解析收在 `base/paths.console_dist_dir()`（09-30）：桌宠形象包
 # 也要扫那一份 `dist/pets/`，两处各写一遍路径就会有"界面打得开、素材清单扫不到"的单边红。
