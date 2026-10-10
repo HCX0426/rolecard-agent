@@ -32,12 +32,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # requirements-mcp（langchain-mcp-adapters）同理要装（10-01 补）：镜像是 B/S 形态，用户在
 # 设置页接 MCP server 是合法的 operator 动作，而未装时 loader 只打一行 warning 就跳过工具 ——
 # 界面照常摆着入口、交通灯照常画，工具永远加载不出来（"格子骗人"的 fail-open）。
-COPY requirements/requirements-runtime.lock ./
+COPY requirements/requirements-runtime.lock requirements/
 # ENGI-18 第三路（2026-10-09 拍板）：Windows 侧解析的锁天生没有 uvloop（uvicorn[standard] 的
 # sys_platform 门，pip-compile 在 win32 上整条剥掉），不挂 `-c` 则镜像现场解析**没锁版本**的它。
 # 约束行由 scripts/tools/refresh_constraints.py 在 Linux 上按锁里的 uvicorn pin 实测 resolve、
 # 周更 lock-refresh 刷新（版本事实只此一处，见 config/constraints-linux.txt 头部）。
-COPY config/constraints-linux.txt ./
+# 两份都按**仓库内子目录结构**拷（2026-10-10 整理那笔的现场教训：拍平拷到 /app 根、
+# RUN 里的路径却带着子目录前缀 ⇒ 第一次 push 就红在 "Could not open constraint file"）。
+COPY config/constraints-linux.txt config/
 RUN pip install --no-cache-dir -r requirements/requirements-runtime.lock -c config/constraints-linux.txt
 
 # 形态自报（审查快照决策七"容器无本地 OCR"那一格的收口）：容器里没有 .venv-ocr、也没有随包
