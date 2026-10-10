@@ -24,6 +24,12 @@ Error creating hnsw segment reader: Nothing found on disk`，而同一趟前一�
 
 用法（门禁里）：`python scripts/pytest_with_evidence.py --lane fast|coverage`，不带 `--lane`
 时按覆盖率档（与改名前的行为一致）。
+
+分片（ENGI-35 B，CI 的 Windows 臂用它跨机器并行）：加 `--shard i/N` 只跑第 i 片（i∈[0,N)）。
+分片规则在本文件、不在调用方 —— 按 `tests/` 里测试文件路径的稳定哈希取模，**并集恒等于 pytest
+实际收集的那一套**（见 `_all_test_files`：口径与 pytest 的 `testpaths`/`python_files` 对齐），
+所以新加一个测试文件自动被某一片认领，不会"没人跑而每片全绿"。取证判据一字不改：二跑只重跑
+**本片区里**红的那几个文件。
 """
 
 from __future__ import annotations
