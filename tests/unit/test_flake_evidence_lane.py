@@ -8,10 +8,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
-import os
+import io
 import pathlib
 import re
+import subprocess
 import sys
 
 import pytest
@@ -263,45 +265,66 @@ PROD_CHROMA_ERROR = (
 def test_a_real_long_flake_still_matches_after_pytest_truncates(monkeypatch, tmp_path) -> None:
     """真子进程回归：**在册签名必须穿过 pytest 的列宽截断活着到达判据**。
 
-    病根（`_run` 那行 `env=` 就是它的修法）：captured 输出不是 tty ⇒ pytest 把短摘要行
-    `FAILED … - 原因` 按 80 列截断，于是那条 126 字的偶发变成 `chromadb.errors.Interna...`，
-    三个签名一个不剩 ⇒ `_is_chroma_flake` 逐条问就答"不在册"⇒ **该发的重跑取证从来没发生**，
-    而屏幕上那句"不在在册签名里，不重跑"看着完全合理。
+    病根（`_run` 那行 `env=` 就是它的修法）：短摘要行 `FAILED … - 原因` 按**终端宽度**截断，
+    而 captured 输出不是 tty ⇒ pytest 回落 80 列，那条 126 字的在册偶发被切成
+    `chromadb.errors.Interna...`，三个签名一个不剩 ⇒ `_is_chroma_flake` 逐条问就答"不在册"
+    ⇒ **该发的重跑取证从来没发生过**，而屏幕上那句"不在在册签名里，不重跑"看着完全合理
+    （2026-10-10 门禁当场撞出，`build/gate-fast-run1.log` 原文为证）。
 
-    为什么这条必须跑**真子进程**：上面所有既有用例都喂**手写**日志，而手写的 `FLAKE_LOG`
-    恰好短到签名没被截过 —— 于是这层守卫在它最该守住的那件事上从没被测过（与本仓"恒绿尺子的
-    分母"那一族同形）。摘掉 `_run` 的 `env=` 这一条当场红（变异实测过），手写日志的用例全不会。
+    为什么必须跑**真子进程**：既有用例全喂**手写**日志，而手写的 `FLAKE_LOG` 恰好短到签名
+    没被截过 —— 这层守卫在它最该守住的那件事上从没被测过（"恒绿尺子的分母是 0"那一族）。
+
+    **三条腿都是刻意做成跨机器确定的**（CI 第一次跑就把我第一版的两个机器假设当场照出来了，
+    正是 ENGI-19 那一族，改法是量出来的不是想出来的）：
+      * 整条用例先 `setenv("COLUMNS", "80")` —— 不指望"各机默认就是 80"（CI 的默认探测并不
+        截断，那是机器的慷慨不是判据的形状），也不指望"各机默认很宽"；窄是钉出来的。
+        于是判据腿**只在 `_run` 那道 `env=` 存在时**才读得到全签名 —— 修复在 CI 上也是有牙的；
+      * 合成用例以 `tmp_path` 为 cwd、命令行用**相对文件名** —— Windows runner 上绝对路径落在
+        rootdir 之外时摘要行会塌成 `FAILED ::test_it`（路径整段没了），`_failures` 那个要求
+        文件名以 `.py` 结尾的锚点就什么都抓不到；
+      * 判据腿把 `_run` 的回显**接进管道里**：子进程那条红若原样进父进程 stdout，会被门禁
+        自己的 `_failures` 读成"又一发红"并拉进重跑清单（那个文件在仓库里根本不存在 ⇒ 收集错
+        ⇒ 真红）。测一条注定失败的用例，不该在套房日志里留下它的尸体。
     """
-    import subprocess
-
     mod = _load(monkeypatch, tmp_path)
+    monkeypatch.setenv("COLUMNS", "80")
     case = tmp_path / "test_the_real_shape.py"
     case.write_text(
         f"def test_it() -> None:\n    assert False, {PROD_CHROMA_ERROR!r}\n",
         encoding="utf-8",
     )
-    rc, log = mod._run([sys.executable, "-m", "pytest", str(case), "-q", "-p", "no:cacheprovider"])
+    argv = [
+        sys.executable, "-m", "pytest", "test_the_real_shape.py",
+        "-q", "-p", "no:cacheprovider",
+    ]
+    monkeypatch.chdir(tmp_path)  # `_run` 不接 cwd，靠进程 cwd 把相对文件名与 rootdir 对齐
+
+    # 判据腿：走真 `_run`（它带着那道 env=），回显不许漏进套房日志
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc, log = mod._run(argv)
     assert rc != 0, "造出来的那条红没红，后面就不用判了"
 
-    # 反向自证：不加 COLUMNS 的同一趟**确实**会被截（否则这条用例只是在测解释器的慷慨）
-    bare = subprocess.run(
-        [sys.executable, "-m", "pytest", str(case), "-q", "-p", "no:cacheprovider"],
+    # 前提腿：同一个用例在**同样钉成 80 列**的裸子进程里确实被截（否则判据没在量截断这件事）
+    narrow = subprocess.run(
+        argv,
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
-        env={k: v for k, v in os.environ.items() if k != "COLUMNS"},
+        cwd=str(tmp_path),
     )
-    bare_summary = "\n".join(
-        ln for ln in (bare.stdout + bare.stderr).splitlines() if ln.startswith("FAILED ")
+    narrow_summary = "\n".join(
+        ln for ln in (narrow.stdout + narrow.stderr).splitlines() if ln.startswith("FAILED ")
     )
-    assert bare_summary and "Nothing found on disk" not in bare_summary, (
-        "被截断这个前提没复现出来 ⇒ 这条用例在测空气：" + bare_summary[:200]
+    assert "Nothing found on disk" not in narrow_summary, (
+        "80 列这一腿没复现出截断 ⇒ 判据吃的宽度形状不存在，本用例作废：" + narrow_summary[:220]
     )
 
     failures = mod._failures(log)
-    assert failures, f"短摘要行没被抓到（形状变了？）：\n{log[-500:]}"
+    assert failures, f"短摘要行没被抓到（形状变了？）：\n{log[-600:]}"
     for name, reason in failures:
+        assert name.endswith("test_the_real_shape.py"), f"抓错了文件：{name}"
         assert mod._is_chroma_flake(reason), f"{name} 的判据读不到在册签名：{reason!r}"
 
 
