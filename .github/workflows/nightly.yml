@@ -110,8 +110,8 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path docs/eval) {
-            git config user.name "rolecard-nightly-bot"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git config user.name "HCX0426"
+            git config user.email "chongxuan-huang@outlook.com"
             git add docs/eval
             if (git diff --cached --quiet) { Write-Host "今晚无新证据" } else {
               git commit -m "chore(eval): 夜间臂证据落盘（run_id=${{ github.run_id }}）"

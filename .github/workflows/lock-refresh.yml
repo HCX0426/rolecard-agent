@@ -101,8 +101,8 @@ jobs:
           fi
           SHA="$(git rev-parse --short HEAD)"
           BRANCH="bot/lock-refresh/constraints-${SHA}"
-          git config user.name "rolecard-lock-bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "HCX0426"
+          git config user.email "chongxuan-huang@outlook.com"
           git checkout -b "$BRANCH"
           git add constraints-linux.txt
           git commit -m "chore(deps): 刷新 Linux 约束行 uvloop（run_id=${{ github.run_id }}）"
@@ -202,8 +202,8 @@ jobs:
           fi
           SHA="$(git rev-parse --short HEAD)"
           BRANCH="bot/lock-refresh/${SHA}"
-          git config user.name "rolecard-lock-bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "HCX0426"
+          git config user.email "chongxuan-huang@outlook.com"
           git checkout -b "$BRANCH"
           git add requirements.lock requirements-runtime.lock
           git commit -m "chore(deps): 每周重解析两把锁（run_id=${{ github.run_id }}）"

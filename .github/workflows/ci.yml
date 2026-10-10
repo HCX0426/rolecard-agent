@@ -253,8 +253,8 @@ jobs:
             echo "dist 无漂移，bot 不动作"
             exit 0
           fi
-          git config user.name "rolecard-dist-bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "HCX0426"
+          git config user.email "chongxuan-huang@outlook.com"
           git add frontend/dist
           git commit -m "chore(dist): CI bot 自动回写 —— 前端源码改动后重建入库产物"
           git push

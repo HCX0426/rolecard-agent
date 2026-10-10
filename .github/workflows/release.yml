@@ -225,8 +225,8 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.version != '' }}
         shell: bash
         run: |
-          git config user.name "rolecard-release-bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "HCX0426"
+          git config user.email "chongxuan-huang@outlook.com"
           git tag -a "v${{ steps.meta.outputs.version }}" -m "Release v${{ steps.meta.outputs.version }}"
           git push origin "v${{ steps.meta.outputs.version }}"
       - name: 取安装包产物
