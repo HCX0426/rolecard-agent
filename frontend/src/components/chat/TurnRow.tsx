@@ -1,6 +1,6 @@
 import type { BuiltTurn } from "../../lib/turns";
 import { answeredByHint, STOP_HINT } from "../../lib/stream";
-import { parseMessageTs } from "../../lib/quiet";
+import { formatMessageTs, parseMessageTs } from "../../lib/quiet";
 import type { MessageRow } from "../../api";
 import { Markdown } from "../Markdown";
 import { Tag } from "../ui";
@@ -150,7 +150,7 @@ export default function TurnRow({
               </div>
               {turn.user.ts && (
                 <p className="mt-1 text-right text-[10px] text-slate-500 dark:text-slate-400">
-                  {turn.user.ts}
+                  {formatMessageTs(turn.user.ts)}
                 </p>
               )}
             </>
@@ -183,7 +183,7 @@ export default function TurnRow({
                 重新生成
               </button>
             )}
-            {turn.answer.ts && <span>{turn.answer.ts}</span>}
+            {turn.answer.ts && <span>{formatMessageTs(turn.answer.ts)}</span>}
           </div>
           {/* 这一轮是被叫停的半句（R26-13 尾）：标记随 checkpoint 落库，所以刷新后仍在。
               这句提示原先挂在页面 state 上（SSE 的 `End.stopped`），一刷新就没了 —— 挂在

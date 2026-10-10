@@ -51,6 +51,24 @@ export function parseMessageTs(ts: string | null | undefined): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+/** 消息 `created_at` → 屏幕上的本地时刻 `YYYY-MM-DD HH:MM:SS`（无 T、无 Z）。
+ *
+ * 为什么单独一条（2026-10-10 用户报"消息时间变成 2026-10-10T06:45:56Z 这种了"）：
+ * P2-17 起新消息存 UTC ISO-Z，而聊天页从前**直接打印存储串** —— 于是屏幕上既多出 T/Z
+ * 两个协议字符，又把 UTC 钟面当本地显示（06:45 其实是 14:45，差整 8 小时）。
+ * 解析走 `parseMessageTs`（格式即纪元）：**两族各自解对** —— 旧族空格按本地解、原样显示
+ * 不错算；新族带 Z 按 UTC 解、换算到本地。刻意不复用 `formatUtcNaive`：那个伺候库表族
+ * （空格=UTC），消息族里空格=旧本地，同一个形状两族语义相反（上一条的注释说的就是它）。
+ * 保留秒位是刻意的：那是旧数据在屏幕上的原有信息量，这次修复不该顺手降级它。
+ * 解析不了原样透出（与 `formatUtcNaive` 同一纪律：不装作换过）。
+ */
+export function formatMessageTs(ts: string | null | undefined): string {
+  const d = parseMessageTs(ts);
+  if (!d) return ts ?? "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 /** 一个角色此刻的静默状态 → 界面上的**三段**（运行环境页与收件箱抽屉共用同一个组件）。
  *
  * 为什么是三段而不是一句话（`R26-45`）：旧版把「距上次说话不足 66 分钟，她连着 1 条没被回

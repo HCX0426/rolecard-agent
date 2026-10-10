@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { QuietStatus } from "../api";
-import { formatNextOk, formatUtcNaive, parseMessageTs, quietParts } from "./quiet";
+import { formatMessageTs, formatNextOk, formatUtcNaive, parseMessageTs, quietParts } from "./quiet";
 
 function status(over: Partial<QuietStatus> = {}): QuietStatus {
   return {
@@ -91,6 +91,36 @@ describe("parseMessageTs（消息时间戳，格式即纪元 —— 后端 core/
     const modern = d.toISOString().replace(/\.\d{3}Z$/, "Z");
     const gap = Math.abs(parseMessageTs(modern)!.getTime() - parseMessageTs(legacy)!.getTime());
     expect(gap).toBeLessThan(2000);
+  });
+});
+
+describe("formatMessageTs（消息时刻的屏幕显示，2026-10-10 修「变成 2026-10-10T06:45:56Z」）", () => {
+  // 期望值同样**从同一时刻现算**（经本地时区渲染），不写死 +8 —— CI 的 UTC runner 也要成立。
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const full = (d: Date) =>
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+
+  it("新族 UTC ISO-Z → 本地钟面、无 T 无 Z（用户要的形状）", () => {
+    const t = new Date("2026-10-10T06:45:56Z");
+    const out = formatMessageTs("2026-10-10T06:45:56Z");
+    expect(out).toBe(full(t));
+    // 这两个断言才是这次报告的正面：屏幕上不该再出现协议字符，也不该是 UTC 钟面
+    expect(out).not.toContain("T");
+    expect(out).not.toContain("Z");
+  });
+
+  it("旧族本地 naive **原样显示**，绝不当 UTC 移走（与 formatUtcNaive 的分野）", () => {
+    // 消息族里空格 = 旧本地（上一条 parseMessageTs 的政策）。若错用 formatUtcNaive，
+    // 这一串会被当 UTC 加 8 小时显示，等于把用户升级前的历史时刻整体挪错。
+    expect(formatMessageTs("2026-09-27 12:30:31")).toBe("2026-09-27 12:30:31");
+  });
+
+  it("解析不了的原样透出，空值给空串（不装作换过）", () => {
+    expect(formatMessageTs("不是时间")).toBe("不是时间");
+    expect(formatMessageTs(null)).toBe("");
+    expect(formatMessageTs(undefined)).toBe("");
+    expect(formatMessageTs("")).toBe("");
   });
 });
 

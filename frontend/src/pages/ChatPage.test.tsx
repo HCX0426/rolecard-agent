@@ -603,6 +603,94 @@ describe("ChatPage 跟着服务端走（在桌宠上回一句，切回控制台�
  * 里看不见它，而桌宠气泡读的是原始消息列表，所以只有这一侧丢），而那一栏「耗时」取的是
  * 段首的用户消息 → 段尾的回答 ⇒ 她的主动开口被算成「这条回答耗时 62 分 34 秒」。
  * 两条症状一起钉。 */
+/** 2026-10-10 用户报的形状：P2-17 把消息 `created_at` 改存 UTC ISO-Z 后，`TurnRow` 从前
+ *  **直接把存储串打印出去** ⇒ 屏幕上出现「2026-10-10T06:45:56Z」：既带着协议字符 T/Z，
+ *  又是 UTC 钟面（本地其实是 14:45）。纯函数（`formatMessageTs`）绿不证明接对了 ——
+ *  这一层的存在理由就是文件头那句「单元逻辑都对，接错了没人知道」。 */
+describe("ChatPage 的消息时刻显示成本地钟面，不再透出 ISO 串", () => {
+  const THREAD = "s_ts_shape";
+
+  function stubTsThread(server: { id: string; role: string; content: string; ts: string }[]) {
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/sessions")
+        return [
+          {
+            thread_id: THREAD,
+            title: "时刻这一格",
+            role_id: "elysia",
+            role_name: "爱莉希雅",
+            updated_at: "2026-10-10 14:45:56",
+            is_proactive: false,
+            is_blank: false,
+          },
+        ];
+      if (url === "/api/roles") return [];
+      if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
+      if (url === "/api/settings/model-providers") return { providers: [] };
+      if (url.includes("/messages")) {
+        const probe = url.includes("limit=1");
+        return {
+          messages: probe ? server.slice(-1) : [...server],
+          total: server.length,
+          limit: probe ? 1 : 500,
+          truncated: false,
+        };
+      }
+      if (url.endsWith("/context")) return { trimmed: 0, kept: 0, budget: 24000 };
+      if (url.startsWith(`/api/session/${THREAD}`)) return { model_name: null, agent_mode: "chat" };
+      return {};
+    });
+  }
+
+  async function openThread(server: { id: string; role: string; content: string; ts: string }[]) {
+    stubTsThread(server);
+    render(
+      <ToastProvider>
+        <ChatPage />
+      </ToastProvider>,
+    );
+    await vi.waitFor(() => expect(screen.getByText("时刻这一格")).toBeTruthy());
+    fireEvent.click(screen.getByText("时刻这一格"));
+    await vi.waitFor(() => expect(screen.getByText("她那句回答")).toBeTruthy());
+  }
+
+  it("屏幕上找不到任何 ISO 形状的时刻（带 T 带 Z 那种）", async () => {
+    await openThread([
+      { id: "u1", role: "user", content: "下午好", ts: "2026-10-10T06:45:00Z" },
+      { id: "a1", role: "assistant", content: "她那句回答", ts: "2026-10-10T06:45:56Z" },
+    ]);
+    const body = document.body.textContent ?? "";
+    // 原始存储串一个字都不该出现（修前它就在屏幕上）
+    expect(body).not.toContain("2026-10-10T06:45:56Z");
+    // 也不该留下任何 ISO 时刻的形状：`T时:分` 与 `时:分:秒Z` 两个签名各挡一道
+    // （刻意**不**断"整个屏幕不许出现字母 Z"—— 那会被任何无关文案误伤，判据要盯的是形状）
+    expect(body).not.toMatch(/T\d{2}:\d{2}/);
+    expect(body).not.toMatch(/\d{2}:\d{2}:\d{2}Z/);
+  });
+
+  it("换算后的本地钟面出现在屏幕上（与 formatMessageTs 同一个出口，不是另算一份）", async () => {
+    const t = new Date("2026-10-10T06:45:56Z");
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const want =
+      `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())} ` +
+      `${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())}`;
+    await openThread([
+      { id: "u1", role: "user", content: "下午好", ts: "2026-10-10T06:45:00Z" },
+      { id: "a1", role: "assistant", content: "她那句回答", ts: "2026-10-10T06:45:56Z" },
+    ]);
+    // 期望值从同一瞬间经本地时区现算（写死 +8 的用例只在东八区绿，CI 的 UTC runner 会假红）
+    expect(document.body.textContent).toContain(want);
+  });
+
+  it("旧族（空格、本地 naive）原样显示，不被当 UTC 挪走", async () => {
+    await openThread([
+      { id: "u1", role: "user", content: "升级前问的", ts: "2026-09-27 12:30:31" },
+      { id: "a1", role: "assistant", content: "她那句回答", ts: "2026-09-27 12:30:34" },
+    ]);
+    expect(document.body.textContent).toContain("2026-09-27 12:30:34");
+  });
+});
+
 describe("ChatPage 把主动开口画成单独一条（不吞上一问的答、不算跨一小时的耗时）", () => {
   const THREAD = "s_proactive_elysia";
 
