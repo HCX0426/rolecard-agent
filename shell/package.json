@@ -2,7 +2,7 @@
   "name": "rolecard-shell",
   "productName": "rolecard-agent",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "rolecard-agent 桌面壳（Electron）：窗口 + 本地后端进程生命周期 + 原生能力桥。不含第二份 UI。",
   "main": "out/main/index.js",
   "scripts": {
