@@ -339,7 +339,25 @@ def select_affected(changed: list[str], tests: list[str]) -> tuple[list[str], st
         stem = Path(path).stem
         hits = [t for t in tests if stem in Path(t).name]
         if not hits:
-            return [], f"{path} 找不到同名测试（映射零命中）—— 宁可慢不可漏，全量"
+            # 2026-10-10 补的第二层匹配（用户问"为什么小修一次这么慢"后量的）：词干同名
+            # 覆盖不了"模块名与测试名不同形"的那一族 —— 实测 148 个 src 模块里 62 个
+            # 命中不了（`message_view.py` 的测试叫 `test_serialize_message.py`，全文里
+            # 明明 import 着它）。先按**内容**问一遍：哪个测试文件 import 了改动的模块
+            # （import 语句里带着完整模块路径，比文件名诚实）；有就跑那些，仍然零才退全量。
+            # import 语义里没有 `src.` 前缀（PYTHONPATH 指到 src/ 里面）—— 不剥掉这个
+            # 前缀内容匹配永远 False（我在取证探针里已经犯过一次一模一样的错，这次别再犯）。
+            dotted = path.removesuffix(".py").replace("/", ".").removeprefix("src.")
+            hits = [
+                t
+                for t in tests
+                # 存在性守卫：`_TESTS` 可能是**用例手喂的假清单**（test_gate_affected 就
+                # 这么喂），盘上没有那份文件时读不得也不算命中 —— 那条用例钉的判据
+                # （零命中退全量）必须原样成立。
+                if (ROOT / t).is_file()
+                and dotted in (ROOT / t).read_text(encoding="utf-8", errors="replace")
+            ]
+            if not hits:
+                return [], f"{path} 找不到同名测试（映射零命中）—— 宁可慢不可漏，全量"
         picked.update(hits)
     # 改到的测试文件本身一定要跑（按词干匹配可能匹配不到它自己，例如改了
     # `test_ocr_bundled_worker.py` 而没改任何 `ocr*` 模块）。

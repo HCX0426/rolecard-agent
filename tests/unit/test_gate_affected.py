@@ -61,6 +61,45 @@ def test_映射零命中当场退回全量() -> None:
     assert "零命中" in why, why
 
 
+def test_内容兜底按import语句命中不同形的测试文件() -> None:
+    """词干同名覆盖不了"模块名与测试名不同形"的那一族（2026-10-10 量的 62/148）。
+
+    实例：`message_view.py` 的测试叫 `test_serialize_message.py`，文件名里没有
+    `message_view`，但**内容里 import 着它** —— 内容匹配比文件名诚实。这条钉两件事：
+    ① 模块路径必须剥掉 `src.` 前缀再匹配（import 语义里没有它；不剥则永远 False，
+    我在取证探针里犯过一次一模一样的错）；② 命中的是**真实仓库文件**（真读盘）。
+    """
+    gate = _load_gate()
+    picked, why = gate.select_affected(
+        ["src/rolecard_agent/api/message_view.py"],
+        [
+            "tests/unit/test_serialize_message.py",
+            "tests/unit/test_memory.py",
+            "tests/unit/test_ocr.py",
+            "tests/unit/test_api.py",
+        ],
+    )
+    assert picked == [
+        "tests/unit/test_import_floor.py",
+        "tests/unit/test_serialize_message.py",
+    ], picked
+    assert "1 个模块" in why and "2/4" in why, why
+
+
+def test_内容兜底对假清单不炸且仍退全量() -> None:
+    """`_TESTS` 可能是手喂的假清单（盘上没有那份文件）——兜底读盘前必须存在性守卫。
+
+    摘掉那个 `is_file()` 这条当场炸 `FileNotFoundError`（真踩过一次：第一版兜底在
+    门禁自己的快档上红的就是它）。零命中照旧退全量 —— 判据一格没松。
+    """
+    gate = _load_gate()
+    picked, why = gate.select_affected(
+        ["src/rolecard_agent/core/没有同名测试的模块.py"], _TESTS
+    )
+    assert picked == []
+    assert "零命中" in why, why
+
+
 def test_动了_src_与_tests_之外的文件当场退回全量() -> None:
     """pyproject / conftest / CI 工作流能影响整套用例的收集与运行方式。"""
     gate = _load_gate()
