@@ -109,10 +109,12 @@ _missing = [pkg for pkg in RUNTIME_PACKAGES if importlib.util.find_spec(pkg) is 
 if _missing:
     raise SystemExit(
         "随包后端要收的这些包没装，拒绝出一个「缺模块」的产物：" + ", ".join(_missing)
-        + "\n  装回来（**一条就够**，它自己把运行时那五族带上）："
-        "\n    .venv\\Scripts\\python.exe -m pip install -r requirements-package.txt"
+        + "\n  装回来（**一条就够**，锁覆盖运行时五族 + dev，README/CONTRIBUTING 同一条）："
+        "\n    .venv\\Scripts\\python.exe -m pip install -r requirements.lock"
         "\n  别再手抄 pip 命令：这条提示从前少写 -api/-rag/-cloud，照它装完 uvicorn/chromadb"
         "\n  仍然缺席、第二次还是拒绝出产物（10-01 实测）。清单的内容只在一份文件里有一份。"
+        "\n  （2026-10-10 订正：这条提示从前指向 requirements-package.txt —— 那份文件在"
+        "\n  锁文件落地时已删（P1-12 把 PyInstaller 并进 dev 族），照着它修不了；改指 requirements.lock。）"
     )
 
 for pkg in RUNTIME_PACKAGES:
