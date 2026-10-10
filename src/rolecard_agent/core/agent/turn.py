@@ -166,6 +166,20 @@ class ContextTrimmed:
 
 
 @dataclass(frozen=True, slots=True)
+class AnsweredBy:
+    """ENGI-36 B：这一轮**实际由云端后端答的话**，而用户请求的是本地档（静默降级发生了）。
+
+    只带那个云端后端的**名字** —— 不带模型名/端点/任何凭据，与 `ContextTrimmed` 一样只承载
+    "发生了什么"，不承载内容。每**用户轮次**最多一条（见 `run_turn` 的 reported 门），工具
+    循环里多次调用不重复刷屏。检测的保守性在 `Settings.degraded_backend`：只在能正向认定
+    "请求本地、实际云端"时才发，绝不从"名字对不上"反推（那会把普通本地轮次误报成隐私事件）。
+    """
+
+    sse_type: ClassVar[str] = "answered_by"
+    backend: str
+
+
+@dataclass(frozen=True, slots=True)
 class Error:
     """这一轮以失败结束。`detail` 是给用户的一句人话；原因只进日志（见 tracer 调用点）。"""
 
@@ -194,6 +208,7 @@ TurnEvent = (
     | ToolResult
     | MessageReplace
     | ContextTrimmed
+    | AnsweredBy
     | Error
     | End
 )
@@ -207,6 +222,7 @@ EVENT_TYPES: tuple[str, ...] = (
     ToolResult.sse_type,
     MessageReplace.sse_type,
     ContextTrimmed.sse_type,
+    AnsweredBy.sse_type,
     Error.sse_type,
     End.sse_type,
 )
@@ -404,6 +420,9 @@ def _iter_turn(
     # 消息把窗口挤得更满的结果，重复上报只会变成噪音。
     trim_reported = False
     think_emitted = False
+    # ENGI-36 B：这一轮有没有发过「实际由云端答的话」那条事件。与 trim_reported 同一套门 ——
+    # 一次用户轮次里 call_model 会因工具循环跑多次，降级这个事实报一次就够，重复上报是噪音。
+    answered_reported = False
     # 每次模型调用的真用量，键是 (节点, 步)。分块带的是累计值，所以"后到的覆盖先到的"
     # 才是那一次调用的数（见 `_from_message_chunk`）。
     usage_seen: dict[Any, TokenUsage | None] = {}
@@ -439,6 +458,15 @@ def _iter_turn(
                             dropped=dropped, kept=(update or {}).get("context_kept") or 0
                         )
                     committed = messages[-1]
+                    # ENGI-36 B：committed 那条消息带了「实际由云端答的话」（`call_model` 里
+                    # `degraded_backend` 正向认定后写入 additional_kwargs）。与裁剪/思考同一套
+                    # 每轮一条的门：一次用户轮多次调用不重复刷屏。只带后端名，不带内容/凭据。
+                    committed_answered = (getattr(committed, "additional_kwargs", None) or {}).get(
+                        "answered_by"
+                    )
+                    if committed_answered and not answered_reported:
+                        answered_reported = True
+                        yield AnsweredBy(backend=str(committed_answered))
                     # 兜底路径：模型没有走增量流（评测脚本 / 非流式后端）时，思考内容会
                     # 完整地落在 committed 上 —— 此时一次性发出，并以 think_emitted
                     # 防止与流式增量重复。

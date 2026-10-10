@@ -74,6 +74,11 @@ def serialize_message(
         # 一刷新就没了 —— 写进检查点的才是历史的一部分。缺键 = 正常收尾，旧消息一律没有。
         if (message.additional_kwargs or {}).get("stopped"):
             row["stopped"] = True
+        # "这一轮其实是云端答的"（ENGI-36 B）与 `stopped` 同一条通路：live 走 SSE 事件、
+        # 回放走消息本身 —— 刷新后仍然标得出来，这正是本功能要消灭的"以为在本机跑"。
+        # 只带**后端名**（用户在别处也认得的标识），不带模型名/端点/任何凭据。
+        if answered_by := (message.additional_kwargs or {}).get("answered_by"):
+            row["answered_by"] = str(answered_by)
     else:
         row = {
             "role": "assistant",

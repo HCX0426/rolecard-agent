@@ -570,6 +570,32 @@ class Settings(BaseModel):
             seen.append(name)
         return seen[:MAX_FALLBACKS]
 
+    def degraded_backend(self, requested: str | None, actual_model: str | None) -> str | None:
+        """ENGI-36 B：**只报能正向认定的**「请求了本地档、实际是云端答的话」。
+
+        返回那台云端后端的**名字**（不是模型名 —— 名字是用户别处也认得的标识），当且仅当全部
+        成立：请求的后端是本地档；实际 `model_name` 非空且在这台实例的后端表里**唯一地**指名
+        一台后端；那台是云端档；且不是请求的那台本身。任何一条不满足 → None（不报）。
+
+        刻意**不从「名字对不上」反推降级**（与直觉相反，但是修得更早的那一半）：云路径的
+        `model_name` 与声明精确相等是探针实测过的（`deepseek-ai/DeepSeek-V4-Flash`），而**本地
+        Ollama 成功路径的 `model_name` 形状没能在本机实测**（Ollama 已卸载）。若"不等于请求的
+        模型名就报云端"，一个形状稍有出入的本地轮次会被误报成「你的数据离开了这台机器」——
+        **误报隐私比沉默更糟**。宁可漏报（服务页 A 那格仍给线索），不可误报。
+        """
+        if not actual_model:
+            return None
+        head = requested or self.model_default
+        if not self._backend_is_local(head):
+            return None  # 请求的本就是云端档：走了云不是"降级"
+        hits = [n for n, b in self.model_backends.items() if b.model == actual_model]
+        if len(hits) != 1:
+            return None  # 重名或查不到 ⇒ 不敢指认是哪台
+        name = hits[0]
+        if name == head or self._backend_is_local(name):
+            return None
+        return name
+
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
         """Parse settings from environment variables.

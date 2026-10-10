@@ -1,5 +1,5 @@
 import type { BuiltTurn } from "../../lib/turns";
-import { STOP_HINT } from "../../lib/stream";
+import { answeredByHint, STOP_HINT } from "../../lib/stream";
 import { parseMessageTs } from "../../lib/quiet";
 import type { MessageRow } from "../../api";
 import { Markdown } from "../Markdown";
@@ -192,6 +192,14 @@ export default function TurnRow({
               本地 `signal.aborted` 认不出它，判据只能来自后端。 */}
           {turn.answer.stopped && (
             <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">{STOP_HINT}</p>
+          )}
+          {/* ENGI-36 B：这一轮实际由云端答的话（请求的是本地档）。与 `stopped` 同一条通路 ——
+              标记随 checkpoint 落库，所以刷新后仍在；live 那一份走 SSE 的 `answered_by` 事件
+              （见 ChatPage 的 live 气泡）。这是隐私事实，不能只靠界面 state（一刷新就没）。 */}
+          {turn.answer.answered_by && (
+            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+              {answeredByHint(turn.answer.answered_by)}
+            </p>
           )}
         </>
       )}

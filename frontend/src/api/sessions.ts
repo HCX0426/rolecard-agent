@@ -30,6 +30,9 @@ export interface MessageRow {
   /** 这一轮是**被叫停**的半句（随 checkpoint 回放，R26-13 尾）——刷新后仍标得出"没说完"。
    *  旧消息与正常收尾都没有这个键。 */
   stopped?: boolean;
+  /** ENGI-36 B：这一轮实际由哪个**云端后端**答的话（请求的是本地档、静默降级时后端才写）。
+   *  随 checkpoint 回放，刷新后仍标得出"这轮出了机器"。正常本地/正常云端都没有这个键。 */
+  answered_by?: string;
   tools?: (string | null)[];
   name?: string;
   /** 工具行入参摘要（AI 消息 tool_calls 按 id 配对）：历史里"搜了什么"可见。 */

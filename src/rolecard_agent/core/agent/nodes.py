@@ -721,6 +721,15 @@ def call_model(
         response, stopped = _collect_model_stream(
             bound, prompt, invoke_kwargs, thread_id=str(state.get("thread_id") or "")
         )
+    # ENGI-36 B：在**守卫替换之前**记下"这轮到底是谁答的话"。下面 `verdict.allowed` 为假时
+    # 会新建一条 AIMessage（丢工具调用），`response_metadata` 连同回退链留下的应答者标识
+    # 一起被丢掉 —— 检测只能趁现在做。（只认"请求本地、实际云端"这一种正向认定，见
+    # `Settings.degraded_backend`：云路径的 model_name 与声明精确相等是实测过的，而本地
+    # Ollama 成功路径的形状没能在本机验证过，从"对不上"反推会把普通本地轮次误报成隐私事件。）
+    answered_by = ctx.settings.degraded_backend(
+        str(backend) if backend else None,
+        (getattr(response, "response_metadata", None) or {}).get("model_name"),
+    )
     if stopped:
         # 中途收手：把已经生成的那半截照原样提交（她看到的与历史里的必须是同一份），
         # 并留一条痕 —— 审计 §12.12② 里"补写半句"那条 P3 的前提正是"半句没进历史"，
@@ -784,6 +793,11 @@ def call_model(
         # 拦截改写的是文本，改不掉"被叫停"这个事实。只标**截断的半句** —— 模型说完了、
         # 只是工具阶段被停的那轮（`End.stopped` 同样为真），句子是完整的，不该背这个标记。
         response.additional_kwargs["stopped"] = True
+    # ENGI-36 B：实际由云端答的话（请求的是本地档）写进**落库那条消息**本身 —— 与 `stopped`
+    # 同一个理由：刷新后的回放才知道"这一轮其实出了机器"，不靠一刷新就没的界面 state。
+    # 写在守卫替换**之后**（守卫新建的那条才是最终要入库的；写前面会被它丢掉）。
+    if answered_by:
+        response.additional_kwargs["answered_by"] = answered_by
     response.additional_kwargs.setdefault("created_at", now_ts())
     return {
         "messages": [response],

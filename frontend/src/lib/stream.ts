@@ -20,6 +20,12 @@
  *  本仓自己的口吻，读起来像开发者在打趣；界面只需要陈述两件事：停了、上面那些是真的。 */
 export const STOP_HINT = "已停止生成：以上是这一轮已经完成的部分。";
 
+/** ENGI-36 B：这一轮其实是**云端**答的话（用户请求的是本地档，回退链静默降级了）。
+ *  与 `STOP_HINT` 同一条理由：界面文案与测试断言必须说同一句话，措辞只在这一处定。
+ *  参数是那个云端后端的**名字**（不是模型名/端点）——用户要能在模型页认得出它是谁。 */
+export const answeredByHint = (backend: string): string =>
+  `注意：这一轮实际由云端「${backend}」作答（你选的本地模型当时不可用，回退链静默降了级）。对话内容离开了这台机器。`;
+
 // 与 `api/sse.ts` 的 ChatEvent 保持结构一致（此处只依赖用到的那几个字段，避免循环依赖）。
 export interface ChatEventLike {
   type: string;
@@ -33,6 +39,8 @@ export interface ChatEventLike {
   role?: { role_id: string; role_name: string };
   /** end 事件带回的"这一轮是用户叫停的"（后端 `End(stopped=…)`，#18）。 */
   stopped?: boolean;
+  /** answered_by 事件带回的云端后端名（ENGI-36 B：请求本地、实际云端答的话）。 */
+  backend?: string;
 }
 
 export interface ToolStep {
@@ -55,6 +63,9 @@ export interface LiveBubble {
   /** 这一轮被用户叫停过：屏幕上那半截是**停下来的**，不是说完的（#18 的 `End.stopped`）。
    *  前台气泡拿它显示 `STOP_HINT`；reload 之后由 checkpoint 里的 `MessageRow.stopped` 接棒。 */
   stopped?: boolean;
+  /** ENGI-36 B：这一轮实际由哪个云端后端答的话（`answered_by` 事件带来）。与 `stopped` 同款
+   *  双读者：live 气泡显示 `answeredByHint`，reload 后由 checkpoint 的 `MessageRow.answered_by` 接棒。 */
+  answeredBy?: string;
 }
 
 /** 从事件里额外要收集的旁路信息（不进入气泡本体）。 */
@@ -203,6 +214,12 @@ export function reduceChatEvent(bubble: LiveBubble, ev: ChatEventLike): ReducedF
       break;
     case "context_trimmed":
       meta.trimmed = { dropped: ev.dropped ?? 0, kept: ev.kept ?? 0 };
+      break;
+    case "answered_by":
+      // ENGI-36 B：这一轮实际由云端答的话（请求的是本地档）。只挂到气泡的旁路字段，
+      // 不污染回答正文。与 `stopped` 同款双读者：live 气泡显示它，reload 后由
+      // `MessageRow.answered_by` 接棒（meta 不另抄一份 —— 填了没人读的字段是台账老问题）。
+      next = { ...bubble, answeredBy: ev.backend ?? "" };
       break;
     case "end":
       // 后端每轮都发 `stopped`（正常收尾是 false），所以这里**照实覆盖**而不是只认 true ——

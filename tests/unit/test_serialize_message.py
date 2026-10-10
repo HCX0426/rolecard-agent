@@ -47,6 +47,24 @@ def test_finished_message_has_no_stopped_field() -> None:
     assert "stopped" not in row
 
 
+def test_answered_by_is_replayed_with_the_message() -> None:
+    """ENGI-36 B：这一轮实际由云端答的话，标记随消息进回放（与 `stopped` 同一条通路）。
+
+    live 那一份走 SSE 的 `answered_by` 事件；刷新后靠写进检查点的这条历史事实仍然标得出来 ——
+    "你的数据离开了这台机器" 不能是一句一刷新就没的提示。只带后端名，不带模型名/端点/凭据。
+    """
+    row = serialize_message(
+        AIMessage(content="其实是云端答的", additional_kwargs={"answered_by": "cloud"})
+    )
+    assert row["answered_by"] == "cloud"
+
+
+def test_local_answer_has_no_answered_by_field() -> None:
+    """正常（没降级）的回复不带这个键 —— 与 `stopped` 同规则：缺键=没发生，不冤枉一轮本地对话。"""
+    row = serialize_message(AIMessage(content="本地答的。"))
+    assert "answered_by" not in row
+
+
 def test_tool_calls_are_still_listed_alongside_reasoning() -> None:
     """带工具调用的思考轮次：tools 与 reasoning 要同时保留（两者都是可观测性的一部分）。"""
     message = AIMessage(

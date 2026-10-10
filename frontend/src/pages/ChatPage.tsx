@@ -11,7 +11,7 @@ import {
 } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
 import { useToast, type Tone } from "../components/Toast";
-import { describeTrim, STOP_HINT, type StreamMeta } from "../lib/stream";
+import { answeredByHint, describeTrim, STOP_HINT, type StreamMeta } from "../lib/stream";
 import { buildTurns, type BuiltTurn } from "../lib/turns";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useChatStream } from "../hooks/useChatStream";
@@ -785,6 +785,11 @@ export default function ChatPage({
                     极端情况）时它就是唯一的提示 —— 落库的标记靠回放，回放失败就没有了。 */}
                 {live.stopped && (
                   <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">{STOP_HINT}</p>
+                )}
+                {live.answeredBy && (
+                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                    {answeredByHint(live.answeredBy)}
+                  </p>
                 )}
               </div>
             )}

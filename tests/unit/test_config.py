@@ -303,6 +303,61 @@ def test_provider_that_is_not_native_is_not_local_even_with_a_loopback_url() -> 
     )
     assert s.resolve_fallbacks("local") == []
 
+
+# -- 实际应答者的正向认定（ENGI-36 B 的分类器）------------------------------------
+
+
+def _three_backends() -> Settings:
+    return Settings(
+        model_backends={
+            "local": ModelBackend(model="qwen3-vl:8b", provider="ollama"),
+            "cloud": ModelBackend(model="cloud-m", provider="openai"),
+        },
+        model_default="local",
+    )
+
+
+def test_degraded_backend_names_the_cloud_when_local_was_asked() -> None:
+    s = _three_backends()
+    assert s.degraded_backend("local", "cloud-m") == "cloud"
+
+
+def test_degraded_backend_is_silent_for_a_normal_local_answer() -> None:
+    """实际 model 命中的是**请求的那台本地档** ⇒ 没降级，绝不报警。"""
+    s = _three_backends()
+    assert s.degraded_backend("local", "qwen3-vl:8b") is None
+
+
+def test_degraded_backend_never_alarms_on_an_unrecognized_name() -> None:
+    """认不出的 model 名 ⇒ None，**不是**"当成云端"。
+
+    这是 B 的核心保守性：本地 Ollama 成功路径的 model_name 形状没能在本机实测过，
+    从「不等于请求的模型名」反推降级会把普通本地轮次误报成隐私事件 —— 误报比沉默糟。
+    """
+    s = _three_backends()
+    assert s.degraded_backend("local", "some-ollama-weird-tag:latest") is None
+    assert s.degraded_backend("local", "") is None
+    assert s.degraded_backend("local", None) is None
+
+
+def test_degraded_backend_is_quiet_when_cloud_was_requested() -> None:
+    """请求的本就是云端档：走了云不是"降级"，不报。"""
+    s = _three_backends()
+    assert s.degraded_backend("cloud", "cloud-m") is None
+    assert s.degraded_backend("cloud", "qwen3-vl:8b") is None
+
+
+def test_degraded_backend_refuses_to_guess_on_ambiguous_model_names() -> None:
+    """两档共用同一个 model 名 ⇒ 指认不了是哪台，返回 None（不蒙）。"""
+    s = Settings(
+        model_backends={
+            "local": ModelBackend(model="shared", provider="ollama"),
+            "cloud": ModelBackend(model="shared", provider="openai"),
+        },
+        model_default="local",
+    )
+    assert s.degraded_backend("local", "shared") is None
+
 # -- 数值型环境变量：`0` 必须被保留（代码审查报告（第二轮）L1） --------------------
 
 

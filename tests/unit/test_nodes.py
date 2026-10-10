@@ -110,6 +110,7 @@ def _ctx(
     tool_epoch: int = 1,
     tracer: Any = None,
     model_resolver: Any = None,
+    settings: Any = None,
 ) -> KernelContext:
     # `enabled_domains` / `tool_epoch` are callables on KernelContext (read live each turn),
     # so the test must supply them here rather than stuffing `enabled_domains` into state -
@@ -119,7 +120,7 @@ def _ctx(
         registry=registry,
         roles=roles,
         tracer=tracer or NullTracer(),
-        settings=Settings(),
+        settings=settings or Settings(),
         enabled_domains=lambda: list(enabled_domains),
         tool_epoch=lambda: tool_epoch,
         model_resolver=model_resolver,
@@ -428,6 +429,57 @@ def _role(roles: RoleCardService, role_id: str = "r", model_name: str | None = N
         )
     )
     return role_id
+
+
+def _policy_settings():
+    """一台本地（ollama）+ 一台云（openai，model 名可控）—— B 的检测要这两档对得上。"""
+    from rolecard_agent.config import ModelBackend
+    from rolecard_agent.config import Settings as _S
+
+    return _S(
+        model_backends={
+            "local": ModelBackend(model="qwen3-vl:8b", provider="ollama"),
+            "cloud": ModelBackend(model="cloud-m", provider="openai"),
+        },
+        model_default="local",
+    )
+
+
+def test_call_model_records_cloud_answer_when_local_was_requested(
+    roles: RoleCardService,
+) -> None:
+    """ENGI-36 B：请求本地档、实际是云端答的话（回退链静默降级）→ 落库那条消息记 `answered_by`。
+
+    这是这个功能的全部意义：用户选了本地模型，数据却悄悄离开了机器，得有一条历史事实记下它，
+    否则聊天页/服务页/刷新后的回放三处都无从标起。
+    """
+    rid = _role(roles, model_name="local")  # 请求的是本地档
+    # 假模型流出的消息带云端的 model_name（探针实测：云路径这个字段与声明精确相等）
+    model = FakeModel(
+        AIMessage(content="云端答的话", response_metadata={"model_name": "cloud-m"})
+    )
+    ctx = _ctx(ToolRegistry(), roles, model, settings=_policy_settings())
+    out = call_model({"messages": [HumanMessage(content="hi")], "current_role_id": rid,
+                      "thread_id": "t"}, ctx)
+    assert out["messages"][0].additional_kwargs.get("answered_by") == "cloud"
+
+
+def test_call_model_does_not_alarm_on_a_normal_local_answer(
+    roles: RoleCardService,
+) -> None:
+    """正常本地轮次**绝不能**记 `answered_by`：把普通轮次误报成隐私事件比沉默更糟。
+
+    探针没能实测本地 Ollama 成功路径的 model_name 形状，所以检测是**正向认定**制
+    （只认「请求本地、实际命中一台已知云端档」），这条钉死它不误伤本地。
+    """
+    rid = _role(roles, model_name="local")
+    model = FakeModel(
+        AIMessage(content="本地答的话", response_metadata={"model_name": "qwen3-vl:8b"})
+    )
+    ctx = _ctx(ToolRegistry(), roles, model, settings=_policy_settings())
+    out = call_model({"messages": [HumanMessage(content="hi")], "current_role_id": rid,
+                      "thread_id": "t"}, ctx)
+    assert "answered_by" not in (out["messages"][0].additional_kwargs or {})
 
 
 def test_call_model_scrubs_her_repeats_from_the_prompt_copy_only(

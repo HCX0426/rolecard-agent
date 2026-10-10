@@ -19,6 +19,9 @@ export type ChatEvent =
   | { type: "thinking"; text: string }
   | { type: "message_replace"; text: string }
   | { type: "context_trimmed"; dropped: number; kept: number }
+  // ENGI-36 B：这一轮实际由云端后端答的话（请求的是本地档、回退链静默降级）。只带后端名，
+  // 不带内容/端点/凭据。每轮最多一条；正常本地或正常云端都不会发。
+  | { type: "answered_by"; backend: string }
   | { type: "tool_call"; name: string; args: Record<string, unknown> }
   | { type: "tool_result"; name: string; content: string }
   | { type: "error"; detail: string }

@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  answeredByHint,
   describeTrim,
   newLiveBubble,
   parseSseFrame,
@@ -169,6 +170,21 @@ describe("reduceChatEvent", () => {
     const r = reduceChatEvent(b, { type: "message_replace", text: "权威回答" });
     expect(r.bubble.thinking).toBe("先想：查一下");
     expect(r.bubble.text).toBe("权威回答");
+  });
+
+  it("answered_by 只带后端名进旁路字段，不污染回答正文（ENGI-36 B）", () => {
+    const r = reduceChatEvent(bubble({ text: "其实是云端答的" }), {
+      type: "answered_by",
+      backend: "cloud",
+    });
+    expect(r.bubble.text).toBe("其实是云端答的");
+    expect(r.bubble.answeredBy).toBe("cloud");
+  });
+
+  it("answeredByHint 点名那个云端后端（隐私事实要具体到是谁）", () => {
+    const hint = answeredByHint("siliconflow");
+    expect(hint).toContain("siliconflow");
+    expect(hint).toContain("云端");
   });
 
   it("start 带回角色摘要；end 不改动气泡（收尾由调用方做）", () => {
