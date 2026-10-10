@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import re
 import sys
+
+import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -246,3 +249,147 @@ def test_the_second_run_going_red_stays_red(monkeypatch, tmp_path, capsys) -> No
     assert mod.main() == 1
     out = capsys.readouterr().out
     assert "FLAKY-RECORDED" not in out and "真红" in out
+
+
+# -- 分片（ENGI-35 B：Windows 臂拆并行 job）--------------------------------------
+
+#: 固定的合成全集（120 个）：分片判据**不能**依赖仓库当前的真实文件数（那会把用例绑死在
+#: "今天有 172 个文件"上，明天加一个文件就红在无关的地方）。这里喂已知清单，只问分片规则
+#: 本身的性质。**为什么是 120 而不是十几个**：哈希取模在"文件数与片数同量级"时本来就可能
+#: 让某一片空着，而 `_shard_selection` 对空片是**故意大声死**的（宁红不空跑）—— 第一版我
+#: 喂 12 个文件跑 N=3，被这道闸拦下：红得对，错的是用例的前提，不是判据。
+_SMALL_SET = [f"tests/unit/test_{n:03d}.py" for n in range(120)]
+
+
+def _fixed_universe(mod, monkeypatch) -> None:
+    monkeypatch.setattr(mod, "_all_test_files", lambda: list(_SMALL_SET))
+
+
+def test_shards_partition_the_universe_exactly_once(monkeypatch, tmp_path) -> None:
+    """**分片唯一的真风险不是慢，是"看起来都跑了"**：并集必须恒等于全集、且两片不相交。
+
+    静态清单（每片写死一串文件）漏的是"新加的测试文件没人认领 ⇒ 那个文件从此不跑而每片全绿"，
+    这条断言把"按路径哈希取模"的构造性质钉住：改片数只重分布，**不会**漏文件、不会重跑。
+    """
+    mod = _load(monkeypatch, tmp_path)
+    _fixed_universe(mod, monkeypatch)
+    for n in (1, 2, 3, 4, 5, 12):
+        shards = [set(mod._shard_selection(i, n)) for i in range(n)]
+        assert set().union(*shards) == set(_SMALL_SET), f"N={n} 有文件没被任何一片认领"
+        for a in range(n):
+            for b in range(a + 1, n):
+                assert not (shards[a] & shards[b]), f"N={n} 片 {a}/{b} 重叠（那个文件跑两遍）"
+
+
+def test_shard_selection_is_stable_across_calls(monkeypatch, tmp_path) -> None:
+    """同一份清单必须每次挑出**同一批**文件：分片号写进 CI，飘了就等于每次跑的不是同一套。"""
+    mod = _load(monkeypatch, tmp_path)
+    _fixed_universe(mod, monkeypatch)
+    for i in range(4):
+        assert mod._shard_selection(i, 4) == mod._shard_selection(i, 4)
+
+
+def test_shard_flag_is_stripped_before_pytest(monkeypatch, tmp_path) -> None:
+    """`--shard` 与 `i/N` 都**不是** pytest 参数，必须在这里摘干净。
+
+    这一格有前科：`--affected-subset` 第一版忘了摘，被当成文件清单第一项转给 pytest，
+    当场 `unrecognized arguments` —— 而且**纯函数用例测不出来**（它只测"挑哪些文件"，
+    测不到"命令行最后长什么样"），是真跑一趟才看见的。所以这条单独钉。
+    """
+    mod = _load(monkeypatch, tmp_path)
+    assert mod._extra_from_argv(["--lane", "fast", "--shard", "1/4"]) == []
+    assert mod._extra_from_argv(["--shard=2/4", "--lane=fast"]) == []
+    # 分片号后面的位置参数不能被吃掉（那是真清单，与 `--lane` 的取值形状不同）
+    assert mod._extra_from_argv(["--lane", "fast", "--shard", "0/4", "tests/x.py"]) == [
+        "tests/x.py"
+    ]
+
+
+def test_bad_shard_argument_dies_loudly(monkeypatch, tmp_path) -> None:
+    """越界/形状错的 `--shard` 必须**大声死**，不许退化成"没分片、跑全套"或"挑中 0 个文件"。
+
+    `4/4` 若被放过去，那一片一个文件都不挑中，屏幕上"no tests ran"看着像"这片恰好空的"，
+    其实是配置写错 —— 整套 CI 少跑一片而四片全绿，与本仓"分母为 0 也红"是同一条铁律。
+    """
+    mod = _load(monkeypatch, tmp_path)
+    for bad in ("4/4", "0/0", "abc", "1/0", "-1/4"):
+        with pytest.raises(SystemExit):
+            mod._shard_from_argv(["--shard", bad])
+    assert mod._shard_from_argv(["--lane", "fast"]) is None  # 没带 = 不分片（跑全套）
+    assert mod._shard_from_argv(["--shard", "2/4"]) == (2, 4)
+    assert mod._shard_from_argv(["--shard=3/4"]) == (3, 4)
+
+
+def test_shard_selection_refuses_an_empty_universe(monkeypatch, tmp_path) -> None:
+    """枚举到 0 个文件 ⇒ 死，不返回空清单。空清单转给 pytest 会"0 selected 全绿"。"""
+    mod = _load(monkeypatch, tmp_path)
+    monkeypatch.setattr(mod, "_all_test_files", lambda: [])
+    with pytest.raises(SystemExit, match="量空气"):
+        mod._shard_selection(0, 4)
+
+
+def test_the_enumeration_matches_pytest_own_discovery(monkeypatch, tmp_path) -> None:
+    """**这条才是"不漏文件"的真判据**：分母必须来自第二个独立出处，不能自己证自己。
+
+    上面那条用固定清单测的是**分片规则**（并集/不相交）；它证不了"规则喂进去的那份清单
+    就是 pytest 会收集的那份"。口径漂移的具体形状本仓已经吃过：pytest 默认 `python_files`
+    是 `test_*.py` **和** `*_test.py` 两个模式，只按其中一个枚举 ⇒ 另一种形状的测试文件
+    落不进任何一片，而并集断言照样成立（两边都缺同一个文件）。
+    所以这里拿 **pytest `--collect-only` 实际收集到的文件集合**与枚举对差：两个方向都必须空。
+    """
+    import subprocess
+
+    mod = _load(monkeypatch, tmp_path)
+    enumerated = set(mod._all_test_files())
+    assert enumerated, "枚举为空：这条断言会退化成恒真"
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(ROOT),
+    )
+    collected = {
+        m.replace("\\", "/")
+        for m in re.findall(r"^(\S+\.py):\s+\d+$", proc.stdout, flags=re.M)
+    }
+    assert proc.returncode == 0, f"pytest 收集本身失败：{proc.stdout[-400:]}"
+    assert collected, "pytest 一个文件都没收集到 ⇒ 这个分母是空的，测了个寂寞"
+    missing = collected - enumerated
+    assert not missing, (
+        "pytest 会跑、分片枚举漏掉的文件（这些文件将**不属于任何一片**）：" + f"{sorted(missing)}"
+    )
+    extra = enumerated - collected
+    assert not extra, (
+        "分片枚举里有、pytest 却不收集的文件（会把从没跑过的塞进某一片）：" + f"{sorted(extra)}"
+    )
+
+
+def test_shard_run_still_carries_the_subset_marker(monkeypatch, tmp_path, capsys) -> None:
+    """分片那一趟**必须**带着 `[AFFECTED-SUBSET]` 记号 —— 读数机靠它拒绝把一片读成全量。
+
+    这是分片最阴的次生风险：Windows 臂今天不经 gate 所以不写读数，将来谁把分片接到读数上，
+    `N passed` 就会被读成 `backend_tests` —— 10-04 那次把 1595 洗成 32 的正是同一条路径。
+    沿用同一个 token（而不是新造 `[SHARD]`）让它**结构上**不可能被当成全量。
+    """
+    mod = _load(monkeypatch, tmp_path)
+    _fixed_universe(mod, monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["x", "--lane", "fast", "--shard", "1/4"])
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, extra=None):  # noqa: ANN001, ANN002
+        # 真 `_run` 跑的是 `cmd + (extra or [])`：首跑的清单走 **extra**，
+        # 取证二跑把文件并进 cmd —— 只收 cmd 就看不见分片挑中的文件（我第一版就漏在这）。
+        calls.append(list(cmd) + list(extra or []))
+        return 0, ""
+
+    monkeypatch.setattr(mod, "_run", fake_run)
+    assert mod.main() == 0
+    out = capsys.readouterr().out
+    assert "[AFFECTED-SUBSET]" in out, out
+    assert "分片 1/4" in out, out
+    # 挑中的文件真的进了 pytest 命令行，而 `--shard`/`1/4` 没漏进去
+    flat = [str(a) for c in calls for a in c]
+    assert any("tests/unit/test_" in a for a in flat), flat
+    assert not any("--shard" in a or re.fullmatch(r"\d+/\d+", a) for a in flat), flat

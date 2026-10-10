@@ -509,15 +509,32 @@ jobs:
           exit "$code"
 
   windows-test:
-    name: Windows 测试臂（每次 push/PR）
+    name: Windows 测试臂 ${{ matrix.shard }}/4（每次 push/PR）
     # 升级路径（审查快照 P1-13 决策四）：起步臂 `windows-release` 只在手动 `build_windows` 跑，
     # 这一条补上「每次 push/PR 都跑的 Windows 测试臂」—— 平台覆盖倒挂（Windows-first 产品
     # 却只有 ubuntu 测试臂）的正式收口。它**只跑用例、不打包**：Windows runner 分钟按 2× 计费，
     # 打包那一半仍是手动 `windows-release` 的职责，这里只保证「Windows 专属分支（ctypes.WinDLL、
     # 图标层、PowerShell 改写）被机器接住」。判据与本地快档同一份（`pytest_with_evidence.py
     # --lane fast`），只读 build/ 下的取证日志、不动入库读数（读数是按平台的，见 gate.py）。
+    #
+    # **为什么拆 4 片（ENGI-35 B，2026-10-10）**：墙钟就是这条臂 —— 最近 5 趟 314/314/324/326/388s，
+    # 而门禁 113~151s、镜像 64~69s、前端 47~63s 全都并行、不占墙钟。臂内部 269s 是跑用例、
+    # 装依赖 32s（uv 已从 119s 压下来）、其余 17s；而那 269s **已经带着 `-n 4`** 且实证 xdist
+    # 在跑（CI 日志 `bringing up nodes` 2 次）—— 4 核已经满了，再加 worker 只会超订，
+    # 所以"在单台机器里再并行"这条路是死的。**跨 4 台机器分片才是剩下的那把刀**：
+    # 实测本机每文件时长合计 277s、最贵的单文件 20.7s（**没有巨无霸**），四片切到 91/74/48/64s。
+    # 如实记着两件事：① 分片是按文件路径哈希取模，**不均匀**（最差片约是最好的 1.9 倍）——
+    # 我没有拿本机时长去挑哈希种子，那等于把一次快照烤进分片规则，而 CI 是 4 核、本机 32 线程，
+    # 权重根本不迁移；② 墙钟不会砍到 1/4，因为每片还得各自付一次 checkout + 装依赖 + 起 venv
+    # （约 55~90s），预估整臂墙钟从 ~314s 落到 ~150~180s，与"并行度换墙钟"的账对得上。
+    # `fail-fast: false` 是**必需**的而不是锦上添花：一片红会取消其余三片，而 GitHub 对
+    # cancelled 的 job **不传日志** —— 那正是 ENGI-34 整夜在治的"丢现场"形状。
     runs-on: windows-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v4
 
@@ -542,10 +559,17 @@ jobs:
         run: |
           # Windows 面不挂 `-c constraints-linux.txt`（uvloop 在 win32 根本不被请求，
           # 文件名与语义都写着 linux —— 两处口径不必绕）。
+          # 这一行**逐字保持原样**：`test_lock_platform_markers` 按行的字面文本数"挂了约束/
+          # 没挂约束"各几条（ubuntu 2 条、windows 2 条）。矩阵只是把同一条命令在 4 台机器上
+          # 各跑一次，YAML 里仍是一行 —— 判据量的就是这个形状，别"顺手"改成 per-shard 变量。
           uv pip install --system -r requirements.lock
 
-      - name: Windows 臂跑一遍快档用例
-        run: python scripts/pytest_with_evidence.py --lane fast
+      - name: Windows 臂跑一遍快档用例（本片）
+        # 分片逻辑住在脚本里而**不在这里**（`--shard i/N`：按路径哈希取模，并集==pytest 实际
+        # 收集面由构造保证，并被 `test_the_enumeration_matches_pytest_own_discovery` 钉住）。
+        # 写成四串静态清单的话，新加的测试文件没人认领就**静默不跑**而四片全绿 —— 那正是本仓
+        # 一路在治的"两份清单迟早漂开"那一族，这里连一份清单都不该有。
+        run: python scripts/pytest_with_evidence.py --lane fast --shard ${{ matrix.shard }}/4
 
   windows-release:
     name: 发布链（Windows 安装包，只在手动触发时跑）

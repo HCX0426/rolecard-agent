@@ -28,6 +28,7 @@ Error creating hnsw segment reader: Nothing found on disk`，而同一趟前一�
 
 from __future__ import annotations
 
+import hashlib
 import pathlib
 import re
 import subprocess
@@ -181,17 +182,88 @@ def _lane_from_argv(argv: list[str]) -> str | None:
 #: 它**不是** pytest 的参数，必须在本文件里摘掉；它同时决定要不要打那行给读数机看的记号。
 _SUBSET_FLAG = "--affected-subset"
 
+#: 分片开关 `--shard i/N`（ENGI-35 B）：**不是** pytest 参数，同样要摘掉。
+_SHARD_FLAG = "--shard"
+_SHARD_RE = re.compile(r"^(\d+)/(\d+)$")
+
+#: pytest 默认 `python_files`（本仓没有覆盖它，实测 pyproject 里 `python_files` 一条都没有）：
+#: 两个模式都算。枚举**必须与收集口径一致**，否则某个 `*_test.py` 落不进任何一片 = 静默少跑
+#: 而四片全绿 —— 分片唯一真正的风险不是慢，是"看起来都跑了"。
+_TEST_PATTERNS = ("test_*.py", "*_test.py")
+
+
+def _shard_from_argv(argv: list[str]) -> tuple[int, int] | None:
+    """`--shard 2/4` → `(2, 4)`；没有就 None。形状错 ⇒ 大声退出，不静默当"没分片"跑全套。
+
+    `2/5`（索引越界）也在这里挡：分片号越界会**安静地**一个文件都不挑中，那一趟"0 passed"
+    看着像"这一片恰好没东西"，其实是分片配置写错了 —— 与"分母为 0 也红"同一条铁律。
+    """
+    raw: str | None = None
+    for i, a in enumerate(argv):
+        if a == _SHARD_FLAG and i + 1 < len(argv):
+            raw = argv[i + 1]
+        elif a.startswith(f"{_SHARD_FLAG}="):
+            raw = a.split("=", 1)[1]
+    if raw is None:
+        return None
+    m = _SHARD_RE.match(raw)
+    if not m:
+        raise SystemExit(f"--shard 要 'i/N' 这种形状，收到 {raw!r}")
+    index, total = int(m.group(1)), int(m.group(2))
+    if total < 1 or not (0 <= index < total):
+        raise SystemExit(f"--shard {raw} 越界：i 必须在 [0, N) 且 N≥1")
+    return index, total
+
+
+def _all_test_files() -> list[str]:
+    """pytest 会收集的全部测试文件（仓库相对 posix 路径），与它的发现口径逐字对齐。
+
+    口径来源（都是实测、不是印象）：`pyproject` 里 `testpaths=["tests"]` 且**没有**覆盖
+    `python_files`/`norecursedirs`，`tests/` 下也没有 `collect_ignore` ⇒ 收集面 =
+    `tests/` 目录树里命中 `test_*.py` 或 `*_test.py` 的文件。`build/` 下那两个 `test_*.py`
+    不在收集面内（`testpaths` 只管 `tests/`），所以这里**不能**跟着收 —— 收了就会把
+    从没被跑过的文件塞进某一片，制造"新出现的红"。
+    """
+    root = ROOT / "tests"
+    found: set[str] = set()
+    for pattern in _TEST_PATTERNS:
+        for p in root.rglob(pattern):
+            if p.is_file() and "__pycache__" not in p.parts:
+                found.add(p.relative_to(ROOT).as_posix())
+    return sorted(found)
+
+
+def _shard_selection(index: int, total: int) -> list[str]:
+    """第 `index` 片：并集恒等于全集由构造保证（同一份枚举 + 确定性哈希），不靠人工维护清单。
+
+    静态清单（每片写死一串文件）的坑正是本仓一路在治的那个：新加的测试文件没人认领，
+    套件**静默变小**而每一片都绿。按文件路径的稳定哈希取模，改片数只是重分布、不会漏文件。
+
+    只挡"整个枚举为空"这一种（收集口径断了、分母为 0）；**单片为空不拦**：片数一大，
+    哈希本来就可能让某片空着，那是合法分布不是 bug，交给 pytest 用 `exit 5 (no tests ran)`
+    去响 —— 与"大声"这条一致，但不破坏"并集==全集"这个可测的数学性质。
+    """
+    files = _all_test_files()
+    if not files:
+        raise SystemExit(
+            "tests/ 下一个测试文件都没枚举到 ⇒ 分片判据在量空气（收集口径变了？见 _all_test_files）"
+        )
+    return [
+        f for f in files if int(hashlib.md5(f.encode("utf-8")).hexdigest(), 16) % total == index
+    ]
+
 
 def _extra_from_argv(argv: list[str]) -> list[str]:
-    """`--lane X` 与 `--affected-subset` 之外的位置参数，原样转给 pytest。
+    """`--lane X` / `--shard i/N` / `--affected-subset` 之外的位置参数，原样转给 pytest。
 
     受影响子集（`gate.py --fast` 那条路）靠它把文件清单交进来。为什么不另起一个入口：
     "红跑取证"的判据与签名清单两档共用一份，多一个入口就多一处会漂的事实面。
+    分片（ENGI-35 B）也走这同一条通道：它挑出来的文件清单照样塞进 `extra`，取证判据一字不改。
 
-    `--affected-subset` 是**这一步自己的**开关（只为了在输出里留个记号），必须在这里摘掉：
-    第一版忘了摘，它被当成文件清单的第一项转给 pytest，pytest 当场
-    `unrecognized arguments: --affected-subset`（真跑一趟才看见 —— 纯函数用例只测到
-    "挑哪些文件"，测不到"命令行最后长什么样"）。
+    这三个开关都是**这一步自己的**（只为留记号 / 挑文件），不是 pytest 参数，必须在这里摘掉：
+    第一版忘了摘 `--affected-subset`，它被当成文件清单的第一项转给 pytest，当场
+    `unrecognized arguments`（真跑一趟才看见 —— 纯函数用例只测到"挑哪些文件"，
+    测不到"命令行最后长什么样"）。`--shard` 的值 `i/N` 紧邻其后，跟着一起摘。
     """
     extra: list[str] = []
     skip_next = False
@@ -199,10 +271,14 @@ def _extra_from_argv(argv: list[str]) -> list[str]:
         if skip_next:
             skip_next = False
             continue
-        if arg == "--lane":
+        if arg == "--lane" or arg == _SHARD_FLAG:
             skip_next = True
             continue
-        if arg.startswith("--lane=") or arg == _SUBSET_FLAG:
+        if (
+            arg.startswith("--lane=")
+            or arg.startswith(f"{_SHARD_FLAG}=")
+            or arg == _SUBSET_FLAG
+        ):
             continue
         extra.append(arg)
     return extra
@@ -222,12 +298,21 @@ def main() -> int:
     BUILD.mkdir(parents=True, exist_ok=True)
     run1, run2 = BUILD / run1_name, BUILD / run2_name
 
+    shard = _shard_from_argv(sys.argv[1:])
     extra = _extra_from_argv(sys.argv[1:])
+    if shard is not None:
+        # 分片挑中的文件**前置**进 extra：与受影响子集同一条通道（"这一趟只跑一部分文件"），
+        # 取证判据一字不改 —— 二跑仍只重跑本片区里红的那几个文件。
+        extra = _shard_selection(*shard) + extra
     if extra or _SUBSET_FLAG in sys.argv[1:]:
         # 这个记号是给 `gate.py._write_readings` 读的：子集跑的 "N passed" 不是全套的数，
         # 读成 backend_tests 就是一次静默漂（同族现场 10-04 出过一次，把 1595 洗成 32）。
+        # **分片故意沿用同一个 token**，不另开 `[SHARD]`：读数机已经认"带这个记号 = 这趟
+        # 没量到全量、不刷新"，而这正是分片的事实。另开新记号等于给"以后有人把分片接到
+        # 读数上"留一发 1595→32 那种洗数 —— 让它**结构上**不可能被当成全量，比加注释可靠。
+        kind = f"分片 {shard[0]}/{shard[1]}" if shard else "受影响子集"
         print(
-            f"[AFFECTED-SUBSET] 这一趟只跑 {len(extra)} 个受影响文件（{lane} 档）—— "
+            f"[AFFECTED-SUBSET] 这一趟只跑 {len(extra)} 个文件（{kind}，{lane} 档）—— "
             "全量读数这趟不刷新（子集不是全量）",
             flush=True,
         )
