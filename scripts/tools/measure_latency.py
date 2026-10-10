@@ -36,7 +36,13 @@ ROOT = Path(__file__).resolve().parents[2]
 VENV_PY = str(ROOT / ".venv" / "Scripts" / "python.exe")
 sys.path.insert(0, str(ROOT / "scripts" / "forensics"))
 
-THREAD = "s_proactive_elysia"
+#: 会话线程。**不再硬编码**（2026-10-10 修真档）：从前这里是
+#: `THREAD = "s_proactive_elysia"` —— 而线程 id 的形状是
+#: `s_proactive_<user>_<role>`（`core/proactive/proactive_thread.py`：确定性，
+#: `f"{PREFIX}{user_id}_{role_id}"`），**少了主人那一段** ⇒ 那个名字在库里从来不存在，
+#: PATCH 恒回 404。而 404 被脚本读成"模型/环境不可用"，于是实测两条臂（云端 + 本地）
+#: **双双** 404 才照出真因：与模型可用性毫无关系，是**脚本自己指错了一个不存在的会话**。
+#: 现在改成启动时建一次（POST 拿回服务端派生的真 id）。
 PROMPT = "解释一下为什么冬天白天比夏天短，说清楚原因，一百字左右。"
 #: 默认两臂。验收标准原文要的就是这两臂（"本地 7B 与云端各测一遍"）。
 #: `siliconflow-vl`（Qwen3-VL-30B）**不在默认里**，理由是一条实测：同一个问句在它那里
@@ -185,14 +191,44 @@ def main() -> int:
                 return 1
             print(f"可选后端：{known}", flush=True)
 
+            # **先建一个会话并拿回服务端派生的真 id**（2026-10-10 修的真空档）。
+            # 从前这里 PATCH 一个硬编码的 `s_proactive_elysia` 而**从不建它** —— 那个名字
+            # 少了主人段（真形状 `s_proactive_<user>_<role>`），库里从来不存在，于是 PATCH
+            # 恒 404；而 404 又被读成"模型/环境不可用"，实测两条臂（云端 + 本地）**双双
+            # 404** 才照出真因：与模型可用性无关，是脚本指错了一个不存在的会话。
+            # `POST /api/session` 只收 `role_id`（id 由服务端派生，不给客户端猜的机会），
+            # 所以这里按**默认角色**建一次，把响应里的 `thread_id` 当后续唯一句柄。
+            created = json.loads(
+                _open(f"{base}/api/session", {"role_id": None}, "POST").read() or "{}"
+            )
+            thread = str(created.get("thread_id") or "")
+            if not thread:
+                print("建会话失败，服务端没回 thread_id：",
+                      json.dumps(created, ensure_ascii=False)[:300])
+                return 1
+            role_shown = created.get("role_name") or created.get("role_id")
+            print(f"会话 = {thread}（角色 {role_shown}）", flush=True)
+
             for frag in [a.strip() for a in args.arms.split(",") if a.strip()]:
                 hit = next((n for n in known if frag.lower() in n.lower()), None)
                 if not hit:
                     rows.append(f"{frag:22} —— 这台机器上没有这个后端，跳过（不是 0 秒，是没测）")
                     continue
-                _open(f"{base}/api/session/{THREAD}",
-                      {"model_name": hit, "agent_mode": "chat"}, "PATCH").read()
-                *_, warm_err = _one_turn(base, THREAD)
+                # 切到这条臂。失败要接住并**如实说**（ENGI-17 同族的纪律：环境不满足时给出
+                # 可读原因，不是让人读栈）。注意这里**不预设**失败原因是"模型没装"——
+                # 上一版就是那么在归因上写错的（真因是会话名写错，见上面那段）。
+                try:
+                    _open(f"{base}/api/session/{thread}",
+                          {"model_name": hit, "agent_mode": "chat"}, "PATCH").read()
+                except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+                    code = getattr(exc, "code", None)
+                    why = f"{type(exc).__name__}{' ' + str(code) if code else ''}"
+                    rows.append(
+                        f"{hit:22} —— 切不过去（{why}），"
+                        "跳过（这条臂没量到，不是 0 秒）"
+                    )
+                    continue
+                *_, warm_err = _one_turn(base, thread)
                 if warm_err:
                     print(f"  预热那轮就失败：{warm_err}（预热不计入样本，但失败要说）", flush=True)
                 firsts: list[float] = []
@@ -200,7 +236,7 @@ def main() -> int:
                 lens: list[int] = []
                 errs: list[str] = []
                 for i in range(args.n):
-                    f, e, c, err = _one_turn(base, THREAD)
+                    f, e, c, err = _one_turn(base, thread)
                     if err:
                         errs.append(err)
                         print(f"  {hit} #{i + 1:2d} 失败：{err}", flush=True)
