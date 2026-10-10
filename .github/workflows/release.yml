@@ -48,12 +48,12 @@ jobs:
           python-version: "3.13"
           cache: pip
           cache-dependency-path: |
-            requirements.lock
-            requirements-dev.txt
+            requirements/requirements.lock
+            requirements/requirements-dev.txt
       - name: 装依赖
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.lock
+          pip install -r requirements/requirements.lock
       # Node + npm ci：`gate.py --fast` 的「前端 vitest」步骤要它。2026-10-09 v0.3.0 首次
       # 打 tag 时这条链第一次真跑，当场红在 `vitest: not found` —— 这条 workflow 从前只在
       # 文档里活着（与 ENGI-23 那族"从未跑过的尾巴"同形状：没有读数的步骤是猜的）。
@@ -132,11 +132,11 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: requirements.lock
+          cache-dependency-path: requirements/requirements.lock
       - name: 装打包机依赖（锁）
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.lock
+          pip install -r requirements/requirements.lock
       - name: Windows 臂跑一遍用例
         run: python scripts/pytest_with_evidence.py --lane fast
       - name: 装 Node（只壳）
