@@ -35,6 +35,7 @@ Error creating hnsw segment reader: Nothing found on disk`，而同一趟前一�
 from __future__ import annotations
 
 import hashlib
+import os
 import pathlib
 import re
 import subprocess
@@ -64,6 +65,12 @@ from chroma_flake_evidence import existing_evidence, hits_signature  # noqa: E40
 # langchain/langgraph 升级唯一的预警信号一起吞掉（2026-10-04 审查快照的吞警告条目）—— 删了，
 # 命令行不再有任何吞警告的口子。
 COMMON = [sys.executable, "-m", "pytest", "-p", "no:cacheprovider"]
+#: 给子进程的终端宽度。**这不是排版参数，是判据输入的一部分**：短摘要行 `FAILED … - 原因`
+#: 按宽度截断，而 captured 输出不是 tty ⇒ pytest 回落 80 列，那条在册偶发的类名就被切成
+#: `chromadb.errors.Interna...`，签名一个不剩（实测见 `_run` 的注释；探针脚本
+#: `build/probe_terminal_width.py` 量出"不设宽度 27 字签名全丢 / 设了 104 字签名俱在"）。
+#: 400 留余量给"长 nodeid + 完整异常首行"（chroma 那条签名 ~110 字 + 路径 nodeid ~60 字）。
+_SUMMARY_COLUMNS = "400"
 #: 两档的命令行：快档带 `-x`（红就停、不量覆盖率）+ 4 worker 并行；覆盖率档反之（保守
 #: 串行，夜间臂再评估）。xdist 的旧结论是"反而更慢"（gate.py 09-19 记录：47s 套件上
 #: worker 建库开销吃掉收益）—— 2026-10-04 重测：套件 1514 条、串行 188s，`-n 4` 实测
@@ -112,7 +119,19 @@ def _rel(path: pathlib.Path) -> str:
 
 def _run(cmd: list[str], extra: list[str] | None = None) -> tuple[int, str]:
     proc = subprocess.run(
-        cmd + (extra or []), capture_output=True, text=True, encoding="utf-8", errors="replace"
+        cmd + (extra or []),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        # **取证通道的承重一行**（2026-10-10 门禁当场撞出）：短摘要行 `FAILED … - 原因`
+        # 是按**终端宽度**截断的，而 captured 输出不是 tty ⇒ pytest 回落到 80 列。
+        # 那条在册的 chroma 偶发于是被切成 `chromadb.errors.Interna...`，三个签名一个不剩，
+        # `_is_chroma_flake` 逐条问就答"不在册"⇒ **该发的重跑取证从来没发生过**，
+        # 而屏幕上那句"不在在册签名里，不重跑"看着完全合理。
+        # 实测（`build/probe_terminal_width.py`）：不设 COLUMNS 时原因 27 字、签名全无；
+        # `COLUMNS=400` 时 104 字、三个签名俱在。宽度不是审美，是判据的输入完整性。
+        env={**os.environ, "COLUMNS": _SUMMARY_COLUMNS},
     )
     out = (proc.stdout or "") + (proc.stderr or "")
     sys.stdout.write(out)

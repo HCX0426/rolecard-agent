@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import pathlib
 import re
 import sys
@@ -249,6 +250,59 @@ def test_the_second_run_going_red_stays_red(monkeypatch, tmp_path, capsys) -> No
     assert mod.main() == 1
     out = capsys.readouterr().out
     assert "FLAKY-RECORDED" not in out and "真红" in out
+
+
+#: 2026-10-10 门禁当场撞出的那一发的**原文**（不是编的：`build/gate-fast-run1.log` 里的 E 行）。
+#: 126 字 —— 比短摘要行的默认回落宽度还长，这正是它被截掉的原因。
+PROD_CHROMA_ERROR = (
+    "chromadb.errors.InternalError: Error executing plan: Internal error: "
+    "Error creating hnsw segment reader: Nothing found on disk"
+)
+
+
+def test_a_real_long_flake_still_matches_after_pytest_truncates(monkeypatch, tmp_path) -> None:
+    """真子进程回归：**在册签名必须穿过 pytest 的列宽截断活着到达判据**。
+
+    病根（`_run` 那行 `env=` 就是它的修法）：captured 输出不是 tty ⇒ pytest 把短摘要行
+    `FAILED … - 原因` 按 80 列截断，于是那条 126 字的偶发变成 `chromadb.errors.Interna...`，
+    三个签名一个不剩 ⇒ `_is_chroma_flake` 逐条问就答"不在册"⇒ **该发的重跑取证从来没发生**，
+    而屏幕上那句"不在在册签名里，不重跑"看着完全合理。
+
+    为什么这条必须跑**真子进程**：上面所有既有用例都喂**手写**日志，而手写的 `FLAKE_LOG`
+    恰好短到签名没被截过 —— 于是这层守卫在它最该守住的那件事上从没被测过（与本仓"恒绿尺子的
+    分母"那一族同形）。摘掉 `_run` 的 `env=` 这一条当场红（变异实测过），手写日志的用例全不会。
+    """
+    import subprocess
+
+    mod = _load(monkeypatch, tmp_path)
+    case = tmp_path / "test_the_real_shape.py"
+    case.write_text(
+        f"def test_it() -> None:\n    assert False, {PROD_CHROMA_ERROR!r}\n",
+        encoding="utf-8",
+    )
+    rc, log = mod._run([sys.executable, "-m", "pytest", str(case), "-q", "-p", "no:cacheprovider"])
+    assert rc != 0, "造出来的那条红没红，后面就不用判了"
+
+    # 反向自证：不加 COLUMNS 的同一趟**确实**会被截（否则这条用例只是在测解释器的慷慨）
+    bare = subprocess.run(
+        [sys.executable, "-m", "pytest", str(case), "-q", "-p", "no:cacheprovider"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={k: v for k, v in os.environ.items() if k != "COLUMNS"},
+    )
+    bare_summary = "\n".join(
+        ln for ln in (bare.stdout + bare.stderr).splitlines() if ln.startswith("FAILED ")
+    )
+    assert bare_summary and "Nothing found on disk" not in bare_summary, (
+        "被截断这个前提没复现出来 ⇒ 这条用例在测空气：" + bare_summary[:200]
+    )
+
+    failures = mod._failures(log)
+    assert failures, f"短摘要行没被抓到（形状变了？）：\n{log[-500:]}"
+    for name, reason in failures:
+        assert mod._is_chroma_flake(reason), f"{name} 的判据读不到在册签名：{reason!r}"
 
 
 # -- 分片（ENGI-35 B：Windows 臂拆并行 job）--------------------------------------
