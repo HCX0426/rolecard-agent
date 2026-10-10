@@ -189,6 +189,31 @@ if (-not $NoLaunch) {
         } catch { }
     }
     if (-not $answer) {
+        # **先取证再死**（2026-10-10 实测：自动化上下文里 Start-Process 起壳会秒退——
+        # 0 退出、零日志、无崩溃记录，而上面那句 throw 只说"没答"，现场一点不留）。
+        # 三问各挡一个死法：① 壳进程树还在不在（不在 = 秒退，答案在退出码/子进程日志）；
+        # ② shell.log/backend.log 有没有这次启动的新写（mtime 早于启动时刻 = 壳根本没跑到
+        #    写日志那行）；③ 打一份 Windows 事件日志里最近的崩溃记录（有 = 静默崩了）。
+        $installedDir = Split-Path -Parent $installedExe
+        $alive = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like "$installedDir*" })
+        Write-Host "      [诊断] 60s 内 :$apiPort 无人应答 —— 现场："
+        Write-Host "      [诊断] ① 安装目录下存活进程数 = $($alive.Count)"
+        $alive | ForEach-Object { Write-Host "      [诊断]    pid=$($_.ProcessId) $($_.Name)" }
+        $userData = Join-Path $env:APPDATA "rolecard-agent"
+        foreach ($logName in "shell.log", "backend.log") {
+            $logPath = Join-Path $userData $logName
+            if (Test-Path $logPath) {
+                $mt = (Get-Item $logPath).LastWriteTime
+                $fresh = $mt -gt (Get-Date).AddMinutes(-3)
+                Write-Host "      [诊断] ② ${logName}: mtime=$($mt.ToString('HH:mm:ss')) fresh=$fresh"
+            } else {
+                Write-Host "      [诊断] ② ${logName}: 不存在（壳可能从没跑到写日志那行）"
+            }
+        }
+        $crash = Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=(Get-Date).AddMinutes(-5)} -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -match 'rolecard' } | Select-Object -First 2
+        if ($crash) { $crash | ForEach-Object { Write-Host "      [诊断] ③ $($_.TimeCreated.ToString('HH:mm:ss')) $($_.ProviderName): $($_.Message.Substring(0,[Math]::Min(160,$_.Message.Length)))" } }
+        else { Write-Host "      [诊断] ③ 近 5 分钟无 rolecard 相关崩溃事件" }
         throw "app is up but /api/health did not answer on :$apiPort within 60s"
     }
     # **谁**在答，比"有人答"重要：按端口找监听者，再问它的可执行路径在不在安装目录下。
