@@ -54,6 +54,66 @@ def test_sse_event_vocabulary_matches_the_parser() -> None:
     )
 
 
+def test_complete_vocabulary_prose_lists_are_not_stale() -> None:
+    """任何一条「首尾=start…end」的斜杠链 = 它在宣称自己就是**整份**轮次词表 ⇒ 必须真是全部。
+
+    为什么单独一条（ENGI-36 B 加 `answered_by` 的现场）：上面那条差分只比对
+    `EVENT_TYPES` ↔ 前端 `ChatEvent`/`stream.ts` 的 case，**看不见**散在 `api/chat.py` docstring
+    与 `docs/架构总览.md` 里那些人写的"完整列举" —— 加一个事件它们不会红，只是静默少列一个，
+    下一位照文档接线的人就以为词表长那样。这正是本仓一路在治的「同一事实抄多处、改一处漏两处」，
+    而**散文提醒（"别忘了改这里"）本身就是漂移的成因**，所以我把它升级成这条尺子。
+
+    判据只用「首尾=start…end」这一个形状把"宣称是全集"的链与"只列了其中几类"分开：
+    后者（如 `stream.ts` 归约讲解里的 `token…context_trimmed`）不该被强求齐全，也不被本条误伤。
+    实测全仓活文件命中的正是那两处全集 —— 分母非 0 由下面那条 `found >= 2` 兜住
+    （"一条都没扫到"与"扫到了都齐"长得一模一样，是台账里那族恒绿尺子的病）。
+    """
+    from rolecard_agent.core.agent.turn import EVENT_TYPES
+
+    root = Path(__file__).resolve().parents[2]
+    vocab = set(EVENT_TYPES)
+    # CamelCase → snake_case：`ToolCall` 与 `tool_call` 认成同一个词（两份列举各用一种写法）。
+    chain = re.compile(
+        r"(?<![A-Za-z0-9_/])"
+        r"([A-Za-z_][A-Za-z0-9_]*(?:\s*/\s*[A-Za-z_][A-Za-z0-9_]*){2,})"
+        r"(?![A-Za-z0-9_/])"
+    )
+
+    def snake(tok: str) -> str:
+        return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", tok).lower()
+
+    files = [
+        p
+        for p in [
+            *sorted((root / "src").rglob("*")),
+            *sorted((root / "frontend" / "src").rglob("*")),
+            *sorted((root / "docs").glob("*.md")),
+        ]
+        if p.is_file()
+        and p.suffix in {".py", ".ts", ".tsx", ".md"}
+        and ".test." not in p.name
+    ]
+    offenders: list[str] = []
+    found = 0
+    for path in files:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for m in chain.finditer(text):
+            toks = [snake(t.strip()) for t in m.group(1).split("/")]
+            if toks[0] != "start" or toks[-1] != "end":
+                continue  # 首尾不齐 ⇒ 它没宣称自己是全集
+            if sum(t in vocab for t in toks) < 3:
+                continue  # 不足三个真事件名 ⇒ 无关三词链（如 start / stop / end）
+            found += 1
+            if set(toks) != vocab:
+                line = text[: m.start()].count("\n") + 1
+                rel = path.relative_to(root).as_posix()
+                offenders.append(f"{rel}:{line} 缺={sorted(vocab - set(toks))}")
+    assert found >= 2, (
+        f"只扫到 {found} 处「整份词表」的列举 ⇒ 扫描口径漂了（这两处正是本条要看住的东西）"
+    )
+    assert not offenders, "整份轮次词表的人写列举过期了（加事件时漏补）：" + "; ".join(offenders)
+
+
 def test_json_request_bodies_are_serialised() -> None:
     """JSON 请求体必须显式序列化 —— 否则写操作（启停插件 / 改角色 / 切模型）全部 422。"""
     src = API_TS.read_text(encoding="utf-8")

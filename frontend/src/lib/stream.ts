@@ -145,6 +145,7 @@ export function parseSseFrame(frame: string): ChatEventLike | null {
  *   - `tool_result`    把**最近的同名执行中**卡片标记完成；找不到就补一张（事件乱序/丢帧时兜底）；
  *   - `error`          追加一行 `[错误] …`，并把仍在执行的卡片标红；
  *   - `context_trimmed` 只记旁路信息，不污染回答正文。
+ *   - `answered_by`    把实际应答的云端后端名挂到气泡旁路字段（ENGI-36 B），同样不进正文。
  */
 export function reduceChatEvent(bubble: LiveBubble, ev: ChatEventLike): ReducedFrame {
   const meta: StreamMeta = {};

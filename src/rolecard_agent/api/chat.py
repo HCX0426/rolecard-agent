@@ -65,7 +65,10 @@ async def chat_events(
     """异步投送 `core.turn.run_turn` 的事件流：逐事件从专属线程池取出，块间让出事件循环。
 
     对外 SSE 协议与直接跑同步版完全一致（start / thinking / token / tool_call / tool_result /
-    message_replace / context_trimmed / error / end）。调用方（端点）需用 `async def` +
+    message_replace / context_trimmed / answered_by / error / end）。词表的唯一出处是
+    `core/agent/turn.py` 的 `EVENT_TYPES`，`tests/unit/test_frontend_contract.py` 拿它双向比对
+    前端 —— **上面这份列举是人写的散文，没有尺子看着**，加事件时别忘了顺手补这里（ENGI-36 B
+    加 `answered_by` 时这里就漏过一次）。调用方（端点）需用 `async def` +
     `StreamingResponse(async_gen)`。
 
     池满（8 个 worker 全忙）时不再无限排队：立刻 yield 一条 error 帧收场 —— 排队本身
