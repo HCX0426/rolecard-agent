@@ -211,10 +211,13 @@ def test_add_model_reuses_the_group_credential_and_its_own_name(
     assert group["key_masked"] == "sk-…cret"  # 一把 key，两个模型 —— 拆层要解决的就是这个
     new = next(m for m in group["models"] if m["name"] == added)
     assert new["supports_vision"] is True and new["supports_tools"] is False
-    # 加完就能在对话页选到：默认没被抢走，新行进了序列尾部
+    # 加完就能在对话页选到：默认没被抢走，新行进了序列尾部。
+    # 断言钉的是 `default_backend`（配置里的第 1 位）而不是 `effective`：本 fixture 故意把
+    # local 指向端口 9（不可达），ENGI-36 A 之后 `effective` 会**诚实地**报此刻真在服务的那台
+    # （顺延到云端 sf），而"谁排在第 1 位"这个不随可用性漂移的事实归 `default_backend`。
     models = client.get("/api/services").json()["services"]
     order = next(s for s in models if s["key"] == "models")
-    assert order["effective"] == "local"
+    assert order["default_backend"] == "local"
     assert added in [c["id"] for c in order["candidates"]]
 
 

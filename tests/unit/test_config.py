@@ -203,6 +203,106 @@ def test_backend_name_names_the_one_that_will_actually_serve() -> None:
     assert settings.backend_name("b") == "b"  # 声明了就按声明（角色级 > 全局优先级）
     assert settings.backend_name("gone") == "a"  # 声明的那台被删了 → 与降级同源
 
+
+# -- 回退的去向策略（ENGI-36 C）：只治「从本地静默滑到云端」这一个方向 ----------------
+
+
+def _mixed_settings(policy: str) -> Settings:
+    """一台本地（ollama）+ 两台云（openai），默认落在本地那台。"""
+    backends = {
+        "local": ModelBackend(model="qwen3-vl:8b", provider="ollama"),
+        "cloud-a": ModelBackend(model="a", provider="openai"),
+        "cloud-b": ModelBackend(model="b", provider="openai"),
+    }
+    return Settings(
+        model_backends=backends,
+        model_default="local",
+        model_fallbacks=["cloud-a", "cloud-b"],
+        model_fallback_policy=policy,
+    )
+
+
+def test_allow_cloud_is_the_default_and_changes_nothing() -> None:
+    """出厂默认 = `allow_cloud` = 现行为：既有链一字不动（回归钉子）。"""
+    s = _mixed_settings("allow_cloud")
+    assert Settings().model_fallback_policy == "allow_cloud"  # 默认值本身也是这档
+    assert s.resolve_fallbacks("local") == ["cloud-a", "cloud-b"]
+
+
+def test_local_only_drops_cloud_backends_when_primary_is_local() -> None:
+    """本地 primary + `local_only` ⇒ 链里所有云端档被剔掉（宁可这一轮失败也不悄悄上云）。"""
+    s = _mixed_settings("local_only")
+    assert s.resolve_fallbacks("local") == []
+
+
+def test_local_only_does_not_reach_up_when_primary_is_already_cloud() -> None:
+    """操作员把云端设成默认时，`local_only` **不介入**：他已知自己在用云，链照旧。
+
+    这条钉的是策略只管一个方向 —— "本地静默滑到云"，不是"禁止一切云端调用"（后者是
+    另一件事，由模型页/服务页配档决定）。全局默认那台本地档因此从这条链上消失：它是
+    `primary`，本来就被"不回退到自己"丢掉。
+    """
+    backends = {
+        "local": ModelBackend(model="qwen3-vl:8b", provider="ollama"),
+        "cloud-a": ModelBackend(model="a", provider="openai"),
+        "cloud-b": ModelBackend(model="b", provider="openai"),
+    }
+    s = Settings(
+        model_backends=backends,
+        model_default="cloud-a",
+        model_fallbacks=["cloud-b", "local"],
+        model_fallback_policy="local_only",
+    )
+    assert s.resolve_fallbacks("cloud-a") == ["cloud-b", "local"]
+
+
+def test_local_only_keeps_local_backends_in_the_chain() -> None:
+    """`local_only` 留本地档在链上：一台本地挂了换另一台本地是它允许的降级。"""
+    backends = {
+        "local": ModelBackend(model="qwen3-vl:8b", provider="ollama"),
+        "local2": ModelBackend(model="other", provider="local"),  # 历史 alias 也算本地
+        "cloud": ModelBackend(model="c", provider="openai"),
+    }
+    s = Settings(
+        model_backends=backends,
+        model_default="local",
+        model_fallbacks=["cloud", "local2"],
+        model_fallback_policy="local_only",
+    )
+    assert s.resolve_fallbacks("local") == ["local2"]  # 云被剔、另一台本地留着
+
+
+def test_consensus_bypasses_the_policy_explicitly() -> None:
+    """`respect_policy=False` 让链完整穿过策略 —— 比对工具（多家对照）靠这个豁免。
+
+    它不受"静默降级"约束：比对是模型显式发起、把同一问题发给多家，"悄悄"不成立。
+    豁免走的是显式参数而不是"读全局配置时特判 consensus"，所以约束的语义只有一处。
+    """
+    s = _mixed_settings("local_only")
+    assert s.resolve_fallbacks("local") == []  # 默认受约束
+    assert s.resolve_fallbacks("local", respect_policy=False) == ["cloud-a", "cloud-b"]
+
+
+def test_provider_that_is_not_native_is_not_local_even_with_a_loopback_url() -> None:
+    """本地与否按 provider 划，不看 base_url（与服务页 `effective_kind` 同源判定）。
+
+    provider=openai 就算把 base_url 填成本机，运行时走的也是 OpenAI 兼容客户端 —— 语义上
+    不是"本地档"，`local_only` 不该把它当本地留下。
+    """
+    backends = {
+        "local": ModelBackend(model="m", provider="ollama"),
+        "sneaky": ModelBackend(
+            model="m", provider="openai", base_url="http://127.0.0.1:11434/v1"
+        ),
+    }
+    s = Settings(
+        model_backends=backends,
+        model_default="local",
+        model_fallbacks=["sneaky"],
+        model_fallback_policy="local_only",
+    )
+    assert s.resolve_fallbacks("local") == []
+
 # -- 数值型环境变量：`0` 必须被保留（代码审查报告（第二轮）L1） --------------------
 
 

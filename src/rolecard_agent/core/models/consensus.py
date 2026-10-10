@@ -42,8 +42,17 @@ def build_consensus_tool(*, settings: Any, build: Any = None) -> Any:
     model_builder = build or (lambda name: build_model(settings, name))
 
     def _targets() -> list[str]:
-        """参与比对的后端：默认后端 + 回退链，去重后最多 MAX_CONSENSUS_BACKENDS 个。"""
-        names = [settings.model_default, *settings.resolve_fallbacks(settings.model_default)]
+        """参与比对的后端：默认后端 + 回退链，去重后最多 MAX_CONSENSUS_BACKENDS 个。
+
+        `respect_policy=False`（ENGI-36 C）：比对工具是**模型显式调用**、把同一问题主动发给
+        多家做对照 —— 它本就要出网，不存在「从本地静默滑到云端」那件事，所以不受
+        `model_fallback_policy=local_only` 约束（那条策略管的是回退链的静默降级方向）。
+        它的闸门是 `CONSENSUS_ENABLED` 总闸与角色白名单，不在这里。
+        """
+        names = [
+            settings.model_default,
+            *settings.resolve_fallbacks(settings.model_default, respect_policy=False),
+        ]
         seen: list[str] = []
         for n in names:
             if n and n not in seen:

@@ -587,16 +587,31 @@ def service_status_view(
                 "model": row.get("model"),
             }
         )
-    effective_backend = by_name.get(default)
-    effective_kind = (
-        (
-            "local"
-            if effective_backend
-            and client_style(str(effective_backend.get("provider", ""))) == "native"
-            else "cloud"
-        )
-        if effective_backend
+    # 生效项与降级留痕（ENGI-36 A）：此前 `models` 这一类**永远显示 `effective=配置的默认、
+    # degraded_from=None`**，而同页的 OCR/嵌入/重排三类都会算"默认不可用就顺延到下一个可用者"
+    # 并留痕。用户 10-08 卸掉 Ollama 后的现场正是这个盲区：默认（本地档）不可达、运行时其实
+    # 由云端答话，服务页却报"一切正常" —— 对话内容悄悄出了机器，三处界面（聊天页/服务页/SSE）
+    # 没有任何信号。现在与那三类同判据：
+    #   * 生效项 = 全局默认可用则默认，否则顺延到**回退链里第一个可用者**；
+    #   * 链走 `settings.resolve_fallbacks`（与运行时 `build_model` 同一份、同一策略 ——
+    #     `local_only` 时本地默认挂了**不会**顺延到云端，那正是 C 要的效果，此处如实显示
+    #     "无生效项"而不是假装降级到云）；
+    #   * 只有"默认在场但不可用、且真的换成了别的可用后端"才算降级（没换 = 失败，不虚报）。
+    avail_by_name = {str(it["id"]): bool(it["available"]) for it in model_items}
+    serve_chain = [default, *settings.resolve_fallbacks(default)]
+    effective_name: str | None = next(
+        (nm for nm in serve_chain if nm in by_name and avail_by_name.get(nm, False)), None
+    )
+    models_degraded_from = (
+        default
+        if default in by_name and not avail_by_name.get(default, False) and effective_name
         else None
+    )
+    eff_backend = by_name.get(effective_name) if effective_name else None
+    models_effective_kind = (
+        "local"
+        if eff_backend and client_style(str(eff_backend.get("provider", ""))) == "native"
+        else ("cloud" if eff_backend else None)
     )
     out.append(
         {
@@ -604,9 +619,14 @@ def service_status_view(
             "title": "模型推理（对话与抽取）",
             "hint": "第 1 位 = 对话默认，其后依次回退（仅建流阶段失败会回退，最多 2 级）。"
             "这里的序列就是「哪些模型用于对话」；key/端点/模型名仍在「模型」页签。",
-            "effective": default,
-            "effective_kind": effective_kind,
-            "degraded_from": None,
+            "effective": effective_name,
+            "effective_kind": models_effective_kind,
+            "degraded_from": models_degraded_from,
+            # 「默认」徽标要钉的是**配置里的第 1 位**（操作员把谁排在最前），不是"现在谁在服务"：
+            # 本地默认挂了、运行时由云端兜底时，effective 会变成那台云，但「默认」不该跟着漂走
+            # （否则用户看不出"其实该用 local、现在在凑合"）。所以单独给一个稳定字段，
+            # 前端徽标读它、降级横幅读 effective —— 两个语义各自一个来源，不再共用一个字段。
+            "default_backend": default if default in by_name else None,
             "readonly": False,
             "order_only": True,
             "candidates": model_items,

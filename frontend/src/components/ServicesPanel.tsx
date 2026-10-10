@@ -352,7 +352,7 @@ export function ServicesPanel() {
                                 )}
                               </>
                             )}
-                            {cat.order_only && cand.id === cat.effective && (
+                            {cat.order_only && cand.id === (cat.default_backend ?? cat.effective) && (
                               <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
                                 默认
                               </span>
@@ -375,6 +375,15 @@ export function ServicesPanel() {
               <p className="text-[11px] text-slate-400 dark:text-slate-500">
                 生效：{cat.candidates.find((c) => c.id === cat.effective)?.label ?? cat.effective}
                 {cat.degraded_from ? "（优先级第 1 位不可用，已自动顺延）" : ""}
+              </p>
+            )}
+            {/* 没有任何可用后端可生效时，上面那句因 effective=null 不出现 —— 但这一类
+                恰恰最需要一句响的（比如 local_only 下本地档全挂：这是设计好的"宁失败不上云"，
+                不说出来用户只会看到一串"不可用"徽标，不知道这一轮会直接失败）。 */}
+            {!cat.effective && cat.candidates.some((c) => c.enabled) && (
+              <p className="rounded-lg border-l-4 border-red-400 bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-900/20 dark:text-red-300">
+                当前没有可用的生效后端 —— 这一轮会**直接失败**，不会悄悄改用别的
+                （链里第 1 位不可用、且后面没有可用者；见各行的「不可用」原因）。
               </p>
             )}
           </section>

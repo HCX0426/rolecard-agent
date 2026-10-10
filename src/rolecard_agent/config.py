@@ -66,6 +66,26 @@ RETIRED_LOCAL_MODELS: tuple[str, ...] = ("qwen2.5:7b", "qwen2.5vl:7b")
 # (实施计划.md §8.5).
 MAX_FALLBACKS = 2
 
+#: 回退链的**去向策略**（ENGI-36 C，2026-10-10 用户拍板）。两个合法档：
+#:   * `allow_cloud`（默认 = 现行为，一字不改）：本地后端失败时允许回退到链里的云端档；
+#:   * `local_only`：回退链里**只留本地档**（native 风格）——本地不可达就让这一轮明确失败，
+#:     绝不把对话内容静默送上第三方。取向与 SSRF 钉 IP / 密钥只写不回读同族：
+#:     **数据出不出这台机器，由操作员显式配置说了算，不由"恰好配了个云端备胎"决定。**
+#:     立案现场：用户 10-08 卸掉 Ollama 后，给会话选 `qwen3-vl-8b`（本地档）实测仍被云端
+#:     答话，而聊天页/服务页/SSE 三处都没有任何信号（取证见审查快照 ENGI-36）。
+#: 比对工具（compare_model_answers）**不受本项管**：它是模型显式调用、把问题发给多家做对照的
+#: 功能，「静默」不成立；它的总闸是 `CONSENSUS_ENABLED`
+#: （链的过滤见 `resolve_fallbacks`，比对侧传 `respect_policy=False`）。
+FALLBACK_POLICIES: tuple[str, ...] = ("allow_cloud", "local_only")
+
+#: 「哪家 provider 算**本地**（数据不出这台机器）」在 config 层的那份投影。
+#: 权威是 `core/model_settings/rules.py::client_style`（style=native 即本地），但那是 config
+#: 的**下游**（rules 反过来 import config），判定不能倒着引用 —— 与 `KEYLESS_PROVIDERS`
+#: 恰好同名单是事实（native 的都不需要 key），两处各有语义、各自有守卫用例
+#: （`test_config.py` 钉这份、`test_model_settings.py` 钉那份）。
+#: `local` 是历史 alias（PROVIDER_ALIASES），老配置里出现过，必须一起认。
+NATIVE_PROVIDERS: frozenset[str] = frozenset({"ollama", "local"})
+
 # SiliconFlow 的 OpenAI 兼容端点（嵌入 bge-m3 / 重排 bge-reranker 共用一个 base_url）。
 # 之所以是**一个常量**而不是散在各工厂里的字面量：以前 `os.environ.get("SILICONFLOW_BASE_URL",
 # "https://api.siliconflow.cn/v1")` 在 rag/retriever.py 里写了 5 遍，改默认值得找 5 处，
@@ -181,6 +201,8 @@ class Settings(BaseModel):
     )
     model_default: str = "local"
     model_fallbacks: list[str] = Field(default_factory=list)
+    # ENGI-36 C：见 `FALLBACK_POLICIES` 那段（数据在常量处，判定是纯函数）。
+    model_fallback_policy: str = "allow_cloud"
 
     # 单次模型调用的超时（秒）。没有它，Ollama 挂起时 SSE 对话与抽取会**无限等待** ——
     # 后果不只是卡一个请求：线程池被占满，且 `with_fallbacks` 永远触发不了（主模型
@@ -498,7 +520,22 @@ class Settings(BaseModel):
         """
         return name if name in self.model_backends else self.model_default
 
-    def resolve_fallbacks(self, primary: str | None = None) -> list[str]:
+    def _backend_is_local(self, name: str | None) -> bool:
+        """这台后端的数据**出不出本机**：provider 归一后命中 `NATIVE_PROVIDERS` = 本地。
+
+        只看 provider 不看 base_url —— `client_style` 那套判定也是 provider 优先；一个
+        provider=openai 却把 base_url 填成本机 Ollama `/v1` 的行，运行时走的是 OpenAI 兼容
+        客户端，语义上不是"本地档"（ENGI-36 的边界按 provider 划，与服务页 `effective_kind` 同源）。
+        查不到的名字按"不本地"处理（宁可把策略收紧，不把云端当本地放行）。
+        """
+        b = self.model_backends.get(name or "")
+        if b is None:
+            return False
+        return b.provider.strip().lower() in NATIVE_PROVIDERS
+
+    def resolve_fallbacks(
+        self, primary: str | None = None, *, respect_policy: bool = True
+    ) -> list[str]:
         """Ordered backend names to try after the primary one fails.
 
         候选池是**整份全局优先级**（`[model_default, *model_fallbacks]`），不是只有
@@ -511,12 +548,26 @@ class Settings(BaseModel):
         (a typo must not become a runtime crash mid-conversation), and caps the chain at
         `MAX_FALLBACKS`. Pure and dependency-free so it is cheap to test - the actual
         `with_fallbacks` wiring lives in `core/graph.build_model`.
+
+        **去向策略（ENGI-36 C，`respect_policy=True` 时生效）**：`local_only` 且 primary 是
+        本地档 ⇒ 链里剔除所有非本地档。约束的是**「从本地静默降级到云端」这一个方向** ——
+        primary 本来就是云端时（操作员显式把云端设成默认）不介入：他已知自己在用云端，链照旧。
+        `respect_policy=False` 留给比对工具（`compare_model_answers`）：它按设计就要把同一问题
+        发给多家做对照，"静默"在这里不成立，不该被这条策略掐掉。
         """
         head = primary or self.model_default
+        restrict = (
+            respect_policy
+            and self.model_fallback_policy == "local_only"
+            and self._backend_is_local(head)
+        )
         seen: list[str] = []
         for name in (self.model_default, *self.model_fallbacks):
-            if name != head and name in self.model_backends and name not in seen:
-                seen.append(name)
+            if name == head or name not in self.model_backends or name in seen:
+                continue
+            if restrict and not self._backend_is_local(name):
+                continue
+            seen.append(name)
         return seen[:MAX_FALLBACKS]
 
     @classmethod
@@ -568,6 +619,7 @@ class Settings(BaseModel):
 
         for env_key, field in (
             ("MODEL_DEFAULT", "model_default"),
+            ("MODEL_FALLBACK_POLICY", "model_fallback_policy"),
             ("MODEL_TIMEOUT_SECONDS", "model_timeout_seconds"),
             ("MODEL_PIN_ON_STARTUP", "model_pin_on_startup"),
             ("WORKSPACE_DIR", "workspace_dir"),

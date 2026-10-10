@@ -56,9 +56,64 @@ def test_status_view_lists_local_seed_and_the_editable_model_group(client: TestC
     # 候选只含 usage=chat 的行（usage=ocr 的行归 OCR 类别引用，不进推理列表）。
     models = _category(body, "models")
     assert models["readonly"] is False and models.get("order_only") is True
-    assert models["effective"] == "local"
+    # 生效项与默认是**两件事**（ENGI-36 A）：本 fixture 故意把 local 指到端口 9（必然不可达，
+    # 让深度检测的断言与宿主机是否跑 Ollama 无关）。于是诚实的 `effective` 是 None —— 这正是
+    # 修前要消灭的形状：从前这里报 effective=local、界面写着"一切正常"，运行时其实会悄悄滑向云端。
+    assert models["default_backend"] == "local"  # 配置里的第 1 位（徽标钉它，稳定）
+    assert models["effective"] is None  # 实际没有可用的生效者
     # 候选里不该混入 usage=ocr 的行（一个模型只出现一次）
     assert all(c["id"] in {"local", "siliconflow"} for c in models["candidates"])
+
+
+def test_models_effective_follows_availability(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """local 探活为真 ⇒ 生效=local；探活为假 ⇒ 生效 None 且默认仍是 local（两个字段各自说话）。"""
+    from rolecard_agent.core.models import services as services_mod
+
+    monkeypatch.setattr(services_mod, "vision_model_ready", lambda *a, **k: True)
+    models = _category(client.get("/api/services").json(), "models")
+    assert models["effective"] == "local"
+    assert models["effective_kind"] == "local"
+    assert models["degraded_from"] is None
+    monkeypatch.setattr(services_mod, "vision_model_ready", lambda *a, **k: False)
+    models = _category(client.get("/api/services").json(), "models")
+    assert models["effective"] is None
+    assert models["default_backend"] == "local"  # 默认不跟着漂走 —— 这正是分开两个字段的全部理由
+
+
+def test_models_degrade_to_cloud_and_says_so(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """默认（本地）不可用 + 链里有可用云端 ⇒ 顺延到云端并标 `degraded_from`（ENGI-36 的盲区那格）。
+
+    这就是当年"卸了 Ollama 还在用云端、界面三处无信号"的形状：修后它必须在服务页说出来。
+    """
+    from rolecard_agent.core.models import services as services_mod
+
+    # local 不可达，其余（云端按 has_key 判，PUT 过的那条有 key）可达
+    monkeypatch.setattr(services_mod, "vision_model_ready", lambda *a, **k: False)
+    client.put(
+        "/api/settings/models",
+        json={
+            "default": "local",
+            "backends": [
+                {"name": "local", "provider": "ollama", "model": "qwen3-vl:8b"},
+                {
+                    "name": "cloud",
+                    "provider": "siliconflow",
+                    "model": "DeepSeek-V4-Flash",
+                    "api_key": "sk-cloud-123456",
+                },
+            ],
+            "fallbacks": ["cloud"],
+        },
+    )
+    models = _category(client.get("/api/services").json(), "models")
+    assert models["effective"] == "cloud"
+    assert models["effective_kind"] == "cloud"  # 前端据此在横幅里追加"注意：发往云端"
+    assert models["degraded_from"] == "local"
+    assert models["default_backend"] == "local"
 
 
 def test_local_endpoints_report_availability_without_network(client: TestClient) -> None:

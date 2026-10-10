@@ -439,6 +439,19 @@
           "overridden": false,
           "override_value": null,
           "value": "未设置"
+        },
+        {
+          "changed": false,
+          "choices": null,
+          "default": "allow_cloud",
+          "field": "model_fallback_policy",
+          "key": "MODEL_FALLBACK_POLICY",
+          "kind": "ro",
+          "label": "回退去向（env 改后重启）",
+          "note": "allow_cloud=本地失败可静默降级到云端（默认）/ local_only=只回退到本地档，本地不可达就让这一轮明说失败，绝不悄悄把对话送出去",
+          "overridden": false,
+          "override_value": null,
+          "value": "allow_cloud"
         }
       ],
       "key": "egress",
