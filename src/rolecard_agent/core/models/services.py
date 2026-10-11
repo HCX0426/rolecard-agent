@@ -186,16 +186,30 @@ class ServiceEndpointService:
         # builtin 行不可删，合法状态下表永不为空，所以这个分支不会误伤操作员。
         ms = ModelSettingsService(self._conn)
         backends = {str(b["name"]) for b in ms.list_backends(user_id=self._owner)}
+        # 语义嵌入/重排**云端先行**（与上面规则 2「语义嵌入云端优先」一致）：`sort_order`
+        # 由下面的计数器按追加顺序现数，云端行必须排在本地内置行**之前**才会被
+        # `make_embedder` 的链首返回选中 —— 曾经反过来播种（hash 先行），结果配了 key
+        # 的操作员仍拿到 HashEmbedder，与声明策略相反（见学习材料 study/04 §1 的取证）。
+        # OCR 保持本地优先：图片外发第三方是隐私红线，云端 OCR 绝不默认。
         defaults: list[tuple[str, str, str, str | None, int]] = [
             ("ocr", "rapidocr", "local", None, 1),
             ("embedding", "hash", "local", None, 1),
             ("rerank", "off", "local", None, 1),
         ]
+        cloud_first: list[tuple[str, str, str, str | None, int]] = []
         if "siliconflow" in backends:
-            defaults.append(("embedding", "siliconflow", "cloud", "siliconflow", 0))
-            defaults.append(("rerank", "siliconflow", "cloud", "siliconflow", 0))
+            cloud_first.append(("embedding", "siliconflow", "cloud", "siliconflow", 0))
+            cloud_first.append(("rerank", "siliconflow", "cloud", "siliconflow", 0))
+        defaults_by_cat: dict[str, list[tuple[str, str, str, str | None, int]]] = {}
+        for row in defaults:
+            defaults_by_cat.setdefault(row[0], []).append(row)
+        for row in cloud_first:
+            defaults_by_cat[row[0]].insert(0, row)
+        ordered: list[tuple[str, str, str, str | None, int]] = []
+        for rows in defaults_by_cat.values():
+            ordered.extend(rows)
         counters: dict[str, int] = {}
-        for cat, eid, kind, ref, builtin in defaults:
+        for cat, eid, kind, ref, builtin in ordered:
             order = counters.get(cat, 0)
             counters[cat] = order + 1
             self._conn.execute(
@@ -209,7 +223,7 @@ class ServiceEndpointService:
             (self.SEED_FLAG, "1"),
         )
         self._conn.commit()
-        return len(defaults)
+        return len(ordered)
 
     # -- 读 --------------------------------------------------------------------
 

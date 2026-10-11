@@ -46,9 +46,11 @@ def svc() -> ServiceEndpointService:
 
 
 def test_seed_once_is_idempotent(svc: ServiceEndpointService) -> None:
-    # 本地行必有；siliconflow 后端存在 → 嵌入/重排各一条默认引用
+    # 本地行必有；siliconflow 后端存在 → 嵌入/重排各一条默认引用。
+    # 语义嵌入/重排**云端先行**（services.py 规则 2「云端优先」的落地）：
+    # 曾反过来播种（hash 先行），配了 key 的操作员仍拿到 HashEmbedder。
     assert [e.id for e in svc.rows("ocr")] == ["rapidocr"]
-    assert [e.id for e in svc.rows("embedding")] == ["hash", "siliconflow"]
+    assert [e.id for e in svc.rows("embedding")] == ["siliconflow", "hash"]
     assert svc.seed_once() == 0  # 重跑不重复播种
 
 
