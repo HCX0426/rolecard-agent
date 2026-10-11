@@ -19,10 +19,18 @@ from rolecard_agent.core.tools.files import make_file_tools
 DEFAULT_DIR = "./data/workspace"
 
 
-def test_save_load_clear_roundtrip(conn) -> None:
+def test_save_load_clear_roundtrip(conn, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """相对路径按「此刻进程 CWD」解析 —— chdir 进 tmp_path，别在仓库根留垃圾。
+
+    save_task_dir 会把不存在的目录真实创建出来（_normalise 的 mkdir）；本用例传
+    相对路径正是要验证解析语义，因此必须先 chdir，否则每次裸跑 pytest 都会在
+    仓库根留下一个空的 my-task/（即审计台账 09-30/10-01 两笔悬案的答案）。
+    """
     assert workspace.load_task_dir(conn) is None  # 从未设置 = None（跟随 env）
+    monkeypatch.chdir(tmp_path)
     saved = workspace.save_task_dir(conn, str(Path("my-task")))  # 相对路径会被解析成绝对
     assert saved == str(Path("my-task").resolve())
+    assert saved == str((tmp_path / "my-task").resolve())  # 且落在临时区，不碰仓库根
     assert workspace.load_task_dir(conn) == saved
     workspace.clear_task_dir(conn)
     assert workspace.load_task_dir(conn) is None
