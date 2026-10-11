@@ -216,6 +216,17 @@ def _run_tick(rt: Any, stub: StubModel, rec: Recorder, roles: list[Any], label: 
     print(f"[{label}] 落库 {made} 条｜留痕 {traces}｜扫描调用 {before} → {_scans(stub)}")
 
 
+def _day_local(now: datetime) -> datetime:
+    """把本地时间挪到 **12:00** 再用。
+
+    ⑥⑦ 两格要量的是"触发链通不通"，而 `quiet_gate` 第二道（23:00–08:00 静默段）
+    拦的是"该不该此刻打扰" —— 两件事无关，但**在凌晨跑探针必然被后者拦住**，
+    于是 `tick_once` 落库 0 条、扫描一次不发，读起来像"链尾不通"，实际是探针自己的时段盲区。
+    这一格既然只问可达性，就把时钟拨到白天：静默段与真实开口节奏都不是这里要量的东西。
+    """
+    return now.astimezone().replace(hour=12, minute=0, second=0, microsecond=0)
+
+
 def _force_timer_experiment(
     rt: Any, stub: StubModel, rec: Recorder, roles: list[Any], now: datetime
 ) -> None:
@@ -228,6 +239,7 @@ def _force_timer_experiment(
         save_state,  # 局部导入：只有这格要写状态
     )
 
+    day = _day_local(now)  # 见 `_day_local`：这一格只问可达性，别被静默段污染
     rt.assembly.conn.execute("DELETE FROM agent_reachout")  # 去掉间隔/未读两道抑制，让触发链裸露
     for role in roles:
         st = get_state(rt.assembly.conn, role.role_id, user_id=rt.identity)
@@ -242,13 +254,14 @@ def _force_timer_experiment(
             cfg, {"messages": [HumanMessage(content="我下周要体检，结果出来跟你说")]}
         )
         before = _scans(stub)
-        made = _tick(rt, when_utc=now, when_local=now.astimezone())
+        made = _tick(rt, when_utc=day.astimezone(UTC), when_local=day)
         fired = [
             e.detail.get("trigger")
             for e in rec.events
             if e.event in ("reachout_skipped", "reachout_sent")
         ][-1:]
-        print(f"[{role.role_id}] affinity=0 + 一句未接住的话 → tick：落库 {made} 条、"
+        print(f"[{role.role_id}] affinity=0 + 一句未接住的话 → tick（{day:%H:%M} 本地）："
+              f"落库 {made} 条、"
               f"命中档位 {fired}、扫描调用 {before} → {_scans(stub)}")
     scans = [p for p in stub.prompts if SCAN_MARK in p]
     if not scans:
@@ -262,21 +275,24 @@ def _clear_all_shadows(
 ) -> None:
     """把排在 timer 之前的**四档**全部让位（只动副本），问最后一个问题：链尾到底通不通。
 
-    `trigger_recall` 没有冷却，判据只是"该角色有没有一条 active 记忆" —— 也就是说只要
-    记忆在长，这一档就永久压在 timer 头上。这是 R26-03 原来没点出的第二道遮蔽。
+    `trigger_recall` 的判据是"该角色有没有一条 active 记忆 + 不在 24h 冷却里" ——
+    记忆在长、又刚冷却过去时，这一档仍压在 timer 头上。这是 R26-03 原来没点出的第二道遮蔽。
+    （R26-23 补了 `RECALL_COOLDOWN_HOURS = 24`，所以它不再是**永久**命中，但仍排在 timer 之前。）
     """
+    day = _day_local(now)
     rt.assembly.conn.execute(
         "UPDATE role_card SET recall_enabled=0, time_pattern_enabled=0, file_watch_enabled=0"
     )
     rt.assembly.conn.commit()
     before = _scans(stub)
-    made = _tick(rt, when_utc=now, when_local=now.astimezone())
+    made = _tick(rt, when_utc=day.astimezone(UTC), when_local=day)
     fired = [
         e.detail.get("trigger")
         for e in rec.events
         if e.event in ("reachout_skipped", "reachout_sent")
     ][-1:]
-    print(f"四档全关 + affinity=0 + 一句未接住的话 → tick：落库 {made} 条、命中档位 {fired}、"
+    print(f"四档全关 + affinity=0 + 一句未接住的话 → tick（{day:%H:%M} 本地）："
+          f"落库 {made} 条、命中档位 {fired}、"
           f"扫描调用 {before} → {_scans(stub)}")
     for i, p in enumerate(p for p in stub.prompts[before:] if SCAN_MARK in p):
         print(f"\n--- 扫描第 {i + 1} 次拿到的**生产素材**（{len(p)} 字符，逐字）---\n{p}")
@@ -293,7 +309,7 @@ def main() -> None:
     app = create_app(sqlite_path=COPY, model=stub, tracer=rec)  # type: ignore[arg-type]
     rt = app.state.ctx.runtime
     settings = rt.effective
-    roles = [r for r in rt.assembly.roles.list_roles() if r.reachout_enabled]
+    roles = [r for r in rt.assembly.roles.scoped(rt.identity).list_roles() if r.reachout_enabled]
     print(f"全局总闸 reachout_enabled = {settings.reachout_enabled}；"
           f"可主动开口的角色 = {[r.role_id for r in roles]}")
 
