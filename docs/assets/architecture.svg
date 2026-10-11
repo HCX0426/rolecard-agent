@@ -93,5 +93,5 @@
   <rect x="24" y="570" width="912" height="58" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
   <text x="40" y="604" font-size="12" font-weight="700" fill="#475569">外部</text>
   <rect x="150" y="579" width="770" height="40" rx="8" fill="#ffffff" stroke="#e2e8f0"/>
-  <text x="535" y="604" text-anchor="middle" font-size="12" fill="#334155">Ollama / OpenAI 兼容端点　·　SiliconFlow（bge-m3 嵌入 / bge-reranker 精排）　·　本地 PaddleOCR / 云端 OCR API</text>
+  <text x="535" y="604" text-anchor="middle" font-size="12" fill="#334155">Ollama / OpenAI 兼容端点　·　SiliconFlow（bge-m3 嵌入 / bge-reranker 精排）　·　本地 RapidOCR / 云端 OCR API</text>
 </svg>
