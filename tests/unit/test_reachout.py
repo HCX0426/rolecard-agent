@@ -1436,6 +1436,38 @@ def test_open_threads_replaces_the_generic_timer_and_are_cached(conn) -> None:
     assert state.open_threads_scan_at is not None, "扫过要记时刻，否则下一 tick 又问一遍"
 
 
+def test_open_threads_scan_is_decoupled_from_the_trigger_chain(conn) -> None:
+    """扫描与档位解耦：affection 命中时照样扫描，扫到话题则口吻升级为 open_thread。
+
+    曾经把扫描挂在整条链最弱的 timer 档之下，而 affection 触顶 + recall 冷却让 timer
+    在生产上不可达 —— 一次扫描都没发生过（真库 `open_threads_at` 为 NULL）。解耦后
+    「读缓存」每档都做（那是 R26-03 注释的本意），「花一次调用扫描」也不再被档位遮蔽，
+    但仍受 90 分钟缓存 + 「本角色没有在飞的生成」两道闸约束。
+    """
+    model = _TwoFaceModel(["下周体检的结果"])
+    utc, local = _now()
+    _seed_state(conn, "active", DEFAULT_AFFINITY_THRESHOLD)  # affection 命中（不再落到 timer）
+    scheduler = ReachoutScheduler(
+        inline_generation=True,
+        settings_provider=lambda: _settings(),
+        roles=_Roles([_role(reachout_enabled=True)]),  # type: ignore[arg-type]
+        model_resolver=lambda _n: model,
+        conn=conn,
+        tracer=_Tracer(),
+        thread_window=lambda _rid: "- 用户：我下周要体检",  # 生产接的是 proactive_recent_window
+    )
+    made = scheduler.tick_once(now_utc=utc, now_local=local)
+    assert made == 1
+    # 解耦的铁证：affection 命中（没有 timer 兜底），扫描仍然发生了
+    assert model.scan_calls == 1, "affection 命中时也必须扫描 —— 扫描不再挂在 timer 下"
+    assert model.gen_calls == 1
+    # 口吻升级为 open_thread，且 affection 的 record_interaction 照常执行（口吻变了，关系值照涨）
+    assert "下周体检的结果" in _joined(model.last_gen_prompt)
+    state = get_state(conn, "active", user_id=ME)
+    assert state.affinity > DEFAULT_AFFINITY_THRESHOLD, "口吻升级不吃掉 affection 的增长"
+    assert state.open_threads == (), "扫出的话题被这句用掉了"
+
+
 def test_batch_read_leaves_seen_but_not_opened(conn) -> None:
     """批量刷已读只写 `seen_at`：它证明"进过那条界面"，不证明"一条条点开看过"。
 

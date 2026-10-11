@@ -555,41 +555,46 @@ class ReachoutScheduler:
                 or trigger_recall(role, self._conn, user_id=owner, now_local=stamp_local)
                 or "timer"
             )
-            # 第五个由头「未收尾话题」：只在链子要落到最弱那一档（timer）时才去补一次扫描，
-            # 结果按 `OPEN_THREADS_REFRESH_MINUTES` 缓存 —— 一次调用换"她记得你说到一半"，
-            # 不能每个 tick 花一遍（本地 8B 一次几十秒，那是直接拖死调度线程的量）。
-            # 缓存**先接住**再谈扫描：扫描要花一次模型调用，所以它仍只挂在最弱那一档；
-            # 但"读上一轮扫出来的结果"不该跟着一起挂 —— 否则 affection 开口时素材被丢掉。
+            # 第五个由头「未收尾话题」：**扫描与档位解耦**。只要缓存过期且有对话素材，
+            # 就花一次模型调用扫「最近一窗」（结果按 `OPEN_THREADS_REFRESH_MINUTES` 缓存，
+            # 每角色最多 90 分钟一次 —— 一次调用换"她记得你说到一半"，不能每 tick 花一遍，
+            # 本地 8B 一次几十秒，那是直接拖死调度线程的量）。曾经把扫描挂在整条链最弱的
+            # timer 档之下，而 affection 触顶 + recall 冷却让 timer 在生产上不可达 ——
+            # 于是一次扫描都没发生过（真库 `open_threads_at` 为 NULL；取证见
+            # scripts/forensics/probe_open_threads_reach.py）。
+            # 扫描只在**本角色没有在飞的生成**时进行（`_queued`）：同一时刻一个角色
+            # 只该有一次模型调用在跑，扫描与开口抢同一个单 worker 池会互相拖慢。
+            # 「读上一轮扫出来的结果」则每档都做（`open_topics` 初始化）—— 这是 R26-03
+            # 那条注释本来的承诺，如今写侧可达了，它才真正生效。
             open_topics: list[str] = list(state.open_threads)
-            if fired == "timer" and self._thread_window is not None:
-                # 取"最近一窗"而不是"她还没接住的那一截"：后者在她每次开口之后必然为空，
-                # 于是这一源在生产上从没被走到过（09-26 轮 R26-03，实测见
-                # scripts/forensics/probe_open_threads_reach.py）。
+            idle = role.role_id not in self._queued
+            if idle and self._thread_window is not None:
+                # 取"最近一窗"而不是"她还没接住的那一截"：后者在她每次开口之后必然为空
+                # （09-26 轮 R26-03，实测见 scripts/forensics/probe_open_threads_reach.py）。
                 turns = self._thread_window(role.role_id)
-                if turns:
-                    if open_threads_stale(state, now=stamp_utc):
-                        scanned = find_open_threads(turns, self._model(role.model_name))
-                        if scanned is None:
-                            # 调用失败：**不写扫描时刻**，下一个 tick 重试。写了就等于一次抖动
-                            # 把这一源关掉 `OPEN_THREADS_REFRESH_MINUTES`（90 分 > 60 分的开口
-                            # 基线），而下个 tick 根本不会再试（R26-11 第一条）。
-                            # `find_open_threads` 不抛只回 None，所以这里没有 try/except ——
-                            # 原先那一段包着一个永远进不去的 except 分支（死代码，同族见 R26-13）。
-                            self._tracer.emit(
-                                TraceEvent(
-                                    event="open_threads_failed",
-                                    node="reachout",
-                                    role_id=role.role_id,
-                                    detail={"error": "模型调用未成功，本轮不记扫描时刻"},
-                                )
+                if turns and open_threads_stale(state, now=stamp_utc):
+                    scanned = find_open_threads(turns, self._model(role.model_name))
+                    if scanned is None:
+                        # 调用失败：**不写扫描时刻**，下一个 tick 重试。写了就等于一次抖动
+                        # 把这一源关掉 `OPEN_THREADS_REFRESH_MINUTES`（90 分 > 60 分的开口
+                        # 基线），而下个 tick 根本不会再试（R26-11 第一条）。
+                        # `find_open_threads` 不抛只回 None，所以这里没有 try/except ——
+                        # 原先那一段包着一个永远进不去的 except 分支（死代码，同族见 R26-13）。
+                        self._tracer.emit(
+                            TraceEvent(
+                                event="open_threads_failed",
+                                node="reachout",
+                                role_id=role.role_id,
+                                detail={"error": "模型调用未成功，本轮不记扫描时刻"},
                             )
-                        else:
-                            state = save_open_threads(
-                                self._conn, role.role_id, scanned, user_id=owner, now=stamp_utc
-                            )
-                    open_topics = list(state.open_threads)
-                    if open_topics:
-                        fired = "open_thread"
+                        )
+                    else:
+                        state = save_open_threads(
+                            self._conn, role.role_id, scanned, user_id=owner, now=stamp_utc
+                        )
+                open_topics = list(state.open_threads)
+                if open_topics:
+                    fired = "open_thread"
             mode = fired if fired in ("recall", "file_event", "open_thread") else "general"
             if self._stopping():
                 return made  # 停机：正在生成的这轮主动放弃（join 才等得到头）
