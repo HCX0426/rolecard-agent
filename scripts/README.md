@@ -50,6 +50,7 @@
 | `scripts/tools/persona_ab.py` | 活人感 A/B（同模型同历史，只差一个改动） | 2026-09-25 主动消息设计稿 | 是 |
 | `scripts/tools/run_eval.py` | 评测跑批（可复现通过率基线 + 数据引用正确率） | P3 出口条件（2026-09-14 首跑） | 是 |
 | `scripts/tools/seed_demo_data.py` | 给演示库注入虚构演示数据 | M4（2026-09 上旬） | 是 |
+| `scripts/tools/render_readme_shots.py` | README 六页签截图驱动（自起隔离后端 + 全新演示库 + headless Chrome） | 2026-10-12 截图重拍（B4） | 是 |
 | `scripts/tools/reachout_outcomes.py` | 主动开口"结局"度量（接话率/连击/看了不接） | 2026-09-26 轮（结局可量化那格） | 是 |
 
 ## forensics/（取证件：一次性探针与现场取证）
@@ -81,4 +82,5 @@
 | `scripts/js/shell_quit_smoke.js` | 桌面壳关窗收起的真机冒烟 | 2026-09-26 壳选型轮 | 是 |
 | `scripts/js/probe_chat_ui.js` | headless Chrome 交互步骤（probe_chat_ui.py 的驱动） | 2026-10-01 对话页拆分轮 | 留档 |
 | `scripts/js/render_shots.js` | 对隔离实例拍五张界面截图 | 2026-09-26 审计轮 | 留档 |
+| `scripts/js/render_readme_shots.js` | 控制台六页签逐页截图（render_readme_shots.py 的驱动） | 2026-10-12 截图重拍（B4） | 是 |
 | `scripts/js/ui_data_source_switch.js` | 数据源切换的界面步骤驱动 | M5（2026-09 中旬） | 留档 |
