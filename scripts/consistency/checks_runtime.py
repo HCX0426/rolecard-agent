@@ -1179,6 +1179,16 @@ def check_deploy_env_parity() -> None:
         fails.append(f"deploy surface drift: {problems}")
 
 
+#: 刻意**只走审批门、不进出厂白名单**的工具（`R102-37` 的拍板，2026-10-12）。
+#:
+#: `run_command` 的"批准语义"不属于开箱即用的对话轮：出厂角色白名单一律不含它，
+#: 命令要跑必须过「设置——命令执行」的审批档（`core/common/approvals.py`）。
+#: 反向差集（declared - wanted）因此对它是**预期内命中**，不是死工具的证据。
+#: 但豁免必须自带判据 —— 它在 `check_role_whitelists_resolve` 里被三只钉子看着：
+#: 声明在场、审计词表在场、出厂白名单不碰它。任一失守即红。
+APPROVAL_GATED_TOOLS: frozenset[str] = frozenset({"run_command"})
+
+
 def check_role_whitelists_resolve() -> None:
     """Every tool name in a built-in role's whitelist must resolve to a declared tool.
 
@@ -1227,16 +1237,42 @@ def check_role_whitelists_resolve() -> None:
     # 反向覆盖（`R102-37` 订正：原来注释许诺"死工具也大声失败"，代码只在 wanted 整体为空
     # 时才红 —— 那是一支**从不输出的空转臂**。真反向判（declared - wanted 非空即红）会先
     # 照到 `run_command`：它是审批门的工具面，出厂白名单**刻意**不含它（批准语义不属于
-    # 开箱即用的对话轮）。在那次拍板之前，反向差集落 **warn**：屏幕上看得见，不假装通过。
-    unused = sorted(declared - wanted)
-    if declared and not wanted:
-        fails.append("tools are declared but no built-in role references any of them")
-        out("role whitelist coverage", False, "no whitelist references any declared tool")
-    elif unused:
-        warns.append(
-            f"role whitelist coverage: 出厂白名单没人引用的工具 {unused}"
-            " —— 是死工具还是刻意只走审批门，需要一次拍板（R102-37）"
-        )
+    # 开箱即用的对话轮）。**拍板（2026-10-12）：维持"只走审批门"，收成显式豁免** ——
+    # 豁免不是死缓，三只钉子看着它（任一失守即红）：
+    #   ① 豁免的工具必须真实声明（`@tool("...")` 在场）—— 删了工具忘了删豁免，当天红；
+    #   ② 豁免的工具必须在审计动作词表里 —— 审批门的工具面必须留痕，词表删词即红；
+    #   ③ 豁免的工具不得出现在任何出厂白名单里 —— 哪天决定开箱给它，豁免就过期了。
+    from rolecard_agent.base.audit import AUDIT_ACTIONS  # noqa: PLC0415
+
+    gated = APPROVAL_GATED_TOOLS
+    undeclared_gated = sorted(gated - declared)
+    unlogged_gated = sorted(gated - AUDIT_ACTIONS)
+    leaked_gated = sorted(gated & wanted)
+    gated_problems = (
+        [f"豁免工具未声明: {undeclared_gated}" if undeclared_gated else ""]
+        + [f"豁免工具不在审计词表: {unlogged_gated}" if unlogged_gated else ""]
+        + [f"豁免工具已进出厂白名单（豁免过期）: {leaked_gated}" if leaked_gated else ""]
+    )
+    gated_problems = [p for p in gated_problems if p]
+    if gated_problems:
+        fails.extend(f"approval-gated tool exemption invalid: {p}" for p in gated_problems)
+        out("role whitelist coverage", False, "; ".join(gated_problems))
+    else:
+        unused = sorted(declared - wanted - gated)
+        if declared and not wanted:
+            fails.append("tools are declared but no built-in role references any of them")
+            out("role whitelist coverage", False, "no whitelist references any declared tool")
+        elif unused:
+            warns.append(
+                f"role whitelist coverage: 出厂白名单没人引用的工具 {unused}"
+                " —— 是死工具还是刻意只走审批门，需要一次拍板（R102-37）"
+            )
+        else:
+            out(
+                "role whitelist coverage",
+                True,
+                f"反向差集只余刻意豁免的审批门工具 {sorted(gated)}（三只钉子在场）",
+            )
 
 
 def _normalise_question(text: str) -> str:
