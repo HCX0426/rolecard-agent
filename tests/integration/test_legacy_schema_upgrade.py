@@ -379,6 +379,107 @@ def test_ocr_builtin_row_renames_from_paddle(tmp_path: Path) -> None:
     assert ids == ["rapidocr"], f"残留的 paddle 行没被清掉：{ids}"
 
 
+def test_semantic_endpoints_swap_to_cloud_first_on_upgrade(tmp_path: Path) -> None:
+    """98d8f20 播种序补课：老库的嵌入/重排引用行升上来要变成云端先行。
+
+    为什么必须是集成用例：`make_embedder` 取 `ordered_candidates("embedding")` 的**链首**，
+    而 `seed_once` 只管新库 —— 存量库 hash(0)→siliconflow(1) 的旧行序意味着配了 key 的
+    操作员照样拿 HashEmbedder，与「服务」页声明的「云端优先」相反，症状是静默的
+    检索质量降级（与 B2 同族：事实与声明分家，没有任何一处会报错）。
+    删掉 `SHAPE_STEPS` 里最后那一步，本用例第一处断言就红。
+    """
+    db = tmp_path / "app.db"
+    conn = connect(db)
+    bootstrap(conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
+    # 造出修复前的播种形态（旧 seed_once 的确切产物：本地行 sort_order=0、云端引用行=1）。
+    # `bootstrap` 不播种，行必须自己插 —— 与上面 paddle 用例同一条教训。
+    conn.execute("DELETE FROM service_endpoint")
+    conn.execute(
+        "INSERT INTO service_endpoint (category, id, kind, ref_backend, enabled, sort_order,"
+        " builtin) VALUES"
+        " ('embedding', 'hash', 'local', NULL, 1, 0, 1),"
+        " ('embedding', 'siliconflow', 'cloud', 'siliconflow', 1, 1, 0),"
+        " ('rerank', 'off', 'local', NULL, 1, 0, 1),"
+        " ('rerank', 'siliconflow', 'cloud', 'siliconflow', 1, 1, 0),"
+        " ('ocr', 'rapidocr', 'local', NULL, 1, 0, 1)"
+    )
+    conn.commit()
+
+    bootstrap(conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
+    # 幂等：第二遍不许再动（对调后守卫条件不再成立）
+    bootstrap(conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
+
+    for category in ("embedding", "rerank"):
+        order = [
+            (str(r["id"]), int(r["sort_order"]))
+            for r in conn.execute(
+                "SELECT id, sort_order FROM service_endpoint"
+                " WHERE category = ? ORDER BY sort_order",
+                (category,),
+            )
+        ]
+        local_id = "hash" if category == "embedding" else "off"
+        assert order == [("siliconflow", 0), (local_id, 1)], (
+            f"{category} 没升成云端先行：{order}"
+        )
+    # OCR 是隐私红线档，本地先行本来就对 —— 不许被这一步碰
+    ocr = conn.execute(
+        "SELECT id, sort_order FROM service_endpoint WHERE category = 'ocr'"
+    ).fetchall()
+    assert [(str(r["id"]), int(r["sort_order"])) for r in ocr] == [("rapidocr", 0)]
+    conn.close()
+
+
+def test_semantic_endpoint_swap_respects_operator_choices(tmp_path: Path) -> None:
+    """守卫比动作重要：操作员在「服务」页动过的形态，这一步一行都不许改。
+
+    三种"不是出厂播种序"的形态各钉一格：停用了云端行、删了云端行、手动排过序。
+    它们都是操作员的选择 —— 迁移替他"改回正确顺序"就是拿出厂默认覆盖用户意图。
+    """
+    db = tmp_path / "app.db"
+    conn = connect(db)
+    bootstrap(conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
+    factory = (
+        " ('embedding', 'hash', 'local', NULL, 1, 0, 1),"
+        " ('embedding', 'siliconflow', 'cloud', 'siliconflow', {sf_en}, {sf_ord}, 0),"
+        " ('rerank', 'off', 'local', NULL, 1, 0, 1)"
+    )
+    cases = [
+        # (名字, siliconflow 行的 enabled, sort_order) —— 非 (1, 0) 的任何出厂外形态
+        ("云端行被停用", 0, 1),
+        ("操作员已手动排成云端先行", 1, 0),
+    ]
+    for label, sf_enabled, sf_order in cases:
+        conn.execute("DELETE FROM service_endpoint")
+        conn.execute(
+            "INSERT INTO service_endpoint (category, id, kind, ref_backend, enabled, sort_order,"
+            " builtin) VALUES"
+            + factory.format(sf_en=sf_enabled, sf_ord=sf_order)
+        )
+        conn.commit()
+        bootstrap(conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
+        row = conn.execute(
+            "SELECT enabled, sort_order FROM service_endpoint"
+            " WHERE category = 'embedding' AND id = 'siliconflow'"
+        ).fetchone()
+        assert (int(row["enabled"]), int(row["sort_order"])) == (sf_enabled, sf_order), (
+            f"「{label}」被迁移改动了：({row['enabled']}, {row['sort_order']})"
+        )
+    # 第三种形态：删掉云端行（只剩本地行）—— 无行可对调，也不许抛
+    conn.execute("DELETE FROM service_endpoint")
+    conn.execute(
+        "INSERT INTO service_endpoint (category, id, kind, ref_backend, enabled, sort_order,"
+        " builtin) VALUES ('embedding', 'hash', 'local', NULL, 1, 0, 1)"
+    )
+    conn.commit()
+    bootstrap(conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
+    rows = conn.execute(
+        "SELECT id FROM service_endpoint WHERE category = 'embedding'"
+    ).fetchall()
+    assert [str(r["id"]) for r in rows] == ["hash"], "只剩本地行的形态被改动了"
+    conn.close()
+
+
 def test_reference_shape_service_endpoint_gains_a_scoped_owner(tmp_path: Path) -> None:
     """多租户 B1b：引用形态（无 api_key）的 `service_endpoint` 升上来 = 加列 + chat 行归属。
 

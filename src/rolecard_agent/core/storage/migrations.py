@@ -477,6 +477,61 @@ def _rename_paddle_ocr_endpoint(conn: SqlConnection) -> None:
     conn.commit()
 
 
+def _seed_order_semantic_cloud_first(conn: SqlConnection) -> None:
+    """存量库的嵌入/重排引用行对调为云端先行（播种顺序补课，98d8f20 的存量半边）。
+
+    98d8f20 把 `seed_once` 的播种序改成云端先行，但**种子只管新库** —— 升级上来的
+    存量库仍是 `hash`(0)→`siliconflow`(1) / `off`(0)→`siliconflow`(1)，配了 key 的
+    操作员照样拿 HashEmbedder，与 `services.py` 规则 2「语义嵌入云端优先」相反，
+    而症状是静默的（检索质量降级，不报错）。
+
+    守卫比动作重要：**只动"出厂播种序、两行都还启着"的形态** —— 该类恰好两行、
+    本地行 builtin=1 且 sort_order 在前、云端引用行（ref=siliconflow）builtin=0 且
+    在后、两行 enabled=1。操作员在「服务」页做过的任何启停/排序/增删都会让守卫
+    落空，一行不改（他的选择是事实，出厂默认不是）。幂等：对调后云端行在前，
+    守卫条件不再成立，重跑零改动。OCR 不在此列 —— 它的本地先行是隐私红线，
+    本来就是对的。
+    """
+    guard = {"id", "kind", "ref_backend", "enabled", "sort_order", "builtin"}
+    if not guard <= _cols(conn, "service_endpoint"):
+        # 这一步排在第二遍补列之前：测试/极端老库走到这里时列可能还缺 —— 缺列时无从
+        # 判"出厂形态"，跳过即可（补列完成后下次开机自然会跑到）。
+        return
+    for category, local_id in (("embedding", "hash"), ("rerank", "off")):
+        rows = conn.execute(
+            "SELECT id, kind, ref_backend, enabled, sort_order, builtin"
+            " FROM service_endpoint WHERE category = ? ORDER BY sort_order",
+            (category,),
+        ).fetchall()
+        if len(rows) != 2:
+            continue  # 操作员增删过行 —— 不是出厂形态，不碰
+        first, second = rows[0], rows[1]
+        factory_shape = (
+            str(first["id"]) == local_id
+            and str(first["kind"]) == "local"
+            and first["ref_backend"] is None
+            and int(first["builtin"]) == 1
+            and int(first["enabled"]) == 1
+            and str(second["id"]) == "siliconflow"
+            and str(second["kind"]) == "cloud"
+            and str(second["ref_backend"] or "") == "siliconflow"
+            and int(second["builtin"]) == 0
+            and int(second["enabled"]) == 1
+        )
+        if not factory_shape:
+            continue
+        conn.execute(
+            "UPDATE service_endpoint SET sort_order = 1 WHERE category = ? AND id = ?",
+            (category, local_id),
+        )
+        conn.execute(
+            "UPDATE service_endpoint SET sort_order = 0 WHERE category = ? AND id = 'siliconflow'",
+            (category,),
+        )
+        migrate_event(f"{category} 引用行对调为云端先行（出厂播种序补课）")
+    conn.commit()
+
+
 #: 通用补列器**必须避开**的表（每张都对应下面 shape 阶段里的一步整表重建/搬层）：
 #: 提前给旧形 `model_backend` 补上 `provider_id`，"没有 provider_id 就是旧形态"的判定
 #: 当场失效 —— 搬层被跳过，旧行的凭据静静留在没人再读的列里。`token_usage_day` 不是列
@@ -510,6 +565,9 @@ SHAPE_STEPS: tuple[Step, ...] = (
     Step(id="shape.model_backend_penalties", run=_backfill_penalty_columns),
     Step(id="shape.role_memory_item_uid", run=_backfill_memory_item_uid),
     Step(id="shape.ocr_paddle_to_rapidocr", run=_rename_paddle_ocr_endpoint),
+    # 排在 service_endpoint 重建之后（老形态库先被重建+重播，这一步才有行可对调）；
+    # 与 OCR 改名同族：都是"内置行的事实变了，存量库要跟上"。
+    Step(id="shape.service_endpoint_cloud_first", run=_seed_order_semantic_cloud_first),
 )
 
 
