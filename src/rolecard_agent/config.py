@@ -345,6 +345,14 @@ class Settings(BaseModel):
     # 决定，而不是由配置决定**，否则部署方忘了拷产物就会得到一个点了没反应的按钮。
     shell_release_dir: Path | None = None
 
+    # 更新检查（设计稿《更新机制与OCR随包》§3.1）：
+    # - update_check_enabled：总闸。False = /api/update-check 直接答 source=disabled，
+    #   一次网都不出（离线部署 / 内网机的默认）。
+    # - update_repo：GitHub 的 `owner/repo`，"最新版本"这个事实的家。空 = 没有在线源，
+    #   只剩本地 shell_release_dir 那一路。默认值与"应用归谁发布"同寿命，不是环境泄漏。
+    update_check_enabled: bool = True
+    update_repo: str = "HCX0426/rolecard-agent"
+
     # v2.4 工作区文件工具（core/tools/files.py，fs_read / fs_write / fs_list）的路径边界。
     # 角色"读写电脑文件"只允许发生在这个目录里 —— 与上传目录同一套 rigor（H1）。
     workspace_dir: Path = Path("./data/workspace")
@@ -674,6 +682,8 @@ class Settings(BaseModel):
             ("CHROMA_PATH", "chroma_path"),
             ("UPLOAD_DIR", "upload_dir"),
             ("SHELL_RELEASE_DIR", "shell_release_dir"),
+            ("UPDATE_CHECK_ENABLED", "update_check_enabled"),
+            ("UPDATE_REPO", "update_repo"),
             ("OCR_PYTHON", "ocr_python"),
             ("SILICONFLOW_BASE_URL", "siliconflow_base_url"),
             ("RAG_MIN_SIMILARITY", "rag_min_similarity"),

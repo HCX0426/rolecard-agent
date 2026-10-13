@@ -11,6 +11,7 @@ import {
 } from "../api";
 import { Card } from "./ui";
 import { ShellReleaseCard } from "./ShellReleaseCard";
+import { UpdateCheckCard } from "./UpdateCheckCard";
 import { describeError } from "../lib/errors";
 
 // ---------------------------------------------------------------- 关于与系统状态
@@ -135,6 +136,9 @@ export function AboutPanel({
           </button>
         </div>
       </Card>
+
+      {/* 检查更新（设计稿《更新机制与OCR随包》）：只读比对，判据在后端，这里照实画。 */}
+      <UpdateCheckCard />
 
       {/* 桌面壳安装包（D②-4）：没有产物时整卡不渲染，所以它放在最后也不会在页面上留空位。 */}
       <ShellReleaseCard />

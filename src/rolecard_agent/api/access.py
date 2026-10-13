@@ -84,6 +84,12 @@ USER_ROUTES: tuple[tuple[str, frozenset[str]], ...] = (
     # 含 key 的行归属哪一档待定 —— 真收紧是一行摘出 + 用例改一行，但"哪些行带 key"要先量
     # （模板行本身存的是 provider/base_url 形状还是凭据引用），先记账不预判。
     ("/api/settings/model-providers", _ANY),
+    # 检查更新（2026-10-13 设计稿《更新机制与OCR随包》）：只读，返回"当前 vs 最新"两个
+    # 版本号。**不是** operator 那条理由（"往外发可执行文件"）—— 它一个字节的可执行文件
+    # 都不发，下载仍走 `/api/shell-release/download`（operator）。出网的地址来自固定的
+    # UPDATE_REPO 配置，不是调用方能给的输入，所以也不带 sync 那层"让本机敲用户给的地址"
+    # 的额外风险。使用者界面上的"关于"页要读它，不读就只能靠人来问有没有新版。
+    ("/api/update-check", frozenset({"GET"})),
 )
 
 # **不**在清单里的都是 operator，包括这些值得点名的：

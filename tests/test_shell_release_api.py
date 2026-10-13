@@ -108,3 +108,62 @@ def test_missing_directory_config_does_not_explode(tmp_path: Path) -> None:
 def test_endpoints_answer_without_credentials_when_auth_off(tmp_path: Path, path: str) -> None:
     """默认 AUTH_MODE=off 的本地形态下这两个都是**只读**端点：不碰主机，也不接受路径输入。"""
     assert _client(tmp_path, tmp_path).get(path).status_code in {200, 404}
+
+
+# ---------------------------------------------------------------- 检查更新（同族端点）
+
+def _update_client(tmp_path: Path, **settings_kw: object) -> TestClient:
+    app = create_app(sqlite_path=tmp_path / "runtime" / "update.db")
+    app.dependency_overrides[get_context] = lambda: _Ctx(Settings(**settings_kw))  # type: ignore[arg-type]
+    return TestClient(app)
+
+
+def test_update_check_disabled_makes_no_network(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """总闸关掉 = source=disabled，且 GitHub 那条路**根本没被装配**（一次网都不出）。"""
+
+    def explode() -> None:
+        raise AssertionError("disabled 不该碰 fetcher")
+
+    monkeypatch.setattr("rolecard_agent.core.update_check.github_fetcher", explode)
+    body = _update_client(tmp_path, update_check_enabled=False).get("/api/update-check").json()
+    assert body["source"] == "disabled" and body["has_update"] is False
+
+
+def test_update_check_prefers_local_release_dir(tmp_path: Path) -> None:
+    """配了托管目录且有产物：本地源优先，version 从文件名现读，不越过去问公网。"""
+    (tmp_path / _NEW).write_bytes(b"x")
+    body = _update_client(tmp_path, shell_release_dir=tmp_path, update_repo="").get(
+        "/api/update-check"
+    ).json()
+    assert body["source"] == "release_dir"
+    assert body["latest"] == "0.3.0"
+    assert body["url"] == "/api/shell-release/download"
+
+
+def test_update_check_github_via_injected_fetcher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """没有本地产物时走 GitHub：测试注入 fetcher，端点级也不出网。"""
+    monkeypatch.setattr(
+        "rolecard_agent.core.update_check.github_fetcher",
+        lambda: (lambda url: {"tag_name": "v9.9.9", "html_url": "https://gh/o/r/tag/v9.9.9"}),
+    )
+    body = _update_client(tmp_path, update_repo="o/r").get("/api/update-check").json()
+    assert body["source"] == "github" and body["latest"] == "9.9.9" and body["has_update"] is True
+
+
+def test_update_check_current_version_is_api_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """current 来自 app.version（= API_VERSION 单源），**不是** Settings 里再抄一份。"""
+    monkeypatch.setattr(
+        "rolecard_agent.core.update_check.github_fetcher",
+        lambda: (lambda url: {"tag_name": "v0.0.1"}),
+    )
+    body = _update_client(tmp_path, update_repo="o/r").get("/api/update-check").json()
+    from rolecard_agent.api.main import API_VERSION
+
+    assert body["current"] == API_VERSION
+    assert body["has_update"] is False  # 最新比当前旧：如实 False，不硬凑"有更新"

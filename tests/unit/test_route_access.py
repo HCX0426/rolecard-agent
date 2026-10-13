@@ -106,6 +106,8 @@ def test_boundaries_that_are_easy_to_get_wrong() -> None:
         ("GET", "/api/mcp/servers", OPERATOR),
         ("POST", "/api/local-service/unload", OPERATOR),
         ("GET", "/api/shell-release/download", OPERATOR),
+        # 检查更新是只读版本号查询（user 档）；往外发可执行文件的下载仍是 operator。
+        ("GET", "/api/update-check", USER),
         ("GET", "/api/audit", OPERATOR),
         # 探活与静态、文档
         ("GET", "/api/health", PUBLIC),

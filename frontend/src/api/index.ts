@@ -25,7 +25,7 @@ import type { ConsolidateOutcome, DistillOutcome } from "./memory";
 import type { TreeResult, WorkspaceDir } from "./workspace";
 import type { ReachoutsPage } from "./reachouts";
 import type { ApprovalRow, ApprovalsPage } from "./approvals";
-import type { ShellRelease } from "./release";
+import type { ShellRelease, UpdateCheck } from "./release";
 
 export class ApiError extends Error {
   constructor(
@@ -197,6 +197,8 @@ export const api = {
   getLocalService: () => request<LocalServiceStatus>("GET", "/api/local-service"),
   /** 桌面壳安装包有没有得下（D②-4；没有产物时 available=false）。 */
   getShellRelease: () => request<ShellRelease>("GET", "/api/shell-release"),
+  /** 检查更新（设计稿《更新机制与OCR随包》）：只读比对，下载/安装永远是用户自己点的动作。 */
+  getUpdateCheck: () => request<UpdateCheck>("GET", "/api/update-check"),
   /** 把默认模型载入显存并常驻。长超时：8GB 卡上冷加载就要十几~几十秒，30s 会报假失败。 */
   pinLocalModel: () =>
     request<{ model: string; resident: ResidentModel[] }>(

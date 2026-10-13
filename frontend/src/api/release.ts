@@ -13,3 +13,19 @@ export interface ShellRelease {
   size_bytes?: number;
   built_at?: string;
 }
+
+/** 「检查更新」的读数（设计稿《更新机制与OCR随包》§3.1，与 `core/update_check.py`
+ *  的 `to_api()` 一一对应）。判据全在后端，这里只照实画：
+ *  - `source=disabled` = 总闸关着（内网/离线部署），一次网都没出；
+ *  - `source=none` + `error` = 问不到（没配源 / 出网失败），界面说"问不到"而不是"已是最新"；
+ *  - `has_update` 只在真比出"最新 > 当前"时为 true —— 下载永远走用户自己点的链接。 */
+export interface UpdateCheck {
+  current: string;
+  latest: string | null;
+  has_update: boolean;
+  source: "github" | "release_dir" | "disabled" | "none";
+  url: string | null;
+  file_name: string | null;
+  size_bytes: number | null;
+  error: string | null;
+}

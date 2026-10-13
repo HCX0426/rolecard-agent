@@ -15,11 +15,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from rolecard_agent.api.deps import AppContext, get_context
 from rolecard_agent.core.artifacts import ARTIFACT_GLOB
+from rolecard_agent.core.update_check import check_update
 
 router = APIRouter()
 
@@ -60,3 +61,20 @@ def download_shell_release(ctx: AppContext = Depends(get_context)) -> FileRespon
     if artifact is None:
         raise HTTPException(status_code=404, detail="没有可下载的桌面壳安装包")
     return FileResponse(artifact, filename=artifact.name, media_type="application/octet-stream")
+
+
+@router.get("/api/update-check")
+def update_check(request: Request, ctx: AppContext = Depends(get_context)) -> dict[str, object]:
+    """「检查更新」：当前版本 vs 最新版本，只读、不下载、不装（设计稿 §3.1）。
+
+    判据全在 `core/update_check.py`（api 薄：这里只接线，且版本从 app.version 现取 ——
+    它由 `api/main.py` 用 API_VERSION 装配，不再抄第二个版本来源）。出网失败收敛成
+    `error` 读数，端点永远 200 —— "检查更新失败"不该长得像"应用坏了"。
+    """
+    settings = ctx.settings
+    return check_update(
+        current=request.app.version,
+        enabled=settings.update_check_enabled,
+        repo=settings.update_repo,
+        release_dir=settings.shell_release_dir,
+    ).to_api()

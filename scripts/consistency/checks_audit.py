@@ -441,7 +441,7 @@ _CITATION_DOC_KEYS: tuple[tuple[str, frozenset[str]], ...] = (
     ("架构计划", frozenset({"审计台账汇编.md"})),
     ("实施计划", frozenset({"审计台账汇编.md"})),
     ("技术评审与决策", frozenset({"审计台账汇编.md"})),
-    ("设计稿", frozenset({"主动消息与记忆设计稿.md"})),
+    ("设计稿", frozenset({"主动消息与记忆设计稿.md", "更新机制与OCR随包.md"})),
     ("总览", frozenset({"架构总览.md"})),
     ("需求", frozenset({"需求与验收标准.md"})),
     (
