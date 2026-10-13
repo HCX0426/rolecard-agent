@@ -11,6 +11,18 @@ appId: com.rolecardagent.desktop
 productName: rolecard-agent
 copyright: ""
 
+# 自动更新的 feed（设计稿《更新机制与OCR随包》§3.3）：electron-updater 读的就是这一段 ——
+# provider: github 时它去 <owner>/<repo> 的 Releases 找 latest.yml。
+# 这一行同时让 `npm run package` 在 shell/release/ 里**产出** latest.yml（元数据清单），
+# 所以 release.yml 的 publish job 必须把它跟 exe 一起传进 Release：缺 latest.yml 的症状
+# 是"检查更新永远报找不到更新"而不报错 —— 与 B1 那族"静默失效的防线"同一个形状。
+# owner/repo 与 UPDATE_REPO（config.py）指的是同一个仓库；两处形状不同（yml 要拆开写），
+# 一致性由门禁的 version/single-source 家族看着 —— 见 scripts/consistency 里的 update feed 断言。
+publish:
+  provider: github
+  owner: HCX0426
+  repo: rolecard-agent
+
 directories:
   output: release
   # 默认就是 build/：shell/build/icon.ico 会被自动当应用图标（托盘/任务栏/安装包同源）
@@ -31,9 +43,12 @@ extraResources:
   - from: ../build/sidecar/rolecard-backend
     to: rolecard-backend
   # 随包本地 OCR worker（scripts/tools/build_ocr_worker.py 的产物，258 MB 未压缩）。
-  # 少了这一条不用怕：electron-builder 会**当场报找不到源**，而不是安静地打出一个
-  # "没有本地 OCR"的包 —— 那种包要到用户传第一张图才暴露（`default_ocr_python` 的旧注释
-  # 就是这么把"装机版没有 OCR"写成设计事实的）。
+  # **订正（2026-10-13 P0）**：这里从前写的是「少了这一条 electron-builder 会当场报找不到源，
+  # 而不是安静地打出一个没有本地 OCR 的包」—— 那句话被 v0.3.0~v0.4.1 的每个包证伪：
+  # 两条打包臂从没跑过 build_ocr_worker.py，源目录不存在，electron-builder 却**静默跳过**
+  # 并照常出货（198 MB、无 OCR），而产物核对只有 60MB 体积判据、轻松放行。
+  # 防线因此搬到 CI 上，三道闸：②b 构建失败即红 → 打包前点名源目录 → 打包后点名
+  # win-unpacked/resources/ocr-worker/ocr-worker.exe（见 ci.yml / release.yml 的注释）。
   - from: ../build/ocrworker/ocr-worker
     to: ocr-worker
 

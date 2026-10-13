@@ -33,14 +33,15 @@
         "rag",
         "cloud",
         "mcp",
-        "dev"
+        "dev",
+        "ocr"
       ],
-      "来源": ".github/workflows/ci.yml 的 windows-release job（装 requirements.lock；dev 是 2026-10-06 加的 Windows 测试臂）",
+      "来源": ".github/workflows/ci.yml 的 windows-release job（装 requirements.lock；dev 是 2026-10-06 加的 Windows 测试臂；ocr 是 2026-10-13 P0 修复加的随包 worker 构建臂）",
       "检查点": {
         "文件": ".github/workflows/ci.yml",
         "job": "windows-release"
       },
-      "说明": "桌面安装包；OCR worker 由 packaging/ 那边单独打，不在这条 pip install 里。"
+      "说明": "桌面安装包。2026-10-13 P0 起这条臂真的会建 .venv-ocr 并跑 build_ocr_worker.py（从前配置指着那份产物、CI 却从没构建过它 —— v0.3.0~v0.4.1 每个包都没本地 OCR）。OCR 栈只进 .venv-ocr，主 venv 依旧不带。"
     },
     "dev": {
       "requires": [
@@ -109,9 +110,9 @@
       "families": [
         "ocr"
       ],
-      "说明": "本地 RapidOCR（独立 OCR venv / 随包 ocr-worker.exe）。**容器不带这一族**——这就是审查快照『容器形态静默缺本地 OCR』那一格：矩阵把它写成 false，于是『缺』是声明过的决定，不再是静默。**dev 那格 2026-10-07 按定义校正为 false**：本形态的 requires（gate job 的 pip 清单）不含 ocr 族，本地 OCR 是表外的独立 venv、可选另装 —— 按『能力 = requires 里那些族都装上了』的定义它就是 false；此前这列没有机器检查，写反了也看不见（三列检查上线的第一趟就把这条撞了出来）。",
+      "说明": "本地 RapidOCR（独立 OCR venv / 随包 ocr-worker.exe）。**容器不带这一族**——这就是审查快照『容器形态静默缺本地 OCR』那一格：矩阵把它写成 false，于是『缺』是声明过的决定，不再是静默。**dev 那格 2026-10-07 按定义校正为 false**：本形态的 requires（gate job 的 pip 清单）不含 ocr 族，本地 OCR 是表外的独立 venv、可选另装 —— 按『能力 = requires 里那些族都装上了』的定义它就是 false；此前这列没有机器检查，写反了也看不见（三列检查上线的第一趟就把这条撞了出来）。**installer 那格 2026-10-13 由 false 改 true**：P0 修复让装包臂真跑 build_ocr_worker.py 了 —— 从前这格写 false 其实还『高估』了事实（矩阵说 dev 态可选装、installer 没有，而 installer 连那份产物都没构建过）。现在装机版随包含 ocr-worker.exe，这一格第一次名副其实。",
       "container": false,
-      "installer": false,
+      "installer": true,
       "dev": false
     },
     "ocr_cloud": {

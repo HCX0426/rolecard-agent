@@ -124,7 +124,9 @@ jobs:
     name: Windows 安装包
     needs: gate
     runs-on: windows-latest
-    timeout-minutes: 30
+    # 30 → 55 分钟：OCR worker 那一族（独立 venv 装 rapidocr/onnxruntime/cv2 + PyInstaller
+    # 打 258 MB 的树 + 冒烟推理）实测本机就要十几分钟（2026-10-13 P0 修复接入）。
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
       - name: 装 Python
@@ -155,6 +157,28 @@ jobs:
         run: python scripts/build_sidecar.py
       - name: 事后尺子：src import 的每一族都在包里
         run: python scripts/check_bundle_parity.py
+      # ---------------- 随包 OCR worker（P0 修复，2026-10-13） ----------------
+      # 为什么单列一步组：`electron-builder.yml` 的 extraResources 从 b87e36c（10-03）起就
+      # 指着 build/ocrworker/ocr-worker，但两条打包臂从没跑过 build_ocr_worker.py ——
+      # 于是 v0.3.0 起每个"成功"的装机包都没带本地 OCR（缺失源被 electron-builder 静默
+      # 跳过，注释里"当场报找不到源"的假设是错的；60MB 弱判据轻松放行 198MB 的无 OCR 包）。
+      # 判据链：① 这里构建失败 = 红；② 打包前断言源目录在场；③ 打包后断言 win-unpacked
+      # 里有 ocr-worker.exe —— 三道闸，任何一道失守都当场红，不再靠体积猜。
+      - name: 建独立 OCR venv 并打随包 worker（②b）
+        shell: pwsh
+        run: |
+          python -m venv .venv-ocr
+          .venv-ocr\Scripts\python.exe -m pip install --upgrade pip
+          .venv-ocr\Scripts\python.exe -m pip install -r requirements/requirements-ocr.txt -r requirements/requirements-package-ocr.txt
+          if ($LASTEXITCODE -ne 0) { throw "OCR venv 装依赖失败" }
+          .venv-ocr\Scripts\python.exe scripts\tools\build_ocr_worker.py
+          if ($LASTEXITCODE -ne 0) { throw "build_ocr_worker 失败（exit=$LASTEXITCODE）—— 冒烟没过或 PyInstaller 崩了" }
+      - name: 前置闸：OCR worker 源目录在场
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "build/ocrworker/ocr-worker/ocr-worker.exe")) {
+            throw "build/ocrworker/ocr-worker 不在 —— ②b 没产出，electron-builder 会把这条 extraResources 静默跳过（就是 v0.3.0~v0.4.1 每个包没有 OCR 的死法）"
+          }
       - name: 随包后端起一次并答 /api/health
         shell: pwsh
         env:
@@ -192,13 +216,31 @@ jobs:
             $seen = @(Get-ChildItem shell/release -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) -join ", "
             throw "期望正好 1 个安装包，实际 $($files.Count)。shell/release 里是：$seen"
           }
-          if ($files[0].Length -lt 60MB) { throw "安装包只有 $([math]::Round($files[0].Length/1MB,2)) MB：随包后端多半没进 extraResources" }
-          Write-Host "安装包 $($files[0].Name) = $([math]::Round($files[0].Length/1MB,2)) MB"
+          # 强判据（P0 修复的第三道闸）：dir target 与 nsis 同场产出，win-unpacked 就是
+          # 安装包的解包等价物 —— 直接点名两份随包资源在不在，不再靠体积猜。
+          $ocr = "shell/release/win-unpacked/resources/ocr-worker/ocr-worker.exe"
+          if (-not (Test-Path $ocr)) {
+            throw "安装包里没有 $ocr：extraResources 那条又静默失效了（v0.3.0~v0.4.1 每个包没 OCR 的 P0 死法，不许重演）"
+          }
+          $be = "shell/release/win-unpacked/resources/rolecard-backend/rolecard-backend.exe"
+          if (-not (Test-Path $be)) { throw "安装包里没有 $be：随包后端没进 extraResources" }
+          $mb = [math]::Round($files[0].Length / 1MB, 2)
+          # 体积下界 60MB → 250MB：OCR worker（258 MB 未压缩）进包后不存在 250 以下的可能。
+          # 主判据是上面两条点名；这条只是第二哨兵（读数，随依赖漂，但漂不破 250 的下界）。
+          if ($mb -lt 250) { throw "安装包只有 $mb MB：OCR worker 多半没进包（点名判据却过了？查 win-unpacked 与 nsis 是否同源）" }
+          # 自动更新的 feed 清单（设计稿 §3.3）：electron-updater 找的就是这份 latest.yml。
+          # 缺它 = "检查更新"永远报找不到更新而**不报错** —— 静默失效的防线，当场点名。
+          if (-not (Test-Path "shell/release/latest.yml")) {
+            throw "shell/release/latest.yml 不在：nsis 没产 feed 清单，自动更新会静默失灵"
+          }
+          Write-Host "安装包 $($files[0].Name) = $mb MB（ocr-worker 与 backend 点名在场，latest.yml 在场）"
       - name: 上传安装包产物
         uses: actions/upload-artifact@v4
         with:
           name: rolecard-agent-installer
-          path: shell/release/rolecard-agent-*-x64.exe
+          path: |
+            shell/release/rolecard-agent-*-x64.exe
+            shell/release/latest.yml
           retention-days: 14
 
   # 把镜像与安装包钉成一份 Release。tag 推送时自动建 Release；手动触发且填了版本
@@ -240,9 +282,11 @@ jobs:
         shell: bash
         run: |
           EXE=$(ls artifact/*.exe | head -n1)
+          # latest.yml 必须跟 exe 同场：electron-updater 找的是这份 feed 清单，
+          # 只传 exe 的 Release 会让所有装机用户的"检查更新"静默失灵（不报错，永远"无更新"）。
           gh release create "v${{ steps.meta.outputs.version }}" \
             --title "v${{ steps.meta.outputs.version }}" \
             --generate-notes \
             --repo "${{ github.repository }}" \
-            "$EXE"
-          echo "Release v${{ steps.meta.outputs.version }} 已建，镜像已 push 至 ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}"
+            "$EXE" artifact/latest.yml
+          echo "Release v${{ steps.meta.outputs.version }} 已建（exe + latest.yml），镜像已 push 至 ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}"

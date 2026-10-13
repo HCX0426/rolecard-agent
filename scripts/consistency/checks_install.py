@@ -113,6 +113,35 @@ def _cmd_covers(req: str, cmd: str) -> bool:
         return True
     return any(lock in cmd and req in surface for lock, surface in LOCK_SURFACES.items())
 
+#: 按形态有意分开装的族（空理由 = 红，见 check_installer_scope 后半）。
+#: 键是相对仓库根的路径（2026-10-10 起这批文件住 requirements/ 子目录）。
+SEPARATE_BY_SHAPE: dict[str, str] = {
+    "requirements/requirements-dev.txt":
+        "开发/CI 依赖，不进生产运行树（含 PyInstaller 与 pip-tools）",
+    "requirements/requirements-ocr.txt":
+        "OCR 栈不进运行树，必须独立 venv（该文件开头有现行理由）",
+    "requirements/requirements-package-ocr.txt":
+        "只有打随包 OCR worker 时要（PyInstaller 装进 .venv-ocr，"
+        "见 scripts/tools/build_ocr_worker.py；10-03 起装机版靠那份产物才有本地 OCR）",
+}
+
+def _only_separate_families(cmd: str) -> bool:
+    """这条 pip 命令装的是不是**全部**属于"按形态分开装"那几族。
+
+    2026-10-13 P0 补：装包臂第一次真跑 `.venv-ocr` 的 OCR 栈安装（rapidocr/onnxruntime/
+    package-ocr），而这条尺子把"文件里每一条 pip install"都当运行时安装面问"五族装齐没"
+    —— 独立 OCR venv 恰恰**不该**装运行时五族（那是它独立成 venv 的全部理由）。
+    判据不是"看见 .venv-ocr 就放过"（那是给特定字符串开后门），而是复用**同一张分类表**：
+    一条命令若只装 SEPARATE_BY_SHAPE 里的族，它就不是运行时安装面。dev 那一族也在这张表里，
+    所以"只装 dev"的命令同样被认作非运行时面 —— 与既有分类一字不增，方向上不会放松
+    "漏装一族"那条主判据（少装任何一族的锁/运行时命令，其 -r 目标仍在这张表外，照问）。
+    """
+    targets = re.findall(r"-r (\S*requirements\S*\.txt)", cmd)
+    if not targets:
+        return False
+    separate_basenames = {k.rsplit("/", 1)[-1] for k in SEPARATE_BY_SHAPE}
+    return all(t.rsplit("/", 1)[-1] in separate_basenames for t in targets)
+
 def check_installer_scope() -> None:
     """四个安装入口必须装**同一组运行时依赖**（09-28 轮 `R28-11`/`R28-12` 那一族的闸）。
 
@@ -229,6 +258,8 @@ def check_installer_scope() -> None:
             missing.append(f"{label} 里找不到任何 pip install 命令")
             continue
         for cmd in cmds:
+            if _only_separate_families(cmd):
+                continue  # 只装按形态分族（如 .venv-ocr 那一发）：不是运行时安装面，不问五族
             missing += [
                 f"{label} 有一条 pip install 没装 {req}（{cmd[:70]}…）"
                 for req in RUNTIME_REQ_FILES
@@ -245,16 +276,7 @@ def check_installer_scope() -> None:
         fails.append(f"installer surfaces miss runtime deps: {missing}")
 
     # 另一半：磁盘上每一份 requirements*.txt 都要在两张表里之一（空理由不算理由）。
-    # 键是相对仓库根的路径（2026-10-10 起这批文件住 requirements/ 子目录）。
-    SEPARATE_BY_SHAPE = {
-        "requirements/requirements-dev.txt":
-            "开发/CI 依赖，不进生产运行树（含 PyInstaller 与 pip-tools）",
-        "requirements/requirements-ocr.txt":
-            "OCR 栈不进运行树，必须独立 venv（该文件开头有现行理由）",
-        "requirements/requirements-package-ocr.txt":
-            "只有打随包 OCR worker 时要（PyInstaller 装进 .venv-ocr，"
-            "见 scripts/tools/build_ocr_worker.py；10-03 起装机版靠那份产物才有本地 OCR）",
-    }
+    # 分类表 SEPARATE_BY_SHAPE 现在住在模块级（与 _only_separate_families 共用一份）。
     unclassified = [
         p.relative_to(ROOT).as_posix()
         for p in sorted((ROOT / "requirements").glob("requirements*.txt"))
