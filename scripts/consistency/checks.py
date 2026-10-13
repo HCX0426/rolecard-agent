@@ -109,6 +109,7 @@ from .checks_meta import (  # noqa: F401
     check_identity_implicit_reads_are_registered,
     check_session_thread_write_seam,
     check_stale_identifiers,
+    check_update_feed,
     check_version_parity,
 )
 from .checks_runtime import (  # noqa: F401

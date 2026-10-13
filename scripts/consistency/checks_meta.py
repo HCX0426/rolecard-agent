@@ -13,7 +13,7 @@ import re
 import sys
 import tomllib
 
-from .core import ROOT, fails, iter_files, out, warns
+from .core import ROOT, YamlSubsetError, fails, iter_files, out, simple_yaml, warns
 
 
 def check_stale_identifiers() -> None:
@@ -253,6 +253,132 @@ def check_version_parity() -> None:
     out("version parity", not bad, "; ".join(bad) if bad else detail)
     if bad:
         fails.append(f"version claims out of sync: {bad}")
+
+
+def check_update_feed() -> None:
+    """自动更新的 feed 三处必须指同一个仓库，且发布链真的产清单（设计稿《更新机制与OCR随包》§3.3）。
+
+    为什么需要：`electron-builder.yml` 的 `publish`（壳的 electron-updater 读它）、
+    `config.py` 的 `update_repo` 默认值（网页的 `/api/update-check` 读它）、`.env.example`
+    里那行示例值 —— 这是**同一个事实（"最新版本住在哪个仓库"）的三个家**。B5 那张自相矛盾
+    的架构图就是"同一事实两个家，某个下午对不上"；这里三个家，对不上的症状是"网页说无更新、
+    壳说检查失败"或反之，而两边都不报错。
+
+    另一半（比"三处相等"更要命）：electron-updater 找的是 Release 里的 **latest.yml**，
+    缺它的症状不是报错而是"永远查不到更新" —— 又一支静默失效的防线。所以顺带钉发布链
+    真的把 latest.yml 产出来（electron-builder.yml 里 nsis 不许被加 `differentialPackage: false`
+    那类会关掉清单的开关）并传进 Release（两条 workflow 的 upload/create 都要点名它）。
+    """
+    problems: list[str] = []
+
+    yml_path = ROOT / "shell" / "electron-builder.yml"
+    if not yml_path.exists():
+        problems.append("shell/electron-builder.yml 不见了")
+        publish = None
+    else:
+        # 只切 `publish:` 那一段喂 simple_yaml —— 整份 yml 它读不动（extraResources 的
+        # `- from:` / 更深缩进的 `to:` 是它子集之外的混合形状）。切法：从 `publish:` 那行起，
+        # 收到下一个**顶格**（缩进 0）非注释行为止，整段去掉公共缩进后解析。
+        raw = yml_path.read_text(encoding="utf-8").splitlines()
+        block: list[str] = []
+        inside = False
+        for line in raw:
+            stripped = line.strip()
+            if stripped.startswith("#") or not stripped:
+                continue
+            top_indent = len(line) - len(line.lstrip(" "))
+            if not inside:
+                if stripped == "publish:" and top_indent == 0:
+                    inside = True
+                    block.append("publish:")
+                continue
+            if top_indent == 0:
+                break  # 下一个顶格键：publish 段结束
+            block.append(line)
+        if not inside:
+            problems.append("electron-builder.yml 没有 publish 段（壳拿不到 feed）")
+            publish = None
+        else:
+            try:
+                publish = simple_yaml("\n".join(block)).get("publish")
+            except YamlSubsetError as exc:
+                problems.append(f"electron-builder.yml 的 publish 段读不出来：{exc}")
+                publish = None
+    feed_repo = None
+    if isinstance(publish, dict):
+        if publish.get("provider") != "github":
+            problems.append(f"publish.provider={publish.get('provider')!r}，不是 github")
+        owner, repo = publish.get("owner"), publish.get("repo")
+        if owner and repo:
+            feed_repo = f"{owner}/{repo}"
+        else:
+            problems.append("publish 缺 owner 或 repo")
+    else:
+        problems.append("electron-builder.yml 没有 publish 段（壳拿不到 feed）")
+
+    # config.py 里 UPDATE_REPO 的默认值：读 AST 找 `update_repo` 那个字段的默认，不在文本里
+    # 猜（与 check_version_parity 用 tomllib 同一条理由：形状变了正则静默 None = 恒绿）。
+    cfg_repo = None
+    cfg_path = ROOT / "src" / "rolecard_agent" / "config.py"
+    if cfg_path.exists():
+        tree = ast.parse(cfg_path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.AnnAssign)
+                and isinstance(node.target, ast.Name)
+                and node.target.id == "update_repo"
+                and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)
+            ):
+                cfg_repo = node.value.value
+    if cfg_repo is None:
+        problems.append("config.py 里读不到 update_repo 的默认值（形状变了？尺子不许静默绿）")
+
+    example_repo = None
+    example = ROOT / ".env.example"
+    if example.exists():
+        for line in example.read_text(encoding="utf-8").splitlines():
+            if line.startswith("UPDATE_REPO="):
+                example_repo = line.split("=", 1)[1].strip()
+    if example_repo is None:
+        problems.append(".env.example 里没有 UPDATE_REPO 这一行（config contract 之外的显式点名）")
+
+    values = {
+        "electron-builder.publish": feed_repo,
+        "config.update_repo": cfg_repo,
+        ".env.example": example_repo,
+    }
+    present = {v for v in values.values() if v}
+    if len(present) > 1:
+        problems.append(f"三处 feed 仓库不是同一个：{values}")
+
+    # 发布链：latest.yml 要产出来（yml 不许关掉差量清单）、要传进 Release（两条 workflow）。
+    if yml_path.exists():
+        yml_text = yml_path.read_text(encoding="utf-8")
+        if re.search(r"(?m)^\s*differentialPackage:\s*false", yml_text):
+            problems.append("electron-builder.yml 写了 differentialPackage:false，会停掉清单")
+    for wf in ("release.yml", "ci.yml"):
+        text = (ROOT / ".github" / "workflows" / wf).read_text(encoding="utf-8")
+        if "latest.yml" not in text:
+            problems.append(f"{wf} 没有点名 latest.yml：feed 清单没人产/没人传，检查更新会静默失灵")
+
+    # 壳的依赖：electron-updater 必须在 shell/package.json 的 dependencies（不是 devDependencies
+    # —— 它是运行期 require 的，打进 asar 的那份靠它）。
+    pkg_path = ROOT / "shell" / "package.json"
+    if pkg_path.exists():
+        pkg = json.loads(pkg_path.read_text(encoding="utf-8"))
+        if "electron-updater" not in (pkg.get("dependencies") or {}):
+            problems.append("electron-updater 不在 shell 的 dependencies（运行期 require 不到）")
+
+    out(
+        "update feed parity",
+        not problems,
+        "; ".join(problems)
+        if problems
+        else f"三处 feed 同指 {cfg_repo}｜latest.yml 两条 workflow 点名｜updater 在 dependencies",
+    )
+    if problems:
+        fails.append(f"update feed out of sync: {problems}")
 
 
 def check_changelog() -> None:

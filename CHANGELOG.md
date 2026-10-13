@@ -10,6 +10,21 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **检查更新**：设置 → 关于新增「更新」卡，如实显示"当前 vs 最新"（事实源：本机托管的安装包 > GitHub Releases），有新版才给下载入口；总闸 `UPDATE_CHECK_ENABLED=0` 可整体关掉（内网/离线部署）。桌面壳同步接入托盘菜单的「检查更新 → 下载 → 重启并更新」三步，全程用户确认，**不静默装**。
+- **桌面壳自动更新**：electron-updater 接 GitHub Releases feed；升级前自动把数据根整目录快照（保留最近 2 份，备份失败即中止更新），并等后端端口确认空出才交给安装器——覆盖安装不再撞文件占用。
+
+### 修复
+
+- **装机版没有本地 OCR（P0）**：`electron-builder.yml` 从 10-03 起就把 `ocr-worker` 列为随包资源，但两条打包臂从没构建过它——缺失源被静默跳过，v0.3.0~v0.4.1 每个"成功"的装机包都没有本地 OCR（服务页那格永远显示不可用，而云端 OCR 按隐私红线不默认）。现在 CI 真的建独立 OCR venv、跑 `build_ocr_worker.py`，打包前后各点名一次产物；安装包体积判据从 60 MB 提到 250 MB 并改为按文件点名。安装包会明显变大（OCR worker 未压缩 258 MB）。
+- **发布链缺 feed 清单**：Release 从此随安装包一起上传 `latest.yml`（缺它时"检查更新"永远报无更新而不报错——正是这次要防的静默形状），两条 workflow 都点名断言。
+
+### 变更
+
+- 新增门禁断言 `update feed parity`：electron-builder 的 publish、`UPDATE_REPO` 默认值、`.env.example` 三处必须同指一个仓库；`installer scope parity` 学会认"只装按形态分族"的命令（独立 OCR venv 不再被误问"运行时五族装齐没"）。
+- 能力矩阵 installer 形态随事实更新：`ocr` 进 requires、`ocr_local` 那格由 false 改 true（P0 修复后第一次名副其实）。
+
 ## [0.4.1] - 2026-10-10
 
 ### 变更

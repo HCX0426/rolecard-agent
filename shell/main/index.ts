@@ -34,6 +34,7 @@ import {
   setPetHotRects,
 } from "./windows";
 import { createTray, type TrayHandle } from "./tray";
+import { createUpdater, updaterAvailable, type Updater } from "./updater";
 import { loadPetPrefs, savePetPrefs, type PetPrefs } from "./state";
 
 /** 后端的启动配置：打包态用随包的 `resources/rolecard-backend/`，开发态由 backend.ts
@@ -83,6 +84,8 @@ let mainWin: BrowserWindow | null = null;
 let petWin: BrowserWindow | null = null;
 let tray: TrayHandle | null = null;
 let quitting = false;
+// 自动更新（设计稿 §3.3）：dev 态是 null，托盘条目随之整条不出现（updaterAvailable 的理由）。
+let updater: Updater | null = null;
 
 /** 桌宠偏好的**唯一真相**（自动置顶 / 透明度 / 显示消息内容 / 靠边隐藏，设计稿 §7.2 第 4 条
  *  与 §7.6）。托盘是它唯一的写入口；渲染端只能读，不能写 —— 页面能改"内容画不画"就等于让
@@ -354,6 +357,17 @@ function boot(): void {
     if (isMainFrame && !isInPlace) consoleReady = false;
   });
 
+  // 自动更新（设计稿 §3.3）：只在打包态装配。顺序承重 —— updater 必须在 createTray **之前**
+  // 建好（托盘按值捕获 controls.updater，晚建 = 菜单永远不出更新条目）；check() 却要留到
+  // 托盘建好**之后**：checking 状态得有人监听重画，先查后建托盘会让菜单停在谎话上。
+  if (updaterAvailable()) {
+    updater = createUpdater({
+      log: logLine,
+      stopBackend: () => backend.stop(),
+      backendPort: () => endpoint().port,
+    });
+  }
+
   tray = createTray({
     showConsole,
     petVisible: () => Boolean(petWin && petWin.isVisible()),
@@ -363,7 +377,14 @@ function boot(): void {
     canAutostart: canManageLoginItem,
     autostartEnabled: loginItemEnabled,
     setAutostart: setLoginItemEnabled,
+    updater,
   });
+
+  if (updater) {
+    updater.onStateChange(() => tray?.refresh());
+    // 开机静默检查一次（只查不下载）：发现新版时托盘那条状态行会亮起来，用户自己决定下不下。
+    updater.check();
+  }
 
   // 全局热键：唤起/收起控制台。刻意不做"让角色开口"那种触发 —— 但**理由不是鉴权**（原先
   // 这里写的"那是要过 operator 鉴权的动作，而那个鉴权还不存在"两处都不成立，09-26 核对）：

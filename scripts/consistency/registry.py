@@ -57,6 +57,7 @@ CHECKS = (
     checks_docs.check_doc_freshness,
     checks_audit.check_audit_index_in_sync,
     checks_meta.check_version_parity,
+    checks_meta.check_update_feed,
     checks_meta.check_changelog,
     checks_meta.check_coverage_threshold,
     checks_config.check_dead_config,

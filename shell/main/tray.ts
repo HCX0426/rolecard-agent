@@ -4,10 +4,11 @@
  * 「关闭控制台」= 隐藏而不是退出（桌宠与后端继续活着）—— 这是一只宠物，
  * 关掉窗口不该让它消失；真要退出走托盘的「退出」，那条路会回收后端进程。
  */
-import { Menu, MenuItem, Tray, app, nativeImage } from "electron";
+import { Menu, MenuItem, Tray, app, nativeImage, type MenuItemConstructorOptions } from "electron";
 import path from "node:path";
 
 import type { PetPrefs } from "./state";
+import type { Updater } from "./updater";
 
 const ICON = path.join(__dirname, "..", "..", "build", "icon.ico");
 
@@ -40,6 +41,8 @@ export type TrayControls = {
   canAutostart: () => boolean;
   autostartEnabled: () => boolean;
   setAutostart: (on: boolean) => void;
+  /** 自动更新（设计稿 §3.3）。dev 态传 null ⇒ 整条更新菜单不出现（与开机自启同一理由）。 */
+  updater: Updater | null;
 };
 
 export type TrayHandle = { tray: Tray; refresh: () => void };
@@ -152,6 +155,9 @@ export function createTray(controls: TrayControls): TrayHandle {
               },
             ]
           : []),
+        // 自动更新（设计稿 §3.3）：一条状态行 + 一条动作行，动作随状态变（检查→下载→装）。
+        // 每次点完都 render()：托盘菜单是即时快照，不重画就会出现"下完了还写着下载"的谎。
+        ...(updateMenuItems(controls.updater, render)),
         { type: "separator" as const },
         // 唯一的退出入口：它触发 before-quit，那里负责回收本壳 spawn 的后端。
         { label: "退出 rolecard-agent", click: () => app.quit() },
@@ -161,4 +167,58 @@ export function createTray(controls: TrayControls): TrayHandle {
   render();
   tray.on("double-click", () => controls.showConsole());
   return { tray, refresh: render };
+}
+
+/** 把 updater 的状态机翻成托盘的两行（状态 + 动作）。null（dev 态）= 两行都不出。 */
+function updateMenuItems(
+  updater: Updater | null,
+  refresh: () => void,
+): MenuItemConstructorOptions[] {
+  if (!updater) return [];
+  const state = updater.state();
+  const status = ((): { label: string; enabled: boolean } => {
+    switch (state.kind) {
+      case "checking":
+        return { label: "正在检查更新…", enabled: false };
+      case "available":
+        return { label: `发现新版本 ${state.version}`, enabled: false };
+      case "downloading":
+        return { label: `下载中 ${state.percent}%`, enabled: false };
+      case "ready":
+        return { label: `新版 ${state.version} 已下载`, enabled: false };
+      case "uptodate":
+        return { label: "已是最新版本", enabled: false };
+      case "error":
+        return { label: `更新：${state.message.slice(0, 40)}`, enabled: false };
+      default:
+        return { label: "更新", enabled: false };
+    }
+  })();
+  const action = ((): { label: string; run: () => void } | null => {
+    switch (state.kind) {
+      case "idle":
+      case "uptodate":
+      case "error":
+        return { label: "检查更新", run: () => updater.check() };
+      case "available":
+        return { label: "下载更新", run: () => updater.download() };
+      case "ready":
+        return { label: "重启并更新", run: () => void updater.install() };
+      default:
+        return null; // checking / downloading 进行中：不给可点的动作
+    }
+  })();
+  const items: MenuItemConstructorOptions[] = [
+    { label: status.label, enabled: status.enabled },
+  ];
+  if (action) {
+    items.push({
+      label: action.label,
+      click: () => {
+        action.run();
+        refresh();
+      },
+    });
+  }
+  return items;
 }
