@@ -713,10 +713,15 @@ jobs:
         # 两条命令之间**逐条查退出码**（09-28 轮 `R28-26` 那条教训的 Windows 版）：pwsh 里
         # `a; b` 的这一步只认最后一条的返回码，于是 `npm ci` 失败被后面那条盖掉，报出来是
         # "electron-builder 找不到目录"这种指错地方的红。
+        # `--publish never`（2026-10-13 dispatch 实测逼出来的）：加了 publish 段之后，
+        # electron-builder 在 CI 上会**当场尝试上传 Release**，而这条 job 没有 GH_TOKEN
+        # —— 死法：`GitHubPublisher: token is not set`。发布归 release.yml 的 publish job，
+        # 这里只产 artifact。读 PublishManager.js 核实过 never 不砍清单：latest.yml（158 行）
+        # 与包内 app-update.yml（87 行）的产出都不看 isPublish，只看 publish 配置在不在。
         run: |
           npm ci
           if ($LASTEXITCODE -ne 0) { throw "npm ci 失败（exit=$LASTEXITCODE）—— 后面那步不该跑" }
-          npm run package
+          npm run package -- --publish never
           if ($LASTEXITCODE -ne 0) { throw "electron-builder 失败（exit=$LASTEXITCODE）" }
 
       - name: 产物核对并上传

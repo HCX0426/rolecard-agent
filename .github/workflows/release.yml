@@ -203,10 +203,16 @@ jobs:
           }
       - name: 打 NSIS 安装包（④）
         working-directory: shell
+        # `--publish never`（2026-10-13 dispatch 实测逼出来的）：加了 publish 段之后，
+        # electron-builder 在 CI 上会**当场尝试上传 Release**，而这条 job 没有 GH_TOKEN
+        # —— 死法：`GitHubPublisher: token is not set`。发布仍归 publish job 的
+        # `gh release create`（build 与 publish 分离是 electron-updater 的标准姿势）。
+        # 读 PublishManager.js 核实过 never 不砍清单：latest.yml（158 行）与包内
+        # app-update.yml（87 行）的产出都不看 isPublish，只看 publish 配置在不在。
         run: |
           npm ci
           if ($LASTEXITCODE -ne 0) { throw "npm ci 失败（exit=$LASTEXITCODE）" }
-          npm run package
+          npm run package -- --publish never
           if ($LASTEXITCODE -ne 0) { throw "electron-builder 失败（exit=$LASTEXITCODE）" }
       - name: 产物核对
         shell: pwsh
