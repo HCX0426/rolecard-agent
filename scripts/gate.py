@@ -108,6 +108,10 @@ STEPS: list[tuple[str, list[str], str]] = [
     ("依赖方向", [PY, "scripts/check_import_layers.py"], "both"),
     # shell/（Electron 壳）此前全程无人检查：它有 `npm run typecheck` 但门禁只 cd frontend。
     ("shell typecheck", [NPM, "run", "typecheck"], "full"),
+    # 升级缓存清理判据（用户 10-13 的规矩）。typecheck 守不住它 —— 类型对、逻辑反是常态，
+    # 而删错了的代价是用户重下一整个安装包或把没装的下载删掉。shell 没有测试框架，
+    # 这个脚本用真实临时目录跑九条读数、红就 exit 1（先 build 再跑，见 shell/package.json）。
+    ("shell updater 清理判据", [NPM, "run", "test:cleanup"], "full"),
     # **不在命令行再补 `-q`**：`pyproject.toml` 的 `addopts` 已经带了一个 `-q`，而 pytest 的
     # quiet 是累加的 —— 两个 `-q` 就是 verbosity -2，会把最后那行 `1320 passed in 177.31s`
     # 连同失败时的 `FAILED tests/...` 一起吞掉（实测：本仓整份输出到 `[100%]` 就直接收尾）。
@@ -411,6 +415,8 @@ STEP_TIMEOUTS: dict[str, float] = {
     "mypy(linux 档)": 420.0,
     "依赖方向": 180.0,
     "shell typecheck": 420.0,
+    # 清理判据那步 = build（tsc 全量）+ 九条真跑，与 typecheck 同量级再留一倍余量。
+    "shell updater 清理判据": 420.0,
     "pytest(-x, 无覆盖率)": 900.0,
     "consistency": 300.0,
     "baseline --check": 300.0,
@@ -943,6 +949,9 @@ def _write_readings(outputs: dict[str, str], ok: bool) -> None:
 CI_SKIP = frozenset(
     {
         "shell typecheck",
+        # 与 shell typecheck 同一条理由：要 node + 先 build（tsc 出 out/），gate --ci 那趟
+        # 不装 node；由 frontend job 里紧邻「壳 typecheck」的那一步跑同一个 npm script。
+        "shell updater 清理判据",
         "前端 vitest",
         "前端 tsc+build",
         "dist 入库同步",

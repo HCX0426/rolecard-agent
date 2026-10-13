@@ -9,6 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "npm run build && electron .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:cleanup": "npm run build && node scripts/test-update-cache-cleanup.cjs",
     "package:dir": "npm run build && electron-builder --win --dir",
     "package": "npm run build && electron-builder --win nsis"
   },

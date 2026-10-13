@@ -16,9 +16,11 @@
  */
 import { app, dialog } from "electron";
 import { autoUpdater, type ProgressInfo, type UpdateInfo } from "electron-updater";
-import { cpSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
+
+import { cleanupConsumedPendingUpdate, type CleanupFs } from "./updateCacheCleanup";
 
 export type UpdaterState =
   | { kind: "idle" }
@@ -116,6 +118,73 @@ export type Updater = {
   download: () => void;
   install: () => Promise<void>;
 };
+
+/** 递归量目录字节（清理读数的"释放了多少"；单文件直接量）。 */
+function dirBytes(target: string): number {
+  try {
+    const stat = statSync(target);
+    if (stat.isFile()) return stat.size;
+    let total = 0;
+    for (const child of readdirSync(target)) total += dirBytes(path.join(target, child));
+    return total;
+  } catch {
+    return 0;
+  }
+}
+
+const realCleanupFs: CleanupFs = {
+  exists: (p) => existsSync(p),
+  readFile: (p) => readFileSync(p, "utf8"),
+  sizeOf: (p) => dirBytes(p),
+  removeDir: (p) => rmSync(p, { recursive: true, force: true }),
+};
+
+/**
+ * 更新缓存目录 = `%LOCALAPPDATA%\<updaterCacheDirName>`。
+ * 名字**不自己拼**（`sanitizeFileName(name).toLowerCase()+"-updater"` 是 app-builder-lib
+ * 的内部推导，抄一份就是第二个事实面，它改了这边静默指错目录）—— 读构建期写进包内的
+ * `resources/app-update.yml`（electron-updater 自己也读这份，AppUpdater.js:545）。
+ * 读不到回 null：调用方按"不动"处理。
+ */
+function resolveUpdaterCacheDir(): string | null {
+  const local = process.env.LOCALAPPDATA;
+  if (!local) return null;
+  try {
+    const yml = readFileSync(path.join(process.resourcesPath, "app-update.yml"), "utf8");
+    const name = /^updaterCacheDirName:\s*(\S+)\s*$/m.exec(yml)?.[1] ?? null;
+    return name ? path.join(local, name) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 升级完成后的临时文件清理（用户 2026-10-13 的规矩）。在**新版的每一次开机**都跑一次：
+ * 判据自己会沉默（pending 不存在/版本不是当前 → keep），所以不需要"这是不是升级后第一次"
+ * 这种记不住的状态。electron-updater 的 Windows 路径没有任何装后清理（读源码核实，
+ * 见 updateCacheCleanup.ts 的文件头），不补就是每次升级泄漏一整个安装包。
+ * 任何异常都不许影响启动 —— 清理失败最多是文件多留着，不该让壳起不来。
+ */
+export function runPostInstallCleanup(log: (text: string) => void): void {
+  try {
+    const cacheDir = resolveUpdaterCacheDir();
+    if (!cacheDir) {
+      log("升级清理：读不到 app-update.yml 的 updaterCacheDirName，跳过（不猜路径）");
+      return;
+    }
+    const report = cleanupConsumedPendingUpdate(cacheDir, app.getVersion(), realCleanupFs);
+    if (report.kind === "removed") {
+      log(
+        `升级清理：删掉已装完的 pending/${report.file}（${report.version}），` +
+          `释放 ${(report.freedBytes / 1024 / 1024).toFixed(1)} MB`,
+      );
+    } else {
+      log(`升级清理：${report.reason}`);
+    }
+  } catch (error) {
+    log(`升级清理异常（不影响功能）：${String(error).slice(0, 160)}`);
+  }
+}
 
 export function createUpdater(options: UpdaterOptions): Updater {
   let current: UpdaterState = { kind: "idle" };

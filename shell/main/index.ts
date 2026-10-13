@@ -34,7 +34,7 @@ import {
   setPetHotRects,
 } from "./windows";
 import { createTray, type TrayHandle } from "./tray";
-import { createUpdater, updaterAvailable, type Updater } from "./updater";
+import { createUpdater, runPostInstallCleanup, updaterAvailable, type Updater } from "./updater";
 import { loadPetPrefs, savePetPrefs, type PetPrefs } from "./state";
 
 /** 后端的启动配置：打包态用随包的 `resources/rolecard-backend/`，开发态由 backend.ts
@@ -361,6 +361,10 @@ function boot(): void {
   // 建好（托盘按值捕获 controls.updater，晚建 = 菜单永远不出更新条目）；check() 却要留到
   // 托盘建好**之后**：checking 状态得有人监听重画，先查后建托盘会让菜单停在谎话上。
   if (updaterAvailable()) {
+    // 升级后的临时文件清理（用户 10-13 的规矩）：在 check() 之前跑 —— 它只删
+    // "版本 == 当前"的已装完下载，与本次要检查的更新无关，先清后查互不干扰。
+    // 放在 updaterAvailable 里：dev 态没有 app-update.yml，也不该去猜缓存目录。
+    runPostInstallCleanup(logLine);
     updater = createUpdater({
       log: logLine,
       stopBackend: () => backend.stop(),

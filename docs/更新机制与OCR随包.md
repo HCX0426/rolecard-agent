@@ -66,14 +66,36 @@ electron-updater 的 blockmap 差分只对**逐字节稳定**的部分有效。�
 
 桌面壳接 `electron-updater`（GitHub provider）。三条不可让的约束：
 
-1. **升级前备份数据根**：复用 `scripts/tools/backup_data_root.py` 的同一份逻辑，
-   装新版前先把 `%LOCALAPPDATA%\rolecard-agent\` 备份成 zip。自动 schema 迁移
-   （如嵌入器调序那类）失败的兜底全靠它。
+1. **升级前备份数据根**：装新版前先把 `%LOCALAPPDATA%\rolecard-agent\` 整目录快照
+   （留最近 2 份）。自动 schema 迁移（如嵌入器调序那类）失败的兜底全靠它。
+   **落地时与设想有一处偏差（如实记）**：设想复用 `backup_data_root.py` 的
+   `sqlite3.backup()`——那是因为它对着**活库**；壳的时序是"先停后端、后备份"，
+   库安静下来时 `cpSync` 整目录（连 wal/shm、chroma、uploads）反而更完整，
+   且快照是目录形态、还原 = 拷回去。备份失败 = 中止更新（红线本身不变）。
 2. **后端干净退出**：更新走 `app.quit()` → `before-quit` → `backend.stop()`
    （`shell/main/backend.ts` 已有，taskkill /T /F 连进程树）。NSIS 覆盖安装时后端
    进程若还活着会文件占用失败 —— 这条必须在下载/安装前确认。
 3. **用户确认制，不静默装**：发现新版 → 托盘/界面提示 → 用户点"更新并重启"才下载+安装。
    本项目有真用户数据（SQLite + chroma + 记忆），静默后台升级风险高于收益。
+
+### 3.4 装好/更新完要自动清临时文件（用户 2026-10-13 追加的规矩）
+
+读源码 + 实测把"哪些是临时文件、能不能删"钉成三类，处置各不相同（判据在
+`shell/main/updateCacheCleanup.ts`，九条读数由 `shell/scripts/test-update-cache-cleanup.cjs`
+真跑，进 full 门禁与 frontend job）：
+
+| 东西 | 处置 | 依据 |
+|---|---|---|
+| `pending/` 里**已装完**的新版安装包 | **删** | electron-updater 只在"下次下载 sha512 对不上"才清它（`DownloadedUpdateHelper.js:74-82`），装完不清；Windows 的 NsisUpdater 路径**零清理**。不删 = 每次升级永久泄漏一整个包（本项目 ~281 MB） |
+| `installer.exe`（差量下载基线） | **留** | NSIS 每次安装自己 `copyFile "$EXEPATH"` 写的（`installer.nsh:93`），是 `differentialDownloadInstaller` 的 oldFile（`AppUpdater.js:668`）；删了下次退化全量重下。且每次安装覆盖、不累积（实测本机这一份 = 今天装的那版，逐字节吻合） |
+| 升级前的数据快照 | **不在这里管** | 它是回滚路径不是临时文件，寿命由 `BACKUP_KEEP`（留最近 2 份）定。把"清临时文件"读成"顺手删备份"是要出人命的读法 |
+
+判据 = `pending/update-info.json` 的 `fileName` 里那个版本 **== 当前运行版本**
+（update-info.json 没有版本字段，版本住在 fileName 里）。相等 ⇒ 正在跑的就是它 ⇒
+"待装"使命结束。缓存目录名**不自己拼**（那是 app-builder-lib 的内部推导），读构建期
+写进包内的 `app-update.yml` 的 `updaterCacheDirName` —— 抄一份就是第二个事实面。
+保守优先：读不到 json / 解析不出版本 / 版本不是当前 / 删除抛错 —— 一律不动并如实记一行。
+在**新版的每一次开机**跑（判据自己会沉默，不需要"是不是升级后第一次"这种记不住的状态）。
 
 ---
 
@@ -102,7 +124,9 @@ electron-updater 的 blockmap 差分只对**逐字节稳定**的部分有效。�
   拉不到就整卡不渲染，与现有 D②-4 卡片同一口径。
 - **壳**：`shell/package.json` 加 `electron-updater`；`electron-builder.yml` 加
   `publish: {provider: github, owner, repo}`；新增 `shell/main/updater.ts` 接线
-  （check / download / quitAndInstall），托盘加"检查更新"条目；升级前调数据备份。
+  （check / download / quitAndInstall），托盘加"检查更新"条目；升级前调数据备份；
+  新版每次开机清已消费的 pending 下载（§3.4，判据在独立的 `updateCacheCleanup.ts`，
+  不 import electron 以便真跑测试）。
 
 ---
 
@@ -115,8 +139,14 @@ electron-updater 的 blockmap 差分只对**逐字节稳定**的部分有效。�
 - [x] E. 壳 electron-updater + 数据备份 + 后端干净退出 + 门禁 `update feed parity` → `d556122`
 - [x] F. 全量门禁：pytest 全绿 / ruff / mypy 149 文件 / check_consistency **72 条全过**
       （71→72，新增 update feed parity）/ 前端 vitest 402 / shell typecheck+build
-- [x] G. 三笔提交已推送（`65ff05a` / `a37ec67` / `d556122`），push 触发的 CI 全绿
-      （门禁 --ci 含新尺子；打包臂是 dispatch/tag-only，OCR 三道闸等下次发版实跑）
+- [x] G. 三笔提交已推送（`65ff05a` / `a37ec67` / `d556122`），push 触发的 CI 全绿；
+      **P0 三道闸已被 dispatch 打包真跑验证**（run `38408788201`：②b 构建绿 → 前置闸绿 →
+      NSIS 绿 → 产物核对「安装包 = 281.54 MB，ocr-worker 与 backend 点名在场，
+      latest.yml 在场」）。第一次 dispatch（`38406037773`）红在 NSIS —— 那是
+      publish 段让 electron-builder 在无 token 的 job 上尝试上传，`71ec11a` 修成
+      `--publish never`（读 PublishManager.js 核实 never 不砍 latest.yml/app-update.yml）
+- [x] H. 升级后自动清临时文件（§3.4，用户 10-13 追加）：`updateCacheCleanup.ts` 纯函数 +
+      九条真跑读数进 full 门禁与 frontend job；对真实缓存目录实测不误删差量基线
 
 > **一处口径订正**：`65ff05a` 的提交标题写"空包三年"是笔误 —— 受影响的出货是
 > v0.3.0（10-09）到 v0.4.1（10-10），约**四天**；缺陷的"年龄"以本稿 §一 的
@@ -126,9 +156,12 @@ electron-updater 的 blockmap 差分只对**逐字节稳定**的部分有效。�
 ## 七、验收判据
 
 - **P0**：CI 打包后 `win-unpacked/resources/ocr-worker/ocr-worker.exe` 在场（强判据）；
-  服务页 OCR 那行不再是"没带上 ocr-worker"。
+  服务页 OCR 那行不再是"没带上 ocr-worker"。**已达成**（run `38408788201` 点名在场，
+  安装包 281.54 MB）。
 - **检查更新**：装 0.4.0 的人打开设置→关于，能看到"当前 0.4.0 · 最新 0.4.1，可下载"，
-  不必再靠人来问（这正是本轮升级的原始痛点）。
+  不必再靠人来问（这正是本轮升级的原始痛点）。**已达成**（隔离后端实打端点：
+  `latest=0.4.1 / has_update=false / error=null`，真出网解析 GitHub tag）。
 - **自动更新**：托盘"检查更新"→ 有新版则提示 → 用户确认 → 备份数据 → 下载 → 干净退出
-  后端 → quitAndInstall。任一步失败都不丢数据（备份在）。
+  后端 → quitAndInstall。任一步失败都不丢数据（备份在）。装完后新版的每次开机清掉
+  已消费的 pending 下载（§3.4），差量基线 `installer.exe` 保留。
 - 全部离线测试可跑（出网判据用注入式，断网不红）。
