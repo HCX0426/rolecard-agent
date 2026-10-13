@@ -1,8 +1,8 @@
 # 更新机制与 OCR 随包 · 设计稿
 
-> 状态：**设计中 → 分批实现**。本稿先钉事实与决策，实现按 §六 的清单分笔提交。
+> 状态：**已全部落地（2026-10-13，§六 清单逐项勾完）**。本稿先钉事实与决策，实现分三笔提交。
 > 触发：用户 2026-10-13 三连问（覆盖安装？检查更新按钮？增量/自动更新？）+ 一个
-> 顺带挖出的 P0（装机版根本没有本地 OCR）。**都要做**。
+> 顺带挖出的 P0（装机版根本没有本地 OCR）。**都要做**——都做了。
 
 ---
 
@@ -108,13 +108,20 @@ electron-updater 的 blockmap 差分只对**逐字节稳定**的部分有效。�
 
 ## 六、实施清单（分笔提交）
 
-- [ ] A. 设计稿入 `docs/` 并登记 `docs/README.md`（本文件）
-- [ ] B. P0：两条 workflow 接 OCR 构建 + 强判据 + 前置闸
-- [ ] C. 后端 update-check 端点 + 离线测试（注入式 fetcher）
-- [ ] D. 前端"检查更新"卡片 + vitest + dist 重建
-- [ ] E. 壳 electron-updater + 数据备份 + 后端干净退出
-- [ ] F. 全量门禁（pytest / ruff / mypy / check_consistency / 前端测试 / shell typecheck）
-- [ ] G. 分笔提交并推送
+- [x] A. 设计稿入 `docs/` 并登记 `docs/README.md`（本文件）
+- [x] B. P0：两条 workflow 接 OCR 构建 + 强判据 + 前置闸 → `65ff05a`
+- [x] C. 后端 update-check 端点 + 离线测试（注入式 fetcher）→ `a37ec67`
+- [x] D. 前端"检查更新"卡片 + vitest + dist 重建 → `a37ec67`（与源码同笔入库）
+- [x] E. 壳 electron-updater + 数据备份 + 后端干净退出 + 门禁 `update feed parity` → `d556122`
+- [x] F. 全量门禁：pytest 全绿 / ruff / mypy 149 文件 / check_consistency **72 条全过**
+      （71→72，新增 update feed parity）/ 前端 vitest 402 / shell typecheck+build
+- [x] G. 三笔提交已推送（`65ff05a` / `a37ec67` / `d556122`），push 触发的 CI 全绿
+      （门禁 --ci 含新尺子；打包臂是 dispatch/tag-only，OCR 三道闸等下次发版实跑）
+
+> **一处口径订正**：`65ff05a` 的提交标题写"空包三年"是笔误 —— 受影响的出货是
+> v0.3.0（10-09）到 v0.4.1（10-10），约**四天**；缺陷的"年龄"以本稿 §一 的
+> 三层证据为准（b87e36c 10-03 起配置在、出货包 10-09 起缺）。已推送的信息不改写，
+> 正确事实以本稿为家。
 
 ## 七、验收判据
 
