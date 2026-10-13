@@ -145,6 +145,11 @@ async function main() {
       stdio: "ignore",
       env: {
         ...process.env,
+        // **剥掉 ELECTRON_RUN_AS_NODE**（2026-10-13 实测逼出来的）：自动化/agent 会话常从
+        // Node 父进程继承它 =1，那时 electron.exe 以纯 Node 跑，`require("electron").app`
+        // 是 undefined，壳在模块顶层就崩、探针一行都写不出 —— 症状长得像"退出路径坏了"，
+        // 其实是环境。undefined 值会被 Node 从子进程环境里整个去掉，与"没设过"等价。
+        ELECTRON_RUN_AS_NODE: undefined,
         // 指到一个不可能存在的程序：壳判定"拉不起后端"就照常开窗，退出时也没有子进程要收。
         ROLECARD_BACKEND_CMD: path.join(profile, "no-such-backend.exe"),
         SHELL_SMOKE_LOG: logFile,
