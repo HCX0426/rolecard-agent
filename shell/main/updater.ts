@@ -254,8 +254,14 @@ export function createUpdater(options: UpdaterOptions): Updater {
       }
       const version = current.kind === "ready" ? current.version : "?";
       options.log(`进入安装：quitAndInstall（版本 ${version}）`);
-      // 第二参 true = 装完自动把新版拉起来：用户点的就是"重启并更新"。
-      autoUpdater.quitAndInstall(false, true);
+      // 两个参都是 true，且这不是口味：读 BaseUpdater.js:13-16 与 NsisUpdater.js:108-112，
+      // `isSilent=false` 时 electron-updater **不给安装器传 /S** —— 这包是 `oneClick: false`，
+      // 于是 NSIS 向导会弹出来等人点「下一步」：手点「重启并更新」的人被向导拦住
+      // （人走开就卡在弹窗上，更新永远不完）。且 `isSilent=false` 时第二参会被忽略
+      // （改读 autoRunAppAfterInstall）—— 传 true 反而不生效。
+      // isSilent=true → `/S`（手动装 0.4.2 用的就是它，实测无向导、静默成功）；
+      // isForceRunAfter=true → `--force-run`（装完把新版拉起来）。
+      autoUpdater.quitAndInstall(true, true);
     },
   };
 }

@@ -10,6 +10,10 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **托盘点「重启并更新」会弹出安装向导**：`quitAndInstall` 从前传 `isSilent=false`，而读 electron-updater 源码（`BaseUpdater.js:13-16`、`NsisUpdater.js:108-112`）才知道非静默时它**不给 NSIS 传 `/S`** —— 本包是 `oneClick: false`，于是点完之后弹一个向导等人点「下一步」，人走开更新就永远卡在弹窗上；且非静默时第二个参数（装完自动拉起新版）会被直接忽略。改成静默 + force-run。
+
 ## [0.4.2] - 2026-10-13
 
 ### 新增
