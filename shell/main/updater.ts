@@ -108,6 +108,11 @@ export type UpdaterOptions = {
   stopBackend: () => void;
   /** 后端端口（等它空出来才许安装器动文件）。 */
   backendPort: () => number;
+  /**
+   * 系统通知（手动检查的回执走它）。**绕过**"控制台在前台就抑制"那条规则 ——
+   * 那条防的是主动开口的噪音；更新回执是用户自己点出来的，他明确要一个答案。
+   */
+  notify: (title: string, body: string) => void;
 };
 
 /** 数据根的备份保留份数：只留最近 N 份，装十次不会攒出十份几百 MB 的快照。 */
@@ -272,6 +277,12 @@ export function createUpdater(options: UpdaterOptions): Updater {
   let prefs = loadUpdaterPrefs();
   /** 装正在跑：挡住"退出触发的第二次装"（quitAndInstall 自己会走 quit 链）。 */
   let installing = false;
+  /**
+   * 本次检查是**用户手点的**（托盘「检查更新」）⇒ 每个终态都要弹 toast 送回执。
+   * 开机自检（startup）不置位 —— 静默是它的默认，发现新版亮托盘状态行就够。
+   * 终态送达后清掉，防止一个陈旧的 true 让之后的静默事件也弹窗。
+   */
+  let manualCheck = false;
   const listeners: ((state: UpdaterState) => void)[] = [];
   const setState = (state: UpdaterState): void => {
     current = state;
@@ -291,20 +302,36 @@ export function createUpdater(options: UpdaterOptions): Updater {
   autoUpdater.on("update-available", (info: UpdateInfo) => {
     options.log(`发现新版本 ${info.version}`);
     setState({ kind: "available", version: info.version });
-    // autoDownload 开着才自己下：autoUpdater.autoDownload 在 checkForUpdates **之前**
-    // 就得是对的值（applyPrefs 已保证），所以这里不再手动 download —— 重复调用会起两路下载。
+    // 手动检查的回执（用户 10-14 的反馈：点了「检查更新」一点提示都没有）：用户点了
+    // 就明确要一个答案，直接弹 toast 送他眼前 —— 托盘菜单是打开那一刻的快照，点完收起，
+    // 后台 refresh 他根本看不见（这正是那次"一点提示都没有"的根因）。**不受**
+    // "控制台在前台就抑制"那条规则管：那条防的是主动开口的噪音，这里是他自己要的回执。
+    if (manualCheck) options.notify(`发现新版本 ${info.version}`, `去托盘点「下载更新」，或到设置 → 关于看详情。`);
   });
-  autoUpdater.on("update-not-available", () => setState({ kind: "uptodate" }));
+  autoUpdater.on("update-not-available", () => {
+    setState({ kind: "uptodate" });
+    if (manualCheck) {
+      options.notify("已是最新版本", `当前 ${app.getVersion()}，没有可用的更新。`);
+      manualCheck = false; // 终态已送达：别让下一次开机检查的落点再弹（开机那次不设 manualCheck）
+    }
+  });
   autoUpdater.on("download-progress", (progress: ProgressInfo) =>
     setState({ kind: "downloading", percent: Math.round(progress.percent) }),
   );
   autoUpdater.on("update-downloaded", (info: UpdateInfo) => {
     options.log(`更新包下载完成：${info.version}`);
     setState({ kind: "ready", version: info.version });
+    // 下载完成的回执：不管是谁发起的（手点 or autoDownload），ready 都意味着
+    // "有个重启并更新在等人"，值得出一声 —— 不出声它可能一直躺在托盘第二行里。
+    options.notify(`新版本 ${info.version} 已下载`, "托盘点「重启并更新」即可完成升级（升级前会自动备份你的数据）。");
   });
   autoUpdater.on("error", (error) => {
     options.log(`更新流程报错：${error?.message ?? String(error)}`);
     setState({ kind: "error", message: String(error?.message ?? error).slice(0, 200) });
+    if (manualCheck) {
+      options.notify("检查更新失败", String(error?.message ?? error).slice(0, 120));
+      manualCheck = false;
+    }
   });
 
   // 装的动作单独成函数：`onQuitAttempt` 要调它，而它住在下面那个返回对象里 ——
@@ -360,17 +387,31 @@ export function createUpdater(options: UpdaterOptions): Updater {
       );
     },
     check: (source = "manual") => {
+      if (source === "manual") {
+        // 立刻给一声"点到了"：检查要 1~3 秒（问 GitHub），这三秒里托盘菜单已收起，
+        // 没有这一声用户面对的就是彻底的无声 —— 10-14 反馈的原话是"都不知道有没有检查过"。
+        manualCheck = true;
+        options.notify("正在检查更新…", "几秒内有结果，会再提示你。");
+      }
       void autoUpdater.checkForUpdates().catch((error) => {
         // 开机那次检查失败不该弹任何东西：它只是"顺手查一下"，托盘保持"检查更新"入口，
         // 用户真要点会自己点（error 读数进状态行，看得见但不打扰）。
         options.log(`检查更新失败（${source}）：${String(error).slice(0, 160)}`);
-        setState({ kind: "error", message: `检查失败：${String(error).slice(0, 160)}` });
+        if (source === "manual") {
+          options.notify("检查更新失败", String(error).slice(0, 120));
+          manualCheck = false;
+        } else {
+          setState({ kind: "error", message: `检查失败：${String(error).slice(0, 160)}` });
+        }
       });
     },
     download: () => {
+      // 点击回执：下载 ~281 MB 要几十秒到几分钟，第一声确认"点到了、在下了"。
+      options.notify("开始下载更新…", "进度看托盘菜单的「下载中 N%」，完成后会再提示。");
       void autoUpdater.downloadUpdate().catch((error) => {
         options.log(`下载更新失败：${String(error).slice(0, 160)}`);
         setState({ kind: "error", message: `下载失败：${String(error).slice(0, 160)}` });
+        options.notify("下载更新失败", String(error).slice(0, 120));
       });
     },
     install: doInstall,

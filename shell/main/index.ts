@@ -369,6 +369,12 @@ function boot(): void {
       log: logLine,
       stopBackend: () => backend.stop(),
       backendPort: () => endpoint().port,
+      // 更新回执**绕过** notify() 里"控制台在前台就抑制"那条：那是防主动开口的噪音；
+      // 这里的 toast 是用户自己点「检查更新/下载更新」要的答案，前台更要给。
+      notify: (title, body) => {
+        new Notification({ title, body }).show();
+        logLine(`更新回执弹出：${title}｜${body}`);
+      },
     });
   }
 

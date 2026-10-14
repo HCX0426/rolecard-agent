@@ -119,6 +119,22 @@ function threadFromHash(): string | null {
 }
 
 // ---- 错误边界：单页崩溃不影响其他页签 ---------------------------------------------------
+/** 页面 chunk 加载失败的特征。升级会整包替换 dist，旧页签内存里那份 index.html 引用的
+ *  hash 文件名在磁盘上已经不存在 → 动态 import 404。**这种错"重试"永远无效**（文件真没了），
+ *  唯一有效的动作是强刷拿新 index.html —— 识别它，给用户"刷新"而不是永远失败的"重试"。
+ *  覆盖两类形状：Vite 产出的 `error loading dynamically imported module`（Chrome/Edge，
+ *  实测 0.4.2→0.4.3 升级后切页签就是它）与 webpack 式 `ChunkLoadError`（防御，换构建器不再漏）。
+ *  判据是**子串匹配而非精确相等**：浏览器在 message 里附带的 URL/文件名随版本漂。 */
+function isChunkLoadError(error: Error): boolean {
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("dynamically imported module") ||
+    message.includes("error loading dynamically imported") ||
+    message.includes("chunkloaderror") ||
+    message.includes("loading chunk")
+  );
+}
+
 class PageBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };
   static getDerivedStateFromError(error: Error) {
@@ -126,6 +142,28 @@ class PageBoundary extends Component<{ children: ReactNode }, { error: Error | n
   }
   render() {
     if (this.state.error) {
+      if (isChunkLoadError(this.state.error)) {
+        // 升级后的旧页签：给"刷新"这一条真正有效的出路，不给注定失败的"重试"。
+        return (
+          <div className="flex h-full items-center justify-center p-8">
+            <div className="max-w-md rounded-xl border border-amber-200 bg-amber-50 p-6 text-center dark:border-amber-800 dark:bg-amber-900/30">
+              <h2 className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                应用已更新，这个页面需要刷新
+              </h2>
+              <p className="mt-2 text-xs leading-relaxed text-amber-700 dark:text-amber-400">
+                你打开的这个页面还停在升级前的版本，它要的旧文件已经不在了。刷新会拿到新版界面；
+                你的数据（对话、知识库、设置）都在后台，不会因为刷新丢任何东西。
+              </p>
+              <button
+                onClick={() => window.location.reload()}
+                className="mt-4 rounded-lg bg-amber-500 px-4 py-2 text-xs text-white hover:bg-amber-600"
+              >
+                刷新到新版本
+              </button>
+            </div>
+          </div>
+        );
+      }
       return (
         <div className="flex h-full items-center justify-center p-8">
           <div className="max-w-md rounded-xl border border-red-200 bg-red-50 p-6 text-center dark:border-red-800 dark:bg-red-900/30">
@@ -321,8 +359,13 @@ export default function App() {
         </div>
       </nav>
 
-      {/* 主内容区 */}
+      {/* 主内容区。外层包一个 PageBoundary：chunk 加载失败那一类错误（升级后旧页签
+          引用的 hash 文件已不在磁盘）在四个常驻页上没有各自的边界 —— 没有它，症状是
+          白屏 + 控制台一条 404（实测 0.4.2→0.4.3 升级后切知识库/插件页就是它）。
+          内层 keyed 的那个管"单页崩溃不串页"；这个外层只兜住内层没接住的（含常驻页），
+          对页面崩溃行为零改变 —— 正常页根本到不了这里。 */}
       <main className="min-h-0 min-w-0 flex-1 pt-[41px] md:pt-0">
+        <PageBoundary>
         {/* 对话页**常驻挂载**（用 hidden 隐藏，而不是条件渲染）。
             它有几样只存在于组件内的状态：正在生成的回答、输入草稿、当前对话与勾选 ——
             条件渲染会在切页时把整页卸载，这些全丢，而服务端那条流还在跑（审查报告 P1-11）。
@@ -385,6 +428,7 @@ export default function App() {
             </Suspense>
           </PageBoundary>
         )}
+        </PageBoundary>
       </main>
 
       {/* 角色主动开口收件箱抽屉（全局，所有页签可见） */}
