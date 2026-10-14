@@ -386,8 +386,10 @@ function boot(): void {
 
   if (updater) {
     updater.onStateChange(() => tray?.refresh());
-    // 开机静默检查一次（只查不下载）：发现新版时托盘那条状态行会亮起来，用户自己决定下不下。
-    updater.check();
+    // 开机检查由 `checkOnStartup` 偏好管（默认开）：它只是发一个只读请求，不惊动用户，
+    // 有新版就亮托盘状态行。关掉它之后托盘的「检查更新」入口照在 —— 开关关掉的是
+    // "自动"，不是"能查"。
+    if (updater.prefs().checkOnStartup) updater.check("startup");
   }
 
   // 全局热键：唤起/收起控制台。刻意不做"让角色开口"那种触发 —— 但**理由不是鉴权**（原先
@@ -428,7 +430,15 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on("will-quit", () => globalShortcut.unregisterAll());
 
-  app.on("before-quit", () => {
+  app.on("before-quit", (event) => {
+    // 「退出时自动装」开着且有已下载好的更新：这一轮退出交给安装器，不让它走普通 quit。
+    // preventDefault 之后 doInstall 照常跑备份 + 等后端退干净（红线 2/3 不被开关绕过），
+    // 最后 quitAndInstall 自己会再触发一次 before-quit —— 那时 installing 已置位，
+    // onQuitAttempt 返回 false，走下面的普通收尾。
+    if (updater?.onQuitAttempt()) {
+      event.preventDefault();
+      return;
+    }
     quitting = true;
     backend.stop();
   });

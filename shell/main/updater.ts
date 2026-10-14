@@ -16,11 +16,81 @@
  */
 import { app, dialog } from "electron";
 import { autoUpdater, type ProgressInfo, type UpdateInfo } from "electron-updater";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import net from "node:net";
 import path from "node:path";
 
 import { cleanupConsumedPendingUpdate, type CleanupFs } from "./updateCacheCleanup";
+
+/**
+ * 自动更新的三档开关（用户 2026-10-14 要的"自动更新开关 + 启动时检测更新"）。
+ *
+ * 为什么是**三档而不是一个总开关**：这三件事的打扰程度差着量级 —— 检查只是发一个只读
+ * 请求（不惊动人）；下载要占带宽与磁盘（一整个 ~281 MB 的包）；装会**杀掉正在用的应用**。
+ * 一个开关管三件事，等于"我允许它开机查一下"顺手买下了"它会自己重启我的程序"。
+ * 所以逐级放开，每一级都要用户自己点：
+ *
+ *   - `checkOnStartup`（默认**开**）：开机静默查一次。只读、不打扰，有新版就亮托盘状态行。
+ *   - `autoDownload`（默认**关**）：查到新版就自己下载。
+ *   - `autoInstallOnQuit`（默认**关**）：已下载好的更新在**应用退出时**自动装上。
+ *     刻意不是"下完立刻装" —— 那会在用户正干活时把应用重启掉。
+ *
+ * 三条红线里只有"用户确认"这一条被开关接管（打开开关本身就是确认）；
+ * **备份与后端干净退出不受开关影响** —— 见 `install()` 与 `onQuitAttempt()`：
+ * 自动装走的是同一个 `install()`，那两条无条件执行。它们是安全，不是口味。
+ */
+export type UpdaterPrefs = {
+  checkOnStartup: boolean;
+  autoDownload: boolean;
+  autoInstallOnQuit: boolean;
+};
+
+export const UPDATER_PREF_DEFAULTS: UpdaterPrefs = {
+  checkOnStartup: true,
+  autoDownload: false,
+  autoInstallOnQuit: false,
+};
+
+function updaterPrefsFile(): string {
+  return path.join(app.getPath("userData"), "updater-prefs.json");
+}
+
+/** 读不出 / 形状不对一律回默认（与桌宠偏好同一条纪律：坏文件不该拦住启动）。 */
+export function loadUpdaterPrefs(): UpdaterPrefs {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(updaterPrefsFile(), "utf8"));
+  } catch {
+    return { ...UPDATER_PREF_DEFAULTS };
+  }
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const flag = (key: keyof UpdaterPrefs) =>
+    typeof o[key] === "boolean" ? (o[key] as boolean) : UPDATER_PREF_DEFAULTS[key];
+  return {
+    checkOnStartup: flag("checkOnStartup"),
+    autoDownload: flag("autoDownload"),
+    autoInstallOnQuit: flag("autoInstallOnQuit"),
+  };
+}
+
+function saveUpdaterPrefs(prefs: UpdaterPrefs): void {
+  try {
+    mkdirSync(path.dirname(updaterPrefsFile()), { recursive: true });
+    writeFileSync(updaterPrefsFile(), JSON.stringify(prefs), "utf8");
+  } catch (error) {
+    // 存不下只是下次回到默认，不该打断用户（与窗口位置/桌宠偏好同一句理由）。
+    console.warn(`[shell] 更新偏好没存下：${String(error)}`);
+  }
+}
 
 export type UpdaterState =
   | { kind: "idle" }
@@ -114,9 +184,20 @@ export function snapshotDataRoot(
 export type Updater = {
   state: () => UpdaterState;
   onStateChange: (listener: (state: UpdaterState) => void) => void;
-  check: () => void;
+  prefs: () => UpdaterPrefs;
+  setPrefs: (patch: Partial<UpdaterPrefs>) => void;
+  check: (source?: "startup" | "manual") => void;
   download: () => void;
   install: () => Promise<void>;
+  /**
+   * 应用正在退出时给自动装留的一手（`autoInstallOnQuit` 开着且已下载好）。
+   * **刻意不用 electron-updater 自带的 `autoInstallOnAppQuit`** —— 那个标志会让 updater
+   * 自己在 quit 时直接 `quitAndInstall`，**绕过红线 2 与 3**（不备份、不等后端退干净），
+   * 症状是"某次退出后应用没装好/装坏了没有回滚"。所以这里走同一个 `install()`：
+   * 开关只接管"要不要问用户"，那两条无条件执行。
+   * 返回 true = 这一轮退出被更新接管（调用方不该继续 quit）。
+   */
+  onQuitAttempt: () => boolean;
 };
 
 /** 递归量目录字节（清理读数的"释放了多少"；单文件直接量）。 */
@@ -188,20 +269,30 @@ export function runPostInstallCleanup(log: (text: string) => void): void {
 
 export function createUpdater(options: UpdaterOptions): Updater {
   let current: UpdaterState = { kind: "idle" };
+  let prefs = loadUpdaterPrefs();
+  /** 装正在跑：挡住"退出触发的第二次装"（quitAndInstall 自己会走 quit 链）。 */
+  let installing = false;
   const listeners: ((state: UpdaterState) => void)[] = [];
   const setState = (state: UpdaterState): void => {
     current = state;
     for (const listener of listeners) listener(state);
   };
 
-  autoUpdater.autoDownload = false; // 红线 1：下载要用户点
-  autoUpdater.autoInstallOnAppQuit = false; // 装更要用户点，不许"下次退出顺手装"
+  // 两个自动档都从偏好映射到 electron-updater 的开关上。autoInstallOnAppQuit **恒关**
+  // —— 自动装由 onQuitAttempt 走 install()（理由见 Updater.onQuitAttempt 的注释）。
+  const applyPrefs = (): void => {
+    autoUpdater.autoDownload = prefs.autoDownload;
+    autoUpdater.autoInstallOnAppQuit = false;
+  };
+  applyPrefs();
   autoUpdater.logger = null; // 日志走 options.log（shell.log 唯一写入口），不给 updater 另开一份
 
   autoUpdater.on("checking-for-update", () => setState({ kind: "checking" }));
   autoUpdater.on("update-available", (info: UpdateInfo) => {
     options.log(`发现新版本 ${info.version}`);
     setState({ kind: "available", version: info.version });
+    // autoDownload 开着才自己下：autoUpdater.autoDownload 在 checkForUpdates **之前**
+    // 就得是对的值（applyPrefs 已保证），所以这里不再手动 download —— 重复调用会起两路下载。
   });
   autoUpdater.on("update-not-available", () => setState({ kind: "uptodate" }));
   autoUpdater.on("download-progress", (progress: ProgressInfo) =>
@@ -216,12 +307,63 @@ export function createUpdater(options: UpdaterOptions): Updater {
     setState({ kind: "error", message: String(error?.message ?? error).slice(0, 200) });
   });
 
+  // 装的动作单独成函数：`onQuitAttempt` 要调它，而它住在下面那个返回对象里 ——
+  // 在对象字面量里自指（`updater.install()`）拿到的是 undefined。
+  const doInstall = async (): Promise<void> => {
+    if (installing) return;
+    installing = true;
+    // 红线 2：先备份，备份失败就**不装**（没有回滚路径的自动迁移不许发生）。
+    try {
+      snapshotDataRoot(process.env.LOCALAPPDATA, options.log);
+    } catch (error) {
+      installing = false;
+      const message = `升级前备份数据失败，已中止更新：${String(error).slice(0, 200)}`;
+      options.log(message);
+      setState({ kind: "error", message });
+      dialog.showErrorBox("更新已中止", message);
+      return;
+    }
+    // 红线 3：后端干净退出 —— 先收进程树，再等端口空出来，才交给安装器。
+    options.stopBackend();
+    const port = options.backendPort();
+    if (!(await waitForPortFree(port, 10_000))) {
+      installing = false;
+      const message = `端口 ${port} 上仍有应答：后端没退干净，已中止更新（强装会撞上文件占用）。`;
+      options.log(message);
+      setState({ kind: "error", message });
+      dialog.showErrorBox("更新已中止", message);
+      return;
+    }
+    const version = current.kind === "ready" ? current.version : "?";
+    options.log(`进入安装：quitAndInstall（版本 ${version}）`);
+    // 两个参都是 true，且这不是口味：读 BaseUpdater.js:13-16 与 NsisUpdater.js:108-112，
+    // `isSilent=false` 时 electron-updater **不给安装器传 /S** —— 我们这包是
+    // `oneClick: false`，于是 NSIS 向导会弹出来等人点「下一步」。那会让两条路都坏：
+    // 手点「重启并更新」的用户被一个安装向导拦住（人走开就卡在弹窗上，更新永远不完），
+    // 而「退出时自动安装」更是直接名不副实。且 `isSilent=false` 时第二参会被忽略
+    // （改读 autoRunAppAfterInstall）—— 传 true 反而不生效。
+    // isSilent=true → `/S`（今天手动装 0.4.2 用的就是它，实测无向导、静默成功）；
+    // isForceRunAfter=true → `--force-run`（装完把新版拉起来）。
+    autoUpdater.quitAndInstall(true, true);
+  };
+
   return {
     state: () => current,
     onStateChange: (listener) => listeners.push(listener),
-    check: () => {
+    prefs: () => ({ ...prefs }),
+    setPrefs: (patch) => {
+      prefs = { ...prefs, ...patch };
+      saveUpdaterPrefs(prefs);
+      applyPrefs();
+      options.log(
+        `更新偏好：开机检查=${prefs.checkOnStartup} 自动下载=${prefs.autoDownload} 退出时自动装=${prefs.autoInstallOnQuit}`,
+      );
+    },
+    check: (source = "manual") => {
       void autoUpdater.checkForUpdates().catch((error) => {
-        options.log(`检查更新失败：${String(error).slice(0, 160)}`);
+        // 开机那次检查失败不该弹任何东西：它只是"顺手查一下"，托盘保持"检查更新"入口，
+        // 用户真要点会自己点（error 读数进状态行，看得见但不打扰）。
+        options.log(`检查更新失败（${source}）：${String(error).slice(0, 160)}`);
         setState({ kind: "error", message: `检查失败：${String(error).slice(0, 160)}` });
       });
     },
@@ -231,37 +373,14 @@ export function createUpdater(options: UpdaterOptions): Updater {
         setState({ kind: "error", message: `下载失败：${String(error).slice(0, 160)}` });
       });
     },
-    install: async () => {
-      // 红线 2：先备份，备份失败就**不装**（没有回滚路径的自动迁移不许发生）。
-      try {
-        snapshotDataRoot(process.env.LOCALAPPDATA, options.log);
-      } catch (error) {
-        const message = `升级前备份数据失败，已中止更新：${String(error).slice(0, 200)}`;
-        options.log(message);
-        setState({ kind: "error", message });
-        dialog.showErrorBox("更新已中止", message);
-        return;
-      }
-      // 红线 3：后端干净退出 —— 先收进程树，再等端口空出来，才交给安装器。
-      options.stopBackend();
-      const port = options.backendPort();
-      if (!(await waitForPortFree(port, 10_000))) {
-        const message = `端口 ${port} 上仍有应答：后端没退干净，已中止更新（强装会撞上文件占用）。`;
-        options.log(message);
-        setState({ kind: "error", message });
-        dialog.showErrorBox("更新已中止", message);
-        return;
-      }
-      const version = current.kind === "ready" ? current.version : "?";
-      options.log(`进入安装：quitAndInstall（版本 ${version}）`);
-      // 两个参都是 true，且这不是口味：读 BaseUpdater.js:13-16 与 NsisUpdater.js:108-112，
-      // `isSilent=false` 时 electron-updater **不给安装器传 /S** —— 这包是 `oneClick: false`，
-      // 于是 NSIS 向导会弹出来等人点「下一步」：手点「重启并更新」的人被向导拦住
-      // （人走开就卡在弹窗上，更新永远不完）。且 `isSilent=false` 时第二参会被忽略
-      // （改读 autoRunAppAfterInstall）—— 传 true 反而不生效。
-      // isSilent=true → `/S`（手动装 0.4.2 用的就是它，实测无向导、静默成功）；
-      // isForceRunAfter=true → `--force-run`（装完把新版拉起来）。
-      autoUpdater.quitAndInstall(true, true);
+    install: doInstall,
+    onQuitAttempt: () => {
+      if (!prefs.autoInstallOnQuit || current.kind !== "ready" || installing) return false;
+      options.log(`退出时自动装（版本 ${current.version}）：走同一条 install()，备份与后端退出照常`);
+      // 不 await：调用方是同步的 quit 链。doInstall 里的 quitAndInstall 会接管这轮退出，
+      // 所以返回 true 告诉调用方**别再自己 app.quit()**（那会打断安装）。
+      void doInstall();
+      return true;
     },
   };
 }

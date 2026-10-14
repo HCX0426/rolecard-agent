@@ -220,5 +220,26 @@ function updateMenuItems(
       },
     });
   }
+  // 自动更新的三档开关（用户 2026-10-14 要的）。做成**逐级放开**而不是一个总开关，
+  // 理由写在 updater.ts 的 UpdaterPrefs 注释里：检查/下载/装 三件事的打扰程度差着量级，
+  // 一个开关管三件等于"允许开机查一下"顺手买下"它会自己重启我的程序"。
+  const prefs = updater.prefs();
+  const toggle = (label: string, key: "checkOnStartup" | "autoDownload" | "autoInstallOnQuit"): MenuItemConstructorOptions => ({
+    label,
+    type: "checkbox",
+    checked: prefs[key],
+    click: (item: MenuItem) => {
+      updater.setPrefs({ [key]: item.checked });
+      refresh();
+    },
+  });
+  items.push({
+    label: "自动更新设置",
+    submenu: Menu.buildFromTemplate([
+      toggle("启动时检查更新", "checkOnStartup"),
+      toggle("自动下载更新", "autoDownload"),
+      toggle("退出时自动安装", "autoInstallOnQuit"),
+    ]),
+  });
   return items;
 }
