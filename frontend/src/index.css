@@ -58,26 +58,17 @@
   color: #6b7688;
 }
 
-/* 键盘可达性基线（2026-10-24 UI 打磨；2026-10-25 按用户反馈收窄）：焦点环只给
-   按钮 / 链接 / 选择器 —— **文本输入框（input/textarea）排除**：浏览器对它们的
-   :focus-visible 判定是"获得焦点即 visible"，鼠标点击输入框也会出环（用户实测
-   对话输入框点出蓝框）。文本输入的聚焦反馈改由各自的 focus:border 样式承担
-   （Composer 等已带 outline-none + focus:border-blue-400，不缺这一层）。 */
+/* 键盘可达性基线（2026-10-24 UI 打磨；2026-10-25 两轮按用户反馈收窄）：焦点环只给
+   按钮 / 链接 / 选择器。**文本输入框（input/textarea）完全不给聚焦高亮**——用户拍板
+   "聚焦不用亮输入框"：浏览器对它们的 :focus-visible 判定是"获得焦点即 visible"，
+   鼠标点击也会出环；Composer 等的 focus-within 变色也一并移除，聚焦反馈只有光标
+   本身（caret）。键盘用户在输入框内的位置由光标指示，无障碍不受损。 */
 :where(button, a, select, [role="button"], [tabindex]):focus-visible {
   outline: 2px solid var(--color-blue-600);
   outline-offset: 1px;
 }
 .dark :where(button, a, select, [role="button"], [tabindex]):focus-visible {
   outline-color: var(--color-blue-400);
-}
-/* 文本输入的键盘可达性保留但改为弱化形态：只有键盘焦点（:focus-visible）才描边，
-   鼠标点击只走 focus:border 的常规反馈。 */
-:where(input, textarea):focus-visible {
-  outline: 1px solid var(--color-blue-300);
-  outline-offset: 0;
-}
-.dark :where(input, textarea):focus-visible {
-  outline-color: var(--color-blue-700);
 }
 
 

@@ -77,7 +77,7 @@ export default function Composer({
 
   return (
     <div className="mx-auto max-w-3xl">
-      <div className="rounded-2xl border border-slate-200 bg-white focus-within:border-blue-400 dark:border-slate-700 dark:bg-slate-800">
+      <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800">
         {pendingImage && (
           <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2 dark:border-slate-700">
             <img
