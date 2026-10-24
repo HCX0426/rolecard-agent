@@ -408,13 +408,32 @@ export default function RolesPage({
           </Notice>
         )}
 
+        {/* 编辑态（2026-10-25 用户拍板）：占满注意力 —— 上方给返回条，下方角色列表
+            整体隐藏。保存/取消/返回都回列表。 */}
+        {editing !== null && (
+          <div className="mt-4 flex items-center justify-between">
+            <Button
+              variant="ghost"
+              type="button"
+              onClick={() => setEditing(null)}
+              title="放弃修改并回到角色列表"
+            >
+              ← 返回列表
+            </Button>
+            <span className="text-xs text-slate-400 dark:text-slate-500">
+              正在编辑：<b className="text-slate-600 dark:text-slate-300">
+                {form.role_name || form.role_id || "新角色"}
+              </b>
+            </span>
+          </div>
+        )}
         {editing !== null && (
           <form
             onSubmit={(e) => {
               e.preventDefault();
               save();
             }}
-            className="mt-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5"
+            className="mt-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5"
           >
             <div className="grid grid-cols-2 gap-4">
               <label className="block">
@@ -789,7 +808,11 @@ export default function RolesPage({
           </form>
         )}
 
-        <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+        <div
+          className={`mt-4 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 ${
+            editing !== null ? "hidden" : ""
+          }`}
+        >
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b border-slate-100 dark:border-slate-800 text-xs text-slate-400 dark:text-slate-500">
