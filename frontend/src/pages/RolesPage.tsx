@@ -111,6 +111,38 @@ export default function RolesPage({
   // ST 卡导入（2026-10-24，2c）：隐藏的 file input 由按钮点开，选完即上传。
   const importInputRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
+  // 内置示例卡（2026-10-24）：随包发布的规范样例（离线、无许可证雷区），一键导入。
+  // ST 官方仓库本身不带成品卡（只有 Seraphina 表情差分与 Eldoria 世界书），所以
+  // "示例"是我们按 V2/V1 规范写的——文件名与清单都住在本组件，卡片实体在
+  // `public/st-cards/`（构建时进 dist，由后端静态托管，fetch 同源直取）。
+  const SAMPLE_CARDS = [
+    {
+      file: "travel-planner.v2.json",
+      label: "凛 · 旅行规划师（V2，含世界书与交替开场白）",
+    },
+    {
+      file: "travel-planner.v2.png",
+      label: "凛 · 同一张的 PNG 内嵌卡",
+    },
+    {
+      file: "code-reviewer.v1.json",
+      label: "CodeReviewer（V1 平铺老格式）",
+    },
+  ];
+  const [showSamples, setShowSamples] = useState(false);
+
+  async function importSample(file: string) {
+    try {
+      const res = await fetch(`/st-cards/${file}`);
+      if (!res.ok) throw new Error(`示例卡取不到（HTTP ${res.status}）`);
+      const blob = await res.blob();
+      await importCard(new File([blob], file, { type: "application/json" }));
+      setShowSamples(false);
+    } catch (e) {
+      setStatus({ ok: false, msg: `示例卡导入失败：${describeError(e)}` });
+      setShowSamples(false);
+    }
+  }
 
   async function importCard(file: File) {
     setImporting(true);
@@ -127,6 +159,7 @@ export default function RolesPage({
         report.worldbook_entries_dropped &&
           `世界书 ${report.worldbook_entries_dropped} 条没导（要走知识页）`,
         report.tags_dropped && `标签 ${report.tags_dropped} 个`,
+        report.alternate_greetings_dropped && `交替开场白 ${report.alternate_greetings_dropped} 条`,
       ].filter(Boolean);
       await load();
       setStatus({
@@ -336,6 +369,34 @@ export default function RolesPage({
               <Button variant="outline" disabled={importing} onClick={() => importInputRef.current?.click()}>
                 {importing ? "导入中…" : "导入 ST 卡"}
               </Button>
+              {/* 内置示例卡：一键导入随包样例（不用自己找文件）。重名会 409，状态栏说人话。 */}
+              <div className="relative">
+                <Button
+                  variant="outline"
+                  disabled={importing}
+                  onClick={() => setShowSamples((v) => !v)}
+                >
+                  示例卡 ▾
+                </Button>
+                {showSamples && (
+                  <div className="absolute right-0 z-20 mt-1 w-72 rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg dark:border-slate-700 dark:bg-slate-800">
+                    <p className="px-2 pb-1 pt-0.5 text-11 text-slate-400 dark:text-slate-500">
+                      随包样例（按 ST V2 / V1 规范写）：一键导入，重名会提示冲突。
+                    </p>
+                    {SAMPLE_CARDS.map((sc) => (
+                      <button
+                        key={sc.file}
+                        type="button"
+                        disabled={importing}
+                        onClick={() => void importSample(sc.file)}
+                        className="block w-full rounded px-2 py-1.5 text-left text-xs text-slate-600 hover:bg-blue-50 hover:text-blue-700 disabled:opacity-50 dark:text-slate-300 dark:hover:bg-blue-900/30 dark:hover:text-blue-300"
+                      >
+                        {sc.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <Button onClick={openCreate}>＋ 新建角色</Button>
             </>
           }
