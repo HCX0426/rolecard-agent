@@ -8,6 +8,17 @@ import { api, UNREAD_POLL_MS } from "./api";
 import { shellBridge } from "./lib/shell";
 import { usePoll } from "./hooks/usePoll";
 import { useTheme } from "./components/useTheme";
+import { PageSkeleton } from "./components/ui/Skeleton";
+import {
+  IconApproval,
+  IconBell,
+  IconChat,
+  IconData,
+  IconKnowledge,
+  IconPlugins,
+  IconRoles,
+  IconSettings,
+} from "./components/icons";
 
 // ---- 路由级代码分割：六页各自成 chunk，hover 导航时预加载 -------------------------------
 const ChatPage = lazy(() => import("./pages/ChatPage"));
@@ -29,73 +40,16 @@ const PRELOAD: Partial<Record<string, () => Promise<unknown>>> = {
 // ---- 页签注册表 -----------------------------------------------------------------------
 // 6 个页签刻意把三件最易混的事分开（docs/前端设计.md 的 IA 一节）：
 //   数据 = 领域数据 · 知识库 = RAG 检索 · 插件 = 能力开关
-const ICON = {
-  width: 16,
-  height: 16,
-  viewBox: "0 0 24 24",
-  fill: "none",
-  stroke: "currentColor",
-  strokeWidth: 1.8,
-  strokeLinecap: "round",
-  strokeLinejoin: "round",
-} as const;
-
+// 六个页签的图标住在 `components/icons.tsx`（全项目图标的唯一出处，2026-10-24 UI
+// 打磨合并：此前这里内联一套 16px stroke 参数、`chat/icons.tsx` 另有一套 13px ——
+// 两份参数两处长法）。页签表只声明"哪个页签配哪个图标"。
 const TABS = [
-  {
-    key: "chat",
-    label: "对话",
-    icon: (
-      <svg {...ICON}>
-        <path d="M4 5h16v11H8l-4 3z" />
-      </svg>
-    ),
-  },
-  {
-    key: "data",
-    label: "数据",
-    icon: (
-      <svg {...ICON}>
-        <path d="M4 20h16M8 20v-6M13 20V7M18 20v-9" />
-      </svg>
-    ),
-  },
-  {
-    key: "knowledge",
-    label: "知识库",
-    icon: (
-      <svg {...ICON}>
-        <path d="M5 4h13v16H5zM8 4v16M11 9h4M11 13h4" />
-      </svg>
-    ),
-  },
-  {
-    key: "roles",
-    label: "角色卡",
-    icon: (
-      <svg {...ICON}>
-        <path d="M3 6h18v12H3zM7 10h5M7 14h3M16 13.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />
-      </svg>
-    ),
-  },
-  {
-    key: "plugins",
-    label: "插件",
-    icon: (
-      <svg {...ICON}>
-        <path d="M9 3v5M15 3v5M6 8h12v5a6 6 0 0 1-12 0V8ZM12 19v2" />
-      </svg>
-    ),
-  },
-  {
-    key: "settings",
-    label: "设置",
-    icon: (
-      <svg {...ICON}>
-        <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" />
-        <path d="M4 12h2M18 12h2M12 4v2M12 18v2M6.5 6.5l1.4 1.4M16.1 16.1l1.4 1.4M17.5 6.5l-1.4 1.4M7.9 16.1l-1.4 1.4" />
-      </svg>
-    ),
-  },
+  { key: "chat", label: "对话", icon: <IconChat /> },
+  { key: "data", label: "数据", icon: <IconData /> },
+  { key: "knowledge", label: "知识库", icon: <IconKnowledge /> },
+  { key: "roles", label: "角色卡", icon: <IconRoles /> },
+  { key: "plugins", label: "插件", icon: <IconPlugins /> },
+  { key: "settings", label: "设置", icon: <IconSettings /> },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -337,10 +291,7 @@ export default function App() {
             {/* 2026-10-24 UI 打磨：导航里的两个 emoji（⚙️/🔔）换成本文件 TABS 同一套
                 stroke-SVG —— 跨操作系统的渲染重量一致，双图标系统归一。 */}
             <span className="shrink-0 opacity-80">
-              <svg {...ICON}>
-                <path d="M12 3 5 6v5c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6l-7-3z" />
-                <path d="m9.5 12 1.8 1.8L15 10" />
-              </svg>
+              <IconApproval />
             </span>
             命令审批
             {approvalPending > 0 && (
@@ -355,10 +306,7 @@ export default function App() {
             title="角色主动找你（收件箱）"
           >
             <span className="shrink-0 opacity-80">
-              <svg {...ICON}>
-                <path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6z" />
-                <path d="M10.5 19a1.8 1.8 0 0 0 3 0" />
-              </svg>
+              <IconBell />
             </span>
             主动消息
             {reachoutUnread > 0 && (
@@ -386,7 +334,7 @@ export default function App() {
             会在每次切页时把子树整个重挂，放进去等于没改。 */}
         <div className={tab === "chat" ? "h-full" : "hidden"}>
           <Suspense
-            fallback={<div className="p-6 text-sm text-slate-400 dark:text-slate-500">加载中…</div>}
+            fallback={<PageSkeleton />}
           >
             <ChatPage
               active={tab === "chat"}
@@ -401,7 +349,7 @@ export default function App() {
             重新请求（与 ChatPage 同源问题，服务页"每次点开都加载中"的完整根因）。 */}
         <div className={tab === "settings" ? "h-full" : "hidden"}>
           <Suspense
-            fallback={<div className="p-6 text-sm text-slate-400 dark:text-slate-500">加载中…</div>}
+            fallback={<PageSkeleton />}
           >
             <SettingsPage
               onOpenChat={() => selectTab("chat")}
@@ -417,14 +365,14 @@ export default function App() {
             与条件渲染等效）。知识库 / 插件页无此类草稿，保留 PageBoundary 按需挂载。 */}
         <div className={tab === "data" ? "h-full" : "hidden"}>
           <Suspense
-            fallback={<div className="p-6 text-sm text-slate-400 dark:text-slate-500">加载中…</div>}
+            fallback={<PageSkeleton />}
           >
             <DataPage />
           </Suspense>
         </div>
         <div className={tab === "roles" ? "h-full" : "hidden"}>
           <Suspense
-            fallback={<div className="p-6 text-sm text-slate-400 dark:text-slate-500">加载中…</div>}
+            fallback={<PageSkeleton />}
           >
             <RolesPage onOpenThread={openThread} />
           </Suspense>
@@ -433,7 +381,7 @@ export default function App() {
           <PageBoundary key={tab}>
             <Suspense
               fallback={
-                <div className="p-6 text-sm text-slate-400 dark:text-slate-500">加载中…</div>
+                <PageSkeleton />
               }
             >
               {tab === "knowledge" && <KnowledgePage onOpenChat={() => selectTab("chat")} />}

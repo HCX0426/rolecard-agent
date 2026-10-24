@@ -60,8 +60,15 @@ MAX_ITEMS = 5000
 _SYNC_BACKUP_KEEP = 5
 
 
-def _identity(ctx: AppContext) -> str:
-    return ctx.current_user()
+def _local_kwargs(ctx: AppContext) -> dict[str, Any]:
+    """sync 端点共用的**本机侧实参**（2026-10-24 冗余清单：同一组 user_id/graph/settings
+    在本文件原样抄了 9 处）。第一参 `conn` 仍是各调用自己给 —— 它是位置参数且各调用同源
+    （`ctx.conn`），收进来反而让 `collect(ctx.conn, **…)` 变成 `collect(**…)` 两套读法。"""
+    return {
+        "user_id": ctx.current_user(),
+        "graph": ctx.app_state["graph"],
+        "settings": ctx.settings,
+    }
 
 
 def _guard_target(request: Request, ctx: AppContext, base_url: str) -> str:
@@ -105,12 +112,7 @@ def _guard_target(request: Request, ctx: AppContext, base_url: str) -> str:
 @router.get("/api/sync/inventory")
 def get_inventory(ctx: AppContext = Depends(get_context)) -> dict[str, object]:
     """这个身份在本机上有哪些可同步条目（身份 + 指纹 + 预览，不含载荷）。"""
-    items, skipped = sync_lib.collect(
-        ctx.conn,
-        user_id=_identity(ctx),
-        graph=ctx.app_state["graph"],
-        settings=ctx.settings,
-    )
+    items, skipped = sync_lib.collect(ctx.conn, **_local_kwargs(ctx))
     if len(items) > MAX_ITEMS:
         raise HTTPException(status_code=409, detail=f"条目过多（{len(items)}），这一版不做分批比对")
     return {
@@ -168,12 +170,7 @@ def post_plan(
     ctx: AppContext = Depends(get_context),
 ) -> dict[str, object]:
     """比出计划，**不写任何东西**。界面上"下一步：看差异"就是这一发。"""
-    mine, skipped = sync_lib.collect(
-        ctx.conn,
-        user_id=_identity(ctx),
-        graph=ctx.app_state["graph"],
-        settings=ctx.settings,
-    )
+    mine, skipped = sync_lib.collect(ctx.conn, **_local_kwargs(ctx))
     theirs, _their_skipped = _remote_inventory(target, request=request, ctx=ctx)
     result = sync_lib.plan(mine, theirs, skipped=skipped)
     return {
@@ -257,9 +254,7 @@ def post_import(
     try:
         outcome = sync_service.run_import(
             ctx.conn,
-            user_id=_identity(ctx),
-            graph=ctx.app_state["graph"],
-            settings=ctx.settings,
+                        **_local_kwargs(ctx),
             items=body.items,
             clear_kinds=body.clear_kinds,
         )
@@ -437,12 +432,7 @@ def post_apply(
 
     kinds = [k for k in (body.kinds or list(sync_lib.SYNC_KINDS)) if k in sync_lib.SYNC_KINDS]
     mode = body.mode if body.mode in MODES else "merge"
-    mine, skipped = sync_lib.collect(
-        ctx.conn,
-        user_id=_identity(ctx),
-        graph=ctx.app_state["graph"],
-        settings=ctx.settings,
-    )
+    mine, skipped = sync_lib.collect(ctx.conn, **_local_kwargs(ctx))
     theirs, _ = _remote_inventory(body, request=request, ctx=ctx)
     result = sync_lib.plan(mine, theirs, skipped=skipped)
     selected, clear = _select(result, mine, kinds=kinds, mode=mode, resolutions=body.resolutions)
@@ -504,12 +494,7 @@ def post_export(
     三道闩：只答**调用者自己名下的**（collect 按身份过滤，别人的 id 在这里就是查无此条）、
     一次最多 `MAX_EXPORT_ITEMS` 条、每一次都进审计（只记结构与条数，**载荷一个字不落**）。
     """
-    mine, _skipped = sync_lib.collect(
-        ctx.conn,
-        user_id=_identity(ctx),
-        graph=ctx.app_state["graph"],
-        settings=ctx.settings,
-    )
+    mine, _skipped = sync_lib.collect(ctx.conn, **_local_kwargs(ctx))
     if len(body.idents) > MAX_EXPORT_ITEMS:
         raise HTTPException(
             status_code=409,
@@ -567,12 +552,7 @@ def post_pull(
             detail="下行的「整份替换」这一档没有：它清的是本机这份。要清本机走界面上的删除。",
         )
     kinds = [k for k in (body.kinds or list(sync_lib.SYNC_KINDS)) if k in sync_lib.SYNC_KINDS]
-    mine, skipped = sync_lib.collect(
-        ctx.conn,
-        user_id=_identity(ctx),
-        graph=ctx.app_state["graph"],
-        settings=ctx.settings,
-    )
+    mine, skipped = sync_lib.collect(ctx.conn, **_local_kwargs(ctx))
     theirs, _ = _remote_inventory(body, request=request, ctx=ctx)
     result = sync_lib.plan(mine, theirs, skipped=skipped)
     wanted: list[tuple[str, str]] = [
@@ -599,9 +579,7 @@ def post_pull(
             row["payload"] = {**(row.get("payload") or {}), "keep_both": True}
     applied = sync_lib.apply_import(
         ctx.conn,
-        user_id=_identity(ctx),
-        graph=ctx.app_state["graph"],
-        settings=ctx.settings,
+                **_local_kwargs(ctx),
         items=rows,
     )
     ctx.audit.log(
@@ -641,12 +619,7 @@ def post_reconcile(
     kinds = [k for k in (body.kinds or list(sync_lib.SYNC_KINDS)) if k in sync_lib.SYNC_KINDS]
 
     def _plan() -> sync_lib.SyncPlan:
-        mine, skipped = sync_lib.collect(
-            ctx.conn,
-            user_id=_identity(ctx),
-            graph=ctx.app_state["graph"],
-            settings=ctx.settings,
-        )
+        mine, skipped = sync_lib.collect(ctx.conn, **_local_kwargs(ctx))
         theirs, _ = _remote_inventory(body, request=request, ctx=ctx)
         return sync_lib.plan(mine, theirs, skipped=skipped)
 
@@ -668,9 +641,7 @@ def post_reconcile(
     rows = _fetch_remote_payloads(body, pull, request=request, ctx=ctx)
     local_out = sync_lib.apply_import(
         ctx.conn,
-        user_id=_identity(ctx),
-        graph=ctx.app_state["graph"],
-        settings=ctx.settings,
+                **_local_kwargs(ctx),
         items=rows,
     )
     ctx.audit.log(

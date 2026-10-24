@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from rolecard_agent.core.storage.migrations import build_plan
-from rolecard_agent.storage.db import _columns, bootstrap, connect
+from rolecard_agent.storage.db import bootstrap, connect, table_columns
 
 REPO = Path(__file__).resolve().parents[2]
 STORAGE = REPO / "src" / "rolecard_agent" / "storage"
@@ -101,7 +101,7 @@ def test_the_injected_action_runs_in_place(tmp_path: Path) -> None:
             for r in conn.execute("PRAGMA index_list('model_backend')").fetchall()
         }
         assert "idx_model_backend_provider" in indexes, indexes
-        assert "provider_id" in _columns(conn, "model_backend")
+        assert "provider_id" in table_columns(conn, "model_backend")
     finally:
         conn.close()
 

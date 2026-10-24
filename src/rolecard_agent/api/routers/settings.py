@@ -15,6 +15,7 @@ from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.api.errors import value_error_to_http
 from rolecard_agent.base.observability import TraceEvent
+from rolecard_agent.base.text import text_of
 from rolecard_agent.config import SECRET_FIELD_NAMES, Settings
 from rolecard_agent.core import runtime_settings
 from rolecard_agent.core.model_settings import (
@@ -957,6 +958,45 @@ def delete_memory(
         detail={"items": len(rows)},
     )
     return _memory_payload(ctx, role_id)
+
+
+class PromptEnhanceBody(BaseModel):
+    # 与 ChatMessage.message 同一个上限：增强提示同样会进模型调用与轨迹，不给上限
+    # 就等于允许一次请求把超大文本塞进 checkpoint（审查报告 P2）。
+    text: str = Field(min_length=1, max_length=8000)
+
+
+@router.post("/api/prompt/enhance")
+def enhance_prompt(body: PromptEnhanceBody, ctx: AppContext = Depends(get_context)) -> object:
+    """增强提示词：把草稿改写得更清晰具体（用户 2026-09-17 提出，照紧凑 IDE 的输入区观感）。
+
+    用默认对话模型做一次纯改写调用——不建会话、不入历史。失败给可读 502，
+    空文本 400。这是"工具性请求"，所以不写审计（审计留痕的是管理面变更）。
+
+    从前长在 `sessions.py`（2026-10-24 冗余清单搬层）：它是无状态的模型工具调用，
+    与"会话"毫无关系 —— 和模型工具性端点（服务页探针一族）同住本文件才对。
+    """
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="没有可增强的内容。")
+    model = ctx.app_state["default_model"]
+    prompt = (
+        "你是提示词工程师。把下面的用户草稿改写为更清晰、具体、信息完整的提示词："
+        "补全模糊指代、明确期望的输出与格式；若草稿已足够清晰则做最小润色。"
+        "只输出改写后的文本本身，不要解释、不要加引号。保持原语言。\n\n草稿：\n" + text
+    )
+    try:
+        out = model.invoke(prompt)
+    except Exception as exc:  # noqa: BLE001 - 模型侧失败给可读原因，不抛栈
+        raise HTTPException(
+            status_code=502, detail=f"增强失败（模型调用错误）：{type(exc).__name__}"
+        ) from exc
+    # 分块回复（多模态模型的常态形态）必须走唯一的取值实现：`str(content)` 会把 Python
+    # repr 原样贴回用户的输入框（架构审计报告 P1-8）。
+    enhanced = text_of(out).strip()
+    if not enhanced:
+        raise HTTPException(status_code=502, detail="增强失败：模型没有返回内容。")
+    return {"text": enhanced}
 
 
 __all__ = ["router"]

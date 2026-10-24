@@ -25,7 +25,6 @@ from rolecard_agent.api.deps import (
 )
 from rolecard_agent.api.message_view import expand_to_turns, serialize_message
 from rolecard_agent.base.observability import TraceEvent
-from rolecard_agent.base.text import text_of
 from rolecard_agent.config import Settings
 from rolecard_agent.core import model_settings
 from rolecard_agent.core.agent.graph import build_graph_config
@@ -849,6 +848,19 @@ def get_session_turn(thread_id: str, ctx: AppContext = Depends(get_context)) -> 
     return {"inflight": inflight_payload(thread_id)}
 
 
+# ---------------------------------------------- 只读快照（冗余清单"get_state 4×"的读侧收口）
+
+
+def _read_snapshot(ctx: AppContext, thread_id: str) -> Any:
+    """只读场景（历史回放 / 上下文预算）的检查点快照。
+
+    纯读不需要 `recursion_limit` 与对话模式解析 —— 那两样是**跑一轮**才要的（写侧的
+    `_history_messages` 是另一个形状）。裸 config 就够了；归属校验由调用方的
+    `get_thread` 负责，这里不重复。
+    """
+    return ctx.app_state["graph"].get_state({"configurable": {"thread_id": thread_id}})
+
+
 @router.get("/api/session/{thread_id}/messages")
 def get_session_messages(
     thread_id: str,
@@ -877,7 +889,7 @@ def get_session_messages(
                 "truncated": False,
                 "inflight": inflight_payload(thread_id),
             }
-    snapshot = ctx.app_state["graph"].get_state({"configurable": {"thread_id": thread_id}})
+    snapshot = _read_snapshot(ctx, thread_id)
     raw = (snapshot.values or {}).get("messages", [])
     # tool_call_id → 入参：历史工具行要能显示"搜了什么"（单条 ToolMessage 看不到入参）。
     call_args: dict[str, dict] = {}
@@ -909,40 +921,8 @@ def get_session_messages(
     }
 
 
-class PromptEnhanceBody(BaseModel):
-    # 与 ChatMessage.message 同一个上限：增强提示同样会进模型调用与轨迹，不给上限
-    # 就等于允许一次请求把超大文本塞进 checkpoint（审查报告 P2）。
-    text: str = Field(min_length=1, max_length=8000)
-
-
-@router.post("/api/prompt/enhance")
-def enhance_prompt(body: PromptEnhanceBody, ctx: AppContext = Depends(get_context)) -> object:
-    """增强提示词：把草稿改写得更清晰具体（用户 2026-09-17 提出，照紧凑 IDE 的输入区观感）。
-
-    用默认对话模型做一次纯改写调用——不建会话、不入历史。失败给可读 502，
-    空文本 400。这是"工具性请求"，所以不写审计（审计留痕的是管理面变更）。
-    """
-    text = body.text.strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="没有可增强的内容。")
-    model = ctx.app_state["default_model"]
-    prompt = (
-        "你是提示词工程师。把下面的用户草稿改写为更清晰、具体、信息完整的提示词："
-        "补全模糊指代、明确期望的输出与格式；若草稿已足够清晰则做最小润色。"
-        "只输出改写后的文本本身，不要解释、不要加引号。保持原语言。\n\n草稿：\n" + text
-    )
-    try:
-        out = model.invoke(prompt)
-    except Exception as exc:  # noqa: BLE001 - 模型侧失败给可读原因，不抛栈
-        raise HTTPException(
-            status_code=502, detail=f"增强失败（模型调用错误）：{type(exc).__name__}"
-        ) from exc
-    # 分块回复（多模态模型的常态形态）必须走唯一的取值实现：`str(content)` 会把 Python
-    # repr 原样贴回用户的输入框（架构审计报告 P1-8）。
-    enhanced = text_of(out).strip()
-    if not enhanced:
-        raise HTTPException(status_code=502, detail="增强失败：模型没有返回内容。")
-    return {"text": enhanced}
+# PromptEnhanceBody / enhance_prompt 搬去了 `api/routers/settings.py`（2026-10-24 冗余
+# 清单：它是无状态的模型工具调用，与"会话"毫无关系 —— 长在这里是杂物间的开始）。
 
 
 @router.get("/api/session/{thread_id}/context")
@@ -957,7 +937,7 @@ def get_session_context(thread_id: str, ctx: AppContext = Depends(get_context)) 
     所以两个数字一起给出，界面不会误导。
     """
     get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
-    snapshot = ctx.app_state["graph"].get_state({"configurable": {"thread_id": thread_id}})
+    snapshot = _read_snapshot(ctx, thread_id)
     values = snapshot.values or {}
     return {
         "trimmed": int(values.get("context_trimmed") or 0),

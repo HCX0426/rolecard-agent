@@ -726,12 +726,10 @@ def reconcile_columns(
     return added
 
 
-def _columns(conn: SqlConnection, table: str) -> set[str]:
-    return {str(r["name"]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-
-
 #: 「带 `thread_id` 的表有哪些」的**现数**判据住在 `storage/threads.py`（线程的 repository）——
 #: 写死清单那一版漏过 `command_approval.thread_id`（R28-23），判据交给库本身才不会复发；
 #: 而 db.py 只留连接与声明引擎，不点名任何表（2026-10-04 审查快照 P1-6）。
+#: （2026-10-24 清理：无人调用的 `_columns()` 已删 —— 它的活由 `table_columns` 干，
+#: 且它从未有过调用方，docstring 里那句"退役"终于兑现。）
 
 

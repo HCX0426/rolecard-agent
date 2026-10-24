@@ -21,13 +21,33 @@ from rolecard_agent.roles.seed import BUILTIN_ROLES
 from rolecard_agent.storage.db import SqlConnection
 from rolecard_agent.storage.threads import set_current_role
 
-_COLUMNS = (
-    "role_id, user_id, role_name, system_prompt, temperature, model_name, "
-    "tool_whitelist, exemplars, knowledge_scopes, description, "
-    "is_builtin, reachout_enabled, recall_enabled, time_pattern_enabled, "
-    "affinity_enabled, file_watch_enabled, greeting_at, reachout_keep, "
-    "pet_pack, created_at, updated_at"
+#: 建卡时可写的列（`created_at` / `updated_at` 由库的 DEFAULT 出，不进 INSERT）。
+#: **这是唯一一份清单**：读侧的 `_COLUMNS` 与写侧的 create-INSERT 都从它拼 ——
+#: 2026-10-24 冗余清单"RoleCard 字段清单"那格的收敛（`greeting_at` 就是清单两处只改了
+#: 一处时当场红出来的，正是它该防的形状）。
+_INSERTABLE_COLUMNS: tuple[str, ...] = (
+    "role_id",
+    "user_id",
+    "role_name",
+    "system_prompt",
+    "temperature",
+    "model_name",
+    "tool_whitelist",
+    "exemplars",
+    "knowledge_scopes",
+    "description",
+    "is_builtin",
+    "reachout_enabled",
+    "recall_enabled",
+    "time_pattern_enabled",
+    "affinity_enabled",
+    "file_watch_enabled",
+    "greeting_at",
+    "reachout_keep",
+    "pet_pack",
 )
+
+_COLUMNS = ", ".join((*_INSERTABLE_COLUMNS, "created_at", "updated_at"))
 
 # Columns stored as JSON text. For every one of them `None` and `[]` mean different things,
 # so the distinction has to survive the round trip.
@@ -138,14 +158,13 @@ class RoleCards:
         """
         if self.exists(data.role_id):
             raise RoleAlreadyExists(f"role already exists: {data.role_id}")
+        # 列清单与占位符都从 `_INSERTABLE_COLUMNS` 拼 —— 加列 = 那一个元组加一项
+        # （值元的顺序必须与之一致，这一半仍是手工的：DTO 字段名 ≠ 列名的那几列
+        # 要过 `_dump_json`，拼不得）。
+        columns = ", ".join(_INSERTABLE_COLUMNS)
+        placeholders = ", ".join("?" for _ in _INSERTABLE_COLUMNS)
         self.conn.execute(
-            "INSERT INTO role_card "
-            "(role_id, user_id, role_name, system_prompt, temperature, model_name, "
-            " tool_whitelist, exemplars, knowledge_scopes, description, is_builtin, "
-            "reachout_enabled, recall_enabled, time_pattern_enabled, affinity_enabled, "
-            "file_watch_enabled, greeting_at, "
-            "reachout_keep, pet_pack) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            f"INSERT INTO role_card ({columns}) VALUES ({placeholders})",
             (
                 data.role_id,
                 self.user_id,

@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -19,6 +19,37 @@ import remarkBreaks from "remark-breaks";
 function stripNode<T extends { node?: unknown }>(props: T): Omit<T, "node"> {
   const { node: _node, ...rest } = props;
   return rest;
+}
+
+/** 代码块右上角的「复制」——2026-10-24 UI 打磨（P2 清单"代码块无复制按钮"那格）。 */
+function CopyCodeButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch {
+          setCopied(false);
+        }
+      }}
+      className="absolute right-2 top-2 rounded-md bg-slate-800/80 px-2 py-1 text-10 text-slate-300 opacity-0 transition-opacity hover:bg-slate-700 hover:text-white group-hover/code:opacity-100 dark:bg-slate-800 dark:text-slate-400"
+    >
+      {copied ? "已复制" : "复制"}
+    </button>
+  );
+}
+
+/** 收集 react-markdown 节点的纯文本（复制按钮要的是原文，不是 React 对象）。 */
+function codeTextOf(node: ReactNode): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(codeTextOf).join("");
+  const el = node as { props?: { children?: ReactNode } };
+  return el.props ? codeTextOf(el.props.children) : "";
 }
 
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
@@ -54,12 +85,18 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
               {...stripNode(p)}
             />
           ),
-          pre: (p) => (
-            <pre
-              className="my-1.5 overflow-x-auto rounded-lg bg-slate-900 p-3 text-12 leading-relaxed text-slate-100 dark:bg-slate-900/80"
-              {...stripNode(p)}
-            />
-          ),
+          pre: (p) => {
+            const raw = codeTextOf(p.children);
+            return (
+              <div className="group/code relative my-1.5">
+                <pre
+                  className="overflow-x-auto rounded-lg bg-slate-900 p-3 text-12 leading-relaxed text-slate-100 dark:bg-slate-900/80"
+                  {...stripNode(p)}
+                />
+                <CopyCodeButton text={raw} />
+              </div>
+            );
+          },
           code: (p) => {
             const rest = stripNode(p);
             const inline = !((rest as { className?: string }).className || "").includes("language-");

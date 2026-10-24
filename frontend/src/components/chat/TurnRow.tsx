@@ -1,4 +1,6 @@
 import type { BuiltTurn } from "../../lib/turns";
+
+import Button from "../ui/Button";
 import { answeredByHint, STOP_HINT } from "../../lib/stream";
 import { formatMessageTs, parseMessageTs } from "../../lib/quiet";
 import type { MessageRow } from "../../api";
@@ -104,18 +106,12 @@ export default function TurnRow({
                 <span className="text-slate-400 dark:text-slate-500">
                   发送后此条之后的历史将作废并重新生成（Ctrl+Enter 发送）
                 </span>
-                <button
-                  onClick={onEditCancel}
-                  className="rounded px-2 py-1 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700"
-                >
+                <Button variant="ghost" size="sm" onClick={onEditCancel}>
                   取消
-                </button>
-                <button
-                  onClick={onSaveEdit}
-                  className="rounded bg-blue-600 px-2.5 py-1 text-white hover:bg-blue-700"
-                >
+                </Button>
+                <Button variant="primary" size="sm" onClick={onSaveEdit}>
                   保存并重新生成
-                </button>
+                </Button>
               </div>
             </div>
           ) : (
@@ -125,7 +121,8 @@ export default function TurnRow({
                   而 opacity-0 的元素照样吃点击 —— 真机探针实测勾不上（jsdom 的 fireEvent 不做
                   命中测试，所以这条只能靠浏览器验）。何况删除模式里意图是勾选，不是改写。 */}
               {!busy && !selectMode && !!userMid && (
-                <button
+                <Button
+                  variant="ghost"
                   onClick={() => onStartEdit(userMid, turn.user!.content, turn.user?.image)}
                   aria-label="编辑并重答"
                   title="编辑这条消息并重新生成（之后的对话会被作废）"
@@ -134,7 +131,7 @@ export default function TurnRow({
                   <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5" aria-hidden="true">
                     <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
                   </svg>
-                </button>
+                </Button>
               )}
               <div className="rounded-2xl rounded-br-sm bg-slate-200/90 px-4 py-2.5 text-slate-900 dark:bg-slate-700 dark:text-slate-100">
                 {turn.user.image && (
@@ -169,19 +166,13 @@ export default function TurnRow({
                 永远不会互相矛盾。 */}
             {!turn.user && <Tag tone="blue">主动说的</Tag>}
             {dur && <span>耗时 {dur}</span>}
-            <button
-              onClick={() => onCopy(turn.answer!.content)}
-              className="hover:text-slate-600 dark:hover:text-slate-300"
-            >
+            <Button variant="link" onClick={() => onCopy(turn.answer!.content)}>
               {copied ? "已复制" : "复制"}
-            </button>
+            </Button>
             {turn.user?.id && !busy && (
-              <button
-                onClick={onRegenerate}
-                className="hover:text-slate-600 dark:hover:text-slate-300"
-              >
+              <Button variant="link" onClick={onRegenerate}>
                 重新生成
-              </button>
+              </Button>
             )}
             {turn.answer.ts && <span>{formatMessageTs(turn.answer.ts)}</span>}
           </div>

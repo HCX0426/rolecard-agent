@@ -1,4 +1,5 @@
 import { useConfirm } from "../../hooks/useConfirm";
+import Button from "../ui/Button";
 import type { RoleCard, ThreadRow } from "../../api";
 
 /**
@@ -69,19 +70,24 @@ export default function SessionSidebar({
   return (
     <>
       {/* 会话列表面板：桌面常驻，移动端 off-canvas 抽屉 */}
+      {/* 下面的三类按钮刻意**仍是裸 button**（2026-10-24 Button 收编的边界裁决）：
+          行悬浮微按钮（清空/✕）是 group-hover 显隐的行内工具，形状是"px-1 py-0.5 +
+          opacity-0 group-hover:opacity-100"，套 Button 变体只会逼出 className 全覆盖；
+          遮罩那颗是可点的 div 语义（aria-label 已给）。收编止于形状匹配的：CTA /
+          文字链 / 危险小按钮。 */}
       <aside
         className={`flex w-64 shrink-0 flex-col border-r border-slate-200 bg-white transition-transform dark:border-slate-700 dark:bg-slate-800 max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:pt-[41px] ${
           sessionsOpen ? "max-md:translate-x-0" : "max-md:-translate-x-full"
         }`}
       >
         <div className="border-b border-slate-100 dark:border-slate-800 p-3">
-          <button
+          <Button
             onClick={onNewSession}
             title="开一条不带角色的临时话题（试个东西、测张图用）。每个角色那条固定对话不受影响。"
-            className="w-full rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            className="w-full px-3 py-2 text-sm"
           >
             ＋ 开一个临时话题
-          </button>
+          </Button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
           {laneRows.length === 0 && tempSessions.length === 0 && orphanLanes.length === 0 && (
@@ -174,34 +180,38 @@ export default function SessionSidebar({
                   临时话题 · {tempSessions.length}
                 </p>
                 {tempPick === null ? (
-                  <button
-                    onClick={() => setTempPick(new Set())}
-                    className="text-11 text-slate-400 hover:text-blue-600 dark:text-slate-500 dark:hover:text-blue-400"
+                  <Button
+                    variant="link"
+                    className="text-11 hover:text-blue-600 dark:hover:text-blue-400"
                     title="勾着删，省得一条条点"
+                    onClick={() => setTempPick(new Set())}
                   >
                     批量清理
-                  </button>
+                  </Button>
                 ) : (
                   <span className="flex items-center gap-1.5 text-11">
-                    <button
+                    <Button
+                      variant="link"
+                      className="hover:text-blue-600 dark:hover:text-blue-400"
                       onClick={() => setTempPick(new Set(tempSessions.map((s) => s.thread_id)))}
-                      className="text-slate-400 hover:text-blue-600 dark:text-slate-500"
                     >
                       全选
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="danger"
                       disabled={tempPick.size === 0}
                       onClick={() => onDeleteMany([...tempPick])}
-                      className="rounded bg-red-600 px-1.5 py-0.5 text-white disabled:bg-slate-300 dark:disabled:bg-slate-700"
+                      className="px-1.5 py-0.5 text-11"
                     >
                       删除 {tempPick.size}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="link"
+                      className="hover:text-slate-600 dark:hover:text-slate-300"
                       onClick={() => setTempPick(null)}
-                      className="text-slate-400 hover:text-slate-600 dark:text-slate-500"
                     >
                       退出
-                    </button>
+                    </Button>
                   </span>
                 )}
               </div>

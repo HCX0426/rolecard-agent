@@ -1,6 +1,6 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode, type Ref } from "react";
 
-type Variant = "primary" | "outline" | "ghost" | "danger";
+type Variant = "primary" | "outline" | "ghost" | "danger" | "link";
 type Size = "sm" | "md";
 
 const VARIANTS: Record<Variant, string> = {
@@ -14,6 +14,10 @@ const VARIANTS: Record<Variant, string> = {
     "text-slate-500 hover:bg-slate-100 disabled:text-slate-300 disabled:hover:bg-transparent dark:text-slate-400 dark:hover:bg-slate-700 dark:disabled:text-slate-600 dark:disabled:hover:bg-transparent",
   danger:
     "bg-red-500 text-white hover:bg-red-600 disabled:bg-slate-300 disabled:text-slate-500 dark:disabled:bg-slate-700 dark:disabled:text-slate-500",
+  // link（2026-10-24 UI 打磨）：裸文字链按钮 —— 消息行的「复制」「重新生成」一族。
+  // 从前它们各写一遍 `hover:text-…` 的裸 class，是"169 个裸 button"里最大的一族；
+  // 有了这个变体它们才有原语可归（base 的 rounded-lg/p-0 由调用方 className 归零）。
+  link: "bg-transparent p-0 rounded-none font-normal text-slate-500 hover:text-slate-700 disabled:text-slate-300 dark:text-slate-400 dark:hover:text-slate-200 dark:disabled:text-slate-600",
 };
 
 const SIZES: Record<Size, string> = {
