@@ -369,7 +369,9 @@ WRITE_TXN_HELPERS = frozenset(
         "src/rolecard_agent/core/memory/memory_distill.py::extract",
         # model_settings 拆包后（2026-10-04 审查快照 P1-6）这个方法住在 read mixin 里。
         "src/rolecard_agent/core/model_settings/read.py::_write_chat_refs",
-        "src/rolecard_agent/core/plugins/__init__.py::_bump_tool_epoch",
+        # 2026-10-24 域常开收口后转公共：rebuild 在换装临界区内调它并当场 commit
+        # （不提交会把 RESERVED 锁留在请求线程的连接槽上，实测后续 create_app 集体 busy）。
+        "src/rolecard_agent/core/plugins/__init__.py::bump_tool_epoch",
         # 2026-10-04 sync 写入口归 owner：这两段从 `core/sync.py` 的 `_write_memory` /
         # `_write_reachout`（该模块后迁 `features/`）搬进各自的 owner，**不收口**的性质不变
         # —— 与随后的导入共用
