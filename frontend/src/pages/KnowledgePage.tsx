@@ -155,15 +155,18 @@ function KnowledgePanel() {
                   嵌入：{s.embedder}
                 </span>
               </div>
-              <button
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                className="text-xs hover:border-red-300 hover:text-red-600 dark:hover:border-red-700 dark:hover:text-red-400"
                 onClick={async () => {
                   if (await confirm({ title: "清空知识库作用域？", body: `将清空作用域 ${s.scope} 的 ${s.chunks} 段内容，此操作不可恢复，且写入审计。`, confirmText: "确认清空", danger: true })) resetScope(s.scope);
                 }}
                 title="删除该作用域的集合 —— 换嵌入模型后维度不兼容时用它重建（写审计）"
-                className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs text-slate-500 dark:text-slate-400 hover:border-red-300 dark:hover:border-red-700 hover:text-red-600 dark:text-red-400 dark:text-red-500"
               >
                 重建（清空）
-              </button>
+              </Button>
             </div>
             {/* 来源文件 chips：比裸文本列表更易扫读（行数多时两列排布）。 */}
             <ul className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2">
@@ -236,19 +239,18 @@ function KnowledgePanel() {
                     <span className="text-11 text-red-600 dark:text-red-400 dark:text-red-500">
                       删除后不可恢复，确认回收？
                     </span>
-                    <button
-                      onClick={cleanupOrphans}
+                    <Button
+                      variant="danger"
+                      type="button"
+                      className="px-2 py-1 text-11"
                       disabled={busy}
-                      className="rounded bg-red-500 px-2 py-1 text-11 text-white hover:bg-red-600 disabled:opacity-50"
+                      onClick={cleanupOrphans}
                     >
                       确认回收
-                    </button>
-                    <button
-                      onClick={() => setOrphans(null)}
-                      className="rounded px-2 py-1 text-11 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700"
-                    >
+                    </Button>
+                    <Button variant="ghost" type="button" className="px-2 py-1 text-11" onClick={() => setOrphans(null)}>
                       取消
-                    </button>
+                    </Button>
                   </div>
                 </>
               )}

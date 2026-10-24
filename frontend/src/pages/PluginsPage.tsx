@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type PluginRow, type ToolCatalog } from "../api";
-import { PageHeader, Switch } from "../components/ui";
+import { Button, PageHeader, Switch } from "../components/ui";
 import { describeError } from '../lib/errors';
 
 /**
@@ -108,12 +108,15 @@ function DomainPlugins() {
               </div>
               <div className="flex items-center gap-3">
                 {tools.length > 0 && (
-                  <button
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    type="button"
+                    className="text-xs"
                     onClick={() => setExpanded(isOpen ? null : p.plugin_id)}
-                    className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs text-slate-500 dark:text-slate-400 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600 dark:text-blue-400"
                   >
                     {isOpen ? "收起详情 ▴" : "详情（工具与数据）▾"}
-                  </button>
+                  </Button>
                 )}
                 <Switch
                   checked={p.enabled}

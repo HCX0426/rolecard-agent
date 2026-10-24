@@ -628,13 +628,9 @@ export default function RolesPage({
                     placeholder="或新建作用域（如 health_reports）"
                     className="flex-1 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs"
                   />
-                  <button
-                    type="button"
-                    onClick={addScope}
-                    className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700"
-                  >
+                  <Button variant="outline" size="sm" type="button" onClick={addScope}>
                     新建
-                  </button>
+                  </Button>
                 </div>
               </div>
               <span className="mt-1 block text-11 leading-relaxed text-slate-400 dark:text-slate-500">
@@ -649,18 +645,20 @@ export default function RolesPage({
                   范例（few-shot：教它「怎么答」，比讲规则更省 token）
                 </span>
                 {form.exemplars.length < 4 && (
-                  <button
+                  <Button
+                    variant="outline"
+                    size="sm"
                     type="button"
+                    className="text-xs"
                     onClick={() =>
                       setForm((f) => ({
                         ...f,
                         exemplars: [...f.exemplars, { rowId: nextExemplarId(), user: "", assistant: "" }],
                       }))
                     }
-                    className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700"
                   >
                     ＋ 加一条范例
-                  </button>
+                  </Button>
                 )}
               </div>
               <div className="mt-1.5 space-y-2">
@@ -722,19 +720,10 @@ export default function RolesPage({
               />
             </label>
             <div className="mt-4 flex gap-2">
-              <button
-                type="submit"
-                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-              >
-                保存
-              </button>
-              <button
-                type="button"
-                onClick={() => setEditing(null)}
-                className="rounded-lg px-4 py-2 text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:bg-slate-800/50 dark:hover:bg-slate-700/60"
-              >
+              <Button type="submit">保存</Button>
+              <Button variant="ghost" type="button" onClick={() => setEditing(null)}>
                 取消
-              </button>
+              </Button>
             </div>
           </form>
         )}
@@ -778,30 +767,39 @@ export default function RolesPage({
                     </span>
                   </td>
                   <td className="px-4 py-2.5 text-right">
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      type="button"
+                      className="text-xs text-blue-600 dark:text-blue-400"
                       onClick={() => {
                         openEdit(r);
                       }}
-                      className="rounded px-2 py-1 text-xs text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:bg-blue-900/30"
                     >
                       编辑
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      type="button"
+                      className="text-xs"
                       onClick={() => setTimelineFor({ role_id: r.role_id, role_name: r.role_name })}
-                      className="rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700/50"
                       title="它主动说过什么、记下/更正过哪些事实、你们哪天开聊（只读）"
                     >
                       事件簿
-                    </button>
+                    </Button>
                     {!r.is_builtin && (
-                      <button
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        type="button"
+                        className="text-xs text-red-500 hover:bg-red-50 dark:bg-red-900/30"
                         onClick={async () => {
                           if (await confirm({ title: "删除这个角色卡？", body: "将删除该角色卡（内置角色不可删）。", confirmText: "确认删除", danger: true })) remove(r.role_id);
                         }}
-                        className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50 dark:bg-red-900/30"
                       >
                         删除
-                      </button>
+                      </Button>
                     )}
                   </td>
                 </tr>

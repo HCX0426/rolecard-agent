@@ -1,5 +1,6 @@
 import { memo, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
+import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 
@@ -57,6 +58,7 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
     <div className="text-sm leading-relaxed">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
+        rehypePlugins={[rehypeHighlight]}
         components={{
           p: (p) => (
             <p className="my-1.5 first:mt-0 last:mb-0" {...stripNode(p)} />

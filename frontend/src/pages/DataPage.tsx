@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type GenericRecord, type PluginRow, type ReportRecord } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
-import { Card, Notice, PageHeader, Tag } from "../components/ui";
+import { Button, Card, Notice, PageHeader, Tag } from "../components/ui";
 import { describeError } from '../lib/errors';
 
 // 数据 —— 领域数据的唯一归属地（自"插件 → 详情"里升为独立顶层页）。
@@ -141,12 +141,15 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
           主流程是<b>上传报告 / 图片让 AI 解析</b>；这里只是补录入口 —— 手填的数据默认带
           【未经人工校验】标记。
         </p>
-        <button
+        <Button
+          variant="outline"
+          size="sm"
+          type="button"
+          className="shrink-0 text-xs"
           onClick={() => setAdding((v) => !v)}
-          className="shrink-0 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600 dark:text-blue-400"
         >
           {adding ? "取消" : "＋ 新增报告"}
-        </button>
+        </Button>
       </div>
       {adding && (
         <AddReportForm
@@ -165,20 +168,24 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
             {Math.min(total, (page + 1) * PAGE_SIZE)} 条
           </span>
           <span className="flex items-center gap-1">
-            <button
-              onClick={() => setPage((p) => Math.max(0, p - 1))}
+            <Button
+              variant="outline"
+              type="button"
+              className="px-2 py-0.5 text-xs"
               disabled={page === 0}
-              className="rounded border border-slate-200 px-2 py-0.5 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-700"
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
             >
               上一页
-            </button>
-            <button
-              onClick={() => setPage((p) => p + 1)}
+            </Button>
+            <Button
+              variant="outline"
+              type="button"
+              className="px-2 py-0.5 text-xs"
               disabled={(page + 1) * PAGE_SIZE >= total}
-              className="rounded border border-slate-200 px-2 py-0.5 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-700"
+              onClick={() => setPage((p) => p + 1)}
             >
               下一页
-            </button>
+            </Button>
           </span>
         </Card>
       )}
@@ -197,14 +204,16 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
               {r.institution && <span className="ml-2 text-slate-400 dark:text-slate-500">{r.institution}</span>}
               {r.note && <span className="ml-2 text-slate-400 dark:text-slate-500">备注：{r.note}</span>}
             </div>
-            <button
+            <Button
+              variant="ghost"
+              type="button"
+              className="px-2 py-1 text-11 text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
               onClick={async () => {
                 if (await confirm({ title: "删除整份报告？", body: "将删除该报告及其全部指标记录，不可恢复。", confirmText: "确认删除", danger: true })) remove("report", r.report_id);
               }}
-              className="rounded px-2 py-1 text-11 text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
             >
               删除报告
-            </button>
+            </Button>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[28rem] text-left text-xs">
@@ -256,18 +265,12 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
                             />
                             已人工校验
                           </label>
-                          <button
-                            onClick={() => saveEdit(i.index_id)}
-                            className="rounded bg-blue-600 px-2.5 py-1 text-white hover:bg-blue-700"
-                          >
+                          <Button variant="primary" size="sm" type="button" className="px-2.5 py-1" onClick={() => saveEdit(i.index_id)}>
                             保存
-                          </button>
-                          <button
-                            onClick={() => setEditId(null)}
-                            className="rounded px-2 py-1 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700"
-                          >
+                          </Button>
+                          <Button variant="ghost" size="sm" type="button" className="px-2 py-1" onClick={() => setEditId(null)}>
                             取消
-                          </button>
+                          </Button>
                         </div>
                       </td>
                     </>
@@ -285,20 +288,20 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
                         </Tag>
                       </td>
                       <td className="px-3 py-2 text-right">
-                        <button
-                          onClick={() => startEdit(i.index_id, i)}
-                          className="rounded px-2 py-1 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:bg-blue-900/30"
-                        >
+                        <Button variant="ghost" size="sm" type="button" className="px-2 py-1 text-blue-600 dark:text-blue-400" onClick={() => startEdit(i.index_id, i)}>
                           修正
-                        </button>
-                        <button
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          type="button"
+                          className="px-2 py-1 text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
                           onClick={async () => {
                             if (await confirm({ title: "删除这条指标记录？", body: "将删除该指标项，不可恢复。", confirmText: "确认删除", danger: true })) remove("index", i.index_id);
                           }}
-                          className="rounded px-2 py-1 text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
                         >
                           删除
-                        </button>
+                        </Button>
                       </td>
                     </>
                   )}
@@ -461,25 +464,21 @@ function AddReportForm({ onDone }: { onDone: () => void }) {
       </div>
 
       <div className="mt-2 flex items-center gap-2">
-        <button
+        <Button
+          variant="outline"
+          size="sm"
+          type="button"
+          className="px-2 py-1 text-xs"
           onClick={() => setRows((rs) => [...rs, { rowId: nextRowId(), name: "", value: "", unit: "" }])}
-          className="rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700"
         >
           ＋ 加一行
-        </button>
-        <button
-          onClick={submit}
-          disabled={busy}
-          className="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700 disabled:bg-slate-300 dark:bg-slate-600"
-        >
+        </Button>
+        <Button variant="primary" size="sm" type="button" className="px-3 py-1 text-xs" disabled={busy} onClick={submit}>
           {busy ? "保存中…" : "保存"}
-        </button>
-        <button
-          onClick={onDone}
-          className="rounded px-2 py-1 text-xs text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700"
-        >
+        </Button>
+        <Button variant="ghost" size="sm" type="button" className="px-2 py-1 text-xs" onClick={onDone}>
           取消
-        </button>
+        </Button>
         <span className="text-11 text-slate-400 dark:text-slate-500">手填默认标记为【未经人工校验】</span>
       </div>
 
@@ -601,12 +600,15 @@ function GenericDomainData({
         <p className="text-11 leading-relaxed text-slate-400 dark:text-slate-500">
           「{displayName}」域的通用数据（标签 + 数值/文本 + 单位 + 备注）。新增领域插件即自动出现此视图。
         </p>
-        <button
+        <Button
+          variant="outline"
+          size="sm"
+          type="button"
+          className="shrink-0 text-xs"
           onClick={() => setAdding((v) => !v)}
-          className="shrink-0 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600 dark:text-blue-400"
         >
           {adding ? "取消" : "＋ 新增记录"}
-        </button>
+        </Button>
       </div>
       {status && <Notice tone={status.ok ? "ok" : "error"}>{status.msg}</Notice>}
       {adding && (
@@ -664,15 +666,18 @@ function GenericDomainData({
                       <td className="px-3 py-2 text-slate-600 dark:text-slate-400">{fmt(r)}</td>
                       <td className="px-3 py-2 text-slate-400 dark:text-slate-500">{r.note || "—"}</td>
                       <td className="px-3 py-2 text-right">
-                        <button onClick={() => startEdit(r)} className="rounded px-2 py-1 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:bg-blue-900/30">修正</button>
-                        <button
+                        <Button variant="ghost" size="sm" type="button" className="px-2 py-1 text-blue-600 dark:text-blue-400" onClick={() => startEdit(r)}>修正</Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          type="button"
+                          className="px-2 py-1 text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
                           onClick={async () => {
                             if (await confirm({ title: "删除这条记录？", body: "将删除该条领域数据，不可恢复。", confirmText: "确认删除", danger: true })) remove(r.id);
                           }}
-                          className="rounded px-2 py-1 text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
                         >
                           删除
-                        </button>
+                        </Button>
                       </td>
                     </>
                   )}

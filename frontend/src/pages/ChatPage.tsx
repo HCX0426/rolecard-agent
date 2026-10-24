@@ -9,6 +9,7 @@ import {
   type SessionContext,
   type ThreadRow,
 } from "../api";
+import Button from "../components/ui/Button";
 import { useConfirm } from "../hooks/useConfirm";
 import { useToast, type Tone } from "../components/Toast";
 import { answeredByHint, describeTrim, STOP_HINT, type StreamMeta } from "../lib/stream";
@@ -26,7 +27,6 @@ import SessionSidebar from "../components/chat/SessionSidebar";
 import TurnRow from "../components/chat/TurnRow";
 import ThinkingPanel from "../components/chat/ThinkingPanel";
 import { Markdown } from "../components/Markdown";
-import { Button } from "../components/ui";
 import { describeError } from '../lib/errors';
 
 export default function ChatPage({
@@ -656,28 +656,24 @@ export default function ChatPage({
                 maxLength={100}
                 className="w-72 rounded-lg border border-blue-300 px-2.5 py-1 text-sm outline-none"
               />
-              <button
-                onClick={renameSession}
-                className="rounded bg-blue-600 px-2.5 py-1 text-xs text-white hover:bg-blue-700"
-              >
+              <Button variant="primary" size="sm" type="button" className="px-2.5 py-1 text-xs" onClick={renameSession}>
                 保存
-              </button>
-              <button
-                onClick={() => setEditingTitle(false)}
-                className="rounded px-2 py-1 text-xs text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700"
-              >
+              </Button>
+              <Button variant="ghost" size="sm" type="button" className="px-2 py-1 text-xs" onClick={() => setEditingTitle(false)}>
                 取消
-              </button>
+              </Button>
             </div>
           ) : (
             <div className="group/title flex items-center gap-2">
-              <button
-                onClick={() => setSessionsOpen(true)}
+              <Button
+                variant="outline"
+                type="button"
+                className="px-2 py-0.5 text-xs md:hidden"
                 aria-label="打开对话列表"
-                className="rounded-lg border border-slate-200 px-2 py-0.5 text-xs text-slate-600 dark:border-slate-700 dark:text-slate-300 md:hidden"
+                onClick={() => setSessionsOpen(true)}
               >
                 对话
-              </button>
+              </Button>
               <h2 className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
                 {current ? current.title || "新对话" : "对话"}
               </h2>
@@ -820,20 +816,20 @@ export default function ChatPage({
               <span className="flex-1">
                 已选 <b>{selected.length}</b> 条消息（勾选一侧会带上配对的问答）。删除不可恢复。
               </span>
-              <button
+              <Button
+                variant="danger"
+                size="sm"
+                type="button"
+                className="px-2.5 py-1"
                 onClick={async () => {
                   if (await confirm({ title: "删除选中的消息？", body: `将删除 ${selected.length} 条消息（整轮），不可恢复。`, confirmText: "确认删除", danger: true })) deleteSelected();
                 }}
-                className="rounded bg-red-500 px-2.5 py-1 text-white hover:bg-red-600"
               >
                 删除所选
-              </button>
-              <button
-                onClick={clearSelection}
-                className="rounded px-2 py-1 hover:bg-amber-100 dark:hover:bg-amber-900/40"
-              >
+              </Button>
+              <Button variant="ghost" size="sm" type="button" className="px-2 py-1" onClick={clearSelection}>
                 退出选择
-              </button>
+              </Button>
             </div>
           )}
           {selectMode && selected.length === 0 && (
@@ -855,13 +851,15 @@ export default function ChatPage({
             <div className="mx-auto mb-2 flex max-w-3xl items-start gap-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-xs leading-relaxed text-amber-700 dark:text-amber-300">
               <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
               <span className="flex-1">{describeTrim(trim.dropped, trim.kept)}</span>
-              <button
-                onClick={() => setTrim(null)}
+              <Button
+                variant="ghost"
+                type="button"
+                className="shrink-0 px-1 text-amber-500 hover:bg-amber-100 dark:hover:bg-amber-900/40"
                 title="知道了（下次仍会在需要时提示）"
-                className="shrink-0 rounded px-1 text-amber-500 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                onClick={() => setTrim(null)}
               >
                 知道了
-              </button>
+              </Button>
             </div>
           )}
           {/* 输入框 + 附图 + 上下文使用率：components/chat/Composer（自适应高度与附图

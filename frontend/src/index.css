@@ -18,6 +18,46 @@
   --text-15--line-height: 1.5;
 }
 
+/* 代码块语法高亮（2026-10-24，rehype-highlight 接入）：token 配色是手写的最小集
+   （不用整份 hljs 主题 —— 那会和深浅色模式打架），浅色铺在深底上、深色同理，
+   两套都对着 slate 底调过。没列出的 token 落回当前文本色，不会不可读。 */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section {
+  color: #c678dd;
+}
+.hljs-string,
+.hljs-attr,
+.hljs-symbol {
+  color: #98c379;
+}
+.hljs-comment,
+.hljs-quote {
+  color: #7d8799;
+  font-style: italic;
+}
+.hljs-number,
+.hljs-built_in,
+.hljs-type {
+  color: #d19a66;
+}
+.hljs-title,
+.hljs-name,
+.hljs-function .hljs-title,
+.hljs-title.function_ {
+  color: #61afef;
+}
+.hljs-variable,
+.hljs-template-variable,
+.hljs-regexp {
+  color: #e06c75;
+}
+.dark .hljs-comment,
+.dark .hljs-quote {
+  color: #6b7688;
+}
+
 /* 键盘可达性基线（2026-10-24 UI 打磨）：全项目此前只有 6 处 focus-visible，键盘用户
    在多数控件上看不到焦点在哪。给所有可交互元素一条统一的焦点环 —— :focus-visible
    只在键盘导航时出现，鼠标点击的视觉行为一字不变。 */
