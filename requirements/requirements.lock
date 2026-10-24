@@ -4,6 +4,9 @@
 #
 #    pip-compile --output-file=requirements/requirements.lock requirements/requirements-api.txt requirements/requirements-cloud.txt requirements/requirements-dev.txt requirements/requirements-mcp.txt requirements/requirements-rag.txt requirements/requirements.txt
 #
+--index-url https://pypi.tuna.tsinghua.edu.cn/simple
+--trusted-host pypi.tuna.tsinghua.edu.cn
+
 aiohappyeyeballs==2.7.1
     # via aiohttp
 aiohttp==3.14.4
@@ -55,7 +58,7 @@ cachecontrol[filecache]==0.14.4
     # via
     #   cachecontrol
     #   pip-audit
-certifi==2026.7.22
+certifi==2026.10.23
     # via
     #   httpcore
     #   httpx
@@ -107,7 +110,7 @@ execnet==2.1.2
     # via pytest-xdist
 fastapi==0.142.2
     # via -r requirements/requirements-api.txt
-filelock==4.0.12
+filelock==4.2.4
     # via
     #   cachecontrol
     #   huggingface-hub
@@ -391,7 +394,7 @@ pyjwt[crypto]==2.15.1
     # via mcp
 pyparsing==3.3.3
     # via pip-requirements-parser
-pypdf==6.19.0
+pypdf==6.21.2
     # via -r requirements/requirements-rag.txt
 pypika==0.51.1
     # via chromadb
@@ -581,6 +584,7 @@ websocket-client==1.9.2
     # via kubernetes
 websockets==16.1.1
     # via
+    #   -r requirements/requirements.txt
     #   langgraph-sdk
     #   langsmith
     #   uvicorn
