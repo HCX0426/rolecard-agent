@@ -556,6 +556,17 @@ def put_runtime_settings(
         detail={"fields": sorted(body.values)},
     )
     ctx.rebuild_runtime()
+    # 渠道配置（qq_*）保存后热重启渠道任务（2026-10-25 渠道可配置化）：rebuild 只换
+    # 图与注册表，后台任务不跟着换 —— 渠道要 stop(复位)→start(读新配置)。
+    # 其余字段保存时 restart 是无害的（总闸关着 → start 留痕即返）。
+    # 键的两种形态都要认：前端提交 env 键（QQ_CHANNEL_ENABLED），脚本提交字段名
+    # （qq_channel_enabled）—— save_overrides 会归一成后者，所以**这里**判断要在
+    # 归一后的形态上做（实测：只看 body.values 时 env 键形态永远不中，restart 静默丢失）。
+    saved_fields = {f.lower() for f in body.values}
+    if any(f.startswith("qq_") for f in saved_fields):
+        channel = ctx.runtime.background_task("qq-channel")
+        if channel is not None and hasattr(channel, "restart"):
+            channel.restart()
     return runtime_payload(
         ctx.settings,
         runtime_settings.load_overrides(ctx.conn),

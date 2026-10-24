@@ -152,3 +152,27 @@ def test_mcp_server(
 
 
 __all__ = ["router"]
+
+
+@router.get("/api/channels")
+def list_channels(ctx: AppContext = Depends(get_context)) -> dict[str, Any]:
+    """外部聊天渠道的**运行状态**（工具页「渠道」区块的状态灯与禁用原因）。
+
+    状态判定住在 `QQChannelSource.status()`（与 start 的三道闸同序），本端点只做
+    转接 —— 宿主没注册该任务（未来有第二个渠道宿主）时如实返回空清单，不猜。
+    """
+    channel = ctx.runtime.background_task("qq-channel")
+    status = channel.status() if channel is not None and hasattr(channel, "status") else None
+    return {
+        "channels": (
+            [
+                {
+                    "id": "qq",
+                    "label": "QQ（官方机器人）",
+                    **status,
+                }
+            ]
+            if status is not None
+            else []
+        )
+    }

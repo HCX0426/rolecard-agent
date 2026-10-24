@@ -458,6 +458,53 @@ class QQChannelSource:
             self._pool.shutdown(wait=False, cancel_futures=True)
         if self._api is not None:
             self._api.close()
+        # 复位状态：restart() 要在同一个对象上再 start()——不置停旗的话新循环一进来
+        # 就看见旗子直接收场（实测："保存配置后渠道永远连不上"就是漏了这一行）。
+        self._stop = threading.Event()
+        self._thread = None
+        self._pool = None
+        self._api = None
+
+    def restart(self) -> None:
+        """按**当前有效配置**重启渠道（2026-10-25 渠道可配置化：运行环境页保存后调用）。
+
+        stop（复位状态）→ start（现读 `runtime.effective`）。总闸关着/凭证缺口时
+        start 自己会留痕并保持停止 —— 所以这一条对"关掉渠道"同样正确。
+        """
+        self.stop()
+        self.start()
+
+    # -- 渠道状态（工具页的"渠道"区块读这里） ---------------------------------
+
+    def status(self) -> dict[str, Any]:
+        """渠道的**运行状态快照**：给管理界面的状态灯与禁用原因。
+
+        三个判定段（总闸 → 凭证 → 依赖）与 `start` 的闸序一致 —— "为什么不连"
+        在界面上就能答，不用翻日志。连接态看线程活着没有；收发计数是进程内的，
+        重启归零（如实）。
+        """
+        settings = self._runtime.effective
+        running = bool(
+            self._thread is not None and self._thread.is_alive()
+        )
+        if not settings.qq_channel_enabled:
+            why = "总闸关闭（QQ_CHANNEL_ENABLED=0）"
+        elif not settings.qq_app_id or not settings.qq_app_secret:
+            why = "凭证缺口：AppID / AppSecret 没配齐"
+        elif importlib.util.find_spec("websockets") is None:
+            why = "websockets 依赖不在场"
+        else:
+            why = None
+        with self._seq_guard:
+            sent = sum(self._seq.values())
+        return {
+            "enabled": settings.qq_channel_enabled,
+            "running": running,
+            "blocked_reason": why,
+            "role_id": settings.qq_channel_role_id or DEFAULT_ROLE_ID,
+            "inflight_turns": MAX_INFLIGHT_TURNS - self._slots._value,  # noqa: SLF001 - 有界信号量的当前占用，BoundedSemaphore 无公开读法
+            "messages_sent": sent,
+        }
 
     def _run_loop(self, gateway: QQGatewayLoop) -> None:
         loop = asyncio.new_event_loop()

@@ -70,6 +70,7 @@ RUNTIME_GROUPS: tuple[tuple[str, str], ...] = (
     ("think", "思考模式"),
     ("agent", "对话模式"),
     ("reachout", "主动开口"),
+    ("channel", "聊天渠道"),
     ("run", "命令执行"),
     ("auth", "访问控制"),
     ("egress", "数据出口"),
@@ -175,6 +176,25 @@ RUNTIME_FIELDS: tuple[FieldSpec, ...] = (
               label="文件事件触发",
               note="开 = 轮询任务目录，有变化时该次开口先说变化（绕间隔一次，静默时段不放松）",
               group="reachout"),
+    # -- channel 聊天渠道（2026-10-25）：QQ 官方机器人的四件配置 --------------------
+    # 保存走既有热重建链：rebuild 换装后渠道任务重启（QQChannelSource.restart 读新
+    # 配置）—— 不用重启进程。端点两项（QQ_API_BASE / QQ_TOKEN_URL）刻意不进注册表：
+    # 那是部署期调试项，改它的人知道自己在干什么（.env + 重启）。
+    FieldSpec("qq_channel_enabled", "QQ_CHANNEL_ENABLED", "bool",
+              label="QQ 渠道总闸",
+              note="开 = 按 AppID/Secret 连 QQ 官方机器人平台（bot 账号，q.qq.com 注册）；"
+                   "保存后渠道自动重连，不用重启", group="channel"),
+    FieldSpec("qq_app_id", "QQ_APP_ID", "str",
+              label="QQ AppID",
+              note="q.qq.com → 开发设置 → AppID（机器人管理页也看得到）", group="channel"),
+    FieldSpec("qq_app_secret", "QQ_APP_SECRET", "secret",
+              label="QQ AppSecret",
+              note="q.qq.com → 开发设置；只写不回读（掩码显示），编辑留空 = 保留原值",
+              group="channel"),
+    FieldSpec("qq_channel_role_id", "QQ_CHANNEL_ROLE_ID", "str",
+              label="渠道绑定的角色",
+              note="QQ 上来的人由哪张角色卡应答（填 role_id，如 general_assistant）；"
+                   "空 = 通用助手", group="channel"),
     # 开口间隔（分钟）：调度每 tick 读当前值，所以在线可改。以前只能改 env + 重启，
     # 排查"它为什么不开口"时没法临时调小复现（架构总览 §5 的抑制层之一）。
     FieldSpec("reachout_interval_minutes", "REACHOUT_INTERVAL_MINUTES", "int",
