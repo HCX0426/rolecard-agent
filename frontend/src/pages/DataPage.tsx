@@ -37,7 +37,7 @@ export default function DataPage({ initialBlock }: { initialBlock?: MaterialsBlo
             </>
           }
           actions={
-            <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 p-0.5">
+            <div className="flex rounded-lg border border-slate-300 bg-white p-0.5 shadow-sm dark:border-slate-600 dark:bg-slate-800">
               {(
                 [
                   ["records", "结构化记录"],

@@ -142,7 +142,7 @@ export default function ChatToolbar({
     : roles;
 
   return (
-    <div className="mx-auto mt-2 flex max-w-3xl items-center gap-2">
+    <div className="mx-auto mt-2 flex max-w-3xl flex-wrap items-center gap-x-2 gap-y-1.5">
       <span
         className="relative"
         onMouseEnter={cancelMenuClose}
@@ -163,7 +163,7 @@ export default function ChatToolbar({
           aria-haspopup="true"
           aria-expanded={roleMenuOpen}
           title="换个说话的角色 —— 会打开那个角色自己的那条对话（各角色的话留在各自那条线里）"
-          className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-700"
+          className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-700"
         >
           <IconUser />
           {roles.find((r) => r.role_id === displayRole)?.role_name ?? "角色"} ▾
@@ -405,7 +405,7 @@ export default function ChatToolbar({
         onClick={() => fileRef.current?.click()}
         disabled={uploading}
         title="上传文件，自动解析并入检索索引（.txt/.md/.pdf/.docx/.pptx/.xlsx + 图片 OCR）"
-        className="flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700 disabled:opacity-50"
+        className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700 disabled:opacity-50"
       >
         <IconClip />
         {uploading ? "上传中…" : "上传文件"}
@@ -414,7 +414,7 @@ export default function ChatToolbar({
         onClick={onToggleSelectMode}
         disabled={busy || !sessionId}
         title="删除历史里的某几段问答：勾选任意一问或一答，会自动带上配对的另一侧"
-        className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs disabled:opacity-50 ${
+        className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1 text-xs disabled:opacity-50 ${
           selectMode
             ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
             : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:border-amber-300 hover:text-amber-600"

@@ -668,11 +668,14 @@ export default function ChatPage({
               <Button
                 variant="outline"
                 type="button"
-                className="px-2 py-0.5 text-xs md:hidden"
+                className="px-2 py-0.5 md:hidden"
                 aria-label="打开对话列表"
+                title="打开对话列表"
                 onClick={() => setSessionsOpen(true)}
               >
-                对话
+                {/* 文字职责在旁边的标题上：移动端 390px 实测「对话/对话」叠两行，
+                    按钮只留图标语义（aria-label 已给屏幕阅读器）。 */}
+                ☰
               </Button>
               <h2 className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
                 {current ? current.title || "新对话" : "对话"}

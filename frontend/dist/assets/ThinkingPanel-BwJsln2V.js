@@ -1,4 +1,4 @@
-import{n as y,o as w,r as i,a as T,j as g}from"./index-Dv3Ug3Pb.js";const B="已停止生成：以上是这一轮已经完成的部分。",_=t=>`注意：这一轮实际由云端「${t}」作答（你选的本地模型当时不可用，回退链静默降了级）。对话内容离开了这台机器。`;function S(t){const r=[];let s=t;for(;;){const n=s.indexOf(`
+import{n as y,o as w,r as i,a as T,j as g}from"./index-DKWnQC_Y.js";const B="已停止生成：以上是这一轮已经完成的部分。",_=t=>`注意：这一轮实际由云端「${t}」作答（你选的本地模型当时不可用，回退链静默降了级）。对话内容离开了这台机器。`;function S(t){const r=[];let s=t;for(;;){const n=s.indexOf(`
 
 `),e=s.indexOf(`\r
 \r
