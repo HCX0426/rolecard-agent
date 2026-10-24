@@ -174,7 +174,7 @@ export default function ChatToolbar({
                 角色一多再给一个搜索框 —— 少了这个封顶，十几个角色就能把浮层顶出屏幕，
                 而它往上长是会被头部截掉的。 */}
             <div className="absolute bottom-full left-0 z-20 mb-2 flex max-h-[min(60vh,420px)] w-64 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-600 dark:bg-slate-800">
-              <p className="shrink-0 bg-slate-50 px-3 py-1.5 text-[11px] font-medium text-slate-400 dark:bg-slate-800/60 dark:text-slate-500">
+              <p className="shrink-0 bg-slate-50 px-3 py-1.5 text-11 font-medium text-slate-400 dark:bg-slate-800/60 dark:text-slate-500">
                 选角色 = 进那个角色自己的那条对话（原来那条留在左侧）
               </p>
               {roles.length > ROLE_SEARCH_FROM && (
@@ -202,14 +202,14 @@ export default function ChatToolbar({
                       <span className="ml-auto flex shrink-0 items-center gap-1.5">
                         {unread > 0 && (
                           <span
-                            className="rounded-full bg-blue-600 px-1.5 text-[10px] text-white"
+                            className="rounded-full bg-blue-600 px-1.5 text-10 text-white"
                             title={`${unread} 条主动找你，还没读`}
                           >
                             {unread}
                           </span>
                         )}
                         {r.is_builtin && (
-                          <span className="rounded bg-slate-100 px-1 text-[10px] text-slate-400 dark:bg-slate-700/60 dark:text-slate-400">
+                          <span className="rounded bg-slate-100 px-1 text-10 text-slate-400 dark:bg-slate-700/60 dark:text-slate-400">
                             内置
                           </span>
                         )}
@@ -267,7 +267,7 @@ export default function ChatToolbar({
             </button>
             {grouped.map(([provider, list]) => (
               <div key={provider}>
-                <p className="bg-slate-50 dark:bg-slate-800/50 px-3 py-1 text-[11px] font-medium text-slate-400 dark:text-slate-500">
+                <p className="bg-slate-50 dark:bg-slate-800/50 px-3 py-1 text-11 font-medium text-slate-400 dark:text-slate-500">
                   {providerLabels[provider] ?? provider}
                 </p>
                 {list.map((b) => (
@@ -305,7 +305,7 @@ export default function ChatToolbar({
                         <button
                           onClick={() => setCtxOpen((c) => (c === b.name ? null : b.name))}
                           title="设置该模型的上下文窗口（num_ctx）"
-                          className="mr-2 shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 hover:bg-slate-200 dark:bg-slate-700/60 dark:text-slate-400 dark:hover:bg-slate-600"
+                          className="mr-2 shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-10 text-slate-500 hover:bg-slate-200 dark:bg-slate-700/60 dark:text-slate-400 dark:hover:bg-slate-600"
                         >
                           {b.num_ctx ? `${Math.round(b.num_ctx / 1024)}k ▾` : "上下文 ▾"}
                         </button>
@@ -316,7 +316,7 @@ export default function ChatToolbar({
                       <button
                         onClick={() => setSampOpen((s) => (s === b.name ? null : b.name))}
                         title="采样惩罚（重复 / 频率 / 存在）：保存即热重建，下一轮生效"
-                        className="mr-2 shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 hover:bg-slate-200 dark:bg-slate-700/60 dark:text-slate-400 dark:hover:bg-slate-600"
+                        className="mr-2 shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-10 text-slate-500 hover:bg-slate-200 dark:bg-slate-700/60 dark:text-slate-400 dark:hover:bg-slate-600"
                       >
                         {b.repeat_penalty != null ||
                         b.frequency_penalty != null ||
@@ -329,7 +329,7 @@ export default function ChatToolbar({
                     {(b.style === "native") &&
                       ctxOpen === b.name && (
                       <div className="border-t border-slate-100 px-3 py-2 dark:border-slate-700/60">
-                        <p className="pb-1.5 text-[10px] font-medium text-slate-400 dark:text-slate-500">
+                        <p className="pb-1.5 text-10 font-medium text-slate-400 dark:text-slate-500">
                           上下文窗口 · {b.model}
                         </p>
                         <div className="grid grid-cols-3 gap-1">
@@ -344,7 +344,7 @@ export default function ChatToolbar({
                             <button
                               key={opt.label}
                               onClick={() => setModelCtx(b.name, opt.value)}
-                              className={`rounded px-2 py-1 text-[11px] ${
+                              className={`rounded px-2 py-1 text-11 ${
                                 (b.num_ctx ?? null) === opt.value
                                   ? "bg-blue-600 text-white"
                                   : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700/60"
@@ -354,7 +354,7 @@ export default function ChatToolbar({
                             </button>
                           ))}
                         </div>
-                        <p className="mt-1.5 text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
+                        <p className="mt-1.5 text-10 leading-relaxed text-slate-400 dark:text-slate-500">
                           Ollama 默认仅 2048 tokens，调大才能真正用上模型窗口
                         </p>
                       </div>
@@ -367,7 +367,7 @@ export default function ChatToolbar({
                             !f.nativeOnly || b.style === "native",
                         ).map((f) => (
                           <div key={f.key} className="flex items-start gap-1.5 py-0.5">
-                            <span className="w-16 shrink-0 pt-1 text-[10px] text-slate-400 dark:text-slate-500">
+                            <span className="w-16 shrink-0 pt-1 text-10 text-slate-400 dark:text-slate-500">
                               {f.label}
                             </span>
                             <div className="flex flex-wrap gap-1">
@@ -375,7 +375,7 @@ export default function ChatToolbar({
                                 <button
                                   key={opt.label}
                                   onClick={() => void setModelSampling(b.name, f.key, opt.value)}
-                                  className={`rounded px-2 py-0.5 text-[11px] ${
+                                  className={`rounded px-2 py-0.5 text-11 ${
                                     (b[f.key] ?? null) === opt.value
                                       ? "bg-blue-600 text-white"
                                       : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700/60"
@@ -387,7 +387,7 @@ export default function ChatToolbar({
                             </div>
                           </div>
                         ))}
-                        <p className="mt-1 text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
+                        <p className="mt-1 text-10 leading-relaxed text-slate-400 dark:text-slate-500">
                           「未设置」= 不传这项、听引擎的（Ollama 出厂重复惩罚就是 1.1）。
                           上调能压复读，但小模型上更容易伤连贯 —— 拿不准就留未设置。
                         </p>
@@ -432,7 +432,7 @@ export default function ChatToolbar({
           e.target.value = "";
         }}
       />
-      <span className="ml-auto text-[11px] text-slate-300 dark:text-slate-600">
+      <span className="ml-auto text-11 text-slate-300 dark:text-slate-600">
         Enter 发送 · 生成中可停止 · 停用插件即刻生效
       </span>
     </div>

@@ -214,7 +214,7 @@ def deep_check(ctx: AppContext = Depends(get_context)) -> object:
     现在这里只负责"探哪一个后端"，**怎么探归 `core.model_probe.list_models` 一处**。
     """
     try:
-        backend = ctx.app_state["effective"].backend(None)
+        backend = ctx.settings.backend(None)
     except KeyError as exc:
         # 默认后端名不在后端集里 = 配置错误。给可读的 400，而不是裸 KeyError → 500。
         raise HTTPException(

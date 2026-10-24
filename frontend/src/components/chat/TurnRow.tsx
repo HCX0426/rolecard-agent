@@ -100,7 +100,7 @@ export default function TurnRow({
                 rows={3}
                 className="w-full resize-y rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-blue-400"
               />
-              <div className="mt-1.5 flex items-center justify-end gap-2 text-[11px]">
+              <div className="mt-1.5 flex items-center justify-end gap-2 text-11">
                 <span className="text-slate-400 dark:text-slate-500">
                   发送后此条之后的历史将作废并重新生成（Ctrl+Enter 发送）
                 </span>
@@ -149,7 +149,7 @@ export default function TurnRow({
                 )}
               </div>
               {turn.user.ts && (
-                <p className="mt-1 text-right text-[10px] text-slate-500 dark:text-slate-400">
+                <p className="mt-1 text-right text-10 text-slate-500 dark:text-slate-400">
                   {formatMessageTs(turn.user.ts)}
                 </p>
               )}
@@ -161,7 +161,7 @@ export default function TurnRow({
       {turn.answer && (
         <>
           <Markdown text={turn.answer.content} />
-          <div className="mt-1 flex items-center gap-3 text-[11px] text-slate-400 dark:text-slate-500">
+          <div className="mt-1 flex items-center gap-3 text-11 text-slate-400 dark:text-slate-500">
             {/* 这一句是她**主动**说的（R26-40 ①）：主动开口那句与前后的提问之间
                 没有"用户消息"作分界，`splitSegments` 已经把它切成独立一段 ——
                 判据就是 `turn.user === null`，**不新增后端字段**（那会给同一件事

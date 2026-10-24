@@ -53,6 +53,7 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "fs_list",
         "fs_read",
         "fs_write",
+        "import_role_card",
         "local_service_pin",
         "local_service_unload",
         "merge_memory_item",

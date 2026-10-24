@@ -25,6 +25,8 @@ export interface RoleCard {
   affinity_enabled?: boolean;
   /** 文件事件触发（架构总览 §5）：该角色可否被任务目录变化触发，默认开。 */
   file_watch_enabled?: boolean;
+  /** 固定时刻问候（HH:MM 本地时刻；null/缺省 = 不排）。每天这一时刻主动开口一次，当日只发一次。 */
+  greeting_at?: string | null;
   /** 收件箱自动保留条数：0 = 不自动删（默认）；N>0 = 只留最近 N 条投递记录。 */
   reachout_keep?: number;
   /** 桌宠形象包 id（空/缺省 = 没配过 → 落默认包）。可选值来自 `/api/pets`，见 `pets/registry.ts`。 */

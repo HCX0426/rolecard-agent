@@ -56,7 +56,7 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
           ),
           pre: (p) => (
             <pre
-              className="my-1.5 overflow-x-auto rounded-lg bg-slate-900 p-3 text-[12px] leading-relaxed text-slate-100 dark:bg-slate-900/80"
+              className="my-1.5 overflow-x-auto rounded-lg bg-slate-900 p-3 text-12 leading-relaxed text-slate-100 dark:bg-slate-900/80"
               {...stripNode(p)}
             />
           ),
@@ -66,7 +66,7 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
             if (inline) {
               return (
                 <code
-                  className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[12px] dark:bg-slate-700/70"
+                  className="rounded bg-slate-100 px-1 py-0.5 font-mono text-12 dark:bg-slate-700/70"
                   {...rest}
                 />
               );

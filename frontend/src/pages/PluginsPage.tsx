@@ -133,7 +133,7 @@ function DomainPlugins() {
                     </div>
                   ))}
                 </div>
-                <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                <p className="text-11 text-slate-400 dark:text-slate-500">
                   本域数据已移到「数据」页 —— 数据随领域归属，插件停用不影响数据保留。
                 </p>
               </div>

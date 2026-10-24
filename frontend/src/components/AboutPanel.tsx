@@ -106,7 +106,7 @@ export function AboutPanel({
             <dd className="font-mono">{info.sessions}</dd>
           </div>
         </dl>
-        <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-500">
+        <p className="mt-2 text-11 text-slate-400 dark:text-slate-500">
           对话默认谁算、失败时依次回退给谁 → 在「服务」里改；模型的增删与它的密钥 → 在「模型」里改。
           插件的启停在左侧「插件」页（停用立即生效）。
         </p>

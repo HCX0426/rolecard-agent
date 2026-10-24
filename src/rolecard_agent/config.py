@@ -104,6 +104,7 @@ SECRET_FIELD_NAMES: frozenset[str] = frozenset(
         "langsmith_api_key",
         "auth_credentials",
         "auth_api_keys",
+        "qq_app_secret",
     }
 )
 
@@ -319,6 +320,22 @@ class Settings(BaseModel):
     # —— 那是**时间**密度问题，按条数合并会让三天前的五条挤成一行而今天的五条占五行。
     # 后端不参与分组：`created_at` 已经在响应里，折叠只做在界面（理由见设计稿 §1）。
     reachout_merge_days: int = 1
+
+    # —— QQ 官方渠道（features/channels/qq.py，2026-10-24 2b）——————————————
+    # 总闸：False = 渠道后台任务不启（默认关 —— 接 QQ 是显式配置，不是默认行为）。
+    # 开着但凭证不齐也起不来：凭证缺口会 emit 一条 qq_channel_disabled，不静默。
+    qq_channel_enabled: bool = False
+    # 开放平台凭证（q.qq.com → 开发设置 → AppID / AppSecret）。Secret 只进内存与
+    # token 交换请求，绝不进日志与轨迹（与 SECRET_FIELD_NAMES 同一条纪律）。
+    qq_app_id: str = ""
+    qq_app_secret: str = ""
+    # 渠道会话绑到哪张角色卡（role_id）。空 = 通用助手。为什么一条渠道一个角色：
+    # v1 的定位是"个人助理在 QQ 上的门"，per-peer 多角色是另一件产品事，等真需求再加表。
+    qq_channel_role_id: str = ""
+    # 协议端点（测试注入假端点；生产保持默认）。适配器**只**对这两个地址出网 ——
+    # 这是它自己的出网边界，不进 URL 工具的允许清单那套（那是给模型用的）。
+    qq_api_base: str = "https://api.sgroup.qq.com"
+    qq_token_url: str = "https://bots.qq.com/app/getAppAccessToken"
 
     # 文件事件触发（架构总览 §5 第四类触发源，core/watch/file_watch.py）：全局总闸。
     # True = 每 tick 轮询任务目录（size+mtime 基线 diff），有变化时该次开口以 file_event
@@ -677,6 +694,12 @@ class Settings(BaseModel):
             ("REACHOUT_ENABLED", "reachout_enabled"),
             ("REACHOUT_INTERVAL_MINUTES", "reachout_interval_minutes"),
             ("REACHOUT_MERGE_DAYS", "reachout_merge_days"),
+            ("QQ_CHANNEL_ENABLED", "qq_channel_enabled"),
+            ("QQ_APP_ID", "qq_app_id"),
+            ("QQ_APP_SECRET", "qq_app_secret"),
+            ("QQ_CHANNEL_ROLE_ID", "qq_channel_role_id"),
+            ("QQ_API_BASE", "qq_api_base"),
+            ("QQ_TOKEN_URL", "qq_token_url"),
             ("FILE_WATCH_ENABLED", "file_watch_enabled"),
             ("SQLITE_PATH", "sqlite_path"),
             ("CHROMA_PATH", "chroma_path"),

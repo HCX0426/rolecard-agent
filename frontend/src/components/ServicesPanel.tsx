@@ -17,7 +17,7 @@ function KindBadge({ kind }: { kind: "local" | "cloud" }) {
       ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
       : "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300";
   return (
-    <span className={`rounded-full px-2 py-0.5 text-[11px] ${style}`}>
+    <span className={`rounded-full px-2 py-0.5 text-11 ${style}`}>
       {kind === "local" ? "本地" : "云端"}
     </span>
   );
@@ -27,7 +27,7 @@ function AvailBadge({ available, reason }: { available: boolean; reason: string 
   return (
     <span
       title={reason}
-      className={`rounded-full px-2 py-0.5 text-[11px] ${
+      className={`rounded-full px-2 py-0.5 text-11 ${
         available
           ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
           : "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
@@ -180,7 +180,7 @@ export function ServicesPanel() {
           <section key={cat.key} className="flex flex-col gap-2">
             <div className="flex items-baseline gap-2">
               <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">{cat.title}</h3>
-              <span className="text-[11px] text-slate-400 dark:text-slate-500">{cat.hint}</span>
+              <span className="text-11 text-slate-400 dark:text-slate-500">{cat.hint}</span>
               {!cat.readonly && (
                 <button
                   onClick={() => {
@@ -228,7 +228,7 @@ export function ServicesPanel() {
                       ))}
                   </select>
                   {selectable.length === 0 && (
-                    <span className="text-[11px] text-slate-400 dark:text-slate-500">
+                    <span className="text-11 text-slate-400 dark:text-slate-500">
                       模型页还没有可加入的模型 —— 请先去「模型」页新增
                     </span>
                   )}
@@ -263,14 +263,14 @@ export function ServicesPanel() {
                       <AvailBadge available={cand.available} reason={cand.reason} />
                       {cand.key_masked && (
                         <span
-                          className="font-mono text-[11px] text-slate-400 dark:text-slate-500"
+                          className="font-mono text-11 text-slate-400 dark:text-slate-500"
                           title="已保存密钥（不可见明文，编辑在模型页）"
                         >
                           {cand.key_masked}
                         </span>
                       )}
                       {cand.builtin && (
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-slate-700 dark:text-slate-300">
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-11 text-slate-500 dark:bg-slate-700 dark:text-slate-300">
                           内置
                         </span>
                       )}
@@ -296,7 +296,7 @@ export function ServicesPanel() {
                             {/* 禁用必须配一句"怎么恢复"：`title` 在禁用按钮上 Chromium 根本不弹，
                                 所以说明要落在 DOM 里，而不是藏在悬浮提示里。 */}
                             {!cand.enabled && (
-                              <span className="text-[10px] leading-tight text-slate-400 dark:text-slate-500">
+                              <span className="text-10 leading-tight text-slate-400 dark:text-slate-500">
                                 该行已停用 —— 先「启用」才能排优先级
                               </span>
                             )}
@@ -305,7 +305,7 @@ export function ServicesPanel() {
                                 <button
                                   disabled={busy === cat.key}
                                   onClick={() => toggleEnabled(cat, cand)}
-                                  className={`rounded-full px-2.5 py-0.5 text-[11px] ${
+                                  className={`rounded-full px-2.5 py-0.5 text-11 ${
                                     cand.enabled
                                       ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
                                       : "bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300"
@@ -320,7 +320,7 @@ export function ServicesPanel() {
                                       if (await confirm({ title: "从这个服务顺序里移除这个模型？", body: "仅从本服务优先级中摘除引用，模型页配置不受影响。", confirmText: "确认移除", danger: true })) remove(cat, cand);
                                     }}
                                     title="仅从本服务移除引用，不影响模型页配置"
-                                    className="rounded px-2 py-0.5 text-[11px] text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30"
+                                    className="rounded px-2 py-0.5 text-11 text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30"
                                   >
                                     移除
                                   </button>
@@ -330,7 +330,7 @@ export function ServicesPanel() {
                               <>
                                 {/* 模型推理这一节：序列本身就是"谁用于对话"的事实面，
                                     所以摘除是一等动作（配置仍留在模型页，不是删配置）。 */}
-                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-slate-700 dark:text-slate-300">
+                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-11 text-slate-500 dark:bg-slate-700 dark:text-slate-300">
                                   {usedByLabel(cand.id)
                                     ? `还用于：${usedByLabel(cand.id)}`
                                     : "仅用于对话"}
@@ -341,26 +341,26 @@ export function ServicesPanel() {
                                     if (await confirm({ title: `把「${cand.label}」移出对话序列？`, body: "只取消「用于对话」这一项，模型页那行配置与它的其他用途都不受影响。至少要保留一个对话模型。", confirmText: "确认移出", danger: true })) removeFromPool(cat, cand);
                                   }}
                                   title={cat.candidates.length <= 1 ? "至少要保留一个对话模型" : "移出对话序列（模型页配置保留）"}
-                                  className="rounded px-2 py-0.5 text-[11px] text-red-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-900/30"
+                                  className="rounded px-2 py-0.5 text-11 text-red-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-900/30"
                                 >
                                   移出对话
                                 </button>
                                 {cat.candidates.length <= 1 && (
-                                  <span className="text-[10px] leading-tight text-slate-400 dark:text-slate-500">
+                                  <span className="text-10 leading-tight text-slate-400 dark:text-slate-500">
                                     这是唯一在册的对话模型 —— 想换先「＋ 加入对话」
                                   </span>
                                 )}
                               </>
                             )}
                             {cat.order_only && cand.id === (cat.default_backend ?? cat.effective) && (
-                              <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                              <span className="rounded-full bg-blue-100 px-2 py-0.5 text-11 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
                                 默认
                               </span>
                             )}
                           </>
                         )}
                         {cat.readonly && !cat.order_only && (
-                          <span className="text-[11px] text-slate-400 dark:text-slate-500">
+                          <span className="text-11 text-slate-400 dark:text-slate-500">
                             {cand.id === cat.effective ? "默认" : ""}
                           </span>
                         )}
@@ -372,7 +372,7 @@ export function ServicesPanel() {
             </div>
 
             {cat.effective && (
-              <p className="text-[11px] text-slate-400 dark:text-slate-500">
+              <p className="text-11 text-slate-400 dark:text-slate-500">
                 生效：{cat.candidates.find((c) => c.id === cat.effective)?.label ?? cat.effective}
                 {cat.degraded_from ? "（优先级第 1 位不可用，已自动顺延）" : ""}
               </p>

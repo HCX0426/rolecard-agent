@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Notice, PageHeader } from "../components/ui";
 import TimelineDrawer from "../components/TimelineDrawer";
 import type { PetPackListing } from "../pets/registry";
@@ -36,6 +36,7 @@ const EMPTY_FORM = {
   recall_enabled: true,
   time_pattern_enabled: true,
   file_watch_enabled: true,
+  greeting_at: "",
   reachout_keep: 0,
   pet_pack: "",
 };
@@ -71,7 +72,7 @@ function ToolGroup({
               className="mt-0.5"
             />
             <span className="min-w-0">
-              <code className="text-[11px] text-slate-700 dark:text-slate-200">{t.name}</code>
+              <code className="text-11 text-slate-700 dark:text-slate-200">{t.name}</code>
               <span className="block truncate text-slate-400 dark:text-slate-500">{t.description}</span>
             </span>
           </label>
@@ -107,6 +108,39 @@ export default function RolesPage({
   /** 可用的桌宠形象包（`/api/pets`）。读不到 = null，那一格整条不出现（不给死选项）。 */
   const [packs, setPacks] = useState<PetPackListing | null>(null);
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
+  // ST 卡导入（2026-10-24，2c）：隐藏的 file input 由按钮点开，选完即上传。
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
+
+  async function importCard(file: File) {
+    setImporting(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const body = await api.post<{ role: { role_id: string }; report: Record<string, unknown> }>(
+        "/api/roles/import",
+        form,
+      );
+      const report = body.report ?? {};
+      const dropped = [
+        report.exemplars_dropped && `范例丢了 ${report.exemplars_dropped} 条`,
+        report.worldbook_entries_dropped &&
+          `世界书 ${report.worldbook_entries_dropped} 条没导（要走知识页）`,
+        report.tags_dropped && `标签 ${report.tags_dropped} 个`,
+      ].filter(Boolean);
+      await load();
+      setStatus({
+        ok: true,
+        msg: `已导入「${body.role.role_id}」${dropped.length ? `（${dropped.join("；")}）` : ""}`,
+      });
+    } catch (e) {
+      setStatus({ ok: false, msg: `导入失败：${describeError(e)}` });
+    } finally {
+      setImporting(false);
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  }
+
 
   async function load() {
     setRoles(await api.get<RoleCard[]>("/api/roles"));
@@ -222,6 +256,7 @@ export default function RolesPage({
       recall_enabled: r.recall_enabled !== false,
       time_pattern_enabled: r.time_pattern_enabled !== false,
       file_watch_enabled: r.file_watch_enabled !== false,
+      greeting_at: r.greeting_at ?? "",
       reachout_keep: Number(r.reachout_keep ?? 0),
       pet_pack: r.pet_pack ?? "",
     });
@@ -248,6 +283,7 @@ export default function RolesPage({
       recall_enabled: form.recall_enabled,
       time_pattern_enabled: form.time_pattern_enabled,
       file_watch_enabled: form.file_watch_enabled,
+      greeting_at: form.greeting_at.trim() || null,
       reachout_keep: form.reachout_keep,
       pet_pack: form.pet_pack,
     };
@@ -283,7 +319,26 @@ export default function RolesPage({
         <PageHeader
           title="角色卡"
           subtitle="人设、温度、工具白名单与知识作用域；内置角色不可删除"
-          actions={<Button onClick={openCreate}>＋ 新建角色</Button>}
+          actions={
+            <>
+              {/* ST 卡导入（2c）：report 里的对账（丢了几条范例/世界书没导）直接进状态栏，
+                  对应"卡里有什么东西没跟着来"必须看得见的口径。 */}
+              <input
+                ref={importInputRef}
+                type="file"
+                accept=".png,.json"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void importCard(file);
+                }}
+              />
+              <Button variant="outline" disabled={importing} onClick={() => importInputRef.current?.click()}>
+                {importing ? "导入中…" : "导入 ST 卡"}
+              </Button>
+              <Button onClick={openCreate}>＋ 新建角色</Button>
+            </>
+          }
         />
 
         {status && (
@@ -409,6 +464,21 @@ export default function RolesPage({
                 />
                 <span className="text-slate-600 dark:text-slate-300">文件事件：任务目录有变化时主动说（需全局「文件事件触发」开着）</span>
               </label>
+              {/* 固定时刻问候（2026-10-24，2a）：每天这一时刻主动开口一次，当日只发一次；
+                  仍要过静默闸 —— 基线间隔没到就照旧被压，排好的问候不越过"别太吵"纪律。 */}
+              <label className="flex items-center gap-2">
+                <span className="text-slate-600 dark:text-slate-300">固定时刻问候</span>
+                <input
+                  type="time"
+                  value={form.greeting_at}
+                  disabled={!form.reachout_enabled}
+                  onChange={(e) => setForm({ ...form, greeting_at: e.target.value })}
+                  className="rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
+                />
+                <span className="text-slate-600 dark:text-slate-300">
+                  每天这个时刻主动找你一次（清空 = 不排）
+                </span>
+              </label>
               {/* 抽屉"只增不减"的自动侧配套（用户 2026-09-23）：手动侧是抽屉里的 ✕ 与「清空」。
                   删的都是**投递记录**，她说出口的那句话留在对话里 —— 那是她下次开口的依据。 */}
               <label className="flex items-center gap-2">
@@ -445,7 +515,7 @@ export default function RolesPage({
                       </option>
                     ))}
                   </select>
-                  <span className="text-[10px] text-slate-400">
+                  <span className="text-10 text-slate-400">
                     自己放的素材放 {packs.user_dir}
                     {packs.skipped.length
                       ? ` · ${packs.skipped.length} 个目录没被认（缺图或渲染器不支持）`
@@ -527,7 +597,7 @@ export default function RolesPage({
                 {/* 可选作用域下拉：来自真实已建知识集合 + 现存角色声明；选中即加入 */}
                 {availableScopes.length > 0 && (
                   <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <span className="text-[11px] text-slate-400 dark:text-slate-500">从已有作用域添加：</span>
+                    <span className="text-11 text-slate-400 dark:text-slate-500">从已有作用域添加：</span>
                     <select
                       value=""
                       onChange={(e) => {
@@ -567,7 +637,7 @@ export default function RolesPage({
                   </button>
                 </div>
               </div>
-              <span className="mt-1 block text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
+              <span className="mt-1 block text-11 leading-relaxed text-slate-400 dark:text-slate-500">
                 这是对内核知识库（RAG）的检索授权：声明 = 可检索该作用域；不声明 =
                 不可检索。库归内核，角色只声明 —— 避免 N 个角色 × M 套索引。可选列表来自
                 现存角色的声明并集。
@@ -597,7 +667,7 @@ export default function RolesPage({
                 {form.exemplars.map((ex, i) => (
                   <div key={ex.rowId} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-2">
                     <div className="flex items-start gap-2">
-                      <span className="mt-1.5 shrink-0 text-[11px] text-slate-400 dark:text-slate-500">用户</span>
+                      <span className="mt-1.5 shrink-0 text-11 text-slate-400 dark:text-slate-500">用户</span>
                       <input
                         value={ex.user}
                         onChange={(e) => setExemplar(i, "user", e.target.value)}
@@ -619,7 +689,7 @@ export default function RolesPage({
                       </button>
                     </div>
                     <div className="mt-1.5 flex items-start gap-2">
-                      <span className="mt-1.5 shrink-0 text-[11px] text-slate-400 dark:text-slate-500">回答</span>
+                      <span className="mt-1.5 shrink-0 text-11 text-slate-400 dark:text-slate-500">回答</span>
                       <textarea
                         value={ex.assistant}
                         onChange={(e) => setExemplar(i, "assistant", e.target.value)}
@@ -631,12 +701,12 @@ export default function RolesPage({
                   </div>
                 ))}
                 {form.exemplars.length === 0 && (
-                  <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                  <p className="text-11 text-slate-400 dark:text-slate-500">
                     还没有范例。范例插在角色设定与安全规则之间（上限 4 条 / 共 3000 字）。
                   </p>
                 )}
               </div>
-              <span className="mt-1 block text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
+              <span className="mt-1 block text-11 leading-relaxed text-slate-400 dark:text-slate-500">
                 装配顺序：角色设定 → <b>范例</b> → 安全规则（安全规则永远最后，不可被覆盖）。
                 半填（只写一半）的范例不会被提交。
                 <b>范例教句式，不教事实</b>：别在这里写真实数值、日期或人名 ——

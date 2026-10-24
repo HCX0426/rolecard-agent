@@ -18,10 +18,8 @@ allowed to see "that failed", but never a stack trace.
 
 from __future__ import annotations
 
-import contextvars
 import json
 from collections.abc import Callable, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -42,6 +40,7 @@ from rolecard_agent.core.agent.prompts import (
 )
 from rolecard_agent.core.agent.state import now_ts
 from rolecard_agent.core.common.anti_repeat import clean_repeated_spans
+from rolecard_agent.core.common.pools import make_pool, submit_with_context
 from rolecard_agent.core.common.thread_locks import stop_requested
 from rolecard_agent.core.memory import current_role_id_ctx
 from rolecard_agent.core.tools.errors import ToolExecutionError
@@ -71,7 +70,7 @@ TOOL_LOOP_BREAK = (
 #   * 执行器有固定的 worker 上限（`_TOOL_MAX_WORKERS`），坑位是有界的；
 #   * 只有 `idempotent` 的工具才重试，超时不会在写工具上叠加副作用。
 _TOOL_MAX_WORKERS = 16
-_tool_executor = ThreadPoolExecutor(max_workers=_TOOL_MAX_WORKERS, thread_name_prefix="tool-exec")
+_tool_executor = make_pool("tool-exec", _TOOL_MAX_WORKERS)
 
 # 默认工具总时长上限（秒）。取 120 与模型超时同量级：单个工具的合理最坏情况（OCR 子进程
 # 120s）不会被误杀，而"无限挂起"被挡住。
@@ -93,18 +92,18 @@ class VisionNotSupported(Exception):
 def _invoke_tool(tool: Any, args: dict[str, Any], timeout_seconds: float) -> Any:
     """在独立线程里执行工具，并施加总时长上限。
 
-    **必须提交 `copy_context()`**：`search_knowledge` 从 `role_knowledge_scopes_ctx` 读
-    当前角色已授权的知识作用域，而 ContextVar 不会自动传播到新线程。不拷贝上下文的话，
-    检索工具会看到空作用域、直接回答"当前角色未授权任何知识作用域" —— 一个由并发实现
-    引入的、与权限相关的静默故障。测试 `test_search_tool_sees_the_role_scopes` 守这一点。
+    **提交必须带上下文**（`pools.submit_with_context`）：`search_knowledge` 从
+    `role_knowledge_scopes_ctx` 读当前角色已授权的知识作用域，而 ContextVar 不会自动
+    传播到新线程。不带过去的话，检索工具会看到空作用域、直接回答"当前角色未授权任何
+    知识作用域" —— 一个由并发实现引入的、与权限相关的静默故障。
+    测试 `test_search_tool_sees_the_role_scopes` 守这一点。
 
     `timeout_seconds <= 0` = 不设上限，直接在当前线程调用（调试用，也保留了"没有
     线程池参与"的原始路径）。
     """
     if timeout_seconds <= 0:
         return tool.invoke(args)
-    copied = contextvars.copy_context()
-    future = _tool_executor.submit(copied.run, tool.invoke, args)
+    future = submit_with_context(_tool_executor, tool.invoke, args)
     try:
         return future.result(timeout=timeout_seconds)
     except FuturesTimeout as exc:
@@ -856,7 +855,8 @@ def execute_tools(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
         role_knowledge_scopes_ctx.set(())
     # 关系驱动主动开口（架构总览 §5）：当前对话角色注入工具层，memory_save 据此把事实
     # 同时写入该角色专属记忆（与全局 memory:facts 隔离）。无角色 = 空串，只写全局。
-    # _invoke_tool 用 copy_context() 提交，所以 worker 线程能看到这里写入的值。
+    # _invoke_tool 经 pools.submit_with_context 提交（拷贝上下文），
+    # 所以 worker 线程能看到这里写入的值。
     current_role_id_ctx.set(state.get("current_role_id", "") or "")
     # 反向图搜的图片来源：本轮最近一张图（无图 → None，image_search 自降级）。
     turn_image_ctx.set(_latest_image_data_url(messages))

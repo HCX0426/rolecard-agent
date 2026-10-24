@@ -31,6 +31,9 @@ dependencies = [
   # 此前靠传递依赖兜住、被「依赖分层」检查抓成红的直接依赖（R28-11）：
   "httpx>=0.27",
   "typing_extensions>=4.12",
+  # QQ 官方渠道（features/channels/qq.py）的 WS 客户端 —— 与 requirements.txt 同一条
+  # 口径（懒加载转直接依赖；本在锁里，langgraph-sdk 传递，加声明不推版本）。
+  "websockets>=13",
 ]
 
 [project.optional-dependencies]

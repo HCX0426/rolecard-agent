@@ -34,7 +34,18 @@ class _Chat(Protocol):
 
 
 def build_consensus_tool(*, settings: Any, build: Any = None) -> Any:
-    """构建比对工具。`build(backend_name) -> _Chat` 可注入（测试用假模型）。"""
+    """构建比对工具。`build(backend_name) -> _Chat` 可注入（测试用假模型）。
+
+    **为什么它不走 `ModelResolver.resolve_role_model`**（2026-10-24 冗余清理时的裁决，
+    别把它当漏网之鱼再收编一次）：
+      * 语义不同——比对是**主动扇出**：把同一问题发给默认 + 回退链的 N 个后端，
+        而解析器回答的是"这一轮该用哪个模型"，两者不是同一个问题；
+      * 凭据口径不同——解析器按"本轮主人"取 key（M2d），而工具闭包在**装配期**持有
+        实例主人的有效配置；扇出去花谁的 key 是产品语义，不该由重构顺手改掉；
+      * 接线顺序——注册表在 `build_runtime` 里先于 `ModelResolver` 装配（工具工厂拿不到
+        解析器），除非重构装配序，收益配不上代价。
+    与解析器同源的部分只有 `build_model` 这一个工厂本身（共享构造、超时与回退链），
+    这已经是收口。"""
     from langchain_core.tools import tool
 
     from rolecard_agent.core.agent.graph import build_model

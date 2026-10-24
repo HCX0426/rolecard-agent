@@ -85,6 +85,7 @@ from rolecard_agent.domains.registry import (
     domain_seed_roles,
 )
 from rolecard_agent.domains.spec import RouterDeps
+from rolecard_agent.features.channels.qq import QQChannelSource
 from rolecard_agent.features.proactive import build_gateway
 from rolecard_agent.features.reachout import ReachoutScheduler
 from rolecard_agent.rag.retriever import KnowledgeBase
@@ -171,6 +172,9 @@ def _register_background_tasks(runtime: Runtime) -> None:
             thread_window=runtime.proactive_recent_window,
         ),
     )
+    # QQ 官方渠道（features/channels/qq.py，2b）：**后台任务自闸** —— 总闸关着或凭证
+    # 缺口时 start() 是一条留痕的 no-op，宿主不替它判断"该不该起"。
+    runtime.register_background("qq-channel", QQChannelSource(runtime=runtime))
 
 
 def create_app(

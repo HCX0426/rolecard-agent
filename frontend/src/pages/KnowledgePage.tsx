@@ -151,7 +151,7 @@ function KnowledgePanel() {
                   {s.scope}
                 </code>
                 <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">{s.chunks} 段</span>
-                <span className="ml-2 rounded-full bg-slate-100 dark:bg-slate-700/50 px-2 py-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                <span className="ml-2 rounded-full bg-slate-100 dark:bg-slate-700/50 px-2 py-0.5 text-11 text-slate-500 dark:text-slate-400">
                   嵌入：{s.embedder}
                 </span>
               </div>
@@ -170,7 +170,7 @@ function KnowledgePanel() {
               {s.sources.map((src) => (
                 <li
                   key={src}
-                  className="truncate rounded bg-slate-50 px-2 py-0.5 font-mono text-[11px] text-slate-500 dark:bg-slate-700/40 dark:text-slate-400"
+                  className="truncate rounded bg-slate-50 px-2 py-0.5 font-mono text-11 text-slate-500 dark:bg-slate-700/40 dark:text-slate-400"
                   title={src}
                 >
                   {src}
@@ -209,7 +209,7 @@ function KnowledgePanel() {
                 可回收 <b>{orphans.orphans.length}</b> 个（{formatBytes(orphans.total_bytes)}）。
               </p>
               {orphans.dangling.length > 0 && (
-                <p className="mt-1 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
+                <p className="mt-1 text-11 leading-relaxed text-amber-700 dark:text-amber-400">
                   另有 <b>{orphans.dangling.length}</b> 行台账指向这台机器上不存在的原件
                   （{orphans.dangling.slice(0, 3).join("、")}
                   {orphans.dangling.length > 3 ? " 等" : ""}）—— 换过数据根时是这个样子，
@@ -222,7 +222,7 @@ function KnowledgePanel() {
                     {orphans.orphans.map((o) => (
                       <li
                         key={o.name}
-                        className="flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400"
+                        className="flex items-center justify-between gap-2 text-11 text-slate-500 dark:text-slate-400"
                       >
                         <code className="truncate">{o.name}</code>
                         <span className="shrink-0">
@@ -233,19 +233,19 @@ function KnowledgePanel() {
                     ))}
                   </ul>
                   <div className="mt-2 flex items-center gap-2">
-                    <span className="text-[11px] text-red-600 dark:text-red-400 dark:text-red-500">
+                    <span className="text-11 text-red-600 dark:text-red-400 dark:text-red-500">
                       删除后不可恢复，确认回收？
                     </span>
                     <button
                       onClick={cleanupOrphans}
                       disabled={busy}
-                      className="rounded bg-red-500 px-2 py-1 text-[11px] text-white hover:bg-red-600 disabled:opacity-50"
+                      className="rounded bg-red-500 px-2 py-1 text-11 text-white hover:bg-red-600 disabled:opacity-50"
                     >
                       确认回收
                     </button>
                     <button
                       onClick={() => setOrphans(null)}
-                      className="rounded px-2 py-1 text-[11px] text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700"
+                      className="rounded px-2 py-1 text-11 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700"
                     >
                       取消
                     </button>

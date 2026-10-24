@@ -27,13 +27,14 @@ import re
 import threading
 import uuid
 from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any
 
 from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.config import Settings
+from rolecard_agent.core.common.pools import make_pool
 from rolecard_agent.core.ingest.ingestion import (
     INGESTION_FAILED,
     INGESTION_PENDING,
@@ -454,7 +455,7 @@ def ingest_upload(
 #: 带宽 —— 并发只会把子进程数与内存一起顶上去，而上传是低频动作，排队不伤体验。
 #: `memory-distill` 同款形状：池恒建（惰性起线程，从不 submit 就零线程）；解释器退出时
 #: `concurrent.futures` 的 atexit 会 join 在飞任务（与 reachout 池同一条已记录取舍）。
-_UPLOAD_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="upload-process")
+_UPLOAD_POOL = make_pool("upload-process", 1)
 _RUNNING: dict[str, Future[None]] = {}
 _RUNNING_GUARD = threading.Lock()
 

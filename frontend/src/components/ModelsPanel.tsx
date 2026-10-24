@@ -211,13 +211,13 @@ function ProviderCard({
         <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
           {group.label}
           {group.style === "native" && (
-            <span className="ml-1.5 text-[11px] text-slate-400">（本机）</span>
+            <span className="ml-1.5 text-11 text-slate-400">（本机）</span>
           )}
         </span>
-        <span className="text-[11px] text-slate-400 dark:text-slate-500">
+        <span className="text-11 text-slate-400 dark:text-slate-500">
           {group.base_url || "默认端点"}
         </span>
-        <span className="ml-auto text-[11px] text-slate-400 dark:text-slate-500">
+        <span className="ml-auto text-11 text-slate-400 dark:text-slate-500">
           {group.needs_key
             ? group.has_key
               ? `key 已存 ${group.key_masked ?? "••••"}`
@@ -240,7 +240,7 @@ function ProviderCard({
                 {row.name}
                 {row.is_default && <Chip tone="blue">第 1 位</Chip>}
               </div>
-              <div className="truncate text-[11px] text-slate-400 dark:text-slate-500">
+              <div className="truncate text-11 text-slate-400 dark:text-slate-500">
                 {row.model}
                 {row.num_ctx ? ` · 窗口 ${row.num_ctx}` : ""}
               </div>
@@ -271,7 +271,7 @@ function ProviderCard({
       </div>
 
       {(otherUses.size > 0 || group.models.some((m) => m.used_by.length === 0)) && (
-        <div className="flex items-center gap-2 border-t border-slate-100 bg-slate-50/60 px-4 py-2 text-[11px] text-slate-500 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-400">
+        <div className="flex items-center gap-2 border-t border-slate-100 bg-slate-50/60 px-4 py-2 text-11 text-slate-500 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-400">
           {otherUses.size > 0 && (
             <span>
               这家还用于：{[...otherUses].map((u) => USAGE_LABEL[u] ?? u).join("、")}
@@ -307,7 +307,7 @@ function Chip({ tone, children }: { tone: "green" | "blue" | "slate"; children: 
     slate: "bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400",
   } as const;
   return (
-    <span className={`ml-1.5 rounded px-1.5 py-0.5 text-[10px] ${TONES[tone]}`}>{children}</span>
+    <span className={`ml-1.5 rounded px-1.5 py-0.5 text-10 ${TONES[tone]}`}>{children}</span>
   );
 }
 
@@ -331,7 +331,7 @@ function CapBadge({
   const mark = value === true ? "✓" : value === false ? "✗" : "?";
   const title =
     value === null ? `${label}：没测过 —— 点这里探测` : `${label}：${value ? "支持" : "不支持"}`;
-  const cls = `rounded px-1.5 py-0.5 text-[10px] ${tone}`;
+  const cls = `rounded px-1.5 py-0.5 text-10 ${tone}`;
   if (value !== null) {
     return (
       <span title={title} className={cls}>

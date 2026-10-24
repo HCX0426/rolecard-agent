@@ -63,6 +63,10 @@ CREATE TABLE IF NOT EXISTS role_card (
     -- 不是她说出口的那句话（那句在主动会话里，是她下次开口的依据 —— 边界见
     -- docs/主动消息与记忆设计稿.md）。旧库由 reconcile_columns 补。
     reachout_keep        INTEGER NOT NULL DEFAULT 200,
+    -- 固定时刻问候（2026-10-24，2a）：'HH:MM'（本地时区）= 每天这个时刻主动开口一次；
+    -- NULL = 不排。当日去重读投递台账（fired_by='scheduled'），不另建状态表。
+    -- 形状校验在 roles/models.py（GREETING_AT_PATTERN）。旧库由 reconcile_columns 补。
+    greeting_at          TEXT,
     -- 桌宠形象包（09-30）：存的是**包名**（对应 `frontend/public/pets/<包>/`），不是图片路径。
     -- 默认 ''（空）= 从没配过，渲染侧落"默认包"。为什么要把"没配过"和"配了但素材坏了"分开：
     -- 后者才落那只 SVG 兜底本体（`GeometricPet`），而"新角色还没配形象"根本不算失败 —— 两件事

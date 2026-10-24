@@ -168,8 +168,8 @@ class SyncPlan:
 _CARD_COLUMNS = (
     "role_id, role_name, system_prompt, temperature, model_name, tool_whitelist,"
     " exemplars, knowledge_scopes, description, reachout_enabled, recall_enabled,"
-    " time_pattern_enabled, affinity_enabled, file_watch_enabled, reachout_keep,"
-    " pet_pack, is_builtin, updated_at"
+    " time_pattern_enabled, affinity_enabled, file_watch_enabled, greeting_at,"
+    " reachout_keep, pet_pack, is_builtin, updated_at"
 )
 
 

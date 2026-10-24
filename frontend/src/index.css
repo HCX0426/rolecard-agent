@@ -3,6 +3,33 @@
 /* Tailwind v4：class 策略的深色模式 —— html 上挂 .dark 即生效（useTheme 切换） */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* 字阶 token（2026-10-24 UI 打磨）：紧凑 IDE 观感依赖一批低于默认 xs(12px) 的字号，
+   从前它们以 text-[10px] / text-[11px] 的临时值散落 190+ 处 —— 那正是"改一处字号要
+   全库搜替换"的来源。现在 1:1 收进 @theme（名字 = 像素值，与原临时值一一对得上，
+   替换是纯机械动作、零视觉变化），新代码一律用 token 不再写 px 临时值。 */
+@theme {
+  --text-10: 10px;
+  --text-10--line-height: 1.4;
+  --text-11: 11px;
+  --text-11--line-height: 1.45;
+  --text-12: 12px;
+  --text-12--line-height: 1.5;
+  --text-15: 15px;
+  --text-15--line-height: 1.5;
+}
+
+/* 键盘可达性基线（2026-10-24 UI 打磨）：全项目此前只有 6 处 focus-visible，键盘用户
+   在多数控件上看不到焦点在哪。给所有可交互元素一条统一的焦点环 —— :focus-visible
+   只在键盘导航时出现，鼠标点击的视觉行为一字不变。 */
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-blue-600);
+  outline-offset: 1px;
+}
+.dark :where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline-color: var(--color-blue-400);
+}
+
+
 /* 项目基调：浅色、紧凑、克制的强调色 —— 2026-09-17 定的桌面 IDE 观感 */
 html,
 body,

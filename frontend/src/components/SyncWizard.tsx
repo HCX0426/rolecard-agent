@@ -256,7 +256,7 @@ function errText(e: unknown): string {
 
 function Title({ children }: { children: React.ReactNode }) {
   return (
-    <h2 className="text-[15px] font-semibold text-slate-900 dark:text-slate-100">{children}</h2>
+    <h2 className="text-15 font-semibold text-slate-900 dark:text-slate-100">{children}</h2>
   );
 }
 
@@ -266,7 +266,7 @@ function Hint({ children }: { children: React.ReactNode }) {
 
 function ErrorBox({ children }: { children: React.ReactNode }) {
   return (
-    <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-[11px] leading-relaxed text-rose-800 dark:border-rose-700 dark:bg-rose-900/30 dark:text-rose-200">
+    <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-11 leading-relaxed text-rose-800 dark:border-rose-700 dark:bg-rose-900/30 dark:text-rose-200">
       {children}
     </p>
   );
@@ -316,7 +316,7 @@ function AskScreen({
             }`}
           >
             {d.label}
-            <span className="ml-1 text-[10px] opacity-70">{d.sub}</span>
+            <span className="ml-1 text-10 opacity-70">{d.sub}</span>
           </button>
         ))}
       </div>
@@ -326,7 +326,7 @@ function AskScreen({
           return (
             <label
               key={m.mode}
-              className={`block rounded-lg border p-3 text-[11px] ${
+              className={`block rounded-lg border p-3 text-11 ${
                 unavailable
                   ? "border-slate-200 opacity-50 dark:border-slate-600"
                   : mode === m.mode
@@ -343,9 +343,9 @@ function AskScreen({
                   onChange={() => onMode(m.mode)}
                   className="h-3.5 w-3.5"
                 />
-                <b className="text-[12px] text-slate-800 dark:text-slate-100">{m.label}</b>
+                <b className="text-12 text-slate-800 dark:text-slate-100">{m.label}</b>
                 <span
-                  className={`rounded px-1.5 py-0.5 text-[10px] ${
+                  className={`rounded px-1.5 py-0.5 text-10 ${
                     m.mode === "replace"
                       ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
                       : "bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300"
@@ -432,13 +432,13 @@ function DryScreen({
             }`}
           >
             <div className="text-lg font-semibold text-slate-900 dark:text-slate-100">{r.value}</div>
-            <div className="text-[10px] leading-tight text-slate-500 dark:text-slate-400">
+            <div className="text-10 leading-tight text-slate-500 dark:text-slate-400">
               {r.label}
             </div>
           </div>
         ))}
       </div>
-      <table className="mt-3 w-full text-[11px]">
+      <table className="mt-3 w-full text-11">
         <tbody>
           {SYNC_ITEMS.map((item) => {
             const bucket = plan.by_kind[item.kind] ?? {};
@@ -466,7 +466,7 @@ function DryScreen({
                   {bucket.conflicts ? ` · 冲突 ${bucket.conflicts}` : ""}
                   {bucket.skipped ? ` · 跳过 ${bucket.skipped}` : ""}
                 </td>
-                <td className="py-2 text-right align-top text-[10px] text-slate-400 dark:text-slate-500">
+                <td className="py-2 text-right align-top text-10 text-slate-400 dark:text-slate-500">
                   {item.hint}
                 </td>
               </tr>
@@ -475,7 +475,7 @@ function DryScreen({
         </tbody>
       </table>
       {plan.skipped.length > 0 && (
-        <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] leading-relaxed text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-200">
+        <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-11 leading-relaxed text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-200">
           {plan.skipped.length} 项无法同步，已整项跳过：
           {plan.skipped.slice(0, 3).map((s) => (
             <span key={`${s.kind}${s.ident}`} className="block">
@@ -560,11 +560,11 @@ function ConflictScreen({
           ? "同一条目（标识相同）两端均有修改。请选择保留的版本，或两个版本均保留。"
           : "同一身份两端内容不同。该类目的身份即此 id，「保留两个版本」不适用 —— 请选择其一。"}
       </Hint>
-      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+      <div className="mt-3 grid grid-cols-2 gap-2 text-11">
         <Preview title="本机版本" at={conflict.mine.at} text={conflict.mine.preview} />
         <Preview title="云端版本" at={conflict.theirs.at} text={conflict.theirs.preview} />
       </div>
-      <div className="mt-3 space-y-2 text-[11px]">
+      <div className="mt-3 space-y-2 text-11">
         <Radio
           value={choice}
           onChange={setChoice}
@@ -629,7 +629,7 @@ function ConflictScreen({
 function Preview({ title, at, text }: { title: string; at: string; text: string }) {
   return (
     <div className="rounded-lg border border-slate-200 p-2.5 dark:border-slate-600">
-      <div className="text-[10px] text-slate-400 dark:text-slate-500">
+      <div className="text-10 text-slate-400 dark:text-slate-500">
         {title}
         {at ? ` · ${at.slice(0, 10)}` : ""}
       </div>
@@ -669,7 +669,7 @@ function Radio({
           onChange={() => onChange(name)}
           className="h-3.5 w-3.5"
         />
-        <b className="text-[12px] text-slate-800 dark:text-slate-100">{title}</b>
+        <b className="text-12 text-slate-800 dark:text-slate-100">{title}</b>
       </span>
       <span className="mt-0.5 block leading-relaxed text-slate-500 dark:text-slate-400">{note}</span>
     </label>

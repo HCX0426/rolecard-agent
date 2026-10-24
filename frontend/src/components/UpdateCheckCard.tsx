@@ -69,7 +69,7 @@ export function UpdateCheckCard() {
         </a>
       )}
       {info.has_update && (
-        <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">
+        <p className="mt-1.5 text-11 text-slate-400 dark:text-slate-500">
           下载后运行安装包即可覆盖升级；你的数据（对话、知识库、设置）都在安装目录之外，不会被动。
         </p>
       )}

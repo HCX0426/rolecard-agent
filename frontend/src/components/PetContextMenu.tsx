@@ -54,7 +54,7 @@ export default function PetContextMenu({
       ref={ref}
       data-pet-ui="menu"
       role="menu"
-      className="fixed z-50 w-44 rounded-lg border border-slate-200 bg-white py-1 text-[11px] shadow-lg dark:border-slate-600 dark:bg-slate-800"
+      className="fixed z-50 w-44 rounded-lg border border-slate-200 bg-white py-1 text-11 shadow-lg dark:border-slate-600 dark:bg-slate-800"
       style={{ left, top }}
     >
       {entries.map((entry) => (

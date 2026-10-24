@@ -21,20 +21,18 @@
 from __future__ import annotations
 
 import asyncio
-import contextvars
-import functools
 import json
 import threading
 from collections.abc import AsyncIterator, Callable, Iterator
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from typing import Any, cast
 
 from rolecard_agent.base.observability import Tracer
 from rolecard_agent.core.agent.turn import Error, TurnEvent, run_turn
+from rolecard_agent.core.common.pools import make_pool, submit_with_context
 from rolecard_agent.core.common.usage import TokenUsage
 
-_CHAT_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="chat-stream")
+_CHAT_POOL = make_pool("chat-stream", 8)
 #: 与池等量的"占位"信号量：提交前非阻塞 acquire，拿不到 = 8 个 worker 全忙 ——
 #: 从前第 9 个并发轮次在队列里**无限等**、SSE 无任何输出也不报错（用户感知"发出去
 #: 没反应"）。现在立刻给一句人话的 error 帧（2026-10-04 审查快照的池满盲区条目）。
@@ -86,7 +84,6 @@ async def chat_events(
             )
         )
         return
-    loop = asyncio.get_event_loop()
     gen: Iterator[str] = (sse(ev) for ev in run_turn(
         graph,
         graph_input=graph_input,
@@ -96,23 +93,20 @@ async def chat_events(
         usage_recorder=usage_recorder,
         after_turn=after_turn,
     ))
-    # **把本请求的上下文带进轮次线程池**（`R102-03`）。`loop.run_in_executor` 与
-    # `pool.submit` 都**不**传播 contextvar（3.13 实测：裸调时池线程只读到默认值，
-    # `asyncio.to_thread` 才会带过去），而 `ThreadLocalConnection._current()` 判
-    # "库代际变没变"读的正是 contextvar —— 不带过去，这条线程的代际永远停在它第一次
-    # 拿到的那个值，"新请求第一次用库先回滚上次残留事务"这道清理就**一次都没触发过**，
-    # 一轮中途断掉留下的未提交事务会一直占着写锁（别的连接等到 busy_timeout 才报错）。
-    # 同一个形状在 `core/agent/nodes.py` 的线程池边界上早就做对了（`copied.run(tool.invoke, args)`，
-    # 那里的症状是权限静默失效），漏的是这道缝。
-    # 每次调用各拷一份上下文：上一轮被取消后那个 `next()` 仍在线程池里跑完（见
+    # **把本请求的上下文带进轮次线程池**（`R102-03`）：传播原语收编在
+    # `core/common/pools.submit_with_context`（每次提交各拷一份 contextvars ——
+    # `loop.run_in_executor` 与裸 `pool.submit` 都**不**传播，池线程只读到默认值；
+    # `ThreadLocalConnection._current()` 判"库代际变没变"读的正是 contextvar，不带
+    # 过去，请求级残留事务清理就一次都不会触发，一轮断掉留下的未提交事务会一直占着
+    # 写锁）。事故与判据的完整账在那边的模块 docstring 里。
+    # 每次提交各拷一份：上一轮被取消后那个 `next()` 仍在线程池里跑完（见
     # `core/common/thread_locks.py` 的说明），共用一枚 Context 就会撞上"同一上下文不可重入"。
-    ctx = contextvars.copy_context()
     sentinel = object()
     try:
         while True:
             try:
-                item = await loop.run_in_executor(
-                    _CHAT_POOL, functools.partial(ctx.run, next, gen, sentinel)
+                item = await asyncio.wrap_future(
+                    submit_with_context(_CHAT_POOL, next, gen, sentinel)
                 )
             except StopIteration:  # pragma: no cover - next 带 default 不会抛，双保险
                 break

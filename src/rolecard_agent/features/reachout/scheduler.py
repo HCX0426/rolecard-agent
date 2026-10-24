@@ -15,7 +15,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future
 from contextlib import suppress
 from datetime import UTC, datetime
 from functools import partial
@@ -24,6 +24,8 @@ from typing import Any
 from rolecard_agent.base.identity import resolve_instance_identity
 from rolecard_agent.base.observability import TraceEvent, Tracer
 from rolecard_agent.config import Settings
+from rolecard_agent.core.common.periodic import PeriodicTask
+from rolecard_agent.core.common.pools import make_pool
 from rolecard_agent.core.common.workspace import resolve_task_dir
 from rolecard_agent.core.proactive.open_threads import find_open_threads
 from rolecard_agent.core.proactive.proactive_state import (
@@ -54,6 +56,7 @@ from rolecard_agent.features.reachout.triggers import (
     open_threads_stale,
     trigger_affection,
     trigger_recall,
+    trigger_scheduled,
     trigger_time_pattern,
 )
 from rolecard_agent.roles.models import RoleCard
@@ -67,7 +70,7 @@ TICK_SECONDS = 30
 # --------------------------------------------------------------------------- 调度线程
 
 
-class ReachoutScheduler:
+class ReachoutScheduler(PeriodicTask):
     """后台 daemon：每 tick 检查启用主动的角色，符合条件就生成并落收件箱。
 
     `settings_provider` 每次 tick 现取（全局总闸热切即时生效）；角色资格实时读库
@@ -93,11 +96,19 @@ class ReachoutScheduler:
         inline_generation: bool = False,
         tick_interval: float = TICK_SECONDS,
     ) -> None:
+        # 循环骨架（循环 / 置旗 / join / 错误留痕）收编在 `core/common/periodic.py`
+        # （2026-10-24，2a 刀）—— 渠道适配器是第二个同形状宿主，骨架不再抄第二遍。
+        super().__init__(
+            name="reachout-scheduler",
+            tick_interval=tick_interval,
+            tracer=tracer,
+            error_event="reachout_tick_error",
+            node="reachout",
+        )
         self._settings = settings_provider
         self._roles = roles
         self._model = model_resolver
         self._conn = conn
-        self._tracer = tracer
         self._deliver = deliver
         # "你们最近聊过什么"的取法由宿主给（它才知道图与检查点在哪）：None = 不带这段上下文。
         self._thread_lines = thread_lines
@@ -107,17 +118,13 @@ class ReachoutScheduler:
         # 每个角色"上一次看到的静默原因"（"" = 可开口）。只是用来判"原因变了没有"，
         # 进程重启就清零 —— 重启后第一次 tick 重新报一句当前状态，那是对的，不是丢消息。
         self._quiet: dict[str, str] = {}
-        self._stop = threading.Event()
-        # 每拍间隔：生产用默认 30s，测试注入毫秒级让 `_loop` 的"抛错→留痕→继续"在
-        # 秒内跑完（不注入就得真 sleep 两个 30s 拍，那条循环保命性的守护用例等不起）。
-        self._tick_interval = tick_interval
         # 生成出循环（2026-10-04 审查快照 PERF-5 条）：默认把生成投给独立单 worker 池，
         # tick 线程只做判定与入队；测试可用 inline_generation=True 要回旧的同步形状。
         # 池**恒建**（类型上因此不是 Optional）：ThreadPoolExecutor 惰性起线程，inline 形状
         # 从不 submit 就一个线程都没有，stop() 空关一次也无害 —— 这换来 tick 里少一处
         # "池可能不存在"的分叉（mypy 的 union-attr 与 E501 折行都消在这里）。
         self._inline_generation = inline_generation
-        self._gen_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="reachout-gen")
+        self._gen_pool = make_pool("reachout-gen", 1)
         self._queued: set[str] = set()
         self._queued_guard = threading.Lock()
         # 文件事件（素材门控）在异步形状下的消费账，两者都由 `_queued_guard` 护着：
@@ -131,32 +138,18 @@ class ReachoutScheduler:
 
     # -- 生命周期 -------------------------------------------------------
 
-    def start(self) -> None:
-        thread = threading.Thread(target=self._loop, name="reachout-scheduler", daemon=True)
-        thread.start()
-        self._thread = thread
+    def stop(self, *, join_timeout: float | None = None) -> None:
+        """停调度：骨架（`core/common/periodic.py`）的置旗 + join 之上，**追加关生成池**。
 
-    def stop(self, *, join_timeout: float = 35.0) -> None:
-        """停调度：置旗后**等线程真的退出**（2026-10-04 审查快照的停机竞态条目）。
-
-        从前只 `set()` 不 join：一次 tick 内含逐角色的真模型调用（本地 8B 每次 10~120s）
-        与 `graph.update_state` 投递，而 `Runtime.shutdown` 在 stop 之后马上就做
-        WAL checkpoint 与 conn.close() —— 优雅退出路径（POSIX SIGTERM / 开发态 Ctrl+C）
-        上调度线程可能正持另一线程连接写库，撞出 busy 噪音甚至 close 后写库异常。
-        join 超时给足一次 tick（TICK_SECONDS=30）+ 余量；超时后仍强收（与旧行为同：
-        daemon 线程随进程走），只是至少给了它一次干净收场的机会。
-
-        tick 内的协作式取消配合这里：每次**模型调用前**查旗，正在生成的那个角色这一轮
-        主动放弃 —— 等它生成完（最长 120s）再 join 会把退出拖到不可接受。
+        join 为什么必须等（2026-10-04 审查快照的停机竞态条目）与超时口径住在骨架的
+        docstring 里；join_timeout 参数是测试注入口（等不起 35s 的用例传小值）。
+        这里只剩调度器自己的那半边：还没开跑的任务直接取消（它们的 done 回调会归还
+        per-role 队位）；正在生成的那一个带着协作式取消旗跑完或随进程收 ——
+        `wait=False`：stop 不等生成，等的是调度线程。注意解释器退出时
+        `concurrent.futures` 的 atexit 会 join 池线程：最坏多等一次在飞生成的时长，
+        比旧形状（join 35s 后 daemon 线程被硬杀在写库半途）干净。
         """
-        self._stop.set()
-        thread = getattr(self, "_thread", None)
-        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
-            thread.join(timeout=join_timeout)
-        # 还没开跑的任务直接取消（它们的 done 回调会归还 per-role 队位）；正在生成的那一个
-        # 带着协作式取消旗跑完或随进程收 —— `wait=False`：stop 不等生成，等的是调度线程。
-        # 注意解释器退出时 `concurrent.futures` 的 atexit 会 join 池线程：最坏多等一次在飞
-        # 生成的时长，比旧形状（join 35s 后 daemon 线程被硬杀在写库半途）干净。
+        super().stop(join_timeout=join_timeout)
         self._gen_pool.shutdown(wait=False, cancel_futures=True)
 
     def wait_idle(self, timeout: float = 10.0) -> bool:
@@ -173,30 +166,6 @@ class ReachoutScheduler:
             time.sleep(0.02)
         with self._queued_guard:
             return not self._queued
-
-    def _loop(self) -> None:
-        while not self._stop.wait(self._tick_interval):
-            try:
-                self.tick_once()
-            except Exception as exc:  # noqa: BLE001 - 调度循环绝不能被一个错误打死
-                # 打死不等于闭嘴：以前这个事件连异常文本都不带（只有 `fatal: False`），
-                # 于是"角色找你了你却点不开"这类故障在日志里查不到任何线索。
-                self._tracer.emit(
-                    TraceEvent(
-                        event="reachout_tick_error",
-                        node="reachout",
-                        detail={
-                            "fatal": False,
-                            "error": f"{type(exc).__name__}: {exc}",
-                        },
-                    )
-                )
-            if self._stop.is_set():
-                break  # stop() 置旗后不再开下一轮 tick：join 才等得到头
-
-    def _stopping(self) -> bool:
-        """tick 内部的协作式取消点：True = 该收手了（正在生成的这轮主动放弃）。"""
-        return self._stop.is_set()
 
     # -- 主流程（可注入 now 用于测试） -------------------------------------
 
@@ -544,10 +513,12 @@ class ReachoutScheduler:
             if why:
                 continue
             # 关系驱动：按角色状态评估触发源，取第一个命中者决定"以什么口吻开口"。
-            # file_event 居链首（素材门控：有变化先说变化）；"timer" 是基线触发。
+            # file_event 居链首（素材门控：有变化先说变化）；scheduled 是用户拍板的固定
+            # 时刻（排它第二，理由见 trigger_scheduled 的 docstring）；"timer" 是基线触发。
             state = get_state(self._conn, role.role_id, user_id=owner)
             fired = (
                 ("file_event" if can_file else None)
+                or trigger_scheduled(role, self._conn, user_id=owner, now_local=stamp_local)
                 or trigger_affection(role, state, settings, now_utc=stamp_utc)
                 or trigger_time_pattern(
                     role, self._conn, user_id=owner, now_local=stamp_local

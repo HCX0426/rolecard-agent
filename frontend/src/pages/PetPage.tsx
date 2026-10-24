@@ -80,7 +80,7 @@ function rowOf(mine: boolean): { className: string; "aria-label": string } {
 /** 我这一方靠右 + 一个浅蓝泡（用户 09-26："像对话界面那样我的回复显示在右边，才有对话感"）。
  *
  * 形状抄 `ChatPage` 那条用户气泡（`ml-auto w-fit max-w-*` + `rounded-br-sm` 的"尾巴"
- * + 蓝边蓝底），只是这面板尺寸小，留白与字阶跟着 `text-[11px]` 那一档收一号。
+ * + 蓝边蓝底），只是这面板尺寸小，留白与字阶跟着 `text-11` 那一档收一号。
  * 说话人不印成可见的"它：/你："（用户 09-26 撤掉的），但那条信息在 `aria-label` 里
  * —— 见 `rowOf`：位置与颜色不足以让读屏软件与色弱用户分辨谁说的。
  */
@@ -993,7 +993,7 @@ export default function PetPage() {
               {threadId && (
                 <button
                   onClick={() => shellBridge()?.openSession(threadId)}
-                  className="text-[10px] text-blue-600 hover:underline dark:text-blue-400"
+                  className="text-10 text-blue-600 hover:underline dark:text-blue-400"
                   title="在控制台里打开这条会话（能翻完整历史、能发图）"
                 >
                   在控制台打开
@@ -1003,7 +1003,7 @@ export default function PetPage() {
                   那正是"移动窗口 ⇒ 把自己挪出光标 ⇒ 自激晃动"的来源。 */}
               <button
                 onClick={() => expand(false)}
-                className="px-1 text-[11px] leading-none text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                className="px-1 text-11 leading-none text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
                 title="收起面板（再点一下色片也能开合）"
                 aria-label="收起面板"
               >
@@ -1017,7 +1017,7 @@ export default function PetPage() {
               否则"内容已隐藏"那半句话的意义会被这行云端地址搅浑。 */}
           {showContent && (
             <div className="flex shrink-0 items-center gap-2 border-b border-slate-100 px-3 py-1 dark:border-slate-700">
-              <span className="shrink-0 text-[10px] text-slate-400 dark:text-slate-500">
+              <span className="shrink-0 text-10 text-slate-400 dark:text-slate-500">
                 {cloud ? `☁ 云端 · ${cloud.user}` : "● 本机"}
               </span>
               {myQuiet && (
@@ -1034,7 +1034,7 @@ export default function PetPage() {
                时别拉出一段橡皮筋选区，但它连"把她说的话选出来复制"一起禁了（用户 09-26 问的
                就是这个）。选中不会把宠物拖走也不会收起面板 —— `dragStart` 与 `rootClick`
                开头都有 `insideUi` 那道闸（面板整块在 `[data-pet-ui]` 里）。 */
-            className="max-h-[300px] min-h-0 flex-1 select-text space-y-1.5 overflow-y-auto px-3 py-2 text-[11px] leading-relaxed"
+            className="max-h-[300px] min-h-0 flex-1 select-text space-y-1.5 overflow-y-auto px-3 py-2 text-11 leading-relaxed"
           >
             {historyError && <p className="text-red-600 dark:text-red-400">{historyError}</p>}
             {streamError && <p className="text-red-600 dark:text-red-400">{streamError}</p>}
@@ -1064,13 +1064,13 @@ export default function PetPage() {
                 <button
                   type="button"
                   onClick={() => threadId && shellBridge()?.openSession(threadId)}
-                  className="block w-full rounded border border-slate-200 bg-slate-50 px-2 py-1 text-left text-[10px] text-slate-500 hover:text-blue-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
+                  className="block w-full rounded border border-slate-200 bg-slate-50 px-2 py-1 text-left text-10 text-slate-500 hover:text-blue-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
                   title={`这里只放最近 ${PANEL_MESSAGES} 条 —— 点进去就是同一条会话，不是另一份`}
                 >
                   ↑ 上面还有 {historyTotal - history.length} 条 · 在控制台看全部
                 </button>
               ) : (
-                <p className="text-[10px] text-slate-400 dark:text-slate-500">
+                <p className="text-10 text-slate-400 dark:text-slate-500">
                   ↑ 上面还有 {historyTotal - history.length} 条（这里只放最近 {PANEL_MESSAGES} 条）
                 </p>
               )
@@ -1112,7 +1112,7 @@ export default function PetPage() {
             {showContent && !busy && mirror !== null && (
               <div data-testid="pet-inflight-mirror">
                 <p {...rowOf(false)}>{mirror || "对方在说…"}</p>
-                <p className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">
+                <p className="mt-0.5 text-10 text-slate-400 dark:text-slate-500">
                   正在生成 · 不是这里发起的
                 </p>
               </div>
@@ -1131,12 +1131,12 @@ export default function PetPage() {
               }}
               rows={1}
               placeholder={`跟${activeName}说一句`}
-              className="max-h-16 min-w-0 flex-1 resize-none rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] leading-relaxed focus:border-blue-400 focus:outline-none dark:border-slate-600 dark:bg-slate-900"
+              className="max-h-16 min-w-0 flex-1 resize-none rounded-lg border border-slate-200 bg-white px-2 py-1 text-11 leading-relaxed focus:border-blue-400 focus:outline-none dark:border-slate-600 dark:bg-slate-900"
             />
             {busy ? (
               <button
                 onClick={stop}
-                className="shrink-0 rounded-lg border border-slate-200 px-2 py-1 text-[11px] text-slate-500 hover:text-red-600 dark:border-slate-600 dark:text-slate-300"
+                className="shrink-0 rounded-lg border border-slate-200 px-2 py-1 text-11 text-slate-500 hover:text-red-600 dark:border-slate-600 dark:text-slate-300"
                 title="停止这一轮生成"
               >
                 停止
@@ -1145,7 +1145,7 @@ export default function PetPage() {
               <button
                 onClick={() => void send()}
                 disabled={!draft.trim() || !activeRole || offline}
-                className="shrink-0 rounded-lg bg-blue-600 px-2.5 py-1 text-[11px] text-white hover:bg-blue-500 disabled:bg-slate-300 dark:disabled:bg-slate-700"
+                className="shrink-0 rounded-lg bg-blue-600 px-2.5 py-1 text-11 text-white hover:bg-blue-500 disabled:bg-slate-300 dark:disabled:bg-slate-700"
               >
                 发送
               </button>
@@ -1171,13 +1171,13 @@ export default function PetPage() {
             // 半透明透出来的是桌面本身（壁纸/图标/底下那个窗口的字），blur 也没有东西可糊
             // （backdrop-filter 只看页面自己身后那层），用户报的"重影"就是这两样叠出来的。
             // 同理不再淡出 opacity —— 淡出的那 500ms 就是一块 500ms 的半透明。
-            className="pet-nodrag w-[200px] rounded-2xl border border-slate-200 bg-white px-3 py-2 text-left text-[11px] leading-relaxed text-slate-700 shadow-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+            className="pet-nodrag w-[200px] rounded-2xl border border-slate-200 bg-white px-3 py-2 text-left text-11 leading-relaxed text-slate-700 shadow-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
             // 宽度按锚点那块（200）而不是 w-full：画布是 560 宽，w-full 会把气泡拉成一条
             // 横穿桌面的白带子（它还是不透明白底 ⇒ 读起来像屏幕被划了一道）。
           >
             {showContent ? shorten(latest.text) : "有新消息 · 内容已隐藏"}
             {unreadOfLatest > 1 && (
-              <span className="ml-1 rounded-full bg-blue-600 px-1.5 text-[10px] text-white">
+              <span className="ml-1 rounded-full bg-blue-600 px-1.5 text-10 text-white">
                 +{unreadOfLatest - 1}
               </span>
             )}
@@ -1226,18 +1226,18 @@ export default function PetPage() {
 
       {failedLive2d && (
         // 模型在清单里、画不出来：说的是原因，不是"没找到"（那是另一行）。
-        <span className="text-[10px] text-amber-600 dark:text-amber-400">
+        <span className="text-10 text-amber-600 dark:text-amber-400">
           Live2D 没画出来：{failedLive2d}
         </span>
       )}
       {looked.misassigned && (
         // 配了、但清单里没有：这一行不能省。否则症状是"我明明选了爱莉，怎么还是那只团子"，
         // 而没有任何地方承认它听见了这个选择。
-        <span className="text-[10px] text-amber-600 dark:text-amber-400">形象包没找到，先用默认</span>
+        <span className="text-10 text-amber-600 dark:text-amber-400">形象包没找到，先用默认</span>
       )}
 
       {offline && (
-        <span className="text-[10px] text-amber-600 dark:text-amber-400">连不上本机程序</span>
+        <span className="text-10 text-amber-600 dark:text-amber-400">连不上本机程序</span>
       )}
       {menu && (
         <PetContextMenu x={menu.x} y={menu.y} entries={menu.entries} onClose={() => setMenu(null)} />

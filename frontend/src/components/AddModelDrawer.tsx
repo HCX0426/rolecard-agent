@@ -233,7 +233,7 @@ export function AddModelDrawer({
           </select>
           {source.kind === "new" && (
             <div className="mt-2 space-y-2">
-              <p className="text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
+              <p className="text-11 leading-relaxed text-slate-400 dark:text-slate-500">
                 下面这两格存进<b>厂商</b>那一层：同一家厂商的多个模型共用一把密钥与一个端点。
               </p>
               <input
@@ -301,7 +301,7 @@ export function AddModelDrawer({
             </div>
           )}
           {listNote && (
-            <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">{listNote}</p>
+            <p className="mt-1.5 text-11 text-slate-400 dark:text-slate-500">{listNote}</p>
           )}
         </section>
 
@@ -309,7 +309,7 @@ export function AddModelDrawer({
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
             3 · 能力探测（可选）
           </label>
-          <p className="mt-1 text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
+          <p className="mt-1 text-11 leading-relaxed text-slate-400 dark:text-slate-500">
             不测也能加入 —— 徽章会显示 <b>?</b>（没测过），之后在卡片上随时补测。
           </p>
           <label className="mt-2 flex items-center gap-2 text-xs">
@@ -341,7 +341,7 @@ export function AddModelDrawer({
             </Button>
           )}
           {probe && (
-            <p className="mt-2 rounded-lg bg-slate-50 px-2.5 py-2 text-[11px] leading-relaxed text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+            <p className="mt-2 rounded-lg bg-slate-50 px-2.5 py-2 text-11 leading-relaxed text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
               工具：{tri(probe.tools)} · 视觉：{tri(probe.vision)}
               {probe.vision_source === "uploaded-image" && "（已外发测试图）"}
               {probe.vision_source === "free-metadata" && "（来自引擎自报的能力，未外发）"} ·

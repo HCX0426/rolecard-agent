@@ -34,14 +34,16 @@ if TYPE_CHECKING:
     from rolecard_agent.rag.ocr import OcrBackend
 from rolecard_agent.core.sessions.session_service import get_row
 from rolecard_agent.rag.retriever import KnowledgeBase
+from rolecard_agent.roles.seed import DEFAULT_ROLE_ID as _DEFAULT_ROLE_ID
 from rolecard_agent.roles.service import (
     RoleCards,
     RoleCardService,
 )
 from rolecard_agent.storage.db import ThreadLocalConnection
 
-# 默认"无角色"：纯对话，不接工具与检索。
-DEFAULT_ROLE_ID = "general_assistant"
+# 默认"无角色"：纯对话，不接工具与检索。事实的家在 `roles/seed.py`（出厂卡的定义处，
+# features 层也要同一个默认），这里再导出 —— api 层调用方的拼写不变。
+DEFAULT_ROLE_ID = _DEFAULT_ROLE_ID
 
 
 def get_thread(conn: ThreadLocalConnection, thread_id: str, *, user_id: str):
@@ -184,7 +186,13 @@ class AppContext:
 
     @property
     def app_state(self) -> dict[str, Any]:
-        """图 / 有效配置 / 默认模型的槽位：设置页热重建后这里被整体换掉，端点每请求读它。"""
+        """图 / 默认模型的槽位：设置页热重建后这里被整体换掉，端点每请求读它。
+
+        **槽位里的 `effective` 不是 api 层的入口**：那是内核与 features 的共享事实面
+        （`ModelResolver`、宿主网关经 `GatewayContext.state` 读它）。api 层要有效配置
+        一律走 `ctx.settings` —— 同一个对象（`Runtime.effective` 读穿同一个槽位），
+        但写法只有一种，"同一份配置两条访问路径"的漂移就没有发生的余地。
+        """
         return self.runtime.state
 
     @property

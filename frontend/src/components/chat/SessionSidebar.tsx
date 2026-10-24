@@ -92,7 +92,7 @@ export default function SessionSidebar({
           {/* 固定的那一栏：一行一个角色。没被找过也照样列着 —— 点一下才 ensure 出那条线。
               组名不写「她们」（09-29 决策 3·R28-44：这一栏列的是角色，不是"女性角色"）。 */}
           {laneRows.length > 0 && (
-            <p className="px-2 pb-1 pt-1 text-[11px] font-medium text-slate-400 dark:text-slate-500">
+            <p className="px-2 pb-1 pt-1 text-11 font-medium text-slate-400 dark:text-slate-500">
               角色
             </p>
           )}
@@ -111,13 +111,13 @@ export default function SessionSidebar({
               >
                 <div className="min-w-0 flex-1">
                   <div className="truncate">{role.role_name}</div>
-                  <div className="truncate text-[11px] text-slate-400 dark:text-slate-500">
+                  <div className="truncate text-11 text-slate-400 dark:text-slate-500">
                     {row ? row.title || "你们的对话" : "还没开始 · 点一下就在这里"}
                   </div>
                 </div>
                 {unread > 0 && (
                   <span
-                    className="shrink-0 rounded-full bg-blue-600 px-1.5 text-[10px] text-white"
+                    className="shrink-0 rounded-full bg-blue-600 px-1.5 text-10 text-white"
                     title={`${unread} 条主动找你，还没读`}
                   >
                     {unread}
@@ -131,7 +131,7 @@ export default function SessionSidebar({
                       e.stopPropagation();
                       onClearLane(row.thread_id, role.role_name);
                     }}
-                    className="shrink-0 rounded px-1 py-0.5 text-[11px] text-slate-300 opacity-0 transition-opacity hover:bg-slate-100 hover:text-red-500 group-hover:opacity-100 dark:text-slate-600 dark:hover:bg-slate-700/50"
+                    className="shrink-0 rounded px-1 py-0.5 text-11 text-slate-300 opacity-0 transition-opacity hover:bg-slate-100 hover:text-red-500 group-hover:opacity-100 dark:text-slate-600 dark:hover:bg-slate-700/50"
                     title={`清空与${role.role_name}的对话（角色卡、记忆与收件箱记录都不动）`}
                   >
                     清空
@@ -150,7 +150,7 @@ export default function SessionSidebar({
             >
               <div className="min-w-0 flex-1">
                 <div className="truncate">{s.title || "旧对话"}</div>
-                <div className="truncate text-[11px] text-slate-400 dark:text-slate-500">
+                <div className="truncate text-11 text-slate-400 dark:text-slate-500">
                   {s.role_name || s.role_id} · 角色已删
                 </div>
               </div>
@@ -170,19 +170,19 @@ export default function SessionSidebar({
           {tempSessions.length > 0 && (
             <>
               <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-3">
-                <p className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
+                <p className="text-11 font-medium text-slate-400 dark:text-slate-500">
                   临时话题 · {tempSessions.length}
                 </p>
                 {tempPick === null ? (
                   <button
                     onClick={() => setTempPick(new Set())}
-                    className="text-[11px] text-slate-400 hover:text-blue-600 dark:text-slate-500 dark:hover:text-blue-400"
+                    className="text-11 text-slate-400 hover:text-blue-600 dark:text-slate-500 dark:hover:text-blue-400"
                     title="勾着删，省得一条条点"
                   >
                     批量清理
                   </button>
                 ) : (
-                  <span className="flex items-center gap-1.5 text-[11px]">
+                  <span className="flex items-center gap-1.5 text-11">
                     <button
                       onClick={() => setTempPick(new Set(tempSessions.map((s) => s.thread_id)))}
                       className="text-slate-400 hover:text-blue-600 dark:text-slate-500"
@@ -224,7 +224,7 @@ export default function SessionSidebar({
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="truncate">{s.title || "新对话"}</div>
-                    <div className="truncate text-[11px] text-slate-400 dark:text-slate-500">
+                    <div className="truncate text-11 text-slate-400 dark:text-slate-500">
                       {s.role_name || s.role_id}
                     </div>
                   </div>

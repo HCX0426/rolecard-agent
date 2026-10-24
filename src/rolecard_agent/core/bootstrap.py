@@ -152,12 +152,10 @@ class ProactiveGatewayLike(Protocol):
 
 @dataclass
 class Runtime:
-    """装配完成的内核运行时。可变量（effective / knowledge / registry / state）只有这一份。"""
+    """装配完成的内核运行时。可变量（state / knowledge / registry）只有这一份。"""
 
     #: 进程构建期的 env 快照（鉴权档位、数据路径等只能重启生效的项从它读）。
     env_settings: Settings
-    #: 叠加了模型页配置与「运行环境」覆盖之后的**有效**配置；`rebuild` 时整体换掉。
-    effective: Settings
     assembly: Assembly
     model_settings: ModelSettingsService
     services: ServiceEndpointService
@@ -212,6 +210,17 @@ class Runtime:
         的唯一出处（`build_runtime` 的两处闭包与 assembler.rebuild 都读它），不是读穿门面。
         """
         return resolve_instance_identity(self.env_settings)
+
+    @property
+    def effective(self) -> Settings:
+        """叠加了模型页配置与「运行环境」覆盖之后的**有效**配置 —— `state["effective"]` 的读穿。
+
+        从前它是两个家：本对象上一个字段、`state` 里一个槽位，`rebuild` 的临界区里各写
+        一遍 —— 漏写任何一个就是"热重建后有人读到旧配置"的静默接缝。单一事实面收进
+        `state` 共享槽位（`ModelResolver` 与宿主网关本来就从那里读），这里只留读穿形状，
+        `assembler.rebuild` 因此只写一处。api 层的调用方走 `AppContext.settings`（同源）。
+        """
+        return self.state["effective"]
 
     def candidate_ids(self, key: str) -> list[str]:
         return assembler.candidate_ids(self.services, key)
@@ -497,7 +506,6 @@ def build_runtime(
     }
     runtime = Runtime(
         env_settings=settings,
-        effective=effective,
         assembly=assembly,
         model_settings=model_settings,
         services=services,

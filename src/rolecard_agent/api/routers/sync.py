@@ -109,7 +109,7 @@ def get_inventory(ctx: AppContext = Depends(get_context)) -> dict[str, object]:
         ctx.conn,
         user_id=_identity(ctx),
         graph=ctx.app_state["graph"],
-        settings=ctx.app_state["effective"],
+        settings=ctx.settings,
     )
     if len(items) > MAX_ITEMS:
         raise HTTPException(status_code=409, detail=f"条目过多（{len(items)}），这一版不做分批比对")
@@ -172,7 +172,7 @@ def post_plan(
         ctx.conn,
         user_id=_identity(ctx),
         graph=ctx.app_state["graph"],
-        settings=ctx.app_state["effective"],
+        settings=ctx.settings,
     )
     theirs, _their_skipped = _remote_inventory(target, request=request, ctx=ctx)
     result = sync_lib.plan(mine, theirs, skipped=skipped)
@@ -259,7 +259,7 @@ def post_import(
             ctx.conn,
             user_id=_identity(ctx),
             graph=ctx.app_state["graph"],
-            settings=ctx.app_state["effective"],
+            settings=ctx.settings,
             items=body.items,
             clear_kinds=body.clear_kinds,
         )
@@ -441,7 +441,7 @@ def post_apply(
         ctx.conn,
         user_id=_identity(ctx),
         graph=ctx.app_state["graph"],
-        settings=ctx.app_state["effective"],
+        settings=ctx.settings,
     )
     theirs, _ = _remote_inventory(body, request=request, ctx=ctx)
     result = sync_lib.plan(mine, theirs, skipped=skipped)
@@ -508,7 +508,7 @@ def post_export(
         ctx.conn,
         user_id=_identity(ctx),
         graph=ctx.app_state["graph"],
-        settings=ctx.app_state["effective"],
+        settings=ctx.settings,
     )
     if len(body.idents) > MAX_EXPORT_ITEMS:
         raise HTTPException(
@@ -571,7 +571,7 @@ def post_pull(
         ctx.conn,
         user_id=_identity(ctx),
         graph=ctx.app_state["graph"],
-        settings=ctx.app_state["effective"],
+        settings=ctx.settings,
     )
     theirs, _ = _remote_inventory(body, request=request, ctx=ctx)
     result = sync_lib.plan(mine, theirs, skipped=skipped)
@@ -601,7 +601,7 @@ def post_pull(
         ctx.conn,
         user_id=_identity(ctx),
         graph=ctx.app_state["graph"],
-        settings=ctx.app_state["effective"],
+        settings=ctx.settings,
         items=rows,
     )
     ctx.audit.log(
@@ -645,7 +645,7 @@ def post_reconcile(
             ctx.conn,
             user_id=_identity(ctx),
             graph=ctx.app_state["graph"],
-            settings=ctx.app_state["effective"],
+            settings=ctx.settings,
         )
         theirs, _ = _remote_inventory(body, request=request, ctx=ctx)
         return sync_lib.plan(mine, theirs, skipped=skipped)
@@ -670,7 +670,7 @@ def post_reconcile(
         ctx.conn,
         user_id=_identity(ctx),
         graph=ctx.app_state["graph"],
-        settings=ctx.app_state["effective"],
+        settings=ctx.settings,
         items=rows,
     )
     ctx.audit.log(

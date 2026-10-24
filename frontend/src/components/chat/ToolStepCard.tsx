@@ -44,7 +44,7 @@ export default function ToolStepCard({ step }: { step: ToolStep }) {
         )}
       </button>
       {open && body && (
-        <pre className="mt-1.5 max-h-56 overflow-auto rounded bg-white dark:bg-slate-800 p-2 text-[11px] whitespace-pre-wrap text-slate-600 dark:text-slate-300">
+        <pre className="mt-1.5 max-h-56 overflow-auto rounded bg-white dark:bg-slate-800 p-2 text-11 whitespace-pre-wrap text-slate-600 dark:text-slate-300">
           {body}
         </pre>
       )}

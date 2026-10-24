@@ -44,6 +44,7 @@ from rolecard_agent.core.proactive.proactive_thread import (
     proactive_thread_id,
 )
 from rolecard_agent.core.sessions import session_service
+from rolecard_agent.roles.models import RoleCard
 
 router = APIRouter()
 
@@ -324,15 +325,7 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
     conn = ctx.conn
     graph = ctx.app_state["graph"]
     thread = get_thread(conn, body.thread_id, user_id=ctx.current_user())
-    role_id = str(thread["current_role_id"])
-    user_id = str(thread["user_id"])
-    session_model = thread["model_name"]  # 会话级覆盖（可 None），每轮实时读库
-    # 会话级对话模式（有效值 = 会话覆盖 or 全局默认），每轮实时读库 + 实时回落：
-    # 会话切「对话/智能体」或操作员改 AGENT_DEFAULT_MODE，下一轮即生效。
-    session_mode = session_service.resolve_agent_mode(
-        thread["agent_mode"], ctx.app_state["effective"]
-    )
-    role = ctx.role_cards.get(role_id)
+    role_id, user_id, session_model, session_mode, role = _turn_state(ctx, thread)
 
     # 侧栏标题：首轮消息截断生成；updated_at 每轮刷新，会话列表按它倒序。
     # 纯图消息没有文本 → 标题用 "[图片]"，COALESCE 兜底空标题（首次就覆盖）。
@@ -344,7 +337,7 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
     # agent 模式上限放大一倍（见 core/graph.build_graph_config）。
     graph_config = build_graph_config(
         body.thread_id,
-        ctx.app_state["effective"],
+        ctx.settings,
         agent_mode=session_mode == "agent",
     )
     snapshot = graph.get_state(graph_config)
@@ -372,35 +365,25 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
             "messages": [_user_message(body.message, body.image, created_at=created_at)],
         }
 
-    return StreamingResponse(
-        chat_events(
-            graph,
-            graph_input=graph_input,
-            config=graph_config,
-            role_summary={"role_id": role.role_id, "role_name": role.role_name},
-            tracer=ctx.tracer,
-            usage_recorder=_usage_ledger(
-                conn,
-                ctx.runtime.effective_for(user_id).backend_name(
-                    session_model or role.model_name
-                ),
-                ctx.tracer,
-                user_id=user_id,
-            ),
-            # 轮后钩子（冗余计数 + 自动记忆提取）由 run_turn 的 finally 统一执行：断线
-            # 轮次与正常轮次行为一致（从前挂在 async 生成器尾部，断线即丢 —— 收尾不对称
-            # 条目）。提交进进程级提取池（连接复用、槽有界），run_turn 的收尾线程不背
-            # 122s 的提取。appended = 本轮真进检查点的消息数（含输入那条）。
-            after_turn=lambda appended: _after_turn_chat(
-                ctx,
-                thread_id=body.thread_id,
-                role_id=role_id,
-                appended=appended,
-                pre_turn_messages=pre_turn_messages,
-            ),
+    # 轮后钩子（冗余计数 + 自动记忆提取）由 run_turn 的 finally 统一执行：断线
+    # 轮次与正常轮次行为一致（从前挂在 async 生成器尾部，断线即丢 —— 收尾不对称
+    # 条目）。提交进进程级提取池（连接复用、槽有界），run_turn 的收尾线程不背
+    # 122s 的提取。appended = 本轮真进检查点的消息数（含输入那条）。
+    return _stream_turn(
+        ctx,
+        graph=graph,
+        config=graph_config,
+        graph_input=graph_input,
+        role=role,
+        user_id=user_id,
+        session_model=session_model,
+        after_turn=lambda appended: _after_turn_chat(
+            ctx,
+            thread_id=body.thread_id,
+            role_id=role_id,
+            appended=appended,
+            pre_turn_messages=pre_turn_messages,
         ),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
@@ -488,6 +471,59 @@ def _usage_ledger(
         record_usage(conn, backend=backend, usage=usage, user_id=user_id, tracer=tracer)
 
     return record
+
+
+def _turn_state(ctx: AppContext, thread: dict) -> tuple[str, str, str | None, str, RoleCard]:
+    """发起一轮前**实时读库**的那组会话事实（chat 与编辑重发共用的读取器）。
+
+    返回 `(role_id, user_id, session_model, session_mode, role)`：会话切角色 / 换模型 /
+    切模式都要在下一轮立即生效（`sessions.py` 的旧注释，2026-10-24 冗余清单「chat vs
+    编辑重发」条收编），所以这个读取器每轮现调，不是缓存。
+    """
+    role_id = str(thread["current_role_id"])
+    user_id = str(thread["user_id"])
+    session_mode = session_service.resolve_agent_mode(thread["agent_mode"], ctx.settings)
+    session_model: str | None = thread["model_name"]
+    return role_id, user_id, session_model, session_mode, ctx.role_cards.get(role_id)
+
+
+def _stream_turn(
+    ctx: AppContext,
+    *,
+    graph: Any,
+    config: Any,
+    graph_input: dict[str, object],
+    role: RoleCard,
+    user_id: str,
+    session_model: str | None,
+    after_turn: Callable[[int], None],
+) -> StreamingResponse:
+    """把一轮已构造好的输入收束成 SSE 流（chat 与编辑重发共用的尾段）。
+
+    role_summary、token 账与流式响应头原先在两条路径里各写一遍。后端名按**这条线程的
+    主人**解析（`effective_for(user_id)`）：拿实例主人那份去解别人的后端名会落回默认，
+    账就记到别人头上了 —— 重新生成花的也是真钱，不记等于"这一轮没发生"。
+    """
+    return StreamingResponse(
+        chat_events(
+            graph,
+            graph_input=graph_input,
+            config=config,
+            role_summary={"role_id": role.role_id, "role_name": role.role_name},
+            tracer=ctx.tracer,
+            usage_recorder=_usage_ledger(
+                ctx.conn,
+                ctx.runtime.effective_for(user_id).backend_name(
+                    session_model or role.model_name
+                ),
+                ctx.tracer,
+                user_id=user_id,
+            ),
+            after_turn=after_turn,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 def _bump_count_committed(ctx: AppContext, *, thread_id: str, delta: int) -> None:
@@ -664,8 +700,8 @@ def _history_messages(ctx: AppContext, thread_id: str) -> tuple[dict, list[AnyMe
     # 这份 config 既用于 get_state / update_state，也直接喂给下面的 graph.stream ——
     # 所以步数上限在这里就必须带上（否则编辑重生成那条路仍是无上界的）。
     # agent 模式上限放大一倍（与 /api/chat 同一口径，见 core/graph.build_graph_config）。
-    mode = session_service.resolve_agent_mode(thread["agent_mode"], ctx.app_state["effective"])
-    config = build_graph_config(thread_id, ctx.app_state["effective"], agent_mode=mode == "agent")
+    mode = session_service.resolve_agent_mode(thread["agent_mode"], ctx.settings)
+    config = build_graph_config(thread_id, ctx.settings, agent_mode=mode == "agent")
     snapshot = graph.get_state(config)
     return config, list((snapshot.values or {}).get("messages") or [])
 
@@ -687,12 +723,7 @@ def edit_message_and_regenerate(
     config, messages = _history_messages(ctx, thread_id)
     graph = ctx.app_state["graph"]
     thread = get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
-    role_id = str(thread["current_role_id"])
-    session_model = thread["model_name"]
-    session_mode = session_service.resolve_agent_mode(
-        thread["agent_mode"], ctx.app_state["effective"]
-    )
-    role = ctx.role_cards.get(role_id)
+    role_id, user_id, session_model, session_mode, role = _turn_state(ctx, thread)
 
     target = next((m for m in messages if getattr(m, "id", None) == body.message_id), None)
     if target is None:
@@ -720,32 +751,19 @@ def edit_message_and_regenerate(
     session_service.touch(ctx.conn, thread_id)
     ctx.conn.commit()
 
-    return StreamingResponse(
-        chat_events(
-            graph,
-            graph_input=graph_input,
-            config=config,
-            role_summary={"role_id": role.role_id, "role_name": role.role_name},
-            tracer=ctx.tracer,
-            # 重新生成花的也是真钱：不记就等于"这一轮没发生"，账会静悄悄地少一截。
-            # 后端名按**这条线程的主人**那份解析：拿实例主人那份去解别人的后端名会落回默认，
-            # 账就记到别人头上了。
-            usage_recorder=_usage_ledger(
-                ctx.conn,
-                ctx.runtime.effective_for(str(thread["user_id"])).backend_name(
-                    session_model or role.model_name
-                ),
-                ctx.tracer,
-                user_id=str(thread["user_id"]),
-            ),
-            # 重新生成这一轮同样追加消息：冗余计数由同一机制维护（编辑端不跑提取，
-            # 不带 _schedule_distill —— 它的节奏账归 chat 主链路管）。
-            after_turn=lambda appended: _bump_count_committed(
-                ctx, thread_id=thread_id, delta=appended
-            ),
+    # 重新生成这一轮同样追加消息：冗余计数由同一机制维护（编辑端不跑提取，
+    # 不带 _schedule_distill —— 它的节奏账归 chat 主链路管）。
+    return _stream_turn(
+        ctx,
+        graph=graph,
+        config=config,
+        graph_input=graph_input,
+        role=role,
+        user_id=user_id,
+        session_model=session_model,
+        after_turn=lambda appended: _bump_count_committed(
+            ctx, thread_id=thread_id, delta=appended
         ),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 

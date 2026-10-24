@@ -33,7 +33,7 @@ function StatusBadge({ status }: { status: ApprovalStatus }) {
           ? "已完成"
           : "已拒绝";
   return (
-    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${style}`}>
+    <span className={`rounded-full px-1.5 py-0.5 text-10 font-medium ${style}`}>
       {label}
     </span>
   );
@@ -42,14 +42,14 @@ function StatusBadge({ status }: { status: ApprovalStatus }) {
 function ResultBlock({ result }: { result: ApprovalResult | null }) {
   if (!result) return null;
   return (
-    <div className="mt-1.5 rounded-md border border-slate-100 bg-slate-50 p-2 text-[10px] leading-relaxed text-slate-600 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-400">
+    <div className="mt-1.5 rounded-md border border-slate-100 bg-slate-50 p-2 text-10 leading-relaxed text-slate-600 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-400">
       <div className="flex gap-3 text-slate-500 dark:text-slate-500">
         <span>退出码 {result.exit_code}</span>
         <span>{result.duration_ms}ms</span>
         <span>{formatBytes(result.output_bytes)}</span>
       </div>
       {result.output && (
-        <pre className="mt-1 max-h-32 overflow-x-auto whitespace-pre-wrap break-all font-mono text-[10px] text-slate-700 dark:text-slate-300">
+        <pre className="mt-1 max-h-32 overflow-x-auto whitespace-pre-wrap break-all font-mono text-10 text-slate-700 dark:text-slate-300">
           {result.output}
         </pre>
       )}
@@ -145,13 +145,13 @@ export default function ApprovalPanel({
                 <StatusBadge status={row.status} />
               </div>
               {row.cwd && (
-                <span className="mt-1 block truncate text-[10px] text-slate-500 dark:text-slate-500">
+                <span className="mt-1 block truncate text-10 text-slate-500 dark:text-slate-500">
                   {row.cwd}
                   {row.role_name ? ` · ${row.role_name}` : ""}
                 </span>
               )}
               <div className="mt-1 flex items-center justify-between">
-                <span className="text-[10px] text-slate-400">
+                <span className="text-10 text-slate-400">
                   #{row.id} · {formatUtcNaive(row.created_at)}
                 </span>
                 {row.status === "pending" && (
@@ -160,14 +160,14 @@ export default function ApprovalPanel({
                       <button
                         onClick={() => decide(row, "approve")}
                         disabled={!row.decide_token}
-                        className="rounded bg-green-600 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-green-700 disabled:bg-slate-300 disabled:text-slate-500 dark:disabled:bg-slate-700 dark:disabled:text-slate-500"
+                        className="rounded bg-green-600 px-2 py-0.5 text-10 font-medium text-white hover:bg-green-700 disabled:bg-slate-300 disabled:text-slate-500 dark:disabled:bg-slate-700 dark:disabled:text-slate-500"
                       >
                         批准
                       </button>
                       <button
                         onClick={() => decide(row, "reject")}
                         disabled={!row.decide_token}
-                        className="rounded bg-red-600 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-red-700 disabled:bg-slate-300 disabled:text-slate-500 dark:disabled:bg-slate-700 dark:disabled:text-slate-500"
+                        className="rounded bg-red-600 px-2 py-0.5 text-10 font-medium text-white hover:bg-red-700 disabled:bg-slate-300 disabled:text-slate-500 dark:disabled:bg-slate-700 dark:disabled:text-slate-500"
                       >
                         拒绝
                       </button>
@@ -175,7 +175,7 @@ export default function ApprovalPanel({
                     {/* 决定令牌是一次性的：为 null 说明这条已被批过、或列表是旧的。
                         与其让人点一下吃 403，不如当场说清怎么恢复（禁用必须配说明）。 */}
                     {!row.decide_token && (
-                      <span className="text-[10px] leading-tight text-slate-400 dark:text-slate-500">
+                      <span className="text-10 leading-tight text-slate-400 dark:text-slate-500">
                         这条已经批过了，或者这份列表是旧的 —— 关掉重开待批列表再批
                       </span>
                     )}

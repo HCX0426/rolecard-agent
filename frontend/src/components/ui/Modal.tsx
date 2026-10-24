@@ -1,6 +1,8 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
+import Button from "./Button";
+
 /** 受控模态框：ESC / 点遮罩关闭、基础焦点管理、暗色态一致。
  *  通过 portal 渲染到 document.body，调用方无需 relative 容器。
  *
@@ -110,25 +112,15 @@ export function ConfirmDialog({
       title={title}
       footer={
         <>
-          <button
-            ref={cancelRef}
-            type="button"
-            onClick={onCancel}
-            className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700/40"
-          >
+          {/* 2026-10-24 UI 打磨：这对手搓按钮收编进 ui/Button（当初确认框自己长按钮，
+              悬停/禁用/焦点样式就与全项目各漂一套 —— 设计文档"新代码必须复用 ui/"的
+              首个违例就在这里）。size="sm" 与原 px-3 py-1.5 text-sm 观感等距。 */}
+          <Button ref={cancelRef} variant="outline" size="sm" type="button" onClick={onCancel}>
             {cancelText}
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            className={
-              danger
-                ? "rounded-lg bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700"
-                : "rounded-lg bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700"
-            }
-          >
+          </Button>
+          <Button variant={danger ? "danger" : "primary"} size="sm" type="button" onClick={onConfirm}>
             {confirmText}
-          </button>
+          </Button>
         </>
       }
     >

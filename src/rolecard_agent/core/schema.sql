@@ -532,3 +532,23 @@ CREATE TABLE IF NOT EXISTS mcp_server (
     updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- ===========================================================================
+-- 渠道会话绑定（features/channels/，2026-10-24 2b）：外部聊天渠道（QQ 官方机器人等）
+-- 的一个"对端"（群 openid / 单聊 openid）↔ 本地 session_thread 的映射。
+-- 为什么一张表而不是把对端塞进 session_thread：渠道绑定是**渠道功能**的状态，内核的
+-- 会话表不该认识"QQ"这个概念；反过来渠道重启/换角色卡时这张表可以整行重指，不动会话。
+-- user_id 记这条绑定创建时的主人（渠道会话归实例主人所有，§4.1）。
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS channel_session (
+    channel     TEXT NOT NULL,               -- 渠道 id（'qq' …）
+    peer        TEXT NOT NULL,               -- 对端 id（group_openid / user_openid / channel_id）
+    thread_id   TEXT NOT NULL,
+    user_id     TEXT NOT NULL,
+    role_id     TEXT,                        -- 创建绑定时的角色（改 QQ_CHANNEL_ROLE_ID 不追溯旧行）
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (channel, peer)
+);
+
+

@@ -35,7 +35,7 @@ export function AuditPanel() {
           placeholder="筛选：动作名 / 对象 / 详情…"
           className="w-64 rounded-lg border border-slate-200 px-3 py-1.5 text-xs outline-none focus:border-blue-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
         />
-        <span className="text-[11px] text-slate-400">{filtered.length} / {rows.length} 条</span>
+        <span className="text-11 text-slate-400">{filtered.length} / {rows.length} 条</span>
       </div>
       {status && <p className="rounded-lg bg-red-50 dark:bg-red-900/30 px-3 py-2 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{status}</p>}
       {/* 横向可滚动：审计列（详情 JSON）天然宽，容器必须给滚动条而不是裁掉。 */}
@@ -75,7 +75,7 @@ export function AuditPanel() {
                 <td className="max-w-56 px-4 py-2 align-top text-slate-400 dark:text-slate-500">
                   {/* 详情可点开：截断摘要 + title 悬浮不够看全 JSON（审计走查反馈） */}
                   {a.detail_json && expanded === String(a.id) ? (
-                    <pre className="max-w-72 whitespace-pre-wrap break-all rounded bg-slate-50 p-1.5 font-mono text-[11px] text-slate-600 dark:bg-slate-700/40 dark:text-slate-300">
+                    <pre className="max-w-72 whitespace-pre-wrap break-all rounded bg-slate-50 p-1.5 font-mono text-11 text-slate-600 dark:bg-slate-700/40 dark:text-slate-300">
                       {a.detail_json}
                     </pre>
                   ) : (
@@ -93,7 +93,7 @@ export function AuditPanel() {
           </tbody>
         </table>
       </Card>
-      <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-500">
+      <p className="mt-2 text-11 text-slate-400 dark:text-slate-500">
         审计由程序在角色切换、插件启停、对话创建、数据修正/删除时写入（US-3）；本页只读。
       </p>
     </div>

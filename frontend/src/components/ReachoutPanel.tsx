@@ -287,7 +287,7 @@ export default function ReachoutPanel({
           </div>
         )}
         {!!data?.file_watch_pending && (
-          <div className="border-b border-slate-100 px-4 py-1.5 text-[11px] text-slate-400 dark:border-slate-700 dark:text-slate-500">
+          <div className="border-b border-slate-100 px-4 py-1.5 text-11 text-slate-400 dark:border-slate-700 dark:text-slate-500">
             任务目录有 {data.file_watch_pending} 项变化，正等着角色找话题
           </div>
         )}
@@ -304,7 +304,7 @@ export default function ReachoutPanel({
                 <button
                   onClick={() => setToggled((t) => ({ ...t, [stack.key]: !isOpen(stack) }))}
                   title={isOpen(stack) ? "收起这一摞" : "展开看每一条"}
-                  className="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left text-[11px] text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-700/40"
+                  className="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left text-11 text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-700/40"
                 >
                   <span className="w-3 shrink-0 text-slate-400">{isOpen(stack) ? "▾" : "▸"}</span>
                   <span className="font-medium text-slate-700 dark:text-slate-200">
@@ -314,7 +314,7 @@ export default function ReachoutPanel({
                     {stack.label} · {stack.items.length} 条
                   </span>
                   {stack.unread > 0 && (
-                    <span className="ml-auto shrink-0 rounded-full bg-blue-600 px-1.5 py-0.5 text-[10px] text-white">
+                    <span className="ml-auto shrink-0 rounded-full bg-blue-600 px-1.5 py-0.5 text-10 text-white">
                       {stack.unread} 未读
                     </span>
                   )}
@@ -381,7 +381,7 @@ function MessageRow({
             {showRole ? row.role_name || row.role_id || "未知角色" : ""}
           </span>
           {row.state === "unread" && (
-            <span className="rounded-full bg-blue-600 px-1.5 py-0.5 text-[10px] text-white">
+            <span className="rounded-full bg-blue-600 px-1.5 py-0.5 text-10 text-white">
               未读
             </span>
           )}
@@ -390,7 +390,7 @@ function MessageRow({
       <span className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
         {row.text}
       </span>
-      <span className="mt-1 flex items-center justify-between text-[10px] text-slate-400">
+      <span className="mt-1 flex items-center justify-between text-10 text-slate-400">
         <span>{formatUtcNaive(row.created_at)}</span>
         {row.thread_id ? (
           <span className="text-blue-600 dark:text-blue-400">打开对话并回复 →</span>

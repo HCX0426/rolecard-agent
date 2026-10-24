@@ -35,12 +35,12 @@ export default function DataPage() {
               <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
                 <h3 className="text-sm font-medium text-slate-700 dark:text-slate-200">{p.display_name}</h3>
                 {p.display_name !== p.plugin_id && (
-                  <code className="rounded bg-slate-100 dark:bg-slate-700/50 px-1.5 py-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                  <code className="rounded bg-slate-100 dark:bg-slate-700/50 px-1.5 py-0.5 text-11 text-slate-500 dark:text-slate-400">
                     {p.plugin_id}
                   </code>
                 )}
                 {!p.enabled && (
-                  <span className="rounded-full bg-amber-50 dark:bg-amber-900/30 px-2 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">
+                  <span className="rounded-full bg-amber-50 dark:bg-amber-900/30 px-2 py-0.5 text-11 text-amber-600 dark:text-amber-400">
                     该领域插件已停用（数据保留）
                   </span>
                 )}
@@ -137,7 +137,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
   return (
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-3">
-        <p className="text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
+        <p className="text-11 leading-relaxed text-slate-400 dark:text-slate-500">
           主流程是<b>上传报告 / 图片让 AI 解析</b>；这里只是补录入口 —— 手填的数据默认带
           【未经人工校验】标记。
         </p>
@@ -201,7 +201,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
               onClick={async () => {
                 if (await confirm({ title: "删除整份报告？", body: "将删除该报告及其全部指标记录，不可恢复。", confirmText: "确认删除", danger: true })) remove("report", r.report_id);
               }}
-              className="rounded px-2 py-1 text-[11px] text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
+              className="rounded px-2 py-1 text-11 text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
             >
               删除报告
             </button>
@@ -480,7 +480,7 @@ function AddReportForm({ onDone }: { onDone: () => void }) {
         >
           取消
         </button>
-        <span className="text-[11px] text-slate-400 dark:text-slate-500">手填默认标记为【未经人工校验】</span>
+        <span className="text-11 text-slate-400 dark:text-slate-500">手填默认标记为【未经人工校验】</span>
       </div>
 
       {err && <p className="mt-2 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{err}</p>}
@@ -598,7 +598,7 @@ function GenericDomainData({
   return (
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-3">
-        <p className="text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
+        <p className="text-11 leading-relaxed text-slate-400 dark:text-slate-500">
           「{displayName}」域的通用数据（标签 + 数值/文本 + 单位 + 备注）。新增领域插件即自动出现此视图。
         </p>
         <button

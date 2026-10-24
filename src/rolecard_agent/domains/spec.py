@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
     from rolecard_agent.base.audit import AuditTrail
     from rolecard_agent.base.observability import Tracer
+    from rolecard_agent.config import Settings
     from rolecard_agent.core.domain.domain_service import DomainQueryService
     from rolecard_agent.core.ingest.ingestion import IngestionService
     from rolecard_agent.rag.ocr import OcrBackend
@@ -105,7 +106,16 @@ class RouterHost(Protocol):
 
     @property
     def app_state(self) -> dict[str, Any]:
-        """图 / 有效配置 / 默认模型的槽位（热重建后整体换掉，端点每请求读它）。"""
+        """图 / 默认模型的槽位（热重建后整体换掉，端点每请求读它）。
+
+        槽位里的 `effective` **不是**域路由读配置的入口 —— 那是内核与 features 的共享
+        事实面；域要有效配置一律走下面的 `settings`（2026-10-24 起与 api 层同一条纪律）。
+        """
+        ...
+
+    @property
+    def settings(self) -> Settings:
+        """**实例主人**那份有效配置（`AppContext.settings` 同源）—— 域路由读配置的唯一写法。"""
         ...
 
     def ocr_candidates(self) -> OcrBackend | None:

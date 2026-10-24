@@ -447,6 +447,40 @@ def trigger_time_pattern(
     return None
 
 
+def trigger_scheduled(
+    role: RoleCard, conn: SqlConnection, *, user_id: str, now_local: datetime
+) -> str | None:
+    """固定时刻问候档（2026-10-24，2a）：角色卡排了 `greeting_at`（HH:MM 本地时刻），
+    且当前这一拍正落在那一分钟 → 触发。
+
+    三个设计决定，改动前先读：
+
+    * **排他链里的位置**在 file_event 之后、affection 之前（接线见 `scheduler.tick_once`）：
+      它是**用户拍板的**由头，优先级应高于统计推断（时段规律）与关系值；文件事件排它
+      前面，是因为"刚发生的素材"比"排好的问候"更不能等。
+    * **当日只发一次**：判据读投递台账 `agent_reachout`（`fired_by='scheduled'` 且本地
+      日期 == 今天），**不另建状态表** —— 台账本来就是"她说过什么、为什么说"的唯一事实面，
+      再立一个"今天发没发"就是第二份可漂移的真相。30s 一拍在目标分钟内会命中两次，
+      这条判据就是挡第二次的。
+    * **过不了静默闸**：它和其它由头一样要过 `quiet_gate`（基线间隔没到照旧被压）——
+      排好的问候不享有越过"别太吵"纪律的特权；今天被压过点，明天同一时刻再来。
+    """
+    if not role.greeting_at:
+        return None
+    if now_local.strftime("%H:%M") != role.greeting_at:
+        return None
+    rows = conn.execute(
+        "SELECT created_at FROM agent_reachout "
+        "WHERE role_id = ? AND user_id = ? AND fired_by = 'scheduled'",
+        (role.role_id, user_id),
+    ).fetchall()
+    for r in rows:
+        ts = _parse_reachout_ts(r["created_at"])
+        if ts is not None and ts.astimezone().date() == now_local.date():
+            return None
+    return "scheduled"
+
+
 #: 回忆档的冷却（小时）。为什么要有（09-26 轮 R26-23）：这一档的判据原先只是"有没有一条
 #: active 记忆"，而记忆条数只增不减 —— 于是它和触顶的 affinity 一样变成永久命中，把排在它
 #: 后面的定时档（以及挂在定时档上的第五由头）一起压死。锚点读 `role_proactive_state.recall_at`。

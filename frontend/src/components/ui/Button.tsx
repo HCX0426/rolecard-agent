@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode, type Ref } from "react";
 
 type Variant = "primary" | "outline" | "ghost" | "danger";
 type Size = "sm" | "md";
@@ -28,23 +28,30 @@ const SIZES: Record<Size, string> = {
  * 只在 `disabled` 为真时渲染一行说明，告诉用户**怎么让它可用**。
  * 为什么要单独一个属性而不是 `title`：Chromium 在禁用按钮上根本不弹原生 title，
  * 于是"禁用了但不说为什么"就成了既拦不住又查不出的死控件。
+ *
+ * `forwardRef`（2026-10-24 UI 打磨）：ConfirmDialog 要把默认焦点落在「取消」上 ——
+ * 函数组件不转发 ref 的话，收编进 Button 的那颗按钮就拿不到 DOM 句柄。
  */
-export default function Button({
-  variant = "primary",
-  size = "md",
-  className = "",
-  children,
-  disabledHint,
-  disabled,
-  ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: Variant;
-  size?: Size;
-  children?: ReactNode;
-  disabledHint?: string;
-}) {
+const Button = forwardRef(function Button(
+  {
+    variant = "primary",
+    size = "md",
+    className = "",
+    children,
+    disabledHint,
+    disabled,
+    ...rest
+  }: ButtonHTMLAttributes<HTMLButtonElement> & {
+    variant?: Variant;
+    size?: Size;
+    children?: ReactNode;
+    disabledHint?: string;
+  },
+  ref: Ref<HTMLButtonElement>,
+) {
   const button = (
     <button
+      ref={ref}
       className={`rounded-lg font-medium transition-colors ${VARIANTS[variant]} ${SIZES[size]} ${className}`}
       disabled={disabled}
       {...rest}
@@ -56,9 +63,11 @@ export default function Button({
   return (
     <span className="inline-flex flex-col items-start gap-0.5">
       {button}
-      <span className="text-[10px] leading-tight text-slate-400 dark:text-slate-500">
+      <span className="text-10 leading-tight text-slate-400 dark:text-slate-500">
         {disabledHint}
       </span>
     </span>
   );
-}
+});
+
+export default Button;

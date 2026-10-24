@@ -43,6 +43,9 @@ SCOPE_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
 #: 只校验形状，**不校验"这个包到底存不存在"** —— 那份清单长在素材目录里
 #: （见 `features/pet_packs.py`），在这里再问一遍就是第二个事实源，而且改素材要重启后端才生效。
 PET_PACK_PATTERN = r"^[a-z][a-z0-9_-]{0,63}$"
+#: 固定时刻问候（`greeting_at`）的形状：24 小时制 HH:MM。校验只管形状 —— "这个时刻合不
+#: 合适"由角色卡的主人自己判断，调度器侧的当日去重与静默闸负责不吵。
+GREETING_AT_PATTERN = r"([01]\d|2[0-3]):[0-5]\d"
 
 # Exemplar budget. Chars are used rather than tokens because it needs no tokenizer
 # dependency, and for Chinese text a character budget is a conservative proxy. The cap is
@@ -91,8 +94,18 @@ def _check_scopes(value: list[str] | None) -> list[str] | None:
     return value
 
 
+def _check_greeting_at(value: str | None) -> str | None:
+    """`greeting_at` 的形状校验与归一：空串与 None 同义 = 没排，归一成 None。"""
+    if not value:
+        return None
+    if not re.fullmatch(GREETING_AT_PATTERN, value):
+        raise ValueError("greeting_at 要写成 HH:MM（24 小时制，本地时区），如 09:00")
+    return value
+
+
 ExemplarList = Annotated[list[RoleExemplar] | None, AfterValidator(_check_exemplar_budget)]
 ScopeList = Annotated[list[str] | None, AfterValidator(_check_scopes)]
+GreetingAt = Annotated[str | None, AfterValidator(_check_greeting_at)]
 
 
 class RoleCard(BaseModel):
@@ -124,6 +137,11 @@ class RoleCard(BaseModel):
     affinity_enabled: bool = True
     # 文件事件触发（架构总览 §5）per-role 闸门：该角色可否被任务目录变化触发。
     file_watch_enabled: bool = True
+    #: 固定时刻问候（2026-10-24，2a）：每天这个本地时刻主动开口一次（HH:MM）。
+    #: None = 不排。它**过不了**静默闸（基线间隔没到照旧被压）—— 排好的问候不享有
+    #: 越过"别太吵"纪律的特权；当日去重读投递台账（`agent_reachout.fired_by='scheduled'`），
+    #: 不另建状态表。触发实现在 `features/reachout/triggers.trigger_scheduled`。
+    greeting_at: GreetingAt = None
     #: 收件箱自动保留条数：0 = 不自动删（默认）；N>0 = 只留最近 N 条。删的是投递记录，
     #: 不是她说出口的那句话（那句留在主动会话里 —— 那是她下次开口的依据）。
     reachout_keep: int = Field(default=0, ge=0, le=1000)
@@ -151,6 +169,7 @@ class RoleCardCreate(BaseModel):
     time_pattern_enabled: bool = True
     affinity_enabled: bool = True
     file_watch_enabled: bool = True
+    greeting_at: GreetingAt = None
     reachout_keep: int = Field(default=0, ge=0, le=1000)
     pet_pack: str = ""
 
@@ -187,6 +206,8 @@ class RoleCardUpdate(BaseModel):
     time_pattern_enabled: bool | None = None
     affinity_enabled: bool | None = None
     file_watch_enabled: bool | None = None
+    #: 排固定时刻问候：HH:MM；空串/None = 清除（当日不再触发）。不传这个键 = 不动。
+    greeting_at: GreetingAt = None
     reachout_keep: int | None = Field(default=None, ge=0, le=1000)
     #: 改桌宠形象。传空串 = 回到"没配过"（渲染落默认包）；不传这个键 = 不动。
     pet_pack: str | None = None

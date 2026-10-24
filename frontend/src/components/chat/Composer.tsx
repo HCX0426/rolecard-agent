@@ -85,12 +85,12 @@ export default function Composer({
               alt="待发送图片"
               className="h-16 w-16 rounded-lg border border-slate-200 object-cover dark:border-slate-600"
             />
-            <span className="text-[11px] text-slate-500 dark:text-slate-400">图片已附加，将随消息一起发送</span>
+            <span className="text-11 text-slate-500 dark:text-slate-400">图片已附加，将随消息一起发送</span>
             <button
               onClick={() => setPendingImage(null)}
               disabled={busy}
               title="移除图片"
-              className="ml-auto rounded px-2 py-1 text-[11px] text-red-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-900/30"
+              className="ml-auto rounded px-2 py-1 text-11 text-red-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-900/30"
             >
               移除
             </button>
@@ -132,7 +132,7 @@ export default function Composer({
               onClick={() => imageInputRef.current?.click()}
               disabled={busy}
               title="附加图片（发给当前模型识别；需视觉模型支持）"
-              className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-700/60"
+              className="flex items-center gap-1 rounded-lg px-2 py-1 text-11 text-slate-500 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-700/60"
             >
               <IconImage />
               图片
@@ -141,7 +141,7 @@ export default function Composer({
               onClick={onEnhance}
               disabled={busy || enhancing || !input.trim()}
               title="增强提示词：把草稿改写得更清晰、具体（一次模型调用）"
-              className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-700/60"
+              className="flex items-center gap-1 rounded-lg px-2 py-1 text-11 text-slate-500 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-700/60"
             >
               <IconSparkle />
               {enhancing ? "增强中…" : "增强提示词"}
@@ -153,7 +153,7 @@ export default function Composer({
                 title={`上下文约 ${ctxUsed} 字 / 上限 ${ctxBudget} 字（${ctxPct}%）${
                   droppedThisTurn !== null ? ` · 本轮已裁 ${droppedThisTurn} 条` : ""
                 }`}
-                className="flex cursor-default items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500"
+                className="flex cursor-default items-center gap-1 text-11 text-slate-400 dark:text-slate-500"
               >
                 <span
                   className={`h-1.5 w-1.5 rounded-full ${

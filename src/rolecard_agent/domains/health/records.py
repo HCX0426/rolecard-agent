@@ -275,7 +275,7 @@ def build_records_router(deps: RouterDeps) -> APIRouter:
         try:
             outcome = run_extraction(
                 text=text,
-                settings=ctx.app_state["effective"],  # 设置页改了后端也立刻生效
+                settings=ctx.settings,  # 设置页改了后端也立刻生效
                 source=source,
                 known_history=_latest_numeric_history(svc.list_records(ctx.current_user())),
                 tracer=ctx.tracer,

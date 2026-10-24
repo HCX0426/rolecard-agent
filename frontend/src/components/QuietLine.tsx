@@ -11,7 +11,7 @@ import Tag from "./ui/Tag";
 export default function QuietLine({ q }: { q: QuietStatus }) {
   const { head, badge, when, ready } = quietParts(q);
   return (
-    <span className="block text-[11px] leading-4">
+    <span className="block text-11 leading-4">
       <span className="flex flex-wrap items-center gap-x-1.5">
         <span className={ready ? "text-slate-500 dark:text-slate-400" : ""}>{head}</span>
         {badge && <Tag tone="amber">{badge}</Tag>}

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from rolecard_agent.api.auth import Actor
@@ -23,6 +23,11 @@ from rolecard_agent.api.deps import (
     get_context,
 )
 from rolecard_agent.core.proactive import timeline
+from rolecard_agent.features.card_import import (
+    CardImportError,
+    load_card_bytes,
+    parse_sillytavern_card,
+)
 from rolecard_agent.roles.models import RoleCardCreate, RoleCardUpdate
 
 router = APIRouter()
@@ -78,6 +83,40 @@ def create_role(
         },
     )
     return created.model_dump(mode="json")
+
+
+@router.post("/api/roles/import", status_code=201)
+def import_role_card(
+    file: UploadFile,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> object:
+    """导入 SillyTavern 角色卡（PNG 内嵌卡或裸 JSON），映射成自家的卡后创建。
+
+    `features/card_import.py` 的 docstring 有完整的字段映射表与对账单口径 —— 路由只做
+    三件事：大小闸（与上传同一档）、解析（解不开 400）、落库（重名走 RoleAlreadyExists
+    → 409）。世界书/标签这些没有对应物的东西**不静默丢**：report 里计数，界面如实展示。
+    """
+    raw = file.file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="文件是空的。")
+    if len(raw) > ctx.settings.max_upload_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"文件超过上限（{ctx.settings.max_upload_bytes} 字节）。",
+        )
+    try:
+        result = parse_sillytavern_card(load_card_bytes(raw))
+    except CardImportError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    created = ctx.role_cards.create(result.card)
+    ctx.audit.log(
+        actor=actor.id,
+        action="import_role_card",
+        target=created.role_id,
+        detail={"source_name": result.report.get("source_name"), "spec": result.report.get("spec")},
+    )
+    return {"role": created.model_dump(mode="json"), "report": result.report}
 
 
 @router.patch("/api/roles/{role_id}")

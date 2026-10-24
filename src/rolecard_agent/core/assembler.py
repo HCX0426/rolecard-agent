@@ -133,7 +133,6 @@ class RuntimeKernel(Protocol):
 
     assembly: Assembly
     env_settings: Settings
-    effective: Settings
     model_settings: ModelSettingsService
     services: ServiceEndpointService
     # 不加 `| None`：Runtime 声明它是必有字段，Protocol 上放宽反而让具体类对不上（不变型）。
@@ -204,9 +203,9 @@ def rebuild(rt: RuntimeKernel) -> None:
     嵌入器/重排器是 KnowledgeBase 构造时注入的实例，引用变了必须连知识库一起重造；
     工具闭包持有知识库，所以注册表也要跟着重建 —— 顺序即依赖序。
     """
-    # 这一步建的是**实例主人**那份（`rt.effective`）：知识库、注册表、工具闭包与
-    # 编译期默认模型都由它喂，问的是"这台机器能干什么"。请求级那份凭据快照不在这一步，
-    # 它按需在 `effective_for(本轮主人)` 里拼 —— 两条缓存同生共死，所以下面一起清。
+    # 这一步建的是**实例主人**那份有效配置（落进 `rt.state["effective"]`）：知识库、注册表、
+    # 工具闭包与编译期默认模型都由它喂，问的是"这台机器能干什么"。请求级那份凭据快照不在
+    # 这一步，它按需在 `effective_for(本轮主人)` 里拼 —— 两条缓存同生共死，所以下面一起清。
     eff = runtime_settings.apply_overrides(
         rt.model_settings.effective_settings(rt.env_settings, user_id=rt.identity),
         runtime_settings.load_overrides(rt.assembly.conn),
@@ -225,7 +224,6 @@ def rebuild(rt: RuntimeKernel) -> None:
         # 知识库"的中间态被 SSE 请求看到。
         # 只清不加代数：第一次清到这一刻之间，可能有写者拿着**换装前**的配置回填过。
         rt.models.clear_caches()
-        rt.effective = eff
         rt.knowledge = knowledge_new
         rt.registry = registry_new
         rt.state["effective"] = eff

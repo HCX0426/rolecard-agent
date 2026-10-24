@@ -22,6 +22,11 @@ from __future__ import annotations
 
 from rolecard_agent.roles.models import RoleCardCreate
 
+#: 默认角色 id：调用方没指定角色时落的那张卡。从前它住在 `api/deps.py`，而渠道适配器
+#: （`features/channels/`）也要同一个默认 —— features 不能反向 import api 层，且"出厂
+#: 那张卡叫什么"本来就是本文件的事（2026-10-24 下沉；api 层经 deps 再导出，调用方不变）。
+DEFAULT_ROLE_ID = "general_assistant"
+
 # The whitelist is written out explicitly even though `None` would mean "everything". Two
 # reasons: it documents which capabilities this role is supposed to have, and it makes the
 # permission boundary visible in the diff when someone widens it.

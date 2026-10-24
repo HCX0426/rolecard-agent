@@ -127,7 +127,7 @@ export default function DataSourceSwitch() {
         <span className="truncate">
           {cloud ? `数据源：云端 · ${source.user}` : "数据源：本机"}
         </span>
-        <span className="ml-auto shrink-0 text-[10px] text-slate-400 dark:text-slate-500">
+        <span className="ml-auto shrink-0 text-10 text-slate-400 dark:text-slate-500">
           {cloud ? "切回" : "切换 ⇄"}
         </span>
       </button>
@@ -146,7 +146,7 @@ export default function DataSourceSwitch() {
             {syncing ? "正在同步…" : "数据同步"}
             {!syncing && recWhy ? " · 未完成" : ""}
           </span>
-          <span className="ml-auto shrink-0 text-[10px] text-slate-400 dark:text-slate-500">
+          <span className="ml-auto shrink-0 text-10 text-slate-400 dark:text-slate-500">
             {syncing ? "" : (formatLastSync(readLastSync()) ?? "未同步")}
           </span>
         </button>
@@ -154,7 +154,7 @@ export default function DataSourceSwitch() {
 
       {/* 登录对账后的读数卡：只把"机器判不了的"端上来，其余的已经各自到位。 */}
       {rec && rec.left_for_human.length > 0 && (
-        <div className="mx-2 mb-1 rounded-lg border border-slate-200 bg-white p-2.5 text-[11px] shadow-sm dark:border-slate-600 dark:bg-slate-800">
+        <div className="mx-2 mb-1 rounded-lg border border-slate-200 bg-white p-2.5 text-11 shadow-sm dark:border-slate-600 dark:bg-slate-800">
           <b className="text-slate-800 dark:text-slate-100">同步完成</b>
           <p className="mt-0.5 leading-relaxed text-slate-500 dark:text-slate-400">
             已上传 {rec.pushed} 项，已下载 {rec.pulled} 项。
@@ -168,7 +168,7 @@ export default function DataSourceSwitch() {
                 clearJustLoggedIn();
                 setRec(null);
               }}
-              className="px-2 py-1 text-[11px] text-slate-500 hover:text-slate-700 dark:text-slate-400"
+              className="px-2 py-1 text-11 text-slate-500 hover:text-slate-700 dark:text-slate-400"
             >
               稍后处理
             </button>
@@ -178,7 +178,7 @@ export default function DataSourceSwitch() {
                 setRec(null);
                 setWizard(true);
               }}
-              className="rounded-lg bg-blue-600 px-2.5 py-1 text-[11px] text-white"
+              className="rounded-lg bg-blue-600 px-2.5 py-1 text-11 text-white"
             >
               立即处理（{rec.left_for_human.length}）
             </button>
@@ -205,14 +205,14 @@ export default function DataSourceSwitch() {
           aria-label="切到云端"
         >
           <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-2xl dark:bg-slate-800">
-            <h2 className="text-[15px] font-semibold text-slate-900 dark:text-slate-100">
+            <h2 className="text-15 font-semibold text-slate-900 dark:text-slate-100">
               切到云端
             </h2>
             <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
               云端是<b>另一份完整数据集</b>：角色卡、会话、记忆、健康档案都换成对面那一份。
               本机这份不动、也不删。
             </p>
-            <label className="mt-3 block text-[11px] text-slate-600 dark:text-slate-300">
+            <label className="mt-3 block text-11 text-slate-600 dark:text-slate-300">
               程序地址
               <input
                 value={base}
@@ -221,7 +221,7 @@ export default function DataSourceSwitch() {
                 className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-xs dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
               />
             </label>
-            <label className="mt-2 block text-[11px] text-slate-600 dark:text-slate-300">
+            <label className="mt-2 block text-11 text-slate-600 dark:text-slate-300">
               账号
               <input
                 value={user}
@@ -229,7 +229,7 @@ export default function DataSourceSwitch() {
                 className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-xs dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
               />
             </label>
-            <label className="mt-2 block text-[11px] text-slate-600 dark:text-slate-300">
+            <label className="mt-2 block text-11 text-slate-600 dark:text-slate-300">
               密码 / 访问令牌
               <input
                 type="password"
@@ -241,7 +241,7 @@ export default function DataSourceSwitch() {
             {/* 失败用红、承诺用黄：两格同色时（第一版截图里就是这样），
                 人会分不清哪一句是刚发生的。JSX 注释只能待在元素的孩子位置上。 */}
             {why && (
-              <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-[11px] leading-relaxed text-rose-800 dark:border-rose-700 dark:bg-rose-900/30 dark:text-rose-200">
+              <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-11 leading-relaxed text-rose-800 dark:border-rose-700 dark:bg-rose-900/30 dark:text-rose-200">
                 {why}
               </p>
             )}
@@ -260,7 +260,7 @@ export default function DataSourceSwitch() {
                 {busy ? "连接中…" : "连接并切换"}
               </button>
             </div>
-            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] leading-relaxed text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-200">
+            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-11 leading-relaxed text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-200">
               连不上或账号不对 = 留在本机这一份，界面上不会出现「半截云端」。
               <b>推理用的 key 由你自己在对面配</b>，这个应用不代付 token。
               <br />

@@ -25,7 +25,8 @@ _COLUMNS = (
     "role_id, user_id, role_name, system_prompt, temperature, model_name, "
     "tool_whitelist, exemplars, knowledge_scopes, description, "
     "is_builtin, reachout_enabled, recall_enabled, time_pattern_enabled, "
-    "affinity_enabled, file_watch_enabled, reachout_keep, pet_pack, created_at, updated_at"
+    "affinity_enabled, file_watch_enabled, greeting_at, reachout_keep, "
+    "pet_pack, created_at, updated_at"
 )
 
 # Columns stored as JSON text. For every one of them `None` and `[]` mean different things,
@@ -142,9 +143,9 @@ class RoleCards:
             "(role_id, user_id, role_name, system_prompt, temperature, model_name, "
             " tool_whitelist, exemplars, knowledge_scopes, description, is_builtin, "
             "reachout_enabled, recall_enabled, time_pattern_enabled, affinity_enabled, "
-            "file_watch_enabled, "
+            "file_watch_enabled, greeting_at, "
             "reachout_keep, pet_pack) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 data.role_id,
                 self.user_id,
@@ -162,6 +163,7 @@ class RoleCards:
                 data.time_pattern_enabled,
                 data.affinity_enabled,
                 data.file_watch_enabled,
+                data.greeting_at,
                 data.reachout_keep,
                 data.pet_pack,
             ),

@@ -160,7 +160,7 @@ export function RuntimePanel() {
   return (
     <div className="mt-6 space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">{data.note}</p>
+        <p className="text-11 leading-relaxed text-slate-400 dark:text-slate-500">{data.note}</p>
         <div className="flex shrink-0 items-center gap-2">
           {saved && <span className="text-xs text-green-600 dark:text-green-400">{saved}</span>}
           {err && <span className="text-xs text-red-600 dark:text-red-400">{err}</span>}
@@ -185,7 +185,7 @@ export function RuntimePanel() {
                 <tr key={it.key} className="border-b border-slate-50 last:border-0 dark:border-slate-700/50">
                   <td className="w-40 py-1.5 align-top">
                     <span className="font-medium text-slate-700 dark:text-slate-200">{it.label}</span>
-                    <span className="ml-1.5 font-mono text-[10px] text-slate-300 dark:text-slate-600">{it.key}</span>
+                    <span className="ml-1.5 font-mono text-10 text-slate-300 dark:text-slate-600">{it.key}</span>
                   </td>
                   <td className="py-1.5 align-top">
                     {/* 主动开口总闸（reachout_enabled）是「记忆与任务目录」页签的单写点：

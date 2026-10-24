@@ -245,7 +245,7 @@ export function ExtensionPanel() {
         <div className="flex items-center justify-between">
           <div className="flex items-baseline gap-2">
             <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">MCP 工具接入</h3>
-            <span className="text-[11px] text-slate-400 dark:text-slate-500">
+            <span className="text-11 text-slate-400 dark:text-slate-500">
               仅 http；接入后需在角色卡白名单授权该工具，角色才可见
             </span>
           </div>
@@ -308,12 +308,12 @@ export function ExtensionPanel() {
                 />
               </div>
               {editingId && Object.keys(servers.find((s) => s.id === editingId)?.headers ?? {}).length > 0 && (
-                <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                <p className="text-11 text-slate-400 dark:text-slate-500">
                   现有鉴权头：{Object.keys(servers.find((s) => s.id === editingId)?.headers ?? {}).join(", ")}（值不可见）
                 </p>
               )}
               <div className="flex items-center gap-2">
-                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                <span className="text-11 text-slate-500 dark:text-slate-400">
                   鉴权头{editingId && !headersTouched ? "（留空=不改，填任一条=整体替换）" : ""}
                 </span>
                 <button
@@ -321,7 +321,7 @@ export function ExtensionPanel() {
                     setHeadersTouched(true);
                     setForm({ ...form, headers: [...form.headers, ["", ""]] });
                   }}
-                  className="rounded border border-slate-200 px-2 py-0.5 text-[11px] text-slate-500 dark:border-slate-700"
+                  className="rounded border border-slate-200 px-2 py-0.5 text-11 text-slate-500 dark:border-slate-700"
                 >
                   ＋ 键值对
                 </button>
@@ -388,22 +388,22 @@ export function ExtensionPanel() {
             >
               <div className="flex items-center gap-2.5">
                 <StatusDot test={t} />
-                <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                <span className="rounded-full bg-blue-100 px-2 py-0.5 text-11 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
                   {s.transport}
                 </span>
                 <span className="text-sm text-slate-800 dark:text-slate-200">{s.display_name}</span>
-                <span className="font-mono text-[11px] text-slate-400 dark:text-slate-500" title={s.url}>
+                <span className="font-mono text-11 text-slate-400 dark:text-slate-500" title={s.url}>
                   {s.url.length > 40 ? `${s.url.slice(0, 40)}…` : s.url}
                 </span>
                 {hdrKeys.length > 0 && (
-                  <span className="font-mono text-[11px] text-slate-400 dark:text-slate-500" title="鉴权头已配置（值不可见）">
+                  <span className="font-mono text-11 text-slate-400 dark:text-slate-500" title="鉴权头已配置（值不可见）">
                     {hdrKeys.join(",")} ****
                   </span>
                 )}
                 <span className="ml-auto flex items-center gap-1.5">
                   <button
                     onClick={() => setExpanded((e) => ({ ...e, [s.id]: !isOpen }))}
-                    className="rounded px-2 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    className="rounded px-2 py-0.5 text-11 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
                     title="展开看工具/错误"
                   >
                     {isOpen ? "收起 ▲" : "详情 ▼"}
@@ -411,7 +411,7 @@ export function ExtensionPanel() {
                   <button
                     disabled={busy === s.id}
                     onClick={() => toggle(s)}
-                    className={`rounded-full px-2.5 py-0.5 text-[11px] ${
+                    className={`rounded-full px-2.5 py-0.5 text-11 ${
                       s.enabled
                         ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
                         : "bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300"
@@ -422,11 +422,11 @@ export function ExtensionPanel() {
                   <button
                     onClick={() => test(s)}
                     disabled={busy === s.id || t.phase === "testing"}
-                    className="rounded border border-slate-200 px-2 py-0.5 text-[11px] text-slate-500 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:hover:bg-slate-800"
+                    className="rounded border border-slate-200 px-2 py-0.5 text-11 text-slate-500 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:hover:bg-slate-800"
                   >
                     测试连接
                   </button>
-                  <button onClick={() => openEdit(s)} className="rounded px-2 py-0.5 text-[11px] text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30">
+                  <button onClick={() => openEdit(s)} className="rounded px-2 py-0.5 text-11 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30">
                     编辑
                   </button>
                   <button
@@ -434,7 +434,7 @@ export function ExtensionPanel() {
                     onClick={async () => {
                       if (await confirm({ title: "删除这个 MCP server？", body: "将从本系统移除该连接（不影响远端服务）。", confirmText: "确认删除", danger: true })) remove(s);
                     }}
-                    className="rounded px-2 py-0.5 text-[11px] text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30"
+                    className="rounded px-2 py-0.5 text-11 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30"
                   >
                     删除
                   </button>
@@ -445,7 +445,7 @@ export function ExtensionPanel() {
                   {t.result.ok ? (
                     <ul className="list-inside list-disc text-slate-500 dark:text-slate-400">
                       {t.result.tools.map((name) => (
-                        <li key={name} className="font-mono text-[11px]">{name}</li>
+                        <li key={name} className="font-mono text-11">{name}</li>
                       ))}
                       {t.result.tools.length === 0 && <li>（无工具）</li>}
                     </ul>
@@ -455,7 +455,7 @@ export function ExtensionPanel() {
                 </div>
               )}
               {isOpen && t.phase !== "done" && (
-                <p className="mt-2 pl-5 text-[11px] text-slate-400 dark:text-slate-500">
+                <p className="mt-2 pl-5 text-11 text-slate-400 dark:text-slate-500">
                   {t.phase === "testing" ? "正在连接…" : "点「测试连接」看该 server 暴露的工具。"}
                 </p>
               )}
@@ -468,7 +468,7 @@ export function ExtensionPanel() {
       <section className="flex flex-col gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
         <div className="flex items-baseline gap-2">
           <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">模型连通性自检</h3>
-          <span className="text-[11px] text-slate-400 dark:text-slate-500">对现在打头的那个模型真发一次轻探活（不耗推理配额）</span>
+          <span className="text-11 text-slate-400 dark:text-slate-500">对现在打头的那个模型真发一次轻探活（不耗推理配额）</span>
         </div>
         <div>
           <button
@@ -493,7 +493,7 @@ export function ExtensionPanel() {
               {probe.models?.length ? `：${probe.models.slice(0, 6).join(", ")}` : ""}
             </p>
           ))}
-        <p className="text-[11px] text-slate-400 dark:text-slate-500">
+        <p className="text-11 text-slate-400 dark:text-slate-500">
           生效 MCP server 合计（含 env 与已停用外）：{effective}
         </p>
       </section>

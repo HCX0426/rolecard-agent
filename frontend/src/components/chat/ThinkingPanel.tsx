@@ -35,7 +35,7 @@ export default function ThinkingPanel({
       <summary className="cursor-pointer select-none text-xs text-slate-400 dark:text-slate-500">
         思考过程
       </summary>
-      <pre className="mt-1.5 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+      <pre className="mt-1.5 max-h-56 overflow-auto whitespace-pre-wrap text-11 leading-relaxed text-slate-500 dark:text-slate-400">
         {text}
       </pre>
     </details>

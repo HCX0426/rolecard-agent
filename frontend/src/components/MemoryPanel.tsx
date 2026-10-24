@@ -536,7 +536,7 @@ export function MemoryPanel() {
               <option value={cadence}>每 {cadence} 轮（默认配置里的其它值）</option>
             )}
           </select>
-          <span className="text-[11px] text-slate-400 dark:text-slate-500">
+          <span className="text-11 text-slate-400 dark:text-slate-500">
             一次提取 = 一次模型调用，跑在回答已经出完之后（不影响对话，失败只留痕）
           </span>
         </label>
@@ -570,14 +570,14 @@ export function MemoryPanel() {
               </span>
               <button
                 onClick={() => setMergePick([])}
-                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-200"
+                className="shrink-0 rounded px-1.5 py-0.5 text-11 text-slate-500 hover:text-slate-700 dark:hover:text-slate-200"
               >
                 取消选择
               </button>
             </div>
             {picked.length === 2 && (
               <>
-                <label className="mt-1.5 block text-[11px] text-slate-500 dark:text-slate-400">
+                <label className="mt-1.5 block text-11 text-slate-500 dark:text-slate-400">
                   合并成一条（先勾的那条留下，含它"用过几次"与钉住状态）
                   {/* 钉住状态不跟着搬：留下的永远是先勾那条，所以"先勾了个没钉住的、
                       后勾的钉住了"这个顺序会让钉住悄悄掉档 —— 说清楚比偷偷换更好。 */}
@@ -597,7 +597,7 @@ export function MemoryPanel() {
                   className="mt-1 w-full resize-none rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:border-blue-400 focus:outline-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
                 />
                 <div className="mt-1 flex items-center justify-between gap-2">
-                  <span className="text-[10px] text-slate-400 dark:text-slate-500">
+                  <span className="text-10 text-slate-400 dark:text-slate-500">
                     {mergeDraft.length}/{MAX_FACT}
                   </span>
                   <button
@@ -644,7 +644,7 @@ export function MemoryPanel() {
                     className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-blue-400 focus:outline-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
                   />
                   <span className="mt-1 flex items-center justify-between gap-2">
-                    <span className="text-[10px] text-slate-400 dark:text-slate-500">
+                    <span className="text-10 text-slate-400 dark:text-slate-500">
                       {editDraft.length}/{MAX_FACT}
                       {/* 超上限后端是**截断**不是报错，所以这里提前说一声。 */}
                       {editDraft.length >= MAX_FACT ? " · 再打会被截断" : ""}
@@ -652,14 +652,14 @@ export function MemoryPanel() {
                     <span className="flex shrink-0 gap-1.5">
                       <button
                         onClick={cancelEdit}
-                        className="rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-200"
+                        className="rounded px-1.5 py-0.5 text-11 text-slate-500 hover:text-slate-700 dark:hover:text-slate-200"
                       >
                         取消
                       </button>
                       <button
                         onClick={() => saveEdit(item)}
                         disabled={itemBusy || !editDraft.trim()}
-                        className="rounded bg-blue-600 px-2 py-0.5 text-[11px] text-white hover:bg-blue-500 disabled:bg-slate-300 dark:disabled:bg-slate-700"
+                        className="rounded bg-blue-600 px-2 py-0.5 text-11 text-white hover:bg-blue-500 disabled:bg-slate-300 dark:disabled:bg-slate-700"
                       >
                         保存
                       </button>
@@ -670,7 +670,7 @@ export function MemoryPanel() {
                 <>
                   <span className="min-w-0 flex-1 break-words text-slate-700 dark:text-slate-200">
                     {item.text}
-                    <span className="mt-0.5 block text-[10px] text-slate-400 dark:text-slate-500">
+                    <span className="mt-0.5 block text-10 text-slate-400 dark:text-slate-500">
                       {SOURCE_LABEL[item.source] ?? item.source}
                       {" · "}用过 {item.hit_count} 次
                       {item.pinned ? " · 已钉住" : ""}
@@ -687,7 +687,7 @@ export function MemoryPanel() {
                             "要紧 = 注入时带【要紧】标记、排序里权重最高；次要 = 活跃数超限时最先被退役（不删）。\n" +
                             "与右边的「钉住」是两件事：钉住完全不进淘汰与整理，这一档只管还在池里时排多前。"
                           }
-                          className="rounded border border-slate-200 bg-white px-1 py-0 text-[10px] text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                          className="rounded border border-slate-200 bg-white px-1 py-0 text-10 text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
                         >
                           {[0, 1, 2].map((tier) => (
                             <option key={tier} value={tier}>
@@ -702,7 +702,7 @@ export function MemoryPanel() {
                     onClick={() => startEdit(item)}
                     disabled={itemBusy}
                     title="改这条的文字（事实对、话说错了就用它，不用删了重记）"
-                    className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700"
+                    className="shrink-0 rounded px-1.5 py-0.5 text-11 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700"
                   >
                     改
                   </button>
@@ -710,14 +710,14 @@ export function MemoryPanel() {
                     onClick={() => void togglePin(item)}
                     disabled={itemBusy}
                     title={item.pinned ? "取消钉住（允许被淘汰/整理）" : "钉住（不参与淘汰与整理）"}
-                    className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700"
+                    className="shrink-0 rounded px-1.5 py-0.5 text-11 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700"
                   >
                     {item.pinned ? "取消钉住" : "钉住"}
                   </button>
                   <button
                     onClick={() => void removeItem(item)}
                     disabled={itemBusy}
-                    className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-slate-500 hover:text-red-600 dark:hover:text-red-400"
+                    className="shrink-0 rounded px-1.5 py-0.5 text-11 text-slate-500 hover:text-red-600 dark:hover:text-red-400"
                   >
                     删除
                   </button>
@@ -727,18 +727,18 @@ export function MemoryPanel() {
           ))}
         </ul>
         {mem?.over_limit && (
-          <p className="mt-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+          <p className="mt-1.5 text-11 text-amber-600 dark:text-amber-400">
             活跃记忆已达上限（{mem.active_count}/{mem.limit}）—— 最弱的已被退役（没删，可撤销）。
             点上面的「整理记忆」合并同义的、让过时的失效，比继续堆着更准。
           </p>
         )}
         <details className="mt-2">
-          <summary className="cursor-pointer text-[11px] text-slate-500 dark:text-slate-400">
+          <summary className="cursor-pointer text-11 text-slate-500 dark:text-slate-400">
             原文视图 / 整段编辑（注入到 prompt 的就是这段）
             {/* 说实在的代价，不藏：整段覆写只删非钉住的条目再按行重建，而"哪一行还是哪一条"
                 是按**文本**认的 —— 所以在TextArea里改了某条的措辞，那条的「要紧程度」会回到一般。
                 逐条列表里改不受影响（按 id 走）。 */}
-            <span className="ml-1 text-[10px] text-slate-400 dark:text-slate-500">
+            <span className="ml-1 text-10 text-slate-400 dark:text-slate-500">
               （在这里改写某条的措辞，那条的「要紧程度」会回到一般；钉住的条目整段保存不动它）
             </span>
           </summary>
@@ -768,7 +768,7 @@ export function MemoryPanel() {
           </button>
           {memMsg && <span className="text-xs text-emerald-600 dark:text-emerald-400">{memMsg}</span>}
           {memErr && <span className="text-xs text-red-600 dark:text-red-400 dark:text-red-500">{memErr}</span>}
-          {mem && <span className="ml-auto text-[11px] text-slate-400 dark:text-slate-500">{memDraft.length} 字</span>}
+          {mem && <span className="ml-auto text-11 text-slate-400 dark:text-slate-500">{memDraft.length} 字</span>}
         </div>
       </Card>
 
@@ -805,9 +805,9 @@ export function MemoryPanel() {
               </option>
             ))}
           </select>
-          {mergeDays === null && <span className="text-[10px] text-slate-400">读取中…</span>}
+          {mergeDays === null && <span className="text-10 text-slate-400">读取中…</span>}
         </label>
-        <p className="mt-1 text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
+        <p className="mt-1 text-11 leading-relaxed text-slate-400 dark:text-slate-500">
           同一角色在一个窗口里攒下的开口折成一行（行上有未读角标，展开看每一条）。
           有未读的那摞总是摊开 —— 折叠只为把旧消息收干净，不藏新消息。
         </p>
@@ -866,7 +866,7 @@ export function MemoryPanel() {
           </span>
         </div>
         {wsDir?.overridden && (
-          <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">
+          <p className="mt-1.5 text-11 text-slate-400 dark:text-slate-500">
             该目录仅存于本机数据库；删除后回到默认的任务目录。
           </p>
         )}
@@ -909,10 +909,26 @@ export function MemoryPanel() {
                   <span className={`truncate ${e.is_dir ? "text-slate-800 dark:text-slate-100" : "text-slate-400 dark:text-slate-500"} ${
                       e.is_dir ? "" : "pl-4"
                     }`}>
-                    {e.is_dir ? "📁 " : ""}{e.name}
+                    {/* 目录标记用 SVG（2026-10-24 UI 打磨）：emoji 的渲染重量随系统漂。 */}
+                    {e.is_dir && (
+                      <svg
+                        width={12}
+                        height={12}
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={1.8}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="mr-1 inline-block align-[-1px]"
+                      >
+                        <path d="M3 6h6l2 2h10v11H3z" />
+                      </svg>
+                    )}
+                    {e.name}
                   </span>
                   {!e.is_dir && e.size > 0 && (
-                    <span className="ml-2 shrink-0 text-[10px] text-slate-400">
+                    <span className="ml-2 shrink-0 text-10 text-slate-400">
                       {e.size > 1024 ? `${(e.size / 1024).toFixed(0)} KB` : `${e.size} B`}
                     </span>
                   )}
@@ -922,7 +938,7 @@ export function MemoryPanel() {
                 <p className="px-2 py-4 text-center text-xs text-slate-400 dark:text-slate-500">（空目录）</p>
               )}
               {tree?.truncated && (
-                <p className="px-2 py-1 text-[11px] text-slate-400 dark:text-slate-500">（条目过多，仅显示部分）</p>
+                <p className="px-2 py-1 text-11 text-slate-400 dark:text-slate-500">（条目过多，仅显示部分）</p>
               )}
             </div>
             <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-4 py-2.5 dark:border-slate-700">

@@ -21,13 +21,13 @@ from __future__ import annotations
 import contextlib
 import re
 from collections.abc import Callable, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.base.text import text_of
 from rolecard_agent.core import memory as mem
 from rolecard_agent.core.common.anti_repeat import dice, grams, jaccard
+from rolecard_agent.core.common.pools import make_pool
 from rolecard_agent.core.common.thread_locks import any_turn_busy, end_extraction, try_extraction
 from rolecard_agent.core.common.usage import TokenUsage, parse_usage, record_usage
 from rolecard_agent.storage.db import SqlConnection
@@ -510,7 +510,7 @@ def pending_messages(conn: SqlConnection, *, thread_id: str, messages: list[Any]
 #: 单调递增，槽永远等不到覆写）—— 每轮对话泄一个 fd。池化后提取固定落到这 1~2 条长命
 #: 线程上，连接槽有界；`try_extraction` 的在飞标记与 `due_for_extract` 的游标判断原样
 #: 生效，排队到的前置作业都是廉价 no-op。
-DISTILL_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="memory-distill")
+DISTILL_POOL = make_pool("memory-distill", 1)
 
 
 def after_turn(

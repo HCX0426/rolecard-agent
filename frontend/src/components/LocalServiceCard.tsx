@@ -114,14 +114,14 @@ export function LocalServiceCard() {
               }`}
             />
             本机 Ollama
-            <span className="truncate font-mono text-[11px] font-normal text-slate-400">
+            <span className="truncate font-mono text-11 font-normal text-slate-400">
               {status.base_url}
             </span>
           </h3>
-          <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">{line}</p>
+          <p className="truncate text-11 text-slate-500 dark:text-slate-400">{line}</p>
           {/* B/S 下不摆一个点不动的灰按钮，直接说清为什么这里没有 */}
           {status.is_local && !shell && (
-            <p className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">
+            <p className="mt-0.5 text-11 text-slate-400 dark:text-slate-500">
               起停 Ollama 进程属于桌面壳（网页不能碰你电脑上的进程）。
             </p>
           )}
@@ -184,7 +184,7 @@ export function LocalServiceCard() {
       </div>
       {msg && (
         <p
-          className={`mt-2 rounded px-2 py-1 text-[11px] ${
+          className={`mt-2 rounded px-2 py-1 text-11 ${
             msg.ok
               ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
               : "bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400"

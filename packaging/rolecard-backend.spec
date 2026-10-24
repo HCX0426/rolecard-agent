@@ -99,6 +99,10 @@ RUNTIME_PACKAGES = (
     "langgraph",
     "langchain_mcp_adapters",
     "mcp",
+    # QQ 渠道（features/channels/qq.py）的 WS 客户端：函数体内懒加载（2b，2026-10-24），
+    # import 图跟不到 —— 不在这里整族收，打包态渠道就是"永远连不上"。它已是运行依赖
+    # （langgraph-sdk 的传递依赖，锁里 16.1.1），不是新增一族。
+    "websockets",
 )
 
 # **下面这段护栏是这条配置里最要紧的一行，不是装饰**：`collect_submodules()` 对没安装的包

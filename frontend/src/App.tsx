@@ -3,6 +3,7 @@ import ReachoutPanel from "./components/ReachoutPanel";
 import DataSourceSwitch from "./components/DataSourceSwitch";
 import ApprovalPanel from "./components/ApprovalPanel";
 import { ToastProvider } from "./components/Toast";
+import Button from "./components/ui/Button";
 import { api, UNREAD_POLL_MS } from "./api";
 import { shellBridge } from "./lib/shell";
 import { usePoll } from "./hooks/usePoll";
@@ -154,12 +155,12 @@ class PageBoundary extends Component<{ children: ReactNode }, { error: Error | n
                 你打开的这个页面还停在升级前的版本，它要的旧文件已经不在了。刷新会拿到新版界面；
                 你的数据（对话、知识库、设置）都在后台，不会因为刷新丢任何东西。
               </p>
-              <button
+              <Button
                 onClick={() => window.location.reload()}
-                className="mt-4 rounded-lg bg-amber-500 px-4 py-2 text-xs text-white hover:bg-amber-600"
+                className="mt-4 bg-amber-500 px-4 py-2 text-11 hover:bg-amber-600"
               >
                 刷新到新版本
-              </button>
+              </Button>
             </div>
           </div>
         );
@@ -169,12 +170,12 @@ class PageBoundary extends Component<{ children: ReactNode }, { error: Error | n
           <div className="max-w-md rounded-xl border border-red-200 bg-red-50 p-6 text-center dark:border-red-800 dark:bg-red-900/30">
             <h2 className="text-sm font-medium text-red-800 dark:text-red-300">页面出了问题</h2>
             <p className="mt-2 text-xs text-red-600 dark:text-red-400">{this.state.error.message}</p>
-            <button
+            <Button
               onClick={() => this.setState({ error: null })}
-              className="mt-4 rounded-lg bg-red-500 px-4 py-2 text-xs text-white hover:bg-red-600"
+              className="mt-4 px-4 py-2 text-11"
             >
               重试
-            </button>
+            </Button>
           </div>
         </div>
       );
@@ -333,10 +334,17 @@ export default function App() {
             className="relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700/60"
             title="命令执行审批（run_command 待批命令）"
           >
-            <span className="shrink-0 opacity-80">⚙️</span>
+            {/* 2026-10-24 UI 打磨：导航里的两个 emoji（⚙️/🔔）换成本文件 TABS 同一套
+                stroke-SVG —— 跨操作系统的渲染重量一致，双图标系统归一。 */}
+            <span className="shrink-0 opacity-80">
+              <svg {...ICON}>
+                <path d="M12 3 5 6v5c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6l-7-3z" />
+                <path d="m9.5 12 1.8 1.8L15 10" />
+              </svg>
+            </span>
             命令审批
             {approvalPending > 0 && (
-              <span className="ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-full bg-amber-500 px-1.5 text-[10px] font-medium text-white">
+              <span className="ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-full bg-amber-500 px-1.5 text-10 font-medium text-white">
                 {approvalPending}
               </span>
             )}
@@ -346,10 +354,15 @@ export default function App() {
             className="relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700/60"
             title="角色主动找你（收件箱）"
           >
-            <span className="shrink-0 opacity-80">🔔</span>
+            <span className="shrink-0 opacity-80">
+              <svg {...ICON}>
+                <path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6z" />
+                <path d="M10.5 19a1.8 1.8 0 0 0 3 0" />
+              </svg>
+            </span>
             主动消息
             {reachoutUnread > 0 && (
-              <span className="ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-medium text-white">
+              <span className="ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-10 font-medium text-white">
                 {reachoutUnread}
               </span>
             )}

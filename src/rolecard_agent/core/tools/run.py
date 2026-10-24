@@ -38,7 +38,6 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -48,6 +47,7 @@ from rolecard_agent.base.audit import tool_audit as _audit
 from rolecard_agent.base.observability import logline
 from rolecard_agent.config import Settings
 from rolecard_agent.core.common.approvals import ApprovalNotFound, ApprovalService
+from rolecard_agent.core.common.pools import make_pool
 from rolecard_agent.core.common.workspace import make_dir_resolver, resolve_task_dir, resolve_within
 from rolecard_agent.core.tools.errors import ToolExecutionError
 from rolecard_agent.storage.db import SqlConnection
@@ -57,7 +57,7 @@ from rolecard_agent.storage.db import SqlConnection
 OUTPUT_MAX_BYTES = 64 * 1024
 
 # 审批后的后台执行池：并发审批的机器不会同时在本地跑很多个命令。
-_APPROVAL_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="approve-run")
+_APPROVAL_EXECUTOR = make_pool("approve-run", 2)
 
 # 任务目录独立 venv 的根（与本仓库的 .venv / .venv-ocr 平级）。
 _TASK_VENV_ROOT = Path(__file__).resolve().parents[4] / ".venv-tasks"

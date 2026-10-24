@@ -157,7 +157,7 @@ export default function TimelineDrawer({
         <span className="flex items-center justify-between gap-3">
           <span>
             {role?.role_name || role?.role_id} · 事件簿
-            <span className="ml-2 text-[11px] font-normal text-slate-400 dark:text-slate-500">
+            <span className="ml-2 text-11 font-normal text-slate-400 dark:text-slate-500">
               只读；要改事实去记忆卡
             </span>
           </span>
@@ -196,7 +196,7 @@ export default function TimelineDrawer({
       <div className="space-y-4">
         {groups.map((group) => (
           <section key={group.date}>
-            <h4 className="mb-1.5 text-[11px] font-medium text-slate-400 dark:text-slate-500">
+            <h4 className="mb-1.5 text-11 font-medium text-slate-400 dark:text-slate-500">
               {group.label}
             </h4>
             <ul className="ml-1 space-y-2 border-l border-slate-200 pl-3.5 dark:border-slate-700">
@@ -211,7 +211,7 @@ export default function TimelineDrawer({
                     <span className="mr-1.5 text-slate-400 dark:text-slate-500">
                       {formatUtcNaive(ev.at, true)}
                     </span>
-                    <span className={`mr-1.5 rounded px-1.5 py-0.5 text-[10px] ${badge.cls}`}>
+                    <span className={`mr-1.5 rounded px-1.5 py-0.5 text-10 ${badge.cls}`}>
                       {badge.label}
                     </span>
                     {jumpable ? (
@@ -227,7 +227,7 @@ export default function TimelineDrawer({
                     )}
                     {ev.kind === "memory_correct" && ev.from_text && (
                       // 「失效不删」第一次被用户看见的地方：旧事实划掉摆在那儿，而不是不见了。
-                      <p className="mt-0.5 break-words text-[11px] text-slate-400 line-through dark:text-slate-500">
+                      <p className="mt-0.5 break-words text-11 text-slate-400 line-through dark:text-slate-500">
                         {ev.from_text}
                       </p>
                     )}
@@ -239,7 +239,7 @@ export default function TimelineDrawer({
         ))}
       </div>
       {truncated && (
-        <p className="mt-3 text-[11px] text-slate-400 dark:text-slate-500">
+        <p className="mt-3 text-11 text-slate-400 dark:text-slate-500">
           某一类事太多，这里只扫到最近的一段（不是全部）。
         </p>
       )}

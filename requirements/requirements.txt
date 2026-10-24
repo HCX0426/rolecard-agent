@@ -43,6 +43,11 @@ pydantic>=2.13
 httpx>=0.27
 typing_extensions>=4.12
 
+# QQ 官方渠道（features/channels/qq.py，2b）的 WS 客户端：函数体内懒加载，如今是直接
+# 依赖要显式声明（同上那族）。它本来就在锁里（langgraph-sdk 的传递依赖，pin <17），
+# 加声明不推版本；spec 的 RUNTIME_PACKAGES 同名那条是它进随包后端的原因。
+websockets>=13
+
 # --- 5. 可观测 -------------------------------------------------------------
 # 注：langsmith 不再直接依赖（L6，源码从不 import；要用传递依赖即可）。
 # local（默认，纯本地 JSON 日志，离线可用）是 OBS_BACKEND 唯一已实现后端。

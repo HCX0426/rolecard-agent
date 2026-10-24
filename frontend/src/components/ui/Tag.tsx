@@ -19,7 +19,7 @@ export default function Tag({
   children: ReactNode;
 }) {
   return (
-    <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] ${TONES[tone]}`}>
+    <span className={`inline-block rounded-full px-2 py-0.5 text-11 ${TONES[tone]}`}>
       {children}
     </span>
   );

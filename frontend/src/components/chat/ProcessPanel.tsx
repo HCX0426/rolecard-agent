@@ -60,11 +60,11 @@ export default function ProcessPanel({ steps }: { steps: TurnStep<TurnMessageLik
               key={i}
               className="rounded border border-slate-200/70 bg-white dark:border-slate-700 dark:bg-slate-800"
             >
-              <summary className="cursor-pointer select-none px-2 py-1 text-[11px] text-slate-400 dark:text-slate-500">
+              <summary className="cursor-pointer select-none px-2 py-1 text-11 text-slate-400 dark:text-slate-500">
                 思考 {steps.slice(0, i + 1).filter((x) => x.kind === "think").length}
                 {s.text.length > 120 ? `（${s.text.length} 字）` : ""}
               </summary>
-              <pre className="max-h-56 overflow-auto whitespace-pre-wrap px-2 pb-2 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+              <pre className="max-h-56 overflow-auto whitespace-pre-wrap px-2 pb-2 text-11 leading-relaxed text-slate-500 dark:text-slate-400">
                 {s.text}
               </pre>
             </details>
