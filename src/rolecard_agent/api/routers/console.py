@@ -5,7 +5,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import re
+
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
@@ -14,6 +17,7 @@ from rolecard_agent.base.observability import scrub_endpoints
 from rolecard_agent.core.ingest import upload_service
 from rolecard_agent.core.ingest.ingestion import IngestionNotFound
 from rolecard_agent.core.ingest.uploads import referenced_paths, remove_orphans, scan_orphans
+from rolecard_agent.roles.models import SCOPE_PATTERN
 
 router = APIRouter()
 
@@ -55,6 +59,80 @@ def list_knowledge_scopes(ctx: AppContext = Depends(get_context)) -> object:
     """
     scopes = [row.get("scope") for row in ctx.knowledge.describe() if row.get("scope")]
     return {"scopes": scopes}
+
+
+class KnowledgeScopeCreate(BaseModel):
+    """新建知识库（作用域）的请求体。名字即集合名，规则同角色作用域。"""
+
+    name: str = Field(min_length=1, max_length=64, pattern=SCOPE_PATTERN)
+
+
+@router.post("/api/knowledge/scopes", status_code=201)
+def create_knowledge_scope(
+    body: KnowledgeScopeCreate,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> object:
+    """新建一个**空**知识库（作用域）—— 管理页"新增知识库"。
+
+    幂等：已存在的同名库原样返回（不重置）。建完即出现在角色卡的作用域下拉
+    （那条链读的是真实集合清单）。破坏性为零：空库不占检索面。
+    """
+    name = body.name.strip()
+    ctx.knowledge.create_scope(name)
+    ctx.audit.log(actor=actor.id, action="create_knowledge_scope", target=name, detail={})
+    return {"scope": name, "chunks": 0, "sources": []}
+
+
+@router.post("/api/knowledge/scopes/{scope}/documents", status_code=201)
+def import_knowledge_document(
+    scope: str,
+    file: UploadFile,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> object:
+    """向指定知识库**导入一份文档**（解析 → 嵌入 → 入该作用域的检索库）。
+
+    与对话页上传共用解析/嵌入实现（同一份重活实现），三处不同：目标作用域由
+    管理页指定；不做指标抽取；不产生会话说明。**后台执行**（OCR 最长 120s +
+    嵌入耗时，同步会卡请求），201 回 task id，进度轮询
+    `GET /api/uploads/tasks/{task_id}`（与上传同源）。作用域不存在时先建
+    （幂等）—— "先建库后投喂"与"边建边投"都是合法姿势。
+    """
+    if not re.fullmatch(SCOPE_PATTERN, scope):
+        raise HTTPException(status_code=400, detail="作用域名不合法（小写字母开头，a-z0-9_）。")
+    raw = file.file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="文件是空的。")
+    if len(raw) > ctx.settings.max_upload_bytes:
+        raise HTTPException(
+            status_code=400, detail=f"文件超过上限（{ctx.settings.max_upload_bytes} 字节）。"
+        )
+    file.file.seek(0)  # 上面的长度预检把指针推到了 EOF；persist 要从头读
+    ctx.knowledge.create_scope(scope)  # 幂等：不存在才建
+    persisted = upload_service.persist_upload(
+        reader=file.file,
+        filename=file.filename or "document.bin",
+        user_id=ctx.current_user(),
+        upload_dir=ctx.settings.upload_dir,
+        ingestion=ctx.ingestion,
+    )
+    submitted = upload_service.submit_scope_import(
+        persisted,
+        scope=scope,
+        ingestion=ctx.ingestion,
+        knowledge=ctx.knowledge,
+        ocr_candidates=ctx.ocr_candidates,
+        tracer=ctx.tracer,
+    )
+    ctx.audit.log(
+        actor=actor.id,
+        action="import_knowledge_document",
+        target=f"{scope}:{persisted.safe_name}",
+        detail={"task_id": persisted.task_id, "queued": submitted},
+    )
+    body = upload_service.processing_outcome(persisted).response()
+    return {**body, "scope": scope, "queued": submitted}
 
 
 @router.delete("/api/knowledge/{scope}")

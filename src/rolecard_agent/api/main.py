@@ -16,7 +16,7 @@ HTTP 这一层该做的五件事：
 services / domains / workspace / reachouts / approvals / mcp / local_service），流式事件
 框架与增量输出审核在 `api/chat.py`。对话内核与 `call_model` / `bind_tools` 解耦：router
 只通过服务层改库，
-下一轮 `call_model` **实时**读到新的 `enabled_domains` 与角色，因此插件启停 / 切角色 /
+下一轮 `call_model` **实时**读到新的角色与工具集（域常开：白名单即唯一边界），因此切角色 /
 换模型无需重启即可生效（07 C14 / US-1 / US-8）。
 
 为什么装配根不在这个文件里（架构审计报告 §0 / §7）：C/S 桌宠壳、评测脚本与冒烟要的是

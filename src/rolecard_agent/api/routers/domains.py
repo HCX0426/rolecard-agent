@@ -51,6 +51,19 @@ def _domain_service(ctx: AppContext) -> DomainDataService:
     return DomainDataService(ctx.conn)
 
 
+@router.get("/api/domains")
+def list_domains(ctx: AppContext = Depends(get_context)) -> list[object]:
+    """已注册域的清单（id + 展示名）—— 资料页的域分组与「关于」面板的来源。
+
+    2026-10-24 权限模型收口：域常开后清单就是 `plugin` 表的全部行（原 `/api/plugins`
+    端点退役），"enabled" 字段随之失去意义，不再回传。
+    """
+    return [
+        {"id": row["plugin_id"], "display_name": row["display_name"]}
+        for row in ctx.plugins.list_plugins()
+    ]
+
+
 @router.get("/api/domains/{domain}/records")
 def list_domain_records(domain: str, ctx: AppContext = Depends(get_context)) -> list[object]:
     """列出某域的通用记录（归属演示用户）。"""

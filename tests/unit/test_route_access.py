@@ -99,8 +99,6 @@ def test_boundaries_that_are_easy_to_get_wrong() -> None:
         ("PUT", "/api/settings/models", OPERATOR),
         ("GET", "/api/approvals", USER),
         ("POST", "/api/approvals/7/decide", OPERATOR),
-        ("GET", "/api/plugins", USER),
-        ("POST", "/api/plugins/web_search/toggle", OPERATOR),
         # 管理面与主机影响
         ("GET", "/api/workspace/tree", OPERATOR),
         ("GET", "/api/mcp/servers", OPERATOR),

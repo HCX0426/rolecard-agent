@@ -224,6 +224,14 @@ def rebuild(rt: RuntimeKernel) -> None:
         # 知识库"的中间态被 SSE 请求看到。
         # 只清不加代数：第一次清到这一刻之间，可能有写者拿着**换装前**的配置回填过。
         rt.models.clear_caches()
+        # 工具代数随换装 bump（2026-10-24 域常开收口）：插件开关退役后，热重建是
+        # 工具集唯一的合法变化来源（MCP 服务器增删也走这条），bump 一次让存活会话
+        # 下一轮走 C14 的漂移检测——历史 tool_calls 降级为可读的"未启用"，不炸。
+        rt.assembly.plugins.bump_tool_epoch()
+        # bump 是一次真写且**不自带提交**（"Caller owns the transaction"）—— 不提交就把
+        # RESERVED 锁留在请求线程的连接槽上，后续所有建库/写路径集体 busy（实测就是
+        # 紧随其后的 create_app 在 auto_vacuum PRAGMA 上 locked）。当场提交。
+        rt.assembly.conn.commit()
         rt.knowledge = knowledge_new
         rt.registry = registry_new
         rt.state["effective"] = eff

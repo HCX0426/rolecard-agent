@@ -1,20 +1,14 @@
-"""Plugin enable/disable - the runtime half of the domain registry.
+"""域清单与工具代数（tool_epoch）—— 域的运行时登记面。
 
-Two different things, kept apart on purpose:
+2026-10-24 权限模型收口：**域常开**。从前 `plugin` 表存"操作员开关"（ENABLED vs
+REGISTERED 两本账），角色卡的工具白名单之外还有一道域级闸；现在**白名单即唯一边界**
+（操作员在角色卡上勾选，模型依旧不能改自己的白名单——自我扩权红线不变），这张表退化为
+"注册了哪些域"的清单（`seed_plugin_rows` 播种、`enabled` 列退役不再读写）。
 
-  * **REGISTERED** domains live in `domains/registry.py` - code, changed by a commit.
-  * **ENABLED** domains live in the `plugin` table - data, changed by an operator.
-
-This module owns the second one.
-
-Every toggle bumps `kernel_meta.tool_epoch` **inside the same transaction**. That version is
-what makes "the tool set changed while this session was alive" detectable after a restart: a
-session whose recorded epoch is older than the current one may carry historical tool_calls for
-tools that no longer exist. `execute_tools` already degrades those to "this capability is
-offline" instead of raising - the epoch is what turns that from mysterious into explainable.
-
-Enabling or disabling is deliberately NOT an LLM-callable tool. Letting the model move its own
-permission boundary is self-authorization, the same reasoning as `switch_role` (D2 / C5).
+`kernel_meta.tool_epoch` 保留且更重要了：它是"工具集在会话存活期间变过没有"的唯一信号。
+开关那一族写入消失后，唯一的变化来源是**热重建**（模型设置 / 服务端点保存 → 注册表整体
+重建，MCP 服务器增删也走这条）——`assembler.rebuild` 在换装临界区内 bump 一次，C14 的
+漂移检测（历史 tool_calls 降级为"未启用"而不是炸）因此继续有效。
 """
 
 from __future__ import annotations
@@ -78,8 +72,12 @@ class PluginService:
         except (TypeError, ValueError):
             return DEFAULT_TOOL_EPOCH
 
-    def _bump_tool_epoch(self) -> int:
-        """Increment and return the new version. Caller owns the transaction."""
+    def bump_tool_epoch(self) -> int:
+        """Increment and return the new version. Caller owns the transaction.
+
+        2026-10-24 起公共：开关写入退役后，热重建是工具集唯一的合法变化来源，
+        `assembler.rebuild` 在换装临界区内调它（C14 的漂移检测因此对 MCP 增删仍有效）。
+        """
         current = self.tool_epoch() + 1
         self._conn.execute(
             "INSERT INTO kernel_meta (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
@@ -113,15 +111,13 @@ class PluginService:
         return bool(row["enabled"]) if row else False
 
     def enabled_domains(self) -> list[str]:
-        """The domains whose tools may be bound *right now*.
+        """**已注册的全部域** —— 域常开（2026-10-24 权限模型收口）。
 
-        Read live on every turn rather than snapshotted into session state. A snapshot would
-        make "disable a plugin and it takes effect immediately" false - and a stale snapshot
-        that still permits a disabled plugin's tools is a silent permission bug.
+        从前这里是 `WHERE enabled = 1`：操作员开关 + 角色白名单双层过滤。现在
+        **白名单即唯一边界**，这张表退化为域清单，全部返回。仍按每次调用现读而非
+        快照：`seed_plugin_rows` 播种的新域在下一轮即可见，语义与"热生效"一致。
         """
-        rows = self._conn.execute(
-            "SELECT plugin_id FROM plugin WHERE enabled = 1 ORDER BY plugin_id"
-        ).fetchall()
+        rows = self._conn.execute("SELECT plugin_id FROM plugin ORDER BY plugin_id").fetchall()
         return [str(row["plugin_id"]) for row in rows]
 
     # -- writes ----------------------------------------------------------------
@@ -147,42 +143,6 @@ class PluginService:
             (plugin_id, display_name or plugin_id, 1 if enabled else 0, sort_order),
         )
         self._conn.commit()
-
-    def set_enabled(self, plugin_id: str, enabled: bool, *, actor: str = "operator") -> int:
-        """Toggle a plugin. Returns the new `tool_epoch`.
-
-        The state change, the version bump and the audit row are one transaction: a bump without
-        the change would make every live session think the tool set moved, and a change without
-        the bump would hide it.
-        """
-        self._check_known(plugin_id)
-        row = self._conn.execute(
-            "SELECT enabled FROM plugin WHERE plugin_id = ?", (plugin_id,)
-        ).fetchone()
-        if row is None:
-            raise UnknownPlugin(f"plugin not registered: {plugin_id}")
-
-        before = bool(row["enabled"])
-        if before == enabled:
-            # No state change, so no version bump: re-enabling an enabled plugin must not
-            # invalidate every live session's tool set.
-            self._audit(actor, "plugin_noop", plugin_id, {"enabled": enabled})
-            self._conn.commit()
-            return self.tool_epoch()
-
-        self._conn.execute(
-            "UPDATE plugin SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE plugin_id = ?",
-            (1 if enabled else 0, plugin_id),
-        )
-        epoch = self._bump_tool_epoch()
-        self._audit(
-            actor,
-            "plugin_enable" if enabled else "plugin_disable",
-            plugin_id,
-            {"was": before, "now": enabled, "tool_epoch": epoch},
-        )
-        self._conn.commit()
-        return epoch
 
     # -- internals -------------------------------------------------------------
 

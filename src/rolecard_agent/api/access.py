@@ -62,7 +62,6 @@ USER_ROUTES: tuple[tuple[str, frozenset[str]], ...] = (
     # 多凭据部署下 user 档能编辑的是这台实例上的全部卡 —— 这是刻意取舍不是疏漏，多凭据
     # 按人隔离角色卡需要 schema 动作，产品上未必想要（审查报告 §4 观察项 1）。
     ("/api/roles", _ANY),
-    ("/api/plugins", frozenset({"GET"})),
     ("/api/tools/catalog", _ANY),
     # 桌宠形象包的清单与素材（09-30）：只读两条，且**必须表态** —— 不写这一行它默认算
     # operator，那么开着鉴权的远端实例上，桌宠那只形象会直接退化成 SVG 兜底（图取不到），
@@ -95,7 +94,6 @@ USER_ROUTES: tuple[tuple[str, frozenset[str]], ...] = (
 # **不**在清单里的都是 operator，包括这些值得点名的：
 #   · `/api/settings/runtime`（覆盖配置、保存即热重建）、`/api/settings/models` 的 PUT（凭据）
 #   · `/api/services/**`（后端选型与凭据引用）、`/api/mcp/**`（接入外部 server = operator 动作）
-#   · `/api/plugins/{id}/toggle`（能力开关，绝不做成 LLM/匿名可调）
 #   · `/api/workspace/dir`·`/api/workspace/tree`（授权边界与全盘浏览）、`/api/audit`（管理面）
 #   · `/api/approvals/{id}/decide`（拍板命令执行；另有 b 那次加的一次性决定令牌）
 #   · `/api/local-service/**`（显存与本机推理服务；另有 `require_loopback` 叠加）

@@ -46,17 +46,15 @@ def _kernel(
     replies: list[Any],
     *,
     registry: ToolRegistry | None = None,
-    enable_health: bool = True,
 ) -> Any:
     """Build a fresh kernel over an existing database file.
 
     Reconnecting on every call is deliberate: it is the only way to prove persistence, since
     an in-memory cache would pass a same-process assertion trivially.
 
-    The plugin switch is wired through a real `PluginService`, because `enabled_domains` is read
-    live from the `plugin` table (not from state) - that is the whole point of the tool_epoch /
-    C14 design. `enable_health=False` simulates "the operator switched the domain off".
-    """
+    2026-10-24 权限模型收口：域常开（`PluginService.enabled_domains` 返回全部注册域，
+    不再有 enable 开关）—— 工具可见性的唯一边界是角色卡白名单（见
+    `test_whitelist_is_applied_before_binding`）。"""
     conn = connect(db_path)
     bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
     roles = RoleCardService(conn)
@@ -65,7 +63,6 @@ def _kernel(
 
     plugins = PluginService(conn, known_plugins=["health"])
     plugins.register("health", display_name="Health")
-    plugins.set_enabled("health", enable_health)
 
     reg = registry or ToolRegistry()
     if registry is None:
@@ -204,7 +201,6 @@ def test_whitelist_is_applied_before_binding(tmp_path: Path) -> None:
     reg.register_many([query_health_record, compare_health_index], domain="health")
     plugins = PluginService(conn, known_plugins=["health"])
     plugins.register("health", display_name="Health")
-    plugins.set_enabled("health", True)
     model = ScriptedChat([AIMessage(content="好的。")])
     graph = build_kernel(
         model=model,
@@ -230,8 +226,10 @@ def test_whitelist_is_applied_before_binding(tmp_path: Path) -> None:
     assert model.last_visible_tools == ["compare_health_index"]
 
 
-def test_disabled_domain_removes_tools_and_offline_call_does_not_raise(tmp_path: Path) -> None:
-    """C14: a historical tool_call for a now-disabled plugin must degrade, not explode."""
+def test_tool_gone_from_registry_degrades_offline_not_raise(tmp_path: Path) -> None:
+    """C14（域常开后的形状）：历史 tool_call 指向的**工具已从注册表消失**
+    （生产路径 = MCP 服务器被移除 → 注册表重建），必须降级为一句可读的
+    "未启用"，而不是抛异常炸掉整轮。"""
     db = tmp_path / "app.db"
     _seed_identity(db)
     graph, _, _ = _kernel(
@@ -243,7 +241,8 @@ def test_disabled_domain_removes_tools_and_offline_call_does_not_raise(tmp_path:
             ),
             AIMessage(content="该项能力当前不可用。"),
         ],
-        enable_health=False,  # the operator switched the domain off
+        # 注册表里只有内核工具——health 域工具不在（等价于"服务器被移除后重建"）
+        registry=_only(list_roles),
     )
     result = graph.invoke(
         {
@@ -251,8 +250,8 @@ def test_disabled_domain_removes_tools_and_offline_call_does_not_raise(tmp_path:
                 thread_id="thread-1",
                 user_id="u1",
                 current_role_id="medical_archivist",
-                enabled_domains=[],
-            ),  # plugin switched off
+                enabled_domains=["health"],
+            ),
             "messages": [HumanMessage(content="查一下")],
         },
         config={"configurable": {"thread_id": "thread-1"}},

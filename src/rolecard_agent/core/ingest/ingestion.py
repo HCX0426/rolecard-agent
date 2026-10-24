@@ -63,7 +63,9 @@ _INGESTION_COLUMNS = (
 # 这里保留该状态是给"显式重启 / 分步推进"的调用方用的（见 _INGESTION_TRANSITIONS）。
 _INGESTION_TRANSITIONS: dict[str, tuple[str, ...]] = {
     INGESTION_PENDING: (INGESTION_PARSED, INGESTION_FAILED),
-    INGESTION_PARSED: (INGESTION_EXTRACTED, INGESTION_FAILED),
+    # parsed → indexed 是知识库直导（2026-10-24）的合法落点：不经指标抽取的文档
+    # 解析完直接入检索库 —— "extracted" 的语义是"做过指标抽取"，这里没有抽取可做。
+    INGESTION_PARSED: (INGESTION_EXTRACTED, INGESTION_INDEXED, INGESTION_FAILED),
     INGESTION_EXTRACTED: (INGESTION_INDEXED, INGESTION_FAILED),
     INGESTION_INDEXED: (),  # terminal: nothing further
     INGESTION_FAILED: (INGESTION_PENDING,),  # explicit restart only

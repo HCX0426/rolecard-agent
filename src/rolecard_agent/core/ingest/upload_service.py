@@ -530,3 +530,140 @@ def submit_processing(
 
         _RUNNING[p.task_id] = _UPLOAD_POOL.submit(_run)
     return True
+
+
+# -- 知识库管理页的文档直导（2026-10-24，知识库管理页）------------------------------
+
+
+def process_scope_import(
+    p: PersistedUpload,
+    *,
+    scope: str,
+    ingestion: IngestionService,
+    knowledge: KnowledgeBase,
+    ocr_candidates: Callable[[], Any] | None,
+    tracer: Any,
+) -> dict[str, object]:
+    """知识库管理页的文档导入（重活）：persist 之后的一段 —— 解析 → 嵌入 → 入**指定作用域**。
+
+    与 `process_upload`（会话上传）共用解析与嵌入实现，三处刻意不同：
+
+    * **目标作用域由调用方指定**（管理页选的库），不再绑死域的 `knowledge_scope`；
+    * **不做指标抽取**、不产生会话说明文案 —— 产物只有"这个库多了 N 段可检索内容"；
+    * 状态链 `pending → parsed → indexed`（`extracted` 的语义是"做过指标抽取"，
+      这里没有抽取可做；转移表已放行 parsed→indexed）。
+
+    台账与进度端点与会话上传同源（`/api/uploads/tasks/{task_id}`），管理页照这个轮询。
+    """
+    existing = ingestion.get(p.task_id)
+    suffix = p.target.suffix.lower()
+    if not p.parseable:
+        return {
+            "task_id": p.task_id,
+            "file": p.safe_name,
+            "status": str(existing["status"]),
+            "chunks": 0,
+            "note": "文件类型暂不支持自动解析（.txt/.md/.pdf/.docx/.pptx/.xlsx 及图片 OCR）。",
+        }
+    try:
+        backend = (
+            ocr_candidates()
+            if suffix in IMAGE_EXTS and ocr_candidates is not None
+            else None
+        )
+        text = parse_document(p.target, backend=backend)
+    except OcrUnavailable:
+        # 与会话上传同一口径：图片保持 pending，OCR 可后补（重传/自愈再入索引）。
+        return {
+            "task_id": p.task_id,
+            "file": p.safe_name,
+            "status": str(existing["status"]),
+            "chunks": 0,
+            "note": "本地 OCR 未配置，图片暂不能读取 —— 配置后重新导入即可。",
+        }
+    except ParseError as exc:
+        ingestion.record_failure(p.task_id, str(exc))
+        raise UploadUnreadable(str(exc)) from exc
+
+    if not text.strip():
+        if (existing["status"] or "pending") == "pending":
+            ingestion.advance(p.task_id, "parsed")
+        return {
+            "task_id": p.task_id,
+            "file": p.safe_name,
+            "status": "parsed",
+            "chunks": 0,
+            "note": "已解析但未提取到文本（可能为扫描件），未入检索。",
+        }
+
+    # 解析文本落盘：重导入/重解析免二次 OCR（与会话上传同一条好处）。
+    try:
+        parsed_text_path(p.target).write_text(text, encoding="utf-8")
+    except OSError as exc:
+        tracer.emit(
+            TraceEvent(
+                event="parsed_text_write_failed",
+                error=f"{type(exc).__name__}: {exc}",
+                detail={"target": p.target.name, "scope": scope},
+            )
+        )
+    try:
+        chunks = knowledge.index(scope, p.task_id, text, source_name=p.safe_name)
+    except (KnowledgeDimensionMismatch, EmbedError) as exc:
+        ingestion.record_failure(p.task_id, str(exc))
+        raise UploadUnreadable(str(exc)) from exc
+
+    if (existing["status"] or "pending") == "pending":
+        for next_status in ("parsed", "indexed"):
+            ingestion.advance(p.task_id, next_status)
+    return {
+        "task_id": p.task_id,
+        "file": p.safe_name,
+        "status": "indexed",
+        "chunks": chunks,
+        "reused": p.reused,
+    }
+
+
+def submit_scope_import(
+    p: PersistedUpload,
+    *,
+    scope: str,
+    ingestion: IngestionService,
+    knowledge: KnowledgeBase,
+    ocr_candidates: Callable[[], Any] | None,
+    tracer: Any,
+) -> bool:
+    """把 `process_scope_import` 丢给后台池；已有一个在跑就不再起（返回 False）。
+
+    与 `submit_processing` 同一形状（同一条池、同一本 `_RUNNING` 账、同一个进度
+    端点），但没有 `sink` —— 知识导入的产物在知识库页自己轮询得到，无需投回会话。
+    失败分工同族：解析/索引硬失败已 `record_failure`（台账 failed → 进度端点读得到）。
+    """
+    with _RUNNING_GUARD:
+        existing = _RUNNING.get(p.task_id)
+        if existing is not None and not existing.done():
+            return False
+
+        def _run() -> None:
+            try:
+                process_scope_import(
+                    p,
+                    scope=scope,
+                    ingestion=ingestion,
+                    knowledge=knowledge,
+                    ocr_candidates=ocr_candidates,
+                    tracer=tracer,
+                )
+            except UploadUnreadable:
+                return  # 台账已 failed：进度端点读得到
+            except Exception as exc:  # noqa: BLE001 — 后台兜底与 submit_processing 同族
+                with contextlib.suppress(Exception):
+                    ingestion.record_failure(p.task_id, f"{type(exc).__name__}: {exc}")
+                return
+            finally:
+                with _RUNNING_GUARD:
+                    _RUNNING.pop(p.task_id, None)
+
+        _RUNNING[p.task_id] = _UPLOAD_POOL.submit(_run)
+    return True

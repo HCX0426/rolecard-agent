@@ -104,35 +104,8 @@ def test_delete_custom_role(client: TestClient) -> None:
 
 
 # -- plugins ------------------------------------------------------------------------
-
-
-def test_list_plugins(client: TestClient) -> None:
-    """Traceability: US-3 — 注册域以插件行呈现，默认启用。"""
-    res = client.get("/api/plugins")
-    assert res.status_code == 200
-    plugins = res.json()
-    health = next((p for p in plugins if p["plugin_id"] == "health"), None)
-    assert health is not None
-    assert health["enabled"] is True
-
-
-def test_toggle_plugin_disables_and_bumps_epoch(client: TestClient) -> None:
-    """Traceability: US-3 — 停用插件返回新 tool_epoch 且状态翻转；重复同态不递增。"""
-    res = client.post("/api/plugins/health/toggle", json={"enabled": False})
-    assert res.status_code == 200
-    body = res.json()
-    assert body["enabled"] is False
-    assert body["tool_epoch"] == 2  # 初始为 1，首次切换 +1
-
-    # 已经是 disabled，再发一次 disabled 不应再递增版本
-    again = client.post("/api/plugins/health/toggle", json={"enabled": False})
-    assert again.json()["tool_epoch"] == 2
-
-
-def test_toggle_unknown_plugin_404(client: TestClient) -> None:
-    """Traceability: US-3 — 命名未注册插件返回 404。"""
-    res = client.post("/api/plugins/ghost/toggle", json={"enabled": True})
-    assert res.status_code == 404
+# （2026-10-24 权限模型收口：GET /api/plugins 与 toggle 端点随"域常开"退役——
+#   白名单即唯一边界，工具清单归「工具」页的 /api/tools/catalog + /api/mcp。）
 
 
 def test_tools_catalog_groups_by_domain(client: TestClient) -> None:

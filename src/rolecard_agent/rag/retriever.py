@@ -502,6 +502,16 @@ class KnowledgeBase:
             with contextlib.suppress(Exception):
                 close_chroma()
 
+    def create_scope(self, scope: str) -> None:
+        """新建一个**空**作用域集合（2026-10-24 知识库管理页的「新增知识库」）。
+
+        幂等：已存在则原样返回（不重置、不动度量）。cosine 度量的新建机制与
+        `_collection_for_write` 同源。空集合即可被 `describe` / `collection_counts`
+        列出（chunks=0），也是角色卡作用域下拉的合法选项 —— 先建库、后投喂。
+        """
+        self._collection_for_write(scope)
+        self._invalidate_collection(scope)
+
     def _collection_for_write(self, scope: str) -> Any:
         """写索引用的集合：不存在时**按 cosine 度量新建**。
 

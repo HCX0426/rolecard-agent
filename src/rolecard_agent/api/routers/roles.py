@@ -14,7 +14,6 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
-from pydantic import BaseModel
 
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import (
@@ -31,12 +30,6 @@ from rolecard_agent.features.card_import import (
 from rolecard_agent.roles.models import RoleCardCreate, RoleCardUpdate
 
 router = APIRouter()
-
-
-class PluginToggle(BaseModel):
-    """Plugin enable/disable request body."""
-
-    enabled: bool
 
 
 def _validate_role_model(ctx: AppContext, model_name: str | None) -> None:
@@ -200,22 +193,6 @@ def tools_catalog(ctx: AppContext = Depends(get_context)) -> object:
         else:
             domains.setdefault(spec.domain, []).append(entry)
     return {"kernel": kernel, "domains": domains}
-
-
-@router.get("/api/plugins")
-def list_plugins(ctx: AppContext = Depends(get_context)) -> list[dict[str, object]]:
-    return ctx.plugins.list_plugins()
-
-
-@router.post("/api/plugins/{plugin_id}/toggle")
-def toggle_plugin(
-    plugin_id: str,
-    body: PluginToggle,
-    ctx: AppContext = Depends(get_context),
-    actor: Actor = Depends(get_actor),
-) -> object:
-    epoch = ctx.plugins.set_enabled(plugin_id, body.enabled, actor=actor.id)
-    return {"plugin_id": plugin_id, "enabled": body.enabled, "tool_epoch": epoch}
 
 
 __all__ = ["router"]
