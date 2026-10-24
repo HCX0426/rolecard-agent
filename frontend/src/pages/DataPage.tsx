@@ -1,60 +1,96 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type GenericRecord, type PluginRow, type ReportRecord } from "../api";
+import { api, type DomainInfo, type GenericRecord, type ReportRecord } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
 import { Button, Card, Notice, PageHeader, Tag } from "../components/ui";
+import { KnowledgeManager } from "../components/KnowledgeManager";
 import { describeError } from '../lib/errors';
 
-// 数据 —— 领域数据的唯一归属地（自"插件 → 详情"里升为独立顶层页）。
-// 数据随领域归属：未来新增领域插件时，这里自动多出一个分组。
-// 主流程是"上传报告 / 图片让 AI 解析"，手动补录只是兜底（所以表单刻意做得最小）。
-export default function DataPage() {
-  const [plugins, setPlugins] = useState<PluginRow[]>([]);
+// 资料 —— 领域内容的管理页（2026-10-24 IA 重构：数据页 + 知识库页合并于此）。
+// 两个区块、**两个引擎**（合并的是界面不是存储）：
+//   结构化记录 —— SQLite，SQL 精确查，表格可修正；AI 走域查询工具读精确值；
+//   知识库     —— Chroma 向量库，语义检索，文档只读可重建；AI 走 search_knowledge。
+// 上传一份报告 = 两个区块各出现产物（抽取成记录 + 原文进检索库）——"一次动作的两个
+// 产物"回到同一个地方，这正是与旧的两页签形态的差别。
+export type MaterialsBlock = "records" | "knowledge";
+
+export default function DataPage({ initialBlock }: { initialBlock?: MaterialsBlock } = {}) {
+  const [domains, setDomains] = useState<DomainInfo[]>([]);
+  const [block, setBlock] = useState<MaterialsBlock>(initialBlock ?? "records");
 
   useEffect(() => {
-    api.get<PluginRow[]>("/api/plugins").then(setPlugins).catch(() => undefined);
+    if (initialBlock) setBlock(initialBlock);
+  }, [initialBlock]);
+
+  useEffect(() => {
+    api.get<DomainInfo[]>("/api/domains").then(setDomains).catch(() => undefined);
   }, []);
 
   return (
     <div className="h-full overflow-y-auto p-4 md:p-6">
       <div className="mx-auto max-w-4xl">
         <PageHeader
-          title="数据"
+          title="资料"
           subtitle={
             <>
-              <b>数据随领域归属</b>：每个领域插件管自己的数据。主流程是
-              <b>上传报告 / 图片让 AI 解析</b>（解析结果进检索索引），下方的手动补录只是兜底入口。
+              结构化记录（可修正的指标/条目）与知识库（文档语义检索）——
+              <b>一次上传，两个产物</b>：抽取成记录 + 原文进检索库。
             </>
           }
+          actions={
+            <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 p-0.5">
+              {(
+                [
+                  ["records", "结构化记录"],
+                  ["knowledge", "知识库"],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setBlock(key)}
+                  className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
+                    block === key
+                      ? "bg-blue-600 text-white"
+                      : "text-slate-600 hover:text-blue-600 dark:text-slate-300 dark:hover:text-blue-400"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          }
         />
-        <div className="mt-5 space-y-7">
-          {plugins.length === 0 && (
-            <p className="text-xs text-slate-400 dark:text-slate-500">正在加载领域…</p>
-          )}
-          {plugins.map((p) => (
-            <section key={p.plugin_id}>
-              <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
-                <h3 className="text-sm font-medium text-slate-700 dark:text-slate-200">{p.display_name}</h3>
-                {p.display_name !== p.plugin_id && (
-                  <code className="rounded bg-slate-100 dark:bg-slate-700/50 px-1.5 py-0.5 text-11 text-slate-500 dark:text-slate-400">
-                    {p.plugin_id}
-                  </code>
-                )}
-                {!p.enabled && (
-                  <span className="rounded-full bg-amber-50 dark:bg-amber-900/30 px-2 py-0.5 text-11 text-amber-600 dark:text-amber-400">
-                    该领域插件已停用（数据保留）
-                  </span>
-                )}
-              </div>
-              <div className="mt-3">
-                {p.plugin_id === "health" ? (
-                  <DataManagement />
-                ) : (
-                  <GenericDomainData domain={p.plugin_id} displayName={p.display_name} />
-                )}
-              </div>
-            </section>
-          ))}
-        </div>
+
+        {block === "knowledge" ? (
+          <KnowledgeManager />
+        ) : (
+          <>
+            <div className="mt-5 space-y-7">
+              {domains.length === 0 && (
+                <p className="text-xs text-slate-400 dark:text-slate-500">正在加载领域…</p>
+              )}
+              {domains.map((d) => (
+                <section key={d.id}>
+                  <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
+                    <h3 className="text-sm font-medium text-slate-700 dark:text-slate-200">{d.display_name}</h3>
+                    {d.display_name !== d.id && (
+                      <code className="rounded bg-slate-100 dark:bg-slate-700/50 px-1.5 py-0.5 text-11 text-slate-500 dark:text-slate-400">
+                        {d.id}
+                      </code>
+                    )}
+                  </div>
+                  <div className="mt-3">
+                    {d.id === "health" ? (
+                      <DataManagement />
+                    ) : (
+                      <GenericDomainData domain={d.id} displayName={d.display_name} />
+                    )}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

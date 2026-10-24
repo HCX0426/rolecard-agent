@@ -9,12 +9,12 @@ import { shellBridge } from "./lib/shell";
 import { usePoll } from "./hooks/usePoll";
 import { useTheme } from "./components/useTheme";
 import { PageSkeleton } from "./components/ui/Skeleton";
+import type { MaterialsBlock } from "./pages/DataPage";
 import {
   IconApproval,
   IconBell,
   IconChat,
   IconData,
-  IconKnowledge,
   IconPlugins,
   IconRoles,
   IconSettings,
@@ -23,17 +23,17 @@ import {
 // ---- 路由级代码分割：六页各自成 chunk，hover 导航时预加载 -------------------------------
 const ChatPage = lazy(() => import("./pages/ChatPage"));
 const DataPage = lazy(() => import("./pages/DataPage"));
-const KnowledgePage = lazy(() => import("./pages/KnowledgePage"));
-const PluginsPage = lazy(() => import("./pages/PluginsPage"));
+
+const ToolsPage = lazy(() => import("./pages/ToolsPage"));
 const RolesPage = lazy(() => import("./pages/RolesPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 
 // hover 预加载：用户在导航栏悬停时提前下载目标页 chunk，消除切换延迟
 const PRELOAD: Partial<Record<string, () => Promise<unknown>>> = {
   data: () => import("./pages/DataPage"),
-  knowledge: () => import("./pages/KnowledgePage"),
+
   roles: () => import("./pages/RolesPage"),
-  plugins: () => import("./pages/PluginsPage"),
+  tools: () => import("./pages/ToolsPage"),
   settings: () => import("./pages/SettingsPage"),
 };
 
@@ -45,10 +45,9 @@ const PRELOAD: Partial<Record<string, () => Promise<unknown>>> = {
 // 两份参数两处长法）。页签表只声明"哪个页签配哪个图标"。
 const TABS = [
   { key: "chat", label: "对话", icon: <IconChat /> },
-  { key: "data", label: "数据", icon: <IconData /> },
-  { key: "knowledge", label: "知识库", icon: <IconKnowledge /> },
+  { key: "data", label: "资料", icon: <IconData /> },
   { key: "roles", label: "角色卡", icon: <IconRoles /> },
-  { key: "plugins", label: "插件", icon: <IconPlugins /> },
+  { key: "tools", label: "工具", icon: <IconPlugins /> },
   { key: "settings", label: "设置", icon: <IconSettings /> },
 ] as const;
 
@@ -65,7 +64,15 @@ function hashParts(): { path: string; query: URLSearchParams } {
 
 function tabFromHash(): TabKey {
   const { path } = hashParts();
+  if (path === "knowledge") return "data"; // 旧深链归一（知识库并入资料页，见 render 区注释）
   return TABS.some((t) => t.key === path) ? (path as TabKey) : "chat";
+}
+
+/** 资料页的区块深链：`#/data?block=knowledge` 直落知识库管理块。 */
+function dataBlockFromHash(): MaterialsBlock {
+  const { path, query } = hashParts();
+  if (path === "knowledge" || query.get("block") === "knowledge") return "knowledge";
+  return "records";
 }
 
 /** 深链指向的会话（没有则 null）。只当"一次性意图"用，消费后由 ChatPage 清掉。 */
@@ -187,12 +194,19 @@ export default function App() {
   // 跨页深链：`#/chat?thread=…` 里的会话只是"一次性的意图"，ChatPage 打开它之后清掉
   // （见 `clearDeepThread`）。留着会让第二次点同一条收件箱消息时 hash 不变、事件不触发。
   const [deepThread, setDeepThread] = useState<string | null>(threadFromHash);
+  // 资料页区块的深链（#/data?block=knowledge）：初始与 hashchange 都对齐
+  const [dataBlock, setDataBlock] = useState<MaterialsBlock>(dataBlockFromHash);
 
   // 浏览器前进/后退 → tab 状态同步
   useEffect(() => {
     const handler = () => {
       setTabState(tabFromHash());
       setDeepThread(threadFromHash());
+      setDataBlock(dataBlockFromHash());
+      // 旧深链归一：#/knowledge 已并入资料页 —— 改写地址栏，前进/后退不再踩已删页签
+      if (window.location.hash.startsWith("#/knowledge")) {
+        window.history.replaceState(null, "", "#/data?block=knowledge");
+      }
     };
     window.addEventListener("hashchange", handler);
     return () => window.removeEventListener("hashchange", handler);
@@ -362,12 +376,12 @@ export default function App() {
             位置 —— 数据页的追加报告多行指标草稿、指标修正 draft、分页 page；角色页的
             编辑表单 form。条件渲染会在切走时整棵卸载丢光（2026-09-18 与服务页同源）。
             注意常驻 = 组件**无条件渲染**（`tab === x && <Page/>` 会在切走时卸载，
-            与条件渲染等效）。知识库 / 插件页无此类草稿，保留 PageBoundary 按需挂载。 */}
+            与条件渲染等效）。工具页无此类草稿，保留 PageBoundary 按需挂载。 */}
         <div className={tab === "data" ? "h-full" : "hidden"}>
           <Suspense
             fallback={<PageSkeleton />}
           >
-            <DataPage />
+            <DataPage initialBlock={dataBlock} />
           </Suspense>
         </div>
         <div className={tab === "roles" ? "h-full" : "hidden"}>
@@ -384,8 +398,8 @@ export default function App() {
                 <PageSkeleton />
               }
             >
-              {tab === "knowledge" && <KnowledgePage onOpenChat={() => selectTab("chat")} />}
-              {tab === "plugins" && <PluginsPage />}
+
+              {tab === "tools" && <ToolsPage />}
             </Suspense>
           </PageBoundary>
         )}

@@ -91,12 +91,6 @@ export const IconData = () => (
   </svg>
 );
 
-export const IconKnowledge = () => (
-  <svg {...NAV}>
-    <path d="M5 4h13v16H5zM8 4v16M11 9h4M11 13h4" />
-  </svg>
-);
-
 export const IconRoles = () => (
   <svg {...NAV}>
     <path d="M3 6h18v12H3zM7 10h5M7 14h3M16 13.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />

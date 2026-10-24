@@ -594,7 +594,7 @@ export default function RolesPage({
                     checked={wlMode === "all"}
                     onChange={() => setWlMode("all")}
                   />
-                  使用全部可用工具（随插件启停自动伸缩）
+                  使用全部工具（含各域工具——白名单为空即全权）
                 </label>
                 <label className="flex cursor-pointer items-center gap-1.5">
                   <input

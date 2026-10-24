@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { ExtensionPanel } from "../components/ExtensionPanel";
 import { AboutPanel } from "../components/AboutPanel";
 import { RuntimePanel } from "../components/RuntimePanel";
 import { AuditPanel } from "../components/AuditPanel";
@@ -8,14 +7,14 @@ import { ModelsPanel } from "../components/ModelsPanel";
 import { ServicesPanel } from "../components/ServicesPanel";
 
 // 设置页子页签：模型（凭据组 + 模型行，见 components/ModelsPanel）/ 服务（运行时状态与降级
-// 策略）/ 记忆与任务目录 / 关于 / 扩展 / 运行环境 / 审计。知识库已升为独立顶层页 ——
-// RAG 是内核能力，不该埋在设置里。
+// 策略）/ 记忆与任务目录 / 关于 / 运行环境 / 审计。
+// 2026-10-24 IA 重构两笔迁出：「扩展」（MCP）升为顶层「工具」页（管理界面，
+// 与内置工具目录同住）；知识库此前已升为顶层页（现并入「资料」页的知识库区块）。
 const SETTINGS_TABS = [
   { key: "models", label: "模型" },
   { key: "services", label: "服务" },
   { key: "memory", label: "记忆与任务目录" },
   { key: "about", label: "关于与系统状态" },
-  { key: "extension", label: "扩展" },
   { key: "runtime", label: "运行环境" },
   { key: "audit", label: "审计" },
 ] as const;
@@ -65,9 +64,6 @@ export default function SettingsPage({
         </div>
         <div className={tab === "services" ? "" : "hidden"}>
           <ServicesPanel />
-        </div>
-        <div className={tab === "extension" ? "" : "hidden"}>
-          <ExtensionPanel />
         </div>
         <div className={tab === "runtime" ? "" : "hidden"}>
           <RuntimePanel />

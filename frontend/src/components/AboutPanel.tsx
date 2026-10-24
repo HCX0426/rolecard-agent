@@ -2,13 +2,7 @@
 // 正文一字未动 —— 等价证明同 MemoryPanel：`SettingsPage.test.tsx` 从整页经 DOM 驱动，
 // 382 支用例数一字不变；import 面由 tsc 的 noUnusedLocals 看守）。
 import { useCallback, useEffect, useState } from "react";
-import {
-  api,
-  type ModelSettings,
-  type PluginRow,
-  type RoleCard,
-  type ThreadRow,
-} from "../api";
+import { api, type DomainInfo, type ModelSettings, type RoleCard, type ThreadRow } from "../api";
 import { Card } from "./ui";
 import { ShellReleaseCard } from "./ShellReleaseCard";
 import { UpdateCheckCard } from "./UpdateCheckCard";
@@ -35,16 +29,15 @@ export function AboutPanel({
   const [loadError, setLoadError] = useState("");
 
   const loadInfo = useCallback(async () => {
-    const [ms, plugins, roles, sessions] = await Promise.all([
+    const [ms, domains, roles, sessions] = await Promise.all([
       api.get<ModelSettings>("/api/settings/models"),
-      api.get<PluginRow[]>("/api/plugins"),
+      api.get<DomainInfo[]>("/api/domains"),
       api.get<RoleCard[]>("/api/roles"),
       api.get<ThreadRow[]>("/api/sessions"),
     ]);
-    const enabled = plugins.filter((p) => p.enabled).length;
     setInfo({
       defaultBackend: ms.default || "env 默认（local）",
-      plugins: `${enabled} / ${plugins.length} 启用`,
+      plugins: `${domains.length} 个域`,
       roles: roles.length,
       sessions: sessions.length,
     });

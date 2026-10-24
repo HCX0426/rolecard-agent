@@ -4,11 +4,11 @@
 // 住址只活在实现里（数一份清单就守一份清单，facade 用通配是不给第二份清单留门）。
 
 
-export interface PluginRow {
-  plugin_id: string;
+/** 已注册域的清单行（2026-10-24 域常开：GET /api/domains，原 /api/plugins 退役）。
+ *  域常开后没有 enabled 概念——工具可见性的唯一边界是角色卡白名单。 */
+export interface DomainInfo {
+  id: string;
   display_name: string;
-  enabled: boolean;
-  config: unknown;
 }
 
 export interface ToolEntry {

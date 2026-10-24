@@ -28,7 +28,7 @@ import DataPage from "./DataPage";
 beforeEach(() => {
   vi.clearAllMocks();
   apiMock.get.mockImplementation(async (url: string) => {
-    if (url === "/api/plugins") return [{ plugin_id: "health", display_name: "健康", enabled: true }];
+    if (url === "/api/domains") return [{ id: "health", display_name: "健康" }];
     if (url.startsWith("/api/records")) {
       return {
         items: [
