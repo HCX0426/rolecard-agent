@@ -215,3 +215,24 @@ def test_periodic_task_stop_joins_and_double_start_is_noop() -> None:
     assert not first.is_alive()  # join 等到了线程真退出
     with task._guard:
         assert task.ticks == 0  # 30s 间隔：没到第一拍就被停了
+
+
+def test_periodic_task_breaks_out_after_error_when_stopping() -> None:
+    """错误那一拍顺手置旗：循环走"留痕 → break"，不开下一拍（骨架 94 行那条出口）。"""
+    tracer = _RecordingTracer()
+    task = _CountingTask(
+        name="test-tick", tick_interval=0.01, tracer=tracer,
+        error_event="test_tick_error", node="test",
+    )
+
+    def boom() -> None:
+        task._stop.set()  # 边报错边置旗
+        raise RuntimeError("boom-and-stop")
+
+    task.tick_once = boom  # type: ignore[method-assign]
+    task.start()
+    thread = task._thread
+    assert thread is not None
+    thread.join(timeout=5)
+    assert not thread.is_alive()  # 置旗后那一拍收尾即 break，join 立刻等到头
+    assert "test_tick_error" in [e.event for e in tracer.events]  # 留痕照发

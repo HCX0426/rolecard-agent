@@ -190,3 +190,88 @@ def test_import_endpoint_roundtrip_and_conflict(tmp_path: Path) -> None:
         )
         assert bad.status_code == 400
         assert "detail" in bad.json()
+
+
+# ---------------------------------------------------------------- 失败分支补测（diff 覆盖率）
+
+
+def _png_with_raw_chara(raw_payload: bytes) -> bytes:
+    """带**损坏** chara 数据的 PNG：内容不经 base64/JSON 校验直接塞进 tEXt。"""
+
+    def chunk(ctype: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(ctype + data) & 0xFFFFFFFF
+        return len(data).to_bytes(4, "big") + ctype + data + crc.to_bytes(4, "big")
+
+    ihdr = (1).to_bytes(4, "big") + (1).to_bytes(4, "big") + bytes([8, 0, 0, 0, 0])
+    text = b"chara\x00" + raw_payload
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", ihdr)
+        + chunk(b"tEXt", text)
+        + chunk(b"IEND", b"")
+    )
+
+
+def test_corrupt_chara_payload_is_rejected() -> None:
+    with pytest.raises(CardImportError, match="解不开"):
+        load_card_bytes(_png_with_raw_chara(b"\xff\xfe not base64 json"))
+
+
+def test_chara_payload_non_object_is_rejected() -> None:
+    payload = base64.b64encode(b"[1, 2, 3]")
+    with pytest.raises(CardImportError, match="JSON 对象"):
+        load_card_bytes(_png_with_raw_chara(payload))
+
+
+def test_top_level_non_object_is_rejected() -> None:
+    with pytest.raises(CardImportError, match="顶层必须是 JSON 对象"):
+        load_card_bytes(b"[1, 2, 3]")
+
+
+def test_blank_lines_inside_example_blocks_are_skipped() -> None:
+    card = dict(V1_CARD)
+    card["mes_example"] = "<START>\n{{user}}: 早\n\n{{char}}: 早呀"
+    result = parse_sillytavern_card(card)
+    assert result.card.exemplars is not None
+    assert result.card.exemplars[0].user == "早"
+
+
+def test_non_dict_card_payload_is_rejected() -> None:
+    class _Weird:
+        """有 .get 但不是 dict —— 防御形状的直测（load_card_bytes 不会产出它）。"""
+
+        def get(self, key: str) -> str:
+            return "x"
+
+    with pytest.raises(CardImportError, match="v2 的 data 对象"):
+        parse_sillytavern_card(_Weird())  # type: ignore[arg-type]
+
+
+def test_shape_validation_failure_becomes_readable_error(monkeypatch) -> None:
+    """映射全过但本仓形状校验拒绝（这里用非法 role_id 模拟）→ 人话 400，不 500。"""
+    from rolecard_agent.features import card_import as ci_mod
+
+    monkeypatch.setattr(ci_mod, "_slugify_role_id", lambda name: "1bad-id!")
+    with pytest.raises(CardImportError, match="形状校验"):
+        parse_sillytavern_card(dict(V1_CARD))
+
+
+def test_import_endpoint_empty_and_oversized(tmp_path: Path, monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    from rolecard_agent.api.main import create_app
+
+    monkeypatch.setenv("MAX_UPLOAD_BYTES", "200")
+    app = create_app(sqlite_path=tmp_path / "import2.db")
+    with TestClient(app) as client:
+        empty = client.post(
+            "/api/roles/import", files={"file": ("x.png", b"", "image/png")}
+        )
+        assert empty.status_code == 400
+        assert "空" in empty.json()["detail"]
+        big = client.post(
+            "/api/roles/import",
+            files={"file": ("x.png", b"x" * 300, "image/png")},
+        )
+        assert big.status_code == 400
+        assert "上限" in big.json()["detail"]
