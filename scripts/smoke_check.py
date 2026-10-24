@@ -302,17 +302,22 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         health = {t["name"] for t in body["domains"].get("health", [])}
         assert {"query_health_record", "compare_health_index"} <= health
 
-    @check("插件启停：停用递增 tool_epoch，启停即时生效")
+    @check("域清单与工具目录：域常开（白名单即唯一边界），退役端点 405")
     def _plugins() -> None:
-        # finance 域加入后插件不止一个且按 plugin_id 排序 —— 必须显式点名 health，
-        # 不能假设列表第 0 项是它（多域后 f < h，[0] 会拿到 finance）。
-        before = next(
-            p for p in c.get("/api/plugins").json() if p["plugin_id"] == "health"
-        )
-        off = c.post("/api/plugins/health/toggle", json={"enabled": False}).json()
-        assert int(off["tool_epoch"]) > 1, off
-        on = c.post("/api/plugins/health/toggle", json={"enabled": True}).json()
-        assert on["enabled"] is True and before["plugin_id"] == "health"
+        # 2026-10-24 权限模型收口：域开关退役（GET/POST /api/plugins 端点已删）。
+        # 新语义钉三点：域清单出 /api/domains（全部注册域，无 enabled 字段）；
+        # 已退役端点回 405（路由不存在，方法不允许）——不是 404 会和打错路径混淆；
+        # 工具目录仍然按域分组（角色卡白名单的选项清单，归「工具」页）。
+        domains = c.get("/api/domains").json()
+        ids = {d["id"] for d in domains}
+        assert "health" in ids, domains
+        assert all("enabled" not in d for d in domains), domains
+        # GET 无路由 → 404（随后被静态 mount 兜底）；POST 有路径残留判定 → 405。
+        # 两个码都只是"路由没了"的证据，具体码不承重——承重的是"域常开"那三条。
+        assert c.get("/api/plugins").status_code in (404, 405)
+        assert c.post("/api/plugins/health/toggle", json={"enabled": False}).status_code == 405
+        catalog = c.get("/api/tools/catalog").json()
+        assert "health" in catalog["domains"], sorted(catalog["domains"])
 
     @check("会话：新建 / 列表 / 详情 / 历史 / 重命名 / 模型覆盖")
     def _sessions() -> None:
