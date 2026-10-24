@@ -522,8 +522,14 @@ class KnowledgeBase:
         """
         try:
             return self._client.get_collection(name=scope)
-        except Exception:  # noqa: BLE001 - 不存在 → 下面新建
-            pass
+        except Exception as exc:
+            # 只把"集合不存在"翻成新建；**名字非法**（chroma 要求 3-63 字符、字母数字
+            # 开头结尾）是调用方可修的错误，必须原样 loud —— 2026-10-24 前它被裸 except
+            # 吞掉后落到最后的 get_collection 再抛 404，"kb 建不出来"查半天查到这里才知道
+            # chroma 不收两字符的名字。SCOPE_PATTERN 允许 1 字符起始，正是要在这里拦。
+            if "does not exist" not in str(exc):
+                raise
+        last_error: Exception | None = None
         for kwargs in (
             {"configuration": {"hnsw": {"space": "cosine"}}},  # chroma 1.x
             {"metadata": {"hnsw:space": "cosine"}},  # 旧版写法
@@ -532,11 +538,13 @@ class KnowledgeBase:
                 created = self._client.create_collection(name=scope, **kwargs)
                 self._invalidate_collection(scope)  # 新建/重建后引用与 describe 缓存作废
                 return created
-            except Exception:  # noqa: BLE001 - 换一种写法再试；都失败就退回 get（会抛）
+            except Exception as exc:  # noqa: BLE001 - 换一种写法再试；最后一次带原因抛出
+                last_error = exc
                 continue
-        collection = self._client.get_collection(name=scope)
-        self._collection_cache[scope] = collection
-        return collection
+        raise RuntimeError(
+            f"知识作用域 {scope!r} 建不出来（chroma 集合名要求 3-63 字符、字母数字开头结尾；"
+            f"请用更长的名字）：{type(last_error).__name__}: {last_error}"
+        ) from last_error
 
     def index(
         self,
