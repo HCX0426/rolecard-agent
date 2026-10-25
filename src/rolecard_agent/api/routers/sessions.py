@@ -24,6 +24,7 @@ from rolecard_agent.api.deps import (
     get_thread,
 )
 from rolecard_agent.api.message_view import expand_to_turns, serialize_message
+from rolecard_agent.api.response_models import SessionsView
 from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.config import Settings
 from rolecard_agent.core import model_settings
@@ -795,7 +796,11 @@ def delete_messages(
     return {"deleted": len(doomed_ids), "remaining": len(messages) - len(doomed_ids)}
 
 
-@router.get("/api/sessions")
+@router.get(
+    "/api/sessions",
+    response_model=SessionsView,
+    response_model_exclude_unset=True,
+)
 def list_sessions(ctx: AppContext = Depends(get_context)) -> list[object]:
     """会话列表（对话页侧栏）：只列**这次请求那个身份**名下的会话。"""
     rows = session_service.list_rows(ctx.conn, ctx.current_user())

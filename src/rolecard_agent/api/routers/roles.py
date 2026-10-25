@@ -21,7 +21,7 @@ from rolecard_agent.api.deps import (
     get_actor,
     get_context,
 )
-from rolecard_agent.api.response_models import ToolsCatalog
+from rolecard_agent.api.response_models import RoleTimelineView, ToolsCatalog
 from rolecard_agent.core.proactive import timeline
 from rolecard_agent.features.card_import import (
     CardImportError,
@@ -153,7 +153,11 @@ def delete_role(
     ctx.audit.log(actor=actor.id, action="delete_role", target=role_id)
 
 
-@router.get("/api/roles/{role_id}/timeline")
+@router.get(
+    "/api/roles/{role_id}/timeline",
+    response_model=RoleTimelineView,
+    response_model_exclude_unset=True,
+)
 def role_timeline(
     role_id: str,
     ctx: AppContext = Depends(get_context),
@@ -184,7 +188,11 @@ def role_timeline(
     )
 
 
-@router.get("/api/tools/catalog", response_model=ToolsCatalog, response_model_exclude_unset=True)
+@router.get(
+    "/api/tools/catalog",
+    response_model=ToolsCatalog,
+    response_model_exclude_unset=True,
+)
 def tools_catalog(ctx: AppContext = Depends(get_context)) -> object:
     """按领域分组的工具目录 —— 角色表单的白名单选择器与插件详情共用。
 

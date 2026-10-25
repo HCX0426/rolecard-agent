@@ -45,6 +45,7 @@ from pydantic import BaseModel, Field
 from rolecard_agent.api import access
 from rolecard_agent.api.auth import ROLE_USER, Actor, basic_header
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
+from rolecard_agent.api.response_models import SyncInventoryView
 from rolecard_agent.base import outbound
 from rolecard_agent.core.model_settings import validate_base_url
 from rolecard_agent.features import sync as sync_lib
@@ -109,7 +110,11 @@ def _guard_target(request: Request, ctx: AppContext, base_url: str) -> str:
     return base
 
 
-@router.get("/api/sync/inventory")
+@router.get(
+    "/api/sync/inventory",
+    response_model=SyncInventoryView,
+    response_model_exclude_unset=True,
+)
 def get_inventory(ctx: AppContext = Depends(get_context)) -> dict[str, object]:
     """这个身份在本机上有哪些可同步条目（身份 + 指纹 + 预览，不含载荷）。"""
     items, skipped = sync_lib.collect(ctx.conn, **_local_kwargs(ctx))

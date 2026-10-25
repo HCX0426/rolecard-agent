@@ -2221,6 +2221,18 @@ export interface components {
             user: string;
         };
         /**
+         * ApprovalsView
+         * @description /api/approvals 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        ApprovalsView: components["schemas"]["ApprovalsViewRoot"];
+        ApprovalsViewRoot: unknown;
+        /**
+         * AuditView
+         * @description /api/audit 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        AuditView: components["schemas"]["AuditViewItem"][];
+        AuditViewItem: unknown;
+        /**
          * BackendSpec
          * @description One model backend row from the settings page.
          *
@@ -2369,6 +2381,12 @@ export interface components {
             /** Value Text */
             value_text?: string | null;
         };
+        /**
+         * DomainsView
+         * @description /api/domains 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        DomainsView: components["schemas"]["DomainsViewItem"][];
+        DomainsViewItem: unknown;
         /** EditMessageBody */
         EditMessageBody: {
             /**
@@ -2420,6 +2438,12 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /**
+         * HealthDeepView
+         * @description /api/health/deep 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        HealthDeepView: components["schemas"]["HealthDeepViewRoot"];
+        HealthDeepViewRoot: unknown;
         /**
          * ImportBody
          * @description 对面写入的载荷。`items` 由发起方按用户的选择挑好，这里不再判冲突。
@@ -2490,6 +2514,18 @@ export interface components {
             /** Name */
             name: string;
         };
+        /**
+         * KnowledgeScopesView
+         * @description /api/knowledge/scopes 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        KnowledgeScopesView: components["schemas"]["KnowledgeScopesViewRoot"];
+        KnowledgeScopesViewRoot: unknown;
+        /**
+         * LocalServiceView
+         * @description /api/local-service 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        LocalServiceView: components["schemas"]["LocalServiceViewRoot"];
+        LocalServiceViewRoot: unknown;
         /** McpCreateBody */
         McpCreateBody: {
             /** Display Name */
@@ -2521,6 +2557,12 @@ export interface components {
             /** Url */
             url?: string | null;
         };
+        /**
+         * McpServersView
+         * @description /api/mcp/servers 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        McpServersView: components["schemas"]["McpServersViewRoot"];
+        McpServersViewRoot: unknown;
         /**
          * MemoryBody
          * @description 记忆面板的保存负载：任选其一提交，缺省 = 该字段不变。
@@ -2581,6 +2623,12 @@ export interface components {
             num_ctx?: number | null;
         };
         /**
+         * ModelProvidersView
+         * @description /api/settings/model-providers 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        ModelProvidersView: components["schemas"]["ModelProvidersViewRoot"];
+        ModelProvidersViewRoot: unknown;
+        /**
          * ModelSamplingBody
          * @description 只改一个后端的采样惩罚。**字段不给默认值**：没出现的键不动，出现且为 null = 清回"不传"。
          *
@@ -2604,6 +2652,24 @@ export interface components {
             /** Fallbacks */
             fallbacks?: string[] | null;
         };
+        /**
+         * ModelSettingsView
+         * @description /api/settings/models 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        ModelSettingsView: components["schemas"]["ModelSettingsViewRoot"];
+        ModelSettingsViewRoot: unknown;
+        /**
+         * OrphanUploadsView
+         * @description /api/uploads/orphans 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        OrphanUploadsView: components["schemas"]["OrphanUploadsViewRoot"];
+        OrphanUploadsViewRoot: unknown;
+        /**
+         * PetsView
+         * @description /api/pets 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        PetsView: components["schemas"]["PetsViewRoot"];
+        PetsViewRoot: unknown;
         /**
          * PinRequest
          * @description `keep_alive` = Ollama 原生秒数，-1 = 永不自动卸载（常驻）。`model` 省略 = 默认模型。
@@ -2688,6 +2754,18 @@ export interface components {
             /** User */
             user: string;
         };
+        /**
+         * RagMetricsView
+         * @description /api/rag/metrics 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        RagMetricsView: components["schemas"]["RagMetricsViewRoot"];
+        RagMetricsViewRoot: unknown;
+        /**
+         * ReachoutsView
+         * @description /api/reachouts 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        ReachoutsView: components["schemas"]["ReachoutsViewRoot"];
+        ReachoutsViewRoot: unknown;
         /**
          * ReconcileBody
          * @description 登录对账：**一次把两边的方向都走完**，用自动策略，人只在最后看一句读数。
@@ -2946,6 +3024,12 @@ export interface components {
             user: string;
         };
         /**
+         * RoleTimelineView
+         * @description /api/roles/{role_id}/timeline 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        RoleTimelineView: components["schemas"]["RoleTimelineViewRoot"];
+        RoleTimelineViewRoot: unknown;
+        /**
          * RuntimeUpdateBody
          * @description 字段名 → 提交值。None/空串 = 清除该覆盖（回落 env）；未出现的字段 = 不变。
          */
@@ -2979,6 +3063,31 @@ export interface components {
             title?: string | null;
         };
         /**
+         * SessionsView
+         * @description /api/sessions 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        SessionsView: {
+            [key: string]: unknown;
+        }[];
+        /**
+         * SettingsMemoryView
+         * @description /api/settings/memory 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        SettingsMemoryView: components["schemas"]["SettingsMemoryViewRoot"];
+        SettingsMemoryViewRoot: unknown;
+        /**
+         * ShellReleaseView
+         * @description /api/shell-release 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        ShellReleaseView: components["schemas"]["ShellReleaseViewRoot"];
+        ShellReleaseViewRoot: unknown;
+        /**
+         * SyncInventoryView
+         * @description /api/sync/inventory 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        SyncInventoryView: components["schemas"]["SyncInventoryViewRoot"];
+        SyncInventoryViewRoot: unknown;
+        /**
          * TargetBody
          * @description 打到哪台、用哪个身份打。`secret` 只在本次请求内存活，绝不回显。
          */
@@ -2994,6 +3103,12 @@ export interface components {
             user: string;
         };
         /**
+         * ToolsCatalog
+         * @description /api/tools/catalog 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        ToolsCatalog: components["schemas"]["ToolsCatalogRoot"];
+        ToolsCatalogRoot: unknown;
+        /**
          * UnloadRequest
          * @description `model` 省略 = 卸掉当前驻留的全部模型（用户要的通常就是这个：把显存还回来）。
          */
@@ -3001,6 +3116,12 @@ export interface components {
             /** Model */
             model?: string | null;
         };
+        /**
+         * UpdateCheckView
+         * @description /api/update-check 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        UpdateCheckView: components["schemas"]["UpdateCheckViewRoot"];
+        UpdateCheckViewRoot: unknown;
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -3022,6 +3143,18 @@ export interface components {
             /** Path */
             path: string;
         };
+        /**
+         * WorkspaceDirView
+         * @description /api/workspace/dir 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        WorkspaceDirView: components["schemas"]["WorkspaceDirViewRoot"];
+        WorkspaceDirViewRoot: unknown;
+        /**
+         * WorkspaceTreeView
+         * @description /api/workspace/tree 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        WorkspaceTreeView: components["schemas"]["WorkspaceTreeViewRoot"];
+        WorkspaceTreeViewRoot: unknown;
     };
     responses: never;
     parameters: never;
@@ -3148,7 +3281,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ApprovalsView"];
                 };
             };
             /** @description Validation Error */
@@ -3216,9 +3349,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["AuditView"];
                 };
             };
             /** @description Validation Error */
@@ -3302,7 +3433,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown[];
+                    "application/json": components["schemas"]["DomainsView"];
                 };
             };
         };
@@ -3474,7 +3605,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["HealthDeepView"];
                 };
             };
         };
@@ -3516,7 +3647,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["KnowledgeScopesView"];
                 };
             };
         };
@@ -3635,7 +3766,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["LocalServiceView"];
                 };
             };
         };
@@ -3721,9 +3852,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["McpServersView"];
                 };
             };
         };
@@ -3897,9 +4026,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["PetsView"];
                 };
             };
         };
@@ -4004,7 +4131,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RagMetricsView"];
                 };
             };
         };
@@ -4027,7 +4154,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ReachoutsView"];
                 };
             };
             /** @description Validation Error */
@@ -4550,7 +4677,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RoleTimelineView"];
                 };
             };
             /** @description Validation Error */
@@ -5215,7 +5342,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown[];
+                    "application/json": components["schemas"]["SessionsView"];
                 };
             };
         };
@@ -5237,7 +5364,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SettingsMemoryView"];
                 };
             };
             /** @description Validation Error */
@@ -5506,7 +5633,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ModelProvidersView"];
                 };
             };
         };
@@ -5526,7 +5653,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ModelSettingsView"];
                 };
             };
         };
@@ -5865,9 +5992,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ShellReleaseView"];
                 };
             };
         };
@@ -6012,9 +6137,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SyncInventoryView"];
                 };
             };
         };
@@ -6139,7 +6262,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ToolsCatalog"];
                 };
             };
         };
@@ -6159,9 +6282,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["UpdateCheckView"];
                 };
             };
         };
@@ -6201,7 +6322,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["OrphanUploadsView"];
                 };
             };
         };
@@ -6252,7 +6373,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WorkspaceDirView"];
                 };
             };
         };
@@ -6327,7 +6448,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WorkspaceTreeView"];
                 };
             };
             /** @description Validation Error */

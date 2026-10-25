@@ -149,6 +149,21 @@
     "title": "ApplyBody",
     "type": "object"
    },
+   "ApprovalsView": {
+    "$ref": "#/components/schemas/ApprovalsViewRoot",
+    "description": "/api/approvals 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "ApprovalsView"
+   },
+   "ApprovalsViewRoot": {},
+   "AuditView": {
+    "description": "/api/audit 的顶层形状（数组包一层只为给它一个名字）。",
+    "items": {
+     "$ref": "#/components/schemas/AuditViewItem"
+    },
+    "title": "AuditView",
+    "type": "array"
+   },
+   "AuditViewItem": {},
    "BackendSpec": {
     "description": "One model backend row from the settings page.\n\n`api_key` is write-only: omitted/None = keep the stored key for this name; \"\" = clear it.\nThe GET endpoint never returns keys, so this round-trip rule is what keeps saves from\nsilently erasing them.",
     "properties": {
@@ -560,6 +575,15 @@
     "title": "DomainRecordPatch",
     "type": "object"
    },
+   "DomainsView": {
+    "description": "/api/domains 的顶层形状（数组包一层只为给它一个名字）。",
+    "items": {
+     "$ref": "#/components/schemas/DomainsViewItem"
+    },
+    "title": "DomainsView",
+    "type": "array"
+   },
+   "DomainsViewItem": {},
    "EditMessageBody": {
     "properties": {
      "content": {
@@ -668,6 +692,12 @@
     "title": "HTTPValidationError",
     "type": "object"
    },
+   "HealthDeepView": {
+    "$ref": "#/components/schemas/HealthDeepViewRoot",
+    "description": "/api/health/deep 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "HealthDeepView"
+   },
+   "HealthDeepViewRoot": {},
    "ImportBody": {
     "description": "对面写入的载荷。`items` 由发起方按用户的选择挑好，这里不再判冲突。\n\n`clear_kinds` 只服务\"整份替换\"那一档，且必须同时带 `confirm_replace=true`：\n删的是**这台机器上这个身份**的该类条目，删错了没有回头路，所以宁可让协议\n多一个显式的键，也不要\"看起来只是个普通参数\"。",
     "properties": {
@@ -839,6 +869,18 @@
     "title": "KnowledgeScopeCreate",
     "type": "object"
    },
+   "KnowledgeScopesView": {
+    "$ref": "#/components/schemas/KnowledgeScopesViewRoot",
+    "description": "/api/knowledge/scopes 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "KnowledgeScopesView"
+   },
+   "KnowledgeScopesViewRoot": {},
+   "LocalServiceView": {
+    "$ref": "#/components/schemas/LocalServiceViewRoot",
+    "description": "/api/local-service 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "LocalServiceView"
+   },
+   "LocalServiceViewRoot": {},
    "McpCreateBody": {
     "properties": {
      "display_name": {
@@ -939,6 +981,12 @@
     "title": "McpPatchBody",
     "type": "object"
    },
+   "McpServersView": {
+    "$ref": "#/components/schemas/McpServersViewRoot",
+    "description": "/api/mcp/servers 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "McpServersView"
+   },
+   "McpServersViewRoot": {},
    "MemoryBody": {
     "description": "记忆面板的保存负载：任选其一提交，缺省 = 该字段不变。\n\n`enabled` = 总开关（走 runtime 覆盖保存 + 热重建，下一轮对话即生效）；\n`content`  = 记忆全文（None = 不变；\"\" = 清空）；\n`extract_turns` = 自动提取的节奏（None = 不变；**0 = 关掉自动那条，只留手动按钮**）。",
     "properties": {
@@ -1075,6 +1123,12 @@
     "title": "ModelContextBody",
     "type": "object"
    },
+   "ModelProvidersView": {
+    "$ref": "#/components/schemas/ModelProvidersViewRoot",
+    "description": "/api/settings/model-providers 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "ModelProvidersView"
+   },
+   "ModelProvidersViewRoot": {},
    "ModelSamplingBody": {
     "description": "只改一个后端的采样惩罚。**字段不给默认值**：没出现的键不动，出现且为 null = 清回\"不传\"。\n\n与 `ModelContextBody` 同一套取舍 —— 走整表 PUT 要前端持有全部行与回退链，改一个数\n却重传整套配置，写放大且并发编辑互相覆盖。",
     "properties": {
@@ -1156,205 +1210,24 @@
     "title": "ModelSettingsBody",
     "type": "object"
    },
+   "ModelSettingsView": {
+    "$ref": "#/components/schemas/ModelSettingsViewRoot",
+    "description": "/api/settings/models 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "ModelSettingsView"
+   },
+   "ModelSettingsViewRoot": {},
+   "OrphanUploadsView": {
+    "$ref": "#/components/schemas/OrphanUploadsViewRoot",
+    "description": "/api/uploads/orphans 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "OrphanUploadsView"
+   },
+   "OrphanUploadsViewRoot": {},
    "PetsView": {
     "$ref": "#/components/schemas/PetsViewRoot",
     "description": "/api/pets 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "PetsView"
    },
-   "PetsViewPacksItem": {
-    "additionalProperties": true,
-    "description": "自动生成：PetsViewPacksItem（packsItem 的对象形状）。",
-    "properties": {
-     "entry": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Entry"
-     },
-     "id": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Id"
-     },
-     "kind": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Kind"
-     },
-     "label": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Label"
-     },
-     "motions": {
-      "anyOf": [
-       {
-        "$ref": "#/components/schemas/PetsViewPacksItem_motions"
-       },
-       {
-        "type": "null"
-       }
-      ]
-     },
-     "rows": {
-      "anyOf": [
-       {
-        "$ref": "#/components/schemas/PetsViewPacksItem_rows"
-       },
-       {
-        "type": "null"
-       }
-      ]
-     },
-     "sheet_url": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Sheet Url"
-     },
-     "source": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Source"
-     }
-    },
-    "title": "PetsViewPacksItem",
-    "type": "object"
-   },
-   "PetsViewPacksItem_motions": {
-    "additionalProperties": true,
-    "description": "自动生成：PetsViewPacksItem_motions（packsItem_motions 的对象形状）。",
-    "properties": {},
-    "title": "PetsViewPacksItem_motions",
-    "type": "object"
-   },
-   "PetsViewPacksItem_rows": {
-    "additionalProperties": true,
-    "description": "自动生成：PetsViewPacksItem_rows（packsItem_rows 的对象形状）。",
-    "properties": {
-     "listening": {
-      "anyOf": [
-       {},
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Listening"
-     },
-     "thinking": {
-      "anyOf": [
-       {},
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Thinking"
-     }
-    },
-    "title": "PetsViewPacksItem_rows",
-    "type": "object"
-   },
-   "PetsViewRoot": {
-    "additionalProperties": true,
-    "description": "自动生成：PetsViewRoot（ 的对象形状）。",
-    "properties": {
-     "cubism_core": {
-      "anyOf": [
-       {
-        "type": "boolean"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Cubism Core"
-     },
-     "cubism_core_path": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Cubism Core Path"
-     },
-     "packs": {
-      "anyOf": [
-       {
-        "items": {
-         "$ref": "#/components/schemas/PetsViewPacksItem"
-        },
-        "type": "array"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Packs"
-     },
-     "skipped": {
-      "anyOf": [
-       {
-        "items": {},
-        "type": "array"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Skipped"
-     },
-     "user_dir": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "User Dir"
-     }
-    },
-    "title": "PetsViewRoot",
-    "type": "object"
-   },
+   "PetsViewRoot": {},
    "PinRequest": {
     "description": "`keep_alive` = Ollama 原生秒数，-1 = 永不自动卸载（常驻）。`model` 省略 = 默认模型。",
     "properties": {
@@ -1523,6 +1396,18 @@
     "title": "PullBody",
     "type": "object"
    },
+   "RagMetricsView": {
+    "$ref": "#/components/schemas/RagMetricsViewRoot",
+    "description": "/api/rag/metrics 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "RagMetricsView"
+   },
+   "RagMetricsViewRoot": {},
+   "ReachoutsView": {
+    "$ref": "#/components/schemas/ReachoutsViewRoot",
+    "description": "/api/reachouts 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "ReachoutsView"
+   },
+   "ReachoutsViewRoot": {},
    "ReconcileBody": {
     "description": "登录对账：**一次把两边的方向都走完**，用自动策略，人只在最后看一句读数。\n\n自动策略只走无歧义的那半（`features.sync.auto_moves`）：本机独有的推上去、对面独有的并回来、\n卡按新者胜；**记忆与会话的冲突原地不动**（\"两份都留\"不幂等，会每登录一次长出两条），\n留在返回值里让人去向导里挑 —— 冲突本该是可数的少数。\n推完再重新比对一次才拉：推上去的东西下一轮就是\"两边相同\"，不会自己跟自己打架。",
     "properties": {
@@ -2203,6 +2088,12 @@
     "title": "RoleExemplar",
     "type": "object"
    },
+   "RoleTimelineView": {
+    "$ref": "#/components/schemas/RoleTimelineViewRoot",
+    "description": "/api/roles/{role_id}/timeline 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "RoleTimelineView"
+   },
+   "RoleTimelineViewRoot": {},
    "RuntimeUpdateBody": {
     "description": "字段名 → 提交值。None/空串 = 清除该覆盖（回落 env）；未出现的字段 = 不变。",
     "properties": {
@@ -2225,128 +2116,6 @@
      "values"
     ],
     "title": "RuntimeUpdateBody",
-    "type": "object"
-   },
-   "ServicesView": {
-    "$ref": "#/components/schemas/ServicesViewRoot",
-    "description": "/api/services 的顶层形状（数组包一层只为给它一个名字）。",
-    "title": "ServicesView"
-   },
-   "ServicesViewRoot": {
-    "additionalProperties": true,
-    "description": "自动生成：ServicesViewRoot（ 的对象形状）。",
-    "properties": {
-     "services": {
-      "anyOf": [
-       {
-        "items": {
-         "$ref": "#/components/schemas/ServicesViewServicesItem"
-        },
-        "type": "array"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Services"
-     }
-    },
-    "title": "ServicesViewRoot",
-    "type": "object"
-   },
-   "ServicesViewServicesItem": {
-    "additionalProperties": true,
-    "description": "自动生成：ServicesViewServicesItem（servicesItem 的对象形状）。",
-    "properties": {
-     "candidates": {
-      "anyOf": [
-       {
-        "items": {},
-        "type": "array"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Candidates"
-     },
-     "degraded_from": {
-      "anyOf": [
-       {},
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Degraded From"
-     },
-     "effective": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Effective"
-     },
-     "effective_kind": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Effective Kind"
-     },
-     "hint": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Hint"
-     },
-     "key": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Key"
-     },
-     "readonly": {
-      "anyOf": [
-       {
-        "type": "boolean"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Readonly"
-     },
-     "title": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Title"
-     }
-    },
-    "title": "ServicesViewServicesItem",
     "type": "object"
    },
    "SessionCreate": {
@@ -2420,6 +2189,33 @@
     "title": "SessionPatch",
     "type": "object"
    },
+   "SessionsView": {
+    "description": "/api/sessions 的顶层形状（数组包一层只为给它一个名字）。",
+    "items": {
+     "additionalProperties": true,
+     "type": "object"
+    },
+    "title": "SessionsView",
+    "type": "array"
+   },
+   "SettingsMemoryView": {
+    "$ref": "#/components/schemas/SettingsMemoryViewRoot",
+    "description": "/api/settings/memory 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "SettingsMemoryView"
+   },
+   "SettingsMemoryViewRoot": {},
+   "ShellReleaseView": {
+    "$ref": "#/components/schemas/ShellReleaseViewRoot",
+    "description": "/api/shell-release 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "ShellReleaseView"
+   },
+   "ShellReleaseViewRoot": {},
+   "SyncInventoryView": {
+    "$ref": "#/components/schemas/SyncInventoryViewRoot",
+    "description": "/api/sync/inventory 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "SyncInventoryView"
+   },
+   "SyncInventoryViewRoot": {},
    "TargetBody": {
     "description": "打到哪台、用哪个身份打。`secret` 只在本次请求内存活，绝不回显。",
     "properties": {
@@ -2451,116 +2247,7 @@
     "description": "/api/tools/catalog 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "ToolsCatalog"
    },
-   "ToolsCatalogDomains": {
-    "additionalProperties": true,
-    "description": "自动生成：ToolsCatalogDomains（domains 的对象形状）。",
-    "properties": {
-     "health": {
-      "anyOf": [
-       {
-        "items": {
-         "$ref": "#/components/schemas/ToolsCatalogDomains_healthItem"
-        },
-        "type": "array"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Health"
-     }
-    },
-    "title": "ToolsCatalogDomains",
-    "type": "object"
-   },
-   "ToolsCatalogDomains_healthItem": {
-    "additionalProperties": true,
-    "description": "自动生成：ToolsCatalogDomains_healthItem（domains_healthItem 的对象形状）。",
-    "properties": {
-     "description": {
-      "anyOf": [
-       {},
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Description"
-     },
-     "name": {
-      "anyOf": [
-       {},
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Name"
-     }
-    },
-    "title": "ToolsCatalogDomains_healthItem",
-    "type": "object"
-   },
-   "ToolsCatalogKernelItem": {
-    "additionalProperties": true,
-    "description": "自动生成：ToolsCatalogKernelItem（kernelItem 的对象形状）。",
-    "properties": {
-     "description": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Description"
-     },
-     "name": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Name"
-     }
-    },
-    "title": "ToolsCatalogKernelItem",
-    "type": "object"
-   },
-   "ToolsCatalogRoot": {
-    "additionalProperties": true,
-    "description": "自动生成：ToolsCatalogRoot（ 的对象形状）。",
-    "properties": {
-     "domains": {
-      "anyOf": [
-       {
-        "$ref": "#/components/schemas/ToolsCatalogDomains"
-       },
-       {
-        "type": "null"
-       }
-      ]
-     },
-     "kernel": {
-      "anyOf": [
-       {
-        "items": {
-         "$ref": "#/components/schemas/ToolsCatalogKernelItem"
-        },
-        "type": "array"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Kernel"
-     }
-    },
-    "title": "ToolsCatalogRoot",
-    "type": "object"
-   },
+   "ToolsCatalogRoot": {},
    "UnloadRequest": {
     "description": "`model` 省略 = 卸掉当前驻留的全部模型（用户要的通常就是这个：把显存还回来）。",
     "properties": {
@@ -2580,6 +2267,12 @@
     "title": "UnloadRequest",
     "type": "object"
    },
+   "UpdateCheckView": {
+    "$ref": "#/components/schemas/UpdateCheckViewRoot",
+    "description": "/api/update-check 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "UpdateCheckView"
+   },
+   "UpdateCheckViewRoot": {},
    "ValidationError": {
     "properties": {
      "ctx": {
@@ -2635,7 +2328,19 @@
     ],
     "title": "WorkspaceDirBody",
     "type": "object"
-   }
+   },
+   "WorkspaceDirView": {
+    "$ref": "#/components/schemas/WorkspaceDirViewRoot",
+    "description": "/api/workspace/dir 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "WorkspaceDirView"
+   },
+   "WorkspaceDirViewRoot": {},
+   "WorkspaceTreeView": {
+    "$ref": "#/components/schemas/WorkspaceTreeViewRoot",
+    "description": "/api/workspace/tree 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "WorkspaceTreeView"
+   },
+   "WorkspaceTreeViewRoot": {}
   }
  },
  "info": {
@@ -2802,7 +2507,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response List Approvals Api Approvals Get"
+         "$ref": "#/components/schemas/ApprovalsView"
         }
        }
       },
@@ -2912,12 +2617,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "items": {
-          "additionalProperties": true,
-          "type": "object"
-         },
-         "title": "Response List Audit Api Audit Get",
-         "type": "array"
+         "$ref": "#/components/schemas/AuditView"
         }
        }
       },
@@ -3004,9 +2704,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "items": {},
-         "title": "Response List Domains Api Domains Get",
-         "type": "array"
+         "$ref": "#/components/schemas/DomainsView"
         }
        }
       },
@@ -3232,7 +2930,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Health Deep Api Health Deep Get"
+         "$ref": "#/components/schemas/HealthDeepView"
         }
        }
       },
@@ -3275,7 +2973,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response List Knowledge Scopes Api Knowledge Scopes Get"
+         "$ref": "#/components/schemas/KnowledgeScopesView"
         }
        }
       },
@@ -3421,7 +3119,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Local Service Status Api Local Service Get"
+         "$ref": "#/components/schemas/LocalServiceView"
         }
        }
       },
@@ -3518,9 +3216,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "additionalProperties": true,
-         "title": "Response List Mcp Servers Api Mcp Servers Get",
-         "type": "object"
+         "$ref": "#/components/schemas/McpServersView"
         }
        }
       },
@@ -3848,7 +3544,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Rag Metrics Api Rag Metrics Get"
+         "$ref": "#/components/schemas/RagMetricsView"
         }
        }
       },
@@ -3933,7 +3629,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Get Reachouts Api Reachouts Get"
+         "$ref": "#/components/schemas/ReachoutsView"
         }
        }
       },
@@ -4584,7 +4280,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Role Timeline Api Roles  Role Id  Timeline Get"
+         "$ref": "#/components/schemas/RoleTimelineView"
         }
        }
       },
@@ -4613,7 +4309,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/ServicesView"
+         "title": "Response List Services Api Services Get"
         }
        }
       },
@@ -5452,9 +5148,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "items": {},
-         "title": "Response List Sessions Api Sessions Get",
-         "type": "array"
+         "$ref": "#/components/schemas/SessionsView"
         }
        }
       },
@@ -5538,7 +5232,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Get Memory Api Settings Memory Get"
+         "$ref": "#/components/schemas/SettingsMemoryView"
         }
        }
       },
@@ -5927,7 +5621,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Get Model Providers Api Settings Model Providers Get"
+         "$ref": "#/components/schemas/ModelProvidersView"
         }
        }
       },
@@ -5946,7 +5640,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Get Model Settings Api Settings Models Get"
+         "$ref": "#/components/schemas/ModelSettingsView"
         }
        }
       },
@@ -6356,9 +6050,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "additionalProperties": true,
-         "title": "Response Shell Release Api Shell Release Get",
-         "type": "object"
+         "$ref": "#/components/schemas/ShellReleaseView"
         }
        }
       },
@@ -6517,9 +6209,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "additionalProperties": true,
-         "title": "Response Get Inventory Api Sync Inventory Get",
-         "type": "object"
+         "$ref": "#/components/schemas/SyncInventoryView"
         }
        }
       },
@@ -6680,9 +6370,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "additionalProperties": true,
-         "title": "Response Update Check Api Update Check Get",
-         "type": "object"
+         "$ref": "#/components/schemas/UpdateCheckView"
         }
        }
       },
@@ -6720,7 +6408,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response List Orphan Uploads Api Uploads Orphans Get"
+         "$ref": "#/components/schemas/OrphanUploadsView"
         }
        }
       },
@@ -6796,7 +6484,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Get Workspace Dir Api Workspace Dir Get"
+         "$ref": "#/components/schemas/WorkspaceDirView"
         }
        }
       },
@@ -6865,7 +6553,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Browse Api Workspace Tree Get"
+         "$ref": "#/components/schemas/WorkspaceTreeView"
         }
        }
       },

@@ -21,7 +21,11 @@ from rolecard_agent.features import pet_packs
 router = APIRouter(tags=["pets"])
 
 
-@router.get("/api/pets", response_model=PetsView, response_model_exclude_unset=True)
+@router.get(
+    "/api/pets",
+    response_model=PetsView,
+    response_model_exclude_unset=True,
+)
 def list_pets() -> dict[str, object]:
     """可用的形象包（用户根覆盖随包那份）+ 每个没进清单的目录为什么没进。"""
     found = pet_packs.scan()
