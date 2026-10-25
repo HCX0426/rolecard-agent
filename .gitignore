@@ -9,6 +9,8 @@ data/sqlite/*.db-shm
 data/sqlite/*.db-wal
 # 迁移前手搓的库备份（里面和 app.db 一样是真实数据与凭据，同样绝不入库）
 data/sqlite/*.bak
+# 界面背景图（2026-10-25，appearance 轴）：用户自己挑的图 —— 运行数据，不入库
+data/appearance/*
 # retention「先备份再删」落的那些 JSONL：内容就是被删的审计行与命令行原文，
 # 和 app.db 同一等级密（开发态数据根就是仓库 data/），绝不入库、随整目录升级不碰
 data/retention-backups/*
