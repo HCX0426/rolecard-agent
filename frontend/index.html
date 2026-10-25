@@ -4,6 +4,16 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>rolecard-agent 控制台</title>
+      <script>
+      // 首帧前把外观偏好写到 <html>（否则会先闪一下默认材质）：材质/配色各一个键。
+      // 读法与 lib/appearance.ts 一致 —— 那边是 React 侧的权威，这里只是提前一拍。
+      try {
+        var m = localStorage.getItem("rolecard.material");
+        var p = localStorage.getItem("rolecard.palette");
+        document.documentElement.setAttribute("data-material", m === "panel" ? "panel" : "glass");
+        document.documentElement.setAttribute("data-palette", p === "cool" ? "cool" : "warm");
+      } catch (e) { /* 隐私模式等：留给 CSS 默认值 */ }
+    </script>
   </head>
   <body>
     <div id="root"></div>

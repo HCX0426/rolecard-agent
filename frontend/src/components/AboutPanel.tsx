@@ -7,6 +7,7 @@ import { Card } from "./ui";
 import { ShellReleaseCard } from "./ShellReleaseCard";
 import { UpdateCheckCard } from "./UpdateCheckCard";
 import { describeError } from "../lib/errors";
+import { useAppearance } from "../lib/appearance";
 
 // ---------------------------------------------------------------- 关于与系统状态
 
@@ -47,27 +48,58 @@ export function AboutPanel({
     loadInfo().catch((e) => setLoadError(`加载失败：${describeError(e)}`));
   }, [loadInfo]);
 
+  const { material, palette, toggleMaterial, togglePalette } = useAppearance();
+
   return (
     <div className="mt-6 space-y-4">
-      {onToggleTheme && (
-        <Card className="p-5">
-          <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">外观</h3>
-          <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-            界面配色跟随本机偏好时可手动覆盖；切换即时生效、随浏览器记住。
-          </p>
-          <div className="mt-2.5 flex items-center gap-2">
-            <span className="text-xs text-slate-500 dark:text-slate-400">
-              当前：{theme === "dark" ? "深色" : "浅色"}
+      {/* 外观三轴（2026-10-25）：材质（玻璃 ↔ 实板）、配色（暖 ↔ 冷）、明暗。
+          三个开关正交 —— 毛玻璃的"透明"和暖色调是**两件事**，之前混成一锅就调不了。 */}
+      <Card className="p-5">
+        <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">外观</h3>
+        <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+          材质、配色与明暗各管各的，任意组合都成立；切换即时生效、随本机记住。
+        </p>
+        <div className="mt-2.5 flex flex-wrap items-center gap-4">
+          <span className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+            材质
+            <span className="rounded-lg bg-slate-100 px-2 py-1 dark:bg-slate-700/50">
+              {material === "glass" ? "毛玻璃" : "实板"}
             </span>
             <button
-              onClick={onToggleTheme}
+              onClick={toggleMaterial}
               className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-600 dark:text-slate-300 dark:hover:border-blue-700"
             >
-              切换为{theme === "dark" ? "浅色" : "深色"}
+              切换为{material === "glass" ? "实板" : "毛玻璃"}
             </button>
-          </div>
-        </Card>
-      )}
+          </span>
+          <span className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+            配色
+            <span className="rounded-lg bg-slate-100 px-2 py-1 dark:bg-slate-700/50">
+              {palette === "warm" ? "暖可可" : "冷中性"}
+            </span>
+            <button
+              onClick={togglePalette}
+              className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-600 dark:text-slate-300 dark:hover:border-blue-700"
+            >
+              切换为{palette === "warm" ? "冷中性" : "暖可可"}
+            </button>
+          </span>
+          {onToggleTheme && (
+            <span className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+              明暗
+              <span className="rounded-lg bg-slate-100 px-2 py-1 dark:bg-slate-700/50">
+                {theme === "dark" ? "深色" : "浅色"}
+              </span>
+              <button
+                onClick={onToggleTheme}
+                className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-600 dark:text-slate-300 dark:hover:border-blue-700"
+              >
+                切换为{theme === "dark" ? "浅色" : "深色"}
+              </button>
+            </span>
+          )}
+        </div>
+      </Card>
 
       <Card className="p-5">
         <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">关于</h3>

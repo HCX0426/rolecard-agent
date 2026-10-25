@@ -1,6 +1,7 @@
 import { StrictMode, Suspense, lazy } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { initAppearance } from "./lib/appearance";
 import "./index.css";
 
 // 桌宠窗（壳的第二扇窗）走同一个入口、同一份构建，只是渲染的根不同：
@@ -10,6 +11,9 @@ import "./index.css";
 const PetPage = lazy(() => import("./pages/PetPage"));
 const isPet = window.location.hash.startsWith("#/pet");
 if (isPet) document.documentElement.dataset.page = "pet";
+// 外观偏好（材质/配色）落到 <html>：index.html 已有一份首帧前的内联脚本，这里补齐
+// React 侧的权威（两者读同一份 localStorage，值一致）。
+initAppearance();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
