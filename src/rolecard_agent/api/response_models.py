@@ -140,8 +140,8 @@ class PetsViewPacksItem_rows(BaseModel):
             return data
         return {k: v for k, v in data.items() if k in given}
 
-    listening: Any | None
-    thinking: Any | None
+    listening: Any
+    thinking: Any
 
 
 class PetsViewPacksItem_motions(BaseModel):
@@ -328,8 +328,8 @@ class ToolsCatalogDomains_healthItem(BaseModel):
             return data
         return {k: v for k, v in data.items() if k in given}
 
-    name: Any | None
-    description: Any | None
+    name: Any
+    description: Any
 
 
 class KnowledgeScopesViewRoot(BaseModel):
@@ -526,10 +526,10 @@ class RagMetricsViewP50(BaseModel):
             return data
         return {k: v for k, v in data.items() if k in given}
 
-    embed_ms: Any | None
-    vector_ms: Any | None
-    rerank_ms: Any | None
-    total_ms: Any | None
+    embed_ms: Any
+    vector_ms: Any
+    rerank_ms: Any
+    total_ms: Any
 
 
 class RagMetricsViewP95(BaseModel):
@@ -566,10 +566,10 @@ class RagMetricsViewP95(BaseModel):
             return data
         return {k: v for k, v in data.items() if k in given}
 
-    embed_ms: Any | None
-    vector_ms: Any | None
-    rerank_ms: Any | None
-    total_ms: Any | None
+    embed_ms: Any
+    vector_ms: Any
+    rerank_ms: Any
+    total_ms: Any
 
 
 class RagMetricsViewP99(BaseModel):
@@ -606,10 +606,10 @@ class RagMetricsViewP99(BaseModel):
             return data
         return {k: v for k, v in data.items() if k in given}
 
-    embed_ms: Any | None
-    vector_ms: Any | None
-    rerank_ms: Any | None
-    total_ms: Any | None
+    embed_ms: Any
+    vector_ms: Any
+    rerank_ms: Any
+    total_ms: Any
 
 
 class ReachoutsViewRoot(BaseModel):
@@ -766,7 +766,7 @@ class SettingsMemoryViewRoot(BaseModel):
         return {k: v for k, v in data.items() if k in given}
 
     enabled: bool | None
-    role_id: Any | None
+    role_id: Any
     content: str | None
     items: list[dict[str, Any]] | None
     active_count: int | None
@@ -934,7 +934,7 @@ class ModelSettingsViewProvidersItem(BaseModel):
     style: str | None
     needs_key: bool | None
     has_key: bool | None
-    key_masked: Any | None
+    key_masked: Any
     models: list[Any] | None
 
 
@@ -1093,13 +1093,13 @@ class UpdateCheckViewRoot(BaseModel):
         return {k: v for k, v in data.items() if k in given}
 
     current: str | None
-    latest: Any | None
+    latest: str | None
     has_update: bool | None
     source: str | None
-    url: Any | None
-    file_name: Any | None
-    size_bytes: Any | None
-    error: str | None
+    url: str | None
+    file_name: Any
+    size_bytes: Any
+    error: Any
 
 
 class OrphanUploadsViewRoot(BaseModel):
@@ -1686,7 +1686,7 @@ class RoleTimelineViewRoot(BaseModel):
 
     role_id: str | None
     items: list[dict[str, Any]] | None
-    next_cursor: Any | None
+    next_cursor: Any
     truncated: bool | None
 
 

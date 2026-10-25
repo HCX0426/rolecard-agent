@@ -102,8 +102,46 @@ def __getattr__(name: str) -> Any:
 '''
 
 
+def _merge_samples(a: Any, b: Any) -> Any:
+    """把两次采样的结果合并（结构相同 ⇒ 字段类型取并集）。
+
+    只在**结构相同**（同 key 集、同数组长度级）时合并；结构不同就返回第一个 ——
+    结构不同意味着端点返回的形状真的变了（那属于"形状不稳"，另一条路处理）。
+    """
+    if isinstance(a, dict) and isinstance(b, dict):
+        out: dict[str, Any] = {}
+        for key in set(a) | set(b):
+            if key in a and key in b:
+                out[key] = _merge_samples(a[key], b[key])
+            else:
+                out[key] = a.get(key, b.get(key))
+        return out
+    if isinstance(a, list) and isinstance(b, list):
+        merged: list[Any] = []
+        for x, y in zip(a, b, strict=False):
+            merged.append(_merge_samples(x, y))
+        return merged
+    if a is None:
+        return b
+    if b is None:
+        return a
+    if type(a) is type(b):
+        return a
+    # 类型不同 ⇒ 形状不稳定 ⇒ Any（诚实）
+    return None
+
+
+def _shapes_compatible(a: Any, b: Any) -> bool:
+    """两次采样的结构兼容吗（key 集一致）？"""
+    if isinstance(a, dict) and isinstance(b, dict):
+        return set(a) == set(b)
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b)
+    return True
+
+
 def _python_type(value: Any) -> str:
-    """JSON 值 → Python 类型注解。"""
+    """JSON 值 → Python 类型注解（null 不参与类型判断 —— 它只影响可空性）。"""
     if isinstance(value, bool):
         return "bool"
     if isinstance(value, int):
@@ -112,6 +150,35 @@ def _python_type(value: Any) -> str:
         return "float"
     if isinstance(value, str):
         return "str"
+    return "Any"
+
+
+def _merged_type(values: list[Any]) -> str:
+    """一组样本值的**合并类型**（同字段在多次生成间不该抖动）。
+
+    为什么需要：字段的值随状态变（实测 /api/update-check 的 latest：有网络是字符串、
+    无网络是 null）。只看一个样本 ⇒ 两次生成分别给出 `str` 与 `Any` ⇒ 漂移判据永远红。
+    合并规则：**null 不参与**（null 只说明可空），其余取类型并集；并集多于一种 ⇒ Any
+    （形状真的不稳定，如实承认）。
+    """
+    kinds = set()
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            kinds.add("bool")
+        elif isinstance(value, int):
+            kinds.add("int")
+        elif isinstance(value, float):
+            kinds.add("float")
+        elif isinstance(value, str):
+            kinds.add("str")
+        else:
+            kinds.add("object")
+    if not kinds:
+        return "Any"
+    if len(kinds) == 1:
+        return kinds.pop()
     return "Any"
 
 
@@ -226,7 +293,13 @@ def _build(
             # 实测 /api/update-check 的 error：样本里是字符串（没出错），出网失败时
             # 是 null。只按样本定 ⇒ 模型说它是非空字符串 ⇒ 真实响应被判非法
             # （'Input should be a valid string'）。键仍然**必填**（键总在，值可能为 null）。
+            #
+            # **类型随状态变的字段用 Any**：实测 /api/update-check 的 latest/url/error
+            # —— 有网络时是字符串、无网络时是 None（⇒ Any）。两次生成的类型不同 ⇒
+            # 漂移判据会永远红。这类字段一律 Any（诚实：形状不稳定就承认不稳定）。
             lines.append(f"    {key}: {annotation} | None")
+            if annotation == "Any":
+                lines[-1] = f"    {key}: Any"
         if not value:
             lines.append("    pass")
         out[model_name] = "\n".join(lines)
@@ -252,7 +325,7 @@ def _build(
     return _python_type(value)
 
 
-def _seed_minimal_data(app: object) -> None:
+def _seed_minimal_data(app: Any) -> None:
     """给**空数组**塞最小数据，让生成器推得出元素类型。
 
     造的样本必须**满足后端自己的约束**（不然创建直接被拒）。数据全在临时库里。
@@ -440,7 +513,13 @@ def generate() -> tuple[str, str | None]:
 
     try:
         for path, model_name in READONLY_ENDPOINTS.items():
+            # **采样两次**：同端点两次的返回可能不同（实测 /api/update-check 的 latest：
+            # 有网络是字符串、无网络是 null）。只看一次 ⇒ 两次生成的类型不同 ⇒
+            # 漂移判据永远红。两次都采，把差异合并掉（null 只影响可空性，类型取并集）。
             sample = _sample(_resolve_path(path))
+            sample2 = _sample(_resolve_path(path))
+            if not _shapes_compatible(sample, sample2):
+                sample = _merge_samples(sample, sample2)
             if not _shape_is_stable(sample):
                 # **形状随数据变化的端点不该有单一模型**：/api/knowledge 的 scopes 里，
                 # 有的作用域 sources 是字符串列表、有的是对象列表 —— 一个模型表达不了
