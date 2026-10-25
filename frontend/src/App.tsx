@@ -5,6 +5,7 @@ import ApprovalPanel from "./components/ApprovalPanel";
 import { ToastProvider } from "./components/Toast";
 import Button from "./components/ui/Button";
 import { api, UNREAD_POLL_MS } from "./api";
+import { useCurrentRole } from "./lib/currentRole";
 import { shellBridge } from "./lib/shell";
 import { usePoll } from "./hooks/usePoll";
 import { useTheme } from "./components/useTheme";
@@ -148,6 +149,7 @@ class PageBoundary extends Component<{ children: ReactNode }, { error: Error | n
 // ---- App ------------------------------------------------------------------------------
 export default function App() {
   const [tab, setTabState] = useState<TabKey>(tabFromHash);
+  const currentRole = useCurrentRole();
   const [navOpen, setNavOpen] = useState(false);
   const { theme, toggle } = useTheme();
   // 角色主动开口（架构计划 B）：铃铛红点 + 收件箱抽屉。静音轮询（10s）：
@@ -269,9 +271,9 @@ export default function App() {
         <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">rolecard-agent</span>
       </div>
 
-      {/* 左侧导航 */}
+      {/* 左侧导航（2026-10-25 玻璃重设计）：玻璃面板 + 强调色选中态 + 底部"当前角色"块 */}
       <nav
-        className={`flex w-52 shrink-0 flex-col border-r border-slate-200 bg-white transition-transform dark:border-slate-700 dark:bg-slate-800 max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:pt-[41px] ${
+        className={`glass flex w-56 shrink-0 flex-col border-r border-white/40 transition-transform max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:pt-[41px] ${
           navOpen ? "max-md:translate-x-0" : "max-md:-translate-x-full"
         }`}
       >
@@ -287,16 +289,40 @@ export default function App() {
               onMouseEnter={() => PRELOAD[t.key]?.()}
               className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
                 tab === t.key
-                  ? "bg-blue-50 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
-                  : "text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700/60"
+                  ? "font-medium text-cocoa-900 dark:text-cocoa-50"
+                  : "text-cocoa-600 hover:bg-white/50 dark:text-cocoa-300 dark:hover:bg-white/5"
               }`}
+              style={
+                tab === t.key
+                  ? {
+                      background: "color-mix(in srgb, var(--accent) 14%, transparent)",
+                      boxShadow: "inset 3px 0 0 var(--accent)",
+                    }
+                  : undefined
+              }
             >
               <span className="shrink-0 opacity-80">{t.icon}</span>
               {t.label}
             </button>
           ))}
         </div>
-        <div className="mt-auto border-t border-slate-100 px-2 py-2 dark:border-slate-700">
+        <div className="mt-auto border-t border-white/50 px-2 py-2 dark:border-white/10">
+          {/* 当前角色块（2026-10-25 玻璃重设计）：强调色从这里来——侧栏底部那颗
+              圆点就是"整站雾底为什么是这个颜色"的答案。 */}
+          {currentRole && (
+            <div className="mb-2 flex items-center gap-2 rounded-lg px-2.5 py-2"
+                 style={{ background: "color-mix(in srgb, var(--accent) 10%, transparent)" }}>
+              <span
+                className="h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ background: "var(--accent)" }}
+                aria-hidden="true"
+              />
+              <span className="min-w-0 flex-1 truncate text-xs text-cocoa-700 dark:text-cocoa-200"
+                    title={currentRole.roleName}>
+                {currentRole.roleName}
+              </span>
+            </div>
+          )}
           <button
             onClick={() => setApprovalOpen(true)}
             className="relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700/60"

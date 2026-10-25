@@ -32,6 +32,7 @@ function fmtDuration(from: string, to: string): string | null {
  */
 export default function TurnRow({
   turn,
+  roleName,
   busy,
   selectMode,
   checked,
@@ -46,6 +47,8 @@ export default function TurnRow({
   onCopy,
 }: {
   turn: BuiltTurn<MessageRow>;
+  /** 回答者的角色名（角色签用；2026-10-25 玻璃重设计）。 */
+  roleName?: string;
   busy: boolean;
   selectMode: boolean;
   /** 这一轮在多选删除里被勾上了（判据由页面持有：勾选集合是页面的事）。 */
@@ -133,7 +136,7 @@ export default function TurnRow({
                   </svg>
                 </Button>
               )}
-              <div className="rounded-2xl rounded-br-sm bg-slate-200/90 px-4 py-2.5 text-slate-900 dark:bg-slate-700 dark:text-slate-100">
+              <div className="rounded-2xl rounded-br-sm border border-white/50 bg-white/70 px-4 py-2.5 text-slate-900 backdrop-blur-sm dark:border-white/10 dark:bg-slate-800/70 dark:text-slate-100">
                 {turn.user.image && (
                   <img
                     src={turn.user.image}
@@ -157,6 +160,18 @@ export default function TurnRow({
       {turn.steps.length > 0 && <ProcessPanel steps={turn.steps} />}
       {turn.answer && (
         <>
+          {/* 角色签：强调色圆点 + 名字。回答区不再是无名的一坨文字 ——
+              "这句是谁说的"是角色化产品的第一信息（2026-10-25 玻璃重设计）。 */}
+          {roleName && (
+            <div className="mb-1 flex items-center gap-1.5">
+              <span
+                className="h-2 w-2 shrink-0 rounded-full"
+                style={{ background: "var(--accent)" }}
+                aria-hidden="true"
+              />
+              <span className="text-11 text-slate-500 dark:text-slate-400">{roleName}</span>
+            </div>
+          )}
           <Markdown text={turn.answer.content} />
           <div className="mt-1 flex items-center gap-3 text-11 text-slate-400 dark:text-slate-500">
             {/* 这一句是她**主动**说的（R26-40 ①）：主动开口那句与前后的提问之间

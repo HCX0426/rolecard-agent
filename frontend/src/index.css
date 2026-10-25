@@ -8,6 +8,40 @@
    全库搜替换"的来源。现在 1:1 收进 @theme（名字 = 像素值，与原临时值一一对得上，
    替换是纯机械动作、零视觉变化），新代码一律用 token 不再写 px 临时值。 */
 @theme {
+  /* 调色板重定义（2026-10-25 玻璃重设计）：Tailwind 的 slate/blue **就地改义**，
+     不动任何组件 className —— 所有 bg-slate-100 / text-blue-600 自动变成可可/强调色。
+     这就是"统一存放样式的地方"的意义：改一次材质，全站生效。 */
+  --color-slate-50: #faf7f2;
+  --color-slate-100: #f4efe7;
+  --color-slate-200: #e8dfd2;
+  --color-slate-300: #d5c7b5;
+  --color-slate-400: #a08d79;
+  --color-slate-500: #7d6b5a;
+  --color-slate-600: #5f5145;
+  --color-slate-700: #4a3f36;
+  --color-slate-800: #372f29;
+  --color-slate-900: #26211d;
+  --color-slate-950: #1a1614;
+
+  /* white/black 是 Tailwind 的**具名色**（不走 --color-* 命名空间），不覆盖就仍是
+     死白 —— 玻璃层最需要的恰恰是"白"变半透明。覆盖成半透明白，bg-white 的面板
+     就自动成了玻璃。 */
+  --color-white: color-mix(in srgb, #ffffff 72%, transparent);
+  --color-black: #1a1614;
+
+  /* 蓝 → 强调色（--accent 随当前角色变）。Tailwind 的 blue-* 是**静态色值**，
+     这里改成引用 CSS 变量：切角色时全站的"蓝"自动变角色色。 */
+  --color-blue-50: color-mix(in srgb, var(--accent) 10%, #ffffff);
+  --color-blue-100: color-mix(in srgb, var(--accent) 16%, #ffffff);
+  --color-blue-200: color-mix(in srgb, var(--accent) 28%, #ffffff);
+  --color-blue-300: color-mix(in srgb, var(--accent) 45%, #ffffff);
+  --color-blue-400: color-mix(in srgb, var(--accent) 65%, #ffffff);
+  --color-blue-500: color-mix(in srgb, var(--accent) 82%, #ffffff);
+  --color-blue-600: var(--accent);
+  --color-blue-700: color-mix(in srgb, var(--accent) 82%, #000000);
+  --color-blue-800: color-mix(in srgb, var(--accent) 68%, #000000);
+  --color-blue-900: color-mix(in srgb, var(--accent) 52%, #000000);
+
   --text-10: 10px;
   --text-10--line-height: 1.4;
   --text-11: 11px;
@@ -16,6 +50,19 @@
   --text-12--line-height: 1.5;
   --text-15: 15px;
   --text-15--line-height: 1.5;
+
+  /* 可可文字色（2026-10-25 玻璃重设计）：正文/标题不再用 slate，暖一档配玻璃底。 */
+  --color-cocoa-50: #f7f2ec;
+  --color-cocoa-100: #efe6da;
+  --color-cocoa-200: #e2d3c0;
+  --color-cocoa-300: #cbb79e;
+  --color-cocoa-400: #a98f72;
+  --color-cocoa-500: #8a7268;
+  --color-cocoa-600: #6d5844;
+  --color-cocoa-700: #54443a;
+  --color-cocoa-800: #3c322c;
+  --color-cocoa-900: #292220;
+  --color-cocoa-950: #1b1715;
 }
 
 /* 代码块语法高亮（2026-10-24，rehype-highlight 接入）：token 配色是手写的最小集
@@ -72,15 +119,65 @@
 }
 
 
-/* 项目基调：浅色、紧凑、克制的强调色 —— 2026-09-17 定的桌面 IDE 观感 */
+/* 项目基调（2026-10-25 玻璃拟态重设计，方向经用户拍板）：
+   底 = 角色强调色的低饱和大雾（--accent 由 JS 按当前角色写入），面板 = 玻璃。
+   "角色的舞台"：界面 chrome 退后成玻璃，强调色是角色带来的。 */
 html,
 body,
 #root {
   height: 100%;
 }
 
+:root {
+  /* 角色强调色（默认 = 通用助手的靛蓝；JS 按当前角色改写 --accent）。
+     派生变量由颜色混合函数生成，浅深两套各调透明度。 */
+  --accent: #a8703c;
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-fog: color-mix(in srgb, var(--accent) 7%, #f4f1ea);
+  --accent-glass: color-mix(in srgb, var(--accent) 4%, #ffffffcc);
+  --accent-ink: color-mix(in srgb, var(--accent) 78%, #1b1715);
+}
+.dark {
+  --accent-fog: color-mix(in srgb, var(--accent) 10%, #171412);
+  --accent-glass: color-mix(in srgb, var(--accent) 6%, #1b1715e6);
+  --accent-ink: color-mix(in srgb, var(--accent) 70%, #f4f1ea);
+}
+
 body {
-  @apply bg-slate-100 text-slate-800 text-sm antialiased dark:bg-slate-900 dark:text-slate-100;
+  background:
+    radial-gradient(60% 50% at 12% 0%, var(--accent-fog), transparent),
+    radial-gradient(50% 40% at 90% 100%, var(--accent-fog), transparent),
+    #f4f1ea;
+  @apply text-sm text-cocoa-900 antialiased;
+}
+.dark body {
+  background:
+    radial-gradient(60% 50% at 12% 0%, var(--accent-fog), transparent),
+    radial-gradient(50% 40% at 90% 100%, var(--accent-fog), transparent),
+    #171412;
+  @apply text-cocoa-100;
+}
+
+/* 玻璃面板原语：内容容器的统一材质。backdrop-blur 只给不滚动的层
+   （侧栏/页头/输入框/卡片），消息流内的长列表不用 blur（滚动 GPU 成本）。 */
+.glass {
+  background: var(--accent-glass);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+}
+.dark .glass {
+  background: var(--accent-glass);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+/* 滚动区内的"玻璃感"（无 blur）：半透明底 + 同款边框，视觉一致不耗 GPU。 */
+.glass-soft {
+  background: color-mix(in srgb, #ffffff 72%, transparent);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+}
+.dark .glass-soft {
+  background: color-mix(in srgb, #1b1715 72%, transparent);
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 /* 桌宠窗（html[data-page="pet"]）必须**一路都不涂背景**：控制台那层 body 底色会让

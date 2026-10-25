@@ -18,6 +18,7 @@ import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useChatStream } from "../hooks/useChatStream";
 import { useMessageSelection } from "../hooks/useMessageSelection";
 import { useSessions } from "../hooks/useSessions";
+import { publishCurrentRole } from "../lib/currentRole";
 import { useSessionMirror } from "../hooks/useSessionMirror";
 import { useUploadFlow } from "../hooks/useUploadFlow";
 import ChatToolbar from "../components/chat/ChatToolbar";
@@ -607,6 +608,25 @@ export default function ChatPage({
   // 提取精华的归属说明：写进的是**这个角色**的记忆桶，所以提示里要念出它的名字。
   const roleLabel =
     roles.find((r) => r.role_id === (current?.role_id || displayRole))?.role_name || "当前角色";
+  // 空白态的开场白 = 当前角色人设的第一行（去掉 Markdown 标题与列表符号）。
+  // 为什么用它：空白页现在是"说明书"，换成角色自己的第一句话才是"她在等你"——
+  // 角色化产品的第一眼该看见人，不是说明（2026-10-25 玻璃重设计）。
+  const roleGreeting = (() => {
+    const role = roles.find((r) => r.role_id === (current?.role_id || displayRole));
+    const first = (role?.system_prompt || "")
+      .split("\n")
+      .map((l) => l.trim())
+      .find(Boolean);
+    return first ? first.replace(/^#+\s*/, "").replace(/^[-*]\s*/, "").slice(0, 120) : "";
+  })();
+  // 当前角色写进共享 store：强调色（雾底/侧栏块/气泡签）跟着它走（2026-10-25 玻璃重设计）。
+  const activeRoleId = current?.role_id || displayRole;
+  const activeRole = roles.find((r) => r.role_id === activeRoleId);
+  useEffect(() => {
+    if (activeRoleId) {
+      publishCurrentRole(activeRoleId, activeRole?.role_name || activeRoleId, activeRole?.accent);
+    }
+  }, [activeRoleId, activeRole?.role_name, activeRole?.accent]);
 
   async function renameSession() {
     const title = titleDraft.trim();
@@ -642,7 +662,7 @@ export default function ChatPage({
 
       {/* 对话区 */}
       <section className="flex min-w-0 flex-1 flex-col">
-        <header className="border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-5 py-3">
+        <header className="glass border-b border-white/40 px-5 py-3">
           {editingTitle && current ? (
             <div className="flex items-center gap-2">
               <input
@@ -725,10 +745,22 @@ export default function ChatPage({
 
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
           {!sessionId && messages.length === 0 && !live && (
-            <div className="mx-auto mt-8 max-w-xl rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
-              <h3 className="text-sm font-medium text-slate-800 dark:text-slate-100">开始一次对话</h3>
-              <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-                直接在下方输入即可（会自动创建对话），或点左上角「＋ 开一个临时话题」。
+            <div className="glass mx-auto mt-8 max-w-xl rounded-xl p-5">
+              {/* 空白态是一句**邀请**，不是说明书（2026-10-25 玻璃重设计）：
+                  角色名 + 它的口吻开场白（role 首行 system_prompt），下面才是操作提示。 */}
+              <div className="flex items-center gap-2">
+                <span
+                  className="h-2.5 w-2.5 rounded-full"
+                  style={{ background: "var(--accent)" }}
+                  aria-hidden="true"
+                />
+                <h3 className="text-sm font-medium text-slate-800 dark:text-slate-100">
+                  {roleLabel ? `和「${roleLabel}」开始` : "开始一次对话"}
+                </h3>
+              </div>
+              <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
+                {roleGreeting ||
+                  "直接在下方输入即可（会自动创建对话），或点左上角「＋ 开一个临时话题」。"}
               </p>
               <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
                 <li>
@@ -752,6 +784,7 @@ export default function ChatPage({
                 <TurnRow
                   key={turn.key}
                   turn={turn}
+                  roleName={roleLabel}
                   busy={busy}
                   selectMode={selectMode}
                   checked={selectMode && !!selectId && selected.includes(selectId)}

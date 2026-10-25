@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Notice, PageHeader } from "../components/ui";
+import { Button, Notice, PageHeader, EllipsisText } from "../components/ui";
 import TimelineDrawer from "../components/TimelineDrawer";
 import type { PetPackListing } from "../pets/registry";
 import {
@@ -421,9 +421,10 @@ export default function RolesPage({
               ← 返回列表
             </Button>
             <span className="text-xs text-slate-400 dark:text-slate-500">
-              正在编辑：<b className="text-slate-600 dark:text-slate-300">
+              正在编辑：
+              <EllipsisText maxClass="max-w-60 inline-block align-bottom" detect className="mx-1 inline font-semibold text-slate-600 dark:text-slate-300">
                 {form.role_name || form.role_id || "新角色"}
-              </b>
+              </EllipsisText>
             </span>
           </div>
         )}

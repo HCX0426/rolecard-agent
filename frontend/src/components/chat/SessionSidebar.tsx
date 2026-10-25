@@ -76,7 +76,7 @@ export default function SessionSidebar({
           遮罩那颗是可点的 div 语义（aria-label 已给）。收编止于形状匹配的：CTA /
           文字链 / 危险小按钮。 */}
       <aside
-        className={`flex w-64 shrink-0 flex-col border-r border-slate-200 bg-white transition-transform dark:border-slate-700 dark:bg-slate-800 max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:pt-[41px] ${
+        className={`glass flex w-56 shrink-0 flex-col border-r border-white/40 transition-transform max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:pt-[41px] ${
           sessionsOpen ? "max-md:translate-x-0" : "max-md:-translate-x-full"
         }`}
       >

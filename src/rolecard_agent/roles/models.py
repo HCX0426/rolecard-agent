@@ -46,6 +46,9 @@ PET_PACK_PATTERN = r"^[a-z][a-z0-9_-]{0,63}$"
 #: 固定时刻问候（`greeting_at`）的形状：24 小时制 HH:MM。校验只管形状 —— "这个时刻合不
 #: 合适"由角色卡的主人自己判断，调度器侧的当日去重与静默闸负责不吵。
 GREETING_AT_PATTERN = r"([01]\d|2[0-3]):[0-5]\d"
+#: 角色强调色（2026-10-25 玻璃重设计）：hex 三/六位。空 = 由 role_id 哈希派生
+#（确定性、不掷骰子——同名同色）。校验只管形状，"好不好看"是主人的事。
+ACCENT_PATTERN = r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$"
 
 # Exemplar budget. Chars are used rather than tokens because it needs no tokenizer
 # dependency, and for Chinese text a character budget is a conservative proxy. The cap is
@@ -94,6 +97,15 @@ def _check_scopes(value: list[str] | None) -> list[str] | None:
     return value
 
 
+def _check_accent(value: str | None) -> str | None:
+    """强调色形状校验：#RGB / #RRGGBB；空 = 派生。存小写归一。"""
+    if not value:
+        return None
+    if not re.fullmatch(ACCENT_PATTERN, value):
+        raise ValueError("accent 要写成 hex 颜色（#4f6bed 或 #4fe）")
+    return value.lower()
+
+
 def _check_greeting_at(value: str | None) -> str | None:
     """`greeting_at` 的形状校验与归一：空串与 None 同义 = 没排，归一成 None。"""
     if not value:
@@ -106,6 +118,7 @@ def _check_greeting_at(value: str | None) -> str | None:
 ExemplarList = Annotated[list[RoleExemplar] | None, AfterValidator(_check_exemplar_budget)]
 ScopeList = Annotated[list[str] | None, AfterValidator(_check_scopes)]
 GreetingAt = Annotated[str | None, AfterValidator(_check_greeting_at)]
+Accent = Annotated[str | None, AfterValidator(_check_accent)]
 
 
 class RoleCard(BaseModel):
@@ -147,6 +160,10 @@ class RoleCard(BaseModel):
     reachout_keep: int = Field(default=0, ge=0, le=1000)
     #: 桌宠用哪个形象包（列定义见 `roles/schema.sql`）。空串 = 从没配过 → 渲染侧落默认包。
     pet_pack: str = ""
+    #: 角色强调色（2026-10-25 玻璃重设计）：这个角色的糖衣色——侧栏角色块、气泡签、
+    #: 界面雾底都从它派生。None = 由 role_id 哈希派生（确定性）。前端落地见 App.tsx
+    #: 的 accent 注入。
+    accent: Accent = None
     is_builtin: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -172,6 +189,7 @@ class RoleCardCreate(BaseModel):
     greeting_at: GreetingAt = None
     reachout_keep: int = Field(default=0, ge=0, le=1000)
     pet_pack: str = ""
+    accent: Accent = None
 
     @field_validator("role_id")
     @classmethod
@@ -208,6 +226,8 @@ class RoleCardUpdate(BaseModel):
     file_watch_enabled: bool | None = None
     #: 排固定时刻问候：HH:MM；空串/None = 清除（当日不再触发）。不传这个键 = 不动。
     greeting_at: GreetingAt = None
+    #: 改强调色：hex；空串 = 回落派生色。不传这个键 = 不动。
+    accent: Accent = None
     reachout_keep: int | None = Field(default=None, ge=0, le=1000)
     #: 改桌宠形象。传空串 = 回到"没配过"（渲染落默认包）；不传这个键 = 不动。
     pet_pack: str | None = None

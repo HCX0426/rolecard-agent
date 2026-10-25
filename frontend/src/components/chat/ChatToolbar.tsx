@@ -4,6 +4,7 @@ import type { RoleCard } from "../../api";
 import { useMenus } from "../../hooks/useMenus";
 import { useModelBackends, type SamplingField } from "../../hooks/useModelBackends";
 import type { Tone } from "../Toast";
+import { EllipsisText } from "../ui";
 import { IconClip, IconModel, IconUser } from "./icons";
 
 /** 角色多到几个，抽屉里才出现搜索框：三五个的时候一个框只是多一个要看的控件。 */
@@ -166,7 +167,10 @@ export default function ChatToolbar({
           className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-700"
         >
           <IconUser />
-          {roles.find((r) => r.role_id === displayRole)?.role_name ?? "角色"} ▾
+          <EllipsisText maxClass="max-w-40" detect>
+            {roles.find((r) => r.role_id === displayRole)?.role_name ?? "角色"}
+          </EllipsisText>
+          <span aria-hidden="true">▾</span>
         </button>
         {roleMenuOpen && (
           <>

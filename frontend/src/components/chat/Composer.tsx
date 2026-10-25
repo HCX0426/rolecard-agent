@@ -76,8 +76,10 @@ export default function Composer({
   }
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800">
+    <div className="mx-auto max-w-3xl pb-2">
+      {/* 输入框 = 浮在暖底上的玻璃卡片（2026-10-25 玻璃重设计）：影子给它"在场"，
+          边框/底色交给材质层，聚焦不点亮（用户 10-25 拍板）。 */}
+      <div className="glass rounded-2xl shadow-[0_8px_30px_-12px_rgba(60,45,30,0.35)] dark:shadow-[0_8px_30px_-12px_rgba(0,0,0,0.6)]">
         {pendingImage && (
           <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2 dark:border-slate-700">
             <img

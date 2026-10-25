@@ -4,8 +4,11 @@ type Variant = "primary" | "outline" | "ghost" | "danger" | "link";
 type Size = "sm" | "md";
 
 const VARIANTS: Record<Variant, string> = {
+  // primary 用**当前角色的强调色**（--accent，2026-10-25 玻璃重设计）：主按钮跟着
+  // 角色换色 —— "现在这个界面是在跟谁说话"不用读字就知道。color-mix 让禁用态
+  // 自动褪成灰（不用再写一份 disabled 蓝）。
   primary:
-    "bg-blue-600 text-white hover:bg-blue-700 disabled:bg-slate-300 dark:bg-blue-600 dark:hover:bg-blue-500 dark:disabled:bg-slate-700",
+    "text-white disabled:bg-slate-300 dark:disabled:bg-slate-700",
   outline:
     "border border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:text-blue-600 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-700 dark:hover:text-blue-400",
   // ghost/danger 以前**完全没有禁用态**：灰掉与否看起来一样能点，
@@ -56,6 +59,29 @@ const Button = forwardRef(function Button(
   const button = (
     <button
       ref={ref}
+      style={
+        variant === "primary"
+          ? {
+              background: "var(--accent)",
+              // hover 的深一档：同色相压暗 12%（浏览器端算，不用两份 CSS）
+              // —— 悬停态用 CSS 变量写不了 :hover，所以走 filter。
+            }
+          : undefined
+      }
+      onMouseEnter={
+        variant === "primary"
+          ? (e) => {
+              e.currentTarget.style.filter = "brightness(0.9)";
+            }
+          : undefined
+      }
+      onMouseLeave={
+        variant === "primary"
+          ? (e) => {
+              e.currentTarget.style.filter = "";
+            }
+          : undefined
+      }
       className={`rounded-lg font-medium transition-colors ${VARIANTS[variant]} ${SIZES[size]} ${className}`}
       disabled={disabled}
       {...rest}

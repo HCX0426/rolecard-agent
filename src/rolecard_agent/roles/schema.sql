@@ -76,6 +76,9 @@ CREATE TABLE IF NOT EXISTS role_card (
     -- 真有的包来保证（与"能力没探测到就把控件整个拿掉"那条通则同一个口径）。
     -- 以后上 Live2D 时改的是注册表里那条目的 kind，这一列一个字都不用动。
     pet_pack           TEXT NOT NULL DEFAULT '',
+    -- 角色强调色（2026-10-25 玻璃重设计）：hex（#rgb/#rrggbb），NULL = 由 role_id
+    -- 派生（确定性）。它是这个角色的"糖衣色"——界面雾底/侧栏块/气泡签都从它派生。
+    accent             TEXT,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

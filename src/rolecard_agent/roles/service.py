@@ -45,6 +45,7 @@ _INSERTABLE_COLUMNS: tuple[str, ...] = (
     "greeting_at",
     "reachout_keep",
     "pet_pack",
+    "accent",
 )
 
 _COLUMNS = ", ".join((*_INSERTABLE_COLUMNS, "created_at", "updated_at"))
@@ -185,6 +186,7 @@ class RoleCards:
                 data.greeting_at,
                 data.reachout_keep,
                 data.pet_pack,
+                data.accent,
             ),
         )
         self.conn.commit()

@@ -31,6 +31,8 @@ export interface RoleCard {
   reachout_keep?: number;
   /** 桌宠形象包 id（空/缺省 = 没配过 → 落默认包）。可选值来自 `/api/pets`，见 `pets/registry.ts`。 */
   pet_pack?: string;
+  /** 角色强调色（hex；缺省 = 由 role_id 确定性派生）。玻璃材质的雾底/侧栏块/气泡签都从它来。 */
+  accent?: string | null;
 }
 
 export interface KnowledgeScopes {
