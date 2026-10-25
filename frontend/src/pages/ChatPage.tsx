@@ -674,7 +674,7 @@ export default function ChatPage({
                   if (e.key === "Escape") setEditingTitle(false);
                 }}
                 maxLength={100}
-                className="w-72 rounded-lg border border-blue-300 px-2.5 py-1 text-sm outline-none"
+                className="w-72 rounded-lg border border-blue-300 px-2.5 py-1 text-sm outline-none focus-visible:border-2"
               />
               <Button variant="primary" size="sm" type="button" className="px-2.5 py-1 text-xs" onClick={renameSession}>
                 保存

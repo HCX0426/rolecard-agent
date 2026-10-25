@@ -116,7 +116,7 @@ export default function Composer({
               : "输入消息，Enter 发送 / Shift+Enter 换行（没有对话会自动创建）"
           }
           disabled={busy}
-          className="max-h-40 w-full resize-none bg-transparent px-4 pt-3 pb-1 leading-relaxed outline-none disabled:bg-slate-50 dark:disabled:bg-slate-800/50"
+          className="max-h-40 w-full resize-none bg-transparent px-4 pt-3 pb-1 leading-relaxed outline-none focus-visible:border-b-2 focus-visible:border-cocoa-400 disabled:bg-slate-50 dark:disabled:bg-slate-800/50"
         />
         <div className="flex items-center justify-between gap-2 px-2.5 pb-2">
           <div className="flex items-center gap-1">

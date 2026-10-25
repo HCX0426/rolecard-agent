@@ -209,20 +209,38 @@ export default function ToolsPage() {
           }
         />
 
+        {/* 锚点条（2026-10-25 玻璃重设计）：这一页有三个长区块，滚动找人靠的是眼睛；
+            锚点条把"去哪儿"变成一次点击。 */}
+        <nav className="mt-4 flex flex-wrap gap-1.5 text-xs" aria-label="本页区块">
+          {[
+            ["channels", "聊天渠道"],
+            ["mcp", "MCP 服务器"],
+            ["catalog", "内置工具目录"],
+          ].map(([id, label]) => (
+            <a
+              key={id}
+              href={`#${id}`}
+              className="rounded-full px-3 py-1 text-slate-500 transition-colors hover:bg-white/60 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-slate-200"
+            >
+              {label}
+            </a>
+          ))}
+        </nav>
+
         {/* ① 聊天渠道（QQ 官方机器人等）—— 外面的门 */}
-        <h2 className="mt-6 mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
+        <h2 id="channels" className="mt-6 mb-3 scroll-mt-4 text-sm font-semibold text-slate-700 dark:text-slate-200">
           聊天渠道
         </h2>
         <ChannelsPanel />
 
         {/* ② MCP 服务器管理（自设置 → 扩展 整体搬入） */}
-        <h2 className="mt-8 mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
+        <h2 id="mcp" className="mt-8 mb-3 scroll-mt-4 text-sm font-semibold text-slate-700 dark:text-slate-200">
           MCP 服务器
         </h2>
         <ExtensionPanel />
 
         {/* ③ 内置工具目录（角色卡白名单的选项清单） */}
-        <h2 className="mt-8 mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
+        <h2 id="catalog" className="mt-8 mb-3 scroll-mt-4 text-sm font-semibold text-slate-700 dark:text-slate-200">
           内置工具目录
         </h2>
         {catalog && (
@@ -244,12 +262,18 @@ export default function ToolsPage() {
                     {id}
                   </code>
                 </p>
-                {tools.map((t) => (
-                  <div key={t.name} className="mt-1 text-xs">
-                    <code className="text-slate-700 dark:text-slate-200">{t.name}</code>
-                    <span className="ml-2 text-slate-400 dark:text-slate-500">{t.description}</span>
-                  </div>
-                ))}
+                {/* 两列网格（2026-10-25 玻璃重设计）：单列码表要滚很久才看完一个域，
+                    两列卡片一眼扫完。 */}
+                <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                  {tools.map((t) => (
+                    <div key={t.name} className="rounded-lg bg-white/50 px-2 py-1.5 text-xs dark:bg-white/5">
+                      <code className="text-slate-700 dark:text-slate-200">{t.name}</code>
+                      <p className="mt-0.5 line-clamp-2 text-11 leading-relaxed text-slate-400 dark:text-slate-500">
+                        {t.description}
+                      </p>
+                    </div>
+                  ))}
+                </div>
               </Card>
             ))}
           </div>

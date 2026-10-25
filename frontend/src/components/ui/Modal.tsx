@@ -27,6 +27,9 @@ export default function Modal({
   variant?: "center" | "drawer";
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
+  // 面板上是 `outline-none`：**故意的** —— 它是 `tabIndex={-1}` 的容器（只为 programmatic
+  // focus），不是可聚焦控件；可聚焦的控件（按钮/输入/链接）在下面各自带 focus 反馈，
+  // 模态里的 Tab 循环由浏览器原生行为承担。
 
   useEffect(() => {
     if (!open) return;

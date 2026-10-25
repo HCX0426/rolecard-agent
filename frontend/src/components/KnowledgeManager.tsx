@@ -270,7 +270,10 @@ export function KnowledgeManager() {
               tabIndex={0}
               onClick={() => setImportScope(s.scope)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") setImportScope(s.scope);
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setImportScope(s.scope);
+                }
               }}
               title="点击选中：「导入文档 →」作用于选中的库"
               className={`rounded-xl border bg-white dark:bg-slate-800 p-4 cursor-pointer transition-colors outline-none focus-visible:border-blue-500 ${

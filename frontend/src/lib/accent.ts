@@ -11,9 +11,9 @@
  *  全部落在**暖色域**——材质是可可底，冷色 accent 与它是撞色（靛蓝配可可棕最明显，
  *  看着像"没改完的旧版蓝"）。玻璃材质的调性要求 accent 与底同族。 */
 const BUILTIN_ACCENTS: Record<string, string> = {
-  general_assistant: "#a8703c", // 焦糖：通用、暖、稳
-  medical_archivist: "#8a5a3c", // 赭石：档案、可信
-  elysia: "#a04a6a", // 玫瑰：角色感强
+  general_assistant: "#b07a3a", // 焦糖：通用、暖、稳
+  medical_archivist: "#8a6a2a", // 橄榄金：档案、可信（与焦糖拉开色相距离）
+  elysia: "#a04a68", // 玫瑰：角色感强
 };
 
 /** 派生色相环（HSL 的 H 值）：焦糖 → 玫瑰 → 赭石 → 橄榄 → 赤陶 → 蜜色 → 栗。

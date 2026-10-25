@@ -401,6 +401,7 @@ function MessageRow({
       </button>
       <button
         onClick={onDelete}
+        aria-label="从抽屉里删掉这条记录"
         title="从抽屉里删掉这条记录（那句话仍留在对话里）"
         className="absolute right-1 top-1 hidden h-5 w-5 place-items-center rounded text-xs text-slate-400 hover:bg-red-50 hover:text-red-500 group-hover:grid dark:hover:bg-red-900/30"
       >

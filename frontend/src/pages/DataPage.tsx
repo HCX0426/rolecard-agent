@@ -16,13 +16,23 @@ export type MaterialsBlock = "records" | "knowledge";
 export default function DataPage({ initialBlock }: { initialBlock?: MaterialsBlock } = {}) {
   const [domains, setDomains] = useState<DomainInfo[]>([]);
   const [block, setBlock] = useState<MaterialsBlock>(initialBlock ?? "records");
+  // 选中的域（2026-10-25 玻璃重设计）：域从"垂直分组堆叠"改成**顶部胶囊 tab** ——
+  // 一次只看一个域，页面短一半；堆叠时两个域的表格上下相隔一屏，要滚很远才看得到第二个。
+  const [activeDomain, setActiveDomain] = useState<string>("");
 
   useEffect(() => {
     if (initialBlock) setBlock(initialBlock);
   }, [initialBlock]);
 
   useEffect(() => {
-    api.get<DomainInfo[]>("/api/domains").then(setDomains).catch(() => undefined);
+    api
+      .get<DomainInfo[]>("/api/domains")
+      .then((list) => {
+        setDomains(list);
+        // 默认停在第一个域（还没选过时）—— 不要让"两个域都铺开"成为初始形态。
+        setActiveDomain((cur) => cur || list[0]?.id || "");
+      })
+      .catch(() => undefined);
   }, []);
 
   return (
@@ -65,30 +75,49 @@ export default function DataPage({ initialBlock }: { initialBlock?: MaterialsBlo
           <KnowledgeManager />
         ) : (
           <>
-            <div className="mt-5 space-y-7">
-              {domains.length === 0 && (
-                <p className="text-xs text-slate-400 dark:text-slate-500">正在加载领域…</p>
+            <>
+              {/* 域切换：胶囊 tab（一次只看一个域） */}
+              {domains.length > 1 && (
+                <div className="mt-4 flex flex-wrap gap-1.5">
+                  {domains.map((d) => {
+                    const on = d.id === activeDomain;
+                    return (
+                      <button
+                        key={d.id}
+                        type="button"
+                        onClick={() => setActiveDomain(d.id)}
+                        aria-pressed={on}
+                        className={`rounded-full px-3 py-1 text-xs transition-colors ${
+                          on
+                            ? "font-medium text-white"
+                            : "text-slate-500 hover:bg-white/50 dark:text-slate-400 dark:hover:bg-white/5"
+                        }`}
+                        style={on ? { background: "var(--accent)" } : undefined}
+                      >
+                        {d.display_name}
+                      </button>
+                    );
+                  })}
+                </div>
               )}
-              {domains.map((d) => (
-                <section key={d.id}>
-                  <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
-                    <h3 className="text-sm font-medium text-slate-700 dark:text-slate-200">{d.display_name}</h3>
-                    {d.display_name !== d.id && (
-                      <code className="rounded bg-slate-100 dark:bg-slate-700/50 px-1.5 py-0.5 text-11 text-slate-500 dark:text-slate-400">
-                        {d.id}
-                      </code>
-                    )}
-                  </div>
-                  <div className="mt-3">
-                    {d.id === "health" ? (
-                      <DataManagement />
-                    ) : (
-                      <GenericDomainData domain={d.id} displayName={d.display_name} />
-                    )}
-                  </div>
+              {domains.length === 0 && (
+                <p className="mt-4 text-xs text-slate-400 dark:text-slate-500">正在加载领域…</p>
+              )}
+              {activeDomain && (
+                <section className="mt-4">
+                  {activeDomain === "health" ? (
+                    <DataManagement />
+                  ) : (
+                    <GenericDomainData
+                      domain={activeDomain}
+                      displayName={
+                        domains.find((d) => d.id === activeDomain)?.display_name ?? activeDomain
+                      }
+                    />
+                  )}
                 </section>
-              ))}
-            </div>
+              )}
+            </>
           </>
         )}
       </div>

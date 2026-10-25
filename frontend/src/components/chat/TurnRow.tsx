@@ -103,7 +103,7 @@ export default function TurnRow({
                   if (e.key === "Escape") onEditCancel();
                 }}
                 rows={3}
-                className="w-full resize-y rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-blue-400"
+                className="w-full resize-y rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-sm outline-none focus-visible:border-2"
               />
               <div className="mt-1.5 flex items-center justify-end gap-2 text-11">
                 <span className="text-slate-400 dark:text-slate-500">

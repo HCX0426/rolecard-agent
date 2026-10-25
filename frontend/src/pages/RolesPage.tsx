@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Notice, PageHeader, EllipsisText } from "../components/ui";
+import { Button, EllipsisText, Notice, PageHeader, Tag } from "../components/ui";
 import TimelineDrawer from "../components/TimelineDrawer";
 import type { PetPackListing } from "../pets/registry";
 import {
@@ -11,6 +11,7 @@ import {
   type ToolEntry,
 } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
+import { accentFor } from "../lib/accent";
 import { describeError } from '../lib/errors';
 
 // 范例草稿行：rowId 是稳定 React key（M7），删行/插行时输入框状态不串行；
@@ -809,88 +810,100 @@ export default function RolesPage({
           </form>
         )}
 
+        {/* 角色墙（2026-10-25 玻璃重设计）：表格改卡片。角色是产品主角 —— 表格把它
+            压成了一行行数据（"role_id / 白名单 / 类型"），卡片才给得起"这是个人"的
+            感觉。每张卡：accent 圆点 + 名字 + 一句人设摘要 + 归属标签。 */}
         <div
-          className={`mt-4 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 ${
+          className={`mt-4 grid gap-3 sm:grid-cols-2 ${
             editing !== null ? "hidden" : ""
           }`}
         >
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-slate-100 dark:border-slate-800 text-xs text-slate-400 dark:text-slate-500">
-                <th className="px-4 py-2.5 font-medium">role_id</th>
-                <th className="px-4 py-2.5 font-medium">名称</th>
-                <th className="px-4 py-2.5 font-medium">模型</th>
-                <th className="px-4 py-2.5 font-medium">工具白名单</th>
-                <th className="px-4 py-2.5 font-medium">类型</th>
-                <th className="px-4 py-2.5"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {roles.map((r) => (
-                <tr key={r.role_id} className="border-b border-slate-50 last:border-0">
-                  <td className="px-4 py-2.5 font-mono text-xs">{r.role_id}</td>
-                  <td className="px-4 py-2.5">{r.role_name}</td>
-                  <td className="px-4 py-2.5 text-slate-500 dark:text-slate-400">
-                    {r.model_name || "跟随默认"}
-                  </td>
-                  <td className="max-w-52 truncate px-4 py-2.5 text-slate-500 dark:text-slate-400">
+          {roles.map((r) => {
+            const accent = accentFor(r.role_id, r.accent);
+            const summary = (r.system_prompt || "").replace(/\s+/g, " ").trim().slice(0, 90);
+            return (
+              <div
+                key={r.role_id}
+                className="glass rounded-xl p-4 transition-transform hover:-translate-y-0.5"
+                style={{ boxShadow: "inset 3px 0 0 " + accent }}
+              >
+                <div className="flex items-start gap-2.5">
+                  <span
+                    className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{ background: accent }}
+                    aria-hidden="true"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                        {r.role_name}
+                      </span>
+                      {r.is_builtin ? (
+                        <Tag tone="green">内置</Tag>
+                      ) : (
+                        <Tag tone="slate">自定义</Tag>
+                      )}
+                    </div>
+                    <code className="mt-0.5 block truncate font-mono text-11 text-slate-400 dark:text-slate-500">
+                      {r.role_id}
+                    </code>
+                  </div>
+                </div>
+                {summary && (
+                  <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                    {summary}
+                  </p>
+                )}
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-11 text-slate-400 dark:text-slate-500">
+                  <span>模型：{r.model_name || "跟随默认"}</span>
+                  <span>
+                    工具：
                     {r.tool_whitelist === null
-                      ? "（全部）"
+                      ? "全部"
                       : r.tool_whitelist.length
-                        ? r.tool_whitelist.join(", ")
-                        : "（无）"}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs ${
-                        r.is_builtin
-                          ? "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300"
-                          : "bg-slate-100 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400"
-                      }`}
-                    >
-                      {r.is_builtin ? "内置" : "自定义"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
+                        ? `${r.tool_whitelist.length} 项`
+                        : "无"}
+                  </span>
+                </div>
+                <div className="mt-3 flex items-center gap-1.5">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    className="text-xs"
+                    onClick={() => {
+                      openEdit(r);
+                    }}
+                  >
+                    编辑
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    className="text-xs"
+                    onClick={() => setTimelineFor({ role_id: r.role_id, role_name: r.role_name })}
+                    title="它主动说过什么、记下/更正过哪些事实、你们哪天开聊（只读）"
+                  >
+                    事件簿
+                  </Button>
+                  {!r.is_builtin && (
                     <Button
                       variant="ghost"
                       size="sm"
                       type="button"
-                      className="text-xs text-blue-600 dark:text-blue-400"
-                      onClick={() => {
-                        openEdit(r);
+                      className="text-xs text-red-500 hover:bg-red-50 dark:bg-red-900/30"
+                      onClick={async () => {
+                        if (await confirm({ title: "删除这个角色卡？", body: "将删除该角色卡（内置角色不可删）。", confirmText: "确认删除", danger: true })) remove(r.role_id);
                       }}
                     >
-                      编辑
+                      删除
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      type="button"
-                      className="text-xs"
-                      onClick={() => setTimelineFor({ role_id: r.role_id, role_name: r.role_name })}
-                      title="它主动说过什么、记下/更正过哪些事实、你们哪天开聊（只读）"
-                    >
-                      事件簿
-                    </Button>
-                    {!r.is_builtin && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        type="button"
-                        className="text-xs text-red-500 hover:bg-red-50 dark:bg-red-900/30"
-                        onClick={async () => {
-                          if (await confirm({ title: "删除这个角色卡？", body: "将删除该角色卡（内置角色不可删）。", confirmText: "确认删除", danger: true })) remove(r.role_id);
-                        }}
-                      >
-                        删除
-                      </Button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
       <TimelineDrawer
