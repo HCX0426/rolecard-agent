@@ -14,8 +14,10 @@ from __future__ import annotations
 import contextlib
 import os
 import pathlib
+import socket
 import sqlite3
 import sys
+import threading
 from collections.abc import Iterator, Sequence
 from typing import Any
 
@@ -35,6 +37,41 @@ from rolecard_agent.storage.db import bootstrap, connect
 def cards(store: RoleCardService) -> RoleCards:
     """测试里"本机主人眼里的那些卡"的简写（M2a 之后每次读写都得说清为谁）。"""
     return store.scoped(...)
+
+
+@pytest.fixture(scope="session")
+def unreachable_backend() -> Iterator[str]:
+    """一个**立即拒绝**的模型后端 URL，替代 `127.0.0.1:9`。
+
+    判据不变 —— 仍然是"必然失败的后端，用来测降级路径"；变的只是拒绝速度：本机网络栈
+    （Windows 防火墙那一层）对关闭端口返回 connection refused 要 ~3.4s，而"accept 即关"
+    的本地监听立刻 RST，实测 ~0.03s。抽取消耗者一次打 primary + verifier（交叉验证设计），
+    一条用例两次 3.4s 就是 6.7s —— 全仓十余处 `:9` 是 top30 热点（≈30% 全量墙钟）的主要
+    构成（P3 实测：全量 336.8s，这批文件 188 条占 81.6s）。
+
+    "accept 即关"而不是"不监听"：拒绝发生在 TCP 层、毫秒级，且**不依赖端口恰好没人占**
+    （`:9` 在某些机器上被 discard 服务监听时语义反转 —— 测试会打到真服务上）。
+    """
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(16)
+
+    def _accept_and_close() -> None:
+        while True:
+            try:
+                conn, _ = srv.accept()
+                conn.close()
+            except OSError:
+                return
+
+    thread = threading.Thread(target=_accept_and_close, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{srv.getsockname()[1]}"
+    finally:
+        srv.close()
+        thread.join(timeout=2)
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _no_startup_model_pin() -> Iterator[None]:
@@ -258,6 +295,8 @@ def _no_chroma_system_leak():
         if system is not None:
             with contextlib.suppress(Exception):
                 system.stop()
+
+
 # --------------------------------------------------------------- R102-41 失败时刻的现场
 _SCRIPTS_DIR = pathlib.Path(__file__).resolve().parents[1] / "scripts"
 BUILD_DIR = pathlib.Path(__file__).resolve().parents[1] / "build"

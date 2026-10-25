@@ -131,9 +131,7 @@ def _app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return TestClient(create_app(sqlite_path=tmp_path / "app.db"))
 
 
-def test_import_lands_in_callers_namespace(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_import_lands_in_callers_namespace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A 推来的东西只进 A 名下；B 的清单里不该出现，重复推也不该长出双份。"""
     client = _app(tmp_path, monkeypatch)
     with client:
@@ -172,9 +170,12 @@ def test_import_lands_in_callers_namespace(
             "SELECT COUNT(*) AS n FROM role_memory_item WHERE uid = 'uid-1'"
         ).fetchone()
         assert int(rows["n"]) == 1, "重复上行长出了双份记忆"
-        assert conn.execute(
-            "SELECT COUNT(*) AS n FROM agent_reachout WHERE text = '她主动说的'"
-        ).fetchone()[0] == 1
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) AS n FROM agent_reachout WHERE text = '她主动说的'"
+            ).fetchone()[0]
+            == 1
+        )
         # 换一个身份看：完全不存在
         mine = client.get("/api/sync/inventory").json()["items"]
         assert "pushed" in {str(r["ident"]) for r in mine}
@@ -235,9 +236,9 @@ def test_import_never_overwrites_another_users_row_by_uid(
             "VALUES ('u1', 'local', '第二个')"
         )
         mem.add_item(conn, bucket=mem.GLOBAL_BUCKET, text="他的事实", user_id="u1")
-        his_uid = str(conn.execute(
-            "SELECT uid FROM role_memory_item WHERE user_id = 'u1'"
-        ).fetchone()["uid"])
+        his_uid = str(
+            conn.execute("SELECT uid FROM role_memory_item WHERE user_id = 'u1'").fetchone()["uid"]
+        )
         conn.commit()
         out = client.post(
             "/api/sync/import",
@@ -245,9 +246,12 @@ def test_import_never_overwrites_another_users_row_by_uid(
         ).json()
         assert out["skipped"].get("memory") == 1
         assert any("属于别人" in str(e["error"]) for e in out["errors"]), out["errors"]
-        assert conn.execute(
-            "SELECT text FROM role_memory_item WHERE uid = ?", (his_uid,)
-        ).fetchone()[0] == "他的事实"
+        assert (
+            conn.execute("SELECT text FROM role_memory_item WHERE uid = ?", (his_uid,)).fetchone()[
+                0
+            ]
+            == "他的事实"
+        )
 
 
 def test_conflict_resolved_as_both_keeps_both_rows(
@@ -265,28 +269,49 @@ def test_conflict_resolved_as_both_keeps_both_rows(
 
     def fake_post(url: str, **kw: Any) -> Any:
         captured["json"] = kw.get("json")
-        return type("R", (), {"status_code": 200, "json": staticmethod(
-            lambda: {"written": {"memory": 1}, "skipped": {}, "errors": []})})()
+        return type(
+            "R",
+            (),
+            {
+                "status_code": 200,
+                "json": staticmethod(
+                    lambda: {"written": {"memory": 1}, "skipped": {}, "errors": []}
+                ),
+            },
+        )()
 
     with client:
         conn = client.app.state.ctx.conn
         mem.add_item(
-            conn, bucket=mem.GLOBAL_BUCKET, text="用户住在上海，跑步习惯是每周三次。",
+            conn,
+            bucket=mem.GLOBAL_BUCKET,
+            text="用户住在上海，跑步习惯是每周三次。",
             user_id="local-user",
         )
         conn.commit()
-        uid = str(conn.execute(
-            "SELECT uid FROM role_memory_item WHERE user_id = 'local-user'"
-        ).fetchone()["uid"])
+        uid = str(
+            conn.execute(
+                "SELECT uid FROM role_memory_item WHERE user_id = 'local-user'"
+            ).fetchone()["uid"]
+        )
         mine = next(
-            row for row in client.get("/api/sync/inventory").json()["items"]
+            row
+            for row in client.get("/api/sync/inventory").json()["items"]
             if row["kind"] == "memory"
         )
         # 对面：同一个 uid、内容不一样 ⇒ 冲突（对面那份的文本只以预览的形式出现）
         theirs = [dict(mine, hash="f" * 16, preview="用户住在上海，最近改成了每周五次。")]
-        monkeypatch.setattr("httpx.get", lambda url, **kw: type("R", (), {
-            "status_code": 200,
-            "json": staticmethod(lambda: {"items": theirs, "skipped": []})})())
+        monkeypatch.setattr(
+            "httpx.get",
+            lambda url, **kw: type(
+                "R",
+                (),
+                {
+                    "status_code": 200,
+                    "json": staticmethod(lambda: {"items": theirs, "skipped": []}),
+                },
+            )(),
+        )
         monkeypatch.setattr("httpx.post", fake_post)
         out = client.post(
             "/api/sync/apply",
@@ -343,8 +368,17 @@ def test_apply_sends_only_what_was_chosen_and_audits_no_text(
         mine = client.get("/api/sync/inventory").json()["items"]
         memory = next(row for row in mine if row["kind"] == "memory")
         theirs = [dict(memory, hash="9" * 16, preview="用户住在苏州")]
-        monkeypatch.setattr("httpx.get", lambda url, **kw: type("R", (), {
-            "status_code": 200, "json": staticmethod(lambda: {"items": theirs, "skipped": []})})())
+        monkeypatch.setattr(
+            "httpx.get",
+            lambda url, **kw: type(
+                "R",
+                (),
+                {
+                    "status_code": 200,
+                    "json": staticmethod(lambda: {"items": theirs, "skipped": []}),
+                },
+            )(),
+        )
         monkeypatch.setattr("httpx.post", fake_post)
         out = client.post(
             "/api/sync/apply",
@@ -388,12 +422,14 @@ def test_export_yields_only_the_callers_own_payloads(
         conn.commit()
         out = client.post(
             "/api/sync/export",
-            json={"idents": [
-                {"kind": "card", "ident": "mine_a"},
-                {"kind": "card", "ident": "theirs_b"},   # 别人的 ⇒ 查无此条
-                {"kind": "card", "ident": "no_such"},     # 不存在的 ⇒ absent
-                {"kind": "memory", "ident": "uid-of-his"},
-            ]},
+            json={
+                "idents": [
+                    {"kind": "card", "ident": "mine_a"},
+                    {"kind": "card", "ident": "theirs_b"},  # 别人的 ⇒ 查无此条
+                    {"kind": "card", "ident": "no_such"},  # 不存在的 ⇒ absent
+                    {"kind": "memory", "ident": "uid-of-his"},
+                ]
+            },
         ).json()
         idents = {(row["kind"], row["ident"]) for row in out["items"]}
         assert ("card", "mine_a") in idents
@@ -434,38 +470,78 @@ def test_pull_brings_the_remote_side_home_and_leaves_conflicts_shut(
         mine = client.get("/api/sync/inventory").json()["items"]
         local_mem = next(r for r in mine if r["kind"] == "memory")
         remote = [
-            {"kind": "memory", "ident": "uid-remote-1", "hash": "a" * 16,
-             "preview": "云端那条新记忆"},
-            {"kind": "card", "ident": "mine_a", "hash": "b" * 16,
-             "at": "2026-09-28 00:00:00", "preview": "对面把这张卡也改过"},  # 冲突
+            {
+                "kind": "memory",
+                "ident": "uid-remote-1",
+                "hash": "a" * 16,
+                "preview": "云端那条新记忆",
+            },
+            {
+                "kind": "card",
+                "ident": "mine_a",
+                "hash": "b" * 16,
+                "at": "2026-09-28 00:00:00",
+                "preview": "对面把这张卡也改过",
+            },  # 冲突
             {"kind": "memory", "ident": local_mem["ident"], "hash": "c" * 16},  # 冲突
         ]
-        monkeypatch.setattr("httpx.get", lambda url, **kw: type("R", (), {
-            "status_code": 200,
-            "json": staticmethod(lambda: {"items": remote, "skipped": []})})())
+        monkeypatch.setattr(
+            "httpx.get",
+            lambda url, **kw: type(
+                "R",
+                (),
+                {
+                    "status_code": 200,
+                    "json": staticmethod(lambda: {"items": remote, "skipped": []}),
+                },
+            )(),
+        )
 
         def fake_post(url: str, **kw: Any) -> Any:
             assert url.endswith("/api/sync/export"), url
             asked = {(r["kind"], r["ident"]) for r in kw["json"]["idents"]}
             payloads = []
             if ("memory", "uid-remote-1") in asked:
-                payloads.append({"kind": "memory", "ident": "uid-remote-1",
-                                 "payload": {"text": "云端那条新记忆"}})
+                payloads.append(
+                    {
+                        "kind": "memory",
+                        "ident": "uid-remote-1",
+                        "payload": {"text": "云端那条新记忆"},
+                    }
+                )
             if ("card", "mine_a") in asked:
-                payloads.append({"kind": "card", "ident": "mine_a",
-                                 "payload": {"role_id": "mine_a", "role_name": "我的卡",
-                                             "system_prompt": "对面改过的那份"}})
+                payloads.append(
+                    {
+                        "kind": "card",
+                        "ident": "mine_a",
+                        "payload": {
+                            "role_id": "mine_a",
+                            "role_name": "我的卡",
+                            "system_prompt": "对面改过的那份",
+                        },
+                    }
+                )
             if ("memory", local_mem["ident"]) in asked:
-                payloads.append({"kind": "memory", "ident": local_mem["ident"],
-                                 "payload": {"text": "对面改的那条记忆"}})
-            return type("R", (), {"status_code": 200,
-                                  "json": staticmethod(lambda: {"items": payloads})})()
+                payloads.append(
+                    {
+                        "kind": "memory",
+                        "ident": local_mem["ident"],
+                        "payload": {"text": "对面改的那条记忆"},
+                    }
+                )
+            return type(
+                "R", (), {"status_code": 200, "json": staticmethod(lambda: {"items": payloads})}
+            )()
 
         monkeypatch.setattr("httpx.post", fake_post)
         out = client.post(
             "/api/sync/pull",
-            json={"base_url": "http://cloud.test:8123", "user": "u1", "secret": SECRET,
-                  "kinds": ["memory", "card"]},
+            json={
+                "base_url": "http://cloud.test:8123",
+                "user": "u1",
+                "secret": SECRET,
+                "kinds": ["memory", "card"],
+            },
         ).json()
         assert out["pulled"] == 1, out  # 只有云端独有的那条记忆过来；两个冲突都默认不动本机
         rows = conn.execute(
@@ -479,15 +555,22 @@ def test_pull_brings_the_remote_side_home_and_leaves_conflicts_shut(
         # 裁决「按对面的」才拉；记忆裁「两份都留」走 keep_both
         client.post(
             "/api/sync/pull",
-            json={"base_url": "http://cloud.test:8123", "user": "u1", "secret": SECRET,
-                  "kinds": ["card", "memory"],
-                  "resolutions": {"card:mine_a": "theirs",
-                                  f"memory:{local_mem['ident']}": "both"}},
+            json={
+                "base_url": "http://cloud.test:8123",
+                "user": "u1",
+                "secret": SECRET,
+                "kinds": ["card", "memory"],
+                "resolutions": {"card:mine_a": "theirs", f"memory:{local_mem['ident']}": "both"},
+            },
         )
         card = next(r for r in client.get("/api/roles").json() if r["role_id"] == "mine_a")
         assert card["system_prompt"] == "对面改过的那份"
-        texts = [str(r["text"]) for r in conn.execute(
-            "SELECT text FROM role_memory_item WHERE user_id='local-user'").fetchall()]
+        texts = [
+            str(r["text"])
+            for r in conn.execute(
+                "SELECT text FROM role_memory_item WHERE user_id='local-user'"
+            ).fetchall()
+        ]
         # 两份都留 = 本机那条原样不动 + 对面那份换一枚新 uid 多出来（三条 = 原有两条 + 它）
         assert len(texts) == 3 and texts.count("本机这条别动") == 1, texts
         assert "对面改的那条记忆" in texts
@@ -495,8 +578,12 @@ def test_pull_brings_the_remote_side_home_and_leaves_conflicts_shut(
         # 下行没有整份替换：它清的是本机这份
         denied = client.post(
             "/api/sync/pull",
-            json={"base_url": "http://cloud.test:8123", "user": "u1", "secret": SECRET,
-                  "mode": "replace"},
+            json={
+                "base_url": "http://cloud.test:8123",
+                "user": "u1",
+                "secret": SECRET,
+                "mode": "replace",
+            },
         )
         assert denied.status_code == 400 and "整份替换" in denied.json()["detail"]
 
@@ -507,9 +594,7 @@ def test_replace_with_unknown_kind_is_400_and_touches_nothing(client: TestClient
     入域校验必须站在任何清空之前。变异：把 post_import 里的 unknown 校验摘掉 ⇒
     本条红（500，且 role_card 已被清空）。
     """
-    before = client.app.state.ctx.conn.execute(
-        "SELECT COUNT(*) FROM role_card"
-    ).fetchone()[0]
+    before = client.app.state.ctx.conn.execute("SELECT COUNT(*) FROM role_card").fetchone()[0]
     res = client.post(
         "/api/sync/import",
         json={
@@ -520,9 +605,7 @@ def test_replace_with_unknown_kind_is_400_and_touches_nothing(client: TestClient
     )
     assert res.status_code == 400
     assert "report" in res.json()["detail"]
-    after = client.app.state.ctx.conn.execute(
-        "SELECT COUNT(*) FROM role_card"
-    ).fetchone()[0]
+    after = client.app.state.ctx.conn.execute("SELECT COUNT(*) FROM role_card").fetchone()[0]
     assert after == before > 0, "校验失败时清空不许已经落盘"
 
 
@@ -619,7 +702,7 @@ def test_import_rejects_empty_payload_on_the_push_side(client: TestClient) -> No
         sync_router._push(
             client.app.state.ctx,
             request=request,
-            base="http://127.0.0.1:9",
+            base="http://refused.test.invalid:1",  # 不出网也不碰本机网络栈：URL 校验就拒了
             user="u",
             secret="s",
             items=[],
@@ -712,6 +795,9 @@ def test_replace_rolls_back_everything_when_any_item_fails(
     ).fetchone()[0]
     assert incoming == 0, "回滚必须撤销已导入的条目"
     # thread 清空不回滚（图侧已删，删前备份兜底）—— 但本地那条 tid 的载体行也该没了
-    assert conn.execute(
-        "SELECT COUNT(*) FROM session_thread WHERE thread_id = ?", (tid,)
-    ).fetchone()[0] == 0
+    assert (
+        conn.execute("SELECT COUNT(*) FROM session_thread WHERE thread_id = ?", (tid,)).fetchone()[
+            0
+        ]
+        == 0
+    )
