@@ -48,7 +48,7 @@ export function AboutPanel({
     loadInfo().catch((e) => setLoadError(`加载失败：${describeError(e)}`));
   }, [loadInfo]);
 
-  const { material, palette, toggleMaterial, togglePalette } = useAppearance();
+  const { material, palette, alpha, toggleMaterial, togglePalette, cycleAlpha } = useAppearance();
 
   return (
     <div className="mt-6 space-y-4">
@@ -82,6 +82,17 @@ export function AboutPanel({
               className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-600 dark:text-slate-300 dark:hover:border-blue-700"
             >
               切换为{palette === "warm" ? "冷中性" : "暖可可"}
+            </button>
+          </span>
+          <span className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+            透明度
+            <span className="rounded-lg bg-slate-100 px-2 py-1 dark:bg-slate-700/50">{alpha}%</span>
+            <button
+              onClick={cycleAlpha}
+              className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-600 dark:text-slate-300 dark:hover:border-blue-700"
+              title="毛玻璃的通透度（只影响玻璃材质；实板材质下无效果）"
+            >
+              调一档
             </button>
           </span>
           {onToggleTheme && (

@@ -147,6 +147,12 @@ body,
   --bg-panel: #fbf8f3;
   --bg-panel-soft: #efe6da;
   --bg-shadow: rgba(60, 45, 30, 0.16);
+  /* 玻璃透明度（第四轴，2026-10-25）：毛玻璃的"透"是**独立**的一件事 ——
+     材质轴（玻璃↔实板）管形状，配色轴（暖↔冷）管色温，透明度管"透多少"。
+     从前它是 62% 这个写死的魔数，"玻璃但更实一点"就调不了。
+     两档：固定层（侧栏/页头/输入框）与滚动区内容（后者略实，滚动时不刺眼）。 */
+  --glass-alpha: 62%;
+  --glass-alpha-soft: 74%;
 }
 .dark {
   --bg-base: #171412;
@@ -156,6 +162,9 @@ body,
   --bg-panel: #221e1b;
   --bg-panel-soft: #2b2622;
   --bg-shadow: rgba(0, 0, 0, 0.45);
+  /* 深色底上玻璃要更实一点才看得出层次（浅色下 62% 就够）。 */
+  --glass-alpha: 78%;
+  --glass-alpha-soft: 86%;
 }
 /* 冷色盘：中性灰蓝，底更"薄"、强调色照样是角色的。 */
 [data-palette="cool"] {
@@ -192,13 +201,12 @@ body {
    .panel —— 实板：不透明、无模糊（"扎实落地"的质感）。
    两者在 light/dark 与 warm/cool 四个组合下都成立：变量负责色，材质负责形。 */
 .glass {
-  background: color-mix(in srgb, var(--bg-panel) 62%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) var(--glass-alpha), transparent);
   backdrop-filter: blur(14px) saturate(1.15);
   -webkit-backdrop-filter: blur(14px) saturate(1.15);
   border: 1px solid color-mix(in srgb, #ffffff 55%, transparent);
 }
 .dark .glass {
-  background: color-mix(in srgb, var(--bg-panel) 72%, transparent);
   border-color: color-mix(in srgb, #ffffff 9%, transparent);
 }
 .panel {
@@ -216,11 +224,11 @@ body {
   border-color: var(--bg-line);
 }
 .glass-soft {
-  background: color-mix(in srgb, var(--bg-panel) 74%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) var(--glass-alpha-soft), transparent);
   border: 1px solid color-mix(in srgb, #ffffff 55%, transparent);
 }
 .dark .glass-soft {
-  background: color-mix(in srgb, var(--bg-panel-soft) 78%, transparent);
+  background: color-mix(in srgb, var(--bg-panel-soft) var(--glass-alpha-soft), transparent);
   border-color: color-mix(in srgb, #ffffff 8%, transparent);
 }
 

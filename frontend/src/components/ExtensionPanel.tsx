@@ -4,6 +4,7 @@
 // 对齐主流 AI-IDE 的 MCP 界面惯例：每 server 一行 + 交通灯状态 + 可展开看工具 + 表单/粘贴 JSON
 // 两种接入。安全红线：这是 operator 动作，绝不暴露成 LLM 自助安装；URL 过 SSRF 边界（后端校验）；
 // headers 只写不回读（后端掩码，编辑留空=保留）。
+import { Button } from "../components/ui";
 import { useCallback, useEffect, useState } from "react";
 import {
   api,
@@ -256,12 +257,10 @@ export function ExtensionPanel() {
             >
               {pasteOpen ? "收起" : "粘贴 JSON"}
             </button>
-            <button
-              onClick={openAdd}
-              className="rounded-lg bg-blue-600 px-2.5 py-1 text-xs text-white hover:bg-blue-700"
-            >
+            <Button variant="primary" onClick={openAdd}
+              className="rounded-lg px-2.5 py-1 text-xs hover:bg-blue-700">
               ＋ 接入 MCP server
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -273,13 +272,10 @@ export function ExtensionPanel() {
               placeholder={'{\n  "mcpServers": {\n    "my-tools": { "url": "https://example.com/mcp", "headers": { "Authorization": "***" } }\n  }\n}'}
               className="h-28 w-full rounded border border-slate-200 bg-white p-2 font-mono text-xs dark:border-slate-700 dark:bg-slate-800"
             />
-            <button
-              disabled={busy === "paste" || !pasteText.trim()}
-              onClick={submitPaste}
-              className="mt-2 rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700 disabled:opacity-50"
-            >
+            <Button variant="primary" disabled={busy === "paste" || !pasteText.trim()} onClick={submitPaste}
+              className="mt-2 rounded px-3 py-1 text-xs hover:bg-blue-700 disabled:opacity-50">
               {busy === "paste" ? "接入中…" : "从 JSON 接入"}
-            </button>
+            </Button>
           </div>
         )}
 
@@ -354,13 +350,10 @@ export function ExtensionPanel() {
                 接入后启用
               </label>
               <div className="flex gap-2">
-                <button
-                  disabled={busy === "form" || !form.url.trim() || (!editingId && !form.id.trim())}
-                  onClick={submit}
-                  className="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700 disabled:opacity-50"
-                >
+                <Button variant="primary" disabled={busy === "form" || !form.url.trim() || (!editingId && !form.id.trim())} onClick={submit}
+                  className="rounded px-3 py-1 text-xs hover:bg-blue-700 disabled:opacity-50">
                   保存
-                </button>
+                </Button>
                 <button onClick={closeForm} className="rounded border border-slate-200 px-3 py-1 text-xs text-slate-500 dark:border-slate-700">
                   取消
                 </button>

@@ -12,6 +12,7 @@
  *     界面上一格常驻状态就够了，两处说同一件事只会让人两处都不信。
  *     "什么会离开这台机器"这句改到弹层里说（登录前那一刻才是它该被读到的时机）。
  */
+import { Button } from "../components/ui";
 import { useEffect, useRef, useState } from "react";
 
 import SyncWizard from "./SyncWizard";
@@ -172,16 +173,10 @@ export default function DataSourceSwitch() {
             >
               稍后处理
             </button>
-            <button
-              onClick={() => {
-                setWizardConflicts(rec.left_for_human);
-                setRec(null);
-                setWizard(true);
-              }}
-              className="rounded-lg bg-blue-600 px-2.5 py-1 text-11 text-white"
-            >
+            <Button variant="primary" onClick={() => { setWizardConflicts(rec.left_for_human); setRec(null); setWizard(true); }}
+              className="rounded-lg px-2.5 py-1 text-11">
               立即处理（{rec.left_for_human.length}）
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -252,13 +247,10 @@ export default function DataSourceSwitch() {
               >
                 取消
               </button>
-              <button
-                onClick={() => void connect()}
-                disabled={busy || !base || !user}
-                className="rounded-lg bg-blue-600 px-3.5 py-2 text-xs text-white disabled:opacity-50"
-              >
+              <Button variant="primary" onClick={() => void connect()} disabled={busy || !base || !user}
+                className="rounded-lg px-3.5 py-2 text-xs disabled:opacity-50">
                 {busy ? "连接中…" : "连接并切换"}
-              </button>
+              </Button>
             </div>
             <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-11 leading-relaxed text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-200">
               连不上或账号不对 = 留在本机这一份，界面上不会出现「半截云端」。

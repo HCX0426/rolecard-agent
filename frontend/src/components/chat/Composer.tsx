@@ -1,3 +1,4 @@
+import { Button } from "../ui";
 import { useEffect, useRef } from "react";
 
 import { fetchLimits } from "../../lib/limits";
@@ -175,15 +176,10 @@ export default function Composer({
                 <IconStop />
               </button>
             ) : (
-              <button
-                onClick={onSubmit}
-                disabled={!input.trim()}
-                title="发送（Enter）"
-                aria-label="发送"
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-white hover:bg-blue-700 disabled:bg-slate-300 dark:disabled:bg-slate-700"
-              >
+              <Button variant="primary" onClick={onSubmit} disabled={!input.trim()} title="发送（Enter）" aria-label="发送"
+                className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-blue-700">
                 <IconSend />
-              </button>
+              </Button>
             )}
           </div>
         </div>

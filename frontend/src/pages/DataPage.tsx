@@ -686,7 +686,8 @@ function GenericDomainData({
             <input value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} placeholder="备注（可选）" className={`${cls} w-32`} />
           </div>
           <div className="mt-2 flex items-center gap-2">
-            <button onClick={submit} className="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700">保存</button>
+            <Button variant="primary" onClick={submit}
+              className="rounded px-3 py-1 text-xs hover:bg-blue-700">保存</Button>
             <button onClick={() => setAdding(false)} className="rounded px-2 py-1 text-xs text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700">取消</button>
           </div>
         </div>
@@ -720,7 +721,8 @@ function GenericDomainData({
                           <input value={draft.value_text} onChange={(e) => setDraft({ ...draft, value_text: e.target.value })} placeholder="文本值" className={`${cls} w-32`} />
                           <input value={draft.unit} onChange={(e) => setDraft({ ...draft, unit: e.target.value })} placeholder="单位" className={`${cls} w-20`} />
                           <input value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} placeholder="备注" className={`${cls} w-28`} />
-                          <button onClick={() => saveEdit(r.id)} className="rounded bg-blue-600 px-2.5 py-1 text-white hover:bg-blue-700">保存</button>
+                          <Button variant="primary" onClick={() => saveEdit(r.id)}
+                            className="rounded px-2.5 py-1 hover:bg-blue-700">保存</Button>
                           <button onClick={() => setEditId(null)} className="rounded px-2 py-1 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700">取消</button>
                         </div>
                       </td>

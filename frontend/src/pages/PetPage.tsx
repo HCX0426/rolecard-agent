@@ -16,6 +16,7 @@
 // 展开时**页面只告诉壳"要不要摊开"**，尺寸与往哪边翻由主进程按工作区算（§7.2）：让后端
 // 托管的那个源报坐标，等于把"窗口能摆到哪"交了出去。
 
+import { Button } from "../components/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import ThinkingPanel from "../components/chat/ThinkingPanel";
@@ -1142,13 +1143,10 @@ export default function PetPage() {
                 停止
               </button>
             ) : (
-              <button
-                onClick={() => void send()}
-                disabled={!draft.trim() || !activeRole || offline}
-                className="shrink-0 rounded-lg bg-blue-600 px-2.5 py-1 text-11 text-white hover:bg-blue-500 disabled:bg-slate-300 dark:disabled:bg-slate-700"
-              >
+              <Button variant="primary" onClick={() => void send()} disabled={!draft.trim() || !activeRole || offline}
+                className="shrink-0 rounded-lg px-2.5 py-1 text-11">
                 发送
-              </button>
+              </Button>
             )}
           </div>
         </section>

@@ -8,7 +8,7 @@ import {
   type RuntimePayload,
 } from "../api";
 import QuietLine from "./QuietLine";
-import { Card } from "./ui";
+import { Card, Button } from "./ui";
 import { describeError } from "../lib/errors";
 
 // ---------------------------------------------------------------- 运行环境（可改 + 只读混合）
@@ -164,13 +164,10 @@ export function RuntimePanel() {
         <div className="flex shrink-0 items-center gap-2">
           {saved && <span className="text-xs text-green-600 dark:text-green-400">{saved}</span>}
           {err && <span className="text-xs text-red-600 dark:text-red-400">{err}</span>}
-          <button
-            onClick={save}
-            disabled={busy || changedCount === 0}
-            className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:bg-slate-300 dark:bg-slate-600 dark:disabled:bg-slate-700"
-          >
+          <Button variant="primary" onClick={save} disabled={busy || changedCount === 0}
+            className="rounded-lg px-3 py-1.5 text-xs font-medium hover:bg-blue-700 dark:bg-slate-600">
             {busy ? "保存中…" : `保存${changedCount ? `（${changedCount} 项修改）` : ""}`}
-          </button>
+          </Button>
         </div>
       </div>
       {data.groups.map((g) => (

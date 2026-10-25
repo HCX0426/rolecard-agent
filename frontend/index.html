@@ -12,6 +12,11 @@
         var p = localStorage.getItem("rolecard.palette");
         document.documentElement.setAttribute("data-material", m === "panel" ? "panel" : "glass");
         document.documentElement.setAttribute("data-palette", p === "cool" ? "cool" : "warm");
+        var a = Number(localStorage.getItem("rolecard.glassAlpha"));
+        if (a >= 0 && a <= 100) {
+          document.documentElement.style.setProperty("--glass-alpha", a + "%");
+          document.documentElement.style.setProperty("--glass-alpha-soft", Math.min(100, a + 12) + "%");
+        }
       } catch (e) { /* 隐私模式等：留给 CSS 默认值 */ }
     </script>
   </head>

@@ -14,6 +14,7 @@
  * 「整份替换」只在上传方向提供：下载方向的整份替换会以云端数据覆盖本机全部数据，
  * 那一步应由用户逐项执行删除，不作为同步档位提供（界面上以禁用态呈现并说明）。
  */
+import { Button } from "../components/ui";
 import { useState } from "react";
 
 import { ApiError } from "../api";
@@ -371,13 +372,10 @@ function AskScreen({
         >
           暂不同步
         </button>
-        <button
-          onClick={onNext}
-          disabled={busy}
-          className="rounded-lg bg-blue-600 px-3.5 py-2 text-xs text-white disabled:opacity-50"
-        >
+        <Button variant="primary" onClick={onNext} disabled={busy}
+          className="rounded-lg px-3.5 py-2 text-xs disabled:opacity-50">
           {busy ? "正在比对…" : "下一步：查看差异"}
-        </button>
+        </Button>
       </div>
       <Hint>
         「暂不同步」不影响登录状态：界面照常使用云端数据，两端数据保持原样。
@@ -512,13 +510,10 @@ function DryScreen({
             处理 {plan.conflicts.length} 项冲突
           </button>
         )}
-        <button
-          onClick={onStart}
-          disabled={busy || kinds.length === 0}
-          className="rounded-lg bg-blue-600 px-3.5 py-2 text-xs text-white disabled:opacity-50"
-        >
+        <Button variant="primary" onClick={onStart} disabled={busy || kinds.length === 0}
+          className="rounded-lg px-3.5 py-2 text-xs disabled:opacity-50">
           {busy ? "正在同步…" : `开始同步（${going} 项）`}
-        </button>
+        </Button>
       </div>
     </>
   );
@@ -610,13 +605,10 @@ function ConflictScreen({
         >
           跳过此项
         </button>
-        <button
-          onClick={() => onDecide(choice)}
-          disabled={busy && last && direction === "reconcile"}
-          className="rounded-lg bg-blue-600 px-3.5 py-2 text-xs text-white disabled:opacity-50"
-        >
+        <Button variant="primary" onClick={() => onDecide(choice)} disabled={busy && last && direction === "reconcile"}
+          className="rounded-lg px-3.5 py-2 text-xs disabled:opacity-50">
           {last && direction === "reconcile" ? "应用选择" : last ? "完成" : "下一项"}
-        </button>
+        </Button>
       </div>
       <Hint>
         本屏不提供「全部按一侧处理」：两侧均有修改的条目应由您逐项确认。
@@ -712,9 +704,10 @@ function DoneScreen({
         ——同步为复制操作，非迁移。
       </p>
       <div className="mt-3 flex justify-end">
-        <button onClick={onDone} className="rounded-lg bg-blue-600 px-3.5 py-2 text-xs text-white">
+        <Button variant="primary" onClick={onDone}
+          className="rounded-lg px-3.5 py-2 text-xs">
           知道了
-        </button>
+        </Button>
       </div>
     </>
   );

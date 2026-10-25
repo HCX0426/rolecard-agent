@@ -12,13 +12,18 @@
         var p = localStorage.getItem("rolecard.palette");
         document.documentElement.setAttribute("data-material", m === "panel" ? "panel" : "glass");
         document.documentElement.setAttribute("data-palette", p === "cool" ? "cool" : "warm");
+        var a = Number(localStorage.getItem("rolecard.glassAlpha"));
+        if (a >= 0 && a <= 100) {
+          document.documentElement.style.setProperty("--glass-alpha", a + "%");
+          document.documentElement.style.setProperty("--glass-alpha-soft", Math.min(100, a + 12) + "%");
+        }
       } catch (e) { /* 隐私模式等：留给 CSS 默认值 */ }
     </script>
-    <script type="module" crossorigin src="/assets/index-Bq5MBJ0K.js"></script>
+    <script type="module" crossorigin src="/assets/index-JnrXsIPp.js"></script>
     <link rel="modulepreload" crossorigin href="/assets/react-CC_ZIGTP.js">
-    <link rel="stylesheet" crossorigin href="/assets/index-Bp_-hi8N.css">
+    <link rel="stylesheet" crossorigin href="/assets/index-CE5IgqIE.css">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"></div>
   </body>
 </html>

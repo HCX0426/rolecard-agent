@@ -2,6 +2,7 @@
 // 架构归一化（引用模型）：模型页是云端配置的唯一事实面 —— 新增 = 从已配置后端中**选择**；
 // 移除 = 仅从本服务优先级中摘除引用（不影响模型页配置）；配置的编辑只在模型页。
 // 优先级第 1 位即生效；修改立即保存并热生效（嵌入/重排后端热重建）。
+import { Button } from "../components/ui";
 import { useCallback, useEffect, useState } from "react";
 import { api, USAGE_LABEL, type ModelSettings } from "../api";
 import type { ServiceCategoryView, ServiceEndpoint, ServicesView } from "../api";
@@ -232,13 +233,10 @@ export function ServicesPanel() {
                       模型页还没有可加入的模型 —— 请先去「模型」页新增
                     </span>
                   )}
-                  <button
-                    disabled={busy === cat.key || !picked}
-                    onClick={() => addRef(cat)}
-                    className="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700 disabled:opacity-50"
-                  >
+                  <Button variant="primary" disabled={busy === cat.key || !picked} onClick={() => addRef(cat)}
+                    className="rounded px-3 py-1 text-xs hover:bg-blue-700 disabled:opacity-50">
                     添加
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}

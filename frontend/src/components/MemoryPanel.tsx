@@ -553,13 +553,10 @@ export function MemoryPanel() {
             placeholder="手动记一条事实（一句话）"
             className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-blue-400 focus:outline-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
           />
-          <button
-            onClick={addFact}
-            disabled={!mem || itemBusy || !newFact.trim()}
-            className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-500 disabled:bg-slate-300 dark:disabled:bg-slate-700"
-          >
+          <Button variant="primary" onClick={addFact} disabled={!mem || itemBusy || !newFact.trim()}
+            className="rounded-lg px-3 py-1.5 text-xs">
             记住
-          </button>
+          </Button>
         </div>
         {/* 合并那条工具条只在选了东西时长出来（平时列表就是列表，不摆一排永远用不上的控件）。 */}
         {picked.length > 0 && (
@@ -600,13 +597,10 @@ export function MemoryPanel() {
                   <span className="text-10 text-slate-400 dark:text-slate-500">
                     {mergeDraft.length}/{MAX_FACT}
                   </span>
-                  <button
-                    onClick={doMerge}
-                    disabled={itemBusy}
-                    className="rounded-lg bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-500 disabled:bg-slate-300 dark:disabled:bg-slate-700"
-                  >
+                  <Button variant="primary" onClick={doMerge} disabled={itemBusy}
+                    className="rounded-lg px-3 py-1 text-xs">
                     合并（留 1 条）
-                  </button>
+                  </Button>
                 </div>
               </>
             )}
@@ -656,13 +650,10 @@ export function MemoryPanel() {
                       >
                         取消
                       </button>
-                      <button
-                        onClick={() => saveEdit(item)}
-                        disabled={itemBusy || !editDraft.trim()}
-                        className="rounded bg-blue-600 px-2 py-0.5 text-11 text-white hover:bg-blue-500 disabled:bg-slate-300 dark:disabled:bg-slate-700"
-                      >
+                      <Button variant="primary" onClick={() => saveEdit(item)} disabled={itemBusy || !editDraft.trim()}
+                        className="rounded px-2 py-0.5 text-11">
                         保存
-                      </button>
+                      </Button>
                     </span>
                   </span>
                 </span>
@@ -752,13 +743,10 @@ export function MemoryPanel() {
         />
         </details>
         <div className="mt-2 flex items-center gap-2">
-          <button
-            onClick={saveMemory}
-            disabled={!mem}
-            className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-500 disabled:opacity-50"
-          >
+          <Button variant="primary" onClick={saveMemory} disabled={!mem}
+            className="rounded-lg px-3 py-1.5 text-xs disabled:opacity-50">
             保存
-          </button>
+          </Button>
           <button
             onClick={clearMemory}
             disabled={!mem}
@@ -842,13 +830,10 @@ export function MemoryPanel() {
           {/* 桌面壳里多一条系统对话框的路子（B/S 下整个按钮不出现）；挑完同样只填草稿，
               要用户按「保存」才生效 —— 授权范围不该被一次点击顺手改掉。 */}
           <NativeDirPickerButton disabled={!wsDir} onPicked={(p) => setWsDraft(p)} />
-          <button
-            onClick={saveWorkspace}
-            disabled={!wsDir}
-            className="shrink-0 rounded-lg bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-500 disabled:opacity-50"
-          >
+          <Button variant="primary" onClick={saveWorkspace} disabled={!wsDir}
+            className="shrink-0 rounded-lg px-3 py-1.5 text-xs disabled:opacity-50">
             保存
-          </button>
+          </Button>
           {wsDir?.overridden && (
             <button
               onClick={clearWorkspace}
@@ -948,16 +933,10 @@ export function MemoryPanel() {
               >
                 取消
               </button>
-              <button
-                onClick={() => {
-                  if (!tree) return;
-                  setWsDraft(tree.path);
-                  setTreeOpen(false);
-                }}
-                className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-500"
-              >
+              <Button variant="primary" onClick={() => { if (!tree) return; setWsDraft(tree.path); setTreeOpen(false); }}
+                className="rounded-lg px-3 py-1.5 text-xs">
                 选中当前目录
-              </button>
+              </Button>
             </div>
           </div>
         </div>
