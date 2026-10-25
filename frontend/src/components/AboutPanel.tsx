@@ -1,9 +1,9 @@
 // 「关于与系统状态」子页签（P3-1 第二刀：从 pages/SettingsPage.tsx **逐字搬来**，
 // 正文一字未动 —— 等价证明同 MemoryPanel：`SettingsPage.test.tsx` 从整页经 DOM 驱动，
 // 382 支用例数一字不变；import 面由 tsc 的 noUnusedLocals 看守）。
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type DomainInfo, type ModelSettings, type RoleCard, type ThreadRow } from "../api";
-import { Card } from "./ui";
+import { Button, Card } from "./ui";
 import { ShellReleaseCard } from "./ShellReleaseCard";
 import { UpdateCheckCard } from "./UpdateCheckCard";
 import { describeError } from "../lib/errors";
@@ -48,7 +48,46 @@ export function AboutPanel({
     loadInfo().catch((e) => setLoadError(`加载失败：${describeError(e)}`));
   }, [loadInfo]);
 
-  const { material, palette, alpha, toggleMaterial, togglePalette, cycleAlpha } = useAppearance();
+  const bgInputRef = useRef<HTMLInputElement>(null);
+  const {
+    material,
+    palette,
+    alpha,
+    bgImage,
+    bgBlur,
+    bgDim,
+    toggleMaterial,
+    togglePalette,
+    setAlpha,
+    setBgImage,
+    setBgBlur,
+    setBgDim,
+  } = useAppearance();
+
+  /** 选一张本地图当背景：上传到本机数据根，拿到 URL 后交给外观层。 */
+  async function uploadBg(file: File) {
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const body = await api.post<{ url: string }>("/api/appearance/background", form);
+      setBgImage(body.url);
+      setLoadError("背景图已设置");
+    } catch (e) {
+      setLoadError(`背景图上传失败：${describeError(e)}`);
+    }
+  }
+
+  /** 移除背景图（同时删掉服务端那张，免得目录越积越多）。 */
+  async function clearBg() {
+    const name = bgImage.split("/").pop() || "";
+    setBgImage("");
+    if (!name) return;
+    try {
+      await api.del(`/api/appearance/background/${encodeURIComponent(name)}`);
+    } catch {
+      /* 删不掉不报错：界面上的"移除"已经生效（URL 不用了） */
+    }
+  }
 
   return (
     <div className="mt-6 space-y-4">
@@ -84,17 +123,30 @@ export function AboutPanel({
               切换为{palette === "warm" ? "冷中性" : "暖可可"}
             </button>
           </span>
-          <span className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+          {/* 透明度：**整个界面**的透光量（0 = 底色全实，100 = 底色全透）。
+              可输入任意值（数字框）+ 拖动（滑杆）—— 用户要的是"能输"，不是几个档位。 */}
+          <label className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
             透明度
-            <span className="rounded-lg bg-slate-100 px-2 py-1 dark:bg-slate-700/50">{alpha}%</span>
-            <button
-              onClick={cycleAlpha}
-              className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-600 dark:text-slate-300 dark:hover:border-blue-700"
-              title="毛玻璃的通透度（只影响玻璃材质；实板材质下无效果）"
-            >
-              调一档
-            </button>
-          </span>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={alpha}
+              onChange={(e) => setAlpha(Number(e.target.value))}
+              className="w-16 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-800"
+              aria-label="界面透明度（百分比）"
+            />
+            <span>%</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={alpha}
+              onChange={(e) => setAlpha(Number(e.target.value))}
+              className="w-32 accent-[var(--accent)]"
+              aria-label="界面透明度滑杆"
+            />
+          </label>
           {onToggleTheme && (
             <span className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
               明暗
@@ -109,6 +161,68 @@ export function AboutPanel({
               </button>
             </span>
           )}
+        </div>
+      </Card>
+
+      {/* 背景图（2026-10-25，第五轴）：选一张本地图当界面的底 —— 有了它，
+          "透明度"才看得出层次（不然只是把底色调淡）。模糊与暗化是**可读性保障**：
+          没有暗化，图上的字会看不清。 */}
+      <Card className="p-5">
+        <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">背景图</h3>
+        <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+          选一张本地图片当界面的底（png/jpg/webp/gif）。图片存在本机数据根里，不出网。
+        </p>
+        <div className="mt-2.5 flex flex-wrap items-center gap-3">
+          <input
+            ref={bgInputRef}
+            type="file"
+            accept=".png,.jpg,.jpeg,.webp,.gif"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void uploadBg(f);
+              e.target.value = "";
+            }}
+          />
+          <Button variant="outline" size="sm" type="button" onClick={() => bgInputRef.current?.click()}>
+            选一张图
+          </Button>
+          {bgImage && (
+            <>
+              <span className="rounded-lg bg-slate-100 px-2 py-1 text-11 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400">
+                已设置
+              </span>
+              <Button variant="ghost" size="sm" type="button" onClick={() => void clearBg()}>
+                移除
+              </Button>
+            </>
+          )}
+          <label className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+            模糊
+            <input
+              type="range"
+              min={0}
+              max={24}
+              value={bgBlur}
+              onChange={(e) => setBgBlur(Number(e.target.value))}
+              className="w-24 accent-[var(--accent)]"
+              aria-label="背景图模糊"
+            />
+            <span className="w-8 text-11">{bgBlur}px</span>
+          </label>
+          <label className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+            暗化
+            <input
+              type="range"
+              min={0}
+              max={80}
+              value={Math.round(bgDim * 100)}
+              onChange={(e) => setBgDim(Number(e.target.value) / 100)}
+              className="w-24 accent-[var(--accent)]"
+              aria-label="背景图暗化"
+            />
+            <span className="w-8 text-11">{Math.round(bgDim * 100)}%</span>
+          </label>
         </div>
       </Card>
 

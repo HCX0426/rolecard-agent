@@ -54,6 +54,7 @@ from rolecard_agent.api.body_cap import BodyCapMiddleware
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.api.errors import error_response, register_error_handlers
 from rolecard_agent.api.ratelimit import Limiter, bucket_key, is_limited, paths_of
+from rolecard_agent.api.routers import appearance as appearance_router
 from rolecard_agent.api.routers import approvals as approvals_router
 from rolecard_agent.api.routers import console as console_router
 from rolecard_agent.api.routers import domains as domains_router
@@ -281,6 +282,8 @@ def create_app(
     app.include_router(shell_release_router.router)
     # 上行同步（M7）：对面那台跑的是同一份代码，所以清单端点与计划端点住在同一个 router 里。
     app.include_router(sync_router.router)
+    # 界面背景图（2026-10-25，第五轴）：上传 + 静态托管那一目录。
+    app.include_router(appearance_router.router)
 
     # 域专属路由（2026-10-04 域机制收口，快照 P1-5）：宿主只交**请求期依赖**——上下文、
     # 身份与按域取查询服务的映射，路由本体由各域自己的 `DomainSpec.router_contrib` 交回来。

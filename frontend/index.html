@@ -12,10 +12,25 @@
         var p = localStorage.getItem("rolecard.palette");
         document.documentElement.setAttribute("data-material", m === "panel" ? "panel" : "glass");
         document.documentElement.setAttribute("data-palette", p === "cool" ? "cool" : "warm");
-        var a = Number(localStorage.getItem("rolecard.glassAlpha"));
-        if (a >= 0 && a <= 100) {
-          document.documentElement.style.setProperty("--glass-alpha", a + "%");
-          document.documentElement.style.setProperty("--glass-alpha-soft", Math.min(100, a + 12) + "%");
+        // 透明度（整个界面的透光量）：底色 --bg-alpha + 玻璃层（比底色更实一点）
+        var a = Number(localStorage.getItem("rolecard.alpha"));
+        if (isFinite(a) && a >= 0 && a <= 100) {
+          document.documentElement.style.setProperty("--bg-alpha", a + "%");
+          document.documentElement.style.setProperty("--glass-alpha", Math.max(0, a - 12) + "%");
+          document.documentElement.style.setProperty("--glass-alpha-soft", Math.max(0, a - 4) + "%");
+        }
+        // 背景图 + 模糊/暗化
+        var bg = localStorage.getItem("rolecard.bgImage");
+        if (bg) {
+          document.documentElement.style.setProperty("--bg-image", 'url("' + bg + '")');
+        }
+        var blur = Number(localStorage.getItem("rolecard.bgBlur"));
+        if (isFinite(blur)) {
+          document.documentElement.style.setProperty("--bg-blur", blur + "px");
+        }
+        var dim = Number(localStorage.getItem("rolecard.bgDim"));
+        if (isFinite(dim)) {
+          document.documentElement.style.setProperty("--bg-dim", String(dim));
         }
       } catch (e) { /* 隐私模式等：留给 CSS 默认值 */ }
     </script>

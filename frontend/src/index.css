@@ -147,12 +147,18 @@ body,
   --bg-panel: #fbf8f3;
   --bg-panel-soft: #efe6da;
   --bg-shadow: rgba(60, 45, 30, 0.16);
-  /* 玻璃透明度（第四轴，2026-10-25）：毛玻璃的"透"是**独立**的一件事 ——
-     材质轴（玻璃↔实板）管形状，配色轴（暖↔冷）管色温，透明度管"透多少"。
-     从前它是 62% 这个写死的魔数，"玻璃但更实一点"就调不了。
-     两档：固定层（侧栏/页头/输入框）与滚动区内容（后者略实，滚动时不刺眼）。 */
-  --glass-alpha: 62%;
-  --glass-alpha-soft: 74%;
+  /* 透明度（第四轴，2026-10-25）：**整个界面**的透光量，不是只管玻璃面板。
+     --bg-alpha = 底色自己的通透（100 = 底色全透，背后只剩背景图/桌面）；
+     --glass-alpha = 玻璃层比底色**更实**一点（alpha - 12），否则面板与底一样透
+     就没有层次了；--glass-alpha-soft 是滚动区内容（再实 4，滚动时不刺眼）。 */
+  --bg-alpha: 100%;
+  --glass-alpha: 88%;
+  --glass-alpha-soft: 96%;
+  /* 背景图层：--bg-image 是 url()（none = 不用），--bg-blur 模糊、--bg-dim 暗化
+     （没有暗化，浅色模式下图上的字会看不清 —— 这不是装饰，是可读性保障）。 */
+  --bg-image: none;
+  --bg-blur: 0px;
+  --bg-dim: 0.35;
 }
 .dark {
   --bg-base: #171412;
@@ -162,9 +168,10 @@ body,
   --bg-panel: #221e1b;
   --bg-panel-soft: #2b2622;
   --bg-shadow: rgba(0, 0, 0, 0.45);
-  /* 深色底上玻璃要更实一点才看得出层次（浅色下 62% 就够）。 */
-  --glass-alpha: 78%;
-  --glass-alpha-soft: 86%;
+  /* 深色底上玻璃要更实一点才看得出层次（浅色下 88% 就够）。 */
+  --bg-alpha: 100%;
+  --glass-alpha: 92%;
+  --glass-alpha-soft: 97%;
 }
 /* 冷色盘：中性灰蓝，底更"薄"、强调色照样是角色的。 */
 [data-palette="cool"] {
@@ -186,14 +193,66 @@ body,
   --bg-shadow: rgba(0, 0, 0, 0.5);
 }
 
+/* 背景分层（2026-10-25）：背景图在**底色之下**，底色带 alpha（--bg-alpha）——
+   于是"整个界面的透明度"= 底色透不透明，背后那张图就透出来多少。
+   背景图自身先模糊、再压一层暗化遮罩（--bg-dim）：没有它，图上的字会看不清
+   （浅色模式尤其明显）—— 这是可读性保障，不是装饰。
+   背景图层用 body::before（fixed + z-index:-1）：内容在它之上，滚动不动。 */
 body {
-  background: var(--bg-base);
+  background: transparent;
   @apply text-sm antialiased;
   color: var(--bg-ink);
 }
-.dark body {
-  background: var(--bg-base);
-  color: var(--bg-ink);
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  /* **整张图 = 整个界面**（2026-10-25）：背景图是**界面的底**，不是装饰 ——
+     cover 铺满视口、不重复、不随内容滚动（fixed）。底色（--bg-base）按 --bg-alpha
+     叠在图**上面**：alpha 越小，图露得越多。 */
+  background-color: color-mix(in srgb, var(--bg-base) var(--bg-alpha), transparent);
+  background-image: var(--bg-image);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  filter: blur(var(--bg-blur));
+  transform: translateZ(0);
+}
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: rgba(20, 14, 8, var(--bg-dim));
+}
+.dark body::after {
+  background: rgba(0, 0, 0, calc(var(--bg-dim) * 1.6));
+}
+
+/* 高透明度下的**文字保底**：正文区给一层极淡的底（不是纯透），否则图上直接读字。
+   这一层跟着 --bg-alpha 走 —— alpha 低（不透明）时它自然消失。 */
+#root {
+  /* 内容区（不是整个视口）：侧栏与面板各自由 .glass/.glass-soft 当介质，
+     这里的淡底只保证**正文滚动区**的字在图上读得清。 */
+  background: color-mix(in srgb, var(--bg-base) calc(var(--bg-alpha) * 0.45), transparent);
+}
+/* 侧栏/页头/输入框这些"玻璃层"之下不该再压一层底 —— 图要能从它们之间透出来。
+   .glass 自己的半透明底就是那层"内容与图之间"的介质。 */
+
+/* 用了背景图时的次要文字加深（slate-400/500 这级在图上不够）。
+   只在**有图**时生效（--bg-image 不是 none）——没图时不该动排版配色。
+   注意：这里**不动**玻璃面板的透明度 —— 面板是"内容与图之间的介质"，
+   图始终是**整个界面的底**（一张图铺满视口），不是每个部件各自一块。 */
+body.has-bg .text-slate-400 {
+  color: color-mix(in srgb, var(--bg-ink) 62%, transparent);
+}
+body.has-bg .text-slate-500 {
+  color: color-mix(in srgb, var(--bg-ink) 74%, transparent);
+}
+body.has-bg .text-slate-300 {
+  color: color-mix(in srgb, var(--bg-ink) 48%, transparent);
 }
 
 /* 材质原语。
