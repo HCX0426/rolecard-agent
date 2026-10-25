@@ -170,6 +170,10 @@ STEPS: list[tuple[str, list[str], str]] = [
     # 与 dist 漂移同一族（"源码是新的、类型是旧的"且不报任何错），快档设防才拦得住。
     # 前端 schema.gen.ts 的再生成由开发者本地跑 `npm run api:types`，与契约副本同一次提交。
     ("openapi 契约同步", [PY, "scripts/tools/export_openapi.py", "--check"], "both"),
+    # 响应模型与运行时形状同步（P1 自动化的另一半）：生成物
+    # src/rolecard_agent/api/response_models.py 是"从运行时真实返回反推"的，端点返回一变
+    # 它就过期。both 进快档：纯离线（起一次 app 打几个只读端点），秒级。
+    ("响应模型同步", [PY, "scripts/tools/gen_response_models.py", "--check"], "both"),
     ("README 可跑性", [PY, "scripts/probe_readme_quickstart.py"], "full"),
     # 随包后端的 import↔bundle parity（R28-34）。只在 full：它量的是**产物**，快档没有产物。
     # `build/sidecar/` 不存在时脚本自己返回 0 并打出"没打过包不是负面"（与"未知不拦"同一条判据），

@@ -1156,6 +1156,205 @@
     "title": "ModelSettingsBody",
     "type": "object"
    },
+   "PetsView": {
+    "$ref": "#/components/schemas/PetsViewRoot",
+    "description": "/api/pets 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "PetsView"
+   },
+   "PetsViewPacksItem": {
+    "additionalProperties": true,
+    "description": "自动生成：PetsViewPacksItem（packsItem 的对象形状）。",
+    "properties": {
+     "entry": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Entry"
+     },
+     "id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Id"
+     },
+     "kind": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Kind"
+     },
+     "label": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Label"
+     },
+     "motions": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/PetsViewPacksItem_motions"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "rows": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/PetsViewPacksItem_rows"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "sheet_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Sheet Url"
+     },
+     "source": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Source"
+     }
+    },
+    "title": "PetsViewPacksItem",
+    "type": "object"
+   },
+   "PetsViewPacksItem_motions": {
+    "additionalProperties": true,
+    "description": "自动生成：PetsViewPacksItem_motions（packsItem_motions 的对象形状）。",
+    "properties": {},
+    "title": "PetsViewPacksItem_motions",
+    "type": "object"
+   },
+   "PetsViewPacksItem_rows": {
+    "additionalProperties": true,
+    "description": "自动生成：PetsViewPacksItem_rows（packsItem_rows 的对象形状）。",
+    "properties": {
+     "listening": {
+      "anyOf": [
+       {},
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Listening"
+     },
+     "thinking": {
+      "anyOf": [
+       {},
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Thinking"
+     }
+    },
+    "title": "PetsViewPacksItem_rows",
+    "type": "object"
+   },
+   "PetsViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：PetsViewRoot（ 的对象形状）。",
+    "properties": {
+     "cubism_core": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Cubism Core"
+     },
+     "cubism_core_path": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Cubism Core Path"
+     },
+     "packs": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/PetsViewPacksItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Packs"
+     },
+     "skipped": {
+      "anyOf": [
+       {
+        "items": {},
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Skipped"
+     },
+     "user_dir": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "User Dir"
+     }
+    },
+    "title": "PetsViewRoot",
+    "type": "object"
+   },
    "PinRequest": {
     "description": "`keep_alive` = Ollama 原生秒数，-1 = 永不自动卸载（常驻）。`model` 省略 = 默认模型。",
     "properties": {
@@ -2028,6 +2227,128 @@
     "title": "RuntimeUpdateBody",
     "type": "object"
    },
+   "ServicesView": {
+    "$ref": "#/components/schemas/ServicesViewRoot",
+    "description": "/api/services 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "ServicesView"
+   },
+   "ServicesViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：ServicesViewRoot（ 的对象形状）。",
+    "properties": {
+     "services": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/ServicesViewServicesItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Services"
+     }
+    },
+    "title": "ServicesViewRoot",
+    "type": "object"
+   },
+   "ServicesViewServicesItem": {
+    "additionalProperties": true,
+    "description": "自动生成：ServicesViewServicesItem（servicesItem 的对象形状）。",
+    "properties": {
+     "candidates": {
+      "anyOf": [
+       {
+        "items": {},
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Candidates"
+     },
+     "degraded_from": {
+      "anyOf": [
+       {},
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Degraded From"
+     },
+     "effective": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Effective"
+     },
+     "effective_kind": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Effective Kind"
+     },
+     "hint": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Hint"
+     },
+     "key": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Key"
+     },
+     "readonly": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Readonly"
+     },
+     "title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Title"
+     }
+    },
+    "title": "ServicesViewServicesItem",
+    "type": "object"
+   },
    "SessionCreate": {
     "description": "Create-session request. Omitting `role_id` binds the default assistant.",
     "properties": {
@@ -2123,6 +2444,121 @@
      "user"
     ],
     "title": "TargetBody",
+    "type": "object"
+   },
+   "ToolsCatalog": {
+    "$ref": "#/components/schemas/ToolsCatalogRoot",
+    "description": "/api/tools/catalog 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "ToolsCatalog"
+   },
+   "ToolsCatalogDomains": {
+    "additionalProperties": true,
+    "description": "自动生成：ToolsCatalogDomains（domains 的对象形状）。",
+    "properties": {
+     "health": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/ToolsCatalogDomains_healthItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Health"
+     }
+    },
+    "title": "ToolsCatalogDomains",
+    "type": "object"
+   },
+   "ToolsCatalogDomains_healthItem": {
+    "additionalProperties": true,
+    "description": "自动生成：ToolsCatalogDomains_healthItem（domains_healthItem 的对象形状）。",
+    "properties": {
+     "description": {
+      "anyOf": [
+       {},
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Description"
+     },
+     "name": {
+      "anyOf": [
+       {},
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Name"
+     }
+    },
+    "title": "ToolsCatalogDomains_healthItem",
+    "type": "object"
+   },
+   "ToolsCatalogKernelItem": {
+    "additionalProperties": true,
+    "description": "自动生成：ToolsCatalogKernelItem（kernelItem 的对象形状）。",
+    "properties": {
+     "description": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Description"
+     },
+     "name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Name"
+     }
+    },
+    "title": "ToolsCatalogKernelItem",
+    "type": "object"
+   },
+   "ToolsCatalogRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：ToolsCatalogRoot（ 的对象形状）。",
+    "properties": {
+     "domains": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ToolsCatalogDomains"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "kernel": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/ToolsCatalogKernelItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Kernel"
+     }
+    },
+    "title": "ToolsCatalogRoot",
     "type": "object"
    },
    "UnloadRequest": {
@@ -3281,9 +3717,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "additionalProperties": true,
-         "title": "Response List Pets Api Pets Get",
-         "type": "object"
+         "$ref": "#/components/schemas/PetsView"
         }
        }
       },
@@ -4179,7 +4613,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response List Services Api Services Get"
+         "$ref": "#/components/schemas/ServicesView"
         }
        }
       },
@@ -6227,7 +6661,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Tools Catalog Api Tools Catalog Get"
+         "$ref": "#/components/schemas/ToolsCatalog"
         }
        }
       },

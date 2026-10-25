@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.api.errors import value_error_to_http
+from rolecard_agent.api.response_models import ServicesView
 from rolecard_agent.core.model_settings import client_style
 from rolecard_agent.core.probes.model_probe import ProbeTarget, list_models
 
@@ -54,7 +55,7 @@ def _row_or_404(ctx: AppContext, key: str, eid: str) -> object:
     raise HTTPException(status_code=404, detail=f"服务 {key} 下不存在端点 {eid!r}")
 
 
-@router.get("/api/services")
+@router.get("/api/services", response_model=ServicesView, response_model_exclude_unset=True)
 def list_services(ctx: AppContext = Depends(get_context)) -> object:
     """运行时状态视图（轻检测：配置齐缺 + 本地探活，不发外部请求）。
 
