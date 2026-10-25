@@ -8,12 +8,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from rolecard_agent.core import update_check as uc
 from rolecard_agent.core.update_check import check_update, parse_version
+
+
+@pytest.fixture(autouse=True)
+def _clear_uc_cache() -> Iterator[None]:
+    """进程级缓存（30 分钟 TTL）在用例间共享——同键用例会互相读到对方读数。"""
+    uc._CACHE.clear()
+    yield
+    uc._CACHE.clear()
 
 
 def test_parse_version_shape() -> None:
@@ -118,3 +128,72 @@ def test_no_source_at_all_says_none(tmp_path: Path) -> None:
     empty.mkdir()
     info = check_update(current="0.4.1", enabled=True, repo="", release_dir=empty)
     assert info.source == "none" and info.error == "未配置更新源"
+
+
+# -- 缓存与限流人话（2026-10-25，用户实测 403 那次）----------------------------------
+
+
+def test_same_key_second_check_uses_cache() -> None:
+    """同 (current, repo) 的第二次检查**不打网络**（三处触发共享一份读数）。"""
+    calls: list[str] = []
+
+    def counting_fetcher(url: str) -> dict[str, Any]:
+        calls.append(url)
+        return {"tag_name": "v0.5.0"}
+
+    first = check_update(current="0.4.4", enabled=True, repo="o/r", fetcher=counting_fetcher)
+    second = check_update(current="0.4.4", enabled=True, repo="o/r", fetcher=counting_fetcher)
+    assert len(calls) == 1, "第二次必须走缓存"
+    assert first.latest == second.latest == "0.5.0"
+
+
+def test_cache_key_includes_current_version() -> None:
+    """升级后 current 变了 → 缓存自然失效（不给新版本端旧读数）。"""
+    calls: list[str] = []
+
+    def counting_fetcher(url: str) -> dict[str, Any]:
+        calls.append(url)
+        return {"tag_name": "v0.5.0"}
+
+    check_update(current="0.4.4", enabled=True, repo="o/r", fetcher=counting_fetcher)
+    check_update(current="0.5.0", enabled=True, repo="o/r", fetcher=counting_fetcher)
+    assert len(calls) == 2
+
+
+def test_rate_limit_403_becomes_actionable_message() -> None:
+    """403/429 → 文案点名匿名限流并给出路，不是甩 HTTPStatusError。"""
+
+    def forbidden(url: str) -> dict[str, Any]:
+        raise RuntimeError(
+            "Client error '403 rate limit exceeded' for url 'https://api.github.com/...'"
+        )
+
+    info = check_update(current="0.4.4", enabled=True, repo="o/r", fetcher=forbidden)
+    assert info.source == "none" and info.has_update is False
+    assert "限流" in (info.error or "")
+    assert "发布页" in (info.error or "")
+
+
+def test_rate_limit_result_is_cached_too() -> None:
+    """限流读数也进缓存：30 分钟内重试大概率还是 403，别替用户再烧一次。"""
+    calls: list[str] = []
+
+    def forbidden(url: str) -> dict[str, Any]:
+        calls.append(url)
+        raise RuntimeError("Client error '403 rate limit exceeded'")
+
+    check_update(current="0.4.4", enabled=True, repo="o/r", fetcher=forbidden)
+    again = check_update(current="0.4.4", enabled=True, repo="o/r", fetcher=forbidden)
+    assert len(calls) == 1
+    assert "限流" in (again.error or "")
+
+
+def test_non_limiter_errors_are_not_labeled_rate_limit() -> None:
+    """DNS/超时这类照旧原样归因——限流文案只给限流，不模糊其他故障。"""
+
+    def timeout(url: str) -> dict[str, Any]:
+        raise TimeoutError("connect timed out")
+
+    info = check_update(current="0.4.4", enabled=True, repo="o/r", fetcher=timeout)
+    assert "限流" not in (info.error or "")
+    assert "TimeoutError" in (info.error or "")

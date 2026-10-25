@@ -15,6 +15,18 @@
 **出网判据不进测试**（与 `scripts/tools/audit_deps.py` 同一条纪律）：fetcher 是注入的，
 测试永远喂假数据；默认实现才碰 httpx。断网 / GitHub 限流 / 仓库不存在，全部收敛成
 `error` 字段，端点本身不 500 —— "检查更新失败"不该长得像"应用坏了"。
+
+**限流是真实发生过的**（2026-10-25 用户实测 403）：GitHub 对匿名 API 的配额是
+**每出口 IP 每小时 60 次**——同一网络里所有访问 GitHub 的东西共享它（浏览器开的
+github.com、别的工具、这台机上跑的其他 agent），用完就是 403，等整点才回。两个对策
+（2026-10-25）：
+
+  1. **进程级缓存**：同一进程内同一版本的检查结果缓存 30 分钟（`_CACHE_TTL`）。壳的
+     开机检查、网页的关于页、用户手点"检查更新"三处共享这一份 —— 不再是每处各打一次；
+  2. **403/429 翻人话**：错误文案里写明"GitHub 匿名限流（每小时 60 次/出口 IP），
+     稍后再试或直接去发布页看"——而不是甩一个 `HTTPStatusError: 403` 让人以为是坏了。
+
+缓存键是 `(current, repo)`：升级后 current 变了，缓存自然失效，不会把旧读数端给新版本。
 """
 
 from __future__ import annotations
@@ -132,6 +144,44 @@ def github_fetcher() -> Fetcher:
     return fetch
 
 
+#: 检查结果的进程级缓存：(current, repo) → (时刻, 读数)。同进程内三处触发（壳开机 /
+#: 网页关于页 / 手动点）共享一份，30 分钟内的重复检查不再打 GitHub —— 匿名配额
+#: 每出口 IP 每小时 60 次，同一网络里人人共享，省着点用。
+_CACHE_TTL_SECONDS = 1800.0
+_CACHE: dict[tuple[str, str], tuple[float, UpdateInfo]] = {}
+
+
+def _cache_get(key: tuple[str, str]) -> UpdateInfo | None:
+    import time  # noqa: PLC0415 - 时钟只在运行时路径需要
+
+    hit = _CACHE.get(key)
+    if hit is None:
+        return None
+    stamp, info = hit
+    if time.monotonic() - stamp > _CACHE_TTL_SECONDS:
+        _CACHE.pop(key, None)
+        return None
+    return info
+
+
+def _cache_put(key: tuple[str, str], info: UpdateInfo) -> None:
+    import time  # noqa: PLC0415
+
+    _CACHE[key] = (time.monotonic(), info)
+
+
+def _humanize_fetch_error(exc: Exception) -> str:
+    """把出网失败翻成**可行动**的人话（限流单独点名，其余归因为网络/配置）。"""
+    text = str(exc)
+    kind = type(exc).__name__
+    if "403" in text or "429" in text or "rate" in text.lower():
+        return (
+            "GitHub 匿名限流（每出口 IP 每小时 60 次，同一网络里所有访问 GitHub 的"
+            "程序共享）—— 稍后再试，或直接去发布页看最新版本"
+        )
+    return f"问 GitHub 失败：{kind}: {text[:160]}"
+
+
 def check_update(
     *,
     current: str,
@@ -140,7 +190,12 @@ def check_update(
     release_dir: Path | None = None,
     fetcher: Fetcher | None = None,
 ) -> UpdateInfo:
-    """按 §模块文档的优先级跑一遍。任何一步失败都收敛进 `error`，不抛。"""
+    """按 §模块文档的优先级跑一遍。任何一步失败都收敛进 `error`，不抛。
+
+    GitHub 源的结果带 30 分钟进程级缓存（`_CACHE`）：同版本同仓库的重复检查不再
+    打 API。成功与"限流"读数都进缓存 —— 限流那条 30 分钟内重试也大概率还是 403，
+    缓存它就是替用户省一次注定失败的出网。
+    """
     if not enabled:
         return UpdateInfo(current=current, source="disabled")
     if release_dir is not None and release_dir.is_dir():
@@ -149,15 +204,21 @@ def check_update(
             return local
     if not repo:
         return UpdateInfo(current=current, source="none", error="未配置更新源")
+    key = (current, repo)
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
     fetch = fetcher or github_fetcher()
     try:
         body = fetch(_LATEST_RELEASE_API.format(repo=repo))
     except Exception as exc:  # noqa: BLE001 - 出网失败的面太宽（DNS/超时/401/5xx/JSON），全收进读数
-        return UpdateInfo(
+        failed = UpdateInfo(
             current=current,
             source="none",
-            error=f"问 GitHub 失败：{type(exc).__name__}: {exc}",
+            error=_humanize_fetch_error(exc),
         )
+        _cache_put(key, failed)  # 限流读数也缓存：30 分钟内重试大概率还是 403
+        return failed
     tag = str(body.get("tag_name") or "")
     latest = _TAG_V.sub("", tag)
     latest_tuple = parse_version(latest)
@@ -167,10 +228,12 @@ def check_update(
             source="github",
             error=f"release tag 不是版本号形状：{tag!r}",
         )
-    return UpdateInfo(
+    info = UpdateInfo(
         current=current,
         latest=latest,
         has_update=latest_tuple > parse_version(current),
         source="github",
         url=str(body.get("html_url") or _RELEASE_PAGE.format(repo=repo)),
     )
+    _cache_put(key, info)
+    return info
