@@ -858,7 +858,10 @@ export default function RolesPage({
                   <span>模型：{r.model_name || "跟随默认"}</span>
                   <span>
                     工具：
-                    {r.tool_whitelist === null
+                    {/* `== null` 而非 `=== null`（P1 接上生成类型后 tsc 指出来的）：生成类型
+                        如实标出 tool_whitelist 可能**缺失**（后端缺省 = null = 全部），
+                        原来的 `=== null` 分支在"键缺失"时会掉进 .length 那条 —— 那是崩溃路径。*/}
+                    {r.tool_whitelist == null
                       ? "全部"
                       : r.tool_whitelist.length
                         ? `${r.tool_whitelist.length} 项`

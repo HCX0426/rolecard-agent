@@ -2,38 +2,17 @@
 // 按路由域搬出，**正文逐字未改**，连注释都跟着它讲的那个名字走）。
 // `index.ts` 以 `export *` 再导出本文件：消费者的 `from "../api"` 一字不动，
 // 住址只活在实现里（数一份清单就守一份清单，facade 用通配是不给第二份清单留门）。
+//
+// P1（2026-10-25）：`RoleCard` 改为**引用生成类型** —— `schema.gen.ts` 由后端 OpenAPI
+// 契约生成（`npm run api:types`），后端改字段而前端没重新生成时，`tsc` 直接红。
+// 手写那份字段清单从此是第二份事实，删掉。
+//
+// 生成类型与手写那份的差异（有意保留生成的那侧）：生成物把后端**全部**字段都列出来，
+// 包括前端此前没声明的 `user_id` / `created_at` / `updated_at`（响应里本来就有，
+// 此前只是类型层没承认）。前端只读用不到它们，多出来不碍事；反过来漏字段才是 bug。
+import type { components } from "./schema.gen";
 
-
-export interface RoleCard {
-  role_id: string;
-  role_name: string;
-  system_prompt: string;
-  temperature: number;
-  model_name: string | null;
-  tool_whitelist: string[] | null;
-  exemplars: { user: string; assistant: string }[] | null;
-  knowledge_scopes: string[] | null;
-  description: string | null;
-  is_builtin: boolean;
-  /** 角色主动开口资格（架构计划 B）：还需全局 REACHOUT_ENABLED 开着才生效。 */
-  reachout_enabled?: boolean;
-  /** 关系驱动主动开口（架构总览 §5）：回忆触发开关，默认开。 */
-  recall_enabled?: boolean;
-  /** 关系驱动主动开口（架构总览 §5）：时段规律触发开关，默认开。 */
-  time_pattern_enabled?: boolean;
-  /** 「关系数值到阈值就想开口」这一档的开关，默认开。关掉才轮得到后面几档（09-26 轮 R26-23）。 */
-  affinity_enabled?: boolean;
-  /** 文件事件触发（架构总览 §5）：该角色可否被任务目录变化触发，默认开。 */
-  file_watch_enabled?: boolean;
-  /** 固定时刻问候（HH:MM 本地时刻；null/缺省 = 不排）。每天这一时刻主动开口一次，当日只发一次。 */
-  greeting_at?: string | null;
-  /** 收件箱自动保留条数：0 = 不自动删（默认）；N>0 = 只留最近 N 条投递记录。 */
-  reachout_keep?: number;
-  /** 桌宠形象包 id（空/缺省 = 没配过 → 落默认包）。可选值来自 `/api/pets`，见 `pets/registry.ts`。 */
-  pet_pack?: string;
-  /** 角色强调色（hex；缺省 = 由 role_id 确定性派生）。玻璃材质的雾底/侧栏块/气泡签都从它来。 */
-  accent?: string | null;
-}
+export type RoleCard = components["schemas"]["RoleCard"];
 
 export interface KnowledgeScopes {
   scopes: string[];

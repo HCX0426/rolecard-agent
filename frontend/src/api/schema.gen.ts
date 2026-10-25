@@ -898,6 +898,14 @@ export interface paths {
         /**
          * List Roles
          * @description All role cards, built-in first.
+         *
+         *     `response_model`（P1，2026-10-25）：本仓 107 个端点此前**零处**声明响应模型 ——
+         *     于是 OpenAPI 里 193 个响应只有 82 个带 $ref，且那 82 个全是 `HTTPValidationError`
+         *     （错误响应，不是成功响应）⇒ 前端没有任何"成功响应"的契约可引用，手写类型无法被
+         *     机器校对。声明它之后前端可引用 `components["schemas"]["RoleCard"]`。
+         *
+         *     零风险条件（本端点满足）：返回对象本身就是 `RoleCard`（`list_roles()` 的返回类型），
+         *     字段集与模型**完全同源** —— FastAPI 的响应过滤不会切掉任何字段。
          */
         get: operations["list_roles_api_roles_get"];
         put?: never;
@@ -2730,6 +2738,86 @@ export interface components {
             report_type: string;
         };
         /**
+         * RoleCard
+         * @description A role as stored. `is_builtin` roles cannot be deleted.
+         */
+        RoleCard: {
+            /** Accent */
+            accent?: string | null;
+            /**
+             * Affinity Enabled
+             * @default true
+             */
+            affinity_enabled: boolean;
+            /** Created At */
+            created_at?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Exemplars */
+            exemplars?: components["schemas"]["RoleExemplar"][] | null;
+            /**
+             * File Watch Enabled
+             * @default true
+             */
+            file_watch_enabled: boolean;
+            /** Greeting At */
+            greeting_at?: string | null;
+            /**
+             * Is Builtin
+             * @default false
+             */
+            is_builtin: boolean;
+            /** Knowledge Scopes */
+            knowledge_scopes?: string[] | null;
+            /** Model Name */
+            model_name?: string | null;
+            /**
+             * Pet Pack
+             * @default
+             */
+            pet_pack: string;
+            /**
+             * Reachout Enabled
+             * @default false
+             */
+            reachout_enabled: boolean;
+            /**
+             * Reachout Keep
+             * @default 0
+             */
+            reachout_keep: number;
+            /**
+             * Recall Enabled
+             * @default true
+             */
+            recall_enabled: boolean;
+            /** Role Id */
+            role_id: string;
+            /** Role Name */
+            role_name: string;
+            /** System Prompt */
+            system_prompt: string;
+            /**
+             * Temperature
+             * @default 0.7
+             */
+            temperature: number;
+            /**
+             * Time Pattern Enabled
+             * @default true
+             */
+            time_pattern_enabled: boolean;
+            /** Tool Whitelist */
+            tool_whitelist?: string[] | null;
+            /** Updated At */
+            updated_at?: string | null;
+            /**
+             * User Id
+             * @default local-user
+             */
+            user_id: string;
+        };
+        /**
          * RoleCardCreate
          * @description Input for creating a role. `is_builtin` is intentionally absent - it is set by
          *     `roles/seed.py`, never by a caller.
@@ -4305,7 +4393,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown[];
+                    "application/json": components["schemas"]["RoleCard"][];
                 };
             };
         };

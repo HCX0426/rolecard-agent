@@ -1427,6 +1427,196 @@
     "title": "ReportCreate",
     "type": "object"
    },
+   "RoleCard": {
+    "description": "A role as stored. `is_builtin` roles cannot be deleted.",
+    "properties": {
+     "accent": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Accent"
+     },
+     "affinity_enabled": {
+      "default": true,
+      "title": "Affinity Enabled",
+      "type": "boolean"
+     },
+     "created_at": {
+      "anyOf": [
+       {
+        "format": "date-time",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Created At"
+     },
+     "description": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Description"
+     },
+     "exemplars": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/RoleExemplar"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Exemplars"
+     },
+     "file_watch_enabled": {
+      "default": true,
+      "title": "File Watch Enabled",
+      "type": "boolean"
+     },
+     "greeting_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Greeting At"
+     },
+     "is_builtin": {
+      "default": false,
+      "title": "Is Builtin",
+      "type": "boolean"
+     },
+     "knowledge_scopes": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Knowledge Scopes"
+     },
+     "model_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Model Name"
+     },
+     "pet_pack": {
+      "default": "",
+      "title": "Pet Pack",
+      "type": "string"
+     },
+     "reachout_enabled": {
+      "default": false,
+      "title": "Reachout Enabled",
+      "type": "boolean"
+     },
+     "reachout_keep": {
+      "default": 0,
+      "maximum": 1000.0,
+      "minimum": 0.0,
+      "title": "Reachout Keep",
+      "type": "integer"
+     },
+     "recall_enabled": {
+      "default": true,
+      "title": "Recall Enabled",
+      "type": "boolean"
+     },
+     "role_id": {
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "title": "Role Id",
+      "type": "string"
+     },
+     "role_name": {
+      "minLength": 1,
+      "title": "Role Name",
+      "type": "string"
+     },
+     "system_prompt": {
+      "title": "System Prompt",
+      "type": "string"
+     },
+     "temperature": {
+      "default": 0.7,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Temperature",
+      "type": "number"
+     },
+     "time_pattern_enabled": {
+      "default": true,
+      "title": "Time Pattern Enabled",
+      "type": "boolean"
+     },
+     "tool_whitelist": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Tool Whitelist"
+     },
+     "updated_at": {
+      "anyOf": [
+       {
+        "format": "date-time",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Updated At"
+     },
+     "user_id": {
+      "default": "local-user",
+      "title": "User Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "role_id",
+     "role_name",
+     "system_prompt"
+    ],
+    "title": "RoleCard",
+    "type": "object"
+   },
    "RoleCardCreate": {
     "description": "Input for creating a role. `is_builtin` is intentionally absent - it is set by\n`roles/seed.py`, never by a caller.",
     "properties": {
@@ -3718,14 +3908,16 @@
   },
   "/api/roles": {
    "get": {
-    "description": "All role cards, built-in first.",
+    "description": "All role cards, built-in first.\n\n`response_model`（P1，2026-10-25）：本仓 107 个端点此前**零处**声明响应模型 ——\n于是 OpenAPI 里 193 个响应只有 82 个带 $ref，且那 82 个全是 `HTTPValidationError`\n（错误响应，不是成功响应）⇒ 前端没有任何\"成功响应\"的契约可引用，手写类型无法被\n机器校对。声明它之后前端可引用 `components[\"schemas\"][\"RoleCard\"]`。\n\n零风险条件（本端点满足）：返回对象本身就是 `RoleCard`（`list_roles()` 的返回类型），\n字段集与模型**完全同源** —— FastAPI 的响应过滤不会切掉任何字段。",
     "operationId": "list_roles_api_roles_get",
     "responses": {
      "200": {
       "content": {
        "application/json": {
         "schema": {
-         "items": {},
+         "items": {
+          "$ref": "#/components/schemas/RoleCard"
+         },
          "title": "Response List Roles Api Roles Get",
          "type": "array"
         }
