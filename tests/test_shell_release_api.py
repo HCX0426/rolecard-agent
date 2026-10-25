@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import datetime
+from collections.abc import Iterator
 from pathlib import Path
 from typing import cast
 
@@ -111,6 +112,21 @@ def test_endpoints_answer_without_credentials_when_auth_off(tmp_path: Path, path
 
 
 # ---------------------------------------------------------------- 检查更新（同族端点）
+
+@pytest.fixture(autouse=True)
+def _clear_uc_cache() -> Iterator[None]:
+    """进程级缓存（30 分钟 TTL）跨用例共享——同键用例会互相读到对方读数。
+
+    2026-10-25 缓存化后的配套：`test_update_check_current_version_is_api_version`
+    与别的 update_check 用例同键（current=API_VERSION, repo=o/r）时，先到的读数
+    会把后到的断言喂成错的（实测 has_update 被喂成 True）。
+    """
+    from rolecard_agent.core import update_check as uc
+
+    uc._CACHE.clear()
+    yield
+    uc._CACHE.clear()
+
 
 def _update_client(tmp_path: Path, **settings_kw: object) -> TestClient:
     app = create_app(sqlite_path=tmp_path / "runtime" / "update.db")
