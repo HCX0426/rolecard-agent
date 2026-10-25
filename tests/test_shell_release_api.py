@@ -13,9 +13,9 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
-from collections.abc import Iterator
 from pathlib import Path
 from typing import cast
 
