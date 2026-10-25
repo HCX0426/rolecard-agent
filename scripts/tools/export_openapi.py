@@ -1,8 +1,8 @@
 """Export the FastAPI OpenAPI schema for frontend type generation (P1).
 
 用法：
-    python scripts/tools/export_openapi.py            # 写 build/openapi.json
-    python scripts/tools/export_openapi.py --check    # 与入库的 frontend/openapi.json 比对
+    python scripts/tools/export_openapi.py            # 刷新入库副本 frontend/openapi.json
+    python scripts/tools/export_openapi.py --check    # 现导出对账入库副本（漂移=红）
 
 为什么要入库一份（frontend/openapi.json）：前端类型生成物 `schema.gen.ts` 与它同一次提交
 走 —— 漂移检查两端各有一份事实，判据只认"入库的 json == 现导出的 json"。build/ 在
@@ -19,6 +19,11 @@ import json
 import pathlib
 import sys
 import tempfile
+
+# 中文与「❌」在管道输出上会撞 GBK（`console encoding` 尺子盯这个；同 scan_secrets.py 的形状）
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
@@ -54,7 +59,7 @@ def main() -> int:
         print(f"OK OpenAPI 契约与代码同步（{len(fresh.get('paths', {}))} 路径）")
         return 0
 
-    REPO_COPY.write_text(fresh_text, encoding="utf-8")
+    REPO_COPY.write_text(fresh_text, encoding="utf-8", newline="\n")
     print(f"written {REPO_COPY} ({len(fresh.get('paths', {}))} 路径)")
     return 0
 
