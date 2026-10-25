@@ -165,6 +165,11 @@ STEPS: list[tuple[str, list[str], str]] = [
     # 这条探针把文档里的启动命令**原样执行一次**并等 /api/health（数据根走临时目录）。
     # 判据只有一份实现（`R28-31`：此前 CI 与本机各写一条 git 命令，CI 那条还看不见未跟踪文件）：
     ("dist 入库同步", [PY, "scripts/check_dist_sync.py"], "full"),
+    # OpenAPI 契约漂移（P1，2026-10-25）：入库的 frontend/openapi.json 必须 == 现导出的
+    # app.openapi()。both 进快档 —— 判据是纯离线对比（不连网、不起服务），秒级；契约漂移
+    # 与 dist 漂移同一族（"源码是新的、类型是旧的"且不报任何错），快档设防才拦得住。
+    # 前端 schema.gen.ts 的再生成由开发者本地跑 `npm run api:types`，与契约副本同一次提交。
+    ("openapi 契约同步", [PY, "scripts/tools/export_openapi.py", "--check"], "both"),
     ("README 可跑性", [PY, "scripts/probe_readme_quickstart.py"], "full"),
     # 随包后端的 import↔bundle parity（R28-34）。只在 full：它量的是**产物**，快档没有产物。
     # `build/sidecar/` 不存在时脚本自己返回 0 并打出"没打过包不是负面"（与"未知不拦"同一条判据），

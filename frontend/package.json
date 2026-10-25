@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "vitest run --coverage"
+    "test": "vitest run --coverage",
+    "api:types": "openapi-typescript ../frontend/openapi.json -o src/api/schema.gen.ts"
   },
   "dependencies": {
     "pixi-live2d-display": "^0.5.0-beta",
@@ -28,6 +29,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "@vitest/coverage-v8": "^5.0.3",
     "jsdom": "^30.0.1",
+    "openapi-typescript": "^7.13.0",
     "source-map-js": "^1.2.2",
     "tailwindcss": "^4.1.4",
     "typescript": "~5.6.3",
