@@ -64,6 +64,7 @@ jobs:
   changes:
     name: 改动路径判定（纯前端则跳过镜像臂与 Windows 分片）
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
