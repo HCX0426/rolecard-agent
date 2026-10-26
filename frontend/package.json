@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run --coverage",
-    "api:types": "openapi-typescript ../frontend/openapi.json -o src/api/schema.gen.ts"
+    "api:types": "openapi-typescript ../frontend/openapi.json -o src/api/schema.gen.ts",
+    "api:types:migrate": "node scripts/check_handwritten_types.mjs"
   },
   "dependencies": {
     "pixi-live2d-display": "^0.5.0-beta",

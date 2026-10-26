@@ -154,7 +154,44 @@
     "description": "/api/approvals 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "ApprovalsView"
    },
-   "ApprovalsViewRoot": {},
+   "ApprovalsViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：ApprovalsViewRoot（ 的对象形状）。",
+    "properties": {
+     "items": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Items"
+     },
+     "pending": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Pending"
+     }
+    },
+    "required": [
+     "items",
+     "pending"
+    ],
+    "title": "ApprovalsViewRoot",
+    "type": "object"
+   },
    "AuditView": {
     "description": "/api/audit 的顶层形状（数组包一层只为给它一个名字）。",
     "items": {
@@ -163,7 +200,88 @@
     "title": "AuditView",
     "type": "array"
    },
-   "AuditViewItem": {},
+   "AuditViewItem": {
+    "additionalProperties": true,
+    "description": "自动生成：AuditViewItem（Item 的对象形状）。",
+    "properties": {
+     "action": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Action"
+     },
+     "actor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Actor"
+     },
+     "detail_json": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Detail Json"
+     },
+     "id": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Id"
+     },
+     "target": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Target"
+     },
+     "ts": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ts"
+     }
+    },
+    "required": [
+     "id",
+     "ts",
+     "actor",
+     "action",
+     "target",
+     "detail_json"
+    ],
+    "title": "AuditViewItem",
+    "type": "object"
+   },
    "BackendSpec": {
     "description": "One model backend row from the settings page.\n\n`api_key` is write-only: omitted/None = keep the stored key for this name; \"\" = clear it.\nThe GET endpoint never returns keys, so this round-trip rule is what keeps saves from\nsilently erasing them.",
     "properties": {
@@ -583,7 +701,40 @@
     "title": "DomainsView",
     "type": "array"
    },
-   "DomainsViewItem": {},
+   "DomainsViewItem": {
+    "additionalProperties": true,
+    "description": "自动生成：DomainsViewItem（Item 的对象形状）。",
+    "properties": {
+     "display_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Display Name"
+     },
+     "id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Id"
+     }
+    },
+    "required": [
+     "id",
+     "display_name"
+    ],
+    "title": "DomainsViewItem",
+    "type": "object"
+   },
    "EditMessageBody": {
     "properties": {
      "content": {
@@ -697,7 +848,184 @@
     "description": "/api/health/deep 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "HealthDeepView"
    },
-   "HealthDeepViewRoot": {},
+   "HealthDeepViewChecks": {
+    "additionalProperties": true,
+    "description": "自动生成：HealthDeepViewChecks（checks 的对象形状）。",
+    "properties": {
+     "chroma": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/HealthDeepViewChecks_chroma"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "models": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/HealthDeepViewChecks_models"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "sqlite": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/HealthDeepViewChecks_sqlite"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "required": [
+     "sqlite",
+     "chroma",
+     "models"
+    ],
+    "title": "HealthDeepViewChecks",
+    "type": "object"
+   },
+   "HealthDeepViewChecks_chroma": {
+    "additionalProperties": true,
+    "description": "自动生成：HealthDeepViewChecks_chroma（checks_chroma 的对象形状）。",
+    "properties": {
+     "detail": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Detail"
+     },
+     "ok": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ok"
+     }
+    },
+    "required": [
+     "ok",
+     "detail"
+    ],
+    "title": "HealthDeepViewChecks_chroma",
+    "type": "object"
+   },
+   "HealthDeepViewChecks_models": {
+    "additionalProperties": true,
+    "description": "自动生成：HealthDeepViewChecks_models（checks_models 的对象形状）。",
+    "properties": {
+     "detail": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Detail"
+     },
+     "ok": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ok"
+     }
+    },
+    "required": [
+     "ok",
+     "detail"
+    ],
+    "title": "HealthDeepViewChecks_models",
+    "type": "object"
+   },
+   "HealthDeepViewChecks_sqlite": {
+    "additionalProperties": true,
+    "description": "自动生成：HealthDeepViewChecks_sqlite（checks_sqlite 的对象形状）。",
+    "properties": {
+     "detail": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Detail"
+     },
+     "ok": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ok"
+     }
+    },
+    "required": [
+     "ok",
+     "detail"
+    ],
+    "title": "HealthDeepViewChecks_sqlite",
+    "type": "object"
+   },
+   "HealthDeepViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：HealthDeepViewRoot（ 的对象形状）。",
+    "properties": {
+     "checks": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/HealthDeepViewChecks"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "status": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Status"
+     }
+    },
+    "required": [
+     "status",
+     "checks"
+    ],
+    "title": "HealthDeepViewRoot",
+    "type": "object"
+   },
    "ImportBody": {
     "description": "对面写入的载荷。`items` 由发起方按用户的选择挑好，这里不再判冲突。\n\n`clear_kinds` 只服务\"整份替换\"那一档，且必须同时带 `confirm_replace=true`：\n删的是**这台机器上这个身份**的该类条目，删错了没有回头路，所以宁可让协议\n多一个显式的键，也不要\"看起来只是个普通参数\"。",
     "properties": {
@@ -874,13 +1202,134 @@
     "description": "/api/knowledge/scopes 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "KnowledgeScopesView"
    },
-   "KnowledgeScopesViewRoot": {},
+   "KnowledgeScopesViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：KnowledgeScopesViewRoot（ 的对象形状）。",
+    "properties": {
+     "scopes": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Scopes"
+     }
+    },
+    "required": [
+     "scopes"
+    ],
+    "title": "KnowledgeScopesViewRoot",
+    "type": "object"
+   },
    "LocalServiceView": {
     "$ref": "#/components/schemas/LocalServiceViewRoot",
     "description": "/api/local-service 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "LocalServiceView"
    },
-   "LocalServiceViewRoot": {},
+   "LocalServiceViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：LocalServiceViewRoot（ 的对象形状）。",
+    "properties": {
+     "base_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Base Url"
+     },
+     "is_local": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Is Local"
+     },
+     "model": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Model"
+     },
+     "pinned": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Pinned"
+     },
+     "resident": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Resident"
+     },
+     "resident_bytes": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Resident Bytes"
+     },
+     "running": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Running"
+     }
+    },
+    "required": [
+     "base_url",
+     "running",
+     "resident",
+     "resident_bytes",
+     "pinned",
+     "is_local",
+     "model"
+    ],
+    "title": "LocalServiceViewRoot",
+    "type": "object"
+   },
    "McpCreateBody": {
     "properties": {
      "display_name": {
@@ -986,7 +1435,44 @@
     "description": "/api/mcp/servers 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "McpServersView"
    },
-   "McpServersViewRoot": {},
+   "McpServersViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：McpServersViewRoot（ 的对象形状）。",
+    "properties": {
+     "effective_count": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Effective Count"
+     },
+     "servers": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Servers"
+     }
+    },
+    "required": [
+     "servers",
+     "effective_count"
+    ],
+    "title": "McpServersViewRoot",
+    "type": "object"
+   },
    "MemoryBody": {
     "description": "记忆面板的保存负载：任选其一提交，缺省 = 该字段不变。\n\n`enabled` = 总开关（走 runtime 覆盖保存 + 热重建，下一轮对话即生效）；\n`content`  = 记忆全文（None = 不变；\"\" = 清空）；\n`extract_turns` = 自动提取的节奏（None = 不变；**0 = 关掉自动那条，只留手动按钮**）。",
     "properties": {
@@ -1128,7 +1614,113 @@
     "description": "/api/settings/model-providers 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "ModelProvidersView"
    },
-   "ModelProvidersViewRoot": {},
+   "ModelProvidersViewProvidersItem": {
+    "additionalProperties": true,
+    "description": "自动生成：ModelProvidersViewProvidersItem（providersItem 的对象形状）。",
+    "properties": {
+     "base_url_hint": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Base Url Hint"
+     },
+     "default_base_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Default Base Url"
+     },
+     "id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Id"
+     },
+     "label": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Label"
+     },
+     "needs_key": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Needs Key"
+     },
+     "style": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Style"
+     }
+    },
+    "required": [
+     "id",
+     "label",
+     "needs_key",
+     "base_url_hint",
+     "style",
+     "default_base_url"
+    ],
+    "title": "ModelProvidersViewProvidersItem",
+    "type": "object"
+   },
+   "ModelProvidersViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：ModelProvidersViewRoot（ 的对象形状）。",
+    "properties": {
+     "providers": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/ModelProvidersViewProvidersItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Providers"
+     }
+    },
+    "required": [
+     "providers"
+    ],
+    "title": "ModelProvidersViewRoot",
+    "type": "object"
+   },
    "ModelSamplingBody": {
     "description": "只改一个后端的采样惩罚。**字段不给默认值**：没出现的键不动，出现且为 null = 清回\"不传\"。\n\n与 `ModelContextBody` 同一套取舍 —— 走整表 PUT 要前端持有全部行与回退链，改一个数\n却重传整套配置，写放大且并发编辑互相覆盖。",
     "properties": {
@@ -1215,19 +1807,463 @@
     "description": "/api/settings/models 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "ModelSettingsView"
    },
-   "ModelSettingsViewRoot": {},
+   "ModelSettingsViewProvidersItem": {
+    "additionalProperties": true,
+    "description": "自动生成：ModelSettingsViewProvidersItem（providersItem 的对象形状）。",
+    "properties": {
+     "base_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Base Url"
+     },
+     "has_key": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Has Key"
+     },
+     "id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Id"
+     },
+     "key_masked": {
+      "title": "Key Masked"
+     },
+     "label": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Label"
+     },
+     "models": {
+      "anyOf": [
+       {
+        "items": {},
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Models"
+     },
+     "needs_key": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Needs Key"
+     },
+     "provider": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Provider"
+     },
+     "style": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Style"
+     }
+    },
+    "required": [
+     "id",
+     "provider",
+     "label",
+     "base_url",
+     "style",
+     "needs_key",
+     "has_key",
+     "key_masked",
+     "models"
+    ],
+    "title": "ModelSettingsViewProvidersItem",
+    "type": "object"
+   },
+   "ModelSettingsViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：ModelSettingsViewRoot（ 的对象形状）。",
+    "properties": {
+     "default": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Default"
+     },
+     "fallbacks": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Fallbacks"
+     },
+     "providers": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/ModelSettingsViewProvidersItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Providers"
+     }
+    },
+    "required": [
+     "default",
+     "providers",
+     "fallbacks"
+    ],
+    "title": "ModelSettingsViewRoot",
+    "type": "object"
+   },
    "OrphanUploadsView": {
     "$ref": "#/components/schemas/OrphanUploadsViewRoot",
     "description": "/api/uploads/orphans 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "OrphanUploadsView"
    },
-   "OrphanUploadsViewRoot": {},
+   "OrphanUploadsViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：OrphanUploadsViewRoot（ 的对象形状）。",
+    "properties": {
+     "dangling": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Dangling"
+     },
+     "orphans": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Orphans"
+     },
+     "referenced": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Referenced"
+     },
+     "scanned": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Scanned"
+     },
+     "total_bytes": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Total Bytes"
+     }
+    },
+    "required": [
+     "orphans",
+     "total_bytes",
+     "scanned",
+     "referenced",
+     "dangling"
+    ],
+    "title": "OrphanUploadsViewRoot",
+    "type": "object"
+   },
    "PetsView": {
     "$ref": "#/components/schemas/PetsViewRoot",
     "description": "/api/pets 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "PetsView"
    },
-   "PetsViewRoot": {},
+   "PetsViewPacksItem": {
+    "additionalProperties": true,
+    "description": "自动生成：PetsViewPacksItem（packsItem 的对象形状）。",
+    "properties": {
+     "entry": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Entry"
+     },
+     "id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Id"
+     },
+     "kind": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Kind"
+     },
+     "label": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Label"
+     },
+     "motions": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/PetsViewPacksItem_motions"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "rows": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/PetsViewPacksItem_rows"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "sheet_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Sheet Url"
+     },
+     "source": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Source"
+     }
+    },
+    "required": [
+     "id",
+     "label",
+     "kind",
+     "rows",
+     "motions",
+     "source",
+     "entry",
+     "sheet_url"
+    ],
+    "title": "PetsViewPacksItem",
+    "type": "object"
+   },
+   "PetsViewPacksItem_motions": {
+    "additionalProperties": true,
+    "description": "自动生成：PetsViewPacksItem_motions（packsItem_motions 的对象形状）。",
+    "properties": {},
+    "title": "PetsViewPacksItem_motions",
+    "type": "object"
+   },
+   "PetsViewPacksItem_rows": {
+    "additionalProperties": true,
+    "description": "自动生成：PetsViewPacksItem_rows（packsItem_rows 的对象形状）。",
+    "properties": {
+     "listening": {
+      "title": "Listening"
+     },
+     "thinking": {
+      "title": "Thinking"
+     }
+    },
+    "required": [
+     "listening",
+     "thinking"
+    ],
+    "title": "PetsViewPacksItem_rows",
+    "type": "object"
+   },
+   "PetsViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：PetsViewRoot（ 的对象形状）。",
+    "properties": {
+     "cubism_core": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Cubism Core"
+     },
+     "cubism_core_path": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Cubism Core Path"
+     },
+     "packs": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/PetsViewPacksItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Packs"
+     },
+     "skipped": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Skipped"
+     },
+     "user_dir": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "User Dir"
+     }
+    },
+    "required": [
+     "packs",
+     "skipped",
+     "user_dir",
+     "cubism_core",
+     "cubism_core_path"
+    ],
+    "title": "PetsViewRoot",
+    "type": "object"
+   },
    "PinRequest": {
     "description": "`keep_alive` = Ollama 原生秒数，-1 = 永不自动卸载（常驻）。`model` 省略 = 默认模型。",
     "properties": {
@@ -1401,13 +2437,264 @@
     "description": "/api/rag/metrics 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "RagMetricsView"
    },
-   "RagMetricsViewRoot": {},
+   "RagMetricsViewP50": {
+    "additionalProperties": true,
+    "description": "自动生成：RagMetricsViewP50（p50 的对象形状）。",
+    "properties": {
+     "embed_ms": {
+      "title": "Embed Ms"
+     },
+     "rerank_ms": {
+      "title": "Rerank Ms"
+     },
+     "total_ms": {
+      "title": "Total Ms"
+     },
+     "vector_ms": {
+      "title": "Vector Ms"
+     }
+    },
+    "required": [
+     "embed_ms",
+     "vector_ms",
+     "rerank_ms",
+     "total_ms"
+    ],
+    "title": "RagMetricsViewP50",
+    "type": "object"
+   },
+   "RagMetricsViewP95": {
+    "additionalProperties": true,
+    "description": "自动生成：RagMetricsViewP95（p95 的对象形状）。",
+    "properties": {
+     "embed_ms": {
+      "title": "Embed Ms"
+     },
+     "rerank_ms": {
+      "title": "Rerank Ms"
+     },
+     "total_ms": {
+      "title": "Total Ms"
+     },
+     "vector_ms": {
+      "title": "Vector Ms"
+     }
+    },
+    "required": [
+     "embed_ms",
+     "vector_ms",
+     "rerank_ms",
+     "total_ms"
+    ],
+    "title": "RagMetricsViewP95",
+    "type": "object"
+   },
+   "RagMetricsViewP99": {
+    "additionalProperties": true,
+    "description": "自动生成：RagMetricsViewP99（p99 的对象形状）。",
+    "properties": {
+     "embed_ms": {
+      "title": "Embed Ms"
+     },
+     "rerank_ms": {
+      "title": "Rerank Ms"
+     },
+     "total_ms": {
+      "title": "Total Ms"
+     },
+     "vector_ms": {
+      "title": "Vector Ms"
+     }
+    },
+    "required": [
+     "embed_ms",
+     "vector_ms",
+     "rerank_ms",
+     "total_ms"
+    ],
+    "title": "RagMetricsViewP99",
+    "type": "object"
+   },
+   "RagMetricsViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：RagMetricsViewRoot（ 的对象形状）。",
+    "properties": {
+     "embedder": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Embedder"
+     },
+     "p50": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/RagMetricsViewP50"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "p95": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/RagMetricsViewP95"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "p99": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/RagMetricsViewP99"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "rerank_enabled": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Rerank Enabled"
+     },
+     "samples": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Samples"
+     }
+    },
+    "required": [
+     "samples",
+     "rerank_enabled",
+     "embedder",
+     "p50",
+     "p95",
+     "p99"
+    ],
+    "title": "RagMetricsViewRoot",
+    "type": "object"
+   },
    "ReachoutsView": {
     "$ref": "#/components/schemas/ReachoutsViewRoot",
     "description": "/api/reachouts 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "ReachoutsView"
    },
-   "ReachoutsViewRoot": {},
+   "ReachoutsViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：ReachoutsViewRoot（ 的对象形状）。",
+    "properties": {
+     "file_watch_pending": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "File Watch Pending"
+     },
+     "items": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Items"
+     },
+     "merge_days": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Merge Days"
+     },
+     "quiet": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Quiet"
+     },
+     "unread": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Unread"
+     },
+     "unread_by_role": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ReachoutsViewUnread_by_role"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "required": [
+     "items",
+     "unread",
+     "unread_by_role",
+     "file_watch_pending",
+     "merge_days",
+     "quiet"
+    ],
+    "title": "ReachoutsViewRoot",
+    "type": "object"
+   },
+   "ReachoutsViewUnread_by_role": {
+    "additionalProperties": true,
+    "description": "自动生成：ReachoutsViewUnread_by_role（unread_by_role 的对象形状）。",
+    "properties": {},
+    "title": "ReachoutsViewUnread_by_role",
+    "type": "object"
+   },
    "ReconcileBody": {
     "description": "登录对账：**一次把两边的方向都走完**，用自动策略，人只在最后看一句读数。\n\n自动策略只走无歧义的那半（`features.sync.auto_moves`）：本机独有的推上去、对面独有的并回来、\n卡按新者胜；**记忆与会话的冲突原地不动**（\"两份都留\"不幂等，会每登录一次长出两条），\n留在返回值里让人去向导里挑 —— 冲突本该是可数的少数。\n推完再重新比对一次才拉：推上去的东西下一轮就是\"两边相同\"，不会自己跟自己打架。",
     "properties": {
@@ -2093,7 +3380,60 @@
     "description": "/api/roles/{role_id}/timeline 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "RoleTimelineView"
    },
-   "RoleTimelineViewRoot": {},
+   "RoleTimelineViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：RoleTimelineViewRoot（ 的对象形状）。",
+    "properties": {
+     "items": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Items"
+     },
+     "next_cursor": {
+      "title": "Next Cursor"
+     },
+     "role_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Role Id"
+     },
+     "truncated": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Truncated"
+     }
+    },
+    "required": [
+     "role_id",
+     "items",
+     "next_cursor",
+     "truncated"
+    ],
+    "title": "RoleTimelineViewRoot",
+    "type": "object"
+   },
    "RuntimeUpdateBody": {
     "description": "字段名 → 提交值。None/空串 = 清除该覆盖（回落 env）；未出现的字段 = 不变。",
     "properties": {
@@ -2203,19 +3543,302 @@
     "description": "/api/settings/memory 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "SettingsMemoryView"
    },
-   "SettingsMemoryViewRoot": {},
+   "SettingsMemoryViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：SettingsMemoryViewRoot（ 的对象形状）。",
+    "properties": {
+     "active_count": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Active Count"
+     },
+     "content": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Content"
+     },
+     "enabled": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Enabled"
+     },
+     "extract_turns": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Extract Turns"
+     },
+     "items": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Items"
+     },
+     "limit": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Limit"
+     },
+     "over_limit": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Over Limit"
+     },
+     "role_id": {
+      "title": "Role Id"
+     }
+    },
+    "required": [
+     "enabled",
+     "role_id",
+     "content",
+     "items",
+     "active_count",
+     "limit",
+     "over_limit",
+     "extract_turns"
+    ],
+    "title": "SettingsMemoryViewRoot",
+    "type": "object"
+   },
    "ShellReleaseView": {
     "$ref": "#/components/schemas/ShellReleaseViewRoot",
     "description": "/api/shell-release 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "ShellReleaseView"
    },
-   "ShellReleaseViewRoot": {},
+   "ShellReleaseViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：ShellReleaseViewRoot（ 的对象形状）。",
+    "properties": {
+     "available": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Available"
+     },
+     "configured": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Configured"
+     }
+    },
+    "required": [
+     "available",
+     "configured"
+    ],
+    "title": "ShellReleaseViewRoot",
+    "type": "object"
+   },
    "SyncInventoryView": {
     "$ref": "#/components/schemas/SyncInventoryViewRoot",
     "description": "/api/sync/inventory 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "SyncInventoryView"
    },
-   "SyncInventoryViewRoot": {},
+   "SyncInventoryViewItemsItem": {
+    "additionalProperties": true,
+    "description": "自动生成：SyncInventoryViewItemsItem（itemsItem 的对象形状）。",
+    "properties": {
+     "at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "At"
+     },
+     "count": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Count"
+     },
+     "hash": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Hash"
+     },
+     "head": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Head"
+     },
+     "ident": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ident"
+     },
+     "kind": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Kind"
+     },
+     "preview": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Preview"
+     }
+    },
+    "required": [
+     "kind",
+     "ident",
+     "hash",
+     "at",
+     "preview",
+     "head",
+     "count"
+    ],
+    "title": "SyncInventoryViewItemsItem",
+    "type": "object"
+   },
+   "SyncInventoryViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：SyncInventoryViewRoot（ 的对象形状）。",
+    "properties": {
+     "items": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/SyncInventoryViewItemsItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Items"
+     },
+     "kinds": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Kinds"
+     },
+     "skipped": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Skipped"
+     }
+    },
+    "required": [
+     "items",
+     "skipped",
+     "kinds"
+    ],
+    "title": "SyncInventoryViewRoot",
+    "type": "object"
+   },
    "TargetBody": {
     "description": "打到哪台、用哪个身份打。`secret` 只在本次请求内存活，绝不回显。",
     "properties": {
@@ -2247,7 +3870,119 @@
     "description": "/api/tools/catalog 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "ToolsCatalog"
    },
-   "ToolsCatalogRoot": {},
+   "ToolsCatalogDomains": {
+    "additionalProperties": true,
+    "description": "自动生成：ToolsCatalogDomains（domains 的对象形状）。",
+    "properties": {
+     "health": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/ToolsCatalogDomains_healthItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Health"
+     }
+    },
+    "required": [
+     "health"
+    ],
+    "title": "ToolsCatalogDomains",
+    "type": "object"
+   },
+   "ToolsCatalogDomains_healthItem": {
+    "additionalProperties": true,
+    "description": "自动生成：ToolsCatalogDomains_healthItem（domains_healthItem 的对象形状）。",
+    "properties": {
+     "description": {
+      "title": "Description"
+     },
+     "name": {
+      "title": "Name"
+     }
+    },
+    "required": [
+     "name",
+     "description"
+    ],
+    "title": "ToolsCatalogDomains_healthItem",
+    "type": "object"
+   },
+   "ToolsCatalogKernelItem": {
+    "additionalProperties": true,
+    "description": "自动生成：ToolsCatalogKernelItem（kernelItem 的对象形状）。",
+    "properties": {
+     "description": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Description"
+     },
+     "name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Name"
+     }
+    },
+    "required": [
+     "name",
+     "description"
+    ],
+    "title": "ToolsCatalogKernelItem",
+    "type": "object"
+   },
+   "ToolsCatalogRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：ToolsCatalogRoot（ 的对象形状）。",
+    "properties": {
+     "domains": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ToolsCatalogDomains"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "kernel": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/ToolsCatalogKernelItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Kernel"
+     }
+    },
+    "required": [
+     "kernel",
+     "domains"
+    ],
+    "title": "ToolsCatalogRoot",
+    "type": "object"
+   },
    "UnloadRequest": {
     "description": "`model` 省略 = 卸掉当前驻留的全部模型（用户要的通常就是这个：把显存还回来）。",
     "properties": {
@@ -2272,7 +4007,88 @@
     "description": "/api/update-check 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "UpdateCheckView"
    },
-   "UpdateCheckViewRoot": {},
+   "UpdateCheckViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：UpdateCheckViewRoot（ 的对象形状）。",
+    "properties": {
+     "current": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Current"
+     },
+     "error": {
+      "title": "Error"
+     },
+     "file_name": {
+      "title": "File Name"
+     },
+     "has_update": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Has Update"
+     },
+     "latest": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Latest"
+     },
+     "size_bytes": {
+      "title": "Size Bytes"
+     },
+     "source": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Source"
+     },
+     "url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Url"
+     }
+    },
+    "required": [
+     "current",
+     "latest",
+     "has_update",
+     "source",
+     "url",
+     "file_name",
+     "size_bytes",
+     "error"
+    ],
+    "title": "UpdateCheckViewRoot",
+    "type": "object"
+   },
    "ValidationError": {
     "properties": {
      "ctx": {
@@ -2334,13 +4150,152 @@
     "description": "/api/workspace/dir 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "WorkspaceDirView"
    },
-   "WorkspaceDirViewRoot": {},
+   "WorkspaceDirViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：WorkspaceDirViewRoot（ 的对象形状）。",
+    "properties": {
+     "overridden": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Overridden"
+     },
+     "path": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Path"
+     }
+    },
+    "required": [
+     "path",
+     "overridden"
+    ],
+    "title": "WorkspaceDirViewRoot",
+    "type": "object"
+   },
    "WorkspaceTreeView": {
     "$ref": "#/components/schemas/WorkspaceTreeViewRoot",
     "description": "/api/workspace/tree 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "WorkspaceTreeView"
    },
-   "WorkspaceTreeViewRoot": {}
+   "WorkspaceTreeViewEntriesItem": {
+    "additionalProperties": true,
+    "description": "自动生成：WorkspaceTreeViewEntriesItem（entriesItem 的对象形状）。",
+    "properties": {
+     "is_dir": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Is Dir"
+     },
+     "name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Name"
+     },
+     "size": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Size"
+     }
+    },
+    "required": [
+     "name",
+     "is_dir",
+     "size"
+    ],
+    "title": "WorkspaceTreeViewEntriesItem",
+    "type": "object"
+   },
+   "WorkspaceTreeViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：WorkspaceTreeViewRoot（ 的对象形状）。",
+    "properties": {
+     "entries": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/WorkspaceTreeViewEntriesItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Entries"
+     },
+     "parent": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Parent"
+     },
+     "path": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Path"
+     },
+     "truncated": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Truncated"
+     }
+    },
+    "required": [
+     "path",
+     "parent",
+     "entries",
+     "truncated"
+    ],
+    "title": "WorkspaceTreeViewRoot",
+    "type": "object"
+   }
   }
  },
  "info": {

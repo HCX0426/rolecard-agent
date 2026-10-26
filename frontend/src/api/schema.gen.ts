@@ -2225,13 +2225,45 @@ export interface components {
          * @description /api/approvals 的顶层形状（数组包一层只为给它一个名字）。
          */
         ApprovalsView: components["schemas"]["ApprovalsViewRoot"];
-        ApprovalsViewRoot: unknown;
+        /**
+         * ApprovalsViewRoot
+         * @description 自动生成：ApprovalsViewRoot（ 的对象形状）。
+         */
+        ApprovalsViewRoot: {
+            /** Items */
+            items: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Pending */
+            pending: number | null;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * AuditView
          * @description /api/audit 的顶层形状（数组包一层只为给它一个名字）。
          */
         AuditView: components["schemas"]["AuditViewItem"][];
-        AuditViewItem: unknown;
+        /**
+         * AuditViewItem
+         * @description 自动生成：AuditViewItem（Item 的对象形状）。
+         */
+        AuditViewItem: {
+            /** Action */
+            action: string | null;
+            /** Actor */
+            actor: string | null;
+            /** Detail Json */
+            detail_json: string | null;
+            /** Id */
+            id: number | null;
+            /** Target */
+            target: string | null;
+            /** Ts */
+            ts: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * BackendSpec
          * @description One model backend row from the settings page.
@@ -2386,7 +2418,18 @@ export interface components {
          * @description /api/domains 的顶层形状（数组包一层只为给它一个名字）。
          */
         DomainsView: components["schemas"]["DomainsViewItem"][];
-        DomainsViewItem: unknown;
+        /**
+         * DomainsViewItem
+         * @description 自动生成：DomainsViewItem（Item 的对象形状）。
+         */
+        DomainsViewItem: {
+            /** Display Name */
+            display_name: string | null;
+            /** Id */
+            id: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** EditMessageBody */
         EditMessageBody: {
             /**
@@ -2443,7 +2486,64 @@ export interface components {
          * @description /api/health/deep 的顶层形状（数组包一层只为给它一个名字）。
          */
         HealthDeepView: components["schemas"]["HealthDeepViewRoot"];
-        HealthDeepViewRoot: unknown;
+        /**
+         * HealthDeepViewChecks
+         * @description 自动生成：HealthDeepViewChecks（checks 的对象形状）。
+         */
+        HealthDeepViewChecks: {
+            chroma: components["schemas"]["HealthDeepViewChecks_chroma"] | null;
+            models: components["schemas"]["HealthDeepViewChecks_models"] | null;
+            sqlite: components["schemas"]["HealthDeepViewChecks_sqlite"] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * HealthDeepViewChecks_chroma
+         * @description 自动生成：HealthDeepViewChecks_chroma（checks_chroma 的对象形状）。
+         */
+        HealthDeepViewChecks_chroma: {
+            /** Detail */
+            detail: string | null;
+            /** Ok */
+            ok: boolean | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * HealthDeepViewChecks_models
+         * @description 自动生成：HealthDeepViewChecks_models（checks_models 的对象形状）。
+         */
+        HealthDeepViewChecks_models: {
+            /** Detail */
+            detail: string | null;
+            /** Ok */
+            ok: boolean | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * HealthDeepViewChecks_sqlite
+         * @description 自动生成：HealthDeepViewChecks_sqlite（checks_sqlite 的对象形状）。
+         */
+        HealthDeepViewChecks_sqlite: {
+            /** Detail */
+            detail: string | null;
+            /** Ok */
+            ok: boolean | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * HealthDeepViewRoot
+         * @description 自动生成：HealthDeepViewRoot（ 的对象形状）。
+         */
+        HealthDeepViewRoot: {
+            checks: components["schemas"]["HealthDeepViewChecks"] | null;
+            /** Status */
+            status: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * ImportBody
          * @description 对面写入的载荷。`items` 由发起方按用户的选择挑好，这里不再判冲突。
@@ -2519,13 +2619,45 @@ export interface components {
          * @description /api/knowledge/scopes 的顶层形状（数组包一层只为给它一个名字）。
          */
         KnowledgeScopesView: components["schemas"]["KnowledgeScopesViewRoot"];
-        KnowledgeScopesViewRoot: unknown;
+        /**
+         * KnowledgeScopesViewRoot
+         * @description 自动生成：KnowledgeScopesViewRoot（ 的对象形状）。
+         */
+        KnowledgeScopesViewRoot: {
+            /** Scopes */
+            scopes: string[] | null;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * LocalServiceView
          * @description /api/local-service 的顶层形状（数组包一层只为给它一个名字）。
          */
         LocalServiceView: components["schemas"]["LocalServiceViewRoot"];
-        LocalServiceViewRoot: unknown;
+        /**
+         * LocalServiceViewRoot
+         * @description 自动生成：LocalServiceViewRoot（ 的对象形状）。
+         */
+        LocalServiceViewRoot: {
+            /** Base Url */
+            base_url: string | null;
+            /** Is Local */
+            is_local: boolean | null;
+            /** Model */
+            model: string | null;
+            /** Pinned */
+            pinned: boolean | null;
+            /** Resident */
+            resident: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Resident Bytes */
+            resident_bytes: number | null;
+            /** Running */
+            running: boolean | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** McpCreateBody */
         McpCreateBody: {
             /** Display Name */
@@ -2562,7 +2694,20 @@ export interface components {
          * @description /api/mcp/servers 的顶层形状（数组包一层只为给它一个名字）。
          */
         McpServersView: components["schemas"]["McpServersViewRoot"];
-        McpServersViewRoot: unknown;
+        /**
+         * McpServersViewRoot
+         * @description 自动生成：McpServersViewRoot（ 的对象形状）。
+         */
+        McpServersViewRoot: {
+            /** Effective Count */
+            effective_count: number | null;
+            /** Servers */
+            servers: {
+                [key: string]: unknown;
+            }[] | null;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * MemoryBody
          * @description 记忆面板的保存负载：任选其一提交，缺省 = 该字段不变。
@@ -2627,7 +2772,36 @@ export interface components {
          * @description /api/settings/model-providers 的顶层形状（数组包一层只为给它一个名字）。
          */
         ModelProvidersView: components["schemas"]["ModelProvidersViewRoot"];
-        ModelProvidersViewRoot: unknown;
+        /**
+         * ModelProvidersViewProvidersItem
+         * @description 自动生成：ModelProvidersViewProvidersItem（providersItem 的对象形状）。
+         */
+        ModelProvidersViewProvidersItem: {
+            /** Base Url Hint */
+            base_url_hint: string | null;
+            /** Default Base Url */
+            default_base_url: string | null;
+            /** Id */
+            id: string | null;
+            /** Label */
+            label: string | null;
+            /** Needs Key */
+            needs_key: boolean | null;
+            /** Style */
+            style: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ModelProvidersViewRoot
+         * @description 自动生成：ModelProvidersViewRoot（ 的对象形状）。
+         */
+        ModelProvidersViewRoot: {
+            /** Providers */
+            providers: components["schemas"]["ModelProvidersViewProvidersItem"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * ModelSamplingBody
          * @description 只改一个后端的采样惩罚。**字段不给默认值**：没出现的键不动，出现且为 null = 清回"不传"。
@@ -2657,19 +2831,139 @@ export interface components {
          * @description /api/settings/models 的顶层形状（数组包一层只为给它一个名字）。
          */
         ModelSettingsView: components["schemas"]["ModelSettingsViewRoot"];
-        ModelSettingsViewRoot: unknown;
+        /**
+         * ModelSettingsViewProvidersItem
+         * @description 自动生成：ModelSettingsViewProvidersItem（providersItem 的对象形状）。
+         */
+        ModelSettingsViewProvidersItem: {
+            /** Base Url */
+            base_url: string | null;
+            /** Has Key */
+            has_key: boolean | null;
+            /** Id */
+            id: string | null;
+            /** Key Masked */
+            key_masked: unknown;
+            /** Label */
+            label: string | null;
+            /** Models */
+            models: unknown[] | null;
+            /** Needs Key */
+            needs_key: boolean | null;
+            /** Provider */
+            provider: string | null;
+            /** Style */
+            style: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ModelSettingsViewRoot
+         * @description 自动生成：ModelSettingsViewRoot（ 的对象形状）。
+         */
+        ModelSettingsViewRoot: {
+            /** Default */
+            default: string | null;
+            /** Fallbacks */
+            fallbacks: string[] | null;
+            /** Providers */
+            providers: components["schemas"]["ModelSettingsViewProvidersItem"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * OrphanUploadsView
          * @description /api/uploads/orphans 的顶层形状（数组包一层只为给它一个名字）。
          */
         OrphanUploadsView: components["schemas"]["OrphanUploadsViewRoot"];
-        OrphanUploadsViewRoot: unknown;
+        /**
+         * OrphanUploadsViewRoot
+         * @description 自动生成：OrphanUploadsViewRoot（ 的对象形状）。
+         */
+        OrphanUploadsViewRoot: {
+            /** Dangling */
+            dangling: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Orphans */
+            orphans: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Referenced */
+            referenced: number | null;
+            /** Scanned */
+            scanned: number | null;
+            /** Total Bytes */
+            total_bytes: number | null;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * PetsView
          * @description /api/pets 的顶层形状（数组包一层只为给它一个名字）。
          */
         PetsView: components["schemas"]["PetsViewRoot"];
-        PetsViewRoot: unknown;
+        /**
+         * PetsViewPacksItem
+         * @description 自动生成：PetsViewPacksItem（packsItem 的对象形状）。
+         */
+        PetsViewPacksItem: {
+            /** Entry */
+            entry: string | null;
+            /** Id */
+            id: string | null;
+            /** Kind */
+            kind: string | null;
+            /** Label */
+            label: string | null;
+            motions: components["schemas"]["PetsViewPacksItem_motions"] | null;
+            rows: components["schemas"]["PetsViewPacksItem_rows"] | null;
+            /** Sheet Url */
+            sheet_url: string | null;
+            /** Source */
+            source: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PetsViewPacksItem_motions
+         * @description 自动生成：PetsViewPacksItem_motions（packsItem_motions 的对象形状）。
+         */
+        PetsViewPacksItem_motions: {
+            [key: string]: unknown;
+        };
+        /**
+         * PetsViewPacksItem_rows
+         * @description 自动生成：PetsViewPacksItem_rows（packsItem_rows 的对象形状）。
+         */
+        PetsViewPacksItem_rows: {
+            /** Listening */
+            listening: unknown;
+            /** Thinking */
+            thinking: unknown;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PetsViewRoot
+         * @description 自动生成：PetsViewRoot（ 的对象形状）。
+         */
+        PetsViewRoot: {
+            /** Cubism Core */
+            cubism_core: boolean | null;
+            /** Cubism Core Path */
+            cubism_core_path: string | null;
+            /** Packs */
+            packs: components["schemas"]["PetsViewPacksItem"][] | null;
+            /** Skipped */
+            skipped: {
+                [key: string]: unknown;
+            }[] | null;
+            /** User Dir */
+            user_dir: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * PinRequest
          * @description `keep_alive` = Ollama 原生秒数，-1 = 永不自动卸载（常驻）。`model` 省略 = 默认模型。
@@ -2759,13 +3053,106 @@ export interface components {
          * @description /api/rag/metrics 的顶层形状（数组包一层只为给它一个名字）。
          */
         RagMetricsView: components["schemas"]["RagMetricsViewRoot"];
-        RagMetricsViewRoot: unknown;
+        /**
+         * RagMetricsViewP50
+         * @description 自动生成：RagMetricsViewP50（p50 的对象形状）。
+         */
+        RagMetricsViewP50: {
+            /** Embed Ms */
+            embed_ms: unknown;
+            /** Rerank Ms */
+            rerank_ms: unknown;
+            /** Total Ms */
+            total_ms: unknown;
+            /** Vector Ms */
+            vector_ms: unknown;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RagMetricsViewP95
+         * @description 自动生成：RagMetricsViewP95（p95 的对象形状）。
+         */
+        RagMetricsViewP95: {
+            /** Embed Ms */
+            embed_ms: unknown;
+            /** Rerank Ms */
+            rerank_ms: unknown;
+            /** Total Ms */
+            total_ms: unknown;
+            /** Vector Ms */
+            vector_ms: unknown;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RagMetricsViewP99
+         * @description 自动生成：RagMetricsViewP99（p99 的对象形状）。
+         */
+        RagMetricsViewP99: {
+            /** Embed Ms */
+            embed_ms: unknown;
+            /** Rerank Ms */
+            rerank_ms: unknown;
+            /** Total Ms */
+            total_ms: unknown;
+            /** Vector Ms */
+            vector_ms: unknown;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RagMetricsViewRoot
+         * @description 自动生成：RagMetricsViewRoot（ 的对象形状）。
+         */
+        RagMetricsViewRoot: {
+            /** Embedder */
+            embedder: string | null;
+            p50: components["schemas"]["RagMetricsViewP50"] | null;
+            p95: components["schemas"]["RagMetricsViewP95"] | null;
+            p99: components["schemas"]["RagMetricsViewP99"] | null;
+            /** Rerank Enabled */
+            rerank_enabled: boolean | null;
+            /** Samples */
+            samples: number | null;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * ReachoutsView
          * @description /api/reachouts 的顶层形状（数组包一层只为给它一个名字）。
          */
         ReachoutsView: components["schemas"]["ReachoutsViewRoot"];
-        ReachoutsViewRoot: unknown;
+        /**
+         * ReachoutsViewRoot
+         * @description 自动生成：ReachoutsViewRoot（ 的对象形状）。
+         */
+        ReachoutsViewRoot: {
+            /** File Watch Pending */
+            file_watch_pending: number | null;
+            /** Items */
+            items: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Merge Days */
+            merge_days: number | null;
+            /** Quiet */
+            quiet: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Unread */
+            unread: number | null;
+            unread_by_role: components["schemas"]["ReachoutsViewUnread_by_role"] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ReachoutsViewUnread_by_role
+         * @description 自动生成：ReachoutsViewUnread_by_role（unread_by_role 的对象形状）。
+         */
+        ReachoutsViewUnread_by_role: {
+            [key: string]: unknown;
+        };
         /**
          * ReconcileBody
          * @description 登录对账：**一次把两边的方向都走完**，用自动策略，人只在最后看一句读数。
@@ -3028,7 +3415,24 @@ export interface components {
          * @description /api/roles/{role_id}/timeline 的顶层形状（数组包一层只为给它一个名字）。
          */
         RoleTimelineView: components["schemas"]["RoleTimelineViewRoot"];
-        RoleTimelineViewRoot: unknown;
+        /**
+         * RoleTimelineViewRoot
+         * @description 自动生成：RoleTimelineViewRoot（ 的对象形状）。
+         */
+        RoleTimelineViewRoot: {
+            /** Items */
+            items: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Next Cursor */
+            next_cursor: unknown;
+            /** Role Id */
+            role_id: string | null;
+            /** Truncated */
+            truncated: boolean | null;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * RuntimeUpdateBody
          * @description 字段名 → 提交值。None/空串 = 清除该覆盖（回落 env）；未出现的字段 = 不变。
@@ -3074,19 +3478,92 @@ export interface components {
          * @description /api/settings/memory 的顶层形状（数组包一层只为给它一个名字）。
          */
         SettingsMemoryView: components["schemas"]["SettingsMemoryViewRoot"];
-        SettingsMemoryViewRoot: unknown;
+        /**
+         * SettingsMemoryViewRoot
+         * @description 自动生成：SettingsMemoryViewRoot（ 的对象形状）。
+         */
+        SettingsMemoryViewRoot: {
+            /** Active Count */
+            active_count: number | null;
+            /** Content */
+            content: string | null;
+            /** Enabled */
+            enabled: boolean | null;
+            /** Extract Turns */
+            extract_turns: number | null;
+            /** Items */
+            items: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Limit */
+            limit: number | null;
+            /** Over Limit */
+            over_limit: boolean | null;
+            /** Role Id */
+            role_id: unknown;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * ShellReleaseView
          * @description /api/shell-release 的顶层形状（数组包一层只为给它一个名字）。
          */
         ShellReleaseView: components["schemas"]["ShellReleaseViewRoot"];
-        ShellReleaseViewRoot: unknown;
+        /**
+         * ShellReleaseViewRoot
+         * @description 自动生成：ShellReleaseViewRoot（ 的对象形状）。
+         */
+        ShellReleaseViewRoot: {
+            /** Available */
+            available: boolean | null;
+            /** Configured */
+            configured: boolean | null;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * SyncInventoryView
          * @description /api/sync/inventory 的顶层形状（数组包一层只为给它一个名字）。
          */
         SyncInventoryView: components["schemas"]["SyncInventoryViewRoot"];
-        SyncInventoryViewRoot: unknown;
+        /**
+         * SyncInventoryViewItemsItem
+         * @description 自动生成：SyncInventoryViewItemsItem（itemsItem 的对象形状）。
+         */
+        SyncInventoryViewItemsItem: {
+            /** At */
+            at: string | null;
+            /** Count */
+            count: number | null;
+            /** Hash */
+            hash: string | null;
+            /** Head */
+            head: string | null;
+            /** Ident */
+            ident: string | null;
+            /** Kind */
+            kind: string | null;
+            /** Preview */
+            preview: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SyncInventoryViewRoot
+         * @description 自动生成：SyncInventoryViewRoot（ 的对象形状）。
+         */
+        SyncInventoryViewRoot: {
+            /** Items */
+            items: components["schemas"]["SyncInventoryViewItemsItem"][] | null;
+            /** Kinds */
+            kinds: string[] | null;
+            /** Skipped */
+            skipped: {
+                [key: string]: unknown;
+            }[] | null;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * TargetBody
          * @description 打到哪台、用哪个身份打。`secret` 只在本次请求内存活，绝不回显。
@@ -3107,7 +3584,51 @@ export interface components {
          * @description /api/tools/catalog 的顶层形状（数组包一层只为给它一个名字）。
          */
         ToolsCatalog: components["schemas"]["ToolsCatalogRoot"];
-        ToolsCatalogRoot: unknown;
+        /**
+         * ToolsCatalogDomains
+         * @description 自动生成：ToolsCatalogDomains（domains 的对象形状）。
+         */
+        ToolsCatalogDomains: {
+            /** Health */
+            health: components["schemas"]["ToolsCatalogDomains_healthItem"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ToolsCatalogDomains_healthItem
+         * @description 自动生成：ToolsCatalogDomains_healthItem（domains_healthItem 的对象形状）。
+         */
+        ToolsCatalogDomains_healthItem: {
+            /** Description */
+            description: unknown;
+            /** Name */
+            name: unknown;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ToolsCatalogKernelItem
+         * @description 自动生成：ToolsCatalogKernelItem（kernelItem 的对象形状）。
+         */
+        ToolsCatalogKernelItem: {
+            /** Description */
+            description: string | null;
+            /** Name */
+            name: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ToolsCatalogRoot
+         * @description 自动生成：ToolsCatalogRoot（ 的对象形状）。
+         */
+        ToolsCatalogRoot: {
+            domains: components["schemas"]["ToolsCatalogDomains"] | null;
+            /** Kernel */
+            kernel: components["schemas"]["ToolsCatalogKernelItem"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * UnloadRequest
          * @description `model` 省略 = 卸掉当前驻留的全部模型（用户要的通常就是这个：把显存还回来）。
@@ -3121,7 +3642,30 @@ export interface components {
          * @description /api/update-check 的顶层形状（数组包一层只为给它一个名字）。
          */
         UpdateCheckView: components["schemas"]["UpdateCheckViewRoot"];
-        UpdateCheckViewRoot: unknown;
+        /**
+         * UpdateCheckViewRoot
+         * @description 自动生成：UpdateCheckViewRoot（ 的对象形状）。
+         */
+        UpdateCheckViewRoot: {
+            /** Current */
+            current: string | null;
+            /** Error */
+            error: unknown;
+            /** File Name */
+            file_name: unknown;
+            /** Has Update */
+            has_update: boolean | null;
+            /** Latest */
+            latest: string | null;
+            /** Size Bytes */
+            size_bytes: unknown;
+            /** Source */
+            source: string | null;
+            /** Url */
+            url: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -3148,13 +3692,53 @@ export interface components {
          * @description /api/workspace/dir 的顶层形状（数组包一层只为给它一个名字）。
          */
         WorkspaceDirView: components["schemas"]["WorkspaceDirViewRoot"];
-        WorkspaceDirViewRoot: unknown;
+        /**
+         * WorkspaceDirViewRoot
+         * @description 自动生成：WorkspaceDirViewRoot（ 的对象形状）。
+         */
+        WorkspaceDirViewRoot: {
+            /** Overridden */
+            overridden: boolean | null;
+            /** Path */
+            path: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * WorkspaceTreeView
          * @description /api/workspace/tree 的顶层形状（数组包一层只为给它一个名字）。
          */
         WorkspaceTreeView: components["schemas"]["WorkspaceTreeViewRoot"];
-        WorkspaceTreeViewRoot: unknown;
+        /**
+         * WorkspaceTreeViewEntriesItem
+         * @description 自动生成：WorkspaceTreeViewEntriesItem（entriesItem 的对象形状）。
+         */
+        WorkspaceTreeViewEntriesItem: {
+            /** Is Dir */
+            is_dir: boolean | null;
+            /** Name */
+            name: string | null;
+            /** Size */
+            size: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * WorkspaceTreeViewRoot
+         * @description 自动生成：WorkspaceTreeViewRoot（ 的对象形状）。
+         */
+        WorkspaceTreeViewRoot: {
+            /** Entries */
+            entries: components["schemas"]["WorkspaceTreeViewEntriesItem"][] | null;
+            /** Parent */
+            parent: string | null;
+            /** Path */
+            path: string | null;
+            /** Truncated */
+            truncated: boolean | null;
+        } & {
+            [key: string]: unknown;
+        };
     };
     responses: never;
     parameters: never;

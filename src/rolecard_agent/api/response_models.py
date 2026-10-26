@@ -47,7 +47,7 @@ class PetsViewRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -88,7 +88,7 @@ class PetsViewPacksItem(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -132,7 +132,7 @@ class PetsViewPacksItem_rows(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -170,7 +170,7 @@ class PetsViewPacksItem_motions(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -207,7 +207,7 @@ class ToolsCatalogRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -245,7 +245,7 @@ class ToolsCatalogKernelItem(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -283,7 +283,7 @@ class ToolsCatalogDomains(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -320,7 +320,7 @@ class ToolsCatalogDomains_healthItem(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -358,7 +358,7 @@ class KnowledgeScopesViewRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -395,7 +395,7 @@ class LocalServiceViewRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -438,7 +438,7 @@ class McpServersViewRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -476,7 +476,7 @@ class RagMetricsViewRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -518,7 +518,7 @@ class RagMetricsViewP50(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -558,7 +558,7 @@ class RagMetricsViewP95(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -598,7 +598,7 @@ class RagMetricsViewP99(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -638,7 +638,7 @@ class ReachoutsViewRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -680,7 +680,7 @@ class ReachoutsViewUnread_by_role(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -717,7 +717,7 @@ class RecordsViewRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -757,7 +757,7 @@ class SettingsMemoryViewRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -801,7 +801,7 @@ class ModelProvidersViewRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -838,7 +838,7 @@ class ModelProvidersViewProvidersItem(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -880,7 +880,7 @@ class ModelSettingsViewRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -919,7 +919,7 @@ class ModelSettingsViewProvidersItem(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -964,7 +964,7 @@ class ShellReleaseViewRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -1002,7 +1002,7 @@ class SyncInventoryViewRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -1041,7 +1041,7 @@ class SyncInventoryViewItemsItem(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -1084,7 +1084,7 @@ class UpdateCheckViewRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -1128,7 +1128,7 @@ class OrphanUploadsViewRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -1169,7 +1169,7 @@ class WorkspaceDirViewRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -1207,7 +1207,7 @@ class WorkspaceTreeViewRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -1247,7 +1247,7 @@ class WorkspaceTreeViewEntriesItem(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -1286,7 +1286,7 @@ class HealthViewRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -1328,7 +1328,7 @@ class HealthViewBuild(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -1367,7 +1367,7 @@ class HealthDeepViewRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -1405,7 +1405,7 @@ class HealthDeepViewChecks(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -1444,7 +1444,7 @@ class HealthDeepViewChecks_sqlite(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -1482,7 +1482,7 @@ class HealthDeepViewChecks_chroma(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -1520,7 +1520,7 @@ class HealthDeepViewChecks_models(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -1558,7 +1558,7 @@ class ApprovalsViewRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -1596,7 +1596,7 @@ class AuditViewItem(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -1638,7 +1638,7 @@ class DomainsViewItem(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
@@ -1676,7 +1676,7 @@ class RoleTimelineViewRoot(BaseModel):
         return data
 
     @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any) -> Any:
+    def _drop_filled(self, handler: Any):
         """把"补出来的键"裁掉 —— 只留端点真给过的。"""
         data = handler(self)
         given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)

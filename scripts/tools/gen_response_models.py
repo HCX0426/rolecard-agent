@@ -277,7 +277,10 @@ def _build(
             "        return data",
             "",
             '    @model_serializer(mode="wrap")',
-            "    def _drop_filled(self, handler: Any) -> Any:",
+            # **返回注解必须留空**：标 `-> Any` 会让 Pydantic 把序列化 schema 整体
+            # 算成 Any ⇒ openapi 里该模型变成 `{}`（实测全部生成模型在 app.openapi()
+            # 中零字段，前端拿不到契约）。handler 的参数注解不受影响，保留。
+            "    def _drop_filled(self, handler: Any):",
             '        """把"补出来的键"裁掉 —— 只留端点真给过的。"""',
             "        data = handler(self)",
             "        given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)",
