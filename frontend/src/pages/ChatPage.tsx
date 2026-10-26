@@ -204,8 +204,11 @@ export default function ChatPage({
       setHistoryTruncated(page.truncated ? page.total - page.messages.length : 0);
       seenTotalRef.current = page.total; // 记账：别处的写入靠这个数与探针比对
       setSessionModel(detail.model_name);
-      setTrim(ctxInfo.trimmed > 0 ? { dropped: ctxInfo.trimmed, kept: ctxInfo.kept } : null);
-      setCtxBudget(ctxInfo.budget);
+      // 生成契约把这几个数字放宽成 number | null（样本证明不了"永远有值"）：
+      // 读不到就按 0 —— 0 正是"没裁过 / 没预算"的既有语义，不发明第三种状态。
+      const trimmed = ctxInfo.trimmed ?? 0;
+      setTrim(trimmed > 0 ? { dropped: trimmed, kept: ctxInfo.kept ?? 0 } : null);
+      setCtxBudget(ctxInfo.budget ?? 0);
       setStatus("");
     } catch (e) {
       setStatus(`加载历史失败：${describeError(e)}`, "warn");
@@ -240,7 +243,11 @@ export default function ChatPage({
    *  角色是可选的：不指定即用默认角色（内置「通用助手」），之后随时在功能行切换。
    *  返回可用的 thread_id（新建或复用的），失败返回 null。 */
   async function createSession(): Promise<string | null> {
-    const empty = sessions.find((s) => s.is_blank && !s.is_proactive);
+    // thread_id 是寻址键；生成契约放宽成 string | null 后，没带 id 的行**不是**可复用的
+    // 空白会话（点不开也删不掉）—— 条件里一并滤掉，走新建那条路。
+    const empty = sessions.find(
+      (s): s is ThreadRow & { thread_id: string } => Boolean(s.is_blank && !s.is_proactive && s.thread_id),
+    );
     if (empty) {
       setStatus("上一次的对话还是空白，已直接为你打开");
       if (sessionId !== empty.thread_id) await selectSession(empty.thread_id);

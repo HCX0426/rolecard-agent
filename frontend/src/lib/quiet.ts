@@ -94,7 +94,8 @@ export function quietParts(r: QuietStatus, now: Date = new Date()): QuietParts {
   if (!r.why) return { head: `${r.role_name} 现在随时能开口`, badge: "", when: "", ready: true };
   return {
     head: `${r.role_name} 静默中 · ${r.why}`,
-    badge: r.streak > 0 ? `连着 ${r.streak} 条没被回 · 已退避` : "",
+    // streak 在生成契约里放宽成了 number | null（样本证明不了"永远有值"）；没量过 = 没退避。
+    badge: (r.streak ?? 0) > 0 ? `连着 ${r.streak} 条没被回 · 已退避` : "",
     when,
     ready: false,
   };
