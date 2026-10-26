@@ -168,7 +168,7 @@ async function toLocal<T>(method: string, url: string, body?: unknown, timeout =
     clearTimeout(timer);
   }
   const text = await res.text();
-  let raw: unknown = null;
+  let raw: unknown; // 初值 null 是死赋值：try/catch 两个分支必写一遍
   try {
     raw = text ? JSON.parse(text) : null;
   } catch {

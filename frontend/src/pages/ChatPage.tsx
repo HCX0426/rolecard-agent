@@ -125,9 +125,11 @@ export default function ChatPage({
   // 状态提示统一走 toast（可叠加、自动消失、带语气）—— 一行 status 会被后来的消息覆盖，
   // 上一个操作的结果还没看清就没了。保留 setStatus 这个名字，既有调用点无需改动。
   const { push: pushToast } = useToast();
-  const setStatus = (text: string, tone: Tone = "info") => {
+  // useCallback：push 在 Toast provider 里是稳定引用，所以 setStatus 也稳定 ——
+  // 下面那个挂载 effect 才能把它诚实写进依赖（ESLint exhaustive-deps 报的就是漏它）。
+  const setStatus = useCallback((text: string, tone: Tone = "info") => {
     if (text) pushToast(text, tone);
-  };
+  }, [pushToast]);
 
   // 会话列表（含移动端抽屉开关）抽到 hooks/useSessions。
   const { sessions, sessionsOpen, setSessionsOpen, refreshSessions } = useSessions();
@@ -136,7 +138,7 @@ export default function ChatPage({
     refreshSessions().catch((e) => setStatus(`加载对话失败：${e.message}`, "warn"));
     api.get<RoleCard[]>("/api/roles").then(setRoles).catch(() => {});
     // 模型行由 ChatToolbar 自己拉（hooks/useModelBackends）：这一页除了生效模型的名字不碰它。
-  }, [refreshSessions]);
+  }, [refreshSessions, setStatus]);
 
   // 头部的角色选择跟随当前会话（切会话时显示该会话自己的角色）
   useEffect(() => {

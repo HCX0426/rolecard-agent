@@ -141,7 +141,7 @@ describe("reduceChatEvent", () => {
   });
 
   it("error：追加一行 [错误]，并把仍在执行的卡片标红", () => {
-    let b = reduceChatEvent(bubble({ text: "开头" }), { type: "tool_call", name: "t" }).bubble;
+    const b = reduceChatEvent(bubble({ text: "开头" }), { type: "tool_call", name: "t" }).bubble;
     const r = reduceChatEvent(b, { type: "error", detail: "模型调用失败" });
     expect(r.bubble.text).toBe("开头\n[错误] 模型调用失败");
     expect(r.bubble.tools[0].status).toBe("error");

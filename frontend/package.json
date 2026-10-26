@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "lint": "eslint . --max-warnings 33 --cache --cache-location node_modules/.cache/eslint",
+    "build": "tsc --noEmit && npm run lint && vite build",
     "preview": "vite preview",
     "test": "vitest run --coverage",
     "api:types": "openapi-typescript ../frontend/openapi.json -o src/api/schema.gen.ts",
@@ -22,6 +23,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@tailwindcss/vite": "^4.1.4",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
@@ -29,11 +31,16 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "@vitest/coverage-v8": "^5.0.3",
+    "eslint": "^10.13.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.13.0",
     "jsdom": "^30.0.1",
     "openapi-typescript": "^7.13.0",
     "source-map-js": "^1.2.2",
     "tailwindcss": "^4.1.4",
     "typescript": "~5.6.3",
+    "typescript-eslint": "^8.72.0",
     "vite": "^6.0.7",
     "vitest": "^5.0.1"
   }

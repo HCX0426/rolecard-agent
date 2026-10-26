@@ -239,7 +239,7 @@ jobs:
         working-directory: shell
         run: npm run test:cleanup
 
-      - name: 构建（`npm run build` 里含 tsc --noEmit）
+      - name: 构建（`npm run build` 含 tsc --noEmit + eslint P8 + vite build）
         working-directory: frontend
         run: npm run build
 
