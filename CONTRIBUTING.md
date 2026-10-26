@@ -42,7 +42,10 @@
 7. 提交
 ```
 
-第 5、6 步不是可选的美化：`check_consistency.py` 专门用来抓"文档与代码不同步"和"旧命名残留"，它是这个仓库唯一的自动护栏。
+第 5、6 步不是可选的美化：`check_consistency.py` 抓"文档与代码不同步"和"旧命名残留"。
+（2026-10-26 订正：它已**不是**唯一的自动护栏 —— 分层门禁 `scripts/gate.py`（ruff/mypy/
+pytest/契约同步/两只文档探针）、pre-commit 静态三连、P6 集成面、P8 前端 eslint 都是；
+但"文档与代码不同步"这一族的**第一尺子**仍是它。）
 
 **第 6 步的输出不许和 `| grep`、`&&` 串在同一条命令里再决定要不要提交。** 判据要单独落盘、单独读
 退出码：`python scripts/check_consistency.py > build/cons.log 2>&1; echo exit=$?`。
