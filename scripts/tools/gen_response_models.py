@@ -81,6 +81,24 @@ READONLY_ENDPOINTS: dict[str, str] = {
     "/api/audit": "AuditView",
     "/api/domains": "DomainsView",
     "/api/roles/{role_id}/timeline": "RoleTimelineView",
+    # —— 第二批（P1b ②，2026-10-26）：种子扩面后这些端点采得到**带字段的样本**。
+    # /api/channels 的清单恒非空（宿主没注册也如实回一行形状）；那族 {thread_id} 端点
+    # 吃的是种子里建好的**主动会话线程**（确定性 id，见 _resolve_path）。
+    "/api/channels": "ChannelsView",
+    "/api/session/{thread_id}": "SessionThreadView",
+    "/api/session/{thread_id}/turn": "SessionTurnView",
+    "/api/session/{thread_id}/messages": "SessionMessagesView",
+    "/api/session/{thread_id}/context": "SessionContextView",
+}
+
+#: 路径参数 → 样本数据里的真实值。`{thread_id}` 用**主动会话的线程 id**
+#: （s_proactive_<user>_<role>）：种子里 `ensure_proactive_thread` 建的那条，恒存在。
+#: 这个串是 `core/proactive/proactive_thread.py::proactive_thread_id` 公式的展开值，
+#: 漂了 ⇒ 采样 404 ⇒ 生成器当场红（有锚点用例钉着，见
+#: tests/unit/test_response_models_seed_surface.py）。
+_SAMPLE_PARAMS: dict[str, str] = {
+    "role_id": "sample_role",
+    "thread_id": "s_proactive_local-user_sample_role",
 }
 
 _MAX_DEPTH = 4
@@ -335,6 +353,8 @@ def _seed_minimal_data(app: Any) -> None:
     """
     from fastapi.testclient import TestClient
 
+    from rolecard_agent.config import DEFAULT_SILICONFLOW_BASE_URL
+
     client = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
     # 角色卡：exemplars / knowledge_scopes 这两个数组在样本里得非空
     client.post(
@@ -353,9 +373,14 @@ def _seed_minimal_data(app: Any) -> None:
     )
     # 知识作用域：knowledge / scopes 端点的数组
     client.post("/api/knowledge/scopes", json={"name": "sample_scope"})
-    # 模型后端（含 fallback）：/api/settings/models 的 fallbacks 是**字符串数组**
-    # （后端名列表）。样本里它是空的 ⇒ 生成器推不出元素类型 ⇒ 建成 dict 型 ⇒
-    # 真实响应（fallbacks 非空）校验失败 'Input should be a valid dictionary'。
+    # 模型后端（含 fallback + 一个带 key 的凭据组）：
+    # - /api/settings/models 的 fallbacks 是**字符串数组**（后端名列表）。样本里它是空的 ⇒
+    #   生成器推不出元素类型 ⇒ 建成 dict 型 ⇒ 真实响应（fallbacks 非空）校验失败
+    #   'Input should be a valid dictionary'。
+    # - `key_masked` 在样本组都 no-key 时采成 null ⇒ Any（ProviderGroup 那族迁不动的根因）。
+    #   多给一个带 api_key 的供应商（硅基流动），这一格采成掩码字符串。
+    #   ⚠️ 整表 PUT 是**替换语义**：想同时保 fallback 与非空 fallbacks，三个后端必须在
+    #   同一次 PUT 里给全（分两次 PUT，后一次抹掉前一次的行）。
     client.put(
         "/api/settings/models",
         json={
@@ -375,9 +400,104 @@ def _seed_minimal_data(app: Any) -> None:
                     "base_url": "http://127.0.0.1:1",
                     "usage": "chat",
                 },
+                {
+                    "name": "sample_cloud",
+                    "provider": "siliconflow",
+                    "model": "sample-cloud-model",
+                    # 抄 `config.DEFAULT_SILICONFLOW_BASE_URL`，不写字面量：
+                    # "duplicated single-source literals" 尺子盯着呢（唯一归属在 config）。
+                    "base_url": DEFAULT_SILICONFLOW_BASE_URL,
+                    "api_key": "sk-sample-secret",
+                    "usage": "chat",
+                },
             ],
             "fallbacks": ["sample_fallback"],
         },
+    )
+
+    # ——— 第二批：把"从前是空数组"的那几族各喂一条最小真数据 ———
+    # MCP server：/api/mcp/servers 的 servers 从前恒空 ⇒ list[dict[str, Any]]。
+    # `enabled: False`：接线后的 rebuild 会真去连启用的 server —— 样本 URL 是死端口，
+    # 别让它每次生成/校验都在日志里挣一条"加载失败"。行本身照进列表（读侧不过滤）。
+    client.post(
+        "/api/mcp/servers",
+        json={
+            "id": "sample_mcp",
+            "display_name": "样本 MCP",
+            "url": "http://127.0.0.1:9/mcp",
+            "headers": {"Authorization": "Bearer sample"},
+            "enabled": False,
+        },
+    )
+    # 记忆行：/api/settings/memory 的 items 从前恒空。
+    client.post("/api/settings/memory/item", json={"text": "样本事实：生成器锚点"})
+    # 一条会话（走主动会话那条确定性线程，_resolve_path 用它采 {thread_id} 那族端点）。
+    client.post("/api/session/proactive", json={"role_id": "sample_role"})
+    # 一条待批命令：/api/approvals 的 items 从前恒空。**直接走服务层** —— 路由的
+    # submit 要从对话链路进来，这里只为让样本面非空。
+    _seed_approval(app)
+    # 一张"有资格主动"的角色卡：让 /api/reachouts 的 quiet 非空（ReachoutsView 最后一个松格）。
+    _seed_reachable_role(app)
+    # 一条主动开口（收件箱）：/api/reachouts 的 items 从前恒空。绑 sample_reachable
+    # （见 _seed_reachout 的注释：不许搅浑 sample_role 的 timeline 形状）。
+    _seed_reachout(app)
+    # 一份体检报告：/api/records 的 items 从前恒空（health 域的读侧）。
+    _seed_health_report(app)
+
+
+def _seed_approval(app: Any) -> None:
+    """种一条 pending 审批（不执行、不出网；只为让采样本时数组非空）。"""
+    ctx = app.state.ctx
+    ctx.approvals.submit("echo sample", cwd=None, role_id="sample_role", role_name="样本角色")
+
+
+def _seed_reachout(app: Any) -> None:
+    """种一条主动开口（收件箱）。用 features.reachout.inbox.record_reachout。
+
+    绑在 **sample_reachable** 而不是 sample_role：`/api/roles/{role_id}/timeline` 采的是
+    sample_role，往它的线上再掺一种事件（reachout 的 verb 是 null、thread 的是 "start"），
+    那个端点就"一个模型表达不了"了 —— 种子之间不许互相搅浑对方的形状。
+    """
+    from rolecard_agent.features.reachout import inbox
+
+    ctx = app.state.ctx
+    role = ctx.role_cards.get("sample_reachable")
+    inbox.record_reachout(
+        ctx.conn, role, "样本：生成器锚点", user_id=ctx.current_user(), fired_by="tick"
+    )
+
+
+def _seed_health_report(app: Any) -> None:
+    """种一份最小体检报告（health 域服务）。"""
+    ctx = app.state.ctx
+    ctx.health.create_report(
+        user_id=ctx.current_user(),
+        report_type="样本报告",
+        check_time="2026-01-01",
+        institution="生成器",
+        note=None,
+        indices=[{"index_name": "白细胞", "index_value": 6.5, "unit": "10^9/L"}],
+    )
+
+
+def _seed_reachable_role(app: Any) -> None:
+    """建一张 reachout_enabled 的角色卡（quiet_status 只列"有资格主动"的角色）。
+
+    为什么单独一张、不给 sample_role 直接开：`ensure_proactive_thread` 与采样线程
+    都绑在 sample_role 上，让**它**再带 reachout_enabled 会让 quiet 那格与收件箱耦合
+    —— 样本角色保持默认关，另建 `sample_reachable` 专供 quiet。
+    """
+    from rolecard_agent.roles.models import RoleCardCreate
+
+    ctx = app.state.ctx
+    ctx.role_cards.create(
+        RoleCardCreate(
+            role_id="sample_reachable",
+            role_name="样本（可主动）",
+            system_prompt="样本",
+            reachout_enabled=True,
+            description="生成器 quiet 样本",
+        )
     )
 
 
@@ -439,12 +559,15 @@ def _shape_is_stable(sample: Any) -> bool:
 
 
 def _resolve_path(path: str) -> str:
-    """把路径里的 `{param}` 换成样本数据里的真实 id。
+    """把路径里的 `{param}` 换成样本数据里的真实值。
 
     带路径参数的端点（`/api/roles/{role_id}/timeline`）不替换就 404 —— 采样拿不到
-    形状，模型也就推不出来。用的 id 来自**我们刚造的那张样本角色卡**。
+    形状，模型也就推不出来。用的值来自**我们刚造的样本数据**（角色卡、主动会话线程），
+    名单在 `_SAMPLE_PARAMS`。
     """
-    return path.replace("{role_id}", "sample_role")
+    for name, value in _SAMPLE_PARAMS.items():
+        path = path.replace("{" + name + "}", value)
+    return path
 
 
 def _sample(path: str) -> Any:
@@ -521,7 +644,7 @@ def generate() -> tuple[str, str | None]:
         "",
         "from pydantic import BaseModel, ConfigDict, RootModel, model_serializer, model_validator",
         "",
-        '#: 记录「端点真给了哪些键」的内部键名（序列化时按它裁剪）。',
+        "#: 记录「端点真给了哪些键」的内部键名（序列化时按它裁剪）。",
         '_GIVEN_KEYS = "__given_keys__"',
         "",
     ]

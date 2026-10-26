@@ -33,7 +33,8 @@ def require_operator(actor: Actor = Depends(get_actor)) -> Actor:
 
 
 @router.get(
-    "/api/health/deep", dependencies=[Depends(require_operator)],
+    "/api/health/deep",
+    dependencies=[Depends(require_operator)],
     response_model=HealthDeepView,
     response_model_exclude_unset=True,
 )
@@ -69,6 +70,4 @@ def metrics() -> PlainTextResponse:
     而那对未鉴权的公网访客没有理由可见。格式与"为什么只有计数没有直方图"写在
     `base/metrics` 的模块注释里；`Content-Type` 里必须带版本号 —— Prometheus 认它。
     """
-    return PlainTextResponse(
-        COUNTS.render(), media_type="text/plain; version=0.0.4; charset=utf-8"
-    )
+    return PlainTextResponse(COUNTS.render(), media_type="text/plain; version=0.0.4; charset=utf-8")

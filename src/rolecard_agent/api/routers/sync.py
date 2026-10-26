@@ -259,7 +259,7 @@ def post_import(
     try:
         outcome = sync_service.run_import(
             ctx.conn,
-                        **_local_kwargs(ctx),
+            **_local_kwargs(ctx),
             items=body.items,
             clear_kinds=body.clear_kinds,
         )
@@ -584,7 +584,7 @@ def post_pull(
             row["payload"] = {**(row.get("payload") or {}), "keep_both": True}
     applied = sync_lib.apply_import(
         ctx.conn,
-                **_local_kwargs(ctx),
+        **_local_kwargs(ctx),
         items=rows,
     )
     ctx.audit.log(
@@ -646,7 +646,7 @@ def post_reconcile(
     rows = _fetch_remote_payloads(body, pull, request=request, ctx=ctx)
     local_out = sync_lib.apply_import(
         ctx.conn,
-                **_local_kwargs(ctx),
+        **_local_kwargs(ctx),
         items=rows,
     )
     ctx.audit.log(

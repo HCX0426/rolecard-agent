@@ -154,6 +154,148 @@
     "description": "/api/approvals 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "ApprovalsView"
    },
+   "ApprovalsViewItemsItem": {
+    "additionalProperties": true,
+    "description": "自动生成：ApprovalsViewItemsItem（itemsItem 的对象形状）。",
+    "properties": {
+     "command": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Command"
+     },
+     "created_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Created At"
+     },
+     "cwd": {
+      "title": "Cwd"
+     },
+     "decide_token": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Decide Token"
+     },
+     "decide_token_ttl_seconds": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Decide Token Ttl Seconds"
+     },
+     "has_token": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Has Token"
+     },
+     "id": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Id"
+     },
+     "result": {
+      "title": "Result"
+     },
+     "role_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Role Id"
+     },
+     "role_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Role Name"
+     },
+     "status": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Status"
+     },
+     "thread_id": {
+      "title": "Thread Id"
+     },
+     "updated_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Updated At"
+     }
+    },
+    "required": [
+     "id",
+     "command",
+     "cwd",
+     "role_id",
+     "role_name",
+     "thread_id",
+     "status",
+     "result",
+     "has_token",
+     "decide_token_ttl_seconds",
+     "created_at",
+     "updated_at",
+     "decide_token"
+    ],
+    "title": "ApprovalsViewItemsItem",
+    "type": "object"
+   },
    "ApprovalsViewRoot": {
     "additionalProperties": true,
     "description": "自动生成：ApprovalsViewRoot（ 的对象形状）。",
@@ -162,8 +304,7 @@
       "anyOf": [
        {
         "items": {
-         "additionalProperties": true,
-         "type": "object"
+         "$ref": "#/components/schemas/ApprovalsViewItemsItem"
         },
         "type": "array"
        },
@@ -492,6 +633,142 @@
      }
     },
     "title": "CatalogBody",
+    "type": "object"
+   },
+   "ChannelsView": {
+    "$ref": "#/components/schemas/ChannelsViewRoot",
+    "description": "/api/channels 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "ChannelsView"
+   },
+   "ChannelsViewChannelsItem": {
+    "additionalProperties": true,
+    "description": "自动生成：ChannelsViewChannelsItem（channelsItem 的对象形状）。",
+    "properties": {
+     "blocked_reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Blocked Reason"
+     },
+     "enabled": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Enabled"
+     },
+     "id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Id"
+     },
+     "inflight_turns": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Inflight Turns"
+     },
+     "label": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Label"
+     },
+     "messages_sent": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Messages Sent"
+     },
+     "role_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Role Id"
+     },
+     "running": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Running"
+     }
+    },
+    "required": [
+     "id",
+     "label",
+     "enabled",
+     "running",
+     "blocked_reason",
+     "role_id",
+     "inflight_turns",
+     "messages_sent"
+    ],
+    "title": "ChannelsViewChannelsItem",
+    "type": "object"
+   },
+   "ChannelsViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：ChannelsViewRoot（ 的对象形状）。",
+    "properties": {
+     "channels": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/ChannelsViewChannelsItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Channels"
+     }
+    },
+    "required": [
+     "channels"
+    ],
+    "title": "ChannelsViewRoot",
     "type": "object"
    },
    "ChatMessage": {
@@ -1454,8 +1731,7 @@
       "anyOf": [
        {
         "items": {
-         "additionalProperties": true,
-         "type": "object"
+         "$ref": "#/components/schemas/McpServersViewServersItem"
         },
         "type": "array"
        },
@@ -1471,6 +1747,101 @@
      "effective_count"
     ],
     "title": "McpServersViewRoot",
+    "type": "object"
+   },
+   "McpServersViewServersItem": {
+    "additionalProperties": true,
+    "description": "自动生成：McpServersViewServersItem（serversItem 的对象形状）。",
+    "properties": {
+     "display_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Display Name"
+     },
+     "enabled": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Enabled"
+     },
+     "headers": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/McpServersViewServersItem_headers"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Id"
+     },
+     "transport": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Transport"
+     },
+     "url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Url"
+     }
+    },
+    "required": [
+     "id",
+     "display_name",
+     "transport",
+     "url",
+     "headers",
+     "enabled"
+    ],
+    "title": "McpServersViewServersItem",
+    "type": "object"
+   },
+   "McpServersViewServersItem_headers": {
+    "additionalProperties": true,
+    "description": "自动生成：McpServersViewServersItem_headers（serversItem_headers 的对象形状）。",
+    "properties": {
+     "Authorization": {
+      "title": "Authorization"
+     }
+    },
+    "required": [
+     "Authorization"
+    ],
+    "title": "McpServersViewServersItem_headers",
     "type": "object"
    },
    "MemoryBody": {
@@ -1800,174 +2171,6 @@
      "backends"
     ],
     "title": "ModelSettingsBody",
-    "type": "object"
-   },
-   "ModelSettingsView": {
-    "$ref": "#/components/schemas/ModelSettingsViewRoot",
-    "description": "/api/settings/models 的顶层形状（数组包一层只为给它一个名字）。",
-    "title": "ModelSettingsView"
-   },
-   "ModelSettingsViewProvidersItem": {
-    "additionalProperties": true,
-    "description": "自动生成：ModelSettingsViewProvidersItem（providersItem 的对象形状）。",
-    "properties": {
-     "base_url": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Base Url"
-     },
-     "has_key": {
-      "anyOf": [
-       {
-        "type": "boolean"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Has Key"
-     },
-     "id": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Id"
-     },
-     "key_masked": {
-      "title": "Key Masked"
-     },
-     "label": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Label"
-     },
-     "models": {
-      "anyOf": [
-       {
-        "items": {},
-        "type": "array"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Models"
-     },
-     "needs_key": {
-      "anyOf": [
-       {
-        "type": "boolean"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Needs Key"
-     },
-     "provider": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Provider"
-     },
-     "style": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Style"
-     }
-    },
-    "required": [
-     "id",
-     "provider",
-     "label",
-     "base_url",
-     "style",
-     "needs_key",
-     "has_key",
-     "key_masked",
-     "models"
-    ],
-    "title": "ModelSettingsViewProvidersItem",
-    "type": "object"
-   },
-   "ModelSettingsViewRoot": {
-    "additionalProperties": true,
-    "description": "自动生成：ModelSettingsViewRoot（ 的对象形状）。",
-    "properties": {
-     "default": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Default"
-     },
-     "fallbacks": {
-      "anyOf": [
-       {
-        "items": {
-         "type": "string"
-        },
-        "type": "array"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Fallbacks"
-     },
-     "providers": {
-      "anyOf": [
-       {
-        "items": {
-         "$ref": "#/components/schemas/ModelSettingsViewProvidersItem"
-        },
-        "type": "array"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Providers"
-     }
-    },
-    "required": [
-     "default",
-     "providers",
-     "fallbacks"
-    ],
-    "title": "ModelSettingsViewRoot",
     "type": "object"
    },
    "OrphanUploadsView": {
@@ -2599,6 +2802,186 @@
     "description": "/api/reachouts 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "ReachoutsView"
    },
+   "ReachoutsViewItemsItem": {
+    "additionalProperties": true,
+    "description": "自动生成：ReachoutsViewItemsItem（itemsItem 的对象形状）。",
+    "properties": {
+     "created_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Created At"
+     },
+     "dismissed_at": {
+      "title": "Dismissed At"
+     },
+     "id": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Id"
+     },
+     "read_at": {
+      "title": "Read At"
+     },
+     "role_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Role Id"
+     },
+     "role_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Role Name"
+     },
+     "seen_at": {
+      "title": "Seen At"
+     },
+     "state": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "State"
+     },
+     "text": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Text"
+     },
+     "thread_id": {
+      "title": "Thread Id"
+     }
+    },
+    "required": [
+     "id",
+     "role_id",
+     "role_name",
+     "text",
+     "state",
+     "created_at",
+     "read_at",
+     "seen_at",
+     "dismissed_at",
+     "thread_id"
+    ],
+    "title": "ReachoutsViewItemsItem",
+    "type": "object"
+   },
+   "ReachoutsViewQuietItem": {
+    "additionalProperties": true,
+    "description": "自动生成：ReachoutsViewQuietItem（quietItem 的对象形状）。",
+    "properties": {
+     "next_ok_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Next Ok At"
+     },
+     "role_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Role Id"
+     },
+     "role_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Role Name"
+     },
+     "streak": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Streak"
+     },
+     "unread": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Unread"
+     },
+     "why": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Why"
+     }
+    },
+    "required": [
+     "role_id",
+     "role_name",
+     "why",
+     "next_ok_at",
+     "streak",
+     "unread"
+    ],
+    "title": "ReachoutsViewQuietItem",
+    "type": "object"
+   },
    "ReachoutsViewRoot": {
     "additionalProperties": true,
     "description": "自动生成：ReachoutsViewRoot（ 的对象形状）。",
@@ -2618,8 +3001,7 @@
       "anyOf": [
        {
         "items": {
-         "additionalProperties": true,
-         "type": "object"
+         "$ref": "#/components/schemas/ReachoutsViewItemsItem"
         },
         "type": "array"
        },
@@ -2644,8 +3026,7 @@
       "anyOf": [
        {
         "items": {
-         "additionalProperties": true,
-         "type": "object"
+         "$ref": "#/components/schemas/ReachoutsViewQuietItem"
         },
         "type": "array"
        },
@@ -2691,7 +3072,22 @@
    "ReachoutsViewUnread_by_role": {
     "additionalProperties": true,
     "description": "自动生成：ReachoutsViewUnread_by_role（unread_by_role 的对象形状）。",
-    "properties": {},
+    "properties": {
+     "sample_reachable": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Sample Reachable"
+     }
+    },
+    "required": [
+     "sample_reachable"
+    ],
     "title": "ReachoutsViewUnread_by_role",
     "type": "object"
    },
@@ -3380,6 +3776,92 @@
     "description": "/api/roles/{role_id}/timeline 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "RoleTimelineView"
    },
+   "RoleTimelineViewItemsItem": {
+    "additionalProperties": true,
+    "description": "自动生成：RoleTimelineViewItemsItem（itemsItem 的对象形状）。",
+    "properties": {
+     "at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "At"
+     },
+     "from_text": {
+      "title": "From Text"
+     },
+     "kind": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Kind"
+     },
+     "ref_id": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ref Id"
+     },
+     "text": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Text"
+     },
+     "thread_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Thread Id"
+     },
+     "verb": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Verb"
+     }
+    },
+    "required": [
+     "kind",
+     "at",
+     "text",
+     "verb",
+     "from_text",
+     "thread_id",
+     "ref_id"
+    ],
+    "title": "RoleTimelineViewItemsItem",
+    "type": "object"
+   },
    "RoleTimelineViewRoot": {
     "additionalProperties": true,
     "description": "自动生成：RoleTimelineViewRoot（ 的对象形状）。",
@@ -3388,8 +3870,7 @@
       "anyOf": [
        {
         "items": {
-         "additionalProperties": true,
-         "type": "object"
+         "$ref": "#/components/schemas/RoleTimelineViewItemsItem"
         },
         "type": "array"
        },
@@ -3458,6 +3939,57 @@
     "title": "RuntimeUpdateBody",
     "type": "object"
    },
+   "SessionContextView": {
+    "$ref": "#/components/schemas/SessionContextViewRoot",
+    "description": "/api/session/{thread_id}/context 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "SessionContextView"
+   },
+   "SessionContextViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：SessionContextViewRoot（ 的对象形状）。",
+    "properties": {
+     "budget": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Budget"
+     },
+     "kept": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Kept"
+     },
+     "trimmed": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Trimmed"
+     }
+    },
+    "required": [
+     "trimmed",
+     "kept",
+     "budget"
+    ],
+    "title": "SessionContextViewRoot",
+    "type": "object"
+   },
    "SessionCreate": {
     "description": "Create-session request. Omitting `role_id` binds the default assistant.",
     "properties": {
@@ -3474,6 +4006,77 @@
      }
     },
     "title": "SessionCreate",
+    "type": "object"
+   },
+   "SessionMessagesView": {
+    "$ref": "#/components/schemas/SessionMessagesViewRoot",
+    "description": "/api/session/{thread_id}/messages 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "SessionMessagesView"
+   },
+   "SessionMessagesViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：SessionMessagesViewRoot（ 的对象形状）。",
+    "properties": {
+     "inflight": {
+      "title": "Inflight"
+     },
+     "limit": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Limit"
+     },
+     "messages": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Messages"
+     },
+     "total": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Total"
+     },
+     "truncated": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Truncated"
+     }
+    },
+    "required": [
+     "messages",
+     "total",
+     "limit",
+     "truncated",
+     "inflight"
+    ],
+    "title": "SessionMessagesViewRoot",
     "type": "object"
    },
    "SessionPatch": {
@@ -3529,19 +4132,364 @@
     "title": "SessionPatch",
     "type": "object"
    },
+   "SessionThreadView": {
+    "$ref": "#/components/schemas/SessionThreadViewRoot",
+    "description": "/api/session/{thread_id} 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "SessionThreadView"
+   },
+   "SessionThreadViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：SessionThreadViewRoot（ 的对象形状）。",
+    "properties": {
+     "agent_mode": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Agent Mode"
+     },
+     "model_name": {
+      "title": "Model Name"
+     },
+     "role_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Role Id"
+     },
+     "role_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Role Name"
+     },
+     "thread_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Thread Id"
+     },
+     "user_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "User Id"
+     }
+    },
+    "required": [
+     "thread_id",
+     "user_id",
+     "role_id",
+     "role_name",
+     "model_name",
+     "agent_mode"
+    ],
+    "title": "SessionThreadViewRoot",
+    "type": "object"
+   },
+   "SessionTurnView": {
+    "$ref": "#/components/schemas/SessionTurnViewRoot",
+    "description": "/api/session/{thread_id}/turn 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "SessionTurnView"
+   },
+   "SessionTurnViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：SessionTurnViewRoot（ 的对象形状）。",
+    "properties": {
+     "inflight": {
+      "title": "Inflight"
+     }
+    },
+    "required": [
+     "inflight"
+    ],
+    "title": "SessionTurnViewRoot",
+    "type": "object"
+   },
    "SessionsView": {
     "description": "/api/sessions 的顶层形状（数组包一层只为给它一个名字）。",
     "items": {
-     "additionalProperties": true,
-     "type": "object"
+     "$ref": "#/components/schemas/SessionsViewItem"
     },
     "title": "SessionsView",
     "type": "array"
+   },
+   "SessionsViewItem": {
+    "additionalProperties": true,
+    "description": "自动生成：SessionsViewItem（Item 的对象形状）。",
+    "properties": {
+     "agent_mode": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Agent Mode"
+     },
+     "is_blank": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Is Blank"
+     },
+     "is_proactive": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Is Proactive"
+     },
+     "role_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Role Id"
+     },
+     "role_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Role Name"
+     },
+     "thread_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Thread Id"
+     },
+     "title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Title"
+     },
+     "updated_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Updated At"
+     }
+    },
+    "required": [
+     "thread_id",
+     "title",
+     "role_id",
+     "role_name",
+     "agent_mode",
+     "updated_at",
+     "is_proactive",
+     "is_blank"
+    ],
+    "title": "SessionsViewItem",
+    "type": "object"
    },
    "SettingsMemoryView": {
     "$ref": "#/components/schemas/SettingsMemoryViewRoot",
     "description": "/api/settings/memory 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "SettingsMemoryView"
+   },
+   "SettingsMemoryViewItemsItem": {
+    "additionalProperties": true,
+    "description": "自动生成：SettingsMemoryViewItemsItem（itemsItem 的对象形状）。",
+    "properties": {
+     "created_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Created At"
+     },
+     "hit_count": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Hit Count"
+     },
+     "id": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Id"
+     },
+     "importance": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Importance"
+     },
+     "invalidated_at": {
+      "title": "Invalidated At"
+     },
+     "last_hit_at": {
+      "title": "Last Hit At"
+     },
+     "pinned": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Pinned"
+     },
+     "role_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Role Id"
+     },
+     "source": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Source"
+     },
+     "superseded_by": {
+      "title": "Superseded By"
+     },
+     "text": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Text"
+     },
+     "uid": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Uid"
+     },
+     "user_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "User Id"
+     }
+    },
+    "required": [
+     "id",
+     "user_id",
+     "uid",
+     "role_id",
+     "text",
+     "source",
+     "pinned",
+     "hit_count",
+     "importance",
+     "last_hit_at",
+     "invalidated_at",
+     "superseded_by",
+     "created_at"
+    ],
+    "title": "SettingsMemoryViewItemsItem",
+    "type": "object"
    },
    "SettingsMemoryViewRoot": {
     "additionalProperties": true,
@@ -3595,8 +4543,7 @@
       "anyOf": [
        {
         "items": {
-         "additionalProperties": true,
-         "type": "object"
+         "$ref": "#/components/schemas/SettingsMemoryViewItemsItem"
         },
         "type": "array"
        },
@@ -3819,8 +4766,7 @@
       "anyOf": [
        {
         "items": {
-         "additionalProperties": true,
-         "type": "object"
+         "$ref": "#/components/schemas/SyncInventoryViewSkippedItem"
         },
         "type": "array"
        },
@@ -3837,6 +4783,64 @@
      "kinds"
     ],
     "title": "SyncInventoryViewRoot",
+    "type": "object"
+   },
+   "SyncInventoryViewSkippedItem": {
+    "additionalProperties": true,
+    "description": "自动生成：SyncInventoryViewSkippedItem（skippedItem 的对象形状）。",
+    "properties": {
+     "ident": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ident"
+     },
+     "kind": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Kind"
+     },
+     "preview": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Preview"
+     },
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason"
+     }
+    },
+    "required": [
+     "kind",
+     "ident",
+     "reason",
+     "preview"
+    ],
+    "title": "SyncInventoryViewSkippedItem",
     "type": "object"
    },
    "TargetBody": {
@@ -4585,9 +5589,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "additionalProperties": true,
-         "title": "Response List Channels Api Channels Get",
-         "type": "object"
+         "$ref": "#/components/schemas/ChannelsView"
         }
        }
       },
@@ -6660,7 +7662,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Get Session Api Session  Thread Id  Get"
+         "$ref": "#/components/schemas/SessionThreadView"
         }
        }
       },
@@ -6748,7 +7750,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Get Session Context Api Session  Thread Id  Context Get"
+         "$ref": "#/components/schemas/SessionContextView"
         }
        }
       },
@@ -6839,9 +7841,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "additionalProperties": true,
-         "title": "Response Get Session Messages Api Session  Thread Id  Messages Get",
-         "type": "object"
+         "$ref": "#/components/schemas/SessionMessagesView"
         }
        }
       },
@@ -7023,9 +8023,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "additionalProperties": true,
-         "title": "Response Get Session Turn Api Session  Thread Id  Turn Get",
-         "type": "object"
+         "$ref": "#/components/schemas/SessionTurnView"
         }
        }
       },
@@ -7596,7 +8594,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/ModelSettingsView"
+         "title": "Response Get Model Settings Api Settings Models Get"
         }
        }
       },

@@ -14,11 +14,7 @@ from pydantic import BaseModel, Field
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.api.errors import value_error_to_http
-from rolecard_agent.api.response_models import (
-    ModelProvidersView,
-    ModelSettingsView,
-    SettingsMemoryView,
-)
+from rolecard_agent.api.response_models import ModelProvidersView, SettingsMemoryView
 from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.base.text import text_of
 from rolecard_agent.config import SECRET_FIELD_NAMES, Settings
@@ -84,8 +80,6 @@ def _models_payload(ctx: AppContext) -> dict[str, object]:
 
 @router.get(
     "/api/settings/models",
-    response_model=ModelSettingsView,
-    response_model_exclude_unset=True,
 )
 def get_model_settings(ctx: AppContext = Depends(get_context)) -> object:
     """模型设置。api_key 永不回明文 —— 只有 has_key 掩码预览。

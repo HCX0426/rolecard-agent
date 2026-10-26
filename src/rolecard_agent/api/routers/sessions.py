@@ -24,7 +24,13 @@ from rolecard_agent.api.deps import (
     get_thread,
 )
 from rolecard_agent.api.message_view import expand_to_turns, serialize_message
-from rolecard_agent.api.response_models import SessionsView
+from rolecard_agent.api.response_models import (
+    SessionContextView,
+    SessionMessagesView,
+    SessionsView,
+    SessionThreadView,
+    SessionTurnView,
+)
 from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.config import Settings
 from rolecard_agent.core import model_settings
@@ -193,7 +199,11 @@ def proactive_session_of(
     return {"thread_id": tid if session_service.exists(ctx.conn, tid) else None, "role_id": role_id}
 
 
-@router.get("/api/session/{thread_id}")
+@router.get(
+    "/api/session/{thread_id}",
+    response_model=SessionThreadView,
+    response_model_exclude_unset=True,
+)
 def get_session(thread_id: str, ctx: AppContext = Depends(get_context)) -> object:
     row = get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
     # 会话指向已被删除的角色：会话本身还在，角色信息降级为空（图侧有同样的兜底）。
@@ -271,9 +281,7 @@ def patch_session(
         if mode is not None and mode not in session_service.MODE_CHOICES:
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    f"未知对话模式 {mode!r}；可用：{' / '.join(session_service.MODE_CHOICES)}"
-                ),
+                detail=(f"未知对话模式 {mode!r}；可用：{' / '.join(session_service.MODE_CHOICES)}"),
             )
         session_service.set_mode(conn, thread_id, mode)
         ctx.audit.log(
@@ -301,9 +309,7 @@ def patch_session(
         "title": row["title"] if row else None,
         "model_name": row["model_name"] if row else None,
         "agent_mode": (
-            session_service.resolve_agent_mode(row["agent_mode"], ctx.settings)
-            if row
-            else "chat"
+            session_service.resolve_agent_mode(row["agent_mode"], ctx.settings) if row else "chat"
         ),
     }
 
@@ -513,9 +519,7 @@ def _stream_turn(
             tracer=ctx.tracer,
             usage_recorder=_usage_ledger(
                 ctx.conn,
-                ctx.runtime.effective_for(user_id).backend_name(
-                    session_model or role.model_name
-                ),
+                ctx.runtime.effective_for(user_id).backend_name(session_model or role.model_name),
                 ctx.tracer,
                 user_id=user_id,
             ),
@@ -761,9 +765,7 @@ def edit_message_and_regenerate(
         role=role,
         user_id=user_id,
         session_model=session_model,
-        after_turn=lambda appended: _bump_count_committed(
-            ctx, thread_id=thread_id, delta=appended
-        ),
+        after_turn=lambda appended: _bump_count_committed(ctx, thread_id=thread_id, delta=appended),
     )
 
 
@@ -836,7 +838,11 @@ def inflight_payload(thread_id: str) -> dict[str, object] | None:
     return None if text is None else {"text": text}
 
 
-@router.get("/api/session/{thread_id}/turn")
+@router.get(
+    "/api/session/{thread_id}/turn",
+    response_model=SessionTurnView,
+    response_model_exclude_unset=True,
+)
 def get_session_turn(thread_id: str, ctx: AppContext = Depends(get_context)) -> dict[str, object]:
     """ "这一条此刻有没有人在说、说到哪儿了"——**只查进程内登记，不碰检查点**。
 
@@ -866,7 +872,11 @@ def _read_snapshot(ctx: AppContext, thread_id: str) -> Any:
     return ctx.app_state["graph"].get_state({"configurable": {"thread_id": thread_id}})
 
 
-@router.get("/api/session/{thread_id}/messages")
+@router.get(
+    "/api/session/{thread_id}/messages",
+    response_model=SessionMessagesView,
+    response_model_exclude_unset=True,
+)
 def get_session_messages(
     thread_id: str,
     ctx: AppContext = Depends(get_context),
@@ -930,7 +940,11 @@ def get_session_messages(
 # 清单：它是无状态的模型工具调用，与"会话"毫无关系 —— 长在这里是杂物间的开始）。
 
 
-@router.get("/api/session/{thread_id}/context")
+@router.get(
+    "/api/session/{thread_id}/context",
+    response_model=SessionContextView,
+    response_model_exclude_unset=True,
+)
 def get_session_context(thread_id: str, ctx: AppContext = Depends(get_context)) -> object:
     """这一会话最近一轮的**上下文预算事实**：模型实际看到了多少条历史、被裁掉多少条。
 

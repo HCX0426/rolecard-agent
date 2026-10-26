@@ -59,6 +59,12 @@ WIRING: dict[str, tuple[str, str]] = {
     "/api/audit": ("AuditView", "console.py"),
     "/api/domains": ("DomainsView", "domains.py"),
     "/api/roles/{role_id}/timeline": ("RoleTimelineView", "roles.py"),
+    # 第二批（P1b ②，2026-10-26）：与 gen_response_models 的白名单同集合（锚点用例钉着）。
+    "/api/channels": ("ChannelsView", "mcp.py"),
+    "/api/session/{thread_id}": ("SessionThreadView", "sessions.py"),
+    "/api/session/{thread_id}/turn": ("SessionTurnView", "sessions.py"),
+    "/api/session/{thread_id}/messages": ("SessionMessagesView", "sessions.py"),
+    "/api/session/{thread_id}/context": ("SessionContextView", "sessions.py"),
 }
 
 
@@ -133,6 +139,23 @@ def _rewrite_decorator(block: list[str], model: str | None) -> list[str]:
     return out
 
 
+def _drop_response_models_imports(text: str) -> str:
+    """删掉 `from rolecard_agent.api.response_models import ...` 的**整条语句**。
+
+    按 AST 的 lineno..end_lineno 删行，不按正则：正则只认单行形状，而仓库里两种形状
+    都在用（`from ... import A, B` 一行版；console.py / settings.py 的括号多行版）。
+    多行版被正则删头只留 `    AuditView,` 孤儿行 ⇒ 下一步 import 插入后整文件语法坏。
+    """
+    lines = text.split(chr(10))
+    drop: set[int] = set()
+    for node in ast.parse(text).body:
+        if isinstance(node, ast.ImportFrom) and node.module == "rolecard_agent.api.response_models":
+            drop.update(range(node.lineno - 1, (node.end_lineno or node.lineno)))
+    if not drop:
+        return text
+    return chr(10).join(ln for i, ln in enumerate(lines) if i not in drop)
+
+
 def _wire_file(path: pathlib.Path, entries: dict[str, str | None]) -> tuple[str, int]:
     """给一个文件里的若干端点接上模型。返回 (新内容, 改动处数)。
 
@@ -179,14 +202,12 @@ def _wire_file(path: pathlib.Path, entries: dict[str, str | None]) -> tuple[str,
     for start, end, block in sorted(edits, reverse=True):
         lines[start : end + 1] = block
 
-    # import：旧的删掉（它列的模型可能这轮已经不存在），新的按本轮接的写
+    # import：旧的删掉（它列的模型可能这轮已经不存在），新的按本轮接的写。
+    # **旧行的删除走 AST 范围而不是正则**：正则 `^from ... import .*$` 只删得出单行
+    # 形状，多行括号 import（console.py / settings.py 就是）会把 `AuditView,` 那几行
+    # 孤儿留在原地 ⇒ 插新行后 parse 当场 IndentationError（2026-10-26 实测）。
     new_text = chr(10).join(lines)
-    new_text = re.sub(
-        r"^from rolecard_agent[.]api[.]response_models import .*$",
-        "",
-        new_text,
-        flags=re.M,
-    )
+    new_text = _drop_response_models_imports(new_text)
     models = sorted({m for m in entries.values() if m})
     if models:
         tree2 = ast.parse(new_text)

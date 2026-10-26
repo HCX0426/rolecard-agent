@@ -2246,14 +2246,46 @@ export interface components {
          */
         ApprovalsView: components["schemas"]["ApprovalsViewRoot"];
         /**
+         * ApprovalsViewItemsItem
+         * @description 自动生成：ApprovalsViewItemsItem（itemsItem 的对象形状）。
+         */
+        ApprovalsViewItemsItem: {
+            /** Command */
+            command: string | null;
+            /** Created At */
+            created_at: string | null;
+            /** Cwd */
+            cwd: unknown;
+            /** Decide Token */
+            decide_token: string | null;
+            /** Decide Token Ttl Seconds */
+            decide_token_ttl_seconds: number | null;
+            /** Has Token */
+            has_token: boolean | null;
+            /** Id */
+            id: number | null;
+            /** Result */
+            result: unknown;
+            /** Role Id */
+            role_id: string | null;
+            /** Role Name */
+            role_name: string | null;
+            /** Status */
+            status: string | null;
+            /** Thread Id */
+            thread_id: unknown;
+            /** Updated At */
+            updated_at: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * ApprovalsViewRoot
          * @description 自动生成：ApprovalsViewRoot（ 的对象形状）。
          */
         ApprovalsViewRoot: {
             /** Items */
-            items: {
-                [key: string]: unknown;
-            }[] | null;
+            items: components["schemas"]["ApprovalsViewItemsItem"][] | null;
             /** Pending */
             pending: number | null;
         } & {
@@ -2367,6 +2399,45 @@ export interface components {
             provider?: string | null;
             /** Provider Id */
             provider_id?: string | null;
+        };
+        /**
+         * ChannelsView
+         * @description /api/channels 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        ChannelsView: components["schemas"]["ChannelsViewRoot"];
+        /**
+         * ChannelsViewChannelsItem
+         * @description 自动生成：ChannelsViewChannelsItem（channelsItem 的对象形状）。
+         */
+        ChannelsViewChannelsItem: {
+            /** Blocked Reason */
+            blocked_reason: string | null;
+            /** Enabled */
+            enabled: boolean | null;
+            /** Id */
+            id: string | null;
+            /** Inflight Turns */
+            inflight_turns: number | null;
+            /** Label */
+            label: string | null;
+            /** Messages Sent */
+            messages_sent: number | null;
+            /** Role Id */
+            role_id: string | null;
+            /** Running */
+            running: boolean | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ChannelsViewRoot
+         * @description 自动生成：ChannelsViewRoot（ 的对象形状）。
+         */
+        ChannelsViewRoot: {
+            /** Channels */
+            channels: components["schemas"]["ChannelsViewChannelsItem"][] | null;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * ChatMessage
@@ -2722,9 +2793,36 @@ export interface components {
             /** Effective Count */
             effective_count: number | null;
             /** Servers */
-            servers: {
-                [key: string]: unknown;
-            }[] | null;
+            servers: components["schemas"]["McpServersViewServersItem"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * McpServersViewServersItem
+         * @description 自动生成：McpServersViewServersItem（serversItem 的对象形状）。
+         */
+        McpServersViewServersItem: {
+            /** Display Name */
+            display_name: string | null;
+            /** Enabled */
+            enabled: boolean | null;
+            headers: components["schemas"]["McpServersViewServersItem_headers"] | null;
+            /** Id */
+            id: string | null;
+            /** Transport */
+            transport: string | null;
+            /** Url */
+            url: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * McpServersViewServersItem_headers
+         * @description 自动生成：McpServersViewServersItem_headers（serversItem_headers 的对象形状）。
+         */
+        McpServersViewServersItem_headers: {
+            /** Authorization */
+            Authorization: unknown;
         } & {
             [key: string]: unknown;
         };
@@ -2845,51 +2943,6 @@ export interface components {
             default?: string | null;
             /** Fallbacks */
             fallbacks?: string[] | null;
-        };
-        /**
-         * ModelSettingsView
-         * @description /api/settings/models 的顶层形状（数组包一层只为给它一个名字）。
-         */
-        ModelSettingsView: components["schemas"]["ModelSettingsViewRoot"];
-        /**
-         * ModelSettingsViewProvidersItem
-         * @description 自动生成：ModelSettingsViewProvidersItem（providersItem 的对象形状）。
-         */
-        ModelSettingsViewProvidersItem: {
-            /** Base Url */
-            base_url: string | null;
-            /** Has Key */
-            has_key: boolean | null;
-            /** Id */
-            id: string | null;
-            /** Key Masked */
-            key_masked: unknown;
-            /** Label */
-            label: string | null;
-            /** Models */
-            models: unknown[] | null;
-            /** Needs Key */
-            needs_key: boolean | null;
-            /** Provider */
-            provider: string | null;
-            /** Style */
-            style: string | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * ModelSettingsViewRoot
-         * @description 自动生成：ModelSettingsViewRoot（ 的对象形状）。
-         */
-        ModelSettingsViewRoot: {
-            /** Default */
-            default: string | null;
-            /** Fallbacks */
-            fallbacks: string[] | null;
-            /** Providers */
-            providers: components["schemas"]["ModelSettingsViewProvidersItem"][] | null;
-        } & {
-            [key: string]: unknown;
         };
         /**
          * OrphanUploadsView
@@ -3144,6 +3197,54 @@ export interface components {
          */
         ReachoutsView: components["schemas"]["ReachoutsViewRoot"];
         /**
+         * ReachoutsViewItemsItem
+         * @description 自动生成：ReachoutsViewItemsItem（itemsItem 的对象形状）。
+         */
+        ReachoutsViewItemsItem: {
+            /** Created At */
+            created_at: string | null;
+            /** Dismissed At */
+            dismissed_at: unknown;
+            /** Id */
+            id: number | null;
+            /** Read At */
+            read_at: unknown;
+            /** Role Id */
+            role_id: string | null;
+            /** Role Name */
+            role_name: string | null;
+            /** Seen At */
+            seen_at: unknown;
+            /** State */
+            state: string | null;
+            /** Text */
+            text: string | null;
+            /** Thread Id */
+            thread_id: unknown;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ReachoutsViewQuietItem
+         * @description 自动生成：ReachoutsViewQuietItem（quietItem 的对象形状）。
+         */
+        ReachoutsViewQuietItem: {
+            /** Next Ok At */
+            next_ok_at: string | null;
+            /** Role Id */
+            role_id: string | null;
+            /** Role Name */
+            role_name: string | null;
+            /** Streak */
+            streak: number | null;
+            /** Unread */
+            unread: number | null;
+            /** Why */
+            why: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * ReachoutsViewRoot
          * @description 自动生成：ReachoutsViewRoot（ 的对象形状）。
          */
@@ -3151,15 +3252,11 @@ export interface components {
             /** File Watch Pending */
             file_watch_pending: number | null;
             /** Items */
-            items: {
-                [key: string]: unknown;
-            }[] | null;
+            items: components["schemas"]["ReachoutsViewItemsItem"][] | null;
             /** Merge Days */
             merge_days: number | null;
             /** Quiet */
-            quiet: {
-                [key: string]: unknown;
-            }[] | null;
+            quiet: components["schemas"]["ReachoutsViewQuietItem"][] | null;
             /** Unread */
             unread: number | null;
             unread_by_role: components["schemas"]["ReachoutsViewUnread_by_role"] | null;
@@ -3171,6 +3268,9 @@ export interface components {
          * @description 自动生成：ReachoutsViewUnread_by_role（unread_by_role 的对象形状）。
          */
         ReachoutsViewUnread_by_role: {
+            /** Sample Reachable */
+            sample_reachable: number | null;
+        } & {
             [key: string]: unknown;
         };
         /**
@@ -3436,14 +3536,34 @@ export interface components {
          */
         RoleTimelineView: components["schemas"]["RoleTimelineViewRoot"];
         /**
+         * RoleTimelineViewItemsItem
+         * @description 自动生成：RoleTimelineViewItemsItem（itemsItem 的对象形状）。
+         */
+        RoleTimelineViewItemsItem: {
+            /** At */
+            at: string | null;
+            /** From Text */
+            from_text: unknown;
+            /** Kind */
+            kind: string | null;
+            /** Ref Id */
+            ref_id: number | null;
+            /** Text */
+            text: string | null;
+            /** Thread Id */
+            thread_id: string | null;
+            /** Verb */
+            verb: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * RoleTimelineViewRoot
          * @description 自动生成：RoleTimelineViewRoot（ 的对象形状）。
          */
         RoleTimelineViewRoot: {
             /** Items */
-            items: {
-                [key: string]: unknown;
-            }[] | null;
+            items: components["schemas"]["RoleTimelineViewItemsItem"][] | null;
             /** Next Cursor */
             next_cursor: unknown;
             /** Role Id */
@@ -3464,12 +3584,56 @@ export interface components {
             };
         };
         /**
+         * SessionContextView
+         * @description /api/session/{thread_id}/context 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        SessionContextView: components["schemas"]["SessionContextViewRoot"];
+        /**
+         * SessionContextViewRoot
+         * @description 自动生成：SessionContextViewRoot（ 的对象形状）。
+         */
+        SessionContextViewRoot: {
+            /** Budget */
+            budget: number | null;
+            /** Kept */
+            kept: number | null;
+            /** Trimmed */
+            trimmed: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * SessionCreate
          * @description Create-session request. Omitting `role_id` binds the default assistant.
          */
         SessionCreate: {
             /** Role Id */
             role_id?: string | null;
+        };
+        /**
+         * SessionMessagesView
+         * @description /api/session/{thread_id}/messages 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        SessionMessagesView: components["schemas"]["SessionMessagesViewRoot"];
+        /**
+         * SessionMessagesViewRoot
+         * @description 自动生成：SessionMessagesViewRoot（ 的对象形状）。
+         */
+        SessionMessagesViewRoot: {
+            /** Inflight */
+            inflight: unknown;
+            /** Limit */
+            limit: number | null;
+            /** Messages */
+            messages: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Total */
+            total: number | null;
+            /** Truncated */
+            truncated: boolean | null;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * SessionPatch
@@ -3487,17 +3651,113 @@ export interface components {
             title?: string | null;
         };
         /**
+         * SessionThreadView
+         * @description /api/session/{thread_id} 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        SessionThreadView: components["schemas"]["SessionThreadViewRoot"];
+        /**
+         * SessionThreadViewRoot
+         * @description 自动生成：SessionThreadViewRoot（ 的对象形状）。
+         */
+        SessionThreadViewRoot: {
+            /** Agent Mode */
+            agent_mode: string | null;
+            /** Model Name */
+            model_name: unknown;
+            /** Role Id */
+            role_id: string | null;
+            /** Role Name */
+            role_name: string | null;
+            /** Thread Id */
+            thread_id: string | null;
+            /** User Id */
+            user_id: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SessionTurnView
+         * @description /api/session/{thread_id}/turn 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        SessionTurnView: components["schemas"]["SessionTurnViewRoot"];
+        /**
+         * SessionTurnViewRoot
+         * @description 自动生成：SessionTurnViewRoot（ 的对象形状）。
+         */
+        SessionTurnViewRoot: {
+            /** Inflight */
+            inflight: unknown;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * SessionsView
          * @description /api/sessions 的顶层形状（数组包一层只为给它一个名字）。
          */
-        SessionsView: {
+        SessionsView: components["schemas"]["SessionsViewItem"][];
+        /**
+         * SessionsViewItem
+         * @description 自动生成：SessionsViewItem（Item 的对象形状）。
+         */
+        SessionsViewItem: {
+            /** Agent Mode */
+            agent_mode: string | null;
+            /** Is Blank */
+            is_blank: boolean | null;
+            /** Is Proactive */
+            is_proactive: boolean | null;
+            /** Role Id */
+            role_id: string | null;
+            /** Role Name */
+            role_name: string | null;
+            /** Thread Id */
+            thread_id: string | null;
+            /** Title */
+            title: string | null;
+            /** Updated At */
+            updated_at: string | null;
+        } & {
             [key: string]: unknown;
-        }[];
+        };
         /**
          * SettingsMemoryView
          * @description /api/settings/memory 的顶层形状（数组包一层只为给它一个名字）。
          */
         SettingsMemoryView: components["schemas"]["SettingsMemoryViewRoot"];
+        /**
+         * SettingsMemoryViewItemsItem
+         * @description 自动生成：SettingsMemoryViewItemsItem（itemsItem 的对象形状）。
+         */
+        SettingsMemoryViewItemsItem: {
+            /** Created At */
+            created_at: string | null;
+            /** Hit Count */
+            hit_count: number | null;
+            /** Id */
+            id: number | null;
+            /** Importance */
+            importance: number | null;
+            /** Invalidated At */
+            invalidated_at: unknown;
+            /** Last Hit At */
+            last_hit_at: unknown;
+            /** Pinned */
+            pinned: boolean | null;
+            /** Role Id */
+            role_id: string | null;
+            /** Source */
+            source: string | null;
+            /** Superseded By */
+            superseded_by: unknown;
+            /** Text */
+            text: string | null;
+            /** Uid */
+            uid: string | null;
+            /** User Id */
+            user_id: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * SettingsMemoryViewRoot
          * @description 自动生成：SettingsMemoryViewRoot（ 的对象形状）。
@@ -3512,9 +3772,7 @@ export interface components {
             /** Extract Turns */
             extract_turns: number | null;
             /** Items */
-            items: {
-                [key: string]: unknown;
-            }[] | null;
+            items: components["schemas"]["SettingsMemoryViewItemsItem"][] | null;
             /** Limit */
             limit: number | null;
             /** Over Limit */
@@ -3578,9 +3836,23 @@ export interface components {
             /** Kinds */
             kinds: string[] | null;
             /** Skipped */
-            skipped: {
-                [key: string]: unknown;
-            }[] | null;
+            skipped: components["schemas"]["SyncInventoryViewSkippedItem"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SyncInventoryViewSkippedItem
+         * @description 自动生成：SyncInventoryViewSkippedItem（skippedItem 的对象形状）。
+         */
+        SyncInventoryViewSkippedItem: {
+            /** Ident */
+            ident: string | null;
+            /** Kind */
+            kind: string | null;
+            /** Preview */
+            preview: string | null;
+            /** Reason */
+            reason: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -3982,9 +4254,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ChannelsView"];
                 };
             };
         };
@@ -5605,7 +5875,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SessionThreadView"];
                 };
             };
             /** @description Validation Error */
@@ -5700,7 +5970,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SessionContextView"];
                 };
             };
             /** @description Validation Error */
@@ -5764,9 +6034,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SessionMessagesView"];
                 };
             };
             /** @description Validation Error */
@@ -5900,9 +6168,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SessionTurnView"];
                 };
             };
             /** @description Validation Error */
@@ -6277,7 +6543,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ModelSettingsView"];
+                    "application/json": unknown;
                 };
             };
         };

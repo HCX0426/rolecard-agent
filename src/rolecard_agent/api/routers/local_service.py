@@ -91,7 +91,8 @@ def _resident_rows(models: list[dict[str, object]]) -> list[dict[str, Any]]:
 
 
 @router.get(
-    "/api/local-service", dependencies=[Depends(require_loopback)],
+    "/api/local-service",
+    dependencies=[Depends(require_loopback)],
     response_model=LocalServiceView,
     response_model_exclude_unset=True,
 )
