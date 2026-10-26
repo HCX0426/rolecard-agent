@@ -103,6 +103,7 @@ def auth_on_env(tmp_path_factory: pytest.TempPathFactory) -> Iterator[httpx.Asyn
         "UPDATE_CHECK_ENABLED",
         "ROLECARD_ERROR_LOG",
         "CHROMA_PATH",
+        "SQLITE_PATH",
     )
     old = {k: os.environ.get(k) for k in keys}
     tmp = tmp_path_factory.mktemp("api-surface")
@@ -111,6 +112,11 @@ def auth_on_env(tmp_path_factory: pytest.TempPathFactory) -> Iterator[httpx.Asyn
     os.environ["UPDATE_CHECK_ENABLED"] = "0"
     os.environ["ROLECARD_ERROR_LOG"] = str(tmp / "error.jsonl")
     os.environ["CHROMA_PATH"] = str(tmp / "chroma")  # 别污染演示库（test_sessions_api 同例）
+    # SQLITE_PATH 也必须进环境：deep 探针（/api/health/deep）读的是 **settings** 的
+    # sqlite_path，不是 create_app 的参数 —— 只传参数不设 env，探针就去看默认相对路径
+    # `data/sqlite/app.db`：开发机上那文件恰好存在 ⇒ 本机绿；CI 的干净 checkout 没有
+    # ⇒ 红（2026-10-26 实测，判红带响应体的那一趟说的真相）。
+    os.environ["SQLITE_PATH"] = str(tmp / "app.db")
     app = None
     try:
         from rolecard_agent.api.main import create_app
