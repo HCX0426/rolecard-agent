@@ -208,7 +208,7 @@ export default function RolesPage({
     // 可选作用域的真实来源：已建的知识集合（RAG 真实作用域），让下拉"所见即所得"。
     api
       .get<KnowledgeScopes>("/api/knowledge/scopes")
-      .then((s) => setKbScopes(s.scopes))
+      .then((s) => setKbScopes(s.scopes ?? []))
       .catch(() => {});
   }, []);
 

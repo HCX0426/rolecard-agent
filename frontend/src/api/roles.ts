@@ -14,6 +14,4 @@ import type { components } from "./schema.gen";
 
 export type RoleCard = components["schemas"]["RoleCard"];
 
-export interface KnowledgeScopes {
-  scopes: string[];
-}
+export type KnowledgeScopes = components["schemas"]["KnowledgeScopesViewRoot"];

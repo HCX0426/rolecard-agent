@@ -85,7 +85,7 @@ export default function DataPage({ initialBlock }: { initialBlock?: MaterialsBlo
                       <button
                         key={d.id}
                         type="button"
-                        onClick={() => setActiveDomain(d.id)}
+                        onClick={() => setActiveDomain(d.id ?? "")}
                         aria-pressed={on}
                         className={`rounded-full px-3 py-1 text-xs transition-colors ${
                           on

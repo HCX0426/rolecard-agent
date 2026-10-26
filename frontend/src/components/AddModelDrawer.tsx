@@ -386,8 +386,9 @@ function tri(value: boolean | null): string {
 function needsKey(provider: string, catalog: ModelProvider[]): boolean {
   const entry = catalog.find((p) => p.id === provider);
   // needs_key 是布尔（`R102-16`）—— 从前目录行是 "0"/"1" 字符串，`=== "1"` 与分组行的
-  // truthy 判定并存，同一份事实两种读法。
-  return entry ? entry.needs_key : true;
+  // truthy 判定并存，同一份事实两种读法。契约迁移后它可空（后端没给 = null）：
+  // 判不准就按"要 key"走（fail-closed，与原 `: true` 兜底同一语义）。
+  return entry?.needs_key ?? true;
 }
 
 function defaultSource(groups: ProviderGroup[], catalog: ModelProvider[]): Source {

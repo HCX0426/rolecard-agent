@@ -6,10 +6,9 @@
 
 /** 已注册域的清单行（2026-10-24 域常开：GET /api/domains，原 /api/plugins 退役）。
  *  域常开后没有 enabled 概念——工具可见性的唯一边界是角色卡白名单。 */
-export interface DomainInfo {
-  id: string;
-  display_name: string;
-}
+import type { components } from "./schema.gen";
+
+export type DomainInfo = components["schemas"]["DomainsViewItem"];
 
 export interface ToolEntry {
   name: string;

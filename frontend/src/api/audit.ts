@@ -4,13 +4,6 @@
 // 住址只活在实现里（数一份清单就守一份清单，facade 用通配是不给第二份清单留门）。
 
 
-export interface AuditRow {
-  // 后端明确带下来的唯一 id（`R102-17`）：展开态的数据锚点就是它 —— 从前拿
-  // (ts,action) 当键，同一秒同动作的 5 条一起开。
-  id: number;
-  ts: string;
-  actor: string;
-  action: string;
-  target: string | null;
-  detail_json: string | null;
-}
+import type { components } from "./schema.gen";
+
+export type AuditRow = components["schemas"]["AuditViewItem"];
