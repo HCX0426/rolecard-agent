@@ -181,6 +181,11 @@ STEPS: list[tuple[str, list[str], str]] = [
     # 它就过期。both 进快档：纯离线（起一次 app 打几个只读端点），秒级。
     ("响应模型同步", [PY, "scripts/tools/gen_response_models.py", "--check"], "both"),
     ("README 可跑性", [PY, "scripts/probe_readme_quickstart.py"], "full"),
+    # 文档命令块可跑性（P14，2026-10-26）：CONTRIBUTING §2/§8 的登记块，形状臂
+    # （引用路径存在）+ 执行臂（venv 落临时目录、init_db 数据根隔离）。full 档：
+    # 执行臂真建 venv（~10s），快档不付这笔。首跑就抓到两个真伤
+    # （init_db 顶层 import 先于 _ensure_importable 炸 / cmd 裸 python 9009）。
+    ("文档命令可跑性", [PY, "scripts/probe_docs_commands.py"], "full"),
     # 随包后端的 import↔bundle parity（R28-34）。只在 full：它量的是**产物**，快档没有产物。
     # `build/sidecar/` 不存在时脚本自己返回 0 并打出"没打过包不是负面"（与"未知不拦"同一条判据），
     # 所以这一条不会因为"这轮没打包"而假红 —— 但它一旦有包就必查。
@@ -445,6 +450,7 @@ STEP_TIMEOUTS: dict[str, float] = {
     # 300s ≈ 热跑的 3.3×：冷 runner 的抖动由余量吃，再往上顶穿就是真坏。
     "响应模型同步": 300.0,
     "README 可跑性": 420.0,  # 脚本内自己只等 90s 健康 + 收尾，这里给它起停的余量
+    "文档命令可跑性": 300.0,  # 执行臂两处 venv（~10s）+ init_db（~5s），余量给冷 runner
     "随包后端 parity": 300.0,
     "依赖审计": 700.0,  # 脚本内 pip-audit 硬超时 600s，这里留善后余量
     "密钥扫描": 420.0,  # 脚本内 gitleaks 硬超时 300s + 首跑下载
