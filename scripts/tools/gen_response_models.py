@@ -347,6 +347,17 @@ def _build(
     return _python_type(value)
 
 
+def _seed_want(client: Any, method: str, path: str, **kwargs: Any) -> None:
+    """种子的**响响应答**：非 2xx 当场炸 —— 静默失败的种子 = 形状悄悄漂，
+    `--check` 只会报"漂了"而不说为什么（2026-10-26 CI 实测那一课）。"""
+    resp = getattr(client, method)(path, **kwargs)
+    if resp.status_code >= 300:
+        raise RuntimeError(
+            f"样本数据创建失败 {method.upper()} {path} → {resp.status_code}：{resp.text[:200]}"
+            "（采样面断了种子，形状必然漂 —— 先修种子再谈生成）"
+        )
+
+
 def _seed_minimal_data(app: Any) -> None:
     """给**空数组**塞最小数据，让生成器推得出元素类型。
 
@@ -358,7 +369,9 @@ def _seed_minimal_data(app: Any) -> None:
 
     client = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
     # 角色卡：exemplars / knowledge_scopes 这两个数组在样本里得非空
-    client.post(
+    _seed_want(
+        client,
+        "post",
         "/api/roles",
         json={
             "role_id": "sample_role",
@@ -373,7 +386,7 @@ def _seed_minimal_data(app: Any) -> None:
         },
     )
     # 知识作用域：knowledge / scopes 端点的数组
-    client.post("/api/knowledge/scopes", json={"name": "sample_scope"})
+    _seed_want(client, "post", "/api/knowledge/scopes", json={"name": "sample_scope"})
     # 模型后端（含 fallback + 一个带 key 的凭据组）：
     # - /api/settings/models 的 fallbacks 是**字符串数组**（后端名列表）。样本里它是空的 ⇒
     #   生成器推不出元素类型 ⇒ 建成 dict 型 ⇒ 真实响应（fallbacks 非空）校验失败
@@ -382,7 +395,9 @@ def _seed_minimal_data(app: Any) -> None:
     #   多给一个带 api_key 的供应商（硅基流动），这一格采成掩码字符串。
     #   ⚠️ 整表 PUT 是**替换语义**：想同时保 fallback 与非空 fallbacks，三个后端必须在
     #   同一次 PUT 里给全（分两次 PUT，后一次抹掉前一次的行）。
-    client.put(
+    _seed_want(
+        client,
+        "put",
         "/api/settings/models",
         json={
             "default": "sample_local",
@@ -420,7 +435,9 @@ def _seed_minimal_data(app: Any) -> None:
     # MCP server：/api/mcp/servers 的 servers 从前恒空 ⇒ list[dict[str, Any]]。
     # `enabled: False`：接线后的 rebuild 会真去连启用的 server —— 样本 URL 是死端口，
     # 别让它每次生成/校验都在日志里挣一条"加载失败"。行本身照进列表（读侧不过滤）。
-    client.post(
+    _seed_want(
+        client,
+        "post",
         "/api/mcp/servers",
         json={
             "id": "sample_mcp",
@@ -431,9 +448,9 @@ def _seed_minimal_data(app: Any) -> None:
         },
     )
     # 记忆行：/api/settings/memory 的 items 从前恒空。
-    client.post("/api/settings/memory/item", json={"text": "样本事实：生成器锚点"})
+    _seed_want(client, "post", "/api/settings/memory/item", json={"text": "样本事实：生成器锚点"})
     # 一条会话（走主动会话那条确定性线程，_resolve_path 用它采 {thread_id} 那族端点）。
-    client.post("/api/session/proactive", json={"role_id": "sample_role"})
+    _seed_want(client, "post", "/api/session/proactive", json={"role_id": "sample_role"})
     # 一条待批命令：/api/approvals 的 items 从前恒空。**直接走服务层** —— 路由的
     # submit 要从对话链路进来，这里只为让样本面非空。
     _seed_approval(app)
@@ -757,7 +774,20 @@ def main() -> int:
             print(f"❌ {OUT_PATH} 不存在 —— 跑一次生成器并提交")
             return 1
         if previous != content:
-            print("❌ 响应模型与运行时形状漂移。")
+            import difflib
+
+            diff = [
+                ln
+                for ln in difflib.unified_diff(
+                    previous.splitlines(),
+                    content.splitlines(),
+                    fromfile="committed",
+                    tofile="fresh-sample",
+                    lineterm="",
+                )
+            ]
+            print("❌ 响应模型与运行时形状漂移。差异摘要（前 60 行）：")
+            print("\n".join(diff[:60]) or "（无可打印 diff —— 内容级差异，跑一次生成器看全量）")
             print("   修法：python scripts/tools/gen_response_models.py 然后提交")
             return 1
         print("OK 响应模型与运行时形状一致")
