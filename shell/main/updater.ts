@@ -47,17 +47,24 @@ import { cleanupConsumedPendingUpdate, type CleanupFs } from "./updateCacheClean
  * 三条红线里只有"用户确认"这一条被开关接管（打开开关本身就是确认）；
  * **备份与后端干净退出不受开关影响** —— 见 `install()` 与 `onQuitAttempt()`：
  * 自动装走的是同一个 `install()`，那两条无条件执行。它们是安全，不是口味。
+ *
+ * `channel`（P10，默认 **stable**）：更新通道。beta = 桌面版的灰度（预发布 feed，
+ * electron-updater 只在 allowPrerelease 时才读得到）；stable 用户绝不该被推到 beta。
  */
+export type UpdaterChannel = "stable" | "beta";
+
 export type UpdaterPrefs = {
   checkOnStartup: boolean;
   autoDownload: boolean;
   autoInstallOnQuit: boolean;
+  channel: UpdaterChannel;
 };
 
 export const UPDATER_PREF_DEFAULTS: UpdaterPrefs = {
   checkOnStartup: true,
   autoDownload: false,
   autoInstallOnQuit: false,
+  channel: "stable",
 };
 
 function updaterPrefsFile(): string {
@@ -73,12 +80,16 @@ export function loadUpdaterPrefs(): UpdaterPrefs {
     return { ...UPDATER_PREF_DEFAULTS };
   }
   const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-  const flag = (key: keyof UpdaterPrefs) =>
+  // 布尔键取子集（channel 是枚举，不进 flag 的 boolean 收窄）。
+  const flag = (key: "checkOnStartup" | "autoDownload" | "autoInstallOnQuit") =>
     typeof o[key] === "boolean" ? (o[key] as boolean) : UPDATER_PREF_DEFAULTS[key];
+  // channel 是白名单枚举：认不出的值一律回 stable —— 坏文件不许把用户拐进灰度通道。
+  const channel = o.channel === "beta" ? "beta" : "stable";
   return {
     checkOnStartup: flag("checkOnStartup"),
     autoDownload: flag("autoDownload"),
     autoInstallOnQuit: flag("autoInstallOnQuit"),
+    channel,
   };
 }
 
@@ -294,6 +305,11 @@ export function createUpdater(options: UpdaterOptions): Updater {
   const applyPrefs = (): void => {
     autoUpdater.autoDownload = prefs.autoDownload;
     autoUpdater.autoInstallOnAppQuit = false;
+    // P10 通道映射：beta = 显式允许预发布 + 读 beta channel feed（GitHub provider 下
+    // electron-updater 只在 allowPrerelease 时才把 prerelease 的 Release 当候选）。
+    // setPrefs 每次都会重跑这里 —— 切通道下一次检查就生效，不用重启。
+    autoUpdater.channel = prefs.channel;
+    autoUpdater.allowPrerelease = prefs.channel === "beta";
   };
   applyPrefs();
   autoUpdater.logger = null; // 日志走 options.log（shell.log 唯一写入口），不给 updater 另开一份
@@ -383,7 +399,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
       saveUpdaterPrefs(prefs);
       applyPrefs();
       options.log(
-        `更新偏好：开机检查=${prefs.checkOnStartup} 自动下载=${prefs.autoDownload} 退出时自动装=${prefs.autoInstallOnQuit}`,
+        `更新偏好：开机检查=${prefs.checkOnStartup} 自动下载=${prefs.autoDownload} 退出时自动装=${prefs.autoInstallOnQuit} 通道=${prefs.channel}`,
       );
     },
     check: (source = "manual") => {

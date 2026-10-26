@@ -246,7 +246,7 @@ jobs:
           name: rolecard-agent-installer
           path: |
             shell/release/rolecard-agent-*-x64.exe
-            shell/release/latest.yml
+            shell/release/*.yml
           retention-days: 14
 
   # 把镜像与安装包钉成一份 Release。tag 推送时自动建 Release；手动触发且填了版本
@@ -269,6 +269,15 @@ jobs:
           fi
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           echo "version_nov=$VER" >> "$GITHUB_OUTPUT"
+          # 预发布判定（P10 beta 通道，2026-10-26）：semver 带连字符 = 有 prerelease 段
+          # （0.5.0-beta.1）。预发布走独立 channel feed（electron-builder 出 beta.yml、
+          # electron-updater allowPrerelease 才读得到），Release 打 prerelease 标志 ——
+          # 稳定通道用户绝不该被推到 beta，灰度的收口就靠这个形状。
+          if [[ "$VER" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: 手动触发时建 tag
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.version != '' }}
         shell: bash
@@ -288,11 +297,28 @@ jobs:
         shell: bash
         run: |
           EXE=$(ls artifact/*.exe | head -n1)
-          # latest.yml 必须跟 exe 同场：electron-updater 找的是这份 feed 清单，
-          # 只传 exe 的 Release 会让所有装机用户的"检查更新"静默失灵（不报错，永远"无更新"）。
+          PRERELEASE="${{ steps.meta.outputs.prerelease }}"
+          # feed 清单必须跟 exe 同场：electron-updater 找的就是这份 yml，
+          # 只传 exe 的 Release 会让装机用户的"检查更新"静默失灵（不报错，永远"无更新"）。
+          # 稳定版 = latest.yml；预发布（P10 beta 通道）= 各 channel 的 yml（beta.yml）
+          # 都要上 —— 稳定通道用户绝不读 beta feed，但切到 beta 的用户要能拿到。
+          if [ "$PRERELEASE" = "true" ]; then
+            ls artifact/beta.yml >/dev/null 2>&1 || {
+              echo "❌ 预发布版本没有 beta.yml：electron-builder 没出 beta channel 清单（查版本号是否带 prerelease 段）"
+              exit 1
+            }
+            FLAG="--prerelease"
+          else
+            ls artifact/latest.yml >/dev/null 2>&1 || {
+              echo "❌ 稳定版没有 latest.yml：nsis 没产 feed 清单，自动更新会静默失灵"
+              exit 1
+            }
+            FLAG=""
+          fi
+          # shellcheck disable=SC2086
           gh release create "v${{ steps.meta.outputs.version }}" \
             --title "v${{ steps.meta.outputs.version }}" \
-            --generate-notes \
+            --generate-notes $FLAG \
             --repo "${{ github.repository }}" \
-            "$EXE" artifact/latest.yml
-          echo "Release v${{ steps.meta.outputs.version }} 已建（exe + latest.yml），镜像已 push 至 ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}"
+            "$EXE" artifact/*.yml
+          echo "Release v${{ steps.meta.outputs.version }} 已建（exe + feed yml，prerelease=$PRERELEASE），镜像已 push 至 ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}"
