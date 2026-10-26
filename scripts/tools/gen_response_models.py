@@ -636,6 +636,13 @@ def generate() -> tuple[str, str | None]:
 
     os.environ["UPDATE_CHECK_ENABLED"] = "0"
     os.environ.pop("SHELL_RELEASE_DIR", None)
+    # **采样期把用户数据根整体搬进临时目录**（闸 ⑧ 扩面，2026-10-26 CI 实测那一课）：
+    # user_data_root 喂着 user_pets_dir / 孤儿上传扫描 / 知识演示种子这一整族 —— 本机
+    # 真数据根里有什么（Cubism Core 在不在、data-root 攒了什么），采样就采到什么形状
+    # （实测现场：随包 live2d 包 hiyori 依赖未入库的 Core 运行时，本机有 ⇒ skipped=[]，
+    # CI 没有 ⇒ skipped=[{id, reason}]，PetsView 两机各一份）。钉到干净临时根后，这族
+    # 形状由**入库的随包资产**唯一决定：live2d 包恒 skipped、孤儿恒空、演示种子恒同。
+    os.environ["DATA_ROOT"] = tempfile.mkdtemp(prefix="gen-models-data-root-")
     backup: str | None = None
     if OUT_PATH.exists():
         backup = OUT_PATH.read_text(encoding="utf-8")

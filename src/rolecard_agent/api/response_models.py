@@ -61,7 +61,7 @@ class PetsViewRoot(BaseModel):
         return {k: v for k, v in data.items() if k in given}
 
     packs: list[PetsViewPacksItem] | None
-    skipped: list[dict[str, Any]] | None
+    skipped: list[PetsViewSkippedItem] | None
     user_dir: str | None
     cubism_core: bool | None
     cubism_core_path: str | None
@@ -184,6 +184,44 @@ class PetsViewPacksItem_motions(BaseModel):
         return {k: v for k, v in data.items() if k in given}
 
     pass
+
+
+class PetsViewSkippedItem(BaseModel):
+    """自动生成：PetsViewSkippedItem（skippedItem 的对象形状）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_missing(cls, data: Any) -> Any:
+        """缺键补 None —— 必填字段遇到响应里没有的键时不该炸。
+
+        同时记下**端点真给了哪些键**（_GIVEN_KEYS）：序列化时按它裁剪，
+        于是响应与端点真返回逐字一致（补出来的键不会被吐出去）。
+
+        为什么不用 exclude_unset：补的键进了 __fields_set__ ⇒ exclude_unset
+        挡不住它（实测 pets 的 rows 多出 'listening': None）。
+        """
+        if isinstance(data, dict):
+            known = set(cls.model_fields)
+            given = {k: v for k, v in data.items() if k != _GIVEN_KEYS}
+            missing = {k: None for k in known if k not in given}
+            merged = {**given, **missing}
+            merged[_GIVEN_KEYS] = set(given)
+            return merged
+        return data
+
+    @model_serializer(mode="wrap")
+    def _drop_filled(self, handler: Any):
+        """把"补出来的键"裁掉 —— 只留端点真给过的。"""
+        data = handler(self)
+        given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
+        if given is None:
+            return data
+        return {k: v for k, v in data.items() if k in given}
+
+    id: str | None
+    reason: str | None
 
 
 class ToolsCatalogRoot(BaseModel):
