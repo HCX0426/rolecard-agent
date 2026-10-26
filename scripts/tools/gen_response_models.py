@@ -474,7 +474,21 @@ def generate() -> tuple[str, str | None]:
     **第一步把旧的生成物移走**并写占位模块：`_sample` 要 import 应用 → import routers →
     import 本模块的生成物。旧产物若不合法，import 会炸，生成器就永远写不出新版本 ——
     自己把自己锁死。
+
+    **采样期钉环境**（闸 ⑧，2026-10-26）：两个端点的形状随本机环境变 ——
+    `/api/update-check` 的值在有网/没网下类型不同（实测 latest/url：release 目录有产物
+    时是字符串、没有时是 null），`/api/shell-release` 的字段集随本机有没有构建产物变。
+    不钉 ⇒ 有网的机器与没网的机器各生成一份 ⇒ `--check` 在另一台机器上随机红
+    （本机实测：CI 趟绿、本机趟红，同一提交）。钉法：
+    `UPDATE_CHECK_ENABLED=0` 让 update-check 走 disabled 分支（8 键全在、不出网）；
+    采样期摘掉 `SHELL_RELEASE_DIR`（shell-release 恒回 available/configured 两键）。
+    代价如实记：这两个视图的**值类型**比真实响应窄（latest 在成功检查时确实是字符串），
+    前端仍按 `| null` 用 —— 换到的是"判据跨机器恒绿"，这条交易值得。
     """
+    import os
+
+    os.environ["UPDATE_CHECK_ENABLED"] = "0"
+    os.environ.pop("SHELL_RELEASE_DIR", None)
     backup: str | None = None
     if OUT_PATH.exists():
         backup = OUT_PATH.read_text(encoding="utf-8")

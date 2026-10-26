@@ -164,6 +164,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/diagnostics/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Diagnostics
+         * @description 一键诊断包（zip）—— 用户报 bug 时附带现场（P2 验收：能一键产出）。
+         */
+        get: operations["export_diagnostics_api_diagnostics_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/domains": {
         parameters: {
             query?: never;
@@ -3656,13 +3676,13 @@ export interface components {
             /** Has Update */
             has_update: boolean | null;
             /** Latest */
-            latest: string | null;
+            latest: unknown;
             /** Size Bytes */
             size_bytes: unknown;
             /** Source */
             source: string | null;
             /** Url */
-            url: string | null;
+            url: unknown;
         } & {
             [key: string]: unknown;
         };
@@ -3998,6 +4018,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_diagnostics_api_diagnostics_export_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

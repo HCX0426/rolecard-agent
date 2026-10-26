@@ -4040,14 +4040,6 @@
       "title": "Has Update"
      },
      "latest": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
       "title": "Latest"
      },
      "size_bytes": {
@@ -4065,14 +4057,6 @@
       "title": "Source"
      },
      "url": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
       "title": "Url"
      }
     },
@@ -4648,6 +4632,23 @@
      }
     },
     "summary": "Chat"
+   }
+  },
+  "/api/diagnostics/export": {
+   "get": {
+    "description": "一键诊断包（zip）—— 用户报 bug 时附带现场（P2 验收：能一键产出）。",
+    "operationId": "export_diagnostics_api_diagnostics_export_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Export Diagnostics"
    }
   },
   "/api/domains": {

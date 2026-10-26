@@ -1093,10 +1093,10 @@ class UpdateCheckViewRoot(BaseModel):
         return {k: v for k, v in data.items() if k in given}
 
     current: str | None
-    latest: str | None
+    latest: Any
     has_update: bool | None
     source: str | None
-    url: str | None
+    url: Any
     file_name: Any
     size_bytes: Any
     error: Any
@@ -1297,6 +1297,7 @@ class HealthViewRoot(BaseModel):
     status: str | None
     version: str | None
     auth_mode: str | None
+    error_count_recent: int | None
     build: HealthViewBuild | None
     max_upload_bytes: int | None
     max_image_bytes: int | None

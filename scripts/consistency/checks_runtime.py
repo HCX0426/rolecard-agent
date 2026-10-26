@@ -213,6 +213,18 @@ def _data_root_write_dirs() -> dict[str, str]:
         value = node.value
         if isinstance(value, ast.Constant) and isinstance(value.value, str):
             dirs[value.value] = "storage/db.py::RETENTION_BACKUP_DIRNAME"
+    # P2 错误签名的落盘目录（base/error_signatures.py）：目录名同样以常量存在，
+    # 尺子按同款形状数到它 —— 运行时往数据根写的每一个目录都必须被 gitignore 管住。
+    es_py = ROOT / "src" / "rolecard_agent" / "base" / "error_signatures.py"
+    for node in ast.walk(ast.parse(es_py.read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.Assign):
+            continue
+        names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+        if "ERROR_DIRNAME" not in names:
+            continue
+        value = node.value
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            dirs[value.value] = "base/error_signatures.py::ERROR_DIRNAME"
     return dirs
 
 

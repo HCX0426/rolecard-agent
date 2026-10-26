@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type DomainInfo, type ModelSettings, type RoleCard, type ThreadRow } from "../api";
 import { Button, Card } from "./ui";
+import { DiagnosticsCard } from "./DiagnosticsCard";
 import { ShellReleaseCard } from "./ShellReleaseCard";
 import { UpdateCheckCard } from "./UpdateCheckCard";
 import { describeError } from "../lib/errors";
@@ -289,6 +290,9 @@ export function AboutPanel({
 
       {/* 检查更新（设计稿《更新机制与OCR随包》）：只读比对，判据在后端，这里照实画。 */}
       <UpdateCheckCard />
+
+      {/* 诊断（P2-②）：一键导出诊断包 —— 错误签名 + 双日志 + 版本指纹，报 bug 附带现场。 */}
+      <DiagnosticsCard />
 
       {/* 桌面壳安装包（D②-4）：没有产物时整卡不渲染，所以它放在最后也不会在页面上留空位。 */}
       <ShellReleaseCard />
