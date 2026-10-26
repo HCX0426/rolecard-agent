@@ -3029,11 +3029,21 @@ export interface components {
             /** Packs */
             packs: components["schemas"]["PetsViewPacksItem"][] | null;
             /** Skipped */
-            skipped: {
-                [key: string]: unknown;
-            }[] | null;
+            skipped: components["schemas"]["PetsViewSkippedItem"][] | null;
             /** User Dir */
             user_dir: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PetsViewSkippedItem
+         * @description 自动生成：PetsViewSkippedItem（skippedItem 的对象形状）。
+         */
+        PetsViewSkippedItem: {
+            /** Id */
+            id: string | null;
+            /** Reason */
+            reason: string | null;
         } & {
             [key: string]: unknown;
         };

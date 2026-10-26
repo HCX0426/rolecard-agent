@@ -2434,8 +2434,7 @@
       "anyOf": [
        {
         "items": {
-         "additionalProperties": true,
-         "type": "object"
+         "$ref": "#/components/schemas/PetsViewSkippedItem"
         },
         "type": "array"
        },
@@ -2465,6 +2464,40 @@
      "cubism_core_path"
     ],
     "title": "PetsViewRoot",
+    "type": "object"
+   },
+   "PetsViewSkippedItem": {
+    "additionalProperties": true,
+    "description": "自动生成：PetsViewSkippedItem（skippedItem 的对象形状）。",
+    "properties": {
+     "id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Id"
+     },
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason"
+     }
+    },
+    "required": [
+     "id",
+     "reason"
+    ],
+    "title": "PetsViewSkippedItem",
     "type": "object"
    },
    "PinRequest": {
