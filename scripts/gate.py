@@ -49,6 +49,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COV_MARKER = ROOT / "build" / ".cov-last-sha"
+
+
 def _venv_python() -> str:
     """按平台找虚拟环境里那个解释器，找不到就退回**调用方自己用的那个**。
 
@@ -159,6 +161,10 @@ STEPS: list[tuple[str, list[str], str]] = [
     # CI 档不受影响（`CI_SKIP` 已点名它 + 前端 tsc+build，CI 的前端各归专属 job）；
     # 本机代价约 +10s（vitest 热跑实测 9.7s）—— 这一格买的就是漂移当场红。
     ("前端 vitest", [NPM, "test"], "both"),
+    # 前端 ESLint（P8，2026-10-26）：hooks 依赖数组那族错误 tsc 管不着（类型对、逻辑反
+    # 是常态）。both 进快档 —— --cache 热跑实测个位数秒；冷跑 ~17s 也远小于预算。
+    # CI 档跳过（CI_SKIP 点名）：frontend job 的 `npm run build` 已含同一条 `npm run lint`。
+    ("前端 eslint", [NPM, "run", "lint"], "both"),
     ("前端 tsc+build", [NPM, "run", "build"], "full"),
     # README 的"快速开始"是 US-6 硬门槛（干净环境 ≤3 条命令）的唯一载体，此前没有任何
     # 尺子看着它 —— 落档时实测第 7 步那条裸 uvicorn 在 src 布局下必挂（R28-36）。
@@ -381,9 +387,7 @@ def select_affected(changed: list[str], tests: list[str]) -> tuple[list[str], st
     return chosen, f"改了 {len(src)} 个模块 → 跑 {len(chosen)}/{len(tests)} 个测试文件"
 
 
-def _affected_pytest_command(
-    base: list[str], changed: list[str] | None
-) -> tuple[list[str], str]:
+def _affected_pytest_command(base: list[str], changed: list[str] | None) -> tuple[list[str], str]:
     """快档那趟 pytest 的命令：能挑就挑（并在输出里留下 `AFFECTED-SUBSET` 记号）。
 
     `changed` 由 `main()` 在**开跑之前**取一次（`None` = 没取到）。不在这里现取，是因为
@@ -433,6 +437,7 @@ STEP_TIMEOUTS: dict[str, float] = {
     "覆盖率分模块地板": 120.0,
     "改动行覆盖率": 120.0,
     "前端 vitest": 420.0,
+    "前端 eslint": 300.0,  # --cache 热跑个位数秒，冷跑 ~17s（10-26 实测）；给足首趟余量
     "前端 tsc+build": 600.0,
     "dist 入库同步": 120.0,
     "README 可跑性": 420.0,  # 脚本内自己只等 90s 健康 + 收尾，这里给它起停的余量
@@ -708,6 +713,7 @@ def _run(
     ) as proc:
         with _ACTIVE_LOCK:
             _ACTIVE.add(proc)  # 挂死时看门狗要能收掉**活着的孩子**，不是只退自己
+
         # 读流必须与等待**并发**。主线程 `wait(timeout)` 而没人读管道 = 经典死锁：子进程
         # 写满几 KB 的管道缓冲后阻塞在 write 上，wait 会**把超时当挂死等到点** —— pytest 那
         # 一步的输出远超管道容量，这把尺子会把正常慢读成挂死。读泵放线程里，主线程只持 deadline。
@@ -962,6 +968,7 @@ CI_SKIP = frozenset(
         # 不装 node；由 frontend job 里紧邻「壳 typecheck」的那一步跑同一个 npm script。
         "shell updater 清理判据",
         "前端 vitest",
+        "前端 eslint",
         "前端 tsc+build",
         "dist 入库同步",
         "真机冒烟(14 项)",
@@ -1134,8 +1141,7 @@ def main() -> int:
     # 而那句话没有判据看着 —— 这半句就是被判据抓住之前的样子。
     if failures:
         print(
-            f"  ⏭️  失败即停：后续 {len(rest)} 步不再跑"
-            f"（{'、'.join(n for n, _, _ in rest)}）",
+            f"  ⏭️  失败即停：后续 {len(rest)} 步不再跑（{'、'.join(n for n, _, _ in rest)}）",
             flush=True,
         )
         rest = []
