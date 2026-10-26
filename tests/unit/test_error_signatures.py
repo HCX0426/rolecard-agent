@@ -80,7 +80,9 @@ def test_recent_counts_within_window(tmp_path: Path) -> None:
 def test_write_failure_never_raises(tmp_path: Path) -> None:
     """观测不许把被观测的带走：日志目录不可写时 record 照常返回签名、recent 照常计数。"""
     log = tmp_path / "readonly" / "error.jsonl"
-    (tmp_path / "readonly").write_text("不是目录")  # 路径被文件占住 ⇒ makedirs 必炸
+    # 路径被文件占住 ⇒ makedirs 必炸；encoding 显式给 —— CI Windows 是 cp1252，
+    # 不带 encoding 这行中文连写都写不出去（2026-10-26 分片红现场）。
+    (tmp_path / "readonly").write_text("不是目录", encoding="utf-8")
     es.reset_for_tests(log)
     try:
         _boom()

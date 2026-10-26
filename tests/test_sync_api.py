@@ -33,6 +33,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     # 整份替换的删前备份落在 user_data_root() 下（2026-10-04 审查快照的数据丢失条目）：
     # 不重定向就会写进开发者真实的用户数据目录。sqlite 路径由 create_app 显式传入，不受影响。
     monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data-root"))
+    monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))  # 同 _app 的隔离理由
     c = TestClient(create_app(sqlite_path=tmp_path / "app.db"))
     with c:
         conn = c.app.state.ctx.conn

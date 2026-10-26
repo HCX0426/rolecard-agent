@@ -36,6 +36,7 @@
 
 from __future__ import annotations
 
+import os
 import pathlib
 import sys
 import tempfile
@@ -576,7 +577,13 @@ def _sample(path: str) -> Any:
 
     from rolecard_agent.api.main import create_app
 
-    app = create_app(sqlite_path=pathlib.Path(tempfile.mkdtemp()) / "gen-models.db")
+    # SQLITE_PATH 必须与环境对齐（2026-10-26 CI 实测）：deep 探针（/api/health/deep）
+    # 读的是 **settings** 的 sqlite_path，不是 create_app 的参数 —— 只传参数不设 env，
+    # 干净的 CI checkout 上它看默认相对路径 `data/sqlite/app.db`，503 直接炸掉采样
+    # （与 test_api_surface 夹具同一课：参数与 settings 必须同时给）。
+    db_path = pathlib.Path(tempfile.mkdtemp()) / "gen-models.db"
+    os.environ["SQLITE_PATH"] = str(db_path)
+    app = create_app(sqlite_path=db_path)
     _seed_minimal_data(app)
     # `client=("127.0.0.1", 50000)`：**TCP 对端**设成回环 —— 本机来源护栏只认对端 IP。
     client = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
