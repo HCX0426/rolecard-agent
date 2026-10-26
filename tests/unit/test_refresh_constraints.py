@@ -38,8 +38,9 @@ def _load():
 def rc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     mod = _load()
     lock = tmp_path / "requirements.lock"
-    lock.write_text("uvicorn[standard]==0.54.0\n    # via -r requirements-api.txt\n",
-                    encoding="utf-8")
+    lock.write_text(
+        "uvicorn[standard]==0.54.0\n    # via -r requirements-api.txt\n", encoding="utf-8"
+    )
     cons = tmp_path / "constraints-linux.txt"
     monkeypatch.setattr(mod, "LOCK", lock)
     monkeypatch.setattr(mod, "CONSTRAINTS", cons)
@@ -105,3 +106,33 @@ def test_手改注释不触发刷新_判的是结构行(rc) -> None:
     cons.write_text("# 手写的一行注释\nuvloop==9.9.9\n", encoding="utf-8")
     assert mod.main([], platform="posix") == 0, "版本没动 ⇒ 不许写、不许报'变了'"
     assert cons.read_text(encoding="utf-8").startswith("# 手写的一行注释"), "注释被刷掉了"
+
+
+# ---------------------------------------------------------------- 报告形状（2026-10-26 清账）
+
+
+def test_pip26报告键install能读出uvloop(rc) -> None:
+    """**连红三周的根因**：pip 26 的 `--report` 顶层键是 `install`（本地 26.2.1 实测），
+    本工具落地时读的是 `data.get("data")` ⇒ 这条 Linux-only 臂从没在 CI 绿过。
+    归一化后两代形状都要认 —— 这是判据本体，不是容错。"""
+    mod, *_ = rc
+    report = {
+        "install": [
+            {"metadata": {"name": "uvicorn", "version": "0.54.0"}},
+            {"metadata": {"name": "uvloop", "version": "0.23.0"}},
+        ]
+    }
+    assert mod._uvloop_from_report(report) == "0.23.0"
+
+
+def test_旧data键的形状也认(rc) -> None:
+    mod, *_ = rc
+    report = {"data": [{"metadata": {"name": "uvloop", "version": "0.21.0"}}]}
+    assert mod._uvloop_from_report(report) == "0.21.0"
+
+
+def test_两键都没有如实答没有(rc) -> None:
+    """None 的语义 = "报告里真没有"，由调用方翻成那条"要人看"的 RuntimeError ——
+    解析器形状漂移不许再冒充上游改声明。"""
+    mod, *_ = rc
+    assert mod._uvloop_from_report({"install": [{"metadata": {"name": "uvicorn"}}]}) is None
