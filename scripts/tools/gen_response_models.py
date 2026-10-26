@@ -623,31 +623,6 @@ def generate() -> tuple[str, str | None]:
         pyc.unlink()
     sys.modules.pop("rolecard_agent.api.response_models", None)
 
-    header = [
-        '"""API 响应模型 —— **自动生成，勿手改**。',
-        "",
-        "生成器：`scripts/tools/gen_response_models.py`（从运行时真实返回反推字段集）。",
-        "漂移判据：同一个脚本的 `--check`（CI 每次 push 比对现形状 vs 入库模型）。",
-        "手改这份文件 = 下一次生成被覆盖；要改字段集，改端点再重跑生成器。",
-        "",
-        "不可建模（形状随数据变化）的端点："
-        + (", ".join(UNMODELABLE) if UNMODELABLE else "（无）"),
-        "",
-        "配套：引用这些模型的端点必须带 `response_model_exclude_unset=True` ——",
-        "否则模型会把端点**没给**的缺省键补成 null（实测 pets 的 rows 多出",
-        "'listening': None，响应与端点真返回不再逐字一致）。",
-        '"""',
-        "",
-        "from __future__ import annotations",
-        "",
-        "from typing import Any",
-        "",
-        "from pydantic import BaseModel, ConfigDict, RootModel, model_serializer, model_validator",
-        "",
-        "#: 记录「端点真给了哪些键」的内部键名（序列化时按它裁剪）。",
-        '_GIVEN_KEYS = "__given_keys__"',
-        "",
-    ]
     models: dict[str, str] = {}
     roots: list[tuple[str, str, str]] = []
 
@@ -683,6 +658,40 @@ def generate() -> tuple[str, str | None]:
         if backup is not None:
             OUT_PATH.write_text(backup, encoding="utf-8", newline="\n")
         raise
+
+    # header 里的「不可建模」清单必须在**采样循环之后**才算：UNMODELABLE 是循环里填的
+    # —— 从前这段在循环前求值，那一行恒为「（无）」（清账时发现的静默撒谎：真被跳过的
+    # 端点在生成物头注里从不出现）。被点名的端点**逐行**列（一行塞五个路径会撞 E501，
+    # 而 ruff format 不折 docstring —— 生成物必须自带过 ruff check 的形状）。
+    unmodelable_note = (
+        ["不可建模（形状随数据变化）的端点：", *(f"  - {p}" for p in UNMODELABLE)]
+        if UNMODELABLE
+        else ["不可建模（形状随数据变化）的端点：（无）"]
+    )
+    header = [
+        '"""API 响应模型 —— **自动生成，勿手改**。',
+        "",
+        "生成器：`scripts/tools/gen_response_models.py`（从运行时真实返回反推字段集）。",
+        "漂移判据：同一个脚本的 `--check`（CI 每次 push 比对现形状 vs 入库模型）。",
+        "手改这份文件 = 下一次生成被覆盖；要改字段集，改端点再重跑生成器。",
+        "",
+        *unmodelable_note,
+        "",
+        "配套：引用这些模型的端点必须带 `response_model_exclude_unset=True` ——",
+        "否则模型会把端点**没给**的缺省键补成 null（实测 pets 的 rows 多出",
+        "'listening': None，响应与端点真返回不再逐字一致）。",
+        '"""',
+        "",
+        "from __future__ import annotations",
+        "",
+        "from typing import Any",
+        "",
+        "from pydantic import BaseModel, ConfigDict, RootModel, model_serializer, model_validator",
+        "",
+        "#: 记录「端点真给了哪些键」的内部键名（序列化时按它裁剪）。",
+        '_GIVEN_KEYS = "__given_keys__"',
+        "",
+    ]
 
     blocks: list[str] = list(header)
     for source in models.values():

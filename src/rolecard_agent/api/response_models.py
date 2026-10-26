@@ -4,7 +4,12 @@
 漂移判据：同一个脚本的 `--check`（CI 每次 push 比对现形状 vs 入库模型）。
 手改这份文件 = 下一次生成被覆盖；要改字段集，改端点再重跑生成器。
 
-不可建模（形状随数据变化）的端点：（无）
+不可建模（形状随数据变化）的端点：
+  - /api/roles
+  - /api/services
+  - /api/knowledge
+  - /api/settings/models
+  - /api/settings/runtime
 
 配套：引用这些模型的端点必须带 `response_model_exclude_unset=True` ——
 否则模型会把端点**没给**的缺省键补成 null（实测 pets 的 rows 多出
