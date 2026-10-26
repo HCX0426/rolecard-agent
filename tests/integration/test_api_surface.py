@@ -172,6 +172,8 @@ async def test_authz_matrix(auth_on_env: _ClientCtx, template: str) -> None:
         expected = PASSED_THROUGH | ({403} if path in LOOPBACK_OVERLAY else set())
         assert op.status_code in expected, (
             f"{path}: operator 档操作员必须过分级闸（403 仅当叠了回环护栏）"
+            f" —— 实测 {op.status_code}，body={op.text[:300]}（红要带现场：503/5xx 是"
+            "端点自报的退化原因，直接看 body 里的 checks，别让下一趟再猜）"
         )
 
 
