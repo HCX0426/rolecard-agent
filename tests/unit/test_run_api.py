@@ -4,6 +4,7 @@
 会落到错误位置（表现为 /api/knowledge 返回 []、会话/知识全空）。`_resolve_data_paths`
 保证无论从哪里启动都指向同一份真实数据。
 """
+
 import importlib.util
 import os
 from pathlib import Path
@@ -23,7 +24,10 @@ def run_api_mod():
 
 
 @pytest.fixture(autouse=True)
-def _isolate_env():
+def _isolate_env(monkeypatch: pytest.MonkeyPatch):
+    # DATA_ROOT 也要摘（conftest 的会话级重定向会改 user_data_root 的答案 —— 这一组测的
+    # 正是"未设置时"的默认解析，env 里带着重定向值它测不到默认）。
+    monkeypatch.delenv("DATA_ROOT", raising=False)
     saved = {k: os.environ.get(k) for k in ("SQLITE_PATH", "CHROMA_PATH", "UPLOAD_DIR")}
     for k in saved:
         os.environ.pop(k, None)

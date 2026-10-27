@@ -280,9 +280,7 @@ def process_upload(
         try:
             # 仅图片需要选 OCR 后端：按「服务」页签的端点顺序（默认本地 RapidOCR 优先）。
             backend = (
-                ocr_candidates()
-                if suffix in IMAGE_EXTS and ocr_candidates is not None
-                else None
+                ocr_candidates() if suffix in IMAGE_EXTS and ocr_candidates is not None else None
             )
             text = parse_document(target, backend=backend)
         except OcrUnavailable:
@@ -324,9 +322,7 @@ def process_upload(
                 # 索引身份用 task_id（按内容 hash 去重 → 同一份字节重建、不同内容彼此
                 # 独立），**不能用 safe_name**：同名文件会互相覆盖，旧文档索引静默丢失
                 # （审查报告 P0）。文件名只作展示名，引用里显示的仍是它。
-                chunks = knowledge.index(
-                    knowledge_scope, task_id, text, source_name=safe_name
-                )
+                chunks = knowledge.index(knowledge_scope, task_id, text, source_name=safe_name)
             except (KnowledgeDimensionMismatch, EmbedError) as exc:
                 # 两者都是"管理员可修复"的状态，且都发生在**索引没被破坏**之后
                 # （index() 已改为先嵌入再写库）。给出可操作的原因。
@@ -389,7 +385,7 @@ def terminal_outcome(p: PersistedUpload) -> UploadOutcome | None:
 
 
 def processing_outcome(p: PersistedUpload) -> UploadOutcome:
-    """"已登记、后台跑着"的即时答复（响应 status=`processing`，新状态值）。
+    """ "已登记、后台跑着"的即时答复（响应 status=`processing`，新状态值）。
 
     这个值**只存在于响应**，不进 intake 状态机：`pending` 是台账事实（"还没走完/
     走不了"），与"正在跑"是两件事 —— 混用会让 OCR 未配置那条终局 pending 被前端
@@ -510,8 +506,23 @@ def submit_processing(
             except Exception as exc:  # noqa: BLE001 — 后台兜底：编程错也要落成 failed，
                 # 不留"running 永远 True、台账永远 pending"的悬空形状。
                 # 连记账都失败就留 pending：重传这条路会自愈（既有语义），这里只管别悬空。
+                # **留 pending 但不许无声**（2026-10-26 CI 现场定案）：CI 上出现过
+                # "pending 34 秒不终局"的悬空（run 40379234206），轨迹里一行都没有 ——
+                # record_failure 自己炸（DB 连接代际/锁）就是当年的现场。兜底失败至少
+                # 落一条 trace，进度端点读不到的"为什么"轨迹里必须读得到。
+                recorded = False
                 with contextlib.suppress(Exception):
                     ingestion.record_failure(p.task_id, f"{type(exc).__name__}: {exc}")
+                    recorded = True
+                if not recorded:
+                    tracer.emit(
+                        TraceEvent(
+                            event="upload_task_stuck_pending",
+                            thread_id=thread_id,
+                            error=f"{type(exc).__name__}: {exc}",
+                            detail={"task_id": p.task_id, "record_failure": "failed-too"},
+                        )
+                    )
                 return
             try:
                 sink(outcome)
@@ -566,11 +577,7 @@ def process_scope_import(
             "note": "文件类型暂不支持自动解析（.txt/.md/.pdf/.docx/.pptx/.xlsx 及图片 OCR）。",
         }
     try:
-        backend = (
-            ocr_candidates()
-            if suffix in IMAGE_EXTS and ocr_candidates is not None
-            else None
-        )
+        backend = ocr_candidates() if suffix in IMAGE_EXTS and ocr_candidates is not None else None
         text = parse_document(p.target, backend=backend)
     except OcrUnavailable:
         # 与会话上传同一口径：图片保持 pending，OCR 可后补（重传/自愈再入索引）。

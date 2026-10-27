@@ -129,6 +129,9 @@ def _app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("AUTH_MODE", "off")
     # 整份替换的删前备份落在 user_data_root() 下，不重定向就会写进真实用户目录。
     monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data-root"))
+    # CHROMA_PATH 逐用例隔离（`table collections already exists` 那发 CI 红，同 client）：
+    # 不设则所有 app 共享默认 chroma 路径，chromadb 1.x rust 层在第二个 system 上当场炸。
+    monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
     return TestClient(create_app(sqlite_path=tmp_path / "app.db"))
 
 
