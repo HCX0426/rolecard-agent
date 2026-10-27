@@ -4,9 +4,6 @@
 #
 #    pip-compile --output-file=requirements/requirements.lock requirements/requirements-api.txt requirements/requirements-cloud.txt requirements/requirements-dev.txt requirements/requirements-mcp.txt requirements/requirements-rag.txt requirements/requirements.txt
 #
---index-url https://pypi.tuna.tsinghua.edu.cn/simple
---trusted-host pypi.tuna.tsinghua.edu.cn
-
 aiohappyeyeballs==2.7.1
     # via aiohttp
 aiohttp==3.14.4
