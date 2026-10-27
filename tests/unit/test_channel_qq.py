@@ -96,9 +96,9 @@ def test_parse_event_rejects_non_message_and_malformed() -> None:
     assert parse_event({"op": 0, "t": "READY", "d": {"user": {"id": "x"}}}) is None
     # 缺对端 / 缺 msg_id：发不回去 = 这条不接
     assert parse_event({"op": 0, "t": "GROUP_AT_MESSAGE_CREATE", "d": {"id": "m"}}) is None
-    assert parse_event(
-        {"op": 0, "t": "GROUP_AT_MESSAGE_CREATE", "d": {"group_openid": "G"}}
-    ) is None
+    assert (
+        parse_event({"op": 0, "t": "GROUP_AT_MESSAGE_CREATE", "d": {"group_openid": "G"}}) is None
+    )
     assert parse_event({"op": 0, "t": "GROUP_AT_MESSAGE_CREATE", "d": "not-a-dict"}) is None
 
 
@@ -169,7 +169,9 @@ def _fake_api(transport: httpx.MockTransport) -> QQApi:
         token_url="https://fake/token",
     )
     tokens = QQTokenManager(
-        app_id="a", app_secret="b", token_url="https://fake/token",
+        app_id="a",
+        app_secret="b",
+        token_url="https://fake/token",
         transport=lambda url, payload: {"access_token": "tok", "expires_in": "7200"},
     )
     return QQApi(creds=creds, tokens=tokens, client=httpx.Client(transport=transport))
@@ -268,15 +270,11 @@ def test_gateway_loop_identify_dispatch_heartbeat_reconnect() -> None:
         return len(connections) > 1
 
     api = _fake_api(
-        httpx.MockTransport(
-            lambda request: httpx.Response(200, json={"url": "wss://fake-gw"})
-        )
+        httpx.MockTransport(lambda request: httpx.Response(200, json={"url": "wss://fake-gw"}))
     )
     gateway = QQGatewayLoop(api=api, tracer=tracer, connect=connect)
     asyncio.run(
-        asyncio.wait_for(
-            gateway.run(stopping=stopping, on_message=received.append), timeout=10
-        )
+        asyncio.wait_for(gateway.run(stopping=stopping, on_message=received.append), timeout=10)
     )
     assert len(connections) >= 2  # 断线后真的重连过
     first = connections[0]
@@ -303,7 +301,9 @@ def test_gateway_loop_stop_wakes_a_silent_connection() -> None:
 
     creds = QQCredentials("a", "b", "https://fake-qq", "https://fake/token")
     tokens = QQTokenManager(
-        app_id="a", app_secret="b", token_url="https://fake/token",
+        app_id="a",
+        app_secret="b",
+        token_url="https://fake/token",
         transport=lambda url, payload: {"access_token": "tok"},
     )
     api = QQApi(creds=creds, tokens=tokens)
@@ -417,7 +417,14 @@ class SimpleNamespaceRuntime:
         self.assembly.tracer = tracer
 
 
-def test_source_starts_and_stops_with_fake_transport() -> None:
+def test_source_starts_and_stops_with_fake_transport(monkeypatch) -> None:
+    # RECV_POLL_SECONDS 压到 0.05（与下面 test_recv_poll_wakes_on_timeout 同款）：
+    # 这条要验的是"停旗唤醒 recv 轮询、join 收干净"，不是 5 秒拍的实时性 —— CI 的
+    # xdist 满载时 5s 定时器可以被 GIL 饿过 join(15s) 预算（run 40452899729 实测），
+    # 把拍子与 join 预算一起缩，测的语义不变、对机器负载不再敏感。
+    from rolecard_agent.features.channels import qq as qq_mod
+
+    monkeypatch.setattr(qq_mod, "RECV_POLL_SECONDS", 0.05)
     rec = _RecordingTracer()
     runtime = SimpleNamespaceRuntime(
         settings=Settings(
@@ -444,7 +451,9 @@ def test_source_starts_and_stops_with_fake_transport() -> None:
 
     # REST 半边喂 MockTransport —— 真网络在一次离线测试里都不许出现
     source = QQChannelSource(
-        runtime=runtime, tracer=rec, api=_fake_api(httpx.MockTransport(handler)),
+        runtime=runtime,
+        tracer=rec,
+        api=_fake_api(httpx.MockTransport(handler)),
         connect=_idle_connect,
     )
     source.start()
