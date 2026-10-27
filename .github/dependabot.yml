@@ -1,0 +1,40 @@
+# 依赖机器人节奏（2026-10-27 用户拍板）：**每月一次、每生态一张打包 PR**，不逐个报。
+#
+# 从前仓里没有这份文件 ⇒ 走的是账户级默认（逐个 PR，攒了六张互相冲突的），
+# 收编 PR #2–#5/#12 时把账还完，这里把口径固化：
+#   * `interval: monthly` —— 一个月来一次；
+#   * 顶层 `groups` 每生态一张打包 PR（"一个个报"的根因就是每个依赖一张）；
+#   * `open-pull-requests-limit: 5` —— 就算有积压也别堆成山。
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /requirements
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      - pip-all
+  - package-ecosystem: npm
+    directory: /shell
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      - shell-npm
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      - frontend-npm
+groups:
+  pip-all:
+    patterns:
+      - "*"
+  shell-npm:
+    patterns:
+      - "*"
+  frontend-npm:
+    patterns:
+      - "*"
