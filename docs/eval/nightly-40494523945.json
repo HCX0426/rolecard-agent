@@ -1,0 +1,374 @@
+{
+  "summary": {
+    "passed": 0,
+    "total": 11,
+    "pass_rate": 0.0,
+    "threshold": 0.85,
+    "started_at": "2026-10-27 11:15:53",
+    "case_set_hash": "da089aef09d4",
+    "python": "3.13.16",
+    "backend": "local",
+    "provider": "ollama",
+    "model": "qwen3-vl:8b",
+    "base_url": "http://127.0.0.1:11434",
+    "runs": 3,
+    "pass_rate_mean": 0.0,
+    "pass_rate_min": 0.0,
+    "pass_rate_max": 0.0,
+    "citation_ok": 0,
+    "citation_total": 0,
+    "citation_rate": null,
+    "per_case": {
+      "health-001": {
+        "passed": 0,
+        "of": 3
+      },
+      "health-002": {
+        "passed": 0,
+        "of": 3
+      },
+      "health-003": {
+        "passed": 0,
+        "of": 3
+      },
+      "authz-001": {
+        "passed": 0,
+        "of": 3
+      },
+      "guard-001": {
+        "passed": 0,
+        "of": 3
+      },
+      "security-001": {
+        "passed": 0,
+        "of": 3
+      },
+      "rag-001": {
+        "passed": 0,
+        "of": 3
+      },
+      "cite-001": {
+        "passed": 0,
+        "of": 3
+      },
+      "cite-002": {
+        "passed": 0,
+        "of": 3
+      },
+      "cite-003": {
+        "passed": 0,
+        "of": 3
+      },
+      "cite-004": {
+        "passed": 0,
+        "of": 3
+      }
+    },
+    "flakiest": []
+  },
+  "runs": [
+    [
+      {
+        "id": "health-001",
+        "path": "tool_selection",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 2
+      },
+      {
+        "id": "health-002",
+        "path": "multi_tool",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "health-003",
+        "path": "no_tool",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "authz-001",
+        "path": "authz_denied",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "guard-001",
+        "path": "guard_blocked",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "security-001",
+        "path": "authz_denied",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "rag-001",
+        "path": "rag_retrieval",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "cite-001",
+        "path": "citation",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 2
+      },
+      {
+        "id": "cite-002",
+        "path": "citation",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "cite-003",
+        "path": "citation",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "cite-004",
+        "path": "citation_no_data",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      }
+    ],
+    [
+      {
+        "id": "health-001",
+        "path": "tool_selection",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "health-002",
+        "path": "multi_tool",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "health-003",
+        "path": "no_tool",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "authz-001",
+        "path": "authz_denied",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "guard-001",
+        "path": "guard_blocked",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "security-001",
+        "path": "authz_denied",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "rag-001",
+        "path": "rag_retrieval",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "cite-001",
+        "path": "citation",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "cite-002",
+        "path": "citation",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "cite-003",
+        "path": "citation",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "cite-004",
+        "path": "citation_no_data",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      }
+    ],
+    [
+      {
+        "id": "health-001",
+        "path": "tool_selection",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "health-002",
+        "path": "multi_tool",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "health-003",
+        "path": "no_tool",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "authz-001",
+        "path": "authz_denied",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "guard-001",
+        "path": "guard_blocked",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "security-001",
+        "path": "authz_denied",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "rag-001",
+        "path": "rag_retrieval",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "cite-001",
+        "path": "citation",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "cite-002",
+        "path": "citation",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "cite-003",
+        "path": "citation",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      },
+      {
+        "id": "cite-004",
+        "path": "citation_no_data",
+        "passed": false,
+        "failures": [
+          "插件 finance 状态对齐失败：HTTP 403"
+        ],
+        "duration_ms": 1
+      }
+    ]
+  ]
+}
