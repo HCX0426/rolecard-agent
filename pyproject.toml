@@ -21,7 +21,7 @@ dependencies = [
   # 与 requirements.txt 同一条钉版口径（那边记着钉版原因）：检查点表是"会话的全部真相"，
   # 上游 layout 变更在本机不会有任何信号。两处约束必须逐字一致 —— parity 尺子比的就是这个
   # （2026-10-04 审查快照：此前这里裸奔，而 requirements 钉 ==3.1.1，漂移已实际发生）。
-  "langgraph-checkpoint-sqlite==3.1.1",
+  "langgraph-checkpoint-sqlite==3.1.2",
   "pydantic>=2.13",
   # v2.4 联网与工作区工具（core/tools/web.py / files.py）：
   # 全部用活跃维护的独立轮子，不走已 sunset 的 langchain-community。
