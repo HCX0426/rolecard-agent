@@ -94,7 +94,10 @@ def _client(
 @pytest.fixture(autouse=True)
 def _offline(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ollama 原语全部替身：本文件绝不碰 11434，也不管宿主机上服务在不在跑。"""
-    monkeypatch.setattr(svc, "local_inference_base_url", lambda _settings: "http://127.0.0.1:9")
+    # P3：替身 URL 用保留名 test.invalid（.invalid TLD 按规范永不解析），不用 :9 ——
+    # 本文件对它的断言只有"字符串相等"，语义不变；而 :9 那种真实 IP 形状在别处被
+    # 当"必然可打的本机端点"用，这里的替身不承担那个职责。
+    monkeypatch.setattr(svc, "local_inference_base_url", lambda _settings: "http://127.0.0.1:1")
     monkeypatch.setattr(svc, "ollama_loaded", lambda _b: [])
     monkeypatch.setattr(svc, "ollama_reachable", lambda _b: False)
     monkeypatch.setattr(svc, "ollama_unload", lambda _b, _m: False)
@@ -168,7 +171,7 @@ def test_status_marks_only_a_native_default_as_pinnable(tmp_path: Path) -> None:
     body = cloud.get("/api/local-service").json()
     assert body["is_local"] is False
     # 云端默认时本地服务照样可以看（驻留的模型还占着显存），只是不能常驻它。
-    assert body["base_url"] == "http://127.0.0.1:9"
+    assert body["base_url"] == "http://127.0.0.1:1"
 
 
 def test_status_survives_a_broken_default_backend(tmp_path: Path) -> None:

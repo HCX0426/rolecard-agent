@@ -929,7 +929,7 @@ describe("PetPage 在桌宠上回话（③：不进控制台就能聊）", () =>
     // 每来一块就长一截，滚动条必须跟着到底。
     for (const [i, chunk] of ["第一块", "第二块", "第三块"].entries()) {
       geo.scrollHeight = 900 + i * 200;
-      // eslint-disable-next-line no-await-in-loop
+       
       await act(async () => {
         emit?.({ type: "token", text: chunk });
       });

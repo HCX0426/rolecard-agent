@@ -140,6 +140,43 @@ async function request<T>(
   return (await res.json()) as T;
 }
 
+/**
+ * 二进制下载（诊断包这类"回文件本体"的端点）。
+ *
+ * 为什么不复用 request：它假定 JSON。为什么不用裸 `<a href>`：云端数据源形态下
+ * fetch 带 authHeaders 才拿得到凭据（`ShellReleaseCard` 那条下载是同源静态产物，
+ * 走 href 没问题；操作员专属端点走 href 会在鉴权开启时被 401 —— blob 这条路两种数据源都对）。
+ */
+async function requestBlob(
+  method: string,
+  url: string,
+): Promise<{ blob: Blob; filename: string }> {
+  let res: Response;
+  try {
+    res = await fetch(apiBase() + url, { method, headers: { ...authHeaders() } });
+  } catch (e) {
+    throw new ApiError(0, `网络错误：${(e as Error).message}`);
+  }
+  if (!res.ok) {
+    const fallback = `${res.status} ${res.statusText}`;
+    let raw: unknown = null;
+    try {
+      raw = await res.json();
+    } catch {
+      /* 非 JSON 错误体，保留状态码 */
+    }
+    const detail =
+      raw && typeof raw === "object" && "detail" in raw
+        ? readableDetail((raw as { detail: unknown }).detail, fallback)
+        : fallback;
+    throw new ApiError(res.status, detail);
+  }
+  // 文件名从 Content-Disposition 读（后端带时间戳）；读不到用稳定兜底名。
+  const cd = res.headers.get("content-disposition") || "";
+  const m = /filename="?([^";]+)"?/.exec(cd);
+  return { blob: await res.blob(), filename: m ? m[1] : "diagnostics.zip" };
+}
+
 // ---- 事件簿（docs/主动消息与记忆设计稿.md §6）---------------------------------------------
 // 与 `core/timeline.py` 的响应一一对应。**后端不写文案**：它只给 `kind` + `verb`，
 // "记下：/ 更正：/ 开始聊："这些中文动词在这里造句 —— 替界面造句的下一步，就是想改一句
@@ -286,6 +323,8 @@ export const api = {
       undefined,
       LONG_REQUEST_TIMEOUT_MS,
     ),
+  /** 一键诊断包（P2-②）：内存组 zip，回文件本体与下载名。 */
+  downloadDiagnostics: () => requestBlob("GET", "/api/diagnostics/export"),
 };
 
 // ---- 契约类型的再导出面（P3-1 第四刀：类型按路由域住在隔壁文件，接口面留在这里）

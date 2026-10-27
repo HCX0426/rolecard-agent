@@ -4,21 +4,9 @@
 // 住址只活在实现里（数一份清单就守一份清单，facade 用通配是不给第二份清单留门）。
 
 
-export interface ThreadRow {
-  thread_id: string;
-  title: string | null;
-  role_id: string;
-  role_name: string | null;
-  updated_at: string;
-  /** 会话级对话模式（后端返回有效值：会话覆盖 or 全局默认）。 */
-  agent_mode?: string;
-  /** 这条是不是"那个角色的固定线"（`s_proactive_<role>`）。旗标由后端给 ——
-   *  那个 id 形状的事实归 `core/reachout/inbox.py`，前端自己拼就等于第二个真相源。 */
-  is_proactive?: boolean;
-  /** 这条线程一个字都还没写过。侧栏用它把空白线程藏起来（旧实现拿"有没有标题"猜，
-   *  而重命名过的空线程、以及深链刚建的线程都会猜错）。 */
-  is_blank?: boolean;
-}
+import type { components } from "./schema.gen";
+
+export type ThreadRow = components["schemas"]["SessionsViewItem"];
 
 export interface MessageRow {
   role: "user" | "assistant" | "tool";
@@ -64,11 +52,4 @@ export interface TurnProbe {
 }
 
 /** 会话的上下文预算事实（`GET /api/session/{id}/context`）。 */
-export interface SessionContext {
-  /** 最近一轮被裁掉的历史条数（0 = 没裁，界面不该提示）。 */
-  trimmed: number;
-  /** 最近一轮实际送进 prompt 的条数。 */
-  kept: number;
-  /** 当前配置的字符预算。可能与历史那一轮不同（操作员改过配置），所以一起给出。 */
-  budget: number;
-}
+export type SessionContext = components["schemas"]["SessionContextViewRoot"];

@@ -10,6 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from rolecard_agent.api.deps import AppContext, get_context
+from rolecard_agent.api.response_models import ReachoutsView
 from rolecard_agent.core.watch.file_watch import pending_count
 from rolecard_agent.features import reachout as svc
 
@@ -46,7 +47,11 @@ def _page(ctx: AppContext, *, role_id: str | None = None) -> dict[str, object]:
     }
 
 
-@router.get("/api/reachouts")
+@router.get(
+    "/api/reachouts",
+    response_model=ReachoutsView,
+    response_model_exclude_unset=True,
+)
 def get_reachouts(
     ctx: AppContext = Depends(get_context),
     role_id: str | None = Query(default=None, description="只返回该角色主动找过你的历史"),

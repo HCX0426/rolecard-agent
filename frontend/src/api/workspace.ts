@@ -5,23 +5,13 @@
 
 
 /** 任务目录（角色可读写的授权范围）：path = 生效目录，overridden = 是否 DB 覆盖（否=跟随 env）。 */
-export interface WorkspaceDir {
-  path: string;
-  overridden: boolean;
-}
+import type { components } from "./schema.gen";
 
-export interface TreeEntry {
-  name: string;
-  is_dir: boolean;
-  size: number;
-}
+export type WorkspaceDir = components["schemas"]["WorkspaceDirViewRoot"];
 
-export interface TreeResult {
-  path: string;
-  parent: string;
-  entries: TreeEntry[];
-  truncated: boolean;
-}
+export type TreeEntry = components["schemas"]["WorkspaceTreeViewEntriesItem"];
+
+export type TreeResult = components["schemas"]["WorkspaceTreeViewRoot"];
 
 /** 上传目录里没被任何 ingestion 台账引用的文件（`/api/uploads/orphans`）。 */
 export interface OrphanUpload {

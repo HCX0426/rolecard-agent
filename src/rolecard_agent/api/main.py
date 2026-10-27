@@ -52,6 +52,8 @@ from rolecard_agent.api.auth import (
 )
 from rolecard_agent.api.body_cap import BodyCapMiddleware
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
+from rolecard_agent.api.diagnostics import install_unhandled_recorder
+from rolecard_agent.api.diagnostics import router as diagnostics_router
 from rolecard_agent.api.errors import error_response, register_error_handlers
 from rolecard_agent.api.ratelimit import Limiter, bucket_key, is_limited, paths_of
 from rolecard_agent.api.routers import appearance as appearance_router
@@ -70,6 +72,7 @@ from rolecard_agent.api.routers import settings as settings_router
 from rolecard_agent.api.routers import shell_release as shell_release_router
 from rolecard_agent.api.routers import sync as sync_router
 from rolecard_agent.api.routers import workspace as workspace_router
+from rolecard_agent.base import error_signatures
 from rolecard_agent.base.identity import active_user_id, resolve_instance_identity
 from rolecard_agent.base.observability import Tracer, logline
 from rolecard_agent.base.paths import console_dist_dir
@@ -97,7 +100,7 @@ from rolecard_agent.storage.db import set_request_epoch
 #: `version="x.y.z"` 那一形 —— 健康接口里那份**根本不在对齐检查范围内**：升版本时
 #: pyproject 与 FastAPI 跟着走，`/api/health` 继续报旧号，而没有任何东西会红。
 #: 合成一个常量之后 parity 比的是 `pyproject` ↔ 这一处，两份手写变成一份。
-API_VERSION = "0.4.4"
+API_VERSION = "0.5.0"
 
 # M5 前端构建产物的位置解析收在 `base/paths.console_dist_dir()`（09-30）：桌宠形象包
 # 也要扫那一份 `dist/pets/`，两处各写一遍路径就会有"界面打得开、素材清单扫不到"的单边红。
@@ -262,12 +265,17 @@ def create_app(
     # 注册在这儿、而认证/限流/分级/来源护栏四个中间件自己拼裸文本 —— 两半形状不一致，
     # 中文文案到不了前端（它只读 JSON detail）。判据见 `api/errors.py` 的模块文档。
     register_error_handlers(app)
+    # P2 观测最小版：没在注册表里的异常 ⇒ 签名记账 + 统一 JSON 正文（从前 Starlette
+    # 对泛型 500 回裸文本 "Internal Server Error" —— errors.py 收口后剩的第三个半）。
+    install_unhandled_recorder(app)
 
     # C1：端点按职责分包，全部端点已迁出本文件。
     app.include_router(roles_router.router)
     # 诊断端点（深探，随后还有指标）：**不是**免鉴权那条 /api/health —— 它要操作员，
     # 因为它回的是内部状态（库健全性、向量库开不开、配了几条后端）。
     app.include_router(health_router.router)
+    # P2-②：一键诊断包（export 动作，操作员 + 审计）。
+    app.include_router(diagnostics_router)
     app.include_router(sessions_router.router)
     app.include_router(console_router.router)
     app.include_router(settings_router.router)
@@ -468,6 +476,9 @@ def create_app(
             "status": "ok",
             "version": API_VERSION,
             "auth_mode": env_settings.auth_mode,
+            # P2 观测最小版：24h 滑窗内的未捕获异常计数（进程内维护，重启归零；
+            # 历史在 error.jsonl、现场在诊断包 —— 这一格只管"现在要不要看一眼"）。
+            "error_count_recent": error_signatures.recent_count(),
             "build": read_build_info().as_dict(),
             # 上限常量给前端现读（Composer 的附图预检等）—— 前端不再手抄数字，
             # 改这里一处即可（2026-10-04 审查快照「上限常量散布」那条的出口）。

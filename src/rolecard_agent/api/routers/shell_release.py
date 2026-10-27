@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from rolecard_agent.api.deps import AppContext, get_context
+from rolecard_agent.api.response_models import ShellReleaseView, UpdateCheckView
 from rolecard_agent.core.artifacts import ARTIFACT_GLOB
 from rolecard_agent.core.update_check import check_update
 
@@ -37,7 +38,11 @@ def _latest_artifact(directory: Path | None) -> Path | None:
     return max(files, key=lambda p: p.stat().st_mtime) if files else None
 
 
-@router.get("/api/shell-release")
+@router.get(
+    "/api/shell-release",
+    response_model=ShellReleaseView,
+    response_model_exclude_unset=True,
+)
 def shell_release(ctx: AppContext = Depends(get_context)) -> dict[str, object]:
     """有没有壳安装包可下。没有 ⇒ `available: false`，界面连入口都不渲染。"""
     configured = ctx.settings.shell_release_dir is not None
@@ -63,7 +68,11 @@ def download_shell_release(ctx: AppContext = Depends(get_context)) -> FileRespon
     return FileResponse(artifact, filename=artifact.name, media_type="application/octet-stream")
 
 
-@router.get("/api/update-check")
+@router.get(
+    "/api/update-check",
+    response_model=UpdateCheckView,
+    response_model_exclude_unset=True,
+)
 def update_check(request: Request, ctx: AppContext = Depends(get_context)) -> dict[str, object]:
     """「检查更新」：当前版本 vs 最新版本，只读、不下载、不装（设计稿 §3.1）。
 

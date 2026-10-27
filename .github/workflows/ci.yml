@@ -53,6 +53,30 @@ env:
   PYTHONUNBUFFERED: "1"
 
 jobs:
+  # 路径感知（P9 ①，2026-10-26）：先花 ~15s 判"这次动了什么"，纯前端的 push/PR 不再
+  # 烧镜像臂与 Windows 分片。**漏跑的代价想清楚了**：后端语义的变化必经 gate 臂（每次
+  # 都跑），后端真坏会在那里红；dist 与源码漂移由 frontend 臂的「dist 必须与源码同步」
+  # 一步守着 —— 两臂不跑的窗口只对"纯前端提交恰好也弄坏了镜像/Windows 专属分支"开放，
+  # 那类耦合没有已知的机制（镜像臂对前端改动的全部判据 = dist 静态拷贝还在）。
+  # 排除式写法 = "frontend/docs 之外还动了东西"：不在名单里的杂项（LICENSE、.gitignore…）
+  # 一律按"动了后端"处理 —— 宁可多跑，不可漏跑。dorny/paths-filter 对首推/强推取
+  # fail-open（全跑），不会因为判不出就静默跳臂。
+  changes:
+    name: 改动路径判定（纯前端则跳过镜像臂与 Windows 分片）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - '!(frontend/**)'
+              - '!(docs/**)'
+
   gate:
     name: 门禁 --ci（单趟 pytest + baseline 比对）
     runs-on: ubuntu-24.04
@@ -239,7 +263,7 @@ jobs:
         working-directory: shell
         run: npm run test:cleanup
 
-      - name: 构建（`npm run build` 里含 tsc --noEmit）
+      - name: 构建（`npm run build` 含 tsc --noEmit + eslint P8 + vite build）
         working-directory: frontend
         run: npm run build
 
@@ -282,6 +306,10 @@ jobs:
   docker:
     name: 镜像真跑（build + 起 + 护栏 + 一次真 API 往返）
     runs-on: ubuntu-24.04
+    needs: [changes]
+    # 纯前端的 push/PR 跳过（P9 ①）：镜像对前端改动的判据只有"dist 静态拷贝还在"，
+    # 真正守 dist 漂移的是 frontend 臂那一步。手动 dispatch 恒跑（有人在点名要它）。
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.code == 'true'
     # 构建镜像这一段本来就慢（拉基座 + pip 装四份 requirements），预算给到 25 分钟。
     timeout-minutes: 25
     steps:
@@ -517,7 +545,12 @@ jobs:
           exit "$code"
 
   windows-test:
-    name: Windows 测试臂 ${{ matrix.shard }}/4（每次 push/PR）
+    name: Windows 测试臂 ${{ matrix.shard }}/4（push/PR，纯前端提交跳过）
+    needs: [changes]
+    # 纯前端的 push/PR 跳过（P9 ①）：这一臂守的是「Windows 专属分支被机器接住」
+    # （ctypes.WinDLL / 图标层 / PowerShell 改写），前端改动一条都碰不到；前端自己的
+    # tsc+vitest 在 frontend 臂跑。手动 dispatch 恒跑。
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.code == 'true'
     # 升级路径（审查快照 P1-13 决策四）：起步臂 `windows-release` 只在手动 `build_windows` 跑，
     # 这一条补上「每次 push/PR 都跑的 Windows 测试臂」—— 平台覆盖倒挂（Windows-first 产品
     # 却只有 ubuntu 测试臂）的正式收口。它**只跑用例、不打包**：Windows runner 分钟按 2× 计费，

@@ -14,8 +14,10 @@ from __future__ import annotations
 import contextlib
 import os
 import pathlib
+import socket
 import sqlite3
 import sys
+import threading
 from collections.abc import Iterator, Sequence
 from typing import Any
 
@@ -35,6 +37,41 @@ from rolecard_agent.storage.db import bootstrap, connect
 def cards(store: RoleCardService) -> RoleCards:
     """测试里"本机主人眼里的那些卡"的简写（M2a 之后每次读写都得说清为谁）。"""
     return store.scoped(...)
+
+
+@pytest.fixture(scope="session")
+def unreachable_backend() -> Iterator[str]:
+    """一个**立即拒绝**的模型后端 URL，替代 `127.0.0.1:9`。
+
+    判据不变 —— 仍然是"必然失败的后端，用来测降级路径"；变的只是拒绝速度：本机网络栈
+    （Windows 防火墙那一层）对关闭端口返回 connection refused 要 ~3.4s，而"accept 即关"
+    的本地监听立刻 RST，实测 ~0.03s。抽取消耗者一次打 primary + verifier（交叉验证设计），
+    一条用例两次 3.4s 就是 6.7s —— 全仓十余处 `:9` 是 top30 热点（≈30% 全量墙钟）的主要
+    构成（P3 实测：全量 336.8s，这批文件 188 条占 81.6s）。
+
+    "accept 即关"而不是"不监听"：拒绝发生在 TCP 层、毫秒级，且**不依赖端口恰好没人占**
+    （`:9` 在某些机器上被 discard 服务监听时语义反转 —— 测试会打到真服务上）。
+    """
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(16)
+
+    def _accept_and_close() -> None:
+        while True:
+            try:
+                conn, _ = srv.accept()
+                conn.close()
+            except OSError:
+                return
+
+    thread = threading.Thread(target=_accept_and_close, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{srv.getsockname()[1]}"
+    finally:
+        srv.close()
+        thread.join(timeout=2)
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _no_startup_model_pin() -> Iterator[None]:
@@ -63,6 +100,38 @@ def _no_startup_model_pin() -> Iterator[None]:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _shared_data_root_per_worker(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """给整个测试会话一个**统一重定向的 DATA_ROOT**（2026-10-26 CI 现场定案）。
+
+    为什么收在这一层：36 个测试文件直接 `create_app(...)` 而不重定向数据根 —— 没设
+    `DATA_ROOT` 时全部 app 共享**平台默认根**（开发机上是仓库根旁边的真实用户目录，
+    CI 干净 checkout 上是 runner 家目录）。后果有两族：
+    ① chroma：全部 app 打**同一个**默认 chroma 路径。Windows 的 rust 绑定对并发 open
+    容忍，Linux（CI）上第二个 `PersistentClient` 并发初始化同一库文件当场
+    `table collections already exists`（run 40379234206 实测；test_sync_api 的
+    `_app` 只是我们**看见**它的地方，不是根因 —— test_api 等并发建 app 的模块同根）。
+    ② 孤儿扫描/上传目录：写进真实用户目录，测试互串还污染机器。
+    每个文件逐个补 `CHROMA_PATH` 补不完（新测试还会漏），收在**会话级**：
+    DATA_ROOT 一处重定向 → user_pets_dir / chroma 默认路径 / uploads 全族跟着走
+    （`base/paths.py::user_data_root` 是它们的唯一上游）。tmp 目录由 pytest 管理，
+    xdist 每个 worker 一个独立 tmp 根，worker 之间天然隔离。
+
+    刻意**不用** module/function 级：有些模块级 fixture 的 app 要跨用例活，会话级
+    重定向不改变任何既有隔离决定（显式设了 CHROMA_PATH/DATA_ROOT 的用例照旧赢）。
+    """
+    root = tmp_path_factory.mktemp("shared-data-root")
+    previous = os.environ.get("DATA_ROOT")
+    os.environ["DATA_ROOT"] = str(root)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("DATA_ROOT", None)
+        else:
+            os.environ["DATA_ROOT"] = previous
 
 
 @pytest.fixture
@@ -258,6 +327,8 @@ def _no_chroma_system_leak():
         if system is not None:
             with contextlib.suppress(Exception):
                 system.stop()
+
+
 # --------------------------------------------------------------- R102-41 失败时刻的现场
 _SCRIPTS_DIR = pathlib.Path(__file__).resolve().parents[1] / "scripts"
 BUILD_DIR = pathlib.Path(__file__).resolve().parents[1] / "build"

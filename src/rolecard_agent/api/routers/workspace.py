@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.api.errors import value_error_to_http
+from rolecard_agent.api.response_models import WorkspaceDirView, WorkspaceTreeView
 from rolecard_agent.core.common import workspace
 
 router = APIRouter()
@@ -40,7 +41,11 @@ def _payload(ctx: AppContext) -> dict[str, object]:
     }
 
 
-@router.get("/api/workspace/dir")
+@router.get(
+    "/api/workspace/dir",
+    response_model=WorkspaceDirView,
+    response_model_exclude_unset=True,
+)
 def get_workspace_dir(ctx: AppContext = Depends(get_context)) -> object:
     """任务目录当前生效值（DB 覆盖 or env）。"""
     return _payload(ctx)
@@ -77,7 +82,11 @@ def delete_workspace_dir(
     return _payload(ctx)
 
 
-@router.get("/api/workspace/tree")
+@router.get(
+    "/api/workspace/tree",
+    response_model=WorkspaceTreeView,
+    response_model_exclude_unset=True,
+)
 def browse(path: Annotated[str, Query(max_length=1024)] = "") -> object:
     """列目录单层内容（设置页树选择器用）。空 path = 从用户主目录起步。"""
     try:

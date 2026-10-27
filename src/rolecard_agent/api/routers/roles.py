@@ -21,13 +21,14 @@ from rolecard_agent.api.deps import (
     get_actor,
     get_context,
 )
+from rolecard_agent.api.response_models import RoleTimelineView, ToolsCatalog
 from rolecard_agent.core.proactive import timeline
 from rolecard_agent.features.card_import import (
     CardImportError,
     load_card_bytes,
     parse_sillytavern_card,
 )
-from rolecard_agent.roles.models import RoleCardCreate, RoleCardUpdate
+from rolecard_agent.roles.models import RoleCard, RoleCardCreate, RoleCardUpdate
 
 router = APIRouter()
 
@@ -49,10 +50,19 @@ def _validate_role_model(ctx: AppContext, model_name: str | None) -> None:
         raise HTTPException(status_code=400, detail=f"未知模型 {model_name!r}；可用：{known}")
 
 
-@router.get("/api/roles")
-def list_roles(ctx: AppContext = Depends(get_context)) -> list[object]:
-    """All role cards, built-in first."""
-    return [r.model_dump(mode="json") for r in ctx.role_cards.list_roles()]
+@router.get("/api/roles", response_model=list[RoleCard])
+def list_roles(ctx: AppContext = Depends(get_context)) -> list[RoleCard]:
+    """All role cards, built-in first.
+
+    `response_model`（P1，2026-10-25）：本仓 107 个端点此前**零处**声明响应模型 ——
+    于是 OpenAPI 里 193 个响应只有 82 个带 $ref，且那 82 个全是 `HTTPValidationError`
+    （错误响应，不是成功响应）⇒ 前端没有任何"成功响应"的契约可引用，手写类型无法被
+    机器校对。声明它之后前端可引用 `components["schemas"]["RoleCard"]`。
+
+    零风险条件（本端点满足）：返回对象本身就是 `RoleCard`（`list_roles()` 的返回类型），
+    字段集与模型**完全同源** —— FastAPI 的响应过滤不会切掉任何字段。
+    """
+    return ctx.role_cards.list_roles()
 
 
 @router.post("/api/roles", status_code=201)
@@ -143,7 +153,11 @@ def delete_role(
     ctx.audit.log(actor=actor.id, action="delete_role", target=role_id)
 
 
-@router.get("/api/roles/{role_id}/timeline")
+@router.get(
+    "/api/roles/{role_id}/timeline",
+    response_model=RoleTimelineView,
+    response_model_exclude_unset=True,
+)
 def role_timeline(
     role_id: str,
     ctx: AppContext = Depends(get_context),
@@ -174,7 +188,11 @@ def role_timeline(
     )
 
 
-@router.get("/api/tools/catalog")
+@router.get(
+    "/api/tools/catalog",
+    response_model=ToolsCatalog,
+    response_model_exclude_unset=True,
+)
 def tools_catalog(ctx: AppContext = Depends(get_context)) -> object:
     """按领域分组的工具目录 —— 角色表单的白名单选择器与插件详情共用。
 

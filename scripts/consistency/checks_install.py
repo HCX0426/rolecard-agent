@@ -4,6 +4,7 @@
 import 形状与 checks.py 相同：同目录 import + `.core` 结算面。判据正文一字未改 ——
 行为等价由门禁实跑全部 CHECKS 证明。
 """
+
 from __future__ import annotations
 
 import json
@@ -49,6 +50,7 @@ LOCK_SURFACES: dict[str, tuple[str, ...]] = {
     ),
 }
 
+
 def _package_names(lines: list[str]) -> set[str]:
     """requirements 风格的那些行 → 发行包名集合（注释与 extras/版本比较符都剥掉）。"""
     names: set[str] = set()
@@ -57,6 +59,7 @@ def _package_names(lines: list[str]) -> set[str]:
         if line:
             names.add(re.split(r"[<>=!\[:]", line, maxsplit=1)[0].strip().lower())
     return names
+
 
 def _runtime_declared_names() -> set[str]:
     """那五份运行时 requirements 里点名装过的发行包。"""
@@ -67,6 +70,7 @@ def _runtime_declared_names() -> set[str]:
             continue
         declared |= _package_names(path.read_text(encoding="utf-8", errors="ignore").splitlines())
     return declared
+
 
 def check_pyproject() -> None:
     try:
@@ -88,6 +92,7 @@ def check_pyproject() -> None:
     if not ok:
         fails.append("pyproject.toml is missing ruff / pytest config")
 
+
 def check_requirements_scope() -> None:
     """requirements/requirements.txt is the v1 kernel set. v2 deps must stay out of it."""
     lines = [
@@ -102,6 +107,7 @@ def check_requirements_scope() -> None:
     if leaked:
         fails.append(f"requirements.txt pulls v2-only deps: {leaked}")
 
+
 def _cmd_covers(req: str, cmd: str) -> bool:
     """这条 pip install 命令装没装 `req` 这一份：点名了它，或点了覆盖它的锁。
 
@@ -113,17 +119,20 @@ def _cmd_covers(req: str, cmd: str) -> bool:
         return True
     return any(lock in cmd and req in surface for lock, surface in LOCK_SURFACES.items())
 
+
 #: 按形态有意分开装的族（空理由 = 红，见 check_installer_scope 后半）。
 #: 键是相对仓库根的路径（2026-10-10 起这批文件住 requirements/ 子目录）。
 SEPARATE_BY_SHAPE: dict[str, str] = {
-    "requirements/requirements-dev.txt":
-        "开发/CI 依赖，不进生产运行树（含 PyInstaller 与 pip-tools）",
-    "requirements/requirements-ocr.txt":
-        "OCR 栈不进运行树，必须独立 venv（该文件开头有现行理由）",
-    "requirements/requirements-package-ocr.txt":
+    "requirements/requirements-dev.txt": (
+        "开发/CI 依赖，不进生产运行树（含 PyInstaller 与 pip-tools）"
+    ),
+    "requirements/requirements-ocr.txt": "OCR 栈不进运行树，必须独立 venv（该文件开头有现行理由）",
+    "requirements/requirements-package-ocr.txt": (
         "只有打随包 OCR worker 时要（PyInstaller 装进 .venv-ocr，"
-        "见 scripts/tools/build_ocr_worker.py；10-03 起装机版靠那份产物才有本地 OCR）",
+        "见 scripts/tools/build_ocr_worker.py；10-03 起装机版靠那份产物才有本地 OCR）"
+    ),
 }
+
 
 def _only_separate_families(cmd: str) -> bool:
     """这条 pip 命令装的是不是**全部**属于"按形态分开装"那几族。
@@ -141,6 +150,7 @@ def _only_separate_families(cmd: str) -> bool:
         return False
     separate_basenames = {k.rsplit("/", 1)[-1] for k in SEPARATE_BY_SHAPE}
     return all(t.rsplit("/", 1)[-1] in separate_basenames for t in targets)
+
 
 def check_installer_scope() -> None:
     """四个安装入口必须装**同一组运行时依赖**（09-28 轮 `R28-11`/`R28-12` 那一族的闸）。
@@ -197,8 +207,10 @@ def check_installer_scope() -> None:
             if not any(v in line for v in _INSTALL_VERBS):
                 continue
             probe = line.strip()
-            if probe.startswith("#") or probe.startswith("//") or probe.lower().startswith(
-                ("rem ", "::")
+            if (
+                probe.startswith("#")
+                or probe.startswith("//")
+                or probe.lower().startswith(("rem ", "::"))
             ):
                 continue
             buf = line
@@ -226,8 +238,10 @@ def check_installer_scope() -> None:
             if "-r requirements" not in line:
                 continue
             probe = line.strip()
-            if probe.startswith("#") or probe.startswith("//") or probe.lower().startswith(
-                ("rem ", "::")
+            if (
+                probe.startswith("#")
+                or probe.startswith("//")
+                or probe.lower().startswith(("rem ", "::"))
             ):
                 continue
             buf = line
@@ -295,7 +309,9 @@ def check_installer_scope() -> None:
     if not ok_class:
         fails.append(f"requirements files missing a classification: {unclassified or blank}")
 
+
 _家_RE = re.compile(r"-r (?:requirements/)?requirements(?:-([a-z_]+))?\.txt")
+
 
 def _installed_families(text: str, *, where: str) -> set[str]:
     """这条安装路径**实际**装了哪几族（`-r requirements-<族>.txt`）。
@@ -334,6 +350,7 @@ def _installed_families(text: str, *, where: str) -> set[str]:
         raise ValueError(f"{where} 里找不到任何 `-r requirements-*.txt`（判据在空转）")
     return families
 
+
 def _family_of(filename: str) -> str:
     """requirements 镜像文件名 → 族名（与 `_家_RE` 的提取口径一致：requirements.txt → "txt"）。
 
@@ -343,6 +360,7 @@ def _family_of(filename: str) -> str:
     if not m:
         raise ValueError(f"{filename} 不是 requirements 镜像文件的形状")
     return m.group(1) or "txt"
+
 
 def _lock_pins(text: str) -> dict[str, str]:
     """锁文件 → {归一化包名: pin 版本}。`name==ver ; marker` 行才收；注释与 `--` 选项跳过。
@@ -364,6 +382,7 @@ def _lock_pins(text: str) -> dict[str, str]:
         pins[re.sub(r"[-_.]+", "-", base.lower())] = version.strip()
     return pins
 
+
 def check_lockfile_parity() -> None:
     """每把锁必须覆盖 LOCK_SURFACES 声明的镜像面：镜像的每条约束 ∈ 锁的 pin，缺包即红。
 
@@ -384,6 +403,18 @@ def check_lockfile_parity() -> None:
             problems.append(f"{lock_name} 不见了（入库产物，pip-compile 重新生成）")
             continue
         lock_text = lock_path.read_text(encoding="utf-8", errors="ignore")
+        # 锁不钉镜像源（CONTRIBUTING 8.2）：本机 pip.ini 的 `--index-url/--trusted-host`
+        # 漏进锁后，CI/镜像全被拖去清华源 —— 2026-10-27 GitHub 侧对镜像 403/空响应，
+        # 镜像臂与 Windows 分片同根红两回。锁刷新脚本会剥这两行，手动提交的漏网由这把尺子拦。
+        leaked_index = [
+            line
+            for line in lock_text.splitlines()
+            if line.startswith(("--index-url", "--trusted-host"))
+        ]
+        if leaked_index:
+            problems.append(
+                f"{lock_name} 混进本机 pip 配置行 {leaked_index}（锁不钉镜像源，删掉再提交）"
+            )
         header = "\n".join(line for line in lock_text.splitlines() if line.startswith("#"))
         pins = _lock_pins(lock_text)
         if not pins:
@@ -430,6 +461,7 @@ def check_lockfile_parity() -> None:
     )
     if problems:
         fails.append(f"lockfile parity drift: {problems}")
+
 
 def check_lock_platform_markers() -> None:
     """锁里的**平台标记**：Windows 上解析出的锁，Linux 也装得上吗（2026-10-08 实撞立案）。
@@ -485,7 +517,9 @@ def check_lock_platform_markers() -> None:
             problems.append(f"{lock_name} 不见了")
             continue
         p, n = lock_findings(
-            path.read_text(encoding="utf-8", errors="ignore"), edges, lock_name,
+            path.read_text(encoding="utf-8", errors="ignore"),
+            edges,
+            lock_name,
             extra_pins=covered,
         )
         problems.extend(p)
@@ -498,11 +532,15 @@ def check_lock_platform_markers() -> None:
         for pin in parse_lock((ROOT / lock_name).read_text(encoding="utf-8", errors="ignore"))
         if pin.marker
     ]
-    detail = "; ".join(problems[:4]) if problems else (
-        f"{len(LOCK_SURFACES)} 把锁的平台标记都判过（会崩那族 {sorted(CRASHES_ELSEWHERE)}；"
-        f"带标记的行 {len(pinned)} 条"
-        + (f"；constraints 兜住 {sorted(covered)}" if covered else "")
-        + "）"
+    detail = (
+        "; ".join(problems[:4])
+        if problems
+        else (
+            f"{len(LOCK_SURFACES)} 把锁的平台标记都判过（会崩那族 {sorted(CRASHES_ELSEWHERE)}；"
+            f"带标记的行 {len(pinned)} 条"
+            + (f"；constraints 兜住 {sorted(covered)}" if covered else "")
+            + "）"
+        )
     )
     out("lock platform markers", ok, detail)
     if problems:
@@ -524,6 +562,7 @@ def _runtime_form_marker() -> str:
 
     return RUNTIME_FORM_ENV
 
+
 def _job_block(text: str, job: str) -> str | None:
     """ci.yml 里一个 job 的整块（`  <job>:` 起，到下一个同级键为止）；找不到返回 None。
 
@@ -533,9 +572,7 @@ def _job_block(text: str, job: str) -> str | None:
     （`on:` 的子键也是 2 空格，先到先切会切错块）。
     """
     lines = text.splitlines()
-    jobs_at = next(
-        (i for i, ln in enumerate(lines) if re.match(r"^jobs:\s*$", ln)), None
-    )
+    jobs_at = next((i for i, ln in enumerate(lines) if re.match(r"^jobs:\s*$", ln)), None)
     if jobs_at is None:
         return None
     key = re.compile(rf"^  {re.escape(job)}:\s*(?:#.*)?$")
@@ -547,6 +584,7 @@ def _job_block(text: str, job: str) -> str | None:
         if sibling.match(lines[j]):
             return "\n".join(lines[start:j])
     return "\n".join(lines[start:])
+
 
 def check_capability_matrix() -> None:
     """形态 × 能力 × 依赖出处：镜像里有什么、缺什么，由**一份矩阵**说了算。
@@ -692,6 +730,7 @@ def check_capability_matrix() -> None:
     if problems:
         fails.append(f"capability matrix out of sync: {problems}")
 
+
 def _package_constraints(lines: list[str]) -> dict[str, str]:
     """requirements 风格的行 → {发行包名: 版本约束原文}（"" = 无约束）。
 
@@ -710,6 +749,7 @@ def _package_constraints(lines: list[str]) -> dict[str, str]:
         pins[base] = rest
     return pins
 
+
 def check_dependency_parity() -> None:
     """pyproject.toml is the single source of truth; requirements*.txt mirror it.
 
@@ -724,17 +764,19 @@ def check_dependency_parity() -> None:
 
     def _diff(label: str, py_lines: list[str], req_file: str) -> None:
         py_pins = _package_constraints(py_lines)
-        req_pins = _package_constraints(
-            (ROOT / req_file).read_text(encoding="utf-8").splitlines()
-        )
+        req_pins = _package_constraints((ROOT / req_file).read_text(encoding="utf-8").splitlines())
         drift = {
             name: {"pyproject": py_pins.get(name), "requirements": req_pins.get(name)}
             for name in sorted(set(py_pins) | set(req_pins))
             if py_pins.get(name) != req_pins.get(name)
         }
         ok = not drift
-        detail = "in sync" if ok else "; ".join(
-            f"{n}: {d['pyproject']!r} vs {d['requirements']!r}" for n, d in drift.items()
+        detail = (
+            "in sync"
+            if ok
+            else "; ".join(
+                f"{n}: {d['pyproject']!r} vs {d['requirements']!r}" for n, d in drift.items()
+            )
         )
         out(label, ok, detail)
         if not ok:
@@ -761,10 +803,12 @@ def check_dependency_parity() -> None:
             continue
         _diff(f"extra parity: {extra}", list(extras[extra]), filename)
 
+
 #: spec 里的模块名（下划线）与发行包名（连字符）之间那点形状差。PEP 503 的归一只到
 #: "下划线/连字符等价"，这里就照那一条来，别写第二套映射表。
 def _module_to_distribution(module: str) -> str:
     return module.lower().replace("_", "-")
+
 
 def _spec_runtime_packages() -> list[str]:
     """spec 的 `RUNTIME_PACKAGES` —— **读法只有一个出处**：`scripts/check_bundle_parity.py`。
@@ -776,6 +820,7 @@ def _spec_runtime_packages() -> list[str]:
     from check_bundle_parity import spec_runtime_packages  # noqa: PLC0415 - 同目录的尺子
 
     return spec_runtime_packages()
+
 
 def check_spec_runtime_vs_requirements() -> None:
     """随包后端要收的每一族**模块**，都必须在那五份运行时 requirements 里有**声明出处**。

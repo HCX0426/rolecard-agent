@@ -25,12 +25,13 @@ from tests.conftest import model_rows
 
 
 @pytest.fixture
-def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    # 默认后端指向一个必然拒绝连接的端口：深度检测的断言因此与宿主机是否跑着 Ollama 无关。
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unreachable_backend: str) -> TestClient:
+    # 默认后端指向一个立即拒绝的后端：深度检测的断言因此与宿主机是否跑着 Ollama 无关。
+    # （P3：不再用 :9 —— 本机网络栈拒它要 ~3.4s，夹具的 accept-即关端点 ~0.03s。）
     monkeypatch.setenv(
         "MODEL_BACKENDS",
         '{"local": {"model": "qwen3-vl:8b", "provider": "ollama",'
-        ' "base_url": "http://127.0.0.1:9"}}',
+        f' "base_url": "{unreachable_backend}"}}}}',
     )
     monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
@@ -46,7 +47,9 @@ def _category(body: dict[str, object], key: str) -> dict[str, object]:
 # -- 状态视图 ------------------------------------------------------------------
 
 
-def test_status_view_lists_local_seed_and_the_editable_model_group(client: TestClient) -> None:
+def test_status_view_lists_local_seed_and_the_editable_model_group(
+    client: TestClient, unreachable_backend: str
+) -> None:
     body = client.get("/api/services").json()
     assert _category(body, "ocr")["candidates"][0]["id"] == "rapidocr"
     embedding = _category(body, "embedding")
@@ -140,7 +143,9 @@ def test_adding_a_reference_requires_a_configured_backend(client: TestClient) ->
     assert "模型页" in res.json()["detail"]
 
 
-def test_add_then_remove_a_reference_never_touches_the_model_page(client: TestClient) -> None:
+def test_add_then_remove_a_reference_never_touches_the_model_page(
+    client: TestClient, unreachable_backend: str
+) -> None:
     """**引用≠复制**：加引用不复制配置，删引用不动模型页。"""
     # 先在模型页建一个嵌入用的后端
     client.put(
@@ -148,7 +153,13 @@ def test_add_then_remove_a_reference_never_touches_the_model_page(client: TestCl
         json={
             "default": "local",
             "backends": [
-                {"name": "local", "provider": "ollama", "model": "qwen3-vl:8b", "api_key": "x"},
+                {
+                    "name": "local",
+                    "provider": "ollama",
+                    "model": "qwen3-vl:8b",
+                    "base_url": unreachable_backend,
+                    "api_key": "x",
+                },
                 {
                     "name": "embed_c",
                     "provider": "siliconflow",
@@ -166,8 +177,9 @@ def test_add_then_remove_a_reference_never_touches_the_model_page(client: TestCl
 
     # 同类服务内一后端至多一条引用
     assert (
-        client.post("/api/services/embedding/endpoints", json={"ref_backend": "embed_c"})
-        .status_code
+        client.post(
+            "/api/services/embedding/endpoints", json={"ref_backend": "embed_c"}
+        ).status_code
         == 400
     )
 
@@ -194,13 +206,21 @@ def test_disabling_the_last_enabled_endpoint_is_refused(client: TestClient) -> N
     assert "至少保留一个" in res.json()["detail"]
 
 
-def test_disable_then_reenable_when_another_candidate_exists(client: TestClient) -> None:
+def test_disable_then_reenable_when_another_candidate_exists(
+    client: TestClient, unreachable_backend: str
+) -> None:
     client.put(
         "/api/settings/models",
         json={
             "default": "local",
             "backends": [
-                {"name": "local", "provider": "ollama", "model": "qwen3-vl:8b", "api_key": "x"},
+                {
+                    "name": "local",
+                    "provider": "ollama",
+                    "model": "qwen3-vl:8b",
+                    "base_url": unreachable_backend,
+                    "api_key": "x",
+                },
                 {
                     "name": "r1",
                     "provider": "siliconflow",
@@ -267,7 +287,9 @@ def test_unavailable_first_choice_degrades_and_says_so(tmp_path: Path) -> None:
     assert "API Key" in first["reason"]
 
 
-def test_reference_to_a_deleted_backend_shows_up_as_stale(client: TestClient) -> None:
+def test_reference_to_a_deleted_backend_shows_up_as_stale(
+    client: TestClient, unreachable_backend: str
+) -> None:
     """被引用后端在模型页删掉 → 引用行呈现"失效"，**不静默跳过**。
 
     静默跳过会让操作员以为"这条还在用"，而真相是这个能力已经不在任何实现上。
@@ -277,7 +299,13 @@ def test_reference_to_a_deleted_backend_shows_up_as_stale(client: TestClient) ->
         json={
             "default": "local",
             "backends": [
-                {"name": "local", "provider": "ollama", "model": "qwen3-vl:8b", "api_key": "x"},
+                {
+                    "name": "local",
+                    "provider": "ollama",
+                    "model": "qwen3-vl:8b",
+                    "base_url": unreachable_backend,
+                    "api_key": "x",
+                },
                 {
                     "name": "gone",
                     "provider": "siliconflow",
@@ -294,7 +322,13 @@ def test_reference_to_a_deleted_backend_shows_up_as_stale(client: TestClient) ->
         json={
             "default": "local",
             "backends": [
-                {"name": "local", "provider": "ollama", "model": "qwen3-vl:8b", "api_key": "x"}
+                {
+                    "name": "local",
+                    "provider": "ollama",
+                    "model": "qwen3-vl:8b",
+                    "base_url": unreachable_backend,
+                    "api_key": "x",
+                }
             ],
         },
     )
@@ -321,13 +355,21 @@ def test_reorder_requires_a_complete_permutation(client: TestClient) -> None:
     assert client.put("/api/services/embedding", json={"order": ["hash"]}).status_code == 200
 
 
-def test_reorder_changes_which_endpoint_is_effective(client: TestClient) -> None:
+def test_reorder_changes_which_endpoint_is_effective(
+    client: TestClient, unreachable_backend: str
+) -> None:
     client.put(
         "/api/settings/models",
         json={
             "default": "local",
             "backends": [
-                {"name": "local", "provider": "ollama", "model": "qwen3-vl:8b", "api_key": "x"},
+                {
+                    "name": "local",
+                    "provider": "ollama",
+                    "model": "qwen3-vl:8b",
+                    "base_url": unreachable_backend,
+                    "api_key": "x",
+                },
                 {"name": "r2", "provider": "siliconflow", "model": "m", "api_key": "sk-b"},
             ],
         },
@@ -392,10 +434,14 @@ def test_service_changes_are_audited(client: TestClient) -> None:
     client.put("/api/services/embedding", json={"order": ["hash"]})
     actions = {a["action"] for a in client.get("/api/audit?limit=100").json()}
     assert "update_service_order" in actions
+
+
 # -- 模型推理优先级（= 默认 + 回退链） ------------------------------------------
 
 
-def test_models_order_maps_to_default_and_fallbacks(client: TestClient) -> None:
+def test_models_order_maps_to_default_and_fallbacks(
+    client: TestClient, unreachable_backend: str
+) -> None:
     """服务页调模型优先级：第 1 位写默认，其余写回退链 —— 与模型页同一份存储。"""
     # 种子环境只有 local 一个 chat 后端 → 先经模型页补一个云端行
     client.put(
@@ -404,8 +450,13 @@ def test_models_order_maps_to_default_and_fallbacks(client: TestClient) -> None:
             "default": "local",
             "backends": [
                 {"name": "local", "provider": "ollama", "model": "m-local", "usage": "chat"},
-                {"name": "cloud", "provider": "openai", "model": "m-cloud",
-                 "usage": "chat", "api_key": "sk-x"},
+                {
+                    "name": "cloud",
+                    "provider": "openai",
+                    "model": "m-cloud",
+                    "usage": "chat",
+                    "api_key": "sk-x",
+                },
             ],
         },
     )
@@ -427,18 +478,20 @@ def test_models_order_maps_to_default_and_fallbacks(client: TestClient) -> None:
 def test_models_order_rejects_unknown_and_duplicate(client: TestClient) -> None:
     client.put(
         "/api/settings/models",
-        json={"default": "local",
-              "backends": [{"name": "local", "provider": "ollama", "model": "m", "usage": "chat"}]},
+        json={
+            "default": "local",
+            "backends": [{"name": "local", "provider": "ollama", "model": "m", "usage": "chat"}],
+        },
     )
     assert client.put("/api/services/models", json={"order": ["ghost"]}).status_code == 400
-    assert client.put(
-        "/api/services/models", json={"order": ["local", "local"]}
-    ).status_code == 400
+    assert client.put("/api/services/models", json={"order": ["local", "local"]}).status_code == 400
     # 空列表在 schema 层被拒（ReorderBody min_length=1）→ FastAPI 校验错误 422
     assert client.put("/api/services/models", json={"order": []}).status_code == 422
 
 
-def test_models_order_is_the_chat_pool_and_can_grow_shrink(client: TestClient) -> None:
+def test_models_order_is_the_chat_pool_and_can_grow_shrink(
+    client: TestClient, unreachable_backend: str
+) -> None:
     """「模型推理」那一节的序列**就是**"谁用于对话"：能加进来、能摘出去，配置本身不受影响。
 
     拆层前这里是死循环（候选只给 usage=chat 的行，而 usage 只能从模型页写）；批次③ 之后

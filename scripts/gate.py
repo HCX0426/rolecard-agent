@@ -49,6 +49,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COV_MARKER = ROOT / "build" / ".cov-last-sha"
+
+
 def _venv_python() -> str:
     """按平台找虚拟环境里那个解释器，找不到就退回**调用方自己用的那个**。
 
@@ -159,13 +161,31 @@ STEPS: list[tuple[str, list[str], str]] = [
     # CI 档不受影响（`CI_SKIP` 已点名它 + 前端 tsc+build，CI 的前端各归专属 job）；
     # 本机代价约 +10s（vitest 热跑实测 9.7s）—— 这一格买的就是漂移当场红。
     ("前端 vitest", [NPM, "test"], "both"),
+    # 前端 ESLint（P8，2026-10-26）：hooks 依赖数组那族错误 tsc 管不着（类型对、逻辑反
+    # 是常态）。both 进快档 —— --cache 热跑实测个位数秒；冷跑 ~17s 也远小于预算。
+    # CI 档跳过（CI_SKIP 点名）：frontend job 的 `npm run build` 已含同一条 `npm run lint`。
+    ("前端 eslint", [NPM, "run", "lint"], "both"),
     ("前端 tsc+build", [NPM, "run", "build"], "full"),
     # README 的"快速开始"是 US-6 硬门槛（干净环境 ≤3 条命令）的唯一载体，此前没有任何
     # 尺子看着它 —— 落档时实测第 7 步那条裸 uvicorn 在 src 布局下必挂（R28-36）。
     # 这条探针把文档里的启动命令**原样执行一次**并等 /api/health（数据根走临时目录）。
     # 判据只有一份实现（`R28-31`：此前 CI 与本机各写一条 git 命令，CI 那条还看不见未跟踪文件）：
     ("dist 入库同步", [PY, "scripts/check_dist_sync.py"], "full"),
+    # OpenAPI 契约漂移（P1，2026-10-25）：入库的 frontend/openapi.json 必须 == 现导出的
+    # app.openapi()。both 进快档 —— 判据是纯离线对比（不连网、不起服务），秒级；契约漂移
+    # 与 dist 漂移同一族（"源码是新的、类型是旧的"且不报任何错），快档设防才拦得住。
+    # 前端 schema.gen.ts 的再生成由开发者本地跑 `npm run api:types`，与契约副本同一次提交。
+    ("openapi 契约同步", [PY, "scripts/tools/export_openapi.py", "--check"], "both"),
+    # 响应模型与运行时形状同步（P1 自动化的另一半）：生成物
+    # src/rolecard_agent/api/response_models.py 是"从运行时真实返回反推"的，端点返回一变
+    # 它就过期。both 进快档：纯离线（起一次 app 打几个只读端点），秒级。
+    ("响应模型同步", [PY, "scripts/tools/gen_response_models.py", "--check"], "both"),
     ("README 可跑性", [PY, "scripts/probe_readme_quickstart.py"], "full"),
+    # 文档命令块可跑性（P14，2026-10-26）：CONTRIBUTING §2/§8 的登记块，形状臂
+    # （引用路径存在）+ 执行臂（venv 落临时目录、init_db 数据根隔离）。full 档：
+    # 执行臂真建 venv（~10s），快档不付这笔。首跑就抓到两个真伤
+    # （init_db 顶层 import 先于 _ensure_importable 炸 / cmd 裸 python 9009）。
+    ("文档命令可跑性", [PY, "scripts/probe_docs_commands.py"], "full"),
     # 随包后端的 import↔bundle parity（R28-34）。只在 full：它量的是**产物**，快档没有产物。
     # `build/sidecar/` 不存在时脚本自己返回 0 并打出"没打过包不是负面"（与"未知不拦"同一条判据），
     # 所以这一条不会因为"这轮没打包"而假红 —— 但它一旦有包就必查。
@@ -372,9 +392,7 @@ def select_affected(changed: list[str], tests: list[str]) -> tuple[list[str], st
     return chosen, f"改了 {len(src)} 个模块 → 跑 {len(chosen)}/{len(tests)} 个测试文件"
 
 
-def _affected_pytest_command(
-    base: list[str], changed: list[str] | None
-) -> tuple[list[str], str]:
+def _affected_pytest_command(base: list[str], changed: list[str] | None) -> tuple[list[str], str]:
     """快档那趟 pytest 的命令：能挑就挑（并在输出里留下 `AFFECTED-SUBSET` 记号）。
 
     `changed` 由 `main()` 在**开跑之前**取一次（`None` = 没取到）。不在这里现取，是因为
@@ -424,9 +442,15 @@ STEP_TIMEOUTS: dict[str, float] = {
     "覆盖率分模块地板": 120.0,
     "改动行覆盖率": 120.0,
     "前端 vitest": 420.0,
+    "前端 eslint": 300.0,  # --cache 热跑个位数秒，冷跑 ~17s（10-26 实测）；给足首趟余量
     "前端 tsc+build": 600.0,
     "dist 入库同步": 120.0,
+    # 响应模型同步从默认 900 收回（P9 ②，2026-10-26）：P1b 第二批扩了采样面
+    # （28→33 端点 × 2 采样 × 每采样建一次 app）后本机实测 80.9 / 89.6s（两趟）。
+    # 300s ≈ 热跑的 3.3×：冷 runner 的抖动由余量吃，再往上顶穿就是真坏。
+    "响应模型同步": 300.0,
     "README 可跑性": 420.0,  # 脚本内自己只等 90s 健康 + 收尾，这里给它起停的余量
+    "文档命令可跑性": 300.0,  # 执行臂两处 venv（~10s）+ init_db（~5s），余量给冷 runner
     "随包后端 parity": 300.0,
     "依赖审计": 700.0,  # 脚本内 pip-audit 硬超时 600s，这里留善后余量
     "密钥扫描": 420.0,  # 脚本内 gitleaks 硬超时 300s + 首跑下载
@@ -699,6 +723,7 @@ def _run(
     ) as proc:
         with _ACTIVE_LOCK:
             _ACTIVE.add(proc)  # 挂死时看门狗要能收掉**活着的孩子**，不是只退自己
+
         # 读流必须与等待**并发**。主线程 `wait(timeout)` 而没人读管道 = 经典死锁：子进程
         # 写满几 KB 的管道缓冲后阻塞在 write 上，wait 会**把超时当挂死等到点** —— pytest 那
         # 一步的输出远超管道容量，这把尺子会把正常慢读成挂死。读泵放线程里，主线程只持 deadline。
@@ -953,6 +978,7 @@ CI_SKIP = frozenset(
         # 不装 node；由 frontend job 里紧邻「壳 typecheck」的那一步跑同一个 npm script。
         "shell updater 清理判据",
         "前端 vitest",
+        "前端 eslint",
         "前端 tsc+build",
         "dist 入库同步",
         "真机冒烟(14 项)",
@@ -1125,8 +1151,7 @@ def main() -> int:
     # 而那句话没有判据看着 —— 这半句就是被判据抓住之前的样子。
     if failures:
         print(
-            f"  ⏭️  失败即停：后续 {len(rest)} 步不再跑"
-            f"（{'、'.join(n for n, _, _ in rest)}）",
+            f"  ⏭️  失败即停：后续 {len(rest)} 步不再跑（{'、'.join(n for n, _, _ in rest)}）",
             flush=True,
         )
         rest = []

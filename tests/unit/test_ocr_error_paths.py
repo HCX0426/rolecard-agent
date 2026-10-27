@@ -124,7 +124,8 @@ def test_非零退出把_stderr_首行带出来(monkeypatch, tmp_path: Path) -> 
 def test_视觉模型不可达算不可用而非失败(monkeypatch, png: Path) -> None:
     """连不上 = 顺延下一个候选（OcrUnavailable）；连上了但识别失败 = ParseError。"""
     _stub_http(monkeypatch, _Client(error=httpx.ConnectError("Connection refused")))
-    backend = ocr_mod.VisionModelBackend(base_url="http://127.0.0.1:9", model="vl")
+    # http 全被 _stub_http 拦下，URL 只当字串用；不用 :9 的理由见 conftest 的 unreachable_backend。
+    backend = ocr_mod.VisionModelBackend(base_url="http://ocr-refused.test.invalid:1", model="vl")
     with pytest.raises(OcrUnavailable) as got:
         backend.ocr(png)
     assert "不可达" in str(got.value)
@@ -226,9 +227,7 @@ class _Row:
 
 def test_选择器跳过不可用候选并顺延到下一个(monkeypatch) -> None:
     """一个候选不可用就下一个；全不可用才 None（调用方降级为 pending）。"""
-    monkeypatch.setattr(
-        ocr_mod.LocalRapidOcrBackend, "available", lambda self: False, raising=True
-    )
+    monkeypatch.setattr(ocr_mod.LocalRapidOcrBackend, "available", lambda self: False, raising=True)
     monkeypatch.setattr(ocr_mod.VisionModelBackend, "available", lambda self: False, raising=True)
     endpoints = {
         "vl": _Row(kind="local", model="qwen3-vl", base_url="http://x", stale=False),
@@ -268,8 +267,6 @@ def test_行在但没配凭据的云端候选不被选中(monkeypatch) -> None:
     """端点序引用了一条云端行、模型页却没填凭据 ⇒ 不发图、不选中（隐私红线的另一面）。"""
     endpoints = {"c": _Row(kind="cloud", base_url="http://c", api_key="", stale=False)}
     assert (
-        ocr_mod.select_ocr_backend(
-            Settings(ocr_python=None), order=["c"], endpoints=endpoints
-        )
+        ocr_mod.select_ocr_backend(Settings(ocr_python=None), order=["c"], endpoints=endpoints)
         is None
     )

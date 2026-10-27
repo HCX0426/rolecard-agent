@@ -125,9 +125,11 @@ export default function ChatPage({
   // 状态提示统一走 toast（可叠加、自动消失、带语气）—— 一行 status 会被后来的消息覆盖，
   // 上一个操作的结果还没看清就没了。保留 setStatus 这个名字，既有调用点无需改动。
   const { push: pushToast } = useToast();
-  const setStatus = (text: string, tone: Tone = "info") => {
+  // useCallback：push 在 Toast provider 里是稳定引用，所以 setStatus 也稳定 ——
+  // 下面那个挂载 effect 才能把它诚实写进依赖（ESLint exhaustive-deps 报的就是漏它）。
+  const setStatus = useCallback((text: string, tone: Tone = "info") => {
     if (text) pushToast(text, tone);
-  };
+  }, [pushToast]);
 
   // 会话列表（含移动端抽屉开关）抽到 hooks/useSessions。
   const { sessions, sessionsOpen, setSessionsOpen, refreshSessions } = useSessions();
@@ -136,7 +138,7 @@ export default function ChatPage({
     refreshSessions().catch((e) => setStatus(`加载对话失败：${e.message}`, "warn"));
     api.get<RoleCard[]>("/api/roles").then(setRoles).catch(() => {});
     // 模型行由 ChatToolbar 自己拉（hooks/useModelBackends）：这一页除了生效模型的名字不碰它。
-  }, [refreshSessions]);
+  }, [refreshSessions, setStatus]);
 
   // 头部的角色选择跟随当前会话（切会话时显示该会话自己的角色）
   useEffect(() => {
@@ -202,8 +204,11 @@ export default function ChatPage({
       setHistoryTruncated(page.truncated ? page.total - page.messages.length : 0);
       seenTotalRef.current = page.total; // 记账：别处的写入靠这个数与探针比对
       setSessionModel(detail.model_name);
-      setTrim(ctxInfo.trimmed > 0 ? { dropped: ctxInfo.trimmed, kept: ctxInfo.kept } : null);
-      setCtxBudget(ctxInfo.budget);
+      // 生成契约把这几个数字放宽成 number | null（样本证明不了"永远有值"）：
+      // 读不到就按 0 —— 0 正是"没裁过 / 没预算"的既有语义，不发明第三种状态。
+      const trimmed = ctxInfo.trimmed ?? 0;
+      setTrim(trimmed > 0 ? { dropped: trimmed, kept: ctxInfo.kept ?? 0 } : null);
+      setCtxBudget(ctxInfo.budget ?? 0);
       setStatus("");
     } catch (e) {
       setStatus(`加载历史失败：${describeError(e)}`, "warn");
@@ -238,7 +243,11 @@ export default function ChatPage({
    *  角色是可选的：不指定即用默认角色（内置「通用助手」），之后随时在功能行切换。
    *  返回可用的 thread_id（新建或复用的），失败返回 null。 */
   async function createSession(): Promise<string | null> {
-    const empty = sessions.find((s) => s.is_blank && !s.is_proactive);
+    // thread_id 是寻址键；生成契约放宽成 string | null 后，没带 id 的行**不是**可复用的
+    // 空白会话（点不开也删不掉）—— 条件里一并滤掉，走新建那条路。
+    const empty = sessions.find(
+      (s): s is ThreadRow & { thread_id: string } => Boolean(s.is_blank && !s.is_proactive && s.thread_id),
+    );
     if (empty) {
       setStatus("上一次的对话还是空白，已直接为你打开");
       if (sessionId !== empty.thread_id) await selectSession(empty.thread_id);

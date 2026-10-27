@@ -54,7 +54,9 @@ def _row_or_404(ctx: AppContext, key: str, eid: str) -> object:
     raise HTTPException(status_code=404, detail=f"服务 {key} 下不存在端点 {eid!r}")
 
 
-@router.get("/api/services")
+@router.get(
+    "/api/services",
+)
 def list_services(ctx: AppContext = Depends(get_context)) -> object:
     """运行时状态视图（轻检测：配置齐缺 + 本地探活，不发外部请求）。
 

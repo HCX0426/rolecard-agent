@@ -4,6 +4,8 @@
 // 住址只活在实现里（数一份清单就守一份清单，facade 用通配是不给第二份清单留门）。
 
 
+import type { components } from "./schema.gen";
+
 export interface BackendRow {
   name: string;
   provider: string;
@@ -33,15 +35,7 @@ export interface BackendRow {
   used_by?: string[];
 }
 
-export interface ModelProvider {
-  id: string;
-  label: string;
-  // 布尔（`R102-16`）：目录行从前发 "0"/"1" 字符串、分组行发 boolean —— JS 里 "0" 是
-  // truthy，谁把目录行当分组行用就永远"要 key"。同一契约键一种类型。
-  needs_key: boolean;
-  base_url_hint: string;
-  style: string; // native | openai
-}
+export type ModelProvider = components["schemas"]["ModelProvidersViewProvidersItem"];
 
 /** 模型设置：**只有分组这一个视图**（旧平铺 `backends` 投影随旧界面一起删了）。
  * 行上的凭据（provider/base_url/has_key）来自它所属的组 —— 需要平铺时用 helper 摊平。 */

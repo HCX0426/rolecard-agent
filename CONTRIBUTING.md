@@ -42,13 +42,22 @@
 7. 提交
 ```
 
-第 5、6 步不是可选的美化：`check_consistency.py` 专门用来抓"文档与代码不同步"和"旧命名残留"，它是这个仓库唯一的自动护栏。
+第 5、6 步不是可选的美化：`check_consistency.py` 抓"文档与代码不同步"和"旧命名残留"。
+（2026-10-26 订正：它已**不是**唯一的自动护栏 —— 分层门禁 `scripts/gate.py`（ruff/mypy/
+pytest/契约同步/两只文档探针）、pre-commit 静态三连、P6 集成面、P8 前端 eslint 都是；
+但"文档与代码不同步"这一族的**第一尺子**仍是它。）
 
 **第 6 步的输出不许和 `| grep`、`&&` 串在同一条命令里再决定要不要提交。** 判据要单独落盘、单独读
 退出码：`python scripts/check_consistency.py > build/cons.log 2>&1; echo exit=$?`。
 理由不是理论 —— 09-30 有两次把红的推上了 `main`，同一条形状：一次是 `... | grep FAIL && git commit`
 （`grep` 在**找到**失败行时返回 0，于是"检查没过"被翻译成"可以提交"），一次是 `... | grep assertions: && git add && git commit && git push`
 （`grep` 抓到了那行计数就返回 0，根本没看它是 38 还是 39）。**管道末端那条命令的退出码不是检查的退出码。**
+
+**风险改动走分支 PR 自审（P12，2026-10-26 拍板）**：装配根 / 公开契约 / 进程生命周期 /
+依赖面 / 门禁本体这五族的改动，先推分支开 PR（自己批自己合），CI 绿再进 main——
+main 上的红是全员可见的坏状态，PR 是"让 CI 先看一眼"的最便宜形态。模板在
+`.github/pull_request_template.md`（改了什么 / 怎么验的 / 风险族 / 回写清单）；
+文案、读数、单个用例级的小改仍直推。
 
 ---
 
@@ -86,40 +95,28 @@
 
 统一前缀 `/api`。**所有响应都是 JSON；错误一律走下面的统一结构。**
 
-| 方法 | 路径 | 用途 |
-| --- | --- | --- |
-| POST | `/api/chat` | SSE 流式对话；body 带 `thread_id`、`message` |
-| GET | `/api/roles` | 角色列表 |
-| POST | `/api/roles` | 新建 / 更新角色 |
-| POST | `/api/session/role` | 切换某 thread 的角色（**运营动作，不是 LLM 工具**） |
-| GET | `/api/plugins` | 插件列表与启用状态 |
-| POST | `/api/plugins/toggle` | 启用 / 停用插件 |
-| POST | `/api/upload` | 文档摄取入口（v1 为占位，v2.2 实现） |
+**端点面不在这里抄清单**（P1，2026-10-26 收口）：事实源是 `app.openapi()` → 入库副本
+`frontend/openapi.json`，门禁「openapi 契约同步」步每次对账（漂移 = 红），前端类型
+`src/api/schema.gen.ts` 由它生成。本节那张老端点表里有三条（`/api/plugins*`、
+`/api/upload`、`/api/session/role`）**已经退役**——正是"markdown 抄第二份端点清单"
+的下场；要问现在有什么端点，问契约文件。
 
 ### 统一错误结构
 
 ```json
-{
-  "error": {
-    "code": "TOOL_NOT_ALLOWED",
-    "message": "当前角色无权调用该工具",
-    "request_id": "req_7f3a..."
-  }
-}
+{ "detail": "这一轮还在跑 —— 先按「停止」或等它说完，再改这段历史。" }
 ```
 
-| code | HTTP | 含义 |
-| --- | --- | --- |
-| `BAD_REQUEST` | 400 | 入参校验失败 |
-| `ROLE_NOT_FOUND` | 404 | 角色不存在 |
-| `THREAD_NOT_FOUND` | 404 | 会话不存在 |
-| `TOOL_NOT_ALLOWED` | 403 | 工具不在当前角色白名单内 |
-| `TOOL_OFFLINE` | 409 | 工具所属插件已停用（跨 `tool_epoch` 恢复的历史调用） |
-| `GUARD_BLOCKED` | 422 | 输出被安全审核拦下 |
-| `MODEL_BACKEND_ERROR` | 502 | 模型后端全部失败（含回退链） |
-| `INTERNAL` | 500 | 未归类错误 —— 对外只给这个 code，细节进日志 |
-
-**消息里绝不能出现堆栈、SQL、文件路径。**
+- 唯一的正文组装点：`api/errors.py::error_response`（中间件四个返回点、
+  `HTTPException` 与异常族 handler 全走它；换正文形状不换头语义——401 的
+  `WWW-Authenticate`、429 的 `Retry-After` 原样带上）。
+- `detail` 两种形状：字符串（业务错误，中文）或 FastAPI 422 的数组（校验错误）——
+  前端 `readableDetail` 认这两种，形状判据钉在 `tests/test_error_contract.py`
+  （TestClient 侧）与 `tests/integration/test_api_surface.py`（httpx ASGI 接缝侧）。
+- 异常族 → 状态码注册表也在 `api/errors.py`（`_FAMILIES`），码是判据不是习惯：
+  404/409/403/400/500 的每条理由跟着那行代码；存储层环境型故障（磁盘满/写锁）
+  单独翻 503。判据用例随 `check_consistency` 的审计族检查一起跑。
+- **堆栈只进日志不进返回值**（铁律）：响应里绝不出现堆栈、SQL、文件路径。
 
 ---
 
@@ -172,9 +169,10 @@
 - [ ] 没有新增依赖；如新增，已同步 `pyproject.toml` 与对应的 `requirements-*.txt`
 - [ ] 没有改动第 4 节的任何文件
 - [ ] 提交信息符合 Conventional Commits（`feat:` / `fix:` / `docs:` / `test:` / `refactor:` / `chore:`）
-- [ ] 已启用本地 git 钩子（一次性：`git config core.hooksPath .githooks`）—— 改前端源码时
-      pre-commit 会自动重建 `frontend/dist` 并随提交入库；dist 必须与源码同一次提交
-      （clone 免 node 可跑 + 随包后端托管都靠它，CI 的回写 bot 只兜 main）。
+- [ ] 已启用本地 git 钩子（一次性：`git config core.hooksPath .githooks`）—— 两道即时拦截：
+      动了 .py 时 pre-commit 先跑静态三连（`ruff check` + `ruff format --check` + 动了 src/ 加
+      mypy 增量，**作用域 = 本次暂存文件**，P4）；改前端源码时自动重建 `frontend/dist` 并随提交
+      入库；dist 必须与源码同一次提交（clone 免 node 可跑 + 随包后端托管都靠它，CI 的回写 bot 只兜 main）。
 
 ---
 

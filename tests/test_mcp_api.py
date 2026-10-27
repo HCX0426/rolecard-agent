@@ -16,10 +16,11 @@ from rolecard_agent.api.main import create_app
 
 
 @pytest.fixture
-def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unreachable_backend: str) -> TestClient:
     monkeypatch.setenv(
         "MODEL_BACKENDS",
-        '{"local": {"model": "qwen3-vl:8b", "provider": "ollama", "base_url": "http://127.0.0.1:9"}}',
+        '{"local": {"model": "qwen3-vl:8b", "provider": "ollama",'
+        f' "base_url": "{unreachable_backend}"}}}}',
     )
     monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
@@ -96,9 +97,7 @@ def test_writes_are_audited_without_secrets(client: TestClient) -> None:
     assert "sk-9999" not in str(audit)  # 审计也不落密钥
 
 
-def test_test_endpoint(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_test_endpoint(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     assert _create(client).status_code == 201
 
     class _T:

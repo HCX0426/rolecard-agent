@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.api.errors import value_error_to_http
+from rolecard_agent.api.response_models import ChannelsView, McpServersView
 from rolecard_agent.core.plugins import mcp_store
 
 router = APIRouter()
@@ -39,7 +40,11 @@ class McpPatchBody(BaseModel):
     enabled: bool | None = None
 
 
-@router.get("/api/mcp/servers")
+@router.get(
+    "/api/mcp/servers",
+    response_model=McpServersView,
+    response_model_exclude_unset=True,
+)
 def list_mcp_servers(ctx: AppContext = Depends(get_context)) -> dict[str, Any]:
     """受管 MCP server 列表（headers 掩码）。env 侧高级配置不进本视图。"""
     rows = mcp_store.list_rows(ctx.conn)
@@ -154,7 +159,11 @@ def test_mcp_server(
 __all__ = ["router"]
 
 
-@router.get("/api/channels")
+@router.get(
+    "/api/channels",
+    response_model=ChannelsView,
+    response_model_exclude_unset=True,
+)
 def list_channels(ctx: AppContext = Depends(get_context)) -> dict[str, Any]:
     """外部聊天渠道的**运行状态**（工具页「渠道」区块的状态灯与禁用原因）。
 

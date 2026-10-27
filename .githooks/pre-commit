@@ -1,16 +1,58 @@
 #!/bin/sh
-# dist 入库同步的**本地即时拦截**（2026-10-04 审查快照「dist 入库」条，决策六的另一半；
-# CI 上由 frontend job 的回写 bot 与 check_dist_sync 兜底，这一半拦在本机提交的瞬间）。
+# 本地即时拦截（L0）：2026-10-04 审查快照「dist 入库」条 + P4「pre-commit 扩容」。
+# CI 上由 frontend job 的回写 bot 与 check_dist_sync 兜底，这一半拦在本机提交的瞬间。
 #
 # 启用（每台克隆机一次性）：
 #     git config core.hooksPath .githooks
 #
-# 行为：本次提交动了前端源码而 dist 没跟着重建 ⇒ 当场重建并把 dist 一起 add 进提交。
-# 没装 node / 构建失败时只提醒、不拦 —— "拦不住就别假装拦了"，后面还有 CI 两道。
+# ── 两组成员，顺序是硬依赖 ──
+#
+# A 组 静态三连（P4，2026-10-26）：ruff check / ruff format --check / mypy —— 作用域
+#   **限定在暂存文件**（数一份清单就守一份清单：全仓跑会把别人的历史欠账算到这次提交头上，
+#   而"别人的红"拦不住人，只教会人 --no-verify）。ruff 能抓的错误类没理由等 84s 的 fast 档。
+#   刻意**不挂**的：pytest / consistency —— 它们分别是 120s 与 40s 级，慢的挂进 hook
+#   就一定会被 --no-verify 绕过，那 hook 就死了（本仓纪律：拦得住的才挂）。
+#   预算实测：ruff 三连 ~1s，mypy 增量（缓存热）~8s —— 冷缓存那次会慢，值一次。
+#
+# B 组 dist 重建（原有条）：动了前端源码而 dist 没跟着重建 ⇒ 当场重建并把 dist add 进提交。
+#   没装 node / 构建失败时只提醒、不拦 —— "拦不住就别假装拦了"，后面还有 CI 两道。
+#
+# ⚠ A 组必须排在 B 组**那个没有前端改动就 exit 0 的早退**之前：纯后端提交如果先撞上
+#   早退，静态三连一克都不跑 ——「hook 里写了、实际从没执行」是机制空转最安静的死法
+#   （与 pyproject 里 coverage_floor 那格同一族判据）。
 
 set -e
 cd "$(git rev-parse --show-toplevel)"
 
+PYBIN=".venv/Scripts/python.exe"
+[ -x "$PYBIN" ] || PYBIN=".venv/bin/python"
+STAGED_PY="$(git diff --cached --name-only --diff-filter=ACM -- '*.py' | tr '\n' ' ')"
+
+# ── A 组：静态三连（暂存文件作用域）──────────────────────────────────────────
+if [ -n "$STAGED_PY" ] && [ -x "$PYBIN" ]; then
+  # shellcheck disable=SC2086  # 词分割是刻意的：文件列表进参数
+  if ! "$PYBIN" -m ruff check $STAGED_PY; then
+    echo "pre-commit：ruff check 红 —— 修完再提交（这一组是秒级的，没有绕的理由）"
+    exit 1
+  fi
+  # 格式与 check 同域同作用域：E501 那类"check 不报、format 想改"的漂移在提交门口合流。
+  # shellcheck disable=SC2086
+  if ! "$PYBIN" -m ruff format --check $STAGED_PY; then
+    echo "pre-commit：这些文件没格式化过 —— 跑 '$PYBIN -m ruff format <文件>' 再提交"
+    exit 1
+  fi
+  # mypy 只在动了 src/ 时跑：scripts/ 那一族按门禁口径另有单独一档。
+  STAGED_SRC="$(git diff --cached --name-only --diff-filter=ACM -- 'src/*.py' | tr '\n' ' ')"
+  if [ -n "$STAGED_SRC" ]; then
+    # shellcheck disable=SC2086
+    if ! "$PYBIN" -m mypy --cache-dir .mypy_cache/src $STAGED_SRC; then
+      echo "pre-commit：mypy 红 —— 类型错不进提交"
+      exit 1
+    fi
+  fi
+fi
+
+# ── B 组：dist 入库同步（原有条，逐字保留行为）───────────────────────────────
 changed="$(git diff --cached --name-only -- frontend/src frontend/index.html frontend/package.json frontend/package-lock.json frontend/vite.config.ts)"
 [ -z "$changed" ] && exit 0
 
