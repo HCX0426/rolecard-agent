@@ -84,3 +84,41 @@ def test_watchdog_stays_quiet_while_the_parent_lives() -> None:
     assert thread is not None
     time.sleep(0.4)
     assert not fired.is_set()
+
+
+# --------------------------- POSIX 那半边（两台机器都要跑得到）
+
+
+def test_posix_alive_branches_are_exercised_on_any_platform(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_posix_process_alive` 的三格用 os.kill 替身打 —— **平台无关**。
+
+    发布闸升全量后首次在 Linux runner 上量出它 64.71%（本机 Windows 永远跑不到
+    这条分支，"两台机器各查各的那半"的分工把这一格漏给了没人查的空档 —— 现在
+    替身让两半都在每台机器上被查）。三格的语义各有归属：
+      * ProcessLookupError → False（真没了）；
+      * PermissionError → True（存在但不是我的 —— 宁可少一道保险，不误杀）；
+      * 正常返回 → True。
+    """
+
+    def raise_no_process(pid: int, sig: int) -> None:
+        raise ProcessLookupError()
+
+    monkeypatch.setattr(watch.os, "kill", raise_no_process)
+    assert watch._posix_process_alive(12345) is False
+
+    def raise_perm(pid: int, sig: int) -> None:
+        raise PermissionError()
+
+    monkeypatch.setattr(watch.os, "kill", raise_perm)
+    assert watch._posix_process_alive(12345) is True
+
+    monkeypatch.setattr(watch.os, "kill", lambda pid, sig: None)
+    assert watch._posix_process_alive(12345) is True
+
+
+def test_process_alive_pid_guards_are_platform_free() -> None:
+    """pid<=0 一律"活着"（无可监视对象）——这条在两个平台上都必须成立。"""
+    assert watch.process_alive(0) is True
+    assert watch.process_alive(-3) is True
