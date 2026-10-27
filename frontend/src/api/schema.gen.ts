@@ -2721,6 +2721,27 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * KnowledgeView
+         * @description /api/knowledge 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        KnowledgeView: components["schemas"]["KnowledgeViewItem"][];
+        /**
+         * KnowledgeViewItem
+         * @description 自动生成：KnowledgeViewItem（Item 的对象形状）。
+         */
+        KnowledgeViewItem: {
+            /** Chunks */
+            chunks: number | null;
+            /** Embedder */
+            embedder: string | null;
+            /** Scope */
+            scope: string | null;
+            /** Sources */
+            sources: string[] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * LocalServiceView
          * @description /api/local-service 的顶层形状（数组包一层只为给它一个名字）。
          */
@@ -4529,9 +4550,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["KnowledgeView"];
                 };
             };
         };

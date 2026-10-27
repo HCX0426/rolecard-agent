@@ -19,8 +19,9 @@
      dict 型，顶层是数组的端点会 ResponseValidationError）；
   ⑤ 生成物过 `ruff format`（否则门禁的 ruff 步红），检查模式两边都格式化后再比对；
   ⑥ **形状随数据变化**的端点不建模（同一数组里元素类型不一致 ⇒ 一个模型表达不了）——
-     实测 /api/knowledge 的 scopes：元素 A 的 sources 是字符串列表、B 的是对象列表；
-     这类端点不生成模型、不接线，并记进"不可建模"清单让"没建模"看得见；
+     实测 /api/roles：同一批返回里 A 卡的 tool_whitelist 是 null、B 卡的是字符串列表，
+     exemplars 还有 None/空/非空三种标签；这类端点不生成模型、不接线，
+     并记进"不可建模"清单让"没建模"看得见；
   ⑦ **响应必须与端点真返回逐字一致**：用 `_GIVEN_KEYS` 记下端点真给了哪些键，序列化时
      按它裁剪（exclude_unset 挡不住 before-validator 补的键 —— 实测补的键会进
      `__fields_set__`，于是 pets 的 rows 多出 `'listening': None`）。
@@ -240,15 +241,15 @@ def _merge_objects(items: list[Any]) -> tuple[dict[str, Any], dict[str, int]] | 
                     merged[key] = None
                 elif isinstance(merged[key], list) and isinstance(value, list):
                     # **嵌套数组也要合并**：不同元素的同一个数组字段，元素类型可能不同
-                    # （实测 /api/knowledge 的 scopes：有的元素 sources 是字符串列表、
-                    # 有的是对象列表）。只取第一个 ⇒ 另一类型的元素校验失败。
+                    # （实测 /api/roles：A 卡的 exemplars 是对象列表、B 卡的是空列表）。
+                    # 只取第一个 ⇒ 另一类型的元素校验失败。
                     merged[key] = merged[key] + value
         for key in item:
             counts[key] = counts.get(key, 0) + 1
     if merged is None:
         return None
     if len(kinds) > 1:
-        # 元素类型不统一（实测 /api/knowledge 的 sources）⇒ 一个模型概括不了。
+        # 元素类型不统一（实测 /api/roles 返回里 dict 与 null 同列）⇒ 一个模型概括不了。
         return None
     return merged, {**counts, "__total__": total}
 
@@ -387,6 +388,13 @@ def _seed_minimal_data(app: Any) -> None:
     )
     # 知识作用域：knowledge / scopes 端点的数组
     _seed_want(client, "post", "/api/knowledge/scopes", json={"name": "sample_scope"})
+    # 投影表补一行来源（2026-10-27 同课的第二半）：CHROMA_PATH 钉进空目录后，采样期
+    # 唯一作用域是**空集合**的 sample_scope —— `describe()` 的 sources=[] ⇒ `_build`
+    # 把空数组兜底成 `list[dict[str, Any]]`，而运行时真形状是 `list[str]`（投影表
+    # `names()` 恒给展示名列表）。给它记一行来源，两机都采到"sources 恒 list[str]"。
+    from rolecard_agent.core.ingest.knowledge_sources import KnowledgeSourceStore
+
+    KnowledgeSourceStore(app.state.ctx.conn).remember("sample_scope", "sample.txt", "sample.txt")
     # 模型后端（含 fallback + 一个带 key 的凭据组）：
     # - /api/settings/models 的 fallbacks 是**字符串数组**（后端名列表）。样本里它是空的 ⇒
     #   生成器推不出元素类型 ⇒ 建成 dict 型 ⇒ 真实响应（fallbacks 非空）校验失败
@@ -533,8 +541,8 @@ def _stable_across(items: list[Any]) -> bool:
     """数组元素**之间**的形状一致性：同名字段在所有元素里类型必须一致。
 
     字段集可以不同（services 的五个分类字段集本就不同 ⇒ 用"必填但可空"处理）；
-    但**同名同位置类型不同**就不稳（实测 /api/knowledge 的 scopes：元素 A 的 sources
-    是字符串列表、元素 B 的是对象列表 —— 一个模型表达不了）。
+    但**同名同位置类型不同**就不稳（实测 /api/roles：A 卡的 tool_whitelist 是 null、
+    B 卡的是字符串列表 —— 一个模型表达不了）。
     """
     objs = [item for item in items if isinstance(item, dict)]
     if len(objs) < 2:
@@ -600,6 +608,12 @@ def _sample(path: str) -> Any:
     # （与 test_api_surface 夹具同一课：参数与 settings 必须同时给）。
     db_path = pathlib.Path(tempfile.mkdtemp()) / "gen-models.db"
     os.environ["SQLITE_PATH"] = str(db_path)
+    # CHROMA_PATH 同一条课（2026-10-27 Release 闸实测的第二处跨机缝）：它默认
+    # `./data/chroma` 是**仓库相对路径**，不吃 DATA_ROOT 的钉子 —— 开发机带着攒了数月
+    # 的真实存量集合（sources 非空），干净 checkout 只有本次种子造的空中作用域
+    # （sources=[]）。`_type_tag` 把空数组记成 `list[]`、非空记成 `list[str]`，两机
+    # 一混一净 ⇒ 一边判"不可建模"、一边判"可建模"，`--check` 跨机随机红。
+    os.environ["CHROMA_PATH"] = str(pathlib.Path(tempfile.mkdtemp()) / "chroma")
     app = create_app(sqlite_path=db_path)
     _seed_minimal_data(app)
     # `client=("127.0.0.1", 50000)`：**TCP 对端**设成回环 —— 本机来源护栏只认对端 IP。
@@ -667,10 +681,10 @@ def generate() -> tuple[str, str | None]:
             if not _shapes_compatible(sample, sample2):
                 sample = _merge_samples(sample, sample2)
             if not _shape_is_stable(sample):
-                # **形状随数据变化的端点不该有单一模型**：/api/knowledge 的 scopes 里，
-                # 有的作用域 sources 是字符串列表、有的是对象列表 —— 一个模型表达不了
-                # （硬套 ⇒ 另一类元素校验失败）。这类端点**不生成模型、不接线**，
-                # 并记进清单让"没建模"这件事看得见（不是静默漏掉）。
+                # **形状随数据变化的端点不该有单一模型**：/api/roles 返回里，A 卡的
+                # tool_whitelist 是 null、B 卡的是字符串列表，exemplars 还有 None/空/非空
+                # 三种标签 —— 一个模型表达不了（硬套 ⇒ 另一类元素校验失败）。这类端点
+                # **不生成模型、不接线**，并记进清单让"没建模"这件事看得见（不是静默漏掉）。
                 UNMODELABLE.append(path)
                 continue
             if isinstance(sample, list):

@@ -15,6 +15,7 @@ from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.api.response_models import (
     AuditView,
     KnowledgeScopesView,
+    KnowledgeView,
     OrphanUploadsView,
     RagMetricsView,
 )
@@ -55,7 +56,11 @@ def list_audit(
     return [dict(r) | {"detail_json": scrub_endpoints(r["detail_json"])} for r in rows]
 
 
-@router.get("/api/knowledge")
+@router.get(
+    "/api/knowledge",
+    response_model=KnowledgeView,
+    response_model_exclude_unset=True,
+)
 def list_knowledge(ctx: AppContext = Depends(get_context)) -> list[dict[str, object]]:
     """v2.1 知识库概览（设置页知识库管理）：作用域 → 分块数 + 来源 + 嵌入器。"""
     return ctx.knowledge.describe()

@@ -72,9 +72,9 @@ def _available_models() -> set[str]:
     """生成物里**实际存在**的模型名。
 
     为什么要看这个：模型是自动生成的 —— 某个端点这轮被判"形状不稳"而被跳过
-    （实测 /api/knowledge 的 scopes：元素 A 的 sources 是字符串列表、B 的是对象列表，
-    一个模型表达不了），它的模型就不存在 ⇒ 接线必须跳过，否则 import 报
-    'cannot import name KnowledgeView'。
+    （实测 /api/roles：A 卡的 tool_whitelist 是 null、B 卡的是字符串列表，一个模型
+    表达不了），它的模型就不存在 ⇒ 接线必须跳过，否则 import 报
+    'cannot import name RoleList'。
     """
     if not GENERATED.exists():
         return set()

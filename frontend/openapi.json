@@ -1504,6 +1504,75 @@
     "title": "KnowledgeScopesViewRoot",
     "type": "object"
    },
+   "KnowledgeView": {
+    "description": "/api/knowledge 的顶层形状（数组包一层只为给它一个名字）。",
+    "items": {
+     "$ref": "#/components/schemas/KnowledgeViewItem"
+    },
+    "title": "KnowledgeView",
+    "type": "array"
+   },
+   "KnowledgeViewItem": {
+    "additionalProperties": true,
+    "description": "自动生成：KnowledgeViewItem（Item 的对象形状）。",
+    "properties": {
+     "chunks": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Chunks"
+     },
+     "embedder": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Embedder"
+     },
+     "scope": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Scope"
+     },
+     "sources": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Sources"
+     }
+    },
+    "required": [
+     "scope",
+     "chunks",
+     "sources",
+     "embedder"
+    ],
+    "title": "KnowledgeViewItem",
+    "type": "object"
+   },
    "LocalServiceView": {
     "$ref": "#/components/schemas/LocalServiceViewRoot",
     "description": "/api/local-service 的顶层形状（数组包一层只为给它一个名字）。",
@@ -5940,12 +6009,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "items": {
-          "additionalProperties": true,
-          "type": "object"
-         },
-         "title": "Response List Knowledge Api Knowledge Get",
-         "type": "array"
+         "$ref": "#/components/schemas/KnowledgeView"
         }
        }
       },
