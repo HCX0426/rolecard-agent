@@ -233,12 +233,33 @@ function updateMenuItems(
       refresh();
     },
   });
+  // 更新通道（P10 ③，2026-10-27 接上界面入口）：桌面版没有金丝雀，分通道的 feed 就是灰度。
+  // 默认 stable；选 beta 即收预发布（electron-updater 的 allowPrerelease + beta channel
+  // feed 两件事都在 updater.ts 的 applyPrefs 里一起翻，这里只写偏好）。写侧走 setPrefs
+  // 的白名单枚举：认不出的值回 stable，坏文件不许把人拐进灰度。
+  const CHANNELS: { label: string; value: "stable" | "beta" }[] = [
+    { label: "正式版（只收正式发布）", value: "stable" },
+    { label: "灰度 beta（预发布也收）", value: "beta" },
+  ];
   items.push({
     label: "自动更新设置",
     submenu: Menu.buildFromTemplate([
       toggle("启动时检查更新", "checkOnStartup"),
       toggle("自动下载更新", "autoDownload"),
       toggle("退出时自动安装", "autoInstallOnQuit"),
+      new MenuItem({ type: "separator" }),
+      new MenuItem({ label: `更新通道：${prefs.channel === "beta" ? "灰度（beta）" : "正式版"}`, enabled: false }),
+      ...CHANNELS.map(
+        (c): MenuItemConstructorOptions => ({
+          label: c.label,
+          type: "radio",
+          checked: prefs.channel === c.value,
+          click: () => {
+            updater.setPrefs({ channel: c.value });
+            refresh();
+          },
+        }),
+      ),
     ]),
   });
   return items;
