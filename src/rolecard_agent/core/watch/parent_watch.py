@@ -39,8 +39,15 @@ _IS_WINDOWS = sys.platform.startswith("win")
 _open_process = _wait = _close_handle = None  # 惰性绑好的 kernel32 入口（见 _win_apis）
 
 
-def _win_apis() -> tuple:
-    """kernel32 的三个入口，带正确的 restype/argtypes（64 位句柄不能按 int 截断）。"""
+def _win_apis() -> tuple:  # pragma: no cover - Windows 专有实现，见函数体内注记
+    """kernel32 的三个入口，带正确的 restype/argtypes（64 位句柄不能按 int 截断）。
+
+    覆盖率口径（发布闸 40522243888 实撞出来的）：本函数与 `_win_process_alive` 只在
+    Windows 上可达，Linux 档结构性到不了 —— 全量档的分模块地板跑在两个平台上，
+    Linux 上这半永远低于地板。按仓内既有惯例登记 `pragma: no cover`：地板从此在
+    两个平台量同一个集合（POSIX 半），而 Windows 这半的正确性仍由 Windows 测试臂
+    的行为用例直接守着（回归会红在测试上，不依赖覆盖率地板）。
+    """
     global _open_process, _wait, _close_handle
     # 这里**要** mypy 按平台收窄（`==`，不是上面那个 startswith）：`ctypes.WinDLL`
     # 在 Linux 的 ctypes 里根本没有这个名字，而 Linux 档不是假想敌 —— 容器跑的就是它
@@ -64,7 +71,7 @@ def _win_apis() -> tuple:
     return _open_process, _wait, _close_handle
 
 
-def _win_process_alive(pid: int) -> bool:
+def _win_process_alive(pid: int) -> bool:  # pragma: no cover - Windows 专有实现（_win_apis 同注）
     """Windows：开一个**带等待权**的句柄，然后问它"信号了吗"。
 
     三种答案都要分开处理：`WAIT_TIMEOUT`=活着、`WAIT_OBJECT_0`=已退出、
