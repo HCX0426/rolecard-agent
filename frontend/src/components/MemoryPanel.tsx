@@ -376,7 +376,8 @@ export function MemoryPanel() {
   const loadWorkspace = useCallback(async () => {
     const d = await api.getWorkspaceDir();
     setWsDir(d);
-    setWsDraft(d.path);
+    // 契约迁移后 path 可空（后端没给 = null）：草稿框以空串起步，与原"没设目录"同形。
+    setWsDraft(d.path ?? "");
   }, []);
 
   useEffect(() => {
@@ -389,7 +390,7 @@ export function MemoryPanel() {
     try {
       const d = await api.setWorkspaceDir(wsDraft.trim());
       setWsDir(d);
-      setWsDraft(d.path);
+      setWsDraft(d.path ?? "");
       setWsMsg("已设置（保存即对角色下一轮生效）");
     } catch (e) {
       setWsErr(`保存失败：${describeError(e)}`);
@@ -402,7 +403,7 @@ export function MemoryPanel() {
     try {
       const d = await api.clearWorkspaceDir();
       setWsDir(d);
-      setWsDraft(d.path);
+      setWsDraft(d.path ?? "");
       setWsMsg("已清除，回落 env 默认目录");
     } catch (e) {
       setWsErr(`清除失败：${describeError(e)}`);
@@ -872,7 +873,7 @@ export function MemoryPanel() {
             </div>
             <div className="flex items-center gap-1.5 border-b border-slate-100 px-3 py-2 text-xs dark:border-slate-700">
               <button
-                onClick={() => browseAt(tree?.parent)}
+                onClick={() => browseAt(tree?.parent ?? undefined)}
                 disabled={!tree}
                 className="rounded border border-slate-200 px-2 py-0.5 text-slate-600 hover:border-blue-300 disabled:opacity-40 dark:border-slate-600 dark:text-slate-300"
               >
@@ -912,14 +913,14 @@ export function MemoryPanel() {
                     )}
                     {e.name}
                   </span>
-                  {!e.is_dir && e.size > 0 && (
+                  {!e.is_dir && (e.size ?? 0) > 0 && (
                     <span className="ml-2 shrink-0 text-10 text-slate-400">
-                      {e.size > 1024 ? `${(e.size / 1024).toFixed(0)} KB` : `${e.size} B`}
+                      {e.size && e.size > 1024 ? `${(e.size / 1024).toFixed(0)} KB` : `${e.size ?? 0} B`}
                     </span>
                   )}
                 </button>
               ))}
-              {tree && tree.entries.length === 0 && (
+              {tree && (tree.entries ?? []).length === 0 && (
                 <p className="px-2 py-4 text-center text-xs text-slate-400 dark:text-slate-500">（空目录）</p>
               )}
               {tree?.truncated && (
@@ -933,7 +934,7 @@ export function MemoryPanel() {
               >
                 取消
               </button>
-              <Button variant="primary" onClick={() => { if (!tree) return; setWsDraft(tree.path); setTreeOpen(false); }}
+              <Button variant="primary" onClick={() => { if (!tree?.path) return; setWsDraft(tree.path); setTreeOpen(false); }}
                 className="rounded-lg px-3 py-1.5 text-xs">
                 选中当前目录
               </Button>

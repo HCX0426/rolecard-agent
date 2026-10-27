@@ -49,14 +49,22 @@ export default function SessionSidebar({
 }) {
   const confirm = useConfirm();
 
+  // 契约生成物把所有字段都放宽成可空（样本证明不了"永远在"）。`thread_id` 是这一栏的
+  // **寻址键** —— 没有它的行点不动也删不掉：入口处一次滤掉，后面每个 s.thread_id 都是
+  // string。（第一批迁移对普通字段用的是逐点 `?? 默认值`；寻址键给默认值等于把
+  // "删的是哪条"变成玄学，滤掉才是如实处理。）
+  const rows = sessions.filter(
+    (s): s is ThreadRow & { thread_id: string } => Boolean(s.thread_id),
+  );
+
   const laneRows = roles.map((r) => ({
     role: r,
-    row: sessions.find((s) => s.is_proactive && s.role_id === r.role_id) ?? null,
+    row: rows.find((s) => s.is_proactive && s.role_id === r.role_id) ?? null,
   }));
   const laneThreadIds = new Set(laneRows.map((l) => l.row?.thread_id));
   /** 角色被删了但那条线还在：不能让它从侧栏消失，否则那段对话就找不回来了。 */
-  const orphanLanes = sessions.filter((s) => s.is_proactive && !laneThreadIds.has(s.thread_id));
-  const tempSessions = sessions.filter((s) => !s.is_proactive && !s.is_blank);
+  const orphanLanes = rows.filter((s) => s.is_proactive && !laneThreadIds.has(s.thread_id));
+  const tempSessions = rows.filter((s) => !s.is_proactive && !s.is_blank);
 
   /** 批量模式下的勾选。独立成一个函数是因为点击整行有两个意思：没开批量 = 打开这条，
    *  开了批量 = 选中它（用户要的是"少点几次"，不是"多一层菜单"）。 */

@@ -48,6 +48,7 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "delete_model",
         "delete_report",
         "delete_role",
+        "export_diagnostics",
         "extract_memory",
         "extract_report",
         "extract_report_failed",

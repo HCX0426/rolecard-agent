@@ -362,6 +362,7 @@ def test_consolidate_unknown_role_404(client: TestClient) -> None:
     res = client.post("/api/settings/memory/consolidate", params={"role_id": "ghost_role"})
     assert res.status_code == 404
 
+
 # ---------------------------------------------------------------- 自动那一档在线可改
 #
 # 一次提取 = 一次真模型调用，所以"要不要自动跑、多久跑一次"必须能在界面上改 ——
@@ -400,9 +401,7 @@ def test_extract_cadence_rejects_absurd_values(client: TestClient) -> None:
 def test_extract_cadence_is_global_only(client: TestClient) -> None:
     """角色作用域下改它 = 400：那一档是所有会话共用的行为，不属于某个桶。"""
     _, role_id = new_session(client)
-    res = client.put(
-        "/api/settings/memory", params={"role_id": role_id}, json={"extract_turns": 6}
-    )
+    res = client.put("/api/settings/memory", params={"role_id": role_id}, json={"extract_turns": 6})
     assert res.status_code == 400 and "全局" in res.json()["detail"]
 
 
@@ -414,10 +413,20 @@ def test_extract_cadence_is_global_only(client: TestClient) -> None:
 # 会话固定在 `local` 上，这样"跟随会话"与"指定另一个后端"在账上是两个不同的名字。
 
 BACKEND_ROWS = [
-    {"name": "local", "provider": "ollama", "model": "qwen3-vl:8b",
-     "base_url": "http://127.0.0.1:9", "usage": "chat"},
-    {"name": "sf", "provider": "siliconflow", "base_url": "https://api.siliconflow.cn/v1",
-     "model": "deepseek-ai/DeepSeek-V4-Flash", "api_key": "sk-test"},
+    {
+        "name": "local",
+        "provider": "ollama",
+        "model": "qwen3-vl:8b",
+        "base_url": "http://local.test.invalid:1",
+        "usage": "chat",
+    },
+    {
+        "name": "sf",
+        "provider": "siliconflow",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "model": "deepseek-ai/DeepSeek-V4-Flash",
+        "api_key": "sk-test",
+    },
 ]
 
 
@@ -447,9 +456,12 @@ def memory_backend(
         monkeypatch.setenv("MEMORY_EXTRACT_BACKEND", extract_backend)
     db = tmp_path / f"app-{tag}.db"
     with TestClient(create_app(sqlite_path=db, model=model)) as c:
-        assert c.put(
-            "/api/settings/models", json={"default": "local", "backends": BACKEND_ROWS}
-        ).status_code == 200
+        assert (
+            c.put(
+                "/api/settings/models", json={"default": "local", "backends": BACKEND_ROWS}
+            ).status_code
+            == 200
+        )
         yield c, db
 
 

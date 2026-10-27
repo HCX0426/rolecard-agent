@@ -21,6 +21,7 @@ def frozen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     bundle = tmp_path / "_internal"
     bundle.mkdir()
     local = tmp_path / "LocalAppData"
+    monkeypatch.delenv("DATA_ROOT", raising=False)  # conftest 的会话级重定向先摘掉（测默认解析）
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "_MEIPASS", str(bundle), raising=False)
     monkeypatch.setattr(paths, "IS_WINDOWS", True)
@@ -30,6 +31,9 @@ def frozen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def test_dev_shape_keeps_the_repo_layout(monkeypatch: pytest.MonkeyPatch) -> None:
     """开发态：一切按仓库根，与打包改造之前一模一样。"""
+    # conftest 的会话级 DATA_ROOT 重定向（chroma 双 system 的 CI 修复）必须先摘掉：
+    # 这条测的就是 user_data_root 的**默认解析**，env 里带着重定向值它就永远测不到默认。
+    monkeypatch.delenv("DATA_ROOT", raising=False)
     monkeypatch.delattr(sys, "frozen", raising=False)
     monkeypatch.delattr(sys, "_MEIPASS", raising=False)
     root = paths.repo_root()

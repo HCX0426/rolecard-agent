@@ -532,6 +532,7 @@ def test_rerank_failure_falls_back_and_is_timed(tmp_path: Path) -> None:
     assert kb.latency_p95()["rerank_enabled"] is True
     assert any(getattr(e, "event", None) == "rerank_fallback" for e in rec.events)
 
+
 # -- 索引的原子性与嵌入分片（代码审查报告（第二轮）M4 / M5） -----------------------
 
 
@@ -567,9 +568,7 @@ def test_index_failure_does_not_destroy_the_existing_chunks(tmp_path: Path) -> N
         kb.index("health_reports", "a.txt", DOC_A)
 
     embedder._left = 99  # 修好它，才能验证"库里的旧分块还在"
-    assert kb.search(["health_reports"], "随访"), (
-        "嵌入失败后旧的索引被清空了 —— 这正是修复前的问题"
-    )
+    assert kb.search(["health_reports"], "随访"), "嵌入失败后旧的索引被清空了 —— 这正是修复前的问题"
 
 
 class _CountingEmbedder(SiliconFlowEmbedder):
@@ -607,9 +606,7 @@ class _RetryClient:
     def __init__(self, fail_times: int, *, payload: dict | None = None) -> None:
         self._fail = fail_times
         self.calls = 0
-        self._payload = payload or {
-            "data": [{"embedding": [0.5]}, {"embedding": [0.25]}]
-        }
+        self._payload = payload or {"data": [{"embedding": [0.5]}, {"embedding": [0.25]}]}
 
     def post(self, *_a: object, **_k: object) -> object:
         self.calls += 1
@@ -748,9 +745,7 @@ def test_一批失败不许返回半份向量(monkeypatch: pytest.MonkeyPatch) -
             self.calls += 1
             if self.calls > 1:  # 第一批成功、第二批怎么试都失败
                 raise ConnectionError("第二批炸了")
-            return _RagResp(
-                json_body={"data": [{"embedding": [0.5]}] * _EMBED_BATCH}
-            )
+            return _RagResp(json_body={"data": [{"embedding": [0.5]}] * _EMBED_BATCH})
 
     emb = _embedder_with(_SecondBatchFails())
     total = _EMBED_BATCH * 2
@@ -812,15 +807,15 @@ def test_重排器字段残缺或状态码异常都走降级() -> None:
     assert err.rerank("q", ["A", "B"]) is None
 
 
-def test_重排器失败时整条检索仍有结果() -> None:
+def test_重排器失败时整条检索仍有结果(unreachable_backend: str) -> None:
     """端到端一臂：**真**重排器（连不上 ⇒ 走真实 except 分支返回 None）下检索照常。
 
     现有的那条回退用例把重排器整个换成了返回 None 的假对象，所以真实的异常分支从没跑过。
     这里用真的 `SiliconFlowReranker` 指到一个必然失败的地址，让异常→None→回退向量序
-    这条链完整地走一遍。
+    这条链完整地走一遍。（P3：不再用 :9 —— 本机网络栈拒它要 ~3.4s，夹具 ~0.03s。）
     """
     tmp = Path(tempfile.mkdtemp())
-    rr = SiliconFlowReranker(api_key="k", base_url="http://127.0.0.1:9")  # 端口 9 必拒
+    rr = SiliconFlowReranker(api_key="k", base_url=unreachable_backend)
     kb = KnowledgeBase(tmp / "chroma", HashEmbedder(), rr)
     kb.index("health_reports", "a.md", DOC_A)
     kb.index("health_reports", "b.md", DOC_B)

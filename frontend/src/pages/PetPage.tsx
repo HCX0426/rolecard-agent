@@ -680,7 +680,7 @@ export default function PetPage() {
     return () => window.clearInterval(timer);
     // 依赖只有 `expanded`：`expand` 每拍都是新函数，把它写进来会让计时器每渲染一次
     // 就重建一次 —— 那等于"页面一动，倒数就重来"，正是要避免的那件事。
-  }, [expanded]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [expanded]);
 
   /** 读出这一句。**两道闸**：托盘语音开关 **且**「显示消息内容」开着 —— 声音和文字一样
    *  会把"你们聊了什么"播给屋里的人听，只藏字不藏声等于那面隐私旗子只糊了半张脸。 */
@@ -814,17 +814,20 @@ export default function PetPage() {
       await load();
       if (!usedTid) {
         setPendingUser(""); // 线程都没建起来（第一句就失败）：没有回放可等，乐观那条自己收掉
-        return;
-      }
-      try {
-        const page = await api.get<MessagePage>(messagesPath(usedTid));
-        handoff(page);
-        // 这轮她说的那句读出来（`speak` 里判两道闸）。与气泡收了才读同一个顺序：
-        // 回放到手 = 这一轮已经落库，读的才是"她真的说过的那一句"。
-        speakLastFrom(page);
-      } catch (e) {
-        // 读不到回放就**留着**气泡与乐观那条：宁可屏幕上重一遍，也不能让用户以为"我说的话没了"。
-        setHistoryError(`历史没读到：${describeError(e)}`);
+      } else {
+        // （从前这里是 finally 里 `return` + 后续代码：finally 的 return 会吞掉 try 侧
+        // 尚未散出的异常 —— ESLint no-unsafe-finally 抓的正是这个；改成 if/else 后
+        // 这段本来就在函数尾，控制流完全等价。）
+        try {
+          const page = await api.get<MessagePage>(messagesPath(usedTid));
+          handoff(page);
+          // 这轮她说的那句读出来（`speak` 里判两道闸）。与气泡收了才读同一个顺序：
+          // 回放到手 = 这一轮已经落库，读的才是"她真的说过的那一句"。
+          speakLastFrom(page);
+        } catch (e) {
+          // 读不到回放就**留着**气泡与乐观那条：宁可屏幕上重一遍，也不能让用户以为"我说的话没了"。
+          setHistoryError(`历史没读到：${describeError(e)}`);
+        }
       }
     }
   }

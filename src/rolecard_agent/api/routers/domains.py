@@ -22,6 +22,7 @@ from rolecard_agent.api.deps import (
     get_context,
 )
 from rolecard_agent.api.errors import value_error_to_http
+from rolecard_agent.api.response_models import DomainsView
 from rolecard_agent.core.domain.domain_data import DomainDataService
 
 router = APIRouter()
@@ -51,7 +52,11 @@ def _domain_service(ctx: AppContext) -> DomainDataService:
     return DomainDataService(ctx.conn)
 
 
-@router.get("/api/domains")
+@router.get(
+    "/api/domains",
+    response_model=DomainsView,
+    response_model_exclude_unset=True,
+)
 def list_domains(ctx: AppContext = Depends(get_context)) -> list[object]:
     """已注册域的清单（id + 展示名）—— 资料页的域分组与「关于」面板的来源。
 

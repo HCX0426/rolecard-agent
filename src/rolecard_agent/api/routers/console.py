@@ -12,6 +12,12 @@ from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
+from rolecard_agent.api.response_models import (
+    AuditView,
+    KnowledgeScopesView,
+    OrphanUploadsView,
+    RagMetricsView,
+)
 from rolecard_agent.base.audit import read_audit_page
 from rolecard_agent.base.observability import scrub_endpoints
 from rolecard_agent.core.ingest import upload_service
@@ -27,7 +33,11 @@ router = APIRouter()
 _AUDIT_PAGE_MAX = 500
 
 
-@router.get("/api/audit")
+@router.get(
+    "/api/audit",
+    response_model=AuditView,
+    response_model_exclude_unset=True,
+)
 def list_audit(
     limit: int = 100,
     before_id: int | None = Query(
@@ -51,7 +61,11 @@ def list_knowledge(ctx: AppContext = Depends(get_context)) -> list[dict[str, obj
     return ctx.knowledge.describe()
 
 
-@router.get("/api/knowledge/scopes")
+@router.get(
+    "/api/knowledge/scopes",
+    response_model=KnowledgeScopesView,
+    response_model_exclude_unset=True,
+)
 def list_knowledge_scopes(ctx: AppContext = Depends(get_context)) -> object:
     """角色卡「知识作用域」下拉的可选项来源：取实际已建的知识集合（RAG 真实作用域）。
 
@@ -157,7 +171,11 @@ def reset_knowledge_scope(
     return {"scope": scope, "removed_chunks": removed}
 
 
-@router.get("/api/rag/metrics")
+@router.get(
+    "/api/rag/metrics",
+    response_model=RagMetricsView,
+    response_model_exclude_unset=True,
+)
 def rag_metrics(ctx: AppContext = Depends(get_context)) -> object:
     """v2.2 检索延迟细分：P50/P95/P99，按阶段拆（嵌入 / 向量检索 / 重排 / 合计）。
 
@@ -175,7 +193,11 @@ def _orphan_report(ctx: AppContext) -> object:
     return scan_orphans(ctx.settings.upload_dir, referenced).as_dict()
 
 
-@router.get("/api/uploads/orphans")
+@router.get(
+    "/api/uploads/orphans",
+    response_model=OrphanUploadsView,
+    response_model_exclude_unset=True,
+)
 def list_orphan_uploads(ctx: AppContext = Depends(get_context)) -> object:
     """**只读盘点**：上传目录里没有被任何 ingestion 台账引用的文件。
 

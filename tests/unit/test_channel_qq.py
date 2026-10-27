@@ -96,9 +96,9 @@ def test_parse_event_rejects_non_message_and_malformed() -> None:
     assert parse_event({"op": 0, "t": "READY", "d": {"user": {"id": "x"}}}) is None
     # 缺对端 / 缺 msg_id：发不回去 = 这条不接
     assert parse_event({"op": 0, "t": "GROUP_AT_MESSAGE_CREATE", "d": {"id": "m"}}) is None
-    assert parse_event(
-        {"op": 0, "t": "GROUP_AT_MESSAGE_CREATE", "d": {"group_openid": "G"}}
-    ) is None
+    assert (
+        parse_event({"op": 0, "t": "GROUP_AT_MESSAGE_CREATE", "d": {"group_openid": "G"}}) is None
+    )
     assert parse_event({"op": 0, "t": "GROUP_AT_MESSAGE_CREATE", "d": "not-a-dict"}) is None
 
 
@@ -169,7 +169,9 @@ def _fake_api(transport: httpx.MockTransport) -> QQApi:
         token_url="https://fake/token",
     )
     tokens = QQTokenManager(
-        app_id="a", app_secret="b", token_url="https://fake/token",
+        app_id="a",
+        app_secret="b",
+        token_url="https://fake/token",
         transport=lambda url, payload: {"access_token": "tok", "expires_in": "7200"},
     )
     return QQApi(creds=creds, tokens=tokens, client=httpx.Client(transport=transport))
@@ -268,15 +270,11 @@ def test_gateway_loop_identify_dispatch_heartbeat_reconnect() -> None:
         return len(connections) > 1
 
     api = _fake_api(
-        httpx.MockTransport(
-            lambda request: httpx.Response(200, json={"url": "wss://fake-gw"})
-        )
+        httpx.MockTransport(lambda request: httpx.Response(200, json={"url": "wss://fake-gw"}))
     )
     gateway = QQGatewayLoop(api=api, tracer=tracer, connect=connect)
     asyncio.run(
-        asyncio.wait_for(
-            gateway.run(stopping=stopping, on_message=received.append), timeout=10
-        )
+        asyncio.wait_for(gateway.run(stopping=stopping, on_message=received.append), timeout=10)
     )
     assert len(connections) >= 2  # 断线后真的重连过
     first = connections[0]
@@ -303,7 +301,9 @@ def test_gateway_loop_stop_wakes_a_silent_connection() -> None:
 
     creds = QQCredentials("a", "b", "https://fake-qq", "https://fake/token")
     tokens = QQTokenManager(
-        app_id="a", app_secret="b", token_url="https://fake/token",
+        app_id="a",
+        app_secret="b",
+        token_url="https://fake/token",
         transport=lambda url, payload: {"access_token": "tok"},
     )
     api = QQApi(creds=creds, tokens=tokens)
@@ -417,7 +417,12 @@ class SimpleNamespaceRuntime:
         self.assembly.tracer = tracer
 
 
-def test_source_starts_and_stops_with_fake_transport() -> None:
+def test_source_starts_and_stops_with_fake_transport(monkeypatch) -> None:
+    # RECV_POLL_SECONDS 压到 0.05（与下面 test_recv_poll_wakes_on_timeout 同款）：
+    # 这条要验的是"停旗唤醒 recv 轮询、join 收干净"，不是 5 秒拍的实时性。
+    from rolecard_agent.features.channels import qq as qq_mod
+
+    monkeypatch.setattr(qq_mod, "RECV_POLL_SECONDS", 0.05)
     rec = _RecordingTracer()
     runtime = SimpleNamespaceRuntime(
         settings=Settings(
@@ -428,11 +433,19 @@ def test_source_starts_and_stops_with_fake_transport() -> None:
         tracer=rec,
     )
 
+    # `_Idle.recv` 第一条**照真服务器回 hello（op10）**再永等 —— 不是测试洁癖，是
+    # 死活的分界：`_session` 的 hello 是**裸 await ws.recv()**（不带轮询超时），模型
+    # 若第一条就永等，线程会卡死在 hello 上、停旗根本传不进 recv 轮询 —— join 必超时。
+    # 它在 CI 上红没红取决于"线程抢在 stop() 前跑到 hello"的调度竞速（落地起就是
+    # 潜伏的 flake，run 40205300469 / 40454855970 两次现形），修模型而不是修时序。
     class _Idle:
         async def send(self, data: str) -> None: ...
 
         async def recv(self) -> str:
-            await asyncio.sleep(3600)  # 永等：recv 轮询每 5s 醒一次看旗
+            if not getattr(_Idle, "greeted", False):
+                _Idle.greeted = True
+                return json.dumps({"op": 10, "d": {"heartbeat_interval": 5000}})
+            await asyncio.sleep(3600)  # 永等：recv 轮询每拍醒一次看旗
 
         async def close(self) -> None: ...
 
@@ -444,7 +457,9 @@ def test_source_starts_and_stops_with_fake_transport() -> None:
 
     # REST 半边喂 MockTransport —— 真网络在一次离线测试里都不许出现
     source = QQChannelSource(
-        runtime=runtime, tracer=rec, api=_fake_api(httpx.MockTransport(handler)),
+        runtime=runtime,
+        tracer=rec,
+        api=_fake_api(httpx.MockTransport(handler)),
         connect=_idle_connect,
     )
     source.start()

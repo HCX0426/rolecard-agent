@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import ROLE_OPERATOR, Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
+from rolecard_agent.api.response_models import ApprovalsView
 from rolecard_agent.base.observability import logline
 from rolecard_agent.core.tools import run as run_tools
 
@@ -43,7 +44,11 @@ class DecideBody(BaseModel):
     token: Annotated[str | None, Field(default=None, max_length=64)] = None
 
 
-@router.get("/api/approvals")
+@router.get(
+    "/api/approvals",
+    response_model=ApprovalsView,
+    response_model_exclude_unset=True,
+)
 def list_approvals(
     status: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 200,

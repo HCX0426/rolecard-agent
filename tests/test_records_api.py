@@ -23,16 +23,17 @@ from rolecard_agent.storage.db import bootstrap, connect
 
 
 @pytest.fixture
-def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unreachable_backend: str) -> TestClient:
     # 本文件的 docstring 承诺"全部离线"，但抽取端点走的是**配置里的真实后端**（它按
     # MODEL_BACKENDS 自己建模型，不像对话端点那样有 model= 注入口）。宿主机 Ollama 在跑时
     # 默认后端就真的可用，于是 `test_extract_rejects_a_second_call_while_one_is_running`
-    # 变成一次 8B 真实抽取（实测 117s，占全套 60%+）。指到一个必然拒绝连接的端口，
+    # 变成一次 8B 真实抽取（实测 117s，占全套 60%+）。指到一个立即拒绝的后端，
     # 让本文件测到的确实是它声称测的东西；真模型路径见下方 live 标记的用例。
+    # （P3：不再用 :9 —— 本机网络栈拒它要 ~3.4s，夹具的 accept-即关端点 ~0.03s。）
     monkeypatch.setenv(
         "MODEL_BACKENDS",
         '{"local": {"model": "qwen2.5vl:7b", "provider": "ollama",'
-        ' "base_url": "http://127.0.0.1:9"}}',
+        f' "base_url": "{unreachable_backend}"}}}}',
     )
     monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
@@ -139,9 +140,7 @@ def test_created_report_appears_in_records(client: TestClient) -> None:
 # -- 知识作用域重建 --------------------------------------------------------------------
 
 
-def test_reset_knowledge_scope_removes_and_audits(
-    client: TestClient, wait_upload
-) -> None:
+def test_reset_knowledge_scope_removes_and_audits(client: TestClient, wait_upload) -> None:
     """清空作用域是破坏性动作：删掉集合 + 写审计（含清掉的分块数）。"""
     tid = client.post("/api/session", json={}).json()["thread_id"]
     uploaded = client.post(
@@ -177,18 +176,20 @@ def test_extract_requires_a_task_id(client: TestClient) -> None:
 
 
 def test_extract_degrades_honestly_without_a_model(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unreachable_backend: str,
 ) -> None:
     """模型后端不可用 → 必须如实降级（502 或 200+skipped），**绝不能 500**，
     也不能假装抽取成功（那会把没校验过的数字塞进档案）。
 
     前提必须显式受控：本机 Ollama 在跑时默认后端是真实可用的，会把这条测试
-    变成"真实抽取成功"路径。所以把后端指到一个必然拒绝连接的端口（:9），
-    无论宿主机状态如何，测到的都是降级分支。"""
+    变成"真实抽取成功"路径。所以把后端指到一个立即拒绝的后端（unreachable_backend
+    夹具，P3 起替代 :9），无论宿主机状态如何，测到的都是降级分支。"""
     monkeypatch.setenv(
         "MODEL_BACKENDS",
         '{"local": {"model": "qwen2.5vl:7b", "provider": "ollama",'
-        ' "base_url": "http://127.0.0.1:9"}}',
+        f' "base_url": "{unreachable_backend}"}}}}',
     )
     monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
@@ -210,16 +211,16 @@ def test_extract_degrades_honestly_without_a_model(
     # 注：异常文本因平台而异（Windows 是 WinError、类 Unix 是 httpx 的 URL 文案），
     # 所以这里断言的是**不变量**（不带 http 端点）而不是某一条具体文案；
     # 脱敏占位符本身的语义由 tests/unit/test_observability.py 直接覆盖。
+    # unreachable_backend 是 127.0.0.1 上的随机端口 —— "127.0.0.1:" 与 "http://" 两条
+    # 不变量对它照样成立（P3 换端点不改判据）。
     failed = next(a for a in audit if a["action"] == "extract_report_failed")
     detail = str(failed["detail_json"])
-    assert "127.0.0.1:9" not in detail, detail
+    assert "127.0.0.1:" not in detail, detail
     assert "http://" not in detail, detail
     assert "https://" not in detail, detail
 
 
-def test_audit_supports_cursor_pagination(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_audit_supports_cursor_pagination(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """`before_id` 游标翻页（代码审查报告（第二轮）B6 / M11）。
 
     审计表只增不减，"每次倒序取 N 条"在表变大后既慢又取不全 —— 需要能稳定地往前翻。

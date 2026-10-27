@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor, is_loopback
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
+from rolecard_agent.api.response_models import LocalServiceView
 from rolecard_agent.config import ModelBackend
 from rolecard_agent.core.model_settings import client_style
 from rolecard_agent.core.telemetry.probes import (
@@ -89,7 +90,12 @@ def _resident_rows(models: list[dict[str, object]]) -> list[dict[str, Any]]:
     return rows
 
 
-@router.get("/api/local-service", dependencies=[Depends(require_loopback)])
+@router.get(
+    "/api/local-service",
+    dependencies=[Depends(require_loopback)],
+    response_model=LocalServiceView,
+    response_model_exclude_unset=True,
+)
 def local_service_status(ctx: AppContext = Depends(get_context)) -> object:
     """本地推理服务的状态：在不在跑、驻留了哪些模型、占多少显存、默认模型能不能常驻。
 

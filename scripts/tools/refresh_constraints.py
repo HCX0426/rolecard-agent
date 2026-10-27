@@ -61,9 +61,15 @@ def resolve_uvloop(uvicorn_ver: str, timeout: int = 300) -> str:
         report = Path(td) / "report.json"
         proc = subprocess.run(
             [
-                sys.executable, "-m", "pip", "install",
-                "--dry-run", "--ignore-installed", "--quiet",
-                "--report", str(report),
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--dry-run",
+                "--ignore-installed",
+                "--quiet",
+                "--report",
+                str(report),
                 f"uvicorn[standard]=={uvicorn_ver}",
             ],
             capture_output=True,
@@ -75,16 +81,37 @@ def resolve_uvloop(uvicorn_ver: str, timeout: int = 300) -> str:
             env={**os.environ, "PIP_CONFIG_FILE": os.devnull},
         )
         if proc.returncode != 0:
-            raise RuntimeError(
-                f"pip --dry-run 退 {proc.returncode}：{proc.stderr.strip()[:200]}"
-            )
+            raise RuntimeError(f"pip --dry-run 退 {proc.returncode}：{proc.stderr.strip()[:200]}")
         data = json.loads(report.read_text(encoding="utf-8"))
-    for item in data.get("data", []):
-        name = item.get("metadata", {}).get("name", "")
+    found = _uvloop_from_report(data)
+    if found is None:
+        # 报告里没有 uvloop：上游改了声明、或解析形状变了 —— 这是"要人看"的形状，不是"没变化"。
+        raise RuntimeError("解析报告里没有 uvloop —— 上游声明或解析形状变了，先看再刷")
+    return found
+
+
+def _uvloop_from_report(data: dict[str, object]) -> str | None:
+    """从 `pip install --report` 的 JSON 里找出 uvloop 的版本。
+
+    **顶层键两代形状都认**（2026-10-26 清账实测）：pip 26 的报告键是 `install`
+    （本地 pip 26.2.1 实测），而本工具从落地起读的是 `data.get("data")` —— 于是这条
+    Linux-only 的臂**从来没在 CI 绿过**（连红三周才被全量复核抓到；workflow 里那句
+    fail-closed 注释是对的：要人看）。两键都收，把"解析器形状漂移"与"上游真改声明"
+    分开 —— 后者才配得上那条 RuntimeError。
+    """
+    items = data.get("install") or data.get("data") or []
+    if not isinstance(items, list):
+        return None
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        name = str(metadata.get("name", ""))
         if name.replace("_", "-").lower() == "uvloop":
-            return str(item["metadata"]["version"])
-    # 报告里没有 uvloop：上游改了声明、或解析形状变了 —— 这是"要人看"的形状，不是"没变化"。
-    raise RuntimeError("解析报告里没有 uvloop —— 上游声明或解析形状变了，先看再刷")
+            return str(metadata["version"])
+    return None
 
 
 def render(uvicorn_ver: str, uvloop_ver: str) -> str:

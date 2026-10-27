@@ -86,6 +86,16 @@ export function Live2dPet({
   // 模型与 app 都活在 ref 里：它们的重建只该发生在 url 变了的时候，而不是每次渲染。
   const model = useRef<LiveModel | null>(null);
   const [failed, setFailed] = useState("");
+  // onError 走"最新引用"ref（而不是直接进下面 effect 的依赖）：调用方传的是内联箭头
+  // （PetPage 每次渲染都换引用），把它放进依赖会让整个 pixi 应用跟着每次渲染重建 —— 那
+  // 正是这个 effect 注释反复强调要避开的。ref 让"加载失败那一刻读到的总是最新的 onError"
+  // 成立，而依赖数组保持只有 url/width/height。
+  // 赋值放 effect 不放渲染体（react-hooks/refs 的判据：渲染中途被并发打断会留下半路的
+  // 旧值）；effect 在提交后同步跑，而加载失败最早也在 await 之后 —— 读到时必已就位。
+  const onErrorRef = useRef(onError);
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
 
   useEffect(() => {
     let disposed = false;
@@ -129,7 +139,7 @@ export function Live2dPet({
         if (disposed) return;
         const reason = error instanceof Error ? error.message : "模型加载失败";
         setFailed(reason);
-        onError?.(reason);
+        onErrorRef.current?.(reason);
       }
     })();
     return () => {

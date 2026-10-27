@@ -14,23 +14,19 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from rolecard_agent.base.identity import resolve_instance_identity
+# **必须先于一切 rolecard_agent 顶层 import**：_ensure_importable 的职责是"无 editable
+# 安装的 clone 上 python scripts/init_db.py 能跑"（本模块 docstring 的承诺）。从前它在
+# main() 里才被调 —— 但下面这行顶层 import 在 main() 之前就 ModuleNotFoundError 了，
+# 承诺从未兑现（P14 探针首跑实测：`.\.venv\Scripts\python.exe scripts\init_db.py`
+# 按文档原样执行当场炸）。
+_src = Path(__file__).resolve().parents[1] / "src"
+if str(_src) not in sys.path:
+    sys.path.insert(0, str(_src))
 
-
-def _ensure_importable() -> None:
-    """Make `rolecard_agent` importable when run straight from a clone.
-
-    The README promises `python scripts/init_db.py` works without an editable install, so the
-    import has to be arranged here rather than assumed.
-    """
-    src = Path(__file__).resolve().parents[1] / "src"
-    if str(src) not in sys.path:
-        sys.path.insert(0, str(src))
+from rolecard_agent.base.identity import resolve_instance_identity  # noqa: E402
 
 
 def main() -> int:
-    _ensure_importable()
-
     from rolecard_agent.config import Settings
     from rolecard_agent.core.plugins import seed_plugin_rows
     from rolecard_agent.core.storage.checkpointer import make_checkpointer

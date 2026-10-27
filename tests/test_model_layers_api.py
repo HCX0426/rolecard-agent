@@ -78,12 +78,12 @@ def fake_http(monkeypatch: pytest.MonkeyPatch) -> Iterator[_FakeHttp]:
 
 
 @pytest.fixture
-def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    """一个本地后端（默认端口指向必然拒绝的地址）+ 一个云端供应商组（带一把 key）。"""
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unreachable_backend: str) -> TestClient:
+    """一个本地后端（默认指向立即拒绝的地址）+ 一个云端供应商组（带一把 key）。"""
     monkeypatch.setenv(
         "MODEL_BACKENDS",
         '{"local": {"model": "qwen3-vl:8b", "provider": "ollama",'
-        ' "base_url": "http://127.0.0.1:9"}}',
+        f' "base_url": "{unreachable_backend}"}}}}',
     )
     monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
@@ -94,11 +94,20 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
             json={
                 "default": "local",
                 "backends": [
-                    {"name": "local", "provider": "ollama", "model": "qwen3-vl:8b",
-                     "base_url": "http://127.0.0.1:9", "usage": "chat"},
-                    {"name": "sf", "provider": "siliconflow",
-                     "base_url": "https://api.siliconflow.cn/v1",
-                     "model": "deepseek-ai/DeepSeek-V4-Flash", "api_key": "sk-group-secret"},
+                    {
+                        "name": "local",
+                        "provider": "ollama",
+                        "model": "qwen3-vl:8b",
+                        "base_url": unreachable_backend,
+                        "usage": "chat",
+                    },
+                    {
+                        "name": "sf",
+                        "provider": "siliconflow",
+                        "base_url": "https://api.siliconflow.cn/v1",
+                        "model": "deepseek-ai/DeepSeek-V4-Flash",
+                        "api_key": "sk-group-secret",
+                    },
                 ],
             },
         )
@@ -140,12 +149,16 @@ def test_catalog_failure_is_a_200_with_a_reason_not_an_error(
 
 def test_catalog_rejects_non_http_base_url(client: TestClient) -> None:
     """M8 那条口径同样守住探测口：不然这就是一个让服务器替内网发请求的入口。"""
-    assert client.post(
-        "/api/settings/models/catalog", json={"provider": "openai", "base_url": "file:///x"}
-    ).status_code == 400
-    assert client.post(
-        "/api/settings/models/catalog", json={"provider_id": "ghost"}
-    ).status_code == 400
+    assert (
+        client.post(
+            "/api/settings/models/catalog", json={"provider": "openai", "base_url": "file:///x"}
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post("/api/settings/models/catalog", json={"provider_id": "ghost"}).status_code
+        == 400
+    )
 
 
 # --------------------------------------------------------------------------- probe
@@ -180,8 +193,7 @@ def test_probe_with_vision_flag_uploads_the_miniature(
     }
     body = client.post(
         "/api/settings/models/probe",
-        json={"provider_id": "siliconflow", "model": "m", "test_tools": True,
-              "test_vision": True},
+        json={"provider_id": "siliconflow", "model": "m", "test_tools": True, "test_vision": True},
     ).json()
     assert body["vision"] is True and body["vision_source"] == "uploaded-image"
     assert body["tools"] is None  # 假回复里有内容、没 tool_calls → "不知道"，不是"不支持"
@@ -199,8 +211,12 @@ def test_add_model_reuses_the_group_credential_and_its_own_name(
     fake_http.replies = {"/models": {"data": [{"id": "Qwen/Qwen3-VL-30B-A3B-Instruct"}]}}
     res = client.post(
         "/api/settings/models",
-        json={"provider_id": "siliconflow", "model": "Qwen/Qwen3-VL-30B-A3B-Instruct",
-              "supports_vision": True, "supports_tools": False},
+        json={
+            "provider_id": "siliconflow",
+            "model": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+            "supports_vision": True,
+            "supports_tools": False,
+        },
     )
     assert res.status_code == 201, res.text
     added = res.json()["added"]["name"]
@@ -227,8 +243,12 @@ def test_add_model_creates_a_group_when_the_provider_is_new(
     fake_http.replies = {"/models": {"data": [{"id": "glm-4"}]}}
     res = client.post(
         "/api/settings/models",
-        json={"provider": "openai", "base_url": "https://mirror.test/v1",
-              "api_key": "sk-mirror", "model": "glm-4"},
+        json={
+            "provider": "openai",
+            "base_url": "https://mirror.test/v1",
+            "api_key": "sk-mirror",
+            "model": "glm-4",
+        },
     )
     assert res.status_code == 201, res.text
     group = _group(client, "openai")
@@ -236,7 +256,9 @@ def test_add_model_creates_a_group_when_the_provider_is_new(
     assert [m["model"] for m in group["models"]] == ["glm-4"]
 
 
-def test_first_model_becomes_the_chat_default_automatically(client: TestClient) -> None:
+def test_first_model_becomes_the_chat_default_automatically(
+    client: TestClient, unreachable_backend: str
+) -> None:
     """一套配置都没有时，加完第一行必须能直接对话（否则"加完仍然不能聊"最难查）。"""
     client.delete("/api/settings/models/sf")
     client.delete("/api/settings/models/local")
@@ -244,8 +266,12 @@ def test_first_model_becomes_the_chat_default_automatically(client: TestClient) 
     assert body["default"] is None and model_rows(body) == []
     added = client.post(
         "/api/settings/models",
-        json={"provider": "ollama", "base_url": "http://127.0.0.1:9",
-              "model": "qwen2.5:7b", "name": "first"},
+        json={
+            "provider": "ollama",
+            "base_url": unreachable_backend,
+            "model": "qwen2.5:7b",
+            "name": "first",
+        },
     )
     assert added.status_code == 201, added.text
     after = client.get("/api/settings/models").json()
@@ -286,9 +312,7 @@ def test_deleting_the_last_model_of_a_group_takes_the_credential(client: TestCli
 
 
 def test_deleting_the_default_promotes_the_next_in_line(client: TestClient) -> None:
-    client.put(
-        "/api/services/models", json={"order": ["sf", "local"]}
-    )
+    client.put("/api/services/models", json={"order": ["sf", "local"]})
     assert client.get("/api/settings/models").json()["default"] == "sf"
     assert client.delete("/api/settings/models/sf").status_code == 204
     body = client.get("/api/settings/models").json()
@@ -304,10 +328,13 @@ def test_delete_unknown_model_is_404(client: TestClient) -> None:
 
 
 def test_capabilities_patch_writes_the_tri_state(client: TestClient) -> None:
-    assert client.patch(
-        "/api/settings/models/sf/capabilities",
-        json={"supports_vision": True, "supports_tools": None},
-    ).status_code == 200
+    assert (
+        client.patch(
+            "/api/settings/models/sf/capabilities",
+            json={"supports_vision": True, "supports_tools": None},
+        ).status_code
+        == 200
+    )
     model = _group(client, "siliconflow")["models"][0]
     assert model["supports_vision"] is True
     assert model["supports_tools"] is None  # null = 没测过，界面渲染 `?`，不是"不支持"
@@ -322,9 +349,12 @@ def test_capabilities_patch_rejects_an_empty_body_and_unknown_field(client: Test
 
 
 def test_capabilities_patch_unknown_model_is_404(client: TestClient) -> None:
-    assert client.patch(
-        "/api/settings/models/ghost/capabilities", json={"supports_vision": True}
-    ).status_code == 404
+    assert (
+        client.patch(
+            "/api/settings/models/ghost/capabilities", json={"supports_vision": True}
+        ).status_code
+        == 404
+    )
 
 
 # --------------------------------------------------------------------------- 采样惩罚
@@ -366,16 +396,23 @@ def test_sampling_rejects_repeat_penalty_on_a_cloud_backend(client: TestClient) 
 
 
 def test_sampling_validates_ranges_names_and_rows(client: TestClient) -> None:
-    assert client.patch(
-        "/api/settings/models/local/sampling", json={"repeat_penalty": 9}
-    ).status_code == 400
-    assert client.patch(
-        "/api/settings/models/local/sampling", json={"presence_penalty": -3}
-    ).status_code == 400
-    assert client.patch(
-        "/api/settings/models/local/sampling", json={"top_k": 40}
-    ).status_code == 400
+    assert (
+        client.patch("/api/settings/models/local/sampling", json={"repeat_penalty": 9}).status_code
+        == 400
+    )
+    assert (
+        client.patch(
+            "/api/settings/models/local/sampling", json={"presence_penalty": -3}
+        ).status_code
+        == 400
+    )
+    assert (
+        client.patch("/api/settings/models/local/sampling", json={"top_k": 40}).status_code == 400
+    )
     assert client.patch("/api/settings/models/local/sampling", json={}).status_code == 400
-    assert client.patch(
-        "/api/settings/models/ghost/sampling", json={"presence_penalty": 0.1}
-    ).status_code == 404
+    assert (
+        client.patch(
+            "/api/settings/models/ghost/sampling", json={"presence_penalty": 0.1}
+        ).status_code
+        == 404
+    )

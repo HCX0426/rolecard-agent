@@ -14,6 +14,10 @@ data/appearance/*
 # retention「先备份再删」落的那些 JSONL：内容就是被删的审计行与命令行原文，
 # 和 app.db 同一等级密（开发态数据根就是仓库 data/），绝不入库、随整目录升级不碰
 data/retention-backups/*
+# P2 错误签名（error.jsonl：异常类型 + 栈帧哈希的落盘历史）—— 运行时件，与 app.db
+# 同等级密（开发态数据根就是仓库 data/），绝不入库、随整目录升级不碰。
+# 尺子 `data root dirs are gitignored` 按 base/error_signatures.py::ERROR_DIRNAME 常量数到这里。
+data/errors/*
 # 文件工具（fs_write）与命令执行的默认工作区：装的是用户让它写出来的东西，不是素材
 # （这一格是 10-03 新断言 `data root dirs are gitignored` 上线第一次运行照出来的）
 data/workspace/*

@@ -1,0 +1,71 @@
+name: Nightly sentinel
+
+# 死信告警（开发流程.md P2-③）：夜间臂（nightly.yml）住在**那台常开机器**上 ——
+# 机器关机 / runner 掉线 / workflow 语法烂掉，表现是同一个：**安静地没跑**，
+# 而 GitHub 不会为"没发生的事"报警。这条哨兵跑在 GitHub-hosted runner 上，
+# 与被监视的对象**共享不了故障**（这正是"死信"的形状：信使不能也死在原地）。
+#
+# 判据取的是 nightly 的**证据提交**而不是 run 结论：nightly 每晚都会往 docs/eval/ 推
+# 证据 JSON（哪怕当晚评测红，`失败也留痕`）—— 所以"最近有 docs/eval 提交" = 臂活着且
+# 答过话；"连续 N 晚没有" = 死信。比查 workflow run 结论更硬：run 停在 queued
+# （没 runner 接）在 API 里连 conclusion 都没有，而证据缺席不需要解释那一层语义。
+#
+# 时间线：nightly 北京 02:00（UTC 18:00）跑，一晚最长 120 分钟 + 证据提交。
+# 哨兵 UTC 23:00 查"昨天那晚"，容错一晚：连续 2 天查不到才立案（阈值 BELOW_DAYS=2）。
+# 立案 = 开一个 issue（同标题未关闭时不重复开 —— 提醒一次就够，刷屏会把告警训练成噪音）。
+#
+# 已知取舍：nightly 手动跑（workflow_dispatch）也写证据 ⇒ 哨兵认"臂活着"，哪怕定时
+# 那条 cron 烂了 —— 本格抓的是"没人知道臂停了"这件事，手动救场的那晚同样值得知道。
+
+on:
+  schedule:
+    - cron: "0 23 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  dead-letter:
+    name: 夜间臂死信检查
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 查最近证据，缺席够久就立案
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          BELOW_DAYS=2   # 连续缺席天数阈值（一晚容错 + 一晚缺席 = 2）
+          # 标签先幂等建好：下面"臂活着"分支要按标签列 issue，标签不存在时 gh 会 404 ——
+          # 死信路径不能因为"从没立过案"这个好兆头而先红。
+          gh label create nightly --repo "$REPO" --color "6f42c1" \
+            --description "夜间臂（nightly）健康告警" --force || true
+          since=$(date -u -d "-${BELOW_DAYS} days" +%Y-%m-%dT%H:%M:%SZ)
+          # docs/eval 在窗口内的提交数（main 分支，含评测 JSON 与留痕 txt）。
+          commits=$(gh api "repos/$REPO/commits" -X GET \
+            -f path=docs/eval -f sha=main -f since="$since" -f per_page=100 \
+            --jq 'length')
+          echo "窗口内 docs/eval 证据提交: $commits（阈值 <1 即死信；窗口起点 $since）"
+          if [ "$commits" -ge 1 ]; then
+            echo "夜间臂活着。若有已开着的死信 issue，关掉它（自动销案）。"
+            number=$(gh issue list --repo "$REPO" --state open --json number,title --jq \
+              '.[] | select(.title | startswith("[nightly]")) | .number' | head -n1 || true)
+            if [ -n "$number" ]; then
+              gh issue close "$number" --repo "$REPO" --comment "臂又答话了（证据回到窗口内），死信自动销案。"
+            fi
+            exit 0
+          fi
+          title="[nightly] 夜间臂连续 ${BELOW_DAYS} 晚没跑成"
+          existing=$(gh issue list --repo "$REPO" --state open --json title --jq \
+            ".[] | select(.title == \"$title\") | .title" || true)
+          if [ -n "$existing" ]; then
+            echo "死信 issue 已开着，不重复开（一次提醒够了）。"
+            exit 1
+          fi
+          gh issue create --repo "$REPO" --label nightly --title "$title" \
+            --body "哨兵在 $since 之后的窗口里没看到任何 docs/eval 证据提交。可能原因：那台常开机器没开机 / self-hosted runner 掉线未注册 / nightly.yml 坏了没跑起来。排查口径见 docs/开发流程.md 的「夜间臂死信」（P2-③）。"
+          echo "已立案：$title"
+          exit 1

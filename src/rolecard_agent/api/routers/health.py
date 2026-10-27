@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from rolecard_agent.api.auth import ROLE_OPERATOR, Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
+from rolecard_agent.api.response_models import HealthDeepView
 from rolecard_agent.base.metrics import COUNTS
 from rolecard_agent.base.observability import logline
 from rolecard_agent.core.probes.readiness import readiness_report
@@ -31,7 +32,12 @@ def require_operator(actor: Actor = Depends(get_actor)) -> Actor:
     raise HTTPException(status_code=403, detail="诊断端点只对操作员开放。")
 
 
-@router.get("/api/health/deep", dependencies=[Depends(require_operator)])
+@router.get(
+    "/api/health/deep",
+    dependencies=[Depends(require_operator)],
+    response_model=HealthDeepView,
+    response_model_exclude_unset=True,
+)
 def health_deep(ctx: AppContext = Depends(get_context)) -> object:
     """真依赖开不开：sqlite `quick_check` / chroma 心跳 / 模型配置存在性。
 
@@ -64,6 +70,4 @@ def metrics() -> PlainTextResponse:
     而那对未鉴权的公网访客没有理由可见。格式与"为什么只有计数没有直方图"写在
     `base/metrics` 的模块注释里；`Content-Type` 里必须带版本号 —— Prometheus 认它。
     """
-    return PlainTextResponse(
-        COUNTS.render(), media_type="text/plain; version=0.0.4; charset=utf-8"
-    )
+    return PlainTextResponse(COUNTS.render(), media_type="text/plain; version=0.0.4; charset=utf-8")

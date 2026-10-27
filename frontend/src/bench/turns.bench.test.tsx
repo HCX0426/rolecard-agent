@@ -32,7 +32,7 @@ function msg(i: number) {
       render(<Markdown text={text} />);
       const ms = performance.now() - t0;
       const nodes = document.querySelectorAll("*").length;
-      // eslint-disable-next-line no-console
+       
       console.info(`[bench] n=${n} 首渲染 ${ms.toFixed(0)}ms, DOM 节点 ${nodes}`);
       expect(ms).toBeGreaterThan(0);
     });

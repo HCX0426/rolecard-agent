@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.api.errors import value_error_to_http
+from rolecard_agent.api.response_models import ModelProvidersView, SettingsMemoryView
 from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.base.text import text_of
 from rolecard_agent.config import SECRET_FIELD_NAMES, Settings
@@ -77,7 +78,9 @@ def _models_payload(ctx: AppContext) -> dict[str, object]:
     }
 
 
-@router.get("/api/settings/models")
+@router.get(
+    "/api/settings/models",
+)
 def get_model_settings(ctx: AppContext = Depends(get_context)) -> object:
     """模型设置。api_key 永不回明文 —— 只有 has_key 掩码预览。
 
@@ -88,7 +91,11 @@ def get_model_settings(ctx: AppContext = Depends(get_context)) -> object:
     return _models_payload(ctx)
 
 
-@router.get("/api/settings/model-providers")
+@router.get(
+    "/api/settings/model-providers",
+    response_model=ModelProvidersView,
+    response_model_exclude_unset=True,
+)
 def get_model_providers() -> object:
     """供应商目录（动态扩展）：设置页「模型」页签的下拉从这里取，不再写死前端。"""
     return {"providers": provider_catalog()}
@@ -624,7 +631,11 @@ def _memory_payload(ctx: AppContext, role_id: str | None = None) -> dict[str, ob
     }
 
 
-@router.get("/api/settings/memory")
+@router.get(
+    "/api/settings/memory",
+    response_model=SettingsMemoryView,
+    response_model_exclude_unset=True,
+)
 def get_memory(
     ctx: AppContext = Depends(get_context),
     role_id: str | None = Query(None, max_length=64),
