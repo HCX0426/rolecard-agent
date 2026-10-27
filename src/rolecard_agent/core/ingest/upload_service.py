@@ -34,7 +34,7 @@ from typing import IO, TYPE_CHECKING, Any
 
 from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.config import Settings
-from rolecard_agent.core.common.pools import make_pool
+from rolecard_agent.core.common.pools import make_pool, submit_with_context
 from rolecard_agent.core.ingest.ingestion import (
     INGESTION_FAILED,
     INGESTION_PENDING,
@@ -539,7 +539,7 @@ def submit_processing(
                 with _RUNNING_GUARD:
                     _RUNNING.pop(p.task_id, None)
 
-        _RUNNING[p.task_id] = _UPLOAD_POOL.submit(_run)
+        _RUNNING[p.task_id] = submit_with_context(_UPLOAD_POOL, _run)
     return True
 
 
@@ -672,5 +672,5 @@ def submit_scope_import(
                 with _RUNNING_GUARD:
                     _RUNNING.pop(p.task_id, None)
 
-        _RUNNING[p.task_id] = _UPLOAD_POOL.submit(_run)
+        _RUNNING[p.task_id] = submit_with_context(_UPLOAD_POOL, _run)
     return True
