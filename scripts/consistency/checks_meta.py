@@ -183,6 +183,7 @@ def check_version_parity() -> None:
     不再是"后端代码换没换"的信号 —— 那一问现在由 `build.sha` 回答（`R28-56` 那格构建指纹），
     恰好不需要版本线替它说话。
     """
+
     def grep_version(text: str, pattern: str) -> str | None:
         # re.M 是必需的：三条模式都锚在 `^` 上，没有 MULTILINE 时除了文件第一行什么都匹配不到
         # —— 写这条检查的人当场就被自己的正则骗过一次（pyproject 读成 None）。
@@ -473,9 +474,7 @@ def check_coverage_threshold() -> None:
                 continue
             hits = [
                 g1 or g2
-                for g1, g2 in pattern.findall(
-                    path.read_text(encoding="utf-8", errors="ignore")
-                )
+                for g1, g2 in pattern.findall(path.read_text(encoding="utf-8", errors="ignore"))
             ]
             if not hits:
                 problems.append(f"{rel} 里找不到阈值短语（尺子失去主体 —— 是短语变了形吗）")
@@ -699,4 +698,121 @@ def check_session_thread_write_seam() -> None:
         fails.append(
             "session_thread write seam is hollow: storage/threads.py must hold the "
             "write statements it claims to own"
+        )
+
+
+#: 评测脚本（`scripts/tools/run_eval.py`）打过的 API 路径前缀 —— 这把尺子只盯这一个消费者。
+#: 为什么是"消费者清单"而不是"全局扫所有脚本"：脚本里出现一个字符串不等于它在调 API
+#: （日志文案、注释、示例都长这样）。真正会出事的是**驱动真实 API 的评测/冒烟脚本**
+#: —— 它调错端点时不会崩，只会安静地全红（本仓 2026-10-27 的实况：评测集 0/11，
+#: 报错是"Host 不是回环地址"与"HTTP 405"，而不是"端点没了"）。
+_EVAL_HARNESS = "scripts/tools/run_eval.py"
+
+
+def _path_literal(node: ast.AST) -> str | None:
+    """从 AST 节点里取出路径字面量；f-string 还原成 `{}` 占位的形状。
+
+    **f-string 必须一起看**：评测脚本打的多是 `f"/api/session/{thread_id}/messages"`
+    这样的动态路径 —— 只认 `ast.Constant` 的话，这把尺子会**看不见它们**，于是
+    "端点退役"那一类漂移从它眼皮底下走过去（2026-10-27 实测：改造后尺子报绿，
+    而脚本里明明还留着退役的 `/api/plugins/.../toggle`）。占位段一律抹成 `{}`，
+    与路由表侧用同一个 `_norm` 抹平，两边就能对上。
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        parts: list[str] = []
+        for value in node.values:
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                parts.append(value.value)
+            else:
+                parts.append("{}")
+        return "".join(parts)
+    return None
+
+
+def check_eval_harness_api_paths() -> None:
+    """评测脚本打过的 API 路径必须真实存在（端点退役 = 评测全红且没人知道）。
+
+    **病根（2026-10-27 实查，不是推测）**：`run_eval.py` 一直打 `/api/plugins/{d}/toggle`，
+    那个端点在 2026-10-24 的"域常开"改造里**退役**了 —— 域一律常开，工具可见性改由
+    角色的 `tool_whitelist` 决定。评测脚本没跟着改，于是每一趟评测的 11 条用例
+    全部死在**对齐那一步**（先是来源护栏 403，改成回环后是 405），通过率恒为 0%，
+    而报告本身照常生成 —— 一份"0% 通过率"的报告躺在 docs/eval/ 里没人当回事。
+
+    为什么这类漂移必须由机器拦：端点退役是**有意**的架构决定，但**忘记改调用方**
+    不是。调用方的错不会让任何测试红（评测要真模型才跑得动），只会让指标恒为 0。
+
+    判据：从 `src/rolecard_agent/api/` 的路由装饰器里抽出全部路径字面量，
+    再把评测脚本里出现的 `/api/...` 字面量（带 f-string 的按前缀截断）逐条对账。
+    对不上的红 —— **不许"看着差不多"放行**：端点路径差一个词就是 404/405。
+
+    为什么用**静态字面量**而不是建 app 跑一遍：建 app 要装依赖、跑播种、几百毫秒到
+    数秒，而尺子要跟着每次 push 跑；而且静态抽出来的路径与运行时 app.routes 是同一份
+    事实（路由装饰器的字面量就是路由的来源）。
+    """
+    api_dir = ROOT / "src" / "rolecard_agent" / "api"
+    known: set[str] = set()
+    for path in sorted(api_dir.rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except (SyntaxError, ValueError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not isinstance(func, ast.Attribute):
+                continue
+            if func.attr not in {"get", "post", "put", "patch", "delete"}:
+                continue
+            for arg in node.args:
+                raw = _path_literal(arg)
+                if raw is not None and raw.startswith("/api/"):
+                    known.add(raw)
+                # 多行装饰器里路径写在 `response_model=` 之后的位置参数 —— 同上处理。
+
+    harness = ROOT / _EVAL_HARNESS
+    if not harness.exists():
+        out("eval harness api paths", True, f"{_EVAL_HARNESS} 不存在（跳过）")
+        return
+    try:
+        tree = ast.parse(harness.read_text(encoding="utf-8", errors="ignore"))
+    except (SyntaxError, ValueError) as exc:
+        out("eval harness api paths", False, f"{_EVAL_HARNESS} 解析失败：{exc}")
+        fails.append(f"eval harness api paths: {_EVAL_HARNESS} 解析失败：{exc}")
+        return
+
+    called: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute):
+            continue
+        if func.attr not in {"get", "post", "put", "patch", "delete"}:
+            continue
+        for arg in node.args:
+            raw = _path_literal(arg)
+            if raw is not None and raw.startswith("/api/"):
+                called.add(raw)
+
+    # f-string 路径（`f"/api/roles/{role_id}"`）按"去掉占位段"后的前缀对账 ——
+    # 占位段的位置用 `{}` 记着，比对时两侧都抹平。
+    def _norm(p: str) -> str:
+        return re.sub(r"\{[^}]*\}", "{}", p)
+
+    known_norm = {_norm(p) for p in known}
+    unknown = sorted(p for p in called if _norm(p) not in known_norm)
+    ok = not unknown
+    detail = (
+        f"评测脚本打的 {len(called)} 条路径全在路由表内（api 层共 {len(known)} 条）"
+        if ok
+        else f"这些路径在 api 层不存在（端点退役或写错）：{unknown}"
+    )
+    out("eval harness api paths", ok, detail)
+    if unknown:
+        fails.append(
+            "eval harness api paths: 评测脚本打了不存在的端点 "
+            f"{unknown} —— 端点退役后调用方没跟着改，评测会安静地全红"
         )

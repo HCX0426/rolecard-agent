@@ -3,6 +3,7 @@
 从前顺序写在 main() 的函数调用里；现在是一张表。新尺子加在这里（并保持顺序：
 便宜的、能早红的排前面），包装器只负责跑与汇总。
 """
+
 from __future__ import annotations
 
 from . import (
@@ -67,6 +68,7 @@ CHECKS = (
     checks_install.check_lockfile_parity,
     checks_install.check_lock_platform_markers,
     checks_install.check_capability_matrix,
+    checks_meta.check_eval_harness_api_paths,
     checks_meta.check_ci_host_python_stdlib_only,
     checks_runtime.check_artifact_single_source,
     checks_runtime.check_single_source_literals,

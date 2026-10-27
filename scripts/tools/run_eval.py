@@ -284,8 +284,10 @@ def _check_assertions(
                 # 窗口里也先剥日期：标记本身就是日期，不剥的话 2026-03-12 里的 3 与 12
                 # 会挤在窗口里冒充被检查的那个数。
                 span = _DATE_LIKE.sub(" ", final_text[lo:hi])
-                if any(abs(n - value) <= float(a.get("tolerance", 0.05))  # type: ignore[arg-type]
-                       for n in _numbers_in(span)):
+                if any(
+                    abs(n - value) <= float(a.get("tolerance", 0.05))  # type: ignore[arg-type]
+                    for n in _numbers_in(span)
+                ):
                     ok = True
                     break
                 at = final_text.find(marker, at + 1)
@@ -302,21 +304,98 @@ def _check_assertions(
     return failures, (cit_ok, cit_total)
 
 
-def _run_case(
-    client: TestClient, case: dict[str, Any], domains: tuple[str, ...]
-) -> dict[str, Any]:
-    """对齐插件状态 → 建会话 → 对话 → 回放。返回该用例的判定结果。"""
-    for d in domains:
-        wanted = d in (case.get("enabled_domains") or [])
-        res = client.post(f"/api/plugins/{d}/toggle", json={"enabled": wanted})
-        if res.status_code != 200:
-            return {
-                "id": case["id"],
-                "path": case["path"],
-                "passed": False,
-                "failures": [f"插件 {d} 状态对齐失败：HTTP {res.status_code}"],
-            }
+def _domain_tool_names(app: object) -> dict[str, set[str]]:
+    """域 → 该域工具名。**从 app 自己的工具注册表读**，不抄第二份清单。
 
+    域与工具的归属写在 `ToolSpec.domain`（`core/tools/registry.py`），那是装配
+    出来的唯一事实面 —— 域的 `DOMAIN_TOOL_NAMES` 是**声明**，注册表是**实际装上
+    的**。评测要判的是"模型这一轮看得见哪些工具"，那就该按实际装上的那份算：
+    抄声明会与真实装配漂移（域加了新工具、装配点过滤掉了某个，两边就不一致了）。
+
+    `spec.domain is None` = 内核件（不属于任何域），不进这张表。
+    """
+    ctx = getattr(app, "state", None)
+    ctx = getattr(ctx, "ctx", None)
+    registry = getattr(ctx, "registry", None)
+    if registry is None:
+        return {}
+    out: dict[str, set[str]] = {}
+    for spec in registry.specs():
+        if spec.domain:
+            out.setdefault(spec.domain, set()).add(spec.name)
+    return out
+
+
+def _align_role_tools(
+    client: TestClient,
+    case: dict[str, Any],
+    domain_tools: dict[str, set[str]],
+) -> tuple[list[str] | None, str | None]:
+    """把角色的 `tool_whitelist` 对齐到本用例要的域，返回（原白名单, 错误说明）。
+
+    **为什么不再 toggle 插件**（2026-10-24 域常开之后）：`/api/plugins/{d}/toggle`
+    那个端点已经退役 —— 域一律常开，工具可见性由**角色白名单**决定
+    （`core/tools/registry.py::filter_specs` 的两段筛：先按 enabled_domains，
+    再按 role.tool_whitelist）。评测用例里 `enabled_domains` 那一列的语义
+    从此 = "本用例允许这个角色看到的域"。
+
+    白名单怎么算：白名单按**工具名**筛，域是工具的归属。所以"禁掉一个域"
+    = 把那个域的工具名从白名单里剔掉（内核件 `domain=None` 保留）。这正好
+    对应 `authz-001` 那类"域停用时模型侧根本不该看到该工具"的用例。
+
+    返回原白名单（用于跑完恢复）：评测跑的是**同一个 app 实例**，白名单改了不
+    恢复会让后面的用例继承上一个用例的边界 —— 那种污染会让报告里的通过率
+    取决于用例顺序。
+    """
+    role_id = case.get("role_id")
+    if not role_id:
+        return None, "用例没写 role_id"
+    res = client.get("/api/roles")
+    if res.status_code != 200:
+        return None, f"读角色清单失败：HTTP {res.status_code}"
+    role = next((r for r in res.json() if r.get("role_id") == role_id), None)
+    if role is None:
+        return None, f"角色 {role_id} 不存在"
+    original = role.get("tool_whitelist")
+    if original is None:
+        # None = 全部已启用域的工具。评测要的是"这一组域"，得先算出具体名单。
+        return None, f"角色 {role_id} 的 tool_whitelist 是 None（= 全部域），无法按用例收窄"
+
+    wanted = set(case.get("enabled_domains") or [])
+    keep = set(original)
+    for domain, names in domain_tools.items():
+        if domain not in wanted:
+            keep -= names
+    patch = client.patch(f"/api/roles/{role_id}", json={"tool_whitelist": sorted(keep)})
+    if patch.status_code != 200:
+        return original, f"角色 {role_id} 白名单对齐失败：HTTP {patch.status_code}"
+    return original, None
+
+
+def _run_case(
+    client: TestClient,
+    case: dict[str, Any],
+    domain_tools: dict[str, set[str]],
+) -> dict[str, Any]:
+    """对齐角色工具边界 → 建会话 → 对话 → 回放。返回该用例的判定结果。"""
+    original, align_error = _align_role_tools(client, case, domain_tools)
+    if align_error:
+        return {
+            "id": case["id"],
+            "path": case["path"],
+            "passed": False,
+            "failures": [align_error],
+        }
+    try:
+        return _run_case_body(client, case)
+    finally:
+        # 恢复原白名单：评测跑的是同一个 app，边界改了不恢复会让后面的用例
+        # 继承上一个用例的权限（顺序依赖的报告不是评测）。
+        if original is not None and case.get("role_id"):
+            client.patch(f"/api/roles/{case['role_id']}", json={"tool_whitelist": original})
+
+
+def _run_case_body(client: TestClient, case: dict[str, Any]) -> dict[str, Any]:
     session = client.post("/api/session", json={"role_id": case.get("role_id")}).json()
     thread_id = str(session["thread_id"])
     chat = client.post("/api/chat", json={"thread_id": thread_id, "message": case["input"]})
@@ -402,7 +481,6 @@ def _run_suite(cases: list[dict[str, Any]], settings: object) -> list[dict[str, 
     from fastapi.testclient import TestClient
 
     from rolecard_agent.api.main import create_app
-    from rolecard_agent.domains.registry import DOMAINS
     from rolecard_agent.storage.db import connect
 
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
@@ -412,11 +490,19 @@ def _run_suite(cases: list[dict[str, Any]], settings: object) -> list[dict[str, 
         conn.close()
         _seed_knowledge(db_path, settings)  # 与 app 同一嵌入器（维度一致）
         app = create_app(sqlite_path=db_path)
-        with TestClient(app) as client:
+        # **回环来源 + 回环 Host**：TestClient 默认的 Host 是 `testserver`、对端是 testclient，
+        # 而来源标识护栏（`R102-45`）只认回环 —— 两者都不是 ⇒ 管理面端点（如
+        # `/api/roles/{id}`）被护栏 403 挡掉，整个评测集 0/11 全红（2026-10-27 实测：
+        # 本机与夜间臂都复现，报错是"Host「testserver」不是回环地址"）。
+        # 评测的语义是"本机单人用"（真实部署的默认形态），所以这里按回环发起：
+        # base_url 决定 Host，client=("127.0.0.1", 50000) 决定 TCP 对端。
+        # **不是把护栏关掉** —— 护栏开着、由本机来源正常放行，才是真实部署的形状。
+        domain_tools = _domain_tool_names(app)
+        with TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000)) as client:
             results = []
             for case in cases:
                 started = time.perf_counter()
-                result = _run_case(client, case, DOMAINS)
+                result = _run_case(client, case, domain_tools)
                 result["duration_ms"] = round((time.perf_counter() - started) * 1000)
                 results.append(result)
     return results
@@ -440,6 +526,7 @@ def _aggregate(
             if r["passed"]:
                 slot["passed"] += 1
     rates = [sum(1 for r in run if r["passed"]) / len(run) for run in runs if run]
+
     # 数据引用正确率：只统计 `answer_*_value` 那一类断言，跨遍合并成一个数。
     # 分母是**断言条数**不是用例数 —— 一条用例可以引用两个数，对一个错一个，
     # 按用例算会把它读成"过"。
