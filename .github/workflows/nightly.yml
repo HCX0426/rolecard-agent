@@ -1,25 +1,37 @@
 name: Nightly
 
-# 夜间臂（审查快照 P2-27 + P3-17，决策八）：self-hosted runner 上跑真机/真模型验收。
+# 夜间臂（审查快照 P2-27 + P3-17，决策八）：定期跑真机冒烟 + 评测，证据落 docs/eval/。
+# （10-27 起月度，见下方时间线注释；名字沿用 nightly —— 改 cron 不改名，历史 run 可追。）
 #
 # 为什么单独一条 workflow + 用 `schedule`（而非并进 ci.yml）：
-#   * 它跑 `pytest -m live`（真 8B 抽取，比其余用例加起来还贵） + smoke_check + run_eval，
-#     需要一台**常开、装了 Ollama + Chrome** 的开发机 —— 这正是「用户侧待办」那一格；
+#   * 它跑 `pytest -m live` + smoke_check（含 UI 段）+ run_eval，比日常 CI 那几档贵；
 #   * 失败只报警不拦 PR（决策八原话）：夜里的偶发红不该把白天在飞的 PR 卡住，但证据要落盘
 #     （docs/eval/ 的 JSON）让人第二天能查。
 #
-# **没有 self-hosted runner 时这条 job 自动 skip**（不是红）：`self-hosted` 标签的 runner
-# 没注册时 GitHub 会把 job 标成「waiting」，永远不会自己变绿也不变红，于是这里用
-# `if: github.repository_owner == 'HCX0426'` 这种廉价门槛 + `continue-on-error` 都拦不住「等不到
-# runner」那件事 —— 真正的解法是：**在你那台常开机器上注册一个 labels 含 `self-hosted`
-# 的 GitHub Actions runner**（见 docs/开发流程.md 的那一节），注册了才会接、没注册就永远 skip。
-# 本 workflow 的 `runs-on: [self-hosted, windows]` 故意写成数组：只匹配带这两个 label 的
-# runner，匹配不到 = 没人接 = 安静地 skip，不污染日常 CI。
+# **2026-10-27 改回 GitHub-hosted（windows-latest）**——死信 issue #11 逼出来的收口：
+#   `runs-on: [self-hosted, windows]` 的"没注册即安静 skip"论证错了一格：GitHub 对
+#   永远等不到 runner 的 schedule run 不是安静 skip，是**排队 24 小时然后整趟 cancelled**
+#   ——10-21 起每晚如此，哨兵 10-27 立案时已经连中六晚。而 P2-27 的 10-10 复核早已量过
+#   另一头：仓库 public ⇒ **托管 runner 免费不限量**，"self-hosted 省成本"的前提不成立；
+#   真卡点从来不是缺机器，是缺一条云端 key（SILICONFLOW_API_KEY，仓库 secrets 数 = 0）。
+#   所以：机器换成托管，**没 key 的晚上真模型段按设计红/空（continue-on-error 兜住），
+#   状态证据照落**——臂从"每晚静默失踪"变成"每晚答话、缺什么写在证据里"。
+#   哪天用户在 repo secrets 里配上 key，run_eval / measure_latency 的云端臂自动点亮，
+#   这个文件一行都不用改。
+#   UI 冒烟段（2026-10-26 分层决定里"交给 nightly 真机"那格）：托管 windows 镜像预装
+#   Chrome/Edge，ui_smoke.js 按 Windows 路径自动探测；playwright-core 装进它认识的
+#   %USERPROFILE%\uicheck 加载位（不下载浏览器，几 MB）。装不上就照设计打印跳过，不拦。
+#
+# **2026-10-27 再改：每月一次（用户拍板"单人项目一个月一次就够了"）**：
+#   cron 取每月 1 号 UTC 03:00（北京 11:00，活跃时段 —— 红了当天就能看，与 lock-refresh
+#   同一句话的理由）。跑在托管 runner 上，用户机器开不开与它无关。
+#   哨兵阈值同步从"连续 2 晚"抬到"连续 35 天"（monthly + 一晚容错），不然月臂会被
+#   日哨天天立案 —— 节奏是一对，拆开哪半边都会撒谎。
 
 on:
   schedule:
-    # 每天 UTC 18:00 跑（北京次日 02:00，开发机常开时段）。
-    - cron: "0 18 * * *"
+    # 每月 1 号 UTC 03:00（北京 11:00，开发时段内 —— 红了当天就能看见）。
+    - cron: "0 3 1 * *"
   workflow_dispatch:
 
 permissions:
@@ -31,14 +43,14 @@ env:
 
 jobs:
   live:
-    name: 夜间真机验收（self-hosted）
-    # 单引号字符串数组 label：只有你注册的、带 self-hosted + windows 两个 label 的 runner 会接。
-    # 没注册时 GitHub 不会报错，job 停在 queued 直到超时——为避免「永远在等」把 nightly 页
-    # 弄脏，这里允许它在超时/无 runner 时当作**成功跳过**（证据照常，只是这一晚没机器跑）。
-    runs-on: [self-hosted, windows]
-    timeout-minutes: 120
+    name: 夜间真机验收（托管 windows）
+    runs-on: windows-latest
+    # 托管免费档按墙钟计费上限给到 3h；真装依赖 + 冒烟 + 评测实测在 30~60 分钟量级。
+    timeout-minutes: 180
     continue-on-error: true   # 决策八：失败只报警不拦 PR（本 job 不进任何 PR 的 needs）
-    if: ${{ github.event_name == 'workflow_dispatch' || true }}
+    env:
+      # 缺 key 时下面各段自己红/空（continue-on-error 兜住）；配上即自动生效。
+      SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - name: 装 Python
@@ -51,17 +63,17 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements/requirements.lock
-      - name: 真机冒烟 + 真模型评测（live 用例 + run_eval）
+      - name: 装 playwright-core（UI 冒烟的驱动，不下载浏览器，用镜像自带的）
+        run: npm install --prefix "$env:USERPROFILE\uicheck" playwright-core
+      - name: 真机冒烟（含 UI 段）+ 真模型评测（run_eval）
         env:
-          # 缺 Ollama / Chrome / 真 key 时这些会失败 —— 但本 job continue-on-error，
-          # 失败只报警；证据照落。
           SMOKE_SKIP_UI: "0"
         run: |
           python scripts/smoke_check.py
           python scripts/tools/run_eval.py --strict --report docs/eval/nightly-${{ github.run_id }}.json
       # ── P3-17：质量验收脚本三件 + live 用例（此前**只写在本文件头的注释里、steps 没接** ——
       # 注释与现实对不上这件事本身就是 bug：这次把线接上，注释才成真。）
-      - name: live 用例（真 8B 抽取，P2-27/决策八 声称的 live 臂）
+      - name: live 用例（真模型抽取；探不到就 skip 并写清缺什么，ENGI-17）
         run: python -m pytest tests -m live -q --no-header
       - name: 质量验收脚本三件（persona_meter / measure_latency / persona_ab）
         shell: pwsh
@@ -105,6 +117,20 @@ jobs:
             Write-Host "run_api 90×2s 等不到健康 —— persona_ab 这晚不量（不拦）"
           }
           if ($srv -and -not $srv.HasExited) { Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue }
+      - name: 今晚答到（状态证据 —— 哨兵的"活着"判据，缺 key 也落）
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path docs/eval | Out-Null
+          $status = [ordered]@{
+            run_id          = "${{ github.run_id }}"
+            sha             = "${{ github.sha }}"
+            utc             = (Get-Date).ToUniversalTime().ToString("s") + "Z"
+            siliconflow_key = [bool]"$env:SILICONFLOW_API_KEY"
+            note            = "缺 key 的晚上：真模型段按设计红/空（continue-on-error 兜住）。" +
+                              "本文件每晚必落 = 夜间臂答话的证据，哨兵盯它销案。"
+          }
+          $status | ConvertTo-Json | Set-Content -Encoding utf8 "docs\eval\status-${{ github.run_id }}.json"
       - name: 证据落盘
         if: always()
         shell: pwsh
@@ -115,6 +141,7 @@ jobs:
             git add docs/eval
             if (git diff --cached --quiet) { Write-Host "今晚无新证据" } else {
               git commit -m "chore(eval): 夜间臂证据落盘（run_id=${{ github.run_id }}）"
+              git pull --rebase origin main || true
               git push
             }
           }
