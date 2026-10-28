@@ -295,7 +295,12 @@ def main(argv: list[str] | None = None, root: Path | None = None) -> int:
         if drifted(after):
             print(f"改完仍然不一致：{after}", file=sys.stderr)
             return 1
-        print("四处已一致 —— 别忘了跑 scripts/check_consistency.py")
+        print(
+            "四处已一致 —— 别忘了跑 scripts/check_consistency.py；"
+            "再跑 scripts/tools/export_openapi.py 重导出契约副本"
+            "（openapi.json 的 info.version 跟着 API_VERSION 走，"
+            "不重导出门禁「openapi 契约同步」必红 —— 0.5.1-beta.1 实测）"
+        )
     return 0
 
 
