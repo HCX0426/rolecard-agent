@@ -27,10 +27,16 @@ def _clear_uc_cache() -> Iterator[None]:
 
 
 def test_parse_version_shape() -> None:
-    assert parse_version("0.4.1") == (0, 4, 1)
-    assert parse_version("v0.4.1") == (0, 4, 1)  # tag 前缀的 v 与裸版本同义
+    # 末位是正式度旗标（P10④：正式 1 / 预发布 0）——预发布要排在同号正式版之前，
+    # 而 Python 元组前缀恒小，两侧都补旗标才判得对。
+    assert parse_version("0.4.1") == (0, 4, 1, 1)
+    assert parse_version("v0.4.1") == (0, 4, 1, 1)  # tag 前缀的 v 与裸版本同义
     assert parse_version("10.2.30") > parse_version("9.9.9")  # 逐段数值比，不是字典序
-    assert parse_version("0.4.1-rc1") == ()  # 形状外：判"比不了"，不装懂
+    assert parse_version("0.5.1-beta.1") == (0, 5, 1, 0)  # 预发布段就地解析
+    assert parse_version("0.5.0") < parse_version("0.5.1-beta.1")  # 预发布比上一版新
+    assert parse_version("0.5.1-beta.1") < parse_version("0.5.1")  # 同号正式版更新
+    assert parse_version("0.4.1-rc1") == (0, 4, 1, 0)  # rc 也是合法预发布段
+    assert parse_version("0.4.x") == ()  # 头部非数字才是形状外：判"比不了"，不装懂
     assert parse_version("") == ()
 
 
@@ -63,9 +69,7 @@ def test_release_dir_is_preferred_and_parses_version_from_filename(tmp_path: Pat
 
 def test_release_dir_without_update(tmp_path: Path) -> None:
     _write_artifact(tmp_path, "rolecard-agent-0.4.0-x64.exe")
-    info = check_update(
-        current="0.4.1", enabled=True, repo="", release_dir=tmp_path, fetcher=None
-    )
+    info = check_update(current="0.4.1", enabled=True, repo="", release_dir=tmp_path, fetcher=None)
     assert info.source == "release_dir" and info.has_update is False
 
 
@@ -76,9 +80,7 @@ def test_github_source_with_injected_fetcher() -> None:
         seen.append(url)
         return {"tag_name": "v0.5.0", "html_url": "https://github.com/o/r/releases/tag/v0.5.0"}
 
-    info = check_update(
-        current="0.4.1", enabled=True, repo="o/r", release_dir=None, fetcher=fake
-    )
+    info = check_update(current="0.4.1", enabled=True, repo="o/r", release_dir=None, fetcher=fake)
     assert seen == ["https://api.github.com/repos/o/r/releases/latest"]
     assert info.source == "github" and info.latest == "0.5.0" and info.has_update is True
     assert info.url == "https://github.com/o/r/releases/tag/v0.5.0"
@@ -117,9 +119,7 @@ def test_disabled_makes_no_call() -> None:
     def explode(url: str) -> dict[str, Any]:
         raise AssertionError("disabled 不该出网")
 
-    info = check_update(
-        current="0.4.1", enabled=False, repo="o/r", fetcher=explode
-    )
+    info = check_update(current="0.4.1", enabled=False, repo="o/r", fetcher=explode)
     assert info.source == "disabled" and info.error is None
 
 
