@@ -323,19 +323,22 @@ jobs:
           PRERELEASE="${{ steps.meta.outputs.prerelease }}"
           # feed 清单必须跟 exe 同场：electron-updater 找的就是这份 yml，
           # 只传 exe 的 Release 会让装机用户的"检查更新"静默失灵（不报错，永远"无更新"）。
-          # 稳定版 = latest.yml；预发布（P10 beta 通道）= 各 channel 的 yml（beta.yml）
-          # 都要上 —— 稳定通道用户绝不读 beta feed，但切到 beta 的用户要能拿到。
+          # 两个路径都要求 latest.yml（v0.5.1-beta.1 发布闸实测修正）：electron-builder 对
+          # GitHub provider **只出当前通道一个 yml**（源码原话 "for GitHub should be
+          # pre-release way be used" —— GitHub 的通道隔离就是 prerelease 标志本身，
+          # generateUpdatesFilesForAllChannels 对 github 是 no-op）；而 electron-updater 的
+          # GitHubProvider 在 allowPrerelease 下先试 beta.yml、404 时**显式回退 latest.yml**
+          # （源码注释 "Allow fallback to latest.yml"）。所以预发布 Release 带 latest.yml
+          # 就是 beta 用户的合法 feed；稳定通道客户端只读非预发布 Release，红线不破。
+          # 最初那版要求 beta.yml，建立在"electron-builder 会按版本段出 beta.yml"的
+          # 错误假设上 —— 守卫尽职地红了，红得对。
+          ls artifact/latest.yml >/dev/null 2>&1 || {
+            echo "❌ 没有 latest.yml：nsis 没产 feed 清单，自动更新会静默失灵（稳定与预发布两个路径都靠它）"
+            exit 1
+          }
           if [ "$PRERELEASE" = "true" ]; then
-            ls artifact/beta.yml >/dev/null 2>&1 || {
-              echo "❌ 预发布版本没有 beta.yml：electron-builder 没出 beta channel 清单（查版本号是否带 prerelease 段）"
-              exit 1
-            }
             FLAG="--prerelease"
           else
-            ls artifact/latest.yml >/dev/null 2>&1 || {
-              echo "❌ 稳定版没有 latest.yml：nsis 没产 feed 清单，自动更新会静默失灵"
-              exit 1
-            }
             FLAG=""
           fi
           # shellcheck disable=SC2086
