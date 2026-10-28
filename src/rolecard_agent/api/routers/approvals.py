@@ -23,8 +23,8 @@ from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import ROLE_OPERATOR, Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
-from rolecard_agent.api.response_models import ApprovalsView
 from rolecard_agent.base.observability import logline
+from rolecard_agent.contracts.response_models import ApprovalsView
 from rolecard_agent.core.tools import run as run_tools
 
 router = APIRouter()

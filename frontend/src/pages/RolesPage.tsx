@@ -64,12 +64,12 @@ function ToolGroup({
           <label
             key={t.name}
             className="flex cursor-pointer items-start gap-1.5 text-xs"
-            title={t.description}
+            title={t.description ?? ""}
           >
             <input
               type="checkbox"
-              checked={selected.includes(t.name)}
-              onChange={() => onToggle(t.name)}
+              checked={selected.includes(t.name ?? "")}
+              onChange={() => onToggle(t.name ?? "")}
               className="mt-0.5"
             />
             <span className="min-w-0">
@@ -193,12 +193,12 @@ export default function RolesPage({
       // 只服务嵌入/重排的行不是推理模型。
       .then((s) => {
         const chat = (s.providers ?? [])
-          .flatMap((g) => g.models)
-          .filter((m) => m.used_by.includes("chat"))
-          .map((m) => m.name);
+          .flatMap((g) => g.models ?? [])
+          .filter((m) => (m.used_by ?? []).includes("chat"))
+          .map((m) => m.name ?? "");
         // 下拉按**设置里那份优先级**排（default → fallbacks → 其余没进链的）：这里选的
         // 正是"要不要盖过它"，顺序看不出来就等于盲选。
-        const ranked = [s.default, ...s.fallbacks].filter(
+        const ranked = [s.default, ...(s.fallbacks ?? [])].filter(
           (n): n is string => n !== null && chat.includes(n),
         );
         setBackends([...ranked, ...chat.filter((n) => !ranked.includes(n))]);
@@ -631,15 +631,15 @@ export default function RolesPage({
               <div className="mt-2 space-y-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-3">
                 <ToolGroup
                   label="内核工具（所有领域通用）"
-                  entries={catalog.kernel}
+                  entries={catalog.kernel ?? []}
                   selected={form.tool_whitelist}
                   onToggle={toggleTool}
                 />
-                {Object.entries(catalog.domains).map(([domain, entries]) => (
+                {Object.entries(catalog.domains ?? {}).map(([domain, entries]) => (
                   <ToolGroup
                     key={domain}
                     label={`领域插件：${domain}`}
-                    entries={entries}
+                    entries={entries as ToolEntry[]}
                     selected={form.tool_whitelist}
                     onToggle={toggleTool}
                   />

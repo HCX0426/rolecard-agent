@@ -392,7 +392,7 @@ function needsKey(provider: string, catalog: ModelProvider[]): boolean {
 }
 
 function defaultSource(groups: ProviderGroup[], catalog: ModelProvider[]): Source {
-  if (groups.length > 0) return { kind: "group", id: groups[0].id };
+  if (groups.length > 0) return { kind: "group", id: groups[0].id ?? "" };
   const first = catalog.find((p) => !p.needs_key) ?? catalog[0];
   return { kind: "new", provider: first?.id ?? "openai", base_url: "", api_key: "" };
 }

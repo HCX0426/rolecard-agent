@@ -11,14 +11,14 @@ import { describeError } from '../lib/errors';
  *  两条拉取路径（挂载、改窗口后刷新）共用它，state 因此只有一种形状。 */
 export function chatRows(settings: ModelSettings): BackendRow[] {
   return (settings.providers ?? []).flatMap((g) =>
-    g.models
-      .filter((m) => m.used_by.includes("chat"))
+    (g.models ?? [])
+      .filter((m) => (m.used_by ?? []).includes("chat"))
       .map((m) => ({
-        name: m.name,
-        provider: g.provider,
-        style: g.style,
+        name: m.name ?? "",
+        provider: g.provider ?? "",
+        style: g.style ?? "",
         base_url: g.base_url,
-        model: m.model,
+        model: m.model ?? "",
         sort_order: 0,
         num_ctx: m.num_ctx,
         supports_vision: m.supports_vision ?? false,
@@ -27,7 +27,7 @@ export function chatRows(settings: ModelSettings): BackendRow[] {
         repeat_penalty: m.repeat_penalty,
         frequency_penalty: m.frequency_penalty,
         presence_penalty: m.presence_penalty,
-        has_key: g.has_key,
+        has_key: g.has_key ?? false,
         key_masked: g.key_masked,
       })),
   );

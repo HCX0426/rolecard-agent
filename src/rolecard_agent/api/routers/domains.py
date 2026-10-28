@@ -22,7 +22,7 @@ from rolecard_agent.api.deps import (
     get_context,
 )
 from rolecard_agent.api.errors import value_error_to_http
-from rolecard_agent.api.response_models import DomainsView
+from rolecard_agent.contracts.response_models import DomainsView
 from rolecard_agent.core.domain.domain_data import DomainDataService
 
 router = APIRouter()

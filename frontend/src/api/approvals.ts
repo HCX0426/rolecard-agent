@@ -4,33 +4,12 @@
 // 住址只活在实现里（数一份清单就守一份清单，facade 用通配是不给第二份清单留门）。
 
 
+import type { components } from "./schema.gen";
+
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "done";
 
-export interface ApprovalResult {
-  exit_code: number | null;
-  output: string;
-  duration_ms: number;
-  output_bytes: number;
-}
+export type ApprovalResult = components["schemas"]["ApprovalsViewItemsItem_result"];
 
-export interface ApprovalRow {
-  id: number;
-  command: string;
-  cwd: string | null;
-  role_id: string | null;
-  role_name: string | null;
-  thread_id: string | null;
-  status: ApprovalStatus;
-  result: ApprovalResult | null;
-  /** 这条待批下发的**一次性决定令牌**：批准/拒绝必须原样带回（后端读完即清空）。
-   *  它不是登录凭据 —— 单机形态本来就不登录；它证明的是"这一条你确实看到过"。 */
-  decide_token: string | null;
-  created_at: string;
-  updated_at: string;
-}
+export type ApprovalRow = components["schemas"]["ApprovalsViewItemsItem"];
 
-export interface ApprovalsPage {
-  items: ApprovalRow[];
-  /** 待批（pending）条数：侧栏红点计数用，不是"未读"，所以不叫 unread。 */
-  pending: number;
-}
+export type ApprovalsPage = components["schemas"]["ApprovalsViewRoot"];

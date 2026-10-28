@@ -274,7 +274,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
               type="button"
               className="px-2 py-1 text-11 text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
               onClick={async () => {
-                if (await confirm({ title: "删除整份报告？", body: "将删除该报告及其全部指标记录，不可恢复。", confirmText: "确认删除", danger: true })) remove("report", r.report_id);
+                if (await confirm({ title: "删除整份报告？", body: "将删除该报告及其全部指标记录，不可恢复。", confirmText: "确认删除", danger: true })) remove("report", r.report_id ?? "");
               }}
             >
               删除报告
@@ -291,7 +291,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
               </tr>
             </thead>
             <tbody>
-              {r.indices.map((i) => (
+              {(r.indices ?? []).map((i) => (
                 <tr key={i.index_id} className="border-t border-slate-50">
                   {editId === i.index_id ? (
                     <>
@@ -330,7 +330,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
                             />
                             已人工校验
                           </label>
-                          <Button variant="primary" size="sm" type="button" className="px-2.5 py-1" onClick={() => saveEdit(i.index_id)}>
+                          <Button variant="primary" size="sm" type="button" className="px-2.5 py-1" onClick={() => saveEdit(i.index_id ?? "")}>
                             保存
                           </Button>
                           <Button variant="ghost" size="sm" type="button" className="px-2 py-1" onClick={() => setEditId(null)}>
@@ -353,7 +353,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
                         </Tag>
                       </td>
                       <td className="px-3 py-2 text-right">
-                        <Button variant="ghost" size="sm" type="button" className="px-2 py-1 text-blue-600 dark:text-blue-400" onClick={() => startEdit(i.index_id, i)}>
+                        <Button variant="ghost" size="sm" type="button" className="px-2 py-1 text-blue-600 dark:text-blue-400" onClick={() => startEdit(i.index_id ?? "", { ...i, is_verified: i.is_verified ?? 0 })}>
                           修正
                         </Button>
                         <Button
@@ -362,7 +362,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
                           type="button"
                           className="px-2 py-1 text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
                           onClick={async () => {
-                            if (await confirm({ title: "删除这条指标记录？", body: "将删除该指标项，不可恢复。", confirmText: "确认删除", danger: true })) remove("index", i.index_id);
+                            if (await confirm({ title: "删除这条指标记录？", body: "将删除该指标项，不可恢复。", confirmText: "确认删除", danger: true })) remove("index", i.index_id ?? "");
                           }}
                         >
                           删除

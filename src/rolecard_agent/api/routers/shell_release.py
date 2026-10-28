@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from rolecard_agent.api.deps import AppContext, get_context
-from rolecard_agent.api.response_models import ShellReleaseView, UpdateCheckView
+from rolecard_agent.contracts.response_models import ShellReleaseView, UpdateCheckView
 from rolecard_agent.core.artifacts import ARTIFACT_GLOB
 from rolecard_agent.core.update_check import check_update
 

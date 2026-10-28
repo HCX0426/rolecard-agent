@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type DomainInfo, type ToolCatalog } from "../api";
+import { api, type DomainInfo, type ToolCatalog, type ToolEntry } from "../api";
 import { Button, Card, Notice, PageHeader } from "../components/ui";
 import { ExtensionPanel } from "../components/ExtensionPanel";
 import { describeError } from "../lib/errors";
@@ -247,14 +247,14 @@ export default function ToolsPage() {
           <div className="space-y-4">
             <Card className="p-4">
               <p className="text-xs font-medium text-slate-500 dark:text-slate-400">内核工具</p>
-              {catalog.kernel.map((t) => (
+              {(catalog.kernel ?? []).map((t) => (
                 <div key={t.name} className="mt-1 text-xs">
                   <code className="text-slate-700 dark:text-slate-200">{t.name}</code>
                   <span className="ml-2 text-slate-400 dark:text-slate-500">{t.description}</span>
                 </div>
               ))}
             </Card>
-            {Object.entries(catalog.domains).map(([id, tools]) => (
+            {Object.entries(catalog.domains ?? {}).map(([id, tools]) => (
               <Card key={id} className="p-4">
                 <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
                   {domainName(id)}{" "}
@@ -265,7 +265,7 @@ export default function ToolsPage() {
                 {/* 两列网格（2026-10-25 玻璃重设计）：单列码表要滚很久才看完一个域，
                     两列卡片一眼扫完。 */}
                 <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
-                  {tools.map((t) => (
+                  {(tools as ToolEntry[]).map((t) => (
                     <div key={t.name} className="rounded-lg bg-white/50 px-2 py-1.5 text-xs dark:bg-white/5">
                       <code className="text-slate-700 dark:text-slate-200">{t.name}</code>
                       <p className="mt-0.5 line-clamp-2 text-11 leading-relaxed text-slate-400 dark:text-slate-500">

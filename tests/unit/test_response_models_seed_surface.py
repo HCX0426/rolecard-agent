@@ -162,3 +162,95 @@ def test_线程端点按样本线程可采(seeded) -> None:
         assert "{thread_id}" not in path, "占位没替换"
         resp = client.get(path)
         assert resp.status_code == 200, f"{path} → {resp.status_code}：样本线程不存在或归属漂了"
+
+
+# ——— 第三批（P1b ③，2026-10-28）：把"采样恒 null"的松格喂成非空的那批种子 ———
+# 判据与第二批同构：种子扩了面就钉住"非空代表值必须采得到"，缩了这里红。
+
+
+def test_审批行的三个恒null格有非空代表(seeded) -> None:
+    """cwd / thread_id / result：产品里分别只有 run_command、会话链路、done 行才有
+    非空 —— 种子必须各喂出一条（_seed_approval_shapes）。"""
+    _grm, _app, client = seeded
+    rows = client.get("/api/approvals").json()["items"]
+    assert rows, "审批列表空了"
+    assert any(r["cwd"] for r in rows), "cwd 全空：带 cwd 的 pending 行没种上"
+    assert any(r["thread_id"] for r in rows), "thread_id 全空"
+    assert any(r["result"] for r in rows), "result 全空：finish 的 done 行没种上"
+
+
+def test_收件箱行的会话派生非空(seeded) -> None:
+    """thread_id 是读侧派生（查到该角色的主动线程才非 null）：sample_reachable
+    的主动线程没建，收件箱这一格就恒 null（ReachoutRow 迁不动的根）。"""
+    _grm, _app, client = seeded
+    rows = client.get("/api/reachouts").json()["items"]
+    assert rows and any(r["thread_id"] for r in rows), "收件箱 thread_id 全空"
+
+
+def test_运行时覆盖采得到可见值(seeded) -> None:
+    """override_value 只在"有覆盖且非 secret"时非 null：种一条 web_allowed_domains。"""
+    _grm, _app, client = seeded
+    groups = client.get("/api/settings/runtime").json()["groups"]
+    items = [i for g in groups for i in (g.get("items") or [])]
+    assert any(i.get("override_value") for i in items), "没有一条可见的运行时覆盖"
+
+
+def test_模型行有上下文窗口与采样惩罚(seeded) -> None:
+    """num_ctx / repeat_penalty 只有显式写过才非 null（PUT 带 num_ctx + set_sampling）。"""
+    _grm, _app, client = seeded
+    groups = client.get("/api/settings/models").json()["providers"]
+    models = [m for g in groups for m in (g.get("models") or [])]
+    assert any(m.get("num_ctx") for m in models), "num_ctx 全空"
+    assert any(m.get("repeat_penalty") for m in models), "repeat_penalty 全空"
+
+
+def test_服务候选有解析到云后端的行(seeded) -> None:
+    """候选行的 base_url/model/ref_backend 只有"引用行解析到已配置后端"才非 null。"""
+    _grm, _app, client = seeded
+    view = client.get("/api/services").json()
+    cands = [c for s in view["services"] for c in (s.get("candidates") or [])]
+    assert any(c.get("base_url") and c.get("ref_backend") for c in cands), (
+        "没有一个候选解析到云后端 —— embedding 的 sample_cloud 引用没种上"
+    )
+
+
+def test_时间线有游标更正事件与会话锚点(seeded) -> None:
+    """next_cursor（>limit 条记忆）、memory_correct（merge_items）、thread 锚点
+    （倒填 created_at + touch 出的 recent 事件）—— TimelineEvent/Page 的三格。"""
+    _grm, _app, client = seeded
+    page = client.get("/api/roles/sample_role/timeline").json()
+    assert page["next_cursor"], "next_cursor 为空：记忆条数没越过 limit=50"
+    kinds = {e["kind"] for e in page["items"]}
+    assert "memory_correct" in kinds, "没有更正事件：from_text 恒 null 的根"
+    assert "thread" in kinds, "页内没有线程锚点：created_at 倒填 + touch 那一手没生效"
+    assert any(e["from_text"] for e in page["items"]), "from_text 全空"
+
+
+def test_报告行的备注与文本指标有非空代表(seeded) -> None:
+    """note / value_text / ref_range / raw_text：create_report 本就收这些键，
+    种子不喂就恒 null（IndexRow / ReportRecord 迁不动的根）。"""
+    _grm, _app, client = seeded
+    recs = client.get("/api/records").json()["items"]
+    assert any(r.get("note") for r in recs), "报告 note 全空"
+    idx = [i for r in recs for i in (r.get("indices") or [])]
+    assert any(i.get("value_text") for i in idx), "value_text 全空"
+    assert any(i.get("ref_range") for i in idx), "ref_range 全空"
+    assert any(i.get("raw_text") for i in idx), "raw_text 全空"
+
+
+def test_接线表里的路由文件路径真实存在() -> None:
+    """/api/records 的前科：接线键集对账查不出"文件路径写错"——`../domains/…` 指向
+    不存在的 api/domains/，records 从第一批起就**从来没接上线**（P1b 第三批抓到）。
+    键集锚点之外，路径本体也必须存在。"""
+    spec = importlib.util.spec_from_file_location(
+        "wrm_paths", str(ROOT / "scripts" / "tools" / "wire_response_models.py")
+    )
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["wrm_paths"] = mod
+    spec.loader.exec_module(mod)
+    routers = ROOT / "src" / "rolecard_agent" / "api" / "routers"
+    for api_path, (_model, filename) in mod.WIRING.items():
+        assert (routers / filename).resolve().exists(), (
+            f"{api_path} 的接线文件 {filename} 不存在 —— 接线从未生效"
+        )

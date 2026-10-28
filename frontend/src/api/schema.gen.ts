@@ -2255,7 +2255,7 @@ export interface components {
             /** Created At */
             created_at: string | null;
             /** Cwd */
-            cwd: unknown;
+            cwd: string | null;
             /** Decide Token */
             decide_token: string | null;
             /** Decide Token Ttl Seconds */
@@ -2264,8 +2264,7 @@ export interface components {
             has_token: boolean | null;
             /** Id */
             id: number | null;
-            /** Result */
-            result: unknown;
+            result: components["schemas"]["ApprovalsViewItemsItem_result"] | null;
             /** Role Id */
             role_id: string | null;
             /** Role Name */
@@ -2273,9 +2272,25 @@ export interface components {
             /** Status */
             status: string | null;
             /** Thread Id */
-            thread_id: unknown;
+            thread_id: string | null;
             /** Updated At */
             updated_at: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ApprovalsViewItemsItem_result
+         * @description 自动生成：ApprovalsViewItemsItem_result（itemsItem_result 的对象形状）。
+         */
+        ApprovalsViewItemsItem_result: {
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Exit Code */
+            exit_code: number | null;
+            /** Output */
+            output: string | null;
+            /** Output Bytes */
+            output_bytes: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -2843,7 +2858,7 @@ export interface components {
          */
         McpServersViewServersItem_headers: {
             /** Authorization */
-            Authorization: unknown;
+            Authorization: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -2966,6 +2981,79 @@ export interface components {
             fallbacks?: string[] | null;
         };
         /**
+         * ModelSettingsView
+         * @description /api/settings/models 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        ModelSettingsView: components["schemas"]["ModelSettingsViewRoot"];
+        /**
+         * ModelSettingsViewProvidersItem
+         * @description 自动生成：ModelSettingsViewProvidersItem（providersItem 的对象形状）。
+         */
+        ModelSettingsViewProvidersItem: {
+            /** Base Url */
+            base_url: string | null;
+            /** Has Key */
+            has_key: boolean | null;
+            /** Id */
+            id: string | null;
+            /** Key Masked */
+            key_masked: string | null;
+            /** Label */
+            label: string | null;
+            /** Models */
+            models: components["schemas"]["ModelSettingsViewProvidersItem_modelsItem"][] | null;
+            /** Needs Key */
+            needs_key: boolean | null;
+            /** Provider */
+            provider: string | null;
+            /** Style */
+            style: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ModelSettingsViewProvidersItem_modelsItem
+         * @description 自动生成：ModelSettingsViewProvidersItem_modelsItem。
+         */
+        ModelSettingsViewProvidersItem_modelsItem: {
+            /** Frequency Penalty */
+            frequency_penalty: number | null;
+            /** Is Default */
+            is_default: boolean | null;
+            /** Model */
+            model: string | null;
+            /** Name */
+            name: string | null;
+            /** Num Ctx */
+            num_ctx: number | null;
+            /** Presence Penalty */
+            presence_penalty: number | null;
+            /** Repeat Penalty */
+            repeat_penalty: number | null;
+            /** Supports Tools */
+            supports_tools: boolean | null;
+            /** Supports Vision */
+            supports_vision: boolean | null;
+            /** Used By */
+            used_by: string[] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ModelSettingsViewRoot
+         * @description 自动生成：ModelSettingsViewRoot（ 的对象形状）。
+         */
+        ModelSettingsViewRoot: {
+            /** Default */
+            default: string | null;
+            /** Fallbacks */
+            fallbacks: string[] | null;
+            /** Providers */
+            providers: components["schemas"]["ModelSettingsViewProvidersItem"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * OrphanUploadsView
          * @description /api/uploads/orphans 的顶层形状（数组包一层只为给它一个名字）。
          */
@@ -3032,9 +3120,9 @@ export interface components {
          */
         PetsViewPacksItem_rows: {
             /** Listening */
-            listening: unknown;
+            listening: number | null;
             /** Thinking */
-            thinking: unknown;
+            thinking: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -3251,7 +3339,7 @@ export interface components {
             /** Text */
             text: string | null;
             /** Thread Id */
-            thread_id: unknown;
+            thread_id: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -3325,6 +3413,73 @@ export interface components {
             secret: string;
             /** User */
             user: string;
+        };
+        /**
+         * RecordsView
+         * @description /api/records 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        RecordsView: components["schemas"]["RecordsViewRoot"];
+        /**
+         * RecordsViewItemsItem
+         * @description 自动生成：RecordsViewItemsItem（itemsItem 的对象形状）。
+         */
+        RecordsViewItemsItem: {
+            /** Check Time */
+            check_time: string | null;
+            /** Indices */
+            indices: components["schemas"]["RecordsViewItemsItem_indicesItem"][] | null;
+            /** Institution */
+            institution: string | null;
+            /** Note */
+            note: string | null;
+            /** Report Id */
+            report_id: string | null;
+            /** Report Type */
+            report_type: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RecordsViewItemsItem_indicesItem
+         * @description 自动生成：RecordsViewItemsItem_indicesItem（itemsItem_indicesItem 的对象形状）。
+         */
+        RecordsViewItemsItem_indicesItem: {
+            /** Index Id */
+            index_id: string | null;
+            /** Index Name */
+            index_name: string | null;
+            /** Index Value */
+            index_value: number | null;
+            /** Is Verified */
+            is_verified: number | null;
+            /** Raw Text */
+            raw_text: string | null;
+            /** Ref Range */
+            ref_range: string | null;
+            /** Source */
+            source: string | null;
+            /** Unit */
+            unit: string | null;
+            /** Value Text */
+            value_text: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RecordsViewRoot
+         * @description 自动生成：RecordsViewRoot（ 的对象形状）。
+         */
+        RecordsViewRoot: {
+            /** Items */
+            items: components["schemas"]["RecordsViewItemsItem"][] | null;
+            /** Limit */
+            limit: number | null;
+            /** Offset */
+            offset: number | null;
+            /** Total */
+            total: number | null;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * ReorderBody
@@ -3574,7 +3729,7 @@ export interface components {
             /** At */
             at: string | null;
             /** From Text */
-            from_text: unknown;
+            from_text: string | null;
             /** Kind */
             kind: string | null;
             /** Ref Id */
@@ -3596,11 +3751,72 @@ export interface components {
             /** Items */
             items: components["schemas"]["RoleTimelineViewItemsItem"][] | null;
             /** Next Cursor */
-            next_cursor: unknown;
+            next_cursor: string | null;
             /** Role Id */
             role_id: string | null;
             /** Truncated */
             truncated: boolean | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RuntimeSettingsView
+         * @description /api/settings/runtime 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        RuntimeSettingsView: components["schemas"]["RuntimeSettingsViewRoot"];
+        /**
+         * RuntimeSettingsViewGroupsItem
+         * @description 自动生成：RuntimeSettingsViewGroupsItem（groupsItem 的对象形状）。
+         */
+        RuntimeSettingsViewGroupsItem: {
+            /** Items */
+            items: components["schemas"]["RuntimeSettingsViewGroupsItem_itemsItem"][] | null;
+            /** Key */
+            key: string | null;
+            /** Label */
+            label: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RuntimeSettingsViewGroupsItem_itemsItem
+         * @description 自动生成：RuntimeSettingsViewGroupsItem_itemsItem（groupsItem_itemsItem 的对象形状）。
+         */
+        RuntimeSettingsViewGroupsItem_itemsItem: {
+            /** Changed */
+            changed: boolean | null;
+            /** Choices */
+            choices: string[] | null;
+            /** Default */
+            default: string | null;
+            /** Field */
+            field: string | null;
+            /** Key */
+            key: string | null;
+            /** Kind */
+            kind: string | null;
+            /** Label */
+            label: string | null;
+            /** Note */
+            note: string | null;
+            /** Overridden */
+            overridden: boolean | null;
+            /** Override Value */
+            override_value: string | null;
+            /** Value */
+            value: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RuntimeSettingsViewRoot
+         * @description 自动生成：RuntimeSettingsViewRoot（ 的对象形状）。
+         */
+        RuntimeSettingsViewRoot: {
+            /** Groups */
+            groups: components["schemas"]["RuntimeSettingsViewGroupsItem"][] | null;
+            /** Note */
+            note: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -3613,6 +3829,83 @@ export interface components {
             values: {
                 [key: string]: string | null;
             };
+        };
+        /**
+         * ServicesView
+         * @description /api/services 的顶层形状（数组包一层只为给它一个名字）。
+         */
+        ServicesView: components["schemas"]["ServicesViewRoot"];
+        /**
+         * ServicesViewRoot
+         * @description 自动生成：ServicesViewRoot（ 的对象形状）。
+         */
+        ServicesViewRoot: {
+            /** Services */
+            services: components["schemas"]["ServicesViewServicesItem"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ServicesViewServicesItem
+         * @description 自动生成：ServicesViewServicesItem（servicesItem 的对象形状）。
+         */
+        ServicesViewServicesItem: {
+            /** Candidates */
+            candidates: components["schemas"]["ServicesViewServicesItem_candidatesItem"][] | null;
+            /** Default Backend */
+            default_backend: string | null;
+            /** Degraded From */
+            degraded_from: string | null;
+            /** Effective */
+            effective: string | null;
+            /** Effective Kind */
+            effective_kind: string | null;
+            /** Hint */
+            hint: string | null;
+            /** Key */
+            key: string | null;
+            /** Order Only */
+            order_only: boolean | null;
+            /** Readonly */
+            readonly: boolean | null;
+            /** Title */
+            title: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ServicesViewServicesItem_candidatesItem
+         * @description 自动生成：ServicesViewServicesItem_candidatesItem。
+         */
+        ServicesViewServicesItem_candidatesItem: {
+            /** Available */
+            available: boolean | null;
+            /** Base Url */
+            base_url: string | null;
+            /** Builtin */
+            builtin: boolean | null;
+            /** Enabled */
+            enabled: boolean | null;
+            /** Id */
+            id: string | null;
+            /** Key Masked */
+            key_masked: string | null;
+            /** Kind */
+            kind: string | null;
+            /** Label */
+            label: string | null;
+            /** Model */
+            model: string | null;
+            /** Order */
+            order: number | null;
+            /** Reason */
+            reason: string | null;
+            /** Ref Backend */
+            ref_backend: string | null;
+            /** Stale */
+            stale: boolean | null;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * SessionContextView
@@ -3923,9 +4216,9 @@ export interface components {
          */
         ToolsCatalogDomains_healthItem: {
             /** Description */
-            description: unknown;
+            description: string | null;
             /** Name */
-            name: unknown;
+            name: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -5253,9 +5546,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["RecordsView"];
                 };
             };
             /** @description Validation Error */
@@ -5629,7 +5920,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ServicesView"];
                 };
             };
         };
@@ -6572,7 +6863,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ModelSettingsView"];
                 };
             };
         };
@@ -6858,7 +7149,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RuntimeSettingsView"];
                 };
             };
         };

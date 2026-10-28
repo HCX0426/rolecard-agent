@@ -21,7 +21,7 @@ from rolecard_agent.api.deps import (
     get_actor,
     get_context,
 )
-from rolecard_agent.api.response_models import RoleTimelineView, ToolsCatalog
+from rolecard_agent.contracts.response_models import RoleTimelineView, ToolsCatalog
 from rolecard_agent.core.proactive import timeline
 from rolecard_agent.features.card_import import (
     CardImportError,
@@ -50,7 +50,9 @@ def _validate_role_model(ctx: AppContext, model_name: str | None) -> None:
         raise HTTPException(status_code=400, detail=f"未知模型 {model_name!r}；可用：{known}")
 
 
-@router.get("/api/roles", response_model=list[RoleCard])
+@router.get(
+    "/api/roles",
+)
 def list_roles(ctx: AppContext = Depends(get_context)) -> list[RoleCard]:
     """All role cards, built-in first.
 

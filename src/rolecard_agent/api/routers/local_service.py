@@ -30,8 +30,8 @@ from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor, is_loopback
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
-from rolecard_agent.api.response_models import LocalServiceView
 from rolecard_agent.config import ModelBackend
+from rolecard_agent.contracts.response_models import LocalServiceView
 from rolecard_agent.core.model_settings import client_style
 from rolecard_agent.core.telemetry.probes import (
     local_inference_base_url,

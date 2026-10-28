@@ -73,8 +73,8 @@ export function ExtensionPanel() {
 
   const load = useCallback(async () => {
     const v = await api.get<McpServersView>("/api/mcp/servers");
-    setServers(v.servers);
-    setEffective(v.effective_count);
+    setServers(v.servers ?? []);
+    setEffective(v.effective_count ?? 0);
     setLoaded(true);
   }, []);
 
@@ -90,7 +90,7 @@ export function ExtensionPanel() {
   function openEdit(s: McpServer) {
     setEditingId(s.id);
     setHeadersTouched(false); // 默认保留原 headers
-    setForm({ id: s.id, display_name: s.display_name, url: s.url, headers: [], enabled: s.enabled });
+    setForm({ id: s.id ?? "", display_name: s.display_name ?? "", url: s.url ?? "", headers: [], enabled: s.enabled ?? false });
   }
   function closeForm() {
     setForm(null);
@@ -134,7 +134,7 @@ export function ExtensionPanel() {
   async function toggle(s: McpServer) {
     setBusy(s.id);
     try {
-      await api.patch(`/api/mcp/servers/${encodeURIComponent(s.id)}`, { enabled: !s.enabled });
+      await api.patch(`/api/mcp/servers/${encodeURIComponent(s.id ?? "")}`, { enabled: !s.enabled });
       await load();
     } catch (e) {
       setStatus({ ok: false, msg: `操作失败：${describeError(e)}` });
@@ -144,15 +144,16 @@ export function ExtensionPanel() {
   }
 
   async function test(s: McpServer) {
-    setTests((t) => ({ ...t, [s.id]: { phase: "testing" } }));
-    setExpanded((e) => ({ ...e, [s.id]: true }));
+    const id = s.id ?? "";
+    setTests((t) => ({ ...t, [id]: { phase: "testing" } }));
+    setExpanded((e) => ({ ...e, [id]: true }));
     try {
-      const r = await api.post<McpTestResult>(`/api/mcp/servers/${encodeURIComponent(s.id)}/test`);
-      setTests((t) => ({ ...t, [s.id]: { phase: "done", result: r } }));
+      const r = await api.post<McpTestResult>(`/api/mcp/servers/${encodeURIComponent(id)}/test`);
+      setTests((t) => ({ ...t, [id]: { phase: "done", result: r } }));
     } catch (e) {
       setTests((t) => ({
         ...t,
-        [s.id]: { phase: "done", result: { id: s.id, ok: false, tool_count: 0, tools: [], error: describeError(e) } },
+        [id]: { phase: "done", result: { id, ok: false, tool_count: 0, tools: [], error: describeError(e) } },
       }));
     }
   }
@@ -160,7 +161,7 @@ export function ExtensionPanel() {
   async function remove(s: McpServer) {
     setBusy(s.id);
     try {
-      await api.del(`/api/mcp/servers/${encodeURIComponent(s.id)}`);
+      await api.del(`/api/mcp/servers/${encodeURIComponent(s.id ?? "")}`);
       await load();
       setStatus({ ok: true, msg: `已移除 ${s.display_name}。` });
     } catch (e) {
@@ -369,9 +370,11 @@ export function ExtensionPanel() {
         )}
 
         {servers.map((s) => {
-          const t: RowTest = tests[s.id] ?? { phase: "idle" };
-          const isOpen = !!expanded[s.id];
-          const hdrKeys = Object.keys(s.headers);
+          const id = s.id ?? "";
+          const url = s.url ?? "";
+          const t: RowTest = tests[id] ?? { phase: "idle" };
+          const isOpen = !!expanded[id];
+          const hdrKeys = Object.keys(s.headers ?? {});
           return (
             <div
               key={s.id}
@@ -385,8 +388,8 @@ export function ExtensionPanel() {
                   {s.transport}
                 </span>
                 <span className="text-sm text-slate-800 dark:text-slate-200">{s.display_name}</span>
-                <span className="font-mono text-11 text-slate-400 dark:text-slate-500" title={s.url}>
-                  {s.url.length > 40 ? `${s.url.slice(0, 40)}…` : s.url}
+                <span className="font-mono text-11 text-slate-400 dark:text-slate-500" title={url}>
+                  {url.length > 40 ? `${url.slice(0, 40)}…` : url}
                 </span>
                 {hdrKeys.length > 0 && (
                   <span className="font-mono text-11 text-slate-400 dark:text-slate-500" title="鉴权头已配置（值不可见）">
@@ -395,7 +398,7 @@ export function ExtensionPanel() {
                 )}
                 <span className="ml-auto flex items-center gap-1.5">
                   <button
-                    onClick={() => setExpanded((e) => ({ ...e, [s.id]: !isOpen }))}
+                    onClick={() => setExpanded((e) => ({ ...e, [id]: !isOpen }))}
                     className="rounded px-2 py-0.5 text-11 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
                     title="展开看工具/错误"
                   >

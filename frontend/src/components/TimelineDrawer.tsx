@@ -26,7 +26,7 @@ const FILTERS: { key: string; label: string; kinds: string | null }[] = [
 ];
 
 /** 徽章是说明不是控件：不做点击筛选（筛选只有上面那个下拉）。 */
-const BADGE: Record<TimelineEvent["kind"], { label: string; cls: string }> = {
+const BADGE: Record<string, { label: string; cls: string }> = {
   reachout: {
     label: "主动",
     cls: "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
@@ -69,7 +69,7 @@ function phraseOf(ev: TimelineEvent): string {
   if (ev.kind === "memory") return `记下：${ev.text}`;
   if (ev.kind === "memory_correct") return ev.text ? `更正为：${ev.text}` : "作废了一条事实";
   if (ev.kind === "thread") return ev.verb === "recent" ? `接着聊：${ev.text}` : `开始聊：${ev.text}`;
-  return ev.text;
+  return ev.text ?? "";
 }
 
 interface DayGroup {
@@ -112,9 +112,9 @@ export default function TimelineDrawer({
       try {
         const page = await api.get<TimelinePage>(url);
         if (req !== reqRef.current) return;
-        setItems((prev) => (append ? [...prev, ...page.items] : page.items));
+        setItems((prev) => (append ? [...prev, ...(page.items ?? [])] : (page.items ?? [])));
         setCursor(page.next_cursor);
-        setTruncated(page.truncated);
+        setTruncated(page.truncated ?? false);
       } catch (e) {
         if (req !== reqRef.current) return;
         setError(describeError(e));
@@ -140,7 +140,7 @@ export default function TimelineDrawer({
   const groups = useMemo<DayGroup[]>(() => {
     const out: DayGroup[] = [];
     for (const ev of items) {
-      const date = ev.at.slice(0, 10);
+      const date = (ev.at ?? "").slice(0, 10);
       const last = out[out.length - 1];
       if (last && last.date === date) last.items.push(ev);
       else out.push({ date, label: dayLabel(date), items: [ev] });
@@ -201,7 +201,7 @@ export default function TimelineDrawer({
             </h4>
             <ul className="ml-1 space-y-2 border-l border-slate-200 pl-3.5 dark:border-slate-700">
               {group.items.map((ev, i) => {
-                const badge = BADGE[ev.kind];
+                const badge = BADGE[ev.kind ?? ""];
                 const jumpable = Boolean(ev.thread_id) && Boolean(onOpenThread);
                 return (
                   <li key={`${ev.kind}-${ev.ref_id}-${i}`} className="relative text-xs leading-relaxed">

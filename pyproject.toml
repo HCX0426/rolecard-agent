@@ -212,7 +212,7 @@ no_implicit_optional = true
 root_packages = ["rolecard_agent"]
 
 [[tool.importlinter.contracts]]
-name = "依赖方向：api → domains → (features 可选) → core → {roles|rag} → base → storage → config"
+name = "依赖方向：api → domains → (features 可选) → core → {roles|rag} → contracts → base → storage → config"
 type = "layers"
 layers = [
     "rolecard_agent.api",
@@ -220,6 +220,10 @@ layers = [
     "(rolecard_agent.features)",
     "rolecard_agent.core",
     "rolecard_agent.roles | rolecard_agent.rag",
+    # 契约层（P1b 第三批）：纯生成的 API 响应模型（零仓内依赖）。路由住在域里
+    # （R102-10），域内路由也要引用响应模型 —— 放 api 里 domains 够不着，放 base
+    # 里违反"零业务知识"准入判据，于是在这层安家（详见 contracts/__init__.py）。
+    "rolecard_agent.contracts",
     "rolecard_agent.base",
     "rolecard_agent.storage",
     "rolecard_agent.config",

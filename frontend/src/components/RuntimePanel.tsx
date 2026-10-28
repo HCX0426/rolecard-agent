@@ -36,11 +36,11 @@ export function RuntimePanel() {
     setData(p);
     const d: Record<string, string> = {};
     const b: Record<string, string> = {};
-    for (const g of p.groups) {
-      for (const it of g.items) {
+    for (const g of p.groups ?? []) {
+      for (const it of g.items ?? []) {
         if (it.kind !== "ro") {
-          d[it.key] = it.override_value ?? "";
-          b[it.key] = it.override_value ?? "";
+          d[it.key ?? ""] = it.override_value ?? "";
+          b[it.key ?? ""] = it.override_value ?? "";
         }
       }
     }
@@ -87,11 +87,12 @@ export function RuntimePanel() {
   }
 
   function inputFor(it: RuntimeItem) {
-    const set = (v: string) => setDraft((d) => ({ ...d, [it.key]: v }));
+    const key = it.key ?? "";
+    const set = (v: string) => setDraft((d) => ({ ...d, [key]: v }));
     if (it.kind === "bool") {
       return (
         <select
-          value={draft[it.key] ?? ""}
+          value={draft[key] ?? ""}
           onChange={(e) => set(e.target.value)}
           className="w-28 rounded border border-slate-200 px-1.5 py-1 text-xs outline-none focus:border-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
         >
@@ -103,7 +104,7 @@ export function RuntimePanel() {
     }
     // 模型名单（动态选项来自模型页后端）→ 勾选组：勾一个算一个，存成逗号串。
     if (it.key === "MODEL_THINKING_MODELS" && it.choices && it.choices.length > 0) {
-      const selected = (draft[it.key] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+      const selected = (draft[key] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
       const toggle = (name: string) => {
         const next = selected.includes(name)
           ? selected.filter((n) => n !== name)
@@ -128,7 +129,7 @@ export function RuntimePanel() {
     }
     // 枚举 → 下拉单选（含"跟随 .env"兜底项）
     if (it.choices && it.choices.length > 0) {
-      const current = draft[it.key] ?? "";
+      const current = draft[key] ?? "";
       const extra = current && !it.choices.includes(current) ? [current] : [];
       return (
         <select
@@ -149,7 +150,7 @@ export function RuntimePanel() {
     return (
       <input
         type={type}
-        value={draft[it.key] ?? ""}
+        value={draft[key] ?? ""}
         onChange={(e) => set(e.target.value)}
         placeholder={it.overridden ? `覆盖中：${it.value}` : `未覆盖（当前 ${it.value}）`}
         className="w-56 rounded border border-slate-200 px-1.5 py-1 font-mono text-xs outline-none focus:border-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
@@ -170,7 +171,7 @@ export function RuntimePanel() {
           </Button>
         </div>
       </div>
-      {data.groups.map((g) => (
+      {(data.groups ?? []).map((g) => (
         <Card
           key={g.key}
           className="p-5"
@@ -178,7 +179,7 @@ export function RuntimePanel() {
           <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">{g.label}</h3>
           <table className="mt-2 w-full text-xs">
             <tbody>
-              {g.items.map((it) => (
+              {(g.items ?? []).map((it) => (
                 <tr key={it.key} className="border-b border-slate-50 last:border-0 dark:border-slate-700/50">
                   <td className="w-40 py-1.5 align-top">
                     <span className="font-medium text-slate-700 dark:text-slate-200">{it.label}</span>

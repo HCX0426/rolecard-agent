@@ -181,6 +181,14 @@
       "title": "Created At"
      },
      "cwd": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
       "title": "Cwd"
      },
      "decide_token": {
@@ -228,7 +236,14 @@
       "title": "Id"
      },
      "result": {
-      "title": "Result"
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ApprovalsViewItemsItem_result"
+       },
+       {
+        "type": "null"
+       }
+      ]
      },
      "role_id": {
       "anyOf": [
@@ -264,6 +279,14 @@
       "title": "Status"
      },
      "thread_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
       "title": "Thread Id"
      },
      "updated_at": {
@@ -294,6 +317,64 @@
      "decide_token"
     ],
     "title": "ApprovalsViewItemsItem",
+    "type": "object"
+   },
+   "ApprovalsViewItemsItem_result": {
+    "additionalProperties": true,
+    "description": "自动生成：ApprovalsViewItemsItem_result（itemsItem_result 的对象形状）。",
+    "properties": {
+     "duration_ms": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Duration Ms"
+     },
+     "exit_code": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Exit Code"
+     },
+     "output": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Output"
+     },
+     "output_bytes": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Output Bytes"
+     }
+    },
+    "required": [
+     "exit_code",
+     "output",
+     "output_bytes",
+     "duration_ms"
+    ],
+    "title": "ApprovalsViewItemsItem_result",
     "type": "object"
    },
    "ApprovalsViewRoot": {
@@ -1904,6 +1985,14 @@
     "description": "自动生成：McpServersViewServersItem_headers（serversItem_headers 的对象形状）。",
     "properties": {
      "Authorization": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
       "title": "Authorization"
      }
     },
@@ -2242,6 +2331,317 @@
     "title": "ModelSettingsBody",
     "type": "object"
    },
+   "ModelSettingsView": {
+    "$ref": "#/components/schemas/ModelSettingsViewRoot",
+    "description": "/api/settings/models 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "ModelSettingsView"
+   },
+   "ModelSettingsViewProvidersItem": {
+    "additionalProperties": true,
+    "description": "自动生成：ModelSettingsViewProvidersItem（providersItem 的对象形状）。",
+    "properties": {
+     "base_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Base Url"
+     },
+     "has_key": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Has Key"
+     },
+     "id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Id"
+     },
+     "key_masked": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Key Masked"
+     },
+     "label": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Label"
+     },
+     "models": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/ModelSettingsViewProvidersItem_modelsItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Models"
+     },
+     "needs_key": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Needs Key"
+     },
+     "provider": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Provider"
+     },
+     "style": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Style"
+     }
+    },
+    "required": [
+     "id",
+     "provider",
+     "label",
+     "base_url",
+     "style",
+     "needs_key",
+     "has_key",
+     "key_masked",
+     "models"
+    ],
+    "title": "ModelSettingsViewProvidersItem",
+    "type": "object"
+   },
+   "ModelSettingsViewProvidersItem_modelsItem": {
+    "additionalProperties": true,
+    "description": "自动生成：ModelSettingsViewProvidersItem_modelsItem。",
+    "properties": {
+     "frequency_penalty": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Frequency Penalty"
+     },
+     "is_default": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Is Default"
+     },
+     "model": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Model"
+     },
+     "name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Name"
+     },
+     "num_ctx": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Num Ctx"
+     },
+     "presence_penalty": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Presence Penalty"
+     },
+     "repeat_penalty": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Repeat Penalty"
+     },
+     "supports_tools": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Supports Tools"
+     },
+     "supports_vision": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Supports Vision"
+     },
+     "used_by": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Used By"
+     }
+    },
+    "required": [
+     "name",
+     "model",
+     "num_ctx",
+     "supports_vision",
+     "supports_tools",
+     "repeat_penalty",
+     "frequency_penalty",
+     "presence_penalty",
+     "used_by",
+     "is_default"
+    ],
+    "title": "ModelSettingsViewProvidersItem_modelsItem",
+    "type": "object"
+   },
+   "ModelSettingsViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：ModelSettingsViewRoot（ 的对象形状）。",
+    "properties": {
+     "default": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Default"
+     },
+     "fallbacks": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Fallbacks"
+     },
+     "providers": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/ModelSettingsViewProvidersItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Providers"
+     }
+    },
+    "required": [
+     "default",
+     "providers",
+     "fallbacks"
+    ],
+    "title": "ModelSettingsViewRoot",
+    "type": "object"
+   },
    "OrphanUploadsView": {
     "$ref": "#/components/schemas/OrphanUploadsViewRoot",
     "description": "/api/uploads/orphans 的顶层形状（数组包一层只为给它一个名字）。",
@@ -2446,9 +2846,25 @@
     "description": "自动生成：PetsViewPacksItem_rows（packsItem_rows 的对象形状）。",
     "properties": {
      "listening": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
       "title": "Listening"
      },
      "thinking": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
       "title": "Thinking"
      }
     },
@@ -2984,6 +3400,14 @@
       "title": "Text"
      },
      "thread_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
       "title": "Thread Id"
      }
     },
@@ -3224,6 +3648,275 @@
      "user"
     ],
     "title": "ReconcileBody",
+    "type": "object"
+   },
+   "RecordsView": {
+    "$ref": "#/components/schemas/RecordsViewRoot",
+    "description": "/api/records 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "RecordsView"
+   },
+   "RecordsViewItemsItem": {
+    "additionalProperties": true,
+    "description": "自动生成：RecordsViewItemsItem（itemsItem 的对象形状）。",
+    "properties": {
+     "check_time": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Check Time"
+     },
+     "indices": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/RecordsViewItemsItem_indicesItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Indices"
+     },
+     "institution": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Institution"
+     },
+     "note": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Note"
+     },
+     "report_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Report Id"
+     },
+     "report_type": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Report Type"
+     }
+    },
+    "required": [
+     "report_id",
+     "report_type",
+     "check_time",
+     "institution",
+     "note",
+     "indices"
+    ],
+    "title": "RecordsViewItemsItem",
+    "type": "object"
+   },
+   "RecordsViewItemsItem_indicesItem": {
+    "additionalProperties": true,
+    "description": "自动生成：RecordsViewItemsItem_indicesItem（itemsItem_indicesItem 的对象形状）。",
+    "properties": {
+     "index_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Index Id"
+     },
+     "index_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Index Name"
+     },
+     "index_value": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Index Value"
+     },
+     "is_verified": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Is Verified"
+     },
+     "raw_text": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Raw Text"
+     },
+     "ref_range": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ref Range"
+     },
+     "source": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Source"
+     },
+     "unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Unit"
+     },
+     "value_text": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Value Text"
+     }
+    },
+    "required": [
+     "index_id",
+     "index_name",
+     "index_value",
+     "value_text",
+     "unit",
+     "ref_range",
+     "is_verified",
+     "source",
+     "raw_text"
+    ],
+    "title": "RecordsViewItemsItem_indicesItem",
+    "type": "object"
+   },
+   "RecordsViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：RecordsViewRoot（ 的对象形状）。",
+    "properties": {
+     "items": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/RecordsViewItemsItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Items"
+     },
+     "limit": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Limit"
+     },
+     "offset": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Offset"
+     },
+     "total": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Total"
+     }
+    },
+    "required": [
+     "items",
+     "total",
+     "limit",
+     "offset"
+    ],
+    "title": "RecordsViewRoot",
     "type": "object"
    },
    "ReorderBody": {
@@ -3894,6 +4587,14 @@
       "title": "At"
      },
      "from_text": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
       "title": "From Text"
      },
      "kind": {
@@ -3983,6 +4684,14 @@
       "title": "Items"
      },
      "next_cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
       "title": "Next Cursor"
      },
      "role_id": {
@@ -4017,6 +4726,242 @@
     "title": "RoleTimelineViewRoot",
     "type": "object"
    },
+   "RuntimeSettingsView": {
+    "$ref": "#/components/schemas/RuntimeSettingsViewRoot",
+    "description": "/api/settings/runtime 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "RuntimeSettingsView"
+   },
+   "RuntimeSettingsViewGroupsItem": {
+    "additionalProperties": true,
+    "description": "自动生成：RuntimeSettingsViewGroupsItem（groupsItem 的对象形状）。",
+    "properties": {
+     "items": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/RuntimeSettingsViewGroupsItem_itemsItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Items"
+     },
+     "key": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Key"
+     },
+     "label": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Label"
+     }
+    },
+    "required": [
+     "key",
+     "label",
+     "items"
+    ],
+    "title": "RuntimeSettingsViewGroupsItem",
+    "type": "object"
+   },
+   "RuntimeSettingsViewGroupsItem_itemsItem": {
+    "additionalProperties": true,
+    "description": "自动生成：RuntimeSettingsViewGroupsItem_itemsItem（groupsItem_itemsItem 的对象形状）。",
+    "properties": {
+     "changed": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Changed"
+     },
+     "choices": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Choices"
+     },
+     "default": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Default"
+     },
+     "field": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Field"
+     },
+     "key": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Key"
+     },
+     "kind": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Kind"
+     },
+     "label": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Label"
+     },
+     "note": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Note"
+     },
+     "overridden": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Overridden"
+     },
+     "override_value": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Override Value"
+     },
+     "value": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Value"
+     }
+    },
+    "required": [
+     "key",
+     "field",
+     "label",
+     "value",
+     "default",
+     "changed",
+     "overridden",
+     "override_value",
+     "kind",
+     "choices",
+     "note"
+    ],
+    "title": "RuntimeSettingsViewGroupsItem_itemsItem",
+    "type": "object"
+   },
+   "RuntimeSettingsViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：RuntimeSettingsViewRoot（ 的对象形状）。",
+    "properties": {
+     "groups": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/RuntimeSettingsViewGroupsItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Groups"
+     },
+     "note": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Note"
+     }
+    },
+    "required": [
+     "note",
+     "groups"
+    ],
+    "title": "RuntimeSettingsViewRoot",
+    "type": "object"
+   },
    "RuntimeUpdateBody": {
     "description": "字段名 → 提交值。None/空串 = 清除该覆盖（回落 env）；未出现的字段 = 不变。",
     "properties": {
@@ -4039,6 +4984,335 @@
      "values"
     ],
     "title": "RuntimeUpdateBody",
+    "type": "object"
+   },
+   "ServicesView": {
+    "$ref": "#/components/schemas/ServicesViewRoot",
+    "description": "/api/services 的顶层形状（数组包一层只为给它一个名字）。",
+    "title": "ServicesView"
+   },
+   "ServicesViewRoot": {
+    "additionalProperties": true,
+    "description": "自动生成：ServicesViewRoot（ 的对象形状）。",
+    "properties": {
+     "services": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/ServicesViewServicesItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Services"
+     }
+    },
+    "required": [
+     "services"
+    ],
+    "title": "ServicesViewRoot",
+    "type": "object"
+   },
+   "ServicesViewServicesItem": {
+    "additionalProperties": true,
+    "description": "自动生成：ServicesViewServicesItem（servicesItem 的对象形状）。",
+    "properties": {
+     "candidates": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/ServicesViewServicesItem_candidatesItem"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Candidates"
+     },
+     "default_backend": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Default Backend"
+     },
+     "degraded_from": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Degraded From"
+     },
+     "effective": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Effective"
+     },
+     "effective_kind": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Effective Kind"
+     },
+     "hint": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Hint"
+     },
+     "key": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Key"
+     },
+     "order_only": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Order Only"
+     },
+     "readonly": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Readonly"
+     },
+     "title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Title"
+     }
+    },
+    "required": [
+     "key",
+     "title",
+     "hint",
+     "effective",
+     "effective_kind",
+     "degraded_from",
+     "readonly",
+     "candidates",
+     "default_backend",
+     "order_only"
+    ],
+    "title": "ServicesViewServicesItem",
+    "type": "object"
+   },
+   "ServicesViewServicesItem_candidatesItem": {
+    "additionalProperties": true,
+    "description": "自动生成：ServicesViewServicesItem_candidatesItem。",
+    "properties": {
+     "available": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Available"
+     },
+     "base_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Base Url"
+     },
+     "builtin": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Builtin"
+     },
+     "enabled": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Enabled"
+     },
+     "id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Id"
+     },
+     "key_masked": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Key Masked"
+     },
+     "kind": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Kind"
+     },
+     "label": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Label"
+     },
+     "model": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Model"
+     },
+     "order": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Order"
+     },
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason"
+     },
+     "ref_backend": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ref Backend"
+     },
+     "stale": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Stale"
+     }
+    },
+    "required": [
+     "id",
+     "label",
+     "kind",
+     "base_url",
+     "model",
+     "enabled",
+     "builtin",
+     "ref_backend",
+     "stale",
+     "key_masked",
+     "available",
+     "reason",
+     "order"
+    ],
+    "title": "ServicesViewServicesItem_candidatesItem",
     "type": "object"
    },
    "SessionContextView": {
@@ -5006,9 +6280,25 @@
     "description": "自动生成：ToolsCatalogDomains_healthItem（domains_healthItem 的对象形状）。",
     "properties": {
      "description": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
       "title": "Description"
      },
      "name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
       "title": "Name"
      }
     },
@@ -6878,9 +8168,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "additionalProperties": true,
-         "title": "Response List Records Api Records Get",
-         "type": "object"
+         "$ref": "#/components/schemas/RecordsView"
         }
        }
       },
@@ -7364,7 +8652,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response List Services Api Services Get"
+         "$ref": "#/components/schemas/ServicesView"
         }
        }
       },
@@ -8691,7 +9979,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Get Model Settings Api Settings Models Get"
+         "$ref": "#/components/schemas/ModelSettingsView"
         }
        }
       },
@@ -9045,7 +10333,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Get Runtime Settings Api Settings Runtime Get"
+         "$ref": "#/components/schemas/RuntimeSettingsView"
         }
        }
       },

@@ -43,6 +43,9 @@ function row(id: number, text: string, state = "unread") {
     text,
     state,
     created_at: "2026-09-19 20:14:00",
+    read_at: null,
+    seen_at: null,
+    dismissed_at: null,
     thread_id: "s_proactive_wan",
   };
 }

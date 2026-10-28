@@ -46,7 +46,7 @@ function ResultBlock({ result }: { result: ApprovalResult | null }) {
       <div className="flex gap-3 text-slate-500 dark:text-slate-500">
         <span>退出码 {result.exit_code}</span>
         <span>{result.duration_ms}ms</span>
-        <span>{formatBytes(result.output_bytes)}</span>
+        <span>{formatBytes(result.output_bytes ?? 0)}</span>
       </div>
       {result.output && (
         <pre className="mt-1 max-h-32 overflow-x-auto whitespace-pre-wrap break-all font-mono text-10 text-slate-700 dark:text-slate-300">
@@ -76,7 +76,7 @@ export default function ApprovalPanel({
       .getApprovals()
       .then((p) => {
         setData(p);
-        onPendingChange(p.pending);
+        onPendingChange(p.pending ?? 0);
       })
       .catch((e) => setErr(`加载失败：${describeError(e)}`));
   }, [open, onPendingChange]);
@@ -86,10 +86,10 @@ export default function ApprovalPanel({
     try {
       // 令牌随行下发、用一次即废：过期或从没拿到时后端回 403，detail 已经是一句人话
       // （"请重新查看待批列表后再批"），这里原样显示，不在前端另造一套判断。
-      const updated = await api.decideApproval(row.id, decision, row.decide_token);
+      const updated = await api.decideApproval(row.id ?? 0, decision, row.decide_token);
       setData((prev) => {
         if (!prev) return prev;
-        const items = prev.items.map((r) => (r.id === updated.id ? updated : r));
+        const items = (prev.items ?? []).map((r) => (r.id === updated.id ? updated : r));
         const pending = items.filter((r) => r.status === "pending").length;
         onPendingChange(pending);
         return { ...prev, items, pending };
@@ -120,12 +120,12 @@ export default function ApprovalPanel({
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {err && <p className="px-2 py-1 text-xs text-red-600 dark:text-red-400">{err}</p>}
-          {data && data.items.length === 0 && (
+          {data && (data.items ?? []).length === 0 && (
             <p className="px-2 py-6 text-center text-xs text-slate-400 dark:text-slate-500">
               还没有待审批的命令
             </p>
           )}
-          {data?.items.map((row) => (
+          {(data?.items ?? []).map((row) => (
             <div
               key={row.id}
               className={`mb-1.5 rounded-lg border px-3 py-2 ${
@@ -142,7 +142,7 @@ export default function ApprovalPanel({
                 <span className="flex-1 truncate font-mono text-xs text-slate-800 dark:text-slate-100">
                   {row.command}
                 </span>
-                <StatusBadge status={row.status} />
+                <StatusBadge status={(row.status ?? "pending") as ApprovalStatus} />
               </div>
               {row.cwd && (
                 <span className="mt-1 block truncate text-10 text-slate-500 dark:text-slate-500">

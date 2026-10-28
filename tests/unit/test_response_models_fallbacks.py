@@ -22,8 +22,8 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel, RootModel, ValidationError
 
-from rolecard_agent.api import response_models as rm
-from rolecard_agent.api.response_models import _GIVEN_KEYS
+from rolecard_agent.contracts import response_models as rm
+from rolecard_agent.contracts.response_models import _GIVEN_KEYS
 
 #: 全体"带补键机制"的生成模型（RootModel 包装与常量不在此列）。
 MECHANIC_CLASSES = sorted(

@@ -40,6 +40,9 @@ function row(over: Partial<ReachoutRow> = {}): ReachoutRow {
     text: "今天腰还酸吗？",
     state: "unread",
     created_at: ago(2),
+    read_at: null,
+    seen_at: null,
+    dismissed_at: null,
     thread_id: "s_proactive_general_assistant",
     ...over,
   };

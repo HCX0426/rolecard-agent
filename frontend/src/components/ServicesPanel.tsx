@@ -41,7 +41,7 @@ function AvailBadge({ available, reason }: { available: boolean; reason: string 
 
 export function ServicesPanel() {
   const [view, setView] = useState<ServicesView | null>(null);
-  const [providers, setProviders] = useState<ModelSettings["providers"]>([]);
+  const [providers, setProviders] = useState<NonNullable<ModelSettings["providers"]>>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [flash, setFlash] = useState("");
@@ -80,17 +80,17 @@ export function ServicesPanel() {
 
   /** 调优先级：启用行数组内相邻互换，全量提交（第 1 位即生效）。 */
   const reorder = (cat: ServiceCategoryView, cand: ServiceEndpoint, delta: -1 | 1) => {
-    const enabled = cat.candidates.filter((c) => c.enabled).map((c) => c.id);
+    const enabled = (cat.candidates ?? []).filter((c) => c.enabled).map((c) => c.id);
     const idx = enabled.indexOf(cand.id);
     const target = idx + delta;
     if (target < 0 || target >= enabled.length) return;
     [enabled[idx], enabled[target]] = [enabled[target], enabled[idx]];
-    run(cat.key, () => api.put(`/api/services/${cat.key}`, { order: enabled }), "优先级已更新并热生效");
+    run(cat.key ?? "", () => api.put(`/api/services/${cat.key}`, { order: enabled }), "优先级已更新并热生效");
   };
 
   const toggleEnabled = (cat: ServiceCategoryView, cand: ServiceEndpoint) => {
     run(
-      cat.key,
+      cat.key ?? "",
       () => api.patch(`/api/services/${cat.key}/endpoints/${cand.id}`, { enabled: !cand.enabled }),
       cand.enabled ? "已停用" : "已启用",
     );
@@ -105,10 +105,10 @@ export function ServicesPanel() {
       return;
     }
     if (cat.order_only) {
-      const order = [...cat.candidates.map((c) => c.id), picked];
-      run(cat.key, () => api.put(`/api/services/${cat.key}`, { order }), "已加入对话序列并热生效");
+      const order = [...(cat.candidates ?? []).map((c) => c.id), picked];
+      run(cat.key ?? "", () => api.put(`/api/services/${cat.key}`, { order }), "已加入对话序列并热生效");
     } else {
-      run(cat.key, () => api.post(`/api/services/${cat.key}/endpoints`, { ref_backend: picked }), "已引用并热生效");
+      run(cat.key ?? "", () => api.post(`/api/services/${cat.key}/endpoints`, { ref_backend: picked }), "已引用并热生效");
     }
     setAdding(null);
     setPicked("");
@@ -116,13 +116,13 @@ export function ServicesPanel() {
 
   /** 从对话序列里摘掉一行（配置本身留在模型页）。至少要留一行 —— 空序列等于没模型可对话。 */
   const removeFromPool = (cat: ServiceCategoryView, cand: ServiceEndpoint) => {
-    const order = cat.candidates.map((c) => c.id).filter((id) => id !== cand.id);
-    run(cat.key, () => api.put(`/api/services/${cat.key}`, { order }), "已移出对话序列（模型页配置保留）");
+    const order = (cat.candidates ?? []).map((c) => c.id).filter((id) => id !== cand.id);
+    run(cat.key ?? "", () => api.put(`/api/services/${cat.key}`, { order }), "已移出对话序列（模型页配置保留）");
   };
 
   /** 移除引用：只从本服务优先级中摘除，模型页配置不受影响。 */
   const remove = (cat: ServiceCategoryView, cand: ServiceEndpoint) => {
-    run(cat.key, () => api.del(`/api/services/${cat.key}/endpoints/${cand.id}`), "已从本服务移除（模型页配置保留）");
+    run(cat.key ?? "", () => api.del(`/api/services/${cat.key}/endpoints/${cand.id}`), "已从本服务移除（模型页配置保留）");
   };
 
   if (error && !view) {
@@ -162,15 +162,15 @@ export function ServicesPanel() {
         </p>
       )}
 
-      {view.services.map((cat) => {
+      {(view.services ?? []).map((cat) => {
         // 候选 = 模型页全部模型 − 本服务已引用的；按供应商分组显示（组头就是凭据组名，
         // 与模型页那一屏的分组口径一致，用户在两页看到的是同一套名字）。
-        const referenced = new Set(cat.candidates.filter((c) => !c.builtin).map((c) => c.id));
+        const referenced = new Set((cat.candidates ?? []).filter((c) => !c.builtin).map((c) => c.id));
         const selectable = providers
-          .flatMap((g) => g.models.map((m) => ({ group: g.label, name: m.name, model: m.model })))
+          .flatMap((g) => (g.models ?? []).map((m) => ({ group: g.label, name: m.name, model: m.model })))
           .filter((m) => !referenced.has(m.name));
         const usedBy = (name: string) =>
-          providers.flatMap((g) => g.models).find((m) => m.name === name)?.used_by ?? [];
+          providers.flatMap((g) => g.models ?? []).find((m) => m.name === name)?.used_by ?? [];
         // 用途回显给人看的是中文类别名（与模型页同一份译名），不是内部键。
         const usedByLabel = (name: string) =>
           usedBy(name)
@@ -215,13 +215,13 @@ export function ServicesPanel() {
                       {cat.order_only ? "选择要用于对话的模型…" : "选择模型页已配置的模型…"}
                     </option>
                     {providers
-                      .filter((g) => g.models.some((m) => !referenced.has(m.name)))
+                      .filter((g) => (g.models ?? []).some((m) => !referenced.has(m.name)))
                       .map((g) => (
-                        <optgroup key={g.id} label={g.label}>
-                          {g.models
+                        <optgroup key={g.id} label={g.label ?? ""}>
+                          {(g.models ?? [])
                             .filter((m) => !referenced.has(m.name))
                             .map((m) => (
-                              <option key={m.name} value={m.name}>
+                              <option key={m.name} value={m.name ?? ""}>
                                 {m.name} · {m.model}
                               </option>
                             ))}
@@ -242,7 +242,7 @@ export function ServicesPanel() {
             )}
 
             <div className="flex flex-col gap-1.5">
-              {cat.candidates.map((cand) => {
+              {(cat.candidates ?? []).map((cand) => {
                 return (
                   <div
                     key={cand.id}
@@ -256,9 +256,9 @@ export function ServicesPanel() {
                       <span className="text-xs text-slate-400">
                         {cand.enabled ? (cand.order ?? 0) + 1 : "—"}
                       </span>
-                      <KindBadge kind={cand.kind} />
+                      <KindBadge kind={(cand.kind ?? "local") as "local" | "cloud"} />
                       <span className="text-sm text-slate-800 dark:text-slate-200">{cand.label}</span>
-                      <AvailBadge available={cand.available} reason={cand.reason} />
+                      <AvailBadge available={cand.available ?? false} reason={cand.reason ?? ""} />
                       {cand.key_masked && (
                         <span
                           className="font-mono text-11 text-slate-400 dark:text-slate-500"
@@ -329,21 +329,21 @@ export function ServicesPanel() {
                                 {/* 模型推理这一节：序列本身就是"谁用于对话"的事实面，
                                     所以摘除是一等动作（配置仍留在模型页，不是删配置）。 */}
                                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-11 text-slate-500 dark:bg-slate-700 dark:text-slate-300">
-                                  {usedByLabel(cand.id)
-                                    ? `还用于：${usedByLabel(cand.id)}`
+                                  {usedByLabel(cand.id ?? "")
+                                    ? `还用于：${usedByLabel(cand.id ?? "")}`
                                     : "仅用于对话"}
                                 </span>
                                 <button
-                                  disabled={busy === cat.key || cat.candidates.length <= 1}
+                                  disabled={busy === cat.key || (cat.candidates ?? []).length <= 1}
                                   onClick={async () => {
                                     if (await confirm({ title: `把「${cand.label}」移出对话序列？`, body: "只取消「用于对话」这一项，模型页那行配置与它的其他用途都不受影响。至少要保留一个对话模型。", confirmText: "确认移出", danger: true })) removeFromPool(cat, cand);
                                   }}
-                                  title={cat.candidates.length <= 1 ? "至少要保留一个对话模型" : "移出对话序列（模型页配置保留）"}
+                                  title={(cat.candidates ?? []).length <= 1 ? "至少要保留一个对话模型" : "移出对话序列（模型页配置保留）"}
                                   className="rounded px-2 py-0.5 text-11 text-red-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-900/30"
                                 >
                                   移出对话
                                 </button>
-                                {cat.candidates.length <= 1 && (
+                                {(cat.candidates ?? []).length <= 1 && (
                                   <span className="text-10 leading-tight text-slate-400 dark:text-slate-500">
                                     这是唯一在册的对话模型 —— 想换先「＋ 加入对话」
                                   </span>
@@ -371,14 +371,14 @@ export function ServicesPanel() {
 
             {cat.effective && (
               <p className="text-11 text-slate-400 dark:text-slate-500">
-                生效：{cat.candidates.find((c) => c.id === cat.effective)?.label ?? cat.effective}
+                生效：{(cat.candidates ?? []).find((c) => c.id === cat.effective)?.label ?? cat.effective}
                 {cat.degraded_from ? "（优先级第 1 位不可用，已自动顺延）" : ""}
               </p>
             )}
             {/* 没有任何可用后端可生效时，上面那句因 effective=null 不出现 —— 但这一类
                 恰恰最需要一句响的（比如 local_only 下本地档全挂：这是设计好的"宁失败不上云"，
                 不说出来用户只会看到一串"不可用"徽标，不知道这一轮会直接失败）。 */}
-            {!cat.effective && cat.candidates.some((c) => c.enabled) && (
+            {!cat.effective && (cat.candidates ?? []).some((c) => c.enabled) && (
               <p className="rounded-lg border-l-4 border-red-400 bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-900/20 dark:text-red-300">
                 当前没有可用的生效后端 —— 这一轮会**直接失败**，不会悄悄改用别的
                 （链里第 1 位不可用、且后面没有可用者；见各行的「不可用」原因）。

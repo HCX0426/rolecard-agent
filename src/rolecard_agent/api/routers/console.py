@@ -12,15 +12,15 @@ from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
-from rolecard_agent.api.response_models import (
+from rolecard_agent.base.audit import read_audit_page
+from rolecard_agent.base.observability import scrub_endpoints
+from rolecard_agent.contracts.response_models import (
     AuditView,
     KnowledgeScopesView,
     KnowledgeView,
     OrphanUploadsView,
     RagMetricsView,
 )
-from rolecard_agent.base.audit import read_audit_page
-from rolecard_agent.base.observability import scrub_endpoints
 from rolecard_agent.core.ingest import upload_service
 from rolecard_agent.core.ingest.ingestion import IngestionNotFound
 from rolecard_agent.core.ingest.uploads import referenced_paths, remove_orphans, scan_orphans

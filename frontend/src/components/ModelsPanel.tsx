@@ -51,7 +51,7 @@ export function ModelsPanel({ onOpenServices }: { onOpenServices?: () => void })
   }, [load]);
 
   async function removeModel(row: ProviderModelRow) {
-    const others = row.used_by.filter((u) => u !== "chat");
+    const others = (row.used_by ?? []).filter((u) => u !== "chat");
     const ok = await confirm({
       title: `删除模型「${row.name}」？`,
       body: others.length
@@ -197,7 +197,7 @@ function ProviderCard({
 }) {
   // 组头状态色：缺 key 才 amber（能恢复 —— 去抽屉里补一把）；本地类供应商本就没 key，不算异常。
   const broken = group.needs_key && !group.has_key;
-  const otherUses = new Set(group.models.flatMap((m) => m.used_by.filter((u) => u !== "chat")));
+  const otherUses = new Set((group.models ?? []).flatMap((m) => (m.used_by ?? []).filter((u) => u !== "chat")));
   return (
     <Card className="overflow-hidden p-0">
       <div
@@ -227,7 +227,7 @@ function ProviderCard({
       </div>
 
       <div className="divide-y divide-slate-100 dark:divide-slate-800">
-        {group.models.map((row) => (
+        {(group.models ?? []).map((row) => (
           <div
             key={row.name}
             className={`flex min-h-[40px] flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/60 ${
@@ -246,8 +246,8 @@ function ProviderCard({
               </div>
             </div>
             <div className="ml-auto flex flex-wrap items-center gap-1.5">
-              {row.used_by.length === 0 && <Chip tone="slate">未使用</Chip>}
-              {row.used_by.map((u) => (
+              {(row.used_by ?? []).length === 0 && <Chip tone="slate">未使用</Chip>}
+              {(row.used_by ?? []).map((u) => (
                 <Chip key={u} tone={u === "chat" ? "green" : "slate"}>
                   {USAGE_LABEL[u] ?? u}
                 </Chip>
@@ -263,14 +263,14 @@ function ProviderCard({
             </div>
           </div>
         ))}
-        {group.models.length === 0 && (
+        {(group.models ?? []).length === 0 && (
           <p className="px-4 py-3 text-xs text-slate-400 dark:text-slate-500">
             这个凭据组下还没有模型 —— 用〔+ 添加模型〕加一个。
           </p>
         )}
       </div>
 
-      {(otherUses.size > 0 || group.models.some((m) => m.used_by.length === 0)) && (
+      {(otherUses.size > 0 || (group.models ?? []).some((m) => (m.used_by ?? []).length === 0)) && (
         <div className="flex items-center gap-2 border-t border-slate-100 bg-slate-50/60 px-4 py-2 text-11 text-slate-500 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-400">
           {otherUses.size > 0 && (
             <span>
@@ -294,7 +294,7 @@ function ProviderCard({
 
 /** 行首状态 glyph：探测过且不通 = ⚠，其余 = ✓（"没测过"不是问题，不吓人的橙）。 */
 function StatusGlyph({ row }: { row: ProviderModelRow }) {
-  const unconfigured = row.used_by.length === 0;
+  const unconfigured = (row.used_by ?? []).length === 0;
   const text = unconfigured ? "○" : "✓";
   const tone = unconfigured ? "text-slate-300 dark:text-slate-600" : "text-emerald-500";
   return <span className={`w-4 shrink-0 text-center text-sm ${tone}`}>{text}</span>;

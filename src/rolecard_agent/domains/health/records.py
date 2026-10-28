@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from rolecard_agent.base.observability import scrub_endpoints
+from rolecard_agent.contracts.response_models import RecordsView
 from rolecard_agent.core.ingest.upload_service import read_source_text, source_kind
 from rolecard_agent.core.ingest.uploads import parsed_text_path as _parsed_text_path
 from rolecard_agent.domains.health.extract import (
@@ -165,7 +166,11 @@ def build_records_router(deps: RouterDeps) -> APIRouter:
     svc = _own_service(deps)
     router = APIRouter()
 
-    @router.get("/api/records")
+    @router.get(
+        "/api/records",
+        response_model=RecordsView,
+        response_model_exclude_unset=True,
+    )
     def list_records(
         ctx: RouterHost = Depends(deps.get_context),
         limit: int = Query(default=50, ge=1, le=200),

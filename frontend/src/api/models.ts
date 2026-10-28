@@ -39,11 +39,7 @@ export type ModelProvider = components["schemas"]["ModelProvidersViewProvidersIt
 
 /** 模型设置：**只有分组这一个视图**（旧平铺 `backends` 投影随旧界面一起删了）。
  * 行上的凭据（provider/base_url/has_key）来自它所属的组 —— 需要平铺时用 helper 摊平。 */
-export interface ModelSettings {
-  default: string | null;
-  fallbacks: string[];
-  providers: ProviderGroup[];
-}
+export type ModelSettings = components["schemas"]["ModelSettingsViewRoot"];
 
 /** 服务类别的内部键 → 给人看的名字。模型页与服务页都在回显 `used_by`，译名只留一份
  *  （两处各写一遍就是"同一个事实两个答案"，两页会各自漂移）。 */
@@ -55,34 +51,10 @@ export const USAGE_LABEL: Record<string, string> = {
 };
 
 /** 一行模型（属于某个凭据组）。能力位是**三态**：null = 没测过 → 界面渲染 `?`。 */
-export interface ProviderModelRow {
-  name: string;
-  model: string;
-  num_ctx: number | null;
-  supports_vision: boolean | null;
-  supports_tools: boolean | null;
-  /** 采样惩罚三栏（null = 没设）。`repeat_penalty` 只有本地 Ollama 行会非空 —— 云端那一栏
-   *  在界面上根本不出现，后端也会 400 挡下写入（OpenAI 兼容体没有这个标准字段）。 */
-  repeat_penalty: number | null;
-  frequency_penalty: number | null;
-  presence_penalty: number | null;
-  /** 这行被哪些服务引用（派生自服务页，模型页只读）：chat / embedding / rerank / ocr。 */
-  used_by: string[];
-  is_default: boolean;
-}
+export type ProviderModelRow = components["schemas"]["ModelSettingsViewProvidersItem_modelsItem"];
 
 /** 凭据组：一组 = 一个 (供应商, 端点)，key 只在这里出现一次。 */
-export interface ProviderGroup {
-  id: string;
-  provider: string;
-  label: string;
-  base_url: string | null;
-  style: string; // native | openai
-  needs_key: boolean;
-  has_key: boolean;
-  key_masked: string | null;
-  models: ProviderModelRow[];
-}
+export type ProviderGroup = components["schemas"]["ModelSettingsViewProvidersItem"];
 
 /** 探测结论（`POST /api/settings/models/probe`）。三态字段 null = 不知道，不是"不行"。 */
 export interface ProbeOutcome {

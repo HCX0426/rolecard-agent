@@ -10,12 +10,6 @@ import type { components } from "./schema.gen";
 
 export type DomainInfo = components["schemas"]["DomainsViewItem"];
 
-export interface ToolEntry {
-  name: string;
-  description: string;
-}
+export type ToolEntry = components["schemas"]["ToolsCatalogDomains_healthItem"];
 
-export interface ToolCatalog {
-  kernel: ToolEntry[];
-  domains: Record<string, ToolEntry[]>;
-}
+export type ToolCatalog = components["schemas"]["ToolsCatalogRoot"];

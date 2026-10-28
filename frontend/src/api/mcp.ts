@@ -5,19 +5,11 @@
 
 
 /** MCP server（架构计划 C·§6.1 operator 接入；仅 http）。headers 值永不出明文（后端掩码）。 */
-export interface McpServer {
-  id: string;
-  display_name: string;
-  transport: string;
-  url: string;
-  headers: Record<string, string>;
-  enabled: boolean;
-}
+import type { components } from "./schema.gen";
 
-export interface McpServersView {
-  servers: McpServer[];
-  effective_count: number;
-}
+export type McpServer = components["schemas"]["McpServersViewServersItem"];
+
+export type McpServersView = components["schemas"]["McpServersViewRoot"];
 
 /** POST /api/mcp/servers/{id}/test 的结果（不落库，真连一次列工具）。 */
 export interface McpTestResult {

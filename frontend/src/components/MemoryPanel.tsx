@@ -421,12 +421,12 @@ export function MemoryPanel() {
 
   const loadReachout = useCallback(async () => {
     const rt = await api.get<RuntimePayload>("/api/settings/runtime");
-    const items = rt.groups.flatMap((g) => g.items);
+    const items = (rt.groups ?? []).flatMap((g) => g.items ?? []);
     const sw = items.find((i) => i.field === "reachout_enabled");
     setReachoutOn(sw ? sw.value !== "0" && sw.value !== "未设置" : null);
     // 收件箱折叠窗口：读的是**生效值**（env + 在线覆盖叠加），和总闸同一个来源。
     const merge = items.find((i) => i.field === "reachout_merge_days");
-    setMergeDays(merge ? Number.parseInt(merge.value, 10) || 1 : null);
+    setMergeDays(merge ? Number.parseInt(merge.value ?? "", 10) || 1 : null);
     if (merge?.choices && merge.choices.length > 0) setMergeChoices(merge.choices);
   }, []);
 

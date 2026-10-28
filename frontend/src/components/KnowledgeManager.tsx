@@ -291,7 +291,7 @@ export function KnowledgeManager() {
                   <span className="ml-2 rounded-full bg-slate-100 dark:bg-slate-700/50 px-2 py-0.5 text-11 text-slate-500 dark:text-slate-400">
                     嵌入：{s.embedder}
                   </span>
-                  {importingScopes.includes(s.scope) && (
+                  {importingScopes.includes(s.scope ?? "") && (
                     <span className="ml-2 text-11 text-blue-600 dark:text-blue-400">导入中…</span>
                   )}
                 </div>
@@ -302,7 +302,7 @@ export function KnowledgeManager() {
                   className="text-xs hover:border-red-300 hover:text-red-600 dark:hover:border-red-700 dark:hover:text-red-400"
                   onClick={async (e) => {
                     e.stopPropagation();
-                    if (await confirm({ title: "清空知识库作用域？", body: `将清空作用域 ${s.scope} 的 ${s.chunks} 段内容，此操作不可恢复，且写入审计。`, confirmText: "确认清空", danger: true })) void resetScope(s.scope);
+                    if (await confirm({ title: "清空知识库作用域？", body: `将清空作用域 ${s.scope} 的 ${s.chunks} 段内容，此操作不可恢复，且写入审计。`, confirmText: "确认清空", danger: true })) void resetScope(s.scope ?? "");
                   }}
                   title="删除该作用域的集合 —— 换嵌入模型后维度不兼容时用它重建（写审计）"
                 >
@@ -311,7 +311,7 @@ export function KnowledgeManager() {
               </div>
               {/* 来源文件 chips：比裸文本列表更易扫读（行数多时两列排布）。 */}
               <ul className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2">
-                {s.sources.map((src) => (
+                {(s.sources ?? []).map((src) => (
                   <li
                     key={src}
                     className="truncate rounded bg-slate-50 px-2 py-0.5 font-mono text-11 text-slate-500 dark:bg-slate-700/40 dark:text-slate-400"

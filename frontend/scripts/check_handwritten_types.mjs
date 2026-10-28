@@ -264,6 +264,7 @@ for (const file of FILES) {
     // RagMetricsViewP50.embed_ms 这类**嵌套第二层**里，顶层检查全放过）。
     // 那种端点是"契约推不出的部分由人补"，保持手写（这才是"自动化的诚实边界"）。
     const chosen = candidates[0];
+    let picked = chosen;
     const genTypes = fieldTypes.get(chosen.cname) || new Map();
     const loosened = [...own].filter((f) => {
       const genType = genTypes.get(f);
@@ -279,20 +280,35 @@ for (const file of FILES) {
       );
       continue;
     }
-    // 唯一性：字段数最接近的两个候选若"多出字段数"相同 ⇒ 形状一样但语义可能不同
-    if (candidates.length > 1 && candidates[0].extra === candidates[1].extra) {
-      skipped.push(
-        `${file}: ${name}（多个候选同形：${candidates
-          .filter((c) => c.extra === candidates[0].extra)
-          .map((c) => c.cname)
-          .join(", ")}）`,
-      );
-      continue;
+    // 唯一性：字段数最接近的两个候选若"多出字段数"相同 ⇒ 形状一样但语义可能不同。
+    // **例外（P1b 第三批）**：并列候选的**字段→类型图完全相同**时，它们在类型层面
+    // 不可区分（引用任何一个，前端拿到的字段与松紧一字不差）—— 实测 ToolEntry 被
+    // ToolsCatalogDomains_healthItem 与 …KernelItem 并列拦死，而两者本来就是"同一张
+    // 工具行"的两处快照。这种平局取字典序第一并在跳过名单外放行；类型图有差别的
+    // 平局照旧让人来判（"宁可漏改也不误改"只退到类型图有差这一格）。
+    const tied = candidates.filter((c) => c.extra === candidates[0].extra);
+    if (tied.length > 1) {
+      const maps = tied.map((c) => {
+        const types = fieldTypes.get(c.cname) || new Map();
+        return [...own]
+          .map((f) => `${f}:${types.get(f) ?? ""}`)
+          .sort()
+          .join("|");
+      });
+      const allSame = maps.every((m) => m === maps[0]);
+      if (!allSame) {
+        skipped.push(
+          `${file}: ${name}（多个候选同形：${tied.map((c) => c.cname).join(", ")}）`,
+        );
+        continue;
+      }
+      tied.sort((a, b) => a.cname.localeCompare(b.cname));
+      picked = tied[0];
     }
 
     src = src.replace(
       whole,
-      `export type ${name} = components["schemas"]["${chosen.cname}"];`,
+      `export type ${name} = components["schemas"]["${picked.cname}"];`,
     );
     changed = true;
     migrated += 1;

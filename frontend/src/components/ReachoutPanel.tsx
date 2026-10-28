@@ -81,7 +81,7 @@ function buildStacks(items: ReachoutRow[], width: number): Stack[] {
     } else {
       buckets.set(key, {
         key,
-        role_id: row.role_id,
+        role_id: row.role_id ?? "",
         role_name: row.role_name || row.role_id || "未知角色",
         label: "",
         items: [row],
@@ -155,7 +155,7 @@ export default function ReachoutPanel({
     )
       return;
     try {
-      await api.deleteReachout(row.id);
+      await api.deleteReachout(row.id ?? 0);
       await reload();
     } catch (e) {
       setErr(`删除失败：${describeError(e)}`);
@@ -199,7 +199,7 @@ export default function ReachoutPanel({
     if (!row.thread_id) {
       // 没有主动会话可去（本功能上线前的老消息）→ 退回"只标记这一条已读"。
       try {
-        const p = await api.markReachoutRead(row.id);
+        const p = await api.markReachoutRead(row.id ?? 0);
         setData(p);
         onUnreadChange(p.unread);
       } catch (e) {

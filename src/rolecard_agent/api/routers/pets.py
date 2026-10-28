@@ -15,7 +15,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from rolecard_agent.api.response_models import PetsView
+from rolecard_agent.contracts.response_models import PetsView
 from rolecard_agent.features import pet_packs
 
 router = APIRouter(tags=["pets"])

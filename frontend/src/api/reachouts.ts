@@ -12,17 +12,7 @@ import type { components } from "./schema.gen";
 export const UNREAD_POLL_MS = 3_000;
 
 /** 角色主动开口（收件箱）条目：独立于对话历史，未读/已读状态由 state 表达。 */
-export interface ReachoutRow {
-  id: number;
-  role_id: string;
-  role_name: string | null;
-  text: string;
-  state: "unread" | "read";
-  created_at: string;
-  /** 该角色的"主动会话"线程 id：点进去能翻历史、能直接回话。
-   *  null = 这条消息还没有对应会话（本功能上线前落库的老消息）→ 界面只给"标记已读"。 */
-  thread_id: string | null;
-}
+export type ReachoutRow = components["schemas"]["ReachoutsViewItemsItem"];
 
 /** 一个"有资格主动开口"的角色此刻的状态（`S-8`）。 */
 export type QuietStatus = components["schemas"]["ReachoutsViewQuietItem"];
@@ -43,24 +33,6 @@ export interface ReachoutsPage {
 
 export type TimelineKind = "reachout" | "memory" | "memory_correct" | "thread";
 
-export interface TimelineEvent {
-  kind: TimelineKind;
-  /** "YYYY-MM-DD HH:MM:SS"（库里原文，定宽 ⇒ 界面直接切片，不再解析一遍时区）。 */
-  at: string;
-  text: string;
-  /** 只有会话锚点带 `start` / `recent`；`correct` 只出现在"更正"那一条。 */
-  verb: "start" | "recent" | "correct" | null;
-  /** "更正"那条被作废的旧事实原文：划掉显示，这是 §3「失效不删」第一次被用户看见的地方。 */
-  from_text: string | null;
-  /** 可跳转的会话；null = 没有（记忆条目、上线前的老消息）⇒ 不给死链。 */
-  thread_id: string | null;
-  ref_id: number;
-}
+export type TimelineEvent = components["schemas"]["RoleTimelineViewItemsItem"];
 
-export interface TimelinePage {
-  role_id: string;
-  items: TimelineEvent[];
-  next_cursor: string | null;
-  /** 某个源扫到了上限：只说明"这里可能还有更早的"，不承诺总量（数全量是归档功能的事）。 */
-  truncated: boolean;
-}
+export type TimelinePage = components["schemas"]["RoleTimelineViewRoot"];

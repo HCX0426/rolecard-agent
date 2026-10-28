@@ -54,6 +54,8 @@ function page(overrides: Partial<ApprovalsPage> = {}): ApprovalsPage {
         status: "pending",
         result: null,
         decide_token: "tok-issued-for-1",
+        decide_token_ttl_seconds: null,
+        has_token: null,
         created_at: "2026-09-18T10:00:00",
         updated_at: "2026-09-18T10:00:00",
       },
@@ -72,6 +74,8 @@ function page(overrides: Partial<ApprovalsPage> = {}): ApprovalsPage {
           output_bytes: 64,
         },
         decide_token: null,  // 批过的行令牌已清空
+        decide_token_ttl_seconds: null,
+        has_token: null,
         created_at: "2026-09-18T09:00:00",
         updated_at: "2026-09-18T09:00:10",
       },
@@ -86,7 +90,7 @@ beforeEach(() => {
   apiMock.getApprovals.mockResolvedValue(page());
   apiMock.decideApproval.mockImplementation(async (id: number, decision: string) => {
     const p = page();
-    return { ...p.items.find((r) => r.id === id)!, status: decision === "approve" ? "approved" : "rejected" };
+    return { ...(p.items ?? []).find((r) => r.id === id)!, status: decision === "approve" ? "approved" : "rejected" };
   });
 });
 
@@ -150,7 +154,7 @@ describe("ApprovalPanel 审批抽屉", () => {
 });
   it("令牌为空（用过或列表是旧的）：批准/拒绝禁用并说明怎么恢复", async () => {
     apiMock.getApprovals.mockResolvedValue(
-      page({ items: [{ ...page().items[0], decide_token: null }] }),
+      page({ items: [{ ...(page().items ?? [])[0], decide_token: null }] }),
     );
     render(<ApprovalPanel open={true} onClose={() => {}} onPendingChange={() => {}} />);
     await screen.findByText("python run.py --mode prod");

@@ -261,11 +261,11 @@ export default function PetPage() {
       // 让它绕过隐藏就等于这个开关只糊住了半张脸。谁找你了照样说清（标题是角色名）。
       shellBridge()?.notify(
         arrived.role_name || "主动消息",
-        showContentRef.current ? shorten(arrived.text) : "内容已隐藏",
+        showContentRef.current ? shorten(arrived.text ?? "") : "内容已隐藏",
         arrived.thread_id,
       );
       // 语音与通知同源同时刻（都是"这次真的新到"那条）：开关与内容旗子都在 `speak` 里判。
-      speak(arrived.text);
+      speak(arrived.text ?? "");
     }
   }, [refreshHistory]);
 
@@ -289,7 +289,7 @@ export default function PetPage() {
     return () => clearTimeout(timer);
   }, [bubbleShownAt, faded]);
 
-  const unreadOfLatest = latest ? (unreadByRole[latest.role_id] ?? 0) : 0;
+  const unreadOfLatest = latest ? (unreadByRole[latest.role_id ?? ""] ?? 0) : 0;
   /**
    * 面板跟谁说话：手动选的 > 最近主动找你的 > 角色表里的第一个。
    *
@@ -1176,7 +1176,7 @@ export default function PetPage() {
             // 宽度按锚点那块（200）而不是 w-full：画布是 560 宽，w-full 会把气泡拉成一条
             // 横穿桌面的白带子（它还是不透明白底 ⇒ 读起来像屏幕被划了一道）。
           >
-            {showContent ? shorten(latest.text) : "有新消息 · 内容已隐藏"}
+            {showContent ? shorten(latest.text ?? "") : "有新消息 · 内容已隐藏"}
             {unreadOfLatest > 1 && (
               <span className="ml-1 rounded-full bg-blue-600 px-1.5 text-10 text-white">
                 +{unreadOfLatest - 1}

@@ -84,7 +84,16 @@ export function useUploadFlow({
       } catch (e) {
         extractError = describeError(e);
       }
-      const outcome = describeExtract(result, extractError, r.file);
+      // ExtractWritten 的 index_name 生成后可空（键必填值可空口径）；展示用的 ExtractLike
+      // 要 string —— 寻址字段按恒有值处理，在此处一次兜底。
+      const outcome = describeExtract(
+        result && {
+          ...result,
+          written: result.written.map((w) => ({ ...w, index_name: w.index_name ?? "" })),
+        },
+        extractError,
+        r.file,
+      );
       onStatus(outcome.text, outcome.tone);
     } catch (e) {
       onStatus(`上传失败：${describeError(e)}`, "warn");

@@ -24,15 +24,15 @@ from rolecard_agent.api.deps import (
     get_thread,
 )
 from rolecard_agent.api.message_view import expand_to_turns, serialize_message
-from rolecard_agent.api.response_models import (
+from rolecard_agent.base.observability import TraceEvent
+from rolecard_agent.config import Settings
+from rolecard_agent.contracts.response_models import (
     SessionContextView,
     SessionMessagesView,
     SessionsView,
     SessionThreadView,
     SessionTurnView,
 )
-from rolecard_agent.base.observability import TraceEvent
-from rolecard_agent.config import Settings
 from rolecard_agent.core import model_settings
 from rolecard_agent.core.agent.graph import build_graph_config
 from rolecard_agent.core.agent.state import new_state, now_ts

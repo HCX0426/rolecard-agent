@@ -37,6 +37,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import pathlib
 import sys
@@ -51,7 +52,7 @@ for _stream in (sys.stdout, sys.stderr):
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-OUT_PATH = ROOT / "src" / "rolecard_agent" / "api" / "response_models.py"
+OUT_PATH = ROOT / "src" / "rolecard_agent" / "contracts" / "response_models.py"
 
 #: 只读端点白名单（路径 → 模型名）。写端点不自动建模（见模块 docstring 闸 ①）。
 READONLY_ENDPOINTS: dict[str, str] = {
@@ -103,7 +104,11 @@ _SAMPLE_PARAMS: dict[str, str] = {
     "thread_id": "s_proactive_local-user_sample_role",
 }
 
-_MAX_DEPTH = 4
+#: 6 = domains 那类「顶层 dict → 值列表 → 元素 → 字段」要多套两层才到字段
+#: （实测 /api/tools/catalog 的 kernel 列表在第 3 层幸存、health 域在第 4 层被切
+#: 成 Any —— ToolEntry/ToolCatalog 迁不动的根因）；services/models 的候选行
+#: 同理住在第 4~5 层。帽只防模型爆炸，不该把"够得到的事实"切丢。
+_MAX_DEPTH = 6
 
 #: 形状随数据变化、无法用单一模型表达的端点（生成时判定，见 _shape_is_stable）。
 UNMODELABLE: list[str] = []
@@ -235,10 +240,15 @@ def _merge_objects(items: list[Any]) -> tuple[dict[str, Any], dict[str, int]] | 
                 if key not in merged:
                     merged[key] = value
                 elif merged[key] is not None and value is None:
-                    # **任一元素为 null ⇒ 该字段可空**：合并时优先保留 null（服务视图里
-                    # 某些分类的 effective 是 None、另一些是字符串；只取第一个会把可空
-                    # 字段标成非空 ⇒ 响应校验失败 'Input should be a valid string'）。
-                    merged[key] = None
+                    # **任一元素为 null ⇒ 该字段可空，但代表值保留非空那一个**：生成侧
+                    # 对每个字段一律吐 `| None`（见 _build），null 的校验安全性由它保证；
+                    # 旧口径这里把 merged 改成 None —— 到 _build 手里就成 Any，前端
+                    # 那格永远是 unknown（实测 key_masked/degraded_from/choices 三族
+                    # 把 services/models/runtime 整条打成"不可建模"的根，P1b 第三批修正）。
+                    pass
+                elif merged[key] is None and value is not None:
+                    # **null 先到、非空后到**：代表值换成非空的（同上，别把类型打成 Any）。
+                    merged[key] = value
                 elif isinstance(merged[key], list) and isinstance(value, list):
                     # **嵌套数组也要合并**：不同元素的同一个数组字段，元素类型可能不同
                     # （实测 /api/roles：A 卡的 exemplars 是对象列表、B 卡的是空列表）。
@@ -270,9 +280,15 @@ def _build(
         if model_name in out:
             return model_name
         out[model_name] = ""
+        docline = f'    """自动生成：{model_name}（{path} 的对象形状）。"""'
+        # ruff 的 E501 按**东亚宽度**计列（CJK 算 2），len() 量不住 —— 上一版深层
+        # 嵌套的模型名 + 中文后缀就超了 100 列（P1b 第三批实测）。
+        width = sum(2 if ord(ch) > 0x2E80 else 1 for ch in docline)
+        if width > 100:
+            docline = f'    """自动生成：{model_name}。"""'
         lines = [
             f"class {model_name}(BaseModel):",
-            f'    """自动生成：{model_name}（{path} 的对象形状）。"""',
+            docline,
             "",
             '    model_config = ConfigDict(extra="allow")',
             "",
@@ -416,6 +432,7 @@ def _seed_minimal_data(app: Any) -> None:
                     "model": "sample-model",
                     "base_url": "http://127.0.0.1:1",
                     "usage": "chat",
+                    "num_ctx": 4096,
                 },
                 {
                     "name": "sample_fallback",
@@ -470,6 +487,41 @@ def _seed_minimal_data(app: Any) -> None:
     # 一份体检报告：/api/records 的 items 从前恒空（health 域的读侧）。
     _seed_health_report(app)
 
+    # ——— 第三批（P1b ③，2026-10-28）：把"采样恒 null"的松格喂成非空 ———
+    # 这些字段在真实运行里确实会有非空值，只是从前的种子造不出来；生成器旧机器还把
+    # "null 与具体类型混列"判成形状不稳（services/models/runtime 三端点整条进不了
+    # 白名单的根）。机器放宽 + 种子补值两头一起收，前端才迁得动。
+    _seed_approval_shapes(app)
+    _seed_reachout_thread(app)
+    _seed_runtime_override(app)
+    _seed_model_sampling(app)
+    _seed_service_ref(app)
+    _seed_timeline_correction(app)
+    _seed_thread_touch(app)
+
+
+def _seed_thread_touch(app: Any) -> None:
+    """把 sample_role 的主动线程 touch 出一条**页内的**线程锚点。
+
+    两个坑都是实测踩出来的：
+    ① created_at 必须倒填 —— "recent"锚点只在 updated 与 created **跨分钟**时才发
+       （timeline._threads 的同分钟合并判据），同一分钟里 touch 只更新 updated_at，
+       样本里就只有"start"锚点；
+    ② 就算发了"start"，它的 at=created_at 与填充记忆同秒，稳定排序把它挤到
+       limit=50 的第一页之外 —— thread_id 在样本里恒 null，TimelineEvent/Page
+       就迁不动。倒填 + touch 后，"recent"的 at=updated_at（毫秒精度、必然最新）
+       稳排第一，thread_id 才有非空代表值。"""
+    from rolecard_agent.core.sessions import session_service
+
+    ctx = app.state.ctx
+    tid = "s_proactive_local-user_sample_role"
+    ctx.conn.execute(
+        "UPDATE session_thread SET created_at = '2026-01-01 00:00:00' WHERE thread_id = ?",
+        (tid,),
+    )
+    session_service.touch(ctx.conn, tid)
+    ctx.conn.commit()
+
 
 def _seed_approval(app: Any) -> None:
     """种一条 pending 审批（不执行、不出网；只为让采样本时数组非空）。"""
@@ -494,16 +546,123 @@ def _seed_reachout(app: Any) -> None:
 
 
 def _seed_health_report(app: Any) -> None:
-    """种一份最小体检报告（health 域服务）。"""
+    """种一份最小体检报告（health 域的读侧）。
+
+    两行指标各有分工：数值行保住 index_value 的类型代表；文本行把 value_text /
+    ref_range / raw_text 三格喂成非 null（create_report 本就收这些键）——
+    它们恒 null 时 IndexRow / ReportRecord 那族前端类型迁不动。note 同理：
+    报告行的 note 从前种成 None，喂一句真话，格就从 Any 变 str|null。"""
     ctx = app.state.ctx
     ctx.health.create_report(
         user_id=ctx.current_user(),
         report_type="样本报告",
         check_time="2026-01-01",
         institution="生成器",
-        note=None,
-        indices=[{"index_name": "白细胞", "index_value": 6.5, "unit": "10^9/L"}],
+        note="样本备注：生成器锚点",
+        indices=[
+            {"index_name": "白细胞", "index_value": 6.5, "unit": "10^9/L"},
+            {
+                "index_name": "尿酸",
+                "value_text": "488",
+                "ref_range": "208-428",
+                "raw_text": "尿酸 488 umol/L（样本原文）",
+            },
+        ],
     )
+
+
+def _seed_approval_shapes(app: Any) -> None:
+    """把审批行的三个恒 null 格（cwd / thread_id / result）喂成非空。
+
+    产品里 cwd 只由 run_command 工具传、thread_id 只在会话链路里传、result 只有
+    done 行才有 —— 列表**含已执行的行**（list_rows 不过滤状态），所以一条 submit
+    带 cwd/thread_id 的 pending 行 + 一条 finish 回填过 result 的 done 行，
+    三格就都有非空代表值（机器放宽后 str|null 一个注解表达得了）。
+    finish 不校验当前状态（无条件 UPDATE），同库重跑幂等；命令串要与
+    _seed_approval 的 "echo sample" 不同 —— submit 对同命令幂等返回旧行。
+    """
+    ctx = app.state.ctx
+    ctx.approvals.submit(
+        "echo sample-shaped",
+        cwd="sub",
+        role_id="sample_role",
+        role_name="样本角色",
+        thread_id="s_proactive_local-user_sample_role",
+    )
+    done = ctx.approvals.submit(
+        "echo sample-done", cwd=None, role_id="sample_role", role_name="样本角色"
+    )
+    ctx.approvals.finish(
+        int(done["id"]),
+        {"exit_code": 0, "output": "ok", "output_bytes": 2, "duration_ms": 1},
+    )
+
+
+def _seed_reachout_thread(app: Any) -> None:
+    """给 sample_reachable 建主动会话线程：收件箱行的 thread_id 是**读侧派生**
+    （查到该 (role, user) 的主动线程才非 null），record_reachout 本身没有这个参数。"""
+    from rolecard_agent.core.proactive.proactive_thread import ensure_proactive_thread
+
+    ctx = app.state.ctx
+    role = ctx.role_cards.get("sample_reachable")
+    ensure_proactive_thread(
+        ctx.conn, role=role, user_id=ctx.current_user(), tool_epoch=ctx.plugins.tool_epoch()
+    )
+
+
+def _seed_runtime_override(app: Any) -> None:
+    """种一条运行时覆盖：override_value 只在"有覆盖且非 secret"时非 null。
+    选 web_allowed_domains（纯 str、无下游形状副作用；secret 字段采不回 override_value）。"""
+    from rolecard_agent.core import runtime_settings
+
+    ctx = app.state.ctx
+    runtime_settings.save_overrides(ctx.conn, {"web_allowed_domains": "example.com"})
+
+
+def _seed_model_sampling(app: Any) -> None:
+    """给 sample_local 设 num_ctx 与采样惩罚三栏：models[].num_ctx/penalties 恒 null
+    是 ProviderModelRow 迁不动的最后一格（只有显式写过才非 null；repeat_penalty
+    只收 native 后端 —— sample_local 是 ollama，正好）。"""
+    ctx = app.state.ctx
+    ctx.model_settings.set_sampling(
+        "sample_local",
+        {"repeat_penalty": 1.1, "frequency_penalty": 0.5, "presence_penalty": 0.3},
+        user_id=ctx.current_user(),
+    )
+
+
+def _seed_service_ref(app: Any) -> None:
+    """给 embedding 挂一条云引用：候选行的 base_url/model/key_masked/ref_backend
+    只有"引用行解析到已配置后端"才非 null（本地内置行四格恒 null）。
+    同库重跑会撞"已在这个顺序里"——种子必须幂等，已存在就跳过。"""
+    ctx = app.state.ctx
+    with contextlib.suppress(ValueError):
+        ctx.services.add("embedding", ref_backend="sample_cloud")
+
+
+def _seed_timeline_correction(app: Any) -> None:
+    """两件事：① 造一条 memory_correct 事件 —— from_text 只有"更正"那一条才有
+    （被退役事实的原文）；② 记忆条数越过 timeline 的 limit=50，让 next_cursor
+    采成非 null（翻页游标是 TimelinePage 最后一格）。add_item 同文本不重复插入，
+    天然幂等；条数多了只会让"下次种子"少插几条，不影响形状。"""
+    from rolecard_agent.core import memory as mem
+
+    ctx = app.state.ctx
+    uid = ctx.current_user()
+    old = mem.add_item(ctx.conn, user_id=uid, bucket="sample_role", text="旧事实：样本被更正")
+    new = mem.add_item(ctx.conn, user_id=uid, bucket="sample_role", text="新事实：样本更正")
+    if old is not None and new is not None:
+        mem.merge_items(
+            ctx.conn,
+            user_id=uid,
+            keep_id=int(new["id"]),
+            drop_id=int(old["id"]),
+            text="新事实：样本更正",
+        )
+    for i in range(52):
+        mem.add_item(
+            ctx.conn, user_id=uid, bucket="sample_role", text=f"样本记忆 {i:02d}：翻页游标填充"
+        )
 
 
 def _seed_reachable_role(app: Any) -> None:
@@ -555,6 +714,13 @@ def _stable_across(items: list[Any]) -> bool:
         for obj in objs:
             if key in obj:
                 kinds.add(_type_tag(obj[key]))
+        # **NoneType 不算独立的形状**（P1b 第三批修正）：null 只说明"可空"，与
+        # _python_type 的口径同源（"null 不参与类型判断 —— 它只影响可空性"）。
+        # `str | None` 一个注解就表达得了"有的行有值、有的行没有"；把它当成形状
+        # 分歧，/api/services（degraded_from）、/api/settings/models（key_masked）、
+        # /api/settings/runtime（choices）就被整条判成"不可建模"。**非 null 类型
+        # 之间的分歧**（str vs list）仍然是分歧 —— 那才是一个模型表达不了的。
+        kinds.discard("NoneType")
         if len(kinds) > 1:
             return False
     return True

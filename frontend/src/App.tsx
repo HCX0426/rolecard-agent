@@ -182,7 +182,7 @@ export default function App() {
   usePoll(
     async (live) => {
       const p = await api.getApprovals("pending");
-      if (live()) setApprovalPending(p.pending);
+      if (live()) setApprovalPending(p.pending ?? 0);
     },
     UNREAD_POLL_MS,
     !approvalOpen,

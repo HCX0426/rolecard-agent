@@ -14,10 +14,15 @@ from pydantic import BaseModel, Field
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.api.errors import value_error_to_http
-from rolecard_agent.api.response_models import ModelProvidersView, SettingsMemoryView
 from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.base.text import text_of
 from rolecard_agent.config import SECRET_FIELD_NAMES, Settings
+from rolecard_agent.contracts.response_models import (
+    ModelProvidersView,
+    ModelSettingsView,
+    RuntimeSettingsView,
+    SettingsMemoryView,
+)
 from rolecard_agent.core import runtime_settings
 from rolecard_agent.core.model_settings import (
     ModelSettingsError,
@@ -80,6 +85,8 @@ def _models_payload(ctx: AppContext) -> dict[str, object]:
 
 @router.get(
     "/api/settings/models",
+    response_model=ModelSettingsView,
+    response_model_exclude_unset=True,
 )
 def get_model_settings(ctx: AppContext = Depends(get_context)) -> object:
     """模型设置。api_key 永不回明文 —— 只有 has_key 掩码预览。
@@ -523,7 +530,11 @@ def runtime_payload(
     }
 
 
-@router.get("/api/settings/runtime")
+@router.get(
+    "/api/settings/runtime",
+    response_model=RuntimeSettingsView,
+    response_model_exclude_unset=True,
+)
 def get_runtime_settings(ctx: AppContext = Depends(get_context)) -> object:
     """运行环境视图：当前生效值（env + DB 覆盖叠加）vs 默认值，密钥只回掩码。"""
     return runtime_payload(

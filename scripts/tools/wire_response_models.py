@@ -27,7 +27,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 ROUTERS = ROOT / "src" / "rolecard_agent" / "api" / "routers"
-GENERATED = ROOT / "src" / "rolecard_agent" / "api" / "response_models.py"
+GENERATED = ROOT / "src" / "rolecard_agent" / "contracts" / "response_models.py"
 
 #: 端点路径 → (模型名, 端点所在文件相对 routers/ 的路径)。
 #: 与 gen_response_models.py 的白名单是同一份清单的两半。
@@ -42,7 +42,7 @@ WIRING: dict[str, tuple[str, str]] = {
     "/api/mcp/servers": ("McpServersView", "mcp.py"),
     "/api/rag/metrics": ("RagMetricsView", "console.py"),
     "/api/reachouts": ("ReachoutsView", "reachouts.py"),
-    "/api/records": ("RecordsView", "../domains/health/records.py"),
+    "/api/records": ("RecordsView", "../../domains/health/records.py"),
     "/api/sessions": ("SessionsView", "sessions.py"),
     "/api/settings/memory": ("SettingsMemoryView", "settings.py"),
     "/api/settings/model-providers": ("ModelProvidersView", "settings.py"),
@@ -140,7 +140,7 @@ def _rewrite_decorator(block: list[str], model: str | None) -> list[str]:
 
 
 def _drop_response_models_imports(text: str) -> str:
-    """删掉 `from rolecard_agent.api.response_models import ...` 的**整条语句**。
+    """删掉 `from rolecard_agent.contracts.response_models import ...` 的**整条语句**。
 
     按 AST 的 lineno..end_lineno 删行，不按正则：正则只认单行形状，而仓库里两种形状
     都在用（`from ... import A, B` 一行版；console.py / settings.py 的括号多行版）。
@@ -149,7 +149,9 @@ def _drop_response_models_imports(text: str) -> str:
     lines = text.split(chr(10))
     drop: set[int] = set()
     for node in ast.parse(text).body:
-        if isinstance(node, ast.ImportFrom) and node.module == "rolecard_agent.api.response_models":
+        if isinstance(node, ast.ImportFrom) and (
+            node.module == "rolecard_agent.contracts.response_models"
+        ):
             drop.update(range(node.lineno - 1, (node.end_lineno or node.lineno)))
     if not drop:
         return text
@@ -220,9 +222,8 @@ def _wire_file(path: pathlib.Path, entries: dict[str, str | None]) -> tuple[str,
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 last_import_end = max(last_import_end, node.end_lineno or node.lineno)
         ins_lines = new_text.split(chr(10))
-        ins_lines.insert(
-            last_import_end, "from rolecard_agent.api.response_models import " + ", ".join(models)
-        )
+        import_line = "from rolecard_agent.contracts.response_models import " + ", ".join(models)
+        ins_lines.insert(last_import_end, import_line)
         new_text = chr(10).join(ins_lines)
     return new_text, len(edits)
 

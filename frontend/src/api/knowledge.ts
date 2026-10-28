@@ -4,24 +4,11 @@
 // 住址只活在实现里（数一份清单就守一份清单，facade 用通配是不给第二份清单留门）。
 
 
-export interface IndexRow {
-  index_id: string;
-  index_name: string;
-  index_value: number | null;
-  value_text: string | null;
-  unit: string | null;
-  ref_range: string | null;
-  is_verified: number | boolean;
-  source: string;
-  raw_text: string | null;
-}
+import type { components } from "./schema.gen";
 
-export interface KnowledgeScope {
-  scope: string;
-  chunks: number;
-  sources: string[];
-  embedder: string;
-}
+export type IndexRow = components["schemas"]["RecordsViewItemsItem_indicesItem"];
+
+export type KnowledgeScope = components["schemas"]["KnowledgeViewItem"];
 
 /** 检索延迟分位（每阶段，单位 ms；无样本时各字段为 null）。 */
 export interface RagStageMs {
@@ -41,12 +28,7 @@ export interface RagMetrics {
 }
 
 /** 结构化抽取：写入档案的指标行 */
-export interface ExtractWritten {
-  index_name: string;
-  index_value: number | null;
-  value_text: string | null;
-  unit: string | null;
-}
+export type ExtractWritten = components["schemas"]["RecordsViewItemsItem_indicesItem"];
 
 /** 抽取时没能通过校验 / 两次识别不一致的项 —— 交给人确认，未写库 */
 export interface ExtractConflict {

@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.api.errors import value_error_to_http
-from rolecard_agent.api.response_models import WorkspaceDirView, WorkspaceTreeView
+from rolecard_agent.contracts.response_models import WorkspaceDirView, WorkspaceTreeView
 from rolecard_agent.core.common import workspace
 
 router = APIRouter()

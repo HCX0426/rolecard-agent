@@ -4,7 +4,7 @@
 // 住址只活在实现里（数一份清单就守一份清单，facade 用通配是不给第二份清单留门）。
 // ReportRecord 的 indices 用的是知识域那份指标行 —— 跨文件的类型引用照原样写 import
 // （不是把 IndexRow 挪过来凑齐一个域：一个类型只有一个家，谁用谁 import）。
-import type { IndexRow } from "./knowledge";
+import type { components } from "./schema.gen";
 
 
 
@@ -19,11 +19,4 @@ export interface GenericRecord {
   created_at: string;
 }
 
-export interface ReportRecord {
-  report_id: string;
-  report_type: string;
-  check_time: string;
-  institution: string | null;
-  note: string | null;
-  indices: IndexRow[];
-}
+export type ReportRecord = components["schemas"]["RecordsViewItemsItem"];

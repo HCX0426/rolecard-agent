@@ -11,9 +11,9 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from rolecard_agent.api.auth import ROLE_OPERATOR, Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
-from rolecard_agent.api.response_models import HealthDeepView
 from rolecard_agent.base.metrics import COUNTS
 from rolecard_agent.base.observability import logline
+from rolecard_agent.contracts.response_models import HealthDeepView
 from rolecard_agent.core.probes.readiness import readiness_report
 
 router = APIRouter()

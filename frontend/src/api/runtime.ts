@@ -5,29 +5,10 @@
 
 
 /** 运行环境（env + DB 覆盖）的展示项。kind=ro 表示不可在线修改；secret 永不回明文。 */
-export interface RuntimeItem {
-  key: string;
-  field: string;
-  label: string;
-  value: string;
-  default: string;
-  changed: boolean;
-  /** DB 覆盖在位（≠ changed：env 也可能与出厂默认不同）。 */
-  overridden: boolean;
-  /** 覆盖的原始值（可编辑初值）；secret / 未覆盖 = null。 */
-  override_value: string | null;
-  kind: "bool" | "str" | "secret" | "float" | "int" | "ro";
-  choices: string[] | null;
-  note: string;
-}
+import type { components } from "./schema.gen";
 
-export interface RuntimeGroup {
-  key: string;
-  label: string;
-  items: RuntimeItem[];
-}
+export type RuntimeItem = components["schemas"]["RuntimeSettingsViewGroupsItem_itemsItem"];
 
-export interface RuntimePayload {
-  note: string;
-  groups: RuntimeGroup[];
-}
+export type RuntimeGroup = components["schemas"]["RuntimeSettingsViewGroupsItem"];
+
+export type RuntimePayload = components["schemas"]["RuntimeSettingsViewRoot"];
