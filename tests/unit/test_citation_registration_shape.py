@@ -81,7 +81,7 @@ def test_真正则在全仓真数据上只增不减() -> None:
     现读：放宽前 39 个号无家、放宽后全部有家，且没有任何原有号失去家。这条是回归闸：
     将来谁再调形状，只要让任何一个号失去归属，这里红。
     """
-    doc = ROOT / "docs" / "代码审查快照（2026-10-04）.md"
+    doc = ROOT / "docs" / "archive" / "代码审查快照（2026-10-04）.md"
     now = _citation_targets(doc)
     before = {
         m.group(1)
@@ -117,7 +117,7 @@ def test_归属表里已有那三十九个号() -> None:
 
     只查数量会漏"登记到别的文档去了"这种形状，所以逐个查它的家**就在这份账本里**。
     """
-    doc = ROOT / "docs" / "代码审查快照（2026-10-04）.md"
+    doc = ROOT / "docs" / "archive" / "代码审查快照（2026-10-04）.md"
     now = _citation_targets(doc)
     for num in ("P2-16", "P2-1", "P3-4", "P3-8", "P3-20", "P2-31", "P3-11", "P3-2"):
         assert num in now, f"{num} 仍无归属：那条悬空误报没修好"
@@ -129,7 +129,8 @@ def test_索引里每个号的地址都能归位() -> None:
     """
     index = ROOT / "docs" / "架构审计索引.md"
     rows = [
-        ln for ln in index.read_text(encoding="utf-8").splitlines()
+        ln
+        for ln in index.read_text(encoding="utf-8").splitlines()
         if ln.startswith("| P") or ln.startswith("| R") or ln.startswith("| ENGI-")
     ]
     checked = 0
