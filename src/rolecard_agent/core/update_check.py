@@ -51,18 +51,35 @@ _TAG_V = re.compile(r"^v(?=\d)")
 
 
 def parse_version(text: str) -> tuple[int, ...]:
-    """`"0.4.1"` / `"v0.4.1"` → `(0, 4, 1)`；解析不出数字段就回空 tuple（不参与比较）。
-
-    刻意不引 `packaging`：它在 dev 依赖族里，而运行时五族不含 —— 为一个比较运算
-    把打包链的依赖面扩大一族，是拿 `R28-34` 那道守卫换一行代码。本仓的版本号
-    形状由 version parity 尺子钉死为纯数字三段（`x.y.z`），这个函数按那个形状工作，
-    遇到形状外的（预发布后缀等）宁可回空 tuple 判"比不了"，不装懂。
+    """`"0.4.1"` / `"v0.4.1"` → `(0, 4, 1, 1)`；预发布号（P10④ 起 version parity 允许
+    `0.5.1-beta.1` 这种形状）→ `(0, 5, 1, 0)`。**末位是正式度旗标**（正式 1 / 预发布
+    0）：预发布要排在同号正式版之前，而 Python 元组比较里 `(0,5,1)` 是 `(0,5,1,x)`
+    的前缀、前缀恒小 —— 追加哨兵排不进中间，给**每一侧**都补旗标才判得对
+    （`-1` 哨兵的第一版就栽在这，实测（0,5,1) vs (0,5,1,-1) 是 False 不是 True）。
+    真解析不出（形状外，如任意文本 tag）回空 tuple —— "比不了"由 `_has_update`
+    如实兜成 False，不装懂。仍然刻意不引 `packaging`（dev 族依赖，不进运行时五族）。
+    本接口只跟 GitHub **latest release**（永远排除 prerelease）比，beta↔beta 的
+    排序在壳侧 electron-updater 的 beta.yml 那条链上，不经这里。
     """
     cleaned = _TAG_V.sub("", text.strip())
-    parts = cleaned.split(".")
+    head, sep, _pre = cleaned.partition("-")
+    parts = head.split(".")
     if not parts or not all(re.fullmatch(r"\d+", p) for p in parts):
         return ()
-    return tuple(int(p) for p in parts)
+    return (*tuple(int(p) for p in parts), 0 if sep else 1)
+
+
+def _has_update(latest_tuple: tuple[int, ...], current: str) -> bool:
+    """latest 严格比 current 新吗？**任一侧解析不出 ⇒ 比不了 ⇒ 如实 False**。
+
+    为什么要有这层而不是直接 `>`：空 tuple 在 Python 里比**任何** tuple 都小，
+    latest 是形状外文本（解析不出）时裸比较会把"比不了"误判成"有更新" ——
+    两处调用点的形状守卫之外，这里再兜一道（0.5.1-beta.1 一 bump 就在 CI
+    抓出来过：test_update_check_current_version_is_api_version）。
+    """
+    if not latest_tuple or not parse_version(current):
+        return False
+    return latest_tuple > parse_version(current)
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,11 +127,12 @@ def _from_release_dir(current: str, directory: Path) -> UpdateInfo | None:
     if not candidates:
         return None
     version_tuple, newest = max(candidates, key=lambda item: item[0])
-    latest = ".".join(str(n) for n in version_tuple)
+    # 末位是正式度旗标，不是版本段 —— 回字符串时剥掉。
+    latest = ".".join(str(n) for n in version_tuple[:-1])
     return UpdateInfo(
         current=current,
         latest=latest,
-        has_update=version_tuple > parse_version(current),
+        has_update=_has_update(version_tuple, current),
         source="release_dir",
         url="/api/shell-release/download",
         file_name=newest.name,
@@ -231,7 +249,7 @@ def check_update(
     info = UpdateInfo(
         current=current,
         latest=latest,
-        has_update=latest_tuple > parse_version(current),
+        has_update=_has_update(latest_tuple, current),
         source="github",
         url=str(body.get("html_url") or _RELEASE_PAGE.format(repo=repo)),
     )

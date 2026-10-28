@@ -41,9 +41,7 @@ def _client(release_dir: Path | None, tmp_path: Path) -> TestClient:
     真数据（本次拆层的迁移就是这样被撞出来的）。
     """
     app = create_app(sqlite_path=tmp_path / "runtime" / "shell-release.db")
-    app.dependency_overrides[get_context] = lambda: _Ctx(
-        Settings(shell_release_dir=release_dir)
-    )
+    app.dependency_overrides[get_context] = lambda: _Ctx(Settings(shell_release_dir=release_dir))
     return TestClient(app)
 
 
@@ -113,6 +111,7 @@ def test_endpoints_answer_without_credentials_when_auth_off(tmp_path: Path, path
 
 # ---------------------------------------------------------------- 检查更新（同族端点）
 
+
 @pytest.fixture(autouse=True)
 def _clear_uc_cache() -> Iterator[None]:
     """进程级缓存（30 分钟 TTL）跨用例共享——同键用例会互相读到对方读数。
@@ -150,9 +149,11 @@ def test_update_check_disabled_makes_no_network(
 def test_update_check_prefers_local_release_dir(tmp_path: Path) -> None:
     """配了托管目录且有产物：本地源优先，version 从文件名现读，不越过去问公网。"""
     (tmp_path / _NEW).write_bytes(b"x")
-    body = _update_client(tmp_path, shell_release_dir=tmp_path, update_repo="").get(
-        "/api/update-check"
-    ).json()
+    body = (
+        _update_client(tmp_path, shell_release_dir=tmp_path, update_repo="")
+        .get("/api/update-check")
+        .json()
+    )
     assert body["source"] == "release_dir"
     assert body["latest"] == "0.3.0"
     assert body["url"] == "/api/shell-release/download"
@@ -164,7 +165,7 @@ def test_update_check_github_via_injected_fetcher(
     """没有本地产物时走 GitHub：测试注入 fetcher，端点级也不出网。"""
     monkeypatch.setattr(
         "rolecard_agent.core.update_check.github_fetcher",
-        lambda: (lambda url: {"tag_name": "v9.9.9", "html_url": "https://gh/o/r/tag/v9.9.9"}),
+        lambda: lambda url: {"tag_name": "v9.9.9", "html_url": "https://gh/o/r/tag/v9.9.9"},
     )
     body = _update_client(tmp_path, update_repo="o/r").get("/api/update-check").json()
     assert body["source"] == "github" and body["latest"] == "9.9.9" and body["has_update"] is True
@@ -176,10 +177,24 @@ def test_update_check_current_version_is_api_version(
     """current 来自 app.version（= API_VERSION 单源），**不是** Settings 里再抄一份。"""
     monkeypatch.setattr(
         "rolecard_agent.core.update_check.github_fetcher",
-        lambda: (lambda url: {"tag_name": "v0.0.1"}),
+        lambda: lambda url: {"tag_name": "v0.0.1"},
     )
     body = _update_client(tmp_path, update_repo="o/r").get("/api/update-check").json()
     from rolecard_agent.api.main import API_VERSION
 
     assert body["current"] == API_VERSION
     assert body["has_update"] is False  # 最新比当前旧：如实 False，不硬凑"有更新"
+
+
+def test_has_update_预发布current按semver排序() -> None:
+    """P10④ bump 0.5.1-beta.1 实测：预发布排在同号正式版之前、比上一版正式版新；
+    形状外（解析不出）才"比不了"⇒ False。这个测试不随仓库当前版本漂（直接喂形状）。"""
+    from rolecard_agent.core.update_check import _has_update
+
+    # latest_tuple 与 parse_version 同构：末位正式度旗标（正式 1 / 预发布 0）。
+    assert _has_update((0, 0, 1, 1), "0.5.1-beta.1") is False
+    assert _has_update((), "0.5.0") is False
+    assert _has_update((0, 5, 1, 1), "0.5.1-beta.1") is True
+    assert _has_update((0, 6, 0, 1), "0.5.1-beta.1") is True
+    assert _has_update((0, 5, 0, 1), "0.5.1-beta.1") is False
+    assert _has_update((0, 5, 0, 1), "0.5.0") is False
