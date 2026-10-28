@@ -142,3 +142,16 @@ def test_草稿在真仓库上跑得动() -> None:
     assert isinstance(sections, dict) and isinstance(skipped, int)
     assert all(isinstance(items, list) for items in sections.values())
     assert set(sections) <= set(bv._SECTIONS)  # noqa: SLF001 - 判据本身就要问那张表
+
+
+def test_预发布号收进门槛_p10beta(tmp_path: pathlib.Path) -> None:
+    """P10④ 的前置：beta feed 要真 prerelease tag，改号命令必须吃得下连字符段。"""
+    repo = _fake_repo(tmp_path)
+    bv.bump(repo, "0.5.1-beta.1", date="2026-10-28", sections={"新增": ["feat: 灰度"]})
+    assert set(bv.collect(repo).values()) == {"0.5.1-beta.1"}, "四处同一个字面串"
+    text = bv.changelog_path(repo).read_text(encoding="utf-8")
+    assert "## [0.5.1-beta.1] - 2026-10-28" in text
+    with pytest.raises(ValueError):
+        bv.bump(repo, "0.5.1 beta.1", sections={})
+    with pytest.raises(ValueError):
+        bv.bump(repo, "0.5.1-", sections={})

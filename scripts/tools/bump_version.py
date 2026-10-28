@@ -19,6 +19,7 @@ perf/refactor→变更，其余前缀不进草稿但计数），起点是 `CHANG
 
     python scripts/tools/bump_version.py --check        # 四处是不是同一个号（只读）
     python scripts/tools/bump_version.py 0.4.0          # 改号 + 插一节 CHANGELOG 草稿
+    python scripts/tools/bump_version.py 0.5.1-beta.1   # 预发布号（beta 通道的真 tag 用）
     python scripts/tools/bump_version.py 0.4.0 --dry-run
 
 写完请跑 `scripts/check_consistency.py`（`version parity` 与 `changelog` 两条尺子都在那里）。
@@ -233,8 +234,12 @@ def bump(
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """改号 + 插一节 CHANGELOG。`sections=None` 时从提交信息现取（测试里直接喂）。"""
-    if not re.fullmatch(r"\d+\.\d+\.\d+", new):
-        raise ValueError(f"版本号得是 x.y.z（收到 {new!r}）")
+    # 预发布号（P10④）：`0.5.1-beta.1` 这种 semver 连字符段 —— beta feed（beta.yml）
+    # 必须由真 prerelease tag 走出来，而改号只有这一条命令，门槛就得给它开口。
+    # 四处都写**同一个字面串**（pyproject 的 PEP 440 会把它规范化成 0.5.1b1 再消费，
+    # 但文件里的字面串不动，version parity 尺子比的还是字符串）。
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", new):
+        raise ValueError(f"版本号得是 x.y.z 或 x.y.z-预发布段（收到 {new!r}）")
     before = collect(root)
     if set(before.values()) == {new}:
         return {"changed": [], "version": new, "already": True, "sections": {}}
