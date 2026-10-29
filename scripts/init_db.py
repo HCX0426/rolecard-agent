@@ -1,4 +1,4 @@
-"""Bootstrap SQLite: apply schema in the fixed order (see storage/db.py), then seed the
+r"""Bootstrap SQLite: apply schema in the fixed order (see storage/db.py), then seed the
 built-in roles from roles/seed.py and each domain's seed roles from its own `DomainSpec`.
 
 Built-in roles live in CODE, not in a SQL fixture: they are undeletable
@@ -6,7 +6,7 @@ Built-in roles live in CODE, not in a SQL fixture: they are undeletable
 ordinary editable data. 域角色同理是代码出厂（类型是自定义，可改可删），只是清单住在
 各自的域包里 —— 见 `domains/registry.domain_seed_roles`。
 
-Run:  python scripts/init_db.py
+Run:  .venv\Scripts\python.exe scripts/init_db.py
 """
 
 from __future__ import annotations

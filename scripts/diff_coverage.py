@@ -73,9 +73,7 @@ def parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
     return out
 
 
-def summarize(
-    changed: dict[str, set[int]], report: dict
-) -> tuple[int, int, dict[str, list[int]]]:
+def summarize(changed: dict[str, set[int]], report: dict) -> tuple[int, int, dict[str, list[int]]]:
     """对齐覆盖数据，返回 (覆盖数, 未覆盖数, {文件: 未覆盖行号}).
 
     行号要与覆盖数据同一棵树 —— 覆盖率那步刚量完的 `.coverage` 就是当前树，天然对齐。
@@ -129,21 +127,11 @@ def _has_coverage_data(root: pathlib.Path) -> pathlib.Path | None:
     """跑一次 `coverage json` 出报告文件；数据不存在返回 None（大声跳过）。"""
     if not (root / "build" / ".coverage").exists():
         return None
-    out_json = root / "build" / "diff_coverage_report.json"
-    out_json.parent.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run(
-        [sys.executable, "-m", "coverage", "json", "-o", str(out_json)],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"coverage json 失败（exit {proc.returncode}）：{(proc.stderr or '').strip()[-400:]}"
-        )
-    return out_json
+    # coverage json 的唯一实现（2026-10-30 审计 #9：与 coverage_floor 的逐字重写归一）。
+    from coverage_json import run_coverage_json  # noqa: PLC0415
+
+    run_coverage_json(root, root / "build" / "diff_coverage_report.json")
+    return root / "build" / "diff_coverage_report.json"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -153,9 +141,7 @@ def main(argv: list[str] | None = None) -> int:
     root = pathlib.Path(args.root) if args.root else pathlib.Path(__file__).resolve().parents[1]
 
     pyproject = root / "pyproject.toml"
-    floor = (
-        load_floor(pyproject.read_text(encoding="utf-8")) if pyproject.exists() else None
-    )
+    floor = load_floor(pyproject.read_text(encoding="utf-8")) if pyproject.exists() else None
     if floor is None:
         print(
             "FAIL diff coverage :: pyproject 里没有 "
@@ -166,8 +152,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if _git(root, "rev-parse", "--verify", "--quiet", BASE_REF).returncode != 0:
         print(
-            f"NO-DATA diff coverage :: 找不到 {BASE_REF}（没配远端的克隆）"
-            " —— 跳过，不代表通过",
+            f"NO-DATA diff coverage :: 找不到 {BASE_REF}（没配远端的克隆） —— 跳过，不代表通过",
             flush=True,
         )
         return 0
@@ -190,8 +175,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if report_path is None:
         print(
-            "NO-DATA diff coverage :: 没有 .coverage 数据（覆盖率那步没跑过）"
-            " —— 跳过，不代表通过",
+            "NO-DATA diff coverage :: 没有 .coverage 数据（覆盖率那步没跑过） —— 跳过，不代表通过",
             flush=True,
         )
         return 0
@@ -201,8 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     total = covered + uncovered
     if total == 0:
         print(
-            f"NO-DATA diff coverage :: {len(changed)} 个改动文件里没有可测行"
-            " —— 跳过，不代表通过",
+            f"NO-DATA diff coverage :: {len(changed)} 个改动文件里没有可测行 —— 跳过，不代表通过",
             flush=True,
         )
         return 0

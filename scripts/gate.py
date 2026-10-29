@@ -47,25 +47,10 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from venv_python import venv_python as _venv_python
+
 ROOT = Path(__file__).resolve().parents[1]
 COV_MARKER = ROOT / "build" / ".cov-last-sha"
-
-
-def _venv_python() -> str:
-    """按平台找虚拟环境里那个解释器，找不到就退回**调用方自己用的那个**。
-
-    为什么不能写死 Windows 那条路径：CI 的 Linux runner 上没有 `.venv/Scripts/python.exe`，
-    每一步都会以"文件不存在"失败（`bin/python` 才是那边的形状），而那副模样看起来像
-    "门禁跑了、全红"。同理，runner 上通常压根没有 `.venv` 目录 —— 依赖是直接装进系统
-    python 的，这时用 `sys.executable` 才是对的，而不是硬凑一个不存在的虚拟环境。
-    """
-    for candidate in (
-        ROOT / ".venv" / "Scripts" / "python.exe",  # Windows
-        ROOT / ".venv" / "bin" / "python",  # Linux / macOS
-    ):
-        if candidate.exists():
-            return str(candidate)
-    return sys.executable
 
 
 PY = _venv_python()
@@ -1178,12 +1163,7 @@ def main() -> int:
         # 步骤跑在哪个目录按名字前缀定（比在元组里再加一个字段少一处噪声）。第一版
         # 我把 shell 那步写成"全局 npm run typecheck"，于是它在仓库根跑、根本没有这个
         # script —— 报错的样子像"壳的类型检查挂了"，其实是步目录错了。
-        if name.startswith("前端"):
-            cwd: Path | None = ROOT / "frontend"
-        elif name.startswith("shell"):
-            cwd = ROOT / "shell"
-        else:
-            cwd = None
+        cwd = _cwd_for(name)
         display, run_cmd = _resolve(name, cmd)
         ok, dt, output = _run(
             display, run_cmd, cwd, remaining=_remaining_seconds(started, deadline)

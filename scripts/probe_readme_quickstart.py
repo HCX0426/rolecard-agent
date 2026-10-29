@@ -23,12 +23,15 @@ from __future__ import annotations
 import contextlib
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
 import time
 import urllib.request
 from pathlib import Path
+
+from venv_python import venv_python as _venv_python
 
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
@@ -40,21 +43,6 @@ from rolecard_agent.core.tools.run import terminate_process_tree  # noqa: E402
 
 README = ROOT / "README.md"
 BLOCK_HEADING = "## 快速开始"
-
-
-def _venv_python() -> str:
-    """本平台 venv 里的解释器（形状随平台：Windows 是 Scripts/python.exe，类 Unix 是 bin/python）。
-
-    找不到就用调用方自己那一份 —— 与 gate.py 同一判据，别再各写一套硬编码 Windows 路径
-    （那正是 CI 第一发红的原因）。
-    """
-    for candidate in (
-        ROOT / ".venv" / "Scripts" / "python.exe",
-        ROOT / ".venv" / "bin" / "python",
-    ):
-        if candidate.exists():
-            return str(candidate)
-    return sys.executable
 
 
 # 裸解释器 / 裸 uvicorn：这两类在 README 里出现就是红（理由见模块 docstring）。
@@ -181,7 +169,11 @@ def _who_listens(port: int) -> str:
     for cmd in cmds:
         try:
             proc = subprocess.run(
-                cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=10,
             )
         except (OSError, subprocess.TimeoutExpired):
@@ -258,6 +250,9 @@ def main() -> int:
             # 20 多分钟 —— 而这一步在 CI 档里每次都跑（10-02 轮 `R102-43`）。
             # 实现仍只有 `core/tools/run.py` 那一份（那里还多一条 POSIX 的 killpg 支路）。
             terminate_process_tree(server)
+            # 临时工作目录跑完即删：从前整份探针库（app.db/chroma/uploads）永远留在
+            # %TEMP%（2026-10-30 壳与脚本审计 #4；姊妹探针 probe_docs_commands 一直有收）。
+            shutil.rmtree(workdir, ignore_errors=True)
             # 等不等得到无所谓：真正的判据是下面那一次端口回读，不是这里的返回值。
             with contextlib.suppress(Exception):
                 server.wait(timeout=20)

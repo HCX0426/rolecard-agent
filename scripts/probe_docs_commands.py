@@ -31,22 +31,13 @@ import sys
 import tempfile
 from pathlib import Path
 
+from venv_python import venv_python as _venv_python
+
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def _venv_python() -> str:
-    """本平台 venv 里的解释器（与 gate.py / README 探针同一判据，不另写一套）。"""
-    for candidate in (
-        ROOT / ".venv" / "Scripts" / "python.exe",
-        ROOT / ".venv" / "bin" / "python",
-    ):
-        if candidate.exists():
-            return str(candidate)
-    return sys.executable
 
 
 @dataclasses.dataclass(frozen=True)

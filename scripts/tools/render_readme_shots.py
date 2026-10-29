@@ -12,11 +12,13 @@
 但 chroma 落临时目录（那份脚本写死 `data/chroma`，这里不能跟着写仓库数据根）。
 跑完图在 build/readme-shots/，人工过目后自行替换 docs/assets/console-*.png。
 """
+
 from __future__ import annotations
 
 import contextlib
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -76,20 +78,38 @@ def _seed_demo(sqlite_path: Path, chroma_path: Path) -> None:
     query = HealthQueryService(conn)
     if not query.list_reports(DEFAULT_USER_ID):
         query.create_report(
-            user_id=DEFAULT_USER_ID, report_type="超声", check_time="2025-05-01",
-            institution="市第一医院", note="年度体检",
-            indices=[{
-                "index_name": "结石直径", "index_value": 5.0, "unit": "mm",
-                "ref_range": "0-5", "is_verified": True, "raw_text": "胆囊结石一枚，直径约5mm",
-            }],
+            user_id=DEFAULT_USER_ID,
+            report_type="超声",
+            check_time="2025-05-01",
+            institution="市第一医院",
+            note="年度体检",
+            indices=[
+                {
+                    "index_name": "结石直径",
+                    "index_value": 5.0,
+                    "unit": "mm",
+                    "ref_range": "0-5",
+                    "is_verified": True,
+                    "raw_text": "胆囊结石一枚，直径约5mm",
+                }
+            ],
         )
         query.create_report(
-            user_id=DEFAULT_USER_ID, report_type="超声", check_time="2026-03-12",
-            institution="市第一医院", note="复查",
-            indices=[{
-                "index_name": "结石直径", "index_value": 6.0, "unit": "mm",
-                "ref_range": "0-5", "is_verified": False, "raw_text": "结石较前增大，约6mm",
-            }],
+            user_id=DEFAULT_USER_ID,
+            report_type="超声",
+            check_time="2026-03-12",
+            institution="市第一医院",
+            note="复查",
+            indices=[
+                {
+                    "index_name": "结石直径",
+                    "index_value": 6.0,
+                    "unit": "mm",
+                    "ref_range": "0-5",
+                    "is_verified": False,
+                    "raw_text": "结石较前增大，约6mm",
+                }
+            ],
         )
     conn.close()
 
@@ -127,7 +147,10 @@ def main() -> int:
     with log.open("wb") as fh:
         server = subprocess.Popen(  # noqa: S603
             [sys.executable, str(ROOT / "scripts" / "run_api.py")],
-            cwd=str(ROOT), env=env, stdout=fh, stderr=subprocess.STDOUT,
+            cwd=str(ROOT),
+            env=env,
+            stdout=fh,
+            stderr=subprocess.STDOUT,
         )
     base = f"http://127.0.0.1:{port}"
     rc = 1
@@ -159,8 +182,12 @@ def main() -> int:
 
         proc = subprocess.run(  # noqa: S603
             ["node", str(ROOT / "scripts" / "js" / "render_readme_shots.js"), base],
-            capture_output=True, text=True, timeout=300, cwd=str(ROOT),
-            encoding="utf-8", errors="replace",
+            capture_output=True,
+            text=True,
+            timeout=300,
+            cwd=str(ROOT),
+            encoding="utf-8",
+            errors="replace",
         )
         print((proc.stdout or "") + (proc.stderr or ""))
         rc = proc.returncode
@@ -169,6 +196,8 @@ def main() -> int:
         with contextlib.suppress(Exception):
             server.wait(timeout=20)
         print(f"\n（读数出处：临时库 {sqlite_path} / 端口 {port}）")
+        # 演示库跑完即删（与 smoke/探针同一课：%TEMP% 不留任何一份库拷贝）。
+        shutil.rmtree(workdir, ignore_errors=True)
     return rc
 
 

@@ -19,9 +19,7 @@
 from __future__ import annotations
 
 import argparse
-import json
 import pathlib
-import subprocess
 import sys
 import tomllib
 
@@ -41,9 +39,7 @@ def load_floor(pyproject_text: str) -> float | None:
     return float(value) if isinstance(value, (int, float)) else None
 
 
-def evaluate(
-    entries: list[tuple[str, int, float]], floor: float
-) -> list[str]:
+def evaluate(entries: list[tuple[str, int, float]], floor: float) -> list[str]:
     """逐文件比对，返回违规描述（空表 = 全过）。
 
     ``entries`` = (文件, 语句数, 精确百分比)。0 语句文件不参与（它们恒报 100，
@@ -58,24 +54,12 @@ def evaluate(
 
 def _report_entries(root: pathlib.Path) -> list[tuple[str, int, float]] | None:
     """把 ``.coverage`` 数据变成 entries；数据不存在返回 None（调用方大声跳过）。"""
-    data_file = root / "build" / ".coverage"
-    if not data_file.exists():
+    if not (root / "build" / ".coverage").exists():
         return None
-    out_json = root / "build" / "coverage_floor_report.json"
-    out_json.parent.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run(
-        [sys.executable, "-m", "coverage", "json", "-o", str(out_json)],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"coverage json 失败（exit {proc.returncode}）：{(proc.stderr or '').strip()[-400:]}"
-        )
-    report = json.loads(out_json.read_text(encoding="utf-8"))
+    # coverage json 的唯一实现（2026-10-30 审计 #9：与 diff_coverage 的逐字重写归一）。
+    from coverage_json import run_coverage_json  # noqa: PLC0415
+
+    report = run_coverage_json(root, root / "build" / "coverage_floor_report.json")
     return [
         (
             name,
@@ -93,11 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     root = pathlib.Path(args.root) if args.root else pathlib.Path(__file__).resolve().parents[1]
 
     pyproject = root / "pyproject.toml"
-    floor = (
-        load_floor(pyproject.read_text(encoding="utf-8"))
-        if pyproject.exists()
-        else None
-    )
+    floor = load_floor(pyproject.read_text(encoding="utf-8")) if pyproject.exists() else None
     if floor is None:
         print(
             "FAIL coverage floor :: pyproject 里没有 "
@@ -113,8 +93,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if entries is None:
         print(
-            "NO-DATA coverage floor :: 没有 .coverage 数据（覆盖率那步没跑过）"
-            " —— 跳过，不代表通过",
+            "NO-DATA coverage floor :: 没有 .coverage 数据（覆盖率那步没跑过） —— 跳过，不代表通过",
             flush=True,
         )
         return 0

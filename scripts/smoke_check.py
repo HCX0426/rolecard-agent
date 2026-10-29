@@ -88,9 +88,7 @@ def _make_pdf_bytes(text: str) -> bytes:
 
 def _make_docx_bytes(paragraphs: list[str]) -> bytes:
     """构造一个最小合法 .docx(OOXML = zip + word/document.xml)，供上传链路验证 Office 解析。"""
-    body = "".join(
-        f'<w:p><w:r><w:t xml:space="preserve">{t}</w:t></w:r></w:p>' for t in paragraphs
-    )
+    body = "".join(f'<w:p><w:r><w:t xml:space="preserve">{t}</w:t></w:r></w:p>' for t in paragraphs)
     doc = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
@@ -516,9 +514,7 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         assert created.json()["report_type"] == "腹部超声"
         assert not created.json()["indices"][0]["is_verified"], "手填 ≠ 已核实"
         # 输入错误翻译成 400，而不是 500
-        bad = c.post(
-            "/api/records/report", json={"report_type": "t", "check_time": "2026-03-12"}
-        )
+        bad = c.post("/api/records/report", json={"report_type": "t", "check_time": "2026-03-12"})
         assert bad.status_code == 400, bad.text
 
     @check("审计：数据变更与模型切换都留痕")
@@ -651,7 +647,8 @@ def console_ui_smoke() -> None:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
-    copy = Path(tempfile.mkdtemp(prefix="ui_smoke_")) / "app.db"
+    smoke_root = Path(tempfile.mkdtemp(prefix="ui_smoke_"))
+    copy = smoke_root / "app.db"
     scratch_db.copy_of_live_db(copy)
     env = {
         **os.environ,
@@ -683,6 +680,10 @@ def console_ui_smoke() -> None:
         server.terminate()
         with contextlib.suppress(Exception):
             server.wait(timeout=15)
+        # 库副本是**真库的拷贝**（含记忆/会话）——跑完即删。从前成功失败路径都不回收，
+        # 每次全量门禁都在 %TEMP% 留一份用户数据的拷贝：既是垃圾累积也是隐私面
+        # （2026-10-30 壳与脚本审计 #2）。
+        shutil.rmtree(smoke_root, ignore_errors=True)
     out = (proc.stdout or "") + (proc.stderr or "")
     print(out.strip())
     print(f"（UI 冒烟跑在副本上：{copy}，端口 {port}；真库一行未动）")
