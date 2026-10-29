@@ -213,7 +213,7 @@ langchain-protocol==0.0.19
     # via
     #   langchain-core
     #   langgraph-sdk
-langgraph==1.2.11
+langgraph==1.2.14
     # via
     #   -r requirements/requirements.txt
     #   langchain
