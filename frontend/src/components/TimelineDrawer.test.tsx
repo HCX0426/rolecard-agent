@@ -24,12 +24,18 @@ import type { TimelineEvent, TimelinePage } from "../api";
 
 const ROLE = { role_id: "elysia", role_name: "爱莉希雅" };
 
-/** 本机日子的时间戳：写死日期会随日历漂移，而分组判的就是"距今几天"。 */
+/** 造一条"本机 (now - offsetDays) 那天 hm 时刻"发生的事件，按**库口径**序列化成 UTC naive。
+ *  真后端的 `at` 是 UTC（`CURRENT_TIMESTAMP`）—— 旧版这里造的是本机日期串，与库事实
+ *  相反；分组换成 `localDateKey` 后再用本机串反而会把"今天"漂成"明天"。 */
 function day(offsetDays: number, hm = "09:00"): string {
+  const [h, m] = hm.split(":").map(Number);
   const d = new Date();
   d.setDate(d.getDate() - offsetDays);
+  d.setHours(h, m, 0, 0);
   const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${hm}:00`;
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(
+    d.getUTCHours(),
+  )}:${p(d.getUTCMinutes())}:00`;
 }
 
 /** `thread_id` 默认 null：只有主动开口与会话锚点才有可跳的线程，由用例自己给。 */
@@ -163,6 +169,20 @@ describe("TimelineDrawer 事件簿", () => {
     expect(onOpenThread).toHaveBeenCalledWith("s_proactive_elysia");
     // 没有 thread_id 的那条是纯文本，不是按钮（后面那个 → 只属于可跳转的行）。
     expect(screen.getByText("没有会话的").tagName).not.toBe("BUTTON");
+  });
+
+  it("UTC 午夜跨界：本地凌晨记的事件归「今天」，不归「昨天」", async () => {
+    // R102-18 同源的第二处：`at` 是 UTC，本地 00:00–07:59（+8）记的事件 UTC 日期还是
+    // 前一天 —— 分组若直接 slice(0,10)，屏幕上就是"昨天 · 00:30"自相矛盾的一行。
+    vi.useFakeTimers({ now: new Date(2026, 9, 31, 0, 30, 0), shouldAdvanceTime: true });
+    try {
+      apiMock.get.mockResolvedValue(page([ev({ at: day(0, "00:30") })]));
+      renderDrawer();
+      await waitFor(() => expect(screen.getByText("今天")).toBeTruthy());
+      expect(screen.queryByText("昨天")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("空态说清「怎么才会有东西」，而不是留一块空白", async () => {

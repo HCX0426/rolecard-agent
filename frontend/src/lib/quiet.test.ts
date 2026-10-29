@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { QuietStatus } from "../api";
-import { formatMessageTs, formatNextOk, formatUtcNaive, parseMessageTs, quietParts } from "./quiet";
+import { formatMessageTs, formatNextOk, formatUtcNaive, localDateKey, parseMessageTs, quietParts } from "./quiet";
 
 function status(over: Partial<QuietStatus> = {}): QuietStatus {
   return {
@@ -38,6 +38,27 @@ describe("formatNextOk", () => {
   it("没有时刻、或读不出时刻，一律空串", () => {
     expect(formatNextOk(null, now)).toBe("");
     expect(formatNextOk("不是时间", now)).toBe("");
+  });
+});
+
+describe("localDateKey（事件簿按天分组的唯一口径）", () => {
+  // 同一条纪律：期望值从同一时刻现算，不写死 +8（CI 的 UTC runner 也得绿）。
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const localDate = (d: Date) =>
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+  it("UTC 裸串 → 本机日期键；UTC+8 的凌晨事件不再被归进'昨天'", () => {
+    // UTC 10-30 16:30 = 本地 10-31 00:30（+8）：旧实现 slice(0,10) 给 10-30，本机已是 31。
+    const t = new Date(Date.UTC(2026, 9, 30, 16, 30));
+    expect(localDateKey("2026-10-30 16:30:00")).toBe(localDate(t));
+    expect(localDateKey("2026-10-30T16:30:00")).toBe(localDate(t));
+  });
+
+  it("已带时区的串同一口径；解析不了回落原串切片（不给空键）", () => {
+    const t = new Date("2026-10-30T16:30:00+08:00");
+    expect(localDateKey("2026-10-30T16:30:00+08:00")).toBe(localDate(t));
+    expect(localDateKey("不是时间")).toBe("不是时间".slice(0, 10));
+    expect(localDateKey(null)).toBe("");
   });
 });
 

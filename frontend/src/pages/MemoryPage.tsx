@@ -13,7 +13,7 @@
 // 怎么保证没改行为：正文从 components/MemoryPanel.tsx **逐字搬来**（两卡的状态与处理器、
 // JSX、注释一字未动）；`SettingsPage.test.tsx` 里记忆族的用例整体迁来 `MemoryPage.test.tsx`
 // （render 目标换成 `<MemoryPage />`，断言不动），用例数搬走而非删除。
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type RoleCard, type RuntimePayload } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
 import { Button, Card } from "../components/ui";
@@ -100,6 +100,9 @@ export default function MemoryPage() {
   const [reachoutMsg, setReachoutMsg] = useState("");
   const [reachoutErr, setReachoutErr] = useState("");
   const confirm = useConfirm();
+  // 竞态守卫：快速切作用域时两个 loadMemory 都在途，A 的慢响应不许盖掉 B 的桶 ——
+  // 那不只是显示错位：盖进草稿的旧内容一旦被「保存」发出，就是跨桶覆盖（数据损坏）。
+  const loadSeqRef = useRef(0);
   // 有效档位（"0" = 自动提取关着）。字符串是为了让 `<select>` 与 option 的 value 对得上。
   const cadence = String(mem?.extract_turns ?? 12);
 
@@ -112,7 +115,9 @@ export default function MemoryPage() {
     scope ? `/api/settings/memory?role_id=${encodeURIComponent(scope)}` : "/api/settings/memory";
 
   const loadMemory = useCallback(async (scope: string) => {
+    const seq = ++loadSeqRef.current;
     const m = await api.get<MemoryPayload>(memoryUrl(scope));
+    if (seq !== loadSeqRef.current) return; // 已切到别的桶：这份旧响应整包作废
     setMem(m);
     setMemDraft(m.content);
   }, []);
@@ -191,11 +196,16 @@ export default function MemoryPage() {
     setMemErr("");
     setMemMsg("");
     setExtractBusy(true);
+    // 档位本身是全局设置，但**读回**要走当前作用域的桶：从前打裸全局 URL，角色作用域
+    // 下改这一档会把整屏（列表+原文草稿）静默换成全局记忆，而下拉还停在角色上。
+    const scope = memScope;
+    const seq = loadSeqRef.current;
     try {
       await api.put<MemoryPayload>("/api/settings/memory", {
         extract_turns: Number.parseInt(next, 10),
       });
-      const m = await api.get<MemoryPayload>("/api/settings/memory");
+      const m = await api.get<MemoryPayload>(memoryUrl(scope));
+      if (seq !== loadSeqRef.current) return; // 期间已切作用域：交还给那次的 loadMemory
       setMem(m);
       setMemDraft(m.content);
       setMemMsg(

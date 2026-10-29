@@ -97,6 +97,13 @@ export default function ChatPage({
   } = useMessageSelection(messages, () => setEditing(null));
   // 本轮是否收到过 error 事件（详情留到收尾时统一提示，见 applyMeta 的说明）。
   const errorRef = useRef<string>("");
+  // 当前选中会话的活引用：上传收尾的回读要拿它比对"这条历史还属于现在的屏幕吗"
+  // （闭包里的 sessionId 是发起上传那一刻的，切走会话后它是旧的）。
+  // 用 effect 统一同步，覆盖 selectSession/createSession/删除清空全部四个写点。
+  const activeSessionRef = useRef<string | null>(null);
+  useEffect(() => {
+    activeSessionRef.current = sessionId;
+  }, [sessionId]);
 
   /** 把事件的旁路信息落到对应的界面状态上（气泡正文之外的信息）。 */
   const applyMeta = useCallback((meta: StreamMeta) => {
@@ -174,8 +181,13 @@ export default function ChatPage({
 
   const scrollRef = useAutoScroll(sessionId, [messages, live, mirror]);
 
+  // 快速连点两条会话的竞态守卫：两个 selectSession 都在途时，慢到的旧响应不许把
+  // 旧会话的历史/模型/折叠计数盖到新会话头上（同仓库 TimelineDrawer 的 reqRef 同款）。
+  const selectSeqRef = useRef(0);
+
   async function selectSession(threadId: string) {
     if (sendingRef.current) return;
+    const seq = ++selectSeqRef.current;
     setSessionId(threadId);
     // 点进某个角色的「主动会话」= 那一摞看过了（`api/index.ts` 的 `markRoleReachoutsRead`
     // 这条端点一直有定义、零调用者）。
@@ -199,6 +211,7 @@ export default function ChatPage({
           .get<SessionContext>(`/api/session/${threadId}/context`)
           .catch(() => ({ trimmed: 0, kept: 0, budget: 0 }) as SessionContext),
       ]);
+      if (seq !== selectSeqRef.current) return; // 已切到别的会话：这份旧历史整包作废
       setMessages(page.messages);
       // 被截断时要如实说明：否则用户以为看到的是全部历史（审查报告 P2）。
       setHistoryTruncated(page.truncated ? page.total - page.messages.length : 0);
@@ -530,6 +543,9 @@ export default function ChatPage({
     sessionId,
     ensureSession: createSession,
     reloadMessages: async (tid) => {
+      // 上传期间允许切会话（不像发送那样被 sendingRef 挡住），所以收尾回读前先比对：
+      // 目标会话已不是当前屏幕上的那条，就不许把它的历史整屏写进来（旧响应盖新会话）。
+      if (tid !== activeSessionRef.current) return;
       try {
         await reloadMessages(tid);
       } catch {

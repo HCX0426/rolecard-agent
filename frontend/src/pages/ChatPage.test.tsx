@@ -12,7 +12,7 @@
 //   2. 工具调用卡片从"执行中"变成结果；
 //   3. 上下文裁剪提示真的渲染出来（而且挂在不会被回放覆盖的位置）。
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChatEvent } from "../api";
@@ -358,6 +358,52 @@ describe("ChatPage 深链打开会话（收件箱「打开对话并回复」）"
       "/api/session/s_proactive_general_assistant/messages",
     );
     expect(await screen.findByText("今天腰还酸吗？")).toBeTruthy();
+  });
+});
+
+describe("ChatPage 快速切会话的竞态守卫（2026-10-30 批次的回归钉）", () => {
+  it("慢到的旧会话历史不许盖到新会话头上（历史/模型/折叠计数整包作废）", async () => {
+    // 旧实现无令牌：点 A（慢）再点 B（快），A 的响应后到 → B 的标题配 A 的历史，
+    // 连 seenTotal 记账也被污染出假"别处写入"。TimelineDrawer 早有 reqRef 同款，这是漏写。
+    let resolveOld!: () => void;
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/sessions")
+        return [
+          { thread_id: "s_old", title: "旧会话", role_id: "r" },
+          { thread_id: "s_new", title: "新会话", role_id: "r" },
+        ];
+      if (url === "/api/roles") return [];
+      if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
+      if (url === "/api/settings/model-providers") return { providers: [] };
+      if (url === "/api/session/s_old/messages") {
+        return new Promise((res) => {
+          resolveOld = () =>
+            res({
+              messages: [{ id: "m1", role: "assistant", content: "旧会话的历史" }],
+              total: 1, limit: 500, truncated: false,
+            });
+        });
+      }
+      if (url === "/api/session/s_new/messages")
+        return {
+          messages: [{ id: "m2", role: "assistant", content: "新会话的历史" }],
+          total: 1, limit: 500, truncated: false,
+        };
+      if (url.endsWith("/context")) return { trimmed: 0, kept: 0, budget: 24000 };
+      if (url.startsWith("/api/session/")) return { model_name: null };
+      return {};
+    });
+
+    render(<ToastProvider><ChatPage /></ToastProvider>);
+    fireEvent.click(await screen.findByText("旧会话"));
+    fireEvent.click(await screen.findByText("新会话"));
+    expect(await screen.findByText("新会话的历史")).toBeTruthy();
+
+    await act(async () => {
+      resolveOld();
+    });
+    expect(screen.queryByText("旧会话的历史")).toBeNull();
+    expect(screen.getByText("新会话的历史")).toBeTruthy();
   });
 });
 

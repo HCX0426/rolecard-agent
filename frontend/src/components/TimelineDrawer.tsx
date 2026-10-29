@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type TimelineEvent, type TimelinePage } from "../api";
-import { formatUtcNaive } from "../lib/quiet";
+import { formatUtcNaive, localDateKey } from "../lib/quiet";
 import { Button, Modal, Notice } from "./ui";
 import { describeError } from '../lib/errors';
 
@@ -55,8 +55,9 @@ function todayKey(offsetDays = 0): string {
 }
 
 /** "YYYY-MM-DD HH:MM:SS" → "今天 / 昨天 / 4月9日"。
- *  按**本机日子**比，不做时区换算：库里那串就是本机写下去的本地时间，换算一次反而
- *  会把"今天"挪走一天（那是这类时间轴最容易被当成 bug 的地方）。 */
+ *  传入的日期键先经 `localDateKey` 换算（分组侧做），这里只比对本机日子。库里那串
+ *  是 **UTC**（`CURRENT_TIMESTAMP`），不换算的话 UTC+8 的本地 00:00–07:59 会被归进
+ *  "昨天"，同一行的时刻却显示本地 07:30 —— 一行自相矛盾（R102-18 同源，见 lib/quiet）。 */
 function dayLabel(date: string): string {
   if (date === todayKey()) return "今天";
   if (date === todayKey(1)) return "昨天";
@@ -140,7 +141,8 @@ export default function TimelineDrawer({
   const groups = useMemo<DayGroup[]>(() => {
     const out: DayGroup[] = [];
     for (const ev of items) {
-      const date = (ev.at ?? "").slice(0, 10);
+      // UTC naive → 本机日期键（不换算就是"昨天 · 07:30"那种自相矛盾的一行）。
+      const date = localDateKey(ev.at);
       const last = out[out.length - 1];
       if (last && last.date === date) last.items.push(ev);
       else out.push({ date, label: dayLabel(date), items: [ev] });

@@ -24,6 +24,22 @@ export function formatUtcNaive(ts: string | null | undefined, hmOnly = false): s
   return hmOnly ? hm : `${t.getMonth() + 1}-${t.getDate()} ${hm}`;
 }
 
+/** UTC naive → **本机日期键** "YYYY-MM-DD"（事件簿按天分组的唯一口径）。
+ *
+ * 为什么单独立一条：分组如果直接 `at.slice(0, 10)`（切 UTC 日期），UTC+8 的
+ * 本地 00:00–07:59 会被归进"昨天"，同一行的时刻却经 `formatUtcNaive` 显示成本地
+ * 07:30 —— 屏上一行自相矛盾（R102-18 在收件箱修过同类，事件簿没跟着修）。
+ * 解析失败时回落原串的日期切片：宁可按旧口径分组，不给空键。 */
+export function localDateKey(ts: string | null | undefined): string {
+  if (!ts) return "";
+  const iso = ts.includes("T") ? ts : ts.replace(" ", "T");
+  const normalized = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : `${iso}Z`;
+  const t = new Date(normalized);
+  if (Number.isNaN(t.getTime())) return ts.slice(0, 10);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
+}
+
 /** 「下一次大约 16:34 / 明天 08:00」。给不出时刻（要他回话、正在对话）就是空串。 */
 export function formatNextOk(iso: string | null, now: Date = new Date()): string {
   if (!iso) return "";

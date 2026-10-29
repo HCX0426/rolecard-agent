@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type DomainInfo, type GenericRecord, type ReportRecord } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
 import { Button, Card, Notice, PageHeader, Tag } from "../components/ui";
@@ -144,11 +144,15 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
   const PAGE_SIZE = 20;
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
+  // 连点翻页的竞态守卫：慢到的旧页不许顶着新页码留在屏上（表格没有轮询，错一次就一直错）。
+  const pageSeqRef = useRef(0);
 
   const load = useCallback(async () => {
+    const req = ++pageSeqRef.current;
     const res = await api.get<{ items: ReportRecord[]; total: number }>(
       `/api/records?limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`,
     );
+    if (req !== pageSeqRef.current) return; // 已翻到别的页：这份旧页整包作废
     setReports(res.items);
     setTotal(res.total);
   }, [page]);
@@ -577,9 +581,14 @@ function GenericDomainData({
   });
   const confirm = useConfirm();
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
+  // 快速切域的竞态守卫：A 域的慢响应不许顶着 B 域的名字留在屏上（表格不自愈）。
+  const reqRef = useRef(0);
 
   const load = useCallback(async () => {
-    setRecords(await api.listDomainRecords(domain));
+    const req = ++reqRef.current;
+    const rows = await api.listDomainRecords(domain);
+    if (req !== reqRef.current) return; // 已切到别的域：这份旧表整包作废
+    setRecords(rows);
   }, [domain]);
 
   useEffect(() => {

@@ -6,7 +6,7 @@
 // /api/settings/runtime 三个端点，其余分支不再陪跑。
 // 主动开口可写卡那一半从「页签拆分」用例里拆来（运行环境只读那一半留在 SettingsPage.test）。
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -535,6 +535,82 @@ describe("记忆卡：改一条 / 合两条（S-3 界面那半）", () => {
     fireEvent.click(picks[0]); // 1 号：未钉住
     fireEvent.click(picks[2]); // 3 号：钉住
     expect(await screen.findByText(/钉住状态不跟着搬/)).toBeTruthy();
+  });
+});
+
+describe("作用域竞态守卫（2026-10-30 批次的回归钉）", () => {
+  const ROLE_R1 = {
+    role_id: "r1", role_name: "角色1", system_prompt: "", temperature: 0.7,
+    model_name: "", tool_whitelist: [], knowledge_scopes: [], is_builtin: false,
+    description: "", reachout_enabled: false, exemplars: [],
+  };
+  const ROLE_R2 = { ...ROLE_R1, role_id: "r2", role_name: "角色2" };
+  const bucket = (roleId: string | null, content: string) => ({
+    enabled: true, role_id: roleId, content, items: [],
+    active_count: 0, limit: 200, over_limit: false, extract_turns: 12,
+  });
+
+  it("快速连切两个角色：慢到的旧桶响应整包作废，不许盖进新桶的草稿", async () => {
+    // 旧实现无守卫：r1 的响应后到，"r1 的内容"填进标着 r2 的编辑器——此时点「保存」
+    // 发出的 PUT 带 role_id=r2，A 桶的正文静默覆盖 B 桶（数据损坏，不只是显示错位）。
+    let resolveR1!: () => void;
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/roles") return [ROLE_R1, ROLE_R2];
+      if (url === "/api/settings/memory?role_id=r1") {
+        return new Promise((res) => {
+          resolveR1 = () => res(bucket("r1", "角色1的记忆"));
+        });
+      }
+      if (url === "/api/settings/memory?role_id=r2") return bucket("r2", "角色2的记忆");
+      if (url === "/api/settings/memory") return bucket(null, "全局的记忆");
+      return {};
+    });
+    render(<MemoryPage />);
+    const sel = (await screen.findAllByRole("combobox") as HTMLSelectElement[]).find((s) =>
+      s.textContent?.includes("全局"),
+    )!;
+    await screen.findByDisplayValue("全局的记忆");
+
+    fireEvent.change(sel, { target: { value: "r1" } }); // 在途（手工放行）
+    fireEvent.change(sel, { target: { value: "r2" } });
+    expect(await screen.findByDisplayValue("角色2的记忆")).toBeTruthy();
+
+    await act(async () => {
+      resolveR1();
+    });
+    // 慢到的 r1 响应被令牌判过期：草稿仍是 r2 的，"保存"不可能再把 r1 的内容发进 r2 桶。
+    expect(screen.queryByDisplayValue("角色1的记忆")).toBeNull();
+    expect(screen.getByDisplayValue("角色2的记忆")).toBeTruthy();
+  });
+
+  it("角色作用域下改提取档位：读回的是该角色的桶，整屏不再被换成全局记忆", async () => {
+    // 旧实现 PUT 后打裸全局 URL 读回：角色作用域下列表+原文草稿静默换成全局桶，
+    // 而下拉还停在该角色 —— 屏上数据与作用域标签互相说谎。
+    let turns = 12; // 后端收下"关"之后有效值变 0（照抄既有那条档位用例的活桩手法）
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/roles") return [ROLE_R1];
+      const scoped = url.includes("role_id=r1");
+      return { ...bucket(scoped ? "r1" : null, scoped ? "角色1的记忆" : "全局的记忆"), extract_turns: turns };
+    });
+    apiMock.put.mockImplementation(async () => {
+      turns = 0;
+      return {};
+    });
+    render(<MemoryPage />);
+    const sel = (await screen.findAllByRole("combobox") as HTMLSelectElement[]).find((s) =>
+      s.textContent?.includes("全局"),
+    )!;
+    fireEvent.change(sel, { target: { value: "r1" } });
+    await screen.findByDisplayValue("角色1的记忆");
+
+    const cadence = (screen.getAllByRole("combobox") as HTMLSelectElement[]).find((s) =>
+      [...s.options].some((o) => o.textContent?.includes("每 12 轮")),
+    )!;
+    fireEvent.change(cadence, { target: { value: "0" } });
+    expect(await screen.findByText(/已关掉自动提取/)).toBeTruthy();
+    expect(screen.getByDisplayValue("角色1的记忆")).toBeTruthy();
+    expect(screen.queryByDisplayValue("全局的记忆")).toBeNull();
+    expect(apiMock.get).toHaveBeenLastCalledWith("/api/settings/memory?role_id=r1");
   });
 });
 
