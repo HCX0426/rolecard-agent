@@ -41,13 +41,19 @@ const MAX_BUBBLE_CHARS = 64;
 /** 指针离开桌面件多久之后，趴着的才自己回去：给"划过它身上"留的宽限。 */
 const RETUCK_MS = 900;
 /**
- * "点哪儿算点桌宠"的余量：色片那 88 见方之外，再算上**壳能把窗挪走多远**。
- * 横向 96 = 壳里的 `SIDE_TUCK`（趴边 ↔ 拉出来那一步），纵向 44 = `BOTTOM_TUCK`。
- * 宽限期里整扇窗都吃点击（为的是"色片刚从边上滑走而手还在原地"），所以落在这段带上的一下
- * 要认成点它；再往外（画布左右各还有 84px、上面 280px）就是"点在桌宠旁边的桌面上"了。
+ * "点哪儿算点桌宠"的位移余量 —— **只在刚滑过窗的宽限期内生效**（见 `onPet`）。
+ * 横向 = 壳里的 `SIDE_TUCK`（趴边 ↔ 拉出来那一步：20 + (160 − 48) = 132），
+ * 纵向 = `BOTTOM_TUCK`（184 + 4 − 48 = 140）。数值抄自 `shell/main/windows.ts`，
+ * 那边改色片尺寸/露出量时这里要跟着改（两处各有注释钉着对方）。
+ * 2026-10-29 两处改动：① 尺寸按渲染层**现在**的 160×184 盒订正（旧值 96/44 按 88 见方
+ * 算，形象放大后没跟 —— 用户报的"没点到图像、点周围也弹消息框"就是这对旧数）；
+ * ② 余量从"永远开着"收紧成"只在滑窗宽限期"——平时点她周围的空气就是点桌面，
+ * 而"悬停把她拉出来→马上点旧位置"这条路径（光标相对色片正好偏移一个滑距）照旧算点她。
  */
-const HIT_SLACK_X = 96;
-const HIT_SLACK_Y = 44;
+const HIT_SLACK_X = 132;
+const HIT_SLACK_Y = 140;
+/** 滑窗宽限期：滑动动画 280ms + 用户的手在动画里就按下去的反应量。 */
+const SLIDE_GRACE_MS = 600;
 /** 面板里摊开最近几条。**这不是"对话的全部"** —— 一条主动会话今天实量到 44 条，
  *  截到这儿只剩最近这一截，所以列表顶部必须说出"上面还有几条"（见 `historyTotal`），
  *  否则驻留件就在悄悄冒充整段历史。再多就不在这里翻了：这块是透明置顶窗，
@@ -128,6 +134,11 @@ export default function PetPage() {
   // 把 10 秒的节拍重置一遍（而它只是想知道这次要不要拍原文）。
   const showContentRef = useRef(true);
   const retuckRef = useRef<number | null>(null);
+  /** 最近一次"壳真的发起滑窗"的时刻（reveal 的滑出、retuck 的趴回、拖完的吸边）。见 `onPet`。 */
+  const slideAtRef = useRef(0);
+  function markSlide() {
+    slideAtRef.current = Date.now();
+  }
   /** 色片那块 DOM：只用来量"点的那一下离它有多远"（见 `onPet` 与 `HIT_SLACK_*`）。 */
   const spriteRef = useRef<HTMLDivElement | null>(null);
   // `expanded` 的"读时不重渲染"版本：拖拽期间 pointermove 密集触发，而 React 状态要到下一次
@@ -446,6 +457,7 @@ export default function PetPage() {
       window.clearTimeout(retuckRef.current);
       retuckRef.current = null;
     }
+    markSlide();
     shellBridge()?.petReveal?.();
   }
 
@@ -455,6 +467,7 @@ export default function PetPage() {
     retuckRef.current = window.setTimeout(() => {
       retuckRef.current = null;
       shellBridge()?.petRetuck?.();
+      markSlide();
     }, RETUCK_MS);
   }
 
@@ -479,10 +492,10 @@ export default function PetPage() {
    *    一起拖回去，用 clientX 算出来的差值恒为 0（这类"看起来在动其实没动"的坑很典型）；
    *  - 只把增量交给壳（`movePetBy`），绝对坐标与出屏夹取都在主进程 —— 页面拿不到"把窗
    *    放到哪"的权力。
-   *  - **按下/点击挂在根节点，不挂在色片上**：200×240 里色片只占中间 88 见方，两侧各 56px
-   *    是透明的。实测从右边趴着的状态点它：悬停把窗口往屏内拉 96px，色片就从光标底下滑走了，
-   *    而那时光标还在窗口内、只是落到了透明边上 —— 挂在色片上的 handler 收不到，用户看到的
-   *    就是"我点它，它跑了"。透明区对用户是不可见的，整扇窗都该算"点的是桌宠"。
+   *  - **按下/点击挂在根节点，不挂在色片上**：从右边趴着的状态点它，悬停把窗口往屏内拉 132px，
+   *    色片从光标底下滑走，那一记 click 落在的是根节点 —— handler 挂色片上就收不到，用户看到的
+   *    是"我点它，它跑了"。"算不算点她"由 `onPet` 在 click 帧判：色片真实盒子，
+   *    外加刚滑过窗那段宽限期的位移余量（2026-10-29 收紧：宽限期外点她周围 = 点桌面）。
    */
   const dragRef = useRef<{ x: number; y: number } | null>(null);
   const dragMovedRef = useRef(false);
@@ -517,6 +530,9 @@ export default function PetPage() {
     // 松手才让壳判"要不要吸到边上"（§7.6）。零参数：吸哪条边由壳按当前工作区量，
     // 而移动过程中判会抖（一路拖过去会"吸上→拉开→吸上"）。旧壳没这个方法就是不吸，无害。
     shellBridge()?.petDragEnd?.();
+    // 吸边那一步同样会把窗滑走（`petDockSnap`），宽限期照给：点她周围 = 点桌面，
+    // 但"刚吸完、手还在旧落点"的那一下要认（同 `reveal`/`pointerLeft` 的理由）。
+    markSlide();
     // `dragMovedRef` 留给紧随其后的 click 事件看完，下一次按下才清 —— 浏览器在拖完之后照样
     // 会补一个 click，不认这一点就是"拖完一松手面板自己弹出来了"。
   }
@@ -526,30 +542,41 @@ export default function PetPage() {
     expand(!expandedRef.current);
   }
 
-  /** 点哪儿算"点桌宠"：色片那 88 见方，**外加壳能把窗挪走的距离**（见 `HIT_SLACK_*`）。
-   *  宽限期里整扇窗都吃点击，所以这一层必须自己认清楚落点是不是它。 */
-  function onPet(event: { clientX: number; clientY: number; target: EventTarget | null }): boolean {
+  /** 点哪儿算"点桌宠"：色片那块矩形，**外加刚滑过窗时的那段位移余量**（见 `HIT_SLACK_*`）。
+   *  宽限期外，点她周围的空气就是点桌面：收起着什么都不做，摊着才是收起（见 `rootClick`）。 */
+  function onPet(event: {
+    clientX: number;
+    clientY: number;
+    target: EventTarget | null;
+  }): boolean {
     const el = spriteRef.current;
     if (!el) return false;
     const hit = event.target as HTMLElement | null;
     if (hit && (hit === el || el.contains(hit))) return true; // 就点在色片身上，不用量坐标
     const r = el.getBoundingClientRect();
     if (!r.width && !r.height) return true; // 量不到形状（无布局的环境）就按老规矩：算点它
+    const sliding = Date.now() - slideAtRef.current < SLIDE_GRACE_MS;
+    const sx = sliding ? HIT_SLACK_X : 0;
+    const sy = sliding ? HIT_SLACK_Y : 0;
     return (
-      event.clientX >= r.left - HIT_SLACK_X &&
-      event.clientX <= r.right + HIT_SLACK_X &&
-      event.clientY >= r.top - HIT_SLACK_Y &&
-      event.clientY <= r.bottom + HIT_SLACK_Y
+      event.clientX >= r.left - sx &&
+      event.clientX <= r.right + sx &&
+      event.clientY >= r.top - sy &&
+      event.clientY <= r.bottom + sy
     );
   }
 
-  /** 根节点的点击分工：**"点开面板"这个动作只属于色片那一块（含上面那段位移余量）**。
+  /** 根节点的点击分工：**"点开面板"这个动作只属于色片那一块的矩形**。
    *
    *  以前是"整块窗都是桌宠"（200×240 里色片占中间 88，边上是 56px 透明带），点哪儿都算点它。
    *  2026-09-24 把窗改成常驻画布（560×520，为了根治展开重影）之后，"边上"变成了左右各 180px、
    *  上面 280px —— 于是"我明明没点到桌宠，点它旁边的桌面却调出了消息框"（用户报的这条）。
+   *  2026-09 那版给的解法是"色片盒 ±96/44 的位移余量"；那对余量**永远开着**，形象从 88 提到
+   *  160×184 后也没订正 —— 于是"点图像周围的空气也弹框"复发了（用户 2026-10-29 再报）。
+   *  现在余量只在刚滑过窗的宽限期内给（悬停拉出/趴回时，光标相对色片正好偏移一个滑距，
+   *  那一段落点要认）；平时点她周围 = 点桌面。
    *
-   *  分工：色片那一带 = 开 / 合；摊着的时候点别处 = 收起来（点空白关闭，这条留着有用）；
+   *  分工：色片上 = 开 / 合；摊着的时候点别处 = 收起来（点空白关闭，这条留着有用）；
    *  收起着的时候点别处 = **什么都不做**。
    */
   function rootClick(event: React.MouseEvent<HTMLDivElement>) {
@@ -981,7 +1008,7 @@ export default function PetPage() {
                   setHistoryTotal(0); // 换角色 = 换一条会话，上一角色的"上面还有 N 条"不能跟着搬
                   historyShapeRef.current = "";
                 }}
-                className="max-w-[150px] truncate rounded border border-slate-200 bg-white px-1 py-0.5 text-xs dark:border-slate-600 dark:bg-slate-800"
+                className="w-[150px] truncate rounded border border-slate-200 bg-white px-1 py-0.5 text-xs dark:border-slate-600 dark:bg-slate-800"
                 title="换个工作台对象（每个角色是它自己的那条主动会话）"
               >
                 {roles.map((r) => (

@@ -24,6 +24,7 @@ export default function Composer({
   ctxPct,
   droppedThisTurn,
   inputRef,
+  hostRef,
   onSubmit,
   onStop,
   onEnhance,
@@ -42,6 +43,9 @@ export default function Composer({
   /** 本轮被折叠掉的历史条数（H3）；没有折叠时为 null。只用于悬停明细。 */
   droppedThisTurn: number | null;
   inputRef: React.RefObject<HTMLTextAreaElement>;
+  /** 消息列表那一块（用户 2026-10-29：输入框长高以对话区高度的 40% 为封顶）。
+   *  量不到（浏览器调试页没挂、jsdom 里高度为 0）就退回 160px 的旧封顶。 */
+  hostRef?: React.RefObject<HTMLElement>;
   onSubmit: () => void;
   onStop: () => void;
   onEnhance: () => void;
@@ -49,13 +53,26 @@ export default function Composer({
 }) {
   const imageInputRef = useRef<HTMLInputElement>(null);
 
-  // 输入框自适应高度：内容多时长高（封顶 160px 后内部滚动），发送/清空后缩回一行。
+  // 输入框自适应高度：内容多时长高，封顶 = 对话区高度的 40%（量不到的环境用 160px），
+  // 超过后框内滚动 —— 滚动条不显示（`no-scrollbar`，用户 2026-10-29：能滚，但别看见那个条）。
+  // ResizeObserver 让封顶跟着窗口尺寸走：只按 input 变化重算的话，把窗口拉小之后
+  // 输入框还按旧封顶占着，要等下一次打字才缩。
   useEffect(() => {
     const el = inputRef.current;
     if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-  }, [input, inputRef]);
+    const host = hostRef?.current ?? null;
+    const resize = () => {
+      const cap = host && host.clientHeight > 0 ? Math.round(host.clientHeight * 0.4) : 160;
+      el.style.maxHeight = `${cap}px`;
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, cap)}px`;
+    };
+    resize();
+    if (!host || typeof ResizeObserver === "undefined") return; // jsdom / 无宿主：只有静态那一次
+    const ro = new ResizeObserver(resize);
+    ro.observe(host);
+    return () => ro.disconnect();
+  }, [input, inputRef, hostRef]);
 
   async function pickImage(file: File | undefined) {
     if (!file) return;
@@ -117,7 +134,7 @@ export default function Composer({
               : "输入消息，Enter 发送 / Shift+Enter 换行（没有对话会自动创建）"
           }
           disabled={busy}
-          className="max-h-40 w-full resize-none bg-transparent px-4 pt-3 pb-1 leading-relaxed outline-none focus-visible:border-b-2 focus-visible:border-cocoa-400 disabled:bg-slate-50 dark:disabled:bg-slate-800/50"
+          className="w-full resize-none overflow-y-auto bg-transparent px-4 pt-3 pb-1 leading-relaxed outline-none no-scrollbar disabled:bg-slate-50 dark:disabled:bg-slate-800/50"
         />
         <div className="flex items-center justify-between gap-2 px-2.5 pb-2">
           <div className="flex items-center gap-1">

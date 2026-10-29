@@ -437,9 +437,9 @@ export default function RolesPage({
             }}
             className="mt-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5"
           >
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 items-start gap-4">
               <label className="block">
-                <span className="text-xs text-slate-500 dark:text-slate-400">role_id（小写字母/数字/下划线{editing ? "，编辑时不可改" : ""}）</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">role_id</span>
                 <input
                   required
                   disabled={!!editing}
@@ -448,9 +448,14 @@ export default function RolesPage({
                   pattern="[a-z][a-z0-9_]*"
                   className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm disabled:bg-slate-50 dark:bg-slate-800/50"
                 />
+                {/* 说明降级到输入框下面独占一行：嵌在 label 文字里会把 label 撑成两行，
+                    把同排的 role_name 输入框顶歪（用户 2026-10-29：多余注释导致没对齐）。 */}
+                <span className="mt-1 block text-11 leading-relaxed text-slate-400 dark:text-slate-500">
+                  小写字母开头，可用数字/下划线{editing ? "；编辑时不可改" : ""}
+                </span>
               </label>
               <label className="block">
-                <span className="text-xs text-slate-500 dark:text-slate-400">role_name</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">角色名</span>
                 <input
                   required
                   value={form.role_name}
@@ -459,6 +464,16 @@ export default function RolesPage({
                 />
               </label>
             </div>
+            {/* 描述紧跟角色名之后（用户 2026-10-29："描述应该放角色名下面"）：
+                它和名字同属"这个角色是谁"，原先沉在表单最底部（第 8 格）。 */}
+            <label className="mt-3 block">
+              <span className="text-xs text-slate-500 dark:text-slate-400">描述</span>
+              <input
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm"
+              />
+            </label>
             <label className="mt-3 block">
               <span className="text-xs text-slate-500 dark:text-slate-400">人设规则</span>
               <textarea
@@ -469,7 +484,7 @@ export default function RolesPage({
                 className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm"
               />
             </label>
-            <div className="mt-3 grid grid-cols-2 gap-4">
+            <div className="mt-3 grid grid-cols-2 items-start gap-4">
               <label className="block">
                 <span className="text-xs text-slate-500 dark:text-slate-400">temperature（0–1）</span>
                 <input
@@ -483,10 +498,7 @@ export default function RolesPage({
                 />
               </label>
               <label className="block">
-                <span className="text-xs text-slate-500 dark:text-slate-400">
-                  模型（角色级 —— 这个角色的对话用哪一个；顺序按「服务」页那份优先级排，
-                  留空 = 跟着它走）
-                </span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">模型</span>
                 <select
                   value={form.model_name}
                   onChange={(e) => setForm({ ...form, model_name: e.target.value })}
@@ -499,6 +511,10 @@ export default function RolesPage({
                     </option>
                   ))}
                 </select>
+                {/* 同 role_id 那一格：说明出 label、独占输入框下面一行，两列的输入框才齐。 */}
+                <span className="mt-1 block text-11 leading-relaxed text-slate-400 dark:text-slate-500">
+                  角色级 —— 留空 = 跟「服务」页那份优先级走
+                </span>
               </label>
             </div>
             <label className="mt-3 flex cursor-pointer items-center gap-2 text-xs">
@@ -606,7 +622,7 @@ export default function RolesPage({
                 </label>
               )}
             </div>
-            <label className="mt-3 block">
+            <div className="mt-3">
               <span className="text-xs text-slate-500 dark:text-slate-400">工具权限</span>
               <div className="mt-1 flex gap-5 text-sm">
                 <label className="flex cursor-pointer items-center gap-1.5">
@@ -626,7 +642,7 @@ export default function RolesPage({
                   自定义白名单
                 </label>
               </div>
-            </label>
+            </div>
             {wlMode === "custom" && catalog && (
               <div className="mt-2 space-y-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-3">
                 <ToolGroup
@@ -651,7 +667,11 @@ export default function RolesPage({
                 )}
               </div>
             )}
-            <label className="mt-3 block">
+            {/* 这一块的标题不是 `<label>` 而是 `<div>`（2026-10-29 修误删）：整块曾被一个
+                label 包住，浏览器把"点这里任何非控件处"转发给 label 里第一个可标注元素 ——
+                正好是第一个作用域 chip 的 ✕。于是点行空白 = 删一个作用域，每点一个。
+                一块里装着多个独立控件（chips/下拉/输入框/按钮）时，label 只能包住它的标题文字。 */}
+            <div className="mt-3">
               <span className="text-xs text-slate-500 dark:text-slate-400">
                 知识作用域（声明可检索的范围；不选 = 不可检索）
               </span>
@@ -667,7 +687,12 @@ export default function RolesPage({
                         {s}
                         <button
                           type="button"
-                          onClick={() => toggleScope(s)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleScope(s);
+                          }}
+                          title={`移除作用域 ${s}`}
+                          aria-label={`移除作用域 ${s}`}
                           className="text-blue-300 hover:text-blue-600 dark:text-blue-400"
                         >
                           ✕
@@ -720,7 +745,7 @@ export default function RolesPage({
                 不可检索。库归内核，角色只声明 —— 避免 N 个角色 × M 套索引。可选列表来自
                 现存角色的声明并集。
               </span>
-            </label>
+            </div>
             <div className="mt-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-slate-500 dark:text-slate-400">
@@ -793,14 +818,6 @@ export default function RolesPage({
                 模型有概率把范例里那个数当成你的事实，在别的问句上复读出来。数值让模型自己去档案里取。
               </span>
             </div>
-            <label className="mt-3 block">
-              <span className="text-xs text-slate-500 dark:text-slate-400">描述</span>
-              <input
-                value={form.description}
-                onChange={(e) => setForm({ ...form, description: e.target.value })}
-                className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm"
-              />
-            </label>
             <div className="mt-4 flex gap-2">
               <Button type="submit">保存</Button>
               <Button variant="ghost" type="button" onClick={() => setEditing(null)}>

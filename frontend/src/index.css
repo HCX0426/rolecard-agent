@@ -119,6 +119,15 @@
   outline-color: var(--color-blue-400);
 }
 
+/* 能滚，但看不见滚动条（用户 2026-10-29：输入框右边那个条是不需要的）。
+   两条都要：Chromium/Electron 走 ::-webkit-scrollbar，Firefox 走 scrollbar-width。 */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 
 /* 材质与配色是**两个正交轴**（2026-10-25 用户点破：毛玻璃透明 ≠ 暖色调）。
      材质轴 = <html data-material>：glass（透明+模糊+光晕）↔ panel（不透明实板）；

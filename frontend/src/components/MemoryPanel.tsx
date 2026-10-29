@@ -487,7 +487,10 @@ export function MemoryPanel() {
           <select
             value={memScope}
             onChange={(e) => changeMemScope(e.target.value)}
-            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+            /* 定宽（用户 2026-10-29：控件宽度不该随角色名长短变）：原生 select 的宽度由
+               "当前选中项"的文字决定，角色名一长就把框撑宽、换选项时整行跟着跳。给一个
+               固定宽度 + 超长省略，换谁选都是同一格宽。 */
+            className="w-64 min-w-0 truncate rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
           >
             <option value="">全局（跨角色共享的用户事实）</option>
             {memRoles.map((r) => (
