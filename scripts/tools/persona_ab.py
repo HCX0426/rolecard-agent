@@ -8,7 +8,7 @@ token 账 —— 那些笔账不该混进真库的"今天花了多少"。
 
     .venv\\Scripts\\python.exe scripts\\persona_ab.py                    # 开口臂：范例三种条件
     .venv\\Scripts\\python.exe scripts\\persona_ab.py --group chat       # 对话臂：深度注入开/关
-    .venv\\Scripts\\python.exe scripts\\persona_ab.py --role elysia --n 6
+    .venv\\Scripts\\python.exe scripts\\persona_ab.py --role medical_archivist --n 6
 
 `--n` 默认 5：**样本小到个位数的 A/B 只能看方向，不能定阈值**。这条写在输出里也写在下面，
 因为第一次跑就有人想把 0.13 与 0.14 当成差别（它们不是 —— 见 §8.12 的读数）。
@@ -20,6 +20,7 @@ token 账 —— 那些笔账不该混进真库的"今天花了多少"。
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sqlite3
 import sys
@@ -39,7 +40,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage  # no
 
 from rolecard_agent.base.identity import resolve_instance_identity  # noqa: E402
 from rolecard_agent.base.text import text_of  # noqa: E402
-from rolecard_agent.config import Settings  # noqa: E402
+from rolecard_agent.config import DEFAULT_SILICONFLOW_BASE_URL, Settings  # noqa: E402
 from rolecard_agent.core import runtime_settings  # noqa: E402
 from rolecard_agent.core.agent.graph import build_model  # noqa: E402
 from rolecard_agent.core.agent.prompts import (  # noqa: E402
@@ -70,6 +71,33 @@ HETERO_EXEMPLARS: list[dict[str, str]] = [
 #: 对话臂共用的几条"用户话"：短、日常、带一点情绪压力（那正是模板最容易回来的地方）。
 SEED_TURNS = ["我回来了", "刚跑完步", "今天好累", "你在干嘛"]
 PROBE_TURN = "你会不会觉得我很烦"
+
+
+DEFAULT_BASE_URL = DEFAULT_SILICONFLOW_BASE_URL
+DEFAULT_MODEL = "deepseek-ai/DeepSeek-V4-Flash"
+
+
+def _maybe_configure_cloud_backend() -> None:
+    """与 scripts/run_api.py / run_eval.py 同款第三条（脚本层胶水，三处刻意同构不抽公共库）。
+
+    有 SILICONFLOW_API_KEY 且未显式配置 MODEL_BACKENDS 时，注册硅基流动后端并设为默认；
+    只写环境变量，key 永不落盘。**没有它，夜间臂上的开口臂会对着不存在的本地 Ollama
+    全部发不出去（0 条），exit 0 却什么都没量**——2026-10-29 铺世界实测抓到的形状。
+    """
+    key = os.environ.get("SILICONFLOW_API_KEY")
+    if not key or os.environ.get("MODEL_BACKENDS"):
+        return  # 无 key 或调用方已显式配置 → 走 Settings 默认（Ollama local）
+    os.environ["MODEL_BACKENDS"] = json.dumps(
+        {
+            "siliconflow": {
+                "provider": "siliconflow",
+                "base_url": os.environ.get("SMOKE_BASE_URL", DEFAULT_BASE_URL),
+                "model": os.environ.get("SMOKE_MODEL", DEFAULT_MODEL),
+                "api_key": key,
+            }
+        }
+    )
+    os.environ["MODEL_DEFAULT"] = "siliconflow"
 
 
 def _effective(conn: sqlite3.Connection) -> Settings:
@@ -159,15 +187,19 @@ def _chat_arms(
             turns.append(AIMessage(content=text))
         turns.append(HumanMessage(content=PROBE_TURN))
         if inject:
-            turns.insert(max(1, len(turns) - DEPTH_INJECT_FROM_END), SystemMessage(
-                content=VOICE_DEPTH_PROMPT
-            ))
+            turns.insert(
+                max(1, len(turns) - DEPTH_INJECT_FROM_END),
+                SystemMessage(content=VOICE_DEPTH_PROMPT),
+            )
         out[label] = {"texts": [text_of(model.invoke(turns)).strip() for _ in range(n)]}
     return out
 
 
 def _report(
-    groups: dict[str, Any], priors: list[str], conn: sqlite3.Connection, day: str,
+    groups: dict[str, Any],
+    priors: list[str],
+    conn: sqlite3.Connection,
+    day: str,
     baseline: tuple[int, int],
 ) -> None:
     """每个臂一行的读数 + 逐条原文。列的选择与 `persona_meter` 完全一致（同一把尺子）。
@@ -222,7 +254,12 @@ def _tokens_this_run(baseline: tuple[int, int], now: tuple[int, int]) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="活人感 A/B（跑在库的副本上）")
-    parser.add_argument("--role", default="elysia", help="角色 id，默认 elysia")
+    parser.add_argument(
+        "--role",
+        default="medical_archivist",
+        help="角色 id（默认 medical_archivist：elysia 那张卡连范例已于 2026-09-23 删净，"
+        "拿它当默认 = 拿一张不存在的卡做夜间默认实验，RoleNotFound 当场红）",
+    )
     parser.add_argument("--n", type=int, default=5, help="每个臂跑几次，默认 5")
     parser.add_argument(
         "--group", choices=("openings", "chat", "both"), default="openings", help="跑哪一组臂"
@@ -240,6 +277,7 @@ def main() -> None:
         help="副本库落在哪（默认 build/scratch/ 下，整目录 gitignore）",
     )
     args = parser.parse_args()
+    _maybe_configure_cloud_backend()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -268,7 +306,8 @@ def main() -> None:
     print(line)
     print("样本小到个位数只能看方向：**别拿它定阈值**。")
     priors = [
-        str(r["text"]) for r in conn.execute(
+        str(r["text"])
+        for r in conn.execute(
             "SELECT text FROM agent_reachout WHERE role_id = ? ORDER BY id", (args.role,)
         ).fetchall()
     ]
@@ -276,9 +315,7 @@ def main() -> None:
     # 开跑前先把今天已有的账抄下来：副本里那些笔是真库跑出来的，不是本轮的。
     baseline = _token_totals(conn, day)
     if args.group in ("openings", "both"):
-        _report(
-            _arms(conn, settings, args.role, args.n, args.backend), priors, conn, day, baseline
-        )
+        _report(_arms(conn, settings, args.role, args.n, args.backend), priors, conn, day, baseline)
     if args.group in ("chat", "both"):
         _report(
             _chat_arms(conn, settings, args.role, args.n, args.backend),
