@@ -614,6 +614,23 @@ describe("作用域竞态守卫（2026-10-30 批次的回归钉）", () => {
   });
 });
 
+describe("记忆卡「清空」的二次确认（2026-10-30 交互审计的回归钉）", () => {
+  it("点『清空』先弹确认，确认才 DELETE —— 一键抹整桶不该比删一条还随便", async () => {
+    // 单条删除早有确认，整桶清空反而裸奔是不一致；收件箱/知识库的清空全都有确认。
+    apiMock.del.mockResolvedValue({
+      enabled: false, role_id: null, content: "", items: [], active_count: 0, limit: 200, over_limit: false,
+    });
+    render(<MemoryPage />);
+    await screen.findByDisplayValue("原始记忆");
+    fireEvent.click(screen.getByRole("button", { name: "清空" }));
+    expect(await screen.findByText("清空全局记忆？")).toBeTruthy();
+    expect(apiMock.del).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "确认清空" }));
+    await waitFor(() => expect(apiMock.del).toHaveBeenCalledWith("/api/settings/memory"));
+    expect(await screen.findByText("已清空")).toBeTruthy();
+  });
+});
+
 describe("主动开口卡（总闸 + 收件箱折叠窗口；2026-10-30 随记忆页签迁来）", () => {
   it("总闸与窗口在此页可写：档位跟着 payload 的 choices 走（R102-19），保存走 runtime 通道", async () => {
     render(<MemoryPage />);

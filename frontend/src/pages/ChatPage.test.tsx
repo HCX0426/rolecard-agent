@@ -407,6 +407,20 @@ describe("ChatPage 快速切会话的竞态守卫（2026-10-30 批次的回归�
   });
 });
 
+describe("ChatPage 建会话失败不吞草稿（2026-10-30 交互审计的回归钉）", () => {
+  it("后端没起时发送：输入框里的字被放回来，而不是随一次失败消失", async () => {
+    // 旧实现先清空再建会话：createSession 失败 return，输入框已经空了 ——
+    // 用户打的字找不回来，只剩一条 toast。
+    apiMock.post.mockRejectedValue(new Error("后端没起"));
+    render(<ToastProvider><ChatPage /></ToastProvider>);
+    await sendMessage("这句不能丢");
+    expect(await screen.findByText(/临时话题创建失败/)).toBeTruthy();
+    expect((screen.getByPlaceholderText(/输入消息/) as HTMLTextAreaElement).value).toBe(
+      "这句不能丢",
+    );
+  });
+});
+
 describe("ChatPage 删除二次确认（useConfirm）", () => {
   function stubWithSession() {
     apiMock.get.mockImplementation(async (url: string) => {

@@ -123,7 +123,7 @@ export default function MemoryPage() {
   }, []);
 
   useEffect(() => {
-    loadRoles().catch(() => {});
+    loadRoles().catch((e) => setMemErr(`角色列表加载失败：${describeError(e)}`));
     loadMemory(memScope).catch((e) => setMemErr(`加载失败：${describeError(e)}`));
   }, [loadRoles, loadMemory, memScope]);
 
@@ -174,6 +174,15 @@ export default function MemoryPage() {
   }
 
   async function clearMemory() {
+    // 破坏性大过"删除一条"：一键抹掉整桶，必须有二次确认 —— 单条删除有、整桶清空反而
+    // 裸奔是交互审计抓出来的不一致（收件箱/知识库的清空全都有确认）。
+    const ok = await confirm({
+      title: memScope ? "清空该角色的专属记忆？" : "清空全局记忆？",
+      body: `${memScope ? "该角色" : "全局"}记忆的全部条目会从这里消失（真删，不是失效）。`,
+      confirmText: "确认清空",
+      danger: true,
+    });
+    if (!ok) return;
     setMemErr("");
     setMemMsg("");
     try {

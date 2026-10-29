@@ -93,6 +93,9 @@ export function ToastStack({
           key={t.id}
           onClick={() => onDismiss?.(t.id)}
           title="点击关闭"
+          // 辅助技术也要听得见反馈：warn 用 alert/assertive，其余 polite（2026-10-30 交互审计）。
+          role={t.tone === "warn" ? "alert" : "status"}
+          aria-live={t.tone === "warn" ? "assertive" : "polite"}
           className={`pointer-events-auto rounded-xl border px-3 py-2 text-left text-xs leading-relaxed shadow-sm ${TONE_CLS[t.tone]}`}
         >
           {t.text}

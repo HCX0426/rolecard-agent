@@ -143,7 +143,11 @@ export default function ChatPage({
 
   useEffect(() => {
     refreshSessions().catch((e) => setStatus(`加载对话失败：${e.message}`, "warn"));
-    api.get<RoleCard[]>("/api/roles").then(setRoles).catch(() => {});
+    api
+      .get<RoleCard[]>("/api/roles")
+      .then(setRoles)
+      // 失败要出声：静默的话"没角色"与"没读到"不可区分，用户只会觉得角色菜单坏了。
+      .catch((e) => setStatus(`角色列表加载失败：${describeError(e)}（先用兜底开场白）`, "warn"));
     // 模型行由 ChatToolbar 自己拉（hooks/useModelBackends）：这一页除了生效模型的名字不碰它。
   }, [refreshSessions, setStatus]);
 
@@ -504,6 +508,9 @@ export default function ChatPage({
     if (!tid) {
       tid = await createSession();
       if (!tid) {
+        // 建会话失败：把刚清掉的草稿放回输入框 —— 那是用户打的字，不该被一次失败吞掉。
+        setInput(text);
+        if (image) setPendingImage(image);
         sendingRef.current = false;
         setBusy(false);
         return;

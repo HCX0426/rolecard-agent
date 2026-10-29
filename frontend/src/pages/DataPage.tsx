@@ -24,16 +24,24 @@ export default function DataPage({ initialBlock }: { initialBlock?: MaterialsBlo
     if (initialBlock) setBlock(initialBlock);
   }, [initialBlock]);
 
-  useEffect(() => {
-    api
+  // 领域列表的失败要有出口：从前静默吞掉，"正在加载领域…"成了永久文案——失败与"没数据"
+  // 不可区分（2026-10-30 交互审计）。
+  const [domainsErr, setDomainsErr] = useState("");
+  const loadDomains = useCallback(() => {
+    return api
       .get<DomainInfo[]>("/api/domains")
       .then((list) => {
         setDomains(list);
         // 默认停在第一个域（还没选过时）—— 不要让"两个域都铺开"成为初始形态。
         setActiveDomain((cur) => cur || list[0]?.id || "");
+        setDomainsErr("");
       })
-      .catch(() => undefined);
+      .catch((e) => setDomainsErr(describeError(e)));
   }, []);
+
+  useEffect(() => {
+    loadDomains();
+  }, [loadDomains]);
 
   return (
     <div className="h-full overflow-y-auto p-4 md:p-6">
@@ -100,7 +108,17 @@ export default function DataPage({ initialBlock }: { initialBlock?: MaterialsBlo
                   })}
                 </div>
               )}
-              {domains.length === 0 && (
+              {domainsErr ? (
+                <div className="mt-4 flex items-center gap-2 text-xs">
+                  <span className="text-red-600 dark:text-red-400">领域列表没读到：{domainsErr}</span>
+                  <button
+                    onClick={() => void loadDomains()}
+                    className="rounded border border-slate-200 px-2 py-0.5 text-11 text-slate-600 hover:border-blue-300 dark:border-slate-600 dark:text-slate-300"
+                  >
+                    重试
+                  </button>
+                </div>
+              ) : domains.length === 0 && (
                 <p className="mt-4 text-xs text-slate-400 dark:text-slate-500">正在加载领域…</p>
               )}
               {activeDomain && (
@@ -469,7 +487,7 @@ function AddReportForm({ onDone }: { onDone: () => void }) {
     "rounded border border-slate-200 dark:border-slate-700 px-2 py-1 text-xs outline-none focus:border-blue-400";
 
   return (
-    <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/30/40 p-3">
+    <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/30 p-3">
       <div className="flex flex-wrap items-center gap-2">
         <input
           value={reportType}
@@ -686,7 +704,7 @@ function GenericDomainData({
       </div>
       {status && <Notice tone={status.ok ? "ok" : "error"}>{status.msg}</Notice>}
       {adding && (
-        <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/30/40 p-3">
+        <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/30 p-3">
           <div className="flex flex-wrap items-center gap-2">
             <input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} placeholder="标签 *（如 体重）" className={`${cls} w-40`} />
             <input value={draft.value_num} onChange={(e) => setDraft({ ...draft, value_num: e.target.value })} placeholder="数值（如 62）" className={`${cls} w-28`} />

@@ -24,7 +24,9 @@ interface ChannelRow {
  */
 function ChannelsPanel() {
   const [channels, setChannels] = useState<ChannelRow[]>([]);
-  const [status, setStatus] = useState("");
+  // 状态条带 tone（同 KnowledgeManager：成功文案不许被 Notice 默认的 error 渲染成红条）。
+  const [status, setStatus] = useState<{ tone: "ok" | "error"; msg: string } | null>(null);
+  const say = (tone: "ok" | "error", msg: string) => setStatus({ tone, msg });
   const [appId, setAppId] = useState("");
   const [secret, setSecret] = useState("");
   const [roleId, setRoleId] = useState("");
@@ -45,7 +47,7 @@ function ChannelsPanel() {
   }, []);
 
   useEffect(() => {
-    load().catch((e) => setStatus(`加载失败：${describeError(e)}`));
+    load().catch((e) => say("error", `加载失败：${describeError(e)}`));
   }, [load]);
 
   async function save() {
@@ -58,10 +60,10 @@ function ChannelsPanel() {
       values["QQ_CHANNEL_ENABLED"] = "1"; // 在这里点保存 = 开闸并连
       await api.put("/api/settings/runtime", { values });
       setSecret("");
-      setStatus("配置已保存，渠道正在按新配置重连…");
+      say("ok", "配置已保存，渠道正在按新配置重连…");
       await load();
     } catch (e) {
-      setStatus(`保存失败：${describeError(e)}`);
+      say("error", `保存失败：${describeError(e)}`);
     } finally {
       setBusy(false);
     }
@@ -72,10 +74,10 @@ function ChannelsPanel() {
     try {
       // 重连 = 重存当前值（后端据此 restart）
       await api.put("/api/settings/runtime", { values: { QQ_CHANNEL_ENABLED: "1" } });
-      setStatus("已按当前配置重连渠道。");
+      say("ok", "已按当前配置重连渠道。");
       await load();
     } catch (e) {
-      setStatus(`重连失败：${describeError(e)}`);
+      say("error", `重连失败：${describeError(e)}`);
     } finally {
       setBusy(false);
     }
@@ -85,10 +87,10 @@ function ChannelsPanel() {
     setBusy(true);
     try {
       await api.put("/api/settings/runtime", { values: { QQ_CHANNEL_ENABLED: "0" } });
-      setStatus("渠道已停用。");
+      say("ok", "渠道已停用。");
       await load();
     } catch (e) {
-      setStatus(`停用失败：${describeError(e)}`);
+      say("error", `停用失败：${describeError(e)}`);
     } finally {
       setBusy(false);
     }
@@ -96,7 +98,7 @@ function ChannelsPanel() {
 
   return (
     <div className="space-y-3">
-      {status && <Notice>{status}</Notice>}
+      {status && <Notice tone={status.tone}>{status.msg}</Notice>}
       {channels.map((ch) => (
         <Card key={ch.id} className="p-5">
           <div className="flex items-center justify-between">
@@ -169,6 +171,12 @@ function ChannelsPanel() {
           </div>
         </Card>
       ))}
+      {channels.length === 0 && (
+        <p className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-xs text-slate-400 dark:border-slate-700 dark:text-slate-500">
+          还没有配置任何渠道 —— 渠道是角色对外说话的门（如 QQ 官方机器人）。
+          不需要对外就让它空着，这不影响对话页与桌宠。
+        </p>
+      )}
     </div>
   );
 }
@@ -197,6 +205,7 @@ const SECTIONS: [SectionKey, string][] = [
 
 export default function ToolsPage() {
   const [catalog, setCatalog] = useState<ToolCatalog | null>(null);
+  const [catalogErr, setCatalogErr] = useState("");
   const [domains, setDomains] = useState<DomainInfo[]>([]);
   // 页内区块的当前页签（2026-10-29 从"锚点条"改成真 tab）。锚点为什么不能是 <a href="#x">：
   // 全站是 hash 路由（App.tsx 把 `#/<tab>` 解析成页签），裸锚点把 URL 改成 `#channels`，
@@ -204,7 +213,11 @@ export default function ToolsPage() {
   const [section, setSection] = useState<SectionKey>("channels");
 
   useEffect(() => {
-    api.get<ToolCatalog>("/api/tools/catalog").then(setCatalog).catch(() => undefined);
+    // 目录加载失败要给出口：从前静默吞掉，页签下只剩一块无声的空白。
+    api
+      .get<ToolCatalog>("/api/tools/catalog")
+      .then(setCatalog)
+      .catch((e) => setCatalogErr(describeError(e)));
     api.get<DomainInfo[]>("/api/domains").then(setDomains).catch(() => undefined);
   }, []);
 
@@ -258,7 +271,22 @@ export default function ToolsPage() {
 
         <div className={section === "catalog" ? "mt-4" : "hidden"}>
           <h2 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">内置工具目录</h2>
-            {catalog && (
+            {catalogErr ? (
+              <Notice tone="error">
+                工具目录没读到：{catalogErr}
+                <button
+                  onClick={() => {
+                    setCatalogErr("");
+                    api.get<ToolCatalog>("/api/tools/catalog").then(setCatalog).catch((e) => setCatalogErr(describeError(e)));
+                  }}
+                  className="ml-2 rounded border border-slate-300 px-2 py-0.5 text-11 text-slate-600 hover:border-blue-300 dark:border-slate-600 dark:text-slate-300"
+                >
+                  重试
+                </button>
+              </Notice>
+            ) : !catalog ? (
+              <p className="text-xs text-slate-400 dark:text-slate-500">正在加载工具目录…</p>
+            ) : (
               <div className="space-y-4">
                 <Card className="p-4">
                   <p className="text-xs font-medium text-slate-500 dark:text-slate-400">内核工具</p>

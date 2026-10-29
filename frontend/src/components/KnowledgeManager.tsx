@@ -36,7 +36,10 @@ function fmtMs(v: number | null | undefined): string {
 export function KnowledgeManager() {
   const [scopes, setScopes] = useState<KnowledgeScope[]>([]);
   const [metrics, setMetrics] = useState<RagMetrics | null>(null);
-  const [status, setStatus] = useState("");
+  // 状态条带 tone：从前是裸串 + Notice 默认 error —— "已创建/已导入"这些成功文案
+  // 全被渲染成红条，每次成功看起来都像失败（2026-10-30 交互审计）。
+  const [status, setStatus] = useState<{ tone: "ok" | "warn" | "error"; msg: string } | null>(null);
+  const say = (tone: "ok" | "warn" | "error", msg: string) => setStatus({ tone, msg });
   const confirm = useConfirm();
   const [orphans, setOrphans] = useState<OrphanReport | null>(null);
   const [busy, setBusy] = useState(false);
@@ -58,7 +61,7 @@ export function KnowledgeManager() {
   }, []);
 
   useEffect(() => {
-    load().catch((e) => setStatus(`加载失败：${e.message}`));
+    load().catch((e) => say("error", `加载失败：${e.message}`));
   }, [load]);
 
   /** 新建一个空作用域（POST /api/knowledge/scopes，幂等）。 */
@@ -69,10 +72,10 @@ export function KnowledgeManager() {
     try {
       await api.post<{ scope: string }>("/api/knowledge/scopes", { name });
       setNewScope("");
-      setStatus(`已创建知识库 ${name} —— 在角色卡勾选作用域即可授权检索`);
+      say("ok", `已创建知识库 ${name} —— 在角色卡勾选作用域即可授权检索`);
       await load();
     } catch (e) {
-      setStatus(`创建失败：${describeError(e)}`);
+      say("error", `创建失败：${describeError(e)}`);
     } finally {
       setCreating(false);
     }
@@ -103,7 +106,8 @@ export function KnowledgeManager() {
         );
         if (states.every((s) => !s.running)) {
           const failed = states.filter((s) => s.status === "failed").length;
-          setStatus(
+          say(
+            failed ? "warn" : "ok",
             failed
               ? `导入完成，但有 ${failed} 个文件失败（详情见进度条目）`
               : `已导入 ${tasks.length} 个文档到 ${scope}`,
@@ -114,7 +118,7 @@ export function KnowledgeManager() {
       }
       await load();
     } catch (e) {
-      setStatus(`导入失败：${describeError(e)}`);
+      say("error", `导入失败：${describeError(e)}`);
     } finally {
       setImportingScopes((s) => s.filter((x) => x !== scope));
       if (fileRef.current) fileRef.current.value = "";
@@ -127,10 +131,10 @@ export function KnowledgeManager() {
       const r = await api.del<{ removed_chunks: number }>(
         `/api/knowledge/${encodeURIComponent(scope)}`,
       );
-      setStatus(`已清空作用域 ${scope}（移除 ${r.removed_chunks} 段，写入审计）`);
+      say("ok", `已清空作用域 ${scope}（移除 ${r.removed_chunks} 段，写入审计）`);
       await load();
     } catch (e) {
-      setStatus(`清空失败：${describeError(e)}`);
+      say("error", `清空失败：${describeError(e)}`);
     }
   }
 
@@ -140,7 +144,7 @@ export function KnowledgeManager() {
     try {
       setOrphans(await api.get<OrphanReport>("/api/uploads/orphans"));
     } catch (e) {
-      setStatus(`盘点失败：${describeError(e)}`);
+      say("error", `盘点失败：${describeError(e)}`);
     } finally {
       setBusy(false);
     }
@@ -152,13 +156,14 @@ export function KnowledgeManager() {
     try {
       const r = await api.post<CleanupResult>("/api/uploads/cleanup", {});
       setOrphans(null);
-      setStatus(
+      say(
+        "ok",
         r.deleted === 0
           ? `没有可回收的文件（扫描 ${r.scanned} 个，全部被台账引用）`
           : `已回收 ${r.deleted} 个文件，释放 ${formatBytes(r.freed_bytes)}（写入审计）`,
       );
     } catch (e) {
-      setStatus(`回收失败：${describeError(e)}`);
+      say("error", `回收失败：${describeError(e)}`);
     } finally {
       setBusy(false);
     }
@@ -166,7 +171,7 @@ export function KnowledgeManager() {
 
   return (
     <div className="mt-4">
-      {status && <Notice>{status}</Notice>}
+      {status && <Notice tone={status.tone}>{status.msg}</Notice>}
 
       {/* 新建知识库 + 导入文档的操作行 */}
       <Card className="p-4">
