@@ -703,6 +703,15 @@ def _seed_timeline_correction(app: Any) -> None:
         mem.add_item(
             ctx.conn, user_id=uid, bucket="sample_role", text=f"样本记忆 {i:02d}：翻页游标填充"
         )
+    # 填充条目一律倒填到更正事件**之前**：它们与更正同秒时是排序稳定下的并列，可一旦
+    # 插入跨过秒界（CI 的时序竞态，2026-10-30 实红过一次 —— 页一正好被 50 条填充占满，
+    # memory_correct 掉页二，kinds 只剩 {memory, thread}），断言就从撞运气变成必红。
+    # 倒填后页一恒有 更正+新事实+touch，页二全是填充 ⇒ next_cursor 依旧非 null，形状不变。
+    ctx.conn.execute(
+        "UPDATE role_memory_item SET created_at = datetime('now', '-2 hours')"
+        " WHERE role_id = 'sample_role' AND text LIKE '样本记忆 %'"
+    )
+    ctx.conn.commit()
 
 
 def _seed_reachable_role(app: Any) -> None:
