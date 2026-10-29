@@ -655,7 +655,14 @@ def _seed_orphan_upload(app: Any) -> None:
     dangling：台账有一行、目录里没有的那张——纯 INSERT，不需真文件（按文件名认引用）。
     """
     ctx = app.state.ctx
-    upload_dir = pathlib.Path(tempfile.mkdtemp(prefix="gen-models-uploads-")) / "uploads"
+    # .resolve() 是关键：scan_orphans 的 `_inside` 比 `entry.resolve().is_relative_to(root)`，
+    # 而它传进去的 root **未 resolve**。GitHub Windows runner 的临时目录带 8.3 短名
+    # （RUNNERA~1），mkdtemp 返回短形、entry.resolve() 展开成长形 ⇒ 前缀对不上 ⇒ 全判
+    # 越界、orphans 恒空（本机长名不触发，CI 才红 —— 2026-10-29 实测那课）。root 先 resolve
+    # 成长形，entry.resolve() 也是长形，is_relative_to 才成立。
+    upload_dir = (
+        pathlib.Path(tempfile.mkdtemp(prefix="gen-models-uploads-")) / "uploads"
+    ).resolve()
     ctx.settings.upload_dir = upload_dir
     upload_dir.mkdir(parents=True, exist_ok=True)
     (upload_dir / "sample_orphan.txt").write_bytes(b"orphan sample")
