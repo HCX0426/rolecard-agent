@@ -2,6 +2,7 @@
 //
 // RolesPage（角色卡管理）接线测试。重点：删除角色卡是破坏性操作，
 // 走 useConfirm 二次确认 —— 点确认才 DELETE，点取消不调。
+// 2026-10-30 起本页还托管「工作区」卡（原设置页的任务目录，授权跟角色走）。
 
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,6 +14,12 @@ const { apiMock } = vi.hoisted(() => ({
     put: vi.fn(),
     patch: vi.fn(),
     del: vi.fn(),
+    // 工作区卡的三个专用方法（api 层的便捷封装，不走 api.get）：
+    // 从前 MemoryPanel 也调它们，但旧桩没给、异常被 catch 吞成"加载中"——没测试看着就一直缺。
+    getWorkspaceDir: vi.fn(),
+    setWorkspaceDir: vi.fn(),
+    clearWorkspaceDir: vi.fn(),
+    browseTree: vi.fn(),
   },
 }));
 
@@ -39,6 +46,8 @@ const ROLE = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 工作区卡挂载即读生效目录（不走 api.get，直接钉方法返回值）。
+  apiMock.getWorkspaceDir.mockResolvedValue({ path: "D:/wk", overridden: true });
   apiMock.get.mockImplementation(async (url: string) => {
     if (url === "/api/roles") return [ROLE];
     if (url === "/api/tools/catalog") return { kernel: [], domains: {} };
@@ -148,5 +157,24 @@ describe("角色级后端选择（用户 2026-09-25：角色级 > 设置里那�
     ]);
     expect(select.options[0].textContent).toBe("跟随全局优先级");
     expect(select.options[1].textContent).toContain("全局第一档");
+  });
+});
+
+describe("工作区卡（2026-10-30 从设置页迁来并更名；授权跟角色卡走）", () => {
+  it("显示生效目录与覆盖来源；点「浏览…」开工作区目录抽屉", async () => {
+    apiMock.browseTree.mockResolvedValue({
+      path: "D:/wk",
+      parent: "D:/",
+      entries: [{ name: "子目录", is_dir: true, size: null }],
+      truncated: false,
+    });
+    const { fireEvent } = await import("@testing-library/react");
+    render(<RolesPage />);
+    // 卡片渲染的是后端回的生效值；DB 覆盖态还有那句"删除后回到默认"的说明
+    expect(await screen.findByDisplayValue("D:/wk")).toBeTruthy();
+    expect(screen.getByText(/该目录仅存于本机数据库/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "浏览…" }));
+    expect(await screen.findByText("选择工作区目录")).toBeTruthy();
+    expect(screen.getByText("子目录")).toBeTruthy();
   });
 });

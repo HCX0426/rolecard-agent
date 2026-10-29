@@ -110,6 +110,13 @@ export const IconSettings = () => (
   </svg>
 );
 
+/** 记忆（书签=记住）——顶层「记忆」页签（2026-10-30 从设置页迁出时新增）。 */
+export const IconMemory = () => (
+  <svg {...NAV}>
+    <path d="M7 3h10v18l-5-4.5L7 21z" />
+  </svg>
+);
+
 /** 命令审批（盾 + 对勾）——侧栏抽屉入口（2026-10-24 从 ⚙️ emoji 换来）。 */
 export const IconApproval = () => (
   <svg {...NAV}>

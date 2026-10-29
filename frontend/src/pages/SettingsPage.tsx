@@ -2,18 +2,18 @@ import { useState } from "react";
 import { AboutPanel } from "../components/AboutPanel";
 import { RuntimePanel } from "../components/RuntimePanel";
 import { AuditPanel } from "../components/AuditPanel";
-import { MemoryPanel } from "../components/MemoryPanel";
 import { ModelsPanel } from "../components/ModelsPanel";
 import { ServicesPanel } from "../components/ServicesPanel";
 
 // 设置页子页签：模型（凭据组 + 模型行，见 components/ModelsPanel）/ 服务（运行时状态与降级
-// 策略）/ 记忆与任务目录 / 关于 / 运行环境 / 审计。
-// 2026-10-24 IA 重构两笔迁出：「扩展」（MCP）升为顶层「工具」页（管理界面，
-// 与内置工具目录同住）；知识库此前已升为顶层页（现并入「资料」页的知识库区块）。
+// 策略）/ 关于 / 运行环境 / 审计。
+// IA 迁出的账：2026-10-24「扩展」（MCP）升为顶层「工具」页、知识库并入「资料」页知识库
+// 区块；2026-10-30 记忆三卡整族出设置 —— 跨会话记忆 + 主动开口升顶层「记忆」页签
+// （pages/MemoryPage），任务目录更名「工作区」由角色卡页托管（components/WorkspacePanel）。
+// 设置页从此只装环境与凭据：模型 / 服务 / 关于 / 运行环境 / 审计。
 const SETTINGS_TABS = [
   { key: "models", label: "模型" },
   { key: "services", label: "服务" },
-  { key: "memory", label: "记忆与任务目录" },
   { key: "about", label: "关于与系统状态" },
   { key: "runtime", label: "运行环境" },
   { key: "audit", label: "审计" },
@@ -53,9 +53,6 @@ export default function SettingsPage({
         </div>
         {/* 子页签常驻挂载 + hidden 隐藏（P1-11 同款）：条件渲染会让每次切页签重新挂载
             面板并重发请求 —— 服务页的探活会因此"每次点开都加载中"（用户 2026-09-18）。 */}
-        <div className={tab === "memory" ? "" : "hidden"}>
-          <MemoryPanel />
-        </div>
         <div className={tab === "about" ? "" : "hidden"}>
           <AboutPanel onOpenChat={onOpenChat} theme={theme} onToggleTheme={onToggleTheme} />
         </div>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, EllipsisText, Notice, PageHeader, Tag } from "../components/ui";
 import TimelineDrawer from "../components/TimelineDrawer";
+import { WorkspacePanel } from "../components/WorkspacePanel";
 import type { PetPackListing } from "../pets/registry";
 import {
   api,
@@ -352,7 +353,7 @@ export default function RolesPage({
       <div className="mx-auto max-w-4xl">
         <PageHeader
           title="角色卡"
-          subtitle="人设、温度、工具白名单与知识作用域；内置角色不可删除"
+          subtitle="人设、温度、工具白名单、知识作用域与工作区；内置角色不可删除"
           actions={
             <>
               {/* ST 卡导入（2c）：report 里的对账（丢了几条范例/世界书没导）直接进状态栏，
@@ -924,6 +925,12 @@ export default function RolesPage({
               </div>
             );
           })}
+        </div>
+        {/* 工作区卡（2026-10-30 从设置页迁来并更名）：授权跟角色走 —— 它是 fs 工具的
+            运行边界，放在角色卡页比藏在设置里更接近它该在的地方。目前所有角色共用一处
+            （卡内已写明）；逐角色的操作权限就是上方编辑表单里的工具白名单。 */}
+        <div className="mt-4">
+          <WorkspacePanel />
         </div>
       </div>
       <TimelineDrawer

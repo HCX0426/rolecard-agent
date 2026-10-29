@@ -16,17 +16,19 @@ import {
   IconBell,
   IconChat,
   IconData,
+  IconMemory,
   IconPlugins,
   IconRoles,
   IconSettings,
 } from "./components/icons";
 
-// ---- 路由级代码分割：六页各自成 chunk，hover 导航时预加载 -------------------------------
+// ---- 路由级代码分割：每页各自成 chunk，hover 导航时预加载 -------------------------------
 const ChatPage = lazy(() => import("./pages/ChatPage"));
 const DataPage = lazy(() => import("./pages/DataPage"));
 
 const ToolsPage = lazy(() => import("./pages/ToolsPage"));
 const RolesPage = lazy(() => import("./pages/RolesPage"));
+const MemoryPage = lazy(() => import("./pages/MemoryPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 
 // hover 预加载：用户在导航栏悬停时提前下载目标页 chunk，消除切换延迟
@@ -34,13 +36,16 @@ const PRELOAD: Partial<Record<string, () => Promise<unknown>>> = {
   data: () => import("./pages/DataPage"),
 
   roles: () => import("./pages/RolesPage"),
+  memory: () => import("./pages/MemoryPage"),
   tools: () => import("./pages/ToolsPage"),
   settings: () => import("./pages/SettingsPage"),
 };
 
 // ---- 页签注册表 -----------------------------------------------------------------------
-// 6 个页签刻意把三件最易混的事分开（docs/前端设计.md 的 IA 一节）：
-//   数据 = 领域数据 · 知识库 = RAG 检索 · 插件 = 能力开关
+// 6 个页签（2026-10-30 IA：记忆三卡出设置 —— 跨会话记忆+主动开口升顶层「记忆」页签，
+// 任务目录更名「工作区」并入角色卡页；此前的知识库并入「资料」区块，故仍是 6）：
+//   对话 = 过程 · 资料 = 领域数据 · 角色卡 = 人格与权限 · 记忆 = 跨会话事实 ·
+//   工具 = 能力开关 · 设置 = 环境与凭据
 // 六个页签的图标住在 `components/icons.tsx`（全项目图标的唯一出处，2026-10-24 UI
 // 打磨合并：此前这里内联一套 16px stroke 参数、`chat/icons.tsx` 另有一套 13px ——
 // 两份参数两处长法）。页签表只声明"哪个页签配哪个图标"。
@@ -48,6 +53,7 @@ const TABS = [
   { key: "chat", label: "对话", icon: <IconChat /> },
   { key: "data", label: "资料", icon: <IconData /> },
   { key: "roles", label: "角色卡", icon: <IconRoles /> },
+  { key: "memory", label: "记忆", icon: <IconMemory /> },
   { key: "tools", label: "工具", icon: <IconPlugins /> },
   { key: "settings", label: "设置", icon: <IconSettings /> },
 ] as const;
@@ -323,6 +329,10 @@ export default function App() {
               </span>
             </div>
           )}
+          {/* 命令审批入口（2026-10-30 降级）：有待批命令才浮出来。用户口径——平时都给
+              完全权限、命令又只落在工作区里跑，常驻一行是噪音；但审批机制本体不动
+              （run_command 的审批档 + /api/approvals 原样），pending 归零即隐。 */}
+          {approvalPending > 0 && (
           <button
             onClick={() => setApprovalOpen(true)}
             className="relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700/60"
@@ -334,12 +344,11 @@ export default function App() {
               <IconApproval />
             </span>
             命令审批
-            {approvalPending > 0 && (
-              <span className="ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-full bg-amber-500 px-1.5 text-10 font-medium text-white">
-                {approvalPending}
-              </span>
-            )}
+            <span className="ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-full bg-amber-500 px-1.5 text-10 font-medium text-white">
+              {approvalPending}
+            </span>
           </button>
+          )}
           <button
             onClick={() => setReachoutOpen(true)}
             className="relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700/60"
@@ -361,7 +370,7 @@ export default function App() {
       </nav>
 
       {/* 主内容区。外层包一个 PageBoundary：chunk 加载失败那一类错误（升级后旧页签
-          引用的 hash 文件已不在磁盘）在四个常驻页上没有各自的边界 —— 没有它，症状是
+          引用的 hash 文件已不在磁盘）在五个常驻页上没有各自的边界 —— 没有它，症状是
           白屏 + 控制台一条 404（实测 0.4.2→0.4.3 升级后切知识库/插件页就是它）。
           内层 keyed 的那个管"单页崩溃不串页"；这个外层只兜住内层没接住的（含常驻页），
           对页面崩溃行为零改变 —— 正常页根本到不了这里。 */}
@@ -398,9 +407,10 @@ export default function App() {
             />
           </Suspense>
         </div>
-        {/* 数据页 / 角色页同样**常驻挂载**（hidden 隐藏）：两者都有未提交的表单与分页
-            位置 —— 数据页的追加报告多行指标草稿、指标修正 draft、分页 page；角色页的
-            编辑表单 form。条件渲染会在切走时整棵卸载丢光（2026-09-18 与服务页同源）。
+        {/* 数据页 / 角色页 / 记忆页同样**常驻挂载**（hidden 隐藏）：三者都有未提交的表单与
+            分页位置 —— 数据页的追加报告多行指标草稿、指标修正 draft、分页 page；角色页的
+            编辑表单 form；记忆页的原文视图草稿、行内编辑、合并勾选。条件渲染会在切走时
+            整棵卸载丢光（2026-09-18 与服务页同源）。
             注意常驻 = 组件**无条件渲染**（`tab === x && <Page/>` 会在切走时卸载，
             与条件渲染等效）。工具页无此类草稿，保留 PageBoundary 按需挂载。 */}
         <div className={tab === "data" ? "h-full" : "hidden"}>
@@ -417,7 +427,14 @@ export default function App() {
             <RolesPage onOpenThread={openThread} />
           </Suspense>
         </div>
-        {tab !== "chat" && tab !== "settings" && tab !== "data" && tab !== "roles" && (
+        <div className={tab === "memory" ? "h-full" : "hidden"}>
+          <Suspense
+            fallback={<PageSkeleton />}
+          >
+            <MemoryPage />
+          </Suspense>
+        </div>
+        {tab !== "chat" && tab !== "settings" && tab !== "data" && tab !== "roles" && tab !== "memory" && (
           <PageBoundary key={tab}>
             <Suspense
               fallback={
