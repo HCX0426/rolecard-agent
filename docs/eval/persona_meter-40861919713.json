@@ -1,0 +1,21 @@
+{
+ "库": "D:\\a\\rolecard-agent\\rolecard-agent\\build\\scratch\\nightly-world.db",
+ "取样时间": "2026-10-29T11:07:46+00:00",
+ "每角色窗口": 20,
+ "角色": {
+  "general_assistant": {
+   "名称": "通用助手",
+   "样本数": 0,
+   "记忆条数": 0
+  },
+  "medical_archivist": {
+   "名称": "健康档案管理员",
+   "样本数": 0,
+   "记忆条数": 0
+  }
+ },
+ "token": {
+  "今日": [],
+  "最近": []
+ }
+}

@@ -1,0 +1,15 @@
+库副本=D:\a\rolecard-agent\rolecard-agent\build\latency_probe.db  端口=62740  HEAD=1793260  n=5
+可选后端：['local', 'siliconflow']
+会话 = s_9d1432486801（角色 通用助手）
+  siliconflow # 1 首字 2.31s 整轮 3.68s 202 字
+  siliconflow # 2 首字 1.64s 整轮 3.20s 199 字
+  siliconflow # 3 首字 1.38s 整轮 2.88s 197 字
+  siliconflow # 4 首字 1.73s 整轮 3.17s 186 字
+  siliconflow # 5 首字 3.03s 整轮 4.93s 222 字
+
+=== 结果（同一把尺子：同一个问句、agent_mode=chat、n=5）===
+  siliconflow            首字 P50  1.64s / P95  3.03s（max 3.03）   整轮 P50  3.17s / P95  4.93s（max 4.93）   输出 201±12 字   样本 5/5
+  qwen3-vl-8b            —— 这台机器上没有这个后端，跳过（不是 0 秒，是没测）
+
+出处：HEAD=1793260 库=latency_probe.db 端口=62740 时间=2026-10-29 11:08
+server pid=6840 已终止；日志 D:\a\rolecard-agent\rolecard-agent\build\latency_server_62740.log
