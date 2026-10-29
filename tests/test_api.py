@@ -216,9 +216,6 @@ def test_enhance_prompt_rejects_empty(client: TestClient) -> None:
     assert "没有可增强" in res.json()["detail"]
 
 
-
-
-
 def test_patch_model_context_404_and_400(client: TestClient) -> None:
     """num_ctx 单列端点：未知后端 404；过小 400（校验在 rebuild 之前，测试不触真实模型）。"""
     res = client.patch("/api/settings/models/ghost/context", json={"num_ctx": 8192})
@@ -465,12 +462,7 @@ def test_runtime_put_accepts_env_keys(client: TestClient) -> None:
     过去后端只认字段名、前端发 env 名 → 任何保存都 400，而测试全用字段名，从没暴露。
     这条直接拿后端**自己吐出的 key** 回提交，锁死前后端键名契约。"""
     payload = client.get("/api/settings/runtime").json()
-    item = next(
-        it
-        for g in payload["groups"]
-        for it in g["items"]
-        if it["kind"] == "bool"
-    )
+    item = next(it for g in payload["groups"] for it in g["items"] if it["kind"] == "bool")
     assert item["key"].isupper()  # payload.key 就是 env 名（如 WEB_SEARCH_ENABLED）
     r = client.put("/api/settings/runtime", json={"values": {item["key"]: "1"}})
     assert r.status_code == 200, r.text
@@ -580,7 +572,12 @@ def test_reachouts_page_carries_why_each_role_is_quiet(client: TestClient) -> No
     row = next(r for r in quiet if r["role_id"] == "general_assistant")
     assert row["role_name"]
     assert set(row) == {
-        "role_id", "role_name", "why", "next_ok_at", "streak", "unread",
+        "role_id",
+        "role_name",
+        "why",
+        "next_ok_at",
+        "streak",
+        "unread",
     }
     # 内置角色出厂静默 ⇒ 不该出现在这一格里（出现了就是承诺"她本来会来找你"）
     client.patch("/api/roles/general_assistant", json={"reachout_enabled": False})
@@ -599,7 +596,7 @@ def test_reachouts_list_and_mark_read_404(client: TestClient) -> None:
     r = client.get("/api/reachouts").json()
     assert "unread" in r and isinstance(r["items"], list)
     assert r["merge_days"] == 1  # 出厂：按天折一摞
-    # 在线覆盖能改到它（写点在「记忆与任务目录」，保存即热生效）
+    # 在线覆盖能改到它（写点在顶层「记忆」页签的主动开口卡，保存即热生效）
     client.put("/api/settings/runtime", json={"values": {"reachout_merge_days": "7"}})
     assert client.get("/api/reachouts").json()["merge_days"] == 7
     client.put("/api/settings/runtime", json={"values": {"reachout_merge_days": ""}})  # 还原
@@ -628,8 +625,6 @@ def test_marking_an_already_read_reachout_is_not_an_error(client: TestClient) ->
     assert res.status_code == 200
     assert res.json()["unread"] == 0
     assert any(i["id"] == int(rid) for i in res.json()["items"])  # 还在历史里，没被"标没了"
-
-
 
 
 def test_reachouts_point_at_the_proactive_thread_and_read_by_role(client: TestClient) -> None:
@@ -740,9 +735,12 @@ def test_proactive_session_ensure_is_idempotent_and_recreatable(client: TestClie
 
     assert client.delete(f"/api/session/{tid}").status_code == 204
     assert client.get(f"/api/session/{tid}").status_code == 404
-    assert client.post("/api/session/proactive", json={"role_id": "general_assistant"}).json()[
-        "thread_id"
-    ] == tid
+    assert (
+        client.post("/api/session/proactive", json={"role_id": "general_assistant"}).json()[
+            "thread_id"
+        ]
+        == tid
+    )
 
 
 def test_proactive_session_requires_a_real_role(client: TestClient) -> None:
@@ -831,9 +829,10 @@ def test_proactive_thread_lookup_is_read_only(client: TestClient) -> None:
     ]
     got = client.get("/api/session/proactive", params={"role_id": "general_assistant"})
     assert got.json()["thread_id"] == tid
-    assert client.get("/api/session/proactive", params={"role_id": "ghost"}).json()[
-        "thread_id"
-    ] is None
+    assert (
+        client.get("/api/session/proactive", params={"role_id": "ghost"}).json()["thread_id"]
+        is None
+    )
 
 
 def test_read_all_marks_every_role(client: TestClient, tmp_path: Path) -> None:
@@ -845,11 +844,11 @@ def test_read_all_marks_every_role(client: TestClient, tmp_path: Path) -> None:
     conn = connect(tmp_path / "app.db")
     for rid in ("wan", "bai"):
         svc.record_reachout(
-        conn,
-        RoleCard(role_id=rid, role_name=rid, system_prompt="x"),
-        "在吗",
-        user_id=DEFAULT_USER_ID,
-    )
+            conn,
+            RoleCard(role_id=rid, role_name=rid, system_prompt="x"),
+            "在吗",
+            user_id=DEFAULT_USER_ID,
+        )
 
     assert client.get("/api/reachouts").json()["unread"] == 2
     body0 = client.get("/api/reachouts").json()
