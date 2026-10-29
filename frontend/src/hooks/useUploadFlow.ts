@@ -84,12 +84,13 @@ export function useUploadFlow({
       } catch (e) {
         extractError = describeError(e);
       }
-      // ExtractWritten 的 index_name 生成后可空（键必填值可空口径）；展示用的 ExtractLike
-      // 要 string —— 寻址字段按恒有值处理，在此处一次兜底。
+      // 诚实契约：skip 路里 written 整个键缺席（旧代码 .map 会在"没有这个键"上炸，
+      // 契约收紧第一次把这个潜伏 bug 摆上类型面）。展示用的 ExtractLike 要元素
+      // index_name 是 string —— 寻址字段按恒有值处理，在此处一次兜底。
       const outcome = describeExtract(
         result && {
           ...result,
-          written: result.written.map((w) => ({ ...w, index_name: w.index_name ?? "" })),
+          written: (result.written ?? []).map((w) => ({ ...w, index_name: w.index_name ?? "" })),
         },
         extractError,
         r.file,

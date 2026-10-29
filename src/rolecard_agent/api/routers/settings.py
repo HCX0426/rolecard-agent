@@ -17,6 +17,10 @@ from rolecard_agent.api.errors import value_error_to_http
 from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.base.text import text_of
 from rolecard_agent.config import SECRET_FIELD_NAMES, Settings
+from rolecard_agent.contracts.handwritten_models import (
+    MemoryConsolidatedView,
+    ProbeOutcomeView,
+)
 from rolecard_agent.contracts.response_models import (
     ModelProvidersView,
     ModelSettingsView,
@@ -293,7 +297,11 @@ class ProbeBody(TargetBody):
     test_vision: bool = False
 
 
-@router.post("/api/settings/models/probe")
+@router.post(
+    "/api/settings/models/probe",
+    response_model=ProbeOutcomeView,
+    response_model_exclude_unset=True,
+)
 def post_model_probe(
     body: ProbeBody,
     ctx: AppContext = Depends(get_context),
@@ -909,7 +917,11 @@ def remove_memory_item(
     return _memory_payload(ctx, role_id)
 
 
-@router.post("/api/settings/memory/consolidate")
+@router.post(
+    "/api/settings/memory/consolidate",
+    response_model=MemoryConsolidatedView,
+    response_model_exclude_unset=True,
+)
 def consolidate_memory(
     ctx: AppContext = Depends(get_context),
     actor: Actor = Depends(get_actor),

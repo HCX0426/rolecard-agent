@@ -884,6 +884,68 @@
     "title": "ChatMessage",
     "type": "object"
    },
+   "CleanupResultView": {
+    "description": "`POST /api/uploads/cleanup`：恒 4 键，无 orphans/dangling（那是 GET 的形状）。",
+    "properties": {
+     "deleted": {
+      "title": "Deleted",
+      "type": "integer"
+     },
+     "freed_bytes": {
+      "title": "Freed Bytes",
+      "type": "integer"
+     },
+     "referenced": {
+      "title": "Referenced",
+      "type": "integer"
+     },
+     "scanned": {
+      "title": "Scanned",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "deleted",
+     "freed_bytes",
+     "scanned",
+     "referenced"
+    ],
+    "title": "CleanupResultView",
+    "type": "object"
+   },
+   "ConnectivityProbeView": {
+    "description": "`POST /api/services/check` 的内层：reachable/detail 恒有，models 是可选键（非空才写）。",
+    "properties": {
+     "detail": {
+      "title": "Detail",
+      "type": "string"
+     },
+     "models": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Models"
+     },
+     "reachable": {
+      "title": "Reachable",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "reachable",
+     "detail"
+    ],
+    "title": "ConnectivityProbeView",
+    "type": "object"
+   },
    "DecideBody": {
     "description": "对一条待批命令拍板。只允许 pending 记录；批准会在后台立即执行一次。\n\n`token` 是这条记录下发的一次性能力凭证（读侧 `GET /api/approvals` 带的 `decide_token`）：\n持有它才批得动 —— 挡的是\"猜一个自增 id 就批准\"和浏览器里跨源的盲 POST。",
     "properties": {
@@ -927,6 +989,24 @@
      "message_ids"
     ],
     "title": "DeleteMessagesBody",
+    "type": "object"
+   },
+   "DistillOutcomeView": {
+    "description": "`POST /api/session/{thread_id}/distill`：{\"report\": …, \"turns_since\": …}（恒 2 键）。",
+    "properties": {
+     "report": {
+      "$ref": "#/components/schemas/MemoryReportView"
+     },
+     "turns_since": {
+      "title": "Turns Since",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "report",
+     "turns_since"
+    ],
+    "title": "DistillOutcomeView",
     "type": "object"
    },
    "DomainRecordCreate": {
@@ -1051,6 +1131,83 @@
     "title": "DomainRecordPatch",
     "type": "object"
    },
+   "DomainRecordView": {
+    "description": "`/api/domains/{domain}/records` 的通用记录行（GET 列表 / POST / PATCH 三个端点共用）。\n\n带 `{domain}` 路径参数的端点不进生成器白名单的理由：域 id 是**数据而不是形状**——\n样本只能证明 finance 一个域，契约却对任意注册域成立；手写模型的字段集取自\n`DomainDataService._row_to_dict`（8 键恒有），比一次采样诚实。\nvalue_num 在库里是 REAL 列、`_row_to_dict` 原样透传（float | None）。",
+    "properties": {
+     "created_at": {
+      "title": "Created At",
+      "type": "string"
+     },
+     "domain": {
+      "title": "Domain",
+      "type": "string"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "label": {
+      "title": "Label",
+      "type": "string"
+     },
+     "note": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Note"
+     },
+     "unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Unit"
+     },
+     "value_num": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Value Num"
+     },
+     "value_text": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Value Text"
+     }
+    },
+    "required": [
+     "id",
+     "domain",
+     "label",
+     "value_text",
+     "value_num",
+     "unit",
+     "note",
+     "created_at"
+    ],
+    "title": "DomainRecordView",
+    "type": "object"
+   },
    "DomainsView": {
     "description": "/api/domains 的顶层形状（数组包一层只为给它一个名字）。",
     "items": {
@@ -1172,6 +1329,172 @@
     "title": "ExportBody",
     "type": "object"
    },
+   "ExtractConflictModel": {
+    "properties": {
+     "index_name": {
+      "title": "Index Name",
+      "type": "string"
+     },
+     "primary": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ExtractedIndexModel"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "reason": {
+      "title": "Reason",
+      "type": "string"
+     },
+     "verify": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ExtractedIndexModel"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "required": [
+     "index_name",
+     "reason",
+     "primary",
+     "verify"
+    ],
+    "title": "ExtractConflictModel",
+    "type": "object"
+   },
+   "ExtractOutcomeView": {
+    "description": "`POST /api/records/extract` 的全部 4 条返回路径（键集互斥，靠 exclude_unset 裁）。\n\n这是本文件唯一\"全键带默认\"的模型：成功路只给 mode..notes 七键，三条降级路各给\nskipped + detail/report_id 之二——四套键集互斥，任一路都不该被另一端缺的键撑爆\n校验。前端按 `skipped` 有无分支消费。",
+    "properties": {
+     "check_time": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Check Time"
+     },
+     "conflicts": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/ExtractConflictModel"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Conflicts"
+     },
+     "detail": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Detail"
+     },
+     "institution": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Institution"
+     },
+     "mode": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mode"
+     },
+     "notes": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Notes"
+     },
+     "report_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Report Id"
+     },
+     "report_type": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Report Type"
+     },
+     "skipped": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Skipped"
+     },
+     "written": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/ExtractWrittenModel"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Written"
+     }
+    },
+    "title": "ExtractOutcomeView",
+    "type": "object"
+   },
    "ExtractRequest": {
     "description": "触发一次结构化抽取（上传成功后由前端自动调用，见 S5b）。",
     "properties": {
@@ -1186,6 +1509,128 @@
      "task_id"
     ],
     "title": "ExtractRequest",
+    "type": "object"
+   },
+   "ExtractWrittenModel": {
+    "description": "抽取响应里 written[] 的元素 —— 只有 4 个键。\n\n⚠️ 与库里的指标行（9 键的 SettingsMemoryViewItemsItem_indicesItem 同族）**不是**\n一个形状：回给客户端的是抽取侧的窄投影，写库的那份（8 键 payload）不出门。\n前端旧手写 ExtractWritten 错指到 9 键那份上，本模型把它拉回运行时事实。",
+    "properties": {
+     "index_name": {
+      "title": "Index Name",
+      "type": "string"
+     },
+     "index_value": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Index Value"
+     },
+     "unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Unit"
+     },
+     "value_text": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Value Text"
+     }
+    },
+    "required": [
+     "index_name",
+     "index_value",
+     "value_text",
+     "unit"
+    ],
+    "title": "ExtractWrittenModel",
+    "type": "object"
+   },
+   "ExtractedIndexModel": {
+    "description": "抽取里冲突行的两侧读数（`ExtractedIndex.model_dump()` 恒 8 键，全量 dump）。",
+    "properties": {
+     "confidence": {
+      "title": "Confidence",
+      "type": "string"
+     },
+     "index_name": {
+      "title": "Index Name",
+      "type": "string"
+     },
+     "index_value": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Index Value"
+     },
+     "raw_text": {
+      "title": "Raw Text",
+      "type": "string"
+     },
+     "ref_range": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ref Range"
+     },
+     "unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Unit"
+     },
+     "value_text": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Value Text"
+     }
+    },
+    "required": [
+     "index_name",
+     "index_value",
+     "value_text",
+     "unit",
+     "ref_range",
+     "raw_text",
+     "confidence"
+    ],
+    "title": "ExtractedIndexModel",
     "type": "object"
    },
    "HTTPValidationError": {
@@ -2002,6 +2447,49 @@
     "title": "McpServersViewServersItem_headers",
     "type": "object"
    },
+   "McpTestResultView": {
+    "description": "`POST /api/mcp/servers/{id}/test`：id/ok/tool_count/tools 恒有，error 是可选键\n（只在异常路出现，非 null 值）⇒ 前三必填、error 带默认。",
+    "properties": {
+     "error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "ok": {
+      "title": "Ok",
+      "type": "boolean"
+     },
+     "tool_count": {
+      "title": "Tool Count",
+      "type": "integer"
+     },
+     "tools": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Tools",
+      "type": "array"
+     }
+    },
+    "required": [
+     "id",
+     "ok",
+     "tool_count",
+     "tools"
+    ],
+    "title": "McpTestResultView",
+    "type": "object"
+   },
    "MemoryBody": {
     "description": "记忆面板的保存负载：任选其一提交，缺省 = 该字段不变。\n\n`enabled` = 总开关（走 runtime 覆盖保存 + 热重建，下一轮对话即生效）；\n`content`  = 记忆全文（None = 不变；\"\" = 清空）；\n`extract_turns` = 自动提取的节奏（None = 不变；**0 = 关掉自动那条，只留手动按钮**）。",
     "properties": {
@@ -2042,6 +2530,69 @@
      }
     },
     "title": "MemoryBody",
+    "type": "object"
+   },
+   "MemoryConsolidatedView": {
+    "description": "`POST /api/settings/memory/consolidate`：report + _memory_payload 摊平的 9 键（恒有）。\n\n顶层**没有** turns_since —— 那是会话 distill（DistillOutcomeView）独有的键，\n前端旧 ConsolidateOutcome extends DistillOutcome 把不存在于响应的必填键抄了进来，\n本模型按运行时形状收口。items[] 元素复用生成物组件（含 last_hit_at 等三族可空键）。",
+    "properties": {
+     "active_count": {
+      "title": "Active Count",
+      "type": "integer"
+     },
+     "content": {
+      "title": "Content",
+      "type": "string"
+     },
+     "enabled": {
+      "title": "Enabled",
+      "type": "boolean"
+     },
+     "extract_turns": {
+      "title": "Extract Turns",
+      "type": "integer"
+     },
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/SettingsMemoryViewItemsItem"
+      },
+      "title": "Items",
+      "type": "array"
+     },
+     "limit": {
+      "title": "Limit",
+      "type": "integer"
+     },
+     "over_limit": {
+      "title": "Over Limit",
+      "type": "boolean"
+     },
+     "report": {
+      "$ref": "#/components/schemas/MemoryReportView"
+     },
+     "role_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Role Id"
+     }
+    },
+    "required": [
+     "report",
+     "enabled",
+     "role_id",
+     "content",
+     "items",
+     "active_count",
+     "limit",
+     "over_limit",
+     "extract_turns"
+    ],
+    "title": "MemoryConsolidatedView",
     "type": "object"
    },
    "MemoryItemBody": {
@@ -2118,6 +2669,96 @@
      }
     },
     "title": "MemoryMergeBody",
+    "type": "object"
+   },
+   "MemoryReportView": {
+    "description": "`memory_distill._report` 的账本（12 键恒有；见 core/memory/memory_distill.py）。",
+    "properties": {
+     "added": {
+      "title": "Added",
+      "type": "integer"
+     },
+     "after": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "After"
+     },
+     "before": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Before"
+     },
+     "detail": {
+      "title": "Detail",
+      "type": "string"
+     },
+     "dup_echo": {
+      "title": "Dup Echo",
+      "type": "integer"
+     },
+     "invalidated": {
+      "title": "Invalidated",
+      "type": "integer"
+     },
+     "merged": {
+      "title": "Merged",
+      "type": "integer"
+     },
+     "noop": {
+      "title": "Noop",
+      "type": "integer"
+     },
+     "similar": {
+      "title": "Similar",
+      "type": "integer"
+     },
+     "skipped": {
+      "title": "Skipped",
+      "type": "integer"
+     },
+     "tokens": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Tokens"
+     },
+     "updated": {
+      "title": "Updated",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "added",
+     "updated",
+     "similar",
+     "merged",
+     "invalidated",
+     "noop",
+     "skipped",
+     "dup_echo",
+     "detail",
+     "tokens",
+     "before",
+     "after"
+    ],
+    "title": "MemoryReportView",
     "type": "object"
    },
    "ModelContextBody": {
@@ -2647,6 +3288,52 @@
     "description": "/api/uploads/orphans 的顶层形状（数组包一层只为给它一个名字）。",
     "title": "OrphanUploadsView"
    },
+   "OrphanUploadsViewOrphansItem": {
+    "additionalProperties": true,
+    "description": "自动生成：OrphanUploadsViewOrphansItem（orphansItem 的对象形状）。",
+    "properties": {
+     "companion": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Companion"
+     },
+     "name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Name"
+     },
+     "size": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Size"
+     }
+    },
+    "required": [
+     "name",
+     "size",
+     "companion"
+    ],
+    "title": "OrphanUploadsViewOrphansItem",
+    "type": "object"
+   },
    "OrphanUploadsViewRoot": {
     "additionalProperties": true,
     "description": "自动生成：OrphanUploadsViewRoot（ 的对象形状）。",
@@ -2655,8 +3342,7 @@
       "anyOf": [
        {
         "items": {
-         "additionalProperties": true,
-         "type": "object"
+         "type": "string"
         },
         "type": "array"
        },
@@ -2670,8 +3356,7 @@
       "anyOf": [
        {
         "items": {
-         "additionalProperties": true,
-         "type": "object"
+         "$ref": "#/components/schemas/OrphanUploadsViewOrphansItem"
         },
         "type": "array"
        },
@@ -3091,6 +3776,79 @@
      "model"
     ],
     "title": "ProbeBody",
+    "type": "object"
+   },
+   "ProbeOutcomeView": {
+    "description": "`POST /api/settings/models/probe`（model_probe.ProbeResult.to_api() 恒 8 键）。\n\nmodel_listed/tools/vision 是**三态**（true/false/null=没测或测不出），键恒在、值可\nnull ⇒ 必填 + `| None`，不降级成可选。",
+    "properties": {
+     "calls_used": {
+      "title": "Calls Used",
+      "type": "integer"
+     },
+     "detail": {
+      "title": "Detail",
+      "type": "string"
+     },
+     "model_listed": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Model Listed"
+     },
+     "models": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Models",
+      "type": "array"
+     },
+     "reachable": {
+      "title": "Reachable",
+      "type": "boolean"
+     },
+     "tools": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Tools"
+     },
+     "vision": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Vision"
+     },
+     "vision_source": {
+      "title": "Vision Source",
+      "type": "string"
+     }
+    },
+    "required": [
+     "reachable",
+     "detail",
+     "model_listed",
+     "tools",
+     "vision",
+     "vision_source",
+     "calls_used",
+     "models"
+    ],
+    "title": "ProbeOutcomeView",
     "type": "object"
    },
    "PromptEnhanceBody": {
@@ -4984,6 +5742,33 @@
      "values"
     ],
     "title": "RuntimeUpdateBody",
+    "type": "object"
+   },
+   "ServiceCheckView": {
+    "description": "`POST /api/services/check`：顶层键名按 provider 风格二选一（ollama /\nopenai_compatible），exclude_unset 把没走的那一支裁掉——两支互斥 ⇒ 都带默认。",
+    "properties": {
+     "ollama": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ConnectivityProbeView"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "openai_compatible": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ConnectivityProbeView"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "title": "ServiceCheckView",
     "type": "object"
    },
    "ServicesView": {
@@ -7084,7 +7869,9 @@
       "content": {
        "application/json": {
         "schema": {
-         "items": {},
+         "items": {
+          "$ref": "#/components/schemas/DomainRecordView"
+         },
          "title": "Response List Domain Records Api Domains  Domain  Records Get",
          "type": "array"
         }
@@ -7134,7 +7921,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Create Domain Record Api Domains  Domain  Records Post"
+         "$ref": "#/components/schemas/DomainRecordView"
         }
        }
       },
@@ -7232,7 +8019,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Patch Domain Record Api Domains  Domain  Records  Record Id  Patch"
+         "$ref": "#/components/schemas/DomainRecordView"
         }
        }
       },
@@ -7710,9 +8497,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "additionalProperties": true,
-         "title": "Response Test Mcp Server Api Mcp Servers  Server Id  Test Post",
-         "type": "object"
+         "$ref": "#/components/schemas/McpTestResultView"
         }
        }
       },
@@ -8207,7 +8992,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Extract Record Api Records Extract Post"
+         "$ref": "#/components/schemas/ExtractOutcomeView"
         }
        }
       },
@@ -8671,7 +9456,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Deep Check Api Services Check Post"
+         "$ref": "#/components/schemas/ServiceCheckView"
         }
        }
       },
@@ -9175,7 +9960,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Distill Session Api Session  Thread Id  Distill Post"
+         "$ref": "#/components/schemas/DistillOutcomeView"
         }
        }
       },
@@ -9675,7 +10460,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Consolidate Memory Api Settings Memory Consolidate Post"
+         "$ref": "#/components/schemas/MemoryConsolidatedView"
         }
        }
       },
@@ -10121,7 +10906,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Post Model Probe Api Settings Models Probe Post"
+         "$ref": "#/components/schemas/ProbeOutcomeView"
         }
        }
       },
@@ -10728,7 +11513,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Cleanup Orphan Uploads Api Uploads Cleanup Post"
+         "$ref": "#/components/schemas/CleanupResultView"
         }
        }
       },

@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.api.errors import value_error_to_http
+from rolecard_agent.contracts.handwritten_models import McpTestResultView
 from rolecard_agent.contracts.response_models import ChannelsView, McpServersView
 from rolecard_agent.core.plugins import mcp_store
 
@@ -126,7 +127,11 @@ def delete_mcp_server(
     ctx.rebuild_runtime()
 
 
-@router.post("/api/mcp/servers/{server_id}/test")
+@router.post(
+    "/api/mcp/servers/{server_id}/test",
+    response_model=McpTestResultView,
+    response_model_exclude_unset=True,
+)
 def test_mcp_server(
     server_id: str,
     ctx: AppContext = Depends(get_context),

@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from rolecard_agent.base.observability import scrub_endpoints
+from rolecard_agent.contracts.handwritten_models import ExtractOutcomeView
 from rolecard_agent.contracts.response_models import RecordsView
 from rolecard_agent.core.ingest.upload_service import read_source_text, source_kind
 from rolecard_agent.core.ingest.uploads import parsed_text_path as _parsed_text_path
@@ -222,7 +223,11 @@ def build_records_router(deps: RouterDeps) -> APIRouter:
         row = svc.get_record(user_id=ctx.current_user(), report_id=report_id)
         return row if row is not None else {"report_id": report_id}
 
-    @router.post("/api/records/extract")
+    @router.post(
+        "/api/records/extract",
+        response_model=ExtractOutcomeView,
+        response_model_exclude_unset=True,
+    )
     def extract_record(
         body: ExtractRequest,
         ctx: RouterHost = Depends(deps.get_context),

@@ -2470,6 +2470,32 @@ export interface components {
             thread_id: string;
         };
         /**
+         * CleanupResultView
+         * @description `POST /api/uploads/cleanup`：恒 4 键，无 orphans/dangling（那是 GET 的形状）。
+         */
+        CleanupResultView: {
+            /** Deleted */
+            deleted: number;
+            /** Freed Bytes */
+            freed_bytes: number;
+            /** Referenced */
+            referenced: number;
+            /** Scanned */
+            scanned: number;
+        };
+        /**
+         * ConnectivityProbeView
+         * @description `POST /api/services/check` 的内层：reachable/detail 恒有，models 是可选键（非空才写）。
+         */
+        ConnectivityProbeView: {
+            /** Detail */
+            detail: string;
+            /** Models */
+            models?: string[] | null;
+            /** Reachable */
+            reachable: boolean;
+        };
+        /**
          * DecideBody
          * @description 对一条待批命令拍板。只允许 pending 记录；批准会在后台立即执行一次。
          *
@@ -2486,6 +2512,15 @@ export interface components {
         DeleteMessagesBody: {
             /** Message Ids */
             message_ids: string[];
+        };
+        /**
+         * DistillOutcomeView
+         * @description `POST /api/session/{thread_id}/distill`：{"report": …, "turns_since": …}（恒 2 键）。
+         */
+        DistillOutcomeView: {
+            report: components["schemas"]["MemoryReportView"];
+            /** Turns Since */
+            turns_since: number;
         };
         /**
          * DomainRecordCreate
@@ -2518,6 +2553,33 @@ export interface components {
             value_num?: number | null;
             /** Value Text */
             value_text?: string | null;
+        };
+        /**
+         * DomainRecordView
+         * @description `/api/domains/{domain}/records` 的通用记录行（GET 列表 / POST / PATCH 三个端点共用）。
+         *
+         *     带 `{domain}` 路径参数的端点不进生成器白名单的理由：域 id 是**数据而不是形状**——
+         *     样本只能证明 finance 一个域，契约却对任意注册域成立；手写模型的字段集取自
+         *     `DomainDataService._row_to_dict`（8 键恒有），比一次采样诚实。
+         *     value_num 在库里是 REAL 列、`_row_to_dict` 原样透传（float | None）。
+         */
+        DomainRecordView: {
+            /** Created At */
+            created_at: string;
+            /** Domain */
+            domain: string;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Note */
+            note: string | null;
+            /** Unit */
+            unit: string | null;
+            /** Value Num */
+            value_num: number | null;
+            /** Value Text */
+            value_text: string | null;
         };
         /**
          * DomainsView
@@ -2574,6 +2636,45 @@ export interface components {
                 [key: string]: string;
             }[];
         };
+        /** ExtractConflictModel */
+        ExtractConflictModel: {
+            /** Index Name */
+            index_name: string;
+            primary: components["schemas"]["ExtractedIndexModel"] | null;
+            /** Reason */
+            reason: string;
+            verify: components["schemas"]["ExtractedIndexModel"] | null;
+        };
+        /**
+         * ExtractOutcomeView
+         * @description `POST /api/records/extract` 的全部 4 条返回路径（键集互斥，靠 exclude_unset 裁）。
+         *
+         *     这是本文件唯一"全键带默认"的模型：成功路只给 mode..notes 七键，三条降级路各给
+         *     skipped + detail/report_id 之二——四套键集互斥，任一路都不该被另一端缺的键撑爆
+         *     校验。前端按 `skipped` 有无分支消费。
+         */
+        ExtractOutcomeView: {
+            /** Check Time */
+            check_time?: string | null;
+            /** Conflicts */
+            conflicts?: components["schemas"]["ExtractConflictModel"][] | null;
+            /** Detail */
+            detail?: string | null;
+            /** Institution */
+            institution?: string | null;
+            /** Mode */
+            mode?: string | null;
+            /** Notes */
+            notes?: string[] | null;
+            /** Report Id */
+            report_id?: string | null;
+            /** Report Type */
+            report_type?: string | null;
+            /** Skipped */
+            skipped?: string | null;
+            /** Written */
+            written?: components["schemas"]["ExtractWrittenModel"][] | null;
+        };
         /**
          * ExtractRequest
          * @description 触发一次结构化抽取（上传成功后由前端自动调用，见 S5b）。
@@ -2581,6 +2682,44 @@ export interface components {
         ExtractRequest: {
             /** Task Id */
             task_id: string;
+        };
+        /**
+         * ExtractWrittenModel
+         * @description 抽取响应里 written[] 的元素 —— 只有 4 个键。
+         *
+         *     ⚠️ 与库里的指标行（9 键的 SettingsMemoryViewItemsItem_indicesItem 同族）**不是**
+         *     一个形状：回给客户端的是抽取侧的窄投影，写库的那份（8 键 payload）不出门。
+         *     前端旧手写 ExtractWritten 错指到 9 键那份上，本模型把它拉回运行时事实。
+         */
+        ExtractWrittenModel: {
+            /** Index Name */
+            index_name: string;
+            /** Index Value */
+            index_value: number | null;
+            /** Unit */
+            unit: string | null;
+            /** Value Text */
+            value_text: string | null;
+        };
+        /**
+         * ExtractedIndexModel
+         * @description 抽取里冲突行的两侧读数（`ExtractedIndex.model_dump()` 恒 8 键，全量 dump）。
+         */
+        ExtractedIndexModel: {
+            /** Confidence */
+            confidence: string;
+            /** Index Name */
+            index_name: string;
+            /** Index Value */
+            index_value: number | null;
+            /** Raw Text */
+            raw_text: string;
+            /** Ref Range */
+            ref_range: string | null;
+            /** Unit */
+            unit: string | null;
+            /** Value Text */
+            value_text: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -2863,6 +3002,23 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * McpTestResultView
+         * @description `POST /api/mcp/servers/{id}/test`：id/ok/tool_count/tools 恒有，error 是可选键
+         *     （只在异常路出现，非 null 值）⇒ 前三必填、error 带默认。
+         */
+        McpTestResultView: {
+            /** Error */
+            error?: string | null;
+            /** Id */
+            id: string;
+            /** Ok */
+            ok: boolean;
+            /** Tool Count */
+            tool_count: number;
+            /** Tools */
+            tools: string[];
+        };
+        /**
          * MemoryBody
          * @description 记忆面板的保存负载：任选其一提交，缺省 = 该字段不变。
          *
@@ -2877,6 +3033,33 @@ export interface components {
             enabled?: boolean | null;
             /** Extract Turns */
             extract_turns?: number | null;
+        };
+        /**
+         * MemoryConsolidatedView
+         * @description `POST /api/settings/memory/consolidate`：report + _memory_payload 摊平的 9 键（恒有）。
+         *
+         *     顶层**没有** turns_since —— 那是会话 distill（DistillOutcomeView）独有的键，
+         *     前端旧 ConsolidateOutcome extends DistillOutcome 把不存在于响应的必填键抄了进来，
+         *     本模型按运行时形状收口。items[] 元素复用生成物组件（含 last_hit_at 等三族可空键）。
+         */
+        MemoryConsolidatedView: {
+            /** Active Count */
+            active_count: number;
+            /** Content */
+            content: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Extract Turns */
+            extract_turns: number;
+            /** Items */
+            items: components["schemas"]["SettingsMemoryViewItemsItem"][];
+            /** Limit */
+            limit: number;
+            /** Over Limit */
+            over_limit: boolean;
+            report: components["schemas"]["MemoryReportView"];
+            /** Role Id */
+            role_id: string | null;
         };
         /**
          * MemoryItemBody
@@ -2912,6 +3095,36 @@ export interface components {
         MemoryMergeBody: {
             /** Text */
             text?: string | null;
+        };
+        /**
+         * MemoryReportView
+         * @description `memory_distill._report` 的账本（12 键恒有；见 core/memory/memory_distill.py）。
+         */
+        MemoryReportView: {
+            /** Added */
+            added: number;
+            /** After */
+            after: number | null;
+            /** Before */
+            before: number | null;
+            /** Detail */
+            detail: string;
+            /** Dup Echo */
+            dup_echo: number;
+            /** Invalidated */
+            invalidated: number;
+            /** Merged */
+            merged: number;
+            /** Noop */
+            noop: number;
+            /** Similar */
+            similar: number;
+            /** Skipped */
+            skipped: number;
+            /** Tokens */
+            tokens: number | null;
+            /** Updated */
+            updated: number;
         };
         /**
          * ModelContextBody
@@ -3059,18 +3272,28 @@ export interface components {
          */
         OrphanUploadsView: components["schemas"]["OrphanUploadsViewRoot"];
         /**
+         * OrphanUploadsViewOrphansItem
+         * @description 自动生成：OrphanUploadsViewOrphansItem（orphansItem 的对象形状）。
+         */
+        OrphanUploadsViewOrphansItem: {
+            /** Companion */
+            companion: boolean | null;
+            /** Name */
+            name: string | null;
+            /** Size */
+            size: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * OrphanUploadsViewRoot
          * @description 自动生成：OrphanUploadsViewRoot（ 的对象形状）。
          */
         OrphanUploadsViewRoot: {
             /** Dangling */
-            dangling: {
-                [key: string]: unknown;
-            }[] | null;
+            dangling: string[] | null;
             /** Orphans */
-            orphans: {
-                [key: string]: unknown;
-            }[] | null;
+            orphans: components["schemas"]["OrphanUploadsViewOrphansItem"][] | null;
             /** Referenced */
             referenced: number | null;
             /** Scanned */
@@ -3199,6 +3422,31 @@ export interface components {
              * @default false
              */
             test_vision: boolean;
+        };
+        /**
+         * ProbeOutcomeView
+         * @description `POST /api/settings/models/probe`（model_probe.ProbeResult.to_api() 恒 8 键）。
+         *
+         *     model_listed/tools/vision 是**三态**（true/false/null=没测或测不出），键恒在、值可
+         *     null ⇒ 必填 + `| None`，不降级成可选。
+         */
+        ProbeOutcomeView: {
+            /** Calls Used */
+            calls_used: number;
+            /** Detail */
+            detail: string;
+            /** Model Listed */
+            model_listed: boolean | null;
+            /** Models */
+            models: string[];
+            /** Reachable */
+            reachable: boolean;
+            /** Tools */
+            tools: boolean | null;
+            /** Vision */
+            vision: boolean | null;
+            /** Vision Source */
+            vision_source: string;
         };
         /** PromptEnhanceBody */
         PromptEnhanceBody: {
@@ -3829,6 +4077,15 @@ export interface components {
             values: {
                 [key: string]: string | null;
             };
+        };
+        /**
+         * ServiceCheckView
+         * @description `POST /api/services/check`：顶层键名按 provider 风格二选一（ollama /
+         *     openai_compatible），exclude_unset 把没走的那一支裁掉——两支互斥 ⇒ 都带默认。
+         */
+        ServiceCheckView: {
+            ollama?: components["schemas"]["ConnectivityProbeView"] | null;
+            openai_compatible?: components["schemas"]["ConnectivityProbeView"] | null;
         };
         /**
          * ServicesView
@@ -4673,7 +4930,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown[];
+                    "application/json": components["schemas"]["DomainRecordView"][];
                 };
             };
             /** @description Validation Error */
@@ -4708,7 +4965,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["DomainRecordView"];
                 };
             };
             /** @description Validation Error */
@@ -4774,7 +5031,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["DomainRecordView"];
                 };
             };
             /** @description Validation Error */
@@ -5191,9 +5448,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["McpTestResultView"];
                 };
             };
             /** @description Validation Error */
@@ -5579,7 +5834,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ExtractOutcomeView"];
                 };
             };
             /** @description Validation Error */
@@ -5940,7 +6195,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ServiceCheckView"];
                 };
             };
         };
@@ -6321,7 +6576,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["DistillOutcomeView"];
                 };
             };
             /** @description Validation Error */
@@ -6671,7 +6926,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MemoryConsolidatedView"];
                 };
             };
             /** @description Validation Error */
@@ -6986,7 +7241,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ProbeOutcomeView"];
                 };
             };
             /** @description Validation Error */
@@ -7512,7 +7767,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CleanupResultView"];
                 };
             };
         };

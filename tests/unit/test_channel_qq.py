@@ -299,14 +299,13 @@ def test_gateway_loop_stop_wakes_a_silent_connection() -> None:
     async def connect(url: str) -> Any:
         return FakeWS([json.dumps({"op": 10, "d": {"heartbeat_interval": 5000}})])
 
-    creds = QQCredentials("a", "b", "https://fake-qq", "https://fake/token")
-    tokens = QQTokenManager(
-        app_id="a",
-        app_secret="b",
-        token_url="https://fake/token",
-        transport=lambda url, payload: {"access_token": "tok"},
+    # 从前这里裸构造 QQApi（不注入 transport）⇒ gateway_url 走真 httpx 打
+    # https://fake-qq —— CI（Linux）上 NXDOMAIN 秒抛、被 except 接住后照常收场，
+    # 而 Windows 本机的 DNS 把这个名字解析得又慢又野（30s 超时 > wait_for 10s）
+    # ⇒ 本机稳定红、CI 绿的"红绿镜像"（P1b 第四批撞上，与兄弟用例同法补注入）。
+    api = _fake_api(
+        httpx.MockTransport(lambda request: httpx.Response(200, json={"url": "wss://fake-gw"}))
     )
-    api = QQApi(creds=creds, tokens=tokens)
     gateway = QQGatewayLoop(api=api, tracer=tracer, connect=connect)
 
     async def scenario() -> None:

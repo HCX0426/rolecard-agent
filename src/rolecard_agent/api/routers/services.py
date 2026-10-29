@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.api.errors import value_error_to_http
+from rolecard_agent.contracts.handwritten_models import ServiceCheckView
 from rolecard_agent.contracts.response_models import ServicesView
 from rolecard_agent.core.model_settings import client_style
 from rolecard_agent.core.probes.model_probe import ProbeTarget, list_models
@@ -205,7 +206,11 @@ def put_service_order(
     return {"service_key": key, "order": body.order, "reloaded": True}
 
 
-@router.post("/api/services/check")
+@router.post(
+    "/api/services/check",
+    response_model=ServiceCheckView,
+    response_model_exclude_unset=True,
+)
 def deep_check(ctx: AppContext = Depends(get_context)) -> object:
     """深度检测：对**当前默认后端**真发一次轻请求（ollama → /api/tags；openai 兼容 → /models）。
 

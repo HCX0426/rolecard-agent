@@ -14,6 +14,7 @@ from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.base.audit import read_audit_page
 from rolecard_agent.base.observability import scrub_endpoints
+from rolecard_agent.contracts.handwritten_models import CleanupResultView
 from rolecard_agent.contracts.response_models import (
     AuditView,
     KnowledgeScopesView,
@@ -212,7 +213,11 @@ def list_orphan_uploads(ctx: AppContext = Depends(get_context)) -> object:
     return _orphan_report(ctx)
 
 
-@router.post("/api/uploads/cleanup")
+@router.post(
+    "/api/uploads/cleanup",
+    response_model=CleanupResultView,
+    response_model_exclude_unset=True,
+)
 def cleanup_orphan_uploads(
     ctx: AppContext = Depends(get_context), actor: Actor = Depends(get_actor)
 ) -> object:

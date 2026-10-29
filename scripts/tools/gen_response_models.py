@@ -498,6 +498,7 @@ def _seed_minimal_data(app: Any) -> None:
     _seed_service_ref(app)
     _seed_timeline_correction(app)
     _seed_thread_touch(app)
+    _seed_orphan_upload(app)
 
 
 def _seed_thread_touch(app: Any) -> None:
@@ -640,6 +641,38 @@ def _seed_service_ref(app: Any) -> None:
         ctx.services.add("embedding", ref_backend="sample_cloud")
 
 
+def _seed_orphan_upload(app: Any) -> None:
+    """喂 /api/uploads/orphans 的两族松格（orphans[] 与 dangling[]，P1b 第四批）。
+
+    先把 settings.upload_dir 指到**绝对临时目录**再写文件：默认 `./data/uploads` 是仓库
+    相对路径，而 `scan_orphans` 的 `_inside(entry, root)` 拿未 resolve 的相对 root 判
+    `is_relative_to` ⇒ 恒 False ⇒ 全仓真实上传文件全被跳过、orphans 永远采不到（两机都空
+    所以不漂）。相对路径默认值是 DATA_ROOT 钉子的盲区（`data_paths()` 只在 run_api 调，
+    create_app/测试夹具都不走它）—— 所以这里直接改属性（Settings 是可变 pydantic 模型、
+    读侧路由每次现取），锚点夹具与生成器两条路都隔离干净，绝不落到开发机的 data/。
+    orphans：写两个无台账引用的文件（主文件 companion=False、`.parsed.txt` 副本在主文件
+    也在时 companion=True——两个布尔值都要有代表值）。GET 不删（删归 cleanup 端点）。
+    dangling：台账有一行、目录里没有的那张——纯 INSERT，不需真文件（按文件名认引用）。
+    """
+    ctx = app.state.ctx
+    upload_dir = pathlib.Path(tempfile.mkdtemp(prefix="gen-models-uploads-")) / "uploads"
+    ctx.settings.upload_dir = upload_dir
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    (upload_dir / "sample_orphan.txt").write_bytes(b"orphan sample")
+    (upload_dir / "sample_orphan.parsed.txt").write_bytes(b"parsed orphan")
+    ctx.ingestion.create(
+        user_id=ctx.current_user(),
+        file_hash="gen-orphan-gone",
+        source_file=str(upload_dir / "sample_ledger_only_gone.txt"),
+    )
+    ctx.ingestion.create(
+        user_id=ctx.current_user(),
+        file_hash="gen-orphan-live",
+        source_file=str(upload_dir / "sample_live.txt"),
+    )
+    (upload_dir / "sample_live.txt").write_bytes(b"referenced live file")
+
+
 def _seed_timeline_correction(app: Any) -> None:
     """两件事：① 造一条 memory_correct 事件 —— from_text 只有"更正"那一条才有
     （被退役事实的原文）；② 记忆条数越过 timeline 的 limit=50，让 next_cursor
@@ -780,6 +813,10 @@ def _sample(path: str) -> Any:
     # （sources=[]）。`_type_tag` 把空数组记成 `list[]`、非空记成 `list[str]`，两机
     # 一混一净 ⇒ 一边判"不可建模"、一边判"可建模"，`--check` 跨机随机红。
     os.environ["CHROMA_PATH"] = str(pathlib.Path(tempfile.mkdtemp()) / "chroma")
+    # UPLOAD_DIR 不在这里钉 —— 它归 _seed_orphan_upload 自己管（直接改 settings.upload_dir
+    # 指绝对临时目录）：那条路锚点夹具与生成器两条都隔离，开发机的 data/uploads 绝不落。
+    # 默认 `./data/uploads` 的相对根 + scan_orphans 的 `_inside` 不 resolve root ⇒ 恒判
+    # 越界 ⇒ orphans 永远空（DATA_ROOT 钉子的又一处盲区，P1b 第四批实测）。
     app = create_app(sqlite_path=db_path)
     _seed_minimal_data(app)
     # `client=("127.0.0.1", 50000)`：**TCP 对端**设成回环 —— 本机来源护栏只认对端 IP。
