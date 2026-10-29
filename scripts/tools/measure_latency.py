@@ -33,7 +33,12 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
-VENV_PY = str(ROOT / ".venv" / "Scripts" / "python.exe")
+# 起后端子进程用**当前解释器**（sys.executable），不硬编码 `.venv/Scripts/python.exe`：
+# 开发机走 .venv 启动（用法那行）⇒ sys.executable 就是那份 venv python，语义不变；
+# 而 GitHub 托管 runner 上没有 `.venv`（pip 装进 setup-python 的环境）⇒ 硬编码那串
+# 在 CI 上是个不存在的文件，measure_latency 每夜死在 Popen 之前——被"找不到源库"
+# 那层更早的红盖住过（2026-10-29 配上 key 后首趟真跑才露出第二层）。
+VENV_PY = sys.executable
 sys.path.insert(0, str(ROOT / "scripts" / "forensics"))
 
 #: 会话线程。**不再硬编码**（2026-10-10 修真档）：从前这里是
@@ -58,8 +63,9 @@ def _free_port() -> int:
         return int(p.getsockname()[1])
 
 
-def _req(url: str, body: dict[str, Any] | None = None, method: str | None = None,
-         timeout: float = 600.0):
+def _req(
+    url: str, body: dict[str, Any] | None = None, method: str | None = None, timeout: float = 600.0
+):
     """`method` 默认**不传**：让 urllib 按"有没有 body"自己定（有 body = POST）。
 
     这里踩过一次坑，而且坑得浪费时间：上一版签名是 `method="GET"` 并把它显式传给
@@ -70,18 +76,22 @@ def _req(url: str, body: dict[str, Any] | None = None, method: str | None = None
     默认值与调用意图相反时，错的那一侧永远是最先被怀疑的那一侧。
     """
     data = None if body is None else json.dumps(body).encode("utf-8")
-    kw: dict[str, Any] = {"data": data,
-                          "headers": {"Content-Type": "application/json"} if data else {}}
+    kw: dict[str, Any] = {
+        "data": data,
+        "headers": {"Content-Type": "application/json"} if data else {},
+    }
     if method is not None:
         kw["method"] = method
     return urllib.request.Request(url, **kw)
 
 
-def _open(url: str, body: dict[str, Any] | None = None, method: str | None = None,
-          timeout: float = 600.0):
+def _open(
+    url: str, body: dict[str, Any] | None = None, method: str | None = None, timeout: float = 600.0
+):
     """发出去并返回响应：`method` 不写就由 urllib 按有没有 body 决定（见 `_req` 那段教训）。"""
     return urllib.request.urlopen(  # noqa: S310
-        _req(url, body, method), timeout=timeout)
+        _req(url, body, method), timeout=timeout
+    )
 
 
 def _json(url: str, body: dict[str, Any] | None = None, method: str | None = None) -> Any:
@@ -162,12 +172,18 @@ def main() -> int:
         "MEMORY_EXTRACT_AUTO": "0",  # 别顺手把探针说的话提进她的长期记忆
         "MODEL_PIN_ON_STARTUP": "0",  # 本地那臂要显式选，不该由启动去钉模型占显存
     }
-    head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
-                          capture_output=True, text=True).stdout.strip()
+    head = subprocess.run(
+        ["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
     print(f"库副本={copy}  端口={port}  HEAD={head}  n={args.n}", flush=True)
     with log_path.open("wb") as log:
-        srv = subprocess.Popen([VENV_PY, "scripts/run_api.py"], env=env, cwd=str(ROOT),  # noqa: S603
-                               stdout=log, stderr=subprocess.STDOUT)
+        srv = subprocess.Popen(
+            [VENV_PY, "scripts/run_api.py"],
+            env=env,
+            cwd=str(ROOT),  # noqa: S603
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
         rows: list[str] = []
         try:
             while True:
@@ -184,8 +200,12 @@ def main() -> int:
             # 形状：`providers[]` 是**供应商分组**（`id`/`label`/`style`…），后端名在每组自己的
             # `models[].name` 上。按 `providers[].name` 找会一个都取不到 —— 那正好是
             # "读不出来却悄悄当没测过"的形状，所以这里读不出就显式失败，不静默。
-            known = [m["name"] for g in catalog.get("providers", [])
-                     for m in (g.get("models") or []) if isinstance(m, dict) and m.get("name")]
+            known = [
+                m["name"]
+                for g in catalog.get("providers", [])
+                for m in (g.get("models") or [])
+                if isinstance(m, dict) and m.get("name")
+            ]
             if not known:
                 print("模型目录读不出预期形状：", json.dumps(catalog, ensure_ascii=False)[:400])
                 return 1
@@ -203,8 +223,10 @@ def main() -> int:
             )
             thread = str(created.get("thread_id") or "")
             if not thread:
-                print("建会话失败，服务端没回 thread_id：",
-                      json.dumps(created, ensure_ascii=False)[:300])
+                print(
+                    "建会话失败，服务端没回 thread_id：",
+                    json.dumps(created, ensure_ascii=False)[:300],
+                )
                 return 1
             role_shown = created.get("role_name") or created.get("role_id")
             print(f"会话 = {thread}（角色 {role_shown}）", flush=True)
@@ -218,15 +240,15 @@ def main() -> int:
                 # 可读原因，不是让人读栈）。注意这里**不预设**失败原因是"模型没装"——
                 # 上一版就是那么在归因上写错的（真因是会话名写错，见上面那段）。
                 try:
-                    _open(f"{base}/api/session/{thread}",
-                          {"model_name": hit, "agent_mode": "chat"}, "PATCH").read()
+                    _open(
+                        f"{base}/api/session/{thread}",
+                        {"model_name": hit, "agent_mode": "chat"},
+                        "PATCH",
+                    ).read()
                 except (urllib.error.HTTPError, urllib.error.URLError) as exc:
                     code = getattr(exc, "code", None)
                     why = f"{type(exc).__name__}{' ' + str(code) if code else ''}"
-                    rows.append(
-                        f"{hit:22} —— 切不过去（{why}），"
-                        "跳过（这条臂没量到，不是 0 秒）"
-                    )
+                    rows.append(f"{hit:22} —— 切不过去（{why}），跳过（这条臂没量到，不是 0 秒）")
                     continue
                 *_, warm_err = _one_turn(base, thread)
                 if warm_err:
@@ -245,26 +267,32 @@ def main() -> int:
                         firsts.append(f)
                     ends.append(e)
                     lens.append(c)
-                    print(f"  {hit} #{i + 1:2d} 首字 {f and round(f, 2)}s 整轮 {e:.2f}s {c} 字",
-                          flush=True)
+                    print(
+                        f"  {hit} #{i + 1:2d} 首字 {f and round(f, 2)}s 整轮 {e:.2f}s {c} 字",
+                        flush=True,
+                    )
                 if not firsts:
-                    rows.append(f"{hit:22} 整轮都没投送出正文 —— 这条臂没量到，别当成快"
-                                + (f"（失败 {len(errs)} 次）" if errs else ""))
+                    rows.append(
+                        f"{hit:22} 整轮都没投送出正文 —— 这条臂没量到，别当成快"
+                        + (f"（失败 {len(errs)} 次）" if errs else "")
+                    )
                     continue
                 rows.append(
                     f"{hit:22} 首字 P50 {_pct(firsts, 0.5):5.2f}s / P95 {_pct(firsts, 0.95):5.2f}s"
                     f"（max {max(firsts):.2f}）   整轮 P50 {_pct(ends, 0.5):5.2f}s /"
                     f" P95 {_pct(ends, 0.95):5.2f}s（max {max(ends):.2f}）   "
                     f"输出 {statistics.mean(lens):.0f}±{statistics.pstdev(lens):.0f} 字   "
-                    f"样本 {len(ends)}/{args.n}"
-                    + (f"，失败 {len(errs)} 次" if errs else ""))
+                    f"样本 {len(ends)}/{args.n}" + (f"，失败 {len(errs)} 次" if errs else "")
+                )
         finally:
             srv.terminate()
             try:
                 srv.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                subprocess.run(["taskkill", "/F", "/T", "/PID", str(srv.pid)],  # noqa: S603
-                               check=False)
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(srv.pid)],  # noqa: S603
+                    check=False,
+                )
     print("\n=== 结果（同一把尺子：同一个问句、agent_mode=chat、n=" + str(args.n) + "）===")
     for r in rows:
         print("  " + r)
