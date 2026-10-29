@@ -3,7 +3,7 @@
 // 每条：命令 + cwd + 提交角色 + 时间；pending 可 approve / reject，结果（done）可展开看输出。
 // 轮询在 App.tsx 侧，Panel 本身只在打开时拉一次最新列表；操作后原地更新。
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   api,
   type ApprovalResult,
@@ -81,6 +81,20 @@ export default function ApprovalPanel({
       .catch((e) => setErr(`加载失败：${describeError(e)}`));
   }, [open, onPendingChange]);
 
+  // Esc 关闭 + 打开时聚焦面板：模态行为与 ui/Modal 同一套。这两个抽屉是 w-80 自绘头部
+  // （清空/筛选在头一行），整体迁 Modal 会动布局 —— 行为先补齐，整迁登记在交互审计
+  // 台账（2026-10-30）缓做。
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    panelRef.current?.focus();
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   async function decide(row: ApprovalRow, decision: "approve" | "reject") {
     if (row.status !== "pending") return;
     try {
@@ -104,7 +118,12 @@ export default function ApprovalPanel({
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/40" onMouseDown={onClose}>
       <div
-        className="absolute right-0 top-0 flex h-full w-80 flex-col border-l border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-800"
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="待审批命令"
+        tabIndex={-1}
+        className="absolute right-0 top-0 flex h-full w-80 flex-col border-l border-slate-200 bg-white shadow-xl outline-none dark:border-slate-700 dark:bg-slate-800"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5 dark:border-slate-700">

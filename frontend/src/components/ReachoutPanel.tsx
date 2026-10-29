@@ -13,7 +13,7 @@
 // 默认展开的规则偏向"别藏东西"：只有一条、或这一摞里有未读 → 直接摊开；
 // 只有**整摞都已读**才折起来 —— 折叠要解决的是旧消息糊成流水账，不是藏新消息。
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type ReachoutsPage, type ReachoutRow } from "../api";
 import { formatUtcNaive } from "../lib/quiet";
 import QuietLine from "./QuietLine";
@@ -143,6 +143,19 @@ export default function ReachoutPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, roleFilter]);
 
+  // Esc 关闭 + 打开时聚焦面板：模态行为与 ui/Modal 同一套（整迁 Modal 的布局风险
+  // 见 ApprovalPanel 同款注释，2026-10-30 交互审计）。
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    panelRef.current?.focus();
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   /** 删一行 = 只让这条投递记录从抽屉消失。**她说过的那句仍在对话里**，文案要说清这一点。 */
   async function removeRow(row: ReachoutRow) {
     if (
@@ -230,7 +243,12 @@ export default function ReachoutPanel({
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/40" onMouseDown={onClose}>
       <div
-        className="absolute right-0 top-0 flex h-full w-80 flex-col border-l border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-800"
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="角色主动找你"
+        tabIndex={-1}
+        className="absolute right-0 top-0 flex h-full w-80 flex-col border-l border-slate-200 bg-white shadow-xl outline-none dark:border-slate-700 dark:bg-slate-800"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5 dark:border-slate-700">

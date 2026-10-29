@@ -166,3 +166,40 @@ def test_chat_events_rejects_when_pool_is_saturated() -> None:
 
     # 池位守恒由 BoundedSemaphore 本身兜底：任何一次多 release 都会在上面夹具的
     # release 循环里抛 ValueError —— 测试能绿就说明数目没有多也没有少。
+
+
+def test_client_disconnect_closes_the_turn_deterministically() -> None:
+    """半途断线（Starlette aclose async 生成器）时，run_turn 的收尾必须**当场**跑。
+
+    同步生成器从前被弃置：run_turn 的 finally（放写锁 / 立停旗 / after_turn 提交）
+    只能等 GC 按引用计数兜底 —— 时机与执行线程都不受控，最坏推迟到"同会话重发撞
+    ThreadBusy"之后（2026-10-30 后端架构审计）。现在投送层 finally 里显式 gen.close()。
+    这里钉两个可观察事实：断线后①after_turn 已被调用、②池位已归还。
+    """
+    import asyncio
+
+    from rolecard_agent.api import chat as chat_mod
+
+    after_turn_calls: list[int] = []
+
+    async def go() -> None:
+        agen = chat_mod.chat_events(
+            _RecordingGraph(sink=[], body="第一句"),
+            graph_input={},
+            config={"configurable": {"thread_id": "t-disconnect"}},
+            role_summary={"role_id": "r", "role_name": "断线"},
+            after_turn=after_turn_calls.append,
+        )
+        # 只消费一帧就"断线"：客户端合流，Starlette 对 async 生成器调 aclose()。
+        async for _frame in agen:
+            break
+        await agen.aclose()
+
+    asyncio.run(go())
+
+    assert len(after_turn_calls) == 1, (
+        f"断线轮次的 after_turn 没有当场执行：{after_turn_calls} —— 收尾又在等 GC 兜底了"
+    )
+    # 池位归还（拿得到 = 上一轮的 release 真的跑了；BoundedSemaphore 多还会当场炸）。
+    assert chat_mod._CHAT_SLOTS.acquire(blocking=False)
+    chat_mod._CHAT_SLOTS.release()

@@ -151,6 +151,14 @@ describe("ApprovalPanel 审批抽屉", () => {
     render(<ApprovalPanel open={false} onClose={() => {}} onPendingChange={() => {}} />);
     expect(apiMock.getApprovals).not.toHaveBeenCalled();
   });
+  it("Esc 关闭抽屉（模态行为与 ui/Modal 同一套，2026-10-30 交互审计的回归钉）", async () => {
+    const onClose = vi.fn();
+    render(<ApprovalPanel open={true} onClose={onClose} onPendingChange={() => {}} />);
+    await screen.findByText("python run.py --mode prod");
+    expect(screen.getByRole("dialog", { name: "待审批命令" })).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).toHaveBeenCalled();
+  });
 });
   it("令牌为空（用过或列表是旧的）：批准/拒绝禁用并说明怎么恢复", async () => {
     apiMock.getApprovals.mockResolvedValue(

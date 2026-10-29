@@ -21,9 +21,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import threading
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Generator
 from dataclasses import asdict
 from typing import Any, cast
 
@@ -32,12 +33,15 @@ from rolecard_agent.core.agent.turn import Error, TurnEvent, run_turn
 from rolecard_agent.core.common.pools import make_pool, submit_with_context
 from rolecard_agent.core.common.usage import TokenUsage
 
-_CHAT_POOL = make_pool("chat-stream", 8)
-#: 与池等量的"占位"信号量：提交前非阻塞 acquire，拿不到 = 8 个 worker 全忙 ——
+#: 轮次线程池的容量 —— 池、占位信号量、池满的用户文案**三处共用这一个数**（从前是
+#: 三个独立字面量，改任何一个其余两份静默变错，正是本仓反复清剿的"两写"形状）。
+_CHAT_WORKERS = 8
+_CHAT_POOL = make_pool("chat-stream", _CHAT_WORKERS)
+#: 与池等量的"占位"信号量：提交前非阻塞 acquire，拿不到 = 全部 worker 忙 ——
 #: 从前第 9 个并发轮次在队列里**无限等**、SSE 无任何输出也不报错（用户感知"发出去
 #: 没反应"）。现在立刻给一句人话的 error 帧（2026-10-04 审查快照的池满盲区条目）。
 #: 池子只服务这条链，信号量与 worker 一一对应。
-_CHAT_SLOTS = threading.BoundedSemaphore(8)
+_CHAT_SLOTS = threading.BoundedSemaphore(_CHAT_WORKERS)
 
 
 def frame(event: TurnEvent) -> dict[str, Any]:
@@ -78,21 +82,24 @@ async def chat_events(
         yield sse(
             Error(
                 detail=(
-                    "这一路已经有 8 轮对话在跑，新的这一轮进不来了 —— "
+                    f"这一路已经有 {_CHAT_WORKERS} 轮对话在跑，新的这一轮进不来了 —— "
                     "等一句话说完再发，或稍后再试。"
                 )
             )
         )
         return
-    gen: Iterator[str] = (sse(ev) for ev in run_turn(
-        graph,
-        graph_input=graph_input,
-        config=config,
-        role_summary=role_summary,
-        tracer=tracer,
-        usage_recorder=usage_recorder,
-        after_turn=after_turn,
-    ))
+    gen: Generator[str] = (
+        sse(ev)
+        for ev in run_turn(
+            graph,
+            graph_input=graph_input,
+            config=config,
+            role_summary=role_summary,
+            tracer=tracer,
+            usage_recorder=usage_recorder,
+            after_turn=after_turn,
+        )
+    )
     # **把本请求的上下文带进轮次线程池**（`R102-03`）：传播原语收编在
     # `core/common/pools.submit_with_context`（每次提交各拷一份 contextvars ——
     # `loop.run_in_executor` 与裸 `pool.submit` 都**不**传播，池线程只读到默认值；
@@ -116,4 +123,11 @@ async def chat_events(
     finally:
         # 客户端断线时 async 生成器被 aclose()：GeneratorExit 从 yield 处抛出，
         # 这里是唯一保证 release 的位置（池位漏一个，以后每次第 8 轮就误报忙）。
+        # 显式 close 掉同步生成器同样要紧：run_turn 的 finally（放写锁 / 立停旗 /
+        # after_turn 提交）从前只能等 GC 按引用计数兜底 —— 时机与执行线程都不受控
+        # （常见就在事件循环线程里补跑一轮收尾，且常推迟到"同会话重发撞 ThreadBusy"
+        # 之后）。正被池线程 next() 执行中的那份 close 不进去（ValueError），按既有
+        # 文档容忍那次在飞的调用跑完、留给 GC。
+        with contextlib.suppress(ValueError):
+            gen.close()
         _CHAT_SLOTS.release()

@@ -52,11 +52,11 @@ function page(overrides: Partial<ReachoutsPage> = {}): ReachoutsPage {
   return { items: [row()], unread: 1, merge_days: 1, ...overrides };
 }
 
-function renderPanel(onOpenThread = vi.fn(), onUnreadChange = vi.fn()) {
+function renderPanel(onOpenThread = vi.fn(), onUnreadChange = vi.fn(), onClose = vi.fn()) {
   const view = render(
     <ReachoutPanel
       open
-      onClose={() => {}}
+      onClose={onClose}
       onUnreadChange={onUnreadChange}
       onOpenThread={onOpenThread}
     />,
@@ -272,5 +272,13 @@ describe("抽屉那一格「她此刻为什么静默」", () => {
     const box = await screen.findByTestId("quiet-status");
     expect(box.textContent).toContain("未读堆积已达上限");
     expect(box.textContent).not.toContain("通用助手");
+  });
+  it("Esc 关闭抽屉（模态行为与 ui/Modal 同一套，2026-10-30 交互审计的回归钉）", async () => {
+    const onClose = vi.fn();
+    renderPanel(vi.fn(), vi.fn(), onClose);
+    await screen.findByText("今天腰还酸吗？");
+    expect(screen.getByRole("dialog", { name: "角色主动找你" })).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).toHaveBeenCalled();
   });
 });

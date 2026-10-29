@@ -187,7 +187,16 @@ class ReachoutScheduler(PeriodicTask):
                 within_minutes=UNDELIVERED_RETRY_MINUTES,
                 limit=UNDELIVERED_RETRY_LIMIT,
             )
-        except (sqlite3.Error, OSError):
+        except (sqlite3.Error, OSError) as exc:
+            # 补投链路坏了必须留痕：从前静默 return 0，"补投永远没跑"与"没有欠投"
+            # 不可区分 —— 与本仓"失败必须留痕"的纪律同一条（2026-10-30 后端架构审计）。
+            self._tracer.emit(
+                TraceEvent(
+                    event="reachout_retry_failed",
+                    node="reachout",
+                    detail={"error": f"{type(exc).__name__}: {exc}"},
+                )
+            )
             return 0
         fixed = 0
         for row in rows:
@@ -287,7 +296,11 @@ class ReachoutScheduler(PeriodicTask):
             return 0
         text = draft.text
         reachout_id = record_reachout(
-            self._conn, role, text, user_id=owner, fired_by=fired,
+            self._conn,
+            role,
+            text,
+            user_id=owner,
+            fired_by=fired,
             repeat_score=draft.score,
         )
         record_interaction(self._conn, role.role_id, user_id=owner, now=stamp_utc)
@@ -418,7 +431,8 @@ class ReachoutScheduler(PeriodicTask):
             with suppress(OSError):
                 if fw_pending_count(self._conn):
                     advance_baseline(
-                        self._conn, resolve_task_dir(self._settings(), self._conn),
+                        self._conn,
+                        resolve_task_dir(self._settings(), self._conn),
                         now_utc=stamped,
                     )
                     self._tracer.emit(
@@ -470,9 +484,7 @@ class ReachoutScheduler(PeriodicTask):
             # 先把上一 tick 欠下的补上（R26-40 ②）：顺序上"她之前说过的那句"该排在"她新要
             # 说的这句"前面，否则补投只会永远让位给新开口。
             self._retry_undelivered(owner)
-            candidates = [
-                r for r in self._roles.scoped(owner).list_roles() if r.reachout_enabled
-            ]
+            candidates = [r for r in self._roles.scoped(owner).list_roles() if r.reachout_enabled]
         except (sqlite3.Error, OSError):
             # 读角色时库/盘临时坏了：这一轮不开口，下一轮重试，**不退整个调度**。
             # 刻意不再 `except Exception`：桩少了个方法、参数写错这类接线错曾经被这里
@@ -520,9 +532,7 @@ class ReachoutScheduler(PeriodicTask):
                 ("file_event" if can_file else None)
                 or trigger_scheduled(role, self._conn, user_id=owner, now_local=stamp_local)
                 or trigger_affection(role, state, settings, now_utc=stamp_utc)
-                or trigger_time_pattern(
-                    role, self._conn, user_id=owner, now_local=stamp_local
-                )
+                or trigger_time_pattern(role, self._conn, user_id=owner, now_local=stamp_local)
                 or trigger_recall(role, self._conn, user_id=owner, now_local=stamp_local)
                 or "timer"
             )
@@ -570,9 +580,7 @@ class ReachoutScheduler(PeriodicTask):
             if self._stopping():
                 return made  # 停机：正在生成的这轮主动放弃（join 才等得到头）
             file_list = (
-                _format_change_list(file_events, truncated=file_truncated)
-                if can_file
-                else ""
+                _format_change_list(file_events, truncated=file_truncated) if can_file else ""
             )
             # 生成与投递**不再占调度线程**（2026-10-04 审查快照 PERF-5 条）：
             # tick 只做判定与入队，真正的模型调用在独立单 worker 池里排队 ——
@@ -623,9 +631,7 @@ class ReachoutScheduler(PeriodicTask):
                     if changed:
                         self._file_inflight -= 1
                 return made
-            future.add_done_callback(
-                partial(self._on_job_done, role.role_id, changed, stamp_utc)
-            )
+            future.add_done_callback(partial(self._on_job_done, role.role_id, changed, stamp_utc))
             made += 1
         if file_events is not None and (file_event_consumed or file_expired):
             # 同步形状的推进收口（一批一次）：真消费 OR 过期。异步形状消费侧的推进在
@@ -643,5 +649,3 @@ class ReachoutScheduler(PeriodicTask):
                 )
             )
         return made
-
-

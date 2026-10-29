@@ -32,6 +32,7 @@ _UTC = UTC
 
 ME = DEFAULT_USER_ID  # 这台实例的主人在测试里的名字（M2b 之后每次读写都要说清为谁）
 
+
 def _role(reachout_enabled: bool = True) -> RoleCard:
     return RoleCard(
         role_id="active",
@@ -51,8 +52,8 @@ def _now() -> tuple[datetime, datetime]:
     而集体失败。要单独测静默行为的用例自带显式 quiet_local（见 _blocked_by_quiet_hours 等）。
     """
     real_utc = datetime.now(UTC)
-    safe_local = datetime.now().astimezone().replace(
-        tzinfo=None, hour=14, minute=0, second=0, microsecond=0
+    safe_local = (
+        datetime.now().astimezone().replace(tzinfo=None, hour=14, minute=0, second=0, microsecond=0)
     )
     return real_utc, safe_local
 
@@ -397,9 +398,7 @@ def test_affection_tier_tick_carries_cached_open_topics(conn) -> None:
     """
     role = _role()
     utc, local = _now()
-    svc.save_open_threads(
-        conn, role.role_id, ["下周要体检，结果出来跟你说"], user_id=ME, now=utc
-    )
+    svc.save_open_threads(conn, role.role_id, ["下周要体检，结果出来跟你说"], user_id=ME, now=utc)
     conn.execute(
         "UPDATE role_proactive_state SET affinity = ? WHERE role_id = ?",
         (DEFAULT_AFFINITY_THRESHOLD + 1.0, role.role_id),
@@ -416,9 +415,7 @@ def test_affection_tier_tick_carries_cached_open_topics(conn) -> None:
     )
     assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
     assert "下周要体检，结果出来跟你说" in _prompt_text(model)
-    row = conn.execute(
-        "SELECT fired_by FROM agent_reachout ORDER BY id DESC LIMIT 1"
-    ).fetchone()
+    row = conn.execute("SELECT fired_by FROM agent_reachout ORDER BY id DESC LIMIT 1").fetchone()
     assert row["fired_by"] == "affection", row["fired_by"]
 
 
@@ -629,9 +626,7 @@ def test_tick_persists_the_repeat_score_of_what_was_said(conn) -> None:
     )
     utc, local = _now()
     assert scheduler.tick_once(now_utc=utc, now_local=local) == 1
-    row = conn.execute(
-        "SELECT repeat_score FROM agent_reachout"
-    ).fetchone()
+    row = conn.execute("SELECT repeat_score FROM agent_reachout").fetchone()
     score = row["repeat_score"] if row is not None else None
     assert score is not None, "主动开口没落复读分 —— ⑥ 分布永远攒不出样本"
     assert 0.0 <= float(score) <= 1.0
@@ -849,9 +844,8 @@ def test_proactive_state_is_scoped_per_person(conn) -> None:
     assert get_state(conn, "she", user_id=ME).affinity == 2.5, "B 的一次交互改到 A 的状态了"
     assert get_state(conn, "she", user_id=other).affinity == 0.2
     # 线程 id 带身份：同一个角色，两个人的主动会话不是同一条。
-    assert (
-        svc.proactive_thread_id("she", user_id=ME)
-        != svc.proactive_thread_id("she", user_id=other)
+    assert svc.proactive_thread_id("she", user_id=ME) != svc.proactive_thread_id(
+        "she", user_id=other
     )
 
 
@@ -906,14 +900,13 @@ def test_trigger_time_pattern_respects_role_toggle(conn) -> None:
     conn.commit()
     role = RoleCard(**{**_role().model_dump(), "time_pattern_enabled": False})
     assert (
-        svc.trigger_time_pattern(
-            role, conn, user_id=DEFAULT_USER_ID, now_local=_now_local()
-        )
+        svc.trigger_time_pattern(role, conn, user_id=DEFAULT_USER_ID, now_local=_now_local())
         is None
     )
-    assert svc.trigger_time_pattern(
-        _role(), conn, user_id=DEFAULT_USER_ID, now_local=_now_local()
-    ) == "time_pattern"
+    assert (
+        svc.trigger_time_pattern(_role(), conn, user_id=DEFAULT_USER_ID, now_local=_now_local())
+        == "time_pattern"
+    )
 
 
 def test_tick_once_runs_affection_trigger_and_bumps_affinity(conn) -> None:
@@ -992,9 +985,7 @@ def test_quiet_gate_interval_exempt_for_file_event_only(conn) -> None:
     # 常规：被间隔挡住
     assert svc.quiet_gate(_role(), _settings(), conn, now_utc=utc, now_local=local).why is not None
     # file_event：豁免间隔档（素材门控）
-    gate = svc.quiet_gate(
-        _role(), _settings(), conn, now_utc=utc, now_local=local, file_event=True
-    )
+    gate = svc.quiet_gate(_role(), _settings(), conn, now_utc=utc, now_local=local, file_event=True)
     assert gate.why is None
 
 
@@ -1128,14 +1119,14 @@ def test_thread_lines_reach_the_prompt(conn) -> None:
         model,
         _settings(),
         conn,
-        role_id='active',
+        role_id="active",
         thread_lines=svc.format_thread_lines(
-            [('用户', '刚跑完步，坐下歇会儿。'), ('你', '辛苦啦')]
+            [("用户", "刚跑完步，坐下歇会儿。"), ("你", "辛苦啦")]
         ),
     )
     joined = _prompt_text(model)
-    assert '刚跑完步，坐下歇会儿。' in joined
-    assert '还没有接过话' in joined
+    assert "刚跑完步，坐下歇会儿。" in joined
+    assert "还没有接过话" in joined
 
 
 def test_unanswered_lines_stops_at_her_own_last_utterance() -> None:
@@ -1195,12 +1186,12 @@ def test_thread_lines_are_empty_when_she_has_the_last_word() -> None:
 
 def test_format_thread_lines_keeps_the_tail_in_order() -> None:
     """只留最后几条、按时间正序；全空白不该产出一段空上下文。"""
-    rows = [('你' if i % 2 == 0 else '用户', f'第{i}条') for i in range(10)]
+    rows = [("你" if i % 2 == 0 else "用户", f"第{i}条") for i in range(10)]
     out = svc.format_thread_lines(rows, limit=3)
-    assert '第7条' in out and '第9条' in out
-    assert '第6条' not in out
-    assert out.index('第7条') < out.index('第9条')
-    assert svc.format_thread_lines([('用户', '   ')]) == ''
+    assert "第7条" in out and "第9条" in out
+    assert "第6条" not in out
+    assert out.index("第7条") < out.index("第9条")
+    assert svc.format_thread_lines([("用户", "   ")]) == ""
 
 
 class _ScriptedModel:
@@ -1326,16 +1317,16 @@ def test_task_text_names_the_template_explicitly(conn) -> None:
     实测把主动会话推成 20 句里 15 句以（开头（同一条卡在普通对话里是 0%）—— 于是
     改成直接禁止旁白，这里钉的就是**新**那四条。
     """
-    model = _FakeModel(AIMessage(content='嗨'))
-    svc.generate_reachout_text(_role(), model, _settings(), conn, role_id='active')
+    model = _FakeModel(AIMessage(content="嗨"))
+    svc.generate_reachout_text(_role(), model, _settings(), conn, role_id="active")
     joined = _prompt_text(model)
-    assert '上一条的开头几个字这次不要用' in joined
-    assert '长度由内容决定' in joined
-    assert '结尾换一种句式收' in joined
-    assert '只写你会说出口的那句话' in joined
+    assert "上一条的开头几个字这次不要用" in joined
+    assert "长度由内容决定" in joined
+    assert "结尾换一种句式收" in joined
+    assert "只写你会说出口的那句话" in joined
     # 旧写法里那两句"教她写（）"的不能悄悄回来。
-    assert '动作和神态用（）包起来' not in joined
-    assert '一个动作起头' not in joined
+    assert "动作和神态用（）包起来" not in joined
+    assert "一个动作起头" not in joined
 
 
 def test_quiet_minutes_grows_with_unreplied_and_jitters_deterministically() -> None:
@@ -1371,9 +1362,9 @@ def test_backoff_counts_the_lines_he_never_replied_to(conn) -> None:
     assert minutes > 100, f"1 条没回 ⇒ 要等 ~120 分钟，读数却只有 {minutes}（退避没进闸门）"
 
     _seed_lane_activity(conn, "active", minutes_ago=70)  # 他 70 分钟前回过话 ⇒ 悬着的那条归零
-    assert (
-        svc.quiet_gate(_role(), _settings(), conn, now_utc=utc, now_local=local).why is None
-    ), "回过话之后不该继续退避（锚点回到 70 分钟前，基础 60 分钟那一档已经过了）"
+    assert svc.quiet_gate(_role(), _settings(), conn, now_utc=utc, now_local=local).why is None, (
+        "回过话之后不该继续退避（锚点回到 70 分钟前，基础 60 分钟那一档已经过了）"
+    )
 
 
 # --------------------------------------------------------------- 第五个由头：未收尾话题
@@ -1394,8 +1385,13 @@ class _TwoFaceModel:
         self.last_gen_prompt: list | None = None
 
     def invoke(self, prompt: object, **kwargs: object) -> AIMessage:
-        text = prompt if isinstance(prompt, str) else " ".join(
-            str(getattr(m, "content", "")) for m in prompt  # type: ignore[union-attr]
+        text = (
+            prompt
+            if isinstance(prompt, str)
+            else " ".join(
+                str(getattr(m, "content", ""))
+                for m in prompt  # type: ignore[union-attr]
+            )
         )
         if "OPEN <" in text:  # 只有扫描那份指令里有这个格式示例
             self.scan_calls += 1
@@ -1495,6 +1491,7 @@ def test_quiet_status_reads_each_number_once(conn) -> None:
     各查一遍填进 payload。两次查询之间被插一条开口，界面就成了自相矛盾的一句话，而这一格
     存在的全部意义是让人信。这条用例数的是**语句次数**，不是值 —— 值一致但多读一遍也红。
     """
+
     class _Counting:
         def __init__(self, inner: object) -> None:
             self._inner = inner
@@ -1566,7 +1563,10 @@ def test_used_topics_are_consumed_so_they_drive_only_one_open(conn) -> None:
 
     utc, local = _now()
     save_open_threads(
-        conn, "active", ["下周体检的结果"], user_id=ME,
+        conn,
+        "active",
+        ["下周体检的结果"],
+        user_id=ME,
         now=utc - timedelta(minutes=5),
     )
     model = _TwoFaceModel(["这条不该被再扫一遍"], reply="体检怎么样了？")
@@ -1595,6 +1595,7 @@ def test_a_failed_scan_does_not_shut_the_source_down_for_90_minutes(conn) -> Non
     （`None` vs `[]`），失败**不写扫描时刻** ⇒ 下一个 tick 还会重试；这一轮照常开口
     （只少一个由头），异常也不往上抛给调度线程。
     """
+
     class _BoomModel:
         def __init__(self) -> None:
             self.calls = 0
@@ -1625,7 +1626,10 @@ def test_a_fresh_cache_is_used_without_spending_another_call(conn) -> None:
 
     utc, local = _now()
     save_open_threads(
-        conn, "active", ["猫绝育约上了没"], user_id=ME,
+        conn,
+        "active",
+        ["猫绝育约上了没"],
+        user_id=ME,
         now=utc - timedelta(minutes=5),
     )
     model = _TwoFaceModel(["这条不该被扫出来"])
@@ -1757,8 +1761,9 @@ def test_recall_cools_down_after_it_actually_spoke(conn) -> None:
     assert svc.trigger_recall(_role(), conn, user_id=ME, now_local=local) == "recall"
 
     record_recall_open(conn, "active", user_id=ME, now=local)
-    assert svc.trigger_recall(_role(), conn, user_id=ME,
-        now_local=local) is None, "刚以回忆开过口，该让位"
+    assert svc.trigger_recall(_role(), conn, user_id=ME, now_local=local) is None, (
+        "刚以回忆开过口，该让位"
+    )
     later = local + timedelta(hours=svc.RECALL_COOLDOWN_HOURS + 1)
     assert svc.trigger_recall(_role(), conn, user_id=ME, now_local=later) == "recall"
 
@@ -1771,22 +1776,20 @@ def test_an_unsent_recall_does_not_burn_the_cooldown(conn) -> None:
     add_item(conn, user_id=ME, bucket="active", text="用户下周要体检")
     scheduler = _scheduler(conn, [_role()], model)
     assert scheduler.tick_once(now_utc=utc, now_local=local) == 0
-    assert (
-        get_state(conn, "active", user_id=ME).recall_at is None
-    ), "没发出去却记了冷却 = 静默关掉这一档一天"
+    assert get_state(conn, "active", user_id=ME).recall_at is None, (
+        "没发出去却记了冷却 = 静默关掉这一档一天"
+    )
 
 
 def test_the_open_thread_task_offers_a_way_out() -> None:
     """指令里必须留着"这些都过去了就别硬接"那条退路 —— 硬找话头比不找更假。"""
-    text = svc._task_text(
-        "open_thread", "", has_memory=True, open_topics=["体检结果", "猫绝育"]
-    )
+    text = svc._task_text("open_thread", "", has_memory=True, open_topics=["体检结果", "猫绝育"])
     assert "体检结果" in text and "猫绝育" in text
     assert "都已经过去" in text and "别硬接" in text
 
 
 def test_open_threads_stale_only_by_age_or_never_scanned() -> None:
-    """"从没扫过"与"扫了但没结果"必须分得开：后者在过期之前不该再花一次调用。"""
+    """ "从没扫过"与"扫了但没结果"必须分得开：后者在过期之前不该再花一次调用。"""
     from rolecard_agent.core.proactive.proactive_state import ProactiveState
 
     now = datetime.now(_UTC)
@@ -1837,9 +1840,7 @@ def test_stop_cancels_pending_generation_cooperatively(conn) -> None:
 # 写库时 `conn` teardown 会在 **C 层**打出 access violation，断言与 `-x` 都拦不住它。
 
 
-def _blocking_resolver(
-    gate: threading.Event, entered: threading.Event, model: object
-) -> Any:
+def _blocking_resolver(gate: threading.Event, entered: threading.Event, model: object) -> Any:
     """模型解析：进池线程先亮牌、再卡在 gate 上 —— 模拟"本地 8B 一次几十秒"。"""
 
     def resolve(_name: str | None) -> object:
@@ -1984,9 +1985,7 @@ def test_stop_drains_the_pool_and_releases_every_slot(conn) -> None:
             for r in conn.execute("SELECT role_id FROM agent_reachout ORDER BY id").fetchall()
         ]
         assert rows == ["active"], f"取消的不落库、在飞的照落：{rows}"
-        assert not any(
-            t.is_alive() for t in scheduler._gen_pool._threads
-        ), "stop 之后池线程没退净"
+        assert not any(t.is_alive() for t in scheduler._gen_pool._threads), "stop 之后池线程没退净"
     finally:
         gate.set()
         _drain(scheduler)
@@ -2039,9 +2038,7 @@ def test_in_flight_row_is_not_redelivered_by_the_next_tick(conn) -> None:
         _drain(scheduler)
 
 
-def test_file_event_is_not_replayed_for_a_role_waking_mid_flight(
-    conn, tmp_path: Path
-) -> None:
+def test_file_event_is_not_replayed_for_a_role_waking_mid_flight(conn, tmp_path: Path) -> None:
     """上一批素材还在池里飞时，下一拍不许把同一批事件再播给刚醒的角色。
 
     `check_changes` 对挂起事件是**原样再报**（基线没推），所以异步形状下"生成几十秒"
@@ -2154,14 +2151,19 @@ def test_wait_idle_reports_timeout(conn) -> None:
 
 
 def test_retry_tolerates_a_broken_catalog_read(conn) -> None:
-    """补投查欠账时库/盘临时坏了 → 这一轮不补、返回 0，而不是把 tick 带崩。"""
+    """补投查欠账时库/盘临时坏了 → 这一轮不补、返回 0，而不是把 tick 带崩。
+
+    2026-10-30 起还要**留痕**：从前静默 return 0，"补投永远没跑"与"没有欠投"
+    不可区分 —— 后端架构审计抓的正是这个不一致。
+    """
+    tracer = _Tracer()
     boom = ReachoutScheduler(
         inline_generation=True,
         settings_provider=lambda: _settings(),
         roles=_Roles([_role()]),  # type: ignore[arg-type]
         model_resolver=lambda _n: _FakeModel(AIMessage(content="x")),
         conn=conn,
-        tracer=_Tracer(),  # type: ignore[arg-type]
+        tracer=tracer,  # type: ignore[arg-type]
         deliver=lambda _r, _t: "thread-1",
     )
     orig = boom._conn
@@ -2175,6 +2177,9 @@ def test_retry_tolerates_a_broken_catalog_read(conn) -> None:
         assert boom._retry_undelivered(ME) == 0
     finally:
         object.__setattr__(boom, "_conn", orig)
+    failed = [e for e in tracer.events if getattr(e, "event", "") == "reachout_retry_failed"]
+    assert failed, "补投链路坏了没留痕 —— 静默 return 0 的旧形状回来了"
+    assert "catalog busy" in str(getattr(failed[0], "detail", {}))
 
 
 def test_retry_skips_deleted_cards_and_busy_threads_without_crashing(conn) -> None:
