@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type DomainInfo, type ToolCatalog, type ToolEntry } from "../api";
-import { Button, Card, Notice, PageHeader } from "../components/ui";
+import { Button, Card, Notice, PageHeader, Tabs } from "../components/ui";
 import { ExtensionPanel } from "../components/ExtensionPanel";
 import { describeError } from "../lib/errors";
 
@@ -237,25 +237,15 @@ export default function ToolsPage() {
           }
         />
 
-        {/* 页签条：一次只显示一个区块。选中态是白底胶囊（非设置页的下划线式）——
-            全站页内页签两套语言并存的统一待办在交互审计台账里挂着，先让注释说真话。 */}
-        <nav className="mt-4 flex flex-wrap gap-1.5 text-xs" aria-label="本页区块">
-          {SECTIONS.map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setSection(key)}
-              aria-current={section === key ? "true" : undefined}
-              className={`rounded-full px-3 py-1 transition-colors ${
-                section === key
-                  ? "bg-white font-medium text-slate-800 shadow-sm dark:bg-white/10 dark:text-slate-100"
-                  : "text-slate-500 hover:bg-white/60 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-slate-200"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </nav>
+        {/* 页签条：一次只显示一个区块。视觉是全站统一的 ui/Tabs（白底胶囊）——
+            三套页内页签语言并存的收编在 2026-10-30 交互审计批次 H 完成。 */}
+        <Tabs
+          className="mt-4"
+          ariaLabel="本页区块"
+          items={SECTIONS.map(([key, label]) => ({ key, label }))}
+          active={section}
+          onChange={setSection}
+        />
 
         {/* 三块**常驻挂载 + hidden 切换**（P1-11 同款，与设置页子页签同一手法）：
             条件渲染会在每次切页签时卸载面板 —— 渠道那一块是带凭证表单的，填到一半

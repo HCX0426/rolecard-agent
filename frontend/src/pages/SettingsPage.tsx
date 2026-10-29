@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Tabs } from "../components/ui";
 import { AboutPanel } from "../components/AboutPanel";
 import { RuntimePanel } from "../components/RuntimePanel";
 import { AuditPanel } from "../components/AuditPanel";
@@ -36,21 +37,14 @@ export default function SettingsPage({
     <div className="h-full overflow-y-auto p-6">
       <div className="mx-auto max-w-3xl">
         <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">设置</h2>
-        <div className="mt-4 flex gap-1 border-b border-slate-200 dark:border-slate-700">
-          {SETTINGS_TABS.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className={`rounded-t-lg px-4 py-2 text-sm ${
-                tab === t.key
-                  ? "border-b-2 border-blue-600 font-medium text-blue-700 dark:text-blue-300"
-                  : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+        {/* 子页签条：全站统一的 ui/Tabs（2026-10-30 从下划线式收编，三套语言归一）。 */}
+        <Tabs
+          className="mt-4"
+          ariaLabel="设置页区块"
+          items={SETTINGS_TABS.map(({ key, label }) => ({ key, label }))}
+          active={tab}
+          onChange={setTab}
+        />
         {/* 子页签常驻挂载 + hidden 隐藏（P1-11 同款）：条件渲染会让每次切页签重新挂载
             面板并重发请求 —— 服务页的探活会因此"每次点开都加载中"（用户 2026-09-18）。 */}
         <div className={tab === "about" ? "" : "hidden"}>

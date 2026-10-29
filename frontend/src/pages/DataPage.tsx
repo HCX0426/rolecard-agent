@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type DomainInfo, type GenericRecord, type ReportRecord } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
-import { Button, Card, Notice, PageHeader, Tag } from "../components/ui";
+import { Button, Card, Notice, PageHeader, Tabs, Tag } from "../components/ui";
 import { KnowledgeManager } from "../components/KnowledgeManager";
 import { describeError } from '../lib/errors';
 
@@ -86,27 +86,13 @@ export default function DataPage({ initialBlock }: { initialBlock?: MaterialsBlo
             <>
               {/* 域切换：胶囊 tab（一次只看一个域） */}
               {domains.length > 1 && (
-                <div className="mt-4 flex flex-wrap gap-1.5">
-                  {domains.map((d) => {
-                    const on = d.id === activeDomain;
-                    return (
-                      <button
-                        key={d.id}
-                        type="button"
-                        onClick={() => setActiveDomain(d.id ?? "")}
-                        aria-pressed={on}
-                        className={`rounded-full px-3 py-1 text-xs transition-colors ${
-                          on
-                            ? "font-medium text-white"
-                            : "text-slate-500 hover:bg-white/50 dark:text-slate-400 dark:hover:bg-white/5"
-                        }`}
-                        style={on ? { background: "var(--accent)" } : undefined}
-                      >
-                        {d.display_name}
-                      </button>
-                    );
-                  })}
-                </div>
+                <Tabs
+                  className="mt-4"
+                  ariaLabel="领域切换"
+                  items={domains.map((d) => ({ key: d.id ?? "", label: d.display_name ?? d.id ?? "" }))}
+                  active={activeDomain}
+                  onChange={(key) => setActiveDomain(key)}
+                />
               )}
               {domainsErr ? (
                 <div className="mt-4 flex items-center gap-2 text-xs">
