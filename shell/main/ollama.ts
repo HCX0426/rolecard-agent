@@ -96,6 +96,11 @@ export class Ollama {
       stdio: "ignore", // 它的日志归它自己的日志文件，不并进壳（那是后端日志才需要跨进程可查）
     });
     if (!child.pid) return { ok: false, reason: `启动 ${bin} 失败：拿不到 pid` };
+    // spawn 的异步失败同样要挂监听：没有它，EACCES 之类会以未捕获异常炸掉主进程
+    // （2026-10-30 审计 #5；ollama 是共享服务，这里只留痕不重启）。
+    child.on("error", (err: Error) => {
+      console.error(`[shell] ollama 进程错误：${err.message}`);
+    });
     child.on("exit", () => {
       this.child = null;
     });

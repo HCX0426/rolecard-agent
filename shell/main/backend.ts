@@ -75,6 +75,8 @@ export type BackendOptions = {
   logFile?: string;
   /** 打包态给后端的 cwd：用户数据目录，保证可写（安装目录不保证）。 */
   cwd?: string;
+  /** 意外退出/重启决策的对外留痕（壳传 logLine 进来落 shell.log；不传就只打控制台）。 */
+  log?: (line: string) => void;
 };
 
 function backendCommand(
@@ -113,6 +115,12 @@ export type Outcome =
 
 export class Backend {
   private child: ChildProcess | null = null;
+  // -- 意外死亡的重启退避（2026-10-30 审计 #1：echoToConsole 那条轮转注释宣称的
+  //    "崩溃后壳拉起后端"此前从未实现 —— 中途崩溃=控制台与桌宠静默瘫痪到用户重启）。
+  private respawnTimer: ReturnType<typeof setTimeout> | null = null;
+  private respawnAttempts = 0;
+  private quitting = false;
+  private spawnedAt = 0;
 
   /**
    * @param options.sidecarExe 打包形态下随包后端的绝对路径（开发态不传）
@@ -126,8 +134,7 @@ export class Backend {
 
   /** 端口没人应就拉起后端；已有人应就直接连。不等就绪 —— 着陆页自己重试。 */
   async ensure(): Promise<Outcome> {
-    if (await serving()) return { kind: "already-serving" };
-    const command = backendCommand(this.options);
+    if (await serving()) return { kind: "already-serving" };    const command = backendCommand(this.options);
     if (!command) {
       return {
         kind: "failed",
@@ -155,9 +162,55 @@ export class Backend {
     if (!child.pid) {
       return { kind: "failed", reason: `启动 ${command.program} 失败：拿不到 pid` };
     }
+    // spawn 本体的异步失败（EACCES/ENOEXEC/路径被锁）从前没有监听 —— 会以 unhandled
+    // `error` event 的形式炸掉主进程，而调用侧的 try/catch 根本兜不到它（审计 #5）。
+    child.on("error", (err: Error) => {
+      this.options.log?.(`[shell] 后端进程错误：${err.message}`);
+    });
+    // 意外退出 → 按退避拉回。退出事件在 stop()（我方回收）时也发 —— 那时不重启。
+    child.on("exit", (code, signal) => {
+      const ranMs = Date.now() - this.spawnedAt;
+      // 稳跑满一分钟才把退避清零：否则"起 5 秒崩一次"会永远卡在最长退避上。
+      if (ranMs > 60_000) this.respawnAttempts = 0;
+      this.child = null;
+      if (this.quitting) return;
+      this.options.log?.(
+        `[shell] 后端进程退出：code=${String(code)} signal=${String(signal)}（稳跑 ${Math.round(ranMs / 1000)}s）`,
+      );
+      this.scheduleRespawn();
+    });
     this.echoToConsole(child);
+    this.spawnedAt = Date.now();
     this.child = child;
     return { kind: "spawned", pid: child.pid };
+  }
+
+  /** 崩溃后按指数退避把后端拉回来：1s/2s/4s… 封顶 30s，连续 8 次不成就认输
+   *  （留一句可操作的日志，别让退避循环永远空转）。进程稳跑满 60 秒视为稳定、清零。 */
+  private scheduleRespawn(): void {
+    if (this.quitting || this.respawnTimer) return;
+    if (this.respawnAttempts >= 8) {
+      this.options.log?.(
+        "[shell] 后端连续 8 次拉回失败，停止自动重启 —— 查看 backend.log 后从托盘重启应用",
+      );
+      return;
+    }
+    const delay = Math.min(1000 * 2 ** this.respawnAttempts, 30_000);
+    this.respawnAttempts += 1;
+    const attempts = this.respawnAttempts;
+    this.options.log?.(`[shell] 后端意外退出 —— ${delay}ms 后第 ${attempts} 次拉回`);
+    this.respawnTimer = setTimeout(() => {
+      this.respawnTimer = null;
+      void this.ensure().then((outcome) => {
+        if (outcome.kind === "failed") {
+          this.options.log?.(`[shell] 第 ${attempts} 次拉回失败：${outcome.reason}`);
+          this.scheduleRespawn();
+        } else {
+          this.respawnAttempts = 0; // spawned 或 already-serving 都算回到稳态
+        }
+      });
+    }, delay);
+    this.respawnTimer.unref?.(); // 退避计时器不该挡住壳自己的退出
   }
 
   /** 后端的输出既要在壳的终端里看得见（开发态），也要落盘（打包态唯一可查的地方）。 */
@@ -190,12 +243,21 @@ export class Backend {
       console.warn(`[shell] 后端日志落不了盘：${String(error)}`);
       return;
     }
+    // 写失败的异步错误同理（磁盘满/文件被锁）：没有监听就是主进程未捕获异常（审计 #5）。
+    sink.on("error", (err: Error) => {
+      console.warn(`[shell] 后端日志写入失败：${err.message}`);
+    });
     // end:false：两条流共用一个文件，任一条结束都不该关掉它（关掉另一条就写不进去了）。
     for (const stream of streams) stream.pipe(sink, { end: false });
   }
 
   /** 退出时回收：连子进程树一起（杀父不杀子会留下孤儿占着端口，下次启动就变谜）。 */
   stop(): void {
+    this.quitting = true; // 我方回收：exit 事件不许触发重启退避
+    if (this.respawnTimer) {
+      clearTimeout(this.respawnTimer);
+      this.respawnTimer = null;
+    }
     const child = this.child;
     this.child = null;
     if (!child?.pid) return;

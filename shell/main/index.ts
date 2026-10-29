@@ -12,7 +12,7 @@
  * 不该让它消失；真要退出走托盘的「退出」，只有那条路会回收后端进程。
  */
 import { BrowserWindow, Notification, app, dialog, globalShortcut, ipcMain } from "electron";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, renameSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { Backend, consoleUrl, endpoint, serving, type BackendOptions, type Outcome } from "./backend";
@@ -41,7 +41,12 @@ import { loadPetPrefs, savePetPrefs, type PetPrefs } from "./state";
  *  自己从仓库布局推（那里还管 cwd=仓库根）。日志两种形态都落盘 —— 打包态没有终端，
  *  而"进程归属"这类保证的判据就是日志里那一行。 */
 function backendOptions(): BackendOptions {
-  const shared = { logFile: path.join(app.getPath("userData"), "backend.log") };
+  // log: logLine —— 意外退出/重启退避的决策流水进 shell.log（审计 #1：中途崩溃
+  // 从前静默瘫痪到用户重启，连一行"它死了"都没有）。
+  const shared = {
+    logFile: path.join(app.getPath("userData"), "backend.log"),
+    log: logLine,
+  };
   if (!app.isPackaged) return shared;
   return {
     ...shared,
@@ -65,6 +70,17 @@ const shellLogFile = path.join(app.getPath("userData"), "shell.log");
 
 function logLine(text: string): void {
   try {
+    // 轮转与 backend.log 同一尺寸口径（8MB 留一代，`R102-64`）：桌宠长年驻留，
+    // 导航放行/吸边/通知每次都写一行，不轮转就是无限长（2026-10-30 审计 #6）。
+    try {
+      const stat = statSync(shellLogFile);
+      if (stat.size > 8 * 1024 * 1024) {
+        rmSync(`${shellLogFile}.1`, { force: true });
+        renameSync(shellLogFile, `${shellLogFile}.1`);
+      }
+    } catch {
+      /* 文件不存在 = 第一次写，直接追加即可 */
+    }
     // 落盘前把换行压成空格（`R102-71`）：`notify 弹出：${title}｜${body}` 那两格来自
     // 页面（角色名可被用户设、消息原文来自模型），都可能含换行 —— 一条消息就能在
     // shell.log 里**伪造出额外的日志行**。压在一行里是这里唯一要的语义：
