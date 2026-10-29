@@ -14,24 +14,8 @@ export type TreeEntry = components["schemas"]["WorkspaceTreeViewEntriesItem"];
 export type TreeResult = components["schemas"]["WorkspaceTreeViewRoot"];
 
 /** 上传目录里没被任何 ingestion 台账引用的文件（`/api/uploads/orphans`）。 */
-export interface OrphanUpload {
-  name: string;
-  size: number;
-  companion: boolean;
-}
+export type OrphanUpload = components["schemas"]["OrphanUploadsViewOrphansItem"];
 
-export interface OrphanReport {
-  orphans: OrphanUpload[];
-  total_bytes: number;
-  scanned: number;
-  referenced: number;
-  /** 反方向（`R28-19`）：台账写着原件、这台机器上没有那些文件。换过数据根时这一列不为空。 */
-  dangling: string[];
-}
+export type OrphanReport = components["schemas"]["OrphanUploadsViewRoot"];
 
-export interface CleanupResult {
-  deleted: number;
-  freed_bytes: number;
-  scanned: number;
-  referenced: number;
-}
+export type CleanupResult = components["schemas"]["CleanupResultView"];

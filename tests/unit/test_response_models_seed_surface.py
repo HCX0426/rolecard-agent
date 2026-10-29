@@ -254,3 +254,33 @@ def test_接线表里的路由文件路径真实存在() -> None:
         assert (routers / filename).resolve().exists(), (
             f"{api_path} 的接线文件 {filename} 不存在 —— 接线从未生效"
         )
+
+
+# ——— 第四批（P1b ④，2026-10-29）：孤儿上传的两族松格 ———
+
+
+def test_孤儿盘点采得到真孤儿与悬空台账(seeded) -> None:
+    """orphans[]（写进绝对临时上传根的两个无引用文件）与 dangling[]（台账有行、
+    文件不在）—— OrphanReport/OrphanUpload 迁不动的松格，第四批的种子钥匙。"""
+    _grm, app, client = seeded
+    body = client.get("/api/uploads/orphans").json()
+    names = {o["name"] for o in body["orphans"]}
+    assert {"sample_orphan.txt", "sample_orphan.parsed.txt"} <= names, (
+        f"孤儿文件没采到：{sorted(names)}"
+    )
+    assert any(o["companion"] for o in body["orphans"]), "companion 两值都要有代表"
+    assert not any(o["companion"] for o in body["orphans"] if o["name"] == "sample_orphan.txt")
+    assert "sample_ledger_only_gone.txt" in body["dangling"], "dangling 没采到悬空台账"
+
+
+def test_孤儿种子绝不落到仓库数据根(seeded) -> None:
+    """隔离判据本体：_seed_orphan_upload 自己把 settings.upload_dir 指进临时目录，
+    锚点夹具与生成器两条路都不许往开发机的 data/ 写一个字（DATA_ROOT 的钉子管不到
+    相对默认路径，第四实测的那一课 —— 这条用例是它的守卫）。"""
+    _grm, app, _client = seeded
+    upload_dir = app.state.ctx.settings.upload_dir
+    assert upload_dir.is_absolute(), f"upload_dir 还是相对根：{upload_dir}"
+    assert "gen-models-uploads" in str(upload_dir), f"没指进生成器临时目录：{upload_dir}"
+    repo_uploads = ROOT / "data" / "uploads"
+    leaked = [p for p in repo_uploads.glob("sample_orphan*")] if repo_uploads.exists() else []
+    assert not leaked, f"孤儿种子漏进了仓库 data/uploads：{leaked}"

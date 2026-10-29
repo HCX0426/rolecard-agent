@@ -354,20 +354,21 @@ export function KnowledgeManager() {
             <div className="mt-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 p-3">
               <p className="text-xs text-slate-600 dark:text-slate-300">
                 扫描 {orphans.scanned} 个文件，其中 {orphans.referenced} 个被台账引用；
-                可回收 <b>{orphans.orphans.length}</b> 个（{formatBytes(orphans.total_bytes)}）。
+                可回收 <b>{(orphans.orphans ?? []).length}</b> 个（
+                {formatBytes(orphans.total_bytes ?? 0)}）。
               </p>
-              {orphans.dangling.length > 0 && (
+              {(orphans.dangling ?? []).length > 0 && (
                 <p className="mt-1 text-11 leading-relaxed text-amber-700 dark:text-amber-400">
-                  另有 <b>{orphans.dangling.length}</b> 行台账指向这台机器上不存在的原件
-                  （{orphans.dangling.slice(0, 3).join("、")}
-                  {orphans.dangling.length > 3 ? " 等" : ""}）—— 换过数据根时是这个样子，
+                  另有 <b>{(orphans.dangling ?? []).length}</b> 行台账指向这台机器上不存在的原件
+                  （{(orphans.dangling ?? []).slice(0, 3).join("、")}
+                  {(orphans.dangling ?? []).length > 3 ? " 等" : ""}）—— 换过数据根时是这个样子，
                   原件在另一份数据目录里。
                 </p>
               )}
-              {orphans.orphans.length > 0 && (
+              {(orphans.orphans ?? []).length > 0 && (
                 <>
                   <ul className="mt-1.5 max-h-40 space-y-0.5 overflow-y-auto">
-                    {orphans.orphans.map((o) => (
+                    {(orphans.orphans ?? []).map((o) => (
                       <li
                         key={o.name}
                         className="flex items-center justify-between gap-2 text-11 text-slate-500 dark:text-slate-400"
@@ -375,7 +376,7 @@ export function KnowledgeManager() {
                         <code className="truncate">{o.name}</code>
                         <span className="shrink-0">
                           {o.companion ? "解析副本 · " : ""}
-                          {formatBytes(o.size)}
+                          {formatBytes(o.size ?? 0)}
                         </span>
                       </li>
                     ))}

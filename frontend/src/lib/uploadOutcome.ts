@@ -39,9 +39,11 @@ export interface UploadTaskProgress {
 
 export interface ExtractLike {
   skipped?: string | null;
-  written: { index_name: string }[];
-  conflicts: { index_name: string }[];
-  notes: string[];
+  // 诚实契约（P1b 第四批）：三条降级路里 written/conflicts/notes **整个键缺席**
+  // （exclude_unset 裁掉的，且值可空），消费侧统一 `?? []` 兜底，不在类型面撒谎。
+  written?: { index_name: string }[] | null;
+  conflicts?: { index_name: string }[] | null;
+  notes?: string[] | null;
 }
 
 export interface Outcome {
@@ -99,17 +101,20 @@ export function describeExtract(
   }
   let text: string;
   let tone: UploadTone = "warn";
-  if (result.written.length > 0) {
-    const names = result.written.map((w) => w.index_name).join("、");
-    text = `「${fileName}」AI 已提取 ${result.written.length} 项指标：${names}（均标记【未经人工校验】，可在「数据」页核对）`;
+  // 键可能整个缺席（skip 路的诚实形状）—— ?? [] 一次兜底，不在类型面上撒谎。
+  const written = result.written ?? [];
+  const conflicts = result.conflicts ?? [];
+  if (written.length > 0) {
+    const names = written.map((w) => w.index_name).join("、");
+    text = `「${fileName}」AI 已提取 ${written.length} 项指标：${names}（均标记【未经人工校验】，可在「数据」页核对）`;
     tone = "ok";
-  } else if (result.conflicts.length > 0) {
-    const names = result.conflicts.map((c) => c.index_name).join("、");
-    text = `「${fileName}」识别出 ${result.conflicts.length} 项存疑指标（${names}），按规则未写入 —— 可在「数据」页手动补录`;
+  } else if (conflicts.length > 0) {
+    const names = conflicts.map((c) => c.index_name).join("、");
+    text = `「${fileName}」识别出 ${conflicts.length} 项存疑指标（${names}），按规则未写入 —— 可在「数据」页手动补录`;
   } else {
     text = `「${fileName}」未识别出可入档的指标（原文已入检索，可直接提问）`;
   }
-  if (result.notes.length > 0) text += `　备注：${result.notes.join("；")}`;
+  if (result.notes?.length) text += `　备注：${result.notes.join("；")}`;
   return { tone, text };
 }
 

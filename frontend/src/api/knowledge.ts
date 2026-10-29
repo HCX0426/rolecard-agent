@@ -27,27 +27,13 @@ export interface RagMetrics {
   p99: RagStageMs;
 }
 
-/** 结构化抽取：写入档案的指标行 */
-export type ExtractWritten = components["schemas"]["RecordsViewItemsItem_indicesItem"];
+/** 结构化抽取响应里 written[] 的元素 —— 运行时只回 4 键（index_name/index_value/value_text/unit）。
+
+ 从前手写这份抄成了 9 键的库内指标行（`RecordsViewItemsItem_indicesItem`），而抽取端点
+ 回的是窄投影（写库的那份 8 键 payload 不出门）—— 第四批手模把它拉回运行时事实。 */
+export type ExtractWritten = components["schemas"]["ExtractWrittenModel"];
 
 /** 抽取时没能通过校验 / 两次识别不一致的项 —— 交给人确认，未写库 */
-export interface ExtractConflict {
-  index_name: string;
-  reason: string;
-  primary: Record<string, unknown> | null;
-  verify: Record<string, unknown> | null;
-}
+export type ExtractConflict = components["schemas"]["ExtractConflictModel"];
 
-export interface ExtractResult {
-  mode: string; // cross（双模型）| self（同模型复查，弱校对）| off
-  report_type: string;
-  check_time: string;
-  institution: string | null;
-  written: ExtractWritten[];
-  conflicts: ExtractConflict[];
-  notes: string[];
-  /** 降级原因：no_model / no_text / already_extracted */
-  skipped?: string;
-  detail?: string;
-  report_id?: string;
-}
+export type ExtractResult = components["schemas"]["ExtractOutcomeView"];

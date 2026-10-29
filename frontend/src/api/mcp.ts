@@ -12,10 +12,4 @@ export type McpServer = components["schemas"]["McpServersViewServersItem"];
 export type McpServersView = components["schemas"]["McpServersViewRoot"];
 
 /** POST /api/mcp/servers/{id}/test 的结果（不落库，真连一次列工具）。 */
-export interface McpTestResult {
-  id: string;
-  ok: boolean;
-  tool_count: number;
-  tools: string[];
-  error?: string;
-}
+export type McpTestResult = components["schemas"]["McpTestResultView"];

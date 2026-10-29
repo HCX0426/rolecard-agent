@@ -22,6 +22,7 @@ from rolecard_agent.api.deps import (
     get_context,
 )
 from rolecard_agent.api.errors import value_error_to_http
+from rolecard_agent.contracts.handwritten_models import DomainRecordView
 from rolecard_agent.contracts.response_models import DomainsView
 from rolecard_agent.core.domain.domain_data import DomainDataService
 
@@ -69,7 +70,10 @@ def list_domains(ctx: AppContext = Depends(get_context)) -> list[object]:
     ]
 
 
-@router.get("/api/domains/{domain}/records")
+@router.get(
+    "/api/domains/{domain}/records",
+    response_model=list[DomainRecordView],
+)
 def list_domain_records(domain: str, ctx: AppContext = Depends(get_context)) -> list[object]:
     """列出某域的通用记录（归属演示用户）。"""
     try:
@@ -78,7 +82,11 @@ def list_domain_records(domain: str, ctx: AppContext = Depends(get_context)) -> 
         raise value_error_to_http(exc) from exc
 
 
-@router.post("/api/domains/{domain}/records", status_code=201)
+@router.post(
+    "/api/domains/{domain}/records",
+    status_code=201,
+    response_model=DomainRecordView,
+)
 def create_domain_record(
     domain: str,
     body: DomainRecordCreate,
@@ -107,7 +115,10 @@ def create_domain_record(
     return row
 
 
-@router.patch("/api/domains/{domain}/records/{record_id}")
+@router.patch(
+    "/api/domains/{domain}/records/{record_id}",
+    response_model=DomainRecordView,
+)
 def patch_domain_record(
     domain: str,
     record_id: str,

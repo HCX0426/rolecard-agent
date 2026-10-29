@@ -57,23 +57,10 @@ export type ProviderModelRow = components["schemas"]["ModelSettingsViewProviders
 export type ProviderGroup = components["schemas"]["ModelSettingsViewProvidersItem"];
 
 /** 探测结论（`POST /api/settings/models/probe`）。三态字段 null = 不知道，不是"不行"。 */
-export interface ProbeOutcome {
-  reachable: boolean;
-  detail: string;
-  model_listed: boolean | null;
-  tools: boolean | null;
-  vision: boolean | null;
-  vision_source: "free-metadata" | "uploaded-image" | "not-tested" | string;
-  calls_used: number;
-  models: string[];
-}
+export type ProbeOutcome = components["schemas"]["ProbeOutcomeView"];
 
 /** POST /api/services/check 的单探测量（ollama 或 openai_compatible 之一）。 */
-export interface ConnectivityProbe {
-  reachable: boolean;
-  detail: string;
-  models?: string[];
-}
+export type ConnectivityProbe = components["schemas"]["ConnectivityProbeView"];
 
 export type ConnectivityResult = Record<string, ConnectivityProbe>;
 

@@ -26,6 +26,7 @@ from rolecard_agent.api.deps import (
 from rolecard_agent.api.message_view import expand_to_turns, serialize_message
 from rolecard_agent.base.observability import TraceEvent
 from rolecard_agent.config import Settings
+from rolecard_agent.contracts.handwritten_models import DistillOutcomeView
 from rolecard_agent.contracts.response_models import (
     SessionContextView,
     SessionMessagesView,
@@ -608,7 +609,11 @@ def _schedule_distill(
     )
 
 
-@router.post("/api/session/{thread_id}/distill")
+@router.post(
+    "/api/session/{thread_id}/distill",
+    response_model=DistillOutcomeView,
+    response_model_exclude_unset=True,
+)
 def distill_session(
     thread_id: str,
     ctx: AppContext = Depends(get_context),

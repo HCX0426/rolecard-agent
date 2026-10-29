@@ -8,15 +8,6 @@ import type { components } from "./schema.gen";
 
 
 
-export interface GenericRecord {
-  id: string;
-  domain: string;
-  label: string;
-  value_text: string | null;
-  value_num: number | null;
-  unit: string | null;
-  note: string | null;
-  created_at: string;
-}
+export type GenericRecord = components["schemas"]["DomainRecordView"];
 
 export type ReportRecord = components["schemas"]["RecordsViewItemsItem"];
