@@ -176,17 +176,32 @@ function ChannelsPanel() {
 /**
  * 工具页（2026-10-24 IA 重构：原「插件」页改造）。
  *
- * 两块内容，回答"这个助手能用哪些能力、从哪来"：
- *   ① MCP 服务器管理 —— 外接能力（自设置页的扩展面板整体搬入，CRUD + 连通性测试）；
- *   ② 内置工具目录 —— 按域分组的全部工具（角色卡白名单的"选项清单"）。
+ * 三块内容，回答"这个助手能用哪些能力、从哪来"：
+ *   ① 聊天渠道 —— 外面的门（QQ 官方机器人）；
+ *   ② MCP 服务器管理 —— 外接能力（自设置页的扩展面板整体搬入，CRUD + 连通性测试）；
+ *   ③ 内置工具目录 —— 按域分组的全部工具（角色卡白名单的"选项清单"）。
+ *
+ * 一次只摊一块（2026-10-29）：三块平铺时页签条读起来像 tab 却不是 tab，点它会经
+ * hash 路由跳到对话页 —— 这里本来就是三个互不相干的清单，tab 化才是它们该有的形状。
  *
  * 权限模型（2026-10-24 收口）：**域常开，白名单即唯一边界** —— 本页不再有域开关，
  * 模型能不能用某个工具只看角色卡勾没勾。MCP 的服务器级启停保留（管连接，不管权限）。
  * 安全红线不变：MCP 接入是操作员动作，绝不暴露成 LLM 自助安装。
  */
+type SectionKey = "channels" | "mcp" | "catalog";
+const SECTIONS: [SectionKey, string][] = [
+  ["channels", "聊天渠道"],
+  ["mcp", "MCP 服务器"],
+  ["catalog", "内置工具目录"],
+];
+
 export default function ToolsPage() {
   const [catalog, setCatalog] = useState<ToolCatalog | null>(null);
   const [domains, setDomains] = useState<DomainInfo[]>([]);
+  // 页内区块的当前页签（2026-10-29 从"锚点条"改成真 tab）。锚点为什么不能是 <a href="#x">：
+  // 全站是 hash 路由（App.tsx 把 `#/<tab>` 解析成页签），裸锚点把 URL 改成 `#channels`，
+  // hashchange 一认不出这个 path 就回落到对话页 —— 用户报的"点 tab 跳到对话"就是它。
+  const [section, setSection] = useState<SectionKey>("channels");
 
   useEffect(() => {
     api.get<ToolCatalog>("/api/tools/catalog").then(setCatalog).catch(() => undefined);
@@ -209,75 +224,76 @@ export default function ToolsPage() {
           }
         />
 
-        {/* 锚点条（2026-10-25 玻璃重设计）：这一页有三个长区块，滚动找人靠的是眼睛；
-            锚点条把"去哪儿"变成一次点击。 */}
+        {/* 页签条：一次只显示一个区块（与设置页同一交互语言：选中态 = 下划线 + 加粗）。 */}
         <nav className="mt-4 flex flex-wrap gap-1.5 text-xs" aria-label="本页区块">
-          {[
-            ["channels", "聊天渠道"],
-            ["mcp", "MCP 服务器"],
-            ["catalog", "内置工具目录"],
-          ].map(([id, label]) => (
-            <a
-              key={id}
-              href={`#${id}`}
-              className="rounded-full px-3 py-1 text-slate-500 transition-colors hover:bg-white/60 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-slate-200"
+          {SECTIONS.map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setSection(key)}
+              aria-current={section === key ? "true" : undefined}
+              className={`rounded-full px-3 py-1 transition-colors ${
+                section === key
+                  ? "bg-white font-medium text-slate-800 shadow-sm dark:bg-white/10 dark:text-slate-100"
+                  : "text-slate-500 hover:bg-white/60 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-slate-200"
+              }`}
             >
               {label}
-            </a>
+            </button>
           ))}
         </nav>
 
-        {/* ① 聊天渠道（QQ 官方机器人等）—— 外面的门 */}
-        <h2 id="channels" className="mt-6 mb-3 scroll-mt-4 text-sm font-semibold text-slate-700 dark:text-slate-200">
-          聊天渠道
-        </h2>
-        <ChannelsPanel />
+        {/* 三块**常驻挂载 + hidden 切换**（P1-11 同款，与设置页子页签同一手法）：
+            条件渲染会在每次切页签时卸载面板 —— 渠道那一块是带凭证表单的，填到一半
+            切去看 MCP 再切回来就全没了。 */}
+        <div className={section === "channels" ? "mt-4" : "hidden"}>
+          <h2 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">聊天渠道</h2>
+          <ChannelsPanel />
+        </div>
 
-        {/* ② MCP 服务器管理（自设置 → 扩展 整体搬入） */}
-        <h2 id="mcp" className="mt-8 mb-3 scroll-mt-4 text-sm font-semibold text-slate-700 dark:text-slate-200">
-          MCP 服务器
-        </h2>
-        <ExtensionPanel />
+        <div className={section === "mcp" ? "mt-4" : "hidden"}>
+          <h2 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">MCP 服务器</h2>
+          <ExtensionPanel />
+        </div>
 
-        {/* ③ 内置工具目录（角色卡白名单的选项清单） */}
-        <h2 id="catalog" className="mt-8 mb-3 scroll-mt-4 text-sm font-semibold text-slate-700 dark:text-slate-200">
-          内置工具目录
-        </h2>
-        {catalog && (
-          <div className="space-y-4">
-            <Card className="p-4">
-              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">内核工具</p>
-              {(catalog.kernel ?? []).map((t) => (
-                <div key={t.name} className="mt-1 text-xs">
-                  <code className="text-slate-700 dark:text-slate-200">{t.name}</code>
-                  <span className="ml-2 text-slate-400 dark:text-slate-500">{t.description}</span>
-                </div>
-              ))}
-            </Card>
-            {Object.entries(catalog.domains ?? {}).map(([id, tools]) => (
-              <Card key={id} className="p-4">
-                <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                  {domainName(id)}{" "}
-                  <code className="rounded bg-slate-100 dark:bg-slate-700/50 px-1 py-0.5 text-11 text-slate-400">
-                    {id}
-                  </code>
-                </p>
-                {/* 两列网格（2026-10-25 玻璃重设计）：单列码表要滚很久才看完一个域，
-                    两列卡片一眼扫完。 */}
-                <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
-                  {(tools as ToolEntry[]).map((t) => (
-                    <div key={t.name} className="rounded-lg bg-white/50 px-2 py-1.5 text-xs dark:bg-white/5">
+        <div className={section === "catalog" ? "mt-4" : "hidden"}>
+          <h2 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">内置工具目录</h2>
+            {catalog && (
+              <div className="space-y-4">
+                <Card className="p-4">
+                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400">内核工具</p>
+                  {(catalog.kernel ?? []).map((t) => (
+                    <div key={t.name} className="mt-1 text-xs">
                       <code className="text-slate-700 dark:text-slate-200">{t.name}</code>
-                      <p className="mt-0.5 line-clamp-2 text-11 leading-relaxed text-slate-400 dark:text-slate-500">
-                        {t.description}
-                      </p>
+                      <span className="ml-2 text-slate-400 dark:text-slate-500">{t.description}</span>
                     </div>
                   ))}
-                </div>
-              </Card>
-            ))}
-          </div>
-        )}
+                </Card>
+                {Object.entries(catalog.domains ?? {}).map(([id, tools]) => (
+                  <Card key={id} className="p-4">
+                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                      {domainName(id)}{" "}
+                      <code className="rounded bg-slate-100 dark:bg-slate-700/50 px-1 py-0.5 text-11 text-slate-400">
+                        {id}
+                      </code>
+                    </p>
+                    {/* 两列网格（2026-10-25 玻璃重设计）：单列码表要滚很久才看完一个域，
+                        两列卡片一眼扫完。 */}
+                    <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                      {(tools as ToolEntry[]).map((t) => (
+                        <div key={t.name} className="rounded-lg bg-white/50 px-2 py-1.5 text-xs dark:bg-white/5">
+                          <code className="text-slate-700 dark:text-slate-200">{t.name}</code>
+                          <p className="mt-0.5 line-clamp-2 text-11 leading-relaxed text-slate-400 dark:text-slate-500">
+                            {t.description}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
+        </div>
       </div>
     </div>
   );

@@ -42,18 +42,22 @@ const CANVAS_SIDE_SLACK = (PET_CANVAS_WIDTH - PET_WIDTH) / 2; // 180
 const CANVAS_TOP_SLACK = PET_CANVAS_HEIGHT - PET_HEIGHT; // 280
 
 // ---- 靠边隐藏（趴边）的几何，设计稿 §7.6 -------------------------------------------------
-// 露出的目标必须是**色片的像素**，不是窗口的像素：色片 88 见方、水平居中在 200 宽的窗里，
-// 两侧各 56px 是透明的 —— 推 40px 藏的全是透明边，色片一格没少，看上去根本没吸进去
-// （提案那版就是这么算错的）。而透明区不吃 hover，露出的那条窄边要全是色片本体才点得着。
-const SPRITE_PX = 88;
+// 露出的目标必须是**色片的像素**，不是窗口的像素：色片居中在 200 宽的锚点框里，两侧是
+// 透明的 —— 推出去藏的全是透明边的话，色片一格没少，看上去根本没吸进去（提案那版就是这么
+// 算错的）。而透明区不吃 hover，露出的那条窄边要全是色片本体才点得着。
+// 2026-10-29 订正：这两维从旧 88 见方改成渲染层**现在**的 160×184（`PetPage` 传给
+// `PetSprite` 的尺寸）。按 88 算的后果：横向实际露出 84px（设计 48）、纵向藏了 140px 里
+// 只有 44 是"按 88 该藏的"—— 趴着的形象与露出窄边都跟常量对不上。
+const SPRITE_W = 160;
+const SPRITE_H = 184;
 const SPRITE_BOTTOM_GAP = 4; // 根节点的 `pb-1`
-const SIDE_PAD = (PET_WIDTH - SPRITE_PX) / 2;
+const SIDE_PAD = (PET_WIDTH - SPRITE_W) / 2;
 /** 藏起来之后仍露在屏外的色片宽度。 */
 export const PET_PEEK_PX = 48;
 /** 拖完那一刻离边多近才算"往边上放"（再远就是"放在桌面上"，不该吸）。 */
 const SNAP_PX = 24;
-const SIDE_TUCK = SIDE_PAD + (SPRITE_PX - PET_PEEK_PX); // 56 + 40 = 96
-const BOTTOM_TUCK = SPRITE_PX + SPRITE_BOTTOM_GAP - PET_PEEK_PX; // 88 + 4 - 48 = 44
+const SIDE_TUCK = SIDE_PAD + (SPRITE_W - PET_PEEK_PX);
+const BOTTOM_TUCK = SPRITE_H + SPRITE_BOTTOM_GAP - PET_PEEK_PX;
 
 export interface Rect {
   x: number;

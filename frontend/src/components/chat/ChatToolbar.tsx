@@ -436,9 +436,6 @@ export default function ChatToolbar({
           e.target.value = "";
         }}
       />
-      <span className="ml-auto text-11 text-slate-300 dark:text-slate-600">
-        Enter 发送 · 生成中可停止 · 停用插件即刻生效
-      </span>
     </div>
   );
 }

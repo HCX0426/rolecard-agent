@@ -1232,26 +1232,37 @@ describe("PetPage 命中区与一次拖只收一次（三条都是量出来的�
     return sprite().parentElement as HTMLElement;
   }
   /** 给色片一块真实的矩形：jsdom 默认什么都量成 0，而"落点离色片多远"正是判据。
-   *  画布 560×520，色片 88 见方在下沿居中 → x 236..324，y 428..516。 */
+   *  画布 560×520，色片 160×184 在下沿居中 → x 200..360，y 332..516。
+   *  （旧形状是 88 见方；形象提到 160×184 后热区判据的钉也按真盒子钉。） */
   function stubSpriteRect(): void {
     const el = sprite();
     el.getBoundingClientRect = () =>
       ({
-        x: 236, y: 428, left: 236, top: 428, right: 324, bottom: 516, width: 88, height: 88,
+        x: 200, y: 332, left: 200, top: 332, right: 360, bottom: 516, width: 160, height: 184,
         toJSON: () => ({}),
       }) as DOMRect;
   }
 
-  it("点色片旁边的透明边也算点它：悬停把宠物拉回屏内时，光标会落在那段带上", async () => {
-    // 实测：从右边趴着点它，窗口往屏内滑 96px，色片从光标底下滑走，而光标还在窗口里。
-    // handler 只挂在色片上就是"我点它，它跑了"。余量按壳能挪走多远给（`HIT_SLACK_X`）。
+  it("刚滑过窗：色片旁边的落点仍算点它；没滑过时点周围 = 点桌面（2026-10-29 收紧）", async () => {
+    // 旧版给的是**永远开着**的 ±96/44 余量（按 88 色片算的旧数，形象提到 160×184 后热区
+    // 大到"点空气也弹框"—— 用户再报）。现在余量只在刚滑过窗的宽限期内给：
+    // 悬停把趴着的她拉出来（reveal ⇒ markSlide），窗滑 132px，色片从光标底下滑走，
+    // 光标还在窗口里 —— 这一落在宽限期里，仍算点她（"我点它，它跑了"不许复发）。
     const shell = withShell();
     const expanded = shell.setPetExpanded as unknown as ReturnType<typeof vi.fn>;
     await mount();
     stubSpriteRect();
-    // 色片右沿外 56px：正是旧尺寸里那条透明带的位置。
+    // 先悬停一次：触发 reveal（壳的滑窗在这被 mock 掉，但 markSlide 照样打点）。
+    fireEvent.mouseEnter(root());
     fireEvent.click(root(), { clientX: 380, clientY: 470 });
     expect(expanded).toHaveBeenLastCalledWith(true);
+
+    // 宽限期（600ms）一过，同一个落点不再是"点她"：面板已摊着，点别处只是收起来。
+    expanded.mockClear();
+    vi.advanceTimersByTime(700);
+    fireEvent.click(root(), { clientX: 380, clientY: 470 });
+    expect(expanded).not.toHaveBeenCalledWith(true);
+    expect(expanded).toHaveBeenLastCalledWith(false);
   });
 
   it("点画布远处的空白不算点桌宠：收起着不摊开，摊着的时候才是收起", async () => {

@@ -24,7 +24,20 @@ function KindBadge({ kind }: { kind: "local" | "cloud" }) {
   );
 }
 
-function AvailBadge({ available, reason }: { available: boolean; reason: string }) {
+function AvailBadge({
+  available,
+  reason,
+  kind = "local",
+}: {
+  available: boolean;
+  reason: string;
+  /** 徽标按"这一行的性质"说话（用户 2026-10-29："ollama 都卸载了咋还列着这个"）：
+   *  这一页列的是**配置在册的后端**，不是本机装了什么的实况清单 —— 卸载不删行是设计，
+   *  但"不可用"三个字把"机器上根本没有"和"装了没开机"混在一起，用户只能靠猜。
+   *  本地档探活失败 ⇒ 明说「本机不可达」；云端档 ⇒ 维持「不可用」。 */
+  kind?: "local" | "cloud";
+}) {
+  const unavailable = kind === "local" ? "本机不可达" : "不可用";
   return (
     <span
       title={reason}
@@ -34,7 +47,7 @@ function AvailBadge({ available, reason }: { available: boolean; reason: string 
           : "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
       }`}
     >
-      {available ? "可用" : "不可用"}
+      {available ? "可用" : unavailable}
     </span>
   );
 }
@@ -258,7 +271,11 @@ export function ServicesPanel() {
                       </span>
                       <KindBadge kind={(cand.kind ?? "local") as "local" | "cloud"} />
                       <span className="text-sm text-slate-800 dark:text-slate-200">{cand.label}</span>
-                      <AvailBadge available={cand.available ?? false} reason={cand.reason ?? ""} />
+                      <AvailBadge
+                        available={cand.available ?? false}
+                        reason={cand.reason ?? ""}
+                        kind={(cand.kind ?? "local") as "local" | "cloud"}
+                      />
                       {cand.key_masked && (
                         <span
                           className="font-mono text-11 text-slate-400 dark:text-slate-500"

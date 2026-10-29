@@ -921,6 +921,7 @@ export default function ChatPage({
             ctxPct={ctxPct}
             droppedThisTurn={trim ? trim.dropped : null}
             inputRef={inputRef}
+            hostRef={scrollRef}
             onSubmit={() => void send()}
             onStop={stop}
             onEnhance={() => void enhance()}
