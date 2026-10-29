@@ -41,21 +41,28 @@ copy .env.example .env
 # 6. 一致性自检（文档与代码是否同步，退出码可用于 CI）
 .\.venv\Scripts\python.exe scripts/check_consistency.py
 
-# 7. 启动（控制台 + 流式对话）
+# 7. 提交钩子（每台克隆机一次性：pre-commit 的 ruff 三连 + dist 重建拦截靠它挂载）
+git config core.hooksPath .githooks
+
+# 8. 启动（控制台 + 流式对话）
 .\.venv\Scripts\python.exe scripts/run_api.py
 #    打开 http://127.0.0.1:8000/ —— 新建会话即可对话；换端口用环境变量 RUN_API_PORT
 ```
 
 > 默认角色「通用助手」是纯对话；要玩健康档案功能切到「健康档案管理员」。
 > 改了前端再构建：`cd frontend && npm ci && npm run build`（普通演示不需要 node，dist 已入库）。
+> 开发态三件套（后端 + 前端热更新 + 桌面壳一条命令）：`powershell -NoProfile -File scripts/dev.ps1`。
+> 类 Unix：`python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements/requirements.lock`；
+> Windows 上也可双击根目录的 `install.bat` 一键装机。
 
 ---
 
 ## 界面预览
 
-控制台六个页签 —— 刻意把最易混淆的三件事分开：
-**数据**（领域数据，随域归属）· **知识库**（RAG 检索，内核能力）· **插件**（能力开关）。
-（截图拍于 2026-10-12，重拍工具：`scripts/tools/render_readme_shots.py`）
+控制台六个页签（**2026-10-30 IA**，页签唯一出处见 `frontend/src/App.tsx` 的 TABS 注册表）：
+**对话**（过程）· **资料**（领域数据 + 知识库区块）· **角色卡**（人格与权限 + 工作区）·
+**记忆**（跨会话事实 + 主动开口）· **工具**（能力开关 + MCP + 渠道）· **设置**（环境与凭据）。
+（截图拍于 2026-10-12，早于 10-30 的 IA 重排，仅供视觉参考；重拍工具：`scripts/tools/render_readme_shots.py`）
 
 | 对话 | 数据（可补录） | 知识库（RAG + 检索延迟） |
 | --- | --- | --- |
@@ -137,6 +144,7 @@ v2 系列：RAG 检索（v2.1）、文档摄取与可插拔 OCR（v2.2）、前�
 
 | 文件 | 内容 |
 | --- | --- |
+| [`docs/README.md`](docs/README.md) | **全部文档的登记处**（含新人阅读顺序与术语表入口） |
 | [`docs/架构总览.md`](docs/架构总览.md) | 单一事实源：定位/双壳 · 技术栈 · 模块地图 · 关键不变式 · 安全模型 |
 | [`docs/需求与验收标准.md`](docs/需求与验收标准.md) | PRD、用户故事、评测集设计、v1/v2 边界 |
 | [`docs/前端设计.md`](docs/前端设计.md) | 前端分层/组件约定 · IA · 深色/响应式 |
