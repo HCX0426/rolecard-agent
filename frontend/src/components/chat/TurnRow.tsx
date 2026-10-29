@@ -4,7 +4,7 @@ import Button from "../ui/Button";
 import { answeredByHint, STOP_HINT } from "../../lib/stream";
 import { formatMessageTs, parseMessageTs } from "../../lib/quiet";
 import type { MessageRow } from "../../api";
-import { Markdown } from "../Markdown";
+import { MarkdownLazy } from "../MarkdownLazy";
 import { Tag } from "../ui";
 import ProcessPanel from "./ProcessPanel";
 
@@ -172,7 +172,7 @@ export default function TurnRow({
               <span className="text-11 text-slate-500 dark:text-slate-400">{roleName}</span>
             </div>
           )}
-          <Markdown text={turn.answer.content} />
+          <MarkdownLazy text={turn.answer.content} />
           <div className="mt-1 flex items-center gap-3 text-11 text-slate-400 dark:text-slate-500">
             {/* 这一句是她**主动**说的（R26-40 ①）：主动开口那句与前后的提问之间
                 没有"用户消息"作分界，`splitSegments` 已经把它切成独立一段 ——

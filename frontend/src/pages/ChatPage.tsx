@@ -27,7 +27,9 @@ import ToolStepCard from "../components/chat/ToolStepCard";
 import SessionSidebar from "../components/chat/SessionSidebar";
 import TurnRow from "../components/chat/TurnRow";
 import ThinkingPanel from "../components/chat/ThinkingPanel";
-import { Markdown } from "../components/Markdown";
+// Markdown 渲染栈经 components/MarkdownLazy 懒加载（审计 #3）：栈本体约占本 chunk
+// 一半，只在第一条助手消息出现时才拉；这个页面不得再静态 import ../Markdown。
+import { MarkdownLazy } from "../components/MarkdownLazy";
 import { describeError } from '../lib/errors';
 
 export default function ChatPage({
@@ -843,7 +845,7 @@ export default function ChatPage({
                   </div>
                 )}
                 <div className={live.streaming ? "caret" : ""}>
-                  {live.text ? <Markdown text={live.text} /> : "思考中…"}
+                  {live.text ? <MarkdownLazy text={live.text} /> : "思考中…"}
                 </div>
                 {/* 被叫停的半句在前台的那份：reload 接棒前它先顶上；reload 失败（会话被删等
                     极端情况）时它就是唯一的提示 —— 落库的标记靠回放，回放失败就没有了。 */}
@@ -864,7 +866,7 @@ export default function ChatPage({
             {!live && mirror !== null && (
               <div className="w-full" data-testid="inflight-mirror">
                 <div className="caret">
-                  {mirror ? <Markdown text={mirror} /> : "对方在说…"}
+                  {mirror ? <MarkdownLazy text={mirror} /> : "对方在说…"}
                 </div>
                 <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
                   正在生成 · 不是这里发起的

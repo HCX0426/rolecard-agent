@@ -1,5 +1,5 @@
 import type { TurnMessageLike, TurnStep } from "../../lib/turns";
-import { Markdown } from "../Markdown";
+import { MarkdownLazy } from "../MarkdownLazy";
 import ThinkingPanel from "./ThinkingPanel";
 import ToolStepCard from "./ToolStepCard";
 
@@ -27,7 +27,7 @@ export default function ProcessPanel({ steps }: { steps: TurnStep<TurnMessageLik
     if (only.kind === "text") {
       return (
         <div className="mb-2.5 text-sm text-slate-600 dark:text-slate-300">
-          <Markdown text={only.text} />
+          <MarkdownLazy text={only.text} />
         </div>
       );
     }
@@ -70,7 +70,7 @@ export default function ProcessPanel({ steps }: { steps: TurnStep<TurnMessageLik
             </details>
           ) : s.kind === "text" ? (
             <div key={i} className="text-xs text-slate-500 dark:text-slate-400">
-              <Markdown text={s.text} />
+              <MarkdownLazy text={s.text} />
             </div>
           ) : (
             <ToolStepCard
