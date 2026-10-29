@@ -1,6 +1,18 @@
 import { useConfirm } from "../../hooks/useConfirm";
 import Button from "../ui/Button";
 import type { RoleCard, ThreadRow } from "../../api";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+
+/** 侧栏行的键盘开关：行是 div onClick 时键盘到不了"打开对话"这个主操作 ——
+ *  role="button" + tabIndex + Enter/Space 让 Tab 能到达（2026-10-30 交互审计）。 */
+function rowActivate(fn: () => void) {
+  return (e: ReactKeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      fn();
+    }
+  };
+}
 
 /**
  * 会话侧栏：桌面常驻、移动端 off-canvas 抽屉。
@@ -115,6 +127,9 @@ export default function SessionSidebar({
             return (
               <div
                 key={role.role_id}
+                role="button"
+                tabIndex={0}
+                onKeyDown={rowActivate(() => onOpenLane(role.role_id))}
                 onClick={() => onOpenLane(role.role_id)}
                 title={`与${role.role_name}的那条对话 —— 桌宠显示的就是这一条`}
                 className={`group mb-1 flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm ${
@@ -158,6 +173,9 @@ export default function SessionSidebar({
           {orphanLanes.map((s) => (
             <div
               key={s.thread_id}
+              role="button"
+              tabIndex={0}
+              onKeyDown={rowActivate(() => onSelectSession(s.thread_id))}
               onClick={() => onSelectSession(s.thread_id)}
               className="group mb-1 flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm hover:bg-slate-50 dark:bg-slate-800/50 dark:hover:bg-slate-700/60"
               title="这个角色已经删掉了，而那段对话还在 —— 要清掉就删这一条"
@@ -226,6 +244,11 @@ export default function SessionSidebar({
               {tempSessions.map((s) => (
                 <div
                   key={s.thread_id}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={rowActivate(() =>
+                    tempPick === null ? onSelectSession(s.thread_id) : togglePick(s.thread_id),
+                  )}
                   className={`group mb-1 flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm ${
                     s.thread_id === sessionId ? "bg-blue-50 dark:bg-blue-900/30 text-blue-800" : "hover:bg-slate-50 dark:bg-slate-800/50 dark:hover:bg-slate-700/60"
                   }`}

@@ -12,7 +12,7 @@
 //   2. 工具调用卡片从"执行中"变成结果；
 //   3. 上下文裁剪提示真的渲染出来（而且挂在不会被回放覆盖的位置）。
 
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChatEvent } from "../api";
@@ -1146,8 +1146,11 @@ describe("ChatPage 换角色 = 进那条角色自己的对话（09-26：一条�
   }
 
   function pickRole(name: string) {
+    // 2026-10-30 起侧栏角色行也带 role="button"（键盘可达），裸查 button 会连它一起捞
+    // —— 菜单条目限定在 role-menu 容器里找。
     fireEvent.click(screen.getByTitle(/换个说话的角色/));
-    fireEvent.click(screen.getByRole("button", { name: new RegExp(name) }));
+    const menu = within(screen.getByTestId("role-menu"));
+    fireEvent.click(menu.getByRole("button", { name: new RegExp(name) }));
   }
 
   it("点另一个角色：ensure 她那一条并载入，**不再把当前线程改挂到她名下**", async () => {
@@ -1272,10 +1275,12 @@ describe("ChatPage 侧栏：每个角色一条固定线 + 临时话题批量清�
     fireEvent.click(screen.getByTitle(/换个说话的角色/));
     const box = await screen.findByLabelText("搜角色");
     fireEvent.change(box, { target: { value: "5" } });
-    expect(screen.getByRole("button", { name: /角色5号/ })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /角色1号/ })).toBeNull();
+    // 同 pickRole 的口径：菜单条目在 role-menu 里找，别把侧栏那排角色行（也是 button 了）捞进来。
+    const menu = within(screen.getByTestId("role-menu"));
+    expect(menu.getByRole("button", { name: /角色5号/ })).toBeTruthy();
+    expect(menu.queryByRole("button", { name: /角色1号/ })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: /角色5号/ }));
+    fireEvent.click(menu.getByRole("button", { name: /角色5号/ }));
     await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith("/api/session/proactive", { role_id: "r5" }));
   });
 
@@ -1290,6 +1295,16 @@ describe("ChatPage 侧栏：每个角色一条固定线 + 临时话题批量清�
     fireEvent.click(screen.getByText("还没开始 · 点一下就在这里"));
     await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith("/api/session/proactive", { role_id: "ga" }));
     expect(apiMock.get).toHaveBeenCalledWith("/api/session/s_proactive_ga/messages");
+  });
+
+  it("侧栏行键盘可达：行有 role=button 且 Enter 触发（2026-10-30 交互审计的回归钉）", async () => {
+    // 从前行是裸 div onClick：Tab 不到、Enter 无效 —— "打开对话"这个主操作键盘用户到不了。
+    await mountSidebar();
+    const row = screen.getByTitle(/与通用助手的那条对话/);
+    expect(row.getAttribute("role")).toBe("button");
+    expect(row.getAttribute("tabindex")).toBe("0");
+    fireEvent.keyDown(row, { key: "Enter" });
+    await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith("/api/session/proactive", { role_id: "ga" }));
   });
 
   it("批量清理：全选一次点完，删的是逐条走已有端点，不新开后端口子", async () => {

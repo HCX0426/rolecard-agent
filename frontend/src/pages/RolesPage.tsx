@@ -92,6 +92,9 @@ export default function RolesPage({
 } = {}) {
   const [roles, setRoles] = useState<RoleCard[]>([]);
   const [editing, setEditing] = useState<string | null>(null); // null=关闭, ""=新建, 其他=role_id
+  // 编辑快照：进入表单那一刻的 form 序列化。返回/取消时脏检查用 —— 全站最大的表单
+  // （人设/白名单/范例一大篇）误触一下就全部重填，没有确认说不过去（MemoryPage 同款纪律）。
+  const [formSnapshot, setFormSnapshot] = useState("");
   const [form, setForm] = useState(EMPTY_FORM);
   // 事件簿抽屉开在哪个角色上（null=关着）。
   const [timelineFor, setTimelineFor] = useState<{ role_id: string; role_name: string } | null>(
@@ -264,6 +267,7 @@ export default function RolesPage({
   function openCreate() {
     setEditing("");
     setForm(EMPTY_FORM);
+    setFormSnapshot(JSON.stringify(EMPTY_FORM));
     setWlMode("all");
   }
   function setExemplar(i: number, key: "user" | "assistant", value: string) {
@@ -275,7 +279,7 @@ export default function RolesPage({
 
   function openEdit(r: RoleCard) {
     setEditing(r.role_id);
-    setForm({
+    const next = {
       role_id: r.role_id,
       role_name: r.role_name,
       system_prompt: r.system_prompt,
@@ -294,8 +298,25 @@ export default function RolesPage({
       greeting_at: r.greeting_at ?? "",
       reachout_keep: Number(r.reachout_keep ?? 0),
       pet_pack: r.pet_pack ?? "",
-    });
+    };
+    setForm(next);
+    setFormSnapshot(JSON.stringify(next));
     setWlMode(r.tool_whitelist === null ? "all" : "custom");
+  }
+
+  /** 放弃编辑的两个出口（返回列表 / 取消）共用：表单脏（与进入时的快照比对不过）
+   *  就先确认，点确认才真的丢。 */
+  async function exitEditing() {
+    if (editing !== null && formSnapshot !== JSON.stringify(form)) {
+      const ok = await confirm({
+        title: "放弃未保存的修改？",
+        body: "这张角色卡改过的内容还没保存，返回会全部丢弃。",
+        confirmText: "放弃修改",
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    setEditing(null);
   }
 
   async function save() {
@@ -417,7 +438,7 @@ export default function RolesPage({
             <Button
               variant="ghost"
               type="button"
-              onClick={() => setEditing(null)}
+              onClick={() => void exitEditing()}
               title="放弃修改并回到角色列表"
             >
               ← 返回列表
@@ -821,7 +842,7 @@ export default function RolesPage({
             </div>
             <div className="mt-4 flex gap-2">
               <Button type="submit">保存</Button>
-              <Button variant="ghost" type="button" onClick={() => setEditing(null)}>
+              <Button variant="ghost" type="button" onClick={() => void exitEditing()}>
                 取消
               </Button>
             </div>

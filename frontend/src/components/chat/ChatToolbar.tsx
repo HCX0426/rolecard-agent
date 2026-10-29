@@ -177,7 +177,10 @@ export default function ChatToolbar({
             {/* 抽屉式而非"全量浮层"（用户 09-26："角色多了咋办"）：列表封顶 60vh 内部滚动，
                 角色一多再给一个搜索框 —— 少了这个封顶，十几个角色就能把浮层顶出屏幕，
                 而它往上长是会被头部截掉的。 */}
-            <div className="absolute bottom-full left-0 z-20 mb-2 flex max-h-[min(60vh,420px)] w-64 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-600 dark:bg-slate-800">
+            <div
+              data-testid="role-menu"
+              className="absolute bottom-full left-0 z-20 mb-2 flex max-h-[min(60vh,420px)] w-64 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-600 dark:bg-slate-800"
+            >
               <p className="shrink-0 bg-slate-50 px-3 py-1.5 text-11 font-medium text-slate-400 dark:bg-slate-800/60 dark:text-slate-500">
                 选角色 = 进那个角色自己的那条对话（原来那条留在左侧）
               </p>

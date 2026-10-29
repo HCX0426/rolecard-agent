@@ -237,7 +237,8 @@ export default function ToolsPage() {
           }
         />
 
-        {/* 页签条：一次只显示一个区块（与设置页同一交互语言：选中态 = 下划线 + 加粗）。 */}
+        {/* 页签条：一次只显示一个区块。选中态是白底胶囊（非设置页的下划线式）——
+            全站页内页签两套语言并存的统一待办在交互审计台账里挂着，先让注释说真话。 */}
         <nav className="mt-4 flex flex-wrap gap-1.5 text-xs" aria-label="本页区块">
           {SECTIONS.map(([key, label]) => (
             <button
