@@ -26,7 +26,30 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from rolecard_agent.contracts.response_models import SettingsMemoryViewItemsItem
+
+class MemoryRowView(BaseModel):
+    """记忆桶里的一行（`core/memory` 的 `_row_to_dict`/`list_items`，13 键恒有）。
+
+    生成物那份 `SettingsMemoryViewItemsItem` 把 id/pinned/hit_count 都推成了可空、
+    last_hit_at/invalidated_at/superseded_by 推成 unknown —— 因为**采样期那几格恒 null**
+    （新记忆还没被命中/整理过）。运行时真相是 id 恒 int、pinned 恒 bool（列有默认）、
+    三个时间戳可 null。手写这一份既如实又不逼前端到处 `?? 0`（items[] 用它的端点：
+    consolidate 写响应；GET /api/settings/memory 那份生成物照旧，两不相扰）。
+    """
+
+    id: int
+    user_id: str
+    uid: str
+    role_id: str
+    text: str
+    source: str
+    pinned: bool
+    hit_count: int
+    importance: int
+    last_hit_at: str | None
+    invalidated_at: str | None
+    superseded_by: int | None
+    created_at: str
 
 
 class ExtractedIndexModel(BaseModel):
@@ -104,14 +127,15 @@ class MemoryConsolidatedView(BaseModel):
 
     顶层**没有** turns_since —— 那是会话 distill（DistillOutcomeView）独有的键，
     前端旧 ConsolidateOutcome extends DistillOutcome 把不存在于响应的必填键抄了进来，
-    本模型按运行时形状收口。items[] 元素复用生成物组件（含 last_hit_at 等三族可空键）。
+    本模型按运行时形状收口。items[] 用 MemoryRowView（比生成物那份更贴运行时：
+    id/pinned 恒非空，采样期恒 null 的三格在这里如实标可空）。
     """
 
     report: MemoryReportView
     enabled: bool
     role_id: str | None
     content: str
-    items: list[SettingsMemoryViewItemsItem]
+    items: list[MemoryRowView]
     active_count: int
     limit: int
     over_limit: bool

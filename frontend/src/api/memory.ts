@@ -16,24 +16,9 @@ export type DistillReport = components["schemas"]["MemoryReportView"];
 
 export type DistillOutcome = components["schemas"]["DistillOutcomeView"];
 
-/** 整理完顺手回一份当前桶的记忆视图：界面不用再发一次 GET 就能刷新列表。 */
-export interface ConsolidateOutcome extends DistillOutcome {
-  enabled: boolean;
-  role_id: string | null;
-  content: string;
-  items: {
-    id: number;
-    text: string;
-    source: string;
-    pinned: boolean;
-    hit_count: number;
-    /** 显著性档位（0 次要 / 1 一般 / 2 要紧）—— 与记忆面板那三档下拉同源。 */
-    importance: number;
-    last_hit_at: string | null;
-    created_at: string | null;
-  }[];
-  active_count: number;
-  limit: number;
-  over_limit: boolean;
-  extract_turns: number;
-}
+/** 整理完顺手回一份当前桶的记忆视图：界面不用再发一次 GET 就能刷新列表。
+
+ * 第四批起指向后端手模：旧写法 `extends DistillOutcome` 继承来一个后端**从不返回**
+ * 的 `turns_since` 必填键（它只属于会话提取那条路），items[] 也只手抄了 8/13 个键——
+ * 契约对账把这些谎言摆出来了。 */
+export type ConsolidateOutcome = components["schemas"]["MemoryConsolidatedView"];

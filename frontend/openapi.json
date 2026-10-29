@@ -2533,7 +2533,7 @@
     "type": "object"
    },
    "MemoryConsolidatedView": {
-    "description": "`POST /api/settings/memory/consolidate`：report + _memory_payload 摊平的 9 键（恒有）。\n\n顶层**没有** turns_since —— 那是会话 distill（DistillOutcomeView）独有的键，\n前端旧 ConsolidateOutcome extends DistillOutcome 把不存在于响应的必填键抄了进来，\n本模型按运行时形状收口。items[] 元素复用生成物组件（含 last_hit_at 等三族可空键）。",
+    "description": "`POST /api/settings/memory/consolidate`：report + _memory_payload 摊平的 9 键（恒有）。\n\n顶层**没有** turns_since —— 那是会话 distill（DistillOutcomeView）独有的键，\n前端旧 ConsolidateOutcome extends DistillOutcome 把不存在于响应的必填键抄了进来，\n本模型按运行时形状收口。items[] 用 MemoryRowView（比生成物那份更贴运行时：\nid/pinned 恒非空，采样期恒 null 的三格在这里如实标可空）。",
     "properties": {
      "active_count": {
       "title": "Active Count",
@@ -2553,7 +2553,7 @@
      },
      "items": {
       "items": {
-       "$ref": "#/components/schemas/SettingsMemoryViewItemsItem"
+       "$ref": "#/components/schemas/MemoryRowView"
       },
       "title": "Items",
       "type": "array"
@@ -2759,6 +2759,101 @@
      "after"
     ],
     "title": "MemoryReportView",
+    "type": "object"
+   },
+   "MemoryRowView": {
+    "description": "记忆桶里的一行（`core/memory` 的 `_row_to_dict`/`list_items`，13 键恒有）。\n\n生成物那份 `SettingsMemoryViewItemsItem` 把 id/pinned/hit_count 都推成了可空、\nlast_hit_at/invalidated_at/superseded_by 推成 unknown —— 因为**采样期那几格恒 null**\n（新记忆还没被命中/整理过）。运行时真相是 id 恒 int、pinned 恒 bool（列有默认）、\n三个时间戳可 null。手写这一份既如实又不逼前端到处 `?? 0`（items[] 用它的端点：\nconsolidate 写响应；GET /api/settings/memory 那份生成物照旧，两不相扰）。",
+    "properties": {
+     "created_at": {
+      "title": "Created At",
+      "type": "string"
+     },
+     "hit_count": {
+      "title": "Hit Count",
+      "type": "integer"
+     },
+     "id": {
+      "title": "Id",
+      "type": "integer"
+     },
+     "importance": {
+      "title": "Importance",
+      "type": "integer"
+     },
+     "invalidated_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Invalidated At"
+     },
+     "last_hit_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Last Hit At"
+     },
+     "pinned": {
+      "title": "Pinned",
+      "type": "boolean"
+     },
+     "role_id": {
+      "title": "Role Id",
+      "type": "string"
+     },
+     "source": {
+      "title": "Source",
+      "type": "string"
+     },
+     "superseded_by": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Superseded By"
+     },
+     "text": {
+      "title": "Text",
+      "type": "string"
+     },
+     "uid": {
+      "title": "Uid",
+      "type": "string"
+     },
+     "user_id": {
+      "title": "User Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "user_id",
+     "uid",
+     "role_id",
+     "text",
+     "source",
+     "pinned",
+     "hit_count",
+     "importance",
+     "last_hit_at",
+     "invalidated_at",
+     "superseded_by",
+     "created_at"
+    ],
+    "title": "MemoryRowView",
     "type": "object"
    },
    "ModelContextBody": {
