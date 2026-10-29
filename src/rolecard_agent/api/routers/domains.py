@@ -12,7 +12,7 @@ H4：路由只做"参数映射 + 异常→HTTP 映射"，所有 SQL 在 `core/do
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor
@@ -74,10 +74,21 @@ def list_domains(ctx: AppContext = Depends(get_context)) -> list[object]:
     "/api/domains/{domain}/records",
     response_model=list[DomainRecordView],
 )
-def list_domain_records(domain: str, ctx: AppContext = Depends(get_context)) -> list[object]:
-    """列出某域的通用记录（归属演示用户）。"""
+def list_domain_records(
+    domain: str,
+    limit: int | None = Query(default=None, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    ctx: AppContext = Depends(get_context),
+) -> list[object]:
+    """列出某域的通用记录（归属演示用户）。
+
+    `limit`/`offset` 可选（给 limit 才分页），缺省全量 —— 响应形状不动，
+    契约面只有这两个查询参数；前端多取一条探"有没有下一页"。
+    """
     try:
-        return _domain_service(ctx).list_records(domain, ctx.current_user())  # type: ignore[return-value]
+        return _domain_service(ctx).list_records(
+            domain, ctx.current_user(), limit=limit, offset=offset
+        )  # type: ignore[return-value]
     except ValueError as exc:
         raise value_error_to_http(exc) from exc
 

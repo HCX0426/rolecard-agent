@@ -70,6 +70,56 @@ describe("DataPage 领域列表的失败要有出口（2026-10-30 交互审计�
   });
 });
 
+describe("通用域分页（2026-10-30 交互审计的回归钉）", () => {
+  it("多取一条探下一页：一屏 20 条、翻页带 offset、换域重挂翻页归零", async () => {
+    // 后端 limit/offset 是加法（响应仍是数组）；前端拿 21 条探边界，整表渲染不再无限长。
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/domains")
+        return [
+          { id: "health", display_name: "健康" },
+          { id: "study", display_name: "学习" },
+        ];
+      if (url.startsWith("/api/records")) return { items: [], total: 0 };
+      return {};
+    });
+    apiMock.listDomainRecords.mockImplementation(
+      async (_domain: string, page?: { limit?: number; offset?: number }) => {
+        const off = page?.offset ?? 0;
+        const end = Math.min(off + (page?.limit ?? 10_000), 25);
+        return Array.from({ length: Math.max(0, end - off) }, (_, i) => ({
+          id: `r${off + i}`,
+          domain: "study",
+          label: `第 ${off + i} 条`,
+          value_text: null,
+          value_num: off + i,
+          unit: null,
+          note: null,
+          created_at: "2026-01-01 00:00:00",
+        }));
+      },
+    );
+    const { fireEvent } = await import("@testing-library/react");
+    render(<DataPage />);
+    fireEvent.click(await screen.findByText("学习"));
+    expect(await screen.findByText(/第 1–20 条/)).toBeTruthy();
+    expect(screen.getByText(/还有更多/)).toBeTruthy();
+    expect(screen.queryByText(/第 21–25 条/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+    await waitFor(() =>
+      expect(apiMock.listDomainRecords).toHaveBeenLastCalledWith("study", {
+        limit: 21,
+        offset: 20,
+      }),
+    );
+    expect(await screen.findByText(/第 21–25 条/)).toBeTruthy();
+    // 末页：下一页置灰（探不到第 26 条）。
+    expect(
+      (screen.getByRole("button", { name: "下一页" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+});
+
 describe("DataPage 删除报告二次确认（useConfirm）", () => {
   it("点『删除报告』弹确认框，点『确认删除』才调用 DELETE", async () => {
     const { fireEvent } = await import("@testing-library/react");

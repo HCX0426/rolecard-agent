@@ -127,6 +127,7 @@ export default function DataPage({ initialBlock }: { initialBlock?: MaterialsBlo
                     <DataManagement />
                   ) : (
                     <GenericDomainData
+                      key={activeDomain}
                       domain={activeDomain}
                       displayName={
                         domains.find((d) => d.id === activeDomain)?.display_name ?? activeDomain
@@ -601,13 +602,22 @@ function GenericDomainData({
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
   // 快速切域的竞态守卫：A 域的慢响应不许顶着 B 域的名字留在屏上（表格不自愈）。
   const reqRef = useRef(0);
+  // 分页（2026-10-30 交互审计：整表渲染是卡顿隐患，与 health 域口径看齐）。
+  // 多取一条探"有没有下一页"，响应形状不动。组件按域 key 重挂 → 翻页态天然归零。
+  const PAGE_SIZE = 20;
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
 
   const load = useCallback(async () => {
     const req = ++reqRef.current;
-    const rows = await api.listDomainRecords(domain);
-    if (req !== reqRef.current) return; // 已切到别的域：这份旧表整包作废
-    setRecords(rows);
-  }, [domain]);
+    const rows = await api.listDomainRecords(domain, {
+      limit: PAGE_SIZE + 1,
+      offset: page * PAGE_SIZE,
+    });
+    if (req !== reqRef.current) return; // 已切到别的域/页：这份旧表整包作废
+    setHasMore(rows.length > PAGE_SIZE);
+    setRecords(rows.slice(0, PAGE_SIZE));
+  }, [domain, page]);
 
   useEffect(() => {
     load().catch((e) => setStatus({ ok: false, msg: `加载失败：${e.message}` }));
@@ -779,6 +789,32 @@ function GenericDomainData({
               ))}
             </tbody>
           </table>
+          {(hasMore || page > 0) && (
+            <div className="mt-3 flex items-center justify-between text-xs text-slate-400 dark:text-slate-500">
+              <span>
+                第 {page * PAGE_SIZE + 1}–{page * PAGE_SIZE + records.length} 条
+                {hasMore ? "（还有更多）" : ""}
+              </span>
+              <span className="flex gap-1.5">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page === 0}
+                  onClick={() => setPage((p) => p - 1)}
+                >
+                  上一页
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!hasMore}
+                  onClick={() => setPage((p) => p + 1)}
+                >
+                  下一页
+                </Button>
+              </span>
+            </div>
+          )}
         </Card>
       )}
     </div>

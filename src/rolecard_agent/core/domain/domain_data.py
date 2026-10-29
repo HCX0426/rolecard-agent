@@ -47,13 +47,27 @@ class DomainDataService:
             "created_at": str(row["created_at"]),
         }
 
-    def list_records(self, domain: str, user_id: str) -> list[dict[str, object]]:
+    def list_records(
+        self,
+        domain: str,
+        user_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, object]]:
         self.check_domain(domain)
-        rows = self._conn.execute(
+        # limit/offset 可选：缺省 = 全量（旧行为一字不变）。分页由调用方"多取一条
+        # 探有没有下一页"（2026-10-30 交互审计：通用域整表渲染是资料页的卡顿隐患，
+        # 与首个富域的分页口径看齐——但响应形状不动，契约面只有这两个查询参数）。
+        sql = (
             f"SELECT {_COLUMNS} FROM domain_data "
-            "WHERE domain = ? AND user_id = ? ORDER BY created_at DESC, id DESC",
-            (domain, user_id),
-        ).fetchall()
+            "WHERE domain = ? AND user_id = ? ORDER BY created_at DESC, id DESC"
+        )
+        params: list[object] = [domain, user_id]
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+        rows = self._conn.execute(sql, params).fetchall()
         return [self._row_to_dict(r) for r in rows]
 
     def create_record(

@@ -217,6 +217,9 @@ export interface paths {
         /**
          * List Domain Records
          * @description 列出某域的通用记录（归属演示用户）。
+         *
+         *     `limit`/`offset` 可选（给 limit 才分页），缺省全量 —— 响应形状不动，
+         *     契约面只有这两个查询参数；前端多取一条探"有没有下一页"。
          */
         get: operations["list_domain_records_api_domains__domain__records_get"];
         put?: never;
@@ -4954,7 +4957,10 @@ export interface operations {
     };
     list_domain_records_api_domains__domain__records_get: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number | null;
+                offset?: number;
+            };
             header?: never;
             path: {
                 domain: string;

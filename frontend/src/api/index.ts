@@ -251,9 +251,15 @@ export const api = {
       "/api/local-service/unload",
       model ? { model } : {},
     ),
-  /** 通用领域记录（非 health 域的数据增删改查）。 */
-  listDomainRecords: (domain: string) =>
-    request<GenericRecord[]>("GET", `/api/domains/${domain}/records`),
+  /** 通用领域记录（非 health 域的数据增删改查）。`page.limit` 给定才分页（后端缺省全量）；
+   *  调用方多取一条探"有没有下一页"。 */
+  listDomainRecords: (domain: string, page?: { limit?: number; offset?: number }) =>
+    request<GenericRecord[]>(
+      "GET",
+      `/api/domains/${domain}/records${
+        page?.limit != null ? `?limit=${page.limit}&offset=${page.offset ?? 0}` : ""
+      }`,
+    ),
   addDomainRecord: (domain: string, body: unknown) =>
     request<GenericRecord>("POST", `/api/domains/${domain}/records`, body),
   patchDomainRecord: (domain: string, id: string, body: unknown) =>
