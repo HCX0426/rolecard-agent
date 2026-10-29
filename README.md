@@ -62,15 +62,15 @@ git config core.hooksPath .githooks
 控制台六个页签（**2026-10-30 IA**，页签唯一出处见 `frontend/src/App.tsx` 的 TABS 注册表）：
 **对话**（过程）· **资料**（领域数据 + 知识库区块）· **角色卡**（人格与权限 + 工作区）·
 **记忆**（跨会话事实 + 主动开口）· **工具**（能力开关 + MCP + 渠道）· **设置**（环境与凭据）。
-（截图拍于 2026-10-12，早于 10-30 的 IA 重排，仅供视觉参考；重拍工具：`scripts/tools/render_readme_shots.py`）
+（截图 2026-10-30 随 IA 重排重拍；重拍工具：`scripts/tools/render_readme_shots.py`）
 
-| 对话 | 数据（可补录） | 知识库（RAG + 检索延迟） |
+| 对话 | 资料（领域数据 + 知识库区块） | 角色卡（含工作区） |
 | --- | --- | --- |
-| ![对话页](docs/assets/console-chat.png) | ![数据页](docs/assets/console-data.png) | ![知识库页](docs/assets/console-knowledge.png) |
+| ![对话页](docs/assets/console-chat.png) | ![资料页](docs/assets/console-data.png) | ![角色卡页](docs/assets/console-roles.png) |
 
-| 角色卡（含范例 exemplars） | 插件（纯能力开关） | 设置（模型热切换 + 回退链） |
+| 记忆（跨会话事实 + 主动开口） | 工具（能力开关 + MCP + 渠道） | 设置（模型热切换 + 回退链） |
 | --- | --- | --- |
-| ![角色卡页](docs/assets/console-roles.png) | ![插件页](docs/assets/console-plugins.png) | ![设置页](docs/assets/console-settings.png) |
+| ![记忆页](docs/assets/console-memory.png) | ![工具页](docs/assets/console-tools.png) | ![设置页](docs/assets/console-settings.png) |
 
 ---
 

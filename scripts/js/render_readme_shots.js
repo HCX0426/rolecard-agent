@@ -41,12 +41,13 @@ function loadPlaywright() {
 }
 
 // 与 README 里两张图的行列一一对应；`console-*.png` 的文件名就是这个 key。
+// 2026-10-30 IA：知识库并入「资料」区块、插件更名「工具」、新增顶层「记忆」。
 const PAGES = [
   ["chat", "对话页"],
-  ["data", "数据页"],
-  ["knowledge", "知识库页"],
+  ["data", "资料页"],
   ["roles", "角色卡页"],
-  ["plugins", "插件页"],
+  ["memory", "记忆页"],
+  ["tools", "工具页"],
   ["settings", "设置页"],
 ];
 
