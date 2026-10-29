@@ -288,7 +288,7 @@ export default function ReachoutPanel({
         )}
         {!!data?.file_watch_pending && (
           <div className="border-b border-slate-100 px-4 py-1.5 text-11 text-slate-400 dark:border-slate-700 dark:text-slate-500">
-            任务目录有 {data.file_watch_pending} 项变化，正等着角色找话题
+            工作区有 {data.file_watch_pending} 项变化，正等着角色找话题
           </div>
         )}
         <div className="flex-1 overflow-y-auto p-2">

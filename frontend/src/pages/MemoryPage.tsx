@@ -1,25 +1,23 @@
-// 「记忆与任务目录」子页签（P3-1 按面板拆文件的第一刀）。
+// 顶层「记忆」页签（2026-10-30 从设置页「记忆与任务目录」子页签迁出）。
 //
-// 为什么拆：设置页 1475 行里这一族占了 930 行 —— 数据、载荷契约（MemoryItem/
-// MemoryPayload）、面板渲染本来就自成一族，改记忆面板却要滚过整页。
-// 怎么保证没改行为：正文从 pages/SettingsPage.tsx **逐字搬来**（一字未动，含【要紧】
-// 同词约定那两段注释）；`SettingsPage.test.tsx` 从整页 `<SettingsPage>` 经 DOM 驱动
-// 这些用例，住址换了而 DOM 形状不动，382 支用例数一字不变就是等价证明；import 面由
-// tsc 的 noUnusedLocals 看守（多一条少一条都编不过）。
+// 为什么迁：用户 2026-10-29「记忆躲起来了咋办」/ 10-30「这三个不放在设置界面，跟记忆
+// 页签或者角色卡页签走」—— 跨会话记忆与主动开口都是"她跨会话记得什么、什么时候找你"这
+// 一族，设置页该只留环境与凭据。任务目录（现更名「工作区」）是授权不是记忆，跟角色卡走
+// （`components/WorkspacePanel.tsx`，由角色卡页托管）。
+//
+// 架构契约（本页是**管理视图**，不动引擎）：记忆只有一个库（`role_memory_item`，SQLite），
+// 注入只有一条路径（`core/memory.memory_for_turn` —— 对话页、主动开口、桌宠共用这一份
+// 规则）。注入语义检索**缓做**（解锁条件与"同一 SQLite 库上的视图、永不双模式"的形态约束
+// 见 docs/开发流程.md 判定表），在这之前"面板上看到的"与"她每轮注入的"是同一份事实。
+//
+// 怎么保证没改行为：正文从 components/MemoryPanel.tsx **逐字搬来**（两卡的状态与处理器、
+// JSX、注释一字未动）；`SettingsPage.test.tsx` 里记忆族的用例整体迁来 `MemoryPage.test.tsx`
+// （render 目标换成 `<MemoryPage />`，断言不动），用例数搬走而非删除。
 import { useCallback, useEffect, useState } from "react";
-import {
-  api,
-  type RoleCard,
-  type RuntimePayload,
-  type TreeResult,
-  type WorkspaceDir,
-} from "../api";
+import { api, type RoleCard, type RuntimePayload } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
-import { Button, Card } from "./ui";
-import { NativeDirPickerButton } from "./NativeDirPickerButton";
+import { Button, Card } from "../components/ui";
 import { describeError } from "../lib/errors";
-
-// ---------------------------------------------------------------- 记忆与任务目录
 
 /** 一条记忆（后端 `role_memory_item` 行）。`content` 是这些条目渲染出来的文本，不是第二份事实。 */
 type MemoryItem = {
@@ -66,7 +64,7 @@ const CADENCES = ["0", "6", "12", "24"];
  *  所以行内编辑那个计数器不是装饰 —— 它是"再打下去要被切掉"的唯一提示。 */
 const MAX_FACT = 200;
 
-export function MemoryPanel() {
+export default function MemoryPage() {
   // 跨会话记忆面板：enabled = 总开关（runtime 覆盖，保存即热生效）；
   // items = 事实面（逐条可钉/改/删），content = 同一批条目的渲染文本（下方"原文视图"）。
   const [mem, setMem] = useState<MemoryPayload | null>(null);
@@ -92,14 +90,6 @@ export function MemoryPanel() {
   const [consolidating, setConsolidating] = useState(false);
   // 自动提取那一档（0 = 关）单独一个忙碌态：它走的是同一个 PUT，但保存后要读回**新有效值**。
   const [extractBusy, setExtractBusy] = useState(false);
-  // 任务目录（file1）：角色可读写的授权范围。wsDir = 生效值；树抽屉 = 目录选择器。
-  const [wsDir, setWsDir] = useState<WorkspaceDir | null>(null);
-  const [wsDraft, setWsDraft] = useState("");
-  const [wsMsg, setWsMsg] = useState("");
-  const [wsErr, setWsErr] = useState("");
-  const [treeOpen, setTreeOpen] = useState(false);
-  const [tree, setTree] = useState<TreeResult | null>(null);
-  const [treeErr, setTreeErr] = useState("");
   // 主动开口全局总闸（覆盖运行环境的 REACHOUT_ENABLED）：rejectOn = 有效值。
   const [reachoutOn, setReachoutOn] = useState<boolean | null>(null);
   // 收件箱折叠窗口（天）：与总闸同帖单写点，运行环境只读展示。
@@ -373,52 +363,6 @@ export function MemoryPanel() {
     ).then(() => setMergePick([]));
   };
 
-  const loadWorkspace = useCallback(async () => {
-    const d = await api.getWorkspaceDir();
-    setWsDir(d);
-    // 契约迁移后 path 可空（后端没给 = null）：草稿框以空串起步，与原"没设目录"同形。
-    setWsDraft(d.path ?? "");
-  }, []);
-
-  useEffect(() => {
-    loadWorkspace().catch((e) => setWsErr(`加载任务目录失败：${describeError(e)}`));
-  }, [loadWorkspace]);
-
-  async function saveWorkspace() {
-    setWsErr("");
-    setWsMsg("");
-    try {
-      const d = await api.setWorkspaceDir(wsDraft.trim());
-      setWsDir(d);
-      setWsDraft(d.path ?? "");
-      setWsMsg("已设置（保存即对角色下一轮生效）");
-    } catch (e) {
-      setWsErr(`保存失败：${describeError(e)}`);
-    }
-  }
-
-  async function clearWorkspace() {
-    setWsErr("");
-    setWsMsg("");
-    try {
-      const d = await api.clearWorkspaceDir();
-      setWsDir(d);
-      setWsDraft(d.path ?? "");
-      setWsMsg("已清除，回落 env 默认目录");
-    } catch (e) {
-      setWsErr(`清除失败：${describeError(e)}`);
-    }
-  }
-
-  async function browseAt(path?: string) {
-    setTreeErr("");
-    try {
-      setTree(await api.browseTree(path));
-    } catch (e) {
-      setTreeErr(`浏览失败：${describeError(e)}`);
-    }
-  }
-
   const loadReachout = useCallback(async () => {
     const rt = await api.get<RuntimePayload>("/api/settings/runtime");
     const items = (rt.groups ?? []).flatMap((g) => g.items ?? []);
@@ -465,15 +409,18 @@ export function MemoryPanel() {
   }
 
   return (
-    <div className="mt-6 space-y-4">
-      <Card className="p-5">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">跨会话记忆</h3>
+    <div className="h-full overflow-y-auto p-6">
+      <div className="mx-auto max-w-3xl">
+        {/* 页头 = 这页的英雄：注入总闸从卡片头提升到页头（2026-10-30 重设计）。它回答的是
+            "她这轮带不带记忆上桌"——整页的状态，不该藏在卡里找；样式沿用侧栏当前角色块
+            那套 accent 药丸语法（bg-blue-600 已被 token 映射到 --accent，随角色变色）。 */}
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">记忆</h2>
           <button
             onClick={toggleMemory}
             disabled={!mem || !!memScope}
             title={memScope ? "注入开关是全局设置，切到「全局记忆」才能改" : undefined}
-            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+            className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
               mem?.enabled
                 ? "bg-blue-600 text-white"
                 : "bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-300"
@@ -482,6 +429,12 @@ export function MemoryPanel() {
             {mem ? (mem.enabled ? "记忆注入：已开启" : "记忆注入：已关闭") : "…"}
           </button>
         </div>
+        <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+          每轮对话都带上这里的事实 —— 对话、主动开口、桌宠共用这一份。
+          主动开口的总闸在下面那张卡；工作区（角色读写文件的授权范围）在「角色卡」页。
+        </p>
+      <Card className="mt-4 p-5">
+        <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">跨会话记忆</h3>
         <div className="mt-2 flex items-center gap-2">
           <label className="text-xs text-slate-500 dark:text-slate-400">作用域</label>
           <select
@@ -671,7 +624,7 @@ export function MemoryPanel() {
                       {item.pinned ? " · 已钉住" : ""}
                       {" · "}
                       {/* 三档做成下拉而不是"点一下循环"：这三档语义不对称（0 与 2 是两端，1 是
-                          默认），循环控件要数两下才知道自己在哪。与同一张卡里「收件箱折叠窗口」同款。 */}
+                          默认），循环控件要数两下才知道自己在哪。与「主动开口」卡的折叠窗口同款。 */}
                       <label className="inline-flex items-center gap-1">
                         要紧程度
                         <select
@@ -806,146 +759,7 @@ export function MemoryPanel() {
         {reachoutMsg && <p className="mt-1.5 text-xs text-emerald-600 dark:text-emerald-400">{reachoutMsg}</p>}
         {reachoutErr && <p className="mt-1.5 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{reachoutErr}</p>}
       </Card>
-
-      <Card className="p-5">
-        <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">任务目录</h3>
-        <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-          角色读写文件的授权范围：只看得到、只碰得到这个目录里的内容（目录外一律拒绝）。
-          修改保存后对角色下一轮对话即时生效。
-        </p>
-        <div className="mt-2.5 flex items-center gap-2">
-          <input
-            value={wsDraft}
-            onChange={(e) => setWsDraft(e.target.value)}
-            disabled={!wsDir}
-            placeholder={wsDir ? "例如 D:\\my-tasks" : "加载中…"}
-            className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-700 focus:border-blue-400 focus:outline-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
-          />
-          <button
-            onClick={() => {
-              setTreeOpen(true);
-              browseAt(wsDraft || undefined);
-            }}
-            disabled={!wsDir}
-            className="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:border-blue-300 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300"
-          >
-            浏览…
-          </button>
-          {/* 桌面壳里多一条系统对话框的路子（B/S 下整个按钮不出现）；挑完同样只填草稿，
-              要用户按「保存」才生效 —— 授权范围不该被一次点击顺手改掉。 */}
-          <NativeDirPickerButton disabled={!wsDir} onPicked={(p) => setWsDraft(p)} />
-          <Button variant="primary" onClick={saveWorkspace} disabled={!wsDir}
-            className="shrink-0 rounded-lg px-3 py-1.5 text-xs disabled:opacity-50">
-            保存
-          </Button>
-          {wsDir?.overridden && (
-            <button
-              onClick={clearWorkspace}
-              className="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:border-red-300 hover:text-red-600 dark:border-slate-600 dark:text-slate-300"
-            >
-              清除（回落默认）
-            </button>
-          )}
-        </div>
-        <div className="mt-2 flex items-center gap-2 text-xs">
-          {wsMsg && <span className="text-emerald-600 dark:text-emerald-400">{wsMsg}</span>}
-          {wsErr && <span className="text-red-600 dark:text-red-400 dark:text-red-500">{wsErr}</span>}
-          <span className="text-slate-400 dark:text-slate-500">
-            当前：{wsDir ? (wsDir.overridden ? "自定义" : "env 默认") : "…"}
-          </span>
-        </div>
-        {wsDir?.overridden && (
-          <p className="mt-1.5 text-11 text-slate-400 dark:text-slate-500">
-            该目录仅存于本机数据库；删除后回到默认的任务目录。
-          </p>
-        )}
-      </Card>
-
-      {/* 目录树选择抽屉（设置页专用，人用的选择器；后端/树契约见 /api/workspace/tree） */}
-      {treeOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-          <div className="flex h-[70vh] w-full max-w-lg flex-col rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-600 dark:bg-slate-800">
-            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5 dark:border-slate-700">
-              <span className="text-sm font-medium text-slate-900 dark:text-slate-100">选择任务目录</span>
-              <button
-                onClick={() => setTreeOpen(false)}
-                className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-              >
-                关闭
-              </button>
-            </div>
-            <div className="flex items-center gap-1.5 border-b border-slate-100 px-3 py-2 text-xs dark:border-slate-700">
-              <button
-                onClick={() => browseAt(tree?.parent ?? undefined)}
-                disabled={!tree}
-                className="rounded border border-slate-200 px-2 py-0.5 text-slate-600 hover:border-blue-300 disabled:opacity-40 dark:border-slate-600 dark:text-slate-300"
-              >
-                ← 上一级
-              </button>
-              <span className="min-w-0 flex-1 truncate font-mono text-slate-500 dark:text-slate-400">
-                {tree?.path ?? "…"}
-              </span>
-            </div>
-            <div className="flex-1 overflow-y-auto p-2">
-              {treeErr && <p className="px-2 py-1 text-xs text-red-600 dark:text-red-400">{treeErr}</p>}
-              {(tree?.entries ?? []).map((e) => (
-                <button
-                  key={e.name}
-                  onClick={() => e.is_dir && browseAt(`${tree!.path}\\${e.name}`)}
-                  disabled={!e.is_dir}
-                  className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs hover:bg-blue-50 disabled:cursor-default disabled:opacity-70 dark:hover:bg-blue-900/30"
-                >
-                  <span className={`truncate ${e.is_dir ? "text-slate-800 dark:text-slate-100" : "text-slate-400 dark:text-slate-500"} ${
-                      e.is_dir ? "" : "pl-4"
-                    }`}>
-                    {/* 目录标记用 SVG（2026-10-24 UI 打磨）：emoji 的渲染重量随系统漂。 */}
-                    {e.is_dir && (
-                      <svg
-                        width={12}
-                        height={12}
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth={1.8}
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className="mr-1 inline-block align-[-1px]"
-                      >
-                        <path d="M3 6h6l2 2h10v11H3z" />
-                      </svg>
-                    )}
-                    {e.name}
-                  </span>
-                  {!e.is_dir && (e.size ?? 0) > 0 && (
-                    <span className="ml-2 shrink-0 text-10 text-slate-400">
-                      {e.size && e.size > 1024 ? `${(e.size / 1024).toFixed(0)} KB` : `${e.size ?? 0} B`}
-                    </span>
-                  )}
-                </button>
-              ))}
-              {tree && (tree.entries ?? []).length === 0 && (
-                <p className="px-2 py-4 text-center text-xs text-slate-400 dark:text-slate-500">（空目录）</p>
-              )}
-              {tree?.truncated && (
-                <p className="px-2 py-1 text-11 text-slate-400 dark:text-slate-500">（条目过多，仅显示部分）</p>
-              )}
-            </div>
-            <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-4 py-2.5 dark:border-slate-700">
-              <button
-                onClick={() => setTreeOpen(false)}
-                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-600 dark:text-slate-300"
-              >
-                取消
-              </button>
-              <Button variant="primary" onClick={() => { if (!tree?.path) return; setWsDraft(tree.path); setTreeOpen(false); }}
-                className="rounded-lg px-3 py-1.5 text-xs">
-                选中当前目录
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
+      </div>
     </div>
   );
 }

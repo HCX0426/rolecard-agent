@@ -1026,11 +1026,11 @@ describe("ChatPage 提取精华（对话 → 该角色的记忆）", () => {
       { role: "assistant", content: "一答" },
     ]);
     apiMock.distillSession.mockRejectedValue(
-      new Error("跨会话记忆当前是关闭的 —— 先在「设置 → 记忆与任务目录」打开它。"),
+      new Error("跨会话记忆当前是关闭的 —— 先在顶层「记忆」页签打开它。"),
     );
 
     await openConversationAndClickDistill();
-    expect(await screen.findByText(/记忆与任务目录/)).toBeTruthy();
+    expect(await screen.findByText(/顶层「记忆」页签/)).toBeTruthy();
   });
 
   it("空对话时按钮禁用并说明「先聊几句」（不是点了没反应的死按钮）", async () => {

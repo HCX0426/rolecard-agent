@@ -628,7 +628,7 @@ def distill_session(
     if not ctx.settings.memory_enabled:
         raise HTTPException(
             status_code=400,
-            detail="跨会话记忆当前是关闭的 —— 先在「设置 → 记忆与任务目录」打开它。",
+            detail="跨会话记忆当前是关闭的 —— 先在顶层「记忆」页签打开它。",
         )
     thread = get_thread(ctx.conn, thread_id, user_id=ctx.current_user())
     _, messages = _history_messages(ctx, thread_id)

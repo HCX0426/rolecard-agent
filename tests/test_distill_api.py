@@ -149,7 +149,7 @@ def test_distill_with_memory_disabled_is_400_with_a_way_back(client: TestClient)
 
     res = client.post(f"/api/session/{tid}/distill")
     assert res.status_code == 400
-    assert "记忆与任务目录" in str(res.json()["detail"])
+    assert "顶层「记忆」页签" in str(res.json()["detail"])
 
 
 def test_distill_unknown_thread_404(client: TestClient) -> None:

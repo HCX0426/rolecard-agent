@@ -186,9 +186,7 @@ export function RuntimePanel() {
                     <span className="ml-1.5 font-mono text-10 text-slate-300 dark:text-slate-600">{it.key}</span>
                   </td>
                   <td className="py-1.5 align-top">
-                    {/* 主动开口总闸（reachout_enabled）是「记忆与任务目录」页签的单写点：
-                        这里只读展示当前生效值，避免同一开关两处可写（架构审计 §3 的控制开关体系）。 */}
-                    {/* 主动开口总闸与收件箱折叠窗口是「记忆与任务目录」页签的单写点：这里
+                    {/* 主动开口总闸与收件箱折叠窗口是顶层「记忆」页签的单写点：这里
                         只读展示当前生效值，避免同一开关两处可写（架构审计 §3 的控制开关体系）。
                         比对必须用 `field`（保存路径用的稳定身份），**不能用 `key`** —— `key`
                         是 env 名（REACHOUT_ENABLED），以前写成比 env 名的小串，运行环境里
@@ -205,7 +203,7 @@ export function RuntimePanel() {
                   </td>
                   <td className="py-1.5 align-top text-slate-400 dark:text-slate-500">
                     {it.field === "reachout_enabled" || it.field === "reachout_merge_days"
-                      ? "在「记忆与任务目录」页签修改"
+                      ? "在「记忆」页签修改"
                       : it.note || (it.changed && it.kind === "ro" ? `默认 ${it.default}` : "")}
                   </td>
                 </tr>
