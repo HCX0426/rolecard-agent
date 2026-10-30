@@ -443,12 +443,17 @@ def check_doc_freshness() -> None:
         fails.append(f"doc freshness: {offenders}")
 
 
-def _last_touch(rel: str) -> tuple[str, str] | None:
-    """该文件最近一次被提交改动 → (提交哈希, 提交时刻 ISO 带时区)。取不到返回 None。"""
+def _head_commit_info() -> tuple[set[str], str] | None:
+    """(本笔提交改动的文件集, 本笔提交时刻 ISO 带时区)。取不到返回 None。
+
+    刻意**不按路径查历史**（`git log -- <path>`）：CJK pathspec 在 runner 上的行为
+    不可信（run 41117308403 实测——没改过的文件也被答成 HEAD），diff-tree 对单个
+    HEAD 对象取改动清单则不依赖任何路径匹配。
+    """
     import subprocess  # noqa: PLC0415 - 尺子自己的进程出钱
 
     proc = subprocess.run(
-        ["git", "log", "-1", "--format=%H%x00%cI", "--", rel],
+        ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -456,18 +461,11 @@ def _last_touch(rel: str) -> tuple[str, str] | None:
         errors="replace",
         timeout=30,
     )
-    out_text = (proc.stdout or "").strip()
-    if proc.returncode != 0 or "\x00" not in out_text:
+    if proc.returncode != 0:
         return None
-    sha, iso = out_text.splitlines()[0].split("\x00", 1)
-    return sha, iso
-
-
-def _head_sha() -> str | None:
-    import subprocess  # noqa: PLC0415
-
-    proc = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
+    files = {line.strip() for line in (proc.stdout or "").splitlines() if line.strip()}
+    proc2 = subprocess.run(
+        ["git", "log", "-1", "--format=%cI", "HEAD"],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -475,27 +473,30 @@ def _head_sha() -> str | None:
         errors="replace",
         timeout=30,
     )
-    return (proc.stdout or "").strip() or None
+    iso = (proc2.stdout or "").strip()
+    if not iso:
+        return None
+    return files, iso
 
 
 def check_doc_header_matches_last_touch() -> None:
-    """带「最后更新」的活文档，头部日期必须等于该文件最近一次被触碰的提交日（R1031-35）。
+    """带「最后更新」的活文档，头部日期必须等于触碰它的那笔提交的当日（R1031-35）。
 
     doc freshness 只拦"正文比头部新"这一半；另一半缺口是**头部自身没人管**——架构总览
     曾在 10-26 回写两轮后头部还写着 10-10（产品审计 P3-1 实测），那句日期对读者撒谎的方式
     同样是"让人以为后面不用看"。这把尺子把它钉死：改了文档就必须同笔改头部日期。
 
-    **执法面 = 「最近一次触碰这份文件的提交恰好是当前 HEAD」**（首日实弹教出来的两课，
-    2026-10-31 run 41115990161）：①CI 上部分历史经常在（depth 并非只有 1），按"看不到
-    就跳过"设计会漏；②`%cs` 按 runner 本地时区渲染日期，+08 的凌晨提交在 UTC runner 上
-    会差一天——两头都是假信号。改成 HEAD 锚定后：改完文档的**下一刻本机门禁**就能抓到
-    漏改头部（这正是纪律要落的位置），再往后的提交不追溯；日期取提交**自身时区**解析
-    （`%cI` → fromisoformat → .date()），作者当天写哪天就是哪天。
+    **执法面 = 本笔提交（HEAD）真的改了这份文档**。首日实弹连吃两课（run 41115990161 /
+    41117308403）：①CI 上按路径查历史不可信——没改过的文件也被 pathspec 答成 HEAD；
+    ②`%cs` 按 runner 本地时区渲染，+08 的凌晨提交在 UTC runner 差一天。终版判据完全不
+    走历史查询：`diff-tree -r HEAD` 拿本笔改动清单（对象自足，无路径匹配），日期取
+    HEAD 自身的 `%cI` 按其**原时区**解析——作者当天写哪天就是哪天。改完文档的下一刻
+    本机门禁就能抓到漏改头部；再往后的提交不追溯（那是 doc freshness 的管辖）。
     """
     offenders: list[str] = []
     checked = 0
     skipped = 0
-    head = _head_sha()
+    info = _head_commit_info()
     for path in iter_files(".md"):
         rel = path.relative_to(ROOT)
         if "archive" in rel.parts:
@@ -508,13 +509,12 @@ def check_doc_header_matches_last_touch() -> None:
             declared = datetime.date(*(int(g) for g in header.groups()))
         except ValueError:
             continue  # 非法日期由 doc freshness 那条负责，不在这里双判
-        touched = _last_touch(rel.as_posix()) if head else None
-        if touched is None or touched[0] != head:
+        if info is None or rel.as_posix() not in info[0]:
             skipped += 1
             continue
         checked += 1
         try:
-            touched_date = datetime.datetime.fromisoformat(touched[1]).date()
+            touched_date = datetime.datetime.fromisoformat(info[1]).date()
         except ValueError:
             continue
         if touched_date != declared:
