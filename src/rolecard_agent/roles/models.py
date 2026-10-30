@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel, Field, field_validator
@@ -47,7 +48,7 @@ PET_PACK_PATTERN = r"^[a-z][a-z0-9_-]{0,63}$"
 #: 合适"由角色卡的主人自己判断，调度器侧的当日去重与静默闸负责不吵。
 GREETING_AT_PATTERN = r"([01]\d|2[0-3]):[0-5]\d"
 #: 角色强调色（2026-10-25 玻璃重设计）：hex 三/六位。空 = 由 role_id 哈希派生
-#（确定性、不掷骰子——同名同色）。校验只管形状，"好不好看"是主人的事。
+# （确定性、不掷骰子——同名同色）。校验只管形状，"好不好看"是主人的事。
 ACCENT_PATTERN = r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$"
 
 # Exemplar budget. Chars are used rather than tokens because it needs no tokenizer
@@ -115,10 +116,29 @@ def _check_greeting_at(value: str | None) -> str | None:
     return value
 
 
+def _check_workspace_dir(value: str | None) -> str | None:
+    """`workspace_dir` 的形状校验：空 = 跟随全局；非空必须是**绝对路径**。
+
+    为什么要求绝对：这一列会被 `Path(value).resolve()` 直接当根用，而相对路径是按
+    **进程 CWD** 解析的 —— 同一个库在壳里与服务里 CWD 不同，于是"这个角色能用哪个目录"
+    取决于它从哪儿启动，那不是授权边界，是巧合。绝对路径是唯一能跨形态稳定的写法。
+    （越界防护不在这里：`resolve_within` 才是那道闸。）
+    """
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if not Path(text).is_absolute():
+        raise ValueError("工作区要写成绝对路径（相对路径会按启动目录解析，不稳定）")
+    return str(Path(text))
+
+
 ExemplarList = Annotated[list[RoleExemplar] | None, AfterValidator(_check_exemplar_budget)]
 ScopeList = Annotated[list[str] | None, AfterValidator(_check_scopes)]
 GreetingAt = Annotated[str | None, AfterValidator(_check_greeting_at)]
 Accent = Annotated[str | None, AfterValidator(_check_accent)]
+WorkspaceDir = Annotated[str | None, AfterValidator(_check_workspace_dir)]
 
 
 class RoleCard(BaseModel):
@@ -164,9 +184,14 @@ class RoleCard(BaseModel):
     #: 界面雾底都从它派生。None = 由 role_id 哈希派生（确定性）。前端落地见 App.tsx
     #: 的 accent 注入。
     accent: Accent = None
+    #: 这个角色自己的工作区（2026-10-30）。None = 跟随全局默认（Settings.workspace_dir
+    #: 或全局覆盖）；非空 = 这张卡独享的目录 —— fs 工具与命令执行的根按"当前角色"解析，
+    #: 授权边界跟着角色走，而不是跟着"当时谁在看那张卡"走。
+    workspace_dir: WorkspaceDir = None
     is_builtin: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
 
 class RoleCardCreate(BaseModel):
     """Input for creating a role. `is_builtin` is intentionally absent - it is set by
@@ -190,6 +215,8 @@ class RoleCardCreate(BaseModel):
     reachout_keep: int = Field(default=0, ge=0, le=1000)
     pet_pack: str = ""
     accent: Accent = None
+    #: 新建时就带上工作区（一般留空 = 跟随全局默认；要单独目录就在这儿给绝对路径）。
+    workspace_dir: WorkspaceDir = None
 
     @field_validator("role_id")
     @classmethod
@@ -231,6 +258,9 @@ class RoleCardUpdate(BaseModel):
     reachout_keep: int | None = Field(default=None, ge=0, le=1000)
     #: 改桌宠形象。传空串 = 回到"没配过"（渲染落默认包）；不传这个键 = 不动。
     pet_pack: str | None = None
+    #: 改这个角色自己的工作区：绝对路径 = 独享一份；传空串 = 回落全局默认。
+    #: 不传这个键 = 不动（"没这个字段"与"清空它"要分得开 —— 靠 `model_fields_set`）。
+    workspace_dir: WorkspaceDir = None
 
     @field_validator("pet_pack")
     @classmethod

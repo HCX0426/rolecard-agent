@@ -745,7 +745,7 @@ def test_a_legacy_upgrade_leaves_the_capability_flags_unmeasured(tmp_path: Path)
 
 
 @pytest.mark.parametrize(
-    ("commit", "expected_missing"), [("14cb9db", 18), ("03631c6", 15)], ids=lambda v: str(v)
+    ("commit", "expected_missing"), [("14cb9db", 19), ("03631c6", 16)], ids=lambda v: str(v)
 )
 def test_audited_shortfall_is_still_the_shortfall(
     commit: str, expected_missing: int, tmp_path: Path
@@ -762,7 +762,9 @@ def test_audited_shortfall_is_still_the_shortfall(
     2026-10-24 的固定时刻问候给 `role_card` 加了 `greeting_at`（可空，2a）⇒ **16 / 13、合计 29**；
     2026-10-25 的角色强调色又加 `accent`（可空，玻璃重设计）⇒ **17 / 14、合计 31**；
     2026-10-30 的退避锚点给 `session_thread` 加了 `user_activity_at`（可空，引擎审计 #2）
-    ⇒ **18 / 15、合计 33**。
+    ⇒ **18 / 15、合计 33**；同日的工作区按角色分 + 记忆分层再加两列
+    （`role_card.workspace_dir` 与 `role_memory_item.category`，均可空/有默认值）
+    ⇒ **19 / 16、合计 35**。
     （这两个数只在测试与这份 docstring 里；审计文档当时没写它，所以不用同步别处。）
     这条红的用途不是"证明坏了"，而是**逼改 schema 的人
     回去看一眼审计文档还写着几个数** —— R26-06 犯的就是"写进文档的数没复算"这一条。

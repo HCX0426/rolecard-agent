@@ -266,11 +266,23 @@ export const api = {
     request<GenericRecord>("PATCH", `/api/domains/${domain}/records/${id}`, body),
   deleteDomainRecord: (domain: string, id: string) =>
     request<void>("DELETE", `/api/domains/${domain}/records/${id}`),
-  /** 任务目录（file1）：查看 / 设置 / 清除 + 设置页目录树浏览。 */
-  getWorkspaceDir: () => request<WorkspaceDir>("GET", "/api/workspace/dir"),
-  setWorkspaceDir: (path: string) =>
-    request<WorkspaceDir>("PUT", "/api/workspace/dir", { path }),
-  clearWorkspaceDir: () => request<WorkspaceDir>("DELETE", "/api/workspace/dir"),
+  /** 工作区：查看 / 设置 / 清除 + 目录树浏览。
+   *
+   * `roleId` 为空 = 操作**全局默认**（没单独配的角色都跟着它）；非空 = 只操作这一个
+   * 角色的那一份（2026-10-30：工作区从"全局一张卡"改成"每个角色一份"）。
+   */
+  getWorkspaceDir: (roleId?: string) =>
+    request<WorkspaceDir>(
+      "GET",
+      `/api/workspace/dir${roleId ? `?role_id=${encodeURIComponent(roleId)}` : ""}`,
+    ),
+  setWorkspaceDir: (path: string, roleId?: string) =>
+    request<WorkspaceDir>("PUT", "/api/workspace/dir", { path, role_id: roleId ?? "" }),
+  clearWorkspaceDir: (roleId?: string) =>
+    request<WorkspaceDir>(
+      "DELETE",
+      `/api/workspace/dir${roleId ? `?role_id=${encodeURIComponent(roleId)}` : ""}`,
+    ),
   browseTree: (path?: string) =>
     request<TreeResult>("GET", `/api/workspace/tree${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   /** 角色主动开口（收件箱）：列表（含未读计数）与标记已读（静音，无提示音）。可按角色过滤。 */

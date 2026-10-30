@@ -142,13 +142,15 @@ def test_fs_tools_without_conn_fall_back_to_env(tmp_path: Path) -> None:
 def test_resolve_within_allows_inside_rejects_escape(tmp_path: Path) -> None:
     """路径边界唯一实现（收口 §5 冗余）：root 内（含子目录）放行、越界按给定异常拒。"""
     (tmp_path / "a" / "b").mkdir(parents=True)
-    assert workspace.resolve_within(
-        tmp_path, "a/b", error_cls=ValueError, what="访问文件"
-    ) == (tmp_path / "a" / "b").resolve()
+    assert (
+        workspace.resolve_within(tmp_path, "a/b", error_cls=ValueError, what="访问文件")
+        == (tmp_path / "a" / "b").resolve()
+    )
     # root 自身允许（normcase 相等那条分支）
-    assert workspace.resolve_within(
-        tmp_path, ".", error_cls=ValueError, what="访问文件"
-    ) == tmp_path.resolve()
+    assert (
+        workspace.resolve_within(tmp_path, ".", error_cls=ValueError, what="访问文件")
+        == tmp_path.resolve()
+    )
     # 越界 → 抛指定异常，文案含动作短语
     with pytest.raises(ValueError, match="只允许访问文件"):
         workspace.resolve_within(
@@ -191,3 +193,101 @@ def test_files_and_run_boundaries_share_one_impl(tmp_path: Path) -> None:
         files_mod._resolve_within(tmp_path, "../../escape")
     with pytest.raises(run_mod.RunCommandError, match="只允许在任务目录内执行命令"):
         run_mod._resolve_within(tmp_path, "../../escape")
+
+
+# ---------------------------------------------------------------------------
+# 每个角色一份工作区（2026-10-30，用户：「工作区…应该放到角色卡的每个角色里，
+# 每个角色可以单独设置工作区」）
+#
+# 改的是**授权边界**：从前全局一份，所有角色共用同一片目录 —— 角色之间根本没有
+# 边界可言。下面这几条钉住新的三层优先级与"角色之间互不可见"。
+# ---------------------------------------------------------------------------
+
+
+def _seed_role(conn, role_id: str = "r_alpha") -> None:
+    conn.execute(
+        "INSERT INTO role_card (role_id, user_id, role_name, system_prompt) "
+        "VALUES (?, 'local-user', ?, '')",
+        (role_id, role_id),
+    )
+    conn.commit()
+
+
+def test_role_dir_wins_over_global_default(conn, tmp_path: Path) -> None:
+    """角色的那一份优先于全局默认 —— 优先级只在这一处排，别处别再排一遍。"""
+    _seed_role(conn, "r_alpha")
+    global_dir = tmp_path / "global"
+    role_dir = tmp_path / "alpha"
+    workspace.save_task_dir(conn, str(global_dir))
+    workspace.save_role_dir(conn, "r_alpha", str(role_dir))
+
+    assert workspace.resolve_task_dir(Settings(), conn, "r_alpha") == role_dir.resolve()
+    # 没配角色的那个角色 → 跟全局默认。
+    _seed_role(conn, "r_beta")
+    assert workspace.resolve_task_dir(Settings(), conn, "r_beta") == global_dir.resolve()
+    # 没给角色（后台任务/纯内核装配）→ 也跟全局默认。
+    assert workspace.resolve_task_dir(Settings(), conn, "") == global_dir.resolve()
+
+
+def test_role_dirs_are_isolated_from_each_other(conn, tmp_path: Path) -> None:
+    """两个角色各配各的 —— 一个角色碰不到另一个角色的目录。"""
+    _seed_role(conn, "r_alpha")
+    _seed_role(conn, "r_beta")
+    alpha = tmp_path / "alpha"
+    beta = tmp_path / "beta"
+    workspace.save_role_dir(conn, "r_alpha", str(alpha))
+    workspace.save_role_dir(conn, "r_beta", str(beta))
+
+    assert workspace.resolve_task_dir(Settings(), conn, "r_alpha") == alpha.resolve()
+    assert workspace.resolve_task_dir(Settings(), conn, "r_beta") == beta.resolve()
+    # 角色自己的根里放别的角色的目录 → 越界（那道闸是 resolve_within，与根无关）。
+    with pytest.raises(files_mod.FsToolError):
+        workspace.resolve_within(
+            alpha.resolve(),
+            str(beta),
+            error_cls=files_mod.FsToolError,
+            what="访问任务目录内的文件",
+        )
+
+
+def test_clear_role_dir_falls_back_to_global(conn, tmp_path: Path) -> None:
+    """清掉角色的那一份 → 回落全局默认（不是清空成"没有目录"）。"""
+    _seed_role(conn, "r_alpha")
+    global_dir = tmp_path / "global"
+    workspace.save_task_dir(conn, str(global_dir))
+    workspace.save_role_dir(conn, "r_alpha", str(tmp_path / "alpha"))
+    assert workspace.load_role_dir(conn, "r_alpha") is not None
+
+    workspace.clear_role_dir(conn, "r_alpha")
+    assert workspace.load_role_dir(conn, "r_alpha") is None
+    assert workspace.resolve_task_dir(Settings(), conn, "r_alpha") == global_dir.resolve()
+
+
+def test_save_role_dir_rejects_unknown_role(conn, tmp_path: Path) -> None:
+    """角色不存在 → 拒绝（不静默新建）：那是给一个不存在的角色写授权边界。"""
+    with pytest.raises(ValueError, match="角色不存在"):
+        workspace.save_role_dir(conn, "no_such_role", str(tmp_path / "x"))
+
+
+def test_dir_resolver_follows_the_current_role(conn, tmp_path: Path) -> None:
+    """fs 工具的根解析器读**执行期**注入的角色 —— 角色是那一轮的事，不是装配时的快照。
+
+    变异：把解析器改成读构建时的 role_id ⇒ 本用例红（它会一直用装配时的那个角色）。
+    """
+    from rolecard_agent.base import scopes
+
+    _seed_role(conn, "r_alpha")
+    _seed_role(conn, "r_beta")
+    alpha = tmp_path / "alpha"
+    beta = tmp_path / "beta"
+    workspace.save_role_dir(conn, "r_alpha", str(alpha))
+    workspace.save_role_dir(conn, "r_beta", str(beta))
+
+    resolver = workspace.make_dir_resolver(Settings(), conn)
+    token = scopes.current_role_id_ctx.set("r_alpha")
+    try:
+        assert resolver() == alpha.resolve()
+        scopes.current_role_id_ctx.set("r_beta")
+        assert resolver() == beta.resolve()
+    finally:
+        scopes.current_role_id_ctx.reset(token)

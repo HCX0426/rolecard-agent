@@ -264,12 +264,17 @@ def run_approval_execution(
     # 所以失败本身也要落成终态（done + result.error）—— "批准=执行一次"由状态机自足，
     # 任何路径都达终态，不靠运气。
     try:
-        cwd = resolve_task_dir(settings, conn)
+        # 工作区按**提交这条命令的角色**解析（2026-10-30）：每个角色一份工作区，
+        # 而这个函数跑在后台线程里 —— ContextVar 不跨线程传播，拿不到"当前角色"，
+        # 所以角色得从审批行自己读（`command_approval.role_id` 早就在那儿存着）。
+        # 读不到（老数据/后台任务无角色）时回落全局默认，行为与从前一致。
+        role_id = str(row.get("role_id") or "")
+        cwd = resolve_task_dir(settings, conn, role_id)
         if row["cwd"]:
             try:
                 cwd = _resolve_within(cwd, row["cwd"])
             except RunCommandError:
-                cwd = resolve_task_dir(settings, conn)
+                cwd = resolve_task_dir(settings, conn, role_id)
         result = execute_command(row["command"], cwd, timeout_seconds=settings.tool_timeout_seconds)
         _audit(
             conn,

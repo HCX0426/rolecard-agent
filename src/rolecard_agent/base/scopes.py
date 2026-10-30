@@ -37,3 +37,18 @@ turn_image_ctx: ContextVar[str | None] = ContextVar("turn_image", default=None)
 def current_turn_image() -> str | None:
     """工具层读取：本轮最近一张图片的 data URL（execute_tools 每轮注入；无图为 None）。"""
     return turn_image_ctx.get()
+
+
+# 当前对话角色（2026-10-30 从 `core/memory` 搬来这里）：**执行期注入到工具层的共享状态**，
+# 与上面两个 ContextVar 同一机制。搬家的理由不是"整理"，是**依赖方向**：
+#   - `core/memory` 的 `memory_save` 工具要读它（写该角色专属的记忆桶）；
+#   - `core/common/workspace` 的工作区解析器要读它（**每个角色一份工作区**，2026-10-30）。
+# 两边都在 core 层，若上下文住在 core/memory，那 core/common 就得反向 import core/memory ——
+# 同层横抓，正是 base 层存在的理由（"两方都合法依赖 base，环就消了"，见本文件开头）。
+# 默认空串 = 无角色上下文（后台任务、纯内核装配）：此时记忆写全局桶、工作区用全局默认。
+current_role_id_ctx: ContextVar[str] = ContextVar("current_role_id", default="")
+
+
+def current_role_id() -> str:
+    """工具层读取：本轮正在对话的角色 id（没有就是空串）。"""
+    return current_role_id_ctx.get()

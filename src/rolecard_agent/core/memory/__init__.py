@@ -37,20 +37,24 @@ from __future__ import annotations
 import math
 import re
 import uuid
-from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
 from langchain_core.tools import BaseTool, tool
 
 from rolecard_agent.base.identity import active_user_id, resolve_instance_identity
+from rolecard_agent.base.scopes import current_role_id_ctx
 from rolecard_agent.config import Settings
 from rolecard_agent.storage.db import SqlConnection, quote_ident, table_columns
 
 # 当前对话角色（架构总览 §5）：execute_tools 每轮注入，memory_save 读取它把事实同时写入
 # 该角色专属记忆。默认空串 = 无角色上下文，此时只写全局桶。与 role_knowledge_scopes_ctx
 # 同一机制（ContextVar + copy_context 跨工具线程）。
-current_role_id_ctx: ContextVar[str] = ContextVar("current_role_id", default="")
+#
+# **定义搬到 base/scopes.py（2026-10-30）**：工作区按角色解析（core/common/workspace）
+# 也要读同一个上下文；两边都在 core 层的话 core/common 就得横抓 core/memory ——
+# 放 base 层两边都只向下依赖，环就消了。这里保留同名再导出，既有调用点
+# （`from rolecard_agent.core.memory import current_role_id_ctx`）不必改，而它仍是那一个。
 
 #: 全局（用户级）记忆用的桶名。空串而不是 NULL：NULL 在唯一约束与 WHERE 里都是麻烦源。
 GLOBAL_BUCKET = ""

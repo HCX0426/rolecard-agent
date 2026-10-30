@@ -79,6 +79,16 @@ CREATE TABLE IF NOT EXISTS role_card (
     -- 角色强调色（2026-10-25 玻璃重设计）：hex（#rgb/#rrggbb），NULL = 由 role_id
     -- 派生（确定性）。它是这个角色的"糖衣色"——界面雾底/侧栏块/气泡签都从它派生。
     accent             TEXT,
+    -- 这个角色自己的工作区（2026-10-30）：**每个角色一份**，不是一个全局目录。
+    -- 从前工作区是 kernel_meta 里一份全局覆盖（`workspace:dir`），角色卡页底部一张卡管全部 ——
+    -- 那形状下"角色 A 能读的文件"和"角色 B 能读的文件"是同一片，角色之间没有边界可言。
+    -- 现在这一列给角色**自己**的根：NULL = 跟随全局默认（Settings.workspace_dir / 全局覆盖），
+    -- 非空 = 这张卡独享的目录。fs 工具与 run_command 的 cwd 都按"当前角色的这一份"解析，
+    -- 换角色就换根 —— 授权边界跟着角色走，而不是跟着"当时谁在看那张卡"走。
+    -- 为什么不用 kernel_meta 一族：那里是"实例级"的键值对（一个 key 一个值），
+    -- 放不下"每个角色一份"；而 role_card 本来就是"角色自己有什么"的唯一事实面。
+    -- 旧库由 reconcile_columns 补（NULL = 行为与从前一致）。
+    workspace_dir      TEXT,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

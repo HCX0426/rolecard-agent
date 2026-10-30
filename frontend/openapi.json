@@ -5022,6 +5022,17 @@
       "default": "local-user",
       "title": "User Id",
       "type": "string"
+     },
+     "workspace_dir": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Workspace Dir"
      }
     },
     "required": [
@@ -5178,6 +5189,17 @@
        }
       ],
       "title": "Tool Whitelist"
+     },
+     "workspace_dir": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Workspace Dir"
      }
     },
     "required": [
@@ -5391,6 +5413,17 @@
        }
       ],
       "title": "Tool Whitelist"
+     },
+     "workspace_dir": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Workspace Dir"
      }
     },
     "title": "RoleCardUpdate",
@@ -7390,12 +7423,18 @@
     "type": "object"
    },
    "WorkspaceDirBody": {
-    "description": "设置任务目录的负载：路径（绝对或相对，相对按工作目录解析）。",
+    "description": "设置任务目录的负载：路径（绝对或相对，相对按工作目录解析）+ 归属角色。\n\n`role_id` 空 = 设**全局默认**（所有没单独配的角色都跟着它）；非空 = 只改这一个角色。\n两者是两层：角色的优先（`core/common/workspace.resolve_task_dir` 里排的那一次）。",
     "properties": {
      "path": {
       "maxLength": 1024,
       "minLength": 1,
       "title": "Path",
+      "type": "string"
+     },
+     "role_id": {
+      "default": "",
+      "maxLength": 64,
+      "title": "Role Id",
       "type": "string"
      }
     },
@@ -11708,8 +11747,21 @@
   },
   "/api/workspace/dir": {
    "delete": {
-    "description": "清除 DB 覆盖，回落 env WORKSPACE_DIR。",
+    "description": "清除覆盖，回落下一层（角色层清掉 → 跟全局；全局层清掉 → 跟 env WORKSPACE_DIR）。",
     "operationId": "delete_workspace_dir_api_workspace_dir_delete",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "role_id",
+      "required": false,
+      "schema": {
+       "default": "",
+       "maxLength": 64,
+       "title": "Role Id",
+       "type": "string"
+      }
+     }
+    ],
     "responses": {
      "200": {
       "content": {
@@ -11720,13 +11772,36 @@
        }
       },
       "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
      }
     },
     "summary": "Delete Workspace Dir"
    },
    "get": {
-    "description": "任务目录当前生效值（DB 覆盖 or env）。",
+    "description": "任务目录当前生效值（该角色自己那份 → 全局覆盖 → env）。",
     "operationId": "get_workspace_dir_api_workspace_dir_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "role_id",
+      "required": false,
+      "schema": {
+       "default": "",
+       "maxLength": 64,
+       "title": "Role Id",
+       "type": "string"
+      }
+     }
+    ],
     "responses": {
      "200": {
       "content": {
@@ -11737,12 +11812,22 @@
        }
       },
       "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
      }
     },
     "summary": "Get Workspace Dir"
    },
    "put": {
-    "description": "设置任务目录（规范化绝对路径落库，保存即对下一轮 fs 调用生效）。",
+    "description": "设置任务目录（规范化绝对路径落库，保存即对下一轮 fs 调用生效）。\n\n带 `role_id` = 只改这个角色的；不带 = 改全局默认。",
     "operationId": "put_workspace_dir_api_workspace_dir_put",
     "requestBody": {
      "content": {

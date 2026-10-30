@@ -46,6 +46,7 @@ _INSERTABLE_COLUMNS: tuple[str, ...] = (
     "reachout_keep",
     "pet_pack",
     "accent",
+    "workspace_dir",
 )
 
 _COLUMNS = ", ".join((*_INSERTABLE_COLUMNS, "created_at", "updated_at"))
@@ -187,6 +188,7 @@ class RoleCards:
                 data.reachout_keep,
                 data.pet_pack,
                 data.accent,
+                data.workspace_dir,
             ),
         )
         self.conn.commit()
@@ -329,9 +331,7 @@ class RoleCardService:
         self._conn.commit()
         return count
 
-    def seed_domain_roles(
-        self, roles: Iterable[RoleCardCreate], *, user_id: str
-    ) -> int:
+    def seed_domain_roles(self, roles: Iterable[RoleCardCreate], *, user_id: str) -> int:
         """播种域角色：类型是**自定义**（is_builtin=0），已存在则一个字段都不覆盖。
 
         `roles` **没有默认值**：域角色清单不再住在本包里（2026-10-04 审查快照的域机制

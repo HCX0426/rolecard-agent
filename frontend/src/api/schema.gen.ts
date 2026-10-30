@@ -2142,18 +2142,20 @@ export interface paths {
         };
         /**
          * Get Workspace Dir
-         * @description 任务目录当前生效值（DB 覆盖 or env）。
+         * @description 任务目录当前生效值（该角色自己那份 → 全局覆盖 → env）。
          */
         get: operations["get_workspace_dir_api_workspace_dir_get"];
         /**
          * Put Workspace Dir
          * @description 设置任务目录（规范化绝对路径落库，保存即对下一轮 fs 调用生效）。
+         *
+         *     带 `role_id` = 只改这个角色的；不带 = 改全局默认。
          */
         put: operations["put_workspace_dir_api_workspace_dir_put"];
         post?: never;
         /**
          * Delete Workspace Dir
-         * @description 清除 DB 覆盖，回落 env WORKSPACE_DIR。
+         * @description 清除覆盖，回落下一层（角色层清掉 → 跟全局；全局层清掉 → 跟 env WORKSPACE_DIR）。
          */
         delete: operations["delete_workspace_dir_api_workspace_dir_delete"];
         options?: never;
@@ -3877,6 +3879,8 @@ export interface components {
              * @default local-user
              */
             user_id: string;
+            /** Workspace Dir */
+            workspace_dir?: string | null;
         };
         /**
          * RoleCardCreate
@@ -3944,6 +3948,8 @@ export interface components {
             time_pattern_enabled: boolean;
             /** Tool Whitelist */
             tool_whitelist?: string[] | null;
+            /** Workspace Dir */
+            workspace_dir?: string | null;
         };
         /**
          * RoleCardUpdate
@@ -3985,6 +3991,8 @@ export interface components {
             time_pattern_enabled?: boolean | null;
             /** Tool Whitelist */
             tool_whitelist?: string[] | null;
+            /** Workspace Dir */
+            workspace_dir?: string | null;
         };
         /**
          * RoleExemplar
@@ -4596,11 +4604,19 @@ export interface components {
         };
         /**
          * WorkspaceDirBody
-         * @description 设置任务目录的负载：路径（绝对或相对，相对按工作目录解析）。
+         * @description 设置任务目录的负载：路径（绝对或相对，相对按工作目录解析）+ 归属角色。
+         *
+         *     `role_id` 空 = 设**全局默认**（所有没单独配的角色都跟着它）；非空 = 只改这一个角色。
+         *     两者是两层：角色的优先（`core/common/workspace.resolve_task_dir` 里排的那一次）。
          */
         WorkspaceDirBody: {
             /** Path */
             path: string;
+            /**
+             * Role Id
+             * @default
+             */
+            role_id: string;
         };
         /**
          * WorkspaceDirView
@@ -7870,7 +7886,9 @@ export interface operations {
     };
     get_workspace_dir_api_workspace_dir_get: {
         parameters: {
-            query?: never;
+            query?: {
+                role_id?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -7884,6 +7902,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkspaceDirView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -7923,7 +7950,9 @@ export interface operations {
     };
     delete_workspace_dir_api_workspace_dir_delete: {
         parameters: {
-            query?: never;
+            query?: {
+                role_id?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -7937,6 +7966,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

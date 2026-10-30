@@ -43,6 +43,23 @@ def load_task_dir(conn: SqlConnection) -> str | None:
     return str(row["value"]) if row else None
 
 
+def load_role_dir(conn: SqlConnection, role_id: str | None) -> str | None:
+    """读**某个角色自己**的工作区；没配过（NULL）或没给角色 = None。
+
+    与 `load_task_dir`（全局覆盖）是两层：角色的优先级更高 —— 角色卡里配了就是它那份，
+    没配才回落全局。这条优先级写在 `resolve_task_dir` 里，别处别再排一遍。
+    """
+    if not role_id:
+        return None
+    row = conn.execute(
+        "SELECT workspace_dir FROM role_card WHERE role_id = ?", (role_id,)
+    ).fetchone()
+    if not row:
+        return None
+    value = row["workspace_dir"]
+    return str(value) if value else None
+
+
 def _normalise(raw: str) -> Path:
     """把用户输入的路径解析成规范绝对路径，目录不存在则创建。
 
@@ -80,10 +97,43 @@ def clear_task_dir(conn: SqlConnection) -> None:
     conn.commit()
 
 
-def resolve_task_dir(settings: Settings, conn: SqlConnection) -> Path:
-    """当前生效的任务目录：DB 覆盖优先，其次 env/出厂默认。
+def save_role_dir(conn: SqlConnection, role_id: str, raw: str) -> str:
+    """保存**某个角色自己**的工作区（规范绝对路径）并返回落库值。
 
-    两条分支都返回**规范绝对路径**（与 save 落库值同一口径）：调用方拿到的就是
+    角色不存在 → ValueError（不静默新建：那是给一个不存在的角色写授权边界）。
+    非法输入整体拒绝（不落任何值）—— 与 `save_task_dir` 同一条纪律。
+    """
+    if not (role_id or "").strip():
+        raise ValueError("角色 id 不能为空。")
+    target = _normalise(raw)
+    row = conn.execute("SELECT 1 FROM role_card WHERE role_id = ?", (role_id,)).fetchone()
+    if not row:
+        raise ValueError(f"角色不存在：{role_id}")
+    conn.execute(
+        "UPDATE role_card SET workspace_dir = ?, updated_at = CURRENT_TIMESTAMP WHERE role_id = ?",
+        (str(target), role_id),
+    )
+    conn.commit()
+    return str(target)
+
+
+def clear_role_dir(conn: SqlConnection, role_id: str) -> None:
+    """清掉这个角色自己的工作区（回落全局默认 → env）。"""
+    conn.execute(
+        "UPDATE role_card SET workspace_dir = NULL, updated_at = CURRENT_TIMESTAMP "
+        "WHERE role_id = ?",
+        (role_id,),
+    )
+    conn.commit()
+
+
+def resolve_task_dir(settings: Settings, conn: SqlConnection, role_id: str | None = None) -> Path:
+    """当前生效的任务目录，按**角色**算：角色自己那份 → 全局覆盖 → env/出厂默认。
+
+    优先级只有这一处（2026-10-30）：角色卡里配了就是它那份（授权边界跟着角色走），
+    没配才回落全局那一份。别处别再排一遍 —— 排两遍就会出现"界面上显示 A、工具里用 B"。
+
+    三条分支都返回**规范绝对路径**（与 save 落库值同一口径）：调用方拿到的就是
     立即可用的根，不用再猜它是相对还是绝对。
 
     DB 那一支**也要 `resolve()`**（`R102-70`）：官方写入口（`save_task_dir`）本来就落规范值，
@@ -92,6 +142,9 @@ def resolve_task_dir(settings: Settings, conn: SqlConnection) -> Path:
     实测（`build/` 探针 + `tests/unit/test_workspace.py`）：非规范值不会让 `resolve_within`
     放行越界（它自己会把根 resolve 掉），所以这不是穿越洞，是**这句话与实现的分歧**。
     """
+    role_dir = load_role_dir(conn, role_id)
+    if role_dir:
+        return Path(role_dir).resolve()
     override = load_task_dir(conn)
     return Path(override).resolve() if override else Path(settings.workspace_dir).resolve()
 
@@ -126,8 +179,17 @@ def make_dir_resolver(settings: Settings, conn: SqlConnection) -> Callable[[], P
 
     与 `enabled_domains` / `memory_provider` 同一模式 —— 内核工具持有的是"每轮现取"
     的读取器，而不是构建时的快照。
+
+    **按角色解析**（2026-10-30）：解析器读执行期注入的 `current_role_id_ctx`，
+    拿到本轮正在对话的那个角色，按"角色自己的目录 → 全局覆盖 → env 默认"取根。
+    为什么用 ContextVar 而不是构建时传 role_id：工具注册表是**实例级**的（所有角色
+    共享同一套白名单工具），但 fs 工具是**每轮调用**的 —— 角色是那一轮的事，
+    所以角色必须从"调用那一刻的上下文"取，而不是从"装配那一刻的快照"取。
+    （`base/scopes.py` 注释里那套"注入端在图节点、读取端在工具层"就是为这件事准备的。）
     """
-    return lambda: resolve_task_dir(settings, conn)
+    from rolecard_agent.base.scopes import current_role_id  # noqa: PLC0415 - 延迟导入避环
+
+    return lambda: resolve_task_dir(settings, conn, current_role_id())
 
 
 def browse_tree(raw: str) -> dict[str, object]:
@@ -164,10 +226,13 @@ def browse_tree(raw: str) -> dict[str, object]:
 __all__ = [
     "WORKSPACE_KEY",
     "browse_tree",
+    "clear_role_dir",
     "clear_task_dir",
+    "load_role_dir",
     "load_task_dir",
     "make_dir_resolver",
     "resolve_task_dir",
     "resolve_within",
+    "save_role_dir",
     "save_task_dir",
 ]

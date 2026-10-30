@@ -36,6 +36,7 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "clear_appearance_background",
         "clear_memory",
         "clear_role_memory",
+        "clear_role_task_dir",
         "clear_task_dir",
         "consolidate_memory",
         "create_domain_record",
@@ -71,6 +72,7 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "run_command",
         "set_session_mode",
         "set_session_model",
+        "set_role_task_dir",
         "set_task_dir",
         "stop_turn",
         "switch_role",
@@ -164,9 +166,7 @@ def tool_audit(
 AUDIT_READ_COLUMNS = "id, ts, actor, action, target, detail_json"
 
 
-def read_audit_page(
-    conn: SqlConnection, *, limit: int, before_id: int | None = None
-) -> list[Any]:
+def read_audit_page(conn: SqlConnection, *, limit: int, before_id: int | None = None) -> list[Any]:
     """审计日志的一页（游标分页，**倒序按自增主键**）。
 
     为什么游标用 `id` 而不是 `OFFSET`：`audit_log` 只增不减，深分页的 `OFFSET` 会退化成

@@ -160,8 +160,8 @@ describe("角色级后端选择（用户 2026-09-25：角色级 > 设置里那�
   });
 });
 
-describe("工作区卡（2026-10-30 从设置页迁来并更名；授权跟角色卡走）", () => {
-  it("显示生效目录与覆盖来源；点「浏览…」开工作区目录抽屉", async () => {
+describe("工作区（2026-10-30 搬进每张角色卡内部，每个角色一份）", () => {
+  it("在角色卡的编辑区里，读的是**这个角色**的那份目录；点「浏览…」开目录抽屉", async () => {
     apiMock.browseTree.mockResolvedValue({
       path: "D:/wk",
       parent: "D:/",
@@ -170,11 +170,44 @@ describe("工作区卡（2026-10-30 从设置页迁来并更名；授权跟角�
     });
     const { fireEvent } = await import("@testing-library/react");
     render(<RolesPage />);
-    // 卡片渲染的是后端回的生效值；DB 覆盖态还有那句"删除后回到默认"的说明
+    await screen.findByText("测试角色");
+
+    // 关键回归钉：**先得进入这张卡的编辑区**才看得到工作区 —— 从前它是一张
+    // 页面底部的全局卡，现在它是"这张卡的一个属性"。不进编辑区就看不到。
+    expect(screen.queryByDisplayValue("D:/wk")).toBeNull();
+    fireEvent.click(screen.getByText("编辑"));
+
     expect(await screen.findByDisplayValue("D:/wk")).toBeTruthy();
-    expect(screen.getByText(/该目录仅存于本机数据库/)).toBeTruthy();
+    // per-role：读的是"这个角色"那一份，不是全局默认。
+    expect(apiMock.getWorkspaceDir).toHaveBeenCalledWith("r1");
     fireEvent.click(screen.getByRole("button", { name: "浏览…" }));
     expect(await screen.findByText("选择工作区目录")).toBeTruthy();
     expect(screen.getByText("子目录")).toBeTruthy();
+  });
+
+  it("保存与清除都带着 role_id（否则改的会是全局默认那份）", async () => {
+    apiMock.setWorkspaceDir.mockResolvedValue({ path: "D:/wk", overridden: true });
+    apiMock.clearWorkspaceDir.mockResolvedValue({ path: "D:/default", overridden: false });
+    const { fireEvent } = await import("@testing-library/react");
+    const { within } = await import("@testing-library/react");
+    render(<RolesPage />);
+    await screen.findByText("测试角色");
+    fireEvent.click(screen.getByText("编辑"));
+
+    const input = (await screen.findByDisplayValue("D:/wk")) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "D:/new" } });
+    // 「保存」在角色卡编辑表单里另有一枚，所以要把范围收进**工作区这一块**。
+    // 定位方式：用工作区输入框所在的容器（它和按钮在同一行）。
+    const wsRow = input.closest("div.flex.items-center.gap-2");
+    expect(wsRow).toBeTruthy();
+    fireEvent.click(within(wsRow as HTMLElement).getByRole("button", { name: "保存" }));
+    await waitFor(() =>
+      expect(apiMock.setWorkspaceDir).toHaveBeenCalledWith("D:/new", "r1"),
+    );
+
+    fireEvent.click(within(wsRow as HTMLElement).getByRole("button", { name: "清除" }));
+    await waitFor(() =>
+      expect(apiMock.clearWorkspaceDir).toHaveBeenCalledWith("r1"),
+    );
   });
 });
