@@ -608,12 +608,17 @@ class MemoryBody(BaseModel):
 
     `enabled` = 总开关（走 runtime 覆盖保存 + 热重建，下一轮对话即生效）；
     `content`  = 记忆全文（None = 不变；"" = 清空）；
-    `extract_turns` = 自动提取的节奏（None = 不变；**0 = 关掉自动那条，只留手动按钮**）。
+    `extract_turns` = 自动提取的节奏（None = 不变；**0 = 关掉自动那条，只留手动按钮**）；
+    `category` = 只作用在**某一层**（记忆分层，2026-10-30；None = 整桶，旧语义）。
+
+    为什么整段覆写要能限定层：界面按板块显示某一层的文本，用户在"项目记忆"板块里点保存 ——
+    若还按整桶删，他另外三层的条目就全没了。一个"保存"毁掉没看见的内容是最坏的交互。
     """
 
     enabled: bool | None = None
     content: str | None = None
     extract_turns: Annotated[int | None, Field(ge=0, le=200)] = None
+    category: Annotated[str | None, Field(default=None, max_length=16)] = None
 
 
 def _require_role(ctx: AppContext, role_id: str) -> None:
@@ -622,24 +627,41 @@ def _require_role(ctx: AppContext, role_id: str) -> None:
         raise HTTPException(status_code=404, detail=f"角色 {role_id!r} 不存在。")
 
 
-def _memory_payload(ctx: AppContext, role_id: str | None = None) -> dict[str, object]:
+def _memory_payload(
+    ctx: AppContext, role_id: str | None = None, category: str | None = None
+) -> dict[str, object]:
     """记忆面板数据。role_id=None → 全局用户记忆；给定 → 该角色专属记忆。
 
     `items` 是事实面（逐条可编辑/钉住/删除），`content` 是按注入顺序渲染出来的同一份 ——
     两个字段不是两处真相：前者是行，后者是那几行的文本视图，界面两种用法都能拿。
     `over_limit` 用来提示"建议整理"（超限的保底淘汰在写入时已做，模型合并是显式动作）。
+
+    `category` = 只看某一层（记忆分板块，2026-10-30）；None = 全部层。
     """
     from rolecard_agent.core import memory as mem
 
     bucket = role_id if role_id else mem.GLOBAL_BUCKET
-    items = mem.list_items(ctx.conn, user_id=ctx.current_user(), bucket=bucket)
-    content, _ = mem.render_memory(ctx.conn, user_id=ctx.current_user(), bucket=bucket)
-    active = [i for i in items if i["invalidated_at"] is None]
+    all_items = mem.list_items(ctx.conn, user_id=ctx.current_user(), bucket=bucket)
+    items = [i for i in all_items if category is None or i["category"] == category]
+    content, _ = mem.render_memory(
+        ctx.conn,
+        user_id=ctx.current_user(),
+        bucket=bucket,
+        categories=(category,) if category else None,
+    )
+    active = [i for i in all_items if i["invalidated_at"] is None]
+    # 每层各几条 —— 面板上的分板块标签要显示"长期记忆 5 / 会话记忆 2"，那两个数得在
+    # 同一次读取里给齐，不能让前端再发 N 次请求自己数（那就是第二个事实面）。
+    counts = {
+        layer: sum(1 for i in active if i["category"] == layer) for layer in mem.MEMORY_CATEGORIES
+    }
     return {
         "enabled": ctx.settings.memory_enabled,
         "role_id": role_id,
+        "category": category,
         "content": content,
         "items": items,
+        "counts": counts,
         "active_count": len(active),
         "limit": mem.MAX_ITEMS_PER_BUCKET,
         "over_limit": len(active) >= mem.MAX_ITEMS_PER_BUCKET,
@@ -658,11 +680,15 @@ def _memory_payload(ctx: AppContext, role_id: str | None = None) -> dict[str, ob
 def get_memory(
     ctx: AppContext = Depends(get_context),
     role_id: str | None = Query(None, max_length=64),
+    category: str | None = Query(None, max_length=16),
 ) -> object:
-    """跨会话记忆：开关（有效值）+ 条目 + 渲染文本。`?role_id=` 切到该角色的专属记忆。"""
+    """跨会话记忆：开关（有效值）+ 条目 + 渲染文本。
+
+    `?role_id=` 切到该角色的专属记忆；`?category=` 只看某一层（记忆分板块）。
+    """
     if role_id:
         _require_role(ctx, role_id)
-    return _memory_payload(ctx, role_id)
+    return _memory_payload(ctx, role_id, category)
 
 
 @router.put("/api/settings/memory")
@@ -698,14 +724,15 @@ def put_memory(
             user_id=ctx.current_user(),
             bucket=bucket,
             text=body.content,
+            category=body.category,
         )
         ctx.audit.log(
             actor=actor.id,
             action="update_role_memory",
             target=f"memory:{role_id}",
-            detail={"chars": len(body.content)},
+            detail={"chars": len(body.content), "category": body.category},
         )
-        return _memory_payload(ctx, role_id)
+        return _memory_payload(ctx, role_id, body.category)
 
     if body.enabled is None and body.content is None and body.extract_turns is None:
         raise HTTPException(status_code=400, detail="没有要保存的内容。")
@@ -717,6 +744,7 @@ def put_memory(
             user_id=ctx.current_user(),
             bucket=mem.GLOBAL_BUCKET,
             text=body.content,
+            category=body.category,
         )
     if body.enabled is not None:
         runtime_settings.save_overrides(ctx.conn, {"memory_enabled": "1" if body.enabled else "0"})
@@ -749,9 +777,13 @@ def put_memory(
 
 
 class MemoryItemBody(BaseModel):
-    """新增一条记忆。`role_id` 走查询参数，与整桶接口同一个作用域口径。"""
+    """新增一条记忆。`role_id` 走查询参数，与整桶接口同一个作用域口径。
+
+    `category` = 落在哪一层（longterm/session/project/self）；不传 = longterm。
+    """
 
     text: Annotated[str, Field(min_length=1, max_length=2000)]
+    category: Annotated[str | None, Field(default=None, max_length=16)] = None
 
 
 class MemoryItemPatchBody(BaseModel):
@@ -764,6 +796,8 @@ class MemoryItemPatchBody(BaseModel):
     text: Annotated[str | None, Field(default=None, max_length=2000)] = None
     pinned: bool | None = None
     importance: int | None = None
+    #: 落在哪一层（记忆分层，2026-10-30）。空 = 不改（PATCH 时）；新增时默认 longterm。
+    category: str | None = None
 
 
 @router.post("/api/settings/memory/item")
@@ -773,7 +807,10 @@ def post_memory_item(
     actor: Actor = Depends(get_actor),
     role_id: str | None = Query(None, max_length=64),
 ) -> object:
-    """面板手动加一条事实（source=manual）。角色作用域必须先有该角色。"""
+    """面板手动加一条事实（source=manual）。角色作用域必须先有该角色。
+
+    `body.category` = 落在哪一层（longterm/session/project/self）；不传 = longterm。
+    """
     from rolecard_agent.core import memory as mem
 
     if role_id:
@@ -785,6 +822,7 @@ def post_memory_item(
         bucket=bucket,
         text=body.text,
         source="manual",
+        category=body.category or "longterm",
     )
     if added is None:
         raise HTTPException(status_code=400, detail="传入的记忆内容为空。")
@@ -805,7 +843,7 @@ def patch_memory_item(
     actor: Actor = Depends(get_actor),
     role_id: str | None = Query(None, max_length=64),
 ) -> object:
-    """改一条的文本、钉住状态，或显著性档位（0 次要 / 1 一般 / 2 要紧）。"""
+    """改一条的文本、钉住状态、显著性档位（0 次要 / 1 一般 / 2 要紧），或把它移到另一层。"""
     from rolecard_agent.core import memory as mem
 
     if mem.get_item(ctx.conn, item_id, user_id=ctx.current_user()) is None:
@@ -814,6 +852,14 @@ def patch_memory_item(
     owner = ctx.current_user()
     if body.text is not None:
         updated = mem.edit_item(ctx.conn, user_id=owner, item_id=item_id, text=body.text) or {}
+    if body.category is not None:
+        # 改层：只动 category，文本不动（所以传空文本 + category 即可）。
+        updated = (
+            mem.edit_item(
+                conn=ctx.conn, user_id=owner, item_id=item_id, text="", category=body.category
+            )
+            or {}
+        )
     if body.pinned is not None:
         updated = mem.set_pinned(ctx.conn, user_id=owner, item_id=item_id, pinned=body.pinned) or {}
     if body.importance is not None:
@@ -830,6 +876,7 @@ def patch_memory_item(
         detail={
             "pinned": updated.get("pinned"),
             "importance": updated.get("importance"),
+            "category": updated.get("category"),
             "chars": len(str(updated.get("text") or "")),
         },
     )
@@ -981,8 +1028,12 @@ def delete_memory(
     ctx: AppContext = Depends(get_context),
     actor: Actor = Depends(get_actor),
     role_id: str | None = Query(None, max_length=64),
+    category: str | None = Query(None, max_length=16),
 ) -> object:
-    """清空整个记忆桶（开关不动）。给定 role_id 只清该角色的。管理动作必须留痕。"""
+    """清空记忆桶（开关不动）。给定 role_id 只清该角色的；给定 category 只清那一层。
+
+    管理动作必须留痕。
+    """
     from rolecard_agent.core import memory as mem
 
     bucket = role_id if role_id else mem.GLOBAL_BUCKET
@@ -994,15 +1045,17 @@ def delete_memory(
         bucket=bucket,
         include_invalidated=True,
     )
+    if category:
+        rows = [r for r in rows if r["category"] == category]
     for item in rows:
         mem.delete_item(ctx.conn, user_id=ctx.current_user(), item_id=item["id"])
     ctx.audit.log(
         actor=actor.id,
         action="clear_role_memory" if role_id else "clear_memory",
         target=f"memory:{bucket}",
-        detail={"items": len(rows)},
+        detail={"items": len(rows), "category": category},
     )
-    return _memory_payload(ctx, role_id)
+    return _memory_payload(ctx, role_id, category)
 
 
 class PromptEnhanceBody(BaseModel):

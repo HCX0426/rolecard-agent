@@ -434,3 +434,149 @@ def test_recall_material_is_the_top_active_item(conn) -> None:
     # 别的角色的条目不能当这个角色的素材
     assert top_active_item(conn, user_id=ME, bucket="other") is None
     assert int(top_active_item(conn, user_id=ME, bucket="elsie")["id"]) == only
+
+
+# ------------------------------------------------------------------ 记忆分层
+#
+# 2026-10-30，用户：「每个角色的记忆分多板块，比如长期记忆、会话记忆、项目记忆」，
+# 以及「留一些给它自己想记住啥就记住啥」。
+#
+# 下面钉的是**分层的语义**，不是字段存在：
+#   - 分层是**一列**不是几张表（检索要能一次命中多层）；
+#   - 每层有自己的注入配额（会话层变多不能把长期层整层挤出去）；
+#   - 角色自记层是给"它自己想记住啥就记住啥"的。
+# ---------------------------------------------------------------------------
+
+
+def test_items_land_in_their_category_and_list_can_filter(conn) -> None:
+    """写入落到指定层；读可以只看某一层。"""
+    long_id = int(add_item(conn, user_id=ME, bucket="r1", text="用户住在上海")["id"])
+    self_id = int(
+        add_item(conn, user_id=ME, bucket="r1", text="我想起来了：周五要交报告", category="self")[
+            "id"
+        ]
+    )
+    assert get_item(conn, long_id, user_id=ME)["category"] == "longterm"
+    assert get_item(conn, self_id, user_id=ME)["category"] == "self"
+
+    only_self = list_items(conn, user_id=ME, bucket="r1", category="self")
+    assert [i["id"] for i in only_self] == [self_id]
+    # 不给 category = 全部层（这是默认读法，不能因为加了层就只看到一层）。
+    assert len(list_items(conn, user_id=ME, bucket="r1")) == 2
+
+
+def test_unknown_category_falls_back_to_longterm(conn) -> None:
+    """不认识的层名归 longterm，不是不写进去 —— 归错了用户能自己改，归错了写不进去就麻烦了。"""
+    item = add_item(conn, user_id=ME, bucket="r1", text="某条事实", category="不存在的层")
+    assert item is not None
+    assert item["category"] == "longterm"
+
+
+def test_each_category_has_its_own_injection_quota(conn) -> None:
+    """**每层各自限条数**，不是四层抢同一个总名额。
+
+    变异：把 `memory_for_turn` 改成不分层（渲染全部再一起截断）⇒ 本用例红 ——
+    会话层一变多，长期事实（"她记得我的称呼"）就被挤出去了。
+    """
+    # 会话层塞满（比长期层的配额多）
+    for i in range(12):
+        add_item(conn, user_id=ME, bucket="r1", text=f"会话摘要 {i}", category="session")
+    # 长期层一条
+    add_item(conn, user_id=ME, bucket="r1", text="用户住在上海", category="longterm")
+
+    text = memory_for_turn(
+        conn, _settings(), "r1", user_id=ME, inject_categories=("longterm", "session")
+    )
+    assert "用户住在上海" in text, "长期记忆被会话层挤出去了"
+    # 会话层按自己的配额截断（12 条进 4 条）
+    assert text.count("会话摘要") <= 4, text
+
+
+def test_inject_categories_gate_which_layers_reach_the_prompt(conn) -> None:
+    """只注入指定的层 —— 用户可以在面板上关掉某一层的注入。"""
+    add_item(conn, user_id=ME, bucket="r1", text="长期的一条", category="longterm")
+    add_item(conn, user_id=ME, bucket="r1", text="项目的一条", category="project")
+
+    only_long = memory_for_turn(
+        conn, _settings(), "r1", user_id=ME, inject_categories=("longterm",)
+    )
+    assert "长期的一条" in only_long
+    assert "项目的一条" not in only_long
+
+    only_project = memory_for_turn(
+        conn, _settings(), "r1", user_id=ME, inject_categories=("project",)
+    )
+    assert "项目的一条" in only_project
+    assert "长期的一条" not in only_project
+
+
+def test_edit_can_move_an_item_between_categories(conn) -> None:
+    """用户能在面板上把一条从"长期"挪到"项目"。"""
+    item_id = int(add_item(conn, user_id=ME, bucket="r1", text="某条事实")["id"])
+    updated = edit_item(conn, user_id=ME, item_id=item_id, text="", category="project")
+    assert updated is not None
+    assert updated["category"] == "project"
+    assert updated["text"] == "某条事实", "改层不该动文本"
+
+
+def test_resolve_inject_categories_parses_and_falls_back() -> None:
+    """设置里那串层名的解析口径：认不出的丢掉，全空回落出厂默认。"""
+    from rolecard_agent.core.memory import (
+        DEFAULT_INJECT_CATEGORIES,
+        resolve_inject_categories,
+    )
+
+    assert resolve_inject_categories("") == DEFAULT_INJECT_CATEGORIES
+    assert resolve_inject_categories(None) == DEFAULT_INJECT_CATEGORIES
+    assert resolve_inject_categories("longterm,project") == ("longterm", "project")
+    # 不认识的层名丢掉，认识的留下
+    assert resolve_inject_categories("longterm,胡说") == ("longterm",)
+    # 全是乱写 → 回落默认（不是"注入零层"——那会让记忆看起来坏了）
+    assert resolve_inject_categories("胡说八道") == DEFAULT_INJECT_CATEGORIES
+
+
+def test_settings_drive_which_layers_are_injected(conn) -> None:
+    """注入哪几层由 `settings.memory_inject_categories` 决定（用户在界面上的那个开关）。"""
+    add_item(conn, user_id=ME, bucket="r1", text="长期的一条", category="longterm")
+    add_item(conn, user_id=ME, bucket="r1", text="项目的一条", category="project")
+
+    only_project = Settings(memory_enabled=True, memory_inject_categories="project")
+    text = memory_for_turn(conn, only_project, "r1", user_id=ME)
+    assert "项目的一条" in text
+    assert "长期的一条" not in text
+
+
+def test_replace_by_category_only_touches_that_layer(conn) -> None:
+    """**按层覆写不能删掉别的层** —— 数据安全级的回归钉。
+
+    界面按板块显示某一层的文本，用户在"项目记忆"板块里点保存。若覆写还按整桶删，
+    他另外三层的条目全没了 —— 一个"保存"动作毁掉没看见的内容。
+
+    变异：把 `replace_bucket_from_text` 的 category 参数摘掉（永远整桶删）⇒ 本用例红。
+    """
+    from rolecard_agent.core.memory import replace_bucket_from_text
+
+    add_item(conn, user_id=ME, bucket="r1", text="长期的一条", category="longterm")
+    add_item(conn, user_id=ME, bucket="r1", text="项目的一条", category="project")
+    add_item(conn, user_id=ME, bucket="r1", text="自记的一条", category="self")
+
+    replace_bucket_from_text(conn, user_id=ME, bucket="r1", text="项目改过了", category="project")
+
+    texts = {i["text"] for i in list_items(conn, user_id=ME, bucket="r1")}
+    assert "项目改过了" in texts
+    assert "长期的一条" in texts, "按层覆写把长期层删了"
+    assert "自记的一条" in texts, "按层覆写把角色自记删了"
+    assert "项目的一条" not in texts, "旧的那条应该被替换掉"
+
+
+def test_replace_without_category_still_replaces_the_whole_bucket(conn) -> None:
+    """不带 category = 旧语义（整桶覆写）—— 那是"原文视图"那个老入口的行为，不能变。"""
+    from rolecard_agent.core.memory import replace_bucket_from_text
+
+    add_item(conn, user_id=ME, bucket="r1", text="长期的一条", category="longterm")
+    add_item(conn, user_id=ME, bucket="r1", text="项目的一条", category="project")
+
+    replace_bucket_from_text(conn, user_id=ME, bucket="r1", text="只剩这条")
+
+    texts = {i["text"] for i in list_items(conn, user_id=ME, bucket="r1")}
+    assert texts == {"只剩这条"}

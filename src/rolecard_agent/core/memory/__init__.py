@@ -37,6 +37,7 @@ from __future__ import annotations
 import math
 import re
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -68,8 +69,32 @@ MAX_ITEM_CHARS = 200
 
 _COLUMNS = (
     "id, user_id, uid, role_id, text, source, pinned, hit_count, importance, "
-    "last_hit_at, invalidated_at, superseded_by, created_at, updated_at"
+    "category, last_hit_at, invalidated_at, superseded_by, created_at, updated_at"
 )
+
+#: 记忆分层（2026-10-30，用户："每个角色的记忆分多板块，比如长期记忆、会话记忆、项目记忆"，
+#: 以及"留一些给它自己想记住啥就记住啥"）。
+#:
+#: 四层各回答一个不同的问题 —— 这是分层的**唯一理由**，别再加第五层：
+#:   longterm 长期记忆 —— 跨会话稳定的事实（称呼、偏好、身份背景）。**每轮注入**。
+#:   session  会话记忆 —— 当前对话滚动的上下文摘要。会话结束即失效（自动清理）。
+#:   project  项目记忆 —— 某个工作区/项目的状态与决策。按项目检索命中才注入。
+#:   self     角色自记 —— 角色自己决定要记的（"我想起来了…"）。**每轮注入**，角色自己可写。
+#:
+#: 为什么是**一列**而不是几张表（这条是架构决策，不是省事）：
+#:  - 检索要能**一次命中多层**（分表 = N 路拼，拼的顺序就成第二个事实面）；
+#:  - 条目式管理（逐条退役/钉住/更正/合并）在任何一层都是同一套操作 —— 分表会把
+#:    "同一条记忆"抄成 N 份，而复制出来的那几份迟早漂。
+#: 记忆仍是**一份**（你定的约束：不打断记忆与聊天的连贯性、不分多套记忆），
+#: 分层只是给同一条记忆多一个维度。
+MEMORY_CATEGORIES: tuple[str, ...] = ("longterm", "session", "project", "self")
+
+#: 每层的**注入策略**（哪些层每轮进 prompt）：
+#:   - longterm / self：每轮注入（稳定事实与角色的自记，量小且正是"她记得我"这件事本身）；
+#:   - session：滑动窗口内，量随会话涨 —— 每轮全注入会挤掉别的层；
+#:   - project：按项目/工作区检索命中才注入（不能每轮全进，那不是项目记忆是知识库）。
+#: 这里是**默认口径**；用户可在记忆页签里逐层调（那是设置层的单一事实面）。
+DEFAULT_INJECT_CATEGORIES: tuple[str, ...] = ("longterm", "self")
 
 
 def _parse_ts(raw: object) -> datetime | None:
@@ -94,6 +119,9 @@ def _row_to_item(row: Any) -> dict[str, Any]:
         "pinned": bool(row["pinned"]),
         "hit_count": int(row["hit_count"] or 0),
         "importance": int(row["importance"] if row["importance"] is not None else 1),
+        # 落在哪一层（记忆分层，2026-10-30）。旧行/异常值一律当 longterm ——
+        # 与 `add_item` 的归一口径一致（那列不给 CHECK，值可能来自模型或旧数据）。
+        "category": str(row["category"] or "longterm"),
         "last_hit_at": row["last_hit_at"],
         "invalidated_at": row["invalidated_at"],
         "superseded_by": None if row["superseded_by"] is None else int(row["superseded_by"]),
@@ -102,20 +130,31 @@ def _row_to_item(row: Any) -> dict[str, Any]:
 
 
 def list_items(
-    conn: SqlConnection, *, user_id: str, bucket: str, include_invalidated: bool = False
+    conn: SqlConnection,
+    *,
+    user_id: str,
+    bucket: str,
+    include_invalidated: bool = False,
+    category: str | None = None,
 ) -> list[dict[str, Any]]:
     """某个桶的条目。默认只给 active —— 失效的留着是为了能查、能撤销，不是为了注入。
     `user_id` 必填：记忆是"关于某个人的事实"，一条不带主人的读法就是把别人的脑子
     接到这个人身上（注入进 prompt 之后她说的每句话都带着那份事实）。
+
+    `category` = 只看某一层（记忆页签的分板块列表用它）；None = 全部层。
     """
     where = (
         "role_id = ? AND user_id = ?"
         if include_invalidated
         else "role_id = ? AND user_id = ? AND invalidated_at IS NULL"
     )
+    params: list[object] = [bucket, user_id]
+    if category:
+        where += " AND category = ?"
+        params.append(category)
     rows = conn.execute(
         f"SELECT {_COLUMNS} FROM role_memory_item WHERE {where} ORDER BY id DESC",
-        (bucket, user_id),
+        params,
     ).fetchall()
     return [_row_to_item(r) for r in rows]
 
@@ -183,6 +222,7 @@ def add_item(
     source: str = "manual",
     importance: int = 1,
     now: datetime | None = None,
+    category: str = "longterm",
 ) -> dict[str, Any] | None:
     """新增一条事实。**完全相同的文本不重复插入**（只刷新那一条的时间），并做超限淘汰。
 
@@ -196,12 +236,17 @@ def add_item(
     而提取模型这次没标号（默认 1）不该把一条已经标成要紧的降回常规 —— 降级的判断该由
     「整理记忆」或用户来做，不该是"再提一次"的副作用。
 
+    `category` = 落在哪一层（见 `MEMORY_CATEGORIES`）。未知层名**归到 longterm**
+    （不是报错）：这一列的值可能来自模型或旧数据，而"归错了层"是可改的（用户在面板上
+    改），"因为层名不认识就写不进去"不是。
+
     返回 None = 文本为空，什么都没做。
     """
     line = " ".join((text or "").split())[:MAX_ITEM_CHARS]
     if not line:
         return None
     tier = clamp_importance(importance)
+    layer = category if category in MEMORY_CATEGORIES else "longterm"
     existing = conn.execute(
         "SELECT id FROM role_memory_item"
         " WHERE role_id = ? AND user_id = ? AND text = ? AND invalidated_at IS NULL",
@@ -220,9 +265,9 @@ def add_item(
     # "相同 id 的不同条目"，上行时任何对账都会串成别人的事实（架构总览 §4.1 那三条上行
     # 语义全都依赖这一列，所以它必须在这里长出来，而不是等上传功能开工再补）。
     conn.execute(
-        "INSERT INTO role_memory_item (role_id, user_id, uid, text, source, importance)"
-        " VALUES (?, ?, ?, ?, ?, ?)",
-        (bucket, user_id, uuid.uuid4().hex, line, source, tier),
+        "INSERT INTO role_memory_item (role_id, user_id, uid, text, source, importance, category)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (bucket, user_id, uuid.uuid4().hex, line, source, tier, layer),
     )
     conn.commit()
     created = conn.execute(
@@ -331,17 +376,36 @@ def get_item(conn: SqlConnection, item_id: int, *, user_id: str) -> dict[str, An
 
 
 def edit_item(
-    conn: SqlConnection, *, user_id: str, item_id: int, text: str
+    conn: SqlConnection,
+    *,
+    user_id: str,
+    item_id: int,
+    text: str,
+    category: str | None = None,
 ) -> dict[str, Any] | None:
-    """人工修正一条（面板上的"编辑"）。空文本 = 不改，交给删除去做那件事。"""
+    """人工修正一条（面板上的"编辑"）。空文本 = 不改，交给删除去做那件事。
+
+    `category` = 改到哪一层（None = 不动）。层名不认识 → 归到 longterm（与 `add_item`
+    同一条口径：归错了层用户能自己改，归错成"写不进去"就麻烦了）。
+    """
+    layer = None
+    if category is not None:
+        layer = category if category in MEMORY_CATEGORIES else "longterm"
     line = " ".join((text or "").split())[:MAX_ITEM_CHARS]
-    if not line:
+    if not line and layer is None:
         return get_item(conn, item_id, user_id=user_id)
-    conn.execute(
-        "UPDATE role_memory_item SET text = ?, updated_at = CURRENT_TIMESTAMP"
-        " WHERE id = ? AND user_id = ?",
-        (line, item_id, user_id),
-    )
+    if line:
+        conn.execute(
+            "UPDATE role_memory_item SET text = ?, updated_at = CURRENT_TIMESTAMP"
+            " WHERE id = ? AND user_id = ?",
+            (line, item_id, user_id),
+        )
+    if layer is not None:
+        conn.execute(
+            "UPDATE role_memory_item SET category = ?, updated_at = CURRENT_TIMESTAMP"
+            " WHERE id = ? AND user_id = ?",
+            (layer, item_id, user_id),
+        )
     conn.commit()
     return get_item(conn, item_id, user_id=user_id)
 
@@ -473,6 +537,18 @@ def enforce_cap(
 #: 200 条/桶是"存"的上界，8 条是"用"的上界，两者不冲突。
 MAX_ITEMS_PER_TURN = 8
 
+#: 每层自己的条目配额（2026-10-30 记忆分层）。**不是四层抢同一个总名额** ——
+#: 那样"会话记忆"一变多就能把"长期记忆"整层挤出去，而长期记忆恰恰是量最小、最该稳的那层
+#: （"她记得我的称呼"要是偶尔挤没了，用户只会觉得她失忆）。
+#: 配额之和（8+4+4+4=20）可以超过 `MAX_ITEMS_PER_TURN`（8）：那个是**单层**的上界，
+#: 这里的分层配额是另一件事 —— 分层后"一轮注入几条"是各层之和，各层各有各的合理量级。
+CATEGORY_LIMITS: dict[str, int] = {
+    "longterm": 8,  # 稳定事实：量本来就小，给足
+    "self": 4,  # 角色自记：她的"我想起来了"，不该淹掉用户的事实
+    "session": 4,  # 会话摘要：随会话涨，压着
+    "project": 4,  # 项目状态：按项目命中才注入
+}
+
 
 def _age_label(raw: object, *, now: datetime) -> str:
     """条目后面的时间标签。为什么要带：注入文本里一句"用户膝盖不舒服"没有保质期，
@@ -501,6 +577,7 @@ def render_memory(
     limit: int = MAX_ITEMS_PER_TURN,
     now: datetime | None = None,
     with_age_labels: bool = False,
+    categories: Sequence[str] | None = None,
 ) -> tuple[str, list[int]]:
     """渲染成文本，同时返回**真的进了文本**的那些条目 id（供命中计数）。
 
@@ -510,14 +587,20 @@ def render_memory(
     面板把这段文本原样填进编辑框、保存时又整段按行覆写条目（`SettingsPage` 的
     `setMemDraft(m.content)`）。标签一旦进这段文本，用户点一次保存「今天」就成了事实正文
     的一部分，再存一次叠一层 —— 一个只读的显示字段被写回了存储层。
+
+    `categories` = 只渲染这些层（None = 全部）。注入侧按层分开渲染再拼，
+    这样"每层各自限几条"而不是"四层抢同一个总名额"。
     """
     stamp = now or datetime.now(UTC)
     used: list[str] = []
     ids: list[int] = []
     total = 0
+    wanted = set(categories) if categories is not None else None
     for item in ranked_active(conn, user_id=user_id, bucket=bucket):
         if len(used) >= limit:
             break
+        if wanted is not None and str(item.get("category") or "longterm") not in wanted:
+            continue
         head = _age_label(item["created_at"], now=stamp) if with_age_labels else ""
         # 「要紧」只挂在注入侧（与时间标签同一条纪律）：面板那段文本会被原样填进编辑框、
         # 保存时整行覆写回条目，标记进了面板文本就等于被写回存储层。
@@ -560,8 +643,27 @@ def mark_hits(conn: SqlConnection, *, user_id: str, item_ids: list[int]) -> None
     conn.commit()
 
 
+def resolve_inject_categories(raw: str | None) -> tuple[str, ...]:
+    """把设置里那串层名解析成**合法的层集合**。
+
+    空 → 出厂默认（`DEFAULT_INJECT_CATEGORIES`）；认不出的层名**丢掉**（不报错）：
+    这串东西可能来自 env、可能手改过，而"少注入一层"是安全方向，"因为层名打错就整个
+    记忆都不注入"不是。**全空**（只写了不认识的层名）→ 回落出厂默认，而不是注入零层 ——
+    后者会让"记忆功能看起来是坏的"，而用户真正想表达的可能是"我拼错了一个层名"。
+    """
+    if raw is None or not raw.strip():
+        return DEFAULT_INJECT_CATEGORIES
+    picked = tuple(p.strip() for p in raw.split(",") if p.strip() in MEMORY_CATEGORIES)
+    return picked or DEFAULT_INJECT_CATEGORIES
+
+
 def memory_for_turn(
-    conn: SqlConnection, settings: Settings, role_id: str | None, *, user_id: str
+    conn: SqlConnection,
+    settings: Settings,
+    role_id: str | None,
+    *,
+    user_id: str,
+    inject_categories: Sequence[str] | None = None,
 ) -> str:
     """以某个角色为锚点的一轮该注入什么记忆 —— **对话与主动开口共用这一份规则**。
 
@@ -570,15 +672,39 @@ def memory_for_turn(
 
     顺手记命中：只有真进了 prompt 的条目才涨 hit_count —— 这就是退役排序里"频次"那一半的
     唯一来源，所以它必须长在注入这条路径上，而不是另开一个统计口。
+
+    **按层注入**（2026-10-30）：每一层有自己的条目配额，而不是四层抢同一个总名额 ——
+    否则"会话记忆"一变多就能把"长期记忆"整层挤出去（而长期记忆恰恰是量最小、最该稳的
+    那一层）。注入哪几层由 `settings.memory_inject_categories` 决定（用户在记忆页签
+    的分板块开关写它）；`inject_categories` 显式传时覆盖它（测试用）。
+    每层的配额见 `CATEGORY_LIMITS`。
     """
     if not settings.memory_enabled:
         return ""
+    layers = (
+        tuple(inject_categories)
+        if inject_categories is not None
+        else resolve_inject_categories(getattr(settings, "memory_inject_categories", ""))
+    )
     buckets = [role_id, GLOBAL_BUCKET] if role_id else [GLOBAL_BUCKET]
     for bucket in buckets:
-        text, ids = render_memory(conn, user_id=user_id, bucket=bucket, with_age_labels=True)
-        if text:
-            mark_hits(conn, user_id=user_id, item_ids=ids)
-            return text
+        blocks: list[str] = []
+        hit_ids: list[int] = []
+        for layer in layers:
+            text, ids = render_memory(
+                conn,
+                user_id=user_id,
+                bucket=bucket,
+                with_age_labels=True,
+                categories=(layer,),
+                limit=CATEGORY_LIMITS.get(layer, MAX_ITEMS_PER_TURN),
+            )
+            if text:
+                blocks.append(text)
+                hit_ids.extend(ids)
+        if blocks:
+            mark_hits(conn, user_id=user_id, item_ids=hit_ids)
+            return "\n".join(blocks)
     return ""
 
 
@@ -596,7 +722,13 @@ _BULLET = re.compile(r"^\s*(?:[-–—•*]\s*)+")
 
 
 def replace_bucket_from_text(
-    conn: SqlConnection, *, user_id: str, bucket: str, text: str, source: str = "manual"
+    conn: SqlConnection,
+    *,
+    user_id: str,
+    bucket: str,
+    text: str,
+    source: str = "manual",
+    category: str | None = None,
 ) -> list[dict[str, Any]]:
     """整段文本 → 该桶的非钉住条目（保留旧 PUT /api/settings/memory 的"覆写"语义）。
 
@@ -609,16 +741,34 @@ def replace_bucket_from_text(
     档号只在【要紧】那个前缀里露一下，还只在带时间标签的注入渲染里露。用户在这里编辑的
     是"话"，不是"行"，一次保存不该顺手把逐条面板上标好的档号抹回 1（那条事实下次就可能
     被挤出 prompt）。改过的行（文本不再逐字相同）落回默认档：那确实是一句新话。
+
+    **`category` = 只覆写这一层**（记忆分层，2026-10-30）：None = 整个桶（旧语义）。
+    这一层限定是**数据安全**要求，不是功能：界面现在按板块显示"某一层"的文本，
+    用户在"项目记忆"板块里点保存，如果还按整桶删，就把他另外三层的条目全删了 ——
+    一个"保存"动作毁掉没看见的内容，那是最坏的一种交互。
     """
-    tiers = {
-        " ".join(str(i["text"]).split()): clamp_importance(i.get("importance"))
+    layer = None
+    if category is not None:
+        layer = category if category in MEMORY_CATEGORIES else "longterm"
+    scope_items = [
+        i
         for i in list_items(conn, user_id=user_id, bucket=bucket)
-        if not i["pinned"]
+        if not i["pinned"] and (layer is None or i["category"] == layer)
+    ]
+    tiers = {
+        " ".join(str(i["text"]).split()): clamp_importance(i.get("importance")) for i in scope_items
     }
-    conn.execute(
-        "DELETE FROM role_memory_item WHERE role_id = ? AND user_id = ? AND pinned = 0",
-        (bucket, user_id),
-    )
+    if layer is None:
+        conn.execute(
+            "DELETE FROM role_memory_item WHERE role_id = ? AND user_id = ? AND pinned = 0",
+            (bucket, user_id),
+        )
+    else:
+        conn.execute(
+            "DELETE FROM role_memory_item WHERE role_id = ? AND user_id = ?"
+            " AND pinned = 0 AND category = ?",
+            (bucket, user_id, layer),
+        )
     conn.commit()
     for line in (text or "").splitlines():
         body = _BULLET.sub("", line)
@@ -629,6 +779,7 @@ def replace_bucket_from_text(
             text=body,
             source=source,
             importance=tiers.get(" ".join(body.split()), 1),
+            category=layer or "longterm",
         )
     return [i for i in list_items(conn, user_id=user_id, bucket=bucket) if i["pinned"]]
 
@@ -663,11 +814,14 @@ def make_memory_tool(*, settings: Settings, conn: SqlConnection) -> BaseTool:
 
 
 __all__ = [
+    "CATEGORY_LIMITS",
+    "DEFAULT_INJECT_CATEGORIES",
     "GLOBAL_BUCKET",
     "MAX_ITEMS_PER_BUCKET",
     "MAX_ITEMS_PER_TURN",
     "MAX_ITEM_CHARS",
     "MAX_MEMORY_CHARS",
+    "MEMORY_CATEGORIES",
     "add_item",
     "current_role_id_ctx",
     "delete_item",
@@ -682,6 +836,7 @@ __all__ = [
     "ranked_active",
     "render_memory",
     "replace_bucket_from_text",
+    "resolve_inject_categories",
     "set_pinned",
     "top_active_item",
 ]

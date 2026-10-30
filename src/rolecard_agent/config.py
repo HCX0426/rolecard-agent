@@ -272,6 +272,11 @@ class Settings(BaseModel):
     # 失败只留一条 trace。这条闸存在是因为"后台偷偷调模型"这件事本身该能一键停。
     memory_extract_auto: bool = True
 
+    # 每轮注入哪几层记忆（记忆分层，2026-10-30）。逗号分隔的层名：longterm/session/project/self。
+    # 空 = 用出厂默认（core/memory.DEFAULT_INJECT_CATEGORIES = longterm + self）。
+    # 读法在 `core/memory.memory_for_turn`；写在顶层「记忆」页签的分板块开关。
+    memory_inject_categories: str = ""
+
     # 记忆那两步（「提取精华」+「整理记忆」）用哪个后端（后端**名**，见模型页）。
     # 空 = 提取跟随这条会话/角色的后端、整理跟随默认后端。
     # 为什么单独一个旋钮（审计 §12.5）：为了把"对话用谁"与"记忆用谁"分开 —— 档案角色留在本地
@@ -706,6 +711,7 @@ class Settings(BaseModel):
             ("MEMORY_ENABLED", "memory_enabled"),
             ("MEMORY_EXTRACT_TURNS", "memory_extract_turns"),
             ("MEMORY_EXTRACT_AUTO", "memory_extract_auto"),
+            ("MEMORY_INJECT_CATEGORIES", "memory_inject_categories"),
             ("MEMORY_EXTRACT_BACKEND", "memory_extract_backend"),
             ("CONSENSUS_ENABLED", "consensus_enabled"),
             ("AGENT_DEFAULT_MODE", "agent_default_mode"),

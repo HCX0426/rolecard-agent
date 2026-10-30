@@ -170,10 +170,11 @@ describe("记忆卡逐条列表（事实面是条目）", () => {
     return render(<MemoryPage />);
   }
 
-  it("列出条目并显示来源与命中次数", async () => {
+  it("列出条目并显示来源、层与命中次数", async () => {
     renderPage();
-    // 条目行的存在用元信息那一行证明（来源 + 命中次数只有渲染出的条目才会出现）。
-expect(await screen.findByText(/对话 · 用过 2 次/)).toBeTruthy();
+    // 条目行的存在用元信息那一行证明（来源 + 层 + 命中次数只有渲染出的条目才会出现）。
+    // 层标签（记忆分层，2026-10-30）：旧数据没有 category 字段时按长期记忆显示。
+    expect(await screen.findByText(/对话 · 长期记忆 · 用过 2 次/)).toBeTruthy();
   });
 
   it("「记住」提交一条并采用返回的 payload", async () => {
@@ -185,8 +186,63 @@ expect(await screen.findByText(/对话 · 用过 2 次/)).toBeTruthy();
     renderPage();
     fireEvent.change(await screen.findByPlaceholderText(/手动记一条事实/), { target: { value: "新的" } });
     fireEvent.click(screen.getByRole("button", { name: "记住" }));
-    await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith("/api/settings/memory/item", { text: "新的" }));
+    // 带 category（记忆分层，2026-10-30）：新增落在**当前看的那一层**，
+    // 否则在"项目记忆"板块里加一条，它会悄悄落到长期记忆。
+    await waitFor(() =>
+      expect(apiMock.post).toHaveBeenCalledWith("/api/settings/memory/item", {
+        text: "新的",
+        category: "longterm",
+      }),
+    );
     expect(await screen.findByText("新的")).toBeTruthy();
+  });
+
+  it("分板块：切到某一层后读 URL 带 category、新增落在那一层", async () => {
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url.startsWith("/api/settings/memory")) {
+        return {
+          enabled: true,
+          role_id: null,
+          category: url.includes("category=project") ? "project" : null,
+          content: "",
+          items: [],
+          counts: { longterm: 3, session: 1, project: 2, self: 0 },
+          active_count: 6,
+          limit: 200,
+          over_limit: false,
+          extract_turns: 12,
+        };
+      }
+      if (url === "/api/roles") return [{ role_id: "r1", role_name: "爱莉希雅" }];
+      if (url === "/api/settings/runtime")
+        return { groups: [{ items: [{ field: "memory_inject_categories", value: "longterm,self" }] }] };
+      return {};
+    });
+    renderPage();
+    // 板块标签上带条数（后端一次给齐 counts，不用前端再发 N 次请求自己数）。
+    expect(await screen.findByText(/长期记忆 3/)).toBeTruthy();
+    expect(screen.getByText(/项目记忆 2/)).toBeTruthy();
+
+    fireEvent.click(screen.getByText(/项目记忆 2/));
+    await waitFor(() =>
+      expect(apiMock.get).toHaveBeenCalledWith("/api/settings/memory?category=project"),
+    );
+
+    // 在这一层里新增 → category 是 project
+    apiMock.post.mockResolvedValue({
+      enabled: true, role_id: null, category: "project", content: "- 项目的一条",
+      items: [{ id: 9, text: "项目的一条", source: "manual", pinned: false, hit_count: 0, importance: 1, last_hit_at: null, created_at: null }],
+      counts: { longterm: 3, session: 1, project: 3, self: 0 },
+      active_count: 7, limit: 200, over_limit: false, extract_turns: 12,
+    });
+    fireEvent.change(await screen.findByPlaceholderText(/手动记一条事实/), { target: { value: "项目的一条" } });
+    fireEvent.click(screen.getByRole("button", { name: "记住" }));
+    await waitFor(() =>
+      expect(apiMock.post).toHaveBeenCalledWith("/api/settings/memory/item", {
+        text: "项目的一条",
+        category: "project",
+      }),
+    );
   });
 
   it("钉住走 PATCH；删除要先二次确认，确认后才真删", async () => {

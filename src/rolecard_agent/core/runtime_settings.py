@@ -396,6 +396,18 @@ RUNTIME_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("memory_enabled", "MEMORY_ENABLED", "bool", group="memory", show=False),
     FieldSpec("memory_extract_auto", "MEMORY_EXTRACT_AUTO", "bool", group="memory", show=False),
     FieldSpec("memory_extract_turns", "MEMORY_EXTRACT_TURNS", "int", group="memory", show=False),
+    # 注入哪几层记忆（记忆分层，2026-10-30）：逗号分隔的层名（longterm/session/project/self）。
+    # 写点是顶层「记忆」页签的分板块开关（每层一个"每轮注入"勾选）。
+    # 为什么做成**一个**字符串而不是四个 bool：四层是一个集合（"注入哪些"），四个 bool 会
+    # 让人以为它们互相独立 —— 而实际语义是"勾哪几个"，一个字段就说清了，且加第五层时
+    # 不用改四处。空 = 用出厂默认（core/memory.DEFAULT_INJECT_CATEGORIES）。
+    FieldSpec(
+        "memory_inject_categories",
+        "MEMORY_INJECT_CATEGORIES",
+        "str",
+        group="memory",
+        show=False,
+    ),
 )
 
 #: 保存/加载侧只认**可在线修改**的项：只读展示行（kind="ro"）显式过滤 —— 否则 PUT 提交

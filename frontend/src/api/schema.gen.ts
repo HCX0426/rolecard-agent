@@ -1479,7 +1479,9 @@ export interface paths {
         };
         /**
          * Get Memory
-         * @description 跨会话记忆：开关（有效值）+ 条目 + 渲染文本。`?role_id=` 切到该角色的专属记忆。
+         * @description 跨会话记忆：开关（有效值）+ 条目 + 渲染文本。
+         *
+         *     `?role_id=` 切到该角色的专属记忆；`?category=` 只看某一层（记忆分板块）。
          */
         get: operations["get_memory_api_settings_memory_get"];
         /**
@@ -1494,7 +1496,9 @@ export interface paths {
         post?: never;
         /**
          * Delete Memory
-         * @description 清空整个记忆桶（开关不动）。给定 role_id 只清该角色的。管理动作必须留痕。
+         * @description 清空记忆桶（开关不动）。给定 role_id 只清该角色的；给定 category 只清那一层。
+         *
+         *     管理动作必须留痕。
          */
         delete: operations["delete_memory_api_settings_memory_delete"];
         options?: never;
@@ -1539,6 +1543,8 @@ export interface paths {
         /**
          * Post Memory Item
          * @description 面板手动加一条事实（source=manual）。角色作用域必须先有该角色。
+         *
+         *     `body.category` = 落在哪一层（longterm/session/project/self）；不传 = longterm。
          */
         post: operations["post_memory_item_api_settings_memory_item_post"];
         delete?: never;
@@ -1567,7 +1573,7 @@ export interface paths {
         head?: never;
         /**
          * Patch Memory Item
-         * @description 改一条的文本、钉住状态，或显著性档位（0 次要 / 1 一般 / 2 要紧）。
+         * @description 改一条的文本、钉住状态、显著性档位（0 次要 / 1 一般 / 2 要紧），或把它移到另一层。
          */
         patch: operations["patch_memory_item_api_settings_memory_item__item_id__patch"];
         trace?: never;
@@ -3029,9 +3035,15 @@ export interface components {
          *
          *     `enabled` = 总开关（走 runtime 覆盖保存 + 热重建，下一轮对话即生效）；
          *     `content`  = 记忆全文（None = 不变；"" = 清空）；
-         *     `extract_turns` = 自动提取的节奏（None = 不变；**0 = 关掉自动那条，只留手动按钮**）。
+         *     `extract_turns` = 自动提取的节奏（None = 不变；**0 = 关掉自动那条，只留手动按钮**）；
+         *     `category` = 只作用在**某一层**（记忆分层，2026-10-30；None = 整桶，旧语义）。
+         *
+         *     为什么整段覆写要能限定层：界面按板块显示某一层的文本，用户在"项目记忆"板块里点保存 ——
+         *     若还按整桶删，他另外三层的条目就全没了。一个"保存"毁掉没看见的内容是最坏的交互。
          */
         MemoryBody: {
+            /** Category */
+            category?: string | null;
             /** Content */
             content?: string | null;
             /** Enabled */
@@ -3070,8 +3082,12 @@ export interface components {
         /**
          * MemoryItemBody
          * @description 新增一条记忆。`role_id` 走查询参数，与整桶接口同一个作用域口径。
+         *
+         *     `category` = 落在哪一层（longterm/session/project/self）；不传 = longterm。
          */
         MemoryItemBody: {
+            /** Category */
+            category?: string | null;
             /** Text */
             text: string;
         };
@@ -3083,6 +3099,8 @@ export interface components {
          *     拿 None 当"没给"才能把"改成 0"和"没打算改"分开。
          */
         MemoryItemPatchBody: {
+            /** Category */
+            category?: string | null;
             /** Importance */
             importance?: number | null;
             /** Pinned */
@@ -4356,10 +4374,28 @@ export interface components {
          */
         SettingsMemoryView: components["schemas"]["SettingsMemoryViewRoot"];
         /**
+         * SettingsMemoryViewCounts
+         * @description 自动生成：SettingsMemoryViewCounts（counts 的对象形状）。
+         */
+        SettingsMemoryViewCounts: {
+            /** Longterm */
+            longterm: number | null;
+            /** Project */
+            project: number | null;
+            /** Self */
+            self: number | null;
+            /** Session */
+            session: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * SettingsMemoryViewItemsItem
          * @description 自动生成：SettingsMemoryViewItemsItem（itemsItem 的对象形状）。
          */
         SettingsMemoryViewItemsItem: {
+            /** Category */
+            category: string | null;
             /** Created At */
             created_at: string | null;
             /** Hit Count */
@@ -4396,8 +4432,11 @@ export interface components {
         SettingsMemoryViewRoot: {
             /** Active Count */
             active_count: number | null;
+            /** Category */
+            category: unknown;
             /** Content */
             content: string | null;
+            counts: components["schemas"]["SettingsMemoryViewCounts"] | null;
             /** Enabled */
             enabled: boolean | null;
             /** Extract Turns */
@@ -6877,6 +6916,7 @@ export interface operations {
         parameters: {
             query?: {
                 role_id?: string | null;
+                category?: string | null;
             };
             header?: never;
             path?: never;
@@ -6943,6 +6983,7 @@ export interface operations {
         parameters: {
             query?: {
                 role_id?: string | null;
+                category?: string | null;
             };
             header?: never;
             path?: never;

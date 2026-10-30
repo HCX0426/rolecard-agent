@@ -28,6 +28,8 @@ type MemoryItem = {
   hit_count: number;
   /** 显著性档位（0 次要 / 1 一般 / 2 要紧）。后端 `clamp_importance` 保证只会是这三个数。 */
   importance: number;
+  /** 落在哪一层（后端 `MEMORY_CATEGORIES`）。旧数据可能缺这个字段，按 longterm 兜底。 */
+  category?: string;
   last_hit_at: string | null;
   created_at: string | null;
 };
@@ -35,14 +37,67 @@ type MemoryItem = {
 type MemoryPayload = {
   enabled: boolean;
   role_id: string | null;
+  /** 当前看的层（None = 全部）。后端按这个过滤 items。 */
+  category?: string | null;
   content: string;
   items: MemoryItem[];
+  /** 每层各几条（后端一次给齐，不用前端再发 N 次请求自己数）。 */
+  counts?: Record<string, number>;
   active_count: number;
   limit: number;
   over_limit: boolean;
   /** 自动提取的节奏（有效值；0 = 关，只留对话页那个手动按钮）。 */
   extract_turns: number;
 };
+
+/**
+ * 记忆分层（2026-10-30，用户：「每个角色的记忆分多板块，比如长期记忆、会话记忆、项目记忆」，
+ * 以及「留一些给它自己想记住啥就记住啥」）。
+ *
+ * 四层各回答一个不同的问题 —— 这是分层的**唯一理由**：
+ *   longterm 长期记忆 —— 跨会话稳定的事实（称呼、偏好、身份）。**每轮注入**。
+ *   session  会话记忆 —— 当前对话的上下文摘要。会话结束即失效。
+ *   project  项目记忆 —— 某个工作区/项目的状态与决策。按项目命中才注入。
+ *   self     角色自记 —— 角色自己决定要记的（"我想起来了…"）。**每轮注入**。
+ *
+ * 与后端 `core/memory.MEMORY_CATEGORIES` 一一对应（那是唯一出处，这里只做界面文案）。
+ */
+const CATEGORY_META: {
+  key: string;
+  label: string;
+  hint: string;
+  /** 默认是否每轮注入（后端 `DEFAULT_INJECT_CATEGORIES` 的同一口径）。 */
+  injectByDefault: boolean;
+}[] = [
+  {
+    key: "longterm",
+    label: "长期记忆",
+    hint: "跨会话稳定的事实：称呼、偏好、身份背景。每轮都注入。",
+    injectByDefault: true,
+  },
+  {
+    key: "self",
+    label: "角色自记",
+    hint: "角色自己想记住的。每轮注入。",
+    injectByDefault: true,
+  },
+  {
+    key: "session",
+    label: "会话记忆",
+    hint: "当前对话的上下文摘要。会话结束就过期。",
+    injectByDefault: false,
+  },
+  {
+    key: "project",
+    label: "项目记忆",
+    hint: "某个工作区/项目的状态与决策。按项目命中才注入。",
+    injectByDefault: false,
+  },
+];
+
+const CATEGORY_LABEL: Record<string, string> = Object.fromEntries(
+  CATEGORY_META.map((c) => [c.key, c.label]),
+);
 
 const SOURCE_LABEL: Record<string, string> = {
   manual: "手动",
@@ -75,6 +130,12 @@ export default function MemoryPage() {
   // 注入开关是全局的，角色作用域只读/改条目、不能改开关。
   const [memScope, setMemScope] = useState("");
   const [memRoles, setMemRoles] = useState<{ role_id: string; role_name: string }[]>([]);
+  /** 当前看哪一层（"" = 全部层）。分板块看（2026-10-30）。 */
+  const [memLayer, setMemLayer] = useState("");
+  /** 哪些层每轮注入。后端 `DEFAULT_INJECT_CATEGORIES` 是出厂值，用户可改。 */
+  const [injectLayers, setInjectLayers] = useState<string[]>(
+    CATEGORY_META.filter((c) => c.injectByDefault).map((c) => c.key),
+  );
   // 新增一条的草稿。逐条录入取代了"只能在 textarea 里手改整段"。
   const [newFact, setNewFact] = useState("");
   const [itemBusy, setItemBusy] = useState(false);
@@ -111,12 +172,23 @@ export default function MemoryPage() {
     setMemRoles(roles.map((r) => ({ role_id: r.role_id, role_name: r.role_name })));
   }, []);
 
-  const memoryUrl = (scope: string) =>
+  /** 读一份记忆。`layer` 非空 = 只看那一层（后端按它过滤 items）。 */
+  const memoryUrl = (scope: string, layer: string) => {
+    const params = new URLSearchParams();
+    if (scope) params.set("role_id", scope);
+    if (layer) params.set("category", layer);
+    const q = params.toString();
+    return q ? `/api/settings/memory?${q}` : "/api/settings/memory";
+  };
+
+  /** 写/删一份记忆。**层走请求体**（PUT 的 body / DELETE 的查询参数由后端读），
+   *  所以这里的 URL 只带作用域 —— 读写用同一个 URL 会让人以为"URL 上的层已经生效了"。 */
+  const memoryScopeUrl = (scope: string) =>
     scope ? `/api/settings/memory?role_id=${encodeURIComponent(scope)}` : "/api/settings/memory";
 
-  const loadMemory = useCallback(async (scope: string) => {
+  const loadMemory = useCallback(async (scope: string, layer: string) => {
     const seq = ++loadSeqRef.current;
-    const m = await api.get<MemoryPayload>(memoryUrl(scope));
+    const m = await api.get<MemoryPayload>(memoryUrl(scope, layer));
     if (seq !== loadSeqRef.current) return; // 已切到别的桶：这份旧响应整包作废
     setMem(m);
     setMemDraft(m.content);
@@ -124,8 +196,8 @@ export default function MemoryPage() {
 
   useEffect(() => {
     loadRoles().catch((e) => setMemErr(`角色列表加载失败：${describeError(e)}`));
-    loadMemory(memScope).catch((e) => setMemErr(`加载失败：${describeError(e)}`));
-  }, [loadRoles, loadMemory, memScope]);
+    loadMemory(memScope, memLayer).catch((e) => setMemErr(`加载失败：${describeError(e)}`));
+  }, [loadRoles, loadMemory, memScope, memLayer]);
 
   async function changeMemScope(next: string) {
     if (next === memScope) return;
@@ -162,12 +234,15 @@ export default function MemoryPage() {
     setMemErr("");
     setMemMsg("");
     try {
-      const m = await api.put<MemoryPayload>(memoryUrl(memScope), {
+      // `category` = 只覆写**当前看的那一层**（记忆分层，2026-10-30）。
+      // 不带它就会按整桶删 —— 用户在"项目记忆"板块里点一下保存，另外三层就没了。
+      const m = await api.put<MemoryPayload>(memoryScopeUrl(memScope), {
         content: memDraft,
+        category: memLayer || null,
       });
       setMem(m);
       setMemDraft(m.content);
-      setMemMsg("已保存");
+      setMemMsg(memLayer ? `已保存到「${CATEGORY_LABEL[memLayer]}」` : "已保存");
     } catch (e) {
       setMemErr(`保存失败：${describeError(e)}`);
     }
@@ -176,9 +251,16 @@ export default function MemoryPage() {
   async function clearMemory() {
     // 破坏性大过"删除一条"：一键抹掉整桶，必须有二次确认 —— 单条删除有、整桶清空反而
     // 裸奔是交互审计抓出来的不一致（收件箱/知识库的清空全都有确认）。
+    const what = memLayer
+      ? `「${CATEGORY_LABEL[memLayer] ?? memLayer}」这一层`
+      : memScope
+        ? "该角色"
+        : "全局";
     const ok = await confirm({
-      title: memScope ? "清空该角色的专属记忆？" : "清空全局记忆？",
-      body: `${memScope ? "该角色" : "全局"}记忆的全部条目会从这里消失（真删，不是失效）。`,
+      title: memLayer ? `清空${what}？` : memScope ? "清空该角色的专属记忆？" : "清空全局记忆？",
+      body: memLayer
+        ? `这一层的条目会从这里消失（真删，不是失效）。其它层不受影响。`
+        : `${what}记忆的全部条目会从这里消失（真删，不是失效）。`,
       confirmText: "确认清空",
       danger: true,
     });
@@ -186,10 +268,19 @@ export default function MemoryPage() {
     setMemErr("");
     setMemMsg("");
     try {
-      const m = await api.del<MemoryPayload>(memoryUrl(memScope));
+      // DELETE 的层走查询参数（后端 DELETE 端点从 query 读 category）。
+      // 用 URLSearchParams 拼而不是手接 `&`：作用域为空时那条 URL **没有 `?`**，
+      // 手接会拼出 `/api/settings/memory&category=x`（没有 ? 就不算查询串）。
+      const delParams = new URLSearchParams();
+      if (memScope) delParams.set("role_id", memScope);
+      if (memLayer) delParams.set("category", memLayer);
+      const delQ = delParams.toString();
+      const m = await api.del<MemoryPayload>(
+        `/api/settings/memory${delQ ? `?${delQ}` : ""}`,
+      );
       setMem(m);
       setMemDraft(m.content);
-      setMemMsg("已清空");
+      setMemMsg(memLayer ? `已清空「${CATEGORY_LABEL[memLayer]}」` : "已清空");
     } catch (e) {
       setMemErr(`清空失败：${describeError(e)}`);
     }
@@ -213,7 +304,7 @@ export default function MemoryPage() {
       await api.put<MemoryPayload>("/api/settings/memory", {
         extract_turns: Number.parseInt(next, 10),
       });
-      const m = await api.get<MemoryPayload>(memoryUrl(scope));
+      const m = await api.get<MemoryPayload>(memoryUrl(scope, memLayer));
       if (seq !== loadSeqRef.current) return; // 期间已切作用域：交还给那次的 loadMemory
       setMem(m);
       setMemDraft(m.content);
@@ -286,6 +377,10 @@ export default function MemoryPage() {
       () =>
         api.post<MemoryPayload>(`/api/settings/memory/item${scopeQs()}`, {
           text,
+          // 落到**当前看的层**（看的是"全部层"时 = 长期记忆）。
+          // 这一句是"分板块"与"逐条录入"接上的地方：不带它，界面在"项目记忆"板块里
+          // 加一条东西，它会悄悄落到长期记忆 —— 用户看着板块标签就知道自己加到哪儿了。
+          category: memLayer || "longterm",
         }),
       "已记住",
     ).then(() => setNewFact(""));
@@ -391,11 +486,62 @@ export default function MemoryPage() {
     const merge = items.find((i) => i.field === "reachout_merge_days");
     setMergeDays(merge ? Number.parseInt(merge.value ?? "", 10) || 1 : null);
     if (merge?.choices && merge.choices.length > 0) setMergeChoices(merge.choices);
+    // 注入哪几层记忆（记忆分层，2026-10-30）：同一个来源读**生效值** ——
+    // "未设置" = 用出厂默认（长期记忆 + 角色自记），所以要显式映射成那两层，
+    // 而不是把 "未设置" 当成"一层都没注入"。
+    const inject = items.find((i) => i.field === "memory_inject_categories");
+    const raw = (inject?.value ?? "").trim();
+    setInjectLayers(
+      raw && raw !== "未设置"
+        ? raw
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : CATEGORY_META.filter((c) => c.injectByDefault).map((c) => c.key),
+    );
   }, []);
 
   useEffect(() => {
     loadReachout().catch(() => setReachoutOn(null));
   }, [loadReachout]);
+
+  /**
+   * 改"哪几层每轮注入"（记忆分层，2026-10-30）。
+   *
+   * 写的是 runtime 覆盖（`memory_inject_categories`，逗号分隔的层名），保存即热重建生效 ——
+   * 和"记忆注入总闸"是同一套机制，所以**保存后读回**生效值（界面显示的必须是真在跑的那份）。
+   */
+  async function toggleInjectLayer(layer: string, on: boolean) {
+    setMemErr("");
+    setMemMsg("");
+    const next = on
+      ? [...new Set([...injectLayers, layer])]
+      : injectLayers.filter((k) => k !== layer);
+    setInjectLayers(next);
+    try {
+      await api.put<RuntimePayload>("/api/settings/runtime", {
+        values: { memory_inject_categories: next.join(",") },
+      });
+      const rt = await api.get<RuntimePayload>("/api/settings/runtime");
+      const items = (rt.groups ?? []).flatMap((g) => g.items ?? []);
+      const inject = items.find((i) => i.field === "memory_inject_categories");
+      const raw = (inject?.value ?? "").trim();
+      setInjectLayers(
+        raw && raw !== "未设置"
+          ? raw
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : CATEGORY_META.filter((c) => c.injectByDefault).map((c) => c.key),
+      );
+      const label = CATEGORY_LABEL[layer] ?? layer;
+      setMemMsg(on ? `「${label}」现在每轮都会带上` : `「${label}」不再每轮注入`);
+    } catch (e) {
+      setMemErr(`保存失败：${describeError(e)}`);
+      // 保存失败要把界面**退回**真实状态 —— 留着乐观的勾选会骗人。
+      loadReachout().catch(() => undefined);
+    }
+  }
 
   async function changeMergeDays(next: string) {
     setReachoutErr("");
@@ -492,6 +638,57 @@ export default function MemoryPage() {
             ? "这是该角色自己的记忆（回忆触发只读这一份），与全局记忆和其它角色隔离。编辑/清空只作用于本角色。"
             : "全局记忆注入每个角色的对话。AI 检测到你明确说出的可复用事实（称呼 / 偏好 / 背景）会自己记下来，并同步进当前角色的专属记忆。"}
         </p>
+
+        {/* 分板块标签（2026-10-30 记忆分层）：记忆会越来越多，按层分开才看得见也调得动。
+            标签上带**条数**（后端一次给齐 counts）—— 没有条数的分板块等于把一堆条目
+            藏进了抽屉，用户不知道哪一层是空的。 */}
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          <button
+            onClick={() => setMemLayer("")}
+            className={`rounded-full px-2.5 py-1 text-xs transition-colors ${
+              memLayer === ""
+                ? "bg-slate-700 text-white dark:bg-slate-200 dark:text-slate-900"
+                : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+            }`}
+          >
+            全部 {mem?.active_count ?? 0}
+          </button>
+          {CATEGORY_META.map((c) => {
+            const n = mem?.counts?.[c.key] ?? 0;
+            const on = memLayer === c.key;
+            return (
+              <button
+                key={c.key}
+                onClick={() => setMemLayer(on ? "" : c.key)}
+                title={c.hint}
+                className={`rounded-full px-2.5 py-1 text-xs transition-colors ${
+                  on
+                    ? "bg-slate-700 text-white dark:bg-slate-200 dark:text-slate-900"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                }`}
+              >
+                {c.label} {n}
+              </button>
+            );
+          })}
+        </div>
+        {/* 当前层的说明 + 注入开关：每层能单独决定"要不要每轮带上"（2026-10-30）。
+            这一行是"自动整理/注入"这类开关的落点 —— 用户抱怨的"看不到就没法调"就解在这里。 */}
+        {memLayer && (
+          <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800/50">
+            <span className="min-w-0 flex-1 text-11 text-slate-500 dark:text-slate-400">
+              {CATEGORY_META.find((c) => c.key === memLayer)?.hint}
+            </span>
+            <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-11 text-slate-600 dark:text-slate-300">
+              <input
+                type="checkbox"
+                checked={injectLayers.includes(memLayer)}
+                onChange={(e) => void toggleInjectLayer(memLayer, e.target.checked)}
+              />
+              每轮注入
+            </label>
+          </div>
+        )}
         {/* 自动提取的节奏：**一个**控件同时管"要不要自动跑"和"多久跑一次"（0 = 只留手动）。
             放在记忆卡而不是运行环境页 —— 它和「整理记忆」是同一件事的两个入口，
             而且这是一笔会自己发生的模型开销，得跟记忆本身同屏才看得见。 */}
@@ -639,6 +836,10 @@ export default function MemoryPage() {
                     {item.text}
                     <span className="mt-0.5 block text-10 text-slate-400 dark:text-slate-500">
                       {SOURCE_LABEL[item.source] ?? item.source}
+                      {" · "}
+                      {/* 层标签（记忆分层，2026-10-30）：用户要在"全部"视图里也能一眼看出
+                          这条属于哪一层 —— 否则分板块只是切了个视角，回来看仍是黑箱。 */}
+                      {CATEGORY_LABEL[item.category ?? "longterm"] ?? "长期记忆"}
                       {" · "}用过 {item.hit_count} 次
                       {item.pinned ? " · 已钉住" : ""}
                       {" · "}

@@ -58,7 +58,7 @@ def _invoke(tool: Any, command: str, cwd: str = "") -> str:
 
 
 def test_execute_success(task_dir: Path) -> None:
-    res = execute_command(f'{PY} -c "print(\'run-ok\')"', task_dir, timeout_seconds=30)
+    res = execute_command(f"{PY} -c \"print('run-ok')\"", task_dir, timeout_seconds=30)
     assert res.exit_code == 0
     assert "run-ok" in res.output
     assert res.duration_ms >= 0
@@ -71,21 +71,19 @@ def test_execute_failure_exit_code(task_dir: Path) -> None:
 
 def test_execute_timeout_returns_readable_result(task_dir: Path) -> None:
     """超时必须真的把进程树杀掉：duration 应接近 timeout，而不是等满整条命令。"""
-    res = execute_command(
-        f'{PY} -c "import time; time.sleep(30)"', task_dir, timeout_seconds=0.3
-    )
+    res = execute_command(f'{PY} -c "import time; time.sleep(30)"', task_dir, timeout_seconds=0.3)
     assert res.exit_code is None
     assert "未结束" in res.output
     # 上限要能区分"真杀了树"（这里量级是几百毫秒）与"等满 30s 的老 bug"，但**不能贴着**
-    # 几百毫秒卡：整条门禁并发跑 + 覆盖率插桩时，Windows 的进程树拆除实测到过 3212ms。
-    # 8s 仍然是 30s 的 1/4，牙齿没丢。
-    assert res.duration_ms < 8_000
+    # 实测值卡：整条门禁并发跑 + 覆盖率插桩时，Windows 的进程树拆除实测到过 3212ms；
+    # 而 2026-10-30 那趟门禁在更重的负载下量到 **8463ms** —— 上界挂在 8000ms 时那条
+    # 就会偶发红（单跑必绿、并发才红，典型的"机器忙"型脆弱断言）。
+    # 15s 仍是 30s 的一半：能区分"杀了树"与"等满"，牙齿没丢；再往上才是真的出问题了。
+    assert res.duration_ms < 15_000
 
 
 def test_execute_output_truncated(task_dir: Path) -> None:
-    res = execute_command(
-        f'{PY} -c "print(\'x\' * 200000)"', task_dir, timeout_seconds=30
-    )
+    res = execute_command(f"{PY} -c \"print('x' * 200000)\"", task_dir, timeout_seconds=30)
     assert res.exit_code == 0
     assert len(res.output) <= OUTPUT_MAX_BYTES + 200  # 截断 + 后缀说明
     assert res.output_bytes >= 200_000
@@ -148,7 +146,7 @@ def test_no_task_venv_keeps_system_path(task_dir: Path) -> None:
 def test_tool_executes_in_auto(task_dir: Path, db: Any) -> None:
     settings = Settings(run_approval="auto", run_tools_enabled=True, workspace_dir=str(task_dir))
     tool = make_run_tool(settings=settings, conn=db, dir_resolver=lambda: task_dir)
-    text = _invoke(tool, f'{PY} -c "print(\'auto-ran\')"', cwd="")
+    text = _invoke(tool, f"{PY} -c \"print('auto-ran')\"", cwd="")
     assert "auto-ran" in text
 
 
@@ -156,7 +154,7 @@ def test_tool_total_switch_off(task_dir: Path, db: Any) -> None:
     """总闸关闭：无论 auto/manual，一律返回可读的关闭说明，绝不执行。"""
     settings = Settings(run_approval="auto", run_tools_enabled=False, workspace_dir=str(task_dir))
     tool = make_run_tool(settings=settings, conn=db, dir_resolver=lambda: task_dir)
-    text = _invoke(tool, f'{PY} -c "print(\'nope\')"')
+    text = _invoke(tool, f"{PY} -c \"print('nope')\"")
     assert "关闭" in text
     assert "nope" not in text
 
@@ -178,17 +176,17 @@ def _manual_tool(task_dir: Path, db: Any) -> Any:
 
 def test_manual_submits_then_waits_for_decision(task_dir: Path, db: Any) -> None:
     tool = _manual_tool(task_dir, db)
-    text1 = _invoke(tool, f'{PY} -c "print(\'pending\')"')
+    text1 = _invoke(tool, f"{PY} -c \"print('pending')\"")
     assert "已提交审批" in text1
-    text2 = _invoke(tool, f'{PY} -c "print(\'pending\')"')
+    text2 = _invoke(tool, f"{PY} -c \"print('pending')\"")
     assert "等待审批" in text2
     approvals = ApprovalService(db)
-    assert approvals.status_of(f'{PY} -c "print(\'pending\')"') == "pending"
+    assert approvals.status_of(f"{PY} -c \"print('pending')\"") == "pending"
 
 
 def test_manual_rejected_is_terminal(task_dir: Path, db: Any) -> None:
     tool = _manual_tool(task_dir, db)
-    cmd = f'{PY} -c "print(\'rej\')"'
+    cmd = f"{PY} -c \"print('rej')\""
     text1 = _invoke(tool, cmd)
     assert "已提交审批" in text1
     approvals = ApprovalService(db)
@@ -203,7 +201,7 @@ def test_manual_rejected_is_terminal(task_dir: Path, db: Any) -> None:
 def test_manual_approved_history_replay(task_dir: Path, db: Any) -> None:
     """批准 → 后台执行完成后，工具同一命令应回放历史结果，绝不重复执行。"""
     tool = _manual_tool(task_dir, db)
-    cmd = f'{PY} -c "print(\'history-test\')"'
+    cmd = f"{PY} -c \"print('history-test')\""
     _invoke(tool, cmd)  # 提交
     approvals = ApprovalService(db)
     row = approvals.latest(cmd)
@@ -220,7 +218,7 @@ def test_manual_approved_history_replay(task_dir: Path, db: Any) -> None:
 def test_manual_approved_in_flight(task_dir: Path, db: Any) -> None:
     """刚批准、后台还没回填时：工具如实说执行中，而不是又提交一次。"""
     tool = _manual_tool(task_dir, db)
-    cmd = f'{PY} -c "print(\'flying\')"'
+    cmd = f"{PY} -c \"print('flying')\""
     _invoke(tool, cmd)
     approvals = ApprovalService(db)
     row = approvals.latest(cmd)
@@ -236,7 +234,7 @@ def test_manual_approved_in_flight(task_dir: Path, db: Any) -> None:
 def test_run_approval_execution_finishes_with_audit(task_dir: Path, db: Any) -> None:
     settings = Settings(run_approval="manual", workspace_dir=str(task_dir))
     approvals = ApprovalService(db)
-    cmd = f'{PY} -c "print(\'OUTPUT_BODY_TEXT\')"'
+    cmd = f"{PY} -c \"print('OUTPUT_BODY_TEXT')\""
     row = approvals.submit(cmd, cwd=str(task_dir))
     approvals.decide(row["id"], "approve", token=row["decide_token"])
     run_approval_execution(row["id"], settings=settings, conn=db)
@@ -260,7 +258,7 @@ def test_run_approval_execution_finishes_with_audit(task_dir: Path, db: Any) -> 
 def test_run_approval_execution_skips_rejected(task_dir: Path, db: Any) -> None:
     settings = Settings(run_approval="manual", workspace_dir=str(task_dir))
     approvals = ApprovalService(db)
-    row = approvals.submit(f'{PY} -c "print(\'never\')"', cwd=str(task_dir))
+    row = approvals.submit(f"{PY} -c \"print('never')\"", cwd=str(task_dir))
     approvals.decide(row["id"], "reject", token=row["decide_token"])
     run_approval_execution(row["id"], settings=settings, conn=db)
     assert approvals.get(row["id"])["status"] == "rejected"  # 拒绝是终态：不执行
