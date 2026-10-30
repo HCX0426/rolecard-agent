@@ -811,8 +811,23 @@ def _resolve_path(path: str) -> str:
     return path
 
 
-def _sample(path: str) -> Any:
-    """打一次端点，拿真实 JSON。失败就抛（不静默跳过 —— 静默跳过 = 生成物悄悄少一类）。"""
+#: 采样客户端的进程级缓存（审计快照（2026-10-31）#R1031-01）：**每个端点各建一次 app
+#: 是这一步 33s（CI 实测）的大头** —— create_app 全量装配 + 种子 + TestClient，×66 次
+#: 采样（33 端点 × 2 遍）全是重复劳动。同一趟 generate 里所有采样共享同一份种子状态，
+#: 装配一次就够：首次调用钉环境、建 app、种子、建 client，其后只付一次 GET 的钱。
+#: 环境钉子（SQLITE_PATH/CHROMA_PATH/UPDATE_CHECK_ENABLED/SHELL_RELEASE_DIR/DATA_ROOT）
+#: 与种子逻辑**逐行保留**原语义，只是从"每采样一次"改为"每进程一次"。
+#: 安全网是现成的：`--check` 把现形状与入库生成物逐字节比对，共享状态若改了任何形状
+#: （不该发生 —— 白名单全是只读 GET），check 当场红。
+_SAMPLE_CLIENT: Any = None
+
+
+def _get_sample_client() -> Any:
+    """首采建一次 app + TestClient（含全部环境钉子与种子），其后复用。"""
+    global _SAMPLE_CLIENT
+    if _SAMPLE_CLIENT is not None:
+        return _SAMPLE_CLIENT
+
     from fastapi.testclient import TestClient
 
     from rolecard_agent.api.main import create_app
@@ -836,7 +851,13 @@ def _sample(path: str) -> Any:
     app = create_app(sqlite_path=db_path)
     _seed_minimal_data(app)
     # `client=("127.0.0.1", 50000)`：**TCP 对端**设成回环 —— 本机来源护栏只认对端 IP。
-    client = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
+    _SAMPLE_CLIENT = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
+    return _SAMPLE_CLIENT
+
+
+def _sample(path: str) -> Any:
+    """打一次端点，拿真实 JSON。失败就抛（不静默跳过 —— 静默跳过 = 生成物悄悄少一类）。"""
+    client = _get_sample_client()
     resp = client.get(path)
     if resp.status_code != 200:
         raise RuntimeError(f"{path} 返回 {resp.status_code}：{resp.text[:200]}")

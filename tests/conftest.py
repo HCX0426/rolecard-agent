@@ -31,6 +31,12 @@ from rolecard_agent.domains.registry import domain_seed_roles
 from rolecard_agent.roles.service import RoleCards, RoleCardService
 from rolecard_agent.storage.db import bootstrap, connect
 
+# chromadb 自带的 Posthog 匿名遥测在测试会话里是真发网请求的（R1031-02 实测：Windows
+# runner 二跑日志里 httpcore WriteError ConnectionAbortedError 10053 —— 离线铁律把它
+# 掐断，但那套后台组件在每条 chroma 用例的 setup/teardown 都照起一遍，是叠加在
+# R102-41 偶发之上的一层无关并发噪声）。会话级关掉：与判据无关的变量少一个是一个。
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+
 # --------------------------------------------------------------------------- offline guard
 
 
@@ -348,6 +354,13 @@ def pytest_runtest_makereport(item: pytest.Item, call: Any) -> None:
     `tmp_path` 在会话收尾时就被回收了 —— 于是每次红完只剩同一句 `Nothing found on disk`，
     十五批取证批批从头。台账要的正是"一次带 chroma 侧状态的现场"（`R102-41`），这一步给它。
 
+    **R1031-03 心跳标记（2026-10-31）**：10-29/10-30 的每一次 CI 命中里，CI 都打印
+    "没有任何 r102-41 现场文件"——钩子在单元测试里直接调用能落盘（tests/unit/
+    test_chroma_flake_evidence.py 钉着），在真实 pytest 里却**一份现场都没落过**。
+    "钩子没被调用"与"被调用但没落盘"两种死法在日志里长得一模一样，十五批取证就是
+    这么批批从头的。入口先落一份心跳（带 worker 与阶段），让下次取证第一眼就能把
+    两种死法分开。
+
     **2026-10-09 改掉的两处（原来是两处叠着的缺陷，实测都在这发偶发身上）**：
 
     ① 从前有一句 `if call.when != "call": return`，理由是"setup 里的错通常是夹具自己的问题"。
@@ -363,6 +376,14 @@ def pytest_runtest_makereport(item: pytest.Item, call: Any) -> None:
        而它的解不是"两处各写一份判据"（判据早已共用），是让两处**读到语义相同的文本**：
        这里补上限定类名，与 pytest 打报告时的那一行同形。
     """
+    try:
+        BUILD_DIR.mkdir(parents=True, exist_ok=True)
+        (BUILD_DIR / "r102-41-hook-heartbeat.txt").write_text(
+            f"{item.nodeid} {call.when} worker={getattr(item.config, 'workerinput', 'serial')}\n",
+            encoding="utf-8",
+        )
+    except Exception:  # noqa: BLE001 - 心跳只服务取证，绝不反向影响测试本身
+        pass
     if call.excinfo is None:
         return
     exc = call.excinfo.value

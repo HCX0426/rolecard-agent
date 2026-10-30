@@ -252,10 +252,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: |
-            frontend/package-lock.json
-            shell/package-lock.json
+          # **npm 缓存刻意撤了（R1031-04，2026-10-31）**：run 41095489479 那趟「装 Node」
+          # 吞掉 10m01s —— 缓存恢复被 Azure 侧 "Egress is over the account limit"(503)
+          # 掐死之后 runner 又死寂 9m24s。这本是一次性故障，但把账算完发现缓存在健康时
+          # 只省 ~8s（npm ci 缓存 5s vs 冷装 13s），而偶发尾巴的期望 ≈ 33s/趟（18 趟
+          # 样本 1 见 × 600s+）——期望值为负，p95 更是被它单独污染。撤掉后这一步只剩
+          # runner 镜像内的 node 解包（~1s），长尾形状整个消失。uv 的两个缓存保留：
+          # 它们省的是 25~270s，期望值远为正。
 
       - name: 装依赖
         working-directory: frontend
