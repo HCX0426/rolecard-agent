@@ -70,6 +70,10 @@ _EXTRACT_PROMPT = (
     "`ADD` 后可以紧跟一个档号 `[0]`/`[1]`/`[2]`（不写就是 `[1]`）：`[2]` 只给**说错会伤人**的那类"
     "—— 过敏与禁忌、正在治的东西、住址与家人这类身份事实；`[0]` 给「顺便提了一句」的偏好。"
     "拿不准就别写档号。\n"
+    "`ADD` 后还可以再跟一个**层标签** `[self]`（可与档号同用，如 `ADD [2][self] …`）："
+    "`[self]` = 关于你自己或你们关系的、想在以后主动提起的事"
+    "（你答应过的话、你对用户的了解心得）；**不写 = 关于用户的长期事实**。"
+    "没有别的层名，拿不准就别写。\n"
     '编号见下面【已有条目】。**那份清单只用来看"是不是已经有了"和引用编号，'
     "不要把它的文字再抄成一条 ADD** —— 同义的事实不要重复 ADD。\n"
 )
@@ -86,9 +90,38 @@ _CONSOLIDATE_PROMPT = (
     "没有可整理的就只输出 NOOP。\n"
 )
 
-#: `ADD` 后面那个可选档号：`[2] 用户青霉素过敏`。写成可选是因为模型漏标是常态，
-#: 而漏标的正确后果是"按常规档 1 记"，不是"这条被丢掉"。
-_ADD = re.compile(r"^ADD\s*(?:\[(\d)\]\s*)?(.+)$", re.IGNORECASE)
+#: `ADD` 后面那串可选方括号元数据：档号 `[2]` 与层标签 `[self]`（见提取提示词）。
+#: **两个都写成可选**是因为模型漏标是常态，而漏标的正确后果是"按常规档 1 记、归
+#: 长期层"，不是"这条被丢掉"。解析用"扫完所有前导方括号"而不是固定顺序 —— 小模型
+#: 会把 `[self][2]` 写反，内容对就行，顺序不判。
+_ADD = re.compile(r"^ADD\s*(.+)$", re.IGNORECASE)
+_BRACKET = re.compile(r"^\[([^\]]*)\]\s*")
+
+
+def _parse_add_meta(rest: str) -> tuple[str | None, str, str]:
+    """`[2][self] 用户青霉素过敏` → (`'2'`, `'self'`, `'用户青霉素过敏'`）。
+
+    档号 = 单个数字；层标签 = `core.memory.MEMORY_CATEGORIES` 里的名字；**别的方括号
+    内容整段剥掉**（模型偶尔抄进别的标记，留着会进事实正文）。都不认 → (None, longterm)。
+    """
+    from rolecard_agent.core.memory import MEMORY_CATEGORIES
+
+    importance: str | None = None
+    layer = "longterm"
+    rest = " ".join(rest.split())
+    while True:
+        m = _BRACKET.match(rest)
+        if not m:
+            break
+        tag = m.group(1).strip().lower()
+        if len(tag) == 1 and tag.isdigit():
+            importance = tag
+        elif tag in MEMORY_CATEGORIES:
+            layer = tag
+        rest = rest[m.end() :]
+    return importance, layer, rest.strip()
+
+
 _UPDATE = re.compile(r"^UPDATE\s+(\d+)\s+(.+)$", re.IGNORECASE)
 _MERGE = re.compile(r"^MERGE\s+([\d,\s]+)\s+(.+)$", re.IGNORECASE)
 _INVALID = re.compile(r"^INVALID\s+(\d+)\s+(.*)$", re.IGNORECASE)
@@ -229,7 +262,7 @@ def extract(
             continue
         add = _ADD.match(text)
         if add:
-            proposed = " ".join(str(add.group(2)).split())
+            importance_raw, category, proposed = _parse_add_meta(str(add.group(1)))
             if is_echo(proposed, known):
                 # 小模型会把【已有条目】那份清单当素材抄回 ADD（实测：本地 8B 连跑三轮，
                 # added 11 → 9 → 8，桶里 26 条而 similar 已经 26）。丢掉纯回声是零信息损失的
@@ -242,7 +275,8 @@ def extract(
                 bucket=bucket,
                 text=proposed,
                 source=source,
-                importance=mem.clamp_importance(add.group(1)),
+                importance=mem.clamp_importance(importance_raw),
+                category=category,
             )
             if fresh is None:
                 report["skipped"] += 1

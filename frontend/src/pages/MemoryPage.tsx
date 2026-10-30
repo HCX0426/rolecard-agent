@@ -644,29 +644,27 @@ export default function MemoryPage() {
           </div>
         )}
         {/* 自动提取的节奏：**一个**控件同时管"要不要自动跑"和"多久跑一次"（0 = 只留手动）。
-            放在记忆卡而不是运行环境页 —— 它和「整理记忆」是同一件事的两个入口，
-            而且这是一笔会自己发生的模型开销，得跟记忆本身同屏才看得见。 */}
-        <label className="mt-2 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-          <span>每 N 轮自动提取一次</span>
+            2026-10-31 用户："这个有必要这么详细吗，摆很难看"——长说明收进悬停（title），
+            正文只留控件本身，文字与下拉同一行对齐。 */}
+        <div
+          className="mt-2 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400"
+          title="一次提取 = 一次模型调用，跑在回答已经出完之后（不影响对话，失败只留痕）"
+        >
+          <span className="shrink-0">每 N 轮模型调用完成后自动提取一次</span>
           <select
             value={cadence}
             disabled={!mem || extractBusy}
             onChange={(e) => void changeExtractCadence(e.target.value)}
             className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
           >
-            <option value="0">关闭（只留对话页的「提取精华」）</option>
+            <option value="0">关闭</option>
             <option value="6">每 6 轮</option>
-            <option value="12">每 12 轮（默认）</option>
+            <option value="12">每 12 轮</option>
             <option value="24">每 24 轮</option>
             {/* env 里设成了别的数（比如 8）时不能显示成"每 12 轮"—— 那是假回显。 */}
-            {!CADENCES.includes(cadence) && (
-              <option value={cadence}>每 {cadence} 轮（默认配置里的其它值）</option>
-            )}
+            {!CADENCES.includes(cadence) && <option value={cadence}>每 {cadence} 轮</option>}
           </select>
-          <span className="text-11 text-slate-400 dark:text-slate-500">
-            一次提取 = 一次模型调用，跑在回答已经出完之后（不影响对话，失败只留痕）
-          </span>
-        </label>
+        </div>
         {/* 逐条列表 = 事实面（后端按 近因×频次 排，钉住的在前）；下面的 textarea 只是同一批
             条目的"原文视图 + 整段覆写"，不是第二份记忆。 */}
         <div className="mt-2.5 flex gap-2">

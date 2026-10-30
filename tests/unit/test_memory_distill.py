@@ -295,6 +295,8 @@ def test_extract_reads_the_importance_marker(conn: SqlConnection) -> None:
     """`ADD [2] …` 那个档号进库变成显著性；漏标与越界都落在常规档，**不是丢掉那条**。
 
     钳制与默认都发生在 `memory.clamp_importance` 那一处（写它的来源有三条）。
+    2026-10-31 起（层标签协议）非数字的方括号内容**整段剥掉**、不进正文 —— 那多半是
+    模型想标档/标层没写对（`[很要紧]`），留着就是记忆里的一条噪音；档位照旧落常规。
     """
     model = FakeModel(
         "ADD [2] 用户青霉素过敏\nADD 用户住在苏州\nADD [9] 越界的档号\nADD [很要紧] 不是数字"
@@ -313,7 +315,7 @@ def test_extract_reads_the_importance_marker(conn: SqlConnection) -> None:
         "用户青霉素过敏": 2,
         "用户住在苏州": 1,
         "越界的档号": 2,
-        "[很要紧] 不是数字": 1,
+        "不是数字": 1,
     }
 
 
@@ -782,3 +784,61 @@ def test_extract_prompt_carries_top_k_not_the_whole_bucket(conn: SqlConnection) 
     assert out["ok"]
     assert out["report"]["existing_items"] <= distill._EXTRACT_TOP_K
     assert "生日在十月" in model.prompts[0], "最相关的候选不该被截掉"
+
+
+# ---------------------------------------------------------------- 提取的层标签
+#
+# 2026-10-31，用户："这些记忆应该是他自动记得，不是我说记哪些"——归层是**模型在写
+# 记忆那一刻**的事（市面上的记忆插件——Mem0 / LangMem / Letta——全是模型写时分类，
+# 用户只做事后策展），不是用户在面板上手动归档。`ADD [self] …` 就是这个动作的协议。
+
+
+def test_add_with_self_tag_lands_in_self_layer(conn: SqlConnection) -> None:
+    """`ADD [self] …` → 归角色自记层；不写层标签 → 长期层（默认）。"""
+    model = FakeModel("ADD [self] 我想以后主动提醒他交周报\nADD 用户住在上海")
+    distill.extract(
+        conn,
+        user_id=ME,
+        model=model,
+        bucket="elysia",
+        messages=[_Msg("human", "嗯"), _Msg("ai", "好")],
+    )
+    items = {
+        str(i["text"]): str(i["category"])
+        for i in mem.list_items(conn, user_id=ME, bucket="elysia")
+    }
+    assert items["我想以后主动提醒他交周报"] == "self"
+    assert items["用户住在上海"] == "longterm"
+
+
+def test_add_tags_are_order_insensitive_and_garbage_tags_are_stripped(conn: SqlConnection) -> None:
+    """档号与层标签**顺序不判**（小模型会写反）；认不出的方括号内容剥掉、不进正文。"""
+    model = FakeModel("ADD [self][2] 我答应帮他搬家\nADD [胡说] 用户有一只猫")
+    distill.extract(
+        conn,
+        user_id=ME,
+        model=model,
+        bucket="elysia",
+        messages=[_Msg("human", "嗯"), _Msg("ai", "好")],
+    )
+    items = {str(i["text"]): i for i in mem.list_items(conn, user_id=ME, bucket="elysia")}
+    self_item = items["我答应帮他搬家"]
+    assert self_item["category"] == "self"
+    assert int(self_item["importance"]) == 2
+    # 乱写的标签不进正文、也不改变归层（剥掉 → 默认长期层）
+    cat_item = items["用户有一只猫"]
+    assert cat_item["category"] == "longterm"
+    assert "胡说" not in str(cat_item["text"])
+
+
+def test_extract_prompt_teaches_the_layer_tag(conn: SqlConnection) -> None:
+    """提示词要教模型 `[self]` 的用法——没有教学，标签协议就只是一纸空文。"""
+    model = FakeModel("NOOP")
+    distill.extract(
+        conn,
+        user_id=ME,
+        model=model,
+        bucket="elysia",
+        messages=[_Msg("human", "嗯"), _Msg("ai", "好")],
+    )
+    assert "[self]" in model.prompts[0]
