@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useModalBehavior } from "../../hooks/useModalBehavior";
 
 import Button from "./Button";
 
@@ -8,7 +9,10 @@ import Button from "./Button";
  *
  *  `variant="drawer"` 是右侧抽屉（添加模型那种多步表单）：同样一套 ESC/遮罩/焦点逻辑，
  *  只是位置与宽度不同 —— 与其再造一个 Drawer 组件、把这套行为复制一遍，
- *  不如让"模态行为"只有一处实现（两处实现迟早各自漂移）。 */
+ *  不如让"模态行为"只有一处实现（两处实现迟早各自漂移）。
+ *  那一处实现自 2026-10-30 起是 `hooks/useModalBehavior`：审批/收件箱两扇 w-80
+ *  自绘头部的抽屉整迁 Modal 会动布局（头一行塞着清空/筛选按钮），但它们要的行为
+ *  与这里逐字相同 —— 行为与版式解耦，两边共用钩子。 */
 export default function Modal({
   open,
   onClose,
@@ -26,20 +30,10 @@ export default function Modal({
   closeOnOverlay?: boolean;
   variant?: "center" | "drawer";
 }) {
-  const panelRef = useRef<HTMLDivElement>(null);
   // 面板上是 `outline-none`：**故意的** —— 它是 `tabIndex={-1}` 的容器（只为 programmatic
   // focus），不是可聚焦控件；可聚焦的控件（按钮/输入/链接）在下面各自带 focus 反馈，
   // 模态里的 Tab 循环由浏览器原生行为承担。
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    panelRef.current?.focus();
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  const panelRef = useModalBehavior(open, onClose);
 
   if (!open) return null;
 

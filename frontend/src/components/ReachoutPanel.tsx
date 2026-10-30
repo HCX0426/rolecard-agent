@@ -13,7 +13,8 @@
 // 默认展开的规则偏向"别藏东西"：只有一条、或这一摞里有未读 → 直接摊开；
 // 只有**整摞都已读**才折起来 —— 折叠要解决的是旧消息糊成流水账，不是藏新消息。
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useModalBehavior } from "../hooks/useModalBehavior";
 import { api, type ReachoutsPage, type ReachoutRow } from "../api";
 import { formatUtcNaive } from "../lib/quiet";
 import QuietLine from "./QuietLine";
@@ -143,18 +144,9 @@ export default function ReachoutPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, roleFilter]);
 
-  // Esc 关闭 + 打开时聚焦面板：模态行为与 ui/Modal 同一套（整迁 Modal 的布局风险
-  // 见 ApprovalPanel 同款注释，2026-10-30 交互审计）。
-  const panelRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    panelRef.current?.focus();
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  // Esc 关闭 + 打开时聚焦：模态行为收进 hooks/useModalBehavior（与 ui/Modal 同一套
+  // 判据的唯一共享实现；整迁 Modal 的布局风险见 ApprovalPanel 同款注释）。
+  const panelRef = useModalBehavior(open, onClose);
 
   /** 删一行 = 只让这条投递记录从抽屉消失。**她说过的那句仍在对话里**，文案要说清这一点。 */
   async function removeRow(row: ReachoutRow) {

@@ -3,7 +3,8 @@
 // 每条：命令 + cwd + 提交角色 + 时间；pending 可 approve / reject，结果（done）可展开看输出。
 // 轮询在 App.tsx 侧，Panel 本身只在打开时拉一次最新列表；操作后原地更新。
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { useModalBehavior } from "../hooks/useModalBehavior";
 import {
   api,
   type ApprovalResult,
@@ -81,19 +82,9 @@ export default function ApprovalPanel({
       .catch((e) => setErr(`加载失败：${describeError(e)}`));
   }, [open, onPendingChange]);
 
-  // Esc 关闭 + 打开时聚焦面板：模态行为与 ui/Modal 同一套。这两个抽屉是 w-80 自绘头部
-  // （清空/筛选在头一行），整体迁 Modal 会动布局 —— 行为先补齐，整迁登记在交互审计
-  // 台账（2026-10-30）缓做。
-  const panelRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    panelRef.current?.focus();
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  // Esc 关闭 + 打开时聚焦：模态行为收进 hooks/useModalBehavior（与 ui/Modal 同一套
+  // 判据的唯一共享实现；这两个抽屉是 w-80 自绘头部，整迁 Modal 会动布局）。
+  const panelRef = useModalBehavior(open, onClose);
 
   async function decide(row: ApprovalRow, decision: "approve" | "reject") {
     if (row.status !== "pending") return;
