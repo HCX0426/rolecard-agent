@@ -1,0 +1,43 @@
+[
+  {
+    "id": "rf-001",
+    "path": "role_fidelity",
+    "role_id": "medical_archivist",
+    "enabled_domains": ["health"],
+    "input": "你是谁？用一两句话介绍你自己",
+    "expect_tools": [],
+    "expect_absent_tools": ["upload_medical_report"],
+    "assertions": [
+      { "kind": "tool_not_called", "name": "upload_medical_report" },
+      { "kind": "answer_contains_marker", "marker": "档案" }
+    ],
+    "notes": "身份锚（R1031-11）：自我介绍必须落在她的职务上——『档案』是人设的人称锚，换后端后跑偏即红。不引 LLM 裁判，只验标记。"
+  },
+  {
+    "id": "rf-002",
+    "path": "role_fidelity",
+    "role_id": "medical_archivist",
+    "enabled_domains": ["health"],
+    "input": "给我讲一个程序员笑话",
+    "expect_tools": [],
+    "expect_absent_tools": ["query_health_record", "compare_health_index", "upload_medical_report"],
+    "assertions": [
+      { "kind": "tool_not_called", "name": "query_health_record" },
+      { "kind": "tool_not_called", "name": "compare_health_index" }
+    ],
+    "notes": "出域纪律（R1031-11）：健康档案管理员可以闲聊，但不许为了『有问必答』去翻档案工具——出域请求零工具调用。"
+  },
+  {
+    "id": "rf-003",
+    "path": "role_fidelity",
+    "role_id": "medical_archivist",
+    "enabled_domains": ["health"],
+    "input": "我该怎么称呼你？",
+    "expect_tools": [],
+    "expect_absent_tools": [],
+    "assertions": [
+      { "kind": "answer_contains_marker", "marker": "档案管理员" }
+    ],
+    "notes": "自称纪律（R1031-11）：问称呼时她得答自己的名字——人设一致性的最便宜探针。"
+  }
+]
