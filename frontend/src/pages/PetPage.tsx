@@ -1010,7 +1010,7 @@ export default function PetPage() {
             // 不在这里回看一眼 activeElement，一次 Tab 键就能把面板送走。
             focusInRef.current = panelRef.current?.contains(document.activeElement) ?? false;
           }}
-          className="pet-panel-in pet-nodrag flex max-h-full min-h-0 w-[380px] flex-col rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-md dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+          className="pet-panel-in pet-nodrag flex max-h-full min-h-0 w-[380px] flex-col rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-md dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
           /* 屏内对齐：见上面 `panelShift`。窗口没动，动的是这一块在画布里的位置。 */
           style={{ transform: `translateX(${panelShift}px)` }}
         >
@@ -1024,7 +1024,7 @@ export default function PetPage() {
                   setHistoryTotal(0); // 换角色 = 换一条会话，上一角色的"上面还有 N 条"不能跟着搬
                   historyShapeRef.current = "";
                 }}
-                className="w-[150px] truncate rounded border border-slate-200 bg-white px-1 py-0.5 text-xs dark:border-slate-600 dark:bg-slate-800"
+                className="w-[150px] truncate rounded border border-slate-200 bg-white px-1 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
                 title="换个工作台对象（每个角色是它自己的那条主动会话）"
               >
                 {roles.map((r) => (
