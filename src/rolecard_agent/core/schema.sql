@@ -57,6 +57,13 @@ CREATE TABLE IF NOT EXISTS session_thread (
     -- "this capability is offline" instead of raising (docs/07 C14).
     tool_epoch       INTEGER NOT NULL DEFAULT 1,
     title            TEXT,
+    -- 用户侧最后一次**说话/动消息**的时刻（chat 轮 / 编辑重发 / 删消息 / 上传说明）。
+    -- 与 updated_at 分列的理由（2026-10-30 引擎审计 #2）：主动开口的"他连着没回"退避
+    -- 指数拿 updated_at 当锚点，而**投递成功自己也 touch updated_at** —— 每投一条就把
+    -- 那条自己抹出计数窗口，正常角色 streak 恒 0、退避永不生效。重命名/改模型照旧只推
+    -- updated_at（间隔档吃它，见 quiet.py 的既定取舍）。NULL = 本列上线前从没用户活动，
+    -- 锚点回退 created_at（线建立那刻）。旧库由 reconcile_columns 自动补列。
+    user_activity_at TIMESTAMP,
     created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

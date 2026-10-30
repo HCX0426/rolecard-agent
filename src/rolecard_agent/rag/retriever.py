@@ -30,7 +30,7 @@ from array import array
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from rolecard_agent.base.observability import TraceEvent, timer
 from rolecard_agent.config import Settings
@@ -85,9 +85,15 @@ def chunk_text(text: str, *, size: int = _CHUNK_SIZE, overlap: int = _CHUNK_OVER
     buf = ""
     for para in paragraphs:
         if len(para) > size:  # 超长段落硬切（带重叠）
+            # 先把手上攒着的 buf 落成块再切：从前这里直接 `buf = ""`，把此前所有
+            # 未成块的小段落**整缓冲丢弃**（docstring 宣称"按段落优先、长度兜底"，
+            # 实测 'A\n\nB\n\n<600字段>' ⇒ A/B 双双不进索引，检索永远查不到它们，
+            # 且没有任何声音。2026-10-30 引擎审计 #1，真数据丢失级）。
+            if buf.strip():
+                chunks.append(buf)
+            buf = ""
             for i in range(0, len(para), size - overlap):
                 chunks.append(para[i : i + size])
-            buf = ""
             continue
         if buf and len(buf) + len(para) + 2 > size:
             chunks.append(buf)
@@ -207,7 +213,24 @@ class SiliconFlowEmbedder(Embedder):
                 res = self._client.post("/embeddings", json={"model": self._model, "input": texts})
                 res.raise_for_status()
                 payload = res.json()
-                return [item["embedding"] for item in payload["data"]]
+                data = payload["data"]
+                # 按响应自带的 index 落位（审计 #3 顺带项）：从前按数组顺序取，
+                # provider 乱序返回时向量会配错分块 —— 半份静默错索引比不入库更坏。
+                # 全部条目都带合法 index 才按 index 排；缺 index 的响应退回数组序
+                # （老行为 —— 部分兼容实现不发 index，按序是唯一信号）。
+                if len(data) == len(texts) and all(
+                    isinstance(item.get("index"), int) and 0 <= int(item["index"]) < len(texts)
+                    for item in data
+                ):
+                    placed: list[list[float] | None] = [None] * len(texts)
+                    for item in data:
+                        placed[int(item["index"])] = item["embedding"]
+                    if any(vec is None for vec in placed):
+                        raise RuntimeError("嵌入响应 index 有重复/缺位")
+                    return [cast("list[float]", vec) for vec in placed]
+                if len(data) != len(texts):
+                    raise RuntimeError(f"嵌入响应条数不符：{len(data)} 条 / 期望 {len(texts)} 条")
+                return [item["embedding"] for item in data]
             except Exception as exc:  # noqa: BLE001 - 网络/HTTP/解析失败一视同仁地重试
                 last = exc
                 if attempt < _EMBED_RETRIES:
@@ -215,7 +238,6 @@ class SiliconFlowEmbedder(Embedder):
         raise EmbedError(
             f"嵌入请求失败（{len(texts)} 条文本，重试 {_EMBED_RETRIES} 次后仍失败）：{last}"
         )
-
 
     def close(self) -> None:
         """M1：释放 httpx.Client 连接（rebuild 旧实例此前从不关闭，累积 fd/连接泄漏）。"""
@@ -303,10 +325,15 @@ class SiliconFlowReranker:
             results = res.json().get("results") or []
             if not results:
                 return None
-            return [(int(r["index"]), float(r["relevance_score"])) for r in results]
+            pairs = [(int(r["index"]), float(r["relevance_score"])) for r in results]
+            # index 是网关原样回传的字段 —— 形状漂移（越界/负数）时调用侧
+            # `hits[i]` 会直接 IndexError 把整轮检索炸成 500，而本类的契约是
+            # "重排失败不抛出、回退向量序"（2026-10-30 引擎审计 #3）。
+            if any(i < 0 for i, _ in pairs):
+                return None
+            return pairs
         except Exception:  # noqa: BLE001 - 重排失败 = 降级，不是故障
             return None
-
 
     def close(self) -> None:
         """M1：释放 httpx.Client 连接。"""
@@ -759,6 +786,10 @@ class KnowledgeBase:
         with timer() as t_rerank:
             if self._reranker is not None and len(hits) > 1:
                 reranked = self._reranker.rerank(query, [h.text for h in hits])
+                # 越界 index 同样按"重排失败"降级（审计 #3 的消费侧兜底：自定义
+                # 重排器/替身不受 SiliconFlowReranker 那道入口校验，契约在应用处收）。
+                if reranked is not None and not all(0 <= i < len(hits) for i, _ in reranked):
+                    reranked = None
                 if reranked is not None:
                     hits = [hits[i] for i, _ in reranked]
                     reranked_flag = True
@@ -826,8 +857,7 @@ class KnowledgeBase:
         }
         for label, pct in (("p50", 50), ("p95", 95), ("p99", 99)):
             out[label] = {
-                stage: _percentile([s[stage] for s in snapshot], pct)
-                for stage in _LATENCY_STAGES
+                stage: _percentile([s[stage] for s in snapshot], pct) for stage in _LATENCY_STAGES
             }
         return out
 
@@ -896,11 +926,20 @@ class KnowledgeBase:
 
         删除失败**必须抛出**：吞掉异常会让调用方以为清空了（审计都写了），而集合还在
         —— "以为删了"的状态比失败难查得多（审查报告 P2）。
+        例外：**"集合本来就不在"按幂等成功**（2026-10-30 引擎审计 #8）—— 半途失败
+        （集合删了、投影清理抛了）后按提示再点一次「重建」，从前 chroma 对不存在的
+        集合再删抛 NotFoundError，界面显示"重建失败"，卡死在无法重试的形状，
+        而索引其实早清干净了。
         """
-        self._client.delete_collection(name=scope)
+        try:
+            self._client.delete_collection(name=scope)
+        except Exception as exc:  # noqa: BLE001 - 只放行"集合不存在"这一种（R102-04 同判据）
+            if not _missing_collection(exc):
+                raise
         self._invalidate_collection(scope)
         if self._sources is not None:
-            # 投影半边（`R102-55`）：集合整个没了，来源清单也清空（同样不吞异常）。
+            # 投影半边（`R102-55`）：集合整个没了，来源清单也清空（同样不吞异常 ——
+            # 它失败时上面那条幂等判据保证用户再点一次能走通）。
             self._sources.forget_scope(scope)
 
 

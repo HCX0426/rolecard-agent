@@ -52,16 +52,13 @@ def _utc_from_db(raw: object) -> datetime | None:
 
 def _last_reachout_utc(conn: SqlConnection, role_id: str, *, user_id: str) -> datetime | None:
     row = conn.execute(
-        "SELECT MAX(created_at) AS at FROM agent_reachout"
-        " WHERE role_id = ? AND user_id = ?",
+        "SELECT MAX(created_at) AS at FROM agent_reachout WHERE role_id = ? AND user_id = ?",
         (role_id, user_id),
     ).fetchone()
     return _utc_from_db(None if row is None else row["at"])
 
 
-def _lane_activity_utc(
-    conn: SqlConnection, role_id: str, *, user_id: str
-) -> datetime | None:
+def _lane_activity_utc(conn: SqlConnection, role_id: str, *, user_id: str) -> datetime | None:
     """对方在那条主动会话里**最后一次有动静**的时刻（任何一轮都会推 `session_thread.updated_at`）。
     线程还不存在给 None（这条线从没建立过 = 无从判断他回没回）。
     """
@@ -72,9 +69,24 @@ def _lane_activity_utc(
     return None if lane is None else _utc_from_db(lane["updated_at"])
 
 
-def _last_speech_utc(
-    conn: SqlConnection, role_id: str, *, user_id: str
-) -> datetime | None:
+def _lane_user_activity_utc(conn: SqlConnection, role_id: str, *, user_id: str) -> datetime | None:
+    """**用户侧**最后一次动消息的时刻（退避计数的锚点；`user_activity_at` 只由
+    chat 轮 / 编辑重发 / 删消息 / 上传说明刷，投递路径不碰）。
+
+    为什么不能拿 `updated_at` 当这个锚点（2026-10-30 引擎审计 #2）：投递成功自己也
+    touch updated_at —— 每投一条就把她自己那句话"晚一点"，那条开口立刻不再满足
+    `created_at > 锚点`，"她连发三条而他一条没回"这个最该退避的形状在正常角色上
+    streak 恒 0、指数退避永不生效。列还没值（旧库/新线）回退 created_at（线建立那刻）。
+    """
+    lane = conn.execute(
+        "SELECT COALESCE(user_activity_at, created_at) AS at FROM session_thread "
+        "WHERE thread_id = ?",
+        (proactive_thread_id(role_id, user_id=user_id),),
+    ).fetchone()
+    return None if lane is None else _utc_from_db(lane["at"])
+
+
+def _last_speech_utc(conn: SqlConnection, role_id: str, *, user_id: str) -> datetime | None:
     """她上一次**在这条线里说话**的时刻 —— 主动开口和**回答用户**都算，取较新那个。
 
     为什么必须算上回答（09-26 用户报的"我还没回话她就换了话题"）：间隔档原先只盯
@@ -98,16 +110,16 @@ def _last_speech_utc(
     return max(reach, chat)
 
 
-def _unreplied_streak(
-    conn: SqlConnection, role_id: str, *, user_id: str
-) -> int:
+def _unreplied_streak(conn: SqlConnection, role_id: str, *, user_id: str) -> int:
     """她主动开口之后、对方**一个字都没回**的那几条 —— 退避指数用的就是它。
 
     为什么不用现成的 `unread`（09-26）：`mark_all_read` 的口径是用户 09-23 拍的"我点进对话
     界面了就算都看过"，于是他只要打开过一次控制台，未读数就归零、退避失效 ——
     "她连着冒了三条而我一条没回"这种最该退避的情形，在库里恰恰表现为 unread = 0。
-    这一条不读状态列，只比时刻：`agent_reachout.created_at > 那条会话最后一次活动`。
-    他回过一句话就会把 `updated_at` 推过那些开口 ⇒ 计数自然归零。
+    这一条不读状态列，只比时刻：`agent_reachout.created_at > 那条会话最后一次**用户侧**活动`。
+    他回过一句话就会把 `user_activity_at` 推过那些开口 ⇒ 计数自然归零。
+    （锚点为什么不是 `updated_at`：投递自己也 touch 它，会把"他没回"的窗口自己抹掉 ——
+    审计 #2 的根修；判据见 `_lane_user_activity_utc`。）
     （**封顶那一道仍然看 `unread`**，两种信号各有出口：划掉抽屉里的行能立刻解掉封顶，
     却解不掉"他没回话" —— 后者只把间隔拉长，不会把她永久关在门外。）
 
@@ -117,7 +129,7 @@ def _unreplied_streak(
     用 `julianday` 而不是直接比字符串：那两列虽然都是 ISO 形状，但 `TIMESTAMP` 声明在
     SQLite 里落进 NUMERIC 亲和，跨亲和的文本比较不是这里要的语义；换成数就只有一种读法。
     """
-    lane = _lane_activity_utc(conn, role_id, user_id=user_id)
+    lane = _lane_user_activity_utc(conn, role_id, user_id=user_id)
     if lane is None:
         return 0
     row = conn.execute(

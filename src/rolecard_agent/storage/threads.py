@@ -76,6 +76,25 @@ def touch_thread(conn: SqlConnection, thread_id: str) -> None:
     conn.execute(_TOUCH_SQL, (thread_id,))
 
 
+def touch_user_activity(conn: SqlConnection, thread_id: str) -> None:
+    """用户侧动消息（chat 轮 / 编辑重发 / 删消息 / 上传说明）：同时刷 updated_at 与
+    `user_activity_at`，**当场提交**。后者是主动开口退避的锚点 —— **投递不许碰它**
+    （审计 #2：投递自己 touch updated_at 会把"他没回"的计数窗口自己抹掉）。
+
+    自己收口（`touch_thread` 不）的理由：chat 那一处它排在流式响应**之前** —— 挂在
+    请求连接的事务里不提交，整条流期间连接都持着写锁，后台提取线程开新连接直接
+    "database is locked"（改时实测）。
+    """
+    conn.execute(
+        "UPDATE session_thread SET "
+        "updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now'), "
+        "user_activity_at = strftime('%Y-%m-%d %H:%M:%f', 'now') "
+        "WHERE thread_id = ?",
+        (thread_id,),
+    )
+    conn.commit()
+
+
 def message_count(conn: SqlConnection, thread_id: str) -> int | None:
     """冗余计数的现值；NULL = 从未对账（旧会话 / 没人维护过）。"""
     row = conn.execute(
@@ -348,9 +367,10 @@ def thread_row(conn: SqlConnection, thread_id: str) -> Any | None:
 
 def thread_exists(conn: SqlConnection, thread_id: str) -> bool:
     """这条会话在不在（**只问存在**：主动面板那句"有没有历史"用，不建行也不取列）。"""
-    return conn.execute(
-        "SELECT 1 FROM session_thread WHERE thread_id = ?", (thread_id,)
-    ).fetchone() is not None
+    return (
+        conn.execute("SELECT 1 FROM session_thread WHERE thread_id = ?", (thread_id,)).fetchone()
+        is not None
+    )
 
 
 def thread_display_state(conn: SqlConnection, thread_id: str) -> Any | None:

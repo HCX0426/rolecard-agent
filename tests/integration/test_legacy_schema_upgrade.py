@@ -87,9 +87,7 @@ def test_legacy_db_boots_without_error(commit: str, tmp_path: Path) -> None:
     missing_before = sorted(set(_declared()) - _tables(conn))
     assert missing_before, f"{commit} 那份形状不该已经是新库"
 
-    applied = bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN
-    )
+    applied = bootstrap(conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
 
     assert applied, "一个 schema 文件都没应用 = 静默跳过了建表"
     conn.close()
@@ -100,7 +98,9 @@ def test_upgraded_columns_match_declaration(commit: str, tmp_path: Path) -> None
     """逐表断言"声明里有的列，升完都在"。漏一处 ALTER 从此在这里红。"""
     conn = _build_legacy(commit, tmp_path / "app.db")
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
 
     declared = _declared()
@@ -120,13 +120,14 @@ def test_upgrade_keeps_existing_rows_and_fills_defaults(tmp_path: Path) -> None:
     """
     conn = _build_legacy("14cb9db", tmp_path / "app.db")
     conn.execute(
-        "INSERT INTO role_card (role_id, role_name, system_prompt)"
-        " VALUES ('u', '旧卡', '旧设定')"
+        "INSERT INTO role_card (role_id, role_name, system_prompt) VALUES ('u', '旧卡', '旧设定')"
     )
     conn.commit()
 
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
 
     row = conn.execute(
@@ -140,9 +141,9 @@ def test_upgrade_keeps_existing_rows_and_fills_defaults(tmp_path: Path) -> None:
         1,
     ), "新列没按 schema.sql 声明的默认值落地"
     # 出厂静默这一条必须是 0：默认给成 1 就等于替用户打开了主动开口。
-    assert conn.execute(
-        "SELECT COUNT(*) FROM role_card WHERE reachout_enabled = 1"
-    ).fetchone()[0] == 0
+    assert (
+        conn.execute("SELECT COUNT(*) FROM role_card WHERE reachout_enabled = 1").fetchone()[0] == 0
+    )
     conn.close()
 
 
@@ -174,15 +175,16 @@ def test_migration_conserves_rows_of_the_tables_it_must_keep(tmp_path: Path) -> 
     conn = _build_legacy("14cb9db", tmp_path / "app.db")
     # 造一行"老库里真有数据"的现场
     conn.execute(
-        "INSERT INTO role_card (role_id, role_name, system_prompt)"
-        " VALUES ('u', '旧卡', '旧设定')"
+        "INSERT INTO role_card (role_id, role_name, system_prompt) VALUES ('u', '旧卡', '旧设定')"
     )
     conn.commit()
     before = {t: _rows(conn, t) for t in CONSERVED_TABLES if t in _tables(conn)}
     assert before, "这份老形状里一张守恒表都没有 = 这条断言在空转"
 
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
 
     after = {t: _rows(conn, t) for t in before}
@@ -199,7 +201,9 @@ def test_legacy_extra_columns_survive(tmp_path: Path) -> None:
     conn = _build_legacy("14cb9db", tmp_path / "app.db")
     before = _cols(conn, "medical_report")
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
     assert before <= _cols(conn, "medical_report")
     conn.close()
@@ -209,11 +213,15 @@ def test_bootstrap_is_idempotent_on_a_legacy_db(tmp_path: Path) -> None:
     """同一个老库连升两次不许红（真实场景：进程重启每次都跑 bootstrap）。"""
     conn = _build_legacy("03631c6", tmp_path / "app.db")
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
     first = {t: _cols(conn, t) for t in _tables(conn)}
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
     assert {t: _cols(conn, t) for t in _tables(conn)} == first
     conn.close()
@@ -227,10 +235,14 @@ def test_reconcile_adds_a_column_that_only_the_declaration_has(tmp_path: Path) -
     db = tmp_path / "app.db"
     fresh = connect(db)
     bootstrap(
-        fresh, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        fresh,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
-    fresh.execute("INSERT INTO role_card (role_id, role_name, system_prompt, description)"
-                  " VALUES ('r', 'n', 'p', '这段说明')")
+    fresh.execute(
+        "INSERT INTO role_card (role_id, role_name, system_prompt, description)"
+        " VALUES ('r', 'n', 'p', '这段说明')"
+    )
     fresh.commit()
     fresh.close()
 
@@ -255,7 +267,9 @@ def test_shape_migrated_tables_are_left_to_migrate(tmp_path: Path) -> None:
     db = tmp_path / "app.db"
     conn = connect(db)
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
     conn.execute("DROP TABLE model_backend")
     conn.execute(
@@ -284,7 +298,9 @@ def test_legacy_usage_rows_become_the_local_identity(tmp_path: Path) -> None:
     db = tmp_path / "app.db"
     conn = connect(db)
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
     conn.execute("DROP TABLE token_usage_day")
     conn.execute(
@@ -301,10 +317,14 @@ def test_legacy_usage_rows_become_the_local_identity(tmp_path: Path) -> None:
     conn.commit()
     # 再 bootstrap 一次 = 走一遍 _migrate（幂等前提：新库再跑一遍也不许动）
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
 
     row = conn.execute(
@@ -316,9 +336,7 @@ def test_legacy_usage_rows_become_the_local_identity(tmp_path: Path) -> None:
         "x",
     ), "旧行被重建丢了 / 归属错了"
     assert (row["calls"], row["prompt_tokens"]) == (3, 42), "旧数据没跟着搬到新形状"
-    pk = [
-        r[1] for r in conn.execute("PRAGMA table_info(token_usage_day)") if r[5] > 0
-    ]
+    pk = [r[1] for r in conn.execute("PRAGMA table_info(token_usage_day)") if r[5] > 0]
     assert pk == ["day", "user_id", "backend"], f"主键没升到 (day,user_id,backend)：{pk}"
     conn.close()
 
@@ -335,7 +353,9 @@ def test_ocr_builtin_row_renames_from_paddle(tmp_path: Path) -> None:
     db = tmp_path / "app.db"
     conn = connect(db)
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
     # 造出换引擎之前的形态。**注意 `bootstrap` 不播种**（播种在装配根的 `seed_once`），
     # 所以旧行必须自己插 —— 用 UPDATE 去改一条不存在的行会得到"0 行被改"，用例于是断言
@@ -349,7 +369,9 @@ def test_ocr_builtin_row_renames_from_paddle(tmp_path: Path) -> None:
     conn.commit()
 
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
     # 幂等：第二遍不许造出第二行
     bootstrap(conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
@@ -371,11 +393,13 @@ def test_ocr_builtin_row_renames_from_paddle(tmp_path: Path) -> None:
     )
     conn.commit()
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
-    ids = [str(r[0]) for r in conn.execute(
-        "SELECT id FROM service_endpoint WHERE category = 'ocr'"
-    )]
+    ids = [
+        str(r[0]) for r in conn.execute("SELECT id FROM service_endpoint WHERE category = 'ocr'")
+    ]
     assert ids == ["rapidocr"], f"残留的 paddle 行没被清掉：{ids}"
 
 
@@ -419,9 +443,7 @@ def test_semantic_endpoints_swap_to_cloud_first_on_upgrade(tmp_path: Path) -> No
             )
         ]
         local_id = "hash" if category == "embedding" else "off"
-        assert order == [("siliconflow", 0), (local_id, 1)], (
-            f"{category} 没升成云端先行：{order}"
-        )
+        assert order == [("siliconflow", 0), (local_id, 1)], f"{category} 没升成云端先行：{order}"
     # OCR 是隐私红线档，本地先行本来就对 —— 不许被这一步碰
     ocr = conn.execute(
         "SELECT id, sort_order FROM service_endpoint WHERE category = 'ocr'"
@@ -453,8 +475,7 @@ def test_semantic_endpoint_swap_respects_operator_choices(tmp_path: Path) -> Non
         conn.execute("DELETE FROM service_endpoint")
         conn.execute(
             "INSERT INTO service_endpoint (category, id, kind, ref_backend, enabled, sort_order,"
-            " builtin) VALUES"
-            + factory.format(sf_en=sf_enabled, sf_ord=sf_order)
+            " builtin) VALUES" + factory.format(sf_en=sf_enabled, sf_ord=sf_order)
         )
         conn.commit()
         bootstrap(conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
@@ -473,9 +494,7 @@ def test_semantic_endpoint_swap_respects_operator_choices(tmp_path: Path) -> Non
     )
     conn.commit()
     bootstrap(conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
-    rows = conn.execute(
-        "SELECT id FROM service_endpoint WHERE category = 'embedding'"
-    ).fetchall()
+    rows = conn.execute("SELECT id FROM service_endpoint WHERE category = 'embedding'").fetchall()
     assert [str(r["id"]) for r in rows] == ["hash"], "只剩本地行的形态被改动了"
     conn.close()
 
@@ -490,7 +509,9 @@ def test_reference_shape_service_endpoint_gains_a_scoped_owner(tmp_path: Path) -
     db = tmp_path / "app.db"
     conn = connect(db)
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
     # 造出 B1b 之前的引用形态：无 user_id 列、带 chat 引用 + 一条能力端点。
     conn.execute("DROP TABLE service_endpoint")
@@ -511,20 +532,20 @@ def test_reference_shape_service_endpoint_gains_a_scoped_owner(tmp_path: Path) -
 
     # 再 bootstrap 一次走 _migrate（幂等前提：新库再跑一遍也不许动）
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
 
     rows = conn.execute("SELECT category, id, user_id FROM service_endpoint").fetchall()
     owner = {str(r["id"]): str(r["user_id"]) for r in rows if str(r["category"]) == "chat"}
     assert owner == {"local": "local-user"}, f"chat 引用行没回填本机主人：{owner}"
-    cap = {
-        str(r["id"]): r["user_id"]
-        for r in rows
-        if str(r["category"]) != "chat"
-    }
+    cap = {str(r["id"]): r["user_id"] for r in rows if str(r["category"]) != "chat"}
     assert cap == {"hash": None}, f"能力行被误标主人 / 丢了：{cap}"
     # 升级后的读侧：单身份照常解析出自己的对话默认（这是"逐字节不变"的最短断言）。
     svc = ModelSettingsService(conn)
@@ -542,7 +563,9 @@ def _b2_legacy_shape(tmp_path: Path) -> tuple[Path, sqlite3.Connection]:
     db = tmp_path / "app.db"
     conn = connect(db)
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
     conn.execute("DROP TABLE role_proactive_state")
     conn.execute(
@@ -557,9 +580,7 @@ def _b2_legacy_shape(tmp_path: Path) -> tuple[Path, sqlite3.Connection]:
         " VALUES ('she', 2.5), ('general_assistant', 0.0)"
     )
     # session_thread.user_id 是外键：先种上主人与本机那份演示身份（同两身份夹具的做法）。
-    conn.execute(
-        "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('local', '本机')"
-    )
+    conn.execute("INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('local', '本机')")
     conn.execute(
         "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name)"
         " VALUES ('local-user', 'local', '本机主人')"
@@ -605,7 +626,9 @@ def test_a_declared_column_on_a_shape_migrated_table_still_gets_added(
     db = tmp_path / "app.db"
     conn = connect(db)
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
     assert column in _cols(conn, table), f"{table} 没有声明 {column}，这条用例的夹具是空的"
     conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
@@ -613,7 +636,9 @@ def test_a_declared_column_on_a_shape_migrated_table_still_gets_added(
     assert column not in _cols(conn, table)
 
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
 
     assert column in _cols(conn, table), (
@@ -644,7 +669,9 @@ def test_the_thread_rename_follows_every_table_that_holds_thread_id(tmp_path: Pa
     conn.commit()
 
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
 
     NEW = "s_proactive_local-user_she"
@@ -665,7 +692,9 @@ def test_the_thread_rename_follows_every_table_that_holds_thread_id(tmp_path: Pa
     assert old_left == 0
     # 幂等：再跑一次不许把已带身份的 id 改成带两个身份段。
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
     again = [str(r["thread_id"]) for r in conn.execute("SELECT thread_id FROM command_approval")]
     assert again == [NEW], f"再跑一次把已带身份的 id 改坏了：{again}"
@@ -684,7 +713,9 @@ def test_a_legacy_upgrade_leaves_the_capability_flags_unmeasured(tmp_path: Path)
     db = tmp_path / "app.db"
     conn = connect(db)
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
     conn.execute("DROP TABLE model_backend")
     conn.execute(
@@ -696,7 +727,9 @@ def test_a_legacy_upgrade_leaves_the_capability_flags_unmeasured(tmp_path: Path)
     conn.commit()
     # 第二次启动才走得到形态判定与搬层（第一次建的是新库形状）
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
 
     row = conn.execute(
@@ -712,7 +745,7 @@ def test_a_legacy_upgrade_leaves_the_capability_flags_unmeasured(tmp_path: Path)
 
 
 @pytest.mark.parametrize(
-    ("commit", "expected_missing"), [("14cb9db", 17), ("03631c6", 14)], ids=lambda v: str(v)
+    ("commit", "expected_missing"), [("14cb9db", 18), ("03631c6", 15)], ids=lambda v: str(v)
 )
 def test_audited_shortfall_is_still_the_shortfall(
     commit: str, expected_missing: int, tmp_path: Path
@@ -727,7 +760,9 @@ def test_audited_shortfall_is_still_the_shortfall(
     2026-10-05 的镜像探针列给 `session_thread` 加了 `message_count`（可空，全量读对账）
     ⇒ **15 / 12、合计 27**（2026-10-04 审查快照「5 秒贵探针」那条）。
     2026-10-24 的固定时刻问候给 `role_card` 加了 `greeting_at`（可空，2a）⇒ **16 / 13、合计 29**；
-    2026-10-25 的角色强调色又加 `accent`（可空，玻璃重设计）⇒ **17 / 14、合计 31**。
+    2026-10-25 的角色强调色又加 `accent`（可空，玻璃重设计）⇒ **17 / 14、合计 31**；
+    2026-10-30 的退避锚点给 `session_thread` 加了 `user_activity_at`（可空，引擎审计 #2）
+    ⇒ **18 / 15、合计 33**。
     （这两个数只在测试与这份 docstring 里；审计文档当时没写它，所以不用同步别处。）
     这条红的用途不是"证明坏了"，而是**逼改 schema 的人
     回去看一眼审计文档还写着几个数** —— R26-06 犯的就是"写进文档的数没复算"这一条。
@@ -765,7 +800,9 @@ def test_b1_residual_staging_table_does_not_permanently_block_boot(tmp_path: Pat
     db = tmp_path / "app.db"
     conn = connect(db)
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
     conn.execute("DROP TABLE token_usage_day")
     conn.execute(
@@ -775,9 +812,7 @@ def test_b1_residual_staging_table_does_not_permanently_block_boot(tmp_path: Pat
         " reasoning_tokens INTEGER NOT NULL DEFAULT 0, unreported INTEGER NOT NULL DEFAULT 0,"
         " PRIMARY KEY (day, backend))"
     )
-    conn.execute(
-        "INSERT INTO token_usage_day (day, backend, calls) VALUES ('2026-09-20', 'x', 3)"
-    )
+    conn.execute("INSERT INTO token_usage_day (day, backend, calls) VALUES ('2026-09-20', 'x', 3)")
     # 崩溃现场：暂存表建好了、老表还在、数据没搬 —— 就是"死在 CREATE 与 INSERT 之间"。
     conn.execute(
         "CREATE TABLE token_usage_day_new ("
@@ -812,7 +847,9 @@ def test_b2_residual_staging_table_does_not_permanently_block_boot(tmp_path: Pat
     db = tmp_path / "app.db"
     conn = connect(db)
     bootstrap(
-        conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN,
+        conn,
+        enabled_domains=DOMAINS,
+        plan=MIGRATION_PLAN,
     )
     conn.execute("DROP TABLE role_proactive_state")
     conn.execute(
@@ -823,9 +860,7 @@ def test_b2_residual_staging_table_does_not_permanently_block_boot(tmp_path: Pat
         " updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
     )
     conn.execute("INSERT INTO role_proactive_state (role_id, affinity) VALUES ('she', 2.5)")
-    conn.execute(
-        "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('local', '本机')"
-    )
+    conn.execute("INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('local', '本机')")
     conn.execute(
         "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name)"
         " VALUES ('local-user', 'local', '本机主人')"
@@ -950,9 +985,7 @@ def test_upgraded_legacy_db_converges_to_the_fresh_bootstrap_shape(
             problems.append(f"{table} 升完缺列 {missing}")
         drifted = [c for c in fcols if c in ucols and fcols[c] != ucols[c]]
         if drifted:
-            problems.append(
-                f"{table} 列属性分叉 { {c: (fcols[c], ucols[c]) for c in drifted} }"
-            )
+            problems.append(f"{table} 列属性分叉 { {c: (fcols[c], ucols[c]) for c in drifted} }")
         extra = set(ucols) - set(fcols)
         allowed = LEGACY_EXTRA_COLUMNS.get(table, set())
         if extra - allowed:
@@ -967,7 +1000,8 @@ def test_upgraded_legacy_db_converges_to_the_fresh_bootstrap_shape(
 
 
 def test_user_version_advance_is_traced_exactly_once(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """代际推进留痕的正反两臂（快照"升级演练"条目的另一半）：
     推进落一行 schema-migrate 事件，**且只在真的推进时落**。

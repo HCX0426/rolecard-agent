@@ -288,6 +288,31 @@ def test_auto_extract_does_not_stack_up_while_one_is_running(
         assert texts(client, role_id) == []
 
 
+def test_manual_distill_respects_the_inflight_gate(
+    tmp_path: Path, model: ChatAndDistill, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """手动「提取精华」也走同一枚在飞闸（2026-10-30 引擎审计 #4 的回归钉）。
+
+    旧实现只有自动路径过闸：用户在自动那一趟（10–120 秒）正跑时点按钮，两次调用读到
+    同一份 pending（游标只在各自结束时推进），同一批事实记两遍、后写的游标覆盖先写的。
+    现在抢不到标记 = 409 明说"上一次还在跑"，而不是排队或并发跑。
+    """
+    from rolecard_agent.core.common.thread_locks import end_extraction, try_extraction
+
+    with auto_client(tmp_path, model, monkeypatch, turns="1") as client:
+        tid, _ = new_session(client)
+        chat(client, tid, "我搬到苏州住了半年")  # 攒出 pending
+        assert try_extraction(tid), "前提：先占住「提取在飞」这枚标记"
+        try:
+            res = client.post(f"/api/session/{tid}/distill")
+            assert res.status_code == 409, res.text
+            assert "上一次提取还在跑" in str(res.json()["detail"])
+        finally:
+            end_extraction(tid)
+        # 闸放开后同一条请求正常走通（409 不是把按钮焊死）。
+        assert client.post(f"/api/session/{tid}/distill").status_code == 200
+
+
 # ---------------------------------------------------------------- 「整理记忆」
 
 

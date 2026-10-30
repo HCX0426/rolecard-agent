@@ -45,6 +45,7 @@ class FakeModel:
 
 ME = DEFAULT_USER_ID  # 这台实例的主人在测试里的名字（M2b 之后每次读写都要说清为谁）
 
+
 @pytest.fixture
 def conn() -> Any:
     c = connect(":memory:")
@@ -66,7 +67,8 @@ def _thread_cols(c: SqlConnection) -> set[str]:
 def test_extract_adds_facts_as_items(conn: SqlConnection) -> None:
     model = FakeModel("ADD 用户住在上海\nADD 用户每周五要交周报")
     out = distill.extract(
-        conn, user_id=ME,
+        conn,
+        user_id=ME,
         model=model,
         bucket="elysia",
         messages=[
@@ -78,8 +80,10 @@ def test_extract_adds_facts_as_items(conn: SqlConnection) -> None:
     assert out["ok"] is True
     assert out["report"]["added"] == 2
     assert set(_texts(conn, "elysia")) == {"用户住在上海", "用户每周五要交周报"}
-    assert [i["source"] for i in mem.list_items(conn, user_id=ME,
-        bucket="elysia")] == ["extract", "extract"]
+    assert [i["source"] for i in mem.list_items(conn, user_id=ME, bucket="elysia")] == [
+        "extract",
+        "extract",
+    ]
     # 成本可见化：模型报了 usage 就带进报告（没报就是 None，不编）
     assert out["report"]["tokens"] == 123
     # 已有条目会进 prompt —— 不然同一句事实每次提取都再 ADD 一遍
@@ -93,7 +97,8 @@ def test_extract_books_the_call_on_the_backend_that_served_it(conn: SqlConnectio
     看不见它就等于"悄悄把成本加上去"。
     """
     distill.extract(
-        conn, user_id=ME,
+        conn,
+        user_id=ME,
         model=FakeModel("ADD 用户住在上海"),
         bucket="elysia",
         messages=[_Msg("human", "我搬到上海了")],
@@ -108,7 +113,8 @@ def test_extract_update_supersedes_instead_of_rewriting(conn: SqlConnection) -> 
     old = mem.add_item(conn, user_id=ME, bucket="elysia", text="用户住在上海", source="manual")
     assert old is not None
     out = distill.extract(
-        conn, user_id=ME,
+        conn,
+        user_id=ME,
         model=FakeModel(f"UPDATE {old['id']} 用户去年搬到北京了"),
         bucket="elysia",
         messages=[_Msg("human", "我现在在北京")],
@@ -123,6 +129,50 @@ def test_extract_update_supersedes_instead_of_rewriting(conn: SqlConnection) -> 
     assert len(mem.list_items(conn, user_id=ME, bucket="elysia", include_invalidated=True)) == 2
 
 
+def test_extract_update_cannot_retire_a_pinned_fact(conn: SqlConnection) -> None:
+    """钉住的事实不参与提取的 UPDATE —— 写侧硬闸，不靠提示词恳求（2026-10-30 引擎审计 #5）。
+
+    旧实现里"不要对带 * 的条目输出任何指令"只是 prompt 里的一句话，而提取路径渲染清单
+    时连星号都不带（mark_pinned=False）—— 模型对一条用户特意钉住的"青霉素过敏"
+    回一句 UPDATE 就能把它退役，违反"钉住的不参与淘汰与整理"的既定纪律
+    （整理路径 :321-327 一直是硬挡的，两入口从此对齐）。
+    """
+    old = mem.add_item(conn, user_id=ME, bucket="elysia", text="用户对青霉素过敏", source="manual")
+    assert old is not None
+    mem.set_pinned(conn, user_id=ME, item_id=int(str(old["id"])), pinned=True)
+    out = distill.extract(
+        conn,
+        user_id=ME,
+        model=FakeModel(f"UPDATE {old['id']} 用户说过敏是笔误"),
+        bucket="elysia",
+        messages=[_Msg("human", "上次那个过敏的事记错了")],
+    )
+    assert out["report"]["updated"] == 0
+    assert out["report"]["skipped"] == 1
+    kept = mem.get_item(conn, int(str(old["id"])), user_id=ME)
+    assert kept is not None and kept["invalidated_at"] is None and kept["pinned"]
+
+
+def test_extract_update_cannot_reach_into_another_bucket(conn: SqlConnection) -> None:
+    """UPDATE 不许跨桶退役：get_item 只按人过滤，模型报一个别的桶/全局的 id 就能
+    把那条退役 —— 桶隔离（角色专属 vs 全局）是记忆面板对用户承诺过的（审计 #5 第二半）。
+    """
+    elsewhere = mem.add_item(
+        conn, user_id=ME, bucket=mem.GLOBAL_BUCKET, text="用户住在上海", source="manual"
+    )
+    assert elsewhere is not None
+    out = distill.extract(
+        conn,
+        user_id=ME,
+        model=FakeModel(f"UPDATE {elsewhere['id']} 用户搬到北京了"),
+        bucket="elysia",  # 角色桶里发起提取，报的却是全局桶那条的 id
+        messages=[_Msg("human", "我现在在北京")],
+    )
+    assert out["report"]["updated"] == 0 and out["report"]["skipped"] == 1
+    untouched = mem.get_item(conn, int(str(elsewhere["id"])), user_id=ME)
+    assert untouched is not None and untouched["invalidated_at"] is None
+
+
 def test_extract_update_that_repeats_the_same_fact_loses_nothing(conn: SqlConnection) -> None:
     """模型说"这条过时了"却给了同一件事的另一种说法 ⇒ 不能把那条自己标为失效。
 
@@ -133,7 +183,8 @@ def test_extract_update_that_repeats_the_same_fact_loses_nothing(conn: SqlConnec
     old = mem.add_item(conn, user_id=ME, bucket="elysia", text="用户住在上海", source="manual")
     assert old is not None
     out = distill.extract(
-        conn, user_id=ME,
+        conn,
+        user_id=ME,
         model=FakeModel(f"UPDATE {old['id']} 用户住在上海"),
         bucket="elysia",
         messages=[_Msg("human", "我还是住在上海")],
@@ -149,7 +200,8 @@ def test_consolidate_keeps_the_survivor_of_a_merge(conn: SqlConnection) -> None:
     b = mem.add_item(conn, user_id=ME, bucket="elysia", text="用户的猫叫米")
     assert a is not None and b is not None
     out = distill.consolidate(
-        conn, user_id=ME,
+        conn,
+        user_id=ME,
         model=FakeModel(f"MERGE {a['id']},{b['id']} 用户养了一只猫叫米"),
         bucket="elysia",
     )
@@ -171,7 +223,8 @@ def test_count_similar_only_counts_and_touches_nothing(conn: SqlConnection) -> N
 
 def test_extract_ignores_unparseable_lines_and_counts_them(conn: SqlConnection) -> None:
     out = distill.extract(
-        conn, user_id=ME,
+        conn,
+        user_id=ME,
         model=FakeModel("我觉得这个人挺有意思\nADD 用户养了一只猫\n- 随便什么\nNOOP"),
         bucket="elysia",
         messages=[_Msg("human", "我家猫又踩键盘了")],
@@ -183,8 +236,11 @@ def test_extract_ignores_unparseable_lines_and_counts_them(conn: SqlConnection) 
 
 def test_extract_noop_changes_nothing(conn: SqlConnection) -> None:
     out = distill.extract(
-        conn, user_id=ME, model=FakeModel("NOOP"), bucket="elysia", messages=[_Msg("human",
-            "今天天气不错")]
+        conn,
+        user_id=ME,
+        model=FakeModel("NOOP"),
+        bucket="elysia",
+        messages=[_Msg("human", "今天天气不错")],
     )
     assert out["report"]["noop"] == 1 and out["report"]["added"] == 0
     assert _texts(conn, "elysia") == []
@@ -193,7 +249,8 @@ def test_extract_noop_changes_nothing(conn: SqlConnection) -> None:
 def test_extract_model_failure_writes_nothing(conn: SqlConnection) -> None:
     mem.add_item(conn, user_id=ME, bucket="elysia", text="原来就有的一条", source="manual")
     out = distill.extract(
-        conn, user_id=ME,
+        conn,
+        user_id=ME,
         model=FakeModel(error=RuntimeError("boom")),
         bucket="elysia",
         messages=[_Msg("human", "随便说点什么")],
@@ -205,8 +262,9 @@ def test_extract_model_failure_writes_nothing(conn: SqlConnection) -> None:
 def test_extract_without_text_is_not_a_model_call(conn: SqlConnection) -> None:
     """纯图片/空消息的会话不值得发一次调用（成本要花在有的可提的内容上）。"""
     model = FakeModel("ADD 不该被用到")
-    out = distill.extract(conn, user_id=ME, model=model, bucket="elysia", messages=[_Msg("human",
-        "")])
+    out = distill.extract(
+        conn, user_id=ME, model=model, bucket="elysia", messages=[_Msg("human", "")]
+    )
     assert out["ok"] is True and model.prompts == []
 
 
@@ -242,7 +300,8 @@ def test_extract_reads_the_importance_marker(conn: SqlConnection) -> None:
         "ADD [2] 用户青霉素过敏\nADD 用户住在苏州\nADD [9] 越界的档号\nADD [很要紧] 不是数字"
     )
     out = distill.extract(
-        conn, user_id=ME,
+        conn,
+        user_id=ME,
         model=model,
         bucket="medical_archivist",
         messages=[_Msg("human", "我青霉素过敏，住在苏州")],
@@ -293,7 +352,7 @@ def test_pending_messages_only_feeds_what_the_cursor_has_not_seen(conn: SqlConne
 
 
 def test_pending_messages_falls_back_to_the_whole_history_when_the_cursor_lies(
-    conn: SqlConnection
+    conn: SqlConnection,
 ) -> None:
     """编辑/删除消息会让列表变短、游标落在长度之外：那种情况**退回整段**。
 
@@ -314,7 +373,8 @@ def test_echo_adds_are_dropped_without_losing_information(conn: SqlConnection) -
     """
     mem.add_item(conn, user_id=ME, bucket="elysia", text="用户今天加班到十点才走", source="extract")
     out = distill.extract(
-        conn, user_id=ME,
+        conn,
+        user_id=ME,
         model=FakeModel("ADD 今天加班到十点才走\nADD 用户中午和同事吵架了"),
         bucket="elysia",
         messages=[_Msg("human", "中午和同事吵架了")],
@@ -335,7 +395,8 @@ def test_a_more_specific_fact_is_never_treated_as_an_echo(conn: SqlConnection) -
         conn, user_id=ME, bucket="medical_archivist", text="用户有肾结石", source="extract"
     )
     out = distill.extract(
-        conn, user_id=ME,
+        conn,
+        user_id=ME,
         model=FakeModel("ADD 用户有肾结石，2026-03-12 复查直径 6 mm"),
         bucket="medical_archivist",
         messages=[_Msg("human", "复查说结石 6 毫米了")],
@@ -370,17 +431,18 @@ def test_extract_prompt_forbids_background_not_said_in_the_dialogue(conn: SqlCon
     assert "没出现过的地点、职业、程度、原因、结论一律不补" in joined
     assert "同一件事在对话里被提到几次，只写一条" in joined
     assert "他明说的事就要记下来" in joined
-    assert "不要加\"用户说\"" in joined
+    assert '不要加"用户说"' in joined
     # 第一版那两句"教它抄原话"的写法不能悄悄回来。
-    assert "写成\"用户说了什么\"" not in joined
+    assert '写成"用户说了什么"' not in joined
     assert "拿不准就少写一条" not in joined
 
 
 def _extract_prompt_of(conn: SqlConnection) -> str:
     """跑一次提取，把发给模型的那段指令原样拿回来（只钉文本，不测模型行为）。"""
     model = FakeModel("NOOP")
-    distill.extract(conn, user_id=ME, model=model, bucket="elysia", messages=[_Msg("human",
-        "随便一句")])
+    distill.extract(
+        conn, user_id=ME, model=model, bucket="elysia", messages=[_Msg("human", "随便一句")]
+    )
     return model.prompts[0]
 
 
@@ -398,7 +460,8 @@ def test_consolidated_merge_inherits_the_highest_importance(conn: SqlConnection)
     )
     assert a is not None and b is not None
     out = distill.consolidate(
-        conn, user_id=ME,
+        conn,
+        user_id=ME,
         model=FakeModel(f"MERGE {a['id']},{b['id']} 用户青霉素过敏会起疹子"),
         bucket="elysia",
     )
@@ -416,7 +479,8 @@ def test_consolidate_never_touches_pinned_items(conn: SqlConnection) -> None:
     assert other is not None
     lines = f"INVALID {pinned['id']} 不该动它\nMERGE {pinned['id']},{other['id']} 混在一起"
     out = distill.consolidate(
-        conn, user_id=ME,
+        conn,
+        user_id=ME,
         model=FakeModel(lines),
         bucket="elysia",
     )
@@ -564,12 +628,11 @@ def test_cursor_migration_adds_the_column(conn: SqlConnection) -> None:
     bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
     assert "distilled_at_seq" in _thread_cols(conn)
     # 补列之后游标是 NULL ⇒ 全部消息都算"没提取过"，节奏判断照跑
-    assert distill.due_for_extract(
-        conn, thread_id="t9", every=1, messages=[_Msg("human", "一句话")]
-    ) is True
-    assert distill.pending_messages(
-        conn, thread_id="t9", messages=[_Msg("human", "一句话")]
-    ) != []
+    assert (
+        distill.due_for_extract(conn, thread_id="t9", every=1, messages=[_Msg("human", "一句话")])
+        is True
+    )
+    assert distill.pending_messages(conn, thread_id="t9", messages=[_Msg("human", "一句话")]) != []
 
 
 class _Msg:
@@ -682,9 +745,7 @@ def test_resource_gate_never_gates_a_cloud_backend(conn: SqlConnection) -> None:
 
 def _extract_invoked(tracer: _RecordingTracer) -> bool:
     """有没有真的走到模型调用：skip 事件全部点名了理由，没有 skip = 走到了。"""
-    return not any(
-        "skipped" in getattr(e, "detail", {}) for e in tracer.events
-    )
+    return not any("skipped" in getattr(e, "detail", {}) for e in tracer.events)
 
 
 def test_extract_prompt_carries_top_k_not_the_whole_bucket(conn: SqlConnection) -> None:

@@ -13,10 +13,18 @@
 //   3. 上下文裁剪提示真的渲染出来（而且挂在不会被回放覆盖的位置）。
 
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChatEvent } from "../api";
 import { ToastProvider } from "../components/Toast";
+
+// 批次 J 把 Markdown 改成懒加载后，coverage 模式下 lazy 的模块解析会慢过断言那一拍
+// （症状："权威文本"找不到 —— 消息其实到了，渲染它的 Suspense 还没换页）。
+// 全套用例开始前先 await 一次这个动态 import：vitest 对同一 specifier 复用模块图，
+// React.lazy 拿到的就是已 resolve 的 promise，Suspense 同步换页，不再与 act 赛跑。
+beforeAll(async () => {
+  await import("../components/Markdown");
+});
 
 // `vi.mock` 的工厂会被**提升到文件顶部**，因此它引用的变量必须同样被提升 ——
 // 用 `vi.hoisted` 而不是普通 `const`，否则报 "Cannot access before initialization"。

@@ -249,9 +249,7 @@ def _restore_insert(
         "importance": int(payload.get("importance") or 1),
     }
     cols = [
-        col
-        for col in table_columns(conn, "role_memory_item")
-        if col in value_map or col in payload
+        col for col in table_columns(conn, "role_memory_item") if col in value_map or col in payload
     ]
     placeholders = ", ".join("?" for _ in cols)
     conn.execute(
@@ -292,13 +290,9 @@ def restore_row(conn: SqlConnection, *, user_id: str, uid: str, payload: dict[st
     if payload.get("keep_both"):
         # 冲突裁决选了"两份都留"：换一枚新 uid 插一条，对面那条一个字都不动
         # （沿用同一个 uid 去"都留"是自我矛盾 —— 那条 UPDATE 就是把对面那份覆盖掉）。
-        _restore_insert(
-            conn, user_id=user_id, uid=uuid.uuid4().hex, text=text, payload=payload
-        )
+        _restore_insert(conn, user_id=user_id, uid=uuid.uuid4().hex, text=text, payload=payload)
         return "created"
-    have = conn.execute(
-        "SELECT id, user_id FROM role_memory_item WHERE uid = ?", (uid,)
-    ).fetchone()
+    have = conn.execute("SELECT id, user_id FROM role_memory_item WHERE uid = ?", (uid,)).fetchone()
     if have is None:
         return _restore_insert(conn, user_id=user_id, uid=uid, text=text, payload=payload)
     if str(have["user_id"]) != user_id:
@@ -378,9 +372,16 @@ def delete_item(conn: SqlConnection, *, user_id: str, item_id: int) -> bool:
     """用户明确删除 = **物理删**（他要它消失，留个"已删除"的行只是把隐私留在盘上）。
 
     与自动退役相反：那条走 `invalidate_item`，可撤销。
+    删的是"取代者"时要把指向它的 `superseded_by` 一并清掉（2026-10-30 引擎审计顺带项）：
+    留着就是悬空指针 —— 时间线把那条更正画成"更正为（空）"，而诚实的读法是
+    "作废了一条事实"（timeline 对 superseded_by 为空的既定分支），不该是一个猜不透的空格。
     """
     cur = conn.execute(
         "DELETE FROM role_memory_item WHERE id = ? AND user_id = ?",
+        (item_id, user_id),
+    )
+    conn.execute(
+        "UPDATE role_memory_item SET superseded_by = NULL WHERE superseded_by = ? AND user_id = ?",
         (item_id, user_id),
     )
     conn.commit()
@@ -437,9 +438,7 @@ def merge_items(
         return None
     line = " ".join((text if text is not None else merged_text(keep, drop)).split())
     updated = edit_item(conn, user_id=user_id, item_id=keep_id, text=line)
-    invalidate_item(
-        conn, user_id=user_id, item_id=drop_id, superseded_by=keep_id
-    )
+    invalidate_item(conn, user_id=user_id, item_id=drop_id, superseded_by=keep_id)
     return updated
 
 
@@ -453,9 +452,7 @@ def enforce_cap(
     并在界面上提示"建议整理"，真正的合并是用户点「整理记忆」时发生的一次显式调用。
     """
     stamp = now or datetime.now(UTC)
-    active = [
-        i for i in list_items(conn, user_id=user_id, bucket=bucket) if not i["pinned"]
-    ]
+    active = [i for i in list_items(conn, user_id=user_id, bucket=bucket) if not i["pinned"]]
     if len(active) <= MAX_ITEMS_PER_BUCKET:
         return []
     weakest = sorted(active, key=lambda i: (_score(i, now=stamp), i["id"]))
@@ -574,18 +571,14 @@ def memory_for_turn(
         return ""
     buckets = [role_id, GLOBAL_BUCKET] if role_id else [GLOBAL_BUCKET]
     for bucket in buckets:
-        text, ids = render_memory(
-            conn, user_id=user_id, bucket=bucket, with_age_labels=True
-        )
+        text, ids = render_memory(conn, user_id=user_id, bucket=bucket, with_age_labels=True)
         if text:
             mark_hits(conn, user_id=user_id, item_ids=ids)
             return text
     return ""
 
 
-def top_active_item(
-    conn: SqlConnection, *, user_id: str, bucket: str
-) -> dict[str, Any] | None:
+def top_active_item(conn: SqlConnection, *, user_id: str, bucket: str) -> dict[str, Any] | None:
     """recall 档的素材：此刻最该被提起的那一条。没有 = None（调用方就不该走回忆口吻）。"""
     ranked = ranked_active(conn, user_id=user_id, bucket=bucket)
     return ranked[0] if ranked else None
@@ -655,15 +648,11 @@ def make_memory_tool(*, settings: Settings, conn: SqlConnection) -> BaseTool:
         # 没绑过（后台、纯内核装配）才落到这台实例的主人。工具签名里没有 user_id 是刻意的：
         # 有它模型就能自己填"我是谁"。
         owner = active_user_id(resolve_instance_identity(settings))
-        added_global = add_item(
-            conn, user_id=owner, bucket=GLOBAL_BUCKET, text=line, source="chat"
-        )
+        added_global = add_item(conn, user_id=owner, bucket=GLOBAL_BUCKET, text=line, source="chat")
         role_id = current_role_id_ctx.get()
         if role_id:
             add_item(conn, user_id=owner, bucket=role_id, text=line, source="chat")
-        count = len(
-            list_items(conn, user_id=owner, bucket=role_id or GLOBAL_BUCKET)
-        )
+        count = len(list_items(conn, user_id=owner, bucket=role_id or GLOBAL_BUCKET))
         return f"已记住：{line}（该桶现有 {count} 条事实）。" if added_global else "没有写入。"
 
     return memory_save

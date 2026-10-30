@@ -101,6 +101,7 @@ def open_threads_stale(state: ProactiveState, *, now: datetime) -> bool:
     age = (now - state.open_threads_scan_at).total_seconds() / 60.0
     return age >= OPEN_THREADS_REFRESH_MINUTES
 
+
 # 开口前去重用：把该角色最近说过的几条原文带进指令。**写死成常量而不是配置项** ——
 # 它是"别复读"这个机制的实现细节，调它的人不会存在，但留一个旋钮就得多测一条路径。
 RECENT_CONTEXT_LIMIT = 5
@@ -134,8 +135,7 @@ def _task_text(
         return f"{_TASK_PREFIX}{lead}{_REACHOUT_TASK_RECALL_BODY}"
     if mode == "file_event":
         return (
-            f"{_TASK_PREFIX}{lead}{_REACHOUT_TASK_FILE_EVENT_BODY}\n\n"
-            f"任务目录的变化：\n{file_list}"
+            f"{_TASK_PREFIX}{lead}{_REACHOUT_TASK_FILE_EVENT_BODY}\n\n任务目录的变化：\n{file_list}"
         )
     if mode == "open_thread" and open_topics:
         # 第五个由头。清单是"扫出来"的而不是"确定存在"的，所以留一条退路：她可以说
@@ -308,7 +308,10 @@ def generate_reachout_text(
         else None
     )
     task = _task_text(
-        mode, file_list, has_memory=bool(memory.strip()), material=material,
+        mode,
+        file_list,
+        has_memory=bool(memory.strip()),
+        material=material,
         open_topics=open_topics,
     )
     # E1 去重：把"最近已经说过什么"摊给它看。没有这一层，每次开口都是从零现编 ——
@@ -447,11 +450,18 @@ def trigger_time_pattern(
     return None
 
 
+#: 固定时刻问候的补投窗口（分钟）。为什么要有（2026-10-30 引擎审计 #7）：30s 一拍从上一拍
+#: **做完**才起算，那一拍若跨过 60 秒（文件扫描/拍内模型调用/补投写库都会），精确等于
+#: 目标分钟的判据就被无声吃掉 —— 当天这格问候永远没人看。窗口取 5 分钟：够盖住一次慢拍，
+#: 又不至于让"早上九点的问候"漂成"九点零五"还发。窗口内被静默闸压过点的，下一拍照常补。
+GREETING_GRACE_MINUTES = 5.0
+
+
 def trigger_scheduled(
     role: RoleCard, conn: SqlConnection, *, user_id: str, now_local: datetime
 ) -> str | None:
     """固定时刻问候档（2026-10-24，2a）：角色卡排了 `greeting_at`（HH:MM 本地时刻），
-    且当前这一拍正落在那一分钟 → 触发。
+    当前时刻过了它、还在补投窗口（`GREETING_GRACE_MINUTES`）内 → 触发。
 
     三个设计决定，改动前先读：
 
@@ -467,7 +477,19 @@ def trigger_scheduled(
     """
     if not role.greeting_at:
         return None
-    if now_local.strftime("%H:%M") != role.greeting_at:
+    # 精确等于那一分钟的判据会被一拍超时无声吃掉（2026-10-30 引擎审计 #7）：30s 一拍
+    # 从上一拍**做完**才起算，那一拍若跨过 60 秒（文件扫描/拍内模型调用/补投写库都会），
+    # 评估时刻从 10:00:45 直接跳到 10:01:45，当天这格问候永远没人看。改成"目标时刻已过、
+    # 在补投窗口内"：迟到最多 GREETING_GRACE_MINUTES 分钟仍会补上，窗口外（含应用整天
+    # 没开着）照旧明天同一时刻再来。重复由下面"今天已发过"的台账判据挡着 —— 投递成功
+    # 即落一行，窗口内的后续拍都读得到。
+    try:
+        hour, minute = (int(part) for part in role.greeting_at.split(":", 1))
+        target = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    except ValueError:
+        return None  # 形状不对的值：不猜，不发
+    elapsed = (now_local - target).total_seconds()
+    if not 0 <= elapsed <= GREETING_GRACE_MINUTES * 60:
         return None
     rows = conn.execute(
         "SELECT created_at FROM agent_reachout "
@@ -506,9 +528,11 @@ def trigger_recall(
         hours=RECALL_COOLDOWN_HOURS
     ):
         return None
-    return "recall" if top_active_item(
-        conn, user_id=user_id, bucket=role.role_id
-    ) is not None else None
+    return (
+        "recall"
+        if top_active_item(conn, user_id=user_id, bucket=role.role_id) is not None
+        else None
+    )
 
 
 def _parse_reachout_ts(raw: object) -> datetime | None:

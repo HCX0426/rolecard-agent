@@ -35,6 +35,7 @@ from rolecard_agent.core.memory import (
 
 ME = DEFAULT_USER_ID  # 这台实例的主人在测试里的名字（M2b 之后每次读写都要说清为谁）
 
+
 def _settings(enabled: bool = True) -> Settings:
     return Settings(memory_enabled=enabled)
 
@@ -61,8 +62,9 @@ def _backdate(conn, item_id: int, *, days: int, hits: int = 0) -> None:
 
 
 def test_add_list_roundtrip_and_dedup(conn) -> None:
-    assert list_items(conn, user_id=ME,
-        bucket=GLOBAL_BUCKET) == []  # 从没写过 = 空列表，不是缺表报错
+    assert (
+        list_items(conn, user_id=ME, bucket=GLOBAL_BUCKET) == []
+    )  # 从没写过 = 空列表，不是缺表报错
     ids = _seed(conn, "用户住在上海", "用户每周五交周报")
     assert len(ids) == 2
     # 完全相同的事实不重复插入（模型执着地"再记一次"不该把桶撑满）
@@ -125,8 +127,9 @@ def test_importance_outranks_a_fresh_throwaway_line(conn) -> None:
     旧的乘法（`近因 × log1p(hits)`）做不到 —— 同一个局面下两条是 0.402 vs 0.693（新闲聊赢）。
     所以这里同一份数据把档号拿掉再断言一次：**翻转它的是这一维，不是别的**。
     """
-    allergy = int(add_item(conn, user_id=ME, bucket=GLOBAL_BUCKET, text="用户青霉素过敏",
-        importance=2)["id"])
+    allergy = int(
+        add_item(conn, user_id=ME, bucket=GLOBAL_BUCKET, text="用户青霉素过敏", importance=2)["id"]
+    )
     fresh = int(add_item(conn, user_id=ME, bucket=GLOBAL_BUCKET, text="今天喝了燕麦奶")["id"])
     _backdate(conn, allergy, days=60, hits=3)
     _backdate(conn, fresh, days=0, hits=0)
@@ -145,11 +148,15 @@ def test_frequency_saturates_and_cannot_buy_out_a_critical_fact(conn) -> None:
 
     没有上限的话"次数"这一维可以无限涨，而它只说明"被提过"，不说明"更要紧"。
     """
-    noisy = int(add_item(conn, user_id=ME, bucket=GLOBAL_BUCKET, text="她爱用「今天」开头",
-        importance=0)["id"])
+    noisy = int(
+        add_item(conn, user_id=ME, bucket=GLOBAL_BUCKET, text="她爱用「今天」开头", importance=0)[
+            "id"
+        ]
+    )
     critical = int(
-        add_item(conn, user_id=ME, bucket=GLOBAL_BUCKET, text="用户在做胰岛素治疗",
-            importance=2)["id"]
+        add_item(conn, user_id=ME, bucket=GLOBAL_BUCKET, text="用户在做胰岛素治疗", importance=2)[
+            "id"
+        ]
     )
     _backdate(conn, noisy, days=200, hits=5000)
     _backdate(conn, critical, days=200, hits=0)
@@ -174,23 +181,19 @@ def test_importance_is_clamped_and_only_ever_raised(conn) -> None:
 def test_set_importance_is_the_one_write_allowed_to_downgrade(conn) -> None:
     """`add_item` 永不降级（再提一次不是判断），但面板那一档**就是**用户的判断：能升也能降，
     包括降到 0（0 不是"没给"）。降完排序立刻跟着走，不然这个控件只是个存着好看的数。"""
-    a = int(add_item(conn, user_id=ME, bucket=GLOBAL_BUCKET, text="用户青霉素过敏",
-        importance=2)["id"])
+    a = int(
+        add_item(conn, user_id=ME, bucket=GLOBAL_BUCKET, text="用户青霉素过敏", importance=2)["id"]
+    )
     b = int(add_item(conn, user_id=ME, bucket=GLOBAL_BUCKET, text="用户喜欢喝美式")["id"])
-    assert [int(i["id"]) for i in ranked_active(conn, user_id=ME, bucket=GLOBAL_BUCKET)] == [a,
-        b]
+    assert [int(i["id"]) for i in ranked_active(conn, user_id=ME, bucket=GLOBAL_BUCKET)] == [a, b]
 
-    assert int(set_importance(conn, user_id=ME, item_id=a,
-        importance=0)["importance"]) == 0  # type: ignore[index]
+    assert int(set_importance(conn, user_id=ME, item_id=a, importance=0)["importance"]) == 0  # type: ignore[index]
     assert int(get_item(conn, b, user_id=ME)["importance"]) == 1  # 只动被点的那一条
-    assert [int(i["id"]) for i in ranked_active(conn, user_id=ME, bucket=GLOBAL_BUCKET)] == [b,
-        a]
+    assert [int(i["id"]) for i in ranked_active(conn, user_id=ME, bucket=GLOBAL_BUCKET)] == [b, a]
 
     # 越界与坏值同一条路：钳进 0..2，认不出的退回 1，不抛。
-    assert int(set_importance(conn, user_id=ME, item_id=a,
-        importance=9)["importance"]) == 2  # type: ignore[index]
-    assert int(set_importance(conn, user_id=ME, item_id=a,
-        importance="很高")["importance"]) == 1  # type: ignore[index]
+    assert int(set_importance(conn, user_id=ME, item_id=a, importance=9)["importance"]) == 2  # type: ignore[index]
+    assert int(set_importance(conn, user_id=ME, item_id=a, importance="很高")["importance"]) == 1  # type: ignore[index]
     assert set_importance(conn, user_id=ME, item_id=999999, importance=2) is None
 
 
@@ -272,12 +275,14 @@ def test_panel_text_has_no_age_label_but_injection_does(conn) -> None:
     # 覆写回来的文本按行解析，显示用的前缀不该变成事实的一部分（存三次仍然只有一层）
     for _ in range(3):
         replace_bucket_from_text(conn, user_id=ME, bucket=GLOBAL_BUCKET, text=panel)
-        assert [i["text"] for i in list_items(conn, user_id=ME,
-            bucket=GLOBAL_BUCKET)] == ["用户住在上海"]
+        assert [i["text"] for i in list_items(conn, user_id=ME, bucket=GLOBAL_BUCKET)] == [
+            "用户住在上海"
+        ]
     # 库里可能已经存着叠好的旧数据（这个 bug 上线过一次），剥多层也要成立
     replace_bucket_from_text(conn, user_id=ME, bucket=GLOBAL_BUCKET, text="- - - 用户搬到了杭州")
-    assert [i["text"] for i in list_items(conn, user_id=ME,
-        bucket=GLOBAL_BUCKET)][-1] == "用户搬到了杭州"
+    assert [i["text"] for i in list_items(conn, user_id=ME, bucket=GLOBAL_BUCKET)][
+        -1
+    ] == "用户搬到了杭州"
 
 
 def test_injection_is_capped_by_count_not_only_by_chars(conn) -> None:
@@ -303,8 +308,9 @@ def test_memory_save_tool_writes_both_buckets(conn) -> None:
         current_role_id_ctx.reset(token)
     assert "已记住" in out
     assert [i["text"] for i in list_items(conn, user_id=ME, bucket="elsie")] == ["每周五要交周报"]
-    assert [i["text"] for i in list_items(conn, user_id=ME,
-        bucket=GLOBAL_BUCKET)] == ["每周五要交周报"]
+    assert [i["text"] for i in list_items(conn, user_id=ME, bucket=GLOBAL_BUCKET)] == [
+        "每周五要交周报"
+    ]
 
 
 # ------------------------------------------------------------------ 退役与整理
@@ -328,9 +334,7 @@ def test_cap_retires_the_weakest_without_deleting(conn) -> None:
     ids = _seed(conn, *(f"事实 {i}" for i in range(MAX_ITEMS_PER_BUCKET)))
     stale = (datetime.now(UTC) - timedelta(days=400)).strftime("%Y-%m-%d %H:%M:%S")
     conn.execute(
-        "UPDATE role_memory_item SET created_at = ? WHERE id IN ({})".format(
-            ",".join("?" * 5)
-        ),
+        "UPDATE role_memory_item SET created_at = ? WHERE id IN ({})".format(",".join("?" * 5)),
         (stale, *ids[:5]),
     )
     conn.commit()
@@ -377,11 +381,15 @@ def test_replace_from_text_carries_the_tiers_of_unchanged_lines(conn) -> None:
     add_item(conn, user_id=ME, bucket=GLOBAL_BUCKET, text="用户青霉素过敏", importance=2)
     add_item(conn, user_id=ME, bucket=GLOBAL_BUCKET, text="用户住在苏州", importance=1)
     replace_bucket_from_text(
-        conn, user_id=ME, bucket=GLOBAL_BUCKET,
-            text="- 用户青霉素过敏\n- 用户住在苏州，最近换了公寓"
+        conn,
+        user_id=ME,
+        bucket=GLOBAL_BUCKET,
+        text="- 用户青霉素过敏\n- 用户住在苏州，最近换了公寓",
     )
-    tiers = {str(i["text"]): int(i["importance"]) for i in list_items(conn, user_id=ME,
-        bucket=GLOBAL_BUCKET)}
+    tiers = {
+        str(i["text"]): int(i["importance"])
+        for i in list_items(conn, user_id=ME, bucket=GLOBAL_BUCKET)
+    }
     assert tiers == {"用户青霉素过敏": 2, "用户住在苏州，最近换了公寓": 1}
     # 逐字相同的那行保住档号；**改过的行是一句新话**，落回默认档（不是"猜它还想要 2"）
 
@@ -393,6 +401,30 @@ def test_delete_is_physical_and_edit_rewrites_in_place(conn) -> None:
     assert delete_item(conn, user_id=ME, item_id=one) is False  # 已经没了，如实说没删到
     edited = edit_item(conn, user_id=ME, item_id=two, text="改过了的")
     assert edited["text"] == "改过了的" and int(edited["id"]) == two
+
+
+def test_deleting_the_survivor_clears_the_dangling_pointer(conn) -> None:
+    """删掉"取代者"时，把指向它的 `superseded_by` 一起清掉（2026-10-30 引擎审计顺带项）。
+
+    旧实现物理删了幸存者，旧行却还 `superseded_by=<不存在的 id>` —— 时间线把那条更正
+    画成"更正为（空）"（`newer` 查不到 → text=""），而诚实的读法是"作废了一条事实"
+    （`superseded_by` 为空那条既定分支）。清成 NULL 让两种读法不再混。
+    """
+    old = add_item(conn, user_id=ME, bucket="elsie", text="用户住在上海")
+    fresh = add_item(conn, user_id=ME, bucket="elsie", text="用户搬到北京了")
+    assert old is not None and fresh is not None
+    invalidate_item(
+        conn,
+        user_id=ME,
+        item_id=int(str(old["id"])),
+        superseded_by=int(str(fresh["id"])),
+    )
+    assert delete_item(conn, user_id=ME, item_id=int(str(fresh["id"]))) is True
+    survivor = get_item(conn, int(str(old["id"])), user_id=ME)
+    assert survivor is not None
+    assert survivor["superseded_by"] is None, (
+        "取代者被删了而指针还悬着 —— 时间线会画成猜不透的'更正为（空）'"
+    )
 
 
 def test_recall_material_is_the_top_active_item(conn) -> None:

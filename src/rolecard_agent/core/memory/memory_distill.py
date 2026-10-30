@@ -56,11 +56,11 @@ _EXTRACT_PROMPT = (
     "身份与称呼、居住地、固定习惯与偏好、长期项目、明确说过的重要事件。\n"
     "不要抽：情节描写、模型自己说的话、你的推测或评价。\n"
     "**事实只从对方说过的话里取**：说过的地点、数值、时间照原样写；没出现过的地点、职业、"
-    "程度、原因、结论一律不补（说过\"加班到十点\"推不出\"工作强度较高\"，更推不出住在哪）。"
+    '程度、原因、结论一律不补（说过"加班到十点"推不出"工作强度较高"，更推不出住在哪）。'
     "反过来，**他明说的事就要记下来**，别因为看起来琐碎就漏掉（买了什么、几点睡、打算去做什么，"
     "对健康档案都是有用的事实）。\n"
     "**同一件事在对话里被提到几次，只写一条**，写信息最全的那句；不要把同一句原话抄两遍。\n"
-    "直接写事实本身，不要加\"用户说\"\"用户表示\"这类前缀。\n"
+    '直接写事实本身，不要加"用户说""用户表示"这类前缀。\n'
     "每条事实写成一句话（不超过 40 字），使用与对话相同的语言。\n"
     "\n"
     "只输出下列格式的行，每行一条指令，不要任何解释、不要代码块：\n"
@@ -70,7 +70,7 @@ _EXTRACT_PROMPT = (
     "`ADD` 后可以紧跟一个档号 `[0]`/`[1]`/`[2]`（不写就是 `[1]`）：`[2]` 只给**说错会伤人**的那类"
     "—— 过敏与禁忌、正在治的东西、住址与家人这类身份事实；`[0]` 给「顺便提了一句」的偏好。"
     "拿不准就别写档号。\n"
-    "编号见下面【已有条目】。**那份清单只用来看\"是不是已经有了\"和引用编号，"
+    '编号见下面【已有条目】。**那份清单只用来看"是不是已经有了"和引用编号，'
     "不要把它的文字再抄成一条 ADD** —— 同义的事实不要重复 ADD。\n"
 )
 
@@ -203,7 +203,10 @@ def extract(
     prompt = (
         _EXTRACT_PROMPT
         + "\n【已有条目】\n"
-        + _existing_block(selected, mark_pinned=False)
+        # mark_pinned=True：提示的图例（"带 * 的条目由用户钉住，不要对它输出任何指令"）
+        # 从前是空头支票 —— 提取路径渲染时不带星号，模型根本看不见哪条钉住了
+        # （2026-10-30 引擎审计 #5；整理路径一直是 True，两入口对齐）。
+        + _existing_block(selected, mark_pinned=True)
         + "\n\n【最近对话】\n"
         + dialogue
         + "\n"
@@ -251,6 +254,12 @@ def extract(
         if upd:
             old = mem.get_item(conn, int(upd.group(1)), user_id=user_id)
             if old is None or old["invalidated_at"] is not None:
+                report["skipped"] += 1
+                continue
+            # 钉住的不参与（"对用户钉住的东西不输出任何指令"从提示词恳求升级为写侧硬闸，
+            # 与整理路径 :321-327 同一判据）；桶外的同样拒 —— get_item 只按人过滤，
+            # 模型报一个别的桶/全局的 id 就能跨桶退役事实（2026-10-30 引擎审计 #5）。
+            if old["pinned"] or str(old["role_id"]) != bucket:
                 report["skipped"] += 1
                 continue
             fresh = mem.add_item(
@@ -364,9 +373,7 @@ def consolidate(
                 continue
             fresh = None
             if invalid.group(2).strip():
-                fresh = mem.add_item(
-                conn, user_id=user_id, bucket=bucket, text=invalid.group(2)
-            )
+                fresh = mem.add_item(conn, user_id=user_id, bucket=bucket, text=invalid.group(2))
             mem.invalidate_item(
                 conn,
                 user_id=user_id,
@@ -470,9 +477,7 @@ def mark_extracted(conn: SqlConnection, *, thread_id: str, message_count: int) -
     set_distilled_seq(conn, thread_id=thread_id, message_count=message_count)
 
 
-def nothing_new(
-    conn: SqlConnection, *, user_id: str, bucket: str
-) -> dict[str, Any]:
+def nothing_new(conn: SqlConnection, *, user_id: str, bucket: str) -> dict[str, Any]:
     """「这次没东西可抽」的报告 —— 形状归本模块管，宿主不该自己拼一份。
 
     `similar` 照样要算：按钮按下去却一条都没加时，界面上要说得出"库里有几对看着像同一件事"，
@@ -548,9 +553,7 @@ def after_turn(
     """
     try:
         thread, messages = load_context()
-        if not due_for_extract(
-            conn, thread_id=thread_id, every=extract_turns, messages=messages
-        ):
+        if not due_for_extract(conn, thread_id=thread_id, every=extract_turns, messages=messages):
             return
         pending = pending_messages(conn, thread_id=thread_id, messages=messages)
         if not pending:

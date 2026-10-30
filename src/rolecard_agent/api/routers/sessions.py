@@ -38,9 +38,11 @@ from rolecard_agent.core import model_settings
 from rolecard_agent.core.agent.graph import build_graph_config
 from rolecard_agent.core.agent.state import new_state, now_ts
 from rolecard_agent.core.common.thread_locks import (
+    end_extraction,
     inflight_text,
     request_stop,
     thread_write,
+    try_extraction,
 )
 from rolecard_agent.core.common.usage import TokenUsage, record_usage
 from rolecard_agent.core.ingest import upload_service
@@ -339,6 +341,12 @@ def chat(body: ChatMessage, ctx: AppContext = Depends(get_context)) -> Streaming
     # 毫秒精度的理由与唯一出处见 `storage/threads._TOUCH_SQL`（`R102-62`），经 service 转发。
     title_fallback = "[图片]" if not body.message.strip() else body.message[:24]
     session_service.seed_title(conn, body.thread_id, title_fallback)
+    # 用户真的在这一轮开了口：退避锚点 `user_activity_at` 也刷（seed_title 只推
+    # updated_at；审计 #2 —— 投递路径不刷这一列，两列从此各说各话）。
+    # 必须当场提交：seed_title 自己带 commit，这句 UPDATE 若挂在事务里，整条流式期间
+    # 请求连接都持着写锁 —— 后台提取线程开新连接直接 "database is locked"（改时实测）。
+    session_service.touch_user_activity(conn, body.thread_id)
+    conn.commit()
 
     # 步数上限随运行配置一起带上：没有它，模型持续返回 tool_calls 时这一轮不会终止。
     # agent 模式上限放大一倍（见 core/graph.build_graph_config）。
@@ -644,15 +652,26 @@ def distill_session(
             "turns_since": 0,
         }
     model, backend = _thread_model(ctx, thread, role_id)
-    outcome = memory_distill.extract(
-        ctx.conn,
-        user_id=str(thread["user_id"]),
-        model=model,
-        bucket=role_id,
-        messages=pending,
-        backend=backend,
-        tracer=ctx.tracer,
-    )
+    # 在飞闸（2026-10-30 引擎审计 #4）：从前手动按钮绕过它，与自动提取并发跑同一窗口 ——
+    # 两次调用读到同一份 pending（游标只在各自结束时推进），同一批事实记两遍、后写的
+    # 游标覆盖先写的。抢不到 = 上一次（多半是自动那一趟）还在跑，明说而不是排队。
+    if not try_extraction(thread_id):
+        raise HTTPException(
+            status_code=409,
+            detail="上一次提取还在跑（自动兜底或刚点过一次）—— 等它跑完再点，内容不会丢。",
+        )
+    try:
+        outcome = memory_distill.extract(
+            ctx.conn,
+            user_id=str(thread["user_id"]),
+            model=model,
+            bucket=role_id,
+            messages=pending,
+            backend=backend,
+            tracer=ctx.tracer,
+        )
+    finally:
+        end_extraction(thread_id)
     report = outcome["report"]
     if outcome["ok"]:
         memory_distill.mark_extracted(ctx.conn, thread_id=thread_id, message_count=len(messages))
@@ -757,7 +776,7 @@ def edit_message_and_regenerate(
         "model_name": session_model,
         "agent_mode": session_mode,
     }
-    session_service.touch(ctx.conn, thread_id)
+    session_service.touch_user_activity(ctx.conn, thread_id)
     ctx.conn.commit()
 
     # 重新生成这一轮同样追加消息：冗余计数由同一机制维护（编辑端不跑提取，
@@ -798,7 +817,8 @@ def delete_messages(
         graph.update_state(config, {"messages": [RemoveMessage(id=i) for i in doomed_ids]})
         # 冗余计数与检查点改动同锁同批维护。
         session_service.bump_message_count(ctx.conn, thread_id, -len(doomed_ids))
-    session_service.touch(ctx.conn, thread_id)
+    # 删消息也是用户动消息（退避锚点跟着刷，审计 #2）。
+    session_service.touch_user_activity(ctx.conn, thread_id)
     ctx.conn.commit()
     return {"deleted": len(doomed_ids), "remaining": len(messages) - len(doomed_ids)}
 
@@ -1031,7 +1051,8 @@ def upload_report(
             # 冗余计数与检查点改动同锁同批维护：说明消息也是一条。
             _bump_count_committed(ctx, thread_id=thread_id, delta=1)
             # 说明消息也是会话内容：updated_at 要动 —— 侧栏"刚刚"、同步指纹都指着它。
-            session_service.touch(ctx.conn, thread_id)
+            # 上传说明由用户的上传动作触发，算用户侧活动（退避锚点一起刷，审计 #2）。
+            session_service.touch_user_activity(ctx.conn, thread_id)
             ctx.conn.commit()
 
     outcome = upload_service.terminal_outcome(persisted)

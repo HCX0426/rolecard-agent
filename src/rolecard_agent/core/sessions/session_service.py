@@ -126,6 +126,12 @@ def touch(conn: SqlConnection, thread_id: str) -> None:
     _threads.touch_thread(conn, thread_id)
 
 
+def touch_user_activity(conn: SqlConnection, thread_id: str) -> None:
+    """用户侧动消息（chat 轮 / 编辑重发 / 删消息 / 上传说明）：updated_at 与
+    `user_activity_at` 一起刷。后者是主动开口退避的锚点，投递不碰（审计 #2）。"""
+    _threads.touch_user_activity(conn, thread_id)
+
+
 def message_count(conn: SqlConnection, thread_id: str) -> int | None:
     """冗余计数的现值；NULL = 未对账（探针据此决定走便宜路还是真读校准）。"""
     return _threads.message_count(conn, thread_id)

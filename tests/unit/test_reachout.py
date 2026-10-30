@@ -122,15 +122,57 @@ def test_blocked_by_interval(conn) -> None:
 
 
 def _seed_lane_activity(conn, role_id: str, minutes_ago: float) -> None:
-    """给那条角色的主动会话盖一个"最后一次活动"的时刻（毫秒精度，与生产写它的语句同格式）。"""
+    """给那条角色的主动会话盖一个"最后一次**用户侧**活动"的时刻（毫秒精度，
+    与生产写它的语句同格式：`touch_user_activity` 两列一起刷）。
+
+    只推 updated_at 的形状（= 投递）由 `test_delivery_touch_alone_keeps_the_streak` 单独钉。
+    """
     ts = (datetime.now(UTC) - timedelta(minutes=minutes_ago)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
     conn.execute(
-        "INSERT INTO session_thread (thread_id, user_id, current_role_id, updated_at) "
-        "VALUES (?, 'u1', ?, ?) "
-        "ON CONFLICT(thread_id) DO UPDATE SET updated_at = excluded.updated_at",
-        (svc.proactive_thread_id(role_id, user_id=ME), role_id, ts),
+        "INSERT INTO session_thread (thread_id, user_id, current_role_id, updated_at, "
+        "user_activity_at) "
+        "VALUES (?, 'u1', ?, ?, ?) "
+        "ON CONFLICT(thread_id) DO UPDATE SET updated_at = excluded.updated_at, "
+        "user_activity_at = excluded.user_activity_at",
+        (svc.proactive_thread_id(role_id, user_id=ME), role_id, ts, ts),
     )
     conn.commit()
+
+
+def test_delivery_touch_alone_keeps_the_streak(conn) -> None:
+    """投递只推 updated_at，**不许**抹掉退避计数（2026-10-30 引擎审计 #2 的回归钉）。
+
+    旧实现拿 updated_at 当锚点：每投一条成功就把她自己那句话"晚一点"，
+    streak 恒 0、指数退避在正常角色上永不生效 —— 最该退避的"她连发三条没人回"
+    被完全豁免。锚点换成 user_activity_at 后：线建好（created_at 兜底）之后
+    连投三条，三条都悬着。
+    """
+    lane = svc.proactive_thread_id("active", user_id=ME)  # 与 _seed_lane_activity 同形：id 按主人算
+    old = (datetime.now(UTC) - timedelta(minutes=300)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    conn.execute(
+        "INSERT INTO session_thread (thread_id, user_id, current_role_id, created_at, updated_at) "
+        "VALUES (?, 'u1', 'active', ?, ?)",
+        (lane, old, old),
+    )
+    conn.commit()
+    for m in (200, 150, 100):
+        ts = (datetime.now(UTC) - timedelta(minutes=m)).strftime("%Y-%m-%d %H:%M:%S")
+        conn.execute(
+            "INSERT INTO agent_reachout (role_id, role_name, text, state, created_at, user_id)"
+            " VALUES ('active', '主动角色', ?, 'unread', ?, ?)",
+            (f"第 {m} 分的那句", ts, ME),
+        )
+    conn.commit()
+    # 模拟投递成功对 updated_at 的副作用（deliver 里的 touch_thread）：锚点列不动。
+    now_ts = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    conn.execute("UPDATE session_thread SET updated_at = ? WHERE thread_id = ?", (now_ts, lane))
+    conn.commit()
+    utc, local = _now()
+    gate = svc.quiet_gate(_role(), _settings(), conn, now_utc=utc, now_local=local)
+    assert gate.streak == 3, (
+        f"三条悬着而 updated_at 刚被投递推走 —— streak={gate.streak}，"
+        "锚点又用回 updated_at 了（审计 #2 的形状回来了）"
+    )
 
 
 def test_a_reply_just_given_also_counts_as_having_spoken(conn) -> None:

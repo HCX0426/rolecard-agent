@@ -91,6 +91,21 @@ def test_chunk_hard_splits_overlong_paragraph_with_overlap() -> None:
     assert chunks[0][-80:] == chunks[1][:80]
 
 
+def test_chunk_flushes_buffer_before_hard_split() -> None:
+    """超长段落硬切前必须先把攒着的缓冲落成块（2026-10-30 引擎审计 #1）。
+
+    旧实现的 `buf = ""` 直接扔掉未成块的小段落：'A\\n\\nB\\n\\n<600字>' 在
+    size=500 下只剩 C 系列块，A/B **一个字都不入库** —— 小标题 + 整页 OCR
+    文本混排的 PDF 就是这形状，检索永远查不到标题、且没有任何声音。
+    """
+    text = "A" * 20 + "\n\n" + "B" * 20 + "\n\n" + "C" * 600
+    chunks = chunk_text(text, size=500, overlap=80)
+    joined = "".join(chunks)
+    assert "A" * 20 in joined, "A 段被硬切分支吞了"
+    assert "B" * 20 in joined, "B 段被硬切分支吞了"
+    assert "C" * 600 in joined, "超长段本身还得全量在"
+
+
 def test_chunk_empty_text_returns_nothing() -> None:
     assert chunk_text("  \n\n  ") == []
 
@@ -230,6 +245,20 @@ def test_projection_tracks_index_delete_and_reset(tmp_path: Path) -> None:
 
     kb.reset_scope("health_reports")
     assert "health_reports" not in store.rows
+
+
+def test_reset_scope_is_idempotent_when_collection_already_gone(tmp_path: Path) -> None:
+    """半途失败后**再点一次重建**必须走得通（2026-10-30 引擎审计 #8 的回归钉）。
+
+    旧实现：集合已删、投影清理抛了（sqlite busy）→ 用户按提示重试 → chroma 对不存在
+    的集合再删抛 NotFoundError → 界面显示"重建失败"，卡死在无法重试的形状，而索引
+    其实早清干净了。现在"集合本来就不在"按幂等成功。
+    """
+    kb = KnowledgeBase(tmp_path / "chroma", HashEmbedder())
+    kb.index("health_reports", "task-1", DOC_A, source_name="报告A.pdf")
+    kb.reset_scope("health_reports")  # 第一次：正常清空
+    kb.reset_scope("health_reports")  # 第二次：集合已不在 —— 不炸，幂等
+    assert all(s["scope"] != "health_reports" for s in kb.describe())
 
 
 def test_reindex_after_delete_restores_the_projection(tmp_path: Path) -> None:
@@ -530,6 +559,29 @@ def test_rerank_failure_falls_back_and_is_timed(tmp_path: Path) -> None:
     hits = kb.search(["health_reports"], "复查频率", k=3, tracer=rec)
     assert hits, "重排失败必须回退向量序，仍返回结果"
     assert kb.latency_p95()["rerank_enabled"] is True
+    assert any(getattr(e, "event", None) == "rerank_fallback" for e in rec.events)
+
+
+class _OutOfRangeReranker:
+    """形状漂移的重排器：index 越界（网关改写/版本变更时真实出现过这种载荷）。"""
+
+    name = "out-of-range"
+
+    def rerank(self, query: str, documents: list[str]) -> list[tuple[int, float]]:
+        return [(99, 0.9)]  # 比 hits 数量大得多的 index
+
+
+def test_rerank_out_of_range_index_degrades_not_crashes(tmp_path: Path) -> None:
+    """越界 index 按"重排失败"降级回向量序，而不是 IndexError 把整轮检索炸成 500
+    （2026-10-30 引擎审计 #3 的回归钉：类契约是"重排是质量增强，不能变成可用性故障"，
+    旧实现只兜了 HTTP/空 results，没兜 index 越界；工具层也只 except 维度不匹配）。
+    """
+    kb = KnowledgeBase(tmp_path / "chroma", HashEmbedder(), _OutOfRangeReranker())  # type: ignore[arg-type]
+    kb.index("health_reports", "随访须知.md", DOC_A)
+    kb.index("health_reports", "饮食建议.md", DOC_B)
+    rec = _Recorder()
+    hits = kb.search(["health_reports"], "复查频率", k=3, tracer=rec)
+    assert hits, "越界 index 必须回退向量序，仍返回结果"
     assert any(getattr(e, "event", None) == "rerank_fallback" for e in rec.events)
 
 

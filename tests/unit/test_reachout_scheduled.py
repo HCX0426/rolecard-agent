@@ -39,9 +39,7 @@ def _role(greeting_at: str | None) -> RoleCard:
 
 def _local(hour: int, minute: int) -> datetime:
     """本地时区的某个时刻（today）。触发判据只看 HH:MM 与本地日期。"""
-    return datetime.now().astimezone().replace(
-        hour=hour, minute=minute, second=0, microsecond=0
-    )
+    return datetime.now().astimezone().replace(hour=hour, minute=minute, second=0, microsecond=0)
 
 
 def _seed_scheduled_fire(conn: Any, *, role_id: str, user_id: str, days_ago: int = 0) -> None:
@@ -64,9 +62,23 @@ def test_fires_at_the_scheduled_minute(conn) -> None:
     assert trigger_scheduled(role, conn, user_id=ME, now_local=_local(9, 0)) == "scheduled"
 
 
-def test_silent_outside_the_scheduled_minute(conn) -> None:
+def test_silent_outside_the_grace_window(conn) -> None:
+    """过了补投窗口（5 分钟）就不再补 —— 迟到太久的问候不如不发（明天同一时刻再来）。"""
     role = _role("09:00")
-    assert trigger_scheduled(role, conn, user_id=ME, now_local=_local(9, 1)) is None
+    assert trigger_scheduled(role, conn, user_id=ME, now_local=_local(9, 6)) is None
+
+
+def test_late_tick_inside_grace_still_fires(conn) -> None:
+    """一拍超时把评估时刻从 09:00 推到 09:02 —— 窗口内照发（2026-10-30 引擎审计 #7）。
+
+    旧判据是精确等于那一分钟：慢一拍就把用户拍板的固定时刻无声吃掉，当天失踪且
+    quiet 留痕里一个字都没有。
+    """
+    role = _role("09:00")
+    assert trigger_scheduled(role, conn, user_id=ME, now_local=_local(9, 2)) == "scheduled"
+    # 窗口内第二拍不重发：台账判据（当日已发过）挡着。
+    _seed_scheduled_fire(conn, role_id=role.role_id, user_id=ME)
+    assert trigger_scheduled(role, conn, user_id=ME, now_local=_local(9, 4)) is None
 
 
 def test_silent_when_nothing_scheduled(conn) -> None:
@@ -164,8 +176,11 @@ class _CountingTask(PeriodicTask):
 def test_periodic_task_ticks_until_stopped() -> None:
     tracer = _RecordingTracer()
     task = _CountingTask(
-        name="test-tick", tick_interval=0.01, tracer=tracer,
-        error_event="test_tick_error", node="test",
+        name="test-tick",
+        tick_interval=0.01,
+        tracer=tracer,
+        error_event="test_tick_error",
+        node="test",
     )
     task.start()
     deadline = time.monotonic() + 2.0
@@ -182,8 +197,11 @@ def test_periodic_task_ticks_until_stopped() -> None:
 def test_periodic_task_survives_tick_errors_and_traces_them() -> None:
     tracer = _RecordingTracer()
     task = _CountingTask(
-        name="test-tick", tick_interval=0.01, tracer=tracer,
-        error_event="test_tick_error", node="test",
+        name="test-tick",
+        tick_interval=0.01,
+        tracer=tracer,
+        error_event="test_tick_error",
+        node="test",
     )
     task.fail_at = {1, 3}
     task.start()
@@ -203,8 +221,11 @@ def test_periodic_task_survives_tick_errors_and_traces_them() -> None:
 
 def test_periodic_task_stop_joins_and_double_start_is_noop() -> None:
     task = _CountingTask(
-        name="test-tick", tick_interval=30.0, tracer=_RecordingTracer(),
-        error_event="test_tick_error", node="test",
+        name="test-tick",
+        tick_interval=30.0,
+        tracer=_RecordingTracer(),
+        error_event="test_tick_error",
+        node="test",
     )
     task.start()
     first = task._thread
@@ -221,8 +242,11 @@ def test_periodic_task_breaks_out_after_error_when_stopping() -> None:
     """错误那一拍顺手置旗：循环走"留痕 → break"，不开下一拍（骨架 94 行那条出口）。"""
     tracer = _RecordingTracer()
     task = _CountingTask(
-        name="test-tick", tick_interval=0.01, tracer=tracer,
-        error_event="test_tick_error", node="test",
+        name="test-tick",
+        tick_interval=0.01,
+        tracer=tracer,
+        error_event="test_tick_error",
+        node="test",
     )
 
     def boom() -> None:
