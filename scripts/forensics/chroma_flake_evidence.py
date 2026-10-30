@@ -36,6 +36,10 @@ CHROMA_FLAKE_SIGNATURES: tuple[str, ...] = (
     "Nothing found on disk",
     "Error creating hnsw segment reader",
     "chromadb.errors.InternalError",
+    # R1031-02 的 create 竞态脸（2026-10-31，run 41118055056）：get 说没有、create 说有。
+    # 摘要行里只剩短类名（RuntimeError 包过一层），"chromadb.errors.InternalError" 那条
+    # 咬不住它 —— ENGI-24①"两台机器各读半张"的姊妹篇，签名必须对着**摘要行长什么样**写。
+    "already exists",
 )
 
 #: 一次现场最多列多少段 / 多少个目录项 —— 取证文件要能打开看完，不是越全越好。
@@ -204,8 +208,7 @@ def collect_forensics(nodeid: str, exc_text: str, extra_roots: list[Path] | None
     extras = [p for p in _extra_persist_dirs(list(extra_roots or [])) if p not in walked]
     parts.append("")
     parts.append(
-        "从给定根里另找到的持久化目录"
-        f"（扫 {len(extra_roots or [])} 个根，另 {len(extras)} 个）:"
+        f"从给定根里另找到的持久化目录（扫 {len(extra_roots or [])} 个根，另 {len(extras)} 个）:"
         if extra_roots
         else "（没有给扫描根 —— 调用方可以传 tmp_path，注册表为空时这条腿才留得下盘上形状）"
     )

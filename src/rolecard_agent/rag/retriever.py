@@ -572,6 +572,11 @@ class KnowledgeBase:
                 self._invalidate_collection(scope)  # 新建/重建后引用与 describe 缓存作废
                 return created
             except Exception as exc:  # noqa: BLE001 - 换一种写法再试；最后一次带原因抛出
+                if "already exists" in str(exc):
+                    # R1031-02 的另一张脸（run 41118055056 实测）：get 说没有、create
+                    # 说有 —— rust 层创建竞态（上游 #7952 族）。集合既然在了就取回来用；
+                    # 建它的只会是同一份代码（都是 cosine），度量不一致不成立。
+                    return self._client.get_collection(name=scope)
                 last_error = exc
                 continue
         raise RuntimeError(
