@@ -119,23 +119,11 @@ export default function TurnRow({
             </div>
           ) : (
             <>
-              {/* 悬浮铅笔：absolute 不占布局（占位会把气泡挤到换行）。
-                  删除模式下不画它：铅笔（-left-9）与轮前复选框（-left-7）叠在同一片像素上，
-                  而 opacity-0 的元素照样吃点击 —— 真机探针实测勾不上（jsdom 的 fireEvent 不做
-                  命中测试，所以这条只能靠浏览器验）。何况删除模式里意图是勾选，不是改写。 */}
-              {!busy && !selectMode && !!userMid && (
-                <Button
-                  variant="ghost"
-                  onClick={() => onStartEdit(userMid, turn.user!.content, turn.user?.image)}
-                  aria-label="编辑并重答"
-                  title="编辑这条消息并重新生成（之后的对话会被作废）"
-                  className="absolute -left-9 top-2 rounded-full p-1.5 text-slate-400 opacity-0 transition-opacity hover:bg-blue-50 hover:text-blue-600 group-hover:opacity-100 dark:text-slate-500 dark:hover:bg-slate-700/60 dark:hover:text-blue-400"
-                >
-                  <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5" aria-hidden="true">
-                    <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-                  </svg>
-                </Button>
-              )}
+              {/* 铅笔（编辑并重答）挂在**消息下沿的时间行**里（2026-10-31 用户："缩小放在
+                  我发出去消息的下边"）：从前 absolute -left-9 悬浮在气泡左侧，位置飘、热区
+                  与删除模式复选框同片像素（opacity-0 照样吃点击，真机探针实测勾不上）。
+                  现在与时间同排右对齐、尺寸缩一档，仍悬停显现。删除模式下不画它：
+                  那时意图是勾选，不是改写。 */}
               <div className="rounded-2xl rounded-br-sm border border-white/50 bg-white/70 px-4 py-2.5 text-slate-900 backdrop-blur-sm dark:border-white/10 dark:bg-slate-800/70 dark:text-slate-100">
                 {turn.user.image && (
                   <img
@@ -149,9 +137,24 @@ export default function TurnRow({
                 )}
               </div>
               {turn.user.ts && (
-                <p className="mt-1 text-right text-10 text-slate-500 dark:text-slate-400">
-                  {formatMessageTs(turn.user.ts)}
-                </p>
+                <div className="mt-1 flex items-center justify-end gap-1.5">
+                  <p className="text-10 text-slate-500 dark:text-slate-400">
+                    {formatMessageTs(turn.user.ts)}
+                  </p>
+                  {!busy && !selectMode && !!userMid && (
+                    <Button
+                      variant="ghost"
+                      onClick={() => onStartEdit(userMid, turn.user!.content, turn.user?.image)}
+                      aria-label="编辑并重答"
+                      title="编辑这条消息并重新生成（之后的对话会被作废）"
+                      className="rounded-full p-0.5 text-slate-400 opacity-0 transition-opacity hover:bg-blue-50 hover:text-blue-600 group-hover:opacity-100 dark:text-slate-500 dark:hover:bg-slate-700/60 dark:hover:text-blue-400"
+                    >
+                      <svg viewBox="0 0 20 20" fill="currentColor" className="h-3 w-3" aria-hidden="true">
+                        <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+                      </svg>
+                    </Button>
+                  )}
+                </div>
               )}
             </>
           )}

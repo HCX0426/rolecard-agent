@@ -229,12 +229,14 @@ def _init_model(
     # 运行时可能是逗号串，直接 `x in str` 会退化成子串匹配（"qwen3" 命中 "qwen3-vl:8b"）。
     # 归一交给 _thinking_model_list（入参 object，绕开 mypy 对 isinstance(str) 的"不可达"误判）。
     thinking_models = _thinking_model_list(settings.model_thinking_models)
-    if (
-        style == "native"
-        and settings.model_thinking != "off"
-        and backend.model in thinking_models
-    ):
+    thinking_on = settings.model_thinking != "off" and backend.model in thinking_models
+    if style == "native" and thinking_on:
         kwargs["reasoning"] = True
+    # OpenAI 兼容端点（SiliconFlow 一族）的思考开关是**请求体里的 `enable_thinking`**，
+    # 不是 native 的 `reasoning` —— 从前这一支从不发开关（2026-10-31 用户报"看不到思考
+    # 过程了"的根因之一）。护栏语义与 native 同一条：名单外的模型不支持，加进去会 400，
+    # 责任在名单本身。捕获侧见 `core/models/openai_reasoning.py`（langchain-openai 不映射
+    # `reasoning_content` 增量，那里补）。
     # 超时的**传法因客户端而异**（实测，别再想当然）：
     #   - openai 兼容客户端认 `timeout` → 落到 request_timeout；
     #   - ChatOllama **不认** `timeout`，传了会被静默丢弃（实测 client_kwargs 为空、
@@ -251,7 +253,23 @@ def _init_model(
     # kwargs 放进请求顶层而不是 `options`，Ollama 直接忽略（审查报告 P1-2）。
     if temperature is not None:
         kwargs["temperature"] = temperature
-    return init_chat_model(**kwargs)
+    if style == "native":
+        return init_chat_model(**kwargs)
+    # OpenAI 兼容：走带思考捕获的子类（行为纯增量 —— 不认识 reasoning_content 的响应
+    # 与从前逐字节一致）。开关在 thinking_on 那段已进 kwargs。
+    if thinking_on:
+        # `extra_body` 是 SDK `create()` 的真参数（并进请求体）；`model_kwargs` 装它会被
+        # 弃用警告 + 当方法参数展开 —— 实测 `Completions.create() got an unexpected
+        # keyword argument 'enable_thinking'`。
+        kwargs["extra_body"] = {"enable_thinking": True}
+    kwargs.pop("model_provider", None)
+    from rolecard_agent.core.agent.openai_reasoning import (  # noqa: PLC0415 - 延迟导入避环
+        ReasoningAwareChatOpenAI,
+    )
+
+    # cast 与 build_model 尾部那条同理由：ChatOpenAI 的 bind_tools 返回 Runnable 而协议要
+    # ChatLike —— init_chat_model 的重载把它抹掉了，直接构造就得自己抹。
+    return cast("ChatLike", ReasoningAwareChatOpenAI(**kwargs))
 
 
 def build_model(

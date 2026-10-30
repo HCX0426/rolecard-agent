@@ -1,5 +1,5 @@
 import { Button } from "../ui";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fetchLimits } from "../../lib/limits";
 import type { Tone } from "../Toast";
@@ -53,6 +53,57 @@ export default function Composer({
 }) {
   const imageInputRef = useRef<HTMLInputElement>(null);
 
+  /** 用户自拉的输入区上限（px）。localStorage 持久化（坏文件/隐私模式回落 null = 启发式）。 */
+  const [userMaxH, setUserMaxH] = useState<number | null>(() => {
+    try {
+      const raw = localStorage.getItem("chat.inputMaxH");
+      const n = raw ? Number(raw) : NaN;
+      return Number.isFinite(n) && n >= 72 ? n : null;
+    } catch {
+      return null;
+    }
+  });
+
+  /** 顶边把手：上拉 = 输入区上限变高（顶边往上提），下拉收窄。松手才落盘。 */
+  const dragStartRef = useRef<{ y: number; cap: number } | null>(null);
+  const onHandleDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const host = hostRef?.current;
+      const startCap =
+        userMaxH ??
+        (host && host.clientHeight > 0 ? Math.round(host.clientHeight * 0.4) : 160);
+      dragStartRef.current = { y: e.clientY, cap: startCap };
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    },
+    [hostRef, userMaxH],
+  );
+  const onHandleMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const start = dragStartRef.current;
+      if (!start) return;
+      // 上界用**窗口**而不是会话滚动区：把手是全局偏好，空会话态（还没开对话、
+      // 宿主未挂载）也得能拉 —— 实测空会话态下挂在宿主上就是"拉了没反应"。
+      const max = Math.max(72, Math.round(window.innerHeight * 0.85));
+      const next = Math.min(max, Math.max(72, start.cap + (start.y - e.clientY)));
+      setUserMaxH(next);
+    },
+    [],
+  );
+  const onHandleUp = useCallback(() => {
+    dragStartRef.current = null;
+  }, []);
+  // 持久化走 effect 而不是 setState updater：拖动结束那一下 setState 的值与现状相等时
+  // React 会整单跳过，updater 根本不执行 —— 副作用放进 updater 就是"有时不落盘"
+  //（实测：拖完 localStorage 还是 null）。高度变化就写，拖动中也写，代价可忽略。
+  useEffect(() => {
+    try {
+      if (userMaxH === null) localStorage.removeItem("chat.inputMaxH");
+      else localStorage.setItem("chat.inputMaxH", String(userMaxH));
+    } catch {
+      /* 隐私模式/坏文件：不落盘，本次会话内仍生效 */
+    }
+  }, [userMaxH]);
+
   // 输入框自适应高度：内容多时长高，封顶 = 对话区高度的 40%（量不到的环境用 160px），
   // 超过后框内滚动 —— 滚动条不显示（`no-scrollbar`，用户 2026-10-29：能滚，但别看见那个条）。
   // ResizeObserver 让封顶跟着窗口尺寸走：只按 input 变化重算的话，把窗口拉小之后
@@ -62,7 +113,11 @@ export default function Composer({
     if (!el) return;
     const host = hostRef?.current ?? null;
     const resize = () => {
-      const cap = host && host.clientHeight > 0 ? Math.round(host.clientHeight * 0.4) : 160;
+      // 上限：用户拖过把手就用**用户那份**（localStorage 持久化）；没拖过用宿主 40%
+      // 的启发式。上限高一些输入区就往上多占一些 —— "对话框往上提"就是这一下。
+      const cap =
+        userMaxH ??
+        (host && host.clientHeight > 0 ? Math.round(host.clientHeight * 0.4) : 160);
       el.style.maxHeight = `${cap}px`;
       el.style.height = "auto";
       el.style.height = `${Math.min(el.scrollHeight, cap)}px`;
@@ -72,7 +127,7 @@ export default function Composer({
     const ro = new ResizeObserver(resize);
     ro.observe(host);
     return () => ro.disconnect();
-  }, [input, inputRef, hostRef]);
+  }, [input, inputRef, hostRef, userMaxH]);
 
   async function pickImage(file: File | undefined) {
     if (!file) return;
@@ -98,6 +153,21 @@ export default function Composer({
       {/* 输入框 = 浮在暖底上的玻璃卡片（2026-10-25 玻璃重设计）：影子给它"在场"，
           边框/底色交给材质层，聚焦不点亮（用户 10-25 拍板）。 */}
       <div className="glass rounded-2xl shadow-[0_8px_30px_-12px_rgba(60,45,30,0.35)] dark:shadow-[0_8px_30px_-12px_rgba(0,0,0,0.6)]">
+        {/* 顶边把手（2026-10-31 用户："宿主 40% 那个我要能自己拉"）：上拉 = 输入区上限
+            变高（顶边往上提），下拉收窄；高度记住（localStorage）。平时隐形，悬停显形 ——
+            一条常驻的把手会把"输入框"切成"上下两块"的错觉。 */}
+        <div
+          onPointerDown={onHandleDown}
+          onPointerMove={onHandleMove}
+          onPointerUp={onHandleUp}
+          onPointerCancel={onHandleUp}
+          role="separator"
+          aria-label="调整输入框高度（拖动）"
+          title="上下拖动调整输入框高度"
+          className="group/handle flex h-3 cursor-row-resize touch-none items-center justify-center rounded-t-2xl"
+        >
+          <span className="h-1 w-10 rounded-full bg-slate-300 opacity-0 transition-opacity group-hover/handle:opacity-100 dark:bg-slate-600" />
+        </div>
         {pendingImage && (
           <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2 dark:border-slate-700">
             <img
