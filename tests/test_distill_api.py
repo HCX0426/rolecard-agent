@@ -274,7 +274,12 @@ def test_auto_extract_does_not_stack_up_while_one_is_running(
     """
     from rolecard_agent.core.common.thread_locks import end_extraction, try_extraction
 
-    with auto_client(tmp_path, model, monkeypatch, turns="1") as client:
+    # turns="0" = 关掉自动提取：这条测试的**前提**是"在飞标记只被测试自己占着"。
+    # 从前用 turns="1"，第 1 步聊天会真的放出一个后台自动提取线程 —— CI 慢机器上它
+    # 可能晚到：测试释放标记（finally）之后、手动请求之前，后台线程抢到标记，
+    # 于是"闸放开后正常走通"那一发拿到 409（2026-10-30 CI 实测红，本地永远绿）。
+    # 手动提取与自动开关无关，关掉它这条前提就是确定性的。
+    with auto_client(tmp_path, model, monkeypatch, turns="0") as client:
         tid, role_id = new_session(client)
         assert try_extraction(tid), "前提：这条会话可以先占住「提取在飞」这枚标记"
         started = time.time()
@@ -299,7 +304,12 @@ def test_manual_distill_respects_the_inflight_gate(
     """
     from rolecard_agent.core.common.thread_locks import end_extraction, try_extraction
 
-    with auto_client(tmp_path, model, monkeypatch, turns="1") as client:
+    # turns="0" = 关掉自动提取：这条测试的**前提**是"在飞标记只被测试自己占着"。
+    # 从前用 turns="1"，第 1 步聊天会真的放出一个后台自动提取线程 —— CI 慢机器上它
+    # 可能晚到：测试释放标记（finally）之后、手动请求之前，后台线程抢到标记，
+    # 于是"闸放开后正常走通"那一发拿到 409（2026-10-30 CI 实测红，本地永远绿）。
+    # 手动提取与自动开关无关，关掉它这条前提就是确定性的。
+    with auto_client(tmp_path, model, monkeypatch, turns="0") as client:
         tid, _ = new_session(client)
         chat(client, tid, "我搬到苏州住了半年")  # 攒出 pending
         assert try_extraction(tid), "前提：先占住「提取在飞」这枚标记"
