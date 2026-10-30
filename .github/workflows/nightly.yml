@@ -52,9 +52,9 @@ jobs:
       # 缺 key 时下面各段自己红/空（continue-on-error 兜住）；配上即自动生效。
       SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: 装 Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip

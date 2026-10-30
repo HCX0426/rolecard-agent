@@ -9,8 +9,8 @@ pytest-cov>=7
 pytest-timeout>=2.3
 # 用例内并行（2026-10-04 重测翻案：1514 条套件 -n 4 从 188s 到 ~70s，见 pytest_with_evidence 注记）。
 pytest-xdist>=3.6
-ruff>=0.6
-mypy>=1.11
+ruff>=0.6,<0.17
+mypy>=1.11,<3
 # 依赖方向契约（把「顺手把 import 提到顶层就引爆循环导入」变成必须评审）：
 # 判据与豁免纪律写在 pyproject 的 [tool.importlinter]，跑法是 scripts/check_import_layers.py。
 import-linter>=2.15

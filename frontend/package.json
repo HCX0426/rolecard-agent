@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "lint": "eslint . --max-warnings 33 --cache --cache-location node_modules/.cache/eslint",
+    "lint": "eslint . --max-warnings 32 --cache --cache-location .eslintcache",
     "build": "tsc --noEmit && npm run lint && vite build",
     "preview": "vite preview",
     "test": "vitest run --coverage",

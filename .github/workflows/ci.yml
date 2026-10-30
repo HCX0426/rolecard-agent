@@ -68,8 +68,8 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -102,10 +102,10 @@ jobs:
       # fetch-depth 从前钉 2：head 归属判据要读 HEAD~1 才认得"只含读数的跟进提交"那一半
       # 形状（10-03 那发 CI 假阳的修法：默认浅克隆父提交读不到 ⇒ 本地绿、CI 红）。判据随
       # "数字移出散文"退役 —— 读数不再被拿去比 README、head 已搬出入库文件，特例同拆。
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: 装 Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           # 与 Dockerfile 的 `python:3.13-slim` 同一条版本线：CI 绿而镜像里是别的版本，
           # 就等于两次实测互相不覆盖。
@@ -136,7 +136,7 @@ jobs:
         # 2026-10-04 审查快照的 CI 门禁条目：runner 上从前每次冷跑三遍 mypy（win/linux/scripts
         # 三档），60-120s 全是重复劳动。挂上增量缓存后二次跑只剩真正变更的模块。
         # pyproject 变了（mypy 配置在那里）或依赖变了就换 key，restore-keys 兜住小改动。
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .mypy_cache
           key: mypy-${{ runner.os }}-py3.13-${{ hashFiles('pyproject.toml', 'requirements/requirements*.txt', 'requirements/requirements*.lock') }}
@@ -243,13 +243,13 @@ jobs:
     permissions:
       contents: write # 仅 dist 回写 bot 用（main push 漂移时自动重建回写）；其余步骤只读
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         # fetch-depth 从前钉 2：bot 回写的第二笔要把读数 head 推进到刚建的提交，需要知道
         # "这个提交的父是谁"。那一笔随 head 归属判据退役整个删除（head 已搬出入库读数、
         # 落 gitignore 的 scratch），浅克隆默认 1 层够 bot 提交与推送用。
 
       - name: 装 Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           # **npm 缓存刻意撤了（R1031-04，2026-10-31）**：run 41095489479 那趟「装 Node」
@@ -326,7 +326,7 @@ jobs:
     # 构建镜像这一段本来就慢（拉基座 + pip 装四份 requirements），预算给到 25 分钟。
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: 构建镜像
         run: docker build -t rolecard-agent:ci .
@@ -494,10 +494,10 @@ jobs:
     steps:
       # fetch-depth 从前钉 2（"全量档也跑 consistency，也要能读 HEAD~1"）—— 那是 head
       # 归属判据的特例，判据退役后同拆，浅克隆默认 1 层够用。
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: 装 Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache-dependency-path: |
@@ -517,7 +517,7 @@ jobs:
             requirements/requirements*.txt
 
       - name: 装 Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -590,10 +590,10 @@ jobs:
       matrix:
         shard: [0, 1, 2, 3]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: 装 Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           # 不再挂 `cache: pip`：这一臂已改用 uv（见下），缓存对象变得没有意义。
@@ -642,10 +642,10 @@ jobs:
     # rapidocr/onnxruntime/cv2 + PyInstaller 打 258 MB 树 + 冒烟推理）本机实测十几分钟。
     timeout-minutes: 55
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: 装 Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           # 不再挂 `cache: pip`：这一臂已改用 uv（见下）。
@@ -687,7 +687,7 @@ jobs:
         run: python scripts/pytest_with_evidence.py --lane fast
 
       - name: 装 Node（只装壳那一份）
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -807,7 +807,7 @@ jobs:
 
       # 这条 job **不装进 runner**（装完还要起壳窗看健康，那是本机 install_package.ps1 的活，
       # 规矩见 docs/开发流程.md）。产物进 artifact，人要装就下载它再跑那条脚本。
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: rolecard-agent-installer
           path: |
