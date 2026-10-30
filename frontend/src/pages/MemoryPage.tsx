@@ -151,15 +151,8 @@ export default function MemoryPage() {
   const [consolidating, setConsolidating] = useState(false);
   // 自动提取那一档（0 = 关）单独一个忙碌态：它走的是同一个 PUT，但保存后要读回**新有效值**。
   const [extractBusy, setExtractBusy] = useState(false);
-  // 主动开口全局总闸（覆盖运行环境的 REACHOUT_ENABLED）：rejectOn = 有效值。
-  const [reachoutOn, setReachoutOn] = useState<boolean | null>(null);
-  // 收件箱折叠窗口（天）：与总闸同帖单写点，运行环境只读展示。
-  // 档位清单跟 payload 的 `choices` 走（`R102-19`）—— 后端加一档界面跟着多一项，
-  // 从前硬编码三个 <option>，界面成了"后端加档它不知道、删档点了收 400"的谎言。
-  const [mergeDays, setMergeDays] = useState<number | null>(null);
-  const [mergeChoices, setMergeChoices] = useState<string[]>(["1", "3", "7"]);
-  const [reachoutMsg, setReachoutMsg] = useState("");
-  const [reachoutErr, setReachoutErr] = useState("");
+  // 主动开口的总闸与收件箱折叠窗口**不在这一页**（2026-10-30 搬去角色卡页）：
+  // per-role 的开口开关长在每张角色卡里，全局总闸在它们家门口；记忆页签只管记忆。
   const confirm = useConfirm();
   // 竞态守卫：快速切作用域时两个 loadMemory 都在途，A 的慢响应不许盖掉 B 的桶 ——
   // 那不只是显示错位：盖进草稿的旧内容一旦被「保存」发出，就是跨桶覆盖（数据损坏）。
@@ -477,18 +470,10 @@ export default function MemoryPage() {
     ).then(() => setMergePick([]));
   };
 
-  const loadReachout = useCallback(async () => {
+  /** 读"哪几层每轮注入"的**生效值**（runtime 覆盖；"未设置" = 出厂默认 longterm+self）。 */
+  const loadInjectLayers = useCallback(async () => {
     const rt = await api.get<RuntimePayload>("/api/settings/runtime");
     const items = (rt.groups ?? []).flatMap((g) => g.items ?? []);
-    const sw = items.find((i) => i.field === "reachout_enabled");
-    setReachoutOn(sw ? sw.value !== "0" && sw.value !== "未设置" : null);
-    // 收件箱折叠窗口：读的是**生效值**（env + 在线覆盖叠加），和总闸同一个来源。
-    const merge = items.find((i) => i.field === "reachout_merge_days");
-    setMergeDays(merge ? Number.parseInt(merge.value ?? "", 10) || 1 : null);
-    if (merge?.choices && merge.choices.length > 0) setMergeChoices(merge.choices);
-    // 注入哪几层记忆（记忆分层，2026-10-30）：同一个来源读**生效值** ——
-    // "未设置" = 用出厂默认（长期记忆 + 角色自记），所以要显式映射成那两层，
-    // 而不是把 "未设置" 当成"一层都没注入"。
     const inject = items.find((i) => i.field === "memory_inject_categories");
     const raw = (inject?.value ?? "").trim();
     setInjectLayers(
@@ -502,8 +487,8 @@ export default function MemoryPage() {
   }, []);
 
   useEffect(() => {
-    loadReachout().catch(() => setReachoutOn(null));
-  }, [loadReachout]);
+    loadInjectLayers().catch(() => undefined);
+  }, [loadInjectLayers]);
 
   /**
    * 改"哪几层每轮注入"（记忆分层，2026-10-30）。
@@ -539,37 +524,7 @@ export default function MemoryPage() {
     } catch (e) {
       setMemErr(`保存失败：${describeError(e)}`);
       // 保存失败要把界面**退回**真实状态 —— 留着乐观的勾选会骗人。
-      loadReachout().catch(() => undefined);
-    }
-  }
-
-  async function changeMergeDays(next: string) {
-    setReachoutErr("");
-    setReachoutMsg("");
-    try {
-      await api.put<RuntimePayload>("/api/settings/runtime", {
-        values: { reachout_merge_days: next },
-      });
-      setMergeDays(Number.parseInt(next, 10));
-      setReachoutMsg(
-        `收件箱已改为每 ${next} 天一摞：同一角色在这个窗口里的主动开口会折成一行`,
-      );
-    } catch (e) {
-      setReachoutErr(`保存失败：${describeError(e)}`);
-    }
-  }
-
-  async function toggleReachout() {
-    setReachoutErr("");
-    setReachoutMsg("");
-    try {
-      await api.put<RuntimePayload>("/api/settings/runtime", {
-        values: { reachout_enabled: reachoutOn ? "0" : "1" },
-      });
-      setReachoutOn(!reachoutOn);
-      setReachoutMsg(reachoutOn ? "已关闭：所有角色都不会主动找你" : "已开启：角色可以主动找你（还需各角色卡的开关）");
-    } catch (e) {
-      setReachoutErr(`保存失败：${describeError(e)}`);
+      loadInjectLayers().catch(() => undefined);
     }
   }
 
@@ -596,7 +551,7 @@ export default function MemoryPage() {
         </div>
         <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
           每轮对话都带上这里的事实 —— 对话、主动开口、桌宠共用这一份。
-          主动开口的总闸在下面那张卡；工作区（角色读写文件的授权范围）在「角色卡」页。
+          主动开口的总闸在「角色卡」页；工作区（角色读写文件的授权范围）在每张角色卡里。
         </p>
       <Card className="mt-4 p-5">
         <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">跨会话记忆</h3>
@@ -937,48 +892,9 @@ export default function MemoryPage() {
         </div>
       </Card>
 
-      <Card className="p-5">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">主动开口</h3>
-          <button
-            onClick={toggleReachout}
-            disabled={reachoutOn === null}
-            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-              reachoutOn
-                ? "bg-blue-600 text-white"
-                : "bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-300"
-            }`}
-          >
-            {reachoutOn === null ? "…" : reachoutOn ? "已开启" : "已关闭"}
-          </button>
-        </div>
-        <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-          全局总闸：关闭后所有角色都不会主动找你（静默，无提示音）。即使开着，也只有角色卡上
-          勾选「角色会主动找你」的角色才会开口。
-        </p>
-        <label className="mt-3 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-          <span>收件箱折叠窗口</span>
-          <select
-            value={String(mergeDays ?? 1)}
-            disabled={mergeDays === null}
-            onChange={(e) => void changeMergeDays(e.target.value)}
-            className="rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
-          >
-            {mergeChoices.map((c) => (
-              <option key={c} value={c}>
-                每 {c} 天一摞
-              </option>
-            ))}
-          </select>
-          {mergeDays === null && <span className="text-10 text-slate-400">读取中…</span>}
-        </label>
-        <p className="mt-1 text-11 leading-relaxed text-slate-400 dark:text-slate-500">
-          同一角色在一个窗口里攒下的开口折成一行（行上有未读角标，展开看每一条）。
-          有未读的那摞总是摊开 —— 折叠只为把旧消息收干净，不藏新消息。
-        </p>
-        {reachoutMsg && <p className="mt-1.5 text-xs text-emerald-600 dark:text-emerald-400">{reachoutMsg}</p>}
-        {reachoutErr && <p className="mt-1.5 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{reachoutErr}</p>}
-      </Card>
+      {/* 主动开口卡不再在这一页（2026-10-30）：总闸与收件箱折叠窗口搬去了角色卡页
+          （components/ReachoutMasterCard，由 RolesPage 托管）—— per-role 的开口开关
+          就在每张角色卡里，全局总闸在它们家门口；这一页只管记忆。 */}
       </div>
     </div>
   );

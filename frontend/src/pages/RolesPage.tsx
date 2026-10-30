@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button, EllipsisText, Notice, PageHeader, Tag } from "../components/ui";
 import TimelineDrawer from "../components/TimelineDrawer";
 import { WorkspacePanel } from "../components/WorkspacePanel";
+import { ReachoutMasterCard } from "../components/ReachoutMasterCard";
 import type { PetPackListing } from "../pets/registry";
 import {
   api,
@@ -424,6 +425,12 @@ export default function RolesPage({
             </>
           }
         />
+
+        {/* 主动开口总闸（2026-10-30 从记忆页签搬来）：per-role 的开口开关就在下面每张
+            角色卡里，全局总闸自然该在它们家门口 —— 记忆页签不该管这件事。 */}
+        <div className="mt-3">
+          <ReachoutMasterCard />
+        </div>
 
         {status && (
           <Notice className="mt-3" tone={status.ok ? "ok" : "error"}>

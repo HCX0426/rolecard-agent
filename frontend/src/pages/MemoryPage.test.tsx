@@ -159,9 +159,11 @@ describe("MemoryPage 页头（注入总闸是这页的英雄元素）", () => {
   it("总闸住在页头而不在卡里；挂载读完显示当前注入状态", async () => {
     render(<MemoryPage />);
     expect(await screen.findByRole("button", { name: "记忆注入：已关闭" })).toBeTruthy();
-    // 页头副标题说明"一份事实、一条注入路径"，并把工作区的去处指清楚
+    // 页头副标题说明"一份事实、一条注入路径"，并把两件事的去处指清楚
+    // （2026-10-30：工作区进了每张角色卡、主动开口总闸去了角色卡页 —— 都不在记忆页签）。
     expect(screen.getByText(/对话、主动开口、桌宠共用这一份/)).toBeTruthy();
-    expect(screen.getByText(/工作区（角色读写文件的授权范围）在「角色卡」页/)).toBeTruthy();
+    expect(screen.getByText(/总闸在「角色卡」页/)).toBeTruthy();
+    expect(screen.getByText(/工作区.*在每张角色卡里/)).toBeTruthy();
   });
 });
 
@@ -687,25 +689,5 @@ describe("记忆卡「清空」的二次确认（2026-10-30 交互审计的回�
   });
 });
 
-describe("主动开口卡（总闸 + 收件箱折叠窗口；2026-10-30 随记忆页签迁来）", () => {
-  it("总闸与窗口在此页可写：档位跟着 payload 的 choices 走（R102-19），保存走 runtime 通道", async () => {
-    render(<MemoryPage />);
-    // 单写点：这里的可写开关（stub 的 reachout_enabled 生效值 = 1 → 已开启）
-    expect(await screen.findByRole("button", { name: "已开启" })).toBeTruthy();
-    // 窗口下拉按**生效值**选中（stub 给 3），而不是按出厂默认 1
-    const select = (await screen.findByLabelText(/收件箱折叠窗口/)) as HTMLSelectElement;
-    expect(select.value).toBe("3");
-    // 档位清单逐项来自 payload 的 `choices`（`R102-19`）：14 不在组件兜底的那三个里 ——
-    // 看得见它，才说明这一屏没有退回"写死三个 option、后端加档它不知道"的旧形态。
-    expect(within(select).getByRole("option", { name: "每 14 天一摞" })).toBeTruthy();
-    fireEvent.change(select, { target: { value: "7" } });
-    await waitFor(() =>
-      expect(apiMock.put).toHaveBeenCalledWith(
-        "/api/settings/runtime",
-        expect.objectContaining({ values: { reachout_merge_days: "7" } }),
-      ),
-    );
-    // 折叠窗口不是"建议改重启"的只读项：保存走同一条 runtime 覆盖通道，即时生效
-    expect(screen.queryAllByRole("button", { name: "已关闭" })).toHaveLength(0);
-  });
-});
+// 主动开口总闸条的用例随组件**整体迁走**（2026-10-30 搬去角色卡页托管）：
+// 现在住在 components/ReachoutMasterCard.test.tsx —— 这一页不再管主动开口。
