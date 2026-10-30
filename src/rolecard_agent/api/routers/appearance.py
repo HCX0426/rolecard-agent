@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
@@ -40,6 +41,29 @@ _DIR_NAME = "appearance"
 def background_dir() -> Path:
     """背景图目录（数据根下；不建目录 until 真的上传）。"""
     return user_data_root() / _DIR_NAME
+
+
+#: 服务端生成的背景图名的形状：`sha256[:12] + 图片后缀`（见 upload_background）。
+_NAME_SHAPE = re.compile(r"^[0-9a-f]{12}\.(?:png|jpe?g|webp|gif)$")
+
+
+def _background_path(name: str) -> Path | None:
+    """把 URL 里的 {name} 解成目录内的真实路径；形状不对 / 不在目录内 → None（调用方给 404）。
+
+    从前只查"不含分隔符、不以点开头"（2026-10-30 安全审计 #6 的绕过）：Windows 上
+    `background_dir() / "C:foo"` 得到 `C:foo`（盘符相对名，既不含斜杠也不以点开头），
+    读/删打到数据根之外、与后端同 CWD 的盘上文件 —— 删除没有恢复面。改成按**生成名
+    的形状白名单** + resolve 后仍在目录内双保险（与 `features/pet_packs.pack_file`
+    同一条守卫纪律）。
+    """
+    if not _NAME_SHAPE.match(name):
+        return None
+    base = background_dir()
+    try:
+        target = (base / name).resolve()
+        return target if target.is_relative_to(base.resolve()) else None
+    except OSError:
+        return None
 
 
 @router.post("/api/appearance/background", status_code=201)
@@ -81,11 +105,9 @@ def upload_background(
 @router.get("/api/appearance/background/{name}")
 def get_background(name: str) -> FileResponse:
     """取一张背景图（缓存头：文件名带内容 hash，变了就是新名，可以长缓存）。"""
-    # **路径穿越防线**：只接受纯文件名（不含分隔符、不含 ..）。
-    if "/" in name or "\\" in name or name.startswith("."):
-        raise HTTPException(status_code=404, detail="没有这张图。")
-    target = background_dir() / name
-    if not target.is_file():
+    # 路径穿越防线见 `_background_path`（形状白名单 + resolve 后仍在目录内）。
+    target = _background_path(name)
+    if target is None or not target.is_file():
         raise HTTPException(status_code=404, detail="没有这张图。")
     return FileResponse(
         target,
@@ -101,13 +123,9 @@ def delete_background(
     actor: Actor = Depends(get_actor),
 ) -> dict[str, object]:
     """删掉一张背景图（换图时清旧的）。"""
-    if "/" in name or "\\" in name or name.startswith("."):
-        raise HTTPException(status_code=404, detail="没有这张图。")
-    target = background_dir() / name
-    if not target.is_file():
+    target = _background_path(name)
+    if target is None or not target.is_file():
         raise HTTPException(status_code=404, detail="没有这张图。")
     target.unlink()
-    ctx.audit.log(
-        actor=actor.id, action="clear_appearance_background", target=name, detail={}
-    )
+    ctx.audit.log(actor=actor.id, action="clear_appearance_background", target=name, detail={})
     return {"deleted": name}

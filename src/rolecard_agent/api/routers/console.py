@@ -136,6 +136,10 @@ def import_knowledge_document(
         user_id=ctx.current_user(),
         upload_dir=ctx.settings.upload_dir,
         ingestion=ctx.ingestion,
+        # 与 sessions.py 的上传口同一口径：传现值，不吃出厂兜底（安全审计 #5）。
+        # 上面第 127 行的预检用的就是 ctx.settings.max_upload_bytes —— persist 内部
+        # 那道若还按 20MB 默认值，配置调大时两处上限就对不上（一个放行一个拒）。
+        max_bytes=ctx.settings.max_upload_bytes,
     )
     submitted = upload_service.submit_scope_import(
         persisted,

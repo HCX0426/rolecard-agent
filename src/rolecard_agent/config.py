@@ -22,7 +22,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 # Any：num_ctx 是 int|None，dict[str,str] 会让 mypy 逐字段校验失败；展开时由 pydantic 把关。
 #: 本机推理服务（Ollama）默认地址 —— **全仓 `src/` 里 11434 的唯一出处**（端口单源那条尺子盯着）。
@@ -620,6 +620,24 @@ class Settings(BaseModel):
         if name == head or self._backend_is_local(name):
             return None
         return name
+
+    @field_validator("auth_mode")
+    @classmethod
+    def _normalize_auth_mode(cls, v: str) -> str:
+        """`AUTH_MODE` 归一到 off/auto/on 之一，未知值**拒绝启动**（2026-10-30 安全审计 #1）。
+
+        为什么是这里而不是各读取点：档位判定有三处读者（`auth_required` 归一后比较、
+        `main.py` 的公网裸奔硬失败护栏、`origin_guard_violation` 的 Host 回环防线），
+        后两处是**裸 `== "off"`**。`AUTH_MODE=OFF` 或 `"off "`（写 .env 极常见的形态）时，
+        `auth_required` 归一判为 off ⇒ 全请求免凭据；而那两处裸比较看到 `"OFF" != "off"`
+        以为"鉴权已开"，于是 `RUN_API_HOST=0.0.0.0` 照样起得来、off 档专属的 Host 回环
+        防线被整条跳过 —— user 档（对话/记忆/知识库/上传/sync）全裸。在一个入口归一，
+        三个读者读到的就是同一个规范值；未知值当场抛（配置写错是启动期该说人话的事）。
+        """
+        normalized = (v or "off").strip().lower()
+        if normalized not in ("off", "auto", "on"):
+            raise ValueError(f"AUTH_MODE 只能是 off/auto/on，收到的是 {v!r}")
+        return normalized
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:

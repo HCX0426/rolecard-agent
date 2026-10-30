@@ -25,7 +25,6 @@ from __future__ import annotations
 from urllib.parse import urlsplit
 
 from rolecard_agent.api.auth import (
-    LOOPBACK_HOSTS,
     ROLE_OPERATOR,
     ROLE_USER,
     is_loopback,
@@ -54,8 +53,14 @@ USER_ROUTES: tuple[tuple[str, frozenset[str]], ...] = (
     # 自己的数据：报告/索引/域记录/知识库与检索质量指标。
     ("/api/records", _ANY),
     ("/api/domains", _ANY),
-    ("/api/knowledge", _ANY),
-    ("/api/uploads", _ANY),
+    # 知识库与上传目录是**共享面**（集合名/孤儿目录都没有用户维度）：读侧留 user
+    # （角色卡的作用域下拉、检索质量指标、自己那次上传的任务进度都要读），写侧收
+    # operator（2026-10-30 安全审计 #2）—— 多凭据部署下，任一使用者凭据不该能
+    # `DELETE /api/knowledge/{scope}` 抹掉全实例已入库的检索内容、往共享集合投喂文档
+    # 污染别人的检索，或 `POST /api/uploads/cleanup` 删掉别人正引用的孤儿。
+    # 单机 off 档 enforce=False 全放行、本机来源永远放行 → 零感知。
+    ("/api/knowledge", frozenset({"GET"})),
+    ("/api/uploads", frozenset({"GET"})),
     ("/api/rag/metrics", _ANY),
     # 角色卡与插件目录：建角色、改角色是这产品的日常用法（插件启停在下面另论）。
     # **角色卡是实例级资源**（`role_cards` 表无 user 归属列，2026-10-09 权限审查确认）：
@@ -67,9 +72,15 @@ USER_ROUTES: tuple[tuple[str, frozenset[str]], ...] = (
     # operator，那么开着鉴权的远端实例上，桌宠那只形象会直接退化成 SVG 兜底（图取不到），
     # 症状长得像"素材坏了"而不是"这条端点没表态"。
     ("/api/pets", frozenset({"GET"})),
-    # 收件箱与审批的**读侧**：红点计数是界面常驻轮询，批准/拒绝不在这一档。
+    # 收件箱的读侧：红点计数是界面常驻轮询。
     ("/api/reachouts", _ANY),
-    ("/api/approvals", frozenset({"GET"})),
+    # 审批**整条不在这一档**（2026-10-30 安全审计 #4）：从前 GET 留 user 只为红点计数，
+    # 但 `list_rows` 没有归属过滤 —— 多凭据部署里使用者 A 能读到 B/主人**待批的命令行
+    # 全文**（常带路径与数据片段）并长期监视谁在批什么；而批准/拒绝本来就只有操作员
+    # 能按（decide 一直是 operator 档），给使用者看一个自己无权行动的队列不是服务是泄露。
+    # 于是这行整条摘掉（默认落 operator，比"空方法集"诚实：清单里不留永不命中的条目）。
+    # 副作用可接受：user 档的红点轮询吃 403 → usePoll 吞错保持 0（不弹入口），操作员档
+    # 照常红点；单机 off 档与本机来源永远放行 → 零感知。
     # 记忆是"关于我这个人的事实"，用户可看可改可清（设置里的记忆卡）。
     ("/api/settings/memory", _ANY),
     # 上行同步（M7）：清单/计划/导入三条都是"把自己的数据搬给自己在另一台的账号"，
@@ -206,8 +217,13 @@ def outbound_target_allowed(
     http/https 地址都收**：多凭据部署里，持 user 凭据的人可以把该身份的记忆与会话全量推到
     自己控制的服务器。判据收在这里而不是散在路由里：`AUTH_MODE=off` 一律放行（那一档的
     语义就是"我本机单人用"，与 `allowed()` 同一条信任模型，单机形态零感知）；开启认证后
-    按档算 —— 回环目标或落在 operator 允许清单里 → 放行；否则只有**操作员这一档**
-    （本机来源 / operator 凭据）能敲。
+    按档算 —— 落在 operator 允许清单里的目标 → 放行；**本机来源**（回环 ip）→ 放行
+    （含它敲本机各端口）；其余（远端来源）只有**操作员这一档**能敲。
+
+    回环**目标**不再单独豁免（2026-10-30 安全审计 #3）：从前 `host in LOOPBACK_HOSTS`
+    直接放行，等于给远端 user 凭据一个"让本机去敲 127.0.0.1:<任意端口>并反射响应"的
+    SSRF 跳板（Ollama、别的内网服务、自身各端点）。豁免的正确主语是**来源**而不是目标：
+    本机来源本就全信任，远端身份敲回环目标要过操作员档（末尾那条 role 判据）。
 
     地址本身能不能用（scheme、空值）仍归 `validate_base_url`，这里只管"谁有资格敲它"。
     """
@@ -216,7 +232,7 @@ def outbound_target_allowed(
     host = (urlsplit(url).hostname or "").strip().lower()
     if not host:
         return False
-    if host in LOOPBACK_HOSTS or host in allowed_hosts(allowlist):
+    if host in allowed_hosts(allowlist):
         return True
     if is_loopback(ip):
         return True

@@ -92,6 +92,16 @@ def test_rejects_path_traversal(client: TestClient) -> None:
         assert client.delete(f"/api/appearance/background/{bad}").status_code != 200
 
 
+def test_rejects_drive_relative_name(client: TestClient) -> None:
+    """Windows 盘符相对名 `C:foo` 既不含斜杠也不以点开头 —— 旧的分隔符黑名单挡不住它
+    （2026-10-30 安全审计 #6）：`background_dir() / "C:foo"` 得到 `C:foo`（换盘到进程
+    CWD 解析），读/删打到数据根之外。改成生成名形状白名单后，它连形状都不合 → 404。
+    """
+    for bad in ("C:evil", "C:evil.png", "D:app.db"):
+        assert client.get(f"/api/appearance/background/{bad}").status_code != 200
+        assert client.delete(f"/api/appearance/background/{bad}").status_code != 200
+
+
 def test_missing_background_is_404(client: TestClient) -> None:
     assert client.get("/api/appearance/background/nope.png").status_code == 404
     assert client.delete("/api/appearance/background/nope.png").status_code == 404

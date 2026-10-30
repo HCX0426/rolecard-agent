@@ -85,7 +85,10 @@ function logLine(text: string): void {
     // 页面（角色名可被用户设、消息原文来自模型），都可能含换行 —— 一条消息就能在
     // shell.log 里**伪造出额外的日志行**。压在一行里是这里唯一要的语义：
     // 一行日志 = 一个事件；这个函数是 shell.log 的唯一写入口，收在这里就是全覆盖。
-    const oneLine = text.replace(/[\r\n]+/g, " ");
+    // 再截一个上限（2026-10-30 安全审计 #7）：`导航被拒：${url}` 里的 url 完全由页面
+    // 决定（AI 生成内容能塞超长链接），一条超长行 + 反复触发就能把壳的排障流水刷成
+    // 同一条噪音、挤掉真实事件（诊断包也收这份日志）。500 字符够写清任何一条正常事件。
+    const oneLine = text.replace(/[\r\n]+/g, " ").slice(0, 500);
     appendFileSync(shellLogFile, `${new Date().toISOString()} ${oneLine}\n`);
   } catch {
     /* 日志写不进去绝不该弄坏功能本身（目录被锁、磁盘满都是这里不该管的事） */

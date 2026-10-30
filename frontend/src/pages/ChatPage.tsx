@@ -58,7 +58,6 @@ export default function ChatPage({
   /** 选中会话的计数。工具条拿它当「换了一条，把菜单收掉」的扳机：菜单开合是它的私事，
    *  而**哪一次算换会话**是页面的事 —— 发送时顺手新建一条不该收菜单（见 ChatToolbar）。 */
   const [selectionNonce, setSelectionNonce] = useState(0);
-  const [currentRole, setCurrentRole] = useState<string>("");
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [input, setInput] = useState("");
   // 这个 ref 留在页面：深链跳进一条会话时要把光标直接落在输入框。自适应高度归 Composer。
@@ -143,6 +142,15 @@ export default function ChatPage({
   // 会话列表（含移动端抽屉开关）抽到 hooks/useSessions。
   const { sessions, sessionsOpen, setSessionsOpen, refreshSessions } = useSessions();
 
+  // 头部的角色选择跟随当前会话（切会话时显示该会话自己的角色）。
+  // 是**派生值**不是 state：从前用 useState + 一个只写它的 effect（React 那条
+  // "you-might-not-need-an-effect" 的 lint 就钉在这里）—— 派生走 effect 会多一帧
+  // "旧角色配新会话"的中间态，且每次 sessions 刷新都白重渲染一遍。
+  const currentRole = useMemo(
+    () => sessions.find((s) => s.thread_id === sessionId)?.role_id || "",
+    [sessions, sessionId],
+  );
+
   useEffect(() => {
     refreshSessions().catch((e) => setStatus(`加载对话失败：${e.message}`, "warn"));
     api
@@ -152,12 +160,6 @@ export default function ChatPage({
       .catch((e) => setStatus(`角色列表加载失败：${describeError(e)}（先用兜底开场白）`, "warn"));
     // 模型行由 ChatToolbar 自己拉（hooks/useModelBackends）：这一页除了生效模型的名字不碰它。
   }, [refreshSessions, setStatus]);
-
-  // 头部的角色选择跟随当前会话（切会话时显示该会话自己的角色）
-  useEffect(() => {
-    const cur = sessions.find((s) => s.thread_id === sessionId);
-    setCurrentRole(cur?.role_id || "");
-  }, [sessionId, sessions]);
 
   // 进入对话界面 = 那些主动消息都看过了。口径不是今天定的：`api/index.ts` 的
   // `markAllReachoutsRead` 与后端

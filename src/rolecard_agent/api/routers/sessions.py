@@ -1034,6 +1034,10 @@ def upload_report(
         user_id=str(thread["user_id"]),
         upload_dir=ctx.settings.upload_dir,
         ingestion=ctx.ingestion,
+        # 传现值而不是吃 UPLOAD_MAX_BYTES 出厂兜底：`MAX_UPLOAD_BYTES` 调小后界面预检
+        # 报小值、这里仍按 20MB 放行就是两个事实面（2026-10-30 安全审计 #5；
+        # upload_service 那句"HTTP 路由显式传现值"的注释此前从未被兑现）。
+        max_bytes=ctx.settings.max_upload_bytes,
     )
 
     def _inject_note(outcome: upload_service.UploadOutcome) -> None:

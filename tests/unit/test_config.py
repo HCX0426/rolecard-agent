@@ -39,6 +39,23 @@ def test_agent_default_mode_from_env() -> None:
     assert Settings.from_env({"AGENT_DEFAULT_MODE": "chat"}).agent_default_mode == "chat"
 
 
+def test_auth_mode_normalizes_case_and_whitespace_then_rejects_unknown() -> None:
+    """`AUTH_MODE` 归一到 off/auto/on，未知值拒绝启动（2026-10-30 安全审计 #1 的回归钉）。
+
+    三个读者里 `auth_required` 归一后比较、公网裸奔护栏与 Host 回环防线是裸 `== "off"` ——
+    `AUTH_MODE=OFF`/`"off "` 时前者判 off（全免凭据）而后两者以为"已开"，于是绑 0.0.0.0
+    照样起、回环防线被跳过。在一个入口归一，三个读者读到同一个规范值。
+    """
+    assert Settings.from_env({"AUTH_MODE": "OFF"}).auth_mode == "off"
+    assert Settings.from_env({"AUTH_MODE": "on  "}).auth_mode == "on"
+    assert Settings.from_env({"AUTH_MODE": "Auto"}).auth_mode == "auto"
+    # 未知值当场抛（配置写错是启动期该说人话的事），不是静默当 off 或 off 之外的第三种
+    with pytest.raises(ValueError, match="AUTH_MODE"):
+        Settings.from_env({"AUTH_MODE": "ture"})  # 手滑拼错
+    # 空串 = 未设置，回落默认 off（不炸）
+    assert Settings.from_env({"AUTH_MODE": ""}).auth_mode == "off"
+
+
 def test_parses_backends_from_json() -> None:
     settings = Settings.from_env(
         {
@@ -177,9 +194,7 @@ def test_a_role_picking_a_lower_priority_backend_keeps_the_global_default() -> N
     的那台）反而不再给它兜底 —— 用户 2026-09-25 要这条时指的是"角色级 > 优先级"，而当时
     的实现连"默认那台还在链上"一起改掉了，是顺手丢的。
     """
-    backends = {
-        n: ModelBackend(model=f"m-{n}", provider="openai") for n in ("a", "b", "c")
-    }
+    backends = {n: ModelBackend(model=f"m-{n}", provider="openai") for n in ("a", "b", "c")}
     settings = Settings(model_backends=backends, model_default="a", model_fallbacks=["b", "c"])
     # 默认自己当 primary：与修前逐字相同（"不回退到自己"那条规则把它丢掉）
     assert settings.resolve_fallbacks() == ["b", "c"]
@@ -291,9 +306,7 @@ def test_provider_that_is_not_native_is_not_local_even_with_a_loopback_url() -> 
     """
     backends = {
         "local": ModelBackend(model="m", provider="ollama"),
-        "sneaky": ModelBackend(
-            model="m", provider="openai", base_url="http://127.0.0.1:11434/v1"
-        ),
+        "sneaky": ModelBackend(model="m", provider="openai", base_url="http://127.0.0.1:11434/v1"),
     }
     s = Settings(
         model_backends=backends,
@@ -357,6 +370,7 @@ def test_degraded_backend_refuses_to_guess_on_ambiguous_model_names() -> None:
         model_default="local",
     )
     assert s.degraded_backend("local", "shared") is None
+
 
 # -- 数值型环境变量：`0` 必须被保留（代码审查报告（第二轮）L1） --------------------
 
@@ -451,10 +465,13 @@ def test_siliconflow_endpoint_and_ocr_python_parse_from_env() -> None:
     assert defaults.ocr_python is None
 
     names = set(Settings.model_fields)
-    assert not {
-        "siliconflow_api_key",
-        "embedding_backend",
-        "rag_rerank",
-        "ocr_backend",
-        "ocr_api_key",
-    } & names
+    assert (
+        not {
+            "siliconflow_api_key",
+            "embedding_backend",
+            "rag_rerank",
+            "ocr_backend",
+            "ocr_api_key",
+        }
+        & names
+    )

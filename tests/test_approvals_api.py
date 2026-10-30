@@ -76,9 +76,7 @@ def _token_from_api(client: TestClient, approval_id: int) -> str | None:
 
 def _approval_rows(db_path: str) -> list[dict]:
     conn = connect(db_path)
-    rows = list(
-        conn.execute("SELECT * FROM command_approval ORDER BY id DESC").fetchall()
-    )
+    rows = list(conn.execute("SELECT * FROM command_approval ORDER BY id DESC").fetchall())
     conn.close()
     return [dict(r) for r in rows]
 
@@ -120,9 +118,11 @@ def test_decide_reject_is_terminal_no_execution(client: TestClient, db_path: str
     assert rows[0]["status"] == "rejected"
     # `R102-51`：docstring 宣称的探测器**落成断言** —— 从前这里只查状态不查审计，
     # 后台错跑执行本用例照样绿（审计里会留下 run_command 行）。
-    audit_runs = sqlite3.connect(db_path).execute(
-        "SELECT COUNT(*) FROM audit_log WHERE action = 'run_command'"
-    ).fetchone()[0]
+    audit_runs = (
+        sqlite3.connect(db_path)
+        .execute("SELECT COUNT(*) FROM audit_log WHERE action = 'run_command'")
+        .fetchone()[0]
+    )
     assert audit_runs == 0, "拒绝是终态，后台不该真的执行命令（audit_log 有 run_command）"
 
 
@@ -216,6 +216,7 @@ def test_token_cannot_be_reused_after_decide(client: TestClient, db_path: str) -
     time.sleep(0.3)
     assert len([r for r in _approval_rows(db_path) if r["command"] == "echo one-shot"]) == 1
 
+
 def test_each_accepted_approve_submits_exactly_one_execution(
     client: TestClient, db_path: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -256,6 +257,7 @@ def test_each_accepted_approve_submits_exactly_one_execution(
     assert _decide(client, other["id"], "reject").status_code == 200
     assert submitted == [row["id"]], f"拒绝不该提交执行，但提交了：{submitted}"
 
+
 def test_the_approval_execution_thread_sees_the_request_epoch(
     client: TestClient, db_path: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -293,11 +295,20 @@ def test_the_approval_execution_thread_sees_the_request_epoch(
 def test_on_mode_token_reachability_and_operator_decides_by_credentials(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`R102-46`：on 档下列表对使用者角色只给 `has_token` 布尔、不再下发令牌本身
-    （读得到列表 ≠ 持有批准能力）；operator 拍板凭凭据、不必持令牌。
+    """on 档下审批队列整条归操作员（`R102-46` + 2026-10-30 安全审计 #4）。
 
-    变异：把 list_approvals 的 include_token 摘成恒 True ⇒ 前半红；
-    把 decide 的 operator 分支摘掉 ⇒ 后半红。
+    两笔收紧叠在同一格上：
+    * `R102-46`：本机来源（off 档 / 回环）读列表时，使用者角色只给 `has_token` 布尔、
+      不再下发令牌本身（"读得到列表 = 持有批准能力"的等式断掉）—— 那半由
+      `test_off_mode_list_still_carries_token_for_the_local_ui` 钉着。
+    * 审计 #4：**非本机来源**的使用者凭据连列表都不该读到 —— `list_rows` 没有归属
+      过滤，远端 user 读到的是别人待批的命令行全文（常带路径/数据片段），而批准/拒绝
+      本来就只有操作员能按，给一个无权行动的队列看不是服务是泄露。于是 approvals
+      整条从 USER_ROUTES 摘掉（默认落 operator）。
+
+    本用例走的是非回环来源（TestClient 不带 loopback 对端），所以：远端 user = 403，
+    远端 operator = 读得到带令牌 + 凭凭据拍板。变异：把 decide 的 operator 分支摘掉
+    ⇒ 最后那步红；把 approvals 放回 user 档 ⇒ 远端 user 那步从 403 变 200 而红。
     """
     monkeypatch.setenv("AUTH_MODE", "on")
     # 凭证分族：`operator:` 前缀 = 操作员；无前缀 = 使用者（没有 "user:" 这种前缀）。
@@ -310,13 +321,9 @@ def test_on_mode_token_reachability_and_operator_decides_by_credentials(
 
     # 匿名：on 档一律 401。
     assert c.get("/api/approvals").status_code == 401
-    # 使用者角色：列表是 user 面（侧栏红点要用），读得到 —— 但令牌不再跟着来：
-    # 行里只有 has_token 布尔，"读得到列表 = 持有批准能力"的等式在 R102-46 断掉。
+    # 远端使用者：整条审批队列读不到（403）—— 命令行全文只给能拍板的人看（审计 #4）。
     user = {"Authorization": "Basic YWxpY2U6cHc="}  # alice:pw
-    items = c.get("/api/approvals", headers=user).json()["items"]
-    target = next(i for i in items if i["id"] == row["id"])
-    assert "decide_token" not in target
-    assert target["has_token"] is True
+    assert c.get("/api/approvals", headers=user).status_code == 403
     res = c.post(
         f"/api/approvals/{row['id']}/decide",
         json={"decision": "approve", "token": row["decide_token"]},
@@ -337,6 +344,7 @@ def test_on_mode_token_reachability_and_operator_decides_by_credentials(
     )
     assert res.status_code == 200
     assert res.json()["status"] == "approved"
+
 
 def test_off_mode_list_still_carries_token_for_the_local_ui(
     client: TestClient, db_path: str

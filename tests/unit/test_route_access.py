@@ -39,9 +39,7 @@ def _live_routes(app: Any) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for route in app.routes:
         items = (
-            route.effective_candidates()
-            if type(route).__name__ == "_IncludedRouter"
-            else [route]
+            route.effective_candidates() if type(route).__name__ == "_IncludedRouter" else [route]
         )
         for item in items:
             target = getattr(item, "route", item)
@@ -97,7 +95,18 @@ def test_boundaries_that_are_easy_to_get_wrong() -> None:
         # 读侧降级、写侧收紧：同一个前缀两档
         ("GET", "/api/settings/models", USER),
         ("PUT", "/api/settings/models", OPERATOR),
-        ("GET", "/api/approvals", USER),
+        # 知识库/上传目录：共享语料的读侧归使用者（角色卡作用域下拉、任务进度轮询），
+        # 写侧收操作员（安全审计 #2：任一使用者凭据不该能清空/投毒全实例语料）。
+        ("GET", "/api/knowledge", USER),
+        ("GET", "/api/knowledge/scopes", USER),
+        ("POST", "/api/knowledge/scopes", OPERATOR),
+        ("DELETE", "/api/knowledge/health_reports", OPERATOR),
+        ("POST", "/api/knowledge/scopes/health_reports/documents", OPERATOR),
+        ("GET", "/api/uploads/tasks/t1", USER),
+        ("POST", "/api/uploads/cleanup", OPERATOR),
+        # 审批整条收操作员（安全审计 #4）：列表没有归属过滤，读侧留 user 等于把别人
+        # 待批的命令行全文交给使用者；红点轮询吃 403 静默为 0 是可接受的代价。
+        ("GET", "/api/approvals", OPERATOR),
         ("POST", "/api/approvals/7/decide", OPERATOR),
         # 管理面与主机影响
         ("GET", "/api/workspace/tree", OPERATOR),
@@ -271,9 +280,7 @@ def test_operator_tier_requires_an_operator_credential(
     alice 能用自己的界面，但管理端点对她是 403；而且**文案要说清是角色不够**，
     不是"忘了带凭据" —— 她已经带对了凭据，另一种说法会让人对着密码框发愣。
     """
-    client = _client(
-        monkeypatch, tmp_path, mode="on", creds="alice:pw,operator:bob:pw"
-    )
+    client = _client(monkeypatch, tmp_path, mode="on", creds="alice:pw,operator:bob:pw")
     assert client.get("/api/sessions", auth=("alice", "pw")).status_code == 200
     denied = client.get("/api/settings/runtime", auth=("alice", "pw"))
     assert denied.status_code == 403
@@ -326,9 +333,7 @@ def test_allowed_truth_table_with_roles() -> None:
         )
 
     assert verdict(role="operator", roles_in_effect=True, authenticated=True, ip="203.0.113.9")
-    assert not verdict(
-        role="user", roles_in_effect=True, authenticated=True, ip="203.0.113.9"
-    )
+    assert not verdict(role="user", roles_in_effect=True, authenticated=True, ip="203.0.113.9")
     # 分族未生效：任何已认证身份都算操作员（兼容规则）
     assert verdict(role="user", roles_in_effect=False, authenticated=True, ip="203.0.113.9")
     # 本机来源永远放行，且与"带没带凭据"无关
@@ -357,10 +362,13 @@ def test_outbound_target_truth_table() -> None:
     assert outbound_target_allowed(
         "http://anywhere.example", ip="203.0.113.9", authenticated=False, enforce=False
     )
-    # 回环目标：它就是"本机对面那份自己"，任何档都不该拦
-    assert outbound_target_allowed("http://127.0.0.1:8123", **far)
-    assert outbound_target_allowed("http://localhost:8123", **far)
-    assert outbound_target_allowed("http://[::1]:8123", **far)
+    # 回环**目标**不再单独豁免（2026-10-30 安全审计 #3 的收紧）：远端 user 档敲
+    # `127.0.0.1:<任意端口>` 是一个"让本机敲门并反射响应"的 SSRF 跳板 —— 豁免的正确
+    # 主语是**来源**：本机来源（下面的 ip=127.0.0.1 行）照旧全放行，远端要过操作员档。
+    assert not outbound_target_allowed("http://127.0.0.1:8123", **far)
+    assert not outbound_target_allowed("http://localhost:8123", **far)
+    assert outbound_target_allowed("http://127.0.0.1:8123", role="operator", **far)
+    assert outbound_target_allowed("http://[::1]:8123", **{**far, "ip": "127.0.0.1"})
     # 清单三种写法等价（裸主机 / 带端口 / 整段 URL），且只比主机名不比端口
     for raw in ("cloud.test", "cloud.test:8443", "https://cloud.test"):
         assert outbound_target_allowed("http://cloud.test:9999", allowlist=raw, **far), raw
@@ -391,8 +399,10 @@ def test_foreign_sync_target_needs_an_operator_tier(
     """`/api/sync/*` 属使用者档，但"把数据推到哪台机器"要 operator 认过（`R102-58`）。
 
     `AUTH_MODE=on` + 远端对端：使用者凭据推到公网地址 = 403 且**文案点名了配置项**；
-    操作员凭据同一目标放行（走到真发请求那一步）；回环目标对使用者照常放行 ——
-    这三格合起来才是"单机形态零感知、多凭据部署有边界"。
+    操作员凭据同一目标放行（走到真发请求那一步）。2026-10-30 安全审计 #3 的收紧：
+    **回环目标对远端来源的使用者同样拒** —— 从前它豁免一切来源，等于给远端 user
+    凭据一个"让本机敲 127.0.0.1:<任意端口>并反射响应"的 SSRF 跳板；豁免的正确主语
+    是来源（本机来源那格见真值表测试）。
     """
     client = _client(
         monkeypatch, tmp_path, mode="on", creds="operator:bob:pw,alice:pw", peer="203.0.113.9"
@@ -412,10 +422,14 @@ def test_foreign_sync_target_needs_an_operator_tier(
     monkeypatch.setattr("httpx.get", lambda url, **kw: _Resp())
     # 操作员凭据：同一目标放行
     assert client.post("/api/sync/plan", json=foreign, auth=("bob", "pw")).status_code == 200
-    # 回环目标：使用者凭据也放行（在清单之外，但它是"本机对面那份自己"）
+    # 回环目标 + 远端来源 + 使用者凭据 = 闸上拒（403），**不是**放到真去连（502）——
+    # 这一格就是 SSRF 跳板被拆掉的判据。
     near = {"base_url": "http://127.0.0.1:1", "user": "alice", "secret": "s"}
-    monkeypatch.undo()  # 去掉替身，让它真的去连（连不上 = 已经过了那道闸）
-    assert client.post("/api/sync/plan", json=near, auth=("alice", "pw")).status_code == 502
+    monkeypatch.undo()  # 去掉替身：若被放行会真去连（502）；被拒则根本走不到那一步
+    blocked = client.post("/api/sync/plan", json=near, auth=("alice", "pw"))
+    assert blocked.status_code == 403, blocked.json()
+    # 操作员凭据敲回环目标照常（远端操作员是"被信任的那双手"）
+    assert client.post("/api/sync/plan", json=near, auth=("bob", "pw")).status_code == 502
 
 
 def test_sync_allowlist_lets_a_user_reach_a_named_host(
