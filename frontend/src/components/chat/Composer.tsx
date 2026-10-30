@@ -193,8 +193,15 @@ export default function Composer({
                 <IconStop />
               </button>
             ) : (
-              <Button variant="primary" onClick={onSubmit} disabled={!input.trim()} title="发送（Enter）" aria-label="发送"
-                className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-blue-700">
+              <Button
+                variant="primary"
+                size="icon"
+                onClick={onSubmit}
+                disabled={!input.trim()}
+                title="发送（Enter）"
+                aria-label="发送"
+                className="flex h-8 w-8 items-center justify-center rounded-full"
+              >
                 <IconSend />
               </Button>
             )}

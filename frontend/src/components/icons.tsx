@@ -19,6 +19,11 @@ const iconAttrs = (width: number, strokeWidth: number) =>
     strokeWidth,
     strokeLinecap: "round",
     strokeLinejoin: "round",
+    // `shrink-0`：图标在 flex 容器里**不许被压缩**（2026-10-30 实测）。
+    // svg 是 `display:block` 的 flex 子项，默认 `flex-shrink:1`：方按钮的内容盒
+    // 一旦被 padding 吃掉，svg 就被压成 0px 宽 —— 图标整个消失，只剩纯色方块。
+    // 尺寸归调用方的 class（`h-4 w-4` 之类），这里的 width/height 只是没 class 时的兜底。
+    className: "shrink-0",
   }) as const;
 
 const INLINE = iconAttrs(13, 2); // 行内小标（输入框 / 消息工具行）
@@ -58,21 +63,21 @@ export const IconImage = () => (
 
 /** 发送（上箭头）——嵌在输入框内的图标按钮（紧凑 IDE 式）。 */
 export const IconSend = () => (
-  <svg {...INLINE} className="h-4 w-4">
+  <svg {...INLINE} className="shrink-0 h-4 w-4">
     <path d="M12 19V6M12 6l-5.5 5.5M12 6l5.5 5.5" />
   </svg>
 );
 
 /** 停止（方块）——生成中替换发送按钮。 */
 export const IconStop = () => (
-  <svg {...INLINE} fill="currentColor" stroke="none" className="h-3.5 w-3.5">
+  <svg {...INLINE} fill="currentColor" stroke="none" className="shrink-0 h-3.5 w-3.5">
     <rect x="7" y="7" width="10" height="10" rx="1.5" />
   </svg>
 );
 
 /** 增强提示词（四角星）。 */
 export const IconSparkle = () => (
-  <svg {...INLINE} className="h-3.5 w-3.5">
+  <svg {...INLINE} className="shrink-0 h-3.5 w-3.5">
     <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z" />
   </svg>
 );
@@ -135,7 +140,7 @@ export const IconBell = () => (
 
 /** 目录（任务目录树里的文件夹标记）。 */
 export const IconFolder = ({ size = 12 }: { size?: number }) => (
-  <svg {...iconAttrs(size, 1.8)} className="mr-1 inline-block align-[-1px]">
+  <svg {...iconAttrs(size, 1.8)} className="mr-1 inline-block shrink-0 align-[-1px]">
     <path d="M3 6h6l2 2h10v11H3z" />
   </svg>
 );

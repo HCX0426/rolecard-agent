@@ -47,3 +47,41 @@ describe("ui/Button 的 disabledHint", () => {
     expect(screen.getByRole("button", { name: "清空" }).className).toMatch(/disabled:/);
   });
 });
+
+describe("ui/Button 的 icon 尺寸（方形图标按钮）", () => {
+  it("icon 尺寸不带任何 padding —— padding 会把方按钮的内容盒吃光", () => {
+    // 2026-10-30 实测：发送按钮曾用 `md` 尺寸（`px-4 py-2`）装一个 32px 方按钮，
+    // 左右各 1rem 的 padding 吃完内容盒后，svg 作为 flex 子项被压成 **0px 宽** ——
+    // 图标整个消失，发送按钮只剩一个纯色方块（用户报"图标咋蓝了"）。
+    render(
+      <Button variant="primary" size="icon" className="h-8 w-8" aria-label="发送">
+        <svg />
+      </Button>,
+    );
+    const cls = screen.getByRole("button", { name: "发送" }).className;
+    expect(cls).toMatch(/\bp-0\b/);
+    expect(cls).not.toMatch(/\bpx-4\b/);
+    expect(cls).not.toMatch(/\bpy-2\b/);
+  });
+
+  it("primary 禁用时不写 inline background —— 否则禁用按钮仍是角色色、看着像能点", () => {
+    // 内联 style 的优先级高于 `disabled:bg-slate-300`：从前 primary 的禁用态
+    // 一直是强调色（--accent），"禁用了但看起来能用"正是要消灭的那一族。
+    const { rerender } = render(
+      <Button variant="primary" disabled aria-label="发送">
+        发
+      </Button>,
+    );
+    const btn = screen.getByRole("button", { name: "发送" }) as HTMLButtonElement;
+    expect(btn.style.background).toBe("");
+    expect(btn.className).toMatch(/disabled:bg-slate-300/);
+
+    rerender(
+      <Button variant="primary" aria-label="发送">
+        发
+      </Button>,
+    );
+    const on = screen.getByRole("button", { name: "发送" }) as HTMLButtonElement;
+    expect(on.style.background).toBe("var(--accent)");
+  });
+});

@@ -412,7 +412,7 @@ export default function RolesPage({
                         type="button"
                         disabled={importing}
                         onClick={() => void importSample(sc.file)}
-                        className="block w-full rounded px-2 py-1.5 text-left text-xs text-slate-600 hover:bg-blue-50 hover:text-blue-700 disabled:opacity-50 dark:text-slate-300 dark:hover:bg-blue-900/30 dark:hover:text-blue-300"
+                        className="block w-full rounded px-2 py-1.5 text-left text-xs text-slate-600 hover:bg-slate-200 hover:text-slate-700 disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100"
                       >
                         {sc.label}
                       </button>
@@ -704,7 +704,7 @@ export default function RolesPage({
                     {form.knowledge_scopes.map((s) => (
                       <span
                         key={s}
-                        className="flex items-center gap-1 rounded-full bg-blue-50 dark:bg-blue-900/30 px-2.5 py-1 text-xs text-blue-700 dark:text-blue-300"
+                        className="flex items-center gap-1 rounded-full bg-slate-200 dark:bg-slate-800/50 px-2.5 py-1 text-xs text-slate-600 dark:text-slate-200"
                       >
                         {s}
                         <button

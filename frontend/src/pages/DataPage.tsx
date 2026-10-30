@@ -474,7 +474,7 @@ function AddReportForm({ onDone }: { onDone: () => void }) {
     "rounded border border-slate-200 dark:border-slate-700 px-2 py-1 text-xs outline-none focus:border-blue-400";
 
   return (
-    <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/30 p-3">
+    <div className="rounded-lg border border-slate-600 dark:border-slate-400 bg-slate-100/70 dark:bg-slate-900/30 p-3">
       <div className="flex flex-wrap items-center gap-2">
         <input
           value={reportType}
@@ -700,7 +700,7 @@ function GenericDomainData({
       </div>
       {status && <Notice tone={status.ok ? "ok" : "error"}>{status.msg}</Notice>}
       {adding && (
-        <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/30 p-3">
+        <div className="rounded-lg border border-slate-600 dark:border-slate-400 bg-slate-100/70 dark:bg-slate-900/30 p-3">
           <div className="flex flex-wrap items-center gap-2">
             <input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} placeholder="标签 *（如 体重）" className={`${cls} w-40`} />
             <input value={draft.value_num} onChange={(e) => setDraft({ ...draft, value_num: e.target.value })} placeholder="数值（如 62）" className={`${cls} w-28`} />

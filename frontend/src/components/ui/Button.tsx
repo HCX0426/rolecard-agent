@@ -1,7 +1,7 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode, type Ref } from "react";
 
 type Variant = "primary" | "outline" | "ghost" | "danger" | "link";
-type Size = "sm" | "md";
+type Size = "sm" | "md" | "icon";
 
 const VARIANTS: Record<Variant, string> = {
   // primary 用**当前角色的强调色**（--accent，2026-10-25 玻璃重设计）：主按钮跟着
@@ -26,6 +26,12 @@ const VARIANTS: Record<Variant, string> = {
 const SIZES: Record<Size, string> = {
   sm: "px-2.5 py-1 text-xs",
   md: "px-4 py-2 text-sm",
+  // icon = **方形图标按钮**（只装一个 svg）：不带任何 padding。
+  // 为什么要有这一档（2026-10-30 实测）：`md` 的 `px-4`（左右各 1rem）会吃掉 32px
+  // 方按钮的内容盒，svg 作为 flex 子项被 `flex-shrink` 压到 **0px 宽** —— 图标
+  // 整个消失，按钮只剩一个纯色方块（发送按钮曾是这样）。padding 归零 + 调用方
+  // 自己给 `h-8 w-8` 才是这一档的正确用法。
+  icon: "p-0",
 };
 
 /**
@@ -62,14 +68,17 @@ const Button = forwardRef(function Button(
       style={
         variant === "primary"
           ? {
-              background: "var(--accent)",
+              // 禁用时**不写** background：内联 style 的优先级高于 `disabled:bg-slate-300`，
+              // 从前禁用的发送按钮仍是角色强调色（看着像能点，实际点不动）——
+              // "禁用了但看起来能用"正是这套变体要消灭的那一族。
+              background: disabled ? undefined : "var(--accent)",
               // hover 的深一档：同色相压暗 12%（浏览器端算，不用两份 CSS）
               // —— 悬停态用 CSS 变量写不了 :hover，所以走 filter。
             }
           : undefined
       }
       onMouseEnter={
-        variant === "primary"
+        variant === "primary" && !disabled
           ? (e) => {
               e.currentTarget.style.filter = "brightness(0.9)";
             }

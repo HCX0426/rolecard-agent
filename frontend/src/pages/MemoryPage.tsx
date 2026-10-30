@@ -536,7 +536,7 @@ export default function MemoryPage() {
         </div>
         {/* 合并那条工具条只在选了东西时长出来（平时列表就是列表，不摆一排永远用不上的控件）。 */}
         {picked.length > 0 && (
-          <div className="mt-2 rounded-lg border border-blue-200 bg-blue-50/60 px-2.5 py-2 text-xs dark:border-blue-800 dark:bg-blue-900/20">
+          <div className="mt-2 rounded-lg border border-slate-600 bg-slate-100/70 px-2.5 py-2 text-xs dark:border-slate-400 dark:bg-slate-900/20">
             <div className="flex items-center justify-between gap-2">
               <span className="text-slate-600 dark:text-slate-300">
                 已选 {picked.length} 条{picked.length < 2 ? " —— 再选一条就能合并" : ""}
