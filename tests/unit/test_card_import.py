@@ -46,12 +46,7 @@ def _png_with_chara(card: dict[str, Any]) -> bytes:
 
     ihdr = (1).to_bytes(4, "big") + (1).to_bytes(4, "big") + bytes([8, 0, 0, 0, 0])
     text = b"chara\x00" + base64.b64encode(json.dumps(card).encode("utf-8"))
-    return (
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", ihdr)
-        + chunk(b"tEXt", text)
-        + chunk(b"IEND", b"")
-    )
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"tEXt", text) + chunk(b"IEND", b"")
 
 
 # ---------------------------------------------------------------- 载体层
@@ -66,7 +61,7 @@ def test_load_card_bytes_accepts_json_and_png() -> None:
 def test_load_card_bytes_rejects_junk_and_plain_png() -> None:
     with pytest.raises(CardImportError, match="不是 PNG"):
         load_card_bytes(b"not a card")
-    with pytest.raises(CardImportError, match="没有 chara"):
+    with pytest.raises(CardImportError, match="没有角色卡数据块"):
         load_card_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0aIHDR" + b"\x00" * 10)
 
 
@@ -204,12 +199,7 @@ def _png_with_raw_chara(raw_payload: bytes) -> bytes:
 
     ihdr = (1).to_bytes(4, "big") + (1).to_bytes(4, "big") + bytes([8, 0, 0, 0, 0])
     text = b"chara\x00" + raw_payload
-    return (
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", ihdr)
-        + chunk(b"tEXt", text)
-        + chunk(b"IEND", b"")
-    )
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"tEXt", text) + chunk(b"IEND", b"")
 
 
 def test_corrupt_chara_payload_is_rejected() -> None:
@@ -264,9 +254,7 @@ def test_import_endpoint_empty_and_oversized(tmp_path: Path, monkeypatch) -> Non
     monkeypatch.setenv("MAX_UPLOAD_BYTES", "200")
     app = create_app(sqlite_path=tmp_path / "import2.db")
     with TestClient(app) as client:
-        empty = client.post(
-            "/api/roles/import", files={"file": ("x.png", b"", "image/png")}
-        )
+        empty = client.post("/api/roles/import", files={"file": ("x.png", b"", "image/png")})
         assert empty.status_code == 400
         assert "空" in empty.json()["detail"]
         big = client.post(
@@ -275,3 +263,52 @@ def test_import_endpoint_empty_and_oversized(tmp_path: Path, monkeypatch) -> Non
         )
         assert big.status_code == 400
         assert "上限" in big.json()["detail"]
+
+
+# ---------------------------------------------------------------- ccv3（R1031-14）
+
+
+def _png_with_blocks(blocks: list[tuple[bytes, dict[str, Any]]]) -> bytes:
+    """带任意个 tEXt 卡块的 PNG：`(keyword, json)` 列表 → 手拼 PNG 字节。"""
+
+    def chunk(ctype: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(ctype + data) & 0xFFFFFFFF
+        return len(data).to_bytes(4, "big") + ctype + data + crc.to_bytes(4, "big")
+
+    ihdr = (1).to_bytes(4, "big") + (1).to_bytes(4, "big") + bytes([8, 0, 0, 0, 0])
+    parts = [b"\x89PNG\r\n\x1a\n", chunk(b"IHDR", ihdr)]
+    for keyword, card in blocks:
+        text = keyword + b"\x00" + base64.b64encode(json.dumps(card).encode("utf-8"))
+        parts.append(chunk(b"tEXt", text))
+    parts.append(chunk(b"IEND", b""))
+    return b"".join(parts)
+
+
+def _v3_card() -> dict[str, Any]:
+    return {
+        "spec": "chara_card_v3",
+        "spec_version": "3.0",
+        "data": {"name": "V3小姐", "description": "来自 ccv3 块的人设"},
+    }
+
+
+def test_png_with_both_blocks_prefers_ccv3() -> None:
+    """ST 规范：chara 与 ccv3 并存时读取方应优先 ccv3 —— 从前只认 chara 正好反着。"""
+    v2 = {"spec": "chara_card_v2", "data": {"name": "V2旧名", "description": "旧"}}
+    result = parse_sillytavern_card(
+        load_card_bytes(_png_with_blocks([(b"chara", v2), (b"ccv3", _v3_card())]))
+    )
+    assert result.card.role_name == "V3小姐"
+    assert result.report["spec"] == "chara_card_v3"
+
+
+def test_png_with_ccv3_only_imports() -> None:
+    """只有 ccv3 块的新卡不再被当成"普通图片"拒掉。"""
+    result = parse_sillytavern_card(load_card_bytes(_png_with_blocks([(b"ccv3", _v3_card())])))
+    assert result.card.role_name == "V3小姐"
+
+
+def test_png_without_any_card_block_says_both_keywords() -> None:
+    """都没有时，报错文案要点名两个关键词 —— 不能只提 chara 把 V3 用户带进沟里。"""
+    with pytest.raises(CardImportError, match="chara/ccv3"):
+        load_card_bytes(_png_with_blocks([]))

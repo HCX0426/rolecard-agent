@@ -941,6 +941,42 @@ export default function RolesPage({
                   >
                     事件簿
                   </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    className="text-xs"
+                    onClick={async () => {
+                      // 导出（R1031-13）：记忆**永不默认随卡走**。这一问就是设计稿 §3
+                      // 的"显式勾选"—— 确定 = 只带置顶且未失效的那几行；取消 = 卡本体。
+                      const withMemory = await confirm({
+                        title: `导出「${r.role_name}」为角色卡文件？`,
+                        body: "「带记忆导出」只带置顶且未失效的记忆行；其余记忆永不出门。",
+                        confirmText: "带记忆导出",
+                        cancelText: "只导卡本体",
+                      });
+                      try {
+                        const { blob, filename } = await api.exportRoleCard(
+                          r.role_id,
+                          withMemory ? "pinned_active" : undefined,
+                        );
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = filename;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                        setStatus({
+                          ok: true,
+                          msg: `已导出 ${r.role_id}${withMemory ? "（含置顶记忆）" : ""}`,
+                        });
+                      } catch (e) {
+                        setStatus({ ok: false, msg: `导出失败：${describeError(e)}` });
+                      }
+                    }}
+                  >
+                    导出
+                  </Button>
                   {!r.is_builtin && (
                     <Button
                       variant="ghost"

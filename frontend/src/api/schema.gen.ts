@@ -982,6 +982,30 @@ export interface paths {
         patch: operations["update_role_api_roles__role_id__patch"];
         trace?: never;
     };
+    "/api/roles/{role_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Role Card
+         * @description 导出一张角色卡为 ST V2 JSON（设计稿 §3「隐私出口」的实现，R1031-13）。
+         *
+         *     **记忆默认不随卡走**；`?include_memory=pinned_active` 显式勾选后只带
+         *     pinned 且 active 的那几行（失效/被取代/未置顶的一律不出门）——借卡、分享、
+         *     换机三种场景里，"她记得什么"永远是你亲手放行的。
+         */
+        get: operations["export_role_card_api_roles__role_id__export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/roles/{role_id}/timeline": {
         parameters: {
             query?: never;
@@ -6203,6 +6227,39 @@ export interface operations {
                 "application/json": components["schemas"]["RoleCardUpdate"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_role_card_api_roles__role_id__export_get: {
+        parameters: {
+            query?: {
+                include_memory?: string | null;
+            };
+            header?: never;
+            path: {
+                role_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

@@ -11,9 +11,10 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+import json
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile
 
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import (
@@ -22,13 +23,16 @@ from rolecard_agent.api.deps import (
     get_context,
 )
 from rolecard_agent.contracts.response_models import RoleTimelineView, ToolsCatalog
+from rolecard_agent.core.memory import list_items as memory_list_items
 from rolecard_agent.core.proactive import timeline
 from rolecard_agent.features.card_import import (
     CardImportError,
+    build_st_v2_card,
     load_card_bytes,
     parse_sillytavern_card,
 )
 from rolecard_agent.roles.models import RoleCard, RoleCardCreate, RoleCardUpdate
+from rolecard_agent.roles.service import RoleNotFound
 
 router = APIRouter()
 
@@ -216,3 +220,50 @@ def tools_catalog(ctx: AppContext = Depends(get_context)) -> object:
 
 
 __all__ = ["router"]
+
+
+@router.get("/api/roles/{role_id}/export")
+def export_role_card(
+    role_id: str,
+    include_memory: Annotated[str | None, Query(max_length=32)] = None,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(get_actor),
+) -> Response:
+    """导出一张角色卡为 ST V2 JSON（设计稿 §3「隐私出口」的实现，R1031-13）。
+
+    **记忆默认不随卡走**；`?include_memory=pinned_active` 显式勾选后只带
+    pinned 且 active 的那几行（失效/被取代/未置顶的一律不出门）——借卡、分享、
+    换机三种场景里，"她记得什么"永远是你亲手放行的。
+    """
+    if include_memory not in (None, "pinned_active"):
+        raise HTTPException(
+            status_code=400,
+            detail="include_memory 只认 pinned_active（记忆出口只有这一档：置顶且未失效）。",
+        )
+    try:
+        card = ctx.role_cards.get(role_id)
+    except RoleNotFound as exc:
+        raise HTTPException(status_code=404, detail=f"角色不存在：{role_id}") from exc
+    memory_items: list[dict[str, Any]] | None = None
+    if include_memory == "pinned_active":
+        memory_items = [
+            {
+                "text": item["text"],
+                "importance": item["importance"],
+                "category": item.get("category"),
+            }
+            for item in memory_list_items(ctx.conn, user_id=ctx.current_user(), bucket=role_id)
+            if item["pinned"]
+        ]
+    payload = build_st_v2_card(card, memory_items)
+    ctx.audit.log(
+        actor=actor.id,
+        action="export_role_card",
+        target=role_id,
+        detail={"include_memory": include_memory == "pinned_active"},
+    )
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{role_id}.card.v2.json"'},
+    )

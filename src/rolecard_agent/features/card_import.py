@@ -21,8 +21,9 @@
                                                        卡导入不该悄悄建向量库
   tags / extensions / 其它    → report 计数，不导入
 
-PNG 卡：chara 规范 = tEXt 块 keyword `chara` + base64(JSON)。只认 `chara`（`ccv3` 是另一代
-规范，遇到就当没有卡数据报错 —— 拿不准的格式不猜）。
+PNG 卡：tEXt 块 keyword `chara`（V1/V2）或 `ccv3`（V3）+ base64(JSON)。**ccv3 优先**
+（ST 规范要求读取方在两块并存时优先 ccv3，且 ccv3 的 `data` 与 V2 同构，落同一张
+映射表；report 的 `spec` 字段如实记来路）。
 """
 
 from __future__ import annotations
@@ -59,7 +60,15 @@ class CardImportResult:
 
 
 def _chara_json_from_png(raw: bytes) -> dict[str, Any]:
-    """PNG 的 tEXt 块里找 keyword=`chara` 的 base64 JSON（ccv3 刻意不认，见模块 docstring）。"""
+    """PNG 的 tEXt 块里找角色卡 JSON：**ccv3 优先，`chara` 兜底**（R1031-14）。
+
+    ST 规范（character-card-spec-v3）写明 PNG 可以同时带 `ccv3` 与 `chara` 两块、
+    读取方应当优先 ccv3 —— 新版 ST 导出的卡大多两块都有；从前只认 `chara`，
+    撞上"只有 ccv3 块"的新卡会报"没有卡数据块（它可能只是一张普通图片）"，
+    对用户是双重误导。ccv3 的 JSON 与 V2 同构（`{spec, data}`），落进同一张映射表。
+    """
+    chara_text: bytes | None = None
+    ccv3_text: bytes | None = None
     pos = 8  # 跳过 PNG 签名
     while pos + 8 <= len(raw):
         length = int.from_bytes(raw[pos : pos + 4], "big")
@@ -68,15 +77,20 @@ def _chara_json_from_png(raw: bytes) -> dict[str, Any]:
         if chunk_type == b"tEXt":
             keyword, _, text = chunk_data.partition(b"\x00")
             if keyword == b"chara":
-                try:
-                    decoded = json.loads(base64.b64decode(text).decode("utf-8"))
-                except (ValueError, UnicodeDecodeError) as exc:
-                    raise CardImportError(f"PNG 卡数据块解不开（base64/JSON 损坏）：{exc}") from exc
-                if not isinstance(decoded, dict):
-                    raise CardImportError("PNG 卡数据块不是 JSON 对象")
-                return decoded
+                chara_text = text
+            elif keyword == b"ccv3":
+                ccv3_text = text
         pos += 12 + length  # 4 长度 + 4 类型 + 数据 + 4 CRC
-    raise CardImportError("PNG 里没有 chara 角色卡数据块（它可能只是一张普通图片）")
+    chosen = ccv3_text if ccv3_text is not None else chara_text
+    if chosen is None:
+        raise CardImportError("PNG 里没有角色卡数据块（chara/ccv3 都不在，它可能只是一张普通图片）")
+    try:
+        decoded = json.loads(base64.b64decode(chosen).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise CardImportError(f"PNG 卡数据块解不开（base64/JSON 损坏）：{exc}") from exc
+    if not isinstance(decoded, dict):
+        raise CardImportError("PNG 卡数据块不是 JSON 对象")
+    return decoded
 
 
 def load_card_bytes(raw: bytes) -> dict[str, Any]:
@@ -144,9 +158,7 @@ def _example_blocks(mes_example: str, role_name: str) -> list[RoleExemplar]:
     return out
 
 
-def _budgeted_exemplars(
-    examples: list[RoleExemplar], report: dict[str, Any]
-) -> list[RoleExemplar]:
+def _budgeted_exemplars(examples: list[RoleExemplar], report: dict[str, Any]) -> list[RoleExemplar]:
     """卡预算（`MAX_EXEMPLARS` / `MAX_EXEMPLAR_CHARS`）的显式执行：超了整条丢、丢了几条进 report。
 
     为什么不静默截断：validation 一抛就是整张卡 400，用户对着一锅粥不知道哪条超标；
@@ -225,3 +237,53 @@ def parse_sillytavern_card(data: dict[str, Any]) -> CardImportResult:
         raise CardImportError(f"卡数据过了映射但没过本仓的形状校验：{exc}") from exc
     report["role_id"] = role_id
     return CardImportResult(card=card, report=report)
+
+
+# ---------------------------------------------------------------- 反向映射（本仓 → ST V2）
+
+
+def build_st_v2_card(
+    card: Any,
+    memory_items: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """本仓的卡 → ST V2 形状（`spec: "chara_card_v2"`），设计稿 §3 那条"隐私出口"的落地。
+
+    反向映射的取舍（与正向映射表对读）：
+      * system_prompt 整体放进 `data.description` —— 正向导入时人设/性格/场景已并进
+        system_prompt，反向不猜拆（拆错比不拆更糟），ST 侧拿到的就是完整人格载体；
+      * exemplars 反向拼回 `<START>` 块 + `{{char}}`/`{{user}}` 宏（ST 的原生形状）；
+      * creator_notes 放回 `data.creator_notes`；description（本仓的备注字段）以
+        `extensions.rolecard_agent.description` 随行，不在 ST 侧占位置；
+      * **记忆默认不随卡走**：调用方显式给了 `memory_items`（pinned+active，见路由层
+        `?include_memory=pinned_active`）才写进 `data.extensions.rolecard_agent.memory`。
+        这是设计稿 §3 的原话口径 —— 导出/分享是卡文件的出口，不是记忆的出口。
+    """
+    data: dict[str, Any] = {
+        "name": card.role_name,
+        "description": card.system_prompt,
+        "personality": "",
+        "scenario": "",
+        "first_mes": "",
+        "mes_example": _exemplars_to_st(card.exemplars or [], card.role_name),
+        "creator_notes": card.description or "",
+    }
+    extensions: dict[str, Any] = {
+        "rolecard_agent": {
+            "role_id": card.role_id,
+            "temperature": card.temperature,
+            "description": card.description,
+        }
+    }
+    if memory_items:
+        extensions["rolecard_agent"]["memory"] = memory_items
+    data["extensions"] = extensions
+    return {"spec": "chara_card_v2", "spec_version": "2.0", "data": data}
+
+
+def _exemplars_to_st(exemplars: list[Any], role_name: str) -> str:
+    """范例对 → ST 的 `<START>` 分块文本（宏用回 `{{char}}`/`{{user}}`）。"""
+    blocks: list[str] = []
+    for ex in exemplars:
+        lines = [f"{{{{user}}}}: {ex.user}", f"{{{{char}}}}: {ex.assistant}"]
+        blocks.append("\n".join(lines))
+    return "\n<START>\n".join(blocks)

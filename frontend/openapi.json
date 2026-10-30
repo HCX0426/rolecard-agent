@@ -9624,6 +9624,61 @@
     "summary": "Update Role"
    }
   },
+  "/api/roles/{role_id}/export": {
+   "get": {
+    "description": "导出一张角色卡为 ST V2 JSON（设计稿 §3「隐私出口」的实现，R1031-13）。\n\n**记忆默认不随卡走**；`?include_memory=pinned_active` 显式勾选后只带\npinned 且 active 的那几行（失效/被取代/未置顶的一律不出门）——借卡、分享、\n换机三种场景里，\"她记得什么\"永远是你亲手放行的。",
+    "operationId": "export_role_card_api_roles__role_id__export_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "role_id",
+      "required": true,
+      "schema": {
+       "title": "Role Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "include_memory",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 32,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Include Memory"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Export Role Card"
+   }
+  },
   "/api/roles/{role_id}/timeline": {
    "get": {
     "description": "事件簿（设计稿 §6）：把这个角色的主动开口、记下/更正的事实、会话锚点并成一条**只读**轴。\n\n纯读，所以不写审计 —— \"谁翻了时间线\"不是运维要关心的事，而这条轴的内容全是用户自己的对话\n与事实，写进审计流水反而是在给它们做第二份留存。",
