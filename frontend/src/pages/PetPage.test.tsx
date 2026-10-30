@@ -648,10 +648,18 @@ describe("PetPage 点开面板（§7：想回话不用开控制台）", () => {
     }).not.toThrow();
   });
 
-  it("悬停只负责把趴着的半只拉出来：不改窗口大小，也就没有「把自己挪出光标」的自激", async () => {
+  it("悬停只负责把趴着的半只拉出来，且只认色片本体：空气不算（2026-10-30 收紧）", async () => {
     const shell = withShell();
     await mount();
+    // 2026-10-30 收紧：reveal 只认**画了像素的地方**（色片/气泡/面板）——
+    // 每次滑窗有 680ms 的整窗宽限（滑动 280 + 余量 400），那段时间透明边距也收得到
+    // mouseenter，不加闸"路过旁边的空气"就能把趴着的那只拉出来（用户当日原话）。
     fireEvent.mouseEnter(hoverZone());
+    await act(async () => {
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+    expect(shell.petReveal).not.toHaveBeenCalled(); // 空气不算
+    fireEvent.mouseEnter(sprite());
     await act(async () => {
       for (let i = 0; i < 4; i += 1) await Promise.resolve();
     });
@@ -692,7 +700,7 @@ describe("PetPage 点开面板（§7：想回话不用开控制台）", () => {
       vi.advanceTimersByTime(400);
     });
     expect(shell.petRetuck).not.toHaveBeenCalled(); // 还在宽限期里
-    fireEvent.mouseEnter(hoverZone()); // 回来了 ⇒ 那个定时器作废
+    fireEvent.mouseEnter(sprite()); // 回到色片上 ⇒ 那个定时器作废（空气不算"回来"，2026-10-30）
     await act(async () => {
       vi.advanceTimersByTime(3_000);
     });
@@ -1253,7 +1261,8 @@ describe("PetPage 命中区与一次拖只收一次（三条都是量出来的�
     await mount();
     stubSpriteRect();
     // 先悬停一次：触发 reveal（壳的滑窗在这被 mock 掉，但 markSlide 照样打点）。
-    fireEvent.mouseEnter(root());
+    // 2026-10-30 起 reveal 挂在色片本体上才认 —— 悬停空气不算（见上面那条）。
+    fireEvent.mouseEnter(sprite());
     fireEvent.click(root(), { clientX: 380, clientY: 470 });
     expect(expanded).toHaveBeenLastCalledWith(true);
 

@@ -573,12 +573,42 @@ function petCursorOnPainted(win: BrowserWindow): boolean {
   );
 }
 
+/** 指针连续离开"画了像素的地方"多久之后，壳自己把趴在边上那只收回去。
+ *  与页面侧的 `RETUCK_MS`（PetPage.tsx）同一口径：给"划过它身上"留的宽限。 */
+const PET_AWAY_RETUCK_MS = 900;
+
+let petAwaySince = 0;
+
 function petPollTick(win: BrowserWindow): void {
   if (win.isDestroyed()) {
     stopPetPolling();
     return;
   }
-  setPetClickable(win, petCursorOnPainted(win));
+  const onPainted = petCursorOnPainted(win);
+  setPetClickable(win, onPainted);
+  // 指针离开画了像素的地方 → 计时趴回（**壳侧兜底**，2026-10-30）。
+  // 为什么壳也要管这件事：窗口一进"忽略鼠标"模式（透明区），页面就**聋了** ——
+  // mouseleave 根本送不进来，页面侧的 pointerLeft 会永远等不到。于是"已经拉出来、
+  // 谁也不收"就成了稳态：用户看到的就是"它周围一直有反应、还回不去"。
+  // 宽限期内（滑动/拖拽/展开的 holdPetClickable）不计时 —— 那是窗口自己动的，
+  // 光标还没落定；拖拽中 holdPetClickable 被连续续期，这一条天然被盖住。
+  if (
+    !onPainted &&
+    dockEnabled &&
+    petDock &&
+    !petDock.tucked &&
+    !petIsExpanded &&
+    Date.now() >= petHoldUntil
+  ) {
+    if (!petAwaySince) {
+      petAwaySince = Date.now();
+    } else if (Date.now() - petAwaySince >= PET_AWAY_RETUCK_MS) {
+      petAwaySince = 0;
+      petRetuck(win);
+    }
+  } else {
+    petAwaySince = 0;
+  }
 }
 
 function startPetPolling(win: BrowserWindow): void {
@@ -612,6 +642,7 @@ export function setPetHotRects(win: BrowserWindow, rects: unknown): void {
 export function setPetHitTestArmed(win: BrowserWindow, armed: boolean): void {
   petHitTestArmed = armed;
   petWantsClicks = true;
+  petAwaySince = 0;
   if (armed) startPetPolling(win);
   else {
     petHotRects = [];

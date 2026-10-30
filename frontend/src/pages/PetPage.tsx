@@ -449,10 +449,26 @@ export default function PetPage() {
     return () => window.clearTimeout(later);
   });
 
+  /** 这次指针动作是不是落在"画了像素的地方"（色片本体，或面板/气泡那块 UI）。
+   *  与 `insideUi` 的区别：`insideUi` 只认 `[data-pet-ui]`（面板、气泡），色片不在里头
+   *  —— 色片的进入要用它自己的 DOM 位置判。 */
+  function onPaintedUi(event: { target: EventTarget | null }): boolean {
+    const el = event.target as HTMLElement | null;
+    if (!el) return false;
+    return Boolean(el.closest?.("[data-pet-ui]") || spriteRef.current?.contains(el));
+  }
+
   /** 悬停只做一件事：把趴在边上的那半只拉出来（§7.6）。**不再弹面板** —— 悬停会改窗口尺寸，
    *  而改尺寸就把宠物从光标底下挪走了，于是"离开→收起→又进入→展开"自激（用户报的"鼠标移过去
-   *  桌宠乱晃"）。面板改成点击才弹，这条环就断了。 */
-  function reveal() {
+   *  桌宠乱晃"）。面板改成点击才弹，这条环就断了。
+   *
+   *  **只认画了像素的地方**（2026-10-30，用户："鼠标还没碰到他，就周围也可以拉出来"）：
+   *  平时壳的逐帧命中判定不给透明区发事件，但**每次滑窗都有 680ms 的整窗宽限**
+   *  （滑动 280 + 余量 400，`slidePetTo` 里的 `holdPetClickable`）—— 那段时间透明边距
+   *  也收得到 mouseenter。不加这道闸，"路过它旁边的空气"就会把趴着的那只拉出来；
+   *  而且拉出来之后页面在透明区是聋的（见 `pointerLeft`），回不去。 */
+  function reveal(event: { target: EventTarget | null }) {
+    if (!onPaintedUi(event)) return;
     if (retuckRef.current !== null) {
       window.clearTimeout(retuckRef.current);
       retuckRef.current = null;
