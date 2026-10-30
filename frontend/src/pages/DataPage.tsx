@@ -212,8 +212,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-3">
         <p className="text-11 leading-relaxed text-slate-400 dark:text-slate-500">
-          主流程是<b>上传报告 / 图片让 AI 解析</b>；这里只是补录入口 —— 手填的数据默认带
-          【未经人工校验】标记。
+          手动补录入口 —— 手填的数据默认带【未经人工校验】标记。
         </p>
         <Button
           variant="outline"
@@ -686,7 +685,7 @@ function GenericDomainData({
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-3">
         <p className="text-11 leading-relaxed text-slate-400 dark:text-slate-500">
-          「{displayName}」域的通用数据（标签 + 数值/文本 + 单位 + 备注）。新增领域插件即自动出现此视图。
+          「{displayName}」域的通用数据。
         </p>
         <Button
           variant="outline"

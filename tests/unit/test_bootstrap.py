@@ -30,7 +30,6 @@ from rolecard_agent.domains.registry import (
     DOMAINS,
     build_query_services,
     build_registry,
-    domain_seed_roles,
 )
 from rolecard_agent.features.proactive import build_gateway
 from rolecard_agent.storage.db import bootstrap as apply_schema
@@ -73,7 +72,6 @@ def _assemble(tmp_path: Path) -> Runtime:
     return build_runtime(
         domains=DOMAINS,
         query_services_factory=build_query_services,
-        domain_seed_roles=domain_seed_roles(),
         proactive_factory=build_gateway,
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_settings(tmp_path),
@@ -147,8 +145,7 @@ def test_assembly_seeds_schema_and_demo_identity(tmp_path: Path) -> None:
         runtime = build_runtime(
             domains=DOMAINS,
             query_services_factory=build_query_services,
-        domain_seed_roles=domain_seed_roles(),
-        proactive_factory=build_gateway,
+            proactive_factory=build_gateway,
             registry_factory=_wiring,  # type: ignore[arg-type]
             env_settings=settings,
             model_factory=lambda *_a, **_k: None,
@@ -243,9 +240,11 @@ def test_deliver_proactive_does_not_interrupt_a_running_turn(tmp_path: Path) -> 
 
         assert not thread_is_busy(tid)
         assert runtime.deliver_proactive(role, "这轮说完了才说") == tid
-        messages = runtime.state["graph"].get_state(
-            build_graph_config(tid, runtime.effective)
-        ).values["messages"]
+        messages = (
+            runtime.state["graph"]
+            .get_state(build_graph_config(tid, runtime.effective))
+            .values["messages"]
+        )
         assert [str(m.content) for m in messages] == ["这轮说完了才说"]
     finally:
         runtime.assembly.conn.close()
@@ -418,7 +417,6 @@ def test_a_turn_carries_the_key_of_the_person_who_is_talking(tmp_path: Path) -> 
     runtime = build_runtime(
         domains=DOMAINS,
         query_services_factory=build_query_services,
-        domain_seed_roles=domain_seed_roles(),
         proactive_factory=build_gateway,
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_settings_with_a_local_key(tmp_path),
@@ -451,7 +449,6 @@ def test_a_default_backend_belongs_to_the_person_who_is_talking(tmp_path: Path) 
     runtime = build_runtime(
         domains=DOMAINS,
         query_services_factory=build_query_services,
-        domain_seed_roles=domain_seed_roles(),
         proactive_factory=build_gateway,
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_settings_with_a_local_key(tmp_path),
@@ -484,7 +481,6 @@ def test_a_background_caller_names_the_owner_it_works_for(tmp_path: Path) -> Non
     runtime = build_runtime(
         domains=DOMAINS,
         query_services_factory=build_query_services,
-        domain_seed_roles=domain_seed_roles(),
         proactive_factory=build_gateway,
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_settings_with_a_local_key(tmp_path),
@@ -509,7 +505,6 @@ def test_an_unknown_backend_degrades_instead_of_raising(tmp_path: Path) -> None:
     runtime = build_runtime(
         domains=DOMAINS,
         query_services_factory=build_query_services,
-        domain_seed_roles=domain_seed_roles(),
         proactive_factory=build_gateway,
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_settings_with_a_local_key(tmp_path),
@@ -577,7 +572,6 @@ def test_an_inflight_build_cannot_republish_a_stale_model_after_rebuild(tmp_path
     runtime = build_runtime(
         domains=DOMAINS,
         query_services_factory=build_query_services,
-        domain_seed_roles=domain_seed_roles(),
         proactive_factory=build_gateway,
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_settings(tmp_path),
@@ -585,14 +579,12 @@ def test_an_inflight_build_cannot_republish_a_stale_model_after_rebuild(tmp_path
     )
     try:
         thread = threading.Thread(
-            target=lambda: runtime.resolve_role_model(
-                "whatever", 0.5, user_id=DEFAULT_USER_ID
-            )
+            target=lambda: runtime.resolve_role_model("whatever", 0.5, user_id=DEFAULT_USER_ID)
         )
         thread.start()
         assert entered.wait(5), "并发那次构造没开始"
 
-        runtime.rebuild()          # 用户在这一刻改了设置
+        runtime.rebuild()  # 用户在这一刻改了设置
         release.set()
         thread.join(5)
         assert not thread.is_alive(), "在飞的那次构造没跑完"

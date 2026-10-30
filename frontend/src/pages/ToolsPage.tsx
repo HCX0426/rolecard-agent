@@ -162,8 +162,7 @@ function ChannelsPanel() {
           </div>
           <div className="mt-2 flex items-center justify-between">
             <p className="text-11 leading-relaxed text-slate-400 dark:text-slate-500">
-              机器人账号在 <b>q.qq.com</b> 注册（个人可建，bot 账号零封号风险）；保存即开闸并重连，
-              无需重启程序。主动消息受平台配额约束。
+              机器人账号在 <b>q.qq.com</b> 注册；保存即重连生效。
             </p>
             <Button variant="primary" size="sm" type="button" disabled={busy || !appId.trim()} onClick={save}>
               {busy ? "保存中…" : "保存并连接"}

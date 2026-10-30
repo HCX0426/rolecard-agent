@@ -31,6 +31,16 @@ def model() -> ScriptedChat:
 @pytest.fixture
 def client(tmp_path: Path, model: ScriptedChat) -> Iterator[TestClient]:
     app = create_app(sqlite_path=tmp_path / "app.db", model=model)
+    # 域角色不再开机播种（2026-10-31，用户拍板：默认常驻只有通用助手）——
+    # 这几条用例要的就是健康档案角色那一档，显式补种。
+    from rolecard_agent.base.identity import DEFAULT_USER_ID
+    from rolecard_agent.domains.registry import domain_seed_roles
+    from rolecard_agent.roles.service import RoleCardService
+    from rolecard_agent.storage.db import connect as rc_connect
+
+    conn = rc_connect(tmp_path / "app.db")
+    RoleCardService(conn).seed_domain_roles(domain_seed_roles(), user_id=DEFAULT_USER_ID)
+    conn.close()
     with TestClient(app) as c:
         yield c
 

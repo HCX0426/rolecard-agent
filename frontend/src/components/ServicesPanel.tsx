@@ -149,8 +149,7 @@ export function ServicesPanel() {
     <div className="flex flex-col gap-5">
       <div className="flex items-center justify-between">
         <p className="text-xs text-slate-500 dark:text-slate-400">
-          云端条目 = 引用「模型」页配好的模型：在这里排顺序，改配置去模型页，移除只影响这一页的优先级。
-          按优先级依次兜底 —— <b>第 1 位即生效</b>，调前几位的顺序即可做多模型比对。
+          云端条目引用「模型」页的配置；按顺序兜底，<b>第 1 位即生效</b>。
         </p>
         <button
           onClick={() =>

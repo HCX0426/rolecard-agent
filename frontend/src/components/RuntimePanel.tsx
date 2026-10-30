@@ -94,9 +94,9 @@ export function RuntimePanel() {
         <select
           value={draft[key] ?? ""}
           onChange={(e) => set(e.target.value)}
-          className="w-28 rounded border border-slate-200 px-1.5 py-1 text-xs outline-none focus:border-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+          className="w-28 rounded border border-slate-200 px-1.5 py-1 text-xs dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
         >
-          <option value="">跟随默认（{it.default}）</option>
+          <option value="" title={`默认 ${it.default}`}>跟随默认</option>
           <option value="1">开</option>
           <option value="0">关</option>
         </select>
@@ -135,9 +135,9 @@ export function RuntimePanel() {
         <select
           value={current}
           onChange={(e) => set(e.target.value)}
-          className="w-40 rounded border border-slate-200 px-1.5 py-1 text-xs outline-none focus:border-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+          className="w-40 rounded border border-slate-200 px-1.5 py-1 text-xs dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
         >
-          <option value="">跟随默认（{it.value}）</option>
+          <option value="" title={`默认 ${it.value}`}>跟随默认</option>
           {[...it.choices, ...extra].map((c) => (
             <option key={c} value={c}>
               {c}

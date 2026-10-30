@@ -66,6 +66,28 @@
   --color-cocoa-950: #1b1715;
 }
 
+/* 下拉框全局统一（2026-10-31，用户："下拉格式看能不能统一，有些还是原生样式"）：
+   原生 select 的箭头随平台漂（Win 是灰色三角、有的环境根本没有），去掉原生外观、
+   自绘一个 chevron，形状（圆角/右内边距）在 base 层定一次，颜色仍由各处 class 给。
+   **点击不亮边框**也是这里：全局摘掉焦点 outline；个别 select 上写的
+   `focus:border-blue-400` 已在同批摘掉 —— "点了之后蓝一下"没有信息量。
+   右内边距必须 !important：各处 class 里的 px-* 会把内容顶到箭头底下重叠。 */
+@layer base {
+  select {
+    appearance: none;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238a8f98' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.4rem center;
+    background-size: 0.75rem;
+    padding-right: 1.55rem !important;
+    border-radius: 0.5rem;
+  }
+  select:focus,
+  select:focus-visible {
+    outline: none;
+  }
+}
+
 /* 代码块语法高亮（2026-10-24，rehype-highlight 接入）：token 配色是手写的最小集
    （不用整份 hljs 主题 —— 那会和深浅色模式打架），浅色铺在深底上、深色同理，
    两套都对着 slate 底调过。没列出的 token 落回当前文本色，不会不可读。 */

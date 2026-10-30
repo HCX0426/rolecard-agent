@@ -30,11 +30,18 @@ def client(tmp_path: Path) -> TestClient:
 
 
 def test_list_roles_includes_builtin(client: TestClient) -> None:
-    """Traceability: US-1 — 内置角色随库启动即存在且排在前面。"""
+    """Traceability: US-1 — 内置角色随库启动即存在。
+
+    2026-10-31 起开机只播种出厂内置（通用助手）；域角色不再开机自动种（用户拍板：
+    默认常驻只有通用助手，开机自动种会让删掉的角色每次重启复活）。
+    """
     res = client.get("/api/roles")
     assert res.status_code == 200
     roles = res.json()
-    assert any(r["role_id"] == "medical_archivist" and not r["is_builtin"] for r in roles)
+    assert any(r["role_id"] == "general_assistant" and r["is_builtin"] for r in roles)
+    assert not any(r["role_id"] == "medical_archivist" for r in roles), (
+        "域角色不应随库自动播种（2026-10-31 用户拍板）"
+    )
 
 
 def test_create_role(client: TestClient) -> None:
@@ -359,6 +366,12 @@ def test_memory_items_can_be_merged(tmp_path: Path) -> None:
         assert (
             client.post("/api/settings/memory/item/99998/merge/99999", json={}).status_code == 404
         )
+        # 域角色不再开机播种（2026-10-31）：要用一个角色作用域就先建一张卡。
+        role_card = client.post(
+            "/api/roles",
+            json={"role_id": "medical_archivist", "role_name": "档案管理员", "system_prompt": ""},
+        )
+        assert role_card.status_code in (201, 409)  # 409 = 并发跑时另一份先建了
         role = client.post(
             "/api/settings/memory/item",
             json={"text": "她记得用户提过体检"},

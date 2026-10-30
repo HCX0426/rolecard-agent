@@ -86,7 +86,6 @@ from rolecard_agent.domains.registry import (
     build_query_services,
     build_registry,
     discover_specs,
-    domain_seed_roles,
 )
 from rolecard_agent.domains.spec import RouterDeps
 from rolecard_agent.features.channels.qq import QQChannelSource
@@ -227,7 +226,6 @@ def create_app(
         # 随之搬进了域自己的工具工厂（喂错域在域那一侧 loud）。
         query_services_factory=build_query_services,
         registry_factory=_host_registry_factory,
-        domain_seed_roles=domain_seed_roles(),
         # 主动开口的网关由宿主接进装配根：内核只认 `ProactiveGatewayLike` 那个形状，
         # 实现在 `features/proactive.py`（features→core 单向，内核不认识功能）。
         proactive_factory=build_gateway,

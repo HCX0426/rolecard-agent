@@ -59,7 +59,7 @@ from rolecard_agent.core.storage.migrations import MIGRATION_PLAN
 from rolecard_agent.core.telemetry.probes import ollama_keep
 from rolecard_agent.core.tools.registry import ToolRegistry
 from rolecard_agent.rag.retriever import KnowledgeBase
-from rolecard_agent.roles.models import RoleCard, RoleCardCreate
+from rolecard_agent.roles.models import RoleCard
 from rolecard_agent.roles.service import RoleCardService
 from rolecard_agent.storage.db import (
     RETENTION_BACKUP_DIRNAME,
@@ -394,7 +394,6 @@ def build_runtime(
     domains: Sequence[str],
     query_services_factory: Callable[[SqlConnection], Mapping[str, DomainQueryService]],
     registry_factory: RegistryFactory,
-    domain_seed_roles: Sequence[RoleCardCreate],
     proactive_factory: Callable[[GatewayContext], ProactiveGatewayLike],
     sqlite_path: Path | None = None,
     env_settings: Settings | None = None,
@@ -404,7 +403,7 @@ def build_runtime(
 ) -> Runtime:
     """装配内核：建库 → 播种 → 服务实例化 → 知识库/注册表/图 → 可热重建的 `Runtime`。
 
-    `domains` / `query_services_factory` / `registry_factory` / `domain_seed_roles` /
+    `domains` / `query_services_factory` / `registry_factory` /
     `proactive_factory` 由宿主给出（本模块不认识任何具体域，也不认识任何产品功能）：各域的
     查询服务以**工厂**传入（它要拿装配过程中建好的连接），域种子角色是**已经聚合好的一沓
     卡**（宿主从各域 `SPEC.seed_roles` 聚出来，见 `domains.registry.domain_seed_roles`）——
@@ -462,9 +461,10 @@ def build_runtime(
     audit = AuditTrail(conn)
     roles = RoleCardService(conn)
     roles.seed_builtins(user_id=owner)
-    # 域种子角色是**宿主聚合好的**（各域 SPEC.seed_roles）：内核不认识任何域名，也就
-    # 无从自己列出"该播种哪些域角色"。参见 `domains.registry.domain_seed_roles`。
-    roles.seed_domain_roles(domain_seed_roles, user_id=owner)
+    # 域角色**不再开机播种**（2026-10-31 用户拍板："默认的只有通用助手才是常驻的"）——
+    # 开机自动种 = 用户删掉的角色每次重启都回来（真机实测复现过）。机制保留在
+    # `seed_domain_roles`（显式调用仍然可用：init 流程或测试自己决定要不要）。
+    # 域能力不依赖种子卡：工具白名单归角色管，用户建卡勾上就能用。
     plugins = PluginService(conn, known_plugins=domains)
     ingestion = IngestionService(conn)
     model_settings = ModelSettingsService(conn)

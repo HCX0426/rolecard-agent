@@ -118,7 +118,7 @@ describe("知识作用域 chips：只有 ✕ 删（2026-10-29 误删修复的回
 });
 
 describe("角色级后端选择（用户 2026-09-25：角色级 > 设置里那份优先级）", () => {
-  it("下拉按全局优先级排、标出第一档，只列参与对话的模型", async () => {
+  it("下拉按全局优先级排，只列参与对话的模型；选项不带括号注释（2026-10-31）", async () => {
     // 供应商分组的原始顺序故意打乱：这里要看的不是"有哪些后端"，而是"我在盖过谁"。
     apiMock.get.mockImplementation(async (url: string) => {
       if (url === "/api/roles") return [ROLE];
@@ -156,7 +156,10 @@ describe("角色级后端选择（用户 2026-09-25：角色级 > 设置里那�
       "a-third",
     ]);
     expect(select.options[0].textContent).toBe("跟随全局优先级");
-    expect(select.options[1].textContent).toContain("全局第一档");
+    // 括号注释从选项里拿掉了（2026-10-31 用户："下拉框里的选项不需要括号解释"）——
+    // "哪个是第一档"由排序本身回答：第一个列出的就是全局优先级的头名。
+    expect(select.options[1].textContent).toBe("c-first");
+    expect([...select.options].every((o) => !o.textContent?.includes("（"))).toBe(true);
   });
 });
 

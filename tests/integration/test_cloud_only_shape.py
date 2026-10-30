@@ -28,7 +28,6 @@ from rolecard_agent.domains.registry import (
     DOMAINS,
     build_query_services,
     build_registry,
-    domain_seed_roles,
 )
 from rolecard_agent.features import reachout as svc
 from rolecard_agent.features.proactive import build_gateway
@@ -90,7 +89,6 @@ def _runtime(tmp_path: Path, **kw: object) -> bootstrap.Runtime:
     return build_runtime(  # type: ignore[return-value]
         domains=DOMAINS,
         query_services_factory=build_query_services,
-        domain_seed_roles=domain_seed_roles(),
         proactive_factory=build_gateway,
         registry_factory=_wiring,  # type: ignore[arg-type]
         env_settings=_cloud_only_settings(tmp_path),

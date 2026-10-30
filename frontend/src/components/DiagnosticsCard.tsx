@@ -35,8 +35,7 @@ export function DiagnosticsCard() {
     <Card className="p-5">
       <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">诊断</h3>
       <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-        遇到问题时导出诊断包发给开发者：内含错误签名、版本指纹与本机日志副本。
-        包只在本机组装、不经网络上报；环境摘要不含任何密钥。
+        导出诊断包发给开发者：错误签名 + 版本指纹 + 本机日志；只在本机组装、不经网络、不含密钥。
       </p>
       <div className="mt-2.5 flex flex-wrap items-center gap-3">
         <Button

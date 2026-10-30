@@ -171,11 +171,12 @@ describe("记忆卡逐条列表（事实面是条目）", () => {
     return render(<MemoryPage />);
   }
 
-  it("列出条目并显示来源、层与命中次数", async () => {
+  it("列出条目：正文旁只留归属层，来源与命中次数收进悬停", async () => {
     renderPage();
-    // 条目行的存在用元信息那一行证明（来源 + 层 + 命中次数只有渲染出的条目才会出现）。
-    // 层标签（记忆分层，2026-10-30）：旧数据没有 category 字段时按长期记忆显示。
-    expect(await screen.findByText(/对话 · 长期记忆 · 用过 2 次/)).toBeTruthy();
+    // 元信息降噪（2026-10-31，dsh 生态共识：界面呈现"归哪一轨"，来源/次数是内部统计）：
+    // 行上只剩层标签；"来源 / 注入次数"进 title 悬停（属性，不是文本）。
+    expect(await screen.findByText("长期记忆")).toBeTruthy();
+    expect(screen.getByTitle(/来源：对话 · 注入过 2 次/)).toBeTruthy();
   });
 
   it("「记住」提交一条并采用返回的 payload", async () => {

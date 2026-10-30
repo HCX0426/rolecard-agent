@@ -107,7 +107,6 @@ export default function RolesPage({
   const [backends, setBackends] = useState<string[]>([]);
   /** 全局优先级里排第一那台（= 角色不设时接话的那台）。下拉按设置里那份顺序排，就是为了让
    *  "我在盖过谁"看得见 —— 按供应商标题分组排会让第一档看不出来。 */
-  const [globalDefault, setGlobalDefault] = useState("");
   const confirm = useConfirm();
   const [newScope, setNewScope] = useState("");
   const [kbScopes, setKbScopes] = useState<string[]>([]);
@@ -207,7 +206,6 @@ export default function RolesPage({
           (n): n is string => n !== null && chat.includes(n),
         );
         setBackends([...ranked, ...chat.filter((n) => !ranked.includes(n))]);
-        setGlobalDefault(s.default ?? "");
       })
       .catch(() => {});
     // 可选作用域的真实来源：已建的知识集合（RAG 真实作用域），让下拉"所见即所得"。
@@ -405,7 +403,7 @@ export default function RolesPage({
                 {showSamples && (
                   <div className="absolute right-0 z-20 mt-1 w-72 rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg dark:border-slate-700 dark:bg-slate-800">
                     <p className="px-2 pb-1 pt-0.5 text-11 text-slate-400 dark:text-slate-500">
-                      随包样例（按 ST V2 / V1 规范写）：一键导入，重名会提示冲突。
+                      随包样例，一键导入。
                     </p>
                     {SAMPLE_CARDS.map((sc) => (
                       <button
@@ -534,9 +532,11 @@ export default function RolesPage({
                   className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm"
                 >
                   <option value="">跟随全局优先级</option>
+                  {/* 选项不带括号注释（2026-10-31）："哪个是全局第一档"看顺序即可——
+                      下拉本身就是按全局优先级排的，第一档就是第二个选项。 */}
                   {backends.map((b) => (
                     <option key={b} value={b}>
-                      {b === globalDefault ? `${b}（全局第一档）` : b}
+                      {b}
                     </option>
                   ))}
                 </select>
@@ -749,7 +749,7 @@ export default function RolesPage({
                       onChange={(e) => {
                         if (e.target.value) toggleScope(e.target.value);
                       }}
-                      className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1.5 text-xs text-slate-600 dark:text-slate-300 outline-none focus:border-blue-400"
+                      className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1.5 text-xs text-slate-600 dark:text-slate-300"
                     >
                       <option value="">＋ 选择作用域…</option>
                       {availableScopes.map((s) => (
@@ -779,11 +779,8 @@ export default function RolesPage({
                   </Button>
                 </div>
               </div>
-              <span className="mt-1 block text-11 leading-relaxed text-slate-400 dark:text-slate-500">
-                这是对内核知识库（RAG）的检索授权：声明 = 可检索该作用域；不声明 =
-                不可检索。库归内核，角色只声明 —— 避免 N 个角色 × M 套索引。可选列表来自
-                现存角色的声明并集。
-              </span>
+              {/* 说明段整段删（2026-10-31 冗余清理）：块标题已写明"声明可检索的范围；
+                  不选 = 不可检索"，剩下的"库归内核 / 避免 N×M"是实现侧的事，不进界面。 */}
             </div>
             <div className="mt-3">
               <div className="flex items-center justify-between">
@@ -851,10 +848,8 @@ export default function RolesPage({
                 )}
               </div>
               <span className="mt-1 block text-11 leading-relaxed text-slate-400 dark:text-slate-500">
-                装配顺序：角色设定 → <b>范例</b> → 安全规则（安全规则永远最后，不可被覆盖）。
-                半填（只写一半）的范例不会被提交。
-                <b>范例教句式，不教事实</b>：别在这里写真实数值、日期或人名 ——
-                模型有概率把范例里那个数当成你的事实，在别的问句上复读出来。数值让模型自己去档案里取。
+                <b>范例教句式，不教事实</b>：别写真实数值 / 日期 / 人名 ——
+                模型可能把范例里的数当成你的事实复读出来。
               </span>
             </div>
             <div className="mt-4 flex gap-2">

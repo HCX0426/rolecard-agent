@@ -24,9 +24,11 @@ from rolecard_agent.roles.service import (
 
 ME = DEFAULT_USER_ID  # 这台实例的主人在测试里的名字（M2b 之后每次读写都要说清为谁）
 
+
 def cards(store: RoleCardService) -> RoleCards:
     """测试里"本机主人眼里的那些卡"的简写（M2a 之后每次读写都得说清为谁）。"""
     return store.scoped(DEFAULT_USER_ID)
+
 
 def _new(role_id: str = "custom", **overrides: object) -> RoleCardCreate:
     payload = {
@@ -103,12 +105,15 @@ def test_whitelist_none_and_empty_round_trip_distinctly(roles: RoleCardService) 
 
 def test_builtin_role_cannot_be_deleted(roles: RoleCardService) -> None:
     # 内置只剩「通用助手」；域种子角色（档案管理员）类型是自定义，可删除。
+    # 2026-10-31 起**开机不再播种域角色**（用户拍板：默认常驻只有通用助手）——
+    # 本 fixture 的显式 seed_domain_roles 只代表"显式调用"的语义：缺失才补插。
+    # 生产路径（bootstrap/init_db）不再调用它，所以"删了又回来"不会发生。
     with pytest.raises(BuiltinRoleProtected):
         cards(roles).delete("general_assistant")
     assert cards(roles).exists("general_assistant")
     cards(roles).delete("medical_archivist")
     assert not cards(roles).exists("medical_archivist")
-    # 重启（再次播种）：缺失才补插，且不会复活为内置。
+    # 显式再播种：缺失才补插，且不会复活为内置（这是"显式调用"的语义）。
     roles.seed_domain_roles(domain_seed_roles(), user_id=ME)
     assert cards(roles).exists("medical_archivist")
     assert cards(roles).get("medical_archivist").is_builtin is False
@@ -246,24 +251,31 @@ def test_deleting_a_role_takes_her_own_state_with_it(
 
     cards(roles).delete("ghost")
 
-    gone = conn.execute(
-        "SELECT COUNT(*) c FROM role_card WHERE role_id='ghost'"
-    ).fetchone()["c"]
+    gone = conn.execute("SELECT COUNT(*) c FROM role_card WHERE role_id='ghost'").fetchone()["c"]
     assert gone == 0
-    assert conn.execute(
-        "SELECT COUNT(*) c FROM role_memory_item WHERE role_id='ghost'"
-    ).fetchone()["c"] == 0, "记忆跟着角色走"
-    assert conn.execute(
-        "SELECT COUNT(*) c FROM role_proactive_state WHERE role_id='ghost'"
-    ).fetchone()["c"] == 0, "关系数值跟着角色走"
+    assert (
+        conn.execute("SELECT COUNT(*) c FROM role_memory_item WHERE role_id='ghost'").fetchone()[
+            "c"
+        ]
+        == 0
+    ), "记忆跟着角色走"
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) c FROM role_proactive_state WHERE role_id='ghost'"
+        ).fetchone()["c"]
+        == 0
+    ), "关系数值跟着角色走"
 
     # 同名重建：必须是一张干净的卡，不该继承任何旧状态
     cards(roles).create(_new("ghost", system_prompt="全新设定。"))
     fresh = get_state(conn, "ghost", user_id=ME)
     assert fresh.affinity == 0.0 and fresh.open_threads == ()
-    assert conn.execute(
-        "SELECT COUNT(*) c FROM role_memory_item WHERE role_id='ghost'"
-    ).fetchone()["c"] == 0
+    assert (
+        conn.execute("SELECT COUNT(*) c FROM role_memory_item WHERE role_id='ghost'").fetchone()[
+            "c"
+        ]
+        == 0
+    )
 
 
 def test_deleting_a_role_keeps_the_users_conversation(

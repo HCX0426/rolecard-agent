@@ -97,5 +97,6 @@ CREATE TABLE IF NOT EXISTS role_card (
 -- could leave the system with no usable role. Enforced in roles/service.py.
 CREATE INDEX IF NOT EXISTS idx_role_card_builtin ON role_card(is_builtin);
 
+
 -- GLOBAL_SAFETY_PROMPT is deliberately absent from this table: it lives in
 -- core/prompts.py so that a role card can never override it.

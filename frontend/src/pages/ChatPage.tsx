@@ -799,14 +799,8 @@ export default function ChatPage({
                   "直接在下方输入即可（会自动创建对话），或点左上角「＋ 开一个临时话题」。"}
               </p>
               <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                <li>
-                  · <b>上传文件 / 图片</b> —— 自动解析并入检索索引（.pdf/.docx/.pptx/.xlsx + 图片 OCR）
-                </li>
-                <li>
-                  · <b>需要某类专业能力时</b> —— 切换角色；每个角色只调用自己白名单内的
-                  工具，回答自带来源
-                </li>
-                <li>· 下方功能行可切换角色与模型（下一轮生效，历史保留）</li>
+                <li>· 传文件 / 图片会自动解析并入检索索引</li>
+                <li>· 需要专业能力就切换角色 —— 每个角色只调自己白名单内的工具</li>
               </ul>
             </div>
           )}

@@ -230,8 +230,7 @@ export function AboutPanel({
       <Card className="p-5">
         <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">关于</h3>
         <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-          rolecard-agent 控制台。多角色对话 Agent：角色卡控制人设与工具权限，
-          插件以数据驱动启停。
+          多角色对话 Agent 控制台。
         </p>
         <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">语言：简体中文（内置）</p>
       </Card>

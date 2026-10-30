@@ -564,10 +564,11 @@ export default function MemoryPage() {
                固定宽度 + 超长省略，换谁选都是同一格宽。 */
             className="w-64 min-w-0 truncate rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
           >
-            <option value="">全局（跨角色共享的用户事实）</option>
+            {/* 选项不带括号注释（2026-10-31）：作用域的语义由上方那行说明讲，选项只给名字。 */}
+            <option value="">全局记忆</option>
             {memRoles.map((r) => (
               <option key={r.role_id} value={r.role_id}>
-                {r.role_name}（该角色专属记忆）
+                {r.role_name}
               </option>
             ))}
           </select>
@@ -735,7 +736,7 @@ export default function MemoryPage() {
           {(mem?.items ?? []).map((item) => (
             <li
               key={item.id}
-              className="flex items-start gap-2 rounded-lg border border-slate-100 px-2 py-1.5 text-xs dark:border-slate-700"
+              className="group flex items-start gap-2 rounded-lg border border-slate-100 px-2 py-1.5 text-xs dark:border-slate-700"
             >
               <input
                 type="checkbox"
@@ -786,26 +787,24 @@ export default function MemoryPage() {
                 <>
                   <span className="min-w-0 flex-1 break-words text-slate-700 dark:text-slate-200">
                     {item.text}
-                    <span className="mt-0.5 block text-10 text-slate-400 dark:text-slate-500">
-                      {SOURCE_LABEL[item.source] ?? item.source}
-                      {" · "}
-                      {/* 层标签（记忆分层，2026-10-30）：用户要在"全部"视图里也能一眼看出
-                          这条属于哪一层 —— 否则分板块只是切了个视角，回来看仍是黑箱。 */}
+                    {/* 元信息收干净（2026-10-31，dsh 生态共识：界面呈现"记忆是什么、归哪一轨"，
+                        来源与命中次数是内部统计 → 收进 title 悬停）。要紧程度是真实生效的档位
+                        （注入带【要紧】标记），保留但悬停行才出现——平时每行只留归属。 */}
+                    <span
+                      className="mt-0.5 block text-10 text-slate-400 dark:text-slate-500"
+                      title={`来源：${SOURCE_LABEL[item.source] ?? item.source} · 注入过 ${item.hit_count} 次`}
+                    >
                       {CATEGORY_LABEL[item.category ?? "longterm"] ?? "长期记忆"}
-                      {" · "}用过 {item.hit_count} 次
                       {item.pinned ? " · 已钉住" : ""}
-                      {" · "}
-                      {/* 三档做成下拉而不是"点一下循环"：这三档语义不对称（0 与 2 是两端，1 是
-                          默认），循环控件要数两下才知道自己在哪。与「主动开口」卡的折叠窗口同款。 */}
-                      <label className="inline-flex items-center gap-1">
-                        要紧程度
+                      <label className="ml-1.5 inline-flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                         <select
                           value={String(item.importance ?? 1)}
                           disabled={itemBusy}
                           onChange={(e) => void setItemImportance(item, Number(e.target.value))}
+                          aria-label="要紧程度"
                           title={
                             "要紧 = 注入时带【要紧】标记、排序里权重最高；次要 = 活跃数超限时最先被退役（不删）。\n" +
-                            "与右边的「钉住」是两件事：钉住完全不进淘汰与整理，这一档只管还在池里时排多前。"
+                            "与「钉住」是两件事：钉住完全不进淘汰与整理，这一档只管还在池里时排多前。"
                           }
                           className="rounded border border-slate-200 bg-white px-1 py-0 text-10 text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
                         >
