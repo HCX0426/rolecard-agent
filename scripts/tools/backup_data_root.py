@@ -14,6 +14,10 @@
 所以根的判定复用 `scratch_db.CANDIDATE_SOURCES`（"两个数据根"这件事在本仓只允许有一处判定，
 见 `R26-17`），并且写完 zip 之后**回头查一遍**：源目录里每个 `*.db` 都必须在 zip 里，
 少一个就抛。少了主库的备份不是备份。
+
+**这个 zip 里有敏感物（R1031-23，2026-10-31 注）**：sqlite 里的 `model_settings` 存着
+模型 API key（明文是设计拍板，见台账），备份会把它们一并带走。zip 别进网盘/聊天工具；
+要分享先确认不需要 key 或自行清库后再备份。
 """
 
 from __future__ import annotations
@@ -99,24 +103,69 @@ def backup(dest_dir: Path, *, root: Path | None = None) -> Path:
                     z.write(f, f.relative_to(tmp).as_posix())
         with zipfile.ZipFile(out) as z:
             wrote = set(z.namelist())
-        missing = [rel for rel in (d.relative_to(src_root).as_posix() for d in dbs)
-                   if rel not in wrote]
+        missing = [
+            rel for rel in (d.relative_to(src_root).as_posix() for d in dbs) if rel not in wrote
+        ]
         total = len(wrote)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     if missing:
         raise SystemExit(f"备份里没有这些库（写出来了但不完整）：{missing}")
-    print(f"BACKUP ok: {out} ({out.stat().st_size:,} bytes, "
-          f"{total} files, {len(dbs)} 个 sqlite 快照)")
+    print(
+        f"BACKUP ok: {out} ({out.stat().st_size:,} bytes, {total} files, {len(dbs)} 个 sqlite 快照)"
+    )
     return out
 
 
+def restore(zip_path: Path, into: Path) -> Path:
+    """把备份 zip 还原进一个**空目标目录**（R1031-15：备份此前只会生产不会消费）。
+
+    两道闸：目标目录非空就拒绝（还原是"换机/回滚"动作，不是覆盖合并）；zip 里有
+    绝对路径或 `..` 穿越段就拒绝（zip-slip，OWASP 文件上载防线的下载侧对称物）。
+    """
+    if not zip_path.exists():
+        raise SystemExit(f"备份 zip 不存在：{zip_path}")
+    into = into.resolve()
+    if into.exists() and any(into.iterdir()):
+        raise SystemExit(f"目标目录不是空的，拒绝覆盖（先清空或换目录）：{into}")
+    with zipfile.ZipFile(zip_path) as z:
+        names = z.namelist()
+        for name in names:
+            drives = len(name) > 1 and name[1] == ":"  # Windows 盘符
+            if name.startswith("/") or ".." in Path(name).parts or drives:
+                raise SystemExit(f"zip 里有不安全的路径，拒绝还原：{name}")
+        into.mkdir(parents=True, exist_ok=True)
+        z.extractall(into)
+    dbs = list(sorted(into.rglob("*.db")))
+    print(f"RESTORE ok: {zip_path} -> {into} ({len(names)} files, {len(dbs)} 个 sqlite)")
+    return into
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description="备份装着的那一份应用的数据根")
-    ap.add_argument("--dest", default="build", help="zip 落在哪（默认仓库的 build/）")
-    ap.add_argument("--root", default=None,
-                    help="覆盖数据根（只给测试用；默认是装着的那一份，不回落仓库 data/）")
+    ap = argparse.ArgumentParser(description="备份/还原装着的那一份应用的数据根")
+    ap.add_argument("--dest", default="build", help="（备份档）zip 落在哪（默认仓库的 build/）")
+    ap.add_argument(
+        "--root",
+        default=None,
+        help="覆盖数据根（只给测试用；默认是装着的那一份，不回落仓库 data/）",
+    )
+    ap.add_argument(
+        "--restore",
+        default=None,
+        metavar="ZIP",
+        help="还原档：把这个备份 zip 还原进 --into 指定的**空**目录",
+    )
+    ap.add_argument(
+        "--into", default=None, metavar="DIR", help="（还原档）还原到哪；必须是不存在或为空的目录"
+    )
     args = ap.parse_args()
+    if args.restore:
+        if not args.into:
+            raise SystemExit("--restore 需要成对的 --into（还原到哪个空目录）")
+        restore(Path(args.restore), Path(args.into))
+        return 0
+    if args.into:
+        raise SystemExit("--into 只跟 --restore 成对使用")
     backup(Path(args.dest), root=Path(args.root) if args.root else None)
     return 0
 

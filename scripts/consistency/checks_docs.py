@@ -22,6 +22,7 @@ _HEADLINE_ZONE_LINES = 35
 
 _READINGS_LINK = "[docs/gate-readings.json](docs/gate-readings.json)"
 
+
 def check_readme_headline_numbers() -> None:
     """README 首屏**不许再出现那三个数**，且必须给出读数文件的链接 —— 数字的家搬到了那边。
 
@@ -63,8 +64,7 @@ def check_readme_headline_numbers() -> None:
             )
     if _READINGS_LINK not in zone:
         problems.append(
-            f"首屏没有指向读数文件的链接（需要 {_READINGS_LINK} 这个形状）"
-            " —— 数字的家不能没有门牌"
+            f"首屏没有指向读数文件的链接（需要 {_READINGS_LINK} 这个形状） —— 数字的家不能没有门牌"
         )
     ok = not problems
     out(
@@ -79,6 +79,7 @@ def check_readme_headline_numbers() -> None:
     )
     if problems:
         fails.append(f"README headline literals: {problems}")
+
 
 def check_promised_artifacts() -> None:
     promised = [
@@ -123,6 +124,7 @@ def check_promised_artifacts() -> None:
     if absent:
         fails.append(f"plan promises artifacts that do not exist: {absent}")
 
+
 def check_readme_quickstart() -> None:
     """The plan's P4 exit criterion is "clone and run in 3 commands" - the README must deliver it.
 
@@ -140,6 +142,7 @@ def check_readme_quickstart() -> None:
     out("readme quickstart", not absent, f"missing: {absent}" if absent else "present")
     if absent:
         fails.append(f"README is missing quickstart pieces: {absent}")
+
 
 def check_doc_references() -> None:
     """Docs are referenced by semantic filename now, not by a number.
@@ -164,6 +167,7 @@ def check_doc_references() -> None:
     out("doc references", not offenders, str(offenders) if offenders else "semantic names only")
     if offenders:
         fails.append(f"numbered docs references found: {offenders}")
+
 
 def check_doc_links() -> None:
     """Backticked repo paths in the docs must point at files that actually exist.
@@ -192,8 +196,14 @@ def check_doc_links() -> None:
     # **但那个前缀只有在配合下面的 gitignore 分区之后才成立**：`build/` 整个是被忽略的暂存区，
     # 直接按"存在吗"判，得到的结论只在这台机器上成立（本机全绿、CI 红 10 处，见 `_git_ignored`）。
     prefixes = (
-        "docs/", "src/", "scripts/", "tests/", "data/", "build/",
-        "config/", "requirements/",
+        "docs/",
+        "src/",
+        "scripts/",
+        "tests/",
+        "data/",
+        "build/",
+        "config/",
+        "requirements/",
     )
     # 字符类必须含中文：**整个中文文件名文档树原本是这条检查的盲区**。09-26 轮 R26-20 实测：
     # 把 CJK 放进来之后立刻抓到 7 处 living docs 指着已经搬进 archive/ 的《技术评审与决策》
@@ -218,6 +228,7 @@ def check_doc_links() -> None:
 
     broken: list[str] = []
     unresolved: list[tuple[str, str]] = []
+
     # 一条刻意不参与：
     #  * `docs/archive/` 是**封存件** —— 里面的路径是"写它的那天"的事实，按 R26-19 的同一个
     #    决定（引用可达性进门禁，但归档档里的编号与路径原地不动）不去追修它们。
@@ -260,9 +271,11 @@ def check_doc_links() -> None:
     if broken:
         fails.append(f"broken doc references: {broken}")
 
+
 def _unescaped_pipes(text: str) -> list[int]:
     """每个未转义 `|` 的下标。"""
     return [m.start() for m in re.finditer(r"(?<!\\)\|", text)]
+
 
 def _is_table_delim(line: str) -> bool:
     body = line.strip()
@@ -272,6 +285,7 @@ def _is_table_delim(line: str) -> bool:
         and bool(body)
         and set(body.replace("|", "").strip()) <= set("-: ")
     )
+
 
 def check_markdown_table_shape() -> None:
     """GFM 表格每一行的列数不能超过表头，且行必须自己收尾。
@@ -321,13 +335,19 @@ def check_markdown_table_shape() -> None:
                     offenders.append(f"{rel}:{i + 1} 这一行没有收尾的 `|`（表格在此被折断）")
                 i += 1
             # 表格后面紧贴着一条不是表格的行 = 上一行其实是折行的续文
-            if i < len(lines) and lines[i].strip() and not lines[i].lstrip().startswith(
-                ("|", "#", ">", "-", "*", "`", "!", "[")
+            if (
+                i < len(lines)
+                and lines[i].strip()
+                and not lines[i].lstrip().startswith(("|", "#", ">", "-", "*", "`", "!", "["))
             ):
                 offenders.append(f"{rel}:{i + 1} 表后紧跟游离行（多半是折断的续文）")
-    out("markdown table shape", not offenders, "all rows match their header"
-        if not offenders else f"{len(offenders)} 处")
+    out(
+        "markdown table shape",
+        not offenders,
+        "all rows match their header" if not offenders else f"{len(offenders)} 处",
+    )
     fails.extend(offenders)
+
 
 def _citation_targets(path: pathlib.Path) -> set[str]:
     """一份文档里所有"能被指到"的编号。"""
@@ -347,10 +367,12 @@ def _citation_targets(path: pathlib.Path) -> set[str]:
                 found.add(hit.group(1))
     return found
 
+
 _HEADER_DATE = re.compile(r"最后更新[：:]\s*(\d{4})-(\d{1,2})-(\d{1,2})")
 _FULL_DATE = re.compile(r"(?<![\d-])(\d{4})-(\d{1,2})-(\d{1,2})(?![\d-])")
 #: 「最后更新」那一行的日期（头部声明），与正文里出现过的日期。
 _BARE_DATE = re.compile(r"(?<![\d-])(\d{1,2})-(\d{1,2})(?![\d-])")
+
 
 def _dates_in(text: str, today: datetime.date) -> list[datetime.date]:
     """正文里出现过的**过去的**日期（含今天）。未来的那些是计划，不该拿去要求头部。
@@ -374,6 +396,7 @@ def _dates_in(text: str, today: datetime.date) -> list[datetime.date]:
         if d <= today:
             found.append(d)
     return found
+
 
 def check_doc_freshness() -> None:
     """活文档头部那句「最后更新」不许比它自己正文里出现过的日期更旧。
@@ -418,3 +441,78 @@ def check_doc_freshness() -> None:
     )
     if offenders:
         fails.append(f"doc freshness: {offenders}")
+
+
+def _last_touch_date(rel: str) -> str | None:
+    """该文件最近一次被提交改动的日期（YYYY-MM-DD）。取不到（新克隆/浅克隆）返回 None。"""
+    import subprocess  # noqa: PLC0415 - 尺子自己的进程出钱
+
+    proc = subprocess.run(
+        ["git", "log", "-1", "--date=short", "--format=%cs", "--", rel],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+    )
+    out_text = (proc.stdout or "").strip()
+    if proc.returncode != 0 or not out_text:
+        return None
+    return out_text.splitlines()[0]
+
+
+def check_doc_header_matches_last_touch() -> None:
+    """带「最后更新」的活文档，头部日期必须等于该文件最近一次被触碰的提交日（R1031-35）。
+
+    doc freshness 只拦"正文比头部新"这一半；另一半缺口是**头部自身没人管**——架构总览
+    曾在 10-26 回写两轮后头部还写着 10-10（产品审计 P3-1 实测），那句日期对读者撒谎的方式
+    同样是"让人以为后面不用看"。这把尺子把它钉死：改了文档就必须同笔改头部日期，反之
+    头部日期漂了当场红。
+
+    **CI 浅克隆上刻意静默跳过**：`git log -1 -- <file>` 在 depth=1 下问不出历史，
+    "看不到"不等于"没问题"——本仓的判据纪律是取不到证据就不发言（与依赖审计
+    fail-closed 不同侧：那里取不到=不干净，因为那是安全闸；这里取不到=不裁，因为
+    它是 freshness 尺不是红线）。本机全量档与快档（有完整历史）是这把尺子的执法场。
+    """
+    offenders: list[str] = []
+    checked = 0
+    skipped = 0
+    for path in iter_files(".md"):
+        rel = path.relative_to(ROOT)
+        if "archive" in rel.parts:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        header = _HEADER_DATE.search(text)
+        if not header:
+            continue
+        try:
+            declared = datetime.date(*(int(g) for g in header.groups()))
+        except ValueError:
+            continue  # 非法日期由 doc freshness 那条负责，不在这里双判
+        touched = _last_touch_date(rel.as_posix())
+        if touched is None:
+            skipped += 1
+            continue
+        checked += 1
+        try:
+            touched_date = datetime.date.fromisoformat(touched)
+        except ValueError:
+            continue
+        if touched_date != declared:
+            offenders.append(
+                f"{rel} 头部写「最后更新 {declared.isoformat()}」"
+                f"而该文件最近一次提交是 {touched_date.isoformat()} —— 改了文档就同笔改头部"
+            )
+    out(
+        "doc header last-touch",
+        not offenders,
+        (
+            f"{checked} 份带「最后更新」的活文档头部与最近触碰提交日一致"
+            f"（{skipped} 份取不到历史，跳过）"
+            if not offenders
+            else "; ".join(offenders[:4])
+        ),
+    )
+    if offenders:
+        fails.append(f"doc header last-touch: {offenders}")

@@ -56,6 +56,7 @@ CHECKS = (
     checks_docs.check_markdown_table_shape,
     checks_audit.check_citation_reachability,
     checks_docs.check_doc_freshness,
+    checks_docs.check_doc_header_matches_last_touch,
     checks_audit.check_audit_index_in_sync,
     checks_meta.check_version_parity,
     checks_meta.check_update_feed,

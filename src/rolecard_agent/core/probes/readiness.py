@@ -64,7 +64,11 @@ def _chroma_check(path: Path) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "detail": _detail(f"chromadb 没装（知识库不可用）：{exc}")}
     try:
-        client = chromadb.PersistentClient(path=str(path))
+        # 与 retriever 同一条口径（R1031-21 隐私面）：探针客户端也不许带 posthog 遥测。
+        client = chromadb.PersistentClient(
+            path=str(path),
+            settings=chromadb.Settings(anonymized_telemetry=False),
+        )
         try:
             beat = client.heartbeat()
         finally:

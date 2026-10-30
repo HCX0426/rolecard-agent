@@ -23,6 +23,7 @@ import contextlib
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 from rolecard_agent.base.audit import AuditTrail
@@ -50,6 +51,10 @@ from rolecard_agent.storage.db import SqlConnection, ThreadLocalConnection
 #: 只读引用，不该拿到能换图、能触发重建的可变运行时。
 @dataclass(frozen=True, slots=True)
 class Assembly:
+    #: 实际打开的那份数据库路径（R1031-26）：诊断包的库健康读数认它，不认
+    #: `Settings.sqlite_path` —— 两者在"create_app(sqlite_path=...) 注入临时库"时
+    #: 从来不是同一个东西（gen_response_models 与诊断测试各踩过一次同一坑）。
+    sqlite_path: Path
     conn: ThreadLocalConnection
     roles: RoleCardService
     #: 审计写入的唯一咽喉（`R102-07`）：端点侧 `ctx.audit.log(...)` 走的就是这一件。
@@ -139,6 +144,7 @@ class RuntimeKernel(Protocol):
     knowledge: KnowledgeBase
     registry: ToolRegistry
     state: dict[str, Any]
+
     # `model_factory` / `registry_factory` 声明为**只读属性**形状：本模块对它们只读
     # （rebuild / build_graph 都只是取用）。写成普通注解成员会要求数据类可赋值，而 mypy
     # 对 @dataclass 的字段一律判 read-only（2026-10-09 用 build/repro_protocol.py 三形状
@@ -148,6 +154,7 @@ class RuntimeKernel(Protocol):
     def model_factory(self) -> Callable[..., ChatLike]: ...
     @property
     def registry_factory(self) -> RegistryFactory: ...
+
     checkpointer: Any
     rebuild_lock: threading.Lock
     models: ModelResolver

@@ -38,9 +38,7 @@ def _make_root(root: Path) -> None:
     conn = sqlite3.connect(db)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("CREATE TABLE session_thread (thread_id TEXT PRIMARY KEY, updated_at TEXT)")
-    conn.execute(
-        "INSERT INTO session_thread VALUES ('s_proactive_elysia', '2026-09-26 13:28:00')"
-    )
+    conn.execute("INSERT INTO session_thread VALUES ('s_proactive_elysia', '2026-09-26 13:28:00')")
     conn.commit()
     (root / "pet-prefs.json").write_text('{"alwaysOnTop": true}', "utf-8")
     # 伴生件必须在**连接关掉之后**手写：给一个活着的库写 `-shm` 不是"造个文件"，
@@ -71,8 +69,7 @@ def test_it_backs_up_the_installed_root_and_reads_back(tmp_path: Path) -> None:
     back.close()
 
 
-def test_it_refuses_to_guess_and_never_falls_back_to_the_repo(tmp_path: Path,
-                                                             monkeypatch) -> None:
+def test_it_refuses_to_guess_and_never_falls_back_to_the_repo(tmp_path: Path, monkeypatch) -> None:
     """候选里没有"仓库外那份"时宁可抛。
 
     回落 = 把仓库的 `data/`（可能是一份停在昨天的陈旧快照）当作用户的真数据备份出去，
@@ -109,3 +106,44 @@ def test_an_incomplete_zip_is_a_failure_not_a_warning(tmp_path: Path, monkeypatc
     with pytest.raises(SystemExit) as got:
         mod.backup(tmp_path / "dest", root=src)
     assert "不完整" in str(got.value)
+
+
+def test_restore_roundtrip_into_empty_dir(tmp_path: Path, monkeypatch) -> None:
+    """R1031-15：备份 → 还原进空目录 → 文件与库逐一对得上（备份从此可消费）。"""
+    from scripts.tools.backup_data_root import backup, restore
+
+    root = tmp_path / "root"
+    (root / "sqlite").mkdir(parents=True)
+    (root / "uploads").mkdir()
+    conn = sqlite3.connect(root / "sqlite" / "app.db")
+    conn.execute("CREATE TABLE t(x)").close()
+    (root / "uploads" / "a.txt").write_text("hello", encoding="utf-8")
+    monkeypatch.setattr("scripts.tools.backup_data_root.installed_data_root", lambda: root)
+
+    out = backup(tmp_path / "dest", root=root)
+    into = tmp_path / "restored"
+    restore(out, into)
+    assert (into / "uploads" / "a.txt").read_text(encoding="utf-8") == "hello"
+    reread = sqlite3.connect(into / "sqlite" / "app.db")
+    assert reread.execute("SELECT count(*) FROM t").fetchone()[0] == 0
+    reread.close()
+
+
+def test_restore_refuses_nonempty_target_and_zip_slip(tmp_path: Path) -> None:
+    """两道闸：非空目标拒绝；zip 里的 `..` 穿越段拒绝（zip-slip）。"""
+    import zipfile
+
+    from scripts.tools.backup_data_root import restore
+
+    occupied = tmp_path / "occupied"
+    occupied.mkdir()
+    (occupied / "x.txt").write_text("1", encoding="utf-8")
+    evil = tmp_path / "evil.zip"
+    with zipfile.ZipFile(evil, "w") as z:
+        z.writestr("../escape.txt", "nope")
+    with pytest.raises(SystemExit, match="不是空的"):
+        restore(evil, occupied)
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    with pytest.raises(SystemExit, match="不安全的路径"):
+        restore(evil, fresh)

@@ -395,8 +395,7 @@ def repair_stranded_rebuild(conn: SqlConnection, *, original: str, temp: str) ->
     tables = {
         str(r[0])
         for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' "
-            "AND name NOT LIKE 'sqlite_%'"
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
         )
     }
     if original in tables or temp not in tables:
@@ -733,3 +732,20 @@ def reconcile_columns(
 #: 且它从未有过调用方，docstring 里那句"退役"终于兑现。）
 
 
+def db_health(sqlite_path: Path | None) -> dict[str, Any]:
+    """库健康两读数（R1031-26；api 层禁裸 SQL，读数口住在 storage 层）。
+
+    排障时最常问的两句"库现在什么状态"以前不在诊断包里；只读 URI 打开，活着的服务不受影响。
+    """
+    if sqlite_path is None or not Path(sqlite_path).exists():
+        return {"present": False}
+    try:
+        conn = sqlite3.connect(f"file:{Path(sqlite_path).as_posix()}?mode=ro", uri=True)
+        try:
+            user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+            quick = conn.execute("PRAGMA quick_check").fetchone()[0]
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        return {"present": True, "error": str(exc)}
+    return {"present": True, "user_version": user_version, "quick_check": quick}

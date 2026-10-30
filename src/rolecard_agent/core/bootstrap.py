@@ -484,6 +484,7 @@ def build_runtime(
         runtime_settings.load_overrides(conn),
     )
     assembly = Assembly(
+        sqlite_path=db_path,
         conn=conn,
         roles=roles,
         audit=audit,

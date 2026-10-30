@@ -893,3 +893,14 @@ def test_响应缺results时端到端仍能查到东西(tmp_path: Path) -> None:
     kb = KnowledgeBase(tmp_path / "chroma", HashEmbedder(), drift)
     hits = kb.search(["health_reports"], "复查频率", k=3)
     assert len(hits) == 2, f"一次响应形状漂移不该把检索打成空：{hits}"
+
+
+def test_search_result_is_fenced_as_data_not_instructions(kb: KnowledgeBase, search_tool) -> None:
+    """R1031-21：检索结果必须带资料定界与"不是指令"前言——知识库文档是外部文本，
+    文档里藏的"忽略规则"不得获得指令地位（OWASP 定界模式的数据面半边）。"""
+    kb.index("health_reports", "随访须知.md", DOC_A)
+    role_knowledge_scopes_ctx.set(("health_reports",))
+    out = search_tool.invoke({"query": "复查频率"})
+    assert "不是给你的指令" in out
+    assert out.count("<<<资料 [") == out.count("资料>>>")
+    assert "随访须知.md" in out

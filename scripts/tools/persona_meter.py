@@ -116,7 +116,7 @@ def _lexigrams(text: str) -> list[str]:
 
 
 def lexical_metrics(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """"语义空转"那一族：句式全绿但来回就是那几个意象，Dice 0.85 那把抓不到（设计稿 §8.1）。
+    """ "语义空转"那一族：句式全绿但来回就是那几个意象，Dice 0.85 那把抓不到（设计稿 §8.1）。
 
     三个数，各自量一件不同的事：
 
@@ -234,10 +234,15 @@ def report(db: Path, limit: int) -> dict[str, Any]:
                 **measure(list(reversed(rows))),  # 正序：判"抄前面的"要用时间序
                 "记忆条数": int(memory["c"] or 0),
             }
+        total_samples = sum(int(m.get("样本数", 0) or 0) for m in per_role.values())
         return {
             "库": str(db),
             "取样时间": datetime.now(UTC).isoformat(timespec="seconds"),
             "每角色窗口": limit,
+            # 如实标记（R1031-19）：样本数 0 的读数是"今晚没测到东西"（夜间世界是现铺的
+            # 空演示库是常态），不是"活人感=0"——空 JSON 冒充实读数比缺读数更害人。
+            "读数有效": total_samples > 0,
+            "读数无效原因": None if total_samples > 0 else "取样窗口内无任何开口记录（样本数=0）",
             "角色": per_role,
             # 钱的事也在这把尺子上（审计 §12.8）：路由改云端后，"活人感"每一步都花真 token，
             # 而重生一次就是两次调用。不读库就报不出这个数，所以它跟着同一份只读连接走。

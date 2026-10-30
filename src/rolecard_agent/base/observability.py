@@ -25,6 +25,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -87,7 +88,10 @@ def logline(level: str, event: str, text: str) -> None:
     `print` 就是它们的输出界面。
     """
     stream = sys.stdout if level in _LOG_STDOUT_LEVELS else sys.stderr
-    print(f"[{level}] [{event}] {text}", file=stream, flush=True)
+    # 时间戳（R1031-25）：三类日志时间口径不一致的病根在这里 —— 结构化事件带时刻、
+    # 人读行没有，排障时两句对不齐。统一打 UTC（与 schema 的 UTC naive 口径同一家）。
+    ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    print(f"[{level}] [{event}] [{ts}] {text}", file=stream, flush=True)
 
 
 def redact(value: Any) -> Any:

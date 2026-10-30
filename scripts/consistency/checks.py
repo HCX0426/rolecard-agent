@@ -13,6 +13,7 @@
 
 **只转发、不复制定义** —— 抄一份就是第二事实面，正是本仓反复治的那一族病。
 """
+
 from __future__ import annotations
 
 from .checks_audit import (  # noqa: F401
@@ -60,6 +61,7 @@ from .checks_docs import (  # noqa: F401
     _is_table_delim,
     _unescaped_pipes,
     check_doc_freshness,
+    check_doc_header_matches_last_touch,
     check_doc_links,
     check_doc_references,
     check_markdown_table_shape,

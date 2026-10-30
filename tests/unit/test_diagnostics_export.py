@@ -85,3 +85,18 @@ def test_export_is_audited(client: TestClient) -> None:
     _zip_rows(client)
     rows = client.get("/api/audit").json()
     assert any(r["action"] == "export_diagnostics" for r in rows)
+
+
+def test_zip_contains_db_health_readings(client: TestClient) -> None:
+    """R1031-26：诊断包必须带库健康两读数（user_version + quick_check）——
+    排障最常问的"库现在什么状态"以前要人另开 sqlite 客户端现查。"""
+    import io
+    import zipfile
+
+    res = client.get("/api/diagnostics/export")
+    assert res.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
+        health = json.loads(zf.read("db-health.json"))
+    assert health["present"] is True
+    assert isinstance(health["user_version"], int)
+    assert health["quick_check"] == "ok"

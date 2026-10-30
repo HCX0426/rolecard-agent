@@ -49,6 +49,7 @@ from rolecard_agent.base import error_signatures
 from rolecard_agent.base.app_identity import APP_NAME
 from rolecard_agent.base.paths import user_data_root
 from rolecard_agent.core.build_info import read_build_info
+from rolecard_agent.storage.db import db_health
 
 
 def install_unhandled_recorder(app: FastAPI) -> None:
@@ -105,7 +106,7 @@ def _env_summary() -> dict[str, Any]:
 _MAX_FILE_BYTES = 2 * 1024 * 1024
 
 
-def build_diagnostics_zip(request: Request | None = None) -> bytes:
+def build_diagnostics_zip(request: Request | None = None, sqlite_path: Path | None = None) -> bytes:
     """组诊断包（不落盘，内存里 zip）。测试与端点共用这一个组装点。"""
     buf = io.BytesIO()
     logs_dir = _shell_log_dir()
@@ -142,6 +143,10 @@ def build_diagnostics_zip(request: Request | None = None) -> bytes:
             json.dumps(error_signatures.recent_signatures(), ensure_ascii=False, indent=2),
         )
         zf.writestr(
+            "db-health.json",
+            json.dumps(db_health(sqlite_path), ensure_ascii=False, indent=2),
+        )
+        zf.writestr(
             "inventory.json",
             json.dumps(
                 {
@@ -162,7 +167,7 @@ def export_diagnostics(
     actor: Actor = Depends(require_operator),
 ) -> Response:
     """一键诊断包（zip）—— 用户报 bug 时附带现场（P2 验收：能一键产出）。"""
-    blob = build_diagnostics_zip(request)
+    blob = build_diagnostics_zip(request, sqlite_path=ctx.runtime.assembly.sqlite_path)
     ctx.audit.log(
         actor=actor.id,
         action="export_diagnostics",

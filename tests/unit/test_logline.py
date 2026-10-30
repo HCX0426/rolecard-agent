@@ -22,7 +22,8 @@ def test_info_goes_to_stdout_with_level_and_event_prefix(
     """`info`/`debug` 走 stdout，行形是 `[级档] [事件名] 内容`（前缀可 grep）。"""
     logline("info", "checkpoints", "归还尾部 3 个空页")
     captured = capsys.readouterr()
-    assert "[info] [checkpoints] 归还尾部 3 个空页" in captured.out
+    assert "[info] [checkpoints] [" in captured.out  # 时间戳段（R1031-25）
+    assert "归还尾部 3 个空页" in captured.out
     assert captured.err == "", "info 不该写 stderr（一次 readouterr 同时看两条流）"
 
 
@@ -38,7 +39,8 @@ def test_notice_warning_error_and_typos_all_go_to_stderr(
     for level in ("notice", "warning", "error", "warn_typo"):
         logline(level, "schema-migrate", f"内容 {level}")
         captured = capsys.readouterr()
-        assert f"[{level}] [schema-migrate] 内容 {level}" in captured.err, level
+        assert f"[{level}] [schema-migrate] [" in captured.err, level
+        assert f"内容 {level}" in captured.err, level
         assert captured.out == "", f"{level} 不该写 stdout"
 
 
