@@ -159,11 +159,10 @@ describe("MemoryPage 页头（注入总闸是这页的英雄元素）", () => {
   it("总闸住在页头而不在卡里；挂载读完显示当前注入状态", async () => {
     render(<MemoryPage />);
     expect(await screen.findByRole("button", { name: "记忆注入：已关闭" })).toBeTruthy();
-    // 页头副标题说明"一份事实、一条注入路径"，并把两件事的去处指清楚
-    // （2026-10-30：工作区进了每张角色卡、主动开口总闸去了角色卡页 —— 都不在记忆页签）。
+    // 页头副标题只剩一句"一份事实、一条注入路径"（2026-10-30 冗余清理：
+    // 指路的那半句删了 —— 用户抱怨"冗余说明太多"，别的页面不该由这页替它们自我介绍）。
     expect(screen.getByText(/对话、主动开口、桌宠共用这一份/)).toBeTruthy();
-    expect(screen.getByText(/总闸在「角色卡」页/)).toBeTruthy();
-    expect(screen.getByText(/工作区.*在每张角色卡里/)).toBeTruthy();
+    expect(screen.queryByText(/总闸在/)).toBeNull();
   });
 });
 

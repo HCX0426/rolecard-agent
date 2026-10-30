@@ -551,7 +551,6 @@ export default function MemoryPage() {
         </div>
         <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
           每轮对话都带上这里的事实 —— 对话、主动开口、桌宠共用这一份。
-          主动开口的总闸在「角色卡」页；工作区（角色读写文件的授权范围）在每张角色卡里。
         </p>
       <Card className="mt-4 p-5">
         <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">跨会话记忆</h3>
@@ -590,8 +589,8 @@ export default function MemoryPage() {
         </div>
         <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
           {memScope
-            ? "这是该角色自己的记忆（回忆触发只读这一份），与全局记忆和其它角色隔离。编辑/清空只作用于本角色。"
-            : "全局记忆注入每个角色的对话。AI 检测到你明确说出的可复用事实（称呼 / 偏好 / 背景）会自己记下来，并同步进当前角色的专属记忆。"}
+            ? "该角色自己的记忆，与全局记忆和其它角色隔离。"
+            : "全局记忆注入每个角色；AI 检测到明确的事实（称呼 / 偏好 / 背景）会自己记下来。"}
         </p>
 
         {/* 分板块标签（2026-10-30 记忆分层）：记忆会越来越多，按层分开才看得见也调得动。
