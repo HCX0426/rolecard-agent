@@ -913,3 +913,26 @@ def test_runtime_bool_reads_back_in_wire_format(client: TestClient) -> None:
     assert rows, [g["key"] for g in groups]
     assert rows[0]["value"] == "0", rows[0]
     client.put("/api/settings/runtime", json={"values": {"reachout_enabled": ""}})  # 还原
+
+
+def test_create_role_with_unknown_model_is_400(client: TestClient) -> None:
+    """R1031（快照批次B①）：角色声明的模型后端必须是这个人真跑得起来的 —— 拼错当场 400。
+
+    `_validate_role_model` 的存在理由就是"配置错误要当场大声"：不许静默收下、
+    等运行期的"降级 + 留痕"来兜（那种错法用户只会发现回答质量不对，查不到原因）。
+    detail 里要点名坏名字，也要带上可用清单 —— 报错的可操作性就是这条的验收面。
+    """
+    payload = {
+        "role_id": "bad_model",
+        "role_name": "坏模型",
+        "system_prompt": "x",
+        "model_name": "no-such-backend",
+    }
+    res = client.post("/api/roles", json=payload)
+    assert res.status_code == 400, res.text[:400]
+    detail = res.json()["detail"]
+    assert "no-such-backend" in detail
+    assert "未知模型" in detail
+    # 库里不许留下这条没建成角色
+    ids = {r["role_id"] for r in client.get("/api/roles").json()}
+    assert "bad-model" not in ids

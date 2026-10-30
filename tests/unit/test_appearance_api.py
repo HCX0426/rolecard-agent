@@ -115,3 +115,17 @@ def test_upload_writes_audit(client: TestClient) -> None:
     rows = client.get("/api/audit?limit=50").json()
     actions = {r["action"] for r in rows}
     assert "set_appearance_background" in actions
+
+
+def test_rejects_oversized_upload(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """R1031（快照批次B②）：超过 `max_upload_bytes` 的图当场 400 —— 异常分支不能只靠
+    happy path 顺带路过（四波审计盲区清单第 6 条里唯一没被现有用例盖住的一格）。"""
+    monkeypatch.setenv("MAX_UPLOAD_BYTES", "64")
+    app = create_app(sqlite_path=tmp_path / "app.db")
+    with TestClient(app) as small:
+        res = small.post(
+            "/api/appearance/background",
+            files={"file": ("big.png", _png_bytes(64, 64), "image/png")},
+        )
+    assert res.status_code == 400
+    assert "超过上限" in res.json()["detail"]

@@ -197,3 +197,27 @@ def test_chat_rejects_empty_message(client: TestClient) -> None:
     session = make_session(client)
     res = client.post("/api/chat", json={"thread_id": session["thread_id"], "message": ""})
     assert res.status_code == 422
+
+
+def test_chat_pool_exhausted_answers_with_error_frame_not_silence(client: TestClient) -> None:
+    """R1031（快照批次B③）：8 个池位全忙时，第 9 轮立刻收到一句人话的 error 帧收场。
+
+    从前的死法是第 9 轮在队列里无限等、SSE 一字不出 —— 用户感知"发出去没反应"。
+    这里不并发起 8 条真轮次（慢且时序脆）：直接占满那把与池等量的占位信号量，
+    它的 acquire 失败就是"池满"这一件事的唯一判据（api/chat.py 的闸口就在它上面）。
+    """
+    import rolecard_agent.api.chat as chat_mod
+
+    assert chat_mod._CHAT_WORKERS == 8
+    held = 0
+    try:
+        for _ in range(chat_mod._CHAT_WORKERS):
+            chat_mod._CHAT_SLOTS.acquire()
+            held += 1
+        session = make_session(client)
+        events = chat(client, str(session["thread_id"]), "你好")
+        assert types_of(events) == ["error"], types_of(events)
+        assert "8 轮对话在跑" in str(events[0]["detail"])
+    finally:
+        for _ in range(held):
+            chat_mod._CHAT_SLOTS.release()
