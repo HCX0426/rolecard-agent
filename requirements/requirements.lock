@@ -391,7 +391,7 @@ pyjwt[crypto]==2.15.1
     # via mcp
 pyparsing==3.3.3
     # via pip-requirements-parser
-pypdf==6.21.2
+pypdf==6.21.4
     # via -r requirements/requirements-rag.txt
 pypika==0.51.1
     # via chromadb
