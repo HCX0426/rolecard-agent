@@ -27,7 +27,7 @@ from langchain_core.tools import tool
 
 from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.base.observability import NullTracer
-from rolecard_agent.config import ModelBackend, Settings
+from rolecard_agent.config import ChatModelNotSet, ModelBackend, Settings
 from rolecard_agent.core.agent.nodes import (
     MAX_TOOL_RETRIES,
     TOOL_DENIED,
@@ -57,6 +57,7 @@ from rolecard_agent.roles.service import RoleCards, RoleCardService
 def cards(store: RoleCardService) -> RoleCards:
     """测试里"本机主人眼里的那些卡"的简写（M2a 之后每次读写都得说清为谁）。"""
     return store.scoped(DEFAULT_USER_ID)
+
 
 def test_route_ends_when_the_model_answers_directly() -> None:
     state = {"messages": [HumanMessage(content="hi"), AIMessage(content="hello")]}
@@ -284,9 +285,7 @@ def test_two_identical_calls_still_execute(roles: RoleCardService, wide_role: st
     assert out["messages"][0].content == "ok"
 
 
-def test_new_user_intent_resets_the_loop_counter(
-    roles: RoleCardService, wide_role: str
-) -> None:
+def test_new_user_intent_resets_the_loop_counter(roles: RoleCardService, wide_role: str) -> None:
     """用户再问一句 = 新意图：即使参数与之前完全相同，也从零开始计数。
 
     这是熔断"沿最近的连续工具循环回溯"这条规则的另一半：回溯遇到用户消息就停。
@@ -334,9 +333,7 @@ def test_undeclared_tools_are_not_retryable() -> None:
     assert reg.is_idempotent("never-registered") is False  # 未注册也按不可重试处理
 
 
-def test_user_safe_tool_error_passes_reason_through(
-    roles: RoleCardService, wide_role: str
-) -> None:
+def test_user_safe_tool_error_passes_reason_through(roles: RoleCardService, wide_role: str) -> None:
     """预料内的工具错误（ToolExecutionError 子类）要把**原因**透传，而不是万能话。
 
     用户反馈：web_search 失败只看到"工具执行失败，请稍后重试或换一种问法"，连"是超时
@@ -455,12 +452,11 @@ def test_call_model_records_cloud_answer_when_local_was_requested(
     """
     rid = _role(roles, model_name="local")  # 请求的是本地档
     # 假模型流出的消息带云端的 model_name（探针实测：云路径这个字段与声明精确相等）
-    model = FakeModel(
-        AIMessage(content="云端答的话", response_metadata={"model_name": "cloud-m"})
-    )
+    model = FakeModel(AIMessage(content="云端答的话", response_metadata={"model_name": "cloud-m"}))
     ctx = _ctx(ToolRegistry(), roles, model, settings=_policy_settings())
-    out = call_model({"messages": [HumanMessage(content="hi")], "current_role_id": rid,
-                      "thread_id": "t"}, ctx)
+    out = call_model(
+        {"messages": [HumanMessage(content="hi")], "current_role_id": rid, "thread_id": "t"}, ctx
+    )
     assert out["messages"][0].additional_kwargs.get("answered_by") == "cloud"
 
 
@@ -477,8 +473,9 @@ def test_call_model_does_not_alarm_on_a_normal_local_answer(
         AIMessage(content="本地答的话", response_metadata={"model_name": "qwen3-vl:8b"})
     )
     ctx = _ctx(ToolRegistry(), roles, model, settings=_policy_settings())
-    out = call_model({"messages": [HumanMessage(content="hi")], "current_role_id": rid,
-                      "thread_id": "t"}, ctx)
+    out = call_model(
+        {"messages": [HumanMessage(content="hi")], "current_role_id": rid, "thread_id": "t"}, ctx
+    )
     assert "answered_by" not in (out["messages"][0].additional_kwargs or {})
 
 
@@ -500,9 +497,7 @@ def test_call_model_scrubs_her_repeats_from_the_prompt_copy_only(
     tracer = RecordingTracer()
     ctx = _ctx(ToolRegistry(), roles, model, tracer=tracer)
 
-    out = call_model(
-        {"messages": state_messages, "current_role_id": rid, "thread_id": "t"}, ctx
-    )
+    out = call_model({"messages": state_messages, "current_role_id": rid, "thread_id": "t"}, ctx)
 
     sent = [str(m.content) for m in model.last_prompt]
     assert sum("今天风真好呀" in text for text in sent) == 1, (
@@ -743,9 +738,7 @@ def test_call_model_injects_image_grounding_when_turn_has_image(roles: RoleCardS
     reg.register(kernel_tool)
     model = FakeModel(AIMessage(content="ok"))
     ctx = _ctx(reg, roles, model)
-    call_model(
-        {"messages": [_image_human_msg()], "current_role_id": rid, "thread_id": "t"}, ctx
-    )
+    call_model({"messages": [_image_human_msg()], "current_role_id": rid, "thread_id": "t"}, ctx)
     system = model.last_prompt[0].content
     assert "图像理解规则" in system
     assert system.index("图像理解规则") < system.index("禁止输出任何疾病诊断")
@@ -962,9 +955,7 @@ def test_trim_history_never_orphans_a_tool_message() -> None:
     比"超窗"更难排查。这里构造 [AIMessage(tool_calls), ToolMessage] 对，并把预算调到
     刚好处在"会切在 ToolMessage 上"的位置。
     """
-    call = AIMessage(
-        content="", tool_calls=[{"name": "list_domains", "args": {}, "id": "c1"}]
-    )
+    call = AIMessage(content="", tool_calls=[{"name": "list_domains", "args": {}, "id": "c1"}])
     result = ToolMessage(content="结果" * 50, tool_call_id="c1", name="list_domains")
     msgs = [HumanMessage(content="问" * 100), call, result]
     kept, _ = trim_history(msgs, 130)  # 预算只装得下 result 的大小
@@ -1001,9 +992,7 @@ def test_trim_history_advances_past_an_illegal_head() -> None:
     回退到 0 仍然非法，于是向前找到 HumanMessage —— 代价是丢得比预算要求的更多，
     换来的是**发出的序列合法**。
     """
-    msgs: list[Any] = [
-        ToolMessage(content="x", tool_call_id=f"c{i}", name="t") for i in range(3)
-    ]
+    msgs: list[Any] = [ToolMessage(content="x", tool_call_id=f"c{i}", name="t") for i in range(3)]
     msgs.append(HumanMessage(content="最新的问题"))
     kept, dropped = trim_history(msgs, 52)
     assert kept == [msgs[3]]
@@ -1042,9 +1031,7 @@ def test_call_model_without_pressure_does_not_trim(roles: RoleCardService) -> No
     tracer = RecordingTracer()
     ctx = _ctx(ToolRegistry(), roles, model, tracer=tracer)
     history = _history(2, 10)
-    call_model(
-        {"messages": history, "current_role_id": "medical_archivist", "thread_id": "t"}, ctx
-    )
+    call_model({"messages": history, "current_role_id": "medical_archivist", "thread_id": "t"}, ctx)
     assert "context_trimmed" not in tracer.kinds()
     # 1 条 system + 全量历史 + 1 条深度注入（写法要求贴在生成点再说一遍）
     assert len(model.last_prompt) == 2 + len(history)
@@ -1076,9 +1063,7 @@ def test_voice_directive_is_injected_after_history_not_inside_the_system_block(
     model = FakeModel(AIMessage(content="ok"))
     ctx = _ctx(ToolRegistry(), roles, model)
     history = _history(6, 10)  # 12 条，倒数第 4 条的位置明显在历史里
-    call_model(
-        {"messages": history, "current_role_id": "medical_archivist", "thread_id": "t"}, ctx
-    )
+    call_model({"messages": history, "current_role_id": "medical_archivist", "thread_id": "t"}, ctx)
     prompt = model.last_prompt
     at = _voice_index(prompt)
     assert at > 1, "不能就是开头那条系统消息（那样等于没做深度注入）"
@@ -1107,9 +1092,7 @@ def test_voice_injection_never_splits_a_tool_call_group(roles: RoleCardService) 
         AIMessage(content="刚才答的"),
         HumanMessage(content="最后这句"),
     ]  # 9 条：朴素落点 9-4=5 正是 result
-    call_model(
-        {"messages": history, "current_role_id": "medical_archivist", "thread_id": "t"}, ctx
-    )
+    call_model({"messages": history, "current_role_id": "medical_archivist", "thread_id": "t"}, ctx)
     prompt = model.last_prompt
     at = _voice_index(prompt)
     call_at = prompt.index(call)
@@ -1130,9 +1113,7 @@ def test_voice_injection_survives_a_history_shorter_than_depth(
     model = FakeModel(AIMessage(content="ok"))
     ctx = _ctx(ToolRegistry(), roles, model)
     history = [HumanMessage(content="就一句")]
-    call_model(
-        {"messages": history, "current_role_id": "medical_archivist", "thread_id": "t"}, ctx
-    )
+    call_model({"messages": history, "current_role_id": "medical_archivist", "thread_id": "t"}, ctx)
     prompt = model.last_prompt
     assert len(prompt) == 3
     assert _voice_index(prompt) == 1
@@ -1260,8 +1241,12 @@ def test_one_turn_writes_all_three_injected_scopes_together(roles: RoleCardServi
 
     def probe(role_id: str, messages: list[Any]) -> tuple[str, str, str]:
         state = {
-            "messages": [*messages, AIMessage(content="", tool_calls=[
-                {"name": "turn_scope_probe", "args": {}, "id": "c1"}])],
+            "messages": [
+                *messages,
+                AIMessage(
+                    content="", tool_calls=[{"name": "turn_scope_probe", "args": {}, "id": "c1"}]
+                ),
+            ],
             "current_role_id": role_id,
             "thread_id": "t1",
         }
@@ -1429,7 +1414,12 @@ def test_real_backend_accepts_a_mid_conversation_system_message() -> None:
     这条只证明"发得出去"。"她是否因此少说几句模板腔"不由断言管，那是
     `scripts/tools/persona_meter.py` 的活（一次采样不足以判质量）。
     """
-    backend = Settings.from_env().backend()
+    try:
+        backend = Settings.from_env().backend()
+    except ChatModelNotSet:
+        # 绝对无默认（2026-10-31）：没设对话模型时解析器在前提检查之前就抛 —— 与下面
+        # "默认后端不是本机 Ollama"同一档：环境没给地基，skip 而非红（决策八）。
+        pytest.skip("这台机器没设置对话模型（绝对无默认），这条真机用例的前提不成立")
     if not backend.base_url or "11434" not in backend.base_url:
         pytest.skip("默认后端不是本机 Ollama，这条真机用例的前提不成立")
     try:
@@ -1451,8 +1441,7 @@ def test_real_backend_accepts_a_mid_conversation_system_message() -> None:
         code = _http_status_of(exc)
         if code is not None and 400 <= code < 500:
             raise AssertionError(
-                f"服务端拒了「历史中间的 system 消息」（{code}）——深度注入这个形态对它不成立："
-                f"{exc}"
+                f"服务端拒了「历史中间的 system 消息」（{code}）——深度注入这个形态对它不成立：{exc}"
             ) from exc
         pytest.skip(f"没问到真服务（{type(exc).__name__}: {exc}），这条需要 Ollama 在跑")
     assert str(reply.content).strip(), "服务端收了，但回了一条空消息"

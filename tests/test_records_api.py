@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from rolecard_agent.api.main import create_app
-from rolecard_agent.config import Settings
+from rolecard_agent.config import ChatModelNotSet, Settings
 from rolecard_agent.core.ingest.ingestion import IngestionService
 from rolecard_agent.core.telemetry import probes
 from rolecard_agent.domains.health import records as records_router
@@ -327,7 +327,13 @@ def test_extract_with_a_real_model_writes_an_unverified_report(
     monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
     monkeypatch.delenv("MODEL_BACKENDS", raising=False)  # 回落到出厂默认后端（真 Ollama）
-    backend = Settings.from_env().backend()
+    try:
+        backend = Settings.from_env().backend()
+    except ChatModelNotSet:
+        # 绝对无默认（2026-10-31 教义）：没设对话模型 = 环境没给地基，决策八的 skip 档，
+        # 不是产品坏了。从前这里拿到的是隐式 local 默认、探针问不到才 skip；现在解析器
+        # 在探针之前就说"没设置"——那件事原样搬进 skip，不许升级成红（nightly 41178678529）。
+        pytest.skip("这台机器没设置对话模型（绝对无默认）—— 这条要真模型")
     if not probes.ollama_reachable(backend.base_url):
         pytest.skip(f"默认后端 {backend.base_url} 连不上（本机没跑 Ollama）—— 这条要真模型")
     if not probes.vision_model_ready(backend.base_url, backend.model, use_cache=False):
