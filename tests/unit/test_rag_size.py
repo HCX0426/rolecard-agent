@@ -64,12 +64,16 @@ def test_empty_scope_is_zero_not_missing(tmp_path: Path) -> None:
 
 
 def test_reset_scope_reclaims_or_defers_to_boot_sweep(tmp_path: Path) -> None:
-    """**回归钉 chroma 的"掉账不掉盘"** + 两层回收的不变量。
+    """**跨平台不变量**：重建之后，最迟经过一次开机清扫，盘上不许留着上一代的尸体。
 
-    Linux：第一层当场删得掉（POSIX 允许删打开的文件）⇒ `(>=1, >0)`、盘上无残留。
-    Windows：句柄自锁，第一层如实报"一个没删成"⇒ 孤儿必须**可见**（账读得出、
-    `orphan_segment_dirs` 数得出），随后 close + 重开 + sweep = 下次开机的形状，
-    实测删得掉。两支都钉：describe 里作用域整个消失、字节账归零。
+    两平台的实测差异（Linux CI 与本机 Windows 各跑过，2026-10-31）：
+      * Linux：`delete_collection` 当场 unlink（POSIX 允许删打开的文件）——没有泄漏，
+        差集回收找不到目录、孤儿全扫也是空。
+      * Windows：unlink 被自己进程的文件句柄押着（close 也不放，实测 1s 后仍在）——
+        第一层如实报 (0,0)，泄漏变成**可见的孤儿**，开机清扫（close+重开=下世进程）
+        实测收得走。
+    所以这里不许钉"哪一层删的"，钉的是**结果**：账清、describe 清、清扫后盘上无残留。
+    读数诚实性只在泄漏真实存在时判（第一层没删成就不许虚报 bytes_freed）。
     """
     kb = _kb(tmp_path)
     kb.index("health_reports", "t1", DOC)
@@ -81,21 +85,19 @@ def test_reset_scope_reclaims_or_defers_to_boot_sweep(tmp_path: Path) -> None:
 
     orphans, ok = kb.orphan_segment_dirs()
     assert ok is True, "集合删完后账必须读得出"
-    if segs_removed:
-        # Linux 绿路径：当场回收，读数与盘一致。
-        assert bytes_freed > 0 and orphans == [], (segs_removed, bytes_freed, orphans)
-        return
-    # Windows：第一层结构删不动 —— 但它**必须如实报 0**（读数只算真从盘上消失的），
-    # 且把泄漏变成可见的孤儿。
-    assert bytes_freed == 0 and len(orphans) >= 1, (segs_removed, bytes_freed, orphans)
-    # 模拟下次开机：close（放句柄）→ 新 client（sweep 不依赖 client，但开机本来就有）→ 清扫。
+    if orphans:
+        # Windows 形状：第一层当场删不动 ⇒ 读数必须如实是 0（只算真从盘上消失的）。
+        assert segs_removed == 0 and bytes_freed == 0, (segs_removed, bytes_freed)
+    # 模拟下次开机（两平台都走一遍 —— Linux 上无事可扫，同样不许报错）：
     _backdate(orphans)
     kb.close()
     kb2 = _kb(tmp_path)
     removed, freed = kb2.sweep_orphan_segments()
-    assert removed >= 1 and freed > 0, (removed, freed)
-    assert kb2.orphan_segment_dirs()[0] == []
-    assert all(not p.is_dir() for p in orphans), "清扫没落到盘上"
+    assert kb2.orphan_segment_dirs()[0] == [], "开机清扫之后，盘上必须再无泄漏"
+    if orphans:
+        assert removed == len(orphans) and freed > 0, (removed, freed)
+    else:
+        assert (removed, freed) == (0, 0), "Linux 无泄漏 ⇒ 清扫无事可做，读数如实"
     kb2.close()
 
 
