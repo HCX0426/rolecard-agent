@@ -3,6 +3,7 @@ import { api, type DomainInfo, type GenericRecord, type ReportRecord } from "../
 import { useConfirm } from "../hooks/useConfirm";
 import { Button, Card, Notice, PageHeader, Tabs, Tag } from "../components/ui";
 import { KnowledgeManager } from "../components/KnowledgeManager";
+import { DataBackupCard } from "../components/DataBackupCard";
 import { describeError } from '../lib/errors';
 
 // 资料 —— 领域内容的管理页（2026-10-24 IA 重构：数据页 + 知识库页合并于此）。
@@ -125,6 +126,13 @@ export default function DataPage({ initialBlock }: { initialBlock?: MaterialsBlo
             </>
           </>
         )}
+
+        {/* 全量备份（R1031-15）：**两个 block 都看得到** —— 它备份的是"这台机器的她"
+            （整根数据根），跟"当前看结构化记录还是知识库"无关。挂在页尾，
+            不抢首屏（记录/知识库才是这一页的正事）。 */}
+        <section className="mt-6">
+          <DataBackupCard />
+        </section>
       </div>
     </div>
   );

@@ -79,19 +79,44 @@ def console_dist_dir() -> Path:
     return Path(os.environ.get("FRONTEND_DIST") or (bundle_root() / "frontend" / "dist"))
 
 
-def _platform_data_root() -> Path:
-    """没有显式覆盖时的数据根：**永远可写**，sqlite / chroma / uploads 的默认父目录。
+def _system_data_root() -> Path:
+    """系统数据目录里的那个根（**不看 frozen**，安装态永远在这儿）。
 
-    开发态保持仓库 `data/`（现有约定与测试都指这儿，改它会让"跑一次测试"污染安装包目录）；
-    冻结态换到系统数据目录（Windows 用 `%LOCALAPPDATA%`，其他平台 `~/.local/share`）。
-    安装目录本身不能当数据根：它可能不可写，而且升级是整目录替换。
+    Windows 优先认 `%LOCALAPPDATA%`（没设才回落 `~\\AppData\\Local`），其他平台
+    `~/.local/share`。从前 `scratch_db` 按 `Path.home()/AppData` 硬编码一遍、
+    `baseline` 按 `$LOCALAPPDATA` 读一遍 —— 同一台机器上换了 `LOCALAPPDATA` 就两半
+    世界（R26-17）。规则只留这一处。
     """
-    if not is_frozen():
-        return repo_root() / "data"
     if IS_WINDOWS:
         base = os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local"
         return Path(base) / _APP_NAME
     return Path.home() / ".local" / "share" / _APP_NAME
+
+
+def data_root_candidates() -> tuple[Path, Path]:
+    """两份数据根的 **sqlite/app.db 路径**：开发态（仓库 `data/`）与安装态（系统目录）。
+
+    09-24 那次搬迁把仓库那份**复制**而非移走，留下两份都可能存在、内容还不同的世界
+    —— "这一轮实验/备份/对账读的到底是哪份"必须问一个函数，而不是各处各拼一遍
+    （`R26-17`，三套规则并存那一条的收口）。顺序是 (dev, installed)，两侧消费者
+    （`scratch_db.CANDIDATE_SOURCES`、`backup_data_root` 拒绝回落）都按这个顺序取。
+    """
+    return (
+        repo_root() / "data" / "sqlite" / "app.db",
+        _system_data_root() / "sqlite" / "app.db",
+    )
+
+
+def _platform_data_root() -> Path:
+    """没有显式覆盖时的数据根：**永远可写**，sqlite / chroma / uploads 的默认父目录。
+
+    开发态保持仓库 `data/`（现有约定与测试都指这儿，改它会让"跑一次测试"污染安装包目录）；
+    冻结态换到系统数据目录（走 `_system_data_root()`，Windows `%LOCALAPPDATA%`、
+    其他平台 `~/.local/share`）。安装目录本身不能当数据根：它可能不可写，而且升级是整目录替换。
+    """
+    if not is_frozen():
+        return repo_root() / "data"
+    return _system_data_root()
 
 
 #: 一个数据根下的四样东西（M4）。它们**必须**同根：只换库不换索引，症状就是

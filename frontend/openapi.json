@@ -7850,6 +7850,23 @@
     "summary": "Chat"
    }
   },
+  "/api/data/export": {
+   "get": {
+    "description": "**全量备份**（zip）—— 换机/搬家时把整根数据带走（R1031-15）。\n\n与脚本那份备份**同一份机制**（`features/data_backup.py`）：库先快照、文件后照抄，\n写完回头查\"每个库都在包里\"。应用内这一条补的是从前缺的入口 —— 从前只有装了\npython 的机器做得到备份（审计快照 §七的定性）。\n\n三条边界：\n  * **根 = 数据根**（`user_data_root()`），而**主库必须在根里**：库被 `SQLITE_PATH`\n    指到别处时直接拒绝（409）—— 少主库的备份不是备份（`R102-75` 那条判据）。\n  * **门禁 = require_operator**：备份包里有全部数据（含模型 API key，R1031-23），\n    与诊断包同一条依赖，不留两处真相。\n  * **写审计**：导出了什么、多大 —— 与其余操作员动作同族。\n临时目录在响应发完后删（BackgroundTask）：包不走磁盘常驻，用户点下载即拿走。",
+    "operationId": "export_data_backup_api_data_export_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Export Data Backup"
+   }
+  },
   "/api/diagnostics/export": {
    "get": {
     "description": "一键诊断包（zip）—— 用户报 bug 时附带现场（P2 验收：能一键产出）。",

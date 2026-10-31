@@ -164,6 +164,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/data/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Data Backup
+         * @description **全量备份**（zip）—— 换机/搬家时把整根数据带走（R1031-15）。
+         *
+         *     与脚本那份备份**同一份机制**（`features/data_backup.py`）：库先快照、文件后照抄，
+         *     写完回头查"每个库都在包里"。应用内这一条补的是从前缺的入口 —— 从前只有装了
+         *     python 的机器做得到备份（审计快照 §七的定性）。
+         *
+         *     三条边界：
+         *       * **根 = 数据根**（`user_data_root()`），而**主库必须在根里**：库被 `SQLITE_PATH`
+         *         指到别处时直接拒绝（409）—— 少主库的备份不是备份（`R102-75` 那条判据）。
+         *       * **门禁 = require_operator**：备份包里有全部数据（含模型 API key，R1031-23），
+         *         与诊断包同一条依赖，不留两处真相。
+         *       * **写审计**：导出了什么、多大 —— 与其余操作员动作同族。
+         *     临时目录在响应发完后删（BackgroundTask）：包不走磁盘常驻，用户点下载即拿走。
+         */
+        get: operations["export_data_backup_api_data_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/diagnostics/export": {
         parameters: {
             query?: never;
@@ -4959,6 +4991,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_data_backup_api_data_export_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

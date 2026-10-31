@@ -1,36 +1,24 @@
 """数据根备份里「先库快照、后文件照抄」这个顺序是有判据的（`R102-75` = 台账里那条没编号的 DAT-06）。
 
-`scripts/backup_data_root.py` 从前先 `copy2` 拷 `chroma/uploads`、后 `backup()` 快照 sqlite，
-得到的 zip 里**库比文件新**：库里写着某个分块已索引，而那个分块的文件没进包 —— 还原之后检索
-指到不存在的分块上，症状是"知识库里有条目却读不出内容"，而且只在真要回滚的时候才被发现。
-顺序反过来最坏只多拷几个库还不认识的孤儿文件：**多比少好**。
+`features/data_backup.py` 的 `backup()` 从前先 `copy2` 拷 `chroma/uploads`、后 `backup()`
+快照 sqlite，得到的 zip 里**库比文件新**：库里写着某个分块已索引，而那个分块的文件没进包 ——
+还原之后检索指到不存在的分块上，症状是"知识库里有条目却读不出内容"，而且只在真要回滚
+的时候才被发现。顺序反过来最坏只多拷几个库还不认识的孤儿文件：**多比少好**。
+
+（R1031-15：机制从脚本搬进 core，这里的 monkeypatch 跟着搬到 core —— patch 一个
+不跑判据的壳会让"没违反"变成恒真。）
 
 两臂都判（`_order_violation` 这条谓词也得能被反序喂红），否则"没违反"可能只是谓词恒真。
 """
 
 from __future__ import annotations
 
-import importlib.util
 import shutil
 import sqlite3
-import sys
 import zipfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-
-
-def _load_backup_module():
-    for p in (str(ROOT), str(ROOT / "scripts")):
-        if p not in sys.path:
-            sys.path.insert(0, p)
-    spec = importlib.util.spec_from_file_location(
-        "backup_data_root_under_test", str(ROOT / "scripts" / "tools" / "backup_data_root.py")
-    )
-    assert spec and spec.loader
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+from rolecard_agent.features import data_backup as mod
 
 
 def _make_root(tmp_path: Path) -> Path:
@@ -61,7 +49,6 @@ def _order_violation(events: list[tuple[str, str]]) -> int | None:
 
 
 def test_backup_snapshots_every_db_before_copying_any_file(tmp_path: Path, monkeypatch) -> None:
-    mod = _load_backup_module()
     root = _make_root(tmp_path)
     events: list[tuple[str, str]] = []
 

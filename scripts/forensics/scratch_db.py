@@ -31,17 +31,17 @@ from datetime import datetime
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-# 安装根的名字唯一出处是 `base/paths.py` 的 `_APP_NAME`（`R102-67`）。本脚本刻意不 import
-# 本包（要在不可安装环境独立跑），但零依赖常量模块 `base/app_identity.py` 只有标准库能算
-# 的东西 —— 引用它的成本是零，改名时这里的静默失效才不会回来。
+# 两个数据根的**判定**唯一住在 `base/paths.data_root_candidates()`（`R26-17` 的收口：
+# 从前这里按 `Path.home()/AppData` 硬编码一遍、baseline.py 按 `$LOCALAPPDATA` 读一遍、
+# 备份脚本再拼第三遍 —— 同一台机器上换了 `LOCALAPPDATA` 就是三半世界）。
+# 本脚本要在不可安装环境独立跑，过去只敢 import 零依赖的 `app_identity`；`base/paths.py`
+# 同样是 stdlib-only（os/sys/pathlib + app_identity，方向尺与 import_floor 用例看着），
+# 引用它的成本一样是零，而"两份候选"从此只有一处算法。
 sys.path.insert(0, str(_REPO_ROOT / "src"))
-from rolecard_agent.base.app_identity import APP_NAME  # noqa: E402
+from rolecard_agent.base.paths import data_root_candidates  # noqa: E402
 
 #: 两个候选源（可能都不存在，也可能都存在但内容不同 —— 那正是这里的存在理由）。
-CANDIDATE_SOURCES: tuple[Path, ...] = (
-    _REPO_ROOT / "data" / "sqlite" / "app.db",
-    Path.home() / "AppData" / "Local" / APP_NAME / "sqlite" / "app.db",
-)
+CANDIDATE_SOURCES: tuple[Path, ...] = data_root_candidates()
 
 
 #: 判"这份库有没有内容、什么时候有内容"要看的所有表。

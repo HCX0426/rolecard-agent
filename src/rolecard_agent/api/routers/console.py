@@ -6,14 +6,20 @@
 from __future__ import annotations
 
 import re
+import shutil
+import tempfile
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
+from rolecard_agent.api.routers.health import require_operator
 from rolecard_agent.base.audit import read_audit_page
 from rolecard_agent.base.observability import scrub_endpoints
+from rolecard_agent.base.paths import user_data_root
 from rolecard_agent.contracts.handwritten_models import CleanupResultView
 from rolecard_agent.contracts.response_models import (
     AuditView,
@@ -25,6 +31,7 @@ from rolecard_agent.contracts.response_models import (
 from rolecard_agent.core.ingest import upload_service
 from rolecard_agent.core.ingest.ingestion import IngestionNotFound
 from rolecard_agent.core.ingest.uploads import referenced_paths, remove_orphans, scan_orphans
+from rolecard_agent.features import data_backup
 from rolecard_agent.roles.models import SCOPE_PATTERN
 
 router = APIRouter()
@@ -251,6 +258,70 @@ def cleanup_orphan_uploads(
         "scanned": report.scanned,
         "referenced": report.referenced,
     }
+
+
+@router.get("/api/data/export", dependencies=[Depends(require_operator)])
+def export_data_backup(
+    background: BackgroundTasks,
+    ctx: AppContext = Depends(get_context),
+    actor: Actor = Depends(require_operator),
+) -> FileResponse:
+    """**全量备份**（zip）—— 换机/搬家时把整根数据带走（R1031-15）。
+
+    与脚本那份备份**同一份机制**（`features/data_backup.py`）：库先快照、文件后照抄，
+    写完回头查"每个库都在包里"。应用内这一条补的是从前缺的入口 —— 从前只有装了
+    python 的机器做得到备份（审计快照 §七的定性）。
+
+    三条边界：
+      * **根 = 数据根**（`user_data_root()`），而**主库必须在根里**：库被 `SQLITE_PATH`
+        指到别处时直接拒绝（409）—— 少主库的备份不是备份（`R102-75` 那条判据）。
+      * **门禁 = require_operator**：备份包里有全部数据（含模型 API key，R1031-23），
+        与诊断包同一条依赖，不留两处真相。
+      * **写审计**：导出了什么、多大 —— 与其余操作员动作同族。
+    临时目录在响应发完后删（BackgroundTask）：包不走磁盘常驻，用户点下载即拿走。
+    """
+    root = _export_root(ctx)
+    tmp_dir = Path(tempfile.mkdtemp(prefix="rc-export-"))
+    try:
+        zip_path = data_backup.backup(tmp_dir, root=root)
+    except data_backup.DataBackupError as exc:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=f"备份做不成：{exc}") from exc
+    size = zip_path.stat().st_size
+    ctx.audit.log(
+        actor=actor.id,
+        action="export_data_backup",
+        target=zip_path.name,
+        detail={"bytes": size, "root": str(root)},
+    )
+    background.add_task(shutil.rmtree, tmp_dir, True)
+    return FileResponse(
+        path=zip_path,
+        media_type="application/zip",
+        filename=zip_path.name,
+    )
+
+
+def _export_root(ctx: AppContext) -> Path:
+    """导出用的数据根 —— 必须是**装着主库的那个根**，否则拒绝。
+
+    判据（`R102-75` 的同一条）：源目录里每个 `*.db` 都必须在 zip 里，少一个就不是备份。
+    `SQLITE_PATH` 指到根外时，备份出来的包**没有主库** —— 与其给一个看着能用的空壳
+    备份，不如当场说清为什么做不成（409 是"这台机器的形状不对"，500 是"我们做坏了"）。
+    """
+    root = user_data_root().resolve()
+    live_db = ctx.runtime.assembly.sqlite_path.resolve()
+    try:
+        live_db.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"这台实例的库不在数据根里（{live_db} 不在 {root} 下）—— "
+                "导出会缺主库，拒绝。请把 SQLITE_PATH 调回数据根内，或用 DATA_ROOT 整体搬。"
+            ),
+        ) from exc
+    return root
 
 
 @router.get("/api/uploads/tasks/{task_id}")

@@ -343,6 +343,9 @@ export const api = {
     ),
   /** 一键诊断包（P2-②）：内存组 zip，回文件本体与下载名。 */
   downloadDiagnostics: () => requestBlob("GET", "/api/diagnostics/export"),
+  /** 全量数据备份（R1031-15）：整根数据根的 zip（库用快照拷，开着程序也不坏）。
+   *  同 downloadDiagnostics 一条理由：走 blob 带鉴权头，裸 href 在云端数据源会丢凭据。 */
+  downloadDataBackup: () => requestBlob("GET", "/api/data/export"),
   // 角色卡导出（R1031-13）：走 blob 带鉴权头而不是裸 href —— 云端数据源下裸链接丢凭据，
   // 与 downloadDiagnostics 同一条理由。includeMemory 只认 undefined / "pinned_active"。
   exportRoleCard: (roleId: string, includeMemory?: "pinned_active") =>
