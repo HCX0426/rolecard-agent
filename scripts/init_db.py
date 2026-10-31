@@ -7,10 +7,12 @@ ordinary editable data. 域角色不再开机播种（2026-10-31 用户拍板：
 开机自动种会让删掉的角色每次重启复活）—— `seed_domain_roles` 保留给显式调用。
 
 Run:  .venv\Scripts\python.exe scripts/init_db.py
+      .venv\Scripts\python.exe scripts/init_db.py --seed-domain-roles  # 铺世界时显式种域角色
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -26,7 +28,15 @@ if str(_src) not in sys.path:
 from rolecard_agent.base.identity import resolve_instance_identity  # noqa: E402
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="建库 + 播种出厂角色")
+    parser.add_argument(
+        "--seed-domain-roles",
+        action="store_true",
+        help="显式播种域出厂角色卡（默认不种：2026-10-31 教义——开机只留通用助手常驻）。"
+        "铺演示/评测世界的脚本要它：persona 三件与 run_eval 的用例点名域角色。",
+    )
+    args = parser.parse_args(argv)
     from rolecard_agent.config import Settings
     from rolecard_agent.core.plugins import seed_plugin_rows
     from rolecard_agent.core.storage.checkpointer import make_checkpointer
@@ -63,8 +73,14 @@ def main() -> int:
     owner = resolve_instance_identity(settings)
     store = RoleCardService(conn)
     seeded = store.seed_builtins(user_id=owner)
-    # 域角色不再开机播种（2026-10-31 用户拍板：默认常驻只有通用助手；开机自动种
-    # 会让用户删掉的角色每次重启都复活）。`seed_domain_roles` 保留给显式调用。
+    # 域角色**不默认播种**（2026-10-31 用户拍板：默认常驻只有通用助手；开机自动种
+    # 会让用户删掉的角色每次重启都复活）。`--seed-domain-roles` 留给显式铺世界的调用方
+    # （nightly 的 persona 三件点名 medical_archivist；run_eval 自己会种，不经过这里）。
+    domain_seeded = 0
+    if args.seed_domain_roles:
+        from rolecard_agent.domains.registry import domain_seed_roles
+
+        domain_seeded = store.seed_domain_roles(domain_seed_roles(), user_id=owner)
 
     enabled = [
         row[0]
@@ -76,7 +92,7 @@ def main() -> int:
         print(f"  schema   : {name}")
     print(f"  registered: {', '.join(DOMAINS) or '(none)'}")
     print(f"  enabled  : {', '.join(enabled) or '(none)'}")
-    print(f"  roles    : {seeded} built-in role(s) seeded")
+    print(f"  roles    : {seeded} built-in role(s) seeded, {domain_seeded} domain role(s)")
     conn.close()
     return 0
 

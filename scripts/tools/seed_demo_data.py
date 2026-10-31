@@ -20,6 +20,8 @@ from rolecard_agent.base.identity import DEFAULT_TENANT_ID, DEFAULT_USER_ID  # n
 from rolecard_agent.config import Settings  # noqa: E402
 from rolecard_agent.core.models.services import ServiceEndpointService  # noqa: E402
 from rolecard_agent.domains.health.service import HealthQueryService  # noqa: E402
+from rolecard_agent.domains.registry import domain_seed_roles  # noqa: E402
+from rolecard_agent.roles.service import RoleCardService  # noqa: E402
 from rolecard_agent.storage.db import bootstrap, connect  # noqa: E402
 
 
@@ -42,6 +44,10 @@ def main() -> None:
         (DEFAULT_USER_ID, DEFAULT_TENANT_ID),
     )
     conn.commit()
+    # 域角色卡由**宿主播种**（2026-10-31 教义：开机不种域角色，只留通用助手常驻）。
+    # 这支脚本是显式 opt-in 的宿主：它建的演示数据线对齐的就是 `medical_archivist`
+    # 的出厂范例（见模块 docstring），不播这张卡，数据线对上的"那本档案"没有管理员。
+    RoleCardService(conn).seed_domain_roles(domain_seed_roles(), user_id=DEFAULT_USER_ID)
 
     query = HealthQueryService(conn)
 

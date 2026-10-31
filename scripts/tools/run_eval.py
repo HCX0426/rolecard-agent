@@ -112,6 +112,16 @@ def _seed_demo_data(conn: object) -> None:  # 与 seed_demo_data.py 同源（脚
         "  VALUES ('local-user', 't1', 'demo user');"
     )
     conn.commit()  # type: ignore[attr-defined]
+    # 域角色卡由**宿主播种**（2026-10-31 教义：装配根开机不种域角色，只留通用助手常驻）。
+    # 评测环是显式 opt-in 的宿主：它选了 health 域、用例点名 `medical_archivist`，就得自己
+    # 把这张出厂卡播下来——bootstrap 的注释把这条路留给"init 流程或测试自己决定要不要"。
+    # 不补这一句的后果是 14 条用例全部以"角色不存在"速 fails（nightly 41176828077 实锤）。
+    from rolecard_agent.domains.registry import domain_seed_roles
+    from rolecard_agent.roles.service import RoleCardService
+
+    RoleCardService(conn).seed_domain_roles(  # type: ignore[arg-type]
+        domain_seed_roles(), user_id=DEFAULT_USER_ID
+    )
     query = HealthQueryService(conn)  # type: ignore[arg-type]
     if not query.list_reports("local-user"):
         query.create_report(

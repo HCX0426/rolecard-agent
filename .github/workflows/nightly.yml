@@ -85,14 +85,16 @@ jobs:
           # 仓库/安装根两根里较新者）——那是"改前/改后 diff"的语义：量的是真实使用攒下的
           # 开口与账本。托管 runner 上这个世界**从来没有存在过**，于是三件每晚齐死在
           # "找不到任何一份源库"，与 key 无关（key 只是让它们此前连死因都看不见）。
-          # 这里现建一份最小演示世界（init_db：全 schema + 出厂角色卡 + 域种子卡），
+          # 这里现建一份最小演示世界（init_db --seed-domain-roles：全 schema + 出厂角色卡
+          # + 域种子卡——2026-10-31 教义后开机不种域角色，persona_ab 默认点名 medical_archivist
+          # 的夜间臂因此要显式种；run_eval 的评测环自己种，不经过这里），
           # LIVE_DB_PATH 把三件的取数钉到它；空历史是诚实读数（样本数 0、token 账空），
           # 有 key 时开口臂真发得出话（persona_ab 自带 run_api 同款云端引导）。
           New-Item -ItemType Directory -Force -Path build/scratch | Out-Null
           $env:SQLITE_PATH = "build/scratch/nightly-world.db"
           $env:CHROMA_PATH = "build/scratch/nightly-chroma"
           $env:LIVE_DB_PATH = "build/scratch/nightly-world.db"
-          python scripts/init_db.py
+          python scripts/init_db.py --seed-domain-roles
           if ($LASTEXITCODE -ne 0) { Write-Host "铺世界失败——三件今晚无量"; exit 1 }
           # persona_meter：只读库；--json 出机器可读（便于改前改后 diff）。
           python scripts/tools/persona_meter.py --json > "$env:TEMP\pm-$rid.json"
