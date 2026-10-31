@@ -72,6 +72,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      frontend_changed: ${{ steps.filter.outputs.frontend_changed }}
       pytest-kind: ${{ steps.plan.outputs.kind }}
       pytest-files: ${{ steps.plan.outputs.files }}
       pytest-base: ${{ steps.plan.outputs.base }}
@@ -85,6 +86,14 @@ jobs:
           filters: |
             code:
               - '!(frontend/**)'
+              - '!(docs/**)'
+            frontend_changed:
+              # 「改哪查哪」的另一半（2026-10-31）：src/tests/docs 之外动过东西才跑前端臂。
+              # 排除式与 code 同一味：pyproject/.github/scripts/LICENSE 这些杂项**算动过**
+              # ——scripts/check_dist_sync.py 自己就住在那一族里（尺子改了要当场再验一遍），
+              # 宁可多跑，不可漏跑。纯后端/纯用例/纯账本 push ⇒ 前端臂跳。
+              - '!(src/**)'
+              - '!(tests/**)'
               - '!(docs/**)'
       - name: 后端 pytest 的这趟该跑什么（判据 = scripts/gate.py plan_backend_pytest）
         id: plan
@@ -301,6 +310,13 @@ jobs:
   frontend:
     name: 前端（tsc + build + vitest）
     runs-on: ubuntu-24.04
+    # 「改哪查哪」的另一半（2026-10-31）：纯后端/纯用例/纯账本 push 跳整条臂
+    # （tsc+vitest+eslint+壳 npm ci 都在量前端，与后端改动无关；壳的两个判据也在这条臂上，
+    # shell/** 不在排除名单里所以动壳照样跑）。手动 dispatch 恒跑 —— **必须**：
+    # full-gate 与 windows-release 都 needs: frontend，这里被条件跳掉的话，
+    # 那两个"人点名要的"会被 needs 连锁静默跳（按钮按了什么都没发生 = 零步当绿）。
+    needs: [changes]
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.frontend_changed == 'true'
     timeout-minutes: 15
     permissions:
       contents: write # 仅 dist 回写 bot 用（main push 漂移时自动重建回写）；其余步骤只读
