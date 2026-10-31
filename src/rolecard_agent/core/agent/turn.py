@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -79,9 +80,52 @@ _GENERIC_MODEL_FAILURE = "模型调用失败，请稍后重试或换一种问法
 #: 模型一个字都没吐时该说的话：与通用的"换一种问法"刻意不同（`R28-06`）。
 EMPTY_STREAM_DETAIL = "模型这一轮没有返回任何内容。重试一次，或换一个模型 —— 不是你的问法问题。"
 
+# 失败原因分类（2026-10-31 用户："设置了，但模型请求失败，你该通知我"）：
+# 从前所有失败都落那句通用的"请稍后重试" —— 对一个死端点这是废话，而真实原因
+# （502 / 401 / 连接被拒）只躺在 trace 里。异常文本里的形状各家不同但都带得抓的锚：
+#   openai: "Error code: 502"；langchain-ollama: "(status code: 502)"。
+_STATUS_RE = re.compile(r"(?:error code|status code)[:=]\s*(\d{3})", re.IGNORECASE)
+# 连接建立不起来一族：openai 的 APIConnectionError 文本、"连接被拒"、Windows WinError、
+# 以及代理把"对面不在"翻成 502 之外的超时族。
+_CONNECT_MARKERS = (
+    "connect error",
+    "connection refused",
+    "connection error",
+    "failed to establish",
+    "winerror 10061",
+    "err_connection",
+    "timed out",
+    "timeout",
+    "getaddrinfo failed",
+)
+
+
+def _status_code(text: str) -> str | None:
+    m = _STATUS_RE.search(text)
+    return m.group(1) if m else None
+
+
+def _failure_detail(text: str, status: str | None) -> str:
+    """按状态码/连接类信号给出**可行动**的一句话 —— 每条都告诉人下一步去哪儿。"""
+    if status == "401" or status == "403":
+        return f"模型服务拒绝了凭据（{status}）：到「设置 → 服务」旁的模型页核对这把 key。"
+    if status == "429":
+        return "模型服务限流（429）：等一会儿再试，或到「服务」页换一个模型。"
+    if status == "404":
+        return "模型或端点不存在（404）：到「模型」页核对模型名与地址。"
+    if status and status.startswith("5"):
+        return f"模型服务端错误（{status}）：稍后重试，或到「服务」页换一个模型。"
+    if any(sig in text for sig in _CONNECT_MARKERS):
+        return "模型连不上（连接超时或被拒）：确认那个模型服务在线后重试，或到「服务」页换一个。"
+    return _GENERIC_MODEL_FAILURE
+
 
 def model_error_detail(exc: Exception) -> str:
-    """把模型调用异常映射成给用户的可读提示。纯函数，便于脱机测试。"""
+    """把模型调用异常映射成给用户的可读提示。纯函数，便于脱机测试。
+
+    分类只看异常文本的**锚**（状态码/连接信号），不看异常类型 —— 各家客户端的异常
+    类型不同但文本锚稳定（上面两条实测注释）。锚抓不到 → 退回通用句，宁缺毋滥。
+    """
     # 调用前拦截（P1-2）与"供应商 400 后才认出来"是**同一个条件**，所以必须是同一句话；
     # 差别只在轨迹里（`vision_blocked_pre_call` 只有前者才会有）。
     if isinstance(exc, VisionNotSupported):
@@ -90,9 +134,12 @@ def model_error_detail(exc: Exception) -> str:
         # 空响应要单独立一句（R28-06）：那句通用的"换一种问法"会把人推向**重复问**，
         # 而这一次根本不是问法的问题 —— 后端一个字都没吐，换问法照样空。
         return EMPTY_STREAM_DETAIL
-    text = str(exc).lower()
-    if any(sig in text for sig in _VISION_MISMATCH_SIGNALS):
+    text = str(exc)
+    if any(sig in text.lower() for sig in _VISION_MISMATCH_SIGNALS):
         return VISION_MISMATCH_DETAIL
+    status = _status_code(text)
+    if status is not None or any(sig in text.lower() for sig in _CONNECT_MARKERS):
+        return _failure_detail(text.lower(), status)
     return _GENERIC_MODEL_FAILURE
 
 
@@ -594,9 +641,7 @@ def _from_tool_update(update: Any) -> Iterator[TurnEvent]:
             yield ToolResult(name=message.name, content=text_of(message))
 
 
-def _emit_error_trace(
-    tracer: Tracer | None, error: str, detail: dict[str, Any]
-) -> None:
+def _emit_error_trace(tracer: Tracer | None, error: str, detail: dict[str, Any]) -> None:
     if tracer is not None:
         tracer.emit(TraceEvent(event="chat_error", error=error, detail=detail))
 

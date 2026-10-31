@@ -1114,6 +1114,39 @@ describe("ChatPage 提取精华（对话 → 该角色的记忆）", () => {
   });
 });
 
+describe("对话默认指向不在线的本地模型 → 常驻横幅（2026-10-31 用户：没设置/不可用要通知）", () => {
+  function stubServices(top: { kind: string; available: boolean; label: string } | undefined) {
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/sessions") return [];
+      if (url === "/api/roles") return [];
+      if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
+      if (url === "/api/settings/model-providers") return { providers: [] };
+      if (url === "/api/services")
+        return {
+          services: [
+            { key: "models", candidates: top ? [top] : [] },
+          ],
+        };
+      return {};
+    });
+  }
+
+  it("第 1 位是本地模型且不在线：显示去服务页设置的横幅", async () => {
+    stubServices({ kind: "local", available: false, label: "qwen3-vl:8b" });
+    render(<ChatPage />);
+    expect(
+      await screen.findByText(/对话默认指向本机模型「qwen3-vl:8b」，但它现在不在线/),
+    ).toBeTruthy();
+  });
+
+  it("第 1 位是云端（或在线）：不显示横幅", async () => {
+    stubServices({ kind: "cloud", available: true, label: "deepseek-chat" });
+    render(<ChatPage />);
+    await screen.findByText(/和「通用助手」开始|新建或从左侧选择/).catch(() => undefined);
+    expect(screen.queryByText(/但它现在不在线/)).toBeNull();
+  });
+});
+
 describe("ChatPage 换角色 = 进那条角色自己的对话（09-26：一条线程只属于一个说话人）", () => {
   const ROLES = [
     { role_id: "ga", role_name: "通用助手", is_builtin: true },

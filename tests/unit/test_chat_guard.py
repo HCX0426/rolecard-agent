@@ -96,6 +96,24 @@ def test_pre_call_block_shares_the_same_sentence() -> None:
 
 
 def test_unrelated_model_error_keeps_generic_detail() -> None:
-    """超时/连接失败等不得误判成视觉不匹配（否则误导用户去换模型）。"""
-    assert model_error_detail(Exception("Request timed out after 120s")).startswith("模型调用失败")
-    assert model_error_detail(Exception("Connection refused")).startswith("模型调用失败")
+    """超时/连接失败不得误判成视觉不匹配（否则误导用户去换模型）。
+
+    2026-10-31 起连接/状态码族有**自己的可行动话**（用户："设置了，但模型请求失败，
+    你该通知我"——通用的"请稍后重试"对一个死端点是废话），但仍然不是视觉那句话；
+    真正没锚的异常才落通用句。"""
+    from rolecard_agent.core.agent.turn import _GENERIC_MODEL_FAILURE
+
+    # 连接族：可行动，且不是视觉误判
+    for text in (
+        "Request timed out after 120s",
+        "Connection refused",
+        "Connection error.",
+    ):
+        detail = model_error_detail(Exception(text))
+        assert detail != VISION_MISMATCH_DETAIL
+        assert "换一个模型" in detail or "确认那个模型服务在线" in detail, (text, detail)
+    # 状态码族：各自可行动
+    assert "502" in model_error_detail(Exception("Error code: 502"))
+    assert "key" in model_error_detail(Exception("Error code: 401"))
+    # 没锚 → 通用句（宁缺毋滥）
+    assert model_error_detail(Exception("something odd")) == _GENERIC_MODEL_FAILURE

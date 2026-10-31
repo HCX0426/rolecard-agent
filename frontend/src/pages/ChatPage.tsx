@@ -10,6 +10,7 @@ import {
   type ThreadRow,
 } from "../api";
 import Button from "../components/ui/Button";
+import { Notice } from "../components/ui";
 import { useConfirm } from "../hooks/useConfirm";
 import { useToast, type Tone } from "../components/Toast";
 import { answeredByHint, describeTrim, STOP_HINT, type StreamMeta } from "../lib/stream";
@@ -160,6 +161,27 @@ export default function ChatPage({
       .catch((e) => setStatus(`角色列表加载失败：${describeError(e)}（先用兜底开场白）`, "warn"));
     // 模型行由 ChatToolbar 自己拉（hooks/useModelBackends）：这一页除了生效模型的名字不碰它。
   }, [refreshSessions, setStatus]);
+
+  /* 对话默认（服务页第 1 位）若是**本地模型且不在线** → 常驻横幅（2026-10-31 用户：
+     "不该有默认设置，如果我没设置模型……你该通知我"）。出厂默认指向本机 Ollama；没装/没开
+     的机器上它是一具幽灵 —— 从前发送失败只弹一句通用的"请稍后重试"，没人知道该去哪儿。
+     只探第 1 位：云端后端的 available 有别的语义（深度检测才填），别误报。 */
+  const [deadLocalDefault, setDeadLocalDefault] = useState<string | null>(null);
+  useEffect(() => {
+    type ServicesPayload = {
+      services?: { key: string; candidates?: { kind: string; available: boolean; label: string }[] }[];
+    };
+    api
+      .get<ServicesPayload>("/api/services")
+      .then((d) => {
+        const models = (d.services ?? []).find((c) => c.key === "models");
+        const top = models?.candidates?.[0];
+        setDeadLocalDefault(
+          top && top.kind === "local" && top.available === false ? String(top.label) : null,
+        );
+      })
+      .catch(() => setDeadLocalDefault(null));
+  }, []);
 
   // 进入对话界面 = 那些主动消息都看过了。口径不是今天定的：`api/index.ts` 的
   // `markAllReachoutsRead` 与后端
@@ -698,6 +720,12 @@ export default function ChatPage({
 
       {/* 对话区 */}
       <section className="flex min-w-0 flex-1 flex-col">
+        {deadLocalDefault && (
+          <Notice className="mx-4 mt-3" tone="warn">
+            对话默认指向本机模型「{deadLocalDefault}」，但它现在不在线 ——
+            启动 Ollama，或到「设置 → 服务」把一个云端模型排到第 1 位。
+          </Notice>
+        )}
         <header className="glass border-b border-white/40 px-5 py-3">
           {editingTitle && current ? (
             <div className="flex items-center gap-2">
