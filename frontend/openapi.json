@@ -2545,15 +2545,33 @@
     "type": "object"
    },
    "MemoryConsolidatedView": {
-    "description": "`POST /api/settings/memory/consolidate`：report + _memory_payload 摊平的 9 键（恒有）。\n\n顶层**没有** turns_since —— 那是会话 distill（DistillOutcomeView）独有的键，\n前端旧 ConsolidateOutcome extends DistillOutcome 把不存在于响应的必填键抄了进来，\n本模型按运行时形状收口。items[] 用 MemoryRowView（比生成物那份更贴运行时：\nid/pinned 恒非空，采样期恒 null 的三格在这里如实标可空）。",
+    "description": "`POST /api/settings/memory/consolidate`：report + **_memory_payload 全量摊平**（恒有）。\n\n顶层**没有** turns_since —— 那是会话 distill（DistillOutcomeView）独有的键，\n前端旧 ConsolidateOutcome extends DistillOutcome 把不存在于响应的必填键抄了进来，\n本模型按运行时形状收口。items[] 用 MemoryRowView（比生成物那份更贴运行时：\nid/pinned 恒非空，采样期恒 null 的三格在这里如实标可空）。\n\n`category` / `counts`（R1031-30 补）：端点真返回 `{\"report\": …, **_memory_payload(…)}`，\n第一版手模漏了这两键 ⇒ response_model 把它们**过滤掉了**——前端整理完拿不到\ncounts，分板块标签就空了。精确契约接别名时被 tsc 当场抓出来。",
     "properties": {
      "active_count": {
       "title": "Active Count",
       "type": "integer"
      },
+     "category": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Category"
+     },
      "content": {
       "title": "Content",
       "type": "string"
+     },
+     "counts": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "title": "Counts",
+      "type": "object"
      },
      "enabled": {
       "title": "Enabled",
@@ -2597,8 +2615,10 @@
      "report",
      "enabled",
      "role_id",
+     "category",
      "content",
      "items",
+     "counts",
      "active_count",
      "limit",
      "over_limit",
@@ -2797,8 +2817,12 @@
     "type": "object"
    },
    "MemoryRowView": {
-    "description": "记忆桶里的一行（`core/memory` 的 `_row_to_dict`/`list_items`，13 键恒有）。\n\n生成物那份 `SettingsMemoryViewItemsItem` 把 id/pinned/hit_count 都推成了可空、\nlast_hit_at/invalidated_at/superseded_by 推成 unknown —— 因为**采样期那几格恒 null**\n（新记忆还没被命中/整理过）。运行时真相是 id 恒 int、pinned 恒 bool（列有默认）、\n三个时间戳可 null。手写这一份既如实又不逼前端到处 `?? 0`（items[] 用它的端点：\nconsolidate 写响应；GET /api/settings/memory 那份生成物照旧，两不相扰）。",
+    "description": "记忆桶里的一行（`core/memory` 的 `_row_to_dict`/`list_items`，14 键恒有）。\n\n生成物那份 `SettingsMemoryViewItemsItem` 把 id/pinned/hit_count 都推成了可空、\nlast_hit_at/invalidated_at/superseded_by 推成 unknown —— 因为**采样期那几格恒 null**\n（新记忆还没被命中/整理过）。运行时真相是 id 恒 int、pinned 恒 bool（列有默认）、\n三个时间戳可 null。手写这一份既如实又不逼前端到处 `?? 0`（items[] 用它的端点：\nconsolidate 写响应；GET /api/settings/memory 那份生成物照旧，两不相扰）。\n\n`category`（R1031-30 补）：四层化 84f3d7c6 起恒有，本手模写于四层化之前漏了它 ——\n接 MemoryPage 别名时被精确契约当场抓出来（前端旧手抄有这键、这里没有）。",
     "properties": {
+     "category": {
+      "title": "Category",
+      "type": "string"
+     },
      "created_at": {
       "title": "Created At",
       "type": "string"
@@ -2883,6 +2907,7 @@
      "pinned",
      "hit_count",
      "importance",
+     "category",
      "last_hit_at",
      "invalidated_at",
      "superseded_by",
@@ -6669,241 +6694,58 @@
     "type": "object"
    },
    "SettingsMemoryView": {
-    "$ref": "#/components/schemas/SettingsMemoryViewRoot",
-    "description": "/api/settings/memory 的顶层形状（数组包一层只为给它一个名字）。",
-    "title": "SettingsMemoryView"
-   },
-   "SettingsMemoryViewCounts": {
-    "additionalProperties": true,
-    "description": "自动生成：SettingsMemoryViewCounts（counts 的对象形状）。",
-    "properties": {
-     "longterm": {
-      "anyOf": [
-       {
-        "type": "integer"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Longterm"
-     },
-     "project": {
-      "anyOf": [
-       {
-        "type": "integer"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Project"
-     },
-     "self": {
-      "anyOf": [
-       {
-        "type": "integer"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Self"
-     },
-     "session": {
-      "anyOf": [
-       {
-        "type": "integer"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Session"
-     }
-    },
-    "required": [
-     "longterm",
-     "session",
-     "project",
-     "self"
-    ],
-    "title": "SettingsMemoryViewCounts",
-    "type": "object"
-   },
-   "SettingsMemoryViewItemsItem": {
-    "additionalProperties": true,
-    "description": "自动生成：SettingsMemoryViewItemsItem（itemsItem 的对象形状）。",
-    "properties": {
-     "category": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Category"
-     },
-     "created_at": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Created At"
-     },
-     "hit_count": {
-      "anyOf": [
-       {
-        "type": "integer"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Hit Count"
-     },
-     "id": {
-      "anyOf": [
-       {
-        "type": "integer"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Id"
-     },
-     "importance": {
-      "anyOf": [
-       {
-        "type": "integer"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Importance"
-     },
-     "invalidated_at": {
-      "title": "Invalidated At"
-     },
-     "last_hit_at": {
-      "title": "Last Hit At"
-     },
-     "pinned": {
-      "anyOf": [
-       {
-        "type": "boolean"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Pinned"
-     },
-     "role_id": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Role Id"
-     },
-     "source": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Source"
-     },
-     "superseded_by": {
-      "title": "Superseded By"
-     },
-     "text": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Text"
-     },
-     "uid": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Uid"
-     },
-     "user_id": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "User Id"
-     }
-    },
-    "required": [
-     "id",
-     "user_id",
-     "uid",
-     "role_id",
-     "text",
-     "source",
-     "pinned",
-     "hit_count",
-     "importance",
-     "category",
-     "last_hit_at",
-     "invalidated_at",
-     "superseded_by",
-     "created_at"
-    ],
-    "title": "SettingsMemoryViewItemsItem",
-    "type": "object"
-   },
-   "SettingsMemoryViewRoot": {
-    "additionalProperties": true,
-    "description": "自动生成：SettingsMemoryViewRoot（ 的对象形状）。",
+    "description": "GET/PUT `/api/settings/memory` 的精确契约（R1031-30，2026-10-31）。\n\n从采样白名单里退役、搬进手模的原因与 consolidate 那份同型：生成物把\n`role_id/category` 推成 unknown、`items[]` 推成可空宽版（采样期新记忆的\nhit/last_hit 恒 null 被当成了\"可能没有\"）。运行时真相（`_memory_payload`）是\n**十个键恒在**：键集不随分支变，只有值可空。手写这一份让 MemoryPage 的\n手抄类型（审计快照 R1031-30 那处\"迁移尺扫不到的漏网\"）有一个可引用的\n权威地址。items 复用 `MemoryRowView`（13 键恒有的精确行）—— 同一个事实\n只住一个地址。",
     "properties": {
      "active_count": {
+      "title": "Active Count",
+      "type": "integer"
+     },
+     "category": {
       "anyOf": [
        {
-        "type": "integer"
+        "type": "string"
        },
        {
         "type": "null"
        }
       ],
-      "title": "Active Count"
-     },
-     "category": {
       "title": "Category"
      },
      "content": {
+      "title": "Content",
+      "type": "string"
+     },
+     "counts": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "title": "Counts",
+      "type": "object"
+     },
+     "enabled": {
+      "title": "Enabled",
+      "type": "boolean"
+     },
+     "extract_turns": {
+      "title": "Extract Turns",
+      "type": "integer"
+     },
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/MemoryRowView"
+      },
+      "title": "Items",
+      "type": "array"
+     },
+     "limit": {
+      "title": "Limit",
+      "type": "integer"
+     },
+     "over_limit": {
+      "title": "Over Limit",
+      "type": "boolean"
+     },
+     "role_id": {
       "anyOf": [
        {
         "type": "string"
@@ -6912,77 +6754,6 @@
         "type": "null"
        }
       ],
-      "title": "Content"
-     },
-     "counts": {
-      "anyOf": [
-       {
-        "$ref": "#/components/schemas/SettingsMemoryViewCounts"
-       },
-       {
-        "type": "null"
-       }
-      ]
-     },
-     "enabled": {
-      "anyOf": [
-       {
-        "type": "boolean"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Enabled"
-     },
-     "extract_turns": {
-      "anyOf": [
-       {
-        "type": "integer"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Extract Turns"
-     },
-     "items": {
-      "anyOf": [
-       {
-        "items": {
-         "$ref": "#/components/schemas/SettingsMemoryViewItemsItem"
-        },
-        "type": "array"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Items"
-     },
-     "limit": {
-      "anyOf": [
-       {
-        "type": "integer"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Limit"
-     },
-     "over_limit": {
-      "anyOf": [
-       {
-        "type": "boolean"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Over Limit"
-     },
-     "role_id": {
       "title": "Role Id"
      }
     },
@@ -6998,7 +6769,7 @@
      "over_limit",
      "extract_turns"
     ],
-    "title": "SettingsMemoryViewRoot",
+    "title": "SettingsMemoryView",
     "type": "object"
    },
    "ShellReleaseView": {
@@ -10784,7 +10555,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "title": "Response Put Memory Api Settings Memory Put"
+         "$ref": "#/components/schemas/SettingsMemoryView"
         }
        }
       },
