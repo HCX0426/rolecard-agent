@@ -235,8 +235,12 @@ def test_patch_model_context_404_and_400(client: TestClient) -> None:
 def test_patch_model_context_roundtrip(client: TestClient) -> None:
     """改窗口要**读得回来**并留痕：本地推理服务的「常驻」档按这个数字下发给 Ollama，
     存了 8192、探针却按 4096 加载，用户看到的就是"预热完还要再等一次冷加载"。"""
+    # 绝对无默认（2026-10-31）：新装机对话池是空的 —— 先**显式**把 local 排进对话。
+    assert client.get("/api/settings/models").json()["default"] is None
+    put = client.put("/api/services/models", json={"order": ["local"]})
+    assert put.status_code == 200
     name = client.get("/api/settings/models").json()["default"]
-    assert name
+    assert name == "local"
     res = client.patch(f"/api/settings/models/{name}/context", json={"num_ctx": 8192})
     assert res.status_code == 200 and res.json()["num_ctx"] == 8192
     rows = model_rows(client.get("/api/settings/models").json())

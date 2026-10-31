@@ -284,7 +284,8 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
                 "role_id": "smoke_role",
                 "role_name": "冒烟角色",
                 "system_prompt": "x",
-                "model_name": "local",
+                # model_name 刻意不给（2026-10-31「绝对无默认」教义）：冒烟机不一定有
+                # 本机后端，硬指 "local" 会被 _validate_role_model 如实 400。不带 = 跟随默认。
                 "tool_whitelist": ["list_reports"],
             },
         )

@@ -28,13 +28,16 @@ from pydantic import BaseModel
 
 
 class MemoryRowView(BaseModel):
-    """记忆桶里的一行（`core/memory` 的 `_row_to_dict`/`list_items`，13 键恒有）。
+    """记忆桶里的一行（`core/memory` 的 `_row_to_dict`/`list_items`，14 键恒有）。
 
     生成物那份 `SettingsMemoryViewItemsItem` 把 id/pinned/hit_count 都推成了可空、
     last_hit_at/invalidated_at/superseded_by 推成 unknown —— 因为**采样期那几格恒 null**
     （新记忆还没被命中/整理过）。运行时真相是 id 恒 int、pinned 恒 bool（列有默认）、
     三个时间戳可 null。手写这一份既如实又不逼前端到处 `?? 0`（items[] 用它的端点：
     consolidate 写响应；GET /api/settings/memory 那份生成物照旧，两不相扰）。
+
+    `category`（R1031-30 补）：四层化 84f3d7c6 起恒有，本手模写于四层化之前漏了它 ——
+    接 MemoryPage 别名时被精确契约当场抓出来（前端旧手抄有这键、这里没有）。
     """
 
     id: int
@@ -46,6 +49,8 @@ class MemoryRowView(BaseModel):
     pinned: bool
     hit_count: int
     importance: int
+    #: 落在哪一层（longterm / session / project / self）。
+    category: str
     last_hit_at: str | None
     invalidated_at: str | None
     superseded_by: int | None
@@ -123,19 +128,25 @@ class MemoryReportView(BaseModel):
 
 
 class MemoryConsolidatedView(BaseModel):
-    """`POST /api/settings/memory/consolidate`：report + _memory_payload 摊平的 9 键（恒有）。
+    """`POST /api/settings/memory/consolidate`：report + **_memory_payload 全量摊平**（恒有）。
 
     顶层**没有** turns_since —— 那是会话 distill（DistillOutcomeView）独有的键，
     前端旧 ConsolidateOutcome extends DistillOutcome 把不存在于响应的必填键抄了进来，
     本模型按运行时形状收口。items[] 用 MemoryRowView（比生成物那份更贴运行时：
     id/pinned 恒非空，采样期恒 null 的三格在这里如实标可空）。
+
+    `category` / `counts`（R1031-30 补）：端点真返回 `{"report": …, **_memory_payload(…)}`，
+    第一版手模漏了这两键 ⇒ response_model 把它们**过滤掉了**——前端整理完拿不到
+    counts，分板块标签就空了。精确契约接别名时被 tsc 当场抓出来。
     """
 
     report: MemoryReportView
     enabled: bool
     role_id: str | None
+    category: str | None
     content: str
     items: list[MemoryRowView]
+    counts: dict[str, int]
     active_count: int
     limit: int
     over_limit: bool
@@ -219,3 +230,27 @@ class DomainRecordView(BaseModel):
     unit: str | None
     note: str | None
     created_at: str
+
+
+class SettingsMemoryView(BaseModel):
+    """GET/PUT `/api/settings/memory` 的精确契约（R1031-30，2026-10-31）。
+
+    从采样白名单里退役、搬进手模的原因与 consolidate 那份同型：生成物把
+    `role_id/category` 推成 unknown、`items[]` 推成可空宽版（采样期新记忆的
+    hit/last_hit 恒 null 被当成了"可能没有"）。运行时真相（`_memory_payload`）是
+    **十个键恒在**：键集不随分支变，只有值可空。手写这一份让 MemoryPage 的
+    手抄类型（审计快照 R1031-30 那处"迁移尺扫不到的漏网"）有一个可引用的
+    权威地址。items 复用 `MemoryRowView`（13 键恒有的精确行）—— 同一个事实
+    只住一个地址。
+    """
+
+    enabled: bool
+    role_id: str | None
+    category: str | None
+    content: str
+    items: list[MemoryRowView]
+    counts: dict[str, int]
+    active_count: int
+    limit: int
+    over_limit: bool
+    extract_turns: int

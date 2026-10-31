@@ -20,12 +20,12 @@ from rolecard_agent.config import SECRET_FIELD_NAMES, Settings
 from rolecard_agent.contracts.handwritten_models import (
     MemoryConsolidatedView,
     ProbeOutcomeView,
+    SettingsMemoryView,
 )
 from rolecard_agent.contracts.response_models import (
     ModelProvidersView,
     ModelSettingsView,
     RuntimeSettingsView,
-    SettingsMemoryView,
 )
 from rolecard_agent.core import runtime_settings
 from rolecard_agent.core.model_settings import (
@@ -691,7 +691,11 @@ def get_memory(
     return _memory_payload(ctx, role_id, category)
 
 
-@router.put("/api/settings/memory")
+@router.put(
+    "/api/settings/memory",
+    response_model=SettingsMemoryView,
+    response_model_exclude_unset=True,
+)
 def put_memory(
     body: MemoryBody,
     ctx: AppContext = Depends(get_context),

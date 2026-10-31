@@ -24,11 +24,11 @@ import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from rolecard_agent.base.audit import AuditTrail
 from rolecard_agent.base.observability import Tracer
-from rolecard_agent.config import Settings
+from rolecard_agent.config import ChatModelNotSet, Settings
 from rolecard_agent.core import runtime_settings
 from rolecard_agent.core.agent.graph import build_kernel
 from rolecard_agent.core.agent.nodes import ChatLike
@@ -221,10 +221,21 @@ def rebuild(rt: RuntimeKernel) -> None:
     # 代数**先加再清**（`ModelResolver.invalidate`）：加在清之前，任何一个"清之前就
     # 进去了、清之后才落笔"的在飞写者手上都拿着旧代数，回填会被它自己否掉（`R28-05`）。
     rt.models.invalidate()
-    default_model = rt.model_factory(eff, None)
+    # 绝对无默认（2026-10-31）：未设置对话模型时构建抛 ChatModelNotSet —— 热重建**必须
+    # 活下来**（保存一条运行环境覆盖不该因为"还没选模型"而 500）。default_model 记 None，
+    # state["graph"] 也就不换 —— 现存的图带着旧模型继续跑；发送时解析层把"去哪里设置"
+    # 通知给用户。None 的 state 槽位与启动期同一形状（build_runtime 那侧同样容忍）。
+    try:
+        default_model = rt.model_factory(eff, None)
+    except ChatModelNotSet:
+        default_model = None
     knowledge_new = build_knowledge(eff, rt.services, rt.assembly.conn)
     registry_new = assemble_registry(rt.assembly, rt.registry_factory, eff, knowledge_new)
-    graph_new = build_graph(rt, default_model, registry_new, eff)
+    # 绝对无默认：default_model 可能是 None —— 图**照常建**（同 build_runtime 那侧的
+    # 说明），发送时解析层把"去哪里设置"通知给用户。
+    graph_new = build_graph(
+        rt, cast("ChatLike", default_model), registry_new, eff
+    )  # cast 理由见 build_runtime 那侧（None=未设置，节点按轮解析）
     old_knowledge = rt.knowledge
     with rt.rebuild_lock:
         # 换装是单个临界区：模型缓存 + 可变引用 + state 槽位一起翻，杜绝"新图配旧

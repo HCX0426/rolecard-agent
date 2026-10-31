@@ -18,37 +18,13 @@ import { api, type RoleCard, type RuntimePayload } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
 import { Button, Card } from "../components/ui";
 import { describeError } from "../lib/errors";
+import type { components } from "../api/schema.gen";
 
-/** 一条记忆（后端 `role_memory_item` 行）。`content` 是这些条目渲染出来的文本，不是第二份事实。 */
-type MemoryItem = {
-  id: number;
-  text: string;
-  source: string;
-  pinned: boolean;
-  hit_count: number;
-  /** 显著性档位（0 次要 / 1 一般 / 2 要紧）。后端 `clamp_importance` 保证只会是这三个数。 */
-  importance: number;
-  /** 落在哪一层（后端 `MEMORY_CATEGORIES`）。旧数据可能缺这个字段，按 longterm 兜底。 */
-  category?: string;
-  last_hit_at: string | null;
-  created_at: string | null;
-};
-
-type MemoryPayload = {
-  enabled: boolean;
-  role_id: string | null;
-  /** 当前看的层（None = 全部）。后端按这个过滤 items。 */
-  category?: string | null;
-  content: string;
-  items: MemoryItem[];
-  /** 每层各几条（后端一次给齐，不用前端再发 N 次请求自己数）。 */
-  counts?: Record<string, number>;
-  active_count: number;
-  limit: number;
-  over_limit: boolean;
-  /** 自动提取的节奏（有效值；0 = 关，只留对话页那个手动按钮）。 */
-  extract_turns: number;
-};
+// 响应契约（R1031-30）：GET/PUT `/api/settings/memory` 的**精确手模**经 api 层别名进来
+// —— 从前这两份手抄在 pages/ 里，迁移尺（只扫 src/api/*.ts）看不见，漂了没人喊。
+// 现在后端上 `SettingsMemoryView`（items 用 13 键恒有的 `MemoryRowView`），这里只引用。
+type MemoryPayload = components["schemas"]["SettingsMemoryView"];
+type MemoryItem = MemoryPayload["items"][number];
 
 /**
  * 记忆分层（2026-10-30，用户：「每个角色的记忆分多板块，比如长期记忆、会话记忆、项目记忆」，

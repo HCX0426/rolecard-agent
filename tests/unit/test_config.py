@@ -20,11 +20,22 @@ from rolecard_agent.config import (
 
 def test_defaults_are_usable_without_any_env() -> None:
     settings = Settings()
-    backend = settings.backend()
-    # 2026-09-17 终版：默认本地模型是 qwen3-vl:8b（对话 + tools + 识图 一体，一行多用）；
-    # qwen2.5:7b / qwen2.5vl:7b / local_vl 均已退役，配置里不应再出现它们。
-    assert backend.model == "qwen3-vl:8b"
-    assert backend.provider == "ollama"
+    # 绝对无默认（2026-10-31 用户拍板）：未设置 = backend(None) 抛 ChatModelNotSet，
+    # 内置 local 行仍存在于模型页（可被显式选用），但**不自动成为对话默认**。
+    import pytest as _pytest
+
+    from rolecard_agent.config import ChatModelNotSet
+
+    with _pytest.raises(ChatModelNotSet):
+        settings.backend()
+    local = settings.model_backends["local"]
+    assert local.model == "qwen3-vl:8b"
+    assert local.provider == "ollama"
+    assert local.usage != "chat"  # 不自动进对话池
+    assert settings.obs_backend == "local"
+    assert settings.obs_emit_raw_text is False  # redacted by default
+    assert settings.memory_enabled is True
+    assert settings.agent_default_mode == "agent"  # 出厂默认 = 智能体（2026-10-10 统一走智能体）
     assert settings.obs_backend == "local"
     assert settings.obs_emit_raw_text is False  # redacted by default
     assert settings.memory_enabled is True
@@ -395,7 +406,8 @@ def test_empty_string_still_means_unset() -> None:
     """空串 = 未设置（否则 `AUTH_CREDENTIALS=` 会把默认值覆盖成空 —— 那是对的一半，
     但 `MODEL_TIMEOUT_SECONDS=` 这种写法不该变成 0）。"""
     settings = Settings.from_env({"MODEL_DEFAULT": "", "AUTH_CREDENTIALS": ""})
-    assert settings.model_default == "local"
+    # 绝对无默认：空串就是未设置（不再回落 "local"）—— 未设置要通知，不要幽灵默认。
+    assert settings.model_default == ""
     assert settings.model_timeout_seconds == 120.0
 
 
@@ -428,17 +440,32 @@ def test_web_master_switch_and_thinking_parse_from_env() -> None:
 
 
 def test_shipped_defaults_ask_for_reasoning_from_the_bundled_local_model() -> None:
-    """随包那个本地模型必须**正好**落在思考名单里。
+    """思考名单出厂为**空**（绝对无默认，2026-10-31）：出厂不再假设任何模型存在。
 
-    名单是按 `model` 名精确匹配的（`core/agent/graph.py`），所以"把默认后端换个模型名"会**静默**
-    把它从名单里摘出去：思考照想、那十几~几十秒照花、屏幕上一个字都不显示 —— 那正是
-    09-26 轮 `R26-29` 量出来的形状（不列名时一次回话生成 366~3809 token 而可见正文几十字），
-    也是用户提"要让她看起来在打字"的直接原因。这条断言钉的是**配对**，不是名单非空：
-    两边各自改都对，改歪一边就回到空泡。
-    """
+    从前名单默认列随包本机模型（R26-29 那条"列名才显示思考"的配对）—— 绝对无默认下
+    出厂没有任何"在对话里的模型"，名单跟着清空：思考显示变成**显式配置**
+    （运行环境页 / MODEL_THINKING_MODELS）。配对纪律本身不变：把哪个模型排进对话、
+    就把哪个模型列进名单，两边改歪一边就回到空泡。"""
     shipped = Settings()
-    assert shipped.model_default
-    assert shipped.backend(shipped.model_default).model in shipped.model_thinking_models
+    assert shipped.model_thinking_models == []
+    # 显式设置后配对仍被钉住：名单内（openai 兼容）模型构造出带开关的捕获子类。
+    explicit = Settings(
+        model_default="cloud",
+        model_backends={
+            "cloud": ModelBackend(
+                model="deepseek-ai/DeepSeek-V4-Flash",
+                provider="siliconflow",
+                api_key="sk-test",
+            )
+        },
+        model_thinking_models=["deepseek-ai/DeepSeek-V4-Flash"],
+    )
+    from rolecard_agent.core.agent.graph import _init_model
+    from rolecard_agent.core.agent.openai_reasoning import ReasoningAwareChatOpenAI
+
+    obj = _init_model(explicit, "cloud")
+    assert isinstance(obj, ReasoningAwareChatOpenAI)
+    assert (obj.extra_body or {}).get("enable_thinking") is True
 
 
 def test_siliconflow_endpoint_and_ocr_python_parse_from_env() -> None:

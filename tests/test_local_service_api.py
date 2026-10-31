@@ -363,13 +363,16 @@ def test_local_endpoint_follows_the_configured_native_backend() -> None:
     from rolecard_agent.core.telemetry.probes import local_inference_base_url
 
     native = Settings(
+        # 绝对无默认（2026-10-31）：`local_inference_base_url` 只读**显式设置**的默认；
+        # 想让本机档生效就显式写 MODEL_DEFAULT（这里测的是"设置了"那一态）。
+        model_default="local",
         model_backends={
             "local": {
                 "model": "qwen3-vl:8b",
                 "provider": "ollama",
                 "base_url": "http://127.0.0.1:12345",
             }
-        }
+        },
     )
     assert local_inference_base_url(native) == "http://127.0.0.1:12345"
     assert local_inference_base_url(_CLOUD) == "http://127.0.0.1:11434"

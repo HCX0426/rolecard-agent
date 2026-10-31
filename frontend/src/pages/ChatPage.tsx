@@ -166,21 +166,33 @@ export default function ChatPage({
      "不该有默认设置，如果我没设置模型……你该通知我"）。出厂默认指向本机 Ollama；没装/没开
      的机器上它是一具幽灵 —— 从前发送失败只弹一句通用的"请稍后重试"，没人知道该去哪儿。
      只探第 1 位：云端后端的 available 有别的语义（深度检测才填），别误报。 */
-  const [deadLocalDefault, setDeadLocalDefault] = useState<string | null>(null);
+  const [modelNotice, setModelNotice] = useState<string | null>(null);
   useEffect(() => {
+    type ModelsPayload = { default?: string | null };
     type ServicesPayload = {
       services?: { key: string; candidates?: { kind: string; available: boolean; label: string }[] }[];
     };
-    api
-      .get<ServicesPayload>("/api/services")
-      .then((d) => {
-        const models = (d.services ?? []).find((c) => c.key === "models");
-        const top = models?.candidates?.[0];
-        setDeadLocalDefault(
-          top && top.kind === "local" && top.available === false ? String(top.label) : null,
+    (async () => {
+      // 绝对无默认（2026-10-31 用户拍板）两形态：
+      //  ① 压根没设置（对话池空）→ "还没设置对话模型"，告诉去哪里设置；
+      //  ② 设置的是本机模型但它不在线 → "启动 Ollama 或换一个"。
+      // 从前①是一具幽灵：发送失败只弹通用的"请稍后重试"，没人知道该去哪儿。
+      const models = await api.get<ModelsPayload>("/api/settings/models");
+      if (!models.default) {
+        setModelNotice(
+          "还没设置对话模型：到「设置 → 服务」把一个模型拖进对话序列（第 1 位生效），或在「模型」页把它的用途勾上对话。",
         );
-      })
-      .catch(() => setDeadLocalDefault(null));
+        return;
+      }
+      const d = await api.get<ServicesPayload>("/api/services");
+      const modelsCat = (d.services ?? []).find((c) => c.key === "models");
+      const top = modelsCat?.candidates?.[0];
+      setModelNotice(
+        top && top.kind === "local" && top.available === false
+          ? `对话默认指向本机模型「${String(top.label)}」，但它现在不在线 —— 启动 Ollama，或到「设置 → 服务」把一个云端模型排到第 1 位。`
+          : null,
+      );
+    })().catch(() => setModelNotice(null));
   }, []);
 
   // 进入对话界面 = 那些主动消息都看过了。口径不是今天定的：`api/index.ts` 的
@@ -720,10 +732,9 @@ export default function ChatPage({
 
       {/* 对话区 */}
       <section className="flex min-w-0 flex-1 flex-col">
-        {deadLocalDefault && (
+        {modelNotice && (
           <Notice className="mx-4 mt-3" tone="warn">
-            对话默认指向本机模型「{deadLocalDefault}」，但它现在不在线 ——
-            启动 Ollama，或到「设置 → 服务」把一个云端模型排到第 1 位。
+            {modelNotice}
           </Notice>
         )}
         <header className="glass border-b border-white/40 px-5 py-3">

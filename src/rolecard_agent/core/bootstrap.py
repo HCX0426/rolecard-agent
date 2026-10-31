@@ -24,13 +24,13 @@ import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from rolecard_agent.base.audit import AuditTrail
 from rolecard_agent.base.identity import ensure_identity_row, resolve_instance_identity
 from rolecard_agent.base.observability import TraceEvent, Tracer, logline, make_tracer
 from rolecard_agent.base.paths import user_data_root
-from rolecard_agent.config import Settings
+from rolecard_agent.config import ChatModelNotSet, Settings
 
 # P2-1 Assembler 刀（2026-10-09）：装配件形状与装配/热重建的实现住 `core/assembler.py`
 # （bootstrap → assembler 单向；Runtime 的形状在 assembler 只以 Protocol 出现 —— 依赖方向
@@ -499,7 +499,13 @@ def build_runtime(
     heal_knowledge_sources(knowledge, conn, tracer=resolved_tracer)
     registry = assembler.assemble_registry(assembly, registry_factory, effective, knowledge)
     factory = model_factory or build_model
-    default_model = model or factory(effective, None)
+    # 绝对无默认（2026-10-31）：新装机/未设置时 `backend(None)` 抛 ChatModelNotSet ——
+    # 启动**必须**活下来：default_model 记 None，发送那一刻由解析层把"去哪里设置"
+    # 通知给用户，而不是启动就 500。
+    try:
+        default_model = model or factory(effective, None)
+    except ChatModelNotSet:
+        default_model = None
     state: dict[str, Any] = {
         "graph": None,  # 下面 build 后回填；对话端点每次请求从这里取当前图
         "effective": effective,
@@ -542,5 +548,11 @@ def build_runtime(
             identity=lambda: runtime.identity,
         )
     )
-    state["graph"] = assembler.build_graph(runtime, default_model, registry, effective)
+    # 绝对无默认：default_model 可能是 None（未设置）—— 图**照常建**（build_graph 对
+    # None 主模型合法，节点按轮走解析层），发送时解析层把"去哪里设置"通知给用户。
+    # runtime 值可为 None（未设置，绝对无默认）——build_graph 与图节点按轮走解析层，
+    # 不解引用这个绑定；类型面仍是历史签名 ChatLike，这里显式 cast。
+    state["graph"] = assembler.build_graph(
+        runtime, cast("ChatLike", default_model), registry, effective
+    )
     return runtime

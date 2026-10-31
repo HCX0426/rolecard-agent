@@ -29,14 +29,18 @@ class _EffectiveMixin(_ReadMixin):
         # 默认/回退链按**这个人**的 chat 引用行取（多租户 B1b，方案 A）：这份配置是谁的 key
         # 谁说话，对话默认就该是那个人的第一条 chat 引用。别人名下的序列对这里不存在。
         default = self.default_backend(user_id=user_id)
-        # 默认缺失/失效 → 退到 DB 第一个后端（首启种子已保证至少一个 chat 后端）。
-        if default is None or default not in merged:
-            default = next(iter(merged), env_settings.model_default)
+        # 绝对无默认（2026-10-31 用户拍板）：未设置或**声明的默认被删** → 保持未设置，
+        # **不再替用户挑一个**。从前"退到 DB 第一个后端"的兜底建立在"首启种子保证至少
+        # 一个 chat 后端"上 —— 那个保证随绝对无默认一起移除了（内置本地行不再自动进池）。
+        # 未设置的形态 = `model_default=""`，`backend(None)` 抛 `ChatModelNotSet`，
+        # 发送方把"去哪里设置"通知给用户。
+        if default is not None and default not in merged:
+            default = None
         fallbacks = self.list_fallbacks(user_id=user_id)
         return env_settings.model_copy(
             update={
                 "model_backends": merged,
-                "model_default": default,
+                "model_default": default or "",
                 "model_fallbacks": fallbacks
                 if fallbacks is not None
                 else env_settings.model_fallbacks,

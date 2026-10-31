@@ -34,6 +34,7 @@ from langgraph.errors import GraphRecursionError
 
 from rolecard_agent.base.observability import TraceEvent, Tracer, scrub_endpoints
 from rolecard_agent.base.text import text_of
+from rolecard_agent.config import ChatModelNotSet
 from rolecard_agent.core.agent.graph import MODEL_NODE, TOOLS_NODE
 from rolecard_agent.core.agent.guard import check
 from rolecard_agent.core.agent.nodes import EmptyModelStream, TurnStopped, VisionNotSupported
@@ -128,6 +129,9 @@ def model_error_detail(exc: Exception) -> str:
     """
     # 调用前拦截（P1-2）与"供应商 400 后才认出来"是**同一个条件**，所以必须是同一句话；
     # 差别只在轨迹里（`vision_blocked_pre_call` 只有前者才会有）。
+    if isinstance(exc, ChatModelNotSet):
+        # 绝对无默认（2026-10-31）：未设置的原话就是可行动的通知，不走分类也不走通用句。
+        return str(exc)
     if isinstance(exc, VisionNotSupported):
         return VISION_MISMATCH_DETAIL
     if isinstance(exc, EmptyModelStream):

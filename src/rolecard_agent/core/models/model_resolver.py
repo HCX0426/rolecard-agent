@@ -23,7 +23,7 @@ from typing import Any
 
 from rolecard_agent.base.identity import active_user_id
 from rolecard_agent.base.observability import TraceEvent, Tracer
-from rolecard_agent.config import Settings
+from rolecard_agent.config import CHAT_MODEL_UNSET_DETAIL, ChatModelNotSet, Settings
 from rolecard_agent.core import runtime_settings
 from rolecard_agent.core.agent.nodes import ChatLike
 from rolecard_agent.core.model_settings import ModelSettingsService
@@ -137,7 +137,11 @@ class ModelResolver:
             return self.injected_model
         user = user_id or active_user_id(self.identity())
         if not backend_name and temperature is None and user == self.identity():
-            return self.state["default_model"]
+            default = self.state["default_model"]
+            if default is None:
+                # 绝对无默认（2026-10-31）：未设置就明说，发送方把话递给用户。
+                raise ChatModelNotSet(CHAT_MODEL_UNSET_DETAIL)
+            return default
         cache_key = (user, backend_name, temperature)
         cached = self.role_models.get(cache_key)
         if cached is not None:
@@ -152,6 +156,10 @@ class ModelResolver:
                     detail={"backend": backend_name, "user_id": user},
                 )
             )
+            if self.state["default_model"] is None:
+                # 绝对无默认：声明的后端不存在 + 未设置默认 → 未设置原话通知（B904：
+                # 这里不是在转译 KeyError 的原因，是从它手里接棒换一种失败）。
+                raise ChatModelNotSet(CHAT_MODEL_UNSET_DETAIL) from None
             return self.state["default_model"]
         # 与 `effective_for` 同一条纪律：代数变了就把手上这份丢掉，别让它活过这次换装
         # （`R28-05`）。下一次解析自然按新配置重建 —— 代价是多构造一次，不是花错 key。

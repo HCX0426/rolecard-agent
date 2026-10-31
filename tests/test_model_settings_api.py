@@ -41,6 +41,7 @@ def factory(
     返回模型，于是"降级"测试从来没真正走到降级分支 —— 一个通过了的假阳性
     （代码审查报告（第二轮）新增断言时暴露）。
     """
+
     def _factory(
         settings: object,
         backend_name: str | None = None,
@@ -86,12 +87,18 @@ def authoritative_text(client: TestClient, thread_id: str, message: str) -> str:
 
 
 def test_fresh_startup_seeds_env_backends(client: TestClient) -> None:
-    """首次启动把 env 后端迁移进表（模型页可见、可编辑）；迁移一次性。"""
+    """首次启动把 env 后端迁移进表（模型页可见、可编辑）；迁移一次性。
+
+    绝对无默认（2026-10-31 用户拍板）：**只迁后端行，不设对话默认** ——
+    内置 local 行不再自动 usage=chat，对话池出厂为空，"还没设置"由对话页横幅与
+    发送通知说出来。"""
     body = client.get("/api/settings/models").json()
-    assert body["default"] == "local"  # env 默认随迁移一并接管
+    assert body["default"] is None  # 不再隐式默认
     assert [r["name"] for r in model_rows(body)] == ["local"]
     # 无 key 供应商（Ollama）不存占位 key：启动归一化会清掉 env 里 "ollama" 这种占位值
     assert model_rows(body)[0]["has_key"] is False
+    # used_by 是派生只读值：对话池空 → 没有 "chat" 用途（不自动进池）。
+    assert "chat" not in (model_rows(body)[0].get("used_by") or [])
 
 
 def test_admin_audits_never_contain_api_key_material(client: TestClient) -> None:
@@ -428,9 +435,7 @@ def test_role_model_name_must_be_a_configured_backend(client: TestClient) -> Non
     assert "cloud-a" in res.json()["detail"]
     # 也覆盖 PATCH 路径
     client.post("/api/roles", json={"role_id": "ok", "role_name": "ok", "system_prompt": "x"})
-    assert (
-        client.patch("/api/roles/ok", json={"model_name": "nope"}).status_code == 400
-    )
+    assert client.patch("/api/roles/ok", json={"model_name": "nope"}).status_code == 400
 
 
 def test_unknown_role_backend_falls_back_to_default(client: TestClient) -> None:
@@ -540,7 +545,7 @@ def test_invalid_default_backend_400(client: TestClient) -> None:
     # 未写入：只剩启动时播种的 local，ghost 不存在
     body = client.get("/api/settings/models").json()
     assert {r["name"] for r in model_rows(body)} == {"local"}
-    assert body["default"] == "local"  # 播种时采纳的 env 默认
+    assert body["default"] is None  # 绝对无默认：无效 PUT 不写，也不隐式默认
 
 
 def test_empty_backend_list_400(client: TestClient) -> None:

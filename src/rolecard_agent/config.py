@@ -45,9 +45,14 @@ DEFAULT_LOCAL_BACKEND: dict[str, Any] = {
     # vl 版官方模板不支持 tools（bind_tools 400），而带工具的档案管理员是对话主路径；
     # 两个 7B 也不能同时驻留 8GB 显存。**qwen2.5:7b 已不再使用**，配置与文档都不应再引用它。
     "model": "qwen3-vl:8b",
+    # 绝对无默认（2026-10-31 用户拍板）：内置本地行**不再自动用于对话** —— 它只是
+    # 模型页里"存在的一行"，进不进对话池由操作员在「服务」页显式排（或 env 显式写
+    # usage=chat）。从前它默认 usage=chat，于是每台新装机都隐式背着一个用户从没
+    # 选过的"对话默认"。打包版首启多一步显式选择，换来的是"跑着的模型一定是我选的"。
     # L11：不设 api_key（ModelBackend 默认 None）。此前占位 "ollama" 会被 deep_check
     # 拼成 `Bearer ollama` 发出去（无效凭据还进日志）；graph.build_model 与 deep_check
     # 都按真值判断，None = 不带认证头。Ollama 本来就不需要 key。
+    "usage": "",
 }
 
 # 多模态后端（vl = 文本版超集）按需添加：图片直读对话 / 备用抽取。
@@ -127,6 +132,22 @@ def env_falsy(raw: str) -> bool:
     return raw.strip().lower() in FALSY_STRINGS
 
 
+class ChatModelNotSet(RuntimeError):
+    """对话默认模型**未设置**（绝对无默认，2026-10-31 用户拍板）。
+
+    新装机不再隐式指向任何模型：`backend(None)` 在未设置时抛本异常，发送方据此把
+    "去哪里设置"通知给用户（`core/agent/turn.model_error_detail` 原样透出这句话），
+    而不是拿一个用户从没选过的模型顶上。
+    """
+
+
+#: `ChatModelNotSet` 的用户面文案（异常与 API 错误详情共用同一份，别抄第二遍）。
+CHAT_MODEL_UNSET_DETAIL = (
+    "还没设置对话模型：到「设置 → 服务」把一个模型拖进对话序列（第 1 位生效），"
+    "或在「模型」页把它的用途勾上对话。"
+)
+
+
 class ModelBackend(BaseModel):
     """One callable model endpoint.
 
@@ -200,7 +221,11 @@ class Settings(BaseModel):
     model_backends: dict[str, ModelBackend] = Field(
         default_factory=lambda: {"local": ModelBackend(**DEFAULT_LOCAL_BACKEND)}
     )
-    model_default: str = "local"
+    # 绝对无默认（2026-10-31）：**空串 = 未设置**。从前默认 "local"（随包本机模型），
+    # 没装 Ollama 的机器上它是一具幽灵，发送失败只给一句通用话术。未设置时
+    # `backend(None)` 抛 `ChatModelNotSet`，发送方据此把"去哪里设置"通知给用户。
+    # env 显式写 MODEL_DEFAULT 的照旧生效 —— 那是操作员自己设置的。
+    model_default: str = ""
     model_fallbacks: list[str] = Field(default_factory=list)
     # ENGI-36 C：见 `FALLBACK_POLICIES` 那段（数据在常量处，判定是纯函数）。
     model_fallback_policy: str = "allow_cloud"
@@ -228,9 +253,9 @@ class Settings(BaseModel):
     # 换成别的模型的人不受这颗默认值影响。例：MODEL_THINKING_MODELS=qwen3:8b
     # 随包那个模型默认要显示思考过程（上面那段"刻意没有裸 on"的理由）。这个名字**不写第二遍**
     # （`R28-13`）：换默认本地模型时，这里跟着 `DEFAULT_LOCAL_BACKEND` 走，不用记得改两处。
-    model_thinking_models: list[str] = Field(
-        default_factory=lambda: [str(DEFAULT_LOCAL_BACKEND["model"])]
-    )
+    # 绝对无默认（2026-10-31）：出厂不再假设"随包那个模型存在"——名单默认空，
+    # 由操作员显式列出（运行环境页 / MODEL_THINKING_MODELS）。
+    model_thinking_models: list[str] = Field(default_factory=list)
 
     # 思考模式**总开关**（用户 2026-09-17）：auto = 按 MODEL_THINKING_MODELS 名单自动；
     # off = 名单内的模型也不传 reasoning —— 那是**把它藏起来**，不是把它停掉（性能上
@@ -535,6 +560,8 @@ class Settings(BaseModel):
         three tool calls later.
         """
         key = name or self.model_default
+        if not key:
+            raise ChatModelNotSet(CHAT_MODEL_UNSET_DETAIL)
         if key not in self.model_backends:
             known = ", ".join(sorted(self.model_backends))
             raise KeyError(f"unknown model backend {key!r}; configured: {known}")
@@ -672,7 +699,11 @@ class Settings(BaseModel):
                     if name == "local":
                         # Partial override: someone writing {"local": {"model": "..."}} means
                         # "the usual Ollama, different model" - not "and drop the base_url".
-                        merged["local"] = ModelBackend(**{**DEFAULT_LOCAL_BACKEND, **cfg})
+                        # usage 不继承内置的 ""（绝对无默认那只管"没写 env"的形态）：
+                        # **env 里显式写了 local 就是操作员在设置**，默认进对话。
+                        merged["local"] = ModelBackend(
+                            **{**DEFAULT_LOCAL_BACKEND, "usage": "chat", **cfg}
+                        )
                     else:
                         merged[name] = ModelBackend(**cfg)
             except ValidationError as exc:

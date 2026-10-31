@@ -1115,11 +1115,15 @@ describe("ChatPage 提取精华（对话 → 该角色的记忆）", () => {
 });
 
 describe("对话默认指向不在线的本地模型 → 常驻横幅（2026-10-31 用户：没设置/不可用要通知）", () => {
-  function stubServices(top: { kind: string; available: boolean; label: string } | undefined) {
+  function stubServices(
+    top: { kind: string; available: boolean; label: string } | undefined,
+    opts?: { defaultModel?: string | null },
+  ) {
     apiMock.get.mockImplementation(async (url: string) => {
       if (url === "/api/sessions") return [];
       if (url === "/api/roles") return [];
-      if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
+      if (url === "/api/settings/models")
+        return { default: opts?.defaultModel === undefined ? "local" : opts.defaultModel, providers: [], fallbacks: [] };
       if (url === "/api/settings/model-providers") return { providers: [] };
       if (url === "/api/services")
         return {
@@ -1137,6 +1141,12 @@ describe("对话默认指向不在线的本地模型 → 常驻横幅（2026-10-
     expect(
       await screen.findByText(/对话默认指向本机模型「qwen3-vl:8b」，但它现在不在线/),
     ).toBeTruthy();
+  });
+
+  it("对话池为空（绝对无默认）：显示「还没设置对话模型」的横幅", async () => {
+    stubServices(undefined, { defaultModel: null });
+    render(<ChatPage />);
+    expect(await screen.findByText(/还没设置对话模型：到「设置 → 服务」/)).toBeTruthy();
   });
 
   it("第 1 位是云端（或在线）：不显示横幅", async () => {

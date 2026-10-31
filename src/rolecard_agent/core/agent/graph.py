@@ -235,7 +235,7 @@ def _init_model(
     # OpenAI 兼容端点（SiliconFlow 一族）的思考开关是**请求体里的 `enable_thinking`**，
     # 不是 native 的 `reasoning` —— 从前这一支从不发开关（2026-10-31 用户报"看不到思考
     # 过程了"的根因之一）。护栏语义与 native 同一条：名单外的模型不支持，加进去会 400，
-    # 责任在名单本身。捕获侧见 `core/models/openai_reasoning.py`（langchain-openai 不映射
+    # 责任在名单本身。捕获侧见 `core/agent/openai_reasoning.py`（langchain-openai 不映射
     # `reasoning_content` 增量，那里补）。
     # 超时的**传法因客户端而异**（实测，别再想当然）：
     #   - openai 兼容客户端认 `timeout` → 落到 request_timeout；
