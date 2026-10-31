@@ -49,8 +49,7 @@ def _own_a_thread(client: TestClient, thread_id: str, user_id: str) -> None:
     """直接落库造"某个人名下的一条会话"，并把 `app_user` 那行补上（有外键）。"""
     conn = client.app.state.ctx.conn
     conn.execute(
-        "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "
-        "VALUES (?, 'local', ?)",
+        "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) VALUES (?, 'local', ?)",
         (user_id, user_id),
     )
     conn.execute(
@@ -59,6 +58,62 @@ def _own_a_thread(client: TestClient, thread_id: str, user_id: str) -> None:
         (thread_id, user_id, f"{user_id} 的线"),
     )
     conn.commit()
+
+
+# -- 7b：凭据族的判定（第四波盲区 P2-6：切身份后 actor.role 的真值）-------------------
+#
+# 为什么单独立一条：这一支此前的断言全是**状态码**（200/404/403）——"切到别人名下"
+# 与"切到别人名下但被降级成使用者"在状态码上长得一模一样。而 `actor.role` 是分级闸
+# `require_operator` 唯一读的那个字段：它错了，operator 档的端点会对普通使用者开，
+# 或者对操作员关上。状态码钉不到这一层。
+
+
+def test_the_credential_family_decides_the_actor_role(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """匿名=user；普通凭据=user；`operator:` 前缀的凭据=operator。
+
+    走的是**真解析路径**（`resolve_actor` + 中间件），不是手搓一个 Actor ——
+    手搓那只验得"Actor 这个类能装下 role"，验不到"凭据串怎么变成 role"。
+    """
+    from rolecard_agent.api.auth import ROLE_OPERATOR, ROLE_USER, resolve_actor
+    from rolecard_agent.config import Settings
+
+    client = _client(
+        monkeypatch,
+        tmp_path,
+        creds="u1:pw,operator:boss:pw",
+    )
+    conn = client.app.state.ctx.conn
+    conn.execute(
+        "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "
+        "VALUES ('u1', 'local', 'u1')"
+    )
+    conn.commit()
+
+    settings = Settings(auth_credentials="u1:pw,operator:boss:pw")
+
+    # 匿名：拿不到身份，但族仍是 user（能不能进门由 auth_required 决定，不由 role 决定）
+    assert resolve_actor(authorization=None, api_key=None, settings=settings).role == ROLE_USER
+
+    # 普通凭据：user 族
+    assert (
+        resolve_actor(authorization=_basic("u1", "pw"), api_key=None, settings=settings).role
+        == ROLE_USER
+    )
+
+    # `operator:` 前缀：operator 族 —— 这一条才是分级闸读的那一格
+    assert (
+        resolve_actor(authorization=_basic("boss", "pw"), api_key=None, settings=settings).role
+        == ROLE_OPERATOR
+    )
+
+    # 真请求面：操作员档端点（/api/metrics）对 user 族关、对 operator 族开 ——
+    # 族判错的后果在这一行上是可见的（403 vs 200），不是只在字段里。
+    user_cred = {"authorization": _basic("u1", "pw")}
+    op_cred = {"authorization": _basic("boss", "pw")}
+    assert client.get("/api/metrics", headers=user_cred).status_code == 403
+    assert client.get("/api/metrics", headers=op_cred).status_code == 200
 
 
 # -- 1 & 2：本机那份 / 不是你的就读不到 --------------------------------------------
@@ -104,13 +159,19 @@ def test_authenticating_as_a_known_user_switches_the_data(
 
     as_u1 = client.get("/api/sessions", headers={"authorization": _basic("u1", "pw")}).json()
     assert [s["thread_id"] for s in as_u1] == ["s_foreign_line"]
-    assert client.get(
-        "/api/session/s_foreign_line/turn", headers={"authorization": _basic("u1", "pw")}
-    ).status_code == 200
+    assert (
+        client.get(
+            "/api/session/s_foreign_line/turn", headers={"authorization": _basic("u1", "pw")}
+        ).status_code
+        == 200
+    )
     # 反过来也一样：u1 读不到本机那份
-    assert client.get(
-        "/api/session/s_local_line/turn", headers={"authorization": _basic("u1", "pw")}
-    ).status_code == 404
+    assert (
+        client.get(
+            "/api/session/s_local_line/turn", headers={"authorization": _basic("u1", "pw")}
+        ).status_code
+        == 404
+    )
 
 
 def test_a_stranger_username_invents_no_identity(
@@ -119,9 +180,12 @@ def test_a_stranger_username_invents_no_identity(
     """`AUTH_CREDENTIALS` 里有、`app_user` 里没有 ⇒ 回落到本机那份，而不是凭空多出一个主人。"""
     client = _client(monkeypatch, tmp_path, creds="nobody:pw")
     _own_a_thread(client, "s_local_line", DEFAULT_USER_ID)
-    ids = [s["thread_id"] for s in client.get(
-        "/api/sessions", headers={"authorization": _basic("nobody", "pw")}
-    ).json()]
+    ids = [
+        s["thread_id"]
+        for s in client.get(
+            "/api/sessions", headers={"authorization": _basic("nobody", "pw")}
+        ).json()
+    ]
     assert ids == ["s_local_line"]
 
 
