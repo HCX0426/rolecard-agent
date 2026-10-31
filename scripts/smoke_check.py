@@ -277,7 +277,9 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
     @check("角色卡：内置 / 新建 / 编辑 / 删除")
     def _roles() -> None:
         builtin = c.get("/api/roles").json()
-        assert any(r["role_id"] == "medical_archivist" for r in builtin)
+        # 锚定「通用助手」（2026-10-31 教义：默认常驻只留它 —— 域角色不再开机自种，
+        # medical_archivist 不再保证在场，这一条在干净世界上必红）。
+        assert any(r["role_id"] == "general_assistant" for r in builtin)
         created = c.post(
             "/api/roles",
             json={
