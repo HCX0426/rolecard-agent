@@ -83,7 +83,7 @@ electron-updater 的 blockmap 差分只对**逐字节稳定**的部分有效。�
 ### 3.4 装好/更新完要自动清临时文件（用户 2026-10-13 追加的规矩）
 
 读源码 + 实测把"哪些是临时文件、能不能删"钉成三类，处置各不相同（判据在
-`shell/main/updateCacheCleanup.ts`，九条读数由 `shell/scripts/test-update-cache-cleanup.cjs`
+`shell/main/updateCacheCleanup.ts`，十五条读数由 `shell/scripts/test-update-cache-cleanup.cjs`
 真跑，进 full 门禁与 frontend job）：
 
 | 东西 | 处置 | 依据 |
@@ -184,7 +184,7 @@ v0.5.1-beta.1 已发四版，完整链仍未被一次真升级走过；下一次
       publish 段让 electron-builder 在无 token 的 job 上尝试上传，`71ec11a` 修成
       `--publish never`（读 PublishManager.js 核实 never 不砍 latest.yml/app-update.yml）
 - [x] H. 升级后自动清临时文件（§3.4，用户 10-13 追加）：`updateCacheCleanup.ts` 纯函数 +
-      九条真跑读数进 full 门禁与 frontend job；对真实缓存目录实测不误删差量基线
+      十五条真跑读数进 full 门禁与 frontend job；对真实缓存目录实测不误删差量基线
 - [x] I. 三档自动更新开关（§3.5，用户 10-14 追加）：`updater-prefs.json` + 托盘子菜单 +
        `before-quit` 接 `onQuitAttempt`；**顺带修掉 `quitAndInstall(false,…)` 不传 `/S`
        的静默安装 bug**（读 BaseUpdater.js/NsisUpdater.js 源码 + 打包版真起一次实测）

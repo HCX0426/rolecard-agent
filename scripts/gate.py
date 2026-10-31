@@ -97,7 +97,7 @@ STEPS: list[tuple[str, list[str], str]] = [
     ("shell typecheck", [NPM, "run", "typecheck"], "full"),
     # 升级缓存清理判据（用户 10-13 的规矩）。typecheck 守不住它 —— 类型对、逻辑反是常态，
     # 而删错了的代价是用户重下一整个安装包或把没装的下载删掉。shell 没有测试框架，
-    # 这个脚本用真实临时目录跑九条读数、红就 exit 1（先 build 再跑，见 shell/package.json）。
+    # 这个脚本用真实临时目录跑十五条读数、红就 exit 1（先 build 再跑，见 shell/package.json）。
     ("shell updater 清理判据", [NPM, "run", "test:cleanup"], "full"),
     # **不在命令行再补 `-q`**：`pyproject.toml` 的 `addopts` 已经带了一个 `-q`，而 pytest 的
     # quiet 是累加的 —— 两个 `-q` 就是 verbosity -2，会把最后那行 `1320 passed in 177.31s`
@@ -509,7 +509,7 @@ STEP_TIMEOUTS: dict[str, float] = {
     "mypy scripts/": 180.0,
     "mypy(linux 档)": 180.0,
     "shell typecheck": 180.0,
-    # 清理判据那步 = build（tsc 全量）+ 九条真跑，实测 1.6s（热）；与 typecheck 同档。
+    # 清理判据那步 = build（tsc 全量）+ 十五条真跑，实测 1.6s（热）；与 typecheck 同档。
     "shell updater 清理判据": 180.0,
     # pytest 快档：三趟绿 run 实测 77.4 / 82.4 / 84.2s，360 ≈ 4.3×（xdist 满载抖动那回
     # 的教训在 22c267d：慢是真实存在的形状，但 900 的上限从未被健康趟用过一半）。

@@ -23,7 +23,9 @@
  *      正是今天装的那版安装包，逐字节吻合。
  *
  *   3. **升级前的数据快照（rolecard-agent-update-backups/）** —— **不在这里管**。
- *      它是回滚路径不是临时文件，寿命由 updater.ts 的 BACKUP_KEEP 定（留最近 2 份）。
+ *      它是回滚路径不是临时文件，寿命由 updater.ts 的 BACKUP_KEEP（份数）与
+ *      BACKUP_MAX_BYTES（总体积，R1031-29）双上限定，裁法是本文件导出的
+ *      `snapshotsToEvict`（判据住这儿，删的动作在 updater）。
  *      把"清临时文件"理解成"顺手删备份"是要出人命的读法。
  *
  * 保守优先：读不到 json、解析不出版本、版本不等于当前 —— 一律**不动**。
@@ -87,4 +89,41 @@ export function cleanupConsumedPendingUpdate(
     return { kind: "keep", reason: `删除失败，保留：${String(error).slice(0, 80)}` };
   }
   return { kind: "removed", file: fileName, version, freedBytes };
+}
+
+/**
+ * 升级快照的体积闸（R1031-29，2026-10-31）：`BACKUP_KEEP` 只管份数不管字节 ——
+ * 数据根长到 8 GB 时"最近 2 份"就是 16 GB 的静默磁盘吞噬。开源参照 logback 的
+ * `totalSizeCap`：份数 + 总体积双上限，超限**从最旧的归档开始删**，且
+ * "never deletes the current active file" —— 这里对应"刚写的那份绝不删"。
+ *
+ * 判据拆成纯函数（名字进、名字出），删的动作留在调用方：与 `cleanupConsumedPending
+ * Update` 同一条纪律 —— 判据必须能被 node 直接跑测试，electron 不进来。
+ *
+ * @param names 快照目录名，**调用方已按时间序排好**（`backup-<ISO 戳>` 字典序=时间序）。
+ *              最后一个 = 刚写的这份，永远不删。
+ * @param sizeOf 单个快照目录的字节量。读不动回 0（算不进预算 = 保守多留，不许少留）。
+ * @returns 要删掉的目录名（可能为空数组）。
+ */
+export function snapshotsToEvict(
+  names: string[],
+  sizeOf: (name: string) => number,
+  maxBytes: number,
+  keepCount: number,
+): string[] {
+  if (names.length === 0) return [];
+  // 第一刀：份数超 keepCount 的部分（最旧的先走）—— 原 BACKUP_KEEP 语义一字不动。
+  const overCount = names.slice(0, Math.max(0, names.length - keepCount));
+  // 第二刀：留下 keepCount 份后仍超体积预算 —— 继续从最旧删起，**永远保留最新那一份**
+  // （它就是"回滚路径"本身，删了它升级就无处可退，宁超预算不许无路）。
+  const survivors = names.slice(Math.max(0, names.length - keepCount));
+  let total = survivors.reduce((sum, name) => sum + sizeOf(name), 0);
+  const overSize: string[] = [];
+  // survivors 至少剩 1 份时停手：while 条件里的 `> 1` 就是那条"最新一份不动"。
+  while (total > maxBytes && survivors.length - overSize.length > 1) {
+    const next = survivors[overSize.length] as string; // 上面的 length 守卫保证了这格存在
+    overSize.push(next);
+    total -= sizeOf(next);
+  }
+  return [...overCount, ...overSize];
 }

@@ -355,7 +355,7 @@ jobs:
         working-directory: shell
         run: npm ci && npm run typecheck
 
-      - name: 壳升级清理判据（真跑九条读数，红就 exit 1）
+      - name: 壳升级清理判据（真跑十五条读数，红就 exit 1）
         # typecheck 守不住"删对了什么" —— 类型对、逻辑反是常态，而这里删错东西的代价是
         # 用户重下一整个安装包、或把还没装的下载删掉。与上面那步同一个 job（node 已装、
         # 依赖已 npm ci），`test:cleanup` 自带 build。gate.py 的 CI_SKIP 把同名步骤挡在

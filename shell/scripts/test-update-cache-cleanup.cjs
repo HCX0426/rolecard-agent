@@ -13,7 +13,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const { versionFromArtifactName, cleanupConsumedPendingUpdate } = require(
+const { versionFromArtifactName, cleanupConsumedPendingUpdate, snapshotsToEvict } = require(
   path.join(__dirname, "..", "out", "main", "updateCacheCleanup.js"),
 );
 
@@ -144,6 +144,50 @@ check("⑦ 尾部斜杠不影响路径（cacheDir 传法两种都对）", () => 
   seedPending(cache, "rolecard-agent-0.4.2-x64.exe");
   const report = cleanupConsumedPendingUpdate(`${cache}/`, "0.4.2", makeFs(cache));
   assert.equal(report.kind, "removed");
+});
+
+// ---------------------------------------------------------------- 快照体积闸（R1031-29）
+
+/** 名字→字节的假表（时间序数组 + 每份尺寸；缺省 1 字节/份）。 */
+function fakeSizes(sizes) {
+  return (name) => sizes[name] ?? 1;
+}
+
+check("⑧ 份数没超、体积没超 → 一个都不删", () => {
+  const names = ["backup-a", "backup-b"];
+  const doomed = snapshotsToEvict(names, fakeSizes({ "backup-a": 500, "backup-b": 500 }), 10_000, 2);
+  assert.deepEqual(doomed, []);
+});
+
+check("⑨ 份数超限 → 最旧的先走（原 BACKUP_KEEP 语义一字不动）", () => {
+  const names = ["backup-1", "backup-2", "backup-3", "backup-4"];
+  const doomed = snapshotsToEvict(names, fakeSizes({}), 1_000_000, 2);
+  assert.deepEqual(doomed, ["backup-1", "backup-2"]);
+});
+
+check("⑩ 份数合规但体积超预算 → 继续从最旧删，最新一份永远保留", () => {
+  // 两份各 6 GB、预算 10 GB：旧的那份必须走，最新那份（回滚路径本身）不许动。
+  const names = ["backup-old", "backup-new"];
+  const doomed = snapshotsToEvict(names, fakeSizes({ "backup-old": 6e9, "backup-new": 6e9 }), 1e10, 2);
+  assert.deepEqual(doomed, ["backup-old"]);
+});
+
+check("⑪ 只剩最新一份仍超预算 → 也绝不删它（宁超预算，不留无路可退）", () => {
+  const names = ["backup-only"];
+  const doomed = snapshotsToEvict(names, fakeSizes({ "backup-only": 100e9 }), 1e10, 2);
+  assert.deepEqual(doomed, []);
+});
+
+check("⑫ 读不动的快照按 0 计：它自己仍按最旧被裁，但不把别的挤过预算线", () => {
+  const names = ["backup-a", "backup-b", "backup-c"];
+  // a 量不到（0 计入预算）、b 7 GB、c 7 GB，预算 10 GB：a 最旧先走（省 0 仍超），
+  // b 再走（省 7 GB 达标），c 是最新一份 —— 永远保留。
+  const doomed = snapshotsToEvict(names, (n) => ({ "backup-b": 7e9, "backup-c": 7e9 }[n] ?? 0), 1e10, 3);
+  assert.deepEqual(doomed, ["backup-a", "backup-b"]);
+});
+
+check("⑬ 空目录 → 空数组不报错", () => {
+  assert.deepEqual(snapshotsToEvict([], fakeSizes({}), 1e10, 2), []);
 });
 
 const failed = results.filter((r) => !r.ok);

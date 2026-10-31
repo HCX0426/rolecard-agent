@@ -29,7 +29,7 @@ import {
 import net from "node:net";
 import path from "node:path";
 
-import { cleanupConsumedPendingUpdate, type CleanupFs } from "./updateCacheCleanup";
+import { cleanupConsumedPendingUpdate, snapshotsToEvict, type CleanupFs } from "./updateCacheCleanup";
 
 /**
  * 自动更新的三档开关（用户 2026-10-14 要的"自动更新开关 + 启动时检测更新"）。
@@ -129,6 +129,15 @@ export type UpdaterOptions = {
 /** 数据根的备份保留份数：只留最近 N 份，装十次不会攒出十份几百 MB 的快照。 */
 const BACKUP_KEEP = 2;
 
+/**
+ * 快照目录的**总体积**预算（R1031-29，2026-10-31）：份数闸拦不住"单份 8 GB"的数据根
+ * —— 2 份就是 16 GB 静默吃盘。2 GiB 的取值依据：本产品是本地陪聊（文本 + 少量上传图片），
+ * 本机实测数据根 8 MB、重度文档工作区按 10 GB 天花板算，2 GiB 覆盖"日常重度用户的一半
+ * 快照"，同时给系统盘留出比"一整份快照"更硬的底线。**最新一份永远不删**（回滚路径），
+ * 所以这份预算的失败形状是"超预算多留一晚"，不是"无路可退"。
+ */
+const BACKUP_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** 端口还能连上 = 后端还没死透。连不上（ECONNREFUSED/超时）才算空。 */
@@ -177,6 +186,9 @@ function backupRootDir(localAppData: string): string {
 /**
  * 整目录快照。返回备份路径；数据根不存在（全新机器没数据可备份）返回 null 但**不算失败**。
  * 名字里的时间戳是 ISO 段（字典序 = 时间序），保留份数按它裁。
+ * 裁两刀（R1031-29）：份数超 BACKUP_KEEP 先走，剩下的一份份量字节、超 BACKUP_MAX_BYTES
+ * 预算继续从最旧删 —— 但**刚写的这份永远不删**（它就是这次升级的回滚路径本身）。
+ * 量字节复用下面清理读数那台 `dirBytes`（同一个事实只住一个地址）。
  */
 export function snapshotDataRoot(
   localAppData: string | undefined,
@@ -190,8 +202,11 @@ export function snapshotDataRoot(
   cpSync(root, dest, { recursive: true });
   const dir = backupRootDir(localAppData);
   const all = readdirSync(dir).filter((name) => name.startsWith("backup-")).sort();
-  for (const name of all.slice(0, Math.max(0, all.length - BACKUP_KEEP))) {
+  const sizeOf = (name: string): number => dirBytes(path.join(dir, name));
+  const doomed = snapshotsToEvict(all, sizeOf, BACKUP_MAX_BYTES, BACKUP_KEEP);
+  for (const name of doomed) {
     rmSync(path.join(dir, name), { recursive: true, force: true });
+    log(`升级快照已裁：${name}（份数/体积双上限，最新一份永远保留）`);
   }
   log(`数据根已快照：${dest}`);
   return dest;
