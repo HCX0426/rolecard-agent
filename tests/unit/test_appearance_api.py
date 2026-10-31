@@ -129,3 +129,15 @@ def test_rejects_oversized_upload(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
         )
     assert res.status_code == 400
     assert "超过上限" in res.json()["detail"]
+
+
+def test_rejects_suffix_content_mismatch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """R1031-22：后缀是 .png、内容不是图 → 400 不落盘（魔数白名单这第二道闸）。"""
+    app = create_app(sqlite_path=tmp_path / "app.db")
+    with TestClient(app) as c:
+        res = c.post(
+            "/api/appearance/background",
+            files={"file": ("evil.png", b"<script>alert(1)</script>", "image/png")},
+        )
+    assert res.status_code == 400
+    assert "不是这张后缀对应的图片" in res.json()["detail"]

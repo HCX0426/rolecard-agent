@@ -34,6 +34,26 @@ router = APIRouter()
 #: 允许的后缀（图片；svg 不收 —— 它能带脚本，是个 XSS 面）。
 _ALLOWED_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
 
+#: 魔数表（R1031-22）：后缀认了还不够——内容得真是那张图。从前只看后缀，
+#: `evil.png` 里装什么都能落进数据根并被原样托管出去（浏览器按 Content-Type 渲染，
+#: 服务器侧不做第二道确认）。表按"文件头字节"白名单：jpg 的 SOI、gif 的署名、
+#: webp 的 RIFF 容器 + WEBP 四 CC、png 的完整签名。
+_MAGIC: tuple[tuple[str, bytes], ...] = (
+    (".png", b"\x89PNG\r\n\x1a\n"),
+    (".jpg", b"\xff\xd8\xff"),
+    (".jpeg", b"\xff\xd8\xff"),
+    (".gif", b"GIF87a"),
+    (".gif", b"GIF89a"),
+)
+
+
+def _magic_matches(suffix: str, head: bytes) -> bool:
+    """内容头是否与后缀相认。webp 单独判（RIFF 容器里第 8-11 字节才是 WEBP）。"""
+    if suffix == ".webp":
+        return head[:4] == b"RIFF" and head[8:12] == b"WEBP"
+    return any(head.startswith(magic) for sfx, magic in _MAGIC if sfx == suffix)
+
+
 #: 目录名（数据根下）。一个就够 —— 界面只有一张背景图。
 _DIR_NAME = "appearance"
 
@@ -81,6 +101,9 @@ def upload_background(
     raw = file.file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="文件是空的。")
+    if not _magic_matches(suffix, raw):
+        # R1031-22：后缀对、内容不对 —— 当场 400，不落盘（落了再被托管出去就是第二道洞）。
+        raise HTTPException(status_code=400, detail="文件内容不是这张后缀对应的图片格式。")
     if len(raw) > ctx.settings.max_upload_bytes:
         raise HTTPException(
             status_code=400, detail=f"文件超过上限（{ctx.settings.max_upload_bytes} 字节）。"

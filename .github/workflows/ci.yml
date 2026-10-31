@@ -264,6 +264,15 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: electron 二进制缓存（R1031-09）
+        # shell 的 npm ci 会跑 electron postinstall 拉 ~100MB 二进制；缓存它，键跟
+        # shell 的锁走（electron-userland/electron-builder#1868 的标准修法）。命中省
+        # 10~20s/趟；miss 只多一次 tar 开销，无害。
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('shell/package-lock.json') }}
+
       - name: 壳 typecheck（`R102-63`：此前只在手动 full 门禁跑，push 路径无人看着）
         working-directory: shell
         run: npm ci && npm run typecheck
