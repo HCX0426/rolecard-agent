@@ -2919,6 +2919,8 @@ export interface components {
          * @description 自动生成：KnowledgeViewItem（Item 的对象形状）。
          */
         KnowledgeViewItem: {
+            /** Bytes */
+            bytes: number | null;
             /** Chunks */
             chunks: number | null;
             /** Embedder */

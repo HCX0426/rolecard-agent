@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
-from rolecard_agent.base.observability import TraceEvent, timer
+from rolecard_agent.base.observability import TraceEvent, logline, timer
 from rolecard_agent.config import Settings
 
 if TYPE_CHECKING:
@@ -495,6 +495,10 @@ class KnowledgeBase:
             path=str(chroma_path),
             settings=chromadb.Settings(anonymized_telemetry=False),
         )
+        # 落盘路径要留着（R1031-33 体积治理）：每个集合的真实字节住在
+        # `<chroma_path>/<集合 uuid>/`（HNSW 的 data_level0.bin 那族文件）——
+        # "知识库到底吃了多少盘"只有量目录才知道，`count()` 数的是段不是字节。
+        self._chroma_path = Path(chroma_path)
         self._embedder = embedder
         self._reranker = reranker
         # 绝对相似度下限（0 = 不过滤）。只在能算出余弦相似度的集合上生效 ——
@@ -887,14 +891,19 @@ class KnowledgeBase:
             raise
 
     def describe(self) -> list[dict[str, object]]:
-        """知识库概览：每个作用域的分块数与来源清单（设置页知识库管理视图）。
+        """知识库概览：每个作用域的分块数、**磁盘字节**与来源清单（设置页知识库管理视图）。
 
         `R102-55` 根治后的读法：分块数出 chroma 的 `count()`，来源清单出**投影表**
         （`knowledge_source`，由 index/delete_source/reset_scope 三入口维护、存量由
         bootstrap 一次性种子回填）。从前那种"每开一次页面就全量倒灌分块元数据"
         （5k 分块 66.5ms、线性于分块数）的读法已不存在 —— 本方法现在与分块数无关。
         裸建法（`sources_store=None`）下来源清单为空：那是单测/脚本的形状，不是应用。
+
+        `bytes`（R1031-33，2026-10-31）：整本账**每次调用量一遍**（`collection_bytes()`，
+        只读 sqlite catalog + 目录求和），不是每集合量一次 —— 概览页开一次别问 N 遍库。
+        量不到落 0（诚实读数，见 collection_bytes 的边界），不许报错、更不许拿段数冒充。
         """
+        byte_map = self.collection_bytes()
         out: list[dict[str, object]] = []
         for scope, count in self.collection_counts():
             sources = self._sources.names(scope) if self._sources is not None else []
@@ -902,6 +911,7 @@ class KnowledgeBase:
                 {
                     "scope": scope,
                     "chunks": count,
+                    "bytes": byte_map.get(scope, 0),
                     "sources": sources,
                     "embedder": self._embedder.name,
                 }
@@ -911,6 +921,51 @@ class KnowledgeBase:
     def collection_counts(self) -> list[tuple[str, int]]:
         """(作用域, 分块数) 清单：概览与一次性种子共用同一事实面（chroma `count()`）。"""
         return [(c.name, int(c.count())) for c in self._client.list_collections()]
+
+    def collection_bytes(self) -> dict[str, int]:
+        """作用域 → 磁盘字节（R1031-33 体积治理的读数面）。
+
+        实测（chromadb 1.5.9，2026-10-31 现场解剖）：`<chroma_path>/<uuid>/` 里住着
+        **VECTOR segment** 的 HNSW 落盘（data_level0.bin 那族 —— `count()` 数的是段，
+        字节只有量目录才知道）；目录名的 uuid 是 segment id 而**不是** collection id，
+        两者的映射住在 `chroma.sqlite3` 的 `segments(collection)` 列。所以这里以目录账
+        为准：只读开 catalog（`mode=ro`，不碰写锁），把每个集合名解成它全部 segment
+        目录的字节和。
+        诚实边界：库还没建 / 表读不动 / 被别的进程写锁 —— 整表回空 dict，调用方把
+        字节当"没量到"（describe 里落 0）。体积是**读数不是判据**：量不到不许报错，
+        更不许猜一个数。目录里认不出的 uuid（孤儿段）不归任何集合 —— 它们由
+        `scripts/tools/chroma_housekeeping.py` 点名，不在这里偷偷删。
+        """
+        import contextlib
+        import sqlite3
+
+        catalog = self._chroma_path / "chroma.sqlite3"
+        if not catalog.is_file():
+            return {}
+        out: dict[str, int] = {}
+        try:
+            con = sqlite3.connect(f"file:{catalog.as_posix()}?mode=ro", uri=True)
+        except sqlite3.Error:
+            return {}
+        try:
+            rows = con.execute(
+                "SELECT c.name, s.id FROM collections c JOIN segments s ON s.collection = c.id"
+            ).fetchall()
+        except sqlite3.Error:  # 表形状不是我们认识的那版 chroma —— 没量到，不是错
+            con.close()
+            return {}
+        with contextlib.closing(con):
+            for name, segment_id in rows:
+                seg_dir = self._chroma_path / str(segment_id)
+                if not seg_dir.is_dir():
+                    continue  # METADATA segment 没有目录（实测），跳过不报错
+                try:
+                    out[str(name)] = out.get(str(name), 0) + sum(
+                        f.stat().st_size for f in seg_dir.rglob("*") if f.is_file()
+                    )
+                except OSError:
+                    continue
+        return out
 
     def source_pairs(self, scope: str) -> list[tuple[str, str]]:
         """((仅迁移种子用)) 某作用域**存量分块**的 (索引身份, 展示名)。
@@ -932,7 +987,148 @@ class KnowledgeBase:
         }
         return sorted(pairs)
 
-    def reset_scope(self, scope: str) -> None:
+    def _segment_ledger(self) -> tuple[set[str], bool]:
+        """(catalog 认得的 segment id 全集, 这本账读得出吗)。
+
+        两格分开是 R1031-33 的命门：**读不出的空账 ≠ 没引用的空账**。
+        `Nothing found on disk` 那一族（R102-41）让"表存在但读炸"成为真实形状，
+        把它读成空集再拿去判孤儿 = 一次偶发把整个知识库删光。
+        """
+        import sqlite3
+
+        catalog = self._chroma_path / "chroma.sqlite3"
+        if not catalog.is_file():
+            return set(), False
+        try:
+            con = sqlite3.connect(f"file:{catalog.as_posix()}?mode=ro", uri=True)
+        except sqlite3.Error:
+            return set(), False
+        try:
+            return {str(r[0]) for r in con.execute("SELECT id FROM segments")}, True
+        except sqlite3.Error:
+            return set(), False
+        finally:
+            con.close()
+
+    def orphan_segment_dirs(self) -> tuple[list[Path], bool]:
+        """uuid 形状、目录在而账上无的 segment 目录 —— `(孤儿, 账读得出吗)`。
+
+        账读不出时回 `([], False)`：调用方**必须**把 False 当"问不出"处理（不删、
+        如实报），不许当"没孤儿"。uuid 形状闸把 `.gitkeep` 等杂项永远挡在射程外。
+        """
+        import re
+
+        ids, ok = self._segment_ledger()
+        if not ok:
+            return [], False
+        _UUID = re.compile(
+            r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        )
+        orphans = [
+            p
+            for p in self._chroma_path.iterdir()
+            if p.is_dir() and _UUID.match(p.name) and p.name not in ids
+        ]
+        return orphans, True
+
+    def _reclaim_segment_dirs(
+        self, before: set[str], after_ok: bool, after: set[str]
+    ) -> tuple[int, int]:
+        """回收"上一本账认得、这一本账不认"的 segment 目录 —— **差集判据，尽力而为**。
+
+        R1031-33 实测（chromadb 1.5.9，2026-10-31 现场解剖）：`delete_collection` 掉
+        catalog 行、**不掉盘**（`<uuid>/data_level0.bin` 那棵 HNSW 树留在原地）。每次
+        「重建作用域」因此泄一整棵旧树 —— 用户看不见的静默吃盘，正是这条台账记的病。
+
+        为什么用差集而不是孤儿全扫：R102-41 那族偶发里 catalog 会答不出来
+        （`Nothing found on disk`），**读不出的账 = 所有目录都"像"孤儿** ⇒ 一次偶发
+        删光知识库。差集把危险形状挡在结构上：只删**这次删除亲手从账上摘掉的 id**；
+        左账读不出、或右账**删除之后**读不出，一个都不碰。
+
+        两层设计的**第一层**（尽力而为）：Windows 上 chroma 自己还攥着被删索引的文件句柄
+        （实测 rmtree 到 1s 后仍 EBUSY，gc 也救不了；Linux 能删 —— POSIX 允许删打开的
+        文件）。删不动**不拦重建**（集合已从账上摘掉，这是回收半边）：大声 warn 留痕，
+        留下的孤儿由**第二层**（`sweep_orphan_segments`，下次开机新进程里句柄自然没了）
+        兜底收走。返回（回收目录数, 释放字节数）——只算**真从盘上消失的**，句柄锁住的
+        不进读数（读数说"我删了什么"，不是"我打算删什么"）。
+        """
+        import shutil
+
+        if not before or not after_ok:
+            return 0, 0
+        removed = freed = 0
+        for gone in before - after:
+            cand = self._chroma_path / str(gone)
+            if not cand.is_dir():
+                continue
+            try:
+                size = sum(f.stat().st_size for f in cand.rglob("*") if f.is_file())
+                shutil.rmtree(cand)
+            except OSError as exc:
+                # 第一层删不动 = 正常形状（Windows 句柄锁），不是失败：第二层接手。
+                logline(
+                    "info", "chroma_reclaim_deferred", f"{gone[:8]} 句柄未放，留给开机清扫：{exc}"
+                )
+                continue
+            if not cand.exists():  # rmtree 没抛但目录还在（理论形状）—— 读数不许说谎
+                continue
+            removed += 1
+            freed += size
+        return removed, freed
+
+    def sweep_orphan_segments(self, *, grace_minutes: int = 10) -> tuple[int, int]:
+        """开机清扫（R1031-33 第二层）：全扫孤儿 uuid 目录，句柄已放的删掉。
+
+        第一层（删除当场回收）在 Windows 上结构性删不动（chroma 攥着自己的索引句柄，
+        实测 1s 后仍 EBUSY）—— 而**下一次开机新进程里那些句柄全没了**（实测复现：
+        close + 重开 → rmtree 立即可行）。所以这里在全新进程被装配根点名一次。
+
+        判据与危险形状：
+          * 账读不出（`([], False)`）⇒ **一个不碰**，直接回 (0,0)：catalog 答不出时
+            所有目录都"像"孤儿，这正是 R102-41 那族偶发最该挡住的删法。
+          * uuid 形状闸：`.gitkeep`、临时目录等杂项永远不在射程。
+          * **宽限期**（默认 10 分钟）：mtime 太新的孤儿可能是**另一个进程正在建的
+            集合**（chroma 先落目录、后写账的窗口）——开机扫撞不上它，但测试/手动扫
+            要防撞。宁可这趟少删，不可删掉别人的新知识。
+        返回（回收目录数, 释放字节数）；有动作就大声留痕。
+        """
+        import shutil
+        import time
+
+        orphans, ok = self.orphan_segment_dirs()
+        if not ok or not orphans:
+            return 0, 0
+        cutoff = time.time() - grace_minutes * 60.0
+        removed = freed = 0
+        for cand in orphans:
+            try:
+                newest = max(
+                    (f.stat().st_mtime for f in cand.rglob("*") if f.is_file()),
+                    default=cand.stat().st_mtime,
+                )
+            except OSError:
+                continue
+            if newest > cutoff:
+                continue  # 新得不像孤儿，像半成品 —— 这趟不碰
+            try:
+                size = sum(f.stat().st_size for f in cand.rglob("*") if f.is_file())
+                shutil.rmtree(cand)
+            except OSError as exc:
+                # 还攥着句柄的（比如本进程刚删的）：等下次开机，不算错。
+                logline("info", "chroma_sweep_locked", f"{cand.name[:8]} 仍被占用，下次再收：{exc}")
+                continue
+            if not cand.exists():
+                removed += 1
+                freed += size
+        if removed:
+            logline(
+                "info",
+                "chroma_orphan_sweep",
+                f"开机清扫：回收 {removed} 个孤儿 segment 目录，释放 {freed} 字节",
+            )
+        return removed, freed
+
+    def reset_scope(self, scope: str) -> tuple[int, int]:
         """删除整个作用域集合（embedder 切换后维度不兼容时的重建入口）。
 
         删除失败**必须抛出**：吞掉异常会让调用方以为清空了（审计都写了），而集合还在
@@ -941,7 +1137,12 @@ class KnowledgeBase:
         （集合删了、投影清理抛了）后按提示再点一次「重建」，从前 chroma 对不存在的
         集合再删抛 NotFoundError，界面显示"重建失败"，卡死在无法重试的形状，
         而索引其实早清干净了。
+
+        返回 `(回收目录数, 释放字节)`（R1031-33：chroma 掉账不掉盘，实测泄整棵旧树；
+        差集回收见 `_reclaim_segment_dirs`）。调用方（console 的重建端点）把读数写进
+        审计 —— 用户看得见"这次重建真正腾出了多少盘"。
         """
+        before, before_ok = self._segment_ledger()
         try:
             self._client.delete_collection(name=scope)
         except Exception as exc:  # noqa: BLE001 - 只放行"集合不存在"这一种（R102-04 同判据）
@@ -952,6 +1153,15 @@ class KnowledgeBase:
             # 投影半边（`R102-55`）：集合整个没了，来源清单也清空（同样不吞异常 ——
             # 它失败时上面那条幂等判据保证用户再点一次能走通）。
             self._sources.forget_scope(scope)
+        after, after_ok = self._segment_ledger()
+        removed, freed = self._reclaim_segment_dirs(before if before_ok else set(), after_ok, after)
+        if removed or freed:
+            logline(
+                "info",
+                "chroma_scope_reclaim",
+                f"{scope}：回收 {removed} 个 segment 目录，释放 {freed} 字节",
+            )
+        return removed, freed
 
 
 # ---------------------------------------------------------------- 内核工具

@@ -497,6 +497,12 @@ def build_runtime(
     # 投影表的一次性种子（`R102-55`）：存量分块（旁路导入的 lore、旧上传）回填来源清单。
     # 热重建不再跑：表在库里，换装知识库实例不影响它。
     heal_knowledge_sources(knowledge, conn, tracer=resolved_tracer)
+    # 孤儿 segment 清扫（R1031-33 第二层）：chroma 删集合掉账不掉盘（实测），而删除当场
+    # 的回收在 Windows 上结构性删不动（自己的句柄锁着）。**开机这个时刻句柄是干净的**
+    # （旧进程已死、新 client 不开账外目录）——差集的账本层已把危险形状挡在结构里，
+    # 判据见 `KnowledgeBase.sweep_orphan_segments`。热重建不跑：新 client 与上一任同
+    # 进程时句柄形状不可靠，而这只是回收优化不是正确性 —— 漏一趟下次开机补。
+    knowledge.sweep_orphan_segments()
     registry = assembler.assemble_registry(assembly, registry_factory, effective, knowledge)
     factory = model_factory or build_model
     # 绝对无默认（2026-10-31）：新装机/未设置时 `backend(None)` 抛 ChatModelNotSet ——

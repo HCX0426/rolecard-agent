@@ -293,6 +293,11 @@ export function KnowledgeManager() {
                     {s.scope}
                   </code>
                   <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">{s.chunks} 段</span>
+                  {/* R1031-33：每作用域吃盘字节（量的是 HNSW 落盘目录，不是文本大小）。
+                      null = 没量到（账读不出）—— 如实显示"体积未知"，不拿 0 冒充。 */}
+                  <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">
+                    {s.bytes === null || s.bytes === undefined ? "体积未知" : formatBytes(s.bytes)}
+                  </span>
                   <span className="ml-2 rounded-full bg-slate-100 dark:bg-slate-700/50 px-2 py-0.5 text-11 text-slate-500 dark:text-slate-400">
                     嵌入：{s.embedder}
                   </span>

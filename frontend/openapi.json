@@ -2042,6 +2042,17 @@
     "additionalProperties": true,
     "description": "自动生成：KnowledgeViewItem（Item 的对象形状）。",
     "properties": {
+     "bytes": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Bytes"
+     },
      "chunks": {
       "anyOf": [
        {
@@ -2093,6 +2104,7 @@
     "required": [
      "scope",
      "chunks",
+     "bytes",
      "sources",
      "embedder"
     ],

@@ -169,16 +169,22 @@ def reset_knowledge_scope(
     """
     removed = ctx.knowledge.scope_count(scope)
     try:
-        ctx.knowledge.reset_scope(scope)
+        segs_removed, bytes_freed = ctx.knowledge.reset_scope(scope)
     except Exception as exc:  # noqa: BLE001 - 失败要可读，且**不能**写"已清空"的审计
         raise HTTPException(status_code=500, detail=f"重建作用域失败（{exc}）") from exc
     ctx.audit.log(
         actor=actor.id,
         action="reset_knowledge_scope",
         target=scope,
-        detail={"chunks_removed": removed},
+        detail={
+            "chunks_removed": removed,
+            # R1031-33：chroma 的 delete_collection 掉账不掉盘（实测），retriever 侧
+            # 按差集回收旧 segment 目录 —— 读数进审计，"这次重建腾出多少盘"可事后查。
+            "segments_removed": segs_removed,
+            "bytes_freed": bytes_freed,
+        },
     )
-    return {"scope": scope, "removed_chunks": removed}
+    return {"scope": scope, "removed_chunks": removed, "bytes_freed": bytes_freed}
 
 
 @router.get(

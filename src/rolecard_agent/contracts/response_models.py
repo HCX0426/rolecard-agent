@@ -539,6 +539,7 @@ class KnowledgeViewItem(BaseModel):
 
     scope: str | None
     chunks: int | None
+    bytes: int | None
     sources: list[str] | None
     embedder: str | None
 
