@@ -65,8 +65,14 @@ SAMPLES = {
 LOOPBACK_OVERLAY = {"/api/local-service"}
 
 #: "放行"的判定：过了认证/分级闸之后的业务结果都算放行（404=样本 id 不存在、
-#: 422=缺查询参数、405=该路径没声明 GET —— 这些都不是鉴权层的决定）。
-PASSED_THROUGH = {200, 204, 404, 405, 422}
+#: 422=缺查询参数、405=该路径没声明 GET、409=这台机器的形状不对 —— 都不是鉴权层的
+#: 决定：认证层只产 401/403，409 只可能出自 handler —— 操作员既然拿到了 409，闸门就是过了；
+#: 匿名 401 与使用者 403 的期望照常钉死，放宽拦不住任何鉴权 bug）。
+#: 409 是 2026-10-31 CI 红出来的（run 41200198131，门禁臂+Windows 臂同一族）：
+#: `/api/data/export` 的"主库不在数据根 ⇒ 拒绝备份空壳"形状闸在本模块装配下**必然**触发
+#: （app.db 住本模块 tmp，DATA_ROOT 是会话共享根）——矩阵该问的是"闸门放行了没有"，
+#: 不是"业务成不成"；200 那条真路径由 tests/unit/test_data_export_api.py 钉。
+PASSED_THROUGH = {200, 204, 404, 405, 409, 422}
 
 USER_CRED = ("alice", "pw")
 OPERATOR_CRED = ("bob", "pw")  # AUTH_CREDENTIALS 里带 operator: 前缀
