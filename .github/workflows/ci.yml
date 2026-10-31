@@ -108,7 +108,15 @@ jobs:
             echo "base $base 解不开（首推/强推/浅史）：全量"
             exit 0
           fi
-          IFS=$'\t' read -r KIND FILES WHY < <(python3 scripts/gate.py --pytest-plan "$base")
+          PLAN=$(python3 scripts/gate.py --pytest-plan "$base")
+          # 制表符三段自己拆，不用 `IFS=$'\t' read`：tab 是 IFS 空白，相邻两个 tab 会被
+          # 折叠成一个分隔符 —— full/skip 档的文件段**是空的**（`full\t\twhy`），read 那版
+          # 把 why 读进 FILES、WHY 成空（首趟 live 实测："full —— " 后面没了）。
+          # `${var%%$'\t'*}` 一类的参数展开按字节切，空字段原样保住。
+          KIND="${PLAN%%$'\t'*}"
+          _rest="${PLAN#*$'\t'}"
+          FILES="${_rest%%$'\t'*}"
+          WHY="${_rest#*$'\t'}"
           case "$KIND" in full|subset|skip) ;; *) KIND=full; FILES=""; WHY="判据答的形状不认识：${KIND}——全量" ;; esac
           echo "kind=$KIND" >>"$GITHUB_OUTPUT"
           echo "files=$FILES" >>"$GITHUB_OUTPUT"
