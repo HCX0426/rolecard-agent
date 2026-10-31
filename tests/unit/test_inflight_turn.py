@@ -65,7 +65,7 @@ class _Chunky:
 
 
 def test_absent_is_not_the_same_as_running_with_no_text_yet() -> None:
-    """"没人在生成"与"在生成、一个字都还没投送"必须是两个读数。
+    """ "没人在生成"与"在生成、一个字都还没投送"必须是两个读数。
 
     分不清的话界面上那一格永远显不出来，而后者正是用户盯着空白的那几秒里唯一的事实。
     """

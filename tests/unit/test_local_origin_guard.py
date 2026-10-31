@@ -44,9 +44,7 @@ def test_off_mode_allows_loopback_hosts_with_any_port() -> None:
 def test_missing_host_header_is_not_the_rebinding_shape() -> None:
     """HTTP/1.0 的裸客户端不带 Host —— rebinding 浏览器恒带，缺 Host 不该误伤。"""
     assert (
-        origin_guard_violation(
-            host_header=None, origin=None, sec_fetch_site=None, auth_mode="off"
-        )
+        origin_guard_violation(host_header=None, origin=None, sec_fetch_site=None, auth_mode="off")
         is None
     )
 
@@ -141,7 +139,5 @@ def test_rollback_switch_restores_old_behavior(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("LOCAL_ORIGIN_ENFORCE", "0")
-    client = TestClient(
-        create_app(sqlite_path=tmp_path / "app.db"), base_url="http://127.0.0.1"
-    )
+    client = TestClient(create_app(sqlite_path=tmp_path / "app.db"), base_url="http://127.0.0.1")
     assert client.get("/api/health", headers={"Host": "attacker.example"}).status_code == 200

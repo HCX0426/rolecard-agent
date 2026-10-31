@@ -131,13 +131,12 @@ def check_audit_action_vocabulary() -> None:
     if unregistered:
         fails.append(f"audit actions not in AUDIT_ACTIONS: {unregistered}")
     if stale:
-        fails.append(
-            f"AUDIT_ACTIONS entries with no call site (rename forks history): {stale}"
-        )
+        fails.append(f"AUDIT_ACTIONS entries with no call site (rename forks history): {stale}")
     if bad_prefixes:
         fails.append(
             f"dynamic audit prefixes not declared in DYNAMIC_ACTION_PREFIXES: {bad_prefixes}"
         )
+
 
 #: 22 份归档散件合并后的汇编（2026-10-09 用户拍板：散件删除、内容逐字保留 + 来源头）。
 _MERGED_ARCHIVE = ROOT / "docs" / "archive" / "审计台账汇编.md"
@@ -167,6 +166,7 @@ def _audit_ledger_path() -> pathlib.Path:
 
     return max(cands, key=_date)
 
+
 def _ledger_h2_span(text: str, ruler: str) -> tuple[int, int] | None:
     """定位台账里 H2 那张表；结构不对就**干净判红**，不许抛 traceback（M26a 实测撞过）。
 
@@ -187,45 +187,48 @@ def _ledger_h2_span(text: str, ruler: str) -> tuple[int, int] | None:
         fails.append(f"{ruler}: newest audit ledger has no H2..H3 table (不是本轮的 H* 结构)")
         return None
 
+
 def check_audit_ledger_row_count() -> None:
-    """台账 H2 标题里那个"（N 条）"必须由脚本现数，不许手写（10-03 批 22 复核当场照出的）。
+    """**已退役（2026-11-01）**：这把尺子的对象没了。
 
-    这一轮加进 `R102-73` 之后，标题还写着"72 条" —— 与本仓反复在治的那一件是同一件事：
-    **写死的数就是会漂的真相**（README 那组数、`R102-36` 那一族、批 12 那句"全部有结论"）。
-    所以这里现数表格行数，再读标题里那个数字，两者必须相等。
+    它判的是"台账 H2 标题里那个「（N 条）」必须由脚本现数"—— 也就是说，它量的是
+    **一份历史台账对自己是否自洽**。历史台账（`docs/archive/审计台账汇编.md`）已按用户
+    拍板删除（"以前归档的也准备删了"），这把尺子的**被审对象不存在了**，于是它从
+    "一把尺子"退化成"一份对不存在文件的期待"—— 那正是它每次都报 `audit ledger missing`
+    的原因。
 
-    判据只看 H2 那张表（`| R102-NN | 级别 | … |` 形状的行），不看散文里的引用 —— 后者
-    由 `audit citations` 与 `audit index in sync` 管着，三把尺子各管一件事。
+    **退役不是"删掉不管"**：真正的防漂移能力已经搬到别处 ——
+      * 编号的可达性 ⇒ `audit citations` + `audit index in sync`（两把都还在跑，
+        判据是"代码里引的号在活文档里找得到"）；
+      * "写死的数就是会漂的真相" ⇒ `readme headline numbers` 那把（README 的数由脚本现数）。
+    这两把覆盖了它想防的那一类缺陷，且**判据的对象是活文档**（一直在写、一直在对账），
+    比对着一份封存件自洽有意义得多。
+
+    留一条空实现（而不是从 registry 里删掉函数）：让"这把尺子为什么退役"留在代码里，
+    免得下一个人看到"编号会漂却没人管"又把同一把尺子重建一遍。
     """
-    ledger = _audit_ledger_path()
-    if not ledger.exists():
-        out("audit ledger row count", False, f"台账不在：{ledger}")
-        fails.append(f"audit ledger missing: {ledger}")
-        return
-    text = ledger.read_text(encoding="utf-8")
-    span = _ledger_h2_span(text, "audit ledger row count")
-    if span is None:
-        return
-    start, end = span
-    rows = len(re.findall(r"^\|\s*(R102-\d+)\s*\|", text[start:end], re.M))
-    stated = re.search(r"## H2 ·[^(（]*（(\d+) 条）", text[start:end])
-    if stated is None:
-        out("audit ledger row count", False, f"H2 标题里没有「（N 条）」这一格（现数 {rows} 行）")
-        fails.append("audit ledger H2 heading has no '（N 条）' cell to verify")
-        return
-    n = int(stated.group(1))
-    ok = n == rows
-    out("audit ledger row count", ok, f"表格现数 {rows} 行，标题写 {n} 条")
-    if not ok:
-        fails.append(
-            f"audit ledger H2 heading says {n} rows while the table holds {rows} —— "
-            "那个数由脚本现数，别手写"
-        )
+    out(
+        "audit ledger row count",
+        True,
+        "已退役（2026-11-01）：台账已删，防漂移改由 audit citations + readme headline numbers 承担",
+    )
+
 
 #: H2「状态」格里算"表过态"的字样（`R102-77` 的尺子在用）。
 _LEDGER_STATUS_MARKERS = (
-    "已收口", "未收口", "不修", "恒", "按设计", "取舍", "无需", "不动", "不改", "已处置", "已拍",
+    "已收口",
+    "未收口",
+    "不修",
+    "恒",
+    "按设计",
+    "取舍",
+    "无需",
+    "不动",
+    "不改",
+    "已处置",
+    "已拍",
 )
+
 
 def _ledger_closure_traced(rid: str, h12: str, detail_rows: str) -> bool:
     """在 H12 的执行记录里找这一条的出处，**认简写**：「`R102-48`+`26`」「老 `31`」都算。
@@ -245,66 +248,29 @@ def _ledger_closure_traced(rid: str, h12: str, detail_rows: str) -> bool:
             return True
     return False
 
-def check_ledger_status_states_verdict() -> None:
-    """台账 H2 每行的「状态」格必须表态；说"已收口"的行必须在 H12 里找得出处（`R102-77`）。
 
-    10-03 那次对账照出来的不是代码没做，而是**一份文档在两处说两种话**：44 行的状态格从没随
-    批 1–5 回写，于是读汇总表的人以为还欠 44 件，读 H12 的人以为只剩 1 件。写死的数与不回的
-    状态格是同一族（`R102-36`），所以这里两臂都判：
-      · 状态格里一个表态字样都没有 ⇒ 红（沉默不许当成"没做"也不当成"做了"）；
-      · 状态格写着"已收口"、而该编号在 H12 的执行记录里查无出处 ⇒ 也红（收口要有出处）。
+def check_ledger_status_states_verdict() -> None:
+    """**已退役（2026-11-01）**：这把尺子的对象没了。
+
+    它判的是"台账 H2 每行的「状态」格必须表态；说「已收口」的行必须在 H12 里找得出处"
+    —— 也就是**一份历史台账对自己是否自洽**。历史台账已按用户拍板删除，这把尺子的被审
+    对象不存在了，于是它退化成"一份对不存在文件的期待"。
+
+    **它想防的那一类缺陷没消失，判据换了地方**：沉默的"状态格"= 文档在一处说做了、
+    另一处说没做 —— 现在由 `audit citations`（代码引的号在活文档里找得到）与
+    `readme headline numbers`（写死的数由脚本现数）承担，两者判的都是**活文档**，
+    一直在写、一直在对账。
+
+    留一条空实现（而不是从 registry 里删掉函数）：让"这把尺子为什么退役"留在代码里，
+    免得下一个人看到"编号的收口没出处却没人管"又把同一把尺子重建一遍。
     """
-    ledger = _audit_ledger_path()
-    if not ledger.exists():
-        out("ledger status states a verdict", False, f"台账不在：{ledger}")
-        fails.append(f"audit ledger missing: {ledger}")
-        return
-    text = ledger.read_text(encoding="utf-8")
-    span = _ledger_h2_span(text, "ledger status states a verdict")
-    if span is None:
-        return
-    start, end = span
-    if "## H12 " not in text:  # 同一条规矩：出处无处可查要出声，不是抛 traceback
-        out(
-            "ledger status states a verdict",
-            False,
-            "最新台账里没有 H12 执行记录 —— 「已收口」的出处无处可查",
-        )
-        fails.append("newest audit ledger has no H12 execution record")
-        return
-    h12 = text[text.index("## H12 "):]
-    detail_rows = text[end:]  # H2 之后就是逐条详表（H7/H8）与执行记录（H12）
-    silent: list[str] = []
-    orphan: list[str] = []
-    total = 0
-    for line in text[start:end].splitlines():
-        m = re.match(r"^\|\s*(R102-\d+)\s*\|", line)
-        if not m:
-            continue
-        total += 1
-        rid = m.group(1)
-        status = line.split("|")[-2]
-        if not any(k in status for k in _LEDGER_STATUS_MARKERS):
-            silent.append(rid)
-        elif "已收口" in status and not _ledger_closure_traced(rid, h12, detail_rows):
-            orphan.append(rid)
-    ok = not silent and not orphan
     out(
         "ledger status states a verdict",
-        ok,
-        f"{total} 行全部表态；「已收口」都能在 H12 找到出处"
-        if ok
-        else f"没表态：{silent}；收口查无出处：{orphan}",
+        True,
+        "已退役（2026-11-01）：台账已删，防「沉默收口」改由 "
+        "audit citations + readme headline numbers 承担",
     )
-    if silent:
-        fails.append(
-            f"audit ledger status cells carry no verdict: {silent} —— "
-            "状态格沉默，读表的人就分不清「没做」与「做了没回写」"
-        )
-    if orphan:
-        fails.append(
-            f"audit ledger claims 已收口 with no trace in H12: {orphan} —— 收口要写在哪一批"
-        )
+
 
 def _git_ignored(refs: list[str]) -> tuple[set[str], bool]:
     """把"文档点名的路径"一次性问 git：哪些是**被忽略的**。返回（被忽略集合, 是否问成功）。
@@ -347,9 +313,10 @@ def _git_ignored(refs: list[str]) -> tuple[set[str], bool]:
     lines = proc.stdout.decode("utf-8", "replace").splitlines()
     return {line.strip().replace("\\", "/") for line in lines if line.strip()}, True
 
+
 # User stories that are explicitly NOT covered by automated tests yet. They are deferred to a
 # later milestone, not forgotten - the traceability check still requires them to be *named* here
-# so the gap stays visible (技术评审与决策.md §9 D3).
+# so the gap stays visible (技术评审与决策.md 「实现对齐核查」D3).
 # US-9 (console frontend) was covered once M5 landed -> removed from this set (2026-09-15).
 # US-6 (quick reproduce: 3 commands / lock file / demo video) still has no *test*; the non-video
 # parts are guarded by readme_quickstart / dependency_parity / python_pin, and the 60s demo
@@ -362,18 +329,19 @@ DEFERRED_US = {"US-6"}
 #:  * 后端扫 `src/**/*.py` 的**字符串常量**，docstring 与注释不算（那些是写给开发者看的，
 #:    「后端」在那儿仍然精确指 `ModelBackend` 那一行）。
 _BANNED_USER_VISIBLE = (
-    "模型后端",      # L2 那一行在界面上叫「模型」
-    "默认后端",      # 「默认」的家是「服务」页那条优先级，不是模型页
-    "后端名",        # 字段名叫「模型名」
-    "后端序列",      # 那条叫「对话优先级」
+    "模型后端",  # L2 那一行在界面上叫「模型」
+    "默认后端",  # 「默认」的家是「服务」页那条优先级，不是模型页
+    "后端名",  # 字段名叫「模型名」
+    "后端序列",  # 那条叫「对话优先级」
     "后端列表",
-    "服务地址",      # L4 那个进程叫「本机程序」，它的地址是「程序地址」
+    "服务地址",  # L4 那个进程叫「本机程序」，它的地址是「程序地址」
     "本机后端",
     "本地推理服务",
     "Ollama 服务",
-    "本地服务",      # 「本机程序」的落选备选（`R102-20`：同一旗标一张屏两个名字，
-                     # 术语词表提案 §6.2 定名「本机程序」—— 从前它不在词表里，尺子照绿）
+    "本地服务",  # 「本机程序」的落选备选（`R102-20`：同一旗标一张屏两个名字，
+    # 术语词表提案 §6.2 定名「本机程序」—— 从前它不在词表里，尺子照绿）
 )
+
 
 def _required_user_stories() -> set[str]:
     """The authoritative US list is the `### US-N` headings in 需求与验收标准.md.
@@ -384,6 +352,7 @@ def _required_user_stories() -> set[str]:
     doc = (ROOT / "docs" / "需求与验收标准.md").read_text(encoding="utf-8")
     return set(re.findall(r"^###\s+(US-\d+)", doc, flags=re.M))
 
+
 def _covered_user_stories() -> set[str]:
     """Every `US-N` token in the test tree counts as covered (unit / integration / eval)."""
     found: set[str] = set()
@@ -393,8 +362,10 @@ def _covered_user_stories() -> set[str]:
         found |= set(re.findall(r"US-\d+", path.read_text(encoding="utf-8", errors="ignore")))
     return found
 
+
 def check_us_traceability() -> None:
-    """Every shipped user story must be traceable to at least one test (技术评审与决策.md §9 D3).
+    """Every shipped user story must be traceable to at least one test (技术评审与决策.md
+    「实现对齐核查」D3).
 
     Before this check the chain was maintained by memory: only US-4 was named in a test, and a
     story could lose its only coverage with no signal. Now (a) a test citing a non-existent US
@@ -418,6 +389,7 @@ def check_us_traceability() -> None:
     )
     out("us traceability", ok, detail)
 
+
 def report_line_budget() -> None:
     def count(suffix: str) -> int:
         return sum(
@@ -430,29 +402,21 @@ def report_line_budget() -> None:
     if md > py * 5:
         print("note: docs still outweigh code - expected during planning, watch it after M1")
 
+
 #: 行里出现这个词就**优先**当它指这份文档（越具体越靠前）。匹配不到词时不做假设：
 #: 直接去所有文档里找这个编号，找到谁就算谁。
 #: 行内点了某份文档时，认的是**文件名**而不是完整路径（10-01 归档之后路径都变了，
 #: 而"这句引用指的是哪份文档"问的是文档身份，不是存放地）。
-#: 2026-10-10：22 份散件合并进《审计台账汇编》后，"审计"这把钥匙的指涉从四份旧台账
-#: 文件名换成汇编 + 仍在盘上的快照 —— 代码注释里"架构审计报告 P1-x"式的历史归因
-#: 指的是台账正文，现在的存放地就是汇编这一卷。
+#: 2026-11-01 改（历史台账与快照删除后）："审计"这把钥匙原先指向 `docs/archive/` 三份
+#: （历史台账 + 两份旧快照）—— 那些文件删了之后，钥匙必须指向**还在盘上的**活文档。
+#: 现在指向 `docs/架构总览.md`（§5 关键架构决策与不变式 = 历轮审计沉淀下来的**判据**，
+#: 那里的 `§x.y` 号正是代码注释里引得最多的那族）与 `docs/需求与验收标准.md`。
+#: 删掉历史台账不删**判据**：判据活在活文档里，历史台账只是过程。
 _CITATION_DOC_KEYS: tuple[tuple[str, frozenset[str]], ...] = (
-    ("架构计划", frozenset({"审计台账汇编.md"})),
-    ("实施计划", frozenset({"审计台账汇编.md"})),
-    ("技术评审与决策", frozenset({"审计台账汇编.md"})),
     ("设计稿", frozenset({"主动消息与记忆设计稿.md", "更新机制与OCR随包.md"})),
     ("总览", frozenset({"架构总览.md"})),
     ("需求", frozenset({"需求与验收标准.md"})),
-    (
-        "审计",
-        frozenset(
-            {
-                "审计台账汇编.md",
-                "代码审查快照（2026-10-04）.md",
-            }
-        ),
-    ),
+    ("审计", frozenset({"架构总览.md", "需求与验收标准.md"})),
 )
 _SECTION_RE = re.compile(r"§\s*(\d+(?:\.\d+)*)")
 
@@ -465,7 +429,7 @@ _PID_RE = re.compile(r"\b(R\d+-\d+|P\d+-\d+|ENGI-\d+)\b")
 
 #: 文档里可以当被引用目标的两种形状：标题编号（`### 12.19 …`）与台账行号（`| 12.4 |`）。
 #: 只活在**散文**里、从来没有台账行锚点的历史编号（同一次宽判据实验量得的全部悬空）。
-#: R28-44/45 描述的事件已并入 §10 的教训正文 —— 它们不是断链，是"正文吸收了条目"。
+#: R28-44/45 描述的事件已并入「处置记录」的教训正文 —— 它们不是断链，是"正文吸收了条目"。
 #: 这份名单是**豁免登记处**：新的悬空出现时先查是不是同类，是就登记理由，不是就修引用。
 #: R28-45 在 2026-10-10 尺子认了快照行形后有了真家，从这份名单退役；R28-44 仍只在散文里。
 #: ENGI-4/ENGI-10 是尺子自述与判据用例里举的**形状示例**（`| P2-16 (PERF-11+ENGI-4) |`），
@@ -489,6 +453,7 @@ _TARGET_ROW_RE = re.compile(
 
 _CITATION_PROSE_ONLY = frozenset({"R28-44", "ENGI-4", "ENGI-10"})
 
+
 def _audit_index():
     """索引生成器（同一份扫描口径的唯一出处）。"""
     script = ROOT / "scripts" / "tools" / "build_audit_index.py"
@@ -498,10 +463,12 @@ def _audit_index():
     spec.loader.exec_module(module)
     return module
 
+
 def check_citation_reachability() -> None:
     """代码/测试/壳里的每一处 `§x.y` 与 `P{n}-{m}` 引用都必须真的指得到东西。
 
-    为什么单独立这条（2026-09-25，审计 §12.19）：`check_doc_links` 只查 markdown 反引号里的
+    为什么单独立这条（2026-09-25，审计「「本地 / 云端」同时指两件事」）：`check_doc_links` 只查
+    markdown 反引号里的
     **路径**，查不到 .py docstring 里"（架构审计报告 P1-5）"这种**散文引用** —— 而这类引用
     实测 29 个文件、444 处。后果不是难看，是**文档一动就静默断链**，而断掉的正好是
     "这个决策为什么长这样"的唯一线索（今天的误判就被一句过期的"P0-3 尚未闭环"带偏过一次）。
@@ -543,12 +510,8 @@ def check_citation_reachability() -> None:
                     (words for word, words in _CITATION_DOC_KEYS if word in line),
                     None,
                 )
-                if named and not any(
-                    item.rsplit("/", 1)[-1] in named for item in found
-                ):
-                    doubtful.append(
-                        f"{rel_file}:{lineno} §{num} 点了那份文档，号却不在它里面"
-                    )
+                if named and not any(item.rsplit("/", 1)[-1] in named for item in found):
+                    doubtful.append(f"{rel_file}:{lineno} §{num} 点了那份文档，号却不在它里面")
             for num in _PID_RE.findall(line):
                 total += 1
                 if num in _CITATION_PROSE_ONLY:
@@ -568,6 +531,7 @@ def check_citation_reachability() -> None:
         if items:
             line = f"{label} ({len(items)}): " + " | ".join(items[:8])
             (fails if hard else warns).append(line)
+
 
 def check_audit_index_in_sync() -> None:
     """`docs/架构审计索引.md` 必须是"现在重算一遍"的那一份。
@@ -591,9 +555,7 @@ def check_audit_index_in_sync() -> None:
     current = target.read_text(encoding="utf-8")
     if current == expected:
         rows = sum(
-            1
-            for line in expected.splitlines()
-            if line.startswith("| ") and " | " in line[2:]
+            1 for line in expected.splitlines() if line.startswith("| ") and " | " in line[2:]
         )
         out("audit index in sync", True, f"{rows} 行与重算结果逐字一致")
         return

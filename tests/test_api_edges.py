@@ -65,7 +65,7 @@ def test_patch_session_renames_title_and_trims(client: TestClient) -> None:
 
 
 def test_patch_session_rejects_unknown_backend(client: TestClient) -> None:
-    """会话级模型覆盖指向不存在的后端 → 400，而不是"保存时通过、对话时才炸"。 """
+    """会话级模型覆盖指向不存在的后端 → 400，而不是"保存时通过、对话时才炸"。"""
     tid = client.post("/api/session", json={}).json()["thread_id"]
     res = client.patch(f"/api/session/{tid}", json={"model_name": "nope"})
     assert res.status_code == 400
@@ -147,7 +147,7 @@ def test_unknown_role_backend_degrades_to_default(client: TestClient) -> None:
 
 
 def test_deleting_missing_report_or_index_is_404(client: TestClient) -> None:
-    """错用户与不存在都返回 404 —— 不用 403 去确认"这条数据确实存在"。 """
+    """错用户与不存在都返回 404 —— 不用 403 去确认"这条数据确实存在"。"""
     assert client.delete("/api/records/report/rp_nope").status_code == 404
     assert client.delete("/api/records/index/ix_nope").status_code == 404
 

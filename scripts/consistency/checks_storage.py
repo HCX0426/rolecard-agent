@@ -70,9 +70,7 @@ def check_storage_db_has_no_business_tables() -> None:
     tables = sorted(_declared_table_names())
     if len(tables) < 10:  # 反向臂：判据被掏空就该红，而不是"零命中=通过"
         out("storage db has no business tables", False, f"只推出 {len(tables)} 个表名（<10）")
-        fails.append(
-            "storage db: declared table names look empty — the check would pass vacuously"
-        )
+        fails.append("storage db: declared table names look empty — the check would pass vacuously")
         return
     pattern = re.compile(rf"\b({'|'.join(sorted(tables, key=len, reverse=True))})\b")
     hits = [
@@ -81,11 +79,7 @@ def check_storage_db_has_no_business_tables() -> None:
         if (m := pattern.search(text))
     ]
     ok = not hits
-    detail = (
-        f"db.py 里 0 处点名业务表（声明里 {len(tables)} 张表）"
-        if ok
-        else "; ".join(hits[:4])
-    )
+    detail = f"db.py 里 0 处点名业务表（声明里 {len(tables)} 张表）" if ok else "; ".join(hits[:4])
     out("storage db has no business tables", ok, detail)
     if hits:
         fails.append(
@@ -333,9 +327,7 @@ def check_sync_write_ownership() -> None:
     detail = (
         "features/sync.py 0 处 INSERT，memory/inbox 两个 owner 各自的写入都在"
         if ok
-        else (
-            f"sync 里回来了：{sync_writes}" if sync_writes else f"owner 被掏空：{hollow}"
-        )
+        else (f"sync 里回来了：{sync_writes}" if sync_writes else f"owner 被掏空：{hollow}")
     )
     out("sync write ownership", ok, detail)
     if sync_writes:
@@ -413,7 +405,7 @@ WRITE_TXN_HELPERS = frozenset(
 
 
 def check_write_txn_ownership_inventory() -> None:
-    """"哪个产品写点会留未提交事务"从此有一份被看着的名单（`R102-03` 沿袭的那一角）。
+    """ "哪个产品写点会留未提交事务"从此有一份被看着的名单（`R102-03` 沿袭的那一角）。
 
     第 47 条断言 `dangling write txn` 管的是"判了 rowcount 那一支有没有先结束事务"；
     这一条管的是**另一支**：函数体里有写语句、而本函数既不 commit 也不 rollback ——
@@ -475,9 +467,7 @@ def check_write_txn_ownership_inventory() -> None:
             "check_consistency.WRITE_TXN_HELPERS 并说清调用方在哪一步收口）"
         )
     if stale:
-        fails.append(
-            f"WRITE_TXN_HELPERS has entries that no longer match a write site: {stale}"
-        )
+        fails.append(f"WRITE_TXN_HELPERS has entries that no longer match a write site: {stale}")
 
 
 def check_single_text_extractor() -> None:
@@ -576,8 +566,7 @@ def check_dangling_write_txns() -> None:
     out(
         "dangling write txn",
         not offenders,
-        "；".join(offenders[:6])
-        + (f"（共 {len(offenders)} 处）" if len(offenders) > 6 else "")
+        "；".join(offenders[:6]) + (f"（共 {len(offenders)} 处）" if len(offenders) > 6 else "")
         if offenders
         else "所有判 rowcount 的分支都在抛/回之前结束了事务（写语句即便改到 0 行也开了事务）",
     )

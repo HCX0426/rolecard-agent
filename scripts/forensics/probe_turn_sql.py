@@ -148,8 +148,10 @@ def main(argv: list[str] | None = None) -> int:
     }
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"turn statements: {len(pairs)} (fresh conns: {fresh}, "
-          f"dup selects: {len(dup)}, wall: {wall_ms:.1f}ms)")
+    print(
+        f"turn statements: {len(pairs)} (fresh conns: {fresh}, "
+        f"dup selects: {len(dup)}, wall: {wall_ms:.1f}ms)"
+    )
     print(f"report -> {out}")
     return 0
 

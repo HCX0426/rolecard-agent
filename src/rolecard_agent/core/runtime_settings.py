@@ -149,7 +149,8 @@ RUNTIME_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("extract_backend", "EXTRACT_BACKEND", "str", label="抽取用的模型", group="rag"),
     FieldSpec("extract_verify", "EXTRACT_VERIFY", "str", label="抽取校对", group="rag"),
     # 「提取精华 / 整理记忆」用哪个后端（空 = 跟随会话/角色）。单独一条是为了把"对话用谁"与
-    # "记忆用谁"分开 —— 角色留在本地陪聊，不代表它的长期记忆也该由 8B 来判（审计 §12.5）。
+    # "记忆用谁"分开 —— 角色留在本地陪聊，不代表它的长期记忆也该由 8B
+    # 来判（审计「档案角色的记忆该由谁来判」）。
     # 依据在 2026-09-24 更正两次：本地并非提不出；修完捏造口子与提取自我叠加后两边各 9 / 10 条。
     # 所以它是延迟与判断力的取舍，不是"有没有记忆"。填了才出网，不填行为与今天一致。
     # 为什么是"backends"而不是"models"：这里存的是 `resolve_role_model()` 认的**后端名**

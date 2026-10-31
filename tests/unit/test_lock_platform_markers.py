@@ -60,11 +60,13 @@ FAKE_EDGES: dict[str, list[Edge]] = {
     "altgraph": [("pyinstaller", None, "")],
 }
 
+
 #: uvicorn 声明 uvloop（standard extra 门内）——requires 接缝喂的就是这一条。
 def fake_requires(name: str, extras: Any = ()) -> list[tuple[str, str | None]]:
     if name == "uvicorn" and "standard" in {str(e) for e in extras}:
         return [("uvloop", FAKE_EDGES["uvloop"][0][1])]
     return []
+
 
 _LOCK_PINNED = """\
 mcp==1.30.0
@@ -200,6 +202,7 @@ def test_parse_lock认pin行_不认注释与缩进() -> None:
 
 # ---- ENGI-18 第三路（2026-10-09 拍板）：约束面是第四格的第二个读数面 ---------------------
 
+
 def test_约束面兜住uvloop时第四格闭嘴_拿掉就回来() -> None:
     """`extra_pins` = `constraints-linux.txt` 的 pin 集合（ENGI-18 第三路）。
 
@@ -236,29 +239,26 @@ def test_三个Linux装配面挂约束_两个Windows面不挂() -> None:
     "哪一种安装器"都算，钉的仍是"哪几个面挂了约束"这个结构事实。
     """
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
     # 归一成"去掉安装器前缀（含 uv 的 --system）"的命令体，两种安装器等价看待。
     def _body(line: str) -> str:
         s = line.strip()
         for verb in ("uv pip install --system ", "uv pip install ", "pip install "):
             if s.startswith(verb):
-                return s[len(verb):]
+                return s[len(verb) :]
         return ""
 
     guarded = [
-        ln for ln in ci.splitlines()
+        ln
+        for ln in ci.splitlines()
         if _body(ln) == "-r requirements/requirements.lock -c config/constraints-linux.txt"
     ]
-    unguarded = [
-        ln for ln in ci.splitlines()
-        if _body(ln) == "-r requirements/requirements.lock"
-    ]
+    unguarded = [ln for ln in ci.splitlines() if _body(ln) == "-r requirements/requirements.lock"]
     assert len(guarded) == 2, f"带 -c 的锁安装应为 2 个 ubuntu job，实为 {len(guarded)}"
     assert len(unguarded) == 2, f"不带 -c 的应为 2 个 windows job，实为 {len(unguarded)}"
     docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert "COPY config/constraints-linux.txt" in docker, "镜像里没有约束文件可 -c"
-    assert (
-        "-r requirements/requirements-runtime.lock -c config/constraints-linux.txt" in docker
-    )
+    assert "-r requirements/requirements-runtime.lock -c config/constraints-linux.txt" in docker
 
 
 def test_入库的约束文件只有一条uvloop_pin() -> None:

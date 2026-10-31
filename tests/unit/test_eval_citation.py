@@ -45,7 +45,7 @@ def test_a_bare_date_is_not_a_citation() -> None:
 
 
 def test_the_absent_half_catches_the_both_numbers_answer() -> None:
-    """"不许出现 5.0"是反向那一半：只断言"要有 6.0"，端出两个数的回答也算对。"""
+    """ "不许出现 5.0"是反向那一半：只断言"要有 6.0"，端出两个数的回答也算对。"""
     both = "这次是 6.0mm，去年那次是 5.0mm。"
     fails, cit = _check(
         [

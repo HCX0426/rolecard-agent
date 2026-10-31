@@ -379,7 +379,7 @@ def pytest_runtest_makereport(item: pytest.Item, call: Any) -> None:
     ② 从前喂判据的是 `str(exc)`，而 `CHROMA_FLAKE_SIGNATURES` 里有一条是**类名**
        （`chromadb.errors.InternalError`）—— `str()` 永远不含自己的类名 ⇒ 那一条签名
        在这个调用点上**物理不可能命中**（实测：同一发偶发，门禁 wrapper 读的日志含类名行 ⇒
-       认；钩子读 `str(exc)` ⇒ 不认）。这就是账本 ENGI-24① 记的"两台机器各读半张"的**真机制**，
+       认；钩子读 `str(exc)` ⇒ 不认）。这就是"两台机器各读半张"的**真机制**，
        而它的解不是"两处各写一份判据"（判据早已共用），是让两处**读到语义相同的文本**：
        这里补上限定类名，与 pytest 打报告时的那一行同形。
     """

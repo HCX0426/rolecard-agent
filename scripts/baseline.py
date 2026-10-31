@@ -1,6 +1,7 @@
 """一次性产出 `build/baseline.json` —— 全项目"当前有多少"的唯一口径。
 
-为什么要有这个脚本（2026-09-25，审计 §12.19 的 direct 产物）：架构审计里"约 15 处
+为什么要有这个脚本（2026-09-25，审计「「本地 / 云端」同时指两件事」 的 direct 产物）：架构审计里"约
+15 处
 `DEFAULT_USER_ID`"与实测 22 处差了 7 处，差的不是口径而是**谁在什么时候手数的**。多路取证
 （六个并行 agent）一旦各自 grep，同一件事会拿到六个数，然后整份报告都在讨论数字不一致。
 
@@ -224,7 +225,7 @@ def section_schema(declared: dict[str, set[str]]) -> dict[str, Any]:
 
 
 def section_identity() -> dict[str, Any]:
-    """一份库里"到底是谁的数据"—— 全部按**集合**记，不按计数（§12.18 那条教训）。"""
+    """一份库里"到底是谁的数据"—— 全部按**集合**记，不按计数（「冒烟自己写进了真库」那条教训）。"""
     out: dict[str, Any] = {}
     for tag, path in data_roots().items():
         if path is None or not path.exists():
@@ -293,7 +294,7 @@ def section_settings() -> dict[str, Any]:
     cfg = ROOT / "src" / "rolecard_agent" / "config.py"
     text = cfg.read_text(encoding="utf-8")
     start = text.index("class Settings(")
-    tail = text[start + 1:]
+    tail = text[start + 1 :]
     end = len(tail)
     for marker in ("\nclass ", "\ndef ", "\n@app", "\nif __"):
         found = tail.find(marker, 1)  # 从 1 起：marker 允许顶格，但跳过 class Settings 自己
@@ -367,9 +368,7 @@ def section_hardcoded_identity() -> dict[str, Any]:
                 if isinstance(node, (ast.Call, ast.keyword)):
                     args = list(node.args) if isinstance(node, ast.Call) else [node.value]
                     out["in_call_args"] += sum(
-                        1
-                        for a in args
-                        if isinstance(a, ast.Name) and a.id == "DEFAULT_USER_ID"
+                        1 for a in args if isinstance(a, ast.Name) and a.id == "DEFAULT_USER_ID"
                     )
         return out
 
@@ -435,9 +434,7 @@ def section_growth(installed: Path | None) -> dict[str, Any]:
 
 def build() -> dict[str, Any]:
     declared = declared_shape()
-    installed = next(
-        p for tag, p in data_roots().items() if tag.startswith("installed")
-    )
+    installed = next(p for tag, p in data_roots().items() if tag.startswith("installed"))
     return {
         "generated_utc": datetime.now(UTC).isoformat(timespec="seconds"),
         "git": section_git(),
@@ -488,23 +485,29 @@ def main() -> None:
     routes = data["routes"]["count"]
     ident = data["data_identity"]
     st = data["settings"]
-    print(f"HEAD {data['git']['head']} 脏 {data['git']['dirty_lines']} 行｜路由 {routes}"
-          f"｜Settings {st['pydantic_model_fields']} 字段"
-          f"{'（与一致性脚本的数法不一致！）' if not st['the_two_agree'] else ''}")
+    print(
+        f"HEAD {data['git']['head']} 脏 {data['git']['dirty_lines']} 行｜路由 {routes}"
+        f"｜Settings {st['pydantic_model_fields']} 字段"
+        f"{'（与一致性脚本的数法不一致！）' if not st['the_two_agree'] else ''}"
+    )
     for tag, info in ident.items():
         if not info.get("exists"):
             print(f"  {tag}: 不存在")
             continue
-        print(f"  {tag}: 会话 {len(info['sessions'])} 主动 {len(info['reachouts'])}"
-              f" 角色 {len(info['roles'])} 记忆条 {len(info['memory_items'])}"
-              f" 最后更新 {info['last_update']}")
+        print(
+            f"  {tag}: 会话 {len(info['sessions'])} 主动 {len(info['reachouts'])}"
+            f" 角色 {len(info['roles'])} 记忆条 {len(info['memory_items'])}"
+            f" 最后更新 {info['last_update']}"
+        )
     art = data["artifacts"]
     print(f"  dist 与包内一致: {art['match']}  {art['repo_dist']} vs {art['installed_package']}")
     print(f"  审计引用文件数: {data['audit_citations']['files']}")
     hid = data["hardcoded_identity"]
-    print(f"  DEFAULT_USER_ID：api 层按行 {hid['api_layer_grep_lines']}｜整个 src 按行 "
-          f"{hid['src_grep_lines']}｜api 层用法 {hid['api_layer_ast']['uses']}｜整个 src 用法 "
-          f"{hid['src_ast']['uses']}（多租户要改的就是这一条）")
+    print(
+        f"  DEFAULT_USER_ID：api 层按行 {hid['api_layer_grep_lines']}｜整个 src 按行 "
+        f"{hid['src_grep_lines']}｜api 层用法 {hid['api_layer_ast']['uses']}｜整个 src 用法 "
+        f"{hid['src_ast']['uses']}（多租户要改的就是这一条）"
+    )
     print(f"→ {OUT}")
 
 

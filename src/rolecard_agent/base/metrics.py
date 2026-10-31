@@ -73,9 +73,7 @@ class EventCounts:
         ]
         if overflow:
             # 注释行（`#` 开头）在文本格式里合法，Prometheus 直接忽略 —— 但人读得到。
-            lines.append(
-                f"# 另有 {overflow} 次事件因超出基数上限（{self._max_series}）并入 other"
-            )
+            lines.append(f"# 另有 {overflow} 次事件因超出基数上限（{self._max_series}）并入 other")
         return "\n".join(lines) + "\n"
 
 

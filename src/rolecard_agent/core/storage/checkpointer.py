@@ -466,4 +466,3 @@ def make_checkpointer(conn: SqlConnection) -> SqliteSaver:
             f"{CHECKPOINT_KEEP_DAYS} 天以内）",
         )
     return saver
-

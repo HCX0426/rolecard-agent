@@ -272,9 +272,7 @@ def make_web_tools(*, settings) -> list:
 
     def _domain_allowed(url: str) -> bool:
         allowed = [
-            d.strip().lower()
-            for d in (settings.web_allowed_domains or "").split(",")
-            if d.strip()
+            d.strip().lower() for d in (settings.web_allowed_domains or "").split(",") if d.strip()
         ]
         if not allowed:
             return True  # 名单为空 = 不限（公网边界交给 _host_is_public）
@@ -387,8 +385,7 @@ def make_web_tools(*, settings) -> list:
         key = settings.saucenao_api_key or ""
         if not key:
             return (
-                "反向图搜未配置：请在「运行环境」填入 SAUCENAO_API_KEY"
-                "（SauceNAO 免费申请）后重试。"
+                "反向图搜未配置：请在「运行环境」填入 SAUCENAO_API_KEY（SauceNAO 免费申请）后重试。"
             )
         try:
             image_bytes = _decode_data_url(data_url)

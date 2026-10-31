@@ -136,10 +136,7 @@ def test_registered_as_mcp_domain(fake_mcp: dict[str, object]) -> None:
 
 def test_settings_parses_mcp_servers() -> None:
     settings = Settings.from_env(
-        {
-            "MCP_SERVERS": '[{"id":"s1","transport":"stdio","command":"python",'
-            '"args":["-m","x"]}]'
-        }
+        {"MCP_SERVERS": '[{"id":"s1","transport":"stdio","command":"python","args":["-m","x"]}]'}
     )
     assert len(settings.mcp_servers) == 1
     assert settings.mcp_servers[0].id == "s1"

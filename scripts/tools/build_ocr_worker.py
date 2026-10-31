@@ -68,8 +68,13 @@ def _smoke() -> int:
         return 1
     _make_smoke_image()
     done = subprocess.run(  # noqa: S603
-        [str(EXE), str(SMOKE_PNG)], capture_output=True, text=True,
-        encoding="utf-8", errors="replace", check=False, timeout=180,
+        [str(EXE), str(SMOKE_PNG)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        timeout=180,
     )
     out = (done.stdout or "").replace(" ", "").replace("\n", "")
     if done.returncode != 0:
@@ -93,7 +98,8 @@ def main() -> int:
     missing = [p for p in ("rapidocr", "cv2", "onnxruntime") if importlib.util.find_spec(p) is None]
     if missing:
         print(
-            "当前解释器没有 OCR 运行栈：" + ", ".join(missing)
+            "当前解释器没有 OCR 运行栈："
+            + ", ".join(missing)
             + f"\n  请用 .venv-ocr\\Scripts\\python.exe 跑本脚本（现在：{sys.executable}）",
             file=sys.stderr,
         )
@@ -107,8 +113,16 @@ def main() -> int:
         )
         return 2
     cmd = [
-        sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
-        "--distpath", str(OUT), "--workpath", str(WORK), str(SPEC),
+        sys.executable,
+        "-m",
+        "PyInstaller",
+        "--noconfirm",
+        "--clean",
+        "--distpath",
+        str(OUT),
+        "--workpath",
+        str(WORK),
+        str(SPEC),
     ]
     print(" ".join(cmd), flush=True)
     result = subprocess.run(cmd, check=False)  # noqa: S603

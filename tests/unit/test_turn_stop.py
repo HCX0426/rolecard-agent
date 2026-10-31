@@ -1,4 +1,4 @@
-""""停止生成"要真的停（任务 #18 / 审计 §12.12②）。
+""" "停止生成"要真的停（任务 #18 / 审计「单测绿了不等于生产没发生」②）。
 
 钉的是三件事，每一件都是这一轮改动新增的行为：
 
@@ -45,6 +45,7 @@ from rolecard_agent.roles.service import RoleCardCreate, RoleCards, RoleCardServ
 def cards(store: RoleCardService) -> RoleCards:
     """测试里"本机主人眼里的那些卡"的简写（M2a 之后每次读写都得说清为谁）。"""
     return store.scoped(DEFAULT_USER_ID)
+
 
 @pytest.fixture(autouse=True)
 def _clean_flags() -> Iterator[None]:

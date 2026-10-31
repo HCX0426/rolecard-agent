@@ -171,9 +171,7 @@ def test_over_quota_gets_a_readable_429_with_retry_after(
     assert c.get("/api/roles", auth=auth).status_code == 200
 
 
-def test_loopback_is_never_limited(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_loopback_is_never_limited(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """本机来源免限流：桌面壳、控制台、脚本与探针全从 127.0.0.1 来。
 
     这条不是"漏了"，是刻意的 —— 与认证那条"本机来源永远放行"同一份信任模型：主人坐
@@ -185,8 +183,7 @@ def test_loopback_is_never_limited(
     monkeypatch.setenv("RATE_LIMIT_PATHS", "/api/chat")
     c = TestClient(create_app(sqlite_path=tmp_path / "app.db"), client=("127.0.0.1", 50000))
     codes = [
-        c.post("/api/chat", json={"thread_id": "t", "text": "hi"}).status_code
-        for _ in range(4)
+        c.post("/api/chat", json={"thread_id": "t", "text": "hi"}).status_code for _ in range(4)
     ]
     assert 429 not in codes, f"本机来源被限流了：{codes}"
 

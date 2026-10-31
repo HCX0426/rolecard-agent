@@ -100,8 +100,9 @@ def _download_asset(cache: Path, binary_name: str) -> Path | None:
 
     picked = _ASSET_BY_OS.get(platform.system())
     if picked is None:
-        print(f"[scan_secrets] 这个平台没有现成的 gitleaks 资产：{platform.system()}",
-              file=sys.stderr)
+        print(
+            f"[scan_secrets] 这个平台没有现成的 gitleaks 资产：{platform.system()}", file=sys.stderr
+        )
         return None
     asset, fmt = picked
     url = f"https://github.com/gitleaks/gitleaks/releases/download/{GITLEAKS_VERSION}/{asset}"
@@ -149,11 +150,15 @@ def _install_to(cache: Path) -> Path | None:
                 file=sys.stderr,
             )
             try:
-                script = "https://raw.githubusercontent.com/gitleaks/gitleaks/master/scripts/install.sh"
+                script = (
+                    "https://raw.githubusercontent.com/gitleaks/gitleaks/master/scripts/install.sh"
+                )
                 cmd_line = f"curl -sSfL {script} | bash -s -- -b {cache} {GITLEAKS_VERSION}"
                 proc = subprocess.run(
                     [installer, "-c", cmd_line],
-                    capture_output=True, text=True, timeout=120,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
                 )
                 if proc.returncode == 0 and target.exists():
                     return target
@@ -165,7 +170,7 @@ def _install_to(cache: Path) -> Path | None:
 
 
 def _tracked_files(repo: Path) -> list[str]:
-    """"这份要发出去的源码"= tracked + 没被忽略的未跟踪。由 git 自己答，不抄第二份规则。
+    """ "这份要发出去的源码"= tracked + 没被忽略的未跟踪。由 git 自己答，不抄第二份规则。
 
     从前这里靠 `--no-git` 直扫工作树 + 配置里一份目录黑名单去逼近同一个语义 —— 两处都是假的：
     `--no-git` 是**盘上全扫、根本不看 .gitignore**，而黑名单两种写法实测都 over-match
@@ -182,8 +187,14 @@ def _tracked_files(repo: Path) -> list[str]:
     """
     proc = subprocess.run(
         [
-            "git", "-C", str(repo), "ls-files", "--cached", "--others",
-            "--exclude-standard", "-z",
+            "git",
+            "-C",
+            str(repo),
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
         ],
         capture_output=True,
         timeout=60,
@@ -244,11 +255,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="密钥扫描（gitleaks 包装，fail-closed）")
     parser.add_argument("--repo", default=".", help="仓库根（默认当前目录）")
     parser.add_argument("--json", default=None, help="把发现写成 JSON 报告")
-    parser.add_argument("--history", action="store_true",
-                        help="全量 git 历史扫描（需要 .git，较慢）")
-    parser.add_argument("--cache-dir",
-                        default=str(Path(tempfile.gettempdir()) / "gitleaks-cache"),
-                        help="离线装二进制的缓存目录")
+    parser.add_argument(
+        "--history", action="store_true", help="全量 git 历史扫描（需要 .git，较慢）"
+    )
+    parser.add_argument(
+        "--cache-dir",
+        default=str(Path(tempfile.gettempdir()) / "gitleaks-cache"),
+        help="离线装二进制的缓存目录",
+    )
     args = parser.parse_args(argv)
 
     repo = Path(args.repo).resolve()
@@ -287,14 +301,25 @@ def main(argv: list[str] | None = None) -> int:
             # 这一格就是 CI 上那 37 个文件本来该走的路：`ScopeMismatch` 从 `_shadow_tree`
             # 抛出来，如果这里不接，脚本就抛 traceback 冲出 —— 门禁确实会红，但退码就不是
             # 约定的 2 了（0 干净 / 1 发现 / 2 扫不成），而这条线的**退出码本身就是判据**。
-            print(f"[scan_secrets] ❌ 影子树建不起来：{exc}（扫不成 ≠ 干净，退 2）",
-                  file=sys.stderr)
+            print(
+                f"[scan_secrets] ❌ 影子树建不起来：{exc}（扫不成 ≠ 干净，退 2）", file=sys.stderr
+            )
             return 2
         source = shadow
         print(f"[scan_secrets] 范围 = git 名单 {len(files)} 个文件（影子树）", file=sys.stderr)
 
-    cmd = [str(tool), "detect", "--source", str(source), "--config", str(config),
-           "--no-banner", "--exit-code", "1", "--redact"]
+    cmd = [
+        str(tool),
+        "detect",
+        "--source",
+        str(source),
+        "--config",
+        str(config),
+        "--no-banner",
+        "--exit-code",
+        "1",
+        "--redact",
+    ]
     if shadow is not None:
         # 影子树里没有 .git，也不该回头去读原仓库的历史 —— `--no-git` 在这里终于名副其实：
         # 扫的就是"本次要发出去的那一份源码"。
@@ -326,8 +351,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
         except OSError as exc:
-            print(f"[scan_secrets] ❌ gitleaks 起不来：{exc}（扫不成 ≠ 干净，退 2）",
-                  file=sys.stderr)
+            print(
+                f"[scan_secrets] ❌ gitleaks 起不来：{exc}（扫不成 ≠ 干净，退 2）", file=sys.stderr
+            )
             return 2
     finally:
         if shadow is not None:

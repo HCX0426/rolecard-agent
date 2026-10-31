@@ -73,7 +73,7 @@ def test_向量库目录被改坏就报红(tmp_path: pathlib.Path) -> None:
 
 
 def test_库文件不在也是红且话不一样(tmp_path: pathlib.Path) -> None:
-    """"文件不在"与"文件坏了"是两种现场：深探不做启发式，如实分开说。"""
+    """ "文件不在"与"文件坏了"是两种现场：深探不做启发式，如实分开说。"""
     report = _report(tmp_path, backends=[{"id": "local"}])
     assert report["checks"]["sqlite"]["ok"] is False
     assert "不存在" in report["checks"]["sqlite"]["detail"]
@@ -149,9 +149,7 @@ def test_门禁只放操作员与本地匿名() -> None:
     assert got.value.status_code == 403
 
 
-def test_验收_chroma_改坏后_health_仍_200_而深探报红(
-    tmp_path: pathlib.Path, monkeypatch
-) -> None:
+def test_验收_chroma_改坏后_health_仍_200_而深探报红(tmp_path: pathlib.Path, monkeypatch) -> None:
     """快照那句验收的**端到端**版本，两半放进同一个进程里量。
 
     坏法用的是"软损坏"：目录形状还在、里面那个 sqlite 不再是库（覆盖成垃圾）。

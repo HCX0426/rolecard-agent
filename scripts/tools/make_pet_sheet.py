@@ -66,8 +66,13 @@ class Variant:
 VARIANTS: dict[str, Variant] = {
     v.id: v
     for v in (
-        Variant(id="default", label="默认团子", palette={}, tuft=False,
-                rows={"listening": 6, "thinking": 7}),
+        Variant(
+            id="default",
+            label="默认团子",
+            palette={},
+            tuft=False,
+            rows={"listening": 6, "thinking": 7},
+        ),
         Variant(
             id="mint",
             label="薄荷",
@@ -115,17 +120,30 @@ def s(v: float) -> float:
     return v * SCALE
 
 
-def ell(d: ImageDraw.ImageDraw, cx: float, cy: float, rx: float, ry: float,
-        fill: tuple[int, ...] | None, outline: tuple[int, ...] | None = None,
-        width: float = 3.0) -> None:
+def ell(
+    d: ImageDraw.ImageDraw,
+    cx: float,
+    cy: float,
+    rx: float,
+    ry: float,
+    fill: tuple[int, ...] | None,
+    outline: tuple[int, ...] | None = None,
+    width: float = 3.0,
+) -> None:
     d.ellipse(
         [s(cx - rx), s(cy - ry), s(cx + rx), s(cy + ry)],
-        fill=fill, outline=outline, width=int(s(width)),
+        fill=fill,
+        outline=outline,
+        width=int(s(width)),
     )
 
 
-def line(d: ImageDraw.ImageDraw, pts: list[tuple[float, float]],
-         fill: tuple[int, ...], width: float = 3.0) -> None:
+def line(
+    d: ImageDraw.ImageDraw,
+    pts: list[tuple[float, float]],
+    fill: tuple[int, ...],
+    width: float = 3.0,
+) -> None:
     d.line([(s(x), s(y)) for x, y in pts], fill=fill, width=int(s(width)), joint="curve")
 
 
@@ -140,56 +158,67 @@ def frame_params(row: int, i: int) -> dict[str, float | str | bool]:
     w = math.sin(2 * math.pi * t)
     a = math.sin(math.pi * i / (COLS - 1))
     p: dict[str, float | str | bool] = {
-        "dx": 0.0, "dy": 0.0, "sx": 1.0, "sy": 1.0, "tilt": 0.0,
-        "eye": "open", "pupil_dx": 0.0, "mouth": "smile",
-        "arm_l": 0.0, "arm_r": 0.0, "foot_l": 0.0, "foot_r": 0.0, "lift": 0.0,
-        "zzz": 0.0, "dizzy": False,
+        "dx": 0.0,
+        "dy": 0.0,
+        "sx": 1.0,
+        "sy": 1.0,
+        "tilt": 0.0,
+        "eye": "open",
+        "pupil_dx": 0.0,
+        "mouth": "smile",
+        "arm_l": 0.0,
+        "arm_r": 0.0,
+        "foot_l": 0.0,
+        "foot_r": 0.0,
+        "lift": 0.0,
+        "zzz": 0.0,
+        "dizzy": False,
     }
-    if row == 0:      # idle：呼吸 + 第 8 帧眨一下眼
+    if row == 0:  # idle：呼吸 + 第 8 帧眨一下眼
         p["sy"] = 1 + 0.024 * w
         p["sx"] = 1 - 0.018 * w
         p["eye"] = "blink" if i == 7 else "open"
-    elif row == 1:    # 跑向右：整体斜 + 双脚交替
+    elif row == 1:  # 跑向右：整体斜 + 双脚交替
         p["dx"] = 6 * w
         p["tilt"] = 4 * w
         p["mouth"] = "o"
         p["foot_l"] = -7 * max(0.0, w)
         p["foot_r"] = -7 * max(0.0, -w)
         p["dy"] = -2 * abs(w)
-    elif row == 2:    # 跑向左：镜像
+    elif row == 2:  # 跑向左：镜像
         p["dx"] = -6 * w
         p["tilt"] = -4 * w
         p["mouth"] = "o"
         p["foot_l"] = -7 * max(0.0, -w)
         p["foot_r"] = -7 * max(0.0, w)
         p["dy"] = -2 * abs(w)
-    elif row == 3:    # 挥手（说话）：右臂抬起、来回摆；嘴张开
+    elif row == 3:  # 挥手（说话）：右臂抬起、来回摆；嘴张开
         p["arm_r"] = -52 + 22 * w
         p["mouth"] = "open"
         p["dy"] = -3 * abs(w)
         p["eye"] = "happy"
-    elif row == 4:    # 跳：a 弧线离地、落地那两帧压扁
+    elif row == 4:  # 跳：a 弧线离地、落地那两帧压扁
         p["dy"] = -46 * a
         p["lift"] = 46 * a
         p["sy"] = 1 - 0.06 * (1 - a)
         p["sx"] = 1 + 0.05 * (1 - a)
         p["mouth"] = "open"
-    elif row == 5:    # 晕：× 眼 + 歪 + 头顶转圈
+    elif row == 5:  # 晕：× 眼 + 歪 + 头顶转圈
         p["eye"] = "x"
         p["mouth"] = "wave"
         p["tilt"] = 6 * w
         p["dx"] = 3 * w
         p["dizzy"] = True
-    elif row == 6:    # 等待：头歪、目光左右找
+    elif row == 6:  # 等待：头歪、目光左右找
         p["tilt"] = 7 * w
         p["pupil_dx"] = 5 * w
         p["mouth"] = "line"
-    elif row == 7:    # 琢磨：目光扫读 + 微微前倾
+    elif row == 7:  # 琢磨：目光扫读 + 微微前倾
         p["pupil_dx"] = 9 * w
         p["dx"] = 3 + 4 * w
         p["mouth"] = "line"
         p["eye"] = "squint"
-    else:             # 睡：闭眼、慢呼吸、Z 往上飘
+    else:  # 睡：闭眼、慢呼吸、Z 往上飘
         p["eye"] = "closed"
         p["sy"] = 1 + 0.035 * w
         p["sx"] = 1 - 0.026 * w
@@ -236,8 +265,16 @@ def draw_face(d: ImageDraw.ImageDraw, p: dict[str, float | str | bool]) -> None:
         d.arc([s(88), s(132), s(104), s(146)], 20, 160, fill=MOUTH, width=int(s(2.6)))
 
 
-def draw_arm(d: ImageDraw.ImageDraw, x: float, y: float, angle_deg: float,
-             inward: int, *, cx: float, cy: float) -> None:
+def draw_arm(
+    d: ImageDraw.ImageDraw,
+    x: float,
+    y: float,
+    angle_deg: float,
+    inward: int,
+    *,
+    cx: float,
+    cy: float,
+) -> None:
     """一只前爪。`angle_deg` 是相对"垂下"的抬臂角度（正 = 抬起）；抬起时爪子挪到
     身体侧上方、**压着身体轮廓边缘** —— 不能挪成一颗悬空的小球（第一次生成就是这个
     毛病，单独一个球漂在旁边像零件掉了）。"""
@@ -317,8 +354,15 @@ def draw_cell(row: int, i: int) -> Image.Image:
 
 #: 出厂调色板的快照。每套包都从这里出发，只覆盖它声明过的那几支。
 BASE: dict[str, tuple[int, ...]] = {
-    "OUTLINE": OUTLINE, "BODY": BODY, "BODY_SHADE": BODY_SHADE, "EAR_IN": EAR_IN,
-    "EYE": EYE, "MOUTH": MOUTH, "BLUSH": BLUSH, "SHADOW": SHADOW, "WHITE": WHITE,
+    "OUTLINE": OUTLINE,
+    "BODY": BODY,
+    "BODY_SHADE": BODY_SHADE,
+    "EAR_IN": EAR_IN,
+    "EYE": EYE,
+    "MOUTH": MOUTH,
+    "BLUSH": BLUSH,
+    "SHADOW": SHADOW,
+    "WHITE": WHITE,
 }
 
 
@@ -353,8 +397,10 @@ def build(variant: Variant) -> None:
     (out_dir / "pack.json").write_bytes(
         (json.dumps(manifest, ensure_ascii=False, indent=1) + "\n").encode("utf-8")
     )
-    print(f"wrote {sprite} + pack.json  {sheet.width}x{sheet.height}  "
-          f"cell={CELL_W}x{CELL_H}  cols={COLS} rows={ROWS}  bytes={sprite.stat().st_size}")
+    print(
+        f"wrote {sprite} + pack.json  {sheet.width}x{sheet.height}  "
+        f"cell={CELL_W}x{CELL_H}  cols={COLS} rows={ROWS}  bytes={sprite.stat().st_size}"
+    )
 
 
 def main() -> None:
@@ -362,7 +408,7 @@ def main() -> None:
     parser.add_argument("--pack", default=None, choices=sorted(VARIANTS))
     parser.add_argument("--all", action="store_true", help="把 VARIANTS 里每套都重生成一遍")
     args = parser.parse_args()
-    for name in (sorted(VARIANTS) if args.all else [args.pack or "default"]):
+    for name in sorted(VARIANTS) if args.all else [args.pack or "default"]:
         build(VARIANTS[name])
 
 

@@ -77,7 +77,7 @@ def test_truncated_or_broken_payload_degrades_to_unknown(
 def test_dirty_flag_absent_is_none_not_false(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """"没记"与"记了说干净"是两件事：把它们混成一件事，脏树打包就会看起来是干净的。"""
+    """ "没记"与"记了说干净"是两件事：把它们混成一件事，脏树打包就会看起来是干净的。"""
     _frozen(monkeypatch, tmp_path)
     (tmp_path / build_info.BUILD_INFO_NAME).write_text(
         json.dumps({"git_sha": "ffff111122223333"}), encoding="utf-8"

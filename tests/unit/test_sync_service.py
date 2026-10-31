@@ -77,9 +77,7 @@ def _count(conn: sqlite3.Connection, table: str, **where: str) -> int:
 # ---------------------------------------------------------------- 备份那一半
 
 
-def test_rows_are_dumped_before_they_are_cleared(
-    conn: sqlite3.Connection, data_root: Path
-) -> None:
+def test_rows_are_dumped_before_they_are_cleared(conn: sqlite3.Connection, data_root: Path) -> None:
     """删前备份里有那一行原文；顺序是判据：**备份写完才允许删**。"""
     _seed_memory(conn, "uid-doomed", "这句要被整份替换清掉")
 
@@ -128,9 +126,7 @@ def test_clearing_is_a_single_transaction_with_the_import(
 ) -> None:
     """清空不自己 commit：调用方（`run_import`）能连导入一起回滚 —— "清了不导"的唯一解。"""
     _seed_memory(conn, "uid-1", "一条")
-    cleared = sync_service.clear_rows_for_replace(
-        conn, user_id=DEFAULT_USER_ID, kinds=["memory"]
-    )
+    cleared = sync_service.clear_rows_for_replace(conn, user_id=DEFAULT_USER_ID, kinds=["memory"])
     assert cleared == {"memory": 1}
     assert conn.in_transaction, "行类清空必须还挂在事务里，否则回滚收不回来"
     conn.rollback()
@@ -229,9 +225,7 @@ def test_backup_files_are_trimmed_per_table(
     assert "role_memory_item-20260102-000000.jsonl" in survivors, survivors
 
 
-def test_clear_threads_sums_both_delete_paths(
-    conn: sqlite3.Connection, data_root: Path
-) -> None:
+def test_clear_threads_sums_both_delete_paths(conn: sqlite3.Connection, data_root: Path) -> None:
     """真删逐条 + 收尾那条**相加**才是条数；只取收尾那个数会恒报 0（`R102-05` 的读数错）。"""
     for tid in ("s_x", "s_y", "s_z"):
         conn.execute(
@@ -259,9 +253,7 @@ def test_service_runs_without_http_for_non_http_hosts(
         "service 反向依赖 HTTP 层，非 HTTP 宿主就 import 不动它"
     )
     _seed_memory(conn, "uid-quiet", "脚本里也能清")
-    cleared = sync_service.clear_rows_for_replace(
-        conn, user_id=DEFAULT_USER_ID, kinds=["memory"]
-    )
+    cleared = sync_service.clear_rows_for_replace(conn, user_id=DEFAULT_USER_ID, kinds=["memory"])
     assert cleared == {"memory": 1}
 
 

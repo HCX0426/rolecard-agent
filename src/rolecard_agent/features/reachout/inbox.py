@@ -45,10 +45,7 @@ def list_reachouts(
     `file_watch_pending` = 当前挂起的目录变更条数（0 = 无事件或功能关闭）。
     """
     # `dismissed` 不进列表（用户已经划掉了），但**行留着** —— 那才是"她冒话而没人接"的证据。
-    where = (
-        "WHERE state != 'dismissed' AND user_id = ?"
-        + (" AND role_id = ?" if role_id else "")
-    )
+    where = "WHERE state != 'dismissed' AND user_id = ?" + (" AND role_id = ?" if role_id else "")
     params = (user_id, role_id, limit) if role_id else (user_id, limit)
     rows = conn.execute(
         f"SELECT id, role_id, role_name, text, state, created_at, read_at, seen_at, dismissed_at "
@@ -76,7 +73,8 @@ def list_reachouts(
             "SELECT COUNT(*) AS n FROM agent_reachout WHERE user_id = ? AND state = 'unread'",
             (user_id,),
         ).fetchone()
-    # "某个角色有几条没读"只在这里算一次（审计 §12.11 的"三份各算"那一格）：铃铛、桌宠、
+    # "某个角色有几条没读"只在这里算一次（审计「主动开口吞消息与抽屉只增不减」的"三份各算"那一格）
+    # 铃铛、桌宠、
     # 抽屉以前各自 filter 一遍，其中桌宠那份连后端给的 `unread` 都不看。
     # 边界：抽屉里**同一摞**（同角色同一天）的角标仍然在前端数 —— 那是显示分组的一部分，
     # 分组只做在前端（设计稿 §1），后端只负责把 `merge_days` 随列表带回。
@@ -196,9 +194,7 @@ def record_reachout(
         (role.role_id, user_id, role.role_name, text, fired_by, repeat_score),
     )
     conn.commit()
-    prune_inbox(
-        conn, role.role_id, int(getattr(role, "reachout_keep", 0) or 0), user_id=user_id
-    )
+    prune_inbox(conn, role.role_id, int(getattr(role, "reachout_keep", 0) or 0), user_id=user_id)
     # 返回 id：调用方要把"投进会话了没有"写回同一行（`mark_delivered`）。
     return int(cur.lastrowid or 0)
 
@@ -243,9 +239,7 @@ def restore_row(conn: SqlConnection, *, user_id: str, payload: dict[str, Any]) -
         "created_at": str(payload.get("created_at") or "") or None,
     }
     cols = [
-        col
-        for col in table_columns(conn, "agent_reachout")
-        if col in value_map or col in payload
+        col for col in table_columns(conn, "agent_reachout") if col in value_map or col in payload
     ]
     placeholders = ", ".join("?" for _ in cols)
     conn.execute(
@@ -299,11 +293,13 @@ def prune_inbox(conn: SqlConnection, role_id: str, keep: int, *, user_id: str) -
     if keep <= 0:
         return 0
     before = int(
-        str(conn.execute(
-            "SELECT COUNT(*) AS n FROM agent_reachout "
-            "WHERE role_id = ? AND user_id = ? AND state != 'dismissed'",
-            (role_id, user_id),
-        ).fetchone()["n"])
+        str(
+            conn.execute(
+                "SELECT COUNT(*) AS n FROM agent_reachout "
+                "WHERE role_id = ? AND user_id = ? AND state != 'dismissed'",
+                (role_id, user_id),
+            ).fetchone()["n"]
+        )
     )
     conn.execute(
         "UPDATE agent_reachout SET state = 'dismissed', dismissed_at = CURRENT_TIMESTAMP "

@@ -81,9 +81,7 @@ def test_execute_failure_still_reaches_terminal(
     monkeypatch.setattr(run_tools, "execute_command", boom)
     conn = connect(db_path)
     try:
-        run_tools.run_approval_execution(
-            approval_id, settings=Settings(), conn=conn
-        )
+        run_tools.run_approval_execution(approval_id, settings=Settings(), conn=conn)
     finally:
         conn.close()
     row = _read_row(db_path, approval_id)

@@ -271,8 +271,8 @@ class ApprovalService:
                 "SELECT id, command, cwd, role_id, role_name, thread_id, status, "
                 "result_json, decide_token, created_at, updated_at FROM command_approval "
                 "WHERE status = ? ORDER BY id DESC LIMIT ?",
-            (status, limit),
-        ).fetchall()
+                (status, limit),
+            ).fetchall()
         return [self._row(r, include_token=include_token) for r in rows]
 
     # ---------------------------------------------------------------- 内部

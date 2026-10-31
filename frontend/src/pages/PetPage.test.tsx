@@ -615,7 +615,7 @@ describe("PetPage 点开面板（§7：想回话不用开控制台）", () => {
     expect(screen.queryByText(/这条现在还不该出现/)).toBeNull();
   });
 
-  it("把「画了像素的那几块」报给壳，形状没变不重复发，卸载时收回（§12.3）", async () => {
+  it("把「画了像素的那几块」报给壳，形状没变不重复发，卸载时收回（「桌宠透明区遮挡点击」）", async () => {
     const shell = withShell();
     const send = shell.petHotRects as unknown as ReturnType<typeof vi.fn>;
     const { unmount } = await mount();
@@ -627,7 +627,7 @@ describe("PetPage 点开面板（§7：想回话不用开控制台）", () => {
     expect(rects.length).toBeGreaterThanOrEqual(1); // 至少有色片那一块
     expect(rects[0]).toHaveLength(4);
     // jsdom 没有排版，量出来必然是 0 —— 这里能钉的是"形状报出去了、都是有限整数"，
-    // 真实尺寸那一半由壳那边的样式位探针在真机上量（见审计 §12.3）。
+    // 真实尺寸那一半由壳那边的样式位探针在真机上量（见审计「桌宠透明区遮挡点击」）。
     expect(rects.flat().every((n) => Number.isInteger(n))).toBe(true);
 
     const before = send.mock.calls.length;

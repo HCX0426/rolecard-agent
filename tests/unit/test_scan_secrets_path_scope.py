@@ -34,8 +34,13 @@ def _make_repo(tmp_path: Path, *, quote: str) -> Path:
     repo.mkdir()
 
     def git(*args: str) -> None:
-        p = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True,
-                           encoding="utf-8", errors="replace")
+        p = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
         assert p.returncode == 0, f"git {' '.join(args)} 失败：{p.stderr[:200]}"
 
     git("init", "-q")
@@ -84,8 +89,9 @@ def test_名单里有盘上找不到的项必须抛而不是打印一声(tmp_pat
         _shadow_tree(repo, [LORE, "不存在的东西.py"])
 
 
-def test_退码语义_范围没定下来是2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                                capsys: pytest.CaptureFixture[str]) -> None:
+def test_退码语义_范围没定下来是2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """退出码就是判据（0 干净 / 1 发现 / 2 扫不成）：范围建不起来必须走 2，不许抛 traceback。
 
     没有这一格的话，`ScopeMismatch` 会一路冲出 `main()`：门禁照样红，但打出来的是 traceback，

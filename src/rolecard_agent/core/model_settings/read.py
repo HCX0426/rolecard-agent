@@ -324,4 +324,3 @@ class _ReadMixin:
             )
         self._write_chat_refs(names, user_id=user_id)
         self._conn.commit()
-

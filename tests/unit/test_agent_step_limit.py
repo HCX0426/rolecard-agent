@@ -45,6 +45,7 @@ def cards(store: RoleCardService) -> RoleCards:
     """测试里"本机主人眼里的那些卡"的简写（M2a 之后每次读写都得说清为谁）。"""
     return store.scoped("u1")
 
+
 class _LoopingChat:
     """永远要求调用同一个工具的假模型：模拟"模型陷入了重复调用"。
 

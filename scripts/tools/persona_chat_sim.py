@@ -13,7 +13,7 @@
     .venv\\Scripts\\python.exe scripts\\persona_chat_sim.py                 # 两边都跑（本地很慢）
     .venv\\Scripts\\python.exe scripts\\persona_chat_sim.py --side cloud    # 只跑云端
     .venv\\Scripts\\python.exe scripts\\persona_chat_sim.py --role elysia --turns 4
-    # 审计 §12.5 那一格（角色留本地、只把提取交云端）——两次跑对减就是 A/B：
+    # 审计「档案角色的记忆该由谁来判」那一格（角色留本地、只把提取交云端）——两次跑对减就是 A/B：
     .venv\\Scripts\\python.exe scripts\\persona_chat_sim.py \\
         --role medical_archivist --model qwen3-vl-8b
     .venv\\Scripts\\python.exe scripts\\persona_chat_sim.py \\
@@ -85,7 +85,7 @@ def _run_thread(
 ) -> list[tuple[str, float, float]]:
     """逐轮走完整链路，**分别记首字延迟与总耗时**；返回每轮的 `(她说的话, 首字秒, 总秒)`。
 
-    为什么要首字（TTFT）而不是只有总耗时：§12.7 要答的问题是"后台自动提取会不会跟下一轮
+    为什么要首字（TTFT）而不是只有总耗时：「本地自动提取的成本」要答的问题是"后台自动提取会不会跟下一轮
     抢显存"，那件事的表现形态是**响应变慢**，而本地 8B 的总耗时里大头是它在思考（实测一条
     问候 184~232 秒）。只有首字延迟能把"模型没空"和"这句话说得长"分开。
     """
@@ -96,9 +96,7 @@ def _run_thread(
         started = time.time()
         first: float | None = None
         text = ""
-        with client.stream(
-            "POST", "/api/chat", json={"thread_id": thread, "message": msg}
-        ) as res:
+        with client.stream("POST", "/api/chat", json={"thread_id": thread, "message": msg}) as res:
             if res.status_code != 200:
                 print(f"  HTTP {res.status_code}", flush=True)
                 continue
@@ -135,7 +133,9 @@ def _run_thread(
 
 
 def _report(
-    db: Path, role_id: str, sides: dict[str, list[tuple[str, float, float]]],
+    db: Path,
+    role_id: str,
+    sides: dict[str, list[tuple[str, float, float]]],
     baseline: tuple[int, int],
 ) -> None:
     """每个臂单独量一遍（**别把两边的句子混在一栏里** —— 那等于量了一个不存在的角色）。"""
@@ -153,7 +153,7 @@ def _report(
         kept = [t for t in hers if t]
         m = pm.measure([{"text": t} for t in kept])
         # 首字延迟单独一行，按轮序排：自动提取会不会跟下一轮抢显存，看的就是这一串里
-        # 有没有哪一格突然翘起来（§12.7）。第 5 轮之后是提取该触发的位置。
+        # 有没有哪一格突然翘起来（「本地自动提取的成本」）。第 5 轮之后是提取该触发的位置。
         series = " ".join(f"{ttft:.1f}" if ttft == ttft else "—" for _t, ttft, _tot in log)
         print(f"\n{label}：首字延迟序列（秒，按轮）{series}")
         print(
@@ -200,19 +200,19 @@ def main() -> None:
     parser.add_argument(
         "--model",
         default="",
-        help="副本里把该角色的 model_name 设成这个后端名。档案角色那一格必须是\"角色留在本地\""
-             "（真库的默认后端是云端，不设这一项测的就不是路由决策后的形状）",
+        help='副本里把该角色的 model_name 设成这个后端名。档案角色那一格必须是"角色留在本地"'
+        "（真库的默认后端是云端，不设这一项测的就不是路由决策后的形状）",
     )
     parser.add_argument(
         "--extract-backend",
         default="",
-        help="MEMORY_EXTRACT_BACKEND：只把「提取精华/整理记忆」交给这个后端（审计 §12.5 那一格）",
+        help="MEMORY_EXTRACT_BACKEND：只把「提取精华/整理记忆」交给这个后端（审计「档案角色的记忆该由谁来判」那一格）",
     )
     parser.add_argument(
         "--sampling",
         default="",
         help="写进副本里该后端的采样惩罚，形如 repeat_penalty=1.2,frequency_penalty=0.1"
-             "（不给 = 保持库里原样）。惩罚的**推荐档位**要用这把尺子量出来才写进界面文案",
+        "（不给 = 保持库里原样）。惩罚的**推荐档位**要用这把尺子量出来才写进界面文案",
     )
     args = parser.parse_args()
     if hasattr(sys.stdout, "reconfigure"):

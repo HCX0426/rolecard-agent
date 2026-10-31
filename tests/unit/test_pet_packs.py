@@ -32,9 +32,7 @@ def _pack(
         (dirn / entry).write_bytes(b"\x89PNG fake")
     if manifest is not None:
         (dirn / pet_packs.MANIFEST_FILE).write_text(
-            manifest
-            if isinstance(manifest, str)
-            else json.dumps(manifest, ensure_ascii=False),
+            manifest if isinstance(manifest, str) else json.dumps(manifest, ensure_ascii=False),
             encoding="utf-8",
         )
     return dirn
@@ -87,9 +85,7 @@ def test_the_user_root_wins_over_the_bundled_one(roots: tuple[Path, Path]) -> No
     _pack(roots[0] / "default", manifest={"label": "我盖的那份"})
     _pack(roots[1] / "default", manifest={"label": "随包那份"})
     found = pet_packs.scan()
-    assert [(p.id, p.source, p.label) for p in found.packs] == [
-        ("default", "user", "我盖的那份")
-    ]
+    assert [(p.id, p.source, p.label) for p in found.packs] == [("default", "user", "我盖的那份")]
 
 
 def test_a_missing_sprite_is_skipped_with_a_reason(roots: tuple[Path, Path]) -> None:
@@ -178,9 +174,7 @@ def test_pack_lookup_refuses_anything_that_is_not_a_slug(bad: str) -> None:
     "relative",
     ["../secret.txt", "../../etc/passwd", "/absolute/path", "textures/../../sqlite/app.db", "."],
 )
-def test_pack_file_cannot_escape_its_own_directory(
-    roots: tuple[Path, Path], relative: str
-) -> None:
+def test_pack_file_cannot_escape_its_own_directory(roots: tuple[Path, Path], relative: str) -> None:
     """第二个守卫：包内相对路径**解析之后还得在包目录里**（Live2D 模型会引用子目录文件，
     所以这条路径必须开，但开了就不能让人借它往外面走）。"""
     pack = _pack(roots[0] / "default")

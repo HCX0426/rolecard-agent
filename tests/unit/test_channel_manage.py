@@ -24,9 +24,12 @@ def test_channel_fields_registered_in_runtime_registry() -> None:
     assert fields["qq_app_secret"].kind == "secret"
     assert fields["qq_channel_enabled"].kind == "bool"
     # 渠道组进分组清单（运行环境页按组渲染）
-    assert any(key == "channel" for key, _label in __import__(
-        "rolecard_agent.core.runtime_settings", fromlist=["RUNTIME_GROUPS"]
-    ).RUNTIME_GROUPS)
+    assert any(
+        key == "channel"
+        for key, _label in __import__(
+            "rolecard_agent.core.runtime_settings", fromlist=["RUNTIME_GROUPS"]
+        ).RUNTIME_GROUPS
+    )
 
 
 def test_saving_channel_config_restarts_channel(tmp_path: Path) -> None:

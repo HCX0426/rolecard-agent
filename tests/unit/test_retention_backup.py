@@ -192,9 +192,7 @@ def test_rotation_is_per_table_so_approvals_cannot_starve_audit(tmp_path: Path) 
         )
     dumped = _read_backup(backup_dir, "audit_log")
     assert [int(r["id"]) for r in dumped] == [doomed_audit]
-    assert {int(r["id"]) for r in _read_backup(backup_dir, "command_approval")} == {
-        doomed_approval
-    }
+    assert {int(r["id"]) for r in _read_backup(backup_dir, "command_approval")} == {doomed_approval}
     conn.close()
 
 

@@ -1,4 +1,4 @@
-"""token 账（core/common/usage.py，审计 §12.8）。
+"""token 账（core/common/usage.py，审计「云端 token 与成本累计」）。
 
 钉五件事：
   1. **四种键名形状都要认出来** —— Ollama 报 `prompt_eval_count`，OpenAI 兼容口报
@@ -65,7 +65,8 @@ def test_parse_recovers_all_four_shapes() -> None:
 def test_reasoning_is_split_out_of_completion_but_stays_a_subset() -> None:
     """思考模型：`reasoning` 单独认出来，但**总量仍然是 prompt + completion**。
 
-    实测过的那条"在吗"回 616 个输出 token、其中 590 是 reasoning（审计 §12.8 第二条）。
+    实测过的那条"在吗"回 616 个输出 token、其中 590 是 reasoning（审计「云端 token 与成本累计
+    第二条）。
     这一列存在的唯一理由就是能问出"今天花的钱里有多少在想"，而它不能把合计撑大 ——
     想的那 590 本来就在那 616 里。两家键名各认一次：漏一家就是"这一路永远显示 0 想"。
     """
@@ -244,9 +245,12 @@ class _ChunkStream:
                     if self.report
                     else None
                 )
-                yield "messages", (
-                    AIMessageChunk(content="嗯", usage_metadata=usage),
-                    {"langgraph_node": "call_model", "langgraph_step": step},
+                yield (
+                    "messages",
+                    (
+                        AIMessageChunk(content="嗯", usage_metadata=usage),
+                        {"langgraph_node": "call_model", "langgraph_step": step},
+                    ),
                 )
             yield "updates", {"call_model": {"messages": [AIMessage(content="嗯" * self.chunks)]}}
 

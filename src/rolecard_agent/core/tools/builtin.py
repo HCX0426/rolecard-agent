@@ -56,10 +56,7 @@ def _current(domains: DomainsLike) -> tuple[str, ...]:
 
 
 def make_kernel_tools(
-    *,
-    roles: RoleReader,
-    current_user: Callable[[], str],
-    enabled_domains: DomainsLike = ()
+    *, roles: RoleReader, current_user: Callable[[], str], enabled_domains: DomainsLike = ()
 ) -> list[BaseTool]:
     """Build the kernel tools, closing over the services they need.
 

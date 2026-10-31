@@ -186,14 +186,11 @@ def main() -> None:
         if not samples:
             continue
         print(
-            f"{label:34}{statistics.median(samples):10.1f}"
-            f"{min(samples):10.1f}{max(samples):10.1f}"
+            f"{label:34}{statistics.median(samples):10.1f}{min(samples):10.1f}{max(samples):10.1f}"
         )
 
     totals = [sum(rd.get("⓪ build_runtime 全程", [0])) for rd in all_rounds]
-    print(
-        f"\nbuild_runtime 全程中位数 = {statistics.median(totals):.1f} ms（验收线 2000 ms）"
-    )
+    print(f"\nbuild_runtime 全程中位数 = {statistics.median(totals):.1f} ms（验收线 2000 ms）")
     recon_a = [v for rd in all_rounds for v in rd.get("③a reconcile（DDL 前）", [])]
     recon_b = [v for rd in all_rounds for v in rd.get("③b reconcile（DDL 后）", [])]
     if recon_a and recon_b:

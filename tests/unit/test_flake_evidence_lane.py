@@ -115,9 +115,7 @@ ERROR_LOG = (
 )
 
 
-def test_an_error_at_setup_line_is_retried_like_a_failed_one(
-    monkeypatch, tmp_path, capsys
-) -> None:
+def test_an_error_at_setup_line_is_retried_like_a_failed_one(monkeypatch, tmp_path, capsys) -> None:
     """chroma 这个偶发**最常以 ERROR 出现**（fixture 期就炸），重跑通道不能只接 `FAILED`。"""
     mod = _load(monkeypatch, tmp_path)
     monkeypatch.setattr(sys, "argv", ["x", "--lane", "fast"])
@@ -147,9 +145,7 @@ MIXED_LOG = (
 )
 
 
-def test_a_mixed_batch_retries_nothing_even_with_one_flake(
-    monkeypatch, tmp_path, capsys
-) -> None:
+def test_a_mixed_batch_retries_nothing_even_with_one_flake(monkeypatch, tmp_path, capsys) -> None:
     mod = _load(monkeypatch, tmp_path)
     monkeypatch.setattr(sys, "argv", ["x", "--lane", "fast"])
     calls: list[list[str]] = []
@@ -319,9 +315,7 @@ def test_a_truncated_summary_line_makes_the_registered_flake_read_as_unregistere
     assert failures, "现场那条真摘要行没被抓到 ⇒ 摘要形状变了，本条要跟着改而不是放它过去"
     name, reason = failures[0]
     assert name == "tests/unit/test_rag.py"
-    assert not mod._is_chroma_flake(reason), (
-        f"被截断的原因居然判成在册 ⇒ 遮羞布更宽了：{reason!r}"
-    )
+    assert not mod._is_chroma_flake(reason), f"被截断的原因居然判成在册 ⇒ 遮羞布更宽了：{reason!r}"
     whole = f"FAILED {name}::test_scope_isolation - {PROD_CHROMA_ERROR}\n1 failed\n"
     n2, r2 = mod._failures(whole)[0]
     assert n2 == name and mod._is_chroma_flake(r2), r2
@@ -427,8 +421,7 @@ def test_the_enumeration_matches_pytest_own_discovery(monkeypatch, tmp_path) -> 
         cwd=str(ROOT),
     )
     collected = {
-        m.replace("\\", "/")
-        for m in re.findall(r"^(\S+\.py):\s+\d+$", proc.stdout, flags=re.M)
+        m.replace("\\", "/") for m in re.findall(r"^(\S+\.py):\s+\d+$", proc.stdout, flags=re.M)
     }
     assert proc.returncode == 0, f"pytest 收集本身失败：{proc.stdout[-400:]}"
     assert collected, "pytest 一个文件都没收集到 ⇒ 这个分母是空的，测了个寂寞"

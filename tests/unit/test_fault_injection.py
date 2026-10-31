@@ -78,7 +78,7 @@ def test_commit_被打断时那笔不会留下来(tmp_path: pathlib.Path) -> Non
         ("disk I/O error", 503),
         ("unable to open database file", 503),
         ("no such table: t", None),  # 编程错：不许伪装成"重试就好"
-        ("near \"SELEC\": syntax error", None),
+        ('near "SELEC": syntax error', None),
     ],
 )
 def test_只有环境型故障才算故障(message: str, expected: int | None) -> None:

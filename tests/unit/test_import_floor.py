@@ -55,9 +55,7 @@ def _imported_packages(path: pathlib.Path) -> set[str]:
 def test_bottom_layers_never_import_upward() -> None:
     offenders: list[str] = []
     for pkg, allowed in ALLOWED_DOWNWARD.items():
-        files = sorted(
-            p for p in (SRC / pkg).rglob("*.py") if "__pycache__" not in p.parts
-        )
+        files = sorted(p for p in (SRC / pkg).rglob("*.py") if "__pycache__" not in p.parts)
         assert files, f"{pkg} 包空了？找 {SRC / pkg}"
         for path in files:
             imported = _imported_packages(path)
@@ -65,9 +63,7 @@ def test_bottom_layers_never_import_upward() -> None:
             if bad:
                 rel = path.relative_to(SRC).as_posix()
                 offenders.append(f"{rel} -> {bad}")
-    assert not offenders, (
-        "底层反向 import 上层（依赖方向被抄回来了）：" + "; ".join(offenders)
-    )
+    assert not offenders, "底层反向 import 上层（依赖方向被抄回来了）：" + "; ".join(offenders)
 
 
 def test_base_is_where_the_shared_primitives_live() -> None:

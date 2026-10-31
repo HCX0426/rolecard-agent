@@ -239,7 +239,8 @@ def make_tracer(settings: Settings) -> Tracer:
     Silently downgrading would be the dangerous option: someone who sets
     `OBS_BACKEND=langsmith` plus a key and gets local JSON lines would believe they have cloud
     traces. The previous version of this function had two identical branches behind an `if`,
-    which read as though the cloud backends were already wired (技术评审与决策.md §9 A1).
+    which read as though the cloud backends were already wired (技术评审与决策.md 「实现对齐核查
+    A1).
     """
     tracer = LocalTracer(emit_raw_text=settings.obs_emit_raw_text, path=settings.obs_log_path)
     if settings.obs_backend not in IMPLEMENTED_BACKENDS:

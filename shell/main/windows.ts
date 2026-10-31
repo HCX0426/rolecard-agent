@@ -184,7 +184,7 @@ function stopSlide(): void {
 function slidePetTo(win: BrowserWindow, target: Rect, ms: number): void {
   stopSlide();
   // 滑的这整段路都吃点击：窗在走而手不动 ⇒ 色片会从光标底下滑走，那一刻光标落到透明带上
-  // （见 §12.3 那段的"点它它跑了"）。多给的 400ms 是留给手反应的时间。
+  // （见「桌宠透明区遮挡点击」那段的"点它它跑了"）。多给的 400ms 是留给手反应的时间。
   holdPetClickable(win, ms + 400);
   const from = petAnchor(win);
   if (
@@ -470,7 +470,7 @@ function panelShiftFor(anchor: Rect, work: Rect): number {
  */
 export function movePetBy(win: BrowserWindow, dx: number, dy: number): void {
   // 拖着的时候整窗吃点击：拖拽必然让光标滑出色片那块 88 见方（手快、窗慢），按新规矩一滑出
-  // 就把点击漏给桌面 ⇒ 拖到一半突然在拖桌面。松手后 400ms 自动收回（见 §12.3）。
+  // 就把点击漏给桌面 ⇒ 拖到一半突然在拖桌面。松手后 400ms 自动收回（见「桌宠透明区遮挡点击」）。
   holdPetClickable(win, 400);
   petUntuck(win, { instant: true }); // 拖着藏着的那一小条走 = 一动手就先把它拉回屏内；拖的时候不滑
   stopSlide(); // 手在拖 ⇒ 任何在跑的动画让开，否则它每帧把窗口按回自己的目标，位移被吃掉
@@ -509,7 +509,7 @@ export function applyPetPrefs(win: BrowserWindow, prefs: PetPrefs): void {
 }
 
 /**
- * 透明带不再挡桌面点击（审计 §12.3）。
+ * 透明带不再挡桌面点击（审计「桌宠透明区遮挡点击」）。
  *
  * 200×240 里色片只占中间 88 见方，两侧各 56px、上下还有余量 —— 那些像素是全透明的，
  * 但整扇窗都在吃鼠标，于是用户点下面的桌面图标会点不到（2026-09-22 他就问过这件事）。

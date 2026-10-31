@@ -96,7 +96,7 @@ def _split_list(raw: str | None) -> list[str]:
 def _entry_role(entry: str) -> tuple[str, str]:
     """拆 `operator:` 前缀 → (角色, 去掉前缀后的凭据串)。"""
     if entry.lower().startswith(OPERATOR_PREFIX):
-        return ROLE_OPERATOR, entry[len(OPERATOR_PREFIX):].strip()
+        return ROLE_OPERATOR, entry[len(OPERATOR_PREFIX) :].strip()
     return ROLE_USER, entry
 
 
@@ -313,9 +313,7 @@ def _exempt_hit(path: str, method: str, exempt: list[str]) -> bool:
     return False
 
 
-def auth_required(
-    *, mode: str, ip: str, path: str, exempt: list[str], method: str = "GET"
-) -> bool:
+def auth_required(*, mode: str, ip: str, path: str, exempt: list[str], method: str = "GET") -> bool:
     """这个请求是否必须带凭证。
 
     fail-closed：`on` 档即使一个凭证都没配，也照样要求 —— 那样所有人都会被拒，

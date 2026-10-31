@@ -89,9 +89,7 @@ def test_complete_vocabulary_prose_lists_are_not_stale() -> None:
             *sorted((root / "frontend" / "src").rglob("*")),
             *sorted((root / "docs").glob("*.md")),
         ]
-        if p.is_file()
-        and p.suffix in {".py", ".ts", ".tsx", ".md"}
-        and ".test." not in p.name
+        if p.is_file() and p.suffix in {".py", ".ts", ".tsx", ".md"} and ".test." not in p.name
     ]
     offenders: list[str] = []
     found = 0
@@ -151,9 +149,7 @@ def test_every_frontend_endpoint_literal_resolves_to_a_backend_route() -> None:
         for path in sorted(frontend_src.rglob("*")):
             if path.suffix not in {".ts", ".tsx"} or ".test." in path.name:
                 continue
-            cleaned = block_comment.sub(
-                "", path.read_text(encoding="utf-8", errors="ignore")
-            )
+            cleaned = block_comment.sub("", path.read_text(encoding="utf-8", errors="ignore"))
             for lineno, line in enumerate(cleaned.splitlines(), 1):
                 if line.lstrip().startswith("//"):
                     continue
@@ -171,11 +167,10 @@ def test_every_frontend_endpoint_literal_resolves_to_a_backend_route() -> None:
     # 口径与基线同源：`app.openapi()`（`app.routes` 在这个 FastAPI 版本里把 router 包成
     # `_IncludedRouter`，不暴露 path —— 别换回去）。
     backend_paths = set(app.openapi()["paths"].keys())
+
     # 后端的路径参数名不参与比对：/api/session/{tid} 按"段数 + 常量段"归一
     def shape(path: str) -> tuple[str, ...]:
-        return tuple(
-            re.sub(r"\{[^}]*\}", "{p}", seg) for seg in path.strip("/").split("/") if seg
-        )
+        return tuple(re.sub(r"\{[^}]*\}", "{p}", seg) for seg in path.strip("/").split("/") if seg)
 
     backend_shapes = {shape(p) for p in backend_paths}
     dangling: list[str] = []
@@ -187,7 +182,4 @@ def test_every_frontend_endpoint_literal_resolves_to_a_backend_route() -> None:
         checked.add(key)
         if shape(key) not in backend_shapes:
             dangling.append(f"{rel}:{lineno} {literal}")
-    assert not dangling, (
-        "前端有指不到后端路由的端点字面量（R102-12 的可达性半边）："
-        f"{dangling[:8]}"
-    )
+    assert not dangling, f"前端有指不到后端路由的端点字面量（R102-12 的可达性半边）：{dangling[:8]}"

@@ -63,9 +63,7 @@ def test_删之前先把行逐列落盘并能在删后读回(env) -> None:
 
     written = {p.name for p in backup.glob("*.jsonl")}
     assert "session_thread-20261007-000000.jsonl" in written, written
-    row = json.loads(
-        (backup / "session_thread-20261007-000000.jsonl").read_text(encoding="utf-8")
-    )
+    row = json.loads((backup / "session_thread-20261007-000000.jsonl").read_text(encoding="utf-8"))
     assert row["thread_id"] == "s_keep"
     assert row["title"] == "能被找回的那一句", "逐列原样，不许只存 id"
     # 「逐列」判成一个与列名无关的断言：备份里的键集合必须**等于**表上的列集合，

@@ -52,8 +52,10 @@ def test_data_root_moves_the_whole_instance(
         assert value.is_relative_to(other), value
     # 一个根 = 一个身份的那份完整数据集：四条彼此同根，不需要再各设一遍。
     assert (
-        paths["CHROMA_PATH"].parent == paths["UPLOAD_DIR"].parent
-        == paths["WORKSPACE_DIR"].parent == other
+        paths["CHROMA_PATH"].parent
+        == paths["UPLOAD_DIR"].parent
+        == paths["WORKSPACE_DIR"].parent
+        == other
     )
 
 
@@ -83,10 +85,15 @@ def test_half_moved_root_speaks_up(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
 
     # 全在根下 / 全搬出去：都不出声（后者是"整份换到别处"，本来就是合法形态）
     assert split_root_notice(**{k.lower(): v for k, v in inside.items()}) is None
-    assert split_root_notice(
-        sqlite_path=elsewhere / "app.db", chroma_path=elsewhere / "c",
-        upload_dir=elsewhere / "u", workspace_dir=elsewhere / "w",
-    ) is None
+    assert (
+        split_root_notice(
+            sqlite_path=elsewhere / "app.db",
+            chroma_path=elsewhere / "c",
+            upload_dir=elsewhere / "u",
+            workspace_dir=elsewhere / "w",
+        )
+        is None
+    )
     # 只换库不换索引：正是 §4.1 那个半吊子状态，必须点名是哪几条在外面
     note = split_root_notice(
         sqlite_path=elsewhere / "app.db",

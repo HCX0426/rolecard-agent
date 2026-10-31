@@ -68,9 +68,7 @@ def test_summarize_splits_executable_lines_against_report() -> None:
             "src\\x\\new.py": {"executed_lines": [1], "missing_lines": [2]},
         }
     }
-    covered, uncovered, violations = mod.summarize(
-        mod.parse_changed_lines(DIFF_SAMPLE), report
-    )
+    covered, uncovered, violations = mod.summarize(mod.parse_changed_lines(DIFF_SAMPLE), report)
     assert (covered, uncovered) == (2, 3), (covered, uncovered)
     assert violations["src/x/old.py"] == [12, 13]
     assert violations["src/x/new.py"] == [2]

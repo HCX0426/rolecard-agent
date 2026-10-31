@@ -1,6 +1,6 @@
 """Unit tests for the ingestion-task ledger and its state machine.  Traceability: US-3.
 
-Why this table exists (技术评审与决策.md §9 B1): a separate `ingestion_task` row,
+Why this table exists (技术评审与决策.md 「实现对齐核查」B1): a separate `ingestion_task` row,
 not a `status` column on `medical_report`. These tests pin the two properties that justify the
 separate table: idempotency on file hash, and a forward-only status graph.
 """
@@ -120,6 +120,7 @@ def test_the_ledger_only_touches_its_own_table(
         for table in re.findall(r"\b(?:INTO|UPDATE|FROM)\s+(\w+)", stmt, flags=re.I)
     }
     assert touched <= {"ingestion_task"}, f"台账写了别的表：{sorted(touched - {'ingestion_task'})}"
+
 
 def test_a_miss_on_the_ledger_does_not_leave_a_write_transaction(
     tmp_path: Path,

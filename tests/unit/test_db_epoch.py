@@ -24,9 +24,7 @@ def _make_conn(tmp_path: Path) -> ThreadLocalConnection:
     path = tmp_path / "app.db"
     raw = connect(path)
     bootstrap(raw, enabled_domains=("health",))
-    raw.execute(
-        "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('t1', 'demo')"
-    )
+    raw.execute("INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('t1', 'demo')")
     raw.execute(
         "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "
         "VALUES ('u1', 't1', 'demo')"
@@ -41,9 +39,7 @@ def test_residual_transaction_is_discarded_when_the_epoch_changes(tmp_path: Path
 
     # 请求 1：写一半不提交（模拟"事务中途异常退出"）
     set_request_epoch("req-1")
-    conn.execute(
-        "INSERT INTO tenant (tenant_id, display_name) VALUES ('t2', 'half-written')"
-    )
+    conn.execute("INSERT INTO tenant (tenant_id, display_name) VALUES ('t2', 'half-written')")
     assert conn.execute("SELECT COUNT(*) FROM tenant").fetchone()[0] == 2  # 本连接看得见
 
     # 请求 2（同一个线程、同一个连接）：代际变了 → 残留事务必须被丢弃
@@ -58,9 +54,7 @@ def test_same_epoch_does_not_rollback_mid_request_writes(tmp_path: Path) -> None
     conn = _make_conn(tmp_path)
 
     set_request_epoch("req-1")
-    conn.execute(
-        "INSERT INTO tenant (tenant_id, display_name) VALUES ('t2', 'first')"
-    )
+    conn.execute("INSERT INTO tenant (tenant_id, display_name) VALUES ('t2', 'first')")
     conn.execute("SELECT COUNT(*) FROM tenant")  # 同请求内再取一次连接
     count = conn.execute("SELECT COUNT(*) FROM tenant").fetchone()[0]
 
@@ -72,9 +66,7 @@ def test_epoch_change_commits_nothing_hidden(tmp_path: Path) -> None:
     conn = _make_conn(tmp_path)
 
     set_request_epoch("req-1")
-    conn.execute(
-        "INSERT INTO tenant (tenant_id, display_name) VALUES ('t2', 'committed')"
-    )
+    conn.execute("INSERT INTO tenant (tenant_id, display_name) VALUES ('t2', 'committed')")
     conn.commit()
 
     set_request_epoch("req-2")
@@ -104,16 +96,13 @@ def test_dedupe_ingestion_removes_duplicates_keeps_latest(tmp_path) -> None:
         ("t-new", "u1", "b.txt", "hash-x", "pending", "2026-06-01 00:00:00"),
         ("t-other", "u1", "c.txt", "hash-y", "pending", "2026-01-01 00:00:00"),
     ]
-    conn.executemany(
-        "INSERT INTO ingestion_task VALUES (?, ?, ?, ?, ?, ?)", rows
-    )
+    conn.executemany("INSERT INTO ingestion_task VALUES (?, ?, ?, ?, ?, ?)", rows)
     conn.commit()
 
     removed = dedupe_ingestion_tasks(conn)
     assert removed == 1
     left = {
-        str(r["task_id"])
-        for r in conn.execute("SELECT task_id FROM ingestion_task").fetchall()
+        str(r["task_id"]) for r in conn.execute("SELECT task_id FROM ingestion_task").fetchall()
     }
     assert left == {"t-new", "t-other"}, left
     assert dedupe_ingestion_tasks(conn) == 0, "幂等：第二遍必须零改动"

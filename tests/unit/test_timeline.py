@@ -27,13 +27,12 @@ ROLE = "elysia"
 USER = "u1"
 
 
-
 @pytest.fixture
 def conn() -> Any:
     c = connect(":memory:")
     bootstrap(c, enabled_domains=())
     # 09-27 轮 M2c 之后轴**按主人读**三条源（收件箱/记忆/会话都带归属），所以这里的锚点
-# 必须与 build(user_id=...) 同一个人：`session_thread.user_id` 又是指向外键的，点就得先有人。
+    # 必须与 build(user_id=...) 同一个人：`session_thread.user_id` 又是指向外键的，点就得先有人。
     c.executescript(
         "INSERT INTO tenant (tenant_id, display_name) VALUES ('t1', 'demo');"
         "INSERT INTO app_user (user_id, tenant_id, display_name) VALUES ('u1', 't1', 'u');"
@@ -131,8 +130,9 @@ def test_superseded_item_becomes_a_correction_event(conn: SqlConnection) -> None
     assert old is not None
     fresh = mem.add_item(conn, user_id=USER, bucket=ROLE, text="用户去年搬到北京了")
     assert fresh is not None
-    mem.invalidate_item(conn, user_id=USER, item_id=int(str(old["id"])),
-        superseded_by=int(str(fresh["id"])))
+    mem.invalidate_item(
+        conn, user_id=USER, item_id=int(str(old["id"])), superseded_by=int(str(fresh["id"]))
+    )
     conn.execute(
         "UPDATE role_memory_item SET invalidated_at = ? WHERE id = ?",
         (at(20, "10:00:00"), old["id"]),
@@ -215,7 +215,11 @@ def test_garbage_cursor_is_not_an_error(conn: SqlConnection) -> None:
 
 def test_threads_of_other_roles_do_not_leak(conn: SqlConnection) -> None:
     add_thread(
-        conn, "s_other", at(4, "10:00:00"), at(4, "11:00:00"), "别人的会话",
+        conn,
+        "s_other",
+        at(4, "10:00:00"),
+        at(4, "11:00:00"),
+        "别人的会话",
         role="general_assistant",
     )
     add_reachout(conn, "我的那条", at(5, "10:00:00"))

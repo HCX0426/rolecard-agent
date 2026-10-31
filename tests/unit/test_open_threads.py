@@ -64,7 +64,7 @@ def test_capped_at_three_and_overlong_topics_are_trimmed() -> None:
 
 
 def test_decoration_is_stripped_but_an_empty_shell_is_dropped() -> None:
-    assert parse_open_threads('OPEN "下周去复查\""') == ["下周去复查"]
+    assert parse_open_threads('OPEN "下周去复查""') == ["下周去复查"]
     assert parse_open_threads("OPEN") == []
     assert parse_open_threads("OPEN    ") == []
 

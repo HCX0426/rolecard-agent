@@ -156,8 +156,11 @@ def test_a_new_group_for_one_identity_does_not_reuse_anothers_key(
     # 组键不撞（全局主键）：`siliconflow` 与 `siliconflow-2` 已被占，第三个拿到下一个后缀。
     ids = {
         str(g["id"])
-        for g in (svc.list_providers(user_id=A) + svc.list_providers(user_id=B)
-                  + svc.list_providers(user_id="u3"))
+        for g in (
+            svc.list_providers(user_id=A)
+            + svc.list_providers(user_id=B)
+            + svc.list_providers(user_id="u3")
+        )
     }
     assert len(ids) == 3, ids
 
@@ -177,12 +180,15 @@ def test_renaming_or_editing_a_foreign_row_is_a_404_not_an_edit(
     with pytest.raises(KeyError):
         svc.remove_model("b-chat", user_id=A)
     assert svc.sampling("b-chat", user_id=B) == {
-        "repeat_penalty": None, "frequency_penalty": None, "presence_penalty": None,
+        "repeat_penalty": None,
+        "frequency_penalty": None,
+        "presence_penalty": None,
     }
     conn = svc._conn  # noqa: SLF001 - 断言的是"库里真的没被改"
-    assert conn.execute(
-        "SELECT num_ctx FROM model_backend WHERE name = 'b-chat'"
-    ).fetchone()[0] is None
+    assert (
+        conn.execute("SELECT num_ctx FROM model_backend WHERE name = 'b-chat'").fetchone()[0]
+        is None
+    )
     assert conn.execute("SELECT 1 FROM model_backend WHERE name = 'b-chat'").fetchone()
 
 
@@ -219,8 +225,11 @@ def test_start_up_repair_reaches_every_identity(svc: ModelSettingsService) -> No
     """
     conn = svc._conn  # noqa: SLF001
     # 历史脏形状：无 key 供应商被写成别名 `local` 且揣了一把占位 key。
-    conn.execute("INSERT INTO model_provider (id, user_id, provider, base_url, api_key) "
-                 "VALUES ('ollama-b', ?, 'local', 'http://localhost:11434', 'stale')", (B,))
+    conn.execute(
+        "INSERT INTO model_provider (id, user_id, provider, base_url, api_key) "
+        "VALUES ('ollama-b', ?, 'local', 'http://localhost:11434', 'stale')",
+        (B,),
+    )
     conn.commit()
     assert svc.normalize_providers() == 1
     rows = {
@@ -251,9 +260,7 @@ def test_chat_usage_derivation_does_not_count_another_persons_chat_ref(
     过滤，B 的服务页会把那一条当成"B 用于对话"，界面列出、运行却解析不到 —— 撒谎的配置。
     """
     conn = svc._conn  # noqa: SLF001
-    b_gid = conn.execute(
-        "SELECT id FROM model_provider WHERE user_id = ?", (B,)
-    ).fetchone()[0]
+    b_gid = conn.execute("SELECT id FROM model_provider WHERE user_id = ?", (B,)).fetchone()[0]
     conn.execute(
         "INSERT INTO model_backend (name, provider_id, model, sort_order) "
         "VALUES ('shared', ?, 'm', 99)",
@@ -279,7 +286,9 @@ def test_seed_from_env_stamps_the_instance_owner(
     env = Settings(
         model_backends={
             "cloud": ModelBackend(
-                provider="siliconflow", model="M", base_url="https://api.siliconflow.cn/v1",
+                provider="siliconflow",
+                model="M",
+                base_url="https://api.siliconflow.cn/v1",
                 api_key="sk-from-env",
             ),
         },
@@ -287,9 +296,12 @@ def test_seed_from_env_stamps_the_instance_owner(
         model_fallbacks=[],
     )
     assert ModelSettingsService(conn).seed_from_env(env, user_id=B) == 1
-    assert conn.execute(
-        "SELECT user_id FROM model_provider WHERE base_url LIKE '%siliconflow%'"
-    ).fetchone()[0] == B
+    assert (
+        conn.execute(
+            "SELECT user_id FROM model_provider WHERE base_url LIKE '%siliconflow%'"
+        ).fetchone()[0]
+        == B
+    )
     assert ModelSettingsService(conn).stored_api_key("cloud", user_id=B) == "sk-from-env"
     # A 看不见这次播种：env 的 key 不会因为"同一个进程"就变成他的可用凭据。
     assert ModelSettingsService(conn).list_backends(user_id=A) == []
@@ -310,9 +322,14 @@ def test_chat_default_and_fallbacks_follow_the_person(svc: ModelSettingsService)
     assert svc.default_backend(user_id="u3") is None  # 没配过 = 这台机器上"这个人"没有
     # A 配两条 → 回退链只属于 A
     extra = _backend_row("a-extra", "Qwen3-1B", "sk-aaaaaaaaaaaaaaaa")
-    svc.save(user_id=A, default="a-chat", backends=[
-        _backend_row("a-chat", "Qwen3-8B", KEY_A), extra,
-    ])
+    svc.save(
+        user_id=A,
+        default="a-chat",
+        backends=[
+            _backend_row("a-chat", "Qwen3-8B", KEY_A),
+            extra,
+        ],
+    )
     assert svc.list_fallbacks(user_id=A) == ["a-extra"]
     assert svc.list_fallbacks(user_id=B) == []
     assert svc.list_fallbacks(user_id=B) != svc.list_fallbacks(user_id=A)
@@ -352,7 +369,9 @@ def test_chat_reference_rows_carry_the_owner_and_capability_rows_do_not(
     }
     assert chat_owner == {"a-chat": A, "b-chat": B}
     # 能力行不该被误标主人：NULL 就是"这台机器的能力"，不是谁名下的配置。
-    assert conn.execute(
-        "SELECT COUNT(*) FROM service_endpoint "
-        "WHERE category != 'chat' AND user_id IS NOT NULL"
-    ).fetchone()[0] == 0
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM service_endpoint WHERE category != 'chat' AND user_id IS NOT NULL"
+        ).fetchone()[0]
+        == 0
+    )

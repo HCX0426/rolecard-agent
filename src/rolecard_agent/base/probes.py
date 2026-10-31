@@ -47,7 +47,6 @@ def vision_model_ready(base_url: str | None, model: str, *, use_cache: bool = Tr
         if cached is not None and time.monotonic() - cached[1] < PROBE_TTL:
             return cached[0]
     try:
-
         tags = outbound.get(f"{base}/api/tags", timeout=3.0).json()
     except Exception:  # noqa: BLE001 - 探活失败 = 不在位
         _PROBE_CACHE[cache_key] = (False, time.monotonic())
@@ -63,9 +62,7 @@ def vision_model_ready(base_url: str | None, model: str, *, use_cache: bool = Tr
 _CAP_CACHE: dict[tuple[str, str], tuple[bool | None, float]] = {}
 
 
-def vision_capability(
-    base_url: str | None, model: str, *, use_cache: bool = True
-) -> bool | None:
+def vision_capability(base_url: str | None, model: str, *, use_cache: bool = True) -> bool | None:
     """Ollama 这个模型**能不能看图** —— 读 `/api/show` 的 `capabilities`（实测形状：
     `["tools","thinking","completion","vision"]`）。只问元数据，不发推理请求。
 
@@ -82,7 +79,6 @@ def vision_capability(
             return cached[0]
     verdict: bool | None
     try:
-
         payload = outbound.post(f"{base}/api/show", json={"model": model}, timeout=3.0).json()
         caps = payload.get("capabilities")
     except Exception:  # noqa: BLE001 - 问不到就是"不知道"，不是"不能"

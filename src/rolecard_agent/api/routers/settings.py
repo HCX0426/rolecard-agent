@@ -995,14 +995,15 @@ def consolidate_memory(
     bucket = role_id or mem.GLOBAL_BUCKET
     # 「提取精华」和「整理记忆」是同一件事的两个入口（都要判断"哪些是事实、谁顶替谁"），
     # 所以共用 `MEMORY_EXTRACT_BACKEND` 这一个旋钮：填了就用它，没填就用默认后端 —— 与今天
-    # 完全一致。**"哪个模型碰过我的记忆文本"必须只有一个答案**（审计 §12.5）。
+    # 完全一致。**"哪个模型碰过我的记忆文本"必须只有一个答案**（审计「档案角色的记忆该由谁来判」）。
     backend = (ctx.settings.memory_extract_backend or "").strip() or None
     outcome = memory_distill.consolidate(
         ctx.conn,
         user_id=ctx.current_user(),
         model=ctx.runtime.resolve_role_model(backend),
         bucket=bucket,
-        # 后端名跟着模型一起进账：默认那条记在"未指名"下，指定了就该记在它名下（§12.8）。
+        # 后端名跟着模型一起进账：默认那条记在"未指名"下，指定了就该记在它名下（「云端 token
+        # 与成本累计」）。
         backend=backend,
         tracer=ctx.tracer,
     )

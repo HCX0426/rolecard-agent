@@ -607,7 +607,7 @@ def _from_message_chunk(
 ) -> Iterator[TurnEvent]:
     """`messages` 模式的一个原始块 → 思考事件 + 已过审的正文增量（并顺手记一次用量）。
 
-    用量为什么在这里取而不是在 `call_model` 里取（审计 §12.8/#8）：
+    用量为什么在这里取而不是在 `call_model` 里取（审计「云端 token 与成本累计」/#8）：
     **供应商在每一个流式分块里都回一份"累计到目前为止"的 usage**，而 langchain 合并
     `AIMessageChunk` 时是把这些逐块**相加**的 —— 于是 `call_model` 拿到的那个合并值是
     `真值 × 分块数`（实测一条"在吗"：非流式 26 token，流式合并后 272,607）。
@@ -628,7 +628,8 @@ def _from_message_chunk(
     # 思考模型的推理增量（langchain-ollama：reasoning=True 时思考进
     # additional_kwargs['reasoning_content']）。与正文分流：思考走 thinking 事件、进折叠
     # 面板，不混进回答正文。qwen3-vl / 云端 DeepSeek 这类思考模型这里是关键分流 ——
-    # 否则思考 token 会被当成回答的字数报给用户（审计 §12.10 那次误判的一半成因）。
+    # 否则思考 token 会被当成回答的字数报给用户（审计「教训写在这里而不是代码里」那次误判的一半成因
+    # 。
     think_delta = (getattr(chunk, "additional_kwargs", None) or {}).get("reasoning_content")
     if isinstance(chunk, AIMessageChunk) and think_delta:
         yield Thinking(text=str(think_delta))

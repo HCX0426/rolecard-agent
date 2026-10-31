@@ -3,7 +3,7 @@
 为什么需要这一发：`install_package.ps1` 的验货全都发生在**装完之后**，而用户选了
 「先不打，攒着一起」（09-30）⇒ 有一段时间产物存在、机器上装的还是上一包。那段路上没有
 任何一条现成判据能回答"刚打出来的这份对不对"，而"构建退出码 0"从来不等于产物是当前的
-（旧轮台账 §12.4 从头在说的那件事）。
+（旧轮台账「安装包过期」从头在说的那件事）。
 
 三路各打**一层**，缺一层就会重演"前端是新的、后端是旧的还照样打印 OK"那次：
 ① 前端层 —— 包内 `_internal/frontend/dist` 与仓库 `frontend/dist` **逐文件 sha256 全等**，
@@ -190,8 +190,10 @@ def check_backend_binary() -> bool:
         return False
     if not FRESH_SIDECAR.exists():
         print(f"  ✗ 比不了：{FRESH_SIDECAR.relative_to(ROOT)} 不存在 —— 没有「刚构建的那份」当尺子")
-        print(f"    包内那份 sha256 = {_sha256(inside)[:12]}…"
-              "（先跑 scripts/build_sidecar.py 再打这一发）")
+        print(
+            f"    包内那份 sha256 = {_sha256(inside)[:12]}…"
+            "（先跑 scripts/build_sidecar.py 再打这一发）"
+        )
         return False
     a, b = _sha256(FRESH_SIDECAR), _sha256(inside)
     print(f"  刚构建 = {a[:12]}…  包内 = {b[:12]}…")
@@ -220,8 +222,9 @@ def check_frozen_boot() -> bool:
         return False
     head = _repo_head_sha()
     if not head:
-        print("  ✗ 读不到仓库 HEAD —— 这一发没有比对的基准"
-                  "（不是包的问题，是这里没在 git 仓库里跑）")
+        print(
+            "  ✗ 读不到仓库 HEAD —— 这一发没有比对的基准（不是包的问题，是这里没在 git 仓库里跑）"
+        )
         return False
     port = _free_port()
     data_root = pathlib.Path(tempfile.mkdtemp(prefix="rc_pkg_artifact_"))
@@ -267,17 +270,23 @@ def check_frozen_boot() -> bool:
             reported, built_dirty = "", None
         if not reported or reported == "unknown":
             print("  ✗ 它没报构建指纹（`build.sha` 缺失或 unknown）—— 这一包不知道自己是谁")
-            print("     两种可能：① 这一包是在指纹机制存在之前打的（那它本来就该被重打一次）；"
-                  "② 有人绕过 scripts/build_sidecar.py 直接 pyinstaller —— spec 里那道硬闸该拦住的")
+            print(
+                "     两种可能：① 这一包是在指纹机制存在之前打的（那它本来就该被重打一次）；"
+                "② 有人绕过 scripts/build_sidecar.py 直接 pyinstaller —— spec 里那道硬闸该拦住的"
+            )
             return False
         print(f"  这一包自报 git_sha={reported}（打包时工作树 dirty={built_dirty}）")
         if reported != head[: len(reported)]:
-            print(f"  ✗ 包里的后端来自 {reported}，而仓库 HEAD 是 {head[: len(reported)]}"
-                  " —— 攒着没重打的那一笔就在这里")
+            print(
+                f"  ✗ 包里的后端来自 {reported}，而仓库 HEAD 是 {head[: len(reported)]}"
+                " —— 攒着没重打的那一笔就在这里"
+            )
             return False
         if built_dirty:
-            print("  ✗ 指纹对上了，但打包那一刻工作树是**脏**的："
-                  "「装的就是 HEAD」这句话不成立，先把改动提交再重打")
+            print(
+                "  ✗ 指纹对上了，但打包那一刻工作树是**脏**的："
+                "「装的就是 HEAD」这句话不成立，先把改动提交再重打"
+            )
             return False
         print(f"  ✓ 身份一致：这一包就是 {head[:12]}")
 
@@ -356,7 +365,10 @@ def check_icon_frames() -> bool:
         k32.EnumResourceNamesW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, enum_cb, ctypes.c_long]
         k32.FindResourceExW.restype = ctypes.c_void_p
         k32.FindResourceExW.argtypes = [
-            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, wintypes.WORD
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            wintypes.WORD,
         ]
         k32.SizeofResource.restype = ctypes.c_size_t
         k32.SizeofResource.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
@@ -413,7 +425,6 @@ def check_icon_frames() -> bool:
         print("  ✓ 逐帧 sha256 全等（桌面上那九帧就是仓库那九帧，四角透明由源文件那条断言看着）")
         return True
 
-
     # 走到这里 = 这一趟不是 Windows：那一整块 PE/加载器的读数**没有被量过**，
     # 所以它进 SKIPPED 并被汇总行念出来，而不是安静地返回 True 冒充"这层过了"。
     SKIPPED.append("④ 图标层（这一趟不是 Windows，PE 资源问不到）")
@@ -438,9 +449,7 @@ def main() -> int:
     if failed:
         print(f"❌ {len(failed)}/{len(layers)} 层没过：" + "；".join(failed) + note)
         return 1
-    print(
-        f"✅ {len(layers)} 层全过 —— 这一包就是这一版（**没有安装**，机器上那份没动）{note}"
-    )
+    print(f"✅ {len(layers)} 层全过 —— 这一包就是这一版（**没有安装**，机器上那份没动）{note}")
     if SKIPPED:
         print("   ⚠ 上面那句『全过』不包括被跳过的层：它们在这一趟**没量到**。")
     return 0

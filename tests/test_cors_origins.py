@@ -44,10 +44,14 @@ def _preflight(client: TestClient, origin: str):
 def test_no_cors_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     client = _client(tmp_path, monkeypatch, "", "off")
     for path, origin in (("/api/roles", OTHER), ("/api/roles", ALLOWED), ("/api/health", OTHER)):
-        res = client.request("OPTIONS", path, headers={
-            "Origin": origin,
-            "Access-Control-Request-Method": "GET",
-        })
+        res = client.request(
+            "OPTIONS",
+            path,
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "GET",
+            },
+        )
         names = {k.lower() for k in res.headers}
         assert "access-control-allow-origin" not in names, (path, names)
 
@@ -64,9 +68,7 @@ def test_only_the_listed_origin_is_allowed(tmp_path: Path, monkeypatch: pytest.M
     assert got.headers.get("access-control-allow-origin") == ALLOWED
 
 
-def test_preflight_is_answered_before_auth(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_preflight_is_answered_before_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """`AUTH_MODE=on` 时预检不能被 401 —— 它按规范不带凭据。"""
     client = _client(tmp_path, monkeypatch, ALLOWED, "on")
     pre = _preflight(client, ALLOWED)

@@ -3,6 +3,7 @@
 按主题拆出；执行顺序由 registry.CHECKS 唯一决定，本模块只回答"这一族住哪"。
 行为等价由门禁实跑全部 CHECKS 证明。
 """
+
 from __future__ import annotations
 
 import ast
@@ -125,8 +126,13 @@ def check_config_contract() -> None:
                     same = False
         if not same:
             drifted.append(f"{key}: example={example!r} 默认={default!r}")
-    out("env default values", not drifted, "; ".join(drifted[:4]) if drifted
-        else f"{len(pairs) - len(_ENV_DEFAULT_EXEMPT)} 个默认值与 example 一致")
+    out(
+        "env default values",
+        not drifted,
+        "; ".join(drifted[:4])
+        if drifted
+        else f"{len(pairs) - len(_ENV_DEFAULT_EXEMPT)} 个默认值与 example 一致",
+    )
     if drifted:
         fails.append(f".env.example values drifted from Settings defaults: {drifted}")
 
@@ -167,6 +173,7 @@ def check_config_contract() -> None:
     )
     if bad_json:
         fails.append(f".env.example JSON examples are unusable: {bad_json}")
+
 
 #: 操作系统给的那些变量：它们不是本应用的契约，写进 .env.example 反而误导人以为可以设。
 _PLATFORM_ENV = {"LOCALAPPDATA", "APPDATA", "TEMP", "TMP", "HOME", "PATH", "USERPROFILE"}
@@ -227,7 +234,7 @@ _MIN_MAPPING_PAIRS = 40
 
 
 def _env_example_documented(env_text: str, cfg_text: str) -> set[str]:
-    """"说出来过"的三处来源：活键、注释键、config 文本里带引号的键。
+    """ "说出来过"的三处来源：活键、注释键、config 文本里带引号的键。
 
     口径与 `check_startup_env_documented` 同源（.env.example 文件头宣布的"活键或注释都
     算"），从前两处各写一遍三条正则 —— 改口径只改这里。**契约检查不用它**：那条的方向是
@@ -255,6 +262,7 @@ _ENV_BRANCH_PAIRS: list[tuple[str, str]] = [
 #: JSON blob 那些键没有"一个出厂默认值"可比；能漂的是"抄下来解析不了"，
 #: 那半边由 `check_config_contract` 里的 `env example json valid` 那条管（原话在它上面）。
 _JSON_BLOB_EXEMPT = {"MODEL_BACKENDS"}
+
 
 def _env_names_read_in_src(src: pathlib.Path) -> dict[str, str]:
     """通过 `os.environ` 读到的变量名 → 第一处 `文件:行`。
@@ -294,6 +302,7 @@ def _env_names_read_in_src(src: pathlib.Path) -> dict[str, str]:
             ):
                 found[name] = f"{rel}:{getattr(node, 'lineno', 0)}"
     return found
+
 
 def check_startup_env_documented() -> None:
     """`src` 里真读的每个环境变量，都必须对谁**说出来过**。
@@ -373,6 +382,7 @@ def check_entrypoint_env_documented() -> None:
     if missing:
         fails.append(f"undocumented env read by run_api.py: {missing}")
 
+
 # Settings fields that are parsed on purpose but not read yet. Declaring them here is the
 # point: a field that is merely forgotten and a field that is deliberately forward-looking
 # look identical in the source, so the difference has to be written down somewhere.
@@ -382,6 +392,7 @@ RESERVED_SETTINGS = {
     # chroma_path left the reserved set in v2.1: the knowledge base reads it for real.
     # upload_dir left the reserved set in M5: the chat upload entry reads it for real.
 }
+
 
 def _settings_field_names(cfg_text: str) -> list[str]:
     """类体里 `name: type` 注解字段（AnnAssign）的名字，按声明顺序。
@@ -407,7 +418,7 @@ def check_dead_config() -> None:
 
     A parsed-but-unread setting is worse than a missing one: `.env.example` advertises it, so
     someone configures it and believes it took effect. That is how `langsmith_api_key` and
-    `model_fallbacks` sat unused (技术评审与决策.md §9 A2 / A4).
+    `model_fallbacks` sat unused (技术评审与决策.md 「实现对齐核查」A2 / A4).
 
     字段范围比这句 docstring 说的宽：Settings、ModelBackend、McpServerConfig 三类的注解
     字段都算（旧正则的 4 空格扫到的就是这三类，实测 78=78）—— 模型页配置里的字段照样
@@ -445,6 +456,7 @@ def check_dead_config() -> None:
     out("dead config", not unread, detail)
     if unread:
         fails.append(f"Settings fields never read outside their declaration: {unread}")
+
 
 def check_env_example_models() -> None:
     """.env.example 里出现的本地模型名，必须是现役的那一个 —— 退役的不许再提。

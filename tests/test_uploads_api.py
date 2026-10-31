@@ -32,9 +32,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 def _upload(client: TestClient, name: str, body: bytes) -> dict[str, object]:
     tid = str(client.post("/api/session", json={}).json()["thread_id"])
-    res = client.post(
-        f"/api/session/{tid}/upload", files={"file": (name, body, "text/plain")}
-    )
+    res = client.post(f"/api/session/{tid}/upload", files={"file": (name, body, "text/plain")})
     assert res.status_code == 201, res.text
     return res.json()
 
@@ -74,9 +72,7 @@ def test_scan_is_read_only(client: TestClient, tmp_path: Path) -> None:
     assert stray.exists(), "盘点端点在只读语义下删了文件"
 
 
-def test_cleanup_removes_only_orphans_and_reports_why(
-    client: TestClient, tmp_path: Path
-) -> None:
+def test_cleanup_removes_only_orphans_and_reports_why(client: TestClient, tmp_path: Path) -> None:
     uploads = tmp_path / "uploads"
     kept = _upload(client, "留着.txt", "保留内容".encode())
     stray_main = uploads / "aaaa1111_旧.txt"
@@ -185,6 +181,7 @@ def test_remove_orphans_tolerates_a_vanishing_file(tmp_path: Path) -> None:
     deleted, _ = remove_orphans(uploads, report)
     assert deleted == 1  # 只有 b 被删，且不抛异常
 
+
 def test_a_ledger_row_from_another_data_root_still_counts_as_referenced(tmp_path: Path) -> None:
     """跨数据根的台账行不再制造沉默（`R28-19` 的一半）。
 
@@ -237,9 +234,7 @@ def test_progress_unknown_task_is_404(client: TestClient) -> None:
     assert client.get("/api/uploads/tasks/ing_nope").status_code == 404
 
 
-def test_progress_hides_tasks_owned_by_someone_else(
-    client: TestClient, tmp_path: Path
-) -> None:
+def test_progress_hides_tasks_owned_by_someone_else(client: TestClient, tmp_path: Path) -> None:
     """不是你的任务 → 与"不存在"同一个 404（不泄露存在性）。
 
     直改 sqlite 的 user_id 换主人是本仓既有做法（test_records_api 的同款）——
@@ -251,17 +246,13 @@ def test_progress_hides_tasks_owned_by_someone_else(
     body = _upload(client, "私有.txt", "只有我能看的内容".encode())
     task_id = str(body["task_id"])
     conn = sqlite3.connect(tmp_path / "uploads.db")
-    conn.execute(
-        "UPDATE ingestion_task SET user_id = 'someone_else' WHERE task_id = ?", (task_id,)
-    )
+    conn.execute("UPDATE ingestion_task SET user_id = 'someone_else' WHERE task_id = ?", (task_id,))
     conn.commit()
     conn.close()
     assert client.get(f"/api/uploads/tasks/{task_id}").status_code == 404
 
 
-def test_processing_response_then_terminal_via_progress(
-    client: TestClient, wait_upload
-) -> None:
+def test_processing_response_then_terminal_via_progress(client: TestClient, wait_upload) -> None:
     """P3-3 的对外形状：201 只是受理（新状态值 `processing`），终局由进度端点读出。
 
     `processing` 不进 intake 状态机（它只存在于响应）—— 断言钉的正是这条边界：
@@ -277,9 +268,7 @@ def test_processing_response_then_terminal_via_progress(
     assert done["updated_at"] is not None
 
 
-def test_completion_note_lands_after_the_processing_note(
-    client: TestClient, wait_upload
-) -> None:
+def test_completion_note_lands_after_the_processing_note(client: TestClient, wait_upload) -> None:
     """两句说明的顺序是判据：先"已登记后台解析任务"，跑完再补"已建立检索索引"。
 
     顺序反了（后台抢在受理说明前面写进会话）在 UI 上就是"先说建好了、再说正在建"。
@@ -293,8 +282,7 @@ def test_completion_note_lands_after_the_processing_note(
     wait_upload(client, str(res.json()["task_id"]))
 
     texts = [
-        str(m["content"])
-        for m in client.get(f"/api/session/{tid}/messages").json()["messages"]
+        str(m["content"]) for m in client.get(f"/api/session/{tid}/messages").json()["messages"]
     ]
     accepted = next((i for i, t in enumerate(texts) if "后台解析任务" in t), None)
     final = next((i for i, t in enumerate(texts) if "已建立检索索引" in t), None)
@@ -303,9 +291,7 @@ def test_completion_note_lands_after_the_processing_note(
     assert accepted < final, f"受理说明必须先于终局说明落进会话：{texts}"
 
 
-def test_failed_processing_reads_back_through_progress(
-    client: TestClient, wait_upload
-) -> None:
+def test_failed_processing_reads_back_through_progress(client: TestClient, wait_upload) -> None:
     """解析失败：进度端点给出 failed + 错误原文（取代从前"本请求 500"的信息通道）。"""
     import rolecard_agent.core.ingest.upload_service as upload_mod
 

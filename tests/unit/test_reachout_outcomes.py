@@ -33,9 +33,12 @@ T_TOUCHED = "2026-09-26 05:00:00.000"
 # 检查点里读出来的那条线（真判据看的就是这份）
 LANE_MSGS: dict[str, list[tuple[str, str]]] = {
     LANE: [
-        ("你", "单独点开且有人回"), ("用户", "在的"),
-        ("你", "批量刷过且有人回"), ("用户", "对的"),
-        ("你", "老数据看不出怎么看的"), ("用户", "嗯"),
+        ("你", "单独点开且有人回"),
+        ("用户", "在的"),
+        ("你", "批量刷过且有人回"),
+        ("用户", "对的"),
+        ("你", "老数据看不出怎么看的"),
+        ("用户", "嗯"),
         ("你", "看过没接"),
     ],
 }
@@ -70,16 +73,39 @@ def _lane(conn: Any) -> None:
 
 def test_the_two_views_of_the_same_rows_agree(conn: Any) -> None:
     _lane(conn)
-    _seed(conn, text="单独点开且有人回", state="read", created_at="2026-09-26 04:00:00",
-          read_at="2026-09-26 04:05:00", fired_by="open_thread")
+    _seed(
+        conn,
+        text="单独点开且有人回",
+        state="read",
+        created_at="2026-09-26 04:00:00",
+        read_at="2026-09-26 04:05:00",
+        fired_by="open_thread",
+    )
     _seed(conn, text="谁都没看过也没人回", state="unread", created_at="2026-09-26 06:00:00")
-    _seed(conn, text="批量刷过且有人回", state="read", created_at="2026-09-26 04:20:00",
-          seen_at="2026-09-26 04:30:00", fired_by="timer")
-    _seed(conn, text="看过没接", state="read", created_at="2026-09-26 06:10:00",
-          seen_at="2026-09-26 06:20:00", fired_by="recall")
+    _seed(
+        conn,
+        text="批量刷过且有人回",
+        state="read",
+        created_at="2026-09-26 04:20:00",
+        seen_at="2026-09-26 04:30:00",
+        fired_by="timer",
+    )
+    _seed(
+        conn,
+        text="看过没接",
+        state="read",
+        created_at="2026-09-26 06:10:00",
+        seen_at="2026-09-26 06:20:00",
+        fired_by="recall",
+    )
     # 老数据形状：`state='read'` 而两个时刻列都没有
-    _seed(conn, text="老数据看不出怎么看的", state="read", created_at="2026-09-26 04:10:00",
-          fired_by="time_pattern")
+    _seed(
+        conn,
+        text="老数据看不出怎么看的",
+        state="read",
+        created_at="2026-09-26 04:10:00",
+        fired_by="time_pattern",
+    )
 
     s = mod.summarize(conn, LANE_MSGS)
     assert (s["picked"], s["unseen"], s["ignored"], s["dismissed"]) == (3, 1, 1, 0)
@@ -112,8 +138,13 @@ def test_the_two_views_of_the_same_rows_agree(conn: Any) -> None:
 def test_batch_seen_counts_as_seen_and_not_as_never_read(conn: Any) -> None:
     """09-26 那组"没看 10/11"的成因：判据写成"有没有 `read_at`"。"""
     _lane(conn)
-    _seed(conn, text="单独点开且有人回", state="read", created_at="2026-09-26 04:00:00",
-          seen_at="2026-09-26 04:30:00")
+    _seed(
+        conn,
+        text="单独点开且有人回",
+        state="read",
+        created_at="2026-09-26 04:00:00",
+        seen_at="2026-09-26 04:30:00",
+    )
     _seed(conn, text="状态还是未读", state="unread", created_at="2026-09-26 06:00:00")
     s = mod.summarize(conn, LANE_MSGS)
     assert (s["picked"], s["unseen"], s["opened"], s["batch_seen"]) == (1, 1, 0, 1)
@@ -126,8 +157,14 @@ def test_the_updated_at_proxy_is_not_the_reply(conn: Any) -> None:
     真判据算"看了没接"。把两个数并排印出来，就是为了这种行不再被一个口径冒充另一个。
     """
     _lane(conn)
-    _seed(conn, text="看过没接", state="read", created_at="2026-09-26 04:00:00",
-          seen_at="2026-09-26 04:30:00", fired_by="timer")
+    _seed(
+        conn,
+        text="看过没接",
+        state="read",
+        created_at="2026-09-26 04:00:00",
+        seen_at="2026-09-26 04:30:00",
+        fired_by="timer",
+    )
     s = mod.summarize(conn, {LANE: [("你", "看过没接")]})
     assert (s["picked"], s["ignored"]) == (0, 1)
     assert s["picked_proxy"] == 1, "近似那条仍会把这行算成「接了」—— 所以才要并排印出来"
@@ -172,12 +209,29 @@ def test_item_five_counts_only_rows_that_know_their_source(conn: Any) -> None:
       "每天几条"被系统性低估，回访日期就被推远。
     """
     _lane(conn)
-    _seed(conn, text="单独点开且有人回", state="read", created_at="2026-09-20 01:00:00",
-          read_at="2026-09-20 02:00:00")                      # 老行：没有由头
-    _seed(conn, text="批量刷过且有人回", state="read", created_at="2026-09-26 03:00:00",
-          seen_at="2026-09-26 03:30:00", fired_by="recall")   # 窗口左端
-    _seed(conn, text="看过没接", state="read", created_at="2026-09-26 09:00:00",
-          seen_at="2026-09-26 09:10:00", fired_by="timer")    # 窗口右端
+    _seed(
+        conn,
+        text="单独点开且有人回",
+        state="read",
+        created_at="2026-09-20 01:00:00",
+        read_at="2026-09-20 02:00:00",
+    )  # 老行：没有由头
+    _seed(
+        conn,
+        text="批量刷过且有人回",
+        state="read",
+        created_at="2026-09-26 03:00:00",
+        seen_at="2026-09-26 03:30:00",
+        fired_by="recall",
+    )  # 窗口左端
+    _seed(
+        conn,
+        text="看过没接",
+        state="read",
+        created_at="2026-09-26 09:00:00",
+        seen_at="2026-09-26 09:10:00",
+        fired_by="timer",
+    )  # 窗口右端
     s = mod.summarize(conn, LANE_MSGS)
     assert s["known_source"] == 2, "NULL 那一行不许算进样本"
     assert s["first_known_at"] == "2026-09-26 03:00:00"
@@ -194,10 +248,21 @@ def test_sample_table_stratifies_so_the_biggest_cell_cannot_eat_the_quota(conn: 
     """
     _lane(conn)
     for i in range(8):  # 大格子：全是最新的、全是"没看"
-        _seed(conn, text=f"affection 第{i}条", state="unread",
-              created_at=f"2026-09-26 1{i}:00:00", fired_by="affection")
-    _seed(conn, text="recall 一条", state="read", created_at="2026-09-26 01:00:00",
-          seen_at="2026-09-26 01:05:00", fired_by="recall")  # 小格子：看着更新更弱
+        _seed(
+            conn,
+            text=f"affection 第{i}条",
+            state="unread",
+            created_at=f"2026-09-26 1{i}:00:00",
+            fired_by="affection",
+        )
+    _seed(
+        conn,
+        text="recall 一条",
+        state="read",
+        created_at="2026-09-26 01:00:00",
+        seen_at="2026-09-26 01:05:00",
+        fired_by="recall",
+    )  # 小格子：看着更新更弱
     sample = mod.sample_table(conn, LANE_MSGS, n=4)
     sources = {str(x["source"]) for x in sample}
     assert sources == {"affection", "recall"}, f"小格子被大格子挤掉了：{sources}"
@@ -210,10 +275,22 @@ def test_sample_table_stratifies_so_the_biggest_cell_cannot_eat_the_quota(conn: 
 def test_sample_table_returns_everything_when_the_corpus_is_smaller_than_n(conn: Any) -> None:
     """库里不够 20 条时，样本就是全部 —— 不硬凑、也不因为"配额取整"漏掉尾巴。"""
     _lane(conn)
-    _seed(conn, text="单独点开且有人回", state="read", created_at="2026-09-26 04:00:00",
-          read_at="2026-09-26 04:05:00", fired_by="timer")
-    _seed(conn, text="看过没接", state="read", created_at="2026-09-26 06:10:00",
-          seen_at="2026-09-26 06:20:00", fired_by="recall")
+    _seed(
+        conn,
+        text="单独点开且有人回",
+        state="read",
+        created_at="2026-09-26 04:00:00",
+        read_at="2026-09-26 04:05:00",
+        fired_by="timer",
+    )
+    _seed(
+        conn,
+        text="看过没接",
+        state="read",
+        created_at="2026-09-26 06:10:00",
+        seen_at="2026-09-26 06:20:00",
+        fired_by="recall",
+    )
     _seed(conn, text="谁都没看过也没人回", state="unread", created_at="2026-09-26 06:00:00")
     sample = mod.sample_table(conn, LANE_MSGS, n=20)
     assert len(sample) == 3
@@ -226,14 +303,23 @@ def test_sample_reply_head_comes_from_the_lane_and_is_clipped(conn: Any) -> None
     人眼判断的全部输入，取错条就等于让人对着别的回合做判断。
     """
     _lane(conn)
-    _seed(conn, text="给你带了桂花糕", state="read", created_at="2026-09-26 04:00:00",
-          read_at="2026-09-26 04:05:00", fired_by="timer")
+    _seed(
+        conn,
+        text="给你带了桂花糕",
+        state="read",
+        created_at="2026-09-26 04:00:00",
+        read_at="2026-09-26 04:05:00",
+        fired_by="timer",
+    )
     long_reply = "谢谢" + "很" * 80
     lane = {
         LANE: [
-            ("你", "上一条旧话"), ("用户", "这条不算"),
-            ("你", "给你带了桂花糕"), ("用户", long_reply),
-            ("你", "后来又冒的一句"), ("用户", "这条更不算"),
+            ("你", "上一条旧话"),
+            ("用户", "这条不算"),
+            ("你", "给你带了桂花糕"),
+            ("用户", long_reply),
+            ("你", "后来又冒的一句"),
+            ("用户", "这条更不算"),
         ]
     }
     sample = mod.sample_table(conn, lane, n=20)
@@ -245,8 +331,13 @@ def test_sample_reply_head_comes_from_the_lane_and_is_clipped(conn: Any) -> None
     assert head.endswith("…") and len(head) <= 60
     assert "这条不算" not in rendered, "旧回合的回话混进了表里"
     # 被划掉的格子也要能抽中（结局分布里它是一档，人眼同样要看）
-    _seed(conn, text="划掉的那条", state="dismissed", created_at="2026-09-26 05:00:00",
-          fired_by="time_pattern")
+    _seed(
+        conn,
+        text="划掉的那条",
+        state="dismissed",
+        created_at="2026-09-26 05:00:00",
+        fired_by="time_pattern",
+    )
     sample2 = mod.sample_table(conn, lane, n=20)
     outcomes = {str(x["outcome"]) for x in sample2}
     assert "dismissed" in outcomes and "picked" in outcomes

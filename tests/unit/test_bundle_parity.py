@@ -229,7 +229,8 @@ def test_lazy_family_absent_from_the_spec_list_is_red(tmp_path: Path) -> None:
 
 
 def test_import_graph_exception_needs_a_non_empty_reason() -> None:
-    """"这族靠 import 图收得到"也要署名写理由，空理由不给绿 —— 与 NOT_BUNDLED_BY_DESIGN 同一条纪律。
+    """ "这族靠 import 图收得到"也要署名写理由，空理由不给绿 ——
+    与 NOT_BUNDLED_BY_DESIGN 同一条纪律。
 
     两本账不能合成一本：一本说"刻意不进包"，一本说"进包但不必整族收"。
     """

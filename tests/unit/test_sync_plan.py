@@ -47,9 +47,7 @@ class _Graph:
 
 
 def _seed(conn: Any, *, user: str) -> None:
-    conn.execute(
-        "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('local', '本机')"
-    )
+    conn.execute("INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('local', '本机')")
     conn.execute(
         "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) VALUES (?, 'local', ?)",
         (user, user),
@@ -286,20 +284,35 @@ def test_auto_moves_takes_only_the_unambiguous() -> None:
 
 def test_a_card_conflict_goes_to_whichever_side_is_newer() -> None:
     # 本机新 ⇒ 推过去
-    push, pull, human = S.auto_moves(S.SyncPlan(
-        only_local=[], only_remote=[], same=[],
-        conflicts=[_conflict("card", "r1", "2026-09-28 08:00:00", "2026-09-27 08:00:00")],
-        skipped=[]))
+    push, pull, human = S.auto_moves(
+        S.SyncPlan(
+            only_local=[],
+            only_remote=[],
+            same=[],
+            conflicts=[_conflict("card", "r1", "2026-09-28 08:00:00", "2026-09-27 08:00:00")],
+            skipped=[],
+        )
+    )
     assert [(i.kind, i.ident) for i in push] == [("card", "r1")] and pull == [] and human == []
     # 对面新 ⇒ 取过来
-    push, pull, human = S.auto_moves(S.SyncPlan(
-        only_local=[], only_remote=[], same=[],
-        conflicts=[_conflict("card", "r1", "2026-09-27 08:00:00", "2026-09-28 08:00:00")],
-        skipped=[]))
+    push, pull, human = S.auto_moves(
+        S.SyncPlan(
+            only_local=[],
+            only_remote=[],
+            same=[],
+            conflicts=[_conflict("card", "r1", "2026-09-27 08:00:00", "2026-09-28 08:00:00")],
+            skipped=[],
+        )
+    )
     assert push == [] and pull == [("card", "r1")] and human == []
     # 读不出时刻的不许赢（空串当最旧）⇒ 留给人
-    push, pull, human = S.auto_moves(S.SyncPlan(
-        only_local=[], only_remote=[], same=[],
-        conflicts=[_conflict("card", "r1", "", "")],
-        skipped=[]))
+    push, pull, human = S.auto_moves(
+        S.SyncPlan(
+            only_local=[],
+            only_remote=[],
+            same=[],
+            conflicts=[_conflict("card", "r1", "", "")],
+            skipped=[],
+        )
+    )
     assert push == [] and pull == [] and len(human) == 1

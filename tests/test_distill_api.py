@@ -270,7 +270,7 @@ def test_auto_extract_does_not_stack_up_while_one_is_running(
 
     两条断言各管一边：`prompts == []` 管"别再起一次"，耗时那条管**去重不能用会话写入锁**
     —— 第一版我正是这么写的，于是这一句 chat 等了 158 秒才回来（`run_turn` 等锁上限 150s），
-    把 §12.7 量过的"自动提取不拖慢下一轮"直接弄坏。那条误设计就是这条断言要挡的。
+    把「本地自动提取的成本」量过的"自动提取不拖慢下一轮"直接弄坏。那条误设计就是这条断言要挡的。
     """
     from rolecard_agent.core.common.thread_locks import end_extraction, try_extraction
 
@@ -440,7 +440,8 @@ def test_extract_cadence_is_global_only(client: TestClient) -> None:
     assert res.status_code == 400 and "全局" in res.json()["detail"]
 
 
-# ------------------------------------------------ 记忆那两步用哪个后端（审计 §12.5）
+# ------------------------------------------------
+# 记忆那两步用哪个后端（审计「档案角色的记忆该由谁来判」）
 #
 # 钉的是"提取精华 / 整理记忆这两步算在哪个后端的账上"。为什么拿 token 账当读数：后端名
 # 一路从 `_thread_model`（或 consolidate）传到 `record_usage`，所以账上的名字就是这一步
@@ -559,7 +560,7 @@ def test_consolidate_follows_the_same_knob(
     """「整理记忆」和「提取精华」共用一个旋钮：答案只该有一个 —— 哪个模型碰过我的记忆文本。
 
     两个入口分开配会留出一个最坏的组合：提取走云端、整理走本地 8B，而整理恰恰是"判断谁
-    顶替谁"那一步，弱模型在这里最容易被同义改述骗过（§12.9 量过的正是这件事）。
+    顶替谁"那一步，弱模型在这里最容易被同义改述骗过（「实验脚本要入库」量过的正是这件事）。
     """
     model.distill = "NOOP"
     with memory_backend(tmp_path, model, monkeypatch, extract_backend="sf") as (client, db):

@@ -125,9 +125,7 @@ def test_blank_memory_is_ignored() -> None:
 
 
 def test_agent_plan_sits_below_examples_and_safety() -> None:
-    result = prompts.build_system_prompt(
-        "角色说明", _EXEMPLARS, memory="记忆", agent=True
-    )
+    result = prompts.build_system_prompt("角色说明", _EXEMPLARS, memory="记忆", agent=True)
     role_at = result.index("角色说明")
     memory_at = result.index("用户长期记忆")
     agent_at = result.index("智能体模式")

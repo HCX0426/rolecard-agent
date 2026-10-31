@@ -93,8 +93,11 @@ def start(name: str, port: int, extra: dict[str, str]) -> tuple[subprocess.Popen
     }
     log = open(root / "api.log", "wb")  # noqa: SIM115
     proc = subprocess.Popen(  # noqa: S603
-        [VENV_PY, "scripts/run_api.py"], env=env, cwd=str(ROOT),
-        stdout=log, stderr=subprocess.STDOUT,
+        [VENV_PY, "scripts/run_api.py"],
+        env=env,
+        cwd=str(ROOT),
+        stdout=log,
+        stderr=subprocess.STDOUT,
     )
     return proc, log
 
@@ -146,9 +149,7 @@ def pairs(base: str, token: str | None) -> list[tuple[str, str]]:
     code, out = req("GET", f"{base}/api/sync/inventory", token=token)
     if code != 200 or not isinstance(out, dict):
         return []
-    return sorted(
-        (str(row.get("kind")), str(row.get("ident"))) for row in out.get("items") or []
-    )
+    return sorted((str(row.get("kind")), str(row.get("ident"))) for row in out.get("items") or [])
 
 
 def written_total(out: Any) -> int:
@@ -246,8 +247,11 @@ def main() -> int:
             (str(row.get("kind")), str(row.get("ident")))
             for row in (plan.get("only_local") or [] if isinstance(plan, dict) else [])
         }
-        check("① 计划：播种那几条都是本机独有", code == 200 and seeded <= only_local,
-              {"counts": counts, "only_local": sorted(only_local)})
+        check(
+            "① 计划：播种那几条都是本机独有",
+            code == 200 and seeded <= only_local,
+            {"counts": counts, "only_local": sorted(only_local)},
+        )
         check("① 计划：零冲突", counts.get("conflicts") == 0, counts)
         check("① 计划：内置卡算『相同』", counts.get("same", 0) >= 2, counts)
 
@@ -256,50 +260,80 @@ def main() -> int:
             "POST", f"{a_base}/api/sync/apply", {**target, "kinds": KINDS, "mode": "merge"}
         )
         sent = applied.get("sent") if isinstance(applied, dict) else None
-        check("② 上行：推的就是计划里那些条", code == 200 and sent == len(only_local),
-              {"sent": sent, "only_local": len(only_local)})
-        check("② 对面落了同样多条", written_total(
-            (applied or {}).get("remote") if isinstance(applied, dict) else None) == sent, applied)
+        check(
+            "② 上行：推的就是计划里那些条",
+            code == 200 and sent == len(only_local),
+            {"sent": sent, "only_local": len(only_local)},
+        )
+        check(
+            "② 对面落了同样多条",
+            written_total((applied or {}).get("remote") if isinstance(applied, dict) else None)
+            == sent,
+            applied,
+        )
 
         # ③ B 那侧的归属：盖的是 B 自己认出的那个人，不是载荷里带来的
         first = pairs(b_base, token)
         check("③ 对面 u1 看得见推来的三条", seeded <= set(first), first)
         _, hist = req("GET", f"{b_base}/api/session/{THREAD_ID}/messages", token=token)
-        texts = [str(m.get("content") or "") for m in (hist or {}).get("messages", [])] \
-            if isinstance(hist, dict) else []
+        texts = (
+            [str(m.get("content") or "") for m in (hist or {}).get("messages", [])]
+            if isinstance(hist, dict)
+            else []
+        )
         check("③ 会话历史在对面读得回来，一字不差", texts == [m["text"] for m in MESSAGES], hist)
         _, box = req("GET", f"{b_base}/api/reachouts", token=token)
-        check("③ 主动消息进了对面的收件箱",
-              REACHOUT_TEXT in json.dumps(box, ensure_ascii=False), box)
+        check(
+            "③ 主动消息进了对面的收件箱", REACHOUT_TEXT in json.dumps(box, ensure_ascii=False), box
+        )
         _, roles_b = req("GET", f"{b_base}/api/roles", token=token)
-        check("③ 推来的卡在对面的角色列表里",
-              any(isinstance(r, dict) and r.get("role_id") == CARD_ID for r in roles_b or []),
-              roles_b)
+        check(
+            "③ 推来的卡在对面的角色列表里",
+            any(isinstance(r, dict) and r.get("role_id") == CARD_ID for r in roles_b or []),
+            roles_b,
+        )
 
         # ④ 重放不长双份（ID 多重集必须一模一样）
         req("POST", f"{a_base}/api/sync/apply", {**target, "kinds": KINDS, "mode": "merge"})
-        check("④ 重放后对面清单一字未变", pairs(b_base, token) == first,
-              (first, pairs(b_base, token)))
+        check(
+            "④ 重放后对面清单一字未变", pairs(b_base, token) == first, (first, pairs(b_base, token))
+        )
 
         # ⑤ 冲突：改本机那张卡 ⇒ 判一条冲突 ⇒ 裁决「保留本机这份」真的写进对面
         req("PATCH", f"{a_base}/api/roles/{CARD_ID}", {"system_prompt": "本机后来改过的人设"})
         _, plan2 = req("POST", f"{a_base}/api/sync/plan", target)
         c2 = plan2.get("counts", {}) if isinstance(plan2, dict) else {}
         check("⑤ 改过的卡判成 1 条冲突", c2.get("conflicts") == 1, c2)
-        req("POST", f"{a_base}/api/sync/apply", {
-            **target, "kinds": ["card"], "mode": "merge",
-            "resolutions": {f"card:{CARD_ID}": "mine"}})
+        req(
+            "POST",
+            f"{a_base}/api/sync/apply",
+            {
+                **target,
+                "kinds": ["card"],
+                "mode": "merge",
+                "resolutions": {f"card:{CARD_ID}": "mine"},
+            },
+        )
         _, roles_c = req("GET", f"{b_base}/api/roles", token=token)
-        prompt = next((str(r.get("system_prompt")) for r in roles_c or []
-                       if isinstance(r, dict) and r.get("role_id") == CARD_ID), "")
+        prompt = next(
+            (
+                str(r.get("system_prompt"))
+                for r in roles_c or []
+                if isinstance(r, dict) and r.get("role_id") == CARD_ID
+            ),
+            "",
+        )
         check("⑤ 裁决「保留本机这份」写进了对面", "后来改过" in prompt, prompt)
 
         # ⑥ 没勾的类不动对面：对面自己建的卡，本机只推记忆时不许碰它
-        req("POST", f"{b_base}/api/roles", {"role_id": "r_his_own", "role_name": "对面自有卡",
-                                            "system_prompt": "在对面建的"}, token=token)
+        req(
+            "POST",
+            f"{b_base}/api/roles",
+            {"role_id": "r_his_own", "role_name": "对面自有卡", "system_prompt": "在对面建的"},
+            token=token,
+        )
         req("POST", f"{a_base}/api/sync/apply", {**target, "kinds": ["memory"], "mode": "merge"})
-        check("⑥ 只勾记忆时，对面的自有卡还在",
-              ("card", "r_his_own") in pairs(b_base, token))
+        check("⑥ 只勾记忆时，对面的自有卡还在", ("card", "r_his_own") in pairs(b_base, token))
 
         # ⑦ 审计与响应里不许出现推过去的原文与口令
         _, audit = req("GET", f"{b_base}/api/audit?limit=80", token=token)
@@ -309,43 +343,79 @@ def main() -> int:
         check("⑦ 对面审计不含口令", '"pw"' not in blob and "Basic " not in blob)
 
         # ---- 下行与登录对账（M8）：同一套引擎的另外两个方向 ------------------------
-        req("POST", f"{b_base}/api/roles",
+        req(
+            "POST",
+            f"{b_base}/api/roles",
             {"role_id": "r_his_own2", "role_name": "对面后来建的卡", "system_prompt": "云端独有的"},
-            token=token)
-        code, pulled = req("POST", f"{a_base}/api/sync/pull",
-                           {**target, "kinds": KINDS, "mode": "merge"})
+            token=token,
+        )
+        code, pulled = req(
+            "POST", f"{a_base}/api/sync/pull", {**target, "kinds": KINDS, "mode": "merge"}
+        )
         names = json.dumps(req("GET", f"{a_base}/api/roles")[1], ensure_ascii=False)
-        check("⑧ 下行：对面那份里本机没有的并回来了",
-              code == 200 and "r_his_own2" in names, {"pulled": pulled, "roles": names[:80]})
-        _, again = req("POST", f"{a_base}/api/sync/pull",
-                       {**target, "kinds": KINDS, "mode": "merge"})
-        check("⑧ 下行也是幂等的（第二遍 pulled=0）",
-              isinstance(again, dict) and again.get("pulled") == 0, again)
+        check(
+            "⑧ 下行：对面那份里本机没有的并回来了",
+            code == 200 and "r_his_own2" in names,
+            {"pulled": pulled, "roles": names[:80]},
+        )
+        _, again = req(
+            "POST", f"{a_base}/api/sync/pull", {**target, "kinds": KINDS, "mode": "merge"}
+        )
+        check(
+            "⑧ 下行也是幂等的（第二遍 pulled=0）",
+            isinstance(again, dict) and again.get("pulled") == 0,
+            again,
+        )
         _, denied = req("POST", f"{a_base}/api/sync/pull", {**target, "mode": "replace"})
-        check("⑧ 下行不给『整份替换』这一档（它清的是本机这份）",
-              denied == 400 or (isinstance(denied, dict)
-                                and "整份替换" in str(denied.get("detail"))), denied)
+        check(
+            "⑧ 下行不给『整份替换』这一档（它清的是本机这份）",
+            denied == 400 or (isinstance(denied, dict) and "整份替换" in str(denied.get("detail"))),
+            denied,
+        )
 
         # 真分歧：同一张卡两边各改过一遍，本机最后改 ⇒ 对账按新者胜，把本机这份推回去
-        req("POST", f"{a_base}/api/sync/import", {"items": [
-            {"kind": "memory", "ident": "uid-push-2",
-             "payload": {"text": "对账前本机又写的一条", "role_id": CARD_ID}}]})
-        req("PATCH", f"{b_base}/api/roles/{CARD_ID}",
-            {"system_prompt": "对面后来又改的人设"}, token=token)
+        req(
+            "POST",
+            f"{a_base}/api/sync/import",
+            {
+                "items": [
+                    {
+                        "kind": "memory",
+                        "ident": "uid-push-2",
+                        "payload": {"text": "对账前本机又写的一条", "role_id": CARD_ID},
+                    }
+                ]
+            },
+        )
+        req(
+            "PATCH",
+            f"{b_base}/api/roles/{CARD_ID}",
+            {"system_prompt": "对面后来又改的人设"},
+            token=token,
+        )
         time.sleep(1.5)  # 新者胜按秒比：同一秒里两边都改过 = 真歧义，策略会留给人（这是对的）
         req("PATCH", f"{a_base}/api/roles/{CARD_ID}", {"system_prompt": "本机最后改的人设"})
         code, rec = req("POST", f"{a_base}/api/sync/reconcile", target)
-        check("⑨ 登录对账：双向都动了且卡按新者胜",
-              code == 200 and (rec or {}).get("pushed", 0) >= 1
-              and "本机最后改的人设" in json.dumps(
-                  req("GET", f"{b_base}/api/roles", token=token)[1], ensure_ascii=False), rec)
+        check(
+            "⑨ 登录对账：双向都动了且卡按新者胜",
+            code == 200
+            and (rec or {}).get("pushed", 0) >= 1
+            and "本机最后改的人设"
+            in json.dumps(req("GET", f"{b_base}/api/roles", token=token)[1], ensure_ascii=False),
+            rec,
+        )
         _, rec2 = req("POST", f"{a_base}/api/sync/reconcile", target)
-        check("⑨ 对账是幂等的（跑两遍第二遍 pushed=pulled=0）",
-              isinstance(rec2, dict) and rec2.get("pushed") == 0 and rec2.get("pulled") == 0, rec2)
+        check(
+            "⑨ 对账是幂等的（跑两遍第二遍 pushed=pulled=0）",
+            isinstance(rec2, dict) and rec2.get("pushed") == 0 and rec2.get("pulled") == 0,
+            rec2,
+        )
         _, audit_b = req("GET", f"{b_base}/api/audit?limit=40", token=token)
         blob_b = json.dumps(audit_b, ensure_ascii=False)
-        check("⑨ 对面审计里有 sync_export 这扇门的记录（只记结构）",
-              "sync_export" in blob_b and "本机最后改的人设" not in blob_b)
+        check(
+            "⑨ 对面审计里有 sync_export 这扇门的记录（只记结构）",
+            "sync_export" in blob_b and "本机最后改的人设" not in blob_b,
+        )
     finally:
         for proc, log in ((a, la), (b, lb)):
             proc.terminate()

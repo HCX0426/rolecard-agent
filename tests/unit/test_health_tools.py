@@ -2,7 +2,8 @@
 
 `upload_medical_report` - the WRITER for the kernel `ingestion_task` ledger - is covered here
 end-to-end so the ingestion table is exercised rather than left as dead schema
-(技术评审与决策.md §9 B1). The three READ tools (query_health_record / compare_health_index /
+(技术评审与决策.md 「实现对齐核查」B1). The three READ tools (query_health_record /
+compare_health_index /
 list_reports) have their own file: tests/unit/test_health_query.py.
 """
 

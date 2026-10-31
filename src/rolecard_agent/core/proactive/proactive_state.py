@@ -76,9 +76,7 @@ def _row_to_state(row: dict[str, Any]) -> ProactiveState:
     return ProactiveState(
         role_id=row["role_id"],
         affinity=float(row["affinity"] or 0.0),
-        last_interaction_utc=_parse_ts(
-            row["last_interaction_utc"]
-        ),
+        last_interaction_utc=_parse_ts(row["last_interaction_utc"]),
         calibration=calibration,
         open_threads=topics,
         open_threads_scan_at=_parse_ts(row["open_threads_at"]),

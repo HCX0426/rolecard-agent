@@ -36,9 +36,7 @@ SHORT = "只回一个字：好"
 
 def new_thread() -> str:
     """一条新会话，并把它的模型钉到本地那个（要的是"慢到来得及打断"）。"""
-    created = httpx.post(
-        f"{BASE}/api/session", json={"role_id": "elysia"}, timeout=60
-    ).json()
+    created = httpx.post(f"{BASE}/api/session", json={"role_id": "elysia"}, timeout=60).json()
     tid = str(created["thread_id"])
     httpx.patch(
         f"{BASE}/api/session/{tid}", json={"model_name": LOCAL_BACKEND}, timeout=60
@@ -103,16 +101,22 @@ def main() -> None:
     committed = last_assistant(t2)
     assert stopped_at is not None
     print(f"[停止] 首帧 {f2:.1f}s，第 {stopped_at:.1f}s 按下停止，流在第 {total2:.1f}s 结束")
-    print(f"       按下去到收手 {total2 - stopped_at:.2f}s"
-          f"（不打断本来还要 {total1 - stopped_at:.0f}s）")
-    print(f"[停止] 屏幕上 {len(streamed)} 字 / 历史里 {len(committed)} 字，"
-          f"同一份 = {streamed.strip() == committed.strip()}")
+    print(
+        f"       按下去到收手 {total2 - stopped_at:.2f}s"
+        f"（不打断本来还要 {total1 - stopped_at:.0f}s）"
+    )
+    print(
+        f"[停止] 屏幕上 {len(streamed)} 字 / 历史里 {len(committed)} 字，"
+        f"同一份 = {streamed.strip() == committed.strip()}"
+    )
     print(f"[停止] 历史结尾：…{committed[-30:]!r}")
 
     t3 = new_thread()
     f3, total3, text3, _ = stream_chat(t3, SHORT)
-    print(f"[下一句] 首帧 {f3:.1f}s，整段 {total3:.1f}s，{len(text3)} 字"
-          f" —— 这里若出现几十秒，就是停止没真的停（引擎还被那一轮占着）")
+    print(
+        f"[下一句] 首帧 {f3:.1f}s，整段 {total3:.1f}s，{len(text3)} 字"
+        f" —— 这里若出现几十秒，就是停止没真的停（引擎还被那一轮占着）"
+    )
 
     # R26-13 尾：被截断的半句要**自带**"被叫停"的标记（随 checkpoint 落库）——
     # 刷新后的回放才标得出"没说完"，而不是靠页面 state。对照的两轮是说完了的，

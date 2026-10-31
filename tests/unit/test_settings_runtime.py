@@ -86,7 +86,8 @@ def test_thinking_models_choices_come_from_model_names() -> None:
 def test_memory_extract_backend_choices_are_backend_names() -> None:
     """「记忆后端」的下拉给的是**后端名**（`resolve_role_model` 认的那份），不是模型列。
 
-    为什么单独钉这一条：填错了不报错 —— 它静默回落默认模型，症状正好是 §12.5 要修的
+    为什么单独钉这一条：填错了不报错 —— 它静默回落默认模型，症状正好是「档案角色的记忆该由谁来判
+    要修的
     "记忆悄悄提不出来"。而模型列可以重名（两个后端都跑 qwen3:8b），所以"models"那个
     选项源顶替不了它。
     """

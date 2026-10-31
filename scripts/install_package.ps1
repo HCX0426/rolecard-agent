@@ -31,7 +31,7 @@ $installerName = "rolecard-agent-$shellVersion-x64.exe"
 $installer = Join-Path $root "shell\release\$installerName"
 $installedExe = Join-Path $env:LOCALAPPDATA "Programs\rolecard-agent\rolecard-agent.exe"
 # 这条预检**只属于 -SkipBuild**：不建的时候就装现成的那份，而"现成的那份"按名字找 ——
-# 版本号一变（10-01 `R28-62` 把两条线并成一条，0.1.0 ⇒ 0.3.0）它就该出声，而不是抱着
+# 版本号一变（10-01 把两条版本线并成一条，0.1.0 ⇒ 0.3.0）它就该出声，而不是抱着
 # `release/` 里那份旧命名的包一路装下去。反过来，**从零打一发时这份产物本来就还不存在**，
 # 在这里拦等于把唯一一条能重打包的路堵死（实测：10-01 第十七包就是被这句拦在 [1/6] 之前的，
 # 而那句报错写的"应该叫 0.3.0、现在只有 0.1.0"当时是完全正确的诊断 —— 正确的诊断用错了时机）。
@@ -67,7 +67,7 @@ if (-not $SkipBuild) {
     Write-Host "[1/6] building (frontend -> sidecar -> nsis)"
     Push-Location (Join-Path $root "frontend")
     # 不再 `| Out-Null`：下面 electron-builder 那一步 09-28 就是因为吞了输出而报出"装进去的不是
-    # 新构建"这种离真因十万八千里的话（`R28-35` 那一族）。退出码照样查，两件事不冲突 ——
+    # 新构建"这种离真因十万八千里的话（吞输出那一族）。退出码照样查，两件事不冲突 ——
     # 打出来的是"失败时能看见为什么"，不是"成功时多几十行"。
     npm run build
     if ($LASTEXITCODE -ne 0) { throw "frontend build failed (exit=$LASTEXITCODE)" }
@@ -116,7 +116,7 @@ $targets = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -e
 $main = $targets | Where-Object { $_.Name -eq "rolecard-agent.exe" } | Select-Object -First 1
 if ($null -ne $main) {
     # 只发 WM_CLOSE 是关不掉这个壳的（「关闭控制台=隐藏」是设计），所以直接 /T /F 收整棵树。
-    # 输出丢掉可以（它只有 "SUCCESS: ..." 这种话），**退出码不能丢**（`R28-35`）：以前
+    # 输出丢掉可以（它只有 "SUCCESS: ..." 这种话），**退出码不能丢**（吞输出那一族）：以前
     # `| Out-Null` 之后直接睡 3 秒继续装，于是"进程根本没被关掉"这一件事被推给后面
     # 一句 cryptic 的"文件被占用"。但退出码本身也不够 —— taskkill 对"找不到那个 PID"
     # 返回的也是失败，而那种情况其实是我们想要的结果。所以判据用**它还在不在**：

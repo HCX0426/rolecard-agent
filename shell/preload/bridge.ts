@@ -86,7 +86,7 @@ contextBridge.exposeInMainWorld("rolecardShell", {
   petRetuck: (): void => {
     ipcRenderer.send("shell:pet-retuck");
   },
-  /** 「只在画了像素的地方吃点击」的开关（§12.3）。页面挂载时报 true、卸载时报 false；
+  /** 「只在画了像素的地方吃点击」的开关（「桌宠透明区遮挡点击」）。页面挂载时报 true、卸载时报 false；
    *  没报过 true（旧界面、着陆页、浏览器里开）就是**整窗照旧吃点击** —— 不会点不动。 */
   petHitTest: (active: boolean): void => {
     ipcRenderer.send("shell:pet-hittest", active);

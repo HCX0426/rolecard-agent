@@ -1,4 +1,4 @@
-""""未收尾话题"的**可达性**验收（09-26 轮 R26-03 规定的那一步能证伪的动作）。
+""" "未收尾话题"的**可达性**验收（09-26 轮 R26-03 规定的那一步能证伪的动作）。
 
 与 `probe_open_threads_live.py` 的分工不同，而且这个区别就是要害：
 
@@ -160,12 +160,16 @@ def _report_delivery_effect(rt: Any, roles: list[Any]) -> None:
         delivered = rt.deliver_proactive(role, "（探针投的一句，用来观测输入链）")
         closed = rt.proactive_recent_lines(role.role_id)
         print(f"[{role.role_id}] 线程 {delivered or tid}")
-        print(f"   用户留了一句没收尾的话 → 读法给 {len(opened)} 字符"
-              f"{'（非空，扫描会被调用）' if opened else '（仍然为空 ⇒ 判据另有其因）'}")
+        print(
+            f"   用户留了一句没收尾的话 → 读法给 {len(opened)} 字符"
+            f"{'（非空，扫描会被调用）' if opened else '（仍然为空 ⇒ 判据另有其因）'}"
+        )
         if opened:
             print("   " + opened.replace("\n", "\n   ")[:300])
-        print(f"   她主动开口那一句落进同一线程 → 读法给 {len(closed)} 字符"
-              + ("  ← 窗口被她自己那句话关上了" if opened and not closed else ""))
+        print(
+            f"   她主动开口那一句落进同一线程 → 读法给 {len(closed)} 字符"
+            + ("  ← 窗口被她自己那句话关上了" if opened and not closed else "")
+        )
 
 
 def _first_free_day(role: Any, st: Any, settings: Any, base_local: datetime) -> int | None:
@@ -200,8 +204,15 @@ def _tick(rt: Any, *, when_utc: datetime, when_local: datetime) -> int:
     return made
 
 
-def _run_tick(rt: Any, stub: StubModel, rec: Recorder, roles: list[Any], label: str,
-              when_utc: datetime, when_local: datetime) -> None:
+def _run_tick(
+    rt: Any,
+    stub: StubModel,
+    rec: Recorder,
+    roles: list[Any],
+    label: str,
+    when_utc: datetime,
+    when_local: datetime,
+) -> None:
     for role in roles:
         rt.assembly.conn.execute(
             "UPDATE agent_reachout SET state='read' WHERE role_id=?", (role.role_id,)
@@ -260,9 +271,11 @@ def _force_timer_experiment(
             for e in rec.events
             if e.event in ("reachout_skipped", "reachout_sent")
         ][-1:]
-        print(f"[{role.role_id}] affinity=0 + 一句未接住的话 → tick（{day:%H:%M} 本地）："
-              f"落库 {made} 条、"
-              f"命中档位 {fired}、扫描调用 {before} → {_scans(stub)}")
+        print(
+            f"[{role.role_id}] affinity=0 + 一句未接住的话 → tick（{day:%H:%M} 本地）："
+            f"落库 {made} 条、"
+            f"命中档位 {fired}、扫描调用 {before} → {_scans(stub)}"
+        )
     scans = [p for p in stub.prompts if SCAN_MARK in p]
     if not scans:
         print("\n⇒ 扫描一次都没发生：`fired` 仍被排在 timer 之前的档位吃掉（见上一行命中档位）。")
@@ -291,9 +304,11 @@ def _clear_all_shadows(
         for e in rec.events
         if e.event in ("reachout_skipped", "reachout_sent")
     ][-1:]
-    print(f"四档全关 + affinity=0 + 一句未接住的话 → tick（{day:%H:%M} 本地）："
-          f"落库 {made} 条、命中档位 {fired}、"
-          f"扫描调用 {before} → {_scans(stub)}")
+    print(
+        f"四档全关 + affinity=0 + 一句未接住的话 → tick（{day:%H:%M} 本地）："
+        f"落库 {made} 条、命中档位 {fired}、"
+        f"扫描调用 {before} → {_scans(stub)}"
+    )
     for i, p in enumerate(p for p in stub.prompts[before:] if SCAN_MARK in p):
         print(f"\n--- 扫描第 {i + 1} 次拿到的**生产素材**（{len(p)} 字符，逐字）---\n{p}")
 
@@ -310,8 +325,10 @@ def main() -> None:
     rt = app.state.ctx.runtime
     settings = rt.effective
     roles = [r for r in rt.assembly.roles.scoped(rt.identity).list_roles() if r.reachout_enabled]
-    print(f"全局总闸 reachout_enabled = {settings.reachout_enabled}；"
-          f"可主动开口的角色 = {[r.role_id for r in roles]}")
+    print(
+        f"全局总闸 reachout_enabled = {settings.reachout_enabled}；"
+        f"可主动开口的角色 = {[r.role_id for r in roles]}"
+    )
 
     _head("① 关系状态读数（R26-03 那三重锁死里能被直接看到的部分）")
     _report_state(rt, roles, now)
@@ -322,7 +339,7 @@ def main() -> None:
     _head("③ 投递一句之后再读同一处 —— 「常态为空」的机制")
     _report_delivery_effect(rt, roles)
 
-    _head("④ 触发源排序：fired == \"timer\" 那一天到底来不来")
+    _head('④ 触发源排序：fired == "timer" 那一天到底来不来')
     base_local = now.astimezone().replace(hour=12, minute=0, second=0, microsecond=0)
     free_days: dict[str, int | None] = {}
     for role in roles:
@@ -331,9 +348,11 @@ def main() -> None:
         d = free_days[role.role_id]
         verdict = f"{d} 天之后" if d is not None else f"{SWEEP_DAYS} 天内都不让位"
         print(f"[{role.role_id}] affinity={st.affinity:.2f} → affection 档让位于 {verdict}")
-    print("读法：上面那个天数的前提是**此后一次都没开口** —— 每次成功开口都会 `record_interaction`"
-          "\n      把 affinity 再 +0.2、同时把衰减的钟（`last_interaction_utc`）归零。"
-          "而开口本身又被 affection 档驱动着。")
+    print(
+        "读法：上面那个天数的前提是**此后一次都没开口** —— 每次成功开口都会 `record_interaction`"
+        "\n      把 affinity 再 +0.2、同时把衰减的钟（`last_interaction_utc`）归零。"
+        "而开口本身又被 affection 档驱动着。"
+    )
     reachable = [d for d in free_days.values() if d is not None]
     first_free = min(reachable) if reachable else None
 
@@ -345,7 +364,10 @@ def main() -> None:
     _run_tick(rt, stub, rec, roles, "现在", now, now.astimezone())
     later_local = base_local + timedelta(days=first_free if first_free is not None else SWEEP_DAYS)
     _run_tick(
-        rt, stub, rec, roles,
+        rt,
+        stub,
+        rec,
+        roles,
         f"timer 第一次可达（+{first_free if first_free is not None else SWEEP_DAYS} 天）",
         later_local.astimezone(UTC),
         later_local,
@@ -358,10 +380,14 @@ def main() -> None:
     _clear_all_shadows(rt, stub, rec, roles, now)
 
     _head("结论读数")
-    print(f"替身累计收到的话题扫描调用 = {_scans(stub)} 次"
-          f"（>0 才说明这一源在生产上可达；0 = 这一源从来没被走到）")
-    print(f"替身累计被调用 {len(stub.prompts)} 次，其中话题扫描 {_scans(stub)} 次"
-          "（其余是开口正文那几次，走的是同一份替身）")
+    print(
+        f"替身累计收到的话题扫描调用 = {_scans(stub)} 次"
+        f"（>0 才说明这一源在生产上可达；0 = 这一源从来没被走到）"
+    )
+    print(
+        f"替身累计被调用 {len(stub.prompts)} 次，其中话题扫描 {_scans(stub)} 次"
+        "（其余是开口正文那几次，走的是同一份替身）"
+    )
 
 
 if __name__ == "__main__":

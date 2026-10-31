@@ -112,9 +112,7 @@ def _backup_dir() -> Path:
     return user_data_root() / RETENTION_BACKUP_DIRNAME / "sync"
 
 
-def dump_before_clear(
-    conn: SqlConnection, *, user_id: str, kinds: list[str]
-) -> dict[str, int]:
+def dump_before_clear(conn: SqlConnection, *, user_id: str, kinds: list[str]) -> dict[str, int]:
     """整份替换清空**之前**，把将要被删的行先落成 JSONL，返回每张表的行数。
 
     会话的正文在 langgraph 的检查点表里（blob），载体行 `session_thread` 只是元数据 ——

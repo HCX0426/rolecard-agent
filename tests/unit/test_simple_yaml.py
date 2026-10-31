@@ -32,7 +32,7 @@ def test_端口映射是标量不是映射() -> None:
 
     判成映射会把 `expose: ["8000"]` 读成 `{"8000": "8000"}`，端口那条尺子读到的形状整个不对。
     """
-    doc = simple_yaml("expose:\n  - 8000\nports:\n  - 8000:8000\n  - \"9000:9000\"\n")
+    doc = simple_yaml('expose:\n  - 8000\nports:\n  - 8000:8000\n  - "9000:9000"\n')
     assert doc["ports"] == ["8000:8000", "9000:9000"]
 
 
@@ -47,7 +47,7 @@ def test_引号标量() -> None:
 
 
 def test_注释整行与行尾都不算数据() -> None:
-    assert simple_yaml("# 整行注释\n\na: 1  # 行尾注释\nb: \"带 # 号的串\"\n") == {
+    assert simple_yaml('# 整行注释\n\na: 1  # 行尾注释\nb: "带 # 号的串"\n') == {
         "a": "1",
         "b": "带 # 号的串",
     }

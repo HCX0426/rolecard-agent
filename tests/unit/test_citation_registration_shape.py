@@ -75,23 +75,38 @@ def test_编号不在首格开头的行不算定义(tmp_path: Path) -> None:
     assert _citation_targets(path) == set()
 
 
-def test_真正则在全仓真数据上只增不减() -> None:
-    """把"放宽只该增加归属"这条**用真账本验一遍**，而不是只信我的构造样本。
+#: 一份**三种定义形状都在**的样本账本（2026-11-01 换掉了原先那份真快照：
+#: 历史台账与快照已删除，而这两条用例要验的是**尺子的形状**，不是某个文件的内容）。
+#: 样本自带三种形状各若干行，够"放宽只该增加归属"这条判据跑起来。
+SAMPLE_LEDGER = """| P2-1 | 独占首格 |
+| P2-16 (PERF-11+ENGI-4) | 编号 + 合并说明同格 |
+| **P3-11** (ENGI-10) | 粗体 + 合并说明 |
+| P3-4 | 独占首格 |
+| P3-8 (CONS-2) | 编号 + 合并说明同格 |
+| **P3-20** (BUG-7) | 粗体 + 合并说明 |
+| P2-31 | 独占首格 |
+| P3-2 | 独占首格 |
+| 见某一格 | 引用不是定义（这行不含任何编号，免得被当成真引用） |
+"""
 
-    现读：放宽前 39 个号无家、放宽后全部有家，且没有任何原有号失去家。这条是回归闸：
-    将来谁再调形状，只要让任何一个号失去归属，这里红。
+
+def test_真正则在全仓真数据上只增不减(tmp_path: Path) -> None:
+    """把"放宽只该增加归属"这条**用一份真账本形状的样本验一遍**，而不只信构造样本。
+
+    放宽前 6 个号无家（合并说明形与粗体形）、放宽后全部有家，且没有任何原有号失去家。
+    这条是回归闸：将来谁再调形状，只要让任何一个号失去归属，这里红。
     """
-    doc = ROOT / "docs" / "archive" / "代码审查快照（2026-10-04）.md"
+    doc = _write(tmp_path, SAMPLE_LEDGER)
     now = _citation_targets(doc)
     before = {
         m.group(1)
-        for ln in doc.read_text(encoding="utf-8", errors="ignore").splitlines()
+        for ln in doc.read_text(encoding="utf-8").splitlines()
         if (m := OLD_STRICT.match(ln))
     }
     assert before <= now, f"有号失去归属：{sorted(before - now)}"
     # 新增的每一条都必须真的以该号开头（不是顺带提到）。取证循环认尺子的全部三种
-    # 定义形状（标题 / 表格行 / 行首粗体散文条目 —— 第三种是 2026-10-10 补的，快照
-    # 第五节的 P0/P1 条目住在那里），缺任何一种都会在这里 StopIteration。
+    # 定义形状（标题 / 表格行 / 行首粗体散文条目 —— 第三种是 2026-10-10 补的），
+    # 缺任何一种都会在这里 StopIteration。
     prose_head = re.compile(r"^\*\*(P[0-3]-\d+|ENGI-\d+)(?:[（(][^）)]*[)）])?")
     lines = doc.read_text(encoding="utf-8", errors="ignore").splitlines()
 
@@ -112,12 +127,12 @@ def test_真正则在全仓真数据上只增不减() -> None:
         assert first.startswith(num), f"{num} 的新家来自非定义行：{first[:60]!r}"
 
 
-def test_归属表里已有那三十九个号() -> None:
-    """正向读数闸（现量）：39 个"曾经无家"的号里抽样必须已登记。
+def test_归属表里已有那三十九个号(tmp_path: Path) -> None:
+    """正向读数闸：曾经"无家"的那批号里抽样必须已登记。
 
     只查数量会漏"登记到别的文档去了"这种形状，所以逐个查它的家**就在这份账本里**。
     """
-    doc = ROOT / "docs" / "archive" / "代码审查快照（2026-10-04）.md"
+    doc = _write(tmp_path, SAMPLE_LEDGER)
     now = _citation_targets(doc)
     for num in ("P2-16", "P2-1", "P3-4", "P3-8", "P3-20", "P2-31", "P3-11", "P3-2"):
         assert num in now, f"{num} 仍无归属：那条悬空误报没修好"
@@ -126,22 +141,24 @@ def test_归属表里已有那三十九个号() -> None:
 def test_索引里每个号的地址都能归位() -> None:
     """索引（生成物）与归属表是同一份事实的两面：索引写了某号住 X，`_citation_targets(X)`
     就必须给出那个号 —— 否则 `audit citations` 与索引互相说两套话。
+
+    **只查"有家"的行**（2026-11-01 改）：历史台账与快照删除后，索引里 210 行 `P`/`R`/`ENGI`
+    号的家全是"（没有任何文档里有这一号）" —— 那些号的过程记录连同文档一起没了，
+    **它们的地址本来就不该再能归位**（判据要问的是"索引**声称**某号住 X，尺子认不认"，
+    对"没有家"的行那问题不成立）。于是这条判据落到**仍有家的号**上：
+    章节号（`§x.y`，住在活文档的标题里）与 `P`/`R` 号（若某份活文档仍提供它）。
     """
     index = ROOT / "docs" / "架构审计索引.md"
-    rows = [
-        ln
-        for ln in index.read_text(encoding="utf-8").splitlines()
-        if ln.startswith("| P") or ln.startswith("| R") or ln.startswith("| ENGI-")
-    ]
+    rows = [ln for ln in index.read_text(encoding="utf-8").splitlines() if ln.startswith("| ")]
     checked = 0
-    for ln in rows[:40]:  # 抽样即可：全量由 audit index in sync 那条管
+    for ln in rows:
         cells = [c.strip() for c in re.split(r"(?<!\\)\|", ln.strip("|"))]
         num, home = cells[0], cells[-1]
         path = ROOT / home
         if not path.exists() or path.suffix != ".md":
-            continue
-        if not re.fullmatch(r"[RP]\d+-\d+", num):
-            continue  # 章节号/ENGI 号另有归属来源，这一条只管 P/R 号
+            continue  # "—"（无家）或路径已删
+        if not re.fullmatch(r"(\d+(?:\.\d+)*|[RP]\d+-\d+)", num):
+            continue  # 表格头那一行等
         assert num in _citation_targets(path), f"索引说 {num} 住在 {home}，尺子却不认"
         checked += 1
     assert checked > 0, "一条都没查：索引形状变了而这条判据在看一个空集合（分母为 0）"

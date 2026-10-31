@@ -52,7 +52,7 @@ def test_consensus_aggregates_via_default_backend() -> None:
 
 def test_consensus_output_carries_the_ai_marker() -> None:
     """架构总览 §5 不变式 5「AI 数据一律带未校验标记」对**比对工具**的覆盖
-    （审计报告 §8 第 4 条补漏）。
+    （`docs/架构总览.md` §5 第 4 条那一格补漏）。
 
     比对结果是拿来当"事实核查依据"的，而它整段都是模型产物。以前只有域工具的返回文本带
     标记，聚合结果一个字都没标 —— 于是这条不变式在最需要它的地方恰好不成立。

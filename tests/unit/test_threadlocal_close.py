@@ -45,9 +45,7 @@ def test_other_threads_pending_write_survives_my_close(tmp_path: Path, capsys) -
 
     def worker() -> None:
         try:
-            tl.execute(
-                "INSERT INTO kernel_meta (key, value) VALUES ('b_other_thread', 'kept')"
-            )
+            tl.execute("INSERT INTO kernel_meta (key, value) VALUES ('b_other_thread', 'kept')")
             wrote.set()
             # 等主线程把"关连接"这件事做完，再提交自己那一笔。
             committed.wait(5)
@@ -68,9 +66,7 @@ def test_other_threads_pending_write_survives_my_close(tmp_path: Path, capsys) -
     probe.row_factory = sqlite3.Row  # 按名取列（app 连接自带这个 row_factory）
     probe.execute("PRAGMA busy_timeout = 3000")
     try:
-        row = probe.execute(
-            "SELECT value FROM kernel_meta WHERE key = 'b_other_thread'"
-        ).fetchone()
+        row = probe.execute("SELECT value FROM kernel_meta WHERE key = 'b_other_thread'").fetchone()
     finally:
         probe.close()
     assert not errors, f"工作线程报错（从前是静默丢写，现在是明着失败）：{errors}"
@@ -78,9 +74,7 @@ def test_other_threads_pending_write_survives_my_close(tmp_path: Path, capsys) -
         "另一线程未提交的写入被主线程 close() 带走了（R102-02 的原始后果）"
     )
     err = capsys.readouterr().err
-    assert "[conn-close]" not in err, (
-        f"线程归还自己的槽是正常路径，不该刷告警：{err!r}"
-    )
+    assert "[conn-close]" not in err, f"线程归还自己的槽是正常路径，不该刷告警：{err!r}"
 
 
 def test_close_ends_my_own_open_transaction_before_closing(tmp_path: Path) -> None:
@@ -99,9 +93,10 @@ def test_close_ends_my_own_open_transaction_before_closing(tmp_path: Path) -> No
     other.execute("PRAGMA busy_timeout = 1500")
     other.execute("INSERT INTO kernel_meta (key, value) VALUES ('after_close', 'ok')")
     other.commit()
-    assert other.execute(
-        "SELECT value FROM kernel_meta WHERE key = 'after_close'"
-    ).fetchone()[0] == "ok"
+    assert (
+        other.execute("SELECT value FROM kernel_meta WHERE key = 'after_close'").fetchone()[0]
+        == "ok"
+    )
     other.close()
 
 

@@ -44,16 +44,15 @@ def _persisted(tmp_path: Path, name: str, content: bytes) -> Any:
     conn = connect(":memory:")
     bootstrap(conn, enabled_domains=())
     # ingestion_task.user_id 挂外键（app_user → tenant）—— 种两行最小身份
+    conn.execute("INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('t1', 't')")
     conn.execute(
-        "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('t1', 't')"
-    )
-    conn.execute(
-        "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "
-        "VALUES ('u1', 't1', 't')"
+        "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) VALUES ('u1', 't1', 't')"
     )
     ingestion = IngestionService(conn)
     task_id = ingestion.create(
-        user_id="u1", file_hash=f"hash_{name}", source_file=str(target),
+        user_id="u1",
+        file_hash=f"hash_{name}",
+        source_file=str(target),
         task_id=f"ing_{name.replace('.', '_')}",
     )
     p = upload_service.PersistedUpload(
@@ -73,8 +72,12 @@ def test_scope_import_unparseable_type(tmp_path: Path) -> None:
     p, ingestion = _persisted(tmp_path, "weird.zip", b"PK")
     p = dataclasses.replace(p, parseable=False)
     out = upload_service.process_scope_import(
-        p, scope="notes", ingestion=ingestion, knowledge=_kb(tmp_path),
-        ocr_candidates=None, tracer=_Tracer(),
+        p,
+        scope="notes",
+        ingestion=ingestion,
+        knowledge=_kb(tmp_path),
+        ocr_candidates=None,
+        tracer=_Tracer(),
     )
     assert "暂不支持" in out["note"]
     assert out["chunks"] == 0
@@ -90,8 +93,12 @@ def test_scope_import_parse_failure_marks_failed(tmp_path: Path, monkeypatch) ->
     monkeypatch.setattr(us, "parse_document", boom)
     with pytest.raises(upload_service.UploadUnreadable):
         upload_service.process_scope_import(
-            p, scope="notes", ingestion=ingestion, knowledge=_kb(tmp_path),
-            ocr_candidates=None, tracer=_Tracer(),
+            p,
+            scope="notes",
+            ingestion=ingestion,
+            knowledge=_kb(tmp_path),
+            ocr_candidates=None,
+            tracer=_Tracer(),
         )
     assert ingestion.get(p.task_id)["status"] == "failed"
 
@@ -102,8 +109,12 @@ def test_scope_import_empty_text_stops_at_parsed(tmp_path: Path, monkeypatch) ->
         "rolecard_agent.core.ingest.upload_service.parse_document", lambda *a, **k: " "
     )
     out = upload_service.process_scope_import(
-        p, scope="notes", ingestion=ingestion, knowledge=_kb(tmp_path),
-        ocr_candidates=None, tracer=_Tracer(),
+        p,
+        scope="notes",
+        ingestion=ingestion,
+        knowledge=_kb(tmp_path),
+        ocr_candidates=None,
+        tracer=_Tracer(),
     )
     assert out["status"] == "parsed"
     assert out["chunks"] == 0
@@ -119,8 +130,12 @@ def test_scope_import_rejects_invalid_scope_name(tmp_path: Path) -> None:
     kb = _kb(tmp_path)
     with _pytest.raises(RuntimeError, match="建不出来"):
         upload_service.process_scope_import(
-            p, scope="k", ingestion=ingestion, knowledge=kb,
-            ocr_candidates=None, tracer=_Tracer(),
+            p,
+            scope="k",
+            ingestion=ingestion,
+            knowledge=kb,
+            ocr_candidates=None,
+            tracer=_Tracer(),
         )
 
 
@@ -129,15 +144,23 @@ def test_scope_import_indexes_and_is_idempotent(tmp_path: Path) -> None:
     kb = _kb(tmp_path)
     kb.create_scope("notes")  # 管理页形状：先建库后投喂（index 的懒建是兜底不是主路径）
     out = upload_service.process_scope_import(
-        p, scope="notes", ingestion=ingestion, knowledge=kb,
-        ocr_candidates=None, tracer=_Tracer(),
+        p,
+        scope="notes",
+        ingestion=ingestion,
+        knowledge=kb,
+        ocr_candidates=None,
+        tracer=_Tracer(),
     )
     assert out["status"] == "indexed"
     assert out["chunks"] >= 1
     # 幂等：同一份再导一遍 —— 状态机已 indexed，不再推进，也不炸
     again = upload_service.process_scope_import(
-        p, scope="notes", ingestion=ingestion, knowledge=kb,
-        ocr_candidates=None, tracer=_Tracer(),
+        p,
+        scope="notes",
+        ingestion=ingestion,
+        knowledge=kb,
+        ocr_candidates=None,
+        tracer=_Tracer(),
     )
     assert again["status"] == "indexed"
 
@@ -150,12 +173,14 @@ def test_scope_import_ocr_unavailable_keeps_pending(tmp_path: Path, monkeypatch)
     def no_ocr(*_a: Any, **_k: Any) -> str:
         raise OcrUnavailable("no backend")
 
-    monkeypatch.setattr(
-        "rolecard_agent.core.ingest.upload_service.parse_document", no_ocr
-    )
+    monkeypatch.setattr("rolecard_agent.core.ingest.upload_service.parse_document", no_ocr)
     out = upload_service.process_scope_import(
-        p, scope="notes", ingestion=ingestion, knowledge=_kb(tmp_path),
-        ocr_candidates=lambda: None, tracer=_Tracer(),
+        p,
+        scope="notes",
+        ingestion=ingestion,
+        knowledge=_kb(tmp_path),
+        ocr_candidates=lambda: None,
+        tracer=_Tracer(),
     )
     assert "OCR 未配置" in out["note"]
     assert ingestion.get(p.task_id)["status"] == "pending"
@@ -179,14 +204,22 @@ def test_submit_scope_import_dedupes_inflight(tmp_path: Path) -> None:
     us.parse_document = slow_parse  # monkeypatch 模块属性（测试自己恢复）
     try:
         ok = upload_service.submit_scope_import(
-            p, scope="notes", ingestion=ingestion, knowledge=_kb(tmp_path),
-            ocr_candidates=None, tracer=_Tracer(),
+            p,
+            scope="notes",
+            ingestion=ingestion,
+            knowledge=_kb(tmp_path),
+            ocr_candidates=None,
+            tracer=_Tracer(),
         )
         assert ok is True
         assert started.wait(timeout=5)
         dup = upload_service.submit_scope_import(
-            p, scope="notes", ingestion=ingestion, knowledge=_kb(tmp_path),
-            ocr_candidates=None, tracer=_Tracer(),
+            p,
+            scope="notes",
+            ingestion=ingestion,
+            knowledge=_kb(tmp_path),
+            ocr_candidates=None,
+            tracer=_Tracer(),
         )
         assert dup is False  # 在跑：不重起
     finally:

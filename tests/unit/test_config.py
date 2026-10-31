@@ -135,7 +135,8 @@ def test_unknown_backend_reference_does_not_break_construction() -> None:
 
 # ------------------------------------------------------------------- fallback chain
 #
-# The chain used to be parsed and then ignored (技术评审与决策.md §9 A4). The resolution rules
+# The chain used to be parsed and then ignored (技术评审与决策.md 「实现对齐核查」A4). The
+# resolution rules
 # live here, in a pure function, because `build_model` itself needs real provider packages to
 # exercise - the part worth testing is which names survive and in what order.
 

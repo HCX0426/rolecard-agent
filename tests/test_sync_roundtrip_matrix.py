@@ -87,21 +87,27 @@ def _pick(grouped: dict[str, list[dict[str, Any]]], kind: str, ident: str) -> di
 def _peer_row_count(client: TestClient, kind: str, ident: str) -> int:
     conn = client.app.state.ctx.conn
     if kind == "card":
-        return int(conn.execute(
-            "SELECT COUNT(*) FROM role_card WHERE role_id = ?", (ident,)
-        ).fetchone()[0])
+        return int(
+            conn.execute("SELECT COUNT(*) FROM role_card WHERE role_id = ?", (ident,)).fetchone()[0]
+        )
     if kind == "memory":
-        return int(conn.execute(
-            "SELECT COUNT(*) FROM role_memory_item WHERE uid = ?", (ident,)
-        ).fetchone()[0])
+        return int(
+            conn.execute(
+                "SELECT COUNT(*) FROM role_memory_item WHERE uid = ?", (ident,)
+            ).fetchone()[0]
+        )
     if kind == "reachout":
-        return int(conn.execute(
-            "SELECT COUNT(*) FROM agent_reachout WHERE role_id = ? AND text = '她主动说的一句'",
-            (ident.split("|", 1)[0],),
-        ).fetchone()[0])
-    return int(conn.execute(
-        "SELECT COUNT(*) FROM session_thread WHERE thread_id = ?", (ident,)
-    ).fetchone()[0])
+        return int(
+            conn.execute(
+                "SELECT COUNT(*) FROM agent_reachout WHERE role_id = ? AND text = '她主动说的一句'",
+                (ident.split("|", 1)[0],),
+            ).fetchone()[0]
+        )
+    return int(
+        conn.execute(
+            "SELECT COUNT(*) FROM session_thread WHERE thread_id = ?", (ident,)
+        ).fetchone()[0]
+    )
 
 
 @pytest.mark.parametrize("kind", KINDS)
@@ -135,8 +141,9 @@ def test_thread_import_replays_messages_in_order(
         item = _pick(_export_all(src), "thread", idents["thread"])
         out = dst.post(
             "/api/sync/import",
-            json={"items": [{"kind": "thread", "ident": item["ident"],
-                             "payload": item["payload"]}]},
+            json={
+                "items": [{"kind": "thread", "ident": item["ident"], "payload": item["payload"]}]
+            },
         ).json()
         assert out["errors"] == [] and out["written"].get("thread") == 1, out
         messages = dst.get(f"/api/session/{item['ident']}/messages").json()["messages"]
@@ -168,8 +175,9 @@ def test_importing_another_users_thread_is_refused(
         conn.commit()
         out = dst.post(
             "/api/sync/import",
-            json={"items": [{"kind": "thread", "ident": item["ident"],
-                             "payload": item["payload"]}]},
+            json={
+                "items": [{"kind": "thread", "ident": item["ident"], "payload": item["payload"]}]
+            },
         ).json()
         assert out["written"].get("thread", 0) == 0, out
         assert any(e.get("error") == "这条身份已经属于别人" for e in out["errors"]), out

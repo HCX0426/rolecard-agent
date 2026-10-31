@@ -315,7 +315,7 @@ function boot(): void {
   ipcMain.on("shell:pet-retuck", () => {
     if (petWin) petRetuck(petWin);
   });
-  // 桌宠的"只在画了像素的地方吃点击"（§12.3）。两条通道：一条开关（这页会不会报），
+  // 桌宠的"只在画了像素的地方吃点击"（「桌宠透明区遮挡点击」）。两条通道：一条开关（这页会不会报），
   // 一条是"哪些矩形有东西"。**坐标与尺寸一概不报进来**的是后者反方向 —— 页面说的只是
   // "我在这儿画了东西"，摆窗的权力全在主进程。非数字 / 越界的矩形在 `setPetHotRects` 里丢掉。
   ipcMain.on("shell:pet-hittest", (_event, value: unknown) => {

@@ -103,8 +103,12 @@ def _cloud(**over: Any) -> ProbeTarget:
 
 
 def _local(**over: Any) -> ProbeTarget:
-    base = {"provider": "ollama", "base_url": "http://localhost:11434", "api_key": None,
-            "model": "qwen3-vl:8b"}
+    base = {
+        "provider": "ollama",
+        "base_url": "http://localhost:11434",
+        "api_key": None,
+        "model": "qwen3-vl:8b",
+    }
     base.update(over)
     return ProbeTarget(**base)  # type: ignore[arg-type]
 
@@ -262,8 +266,16 @@ def test_resolve_target_uses_the_stored_group_key() -> None:
     svc = _service()
     svc.save(
         default="chat",
-        backends=[{"name": "chat", "provider": "siliconflow", "model": "m",
-                   "api_key": "sk-group", "usage": "chat"}], user_id=OWNER,
+        backends=[
+            {
+                "name": "chat",
+                "provider": "siliconflow",
+                "model": "m",
+                "api_key": "sk-group",
+                "usage": "chat",
+            }
+        ],
+        user_id=OWNER,
     )
     target = resolve_target(svc, provider_id="siliconflow", model="new-model", user_id=OWNER)
     assert target.api_key == "sk-group"
@@ -275,8 +287,16 @@ def test_resolve_target_body_key_wins_over_stored() -> None:
     svc = _service()
     svc.save(
         default="chat",
-        backends=[{"name": "chat", "provider": "siliconflow", "model": "m",
-                   "api_key": "sk-old", "usage": "chat"}], user_id=OWNER,
+        backends=[
+            {
+                "name": "chat",
+                "provider": "siliconflow",
+                "model": "m",
+                "api_key": "sk-old",
+                "usage": "chat",
+            }
+        ],
+        user_id=OWNER,
     )
     target = resolve_target(svc, provider="siliconflow", api_key="sk-new", model="m", user_id=OWNER)
     assert target.api_key == "sk-new"

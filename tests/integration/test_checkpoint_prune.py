@@ -105,9 +105,7 @@ def _kernel(db_path: Path, replies: list[Any]) -> Any:
 def _say(graph: Any, text: str) -> None:
     graph.invoke(
         {
-            **new_state(
-                thread_id="thread-1", user_id="u1", current_role_id="medical_archivist"
-            ),
+            **new_state(thread_id="thread-1", user_id="u1", current_role_id="medical_archivist"),
             "messages": [HumanMessage(content=text)],
         },
         config={"configurable": {"thread_id": "thread-1"}},
@@ -133,10 +131,13 @@ def test_every_write_gets_a_clock_without_touching_langgraphs_inserts(tmp_path: 
     assert created_at is not None and created_at.endswith("Z"), created_at
     # 第二遍装配（= 重启）既不重复建列也不报错，触发器仍然只有一条。
     make_checkpointer(conn)
-    assert conn.execute(
-        "SELECT COUNT(*) FROM sqlite_master"
-        " WHERE type = 'trigger' AND name = 'checkpoints_stamp_created_at'"
-    ).fetchone()[0] == 1
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master"
+            " WHERE type = 'trigger' AND name = 'checkpoints_stamp_created_at'"
+        ).fetchone()[0]
+        == 1
+    )
     conn.close()
 
 

@@ -5,7 +5,8 @@ to us and is being turned into structured reports". It is a KERNEL table on purp
 though the work it tracks belongs to a domain plugin: the kernel owns identity, the plugin
 switch, and this ledger, so the audit story stays in one place.
 
-Why a separate table and not a `status` column on the domain's report row (技术评审与决策.md §9 B1):
+Why a separate table and not a `status` column on the domain's report row (技术评审与决策.md
+「实现对齐核查」B1):
 
   * **Process vs fact.** An intake can be retried; the resulting report is still one report.
     Putting run state on the report row means either losing attempt history or growing the
@@ -164,8 +165,7 @@ class IngestionService:
         精确、原子的点查（审查报告 M4）。
         """
         row = self._conn.execute(
-            f"SELECT {_INGESTION_COLUMNS} FROM ingestion_task "
-            "WHERE user_id = ? AND file_hash = ?",
+            f"SELECT {_INGESTION_COLUMNS} FROM ingestion_task WHERE user_id = ? AND file_hash = ?",
             (user_id, file_hash),
         ).fetchone()
         return None if row is None else dict(row)

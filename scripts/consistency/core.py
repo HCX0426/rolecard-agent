@@ -4,6 +4,7 @@
 （IGNORED_DIRS 剪枝 + 缓存）、注释剥离。多一个进来的候选都要先问：
 "它是三处以上判据共用的世界观吗？"——不是就留在自己的判据模块里。
 """
+
 from __future__ import annotations
 
 import os
@@ -50,11 +51,7 @@ IGNORED_DIR_PREFIXES = (".venv",)
 
 def _prune(dirnames: list[str]) -> list[str]:
     """剪掉不该进的子树：精确名 + `.venv` 前缀。**唯一出处**，两处遍历都调它。"""
-    return [
-        d
-        for d in dirnames
-        if d not in IGNORED_DIRS and not d.startswith(IGNORED_DIR_PREFIXES)
-    ]
+    return [d for d in dirnames if d not in IGNORED_DIRS and not d.startswith(IGNORED_DIR_PREFIXES)]
 
 
 def iter_files(*suffixes: str) -> list[pathlib.Path]:
@@ -156,7 +153,7 @@ def _parse_block(lines: list[tuple[int, str]], indent: int) -> Any:
             # YAML 自己的规矩：`key: value` 的冒号后面要有空格（或到行尾）。没有就是数据——
             # `8000:8000` 是**端口映射这一个标量**，不是映射。判错会把 `expose: ["8000"]`
             # 读成 `{"8000": "8000"}`，端口那条尺子读到的形状整个不对。
-            if not item.startswith(("\"", "'")) and (": " in item or item.endswith(":")):
+            if not item.startswith(('"', "'")) and (": " in item or item.endswith(":")):
                 key, _, val = item.partition(":")
                 result.append({key.strip(): _scalar(val)})
             else:

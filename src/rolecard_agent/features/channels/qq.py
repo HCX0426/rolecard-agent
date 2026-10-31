@@ -239,9 +239,7 @@ class QQApi:
         return url
 
     def send(self, inbound: QQInbound, text: str, *, msg_seq: int) -> None:
-        body = outbound_body(
-            text, kind=inbound.kind, msg_id=inbound.msg_id, msg_seq=msg_seq
-        )
+        body = outbound_body(text, kind=inbound.kind, msg_id=inbound.msg_id, msg_seq=msg_seq)
         res = self._client.post(
             f"{self._creds.api_base}{send_path(inbound.kind, inbound.peer)}",
             headers=self._headers(),
@@ -320,9 +318,7 @@ class QQGatewayLoop:
         ws = await self._connect(url)
         try:
             hello = json.loads(await ws.recv())
-            interval = (
-                float((hello.get("d") or {}).get("heartbeat_interval") or 30000) / 1000.0
-            )
+            interval = float((hello.get("d") or {}).get("heartbeat_interval") or 30000) / 1000.0
             await ws.send(
                 json.dumps(
                     {
@@ -355,9 +351,7 @@ class QQGatewayLoop:
         finally:
             await ws.close()
 
-    async def _heartbeats(
-        self, ws: _WSLike, interval: float, last_seq: Callable[[], int]
-    ) -> None:
+    async def _heartbeats(self, ws: _WSLike, interval: float, last_seq: Callable[[], int]) -> None:
         while True:
             await asyncio.sleep(interval)
             await ws.send(json.dumps({"op": 1, "d": last_seq()}))
@@ -413,9 +407,7 @@ class QQChannelSource:
             self._emit("qq_channel_disabled", "总闸 QQ_CHANNEL_ENABLED=0，渠道不启")
             return
         if not settings.qq_app_id or not settings.qq_app_secret:
-            self._emit(
-                "qq_channel_disabled", "凭证缺口：QQ_APP_ID / QQ_APP_SECRET 没配齐"
-            )
+            self._emit("qq_channel_disabled", "凭证缺口：QQ_APP_ID / QQ_APP_SECRET 没配齐")
             return
         if importlib.util.find_spec("websockets") is None:
             logline(
@@ -435,9 +427,7 @@ class QQChannelSource:
             app_id=creds.app_id, app_secret=creds.app_secret, token_url=creds.token_url
         )
         self._api = self._api_override or QQApi(creds=creds, tokens=tokens)
-        gateway = QQGatewayLoop(
-            api=self._api, tracer=self._tracer, connect=self._connect_override
-        )
+        gateway = QQGatewayLoop(api=self._api, tracer=self._tracer, connect=self._connect_override)
         self._pool = make_pool("qq-turn", 1)
         thread = threading.Thread(
             target=self._run_loop, args=(gateway,), name="qq-channel", daemon=True
@@ -448,11 +438,7 @@ class QQChannelSource:
     def stop(self) -> None:
         self._stop.set()
         thread = self._thread
-        if (
-            thread is not None
-            and thread.is_alive()
-            and thread is not threading.current_thread()
-        ):
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
             thread.join(timeout=RECV_POLL_SECONDS * 2 + 5)
         if self._pool is not None:
             self._pool.shutdown(wait=False, cancel_futures=True)
@@ -484,9 +470,7 @@ class QQChannelSource:
         重启归零（如实）。
         """
         settings = self._runtime.effective
-        running = bool(
-            self._thread is not None and self._thread.is_alive()
-        )
+        running = bool(self._thread is not None and self._thread.is_alive())
         if not settings.qq_channel_enabled:
             why = "总闸关闭（QQ_CHANNEL_ENABLED=0）"
         elif not settings.qq_app_id or not settings.qq_app_secret:
@@ -522,9 +506,7 @@ class QQChannelSource:
         """WS 线程里调：入站消息交给单 worker 池排队（全局串行 = 同一对端保序）。"""
         pool = self._pool
         if pool is None or not self._slots.acquire(blocking=False):
-            self._emit(
-                "qq_channel_busy", f"在跑的轮次已满 {MAX_INFLIGHT_TURNS}，这条不接"
-            )
+            self._emit("qq_channel_busy", f"在跑的轮次已满 {MAX_INFLIGHT_TURNS}，这条不接")
             return
 
         def job() -> None:
@@ -545,9 +527,7 @@ class QQChannelSource:
         try:
             role = runtime.assembly.roles.scoped(owner).get(role_id)
         except RoleNotFound:
-            self._emit(
-                "qq_channel_role_missing", f"QQ_CHANNEL_ROLE_ID={role_id!r} 不存在"
-            )
+            self._emit("qq_channel_role_missing", f"QQ_CHANNEL_ROLE_ID={role_id!r} 不存在")
             return
         api = self._api
         if api is None:  # pragma: no cover - start() 没跑过就到不了这里（形状护栏）
@@ -635,6 +615,4 @@ class QQChannelSource:
             return nxt
 
     def _emit(self, event: str, detail: str) -> None:
-        self._tracer.emit(
-            TraceEvent(event=event, node="channel", detail={"detail": detail})
-        )
+        self._tracer.emit(TraceEvent(event=event, node="channel", detail={"detail": detail}))

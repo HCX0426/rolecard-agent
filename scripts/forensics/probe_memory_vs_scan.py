@@ -101,8 +101,10 @@ def main() -> int:
         mem = memory_for_turn(conn, rt.effective, rid, user_id=owner)
         window = rt.proactive_recent_window(rid)
         items = _counts(conn, rid)
-        print(f"\n{'─' * 66}\n{name}（{rid}）｜该角色专属记忆 {items} 条｜主动会话 "
-              f"{'有' if window else '无'}内容")
+        print(
+            f"\n{'─' * 66}\n{name}（{rid}）｜该角色专属记忆 {items} 条｜主动会话 "
+            f"{'有' if window else '无'}内容"
+        )
         print(f"  记忆注入给开口 prompt 的文本：{mem!r}")
         if not window:
             print("  扫描：没有可扫的窗口（这条线程还没聊过）⇒ 不参与对减")
@@ -124,8 +126,10 @@ def main() -> int:
         print(f"  被扫的窗口原文：{window[:300]}")
 
     print(f"\n{'=' * 66}\n判定")
-    print(f"  有窗口可扫的角色：{scanned} 个；扫出话题 {total_topics} 条；"
-          f"其中记忆那一路已经带上的：{carried} 条")
+    print(
+        f"  有窗口可扫的角色：{scanned} 个；扫出话题 {total_topics} 条；"
+        f"其中记忆那一路已经带上的：{carried} 条"
+    )
     if total_topics == 0:
         print("  ⇒ 样本为 0：今天没有任何一条未收尾话题可用来证伪，**不能据此下结论**。")
         print("    要出结论得先攒出真实会话（这条探针跑一次只要几个云端调用）。")
@@ -133,11 +137,15 @@ def main() -> int:
     if carried == total_topics:
         print("  ⇒ 全部重复：记忆注入已经带上每一条，第五由头今天是可以砍的那一个。")
     else:
-        print(f"  ⇒ 不重复：{total_topics - carried}/{total_topics} 条只有扫描带得上，"
-              "而记忆池的填充是**事后**的（对话里说完→下一轮才提炼），"
-              "开口要的恰恰是'此刻还没落地'那一件。")
-    print("  代价对照：扫描 = 每个刷新周期一次模型调用"
-          f"（缓存 {OPEN_THREADS_REFRESH_MINUTES} 分钟）；记忆注入 = 免费搭车。")
+        print(
+            f"  ⇒ 不重复：{total_topics - carried}/{total_topics} 条只有扫描带得上，"
+            "而记忆池的填充是**事后**的（对话里说完→下一轮才提炼），"
+            "开口要的恰恰是'此刻还没落地'那一件。"
+        )
+    print(
+        "  代价对照：扫描 = 每个刷新周期一次模型调用"
+        f"（缓存 {OPEN_THREADS_REFRESH_MINUTES} 分钟）；记忆注入 = 免费搭车。"
+    )
     return 0
 
 

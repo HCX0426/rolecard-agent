@@ -75,8 +75,6 @@ def test_rebuild_path_has_only_one_live_system(tmp_path: Path) -> None:
     second = _make(tmp_path, "kb-b")  # 新实例（重建时先建新、再关旧的）
     second.index("health_reports", "b.txt", "复查频率")
     first.close()
-    assert len(REGISTRY) == base + 1, (
-        f"重建之后应当只剩新那一格：基线 {base}，现在 {len(REGISTRY)}"
-    )
+    assert len(REGISTRY) == base + 1, f"重建之后应当只剩新那一格：基线 {base}，现在 {len(REGISTRY)}"
     second.close()
     assert len(REGISTRY) == base

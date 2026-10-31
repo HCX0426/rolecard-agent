@@ -15,6 +15,7 @@
 
 解析失败一律抛 `ParseError`（可读原因、不含栈），调用方据其决定 500 还是降级。
 """
+
 from __future__ import annotations
 
 import re
@@ -34,9 +35,7 @@ if TYPE_CHECKING:
 
 TEXT_EXTS: frozenset[str] = frozenset({".txt", ".md"})
 PDF_EXTS: frozenset[str] = frozenset({".pdf"})
-IMAGE_EXTS: frozenset[str] = frozenset(
-    {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tiff", ".webp"}
-)
+IMAGE_EXTS: frozenset[str] = frozenset({".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tiff", ".webp"})
 DOCX_EXTS: frozenset[str] = frozenset({".docx"})
 PPTX_EXTS: frozenset[str] = frozenset({".pptx"})
 XLSX_EXTS: frozenset[str] = frozenset({".xlsx"})
@@ -212,9 +211,7 @@ def _parse_docx(p: Path) -> str:
             xml = z.read("word/document.xml")
         except KeyError as exc:
             raise ParseError("不是有效的 .docx：缺少 word/document.xml") from exc
-    return _text_from_xml(
-        xml, para_tag=f"{_W_NS}p", text_tag=f"{_W_NS}t", part="word/document.xml"
-    )
+    return _text_from_xml(xml, para_tag=f"{_W_NS}p", text_tag=f"{_W_NS}t", part="word/document.xml")
 
 
 def _numbered(names: list[str], pattern: re.Pattern[str]) -> list[str]:
@@ -224,6 +221,7 @@ def _numbered(names: list[str], pattern: re.Pattern[str]) -> list[str]:
     PPT 因此会被抽出错乱的页序 —— 第 10 页的数值出现在第 1 页之后，结构化抽取拿到的
     上下文是错的，而这是**静默**的语义错误（审查报告 M9）。
     """
+
     def key(name: str) -> int:
         found = pattern.search(name)
         return int(found.group(1)) if found else 0
@@ -238,9 +236,7 @@ def _parse_pptx(p: Path) -> str:
         if not slides:
             raise ParseError("不是有效的 .pptx：没有 ppt/slides/slide*.xml")
         parts = [
-            _text_from_xml(
-                z.read(name), para_tag=f"{_A_NS}p", text_tag=f"{_A_NS}t", part=name
-            )
+            _text_from_xml(z.read(name), para_tag=f"{_A_NS}p", text_tag=f"{_A_NS}t", part=name)
             for name in slides
         ]
     return "\n\n".join(x for x in parts if x)

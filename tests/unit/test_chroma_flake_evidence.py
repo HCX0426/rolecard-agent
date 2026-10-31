@@ -108,7 +108,7 @@ def test_取证层与门禁共用同一份签名判据() -> None:
     assert pwe.hits_signature is cfe.hits_signature
     # conftest 那个失败时刻钩子也**不许自己算**：它在红的那一刻决定要不要落现场，
     # 与 wrapper 判的不是同一件事时，就会出现"一边认偶发、一边不认"的半张读数
-    # （账本 ENGI-24① 记的正是这个形状）。
+    # （记的正是这个形状）。
     #
     # 这里用 **AST** 而不是扫源码字符串（2026-10-09 我自己撞出来的）：第一版写的是
     # `assert "CHROMA_FLAKE_SIGNATURES" not in conftest_src` 之类，而我在钩子的 docstring 里
@@ -126,8 +126,11 @@ def _hook_calls_shared_predicate() -> bool:
     src = (ROOT / "tests" / "conftest.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     hook = next(
-        (n for n in tree.body
-         if isinstance(n, ast.FunctionDef) and n.name == "pytest_runtest_makereport"),
+        (
+            n
+            for n in tree.body
+            if isinstance(n, ast.FunctionDef) and n.name == "pytest_runtest_makereport"
+        ),
         None,
     )
     if hook is None:
@@ -164,9 +167,10 @@ def _load_conftest():
     return mod
 
 
-def test_钩子对setup阶段的在册偶发也落现场(tmp_path: pathlib.Path,
-                                          monkeypatch: pytest.MonkeyPatch) -> None:
-    """**行为臂（ENGI-24① 那格的两处叠加缺陷，一次全钉）**。
+def test_钩子对setup阶段的在册偶发也落现场(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**行为臂（"两处叠加缺陷"那一格，一次全钉）**。
 
     run 37860489135 的 Windows 臂那次 chroma `(code: 5) database is locked` 是
     `ERROR at setup of …` —— 发生在 **fixture 阶段**，而旧钩子第一句就是
@@ -204,8 +208,9 @@ def test_钩子对setup阶段的在册偶发也落现场(tmp_path: pathlib.Path,
     assert "chromadb.errors.InternalError" in text, f"现场里没有类名那一半：{text[:200]}"
 
 
-def test_钩子对不在册的失败不落现场(tmp_path: pathlib.Path,
-                                 monkeypatch: pytest.MonkeyPatch) -> None:
+def test_钩子对不在册的失败不落现场(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """反向臂（上一发不许是"什么都落"换来的）：真 bug 不该被当成那一发偶发去取证。"""
     import sys
     from types import SimpleNamespace
@@ -250,9 +255,7 @@ def test_wrapper的判定跟着共用清单实时走(monkeypatch: pytest.MonkeyP
     assert pwe._is_chroma_flake("前缀 哨兵签名XYZ 后缀") is True, (
         "换了共用清单，wrapper 却说不是偶发 ⇒ 它手里有第二份判法"
     )
-    assert pwe._is_chroma_flake(FLAKE_TEXT) is False, (
-        "旧清单的形状还认 ⇒ 同上：判法被抄了第二份"
-    )
+    assert pwe._is_chroma_flake(FLAKE_TEXT) is False, "旧清单的形状还认 ⇒ 同上：判法被抄了第二份"
     # 空原因仍是"没证据"，与清单内容无关（fail-closed 那一侧不能被这个改动带跑）
     assert pwe._is_chroma_flake("   ") is False
 

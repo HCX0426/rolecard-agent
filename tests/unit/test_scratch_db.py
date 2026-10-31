@@ -31,9 +31,7 @@ def _db(path: Path, *, newest: str, ids: tuple[str, ...]) -> Path:
     """造一份只够选源逻辑用的库：一张 session_thread 加几行。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
-    conn.execute(
-        "CREATE TABLE session_thread (thread_id TEXT PRIMARY KEY, updated_at TEXT)"
-    )
+    conn.execute("CREATE TABLE session_thread (thread_id TEXT PRIMARY KEY, updated_at TEXT)")
     conn.executemany(
         "INSERT INTO session_thread VALUES (?, ?)",
         [(i, newest) for i in ids],
@@ -129,7 +127,7 @@ def test_freshness_reads_reachout_too(tmp_path, monkeypatch):
 
 
 def test_copy_carries_the_exact_session_set(tmp_path, monkeypatch):
-    """验收口径是**集合**，不是条数（§12.18 那次误删就是按计数删的）。"""
+    """验收口径是**集合**，不是条数（「冒烟自己写进了真库」那次误删就是按计数删的）。"""
     src = _db(tmp_path / "src.db", newest="2026-09-25 05:59:18", ids=("s_a", "s_b", "s_ecb"))
     monkeypatch.delenv("LIVE_DB_PATH", raising=False)
     mod = _load(monkeypatch, tmp_path)

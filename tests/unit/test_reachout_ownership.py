@@ -78,7 +78,7 @@ def test_two_owners_see_only_their_own_inbox(db) -> None:
 
 
 def test_read_all_and_clear_all_stay_inside_one_owner(db) -> None:
-    """"一键全清"是最需要归属守卫的两条：不隔离就等于替别人做决定。"""
+    """ "一键全清"是最需要归属守卫的两条：不隔离就等于替别人做决定。"""
     _seed_pair(db)
     assert mark_all_read(db, user_id=DEFAULT_USER_ID) == 1
     after = list_reachouts(db, user_id=OTHER)
@@ -114,9 +114,9 @@ def test_the_timeline_filters_all_three_sources_by_owner(db) -> None:
     )
     db.commit()
 
-    kinds = [str(i["kind"]) for i in timeline.build(
-        db, user_id=DEFAULT_USER_ID, role_id=ROLE
-    )["items"]]
+    kinds = [
+        str(i["kind"]) for i in timeline.build(db, user_id=DEFAULT_USER_ID, role_id=ROLE)["items"]
+    ]
     assert "thread" in kinds and "reachout" in kinds
     texts = " ".join(
         str(i["text"]) for i in timeline.build(db, user_id=DEFAULT_USER_ID, role_id=ROLE)["items"]

@@ -59,18 +59,15 @@ def test_a_new_column_flows_through_restore_without_touching_sync(
         payload={"text": "用户住在上海", "memo": "新加的列也要跟着走"},
     )
     assert outcome == "created"
-    row = conn.execute(
-        "SELECT text, memo FROM role_memory_item WHERE uid = ?", ("m1",)
-    ).fetchone()
+    row = conn.execute("SELECT text, memo FROM role_memory_item WHERE uid = ?", ("m1",)).fetchone()
     assert row["text"] == "用户住在上海"
     assert row["memo"] == "新加的列也要跟着走", "wire 带了值，列集现算必须落下去"
 
-    assert restore_memory(
-        conn, user_id=DEFAULT_USER_ID, uid="m2", payload={"text": "第二条"}
-    ) == "created"
-    row2 = conn.execute(
-        "SELECT memo FROM role_memory_item WHERE uid = ?", ("m2",)
-    ).fetchone()
+    assert (
+        restore_memory(conn, user_id=DEFAULT_USER_ID, uid="m2", payload={"text": "第二条"})
+        == "created"
+    )
+    row2 = conn.execute("SELECT memo FROM role_memory_item WHERE uid = ?", ("m2",)).fetchone()
     assert row2["memo"] is None, "wire 没带 → 整列不出现，表默认说了算（别写显式 NULL）"
 
     reach = restore_reachout(
@@ -85,9 +82,7 @@ def test_a_new_column_flows_through_restore_without_touching_sync(
         },
     )
     assert reach == "created"
-    got = conn.execute(
-        "SELECT memo FROM agent_reachout WHERE text = ?", ("她先开口",)
-    ).fetchone()
+    got = conn.execute("SELECT memo FROM agent_reachout WHERE text = ?", ("她先开口",)).fetchone()
     assert got["memo"] == "reachout 也一样"
     conn.commit()  # restore 不自收口（登记在册的"写而不收口"），调用方统一 commit
 
@@ -141,9 +136,7 @@ def test_restore_keeps_the_private_writer_semantics(
     assert int(rows["c"]) == 2, "两份都留 = 两条并存，不是覆盖"
 
     # 空文本 = 跳过（对面 payload 的 text 字段空/缺）
-    assert (
-        restore_memory(conn, user_id=DEFAULT_USER_ID, uid="u-empty", payload={}) == "skipped"
-    )
+    assert restore_memory(conn, user_id=DEFAULT_USER_ID, uid="u-empty", payload={}) == "skipped"
     conn.commit()
 
 

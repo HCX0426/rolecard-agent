@@ -481,7 +481,8 @@ def test_recall_mode_without_memory_refuses_to_fake_the_past(conn) -> None:
     """recall 档在没记忆时必须换成"不假装记得往事"的指令。
 
     它的字面意思就是"提起一件之前答应过的事"，而素材只有一坨（可能为空的）记忆 ——
-    对着空记忆说这句话，是在**要求模型捏造**（审计 §8 那条"人设只解读不捏造"）。
+    对着空记忆说这句话，是在**要求模型捏造**（"角色只负责解读不捏造"，
+    见 `docs/架构总览.md` §5 第 4 条）。
     """
     model = _FakeModel(AIMessage(content="嗨"))
     svc.generate_reachout_text(_role(), model, _settings(), conn, role_id="active", mode="recall")
@@ -1323,9 +1324,9 @@ def test_no_role_id_means_no_scoring_corpus(conn) -> None:
 
 
 def test_reachout_costs_are_booked_per_call(conn) -> None:
-    """主动开口花的 token 进账，重生一次就是两次调用（审计 §12.8）。
+    """主动开口花的 token 进账，重生一次就是两次调用（审计「云端 token 与成本累计」）。
 
-    这条是 §12.1 那道闸门的配套：闸门说"太像就重来一次"，那笔钱必须看得见，
+    这条是「复读要量化」那道闸门的配套：闸门说"太像就重来一次"，那笔钱必须看得见，
     否则"为了不复读而把每天的双倍调用悄悄加上去"没人会注意到。
     （`_ScriptedModel` 的 `usages` 一份对应一次调用。）
     """

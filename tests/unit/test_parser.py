@@ -5,6 +5,7 @@ OCR 子进程路径（rapidocr）依赖独立 venv，本环境可能未装，故
 - 选择器策略：RapidOCR 优先，云端 key 兜底；
 真实 OCR 在 .venv-ocr 就绪后由集成验证（scripts/smoke_check.py / 手工上传图片）。
 """
+
 from __future__ import annotations
 
 import io
@@ -66,9 +67,7 @@ def _zip_bytes(files: dict[str, str]) -> bytes:
 
 
 def _make_docx_bytes(paragraphs: list[str]) -> bytes:
-    body = "".join(
-        f'<w:p><w:r><w:t xml:space="preserve">{t}</w:t></w:r></w:p>' for t in paragraphs
-    )
+    body = "".join(f'<w:p><w:r><w:t xml:space="preserve">{t}</w:t></w:r></w:p>' for t in paragraphs)
     doc = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
@@ -563,9 +562,9 @@ def test_xlsx_inline_strings_are_read_when_there_is_no_shared_table(tmp_path: Pa
     sheet = (
         '<?xml version="1.0"?>'
         '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-        "<sheetData><row><c t=\"inlineStr\"><is><t>收缩压</t></is></c>"
-        "<c t=\"inlineStr\"><is><t></t></is></c>"
-        "<c t=\"inlineStr\"><is><t>118</t></is></c></row></sheetData></worksheet>"
+        '<sheetData><row><c t="inlineStr"><is><t>收缩压</t></is></c>'
+        '<c t="inlineStr"><is><t></t></is></c>'
+        '<c t="inlineStr"><is><t>118</t></is></c></row></sheetData></worksheet>'
     )
     f = tmp_path / "内联.xlsx"
     f.write_bytes(_zip_bytes({"xl/worksheets/sheet1.xml": sheet}))

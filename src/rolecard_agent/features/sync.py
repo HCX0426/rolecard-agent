@@ -61,6 +61,7 @@ def thread_memo_clear() -> None:
     """清空会话指纹备忘（测试与热排障用；生产进程无需调用）。"""
     _THREAD_MEMO.clear()
 
+
 #: 会话"头多少条"用来判前缀：20 条足够分开两个真实分叉的对话，又不至于把整段历史
 #: 塞进清单端点的响应里。
 HEAD_MESSAGES = 20
@@ -357,8 +358,12 @@ def collect_threads(
                 _THREAD_MEMO.popitem(last=False)
         if memo[0] == "skip":
             skipped.append(
-                {"kind": KIND_THREAD, "ident": tid, "reason": memo[1],
-                 "preview": _preview(row["title"] or tid)}
+                {
+                    "kind": KIND_THREAD,
+                    "ident": tid,
+                    "reason": memo[1],
+                    "preview": _preview(row["title"] or tid),
+                }
             )
             continue
         _, digest, head, count, pairs = memo
@@ -559,9 +564,7 @@ def _write_thread(
     from rolecard_agent.core.agent.graph import build_graph_config
 
     tid = str(payload["thread_id"])
-    row = conn.execute(
-        "SELECT user_id FROM session_thread WHERE thread_id = ?", (tid,)
-    ).fetchone()
+    row = conn.execute("SELECT user_id FROM session_thread WHERE thread_id = ?", (tid,)).fetchone()
     if row is not None and str(row["user_id"]) != user_id:
         return "foreign"
     if row is None:
@@ -581,9 +584,7 @@ def _write_thread(
     # 中间插进用户那一轮的 `stream`，两边会各自基于同一个父检查点分叉，后写的把先写的盖掉
     # —— 而这一条链路盖掉的是一整段历史，不是单条消息。
     with thread_write(tid):
-        graph.update_state(
-            config, {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *messages]}
-        )
+        graph.update_state(config, {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *messages]})
     return "created" if row is None else "updated"
 
 

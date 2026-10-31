@@ -55,7 +55,7 @@ def check_artifact_single_source() -> None:
         '"_internal" / "frontend"': "用 artifacts.installed_dist(root)",
         '"Programs" / "rolecard-agent"': "用 artifacts.installed_dir(local_appdata)",
         '"rolecard-agent-*.exe"': "用 artifacts.ARTIFACT_GLOB",
-        '"rolecard-backend.exe"': "用 f\"{artifacts.BACKEND_NAME}.exe\"",
+        '"rolecard-backend.exe"': '用 f"{artifacts.BACKEND_NAME}.exe"',
         '"win-unpacked"': "用 artifacts.unpacked_backend(release_dir)",
     }
     # 读的是 **AST 里的字符串常量**，不是原文（与 `single-source literals` 同一个取向）：
@@ -106,8 +106,9 @@ def check_artifact_single_source() -> None:
         to_line = re.search(r"^\s*to:\s*(\S+)\s*$", text, flags=re.M)
         if to_line and to_line.group(1) != artifacts.BACKEND_NAME:
             problems.append(
-            f"electron-builder 的 extraResources to={to_line.group(1)} ≠ {artifacts.BACKEND_NAME}"
-        )
+                f"electron-builder 的 extraResources to={to_line.group(1)}"
+                f" ≠ {artifacts.BACKEND_NAME}"
+            )
     ps1_path = ROOT / "scripts" / "install_package.ps1"
     ps1_raw = ps1_path.read_text(encoding="utf-8", errors="ignore")
 
@@ -135,9 +136,7 @@ def check_artifact_single_source() -> None:
         f"{artifacts.BACKEND_NAME}.exe",
     )
     if got_backend is not None and got_backend != want_backend:
-        problems.append(
-            f"ps1 里「刚构建那份」= {got_backend} 与出处不同形（应为 {want_backend}）"
-        )
+        problems.append(f"ps1 里「刚构建那份」= {got_backend} 与出处不同形（应为 {want_backend}）")
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8", errors="ignore")
     globs = set(re.findall(rf"{artifacts.APP_NAME}-[^\s'\"]*\.exe", ci))
     if globs and not all(re.match(rf"^{artifacts.APP_NAME}-[\w.*-]+\.exe$", g) for g in globs):
@@ -162,7 +161,7 @@ def check_artifact_single_source() -> None:
 #: 例外必须写理由，且例外本身也被数：登记了却不再对应代码里的目录 ⇒ 红（防豁免名单变垃圾桶）。
 _DATA_ROOT_EXEMPT: dict[str, str] = {
     "sqlite": "按后缀逐类忽略（*.db / -wal / -shm / -journal / *.bak / *.trace.jsonl），"
-              "`.gitkeep` 与 `_stale-dev-snapshot-*/` 各有专门条目 —— 这一格是刻意分开的",
+    "`.gitkeep` 与 `_stale-dev-snapshot-*/` 各有专门条目 —— 这一格是刻意分开的",
 }
 
 
@@ -185,11 +184,7 @@ def _data_root_write_dirs() -> dict[str, str]:
     paths_py = ROOT / "src" / "rolecard_agent" / "base" / "paths.py"
     tree = ast.parse(paths_py.read_text(encoding="utf-8"))
     fn = next(
-        (
-            n
-            for n in tree.body
-            if isinstance(n, ast.FunctionDef) and n.name == "data_paths"
-        ),
+        (n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "data_paths"),
         None,
     )
     if fn is None:  # pragma: no cover - 推导处改名时先当红
@@ -372,7 +367,7 @@ def check_app_icon_frames() -> None:
     count = int.from_bytes(data[4:6], "little")
     sizes: list[int] = []
     for i in range(count):
-        e = data[6 + 16 * i: 22 + 16 * i]
+        e = data[6 + 16 * i : 22 + 16 * i]
         if len(e) < 16:
             break
         w = 256 if e[0] == 0 else e[0]
@@ -411,7 +406,8 @@ def check_app_icon_frames() -> None:
     )
     if problems:
         fails.append(
-            "app icon is not a clean multi-frame RGBA set: " + "；".join(problems)
+            "app icon is not a clean multi-frame RGBA set: "
+            + "；".join(problems)
             + " —— 重跑 .venv-ocr\\Scripts\\python.exe scripts/tools/make_app_icon.py"
         )
 
@@ -435,17 +431,30 @@ def check_safety_prompt() -> None:
 
 
 def check_milestone_alignment() -> None:
-    """Milestone ids in the README must match the plan (now in 审计台账汇编.md — the 22
-    archived files were merged into one on 2026-10-09 by user decision; the plan's text
-    lives there verbatim under its own source header)."""
-    readme_ids = set(re.findall(r"\*\*M(\d)", (ROOT / "README.md").read_text(encoding="utf-8")))
-    plan_path = ROOT / "docs" / "archive" / "审计台账汇编.md"
-    plan_ids = set(re.findall(r"\*\*M(\d)", plan_path.read_text(encoding="utf-8")))
-    ok = readme_ids == plan_ids and bool(plan_ids)
-    detail = f"README={sorted(readme_ids)} plan={sorted(plan_ids)}"
+    """里程碑号在 README 与 `架构总览` 两处必须一致。
+
+    **为什么是对账两份活文档而不是"计划 + README"**（2026-11-01 改）：从前这把尺子读
+    `docs/archive/审计台账汇编.md`（历史台账）当"计划"——于是**归档件成了尺子的数据源**，
+    删不掉也搬不动。删掉归档的那一刻这把尺子就崩（实测：脚本当场 FileNotFoundError）。
+    现在的事实源是两份**活文档**：README 的里程碑表（对外口径）与 `架构总览` §4
+    （里程碑状态，内部口径）—— 两者都是"现状"，本就该互相印证；历史台账该只做历史。
+
+    判据形状：README 的表格行 `| **M3** |` 与架构总览里的**基座号段声明** `M1–M5`。
+    文档里另有两套同形编号（§4.1 那条 A–D 阶段的 M1–M8、§3 里那条 M1~M6），
+    混进来会让这把尺子永远红 —— 所以只认"基座（M…–M…）"这一句。
+    两边必须同形，且**不许为空**（空 = 两边都把里程碑表删了 = 这把尺子失效）。
+    """
+    readme_text = (ROOT / "README.md").read_text(encoding="utf-8")
+    overview_text = (ROOT / "docs" / "架构总览.md").read_text(encoding="utf-8")
+    readme_ids = set(re.findall(r"\|\s*\*\*M(\d)\*\*", readme_text))
+    overview_ids: set[str] = set()
+    for lo, hi in re.findall(r"基座（M(\d)\s*[–\-~]\s*M(\d)", overview_text):
+        overview_ids.update(str(n) for n in range(int(lo), int(hi) + 1))
+    ok = readme_ids == overview_ids and bool(readme_ids)
+    detail = f"README={sorted(readme_ids)} 总览基座={sorted(overview_ids)}"
     out("milestone alignment", ok, detail)
     if not ok:
-        fails.append(f"milestone ids differ between README and plan: {detail}")
+        fails.append(f"milestone ids differ between README and 架构总览: {detail}")
 
 
 def check_v1_v2_boundary() -> None:
@@ -455,7 +464,7 @@ def check_v1_v2_boundary() -> None:
     So no live document may still advertise them as a v2 roadmap item. This rule exists
     because pulling scope forward left exactly such a leftover behind twice.
     """
-    scanned = ("README.md", "docs/archive/审计台账汇编.md", "docs/需求与验收标准.md")
+    scanned = ("README.md", "docs/需求与验收标准.md")
     offenders: list[str] = []
     for name in scanned:
         path = ROOT / name
@@ -648,8 +657,19 @@ def check_single_source_literals() -> None:
     # 今天恰好为 0 命中（本仓非 ASCII 路径都是 `.md`，不在这些扩展名里）—— 那是巧合，
     # 不是安全：任何一份中文命名的 `.py`/`.toml` 一进来，这条判据就会静默看不见它。
     tracked = subprocess.run(
-        ["git", "-c", "core.quotepath=false", "ls-files",
-         "*.py", "*.yml", "*.yaml", "*.ts", "*.tsx", "*.js", "*.toml"],
+        [
+            "git",
+            "-c",
+            "core.quotepath=false",
+            "ls-files",
+            "*.py",
+            "*.yml",
+            "*.yaml",
+            "*.ts",
+            "*.tsx",
+            "*.js",
+            "*.toml",
+        ],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -657,20 +677,15 @@ def check_single_source_literals() -> None:
         errors="replace",
         check=False,
     ).stdout.splitlines()
-    scanned = [
-        ROOT / rel
-        for rel in tracked
-        if rel and (ROOT / rel).exists()
-    ] or [p for root in ("src", "scripts") for p in (ROOT / root).rglob("*.py")]
+    scanned = [ROOT / rel for rel in tracked if rel and (ROOT / rel).exists()] or [
+        p for root in ("src", "scripts") for p in (ROOT / root).rglob("*.py")
+    ]
     self_rel = pathlib.Path(__file__).relative_to(ROOT).as_posix()
     holders: dict[str, set[str]] = {}
     for path in sorted(scanned):
         rel = str(path.relative_to(ROOT)).replace("\\", "/")
         is_test = (
-            rel == self_rel
-            or "/tests/" in f"/{rel}"
-            or rel.startswith("tests/")
-            or ".test." in rel
+            rel == self_rel or "/tests/" in f"/{rel}" or rel.startswith("tests/") or ".test." in rel
         )
         if is_test:
             continue
@@ -978,8 +993,10 @@ def _deploy_port_findings(compose: str, caddy_text: str) -> list[str]:
     problems: list[str] = []
     services = (simple_yaml(compose).get("services") or {}) if compose else {}
     if not isinstance(services, dict):
-        return [f"compose 的 services 读不出映射（形状是 {type(services).__name__}）—— "
-                "这一问不能静默跳过"]
+        return [
+            f"compose 的 services 读不出映射（形状是 {type(services).__name__}）—— "
+            "这一问不能静默跳过"
+        ]
 
     published = sorted(
         name
@@ -1206,7 +1223,7 @@ def check_role_whitelists_resolve() -> None:
 
     The built-in role's whitelist listed `list_domains` / `list_roles` while
     `core/tools/builtin.py` was still an empty docstring - a permission list pointing at
-    nothing, which reads as working code (技术评审与决策.md §9 B1).
+    nothing, which reads as working code (技术评审与决策.md 「实现对齐核查」B1).
 
     ## 声明面只认 `@tool("...")`
 

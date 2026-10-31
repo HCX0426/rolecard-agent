@@ -30,13 +30,15 @@ def _load():
 
 
 def _finding(pkg: str, vid: str, fixes: list[str] | None = None, aliases: list[str] | None = None):
-    return {"dependencies": [
-        {
-            "name": pkg,
-            "version": "1.0.0",
-            "vulns": [{"id": vid, "fix_versions": fixes or [], "aliases": aliases or []}],
-        }
-    ]}
+    return {
+        "dependencies": [
+            {
+                "name": pkg,
+                "version": "1.0.0",
+                "vulns": [{"id": vid, "fix_versions": fixes or [], "aliases": aliases or []}],
+            }
+        ]
+    }
 
 
 def test_同一条告警的两份记录只数一次() -> None:

@@ -37,6 +37,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+
 def _src(rel: str) -> str:
     return (ROOT / rel).read_text(encoding="utf-8")
 
@@ -81,7 +82,9 @@ def test_本机真实仓在当前配置下确实拿得到原名() -> None:
     """
     raw = subprocess.run(
         ["git", "-c", "core.quotepath=false", "ls-files", "-z"],
-        cwd=ROOT, capture_output=True, check=False,
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
     ).stdout
     names = [n.decode("utf-8", "replace") for n in raw.split(b"\x00") if n.strip()]
     assert len(names) > 500, f"名单才 {len(names)} 条：不像这份仓库，分母可疑"

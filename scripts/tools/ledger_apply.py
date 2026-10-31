@@ -49,7 +49,7 @@ if "--probe" in sys.argv:
             near = [ln for ln in text.splitlines() if stem in ln]
             for ln in near[:1]:
                 idx = ln.find(stem)
-                print("      实际附近:", repr(ln[max(0, idx - 8):idx + 96]))
+                print("      实际附近:", repr(ln[max(0, idx - 8) : idx + 96]))
     print("锚点全对，可以写盘" if not missed else f"有 {missed} 个锚不合格")
     sys.exit(1 if missed else 0)
 
@@ -63,14 +63,19 @@ for e in SPEC:
     if "\n" in e["new"] and not e.get("multi_line"):
         print(f"[{e['id']}] 新文本含换行，会劈开表格行；确实要插入整块就写 multi_line: true")
         sys.exit(1)
-    if e.get("multi_line") and e["new"].strip("\n").splitlines() and any(
-        ln.strip() and not ln.lstrip().startswith(("|", "#", ">", "-", "*")) and "：" not in ln
-        for ln in e["new"].splitlines()
+    if (
+        e.get("multi_line")
+        and e["new"].strip("\n").splitlines()
+        and any(
+            ln.strip() and not ln.lstrip().startswith(("|", "#", ">", "-", "*")) and "：" not in ln
+            for ln in e["new"].splitlines()
+        )
     ):
         # 多行块的每一行要么是表格行/标题/引用，要么是纯散文段落 —— 不允许出现"半截表格行"
         # （以 `|` 开头却不以 `|` 结尾）那种最容易劈坏文件的形状。
         half = [
-            ln for ln in e["new"].splitlines()
+            ln
+            for ln in e["new"].splitlines()
             if ln.lstrip().startswith("|") and not ln.rstrip().endswith("|")
         ]
         if half:
@@ -108,5 +113,7 @@ if bad:
     LED.write_text(before, encoding="utf-8", newline="\n")
     print("自检不过，已还原：", bad)
     sys.exit(1)
-print(f"✅ 落账完成：{was} → {len(rows)} 行（编号 {nums[0]}→{nums[-1]}）、"
-      f"每行 {widths.pop()} 格、文件 {len(lines)} 行（原 {len(before.splitlines())}）")
+print(
+    f"✅ 落账完成：{was} → {len(rows)} 行（编号 {nums[0]}→{nums[-1]}）、"
+    f"每行 {widths.pop()} 格、文件 {len(lines)} 行（原 {len(before.splitlines())}）"
+)

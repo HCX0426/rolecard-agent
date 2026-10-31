@@ -110,6 +110,7 @@ def _invoke_tool(tool: Any, args: dict[str, Any], timeout_seconds: float) -> Any
         future.cancel()
         raise ToolTimeout(f"工具执行超过 {timeout_seconds:g}s 未返回") from exc
 
+
 # v2.1 RAG 的作用域注入（role_knowledge_scopes_ctx / current_knowledge_scopes）与反向图搜的
 # 图片来源注入（turn_image_ctx / current_turn_image）已下沉到 `base/scopes.py`：它们是内核
 # 节点注入、rag 工具层读取的共享状态，住 base 层才能让 `rag` 合法依赖、不反向 import `core`
@@ -561,7 +562,7 @@ def _collect_model_stream(
     为什么不再是 `bound.invoke()`（2026-09-25，#18）：挂了 SSE 回调时 langchain 内部走的
     确实也是流式路径，但**那条流不在我们手里** —— 于是"停止生成"只能干等：
     `await run_in_executor(next, gen)` 被取消并不中断线程池里已经在跑的那次 `next()`
-    （审计 §12.12② 实测：一句被取消的 800 字生成把下一个请求排在它后面）。
+    （审计「单测绿了不等于生产没发生」② 实测：一句被取消的 800 字生成把下一个请求排在它后面）。
     拿住流之后收手就是 `close()`，而实测**关掉连接真的放得开引擎**：同一台机 qwen3-vl:8b，
     长生成跑到第 3 块关连接，之后 1-token 探针 0.30s / 0.20s / 0.16s（基线 0.12s）——
     Ollama 在客户端断开后不到一秒就停了，云端同理是连接一断就不再计。停这才意味着省。
@@ -731,7 +732,8 @@ def call_model(
     )
     if stopped:
         # 中途收手：把已经生成的那半截照原样提交（她看到的与历史里的必须是同一份），
-        # 并留一条痕 —— 审计 §12.12② 里"补写半句"那条 P3 的前提正是"半句没进历史"，
+        # 并留一条痕 —— 审计「单测绿了不等于生产没发生」② 里"补写半句"那条 P3
+        # 的前提正是"半句没进历史"，
         # 从这一版起它不成立了：停在哪儿，历史就到哪儿。
         ctx.tracer.emit(
             TraceEvent(
@@ -742,7 +744,8 @@ def call_model(
                 detail={"chars": len(text_of(response))},
             )
         )
-    # 这里**不记 token 账，也不往 `node_end` 写用量**（审计 §12.8/#8）。原因不是"取不到"，
+    # 这里**不记 token 账，也不往 `node_end` 写用量**（审计「云端 token 与成本累计」/#8）
+    # 原因不是"取不到"，
     # 而是取到的必然错：挂了 SSE 回调时 langchain 走的也是流式路径，而供应商每个分块都回一份
     # "累计到此"的 usage、合并时逐块相加 —— 实测一条"在吗"非流式 26 token、流式合并后 272,607。
     # 真值只有在分块层看得见，所以记账搬到了 `core/agent/turn.py`（事件 `llm_usage`，按 (节点,步)
@@ -874,9 +877,7 @@ def execute_tools(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
     # offline（"这个插件已经关了"）。给用户错的那一句，比不给解释更糟。
     tools, domains = turn_context(state, ctx)
     known = set(ctx.registry.names())
-    stage_one = {
-        t.name for t in ctx.registry.select(enabled_domains=domains, role_whitelist=None)
-    }
+    stage_one = {t.name for t in ctx.registry.select(enabled_domains=domains, role_whitelist=None)}
     permitted = {t.name for t in tools}
 
     results: list[ToolMessage] = []
@@ -1007,7 +1008,8 @@ def execute_tools(state: dict[str, Any], ctx: KernelContext) -> dict[str, Any]:
 
     update: dict[str, Any] = {"messages": results}
     if retries:
-        # `retry_count` was a declared-but-never-written field (技术评审与决策.md §9 A4). It is
+        # `retry_count` was a declared-but-never-written field (技术评审与决策.md 「实现对齐核查
+        # A4). It is
         # now the per-session tally of tool retries, which is what makes "how flaky is this
         # deployment" answerable from state instead of from log grepping.
         update["retry_count"] = (state.get("retry_count") or 0) + retries

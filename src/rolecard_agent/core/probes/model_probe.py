@@ -161,13 +161,15 @@ def list_models(target: ProbeTarget) -> tuple[list[str], str]:
     只当提示，不当否决（`model_listed` 是建议性的，见 `probe`）。
     """
     if target.style == "native":
-        url, pick = f"{target.root}/api/tags", lambda d: [
-            str(m.get("name", "")) for m in d.get("models", [])
-        ]
+        url, pick = (
+            f"{target.root}/api/tags",
+            lambda d: [str(m.get("name", "")) for m in d.get("models", [])],
+        )
     else:
-        url, pick = f"{target.root}/models", lambda d: [
-            str(m.get("id", "")) for m in d.get("data", [])
-        ]
+        url, pick = (
+            f"{target.root}/models",
+            lambda d: [str(m.get("id", "")) for m in d.get("data", [])],
+        )
     try:
         # 走 `base/outbound`：这一发带着**已存的 api_key**，不许经手系统代理（R26-43）。
         res = outbound.get(url, headers=target.auth_headers(), timeout=_LIST_TIMEOUT)
@@ -203,9 +205,7 @@ def _chat_completion(
         body["tools"] = [_PROBE_TOOL]
         body["tool_choice"] = "auto"
     try:
-        res = outbound.post(
-            url, json=body, headers=target.auth_headers(), timeout=_CALL_TIMEOUT
-        )
+        res = outbound.post(url, json=body, headers=target.auth_headers(), timeout=_CALL_TIMEOUT)
     except Exception as exc:  # noqa: BLE001 - 调不通就是结论
         return {}, f"{type(exc).__name__}: {exc}"[:180]
     if res.status_code != 200:

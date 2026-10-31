@@ -1,6 +1,6 @@
 """Observability: the tracer must be useful and must never be dangerous.  Traceability: US-5.
 
-Two properties matter and neither was tested before (技术评审与决策.md §9 D1):
+Two properties matter and neither was tested before (技术评审与决策.md 「实现对齐核查」D1):
 
   * it never raises - a logging failure must not take down a request;
   * it redacts by default - the whole point of putting redaction *inside* the tracer is that a
@@ -47,9 +47,7 @@ def test_redaction_is_on_by_default(tmp_path: Path) -> None:
     """A 412-character answer must not appear in the log; its shape may."""
     log = tmp_path / "trace.jsonl"
     tracer = LocalTracer(path=log)
-    tracer.emit(
-        TraceEvent(event="node_end", detail={"content": "患者" * 6, "tools_visible": 2})
-    )
+    tracer.emit(TraceEvent(event="node_end", detail={"content": "患者" * 6, "tools_visible": 2}))
     tracer.close()
     detail = _lines(log)[0]["detail"]
     assert detail["content"] == "<redacted:12 chars>"

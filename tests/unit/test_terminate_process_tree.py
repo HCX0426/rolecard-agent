@@ -211,12 +211,15 @@ def test_同组的孩子被杀后调用方必须活着(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     proc = subprocess.run(
-        [sys.executable, str(script)], capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=60,
+        [sys.executable, str(script)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
     )
     assert "CALLER-ALIVE" in proc.stdout, (
-        f"调用方被连坐了（run 37842997481 的形状）：rc={proc.returncode} "
-        f"err={proc.stderr[-200:]}"
+        f"调用方被连坐了（run 37842997481 的形状）：rc={proc.returncode} err={proc.stderr[-200:]}"
     )
 
 
@@ -227,9 +230,7 @@ def test_独立成组时孙子也收干净(tmp_path: Path) -> None:
     """
     mark = tmp_path / "grandchild.pid"
     inner = (
-        "import os, time\n"
-        "open(os.environ['MARK'], 'w').write(str(os.getpid()))\n"
-        "time.sleep(60)\n"
+        "import os, time\nopen(os.environ['MARK'], 'w').write(str(os.getpid()))\ntime.sleep(60)\n"
     )
     script = tmp_path / "group.py"
     script.write_text(
@@ -246,8 +247,13 @@ def test_独立成组时孙子也收干净(tmp_path: Path) -> None:
     )
     env = {**os.environ, "MARK": str(mark)}
     proc = subprocess.run(
-        [sys.executable, str(script)], capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=90, env=env,
+        [sys.executable, str(script)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=90,
+        env=env,
     )
     assert "DONE" in proc.stdout, proc.stdout[-300:] + proc.stderr[-300:]
     assert mark.exists(), "孙子没起来：这一臂没量到东西（分母为 0 不等于通过）"
@@ -277,8 +283,10 @@ def test_真起一个孩子收掉它() -> None:
         # Windows：`shell=True` 起的是 cmd → 孙子 python 那棵树，正是"只杀外壳会留孤儿"的
         # 形状（本仓实测过两次）。
         proc = subprocess.Popen(
-            subprocess.list2cmdline(sleep_cmd), shell=True,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            subprocess.list2cmdline(sleep_cmd),
+            shell=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
     time.sleep(0.6)
     terminate_process_tree(proc)  # type: ignore[arg-type]

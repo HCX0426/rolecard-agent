@@ -2,7 +2,7 @@
 
 `roles/seed.py` already listed `list_domains` / `list_roles` in the built-in role's whitelist
 while `core/tools/builtin.py` was still an empty docstring - the whitelist pointed at nothing
-(技术评审与决策.md §9 B1). The name assertions below are the regression guard.
+(技术评审与决策.md 「实现对齐核查」B1). The name assertions below are the regression guard.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ def cards(store: RoleCardService) -> RoleCards:
 def _who() -> str:
     """这台实例的主人 = 本机那份（`make_kernel_tools` 要一个"现取身份"的提供者）。"""
     return DEFAULT_USER_ID
+
 
 def test_kernel_tool_names_are_stable(roles: RoleCardService) -> None:
     names = [t.name for t in make_kernel_tools(current_user=_who, roles=roles)]
@@ -50,8 +51,7 @@ def test_list_domains_reports_what_is_enabled(roles: RoleCardService) -> None:
 def test_list_domains_says_so_when_nothing_is_on(roles: RoleCardService) -> None:
     """An empty answer is still an answer - the model should not have to guess."""
     tools = {
-        t.name: t
-        for t in make_kernel_tools(current_user=_who, roles=roles, enabled_domains=[])
+        t.name: t for t in make_kernel_tools(current_user=_who, roles=roles, enabled_domains=[])
     }
     assert "没有启用" in tools["list_domains"].invoke({})
 

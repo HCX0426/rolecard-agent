@@ -159,7 +159,7 @@ CREATE INDEX IF NOT EXISTS idx_reachout_state_time ON agent_reachout(state, crea
 -- 缺索引三条（09-28 轮 `R28-22`，当前规模无实害、登记的那笔）：按实际查询的列序补，
 -- 每次启动都执行 `IF NOT EXISTS` ⇒ 老库下一次开机就拿到，不用写迁移。
 CREATE INDEX IF NOT EXISTS idx_reachout_user_state ON agent_reachout(user_id, state);
--- 收件箱/事件簿的查询形状是"按人过滤 + ORDER BY id DESC LIMIT"（`R102-49`）：现有两把
+-- 收件箱/事件簿的查询形状是"按人过滤 + ORDER BY id DESC LIMIT"：现有两把
 -- 索引没有一把以 id 收尾 ⇒ 20k 行时 TEMP B-TREE 排序 21.7ms；这把索引量测对照 0.128ms。
 -- `reachout_keep` 默认 0 = 行数无界，列表延迟随行数线性走 —— 索引是那把尺子之外的第一刀。
 CREATE INDEX IF NOT EXISTS idx_reachout_user_id ON agent_reachout(user_id, id DESC);
@@ -324,7 +324,7 @@ CREATE TABLE IF NOT EXISTS model_backend (
 -- 索引必须跟着重建后的形状走（放在这里，旧库的 `CREATE TABLE IF NOT EXISTS` 会跳过建表、
 -- 却仍然执行这条 CREATE INDEX → "no such column: provider_id"）。
 
--- 模型调用的 token 账（审计 §12.8）：路由改云端之后，对话/主动开口/记忆提取三条路都花真钱，
+-- 模型调用的 token 账（审计「云端 token 与成本累计」）：路由改云端之后，对话/主动开口/记忆提取三条路都花真钱，
 -- 而项目里没有任何一个数能回答"今天花了多少"（`node_end` 的 tokens 一直是 null，
 -- `reachout_sent` 只带 chars —— 字数不是钱）。
 -- 粒度是 (本地日期, **身份**, 后端)，**故意不给每次调用留一行**：这张表只增不减（audit_log 已经为此
@@ -342,7 +342,7 @@ CREATE TABLE IF NOT EXISTS token_usage_day (
     calls             INTEGER NOT NULL DEFAULT 0,
     prompt_tokens     INTEGER NOT NULL DEFAULT 0,
     completion_tokens INTEGER NOT NULL DEFAULT 0,
-    -- 思考模型输出里"想"的那一段（架构审计 §12.8 第二条）。**它是 completion 的子集**，
+    -- 思考模型输出里"想"的那一段（架构审计「云端 token 与成本累计」第二条）。**它是 completion 的子集**，
     -- 不是第三段开销 —— 所以总量仍然是 prompt + completion，这一列只用来回答
     -- "今天花的钱里有多少是她想出来的"。老库由 reconcile_columns 自动补，无迁移。
     reasoning_tokens  INTEGER NOT NULL DEFAULT 0,

@@ -52,18 +52,14 @@ def _key(event: dict[str, Any]) -> tuple[str, int, int]:
     return (str(event["at"]), -KIND_ORDER[str(event["kind"])], int(event["ref_id"]))
 
 
-def _reachouts(
-    conn: SqlConnection, role_id: str, *, user_id: str
-) -> list[dict[str, Any]]:
+def _reachouts(conn: SqlConnection, role_id: str, *, user_id: str) -> list[dict[str, Any]]:
     rows = conn.execute(
         "SELECT id, text, created_at FROM agent_reachout"
         " WHERE role_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?",
         (role_id, user_id, _SCAN_CAP),
     ).fetchall()
     thread = proactive_thread_id(role_id, user_id=user_id)
-    exists = conn.execute(
-        "SELECT 1 FROM session_thread WHERE thread_id = ?", (thread,)
-    ).fetchone()
+    exists = conn.execute("SELECT 1 FROM session_thread WHERE thread_id = ?", (thread,)).fetchone()
     return [
         {
             "kind": "reachout",
@@ -79,9 +75,7 @@ def _reachouts(
     ]
 
 
-def _memory(
-    conn: SqlConnection, role_id: str, *, user_id: str
-) -> list[dict[str, Any]]:
+def _memory(conn: SqlConnection, role_id: str, *, user_id: str) -> list[dict[str, Any]]:
     """记下 = `created_at`；更正 = 那条被取代时的 `invalidated_at`。
 
     "失效不删"此前只是库里一列，价值只在被回滚和被调试；这一条把它画成用户看得见的东西。
@@ -125,9 +119,7 @@ def _memory(
     return events
 
 
-def _threads(
-    conn: SqlConnection, role_id: str, *, user_id: str
-) -> list[dict[str, Any]]:
+def _threads(conn: SqlConnection, role_id: str, *, user_id: str) -> list[dict[str, Any]]:
     """会话只给锚点，不逐条列消息：按角色扫 checkpoint 既贵，又是把对话全文复制进第二个视图。"""
     rows = conn.execute(
         "SELECT thread_id, title, created_at, updated_at FROM session_thread "

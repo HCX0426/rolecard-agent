@@ -75,10 +75,17 @@ def _stream_ollama(*, think: str | None, prompt: str) -> dict[str, Any]:
                     first_content = time.perf_counter() - t0
                 content_chars += len(str(msg["content"]))
             if chunk.get("done"):
-                stats = {k: chunk.get(k) for k in (
-                    "total_duration", "load_duration", "prompt_eval_count",
-                    "prompt_eval_duration", "eval_count", "eval_duration",
-                )}
+                stats = {
+                    k: chunk.get(k)
+                    for k in (
+                        "total_duration",
+                        "load_duration",
+                        "prompt_eval_count",
+                        "prompt_eval_duration",
+                        "eval_count",
+                        "eval_duration",
+                    )
+                }
     return {
         "prompt_chars": len(prompt),
         "think_param": think,
@@ -172,8 +179,12 @@ def _arm_window(reps: int) -> list[dict[str, Any]]:
         # "重新加载那 5~15 秒"算进下一臂的速率里（本机踩过，见 09-24 那条测量纪律）。
         httpx.post(
             f"{OLLAMA}/api/generate",
-            json={"model": MODEL, "prompt": "只回一个字：好", "stream": False,
-                  "options": {"num_ctx": num_ctx, "num_predict": 6}},
+            json={
+                "model": MODEL,
+                "prompt": "只回一个字：好",
+                "stream": False,
+                "options": {"num_ctx": num_ctx, "num_predict": 6},
+            },
             timeout=300,
         ).raise_for_status()
         for i in range(reps):

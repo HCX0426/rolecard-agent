@@ -126,12 +126,10 @@ def _first_reply_after(pairs: list[tuple[str, str]], text: str) -> str | None:
     )
     if at is None:
         return None
-    return next((t for who, t in pairs[at + 1:] if who == "用户"), None)
+    return next((t for who, t in pairs[at + 1 :] if who == "用户"), None)
 
 
-def classify(
-    row: Any, lane_msgs: dict[str, list[tuple[str, str]]]
-) -> dict[str, Any]:
+def classify(row: Any, lane_msgs: dict[str, list[tuple[str, str]]]) -> dict[str, Any]:
     """把一行主动消息归到「由头 × 结局」那一格 —— **逐行判据只此一份**。
 
     `summarize` 的计数与抽样表都读它：两个视图可以说同一批行的不同话，但不允许对同一行
@@ -340,16 +338,12 @@ def sample_table(
             role_id=str(r["role_id"]),
             text=str(r["text"]),
             created_at=str(r["created_at"]),
-            repeat_score=(
-                float(str(r["repeat_score"])) if r["repeat_score"] is not None else None
-            ),
+            repeat_score=(float(str(r["repeat_score"])) if r["repeat_score"] is not None else None),
         )
         classified.append(item)
 
     def newest_first(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return sorted(
-            items, key=lambda x: (str(x["created_at"]), int(x["id"])), reverse=True
-        )
+        return sorted(items, key=lambda x: (str(x["created_at"]), int(x["id"])), reverse=True)
 
     cells: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for item in classified:
@@ -371,9 +365,7 @@ def sample_table(
     return newest_first(list(chosen.values()))
 
 
-def render_sample(
-    sample: list[dict[str, Any]], *, rows_total: int, generated_at: str
-) -> str:
+def render_sample(sample: list[dict[str, Any]], *, rows_total: int, generated_at: str) -> str:
     """抽样表渲染成 markdown。最后一列留空给**人**填 —— 这张表的产出就是那 20 个手写值。"""
     lines = [
         "# 主动开口对照样本（人眼判一次）",
@@ -389,11 +381,7 @@ def render_sample(
         "|---|---|---|---|---|---|---|---|---|",
     ]
     for i, item in enumerate(sample, 1):
-        score = (
-            f"{float(item['repeat_score']):.2f}"
-            if item["repeat_score"] is not None
-            else "—"
-        )
+        score = f"{float(item['repeat_score']):.2f}" if item["repeat_score"] is not None else "—"
         reply = _clip(item["reply"], 60) if item["reply"] else "—"
         # 时间直接切片到分钟：`_clip` 会在末尾加省略号，把 "04:38" 截成 "04:3…"。
         stamp_minute = str(item["created_at"])[:16]
@@ -476,18 +464,24 @@ def main() -> None:
         first, last = _parse(s["first_known_at"]), _parse(s["last_known_at"])
         if first and last and last > first:
             span_h = (last - first).total_seconds() / 3600.0
-        print(f"   带由头 {kn} / {need} 条；从 {s['first_known_at']} 攒到 {s['last_known_at']}"
-              f"（观测 {span_h:.1f} 小时）")
+        print(
+            f"   带由头 {kn} / {need} 条；从 {s['first_known_at']} 攒到 {s['last_known_at']}"
+            f"（观测 {span_h:.1f} 小时）"
+        )
         if kn >= need:
             print("   够了 —— 可以按 ④ 的分布判第五由头有没有真驱动过一次开口。")
         elif span_h > 0 and kn >= 2:
             per_day = kn / (span_h / 24.0)
-            print(f"   按这个速率约 {per_day:.1f} 条/天，还差 {need - kn} 条 ≈"
-                  f" {(need - kn) / per_day:.1f} 天 —— 这只是「什么时候值得回来看一眼」，"
-                  f"\n     不是预测：开口本身被闸门压着（间隔 + 静默段 + 退避），速率不该外推。")
+            print(
+                f"   按这个速率约 {per_day:.1f} 条/天，还差 {need - kn} 条 ≈"
+                f" {(need - kn) / per_day:.1f} 天 —— 这只是「什么时候值得回来看一眼」，"
+                f"\n     不是预测：开口本身被闸门压着（间隔 + 静默段 + 退避），速率不该外推。"
+            )
         else:
-            print("   只有 1 条，**算不出速率**（一条样本推不出「每天几条」，硬推就是编）。"
-                  "\n     下次再读这一项时它会自己变准。")
+            print(
+                "   只有 1 条，**算不出速率**（一条样本推不出「每天几条」，硬推就是编）。"
+                "\n     下次再读这一项时它会自己变准。"
+            )
     rd = repeat_distribution(conn)
     n_scored = int(rd["n"])
     print("⑥ 复读分分布（`repeat_score` 那一列，N4 ① —— 0=不撞，越大越像自己）")

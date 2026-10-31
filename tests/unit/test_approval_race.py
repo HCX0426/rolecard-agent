@@ -50,8 +50,14 @@ def _submit_one(path: Path) -> dict[str, Any]:
         conn.close()
 
 
-def _decide_gated(path: Path, approval_id: int, decision: str, token: str, threads: int,
-                  monkeypatch: pytest.MonkeyPatch) -> list[str]:
+def _decide_gated(
+    path: Path,
+    approval_id: int,
+    decision: str,
+    token: str,
+    threads: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[str]:
     """`threads` 个线程同时决定同一条：每个都走到"写完就放行"那道门，然后一起冲出去。"""
     barrier = threading.Barrier(threads)
     original = ApprovalService._check_token
@@ -98,12 +104,14 @@ def _status(path: Path, approval_id: int) -> tuple[str, Any]:
     return str(row["status"]), row["decide_token"]
 
 
-def test_four_concurrent_approves_admit_exactly_one(tmp_path: Path,
-                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+def test_four_concurrent_approves_admit_exactly_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = _db(tmp_path)
     row = _submit_one(path)
-    results = _decide_gated(path, int(row["id"]), "approve", str(row["decide_token"]),
-                            THREADS, monkeypatch)
+    results = _decide_gated(
+        path, int(row["id"]), "approve", str(row["decide_token"]), THREADS, monkeypatch
+    )
 
     assert not [r for r in results if r.startswith("other:")], f"有线程抛了别的错：{results}"
     assert results.count("ok") == 1, (
@@ -116,8 +124,9 @@ def test_four_concurrent_approves_admit_exactly_one(tmp_path: Path,
     assert token is None, f"决定之后令牌必须清掉，否则同一枚凭据还能再用：{token}"
 
 
-def test_approve_and_reject_racing_leave_one_winner(tmp_path: Path,
-                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+def test_approve_and_reject_racing_leave_one_winner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """批准与拒绝同时到：只能有一个兑现。
 
     这一对比"两发批准"更疼：她点的是「拒绝」，而另一处（第二个页签、第二次点击）同一秒
@@ -161,6 +170,7 @@ def test_approve_and_reject_racing_leave_one_winner(tmp_path: Path,
     expected = "approved" if winner == ["approve"] else "rejected"
     assert _status(path, approval_id)[0] == expected, (winner, _status(path, approval_id))
 
+
 def test_a_cas_loser_does_not_leave_the_database_locked(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -190,7 +200,7 @@ def test_a_cas_loser_does_not_leave_the_database_locked(
     monkeypatch.setattr(ApprovalService, "_check_token", staticmethod(gated))
 
     outcomes: list[str] = []
-    leaked: list[Any] = []          # 故意留着不关
+    leaked: list[Any] = []  # 故意留着不关
     lock = threading.Lock()
 
     def worker(decision: str) -> None:
@@ -281,17 +291,14 @@ def test_dedupe_rescues_legacy_duplicate_pending(tmp_path: Path) -> None:
         conn.execute("DROP INDEX IF EXISTS idx_command_approval_one_pending")
         for _ in range(3):
             conn.execute(
-                "INSERT INTO command_approval (command, status) "
-                "VALUES ('python dup.py', 'pending')"
+                "INSERT INTO command_approval (command, status) VALUES ('python dup.py', 'pending')"
             )
         conn.commit()
         # 再开一次机：清重先跑（计划里的 pre_ddl 步骤），唯一索引才建得起来。
         bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
         statuses = [
             str(r[0])
-            for r in conn.execute(
-                "SELECT status FROM command_approval ORDER BY id"
-            ).fetchall()
+            for r in conn.execute("SELECT status FROM command_approval ORDER BY id").fetchall()
         ]
         assert statuses == ["rejected", "rejected", "pending"]
         has_index = conn.execute(

@@ -64,9 +64,12 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
             ).status_code in (200, 201), who
             made = client.post("/api/session", json={"role_id": f"r_{tag}"}, headers=head)
             assert made.status_code in (200, 201), made.text
-            assert client.post(
-                "/api/settings/memory/item", json={"text": f"事实{tag}"}, headers=head
-            ).status_code == 200
+            assert (
+                client.post(
+                    "/api/settings/memory/item", json={"text": f"事实{tag}"}, headers=head
+                ).status_code
+                == 200
+            )
             saved = client.put(
                 "/api/settings/models",
                 json={
@@ -112,9 +115,10 @@ def test_role_cards_are_disjoint_both_ways(client: TestClient) -> None:
     assert "r_a" not in _ids(client, B, "/api/roles", "role_id")
     # 读、改、删三条路都要 404，而不是"承认它存在"
     assert client.get("/api/roles/r_b", headers=_as(A)).status_code == 404
-    assert client.patch(
-        "/api/roles/r_b", json={"description": "偷改"}, headers=_as(A)
-    ).status_code == 404
+    assert (
+        client.patch("/api/roles/r_b", json={"description": "偷改"}, headers=_as(A)).status_code
+        == 404
+    )
     assert client.delete("/api/roles/r_b", headers=_as(A)).status_code == 404
     mine = [r for r in client.get("/api/roles", headers=_as(B)).json() if r["role_id"] == "r_b"]
     assert mine and mine[0].get("description") != "偷改"
@@ -133,15 +137,19 @@ def test_threads_and_checkpoints_do_not_leak(client: TestClient) -> None:
     ):
         assert client.get(path, headers=_as(A)).status_code == 404, path
     # 写侧四条路（改名 / 叫停 / 删历史 / 删会话）同样进不去
-    assert client.patch(
-        f"/api/session/{foreign}", json={"title": "偷改"}, headers=_as(A)
-    ).status_code == 404
+    assert (
+        client.patch(f"/api/session/{foreign}", json={"title": "偷改"}, headers=_as(A)).status_code
+        == 404
+    )
     assert client.post(f"/api/session/{foreign}/stop", headers=_as(A)).status_code == 404
-    assert client.post(
-        f"/api/session/{foreign}/messages/delete",
-        json={"message_ids": ["whatever"]},
-        headers=_as(A),
-    ).status_code == 404
+    assert (
+        client.post(
+            f"/api/session/{foreign}/messages/delete",
+            json={"message_ids": ["whatever"]},
+            headers=_as(A),
+        ).status_code
+        == 404
+    )
     assert client.delete(f"/api/session/{foreign}", headers=_as(A)).status_code == 404
     assert foreign in _ids(client, B, "/api/sessions", "thread_id"), "他的线被删掉了"
 
@@ -151,9 +159,12 @@ def test_memory_items_are_owner_scoped(client: TestClient) -> None:
     b_view = client.get("/api/settings/memory", headers=_as(B)).json()
     assert "事实b" not in str(a_view) and "事实a" not in str(b_view)
     b_id = next(int(str(i["id"])) for i in b_view["items"] if i["text"] == "事实b")
-    assert client.patch(
-        f"/api/settings/memory/item/{b_id}", json={"text": "偷改"}, headers=_as(A)
-    ).status_code == 404
+    assert (
+        client.patch(
+            f"/api/settings/memory/item/{b_id}", json={"text": "偷改"}, headers=_as(A)
+        ).status_code
+        == 404
+    )
     assert client.delete(f"/api/settings/memory/item/{b_id}", headers=_as(A)).status_code == 404
     after = client.get("/api/settings/memory", headers=_as(B)).json()
     assert [i["text"] for i in after["items"] if i["id"] == b_id] == ["事实b"]
@@ -180,9 +191,12 @@ def test_model_credentials_never_spend_the_other_key(client: TestClient) -> None
     assert [str(m["model"]) for g in b_groups for m in g["models"]] == ["Model-b"]
     assert KEY_B not in repr(a_groups) and KEY_A not in repr(b_groups)
     assert client.delete("/api/settings/models/m_b", headers=_as(A)).status_code == 404
-    assert client.patch(
-        "/api/settings/models/m_b/context", json={"num_ctx": 8192}, headers=_as(A)
-    ).status_code == 404
+    assert (
+        client.patch(
+            "/api/settings/models/m_b/context", json={"num_ctx": 8192}, headers=_as(A)
+        ).status_code
+        == 404
+    )
     left = client.get("/api/settings/models", headers=_as(B)).json()["providers"]
     assert [str(m["model"]) for g in left for m in g["models"]] == ["Model-b"]
     assert [g["has_key"] for g in left] == [True], "他的凭据被动过"
@@ -242,10 +256,12 @@ def test_an_instance_owned_by_the_second_person_can_talk(
         assert seeded == {A, B}, "实例主人那一行没补上，外键就没有对象可指"
         made = client.post("/api/session", json={"role_id": "general_assistant"})
         assert made.status_code == 201, made.text
-        owner = str(conn.execute(
-            "SELECT user_id FROM session_thread WHERE thread_id = ?",
-            (made.json()["thread_id"],),
-        ).fetchone()["user_id"])
+        owner = str(
+            conn.execute(
+                "SELECT user_id FROM session_thread WHERE thread_id = ?",
+                (made.json()["thread_id"],),
+            ).fetchone()["user_id"]
+        )
         assert owner == B
         # 整份数据集都是他的：出厂卡也挂在这个主人名下（§4.1"换的是整份数据集"）
         assert client.get("/api/roles").json(), "主人不是演示身份时，出厂卡没播种到他名下"
@@ -270,9 +286,7 @@ def test_deleting_my_session_does_not_touch_the_other_persons_checkpoints(
 
     tids: dict[str, str] = {}
     for who, tag in ((A, "a"), (B, "b")):
-        one = next(
-            r for r in client.get("/api/sessions", headers=_as(who)).json()
-        )
+        one = next(r for r in client.get("/api/sessions", headers=_as(who)).json())
         tids[tag] = str(one["thread_id"])
         # 直写一条消息进各自的检查点（与 cloud_only_shape 同一路写法）：不跑图，只为留下
         # 可数的 checkpoint 行。
@@ -320,14 +334,10 @@ def test_second_login_can_open_a_session_and_write_domain_records(
     assert rec.status_code == 201, rec.text
     rid = str(rec.json()["id"])
     assert rid in {
-        str(r["id"]) for r in client.get(
-            "/api/domains/health/records", headers=_as(B)
-        ).json()
+        str(r["id"]) for r in client.get("/api/domains/health/records", headers=_as(B)).json()
     }
     assert rid not in {
-        str(r["id"]) for r in client.get(
-            "/api/domains/health/records", headers=_as(A)
-        ).json()
+        str(r["id"]) for r in client.get("/api/domains/health/records", headers=_as(A)).json()
     }, "B 写的记录出现在 A 的读侧"
 
 

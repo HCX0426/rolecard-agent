@@ -51,9 +51,7 @@ def test_the_scripts_own_bootstrap_leaves_a_usable_embedding_endpoint(tmp_path: 
         "「服务」页是空的 —— 这就是 09-26 那次评测环跑不起来的原样。"
         " `storage.db.bootstrap` 不播端点，脚本必须自己调 seed_once()"
     )
-    embedder = make_embedder(
-        object(), order=order, endpoints=services.endpoint_map("embedding")
-    )
+    embedder = make_embedder(object(), order=order, endpoints=services.endpoint_map("embedding"))
     assert isinstance(embedder, HashEmbedder), "离线环里嵌入器必须是内置 hash 那档（不调云端）"
     conn.close()
 

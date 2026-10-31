@@ -62,9 +62,7 @@ def test_strand_repair_restores_rows_and_reruns_migration(db_path: Path) -> None
     """
     conn = connect(db_path)
     try:
-        conn.execute(
-            "INSERT INTO role_proactive_state (role_id, affinity) VALUES ('r_probe', 0.5)"
-        )
+        conn.execute("INSERT INTO role_proactive_state (role_id, affinity) VALUES ('r_probe', 0.5)")
         conn.commit()
         # 手工构造"死在 DROP 之后、RENAME 之前"的现场：
         conn.execute("ALTER TABLE role_proactive_state RENAME TO role_proactive_state__b2")
@@ -85,9 +83,7 @@ def test_strand_repair_drops_empty_temp(db_path: Path) -> None:
     conn = connect(db_path)
     try:
         conn.execute("DROP TABLE role_proactive_state")
-        conn.execute(
-            "CREATE TABLE role_proactive_state__b2 (user_id TEXT, role_id TEXT)"
-        )
+        conn.execute("CREATE TABLE role_proactive_state__b2 (user_id TEXT, role_id TEXT)")
         conn.commit()
         bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
         stranded = conn.execute(

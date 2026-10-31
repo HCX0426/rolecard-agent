@@ -869,7 +869,7 @@ def test_read_all_marks_every_role(client: TestClient, tmp_path: Path) -> None:
 
     assert client.get("/api/reachouts").json()["unread"] == 2
     body0 = client.get("/api/reachouts").json()
-    # "某个角色有几条没读"由后端算一次（审计 §12.11 的"三份各算"那一格）
+    # "某个角色有几条没读"由后端算一次（审计「主动开口吞消息与抽屉只增不减」的"三份各算"那一格）
     assert body0["unread_by_role"] == {"wan": 1, "bai": 1}
     res = client.post("/api/reachouts/read-all")
     assert res.status_code == 200 and res.json()["marked"] == 2

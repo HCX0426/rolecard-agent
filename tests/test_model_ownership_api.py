@@ -68,14 +68,22 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 
 def test_each_login_sees_only_its_own_credential_group(client: TestClient) -> None:
-    assert client.put(
-        "/api/settings/models", json=_cloud_body("a-chat", "Qwen3-8B", KEY_A),
-        headers=_headers("local-user"),
-    ).status_code == 200
-    assert client.put(
-        "/api/settings/models", json=_cloud_body("b-chat", "Qwen3-32B", KEY_B),
-        headers=_headers("u1"),
-    ).status_code == 200
+    assert (
+        client.put(
+            "/api/settings/models",
+            json=_cloud_body("a-chat", "Qwen3-8B", KEY_A),
+            headers=_headers("local-user"),
+        ).status_code
+        == 200
+    )
+    assert (
+        client.put(
+            "/api/settings/models",
+            json=_cloud_body("b-chat", "Qwen3-32B", KEY_B),
+            headers=_headers("u1"),
+        ).status_code
+        == 200
+    )
 
     mine = client.get("/api/settings/models", headers=_headers("local-user")).json()
     theirs = client.get("/api/settings/models", headers=_headers("u1")).json()
@@ -92,11 +100,16 @@ def test_each_login_sees_only_its_own_credential_group(client: TestClient) -> No
 
 def test_whole_table_save_by_one_leaves_the_others_rows_alone(client: TestClient) -> None:
     """`PUT` 的"全量替换"替换的是**这个人**那一集（旧形状入参一字未改，所以更要端到端跑）。"""
-    client.put("/api/settings/models", json=_cloud_body("b-chat", "Qwen3-32B", KEY_B),
-               headers=_headers("u1"))
+    client.put(
+        "/api/settings/models",
+        json=_cloud_body("b-chat", "Qwen3-32B", KEY_B),
+        headers=_headers("u1"),
+    )
     again = _cloud_body("a-new", "Qwen3-14B", KEY_A)
-    assert client.put("/api/settings/models", json=again,
-                      headers=_headers("local-user")).status_code == 200
+    assert (
+        client.put("/api/settings/models", json=again, headers=_headers("local-user")).status_code
+        == 200
+    )
     left = client.get("/api/settings/models", headers=_headers("u1")).json()
     names = [b["model"] for g in left["providers"] for b in g["models"]]
     assert names == ["Qwen3-32B"], f"A 存了一次盘，B 的配置变小了：{names}"
@@ -104,8 +117,11 @@ def test_whole_table_save_by_one_leaves_the_others_rows_alone(client: TestClient
 
 
 def test_deleting_another_identitys_model_is_a_404(client: TestClient) -> None:
-    client.put("/api/settings/models", json=_cloud_body("b-chat", "Qwen3-32B", KEY_B),
-               headers=_headers("u1"))
+    client.put(
+        "/api/settings/models",
+        json=_cloud_body("b-chat", "Qwen3-32B", KEY_B),
+        headers=_headers("u1"),
+    )
     resp = client.delete("/api/settings/models/b-chat", headers=_headers("local-user"))
     assert resp.status_code == 404, resp.status_code
     assert client.get("/api/settings/models", headers=_headers("u1")).json()["providers"]
@@ -133,36 +149,51 @@ def test_naming_a_backend_is_scoped_to_the_caller(client: TestClient) -> None:
     下一轮只能降级到别人的模型（也就是花别人的 key）。后端名全局唯一之后，这是两个
     身份之间最后一条还能互相指错的线。
     """
-    client.put("/api/settings/models", json=_cloud_body("a-chat", "Qwen3-8B", KEY_A),
-               headers=_headers("local-user"))
-    client.put("/api/settings/models", json=_cloud_body("b-chat", "Qwen3-32B", KEY_B),
-               headers=_headers("u1"))
+    client.put(
+        "/api/settings/models",
+        json=_cloud_body("a-chat", "Qwen3-8B", KEY_A),
+        headers=_headers("local-user"),
+    )
+    client.put(
+        "/api/settings/models",
+        json=_cloud_body("b-chat", "Qwen3-32B", KEY_B),
+        headers=_headers("u1"),
+    )
     # 出厂卡播给的是**实例主人**，所以 u1 得先有自己的卡（M2a 的归属读法）
     client.post(
         "/api/roles",
         json={"role_id": "u1_card", "role_name": "他的卡", "system_prompt": "你是助手。"},
         headers=_headers("u1"),
     )
-    tid = client.post(
-        "/api/session", json={"role_id": "u1_card"}, headers=_headers("u1")
-    ).json()["thread_id"]
+    tid = client.post("/api/session", json={"role_id": "u1_card"}, headers=_headers("u1")).json()[
+        "thread_id"
+    ]
 
     # 指别人的后端：400（不是"存得下就算"）
-    assert client.patch(
-        f"/api/session/{tid}", json={"model_name": "a-chat"}, headers=_headers("u1")
-    ).status_code == 400
+    assert (
+        client.patch(
+            f"/api/session/{tid}", json={"model_name": "a-chat"}, headers=_headers("u1")
+        ).status_code
+        == 400
+    )
     # 指自己那台：200
-    assert client.patch(
-        f"/api/session/{tid}", json={"model_name": "b-chat"}, headers=_headers("u1")
-    ).status_code == 200
+    assert (
+        client.patch(
+            f"/api/session/{tid}", json={"model_name": "b-chat"}, headers=_headers("u1")
+        ).status_code
+        == 200
+    )
     # 角色卡上写后端的那个入口同一纪律（`_validate_role_model`）
-    assert client.post(
-        "/api/roles",
-        json={
-            "role_id": "u1_card2",
-            "role_name": "卡",
-            "system_prompt": "你是助手。",
-            "model_name": "a-chat",
-        },
-        headers=_headers("u1"),
-    ).status_code == 400
+    assert (
+        client.post(
+            "/api/roles",
+            json={
+                "role_id": "u1_card2",
+                "role_name": "卡",
+                "system_prompt": "你是助手。",
+                "model_name": "a-chat",
+            },
+            headers=_headers("u1"),
+        ).status_code
+        == 400
+    )

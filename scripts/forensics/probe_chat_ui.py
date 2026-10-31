@@ -6,6 +6,7 @@
 跑法（仓库根）：
     PYTHONPATH=src PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe scripts/probe_chat_ui.py
 """
+
 from __future__ import annotations
 
 import contextlib

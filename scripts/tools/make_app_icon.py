@@ -111,7 +111,7 @@ def _ico_frames(path: pathlib.Path) -> list[tuple[int, bytes]]:
     count = int.from_bytes(data[4:6], "little")
     out: list[tuple[int, bytes]] = []
     for i in range(count):
-        e = data[6 + 16 * i: 22 + 16 * i]
+        e = data[6 + 16 * i : 22 + 16 * i]
         if len(e) < 16:
             break
         w = 256 if e[0] == 0 else e[0]
@@ -121,7 +121,7 @@ def _ico_frames(path: pathlib.Path) -> list[tuple[int, bytes]]:
         # 于是每一帧都被切成一堆垃圾，还被报成"不是 PNG"）。
         off = int.from_bytes(e[12:16], "little")
         ln = int.from_bytes(e[8:12], "little")
-        out.append((min(w, h), data[off:off + ln]))
+        out.append((min(w, h), data[off : off + ln]))
     return out
 
 

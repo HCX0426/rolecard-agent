@@ -60,8 +60,11 @@ def start(name: str, port: int, extra: dict[str, str]):
     }
     log = open(root / "api.log", "wb")  # noqa: SIM115
     proc = subprocess.Popen(  # noqa: S603
-        [VENV_PY, "scripts/run_api.py"], env=env, cwd=str(ROOT),
-        stdout=log, stderr=subprocess.STDOUT,
+        [VENV_PY, "scripts/run_api.py"],
+        env=env,
+        cwd=str(ROOT),
+        stdout=log,
+        stderr=subprocess.STDOUT,
     )
     return proc, log, root
 
@@ -83,9 +86,9 @@ def wait_health(base: str, proc: subprocess.Popen) -> None:
 def make_role(
     base: str, role_id: str, name: str, token: str | None, *, prompt: str = "e2e 用的卡"
 ) -> None:
-    body = json.dumps(
-        {"role_id": role_id, "role_name": name, "system_prompt": prompt}
-    ).encode("utf-8")
+    body = json.dumps({"role_id": role_id, "role_name": name, "system_prompt": prompt}).encode(
+        "utf-8"
+    )
     req = urllib.request.Request(  # noqa: S310
         f"{base}/api/roles",
         data=body,
@@ -189,19 +192,33 @@ def main() -> int:
         add_memory(a_base, MEMORY_TEXT)
         # 一条**两边同 uid、内容各改过**的记忆：记忆的冲突永远进"留给人"那一档
         # （"两份都留"不幂等，自动档不碰它），于是登录对账的读数卡有确定的出现条件。
-        for base, tok, text in ((a_base, None, "本机那份的分歧记忆"),
-                                (b_base, token, "云端那份的分歧记忆")):
+        for base, tok, text in (
+            (a_base, None, "本机那份的分歧记忆"),
+            (b_base, token, "云端那份的分歧记忆"),
+        ):
             code_i, out_i = req(
-                "POST", f"{base}/api/sync/import",
-                {"items": [{"kind": "memory", "ident": "uid-div",
-                            "payload": {"text": text, "role_id": "r_local"}}]},
+                "POST",
+                f"{base}/api/sync/import",
+                {
+                    "items": [
+                        {
+                            "kind": "memory",
+                            "ident": "uid-div",
+                            "payload": {"text": text, "role_id": "r_local"},
+                        }
+                    ]
+                },
                 token=tok,
             )
             assert code_i == 200, out_i
         r = subprocess.run(  # noqa: S603
             ["node", "scripts/ui_data_source_switch.js", a_base + "/", b_base],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            cwd=str(ROOT), timeout=600,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=str(ROOT),
+            timeout=600,
         )
         print(r.stdout.strip())
         if r.stderr.strip():
@@ -212,26 +229,35 @@ def main() -> int:
         # 卡该在（勾了），那条记忆不该在（在预检屏被取消了勾选）。
         roles = json.dumps(get_json(f"{b_base}/api/roles", token), ensure_ascii=False)
         card_ok = "本机最后改的人设" in roles
-        print(f"{'PASS' if card_ok else 'FAIL'}"
-              "  ⑬ 卡的分歧按『新者胜』自动推过去（本机最后改的那份在对面上）")
+        print(
+            f"{'PASS' if card_ok else 'FAIL'}"
+            "  ⑬ 卡的分歧按『新者胜』自动推过去（本机最后改的那份在对面上）"
+        )
         inv_raw: dict[str, Any] = get_json(f"{b_base}/api/sync/inventory", token)
         inv = json.dumps(inv_raw, ensure_ascii=False)
         div_ok = "本机那份的分歧记忆" in inv and "云端那份的分歧记忆" not in inv
-        print(f"{'PASS' if div_ok else 'FAIL'}"
-              "  ⑭ 裁决『保留本机版本』真的写进了对面（同 uid 那条换成机这份）")
+        print(
+            f"{'PASS' if div_ok else 'FAIL'}"
+            "  ⑭ 裁决『保留本机版本』真的写进了对面（同 uid 那条换成机这份）"
+        )
         if not div_ok:
-            print("   B 的记忆清单：", json.dumps(
-                [r for r in inv_raw.get("items", []) if r.get("kind") == "memory"],
-                ensure_ascii=False))
+            print(
+                "   B 的记忆清单：",
+                json.dumps(
+                    [r for r in inv_raw.get("items", []) if r.get("kind") == "memory"],
+                    ensure_ascii=False,
+                ),
+            )
         audit_b = json.dumps(get_json(f"{b_base}/api/audit?limit=40", token), ensure_ascii=False)
         secrets = (MEMORY_TEXT, "本机那份的分歧记忆", "云端那份的分歧记忆")
         # B 那侧看得到的门：sync_import（收下推送）与 sync_export（交出载荷）；
         # sync_reconcile 记在发起方 A 那台的审计里，不会出现在 B。
-        aud_ok = "sync_import" in audit_b and "sync_export" in audit_b and all(
-            s not in audit_b for s in secrets
+        aud_ok = (
+            "sync_import" in audit_b
+            and "sync_export" in audit_b
+            and all(s not in audit_b for s in secrets)
         )
-        print(f"{'PASS' if aud_ok else 'FAIL'}"
-              "  ⑮ 对面审计有对账与导出的记录，而无任何原文")
+        print(f"{'PASS' if aud_ok else 'FAIL'}  ⑮ 对面审计有对账与导出的记录，而无任何原文")
         return 0 if (card_ok and div_ok and aud_ok) else 1
     finally:
         for proc, log in ((a, la), (b, lb)):

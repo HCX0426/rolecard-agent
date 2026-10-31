@@ -128,7 +128,10 @@ def test_被剪掉的入库文件里不许藏着引用形状() -> None:
     # （run 37860489135 实测：本地 5 支全绿、CI 红在这一格）。本机 Git-for-Windows 默认
     # false 所以永远复现不出来。`-z` 输出原始字节，两平台同形。
     raw = subprocess.run(
-        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=False,
+        ["git", "ls-files", "-z"],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
     ).stdout
     tracked = [n.decode("utf-8", "replace") for n in raw.split(b"\x00") if n.strip()]
     if not tracked:
@@ -140,8 +143,7 @@ def test_被剪掉的入库文件里不许藏着引用形状() -> None:
     for rel in tracked:
         parts = rel.split("/")
         buried = any(
-            p in core.IGNORED_DIRS or p.startswith(core.IGNORED_DIR_PREFIXES)
-            for p in parts[:-1]
+            p in core.IGNORED_DIRS or p.startswith(core.IGNORED_DIR_PREFIXES) for p in parts[:-1]
         )
         if not buried or Path(rel).suffix not in scan:
             continue
@@ -153,9 +155,7 @@ def test_被剪掉的入库文件里不许藏着引用形状() -> None:
     # 分母哨兵：现况是 10 个入库文件住在被剪的目录下（lore/.gitkeep/icon）。剪枝逻辑哪天
     # 缩到"什么都没剪"，这条会因 `buried_seen == 0` 当场红 —— 而不是空转"通过"：
     # 没有分母的绿灯与"量了说干净"长得一样（本仓为这一族立过三次尺子）。
-    assert buried_seen > 0, (
-        "被剪目录下没有任何入库文件可查：分母为 0，这条断言已经不再量任何东西"
-    )
+    assert buried_seen > 0, "被剪目录下没有任何入库文件可查：分母为 0，这条断言已经不再量任何东西"
     assert not offenders, (
         f"被剪目录里出现了快照编号引用（{buried_seen} 个可查文件之中），两条审计尺子会静默"
         f"漏看它们：{offenders} —— 挪进 docs/，或者在 core._prune 里为它开一个**有主的**例外"

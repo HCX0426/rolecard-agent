@@ -334,7 +334,6 @@ def test_ssrf_blocked_surfaces_as_refused_not_generic_failure(settings, monkeypa
     assert "网页读取失败" not in out, "把安全边界报成连通性问题，正是住在值里那一族缺陷"
 
 
-
 def test_fetch_extracts_main_text(settings: Settings, monkeypatch) -> None:
     import rolecard_agent.core.tools.web as web
 

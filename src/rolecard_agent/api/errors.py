@@ -143,9 +143,7 @@ def register_error_handlers(app: FastAPI) -> None:
     # 而不是各写各的 try —— 六种说法的下场在下面这些注册点里已经见过）。
     @app.exception_handler(ThreadBusy)
     async def _thread_busy(_: Request, exc: ThreadBusy) -> JSONResponse:
-        return error_response(
-            409, "这一轮还在跑 —— 先按「停止」或等它说完，再改这段历史。"
-        )
+        return error_response(409, "这一轮还在跑 —— 先按「停止」或等它说完，再改这段历史。")
 
     # 存储层的环境型故障：读得懂的 503 + 一句可操作的话（从前它落到泛化的 500 空壳上，
     # 而"磁盘满了"与"我们写错了"对用户是两件完全不同的事）。认不出来的照旧 500 ——

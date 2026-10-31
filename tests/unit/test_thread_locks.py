@@ -99,7 +99,7 @@ def test_extraction_marker_is_not_the_write_lock() -> None:
 
     同一个会话的第二次提取要挡住（否则每次都在抄已有清单），但用户那一轮绝不能因此排队：
     一次提取 10–120 秒，而 `run_turn` 等锁上限 5 秒 —— 共用一把锁的话，"提取在跑"就等于
-    "下一句最慢等 5 秒然后被拒"，那正是 §12.7 实测排除掉的耦合
+    "下一句最慢等 5 秒然后被拒"，那正是「本地自动提取的成本」实测排除掉的耦合
     （第一版就踩了，被一条 158 秒的测试抓到）。
     """
     assert try_extraction("t7")
@@ -199,6 +199,7 @@ def test_run_turn_rejects_instead_of_forking_when_busy() -> None:
 
     assert try_thread_write("t-busy", timeout=0.0), "夹具没能占住锁"
     try:
+
         class _NeverCalled:
             def __init__(self) -> None:
                 self.calls = 0

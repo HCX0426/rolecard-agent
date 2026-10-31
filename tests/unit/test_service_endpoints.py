@@ -38,7 +38,8 @@ def svc() -> ServiceEndpointService:
             },
             {"name": "local", "provider": "ollama", "model": "qwen2.5:7b"},
         ],
-        fallbacks=[], user_id=OWNER,
+        fallbacks=[],
+        user_id=OWNER,
     )
     s = ServiceEndpointService(c, owner=OWNER)
     s.seed_once()
@@ -109,7 +110,8 @@ def test_stale_reference_is_visible_not_silent(svc: ServiceEndpointService) -> N
     ms.save(
         default="local",
         backends=[{"name": "local", "provider": "ollama", "model": "qwen2.5:7b"}],
-        fallbacks=[], user_id=OWNER,
+        fallbacks=[],
+        user_id=OWNER,
     )
     row = next(e for e in svc.rows("embedding") if e.id == "siliconflow")
     assert row.stale is True and row.api_key is None
@@ -152,9 +154,16 @@ def test_vision_reference_row_probes_the_model(
 
     # 直接构造视觉引用行（不依赖 Ollama）：frozen dataclass，字段即 to_api 的来源。
     vision = EndpointConfig(
-        id="local_vl", label="local_vl", kind="local", base_url="http://127.0.0.1:11434",
-        api_key=None, model="qwen3-vl:8b", enabled=True, builtin=False,
-        ref_backend="local_vl", stale=False,
+        id="local_vl",
+        label="local_vl",
+        kind="local",
+        base_url="http://127.0.0.1:11434",
+        api_key=None,
+        model="qwen3-vl:8b",
+        enabled=True,
+        builtin=False,
+        ref_backend="local_vl",
+        stale=False,
     )
     monkeypatch.setattr(probes, "vision_model_ready", lambda *a, **k: True)
     ok, reason = endpoint_available(vision, _settings_stub())

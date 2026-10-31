@@ -41,6 +41,7 @@ def cards(store: RoleCardService) -> RoleCards:
     """测试里"本机主人眼里的那些卡"的简写（M2a 之后每次读写都得说清为谁）。"""
     return store.scoped("u1")
 
+
 def _kernel(
     db_path: Path,
     replies: list[Any],
@@ -298,7 +299,6 @@ def _ask_who(user_id: str) -> str:  # pragma: no cover - 只是把两轮跑法�
     return user_id
 
 
-
 def _allow_this_tool(db: Path, owner: str) -> None:
     """造一张只授权那个探针工具的角色卡。
 
@@ -315,6 +315,7 @@ def _allow_this_tool(db: Path, owner: str) -> None:
         )
     )
     conn.close()
+
 
 def test_a_turn_binds_its_threads_owner_for_zero_arg_tool_closures(tmp_path: Path) -> None:
     """§4.1 的 M3 后半：她查的是**这条线程的主人**的档案，不是这台实例的主人的。
@@ -340,9 +341,7 @@ def test_a_turn_binds_its_threads_owner_for_zero_arg_tool_closures(tmp_path: Pat
     )
     result = graph.invoke(
         {
-            **new_state(
-                thread_id="thread-1", user_id="u1", current_role_id="probe"
-            ),
+            **new_state(thread_id="thread-1", user_id="u1", current_role_id="probe"),
             "messages": [HumanMessage(content="看下我的档案")],
         },
         config={"configurable": {"thread_id": "thread-1"}},
@@ -382,9 +381,7 @@ def test_a_bound_turn_never_needs_the_identity_fallback(tmp_path: Path) -> None:
     with capturing_identity_fallback() as fell:
         result = graph.invoke(
             {
-                **new_state(
-                    thread_id="thread-1", user_id="u1", current_role_id="probe"
-                ),
+                **new_state(thread_id="thread-1", user_id="u1", current_role_id="probe"),
                 "messages": [HumanMessage(content="看下我的档案")],
             },
             config={"configurable": {"thread_id": "thread-1"}},
@@ -416,9 +413,7 @@ def test_a_state_without_an_owner_falls_back_instead_of_crashing(tmp_path: Path)
     )
     result = graph.invoke(
         {
-            **new_state(
-                thread_id="thread-1", user_id="", current_role_id="probe"
-            ),
+            **new_state(thread_id="thread-1", user_id="", current_role_id="probe"),
             "messages": [HumanMessage(content="看下我的档案")],
         },
         config={"configurable": {"thread_id": "thread-1"}},

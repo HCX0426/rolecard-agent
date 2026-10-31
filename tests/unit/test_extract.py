@@ -64,9 +64,7 @@ def _raw(text: str):
 
 def _run(primary, verifier=None, *, mode: str = "cross", **kw: Any):  # noqa: ANN001, ANN201
     """短调用封装：测试里 90% 的调用都是"同一份原文 + 两个 invoker"。"""
-    return extract_health_report(
-        text=SOURCE, primary=primary, verifier=verifier, mode=mode, **kw
-    )
+    return extract_health_report(text=SOURCE, primary=primary, verifier=verifier, mode=mode, **kw)
 
 
 # -- 抽取 + 合并 ------------------------------------------------------------------------
@@ -301,11 +299,10 @@ def test_failover_to_verifier_when_primary_down(monkeypatch: pytest.MonkeyPatch)
             if name == "local":
                 raise ExtractError("模型调用失败：connection refused")
             return json.dumps(_payload(), ensure_ascii=False)
+
         return invoke
 
-    monkeypatch.setattr(
-        "rolecard_agent.domains.health.extract.make_invoker", fake_make
-    )
+    monkeypatch.setattr("rolecard_agent.domains.health.extract.make_invoker", fake_make)
     result = _failover_primary(_settings(), plan)
     assert result.primary == "cloud"
     assert result.mode == "self"  # 降级为弱校对（原主后端挂了，不能校对自己）

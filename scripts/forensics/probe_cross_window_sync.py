@@ -142,8 +142,11 @@ def main() -> int:
     print(f"源库副本={copy}\n端口={port}", flush=True)
     with log_path.open("wb") as log:
         srv = subprocess.Popen(  # noqa: S603
-            [VENV_PY, "scripts/run_api.py"], env=env, cwd=str(ROOT),
-            stdout=log, stderr=subprocess.STDOUT,
+            [VENV_PY, "scripts/run_api.py"],
+            env=env,
+            cwd=str(ROOT),
+            stdout=log,
+            stderr=subprocess.STDOUT,
         )
         try:
             while True:
@@ -170,7 +173,8 @@ def main() -> int:
 
             sent_at = time.perf_counter()
             first, end_at, chars = _read_events(
-                f"{base}/api/chat", {"thread_id": THREAD_ID, "message": MESSAGE})
+                f"{base}/api/chat", {"thread_id": THREAD_ID, "message": MESSAGE}
+            )
             time.sleep(7.0)
             stop.set()
             ta.join(timeout=3)
@@ -191,26 +195,34 @@ def main() -> int:
             new_mirror = first_seen(new, "mirror")
             new_total = first_seen(new, "total", min_v=int(base_total) + 1)
             print(f"{'':22}{'最早看见她在打字':16}{'最早看见她的字':16}最早看见落地的那条")
+
             def cell(ts: float | None) -> str:
                 return f"+{ts - sent_at:5.2f}s" if ts else "读不到"
+
             print(f"  修前（只有 5 秒贵读）{cell(None):16}{cell(None):16}{cell(old_total)}")
-            print(f"  修后（0.8 秒心跳）  {cell(new_type):16}{cell(new_mirror):16}"
-                  f"{cell(new_total)}")
+            print(
+                f"  修后（0.8 秒心跳）  {cell(new_type):16}{cell(new_mirror):16}{cell(new_total)}"
+            )
             print()
             if old_total:
-                print(f"  落地那一条：修前 +{old_total - sent_at:.2f}s → 修后 "
-                      f"{(new_total or old_total) - sent_at:.2f}s"
-                      f"　（提前 {old_total - (new_total or old_total):.2f}s）")
+                print(
+                    f"  落地那一条：修前 +{old_total - sent_at:.2f}s → 修后 "
+                    f"{(new_total or old_total) - sent_at:.2f}s"
+                    f"　（提前 {old_total - (new_total or old_total):.2f}s）"
+                )
             if new_mirror:
-                print(f"  他从桌宠看到第一个字起，界面最早出现她的字：修后 "
-                      f"{new_mirror - first:.2f}s（修前是 {(old_total or first) - first:.2f}s）")
+                print(
+                    f"  他从桌宠看到第一个字起，界面最早出现她的字：修后 "
+                    f"{new_mirror - first:.2f}s（修前是 {(old_total or first) - first:.2f}s）"
+                )
         finally:
             srv.terminate()
             try:
                 srv.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 subprocess.run(  # noqa: S603
-                    ["taskkill", "/F", "/T", "/PID", str(srv.pid)], check=False)
+                    ["taskkill", "/F", "/T", "/PID", str(srv.pid)], check=False
+                )
             print(f"\nserver pid={srv.pid} 已终止；日志 {log_path}")
     return 0
 

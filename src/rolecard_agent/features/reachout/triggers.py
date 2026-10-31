@@ -118,7 +118,8 @@ def _task_text(
     """拼任务指令：开头按"有没有长期记忆"分叉，正文按触发口吻分叉。
 
     recall 档最需要这处分叉：它的字面意思就是"提起一件之前答应过的事"，而记忆里没东西时
-    这句话就是在要求模型捏造（审计 §8「人设只解读不捏造」那条不变式，正是在这种地方被违反）。
+    这句话就是在要求模型捏造（"角色只负责解读不捏造"那条不变式，正是在这种地方被违反 ——
+    见 `docs/架构总览.md` §5 第 4 条）。
     有素材时把**那一条**摊给它，并限定"只说这一条、别补细节"—— 与 file_event 档给清单同理。
     """
     lead = _LEAD_WITH_MEMORY if has_memory else _LEAD_NO_MEMORY
@@ -259,7 +260,8 @@ class ReachoutDraft(NamedTuple):
     text: str | None
     why: str = ""
     score: float = 0.0
-    # 这一次开口（含可能的一次重生）花掉的 token；后端没报就是 None（审计 §12.8）。
+    # 这一次开口（含可能的一次重生）花掉的 token；后端没报就是 None
+    # （审计「云端 token 与成本累计」）。
     # 放在草稿里而不是让调度器去问生成函数：`spent` 是那次调用的局部量，出不去。
     tokens: int | None = None
 
@@ -344,7 +346,8 @@ def generate_reachout_text(
             _sum_or_none(spent.prompt, usage.prompt),
             _sum_or_none(spent.completion, usage.completion),
             # 重生就是再花一次"想"：这一栏不跟着累加，`spent.reasoning` 就永远只有最后一
-            # 次的量，而 §12.8 第二条要判的恰恰是"这次开口里想占了多大比例"。
+            # 次的量，而「云端 token 与成本累计」第二条要判的恰恰是
+            # "这次开口里想占了多大比例"。
             _sum_or_none(spent.reasoning, usage.reasoning),
         )
 
@@ -355,7 +358,7 @@ def generate_reachout_text(
             HumanMessage(content=f"{task}{extra}\n\n（你的角色是 {role.role_name}）"),
         ]
         reply = model.invoke(prompt)
-        add_usage(parse_usage(reply))  # 主动开口也花真钱，重生一次就是两次（审计 §12.8）
+        add_usage(parse_usage(reply))  # 主动开口也花真钱，重生一次就是两次
         # 用全项目唯一的取值实现：`str(reply.content)` 在分块形态下会得到 Python repr，
         # 而这份文本既进 guard 又进用户收件箱（架构审计报告 P1-8）。
         text = text_of(reply).strip()
@@ -507,7 +510,8 @@ def trigger_scheduled(
 #: active 记忆"，而记忆条数只增不减 —— 于是它和触顶的 affinity 一样变成永久命中，把排在它
 #: 后面的定时档（以及挂在定时档上的第五由头）一起压死。锚点读 `role_proactive_state.recall_at`。
 #: 取 24 小时的理由：那是这条链上其它几档的天然周期（基线间隔 60 分钟、时段规律按小时众数），
-#: 而"想起一件往事"一天一次已经是上限，同一小时里两次"我记得你说过…"正是 §12.11 那条投诉。
+#: 而"想起一件往事"一天一次已经是上限，同一小时里两次"我记得你说过…"
+#: 正是「主动开口吞消息与抽屉只增不减」那条投诉。
 RECALL_COOLDOWN_HOURS = 24.0
 
 

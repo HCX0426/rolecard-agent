@@ -126,9 +126,7 @@ def lazy_third_party_imports(src: Path) -> dict[str, str]:
         except SyntaxError:
             continue
         for holder in ast.walk(tree):
-            if not isinstance(
-                holder, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
-            ):
+            if not isinstance(holder, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
                 continue
             for node in ast.walk(holder):
                 if isinstance(node, ast.Import):
@@ -252,10 +250,7 @@ def bundled_schema_files(bundle: Path) -> set[str]:
     internal = bundle / "_internal"
     if not internal.is_dir():
         return set()
-    return {
-        p.relative_to(internal).as_posix()
-        for p in internal.rglob("schema.sql")
-    }
+    return {p.relative_to(internal).as_posix() for p in internal.rglob("schema.sql")}
 
 
 def main() -> int:
@@ -332,7 +327,7 @@ def main() -> int:
             "   两种收法二选一：\n"
             "     ① 该进包 ⇒ 在 spec 的 RUNTIME_PACKAGES 里补上它。注意 `collect_submodules()`\n"
             "        对没安装的包**返回空列表且不报错**，所以补名字之前先确认构建机装过\n"
-            "        （`importlib.util.find_spec(\"…\") is not None`）。\n"
+            '        （`importlib.util.find_spec("…") is not None`）。\n'
             "     ② 刻意不进 ⇒ 加进 scripts/check_bundle_parity.py 的 NOT_BUNDLED_BY_DESIGN\n"
             "        并写理由（空理由不算理由，照样红）。\n"
             "   放着手不管是最坏的那种：界面照常摆着那格，而它永远点不出东西。",

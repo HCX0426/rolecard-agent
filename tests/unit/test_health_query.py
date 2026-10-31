@@ -250,9 +250,7 @@ def test_query_accepts_partial_dates(service: HealthQueryService) -> None:
     assert [r["check_time"] for r in through_2025] == ["2025-05-01"]
 
     # 单日边界：结束日当天必须含在内（上界是"次日零点"的开区间）
-    on_day = service.search_indices(
-        U1, "结石直径", start_date="2026-03-12", end_date="2026-03-12"
-    )
+    on_day = service.search_indices(U1, "结石直径", start_date="2026-03-12", end_date="2026-03-12")
     assert [r["check_time"] for r in on_day] == ["2026-03-12"]
 
     # 跨年边界：12 月的下一个月是次年 1 月

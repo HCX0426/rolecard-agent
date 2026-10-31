@@ -130,6 +130,7 @@ def test_the_assertion_count_is_not_a_reading(tmp_path: Path) -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "一致性 4" not in readme and "一致性 1" not in readme, "README 首屏又抄回那串自指的数"
 
+
 def test_readings_paths_move_off_the_tracked_file_on_a_runner(monkeypatch) -> None:
     """runner 不许回写入库那份读数 —— 覆盖率是**按平台**的数（`R28-74`）。
 

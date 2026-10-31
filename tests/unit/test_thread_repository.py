@@ -90,9 +90,7 @@ def test_no_layer_above_storage_writes_this_table() -> None:
 
 
 def test_seed_title_does_not_overwrite_an_existing_one(conn) -> None:
-    create_thread(
-        conn, thread_id="s_1", user_id=DEFAULT_USER_ID, role_id="girl", tool_epoch=1
-    )
+    create_thread(conn, thread_id="s_1", user_id=DEFAULT_USER_ID, role_id="girl", tool_epoch=1)
     seed_title(conn, "s_1", "第一句的前二十四字")
     assert conn.execute("SELECT title FROM session_thread WHERE thread_id='s_1'").fetchone()[0] == (
         "第一句的前二十四字"
@@ -112,23 +110,22 @@ def test_millisecond_touch_survives_the_move(conn) -> None:
     create_thread(conn, thread_id="s_2", user_id=DEFAULT_USER_ID, role_id="girl", tool_epoch=1)
     set_model(conn, "s_2", "some-model")
     stamp = str(
-        conn.execute(
-            "SELECT updated_at FROM session_thread WHERE thread_id='s_2'"
-        ).fetchone()[0]
+        conn.execute("SELECT updated_at FROM session_thread WHERE thread_id='s_2'").fetchone()[0]
     )
     assert "." in stamp, f"updated_at 丢了毫秒：{stamp!r}"
     touch_thread(conn, "s_2")
     conn.commit()
     again = str(
-        conn.execute(
-            "SELECT updated_at FROM session_thread WHERE thread_id='s_2'"
-        ).fetchone()[0]
+        conn.execute("SELECT updated_at FROM session_thread WHERE thread_id='s_2'").fetchone()[0]
     )
     assert again >= stamp and "." in again
     set_distilled_seq(conn, thread_id="s_2", message_count=7)
-    assert conn.execute(
-        "SELECT distilled_at_seq FROM session_thread WHERE thread_id='s_2'"
-    ).fetchone()[0] == 7
+    assert (
+        conn.execute(
+            "SELECT distilled_at_seq FROM session_thread WHERE thread_id='s_2'"
+        ).fetchone()[0]
+        == 7
+    )
 
 
 def test_foreign_owner_returns_zero_without_hanging_a_write_txn(conn) -> None:
@@ -142,9 +139,12 @@ def test_foreign_owner_returns_zero_without_hanging_a_write_txn(conn) -> None:
     second = sqlite3.connect(conn.execute("PRAGMA database_list").fetchone()[2])
     second.row_factory = sqlite3.Row
     # 归属不匹配就没动过任何一行
-    assert second.execute(
-        "SELECT current_role_id FROM session_thread WHERE thread_id='s_3'"
-    ).fetchone()[0] == "girl"
+    assert (
+        second.execute(
+            "SELECT current_role_id FROM session_thread WHERE thread_id='s_3'"
+        ).fetchone()[0]
+        == "girl"
+    )
     second.close()
 
 

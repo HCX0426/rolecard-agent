@@ -151,9 +151,7 @@ def test_真有发现退1_没有发现退0_其它码按扫不成(
 # --------------------------------------------------------------------------- 扫描范围
 
 
-def test_名单由_git_现答而不是抄一份规则(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_名单由_git_现答而不是抄一份规则(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """`_tracked_files` 的命令行就是"范围"的全部定义：tracked + 未忽略的未跟踪。
 
     少了 `--others --exclude-standard` 就漏掉本次要发但还没入库的文件（那种文件恰恰最可能
@@ -202,9 +200,7 @@ def test_空名单也按扫不成(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert "空的" in capsys.readouterr().err
 
 
-def test_扫的是影子树不是工作树(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_扫的是影子树不是工作树(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """`--source` 必须落在影子树上，且带着 `--no-git`：这两件一起才是"只扫要发的那一份"。"""
     scan = _load()
     calls: list[list[str]] = []
@@ -246,8 +242,9 @@ def test_影子树按名单建且保留结构(tmp_path: Path) -> None:
         scan._shadow_tree(repo, ["a.py", "sub"])
 
 
-def test_范围缺项退码走2而不是traceback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                                     capsys: pytest.CaptureFixture[str]) -> None:
+def test_范围缺项退码走2而不是traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """`ScopeMismatch` 必须被 `main()` 收成语义明确的 **2**（0 干净 / 1 发现 / 2 扫不成）。
 
     抛出去也是一种红，但退码是这条线的判据本体：traceback 等于给判据新造第四种码

@@ -44,9 +44,9 @@ def test_an_old_db_gets_them_on_the_next_boot(tmp_path: Path) -> None:
     for index in REGISTERED.values():
         conn.execute(f"DROP INDEX IF EXISTS {index}")
     conn.commit()
-    assert all(
-        index not in _indexes(conn, table) for table, index in REGISTERED.items()
-    ), "夹具没能把索引去掉"
+    assert all(index not in _indexes(conn, table) for table, index in REGISTERED.items()), (
+        "夹具没能把索引去掉"
+    )
 
     bootstrap(conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
     for table, index in REGISTERED.items():

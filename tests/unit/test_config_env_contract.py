@@ -107,11 +107,11 @@ def test_表只认For里的元组_散文里的同形元组不算() -> None:
 
 def test_变量拼出来的键读不出来_也长不成KEY的不算() -> None:
     cfg = (
-        'def f(src):\n'
+        "def f(src):\n"
         '    x = src.get("lower_case")\n'  # 小写不是 env 键形状
         '    y = src.get("A")\n'  # 单字母不满足 [A-Z][A-Z0-9_]+
-        '    src.get(name)\n'  # 变量参数：读不出来（漏在明处）
-        '    return x, y\n'
+        "    src.get(name)\n"  # 变量参数：读不出来（漏在明处）
+        "    return x, y\n"
     )
     _, keys = ccfg.config_env_contract(cfg)
     assert keys == set(), keys
@@ -148,11 +148,7 @@ def test_金丝雀_表塌到下限以下就红而不是绿(tmp_path, monkeypatch
     """结构变了（表读不出来）→ 键变少 → 契约只会更绿，所以读法本身要有下限。"""
     _silence(monkeypatch)
     monkeypatch.setattr(ccfg, "ROOT", tmp_path)
-    tiny = (
-        "def from_env():\n"
-        '    for env_key, field in (("ONLY_ONE", "only_one"),):\n'
-        "        pass\n"
-    )
+    tiny = 'def from_env():\n    for env_key, field in (("ONLY_ONE", "only_one"),):\n        pass\n'
     _write_repo(tmp_path, tiny, example="# ONLY_ONE=1\n")
     ccfg.fails.clear()
     ccfg.check_config_contract()

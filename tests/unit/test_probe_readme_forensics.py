@@ -171,7 +171,7 @@ def test_判红那一句里带着持有者与外壳状态(tmp_path: pathlib.Path
     assert "while grace <" in src and "_port_still_listening(port)" in src, (
         "宽限重试的**循环**没了：内核回收滞后会被直接报成留孤儿（前一趟那个红多半就是这么来的）"
     )
-    assert "time.sleep" in src[src.index("while grace <"):src.index("while grace <") + 200], (
+    assert "time.sleep" in src[src.index("while grace <") : src.index("while grace <") + 200], (
         "重试没有间隔 = 三次连问同一个瞬间，等于没给滞后留时间"
     )
     assert "外壳进程状态" in src, "外壳还活着/已退这一格没了：分不清该杀谁"

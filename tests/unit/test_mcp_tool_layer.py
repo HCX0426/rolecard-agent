@@ -88,9 +88,7 @@ def test_stdio_连接带_command_args_而_env_空时不出现() -> None:
         "args": ["-m", "srv"],
         "transport": "stdio",
     }
-    with_env = mcp_mod._connection(
-        McpServerConfig(id="s", command="python", env={"TOKEN": "t"})
-    )
+    with_env = mcp_mod._connection(McpServerConfig(id="s", command="python", env={"TOKEN": "t"}))
     assert with_env["env"] == {"TOKEN": "t"}
 
 
@@ -188,9 +186,7 @@ def test_一个_server挂掉不带走别的(monkeypatch, conn) -> None:
         return [_Raw()]
 
     monkeypatch.setattr(mcp_mod, "_fetch_one", fake, raising=True)
-    monkeypatch.setattr(
-        mcp_mod.importlib.util, "find_spec", lambda _n: object(), raising=True
-    )
+    monkeypatch.setattr(mcp_mod.importlib.util, "find_spec", lambda _n: object(), raising=True)
     tools = mcp_mod.load_mcp_tools(
         [McpServerConfig(id="good", command="p"), McpServerConfig(id="bad", command="p")],
         conn=conn,

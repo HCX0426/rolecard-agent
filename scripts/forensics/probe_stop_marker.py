@@ -5,6 +5,7 @@
 
     PYTHONPATH=src PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe scripts/probe_stop_marker.py
 """
+
 from __future__ import annotations
 
 import contextlib

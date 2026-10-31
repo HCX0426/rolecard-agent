@@ -77,6 +77,7 @@ _ENV_LNX: dict[str, str] = {
     "platform_libc_version": "2.39",
 }
 
+
 def _env(overrides: Mapping[str, str]) -> dict[str, Any]:
     """从本机默认环境起，只覆盖平台那几位。
 
@@ -88,6 +89,7 @@ def _env(overrides: Mapping[str, str]) -> dict[str, Any]:
     base["extra"] = ""
     base.update(overrides)
     return base
+
 
 ENV_WIN: dict[str, Any] = _env(_ENV_WIN)
 ENV_LNX: dict[str, Any] = _env(_ENV_LNX)
@@ -112,9 +114,11 @@ CRASHES_ELSEWHERE: frozenset[str] = frozenset({"pywin32"})
 #: 捕获组里就是带引号的值。
 _EXTRA_CLAUSE = re.compile(r"""extra\s*(?:==|!=|not\s+in|in)\s*('[^']*'|"[^"]*")""")
 
+
 def norm(name: str) -> str:
     """PEP 503 口径的包名归一（锁、元数据、镜像三方用的同一把尺）。"""
     return name.lower().replace("_", "-")
+
 
 def _extra_names(marker_text: str) -> set[str]:
     """标记里 `extra` 门控的那些名字（`extra in "a b"` 展开成两个）。"""
@@ -122,6 +126,7 @@ def _extra_names(marker_text: str) -> set[str]:
     for quoted in _EXTRA_CLAUSE.findall(marker_text):
         names.update(quoted.strip("'\"").split())
     return names
+
 
 def _strip_extra_clauses(marker_text: str) -> str:
     """摘掉标记里的 `extra` 子句（补钉只钉平台，extras 由被钉方自己选）。
@@ -135,17 +140,20 @@ def _strip_extra_clauses(marker_text: str) -> str:
     text = re.sub(rf"^(?:{_EXTRA_CLAUSE.pattern})\s*", "", text)
     return text.strip()
 
+
 def _installs(marker: Marker, env: Mapping[str, Any]) -> bool:
     try:
         return marker.evaluate(dict(env))
     except Exception:
         return False
 
+
 SHAPE_WIN = "win"
 SHAPE_UNIX = "unix"
 SHAPE_BOTH = "both"
 SHAPE_NEVER = "never"
 SHAPE_INERT = "inert"
+
 
 def platform_of(marker_text: str, requested_extras: Iterable[str] = ()) -> str:
     """一条声明在我们这两个平台下的形状。
@@ -173,7 +181,9 @@ def platform_of(marker_text: str, requested_extras: Iterable[str] = ()) -> str:
         return SHAPE_BOTH
     return SHAPE_NEVER
 
+
 Edge = tuple[str, str | None, str]
+
 
 def classify(name: str, edges: Mapping[str, list[Edge]]) -> str:
     """按上游声明图给包名定性：`required` / `win` / `unix` / `both` / `never` / `unknown`。
@@ -216,6 +226,7 @@ def classify(name: str, edges: Mapping[str, list[Edge]]) -> str:
         return SHAPE_BOTH
     return SHAPE_NEVER
 
+
 def expected_marker(name: str, edges: Mapping[str, list[Edge]]) -> str | None:
     """该包在锁里**应当**带的标记；不该带（其余档位）返回 None。
 
@@ -235,7 +246,9 @@ def expected_marker(name: str, edges: Mapping[str, list[Edge]]) -> str | None:
             return stripped
     return 'sys_platform != "win32"'
 
+
 _EDGES: dict[str, list[Edge]] | None = None
+
 
 def installed_edges() -> dict[str, list[Edge]]:
     """被声明包名 → [(声明者, 声明标记原文|None, 版本约束原文)]。
@@ -256,10 +269,12 @@ def installed_edges() -> dict[str, list[Edge]]:
     _EDGES = edges
     return edges
 
+
 def reset_edges_cache() -> None:
     """接缝：单测喂假图之前清掉进程内缓存。"""
     global _EDGES
     _EDGES = None
+
 
 def _requires_of(dist: metadata.Distribution) -> list[tuple[str, str | None, str]]:
     """一个分包的 `Requires-Dist` → [(归一化包名, 标记原文|None, 版本约束原文)]。"""
@@ -275,6 +290,7 @@ def _requires_of(dist: metadata.Distribution) -> list[tuple[str, str | None, str
             _, _, spec = spec.partition("]")
         rows.append((norm(name), marker_part.strip() or None, spec.strip()))
     return rows
+
 
 def installed_requires(name: str, extras: Iterable[str] = ()) -> list[tuple[str, str | None]]:
     """本环境里那个包声明了什么（`inert` 的边已筛掉）；没装返回 []（看不见 ⇒ 不判）。
@@ -297,7 +313,9 @@ def installed_requires(name: str, extras: Iterable[str] = ()) -> list[tuple[str,
         out.append((dep, marker_text))
     return out
 
+
 _PIN_LINE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*(?:\[[A-Za-z0-9_,.-]+\])?==)(\S+)(.*)$")
+
 
 class Pin:
     """锁里的一条 pin：行号、归一化基名、请求的 extras、版本、已有标记（None = 裸）。"""
@@ -316,6 +334,7 @@ class Pin:
     @property
     def label(self) -> str:
         return self.name if not self.extras else f"{self.name}[{','.join(self.extras)}]"
+
 
 def parse_lock(text: str) -> list[Pin]:
     """顶格 pin 行（pip-tools 的规矩：pin 永不缩进；`#` 与 `--` 开头的行都不是 pin）。"""
@@ -336,6 +355,7 @@ def parse_lock(text: str) -> list[Pin]:
         pins.append(Pin(i, norm(spec.split("[", 1)[0].rstrip("=")), extras, m.group(2), marker))
     return pins
 
+
 def _same_semantics(got: str, want: str) -> bool:
     """两个标记在两平台下的真值是否一致（核语义而不是核字面写法）。"""
     try:
@@ -343,9 +363,10 @@ def _same_semantics(got: str, want: str) -> bool:
         w = Marker(want)
     except InvalidMarker:
         return False
-    return _installs(g, ENV_WIN) == _installs(w, ENV_WIN) and _installs(
-        g, ENV_LNX
-    ) == _installs(w, ENV_LNX)
+    return _installs(g, ENV_WIN) == _installs(w, ENV_WIN) and _installs(g, ENV_LNX) == _installs(
+        w, ENV_LNX
+    )
+
 
 def lock_findings(
     text: str,
@@ -423,6 +444,7 @@ def lock_findings(
                     "锁里没有它的 pin —— 那一侧平台拿到的是**没锁版本**的它"
                 )
     return problems, noise
+
 
 def repair(
     text: str,

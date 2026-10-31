@@ -91,7 +91,7 @@ def test_extract_adds_facts_as_items(conn: SqlConnection) -> None:
 
 
 def test_extract_books_the_call_on_the_backend_that_served_it(conn: SqlConnection) -> None:
-    """提取也花真钱，所以要进同一本 token 账（审计 §12.8）。
+    """提取也花真钱，所以要进同一本 token 账（审计「云端 token 与成本累计」）。
 
     本地实测一次提取约 122 秒 / 248 token —— 自动提取降频到 5 轮之后，这笔开销是按轮次涨的，
     看不见它就等于"悄悄把成本加上去"。
@@ -391,7 +391,7 @@ def test_echo_adds_are_dropped_without_losing_information(conn: SqlConnection) -
 def test_a_more_specific_fact_is_never_treated_as_an_echo(conn: SqlConnection) -> None:
     """反方向不能一起砍：「有结石」已在库里，而新说的是「结石直径 6 mm」—— 那是**更多信息**。
 
-    抹掉它是吞真事实（§12.9 那次误并的同一种错），这种收敛留给「整理记忆」。
+    抹掉它是吞真事实（「实验脚本要入库」那次误并的同一种错），这种收敛留给「整理记忆」。
     """
     mem.add_item(
         conn, user_id=ME, bucket="medical_archivist", text="用户有肾结石", source="extract"

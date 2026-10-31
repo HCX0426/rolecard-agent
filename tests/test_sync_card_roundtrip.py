@@ -180,8 +180,13 @@ def test_reconcile_carries_the_failures_it_swallowed(
         # 对面：我这些卡它都有且一字不差（指纹相同 ⇒ 不推），另有一条**它独有**的，
         # 而那条的载荷是"没翻译过"的旧形状（库里那种 JSON 文本）⇒ 落到本机必炸。
         theirs = cards + [
-            {"kind": "card", "ident": "badshape", "hash": "f" * 16,
-             "at": "2026-10-01 00:00:00", "preview": "对面那张带文本白名单的卡"}
+            {
+                "kind": "card",
+                "ident": "badshape",
+                "hash": "f" * 16,
+                "at": "2026-10-01 00:00:00",
+                "preview": "对面那张带文本白名单的卡",
+            }
         ]
 
         def fake_get(url: str, **kw: Any) -> _Resp:
@@ -189,10 +194,12 @@ def test_reconcile_carries_the_failures_it_swallowed(
 
         def fake_post(url: str, **kw: Any) -> _Resp:
             if url.endswith("/api/sync/export"):
-                return _Resp({
-                    "items": [{"kind": "card", "ident": "badshape", "payload": bad_payload}],
-                    "absent": 0,
-                })
+                return _Resp(
+                    {
+                        "items": [{"kind": "card", "ident": "badshape", "payload": bad_payload}],
+                        "absent": 0,
+                    }
+                )
             return _Resp({"written": {}, "skipped": {}, "errors": []})
 
         monkeypatch.setattr("httpx.get", fake_get)

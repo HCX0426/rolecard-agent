@@ -265,9 +265,7 @@ def test_delete_session_removes_thread_and_checkpoints(client: TestClient, tmp_p
     # 断言对齐权威名单 `thread_id_carriers()`（现数现用）而不是再抄一张表清单 ——
     # R102-51 的教训：docstring 承诺"不留孤儿"，断言却只数了两张表，孤儿就在眼皮底下活着。
     left_carriers = {
-        table: db.execute(
-            f"SELECT COUNT(*) FROM {table} WHERE thread_id = ?", (tid,)
-        ).fetchone()[0]
+        table: db.execute(f"SELECT COUNT(*) FROM {table} WHERE thread_id = ?", (tid,)).fetchone()[0]
         for table in thread_id_carriers(db)
     }
     db.close()
@@ -538,16 +536,12 @@ def test_reupload_self_heals_when_the_stored_file_vanished(
     body = b"Follow-up report: glucose 6.1."
     with TestClient(app) as c:
         tid = str(c.post("/api/session", json={}).json()["thread_id"])
-        first = c.post(
-            f"/api/session/{tid}/upload", files={"file": ("a.txt", body, "text/plain")}
-        )
+        first = c.post(f"/api/session/{tid}/upload", files={"file": ("a.txt", body, "text/plain")})
         assert first.status_code == 201
         stored = next(p for p in uploads.iterdir() if not p.name.endswith(".parsed.txt"))
         stored.unlink()  # 模拟人工删除 / 数据卷重置
 
-        again = c.post(
-            f"/api/session/{tid}/upload", files={"file": ("a.txt", body, "text/plain")}
-        )
+        again = c.post(f"/api/session/{tid}/upload", files={"file": ("a.txt", body, "text/plain")})
         assert again.status_code == 201, again.text
         assert again.json()["reused"] is True  # 仍然是同一个任务，没有重复登记
         assert again.json()["task_id"] == first.json()["task_id"]
@@ -605,9 +599,7 @@ def test_failed_task_recovers_when_the_same_file_is_reuploaded(
         assert again.status_code == 201, again.text
         assert again.json()["reused"] is True  # 同一份字节，仍是同一个任务
         done = wait_upload(c, again.json()["task_id"])
-        assert done["status"] == "indexed", (
-            "重传成功后任务必须回到 indexed —— failed 不能是终点"
-        )
+        assert done["status"] == "indexed", "重传成功后任务必须回到 indexed —— failed 不能是终点"
         assert calls["n"] == 2
 
 
@@ -716,4 +708,6 @@ def test_upload_unknown_thread_404(tmp_path: Path, monkeypatch: pytest.MonkeyPat
             files={"file": ("a.txt", b"data", "text/plain")},
         )
         assert res.status_code == 404
+
+
 # -- 编辑重生成 / 删除问答对（v2.4） ----------------------------------------------

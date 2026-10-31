@@ -261,8 +261,7 @@ def _upgrade_role_proactive_state_pk(conn: SqlConnection) -> None:
     conn.execute("DROP TABLE role_proactive_state")
     conn.execute("ALTER TABLE role_proactive_state__b2 RENAME TO role_proactive_state")
     for row in conn.execute(
-        "SELECT thread_id, user_id FROM session_thread "
-        "WHERE thread_id LIKE 's_proactive_%'"
+        "SELECT thread_id, user_id FROM session_thread WHERE thread_id LIKE 's_proactive_%'"
     ).fetchall():
         tid = str(row["thread_id"])
         uid = str(row["user_id"])
@@ -271,7 +270,7 @@ def _upgrade_role_proactive_state_pk(conn: SqlConnection) -> None:
         # 落笔在 owner（`session_thread write seam` 只认 storage），判断在这里：
         # 带 thread_id 的表全跟着走（`R28-23`）—— 审批、检查点、writes，以及将来任何新表，
         # 判据是库的形状，不是这段代码记得列了几张。
-        rename_thread_id(conn, old=tid, new=f"s_proactive_{uid}_{tid[len('s_proactive_'):]}")
+        rename_thread_id(conn, old=tid, new=f"s_proactive_{uid}_{tid[len('s_proactive_') :]}")
     conn.commit()  # 重建原子落盘（`R102-53`）
     migrate_event("role_proactive_state 主键重建完成（含线程 id 换名）")
 
@@ -435,9 +434,7 @@ def _backfill_memory_item_uid(conn: SqlConnection) -> None:
     """
     if "uid" not in _cols(conn, "role_memory_item"):
         return
-    rows = conn.execute(
-        "SELECT id FROM role_memory_item WHERE uid IS NULL OR uid = ''"
-    ).fetchall()
+    rows = conn.execute("SELECT id FROM role_memory_item WHERE uid IS NULL OR uid = ''").fetchall()
     for r in rows:
         conn.execute(
             "UPDATE role_memory_item SET uid = ? WHERE id = ?",
@@ -471,8 +468,7 @@ def _rename_paddle_ocr_endpoint(conn: SqlConnection) -> None:
         conn.execute("DELETE FROM service_endpoint WHERE category = 'ocr' AND id = 'paddle'")
     else:
         conn.execute(
-            "UPDATE service_endpoint SET id = 'rapidocr'"
-            " WHERE category = 'ocr' AND id = 'paddle'"
+            "UPDATE service_endpoint SET id = 'rapidocr' WHERE category = 'ocr' AND id = 'paddle'"
         )
     conn.commit()
 
@@ -543,15 +539,16 @@ def _seed_order_semantic_cloud_first(conn: SqlConnection) -> None:
 #: `role_proactive_state` **刻意不在**这张表里（与搬家前的 `_SHAPE_MIGRATED_TABLES` 逐字
 #: 一致）：它缺的 `user_id` 是主键列，补列器本来就跳过 pk 列（`decl["pk"]`），判据不受污染；
 #: 而非 pk 的那几列（open_threads / recall_at）先补上也无害 —— B2 重建的 INSERT 会照抄。
-SHAPE_TABLES: frozenset[str] = frozenset(
-    {"model_backend", "service_endpoint", "token_usage_day"}
-)
+SHAPE_TABLES: frozenset[str] = frozenset({"model_backend", "service_endpoint", "token_usage_day"})
 
 
 #: DDL 之后的阶段（顺序即执行序；哪一步排在前的理由写在各自 docstring 里）。
 SHAPE_STEPS: tuple[Step, ...] = (
-    Step(id="shape.model_backend_history_columns", run=_backfill_model_backend_history_columns,
-         check=_model_backend_is_legacy),
+    Step(
+        id="shape.model_backend_history_columns",
+        run=_backfill_model_backend_history_columns,
+        check=_model_backend_is_legacy,
+    ),
     Step(id="shape.ensure_role_proactive_state", run=_ensure_role_proactive_state),
     Step(id="shape.role_proactive_state_pk", run=_upgrade_role_proactive_state_pk),
     Step(id="shape.ensure_role_memory", run=_ensure_role_memory),
@@ -559,8 +556,11 @@ SHAPE_STEPS: tuple[Step, ...] = (
     Step(id="shape.token_usage_day_pk", run=_upgrade_token_usage_pk),
     Step(id="shape.rebuild_service_endpoint", run=_rebuild_legacy_service_endpoint),
     Step(id="shape.service_endpoint_owner", run=_backfill_service_endpoint_owner),
-    Step(id="shape.model_backend_provider_layers", run=_run_provider_layers,
-         check=_model_backend_is_legacy),
+    Step(
+        id="shape.model_backend_provider_layers",
+        run=_run_provider_layers,
+        check=_model_backend_is_legacy,
+    ),
     Step(id="shape.model_backend_provider_index", run=_create_provider_index),
     Step(id="shape.model_backend_penalties", run=_backfill_penalty_columns),
     Step(id="shape.role_memory_item_uid", run=_backfill_memory_item_uid),

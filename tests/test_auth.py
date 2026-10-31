@@ -54,9 +54,7 @@ def _client(
 # -- 档位 ---------------------------------------------------------------------------
 
 
-def test_off_mode_lets_local_demo_through(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_off_mode_lets_local_demo_through(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """默认 off：不配凭证也能用 —— 这是"本地打开就能演示"的底线。"""
     c = _client(monkeypatch, tmp_path, mode="off")
     assert c.get("/api/roles").status_code == 200
@@ -217,9 +215,7 @@ def test_api_key_is_accepted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 # -- 审计身份 -----------------------------------------------------------------------
 
 
-def test_audit_records_basic_username(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_audit_records_basic_username(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """审计的 actor 不再是写死的 "operator"，而是真实调用方。"""
     c = _client(monkeypatch, tmp_path)
     res = c.post("/api/session", json={}, headers={"Authorization": _basic("demo", "s3cret")})

@@ -42,10 +42,10 @@ def test_zero_statement_files_are_not_floor_violations() -> None:
 
 def test_floor_config_is_read_from_pyproject_text() -> None:
     mod = _load()
-    assert mod.load_floor('[tool.rolecard]\ncoverage_floor = 85\n') == 85
+    assert mod.load_floor("[tool.rolecard]\ncoverage_floor = 85\n") == 85
     # 缺这一格 = None（调用方判红）；别处的表不算数
     assert mod.load_floor('[tool.mypy]\npackages = ["x"]\n') is None
-    assert mod.load_floor('[tool.rolecard]\nother = 1\n') is None
+    assert mod.load_floor("[tool.rolecard]\nother = 1\n") is None
 
 
 def test_missing_floor_config_fails_loudly_instead_of_passing(tmp_path, capsys) -> None:

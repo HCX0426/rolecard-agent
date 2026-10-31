@@ -81,7 +81,5 @@ def delete_rows_for_user(conn: SqlConnection, table: str, user_id: str) -> int:
     走的是 `ROW_TABLES` 那张**窄**名单：`session_thread` 读得到（备份要它）但删不掉 ——
     级联删必须带上检查点与审批，那条路在 `storage/threads.py`，这里整类删会留下孤儿。
     """
-    cur = conn.execute(
-        f"DELETE FROM {_require(table, ROW_TABLES)} WHERE user_id = ?", (user_id,)
-    )
+    cur = conn.execute(f"DELETE FROM {_require(table, ROW_TABLES)} WHERE user_id = ?", (user_id,))
     return max(cur.rowcount, 0)

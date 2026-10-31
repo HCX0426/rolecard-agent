@@ -91,14 +91,11 @@ def test_the_injected_action_runs_in_place(tmp_path: Path) -> None:
 
     conn = _legacy_conn(tmp_path)
     try:
-        bootstrap(
-            conn, enabled_domains=("health",), plan=build_plan(provider_layers=fake_layers)
-        )
+        bootstrap(conn, enabled_domains=("health",), plan=build_plan(provider_layers=fake_layers))
         assert calls == ["moved"]
         # 顺序承重的证据：索引是在搬层**之后**建的，所以它此刻必须真的存在。
         indexes = {
-            str(r["name"])
-            for r in conn.execute("PRAGMA index_list('model_backend')").fetchall()
+            str(r["name"]) for r in conn.execute("PRAGMA index_list('model_backend')").fetchall()
         }
         assert "idx_model_backend_provider" in indexes, indexes
         assert "provider_id" in table_columns(conn, "model_backend")

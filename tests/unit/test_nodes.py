@@ -5,7 +5,7 @@ decisions that are cheap to get wrong and expensive to notice: when to loop back
 tools, which tools a turn may see, how a failing tool is retried, and how much history is
 allowed into the prompt.
 
-See 技术评审与决策.md §9 D2 - these had no unit coverage before.
+See 技术评审与决策.md 「实现对齐核查」D2 - these had no unit coverage before.
 """
 
 from __future__ import annotations
@@ -533,7 +533,8 @@ def test_call_model_leaves_a_clean_history_untouched(roles: RoleCardService) -> 
 
 
 def test_call_model_leaves_usage_out_of_node_end(roles: RoleCardService) -> None:
-    """`call_model` 这一层**不许**记 token 账，也不许把用量写进 `node_end`（审计 §12.8/#8）。
+    """`call_model` 这一层**不许**记 token 账，也不许把用量写进 `node_end`（审计「云端 token
+    与成本累计」/#8）。
 
     不是"取不到"——是这里取到的一定是错的：后端在每一个流式分块里都回一份"累计到此"的
     usage，langchain 合并时逐块相加，所以合并值 = 真值 × 分块数（实测一条"在吗"：

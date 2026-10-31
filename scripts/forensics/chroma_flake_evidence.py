@@ -38,7 +38,7 @@ CHROMA_FLAKE_SIGNATURES: tuple[str, ...] = (
     "chromadb.errors.InternalError",
     # R1031-02 的 create 竞态脸（2026-10-31，run 41118055056）：get 说没有、create 说有。
     # 摘要行里只剩短类名（RuntimeError 包过一层），"chromadb.errors.InternalError" 那条
-    # 咬不住它 —— ENGI-24①"两台机器各读半张"的姊妹篇，签名必须对着**摘要行长什么样**写。
+    # 咬不住它 —— "两台机器各读半张"的姊妹篇，签名必须对着**摘要行长什么样**写。
     "already exists",
 )
 

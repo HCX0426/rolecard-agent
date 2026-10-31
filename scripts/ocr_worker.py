@@ -15,6 +15,7 @@ RapidOCR（3.x）：`RapidOCR()(path)` → 结果对象的 `txts` 是识别出�
 保证 stdout **只有**识别文本。置信度（`scores`）不参与输出：worker 的协议是纯文本，
 从前 Paddle 那版也没筛，换了后端不该顺手改变"哪些字算识别出来"的口径。
 """
+
 from __future__ import annotations
 
 import contextlib
