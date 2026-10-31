@@ -340,6 +340,13 @@ _SCRIPTS_DIR = pathlib.Path(__file__).resolve().parents[1] / "scripts"
 BUILD_DIR = pathlib.Path(__file__).resolve().parents[1] / "build"
 # 取证层住 forensics/（脚本分层后各归其层）；签名清单与门禁共用同一份。
 _FORENSICS_DIR = _SCRIPTS_DIR / "forensics"
+# scripts/ 本体也要在 sys.path 上（2026-10-31 收口）：从前只有各个用例自己
+# `sys.path.insert(0, ROOT/"scripts")`，于是"按 importlib 加载 scripts/gate.py"的那一族
+# 测的是**文件顺序** —— 单独跑 `pytest tests/unit/test_gate_affected.py` 直接
+# `ModuleNotFoundError: venv_python`（gate.py 顶层 import 它），整套跑时恰好有别的用例
+# 先把 scripts/ 塞了进去才绿。顺序依赖的绿比红贵。
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
 if str(_FORENSICS_DIR) not in sys.path:
     sys.path.insert(0, str(_FORENSICS_DIR))
 

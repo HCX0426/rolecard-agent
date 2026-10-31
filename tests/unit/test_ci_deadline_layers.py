@@ -25,6 +25,22 @@ import pytest
 CI = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
 
 
+def _gate_runs(run: str) -> bool:
+    """这一步是不是在**跑门禁**（三层墙钟只管这种步骤）。
+
+    `gate.py --pytest-plan` 是一问一答的纯查询（秒级、不跑任何步），不算门禁本体 ——
+    给它配 deadline/timeout 是范畴错误。判据按"会执行的行里出现了不带 --pytest-plan 的
+    gate.py 调用"来认（注释行不算 —— `_executable` 那层的教训：注释不是执行路径）。
+    """
+    for line in run.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or not stripped:
+            continue
+        if "scripts/gate.py" in stripped and "--pytest-plan" not in stripped:
+            return True
+    return False
+
+
 def _steps() -> list[dict[str, object]]:
     try:
         import yaml
@@ -38,7 +54,7 @@ def _steps() -> list[dict[str, object]]:
             raise AssertionError(f"job {job_name} 没有 timeout-minutes：默认 6 小时 = 没有防线")
         for step in job.get("steps", []):
             run = step.get("run")
-            if isinstance(run, str) and "scripts/gate.py" in run:
+            if isinstance(run, str) and _gate_runs(run):
                 out.append({"job": job_name, "run": run, "budget": float(budget)})
     if not out:
         raise AssertionError("ci.yml 里一个调 gate.py 的 run 步骤都没扫到：分母为 0 不等于全绿")
@@ -83,9 +99,7 @@ def _executable(run: str) -> str:
     注释里的那句"别用 `if ! timeout`" —— 注释不是执行路径，判据扫它就会把"解释了为什么不做"
     读成"做了"（这一发是它自己撞出来的，不是我想到的）。
     """
-    return "\n".join(
-        ln for ln in run.splitlines() if not ln.strip().startswith("#")
-    )
+    return "\n".join(ln for ln in run.splitlines() if not ln.strip().startswith("#"))
 
 
 def test_gate步骤不许挂step级超时() -> None:

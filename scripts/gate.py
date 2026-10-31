@@ -296,11 +296,18 @@ _MAX_AFFECTED_SHARE = 0.6
 _MACHINE_ARTIFACTS = frozenset({"docs/gate-readings.json"})
 
 
-def _changed_paths() -> list[str]:
+def _changed_paths(base: str | None = None) -> list[str]:
     """工作树里的改动（未提交含已暂存 + 未跟踪），与 `_src_changed` 同一口径。
 
     `_git` 失败会抛 —— 调用方按"不确定 = 跑全量"处理，不在这里吞掉。
+
+    给 `base` 时换一种问法：**base..HEAD 的提交面**（2026-10-31 排程教义的 CI 形态）。
+    runner 上工作树永远是干净的（代码已提交），工作树口径恒回空清单 —— "改哪查哪"
+    在 CI 上只能问历史。base 解不开（浅克隆没有那个 sha）`_git` 抛，同上按全量处理。
     """
+    if base:
+        changed = _git("diff", "--name-only", f"{base}..HEAD").splitlines()
+        return [p.strip().replace("\\", "/") for p in changed if p.strip()]
     changed = _git("diff", "--name-only", "HEAD").splitlines()
     changed += _git("ls-files", "--others", "--exclude-standard").splitlines()
     return [p.strip().replace("\\", "/") for p in changed if p.strip()]
@@ -310,6 +317,81 @@ def _test_files() -> list[str]:
     return sorted(
         str(p.relative_to(ROOT)).replace("\\", "/") for p in ROOT.glob("tests/**/test_*.py")
     )
+
+
+#: 「改哪查哪」的内容面（2026-10-31 用户拍板的排程教义）：这些目录没有 `src/` 模块，
+#: 后端用例不 import 它们 —— 但**有几支用例直接读它们**（openapi 面、壳产物、引用对账）。
+#: 所以这一族改动不整步跳过，而是按**提及耦合**挑用例：改了 `frontend/openapi.json`
+#: 就跑读它的 `test_api_surface`，改了 `docs/架构审计索引.md` 就跑对账引用的那几支。
+#: 探测手法与 `select_affected` 的第二层匹配同一条：问测试文件的**内容**，不问文件名
+#: （`message_view.py` 的测试叫 `test_serialize_message.py` —— 名字会骗人，import 不会）。
+_AFFECTED_CONTENT_ROOTS = ("frontend/", "docs/", "shell/")
+
+
+def _coupled_tests(changed: list[str], tests: list[str]) -> list[str]:
+    """改动文件与测试文件的耦合探测：测试文本里出现过改动文件的**名字**或它的**根目录词**。
+
+    根目录词那一路兜 rglob 读者（`test_frontend_contract` 遍历整个 frontend/src，不会点名
+    每个文件，但它的源码里句句写着 "frontend"）。提及不到任何用例 = 这族改动与后端测试
+    真的零耦合，调用方才允许 skip。太短的名字（`x.md`）不参与匹配，免得 "api" 这种
+    四个字的词把每张测试都点亮；`docs`/`shell` 两个四字词是目录名，单独放行。
+    """
+    names = {Path(p).name for p in changed} | {p.split("/")[0] for p in changed}
+    hits: list[str] = []
+    for t in tests:
+        path = ROOT / t
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if any(name in text for name in names if len(name) > 4 or name in {"docs", "shell"}):
+            hits.append(t)
+    return hits
+
+
+def plan_backend_pytest(changed: list[str] | None, tests: list[str]) -> tuple[str, list[str], str]:
+    """后端 pytest 这一步的最终形状：`("full"|"subset"|"skip", 文件清单, 为什么)`。
+
+    三档的判据与出处：
+      * **skip** —— 改动全部落在 `_AFFECTED_CONTENT_ROOTS`（frontend/docs/shell）且
+        **没有任何测试文件提及**这些名字或根目录词：真零耦合才敢整步跳（CI 的 gate 臂
+        与 Windows 分片都跳）。提及到一支 ⇒ subset 只跑耦合的那几支。
+      * **subset** —— 只改了 `src/rolecard_agent/**.py` 与/或 `tests/**.py`，
+        `select_affected` 能挑出非空清单（挑不出照旧 full，五条保守判据一字未动）。
+      * **full** —— 其余一切（含 `changed is None` 的 git 失败档、空清单档）。
+    与 `_src_changed()` 同一条铁律：**探测失误只许让门禁更慢，不许让它更弱** ——
+    默认值永远是 full，skip/subset 都得"问得出且问得准"才成立。
+    """
+    if changed is None:
+        return "full", [], "git 查询失败：不确定就保守跑"
+    changed = [p for p in changed if p not in _MACHINE_ARTIFACTS]
+    if not changed:
+        return "full", [], "没有改动面可问（空清单不是'没东西要跑'，是'不知道'）"
+    if all(p.startswith(_AFFECTED_CONTENT_ROOTS) for p in changed):
+        coupled = _coupled_tests(changed, tests)
+        if not coupled:
+            roots = "、".join(sorted({p.split("/")[0] + "/" for p in changed}))
+            return "skip", [], f"改动全在 {roots} 里，没有任何用例提及它们"
+        picked = sorted(set(_ALWAYS_RUN_TESTS) | set(coupled))
+        why = f"内容面改动 {len(changed)} 个文件 → 提及耦合 {len(coupled)} 支用例"
+        return "subset", picked, why
+    # 只改了用例自己（tests/**.py，且没碰 conftest —— conftest 是收集面的横切件）：
+    # 跑被改的那几支 + 常跑集就够，整套后端在等一个没发生的 src 改动。
+    only_tests = all(p.startswith("tests/") for p in changed)
+    if only_tests and not any(Path(p).name == "conftest.py" for p in changed):
+        # 改动清单里有**删掉**的用例文件也照样出现在 `git diff --name-only` 里 —— 把它们
+        # 塞给 pytest 是收集期 "file not found" 红。按盘上枚举（`tests` 参数）过滤一遍，
+        # 与 select_affected 第二层匹配的 `(ROOT / t).is_file()` 守卫同一个道理。
+        present = [p for p in changed if p in set(tests)]
+        if not present:
+            # 只剩"删掉的文件"：没有东西可跑，而"删测试"这件事本身要全套看着才踏实
+            # （别的用例可能 import 被删的那份 helper）。宁可慢，不可漏。
+            return "full", [], "动的测试文件都已不在盘上（纯删除）——按全量"
+        picked = sorted((set(_ALWAYS_RUN_TESTS) | set(present)) & set(tests))
+        return "subset", picked, f"只动了 {len(present)} 个用例文件——跑被改的那些"
+    picked, why = select_affected(changed, tests)
+    if not picked:
+        return "full", [], why
+    return "subset", picked, why
 
 
 def select_affected(changed: list[str], tests: list[str]) -> tuple[list[str], str]:
@@ -323,8 +405,9 @@ def select_affected(changed: list[str], tests: list[str]) -> tuple[list[str], st
       4. 某个改动模块**找不到同名测试**（零命中）—— 这正是"宁可慢不可漏"那一句；
       5. 挑出来的文件超过全集六成 —— 省不下多少。
 
-    这条路的产出**只有本地 `--fast` 用**：CI 与全量档永远跑全套，读数也从不采信子集
-    （见 `_write_readings` 里 `AFFECTED-SUBSET` 那一支）。
+    这条路的产出过去**只有本地 `--fast` 用**；2026-10-31 排程教义把它推到 CI 的 push 档
+    （`--affected-from <base>` 提供提交面），CI 与全量档在**没给 base** 时仍跑全套。
+    读数在两种形态下都从不采信子集（见 `_write_readings` 里 `AFFECTED-SUBSET` 那一支）。
     """
     # 先摘掉机器自己写的文件（读数是门禁每步在写的，不是"你在改的代码"）。
     changed = [p for p in changed if p not in _MACHINE_ARTIFACTS]
@@ -382,13 +465,16 @@ def _affected_pytest_command(base: list[str], changed: list[str] | None) -> tupl
 
     `changed` 由 `main()` 在**开跑之前**取一次（`None` = 没取到）。不在这里现取，是因为
     门禁自己每跑完一步就往读数文件里写 —— 边跑边取会把机器刚写的文件读成"你改的东西"。
+
+    skip 档由调用方（`_resolve`）先问 `plan_backend_pytest` 拦下；这里只处理 full/subset。
     """
-    if changed is None:
-        return base, "全量（git 查询失败：不确定就保守跑）"
-    picked, why = select_affected(changed, _test_files())
-    if not picked:
-        return base, f"全量（{why}）"
-    return [*base, "--affected-subset", *picked], f"受影响子集：{why}"
+    kind, picked, why = plan_backend_pytest(changed, _test_files())
+    if kind == "subset" and picked:
+        return [*base, "--affected-subset", *picked], f"受影响子集：{why}"
+    if kind == "skip":
+        # 调用方本该先拦下 skip；走到这里按"没拦成"处理 —— 保守跑全量，绝不当"跳过"执行。
+        return base, f"全量（skip 档不该走到命令拼装：{why}）"
+    return base, f"全量（{why}）"
 
 
 def _cwd_for(name: str) -> Path | None:
@@ -1006,6 +1092,15 @@ def main() -> int:
         help="快档也跑全套用例（关掉受影响选择；提交前那趟建议带上）",
     )
     parser.add_argument(
+        "--affected-from",
+        metavar="BASE",
+        default=None,
+        help="改动面改问 `BASE..HEAD` 的提交清单（CI 用；runner 上工作树恒干净，"
+        "工作树口径永远问不出东西）。给了它 --ci 档也走「改哪查哪」路由：只动 src 深"
+        "模块→受影响子集，只动 frontend/docs/shell→提及耦合的那几支（没人提及→整步跳），"
+        "问不出→全量。不给（本机默认）→ 只 --fast 生效，--ci/全量跑全套——与从前一致。",
+    )
+    parser.add_argument(
         "--deadline-minutes",
         type=float,
         default=None,
@@ -1013,7 +1108,27 @@ def main() -> int:
         "存在的理由：runner 杀 job 时 GitHub **不上传日志** —— 连续两趟挂死的现场就是这么丢的；"
         "死在自己的 deadline 上则是一次**带完整汇总的红**。不设 = 只受每步上限管（本机默认）。",
     )
+    parser.add_argument(
+        "--pytest-plan",
+        metavar="BASE",
+        default=None,
+        help="只回答一个问题不跑东西：BASE..HEAD 这组改动下，后端 pytest 该跑 full、"
+        "subset 还是 skip。打印 `<kind>\\t<文件清单>\\t<为什么>`（制表符三段）后退出 0 —— "
+        "CI 的 changes 臂与 gate 步问的是**同一份判据**（本文件 plan_backend_pytest），"
+        "不在 YAML 里抄第二份名单。",
+    )
     args = parser.parse_args()
+
+    if args.pytest_plan:
+        try:
+            changed = _changed_paths(base=args.pytest_plan)
+        except Exception:
+            changed = None
+        kind, picked, why = plan_backend_pytest(changed, _test_files())
+        # 三段制表符：CI 的 changes 臂按 `IFS=$'\t' read` 拆。文件清单给 Windows 分片用
+        # （`--shard i/4 --affected-subset <files>`，交集语义在 pytest_with_evidence 里收口）。
+        print(f"{kind}\t{' '.join(picked)}\t{why}", flush=True)
+        return 0
 
     # 墙钟从 `main()` 的第一行起算，**排在第一个 git 调用之前**：从前 `started` 在这里往下
     # 四十行（守卫、读数键检查之后），于是 `_changed_paths()` 那第一批 `_git()` —— 全门禁里
@@ -1035,10 +1150,19 @@ def main() -> int:
     # 那份 `docs/gate-readings.json`；scratch 槽在 gitignore 的 build/ 下、进不了清单），
     # 边跑边取会把机器刚写的文件当成"你改的东西"（实测第一趟演示就是这么退回全量的）。
     # 取不到（不是 git 工作树、git 挂了）记 None —— 下游按"不确定 = 全量"处理。
+    # `--affected-from BASE` 时问的是提交面（CI：工作树恒干净，见 _changed_paths 的 base 支）。
     try:
-        _changed_at_start: list[str] | None = _changed_paths()
+        _changed_at_start: list[str] | None = _changed_paths(base=args.affected_from)
     except Exception:
         _changed_at_start = None
+
+    # 「改哪查哪」的生效面（2026-10-31 排程教义）：--ci 档要 `--affected-from` 给得出
+    # 提交面才路由（没给 = 与从前逐字一致：全套）；--fast 档本机照旧认工作树。
+    # 这份结果给**循环的 skip 判定**用；命令拼装走 `_affected_pytest_command`（另一处
+    # 对同一份 `_changed_at_start` 的纯函数调用 —— 输入只取一次，两问必同答）。
+    _pytest_routing: tuple[str, list[str], str] | None = None
+    if (args.ci and args.affected_from) or (args.fast and not args.full_tests):
+        _pytest_routing = plan_backend_pytest(_changed_at_start, _test_files())
 
     # 读数的键按**步骤名**挂钩，而步骤名会改（改名/合并/删步）：写错的键从此永不命中，
     # 却长得像"这一趟没跑那一步"（见 _write_readings）—— 于是一条读数静静消失、门禁照绿。
@@ -1108,8 +1232,12 @@ def main() -> int:
         )
 
     def _resolve(name: str, cmd: list[str]) -> tuple[str, list[str]]:
-        """一步最终的（显示名，命令行）—— 受影响用例选择只在这一处发生。"""
-        if args.fast and not args.full_tests and name.startswith("pytest(-x"):
+        """一步最终的（显示名，命令行）—— 受影响用例选择只在这一处发生。
+
+        拼装委托给 `_affected_pytest_command`（`test_门禁拼出来的命令行形状` 钉的就是它），
+        这里只决定"这一步该不该问"；skip 档由循环先拦、根本走不到这里。
+        """
+        if _pytest_routing is not None and name.startswith("pytest(-x"):
             run_cmd, note = _affected_pytest_command(cmd, _changed_at_start)
             return f"{name}｜{note}", run_cmd
         return name, cmd
@@ -1158,6 +1286,18 @@ def main() -> int:
         # 覆盖率那条：本地全量档"没碰 src/ 就跳过"（判据在 `_cov_lane_skipped`）。
         if _cov_lane_skipped(name):
             print(f"\n▶ {name}：跳过（src/ 无改动）", flush=True)
+            timings.append((name, 0.0))
+            continue
+        # 「改哪查哪」的 skip 档（2026-10-31 排程教义）：改动全在 frontend/docs/shell 里，
+        # 后端用例与它们零耦合（判据与出处：plan_backend_pytest）。跳过**大声打出来** ——
+        # 一声不吭的跳过就是"没跑到被读成全绿"那一族（`.gitleaks.toml` 死表的教训）。
+        # 读数不刷新也不留记号：这一步**没跑**，与"跑了没量到"是两种落点（见 _write_readings）。
+        if (
+            _pytest_routing is not None
+            and _pytest_routing[0] == "skip"
+            and name.startswith("pytest(-x")
+        ):
+            print(f"\n▶ {name}：跳过（{_pytest_routing[2]}）", flush=True)
             timings.append((name, 0.0))
             continue
         # 步骤跑在哪个目录按名字前缀定（比在元组里再加一个字段少一处噪声）。第一版

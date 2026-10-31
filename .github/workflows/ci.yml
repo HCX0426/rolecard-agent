@@ -61,14 +61,24 @@ jobs:
   # 排除式写法 = "frontend/docs 之外还动了东西"：不在名单里的杂项（LICENSE、.gitignore…）
   # 一律按"动了后端"处理 —— 宁可多跑，不可漏跑。dorny/paths-filter 对首推/强推取
   # fail-open（全跑），不会因为判不出就静默跳臂。
+  #
+  # 2026-10-31 排程教义加第二问（pytest-plan）：后端 pytest 这步按 `gate.py` 的
+  # plan_backend_pytest 路由（full/subset/skip），判据住在脚本里、不在 YAML 里抄名单。
+  # fetch-depth: 0 是给这一问的：`HEAD~1..HEAD` 在浅克隆里解不开，解不开 = full（保守，
+  # 但每次 push 都白跑整套就白改了教义）；本仓 1300 提交 / 51MB，全量 fetch 秒级。
   changes:
-    name: 改动路径判定（纯前端则跳过镜像臂与 Windows 分片）
+    name: 改动路径判定（纯前端提交跳过镜像臂与 Windows 分片；后端用例按改哪查哪）
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      pytest-kind: ${{ steps.plan.outputs.kind }}
+      pytest-files: ${{ steps.plan.outputs.files }}
+      pytest-base: ${{ steps.plan.outputs.base }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: dorny/paths-filter@v4
         id: filter
         with:
@@ -76,10 +86,43 @@ jobs:
             code:
               - '!(frontend/**)'
               - '!(docs/**)'
+      - name: 后端 pytest 的这趟该跑什么（判据 = scripts/gate.py plan_backend_pytest）
+        id: plan
+        run: |
+          # base 按事件取**现成 SHA**（不赌远端 ref 在不在 fetch 面里）：push 问
+          # `github.event.before`（本次推之前的 main 尖 —— 多提交连推时 HEAD~1 只看得到
+          # 最后一发，会漏挑前面几发牵动的用例；全量并集才是"改哪查哪"的正确口径）；
+          # PR 问 base.sha；workflow_dispatch 不路由（手动点名要全套）。
+          # 解不开（首推全零 / GC 掉了旧尖 / 浅史）= full：探测失误只许让门禁更慢。
+          if [ "${{ github.event_name }}" = "push" ]; then
+            base="${{ github.event.before }}"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            echo "kind=full" >>"$GITHUB_OUTPUT"; echo "files=" >>"$GITHUB_OUTPUT"
+            echo "手动触发：全套（有人在点名要它）"
+            exit 0
+          fi
+          if ! git rev-parse --quiet --verify "${base}^{commit}" >/dev/null; then
+            echo "kind=full" >>"$GITHUB_OUTPUT"; echo "files=" >>"$GITHUB_OUTPUT"; echo "base=" >>"$GITHUB_OUTPUT"
+            echo "base $base 解不开（首推/强推/浅史）：全量"
+            exit 0
+          fi
+          IFS=$'\t' read -r KIND FILES WHY < <(python3 scripts/gate.py --pytest-plan "$base")
+          case "$KIND" in full|subset|skip) ;; *) KIND=full; FILES=""; WHY="判据答的形状不认识：${KIND}——全量" ;; esac
+          echo "kind=$KIND" >>"$GITHUB_OUTPUT"
+          echo "files=$FILES" >>"$GITHUB_OUTPUT"
+          echo "base=$base" >>"$GITHUB_OUTPUT"
+          echo "后端 pytest 这趟：$KIND —— $WHY"
 
   gate:
     name: 门禁 --ci（单趟 pytest + baseline 比对）
     runs-on: ubuntu-24.04
+    # 排在 changes 之后（2026-10-31 排程教义）：后端 pytest 这一步按它的回答路由
+    # full/subset/skip —— changes 那臂算过一次判据（打印的是给人看的），这里把同一个
+    # base 交给 gate.py **在进程内再算一次**：挑文件与跑文件用的是同一份 plan_backend_pytest，
+    # 没有"输出与命令行各拼各的"那道缝。
+    needs: [changes]
     # 每条 job 都要有 timeout（09-28 轮 `R28-25`：四条无一设过，任一挂死就默认烧满 360 分钟）。
     # 预算按**实测用时**给：从前 15 分钟两次被 20 分钟顶穿（`15e2f77`/`f1e06b3`，无一失败 ——
     # 是慢不是卡），抬到 30 仍只是兜底。2026-10-04 砍掉双趟 pytest（fast + coverage 两趟全跑
@@ -99,10 +142,13 @@ jobs:
     # 现在三层墙钟都在，这一层只兜"前两层都没做到"的病态，界取整不取巧合。
     timeout-minutes: 18
     steps:
-      # fetch-depth 从前钉 2：head 归属判据要读 HEAD~1 才认得"只含读数的跟进提交"那一半
-      # 形状（10-03 那发 CI 假阳的修法：默认浅克隆父提交读不到 ⇒ 本地绿、CI 红）。判据随
-      # "数字移出散文"退役 —— 读数不再被拿去比 README、head 已搬出入库文件，特例同拆。
+      # fetch-depth 0（2026-10-31 排程教义）：`--affected-from <base>` 在这一步的进程里
+      # 跑 `git diff base..HEAD` —— 浅克隆里没有那个 base 就抛、按全量兜底（保守但对
+      # "改哪查哪"等于白接线）。全量 fetch 本仓秒级（1300 提交 / 51MB）。
+      # 从前钉 2 的理由（head 归属判据读 HEAD~1）已随判据退役，见下面注释。
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: 装 Python
         uses: actions/setup-python@v6
@@ -217,7 +263,15 @@ jobs:
           # code 又真的是 timeout 的退码。
           code=0
           t0=$(date +%s)
-          timeout --kill-after=30s 660s python scripts/gate.py --ci --deadline-minutes 10 || code=$?
+          # 「改哪查哪」（2026-10-31 排程教义）：changes 臂解得出的 base 就交给 gate.py，
+          # 后端 pytest 那一步按 plan_backend_pytest 走 full/subset/skip；
+          # base 为空（手动 dispatch / 解不出的 push/PR）= 不给旗 = 与从前逐字一致跑全套。
+          AFFECTED=""
+          if [ -n "${{ needs.changes.outputs.pytest-base }}" ]; then
+            AFFECTED="--affected-from ${{ needs.changes.outputs.pytest-base }}"
+          fi
+          echo "这趟后端 pytest 的判据：kind=${{ needs.changes.outputs.pytest-kind }} ${AFFECTED:---affected-from（无）——全套}"
+          timeout --kill-after=30s 660s python scripts/gate.py --ci $AFFECTED --deadline-minutes 10 || code=$?
           spent=$(( $(date +%s) - t0 ))
           if [ "$code" = 124 ] || [ "$code" = 137 ]; then
             # **不许把"我打印的那句"当成"已证实的归因"**（run 37842997481 的教训）：那一趟
@@ -572,7 +626,10 @@ jobs:
     # 纯前端的 push/PR 跳过（P9 ①）：这一臂守的是「Windows 专属分支被机器接住」
     # （ctypes.WinDLL / 图标层 / PowerShell 改写），前端改动一条都碰不到；前端自己的
     # tsc+vitest 在 frontend 臂跑。手动 dispatch 恒跑。
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.code == 'true'
+    # 2026-10-31 排程教义加第二种跳：`pytest-kind == skip`（改动全在内容面、没有任何
+    # 用例提及 —— gate 臂整步跳的那一档）——四台 windows 机器一起跳，这一族 push 的
+    # windows 分钟本来就是 2× 计费、也本来就是墙钟最贵的那条臂。
+    if: github.event_name == 'workflow_dispatch' || (needs.changes.outputs.code == 'true' && needs.changes.outputs.pytest-kind != 'skip')
     # 升级路径（审查快照 P1-13 决策四）：起步臂 `windows-release` 只在手动 `build_windows` 跑，
     # 这一条补上「每次 push/PR 都跑的 Windows 测试臂」—— 平台覆盖倒挂（Windows-first 产品
     # 却只有 ubuntu 测试臂）的正式收口。它**只跑用例、不打包**：Windows runner 分钟按 2× 计费，
@@ -632,7 +689,19 @@ jobs:
         # 收集面由构造保证，并被 `test_the_enumeration_matches_pytest_own_discovery` 钉住）。
         # 写成四串静态清单的话，新加的测试文件没人认领就**静默不跑**而四片全绿 —— 那正是本仓
         # 一路在治的"两份清单迟早漂开"那一族，这里连一份清单都不该有。
-        run: python scripts/pytest_with_evidence.py --lane fast --shard ${{ matrix.shard }}/4
+        # 「改哪查哪」（2026-10-31）：kind=subset 时把 changes 臂挑出的文件交给
+        # `--affected-subset`，pwe 内部与本片求交（交集为空 = 这一片今天没活，退 0）。
+        # kind=full / 手动 dispatch 时 files 为空 ⇒ 不给旗 ⇒ 整片全套 —— 原样。
+        shell: bash
+        run: |
+          KIND="${{ needs.changes.outputs.pytest-kind }}"
+          FILES="${{ needs.changes.outputs.pytest-files }}"
+          if [ "$KIND" = "subset" ] && [ -n "$FILES" ]; then
+            # shellcheck disable=SC2086  # 词分割是刻意的：文件清单进参数
+            python scripts/pytest_with_evidence.py --lane fast --shard ${{ matrix.shard }}/4 --affected-subset $FILES
+          else
+            python scripts/pytest_with_evidence.py --lane fast --shard ${{ matrix.shard }}/4
+          fi
 
   windows-release:
     name: 发布链（Windows 安装包，只在手动触发时跑）

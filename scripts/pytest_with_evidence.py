@@ -102,9 +102,7 @@ LANES: dict[str, tuple[list[str], str, str]] = {
 #: pip 的 `ERROR: Could not find a version…`、docker 的 `ERROR: failed to build…` 也吞进来
 #: （这两族同样真实存在于日志里），而那是**别的工具的报错**，不是本层的取证对象。
 #: `(?:::|$)` 与 `\.py` 双锚一起挡住它们：既要求"路径后紧跟 `::` 或到行尾"，也要求"确实是个 .py"。
-_SUMMARY_LINE_RE = re.compile(
-    r"^(?:FAILED|ERROR)\s+(\S+\.py)(?:::|\s|$)(.*)$", re.M
-)
+_SUMMARY_LINE_RE = re.compile(r"^(?:FAILED|ERROR)\s+(\S+\.py)(?:::|\s|$)(.*)$", re.M)
 
 
 def _rel(path: pathlib.Path) -> str:
@@ -289,9 +287,14 @@ def _extra_from_argv(argv: list[str]) -> list[str]:
     第一版忘了摘 `--affected-subset`，它被当成文件清单的第一项转给 pytest，当场
     `unrecognized arguments`（真跑一趟才看见 —— 纯函数用例只测到"挑哪些文件"，
     测不到"命令行最后长什么样"）。`--shard` 的值 `i/N` 紧邻其后，跟着一起摘。
+
+    `--affected-subset` 后面的那串文件同样要摘掉（`_subset_files_from_argv` 单独取）：
+    分片与子集同时给时，交集在 `main()` 里算 —— 文件继续混在 positional 里就没法与
+    "人直接点名要跑的文件"区分开（那种不打印子集记号）。
     """
     extra: list[str] = []
     skip_next = False
+    subset_files = set(_subset_files_from_argv(argv))
     for arg in argv:
         if skip_next:
             skip_next = False
@@ -299,14 +302,28 @@ def _extra_from_argv(argv: list[str]) -> list[str]:
         if arg == "--lane" or arg == _SHARD_FLAG:
             skip_next = True
             continue
-        if (
-            arg.startswith("--lane=")
-            or arg.startswith(f"{_SHARD_FLAG}=")
-            or arg == _SUBSET_FLAG
-        ):
+        if arg.startswith("--lane=") or arg.startswith(f"{_SHARD_FLAG}=") or arg == _SUBSET_FLAG:
+            continue
+        if arg in subset_files:
             continue
         extra.append(arg)
     return extra
+
+
+def _subset_files_from_argv(argv: list[str]) -> list[str]:
+    """`--affected-subset` 之后、下一个 `--` 开头参数之前的文件清单。"""
+    out: list[str] = []
+    seen = False
+    for arg in argv:
+        if arg == _SUBSET_FLAG:
+            seen = True
+            continue
+        if not seen:
+            continue
+        if arg.startswith("--"):
+            break
+        out.append(arg)
+    return out
 
 
 def main() -> int:
@@ -324,18 +341,37 @@ def main() -> int:
     run1, run2 = BUILD / run1_name, BUILD / run2_name
 
     shard = _shard_from_argv(sys.argv[1:])
+    subset = _subset_files_from_argv(sys.argv[1:])
     extra = _extra_from_argv(sys.argv[1:])
-    if shard is not None:
+    if shard is not None and subset:
+        # 分片与受影响子集同时给：**交集**才是这一片的活（2026-10-31 排程教义 ——
+        # CI 的 Windows 臂继续分片，但片里只跑"这发改动可能牵动的那几个文件"）。
+        # 交集为空 = 这一片没活可跑：大声打个 0 文件、退 0，**绝不许回落成整套**
+        # （空清单交给 pytest 会收集整个 tests/ —— 那正是"探测失误让门禁变弱"的形态）。
+        picked = [f for f in _shard_selection(*shard) if f in set(subset)]
+        if not picked:
+            print(
+                f"[AFFECTED-SUBSET] 分片 {shard[0]}/{shard[1]} 与受影响子集零交集 —— "
+                f"这一片今天没活（{lane} 档；全量读数不刷新），exit 0",
+                flush=True,
+            )
+            return 0
+        extra = picked + extra
+    elif shard is not None:
         # 分片挑中的文件**前置**进 extra：与受影响子集同一条通道（"这一趟只跑一部分文件"），
         # 取证判据一字不改 —— 二跑仍只重跑本片区里红的那几个文件。
         extra = _shard_selection(*shard) + extra
-    if extra or _SUBSET_FLAG in sys.argv[1:]:
+    elif subset:
+        extra = subset + extra
+    if extra or subset or shard is not None:
         # 这个记号是给 `gate.py._write_readings` 读的：子集跑的 "N passed" 不是全套的数，
         # 读成 backend_tests 就是一次静默漂（同族现场 10-04 出过一次，把 1595 洗成 32）。
         # **分片故意沿用同一个 token**，不另开 `[SHARD]`：读数机已经认"带这个记号 = 这趟
         # 没量到全量、不刷新"，而这正是分片的事实。另开新记号等于给"以后有人把分片接到
         # 读数上"留一发 1595→32 那种洗数 —— 让它**结构上**不可能被当成全量，比加注释可靠。
         kind = f"分片 {shard[0]}/{shard[1]}" if shard else "受影响子集"
+        if shard is not None and subset:
+            kind = f"分片 {shard[0]}/{shard[1]} ∩ 受影响子集"
         print(
             f"[AFFECTED-SUBSET] 这一趟只跑 {len(extra)} 个文件（{kind}，{lane} 档）—— "
             "全量读数这趟不刷新（子集不是全量）",

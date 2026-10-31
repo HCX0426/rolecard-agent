@@ -182,7 +182,9 @@ def test_the_watchdog_is_armed_before_the_first_git_call() -> None:
     """
     src = (ROOT / "scripts" / "gate.py").read_text(encoding="utf-8")
     arm = src.index("_arm_watchdog(started, deadline, timings)")
-    first_git = src.index("_changed_at_start: list[str] | None = _changed_paths()")
+    first_git = src.index(
+        "_changed_at_start: list[str] | None = _changed_paths(base=args.affected_from)"
+    )
     assert arm < first_git, "看门狗上膛必须排在第一批 git 调用之前"
 
 

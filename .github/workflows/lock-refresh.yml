@@ -1,6 +1,7 @@
 name: Lock refresh
 
-# 每周重新解析两把锁，有真变化就开一张 PR（快照 P1-12 ④ / ENGI-15 ② 的最后一格）。
+# 每月重新解析两把锁，有真变化就开一张 PR（快照 P1-12 ④ / ENGI-15 ② 的最后一格；
+# 2026-10-31 改月频——单人项目，自动执行的重检查一月一次够了）。
 #
 # 为什么判"变没变"不能按字节比（2026-10-08 实测，不是推测）：
 #   在这台机上屏蔽本地 pip 配置后重新 compile，174/136 条 pin **一条没动**，字节比仍差
@@ -25,13 +26,15 @@ name: Lock refresh
 # 退出码的形状（这一步最容易写错的地方）：`recompile_locks.py` 用 0=没变 / 1=变了 / 2=跑不动。
 #   若直接把 1 交给 runner，它会当成"步骤失败"——于是**每个正常的变化周都会红**，
 #   而红过一次之后人就学会忽略这条 workflow 了。所以这里显式把 0/1 翻成 output、
-#   **只有 2 才让作业红**："刷不动"报成"本周无事"才是真正不能接受的失效形状
+#   **只有 2 才让作业红**："刷不动"报成"本月无事"才是真正不能接受的失效形状
 #   （与 audit_deps 的"扫不成 ≠ 干净"同一条判据）。
 
 on:
   schedule:
-    # 每周一 UTC 03:00（北京 11:00，开发时段内 —— 红了当天就能看见，不是躺在夜里）。
-    - cron: "0 3 * * 1"
+    # 每月 3 号 UTC 03:00（北京 11:00，开发时段内 —— 红了当天就能看见，不是躺在夜里）。
+    # 2026-10-31 用户拍板改月频：单人项目，自动执行的重检查一月一次够了
+    # （从前每周一一趟；依赖的新鲜度不是日常迭代要追的东西，发版那道闸前有整把锁在）。
+    - cron: "0 3 3 * *"
   workflow_dispatch: {}
 
 permissions:
@@ -74,7 +77,7 @@ jobs:
           python scripts/tools/refresh_constraints.py || rc=$?
           if [ "$rc" -eq 0 ]; then echo "changed=false" >> "$GITHUB_OUTPUT"; exit 0; fi
           if [ "$rc" -eq 1 ]; then echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0; fi
-          echo "::error::刷不动约束行（exit=$rc）：这一趟必须红，不许当成‘本周无事’"
+          echo "::error::刷不动约束行（exit=$rc）：这一趟必须红，不许当成‘本月无事’"
           exit "$rc"
 
       - name: 变了 → 在新约束上装锁 + 快档用例
@@ -171,7 +174,7 @@ jobs:
             if [ "$rc" -eq 1 ]; then echo "changed=true" >> "$GITHUB_OUTPUT"; else echo "changed=false" >> "$GITHUB_OUTPUT"; fi
             exit 0
           fi
-          echo "::error::刷不动锁（exit=$rc）：这一趟必须红，不许当成‘本周无事’"
+          echo "::error::刷不动锁（exit=$rc）：这一趟必须红，不许当成‘本月无事’"
           exit "$rc"
 
       - name: 有新解析 → 先在新锁上跑一遍快档用例
@@ -206,12 +209,12 @@ jobs:
           git config user.email "chongxuan-huang@outlook.com"
           git checkout -b "$BRANCH"
           git add requirements/requirements.lock requirements/requirements-runtime.lock
-          git commit -m "chore(deps): 每周重解析两把锁（run_id=${{ github.run_id }}）"
+          git commit -m "chore(deps): 每月重解析两把锁（run_id=${{ github.run_id }}）"
           git push -u origin "$BRANCH"
           # 正文两样东西：变了哪些 pin（上面那份差异清单），以及"本条 job 已在新锁上
           # 跑绿快档用例"的证据 —— 因为这张 PR 不会自带 checks。
           {
-            echo "## 每周锁刷新"
+            echo "## 每月锁刷新"
             echo
             echo "由 \`scripts/tools/recompile_locks.py\` 在 Windows runner 上重新解析产出"
             echo "（本地 pip 配置已屏蔽 —— 锁不钉镜像源，CONTRIBUTING 8.2）。"
@@ -229,6 +232,6 @@ jobs:
             echo "  所以证据是上面这一条 job 里跑的；需要远端门禁请手动 dispatch 一次 CI。"
           } > "$RUNNER_TEMP/pr-body.md" # 写进 runner 临时目录：工作树里不留一份能被下次 add 捡走的正文
           gh pr create --base main --head "$BRANCH" \
-            --title "chore(deps): 每周重解析两把锁" \
+            --title "chore(deps): 每月重解析两把锁" \
             --body-file "$RUNNER_TEMP/pr-body.md" \
             --repo "${{ github.repository }}"

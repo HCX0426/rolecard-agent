@@ -93,9 +93,7 @@ def test_内容兜底对假清单不炸且仍退全量() -> None:
     门禁自己的快档上红的就是它）。零命中照旧退全量 —— 判据一格没松。
     """
     gate = _load_gate()
-    picked, why = gate.select_affected(
-        ["src/rolecard_agent/core/没有同名测试的模块.py"], _TESTS
-    )
+    picked, why = gate.select_affected(["src/rolecard_agent/core/没有同名测试的模块.py"], _TESTS)
     assert picked == []
     assert "零命中" in why, why
 
@@ -114,6 +112,92 @@ def test_没有_src_改动就不挑() -> None:
     picked, why = gate.select_affected(["README.md", "docs/代码审查快照.md"], _TESTS)
     assert picked == []
     assert "没有 src/" in why, why
+
+
+# ------------------------------------------------------------------ plan_backend_pytest
+# （2026-10-31 排程教义的三档路由：skip / subset / full。判据住在 gate.py，这里钉边界。）
+
+
+def test_plan_无人提及的内容面改动整步跳过() -> None:
+    """改动全在 frontend/ docs/ shell/ 里，而假清单里没有一支用例提及 ⇒ skip。"""
+    gate = _load_gate()
+    kind, picked, why = gate.plan_backend_pytest(  # noqa: SLF001
+        ["frontend/src/App.tsx", "docs/手册/x.md", "shell/main.ts"], _TESTS
+    )
+    assert kind == "skip" and picked == [] and "没有任何用例提及" in why, (kind, why)
+
+
+def test_plan_内容面改动按提及耦合挑用例() -> None:
+    """耦合探测问测试文件的**内容**：真仓里 `frontend/openapi.json` 被 API 面用例读着，
+    改了它就只能跑那几支（skip 与全量中间的那一档）。"""
+    gate = _load_gate()
+    kind, picked, why = gate.plan_backend_pytest(  # noqa: SLF001
+        ["frontend/openapi.json"],
+        gate._test_files(),  # noqa: SLF001
+    )
+    assert kind == "subset", (kind, why)
+    assert "tests/integration/test_api_surface.py" in picked, picked
+    assert "tests/unit/test_paths.py" in picked, picked  # 也提 frontend
+
+
+def test_plan_夜间证据JSON这种角落永远走subset不裸跳() -> None:
+    """提及耦合的**反面**：只碰一个没人提的角落（docs/eval 的夜间 JSON）——
+    真仓里没有任何测试文本提到 "nightly-41176828077.json"，但提到 "docs" 的不少，
+    所以这一族永远走 subset 而不是 skip：skip 只在整词都没人提时发生。"""
+    gate = _load_gate()
+    kind, picked, why = gate.plan_backend_pytest(  # noqa: SLF001
+        ["docs/eval/status-41176828077.json"],
+        gate._test_files(),  # noqa: SLF001
+    )
+    assert kind in ("skip", "subset"), kind
+    if kind == "subset":
+        assert picked, why
+
+
+def test_plan_掺一件别的文件就不许跳() -> None:
+    """README/pyproject/.github/scripts 这类文件的耦合面没有机器清单敢打包票 ⇒ full。"""
+    gate = _load_gate()
+    kind, _p, why = gate.plan_backend_pytest(  # noqa: SLF001
+        ["docs/x.md", "README.md"], _TESTS
+    )
+    assert kind == "full", (kind, why)
+
+
+def test_plan_只动用例文件挑被改的那些() -> None:
+    """只碰 tests/**.py（没碰 conftest）⇒ subset：跑被改的用例 + 常跑集。"""
+    gate = _load_gate()
+    kind, picked, _why = gate.plan_backend_pytest(  # noqa: SLF001
+        ["tests/unit/test_ocr.py"], _TESTS
+    )
+    assert kind == "subset"
+    assert picked == ["tests/unit/test_import_floor.py", "tests/unit/test_ocr.py"], picked
+
+
+def test_plan_动过_conftest_就全量() -> None:
+    """conftest 是收集面的横切件，"只动了测试"对它不成立 ⇒ full。"""
+    gate = _load_gate()
+    kind, _p, _why = gate.plan_backend_pytest(  # noqa: SLF001
+        ["tests/conftest.py", "tests/unit/test_ocr.py"], _TESTS
+    )
+    assert kind == "full"
+
+
+def test_plan_删掉的测试文件不进清单() -> None:
+    """git diff 看得见删除：把没了的文件塞给 pytest = 收集期红。按盘上枚举过滤。"""
+    gate = _load_gate()
+    kind, picked, _why = gate.plan_backend_pytest(  # noqa: SLF001
+        ["tests/unit/test_不存在的.py"], _TESTS
+    )
+    assert "tests/unit/test_不存在的.py" not in picked
+    # 唯一的改动是个"删掉的" ⇒ 没东西可跑 ⇒ 保守走 full（不拿空清单骗过收集）。
+    assert kind == "full", (kind, picked)
+
+
+def test_plan_空清单与_git_失败都是_full() -> None:
+    """两个"问不出"的形状都回 full —— 探测失误只许让门禁更慢，不许让它更弱。"""
+    gate = _load_gate()
+    assert gate.plan_backend_pytest([], _TESTS)[0] == "full"  # noqa: SLF001
+    assert gate.plan_backend_pytest(None, _TESTS)[0] == "full"  # noqa: SLF001
 
 
 def test_挑得太多也退回全量() -> None:
@@ -184,15 +268,32 @@ def test_门禁拼出来的命令行形状() -> None:
 
 
 def test_子集开关不许转给_pytest() -> None:
-    """`pytest_with_evidence.py` 必须把 `--lane` 与 `--affected-subset` 一起摘掉。"""
+    """`pytest_with_evidence.py` 必须把 `--lane` 与 `--affected-subset` 一起摘掉。
+
+    2026-10-31 排程教义的合同升级：子集文件从 positional 里**也**摘出来（单独走
+    `_subset_files_from_argv`），`main()` 拿它与分片求交 —— 混在 positional 里就没法与
+    "人直接点名要跑的文件"区分（那种不该打印子集记号）。开关与文件都不许落到 pytest 命令行。
+    """
     pwe = _load_script("pytest_with_evidence.py")
     assert pwe._SUBSET_FLAG == "--affected-subset"  # noqa: SLF001
-    extra = pwe._extra_from_argv(  # noqa: SLF001
-        ["--lane", "fast", "--affected-subset", "tests/unit/test_ocr.py", "tests/unit/test_api.py"]
-    )
-    assert extra == ["tests/unit/test_ocr.py", "tests/unit/test_api.py"], extra
+    argv = [
+        "--lane",
+        "fast",
+        "--affected-subset",
+        "tests/unit/test_ocr.py",
+        "tests/unit/test_api.py",
+    ]
+    assert pwe._subset_files_from_argv(argv) == [  # noqa: SLF001
+        "tests/unit/test_ocr.py",
+        "tests/unit/test_api.py",
+    ]
+    assert pwe._extra_from_argv(argv) == []  # noqa: SLF001
     assert pwe._extra_from_argv(["--lane=fast"]) == []  # noqa: SLF001
     assert pwe._extra_from_argv(["--lane", "coverage"]) == []  # noqa: SLF001
+    # 点名要跑的文件（不带开关）留在 positional：这条与上面那条合起来钉"摘的只有子集那族"。
+    assert pwe._extra_from_argv(["--lane", "fast", "tests/unit/test_x.py"]) == [  # noqa: SLF001
+        "tests/unit/test_x.py"
+    ]
 
 
 def test_真工作树上挑出来的文件必须真的存在() -> None:
