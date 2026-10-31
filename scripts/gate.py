@@ -179,10 +179,13 @@ STEPS: list[tuple[str, list[str], str]] = [
     ("随包后端 parity", [PY, "scripts/check_bundle_parity.py"], "both"),
     # **依赖漏洞扫描**（ENGI-15 ①，2026-10-07 锁文件落地后接线）：`audit_deps.py` 出网问
     # OSV，所以它**不进快档**（本仓"测试全离线"的铁律），mode=full 落在本地全量档与
-    # `--ci`（--ci 是 full 减 CI_SKIP，而它**刻意不在 CI_SKIP**）—— 每次 push 的 CI 红
-    # 线从这条起成立。判据在 dependency-audit-allowlist.json：新出现的告警 = 红；
+    # `--ci`（--ci 是 full 减 CI_SKIP，而它**刻意不在 CI_SKIP**）。判据在
+    # dependency-audit-allowlist.json：新出现的告警 = 红；
     # 在册豁免带"上游已给修复版本"前提，前提消失会**反过来红**（豁免不是永久通行证）。
     # 退出码 fail-closed：扫不成（断网/接口变更）退 2，门禁同样红 —— 扫不成不等于干净。
+    # 2026-10-31 排程教义：走「改哪查哪」路由的趟里，这一步**按锁面改没改决定跑不跑**
+    # （plan_dependency_audit；新增披露的时刻归 lock-refresh 月臂与发版全量闸），没给
+    # base 的手动趟与本机全量档照跑。
     ("依赖审计", [PY, "scripts/tools/audit_deps.py"], "full"),
     # **密钥扫描**（审查快照（2026-10-04）#ENGI-15 ②，可选档但本仓已接）：`scan_secrets.py`
     # 包装 gitleaks，扫的是**由 git 名单圈出的影子树**（tracked + 未忽略的未跟踪 = 本次要发的
@@ -475,6 +478,44 @@ def _affected_pytest_command(base: list[str], changed: list[str] | None) -> tupl
         # 调用方本该先拦下 skip；走到这里按"没拦成"处理 —— 保守跑全量，绝不当"跳过"执行。
         return base, f"全量（skip 档不该走到命令拼装：{why}）"
     return base, f"全量（{why}）"
+
+
+def plan_dependency_audit(changed: list[str] | None) -> tuple[bool, str]:
+    """依赖审计这一步要不要跑：`(跑?, 为什么)`（2026-10-31 排程教义的"改哪查哪"半边）。
+
+    OSV 问的是**锁面**（requirements/**.lock|.txt + pyproject 的 extras + 约束文件）上
+    那些版本的漏洞状态 —— 依赖声明一个字没改，答案就不可能变（唯一例外：OSV 数据库
+    本身新增了披露，那是 lock-refresh 月臂与发版全量闸的时刻，不是每次 push 的）。
+    判据与 `select_affected` 的第一条同味：**碰了锁面之外的任何文件不算数**——只要
+    改动里有锁面文件就全跑（宁多跑）；问不出（changed None / 清单为空）也全跑。
+    没给 `--affected-from` 的档位（本机全量、CI 手动 dispatch）不走这条路——调用方
+    只在 routing 生效时问这里（与 `_pytest_routing` 同一条接线纪律）。
+    """
+    if changed is None:
+        return True, "git 查询失败：不确定就保守跑"
+    if not changed:
+        return True, "没有改动面可问（空清单不是'没东西要审'，是'不知道'）"
+    touched = [p for p in changed if _is_dependency_surface(p)]
+    if touched:
+        return True, f"锁面动过（{touched[0]} 等 {len(touched)} 个文件）"
+    return False, "改动没碰任何依赖声明面（requirements/**.lock|.txt / pyproject / constraints）"
+
+
+def _is_dependency_surface(path: str) -> bool:
+    """一个改动文件是不是"依赖声明面"。名单与 `checks_install.LOCK_SURFACES` 同源一族：
+    requirements 目录的锁与 txt、pyproject（extras 的界写在那）、config/constraints-*.txt。
+    两族**判据本身**也在面内：豁免表（allowlist）改了 = 放行行为变了、审计脚本改了 =
+    问法变了 —— 这两种改动恰恰最需要拿审计真跑一遍来验自己。
+    """
+    if path.startswith("requirements/") and (path.endswith(".lock") or path.endswith(".txt")):
+        return True
+    if path.startswith("config/") and "constraints" in path and path.endswith(".txt"):
+        return True
+    if path == "config/dependency-audit-allowlist.json":
+        return True
+    if path == "scripts/tools/audit_deps.py":
+        return True
+    return path == "pyproject.toml"
 
 
 def _cwd_for(name: str) -> Path | None:
@@ -1161,8 +1202,12 @@ def main() -> int:
     # 这份结果给**循环的 skip 判定**用；命令拼装走 `_affected_pytest_command`（另一处
     # 对同一份 `_changed_at_start` 的纯函数调用 —— 输入只取一次，两问必同答）。
     _pytest_routing: tuple[str, list[str], str] | None = None
+    # 依赖审计的默认=跑：只有路由生效（--ci+--affected-from 或本机 --fast）才问判据。
+    _dep_audit_runs: bool = True
+    _dep_audit_why = "没走「改哪查哪」路由：照跑"
     if (args.ci and args.affected_from) or (args.fast and not args.full_tests):
         _pytest_routing = plan_backend_pytest(_changed_at_start, _test_files())
+        _dep_audit_runs, _dep_audit_why = plan_dependency_audit(_changed_at_start)
 
     # 读数的键按**步骤名**挂钩，而步骤名会改（改名/合并/删步）：写错的键从此永不命中，
     # 却长得像"这一趟没跑那一步"（见 _write_readings）—— 于是一条读数静静消失、门禁照绿。
@@ -1298,6 +1343,12 @@ def main() -> int:
             and name.startswith("pytest(-x")
         ):
             print(f"\n▶ {name}：跳过（{_pytest_routing[2]}）", flush=True)
+            timings.append((name, 0.0))
+            continue
+        # 依赖审计的「改哪查哪」（2026-10-31 排程教义）：OSV 答的是锁面版本的问题，
+        # 锁面没动答案不会变（新增披露归月臂与发版全量闸的时刻）。跳过大声打出来。
+        if name == "依赖审计" and not _dep_audit_runs:
+            print(f"\n▶ {name}：跳过（{_dep_audit_why}）", flush=True)
             timings.append((name, 0.0))
             continue
         # 步骤跑在哪个目录按名字前缀定（比在元组里再加一个字段少一处噪声）。第一版

@@ -200,6 +200,41 @@ def test_plan_空清单与_git_失败都是_full() -> None:
     assert gate.plan_backend_pytest(None, _TESTS)[0] == "full"  # noqa: SLF001
 
 
+# ------------------------------------------------------- plan_dependency_audit（锁面判据）
+
+
+def test_plan_锁面动过必须审() -> None:
+    """requirements 的锁/txt、pyproject 的 extras、约束文件、豁免表、审计脚本自己——都在面内。"""
+    gate = _load_gate()
+    for path in (
+        "requirements/requirements.lock",
+        "requirements/requirements-runtime.lock",
+        "requirements/requirements-dev.txt",
+        "pyproject.toml",
+        "config/constraints-linux.txt",
+        "config/dependency-audit-allowlist.json",
+        "scripts/tools/audit_deps.py",
+    ):
+        runs, why = gate.plan_dependency_audit([path, "src/rolecard_agent/rag/ocr.py"])  # noqa: SLF001
+        assert runs, f"{path} 必须触发依赖审计：{why}"
+
+
+def test_plan_没碰锁面就不审() -> None:
+    """OSV 答的是锁面版本的问题：锁没动，答案不可能变（披露新增归月臂与发版闸）。"""
+    gate = _load_gate()
+    runs, why = gate.plan_dependency_audit(  # noqa: SLF001
+        ["src/rolecard_agent/rag/ocr.py", "tests/unit/test_ocr.py", "docs/x.md"]
+    )
+    assert not runs and "没碰" in why, (runs, why)
+
+
+def test_plan_依赖审计问不出必须审() -> None:
+    """changed None / 空清单：与 pytest 档同一条保守纪律——问不出=跑。"""
+    gate = _load_gate()
+    assert gate.plan_dependency_audit(None)[0] is True  # noqa: SLF001
+    assert gate.plan_dependency_audit([])[0] is True  # noqa: SLF001
+
+
 def test_挑得太多也退回全量() -> None:
     """省不下多少就不省：一次"我到底跑全了没有"的疑问比那几秒贵。"""
     gate = _load_gate()
