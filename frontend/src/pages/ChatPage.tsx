@@ -84,6 +84,12 @@ export default function ChatPage({
   // 编辑重生成：正在编辑的那条消息（id + 草稿 + 原图，图随编辑保留）
   const [editing, setEditing] = useState<{ id: string; text: string; image?: string } | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null); // 复制反馈（按轮 key）
+  // `editing` 的活引用：需要**稳定身份**的回调要读"当下那一份"（R1031-31）。
+  // 赋值放 effect 而非渲染期：渲染期改 ref 是 React 明令禁止的（react-hooks/refs）。
+  const editingRef = useRef<{ id: string; text: string; image?: string } | null>(null);
+  useEffect(() => {
+    editingRef.current = editing;
+  });
   const [enhancing, setEnhancing] = useState(false); // 增强提示词进行中
   const [distilling, setDistilling] = useState(false); // 提取精海中（一次真模型调用，本地卡上要几十秒）
   const [ctxBudget, setCtxBudget] = useState(0); // 上下文字符预算（后端 context 端点）
@@ -130,6 +136,12 @@ export default function ChatPage({
     startBubble,
     stop,
   } = useChatStream(applyMeta);
+  // `busy` 的活引用：需要**稳定身份**的回调要读"当下那一份"（R1031-31）。
+  // 赋值放 effect 而非渲染期：渲染期改 ref 是 React 明令禁止的（react-hooks/refs）。
+  const busyRef = useRef(busy);
+  useEffect(() => {
+    busyRef.current = busy;
+  });
 
   // 状态提示统一走 toast（可叠加、自动消失、带语气）—— 一行 status 会被后来的消息覆盖，
   // 上一个操作的结果还没看清就没了。保留 setStatus 这个名字，既有调用点无需改动。
@@ -460,7 +472,44 @@ export default function ChatPage({
   // memo：数百条历史时每个 token 都会触发渲染，重跑切分是纯浪费（审查报告 P2）。
   const turns = useMemo(() => buildTurns(messages), [messages]);
 
-  function copyContent(text: string, key: string) {
+  // ---- 给 TurnRow 的**稳定**回调（R1031-31）-----------------------------------------
+  //
+  // 为什么这一组要存在：TurnRow 现在是 memo 的，而 memo 比的是 **props 身份**。从前的
+  // 写法在 map 里给每行塞内联闭包（`() => toggleSelect(selectId)` 等），每一次父组件
+  // 重渲都产出**全新**的函数对象 ⇒ memo 永远判定"props 变了"⇒ 历史那几百行每收到
+  // 一个 token 就重渲一遍。实测（`src/bench/streaming.bench.test.tsx`，2026-10-31）：
+  // 每提交耗时随历史长度**线性涨**（10 轮 1.79ms vs 200 轮 11.51ms，比值 6.4×），
+  // 500 轮（后端硬顶）外推约 26.9ms/提交 ⇒ 一句话的纯渲染开销上到秒级。
+  //
+  // 修法不是"给 memo 加例外"，而是**把数据从闭包里拿出来当参数**：回调本身在页面级
+  // 只创建一次（身份稳定），每行要用的东西（selectId / turn / key）由行内自己带上。
+  // 这样 memo 才真的拦得住 —— 而"拦得住"是可以用上面那个基准量出来的。
+
+  /** 勾选这一轮：勾选位是一问一答共用的（后端也按整轮删），所以传的是那一轮的用户 id。 */
+  const onToggleSelect = useCallback(
+    (selectId: string) => {
+      toggleSelect(selectId);
+    },
+    [toggleSelect],
+  );
+
+  const onStartEdit = useCallback((id: string, text: string, image?: string) => {
+    setEditing({ id, text, image });
+  }, []);
+
+  const onEditChange = useCallback((text: string) => {
+    setEditing((cur) => (cur ? { ...cur, text } : cur));
+  }, []);
+
+  const onEditCancel = useCallback(() => setEditing(null), []);
+
+  /** 保存编辑 = 从该条重新生成（与「重新生成」同一条通道）。 */
+  const onSaveEdit = useCallback(() => {
+    void saveEditRef.current();
+  }, []);
+
+  /** 复制这一轮的回答：文本与轮 key 由行内带上来（否则每行都要一个新闭包）。 */
+  const onCopy = useCallback((text: string, key: string) => {
     navigator.clipboard?.writeText(text).then(
       () => {
         setCopiedKey(key);
@@ -468,16 +517,19 @@ export default function ChatPage({
       },
       () => undefined,
     );
-  }
+  }, []);
 
-  /** 重新生成：丢弃该回答及其后的历史，用触发本轮的用户消息原样重问（紧凑 IDE 式）。 */
-  function regenerate(turn: BuiltTurn<MessageRow>) {
-    const uid = turn.user?.id;
-    const content = turn.user?.content ?? "";
-    if (!uid || busy || (!content && !turn.user?.image)) return;
-    // 多模态：原消息带图时随重问一起保图（重新生成保留上下文完整性，2026-09-18）
-    saveEdit(uid, content, turn.user?.image ?? null);
-  }
+  /** 重新生成这一轮：丢弃该回答及其后的历史，用触发本轮的用户消息原样重问。 */
+  const onRegenerate = useCallback(
+    (turn: BuiltTurn<MessageRow>) => {
+      const uid = turn.user?.id;
+      const content = turn.user?.content ?? "";
+      if (!uid || busyRef.current || (!content && !turn.user?.image)) return;
+      // 多模态：原消息带图时随重问一起保图（重新生成保留上下文完整性，2026-09-18）
+      void saveEditRef.current(uid, content, turn.user?.image ?? null);
+    },
+    [],
+  );
 
   // 上下文使用率：已用字符按当前消息估算（展示口径，随消息实时更新），上限来自后端配置。
     const ctxUsed = useMemo(
@@ -600,18 +652,14 @@ export default function ChatPage({
     onStatus: setStatus,
   });
 
-  function startEdit(id: string, text: string, image?: string) {
-    setEditing({ id, text, image });
-  }
-
   /** 编辑保存 = 从该条重新生成：SSE 与普通对话完全一致，结束后回放刷新历史。
    *  override* 供「重新生成」按钮复用同一通道（不经过编辑表单）。 */
   async function saveEdit(overrideId?: string, overrideText?: string, overrideImage?: string | null) {
     // override：直接指定要重新生成的用户消息（消息行「重新生成」按钮复用同一通道）
-    const mid = overrideId ?? editing?.id;
-    const content = (overrideText ?? editing?.text ?? "").trim();
+    const mid = overrideId ?? editingRef.current?.id;
+    const content = (overrideText ?? editingRef.current?.text ?? "").trim();
     if (!mid || !sessionId || sendingRef.current) return;
-    const image = overrideImage ?? editing?.image ?? null;
+    const image = overrideImage ?? editingRef.current?.image ?? null;
     if (!content && !image) return;
     sendingRef.current = true;
     setBusy(true);
@@ -634,6 +682,22 @@ export default function ChatPage({
       }
     }
   }
+
+  /** `saveEdit` 的活引用版：给需要**稳定身份**的调用方用（R1031-31）。
+   *
+   * 为什么要活引用：`saveEdit` 读 `editing`（当前正在编辑的那条）与 `sessionId`，
+   * 这两个值每轮都在变；若把它包成 `useCallback` 并把这两个值列进依赖，函数身份
+   * 就跟着变 —— 每行 TurnRow 的 memo 又被打穿。用 ref 读"当下那一份"，回调本身
+   * 只创建一次，语义不变（读的一定是**调用那一刻**的值，不是创建那一刻的）。
+   *
+   * 赋值放在 **effect** 里而不是渲染里：渲染期改 ref 是 React 明令禁止的
+   * （react-hooks/refs 尺子会判红，理由是渲染可能被丢弃/重放，副作用不该在那儿发生）。
+   * 代价是"本次渲染后、effect 跑前"这一小段里 ref 还是上一版 —— 那段窗口里没有
+   * 用户交互（effect 在同一次提交后立刻跑），所以读到的仍是"当下那一份"。 */
+  const saveEditRef = useRef(saveEdit);
+  useEffect(() => {
+    saveEditRef.current = saveEdit;
+  });
 
   /** 删除所选（后端按整轮扩展并写审计语义上的不可恢复操作）。 */
   async function deleteSelected() {
@@ -859,13 +923,13 @@ export default function ChatPage({
                   checked={selectMode && !!selectId && selected.includes(selectId)}
                   editing={editing}
                   copied={copiedKey === turn.key}
-                  onToggleSelect={() => toggleSelect(selectId)}
-                  onStartEdit={startEdit}
-                  onEditChange={(text) => editing && setEditing({ ...editing, text })}
-                  onEditCancel={() => setEditing(null)}
-                  onSaveEdit={() => saveEdit()}
-                  onRegenerate={() => regenerate(turn)}
-                  onCopy={(text) => copyContent(text, turn.key)}
+                  onToggleSelect={onToggleSelect}
+                  onStartEdit={onStartEdit}
+                  onEditChange={onEditChange}
+                  onEditCancel={onEditCancel}
+                  onSaveEdit={onSaveEdit}
+                  onRegenerate={onRegenerate}
+                  onCopy={onCopy}
                 />
               );
             })}

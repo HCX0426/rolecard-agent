@@ -1,3 +1,5 @@
+import { memo } from "react";
+
 import type { BuiltTurn } from "../../lib/turns";
 
 import Button from "../ui/Button";
@@ -29,8 +31,18 @@ function fmtDuration(from: string, to: string): string | null {
  * 为什么合并成一轮而不逐条渲染：一条带工具的回答在数据里是
  * `[用户 → AIMessage(思考+tool_calls) → ToolMessage → AIMessage(最终)]`，逐条渲染会把它
  * 散成三个突兀的框（用户反馈）。
+ *
+ * **为什么是 memo 的（R1031-31）**：流式期间每来一个 token，页面就重渲一次；从前的
+ * TurnRow 没有 memo，于是那几百行历史每 token 重渲一遍 —— 实测（`src/bench/
+ * streaming.bench.test.tsx`）每提交耗时随历史长度线性涨（10 轮 1.79ms vs 200 轮
+ * 11.51ms，比值 6.4×），500 轮（后端硬顶）外推约 26.9ms/提交 ⇒ 一句话的纯渲染
+ * 开销上到秒级。
+ *
+ * memo 只在**props 身份不变**时才拦得住重渲 —— 所以回调一律是页面级的稳定函数，
+ * 每行要用的东西（selectId / turn / key）由行内当参数带上，而不是包成闭包塞进来。
+ * 改这一层时记得连着改 ChatPage 那一侧，否则 memo 会静默失效（props 每次都变）。
  */
-export default function TurnRow({
+function TurnRow({
   turn,
   roleName,
   busy,
@@ -56,13 +68,17 @@ export default function TurnRow({
   /** 正在编辑的那一条（不是这一轮时为 null）。 */
   editing: { id: string; text: string; image?: string } | null;
   copied: boolean;
-  onToggleSelect: () => void;
+  /** 勾选/取消这一轮 —— **参数带 id**（页面级稳定函数，不包闭包）。 */
+  onToggleSelect: (selectId: string) => void;
+  /** 开始编辑这一条（参数是消息 id/正文/附图）。 */
   onStartEdit: (id: string, text: string, image?: string) => void;
   onEditChange: (text: string) => void;
   onEditCancel: () => void;
   onSaveEdit: () => void;
-  onRegenerate: () => void;
-  onCopy: (text: string) => void;
+  /** 重新生成这一轮 —— **参数带这一轮**（页面级稳定函数）。 */
+  onRegenerate: (turn: BuiltTurn<MessageRow>) => void;
+  /** 复制这一轮的回答 —— **参数带正文与轮 key**。 */
+  onCopy: (text: string, key: string) => void;
 }) {
   const userMid = turn.user?.id ?? "";
   const answerMid = turn.answer?.id ?? "";
@@ -80,7 +96,7 @@ export default function TurnRow({
           type="checkbox"
           aria-label={`选择这一轮：${(turn.user?.content ?? turn.answer?.content ?? "").slice(0, 12)}`}
           checked={checked}
-          onChange={onToggleSelect}
+          onChange={() => onToggleSelect(selectId)}
           className="absolute -left-7 top-1 h-3.5 w-3.5 accent-amber-500"
         />
       )}
@@ -184,11 +200,11 @@ export default function TurnRow({
                 永远不会互相矛盾。 */}
             {!turn.user && <Tag tone="blue">主动说的</Tag>}
             {dur && <span>耗时 {dur}</span>}
-            <Button variant="link" onClick={() => onCopy(turn.answer!.content)}>
+            <Button variant="link" onClick={() => onCopy(turn.answer!.content, turn.key)}>
               {copied ? "已复制" : "复制"}
             </Button>
             {turn.user?.id && !busy && (
-              <Button variant="link" onClick={onRegenerate}>
+              <Button variant="link" onClick={() => onRegenerate(turn)}>
                 重新生成
               </Button>
             )}
@@ -215,3 +231,11 @@ export default function TurnRow({
     </div>
   );
 }
+
+/**
+ * memo 的比较器用默认的**浅比较**：props 里的 `turn` 是 `useMemo` 出来的稳定引用
+ * （`buildTurns(messages)` 只在 messages 变时重建），回调是页面级稳定函数 ——
+ * 于是每 token 的那次父级重渲里，这一行的 props 全同 ⇒ React 直接跳过它的渲染。
+ * 哪一格变了（勾选状态、复制反馈、编辑态、busy）都会照常重渲 —— 那几处本来就该重渲。
+ */
+export default memo(TurnRow);

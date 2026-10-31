@@ -61,6 +61,9 @@ let replay: {
   name?: string;
   reasoning?: string;
   stopped?: boolean;
+  /** 落库时刻（ISO）：铅笔那枚按钮挂在**带时刻的消息**下沿（TurnRow 的渲染条件），
+   *  所以要测"编辑并重答"就得给时刻。 */
+  ts?: string;
 }[] = [];
 
 /** 一份最小可用的后端应答集：会话列表 / 角色 / 模型设置 / 历史回放 / 上下文预算。 */
@@ -496,6 +499,42 @@ describe("ChatPage 删除二次确认（useConfirm）", () => {
         expect.any(Object),
       ),
     );
+  });
+
+  // R1031-31：TurnRow 改成 memo 之后，它的回调从"每行一个闭包"改成了
+  // "页面级稳定函数 + 参数"。这是**形状**上的改动 ⇒ 行为必须另钉一遍：
+  // 这三条（复制 / 重新生成 / 编辑并重答）正是被改形状的那几个。
+  it("memo 化之后：复制、重新生成、编辑并重答仍各自作用在**那一轮**上", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    replay = [
+      { id: "m1", role: "user", content: "第一问", ts: "2026-10-31T10:00:00Z" },
+      { id: "m2", role: "assistant", content: "第一答", ts: "2026-10-31T10:00:01Z" },
+      { id: "m3", role: "user", content: "第二问", ts: "2026-10-31T10:00:02Z" },
+      { id: "m4", role: "assistant", content: "第二答", ts: "2026-10-31T10:00:03Z" },
+    ];
+    scriptedStream([{ type: "token", text: "答" }, { type: "end" }]);
+    // 复制动作要读剪贴板：jsdom 没有 clipboard，给一个可断言的替身。
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+
+    render(<ToastProvider><ChatPage /></ToastProvider>);
+    await sendMessage("第一问");
+    expect(await screen.findByText("第一答")).toBeTruthy();
+    expect(await screen.findByText("第二答")).toBeTruthy();
+
+    // ① 复制：点**第二轮**的复制按钮 ⇒ 复制的是"第二答"，不是第一答。
+    //    （参数化改动的要害就在这里：从前是 `() => copyContent(text, turn.key)`，
+    //      闭包抓的是行内的 turn.key；改错就会复制到别的那一轮。）
+    const copyButtons = screen.getAllByRole("button", { name: /复制/ });
+    fireEvent.click(copyButtons[copyButtons.length - 1]);
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("第二答"));
+
+    // ② 编辑并重答：铅笔挂在**用户消息**下沿。点第二轮那条 ⇒ 编辑框里是"第二问"。
+    const pencils = screen.getAllByLabelText("编辑并重答");
+    fireEvent.click(pencils[pencils.length - 1]);
+    const box = (await screen.findByDisplayValue("第二问")) as HTMLTextAreaElement;
+    expect(box.value).toBe("第二问");
+    expect(screen.queryByDisplayValue("第一问")).toBeNull();
   });
 });
 
