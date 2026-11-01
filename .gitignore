@@ -110,3 +110,7 @@ build/_baseline/
 
 # eslint 缓存挪出 node_modules（R1031-07）：npm ci 会整个删掉 node_modules，缓存放里面 = CI 恒冷跑
 frontend/.eslintcache
+
+# 审计过程件的临时目录（2026-11-01 复建）：尺子也剪掉它（scripts/consistency/core.py
+# 的 IGNORED_DIRS），因为结论的归宿是活文档，过程不留档 —— 与 11-01 删历史台账同一条纪律。
+/.audit/
