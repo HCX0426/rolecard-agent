@@ -96,6 +96,12 @@ contextBridge.exposeInMainWorld("rolecardShell", {
   petHotRects: (rects: number[][]): void => {
     ipcRenderer.send("shell:pet-hot-rects", rects);
   },
+  /** 这页"色片盒里哪一块真的有像素"：`[x, y, w, h]`，画布坐标。报的仍然**只有位置**——
+   *  壳拿它算趴边该推出去多少（Live2D 人物只占画布中间一小块，按盒子算会露出透明边，
+   *  屏幕上零像素 = "桌宠不见了"），并收窄点击命中区。旧壳收不到这条就是不改行为。 */
+  petContentRect: (rect: number[]): void => {
+    ipcRenderer.send("shell:pet-content-rect", rect);
+  },
   /** 桌宠的「显示消息内容」旗子（托盘是它唯一的写入口）。**只有读**：给页面一条写回的路，
    *  等于让后端托管的那个源自己决定要不要藏起内容，那就不叫隐私开关了。 */
   petContentVisible: (): Promise<boolean> => ipcRenderer.invoke("shell:pet-content-visible"),

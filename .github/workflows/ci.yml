@@ -363,6 +363,15 @@ jobs:
         working-directory: shell
         run: npm run test:cleanup
 
+      - name: 壳桌宠趴边几何（真跑十二条读数，红就 exit 1）
+        # 与上一步同一个形状：typecheck 守不住"方向对不对"。三条边的式子写反（right/left
+        # 互换、bottom 误写成 y+h−vis）**类型全对**，代价是"趴边后屏幕上零像素"—— 用户
+        # 看到的就是一只不见了（2026-11-01 真发生过：Live2D 的人物只占画布中间 44×167，
+        # 按盒子的常数推 132 ⇒ 露出的 48px 全是透明边）。这步把三条边的读数与"内容充满时
+        # 必须等于旧常数 132/140"那条安全阀钉死，纯函数、无 electron 依赖。
+        working-directory: shell
+        run: npm run test:dock
+
       - name: npm 依赖漏洞扫描（新披露 = 红，红就 exit 1）
         # 2026-11-01 补上：此前依赖审计**只扫 Python**（pip-audit 问 OSV），npm 侧一把
         # 尺子都没有 —— minimatch 的 DoS（GHSA-g3hv-75wg-m249，10-30 披露）在仓里躺了

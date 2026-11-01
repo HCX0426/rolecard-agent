@@ -42,16 +42,31 @@ const MAX_BUBBLE_CHARS = 64;
 const RETUCK_MS = 900;
 /**
  * "点哪儿算点桌宠"的位移余量 —— **只在刚滑过窗的宽限期内生效**（见 `onPet`）。
- * 横向 = 壳里的 `SIDE_TUCK`（趴边 ↔ 拉出来那一步：20 + (160 − 48) = 132），
- * 纵向 = `BOTTOM_TUCK`（184 + 4 − 48 = 140）。数值抄自 `shell/main/windows.ts`，
- * 那边改色片尺寸/露出量时这里要跟着改（两处各有注释钉着对方）。
+ * 横向 = 壳里的 `SIDE_TUCK`（趴边 ↔ 拉出来那一步：20 + (160 − 48) = 132）；纵向见下面
+ * `HIT_SLACK_Y`（现在是 0）。数值抄自 `shell/main/windows.ts`，那边改色片尺寸/露出量时
+ * 这里要跟着改（两处各有注释钉着对方）。
  * 2026-10-29 两处改动：① 尺寸按渲染层**现在**的 160×184 盒订正（旧值 96/44 按 88 见方
  * 算，形象放大后没跟 —— 用户报的"没点到图像、点周围也弹消息框"就是这对旧数）；
  * ② 余量从"永远开着"收紧成"只在滑窗宽限期"——平时点她周围的空气就是点桌面，
  * 而"悬停把她拉出来→马上点旧位置"这条路径（光标相对色片正好偏移一个滑距）照旧算点她。
  */
 const HIT_SLACK_X = 132;
-const HIT_SLACK_Y = 140;
+/**
+ * 滑窗宽限期内的**纵向**余量：0。
+ *
+ * 从前这里是 140（`BOTTOM_TUCK`），因为趴下边缘会把窗**往下**滑一段，光标相对色片正好
+ * 差那一截。2026-11-01 纵向不再吸边（用户：「底下和上都不需要隐藏」—— 往下推必然把脚
+ * 切掉），窗只剩左右平移，纵向余量就没有存在的理由了：留着它 = 白白让上下 140px 的空气
+ * 也算"点她"，正是用户抱怨过的那个形状。数与出处都收在这里讲清，别再抄回壳的常数。
+ */
+const HIT_SLACK_Y = 0;
+/**
+ * 按**内容框**判落点时给的外扩（CSS 像素）。
+ *
+ * 内容框是 `alpha > 10` 量出来的，发梢、投影、抗锯齿边缘比眼睛看到的略紧；不给几个
+ * 像素余量会出现"看着能点、实际点不着"。6 与壳那边 `PET_HOT_PAD` 同一量级。
+ */
+const CONTENT_HIT_PAD = 6;
 /** 滑窗宽限期：滑动动画 280ms + 用户的手在动画里就按下去的反应量。 */
 const SLIDE_GRACE_MS = 600;
 /** 面板里摊开最近几条。**这不是"对话的全部"** —— 一条主动会话今天实量到 44 条，
@@ -336,7 +351,12 @@ export default function PetPage() {
   const [live2dFailure, setLive2dFailure] = useState<{ id: string; reason: string } | null>(null);
   useEffect(() => {
     setLive2dFailure((prev) => (prev && prev.id !== looked.pack?.id ? null : prev));
-  }, [looked.pack?.id]);
+    // 内容边界同理：它是**上一个模型**量出来的。换包（尤其 live2d → 序列帧/默认包）不清掉，
+    // 命中区会继续按上一只人物的那一格收窄，用户看到的是"点她却点不动"。
+    // 这里只清 ref，不自己调 `reportHotRects`：下面那条"每次渲染后重报"的 effect 就在同一次
+    // 提交里、且声明在它之后 —— 它会按清掉之后的状态重报一遍（落回整盒 ⇒ 壳那边落回旧常数）。
+    spriteContentRef.current = null;
+  }, [looked.pack?.id, looked.pack?.kind]);
   const failedLive2d =
     live2dFailure && looked.pack?.kind === "live2d" && live2dFailure.id === looked.pack.id
       ? live2dFailure.reason
@@ -411,24 +431,84 @@ export default function PetPage() {
    *
    *  200×240 里色片只占中间 88 见方，两侧各 56px 是全透明的，可整扇窗都在吃鼠标 ——
    *  结果那两条带上面的桌面图标点不到（用户 2026-09-22 就问过）。这页只把"画了东西的块"
-   *  （`.pet-nodrag`：色片、气泡、面板）报给壳，壳每 40ms 拿光标位置比一次。
+   *  （`.pet-nodrag`：色片、气泡、面板）报给壳，壳每 16ms 拿光标位置比一次
+   *  （`PET_POLL_MS`；从前是 40ms，实测太粗 —— 光标落到色片后那 40ms 里按下的会被放行）。
    *  为什么不在页面里判 hover 再回一个布尔：真机量过 —— 窗带上 `WS_EX_TRANSPARENT` 之后
    *  `forward:true` 一条 mousemove 都送不进来，翻成"放行"就没有回来的路。
    *  浏览器里开 #/pet、或新界面跑在旧壳里（没这两个方法）时一行都不做 ⇒ 保持整窗吃点击。
+   *
+   *  2026-11-01 补上缺的一半：色片那一块报的原先是 **DOM 盒**，而 Live2D 的人物只占画布
+   *  中间一小块（真机实测内容宽 44~56px 随姿态变，画布 160 宽 ⇒ 两侧各 50~58px 全透明）——
+   *  于是"我都没点到人上，却算点了她"（用户原话）。现在这块改报**内容框**
+   *  （`spriteContentRef`），量不到就退回 DOM 盒。
    */
   const hotKeyRef = useRef("");
+  const contentKeyRef = useRef("");
+  /**
+   * 色片那 160×184 的盒子里**真有像素**的那一块（画布/窗口坐标，CSS 像素）。
+   * null = 没量到（序列帧包、模型还在加载、读像素失败）⇒ 一切按整盒算，与今天一致。
+   *
+   * 用结构化对象而不是 `DOMRect`：jsdom 的 `DOMRect` 构造器不保证可 new，而这里只需要
+   * left/top/width/height 四个数，`getBoundingClientRect()` 回来的就是同一个形状。
+   */
+  const spriteContentRef = useRef<{ left: number; top: number; width: number; height: number } | null>(
+    null,
+  );
+
+  /** 色片盒在窗口里的位置 —— 内容框要从"盒内局部"换算成"画布坐标"。 */
+  function spriteBoxRect(): DOMRect | null {
+    const el = spriteRef.current;
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 ? r : null;
+  }
+
+  /** Live2D 量完内容边界后报上来的那一格（盒内局部坐标）。 */
+  function handleContentBounds(box: { x: number; y: number; width: number; height: number }) {
+    const host = spriteBoxRect();
+    if (!host) return;
+    spriteContentRef.current = {
+      left: host.left + box.x,
+      top: host.top + box.y,
+      width: box.width,
+      height: box.height,
+    };
+    // 内容要等模型加载完才量得到，而窗这时候可能**已经按兜底常数藏好了**：不立刻重报，
+    // "修好了"就得等下一次拖动才看得见（2026-11-01 真机验证踩过）。
+    reportHotRects();
+  }
 
   function reportHotRects() {
-    const send = shellBridge()?.petHotRects;
+    const shell = shellBridge();
+    const send = shell?.petHotRects;
     if (!send) return; // 没壳 / 旧壳：不报，壳那边就不会把窗设成忽略
+    const content = spriteContentRef.current;
     const rects = Array.from(document.querySelectorAll(".pet-nodrag")).map((el) => {
-      const r = el.getBoundingClientRect();
+      // 色片这一块：量得到内容就报内容（空气不吃点击），报不到就照旧报整盒。
+      const r = el === spriteRef.current && content ? content : el.getBoundingClientRect();
       return [r.left, r.top, r.width, r.height].map((n) => Math.round(n));
     });
     const key = JSON.stringify(rects);
-    if (key === hotKeyRef.current) return; // 每次渲染都跑一遍：形状没变就不发消息
-    hotKeyRef.current = key;
-    send(rects);
+    if (key !== hotKeyRef.current) {
+      hotKeyRef.current = key;
+      send(rects);
+    }
+    // 同一份内容框还给壳一份：它要拿这个算**趴边该推出去多少**（`petDockGeometry`）。
+    const spriteRect = spriteBoxRect();
+    const payload =
+      content && spriteRect
+        ? [
+            Math.round(content.left),
+            Math.round(content.top),
+            Math.round(content.width),
+            Math.round(content.height),
+          ]
+        : [];
+    const ckey = JSON.stringify(payload);
+    if (ckey !== contentKeyRef.current) {
+      contentKeyRef.current = ckey;
+      shell?.petContentRect?.(payload);
+    }
   }
 
   // 挂载：声明"这页会报像素块"，卸载：立刻还给壳（壳那边同时停表）。
@@ -449,13 +529,41 @@ export default function PetPage() {
     return () => window.clearTimeout(later);
   });
 
+  /** 落点在不在这块矩形里（横纵各给一段余量）。 */
+  function inRect(
+    r: { left: number; top: number; width: number; height: number },
+    x: number,
+    y: number,
+    padX: number,
+    padY = padX,
+  ): boolean {
+    return (
+      x >= r.left - padX &&
+      x <= r.left + r.width + padX &&
+      y >= r.top - padY &&
+      y <= r.top + r.height + padY
+    );
+  }
+
   /** 这次指针动作是不是落在"画了像素的地方"（色片本体，或面板/气泡那块 UI）。
    *  与 `insideUi` 的区别：`insideUi` 只认 `[data-pet-ui]`（面板、气泡），色片不在里头
-   *  —— 色片的进入要用它自己的 DOM 位置判。 */
-  function onPaintedUi(event: { target: EventTarget | null }): boolean {
+   *  —— 色片的进入要用它自己的 DOM 位置判。
+   *
+   *  2026-11-01：色片这一块改成**先按内容框判坐标**。canvas 不是 alpha-aware 的，
+   *  `contains(target)` 对透明 padding 同样返回 true —— 于是"路过她旁边的空气"也会把
+   *  趴着的那只拉出来（用户 2026-10-30 报的那条，Live2D 那 58px 透明边让它更难躲）。
+   *  量不到内容框就退回原来的 DOM 判定，不比以前更严。 */
+  function onPaintedUi(event: { target: EventTarget | null; clientX?: number; clientY?: number }): boolean {
     const el = event.target as HTMLElement | null;
     if (!el) return false;
-    return Boolean(el.closest?.("[data-pet-ui]") || spriteRef.current?.contains(el));
+    if (el.closest?.("[data-pet-ui]")) return true;
+    if (!spriteRef.current?.contains(el)) return false;
+    const content = spriteContentRef.current;
+    const box = spriteBoxRect();
+    if (!content || !box) return true; // 没量到内容框 ⇒ 与今天一致：整盒都算她
+    if (typeof event.clientX !== "number" || typeof event.clientY !== "number") return true;
+    // 内容框只用于"是不是她"，边缘给几个像素的余量：发梢与投影是半透明的，框得比眼睛看到的最紧。
+    return inRect(content, event.clientX, event.clientY, CONTENT_HIT_PAD);
   }
 
   /** 悬停只做一件事：把趴在边上的那半只拉出来（§7.6）。**不再弹面板** —— 悬停会改窗口尺寸，
@@ -467,7 +575,7 @@ export default function PetPage() {
    *  （滑动 280 + 余量 400，`slidePetTo` 里的 `holdPetClickable`）—— 那段时间透明边距
    *  也收得到 mouseenter。不加这道闸，"路过它旁边的空气"就会把趴着的那只拉出来；
    *  而且拉出来之后页面在透明区是聋的（见 `pointerLeft`），回不去。 */
-  function reveal(event: { target: EventTarget | null }) {
+  function reveal(event: { target: EventTarget | null; clientX: number; clientY: number }) {
     if (!onPaintedUi(event)) return;
     if (retuckRef.current !== null) {
       window.clearTimeout(retuckRef.current);
@@ -558,8 +666,13 @@ export default function PetPage() {
     expand(!expandedRef.current);
   }
 
-  /** 点哪儿算"点桌宠"：色片那块矩形，**外加刚滑过窗时的那段位移余量**（见 `HIT_SLACK_*`）。
-   *  宽限期外，点她周围的空气就是点桌面：收起着什么都不做，摊着才是收起（见 `rootClick`）。 */
+  /** 点哪儿算"点桌宠"：色片那一块，**外加刚滑过窗时的那段位移余量**（见 `HIT_SLACK_*`）。
+   *  宽限期外，点她周围的空气就是点桌面：收起着什么都不做，摊着才是收起（见 `rootClick`）。
+   *
+   *  2026-11-01：量到过内容框（Live2D 的真像素边界）时**按内容框判**。canvas 不认 alpha，
+   *  那 160 宽的盒子里人物只占 44，`el.contains(target)` 对左右各约 58px 的透明 padding
+   *  同样返回 true —— 这正是用户那句"我都没点击到人上，需要看形状和位置吧"。
+   *  没量到内容框（序列帧包、模型还在加载、浏览器里开）⇒ 逐格沿用旧判定，不比以前更严。 */
   function onPet(event: {
     clientX: number;
     clientY: number;
@@ -567,19 +680,19 @@ export default function PetPage() {
   }): boolean {
     const el = spriteRef.current;
     if (!el) return false;
-    const hit = event.target as HTMLElement | null;
-    if (hit && (hit === el || el.contains(hit))) return true; // 就点在色片身上，不用量坐标
-    const r = el.getBoundingClientRect();
-    if (!r.width && !r.height) return true; // 量不到形状（无布局的环境）就按老规矩：算点它
     const sliding = Date.now() - slideAtRef.current < SLIDE_GRACE_MS;
-    const sx = sliding ? HIT_SLACK_X : 0;
-    const sy = sliding ? HIT_SLACK_Y : 0;
-    return (
-      event.clientX >= r.left - sx &&
-      event.clientX <= r.right + sx &&
-      event.clientY >= r.top - sy &&
-      event.clientY <= r.bottom + sy
-    );
+    const padX = sliding ? HIT_SLACK_X : CONTENT_HIT_PAD;
+    const padY = sliding ? HIT_SLACK_Y : CONTENT_HIT_PAD;
+    const content = spriteContentRef.current;
+    const box = spriteBoxRect();
+    if (!content) {
+      const hit = event.target as HTMLElement | null;
+      if (hit && (hit === el || el.contains(hit))) return true; // 就点在色片身上，不用量坐标
+      if (!box) return true; // 量不到形状（无布局的环境）就按老规矩：算点它
+      return inRect(box, event.clientX, event.clientY, padX, padY);
+    }
+    if (!box) return true; // 布局量不到（无布局环境）⇒ 老规矩
+    return inRect(content, event.clientX, event.clientY, padX, padY);
   }
 
   /** 根节点的点击分工：**"点开面板"这个动作只属于色片那一块的矩形**。
@@ -1251,6 +1364,7 @@ export default function PetPage() {
             width={160}
             height={184}
             onError={(reason) => setLive2dFailure({ id: drawn.id, reason })}
+            onContentBounds={handleContentBounds}
           />
         ) : (
         <PetSprite

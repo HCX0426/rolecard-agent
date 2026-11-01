@@ -32,6 +32,7 @@ import {
   setPetExpanded,
   setPetHitTestArmed,
   setPetHotRects,
+  setPetContentRect,
 } from "./windows";
 import { createTray, type TrayHandle } from "./tray";
 import { createUpdater, runPostInstallCleanup, updaterAvailable, type Updater } from "./updater";
@@ -323,6 +324,19 @@ function boot(): void {
   });
   ipcMain.on("shell:pet-hot-rects", (_event, value: unknown) => {
     if (petWin) setPetHotRects(petWin, value);
+  });
+  // 桌宠上报"盒子里哪一块真的有像素"（`[x, y, w, h]`，画布坐标）。**报的仍只是位置**：
+  // 壳据此算趴边该推出去多少 —— Live2D 的人物只占画布中间一小块（真机实测 44×166），
+  // 按盒子算会把左右各约 58px 的透明边露在屏内 ⇒ 屏幕上零像素，用户看到"桌宠不见了"。
+  // 同一份数还用来收窄点击命中区（点她周围的空气不再算点她，2026-11-01 用户报的那条）。
+  // 报得不合法一律当没报（`normalizeContentRect` → null ⇒ 落旧常数），页面说错话不该把
+  // 桌宠推出屏幕。摆窗的权力照旧一条都不给页面。
+  ipcMain.on("shell:pet-content-rect", (_event, value: unknown) => {
+    if (!petWin) return;
+    setPetContentRect(petWin, value);
+    // 留一行读数：内容边界**量不到**时页面报的是空数组，壳会退回"整盒"的旧兜底 ——
+    // 那正是"桌宠趴边看不见"复发时唯一能归因的地方（打包态没有终端，日志是唯一出口）。
+    logLine(`桌宠内容框上报：${JSON.stringify(value)}`);
   });
   // 桌宠页问"内容该不该画出来"（托盘「显示消息内容」）。**只有读**：写的那一侧只在托盘，
   // 页面能改它就不是隐私开关了，是后端托管的那个源自己把自己藏起来的手势。

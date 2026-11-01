@@ -18,6 +18,13 @@ import {
   type DockEdge,
   type PetPrefs,
 } from "./state";
+import {
+  normalizeContentRect,
+  tuckForEdge,
+  dockEdgeFor,
+  PEEK_PX,
+  type Rect as ContentRect,
+} from "./petDockGeometry";
 
 export const PET_WIDTH = 200;
 export const PET_HEIGHT = 240;
@@ -42,22 +49,31 @@ const CANVAS_SIDE_SLACK = (PET_CANVAS_WIDTH - PET_WIDTH) / 2; // 180
 const CANVAS_TOP_SLACK = PET_CANVAS_HEIGHT - PET_HEIGHT; // 280
 
 // ---- 靠边隐藏（趴边）的几何，设计稿 §7.6 -------------------------------------------------
-// 露出的目标必须是**色片的像素**，不是窗口的像素：色片居中在 200 宽的锚点框里，两侧是
+// 露出的目标必须是**内容的像素**，不是窗口的像素：色片居中在 200 宽的锚点框里，两侧是
 // 透明的 —— 推出去藏的全是透明边的话，色片一格没少，看上去根本没吸进去（提案那版就是这么
 // 算错的）。而透明区不吃 hover，露出的那条窄边要全是色片本体才点得着。
-// 2026-10-29 订正：这两维从旧 88 见方改成渲染层**现在**的 160×184（`PetPage` 传给
+// 2026-10-29 订正：锚点内那格从旧 88 见方改成渲染层**现在**的 160×184（`PetPage` 传给
 // `PetSprite` 的尺寸）。按 88 算的后果：横向实际露出 84px（设计 48）、纵向藏了 140px 里
 // 只有 44 是"按 88 该藏的"—— 趴着的形象与露出窄边都跟常量对不上。
-const SPRITE_W = 160;
-const SPRITE_H = 184;
-const SPRITE_BOTTOM_GAP = 4; // 根节点的 `pb-1`
-const SIDE_PAD = (PET_WIDTH - SPRITE_W) / 2;
-/** 藏起来之后仍露在屏外的色片宽度。 */
-export const PET_PEEK_PX = 48;
+// 2026-11-01 再订正（修"Live2D 桌宠趴边看不见"）**两次**：
+// ① **160×184 只是"内容充满盒子"那种包的尺寸，不再是通用真相**。「色片内容横向充满那
+//    160 宽的盒」对序列帧成立，对 Live2D 不成立 —— Cubism 的画布是正方形，人物只占中间
+//    一小块（雏雾 hiyori 真机 CDP 实测：内容宽 46~48、左右各约 57px 全透明）。按画布摆位
+//    ⇒ 趴边时屏内那 48px 全落在透明边里，**屏幕上一个像素都没有**：用户看到的就是
+//    "桌宠不见了"，而窗活着、页面活着、模型也活着、hover 还能唤出来。
+//    所以露头量改成按**页面上报的内容框**算（`petDockGeometry.tuckForEdge`），"内容充满"
+//    退化成"页面还没报之前"的兜底。几何的那几个数（锚点 200×240、色片盒 160×184、peek 48）
+//    **只写在 `petDockGeometry.ts` 一处** —— 两个文件各抄一份正是 2026-10-29 那次的病根。
+//    兜底值刻意与旧常数逐格相等（左右 132），所以序列帧那条路一格行为都没变。
+// ② **纵向不再吸边**（用户当日拍板「底下和上都不需要隐藏」）：往下推之后屏内留的是锚点的
+//    上段（头顶那一截），站在地上的形象被从脚踝往上整条藏掉 —— 那是"缺了一截"而不是
+//    "收进了边里"。旧的 bottom 140 那条常数连同它的花费一起删了，`DockEdge` 收成
+//    "left" | "right"，旧偏好里的 `"bottom"` 在 `loadPetPrefs` 落成 null。
+
+/** 趴边之后仍留在屏内的**内容**宽度（真身在 `petDockGeometry`，这里留个同名导出好找）。 */
+export const PET_PEEK_PX = PEEK_PX;
 /** 拖完那一刻离边多近才算"往边上放"（再远就是"放在桌面上"，不该吸）。 */
 const SNAP_PX = 24;
-const SIDE_TUCK = SIDE_PAD + (SPRITE_W - PET_PEEK_PX);
-const BOTTOM_TUCK = SPRITE_H + SPRITE_BOTTOM_GAP - PET_PEEK_PX;
 
 export interface Rect {
   x: number;
@@ -130,6 +146,14 @@ let petDockPending = false;
 /** 「靠边隐藏」总开关的当前值。`applyPetPrefs` 每次落偏好时顺手带进来。 */
 let dockEnabled = true;
 
+/**
+ * 页面上报的**内容框**（锚点坐标），null = 还没报过 ⇒ 趴边用旧常数兜底。
+ *
+ * 为什么放在壳里而不是让页面直接报"该推多少"：页面只说"我画在哪"，摆窗的权力全在主进程
+ * （与 `setPetHotRects` 同一条分工红线）。
+ */
+let petContentRect: ContentRect | null = null;
+
 /** 吸边状态变了就通知一次（落库与日志都在 index.ts 那一侧，这里只管窗）。 */
 let onDockChanged: ((edge: DockEdge | null) => void) | null = null;
 
@@ -146,22 +170,29 @@ function clamp(n: number, low: number, high: number): number {
   return Math.min(Math.max(n, low), high);
 }
 
-/** 贴边但**一格都没藏**的那块矩形（另两条轴仍夹在工作区里）。 */
+/**
+ * 贴边但**一格都没藏**的那块矩形（另一条轴仍夹在工作区里）。
+ *
+ * 只有左右两条（`DockEdge` 已经收成这两值）：纵向不吸，所以原来那条"贴下沿"的分支
+ * 跟着删了 —— 留着就是一段永远跑不到的代码，而它读起来像"还支持吸下边"。
+ */
 function flushRect(edge: DockEdge, rect: Rect, work: Rect): Rect {
   const size = anchorSize();
-  const x = clamp(rect.x, work.x, work.x + Math.max(0, work.width - size.width));
   const y = clamp(rect.y, work.y, work.y + Math.max(0, work.height - size.height));
   if (edge === "left") return { ...size, x: work.x, y };
-  if (edge === "right") return { ...size, x: work.x + work.width - size.width, y };
-  return { ...size, x, y: work.y + work.height - size.height };
+  return { ...size, x: work.x + work.width - size.width, y };
 }
 
-/** 藏起来之后的矩形：沿吸的那条轴推出去，露出 `PET_PEEK_PX` 的色片。 */
+/**
+ * 藏起来之后的矩形：沿吸的那条轴推出去，露出 `PET_PEEK_PX` 的**内容**。
+ *
+ * 推送量优先按页面上报的内容框算（`tuckForEdge`）。没报过 ⇒ 落回旧的常数 tuck，
+ * 而那个常数刻意等于"内容充满盒子"时公式的结果，所以序列帧这条路的数**一格都没变**。
+ */
 function tuckedRect(edge: DockEdge, rect: Rect, work: Rect): Rect {
   const flush = flushRect(edge, rect, work);
-  if (edge === "left") return { ...flush, x: flush.x - SIDE_TUCK };
-  if (edge === "right") return { ...flush, x: flush.x + SIDE_TUCK };
-  return { ...flush, y: flush.y + BOTTOM_TUCK };
+  const tuck = tuckForEdge(edge, petContentRect);
+  return edge === "left" ? { ...flush, x: flush.x - tuck } : { ...flush, x: flush.x + tuck };
 }
 
 // ---- 滑进滑出，不瞬移 -------------------------------------------------------------------
@@ -215,19 +246,23 @@ function slidePetTo(win: BrowserWindow, target: Rect, ms: number): void {
 }
 
 /**
- * 拖完那一刻判：该吸哪条边。
+ * 松手那一刻判：该吸哪条边。
  *
- * 贴角上时**左右优先于下**：侧着趴是这类桌宠最常见的那个姿势，而且下边推出去会压到任务栏
- * 那条带（`workArea` 不含任务栏），风险留给它自己那条（§7.6 要求本机实测为准）。
+ * **纵向不吸（2026-11-01 用户拍板：「底下和上都不需要隐藏」）**。原先有 bottom 这一条，
+ * 而它必然后果是把脚切掉：往下推 T 之后屏内保留的是锚点的**上段**（头顶那条），于是
+ * "站在地上"的形象被从脚踝以上整条藏起来 —— 对桌宠这是最坏的一种隐藏，人一眼就认出
+ * 是"缺了一截"，而不是"收进了边里"。横向没有这个问题（左右推出去露的是身体的纵条，
+ * 头脚都在）。顺带一提 top 从来没有过：窗贴屏顶 = 标题那条带，从来不值得吸。
+ *
+ * 所以只判左右。拖到下边缘 = 就停在那儿（普通摆放，不吸、不推、不藏）；旧偏好文件里存着
+ * `docked:"bottom"` 的那些在 `state.ts:loadPetPrefs` 就落成 null（类型里已经没这一档），
+ * 于是开机不吸、窗停在存盘位置整只露着 —— 不需要迁移代码，也不会卡在"永远藏着打不开"。
+ *
+ * 贴角上时"左右优先于下"这个原规矩自然消失了（下已经不在候选里）。
+ * 判据本体在 `petDockGeometry.dockEdgeFor`（纯函数，`npm run test:dock` 直接钉着它）。
  */
 export function petDockEdgeFor(rect: Rect, work: Rect): DockEdge | null {
-  const size = anchorSize();
-  const right = rect.x + size.width;
-  const bottom = rect.y + size.height;
-  if (rect.x - work.x <= SNAP_PX) return "left";
-  if (work.x + work.width - right <= SNAP_PX) return "right";
-  if (work.y + work.height - bottom <= SNAP_PX) return "bottom";
-  return null;
+  return dockEdgeFor(rect, work, SNAP_PX);
 }
 
 /**
@@ -313,14 +348,28 @@ export function petDragEnded(win: BrowserWindow): void {
   settlePetDock(win);
 }
 
-/** 开机恢复：偏好里记着吸哪条边且开关没关，就按**当前**工作区重算贴边位再藏进去。 */
+/**
+ * 开机恢复：偏好里记着吸哪条边且开关没关，就按**当前**工作区重算贴边位再藏进去。
+ *
+ * 走的是与松手那条同一个判据 `petDockEdgeFor`（2026-11-01）：**当前**位置还算不算贴边。
+ * 判据落空（换了分辨率、拔了副屏、存的那条边现在纵向已经不吸）⇒ 把窗落到屏内的贴边位置、
+ * 并忘掉吸边，整只露着 —— 绝不"开机就藏着一只找不回来的窗"。`"bottom"` 这一档在类型里
+ * 已经没了，旧偏好文件里存的会被 `loadPetPrefs` 落成 null，走的就是这条落空分支。
+ */
 export function restorePetDock(win: BrowserWindow, prefs: PetPrefs): void {
   if (!prefs.dockEnabled || !prefs.docked) return;
+  const edge = petDockEdgeFor(petAnchorFor(petAnchor(win)), workRect());
+  if (!edge) {
+    petDock = null;
+    onDockChanged?.(null);
+    placePet(win, petAnchorFor(petAnchor(win)));
+    return;
+  }
   stopSlide(); // 开机那一下不滑：从屏外滑进来会让人以为宠物是自己跑出去的
-  petDock = { edge: prefs.docked, tucked: false };
-  placePet(win, flushRect(prefs.docked, petAnchor(win), workRect())); // 先落到屏内的贴边位
-  petDock = { edge: prefs.docked, tucked: true };
-  placePet(win, tuckedRect(prefs.docked, petAnchor(win), workRect()));
+  petDock = { edge, tucked: false };
+  placePet(win, flushRect(edge, petAnchor(win), workRect())); // 先落到屏内的贴边位
+  petDock = { edge, tucked: true };
+  placePet(win, tuckedRect(edge, petAnchor(win), workRect()));
 }
 
 /** 关掉「靠边隐藏」：露出来并忘掉吸边（开关关掉之后还藏着，就是"关了却还有影响"）。 */
@@ -399,7 +448,8 @@ function anchorSize(): { width: number; height: number } {
  * 锚点框（色片那块 200×240）→ 窗口矩形。
  *
  * **壳里所有几何都在锚点上算**：夹取、吸边判定、藏出去多少、存进偏好的那块矩形 —— 全部
- * 一字不改地沿用"窗就是 200×240"那套语义（`trackBounds`、`petDockEdgeFor`、`SIDE_TUCK` 都靠它）。
+ * 一字不改地沿用"窗就是 200×240"那套语义（`trackBounds`、`petDockEdgeFor`、
+ * `petDockGeometry.tuckForEdge` 都靠它）。
  * 只有落到窗口的那一步经过这里，唯一的变化就是尺寸永远是画布。
  */
 function canvasOf(anchor: Rect): Rect {
@@ -519,8 +569,8 @@ export function applyPetPrefs(win: BrowserWindow, prefs: PetPrefs): void {
  * 窗一带上 `WS_EX_TRANSPARENT`，`forward` 声称会送的 mousemove **一条都没到页面**
  * （Electron 44 / Win11 26200：跳回色片 1.6s，样式位不动、壳也没收到任何判定）。也就是
  * "一旦放行就再也没有回来的路"，桌宠会变成一只点不动的东西。主进程问
- * `screen.getCursorScreenPoint()` 不看这扇窗自己的样式位，环因此闭得上：40ms 一次，
- * 只在页面 arm 之后跑。
+ * `screen.getCursorScreenPoint()` 不看这扇窗自己的样式位，环因此闭得上：16ms 一次
+ * （见 `PET_POLL_MS`），只在页面 arm 之后跑。
  *
  * 分工仍守得住：**页面只报"画了东西的块"在哪**（色片 / 气泡 / 面板三个矩形，窗口坐标），
  * 摆窗的权力、工作区、夹取、吸边全在主进程 —— 它报的是"哪里有我看得见的像素"，
@@ -636,6 +686,28 @@ export function setPetHotRects(win: BrowserWindow, rects: unknown): void {
   }
   petHotRects = next;
   if (petHitTestArmed) petPollTick(win); // 布局刚变完就判一次，不等下一个 tick
+}
+
+/**
+ * 页面上报"我这个色片盒里，哪一块真的有像素"（画布坐标，`[x, y, w, h]`）。
+ *
+ * 收到就立刻按**当前吸的那条边**重新趴一次：模型的内容边界要加载完才量得到，而窗早就按
+ * 兜底常数藏好了 —— 不补这一下，"修好了"只在下一次拖动才看得见（2026-11-01 那次真机验证
+ * 就是靠重新拖动才露出内容，很容易误判成没生效）。
+ *
+ * 报得不合法一律当没报（`normalizeContentRect` 返回 null ⇒ 落旧常数）：页面不该因为自己
+ * 说错话就把桌宠推出屏幕。
+ */
+export function setPetContentRect(win: BrowserWindow, rect: unknown): void {
+  const next = normalizeContentRect(rect, { x: CANVAS_SIDE_SLACK, y: CANVAS_TOP_SLACK });
+  const changed = JSON.stringify(next) !== JSON.stringify(petContentRect);
+  petContentRect = next;
+  if (!changed) return;
+  if (petHitTestArmed) petPollTick(win); // 命中区随内容收窄：空气不再吃点击
+  // 只有正藏着的时候需要重摆；露着的时候下次趴边自然用新数。
+  if (petDock && petDock.tucked && !petIsExpanded) {
+    slidePetTo(win, tuckedRect(petDock.edge, petAnchor(win), workRect()), DOCK_MS);
+  }
 }
 
 /** 页面挂载/卸载"这页会报像素块"。关掉 = 立刻恢复吃点击并停表。 */

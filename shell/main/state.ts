@@ -20,8 +20,17 @@ type Saved = Record<string, Rectangle>;
  * 为什么单独一个文件而不是塞进 `window-state.json`：那份的形状是"label → 矩形"，被
  * `initialBounds` 直接按 label 取；混进一个非矩形键就要在每个读取点加类型判断，而这两样
  * 东西的演化方向根本不同（位置每拖一次写一次，偏好只在托盘点一下写）。 */
-/** 靠边隐藏吸的那几条边。上边故意不做：Windows 顶部有贴边手势与最大化热区。 */
-export type DockEdge = "left" | "right" | "bottom";
+/**
+ * 桌宠能吸的边。**只有左右两条**。
+ *
+ * 上边故意不做：Windows 顶部有贴边手势与最大化热区。
+ * 下边是 2026-11-01 撤掉的（用户拍板「底下和上都不需要隐藏」）：往下推之后屏内留下的
+ * 是锚点的**上段**（头顶那一截），"站在地上"的形象被从脚踝往上整条藏掉 —— 一眼就是
+ * "缺了一块"而不是"收进了边里"；横向推出去露的是身体的纵条，头脚都在，没这个问题。
+ * 类型收成这两条、而不是留着 `"bottom"` 再在运行时挡一道：留着就有走得到的死分支，
+ * 而"看着有覆盖、其实永远不会跑"的绿灯比没有绿灯更坏。
+ */
+export type DockEdge = "left" | "right";
 
 /** 桌宠偏好的**唯一形状**（托盘是它唯一的写入口，渲染端只能读其中一样）。
  *
@@ -178,8 +187,10 @@ export function loadPetPrefs(): PetPrefs {
     voice: flag("voice"),
     dockEnabled: flag("dockEnabled"),
     opacity: Math.min(1, Math.max(0.2, opacity)),
-    // 认不出的边（手改过文件、或上一版还不叫这个名字）一律当"没吸"，不猜。
-    docked: docked === "left" || docked === "right" || docked === "bottom" ? docked : null,
+    // 认不出的边（手改过文件、或上一版还不叫这个名字）**一律当"没吸"，不猜**。
+    // 旧版存过 `"bottom"`：那一档现在不存在了（纵向不吸，见 `DockEdge`），落在这里自然
+    // 变成 null ⇒ 窗停在存盘的位置整只露着，不需要迁移代码，也不会卡在"永远藏着打不开"。
+    docked: docked === "left" || docked === "right" ? docked : null,
     // 面板自动收起：只认**有限非负数**（0 是合法值 = 不自动收起），其余回默认。
     // 不夹进档位表：档位是托盘怎么画，不是取值域 —— 手改文件挑个 20 秒不该被改回 15。
     panelAutoHideMs:

@@ -99,6 +99,12 @@ STEPS: list[tuple[str, list[str], str]] = [
     # 而删错了的代价是用户重下一整个安装包或把没装的下载删掉。shell 没有测试框架，
     # 这个脚本用真实临时目录跑十五条读数、红就 exit 1（先 build 再跑，见 shell/package.json）。
     ("shell updater 清理判据", [NPM, "run", "test:cleanup"], "full"),
+    # 桌宠趴边几何（2026-11-01 修"Live2D 桌宠趴边看不见"）。typecheck 同样守不住它：
+    # 三条边的式子写反（right/left 互换、bottom 写成 y+h−vis）**类型全对**，而代价是
+    # "趴边后屏幕上零像素"—— 用户看到的就是一只不见了，只有真机量得出来，而真机又最容易
+    # 把"hover 得到"误当"看得见"（这次就误判过一轮）。这步把三条边的读数 + "内容充满时必须
+    # 等于旧常数 132/140"那条安全阀钉死，12 条读数实测 0.3s。
+    ("shell 桌宠趴边几何", [NPM, "run", "test:dock"], "full"),
     # **不在命令行再补 `-q`**：`pyproject.toml` 的 `addopts` 已经带了一个 `-q`，而 pytest 的
     # quiet 是累加的 —— 两个 `-q` 就是 verbosity -2，会把最后那行 `1320 passed in 177.31s`
     # 连同失败时的 `FAILED tests/...` 一起吞掉（实测：本仓整份输出到 `[100%]` 就直接收尾）。
@@ -571,6 +577,8 @@ STEP_TIMEOUTS: dict[str, float] = {
     "shell typecheck": 180.0,
     # 清理判据那步 = build（tsc 全量）+ 十五条真跑，实测 1.6s（热）；与 typecheck 同档。
     "shell updater 清理判据": 180.0,
+    # 趴边几何那步 = 同一个 build + 十二条纯函数读数，实测 0.3s；与上面两步同档。
+    "shell 桌宠趴边几何": 180.0,
     # pytest 快档：三趟绿 run 实测 77.4 / 82.4 / 84.2s，360 ≈ 4.3×（xdist 满载抖动那回
     # 的教训在 22c267d：慢是真实存在的形状，但 900 的上限从未被健康趟用过一半）。
     "pytest(-x, 无覆盖率)": 360.0,
@@ -1121,6 +1129,9 @@ CI_SKIP = frozenset(
         # 与 shell typecheck 同一条理由：要 node + 先 build（tsc 出 out/），gate --ci 那趟
         # 不装 node；由 frontend job 里紧邻「壳 typecheck」的那一步跑同一个 npm script。
         "shell updater 清理判据",
+        # 与 shell typecheck 同一条理由：要 node + 先 build（tsc 出 out/）。桌宠趴边几何那步
+        # 跑的是同一个 npm script（`npm run test:dock`），由 frontend job 里那块一起跑。
+        "shell 桌宠趴边几何",
         # 与 shell typecheck 同一条理由：要 **node**（npm audit 问 advisory 库），
         # 而 gate --ci 那趟不装 node；由 frontend job 里紧邻「壳 typecheck」的那一步
         # 跑同一个脚本（`scripts/tools/audit_deps_npm.py`）。

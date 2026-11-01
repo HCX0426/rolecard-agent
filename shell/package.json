@@ -10,6 +10,7 @@
     "dev": "npm run build && electron .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:cleanup": "npm run build && node scripts/test-update-cache-cleanup.cjs",
+    "test:dock": "npm run build && node scripts/test-pet-dock-geometry.cjs",
     "package:dir": "npm run build && electron-builder --win --dir",
     "package": "npm run build && electron-builder --win nsis"
   },
