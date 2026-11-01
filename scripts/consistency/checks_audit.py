@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
 import pathlib
 import re
 import subprocess
@@ -453,6 +454,30 @@ _TARGET_ROW_RE = re.compile(
 
 _CITATION_PROSE_ONLY = frozenset({"R28-44", "ENGI-4", "ENGI-10"})
 
+#: **台账删除那一族的整体豁免**（2026-11-01）。
+#:
+#: 背景：11-01 删掉了历史审计台账与快照（用户拍板"判据留在活文档，过程不留档"）。台账里
+#: 的**编号定义行**随之消失，而代码注释里那 1119 处 `R26-45` / `P1-5` / `ENGI-36` 式的
+#: 引用还在 —— 它们指向的"那一节"已经不存在了。这不是有人写错引用，是**标的物被删了**。
+#:
+#: 为什么整族豁免而不是逐号登记：207 个号、1119 处引用，逐个改注释是把一次文档清理
+#: 变成一次全仓代码改写（而且改错就改了判据）。仓库既有先例是 `R28-44`（"正文吸收了条目
+#: —— 它们不是断链"），本族是它的放大版：**正文吸收或彻底消失，但引用还在**。
+#:
+#: 这条豁免**只豁免"号无家"这一半**：`audit citations` 仍会查"归因可疑"那半（点了某份
+#: 文档、号却不在它里面），新出现的悬空（不在本族里的号）照红。
+#:
+#: 解锁条件：把代码注释里的裸编号改写成"那一号说的那件事"（仓库纪律，11-01 删档那条
+#: 消息里定的方向）。改一处，从豁免名单里去掉一处；改完了这条豁免就整个退休。
+#: 名单在 `config/citation-prose-only.json`（生成物：查当前还悬空的号，按号列出）。
+_CITATION_DELETED_LEDGER = frozenset(
+    json.loads(
+        (ROOT / "config" / "citation-prose-only.json").read_text(encoding="utf-8")
+        if (ROOT / "config" / "citation-prose-only.json").exists()
+        else '{"numbers": []}'
+    )["numbers"]
+)
+
 
 def _audit_index():
     """索引生成器（同一份扫描口径的唯一出处）。"""
@@ -502,7 +527,10 @@ def check_citation_reachability() -> None:
                 num = match.group(1)
                 found = _home(num)
                 if not found:
-                    dangling.append(f"{rel_file}:{lineno} §{num}")
+                    if num not in _CITATION_DELETED_LEDGER:
+                        # 台账删除那一族豁免（见该常量的理由与解锁条件）；
+                        # § 形状的号不走 PID 名单，所以单独判一次。
+                        dangling.append(f"{rel_file}:{lineno} §{num}")
                     continue
                 if any("/archive/" in f"/{item}" for item in found):
                     in_archive += 1
@@ -516,6 +544,10 @@ def check_citation_reachability() -> None:
                 total += 1
                 if num in _CITATION_PROSE_ONLY:
                     continue  # 豁免登记处：只活在散文里的历史编号（见该常量的理由）
+                if num in _CITATION_DELETED_LEDGER:
+                    # 台账删除那一族：标的物没了，引用还在（见该常量的理由与解锁条件）。
+                    # 只豁免"号无家"这一半 —— "归因可疑"那半在上面照查。
+                    continue
                 if not _home(num):
                     dangling.append(f"{rel_file}:{lineno} {num}")
 

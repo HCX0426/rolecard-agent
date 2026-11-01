@@ -60,6 +60,16 @@ def _load_ruler():
     return check_consistency
 
 
+def _deleted_ledger_numbers() -> frozenset[str]:
+    """台账删除那一族的悬空编号（它们的家是 `config/citation-prose-only.json`）。"""
+    import json  # noqa: PLC0415
+
+    path = ROOT / "config" / "citation-prose-only.json"
+    if not path.exists():
+        return frozenset()
+    return frozenset(json.loads(path.read_text(encoding="utf-8"))["numbers"])
+
+
 def _heading_text(path: pathlib.Path, number: str) -> str:
     """该文档里这一号那一行的文字（标题行取标题，表格行取第二格），压掉竖线与多余空白。"""
     import re  # noqa: PLC0415
@@ -90,9 +100,21 @@ def scanned_citations() -> tuple[set[str], dict[str, set[str]], dict[str, set[st
 
     **索引生成器与 `audit citations` 那条断言共用这一个函数** —— 两边各扫一遍就会有两套
     "什么算被引用"，而这两套迟早分叉（本仓为这件事立过三次尺子也犯过三次）。
+
+    **索引自己不算"提供编号的文档"**（2026-11-01 修一处自证失效）：这张表的行里就写着
+    编号（`| R26-01 | …`），而它自己又是 `docs/**/*.md` 的一员 —— 于是每个被代码引用的号
+    都在索引里找到了"家"，`audit citations` 对着它永远判不出悬空，**尺子给自己发了通行证**。
+    同一份代码里 `render()` 早就把索引从"家"里剔掉了（生成物不喂自己的输入），两处口径
+    不一致的结果就是那张表里 210 行"(没有任何文档里有这一号)"：扫描时算有家，渲染时不算。
+    现在两处同一口径 —— 扫描时就剔掉，尺子才真能抓出悬空引用。
     """
     ruler = _load_ruler()
-    docs = sorted((ROOT / "docs").rglob("*.md"))
+    index_rel = OUT.relative_to(ROOT).as_posix()
+    docs = sorted(
+        path
+        for path in (ROOT / "docs").rglob("*.md")
+        if path.relative_to(ROOT).as_posix() != index_rel
+    )
     targets = {path: ruler._citation_targets(path) for path in docs}
     numbers: set[str] = set()
     for path in ruler.iter_files(".py", ".ts", ".tsx", ".js"):
@@ -127,7 +149,15 @@ def render() -> str:
         if not found:
             # 查无此号：让它在索引里显形，而不是静默少一行 —— 少了哪一行，
             # `audit citations` 那条本来就红，这里再留一句"没有家"免得看着像生成器坏了。
-            rows.append((number, "(没有任何文档里有这一号)", "—"))
+            #
+            # **例外：台账删除那一族**（2026-11-11）。那批号的定义行随历史台账一起删了，
+            # 它们的登记处是 `config/citation-prose-only.json`（那才是它们的家）——
+            # 在这张表里再列一行"(没有任何文档里有这一号)"只会制造 210 行噪音，
+            # 而且**这张表自己就是那批号的"家"** ⇒ `audit citations` 拿它当通行证，
+            # 尺子对自己的失明完全看不见（自证失效）。扫描口径已改成"索引不喂自己的输入"，
+            # 这批号在这里不再有家，因此也不该在这里出现。
+            if number not in _deleted_ledger_numbers():
+                rows.append((number, "(没有任何文档里有这一号)", "—"))
             continue
         first = ROOT / found[0]
         title = _heading_text(first, number) if first.exists() else "(读不到)"
