@@ -363,6 +363,19 @@ jobs:
         working-directory: shell
         run: npm run test:cleanup
 
+      - name: npm 依赖漏洞扫描（新披露 = 红，红就 exit 1）
+        # 2026-11-01 补上：此前依赖审计**只扫 Python**（pip-audit 问 OSV），npm 侧一把
+        # 尺子都没有 —— minimatch 的 DoS（GHSA-g3hv-75wg-m249，10-30 披露）在仓里躺了
+        # 两天没人发现，直到 Dependabot 的**月报**把它推出来。披露是时刻发生的，
+        # Dependabot 是月节奏，中间的窗口太长。
+        # 放在这个 job：它要 **node**（npm audit 问 advisory 库），而门禁 --ci 那趟不装
+        # node —— gate.py 的 CI_SKIP 把同名步骤挡在那边，判据只在这里跑一次。
+        # 强制走官方 registry：本机默认的腾讯云镜像**不实现** npm 的 audit 端点
+        # （实测 `[NOT_IMPLEMENTED]`），脚本里已钉死。
+        # 用 runner 自带的 python3 —— 脚本只用标准库，这个 job 没装 Python 也没建 venv
+        # （它量的是前端，装 Python 反而多一份要维护的东西）。
+        run: python3 scripts/tools/audit_deps_npm.py
+
       - name: 构建（`npm run build` 含 tsc --noEmit + eslint P8 + vite build）
         working-directory: frontend
         run: npm run build

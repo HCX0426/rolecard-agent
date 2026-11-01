@@ -187,6 +187,17 @@ STEPS: list[tuple[str, list[str], str]] = [
     # （plan_dependency_audit；新增披露的时刻归 lock-refresh 月臂与发版全量闸），没给
     # base 的手动趟与本机全量档照跑。
     ("依赖审计", [PY, "scripts/tools/audit_deps.py"], "full"),
+    # **npm 侧依赖漏洞扫描**（2026-11-01 补上）：此前这一格**只扫 Python**（pip-audit），
+    # npm 侧一把尺子都没有 —— minimatch 的 DoS（GHSA-g3hv-75wg-m249，10-30 披露）在本仓
+    # 躺了两天没人发现，直到 Dependabot 的**月报**把它推出来。披露是时刻发生的，
+    # Dependabot 是月节奏，两者之间的窗口太长。
+    # 机制与 pip 侧同款：扫锁文件、对照同一张在册豁免表、新披露 = 红、在册豁免带
+    # "上游还没给修复版本"的前提（前提消失时反过来红）、fail-closed（扫不成退 2，
+    # 门禁同样红 —— 扫不成不等于干净）。
+    # 同样**不进快档**（出网问 advisory 库，撞"测试全离线"那条铁律），mode=full 落在
+    # 本地全量档与 `--ci`。注意它强制走官方 registry：本机默认的腾讯云镜像**不实现**
+    # npm 的 audit 端点（实测 `[NOT_IMPLEMENTED]`）。
+    ("npm 依赖审计", [PY, "scripts/tools/audit_deps_npm.py"], "full"),
     # **密钥扫描**（审查快照（2026-10-04）#ENGI-15 ②，可选档但本仓已接）：`scan_secrets.py`
     # 包装 gitleaks，扫的是**由 git 名单圈出的影子树**（tracked + 未忽略的未跟踪 = 本次要发的
     # 那份源码；2026-10-09 订正 —— 从前这里写的是"只扫当前工作树（`--no-git`，离线可跑）"，
@@ -514,6 +525,14 @@ def _is_dependency_surface(path: str) -> bool:
     if path == "config/dependency-audit-allowlist.json":
         return True
     if path == "scripts/tools/audit_deps.py":
+        return True
+    # npm 侧（2026-11-01 补）：两把 npm 锁面与它们各自的 package.json（overrides 写在那）
+    # 同样在面内 —— npm 锁面动过就该问一次 npm 的 advisory 库。
+    if path in ("shell/package-lock.json", "frontend/package-lock.json"):
+        return True
+    if path in ("shell/package.json", "frontend/package.json"):
+        return True
+    if path == "scripts/tools/audit_deps_npm.py":
         return True
     return path == "pyproject.toml"
 
@@ -1102,6 +1121,10 @@ CI_SKIP = frozenset(
         # 与 shell typecheck 同一条理由：要 node + 先 build（tsc 出 out/），gate --ci 那趟
         # 不装 node；由 frontend job 里紧邻「壳 typecheck」的那一步跑同一个 npm script。
         "shell updater 清理判据",
+        # 与 shell typecheck 同一条理由：要 **node**（npm audit 问 advisory 库），
+        # 而 gate --ci 那趟不装 node；由 frontend job 里紧邻「壳 typecheck」的那一步
+        # 跑同一个脚本（`scripts/tools/audit_deps_npm.py`）。
+        "npm 依赖审计",
         "前端 vitest",
         "前端 eslint",
         "前端 tsc+build",
