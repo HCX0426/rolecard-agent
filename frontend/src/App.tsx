@@ -296,7 +296,7 @@ export default function App() {
               className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
                 tab === t.key
                   ? "font-medium text-cocoa-900 dark:text-cocoa-50"
-                  : "text-cocoa-600 hover:bg-white/50 dark:text-cocoa-300 dark:hover:bg-white/5"
+                  : "text-slate-600 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-white/50"
               }`}
               style={
                 tab === t.key
@@ -374,7 +374,7 @@ export default function App() {
           白屏 + 控制台一条 404（实测 0.4.2→0.4.3 升级后切知识库/插件页就是它）。
           内层 keyed 的那个管"单页崩溃不串页"；这个外层只兜住内层没接住的（含常驻页），
           对页面崩溃行为零改变 —— 正常页根本到不了这里。 */}
-      <main className="min-h-0 min-w-0 flex-1 pt-[41px] md:pt-0">
+      <main className="min-h-0 min-w-0 flex-1 pt-[41px] md:pt-0 transition-opacity">
         <PageBoundary>
         {/* 对话页**常驻挂载**（用 hidden 隐藏，而不是条件渲染）。
             它有几样只存在于组件内的状态：正在生成的回答、输入草稿、当前对话与勾选 ——

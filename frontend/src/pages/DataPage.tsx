@@ -329,7 +329,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
                           <input
                             value={draft.unit}
                             onChange={(e) => setDraft({ ...draft, unit: e.target.value })}
-                            placeholder="单位"
+                            placeholder="单位（可选）"
                             className="w-20 rounded border border-slate-200 dark:border-slate-700 px-2 py-1"
                           />
                           <input
@@ -528,7 +528,7 @@ function AddReportForm({ onDone }: { onDone: () => void }) {
             <input
               value={r.unit}
               onChange={(e) => setRow(i, { unit: e.target.value })}
-              placeholder="单位"
+              placeholder="单位（可选）"
               className={`${inputCls} w-20`}
             />
             {rows.length > 1 && (
@@ -749,7 +749,7 @@ function GenericDomainData({
                         <div className="flex flex-wrap items-center gap-2">
                           <input value={draft.value_num} onChange={(e) => setDraft({ ...draft, value_num: e.target.value })} placeholder="数值" className={`${cls} w-24`} />
                           <input value={draft.value_text} onChange={(e) => setDraft({ ...draft, value_text: e.target.value })} placeholder="文本值" className={`${cls} w-32`} />
-                          <input value={draft.unit} onChange={(e) => setDraft({ ...draft, unit: e.target.value })} placeholder="单位" className={`${cls} w-20`} />
+                          <input value={draft.unit} onChange={(e) => setDraft({ ...draft, unit: e.target.value })} placeholder="单位（可选）" className={`${cls} w-20`} />
                           <input value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} placeholder="备注" className={`${cls} w-28`} />
                           <Button variant="primary" onClick={() => saveEdit(r.id)}
                             className="rounded px-2.5 py-1 hover:bg-blue-700">保存</Button>
