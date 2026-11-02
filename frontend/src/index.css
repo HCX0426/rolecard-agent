@@ -292,8 +292,15 @@ body.has-bg .text-slate-300 {
    两者在 light/dark 与 warm/cool 四个组合下都成立：变量负责色，材质负责形。 */
 .glass {
   background: color-mix(in srgb, var(--bg-panel) var(--glass-alpha), transparent);
-  backdrop-filter: blur(14px) saturate(1.15);
+  /* ⚠ 顺序承重：带前缀的写**前**、标准属性写**后**（与 Tailwind 自己生成的
+     `.backdrop-blur-sm` 同一个顺序）。构建链（Tailwind v4 的 lightningcss）把这两条当
+     同一属性的重复声明、只留**最后**那条 —— 旧写法（标准在前）打进 dist 后只剩
+     `-webkit-backdrop-filter`，而 Blink/Chromium 不认这个 WebKit 别名，于是毛玻璃在
+     Windows 装机版上整条不生效（真机递归走 CSSOM 一条 backdrop 声明都读不到、计算值
+     none，而同页面内联标准属性却好使 —— 2026-11-02 取证）。用户那句
+     「毛玻璃没有玻璃质感」根因是这两行的顺序，不在显卡、不在透明窗。 */
   -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  backdrop-filter: blur(14px) saturate(1.15);
   border: 1px solid color-mix(in srgb, #ffffff 55%, transparent);
 }
 .dark .glass {
@@ -304,8 +311,10 @@ body.has-bg .text-slate-300 {
   border: 1px solid var(--bg-line);
 }
 [data-material="panel"] .glass {
-  backdrop-filter: none;
+  /* 同一条顺序纪律：这里要是被 dedup 成只剩 `-webkit-backdrop-filter:none`，就盖不住
+     上面 `.glass` 留下的标准 `backdrop-filter` —— 实板模式在 Chromium 上会糊不掉。 */
   -webkit-backdrop-filter: none;
+  backdrop-filter: none;
   background: var(--bg-panel);
   border-color: var(--bg-line);
 }

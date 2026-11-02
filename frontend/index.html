@@ -12,12 +12,18 @@
         var p = localStorage.getItem("rolecard.palette");
         document.documentElement.setAttribute("data-material", m === "panel" ? "panel" : "glass");
         document.documentElement.setAttribute("data-palette", p === "cool" ? "cool" : "warm");
-        // 透明度（整个界面的透光量）：底色 --bg-alpha + 玻璃层（比底色更实一点）
-        var a = Number(localStorage.getItem("rolecard.alpha"));
+        // 透明度滑块 → 实心度：CSS 那三个变量是被 color-mix(色 X%, transparent) 消费的，
+        // X 是"留多少色"，与滑块的"透多少"方向相反 —— 必须做一次 100 - a。
+        // 算术与 lib/appearance.ts 的 soliditiesFor 逐字一致（这份跑在打包前的裸 HTML 里，
+        // import 不到那边；改那边记得改这里，方向已由 appearance.test.ts 钉住）。
+        var raw = localStorage.getItem("rolecard.alpha");
+        var a = raw === null || raw === "" ? 0 : Number(raw);
         if (isFinite(a) && a >= 0 && a <= 100) {
-          document.documentElement.style.setProperty("--bg-alpha", a + "%");
-          document.documentElement.style.setProperty("--glass-alpha", Math.max(0, a - 12) + "%");
-          document.documentElement.style.setProperty("--glass-alpha-soft", Math.max(0, a - 4) + "%");
+          // 变量名避开下面背景图那格既有的 bg（var 是脚本作用域，同名会互相盖掉）
+          var solid = 100 - a;
+          document.documentElement.style.setProperty("--bg-alpha", solid + "%");
+          document.documentElement.style.setProperty("--glass-alpha", Math.max(0, solid - 12) + "%");
+          document.documentElement.style.setProperty("--glass-alpha-soft", Math.max(0, solid - 4) + "%");
         }
         // 背景图 + 模糊/暗化
         var bg = localStorage.getItem("rolecard.bgImage");
@@ -28,7 +34,12 @@
         if (isFinite(blur)) {
           document.documentElement.style.setProperty("--bg-blur", blur + "px");
         }
-        var dim = Number(localStorage.getItem("rolecard.bgDim"));
+        // 暗化：键不存在必须落 0.25（与 lib/appearance.ts 的 readNumber 兜底同值）。
+        // 旧写法 Number(getItem(k)) 在缺键时给出 0（Number(null)===0 且有限），于是
+        // "没设过"被读成"设了 0"= 没有暗化层，首帧字压在亮图上 —— 两边不一致还
+        // 会让这份脚本失去它存在的意义（避免首帧闪错）。
+        var rawDim = localStorage.getItem("rolecard.bgDim");
+        var dim = rawDim === null || rawDim === "" ? 0.25 : Number(rawDim);
         if (isFinite(dim)) {
           document.documentElement.style.setProperty("--bg-dim", String(dim));
         }
