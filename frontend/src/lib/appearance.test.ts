@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { initAppearance, soliditiesFor, ALPHA_DEFAULT, ALPHA_MAX, ALPHA_MIN } from "./appearance";
 
+
 describe("soliditiesFor：透明度 → 实心度", () => {
   it("方向不许反：透明度拉满 ⇒ 底色全透（实心度 0）", () => {
     expect(soliditiesFor(ALPHA_MAX).bg).toBe(0);

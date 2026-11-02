@@ -287,20 +287,23 @@ body.has-bg .text-slate-300 {
 }
 
 /* 材质原语。
-   .glass —— 毛玻璃：半透明 + backdrop blur + 顶部高光边（固定层用：侧栏/页头/输入框）。
-   .panel —— 实板：不透明、无模糊（"扎实落地"的质感）。
+   .glass —— 玻璃层：半透明介质 + 顶部高光边（固定层用：侧栏/页头/输入框）。
+              它**不糊**身后像素 —— 能透出多少由 --glass-alpha 决定，要糊请用关于面板
+              那格「模糊」（它糊的是背景图本身，只有一层，用户分得清是谁糊的）。
+   .panel —— 实板：不透明（"扎实落地"的质感）。
    两者在 light/dark 与 warm/cool 四个组合下都成立：变量负责色，材质负责形。 */
 .glass {
   background: color-mix(in srgb, var(--bg-panel) var(--glass-alpha), transparent);
-  /* ⚠ 顺序承重：带前缀的写**前**、标准属性写**后**（与 Tailwind 自己生成的
-     `.backdrop-blur-sm` 同一个顺序）。构建链（Tailwind v4 的 lightningcss）把这两条当
-     同一属性的重复声明、只留**最后**那条 —— 旧写法（标准在前）打进 dist 后只剩
-     `-webkit-backdrop-filter`，而 Blink/Chromium 不认这个 WebKit 别名，于是毛玻璃在
-     Windows 装机版上整条不生效（真机递归走 CSSOM 一条 backdrop 声明都读不到、计算值
-     none，而同页面内联标准属性却好使 —— 2026-11-02 取证）。用户那句
-     「毛玻璃没有玻璃质感」根因是这两行的顺序，不在显卡、不在透明窗。 */
-  -webkit-backdrop-filter: blur(14px) saturate(1.15);
-  backdrop-filter: blur(14px) saturate(1.15);
+  /* 玻璃层**不糊身后像素**（2026-11-03，用户："页签栏那些都看不到图片，我不要模糊的"）。
+     这里原本挂着 `backdrop-filter: blur(14px) saturate(1.15)` —— 它糊的是身后**已绘制的
+     所有像素**，包括 body::before 上那张背景图，于是侧栏/页头只剩一片均匀浅色，图被抹平。
+     关于面板上「模糊」那格管的是背景图自己糊不糊（--bg-blur），两层叠着，用户根本分不清
+     是谁糊的 —— 所以只留后者这一个旋钮。
+     半透明层次仍由上面那行 `--glass-alpha` 承担（"内容与图之间的介质"），材质开关
+     glass↔panel 照旧有效：它现在差在底色实心度，不差在模糊。
+     ⚠ 若将来要加回前缀属性：带前缀的必须写在**前**、标准属性写在**后**。构建链
+     （Tailwind v4 的 lightningcss）把同一属性的两条当重复声明、只留**最后**那条，
+     反序会让它在 Chromium 上整条消失（2026-11-02 为这条踩过一次，见 f2b26041）。 */
   border: 1px solid color-mix(in srgb, #ffffff 55%, transparent);
 }
 .dark .glass {
@@ -311,10 +314,8 @@ body.has-bg .text-slate-300 {
   border: 1px solid var(--bg-line);
 }
 [data-material="panel"] .glass {
-  /* 同一条顺序纪律：这里要是被 dedup 成只剩 `-webkit-backdrop-filter:none`，就盖不住
-     上面 `.glass` 留下的标准 `backdrop-filter` —— 实板模式在 Chromium 上会糊不掉。 */
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
+  /* 只换底色与描边：玻璃层本来就不糊身后像素了，这里没有 backdrop 要关
+     （从前那两条 `backdrop-filter: none` 是给 .glass 的 blur 兜底用的，随它一起删）。 */
   background: var(--bg-panel);
   border-color: var(--bg-line);
 }
