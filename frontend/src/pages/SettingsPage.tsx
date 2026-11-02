@@ -36,7 +36,7 @@ export default function SettingsPage({
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="mx-auto max-w-3xl">
-        <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">设置</h2>
+        <h2 className="text-base font-semibold text-slate-900">设置</h2>
         {/* 子页签条：全站统一的 ui/Tabs（2026-10-30 从下划线式收编，三套语言归一）。 */}
         <Tabs
           className="mt-4"

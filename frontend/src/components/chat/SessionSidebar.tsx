@@ -100,7 +100,7 @@ export default function SessionSidebar({
           sessionsOpen ? "max-md:translate-x-0" : "max-md:-translate-x-full"
         }`}
       >
-        <div className="border-b border-slate-100 dark:border-slate-800 p-3">
+        <div className="border-b border-slate-100 p-3">
           <Button
             onClick={onNewSession}
             title="开一条不带角色的临时话题（试个东西、测张图用）。每个角色那条固定对话不受影响。"
@@ -111,14 +111,14 @@ export default function SessionSidebar({
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
           {laneRows.length === 0 && tempSessions.length === 0 && orphanLanes.length === 0 && (
-            <p className="px-2 py-4 text-xs text-slate-400 dark:text-slate-500">
+            <p className="px-2 py-4 text-xs text-slate-400">
               还没有角色，也还没有对话
             </p>
           )}
           {/* 固定的那一栏：一行一个角色。没被找过也照样列着 —— 点一下才 ensure 出那条线。
               组名不写「她们」（09-29 决策 3·R28-44：这一栏列的是角色，不是"女性角色"）。 */}
           {laneRows.length > 0 && (
-            <p className="px-2 pb-1 pt-1 text-11 font-medium text-slate-400 dark:text-slate-500">
+            <p className="px-2 pb-1 pt-1 text-11 font-medium text-slate-400">
               角色
             </p>
           )}
@@ -135,12 +135,12 @@ export default function SessionSidebar({
                 className={`group mb-1 flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm ${
                   row?.thread_id === sessionId
                     ? "bg-blue-50 dark:bg-blue-900/30 text-blue-800"
-                    : "hover:bg-slate-50 dark:bg-slate-800/50 dark:hover:bg-slate-700/60"
+                    : "hover:bg-slate-50"
                 }`}
               >
                 <div className="min-w-0 flex-1">
                   <div className="truncate">{role.role_name}</div>
-                  <div className="truncate text-11 text-slate-400 dark:text-slate-500">
+                  <div className="truncate text-11 text-slate-400">
                     {row ? row.title || "你们的对话" : "还没开始 · 点一下就在这里"}
                   </div>
                 </div>
@@ -160,7 +160,7 @@ export default function SessionSidebar({
                       e.stopPropagation();
                       onClearLane(row.thread_id, role.role_name);
                     }}
-                    className="shrink-0 rounded px-1 py-0.5 text-11 text-slate-300 opacity-0 transition-opacity hover:bg-slate-100 hover:text-red-500 group-hover:opacity-100 dark:text-slate-600 dark:hover:bg-slate-700/50"
+                    className="shrink-0 rounded px-1 py-0.5 text-11 text-slate-300 opacity-0 transition-opacity hover:bg-slate-100 hover:text-red-500 group-hover:opacity-100"
                     title={`清空与${role.role_name}的对话（角色卡、记忆与收件箱记录都不动）`}
                   >
                     清空
@@ -177,12 +177,12 @@ export default function SessionSidebar({
               tabIndex={0}
               onKeyDown={rowActivate(() => onSelectSession(s.thread_id))}
               onClick={() => onSelectSession(s.thread_id)}
-              className="group mb-1 flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm hover:bg-slate-50 dark:bg-slate-800/50 dark:hover:bg-slate-700/60"
+              className="group mb-1 flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm hover:bg-slate-50"
               title="这个角色已经删掉了，而那段对话还在 —— 要清掉就删这一条"
             >
               <div className="min-w-0 flex-1">
                 <div className="truncate">{s.title || "旧对话"}</div>
-                <div className="truncate text-11 text-slate-400 dark:text-slate-500">
+                <div className="truncate text-11 text-slate-400">
                   {s.role_name || s.role_id} · 角色已删
                 </div>
               </div>
@@ -191,7 +191,7 @@ export default function SessionSidebar({
                   e.stopPropagation();
                   if (await confirm({ title: "删除这条对话？", body: "对话及其全部消息将被永久删除，不可恢复。", confirmText: "删除", danger: true })) onDeleteOne(s.thread_id);
                 }}
-                className="shrink-0 rounded px-1 py-0.5 text-xs text-slate-300 opacity-0 transition-opacity hover:bg-slate-100 hover:text-red-500 group-hover:opacity-100 dark:text-slate-600 dark:hover:bg-slate-700/50"
+                className="shrink-0 rounded px-1 py-0.5 text-xs text-slate-300 opacity-0 transition-opacity hover:bg-slate-100 hover:text-red-500 group-hover:opacity-100"
                 title="删除对话"
               >
                 ✕
@@ -202,7 +202,7 @@ export default function SessionSidebar({
           {tempSessions.length > 0 && (
             <>
               <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-3">
-                <p className="text-11 font-medium text-slate-400 dark:text-slate-500">
+                <p className="text-11 font-medium text-slate-400">
                   临时话题 · {tempSessions.length}
                 </p>
                 {tempPick === null ? (
@@ -233,7 +233,7 @@ export default function SessionSidebar({
                     </Button>
                     <Button
                       variant="link"
-                      className="hover:text-slate-600 dark:hover:text-slate-300"
+                      className="hover:text-slate-600"
                       onClick={() => setTempPick(null)}
                     >
                       退出
@@ -250,7 +250,7 @@ export default function SessionSidebar({
                     tempPick === null ? onSelectSession(s.thread_id) : togglePick(s.thread_id),
                   )}
                   className={`group mb-1 flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm ${
-                    s.thread_id === sessionId ? "bg-blue-50 dark:bg-blue-900/30 text-blue-800" : "hover:bg-slate-50 dark:bg-slate-800/50 dark:hover:bg-slate-700/60"
+                    s.thread_id === sessionId ? "bg-blue-50 dark:bg-blue-900/30 text-blue-800" : "hover:bg-slate-50"
                   }`}
                   onClick={() => (tempPick === null ? onSelectSession(s.thread_id) : togglePick(s.thread_id))}
                 >
@@ -265,7 +265,7 @@ export default function SessionSidebar({
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="truncate">{s.title || "新对话"}</div>
-                    <div className="truncate text-11 text-slate-400 dark:text-slate-500">
+                    <div className="truncate text-11 text-slate-400">
                       {s.role_name || s.role_id}
                     </div>
                   </div>
@@ -274,7 +274,7 @@ export default function SessionSidebar({
                       e.stopPropagation();
                       if (await confirm({ title: "删除这个对话？", body: "对话及其全部消息将被永久删除，不可恢复。", confirmText: "删除", danger: true })) onDeleteOne(s.thread_id);
                     }}
-                    className="shrink-0 rounded px-1 py-0.5 text-xs text-slate-300 dark:text-slate-600 opacity-0 transition-opacity hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700 hover:text-red-500 group-hover:opacity-100"
+                    className="shrink-0 rounded px-1 py-0.5 text-xs text-slate-300 opacity-0 transition-opacity hover:bg-slate-100 hover:text-red-500 group-hover:opacity-100"
                     title="删除对话"
                   >
                     ✕

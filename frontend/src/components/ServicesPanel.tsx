@@ -142,13 +142,13 @@ export function ServicesPanel() {
     return <p className="text-sm text-red-600 dark:text-red-400">{error}</p>;
   }
   if (!view) {
-    return <p className="text-sm text-slate-500 dark:text-slate-400">加载中…</p>;
+    return <p className="text-sm text-slate-500">加载中…</p>;
   }
 
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-center justify-between">
-        <p className="text-xs text-slate-500 dark:text-slate-400">
+        <p className="text-xs text-slate-500">
           云端条目引用「模型」页的配置；按顺序兜底，<b>第 1 位即生效</b>。
         </p>
         <button
@@ -157,7 +157,7 @@ export function ServicesPanel() {
               setFlash("已重新检测");
             })
           }
-          className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+          className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
         >
           重新检测
         </button>
@@ -192,15 +192,15 @@ export function ServicesPanel() {
         return (
           <section key={cat.key} className="flex flex-col gap-2">
             <div className="flex items-baseline gap-2">
-              <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">{cat.title}</h3>
-              <span className="text-11 text-slate-400 dark:text-slate-500">{cat.hint}</span>
+              <h3 className="text-sm font-medium text-slate-900">{cat.title}</h3>
+              <span className="text-11 text-slate-400">{cat.hint}</span>
               {!cat.readonly && (
                 <button
                   onClick={() => {
                     setAdding(adding === cat.key ? null : cat.key);
                     setPicked("");
                   }}
-                  className="ml-auto shrink-0 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 hover:text-blue-600 dark:hover:text-blue-400"
+                  className="ml-auto shrink-0 rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:border-blue-300 hover:text-blue-600 dark:hover:text-blue-400"
                 >
                   {adding === cat.key ? "取消" : cat.order_only ? "＋ 加入对话" : "＋ 引用模型"}
                 </button>
@@ -221,7 +221,7 @@ export function ServicesPanel() {
                   <select
                     value={picked}
                     onChange={(e) => setPicked(e.target.value)}
-                    className="rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-xs"
+                    className="rounded border border-slate-200 bg-surface px-2 py-1 text-xs"
                   >
                     <option value="">
                       {cat.order_only ? "选择要用于对话的模型…" : "选择模型页已配置的模型…"}
@@ -241,7 +241,7 @@ export function ServicesPanel() {
                       ))}
                   </select>
                   {selectable.length === 0 && (
-                    <span className="text-11 text-slate-400 dark:text-slate-500">
+                    <span className="text-11 text-slate-400">
                       模型页还没有可加入的模型 —— 请先去「模型」页新增
                     </span>
                   )}
@@ -260,8 +260,8 @@ export function ServicesPanel() {
                     key={cand.id}
                     className={`rounded-lg border px-3 py-2 ${
                       cand.enabled && !cand.stale
-                        ? "border-slate-200 dark:border-slate-700"
-                        : "border-dashed border-slate-200 opacity-60 dark:border-slate-700"
+                        ? "border-slate-200"
+                        : "border-dashed border-slate-200 opacity-60"
                     }`}
                   >
                     <div className="flex items-center gap-2.5">
@@ -269,7 +269,7 @@ export function ServicesPanel() {
                         {cand.enabled ? (cand.order ?? 0) + 1 : "—"}
                       </span>
                       <KindBadge kind={(cand.kind ?? "local") as "local" | "cloud"} />
-                      <span className="text-sm text-slate-800 dark:text-slate-200">{cand.label}</span>
+                      <span className="text-sm text-slate-800">{cand.label}</span>
                       <AvailBadge
                         available={cand.available ?? false}
                         reason={cand.reason ?? ""}
@@ -277,14 +277,14 @@ export function ServicesPanel() {
                       />
                       {cand.key_masked && (
                         <span
-                          className="font-mono text-11 text-slate-400 dark:text-slate-500"
+                          className="font-mono text-11 text-slate-400"
                           title="已保存密钥（不可见明文，编辑在模型页）"
                         >
                           {cand.key_masked}
                         </span>
                       )}
                       {cand.builtin && (
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-11 text-slate-500 dark:bg-slate-700 dark:text-slate-300">
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-11 text-slate-500">
                           内置
                         </span>
                       )}
@@ -295,7 +295,7 @@ export function ServicesPanel() {
                               disabled={busy === cat.key || !cand.enabled}
                               onClick={() => reorder(cat, cand, -1)}
                               title="上调优先级"
-                              className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:hover:bg-slate-800"
+                              className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-50 disabled:opacity-40"
                             >
                               ↑
                             </button>
@@ -303,14 +303,14 @@ export function ServicesPanel() {
                               disabled={busy === cat.key || !cand.enabled}
                               onClick={() => reorder(cat, cand, 1)}
                               title="下调优先级"
-                              className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:hover:bg-slate-800"
+                              className="rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-50 disabled:opacity-40"
                             >
                               ↓
                             </button>
                             {/* 禁用必须配一句"怎么恢复"：`title` 在禁用按钮上 Chromium 根本不弹，
                                 所以说明要落在 DOM 里，而不是藏在悬浮提示里。 */}
                             {!cand.enabled && (
-                              <span className="text-10 leading-tight text-slate-400 dark:text-slate-500">
+                              <span className="text-10 leading-tight text-slate-400">
                                 该行已停用 —— 先「启用」才能排优先级
                               </span>
                             )}
@@ -322,7 +322,7 @@ export function ServicesPanel() {
                                   className={`rounded-full px-2.5 py-0.5 text-11 ${
                                     cand.enabled
                                       ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
-                                      : "bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300"
+                                      : "bg-slate-100 text-slate-500"
                                   }`}
                                 >
                                   {cand.enabled ? "启用中" : "已停用"}
@@ -344,7 +344,7 @@ export function ServicesPanel() {
                               <>
                                 {/* 模型推理这一节：序列本身就是"谁用于对话"的事实面，
                                     所以摘除是一等动作（配置仍留在模型页，不是删配置）。 */}
-                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-11 text-slate-500 dark:bg-slate-700 dark:text-slate-300">
+                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-11 text-slate-500">
                                   {usedByLabel(cand.id ?? "")
                                     ? `还用于：${usedByLabel(cand.id ?? "")}`
                                     : "仅用于对话"}
@@ -360,7 +360,7 @@ export function ServicesPanel() {
                                   移出对话
                                 </button>
                                 {(cat.candidates ?? []).length <= 1 && (
-                                  <span className="text-10 leading-tight text-slate-400 dark:text-slate-500">
+                                  <span className="text-10 leading-tight text-slate-400">
                                     这是唯一在册的对话模型 —— 想换先「＋ 加入对话」
                                   </span>
                                 )}
@@ -374,7 +374,7 @@ export function ServicesPanel() {
                           </>
                         )}
                         {cat.readonly && !cat.order_only && (
-                          <span className="text-11 text-slate-400 dark:text-slate-500">
+                          <span className="text-11 text-slate-400">
                             {cand.id === cat.effective ? "默认" : ""}
                           </span>
                         )}
@@ -386,7 +386,7 @@ export function ServicesPanel() {
             </div>
 
             {cat.effective && (
-              <p className="text-11 text-slate-400 dark:text-slate-500">
+              <p className="text-11 text-slate-400">
                 生效：{(cat.candidates ?? []).find((c) => c.id === cat.effective)?.label ?? cat.effective}
                 {cat.degraded_from ? "（优先级第 1 位不可用，已自动顺延）" : ""}
               </p>

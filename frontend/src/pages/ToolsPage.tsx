@@ -110,12 +110,12 @@ function ChannelsPanel() {
                     ? "bg-green-500"
                     : ch.enabled
                       ? "bg-amber-400"
-                      : "bg-slate-300 dark:bg-slate-600"
+                      : "bg-slate-300"
                 }`}
                 title={ch.running ? "已连接" : ch.blocked_reason || "未运行"}
               />
-              <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{ch.label}</span>
-              <span className="text-xs text-slate-400 dark:text-slate-500">
+              <span className="text-sm font-medium text-slate-900">{ch.label}</span>
+              <span className="text-xs text-slate-400">
                 {ch.running
                   ? `已连接 · 角色卡：${ch.role_id} · 已发 ${ch.messages_sent} 条`
                   : ch.blocked_reason}
@@ -144,24 +144,24 @@ function ChannelsPanel() {
               value={appId}
               onChange={(e) => setAppId(e.target.value)}
               placeholder="AppID（q.qq.com → 开发设置）"
-              className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs"
+              className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
             />
             <input
               value={secret}
               onChange={(e) => setSecret(e.target.value)}
               type="password"
               placeholder="AppSecret（留空 = 保留已存的）"
-              className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs"
+              className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
             />
             <input
               value={roleId}
               onChange={(e) => setRoleId(e.target.value)}
               placeholder="应答角色卡 role_id（空 = 通用助手）"
-              className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs"
+              className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
             />
           </div>
           <div className="mt-2 flex items-center justify-between">
-            <p className="text-11 leading-relaxed text-slate-400 dark:text-slate-500">
+            <p className="text-11 leading-relaxed text-slate-400">
               机器人账号在 <b>q.qq.com</b> 注册；保存即重连生效。
             </p>
             <Button variant="primary" size="sm" type="button" disabled={busy || !appId.trim()} onClick={save}>
@@ -171,7 +171,7 @@ function ChannelsPanel() {
         </Card>
       ))}
       {channels.length === 0 && (
-        <p className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-xs text-slate-400 dark:border-slate-700 dark:text-slate-500">
+        <p className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-xs text-slate-400">
           还没有配置任何渠道 —— 渠道是角色对外说话的门（如 QQ 官方机器人）。
           不需要对外就让它空着，这不影响对话页与桌宠。
         </p>
@@ -250,17 +250,17 @@ export default function ToolsPage() {
             条件渲染会在每次切页签时卸载面板 —— 渠道那一块是带凭证表单的，填到一半
             切去看 MCP 再切回来就全没了。 */}
         <div className={section === "channels" ? "mt-4" : "hidden"}>
-          <h2 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">聊天渠道</h2>
+          <h2 className="mb-3 text-sm font-semibold text-slate-700">聊天渠道</h2>
           <ChannelsPanel />
         </div>
 
         <div className={section === "mcp" ? "mt-4" : "hidden"}>
-          <h2 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">MCP 服务器</h2>
+          <h2 className="mb-3 text-sm font-semibold text-slate-700">MCP 服务器</h2>
           <ExtensionPanel />
         </div>
 
         <div className={section === "catalog" ? "mt-4" : "hidden"}>
-          <h2 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">内置工具目录</h2>
+          <h2 className="mb-3 text-sm font-semibold text-slate-700">内置工具目录</h2>
             {catalogErr ? (
               <Notice tone="error">
                 工具目录没读到：{catalogErr}
@@ -269,29 +269,29 @@ export default function ToolsPage() {
                     setCatalogErr("");
                     api.get<ToolCatalog>("/api/tools/catalog").then(setCatalog).catch((e) => setCatalogErr(describeError(e)));
                   }}
-                  className="ml-2 rounded border border-slate-300 px-2 py-0.5 text-11 text-slate-600 hover:border-blue-300 dark:border-slate-600 dark:text-slate-300"
+                  className="ml-2 rounded border border-slate-300 px-2 py-0.5 text-11 text-slate-600 hover:border-blue-300"
                 >
                   重试
                 </button>
               </Notice>
             ) : !catalog ? (
-              <p className="text-xs text-slate-400 dark:text-slate-500">正在加载工具目录…</p>
+              <p className="text-xs text-slate-400">正在加载工具目录…</p>
             ) : (
               <div className="space-y-4">
                 <Card className="p-4">
-                  <p className="text-xs font-medium text-slate-500 dark:text-slate-400">内核工具</p>
+                  <p className="text-xs font-medium text-slate-500">内核工具</p>
                   {(catalog.kernel ?? []).map((t) => (
                     <div key={t.name} className="mt-1 text-xs">
-                      <code className="text-slate-700 dark:text-slate-200">{t.name}</code>
-                      <span className="ml-2 text-slate-400 dark:text-slate-500">{t.description}</span>
+                      <code className="text-slate-700">{t.name}</code>
+                      <span className="ml-2 text-slate-400">{t.description}</span>
                     </div>
                   ))}
                 </Card>
                 {Object.entries(catalog.domains ?? {}).map(([id, tools]) => (
                   <Card key={id} className="p-4">
-                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                    <p className="text-xs font-medium text-slate-500">
                       {domainName(id)}{" "}
-                      <code className="rounded bg-slate-100 dark:bg-slate-700/50 px-1 py-0.5 text-11 text-slate-400">
+                      <code className="rounded bg-slate-100 px-1 py-0.5 text-11 text-slate-400">
                         {id}
                       </code>
                     </p>
@@ -299,9 +299,9 @@ export default function ToolsPage() {
                         两列卡片一眼扫完。 */}
                     <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
                       {(tools as ToolEntry[]).map((t) => (
-                        <div key={t.name} className="rounded-lg bg-white/50 px-2 py-1.5 text-xs dark:bg-white/5">
-                          <code className="text-slate-700 dark:text-slate-200">{t.name}</code>
-                          <p className="mt-0.5 line-clamp-2 text-11 leading-relaxed text-slate-400 dark:text-slate-500">
+                        <div key={t.name} className="rounded-lg bg-surface/50 px-2 py-1.5 text-xs dark:bg-white/5">
+                          <code className="text-slate-700">{t.name}</code>
+                          <p className="mt-0.5 line-clamp-2 text-11 leading-relaxed text-slate-400">
                             {t.description}
                           </p>
                         </div>

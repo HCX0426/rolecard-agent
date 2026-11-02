@@ -30,12 +30,12 @@ export default function ThinkingPanel({
     <details
       open={open}
       onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-      className="mb-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 px-2.5 py-1.5"
+      className="mb-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5"
     >
-      <summary className="cursor-pointer select-none text-xs text-slate-400 dark:text-slate-500">
+      <summary className="cursor-pointer select-none text-xs text-slate-400">
         思考过程
       </summary>
-      <pre className="mt-1.5 max-h-56 overflow-auto whitespace-pre-wrap text-11 leading-relaxed text-slate-500 dark:text-slate-400">
+      <pre className="mt-1.5 max-h-56 overflow-auto whitespace-pre-wrap text-11 leading-relaxed text-slate-500">
         {text}
       </pre>
     </details>

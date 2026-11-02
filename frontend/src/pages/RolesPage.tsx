@@ -60,7 +60,7 @@ function ToolGroup({
 }) {
   return (
     <div>
-      <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p>
+      <p className="text-xs font-medium text-slate-500">{label}</p>
       <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1.5">
         {entries.map((t) => (
           <label
@@ -75,8 +75,8 @@ function ToolGroup({
               className="mt-0.5"
             />
             <span className="min-w-0">
-              <code className="text-11 text-slate-700 dark:text-slate-200">{t.name}</code>
-              <span className="block truncate text-slate-400 dark:text-slate-500">{t.description}</span>
+              <code className="text-11 text-slate-700">{t.name}</code>
+              <span className="block truncate text-slate-400">{t.description}</span>
             </span>
           </label>
         ))}
@@ -401,8 +401,8 @@ export default function RolesPage({
                   示例卡 ▾
                 </Button>
                 {showSamples && (
-                  <div className="absolute right-0 z-20 mt-1 w-72 rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg dark:border-slate-700 dark:bg-slate-800">
-                    <p className="px-2 pb-1 pt-0.5 text-11 text-slate-400 dark:text-slate-500">
+                  <div className="absolute right-0 z-20 mt-1 w-72 rounded-lg border border-slate-200 bg-surface p-1.5 shadow-lg">
+                    <p className="px-2 pb-1 pt-0.5 text-11 text-slate-400">
                       随包样例，一键导入。
                     </p>
                     {SAMPLE_CARDS.map((sc) => (
@@ -411,7 +411,7 @@ export default function RolesPage({
                         type="button"
                         disabled={importing}
                         onClick={() => void importSample(sc.file)}
-                        className="block w-full rounded px-2 py-1.5 text-left text-xs text-slate-600 hover:bg-slate-200 hover:text-slate-700 disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                        className="block w-full rounded px-2 py-1.5 text-left text-xs text-slate-600 hover:bg-slate-200 hover:text-slate-700 disabled:opacity-50"
                       >
                         {sc.label}
                       </button>
@@ -448,9 +448,9 @@ export default function RolesPage({
             >
               ← 返回列表
             </Button>
-            <span className="text-xs text-slate-400 dark:text-slate-500">
+            <span className="text-xs text-slate-400">
               正在编辑：
-              <EllipsisText maxClass="max-w-60 inline-block align-bottom" detect className="mx-1 inline font-semibold text-slate-600 dark:text-slate-300">
+              <EllipsisText maxClass="max-w-60 inline-block align-bottom" detect className="mx-1 inline font-semibold text-slate-600">
                 {form.role_name || form.role_id || "新角色"}
               </EllipsisText>
             </span>
@@ -462,58 +462,58 @@ export default function RolesPage({
               e.preventDefault();
               save();
             }}
-            className="mt-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5"
+            className="mt-2 rounded-xl border border-slate-200 bg-surface p-5"
           >
             <div className="grid grid-cols-2 items-start gap-4">
               <label className="block">
-                <span className="text-xs text-slate-500 dark:text-slate-400">role_id</span>
+                <span className="text-xs text-slate-500">role_id</span>
                 <input
                   required
                   disabled={!!editing}
                   value={form.role_id}
                   onChange={(e) => setForm({ ...form, role_id: e.target.value })}
                   pattern="[a-z][a-z0-9_]*"
-                  className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm disabled:bg-slate-50 dark:bg-slate-800/50"
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:bg-slate-50"
                 />
                 {/* 说明降级到输入框下面独占一行：嵌在 label 文字里会把 label 撑成两行，
                     把同排的 role_name 输入框顶歪（用户 2026-10-29：多余注释导致没对齐）。 */}
-                <span className="mt-1 block text-11 leading-relaxed text-slate-400 dark:text-slate-500">
+                <span className="mt-1 block text-11 leading-relaxed text-slate-400">
                   小写字母开头，可用数字/下划线{editing ? "；编辑时不可改" : ""}
                 </span>
               </label>
               <label className="block">
-                <span className="text-xs text-slate-500 dark:text-slate-400">角色名</span>
+                <span className="text-xs text-slate-500">角色名</span>
                 <input
                   required
                   value={form.role_name}
                   onChange={(e) => setForm({ ...form, role_name: e.target.value })}
-                  className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm"
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
                 />
               </label>
             </div>
             {/* 描述紧跟角色名之后（用户 2026-10-29："描述应该放角色名下面"）：
                 它和名字同属"这个角色是谁"，原先沉在表单最底部（第 8 格）。 */}
             <label className="mt-3 block">
-              <span className="text-xs text-slate-500 dark:text-slate-400">描述</span>
+              <span className="text-xs text-slate-500">描述</span>
               <input
                 value={form.description}
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
-                className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm"
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
               />
             </label>
             <label className="mt-3 block">
-              <span className="text-xs text-slate-500 dark:text-slate-400">人设规则</span>
+              <span className="text-xs text-slate-500">人设规则</span>
               <textarea
                 required
                 rows={3}
                 value={form.system_prompt}
                 onChange={(e) => setForm({ ...form, system_prompt: e.target.value })}
-                className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm"
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
               />
             </label>
             <div className="mt-3 grid grid-cols-2 items-start gap-4">
               <label className="block">
-                <span className="text-xs text-slate-500 dark:text-slate-400">temperature（0–1）</span>
+                <span className="text-xs text-slate-500">temperature（0–1）</span>
                 <input
                   type="number"
                   step="0.1"
@@ -521,15 +521,15 @@ export default function RolesPage({
                   max="1"
                   value={form.temperature}
                   onChange={(e) => setForm({ ...form, temperature: Number(e.target.value) })}
-                  className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm"
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
                 />
               </label>
               <label className="block">
-                <span className="text-xs text-slate-500 dark:text-slate-400">模型</span>
+                <span className="text-xs text-slate-500">模型</span>
                 <select
                   value={form.model_name}
                   onChange={(e) => setForm({ ...form, model_name: e.target.value })}
-                  className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm"
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
                 >
                   <option value="">跟随全局优先级</option>
                   {/* 选项不带括号注释（2026-10-31）："哪个是全局第一档"看顺序即可——
@@ -541,7 +541,7 @@ export default function RolesPage({
                   ))}
                 </select>
                 {/* 同 role_id 那一格：说明出 label、独占输入框下面一行，两列的输入框才齐。 */}
-                <span className="mt-1 block text-11 leading-relaxed text-slate-400 dark:text-slate-500">
+                <span className="mt-1 block text-11 leading-relaxed text-slate-400">
                   角色级 —— 留空 = 跟「服务」页那份优先级走
                 </span>
               </label>
@@ -552,7 +552,7 @@ export default function RolesPage({
                 checked={form.reachout_enabled}
                 onChange={(e) => setForm({ ...form, reachout_enabled: e.target.checked })}
               />
-              <span className="text-slate-600 dark:text-slate-300">角色会主动找你（需全局「主动开口」总闸开着）</span>
+              <span className="text-slate-600">角色会主动找你（需全局「主动开口」总闸开着）</span>
             </label>
             <div className="mt-2 ml-5 flex flex-col gap-1.5 text-xs">
               <label className="flex cursor-pointer items-center gap-2">
@@ -562,7 +562,7 @@ export default function RolesPage({
                   disabled={!form.reachout_enabled}
                   onChange={(e) => setForm({ ...form, affinity_enabled: e.target.checked })}
                 />
-                <span className="text-slate-600 dark:text-slate-300">关系驱动·关系数值：聊得够近就主动找你（关掉它下面几档才轮得到）</span>
+                <span className="text-slate-600">关系驱动·关系数值：聊得够近就主动找你（关掉它下面几档才轮得到）</span>
               </label>
               <label className="flex cursor-pointer items-center gap-2">
                 <input
@@ -571,7 +571,7 @@ export default function RolesPage({
                   disabled={!form.reachout_enabled}
                   onChange={(e) => setForm({ ...form, recall_enabled: e.target.checked })}
                 />
-                <span className="text-slate-600 dark:text-slate-300">关系驱动·回忆：记得的事会主动提起（按角色记忆隔离，一天最多一次）</span>
+                <span className="text-slate-600">关系驱动·回忆：记得的事会主动提起（按角色记忆隔离，一天最多一次）</span>
               </label>
               <label className="flex cursor-pointer items-center gap-2">
                 <input
@@ -580,7 +580,7 @@ export default function RolesPage({
                   disabled={!form.reachout_enabled}
                   onChange={(e) => setForm({ ...form, time_pattern_enabled: e.target.checked })}
                 />
-                <span className="text-slate-600 dark:text-slate-300">关系驱动·时段规律：按你常互动的时段主动找你</span>
+                <span className="text-slate-600">关系驱动·时段规律：按你常互动的时段主动找你</span>
               </label>
               <label className="flex cursor-pointer items-center gap-2">
                 <input
@@ -589,20 +589,20 @@ export default function RolesPage({
                   disabled={!form.reachout_enabled}
                   onChange={(e) => setForm({ ...form, file_watch_enabled: e.target.checked })}
                 />
-                <span className="text-slate-600 dark:text-slate-300">文件事件：任务目录有变化时主动说（需全局「文件事件触发」开着）</span>
+                <span className="text-slate-600">文件事件：任务目录有变化时主动说（需全局「文件事件触发」开着）</span>
               </label>
               {/* 固定时刻问候（2026-10-24，2a）：每天这一时刻主动开口一次，当日只发一次；
                   仍要过静默闸 —— 基线间隔没到就照旧被压，排好的问候不越过"别太吵"纪律。 */}
               <label className="flex items-center gap-2">
-                <span className="text-slate-600 dark:text-slate-300">固定时刻问候</span>
+                <span className="text-slate-600">固定时刻问候</span>
                 <input
                   type="time"
                   value={form.greeting_at}
                   disabled={!form.reachout_enabled}
                   onChange={(e) => setForm({ ...form, greeting_at: e.target.value })}
-                  className="rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
+                  className="rounded border border-slate-200 bg-surface px-2 py-1 text-xs"
                 />
-                <span className="text-slate-600 dark:text-slate-300">
+                <span className="text-slate-600">
                   每天这个时刻主动找你一次（清空 = 不排）
                 </span>
               </label>
@@ -618,9 +618,9 @@ export default function RolesPage({
                   onChange={(e) =>
                     setForm({ ...form, reachout_keep: Math.max(0, Number(e.target.value) || 0) })
                   }
-                  className="w-20 rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
+                  className="w-20 rounded border border-slate-200 bg-surface px-2 py-1 text-xs"
                 />
-                <span className="text-slate-600 dark:text-slate-300">
+                <span className="text-slate-600">
                   主动消息只留最近 N 条（0 = 不自动删，只手动清）
                 </span>
               </label>
@@ -628,11 +628,11 @@ export default function RolesPage({
                   时这一整条不出现 —— 只能选"默认"的下拉是死控件。空值 = 跟随默认包。 */}
               {packs && packs.packs.length > 0 && (
                 <label className="flex items-center gap-2">
-                  <span className="text-slate-600 dark:text-slate-300">桌宠形象</span>
+                  <span className="text-slate-600">桌宠形象</span>
                   <select
                     value={form.pet_pack}
                     onChange={(e) => setForm({ ...form, pet_pack: e.target.value })}
-                    className="rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
+                    className="rounded border border-slate-200 bg-surface px-2 py-1 text-xs"
                   >
                     <option value="">跟随默认包</option>
                     {packs.packs.map((p) => (
@@ -652,7 +652,7 @@ export default function RolesPage({
               )}
             </div>
             <div className="mt-3">
-              <span className="text-xs text-slate-500 dark:text-slate-400">工具权限</span>
+              <span className="text-xs text-slate-500">工具权限</span>
               <div className="mt-1 flex gap-5 text-sm">
                 <label className="flex cursor-pointer items-center gap-1.5">
                   <input
@@ -673,7 +673,7 @@ export default function RolesPage({
               </div>
             </div>
             {wlMode === "custom" && catalog && (
-              <div className="mt-2 space-y-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-3">
+              <div className="mt-2 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
                 <ToolGroup
                   label="内核工具（所有领域通用）"
                   entries={catalog.kernel ?? []}
@@ -702,7 +702,7 @@ export default function RolesPage({
                 同一个问题："这个角色能碰什么" —— 白名单管**哪些工具**，工作区管**哪些文件**。
                 新建态不显示：role_id 还不存在，这一列还没有主人。 */}
             {editing && (
-              <div className="mt-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-3">
+              <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
                 <WorkspacePanel roleId={form.role_id} />
               </div>
             )}
@@ -711,17 +711,17 @@ export default function RolesPage({
                 正好是第一个作用域 chip 的 ✕。于是点行空白 = 删一个作用域，每点一个。
                 一块里装着多个独立控件（chips/下拉/输入框/按钮）时，label 只能包住它的标题文字。 */}
             <div className="mt-3">
-              <span className="text-xs text-slate-500 dark:text-slate-400">
+              <span className="text-xs text-slate-500">
                 知识作用域（声明可检索的范围；不选 = 不可检索）
               </span>
-              <div className="mt-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-3">
+              <div className="mt-1.5 rounded-lg border border-slate-200 bg-slate-50 p-3">
                 {/* 已选：可移除的 chips */}
                 {form.knowledge_scopes.length > 0 && (
                   <div className="mb-2 flex flex-wrap gap-1.5">
                     {form.knowledge_scopes.map((s) => (
                       <span
                         key={s}
-                        className="flex items-center gap-1 rounded-full bg-slate-200 dark:bg-slate-800/50 px-2.5 py-1 text-xs text-slate-600 dark:text-slate-200"
+                        className="flex items-center gap-1 rounded-full bg-slate-200 px-2.5 py-1 text-xs text-slate-600"
                       >
                         {s}
                         <button
@@ -743,13 +743,13 @@ export default function RolesPage({
                 {/* 可选作用域下拉：来自真实已建知识集合 + 现存角色声明；选中即加入 */}
                 {availableScopes.length > 0 && (
                   <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <span className="text-11 text-slate-400 dark:text-slate-500">从已有作用域添加：</span>
+                    <span className="text-11 text-slate-400">从已有作用域添加：</span>
                     <select
                       value=""
                       onChange={(e) => {
                         if (e.target.value) toggleScope(e.target.value);
                       }}
-                      className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1.5 text-xs text-slate-600 dark:text-slate-300"
+                      className="rounded-lg border border-slate-200 bg-surface px-2 py-1.5 text-xs text-slate-600"
                     >
                       <option value="">＋ 选择作用域…</option>
                       {availableScopes.map((s) => (
@@ -772,7 +772,7 @@ export default function RolesPage({
                       }
                     }}
                     placeholder="或新建作用域（如 health_reports）"
-                    className="flex-1 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs"
+                    className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
                   />
                   <Button variant="outline" size="sm" type="button" onClick={addScope}>
                     新建
@@ -784,7 +784,7 @@ export default function RolesPage({
             </div>
             <div className="mt-3">
               <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-500 dark:text-slate-400">
+                <span className="text-xs text-slate-500">
                   范例（few-shot：教它「怎么答」，比讲规则更省 token）
                 </span>
                 {form.exemplars.length < 4 && (
@@ -806,14 +806,14 @@ export default function RolesPage({
               </div>
               <div className="mt-1.5 space-y-2">
                 {form.exemplars.map((ex, i) => (
-                  <div key={ex.rowId} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-2">
+                  <div key={ex.rowId} className="rounded-lg border border-slate-200 bg-slate-50 p-2">
                     <div className="flex items-start gap-2">
-                      <span className="mt-1.5 shrink-0 text-11 text-slate-400 dark:text-slate-500">用户</span>
+                      <span className="mt-1.5 shrink-0 text-11 text-slate-400">用户</span>
                       <input
                         value={ex.user}
                         onChange={(e) => setExemplar(i, "user", e.target.value)}
                         placeholder="用户会怎么问"
-                        className="flex-1 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs"
+                        className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
                       />
                       <button
                         type="button"
@@ -823,31 +823,31 @@ export default function RolesPage({
                             exemplars: f.exemplars.filter((_, j) => j !== i),
                           }))
                         }
-                        className="rounded px-1.5 py-1 text-xs text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700 hover:text-red-500"
+                        className="rounded px-1.5 py-1 text-xs text-slate-400 hover:bg-slate-100 hover:text-red-500"
                         title="删除这条范例"
                       >
                         ✕
                       </button>
                     </div>
                     <div className="mt-1.5 flex items-start gap-2">
-                      <span className="mt-1.5 shrink-0 text-11 text-slate-400 dark:text-slate-500">回答</span>
+                      <span className="mt-1.5 shrink-0 text-11 text-slate-400">回答</span>
                       <textarea
                         value={ex.assistant}
                         onChange={(e) => setExemplar(i, "assistant", e.target.value)}
                         rows={2}
                         placeholder="理想的回答（体现语气与边界）"
-                        className="flex-1 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs"
+                        className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
                       />
                     </div>
                   </div>
                 ))}
                 {form.exemplars.length === 0 && (
-                  <p className="text-11 text-slate-400 dark:text-slate-500">
+                  <p className="text-11 text-slate-400">
                     还没有范例。范例插在角色设定与安全规则之间（上限 4 条 / 共 3000 字）。
                   </p>
                 )}
               </div>
-              <span className="mt-1 block text-11 leading-relaxed text-slate-400 dark:text-slate-500">
+              <span className="mt-1 block text-11 leading-relaxed text-slate-400">
                 <b>范例教句式，不教事实</b>：别写真实数值 / 日期 / 人名 ——
                 模型可能把范例里的数当成你的事实复读出来。
               </span>
@@ -886,7 +886,7 @@ export default function RolesPage({
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                      <span className="truncate text-sm font-medium text-slate-900">
                         {r.role_name}
                       </span>
                       {r.is_builtin ? (
@@ -895,17 +895,17 @@ export default function RolesPage({
                         <Tag tone="slate">自定义</Tag>
                       )}
                     </div>
-                    <code className="mt-0.5 block truncate font-mono text-11 text-slate-400 dark:text-slate-500">
+                    <code className="mt-0.5 block truncate font-mono text-11 text-slate-400">
                       {r.role_id}
                     </code>
                   </div>
                 </div>
                 {summary && (
-                  <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                  <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-500">
                     {summary}
                   </p>
                 )}
-                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-11 text-slate-400 dark:text-slate-500">
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-11 text-slate-400">
                   <span>模型：{r.model_name || "跟随默认"}</span>
                   <span>
                     工具：

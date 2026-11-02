@@ -197,11 +197,11 @@ export function AddModelDrawer({
     >
       <div className="space-y-5">
         <section>
-          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+          <label className="text-xs font-medium text-slate-500">
             1 · 供应商
           </label>
           <select
-            className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
+            className="mt-1.5 w-full rounded-lg border border-slate-200 bg-surface px-2.5 py-2 text-sm"
             value={source.kind === "group" ? `${GROUP_SOURCE}${source.id}` : `__new__${source.provider}`}
             onChange={(e) => {
               const v = e.target.value;
@@ -233,7 +233,7 @@ export function AddModelDrawer({
           </select>
           {source.kind === "new" && (
             <div className="mt-2 space-y-2">
-              <p className="text-11 leading-relaxed text-slate-400 dark:text-slate-500">
+              <p className="text-11 leading-relaxed text-slate-400">
                 下面这两格存进<b>厂商</b>那一层：同一家厂商的多个模型共用一把密钥与一个端点。
               </p>
               <input
@@ -243,7 +243,7 @@ export function AddModelDrawer({
                   invalidate();
                 }}
                 placeholder={hint || "base_url（留空=该厂商默认端点）"}
-                className="w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
+                className="w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm"
               />
               {needsKey(source.provider, catalog) && (
                 <input
@@ -254,7 +254,7 @@ export function AddModelDrawer({
                     invalidate();
                   }}
                   placeholder="api_key（只存本机，保存后不再回显明文）"
-                  className="w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
+                  className="w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm"
                 />
               )}
             </div>
@@ -263,7 +263,7 @@ export function AddModelDrawer({
 
         <section>
           <div className="flex items-center gap-2">
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+            <label className="text-xs font-medium text-slate-500">
               2 · 模型名
             </label>
             <Button size="sm" variant="ghost" onClick={fetchModels} disabled={busy}>
@@ -277,10 +277,10 @@ export function AddModelDrawer({
               invalidate();
             }}
             placeholder="如 deepseek-ai/DeepSeek-V4-Flash 或 qwen3-vl:8b"
-            className="mt-1.5 w-full rounded-lg border border-slate-200 px-2.5 py-2 font-mono text-sm dark:border-slate-700 dark:bg-slate-800"
+            className="mt-1.5 w-full rounded-lg border border-slate-200 px-2.5 py-2 font-mono text-sm"
           />
           {models.length > 0 && (
-            <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700">
+            <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-slate-200">
               {models
                 .filter((m) => !model || m.toLowerCase().includes(model.toLowerCase()))
                 .map((m) => (
@@ -291,7 +291,7 @@ export function AddModelDrawer({
                       setModel(m);
                       invalidate();
                     }}
-                    className={`block w-full px-2.5 py-1.5 text-left font-mono text-xs hover:bg-slate-50 dark:hover:bg-slate-700/60 ${
+                    className={`block w-full px-2.5 py-1.5 text-left font-mono text-xs hover:bg-slate-50 ${
                       m === model ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" : ""
                     }`}
                   >
@@ -301,15 +301,15 @@ export function AddModelDrawer({
             </div>
           )}
           {listNote && (
-            <p className="mt-1.5 text-11 text-slate-400 dark:text-slate-500">{listNote}</p>
+            <p className="mt-1.5 text-11 text-slate-400">{listNote}</p>
           )}
         </section>
 
         <section>
-          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+          <label className="text-xs font-medium text-slate-500">
             3 · 能力探测（可选）
           </label>
-          <p className="mt-1 text-11 leading-relaxed text-slate-400 dark:text-slate-500">
+          <p className="mt-1 text-11 leading-relaxed text-slate-400">
             不测也能加入 —— 徽章会显示 <b>?</b>（没测过），之后在卡片上随时补测。
           </p>
           <label className="mt-2 flex items-center gap-2 text-xs">
@@ -341,7 +341,7 @@ export function AddModelDrawer({
             </Button>
           )}
           {probe && (
-            <p className="mt-2 rounded-lg bg-slate-50 px-2.5 py-2 text-11 leading-relaxed text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+            <p className="mt-2 rounded-lg bg-slate-50 px-2.5 py-2 text-11 leading-relaxed text-slate-500">
               工具：{tri(probe.tools)} · 视觉：{tri(probe.vision)}
               {probe.vision_source === "uploaded-image" && "（已外发测试图）"}
               {probe.vision_source === "free-metadata" && "（来自引擎自报的能力，未外发）"} ·

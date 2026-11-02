@@ -40,8 +40,8 @@ export function DataBackupCard() {
 
   return (
     <Card className="p-5">
-      <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">全量备份</h3>
-      <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+      <h3 className="text-sm font-medium text-slate-900">全量备份</h3>
+      <p className="mt-1.5 text-xs leading-relaxed text-slate-500">
         把这台机器上的全部数据（角色卡、会话、记忆、设置、知识库、上传原件）打成 zip 下载，换机/搬家时带走。
         <b className="text-amber-700 dark:text-amber-400">包里含模型 API key</b>
         ，别丢进网盘或聊天工具；只在本机生成、不经网络。
@@ -58,7 +58,7 @@ export function DataBackupCard() {
           {state.kind === "busy" ? "正在打包…" : "导出全量备份"}
         </Button>
         {state.kind === "done" && (
-          <span className="text-11 text-slate-400 dark:text-slate-500">
+          <span className="text-11 text-slate-400">
             已导出 {state.filename}（若浏览器没自动下载，再点一次）
           </span>
         )}

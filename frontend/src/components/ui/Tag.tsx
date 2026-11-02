@@ -7,7 +7,7 @@ const TONES: Record<TagTone, string> = {
   amber: "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
   red: "bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400",
   blue: "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
-  slate: "bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400",
+  slate: "bg-slate-100 text-slate-500",
 };
 
 /** 状态标签（已校验 / 未校验 / 插件停用 …）。 */

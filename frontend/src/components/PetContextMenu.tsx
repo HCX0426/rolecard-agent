@@ -54,7 +54,7 @@ export default function PetContextMenu({
       ref={ref}
       data-pet-ui="menu"
       role="menu"
-      className="fixed z-50 w-44 rounded-lg border border-slate-200 bg-white py-1 text-11 shadow-lg dark:border-slate-600 dark:bg-slate-800"
+      className="fixed z-50 w-44 rounded-lg border border-slate-200 bg-surface py-1 text-11 shadow-lg"
       style={{ left, top }}
     >
       {entries.map((entry) => (
@@ -67,7 +67,7 @@ export default function PetContextMenu({
             entry.run();
             onClose();
           }}
-          className="block w-full px-2.5 py-1 text-left text-slate-600 enabled:hover:bg-blue-50 enabled:hover:text-blue-700 disabled:text-slate-300 dark:text-slate-200 dark:enabled:hover:bg-slate-700/60 dark:disabled:text-slate-600"
+          className="block w-full px-2.5 py-1 text-left text-slate-600 enabled:hover:bg-blue-50 enabled:hover:text-blue-700 disabled:text-slate-300 dark:enabled:hover:bg-slate-700/60"
         >
           {entry.label}
         </button>

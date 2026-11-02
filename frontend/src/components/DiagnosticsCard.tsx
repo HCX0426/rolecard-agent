@@ -33,8 +33,8 @@ export function DiagnosticsCard() {
 
   return (
     <Card className="p-5">
-      <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">诊断</h3>
-      <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+      <h3 className="text-sm font-medium text-slate-900">诊断</h3>
+      <p className="mt-1.5 text-xs leading-relaxed text-slate-500">
         导出诊断包发给开发者：错误签名 + 版本指纹 + 本机日志；只在本机组装、不经网络、不含密钥。
       </p>
       <div className="mt-2.5 flex flex-wrap items-center gap-3">
@@ -49,7 +49,7 @@ export function DiagnosticsCard() {
           {state.kind === "busy" ? "正在打包…" : "导出诊断包"}
         </Button>
         {state.kind === "done" && (
-          <span className="text-11 text-slate-400 dark:text-slate-500">
+          <span className="text-11 text-slate-400">
             已导出 {state.filename}（若浏览器没自动下载，再点一次）
           </span>
         )}

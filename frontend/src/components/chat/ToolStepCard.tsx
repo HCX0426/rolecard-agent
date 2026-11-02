@@ -22,29 +22,29 @@ export default function ToolStepCard({ step }: { step: ToolStep }) {
     .join("  ")
     .slice(0, 80);
   return (
-    <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-2.5 py-1.5">
+    <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5">
       <button
         onClick={() => body && setOpen((o) => !o)}
-        className={`flex w-full items-center gap-2 text-left font-mono text-xs text-slate-600 dark:text-slate-300 ${
+        className={`flex w-full items-center gap-2 text-left font-mono text-xs text-slate-600 ${
           body ? "cursor-pointer" : "cursor-default"
         }`}
       >
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
         <span className="shrink-0">{step.name}</span>
         {argsSummary && (
-          <span className="min-w-0 flex-1 truncate text-slate-400 dark:text-slate-500">
+          <span className="min-w-0 flex-1 truncate text-slate-400">
             {argsSummary}
           </span>
         )}
-        {step.status === "running" && <span className="shrink-0 text-slate-400 dark:text-slate-500">执行中…</span>}
+        {step.status === "running" && <span className="shrink-0 text-slate-400">执行中…</span>}
         {body && (
-          <span className="ml-auto shrink-0 text-slate-300 dark:text-slate-600">
+          <span className="ml-auto shrink-0 text-slate-300">
             {open ? "收起 ▴" : `${body.length} 字 ▾`}
           </span>
         )}
       </button>
       {open && body && (
-        <pre className="mt-1.5 max-h-56 overflow-auto rounded bg-white dark:bg-slate-800 p-2 text-11 whitespace-pre-wrap text-slate-600 dark:text-slate-300">
+        <pre className="mt-1.5 max-h-56 overflow-auto rounded bg-surface p-2 text-11 whitespace-pre-wrap text-slate-600">
           {body}
         </pre>
       )}

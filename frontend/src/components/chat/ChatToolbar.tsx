@@ -164,7 +164,7 @@ export default function ChatToolbar({
           aria-haspopup="true"
           aria-expanded={roleMenuOpen}
           title="换个说话的角色 —— 会打开那个角色自己的那条对话（各角色的话留在各自那条线里）"
-          className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-700"
+          className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200 bg-surface px-3 py-1 text-xs text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
         >
           <IconUser />
           <EllipsisText maxClass="max-w-40" detect>
@@ -179,9 +179,9 @@ export default function ChatToolbar({
                 而它往上长是会被头部截掉的。 */}
             <div
               data-testid="role-menu"
-              className="absolute bottom-full left-0 z-20 mb-2 flex max-h-[min(60vh,420px)] w-64 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-600 dark:bg-slate-800"
+              className="absolute bottom-full left-0 z-20 mb-2 flex max-h-[min(60vh,420px)] w-64 flex-col overflow-hidden rounded-xl border border-slate-200 bg-surface shadow-lg"
             >
-              <p className="shrink-0 bg-slate-50 px-3 py-1.5 text-11 font-medium text-slate-400 dark:bg-slate-800/60 dark:text-slate-500">
+              <p className="shrink-0 bg-slate-50 px-3 py-1.5 text-11 font-medium text-slate-400">
                 选角色 = 进那个角色自己的那条对话（原来那条留在左侧）
               </p>
               {roles.length > ROLE_SEARCH_FROM && (
@@ -190,7 +190,7 @@ export default function ChatToolbar({
                   onChange={(e) => setRoleFilter(e.target.value)}
                   placeholder={`搜角色（${roles.length} 个）`}
                   aria-label="搜角色"
-                  className="mx-2 mt-2 shrink-0 rounded-lg border border-slate-200 px-2 py-1 text-xs outline-none focus:border-blue-400 dark:border-slate-600 dark:bg-slate-900"
+                  className="mx-2 mt-2 shrink-0 rounded-lg border border-slate-200 px-2 py-1 text-xs outline-none focus:border-blue-400"
                 />
               )}
               <div className="min-h-0 flex-1 overflow-y-auto py-1">
@@ -205,7 +205,7 @@ export default function ChatToolbar({
                       }}
                       className="flex w-full items-center justify-between gap-2 px-3 py-2 text-xs hover:bg-blue-50 dark:hover:bg-blue-900/30"
                     >
-                      <span className="truncate text-slate-700 dark:text-slate-200">{r.role_name}</span>
+                      <span className="truncate text-slate-700">{r.role_name}</span>
                       <span className="ml-auto flex shrink-0 items-center gap-1.5">
                         {unread > 0 && (
                           <span
@@ -216,7 +216,7 @@ export default function ChatToolbar({
                           </span>
                         )}
                         {r.is_builtin && (
-                          <span className="rounded bg-slate-100 px-1 text-10 text-slate-400 dark:bg-slate-700/60 dark:text-slate-400">
+                          <span className="rounded bg-slate-100 px-1 text-10 text-slate-400">
                             内置
                           </span>
                         )}
@@ -228,7 +228,7 @@ export default function ChatToolbar({
                   );
                 })}
                 {shownRoles.length === 0 && (
-                  <p className="px-3 py-2 text-xs text-slate-400 dark:text-slate-500">
+                  <p className="px-3 py-2 text-xs text-slate-400">
                     没有匹配「{roleFilter}」的角色
                   </p>
                 )}
@@ -255,14 +255,14 @@ export default function ChatToolbar({
           aria-haspopup="true"
           aria-expanded={modelMenuOpen}
           title="切换本对话使用的模型（按供应商分组；选中即开对话）"
-          className="flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700"
+          className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-surface px-3 py-1 text-xs text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
         >
           <IconModel />
           {backends.find((b) => b.name === effectiveBackend)?.model || effectiveBackend || "模型"} ▾
         </button>
         {modelMenuOpen && (
           <>
-            <div className="absolute bottom-full left-0 z-20 mb-2 max-h-72 w-72 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-lg">
+            <div className="absolute bottom-full left-0 z-20 mb-2 max-h-72 w-72 overflow-y-auto rounded-xl border border-slate-200 bg-surface shadow-lg">
             <button
               onClick={async () => {
                 if (await onSwitchModel(null)) setModelMenuOpen(false);
@@ -274,7 +274,7 @@ export default function ChatToolbar({
             </button>
             {grouped.map(([provider, list]) => (
               <div key={provider}>
-                <p className="bg-slate-50 dark:bg-slate-800/50 px-3 py-1 text-11 font-medium text-slate-400 dark:text-slate-500">
+                <p className="bg-slate-50 px-3 py-1 text-11 font-medium text-slate-400">
                   {providerLabels[provider] ?? provider}
                 </p>
                 {list.map((b) => (
@@ -302,7 +302,7 @@ export default function ChatToolbar({
                           )}
                         </span>
                         <span className="ml-2 flex min-w-0 items-center gap-1.5">
-                          <span className="truncate text-slate-400 dark:text-slate-500">{b.name}</span>
+                          <span className="truncate text-slate-400">{b.name}</span>
                         </span>
                         {effectiveBackend === b.name && (
                           <span className="ml-1 text-blue-600 dark:text-blue-400">✓</span>
@@ -312,7 +312,7 @@ export default function ChatToolbar({
                         <button
                           onClick={() => setCtxOpen((c) => (c === b.name ? null : b.name))}
                           title="设置该模型的上下文窗口（num_ctx）"
-                          className="mr-2 shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-10 text-slate-500 hover:bg-slate-200 dark:bg-slate-700/60 dark:text-slate-400 dark:hover:bg-slate-600"
+                          className="mr-2 shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-10 text-slate-500 hover:bg-slate-200"
                         >
                           {b.num_ctx ? `${Math.round(b.num_ctx / 1024)}k ▾` : "上下文 ▾"}
                         </button>
@@ -323,7 +323,7 @@ export default function ChatToolbar({
                       <button
                         onClick={() => setSampOpen((s) => (s === b.name ? null : b.name))}
                         title="采样惩罚（重复 / 频率 / 存在）：保存即热重建，下一轮生效"
-                        className="mr-2 shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-10 text-slate-500 hover:bg-slate-200 dark:bg-slate-700/60 dark:text-slate-400 dark:hover:bg-slate-600"
+                        className="mr-2 shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-10 text-slate-500 hover:bg-slate-200"
                       >
                         {b.repeat_penalty != null ||
                         b.frequency_penalty != null ||
@@ -335,8 +335,8 @@ export default function ChatToolbar({
                     {/* 上下文选项：点行内「上下文」徽章展开（inline，触屏可用） */}
                     {(b.style === "native") &&
                       ctxOpen === b.name && (
-                      <div className="border-t border-slate-100 px-3 py-2 dark:border-slate-700/60">
-                        <p className="pb-1.5 text-10 font-medium text-slate-400 dark:text-slate-500">
+                      <div className="border-t border-slate-100 px-3 py-2">
+                        <p className="pb-1.5 text-10 font-medium text-slate-400">
                           上下文窗口 · {b.model}
                         </p>
                         <div className="grid grid-cols-3 gap-1">
@@ -354,27 +354,27 @@ export default function ChatToolbar({
                               className={`rounded px-2 py-1 text-11 ${
                                 (b.num_ctx ?? null) === opt.value
                                   ? "bg-blue-600 text-white"
-                                  : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700/60"
+                                  : "text-slate-600 hover:bg-slate-100"
                               }`}
                             >
                               {opt.label}
                             </button>
                           ))}
                         </div>
-                        <p className="mt-1.5 text-10 leading-relaxed text-slate-400 dark:text-slate-500">
+                        <p className="mt-1.5 text-10 leading-relaxed text-slate-400">
                           Ollama 默认仅 2048 tokens，调大才能真正用上模型窗口
                         </p>
                       </div>
                     )}
                     {/* 采样惩罚面板：一栏一行、行内点档位，第一档永远是「未设置」。 */}
                     {sampOpen === b.name && (
-                      <div className="border-t border-slate-100 px-3 py-2 dark:border-slate-700/60">
+                      <div className="border-t border-slate-100 px-3 py-2">
                         {SAMPLING_FIELDS.filter(
                           (f) =>
                             !f.nativeOnly || b.style === "native",
                         ).map((f) => (
                           <div key={f.key} className="flex items-start gap-1.5 py-0.5">
-                            <span className="w-16 shrink-0 pt-1 text-10 text-slate-400 dark:text-slate-500">
+                            <span className="w-16 shrink-0 pt-1 text-10 text-slate-400">
                               {f.label}
                             </span>
                             <div className="flex flex-wrap gap-1">
@@ -385,7 +385,7 @@ export default function ChatToolbar({
                                   className={`rounded px-2 py-0.5 text-11 ${
                                     (b[f.key] ?? null) === opt.value
                                       ? "bg-blue-600 text-white"
-                                      : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700/60"
+                                      : "text-slate-600 hover:bg-slate-100"
                                   }`}
                                 >
                                   {opt.label}
@@ -394,7 +394,7 @@ export default function ChatToolbar({
                             </div>
                           </div>
                         ))}
-                        <p className="mt-1 text-10 leading-relaxed text-slate-400 dark:text-slate-500">
+                        <p className="mt-1 text-10 leading-relaxed text-slate-400">
                           「未设置」= 不传这项、听引擎的（Ollama 出厂重复惩罚就是 1.1）。
                           上调能压复读，但小模型上更容易伤连贯 —— 拿不准就留未设置。
                         </p>
@@ -412,7 +412,7 @@ export default function ChatToolbar({
         onClick={() => fileRef.current?.click()}
         disabled={uploading}
         title="上传文件，自动解析并入检索索引（.txt/.md/.pdf/.docx/.pptx/.xlsx + 图片 OCR）"
-        className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700 disabled:opacity-50"
+        className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200 bg-surface px-3 py-1 text-xs text-slate-600 hover:border-blue-300 dark:hover:border-blue-700 disabled:opacity-50"
       >
         <IconClip />
         {uploading ? "上传中…" : "上传文件"}
@@ -424,7 +424,7 @@ export default function ChatToolbar({
         className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1 text-xs disabled:opacity-50 ${
           selectMode
             ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
-            : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:border-amber-300 hover:text-amber-600"
+            : "border-slate-200 bg-surface text-slate-600 hover:border-amber-300 hover:text-amber-600"
         }`}
       >
         {selectMode ? "退出删除模式" : "删除对话"}

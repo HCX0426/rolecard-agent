@@ -75,8 +75,8 @@ export function WorkspacePanel({ roleId }: { roleId: string }) {
     <div>
       {/* 一行标题 + 当前生效值：路径是这字段的主要信息，字号给足 */}
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-xs font-medium text-slate-700 dark:text-slate-200">工作区</span>
-        <span className="truncate text-11 text-slate-400 dark:text-slate-500">
+        <span className="text-xs font-medium text-slate-700">工作区</span>
+        <span className="truncate text-11 text-slate-400">
           {wsDir?.overridden ? "独享" : "跟随全局默认"}
         </span>
       </div>
@@ -87,7 +87,7 @@ export function WorkspacePanel({ roleId }: { roleId: string }) {
           onChange={(e) => setWsDraft(e.target.value)}
           disabled={!wsDir}
           placeholder={wsDir ? "例如 D:\\my-tasks" : "加载中…"}
-          className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-700 focus:border-blue-400 focus:outline-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+          className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-surface px-2.5 py-1.5 font-mono text-xs text-slate-700 focus:border-blue-400 focus:outline-none"
         />
         <button
           onClick={() => {
@@ -95,7 +95,7 @@ export function WorkspacePanel({ roleId }: { roleId: string }) {
             browseAt(wsDraft || undefined);
           }}
           disabled={!wsDir}
-          className="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:border-blue-300 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300"
+          className="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:border-blue-300 disabled:opacity-50"
         >
           浏览…
         </button>
@@ -109,7 +109,7 @@ export function WorkspacePanel({ roleId }: { roleId: string }) {
         {wsDir?.overridden && (
           <button
             onClick={clearWorkspace}
-            className="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:border-red-300 hover:text-red-600 dark:border-slate-600 dark:text-slate-300"
+            className="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:border-red-300 hover:text-red-600"
           >
             清除
           </button>
@@ -121,32 +121,32 @@ export function WorkspacePanel({ roleId }: { roleId: string }) {
         {wsErr && <span className="text-red-600 dark:text-red-400">{wsErr}</span>}
       </div>
       {/* 说明压到一行：这个字段在角色卡里已经够密了，长说明会把它撑成一堵墙 */}
-      <p className="mt-1 text-11 text-slate-400 dark:text-slate-500">
+      <p className="mt-1 text-11 text-slate-400">
         这个角色读写文件的范围：目录外一律拒绝。
       </p>
 
       {/* 目录树选择抽屉（人用的选择器；后端/树契约见 /api/workspace/tree） */}
       {treeOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-          <div className="flex h-[70vh] w-full max-w-lg flex-col rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-600 dark:bg-slate-800">
-            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5 dark:border-slate-700">
-              <span className="text-sm font-medium text-slate-900 dark:text-slate-100">选择工作区目录</span>
+          <div className="flex h-[70vh] w-full max-w-lg flex-col rounded-xl border border-slate-200 bg-surface shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5">
+              <span className="text-sm font-medium text-slate-900">选择工作区目录</span>
               <button
                 onClick={() => setTreeOpen(false)}
-                className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                className="text-xs text-slate-400 hover:text-slate-600"
               >
                 关闭
               </button>
             </div>
-            <div className="flex items-center gap-1.5 border-b border-slate-100 px-3 py-2 text-xs dark:border-slate-700">
+            <div className="flex items-center gap-1.5 border-b border-slate-100 px-3 py-2 text-xs">
               <button
                 onClick={() => browseAt(tree?.parent ?? undefined)}
                 disabled={!tree}
-                className="rounded border border-slate-200 px-2 py-0.5 text-slate-600 hover:border-blue-300 disabled:opacity-40 dark:border-slate-600 dark:text-slate-300"
+                className="rounded border border-slate-200 px-2 py-0.5 text-slate-600 hover:border-blue-300 disabled:opacity-40"
               >
                 ← 上一级
               </button>
-              <span className="min-w-0 flex-1 truncate font-mono text-slate-500 dark:text-slate-400">
+              <span className="min-w-0 flex-1 truncate font-mono text-slate-500">
                 {tree?.path ?? "…"}
               </span>
             </div>
@@ -157,9 +157,9 @@ export function WorkspacePanel({ roleId }: { roleId: string }) {
                   key={e.name}
                   onClick={() => e.is_dir && browseAt(`${tree!.path}\\${e.name}`)}
                   disabled={!e.is_dir}
-                  className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs hover:bg-slate-100 disabled:cursor-default disabled:opacity-70 dark:hover:bg-slate-700/60"
+                  className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs hover:bg-slate-100 disabled:cursor-default disabled:opacity-70"
                 >
-                  <span className={`truncate ${e.is_dir ? "text-slate-800 dark:text-slate-100" : "text-slate-400 dark:text-slate-500"} ${
+                  <span className={`truncate ${e.is_dir ? "text-slate-800" : "text-slate-400"} ${
                       e.is_dir ? "" : "pl-4"
                     }`}>
                     {/* 目录标记用 SVG（2026-10-24 UI 打磨）：emoji 的渲染重量随系统漂。 */}
@@ -174,16 +174,16 @@ export function WorkspacePanel({ roleId }: { roleId: string }) {
                 </button>
               ))}
               {tree && (tree.entries ?? []).length === 0 && (
-                <p className="px-2 py-4 text-center text-xs text-slate-400 dark:text-slate-500">（空目录）</p>
+                <p className="px-2 py-4 text-center text-xs text-slate-400">（空目录）</p>
               )}
               {tree?.truncated && (
-                <p className="px-2 py-1 text-11 text-slate-400 dark:text-slate-500">（条目过多，仅显示部分）</p>
+                <p className="px-2 py-1 text-11 text-slate-400">（条目过多，仅显示部分）</p>
               )}
             </div>
-            <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-4 py-2.5 dark:border-slate-700">
+            <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-4 py-2.5">
               <button
                 onClick={() => setTreeOpen(false)}
-                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-600 dark:text-slate-300"
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:border-blue-300"
               >
                 取消
               </button>

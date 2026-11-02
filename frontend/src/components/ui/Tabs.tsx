@@ -32,8 +32,8 @@ export default function Tabs<T extends string>({
             aria-pressed={on}
             className={`rounded-full px-3 py-1 transition-colors ${
               on
-                ? "bg-white font-medium text-slate-800 shadow-sm dark:bg-white/10 dark:text-slate-100"
-                : "text-slate-500 hover:bg-white/60 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-slate-200"
+                ? "bg-surface font-medium text-slate-800 shadow-sm dark:bg-white/10"
+                : "text-slate-500 hover:bg-surface/60 hover:text-slate-700 dark:hover:bg-white/5"
             }`}
           >
             {it.label}

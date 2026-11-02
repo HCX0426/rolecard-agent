@@ -836,7 +836,7 @@ export default function ChatPage({
                     按钮只留图标语义（aria-label 已给屏幕阅读器）。 */}
                 ☰
               </Button>
-              <h2 className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+              <h2 className="truncate text-sm font-medium text-slate-900">
                 {current ? current.title || "新对话" : "对话"}
               </h2>
               {current && (
@@ -845,7 +845,7 @@ export default function ChatPage({
                     setTitleDraft(current.title || "");
                     setEditingTitle(true);
                   }}
-                  className="rounded px-1.5 py-0.5 text-xs text-slate-300 dark:text-slate-600 opacity-0 transition-opacity hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700 hover:text-slate-600 dark:hover:text-slate-300 group-hover/title:opacity-100"
+                  className="rounded px-1.5 py-0.5 text-xs text-slate-300 opacity-0 transition-opacity hover:bg-slate-100 hover:text-slate-600 group-hover/title:opacity-100"
                   title="重命名对话"
                 >
                   ✎
@@ -875,7 +875,7 @@ export default function ChatPage({
               )}
             </div>
           )}
-          <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
+          <p className="mt-0.5 text-xs text-slate-400">
             {current
               ? `当前角色：${currentRole ? roles.find((r) => r.role_id === currentRole)?.role_name || currentRole : "默认"} · 切换角色后下一轮生效`
               : "新建或从左侧选择一个对话开始"}
@@ -893,15 +893,15 @@ export default function ChatPage({
                   style={{ background: "var(--accent)" }}
                   aria-hidden="true"
                 />
-                <h3 className="text-sm font-medium text-slate-800 dark:text-slate-100">
+                <h3 className="text-sm font-medium text-slate-800">
                   {roleLabel ? `和「${roleLabel}」开始` : "开始一次对话"}
                 </h3>
               </div>
-              <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
+              <p className="mt-1.5 text-xs text-slate-500">
                 {roleGreeting ||
                   "直接在下方输入即可（会自动创建对话），或点左上角「＋ 开一个临时话题」。"}
               </p>
-              <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+              <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-slate-500">
                 <li>· 传文件 / 图片会自动解析并入检索索引</li>
                 <li>· 需要专业能力就切换角色 —— 每个角色只调自己白名单内的工具</li>
               </ul>
@@ -949,7 +949,7 @@ export default function ChatPage({
                 {/* 被叫停的半句在前台的那份：reload 接棒前它先顶上；reload 失败（会话被删等
                     极端情况）时它就是唯一的提示 —— 落库的标记靠回放，回放失败就没有了。 */}
                 {live.stopped && (
-                  <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">{STOP_HINT}</p>
+                  <p className="mt-1 text-xs text-slate-400">{STOP_HINT}</p>
                 )}
                 {live.answeredBy && (
                   <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
@@ -967,7 +967,7 @@ export default function ChatPage({
                 <div className="caret">
                   {mirror ? <MarkdownLazy text={mirror} /> : "对方在说…"}
                 </div>
-                <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+                <p className="mt-1 text-xs text-slate-400">
                   正在生成 · 不是这里发起的
                 </p>
               </div>
@@ -978,7 +978,7 @@ export default function ChatPage({
           </div>
         </div>
 
-        <div className="border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+        <div className="border-t border-slate-200 bg-surface p-4">
           {/* 多选删除：确认条出现时输入框让位，避免"边打字边误删" */}
           {selectMode && selected.length > 0 && (
             <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
@@ -1002,12 +1002,12 @@ export default function ChatPage({
             </div>
           )}
           {selectMode && selected.length === 0 && (
-            <div className="mx-auto mb-2 max-w-3xl rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-xs text-slate-500 dark:text-slate-400">
+            <div className="mx-auto mb-2 max-w-3xl rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
               删除模式：勾选任意一问或一答，会自动带上配对的另一侧；选好后点右下「删除所选」。
             </div>
           )}
           {historyTruncated > 0 && (
-            <div className="mx-auto mb-2 max-w-3xl rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-xs text-slate-500 dark:text-slate-400">
+            <div className="mx-auto mb-2 max-w-3xl rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
               当前只显示这个对话的<b>最近 {messages.length} 条</b>消息
               （还有 {historyTruncated} 条更早的未加载）。
             </div>

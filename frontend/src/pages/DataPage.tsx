@@ -56,7 +56,7 @@ export default function DataPage({ initialBlock }: { initialBlock?: MaterialsBlo
             </>
           }
           actions={
-            <div className="flex rounded-lg border border-slate-300 bg-white p-0.5 shadow-sm dark:border-slate-600 dark:bg-slate-800">
+            <div className="flex rounded-lg border border-slate-300 bg-surface p-0.5 shadow-sm">
               {(
                 [
                   ["records", "结构化记录"],
@@ -70,7 +70,7 @@ export default function DataPage({ initialBlock }: { initialBlock?: MaterialsBlo
                   className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
                     block === key
                       ? "bg-blue-600 text-white"
-                      : "text-slate-600 hover:text-blue-600 dark:text-slate-300 dark:hover:text-blue-400"
+                      : "text-slate-600 hover:text-blue-600 dark:hover:text-blue-400"
                   }`}
                 >
                   {label}
@@ -100,13 +100,13 @@ export default function DataPage({ initialBlock }: { initialBlock?: MaterialsBlo
                   <span className="text-red-600 dark:text-red-400">领域列表没读到：{domainsErr}</span>
                   <button
                     onClick={() => void loadDomains()}
-                    className="rounded border border-slate-200 px-2 py-0.5 text-11 text-slate-600 hover:border-blue-300 dark:border-slate-600 dark:text-slate-300"
+                    className="rounded border border-slate-200 px-2 py-0.5 text-11 text-slate-600 hover:border-blue-300"
                   >
                     重试
                   </button>
                 </div>
               ) : domains.length === 0 && (
-                <p className="mt-4 text-xs text-slate-400 dark:text-slate-500">正在加载领域…</p>
+                <p className="mt-4 text-xs text-slate-400">正在加载领域…</p>
               )}
               {activeDomain && (
                 <section className="mt-4">
@@ -219,7 +219,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
   return (
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-3">
-        <p className="text-11 leading-relaxed text-slate-400 dark:text-slate-500">
+        <p className="text-11 leading-relaxed text-slate-400">
           手动补录入口 —— 手填的数据默认带【未经人工校验】标记。
         </p>
         <Button
@@ -243,7 +243,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
       )}
       {status && <Notice tone={status.ok ? "ok" : "error"}>{status.msg}</Notice>}
       {total > PAGE_SIZE && (
-        <Card className="flex items-center justify-between px-3 py-2 text-xs text-slate-500 dark:text-slate-400">
+        <Card className="flex items-center justify-between px-3 py-2 text-xs text-slate-500">
           <span>
             共 <b>{total}</b> 条，当前第 {page * PAGE_SIZE + 1}–
             {Math.min(total, (page + 1) * PAGE_SIZE)} 条
@@ -271,19 +271,19 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
         </Card>
       )}
       {reports.length === 0 ? (
-        <div className={`rounded-lg border border-dashed border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-center text-xs text-slate-400 dark:text-slate-500 ${compact ? "p-4" : "p-8 text-sm"}`}>
+        <div className={`rounded-lg border border-dashed border-slate-200 bg-surface text-center text-xs text-slate-400 ${compact ? "p-4" : "p-8 text-sm"}`}>
           该域还没有数据：在对话页上传报告 / 图片（自动解析入索引），或点上方「＋ 新增报告」手动补录。
         </div>
       ) : (
         reports.map((r) => (
         <Card key={r.report_id} className="overflow-hidden">
-          <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/70 px-3 py-2 dark:border-slate-700/60 dark:bg-slate-700/30">
+          <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/70 px-3 py-2">
             <div className="text-xs">
-              <span className="font-medium text-slate-800 dark:text-slate-100">
+              <span className="font-medium text-slate-800">
                 {String(r.check_time).slice(0, 10)} · {r.report_type}
               </span>
-              {r.institution && <span className="ml-2 text-slate-400 dark:text-slate-500">{r.institution}</span>}
-              {r.note && <span className="ml-2 text-slate-400 dark:text-slate-500">备注：{r.note}</span>}
+              {r.institution && <span className="ml-2 text-slate-400">{r.institution}</span>}
+              {r.note && <span className="ml-2 text-slate-400">备注：{r.note}</span>}
             </div>
             <Button
               variant="ghost"
@@ -299,7 +299,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[28rem] text-left text-xs">
             <thead>
-              <tr className="text-slate-400 dark:text-slate-500">
+              <tr className="text-slate-400">
                 <th className="px-3 py-1.5 font-medium">指标</th>
                 <th className="px-3 py-1.5 font-medium">数值</th>
                 <th className="px-3 py-1.5 font-medium">校验</th>
@@ -311,32 +311,32 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
                 <tr key={i.index_id} className="border-t border-slate-50">
                   {editId === i.index_id ? (
                     <>
-                      <td className="px-3 py-2 font-medium text-slate-700 dark:text-slate-200">{i.index_name}</td>
+                      <td className="px-3 py-2 font-medium text-slate-700">{i.index_name}</td>
                       <td className="px-3 py-2" colSpan={3}>
                         <div className="flex flex-wrap items-center gap-2">
                           <input
                             value={draft.index_value}
                             onChange={(e) => setDraft({ ...draft, index_value: e.target.value })}
                             placeholder="数值（可空）"
-                            className="w-24 rounded border border-slate-200 dark:border-slate-700 px-2 py-1"
+                            className="w-24 rounded border border-slate-200 px-2 py-1"
                           />
                           <input
                             value={draft.value_text}
                             onChange={(e) => setDraft({ ...draft, value_text: e.target.value })}
                             placeholder="文本值（可空）"
-                            className="w-32 rounded border border-slate-200 dark:border-slate-700 px-2 py-1"
+                            className="w-32 rounded border border-slate-200 px-2 py-1"
                           />
                           <input
                             value={draft.unit}
                             onChange={(e) => setDraft({ ...draft, unit: e.target.value })}
                             placeholder="单位（可选）"
-                            className="w-20 rounded border border-slate-200 dark:border-slate-700 px-2 py-1"
+                            className="w-20 rounded border border-slate-200 px-2 py-1"
                           />
                           <input
                             value={draft.ref_range}
                             onChange={(e) => setDraft({ ...draft, ref_range: e.target.value })}
                             placeholder="参考区间"
-                            className="w-24 rounded border border-slate-200 dark:border-slate-700 px-2 py-1"
+                            className="w-24 rounded border border-slate-200 px-2 py-1"
                           />
                           <label className="flex items-center gap-1">
                             <input
@@ -357,10 +357,10 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
                     </>
                   ) : (
                     <>
-                      <td className="px-3 py-2 font-medium text-slate-700 dark:text-slate-200">{i.index_name}</td>
+                      <td className="px-3 py-2 font-medium text-slate-700">{i.index_name}</td>
                       <td className="px-3 py-2">
                         {fmtValue(i)}
-                        {i.ref_range ? <span className="ml-1 text-slate-400 dark:text-slate-500">（参考 {i.ref_range}）</span> : null}
+                        {i.ref_range ? <span className="ml-1 text-slate-400">（参考 {i.ref_range}）</span> : null}
                         {!i.is_verified && <span className="ml-1 text-amber-600 dark:text-amber-400">【未经人工校验】</span>}
                       </td>
                       <td className="px-3 py-2">
@@ -478,10 +478,10 @@ function AddReportForm({ onDone }: { onDone: () => void }) {
   }
 
   const inputCls =
-    "rounded border border-slate-200 dark:border-slate-700 px-2 py-1 text-xs outline-none focus:border-blue-400";
+    "rounded border border-slate-200 px-2 py-1 text-xs outline-none focus:border-blue-400";
 
   return (
-    <div className="rounded-lg border border-slate-600 dark:border-slate-400 bg-slate-100/70 dark:bg-slate-900/30 p-3">
+    <div className="rounded-lg border border-slate-600 bg-slate-100/70 p-3">
       <div className="flex flex-wrap items-center gap-2">
         <input
           value={reportType}
@@ -534,7 +534,7 @@ function AddReportForm({ onDone }: { onDone: () => void }) {
             {rows.length > 1 && (
               <button
                 onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}
-                className="rounded px-1.5 py-0.5 text-xs text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700 hover:text-red-500"
+                className="rounded px-1.5 py-0.5 text-xs text-slate-400 hover:bg-slate-100 hover:text-red-500"
                 title="删除该行"
               >
                 ✕
@@ -560,7 +560,7 @@ function AddReportForm({ onDone }: { onDone: () => void }) {
         <Button variant="ghost" size="sm" type="button" className="px-2 py-1 text-xs" onClick={onDone}>
           取消
         </Button>
-        <span className="text-11 text-slate-400 dark:text-slate-500">手填默认标记为【未经人工校验】</span>
+        <span className="text-11 text-slate-400">手填默认标记为【未经人工校验】</span>
       </div>
 
       {err && <p className="mt-2 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{err}</p>}
@@ -687,12 +687,12 @@ function GenericDomainData({
   }
 
   const cls =
-    "rounded border border-slate-200 dark:border-slate-700 px-2 py-1 text-xs outline-none focus:border-blue-400";
+    "rounded border border-slate-200 px-2 py-1 text-xs outline-none focus:border-blue-400";
 
   return (
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-3">
-        <p className="text-11 leading-relaxed text-slate-400 dark:text-slate-500">
+        <p className="text-11 leading-relaxed text-slate-400">
           「{displayName}」域的通用数据。
         </p>
         <Button
@@ -707,7 +707,7 @@ function GenericDomainData({
       </div>
       {status && <Notice tone={status.ok ? "ok" : "error"}>{status.msg}</Notice>}
       {adding && (
-        <div className="rounded-lg border border-slate-600 dark:border-slate-400 bg-slate-100/70 dark:bg-slate-900/30 p-3">
+        <div className="rounded-lg border border-slate-600 bg-slate-100/70 p-3">
           <div className="flex flex-wrap items-center gap-2">
             <input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} placeholder="标签 *（如 体重）" className={`${cls} w-40`} />
             <input value={draft.value_num} onChange={(e) => setDraft({ ...draft, value_num: e.target.value })} placeholder="数值（如 62）" className={`${cls} w-28`} />
@@ -718,19 +718,19 @@ function GenericDomainData({
           <div className="mt-2 flex items-center gap-2">
             <Button variant="primary" onClick={submit}
               className="rounded px-3 py-1 text-xs hover:bg-blue-700">保存</Button>
-            <button onClick={() => setAdding(false)} className="rounded px-2 py-1 text-xs text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700">取消</button>
+            <button onClick={() => setAdding(false)} className="rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-100">取消</button>
           </div>
         </div>
       )}
       {records.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-center text-xs text-slate-400 dark:text-slate-500 p-8">
+        <div className="rounded-lg border border-dashed border-slate-200 bg-surface text-center text-xs text-slate-400 p-8">
           该域还没有数据：点上方「＋ 新增记录」补录。
         </div>
       ) : (
         <Card className="overflow-x-auto">
           <table className="w-full min-w-[26rem] text-left text-xs">
             <thead>
-              <tr className="text-slate-400 dark:text-slate-500">
+              <tr className="text-slate-400">
                 <th className="px-3 py-1.5 font-medium">标签</th>
                 <th className="px-3 py-1.5 font-medium">值</th>
                 <th className="px-3 py-1.5 font-medium">备注</th>
@@ -753,15 +753,15 @@ function GenericDomainData({
                           <input value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} placeholder="备注" className={`${cls} w-28`} />
                           <Button variant="primary" onClick={() => saveEdit(r.id)}
                             className="rounded px-2.5 py-1 hover:bg-blue-700">保存</Button>
-                          <button onClick={() => setEditId(null)} className="rounded px-2 py-1 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:bg-slate-700/50 dark:hover:bg-slate-700">取消</button>
+                          <button onClick={() => setEditId(null)} className="rounded px-2 py-1 text-slate-500 hover:bg-slate-100">取消</button>
                         </div>
                       </td>
                     </>
                   ) : (
                     <>
-                      <td className="px-3 py-2 font-medium text-slate-700 dark:text-slate-200">{r.label}</td>
-                      <td className="px-3 py-2 text-slate-600 dark:text-slate-400">{fmt(r)}</td>
-                      <td className="px-3 py-2 text-slate-400 dark:text-slate-500">{r.note || "—"}</td>
+                      <td className="px-3 py-2 font-medium text-slate-700">{r.label}</td>
+                      <td className="px-3 py-2 text-slate-600">{fmt(r)}</td>
+                      <td className="px-3 py-2 text-slate-400">{r.note || "—"}</td>
                       <td className="px-3 py-2 text-right">
                         <Button variant="ghost" size="sm" type="button" className="px-2 py-1 text-blue-600 dark:text-blue-400" onClick={() => startEdit(r)}>修正</Button>
                         <Button
@@ -783,7 +783,7 @@ function GenericDomainData({
             </tbody>
           </table>
           {(hasMore || page > 0) && (
-            <div className="mt-3 flex items-center justify-between text-xs text-slate-400 dark:text-slate-500">
+            <div className="mt-3 flex items-center justify-between text-xs text-slate-400">
               <span>
                 第 {page * PAGE_SIZE + 1}–{page * PAGE_SIZE + records.length} 条
                 {hasMore ? "（还有更多）" : ""}

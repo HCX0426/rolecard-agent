@@ -37,7 +37,7 @@ function CopyCodeButton({ text }: { text: string }) {
           setCopied(false);
         }
       }}
-      className="absolute right-2 top-2 rounded-md bg-slate-800/80 px-2 py-1 text-10 text-slate-300 opacity-0 transition-opacity hover:bg-slate-700 hover:text-white group-hover/code:opacity-100 dark:bg-slate-800 dark:text-slate-400"
+      className="absolute right-2 top-2 rounded-md bg-slate-800/80 px-2 py-1 text-10 text-slate-300 opacity-0 transition-opacity hover:bg-slate-700 hover:text-white group-hover/code:opacity-100"
     >
       {copied ? "已复制" : "复制"}
     </button>
@@ -83,7 +83,7 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
           ),
           blockquote: (p) => (
             <blockquote
-              className="my-1.5 border-l-2 border-slate-300 pl-2 text-slate-500 dark:border-slate-600 dark:text-slate-400"
+              className="my-1.5 border-l-2 border-slate-300 pl-2 text-slate-500"
               {...stripNode(p)}
             />
           ),
@@ -92,7 +92,7 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
             return (
               <div className="group/code relative my-1.5">
                 <pre
-                  className="overflow-x-auto rounded-lg bg-slate-900 p-3 text-12 leading-relaxed text-slate-100 dark:bg-slate-900/80"
+                  className="overflow-x-auto rounded-lg bg-slate-900 p-3 text-12 leading-relaxed text-slate-100"
                   {...stripNode(p)}
                 />
                 <CopyCodeButton text={raw} />
@@ -105,7 +105,7 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
             if (inline) {
               return (
                 <code
-                  className="rounded bg-slate-100 px-1 py-0.5 font-mono text-12 dark:bg-slate-700/70"
+                  className="rounded bg-slate-100 px-1 py-0.5 font-mono text-12"
                   {...rest}
                 />
               );
@@ -119,14 +119,14 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
           ),
           th: (p) => (
             <th
-              className="border border-slate-200 bg-slate-50 px-2 py-1 text-left font-medium dark:border-slate-600 dark:bg-slate-700/50"
+              className="border border-slate-200 bg-slate-50 px-2 py-1 text-left font-medium"
               {...stripNode(p)}
             />
           ),
           td: (p) => (
-            <td className="border border-slate-200 px-2 py-1 align-top dark:border-slate-600" {...stripNode(p)} />
+            <td className="border border-slate-200 px-2 py-1 align-top" {...stripNode(p)} />
           ),
-          hr: () => <hr className="my-2 border-slate-200 dark:border-slate-600" />,
+          hr: () => <hr className="my-2 border-slate-200" />,
         }}
       >
         {text}

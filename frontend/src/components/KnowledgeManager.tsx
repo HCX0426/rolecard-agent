@@ -183,7 +183,7 @@ export function KnowledgeManager() {
               if (e.key === "Enter" && newScope.trim()) void createScope();
             }}
             placeholder="新知识库名（如 trip_notes）"
-            className="flex-1 min-w-48 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs"
+            className="flex-1 min-w-48 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
           />
           <Button
             variant="primary"
@@ -216,7 +216,7 @@ export function KnowledgeManager() {
             }}
           />
         </div>
-        <p className="mt-1.5 text-11 leading-relaxed text-slate-400 dark:text-slate-500">
+        <p className="mt-1.5 text-11 leading-relaxed text-slate-400">
           「导入文档 →」作用于下面<b>选中的那个库</b>（点卡片选中）；支持 .txt/.md/.pdf/
           .docx/.pptx/.xlsx 与图片（OCR）。导入走后台任务，完成后概览自动刷新。
         </p>
@@ -225,19 +225,19 @@ export function KnowledgeManager() {
       {metrics && (
         <Card className="mt-3 p-4">
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-slate-700 dark:text-slate-200">检索延迟细分（ms）</span>
-            <span className="text-xs text-slate-400 dark:text-slate-500">
+            <span className="text-sm font-medium text-slate-700">检索延迟细分（ms）</span>
+            <span className="text-xs text-slate-400">
               样本 {metrics.samples} · 嵌入 {metrics.embedder} · 重排
               {metrics.rerank_enabled ? "开" : "关"}
             </span>
           </div>
           {metrics.samples === 0 ? (
-            <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
+            <p className="mt-2 text-xs text-slate-400">
               尚无检索样本：在对话里提问一次（触发 search_knowledge）即可看到分位。
             </p>
           ) : (
             <table className="mt-2 w-full text-left text-xs">
-              <thead className="text-slate-400 dark:text-slate-500">
+              <thead className="text-slate-400">
                 <tr>
                   <th className="py-1 font-normal">阶段</th>
                   <th className="py-1 font-normal">P50</th>
@@ -245,9 +245,9 @@ export function KnowledgeManager() {
                   <th className="py-1 font-normal">P99</th>
                 </tr>
               </thead>
-              <tbody className="text-slate-600 dark:text-slate-300">
+              <tbody className="text-slate-600">
                 {LATENCY_STAGES.map(([key, label]) => (
-                  <tr key={key} className="border-t border-slate-100 dark:border-slate-800">
+                  <tr key={key} className="border-t border-slate-100">
                     <td className="py-1">{label}</td>
                     <td className="py-1">{fmtMs(metrics.p50[key])}</td>
                     <td className="py-1">{fmtMs(metrics.p95[key])}</td>
@@ -262,7 +262,7 @@ export function KnowledgeManager() {
 
       <div className="mt-3 space-y-3">
         {scopes.length === 0 && (
-          <Card className="border-dashed p-8 text-center text-sm text-slate-400 dark:text-slate-500">
+          <Card className="border-dashed p-8 text-center text-sm text-slate-400">
             还没有知识库：上面新建一个，或在对话页上传 .txt/.md/.pdf 等文档自动建库。
           </Card>
         )}
@@ -281,24 +281,24 @@ export function KnowledgeManager() {
                 }
               }}
               title="点击选中：「导入文档 →」作用于选中的库"
-              className={`rounded-xl border bg-white dark:bg-slate-800 p-4 cursor-pointer transition-colors outline-none focus-visible:border-blue-500 ${
+              className={`rounded-xl border bg-surface p-4 cursor-pointer transition-colors outline-none focus-visible:border-blue-500 ${
                 selected
                   ? "border-blue-400 dark:border-blue-600"
-                  : "border-slate-200 hover:border-slate-300 dark:border-slate-700 dark:hover:border-slate-600"
+                  : "border-slate-200 hover:border-slate-300"
               }`}
             >
               <div className="flex items-center justify-between">
                 <div>
-                  <code className="rounded bg-slate-100 dark:bg-slate-700/50 px-1.5 py-0.5 text-xs text-slate-700 dark:text-slate-200">
+                  <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-700">
                     {s.scope}
                   </code>
-                  <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">{s.chunks} 段</span>
+                  <span className="ml-2 text-xs text-slate-500">{s.chunks} 段</span>
                   {/* R1031-33：每作用域吃盘字节（量的是 HNSW 落盘目录，不是文本大小）。
                       null = 没量到（账读不出）—— 如实显示"体积未知"，不拿 0 冒充。 */}
-                  <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">
+                  <span className="ml-2 text-xs text-slate-500">
                     {s.bytes === null || s.bytes === undefined ? "体积未知" : formatBytes(s.bytes)}
                   </span>
-                  <span className="ml-2 rounded-full bg-slate-100 dark:bg-slate-700/50 px-2 py-0.5 text-11 text-slate-500 dark:text-slate-400">
+                  <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-11 text-slate-500">
                     嵌入：{s.embedder}
                   </span>
                   {importingScopes.includes(s.scope ?? "") && (
@@ -324,7 +324,7 @@ export function KnowledgeManager() {
                 {(s.sources ?? []).map((src) => (
                   <li
                     key={src}
-                    className="truncate rounded bg-slate-50 px-2 py-0.5 font-mono text-11 text-slate-500 dark:bg-slate-700/40 dark:text-slate-400"
+                    className="truncate rounded bg-slate-50 px-2 py-0.5 font-mono text-11 text-slate-500"
                     title={src}
                   >
                     {src}
@@ -340,10 +340,10 @@ export function KnowledgeManager() {
         <Card className="p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
+              <span className="text-sm font-medium text-slate-700">
                 上传目录清理
               </span>
-              <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
+              <p className="mt-0.5 text-xs text-slate-400">
                 回收 data/uploads 里没有被任何登记任务引用的文件（旧版本重复上传留下的副本、
                 解析中断的半成品）。被引用的文件与在用的解析文本副本不会被动。
               </p>
@@ -361,8 +361,8 @@ export function KnowledgeManager() {
           </div>
 
           {orphans && (
-            <div className="mt-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 p-3">
-              <p className="text-xs text-slate-600 dark:text-slate-300">
+            <div className="mt-3 rounded-lg bg-slate-50 p-3">
+              <p className="text-xs text-slate-600">
                 扫描 {orphans.scanned} 个文件，其中 {orphans.referenced} 个被台账引用；
                 可回收 <b>{(orphans.orphans ?? []).length}</b> 个（
                 {formatBytes(orphans.total_bytes ?? 0)}）。
@@ -381,7 +381,7 @@ export function KnowledgeManager() {
                     {(orphans.orphans ?? []).map((o) => (
                       <li
                         key={o.name}
-                        className="flex items-center justify-between gap-2 text-11 text-slate-500 dark:text-slate-400"
+                        className="flex items-center justify-between gap-2 text-11 text-slate-500"
                       >
                         <code className="truncate">{o.name}</code>
                         <span className="shrink-0">

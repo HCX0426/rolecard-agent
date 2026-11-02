@@ -118,7 +118,7 @@ export default function DataSourceSwitch() {
       <button
         onClick={() => (cloud ? backToLocal() : setOpen(true))}
         title={cloud ? "切回本机那份数据（云端那份不动、也不删）" : "切到云端（另一份完整数据集）"}
-        className="relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700/60"
+        className="relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50"
       >
         <span
           className={`h-2 w-2 shrink-0 rounded-full ${cloud ? "bg-sky-500" : "bg-emerald-500"}`}
@@ -128,7 +128,7 @@ export default function DataSourceSwitch() {
         <span className="truncate">
           {cloud ? `数据源：云端 · ${source.user}` : "数据源：本机"}
         </span>
-        <span className="ml-auto shrink-0 text-10 text-slate-400 dark:text-slate-500">
+        <span className="ml-auto shrink-0 text-10 text-slate-400">
           {cloud ? "切回" : "切换 ⇄"}
         </span>
       </button>
@@ -140,14 +140,14 @@ export default function DataSourceSwitch() {
         <button
           onClick={() => setWizard(true)}
           title="双向同步：角色卡 / 会话 / 记忆 / 主动消息。登录时已自动对账一次，此后手动。"
-          className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700/60"
+          className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50"
         >
           <span className="shrink-0 opacity-80">⇅</span>
           <span className="truncate">
             {syncing ? "正在同步…" : "数据同步"}
             {!syncing && recWhy ? " · 未完成" : ""}
           </span>
-          <span className="ml-auto shrink-0 text-10 text-slate-400 dark:text-slate-500">
+          <span className="ml-auto shrink-0 text-10 text-slate-400">
             {syncing ? "" : (formatLastSync(readLastSync()) ?? "未同步")}
           </span>
         </button>
@@ -155,9 +155,9 @@ export default function DataSourceSwitch() {
 
       {/* 登录对账后的读数卡：只把"机器判不了的"端上来，其余的已经各自到位。 */}
       {rec && rec.left_for_human.length > 0 && (
-        <div className="mx-2 mb-1 rounded-lg border border-slate-200 bg-white p-2.5 text-11 shadow-sm dark:border-slate-600 dark:bg-slate-800">
-          <b className="text-slate-800 dark:text-slate-100">同步完成</b>
-          <p className="mt-0.5 leading-relaxed text-slate-500 dark:text-slate-400">
+        <div className="mx-2 mb-1 rounded-lg border border-slate-200 bg-surface p-2.5 text-11 shadow-sm">
+          <b className="text-slate-800">同步完成</b>
+          <p className="mt-0.5 leading-relaxed text-slate-500">
             已上传 {rec.pushed} 项，已下载 {rec.pulled} 项。
           </p>
           <p className="mt-0.5 leading-relaxed text-amber-700 dark:text-amber-300">
@@ -169,7 +169,7 @@ export default function DataSourceSwitch() {
                 clearJustLoggedIn();
                 setRec(null);
               }}
-              className="px-2 py-1 text-11 text-slate-500 hover:text-slate-700 dark:text-slate-400"
+              className="px-2 py-1 text-11 text-slate-500 hover:text-slate-700"
             >
               稍后处理
             </button>
@@ -199,38 +199,38 @@ export default function DataSourceSwitch() {
           aria-modal="true"
           aria-label="切到云端"
         >
-          <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-2xl dark:bg-slate-800">
-            <h2 className="text-15 font-semibold text-slate-900 dark:text-slate-100">
+          <div className="w-full max-w-sm rounded-xl bg-surface p-5 shadow-2xl">
+            <h2 className="text-15 font-semibold text-slate-900">
               切到云端
             </h2>
-            <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+            <p className="mt-1 text-xs leading-relaxed text-slate-500">
               云端是<b>另一份完整数据集</b>：角色卡、会话、记忆、健康档案都换成对面那一份。
               本机这份不动、也不删。
             </p>
-            <label className="mt-3 block text-11 text-slate-600 dark:text-slate-300">
+            <label className="mt-3 block text-11 text-slate-600">
               程序地址
               <input
                 value={base}
                 onChange={(e) => setBase(e.target.value)}
                 placeholder="https://cloud.example.cn:8123"
-                className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-xs dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-xs"
               />
             </label>
-            <label className="mt-2 block text-11 text-slate-600 dark:text-slate-300">
+            <label className="mt-2 block text-11 text-slate-600">
               账号
               <input
                 value={user}
                 onChange={(e) => setUser(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-xs dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-xs"
               />
             </label>
-            <label className="mt-2 block text-11 text-slate-600 dark:text-slate-300">
+            <label className="mt-2 block text-11 text-slate-600">
               密码 / 访问令牌
               <input
                 type="password"
                 value={secret}
                 onChange={(e) => setSecret(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-xs dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-xs"
               />
             </label>
             {/* 失败用红、承诺用黄：两格同色时（第一版截图里就是这样），
@@ -243,7 +243,7 @@ export default function DataSourceSwitch() {
             <div className="mt-3 flex justify-end gap-2">
               <button
                 onClick={() => setOpen(false)}
-                className="rounded-lg border border-slate-200 px-3.5 py-2 text-xs text-slate-600 dark:border-slate-600 dark:text-slate-300"
+                className="rounded-lg border border-slate-200 px-3.5 py-2 text-xs text-slate-600"
               >
                 取消
               </button>

@@ -11,11 +11,26 @@
   /* 调色板重定义（2026-10-25）：Tailwind 的 slate/blue/white **就地改义**，
      不动任何组件 className —— 所有 bg-slate-100 / text-blue-600 自动变成
      配色轴的当前值。这就是"统一存放样式的地方"的意义：改一次材质，全站生效。 */
-  /* white/black 是 Tailwind 的**具名色**（不走 --color-* 命名空间），不覆盖就仍是
-     死白 —— 玻璃层最需要的恰恰是"白"变半透明。覆盖成半透明白，bg-white 的面板
-     就自动成了玻璃。 */
-  --color-white: color-mix(in srgb, #ffffff 72%, transparent);
+  /* white/black 是 Tailwind 的**具名色**（不走 --color-* 命名空间）。
+     ⚠ 这里从前把它覆盖成 72% 半透明白，本意是让 `bg-white` 的面板自动变玻璃 ——
+     但覆盖是**全局**的，于是 `text-white` 也一起被洗成半透明白字（实测压在强调色上
+     只有 2.69 对比度，而纯白本该 3.69）。板面玻璃已经另立 `--color-surface` 承担，
+     这里就恢复成"白就是白"：透明度只由显式的 `/NN` 修饰决定，这才是不归一化的反面教材。 */
+  --color-white: #ffffff;
   --color-black: #1a1614;
+  /* surface —— 会翻转的"板面白"（2026-11-03）。`bg-white` 是**静态**的 72% 白，浅色下
+     正是玻璃质感，深色下却成了一块亮板（实测深色里文字压在上面对比度低到 1.2）。
+     从前靠每个调用点各写一条 `dark:bg-slate-800` 兜住 —— 而 slate-* 已被 @theme 改义成
+     会翻转的语义色，那条兜底等于又翻一次（双重反转）。现在收成一个颜色：
+       浅色 = 72% 白 + 透明  → 与旧 bg-white 逐格相同（零视觉变化，用户已认可的效果）
+       深色 = 6% 白 + 面板色  → 一块比页面略亮的**实板**
+     ⚠ 底层必须是 `var(--surface-under)` 而不是 transparent：第一版写成"深色 = 9% 白混
+     透明"，那是 9% 不透明度 ≈ 全透 —— 壁纸直接穿透控件，底部那排按钮在真图上糊到看不
+     见（见 build/glass-evidence/matrix_dark_bg.png）。板面得盖住背景才叫板面。
+     ⚠ 而且百分比不能写成字面量：Tailwind 会把能静态求值的 color-mix 连同 `/50` 这类
+     alpha 修饰一起折成死的十六进制（实测 `.bg-surface/50{background-color:#ffffff5c}`），
+     深色就再也不翻 —— 留一个它算不动的 var，alpha 变体才保持活引用。 */
+  --color-surface: color-mix(in srgb, #ffffff var(--surface-pct), var(--surface-under, transparent));
 
   /* 蓝 → 强调色（--accent 随当前角色变）：切角色时全站的"蓝"自动变角色色。 */
   --color-blue-50: color-mix(in srgb, var(--accent) 10%, #ffffff);
@@ -190,6 +205,12 @@ body,
   --bg-image: none;
   --bg-blur: 0px;
   --bg-dim: 0.35;
+  /* 板面白的不透明度（浅色 72% = 旧 bg-white 逐格相同）。见 @theme 里 --color-surface
+     那段：它必须是 var 而不是字面量，否则 alpha 变体（bg-surface/50 等）会被构建链
+     折成死的十六进制，深色就不再翻。 */
+  --surface-pct: 72%;
+  /* 板面白的底层：浅色 = 透明（玻璃，壁纸透得过来，与用户已认可的效果逐格相同）。 */
+  --surface-under: transparent;
 }
 .dark {
   --bg-base: #171412;
@@ -203,6 +224,11 @@ body,
   --bg-alpha: 100%;
   --glass-alpha: 92%;
   --glass-alpha-soft: 97%;
+  /* 板面白在深色下 = 6% 白提亮 + **不透明的面板色**打底：压在 #171412 上得到一块比
+     页面略亮的实板，控件（底部那排按钮等）不再让壁纸穿透。只动百分比与底层、不动
+     --color-surface 本身 —— 后者一被静态求值，bg-surface/50 这类 alpha 变体就不再翻。 */
+  --surface-pct: 6%;
+  --surface-under: var(--bg-panel);
 }
 /* 冷色盘：中性灰蓝，底更"薄"、强调色照样是角色的。 */
 [data-palette="cool"] {

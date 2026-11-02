@@ -41,7 +41,7 @@ const BADGE: Record<string, { label: string; cls: string }> = {
   },
   thread: {
     label: "对话",
-    cls: "bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400",
+    cls: "bg-slate-100 text-slate-500",
   },
 };
 
@@ -159,14 +159,14 @@ export default function TimelineDrawer({
         <span className="flex items-center justify-between gap-3">
           <span>
             {role?.role_name || role?.role_id} · 事件簿
-            <span className="ml-2 text-11 font-normal text-slate-400 dark:text-slate-500">
+            <span className="ml-2 text-11 font-normal text-slate-400">
               只读；要改事实去记忆卡
             </span>
           </span>
           <select
             value={filterKey}
             onChange={(e) => setFilterKey(e.target.value)}
-            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-normal text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
+            className="rounded-lg border border-slate-200 bg-surface px-2 py-1 text-xs font-normal text-slate-600"
             title="只看某一类"
           >
             {FILTERS.map((f) => (
@@ -187,30 +187,30 @@ export default function TimelineDrawer({
     >
       {error && <Notice className="mb-3">事件簿没读到：{error}</Notice>}
       {!error && loading && items.length === 0 && (
-        <p className="text-xs text-slate-400 dark:text-slate-500">读取中…</p>
+        <p className="text-xs text-slate-400">读取中…</p>
       )}
       {!error && !loading && items.length === 0 && (
         // 空态要说清"怎么才会有东西"，不然它读起来像坏了。
-        <p className="text-xs text-slate-400 dark:text-slate-500">
+        <p className="text-xs text-slate-400">
           还没有记录 —— 聊几句，或在角色卡上开启「主动找你」。
         </p>
       )}
       <div className="space-y-4">
         {groups.map((group) => (
           <section key={group.date}>
-            <h4 className="mb-1.5 text-11 font-medium text-slate-400 dark:text-slate-500">
+            <h4 className="mb-1.5 text-11 font-medium text-slate-400">
               {group.label}
             </h4>
-            <ul className="ml-1 space-y-2 border-l border-slate-200 pl-3.5 dark:border-slate-700">
+            <ul className="ml-1 space-y-2 border-l border-slate-200 pl-3.5">
               {group.items.map((ev, i) => {
                 const badge = BADGE[ev.kind ?? ""];
                 const jumpable = Boolean(ev.thread_id) && Boolean(onOpenThread);
                 return (
                   <li key={`${ev.kind}-${ev.ref_id}-${i}`} className="relative text-xs leading-relaxed">
                     <span
-                      className={`absolute -left-[19px] top-1 h-2 w-2 rounded-full ${badge.cls} ring-2 ring-white dark:ring-slate-800`}
+                      className={`absolute -left-[19px] top-1 h-2 w-2 rounded-full ${badge.cls} ring-2 ring-white`}
                     />
-                    <span className="mr-1.5 text-slate-400 dark:text-slate-500">
+                    <span className="mr-1.5 text-slate-400">
                       {formatUtcNaive(ev.at, true)}
                     </span>
                     <span className={`mr-1.5 rounded px-1.5 py-0.5 text-10 ${badge.cls}`}>
@@ -229,7 +229,7 @@ export default function TimelineDrawer({
                     )}
                     {ev.kind === "memory_correct" && ev.from_text && (
                       // 「失效不删」第一次被用户看见的地方：旧事实划掉摆在那儿，而不是不见了。
-                      <p className="mt-0.5 break-words text-11 text-slate-400 line-through dark:text-slate-500">
+                      <p className="mt-0.5 break-words text-11 text-slate-400 line-through">
                         {ev.from_text}
                       </p>
                     )}
@@ -241,7 +241,7 @@ export default function TimelineDrawer({
         ))}
       </div>
       {truncated && (
-        <p className="mt-3 text-11 text-slate-400 dark:text-slate-500">
+        <p className="mt-3 text-11 text-slate-400">
           某一类事太多，这里只扫到最近的一段（不是全部）。
         </p>
       )}

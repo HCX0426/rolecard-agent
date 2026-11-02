@@ -104,13 +104,13 @@ export function LocalServiceCard() {
         }${owned}`;
 
   return (
-    <section className="mb-4 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+    <section className="mb-4 rounded-lg border border-slate-200 p-3">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="flex items-center gap-2 text-sm font-medium text-slate-900 dark:text-slate-100">
+          <h3 className="flex items-center gap-2 text-sm font-medium text-slate-900">
             <span
               className={`inline-block h-2 w-2 shrink-0 rounded-full ${
-                status.running ? "bg-emerald-500" : "bg-slate-400 dark:bg-slate-600"
+                status.running ? "bg-emerald-500" : "bg-slate-400"
               }`}
             />
             本机 Ollama
@@ -118,10 +118,10 @@ export function LocalServiceCard() {
               {status.base_url}
             </span>
           </h3>
-          <p className="truncate text-11 text-slate-500 dark:text-slate-400">{line}</p>
+          <p className="truncate text-11 text-slate-500">{line}</p>
           {/* B/S 下不摆一个点不动的灰按钮，直接说清为什么这里没有 */}
           {status.is_local && !shell && (
-            <p className="mt-0.5 text-11 text-slate-400 dark:text-slate-500">
+            <p className="mt-0.5 text-11 text-slate-400">
               起停 Ollama 进程属于桌面壳（网页不能碰你电脑上的进程）。
             </p>
           )}

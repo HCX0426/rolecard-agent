@@ -38,7 +38,7 @@ export function NativeDirPickerButton({
       <button
         onClick={() => void pick()}
         disabled={disabled}
-        className="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:border-blue-300 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300"
+        className="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:border-blue-300 disabled:opacity-50"
       >
         系统选目录…
       </button>

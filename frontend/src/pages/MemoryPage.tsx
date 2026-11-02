@@ -511,7 +511,7 @@ export default function MemoryPage() {
             "她这轮带不带记忆上桌"——整页的状态，不该藏在卡里找；样式沿用侧栏当前角色块
             那套 accent 药丸语法（bg-blue-600 已被 token 映射到 --accent，随角色变色）。 */}
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">记忆</h2>
+          <h2 className="text-base font-semibold text-slate-900">记忆</h2>
           <button
             onClick={toggleMemory}
             disabled={!mem || !!memScope}
@@ -519,26 +519,26 @@ export default function MemoryPage() {
             className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
               mem?.enabled
                 ? "bg-blue-600 text-white"
-                : "bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-300"
+                : "bg-slate-200 text-slate-500"
             }`}
           >
             {mem ? (mem.enabled ? "记忆注入：已开启" : "记忆注入：已关闭") : "…"}
           </button>
         </div>
-        <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+        <p className="mt-1 text-xs leading-relaxed text-slate-500">
           每轮对话都带上这里的事实 —— 对话、主动开口、桌宠共用这一份。
         </p>
       <Card className="mt-4 p-5">
-        <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">跨会话记忆</h3>
+        <h3 className="text-sm font-medium text-slate-900">跨会话记忆</h3>
         <div className="mt-2 flex items-center gap-2">
-          <label className="text-xs text-slate-500 dark:text-slate-400">作用域</label>
+          <label className="text-xs text-slate-500">作用域</label>
           <select
             value={memScope}
             onChange={(e) => changeMemScope(e.target.value)}
             /* 定宽（用户 2026-10-29：控件宽度不该随角色名长短变）：原生 select 的宽度由
                "当前选中项"的文字决定，角色名一长就把框撑宽、换选项时整行跟着跳。给一个
                固定宽度 + 超长省略，换谁选都是同一格宽。 */
-            className="w-64 min-w-0 truncate rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+            className="w-64 min-w-0 truncate rounded-lg border border-slate-200 bg-surface px-2 py-1 text-xs text-slate-700"
           >
             {/* 选项不带括号注释（2026-10-31）：作用域的语义由上方那行说明讲，选项只给名字。 */}
             <option value="">全局记忆</option>
@@ -564,7 +564,7 @@ export default function MemoryPage() {
             </Button>
           </div>
         </div>
-        <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+        <p className="mt-1.5 text-xs leading-relaxed text-slate-500">
           {memScope
             ? "该角色自己的记忆，与全局记忆和其它角色隔离。"
             : "全局记忆注入每个角色；AI 检测到明确的事实（称呼 / 偏好 / 背景）会自己记下来。"}
@@ -578,8 +578,8 @@ export default function MemoryPage() {
             onClick={() => setMemLayer("")}
             className={`rounded-full px-2.5 py-1 text-xs transition-colors ${
               memLayer === ""
-                ? "bg-slate-700 text-white dark:bg-slate-200 dark:text-slate-900"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                ? "bg-slate-700 text-white"
+                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
             }`}
           >
             全部 {mem?.active_count ?? 0}
@@ -594,8 +594,8 @@ export default function MemoryPage() {
                 title={c.hint}
                 className={`rounded-full px-2.5 py-1 text-xs transition-colors ${
                   on
-                    ? "bg-slate-700 text-white dark:bg-slate-200 dark:text-slate-900"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                    ? "bg-slate-700 text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
               >
                 {c.label} {n}
@@ -606,11 +606,11 @@ export default function MemoryPage() {
         {/* 当前层的说明 + 注入开关：每层能单独决定"要不要每轮带上"（2026-10-30）。
             这一行是"自动整理/注入"这类开关的落点 —— 用户抱怨的"看不到就没法调"就解在这里。 */}
         {memLayer && (
-          <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800/50">
-            <span className="min-w-0 flex-1 text-11 text-slate-500 dark:text-slate-400">
+          <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+            <span className="min-w-0 flex-1 text-11 text-slate-500">
               {CATEGORY_META.find((c) => c.key === memLayer)?.hint}
             </span>
-            <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-11 text-slate-600 dark:text-slate-300">
+            <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-11 text-slate-600">
               <input
                 type="checkbox"
                 checked={injectLayers.includes(memLayer)}
@@ -624,7 +624,7 @@ export default function MemoryPage() {
             2026-10-31 用户："这个有必要这么详细吗，摆很难看"——长说明收进悬停（title），
             正文只留控件本身，文字与下拉同一行对齐。 */}
         <div
-          className="mt-2 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400"
+          className="mt-2 flex items-center gap-2 text-xs text-slate-500"
           title="一次提取 = 一次模型调用，跑在回答已经出完之后（不影响对话，失败只留痕）"
         >
           <span className="shrink-0">每 N 轮模型调用完成后自动提取一次</span>
@@ -632,7 +632,7 @@ export default function MemoryPage() {
             value={cadence}
             disabled={!mem || extractBusy}
             onChange={(e) => void changeExtractCadence(e.target.value)}
-            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+            className="rounded-lg border border-slate-200 bg-surface px-2 py-1 text-xs text-slate-700"
           >
             <option value="0">关闭</option>
             <option value="6">每 6 轮</option>
@@ -653,7 +653,7 @@ export default function MemoryPage() {
             }}
             disabled={!mem || itemBusy}
             placeholder="手动记一条事实（一句话）"
-            className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-blue-400 focus:outline-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+            className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-surface px-2.5 py-1.5 text-xs text-slate-700 focus:border-blue-400 focus:outline-none"
           />
           <Button variant="primary" onClick={addFact} disabled={!mem || itemBusy || !newFact.trim()}
             className="rounded-lg px-3 py-1.5 text-xs">
@@ -662,21 +662,21 @@ export default function MemoryPage() {
         </div>
         {/* 合并那条工具条只在选了东西时长出来（平时列表就是列表，不摆一排永远用不上的控件）。 */}
         {picked.length > 0 && (
-          <div className="mt-2 rounded-lg border border-slate-600 bg-slate-100/70 px-2.5 py-2 text-xs dark:border-slate-400 dark:bg-slate-900/20">
+          <div className="mt-2 rounded-lg border border-slate-600 bg-slate-100/70 px-2.5 py-2 text-xs">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-slate-600 dark:text-slate-300">
+              <span className="text-slate-600">
                 已选 {picked.length} 条{picked.length < 2 ? " —— 再选一条就能合并" : ""}
               </span>
               <button
                 onClick={() => setMergePick([])}
-                className="shrink-0 rounded px-1.5 py-0.5 text-11 text-slate-500 hover:text-slate-700 dark:hover:text-slate-200"
+                className="shrink-0 rounded px-1.5 py-0.5 text-11 text-slate-500 hover:text-slate-700"
               >
                 取消选择
               </button>
             </div>
             {picked.length === 2 && (
               <>
-                <label className="mt-1.5 block text-11 text-slate-500 dark:text-slate-400">
+                <label className="mt-1.5 block text-11 text-slate-500">
                   合并成一条（先勾的那条留下，含它"用过几次"与钉住状态）
                   {/* 钉住状态不跟着搬：留下的永远是先勾那条，所以"先勾了个没钉住的、
                       后勾的钉住了"这个顺序会让钉住悄悄掉档 —— 说清楚比偷偷换更好。 */}
@@ -693,10 +693,10 @@ export default function MemoryPage() {
                   rows={2}
                   maxLength={MAX_FACT}
                   aria-label="合并后的句子"
-                  className="mt-1 w-full resize-none rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:border-blue-400 focus:outline-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+                  className="mt-1 w-full resize-none rounded-lg border border-slate-200 bg-surface px-2 py-1.5 text-xs text-slate-700 focus:border-blue-400 focus:outline-none"
                 />
                 <div className="mt-1 flex items-center justify-between gap-2">
-                  <span className="text-10 text-slate-400 dark:text-slate-500">
+                  <span className="text-10 text-slate-400">
                     {mergeDraft.length}/{MAX_FACT}
                   </span>
                   <Button variant="primary" onClick={doMerge} disabled={itemBusy}
@@ -712,7 +712,7 @@ export default function MemoryPage() {
           {(mem?.items ?? []).map((item) => (
             <li
               key={item.id}
-              className="group flex items-start gap-2 rounded-lg border border-slate-100 px-2 py-1.5 text-xs dark:border-slate-700"
+              className="group flex items-start gap-2 rounded-lg border border-slate-100 px-2 py-1.5 text-xs"
             >
               <input
                 type="checkbox"
@@ -737,10 +737,10 @@ export default function MemoryPage() {
                     maxLength={MAX_FACT}
                     disabled={itemBusy}
                     aria-label="改这条记忆"
-                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-blue-400 focus:outline-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+                    className="w-full rounded-lg border border-slate-200 bg-surface px-2 py-1 text-xs text-slate-700 focus:border-blue-400 focus:outline-none"
                   />
                   <span className="mt-1 flex items-center justify-between gap-2">
-                    <span className="text-10 text-slate-400 dark:text-slate-500">
+                    <span className="text-10 text-slate-400">
                       {editDraft.length}/{MAX_FACT}
                       {/* 超上限后端是**截断**不是报错，所以这里提前说一声。 */}
                       {editDraft.length >= MAX_FACT ? " · 再打会被截断" : ""}
@@ -748,7 +748,7 @@ export default function MemoryPage() {
                     <span className="flex shrink-0 gap-1.5">
                       <button
                         onClick={cancelEdit}
-                        className="rounded px-1.5 py-0.5 text-11 text-slate-500 hover:text-slate-700 dark:hover:text-slate-200"
+                        className="rounded px-1.5 py-0.5 text-11 text-slate-500 hover:text-slate-700"
                       >
                         取消
                       </button>
@@ -761,13 +761,13 @@ export default function MemoryPage() {
                 </span>
               ) : (
                 <>
-                  <span className="min-w-0 flex-1 break-words text-slate-700 dark:text-slate-200">
+                  <span className="min-w-0 flex-1 break-words text-slate-700">
                     {item.text}
                     {/* 元信息收干净（2026-10-31，dsh 生态共识：界面呈现"记忆是什么、归哪一轨"，
                         来源与命中次数是内部统计 → 收进 title 悬停）。要紧程度是真实生效的档位
                         （注入带【要紧】标记），保留但悬停行才出现——平时每行只留归属。 */}
                     <span
-                      className="mt-0.5 block text-10 text-slate-400 dark:text-slate-500"
+                      className="mt-0.5 block text-10 text-slate-400"
                       title={`来源：${SOURCE_LABEL[item.source] ?? item.source} · 注入过 ${item.hit_count} 次`}
                     >
                       {CATEGORY_LABEL[item.category ?? "longterm"] ?? "长期记忆"}
@@ -782,7 +782,7 @@ export default function MemoryPage() {
                             "要紧 = 注入时带【要紧】标记、排序里权重最高；次要 = 活跃数超限时最先被退役（不删）。\n" +
                             "与「钉住」是两件事：钉住完全不进淘汰与整理，这一档只管还在池里时排多前。"
                           }
-                          className="rounded border border-slate-200 bg-white px-1 py-0 text-10 text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                          className="rounded border border-slate-200 bg-surface px-1 py-0 text-10 text-slate-600"
                         >
                           {[0, 1, 2].map((tier) => (
                             <option key={tier} value={tier}>
@@ -797,7 +797,7 @@ export default function MemoryPage() {
                     onClick={() => startEdit(item)}
                     disabled={itemBusy}
                     title="改这条的文字（事实对、话说错了就用它，不用删了重记）"
-                    className="shrink-0 rounded px-1.5 py-0.5 text-11 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700"
+                    className="shrink-0 rounded px-1.5 py-0.5 text-11 text-slate-500 hover:bg-slate-100"
                   >
                     改
                   </button>
@@ -805,7 +805,7 @@ export default function MemoryPage() {
                     onClick={() => void togglePin(item)}
                     disabled={itemBusy}
                     title={item.pinned ? "取消钉住（允许被淘汰/整理）" : "钉住（不参与淘汰与整理）"}
-                    className="shrink-0 rounded px-1.5 py-0.5 text-11 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700"
+                    className="shrink-0 rounded px-1.5 py-0.5 text-11 text-slate-500 hover:bg-slate-100"
                   >
                     {item.pinned ? "取消钉住" : "钉住"}
                   </button>
@@ -828,12 +828,12 @@ export default function MemoryPage() {
           </p>
         )}
         <details className="mt-2">
-          <summary className="cursor-pointer text-11 text-slate-500 dark:text-slate-400">
+          <summary className="cursor-pointer text-11 text-slate-500">
             原文视图 / 整段编辑（注入到 prompt 的就是这段）
             {/* 说实在的代价，不藏：整段覆写只删非钉住的条目再按行重建，而"哪一行还是哪一条"
                 是按**文本**认的 —— 所以在TextArea里改了某条的措辞，那条的「要紧程度」会回到一般。
                 逐条列表里改不受影响（按 id 走）。 */}
-            <span className="ml-1 text-10 text-slate-400 dark:text-slate-500">
+            <span className="ml-1 text-10 text-slate-400">
               （在这里改写某条的措辞，那条的「要紧程度」会回到一般；钉住的条目整段保存不动它）
             </span>
           </summary>
@@ -843,7 +843,7 @@ export default function MemoryPage() {
           rows={5}
           disabled={!mem}
           placeholder={mem ? (mem.content ? "" : memScope ? "该角色还没有专属记忆。" : "暂无全局记忆。") : "加载中…"}
-          className="mt-2.5 w-full resize-y rounded-lg border border-slate-200 bg-white p-2.5 font-mono text-xs text-slate-700 focus:border-blue-400 focus:outline-none dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+          className="mt-2.5 w-full resize-y rounded-lg border border-slate-200 bg-surface p-2.5 font-mono text-xs text-slate-700 focus:border-blue-400 focus:outline-none"
         />
         </details>
         <div className="mt-2 flex items-center gap-2">
@@ -854,13 +854,13 @@ export default function MemoryPage() {
           <button
             onClick={clearMemory}
             disabled={!mem}
-            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:border-red-300 hover:text-red-600 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300"
+            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:border-red-300 hover:text-red-600 disabled:opacity-50"
           >
             清空
           </button>
           {memMsg && <span className="text-xs text-emerald-600 dark:text-emerald-400">{memMsg}</span>}
           {memErr && <span className="text-xs text-red-600 dark:text-red-400 dark:text-red-500">{memErr}</span>}
-          {mem && <span className="ml-auto text-11 text-slate-400 dark:text-slate-500">{memDraft.length} 字</span>}
+          {mem && <span className="ml-auto text-11 text-slate-400">{memDraft.length} 字</span>}
         </div>
       </Card>
 

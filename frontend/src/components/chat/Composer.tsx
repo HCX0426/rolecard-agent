@@ -166,16 +166,16 @@ export default function Composer({
           title="上下拖动调整输入框高度"
           className="group/handle flex h-3 cursor-row-resize touch-none items-center justify-center rounded-t-2xl"
         >
-          <span className="h-1 w-10 rounded-full bg-slate-300 opacity-0 transition-opacity group-hover/handle:opacity-100 dark:bg-slate-600" />
+          <span className="h-1 w-10 rounded-full bg-slate-300 opacity-0 transition-opacity group-hover/handle:opacity-100" />
         </div>
         {pendingImage && (
-          <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2 dark:border-slate-700">
+          <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2">
             <img
               src={pendingImage}
               alt="待发送图片"
-              className="h-16 w-16 rounded-lg border border-slate-200 object-cover dark:border-slate-600"
+              className="h-16 w-16 rounded-lg border border-slate-200 object-cover"
             />
-            <span className="text-11 text-slate-500 dark:text-slate-400">图片已附加，将随消息一起发送</span>
+            <span className="text-11 text-slate-500">图片已附加，将随消息一起发送</span>
             <button
               onClick={() => setPendingImage(null)}
               disabled={busy}
@@ -204,7 +204,7 @@ export default function Composer({
               : "输入消息，Enter 发送 / Shift+Enter 换行（没有对话会自动创建）"
           }
           disabled={busy}
-          className="w-full resize-none overflow-y-auto bg-transparent px-4 pt-3 pb-1 leading-relaxed outline-none no-scrollbar disabled:bg-slate-50 dark:disabled:bg-slate-800/50"
+          className="w-full resize-none overflow-y-auto bg-transparent px-4 pt-3 pb-1 leading-relaxed outline-none no-scrollbar disabled:bg-slate-50"
         />
         <div className="flex items-center justify-between gap-2 px-2.5 pb-2">
           <div className="flex items-center gap-1">
@@ -222,7 +222,7 @@ export default function Composer({
               onClick={() => imageInputRef.current?.click()}
               disabled={busy}
               title="附加图片（发给当前模型识别；需视觉模型支持）"
-              className="flex items-center gap-1 rounded-lg px-2 py-1 text-11 text-slate-500 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-700/60"
+              className="flex items-center gap-1 rounded-lg px-2 py-1 text-11 text-slate-500 hover:bg-slate-100 disabled:opacity-40"
             >
               <IconImage />
               图片
@@ -231,7 +231,7 @@ export default function Composer({
               onClick={onEnhance}
               disabled={busy || enhancing || !input.trim()}
               title="增强提示词：把草稿改写得更清晰、具体（一次模型调用）"
-              className="flex items-center gap-1 rounded-lg px-2 py-1 text-11 text-slate-500 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-700/60"
+              className="flex items-center gap-1 rounded-lg px-2 py-1 text-11 text-slate-500 hover:bg-slate-100 disabled:opacity-40"
             >
               <IconSparkle />
               {enhancing ? "增强中…" : "增强提示词"}
@@ -243,11 +243,11 @@ export default function Composer({
                 title={`上下文约 ${ctxUsed} 字 / 上限 ${ctxBudget} 字（${ctxPct}%）${
                   droppedThisTurn !== null ? ` · 本轮已裁 ${droppedThisTurn} 条` : ""
                 }`}
-                className="flex cursor-default items-center gap-1 text-11 text-slate-400 dark:text-slate-500"
+                className="flex cursor-default items-center gap-1 text-11 text-slate-400"
               >
                 <span
                   className={`h-1.5 w-1.5 rounded-full ${
-                    ctxPct >= 80 ? "bg-amber-400" : "bg-slate-300 dark:bg-slate-600"
+                    ctxPct >= 80 ? "bg-amber-400" : "bg-slate-300"
                   }`}
                 />
                 {ctxPct}%
@@ -258,7 +258,7 @@ export default function Composer({
                 onClick={onStop}
                 title="停止生成"
                 aria-label="停止生成"
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-700 text-white hover:bg-slate-800 dark:bg-slate-600 dark:hover:bg-slate-500"
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-700 text-white hover:bg-slate-800"
               >
                 <IconStop />
               </button>

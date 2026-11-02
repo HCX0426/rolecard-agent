@@ -108,7 +108,7 @@ function rowOf(mine: boolean): { className: string; "aria-label": string } {
  */
 const MINE_ROW =
   "ml-auto w-fit max-w-[86%] break-words rounded-xl rounded-br-sm border border-blue-200" +
-  " bg-blue-50 px-1.5 py-0.5 dark:border-slate-700 dark:bg-slate-800/70";
+  " bg-blue-50 px-1.5 py-0.5";
 
 export default function PetPage() {
   const [items, setItems] = useState<ReachoutRow[]>([]);
@@ -1123,11 +1123,11 @@ export default function PetPage() {
             // 不在这里回看一眼 activeElement，一次 Tab 键就能把面板送走。
             focusInRef.current = panelRef.current?.contains(document.activeElement) ?? false;
           }}
-          className="pet-panel-in pet-nodrag flex max-h-full min-h-0 w-[380px] flex-col rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-md dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+          className="pet-panel-in pet-nodrag flex max-h-full min-h-0 w-[380px] flex-col rounded-2xl border border-slate-200 bg-surface text-slate-700 shadow-md"
           /* 屏内对齐：见上面 `panelShift`。窗口没动，动的是这一块在画布里的位置。 */
           style={{ transform: `translateX(${panelShift}px)` }}
         >
-          <header className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-100 px-3 py-2 dark:border-slate-700">
+          <header className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-100 px-3 py-2">
             {roles.length > 1 ? (
               <select
                 value={activeRole ?? ""}
@@ -1137,7 +1137,7 @@ export default function PetPage() {
                   setHistoryTotal(0); // 换角色 = 换一条会话，上一角色的"上面还有 N 条"不能跟着搬
                   historyShapeRef.current = "";
                 }}
-                className="w-[150px] truncate rounded border border-slate-200 bg-white px-1 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                className="w-[150px] truncate rounded border border-slate-200 bg-surface px-1 py-0.5 text-xs"
                 title="换个工作台对象（每个角色是它自己的那条主动会话）"
               >
                 {roles.map((r) => (
@@ -1163,7 +1163,7 @@ export default function PetPage() {
                   那正是"移动窗口 ⇒ 把自己挪出光标 ⇒ 自激晃动"的来源。 */}
               <button
                 onClick={() => expand(false)}
-                className="px-1 text-11 leading-none text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                className="px-1 text-11 leading-none text-slate-400 hover:text-slate-600"
                 title="收起面板（再点一下色片也能开合）"
                 aria-label="收起面板"
               >
@@ -1176,8 +1176,8 @@ export default function PetPage() {
               这行只是让桌宠不再假装不存在"云端"这件事。按设计稿 §6：只在**显示内容**时画，
               否则"内容已隐藏"那半句话的意义会被这行云端地址搅浑。 */}
           {showContent && (
-            <div className="flex shrink-0 items-center gap-2 border-b border-slate-100 px-3 py-1 dark:border-slate-700">
-              <span className="shrink-0 text-10 text-slate-400 dark:text-slate-500">
+            <div className="flex shrink-0 items-center gap-2 border-b border-slate-100 px-3 py-1">
+              <span className="shrink-0 text-10 text-slate-400">
                 {cloud ? `☁ 云端 · ${cloud.user}` : "● 本机"}
               </span>
               {myQuiet && (
@@ -1201,19 +1201,19 @@ export default function PetPage() {
             {!showContent && (
               // 关掉旗子时这里一个字的对话都不画（连历史都没去读，见上面那个 effect）。
               // 但"它在不在说话"仍然要说 —— 隐藏内容不等于把驻留件变成没有反馈的黑盒。
-              <p className="text-slate-400 dark:text-slate-500">
+              <p className="text-slate-400">
                 {busy
                   ? "它正在回话…（内容已隐藏）"
                   : `内容已隐藏${unreadOfActive ? ` · ${unreadOfActive} 条未读` : ""} —— 在控制台里读，或到托盘勾回「显示消息内容」。`}
               </p>
             )}
             {showContent && !threadId && !historyError && !pendingUser && (
-              <p className="text-slate-400 dark:text-slate-500">
+              <p className="text-slate-400">
                 还没有你们的对话 —— 说第一句就会开始（它会记进这个角色的记忆与这条会话）。
               </p>
             )}
             {showContent && threadId && history === null && !historyError && !pendingUser && (
-              <p className="text-slate-400 dark:text-slate-500">读取中…</p>
+              <p className="text-slate-400">读取中…</p>
             )}
             {/* 面板只画最近 `PANEL_MESSAGES` 条，而"一共有几条"是后端 `total` 报的。不写这一行，
                 这块小窗就在冒充"你们的全部对话"（用户 09-26 问的正是这个：那条会话实量 44 条，
@@ -1224,13 +1224,13 @@ export default function PetPage() {
                 <button
                   type="button"
                   onClick={() => threadId && shellBridge()?.openSession(threadId)}
-                  className="block w-full rounded border border-slate-200 bg-slate-50 px-2 py-1 text-left text-10 text-slate-500 hover:text-blue-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
+                  className="block w-full rounded border border-slate-200 bg-slate-50 px-2 py-1 text-left text-10 text-slate-500 hover:text-blue-600"
                   title={`这里只放最近 ${PANEL_MESSAGES} 条 —— 点进去就是同一条会话，不是另一份`}
                 >
                   ↑ 上面还有 {historyTotal - history.length} 条 · 在控制台看全部
                 </button>
               ) : (
-                <p className="text-10 text-slate-400 dark:text-slate-500">
+                <p className="text-10 text-slate-400">
                   ↑ 上面还有 {historyTotal - history.length} 条（这里只放最近 {PANEL_MESSAGES} 条）
                 </p>
               )
@@ -1272,13 +1272,13 @@ export default function PetPage() {
             {showContent && !busy && mirror !== null && (
               <div data-testid="pet-inflight-mirror">
                 <p {...rowOf(false)}>{mirror || "对方在说…"}</p>
-                <p className="mt-0.5 text-10 text-slate-400 dark:text-slate-500">
+                <p className="mt-0.5 text-10 text-slate-400">
                   正在生成 · 不是这里发起的
                 </p>
               </div>
             )}
           </div>
-          <div className="flex shrink-0 items-end gap-1.5 border-t border-slate-100 px-2 py-2 dark:border-slate-700">
+          <div className="flex shrink-0 items-end gap-1.5 border-t border-slate-100 px-2 py-2">
             <textarea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -1291,12 +1291,12 @@ export default function PetPage() {
               }}
               rows={1}
               placeholder={`跟${activeName}说一句`}
-              className="max-h-16 min-w-0 flex-1 resize-none rounded-lg border border-slate-200 bg-white px-2 py-1 text-11 leading-relaxed focus:border-blue-400 focus:outline-none dark:border-slate-600 dark:bg-slate-900"
+              className="max-h-16 min-w-0 flex-1 resize-none rounded-lg border border-slate-200 bg-surface px-2 py-1 text-11 leading-relaxed focus:border-blue-400 focus:outline-none"
             />
             {busy ? (
               <button
                 onClick={stop}
-                className="shrink-0 rounded-lg border border-slate-200 px-2 py-1 text-11 text-slate-500 hover:text-red-600 dark:border-slate-600 dark:text-slate-300"
+                className="shrink-0 rounded-lg border border-slate-200 px-2 py-1 text-11 text-slate-500 hover:text-red-600"
                 title="停止这一轮生成"
               >
                 停止
@@ -1328,7 +1328,7 @@ export default function PetPage() {
             // 半透明透出来的是桌面本身（壁纸/图标/底下那个窗口的字），blur 也没有东西可糊
             // （backdrop-filter 只看页面自己身后那层），用户报的"重影"就是这两样叠出来的。
             // 同理不再淡出 opacity —— 淡出的那 500ms 就是一块 500ms 的半透明。
-            className="pet-nodrag w-[200px] rounded-2xl border border-slate-200 bg-white px-3 py-2 text-left text-11 leading-relaxed text-slate-700 shadow-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+            className="pet-nodrag w-[200px] rounded-2xl border border-slate-200 bg-surface px-3 py-2 text-left text-11 leading-relaxed text-slate-700 shadow-sm"
             // 宽度按锚点那块（200）而不是 w-full：画布是 560 宽，w-full 会把气泡拉成一条
             // 横穿桌面的白带子（它还是不透明白底 ⇒ 读起来像屏幕被划了一道）。
           >

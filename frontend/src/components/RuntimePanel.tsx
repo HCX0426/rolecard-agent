@@ -83,7 +83,7 @@ export function RuntimePanel() {
     return <p className="mt-6 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{err}</p>;
   }
   if (!data) {
-    return <p className="mt-6 text-xs text-slate-400 dark:text-slate-500">加载中…</p>;
+    return <p className="mt-6 text-xs text-slate-400">加载中…</p>;
   }
 
   function inputFor(it: RuntimeItem) {
@@ -94,7 +94,7 @@ export function RuntimePanel() {
         <select
           value={draft[key] ?? ""}
           onChange={(e) => set(e.target.value)}
-          className="w-28 rounded border border-slate-200 px-1.5 py-1 text-xs dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+          className="w-28 rounded border border-slate-200 px-1.5 py-1 text-xs"
         >
           <option value="" title={`默认 ${it.default}`}>跟随默认</option>
           <option value="1">开</option>
@@ -114,7 +114,7 @@ export function RuntimePanel() {
       return (
         <div className="flex flex-wrap gap-2">
           {it.choices.map((name) => (
-            <label key={name} className="flex cursor-pointer items-center gap-1 font-mono text-xs text-slate-600 dark:text-slate-300">
+            <label key={name} className="flex cursor-pointer items-center gap-1 font-mono text-xs text-slate-600">
               <input
                 type="checkbox"
                 checked={selected.includes(name)}
@@ -135,7 +135,7 @@ export function RuntimePanel() {
         <select
           value={current}
           onChange={(e) => set(e.target.value)}
-          className="w-40 rounded border border-slate-200 px-1.5 py-1 text-xs dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+          className="w-40 rounded border border-slate-200 px-1.5 py-1 text-xs"
         >
           <option value="" title={`默认 ${it.value}`}>跟随默认</option>
           {[...it.choices, ...extra].map((c) => (
@@ -153,7 +153,7 @@ export function RuntimePanel() {
         value={draft[key] ?? ""}
         onChange={(e) => set(e.target.value)}
         placeholder={it.overridden ? `覆盖中：${it.value}` : `未覆盖（当前 ${it.value}）`}
-        className="w-56 rounded border border-slate-200 px-1.5 py-1 font-mono text-xs outline-none focus:border-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+        className="w-56 rounded border border-slate-200 px-1.5 py-1 font-mono text-xs outline-none focus:border-blue-400"
       />
     );
   }
@@ -161,12 +161,12 @@ export function RuntimePanel() {
   return (
     <div className="mt-6 space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-11 leading-relaxed text-slate-400 dark:text-slate-500">{data.note}</p>
+        <p className="text-11 leading-relaxed text-slate-400">{data.note}</p>
         <div className="flex shrink-0 items-center gap-2">
           {saved && <span className="text-xs text-green-600 dark:text-green-400">{saved}</span>}
           {err && <span className="text-xs text-red-600 dark:text-red-400">{err}</span>}
           <Button variant="primary" onClick={save} disabled={busy || changedCount === 0}
-            className="rounded-lg px-3 py-1.5 text-xs font-medium hover:bg-blue-700 dark:bg-slate-600">
+            className="rounded-lg px-3 py-1.5 text-xs font-medium hover:bg-blue-700">
             {busy ? "保存中…" : `保存${changedCount ? `（${changedCount} 项修改）` : ""}`}
           </Button>
         </div>
@@ -176,14 +176,14 @@ export function RuntimePanel() {
           key={g.key}
           className="p-5"
         >
-          <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">{g.label}</h3>
+          <h3 className="text-sm font-medium text-slate-900">{g.label}</h3>
           <table className="mt-2 w-full text-xs">
             <tbody>
               {(g.items ?? []).map((it) => (
-                <tr key={it.key} className="border-b border-slate-50 last:border-0 dark:border-slate-700/50">
+                <tr key={it.key} className="border-b border-slate-50 last:border-0">
                   <td className="w-40 py-1.5 align-top">
-                    <span className="font-medium text-slate-700 dark:text-slate-200">{it.label}</span>
-                    <span className="ml-1.5 font-mono text-10 text-slate-300 dark:text-slate-600">{it.key}</span>
+                    <span className="font-medium text-slate-700">{it.label}</span>
+                    <span className="ml-1.5 font-mono text-10 text-slate-300">{it.key}</span>
                   </td>
                   <td className="py-1.5 align-top">
                     {/* 主动开口总闸与收件箱折叠窗口是顶层「记忆」页签的单写点：这里
@@ -194,14 +194,14 @@ export function RuntimePanel() {
                     {it.kind === "ro"
                     || it.field === "reachout_enabled"
                     || it.field === "reachout_merge_days" ? (
-                      <span className={`font-mono ${it.changed ? "text-amber-600 dark:text-amber-400" : "text-slate-600 dark:text-slate-300"}`}>
+                      <span className={`font-mono ${it.changed ? "text-amber-600 dark:text-amber-400" : "text-slate-600"}`}>
                         {it.value}
                       </span>
                     ) : (
                       inputFor(it)
                     )}
                   </td>
-                  <td className="py-1.5 align-top text-slate-400 dark:text-slate-500">
+                  <td className="py-1.5 align-top text-slate-400">
                     {it.field === "reachout_enabled" || it.field === "reachout_merge_days"
                       ? "在「记忆」页签修改"
                       : it.note || (it.changed && it.kind === "ro" ? `默认 ${it.default}` : "")}
@@ -215,10 +215,10 @@ export function RuntimePanel() {
           {g.key === "reachout" && quiet.length > 0 && (
             <ul
               data-testid="quiet-status"
-              className="mt-3 space-y-1 border-t border-slate-100 pt-2 dark:border-slate-700"
+              className="mt-3 space-y-1 border-t border-slate-100 pt-2"
             >
               {quiet.map((q) => (
-                <li key={q.role_id} className="text-slate-500 dark:text-slate-400">
+                <li key={q.role_id} className="text-slate-500">
                   <QuietLine q={q} />
                 </li>
               ))}

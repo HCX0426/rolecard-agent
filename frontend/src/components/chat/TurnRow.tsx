@@ -109,7 +109,7 @@ function TurnRow({
           }
         >
           {isEditingThis && editing ? (
-            <div className="rounded-2xl rounded-br-sm border border-blue-300 bg-blue-50 dark:bg-slate-800/70 p-2.5">
+            <div className="rounded-2xl rounded-br-sm border border-blue-300 bg-blue-50 p-2.5">
               <textarea
                 autoFocus
                 value={editing.text}
@@ -119,10 +119,10 @@ function TurnRow({
                   if (e.key === "Escape") onEditCancel();
                 }}
                 rows={3}
-                className="w-full resize-y rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-sm outline-none focus-visible:border-2"
+                className="w-full resize-y rounded-lg border border-blue-200 bg-surface px-2.5 py-1.5 text-sm outline-none focus-visible:border-2"
               />
               <div className="mt-1.5 flex items-center justify-end gap-2 text-11">
-                <span className="text-slate-400 dark:text-slate-500">
+                <span className="text-slate-400">
                   发送后此条之后的历史将作废并重新生成（Ctrl+Enter 发送）
                 </span>
                 <Button variant="ghost" size="sm" onClick={onEditCancel}>
@@ -140,7 +140,7 @@ function TurnRow({
                   与删除模式复选框同片像素（opacity-0 照样吃点击，真机探针实测勾不上）。
                   现在与时间同排右对齐、尺寸缩一档，仍悬停显现。删除模式下不画它：
                   那时意图是勾选，不是改写。 */}
-              <div className="rounded-2xl rounded-br-sm border border-white/50 bg-white/70 px-4 py-2.5 text-slate-900 backdrop-blur-sm dark:border-white/10 dark:bg-slate-800/70 dark:text-slate-100">
+              <div className="rounded-2xl rounded-br-sm border border-white/50 bg-surface/70 px-4 py-2.5 text-slate-900 backdrop-blur-sm dark:border-white/10">
                 {turn.user.image && (
                   <img
                     src={turn.user.image}
@@ -154,7 +154,7 @@ function TurnRow({
               </div>
               {turn.user.ts && (
                 <div className="mt-1 flex items-center justify-end gap-1.5">
-                  <p className="text-10 text-slate-500 dark:text-slate-400">
+                  <p className="text-10 text-slate-500">
                     {formatMessageTs(turn.user.ts)}
                   </p>
                   {!busy && !selectMode && !!userMid && (
@@ -163,7 +163,7 @@ function TurnRow({
                       onClick={() => onStartEdit(userMid, turn.user!.content, turn.user?.image)}
                       aria-label="编辑并重答"
                       title="编辑这条消息并重新生成（之后的对话会被作废）"
-                      className="rounded-full p-0.5 text-slate-400 opacity-0 transition-opacity hover:bg-blue-50 hover:text-blue-600 group-hover:opacity-100 dark:text-slate-500 dark:hover:bg-slate-700/60 dark:hover:text-blue-400"
+                      className="rounded-full p-0.5 text-slate-400 opacity-0 transition-opacity hover:bg-blue-50 hover:text-blue-600 group-hover:opacity-100 dark:hover:text-blue-400"
                     >
                       <svg viewBox="0 0 20 20" fill="currentColor" className="h-3 w-3" aria-hidden="true">
                         <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
@@ -188,11 +188,11 @@ function TurnRow({
                 style={{ background: "var(--accent)" }}
                 aria-hidden="true"
               />
-              <span className="text-11 text-slate-500 dark:text-slate-400">{roleName}</span>
+              <span className="text-11 text-slate-500">{roleName}</span>
             </div>
           )}
           <MarkdownLazy text={turn.answer.content} />
-          <div className="mt-1 flex items-center gap-3 text-11 text-slate-400 dark:text-slate-500">
+          <div className="mt-1 flex items-center gap-3 text-11 text-slate-400">
             {/* 这一句是她**主动**说的（R26-40 ①）：主动开口那句与前后的提问之间
                 没有"用户消息"作分界，`splitSegments` 已经把它切成独立一段 ——
                 判据就是 `turn.user === null`，**不新增后端字段**（那会给同一件事
@@ -216,7 +216,7 @@ function TurnRow({
               "别的窗口按的停"（桌宠的「停止」）同样被落库的标记覆盖 —— 那扇窗没流过，
               本地 `signal.aborted` 认不出它，判据只能来自后端。 */}
           {turn.answer.stopped && (
-            <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">{STOP_HINT}</p>
+            <p className="mt-1 text-xs text-slate-400">{STOP_HINT}</p>
           )}
           {/* ENGI-36 B：这一轮实际由云端答的话（请求的是本地档）。与 `stopped` 同一条通路 ——
               标记随 checkpoint 落库，所以刷新后仍在；live 那一份走 SSE 的 `answered_by` 事件

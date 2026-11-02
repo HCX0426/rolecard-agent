@@ -36,25 +36,25 @@ export function UpdateCheckCard() {
   const verdict = info.has_update
     ? { tone: "text-amber-700 dark:text-amber-400", text: `发现新版本 ${info.latest}` }
     : info.source === "disabled"
-      ? { tone: "text-slate-400 dark:text-slate-500", text: "更新检查已关闭（UPDATE_CHECK_ENABLED=0）" }
+      ? { tone: "text-slate-400", text: "更新检查已关闭（UPDATE_CHECK_ENABLED=0）" }
       : info.error
-        ? { tone: "text-slate-400 dark:text-slate-500", text: `没问到最新版本：${info.error}` }
-        : { tone: "text-slate-400 dark:text-slate-500", text: `已是最新（${info.current}）` };
+        ? { tone: "text-slate-400", text: `没问到最新版本：${info.error}` }
+        : { tone: "text-slate-400", text: `已是最新（${info.current}）` };
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800">
+    <div className="rounded-xl border border-slate-200 bg-surface p-5">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">更新</h3>
+        <h3 className="text-sm font-medium text-slate-900">更新</h3>
         <button
           onClick={() => void load()}
           disabled={checking}
-          className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:border-blue-300 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:border-blue-700"
+          className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:border-blue-300 disabled:opacity-50 dark:hover:border-blue-700"
         >
           {checking ? "检查中…" : "重新检查"}
         </button>
       </div>
       <p className={`mt-1.5 text-xs ${verdict.tone}`}>{verdict.text}</p>
-      <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+      <p className="mt-1 text-xs text-slate-400">
         当前版本 {info.current}
         {info.source === "release_dir" && "（和本机托管的安装包比）"}
         {info.source === "github" && "（和 GitHub 发布比）"}
@@ -69,7 +69,7 @@ export function UpdateCheckCard() {
         </a>
       )}
       {info.has_update && (
-        <p className="mt-1.5 text-11 text-slate-400 dark:text-slate-500">
+        <p className="mt-1.5 text-11 text-slate-400">
           下载后运行安装包即可覆盖升级；你的数据（对话、知识库、设置）都在安装目录之外，不会被动。
         </p>
       )}

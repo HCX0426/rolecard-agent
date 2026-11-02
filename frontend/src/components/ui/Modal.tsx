@@ -51,21 +51,21 @@ export default function Modal({
         onClick={(e) => e.stopPropagation()}
         className={
           drawer
-            ? "absolute inset-y-0 right-0 flex w-full max-w-lg flex-col overflow-y-auto border-l border-slate-200 bg-white p-5 shadow-xl outline-none dark:border-slate-700 dark:bg-slate-800"
-            : "relative w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl outline-none dark:border-slate-700 dark:bg-slate-800"
+            ? "absolute inset-y-0 right-0 flex w-full max-w-lg flex-col overflow-y-auto border-l border-slate-200 bg-surface p-5 shadow-xl outline-none"
+            : "relative w-full max-w-md rounded-xl border border-slate-200 bg-surface p-5 shadow-xl outline-none"
         }
       >
         {title != null && (
-          <h3 className="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+          <h3 className="mb-3 text-sm font-semibold text-slate-900">
             {title}
           </h3>
         )}
-        <div className="flex-1 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
+        <div className="flex-1 text-sm leading-relaxed text-slate-600">
           {children}
         </div>
         {footer != null && (
           <div
-            className={`flex justify-end gap-2 ${drawer ? "sticky bottom-0 mt-5 bg-white pt-3 dark:bg-slate-800" : "mt-4"}`}
+            className={`flex justify-end gap-2 ${drawer ? "sticky bottom-0 mt-5 bg-surface pt-3" : "mt-4"}`}
           >
             {footer}
           </div>

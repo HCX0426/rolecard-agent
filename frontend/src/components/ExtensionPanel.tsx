@@ -37,7 +37,7 @@ function headersToMap(rows: [string, string][]): Record<string, string> {
 
 function StatusDot({ test }: { test: RowTest }) {
   const map = {
-    idle: { cls: "bg-slate-300 dark:bg-slate-600", title: "未测试" },
+    idle: { cls: "bg-slate-300", title: "未测试" },
     testing: { cls: "bg-amber-400 animate-pulse", title: "测试中…" },
   } as const;
   let cls: string = map.idle.cls;
@@ -226,7 +226,7 @@ export function ExtensionPanel() {
     }
   }
 
-  if (!loaded) return <p className="text-sm text-slate-500 dark:text-slate-400">加载中…</p>;
+  if (!loaded) return <p className="text-sm text-slate-500">加载中…</p>;
 
   return (
     <div className="mt-6 flex flex-col gap-6">
@@ -246,15 +246,15 @@ export function ExtensionPanel() {
       <section className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <div className="flex items-baseline gap-2">
-            <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">MCP 工具接入</h3>
-            <span className="text-11 text-slate-400 dark:text-slate-500">
+            <h3 className="text-sm font-medium text-slate-900">MCP 工具接入</h3>
+            <span className="text-11 text-slate-400">
               仅 http；接入后需在角色卡白名单授权该工具，角色才可见
             </span>
           </div>
           <div className="flex gap-1.5">
             <button
               onClick={() => setPasteOpen((v) => !v)}
-              className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:border-blue-300 hover:text-blue-600 dark:border-slate-700 dark:text-slate-300"
+              className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:border-blue-300 hover:text-blue-600"
             >
               {pasteOpen ? "收起" : "粘贴 JSON"}
             </button>
@@ -271,7 +271,7 @@ export function ExtensionPanel() {
               value={pasteText}
               onChange={(e) => setPasteText(e.target.value)}
               placeholder={'{\n  "mcpServers": {\n    "my-tools": { "url": "https://example.com/mcp", "headers": { "Authorization": "***" } }\n  }\n}'}
-              className="h-28 w-full rounded border border-slate-200 bg-white p-2 font-mono text-xs dark:border-slate-700 dark:bg-slate-800"
+              className="h-28 w-full rounded border border-slate-200 bg-surface p-2 font-mono text-xs"
             />
             <Button variant="primary" disabled={busy === "paste" || !pasteText.trim()} onClick={submitPaste}
               className="mt-2 rounded px-3 py-1 text-xs hover:bg-blue-700 disabled:opacity-50">
@@ -289,28 +289,28 @@ export function ExtensionPanel() {
                   disabled={!!editingId}
                   onChange={(e) => setForm({ ...form, id: e.target.value })}
                   placeholder="id（字母数字 . _ -）"
-                  className="w-40 rounded border border-slate-200 bg-white px-2 py-1 text-xs disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800"
+                  className="w-40 rounded border border-slate-200 bg-surface px-2 py-1 text-xs disabled:opacity-60"
                 />
                 <input
                   value={form.display_name}
                   onChange={(e) => setForm({ ...form, display_name: e.target.value })}
                   placeholder="显示名"
-                  className="w-40 rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
+                  className="w-40 rounded border border-slate-200 bg-surface px-2 py-1 text-xs"
                 />
                 <input
                   value={form.url}
                   onChange={(e) => setForm({ ...form, url: e.target.value })}
                   placeholder="http(s)://… 端点（本机 / 内网 / 公网均可）"
-                  className="flex-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
+                  className="flex-1 rounded border border-slate-200 bg-surface px-2 py-1 text-xs"
                 />
               </div>
               {editingId && Object.keys(servers.find((s) => s.id === editingId)?.headers ?? {}).length > 0 && (
-                <p className="text-11 text-slate-400 dark:text-slate-500">
+                <p className="text-11 text-slate-400">
                   现有鉴权头：{Object.keys(servers.find((s) => s.id === editingId)?.headers ?? {}).join(", ")}（值不可见）
                 </p>
               )}
               <div className="flex items-center gap-2">
-                <span className="text-11 text-slate-500 dark:text-slate-400">
+                <span className="text-11 text-slate-500">
                   鉴权头{editingId && !headersTouched ? "（留空=不改，填任一条=整体替换）" : ""}
                 </span>
                 <button
@@ -318,7 +318,7 @@ export function ExtensionPanel() {
                     setHeadersTouched(true);
                     setForm({ ...form, headers: [...form.headers, ["", ""]] });
                   }}
-                  className="rounded border border-slate-200 px-2 py-0.5 text-11 text-slate-500 dark:border-slate-700"
+                  className="rounded border border-slate-200 px-2 py-0.5 text-11 text-slate-500"
                 >
                   ＋ 键值对
                 </button>
@@ -329,14 +329,14 @@ export function ExtensionPanel() {
                     value={row[0]}
                     onChange={(e) => setForm({ ...form, headers: form.headers.map((r, j) => (j === i ? [e.target.value, r[1]] : r)) })}
                     placeholder="Header 名"
-                    className="w-40 rounded border border-slate-200 bg-white px-2 py-1 font-mono text-xs dark:border-slate-700 dark:bg-slate-800"
+                    className="w-40 rounded border border-slate-200 bg-surface px-2 py-1 font-mono text-xs"
                   />
                   <input
                     value={row[1]}
                     onChange={(e) => setForm({ ...form, headers: form.headers.map((r, j) => (j === i ? [r[0], e.target.value] : r)) })}
                     placeholder="值（密钥）"
                     type="password"
-                    className="flex-1 rounded border border-slate-200 bg-white px-2 py-1 font-mono text-xs dark:border-slate-700 dark:bg-slate-800"
+                    className="flex-1 rounded border border-slate-200 bg-surface px-2 py-1 font-mono text-xs"
                   />
                   <button
                     onClick={() => setForm({ ...form, headers: form.headers.filter((_, j) => j !== i) })}
@@ -346,7 +346,7 @@ export function ExtensionPanel() {
                   </button>
                 </div>
               ))}
-              <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+              <label className="flex items-center gap-2 text-xs text-slate-600">
                 <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
                 接入后启用
               </label>
@@ -355,7 +355,7 @@ export function ExtensionPanel() {
                   className="rounded px-3 py-1 text-xs hover:bg-blue-700 disabled:opacity-50">
                   保存
                 </Button>
-                <button onClick={closeForm} className="rounded border border-slate-200 px-3 py-1 text-xs text-slate-500 dark:border-slate-700">
+                <button onClick={closeForm} className="rounded border border-slate-200 px-3 py-1 text-xs text-slate-500">
                   取消
                 </button>
               </div>
@@ -364,7 +364,7 @@ export function ExtensionPanel() {
         )}
 
         {servers.length === 0 && (
-          <p className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-xs text-slate-400 dark:border-slate-700">
+          <p className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-xs text-slate-400">
             还没有接入任何 MCP server。点「＋ 接入」填一条 http 端点，或「粘贴 JSON」批量导入。
           </p>
         )}
@@ -379,7 +379,7 @@ export function ExtensionPanel() {
             <div
               key={s.id}
               className={`rounded-lg border px-3 py-2 ${
-                s.enabled ? "border-slate-200 dark:border-slate-700" : "border-dashed border-slate-200 opacity-60 dark:border-slate-700"
+                s.enabled ? "border-slate-200" : "border-dashed border-slate-200 opacity-60"
               }`}
             >
               <div className="flex items-center gap-2.5">
@@ -387,19 +387,19 @@ export function ExtensionPanel() {
                 <span className="rounded-full bg-blue-100 px-2 py-0.5 text-11 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
                   {s.transport}
                 </span>
-                <span className="text-sm text-slate-800 dark:text-slate-200">{s.display_name}</span>
-                <span className="font-mono text-11 text-slate-400 dark:text-slate-500" title={url}>
+                <span className="text-sm text-slate-800">{s.display_name}</span>
+                <span className="font-mono text-11 text-slate-400" title={url}>
                   {url.length > 40 ? `${url.slice(0, 40)}…` : url}
                 </span>
                 {hdrKeys.length > 0 && (
-                  <span className="font-mono text-11 text-slate-400 dark:text-slate-500" title="鉴权头已配置（值不可见）">
+                  <span className="font-mono text-11 text-slate-400" title="鉴权头已配置（值不可见）">
                     {hdrKeys.join(",")} ****
                   </span>
                 )}
                 <span className="ml-auto flex items-center gap-1.5">
                   <button
                     onClick={() => setExpanded((e) => ({ ...e, [id]: !isOpen }))}
-                    className="rounded px-2 py-0.5 text-11 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    className="rounded px-2 py-0.5 text-11 text-slate-500 hover:bg-slate-100"
                     title="展开看工具/错误"
                   >
                     {isOpen ? "收起 ▲" : "详情 ▼"}
@@ -410,7 +410,7 @@ export function ExtensionPanel() {
                     className={`rounded-full px-2.5 py-0.5 text-11 ${
                       s.enabled
                         ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
-                        : "bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300"
+                        : "bg-slate-100 text-slate-500"
                     }`}
                   >
                     {s.enabled ? "启用中" : "已停用"}
@@ -418,7 +418,7 @@ export function ExtensionPanel() {
                   <button
                     onClick={() => test(s)}
                     disabled={busy === s.id || t.phase === "testing"}
-                    className="rounded border border-slate-200 px-2 py-0.5 text-11 text-slate-500 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:hover:bg-slate-800"
+                    className="rounded border border-slate-200 px-2 py-0.5 text-11 text-slate-500 hover:bg-slate-50 disabled:opacity-40"
                   >
                     测试连接
                   </button>
@@ -439,7 +439,7 @@ export function ExtensionPanel() {
               {isOpen && t.phase === "done" && (
                 <div className="mt-2 pl-5 text-xs">
                   {t.result.ok ? (
-                    <ul className="list-inside list-disc text-slate-500 dark:text-slate-400">
+                    <ul className="list-inside list-disc text-slate-500">
                       {t.result.tools.map((name) => (
                         <li key={name} className="font-mono text-11">{name}</li>
                       ))}
@@ -451,7 +451,7 @@ export function ExtensionPanel() {
                 </div>
               )}
               {isOpen && t.phase !== "done" && (
-                <p className="mt-2 pl-5 text-11 text-slate-400 dark:text-slate-500">
+                <p className="mt-2 pl-5 text-11 text-slate-400">
                   {t.phase === "testing" ? "正在连接…" : "点「测试连接」看该 server 暴露的工具。"}
                 </p>
               )}
@@ -461,16 +461,16 @@ export function ExtensionPanel() {
       </section>
 
       {/* ---- ② 模型连通性自检 ---- */}
-      <section className="flex flex-col gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
+      <section className="flex flex-col gap-2 border-t border-slate-100 pt-4">
         <div className="flex items-baseline gap-2">
-          <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">模型连通性自检</h3>
-          <span className="text-11 text-slate-400 dark:text-slate-500">对现在打头的那个模型真发一次轻探活（不耗推理配额）</span>
+          <h3 className="text-sm font-medium text-slate-900">模型连通性自检</h3>
+          <span className="text-11 text-slate-400">对现在打头的那个模型真发一次轻探活（不耗推理配额）</span>
         </div>
         <div>
           <button
             onClick={runCheck}
             disabled={connBusy}
-            className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50"
           >
             {connBusy ? "检测中…" : "检测当前默认"}
           </button>
@@ -489,7 +489,7 @@ export function ExtensionPanel() {
               {probe.models?.length ? `：${probe.models.slice(0, 6).join(", ")}` : ""}
             </p>
           ))}
-        <p className="text-11 text-slate-400 dark:text-slate-500">
+        <p className="text-11 text-slate-400">
           生效 MCP server 合计（含 env 与已停用外）：{effective}
         </p>
       </section>

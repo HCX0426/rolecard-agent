@@ -66,8 +66,8 @@ export function ReachoutMasterCard() {
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-slate-200 bg-white/60 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800/40">
-      <span className="text-slate-600 dark:text-slate-300">主动开口</span>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-slate-200 bg-surface/60 px-3 py-2 text-xs">
+      <span className="text-slate-600">主动开口</span>
       <button
         onClick={() => void toggle()}
         disabled={reachoutOn === null}
@@ -75,21 +75,21 @@ export function ReachoutMasterCard() {
         className={`rounded-full px-3 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
           reachoutOn
             ? "bg-blue-600 text-white"
-            : "bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-300"
+            : "bg-slate-200 text-slate-500"
         }`}
       >
         {reachoutOn === null ? "…" : reachoutOn ? "总闸已开启" : "总闸已关闭"}
       </button>
-      <span className="min-w-0 flex-1 text-11 text-slate-400 dark:text-slate-500">
+      <span className="min-w-0 flex-1 text-11 text-slate-400">
         关了之后谁都不会来找你；开了之后也只有角色卡里勾了「会主动找你」的角色会开口。
       </span>
-      <label className="flex shrink-0 items-center gap-1.5 text-11 text-slate-500 dark:text-slate-400">
+      <label className="flex shrink-0 items-center gap-1.5 text-11 text-slate-500">
         收件箱
         <select
           value={String(mergeDays ?? 1)}
           disabled={mergeDays === null}
           onChange={(e) => void changeMergeDays(e.target.value)}
-          className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-11 dark:border-slate-700 dark:bg-slate-800"
+          className="rounded border border-slate-200 bg-surface px-1.5 py-0.5 text-11"
         >
           {mergeChoices.map((c) => (
             <option key={c} value={c}>

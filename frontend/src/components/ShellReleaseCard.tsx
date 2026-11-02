@@ -42,25 +42,25 @@ export function ShellReleaseCard() {
     .join(" · ");
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-800">
-      <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">
+    <div className="rounded-xl border border-slate-200 bg-surface p-5">
+      <h3 className="text-sm font-medium text-slate-900">
         桌面壳（Windows 桌宠）
       </h3>
-      <p className="mt-1 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+      <p className="mt-1 flex items-center gap-2 text-xs text-slate-500">
         <span className="h-2 w-2 rounded-full bg-emerald-500" />
         有可下载的安装包
       </p>
-      <p className="mt-2 font-mono text-xs text-slate-700 dark:text-slate-300">
+      <p className="mt-2 font-mono text-xs text-slate-700">
         {name}
-        {meta && <span className="ml-2 text-slate-400 dark:text-slate-500">{meta}</span>}
+        {meta && <span className="ml-2 text-slate-400">{meta}</span>}
       </p>
-      <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
+      <p className="mt-1.5 text-xs text-slate-500">
         程序就在安装包里，只监听 127.0.0.1；桌宠、托盘与系统通知由它管。装好后不需要再开这个网页。
       </p>
       <a
         href="/api/shell-release/download"
         download={name}
-        className="mt-3 inline-block rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-700"
+        className="mt-3 inline-block rounded-lg border border-slate-200 bg-surface px-3 py-1.5 text-xs text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
       >
         下载桌面壳
       </a>

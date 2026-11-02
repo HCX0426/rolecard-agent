@@ -7,20 +7,24 @@ const VARIANTS: Record<Variant, string> = {
   // primary 用**当前角色的强调色**（--accent，2026-10-25 玻璃重设计）：主按钮跟着
   // 角色换色 —— "现在这个界面是在跟谁说话"不用读字就知道。color-mix 让禁用态
   // 自动褪成灰（不用再写一份 disabled 蓝）。
+  // ⚠ 禁用态必须同时把**字色**换掉（2026-11-03）：`disabled:bg-slate-300` 在 @theme
+  // 把 slate-* 改义成 --bg-line 之后，浅色那端是米色 #e2d3c0 —— 白字压上去实测对比度
+  // **1.47**，「保存」「记住」这类禁用主按钮整个看不见（深色端反而没事，所以从前没人
+  // 报）。danger 变体早就写了 `disabled:text-slate-500` 兜住同一件事，primary 是漏的那个。
   primary:
-    "text-white disabled:bg-slate-300 dark:disabled:bg-slate-700",
+    "text-white disabled:bg-slate-300 disabled:text-slate-500",
   outline:
-    "border border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:text-blue-600 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-700 dark:hover:text-blue-400",
+    "border border-slate-200 bg-surface text-slate-600 hover:border-blue-300 hover:text-blue-600 disabled:opacity-50 dark:hover:border-blue-700 dark:hover:text-blue-400",
   // ghost/danger 以前**完全没有禁用态**：灰掉与否看起来一样能点，
   // 于是"禁用 + 说明"这条规则在这些变体上等于没实现。
   ghost:
-    "text-slate-500 hover:bg-slate-100 disabled:text-slate-300 disabled:hover:bg-transparent dark:text-slate-400 dark:hover:bg-slate-700 dark:disabled:text-slate-600 dark:disabled:hover:bg-transparent",
+    "text-slate-500 hover:bg-slate-100 disabled:text-slate-300 disabled:hover:bg-transparent dark:disabled:hover:bg-transparent",
   danger:
-    "bg-red-500 text-white hover:bg-red-600 disabled:bg-slate-300 disabled:text-slate-500 dark:disabled:bg-slate-700 dark:disabled:text-slate-500",
+    "bg-red-500 text-white hover:bg-red-600 disabled:bg-slate-300 disabled:text-slate-500",
   // link（2026-10-24 UI 打磨）：裸文字链按钮 —— 消息行的「复制」「重新生成」一族。
   // 从前它们各写一遍 `hover:text-…` 的裸 class，是"169 个裸 button"里最大的一族；
   // 有了这个变体它们才有原语可归（base 的 rounded-lg/p-0 由调用方 className 归零）。
-  link: "bg-transparent p-0 rounded-none font-normal text-slate-500 hover:text-slate-700 disabled:text-slate-300 dark:text-slate-400 dark:hover:text-slate-200 dark:disabled:text-slate-600",
+  link: "bg-transparent p-0 rounded-none font-normal text-slate-500 hover:text-slate-700 disabled:text-slate-300",
 };
 
 const SIZES: Record<Size, string> = {
@@ -102,7 +106,7 @@ const Button = forwardRef(function Button(
   return (
     <span className="inline-flex flex-col items-start gap-0.5">
       {button}
-      <span className="text-10 leading-tight text-slate-400 dark:text-slate-500">
+      <span className="text-10 leading-tight text-slate-400">
         {disabledHint}
       </span>
     </span>

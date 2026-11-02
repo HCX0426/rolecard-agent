@@ -108,7 +108,7 @@ export function ModelsPanel({ onOpenServices }: { onOpenServices?: () => void })
         <Card className="p-5">
           <div className="space-y-2.5">
             {[0, 1, 2].map((i) => (
-              <div key={i} className="h-9 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-700/50" />
+              <div key={i} className="h-9 animate-pulse rounded-lg bg-slate-100" />
             ))}
           </div>
         </Card>
@@ -123,7 +123,7 @@ export function ModelsPanel({ onOpenServices }: { onOpenServices?: () => void })
       <LocalServiceCard />
 
       <div className="flex items-center gap-2">
-        <h3 className="text-sm font-medium text-slate-900 dark:text-slate-100">供应商与模型</h3>
+        <h3 className="text-sm font-medium text-slate-900">供应商与模型</h3>
         <span className="ml-auto flex gap-2">
           <Button size="sm" variant="outline" onClick={() => load().catch(() => undefined)}>
             重新载入
@@ -140,7 +140,7 @@ export function ModelsPanel({ onOpenServices }: { onOpenServices?: () => void })
 
       {groups.length === 0 && (
         <Card className="p-5">
-          <p className="text-sm text-slate-600 dark:text-slate-300">
+          <p className="text-sm text-slate-600">
             还没有配置任何模型。本地 Ollama 免配置：装好并 <code>ollama serve</code> 之后，
             直接添加一家"本地 Ollama"就行。
           </p>
@@ -201,23 +201,23 @@ function ProviderCard({
   return (
     <Card className="overflow-hidden p-0">
       <div
-        className={`flex items-center gap-2 border-b border-slate-100 px-4 py-3 dark:border-slate-700 ${
+        className={`flex items-center gap-2 border-b border-slate-100 px-4 py-3 ${
           broken ? "bg-amber-50/60 dark:bg-amber-900/20" : ""
         }`}
       >
         <span
           className={`h-4 w-[3px] rounded-full ${broken ? "bg-amber-400" : "bg-emerald-500"}`}
         />
-        <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
+        <span className="text-sm font-medium text-slate-900">
           {group.label}
           {group.style === "native" && (
             <span className="ml-1.5 text-11 text-slate-400">（本机）</span>
           )}
         </span>
-        <span className="text-11 text-slate-400 dark:text-slate-500">
+        <span className="text-11 text-slate-400">
           {group.base_url || "默认端点"}
         </span>
-        <span className="ml-auto text-11 text-slate-400 dark:text-slate-500">
+        <span className="ml-auto text-11 text-slate-400">
           {group.needs_key
             ? group.has_key
               ? `key 已存 ${group.key_masked ?? "••••"}`
@@ -226,21 +226,21 @@ function ProviderCard({
         </span>
       </div>
 
-      <div className="divide-y divide-slate-100 dark:divide-slate-800">
+      <div className="divide-y divide-slate-100">
         {(group.models ?? []).map((row) => (
           <div
             key={row.name}
-            className={`flex min-h-[40px] flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/60 ${
+            className={`flex min-h-[40px] flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 hover:bg-slate-50 ${
               row.name === highlight ? "animate-[fadein_120ms_ease-out]" : ""
             }`}
           >
             <StatusGlyph row={row} />
             <div className="min-w-0">
-              <div className="truncate font-mono text-xs text-slate-700 dark:text-slate-200">
+              <div className="truncate font-mono text-xs text-slate-700">
                 {row.name}
                 {row.is_default && <Chip tone="blue">第 1 位</Chip>}
               </div>
-              <div className="truncate text-11 text-slate-400 dark:text-slate-500">
+              <div className="truncate text-11 text-slate-400">
                 {row.model}
                 {row.num_ctx ? ` · 窗口 ${row.num_ctx}` : ""}
               </div>
@@ -264,14 +264,14 @@ function ProviderCard({
           </div>
         ))}
         {(group.models ?? []).length === 0 && (
-          <p className="px-4 py-3 text-xs text-slate-400 dark:text-slate-500">
+          <p className="px-4 py-3 text-xs text-slate-400">
             这个凭据组下还没有模型 —— 用〔+ 添加模型〕加一个。
           </p>
         )}
       </div>
 
       {(otherUses.size > 0 || (group.models ?? []).some((m) => (m.used_by ?? []).length === 0)) && (
-        <div className="flex items-center gap-2 border-t border-slate-100 bg-slate-50/60 px-4 py-2 text-11 text-slate-500 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-400">
+        <div className="flex items-center gap-2 border-t border-slate-100 bg-slate-50/60 px-4 py-2 text-11 text-slate-500">
           {otherUses.size > 0 && (
             <span>
               这家还用于：{[...otherUses].map((u) => USAGE_LABEL[u] ?? u).join("、")}
@@ -296,7 +296,7 @@ function ProviderCard({
 function StatusGlyph({ row }: { row: ProviderModelRow }) {
   const unconfigured = (row.used_by ?? []).length === 0;
   const text = unconfigured ? "○" : "✓";
-  const tone = unconfigured ? "text-slate-300 dark:text-slate-600" : "text-emerald-500";
+  const tone = unconfigured ? "text-slate-300" : "text-emerald-500";
   return <span className={`w-4 shrink-0 text-center text-sm ${tone}`}>{text}</span>;
 }
 
@@ -304,7 +304,7 @@ function Chip({ tone, children }: { tone: "green" | "blue" | "slate"; children: 
   const TONES = {
     green: "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
     blue: "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
-    slate: "bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400",
+    slate: "bg-slate-100 text-slate-500",
   } as const;
   return (
     <span className={`ml-1.5 rounded px-1.5 py-0.5 text-10 ${TONES[tone]}`}>{children}</span>
@@ -326,7 +326,7 @@ function CapBadge({
       ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
       : value === false
         ? // "不能看"是事实不是错误，所以是 slate 而不是红
-          "bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400"
+          "bg-slate-100 text-slate-500"
         : "bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300";
   const mark = value === true ? "✓" : value === false ? "✗" : "?";
   const title =

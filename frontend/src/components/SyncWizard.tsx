@@ -181,7 +181,7 @@ export default function SyncWizard({
       aria-modal="true"
       aria-label="数据同步"
     >
-      <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-5 shadow-2xl dark:bg-slate-800">
+      <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-xl bg-surface p-5 shadow-2xl">
         {step === "ask" && (
           <AskScreen
             where={where}
@@ -257,12 +257,12 @@ function errText(e: unknown): string {
 
 function Title({ children }: { children: React.ReactNode }) {
   return (
-    <h2 className="text-15 font-semibold text-slate-900 dark:text-slate-100">{children}</h2>
+    <h2 className="text-15 font-semibold text-slate-900">{children}</h2>
   );
 }
 
 function Hint({ children }: { children: React.ReactNode }) {
-  return <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">{children}</p>;
+  return <p className="mt-1 text-xs leading-relaxed text-slate-500">{children}</p>;
 }
 
 function ErrorBox({ children }: { children: React.ReactNode }) {
@@ -301,7 +301,7 @@ function AskScreen({
         云端是另一份完整数据集。当前连接 <b>{where}</b>，选择同步方向与合并方式。
       </Hint>
       <div
-        className="mt-3 flex rounded-lg border border-slate-200 p-1 dark:border-slate-600"
+        className="mt-3 flex rounded-lg border border-slate-200 p-1"
         role="radiogroup"
         aria-label="同步方向"
       >
@@ -313,7 +313,7 @@ function AskScreen({
             className={`flex-1 rounded-md px-3 py-1.5 text-xs ${
               direction === d.direction
                 ? "bg-blue-600 text-white"
-                : "text-slate-600 dark:text-slate-300"
+                : "text-slate-600"
             }`}
           >
             {d.label}
@@ -329,10 +329,10 @@ function AskScreen({
               key={m.mode}
               className={`block rounded-lg border p-3 text-11 ${
                 unavailable
-                  ? "border-slate-200 opacity-50 dark:border-slate-600"
+                  ? "border-slate-200 opacity-50"
                   : mode === m.mode
                     ? "border-blue-500 bg-blue-50/60 dark:bg-blue-900/20"
-                    : "border-slate-200 dark:border-slate-600"
+                    : "border-slate-200"
               }`}
             >
               <span className="flex items-center gap-2">
@@ -344,18 +344,18 @@ function AskScreen({
                   onChange={() => onMode(m.mode)}
                   className="h-3.5 w-3.5"
                 />
-                <b className="text-12 text-slate-800 dark:text-slate-100">{m.label}</b>
+                <b className="text-12 text-slate-800">{m.label}</b>
                 <span
                   className={`rounded px-1.5 py-0.5 text-10 ${
                     m.mode === "replace"
                       ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
-                      : "bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300"
+                      : "bg-slate-100 text-slate-500"
                   }`}
                 >
                   {unavailable ? "下载方向不可用" : m.note}
                 </span>
               </span>
-              <span className="mt-1 block leading-relaxed text-slate-500 dark:text-slate-400">
+              <span className="mt-1 block leading-relaxed text-slate-500">
                 {unavailable
                   ? "将以云端数据覆盖本机全部数据。如需清除本机数据，请使用删除功能。"
                   : m.cost}
@@ -368,7 +368,7 @@ function AskScreen({
       <div className="mt-3 flex items-center justify-end gap-2">
         <button
           onClick={onCancel}
-          className="px-2 py-2 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400"
+          className="px-2 py-2 text-xs text-slate-500 hover:text-slate-700"
         >
           暂不同步
         </button>
@@ -426,11 +426,11 @@ function DryScreen({
             className={`rounded-lg border p-2.5 ${
               r.tone === "warn" && r.value > 0
                 ? "border-rose-200 bg-rose-50 dark:border-rose-700 dark:bg-rose-900/30"
-                : "border-slate-200 dark:border-slate-600"
+                : "border-slate-200"
             }`}
           >
-            <div className="text-lg font-semibold text-slate-900 dark:text-slate-100">{r.value}</div>
-            <div className="text-10 leading-tight text-slate-500 dark:text-slate-400">
+            <div className="text-lg font-semibold text-slate-900">{r.value}</div>
+            <div className="text-10 leading-tight text-slate-500">
               {r.label}
             </div>
           </div>
@@ -441,7 +441,7 @@ function DryScreen({
           {SYNC_ITEMS.map((item) => {
             const bucket = plan.by_kind[item.kind] ?? {};
             return (
-              <tr key={item.kind} className="border-t border-slate-100 dark:border-slate-700">
+              <tr key={item.kind} className="border-t border-slate-100">
                 <td className="w-6 py-2 align-top">
                   <input
                     type="checkbox"
@@ -457,14 +457,14 @@ function DryScreen({
                     className="mt-0.5 h-3.5 w-3.5"
                   />
                 </td>
-                <td className="py-2 align-top text-slate-700 dark:text-slate-200">{item.label}</td>
-                <td className="py-2 align-top text-slate-500 dark:text-slate-400">
+                <td className="py-2 align-top text-slate-700">{item.label}</td>
+                <td className="py-2 align-top text-slate-500">
                   本机 {totalOf(bucket)} 项
                   {bucket.only_local ? ` · 独有 ${bucket.only_local}` : ""}
                   {bucket.conflicts ? ` · 冲突 ${bucket.conflicts}` : ""}
                   {bucket.skipped ? ` · 跳过 ${bucket.skipped}` : ""}
                 </td>
-                <td className="py-2 text-right align-top text-10 text-slate-400 dark:text-slate-500">
+                <td className="py-2 text-right align-top text-10 text-slate-400">
                   {item.hint}
                 </td>
               </tr>
@@ -498,7 +498,7 @@ function DryScreen({
       <div className="mt-3 flex items-center justify-end gap-2">
         <button
           onClick={onBack}
-          className="rounded-lg border border-slate-200 px-3.5 py-2 text-xs text-slate-600 dark:border-slate-600 dark:text-slate-300"
+          className="rounded-lg border border-slate-200 px-3.5 py-2 text-xs text-slate-600"
         >
           返回
         </button>
@@ -595,13 +595,13 @@ function ConflictScreen({
       <div className="mt-3 flex items-center justify-end gap-2">
         <button
           onClick={onBack}
-          className="px-2 py-2 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400"
+          className="px-2 py-2 text-xs text-slate-500 hover:text-slate-700"
         >
           返回
         </button>
         <button
           onClick={() => onDecide("skip")}
-          className="rounded-lg border border-slate-200 px-3.5 py-2 text-xs text-slate-600 dark:border-slate-600 dark:text-slate-300"
+          className="rounded-lg border border-slate-200 px-3.5 py-2 text-xs text-slate-600"
         >
           跳过此项
         </button>
@@ -620,12 +620,12 @@ function ConflictScreen({
 
 function Preview({ title, at, text }: { title: string; at: string; text: string }) {
   return (
-    <div className="rounded-lg border border-slate-200 p-2.5 dark:border-slate-600">
-      <div className="text-10 text-slate-400 dark:text-slate-500">
+    <div className="rounded-lg border border-slate-200 p-2.5">
+      <div className="text-10 text-slate-400">
         {title}
         {at ? ` · ${at.slice(0, 10)}` : ""}
       </div>
-      <div className="mt-1 leading-relaxed text-slate-700 dark:text-slate-200">
+      <div className="mt-1 leading-relaxed text-slate-700">
         {text || "（空）"}
       </div>
     </div>
@@ -650,7 +650,7 @@ function Radio({
       className={`block rounded-lg border p-2.5 ${
         value === name
           ? "border-blue-500 bg-blue-50/60 dark:bg-blue-900/20"
-          : "border-slate-200 dark:border-slate-600"
+          : "border-slate-200"
       }`}
     >
       <span className="flex items-center gap-2">
@@ -661,9 +661,9 @@ function Radio({
           onChange={() => onChange(name)}
           className="h-3.5 w-3.5"
         />
-        <b className="text-12 text-slate-800 dark:text-slate-100">{title}</b>
+        <b className="text-12 text-slate-800">{title}</b>
       </span>
-      <span className="mt-0.5 block leading-relaxed text-slate-500 dark:text-slate-400">{note}</span>
+      <span className="mt-0.5 block leading-relaxed text-slate-500">{note}</span>
     </label>
   );
 }
@@ -679,7 +679,7 @@ function DoneScreen({
     <>
       <Title>同步完成</Title>
       <div className={"mt-2 h-1 w-full rounded " + (done.failed > 0 ? "bg-amber-500" : "bg-emerald-500")} />
-      <p className="mt-3 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+      <p className="mt-3 text-xs leading-relaxed text-slate-600">
         已上传 <b className="text-emerald-700 dark:text-emerald-300">{done.up}</b> 项，下载{" "}
         <b className="text-emerald-700 dark:text-emerald-300">{done.down}</b> 项
         {done.skipped > 0 && <>；{done.skipped} 项因已存在而跳过</>}。
@@ -695,11 +695,11 @@ function DoneScreen({
           </>
         )}
       </p>
-      <p className="mt-2 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+      <p className="mt-2 text-xs leading-relaxed text-slate-600">
         <b className="text-amber-700 dark:text-amber-300">向量索引未随数据迁移</b>
         ——云端将基于其嵌入服务自行重建。两端嵌入服务不同时，向量之间不可直接比较。
       </p>
-      <p className="mt-2 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+      <p className="mt-2 text-xs leading-relaxed text-slate-600">
         本机数据<b className="text-emerald-700 dark:text-emerald-300">未做任何修改</b>
         ——同步为复制操作，非迁移。
       </p>

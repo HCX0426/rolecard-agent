@@ -13,11 +13,11 @@ export default function QuietLine({ q }: { q: QuietStatus }) {
   return (
     <span className="block text-11 leading-4">
       <span className="flex flex-wrap items-center gap-x-1.5">
-        <span className={ready ? "text-slate-500 dark:text-slate-400" : ""}>{head}</span>
+        <span className={ready ? "text-slate-500" : ""}>{head}</span>
         {badge && <Tag tone="amber">{badge}</Tag>}
       </span>
       {when && (
-        <span className="block text-slate-400 dark:text-slate-500">⇒ 下一次大约 {when}</span>
+        <span className="block text-slate-400">⇒ 下一次大约 {when}</span>
       )}
     </span>
   );

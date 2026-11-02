@@ -26,7 +26,7 @@ export default function ProcessPanel({ steps }: { steps: TurnStep<TurnMessageLik
     }
     if (only.kind === "text") {
       return (
-        <div className="mb-2.5 text-sm text-slate-600 dark:text-slate-300">
+        <div className="mb-2.5 text-sm text-slate-600">
           <MarkdownLazy text={only.text} />
         </div>
       );
@@ -49,8 +49,8 @@ export default function ProcessPanel({ steps }: { steps: TurnStep<TurnMessageLik
   const tools = steps.filter((s) => s.kind === "tool").length;
   const parts = [thinks ? `思考 ×${thinks}` : "", tools ? `工具 ×${tools}` : ""].filter(Boolean);
   return (
-    <details className="group/proc mb-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 px-2.5 py-1.5">
-      <summary className="cursor-pointer select-none text-xs text-slate-400 dark:text-slate-500">
+    <details className="group/proc mb-2.5 rounded-lg border border-slate-200 bg-slate-50/70 px-2.5 py-1.5">
+      <summary className="cursor-pointer select-none text-xs text-slate-400">
         过程{parts.length ? ` · ${parts.join(" · ")}` : ""}
       </summary>
       <div className="mt-1.5 space-y-1.5">
@@ -58,18 +58,18 @@ export default function ProcessPanel({ steps }: { steps: TurnStep<TurnMessageLik
           s.kind === "think" ? (
             <details
               key={i}
-              className="rounded border border-slate-200/70 bg-white dark:border-slate-700 dark:bg-slate-800"
+              className="rounded border border-slate-200/70 bg-surface"
             >
-              <summary className="cursor-pointer select-none px-2 py-1 text-11 text-slate-400 dark:text-slate-500">
+              <summary className="cursor-pointer select-none px-2 py-1 text-11 text-slate-400">
                 思考 {steps.slice(0, i + 1).filter((x) => x.kind === "think").length}
                 {s.text.length > 120 ? `（${s.text.length} 字）` : ""}
               </summary>
-              <pre className="max-h-56 overflow-auto whitespace-pre-wrap px-2 pb-2 text-11 leading-relaxed text-slate-500 dark:text-slate-400">
+              <pre className="max-h-56 overflow-auto whitespace-pre-wrap px-2 pb-2 text-11 leading-relaxed text-slate-500">
                 {s.text}
               </pre>
             </details>
           ) : s.kind === "text" ? (
-            <div key={i} className="text-xs text-slate-500 dark:text-slate-400">
+            <div key={i} className="text-xs text-slate-500">
               <MarkdownLazy text={s.text} />
             </div>
           ) : (

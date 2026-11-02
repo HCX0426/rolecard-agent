@@ -264,17 +264,17 @@ export default function App() {
       )}
 
       {/* 移动端顶栏 */}
-      <div className="absolute inset-x-0 top-0 z-20 flex items-center gap-2 border-b border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800 md:hidden">
+      <div className="absolute inset-x-0 top-0 z-20 flex items-center gap-2 border-b border-slate-200 bg-surface px-3 py-2 md:hidden">
         <button
           aria-label="打开菜单"
           onClick={() => setNavOpen(true)}
-          className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
+          className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M4 6h16M4 12h16M4 18h16" />
           </svg>
         </button>
-        <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">rolecard-agent</span>
+        <span className="text-sm font-semibold text-slate-900">rolecard-agent</span>
       </div>
 
       {/* 左侧导航（2026-10-25 玻璃重设计）：玻璃面板 + 强调色选中态 + 底部"当前角色"块 */}
@@ -284,8 +284,8 @@ export default function App() {
         }`}
       >
         <div className="px-4 py-4">
-          <h1 className="text-base font-semibold text-slate-900 dark:text-slate-100">rolecard-agent</h1>
-          <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">多角色对话 Agent 内核</p>
+          <h1 className="text-base font-semibold text-slate-900">rolecard-agent</h1>
+          <p className="mt-0.5 text-xs text-slate-400">多角色对话 Agent 内核</p>
         </div>
         <div className="flex flex-col gap-1 px-2">
           {TABS.map((t) => (
@@ -296,7 +296,7 @@ export default function App() {
               className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
                 tab === t.key
                   ? "font-medium text-cocoa-900 dark:text-cocoa-50"
-                  : "text-slate-600 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-white/50"
+                  : "text-slate-600 hover:bg-surface/50"
               }`}
               style={
                 tab === t.key
@@ -335,7 +335,7 @@ export default function App() {
           {approvalPending > 0 && (
           <button
             onClick={() => setApprovalOpen(true)}
-            className="relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700/60"
+            className="relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50"
             title="命令执行审批（run_command 待批命令）"
           >
             {/* 2026-10-24 UI 打磨：导航里的两个 emoji（⚙️/🔔）换成本文件 TABS 同一套
@@ -351,7 +351,7 @@ export default function App() {
           )}
           <button
             onClick={() => setReachoutOpen(true)}
-            className="relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700/60"
+            className="relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50"
             title="角色主动找你（收件箱）"
           >
             <span className="shrink-0 opacity-80">

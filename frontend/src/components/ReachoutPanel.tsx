@@ -240,11 +240,11 @@ export default function ReachoutPanel({
         aria-modal="true"
         aria-label="角色主动找你"
         tabIndex={-1}
-        className="absolute right-0 top-0 flex h-full w-80 flex-col border-l border-slate-200 bg-white shadow-xl outline-none dark:border-slate-700 dark:bg-slate-800"
+        className="absolute right-0 top-0 flex h-full w-80 flex-col border-l border-slate-200 bg-surface shadow-xl outline-none"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5 dark:border-slate-700">
-          <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5">
+          <span className="text-sm font-medium text-slate-900">
             角色主动找你
           </span>
           <span className="flex items-center gap-2">
@@ -252,14 +252,14 @@ export default function ReachoutPanel({
               <button
                 onClick={() => void clearAll()}
                 title="清空投递记录（对话里说过的话不动）"
-                className="text-xs text-slate-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400"
+                className="text-xs text-slate-400 hover:text-red-500 dark:hover:text-red-400"
               >
                 清空
               </button>
             )}
             <button
               onClick={onClose}
-              className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              className="text-xs text-slate-400 hover:text-slate-600"
             >
               关闭
             </button>
@@ -268,23 +268,23 @@ export default function ReachoutPanel({
         {!!quietRows.length && (
           <div
             data-testid="quiet-status"
-            className="border-b border-slate-100 px-4 py-2 dark:border-slate-700"
+            className="border-b border-slate-100 px-4 py-2"
           >
             {quietRows.map((q) => (
-              <p key={q.role_id} className="text-slate-400 dark:text-slate-500">
+              <p key={q.role_id} className="text-slate-400">
                 <QuietLine q={q} />
               </p>
             ))}
           </div>
         )}
         {roles.length > 1 && (
-          <div className="border-b border-slate-100 px-3 py-2 dark:border-slate-700">
-            <label className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+          <div className="border-b border-slate-100 px-3 py-2">
+            <label className="flex items-center gap-2 text-xs text-slate-500">
               <span>只看</span>
               <select
                 value={roleFilter ?? ""}
                 onChange={(e) => setRoleFilter(e.target.value || null)}
-                className="flex-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
+                className="flex-1 rounded border border-slate-200 bg-surface px-2 py-1 text-xs"
               >
                 <option value="">全部角色</option>
                 {roles.map((r) => (
@@ -297,14 +297,14 @@ export default function ReachoutPanel({
           </div>
         )}
         {!!data?.file_watch_pending && (
-          <div className="border-b border-slate-100 px-4 py-1.5 text-11 text-slate-400 dark:border-slate-700 dark:text-slate-500">
+          <div className="border-b border-slate-100 px-4 py-1.5 text-11 text-slate-400">
             工作区有 {data.file_watch_pending} 项变化，正等着角色找话题
           </div>
         )}
         <div className="flex-1 overflow-y-auto p-2">
           {err && <p className="px-2 py-1 text-xs text-red-600 dark:text-red-400">{err}</p>}
           {data && data.items.length === 0 && (
-            <p className="px-2 py-6 text-center text-xs text-slate-400 dark:text-slate-500">
+            <p className="px-2 py-6 text-center text-xs text-slate-400">
               还没有角色主动找过你
             </p>
           )}
@@ -314,13 +314,13 @@ export default function ReachoutPanel({
                 <button
                   onClick={() => setToggled((t) => ({ ...t, [stack.key]: !isOpen(stack) }))}
                   title={isOpen(stack) ? "收起这一摞" : "展开看每一条"}
-                  className="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left text-11 text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-700/40"
+                  className="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left text-11 text-slate-500 hover:bg-slate-50"
                 >
                   <span className="w-3 shrink-0 text-slate-400">{isOpen(stack) ? "▾" : "▸"}</span>
-                  <span className="font-medium text-slate-700 dark:text-slate-200">
+                  <span className="font-medium text-slate-700">
                     {stack.role_name}
                   </span>
-                  <span className="text-slate-400 dark:text-slate-500">
+                  <span className="text-slate-400">
                     {stack.label} · {stack.items.length} 条
                   </span>
                   {stack.unread > 0 && (
@@ -344,9 +344,9 @@ export default function ReachoutPanel({
                 <button
                   onClick={() => void openRow(stack.items[0])}
                   title="打开与该角色的对话（可翻历史、可直接回复）"
-                  className="ml-4 flex w-[calc(100%-1rem)] flex-col rounded-lg border border-slate-100 px-3 py-1.5 text-left opacity-70 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-700/40"
+                  className="ml-4 flex w-[calc(100%-1rem)] flex-col rounded-lg border border-slate-100 px-3 py-1.5 text-left opacity-70 transition-colors hover:bg-slate-50"
                 >
-                  <span className="truncate text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                  <span className="truncate text-xs leading-relaxed text-slate-500">
                     {stack.items[0].text}
                   </span>
                 </button>
@@ -381,13 +381,13 @@ function MessageRow({
         className={`flex w-full flex-col rounded-lg border pr-7 py-2 pl-3 text-left transition-colors ${
           row.state === "unread"
             ? "border-blue-200 bg-blue-50/60 dark:border-blue-800 dark:bg-blue-900/20"
-            : "border-slate-100 opacity-70 dark:border-slate-700"
+            : "border-slate-100 opacity-70"
         }`}
       >
       {/* 组头已经给了角色与日期区间，行里就不重复；只有"未读"标记值得占一行。 */}
       {(showRole || row.state === "unread") && (
         <span className="flex items-center justify-between text-xs">
-          <span className="font-medium text-slate-800 dark:text-slate-100">
+          <span className="font-medium text-slate-800">
             {showRole ? row.role_name || row.role_id || "未知角色" : ""}
           </span>
           {row.state === "unread" && (
@@ -397,7 +397,7 @@ function MessageRow({
           )}
         </span>
       )}
-      <span className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+      <span className="mt-1 text-xs leading-relaxed text-slate-600">
         {row.text}
       </span>
       <span className="mt-1 flex items-center justify-between text-10 text-slate-400">
