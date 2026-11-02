@@ -334,11 +334,23 @@ body.has-bg .text-slate-300 {
 
 /* 桌宠窗（html[data-page="pet"]）必须**一路都不涂背景**：控制台那层 body 底色会让
    透明窗变成一块灰色矩形 —— 这正是这类窗最常见的翻车点（不是 WebView 画不出透明，
-   是页面自己先把不透明的底铺满了）。色片和气泡自带底色，不受这条影响。 */
+   是页面自己先把不透明的底铺满了）。色片和气泡自带底色，不受这条影响。
+
+   ⚠ 伪元素那两层**必须一起摘**（2026-11-03 回归）：铺底的活儿住在 `body::before`
+   （底色 + 背景图）与 `body::after`（暗化遮罩）身上，两者都是 `position:fixed;
+   inset:0`，只重置 html/body/#root 的 `background` 盖不到它们 —— 桌宠窗于是被涂成
+   一块暖白矩形。从前这条漏洞一直藏着：透明度那条链方向写反时 `--bg-alpha` 出厂是
+   0%（伪元素算出来全透明，画了等于没画），11-02 把方向修对后它变成 100% 实心，
+   白块当场露出来。`display:none` 而不是 `background:transparent`：::before 上还挂着
+   背景图与 blur，留着它等于在透明窗里画一张图。 */
 html[data-page="pet"],
 html[data-page="pet"] body,
 html[data-page="pet"] #root {
   background: transparent;
+}
+html[data-page="pet"] body::before,
+html[data-page="pet"] body::after {
+  display: none;
 }
 
 /* 桌宠窗的拖拽区：`-webkit-app-region` 由 Chromium 自己处理，页面不需要拿到任何壳能力
