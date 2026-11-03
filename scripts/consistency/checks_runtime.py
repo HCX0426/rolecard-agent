@@ -751,7 +751,7 @@ def check_appearance_single_source() -> None:
     真浏览器实测才看得出，tsc / eslint / vitest 全都看不见（vitest 里 `.css` 导入被桩成
     空串，在那儿比字面值会写成一条**永远通过**的断言 —— 比没有检查更坏）。
 
-    判据四条，任一取不到输入即判红（"扫不到"不等于"通过"）：
+    判据五条，任一取不到输入即判红（"扫不到"不等于"通过"）：
 
       1. JS 常量与 CSS 字面值逐一对齐：`BG_DIM_DEFAULT` ↔ `--bg-dim`、
          `BG_BLUR_DEFAULT` ↔ `--bg-blur`、`SOLID_DEFAULT` ↔ `--bg-solid`
@@ -759,13 +759,17 @@ def check_appearance_single_source() -> None:
       2. JS 与首帧脚本**都不许**再写 `--bg-alpha` / `--glass-alpha` / `--glass-alpha-soft`
          这三条内联 —— 层次是 CSS 的事，JS 一写就把主题档盖死（本条正是那次的回归锁）；
       3. `.dark` 块必须调 `--glass-offset`（否则"深色档位"这个说法又变成死码）；
-      4. 首帧脚本与 appearance.ts 各自**只做一条** `--bg-solid` 赋值（多一条就回到三真值）。
+      4. 首帧脚本与 appearance.ts 各自**只做一条** `--bg-solid` 赋值（多一条就回到三真值）；
+      5. 首帧的 `--accent` 兜底色必须等于**默认角色**在 `accent.ts` 里的那档
+         （2026-11-04 补：跨 CSS/TS 边界互 import 不了，只能钉；详见函数内第 5 段）。
+
 
     刻意不在范围：`frontend/dist`（构建产物，源头红它必红）；测试件（自足的假数据）。
     """
     ts_rel = "frontend/src/lib/appearance.ts"
     css_rel = "frontend/src/index.css"
     html_rel = "frontend/index.html"
+    accent_rel = "frontend/src/lib/accent.ts"
     offenders: list[str] = []
 
     def _read(rel: str) -> str | None:
@@ -778,7 +782,8 @@ def check_appearance_single_source() -> None:
     ts = _read(ts_rel)
     css = _read(css_rel)
     html = _read(html_rel)
-    if ts is None or css is None or html is None:
+    accent = _read(accent_rel)
+    if ts is None or css is None or html is None or accent is None:
         out("appearance single source", False, "; ".join(offenders))
         fails.append(f"appearance single source inputs missing: {offenders}")
         return
@@ -847,13 +852,51 @@ def check_appearance_single_source() -> None:
         if n != 1:
             offenders.append(f"{rel} 里 --bg-solid 赋值出现 {n} 次（应为 1）")
 
+    # 5) 首帧的 --accent 兜底色必须等于**默认角色**的 accent（2026-11-04 归一）
+    #    `--accent` 有两处独立声明：`index.css :root`（首帧、JS 挂上之前的兜底）与
+    #    `accent.ts` 的 `BUILTIN_ACCENTS`（React 起来后按当前角色注入）。首帧脚本**不写**
+    #    --accent（实测 html 里零命中），所以首帧那一格完全靠 CSS 兜底 ——
+    #    而它兜的该是**默认角色那一档**：无角色信息时用户第一眼看到的就是默认角色的温度。
+    #    两边不等 ⇒ 首帧一个色、挂载翻成另一个色（闪变，像素可见，正是本轮在治的漂移）。
+    #    跨 CSS/TS 边界互相 import 不了（Vite 不给 CSS 做 JS 插值），属"只能钉"档 ——
+    #    与 `.sql` 里那个引用不了 Python 常量的 `DEFAULT 'local-user'` 同一族。
+    #    要查的那个 role_id 不硬编码在尺子里：import 后端 `DEFAULT_ROLE_ID` 现取，
+    #    "默认角色是谁"仍由 `roles/seed.py` 单点声明，这里只是消费。
+    sys.path.insert(0, str(ROOT / "src"))
+    from rolecard_agent.roles.seed import DEFAULT_ROLE_ID  # noqa: PLC0415
+
+    css_accent = _css_num("--accent", ":root")
+    m_default = re.search(rf'^\s*{re.escape(DEFAULT_ROLE_ID)}:\s*"([^"]+)"', accent, re.M)
+    if css_accent is None:
+        pass  # 输入读不出已由 _css_num 记进 offenders
+    elif m_default is None:
+        offenders.append(
+            f"accent.ts 的 BUILTIN_ACCENTS 里找不到默认角色 {DEFAULT_ROLE_ID!r} 那条"
+            "（首帧兜底无从比对 = 判红，不算通过）"
+        )
+    else:
+        css_hex, ts_hex = css_accent.strip().lower(), m_default.group(1).strip().lower()
+
+        def _norm_hex(h: str) -> str:
+            # 只比 3/6 位 hex，且按 `expandHex` 的口径把 #abc 展成 #aabbcc 再比
+            # （否则 `#b0a` 与 `#bb00aa` 这两个同一个色会被判成不一致 = 假红）。
+            return "#" + "".join(c * 2 for c in h[1:]) if len(h) == 4 else h
+
+        if _norm_hex(css_hex) != _norm_hex(ts_hex):
+            offenders.append(
+                f"首帧 --accent({css_hex}) 与 accent.ts 默认角色 "
+                f"{DEFAULT_ROLE_ID}({ts_hex}) 不一致 ⇒ 挂载时角色色会闪变"
+            )
+
     out(
         "appearance single source",
         not offenders,
         "; ".join(offenders[:5])
         if offenders
-        else "JS 兜底值与 index.css 字面值对齐；透明度只写一条内联；.dark 的档位有人读",
+        else "JS 兜底值与 index.css 字面值对齐；透明度只写一条内联；.dark 的档位有人读；"
+        "首帧 --accent = 默认角色色",
     )
+
     if offenders:
         fails.append(f"appearance drift: {offenders}")
 
