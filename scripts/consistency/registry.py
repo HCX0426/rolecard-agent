@@ -73,6 +73,7 @@ CHECKS = (
     checks_meta.check_ci_host_python_stdlib_only,
     checks_runtime.check_artifact_single_source,
     checks_runtime.check_single_source_literals,
+    checks_runtime.check_appearance_single_source,
     checks_runtime.check_local_service_port_single_source,
     checks_storage.check_dangling_write_txns,
     checks_storage.check_shape_migration_ddl,

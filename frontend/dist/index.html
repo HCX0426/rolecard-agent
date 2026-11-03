@@ -5,49 +5,53 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>rolecard-agent 控制台</title>
       <script>
-      // 首帧前把外观偏好写到 <html>（否则会先闪一下默认材质）：材质/配色各一个键。
-      // 读法与 lib/appearance.ts 一致 —— 那边是 React 侧的权威，这里只是提前一拍。
+      // 首帧前把外观偏好写到 <html>（否则会先闪一下默认材质）。
+      // ⚠ 这份与 lib/appearance.ts 是**同一件事的两处落地**，不是两套规则：它跑在打包前的
+      // 裸 HTML 里，import 不到那边，所以只能照抄。抄的规矩（2026-11-03 归一化后收紧）：
+      // **每档只做一条赋值**，兜底数字与 index.css 的字面值由 scripts/consistency 的
+      // 「外观默认值单一真值」断言对死。从前这里也写三档 alpha，内联样式压过 .dark，
+      // 于是 CSS 里深色那组（92%/97%）一次都没生效过 —— 现在只写 --bg-solid 一个数，
+      // 层次差留在 CSS（它管主题管深浅），两边都不可能再互相盖。
       try {
+        var de = document.documentElement;
         var m = localStorage.getItem("rolecard.material");
         var p = localStorage.getItem("rolecard.palette");
-        document.documentElement.setAttribute("data-material", m === "panel" ? "panel" : "glass");
-        document.documentElement.setAttribute("data-palette", p === "cool" ? "cool" : "warm");
-        // 透明度滑块 → 实心度：CSS 那三个变量是被 color-mix(色 X%, transparent) 消费的，
+        de.setAttribute("data-material", m === "panel" ? "panel" : "glass");
+        de.setAttribute("data-palette", p === "cool" ? "cool" : "warm");
+        // 明暗：**键不存在时才读系统偏好** —— 这是 React 侧 useTheme 的 initial()，从前
+        // 这份首帧脚本压根不管明暗，于是深色用户每次启动都先闪一帧浅色再翻。实测这帧
+        // 闪在首绘之前（.dark 挂在 t=35ms，first-paint 在 t=704ms），用户看不到，但
+        // 壳的着陆页与它之间确实有两种配色。现在两处同判据、同一时刻落地。
+        var t = localStorage.getItem("theme");
+        var dark = t === "dark" || (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+        de.classList.toggle("dark", dark);
+        // 透明度滑块 → 实心度：CSS 那一路是被 color-mix(色 X%, transparent) 消费的，
         // X 是"留多少色"，与滑块的"透多少"方向相反 —— 必须做一次 100 - a。
-        // 算术与 lib/appearance.ts 的 soliditiesFor 逐字一致（这份跑在打包前的裸 HTML 里，
-        // import 不到那边；改那边记得改这里，方向已由 appearance.test.ts 钉住）。
         var raw = localStorage.getItem("rolecard.alpha");
         var a = raw === null || raw === "" ? 0 : Number(raw);
-        if (isFinite(a) && a >= 0 && a <= 100) {
-          // 变量名避开下面背景图那格既有的 bg（var 是脚本作用域，同名会互相盖掉）
-          var solid = 100 - a;
-          document.documentElement.style.setProperty("--bg-alpha", solid + "%");
-          document.documentElement.style.setProperty("--glass-alpha", Math.max(0, solid - 12) + "%");
-          document.documentElement.style.setProperty("--glass-alpha-soft", Math.max(0, solid - 4) + "%");
+        if (isFinite(a)) {
+          de.style.setProperty("--bg-solid", String(Math.max(0, Math.min(100, 100 - a))));
         }
-        // 背景图 + 模糊/暗化
+        // 背景图三件套：与 lib/appearance.ts 的 applyBackground 同构 —— 没设过就**不写**，
+        // 让 index.css 那一份默认做主（从前这里给 dim 兜了个值写进内联，把 CSS 的默认盖死）。
         var bg = localStorage.getItem("rolecard.bgImage");
         if (bg) {
-          document.documentElement.style.setProperty("--bg-image", 'url("' + bg + '")');
+          de.setAttribute("data-has-bg", "");
+          de.style.setProperty("--bg-image", 'url("' + bg + '")');
         }
-        var blur = Number(localStorage.getItem("rolecard.bgBlur"));
-        if (isFinite(blur)) {
-          document.documentElement.style.setProperty("--bg-blur", blur + "px");
+        var blur = localStorage.getItem("rolecard.bgBlur");
+        if (blur !== null && blur !== "" && isFinite(Number(blur))) {
+          de.style.setProperty("--bg-blur", Number(blur) + "px");
         }
-        // 暗化：键不存在必须落 0.25（与 lib/appearance.ts 的 readNumber 兜底同值）。
-        // 旧写法 Number(getItem(k)) 在缺键时给出 0（Number(null)===0 且有限），于是
-        // "没设过"被读成"设了 0"= 没有暗化层，首帧字压在亮图上 —— 两边不一致还
-        // 会让这份脚本失去它存在的意义（避免首帧闪错）。
-        var rawDim = localStorage.getItem("rolecard.bgDim");
-        var dim = rawDim === null || rawDim === "" ? 0.25 : Number(rawDim);
-        if (isFinite(dim)) {
-          document.documentElement.style.setProperty("--bg-dim", String(dim));
+        var dim = localStorage.getItem("rolecard.bgDim");
+        if (dim !== null && dim !== "" && isFinite(Number(dim))) {
+          de.style.setProperty("--bg-dim", String(Number(dim)));
         }
       } catch (e) { /* 隐私模式等：留给 CSS 默认值 */ }
     </script>
-    <script type="module" crossorigin src="/assets/index-HZayaWta.js"></script>
+    <script type="module" crossorigin src="/assets/index-DqSTpdbU.js"></script>
     <link rel="modulepreload" crossorigin href="/assets/react-CC_ZIGTP.js">
-    <link rel="stylesheet" crossorigin href="/assets/index-CGXEu2LU.css">
+    <link rel="stylesheet" crossorigin href="/assets/index-Dc2lYAbF.css">
   </head>
   <body>
     <div id="root"></div>

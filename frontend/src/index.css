@@ -194,17 +194,32 @@ body,
   --bg-panel-soft: #efe6da;
   --bg-shadow: rgba(60, 45, 30, 0.16);
   /* 透明度（第四轴，2026-10-25）：**整个界面**的透光量，不是只管玻璃面板。
-     --bg-alpha = 底色自己的通透（100 = 底色全透，背后只剩背景图/桌面）；
-     --glass-alpha = 玻璃层比底色**更实**一点（alpha - 12），否则面板与底一样透
-     就没有层次了；--glass-alpha-soft 是滚动区内容（再实 4，滚动时不刺眼）。 */
-  --bg-alpha: 100%;
-  --glass-alpha: 88%;
-  --glass-alpha-soft: 96%;
+     —— 2026-11-03 归一化：这里从前写死 `--bg-alpha: 100% / --glass-alpha: 88% / soft: 96%`
+     三档，而 JS 把同样三档再算一遍并**以内联样式**写进 `<html>`。内联样式压过 `.dark` 的
+     选择器，于是下面 `.dark` 那组（92%/97%）从有到今一次都没生效过 —— 真浏览器实测：
+     带 JS 内联是 88%/96%，把内联清掉才露出 92%/97%。深色下"玻璃层该比底色更实"这一档
+     整个是死码。
+     现在只留**一个**由 JS 写的数（--bg-solid，实心度），层次差改成 CSS 里的偏移量，
+     于是深色能自己调、JS 无从覆盖。为什么方向换算仍留在 JS：那是 2026-11-02 翻过车的
+     地方，必须能被单测钉住（`appearance.test.ts`），而 CSS 的差值不会翻方向。 */
+  --bg-solid: 100;
+  /* 玻璃层比底色**更实**的幅度（浅色 -12 / soft -4，沿用作者定的层次，未改像素）。 */
+  --glass-offset: 12;
+  --glass-soft-offset: 4;
+  --bg-alpha: calc(var(--bg-solid) * 1%);
+  /* max() 提到顶层、两侧都带百分号：`calc(max(0, …) * 1%)` 那种把无单位数和百分数混在
+     一层里的写法，构建链（lightningcss）压完形状不一定还认。这里两侧同型最稳。 */
+  --glass-alpha: max(0%, calc((var(--bg-solid) - var(--glass-offset)) * 1%));
+  --glass-alpha-soft: max(0%, calc((var(--bg-solid) - var(--glass-soft-offset)) * 1%));
   /* 背景图层：--bg-image 是 url()（none = 不用），--bg-blur 模糊、--bg-dim 暗化
      （没有暗化，浅色模式下图上的字会看不清 —— 这不是装饰，是可读性保障）。 */
   --bg-image: none;
   --bg-blur: 0px;
-  --bg-dim: 0.35;
+  /* 暗化的**唯一**默认值。从前这里是 0.35、而 JS 两份读数的兜底都是 0.25 —— 内联样式
+     压过 CSS，所以 0.35 同样是死码，用户历来看到的都是 0.25。取历史上真实生效的那个值，
+     像素不变，只是把它变成真的。JS 缺键时不再写这一档（见 appearance.ts 的 applyBgDim）。 */
+  --bg-dim: 0.25;
+
   /* 板面白的不透明度（浅色 72% = 旧 bg-white 逐格相同）。见 @theme 里 --color-surface
      那段：它必须是 var 而不是字面量，否则 alpha 变体（bg-surface/50 等）会被构建链
      折成死的十六进制，深色就不再翻。 */
@@ -220,10 +235,12 @@ body,
   --bg-panel: #221e1b;
   --bg-panel-soft: #2b2622;
   --bg-shadow: rgba(0, 0, 0, 0.45);
-  /* 深色底上玻璃要更实一点才看得出层次（浅色下 88% 就够）。 */
-  --bg-alpha: 100%;
-  --glass-alpha: 92%;
-  --glass-alpha-soft: 97%;
+  /* 深色底上玻璃要更实一点才看得出层次（浅色下透 12 就够，深色只透 8）。
+     —— 从前这里写死 `--bg-alpha: 100%; --glass-alpha: 92%; --glass-alpha-soft: 97%`，
+     想给深色单独一档，可那三行**从未生效**：JS 把同一个数以内联样式写在 `<html>` 上，
+     压过了这里的声明（实测见 :root 那段注释）。改成调"差值"，于是这一档终于有人读了。 */
+  --glass-offset: 8;
+  --glass-soft-offset: 3;
   /* 板面白在深色下 = 6% 白提亮 + **不透明的面板色**打底：压在 #171412 上得到一块比
      页面略亮的实板，控件（底部那排按钮等）不再让壁纸穿透。只动百分比与底层、不动
      --color-surface 本身 —— 后者一被静态求值，bg-surface/50 这类 alpha 变体就不再翻。 */
@@ -299,16 +316,20 @@ body::after {
    .glass 自己的半透明底就是那层"内容与图之间"的介质。 */
 
 /* 用了背景图时的次要文字加深（slate-400/500 这级在图上不够）。
-   只在**有图**时生效（--bg-image 不是 none）——没图时不该动排版配色。
+   只在**有图**时生效 —— 没图时不该动排版配色。
+   选择器住在这里（<html> 的 data-has-bg 属性）而不是 body 的 class：首帧脚本跑在
+   <head> 里，那时 document.body 还不存在，挂不了 class；从前"首帧不加深、React 起来
+   才加深"就是这两处落地方式不一致造成的。2026-11-03 归一化：JS 与首帧脚本都改挂同一个
+   属性，一个真值、一个选择器。
    注意：这里**不动**玻璃面板的透明度 —— 面板是"内容与图之间的介质"，
    图始终是**整个界面的底**（一张图铺满视口），不是每个部件各自一块。 */
-body.has-bg .text-slate-400 {
+html[data-has-bg] .text-slate-400 {
   color: color-mix(in srgb, var(--bg-ink) 62%, transparent);
 }
-body.has-bg .text-slate-500 {
+html[data-has-bg] .text-slate-500 {
   color: color-mix(in srgb, var(--bg-ink) 74%, transparent);
 }
-body.has-bg .text-slate-300 {
+html[data-has-bg] .text-slate-300 {
   color: color-mix(in srgb, var(--bg-ink) 48%, transparent);
 }
 

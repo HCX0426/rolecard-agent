@@ -740,6 +740,124 @@ def check_single_source_literals() -> None:
         fails.append(f"duplicated single-source literals: {offenders}")
 
 
+def check_appearance_single_source() -> None:
+    """外观默认值与「JS 往 <html> 上写哪几条内联」只许一处真值。
+
+    为什么需要这把尺子（2026-11-03 归一化那轮的现形）：透明度在 JS 里算成**三档**
+    （bg / glass / glassSoft），`applyAlpha` 把三条都写成 `<html>` 的内联样式；内联样式
+    压过 `.dark` 选择器，于是 index.css 里给深色准备的那组档位（92% / 97%）**从写下来
+    那一天起一次都没生效过**。同族第二处：CSS 写 `--bg-dim: 0.35`、JS 兜底写 0.25，而
+    JS 总把兜底值写进内联 —— 用户历来看到的都是 0.25，那行 0.35 也是死码。两处都只有
+    真浏览器实测才看得出，tsc / eslint / vitest 全都看不见（vitest 里 `.css` 导入被桩成
+    空串，在那儿比字面值会写成一条**永远通过**的断言 —— 比没有检查更坏）。
+
+    判据四条，任一取不到输入即判红（"扫不到"不等于"通过"）：
+
+      1. JS 常量与 CSS 字面值逐一对齐：`BG_DIM_DEFAULT` ↔ `--bg-dim`、
+         `BG_BLUR_DEFAULT` ↔ `--bg-blur`、`SOLID_DEFAULT` ↔ `--bg-solid`
+         （后者由 appearance.ts 里 `ALPHA_MAX - ALPHA_DEFAULT` 现算，不抄字面量）；
+      2. JS 与首帧脚本**都不许**再写 `--bg-alpha` / `--glass-alpha` / `--glass-alpha-soft`
+         这三条内联 —— 层次是 CSS 的事，JS 一写就把主题档盖死（本条正是那次的回归锁）；
+      3. `.dark` 块必须调 `--glass-offset`（否则"深色档位"这个说法又变成死码）；
+      4. 首帧脚本与 appearance.ts 各自**只做一条** `--bg-solid` 赋值（多一条就回到三真值）。
+
+    刻意不在范围：`frontend/dist`（构建产物，源头红它必红）；测试件（自足的假数据）。
+    """
+    ts_rel = "frontend/src/lib/appearance.ts"
+    css_rel = "frontend/src/index.css"
+    html_rel = "frontend/index.html"
+    offenders: list[str] = []
+
+    def _read(rel: str) -> str | None:
+        p = ROOT / rel
+        if not p.exists():
+            offenders.append(f"{rel} 不存在（尺子的输入丢了）")
+            return None
+        return p.read_text(encoding="utf-8", errors="ignore")
+
+    ts = _read(ts_rel)
+    css = _read(css_rel)
+    html = _read(html_rel)
+    if ts is None or css is None or html is None:
+        out("appearance single source", False, "; ".join(offenders))
+        fails.append(f"appearance single source inputs missing: {offenders}")
+        return
+
+    def _js_num(name: str) -> float | None:
+        m = re.search(rf"export const {name} = ([\d.]+);", ts or "")
+        if m:
+            return float(m.group(1))
+        # SOLID_DEFAULT 不写死：它是 `ALPHA_MAX - ALPHA_DEFAULT` 的表达式，现算
+        if name == "SOLID_DEFAULT":
+            hi = re.search(r"export const ALPHA_MAX = ([\d.]+);", ts or "")
+            lo = re.search(r"export const ALPHA_DEFAULT = ([\d.]+);", ts or "")
+            if hi and lo:
+                return float(hi.group(1)) - float(lo.group(1))
+        offenders.append(f"appearance.ts 里找不到 {name} 的数字字面值")
+        return None
+
+    def _css_num(var_name: str, block: str) -> str | None:
+        """取某个块（`:root` / `.dark`）里 `--x: 值;` 的值。按括号配对切块，不靠行数。"""
+        m = re.search(rf"{re.escape(block)}\s*\{{(?P<body>.*?)\n\}}", css or "", re.S)
+        if not m:
+            offenders.append(f"index.css 里找不到 {block} 块")
+            return None
+        one = re.search(rf"{re.escape(var_name)}:\s*([^;]+);", m.group("body"))
+        if not one:
+            offenders.append(f"index.css 的 {block} 里没有 {var_name}")
+            return None
+        return one.group(1).strip()
+
+    # 1) JS 常量 ↔ CSS 字面值
+    for js_name, css_var, unit in (
+        ("BG_DIM_DEFAULT", "--bg-dim", ""),
+        ("BG_BLUR_DEFAULT", "--bg-blur", "px"),
+        ("SOLID_DEFAULT", "--bg-solid", ""),
+    ):
+        jv = _js_num(js_name)
+        cv = _css_num(css_var, ":root")
+        if jv is None or cv is None:
+            continue
+        cv_num = cv.rstrip(unit).strip() if unit else cv
+        try:
+            if float(cv_num) != jv:
+                offenders.append(f"{js_name}={jv} 与 index.css {css_var}={cv} 不一致")
+        except ValueError:
+            offenders.append(f"index.css 的 {css_var}={cv} 不是个数（尺子读不动 = 判红，不算通过）")
+
+    # 2) 不许再由 JS 写这三条内联（层次归 CSS）
+    banned = ("--bg-alpha", "--glass-alpha", "--glass-alpha-soft")
+    for rel, text in ((ts_rel, ts), (html_rel, html)):
+        hit = [v for v in banned if f'setProperty("{v}"' in text or f"'{v}'" in text]
+        if hit:
+            offenders.append(f"{rel} 又把这些写成了内联样式（会盖死 .dark）：{hit}")
+
+    # 3) 深色档位必须真有人读
+    m_dark = re.search(r"\.dark\s*\{(?P<body>.*?)\n\}", css, re.S)
+    dark_body = m_dark.group("body") if m_dark else ""
+    if "--glass-offset" not in dark_body:
+        offenders.append("index.css 的 .dark 里没有 --glass-offset（深色档位又会是死码）")
+
+    # 4) --bg-solid 两侧各只赋值一次
+    for rel, text, pat in (
+        (ts_rel, ts, r'setProperty\("--bg-solid"'),
+        (html_rel, html, r'setProperty\("--bg-solid"'),
+    ):
+        n = len(re.findall(pat, text))
+        if n != 1:
+            offenders.append(f"{rel} 里 --bg-solid 赋值出现 {n} 次（应为 1）")
+
+    out(
+        "appearance single source",
+        not offenders,
+        "; ".join(offenders[:5])
+        if offenders
+        else "JS 兜底值与 index.css 字面值对齐；透明度只写一条内联；.dark 的档位有人读",
+    )
+    if offenders:
+        fails.append(f"appearance drift: {offenders}")
+
+
 def check_local_service_port_single_source() -> None:
     """本机推理服务端口（11434）在 src/ 与 scripts/ 里只许出现在 config.py。
 
