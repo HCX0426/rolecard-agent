@@ -6636,6 +6636,17 @@
       ],
       "title": "Is Proactive"
      },
+     "role_gone": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Role Gone"
+     },
      "role_id": {
       "anyOf": [
        {
@@ -6697,6 +6708,7 @@
      "title",
      "role_id",
      "role_name",
+     "role_gone",
      "agent_mode",
      "updated_at",
      "is_proactive",

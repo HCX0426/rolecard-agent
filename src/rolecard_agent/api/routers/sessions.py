@@ -849,6 +849,13 @@ def list_sessions(ctx: AppContext = Depends(get_context)) -> list[object]:
             # 而要真条数得逐条线程回放（N 次 msgpack 反序列化），侧栏每次刷新都付一遍不值。
             # EXISTS 判的是"这条线写过东西没有"，正是界面要知道的那一件事。
             "is_blank": not bool(r["has_state"]),
+            # 会话指向的角色**在这个主人名下已经不在了**（与 `role_name` 同一个 LEFT JOIN
+            # 出来的，见 `storage/threads.session_list_rows` 那段为什么必须带 user_id）。
+            # 界面必须拿它而不是拿 `role_name == null` 去猜：`is_blank` 只说"没写过字"，
+            # 一条**又空白又角色没了**的行会被 `createSession` 当成"可复用的空白会话"
+            # 自动选中，而它发不出第一条消息（`POST /api/chat` 必 404）—— 2026-11-04
+            # 真机冒烟红就是撞在这格，库里现场 `s_177eb77300d3`。
+            "role_gone": bool(r["role_gone"]),
         }
         for r in rows
     ]

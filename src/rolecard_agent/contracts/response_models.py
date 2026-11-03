@@ -1235,6 +1235,7 @@ class SessionsViewItem(BaseModel):
     title: str | None
     role_id: str | None
     role_name: str | None
+    role_gone: bool | None
     agent_mode: str | None
     updated_at: str | None
     is_proactive: bool | None

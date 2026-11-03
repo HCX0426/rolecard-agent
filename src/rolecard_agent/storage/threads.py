@@ -395,14 +395,35 @@ def session_list_rows(conn: SqlConnection, user_id: str) -> list[Any]:
         `is_blank` 旗标：**不给条数** —— 一轮对话在 `checkpoints` 里是好几行
         （`R26-07` 那个平方级增长就是它），把行数当条数报是骗界面，而真要条数得逐条
         线程回放（N 次 msgpack 反序列化），侧栏每次刷新都付一遍不值。
+
+    `role_gone` 与 `role_name` 出自**同一个** LEFT JOIN（`r.role_id IS NULL` ⇔ 没 JOIN
+    上卡），不是第二次判"角色还在不在"。为什么要专门把它做成旗标而不是让界面看
+    `role_name == null`（2026-11-04 真机冒烟红的根因）：`ChatPage.createSession` 从前
+    只按 `is_blank` 复用空白会话，而 `is_blank` 在后端的意思是"一个字的对话都没写过"，
+    被界面当成"可以拿来发第一条" —— 一条**指向已删角色**的空白行两样都占：空白 ⇒ 被
+    自动复用；角色没了 ⇒ `POST /api/chat` 必 404（`_turn_state` 里 `role_cards.get()`）。
+    用户看到的是全新浏览器里第一条消息永远发不出去。库里那个现场：
+    `s_177eb77300d3`（`travel_planner`，卡已删，`checkpoints` 零行）。
+    "旗标来自后端、界面不猜形状"这条纪律见 `components/chat/SessionSidebar.tsx` 头部。
+
+    ⚠ **JOIN 必须带 `r.user_id = s.user_id`**（这条旗标能不能与 chat 那条判定**同意**的
+    关键）：`RoleCards.get()` 的归属规则是 `WHERE role_id = ? AND user_id = ?`
+    （`roles/service.py:140`，"内置卡今天不算公共资产"），而 `role_id` 目前是**全局唯一
+    主键** —— 少了这个条件，别人的同名卡会把这条 JOIN 上，于是列表说"角色还在"、
+    `role_cards.get()` 按本主人查却抛 `RoleNotFound`，两个信号当场分叉：我正要修"两套
+    判定"，一不留神就写出了第三套。今天单机单主人看不出差别，`service.py:117-120` 已经
+    写明多主人那条路是"`(user_id, role_id)` 复合主键"，所以这里**提前**按同一口径收口。
+    `WHERE s.user_id = ?` 与 `ctx.current_user()` 是同一个人（清单本来就按主人过滤），
+    所以 `r.user_id = s.user_id` 与 `get()` 里那个 user_id 语义严格等价。
     """
     return list(
         conn.execute(
             "SELECT s.thread_id, s.title, s.current_role_id AS role_id, r.role_name, "
+            "(r.role_id IS NULL) AS role_gone, "
             "s.agent_mode, s.updated_at, "
             "EXISTS (SELECT 1 FROM checkpoints c WHERE c.thread_id = s.thread_id) AS has_state "
             "FROM session_thread s "
-            "LEFT JOIN role_card r ON r.role_id = s.current_role_id "
+            "LEFT JOIN role_card r ON r.role_id = s.current_role_id AND r.user_id = s.user_id "
             "WHERE s.user_id = ? ORDER BY s.updated_at DESC, s.thread_id",
             (user_id,),
         ).fetchall()

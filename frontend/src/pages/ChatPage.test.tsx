@@ -432,6 +432,96 @@ describe("ChatPage 建会话失败不吞草稿（2026-10-30 交互审计的回�
   });
 });
 
+describe("ChatPage 复用空白会话：认后端三个旗标（2026-11-04 真机冒烟红的回归钉）", () => {
+  // 装机库里那个现场：一条 `is_blank` 的会话，角色卡却被删了（`s_177eb77300d3` /
+  // `travel_planner`）。`is_blank` 在后端只说"这条一个字的对话都没写过"，从前界面据此就
+  // 把它当"可以拿来发第一条"自动复用 —— 而它发不出第一条（`POST /api/chat` 必 404，
+  // `_turn_state` 里 `role_cards.get()`），且这条会话在侧栏**看不见**（列表只列非空白），
+  // 既点不到也删不掉。用户看到的是"全新浏览器里第一条消息永远发不出去"。
+  // 这条 describe 在此**零覆盖** —— 所以那个形状能一路活到全量门禁才红。
+  const orphan = (over: Record<string, unknown> = {}) => ({
+    thread_id: "s_blank_gone",
+    title: null,
+    role_id: "travel_planner",
+    role_name: null,
+    updated_at: "2026-10-24 11:35:22",
+    agent_mode: "chat",
+    is_proactive: false,
+    is_blank: true,
+    role_gone: true,
+    ...over,
+  });
+
+  function mountWith(sessions: unknown[]) {
+    stubMountCalls(); // 先装 post 的替身（`/api/session` → `s_test`），下面只换 get
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/sessions") return sessions;
+      if (url === "/api/roles") return [{ role_id: "ga", role_name: "通用助手", is_builtin: true }];
+      if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
+      if (url === "/api/settings/model-providers") return { providers: [] };
+      if (url.includes("/messages")) return { messages: [], total: 0, limit: 500, truncated: false };
+      if (url.endsWith("/context")) return { trimmed: 0, kept: 0, budget: 24000 };
+      if (url.startsWith("/api/session/")) return { model_name: null, agent_mode: "chat" };
+      return {};
+    });
+  }
+
+  const oneTurn = () =>
+    scriptedStream([
+      { type: "start", role: { role_id: "ga", role_name: "通用助手" } },
+      { type: "end" },
+    ]);
+
+  it("角色已删的空白会话不复用：新建一条，第一条消息发得出去", async () => {
+    mountWith([orphan()]);
+    oneTurn();
+    render(
+      <ToastProvider>
+        <ChatPage />
+      </ToastProvider>,
+    );
+    await sendMessage("第一句");
+    await waitFor(() => expect(streamChatMock).toHaveBeenCalled());
+    // 关键断言是**发给了谁**：新建于 `s_test` 而不是复用那条必 404 的 `s_blank_gone`。
+    // 只断言"新建过一条"不够 —— 建了却把消息发给旧线程，同样是发不出去。
+    expect(streamChatMock.mock.calls[0][0]).toBe("s_test");
+    expect(apiMock.post).toHaveBeenCalledWith("/api/session", {});
+    expect(screen.queryByText(/还是空白/)).toBeNull();
+  });
+
+  it("角色还在的空白会话照旧复用（不因此多堆一条空会话）", async () => {
+    mountWith([orphan({ thread_id: "s_blank_ok", role_id: "ga", role_name: "通用助手", role_gone: false })]);
+    oneTurn();
+    render(
+      <ToastProvider>
+        <ChatPage />
+      </ToastProvider>,
+    );
+    await sendMessage("第一句");
+    await waitFor(() => expect(streamChatMock).toHaveBeenCalled());
+    expect(streamChatMock.mock.calls[0][0]).toBe("s_blank_ok");
+    expect(apiMock.post).not.toHaveBeenCalledWith("/api/session", {});
+    expect(await screen.findByText(/还是空白/)).toBeTruthy();
+  });
+
+  it("老后端没这格（`role_gone` 整个字段缺失）按「没删」处理", async () => {
+    // 缺字段 ≠ 角色没了。把降级读数变成"不复用"会凭空改掉旧后端的既有行为，
+    // 而这条降级与上面 `stubMountCalls` 时代的那些替身形状是同一类兼容义务。
+    const legacy = orphan({ thread_id: "s_blank_legacy", role_id: "ga", role_name: "通用助手" });
+    delete (legacy as Record<string, unknown>).role_gone;
+    mountWith([legacy]);
+    oneTurn();
+    render(
+      <ToastProvider>
+        <ChatPage />
+      </ToastProvider>,
+    );
+    await sendMessage("第一句");
+    await waitFor(() => expect(streamChatMock).toHaveBeenCalled());
+    expect(streamChatMock.mock.calls[0][0]).toBe("s_blank_legacy");
+  });
+});
+
 describe("ChatPage 删除二次确认（useConfirm）", () => {
   function stubWithSession() {
     apiMock.get.mockImplementation(async (url: string) => {

@@ -4429,6 +4429,8 @@ export interface components {
             is_blank: boolean | null;
             /** Is Proactive */
             is_proactive: boolean | null;
+            /** Role Gone */
+            role_gone: boolean | null;
             /** Role Id */
             role_id: string | null;
             /** Role Name */

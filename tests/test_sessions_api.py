@@ -276,14 +276,18 @@ def test_delete_unknown_session_404(client: TestClient) -> None:
     assert client.delete("/api/session/nope").status_code == 404
 
 
-def test_session_list_carries_the_two_flags_the_sidebar_needs(client: TestClient) -> None:
-    """`is_blank` 与 `is_proactive`：侧栏分栏与"藏掉空白线程"用的是后端旗标，不是猜的。
+def test_session_list_carries_the_three_flags_the_sidebar_needs(client: TestClient) -> None:
+    """`is_blank` / `is_proactive` / `role_gone`：侧栏与"能不能复用这条"用的是后端旗标，不是猜的。
 
     为什么值得钉住（`R26-06` 那一族：写进界面的推断没人复核）：旧前端拿"有没有标题"当
     "这条是不是空的"，而重命名过的空线程、深链刚建出来的线程都会被骗过去；线程 id 那个
     形状（`s_proactive_<uid>_<role>`，B2 起带身份）的事实归 `features/reachout/inbox.py`，前端自己
     拼就是第二个真相源。
     空白的判据是"这条线程写过 checkpoint 没有"—— 那个只有后端看得见。
+    `role_gone` 同理（2026-11-04 补）：界面从前拿 `role_name == null` 猜"角色还在不在"，
+    而 `is_blank` 在后端只说"没写过字"，一条**又空白又角色没了**的行会被 `createSession`
+    当成可复用的空会话自动选中，然后第一条消息必 404（`_turn_state` 里 `role_cards.get()`）。
+    真机冒烟红就是撞在这格，装机库现场 `s_177eb77300d3`（`travel_planner` 卡已删）。
     """
     blank = client.post("/api/session", json={}).json()
     talked = client.post("/api/session", json={}).json()
@@ -295,6 +299,10 @@ def test_session_list_carries_the_two_flags_the_sidebar_needs(client: TestClient
     assert rows[str(talked["thread_id"])]["is_blank"] is False
     assert rows[str(lane["thread_id"])]["is_proactive"] is True
     assert rows[str(talked["thread_id"])]["is_proactive"] is False
+    # 角色还在的三条都该是 False —— 报**布尔**而不是 None：界面要能拿它直接进条件，
+    # 不必再区分"没这格"与"这格说没删"（老后端缺这格时前端按"没删"处理，见 ChatPage）。
+    for tid in (blank["thread_id"], talked["thread_id"], lane["thread_id"]):
+        assert rows[str(tid)]["role_gone"] is False, tid
     # 报的是布尔而不是"条数"：一轮对话在 checkpoints 里是好几行，把行数当条数报出去就是骗界面
     assert "checkpoint_rows" not in rows[str(talked["thread_id"])]
 
@@ -311,6 +319,10 @@ def test_session_list_survives_role_deletion(client: TestClient) -> None:
     sessions = client.get("/api/sessions").json()
     row = next(s for s in sessions if s["thread_id"] == session["thread_id"])
     assert row["role_id"] == "temp" and row["role_name"] is None
+    # 同一格的后端读法（从前只有 `role_name is None` 这一个信号，界面得自己猜它为什么是
+    # null —— 名字本身 NOT NULL，所以 null 只可能是"卡不在了"；今天仍成立，但那条推断
+    # 依赖 `role_card.role_name TEXT NOT NULL` 这条 DDL，隔一层就没人守。旗标把它说明白。）
+    assert row["role_gone"] is True
 
 
 def test_role_name_degrades_on_get_and_patch_alike(client: TestClient) -> None:

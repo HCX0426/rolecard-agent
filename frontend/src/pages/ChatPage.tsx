@@ -306,15 +306,31 @@ export default function ChatPage({
     inputRef.current?.focus(); // 跳进来的目的是回话：光标直接落在输入框
   }, [deepThread, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /** 创建会话；上一个会话还没发过消息（无标题 = 空白）→ 直接打开它，不堆叠空会话。
-   *  角色是可选的：不指定即用默认角色（内置「通用助手」），之后随时在功能行切换。
-   *  返回可用的 thread_id（新建或复用的），失败返回 null。 */
+  /** 创建会话；上一次那条**一个字的对话都没写过、且角色还在**的空白会话 → 直接打开它，
+   *  不堆叠空会话。角色是可选的：不指定即用默认角色（内置「通用助手」），之后随时在功能行切换。
+   *  返回可用的 thread_id（新建或复用的），失败返回 null。
+   *
+   *  ⚠ 从前这段的注释写着"无标题 = 空白"，而代码读的是后端旗标 `is_blank` —— 那句是旧实现
+   *  的遗言（`SessionSidebar.tsx` 头部记着"靠有没有标题判会被骗"这条已经修过的理由）。
+   *  注释与代码各说一件事就是本轮在清的那类债，顺手改成与代码一致。
+   */
   async function createSession(): Promise<string | null> {
     // thread_id 是寻址键；生成契约放宽成 string | null 后，没带 id 的行**不是**可复用的
     // 空白会话（点不开也删不掉）—— 条件里一并滤掉，走新建那条路。
+    // `role_gone` 那一格是 2026-11-04 真机冒烟红的根因：一条 `is_blank` 但指向**已删角色**
+    // 的行两样都占 —— 空白 ⇒ 被这里自动复用；角色没了 ⇒ 它发不出第一条消息
+    // （`POST /api/chat` 必 404，`_turn_state` 里 `role_cards.get()`）。用户看到的是"全新
+    // 浏览器里第一条消息永远发不出去"，而这条会话在侧栏**根本看不见**（列表只列非空白的），
+    // 所以既点不到也删不掉。库里那个现场 `s_177eb77300d3`。
+    // 判据取后端旗标而不是在这里看 `role_name == null` 猜：同一个"角色还在不在"的问题
+    // 不该有两处回答（`features/reachout/inbox.py` 与 `storage/threads` 的线程 id 形状
+    // 是同一条纪律的两半）。`null`（老后端没这格）按"没删"处理 —— 不因此拦住复用，
+    // 免得把一次降级读数变成新的行为变化。
     const empty = sessions.find(
-      (s): s is ThreadRow & { thread_id: string } => Boolean(s.is_blank && !s.is_proactive && s.thread_id),
+      (s): s is ThreadRow & { thread_id: string } =>
+        Boolean(s.is_blank && !s.is_proactive && !s.role_gone && s.thread_id),
     );
+
     if (empty) {
       setStatus("上一次的对话还是空白，已直接为你打开");
       if (sessionId !== empty.thread_id) await selectSession(empty.thread_id);
