@@ -33,11 +33,47 @@
  * 是每次都重下，且"看起来清理生效了"没人会去查 —— 静默失效那一族）。
  */
 
-/** 从 `rolecard-agent-0.4.2-x64.exe` 这类文件名里读版本；形状不对回 null。 */
+/**
+ * 从 `rolecard-agent-0.4.2-x64.exe` 这类文件名里读版本；形状不对回 null，**不猜**。
+ *
+ * ⚠ 这条式子与 `src/rolecard_agent/core/artifacts.py` 的 `_VERSION_IN_NAME` 是**同一个事实的
+ * 两份实现**（跨语言 import 不到，只能各写一条）。2026-11-03 审查 A-1 实测到两份**都坏在
+ * 同一个输入上**：版本段从前写成三段不含点，而当时仓库的版本号正是 `0.5.1-beta.1` ⇒
+ * 现网产物名解析成 null ⇒ 这个"已装完就清掉"的判据在 beta 版上永久静默失效，本机
+ * `%LOCALAPPDATA%\rolecard-shell-updater\` 因此躺着 286.7 MB，而日志只写"解析不出版本"——
+ * 看起来像"正常，没东西可清"。
+ * 同一天还量出第二处分叉：`rolecard-agent-0.4.2.exe`（不带 arch）**这里解析成功、Python 侧
+ * 返回 null**，而本文件与测试的注释都自称"与 core/artifacts.py 同一宽容口径"——注释在替一个
+ * 不成立的等式背书。现在两侧统一为 **arch 段必需**（与 electron-builder.yml 的
+ * `artifactName: rolecard-agent-${version}-${arch}.${ext}` 逐字对应）：可选 arch 会让
+ * `0.4.2-x64` 被预发布段吃掉，同一输入两侧按回溯顺序给出不同答案，歧义比读不出更坏。
+ *
+ * 共同判据不住注释里，住 **`config/artifact-name-vectors.json`**：两侧的测试（本仓
+ * `shell/scripts/test-update-cache-cleanup.cjs` 与 `tests/unit/test_artifacts.py`）各自读
+ * 同一张表跑一遍。改任何一侧的正则，只要与另一侧不一致就有一边红；要加新形状，只改那张表。
+ */
 export function versionFromArtifactName(name: string): string | null {
-  const match = /-(\d+\.\d+\.\d+)(?:-[A-Za-z0-9_]+)?\.exe$/i.exec(name.trim());
+  const match =
+    /^rolecard-agent-(\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.]*)?)-([A-Za-z0-9_]+)\.exe$/i.exec(
+      name.trim(),
+    );
   return match?.[1] ?? null;
 }
+
+/** 与 `versionFromArtifactName` 同一条式子的完整拆法（版本 + arch），给共享向量表的测试用。 */
+export function parseArtifactName(name: string): { version: string; arch: string } | null {
+  const match =
+    /^rolecard-agent-(\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.]*)?)-([A-Za-z0-9_]+)\.exe$/i.exec(
+      name.trim(),
+    );
+  if (!match) return null;
+  const [, version, arch] = match;
+  // 两个捕获组由正则本身保证存在，但 tsconfig 开了严格索引访问 —— 在这里收敛，
+  // 不用 `!` 把"我保证"写成运行时不校验的断言。
+  if (!version || !arch) return null;
+  return { version, arch };
+}
+
 
 export type CleanupFs = {
   exists: (path: string) => boolean;

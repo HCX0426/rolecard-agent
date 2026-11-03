@@ -13,9 +13,14 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const { versionFromArtifactName, cleanupConsumedPendingUpdate, snapshotsToEvict } = require(
-  path.join(__dirname, "..", "out", "main", "updateCacheCleanup.js"),
-);
+const {
+  versionFromArtifactName,
+  parseArtifactName,
+  cleanupConsumedPendingUpdate,
+  snapshotsToEvict,
+} = require(path.join(__dirname, "..", "out", "main", "updateCacheCleanup.js"));
+
+const REPO_ROOT = path.join(__dirname, "..", "..");
 
 const results = [];
 function check(name, fn) {
@@ -65,20 +70,45 @@ function tempCache(label) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `rc-cleanup-${label}-`));
 }
 
-// ---------------------------------------------------------------- 版本解析
+// ---------------------------------------------------------------- 版本解析（共享向量表）
 
-check("从标准安装包名读版本", () => {
-  assert.equal(versionFromArtifactName("rolecard-agent-0.4.2-x64.exe"), "0.4.2");
-  assert.equal(versionFromArtifactName("rolecard-agent-10.2.0-arm64.exe"), "10.2.0");
-  // 不带 arch 的形状（artifactName 改窄时仍要能读 —— 与 core/artifacts.py 同一宽容口径）
-  assert.equal(versionFromArtifactName("rolecard-agent-0.4.2.exe"), "0.4.2");
+// 这张表是**两侧唯一的共同判据**：python 的 tests/unit/test_artifacts.py 读同一个文件。
+// 为什么不在这里各写一遍期望值（2026-11-03 审查 A-1 的现形）：安装包名的解析在仓里是
+// 两份实现（这条 TS 正则 + core/artifacts.py 那条 Python 正则），跨语言 import 不到，
+// 于是各自绿守不住"同一个名字给出同一个答案"。实测两份**都坏在同一个输入上**：
+// 版本段写成三段不含点，而仓库当时的版本号正是 0.5.1-beta.1 ⇒ 现网名字解析成 null ⇒
+// "已装完就清掉 pending"那条判据在 beta 上永久静默失效，日志只写"解析不出版本"，
+// 看起来像"正常，没东西可清"。同一天还量出第二处分叉：`rolecard-agent-0.4.2.exe`
+// （不带 arch）**这里解析成功、Python 侧返回 null**，而下面那条旧注释自称
+// "与 core/artifacts.py 同一宽容口径" —— 注释在替一个不成立的等式背书。
+// 现在统一 arch 必需（与 electron-builder.yml 的 artifactName 逐字对应）。
+check("安装包名解析与共享向量表一致", () => {
+  const tablePath = path.join(REPO_ROOT, "config", "artifact-name-vectors.json");
+  assert.ok(fs.existsSync(tablePath), `共享向量表不见了：${tablePath}`);
+  const vectors = JSON.parse(fs.readFileSync(tablePath, "utf8")).vectors;
+  assert.ok(Array.isArray(vectors) && vectors.length >= 8, `向量表只剩 ${vectors?.length} 条 —— 覆盖塌了，不许静默变绿`);
+  for (const vec of vectors) {
+    const parsed = parseArtifactName(vec.name);
+    if (vec.version === null) {
+      assert.equal(parsed, null, `${vec.name} 应当不认，却解析成 ${JSON.stringify(parsed)}`);
+    } else {
+      assert.deepEqual(parsed, { version: vec.version, arch: vec.arch }, `向量 ${vec.name} 解析不符`);
+      assert.equal(versionFromArtifactName(vec.name), vec.version, `版本读数与完整拆法不一致：${vec.name}`);
+    }
+  }
 });
 
-check("形状外的一律 null（不猜）", () => {
-  assert.equal(versionFromArtifactName("installer.exe"), null);
-  assert.equal(versionFromArtifactName("rolecard-agent-0.4-x64.exe"), null);
-  assert.equal(versionFromArtifactName("rolecard-agent-0.4.2-x64.zip"), null);
-  assert.equal(versionFromArtifactName(""), null);
+check("现网版本号产出的名字必须解析得出（A-1 的回归锁）", () => {
+  // 版本号唯一出处是 pyproject.toml（门禁 version parity 管那四处一致），这里现读不抄。
+  const toml = fs.readFileSync(path.join(REPO_ROOT, "pyproject.toml"), "utf8");
+  const m = /^version\s*=\s*"([^"]+)"/m.exec(toml);
+  assert.ok(m, "pyproject.toml 里读不到 version —— 这条判据就瞎了");
+  const live = `rolecard-agent-${m[1]}-x64.exe`;
+  assert.equal(
+    versionFromArtifactName(live),
+    m[1],
+    `现网产物名 ${live} 解析不出版本 —— 清理判据会静默失效（A-1 复发）`,
+  );
 });
 
 // ---------------------------------------------------------------- 六种读数

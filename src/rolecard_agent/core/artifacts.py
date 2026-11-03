@@ -46,7 +46,27 @@ RESOURCES_DIR = "resources"
 #: 安装包文件名**匹配**用的 glob。故意比式子宽一档：`artifactName` 改成不带 arch 时，
 #: 窄 glob 会让下载卡找不到文件而"照设计"消失 —— 那看起来像正常行为，其实是我把缺陷藏起来。
 ARTIFACT_GLOB = f"{APP_NAME}-*.exe"
-_VERSION_IN_NAME = re.compile(rf"^{re.escape(APP_NAME)}-(\d+\.\d+\.\d+)-([A-Za-z0-9_]+)\.exe$")
+#: 解析用的式子：版本段是**完整 semver（含预发布）**，arch 段必需。
+#: ⚠ 2026-11-03 审查 A-1：从前版本段写成 `(\d+\.\d+\.\d+)`（不含点），而仓库当前的版本号
+#: 正是 `0.5.1-beta.1` —— 于是**现网产物名解析成 None**：实测
+#: `parse_artifact_name("rolecard-agent-0.5.1-beta.1-x64.exe") = None`，而
+#: `...-0.5.0-x64.exe` 正常。两侧同构的壳侧正则同坏（`updateCacheCleanup.ts`），后果是
+#: 升级后不清理已装完的 pending 包 —— 本机实测 `%LOCALAPPDATA%\rolecard-shell-updater\`
+#: 里躺着 286.7 MB 就是这么攒下的，而日志只写"解析不出版本"，看起来像"正常没东西可清"。
+#: 同一天还量出第二处分叉：不带 arch 的名字，TS 侧解析成功、Python 侧返回 null，
+#: 而两侧注释都自称「同一宽容口径」——注释在替一个不成立的等式背书。现在统一 **arch 必需**：
+#: 与 `electron-builder.yml` 的 `artifactName: rolecard-agent-${version}-${arch}.${ext}`
+#: 逐字对应；可选 arch 会让 `0.4.2-x64` 被预发布段吃掉，同一输入两侧按回溯顺序给出不同答案，
+#: 歧义比读不出更坏。模板真改的那天，这张向量表会红 —— 那正是我们要的响动。
+#:
+#: 两份实现（这条 Python 正则 + `shell/main/updateCacheCleanup.ts` 那条 TS 正则）跨语言
+#: import 不到，所以共同判据不住注释里，住 **`config/artifact-name-vectors.json`**：
+#: `tests/unit/test_artifacts.py` 与 `shell/scripts/test-update-cache-cleanup.cjs` 各读
+#: 同一张表跑一遍。谁改形状、只要与另一侧不一致就有一边红。
+_VERSION_IN_NAME = re.compile(
+    rf"^{re.escape(APP_NAME)}-(\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.]*)?)-([A-Za-z0-9_]+)\.exe$",
+    re.IGNORECASE,
+)
 
 
 def sidecar_bundle(root: Path) -> Path:

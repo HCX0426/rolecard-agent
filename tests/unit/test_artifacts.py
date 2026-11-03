@@ -40,6 +40,52 @@ def test_artifact_name_roundtrips_with_the_builder_pattern() -> None:
     assert artifacts.parse_artifact_name("something-else.exe") is None
 
 
+def test_parse_artifact_name_matches_the_shared_vectors() -> None:
+    """两侧（python 与壳的 TS）对同一个名字必须给出**同一个**答案。
+
+    为什么拿一张 JSON 表而不是各自写断言（2026-11-03 审查 A-1）：安装包名的解析在仓里是
+    **两份实现**——`core/artifacts.py` 的正则与 `shell/main/updateCacheCleanup.ts` 的正则，
+    跨语言 import 不到，于是各自的测试只能各自绿。实测两份**都坏在同一个输入上**：版本段
+    写成三段不含点，而仓库当时的版本号正是 `0.5.1-beta.1` ⇒ 现网名字解析成 None ⇒
+    "已装完就清掉 pending"那条判据在 beta 上永久静默失效（日志写"解析不出版本"，
+    看起来像"正常，没东西可清"）。同一天还量出第二处分叉：`rolecard-agent-0.4.2.exe`
+    （不带 arch）TS 侧解析成功、Python 侧返回 null，而两侧注释都自称"同一宽容口径"。
+
+    判据因此搬到两侧都能读的这张表里：`config/artifact-name-vectors.json`。
+    壳侧那份测试读**同一个文件**（见 shell/scripts/test-update-cache-cleanup.cjs）。
+    谁改了正则而另一侧没跟上，就有一边红 —— 这才是"两条实现、一个事实"的可执行形态。
+    """
+    import json
+
+    from rolecard_agent.core import artifacts
+
+    vectors_path = ROOT / "config" / "artifact-name-vectors.json"
+    assert vectors_path.exists(), f"共享向量表不见了：{vectors_path}"
+    vectors = json.loads(vectors_path.read_text(encoding="utf-8"))["vectors"]
+    assert len(vectors) >= 8, f"向量表只剩 {len(vectors)} 条 —— 覆盖塌了，不许静默变绿"
+
+    for vec in vectors:
+        name = vec["name"]
+        parsed = artifacts.parse_artifact_name(name)
+        if vec["version"] is None:
+            assert parsed is None, f"{name} 应当不认，却解析成 {parsed}"
+        else:
+            assert parsed == (vec["version"], vec["arch"]), f"{name} -> {parsed}"
+
+    # 现网那一份产物名必须在表里（A-1 就是栽在"测试用的形状"与"真实产物的形状"不是一回事）
+    live = artifacts.artifact_name(_current_version())
+    assert any(v["name"] == live for v in vectors), f"现网产物名 {live} 不在向量表里"
+    assert artifacts.parse_artifact_name(live) is not None, f"现网名字 {live} 解析不出 —— A-1 复发"
+
+
+def _current_version() -> str:
+    """版本号只读一处（`pyproject.toml`，门禁的 version parity 管那四处一致）。"""
+    import tomllib
+
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    return tomllib.loads(text)["project"]["version"]
+
+
 def test_builder_yml_agrees_with_the_module() -> None:
     """`electron-builder.yml` 抄不了 import，所以它必须与出处**同形** —— 这条是实测不是约定。"""
     from rolecard_agent.core import artifacts
