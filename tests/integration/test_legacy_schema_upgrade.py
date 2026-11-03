@@ -887,6 +887,16 @@ def test_b2_residual_staging_table_does_not_permanently_block_boot(tmp_path: Pat
         "SELECT user_id, affinity FROM role_proactive_state WHERE role_id = 'she'"
     ).fetchone()
     assert row is not None and float(row["affinity"]) == 2.5, "关系数值在重放里丢了"
+    # 老行归属本机主人：`_upgrade_role_proactive_state_pk` 里那句 `SELECT ?, ...` 绑的
+    # `DEFAULT_USER_ID`，从前**没有任何断言读到它**（这里只断言 affinity，而 895 行那个线程
+    # id 是从 `session_thread` 的旧行现读 uid 拼的，不是迁移写进这张表的值）。2026-11-04
+    # 把六处硬写 `'local-user'` 归一到常量时现形：变异（改常量）这一族的用例照样全绿，
+    # 说明那半步根本没被测 —— 一个不失败的检查比没有检查更坏。
+    # ⚠ 期望值这里**必须硬写**而不是引 `DEFAULT_USER_ID`：拿常量比常量派生出来的值是
+    # 恒真（两边一起漂就一起绿），那正是 `test_identity_scoping` 那把 `.sql` 尺子刻意
+    # 不这么写的原因 —— 它拿常量去比 `.sql` 里那个无法引用常量的字面量。
+    assert str(row["user_id"]) == "local-user", f"老行归属没落到本机主人：{row['user_id']!r}"
+
     tid = str(
         conn.execute(
             "SELECT thread_id FROM session_thread WHERE current_role_id = 'she'"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 
+from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.base.observability import logline
 from rolecard_agent.core.model_settings.rows import _kind_of_names, _table_columns
 from rolecard_agent.core.model_settings.rules import (
@@ -186,9 +187,13 @@ def migrate_to_provider_layers(conn: SqlConnection) -> int:
         conn.execute(
             "INSERT OR IGNORE INTO service_endpoint "
             "(category, id, kind, ref_backend, enabled, sort_order, builtin, user_id) "
-            "VALUES (?, ?, ?, ?, 1, ?, 0, 'local-user')",
-            (CHAT_CATEGORY, name, kinds.get(name, "cloud"), name, order),
+            # 主人绑常量而不是硬写 `'local-user'`：与 `core/storage/migrations.py` 里
+            # `service_endpoint` 回填那一步同一个出处（2026-11-04 归一），两处从前各抄一份，
+            # 而它们必须与 `base/identity.DEFAULT_USER_ID` 一致 —— 抄两份就是两处会漂。
+            "VALUES (?, ?, ?, ?, 1, ?, 0, ?)",
+            (CHAT_CATEGORY, name, kinds.get(name, "cloud"), name, order, DEFAULT_USER_ID),
         )
+
     conn.execute("DELETE FROM kernel_meta WHERE key IN ('model_default', 'model_fallbacks')")
     conn.commit()
     return len(groups)

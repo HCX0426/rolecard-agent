@@ -30,6 +30,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.core.model_settings import migrate_to_provider_layers
 from rolecard_agent.storage.db import (
     SqlConnection,
@@ -244,20 +245,33 @@ def _upgrade_role_proactive_state_pk(conn: SqlConnection) -> None:
     conn.execute("DROP TABLE IF EXISTS role_proactive_state__b2")
     conn.execute(
         "CREATE TABLE role_proactive_state__b2 ("
-        " user_id TEXT NOT NULL DEFAULT 'local-user', role_id TEXT NOT NULL,"
+        # 归属默认值由 `base/identity.DEFAULT_USER_ID` **派生**（架构归一化，2026-11-04）：
+        # SQLite 的 DDL 里 `DEFAULT` 挂不了绑定参数，只能拼字面量，所以这里是插值。
+        # 从前这里硬写 `'local-user'` —— 与本文件 `service_endpoint` 那一步 docstring
+        # 承诺的"与 DEFAULT_USER_ID 一字不差"就全靠人记得，而"全靠人记得"正是本仓在抓的
+        # 形状。插值产出的文本与改动前**逐字节相同**（直接比过两段字符串才敢这么说：
+        # `"…DEFAULT 'local-user'…"` == 插值结果 ⇒ True。别把这件事记到 `baseline.py` 头上，
+        # 它量的是**列名集合**（`_columns()` 走 `PRAGMA table_info`），不看 SQL 文本，
+        # 一个改了默认值文本的改动在它那里照样"无漂移"）。
+        f" user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}', role_id TEXT NOT NULL,"
         " affinity REAL NOT NULL DEFAULT 0.0, last_interaction_utc TIMESTAMP,"
         " calibration_json TEXT, open_threads TEXT, open_threads_at TIMESTAMP,"
         " recall_at TIMESTAMP,"
         " updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
         " PRIMARY KEY (user_id, role_id))"
     )
+
     conn.execute(
         "INSERT INTO role_proactive_state__b2 (user_id, role_id, affinity,"
         " last_interaction_utc, calibration_json, open_threads, open_threads_at, recall_at,"
         " updated_at)"
-        " SELECT 'local-user', role_id, affinity, last_interaction_utc, calibration_json,"
-        " open_threads, open_threads_at, recall_at, updated_at FROM role_proactive_state"
+        # 老行归属实例主人：DML 里能挂**绑定参数**，所以绑 `DEFAULT_USER_ID` 而不是拼字面量
+        # —— 拼是 DDL 那一步的不得已（`DEFAULT` 挂不了参数），能绑却还去拼就是自找漂移面。
+        " SELECT ?, role_id, affinity, last_interaction_utc, calibration_json,"
+        " open_threads, open_threads_at, recall_at, updated_at FROM role_proactive_state",
+        (DEFAULT_USER_ID,),
     )
+
     conn.execute("DROP TABLE role_proactive_state")
     conn.execute("ALTER TABLE role_proactive_state__b2 RENAME TO role_proactive_state")
     for row in conn.execute(
@@ -325,7 +339,9 @@ def _upgrade_token_usage_pk(conn: SqlConnection) -> None:
     conn.execute("DROP TABLE IF EXISTS token_usage_day_new")
     conn.execute(
         "CREATE TABLE token_usage_day_new ("
-        " day TEXT NOT NULL, user_id TEXT NOT NULL DEFAULT 'local-user',"
+        # 与上面 B2 那一步同一条理由：DDL 的 `DEFAULT` 挂不了绑定参数，只能由常量插值，
+        # 产出的文本与改动前逐字节相同。
+        f" day TEXT NOT NULL, user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',"
         " backend TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0,"
         " prompt_tokens INTEGER NOT NULL DEFAULT 0,"
         " completion_tokens INTEGER NOT NULL DEFAULT 0,"
@@ -336,9 +352,11 @@ def _upgrade_token_usage_pk(conn: SqlConnection) -> None:
     conn.execute(
         "INSERT INTO token_usage_day_new (day, user_id, backend, calls, prompt_tokens,"
         " completion_tokens, reasoning_tokens, unreported)"
-        " SELECT day, 'local-user', backend, calls, prompt_tokens, completion_tokens,"
-        " reasoning_tokens, unreported FROM token_usage_day"
+        " SELECT day, ?, backend, calls, prompt_tokens, completion_tokens,"
+        " reasoning_tokens, unreported FROM token_usage_day",
+        (DEFAULT_USER_ID,),
     )
+
     conn.execute("DROP TABLE token_usage_day")
     conn.execute("ALTER TABLE token_usage_day_new RENAME TO token_usage_day")
     conn.commit()  # 重建原子落盘（`R102-53`）
@@ -384,7 +402,15 @@ def _backfill_service_endpoint_owner(conn: SqlConnection) -> None:
     if "user_id" in _cols(conn, "service_endpoint"):
         return
     conn.execute("ALTER TABLE service_endpoint ADD COLUMN user_id TEXT")
-    conn.execute("UPDATE service_endpoint SET user_id = 'local-user' WHERE category = 'chat'")
+    # 回填历史 chat 行的主人：绑 `DEFAULT_USER_ID`。上面那句 docstring 写的"与
+    # `base/identity.DEFAULT_USER_ID` 一字不差 —— 漂了就是升级完对话默认丢失"，从前
+    # **没有任何东西保证**这句话（这里硬写 'local-user'，而 `tests/unit/test_identity_scoping.py`
+    # 那把尺子只扫 `*.sql`，扫不到这一行）。现在漂不了：同一个常量，不靠记得。
+    conn.execute(
+        "UPDATE service_endpoint SET user_id = ? WHERE category = 'chat'",
+        (DEFAULT_USER_ID,),
+    )
+
     # 自己收口：这一步必须**独立成账** —— 依赖"后面某一步会 commit"就是把这列的回填
     # 绑在别的步骤的生命周期上（下一步抛掉时，这列就静默丢了）。
     conn.commit()
