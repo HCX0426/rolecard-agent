@@ -22,6 +22,8 @@ CHECKS = (
     checks_install.check_requirements_scope,
     checks_meta.check_stale_identifiers,
     checks_config.check_config_contract,
+    # 反向那半把（example 教的键必须有人读）紧挨正向放：两问是一对，分开摆就没人想起第二个
+    checks_config.check_env_keys_have_readers,
     checks_config.check_startup_env_documented,
     checks_config.check_entrypoint_env_documented,
     checks_install.check_dependency_parity,

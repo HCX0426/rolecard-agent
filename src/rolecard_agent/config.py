@@ -782,6 +782,15 @@ class Settings(BaseModel):
             ("RATE_LIMIT_PATHS", "rate_limit_paths"),
             ("MAX_UPLOAD_BYTES", "max_upload_bytes"),
             ("MAX_IMAGE_BYTES", "max_image_bytes"),
+            # 三张只增表的保留策略（`.env.example` 那三行注释就在教人设它们）。
+            # 2026-11-03 审查 A1：这三个键**从前没有任何代码读取** —— example 里写着
+            # `# AUDIT_LOG_RETENTION_DAYS=90` 这样三行，操作员取消注释、重启，字段仍拿
+            # 类默认值，且一句声音都没有（`config contract` 只问"config 声明的键在不在
+            # example 里"，反方向"example 里的键有人读吗"那时无尺子）。字段本身是活的
+            # （`core/bootstrap.py` 拿去做清理），死的是 env 这一路 —— 所以补映射，不删注释。
+            ("AUDIT_LOG_RETENTION_DAYS", "audit_log_retention_days"),
+            ("AUDIT_LOG_MAX_ROWS", "audit_log_max_rows"),
+            ("APPROVAL_DONE_RETENTION_DAYS", "approval_done_retention_days"),
             ("SYNC_ALLOWED_HOSTS", "sync_allowed_hosts"),
             ("IDENTITY_USER_ID", "identity_user_id"),
             ("LANGSMITH_API_KEY", "langsmith_api_key"),

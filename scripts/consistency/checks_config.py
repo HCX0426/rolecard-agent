@@ -304,6 +304,70 @@ def _env_names_read_in_src(src: pathlib.Path) -> dict[str, str]:
     return found
 
 
+#: example 里教了、代码**刻意**不读的键。进这张表必须写理由 —— 与 `_ENV_DEFAULT_EXEMPT`
+#: 同一纪律："逼出一个书面理由"正是豁免表的全部价值，否则它就是一条越来越宽的漏洞清单。
+#: 目前空表：2026-11-03 立这条尺子时实测 79 个抄写形状的键全有读者（A1 那三个补进映射表之后）。
+_ENV_UNREAD_EXEMPT: set[str] = set()
+
+
+def check_env_keys_have_readers() -> None:
+    """`.env.example` 教人抄的每个键，代码里必须真有人读（反向契约）。
+
+    为什么现在立（2026-11-03 审查 A1 的现形）：正向那条 `config contract` 问的是
+    "config 声明的键有没有在 example 里出现过"，**反方向无尺子**。于是 example 里躺着三行
+
+        # AUDIT_LOG_RETENTION_DAYS=90
+        # AUDIT_LOG_MAX_ROWS=10000
+        # APPROVAL_DONE_RETENTION_DAYS=30
+
+    而 `from_env` 的映射表里根本没有这三个键。实测：设 `AUDIT_LOG_RETENTION_DAYS=7`
+    重启，字段仍是 90。用户照抄 = 以为保留策略生效、实际永远拿类默认，一句声音都没有；
+    正向检查一路绿。这就是用户反复点的那族"从不失败的检查"——**契约文件教了、代码不认**。
+
+    口径三条，都是从既有尺子上搬来的、不新造判据：
+      * 「教人抄」= `KEY=` 或 `# KEY=`（**必须带等号**）。实测收紧的理由：只写
+        "注释里的全大写词"会抓到 `POST`、`API` 这类散文散词，尺子一立就红在噪音上；
+      * 「有人读」= config 的映射表 ∪ 分支 `src.get` ∪ `src/**` 里 `os.environ` ∪
+        入口 `run_api.py`（与 `startup env documented` / `entrypoint env documented`
+        同一批读法，复用 `_env_names_read_in_src` 与 `config_env_contract`，
+        不再写第三份解析器）；
+      * 读不到输入判红，不判通过：config 表读出 0 对、或 src 解析出 0 个 env 名，
+        都是尺子自己坏了（空集合会让下面算成全绿 —— 恒绿尺子，先掐掉）。
+    """
+    env_text = (ROOT / ".env.example").read_text(encoding="utf-8", errors="ignore")
+    cfg_text = (ROOT / "src" / "rolecard_agent" / "config.py").read_text(
+        encoding="utf-8", errors="ignore"
+    )
+    taught = set(re.findall(r"^[ \t]*#?[ \t]*([A-Z][A-Z0-9_]{2,})[ \t]*=", env_text, re.M))
+    if not taught:
+        out("env keys have readers", False, ".env.example 读不出任何抄写形状的键 —— 不许静默绿")
+        fails.append("env example unreadable for reverse contract")
+        return
+    table, cfg_keys = config_env_contract(cfg_text)
+    if not table:
+        out("env keys have readers", False, "config 映射表读出 0 对 —— 读法坏了，不能拿来判绿")
+        fails.append("config mapping table unreadable for reverse contract")
+        return
+    src_read = set(_env_names_read_in_src(ROOT / "src" / "rolecard_agent"))
+    if not src_read:
+        out("env keys have readers", False, "src 解析出 0 个 env 名 —— 读法坏了，不能拿来判绿")
+        fails.append("src env readers unreadable for reverse contract")
+        return
+    entry_read = set(_env_names_read_in_src(ROOT / "scripts" / "run_api.py"))
+    branch_keys = cfg_keys - {k for k, _ in table}
+    read = {k for k, _ in table} | branch_keys | src_read | entry_read
+    orphans = sorted(taught - read - _ENV_UNREAD_EXEMPT)
+    out(
+        "env keys have readers",
+        not orphans,
+        f"{len(taught)} 个抄写形状的键各有读者（豁免 {sorted(_ENV_UNREAD_EXEMPT)}）"
+        if not orphans
+        else f"example 教人抄、代码却不读：{orphans}",
+    )
+    if orphans:
+        fails.append(f".env.example teaches keys nobody reads: {orphans}")
+
+
 def check_startup_env_documented() -> None:
     """`src` 里真读的每个环境变量，都必须对谁**说出来过**。
 
