@@ -165,7 +165,7 @@ export default function ChatPage({
   );
 
   useEffect(() => {
-    refreshSessions().catch((e) => setStatus(`加载对话失败：${e.message}`, "warn"));
+    refreshSessions().catch((e) => setStatus(`加载对话失败：${describeError(e)}`, "warn"));
     api
       .get<RoleCard[]>("/api/roles")
       .then(setRoles)

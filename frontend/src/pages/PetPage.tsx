@@ -893,7 +893,9 @@ export default function PetPage() {
         historyShapeRef.current = shapeOf(page);
         handoff(page);
       })
-      .catch((e: Error) => alive && setHistoryError(`历史没读到：${e.message}`));
+      // 参数从 `(e: Error)` 收成 unknown 并走唯一出口：显式标注 Error 并不校验运行时形状，
+      // reject 非 Error 时 `e.message` 是 undefined，屏幕上就是一句"历史没读到：undefined"。
+      .catch((e: unknown) => alive && setHistoryError(`历史没读到：${describeError(e)}`));
     return () => {
       alive = false;
     };

@@ -17,7 +17,6 @@
 import { Button } from "../components/ui";
 import { useState } from "react";
 
-import { ApiError } from "../api";
 import { read as readDataSource } from "../lib/dataSource";
 import {
   DIRECTIONS,
@@ -91,7 +90,7 @@ export default function SyncWizard({
       setPlan(await fetchPlan(target));
       setStep("dry");
     } catch (e) {
-      setWhy(errText(e));
+      setWhy(describeError(e, "同步失败"));
     } finally {
       setBusy(false);
     }
@@ -156,7 +155,7 @@ export default function SyncWizard({
       setDone({ up, down, skipped, failed });
       setStep("done");
     } catch (e) {
-      setWhy(errText(e));
+      setWhy(describeError(e, "同步失败"));
     } finally {
       setBusy(false);
     }
@@ -251,10 +250,11 @@ function toBackend(
   return out;
 }
 
-function errText(e: unknown): string {
-  return e instanceof ApiError ? e.message : describeError(e) || "同步失败";
-}
-
+// 从前这里是第三份"错误 → 人话"政策：`e instanceof ApiError ? e.message : describeError(e)`。
+// 它存在的唯一理由是 `describeError` 会把**所有** status=0 改写成"请确认服务已启动"，
+// 把 sync.ts 自己那句诚实的"本机程序没在限时内回答。"吃掉 —— 于是这里绕开唯一出口自救。
+// 现在 describeError 按 kind 分档、超时原样透传（见 lib/errors.ts），自救成了多余的
+// 第二真值：同一个失败在同步向导里说短句、在别处说长句。删掉，统一走唯一出口。
 function Title({ children }: { children: React.ReactNode }) {
   return (
     <h2 className="text-15 font-semibold text-slate-900">{children}</h2>

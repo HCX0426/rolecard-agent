@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type AuditRow } from "../api";
 import { Button, Card } from "./ui";
+import { describeError } from "../lib/errors";
 import { formatUtcNaive } from "../lib/quiet";
 
 /** 审计动作的展示分组。匹配规则 = 动作名含关键词（受控词表见 `base/audit.py`）。
@@ -76,7 +77,7 @@ export function AuditPanel() {
     try {
       setRows(await api.get<AuditRow[]>("/api/audit?limit=200"));
     } catch (e) {
-      setStatus(`加载失败：${(e as Error).message}`);
+      setStatus(`加载失败：${describeError(e)}`);
     } finally {
       setLoading(false);
     }

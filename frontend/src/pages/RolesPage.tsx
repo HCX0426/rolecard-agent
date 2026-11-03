@@ -184,7 +184,7 @@ export default function RolesPage({
     setRoles(await api.get<RoleCard[]>("/api/roles"));
   }
   useEffect(() => {
-    load().catch((e) => setStatus({ ok: false, msg: `加载失败：${e.message}` }));
+    load().catch((e) => setStatus({ ok: false, msg: `加载失败：${describeError(e)}` }));
     api.get<ToolCatalog>("/api/tools/catalog").then(setCatalog).catch(() => {});
     // 同 PetPage：形状不对就当没读到，那一格整条不出现（不给一个只能选默认的死下拉）。
     api

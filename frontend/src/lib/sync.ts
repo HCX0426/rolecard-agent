@@ -162,8 +162,11 @@ async function toLocal<T>(method: string, url: string, body?: unknown, timeout =
       signal: controller.signal,
     });
   } catch (e) {
-    if ((e as Error).name === "AbortError") throw new ApiError(0, "本机程序没在限时内回答。");
-    throw new ApiError(0, `网络错误：${describeError(e)}`);
+    // kind 必须标：这条的 message 自己写得够诚实（"没在限时内回答"），但下游
+    // describeError 从前只看 status=0 就把它换成"请确认服务已启动"——同步程序只是慢，
+    // 不是没起，让用户去重启服务同样是反话（见 api/index.ts 的 ApiErrorKind）。
+    if ((e as Error).name === "AbortError") throw new ApiError(0, "本机程序没在限时内回答。", "timeout");
+    throw new ApiError(0, `网络错误：${describeError(e)}`, "network");
   } finally {
     clearTimeout(timer);
   }

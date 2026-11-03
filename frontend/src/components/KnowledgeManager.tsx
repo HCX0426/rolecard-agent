@@ -61,7 +61,7 @@ export function KnowledgeManager() {
   }, []);
 
   useEffect(() => {
-    load().catch((e) => say("error", `加载失败：${e.message}`));
+    load().catch((e) => say("error", `加载失败：${describeError(e)}`));
   }, [load]);
 
   /** 新建一个空作用域（POST /api/knowledge/scopes，幂等）。 */

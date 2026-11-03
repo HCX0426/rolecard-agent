@@ -26,7 +26,6 @@ import {
   save,
   tryConnect,
 } from "../lib/dataSource";
-import { ApiError } from "../api";
 import {
   formatLastSync,
   readLastSync,
@@ -36,7 +35,7 @@ import {
   type LeftConflict,
   type ReconcileResult,
 } from "../lib/sync";
-import { describeError } from '../lib/errors';
+import { describeError } from "../lib/errors";
 
 
 export default function DataSourceSwitch() {
@@ -76,13 +75,10 @@ export default function DataSourceSwitch() {
         saveLastSync({ pushed: r.pushed, pulled: r.pulled });
         tick((n) => n + 1);
       })
-      .catch((e: unknown) =>
-        setRecWhy(
-          e instanceof ApiError
-            ? `登录同步未完成：${e.message}`
-            : `登录同步未完成：${describeError(e)}`,
-        ),
-      )
+      // 两个分支从前给的**不是**同一句话（ApiError 那支绕开 describeError，因为后者
+      // 会把 status=0 一律换成"请确认服务已启动"）。现在超时原样透传，两支文本相同 ——
+      // 这个分叉就成了死重复，收成一句（describeError 对非 Error 也有 fallback，不会炸）。
+      .catch((e: unknown) => setRecWhy(`登录同步未完成：${describeError(e)}`))
       .finally(() => setSyncing(false));
     // uploadTarget/target 只依赖 localStorage 的登录态，cloud 翻转即是它的变化
     // eslint-disable-next-line react-hooks/exhaustive-deps

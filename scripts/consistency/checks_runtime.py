@@ -866,6 +866,124 @@ _MIN_PATH_REFS = 2
 _MIN_RAISE_NODES = 120
 
 
+#: 生产侧 `new ApiError(0, …)` 至少要有这么多处，读出来少于它就判红。
+#: 现网实测 2026-11-03：api/index.ts 4 处 + lib/sync.ts 3 处 = 7。下限取 5 是给
+#: 合理的合并留余地，同时挡住"解析器塌了 → 一个都没读到 → 全绿"（本仓 consistency
+#: 家族的既有纪律：读不出输入不等于通过）。
+_MIN_ZERO_STATUS_CALLS = 5
+
+
+def _top_level_args(call: str) -> list[str]:
+    """把 `a, b \`x\`, f(1,2)` 这样的实参表按**顶层逗号**切开（括号与引号内不算）。"""
+    args: list[str] = []
+    depth = 0
+    quote = ""
+    cur: list[str] = []
+    for ch in call:
+        if quote:
+            cur.append(ch)
+            if ch == quote:
+                quote = ""
+            continue
+        if ch in "\"'`":
+            quote = ch
+            cur.append(ch)
+        elif ch in "([{":
+            depth += 1
+            cur.append(ch)
+        elif ch in ")]}":
+            depth -= 1
+            cur.append(ch)
+        elif ch == "," and depth == 0:
+            args.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    args.append("".join(cur))
+    return [a.strip() for a in args]
+
+
+def check_zero_status_apierror_has_kind() -> None:
+    """`new ApiError(0, …)` 必须带第三个实参（kind），生产代码里一处不许漏。
+
+    为什么立这条（2026-11-03 审查 A1）：`status = 0` 这一个值同时装着**三件不同的事**
+    —— 断网/后端没起、前端等到超时（后端很可能还在跑）、本机同步程序没在限时内回答。
+    于是唯一出口 `describeError` 只能按 status 分档，那一档给的
+    "网络错误：后端连不上，请确认服务已启动" 对**超时**是反话：上传/抽取到点时后端
+    已经把文件落了盘、还在建索引（`api/index.ts:74-78` 的立论写得很清楚），这句话
+    催用户去重启服务并照着"假失败"再点一次。措辞住在抛出方、语义却只有抛出方知道
+    —— 所以语义必须由抛出方标出来，而不是让下游猜。
+
+    判据（与 `single-source literals` 同一取向：读 AST 之外的**结构**，不数原文）：
+      * 生产代码（`frontend/src/**` 的 .ts/.tsx，**排除测试件与 dist**）里每一处
+        `new ApiError(` 的**第一个实参**若是字面 `0`，就必须有第三个实参且含
+        `"timeout"` / `"network"` 之一；
+      * 顶层逗号切分（模板串与嵌套括号不吃进去），不是正则一刀切；
+      * 读出的调用数 < `_MIN_ZERO_STATUS_CALLS` ⇒ 判红（解析器塌了不许当通过）；
+      * 测试件豁免：mock 载荷是自足的假数据，而 `errors.test.ts` 里**故意**留了一条
+        不带 kind 的用例，那是在测"分不清就不赌"这一路。
+    """
+    root = ROOT / "frontend" / "src"
+    offenders: list[str] = []
+    calls = 0
+    zero_calls = 0
+    for path in sorted(root.rglob("*")):
+        if path.suffix not in (".ts", ".tsx") or not path.is_file():
+            continue
+        rel = path.relative_to(ROOT).as_posix()
+        if ".test." in rel or "dist" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        pos = 0
+        while True:
+            i = text.find("new ApiError(", pos)
+            if i < 0:
+                break
+            pos = i + len("new ApiError(")
+            # 括号配对取实参表（模板串里的括号不算，所以按引号状态跳过）
+            depth = 1
+            quote = ""
+            j = pos
+            while j < len(text) and depth > 0:
+                ch = text[j]
+                if quote:
+                    if ch == quote:
+                        quote = ""
+                elif ch in "\"'`":
+                    quote = ch
+                elif ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                j += 1
+            if depth != 0:
+                offenders.append(f"{rel} 有一处 new ApiError( 括号不配对，这条尺子读不动它")
+                continue
+            args = _top_level_args(text[pos : j - 1])
+            calls += 1
+            if args and args[0] == "0":
+                zero_calls += 1
+                kind = args[2] if len(args) >= 3 else ""
+                if '"timeout"' not in kind and '"network"' not in kind:
+                    line = text[:i].count("\n") + 1
+                    offenders.append(f"{rel}:{line} status=0 却没标 kind（实参 {len(args)} 个）")
+    if calls < _MIN_ZERO_STATUS_CALLS:
+        offenders.insert(
+            0, f"只读出 {calls} 处 new ApiError（下限 {_MIN_ZERO_STATUS_CALLS}）—— 读法坏了"
+        )
+    out(
+        "status=0 ApiError has kind",
+        not offenders,
+        "; ".join(offenders[:5])
+        if offenders
+        # 两个数各说各的：`calls` 是扫到的全部抛点，其中 status=0 的才需要 kind。
+        # 写成 "5/8 处都标了 kind" 会让人以为有 3 处漏标 —— 读数的措辞也算文案。
+        else f"{calls} 处 new ApiError 里 {zero_calls} 处是 status=0，全部标了 kind",
+    )
+    if offenders:
+        fails.append(f"ApiError(0) without kind: {offenders}")
+
+
 def check_error_message_paths_resolve() -> None:
     """`raise` / `assert` 文本里指出的源码路径，必须在磁盘上存在。
 

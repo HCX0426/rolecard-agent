@@ -170,7 +170,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
     setTotal(res.total);
   }, [page]);
   useEffect(() => {
-    load().catch((e) => setStatus({ ok: false, msg: `加载失败：${e.message}` }));
+    load().catch((e) => setStatus({ ok: false, msg: `加载失败：${describeError(e)}` }));
   }, [load]);
 
   function startEdit(indexId: string, current: { index_value: number | null; value_text: string | null; unit: string | null; ref_range: string | null; is_verified: number | boolean }) {
@@ -613,7 +613,7 @@ function GenericDomainData({
   }, [domain, page]);
 
   useEffect(() => {
-    load().catch((e) => setStatus({ ok: false, msg: `加载失败：${e.message}` }));
+    load().catch((e) => setStatus({ ok: false, msg: `加载失败：${describeError(e)}` }));
   }, [load]);
 
   function fmt(r: GenericRecord): string {

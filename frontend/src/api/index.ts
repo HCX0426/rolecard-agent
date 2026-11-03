@@ -27,10 +27,21 @@ import type { ReachoutsPage } from "./reachouts";
 import type { ApprovalRow, ApprovalsPage } from "./approvals";
 import type { ShellRelease, UpdateCheck } from "./release";
 
+/**
+ * `kind` 不是装饰：`status = 0` 这一个值从前同时装着**三件不同的事** ——
+ * 断网 / 后端没起、前端等到超时（后端很可能还在跑）、本机同步程序没在限时内回答。
+ * 于是 `describeError` 只能按 status 分档，而那一句"请确认服务已启动"对超时是**反话**
+ * （见 lib/errors.ts 同一处）：上传/抽取到点时后端仍在落盘与建索引，界面却让用户去
+ * 确认服务、用户于是照着假失败再点一次 —— 正是 74-78 行立论要防的那件事。
+ * 措辞可以各说各的，**语义必须由抛出方标出来**（只有抛的地方知道自己为什么抛）。
+ */
+export type ApiErrorKind = "timeout" | "network";
+
 export class ApiError extends Error {
   constructor(
     public status: number,
     detail: string,
+    public kind?: ApiErrorKind,
   ) {
     super(detail);
   }
@@ -116,9 +127,10 @@ async function request<T>(
       throw new ApiError(
         0,
         `已等待 ${secs}s 仍未返回，前端停止等待（那一端可能仍在处理：稍后刷新看看结果）`,
+        "timeout",
       );
     }
-    throw new ApiError(0, `网络错误：${(e as Error).message}`);
+    throw new ApiError(0, `网络错误：${(e as Error).message}`, "network");
   } finally {
     clearTimeout(timer);
   }
@@ -155,7 +167,10 @@ async function requestBlob(
   try {
     res = await fetch(apiBase() + url, { method, headers: { ...authHeaders() } });
   } catch (e) {
-    throw new ApiError(0, `网络错误：${(e as Error).message}`);
+    // 这条**没有**超时（不像 request 带 REQUEST_TIMEOUT_MS）：catch 里只可能是断网一类，
+    // 不会是 AbortError，所以 kind 直接标 network。将来若要给它加限时，先看
+    // LONG_REQUEST_TIMEOUT_MS 那段注释 —— 诊断包在后端是长任务，套 30s 会造出新的假失败。
+    throw new ApiError(0, `网络错误：${(e as Error).message}`, "network");
   }
   if (!res.ok) {
     const fallback = `${res.status} ${res.statusText}`;
