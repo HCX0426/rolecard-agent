@@ -66,7 +66,7 @@ for _stream in (sys.stdout, sys.stderr):
 NPM = "npm.cmd" if platform.system() == "Windows" else "npm"
 
 # (名称, 命令, 模式) —— "both"=快/全量都跑; "fast"=仅快门禁; "full"=仅全量
-# 覆盖率那趟只在 full 跑，且 _src_changed() 为 False 时跳过（见 main）。
+# 覆盖率那趟只在 full 跑，且 _coverage_inputs_changed() 为 False 时跳过（见 main）。
 STEPS: list[tuple[str, list[str], str]] = [
     ("ruff", [PY, "-m", "ruff", "check", "."], "both"),
     # 三档 mypy 各用各的缓存目录（`--cache-dir`）。并发共写一份 `.mypy_cache` 是 2026-10-08
@@ -105,6 +105,11 @@ STEPS: list[tuple[str, list[str], str]] = [
     # 把"hover 得到"误当"看得见"（这次就误判过一轮）。这步把三条边的读数 + "内容充满时必须
     # 等于旧常数 132/140"那条安全阀钉死，12 条读数实测 0.3s。
     ("shell 桌宠趴边几何", [NPM, "run", "test:dock"], "full"),
+    # 更新反馈判据（2026-11-03 审查 A-6/A-8）。同样是 typecheck 守不住的那一类：
+    # "同一次失败弹两条 toast"与"下载失败被冒名成检查失败"都是**类型全对、语义错**。
+    # 它测判据本身（`updateFeedback.ts`），接线那一半由 consistency 的
+    # 「updater failure readout has one owner」盯着 —— 两边问的是不同的问题，缺一不可。
+    ("shell 更新反馈判据", [NPM, "run", "test:feedback"], "full"),
     # **不在命令行再补 `-q`**：`pyproject.toml` 的 `addopts` 已经带了一个 `-q`，而 pytest 的
     # quiet 是累加的 —— 两个 `-q` 就是 verbosity -2，会把最后那行 `1320 passed in 177.31s`
     # 连同失败时的 `FAILED tests/...` 一起吞掉（实测：本仓整份输出到 `[100%]` 就直接收尾）。
@@ -229,13 +234,14 @@ def _git(*args: str) -> str:
     `encoding="utf-8"` 不是可选的：本仓有中文文件名，git 吐出来的是 UTF-8，而 Windows 上
     `text=True` 默认按 GBK 解 —— 解码在**读子进程输出的那个线程**里抛 UnicodeDecodeError，
     主线程只会拿到一份被截断的 stdout（实测 09-25 就在 `diff --name-only` 上中招）。
-    截断不是"少几行"，`_src_changed()` 会拿着半份清单判断要不要跑覆盖率，那是一次静默失效。
+    截断不是"少几行"：`_coverage_inputs_changed()` 会拿着半份清单判断要不要跑覆盖率，
+    那是一次静默失效。
 
     `-c core.quotepath=false` 是**同一条病的另一半**（2026-10-09 由 CI 现场照出，
     run 37852226595）：这个配置在 Linux 上默认 **true**（Git for Windows 默认 false），true 时
     git 把非 ASCII 路径输出成**带双引号的八进制转义** —— `"data/lore/01-\345\237\272…"`。
     于是 `p.startswith("src/")` 对中文路径**永远判假**：改动清单里那些文件既不算"改了 src"、
-    也不算"改了别的"，而是直接从判据眼里消失。`_src_changed()` 中招就是覆盖率被静默跳过
+    也不算"改了别的"，而是直接从判据眼里消失。`_coverage_inputs_changed()` 中招就是覆盖率被静默跳过
     （= 变弱，正是本函数上面那段注释不许发生的事）。本机复现不出来，只在 CI 上发作 ——
     关掉它对 ASCII 路径毫无影响，所以这是一处零成本的收口。
     """
@@ -247,11 +253,11 @@ def _git(*args: str) -> str:
         encoding="utf-8",
         errors="replace",
         # 60s 上限（2026-10-09）：`_git` 是全部门禁里**唯一没有超时**的 subprocess，而它跑在
-        # 每一步之前（改动清单、`_src_changed`、dist 同步、parity…）。git 在坏 lockfile/超大
+        # 每一步之前（改动清单、覆盖率跳过判据、dist 同步、parity…）。git 在坏 lockfile/超大
         # 未跟踪树/凭据助手弹窗上就是能吊住不动的 —— 那正好是"每步预算都界得住，整趟却照样
-        # 被杀"的形状（run 37823819338）。超时抛 TimeoutExpired，调用方各有兜底：`_changed_paths`
-        # 的兜底是 None→保守全量，`_src_changed` 的兜底是 True→照跑覆盖率 —— 全是**变慢不变弱**，
-        # 而"吊死整条 job"是变没证据。
+        # 被杀"的形状（run 37823819338）。超时抛 TimeoutExpired，调用方各有兜底：
+        # `_changed_paths` 的兜底是 None→保守全量，覆盖率跳过判据的兜底是 True→照跑覆盖率 ——
+        # 全是**变慢不变弱**，而"吊死整条 job"是变没证据。
         timeout=60,
     )
     if proc.returncode != 0:
@@ -259,34 +265,52 @@ def _git(*args: str) -> str:
     return proc.stdout
 
 
-def _src_changed() -> bool:
-    """覆盖率只量 ``src/``。自**上次覆盖率实跑**以来没碰 ``src/`` 时那趟是纯重跑，可跳过。
+#: 覆盖率数据的**输入面**（跳过判据问的就是"这些动过没有"）。
+#: 为什么不止 `src/`（2026-11-04 现形）：覆盖率量的是 src/，可那份**数据**是
+#: `src/` + `tests/` + `pyproject.toml`（口径声明在那儿）共同产出的。从前判据只看
+#: `src/`，于是"给某行补了用例、src 不动"这一格被跳过覆盖率，而下一步的改动行覆盖率
+#: 拿**上一趟**的旧数据判它 → 红在一条已经修好的改动上，还教人"去补用例"（用例已在）。
+#: 同一格的反方向更危险：删掉一支用例、src 不动 ⇒ 旧数据说"已覆盖" ⇒ **假绿**。
+_COVERAGE_INPUT_PREFIXES = ("src/", "tests/")
+_COVERAGE_INPUT_FILES = frozenset({"pyproject.toml"})
 
-    判据 2026-09-28 修过一个盲区：原版兜底看「最近一个提交」，于是「提交 src 改动 → 再提交
-    一个纯 docs 的」就把 src 的改动遮住了 —— 装前全量门禁静默跳过覆盖率，而那恰是十次打包
-    规矩里唯一必须实跑它的时刻。现改为记录**上次覆盖率实跑时的 HEAD**（build/ 不入库）：
+
+def _touches_coverage_inputs(paths: list[str]) -> bool:
+    """这批改动路径里有没有覆盖率的输入。"""
+    return any(p.startswith(_COVERAGE_INPUT_PREFIXES) or p in _COVERAGE_INPUT_FILES for p in paths)
+
+
+def _coverage_inputs_changed() -> bool:
+    """自**上次覆盖率实跑**以来，覆盖率的输入面有没有变。没变 ⇒ 那趟是纯重跑，可跳过。
+
+    判据修过三个盲区，都朝"宁可多跑"一侧倒：
+      * 2026-09-28：原版兜底看「最近一个提交」，于是「提交 src 改动 → 再提交一个纯 docs
+        的」就把 src 的改动遮住了 —— 装前全量门禁静默跳过覆盖率，而那恰是十次打包规矩里
+        唯一必须实跑它的时刻。改为记录**上次覆盖率实跑时的 HEAD**（marker 在 build/，不入库）。
+      * `R28-27`（09-29）：`last == head` 那条短路从前排在查工作树**之前**，于是"改 src
+        不提交再跑一次"照样返回跳过。修法是**换顺序**：工作树先算。
+      * 2026-11-04：输入面从 `src/` 扩到 `src/ + tests/ + pyproject.toml`（上面那段）。
     marker 缺失（首次 / CI / 清过 build/）一律保守跑；git 挂了等任何不确定也一律 True
     —— fail-safe 不变，绝不因探测失误而悄悄削弱覆盖率安全网（具体那条线是多少见
     pyproject 的 ``fail_under``，本函数不读它）。
 
-    同一族的第二个盲区（`R28-27`，09-29 现测复现）：HEAD 相等那条短路**排在查工作树之前**，
-    于是"覆盖率跑过 → 改 src 不提交 → 再跑一次门禁"照样返回"跳过"（marker == HEAD，直接就
-    return False 了，那几行查 `git diff HEAD` 的代码根本不执行）。修法不是补条件而是**换顺序**：
-    工作树这一趟先算，因为它要防的正是"HEAD 没动"那一刻。
+    扫描**复用** `_changed_paths()` 而不是自己再写一遍 `diff` + `ls-files`：从前这两处
+    各写同一个扫描，`_changed_paths` 的 docstring 自称「与 `_src_changed` 同一口径」
+    （那是重命名**之前**的旧名，此处保留原话以免改了名之后这句话变成无主语）—— 而
+    "同一口径"当时是靠人手动维持的，正是本仓反复在抓的形状。现在口径由**调用关系**保证
+    （这里只调它一次），不再靠记得。它也已经支持 `base..HEAD` 与路径归一，正是这里要的
+    两种问法。
     """
     try:
         head = _git("rev-parse", "HEAD").strip()
         # 未提交（含已暂存）与未跟踪：两条都要，Vite 那类"净增新命名产物"的形状同理。
-        work = _git("diff", "--name-only", "HEAD").splitlines()
-        work += _git("ls-files", "--others", "--exclude-standard").splitlines()
-        dirty_src = any(p.startswith("src/") for p in work)
+        dirty = _touches_coverage_inputs(_changed_paths())
         if COV_MARKER.exists():
             last = COV_MARKER.read_text(encoding="utf-8").strip()
             if last == head:
-                return dirty_src  # HEAD 没动：工作树里有没有 src 就是全部判据
+                return dirty  # HEAD 没动：工作树里有没有输入面改动就是全部判据
             if last:
-                changed = _git("diff", "--name-only", f"{last}..HEAD").splitlines()
-                return dirty_src or any(p.startswith("src/") for p in changed)
+                return dirty or _touches_coverage_inputs(_changed_paths(base=last))
         # 没有 marker（首次 / CI / 清过 build/）：保守跑一趟并从此留下基准。
         return True
     except Exception:
@@ -298,7 +322,8 @@ def _src_changed() -> bool:
 #: 为什么只在改了 src/ 时挑，且**挑不出来就退回全量**：这一步买的是一分钟量级的本地反馈，
 #: 代价是"少跑的那些文件里可能有一条本来会红"。所以判据全部朝保守一侧倒 ——
 #: 任何一处不确定（git 查不动、改了横切面、模块找不到同名测试、挑出来的比例太高）
-#: 都退回全量。这条纪律与 `_src_changed()` 是同一条：**探测失误只许让门禁更慢，不许让它更弱**。
+#: 都退回全量。这条纪律与 `_coverage_inputs_changed()` 同一条：
+#: **探测失误只许让门禁更慢，不许让它更弱**。
 _SRC_PREFIX = "src/rolecard_agent/"
 #: 地基包：上下各层都 import 它们，"改了它只跑同名的测试"是错的（`base/paths` 一次改动
 #: 就牵动装配、打包、OCR 三条线）。
@@ -317,9 +342,11 @@ _MACHINE_ARTIFACTS = frozenset({"docs/gate-readings.json"})
 
 
 def _changed_paths(base: str | None = None) -> list[str]:
-    """工作树里的改动（未提交含已暂存 + 未跟踪），与 `_src_changed` 同一口径。
+    """改动清单：工作树（未提交含已暂存 + 未跟踪），或给定 `base` 时问提交面。
 
-    `_git` 失败会抛 —— 调用方按"不确定 = 跑全量"处理，不在这里吞掉。
+    现在是**唯一**那份路径扫描 —— `_coverage_inputs_changed()` 与"改哪查哪"两条判据
+    都调它（从前各写一遍，口径靠人维持）。`_git` 失败会抛，调用方按"不确定 = 保守"处理，
+    不在这里吞掉。
 
     给 `base` 时换一种问法：**base..HEAD 的提交面**（2026-10-31 排程教义的 CI 形态）。
     runner 上工作树永远是干净的（代码已提交），工作树口径恒回空清单 —— "改哪查哪"
@@ -378,7 +405,7 @@ def plan_backend_pytest(changed: list[str] | None, tests: list[str]) -> tuple[st
       * **subset** —— 只改了 `src/rolecard_agent/**.py` 与/或 `tests/**.py`，
         `select_affected` 能挑出非空清单（挑不出照旧 full，五条保守判据一字未动）。
       * **full** —— 其余一切（含 `changed is None` 的 git 失败档、空清单档）。
-    与 `_src_changed()` 同一条铁律：**探测失误只许让门禁更慢，不许让它更弱** ——
+    与 `_coverage_inputs_changed()` 同一条铁律：**探测失误只许让门禁更慢，不许让它更弱** ——
     默认值永远是 full，skip/subset 都得"问得出且问得准"才成立。
     """
     if changed is None:
@@ -579,6 +606,11 @@ STEP_TIMEOUTS: dict[str, float] = {
     "shell updater 清理判据": 180.0,
     # 趴边几何那步 = 同一个 build + 十二条纯函数读数，实测 0.3s；与上面两步同档。
     "shell 桌宠趴边几何": 180.0,
+    # 更新反馈判据那步 = 同一个 build + 十三条纯函数读数，本机实测 1.4s 墙钟
+    # （与 test:cleanup 的 1.4s 同量级 —— 两者都是"一次 tsc 全量 build + 十几条读数"）；
+    # 同档 180。不登记就掉进 DEFAULT 900，而 606 行那条注释已经说明"查不到 = 上限
+    # 静默失效"是本仓认过的缺陷形状，不是可接受的默认。
+    "shell 更新反馈判据": 180.0,
     # pytest 快档：三趟绿 run 实测 77.4 / 82.4 / 84.2s，360 ≈ 4.3×（xdist 满载抖动那回
     # 的教训在 22c267d：慢是真实存在的形状，但 900 的上限从未被健康趟用过一半）。
     "pytest(-x, 无覆盖率)": 360.0,
@@ -605,6 +637,11 @@ STEP_TIMEOUTS: dict[str, float] = {
     "文档命令可跑性": 120.0,  # 执行臂两处 venv（~10s）+ init_db（~5s），实测 4.4~5.5s
     "随包后端 parity": 120.0,  # 实测 0.5~0.7s；120 纯防挂死（要解包比对）
     "依赖审计": 700.0,  # 脚本内 pip-audit 硬超时 600s，这里留善后余量（实测 2.5~5.7s）
+    # npm 那一臂同形：`audit_deps_npm.py:87` 内部硬超时 600s，本机实测 3.8s。
+    # 从前表里**没这一格**（普查 STEP_TIMEOUTS 时量出来的），于是一路掉进 DEFAULT 900 ——
+    # 与「openapi 契约同步」那格的注释记的是同一族缺陷。由 consistency 的
+    # 「gate step lists aligned」钉住：新增步骤忘登记 = 红，不再靠人记得。
+    "npm 依赖审计": 700.0,
     "密钥扫描": 420.0,  # 脚本内 gitleaks 硬超时 300s + 首跑下载（实测 1.3~1.8s）
     "真机冒烟(14 项)": 900.0,
 }
@@ -1132,6 +1169,9 @@ CI_SKIP = frozenset(
         # 与 shell typecheck 同一条理由：要 node + 先 build（tsc 出 out/）。桌宠趴边几何那步
         # 跑的是同一个 npm script（`npm run test:dock`），由 frontend job 里那块一起跑。
         "shell 桌宠趴边几何",
+        # 与上两条同一条理由：要 node + 先 build。这一步的 npm script
+        # （`npm run test:feedback`）由 frontend job 里那块一起跑。
+        "shell 更新反馈判据",
         # 与 shell typecheck 同一条理由：要 **node**（npm audit 问 advisory 库），
         # 而 gate --ci 那趟不装 node；由 frontend job 里紧邻「壳 typecheck」的那一步
         # 跑同一个脚本（`scripts/tools/audit_deps_npm.py`）。
@@ -1307,7 +1347,7 @@ def main() -> int:
             (not args.fast)
             and (not args.ci)
             and name.startswith("pytest(覆盖率")
-            and not _src_changed()
+            and not _coverage_inputs_changed()
         )
 
     def _resolve(name: str, cmd: list[str]) -> tuple[str, list[str]]:
@@ -1401,7 +1441,7 @@ def main() -> int:
             failures.append(name)
             break  # 失败即停：后面的步骤在同一个问题上只会重复失败
         if name.startswith("pytest(覆盖率"):
-            # 记下"覆盖率这次是在哪个 HEAD 上实跑的"：`_src_changed` 的判据靠它，
+            # 记下"覆盖率这次是在哪个 HEAD 上实跑的"：`_coverage_inputs_changed` 的判据靠它，
             # 纯 docs 的后续提交才不会再把 src 的改动遮住。写不了 marker 只会让
             # 下次多跑一趟覆盖率，不是错误。
             with contextlib.suppress(Exception):

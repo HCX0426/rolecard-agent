@@ -44,7 +44,7 @@ def _src(rel: str) -> str:
 
 def test_gate的git单点关掉quotepath() -> None:
     """`_git()` 是 gate 全部 git 查询的**单点** —— 一处带开关，`_changed_paths()` 与
-    `_src_changed()` 两条受害路径一起收口。"""
+    `_coverage_inputs_changed()` 两条受害路径一起收口。"""
     src = _src("scripts/gate.py")
     assert '"core.quotepath=false"' in src, (
         "gate._git 又回到不锁 quotepath：Linux 上中文路径被转义 ⇒ "

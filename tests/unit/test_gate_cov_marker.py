@@ -85,47 +85,83 @@ def test_dirty_src_forces_a_rerun_even_when_head_has_not_moved(repo: Path) -> No
     """**这条就是缺陷本尊**：marker == HEAD 且 src 有未提交改动 ⇒ 必须重跑。"""
     _mark_head(repo)
     (repo / "src" / "app.py").write_text("VALUE = 3\n", encoding="utf-8")
-    assert gate._src_changed() is True, "HEAD 没动就被判成「没变化」，那一趟覆盖率是假绿"
+    assert gate._coverage_inputs_changed() is True, (
+        "HEAD 没动就被判成「没变化」，那一趟覆盖率是假绿"
+    )
 
 
 def test_untracked_new_file_in_src_counts(repo: Path) -> None:
     """未跟踪的新文件也算：`git diff` 那一族看不见它（与 dist 同步那条同一个盲区）。"""
     _mark_head(repo)
     (repo / "src" / "brand_new.py").write_text("NEW = 1\n", encoding="utf-8")
-    assert gate._src_changed() is True, "净增一个 src 新文件而覆盖率不重跑"
+    assert gate._coverage_inputs_changed() is True, "净增一个 src 新文件而覆盖率不重跑"
 
 
 def test_clean_worktree_at_the_same_head_still_skips(repo: Path) -> None:
     """省时间那一半还得保住：HEAD 没动且工作树干净 ⇒ 跳过（否则每次全量都白跑一趟）。"""
     _mark_head(repo)
-    assert gate._src_changed() is False
+    assert gate._coverage_inputs_changed() is False
 
 
 def test_uncommitted_docs_only_still_skips(repo: Path) -> None:
     """只改 docs（未提交）同样跳过：判据是 src，不是「文件动没动」。"""
     _mark_head(repo)
     (repo / "README.md").write_text("docs only\n", encoding="utf-8")
-    assert gate._src_changed() is False
+    assert gate._coverage_inputs_changed() is False
+
+
+def test_uncommitted_test_only_change_forces_a_rerun(repo: Path) -> None:
+    """只改 tests/ 也必须重跑 —— 这条是 2026-11-04 现测补的洞（当时**红**）。
+
+    现形方式不是"少跑一趟"，是全量门禁**红在一件已经修好的事上**：给 `qq.py` 一行降级
+    代码补了用例，覆盖率那步却因"src 没变"被跳过，下一步的改动行覆盖率拿**上一趟**的
+    `.coverage` 判它仍未覆盖 —— 报"去补用例"，而用例已经在那儿了。
+
+    判据为什么该含 tests/：覆盖率数据是 `src/` 与 `tests/` **共同**产出的，而
+    `scripts/diff_coverage.py` 的基线是 `origin/main`（跨度十几个提交）、分母是 src 改动行。
+    它第 79 行写着"覆盖率那步刚量完的 `.coverage` 就是当前树，天然对齐" —— 这句
+    承重假设**没有任何判据保证**：跳过判据只看 src/，于是"tests 变了、src 没变"这一格
+    里数据不是当前树的。方向上更该警惕的是**假绿**：把某个覆盖某行的用例删掉、src 不动，
+    旧数据会说"已覆盖"，改动行覆盖率就静默放行。
+
+    与 `_coverage_inputs_changed` docstring 那条铁律同向：**探测失误只许让门禁更慢，不许让它更弱**。
+    多跑一趟是 6 分钟，少跑一趟是安全网消失。
+    """
+    _mark_head(repo)
+    (repo / "tests").mkdir(parents=True, exist_ok=True)
+    (repo / "tests" / "test_app.py").write_text(
+        "def test_x():\n    assert True\n", encoding="utf-8"
+    )
+    assert gate._coverage_inputs_changed() is True, (
+        "只改了 tests/ 就跳过覆盖率 ⇒ 下一步拿旧数据判新用例"
+    )
+
+
+def test_committed_test_only_change_forces_a_rerun(repo: Path) -> None:
+    """同一格的另一半：**提交过**的 tests 改动也要重跑（marker 停在旧 HEAD 那一路）。"""
+    _mark_head(repo)
+    _commit_change(repo, "tests/test_app.py")
+    assert gate._coverage_inputs_changed() is True
 
 
 def test_committed_src_since_the_marker_reruns(repo: Path) -> None:
     """marker 停在旧 HEAD、之后提交了 src 改动 ⇒ 重跑（原版修过的那一半）。"""
     _mark_head(repo)
     _commit_change(repo, "src/app.py")
-    assert gate._src_changed() is True
+    assert gate._coverage_inputs_changed() is True
 
 
 def test_committed_docs_since_the_marker_skips(repo: Path) -> None:
     """提交过但只碰 docs ⇒ 仍跳过（「docs 提交遮住 src」那个误判的反面）。"""
     _mark_head(repo)
     _commit_change(repo, "docs/note.md")
-    assert gate._src_changed() is False
+    assert gate._coverage_inputs_changed() is False
 
 
 def test_missing_marker_is_conservative(repo: Path) -> None:
     """没有 marker（首次 / CI / 清过 build/）一律跑。"""
     assert not (repo / "build" / ".cov-last-sha").exists()
-    assert gate._src_changed() is True
+    assert gate._coverage_inputs_changed() is True
 
 
 def test_broken_git_is_conservative(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -134,4 +170,4 @@ def test_broken_git_is_conservative(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     nowhere.mkdir()
     monkeypatch.setattr(gate, "ROOT", nowhere)
     monkeypatch.setattr(gate, "COV_MARKER", nowhere / "build" / ".cov-last-sha")
-    assert gate._src_changed() is True
+    assert gate._coverage_inputs_changed() is True
