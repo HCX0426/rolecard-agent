@@ -355,7 +355,7 @@ jobs:
         working-directory: shell
         run: npm ci && npm run typecheck
 
-      - name: 壳升级清理判据（真跑十五条读数，红就 exit 1）
+      - name: 壳升级清理判据（纯函数读数，红就 exit 1）
         # typecheck 守不住"删对了什么" —— 类型对、逻辑反是常态，而这里删错东西的代价是
         # 用户重下一整个安装包、或把还没装的下载删掉。与上面那步同一个 job（node 已装、
         # 依赖已 npm ci），`test:cleanup` 自带 build。gate.py 的 CI_SKIP 把同名步骤挡在
@@ -363,7 +363,7 @@ jobs:
         working-directory: shell
         run: npm run test:cleanup
 
-      - name: 壳桌宠趴边几何（真跑十二条读数，红就 exit 1）
+      - name: 壳桌宠趴边几何判据（纯函数读数，红就 exit 1）
         # 与上一步同一个形状：typecheck 守不住"方向对不对"。三条边的式子写反（right/left
         # 互换、bottom 误写成 y+h−vis）**类型全对**，代价是"趴边后屏幕上零像素"—— 用户
         # 看到的就是一只不见了（2026-11-01 真发生过：Live2D 的人物只占画布中间 44×167，
@@ -372,7 +372,7 @@ jobs:
         working-directory: shell
         run: npm run test:dock
 
-      - name: 壳更新反馈判据（真跑十三条读数，红就 exit 1）
+      - name: 壳更新反馈判据（纯函数读数，红就 exit 1）
         # 与上两步同一个形状：typecheck 守不住"一次失败弹几条 toast"。2026-11-03 审查
         # A-8 的现形就是同一次失败有两个认领者（error 监听器与调用方的 .catch 各弹一条），
         # 而"先 emit 再 throw"住在 electron-updater 的编译产物里 —— 升级那个包就可能复活。
@@ -380,6 +380,17 @@ jobs:
         # 「updater failure readout has one owner」盯着（Python 读 TS 原文）。两边缺一不可。
         working-directory: shell
         run: npm run test:feedback
+
+      - name: 壳导航护栏与后端地址归一判据（R102-73 那类"整包不可用"的回归位）
+        # 与上三步同一个形状：typecheck 守不住 `return false` 与 `return true` 的区别，
+        # 而这一次错的是**放行面**：批 13 的护栏把自家合法终态拦死，装完机控制台停在
+        # 「正在打开控制台…」，当时仓库里没有任何测试钉这个纯函数 —— 错误一路进了安装包，
+        # 靠用户肉眼发现（`scripts/js/shell_quit_smoke.js` 头部记着它当年当门禁试两回撤回、
+        # 回归位改放纯函数表的经过）。2026-11-04 才真有那张表。
+        # 本轮 A-2 的另一半（`ROLECARD_BACKEND_URL` 不带 scheme 被解析成 file:// 相对路径）
+        # 也在这一支：它证明的是"归一之后护栏放行"，接缝两侧一起钉。
+        working-directory: shell
+        run: npm run test:navigation
 
 
       - name: npm 依赖漏洞扫描（新披露 = 红，红就 exit 1）

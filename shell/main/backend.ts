@@ -25,10 +25,63 @@ export function endpoint(): { host: string; port: number } {
   return { host: "127.0.0.1", port: envPort() };
 }
 
-/** 控制台地址：着陆页探活成功后跳这里。界面由后端托管，所以壳里不复制一份 dist。 */
+/**
+ * 控制台地址：着陆页探活成功后跳这里，同时是导航护栏认的那一个 origin。
+ * 界面由后端托管，所以壳里不复制一份 dist。
+ */
 export function consoleUrl(): string {
-  return process.env.ROLECARD_BACKEND_URL ?? `http://${endpoint().host}:${endpoint().port}`;
+  return normalizeConsoleUrl(process.env.ROLECARD_BACKEND_URL, endpoint().host, endpoint().port);
 }
+
+/**
+ * 把操作员写的 `ROLECARD_BACKEND_URL` 归一成一个**能解析的绝对 URL**。
+ *
+ * 为什么需要（2026-11-03 实测，不是推演）：`127.0.0.1:8000` 这种不带 scheme 的写法最自然
+ * （`docs/开发流程.md:263` 那行就写着"连哪个端口 / 控制台地址"），而浏览器把它当**相对路径**
+ * 解 —— 着陆页是 `file://` 页面，实测：
+ *
+ *     new URL("127.0.0.1:8000/", "file:///C:/x/index.html")
+ *       -> file:///C:/x/127.0.0.1:8000/        origin = null
+ *
+ * 护栏**放行**（它看到的前缀是 `file://`），然后 `ERR_FILE_NOT_FOUND`：控制台永远打不开，
+ * 界面停在「正在打开控制台…」。这个形状与 `R102-73` 那次"护栏把自己的终态拦了"看着一样、
+ * 根因相反（那次是 deny，这次是 allow 到一个不存在的文件），所以先从真 URL 上量出来再动手。
+ *
+ * 只做机械补全，**不替操作员猜别的**：补完仍解析不出（实测 `"not a url"` →
+ * `http://not a url` 会让 `new URL` 抛；注意 `"中文"` 反而**能**解析成 punycode，
+ * 所以我没有拿它当例子 —— 这行注释里的每个形状都是量出来的）就照原样交出去，
+ * 让着陆页那条 60s 超时的诊断文案出声（它列了 `ROLECARD_BACKEND_CMD` / `ROLECARD_PYTHON`
+ * 等排查方向）—— 静默改回默认值会把"我配错了"变成"它自己连不上"，更难查。
+
+ */
+export function normalizeConsoleUrl(
+  raw: string | undefined,
+  host: string,
+  port: number,
+): string {
+  const text = (raw ?? "").trim();
+  let candidate: string;
+  if (!text) {
+    candidate = `http://${host}:${port}`;
+  } else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) {
+    // 已带 scheme ⇒ 原样：操作员显式写的优先（包括 https）。
+    candidate = text;
+  } else {
+    // 没写 scheme：按 http:// 补（`//host:port` 那种协议相对写法也走这一路）。
+    candidate = `http://${text.replace(/^\/+/, "")}`;
+  }
+  // **一律去掉尾斜杠**（2026-11-04 现测，不是口味）：唯一的消费方 `shell/web/index.html:131`
+  // 拼的是 `${base}/` 与 `${base}/#/pet` —— base 带斜杠就跳成 `http://host//`。
+  // 后端那侧救不了：界面是 `app.mount("/", StaticFiles(...))`（`api/main.py:490`），
+  // StaticFiles 不把 `//` 规范化成 `/`，那就是一个真 404。
+  // 护栏不受这一步影响：`new URL` 对带/不带尾斜杠给**同一个 origin**（实测
+  // `http://127.0.0.1:8000` 与 `http://127.0.0.1:8000/` 的 origin 都是
+  // `http://127.0.0.1:8000`），所以去掉斜杠只为导航正确，不改变放行判据。
+  // 只在末尾是斜杠时去（`https://host/base/` → `https://host/base`），不碰路径中段。
+  return candidate.replace(/\/+$/, "");
+}
+
+
 
 /** 端口上有人应答吗。只做 TCP 层判定 —— 着陆页还要发真请求，两者语义不同。 */
 export function serving(timeoutMs = 300): Promise<boolean> {

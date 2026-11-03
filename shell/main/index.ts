@@ -18,7 +18,7 @@ import path from "node:path";
 import { Backend, consoleUrl, endpoint, serving, type BackendOptions, type Outcome } from "./backend";
 import { canManageLoginItem, loginItemEnabled, setLoginItemEnabled, startedByLoginItem } from "./autostart";
 import { Ollama } from "./ollama";
-import { isAllowedNavigation } from "./navigation";
+import { navigationVerdict } from "./navigation";
 import {
   applyPetPrefs,
   createMainWindow,
@@ -258,14 +258,16 @@ function wireWindow(win: BrowserWindow): void {
   // 与它对后端的"已登录"二次调用。**合法目标不止着陆页**：探活成功后窗要导航去后端那一格
   // （控制台 `http://127.0.0.1:<端口>/`、桌宠同一 origin 的 `#/pet`）—— 批 13 只放 file://
   // 就把这条主路径拦死了（`R102-73`，第二十包装完控制台停在「正在打开控制台…」）。
-  // 判据收在 `navigation.ts::isAllowedNavigation`：file:// 与后端那一个 origin 放行，其余拦，
-  // 拦与放都留一行痕（打包态没有终端，logLine 是唯一证据）。
+  // 判据收在 `navigation.ts::navigationVerdict`：file:// 与后端那一个 origin 放行，其余拦。
+  // 拦有两种因（远程目标 / 后端地址自己配坏了），日志分开写 —— 打包态没有终端，
+  // logLine 是唯一证据，而"有东西想跑掉"与"我配错了"是两件要做不同事的事。
   win.webContents.setWindowOpenHandler(({ url }) => {
     logLine(`导航被拒（新开窗）：${url}`);
     return { action: "deny" };
   });
   win.webContents.on("will-navigate", (event, url) => {
-    if (isAllowedNavigation(url, consoleUrl())) {
+    const verdict = navigationVerdict(url, consoleUrl());
+    if (verdict === "allow") {
       // 放行也留一行痕：真机冒烟靠这句判"控制台确实到了后端那一格"。批 13 那版把这条
       // 合法路径当成注入拦掉了（`R102-73`），而拦截有痕、放行无痕 ⇒ 屏幕上只剩一个转圈，
       // 日志里却看不出是护栏自己拦错了。
@@ -273,8 +275,13 @@ function wireWindow(win: BrowserWindow): void {
       return;
     }
     event.preventDefault();
-    logLine(`导航被拒（页面跳转）：${url}`);
+    logLine(
+      verdict === "deny-broken-backend"
+        ? `导航被拒（后端地址本身解析不了，ROLECARD_BACKEND_URL 配错了？）：${url}`
+        : `导航被拒（不是本机控制台 origin）：${url}`,
+    );
   });
+
 }
 
 function boot(): void {

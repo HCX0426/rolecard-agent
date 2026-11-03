@@ -97,19 +97,28 @@ STEPS: list[tuple[str, list[str], str]] = [
     ("shell typecheck", [NPM, "run", "typecheck"], "full"),
     # 升级缓存清理判据（用户 10-13 的规矩）。typecheck 守不住它 —— 类型对、逻辑反是常态，
     # 而删错了的代价是用户重下一整个安装包或把没装的下载删掉。shell 没有测试框架，
-    # 这个脚本用真实临时目录跑十五条读数、红就 exit 1（先 build 再跑，见 shell/package.json）。
+    # 这个脚本用真实临时目录跑一轮读数（条数由脚本自己打印，注释不复制）、红就 exit 1
+    # （先 build 再跑，见 shell/package.json）。
     ("shell updater 清理判据", [NPM, "run", "test:cleanup"], "full"),
     # 桌宠趴边几何（2026-11-01 修"Live2D 桌宠趴边看不见"）。typecheck 同样守不住它：
-    # 三条边的式子写反（right/left 互换、bottom 写成 y+h−vis）**类型全对**，而代价是
-    # "趴边后屏幕上零像素"—— 用户看到的就是一只不见了，只有真机量得出来，而真机又最容易
-    # 把"hover 得到"误当"看得见"（这次就误判过一轮）。这步把三条边的读数 + "内容充满时必须
-    # 等于旧常数 132/140"那条安全阀钉死，12 条读数实测 0.3s。
+    # 边的式子写反（right/left 互换）**类型全对**，而代价是"趴边后屏幕上零像素"——
+    # 用户看到的就是一只不见了，只有真机量得出来，而真机又最容易把"hover 得到"误当
+    # "看得见"（这次就误判过一轮）。这步钉的是**左右两条边**的读数 + "内容充满时必须
+    # 等于旧常数 132"那条安全阀，外加"纵向不再产出边"的两条 `dockEdgeFor` 读数。
+    # ⚠ 这条注释从前写的是"三条边"和"旧常数 132/140"：bottom 那一条连同它的 140 已在
+    # 11-01 随纵向吸边一起删掉（用户拍「底下和上都不需要隐藏」），而注释没跟着改。
+    # 条数也不再写死 —— 读数从 12 涨到 16 就是这行撒谎的原因，见 ci.yml 同处。
     ("shell 桌宠趴边几何", [NPM, "run", "test:dock"], "full"),
     # 更新反馈判据（2026-11-03 审查 A-6/A-8）。同样是 typecheck 守不住的那一类：
     # "同一次失败弹两条 toast"与"下载失败被冒名成检查失败"都是**类型全对、语义错**。
     # 它测判据本身（`updateFeedback.ts`），接线那一半由 consistency 的
     # 「updater failure readout has one owner」盯着 —— 两边问的是不同的问题，缺一不可。
     ("shell 更新反馈判据", [NPM, "run", "test:feedback"], "full"),
+    # 导航护栏 + 控制台地址归一（2026-11-04 审查 A-2）。这支是四支里**唯一防"整包不可用"**
+    # 的：`R102-73` 那次护栏把自家合法终态拦死，装完机控制台停在「正在打开控制台…」，
+    # 而当时仓库里没有任何测试钉这个纯函数 —— 判据错一路进了安装包，靠用户肉眼发现。
+    # typecheck 同样守不住它（`return false` 与 `return true` 类型一模一样）。
+    ("shell 导航护栏判据", [NPM, "run", "test:navigation"], "full"),
     # **不在命令行再补 `-q`**：`pyproject.toml` 的 `addopts` 已经带了一个 `-q`，而 pytest 的
     # quiet 是累加的 —— 两个 `-q` 就是 verbosity -2，会把最后那行 `1320 passed in 177.31s`
     # 连同失败时的 `FAILED tests/...` 一起吞掉（实测：本仓整份输出到 `[100%]` 就直接收尾）。
@@ -602,15 +611,18 @@ STEP_TIMEOUTS: dict[str, float] = {
     "mypy scripts/": 180.0,
     "mypy(linux 档)": 180.0,
     "shell typecheck": 180.0,
-    # 清理判据那步 = build（tsc 全量）+ 十五条真跑，实测 1.6s（热）；与 typecheck 同档。
+    # 下面四步同一个形状：一次 tsc 全量 build + 若干条纯函数读数，本机实测墙钟
+    # 0.3 ~ 1.6s（cleanup 1.6 / dock 0.3 / feedback 1.4 / navigation 1.3），同档 180。
+    # ⚠ **条数不在这里写**：从前这四行各写一个死数（十二、十三、十五、二十二），其中两个
+    # 已经和真实读数不符（dock 实际 16、navigation 实际 24）—— 注释复制了一份本来就会变的
+    # 读数，而那条读数脚本自己每次都会打印。要省字不能靠撒谎，只能靠不复制。
+    # 不登记就掉进 DEFAULT 900，而"查不到 = 上限静默失效"是本仓认过的缺陷形状，不是可接受
+    # 的默认（`_step_timeout` 用 `dict.get(name, DEFAULT)`，不报错）；三份名单由
+    # consistency 的「gate step lists aligned」对账。
     "shell updater 清理判据": 180.0,
-    # 趴边几何那步 = 同一个 build + 十二条纯函数读数，实测 0.3s；与上面两步同档。
     "shell 桌宠趴边几何": 180.0,
-    # 更新反馈判据那步 = 同一个 build + 十三条纯函数读数，本机实测 1.4s 墙钟
-    # （与 test:cleanup 的 1.4s 同量级 —— 两者都是"一次 tsc 全量 build + 十几条读数"）；
-    # 同档 180。不登记就掉进 DEFAULT 900，而 606 行那条注释已经说明"查不到 = 上限
-    # 静默失效"是本仓认过的缺陷形状，不是可接受的默认。
     "shell 更新反馈判据": 180.0,
+    "shell 导航护栏判据": 180.0,
     # pytest 快档：三趟绿 run 实测 77.4 / 82.4 / 84.2s，360 ≈ 4.3×（xdist 满载抖动那回
     # 的教训在 22c267d：慢是真实存在的形状，但 900 的上限从未被健康趟用过一半）。
     "pytest(-x, 无覆盖率)": 360.0,
@@ -1172,6 +1184,9 @@ CI_SKIP = frozenset(
         # 与上两条同一条理由：要 node + 先 build。这一步的 npm script
         # （`npm run test:feedback`）由 frontend job 里那块一起跑。
         "shell 更新反馈判据",
+        # 与上几条同一条理由：要 node + 先 build。npm script 是 `npm run test:navigation`，
+        # 由 frontend job 里那块一起跑（A-2 那支防的是"整包不可用"，最该在 CI 上有位）。
+        "shell 导航护栏判据",
         # 与 shell typecheck 同一条理由：要 **node**（npm audit 问 advisory 库），
         # 而 gate --ci 那趟不装 node；由 frontend job 里紧邻「壳 typecheck」的那一步
         # 跑同一个脚本（`scripts/tools/audit_deps_npm.py`）。

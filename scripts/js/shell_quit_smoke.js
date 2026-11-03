@@ -8,7 +8,10 @@
  * "后端可达"的 attach 语义（scratch profile + 一个不存在的 ROLECARD_BACKEND_CMD 时，
  * 着陆页到底认不认那个假后端），**这条判据分不清"护栏坏了"和"环境不同"** —— 按本仓
  * "分不清就不拦"的规矩，它不该当门禁。`R102-73` 的回归位改放在两处定得死的地方：
- * `shell/main/navigation.ts` 的十格判据表（纯函数）与装机现场 `shell.log` 的「导航放行」实录。
+ * `shell/main/navigation.ts` 的判据（纯函数）与装机现场 `shell.log` 的「导航放行」实录。
+ * ⚠ 这里从前写的是"十格判据表"—— 而**那张表在本仓并不存在**：2026-11-04 之前仓库里没有
+ * 任何测试钉这个函数，`R102-73` 正是这么一路进的安装包。现在它有了
+ * （`shell/scripts/test-navigation-guard.cjs`）。格子数会随改动变，所以不再写死数字。
  *
  * 用法：
  *   node scripts/shell_quit_smoke.js

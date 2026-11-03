@@ -12,6 +12,7 @@
     "test:cleanup": "npm run build && node scripts/test-update-cache-cleanup.cjs",
     "test:dock": "npm run build && node scripts/test-pet-dock-geometry.cjs",
     "test:feedback": "npm run build && node scripts/test-update-feedback.cjs",
+    "test:navigation": "npm run build && node scripts/test-navigation-guard.cjs",
     "package:dir": "npm run build && electron-builder --win --dir",
     "package": "npm run build && electron-builder --win nsis"
   },
