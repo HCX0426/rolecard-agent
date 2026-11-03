@@ -207,7 +207,7 @@ def rename_thread_id(conn: SqlConnection, *, old: str, new: str) -> None:
     名单仍然现数（`thread_id_carriers`），所以将来新增一张带 `thread_id` 的表不必记得改
     这里。写 `session_thread` 的动作收在本模块：`session_thread write seam` 那把尺子只认
     storage（越层写这张表即红），而"谁该改 id"的判断（改名规则、哪些会话要改）住
-    `core/migrations.py` 的形状迁移步骤里 —— 判断在 core，落笔在 owner。
+    `core/storage/migrations.py` 的形状迁移步骤里 —— 判断在 core，落笔在 owner。
 
     不 commit：整段重建的原子性由调用方的显式事务负责（B2 那一步首尾 BEGIN/COMMIT）。
     """

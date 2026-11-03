@@ -858,6 +858,82 @@ def check_appearance_single_source() -> None:
         fails.append(f"appearance drift: {offenders}")
 
 
+#: raise/assert 里的路径引用：至少读出这么多条，否则判红（读法塌了不许静默绿）。
+#: 现网实测 2026-11-03：src/ 388 条 raise/assert、其中 310 条带字符串，路径引用 4 条。
+#: 下限取 2 是因为这个数天然小（只有"指挥读者去改哪个文件"的那几条才写路径）；
+#: 判"读法坏了"靠的是下面 `_MIN_RAISE_NODES`，两条分工不同。
+_MIN_PATH_REFS = 2
+_MIN_RAISE_NODES = 120
+
+
+def check_error_message_paths_resolve() -> None:
+    """`raise` / `assert` 文本里指出的源码路径，必须在磁盘上存在。
+
+    为什么只管 raise/assert、不管注释与 docstring（2026-11-03 审查 A3）：那一轮量出
+    仓里 **21 处**写着 `core/migrations.py`，而那个文件从来不存在（步骤清单 P1-6 拆包后
+    住在 `core/storage/migrations.py`）。但**不能**把尺子做成"全文扫路径"—— 实测那会抓到
+    13 种"失踪"，其中一批是**合法的历史叙述**（`R102-59` 从 `core/reachout.py` 拆出…：
+    拆分当时它确实在 core，后来才迁 features，把它"改正"成 features 反而把历史改错了，
+    我这轮差点就这么干了）。散文里的旧名字是记录，报错文本里的旧名字是指令。
+
+    判据只认**指令**：raise/assert 的字符串是运行时递给排障者的"你该去哪儿改"，指着
+    一个不存在的文件，症状就是"照着报错文本找不到东西"——那两句正好是 P1-6 之后唯一
+    会在此类事故里被人读到的文本（`db.py:552` 数据库打不开、`db.py:671` 补列器拦下
+    NOT NULL 无默认列）。两条实测都指错，现已改正。
+
+    读法三条，任一不满足判红（不用"扫到 0 条"当通过）：
+      * raise/assert 节点数 < `_MIN_RAISE_NODES` ⇒ AST 读法塌了（现网 388）；
+      * 路径引用数 < `_MIN_PATH_REFS` ⇒ 要么被人删了、要么正则不认新形状，两者都该问；
+      * 路径的候选落点按三种形制试：`src/rolecard_agent/<tok>`、仓库根 `<tok>`、`src/<tok>`
+        （与文档里两种写法同源）。f-string 里的字面片段也算（ast 的 Constant 位置天然覆盖）。
+    """
+    offenders: list[str] = []
+    refs = 0
+    nodes = 0
+    path_pat = re.compile(
+        r"(?<![\w/.-])((?:[a-z_][a-z0-9_]*/){1,6}[a-z_][a-z0-9_]*\.(?:py|sql))(?![\w-])"
+    )
+    for file in sorted((ROOT / "src").rglob("*.py")):
+        rel = file.relative_to(ROOT).as_posix()
+        try:
+            tree = ast.parse(file.read_text(encoding="utf-8", errors="ignore"))
+        except (SyntaxError, ValueError) as exc:
+            offenders.append(f"{rel} 解析失败（{type(exc).__name__}），这条尺子看不见它")
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Raise, ast.Assert)):
+                continue
+            nodes += 1
+            for sub in ast.walk(node):
+                if not (isinstance(sub, ast.Constant) and isinstance(sub.value, str)):
+                    continue
+                for m in path_pat.finditer(sub.value):
+                    tok = m.group(1)
+                    refs += 1
+                    cands = (
+                        ROOT / "src" / "rolecard_agent" / tok,
+                        ROOT / tok,
+                        ROOT / "src" / tok,
+                    )
+                    if not any(c.exists() for c in cands):
+                        offenders.append(f"{rel}:{node.lineno} 指向不存在的 {tok}")
+    if nodes < _MIN_RAISE_NODES:
+        offenders.insert(
+            0, f"只读出 {nodes} 条 raise/assert（下限 {_MIN_RAISE_NODES}）—— AST 读法坏了"
+        )
+    if refs < _MIN_PATH_REFS:
+        offenders.insert(0, f"只读出 {refs} 条路径引用（下限 {_MIN_PATH_REFS}）—— 判据形状变了？")
+    out(
+        "error message paths resolve",
+        not offenders,
+        "; ".join(offenders[:4])
+        if offenders
+        else f"{refs} 条报错文本里的路径全部存在（扫 {nodes} 条 raise/assert）",
+    )
+    if offenders:
+        fails.append(f"error messages point at missing files: {offenders}")
+
+
 def check_local_service_port_single_source() -> None:
     """本机推理服务端口（11434）在 src/ 与 scripts/ 里只许出现在 config.py。
 

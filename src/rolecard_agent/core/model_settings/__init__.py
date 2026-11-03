@@ -3,7 +3,7 @@
 分工（调用方只认本文件导出的那一份名字，导出面与拆分前**逐字相同**）：
 
   * `rules`     —— 常量与规则：provider 目录 / 别名 / 无 key 厂商 / 用途枚举 / URL 校验 / 掩码；
-  * `migration` —— 搬层迁移（旧形态 → 两层 + chat 引用行），已注册进 `core/migrations.py`
+  * `migration` —— 搬层迁移（旧形态 → 两层 + chat 引用行），已注册进 `core/storage/migrations.py`
                    的 `shape.model_backend_provider_layers` 步骤；
   * `rows`      —— 行与列的事实面：哪些列归本服务管、后端行怎么从 SQL 行解析出来；
   * `read`      —— 读侧与清单（`list_backends` / `list_providers` / 默认 / 凭据探测 / 播种）；

@@ -14,7 +14,7 @@ a no-op and leave orphaned index rows behind.
 列级迁移是**声明驱动**的：`bootstrap` 每次启动都拿 `schema.sql` 的声明形状比对这份库，
 缺列自动 `ADD COLUMN`（`reconcile_columns`），所以加一列只改 `schema.sql` 一处就够。
 只有"形状根本不同"的表才需要一步整表重建 —— 那些是**业务语义**，住
-`core/migrations.py` 的注册表里，经 `bootstrap(plan=…)` 交进来：本模块不认识任何业务表名，
+`core/storage/migrations.py` 的注册表里，经 `bootstrap(plan=…)` 交进来：本模块不认识任何业务表名，
 也不再有一段 `_migrate`（2026-10-04 审查快照 P1-6 的 split-brain 收口）。**绝不要靠删库来
 升级** —— `data/sqlite/app.db` 与安装目录下那份是真实数据，不是演示脚手架（09-26 轮
 R26-05 抓到 `CONTRIBUTING.md` 就是这么教的，那条已订正）。
@@ -358,7 +358,7 @@ def migrate_event(message: str) -> None:
     **唯一没有可追溯事件**的一类 —— R102-27 那种"半路死"发生时只有异常栈可查。排查判据
     要进事件流，不进注释（`R102-42` 同族的另一半）。
 
-    **公开给 core**：步骤的清单与顺序住在 `core/migrations.py`，那边执行一步就念一声 ——
+    **公开给 core**：步骤的清单与顺序住在 `core/storage/migrations.py`，那边执行一步就念一声 ——
     同一条事件流，不另起炉灶（storage 里再长一个私有出口就是第二个真相）。"""
 
     stamp = datetime.now(UTC).isoformat(timespec="seconds")
@@ -389,7 +389,7 @@ def repair_stranded_rebuild(conn: SqlConnection, *, original: str, temp: str) ->
     死在 INSERT 之前的老窗口，DROP IF EXISTS 已自愈过它）。两种现场都不许静默留着
     —— 滞留的暂存表是一本**永远没人读**的账本，而 bootstrap 重跑不但不报错还照常绿。
 
-    **点名哪三对**（原表 / 暂存表）的是 `core/migrations.py` 的 `STRANDED_REBUILDS`：
+    **点名哪三对**（原表 / 暂存表）的是 `core/storage/migrations.py` 的 `STRANDED_REBUILDS`：
     storage 只回答"怎么修"，不记得"修谁"（P1-6：业务表名不住在 storage）。
     """
     tables = {
@@ -507,10 +507,10 @@ def dump_before_delete(
 
 
 class MigrationPlanLike(Protocol):
-    """storage 认识的**迁移计划形状**（`core.migrations.MigrationPlan` 结构性满足它）。
+    """storage 认识的**迁移计划形状**（`core.storage.migrations.MigrationPlan` 结构性满足它）。
 
     storage 只问三件事：DDL 之前跑什么、DDL 之后跑什么、通用补列器第一遍避开哪些表。
-    它不认识 `Step`、不认识任何业务表名 —— 步骤的清单与顺序住在 `core/migrations.py`
+    它不认识 `Step`、不认识任何业务表名 —— 步骤的清单与顺序住在 `core/storage/migrations.py`
     （2026-10-04 审查快照 P1-6：形状迁移的语义从 storage 收回 core，storage 只留
     连接 + 声明引擎 + 执行入口）。
     """
@@ -533,7 +533,7 @@ def _require_plan_for_existing_db(conn: SqlConnection, *, plan: MigrationPlanLik
     """**已经存在的库**必须显式交迁移计划，否则当众失败 —— 不做任何启发式判断。
 
     为什么是"非空库一律要计划"而不是"落后于声明才要"（2026-10-04 审查快照 P1-6 的落地
-    取舍）：判"这份库需要哪些业务步骤"的知识住在 `core/migrations.py`（清重、滞留自愈、
+    取舍）：判"这份库需要哪些业务步骤"的知识住在 `core/storage/migrations.py`（清重、滞留自愈、
     整表重建、搬层），storage 拿不到 —— 任何"我看它像不需要"的猜测都会把**该搬的没搬**
     变成静默事故（症状：配置变小 / 主键没换 / 暂存表里的数据再没人读），而那正是搬家前
     `provider_layers is None` 那句 RuntimeError 要拦的东西。判据换成"库是不是空的"有三个
@@ -551,7 +551,7 @@ def _require_plan_for_existing_db(conn: SqlConnection, *, plan: MigrationPlanLik
     if existing:
         raise RuntimeError(
             "数据库已存在，业务迁移计划必须显式交进来（清重 / 滞留自愈 / 整表重建 / 搬层"
-            "这些步骤住 core/migrations.py，storage 不认识它们）：显式传 "
+            "这些步骤住 core/storage/migrations.py，storage 不认识它们）：显式传 "
             "plan=rolecard_agent.core.storage.migrations.MIGRATION_PLAN；新建空库可以不传。"
         )
 
@@ -588,7 +588,7 @@ def bootstrap(
         declared=declared,
         skip=frozenset() if plan is None else plan.shape_tables,
     )
-    # 业务阶段（core 交进来的步骤，顺序与名字都在 core/migrations.py）：
+    # 业务阶段（core 交进来的步骤，顺序与名字都在 core/storage/migrations.py）：
     # pre_ddl 必须站在 DDL 之前（唯一索引踩重复行 = 库打不开，R28-15）；
     # shape 必须站在 DDL 之后（重建会 DROP/RENAME，先补的列与先建的索引跟着旧表没）。
     if plan is not None:
@@ -632,7 +632,7 @@ def table_columns(conn: SqlConnection, table: str) -> list[str]:
 
     为什么是现算而不是一张手写的列清单：清单就是第二份事实面 —— 表加了列而清单没跟上，
     那边的 INSERT 永远少那一列，症状是"写路径静默少列"（同步导入那条链踩过，见
-    `core/memory.restore_row` / `core/reachout.inbox.restore_row`）。
+    `core/memory.restore_row` / `features.reachout.inbox.restore_row`）。
     表名走 `quote_ident`：这张表名来自代码常量，但"现算"的机制不该给调用方留一个
     直接把变量拼进 PRAGMA 的口子。
     """
@@ -670,7 +670,7 @@ def _add_column_ddl(table: str, decl: sqlite3.Row) -> str:
     if decl["notnull"] and decl["dflt_value"] is None:
         raise RuntimeError(
             f"{table}.{name} 声明成 NOT NULL 又没有默认值，SQLite 不允许 ADD COLUMN 补它。"
-            "这种列必须走整表重建：把它加进 core/migrations.py 的 `SHAPE_TABLES`，"
+            "这种列必须走整表重建：把它加进 core/storage/migrations.py 的 `SHAPE_TABLES`，"
             "并在那边的 shape 阶段写一次重建步骤。"
         )
     spec = f"{quote_ident(name)} {decl['type'] or 'TEXT'}"

@@ -150,7 +150,7 @@ def test_upgrade_keeps_existing_rows_and_fills_defaults(tmp_path: Path) -> None:
 #: 迁移**必须守恒**行数的表（2026-10-04 审查快照 P1-6 的验收项）。刻意不含：
 #: `service_endpoint`（老形态那批行是"弃用 + 重播"的演示数据，重建本来就丢行）与
 #: `model_backend` / `model_provider`（搬层按 (供应商, 端点) 归并，行数从 N 变组数 ——
-#: 那两处的语义写在 `core/migrations.py` 各自那一步的 docstring 里）。
+#: 那两处的语义写在 `core/storage/migrations.py` 各自那一步的 docstring 里）。
 CONSERVED_TABLES = (
     "role_card",
     "session_thread",
@@ -196,7 +196,7 @@ def test_legacy_extra_columns_survive(tmp_path: Path) -> None:
     """声明里没有的旧列**不删**：那是"退成只读"还是"删掉"的决定，不是升级该顺手做的事。
 
     14cb9db 的 `medical_report` 带着 `source_file`/`status`/`file_hash` 三列，现版声明已经
-    没有它们。补列器只管补缺，不管理赔 —— 删列要走显式整表重建（core/migrations.py）。
+    没有它们。补列器只管补缺，不管理赔 —— 删列要走显式整表重建（core/storage/migrations.py）。
     """
     conn = _build_legacy("14cb9db", tmp_path / "app.db")
     before = _cols(conn, "medical_report")

@@ -187,7 +187,11 @@ class QQTokenManager:
                 raise RuntimeError("token 端点没有回 access_token（检查 AppID / AppSecret）")
             try:
                 ttl = float(payload.get("expires_in") or 7200)
-            except ValueError:
+            except (TypeError, ValueError):
+                # TypeError 必须一起接：`or 7200` 只兜 None 与空值，而协议侧一旦把这个字段
+                # 回成 list/dict（形状漂移），`float([1])` 抛的是 **TypeError** —— 从前只捕
+                # ValueError，于是这条"读不到就退回默认 TTL"的降级路当场变成"整次取 token
+                # 失败"。实测：float([1]) / float({'a':1}) 都抛 TypeError。
                 ttl = 7200.0
             self._cached = token
             self._expires_at = now + max(ttl - self._EXPIRY_MARGIN_SECONDS, 60.0)

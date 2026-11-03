@@ -425,7 +425,7 @@ def build_runtime(
     # 搬层那一步由装配根交给 storage（`R102-08`）：内核认识自己的上层形状，storage 不必
     # 反过来 import core —— 全仓那条唯一的模块级真环就此断开。
     # `plan` 是业务迁移的**全部**（清重 / 滞留自愈 / 整表重建 / 搬层）：步骤的清单与顺序
-    # 住在 `core/migrations.py`，storage 只认这个形状（P1-6 的 split-brain 收口）。
+    # 住在 `core/storage/migrations.py`，storage 只认这个形状（P1-6 的 split-brain 收口）。
     apply_schema(conn, enabled_domains=domains, plan=MIGRATION_PLAN)
     seed_plugin_rows(conn, domains)
     # 出厂卡也有主人：这台实例的主人（`IDENTITY_USER_ID`，空=本机那份）。§4.1 的"两份完整

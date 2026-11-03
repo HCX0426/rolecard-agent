@@ -6,7 +6,7 @@
      惰性 import）即红；惰性 import 只是让导入不炸，环还在。
   2. **旧形态现场 + 没交计划 = 大声失败**，不是"静默不搬"：那一步的代价是用户配置变小
      （凭据组没建、chat 引用行没写），而症状长得像"我明明配过模型"。判据是**通用**的
-     （声明 vs 实况，storage 里不点名任何表）—— 步骤清单住 `core/migrations.py`。
+     （声明 vs 实况，storage 里不点名任何表）—— 步骤清单住 `core/storage/migrations.py`。
   3. **计划真的被执行**，并且是在 `bootstrap` 内部那个位置（顺序承重：搬层要排在
      service_endpoint 重建之后、`idx_model_backend_provider` 创建之前 —— 先建的索引会跟着
      DROP/RENAME 一起没了）。这条用"索引最后还在"来证。

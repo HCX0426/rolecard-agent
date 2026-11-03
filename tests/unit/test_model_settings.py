@@ -732,7 +732,7 @@ def test_legacy_db_moves_into_two_layers_without_losing_config() -> None:
     conn.execute("INSERT INTO kernel_meta (key, value) VALUES ('model_fallbacks', '[\"chat\"]')")
     conn.commit()
 
-    # 与生产同一步序：形状迁移先补列再搬层（`core/migrations.py` 的 step 顺序就是这个），
+    # 与生产同一步序：形状迁移先补列再搬层（`core/storage/migrations.py` 的 step 顺序就是这个），
     # 所以搬层之后那些组是**有主人**的 —— 老库里没有归属这回事，它们落进列默认值那份。
     # `skip=SHAPE_TABLES` 是第一遍补列的规矩（`model_backend` 那些列由整表重建负责）。
     assert "model_provider.user_id" in reconcile_columns(conn, skip=SHAPE_TABLES)
