@@ -29,9 +29,23 @@
         // X 是"留多少色"，与滑块的"透多少"方向相反 —— 必须做一次 100 - a。
         var raw = localStorage.getItem("rolecard.alpha");
         var a = raw === null || raw === "" ? 0 : Number(raw);
+        // 圆整 + 夹取必须与 `lib/appearance.ts` 的 `bgSolidity` **逐值等价**（对拍钉在
+        // `lib/firstFrameParity.test.ts`：真执行这段脚本本体，与 React 路径逐个输入比）。
+        // 这份脚本跑在打包前的裸 HTML 里，import 不到那边，只能抄 —— 抄就得可验证，
+        // 否则两份算术漂出去没人知道（一致性尺子只钉文本形状，钉不住算术）。
+        // ⚠ 顺序写死成"先 clamp 再 100 -"，与 `bgSolidity` 同一形状。少了 round 时
+        //   `33.7` 首帧算 66.3、React 算 66（差 1，对拍会红）—— 不是"差 0.x"，
+        //   这句以前写错过；数值是从真跑两遍算术量出来的。
+        // 实测记录（2026-11-04）：装机版盘上是 `rolecard.alpha = 0`（整数），而且
+        // `f2b26041` / `07135b39` 那两版 setter 都过 `clampAlpha`（含 Math.round），
+        // 所以"历史小数值"这条**今天不可达**。加 round 不是修一个已发生的故障，而是
+        // 让两份算术对**任何**输入等价 —— 那个等价此前没有任何东西保证。
         if (isFinite(a)) {
-          de.style.setProperty("--bg-solid", String(Math.max(0, Math.min(100, 100 - a))));
+          var clamped = Math.max(0, Math.min(100, Math.round(a)));
+          de.style.setProperty("--bg-solid", String(100 - clamped));
         }
+
+
         // 背景图三件套：与 lib/appearance.ts 的 applyBgImage/applyBgBlur/applyBgDim 同构 ——
         // 没设过就**不写**，让 index.css 那一份默认做主（从前这里给 dim 兜了个值写进内联，
         // 把 CSS 的默认盖死）。
