@@ -32,8 +32,9 @@
         if (isFinite(a)) {
           de.style.setProperty("--bg-solid", String(Math.max(0, Math.min(100, 100 - a))));
         }
-        // 背景图三件套：与 lib/appearance.ts 的 applyBackground 同构 —— 没设过就**不写**，
-        // 让 index.css 那一份默认做主（从前这里给 dim 兜了个值写进内联，把 CSS 的默认盖死）。
+        // 背景图三件套：与 lib/appearance.ts 的 applyBgImage/applyBgBlur/applyBgDim 同构 ——
+        // 没设过就**不写**，让 index.css 那一份默认做主（从前这里给 dim 兜了个值写进内联，
+        // 把 CSS 的默认盖死）。
         var bg = localStorage.getItem("rolecard.bgImage");
         if (bg) {
           de.setAttribute("data-has-bg", "");
@@ -49,9 +50,9 @@
         }
       } catch (e) { /* 隐私模式等：留给 CSS 默认值 */ }
     </script>
-    <script type="module" crossorigin src="/assets/index-BXZXqwXE.js"></script>
+    <script type="module" crossorigin src="/assets/index-Bbfsh8YQ.js"></script>
     <link rel="modulepreload" crossorigin href="/assets/react-CC_ZIGTP.js">
-    <link rel="stylesheet" crossorigin href="/assets/index-Dc2lYAbF.css">
+    <link rel="stylesheet" crossorigin href="/assets/index-TO17aIaa.css">
   </head>
   <body>
     <div id="root"></div>

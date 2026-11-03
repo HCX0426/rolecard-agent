@@ -146,7 +146,7 @@ export default function PetPage() {
   // 有这面旗子的旧壳里）时不该把功能藏起来，那等于用一个用户找不到的开关把他锁在门外。
   const [showContent, setShowContent] = useState(true);
   // 同一个值的"读时不重订阅"版本：`load` 是轮询回调，依赖里加旗子会让每次改开关都
-  // 把 10 秒的节拍重置一遍（而它只是想知道这次要不要拍原文）。
+  // 把 UNREAD_POLL_MS 那个节拍重置一遍（而它只是想知道这次要不要拍原文）。
   const showContentRef = useRef(true);
   const retuckRef = useRef<number | null>(null);
   /** 最近一次"壳真的发起滑窗"的时刻（reveal 的滑出、retuck 的趴回、拖完的吸边）。见 `onPet`。 */
@@ -869,7 +869,7 @@ export default function PetPage() {
   // 卸载时把正在读的那句掐掉：驻留件不该在你让它消失之后还在说话。
   useEffect(() => () => window.speechSynthesis?.cancel(), []);
 
-  // 历史只在**展开时**读：驻留件不该为了一个没被看到的面板每 10 秒打一次接口。
+  // 历史只在**展开时**读：驻留件不该为了一个没被看到的面板每拍（UNREAD_POLL_MS）打一次接口。
   // 一轮跑完的那次重读在 `send()` 里 inline 做（要等它到手才敢收气泡，见 `handoff`）。
   // 关掉「显示消息内容」时连读都不读：藏起来的东西不该只是不画，还留在页面里等着被看到。
   useEffect(() => {

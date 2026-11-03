@@ -14,17 +14,17 @@
 // JSX、注释一字未动）；`SettingsPage.test.tsx` 里记忆族的用例整体迁来 `MemoryPage.test.tsx`
 // （render 目标换成 `<MemoryPage />`，断言不动），用例数搬走而非删除。
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type RoleCard, type RuntimePayload } from "../api";
+import { api, type RoleCard, type RuntimePayload, type MemoryPayload, type MemoryItem } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
 import { Button, Card } from "../components/ui";
 import { describeError } from "../lib/errors";
-import type { components } from "../api/schema.gen";
 
-// 响应契约（R1031-30）：GET/PUT `/api/settings/memory` 的**精确手模**经 api 层别名进来
-// —— 从前这两份手抄在 pages/ 里，迁移尺（只扫 src/api/*.ts）看不见，漂了没人喊。
-// 现在后端上 `SettingsMemoryView`（items 用 13 键恒有的 `MemoryRowView`），这里只引用。
-type MemoryPayload = components["schemas"]["SettingsMemoryView"];
-type MemoryItem = MemoryPayload["items"][number];
+// 响应契约（R1031-30）：GET/PUT `/api/settings/memory` 的精确手模在 `api/memory.ts`
+// 以别名收编（一个事实只住一个地址），这里**只引用**、不在页面里再抄一份。
+// 从前这两份手抄就住在本文件（`components["schemas"]["SettingsMemoryView"]` 与
+// `MemoryPayload["items"][number]`）：迁移尺只扫 src/api/*.ts，看不见 pages/，
+// 而两条推导路径还各不相同（一条从 MemoryRowView 直取、一条从 items 反推）——
+// 后端哪天换掉 items 的行型，页面这份会静默跟着变，api 那份不会。
 
 /**
  * 记忆分层（2026-10-30，用户：「每个角色的记忆分多板块，比如长期记忆、会话记忆、项目记忆」，
@@ -859,7 +859,7 @@ export default function MemoryPage() {
             清空
           </button>
           {memMsg && <span className="text-xs text-emerald-600 dark:text-emerald-400">{memMsg}</span>}
-          {memErr && <span className="text-xs text-red-600 dark:text-red-400 dark:text-red-500">{memErr}</span>}
+          {memErr && <span className="text-xs text-red-600 dark:text-red-400">{memErr}</span>}
           {mem && <span className="ml-auto text-11 text-slate-400">{memDraft.length} 字</span>}
         </div>
       </Card>

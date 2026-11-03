@@ -67,7 +67,16 @@ export default function PetContextMenu({
             entry.run();
             onClose();
           }}
-          className="block w-full px-2.5 py-1 text-left text-slate-600 enabled:hover:bg-blue-50 enabled:hover:text-blue-700 disabled:text-slate-300 dark:enabled:hover:bg-slate-700/60"
+          // hover 高亮浅色端是 bg-blue-50 + text-blue-700（accent 的浅洗 + 暗 accent 字）。
+          // 深色端从前写 `dark:enabled:hover:bg-slate-700/60` —— 双重翻转的残留（上一轮清
+          // 841 条时我的正则 `dark:[a-z-]*slate` 不吃 `enabled:hover:` 这类冒号修饰，恰好
+          // 漏掉这条）：--color-slate-700 = var(--bg-ink) 在 .dark 下是近白亮字色，于是
+          // "深色下更深一档"实际铺出**近白一块**，配 accent 暗字实测对比 **1.61**（真鼠标
+          // hover 取证，build/probe_dark_red_hover.cjs）。改成与全站深色端同一惯例
+          // （dark:bg-blue-900/30 ×8 处、dark:hover:text-blue-400 ×6 处）：accent 深洗 +
+          // accent 亮字，两轴一起翻，浅色端一个像素没动。
+          className="block w-full px-2.5 py-1 text-left text-slate-600 enabled:hover:bg-blue-50 enabled:hover:text-blue-700 disabled:text-slate-300 dark:enabled:hover:bg-blue-900/30 dark:enabled:hover:text-blue-400"
+
         >
           {entry.label}
         </button>

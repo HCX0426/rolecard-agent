@@ -237,7 +237,7 @@ export function AboutPanel({
 
       <Card className="p-5">
         <h3 className="text-sm font-medium text-slate-900">系统状态</h3>
-        {loadError && <p className="mt-1 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{loadError}</p>}
+        {loadError && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{loadError}</p>}
         <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
           <div className="flex justify-between border-b border-slate-50 py-1">
             <dt className="text-slate-400">对话默认（服务页第 1 位）</dt>

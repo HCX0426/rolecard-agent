@@ -288,7 +288,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
             <Button
               variant="ghost"
               type="button"
-              className="px-2 py-1 text-11 text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
+              className="px-2 py-1 text-11 text-red-600 hover:bg-red-50 dark:text-red-400 dark:bg-red-900/30 dark:hover:bg-red-900/30"
               onClick={async () => {
                 if (await confirm({ title: "删除整份报告？", body: "将删除该报告及其全部指标记录，不可恢复。", confirmText: "确认删除", danger: true })) remove("report", r.report_id ?? "");
               }}
@@ -376,7 +376,7 @@ function DataManagement({ compact = false }: { compact?: boolean }) {
                           variant="ghost"
                           size="sm"
                           type="button"
-                          className="px-2 py-1 text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
+                          className="px-2 py-1 text-red-600 hover:bg-red-50 dark:text-red-400 dark:bg-red-900/30 dark:hover:bg-red-900/30"
                           onClick={async () => {
                             if (await confirm({ title: "删除这条指标记录？", body: "将删除该指标项，不可恢复。", confirmText: "确认删除", danger: true })) remove("index", i.index_id ?? "");
                           }}
@@ -563,7 +563,7 @@ function AddReportForm({ onDone }: { onDone: () => void }) {
         <span className="text-11 text-slate-400">手填默认标记为【未经人工校验】</span>
       </div>
 
-      {err && <p className="mt-2 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{err}</p>}
+      {err && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{err}</p>}
     </div>
   );
 }
@@ -768,7 +768,7 @@ function GenericDomainData({
                           variant="ghost"
                           size="sm"
                           type="button"
-                          className="px-2 py-1 text-red-400 dark:text-red-500 hover:bg-red-50 dark:bg-red-900/30 hover:text-red-600 dark:text-red-400 dark:text-red-500"
+                          className="px-2 py-1 text-red-600 hover:bg-red-50 dark:text-red-400 dark:bg-red-900/30 dark:hover:bg-red-900/30"
                           onClick={async () => {
                             if (await confirm({ title: "删除这条记录？", body: "将删除该条领域数据，不可恢复。", confirmText: "确认删除", danger: true })) remove(r.id);
                           }}

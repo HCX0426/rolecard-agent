@@ -80,7 +80,7 @@ export function RuntimePanel() {
   }
 
   if (err && !data) {
-    return <p className="mt-6 text-xs text-red-600 dark:text-red-400 dark:text-red-500">{err}</p>;
+    return <p className="mt-6 text-xs text-red-600 dark:text-red-400">{err}</p>;
   }
   if (!data) {
     return <p className="mt-6 text-xs text-slate-400">加载中…</p>;

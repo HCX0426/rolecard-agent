@@ -14,6 +14,7 @@ import { Button } from "./ui";
 import { IconFolder } from "./icons";
 import { NativeDirPickerButton } from "./NativeDirPickerButton";
 import { describeError } from "../lib/errors";
+import { formatBytes } from "../lib/bytes";
 
 export function WorkspacePanel({ roleId }: { roleId: string }) {
   // 工作区：wsDir = 生效值；树抽屉 = 目录选择器。
@@ -168,7 +169,11 @@ export function WorkspacePanel({ roleId }: { roleId: string }) {
                   </span>
                   {!e.is_dir && (e.size ?? 0) > 0 && (
                     <span className="ml-2 shrink-0 text-10 text-slate-400">
-                      {e.size && e.size > 1024 ? `${(e.size / 1024).toFixed(0)} KB` : `${e.size ?? 0} B`}
+                      {/* 走 lib/bytes.ts 这个唯一出处。从前这里自己写 `> 1024 ? KB : B`，
+                          于是同一个字节数在目录树里是 "3145728 KB"、在上传结果里是
+                          "3072.0 MB"，用户没法横向比；而边界 1024 因为写的是 `>` 不是 `>=`
+                          会显示成 "1024 B"（formatBytes 给 1.0 KB）。 */}
+                      {formatBytes(e.size ?? 0)}
                     </span>
                   )}
                 </button>

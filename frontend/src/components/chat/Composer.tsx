@@ -2,6 +2,7 @@ import { Button } from "../ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fetchLimits } from "../../lib/limits";
+import { formatBytes } from "../../lib/bytes";
 import type { Tone } from "../Toast";
 import { IconImage, IconSend, IconSparkle, IconStop } from "./icons";
 
@@ -138,8 +139,13 @@ export default function Composer({
     // 上限从后端 /api/health 现读（config.max_image_bytes 的镜像），不在前端手抄。
     const limits = await fetchLimits();
     if (file.size > limits.image) {
-      const mb = Math.round(limits.image / 1024 / 1024);
-      onStatus(`图片超过 ${mb}MB 上限（当前 ${Math.round(file.size / 1024 / 1024)}MB）`, "warn");
+      // 走 lib/bytes.ts 唯一出处：从前这里自己 `Math.round(x/1024/1024)`，于是
+      // 15.6 MB 的文件报成"当前 16MB"—— 而 16 > 上限那句里的 15，读起来像
+      // "我没超限却被拒"。一位小数（formatBytes）不会造成这种自相矛盾。
+      onStatus(
+        `图片超过 ${formatBytes(limits.image)} 上限（当前 ${formatBytes(file.size)}）`,
+        "warn",
+      );
       return;
     }
     const reader = new FileReader();

@@ -392,7 +392,7 @@ export function KnowledgeManager() {
                     ))}
                   </ul>
                   <div className="mt-2 flex items-center gap-2">
-                    <span className="text-11 text-red-600 dark:text-red-400 dark:text-red-500">
+                    <span className="text-11 text-red-600 dark:text-red-400">
                       删除后不可恢复，确认回收？
                     </span>
                     <Button

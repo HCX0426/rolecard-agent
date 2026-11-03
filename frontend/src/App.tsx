@@ -158,8 +158,10 @@ export default function App() {
   const currentRole = useCurrentRole();
   const [navOpen, setNavOpen] = useState(false);
   const { theme, toggle } = useTheme();
-  // 角色主动开口（架构计划 B）：铃铛红点 + 收件箱抽屉。静音轮询（10s）：
-  // 页面开着时新开口 10 秒内上角标；页面关着 = 回来看到堆积（web 无常驻推送，如实降级）。
+  // 角色主动开口（架构计划 B）：铃铛红点 + 收件箱抽屉。静音轮询（节拍 = UNREAD_POLL_MS，
+  // 不在这儿重抄秒数 —— 这个数从前是 10s、注释跟着写 10s，改常数时没人回头改注释，
+  // 于是同一件事在代码与注释里各有一个值）：页面开着时新开口在一个节拍内上角标；
+  // 页面关着 = 回来看到堆积（web 无常驻推送，如实降级）。
   const [reachoutOpen, setReachoutOpen] = useState(false);
   const [reachoutUnread, setReachoutUnread] = useState(0);
   // 按角色的未读数：对话页侧栏「她们」那一栏的徽章要用它。**与铃铛红点是同一次轮询的产物**
@@ -167,7 +169,8 @@ export default function App() {
   // `api/reachouts.ts` 里 `UNREAD_POLL_MS` 那条注释）。
   const [reachoutUnreadByRole, setReachoutUnreadByRole] = useState<Record<string, number>>({});
   // 命令执行审批（架构计划 C·§6.2）：待批红点 + 审批抽屉。与主动消息同一套静默轮询
-  // （10s）：模型提交审批后 10 秒内红点出现 —— 后端无推送，只能如实降级为轮询。
+  // （同一个 UNREAD_POLL_MS，见上面那条注释为什么不重抄秒数）：模型提交审批后一个节拍内
+  // 红点出现 —— 后端无推送，只能如实降级为轮询。
   const [approvalOpen, setApprovalOpen] = useState(false);
   const [approvalPending, setApprovalPending] = useState(0);
 
