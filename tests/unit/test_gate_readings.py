@@ -229,6 +229,46 @@ def test_fast_steps_leave_the_committed_slot_alone(tmp_path: Path) -> None:
     assert scratch["head"] == "0123456789ab"
 
 
+def test_the_badge_follows_the_stubbed_slot_and_never_the_producing_tree(
+    tmp_path: Path,
+) -> None:
+    """单元测试**不许**把假覆盖率写进生产的 `docs/coverage-badge.json`（2026-11-04 现形）。
+
+    现场（哨兵实验三次坐实，不是推理）：把 badge 置成 `99.99%`，单跑
+    `pytest tests/unit/test_gate_readings.py`（**完全不涉及覆盖率那步**）之后它变成
+    `91.89%` —— 正是上面两条用例里那份假夹具的数。根因是"入库位置"有**两处声明**：
+    `_stub()` 能把读数机写的入库槽 `READINGS` 搬到 tmp，可 badge 的落点在 `gate.py` 里
+    是硬编码的 `ROOT / "docs" / "coverage-badge.json"` —— 同一个目录事实抄了两遍，
+    stub 只盖得住其中一遍，于是测试的假数据顺着没被盖住的那条漏进**生产文件**。
+
+    后果不止"工作树多一笔脏"：badge 被假数改写、而 `gate-readings.json` 安然不动
+    （它这趟落 tmp），两个本该"同一现场生成"的数从此**互相矛盾**（实测本机 badge 91.89
+    对 readings 94.58）。docstring 里那句"与 gate-readings 共命运"在没有判据时就是空话。
+
+    所以这里要的不是"badge 内容对"，而是**落点派生自入库槽**：stub 之后 badge 必须落在
+    tmp 里，生产那份一字节都不许动。用 73.31 这个跟任何既有夹具/读数都不同的数，
+    防止"碰巧等于旧值"让断言假绿。
+    """
+    gate = _load_gate()
+    _stub(gate, tmp_path)
+    prod = ROOT / "docs" / "coverage-badge.json"
+    before = prod.read_bytes() if prod.exists() else None
+
+    cov = "Required test coverage of 90% reached. Total coverage: 73.31%\n"
+    gate._write_readings({"pytest(覆盖率)": cov}, True)  # noqa: SLF001
+
+    stubbed_badge = tmp_path / "coverage-badge.json"
+    assert stubbed_badge.exists(), (
+        "badge 没跟着入库槽落进 stub 目录 ⇒ 它的落点是另一处独立声明，"
+        "测试（和 runner）会直接写生产文件"
+    )
+    badge = json.loads(stubbed_badge.read_text(encoding="utf-8"))
+    assert badge["message"] == "73.31%", f"badge 没量到这一趟的数：{badge}"
+
+    after = prod.read_bytes() if prod.exists() else None
+    assert after == before, "单元测试改写了生产的 coverage-badge.json —— 入库落点又硬编码了一遍"
+
+
 def test_slots_never_leak_into_each_other(tmp_path: Path) -> None:
     """两槽的**纯度**：快数（用例数/head/记号）与慢数（覆盖率家族）不许住进同一份文件。
 

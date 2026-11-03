@@ -1142,11 +1142,22 @@ def _write_readings(outputs: dict[str, str], ok: bool) -> None:
                         "message": f"{coverage_value}%",
                         "color": "brightgreen" if float(coverage_value) >= 90.0 else "yellow",
                     }
-                    (ROOT / "docs" / "coverage-badge.json").write_text(
+                    # 落点**派生自入库槽**（`path.with_name`），不是再写一遍 `ROOT/"docs"`：
+                    # 从前这里硬编码第二个"入库位置"，于是同一个目录事实有两处声明 ——
+                    # 测试把 `READINGS` stub 到 tmp 之后，读数机老老实实落 tmp，badge 却
+                    # 照写生产文件（2026-11-04 哨兵实验：单跑 `test_gate_readings.py` 把
+                    # 装机 badge 从 99.99% 改成夹具的 91.89%，而 gate-readings.json 安然
+                    # 不动 ⇒ 两个本该同现场生成的数互相矛盾）。
+                    # `test_the_badge_follows_the_stubbed_slot_and_never_the_producing_tree`
+                    # 钉的就是这一条。顺带修掉 runner 那一格：`GATE_READINGS_SCRATCH=1` 时
+                    # 入库槽落 `build/`，badge 现在跟着落 `build/` —— 覆盖率是按平台的数
+                    # （`R28-74`），Linux runner 本就不该覆盖本机那枚公开徽章。
+                    (path.with_name("coverage-badge.json")).write_text(
                         json.dumps(badge, ensure_ascii=False, indent=2) + "\n",
                         encoding="utf-8",
                         newline="\n",
                     )
+
     for path, data, notes in (
         (READINGS, committed, added[READINGS]),
         (READINGS_SCRATCH, scratch, added[READINGS_SCRATCH]),
