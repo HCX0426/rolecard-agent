@@ -161,6 +161,41 @@ def test_token_manager_missing_token_is_loud() -> None:
         tokens.token()
 
 
+@pytest.mark.parametrize("bad_ttl", [[1], {"a": 1}, "abc", ""])
+def test_token_manager_bad_ttl_falls_back_to_default_ttl(bad_ttl: Any) -> None:
+    """`expires_in` 形状不对 ⇒ 退回**默认 TTL**，而不是把整次取 token 打断（审查 A4）。
+
+    两件事分开测才有效：
+      * 「不抛」——从前只捕 ValueError，而 `float([1])` 抛的是 **TypeError**，
+        逃出 try 之后症状从"退默认 TTL"升级成"QQ 渠道连不上"；
+      * 「退的是 7200」——只断言不抛的话，把兜底写成 60 也照样绿。所以这里用假时钟
+        量**行为**：7200 − 300（提前量）= 6900s 之后才该重取。
+    空串那臂是 `or 7200` 自己兜的（走不到 except），放在一起是因为它同样**不该抛** ——
+    四臂共用一条断言：读不出的 TTL 一律落回默认，绝不升级成故障。
+    """
+    calls: list[int] = []
+    now = {"t": 1000.0}
+
+    def transport(url: str, payload: dict[str, str]) -> dict[str, Any]:
+        calls.append(1)
+        return {"access_token": "tok-bad-ttl", "expires_in": bad_ttl}
+
+    tokens = QQTokenManager(
+        app_id="a",
+        app_secret="b",
+        token_url="https://fake/token",
+        transport=transport,
+        clock=lambda: now["t"],
+    )
+    assert tokens.token() == "tok-bad-ttl"  # 不抛：降级成立
+    now["t"] = 1000.0 + 6899  # 还差 1 秒没到兜底 TTL 的提前点
+    assert tokens.token() == "tok-bad-ttl"
+    assert len(calls) == 1
+    now["t"] = 1000.0 + 6900 + 1  # 过了 7200-300 ⇒ 该重取了
+    assert tokens.token() == "tok-bad-ttl"
+    assert len(calls) == 2
+
+
 def _fake_api(transport: httpx.MockTransport) -> QQApi:
     creds = QQCredentials(
         app_id="a",
