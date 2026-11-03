@@ -37,6 +37,11 @@ def main(argv: list[str] | None = None) -> int:
         "铺演示/评测世界的脚本要它：persona 三件与 run_eval 的用例点名域角色。",
     )
     args = parser.parse_args(argv)
+    # 数据路径与 run_api.py 走同一条解析（`base/paths.resolve_data_env`，2026-11-03 审查 B4）：
+    # 从前这里是 `Settings.from_env()` 直接取字段默认值 `./data/sqlite/app.db`，那是**按 CWD**
+    # 解析的第二条路径 —— 而 README 教的正是这一条。在非仓库根目录跑它，会在 `<CWD>/data/`
+    # 下另建一份空库并播种成功，与启动器那份"两个都成功、指向两个文件"，症状长得像"库被清空了"。
+    from rolecard_agent.base.paths import resolve_data_env
     from rolecard_agent.config import Settings
     from rolecard_agent.core.plugins import seed_plugin_rows
     from rolecard_agent.core.storage.checkpointer import make_checkpointer
@@ -45,7 +50,11 @@ def main(argv: list[str] | None = None) -> int:
     from rolecard_agent.roles.service import RoleCardService
     from rolecard_agent.storage.db import bootstrap, connect
 
+    notice = resolve_data_env()
+    if notice:
+        print(f"[init_db] 注意：{notice}")
     settings = Settings.from_env()
+    settings.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
     conn = connect(settings.sqlite_path)
 
     # Schemas are applied for every REGISTERED domain, not only the enabled ones: the table

@@ -211,6 +211,43 @@ def split_root_notice(
     )
 
 
+def resolve_data_env() -> str | None:
+    """把四条数据路径解析成**绝对值写回 os.environ**，返回"半搬"提示（没有则 None）。
+
+    为什么从 `scripts/run_api.py` 的 `_resolve_data_paths()` 下移到这里（2026-11-03 审查 B4）：
+    `data_paths()` 的 docstring 自称"这些路径的**唯一**推导处"，可它只是**推导默认值**的那一半;
+    「用户设了相对值该怎么折成绝对值」这另一半长在启动器里，于是仓里实际存在**两条**解析路径 ——
+    走 `run_api.py` 的得到 `<数据根>/sqlite/app.db`，而**绕过启动器**直接
+    `Settings.from_env()` 的（`scripts/init_db.py`、各种探针、第二实例）得到按 **CWD** 解析的
+    `./data/sqlite/app.db`。README 第 39 行教的正是后者：从非仓库根目录跑 `init_db.py`
+    会在 `<CWD>/data/` 下**另建一份空库**并播种成功，两句"成功"指向两个文件 ——
+    这正是"我的库被清空了"那个症状的发生器，而它看起来毫无问题。
+
+    规则一字未改（三条，与从前那份逐条对应）：
+      * 环境变量未设置 → 用 `data_paths()` 的默认绝对路径；
+      * 已设置且为绝对路径 → 原样保留（用户显式覆盖优先）；
+      * 已设置但为相对路径 → 按 `path_from_config()` 的基准解析（**仓库根**，不是数据根，
+        理由在该函数 docstring：`.env.example` 里的 `./data/...` 就是按仓库根约定的）。
+
+    出声也保持原样：`split_root_notice()` 的半搬警告由**调用方**打印（这里是库，
+    库不该 print）。建目录也不在这里做 —— 那是启动器的副作用策略，探针脚本可能只想读。
+    """
+    resolved: dict[str, str] = {}
+    for key, default_abs in data_paths().items():
+        val = os.environ.get(key)
+        if not val:
+            resolved[key] = str(default_abs)
+        else:
+            resolved[key] = str(path_from_config(val))
+        os.environ[key] = resolved[key]
+    return split_root_notice(
+        sqlite_path=resolved["SQLITE_PATH"],
+        chroma_path=resolved["CHROMA_PATH"],
+        upload_dir=resolved["UPLOAD_DIR"],
+        workspace_dir=resolved["WORKSPACE_DIR"],
+    )
+
+
 def path_from_config(value: str | Path) -> Path:
     """配置（`.env` / 界面里的运行环境）里的路径 → 绝对路径。
 

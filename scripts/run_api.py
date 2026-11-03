@@ -67,36 +67,19 @@ def _resolve_data_paths() -> None:
     `%LOCALAPPDATA%\rolecard-agent`**。后者不是可选项 —— 安装目录可能不可写，而且升级是
     整目录替换，库放进去等于"更新一次丢一次"。
 
-    规则：环境变量未设置 → 用数据根下的默认绝对路径（推导在 `base/paths.data_paths()`，
-    配置层与启动器共用同一份，不再各写一遍）；已设置且为绝对路径 → 原样保留
-    （用户显式覆盖优先）；已设置但为相对路径 → 按 `path_from_config` 的基准解析（CWD 无关）。
-
-    而那个根本身可以被 `DATA_ROOT` 整份搬走（M4）：**换身份 = 换一个根，只需要这一个变量**。
-    只换三条里的某一条，症状就是 §4.1 那句"记忆没了、向量库还在"—— 比不换更像数据损坏，
-    所以最后会出声一句（`split_root_notice`）。
+    ⚠ 三条解析规则本身 2026-11-03 已下移到 `base/paths.resolve_data_env()`（审查 B4）：
+    从前它们长在这个启动器里，于是"绕过启动器直接 `Settings.from_env()`"的那些入口
+    （`scripts/init_db.py` 是 README 第 39 行**教人跑**的那一个）走的是第二条路径 ——
+    相对值按 CWD 解析，在非仓库根目录下会**另建一份空库**并播种成功，两句"成功"指向
+    两个文件。规则只留一份，两个入口都调它；这里只保留启动器自己的两件事：
+    打印警告（库不该 print）与建出落点目录。
     """
     from rolecard_agent.base.paths import (
         DATA_PATH_ENVS,
-        data_paths,
-        path_from_config,
-        split_root_notice,
+        resolve_data_env,
     )
 
-    defaults = data_paths()
-    for key, default_abs in defaults.items():
-        val = os.environ.get(key)
-        if not val:
-            os.environ[key] = str(default_abs)
-        else:
-            # 相对值按**仓库根**（开发态）解析，不是按数据根：`.env.example` 里的
-            # `./data/...` 就是这么约定的，换基准会让"没改过路径"的人凭空丢库。
-            os.environ[key] = str(path_from_config(val))
-    notice = split_root_notice(
-        sqlite_path=os.environ["SQLITE_PATH"],
-        chroma_path=os.environ["CHROMA_PATH"],
-        upload_dir=os.environ["UPLOAD_DIR"],
-        workspace_dir=os.environ["WORKSPACE_DIR"],
-    )
+    notice = resolve_data_env()
     if notice:
         print(f"[run_api] 注意：{notice}")
     # 确保落点目录存在：fresh clone / 首次启动时不因父目录缺失而 500（sqlite 的 connect
