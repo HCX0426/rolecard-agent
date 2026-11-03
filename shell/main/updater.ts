@@ -30,6 +30,14 @@ import net from "node:net";
 import path from "node:path";
 
 import { cleanupConsumedPendingUpdate, snapshotsToEvict, type CleanupFs } from "./updateCacheCleanup";
+import {
+  advanceStageOnDownload,
+  failureOf,
+  failureTitle,
+  isCheckTerminal,
+  shouldHandoffQuitToInstall,
+  type ManualAction,
+} from "./updateFeedback";
 
 /**
  * 自动更新的三档开关（用户 2026-10-14 要的"自动更新开关 + 启动时检测更新"）。
@@ -304,11 +312,31 @@ export function createUpdater(options: UpdaterOptions): Updater {
   /** 装正在跑：挡住"退出触发的第二次装"（quitAndInstall 自己会走 quit 链）。 */
   let installing = false;
   /**
-   * 本次检查是**用户手点的**（托盘「检查更新」）⇒ 每个终态都要弹 toast 送回执。
-   * 开机自检（startup）不置位 —— 静默是它的默认，发现新版亮托盘状态行就够。
-   * 终态送达后清掉，防止一个陈旧的 true 让之后的静默事件也弹窗。
+   * 这一次装是不是**退出触发**的（托盘「重启并更新」直接调 install() 时是 false）。
+   *
+   * 为什么需要这个旗子（2026-11-03 审查 A-6）：`before-quit` 为了把退出交给安装器，
+   * 调了 `event.preventDefault()`。可 `doInstall` 的两条中止路（备份抛错、端口没空出来）
+   * 只 `return` —— 没有任何人再触发一次退出。于是用户点「退出」看到的是：一个错误框，
+   * 然后应用照旧活着，**既没退也没装**。这比"退出没反应"更糟，因为它给了一次明确的
+   * 失败读数、却把那轮退出永久吞掉了。
+   *
+   * 补一次 `app.quit()` 不会死循环：两条中止路都先 `setState({kind:"error"})`，
+   * 而 `onQuitAttempt` 的第一条判据就是 `current.kind !== "ready"` ⇒ 返回 false ⇒
+   * `before-quit` 走普通收尾（quitting = true、backend.stop()）。
    */
-  let manualCheck = false;
+  let quitDriven = false;
+  /**
+   * **用户手点的那一轮处在哪个阶段**（null = 不是手点的，比如开机自检 ⇒ 静默档）。
+   *
+   * 从前这里是个布尔 `manualCheck`，两个症状都从它来：
+   *  - 检查成功后不清（那是事实：接下来用户要点下载），于是**下载**失败时 error
+   *    监听器拿着旧上下文弹"检查更新失败" —— 检查明明成功了，文案在说谎；
+   *  - 失败读数有两个主人（监听器 + 调用方 `.catch`）：electron-updater 在 reject
+   *    之前**先 emit("error")**（AppUpdater.js:271 与 :439/:453→:477，已核源码），
+   *    于是同一次失败弹两条同名 toast。
+   * 现在带阶段，且失败读数只有监听器一个主人（判据在 `updateFeedback.ts`）。
+   */
+  let manualAction: ManualAction = null;
   const listeners: ((state: UpdaterState) => void)[] = [];
   const setState = (state: UpdaterState): void => {
     current = state;
@@ -333,22 +361,28 @@ export function createUpdater(options: UpdaterOptions): Updater {
   autoUpdater.on("update-available", (info: UpdateInfo) => {
     options.log(`发现新版本 ${info.version}`);
     setState({ kind: "available", version: info.version });
-    // 手动检查的回执（用户 10-14 的反馈：点了「检查更新」一点提示都没有）：用户点了
+    // 手动那一轮的回执（用户 10-14 的反馈：点了「检查更新」一点提示都没有）：用户点了
     // 就明确要一个答案，直接弹 toast 送他眼前 —— 托盘菜单是打开那一刻的快照，点完收起，
     // 后台 refresh 他根本看不见（这正是那次"一点提示都没有"的根因）。**不受**
     // "控制台在前台就抑制"那条规则管：那条防的是主动开口的噪音，这里是他自己要的回执。
-    if (manualCheck) options.notify(`发现新版本 ${info.version}`, `去托盘点「下载更新」，或到设置 → 关于看详情。`);
+    // 上下文**不清**：接下来用户要点「下载更新」，那一轮的成败还是他要的答案，
+    // 而失败报哪个阶段就由这个上下文决定（从前它是布尔，于是下载失败被冒名成检查失败）。
+    if (manualAction !== null) options.notify(`发现新版本 ${info.version}`, `去托盘点「下载更新」，或到设置 → 关于看详情。`);
   });
   autoUpdater.on("update-not-available", () => {
     setState({ kind: "uptodate" });
-    if (manualCheck) {
+    if (isCheckTerminal(manualAction)) {
       options.notify("已是最新版本", `当前 ${app.getVersion()}，没有可用的更新。`);
-      manualCheck = false; // 终态已送达：别让下一次开机检查的落点再弹（开机那次不设 manualCheck）
+      manualAction = null; // 检查的终态已送达（判据见 updateFeedback.isCheckTerminal）
     }
   });
-  autoUpdater.on("download-progress", (progress: ProgressInfo) =>
-    setState({ kind: "downloading", percent: Math.round(progress.percent) }),
-  );
+  autoUpdater.on("download-progress", (progress: ProgressInfo) => {
+    // 开始下载就是"这一轮进入下载阶段"的客观证据：autoDownload 下没人点过第二下，
+    // 而上下文还留在 "check" —— 不推进的话下载失败会报"检查更新失败"（检查是成功的）。
+    // 静默档（null）由判据保持静默：自动开始下载不等于用户要答案。
+    manualAction = advanceStageOnDownload(manualAction);
+    setState({ kind: "downloading", percent: Math.round(progress.percent) });
+  });
   autoUpdater.on("update-downloaded", (info: UpdateInfo) => {
     options.log(`更新包下载完成：${info.version}`);
     setState({ kind: "ready", version: info.version });
@@ -356,17 +390,39 @@ export function createUpdater(options: UpdaterOptions): Updater {
     // "有个重启并更新在等人"，值得出一声 —— 不出声它可能一直躺在托盘第二行里。
     options.notify(`新版本 ${info.version} 已下载`, "托盘点「重启并更新」即可完成升级（升级前会自动备份你的数据）。");
   });
+  // **失败读数的唯一主人**（A-8）。electron-updater 在 reject 之前先 emit("error")
+  // （AppUpdater.js:271 检查路、:439/:453→:477 下载路，已核源码），所以 toast 只能在这里出 ——
+  // 调用方的 .catch 再弹一次就是同一次失败两条同名 toast（从前正是这样）。
+  // 标题按 manualAction 的阶段给：手点检查之后转下载，失败要报"下载更新失败"，
+  // 不能拿着旧的检查上下文冒名（布尔时代就是这个症状）。
   autoUpdater.on("error", (error) => {
     options.log(`更新流程报错：${error?.message ?? String(error)}`);
     setState({ kind: "error", message: String(error?.message ?? error).slice(0, 200) });
-    if (manualCheck) {
-      options.notify("检查更新失败", String(error?.message ?? error).slice(0, 120));
-      manualCheck = false;
+    const report = failureOf(manualAction);
+    if (report.shouldNotify) {
+      options.notify(failureTitle(report.stage), String(error?.message ?? error).slice(0, 120));
     }
+    if (report.consumesAction) manualAction = null; // 静默档没有上下文可消费
   });
 
   // 装的动作单独成函数：`onQuitAttempt` 要调它，而它住在下面那个返回对象里 ——
   // 在对象字面量里自指（`updater.install()`）拿到的是 undefined。
+  /**
+   * 中止安装时把**那轮退出交回应用**（审查 A-6）。
+   *
+   * 只在"这次装是退出触发的"时才交：手点「重启并更新」失败不该把应用退掉
+   * （用户要的是装上新版，不是被踢出程序）。
+   * 交回去的方式是 `app.quit()` —— 它会再走一遍 `before-quit`，那时
+   * `onQuitAttempt` 因为 `current.kind === "error"`（不是 "ready"）返回 false，
+   * 于是走普通收尾。**不会死循环**，判据就是那一条 kind。
+   */
+  const abortAndReleaseQuit = (): void => {
+    if (!quitDriven) return;
+    quitDriven = false;
+    options.log("安装已中止：把这一轮退出交回应用（否则用户那一下「退出」被吞掉）");
+    app.quit();
+  };
+
   const doInstall = async (): Promise<void> => {
     if (installing) return;
     installing = true;
@@ -379,6 +435,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
       options.log(message);
       setState({ kind: "error", message });
       dialog.showErrorBox("更新已中止", message);
+      abortAndReleaseQuit();
       return;
     }
     // 红线 3：后端干净退出 —— 先收进程树，再等端口空出来，才交给安装器。
@@ -386,10 +443,11 @@ export function createUpdater(options: UpdaterOptions): Updater {
     const port = options.backendPort();
     if (!(await waitForPortFree(port, 10_000))) {
       installing = false;
-      const message = `端口 ${port} 上仍有应答：后端没退干净，已中止更新（强装会撞上文件占用）。`;
+      const message = `端口 ${port} 上仍有应答：后端没退干净，已中止更新（强装会撞上文件占用）。` + `退出已交回应用，你刚才那一下「退出」照常生效。`;
       options.log(message);
       setState({ kind: "error", message });
       dialog.showErrorBox("更新已中止", message);
+      abortAndReleaseQuit();
       return;
     }
     const version = current.kind === "ready" ? current.version : "?";
@@ -421,36 +479,53 @@ export function createUpdater(options: UpdaterOptions): Updater {
       if (source === "manual") {
         // 立刻给一声"点到了"：检查要 1~3 秒（问 GitHub），这三秒里托盘菜单已收起，
         // 没有这一声用户面对的就是彻底的无声 —— 10-14 反馈的原话是"都不知道有没有检查过"。
-        manualCheck = true;
+        manualAction = "check";
         options.notify("正在检查更新…", "几秒内有结果，会再提示你。");
       }
       void autoUpdater.checkForUpdates().catch((error) => {
-        // 开机那次检查失败不该弹任何东西：它只是"顺手查一下"，托盘保持"检查更新"入口，
-        // 用户真要点会自己点（error 读数进状态行，看得见但不打扰）。
+        // **只记日志**：上游在 reject 之前已经 emit("error")（AppUpdater.js:271），
+        // 状态读数与失败 toast 都由上面那个监听器认领（判据在 updateFeedback.failureOf）。
+        // 从前这里对 manual 又 notify 一次 —— 同一次失败两条同名 toast 就是这么来的。
+        // 留着这一声 log 是因为它带 source（manual/startup），比监听器那条更能定位是谁发起的。
         options.log(`检查更新失败（${source}）：${String(error).slice(0, 160)}`);
-        if (source === "manual") {
-          options.notify("检查更新失败", String(error).slice(0, 120));
-          manualCheck = false;
-        } else {
-          setState({ kind: "error", message: `检查失败：${String(error).slice(0, 160)}` });
-        }
       });
     },
     download: () => {
       // 点击回执：下载 ~281 MB 要几十秒到几分钟，第一声确认"点到了、在下了"。
+      // 上下文进 download 阶段：此后这一轮的失败要报"下载更新失败"。
+      manualAction = "download";
       options.notify("开始下载更新…", "进度看托盘菜单的「下载中 N%」，完成后会再提示。");
       void autoUpdater.downloadUpdate().catch((error) => {
+        // **只记日志**：与 check() 同一条理由 —— downloadUpdate 在 reject 之前先
+        // emit("error")（AppUpdater.js:439/:453→:477），状态读数与失败 toast 都归
+        // 那个监听器。从前这里既 setState 又 notify：读数有两个主人，toast 弹两条。
         options.log(`下载更新失败：${String(error).slice(0, 160)}`);
-        setState({ kind: "error", message: `下载失败：${String(error).slice(0, 160)}` });
-        options.notify("下载更新失败", String(error).slice(0, 120));
       });
     },
     install: doInstall,
     onQuitAttempt: () => {
-      if (!prefs.autoInstallOnQuit || current.kind !== "ready" || installing) return false;
-      options.log(`退出时自动装（版本 ${current.version}）：走同一条 install()，备份与后端退出照常`);
+      // 判据住在 updateFeedback.shouldHandoffQuitToInstall（三个条件：开关开着、
+      // 有下载好的等着装、这一轮没在装）。搬出去是为了能被 node 直接测 ——
+      // 尤其"没在装"那一条：它同时是挡住死循环的那一条（quitAndInstall 自己会
+      // 再触发一次 before-quit）。
+      if (
+        !shouldHandoffQuitToInstall({
+          autoInstallOnQuit: prefs.autoInstallOnQuit,
+          stateKind: current.kind,
+          installing,
+        })
+      )
+        return false;
+      // 交接成立才写这一行日志（从前判据写在 if 里、日志无条件跟在后面，
+      // 于是 kind 不是 ready 时这里读 current.version —— 那个分支上它根本没有 version）。
+      const version = current.kind === "ready" ? current.version : "?";
+      options.log(`退出时自动装（版本 ${version}）：走同一条 install()，备份与后端退出照常`);
       // 不 await：调用方是同步的 quit 链。doInstall 里的 quitAndInstall 会接管这轮退出，
       // 所以返回 true 告诉调用方**别再自己 app.quit()**（那会打断安装）。
+      // 置旗子：这轮退出是被安装**借走**的，两条中止路必须把它交回去（A-6）——
+      // 必须在 doInstall() 之前置：它的开头是同步的，中止可能发生在第一个 await 之后、
+      // 而旗子要在任何一次 abortAndReleaseQuit 读到之前就已经是 true。
+      quitDriven = true;
       void doInstall();
       return true;
     },

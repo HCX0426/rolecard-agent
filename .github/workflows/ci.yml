@@ -372,6 +372,16 @@ jobs:
         working-directory: shell
         run: npm run test:dock
 
+      - name: 壳更新反馈判据（真跑十三条读数，红就 exit 1）
+        # 与上两步同一个形状：typecheck 守不住"一次失败弹几条 toast"。2026-11-03 审查
+        # A-8 的现形就是同一次失败有两个认领者（error 监听器与调用方的 .catch 各弹一条），
+        # 而"先 emit 再 throw"住在 electron-updater 的编译产物里 —— 升级那个包就可能复活。
+        # 判据本身在这一步测；**接线有没有绕过判据**由 check_consistency 的
+        # 「updater failure readout has one owner」盯着（Python 读 TS 原文）。两边缺一不可。
+        working-directory: shell
+        run: npm run test:feedback
+
+
       - name: npm 依赖漏洞扫描（新披露 = 红，红就 exit 1）
         # 2026-11-01 补上：此前依赖审计**只扫 Python**（pip-audit 问 OSV），npm 侧一把
         # 尺子都没有 —— minimatch 的 DoS（GHSA-g3hv-75wg-m249，10-30 披露）在仓里躺了

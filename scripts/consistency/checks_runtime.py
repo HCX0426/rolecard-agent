@@ -1052,6 +1052,229 @@ def check_error_message_paths_resolve() -> None:
         fails.append(f"error messages point at missing files: {offenders}")
 
 
+#: updater.ts 里"一次失败只有一个读数主人"的落点（2026-11-03 审查 A-8）。
+#: 每项 = 上游调用名；它的 `.catch` 体内不许再出现下面这两个动作。
+_UPDATER_CATCH_SITES = ("checkForUpdates", "downloadUpdate")
+_UPDATER_FORBIDDEN_IN_CATCH = ("options.notify(", "setState(")
+
+
+def _js_block_body(text: str, from_index: int) -> str:
+    """取 `from_index` 之后**第一个** `{…}` 的内容（嵌套算进去，字符串/模板串里的不算）。
+
+    为什么不用正则：要判的是"这个 catch 的函数体**里**有没有 notify"。正则一刀切会把
+    注释也算进去，而模板串里的 `${...}` 会骗过括号配对 —— 两种错的方向都不可控。
+    """
+    i = text.find("{", from_index)
+    if i < 0:
+        return ""
+    depth = 0
+    quote = ""
+    j = i
+    while j < len(text):
+        ch = text[j]
+        if quote:
+            if ch == quote and text[j - 1] != "\\":
+                quote = ""
+        elif ch in "\"'`":
+            quote = ch
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[i + 1 : j]
+        j += 1
+    return ""
+
+
+def check_updater_failure_readout_has_one_owner() -> None:
+    """失败读数与状态读数只有 `error` 监听器一个主人（盯**接线**，跨 TS）。
+
+    为什么判据搬进 `updateFeedback.ts`、能被 node 直测之后，还要这条（Python 读 TS 原文）：
+    判据测试只能证明"判据本身算得对"，**证明不了 `updater.ts` 真在用它**。那两条
+    `.catch` 里有没有人把 `notify`/`setState` 再加回来，判据测试一个字都看不见 ——
+    而"先 emit 再 throw"这件事住在 electron-updater 的编译产物里，升级那个包、或有人
+    "顺手把失败也写进状态行"，双弹就复活。这正是 A-8 的原发形状（同一次失败两条同名
+    toast）。尺子因此同时盯两侧：判据对不对（shell 那边有测试）、接线有没有绕过它（这条）。
+
+    判据三条，任一不满足判红（"看不见"不等于"通过"）：
+      1. `checkForUpdates()` / `downloadUpdate()` 的 `.catch` **函数体内**不许出现
+         `options.notify(` 或 `setState(`；
+      2. `updateFeedback.ts` 导出的判据函数在 `updater.ts` 里**各有真实调用点**
+         （导出了没人调 = 判据空转，线上走的还是旧逻辑而测试全绿）；
+      3. 两个输入文件读不到、两处上游调用一个都找不到、或某个 catch 的函数体抠不出
+         内容 ⇒ 判红（读法塌了不许静默绿）。
+
+    注释过滤是**行首启发式**（`//`、`/*`、续行 `*`）：误判方向是假红（块注释中间那行
+    没对齐也会被当代码），不是假绿 —— 宁可多报，因为漏报就是这条尺子存在的理由。
+
+    为什么 Python 再读一遍 TS、而不是让壳那边的测试顺手管：两边问的是**不同的问题**。
+    `test-update-feedback.cjs` 证"判据算得对"（给定上下文，该不该弹、弹哪一阶段）；
+    这条证"接线没绕过判据"（那两个 catch 里没有第二个主人、判据函数真被调用）。
+    判据测试对这两件事**一个字都看不见** —— 它 import 的是 `updateFeedback.js`，
+    不看 `updater.ts`。两条都必要，缺一不可。
+    （gate 的 full 档确实跑 `npm run test:cleanup` / `test:dock`，接线也在那里被
+    `check_consistency` 覆盖到同一把门禁 —— 这条不是为了"多一处要人记得跑"。）
+    """
+    updater = ROOT / "shell" / "main" / "updater.ts"
+    feedback = ROOT / "shell" / "main" / "updateFeedback.ts"
+    offenders: list[str] = []
+    for p in (updater, feedback):
+        if not p.exists():
+            offenders.append(f"{p.relative_to(ROOT).as_posix()} 不存在（这条尺子的输入丢了）")
+    if offenders:
+        out("updater failure readout has one owner", False, "; ".join(offenders))
+        fails.append(f"updater readout inputs missing: {offenders}")
+        return
+
+    text = updater.read_text(encoding="utf-8", errors="ignore")
+    fb_text = feedback.read_text(encoding="utf-8", errors="ignore")
+
+    checked = 0
+    for call in _UPDATER_CATCH_SITES:
+        pos = 0
+        while True:
+            i = text.find(f"{call}()", pos)
+            if i < 0:
+                break
+            pos = i + len(call) + 2
+            catch_at = text.find(".catch(", i)
+            if catch_at < 0 or catch_at - i > 200:
+                offenders.append(f"{call}() 之后找不到紧邻的 .catch —— 吞 rejection 那一条不成立")
+                continue
+            checked += 1
+            body = _js_block_body(text, catch_at)
+            if not body.strip():
+                offenders.append(f"{call}().catch 的函数体抠不出内容（读法塌了，不判通过）")
+                continue
+            code = "\n".join(
+                line for line in body.splitlines() if not line.strip().startswith(("//", "*", "/*"))
+            )
+            for bad in _UPDATER_FORBIDDEN_IN_CATCH:
+                if bad in code:
+                    line = text[:catch_at].count("\n") + 1
+                    offenders.append(
+                        f"shell/main/updater.ts:{line} {call}().catch 里有 {bad} —— "
+                        "读数出现第二个主人"
+                    )
+    if checked == 0:
+        offenders.append("两处上游调用一个都没找到 —— 接线形状变了，这条尺子已看不见它要防的东西")
+
+    wanted = {
+        "failureOf",
+        "failureTitle",
+        "advanceStageOnDownload",
+        "isCheckTerminal",
+        "shouldHandoffQuitToInstall",
+    }
+    exported = set(re.findall(r"^export (?:function|const) (\w+)", fb_text, re.M))
+    missing_export = sorted(wanted - exported)
+    if missing_export:
+        offenders.append(f"updateFeedback.ts 少了这些导出：{missing_export}")
+    for name in sorted(wanted & exported):
+        if len(re.findall(rf"\b{name}\(", text)) == 0:
+            offenders.append(f"{name} 被导出但 updater.ts 一次都没调（判据空转）")
+
+    out(
+        "updater failure readout has one owner",
+        not offenders,
+        "; ".join(offenders[:5])
+        if offenders
+        else f"{checked} 处 .catch 只记日志；{len(wanted)} 条判据各有调用点",
+    )
+    if offenders:
+        fails.append(f"updater readout owners: {offenders}")
+
+
+def check_gate_step_lists_aligned() -> None:
+    """`gate.py` 的三份步骤名单必须互相对齐（新增步骤忘了登记 = 红）。
+
+    为什么立这条（2026-11-03 自查）：门禁的步骤清单 `STEPS`、每步上限表
+    `STEP_TIMEOUTS`、CI 跳过集 `CI_SKIP` 是**同一批步骤名的三处声明**。`_step_timeout`
+    用 `dict.get(name, DEFAULT)` 查表 —— 查不到不报错，只是那一步的每步上限**静默失效**
+    （掉进 900s）。表里「openapi 契约同步」那条注释正是作者自己撞过这一族后补的。
+    而本轮往 full 档加 `shell 更新反馈判据` 时我**又漏登记了 STEP_TIMEOUTS** —— 普查
+    三份名单才发现；顺手量出既有的一处同类缺口：`npm 依赖审计` 从来没进过那张表
+    （它内部硬超时 600s，却一路拿着 DEFAULT 900 跑）。既然连"刚被这条纪律提醒过的人"
+    都会漏，它就不该靠记得。
+
+    判据全走 AST，两条读法教训都写在这里：
+      * 上一轮我用**正则**普查，把注释与 CLI flag 都算成步骤名（读数脏）；
+      * 更险的是 `STEPS`/`STEP_TIMEOUTS` 写成**带注解的赋值**
+        （`STEPS: list[...] = [...]` 是 `ast.AnnAssign` 不是 `ast.Assign`）——
+        只认 `Assign` 的读法会把它读成**空集**，于是三份差集全报"无"。
+        空集算出来的"没问题"与真没问题长得一模一样，所以**先断言三份都非空**再算差集。
+
+    三条判据：
+      1. 三份名单各自非空，否则判红（读法塌了不许静默绿）；
+      2. 每个步骤名都要在 `STEP_TIMEOUTS` 里有格子（缺 = 每步上限静默掉进 DEFAULT）；
+      3. 每个 `CI_SKIP` 成员都要真对应一个步骤（拼错 = 那一步在 CI 里其实没跳）。
+
+    方向差集 `STEP_TIMEOUTS - STEPS`（孤儿格子）**刻意不判红**：删步骤时留下的旧格子
+    只是噪声，不会让人少跑任何检查；判它只会逼人把表清空一半。数量写进读数，看得见不拦。
+    """
+    gate = ROOT / "scripts" / "gate.py"
+    offenders: list[str] = []
+    if not gate.exists():
+        out("gate step lists aligned", False, "scripts/gate.py 不存在（这条尺子的输入丢了）")
+        fails.append("gate.py missing for step-list check")
+        return
+    tree = ast.parse(gate.read_text(encoding="utf-8", errors="ignore"))
+
+    def _targets(node: ast.AST) -> list[str]:
+        # Assign 与 AnnAssign 两种写法都要认 —— 漏后者就是上面那段假绿。
+        if isinstance(node, ast.Assign):
+            return [t.id for t in node.targets if isinstance(t, ast.Name)]
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            return [node.target.id]
+        return []
+
+    steps: list[str] = []
+    timeouts: list[str] = []
+    ci_skip: list[str] = []
+    for node in ast.walk(tree):
+        for name in _targets(node):
+            value = getattr(node, "value", None)
+            if value is None:
+                continue
+            if name == "STEPS" and isinstance(value, (ast.List, ast.Tuple)):
+                for el in value.elts:
+                    # 每项形如 ("名字", [cmd...], "档位")；展开调用（如 _smoke_steps()）
+                    # 不是元组字面量，拿不到就跑不出非空断言 —— 那里能兜住。
+                    if (
+                        isinstance(el, ast.Tuple)
+                        and el.elts
+                        and isinstance(el.elts[0], ast.Constant)
+                    ):
+                        steps.append(str(el.elts[0].value))
+            elif name == "STEP_TIMEOUTS" and isinstance(value, ast.Dict):
+                timeouts = [str(k.value) for k in value.keys if isinstance(k, ast.Constant)]
+            elif name == "CI_SKIP":
+                for sub in ast.walk(value):
+                    if isinstance(sub, (ast.Set, ast.List, ast.Tuple)):
+                        ci_skip += [str(e.value) for e in sub.elts if isinstance(e, ast.Constant)]
+
+    for label, lst in (("STEPS", steps), ("STEP_TIMEOUTS", timeouts), ("CI_SKIP", ci_skip)):
+        if not lst:
+            offenders.append(f"{label} 读出 0 条 —— 读法坏了，空集会把下面算成全绿")
+    if not offenders:
+        S, T, C = set(steps), set(timeouts), set(ci_skip)
+        for name in sorted(S - T):
+            offenders.append(f"步骤「{name}」没有 STEP_TIMEOUTS 格子（每步上限静默掉进 DEFAULT）")
+        for name in sorted(C - S):
+            offenders.append(f"CI_SKIP 里的「{name}」不对应任何步骤（拼错 = CI 里其实没跳）")
+    out(
+        "gate step lists aligned",
+        not offenders,
+        "; ".join(offenders[:5])
+        if offenders
+        else f"{len(steps)} 步骤名 × {len(timeouts)} 上限格子 × {len(ci_skip)} 个 CI 跳过项两两对齐"
+        f"（孤儿上限格子 {len(set(timeouts) - set(steps))} 个，只算噪声不拦）",
+    )
+    if offenders:
+        fails.append(f"gate step lists drift: {offenders}")
+
+
 def check_local_service_port_single_source() -> None:
     """本机推理服务端口（11434）在 src/ 与 scripts/ 里只许出现在 config.py。
 

@@ -78,6 +78,11 @@ CHECKS = (
     checks_runtime.check_appearance_single_source,
     checks_runtime.check_zero_status_apierror_has_kind,
     checks_runtime.check_error_message_paths_resolve,
+    # 盯接线而不是盯判据：判据由 shell/scripts/test-update-feedback.cjs 自己测，
+    # 这条问的是"接线有没有绕过判据"（catch 里的第二个主人、导出了没人调）
+    checks_runtime.check_updater_failure_readout_has_one_owner,
+    # gate.py 自己那三份名单的对齐（本轮我自己漏登记过一次，才立的尺子）
+    checks_runtime.check_gate_step_lists_aligned,
     checks_runtime.check_local_service_port_single_source,
     checks_storage.check_dangling_write_txns,
     checks_storage.check_shape_migration_ddl,
