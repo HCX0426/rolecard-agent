@@ -261,6 +261,49 @@ describe("ChatPage 流式渲染", () => {
     expect(screen.queryByText(/权威回答/)).toBeTruthy();
   });
 
+  it("流式期间默认展开、结束之后折叠 —— 这条以前只有真机冒烟在钉（有方差）", async () => {
+    // 为什么必须有这一支（2026-11-04）：上面那支名字写着"可折叠的思考面板"，实际只断言
+    // 回答文本在不在 —— **"流式期间默认展开"这件事从来没有确定性覆盖**，它只住在
+    // `scripts/js/ui_smoke.js` 那条判据里，而那一条依赖真模型：思考是流式到达还是随最终
+    // 消息一起到，取决于模型，于是判据会在"面板出现时流其实已经结束"的那一刻读到
+    // 回放面板（`defaultOpen={false}`，按 09-16 用户口径**本就该折叠**）⇒ 恒红。
+    // 这里用一道闸把"流还没结束"变成**可见证**的状态：thinking 发完就停在闸上，
+    // DOM 稳定在流式中 ⇒ 断言展开；放闸跑完 ⇒ 断言折叠。两半同一支，顺序即语义。
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    replay = [
+      { role: "user", content: "闸上一问" },
+      { role: "assistant", content: "答完", reasoning: "闸后的回放思考" },
+    ];
+    streamChatMock.mockImplementation(
+      async (_tid: string, _msg: string, onEvent: (e: ChatEvent) => void) => {
+        onEvent({ type: "start", role: { role_id: "ga", role_name: "通用助手" } });
+        onEvent({ type: "thinking", text: "正在想的这段" });
+        await gate; // ← 停在这里：流**确实**还没结束（不是靠 sleep 猜时长）
+        onEvent({ type: "token", text: "答完" });
+        onEvent({ type: "end" });
+      },
+    );
+
+    render(<ToastProvider><ChatPage /></ToastProvider>);
+    await sendMessage("闸上一问");
+
+    const summary = await screen.findByText(/^思考过程/);
+    const panel = summary.closest("details");
+    // 流式期间：展开（面板本身就是"正在思考"的视觉信号）
+    expect(panel?.hasAttribute("open")).toBe(true);
+    expect(await screen.findByText(/正在想的这段/)).toBeTruthy();
+
+    releaseGate();
+    await waitFor(() => expect(screen.getByRole("button", { name: "发送" })).toBeTruthy());
+    // 结束之后：折叠（展开是用户点击后的动作；每条都保持展开会喧宾夺主）
+    const after = (await screen.findByText(/^思考过程/)).closest("details");
+    expect(after?.hasAttribute("open")).toBe(false);
+  });
+
+
   it("回答结束后思考过程**仍然保留**：回放的助手消息带 reasoning 就要再渲染一次", async () => {
     // 一轮结束前端会用 checkpoint 回放整体替换消息区、live 气泡被清空；
     // 思考若只存在 live 气泡里就会消失 —— 所以回放数据里的 reasoning 必须再渲染。

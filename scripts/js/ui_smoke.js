@@ -106,8 +106,32 @@ function record(name, ok, note = "") {
     await page.getByRole("button", { name: "发送" }).click();
 
     // 思考面板（思考模型才会有；没有就跳过这一项而不是判失败）
-    const summary = page.getByText("思考过程", { exact: true }).first();
+    //
+    // 定位一律用**最后一个**「思考过程」，不是 `first()`、更不是
+    // `document.querySelector("details")`（全文档第一个）。三条理由：
+    //   1. live 气泡渲染在历史列表**之后**（ChatPage.tsx:952 的 `{live && …}` 排在
+    //      turn.map 后面），所以流式期间"最后一个"就是 live 那一个；
+    //   2. 用 `first()` 会撞上**回放的**思考面板：本仓的回放路径传
+    //      `defaultOpen={false}`（用户 09-16 口径"刚结束的一轮保持展开是错的"），
+    //      于是副本库里只要有一条带 reasoning 的历史，`first()` 就是那个**该折叠**的面板
+    //      ⇒ "流式期间默认展开"变成恒红；
+    //   3. `querySelector("details")` 更糟：对话页与记忆页/数据页**都常驻挂载**
+    //      （App.tsx:387 / :433），实测着陆页唯一的 details 是记忆页那个默认折叠的
+    //      「原文视图 / 整段编辑」（MemoryPage.tsx:830）⇒ "结束后已折叠"读到它**永远绿**，
+    //      而一个从不失败的检查比没有检查更坏（本仓原话）。
+    // 展开语义本身已经有**确定性**覆盖（不依赖模型方差）：
+    //   `ThinkingPanel.test.tsx`（attribute 与 property 同步，判据读法成立）+
+    //   `ChatPage.test.tsx`「流式期间默认展开、结束之后折叠」（用一道闸把流停在中间）。
+    // 这一格在真机上只问"这条链路在真浏览器里接上了没有"，接不上/读不到就如实跳过。
+    const thinkingDots = page.locator("details").filter({ has: page.getByText("思考过程", { exact: true }) });
+    // 一个 locator 走到底：流式期间与结束后都读**同一个** `thinkingPanel`。
+    // Playwright 的 locator 是惰性的，每次动作时重新解析 ⇒ 流结束后它自然指向回放出来的
+    // 那一条（live 气泡已被 checkpoint 回放替换），不需要第二个定位方式。
+    const thinkingPanel = thinkingDots.last();
+    const summary = thinkingPanel.locator("summary");
     const answer = page.getByText(/白天|白昼|昼长|日照/).first();
+    const sendBtn = page.getByRole("button", { name: "发送" });
+    const stopBtn = page.getByRole("button", { name: "停止生成" });
     let thinkingSeen = false;
     try {
       await summary.waitFor({ state: "visible", timeout: 90000 });
@@ -116,20 +140,27 @@ function record(name, ok, note = "") {
       thinkingSeen = false;
     }
     if (thinkingSeen) {
-      const openDuringStream = await page.evaluate(() => {
-        const el = document.querySelector("details");
-        return el ? el.hasAttribute("open") : null;
-      });
-      const label = (await summary.textContent()) || "";
-      record("思考过程：流式期间可见且默认展开", openDuringStream === true, `标题=${JSON.stringify(label)}`);
-      record("思考过程：不带「思考中…」省略号", label.trim() === "思考过程");
+      // ⚠ 「流式期间」这四个字**必须有见证**（2026-11-04 现形）：从前是"面板一出现就读
+      // open"。思考是流式到达还是随最终消息一起到取决于模型 —— 后者那一刻流已经结束，
+      // 该读到的确实是折叠的回放面板 ⇒ 恒假红。见证就是发送按钮本身：生成中它是
+      // 「停止生成」（Composer.tsx:266），流结束才换回「发送」（:278），两者同位互斥。
+      const streaming = await stopBtn.isVisible().catch(() => false);
+      if (!streaming) {
+        console.log("（跳过「流式期间默认展开」：面板出现时拿不到「流还在跑」的见证，那一刻该折叠而不是展开）");
+      } else {
+        const openDuringStream = await thinkingPanel.evaluate((d) => d.hasAttribute("open"));
+        const label = (await summary.textContent()) || "";
+        record("思考过程：流式期间可见且默认展开", openDuringStream === true, `标题=${JSON.stringify(label)}`);
+        record("思考过程：不带「思考中…」省略号", label.trim() === "思考过程");
+      }
     } else {
       console.log("（跳过思考相关断言：当前模型未输出思考，或响应较慢）");
     }
 
     // 等待回答结束：生成中这个按钮是「停止生成」，流结束后才换回「发送」——
     // 所以等它出现 = 等流真正结束（不是靠 sleep 猜时长）。
-    await page.getByRole("button", { name: "发送" }).waitFor({ timeout: 180000 });
+    await sendBtn.waitFor({ timeout: 180000 });
+
     const answered = await answer
       .waitFor({ state: "visible", timeout: 15000 })
       .then(() => true)
@@ -137,27 +168,31 @@ function record(name, ok, note = "") {
     record("回答生成并渲染", answered);
 
     if (thinkingSeen) {
-      const stillVisible = await page.getByText("思考过程", { exact: true }).first().isVisible().catch(() => false);
-      const stillOpen = await page.evaluate(() => {
-        const el = document.querySelector("details");
-        return el ? el.hasAttribute("open") : null;
-      });
+      // 三条都读**同一个** `thinkingPanel`（见上面那段"一个 locator 走到底"）。
+      // 从前这三条读的是 `document.querySelector("details")`（全文档第一个）与
+      // `getByText(...).first()`：对话页与记忆页都常驻挂载，而实测着陆页第一个 details 是
+      // 记忆页那个默认折叠的「原文视图 / 整段编辑」（MemoryPage.tsx:830）⇒
+      //   · 「已结束应折叠」那条读它 ⇒ **永远绿**：一个从不失败的检查比没有检查更坏；
+      //   · 「点击可展开」那条等它带上 open ⇒ **永远红**：点的是思考面板，等的是别人。
       // 关键回归点：轮次结束会用 checkpoint 回放整体替换消息区，思考必须留得住。
-      // 注意断言的是**折叠**态：展开属于用户的点击动作（用户 2026-09-16 明确），
+      // 断言的是**折叠**态：展开属于用户的点击动作（用户 2026-09-16 明确），
       // 流式期间才是默认展开（上面那条已覆盖）。
+      const stillVisible = await thinkingPanel.isVisible().catch(() => false);
+      const stillOpen = await thinkingPanel.evaluate((d) => d.hasAttribute("open")).catch(() => null);
       record("回答结束后思考过程仍然保留", stillVisible);
       record("回答结束后思考面板已折叠（展开交给用户点击）", stillOpen === false);
 
       // 点击后必须真的能展开出思考正文（否则"保留"只是留了个空壳）
-      const panel = page.getByText("思考过程", { exact: true }).first();
-      await panel.click().catch(() => {});
-      // 等 `details` 真的带上 open，而不是 sleep 400ms 后赌一次快照。
-      const opened = await page
-        .waitForFunction(() => document.querySelector("details")?.hasAttribute("open") === true, undefined, {
-          timeout: 5000,
-        })
-        .then(() => true)
-        .catch(() => false);
+      await summary.click().catch(() => {});
+      // 等**这一个** details 真的带上 open，而不是 sleep 400ms 后赌一次快照，
+      // 也不是等全文档任意一个 details 开了（那会被别的折叠面板冒名满足）。
+      const handle = await thinkingPanel.elementHandle();
+      const opened = handle
+        ? await page
+            .waitForFunction((el) => el.hasAttribute("open") === true, handle, { timeout: 5000 })
+            .then(() => true)
+            .catch(() => false)
+        : false;
       record("点击思考面板可展开", opened);
     }
 
