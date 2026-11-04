@@ -86,6 +86,8 @@ CHECKS = (
     checks_runtime.check_window_open_wiring,
     #: A-3：IPC 逐通道 sender 锁（19×fromOwnWindow + renderer-ready 严锁，按注册分段自动纳入新通道）
     checks_runtime.check_ipc_sender_guard,
+    #: A-4：/api/health 报 data_root 且只准走 user_data_root（含行为测试在场的钉子）
+    checks_runtime.check_health_data_root,
     checks_runtime.check_zero_status_apierror_has_kind,
     checks_runtime.check_error_message_paths_resolve,
     # 盯接线而不是盯判据：判据由 shell/scripts/test-update-feedback.cjs 自己测，

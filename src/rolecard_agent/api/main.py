@@ -75,7 +75,7 @@ from rolecard_agent.api.routers import workspace as workspace_router
 from rolecard_agent.base import error_signatures
 from rolecard_agent.base.identity import active_user_id, resolve_instance_identity
 from rolecard_agent.base.observability import Tracer, logline
-from rolecard_agent.base.paths import console_dist_dir
+from rolecard_agent.base.paths import console_dist_dir, user_data_root
 from rolecard_agent.config import Settings
 from rolecard_agent.core.agent.nodes import ChatLike
 from rolecard_agent.core.bootstrap import Assembly, Runtime, build_runtime
@@ -461,8 +461,10 @@ def create_app(
     def health() -> object:
         """探活：容器 healthcheck 与反代探活用，**必须免鉴权**（默认在 `AUTH_EXEMPT_PATHS` 里）。
 
-        只回状态、当前认证档位，以及**这份代码是从哪个 commit 打的** —— 便于部署后确认"认证到底
-        开没开"与"跑着的是哪一版"，不含任何凭证信息。
+        只回状态、当前认证档位、**这份代码是从哪个 commit 打的**，以及这一进程读的
+        **数据根**（A-4：两份数据根 + `DATA_ROOT` 搬家并存，"探活绿但数据不对"要能从
+        这一格直接归因到目录）—— 便于部署后确认"认证到底开没开"、"跑着的是哪一版"与
+        "读的是哪份数据"，不含任何凭证信息。
 
         `build` 那一格是 10-01 补的（台账 `R28-56`）：`probe_package_artifact.py` 那三层判据里，
         ① 比前端哈希、② 比刚构建的 exe 字节，一次**纯后端**改动会让 ① 一字不差地绿而 ② 在没有
@@ -478,6 +480,10 @@ def create_app(
             # 历史在 error.jsonl、现场在诊断包 —— 这一格只管"现在要不要看一眼"）。
             "error_count_recent": error_signatures.recent_count(),
             "build": read_build_info().as_dict(),
+            # 数据根现报（A-4）：唯一出处 `user_data_root()`（认 `DATA_ROOT` 覆盖），
+            # 这里只转字符串 —— 任何在 API 层再拼一遍 `data/...` 的写法都是第二套解析
+            # 逻辑（判据 `ipc sender guard` 同页的 `health data root` 盯着）。
+            "data_root": str(user_data_root()),
             # 上限常量给前端现读（Composer 的附图预检等）—— 前端不再手抄数字，
             # 改这里一处即可（2026-10-04 审查快照「上限常量散布」那条的出口）。
             "max_upload_bytes": env_settings.max_upload_bytes,

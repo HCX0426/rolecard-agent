@@ -1223,6 +1223,67 @@ def check_ipc_sender_guard() -> None:
         fails.append(f"ipc sender guard: {offenders}")
 
 
+def check_health_data_root() -> None:
+    """/api/health 报 `data_root`，且只准问 `user_data_root()`（A-4）。
+
+    （A-4，2026-11-04）09-24 之后世界上有两份数据根（仓库 `data/` 与安装态系统目录），
+    外加 `DATA_ROOT` 整体搬家（M4）—— 并存的世界里"探活绿着但数据不对"要能从 health
+    这一格直接归因到目录。判据钉四件事：
+
+      1. import 带上 `user_data_root`（少了 = 运行时 NameError，health 500 = 容器永远
+         unhealthy，比缺一格信息重得多）；
+      2. health() 返回体里逐字 `"data_root": str(user_data_root()),`；
+      3. API 层**不碰**第二套解析（`repo_root() / "data"`、`_platform_data_root` 都是
+         另写一份规则 —— 忽略 `DATA_ROOT` 覆盖正是这条要消灭的病）；
+      4. 行为半边有人测（`tests/unit/test_health_data_root.py` 钉逐字相等 + 覆盖跟走）。
+    """
+    rel = "src/rolecard_agent/api/main.py"
+    p = ROOT / rel
+    test_rel = "tests/unit/test_health_data_root.py"
+    if not p.exists():
+        out("health data root", False, f"{rel} 不存在（尺子的输入丢了）")
+        fails.append("health data root: [输入文件丢失]")
+        return
+
+    src = p.read_text(encoding="utf-8", errors="ignore")
+    offenders: list[str] = []
+
+    if "from rolecard_agent.base.paths import console_dist_dir, user_data_root" not in src:
+        offenders.append(f"{rel} import 没带上 user_data_root（health 会 500）")
+
+    start = src.find('@app.get("/api/health")')
+    end = src.find("dist_dir = console_dist_dir()")
+    if start < 0 or end <= start:
+        offenders.append(f"{rel} 找不到 health 段（输入变了？）")
+    else:
+        region = src[start:end]
+        if '"data_root": str(user_data_root()),' not in region:
+            offenders.append("health() 没报 data_root（归因不到目录）")
+        if 'repo_root() / "data"' in region or "_platform_data_root" in region:
+            offenders.append("health 内联了第二套数据根解析（会忽略 DATA_ROOT 覆盖）")
+
+    if "_platform_data_root" in src:
+        offenders.append(f"{rel} 碰了 paths 的内部推导（API 层只准走 user_data_root）")
+
+    t = ROOT / test_rel
+    if not t.exists():
+        offenders.append(f"{test_rel} 缺失（行为半边没人测）")
+    else:
+        tsrc = t.read_text(encoding="utf-8", errors="ignore")
+        if 'body["data_root"]' not in tsrc or "user_data_root()" not in tsrc:
+            offenders.append(f"{test_rel} 没钉 data_root == user_data_root()")
+
+    out(
+        "health data root",
+        not offenders,
+        "; ".join(offenders)
+        if offenders
+        else "health 报 data_root 且只问 user_data_root；行为测试在场",
+    )
+    if offenders:
+        fails.append(f"health data root: {offenders}")
+
+
 #: raise/assert 里的路径引用：至少读出这么多条，否则判红（读法塌了不许静默绿）。
 #: 现网实测 2026-11-03：src/ 388 条 raise/assert、其中 310 条带字符串，路径引用 4 条。
 #: 下限取 2 是因为这个数天然小（只有"指挥读者去改哪个文件"的那几条才写路径）；
