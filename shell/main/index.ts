@@ -293,20 +293,46 @@ function wireWindow(win: BrowserWindow): void {
 
 }
 
+/**
+ * IPC 的第一道（A-3，2026-11-04 审计）：sender 必须是应用自己那两扇窗。
+ *
+ * 页面渲染的是第三方角色卡（AI 生成内容），`sandbox: true` 挡的是 node，挡不住"页面里的
+ * 脚本把桥方法挨个调一遍" —— 参数不可信是各 handler 已有的纪律，而**谁在说话**这道从前
+ * 只有 `shell:renderer-ready` 有（它那道更严：只认控制台，见那里）。这里把其余 19 条通道
+ * 统一收口：mainWin / petWin 的 webContents 才算数，第三方（或已销毁窗口）的一律当没听见
+ * —— 返回 undefined 是安全侧的默认：真业务从不会走这条路，缺一拍不构成故障。
+ *
+ * 形参用结构类型 `{ sender: { id } }` 而不是引 electron 的两个 Event 类型：handle/on 两边
+ * 的事件类型不同，但这一道只看 `sender.id`，结构形参两边都收得进，不引类型噪音。 */
+function fromOwnWindow(event: { sender: { id: number } }): boolean {
+  const id = event.sender.id;
+  if (mainWin && !mainWin.isDestroyed() && id === mainWin.webContents.id) return true;
+  return Boolean(petWin && !petWin.isDestroyed() && id === petWin.webContents.id);
+}
+
 function boot(): void {
-  ipcMain.handle("shell:backend-url", () => consoleUrl());
-  ipcMain.handle("shell:backend-reachable", () => serving());
-  ipcMain.handle("shell:open-session", (_event, value: unknown) => {
+  ipcMain.handle("shell:backend-url", (event) => {
+    if (!fromOwnWindow(event)) return;
+    return consoleUrl();
+  });
+  ipcMain.handle("shell:backend-reachable", (event) => {
+    if (!fromOwnWindow(event)) return;
+    return serving();
+  });
+  ipcMain.handle("shell:open-session", (event, value: unknown) => {
+    if (!fromOwnWindow(event)) return;
     const id = threadIdOf(value);
     if (id) openSession(id);
   });
-  ipcMain.handle("shell:notify", (_event, title: unknown, body: unknown, value: unknown) => {
+  ipcMain.handle("shell:notify", (event, title: unknown, body: unknown, value: unknown) => {
+    if (!fromOwnWindow(event)) return;
     notify(textOf(title, 80), textOf(body, 200), threadIdOf(value));
   });
   // 桌宠悬停展开 / 收起（设计稿 §7.2）。参数只有一个布尔：**几何不让页面报**——
   // 工作区在哪、色片锚在哪个角只有主进程知道，交给后端托管的那个源就等于把"窗口能摆到哪"
   // 交了出去。非布尔一律不动窗（跟 `threadIdOf` / `textOf` 同一套"输入不可信"的写法）。
-  ipcMain.handle("shell:pet-expanded", (_event, value: unknown) => {
+  ipcMain.handle("shell:pet-expanded", (event, value: unknown) => {
+    if (!fromOwnWindow(event)) return;
     if (typeof value !== "boolean" || !petWin) return false;
     setPetExpanded(petWin, value);
     return true;
@@ -314,7 +340,8 @@ function boot(): void {
   // 拖动桌宠：页面只报**增量**（`[dx, dy]`），摆哪、能不能出屏由壳定（`movePetBy`）。
   // 为什么不用 CSS 的 `-webkit-app-region: drag`：见 PetPage 里那段注释 —— 实测拖拽区
   // 会把鼠标事件整个吞掉，悬停展开就没法工作（那篇悬浮球实现说的"drag 与点击冲突"是同一件事）。
-  ipcMain.on("shell:pet-drag", (_event, value: unknown) => {
+  ipcMain.on("shell:pet-drag", (event, value: unknown) => {
+    if (!fromOwnWindow(event)) return;
     if (!petWin || !Array.isArray(value) || value.length !== 2) return;
     const [dx, dy] = value;
     if (typeof dx !== "number" || typeof dy !== "number" || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
@@ -322,23 +349,28 @@ function boot(): void {
   });
   // 松手那一刻交给壳判边（§7.6）。**零参数**：吸哪条边、藏多深由壳按当前工作区量，而面板
   // 还摊着时它只记账 —— 真吸发生在面板收起那一瞬（见 windows.ts 的 `petDragEnded`）。
-  ipcMain.on("shell:pet-drag-end", () => {
+  ipcMain.on("shell:pet-drag-end", (event) => {
+    if (!fromOwnWindow(event)) return;
     if (petWin) petDragEnded(petWin);
   });
   // 悬停 = 只把趴着的半只拉出来；离开 = 让它自己趴回去（面板开着时不动）。**零参数**。
-  ipcMain.on("shell:pet-reveal", () => {
+  ipcMain.on("shell:pet-reveal", (event) => {
+    if (!fromOwnWindow(event)) return;
     if (petWin) petReveal(petWin);
   });
-  ipcMain.on("shell:pet-retuck", () => {
+  ipcMain.on("shell:pet-retuck", (event) => {
+    if (!fromOwnWindow(event)) return;
     if (petWin) petRetuck(petWin);
   });
   // 桌宠的"只在画了像素的地方吃点击"（「桌宠透明区遮挡点击」）。两条通道：一条开关（这页会不会报），
   // 一条是"哪些矩形有东西"。**坐标与尺寸一概不报进来**的是后者反方向 —— 页面说的只是
   // "我在这儿画了东西"，摆窗的权力全在主进程。非数字 / 越界的矩形在 `setPetHotRects` 里丢掉。
-  ipcMain.on("shell:pet-hittest", (_event, value: unknown) => {
+  ipcMain.on("shell:pet-hittest", (event, value: unknown) => {
+    if (!fromOwnWindow(event)) return;
     if (petWin && typeof value === "boolean") setPetHitTestArmed(petWin, value);
   });
-  ipcMain.on("shell:pet-hot-rects", (_event, value: unknown) => {
+  ipcMain.on("shell:pet-hot-rects", (event, value: unknown) => {
+    if (!fromOwnWindow(event)) return;
     if (petWin) setPetHotRects(petWin, value);
   });
   // 桌宠上报"盒子里哪一块真的有像素"（`[x, y, w, h]`，画布坐标）。**报的仍只是位置**：
@@ -347,7 +379,8 @@ function boot(): void {
   // 同一份数还用来收窄点击命中区（点她周围的空气不再算点她，2026-11-01 用户报的那条）。
   // 报得不合法一律当没报（`normalizeContentRect` → null ⇒ 落旧常数），页面说错话不该把
   // 桌宠推出屏幕。摆窗的权力照旧一条都不给页面。
-  ipcMain.on("shell:pet-content-rect", (_event, value: unknown) => {
+  ipcMain.on("shell:pet-content-rect", (event, value: unknown) => {
+    if (!fromOwnWindow(event)) return;
     if (!petWin) return;
     setPetContentRect(petWin, value);
     // 留一行读数：内容边界**量不到**时页面报的是空数组，壳会退回"整盒"的旧兜底 ——
@@ -356,21 +389,40 @@ function boot(): void {
   });
   // 桌宠页问"内容该不该画出来"（托盘「显示消息内容」）。**只有读**：写的那一侧只在托盘，
   // 页面能改它就不是隐私开关了，是后端托管的那个源自己把自己藏起来的手势。
-  ipcMain.handle("shell:pet-content-visible", () => petPrefs.showContent);
+  ipcMain.handle("shell:pet-content-visible", (event) => {
+    if (!fromOwnWindow(event)) return;
+    return petPrefs.showContent;
+  });
   // 同一个形状：桌宠页问"朗读开着吗"（托盘「朗读消息」）。读音能不能关**只有用户说了算** ——
   // 页面拿到的是只读值，出声与否的最终裁决仍在页面侧（那还要叠上内容旗子那道闸）。
-  ipcMain.handle("shell:pet-voice", () => petPrefs.voice);
+  ipcMain.handle("shell:pet-voice", (event) => {
+    if (!fromOwnWindow(event)) return;
+    return petPrefs.voice;
+  });
   // 同上：面板自动收起的毫秒数，**只有读**。写入口只在托盘（与隐私旗子同一条理由：
   // 页面能改它，就等于把"这块面板在桌面上摊多久"交回给被画的那块东西自己决定）。
-  ipcMain.handle("shell:pet-auto-hide", () => petPrefs.panelAutoHideMs);
+  ipcMain.handle("shell:pet-auto-hide", (event) => {
+    if (!fromOwnWindow(event)) return;
+    return petPrefs.panelAutoHideMs;
+  });
   // 本地推理服务的进程（D③-b）。**三个方法都不收参数**：起停一个本机进程能碰到的东西比
   // 打开一个会话多得多，参数一旦是路径/命令，桥就成了任意执行入口。
-  ipcMain.handle("shell:ollama-owner", () => ollama.owner());
-  ipcMain.handle("shell:ollama-start", () => ollama.start());
-  ipcMain.handle("shell:ollama-stop", () => ollama.stop());
+  ipcMain.handle("shell:ollama-owner", (event) => {
+    if (!fromOwnWindow(event)) return;
+    return ollama.owner();
+  });
+  ipcMain.handle("shell:ollama-start", (event) => {
+    if (!fromOwnWindow(event)) return;
+    return ollama.start();
+  });
+  ipcMain.handle("shell:ollama-stop", (event) => {
+    if (!fromOwnWindow(event)) return;
+    return ollama.stop();
+  });
   // 原生目录选择器（D②-6）。**零参数 + 路径由用户在对话框里选**：页面拿不到"指定任意路径"
   // 的能力，所以这条不构成新的口子。取消返回 null，由界面决定什么都不做。
   ipcMain.handle("shell:pick-directory", async (event) => {
+    if (!fromOwnWindow(event)) return;
     const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWin ?? undefined;
     const result = owner
       ? await dialog.showOpenDialog(owner, { properties: ["openDirectory", "createDirectory"] })

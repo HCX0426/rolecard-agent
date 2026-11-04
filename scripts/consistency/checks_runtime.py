@@ -1163,6 +1163,66 @@ def check_window_open_wiring() -> None:
         fails.append(f"window open wiring: {offenders}")
 
 
+def check_ipc_sender_guard() -> None:
+    """壳侧每条 IPC 通道都有 sender 锁：19 条走 fromOwnWindow，renderer-ready 自带更严那道（A-3）。
+
+    （A-3，2026-11-04）页面渲染的是第三方角色卡（AI 生成内容）：`sandbox: true` 挡的是
+    node，挡不住"页面里的脚本把桥方法挨个调一遍"。参数不可信各 handler 本来就有纪律，
+    而**谁在说话**这道从前只有 `shell:renderer-ready` 有。判据钉三件事：
+
+      1. helper `fromOwnWindow` 在场，且**两扇窗都算**（只留一半 = 另一扇窗的 IPC 全死）；
+      2. 逐通道过：注册处到下一个注册处之间的片段必须带锁行；`shell:renderer-ready`
+         例外但不是免检 —— 它必须带自己那道更严的（只认控制台）；
+      3. 全局账：锁行数 == 注册数 - 1（防"锁跑出通道外"凑数，也给新通道留对账基准）。
+
+    判据按**注册本身**分段，将来加通道自动纳入，不维护通道清单。
+    """
+    idx_rel = "shell/main/index.ts"
+    p = ROOT / idx_rel
+    if not p.exists():
+        out("ipc sender guard", False, f"{idx_rel} 不存在（尺子的输入丢了）")
+        fails.append("ipc sender guard: [输入文件丢失]")
+        return
+
+    src = p.read_text(encoding="utf-8", errors="ignore")
+    offenders: list[str] = []
+
+    if "function fromOwnWindow(" not in src:
+        offenders.append("缺 fromOwnWindow 定义")
+    else:
+        if "id === mainWin.webContents.id" not in src:
+            offenders.append("fromOwnWindow 不认控制台窗")
+        if "id === petWin.webContents.id" not in src:
+            offenders.append("fromOwnWindow 不认桌宠窗（那扇的 IPC 会全死）")
+
+    matches = list(re.finditer(r'ipcMain\.(?:handle|on)\("([^"]+)"', src))
+    if not matches:
+        offenders.append("index.ts 里一个 ipcMain 注册都找不到（输入变了？）")
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(src)
+        seg = src[m.start() : end]
+        channel = m.group(1)
+        if channel == "shell:renderer-ready":
+            if "event.sender.id !== mainWin.webContents.id" not in seg:
+                offenders.append("shell:renderer-ready 没有自己的更严 sender 校验")
+        elif "if (!fromOwnWindow(event)) return;" not in seg:
+            offenders.append(f"{channel} 没上 fromOwnWindow 锁")
+
+    guards = src.count("if (!fromOwnWindow(event)) return;")
+    if guards != len(matches) - 1:
+        offenders.append(f"锁行 {guards} ≠ 注册 {len(matches)} - 1（锁跑出通道外 / 有通道漏锁）")
+
+    out(
+        "ipc sender guard",
+        not offenders,
+        "; ".join(offenders[:6])
+        if offenders
+        else f"注册 {len(matches)} 条：19 条 fromOwnWindow + renderer-ready 自带严锁",
+    )
+    if offenders:
+        fails.append(f"ipc sender guard: {offenders}")
+
+
 #: raise/assert 里的路径引用：至少读出这么多条，否则判红（读法塌了不许静默绿）。
 #: 现网实测 2026-11-03：src/ 388 条 raise/assert、其中 310 条带字符串，路径引用 4 条。
 #: 下限取 2 是因为这个数天然小（只有"指挥读者去改哪个文件"的那几条才写路径）；
