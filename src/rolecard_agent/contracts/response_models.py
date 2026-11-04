@@ -2151,6 +2151,7 @@ class HealthViewRoot(BaseModel):
     auth_mode: str | None
     error_count_recent: int | None
     build: HealthViewBuild | None
+    data_root: str | None
     max_upload_bytes: int | None
     max_image_bytes: int | None
 
