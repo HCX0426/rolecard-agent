@@ -1735,24 +1735,21 @@ def check_updater_channel_feed_wiring() -> None:
     v0.5.0/v0.5.1-beta.1 的 stable.yml 均 404，latest.yml 实存 353B/374B），而稳定通道
     allowPrerelease=false 不走「404 回退 latest.yml」那条活路 —— 每次检查更新必失败。
     beta 通道不受此害纯属侥幸：它 allowPrerelease=true，先试 beta.yml、404 后源码显式回退
-    latest.yml（release.yml 发布闸注释同源）。链子两头都钉：壳侧映射 + 发布侧闸保住
-    latest.yml 资产。
+    latest.yml（release.yml 发布闸注释同源）。链子两头各归一主：壳侧映射这条尺子，
+    发布侧闸行归 `check_update_feed`（2026-11-04 收编：它原先只查「文本出现 latest.yml」
+    —— 注释就能喂绿；此处不再读 release.yml，同一行事实两个主人 = 多套逻辑）。
 
-    判据四条，任一不满足判红（「看不见」不等于「通过」）：
+    判据三条，任一不满足判红（「看不见」不等于「通过」）：
       1. `updater.ts` 逐字两行在场 —— 映射行 `? "beta" : "latest"` 与 allowPrerelease 行
          （成对原子：改了映射改漏 allowPrerelease = beta 候选筛选断线）；
       2. 禁行 `autoUpdater.channel = prefs.channel;` 绝迹（域内词直喂的原发形状，
          分号边界钉死，不误伤映射行的前缀）；
-      3. `release.yml` 发布闸逐字在场（`ls artifact/latest.yml` —— 稳定与预发布两个通道
-         都靠这个资产，闸被拆 = 壳侧映射对了也拿不到 feed）；
-      4. 任一输入文件读不到 ⇒ 判红（读法塌了不许静默绿）。
+      3. 输入文件读不到 ⇒ 判红（读法塌了不许静默绿）。
     """
     updater = ROOT / "shell" / "main" / "updater.ts"
-    release = ROOT / ".github" / "workflows" / "release.yml"
     offenders: list[str] = []
-    for p in (updater, release):
-        if not p.exists():
-            offenders.append(f"{p.relative_to(ROOT).as_posix()} 不存在（这条尺子的输入丢了）")
+    if not updater.exists():
+        offenders.append(f"{updater.relative_to(ROOT).as_posix()} 不存在（这条尺子的输入丢了）")
     if offenders:
         out("updater channel feed wiring", False, "; ".join(offenders))
         fails.append(f"updater channel inputs missing: {offenders}")
@@ -1776,18 +1773,13 @@ def check_updater_channel_feed_wiring() -> None:
             "updater.ts 出现域内词直喂数（stable→stable.yml，"
             "检查更新必报 ERR_UPDATER_CHANNEL_FILE_NOT_FOUND）"
         )
-    wf = release.read_text(encoding="utf-8", errors="ignore")
-    if "ls artifact/latest.yml" not in wf:
-        offenders.append(
-            "release.yml 发布闸丢了「ls artifact/latest.yml」（稳定与预发布的 feed 资产都没人保了）"
-        )
 
     out(
         "updater channel feed wiring",
         not offenders,
         "; ".join(offenders[:5])
         if offenders
-        else "stable→latest 映射与 allowPrerelease 成对在场、无直喂数；发布闸保住 latest.yml 资产",
+        else "stable→latest 映射与 allowPrerelease 成对在场、无直喂数（闸行归 check_update_feed）",
     )
     if offenders:
         fails.append(f"updater channel feed wiring: {offenders}")

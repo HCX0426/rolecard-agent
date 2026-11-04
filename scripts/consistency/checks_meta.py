@@ -358,10 +358,13 @@ def check_update_feed() -> None:
         yml_text = yml_path.read_text(encoding="utf-8")
         if re.search(r"(?m)^\s*differentialPackage:\s*false", yml_text):
             problems.append("electron-builder.yml 写了 differentialPackage:false，会停掉清单")
-    for wf in ("release.yml", "ci.yml"):
+    # 2026-11-04 收编（见 check_updater_channel_feed_wiring 注）：release.yml 钉闸行本身
+    # ——「文本出现 latest.yml」能被注释喂绿，删闸留注释照样绿；且发布走 artifact/*.yml
+    # glob 上传不点名，这份文件里 latest.yml 的特异行就是闸行。ci.yml 没这道闸，维持点名级。
+    for wf, anchor in (("release.yml", "ls artifact/latest.yml"), ("ci.yml", "latest.yml")):
         text = (ROOT / ".github" / "workflows" / wf).read_text(encoding="utf-8")
-        if "latest.yml" not in text:
-            problems.append(f"{wf} 没有点名 latest.yml：feed 清单没人产/没人传，检查更新会静默失灵")
+        if anchor not in text:
+            problems.append(f"{wf} 缺「{anchor}」：feed 清单没人产/没人传，检查更新会静默失灵")
 
     # 壳的依赖：electron-updater 必须在 shell/package.json 的 dependencies（不是 devDependencies
     # —— 它是运行期 require 的，打进 asar 的那份靠它）。
