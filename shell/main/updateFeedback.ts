@@ -114,3 +114,39 @@ export type QuitHandoffInput = {
 export function shouldHandoffQuitToInstall(input: QuitHandoffInput): boolean {
   return input.autoInstallOnQuit && input.stateKind === "ready" && !input.installing;
 }
+
+/**
+ * 中止安装之后该做什么（审查 A-6 的续 + 本轮备份挪位引入的新分支）。
+ *
+ * 备份挪到「停库 + 等端口空」之后（用户 2026-11-04 拍板：一致快照优先），于是两条中止路
+ * （端口没空出来、备份抛错）**都发生在后端已被停掉之后**。中止后必须分档处理，否则
+ * 修一个"回滚快照撕裂"换来一个"后端掉线"：
+ *   - **退出触发**（`quitDriven`）：用户那一下是「退出」，装中止了就照常退 —— 交回退出，
+ *     后端由 `before-quit` 的普通收尾处理，不在这儿拉（拉了立刻又被 stop 掉，白费）。
+ *   - **手点「重启并更新」**（非 quitDriven）：应用要继续活着，可后端已被停 ⇒ 必须拉回来，
+ *     否则用户看到"更新中止"对话框关掉后，应用活着但连不上后端。
+ * `restartBackend` 走 `backend.ensure()`：它幂等（端口有别人在应答就 already-serving，
+ * 不会双起），且现在会复位 `quitting`，拉回的后端不失去崩溃自愈（见 backend.ts）。
+ *
+ * 判据抽成纯函数是为了能被 node 直测（shell 没有测试框架）—— 这条分错档的后果是
+ * "某个档位静默掉线"，typecheck 完全看不出来。
+ */
+export type AbortFollowUp = "release-quit" | "restart-backend";
+
+export function abortFollowUp(quitDriven: boolean): AbortFollowUp {
+  return quitDriven ? "release-quit" : "restart-backend";
+}
+
+/**
+ * 中止读数的尾巴（对话框文案的最后一句）——与 `abortFollowUp` **同一个决定的另一半**。
+ *
+ * 为什么也住进判据模块：中止对话框从前那句"退出已交回应用，你刚才那一下「退出」照常生效"
+ * 是**无条件**写的，而它只在退出触发那一档是真的；手点那一档应用根本没在退出。挪序之后
+ * 两档的行为本就分岔（一个交回退出、一个拉回后端），文案必须跟着同一个 `followUp` 走 ——
+ * 行为和读数各有主人、又各说各话，正是 A-8 那族"文案说谎"的形状。
+ */
+export function abortFollowUpNotice(followUp: AbortFollowUp): string {
+  return followUp === "release-quit"
+    ? "退出已交回应用，你刚才那一下「退出」照常生效。"
+    : "应用继续运行，后端已拉回（这一轮更新中止，数据没动）。";
+}

@@ -187,6 +187,12 @@ export class Backend {
 
   /** 端口没人应就拉起后端；已有人应就直接连。不等就绪 —— 着陆页自己重试。 */
   async ensure(): Promise<Outcome> {
+    // `ensure()` 的语义是"我此刻要有一个后端在跑" ⇒ 复位 `stop()` 留下的我方回收旗子。
+    // 不复位的话，被 `stopBackend()` 停掉、随后升级中止又拉回来的那个后端会带着
+    // `quitting=true` 出生：它的 `exit` 事件被 `scheduleRespawn` 第一行短路，
+    // "崩了不会自愈"的裸奔进程 = 把一次临时中止换来一个更糟的长期状态。
+    // 开机启动与开发态启动重试循环里 quitting 本就是 false，这句是 no-op。
+    this.quitting = false;
     if (await serving()) return { kind: "already-serving" };    const command = backendCommand(this.options);
     if (!command) {
       return {
@@ -222,6 +228,16 @@ export class Backend {
     });
     // 意外退出 → 按退避拉回。退出事件在 stop()（我方回收）时也发 —— 那时不重启。
     child.on("exit", (code, signal) => {
+      // **只处理"仍是当前那个子进程"的退出**（identity guard）。2026-11-04 改升级中止路时
+      // 读时序**推演**出的洞（不是线上观测到的事故）：`stopBackend()` 之后 `restartBackend()`
+      // 走 `ensure()` 会把 `quitting` 复位并 spawn 新子进程，而端口是通过"连接被拒"探到空的
+      // —— 那可以早于旧子进程 Node 侧 `exit` 回调（libuv 把它排在后续事件轮），于是迟到的
+      // handler 可能在新子进程已就位之后才跑。从前这里无条件 `this.child = null`，那个迟到的 handler 会把**新**子进程的引用抹掉
+      // （下次退出 `stop()` 看到 null 就不 taskkill ⇒ 孤儿后端活过退出），或走进
+      // `scheduleRespawn` 误拉第三个。旧子进程被我们主动杀掉的退出不该碰当前状态：
+      // `this.child !== child` 就是"这个 handler 说的已经不是现在这个后端了"，直接 return。
+      // 崩溃自愈那条路不受影响：崩溃时 `this.child === child`（还是当前那个），照常往下走。
+      if (this.child !== child) return;
       const ranMs = Date.now() - this.spawnedAt;
       // 稳跑满一分钟才把退避清零：否则"起 5 秒崩一次"会永远卡在最长退避上。
       if (ranMs > 60_000) this.respawnAttempts = 0;

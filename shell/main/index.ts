@@ -409,6 +409,21 @@ function boot(): void {
       log: logLine,
       stopBackend: () => backend.stop(),
       backendPort: () => endpoint().port,
+      // 升级中止（备份抛错 / 端口没空出来）之后把后端拉回来 —— 这两条路都在 `stopBackend()`
+      // **之后**（备份要拍安静库的快照，见 updater.ts 文件头红线 2/3 的顺序说明），中止时
+      // 后端已经停了；手点那一档应用还要继续活着，不拉就是"应用开着却连不上后端"。
+      // 不复用 `report()`：它那句 `already-serving` 的措辞（"不是本壳起的"）是给开机那一路
+      // 写的，套到这里会把"我自己刚停掉又拉回来"说成别人的进程。`ensure()` 本身幂等，
+      // 且现在会复位 `quitting`（backend.ts），拉回来的后端不失去崩溃自愈。
+      restartBackend: () => {
+        void backend.ensure().then((outcome) => {
+          logLine(
+            outcome.kind === "failed"
+              ? `升级中止后拉回后端失败：${outcome.reason}`
+              : `升级中止后拉回后端：${outcome.kind}`,
+          );
+        });
+      },
       // 更新回执**绕过** notify() 里"控制台在前台就抑制"那条：那是防主动开口的噪音；
       // 这里的 toast 是用户自己点「检查更新/下载更新」要的答案，前台更要给。
       notify: (title, body) => {

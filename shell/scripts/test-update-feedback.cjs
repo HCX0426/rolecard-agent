@@ -10,6 +10,8 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 
 const {
+  abortFollowUp,
+  abortFollowUpNotice,
   advanceStageOnDownload,
   failureOf,
   failureTitle,
@@ -118,6 +120,30 @@ check("用户关掉「退出时自动装」⇒ 永远不交接", () => {
     shouldHandoffQuitToInstall({ autoInstallOnQuit: false, stateKind: "ready", installing: false }),
     false,
   );
+});
+
+// ------------------------------------------------ 本轮：备份挪到停库之后 ⇒ 中止分两档收尾
+//
+// 判据本体与为什么必须分档见 updateFeedback.abortFollowUp。这里钉三件事：
+// 分档别分反（分反=某档静默掉线）、文案跟着同一个判据走（本轮修的就是"两档共用一句谎"）、
+// 以及**手点档不许说"退出已交回应用"**（从前那句是无条件写的，而那一档应用根本没在退出）。
+
+check("退出触发的中止 ⇒ 交回退出（不再拉后端：拉了马上被普通收尾 stop 掉）", () => {
+  assert.equal(abortFollowUp(true), "release-quit");
+});
+
+check("手点「重启并更新」的中止 ⇒ 拉回后端（此刻后端已被停过）", () => {
+  assert.equal(abortFollowUp(false), "restart-backend");
+});
+
+check("两档各有一句、且互不冒充（文案与行为同一个判据派生）", () => {
+  const quit = abortFollowUpNotice("release-quit");
+  const restart = abortFollowUpNotice("restart-backend");
+  assert.ok(quit.length > 0 && restart.length > 0, "某档没有尾巴文案");
+  assert.notEqual(quit, restart, "两档共用一句 ⇒ 其中一档必然在说谎");
+  // 回归锁：手点那一档应用没在退出，这句从前无条件写"退出已交回应用"。
+  assert.ok(!restart.includes("退出已交回"), `restart 档的文案还在冒充退出档：${restart}`);
+  assert.ok(quit.includes("退出"), `release-quit 档该说退出：${quit}`);
 });
 
 // ---------------------------------------------------------------- 判据不许空转

@@ -11,6 +11,16 @@
  *   3. **后端干净退出**：NSIS 覆盖安装时 sidecar 若还活着 = 文件占用 = 装到一半失败。
  *      所以先 `stopBackend()`（taskkill 进程树），再**等端口真的空出来**才进安装器。
  *
+ * 编号是设计稿的三条红线，**执行顺序是 3 → 2**（2026-11-04 才掰过来）：从前 `doInstall`
+ * 真的是"先备份、后停库"，与第 2 条自己写的依据直接相反 —— WAL 开着时对**活库** cpSync，
+ * `app.db` 与 `-wal`/`-shm` 不在同一时刻，那份回滚快照本身可能撕裂，而红线 2 保的正是它。
+ * 注释当时的因果是对的、代码是错的，所以修的是代码。挪序带来的新分支一起补掉：中止路
+ * 必然落在"后端已停"之后 ⇒ 手点那一档要把后端拉回来（`abortInstall` + 判据
+ * `updateFeedback.abortFollowUp`），否则修一个撕裂换来一个"应用活着但连不上后端"。
+ *
+ * 顺带一条：`stopBackend()` 调完不代表库已安静（`taskkill` 是 fire-and-forget），
+ * "安静"的真实判据是**端口确认空出来**，所以快照排在 `waitForPortFree` 之后，不是紧跟着停库。
+ *
  * dev 态（未打包）整条不装配：electron-updater 在没有 app-update.yml 的环境里只会抛错，
  * 而"看得见但永远无效"的托盘条目比没有更糟（与开机自启同一条理由，`canManageLoginItem`）。
  */
@@ -31,6 +41,8 @@ import path from "node:path";
 
 import { cleanupConsumedPendingUpdate, snapshotsToEvict, type CleanupFs } from "./updateCacheCleanup";
 import {
+  abortFollowUp,
+  abortFollowUpNotice,
   advanceStageOnDownload,
   failureOf,
   failureTitle,
@@ -127,6 +139,15 @@ export type UpdaterOptions = {
   stopBackend: () => void;
   /** 后端端口（等它空出来才许安装器动文件）。 */
   backendPort: () => number;
+  /**
+   * 把刚被 `stopBackend()` 停掉的后端拉回来。**只在中止路上用**（备份抛错 / 端口没空出来），
+   * 且只在**不是退出触发**那一档用（判据 `updateFeedback.abortFollowUp`）—— 退出触发的中止
+   * 直接交回退出、不必再拉。实现走 `backend.ensure()`（它现在会复位 `quitting`，拉回的后端
+   * 不裸奔，见 backend.ts）。没有这一口，手动「重启并更新」一旦在停库之后中止，就会留下
+   * 「后端死了、应用照旧活着」的新空档 —— 那正是把备份挪到停库之后**新引入**的风险，
+   * 必须一起补掉，否则修一个撕裂换来一个掉线。
+   */
+  restartBackend: () => void;
   /**
    * 系统通知（手动检查的回执走它）。**绕过**"控制台在前台就抑制"那条规则 ——
    * 那条防的是主动开口的噪音；更新回执是用户自己点出来的，他明确要一个答案。
@@ -408,46 +429,65 @@ export function createUpdater(options: UpdaterOptions): Updater {
   // 装的动作单独成函数：`onQuitAttempt` 要调它，而它住在下面那个返回对象里 ——
   // 在对象字面量里自指（`updater.install()`）拿到的是 undefined。
   /**
-   * 中止安装时把**那轮退出交回应用**（审查 A-6）。
+   * 中止安装：复位旗子、落状态读数、按档位收尾、再给用户那一声（审查 A-6 的续）。
    *
-   * 只在"这次装是退出触发的"时才交：手点「重启并更新」失败不该把应用退掉
-   * （用户要的是装上新版，不是被踢出程序）。
-   * 交回去的方式是 `app.quit()` —— 它会再走一遍 `before-quit`，那时
-   * `onQuitAttempt` 因为 `current.kind === "error"`（不是 "ready"）返回 false，
-   * 于是走普通收尾。**不会死循环**，判据就是那一条 kind。
+   * **两条中止路共用这一个函数**（端口没空出来 / 备份抛错）—— 从前它们各自抄了一遍
+   * 同样的四步，于是"读数尾巴"和"实际做了什么"能各自漂（本轮改序时我若照旧抄两遍，
+   * 就是再造一个两处声明）。尾巴文案由 `abortFollowUpNotice(followUp)` 给，与下面那个
+   * 分支**同一个判据**：写"退出已交回应用"却走了拉后端那条，就是文案说谎。
+   *
+   * 收尾分两档（判据在 `updateFeedback.abortFollowUp`）：
+   *   - 退出触发 ⇒ `app.quit()` 把用户那一下「退出」交回应用（`onQuitAttempt` 那时
+   *     `kind === "error"` 判 false，走普通收尾，不死循环）；
+   *   - 手点「重启并更新」⇒ 应用要继续活着，可后端此刻**已经被停了**（备份挪到停库之后
+   *     ⇒ 中止路必然落在停库之后）⇒ 必须 `restartBackend()` 拉回来，否则修一个快照撕裂
+   *     换来一个"应用活着但连不上后端"的新洞。
+   * `restartBackend()` 走 `backend.ensure()`：它幂等（端口有别人在应答就 already-serving，
+   * 不会双起），且现在会复位 `quitting`，拉回的后端不失去崩溃自愈（见 backend.ts）。
+   *
+   * 顺序：读数在前、收尾在后。理由只有一条、且不依赖 `showErrorBox` 是否阻塞 JS 线程
+   * （那是 Electron 文档没给到粒度、本机也核不到的事，不敢当依据写）：收尾那两步
+   * （`app.quit()` / `restartBackend()`）万一抛错，读数已经先落进 shell.log 与状态机、
+   * 对话框也已经弹出 —— 用户至少知道"为什么中止"，不会只剩一个卡住的界面。
    */
-  const abortAndReleaseQuit = (): void => {
-    if (!quitDriven) return;
-    quitDriven = false;
-    options.log("安装已中止：把这一轮退出交回应用（否则用户那一下「退出」被吞掉）");
-    app.quit();
+  const abortInstall = (reason: string): void => {
+    installing = false;
+    const followUp = abortFollowUp(quitDriven);
+    const message = `${reason}${abortFollowUpNotice(followUp)}`;
+    options.log(message);
+    setState({ kind: "error", message });
+    dialog.showErrorBox("更新已中止", message);
+    if (followUp === "release-quit") {
+      quitDriven = false;
+      app.quit();
+    } else {
+      options.restartBackend();
+    }
   };
 
   const doInstall = async (): Promise<void> => {
     if (installing) return;
     installing = true;
-    // 红线 2：先备份，备份失败就**不装**（没有回滚路径的自动迁移不许发生）。
-    try {
-      snapshotDataRoot(process.env.LOCALAPPDATA, options.log);
-    } catch (error) {
-      installing = false;
-      const message = `升级前备份数据失败，已中止更新：${String(error).slice(0, 200)}`;
-      options.log(message);
-      setState({ kind: "error", message });
-      dialog.showErrorBox("更新已中止", message);
-      abortAndReleaseQuit();
-      return;
-    }
-    // 红线 3：后端干净退出 —— 先收进程树，再等端口空出来，才交给安装器。
+    // 红线 3 在前、红线 2 在后，顺序承重（2026-11-04 本轮）：备份必须是**安静库**的快照。
+    // 从前这里是"先备份、再停后端"，与文件头那条设计依据直接相反（"库安静下来时整目录
+    // 拷贝就是一致快照"）：WAL 开着时对活库 cpSync，`app.db` 与 `-wal`/`-shm` 不在同一
+    // 时刻，回滚快照可能撕裂 —— 而这份快照正是红线 2 要保的"回滚路径"本身。
+    // "库安静"的真实判据不是调过 `stopBackend()`（`taskkill` 是 fire-and-forget，调完
+    // 后端可能还没死），而是**端口确认空出来**，所以快照排在 `waitForPortFree` 之后。
+    // 代价：中止路现在必然落在停库之后 ⇒ 中止必须把后端拉回来（见 abortInstall）。
     options.stopBackend();
     const port = options.backendPort();
     if (!(await waitForPortFree(port, 10_000))) {
-      installing = false;
-      const message = `端口 ${port} 上仍有应答：后端没退干净，已中止更新（强装会撞上文件占用）。` + `退出已交回应用，你刚才那一下「退出」照常生效。`;
-      options.log(message);
-      setState({ kind: "error", message });
-      dialog.showErrorBox("更新已中止", message);
-      abortAndReleaseQuit();
+      abortInstall(
+        `端口 ${port} 上仍有应答：后端没退干净，已中止更新（强装会撞上文件占用）。`,
+      );
+      return;
+    }
+    // 红线 2：库已安静 ⇒ 快照；备份失败就**不装**（没有回滚路径的自动迁移不许发生）。
+    try {
+      snapshotDataRoot(process.env.LOCALAPPDATA, options.log);
+    } catch (error) {
+      abortInstall(`升级前备份数据失败，已中止更新：${String(error).slice(0, 200)}。`);
       return;
     }
     const version = current.kind === "ready" ? current.version : "?";
@@ -524,7 +564,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
       // 所以返回 true 告诉调用方**别再自己 app.quit()**（那会打断安装）。
       // 置旗子：这轮退出是被安装**借走**的，两条中止路必须把它交回去（A-6）——
       // 必须在 doInstall() 之前置：它的开头是同步的，中止可能发生在第一个 await 之后、
-      // 而旗子要在任何一次 abortAndReleaseQuit 读到之前就已经是 true。
+      // 而旗子要在任何一次 abortInstall 读到之前就已经是 true（它据此选 release-quit 档）。
       quitDriven = true;
       void doInstall();
       return true;
