@@ -1112,6 +1112,57 @@ def check_pet_reload_state_replay() -> None:
         fails.append(f"pet reload state replay: {offenders}")
 
 
+def check_window_open_wiring() -> None:
+    """新开窗外送只走 `windowOpenVerdict` 这一个判据（A-10：http/https → 系统浏览器）。
+
+    （A-10，2026-11-04）`setWindowOpenHandler` 从前**一律 deny**：注入被挡住，真人点的
+    合法外链也一起死。修成"判据一种、外送一处、其余仍拦"，但**行为改对了 ≠ 接线不会
+    再退**（改回全拦不报编译错、测试也只测纯函数），所以钉四点：
+
+      1. 判据本体还在 `navigation.ts`（与 `navigationVerdict` 同家）；
+      2. index.ts 逐字走判据 + 逐字 `shell.openExternal`（缺任一半 = 白名单没接上/裸外送）；
+      3. index.ts **不许内联 scheme 判断**（`protocol === "http:"` 出现在接线层 = 第二套逻辑）；
+      4. 导航护栏测试真跑 `windowOpenVerdict`（判据绿但没人测 = 空尺子）。
+    """
+    nav_rel = "shell/main/navigation.ts"
+    idx_rel = "shell/main/index.ts"
+    test_rel = "shell/scripts/test-navigation-guard.cjs"
+
+    texts: dict[str, str] = {}
+    offenders: list[str] = []
+    for rel in (nav_rel, idx_rel, test_rel):
+        p = ROOT / rel
+        if not p.exists():
+            offenders.append(f"{rel} 不存在（尺子的输入丢了）")
+            continue
+        texts[rel] = p.read_text(encoding="utf-8", errors="ignore")
+
+    if nav_rel in texts and "export function windowOpenVerdict(" not in texts[nav_rel]:
+        offenders.append(f"{nav_rel} 缺 windowOpenVerdict 判据本体")
+
+    if idx_rel in texts:
+        idx = texts[idx_rel]
+        if 'if (windowOpenVerdict(url) === "open-external")' not in idx:
+            offenders.append(f"{idx_rel} 没走 windowOpenVerdict（改回全拦=外链又全死）")
+        if "shell.openExternal(url)" not in idx:
+            offenders.append(f"{idx_rel} 没有 shell.openExternal（判了 open-external 却没外送）")
+        if 'protocol === "http:"' in idx or 'protocol === "https:"' in idx:
+            offenders.append(f"{idx_rel} 内联了 scheme 判断（判据该只在 navigation.ts 一处）")
+
+    if test_rel in texts and "windowOpenVerdict(" not in texts[test_rel]:
+        offenders.append(f"{test_rel} 没覆盖 windowOpenVerdict（判据绿但没人测）")
+
+    out(
+        "window open wiring",
+        not offenders,
+        "; ".join(offenders[:5])
+        if offenders
+        else "判据在 navigation.ts；index.ts 走判据+openExternal 不内联；测试有覆盖",
+    )
+    if offenders:
+        fails.append(f"window open wiring: {offenders}")
+
+
 #: raise/assert 里的路径引用：至少读出这么多条，否则判红（读法塌了不许静默绿）。
 #: 现网实测 2026-11-03：src/ 388 条 raise/assert、其中 310 条带字符串，路径引用 4 条。
 #: 下限取 2 是因为这个数天然小（只有"指挥读者去改哪个文件"的那几条才写路径）；

@@ -82,6 +82,8 @@ CHECKS = (
     checks_runtime.check_clamp_single_source,
     #: A-7：重载换代后壳页状态同一起点（did-finish-load 复位 + 页面 pull 首值）
     checks_runtime.check_pet_reload_state_replay,
+    #: A-10：新开窗外送唯一判据（http/https → shell.openExternal，接线不许内联 scheme）
+    checks_runtime.check_window_open_wiring,
     checks_runtime.check_zero_status_apierror_has_kind,
     checks_runtime.check_error_message_paths_resolve,
     # 盯接线而不是盯判据：判据由 shell/scripts/test-update-feedback.cjs 自己测，

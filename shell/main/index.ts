@@ -11,14 +11,14 @@
  * 关于"关窗口"的语义（D②-3 定）：**收起而不是退出**。这是一只放在桌面上的宠物，关掉控制台
  * 不该让它消失；真要退出走托盘的「退出」，只有那条路会回收后端进程。
  */
-import { BrowserWindow, Notification, app, dialog, globalShortcut, ipcMain } from "electron";
+import { BrowserWindow, Notification, app, dialog, globalShortcut, ipcMain, shell } from "electron";
 import { appendFileSync, renameSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { Backend, consoleUrl, endpoint, serving, type BackendOptions, type Outcome } from "./backend";
 import { canManageLoginItem, loginItemEnabled, setLoginItemEnabled, startedByLoginItem } from "./autostart";
 import { Ollama } from "./ollama";
-import { navigationVerdict } from "./navigation";
+import { navigationVerdict, windowOpenVerdict } from "./navigation";
 import {
   applyPetPrefs,
   createMainWindow,
@@ -262,7 +262,16 @@ function wireWindow(win: BrowserWindow): void {
   // 拦有两种因（远程目标 / 后端地址自己配坏了），日志分开写 —— 打包态没有终端，
   // logLine 是唯一证据，而"有东西想跑掉"与"我配错了"是两件要做不同事的事。
   win.webContents.setWindowOpenHandler(({ url }) => {
-    logLine(`导航被拒（新开窗）：${url}`);
+    // 判据一处（navigation.ts::windowOpenVerdict）：http/https 交给系统浏览器，其余仍拦。
+    // 两支都 return deny —— 应用内**永远不开新窗**，"放出去"指的是外送系统浏览器。
+    if (windowOpenVerdict(url) === "open-external") {
+      logLine(`外链交系统浏览器：${url}`);
+      // openExternal 会拒（系统没配处理 http 的程序）：不接住就是未处理 rejection，
+      // 而打包态没有终端 —— 这行日志是"点了却没开"唯一的解释。
+      void shell.openExternal(url).catch(() => logLine(`外链打不开：${url}`));
+    } else {
+      logLine(`导航被拒（新开窗）：${url}`);
+    }
     return { action: "deny" };
   });
   win.webContents.on("will-navigate", (event, url) => {

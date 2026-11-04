@@ -11,7 +11,7 @@
  */
 
 const assert = require("node:assert/strict");
-const { navigationVerdict } = require("../out/main/navigation.js");
+const { navigationVerdict, windowOpenVerdict } = require("../out/main/navigation.js");
 const { normalizeConsoleUrl } = require("../out/main/backend.js");
 
 let passed = 0;
@@ -152,6 +152,45 @@ t("接缝：裸地址经归一后护栏放行（A-2 那次的完整复现链）"
   const naive = "127.0.0.1:8000";
   assert.equal(new URL(`/${naive}/`, "file:///C:/app/index.html").protocol, "file:");
 });
+
+// ---- A-10 新开窗判据：只有 http/https 配外送系统浏览器，其余一种都不出（2026-11-04）----
+t("https 外链 → open-external（真人点的文档链接该能点开）", () =>
+  assert.equal(windowOpenVerdict("https://docs.example.com/api"), "open-external"));
+
+t("http 外链 → open-external", () =>
+  assert.equal(windowOpenVerdict("http://example.org/x"), "open-external"));
+
+t("大小写不同的 scheme 也认（URL 解析后 protocol 归小写）", () =>
+  assert.equal(windowOpenVerdict("HTTPS://EXAMPLE.ORG/X"), "open-external"));
+
+t("本机后端地址外送也无妨（走系统浏览器，不进应用窗）", () =>
+  assert.equal(windowOpenVerdict("http://127.0.0.1:8000/api/docs"), "open-external"));
+
+t("file: 绝不外送（本地文件直接执行面）", () =>
+  assert.equal(windowOpenVerdict("file:///C:/Windows/System32/calc.exe"), "deny"));
+
+t("javascript: 不外送（解析得动也不放）", () =>
+  assert.equal(windowOpenVerdict("javascript:alert(1)"), "deny"));
+
+t("data: 不外送", () =>
+  assert.equal(windowOpenVerdict("data:text/html,<script>x</script>"), "deny"));
+
+t("能唤起本机程序的自定义 scheme 一种都不外送", () => {
+  assert.equal(windowOpenVerdict("smb://nas/share"), "deny");
+  assert.equal(windowOpenVerdict("ms-msdt:/id some"), "deny");
+  assert.equal(windowOpenVerdict("mailto:a@b.c"), "deny"); // 审计口径：http/https-only
+});
+
+t("解析不动的串 → deny（与 navigationVerdict 同句）", () =>
+  assert.equal(windowOpenVerdict("not a url"), "deny"));
+
+t("空串 / 非字符串 → deny", () => {
+  assert.equal(windowOpenVerdict(""), "deny");
+  assert.equal(windowOpenVerdict(undefined), "deny");
+});
+
+t("协议相对写法（//host）没有 scheme → deny", () =>
+  assert.equal(windowOpenVerdict("//evil.test/x"), "deny"));
 
 console.log(`导航护栏 + 控制台地址归一：${passed} 项通过`);
 if (process.exitCode) console.error("有失败项");

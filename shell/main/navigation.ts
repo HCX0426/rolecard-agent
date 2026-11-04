@@ -53,4 +53,33 @@ export function navigationVerdict(url: string, backendUrl: string): NavigationVe
   return target.origin === backend.origin ? "allow" : "deny-remote";
 }
 
+/** 新开窗判据（A-10，2026-11-04）：**只有 http/https** 配交给系统浏览器。
+ *
+ * 从前 `wireWindow` 的 `setWindowOpenHandler` 一律 `deny` + 一行日志 —— AI 生成内容里
+ * 的 `<a target="_blank">` 确实被挡住了，但**真人点的合法外链也一起死掉**（点了没反应，
+ * 屏幕和日志都不解释）。修法是把"放出去"也变成一种有判据、可测试的因：
+ *
+ *  - `open-external` ⇒ `shell.openExternal` 交给系统默认浏览器，**不进应用的任何一扇窗**；
+ *  - 其余一律仍 deny —— `file:`（本地文件直接执行面）、`javascript:`、`data:` 与各种
+ *    能唤起本机程序的自定义 scheme（`smb:`、`ms-msdt:`…）、连 `mailto:` 也不外送：
+ *    审计口径就是 http/https-only，宽一分就要为每种 scheme 单独辩护一次。
+ *
+ * 为什么不复用 `navigationVerdict`：那条判的是"窗能不能**导航**过去"（`file://` 与本机
+ * 后端 origin 是应用的合法终态），与"要不要开**系统浏览器**"是两件事、两种因 —— 同一个
+ * URL 在两条规则下可以合法地得出**不同**结论（`file:` 导航允许、外送禁止）。合成一条
+ * 判据就是第三套逻辑，正是本轮要清的形状。 */
+export type WindowOpenVerdict = "open-external" | "deny";
+
+export function windowOpenVerdict(url: string): WindowOpenVerdict {
+  if (typeof url !== "string" || url.length === 0) return "deny";
+  try {
+    const target = new URL(url);
+    return target.protocol === "http:" || target.protocol === "https:"
+      ? "open-external"
+      : "deny";
+  } catch {
+    return "deny"; // 解析不动的串 = 未知目标（与 navigationVerdict 同一句）
+  }
+}
+
 
