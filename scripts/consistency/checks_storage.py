@@ -626,3 +626,54 @@ def check_shape_migration_ddl() -> None:
             "model_backend__layers DDL drifted from schema.sql: "
             f"{drift} —— 搬完层的旧库会 no such column；改列要两边一起改"
         )
+
+
+def check_checkpoint_clock_upgrade_test() -> None:
+    """checkpoints 时钟列的老形态升级必须有镜像测试，且测试只驱动生产入口（A2）。
+
+    `ensure_checkpoint_clock` 是 bootstrap 声明面**之外**唯一一处用户库 DDL（表由
+    langgraph 的 `saver.setup()` 建、列由我们启动时补），它没有老形态测试就等于：补列
+    写坏只有用户机器上的第一次启动知道 —— schema 那侧有 `tests/fixtures/legacy_schemas/`
+    配 `test_legacy_schema_upgrade.py`，这一侧必须有对偶。
+    这把尺子钉两件事：测试在场且带着四段不可删的断言（fixture 自证 / 老行留 NULL /
+    幂等重跑 / 终点收敛走生产链），以及测试里**不许**出现第二套 ALTER —— 测试自己
+    抄一遍补列 DDL 就是「不可多套逻辑」的反面教材，且抄出来的那份不会被生产调用。
+    """
+    path = ROOT / "tests" / "integration" / "test_checkpoint_clock_upgrade.py"
+    if not path.is_file():
+        fails.append(
+            "checkpoint clock upgrade: ensure_checkpoint_clock 的老形态升级没有任何测试"
+            "（checkpoints 不在 bootstrap 声明面上，补错了没人替它说话）"
+        )
+        out("checkpoint clock upgrade", False, "test file missing")
+        return
+    src = path.read_text(encoding="utf-8")
+    required = {
+        "fixture 自证（setup 建出的表不带 created_at）": '"created_at" not in _cols(conn)',
+        "生产入口 ensure_checkpoint_clock（不许测试另起炉灶）": "ensure_checkpoint_clock(conn)",
+        "老行保全（补列后历史 created_at 留 NULL）": 'row["created_at"] is None',
+        "幂等重跑（第二遍不重建触发器）": '"第二遍把触发器又建了一份"',
+        "终点收敛（fresh 一侧走 make_checkpointer 生产链）": "make_checkpointer(fresh)",
+    }
+    missing = [name for name, anchor in required.items() if anchor not in src]
+    inline_ddl = "ALTER TABLE checkpoints" in src
+    ok = not missing and not inline_ddl
+    detail = (
+        "四段断言齐、无内联补列 DDL"
+        if ok
+        else "；".join(
+            (["缺：" + "、".join(missing)] if missing else [])
+            + (["测试内联了第二套补列 DDL（ALTER TABLE checkpoints）"] if inline_ddl else [])
+        )
+    )
+    out("checkpoint clock upgrade", ok, detail)
+    if missing:
+        fails.append(
+            "checkpoint clock upgrade 测试缺承重断言："
+            f"{missing} —— 对应的老形态现场没人验，补列坏在启动链里没人红"
+        )
+    if inline_ddl:
+        fails.append(
+            "tests 里内联 ALTER TABLE checkpoints —— 第二套补列逻辑（生产不会调它，"
+            "改列时它永远「对」）"
+        )

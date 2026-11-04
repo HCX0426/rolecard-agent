@@ -100,6 +100,9 @@ CHECKS = (
     checks_runtime.check_local_service_port_single_source,
     checks_storage.check_dangling_write_txns,
     checks_storage.check_shape_migration_ddl,
+    # A-2：bootstrap 声明面之外的那处补列（checkpoints.created_at）要有对偶的老形态
+    # 升级测试，且测试不许自带第二套 ALTER —— 镜像 test_legacy_schema_upgrade 的纪律
+    checks_storage.check_checkpoint_clock_upgrade_test,
     checks_runtime.check_bundled_copy,
     checks_runtime.check_vocabulary,
     checks_runtime.check_deploy_env_parity,
