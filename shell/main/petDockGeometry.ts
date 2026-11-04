@@ -50,6 +50,20 @@ export const PEEK_PX = 48;
 export const FULL_REVEAL_SLACK = 20;
 
 /**
+ * 光标命中"画了像素的块"时，矩形外扩几像素（CSS/DIP）—— **壳与前端共用同一个数**。
+ *
+ * 两侧是同一条谓词、同一个矩形（页面 `reportHotRects` 对色片报的就是内容框）：
+ *  - 壳侧 `windows.ts.petCursorOnPainted` 用它补 DWM 给无边框透明窗留的 1~3px 不可见边
+ *    （`setBounds(200×244)` 实际 `getBounds` 报 202×244），光标压在边缘上不该判成
+ *    "已经离开" —— 这道闸是 `setIgnoreMouseEvents` 的转发闸，**跑在页面判定之前**；
+ *  - 页面侧 `PetPage.onPaintedUi/onPet` 用它给发梢、投影这些半透明边缘留量
+ *    （内容框按 `alpha > 10` 量，比眼睛看到的紧）。
+ * 分成两个数必出死带：壳的闸在前，页面侧的数一大，多出来的那圈事件根本到不了；数一小
+ * 则收到也白收。所以必须同值、只住这一处，两侧都 import（A-9b 归一，判据钉住不许抄回）。
+ */
+export const PET_HOT_PAD = 6;
+
+/**
  * 色片盒（160×184）在锚点框（200×240）里的位置：水平居中、底对齐。
  *
  * 这是**唯一的出处** —— 兜底 tuck 从它算，两边不会再各写一份而对不上

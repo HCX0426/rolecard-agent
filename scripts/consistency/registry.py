@@ -78,6 +78,8 @@ CHECKS = (
     checks_runtime.check_appearance_single_source,
     # A-9 归一：桌宠几何常数前端只 import 壳的唯一出处、不许手抄（与 appearance 同族）
     checks_runtime.check_pet_geometry_single_source,
+    # A-9b 归一：命中外扩 PET_HOT_PAD 跨进程同一数（壳的转发闸跑在页面判定之前，分家即死带）
+    checks_runtime.check_pet_hit_pad_single_source,
     #: A-11：工作区夹取数学唯一出处（state/windows 三份近亲写法归一到纯层）
     checks_runtime.check_clamp_single_source,
     #: A-7：重载换代后壳页状态同一起点（did-finish-load 复位 + 页面 pull 首值）

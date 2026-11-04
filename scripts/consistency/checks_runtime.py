@@ -939,7 +939,7 @@ def check_pet_geometry_single_source() -> None:
 
     if pet_rel in texts:
         pet = texts[pet_rel]
-        if "import { LEGACY_SIDE_TUCK } from '@shell/petDockGeometry';" not in pet:
+        if "import { LEGACY_SIDE_TUCK, PET_HOT_PAD } from '@shell/petDockGeometry';" not in pet:
             offenders.append(f"{pet_rel} 没有经 @shell/petDockGeometry import LEGACY_SIDE_TUCK")
         if "const HIT_SLACK_X = LEGACY_SIDE_TUCK;" not in pet:
             offenders.append(
@@ -971,6 +971,67 @@ def check_pet_geometry_single_source() -> None:
     )
     if offenders:
         fails.append(f"pet geometry single source: {offenders}")
+
+
+def check_pet_hit_pad_single_source() -> None:
+    """光标命中外扩 PET_HOT_PAD 跨壳/前端只许一份（A-9b，2026-11-04 归一）。
+
+    同一条谓词、同一个矩形算过两遍：页面 `reportHotRects` 对色片报的就是内容框，
+    壳 `petCursorOnPainted` 拿它 ±pad 判"光标在不在画了像素的地方"（这道闸是
+    `setIgnoreMouseEvents` 的转发闸，**跑在页面判定之前**），前端 `PetPage.onPaintedUi/
+    onPet` 再拿同一框 ±pad 判一次（发梢、投影按 `alpha > 10` 量，比眼睛看到的紧）。从前
+    两处各写一个 6（壳注 DWM 1~3px 不可见边、页面注半透明余量），而改回手抄**没有任何
+    编译错误**：壳的闸在前，页面侧的数一大，多出来的那圈事件根本到不了（死带）；数一小
+    则收到也白收 —— 必须同值、只住一处。接点取不到输入即红（"扫不到 ≠ 通过"）：
+
+      1. 唯一出处在纯层 `petDockGeometry.ts`（前端 import 不进 electron 文件）；
+      2. `windows.ts` 使用共享常量，且没有本地 `const PET_HOT_PAD`；
+      3. `PetPage.tsx` 经 `@shell` 合并 import 行拿到它，且整词 `CONTENT_HIT_PAD`
+         已绝迹、无本地 `const PET_HOT_PAD`（旧名残本 / 手抄复发都当场红）。
+    """
+    owner_rel = "shell/main/petDockGeometry.ts"
+    win_rel = "shell/main/windows.ts"
+    pet_rel = "frontend/src/pages/PetPage.tsx"
+
+    texts: dict[str, str] = {}
+    offenders: list[str] = []
+    for rel in (owner_rel, win_rel, pet_rel):
+        p = ROOT / rel
+        if not p.exists():
+            offenders.append(f"{rel} 不存在（尺子的输入丢了）")
+            continue
+        texts[rel] = p.read_text(encoding="utf-8", errors="ignore")
+
+    if owner_rel in texts and "export const PET_HOT_PAD = 6" not in texts[owner_rel]:
+        offenders.append(
+            f"{owner_rel} 不再有 export const PET_HOT_PAD = 6（唯一出处搬家了，尺子要跟）"
+        )
+
+    if win_rel in texts:
+        win = texts[win_rel]
+        if "PET_HOT_PAD" not in win:
+            offenders.append(f"{win_rel} 不再使用共享的 PET_HOT_PAD")
+        if "const PET_HOT_PAD" in win:
+            offenders.append(f"{win_rel} 本地又定义了 PET_HOT_PAD（两处写，壳改页面不跟）")
+
+    if pet_rel in texts:
+        pet = texts[pet_rel]
+        if "import { LEGACY_SIDE_TUCK, PET_HOT_PAD } from '@shell/petDockGeometry';" not in pet:
+            offenders.append(f"{pet_rel} 没经合并 import 行拿到 PET_HOT_PAD（@shell 接线丢了）")
+        if "CONTENT_HIT_PAD" in pet:
+            offenders.append(f"{pet_rel} 还留着 CONTENT_HIT_PAD 手抄名（与壳不同步 → 转发闸死带）")
+        if "const PET_HOT_PAD" in pet:
+            offenders.append(f"{pet_rel} 本地又定义了 PET_HOT_PAD（A-9 病根复发）")
+
+    out(
+        "pet hit pad single source",
+        not offenders,
+        "; ".join(offenders[:5])
+        if offenders
+        else "PET_HOT_PAD 只住 petDockGeometry，windows/PetPage 都 import、无本地与旧名残本",
+    )
+    if offenders:
+        fails.append(f"pet hit pad single source: {offenders}")
 
 
 def check_clamp_single_source() -> None:

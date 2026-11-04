@@ -34,7 +34,7 @@ import { shellBridge } from "../lib/shell";
 import { PANEL_TICK_MS, panelCountdown, panelHeld, panelTimerArmed } from "../lib/petPanel";
 import { type StreamMeta } from "../lib/stream";
 import { describeError } from '../lib/errors';
-import { LEGACY_SIDE_TUCK } from '@shell/petDockGeometry';
+import { LEGACY_SIDE_TUCK, PET_HOT_PAD } from '@shell/petDockGeometry';
 
 const BUBBLE_MS = 30_000; // 气泡到点自己收起：驻留件不该把一句话长期戳在桌面上
 // （不做淡出：这扇窗是透明窗，半透明的每一毫秒透出来的都是桌面本身 —— 那正是"重影"）
@@ -63,13 +63,8 @@ const HIT_SLACK_X = LEGACY_SIDE_TUCK;
  * 也算"点她"，正是用户抱怨过的那个形状。数与出处都收在这里讲清，别再抄回壳的常数。
  */
 const HIT_SLACK_Y = 0;
-/**
- * 按**内容框**判落点时给的外扩（CSS 像素）。
- *
- * 内容框是 `alpha > 10` 量出来的，发梢、投影、抗锯齿边缘比眼睛看到的略紧；不给几个
- * 像素余量会出现"看着能点、实际点不着"。6 与壳那边 `PET_HOT_PAD` 同一量级。
- */
-const CONTENT_HIT_PAD = 6;
+// 命中外扩不再本地定：共享的 `PET_HOT_PAD` 住 `shell/main/petDockGeometry.ts` ——
+// 壳的转发闸跑在页面判定之前，两侧不同值就出"到不了/白收"的死带（A-9b 归一）。
 /** 滑窗宽限期：滑动动画 280ms + 用户的手在动画里就按下去的反应量。 */
 const SLIDE_GRACE_MS = 600;
 /** 面板里摊开最近几条。**这不是"对话的全部"** —— 一条主动会话今天实量到 44 条，
@@ -566,7 +561,7 @@ export default function PetPage() {
     if (!content || !box) return true; // 没量到内容框 ⇒ 与今天一致：整盒都算她
     if (typeof event.clientX !== "number" || typeof event.clientY !== "number") return true;
     // 内容框只用于"是不是她"，边缘给几个像素的余量：发梢与投影是半透明的，框得比眼睛看到的最紧。
-    return inRect(content, event.clientX, event.clientY, CONTENT_HIT_PAD);
+    return inRect(content, event.clientX, event.clientY, PET_HOT_PAD);
   }
 
   /** 悬停只做一件事：把趴在边上的那半只拉出来（§7.6）。**不再弹面板** —— 悬停会改窗口尺寸，
@@ -684,8 +679,8 @@ export default function PetPage() {
     const el = spriteRef.current;
     if (!el) return false;
     const sliding = Date.now() - slideAtRef.current < SLIDE_GRACE_MS;
-    const padX = sliding ? HIT_SLACK_X : CONTENT_HIT_PAD;
-    const padY = sliding ? HIT_SLACK_Y : CONTENT_HIT_PAD;
+    const padX = sliding ? HIT_SLACK_X : PET_HOT_PAD;
+    const padY = sliding ? HIT_SLACK_Y : PET_HOT_PAD;
     const content = spriteContentRef.current;
     const box = spriteBoxRect();
     if (!content) {
