@@ -372,7 +372,14 @@ export function createUpdater(options: UpdaterOptions): Updater {
     // P10 通道映射：beta = 显式允许预发布 + 读 beta channel feed（GitHub provider 下
     // electron-updater 只在 allowPrerelease 时才把 prerelease 的 Release 当候选）。
     // setPrefs 每次都会重跑这里 —— 切通道下一次检查就生效，不用重启。
-    autoUpdater.channel = prefs.channel;
+    // feed 文件名 = 通道名 + ".yml"（util.js getChannelFilename；Windows 无平台前缀，Provider.js
+    // 原话「for windows we use channel name without platform specifier」），而 electron-builder
+    // 对 GitHub 只出 latest.yml（release.yml 发布闸注释同源）。所以域内词 stable 必须换给
+    // electron-updater 的默认名 latest：直喂数 stable 找的是 stable.yml —— 没有任何 Release
+    // 带它（2026-11-04 实测 v0.5.0/v0.5.1-beta.1 均 404，latest.yml 实存 353B/374B），且稳定
+    // 通道 allowPrerelease=false 不走 GitHubProvider 的「404 回退 latest.yml」活路（源码注释
+    // "Allow fallback to latest.yml"）→ 每次检查必报 ERR_UPDATER_CHANNEL_FILE_NOT_FOUND。
+    autoUpdater.channel = prefs.channel === "beta" ? "beta" : "latest";
     autoUpdater.allowPrerelease = prefs.channel === "beta";
   };
   applyPrefs();

@@ -97,6 +97,8 @@ CHECKS = (
     # 盯接线而不是盯判据：判据由 shell/scripts/test-update-feedback.cjs 自己测，
     # 这条问的是"接线有没有绕过判据"（catch 里的第二个主人、导出了没人调）
     checks_runtime.check_updater_failure_readout_has_one_owner,
+    #: 更新通道接线：域内 stable → feed 名 latest（直喂数 stable.yml = 发布流 404、稳定通道无回退）
+    checks_runtime.check_updater_channel_feed_wiring,
     # gate.py 自己那三份名单的对齐（本轮我自己漏登记过一次，才立的尺子）
     checks_runtime.check_gate_step_lists_aligned,
     checks_runtime.check_local_service_port_single_source,

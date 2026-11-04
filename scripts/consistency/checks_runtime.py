@@ -1724,6 +1724,75 @@ def check_updater_failure_readout_has_one_owner() -> None:
         fails.append(f"updater readout owners: {offenders}")
 
 
+def check_updater_channel_feed_wiring() -> None:
+    """稳定/灰度通道的 feed 文件名两套词表必须对上接线（直喂 stable = 每次检查必 404）。
+
+    背景（2026-11-04 查账，逐环实测 + 源码）：偏好层的通道词是域内的 stable/beta
+    （tray 菜单、updater-prefs.json、认不出回 stable 的白名单），而 electron-updater 找的
+    feed 资产名是「通道名 + .yml」（util.js getChannelFilename；Windows 无平台前缀）。
+    旧接线 `autoUpdater.channel = prefs.channel` 把域内词直喂：stable → stable.yml →
+    GitHubProvider.js:125 抛 ERR_UPDATER_CHANNEL_FILE_NOT_FOUND（2026-11-04 实测
+    v0.5.0/v0.5.1-beta.1 的 stable.yml 均 404，latest.yml 实存 353B/374B），而稳定通道
+    allowPrerelease=false 不走「404 回退 latest.yml」那条活路 —— 每次检查更新必失败。
+    beta 通道不受此害纯属侥幸：它 allowPrerelease=true，先试 beta.yml、404 后源码显式回退
+    latest.yml（release.yml 发布闸注释同源）。链子两头都钉：壳侧映射 + 发布侧闸保住
+    latest.yml 资产。
+
+    判据四条，任一不满足判红（「看不见」不等于「通过」）：
+      1. `updater.ts` 逐字两行在场 —— 映射行 `? "beta" : "latest"` 与 allowPrerelease 行
+         （成对原子：改了映射改漏 allowPrerelease = beta 候选筛选断线）；
+      2. 禁行 `autoUpdater.channel = prefs.channel;` 绝迹（域内词直喂的原发形状，
+         分号边界钉死，不误伤映射行的前缀）；
+      3. `release.yml` 发布闸逐字在场（`ls artifact/latest.yml` —— 稳定与预发布两个通道
+         都靠这个资产，闸被拆 = 壳侧映射对了也拿不到 feed）；
+      4. 任一输入文件读不到 ⇒ 判红（读法塌了不许静默绿）。
+    """
+    updater = ROOT / "shell" / "main" / "updater.ts"
+    release = ROOT / ".github" / "workflows" / "release.yml"
+    offenders: list[str] = []
+    for p in (updater, release):
+        if not p.exists():
+            offenders.append(f"{p.relative_to(ROOT).as_posix()} 不存在（这条尺子的输入丢了）")
+    if offenders:
+        out("updater channel feed wiring", False, "; ".join(offenders))
+        fails.append(f"updater channel inputs missing: {offenders}")
+        return
+
+    src = updater.read_text(encoding="utf-8", errors="ignore")
+    map_line = 'autoUpdater.channel = prefs.channel === "beta" ? "beta" : "latest";'
+    allow_line = 'autoUpdater.allowPrerelease = prefs.channel === "beta";'
+    if map_line not in src:
+        offenders.append(
+            "updater.ts 缺「stable→latest」feed 名映射"
+            "（域内词直喂 = 找 stable.yml，发布流无此资产）"
+        )
+    if allow_line not in src:
+        offenders.append(
+            "updater.ts 缺 allowPrerelease 按 beta 取值的半边"
+            "（与映射行成对：漏改 = beta 候选筛选断线）"
+        )
+    if "autoUpdater.channel = prefs.channel;" in src:
+        offenders.append(
+            "updater.ts 出现域内词直喂数（stable→stable.yml，"
+            "检查更新必报 ERR_UPDATER_CHANNEL_FILE_NOT_FOUND）"
+        )
+    wf = release.read_text(encoding="utf-8", errors="ignore")
+    if "ls artifact/latest.yml" not in wf:
+        offenders.append(
+            "release.yml 发布闸丢了「ls artifact/latest.yml」（稳定与预发布的 feed 资产都没人保了）"
+        )
+
+    out(
+        "updater channel feed wiring",
+        not offenders,
+        "; ".join(offenders[:5])
+        if offenders
+        else "stable→latest 映射与 allowPrerelease 成对在场、无直喂数；发布闸保住 latest.yml 资产",
+    )
+    if offenders:
+        fails.append(f"updater channel feed wiring: {offenders}")
+
+
 def check_gate_step_lists_aligned() -> None:
     """`gate.py` 的三份步骤名单必须互相对齐（新增步骤忘了登记 = 红）。
 

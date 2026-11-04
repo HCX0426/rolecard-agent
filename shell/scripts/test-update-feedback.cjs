@@ -18,6 +18,13 @@ const {
   isCheckTerminal,
   shouldHandoffQuitToInstall,
 } = require(path.join(__dirname, "..", "out", "main", "updateFeedback.js"));
+// 通道 feed 名契约（stable.yml 404 根因的上游坐实）：updater.ts 的 stable→latest 映射
+// 成立在 util.getChannelFilename 的形状（通道名 + ".yml"、Windows 无前缀）上 —— 升级
+// electron-updater 若哪天给 "stable" 开特例，这层映射就成了多余的谎，而 typecheck 对
+// 文件名毫无感觉（与「先 emit 再 throw 住在编译产物里」同一条升级风险）。
+const { getChannelFilename } = require(
+  path.join(__dirname, "..", "node_modules", "electron-updater", "out", "util.js"),
+);
 
 let pass = 0;
 let fail = 0;
@@ -161,6 +168,17 @@ check("所有 ManualAction 取值都有定义好的失败读数（新增档忘�
       assert.equal(failureTitle(r.stage).length > 0, true);
     }
   }
+});
+
+// ------------------------------------------------ 通道 feed 名契约（实测 2026-11-04）
+//
+// stable.yml 404 那条账的根：直喂 stable 找的是 stable.yml，而全部 Release 只带
+// latest.yml（v0.5.0 实存 353B、v0.5.1-beta.1 实存 374B，stable.yml 两个 tag 均 404）。
+// updater.ts 侧映射由一致性判据钉住；这里钉的是它**成立的前提**（上游包的命名形状）。
+
+check("feed 文件名 = 通道名 + .yml（stable→latest 映射的成立前提，改名会在上游升级时红）", () => {
+  assert.equal(getChannelFilename("latest"), "latest.yml");
+  assert.equal(getChannelFilename("stable"), "stable.yml");
 });
 
 console.log(`\n更新链判据：${pass}/${pass + fail}${fail ? " 有失败" : ""}`);
