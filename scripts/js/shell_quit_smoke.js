@@ -141,6 +141,7 @@ async function main() {
 
   let child;
   let killed = false;
+  let failed = false;
   try {
     child = spawn(exe, [".", `--user-data-dir=${profile}`], {
       cwd: SHELL,
@@ -197,9 +198,13 @@ async function main() {
     if (failures.length) {
       for (const f of failures) console.error(`FAIL ${f}`);
       console.error(`--- 探针日志 ---\n${raw}`);
-      process.exit(1);
+      // 失败不能就地 exit：process.exit **不跑 finally**，下面的探针回写就永远不执行
+      // —— 坏探针烙进 out/main/main.js，"探针只活在这一轮里"变成谎话（129 行防污染
+      // 段正是这类事故的前科：上轮崩在 finally 前，产物尾部留过两枚探针）。记旗，出栈后收场。
+      failed = true;
+    } else {
+      console.log("PASS 退出路径干净：没有窗拦 close，没有未捕获异常把收尾堵住");
     }
-    console.log("PASS 退出路径干净：没有窗拦 close，没有未捕获异常把收尾堵住");
   } finally {
     fs.writeFileSync(MAIN_JS, original); // 探针只活在这一轮里
     try {
@@ -208,6 +213,7 @@ async function main() {
       /* 临时目录清不掉不影响结论 */
     }
   }
+  if (failed) process.exit(1); // 探针已回写（finally 跑完）才收场：失败 rc=1，还原不缺席
 }
 
 void main();

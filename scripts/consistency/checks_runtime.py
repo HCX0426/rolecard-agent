@@ -1284,6 +1284,57 @@ def check_health_data_root() -> None:
         fails.append(f"health data root: {offenders}")
 
 
+def check_quit_smoke_restore() -> None:
+    """退出冒烟：失败也必须先回写探针再收场（A 系列延续，2026-11-04）。
+
+    `process.exit()` **不执行 finally** —— 失败分支在 `try` 里就地 `exit(1)`，`finally`
+    里"探针只活在这一轮里"的回写（`fs.writeFileSync(MAIN_JS, original)`）就永远不会跑，
+    坏探针烙进 `out/main/main.js`：脚本 129 行的防污染段正是这类事故的前科（上轮崩在
+    finally 之前，产物尾部留过**两枚**探针）。判据钉三件事：
+
+      1. 本轮 `try` 窗口（`let killed` → `} finally {`）内 **零** `process.exit`；
+      2. 失败分支记旗（`failed = true;`），栈外 `if (failed) process.exit(1);` 收场 ——
+         rc=1 不丢（静默绿比红危险）；
+      3. `finally` 仍回写 `MAIN_JS`。
+    """
+    rel = "scripts/js/shell_quit_smoke.js"
+    p = ROOT / rel
+    if not p.exists():
+        out("quit smoke restore", False, f"{rel} 不存在（尺子的输入丢了）")
+        fails.append("quit smoke restore: [输入文件丢失]")
+        return
+
+    src = p.read_text(encoding="utf-8", errors="ignore")
+    offenders: list[str] = []
+
+    try_i = src.find("let killed = false;")
+    finally_i = src.find("} finally {")
+    if try_i < 0 or finally_i <= try_i:
+        offenders.append(f"{rel} 结构锚丢了（let killed / }} finally {{）——尺子的输入变了？")
+    else:
+        window = src[try_i:finally_i]
+        if "process.exit(" in window:
+            offenders.append("try→finally 之间仍有 process.exit（不跑 finally，探针回写缺席）")
+        if "failed = true;" not in window:
+            offenders.append("失败分支没记旗（failed = true）")
+        after = src[finally_i:]
+        if "if (failed) process.exit(1);" not in after:
+            offenders.append("缺 if (failed) process.exit(1)（失败会静默绿）")
+
+    if "fs.writeFileSync(MAIN_JS, original);" not in src:
+        offenders.append("finally 不再回写探针（探针会留在构建产物里）")
+
+    out(
+        "quit smoke restore",
+        not offenders,
+        "; ".join(offenders)
+        if offenders
+        else "try 窗口零 exit：先回写探针，出栈后按旗收场（rc=1 不丢）",
+    )
+    if offenders:
+        fails.append(f"quit smoke restore: {offenders}")
+
+
 #: raise/assert 里的路径引用：至少读出这么多条，否则判红（读法塌了不许静默绿）。
 #: 现网实测 2026-11-03：src/ 388 条 raise/assert、其中 310 条带字符串，路径引用 4 条。
 #: 下限取 2 是因为这个数天然小（只有"指挥读者去改哪个文件"的那几条才写路径）；

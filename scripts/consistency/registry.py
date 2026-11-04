@@ -88,6 +88,8 @@ CHECKS = (
     checks_runtime.check_ipc_sender_guard,
     #: A-4：/api/health 报 data_root 且只准走 user_data_root（含行为测试在场的钉子）
     checks_runtime.check_health_data_root,
+    #: quit 冒烟：process.exit 不跑 finally —— 失败也必须先回写探针再按旗收场
+    checks_runtime.check_quit_smoke_restore,
     checks_runtime.check_zero_status_apierror_has_kind,
     checks_runtime.check_error_message_paths_resolve,
     # 盯接线而不是盯判据：判据由 shell/scripts/test-update-feedback.cjs 自己测，
