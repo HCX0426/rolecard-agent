@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* 自动内容检测只跳 .gitignore —— 而 dist 是入库的，于是构建产物自己的文本（如
+   Markdown 包里的排版工具串）被当候选抽成规则，产物再喂回下一次构建：满盘起步
+   恒比空盘起步多 11 条非源码规则（实测 922 vs 911、G1-only=0），同源同码两套产物。
+   @source not 把 dist 摘出扫描集，构建输入不再依赖起点状态 —— 注释本身也在扫描集内，
+   解释用的字样别裸写成类名，否则等于从后门把刚摘掉的规则又注回来。 */
+@source not "../dist";
+
 /* Tailwind v4：class 策略的深色模式 —— html 上挂 .dark 即生效（useTheme 切换） */
 @custom-variant dark (&:where(.dark, .dark *));
 
