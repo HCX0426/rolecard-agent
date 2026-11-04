@@ -15,7 +15,8 @@
 #   预算实测：ruff 三连 ~1s，mypy 增量（缓存热）~8s —— 冷缓存那次会慢，值一次。
 #
 # B 组 dist 重建（原有条）：动了前端源码而 dist 没跟着重建 ⇒ 当场重建并把 dist add 进提交。
-#   没装 node / 构建失败时只提醒、不拦 —— "拦不住就别假装拦了"，后面还有 CI 两道。
+#   没装 npm 才提醒放行（本机没工具，拦了也白拦 —— CI 还有两道兜底）；构建失败一律拦：
+#   vite emptyOutDir 先清 dist 再写，半途崩了盘上就是残面，放行等于把残面入库。
 #
 # ⚠ A 组必须排在 B 组**那个没有前端改动就 exit 0 的早退**之前：纯后端提交如果先撞上
 #   早退，静态三连一克都不跑 ——「hook 里写了、实际从没执行」是机制空转最安静的死法
@@ -61,9 +62,20 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 0
 fi
 
+# 构建子进程临时目录落仓内 —— 与 scripts/gate.py::_redirect_temp_for_children 同一条规则的
+# 钩子侧落地（引用互指防两套逻辑漂移）：受限启动上下文里系统 %TEMP% 间歇拒删，esbuild 崩在
+# remove 上时 vite 已把 dist 清了 —— 裸环境实测 RED_RC=1「Access is denied」+ dist 挖空。
+if command -v cygpath >/dev/null 2>&1; then
+  HTEMP="$(cygpath -m "$(git rev-parse --show-toplevel)")/build/tmp/hook-$$"
+else
+  HTEMP="$(git rev-parse --show-toplevel)/build/tmp/hook-$$"
+fi
+mkdir -p "$HTEMP"
+export TMPDIR="$HTEMP" TEMP="$HTEMP" TMP="$HTEMP"
+
 echo "pre-commit：前端源码有改动，重建 dist ..."
 (cd frontend && npm run build >/dev/null) || {
-  echo "pre-commit：构建失败 —— 本次提交不带重建的 dist（CI 的 check_dist_sync 会拦）"
+  echo "pre-commit：构建失败 —— 本次提交拦下（dist 已被清空、不可信；CI 的 check_dist_sync 也会兜）"
   exit 1
 }
 
