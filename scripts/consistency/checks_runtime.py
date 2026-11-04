@@ -901,6 +901,78 @@ def check_appearance_single_source() -> None:
         fails.append(f"appearance drift: {offenders}")
 
 
+def check_pet_geometry_single_source() -> None:
+    """桌宠几何常数跨 shell/frontend 只许一份：前端 @shell 别名 import 壳的唯一出处。
+
+    （A-9，2026-11-04 归一化）：`PetPage.tsx` 的 `HIT_SLACK_X` 从前**手抄** `132`，
+    注释自认"数值抄自 shell/main/windows.ts，两处各有注释钉着对方" —— 壳改色片尺寸
+    时前端照旧用旧数，正是"改了没生效"那族的病根（2026-10-29 栽过一次）。收成 import
+    后壳推导前端自动跟，但**改回手抄不会有任何编译错误**，所以立这把尺子。
+    判据四个接点，任一取不到输入即判红（"扫不到"不等于"通过"，与 appearance 同族）：
+
+      1. 壳侧唯一出处还在：`petDockGeometry.ts` 导出 `LEGACY_SIDE_TUCK`；
+      2. 前端经 `@shell/petDockGeometry` import 它，且 `HIT_SLACK_X` 的赋值行**逐字**
+         等于 `LEGACY_SIDE_TUCK`（换成任何数字字面量 = 手抄，当场红）；
+      3. vite 与 vitest 两份 config 都 import 共用的 `./shell-alias` —— 只挂一份 =
+         构建与测试两套解析，别名接线本身也不许双份；
+      4. tsconfig `paths` 有 `@shell/*`（JSON import 不进 JS 常量，只能钉）。
+    """
+    owner_rel = "shell/main/petDockGeometry.ts"
+    pet_rel = "frontend/src/pages/PetPage.tsx"
+    alias_rel = "frontend/shell-alias.ts"
+    cfg_rels = ("frontend/vite.config.ts", "frontend/vitest.config.ts")
+    tsconfig_rel = "frontend/tsconfig.json"
+
+    texts: dict[str, str] = {}
+    offenders: list[str] = []
+    for rel in (owner_rel, pet_rel, alias_rel, *cfg_rels, tsconfig_rel):
+        p = ROOT / rel
+        if not p.exists():
+            offenders.append(f"{rel} 不存在（尺子的输入丢了）")
+            continue
+        texts[rel] = p.read_text(encoding="utf-8", errors="ignore")
+
+    # 每个子串都必须带边界（= / 空格 / 引号），否则 `LEGACY_SIDE_TUCK_MOVED` 这种
+    # 保留前缀的改名会包含原串 —— 2026-11-04 M5 变异就是这么骗过第一版尺子的。
+    if owner_rel in texts and "export const LEGACY_SIDE_TUCK =" not in texts[owner_rel]:
+        offenders.append(f"{owner_rel} 不再导出 LEGACY_SIDE_TUCK（唯一出处搬家了，尺子要跟）")
+
+    if pet_rel in texts:
+        pet = texts[pet_rel]
+        if "import { LEGACY_SIDE_TUCK } from '@shell/petDockGeometry';" not in pet:
+            offenders.append(f"{pet_rel} 没有经 @shell/petDockGeometry import LEGACY_SIDE_TUCK")
+        if "const HIT_SLACK_X = LEGACY_SIDE_TUCK;" not in pet:
+            offenders.append(
+                f"{pet_rel} 的 HIT_SLACK_X 赋值行不是逐字的 "
+                "`const HIT_SLACK_X = LEGACY_SIDE_TUCK;`（改回字面量 = 手抄复发）"
+            )
+
+    if alias_rel in texts:
+        a = texts[alias_rel]
+        if "export const shellAlias =" not in a or "'@shell/'" not in a or "shell/main/" not in a:
+            offenders.append(f"{alias_rel} 丢了 @shell → shell/main 的别名接线")
+
+    for rel in cfg_rels:
+        if rel not in texts:
+            continue
+        cfg = texts[rel]
+        if 'from "./shell-alias"' not in cfg or "alias: shellAlias }" not in cfg:
+            offenders.append(f"{rel} 没用共用别名（要直接 import ./shell-alias，不许自带一份）")
+
+    if tsconfig_rel in texts and '"@shell/*"' not in texts[tsconfig_rel]:
+        offenders.append(f"{tsconfig_rel} 没有 @shell/* paths（tsc 与 vite 的解析会分家）")
+
+    out(
+        "pet geometry single source",
+        not offenders,
+        "; ".join(offenders[:5])
+        if offenders
+        else "HIT_SLACK_X 直接引用壳的 LEGACY_SIDE_TUCK；vite/vitest/tsconfig 三处接同一别名",
+    )
+    if offenders:
+        fails.append(f"pet geometry single source: {offenders}")
+
+
 #: raise/assert 里的路径引用：至少读出这么多条，否则判红（读法塌了不许静默绿）。
 #: 现网实测 2026-11-03：src/ 388 条 raise/assert、其中 310 条带字符串，路径引用 4 条。
 #: 下限取 2 是因为这个数天然小（只有"指挥读者去改哪个文件"的那几条才写路径）；

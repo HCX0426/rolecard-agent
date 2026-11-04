@@ -1,6 +1,8 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
+import { shellAlias } from "./shell-alias";
+
 /**
  * 前端测试配置。
  *
@@ -18,6 +20,7 @@ import { defineConfig } from "vitest/config";
  */
 export default defineConfig({
   plugins: [react()],
+  resolve: { alias: shellAlias },
   test: {
     environment: "node",
     include: ["src/**/*.test.{ts,tsx}"],

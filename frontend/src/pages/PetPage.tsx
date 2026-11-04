@@ -34,6 +34,7 @@ import { shellBridge } from "../lib/shell";
 import { PANEL_TICK_MS, panelCountdown, panelHeld, panelTimerArmed } from "../lib/petPanel";
 import { type StreamMeta } from "../lib/stream";
 import { describeError } from '../lib/errors';
+import { LEGACY_SIDE_TUCK } from '@shell/petDockGeometry';
 
 const BUBBLE_MS = 30_000; // 气泡到点自己收起：驻留件不该把一句话长期戳在桌面上
 // （不做淡出：这扇窗是透明窗，半透明的每一毫秒透出来的都是桌面本身 —— 那正是"重影"）
@@ -42,15 +43,17 @@ const MAX_BUBBLE_CHARS = 64;
 const RETUCK_MS = 900;
 /**
  * "点哪儿算点桌宠"的位移余量 —— **只在刚滑过窗的宽限期内生效**（见 `onPet`）。
- * 横向 = 壳里的 `SIDE_TUCK`（趴边 ↔ 拉出来那一步：20 + (160 − 48) = 132）；纵向见下面
- * `HIT_SLACK_Y`（现在是 0）。数值抄自 `shell/main/windows.ts`，那边改色片尺寸/露出量时
- * 这里要跟着改（两处各有注释钉着对方）。
+ * 横向 = 壳里"趴边 ↔ 拉出来"那一步的距离，**直接 import 壳的唯一出处**
+ * （`shell/main/petDockGeometry.ts` 的 `LEGACY_SIDE_TUCK`，由色片盒位置现算 = 132）；
+ * 纵向见下面 `HIT_SLACK_Y`（现在是 0）。从前这里手抄了 `132`、注释与
+ * `shell/main/windows.ts` 互钉 —— 那正是 A-9 归一的病根：壳改推导，前端还在用旧数。
+ * 现在两份代码一份事实，壳改了这里自动跟（一致性判据钉住不许抄回）。
  * 2026-10-29 两处改动：① 尺寸按渲染层**现在**的 160×184 盒订正（旧值 96/44 按 88 见方
  * 算，形象放大后没跟 —— 用户报的"没点到图像、点周围也弹消息框"就是这对旧数）；
  * ② 余量从"永远开着"收紧成"只在滑窗宽限期"——平时点她周围的空气就是点桌面，
  * 而"悬停把她拉出来→马上点旧位置"这条路径（光标相对色片正好偏移一个滑距）照旧算点她。
  */
-const HIT_SLACK_X = 132;
+const HIT_SLACK_X = LEGACY_SIDE_TUCK;
 /**
  * 滑窗宽限期内的**纵向**余量：0。
  *
