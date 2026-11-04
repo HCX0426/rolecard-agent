@@ -1051,6 +1051,67 @@ def check_clamp_single_source() -> None:
         fails.append(f"clamp single source: {offenders}")
 
 
+def check_pet_reload_state_replay() -> None:
+    """重载后壳页两半回到同一起点：壳侧 did-finish-load 复位 + 页面挂载 pull 首值（A-7）。
+
+    （A-7，2026-11-04）整页 reload（F5、`dataSource.ts` 切后端的 `location.reload`、
+    错误页按钮）把渲染端连锅端掉：新页面挂载时**默认收起、面板零位**，而壳侧
+    `petIsExpanded` / `lastPanelShift` 会活过这一代不复位 —— 后果各自可数：
+
+      * 残留 `petIsExpanded=true` ⇒ 「摊着别自动动」那几道闸门（吸边恢复、自动收起、
+        停靠恢复）一直按住，`placePet` 还把非零位移推给一张收起的页；
+      * 残留旧 `lastPanelShift` ⇒ `sendPanelShift` 的同值去重把**下一次展开**的真发送
+        吃掉，页面停在 0，面板贴屏边那一截被切（去重只该防同代内重发）。
+
+    判据钉两半，缺任一半都算复发：
+
+      1. 壳侧 `did-finish-load` 复位块在场，且两条复位**逐字连续**（只复位一条 = 只修半边）；
+      2. 页面挂载仍 pull 三个首值 —— 这半边是既有实现，index.ts 注释许过「页面 pull 首值、
+         push 收变更」的愿，从此由尺子盯，不靠记性。
+    """
+    win_rel = "shell/main/windows.ts"
+    pet_rel = "frontend/src/pages/PetPage.tsx"
+
+    texts: dict[str, str] = {}
+    offenders: list[str] = []
+    for rel in (win_rel, pet_rel):
+        p = ROOT / rel
+        if not p.exists():
+            offenders.append(f"{rel} 不存在（尺子的输入丢了）")
+            continue
+        texts[rel] = p.read_text(encoding="utf-8", errors="ignore")
+
+    if win_rel in texts:
+        win = texts[win_rel]
+        if 'win.webContents.on("did-finish-load"' not in win:
+            offenders.append(
+                f"{win_rel} 没有 did-finish-load 复位钩子（重载=换代，壳侧两条真相要归零）"
+            )
+        reset_block = "petIsExpanded = false;\n    lastPanelShift = 0;\n  });"
+        if reset_block not in win:
+            offenders.append(f"{win_rel} 的复位块不是「两条逐字连续」（少一条 = 只修半边）")
+
+    if pet_rel in texts:
+        page = texts[pet_rel]
+        for call, why in (
+            (".petContentVisible()", "内容旗子首值不再 pull"),
+            (".petVoiceEnabled()", "语音旗子首值不再 pull"),
+            (".petPanelAutoHideMs()", "自动收起秒数首值不再 pull"),
+        ):
+            if call not in page:
+                offenders.append(f"{pet_rel}：{why}（{call}）")
+
+    out(
+        "pet reload state replay",
+        not offenders,
+        "; ".join(offenders[:5])
+        if offenders
+        else "did-finish-load 复位两条逐字在场；页面挂载 pull 三个首值",
+    )
+    if offenders:
+        fails.append(f"pet reload state replay: {offenders}")
+
+
 #: raise/assert 里的路径引用：至少读出这么多条，否则判红（读法塌了不许静默绿）。
 #: 现网实测 2026-11-03：src/ 388 条 raise/assert、其中 310 条带字符串，路径引用 4 条。
 #: 下限取 2 是因为这个数天然小（只有"指挥读者去改哪个文件"的那几条才写路径）；

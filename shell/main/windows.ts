@@ -815,6 +815,18 @@ export function createPetWindow(prefs: PetPrefs = loadPetPrefs()): BrowserWindow
   // 桌宠页换了（跳回着陆页、重载、后端挂了）⇒ 没人报"光标在不在东西上"了，立刻回到吃点击。
   // 不复位就是"桌宠突然点不动"，而那正是这条优化想修的那类毛病。
   win.webContents.on("did-start-navigation", () => setPetHitTestArmed(win, false));
+  // 整页重载 = 渲染端连锅端掉换了一代：新页面挂载时**默认收起、面板零位**（首值它自己
+  // pull，见 PetPage 那三个 useEffect）。壳侧这两条真相必须跟着回到同一起点，不跟就是
+  // 两半错位（A-7，2026-11-04 审计）：
+  //  - `petIsExpanded` 残留 true ⇒ 「摊着别自动动」那几道闸门（吸边恢复、自动收起）一直
+  //    按住，`placePet` 还会把非零位移推给一张收起的页；
+  //  - `lastPanelShift` 残留旧值 ⇒ `sendPanelShift` 的同值去重把**下一次展开**的那次真
+  //    发送吃掉：页面停在 0，面板贴屏边那一截被切 —— 去重只该防同代内重发。
+  // 只复位、不发送：0/收起就是页面的默认（首值 pull），幂等到首次加载那遍也无害。
+  win.webContents.on("did-finish-load", () => {
+    petIsExpanded = false;
+    lastPanelShift = 0;
+  });
   win.on("closed", () => {
     if (petHoldTimer) clearTimeout(petHoldTimer);
     petHoldTimer = null;

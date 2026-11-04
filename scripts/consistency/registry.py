@@ -80,6 +80,8 @@ CHECKS = (
     checks_runtime.check_pet_geometry_single_source,
     #: A-11：工作区夹取数学唯一出处（state/windows 三份近亲写法归一到纯层）
     checks_runtime.check_clamp_single_source,
+    #: A-7：重载换代后壳页状态同一起点（did-finish-load 复位 + 页面 pull 首值）
+    checks_runtime.check_pet_reload_state_replay,
     checks_runtime.check_zero_status_apierror_has_kind,
     checks_runtime.check_error_message_paths_resolve,
     # 盯接线而不是盯判据：判据由 shell/scripts/test-update-feedback.cjs 自己测，
