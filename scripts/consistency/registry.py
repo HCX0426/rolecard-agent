@@ -78,6 +78,8 @@ CHECKS = (
     checks_runtime.check_appearance_single_source,
     # A-9 归一：桌宠几何常数前端只 import 壳的唯一出处、不许手抄（与 appearance 同族）
     checks_runtime.check_pet_geometry_single_source,
+    #: A-11：工作区夹取数学唯一出处（state/windows 三份近亲写法归一到纯层）
+    checks_runtime.check_clamp_single_source,
     checks_runtime.check_zero_status_apierror_has_kind,
     checks_runtime.check_error_message_paths_resolve,
     # 盯接线而不是盯判据：判据由 shell/scripts/test-update-feedback.cjs 自己测，

@@ -973,6 +973,84 @@ def check_pet_geometry_single_source() -> None:
         fails.append(f"pet geometry single source: {offenders}")
 
 
+def check_clamp_single_source() -> None:
+    """工作区夹取的数学只住在 `petDockGeometry.clampRectToWorkArea`（A-11 归一）。
+
+    （A-11，2026-11-04）同一条式子 `x = min(max(x, work.x), work.x + max(0, work.w − w))`
+    在审计时有**三份近亲写法**：`state.ts` 的 `clampToWorkArea`、`windows.ts`
+    `petAnchorFor` 的行内八行、`flushRect` 只夹 y 的标量化半份 —— 改一处不跟另外两处，
+    正是"多套逻辑"的形状。归一后三处都改调纯函数，任一份回来都判红：
+
+      1. 纯层唯一定义还在（`export function clampRectToWorkArea(` 带括号收边界）；
+      2. x 式数学本体在纯层里**恰好一次**（0 = 搬家了、2 = 纯层内也长双胞胎）；
+      3. 旧写法的字面特征在两个调用文件里一个都不许在 —— 每个子串带边界
+         （A-9 的 M5 教训：`clampToWorkAreaExtra` 这类保留前缀的改名会包含原串）；
+      4. 两个调用点逐字改调新函数，且 dock 测试真的在跑它（判据绿但没人测 = 空尺子）。
+    """
+    pet_rel = "shell/main/petDockGeometry.ts"
+    win_rel = "shell/main/windows.ts"
+    st_rel = "shell/main/state.ts"
+    test_rel = "shell/scripts/test-pet-dock-geometry.cjs"
+
+    texts: dict[str, str] = {}
+    offenders: list[str] = []
+    for rel in (pet_rel, win_rel, st_rel, test_rel):
+        p = ROOT / rel
+        if not p.exists():
+            offenders.append(f"{rel} 不存在（尺子的输入丢了）")
+            continue
+        texts[rel] = p.read_text(encoding="utf-8", errors="ignore")
+
+    if pet_rel in texts:
+        pet = texts[pet_rel]
+        if "export function clampRectToWorkArea(" not in pet:
+            offenders.append(f"{pet_rel} 缺 clampRectToWorkArea 唯一定义")
+        x_math = "Math.min(Math.max(rect.x, work.x), maxX)"
+        n_x = pet.count(x_math)
+        if n_x != 1:
+            offenders.append(f"{pet_rel} 工作区夹取 x 式出现 {n_x} 次（须恰好 1）")
+
+    if win_rel in texts:
+        win = texts[win_rel]
+        for bad, why in (
+            ("Math.min(Math.max(next.x", "petAnchorFor 的行内夹取回来了"),
+            ("work.y + Math.max(0, work.height - size.height)", "flushRect 的 y 向旧式回来了"),
+            ("function clampToWorkArea", "旧私有双胞胎的名字出现在 windows"),
+        ):
+            if bad in win:
+                offenders.append(f"{win_rel}：{why}（{bad!r}）")
+        if "clampRectToWorkArea(next, workArea)" not in win:
+            offenders.append(f"{win_rel} 的 petAnchorFor 没改调 clampRectToWorkArea")
+        if "{ ...size, x: rect.x, y: rect.y }, work).y" not in win:
+            offenders.append(f"{win_rel} 的 flushRect 没改调 clampRectToWorkArea")
+
+    if st_rel in texts:
+        st = texts[st_rel]
+        for bad, why in (
+            ("function clampToWorkArea", "state 里的旧私有双胞胎回来了"),
+            ("Math.min(Math.max(rect.x, workArea.x)", "state 的行内旧式回来了"),
+        ):
+            if bad in st:
+                offenders.append(f"{st_rel}：{why}（{bad!r}）")
+        if "clampRectToWorkArea(" not in st:
+            offenders.append(f"{st_rel} 没调用 clampRectToWorkArea")
+        if 'from "./petDockGeometry"' not in st:
+            offenders.append(f"{st_rel} 没从 ./petDockGeometry import")
+
+    if test_rel in texts and "clampRectToWorkArea" not in texts[test_rel]:
+        offenders.append(f"{test_rel} 没覆盖 clampRectToWorkArea（判据绿但没人测）")
+
+    out(
+        "clamp single source",
+        not offenders,
+        "; ".join(offenders[:5])
+        if offenders
+        else "夹取唯一定义在纯层；windows/state 三份旧写法归零；dock 测试有读数",
+    )
+    if offenders:
+        fails.append(f"clamp single source: {offenders}")
+
+
 #: raise/assert 里的路径引用：至少读出这么多条，否则判红（读法塌了不许静默绿）。
 #: 现网实测 2026-11-03：src/ 388 条 raise/assert、其中 310 条带字符串，路径引用 4 条。
 #: 下限取 2 是因为这个数天然小（只有"指挥读者去改哪个文件"的那几条才写路径）；
@@ -989,7 +1067,7 @@ _MIN_ZERO_STATUS_CALLS = 5
 
 
 def _top_level_args(call: str) -> list[str]:
-    """把 `a, b \`x\`, f(1,2)` 这样的实参表按**顶层逗号**切开（括号与引号内不算）。"""
+    r"""把 `a, b \`x\`, f(1,2)` 这样的实参表按**顶层逗号**切开（括号与引号内不算）。"""
     args: list[str] = []
     depth = 0
     quote = ""

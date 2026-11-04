@@ -12,6 +12,7 @@
 import { app, screen, type BrowserWindow, type Rectangle } from "electron";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { clampRectToWorkArea } from "./petDockGeometry";
 
 type Saved = Record<string, Rectangle>;
 
@@ -107,22 +108,17 @@ function save(states: Saved): void {
   }
 }
 
-/** 夹进主屏工作区（保持尺寸不变，只挪位置）。 */
-function clampToWorkArea(rect: Rectangle): Rectangle {
-  const { workArea } = screen.getPrimaryDisplay();
-  const maxX = workArea.x + Math.max(0, workArea.width - rect.width);
-  const maxY = workArea.y + Math.max(0, workArea.height - rect.height);
-  return {
-    ...rect,
-    x: Math.min(Math.max(rect.x, workArea.x), maxX),
-    y: Math.min(Math.max(rect.y, workArea.y), maxY),
-  };
-}
-
-/** 这扇窗该开在哪：上次的位置，没有就落到 `fallback`；两种都夹回当前工作区。 */
+/** 这扇窗该开在哪：上次的位置，没有就落到 `fallback`；两种都夹回当前工作区。
+ *
+ * 夹取数学收在 `petDockGeometry.clampRectToWorkArea`（A-11 归一：本文件从前自写了一份
+ * 与 `windows.ts` `petAnchorFor` 行内同式的双胞胎）。`work` 仍取主屏 —— 与归一前逐格
+ * 一致；多屏按 `getDisplayMatching` 取屏需要真机读数，不在本次归一的范围里。 */
 export function initialBounds(label: string, fallback: Rectangle): Rectangle {
   const stored = load()[label];
-  return clampToWorkArea(stored ? { ...fallback, ...stored } : fallback);
+  return clampRectToWorkArea(
+    stored ? { ...fallback, ...stored } : fallback,
+    screen.getPrimaryDisplay().workArea,
+  );
 }
 
 /** 之后自动存：拖拽/缩放结束时写一次（debounce，别把磁盘当心跳）。

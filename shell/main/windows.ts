@@ -19,6 +19,7 @@ import {
   type PetPrefs,
 } from "./state";
 import {
+  clampRectToWorkArea,
   normalizeContentRect,
   tuckForEdge,
   dockEdgeFor,
@@ -105,13 +106,7 @@ export function petAnchorFor(current: Rect): Rect {
     height,
   };
   const { workArea } = screen.getPrimaryDisplay();
-  const maxX = workArea.x + Math.max(0, workArea.width - width);
-  const maxY = workArea.y + Math.max(0, workArea.height - height);
-  return {
-    ...next,
-    x: Math.min(Math.max(next.x, workArea.x), maxX),
-    y: Math.min(Math.max(next.y, workArea.y), maxY),
-  };
+  return clampRectToWorkArea(next, workArea);
 }
 
 const PRELOAD = path.join(__dirname, "..", "preload", "bridge.js");
@@ -178,7 +173,7 @@ function clamp(n: number, low: number, high: number): number {
  */
 function flushRect(edge: DockEdge, rect: Rect, work: Rect): Rect {
   const size = anchorSize();
-  const y = clamp(rect.y, work.y, work.y + Math.max(0, work.height - size.height));
+  const y = clampRectToWorkArea({ ...size, x: rect.x, y: rect.y }, work).y;
   if (edge === "left") return { ...size, x: work.x, y };
   return { ...size, x: work.x + work.width - size.width, y };
 }

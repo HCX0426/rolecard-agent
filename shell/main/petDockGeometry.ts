@@ -159,3 +159,26 @@ export function normalizeContentRect(
   out.height = Math.min(out.height, ANCHOR_H - out.y);
   return out;
 }
+
+/**
+ * 把矩形夹回**工作区**：保尺寸只挪位置；矩形比工作区还大时贴工作区原点。
+ *
+ * （A-11 归一，2026-11-04）这条数学从前有**三份近亲写法**：`state.ts` 的
+ * `clampToWorkArea`、`windows.ts` `petAnchorFor` 的行内八行、`flushRect` 只夹 y 的
+ * 标量化半份 —— 三处各自手推 `maxX = work.x + Math.max(0, work.width − width)`。
+ * 收成这一个纯函数：唯一读法、`npm run test:dock` 真跑得着（纯层不碰 electron，
+ * 正是本文件存在的理由），三个调用点不再各信各的。
+ *
+ * `work` 是**参数**而不是函数里去 `screen.getPrimaryDisplay()`：调用点自己取屏。
+ * 归一当天四条调用路都仍给主屏工作区 —— 零行为变化；多屏按 `getDisplayMatching`
+ * 取屏是另一件事，没真机读数之前不动（见 A-11 收尾备注）。
+ */
+export function clampRectToWorkArea(rect: Rect, work: Rect): Rect {
+  const maxX = work.x + Math.max(0, work.width - rect.width);
+  const maxY = work.y + Math.max(0, work.height - rect.height);
+  return {
+    ...rect,
+    x: Math.min(Math.max(rect.x, work.x), maxX),
+    y: Math.min(Math.max(rect.y, work.y), maxY),
+  };
+}

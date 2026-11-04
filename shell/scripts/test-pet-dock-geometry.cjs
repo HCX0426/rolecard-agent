@@ -300,6 +300,38 @@ check("normalizeContentRect：报出锚点框的内容被夹回锚点内", () =>
   }
 });
 
+// ---- A-11 归一：工作区夹取唯一出处（同一条数学曾有三份近亲写法）----------------------
+check("clampRectToWorkArea：越界夹回、在内不动、超大贴原点、副屏带偏移", () => {
+  const work = { x: 0, y: 0, width: 1920, height: 1040 };
+  // 越界四角：推回工作区内，**尺寸一格不动**（state.ts 的口径：只挪位置）
+  const a = G.clampRectToWorkArea({ x: -50, y: -20, width: 800, height: 600 }, work);
+  assert.deepEqual(a, { x: 0, y: 0, width: 800, height: 600 });
+  const b = G.clampRectToWorkArea({ x: 1600, y: 900, width: 800, height: 600 }, work);
+  assert.deepEqual(b, { x: 1120, y: 440, width: 800, height: 600 }); // 1920−800 / 1040−600
+  // 已经在工作区内：一格都不许挪（夹取不是"重新摆放"）
+  const c = G.clampRectToWorkArea({ x: 120, y: 80, width: 800, height: 600 }, work);
+  assert.deepEqual(c, { x: 120, y: 80, width: 800, height: 600 });
+  // 比工作区还宽：max(0, …) 顶成 0 ⇒ 贴原点，不许算出负的 maxX 再把矩形甩到右下
+  const d = G.clampRectToWorkArea({ x: 50, y: 50, width: 2000, height: 600 }, work);
+  assert.deepEqual(d, { x: 0, y: 50, width: 2000, height: 600 });
+  // 原点非 0 的工作区（副屏）：夹取必须带偏移 —— 当 0 处理会把多屏坐标夹坏
+  const ext = { x: -1920, y: 0, width: 1920, height: 1040 };
+  const e = G.clampRectToWorkArea({ x: -3000, y: 10, width: 600, height: 500 }, ext);
+  assert.deepEqual(e, { x: -1920, y: 10, width: 600, height: 500 });
+});
+
+check("clampRectToWorkArea：正好压线的坐标不漂移（归一前三份写法的共同读数）", () => {
+  const work = { x: 100, y: 50, width: 1000, height: 800 };
+  assert.deepEqual(
+    G.clampRectToWorkArea({ x: 100, y: 50, width: 100, height: 100 }, work),
+    { x: 100, y: 50, width: 100, height: 100 },
+  );
+  assert.deepEqual(
+    G.clampRectToWorkArea({ x: 1000, y: 750, width: 100, height: 100 }, work),
+    { x: 1000, y: 750, width: 100, height: 100 }, // 100+1000−100 / 50+800−100
+  );
+});
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} 通过`);
 if (failed.length) {
