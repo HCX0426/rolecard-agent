@@ -143,7 +143,12 @@ async function main() {
   let killed = false;
   let failed = false;
   try {
-    child = spawn(exe, [".", `--user-data-dir=${profile}`], {
+    // --no-sandbox：这轮只测退出路径、不测沙箱（与"不 spawn 后端"同一取舍）。2026-11-04
+    // agent 会话派生的进程里 Chromium 原生沙箱起不来 —— 无输出秒退 rc=3，探针一行写不出，
+    // 症状与"退出路径坏了"同形；单变量 A/B 实测：--no-sandbox 存活过 8s，--disable-gpu 照样
+    // 秒死，凶手是沙箱与 GPU 无关。临时 user-data-dir、后端指向不存在的程序，--no-sandbox
+    // 零暴露面；四条判据与预算一条不减（换环境照样拦真回归）。
+    child = spawn(exe, [".", `--user-data-dir=${profile}`, "--no-sandbox"], {
       cwd: SHELL,
       windowsHide: true,
       stdio: "ignore",
