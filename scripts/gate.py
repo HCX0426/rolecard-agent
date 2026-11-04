@@ -34,11 +34,13 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import contextlib
 import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -230,7 +232,7 @@ STEPS: list[tuple[str, list[str], str]] = [
     # 挡默认规则对良性内容：.env.example 空值、文档示例 endpoint、CI 假 token、data URL、
     # 测试 fixture 的误报）。
     ("密钥扫描", [PY, "scripts/tools/scan_secrets.py"], "full"),
-    ("真机冒烟(14 项)", [PY, "scripts/smoke_check.py"], "full"),
+    ("真机冒烟", [PY, "scripts/smoke_check.py"], "full"),
     # 「README 数字收尾」这一步已随拍板"数字移出散文"整个删除：README 不再抄数 ⇒ 没有
     # 数要"收尾"，反向断言（首屏不许有数 + 引用必须在）本就排在 `consistency` 里、不依赖
     # 覆盖率/vitest 之后才写进读数 —— R28-73 那条"晚一趟"的病灶连根没了。
@@ -655,7 +657,7 @@ STEP_TIMEOUTS: dict[str, float] = {
     # 「gate step lists aligned」钉住：新增步骤忘登记 = 红，不再靠人记得。
     "npm 依赖审计": 700.0,
     "密钥扫描": 420.0,  # 脚本内 gitleaks 硬超时 300s + 首跑下载（实测 1.3~1.8s）
-    "真机冒烟(14 项)": 900.0,
+    "真机冒烟": 900.0,
 }
 
 
@@ -809,6 +811,55 @@ def _terminate_step(proc: subprocess.Popen[str]) -> None:
     from rolecard_agent.core.tools.run import terminate_process_tree  # noqa: PLC0415
 
     terminate_process_tree(proc)
+
+
+def _redirect_temp_for_children() -> None:
+    """把本趟所有子进程的临时目录搬进仓内 `build/tmp/gate-<pid>`，退场时整棵清掉。
+
+    为什么（2026-11-04 两发实测假红）：门禁在受限启动上下文里跑时，系统 `%TEMP%`
+    **间歇性不可写** —— `shell updater 清理判据` 7 个臂全栽在
+    `EPERM: mkdtemp '…\\AppData\\Local\\Temp\\…'`（同臂前台跑通过；把 TEMP 指进
+    工作区立即 15/15 绿），下一趟 `前端 vitest` 又在**收集任何用例之前**死在
+    `EPERM: open '…Temp\\vitest-coverage-*.lock'`（2.9s 退出，正常 11~35s）。两次
+    红都与代码无关，只与"这个系统位置此刻可不可写"有关 —— 判据被环境掷骰子，
+    就会训练人忽略红（不反映代码好坏的失败比没有检查更坏）。
+
+    还顺手收掉一个**真**撞点（与沙箱无关）：vitest 的 coverage lock 按配置算哈希，
+    而门禁会并发跑（`_write_readings` docstring 记着"我这边一次 --fast，同时另一
+    次 --ci 还在跑"）—— 两趟会撞 `%TEMP%` 下同一个 lock 文件名；每趟一个 PID
+    命名空间之后，这个撞点不存在了。
+
+    为什么改**一处环境变量**就够、而不是三个 spawn 点各改一遍（不可多套逻辑）：
+    `_run` 是 `{**os.environ, …}` 拷贝、`_run_captured` 与 `_git` 压根不传 env ——
+    三个点都继承本进程环境，本函数改的就是它。再给某一处加 `env=` 参数，就是给
+    同一决定造第二个出口。
+
+    落 `build/` 的理由：gitignored（`git status` / `_changed_paths` / dist-sync 都
+    不看它），且门禁自己就往里写（读数 scratch、覆盖率报告），可写是它的日常。
+    建不成目录就**不动环境**（直接返回）：门禁不能因为"临时目录没建成"就不起跑。
+    """
+    base = ROOT / "build" / "tmp"
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        # 上一趟被硬杀（job 超时 / 断电）时 atexit 没跑 ⇒ 这里只增不减，顺手清 24h
+        # 前的遗骸（门禁单趟有墙钟，24h 还在的只可能是死进程的）。best-effort。
+        for entry in base.iterdir():
+            try:
+                if (
+                    entry.name.startswith("gate-")
+                    and entry.is_dir()
+                    and time.time() - entry.stat().st_mtime > 24 * 3600
+                ):
+                    shutil.rmtree(entry, ignore_errors=True)
+            except OSError:
+                continue  # 与死进程的清扫撞车：谁先删完都算清干净
+        run = base / f"gate-{os.getpid()}"
+        run.mkdir(exist_ok=True)
+    except OSError:
+        return
+    for key in ("TMPDIR", "TEMP", "TMP"):
+        os.environ[key] = str(run)
+    atexit.register(shutil.rmtree, run, ignore_errors=True)
 
 
 def _run_captured(
@@ -1206,7 +1257,7 @@ CI_SKIP = frozenset(
         "前端 eslint",
         "前端 tsc+build",
         "dist 入库同步",
-        "真机冒烟(14 项)",
+        "真机冒烟",
         "pytest(覆盖率)",
         "覆盖率分模块地板",
         "改动行覆盖率",
@@ -1259,6 +1310,11 @@ def main() -> int:
         "不在 YAML 里抄第二份名单。",
     )
     args = parser.parse_args()
+
+    # 子进程的临时目录要在**第一个 spawn 之前**定下来（下面 `--pytest-plan` 那支的
+    # `_git` 与正常路径的 `_changed_paths` 都算第一个 spawn）。只改这一处就覆盖
+    # 三个 spawn 点（它们全继承本进程环境，见 `_redirect_temp_for_children` 的 docstring）。
+    _redirect_temp_for_children()
 
     if args.pytest_plan:
         try:
