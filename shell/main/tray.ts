@@ -43,6 +43,11 @@ export type TrayControls = {
   setAutostart: (on: boolean) => void;
   /** 自动更新（设计稿 §3.3）。dev 态传 null ⇒ 整条更新菜单不出现（与开机自启同一理由）。 */
   updater: Updater | null;
+  /** 设置类条目点完把新状态播报出来（菜单会关，用户就看不到结果了）。
+   *  由 index.ts 用**更新回执同一条** `new Notification().show()` 实现 —— 那是本仓
+   *  唯一有真机显示证据的通道；刻意绕开 notify() 的"前台就抑制"（这条是用户自己
+   *  刚做的动作，前台更要给）。 */
+  notifyResult: (title: string, body: string) => void;
 };
 
 export type TrayHandle = { tray: Tray; refresh: () => void };
@@ -57,21 +62,29 @@ export function createTray(controls: TrayControls): TrayHandle {
   const tray = new Tray(icon);
   tray.setToolTip("rolecard-agent");
 
-  // 点完**原地重开**菜单 —— 只给设置类条目（勾选/单选/自启）用：Windows 原生菜单选中
-  // 即销毁是 OS 行为，Electron 没有"保持展开"的口子，重开是唯一可行的观感；这些条目
-  // 的反馈就是菜单里的勾选态本身，关了等于看不到结果（用户 2026-11-05）。动作类
-  // （检查/下载/重启并更新/开控制台/退出）不重开：它们的去向不在菜单里，僵尸菜单挡眼。
-  // 延时 50ms：同步重弹会撞在系统收起上一份菜单的路上（社区同形状的实测值，非精确）。
-  const keepMenuOpen = () => {
+  // 点完**原地重开**菜单 + 把结果播报出来 —— 只给设置类条目（勾选/单选/自启）用。
+  // Windows 原生菜单选中即销毁是 OS 行为，Electron 没有"保持展开"的口子（官方 Tray
+  // API 全文核对过）；重开是最接近"不关"的观感，但它**未能在本机验证**（上一版重开
+  // 真机没生效，用户 2026-11-05 复验）。所以这一版把两件事分开：
+  //   ① 结果可见 = **确定的**：走 `controls.notifyResult` —— 它就是更新回执那条
+  //      `new Notification().show()`（本仓唯一有真机显示证据的通道）。刻意**不用**
+  //      tray.displayBalloon：全仓此前零使用，Win11 对气泡的支持不可靠 —— 不拿没验证
+  //      过的通道当承诺（房规：从不失败的检查比没检查更坏，没显示的证据同理）。
+  //   ② 菜单重开 = **尽力而为**：先 tray.focus()（文档原话"弹过快捷菜单后把焦点还给
+  //      通知区"，焦点还挂在已销毁菜单上时后续 popup 会被系统吞掉 —— 这正是上一版
+  //      最可能的死因），再不传坐标调 popUpContextMenu() 让原生按图标锚定（上一版手算
+  //      getBounds 坐标，Win11 溢出区里那个位置可能本就错）。失败不报错：结果已送达。
+  const keepMenuOpen = (label: string, value: string) => {
+    controls.notifyResult(label, `已设为：${value}`);
     if (process.platform !== "win32") return;
     setTimeout(() => {
       try {
-        const b = tray.getBounds();
-        tray.popUpContextMenu(undefined, { x: b.x + Math.round(b.width / 2), y: b.y + b.height });
+        tray.focus();
+        tray.popUpContextMenu();
       } catch {
-        /* 图标恰好被系统移除：操作结果已生效，菜单弹不出不值得拦下任何东西 */
+        /* 重开尽力而为：结果已经由通知送达 */
       }
-    }, 50);
+    }, 80);
   };
 
   const render = () => {
@@ -91,7 +104,7 @@ export function createTray(controls: TrayControls): TrayHandle {
         checked,
         click: (item) => {
           onChange(item.checked);
-          keepMenuOpen();
+          keepMenuOpen(label, item.checked ? "开" : "关");
         },
       });
     tray.setContextMenu(
@@ -124,7 +137,7 @@ export function createTray(controls: TrayControls): TrayHandle {
               click: () => {
                 controls.setPetPrefs({ opacity: step.value });
                 render();
-                keepMenuOpen();
+                keepMenuOpen("透明度", step.label);
               },
             })),
           ),
@@ -158,7 +171,7 @@ export function createTray(controls: TrayControls): TrayHandle {
               click: () => {
                 controls.setPetPrefs({ panelAutoHideMs: step.value });
                 render();
-                keepMenuOpen();
+                keepMenuOpen("面板自动收起", step.label);
               },
             })),
           ),
@@ -173,7 +186,7 @@ export function createTray(controls: TrayControls): TrayHandle {
                 click: (item: MenuItem) => {
                   controls.setAutostart(item.checked);
                   render();
-                  keepMenuOpen();
+                  keepMenuOpen("开机自启", item.checked ? "开" : "关");
                 },
               },
             ]
@@ -198,7 +211,7 @@ export function createTray(controls: TrayControls): TrayHandle {
 function updateMenuItems(
   updater: Updater | null,
   refresh: () => void,
-  keepMenuOpen: () => void,
+  keepMenuOpen: (label: string, value: string) => void,
 ): MenuItemConstructorOptions[] {
   if (!updater) return [];
   const state = updater.state();
@@ -257,7 +270,7 @@ function updateMenuItems(
     click: (item: MenuItem) => {
       updater.setPrefs({ [key]: item.checked });
       refresh();
-      keepMenuOpen();
+      keepMenuOpen(label, item.checked ? "开" : "关");
     },
   });
   // 更新通道（P10 ③，2026-10-27 接上界面入口）：桌面版没有金丝雀，分通道的 feed 就是灰度。
@@ -284,7 +297,7 @@ function updateMenuItems(
           click: () => {
             updater.setPrefs({ channel: c.value });
             refresh();
-            keepMenuOpen();
+            keepMenuOpen("更新通道", c.value === "beta" ? "灰度 beta" : "正式版");
           },
         }),
       ),

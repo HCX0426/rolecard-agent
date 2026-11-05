@@ -504,6 +504,12 @@ function boot(): void {
     autostartEnabled: loginItemEnabled,
     setAutostart: setLoginItemEnabled,
     updater,
+    // 托盘设置类条目的结果播报：与更新回执**同一条通道**（本仓唯一有真机显示证据的），
+    // 也刻意绕开 notify() 的"前台就抑制" —— 这条是用户自己刚做的动作，前台更要给。
+    notifyResult: (title, body) => {
+      new Notification({ title, body }).show();
+      logLine(`设置回执弹出：${title}｜${body}`);
+    },
   });
 
   if (updater) {
