@@ -57,6 +57,23 @@ export function createTray(controls: TrayControls): TrayHandle {
   const tray = new Tray(icon);
   tray.setToolTip("rolecard-agent");
 
+  // 点完**原地重开**菜单 —— 只给设置类条目（勾选/单选/自启）用：Windows 原生菜单选中
+  // 即销毁是 OS 行为，Electron 没有"保持展开"的口子，重开是唯一可行的观感；这些条目
+  // 的反馈就是菜单里的勾选态本身，关了等于看不到结果（用户 2026-11-05）。动作类
+  // （检查/下载/重启并更新/开控制台/退出）不重开：它们的去向不在菜单里，僵尸菜单挡眼。
+  // 延时 50ms：同步重弹会撞在系统收起上一份菜单的路上（社区同形状的实测值，非精确）。
+  const keepMenuOpen = () => {
+    if (process.platform !== "win32") return;
+    setTimeout(() => {
+      try {
+        const b = tray.getBounds();
+        tray.popUpContextMenu(undefined, { x: b.x + Math.round(b.width / 2), y: b.y + b.height });
+      } catch {
+        /* 图标恰好被系统移除：操作结果已生效，菜单弹不出不值得拦下任何东西 */
+      }
+    }, 50);
+  };
+
   const render = () => {
     const prefs = controls.petPrefs();
     const onPet = controls.petVisible();
@@ -72,7 +89,10 @@ export function createTray(controls: TrayControls): TrayHandle {
         label,
         type: "checkbox",
         checked,
-        click: (item) => onChange(item.checked),
+        click: (item) => {
+          onChange(item.checked);
+          keepMenuOpen();
+        },
       });
     tray.setContextMenu(
       Menu.buildFromTemplate([
@@ -104,6 +124,7 @@ export function createTray(controls: TrayControls): TrayHandle {
               click: () => {
                 controls.setPetPrefs({ opacity: step.value });
                 render();
+                keepMenuOpen();
               },
             })),
           ),
@@ -137,6 +158,7 @@ export function createTray(controls: TrayControls): TrayHandle {
               click: () => {
                 controls.setPetPrefs({ panelAutoHideMs: step.value });
                 render();
+                keepMenuOpen();
               },
             })),
           ),
@@ -151,13 +173,14 @@ export function createTray(controls: TrayControls): TrayHandle {
                 click: (item: MenuItem) => {
                   controls.setAutostart(item.checked);
                   render();
+                  keepMenuOpen();
                 },
               },
             ]
           : []),
         // 自动更新（设计稿 §3.3）：一条状态行 + 一条动作行，动作随状态变（检查→下载→装）。
         // 每次点完都 render()：托盘菜单是即时快照，不重画就会出现"下完了还写着下载"的谎。
-        ...(updateMenuItems(controls.updater, render)),
+        ...(updateMenuItems(controls.updater, render, keepMenuOpen)),
         { type: "separator" as const },
         // 唯一的退出入口：它触发 before-quit，那里负责回收本壳 spawn 的后端。
         { label: "退出 rolecard-agent", click: () => app.quit() },
@@ -169,10 +192,13 @@ export function createTray(controls: TrayControls): TrayHandle {
   return { tray, refresh: render };
 }
 
-/** 把 updater 的状态机翻成托盘的两行（状态 + 动作）。null（dev 态）= 两行都不出。 */
+/** 把 updater 的状态机翻成托盘的两行（状态 + 动作）。null（dev 态）= 两行都不出。
+ *  `keepMenuOpen` 由 createTray 注入：三档开关与通道是设置类条目，点完要原地重开
+ *  （见 createTray 里那条注释）；动作类条目（检查/下载/装）不重开。 */
 function updateMenuItems(
   updater: Updater | null,
   refresh: () => void,
+  keepMenuOpen: () => void,
 ): MenuItemConstructorOptions[] {
   if (!updater) return [];
   const state = updater.state();
@@ -231,6 +257,7 @@ function updateMenuItems(
     click: (item: MenuItem) => {
       updater.setPrefs({ [key]: item.checked });
       refresh();
+      keepMenuOpen();
     },
   });
   // 更新通道（P10 ③，2026-10-27 接上界面入口）：桌面版没有金丝雀，分通道的 feed 就是灰度。
@@ -257,6 +284,7 @@ function updateMenuItems(
           click: () => {
             updater.setPrefs({ channel: c.value });
             refresh();
+            keepMenuOpen();
           },
         }),
       ),
