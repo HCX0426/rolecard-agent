@@ -170,3 +170,39 @@ def test_grounding_rule_encodes_persona_interprets_not_fabricates() -> None:
     assert "不决定「图里有什么」" in result  # 人设管"怎么看"，不管"看到什么"
     assert "web_search" in result  # 不明白就联网搜
     assert "不知道" in result  # 搜不到就承认不知道
+
+
+# --------------------------------------------------------------------------- 不出戏（深度注入）
+#
+# 用户 2026-11-05 看到的是**思考过程里**冒出一句「我需要以爱莉希雅的身份回应」：全仓
+# 零命中（卡里没有、注入模板里没有）⇒ 那是模型自己的元叙述 = 从角色外面描述自己，
+# 社区叫 break immersion。判据能钉的只有"指令在场"（贴着生成点那条深度注入里有没有
+# 这句话），钉不了"模型每次遵守"—— 后者是 persona_meter / 夜间臂评测的事，不许
+# 在这里假装成前者。
+
+
+def test_depth_prompt_forbids_out_of_character_self_narration() -> None:
+    """禁令要指名那类说法本身（"我需要以…身份回应"），不是抽象的"别出戏"。"""
+    text = prompts.VOICE_DEPTH_PROMPT
+    assert "身份" in text and "回应" in text  # 出戏句式被点名，模型才知道要避开什么
+    # 正写：先给"该怎么想/怎么写"，再划禁区（ST 官方与 JanitorAI 文档同口径：纯否定式更差）
+    assert "用她自己的口吻" in text or "第一人称" in text
+
+
+def test_depth_impersonation_rule_is_conditional_not_universal() -> None:
+    """条件式护栏：这条对通用助手/健康档案管理员那种**没有角色**的功能型必须无害。
+
+    写成"你是角色"会给功能型引入错误前提，反倒催生更多身份元叙述 —— 与第 3 条
+    （动作括号写成"如果要用的话"）是同一条理由，所以判据也照同一形状钉：有"如果"。
+    """
+    assert "如果你有" in prompts.VOICE_DEPTH_PROMPT
+
+
+def test_depth_prompt_is_the_single_home_of_the_rule() -> None:
+    """归一化：禁令只住深度注入一处 —— build_system_prompt（system 那层）不许再抄一份。
+
+    两处声明 = 两套逻辑：改了深度那份、system 那份还留着旧措辞，就没有人能确定模型
+    读到的是哪一条。所以这里判"system 层不含"，而不是判"含"。
+    """
+    system = prompts.build_system_prompt("你是爱莉希雅。")
+    assert "身份" not in system
