@@ -9,6 +9,7 @@ Also serves as the template for how tests in this repo are written - see CONTRIB
 
 from __future__ import annotations
 
+import re
 from typing import NamedTuple
 
 from rolecard_agent.core.agent import prompts
@@ -203,6 +204,9 @@ def test_depth_prompt_is_the_single_home_of_the_rule() -> None:
 
     两处声明 = 两套逻辑：改了深度那份、system 那份还留着旧措辞，就没有人能确定模型
     读到的是哪一条。所以这里判"system 层不含"，而不是判"含"。
+    ⚠ 判的是出戏**句式本身**（「身份…回应」的搭配），不是「身份」整词：第一段是
+    用户卡的原文，谁的卡正文带这两个字（"以守护者的身份"之类正当写法）就会把正当
+    内容错杀成红 —— 判据不许由数据内容决定胜负（提交后自查逮到的形状，当场收窄）。
     """
     system = prompts.build_system_prompt("你是爱莉希雅。")
-    assert "身份" not in system
+    assert re.search(r"身份.{0,12}回应", system) is None
