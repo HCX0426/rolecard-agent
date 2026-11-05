@@ -19,6 +19,7 @@ import {
 } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
 import { formatBytes } from "../lib/uploadOutcome";
+import { summarizeFailures } from "../lib/ingestErrors";
 import { describeError } from '../lib/errors';
 
 // 检索延迟细分：阶段顺序 + 空值显示（无样本时后端返回 null，显示 "—" 而非 0）。
@@ -105,11 +106,14 @@ export function KnowledgeManager() {
           )),
         );
         if (states.every((s) => !s.running)) {
-          const failed = states.filter((s) => s.status === "failed").length;
+          const failed = states.filter((s) => s.status === "failed");
           say(
-            failed ? "warn" : "ok",
-            failed
-              ? `导入完成，但有 ${failed} 个文件失败（详情见进度条目）`
+            failed.length ? "warn" : "ok",
+            failed.length
+              // 「详情见进度条目」从前是一句谎话：进度条上没有条目可看，error 读到了就丢。
+              // 现在把原因直接带出来（按原因去重、最多两条，长文本截断）—— 用户不必
+              // 再去翻后端日志才知道为什么失败。
+              ? `导入完成，但有 ${failed.length} 个文件失败：${summarizeFailures(failed.map((s) => s.error))}`
               : `已导入 ${tasks.length} 个文档到 ${scope}`,
           );
           break;
