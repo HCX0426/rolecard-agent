@@ -163,3 +163,33 @@ def test_a_miss_on_the_ledger_does_not_leave_a_write_transaction(
             second.close()
     finally:
         first.close()
+
+
+def test_success_clears_the_stale_failure_reason(ing: IngestionService) -> None:
+    """走通的任务不许还挂着上一轮的失败原因 —— 进度端点会原样把它投影出去。
+
+    实测形状（2026-11-06，装机库）：`status=indexed` 而 `error` 仍是「嵌入模型与已有
+    索引的维度不一致…」，于是界面读起来像"失败了"。这是状态与事实背离：`record_failure`
+    写 `last_error`，`advance` 从不擦。真原因由 `status` 说、旧原因由 `last_error` 说，
+    同一个事实两张嘴。修法落在**数据层** —— 在端点上按 status 遮丑只会把背离留在库里，
+    换个读法（台账导出、审计、别的前端）又漏出来。
+    """
+    tid = ing.create(user_id="u1", file_hash="h1")
+    ing.record_failure(tid, "嵌入维度不一致")
+    assert ing.get(tid)["last_error"] == "嵌入维度不一致"
+    ing.advance(tid, "pending")  # failed 的唯一回边 = 用户在重试
+    ing.advance(tid, "parsed")
+    ing.advance(tid, "indexed")
+    row = ing.get(tid)
+    assert row["status"] == INGESTION_INDEXED
+    assert row["last_error"] in (None, ""), f"成功后仍挂着旧原因：{row['last_error']!r}"
+    assert row["attempts"] == 1  # 失败次数是历史事实，不跟着清（清了就没法看重试了几次）
+
+
+def test_rejected_transition_still_does_not_touch_the_reason(ing: IngestionService) -> None:
+    """非法转移必须在写之前就拦下 —— 不许"顺手清一下原因"把现场抹掉。"""
+    tid = ing.create(user_id="u1", file_hash="h1")
+    ing.record_failure(tid, "ocr exploded")
+    with pytest.raises(IngestionBadStatus):
+        ing.advance(tid, "indexed")  # failed 只许回 pending
+    assert ing.get(tid)["last_error"] == "ocr exploded"

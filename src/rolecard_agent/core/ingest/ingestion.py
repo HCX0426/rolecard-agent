@@ -202,9 +202,15 @@ class IngestionService:
             if status in (INGESTION_INDEXED, INGESTION_FAILED)
             else ""
         )
+        # 走到 indexed = 这一轮成功了，上一轮失败的原因必须一起擦掉：进度端点是
+        # `row["last_error"] or None` 原样投影，留着它界面就同时读到"已入库"和
+        # "维度不一致所以失败"（2026-11-06 装机库实测）。留在库里比在端点上遮丑更坏 ——
+        # 端点之外还有台账导出与审计会读同一格。attempts 不清：那是"重试过几次"的
+        # 历史事实，清掉就把诊断信息也擦了。
+        cleared = ", last_error = NULL" if status == INGESTION_INDEXED else ""
         self._conn.execute(
-            f"UPDATE ingestion_task SET status = ?, updated_at = CURRENT_TIMESTAMP{finished} "
-            "WHERE task_id = ?",
+            f"UPDATE ingestion_task SET status = ?, updated_at = CURRENT_TIMESTAMP{finished}"
+            f"{cleared} WHERE task_id = ?",
             (status, task_id),
         )
         self._conn.commit()
