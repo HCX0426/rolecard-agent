@@ -9,7 +9,7 @@ import { api, type ChatEvent } from "../api";
 import { newLiveBubble, reduceChatEvent, type LiveBubble, type StreamMeta } from "../lib/stream";
 
 export function useChatStream(onMeta: (meta: StreamMeta) => void) {
-  const [busy, setBusy] = useState(false); // 流式进行中：驱动「停止」按钮与输入禁用
+  const [busy, setBusy] = useState(false); // 流式进行中：驱动「停止」按钮与发送位形态；输入框不被它锁（2026-11-05 用户：回答时也要能打字攒草稿）
   const [live, setLive] = useState<LiveBubble | null>(null);
   const liveRef = useRef<LiveBubble | null>(null);
   const sendingRef = useRef(false); // 并发发送/切会话的闸门（同步读，避免 setState 异步竞态）

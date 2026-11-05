@@ -30,7 +30,7 @@ export default function ThinkingPanel({
     <details
       open={open}
       onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-      className="mb-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5"
+      className="mb-2 rounded-lg border border-slate-200 px-2.5 py-1.5"
     >
       <summary className="cursor-pointer select-none text-xs text-slate-400">
         思考过程

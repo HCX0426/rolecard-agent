@@ -951,6 +951,18 @@ export default function ChatPage({
             })}
             {live && (
               <div className="w-full">
+                {/* 角色签与回放同构（TurnRow 修正同轮）：流式这半句也要先有名字、
+                    思考过程在名字之下 —— 从前 live 整块没有签，思考像挂在消息之外。 */}
+                {roleLabel && (
+                  <div className="mb-1 flex items-center gap-1.5">
+                    <span
+                      className="h-2 w-2 shrink-0 rounded-full"
+                      style={{ background: "var(--accent)" }}
+                      aria-hidden="true"
+                    />
+                    <span className="text-11 text-slate-500">{roleLabel}</span>
+                  </div>
+                )}
                 <ThinkingPanel text={live.thinking} />
                 {live.tools.length > 0 && (
                   <div className="mb-2 space-y-1.5">

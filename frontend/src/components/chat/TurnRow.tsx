@@ -25,8 +25,9 @@ function fmtDuration(from: string, to: string): string | null {
 }
 
 /**
- * 屏幕上的一轮（紧凑 IDE 式）：用户气泡 → 一个「过程」折叠面板（思考/工具同框）
- * → 最终回答 + 操作行。
+ * 屏幕上的一轮（紧凑 IDE 式）：用户气泡 → 角色签 →「过程」折叠面板（思考/工具同框）
+ * → 最终回答 + 操作行（顺序 2026-11-05 修正：用户"思考过程应该在角色名下面"——从前
+ * 过程挂在 answer 块之前，思考像整条消息之外的一坨）。
  *
  * 为什么合并成一轮而不逐条渲染：一条带工具的回答在数据里是
  * `[用户 → AIMessage(思考+tool_calls) → ToolMessage → AIMessage(最终)]`，逐条渲染会把它
@@ -176,7 +177,9 @@ function TurnRow({
           )}
         </div>
       )}
-      {turn.steps.length > 0 && <ProcessPanel steps={turn.steps} />}
+      {/* 过程面板在角色签**之下**（见头注）；本轮没有最终回答却带了过程（叫停在工具中途
+          那类）时画在老位置 —— 信息不丢，只是没有"名字"可挂。 */}
+      {turn.steps.length > 0 && !turn.answer && <ProcessPanel steps={turn.steps} />}
       {turn.answer && (
         <>
           {/* 角色签：强调色圆点 + 名字。回答区不再是无名的一坨文字 ——
@@ -191,6 +194,7 @@ function TurnRow({
               <span className="text-11 text-slate-500">{roleName}</span>
             </div>
           )}
+          {turn.steps.length > 0 && <ProcessPanel steps={turn.steps} />}
           <MarkdownLazy text={turn.answer.content} />
           <div className="mt-1 flex items-center gap-3 text-11 text-slate-400">
             {/* 这一句是她**主动**说的（R26-40 ①）：主动开口那句与前后的提问之间

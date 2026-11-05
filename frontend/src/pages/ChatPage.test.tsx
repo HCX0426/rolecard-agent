@@ -348,6 +348,49 @@ describe("ChatPage 流式渲染", () => {
     expect(await screen.findByText(/想过了/)).toBeTruthy();
   });
 
+  it("思考过程在角色名**之下**（用户 2026-11-05：「思考过程应该在角色名下面」）", async () => {
+    // DOM 顺序尺子：从前 ProcessPanel 挂在 answer 块之前 —— 思考像整条消息之外的一坨。
+    // 修法把过程挪进角色签之后；这条断言钉的就是"签在上、过程在下、正文最后"这个序。
+    // 判据读 compareDocumentPosition（文档序谁先谁后），不读样式、不赌布局。
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url === "/api/sessions") return [{ thread_id: "s_test", role_id: "r_x" }];
+      if (url === "/api/roles") return [{ role_id: "r_x", role_name: "爱莉希雅" }];
+      if (url === "/api/settings/models") return { default: "local", providers: [], fallbacks: [] };
+      if (url === "/api/settings/model-providers") return { providers: [] };
+      if (url.includes("/messages"))
+        return {
+          messages: [
+            { role: "user", content: "在吗" },
+            { role: "assistant", content: "在呀♪", reasoning: "先想再答" },
+          ],
+          total: 2,
+          limit: 500,
+          truncated: false,
+        };
+      if (url.endsWith("/context")) return { trimmed: 0, kept: 0, budget: 24000 };
+      if (url.startsWith("/api/session/")) return { model_name: null };
+      return {};
+    });
+    scriptedStream([{ type: "end" }]);
+
+    render(<ToastProvider><ChatPage /></ToastProvider>);
+    await sendMessage("在吗");
+
+    // 判据缩在**这一轮的根**里：角色名在页面别处也出现（工具栏选择器、头部说明），
+    // 全屏 getByText 会撞上无关节点 —— 那不是这条断言要问的事。
+    const summary = await screen.findByText(/^思考过程/);
+    const group = summary.closest(".group");
+    expect(group).not.toBeNull();
+    const scope = within(group as HTMLElement);
+    const chip = scope.getByText("爱莉希雅");
+    // 正文走 MarkdownLazy 的异步分包，同步 getByText 取不到（本文件都用 findByText 就是这原因）
+    const answer = await scope.findByText("在呀♪");
+    const after = (a: HTMLElement, b: HTMLElement) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_PRECEDING);
+    expect(after(summary, chip)).toBe(true); // 思考在角色名之后（= 名字在上）
+    expect(after(answer, summary)).toBe(true); // 正文在思考之后
+  });
+
   it("error 事件让用户真的看得到提示（气泡会被回放冲掉，所以必须走 toast）", async () => {
     replay = [{ role: "user", content: "会失败的请求" }]; // 服务端只存下了用户那一句
     scriptedStream([

@@ -121,7 +121,11 @@ export default function Composer({
         (host && host.clientHeight > 0 ? Math.round(host.clientHeight * 0.4) : 160);
       el.style.maxHeight = `${cap}px`;
       el.style.height = "auto";
-      el.style.height = `${Math.min(el.scrollHeight, cap)}px`;
+      // 用户亲手拉过的那份 = **要的高度**，不是"只是上限"（2026-11-05 用户："没输入
+      // 文字时上拉也要看得到拉了"——从前空框 scrollHeight 比上限小，拉完高度纹不动，
+      // 像坏了）。内容超过那份仍封顶在 cap 内滚动。没拉过（null）保持旧行为。
+      const want = userMaxH ?? 0;
+      el.style.height = `${Math.min(Math.max(el.scrollHeight, want), cap)}px`;
     };
     resize();
     if (!host || typeof ResizeObserver === "undefined") return; // jsdom / 无宿主：只有静态那一次
@@ -199,18 +203,21 @@ export default function Composer({
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             // Enter 发送、Shift+Enter 换行；输入法组词中（isComposing）不触发。
+            // 生成中也允许打字（用户 2026-11-05："回答我时输入框还要能输入"）：那时
+            // Enter **让浏览器插入换行**而不是吞掉 —— 攒草稿不该看起来像按键坏了，
+            // 真发送要等这轮停下（右下角就是「停止」）。
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              if (busy) return;
               e.preventDefault();
               onSubmit();
             }
           }}
           placeholder={
             busy
-              ? "正在生成…（可点右下角停止）"
+              ? "正在生成…（接着打字不丢，要打断点右下角「停止」）"
               : "输入消息，Enter 发送 / Shift+Enter 换行（没有对话会自动创建）"
           }
-          disabled={busy}
-          className="w-full resize-none overflow-y-auto bg-transparent px-4 pt-3 pb-1 leading-relaxed outline-none no-scrollbar disabled:bg-slate-50"
+          className="w-full resize-none overflow-y-auto bg-transparent px-4 pt-3 pb-1 leading-relaxed outline-none no-scrollbar"
         />
         <div className="flex items-center justify-between gap-2 px-2.5 pb-2">
           <div className="flex items-center gap-1">

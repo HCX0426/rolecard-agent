@@ -49,7 +49,7 @@ export default function ProcessPanel({ steps }: { steps: TurnStep<TurnMessageLik
   const tools = steps.filter((s) => s.kind === "tool").length;
   const parts = [thinks ? `思考 ×${thinks}` : "", tools ? `工具 ×${tools}` : ""].filter(Boolean);
   return (
-    <details className="group/proc mb-2.5 rounded-lg border border-slate-200 bg-slate-50/70 px-2.5 py-1.5">
+    <details className="group/proc mb-2.5 rounded-lg border border-slate-200 px-2.5 py-1.5">
       <summary className="cursor-pointer select-none text-xs text-slate-400">
         过程{parts.length ? ` · ${parts.join(" · ")}` : ""}
       </summary>
@@ -58,7 +58,7 @@ export default function ProcessPanel({ steps }: { steps: TurnStep<TurnMessageLik
           s.kind === "think" ? (
             <details
               key={i}
-              className="rounded border border-slate-200/70 bg-surface"
+              className="rounded border border-slate-200/70"
             >
               <summary className="cursor-pointer select-none px-2 py-1 text-11 text-slate-400">
                 思考 {steps.slice(0, i + 1).filter((x) => x.kind === "think").length}

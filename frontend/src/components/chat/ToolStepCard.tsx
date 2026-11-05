@@ -22,7 +22,7 @@ export default function ToolStepCard({ step }: { step: ToolStep }) {
     .join("  ")
     .slice(0, 80);
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+    <div className="rounded-lg border border-slate-200 px-2.5 py-1.5">
       <button
         onClick={() => body && setOpen((o) => !o)}
         className={`flex w-full items-center gap-2 text-left font-mono text-xs text-slate-600 ${
