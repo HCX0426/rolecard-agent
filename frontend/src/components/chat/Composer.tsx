@@ -65,7 +65,14 @@ export default function Composer({
     }
   });
 
-  /** 顶边把手：上拉 = 输入区上限变高（顶边往上提），下拉收窄。松手才落盘。 */
+  /** 顶边把手：上拉 = 输入区变高（顶边往上提），下拉收窄。松手才落盘。
+   *  `heldH` = **本次会话里拉到的那档高度**（用户 2026-11-05 三次反馈定稿：
+   *  「默认是最小的就行」+「我在那松手就放那」）：
+   *    · 开局没有它 ⇒ 高度贴内容（最小）—— localStorage 里那份只作**上限**，
+   *      不当常驻高度，否则每次打开都像是"被拉开的"（那正是上一版过头的地方）；
+   *    · 拉完松手不清零 ⇒ 停在你放手的那一档，不回弹。
+   *  它刻意**不落盘**：跨会话记住高度 = 下次打开又成"默认拉开"，与第一条诉求冲突。 */
+  const [heldH, setHeldH] = useState<number | null>(null);
   const dragStartRef = useRef<{ y: number; cap: number } | null>(null);
   const onHandleDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -74,6 +81,7 @@ export default function Composer({
         userMaxH ??
         (host && host.clientHeight > 0 ? Math.round(host.clientHeight * 0.4) : 160);
       dragStartRef.current = { y: e.clientY, cap: startCap };
+      // 按下**不改高度**：只在起拖的那一瞬跳一档，手感像"框被弹了一下"。
       e.currentTarget.setPointerCapture?.(e.pointerId);
     },
     [hostRef, userMaxH],
@@ -87,11 +95,13 @@ export default function Composer({
       const max = Math.max(72, Math.round(window.innerHeight * 0.85));
       const next = Math.min(max, Math.max(72, start.cap + (start.y - e.clientY)));
       setUserMaxH(next);
+      setHeldH(next);
     },
     [],
   );
   const onHandleUp = useCallback(() => {
     dragStartRef.current = null;
+    // heldH 不清零：松手停在那（用户 2026-11-05："我在那松手就放那"）。
   }, []);
   // 持久化走 effect 而不是 setState updater：拖动结束那一下 setState 的值与现状相等时
   // React 会整单跳过，updater 根本不执行 —— 副作用放进 updater 就是"有时不落盘"
@@ -121,10 +131,11 @@ export default function Composer({
         (host && host.clientHeight > 0 ? Math.round(host.clientHeight * 0.4) : 160);
       el.style.maxHeight = `${cap}px`;
       el.style.height = "auto";
-      // 用户亲手拉过的那份 = **要的高度**，不是"只是上限"（2026-11-05 用户："没输入
-      // 文字时上拉也要看得到拉了"——从前空框 scrollHeight 比上限小，拉完高度纹不动，
-      // 像坏了）。内容超过那份仍封顶在 cap 内滚动。没拉过（null）保持旧行为。
-      const want = userMaxH ?? 0;
+      // 高度：开局 heldH=null ⇒ 贴内容（最小）—— 这就是"默认别拉开"（用户 2026-11-05
+      // 三次反馈定稿）。拉过之后 heldH=那一档 ⇒ **停在你放手的位置不回弹**（"我在那
+      // 松手就放那"）。heldH 不落盘，所以每次打开仍是最小；上限 cap 用 localStorage
+      // 那份，管的是"内容多时最高能撑到哪儿"，与常态高度是两回事。
+      const want = heldH ?? 0;
       el.style.height = `${Math.min(Math.max(el.scrollHeight, want), cap)}px`;
     };
     resize();
@@ -132,7 +143,8 @@ export default function Composer({
     const ro = new ResizeObserver(resize);
     ro.observe(host);
     return () => ro.disconnect();
-  }, [input, inputRef, hostRef, userMaxH]);
+    // heldH 必须在依赖里：每拉一档就要重算一次高度，漏了就"拉了不动"。
+  }, [input, inputRef, hostRef, userMaxH, heldH]);
 
   async function pickImage(file: File | undefined) {
     if (!file) return;

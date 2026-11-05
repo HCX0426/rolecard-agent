@@ -71,19 +71,40 @@ describe("生成中输入框不再被锁（用户 2026-11-05：回答时也要�
   });
 });
 
-describe("上拉把手拉的是**高度**，不只是上限（空框也要看得见拉了）", () => {
-  it("拉过（localStorage 有值）之后，空输入框的高度 = 拉的那份", () => {
-    // jsdom 里 scrollHeight 恒 0：从前的写法 `min(scrollHeight, cap)` 会算出 0 ——
-    // 于是"用户拉高了、框还是那么矮"正是这条判据要拦的形状。
-    localStorage.setItem("chat.inputMaxH", "200");
+describe("输入框：默认最小；松手停在那；跨会话不记高度", () => {
+  /** 顶边把手（role=separator）：pointerdown 起、pointermove 跟、pointerup 落。 */
+  function handle(container: HTMLElement) {
+    return container.querySelector('[role="separator"]') as HTMLElement;
+  }
+
+  it("拉过并松手 ⇒ 高度**停在放手那一档**（用户 2026-11-05：「我在那松手就放那」）", () => {
+    // 上一版把这条写成了「松手回到贴内容」，正是被否掉的行为。现在钉回来：
+    // 起手贴内容（最小）→ 拉着跟手 → 松手不回弹，停在你放的那一档。
     const { props, inputRef } = makeProps({ input: "" });
-    render(<Composer {...props} />);
-    expect(inputRef.current).not.toBeNull();
-    expect(inputRef.current?.style.height).toBe("200px");
-    expect(inputRef.current?.style.maxHeight).toBe("200px");
+    const { container } = render(<Composer {...props} />);
+    expect(inputRef.current?.style.height).toBe("0px"); // 起手：贴内容（jsdom scrollHeight=0）
+    const h = handle(container);
+    fireEvent.pointerDown(h, { clientY: 400, pointerId: 1 });
+    fireEvent.pointerMove(h, { clientY: 260, pointerId: 1 }); // 上拉 140
+    const dragged = (inputRef.current?.style.height ?? "0").replace("px", "");
+    expect(Number(dragged)).toBeGreaterThan(0); // 拉了必须看得见动
+    fireEvent.pointerUp(h, { pointerId: 1 });
+    expect(inputRef.current?.style.height).toBe(`${dragged}px`); // 松手：停在那
   });
 
-  it("没拉过（无 localStorage）时空框不被撑高（默认按内容，回落旧行为）", () => {
+  it("默认最小 = **跨会话不记高度**，localStorage 那份只是上限", () => {
+    // 用户："对话框咋默认是拉开的，默认是最小的就行了"——上一把把拖过的值落盘成
+    // 常驻高度，每次重开都撑着。那份值现在只能是**上限**：重挂后空框贴内容，
+    // maxHeight 里仍留着它。判据钉住"落盘的是上限、非常驻高度"这条分界。
+    localStorage.setItem("chat.inputMaxH", "200");
+    const { props, inputRef } = makeProps({ input: "" });
+    const { container } = render(<Composer {...props} />);
+    expect(inputRef.current?.style.maxHeight).toBe("200px"); // 上限：记着
+    expect(inputRef.current?.style.height).toBe("0px"); // 高度：贴内容，没被撑开
+    expect(handle(container)).not.toBeNull();
+  });
+
+  it("没拉过（无 localStorage）时空框就是贴内容", () => {
     const { props, inputRef } = makeProps({ input: "" });
     render(<Composer {...props} />);
     expect(inputRef.current?.style.maxHeight).toBe("160px");
