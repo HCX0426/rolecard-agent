@@ -72,7 +72,6 @@ BUILTIN_ROLES: tuple[RoleCardCreate, ...] = (
         temperature=0.7,
         model_name=None,
         tool_whitelist=GENERAL_ASSISTANT_TOOLS,
-        exemplars=[],
         knowledge_scopes=[],
         description=(
             "默认角色：通用对话 + 基础内核工具（联网 / 工作区文件 / 多模型比对），"

@@ -124,7 +124,6 @@ from .checks_runtime import (  # noqa: F401
     _crlf_exempt_globs,
     _data_root_write_dirs,
     _div_chain_parts,
-    _normalise_question,
     _path_chain_parts,
     _png_corner_alphas,
     check_app_icon_frames,

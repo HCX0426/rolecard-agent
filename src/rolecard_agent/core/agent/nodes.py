@@ -128,8 +128,8 @@ def _invoke_tool(tool: Any, args: dict[str, Any], timeout_seconds: float) -> Any
 #   2. 重试同参数，所以真正的收益只在瞬时故障上（见上）。
 MAX_TOOL_RETRIES = 2
 
-# 上下文预算（审查报告 H3）。用**字符数**而不是 token：与 roles/models.py 的
-# MAX_EXEMPLAR_CHARS 同一取舍 —— 中文场景下字符数是保守代理，且不引入分词器依赖。
+# 上下文预算（审查报告 H3）。用**字符数**而不是 token：中文场景下字符数是保守代理，
+# 且不引入分词器依赖。
 DEFAULT_MAX_CONTEXT_CHARS = 24000
 
 
@@ -669,7 +669,7 @@ def call_model(
         )
 
     # System prompt is built here, never stored: see the module docstring. Order inside is
-    # role -> memory -> agent plan -> exemplars -> global safety rules, so the rules remain
+    # role -> memory -> agent plan -> global safety rules, so the rules remain
     # last and authoritative. Memory only enters when the master switch is on (MEMORY_ENABLED);
     # the provider itself is fail-closed (returns "" by default). Agent mode is a per-session
     # state the chat endpoint resolves live from session_thread (NULL = global default).
@@ -687,7 +687,6 @@ def call_model(
     history = _scrub_own_repeats(history, ctx, state.get("thread_id"), role_id)
     system = build_system_prompt(
         role.system_prompt,
-        role.exemplars,
         memory=memory_text,
         agent=state.get("agent_mode") == "agent",
         has_image=_history_has_image(history),

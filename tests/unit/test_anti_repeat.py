@@ -51,7 +51,7 @@ def test_verbatim_echo_is_above_the_drop_bar() -> None:
 def test_style_similarity_stays_below_the_gate() -> None:
     """ "同一个壳换个说法"不是复读：0.472 那条口癖离闸门还远。
 
-    这一条挡的是最容易犯的错 —— 把"她像她自己"当病治。那档要治得改角色卡范例
+    这一条挡的是最容易犯的错 —— 把"她像她自己"当病治。那档要治得改角色卡人设
     （设计稿 §8.2 第 3 条，内容层，要用户点头），不是在这里多花一次模型调用。
     """
     tic = repeat_score(TIC_HEAVIEST, [ORIGINAL])

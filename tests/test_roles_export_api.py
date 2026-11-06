@@ -60,7 +60,6 @@ def test_export_roundtrips_v2_shape(client: TestClient) -> None:
             "role_name": "出口测试员",
             "system_prompt": "你是出口测试员。",
             "description": "一份用于导出的卡",
-            "exemplars": [{"user": "你好", "assistant": "嗨，我在。"}],
         },
     )
     res = client.get("/api/roles/exporter/export")
@@ -73,9 +72,9 @@ def test_export_roundtrips_v2_shape(client: TestClient) -> None:
     assert data["name"] == "出口测试员"
     assert data["description"] == "你是出口测试员。"
     assert data["creator_notes"] == "一份用于导出的卡"
-    # 范例反向拼回 ST 的宏形状（{{char}}/{{user}}），可被自家导入器再吃回去
-    assert "{{user}}: 你好" in data["mes_example"]
-    assert "{{char}}: 嗨，我在。" in data["mes_example"]
+    # 范例通道已删（2026-11-06）：导出不编造 ST 对话示例，键还在、恒为空串
+    # （ST 侧对该字段的形状不敏感，空串是它自家的"没有示例"写法）。
+    assert data["mes_example"] == ""
 
 
 def test_export_memory_stays_home_by_default(client: TestClient, tmp_path: Path) -> None:

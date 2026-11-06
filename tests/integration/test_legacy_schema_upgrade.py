@@ -745,7 +745,7 @@ def test_a_legacy_upgrade_leaves_the_capability_flags_unmeasured(tmp_path: Path)
 
 
 @pytest.mark.parametrize(
-    ("commit", "expected_missing"), [("14cb9db", 19), ("03631c6", 16)], ids=lambda v: str(v)
+    ("commit", "expected_missing"), [("14cb9db", 18), ("03631c6", 16)], ids=lambda v: str(v)
 )
 def test_audited_shortfall_is_still_the_shortfall(
     commit: str, expected_missing: int, tmp_path: Path
@@ -765,6 +765,9 @@ def test_audited_shortfall_is_still_the_shortfall(
     ⇒ **18 / 15、合计 33**；同日的工作区按角色分 + 记忆分层再加两列
     （`role_card.workspace_dir` 与 `role_memory_item.category`，均可空/有默认值）
     ⇒ **19 / 16、合计 35**。
+    2026-11-06/07 的范例通道整条删除给**声明**去掉了 `role_card.exemplars` ——
+    这是"减列"方向的首次漂移：14cb9db 那份形状本就无此列 ⇒ **18 / 16、合计 34**；
+    03631c6 那份形状带该列，它的缺列数一个不动（仍 16）。
     （这两个数只在测试与这份 docstring 里；审计文档当时没写它，所以不用同步别处。）
     这条红的用途不是"证明坏了"，而是**逼改 schema 的人
     回去看一眼审计文档还写着几个数** —— R26-06 犯的就是"写进文档的数没复算"这一条。
@@ -909,11 +912,16 @@ def test_b2_residual_staging_table_does_not_permanently_block_boot(tmp_path: Pat
 
 # -- 升级路径的实弹演练 + 代际推进留痕（快照"升级演练"条目） -------------------------------
 
-#: 这两份 fixture 带的、**当前声明里已经没有**的旧列（14cb9db 那份的 `medical_report`
-#: 三个"拆表前"的列）。"升级不删列"是既定取向 —— `test_legacy_extra_columns_survive`
-#: 钉着那一半；这份名单是另一半的**边界**：出现名单外的多余列 = 升级路径留下了没人
+#: 这两份 fixture 带的、**当前声明里已经没有**的旧列：14cb9db 那份的 `medical_report`
+#: 三个"拆表前"的列，以及 03631c6 那份的 `role_card.exemplars` —— 2026-11-06/07 范例通道
+#: 整条删除时声明去列，老库留列是既定取向（升级不替用户删数据，见
+#: `test_legacy_extra_columns_survive`）。"升级不删列"是既定取向 —— 那条钉着那一半；
+#: 这份名单是另一半的**边界**：出现名单外的多余列 = 升级路径留下了没人
 #: 决定过的东西，同样红（要留，就来这里把名字加上并写清为什么留）。
-LEGACY_EXTRA_COLUMNS = {"medical_report": {"file_hash", "source_file", "status"}}
+LEGACY_EXTRA_COLUMNS = {
+    "medical_report": {"file_hash", "source_file", "status"},
+    "role_card": {"exemplars"},
+}
 
 
 def _shape(conn: sqlite3.Connection) -> dict[str, object]:

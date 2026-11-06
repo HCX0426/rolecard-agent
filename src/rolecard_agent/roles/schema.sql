@@ -23,20 +23,17 @@ CREATE TABLE IF NOT EXISTS role_card (
     tool_whitelist  TEXT,                           -- JSON array; NULL = all enabled tools, [] = none
     description     TEXT,
 
-    -- Role reproducibility is not one channel but four; system_prompt alone only covers the
-    -- first (rules). These two columns cover the other two that belong to the role:
+    -- Role reproducibility is not one channel but several; system_prompt alone only covers the
+    -- rules. This column covers the retrieval declaration:
     --
-    --   exemplars        JSON [{"user": ..., "assistant": ...}] - a FEW high-quality samples
-    --                    of how this role answers. Behaviour is shaped far more effectively
-    --                    by examples than by writing longer rules.
-    --   knowledge_scopes JSON ["health_reports"] - which retrieval scopes this role may read.
+    --   knowledge_scopes  JSON ["health_reports"] - which retrieval scopes this role may read.
     --                    The role DECLARES scopes; it does not own a vector store. Owning one
     --                    would give N roles x M collections, duplicated indexes and no single
     --                    source of truth (merged audit ledger, 技术评审与决策 A1).
     --
-    -- Exemplars are trusted content: writable only by an operator, never generated from
-    -- conversation, otherwise a user could steer the persona through chat.
-    exemplars         TEXT,
+    -- exemplars 已删（2026-11-06，用户拍板"范例让语气变死，去掉"）：行为范例这一整条通道连同
+    -- 列声明一起退役。老库里物理残留的旧列不再被任何读写路径投影（服务层列清单是唯一出处），
+    -- 是惰性死数据；reconcile_columns 只补不删，故无需迁移。原文见 docs §8.12 与设计稿。
     knowledge_scopes  TEXT,
 
     is_builtin      INTEGER NOT NULL DEFAULT 0,     -- built-in roles cannot be deleted

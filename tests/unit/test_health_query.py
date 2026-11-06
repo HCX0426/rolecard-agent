@@ -6,7 +6,7 @@
      一个用户能看到的数据（test_user_isolation）。
   2. **未核验标记必须在工具返回文本里**，不指望模型自觉补（test_*marker）。
   3. **诚实缺失**：查不到时返回"没有记录 + 现有指标清单"，让模型自我纠正而不是编造
-     （test_query_unknown_*）。这正是内置角色范例里"档案没有就直接说没有"的工具侧支点。
+     （test_query_unknown_*）。这正是出厂角色人设里"档案没有就直接说没有"的工具侧支点。
   4. **对比是算术不是诊断**：只报"最早→最近 + 变化量"，单次记录明确拒绝对比。
 
 全部离线：内存库 + `current_user` 注入常量。
@@ -51,7 +51,7 @@ def service() -> HealthQueryService:
 
 
 def _seed_two_years(service: HealthQueryService, *, user: str = U1) -> None:
-    """内置角色范例里的那条数据线：2025 年 5.0 mm → 2026 年 6.0 mm。"""
+    """档案里那条数据线（health-001 的那组数）：2025 年 5.0 mm → 2026 年 6.0 mm。"""
     service.create_report(
         user_id=user,
         report_type="超声",

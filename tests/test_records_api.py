@@ -406,20 +406,3 @@ def test_deleting_a_report_also_clears_its_knowledge_chunks(
 
 
 ARTICLE = "# 随访须知\n\n每半年复查一次超声；发现腹痛、发热或黄疸请及时就医。"
-
-
-# -- 角色 exemplars（前端表单要写入的字段，确认 API 端到端支持） ------------------------
-
-
-def test_role_exemplars_round_trip(client: TestClient) -> None:
-    """Traceability: US-8 — exemplars 经 API 存取往返一致。"""
-    payload = {
-        "role_id": "coach",
-        "role_name": "教练",
-        "system_prompt": "你是随访教练。",
-        "exemplars": [{"user": "我该复查吗", "assistant": "每半年一次，别拖。"}],
-    }
-    assert client.post("/api/roles", json=payload).status_code == 201
-    row = next(r for r in client.get("/api/roles").json() if r["role_id"] == "coach")
-    assert row["exemplars"][0]["user"] == "我该复查吗"
-    assert row["exemplars"][0]["assistant"] == "每半年一次，别拖。"

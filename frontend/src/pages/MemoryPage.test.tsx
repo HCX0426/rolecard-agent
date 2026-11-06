@@ -43,7 +43,6 @@ beforeEach(() => {
           is_builtin: false,
           description: "",
           reachout_enabled: false,
-          exemplars: [],
         },
       ];
     }
@@ -333,7 +332,6 @@ describe("记忆卡「整理记忆」（一次模型调用，只写标记）", (
             is_builtin: false,
             description: "",
             reachout_enabled: false,
-            exemplars: [],
           },
         ];
       }
@@ -600,7 +598,7 @@ describe("作用域竞态守卫（2026-10-30 批次的回归钉）", () => {
   const ROLE_R1 = {
     role_id: "r1", role_name: "角色1", system_prompt: "", temperature: 0.7,
     model_name: "", tool_whitelist: [], knowledge_scopes: [], is_builtin: false,
-    description: "", reachout_enabled: false, exemplars: [],
+    description: "", reachout_enabled: false,
   };
   const ROLE_R2 = { ...ROLE_R1, role_id: "r2", role_name: "角色2" };
   const bucket = (roleId: string | null, content: string) => ({

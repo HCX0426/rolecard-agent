@@ -168,7 +168,7 @@ class SyncPlan:
 #: 而 `R102-25` 要问的"内容真变了吗"也必须读同一个函数，否则两处迟早分叉）。
 _CARD_COLUMNS = (
     "role_id, role_name, system_prompt, temperature, model_name, tool_whitelist,"
-    " exemplars, knowledge_scopes, description, reachout_enabled, recall_enabled,"
+    " knowledge_scopes, description, reachout_enabled, recall_enabled,"
     " time_pattern_enabled, affinity_enabled, file_watch_enabled, greeting_at,"
     " reachout_keep, pet_pack, accent, is_builtin, updated_at"
 )

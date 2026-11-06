@@ -44,7 +44,6 @@ beforeEach(() => {
           is_builtin: false,
           description: "",
           reachout_enabled: false,
-          exemplars: [],
         },
       ];
     }

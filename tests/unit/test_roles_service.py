@@ -9,10 +9,8 @@ import pytest
 from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.domains.registry import domain_seed_roles
 from rolecard_agent.roles.models import (
-    MAX_EXEMPLARS,
     RoleCardCreate,
     RoleCardUpdate,
-    RoleExemplar,
 )
 from rolecard_agent.roles.service import (
     BuiltinRoleProtected,
@@ -164,53 +162,16 @@ def test_switch_on_unknown_thread_raises(roles: RoleCardService) -> None:
         roles.set_thread_role("ghost-thread", "medical_archivist", user_id=ME)
 
 
-# --------------------------------------------------------- exemplars & knowledge scopes
+# ------------------------------------------------------------------------ knowledge scopes
 #
-# Reproducing a role is not just rules. Examples shape behaviour more per token than longer
-# instructions, and knowledge scopes are the retrieval authorisation - so both need to survive
-# the JSON round trip exactly.
+# 检索授权就是知识作用域 —— 它必须原样穿过 JSON 往返。
+# （原左侧还有"范例穿过 JSON 往返"一组判据：范例通道 2026-11-06 整条删除，
+# 判据随功能一起退役，不是阈值放水。）
 
 
-def test_builtin_role_ships_with_examples_and_a_scope(roles: RoleCardService) -> None:
+def test_domain_role_ships_with_a_scope(roles: RoleCardService) -> None:
     role = cards(roles).get("medical_archivist")
-    assert role.exemplars is not None
-    # At least one example must be a refusal: imitation is the strongest signal, so a role
-    # that only sees successful lookups learns to answer everything.
-    assert any("不能" in item.assistant for item in role.exemplars)
     assert role.knowledge_scopes == ["health_reports"]
-
-
-def test_exemplars_round_trip(roles: RoleCardService) -> None:
-    given = [
-        RoleExemplar(user="问一", assistant="答一"),
-        RoleExemplar(user="问二", assistant="答二"),
-    ]
-    cards(roles).create(_new("styled", exemplars=given))
-    loaded = cards(roles).get("styled").exemplars
-    assert [(e.user, e.assistant) for e in loaded] == [("问一", "答一"), ("问二", "答二")]
-
-
-def test_exemplars_are_optional_and_stay_none(roles: RoleCardService) -> None:
-    cards(roles).create(_new("plain"))
-    assert cards(roles).get("plain").exemplars is None
-
-
-def test_too_many_exemplars_is_rejected() -> None:
-    too_many = [RoleExemplar(user=f"q{i}", assistant="a") for i in range(MAX_EXEMPLARS + 1)]
-    with pytest.raises(ValueError, match="at most"):
-        _new("greedy", exemplars=too_many)
-
-
-def test_exemplar_char_budget_is_enforced() -> None:
-    # Each item stays inside its own per-field limit; it is the TOTAL that must be rejected.
-    big = [RoleExemplar(user="问", assistant="答" * 2000) for _ in range(2)]
-    with pytest.raises(ValueError, match="budget"):
-        _new("wordy", exemplars=big)
-
-
-def test_exemplar_cannot_be_empty() -> None:
-    with pytest.raises(ValueError):
-        RoleExemplar(user="", assistant="答")
 
 
 def test_knowledge_scopes_round_trip(roles: RoleCardService) -> None:
@@ -221,14 +182,6 @@ def test_knowledge_scopes_round_trip(roles: RoleCardService) -> None:
 def test_bad_scope_name_is_rejected() -> None:
     with pytest.raises(ValueError, match="invalid knowledge scope"):
         _new("badscope", knowledge_scopes=["Health Reports"])
-
-
-def test_update_can_replace_exemplars(roles: RoleCardService) -> None:
-    cards(roles).create(_new("styled", exemplars=[RoleExemplar(user="旧", assistant="旧答")]))
-    cards(roles).update(
-        "styled", RoleCardUpdate(exemplars=[RoleExemplar(user="新", assistant="新答")])
-    )
-    assert [e.user for e in cards(roles).get("styled").exemplars] == ["新"]
 
 
 def test_deleting_a_role_takes_her_own_state_with_it(

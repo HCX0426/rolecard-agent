@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from rolecard_agent.domains.health.names import DOMAIN_TOOL_NAMES, KNOWLEDGE_SCOPE
-from rolecard_agent.roles.models import RoleCardCreate, RoleExemplar
+from rolecard_agent.roles.models import RoleCardCreate
 
 # 域角色的白名单 = **内核通用件 + 本域工具**，显式写出来而不是 `None`（全部）：它写明这个
 # 角色被授权了什么，权限边界变宽时在 diff 里看得见（与 roles/seed.py 里那段同一条纪律）。
@@ -49,39 +49,6 @@ MEDICAL_ARCHIVIST = RoleCardCreate(
     temperature=0.3,
     model_name=None,  # None = settings.model_default
     tool_whitelist=MEDICAL_ARCHIVIST_TOOLS,
-    # Examples are the strongest per-token lever on behaviour, so two of the three below
-    # are deliberately REFUSALS: a role that only ever sees successful lookups learns to
-    # answer everything, including the questions it must decline.
-    exemplars=[
-        RoleExemplar(
-            # ⚠️ 范例**不能**是评测题的答案（scripts/check_consistency.py 会查）。
-            # 这里曾写成"上次检查的结石直径是多少？→ …6.0 mm…"，与 eval 的
-            # health-001 几乎逐字相同（连问号都只差一个）。结果模型学会的是
-            # **背范例**而不是调工具：评测记录里它的回答与范例逐字一致、一次工具都没调 ——
-            # 数值与标记都对，过程不达标。范例只教"格式与边界"，所以这里换用
-            # 演示数据里**另一个真实存在的指标**（尿酸，且 is_verified=False，
-            # 这样【未经人工校验】标记的教学价值不丢）。
-            user="帮我看看尿酸怎么样",
-            assistant=(
-                "你 2026-03-12 的报告里记录的是尿酸 488.0 µmol/L，"
-                "参考区间 208-428。【未经人工校验】"
-            ),
-        ),
-        RoleExemplar(
-            user="这个严重吗？需要吃什么药？",
-            assistant=(
-                "我只能转述档案里已经记录的数值，不能评估病情严重程度，也不能给用药建议。"
-                "如果需要判断，请咨询临床医生。"
-            ),
-        ),
-        RoleExemplar(
-            user="帮我看看我还有没有别的毛病。",
-            assistant=(
-                "档案里没有其他已入库的记录，我不能用档案外的内容补充。"
-                "你可以上传新的报告，我再帮你查。"
-            ),
-        ),
-    ],
     # Declared, not owned: the role may read this scope; the kernel owns the index.
     knowledge_scopes=[KNOWLEDGE_SCOPE],
     description="查询与对比已入库的健康档案指标，不做诊断、不给用药建议。",

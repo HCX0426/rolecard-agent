@@ -1,12 +1,17 @@
 """DTOs: RoleCard, RoleCardCreate, RoleCardUpdate.
 
-Reproducing a role takes four channels, not one. Two belong to the role card, one to the
-kernel, one to the plugin layer:
+Reproducing a role takes three channels, not one. Two belong to the role card, one to the
+plugin layer:
 
   人设规则    system_prompt        rules and boundaries
-  行为范例    exemplars            how the role answers - the strongest lever per token
   能力权限    tool_whitelist       what it may do
   事实知识    knowledge_scopes     which retrieval scopes it may read (declared, not owned)
+
+（2026-11-06：第四个通道"行为范例 exemplars"已按用户拍板整体删除。实测依据见设计稿
+§8.12 与其后的对话评测：范例要么被逐字复读、要么与无范例臂等效，而它使语气变死；
+安全红线由 GLOBAL_SAFETY_PROMPT 单独承担，卡只管人设。遗留升级照旧保留声明外旧列
+（那是决定、不是顺手，见 test_legacy_extra_columns_survive），而本批的决定已做出 = 删：
+两根活库的死列随本批直删，`baseline --check` 判实库与声明逐列相等，留列即漂移红。）
 
 Fields of note:
 
@@ -50,42 +55,6 @@ GREETING_AT_PATTERN = r"([01]\d|2[0-3]):[0-5]\d"
 #: 角色强调色（2026-10-25 玻璃重设计）：hex 三/六位。空 = 由 role_id 哈希派生
 # （确定性、不掷骰子——同名同色）。校验只管形状，"好不好看"是主人的事。
 ACCENT_PATTERN = r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$"
-
-# Exemplar budget. Chars are used rather than tokens because it needs no tokenizer
-# dependency, and for Chinese text a character budget is a conservative proxy. The cap is
-# not bureaucracy: examples compete with the conversation for context, and past a handful the
-# marginal example mostly dilutes the earlier ones.
-MAX_EXEMPLARS = 4
-MAX_EXEMPLAR_CHARS = 3000
-
-
-class RoleExemplar(BaseModel):
-    """One worked example of how this role answers.
-
-    规矩（09-27 定，`Q8`）：**范例教的是句式与边界，不是事实**。一条写着"尿酸 488.0"的
-    范例，模型有概率在**别的问句**上把那个数当事实复读出来 —— 那正是 A3 那把引用尺子里的
-    `answer_absent_value`。所以默认写法是"这一句该有什么结构、哪里要停"，数值交给工具去取。
-
-    唯一的例外要写清楚，因为出厂那张档案管理员卡就落在例外里：当一条范例的**存在理由**就是
-    教一个带格式的读数（例如结尾那句【未经人工校验】标记），数值可以给，但必须是
-    **演示数据里真实存在的那一个** —— 不许编（编的数会被当成可引用的真值），也不许是评测题的
-    答案（`check_consistency.py` 那条"范例泄漏评测答案"的机器检查治的就是这个：一旦是答案，
-    模型学会的是背范例而不是调工具）。
-    """
-
-    user: str = Field(min_length=1, max_length=1000)
-    assistant: str = Field(min_length=1, max_length=2000)
-
-
-def _check_exemplar_budget(value: list[RoleExemplar] | None) -> list[RoleExemplar] | None:
-    if value is None:
-        return None
-    if len(value) > MAX_EXEMPLARS:
-        raise ValueError(f"at most {MAX_EXEMPLARS} exemplars, got {len(value)}")
-    total = sum(len(item.user) + len(item.assistant) for item in value)
-    if total > MAX_EXEMPLAR_CHARS:
-        raise ValueError(f"exemplars total {total} chars, budget is {MAX_EXEMPLAR_CHARS}")
-    return value
 
 
 def _check_scopes(value: list[str] | None) -> list[str] | None:
@@ -134,7 +103,6 @@ def _check_workspace_dir(value: str | None) -> str | None:
     return str(Path(text))
 
 
-ExemplarList = Annotated[list[RoleExemplar] | None, AfterValidator(_check_exemplar_budget)]
 ScopeList = Annotated[list[str] | None, AfterValidator(_check_scopes)]
 GreetingAt = Annotated[str | None, AfterValidator(_check_greeting_at)]
 Accent = Annotated[str | None, AfterValidator(_check_accent)]
@@ -155,7 +123,6 @@ class RoleCard(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     model_name: str | None = None
     tool_whitelist: list[str] | None = None
-    exemplars: ExemplarList = None
     knowledge_scopes: ScopeList = None
     description: str | None = None
     # 主动开口（架构计划 B）：角色是否会主动来找用户（还需要全局 REACHOUT_ENABLED 开着）。
@@ -203,7 +170,6 @@ class RoleCardCreate(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     model_name: str | None = None
     tool_whitelist: list[str] | None = None
-    exemplars: ExemplarList = None
     knowledge_scopes: ScopeList = None
     description: str | None = None
     reachout_enabled: bool = False
@@ -243,7 +209,6 @@ class RoleCardUpdate(BaseModel):
     temperature: float | None = Field(default=None, ge=0.0, le=1.0)
     model_name: str | None = None
     tool_whitelist: list[str] | None = None
-    exemplars: ExemplarList = None
     knowledge_scopes: ScopeList = None
     description: str | None = None
     reachout_enabled: bool | None = None

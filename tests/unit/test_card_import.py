@@ -1,7 +1,7 @@
 """ST 角色卡导入器（`features/card_import.py` + `POST /api/roles/import`）的单元测试。
 
 钉住：两条载体（PNG 内嵌 chara / 裸 JSON）、V1/V2 两代形状、字段映射的落点与对账单
-（超预算的范例整条丢并计数、世界书/标签不静默）、role_id 的 slug 规则、端点的
+（mes_example 不导入、只对账计数；世界书/标签不静默）、role_id 的 slug 规则、端点的
 400/409/201 三态。
 """
 
@@ -68,7 +68,7 @@ def test_load_card_bytes_rejects_junk_and_plain_png() -> None:
 # ---------------------------------------------------------------- 映射层
 
 
-def test_v1_card_maps_prompt_sections_and_examples() -> None:
+def test_v1_card_maps_prompt_sections_and_drops_examples() -> None:
     result = parse_sillytavern_card(V1_CARD)
     card = result.card
     assert card.role_id == "alice_4b"
@@ -77,9 +77,11 @@ def test_v1_card_maps_prompt_sections_and_examples() -> None:
     assert "【性格】\n温和、直接。" in card.system_prompt
     assert "【场景】\n一间安静的办公室。" in card.system_prompt
     assert "【开场白（首次问候可参考）】\n你好呀" in card.system_prompt
-    assert card.exemplars is not None and len(card.exemplars) == 2
-    assert card.exemplars[0].user == "早"
-    assert card.exemplars[0].assistant == "早呀。今天的安排已经理好了。\n第二行接着说。"
+    # 范例通道整条删除（2026-11-06）：字段从 DTO 上消失，mes_example 只进对账单。
+    assert not hasattr(card, "exemplars")
+    # 本卡两块范例（两个 <START> 块）全数不导入 ⇒ 对账计 2 —— 与删除前 len(card.exemplars)==2
+    # 同一夹具的导入数一一对应，只是现在"有几块"等于"丢几块"。
+    assert result.report["mes_example_dropped"] == 2
     assert card.description is None
     assert result.report["spec"] == "v1"
 
@@ -101,6 +103,7 @@ def test_v2_card_counts_what_it_does_not_import() -> None:
     assert result.report["worldbook_entries_dropped"] == 2
     assert result.report["tags_dropped"] == 2
     assert result.report["alternate_greetings_dropped"] == 2
+    assert result.report["mes_example_dropped"] == 2  # 同一夹具两块范例，v2 也不导入
     assert result.card.description == "作者的说明。"
 
 
@@ -110,24 +113,24 @@ def test_v2_system_prompt_takes_the_head_position() -> None:
     assert result.card.system_prompt.startswith("覆盖段\n\n【人设】")
 
 
-def test_example_macros_are_resolved_with_literal_names() -> None:
+def test_mes_example_macros_never_reach_the_prompt() -> None:
+    """范例的 {{char}}/{{user}} 宏从前在此落成字面；现在整条不进卡，宏也不许漏进人设。"""
     card = parse_sillytavern_card(V1_CARD).card
-    assert card.exemplars is not None
-    assert "{{char}}" not in card.exemplars[1].assistant
-    assert "{{user}}" not in card.exemplars[1].user
+    assert "{{char}}" not in card.system_prompt
+    assert "{{user}}" not in card.system_prompt
+    assert "<START>" not in card.system_prompt
 
 
-def test_over_budget_exemplars_are_dropped_loudly() -> None:
+def test_all_mes_example_blocks_are_counted_and_never_imported() -> None:
     many = dict(V1_CARD)
-    # 8 条各 ~700 字的范例必超条数与字数预算；末尾再补一条短的确认预算内仍在
+    # 8 条大块 + 1 条短块：范例通道已删，对账单必须报全 9 条，卡上一条都不留。
     blocks = "".join(
         f"<START>\n{{{{user}}}}: 消息{i}\n{{{{char}}}}: {'回' * 700}\n" for i in range(8)
     )
     many["mes_example"] = blocks + "<START>\n{{user}}: 早\n{{char}}: 早呀"
     result = parse_sillytavern_card(many)
-    assert result.card.exemplars is not None
-    assert len(result.card.exemplars) <= 4  # MAX_EXEMPLARS
-    assert result.report["exemplars_dropped"] >= 4  # 超预算的整条丢弃且对账
+    assert result.report["mes_example_dropped"] == 9
+    assert not hasattr(result.card, "exemplars")
 
 
 @pytest.mark.parametrize(
@@ -216,14 +219,6 @@ def test_chara_payload_non_object_is_rejected() -> None:
 def test_top_level_non_object_is_rejected() -> None:
     with pytest.raises(CardImportError, match="顶层必须是 JSON 对象"):
         load_card_bytes(b"[1, 2, 3]")
-
-
-def test_blank_lines_inside_example_blocks_are_skipped() -> None:
-    card = dict(V1_CARD)
-    card["mes_example"] = "<START>\n{{user}}: 早\n\n{{char}}: 早呀"
-    result = parse_sillytavern_card(card)
-    assert result.card.exemplars is not None
-    assert result.card.exemplars[0].user == "早"
 
 
 def test_non_dict_card_payload_is_rejected() -> None:

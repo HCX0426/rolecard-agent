@@ -13,9 +13,8 @@
   scenario                   → system_prompt 【场景】
   system_prompt (v2)         → system_prompt 开头     ST 的显式覆盖段，有就放在最前
   first_mes                  → system_prompt 【开场白】  内核没有"第一句话"概念，作为参考段落保留
-  mes_example                → exemplars             `<START>` 分块逐块拆 (user, char) 对；
-                                                       `{{char}}`→角色名、`{{user}}`→"用户"；
-                                                       超 MAX_EXEMPLARS / 字数预算 → 整条丢弃并计数
+  mes_example                → **不导入**，report 计数   行为范例这条通道已整条删除（2026-11-06）：
+                                                        卡只带人设，范例不进提示词也不进库
   creator_notes              → description
   character_book（世界书）    → **不导入**，report 计数  知识要走本仓的 RAG（知识页上传建作用域），
                                                        卡导入不该悄悄建向量库
@@ -34,12 +33,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from rolecard_agent.roles.models import (
-    MAX_EXEMPLAR_CHARS,
-    MAX_EXEMPLARS,
-    RoleCardCreate,
-    RoleExemplar,
-)
+from rolecard_agent.roles.models import RoleCardCreate
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
@@ -126,56 +120,6 @@ def _slugify_role_id(name: str) -> str:
     return slug
 
 
-def _example_blocks(mes_example: str, role_name: str) -> list[RoleExemplar]:
-    """`<START>` 分块 → (user, char) 对。`{{char}}`/`{{user}}` 宏换成会落进提示词的字面。"""
-    out: list[RoleExemplar] = []
-    blocks = [b.strip() for b in mes_example.split("<START>") if b.strip()]
-    for block in blocks:
-        user_lines: list[str] = []
-        char_lines: list[str] = []
-        for line in block.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            if stripped.startswith("{{user}}:"):
-                user_lines.append(stripped[len("{{user}}:") :].strip())
-            elif stripped.startswith("{{char}}:"):
-                char_lines.append(stripped[len("{{char}}:") :].strip())
-            elif char_lines:
-                # 同一角色的多行发言：接在上一条后面
-                char_lines[-1] = f"{char_lines[-1]}\n{stripped}"
-        if user_lines and char_lines:
-            # 宏换字面：本仓的范例不做宏替换（那是 ST 渲染层的事），落进提示词前先定稿。
-            def resolve(text: str) -> str:
-                return text.replace("{{user}}", "用户").replace("{{char}}", role_name)
-
-            out.append(
-                RoleExemplar(
-                    user=resolve("\n".join(user_lines)),
-                    assistant=resolve("\n".join(char_lines)),
-                )
-            )
-    return out
-
-
-def _budgeted_exemplars(examples: list[RoleExemplar], report: dict[str, Any]) -> list[RoleExemplar]:
-    """卡预算（`MAX_EXEMPLARS` / `MAX_EXEMPLAR_CHARS`）的显式执行：超了整条丢、丢了几条进 report。
-
-    为什么不静默截断：validation 一抛就是整张卡 400，用户对着一锅粥不知道哪条超标；
-    这里丢整条并对账，界面能如实说"倒了 3 条"。
-    """
-    kept: list[RoleExemplar] = []
-    total = 0
-    for example in examples:
-        size = len(example.user) + len(example.assistant)
-        if len(kept) >= MAX_EXEMPLARS or total + size > MAX_EXEMPLAR_CHARS:
-            report["exemplars_dropped"] = report.get("exemplars_dropped", 0) + 1
-            continue
-        kept.append(example)
-        total += size
-    return kept
-
-
 def _section(label: str, body: str) -> str:
     return f"【{label}】\n{body.strip()}" if body.strip() else ""
 
@@ -212,9 +156,11 @@ def parse_sillytavern_card(data: dict[str, Any]) -> CardImportResult:
             "卡里没有可用的正文（description / personality / scenario / first_mes 全空）"
         )
 
-    examples = _example_blocks(str(inner.get("mes_example") or ""), name)
-    report["exemplar_blocks"] = len(examples)
-    kept = _budgeted_exemplars(examples, report)
+    # 范例这条通道已整条删除（2026-11-06）：mes_example 只计数、不进卡，绝不静默丢。
+    # 计数 = 非空块数，与删除前解析层"split("<START>") 后滤空"的口径逐字一致。
+    report["mes_example_dropped"] = len(
+        [b for b in str(inner.get("mes_example") or "").split("<START>") if b.strip()]
+    )
 
     creator_notes = str(inner.get("creator_notes") or "").strip()
     book = inner.get("character_book")
@@ -231,7 +177,6 @@ def parse_sillytavern_card(data: dict[str, Any]) -> CardImportResult:
             role_name=name,
             system_prompt=system_prompt,
             description=creator_notes or None,
-            exemplars=kept or None,
         )
     except Exception as exc:  # noqa: BLE001 - 形状校验失败要给人话，不能 500
         raise CardImportError(f"卡数据过了映射但没过本仓的形状校验：{exc}") from exc
@@ -251,7 +196,8 @@ def build_st_v2_card(
     反向映射的取舍（与正向映射表对读）：
       * system_prompt 整体放进 `data.description` —— 正向导入时人设/性格/场景已并进
         system_prompt，反向不猜拆（拆错比不拆更糟），ST 侧拿到的就是完整人格载体；
-      * exemplars 反向拼回 `<START>` 块 + `{{char}}`/`{{user}}` 宏（ST 的原生形状）；
+      * `mes_example` 恒为空串：本仓不再持有范例通道（2026-11-06 整条删除），导出时不编造
+        ST 侧的对话示例；
       * creator_notes 放回 `data.creator_notes`；description（本仓的备注字段）以
         `extensions.rolecard_agent.description` 随行，不在 ST 侧占位置；
       * **记忆默认不随卡走**：调用方显式给了 `memory_items`（pinned+active，见路由层
@@ -264,7 +210,7 @@ def build_st_v2_card(
         "personality": "",
         "scenario": "",
         "first_mes": "",
-        "mes_example": _exemplars_to_st(card.exemplars or [], card.role_name),
+        "mes_example": "",
         "creator_notes": card.description or "",
     }
     extensions: dict[str, Any] = {
@@ -278,12 +224,3 @@ def build_st_v2_card(
         extensions["rolecard_agent"]["memory"] = memory_items
     data["extensions"] = extensions
     return {"spec": "chara_card_v2", "spec_version": "2.0", "data": data}
-
-
-def _exemplars_to_st(exemplars: list[Any], role_name: str) -> str:
-    """范例对 → ST 的 `<START>` 分块文本（宏用回 `{{char}}`/`{{user}}`）。"""
-    blocks: list[str] = []
-    for ex in exemplars:
-        lines = [f"{{{{user}}}}: {ex.user}", f"{{{{char}}}}: {ex.assistant}"]
-        blocks.append("\n".join(lines))
-    return "\n<START>\n".join(blocks)

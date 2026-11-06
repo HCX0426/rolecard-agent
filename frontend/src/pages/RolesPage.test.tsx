@@ -41,7 +41,6 @@ const ROLE = {
   is_builtin: false,
   description: "",
   reachout_enabled: false,
-  exemplars: [] as { rowId: number; user: string; assistant: string }[],
 };
 
 beforeEach(() => {

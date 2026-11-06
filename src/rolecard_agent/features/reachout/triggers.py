@@ -324,7 +324,7 @@ def generate_reachout_text(
             task = f"{task}\n\n{recent}"
     if thread_lines:
         task = f"{task}\n\n{thread_lines}"
-    system = build_system_prompt(role.system_prompt, role.exemplars, memory=memory, agent=False)
+    system = build_system_prompt(role.system_prompt, memory=memory, agent=False)
     spent = TokenUsage(None, None)  # 这一次开口（含重生）花掉的总量，没报就是 None
     _tracer = tracer or NullTracer()
 

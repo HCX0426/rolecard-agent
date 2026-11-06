@@ -67,7 +67,6 @@ def _demo_seed_role() -> RoleCardCreate:
         temperature=0.3,
         model_name=None,
         tool_whitelist=["demo_ping", "demo_write"],
-        exemplars=[],
         knowledge_scopes=[],
         description="P1-5 金标准：随域 SPEC 出厂的种子角色。",
     )

@@ -2,7 +2,7 @@
 
 四条各挡一个坏法，全部走端点，不 import 私有的拼装函数：
 
-  * **交出去的载荷必须是对面收得下的** —— 那三列在库里是 JSON **文本**，而写入端校验用的
+  * **交出去的载荷必须是对面收得下的** —— 那几列在库里是 JSON **文本**，而写入端校验用的
     `RoleCardUpdate` 要 **list**。从前没人翻译：每张带白名单的卡在 import 端必炸，
     而 `apply_import` 把异常折进 errors、HTTP 照回 200 —— 台账实测 3/3 张卡全灭、
     `written` 里 card 一格都没有。这条用例原来不存在的原因是**它手抄了三键的载荷**，
@@ -30,7 +30,6 @@ CARD_WITH_LIST = {
     "role_name": "带白名单的卡",
     "system_prompt": "她只准用两把工具",
     "tool_whitelist": ["web_search", "memory_save"],
-    "exemplars": [{"user": "问跑步", "assistant": "每周三次"}],
     "knowledge_scopes": ["medical"],
     "description": "同步验收用的那张",
     "pet_pack": "hiyori",
@@ -45,7 +44,7 @@ def _app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str) -> TestClie
 def _card_row(client: TestClient, role_id: str) -> dict[str, Any]:
     conn = client.app.state.ctx.conn
     row = conn.execute(
-        "SELECT updated_at, tool_whitelist, exemplars, knowledge_scopes, pet_pack, description "
+        "SELECT updated_at, tool_whitelist, knowledge_scopes, pet_pack, description "
         "FROM role_card WHERE role_id = ?",
         (role_id,),
     ).fetchone()
@@ -55,7 +54,7 @@ def _card_row(client: TestClient, role_id: str) -> dict[str, Any]:
 def test_a_card_exported_by_the_source_is_accepted_by_the_peer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """源侧 `export` 交出的那张，对面 `import` 必须真的收得下（含三列 JSON 与 pet_pack）。"""
+    """源侧 `export` 交出的那张，对面 `import` 必须真的收得下（含 JSON 列与 pet_pack）。"""
     src = _app(tmp_path, monkeypatch, "src.db")
     dst = _app(tmp_path, monkeypatch, "dst.db")
     with src, dst:
@@ -68,7 +67,7 @@ def test_a_card_exported_by_the_source_is_accepted_by_the_peer(
         ]
         exported = src.post("/api/sync/export", json={"idents": idents}).json()["items"]
         card = next(i for i in exported if i["ident"] == "withlist")
-        # 载荷里那三列必须是**结构**，不是库里的文本
+        # 载荷里那两列（白名单/作用域）必须是**结构**，不是库里的文本
         assert isinstance(card["payload"]["tool_whitelist"], list), card["payload"]
         assert card["payload"].get("pet_pack") == "hiyori", "形象包没进载荷 ⇒ 对面那张永远没形象"
 

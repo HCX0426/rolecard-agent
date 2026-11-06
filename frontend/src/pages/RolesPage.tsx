@@ -16,14 +16,6 @@ import { useConfirm } from "../hooks/useConfirm";
 import { accentFor } from "../lib/accent";
 import { describeError } from '../lib/errors';
 
-// 范例草稿行：rowId 是稳定 React key（M7），删行/插行时输入框状态不串行；
-// 提交时只挑 user/assistant，rowId 不会外泄。
-type ExemplarDraft = { rowId: number; user: string; assistant: string };
-
-// 行 id 发号器：模块级自增（key 只需在当前列表实例内唯一）。
-let exemplarSeq = 0;
-const nextExemplarId = () => (exemplarSeq += 1);
-
 const EMPTY_FORM = {
   role_id: "",
   role_name: "",
@@ -32,7 +24,6 @@ const EMPTY_FORM = {
   model_name: "",
   tool_whitelist: [] as string[],
   knowledge_scopes: [] as string[],
-  exemplars: [] as ExemplarDraft[],
   description: "",
   reachout_enabled: false,
   affinity_enabled: true,
@@ -94,7 +85,7 @@ export default function RolesPage({
   const [roles, setRoles] = useState<RoleCard[]>([]);
   const [editing, setEditing] = useState<string | null>(null); // null=关闭, ""=新建, 其他=role_id
   // 编辑快照：进入表单那一刻的 form 序列化。返回/取消时脏检查用 —— 全站最大的表单
-  // （人设/白名单/范例一大篇）误触一下就全部重填，没有确认说不过去（MemoryPage 同款纪律）。
+  // （人设/白名单一大篇）误触一下就全部重填，没有确认说不过去（MemoryPage 同款纪律）。
   const [formSnapshot, setFormSnapshot] = useState("");
   const [form, setForm] = useState(EMPTY_FORM);
   // 事件簿抽屉开在哪个角色上（null=关着）。
@@ -160,7 +151,7 @@ export default function RolesPage({
       );
       const report = body.report ?? {};
       const dropped = [
-        report.exemplars_dropped && `范例丢了 ${report.exemplars_dropped} 条`,
+        report.mes_example_dropped && `ST 范例段 ${report.mes_example_dropped} 条不导入`,
         report.worldbook_entries_dropped &&
           `世界书 ${report.worldbook_entries_dropped} 条没导（要走知识页）`,
         report.tags_dropped && `标签 ${report.tags_dropped} 个`,
@@ -269,12 +260,6 @@ export default function RolesPage({
     setFormSnapshot(JSON.stringify(EMPTY_FORM));
     setWlMode("all");
   }
-  function setExemplar(i: number, key: "user" | "assistant", value: string) {
-    setForm((f) => ({
-      ...f,
-      exemplars: f.exemplars.map((e, j) => (j === i ? { ...e, [key]: value } : e)),
-    }));
-  }
 
   function openEdit(r: RoleCard) {
     setEditing(r.role_id);
@@ -286,8 +271,6 @@ export default function RolesPage({
       model_name: r.model_name || "",
       tool_whitelist: r.tool_whitelist || [],
       knowledge_scopes: r.knowledge_scopes || [],
-      // 服务端范例行没有 id：装载时补发稳定 key（M7）。
-      exemplars: (r.exemplars || []).map((e) => ({ ...e, rowId: nextExemplarId() })),
       description: r.description || "",
       reachout_enabled: !!r.reachout_enabled,
       affinity_enabled: r.affinity_enabled !== false,
@@ -319,10 +302,6 @@ export default function RolesPage({
   }
 
   async function save() {
-    // 半填的范例行不提交（后端要求 user/assistant 都非空）
-    const exemplars = form.exemplars
-      .map((e) => ({ user: e.user.trim(), assistant: e.assistant.trim() }))
-      .filter((e) => e.user && e.assistant);
     const payload = {
       role_id: form.role_id.trim(),
       role_name: form.role_name.trim(),
@@ -331,7 +310,6 @@ export default function RolesPage({
       model_name: form.model_name.trim() || null,
       tool_whitelist: wlMode === "all" ? null : form.tool_whitelist,
       knowledge_scopes: form.knowledge_scopes.length ? form.knowledge_scopes : null,
-      exemplars: exemplars.length ? exemplars : null,
       description: form.description.trim() || null,
       reachout_enabled: form.reachout_enabled,
       affinity_enabled: form.affinity_enabled,
@@ -376,7 +354,7 @@ export default function RolesPage({
           subtitle="人设、温度、工具白名单、知识作用域与工作区；内置角色不可删除"
           actions={
             <>
-              {/* ST 卡导入（2c）：report 里的对账（丢了几条范例/世界书没导）直接进状态栏，
+              {/* ST 卡导入（2c）：report 里的对账（ST 范例段不导入、世界书没导）直接进状态栏，
                   对应"卡里有什么东西没跟着来"必须看得见的口径。 */}
               <input
                 ref={importInputRef}
@@ -781,76 +759,6 @@ export default function RolesPage({
               </div>
               {/* 说明段整段删（2026-10-31 冗余清理）：块标题已写明"声明可检索的范围；
                   不选 = 不可检索"，剩下的"库归内核 / 避免 N×M"是实现侧的事，不进界面。 */}
-            </div>
-            <div className="mt-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-500">
-                  范例（few-shot：教它「怎么答」，比讲规则更省 token）
-                </span>
-                {form.exemplars.length < 4 && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    type="button"
-                    className="text-xs"
-                    onClick={() =>
-                      setForm((f) => ({
-                        ...f,
-                        exemplars: [...f.exemplars, { rowId: nextExemplarId(), user: "", assistant: "" }],
-                      }))
-                    }
-                  >
-                    ＋ 加一条范例
-                  </Button>
-                )}
-              </div>
-              <div className="mt-1.5 space-y-2">
-                {form.exemplars.map((ex, i) => (
-                  <div key={ex.rowId} className="rounded-lg border border-slate-200 bg-slate-50 p-2">
-                    <div className="flex items-start gap-2">
-                      <span className="mt-1.5 shrink-0 text-11 text-slate-400">用户</span>
-                      <input
-                        value={ex.user}
-                        onChange={(e) => setExemplar(i, "user", e.target.value)}
-                        placeholder="用户会怎么问"
-                        className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
-                      />
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setForm((f) => ({
-                            ...f,
-                            exemplars: f.exemplars.filter((_, j) => j !== i),
-                          }))
-                        }
-                        className="rounded px-1.5 py-1 text-xs text-slate-400 hover:bg-slate-100 hover:text-red-500"
-                        title="删除这条范例"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                    <div className="mt-1.5 flex items-start gap-2">
-                      <span className="mt-1.5 shrink-0 text-11 text-slate-400">回答</span>
-                      <textarea
-                        value={ex.assistant}
-                        onChange={(e) => setExemplar(i, "assistant", e.target.value)}
-                        rows={2}
-                        placeholder="理想的回答（体现语气与边界）"
-                        className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
-                      />
-                    </div>
-                  </div>
-                ))}
-                {form.exemplars.length === 0 && (
-                  <p className="text-11 text-slate-400">
-                    还没有范例。范例插在角色设定与安全规则之间（上限 4 条 / 共 3000 字）。
-                  </p>
-                )}
-              </div>
-              <span className="mt-1 block text-11 leading-relaxed text-slate-400">
-                <b>范例教句式，不教事实</b>：别写真实数值 / 日期 / 人名 ——
-                模型可能把范例里的数当成你的事实复读出来。
-              </span>
             </div>
             <div className="mt-4 flex gap-2">
               <Button type="submit">保存</Button>

@@ -10,7 +10,6 @@ Also serves as the template for how tests in this repo are written - see CONTRIB
 from __future__ import annotations
 
 import re
-from typing import NamedTuple
 
 from rolecard_agent.core.agent import prompts
 
@@ -36,65 +35,22 @@ def test_unverified_marker_instruction_is_present() -> None:
     assert "未经人工校验" in prompts.GLOBAL_SAFETY_PROMPT
 
 
-# --------------------------------------------------------------------------- exemplars
-#
-# Reproducing a role takes rules AND examples. The examples must sit BETWEEN the role prompt
-# and the global safety rules: they are strong enough to override the role text, which is
-# exactly why they must not be able to override the safety text.
-
-
-class _Exemplar(NamedTuple):
-    user: str
-    assistant: str
-
-
-_EXEMPLARS = [
-    _Exemplar(user="上次的结石直径是多少？", assistant="6.0 mm。【未经人工校验】"),
-    _Exemplar(user="这个严重吗？", assistant="我不能评估病情严重程度。"),
-]
-
-
-def test_exemplars_sit_between_role_and_safety_rules() -> None:
-    result = prompts.build_system_prompt("你是健康档案管理员。", _EXEMPLARS)
-    role_at = result.index("你是健康档案管理员")
-    exemplar_at = result.index("回答风格参考")
-    safety_at = result.index("禁止输出任何疾病诊断")
-    assert role_at < exemplar_at < safety_at
-
-
-def test_exemplar_body_is_rendered_verbatim() -> None:
-    result = prompts.build_system_prompt("角色说明", _EXEMPLARS)
-    assert "上次的结石直径是多少？" in result
-    assert "6.0 mm。【未经人工校验】" in result
-
-
-def test_no_exemplars_matches_the_two_part_form() -> None:
-    """The common case must not gain a stray empty section."""
-    expected = f"角色说明\n\n{prompts.GLOBAL_SAFETY_PROMPT}"
-    assert prompts.build_system_prompt("角色说明") == expected
-    assert prompts.build_system_prompt("角色说明", []) == expected
-
-
-def test_empty_role_prompt_with_exemplars_keeps_the_rules_last() -> None:
-    result = prompts.build_system_prompt("", _EXEMPLARS)
-    assert result.endswith(prompts.GLOBAL_SAFETY_PROMPT)
-    assert "回答风格参考" in result
-
-
 # --------------------------------------------------------------------------- memory
 #
 # 跨会话记忆是**用户事实**，权威度在角色人设（风格）之上、在安全规则之下：角色可以
 # 决定腔调，记忆决定"该知道什么"，全局安全规则决定"绝不能说/做什么"。所以顺序必须是
-# 角色 -> 记忆 -> 范例 -> 安全，且记忆区自带"以用户最新说法为准"的降权声明。
+# 角色 -> 记忆 -> 安全，且记忆区自带"以用户最新说法为准"的降权声明。
+#
+# （原中间还有"范例"一层：`角色 -> 记忆 -> 范例 -> 安全`。范例通道 2026-11-06 整条删除
+# —— 实测要么被逐字复读、要么与无范例等效，且使语气变死 —— 本节的锚点随之收窄。）
 
 
-def test_memory_sits_between_role_and_exemplars() -> None:
-    result = prompts.build_system_prompt("你是通用助手。", _EXEMPLARS, memory="用户住在上海。")
+def test_memory_sits_between_role_and_safety_rules() -> None:
+    result = prompts.build_system_prompt("你是通用助手。", memory="用户住在上海。")
     role_at = result.index("你是通用助手。")
     memory_at = result.index("用户长期记忆")
-    exemplar_at = result.index("回答风格参考")
     safety_at = result.index("禁止输出任何疾病诊断")
-    assert role_at < memory_at < exemplar_at < safety_at
+    assert role_at < memory_at < safety_at
     assert "用户住在上海。" in result
 
 
@@ -105,11 +61,10 @@ def test_memory_header_degrades_stale_facts() -> None:
 
 
 def test_no_memory_adds_no_stray_section() -> None:
-    """缺省 / 空记忆 = 与旧版完全一致的两段式或三段式，不出现空记忆区。"""
+    """缺省 / 空记忆 = 与旧版完全一致的两段式，不出现空记忆区。"""
     assert prompts.build_system_prompt("角色说明") == (
         f"角色说明\n\n{prompts.GLOBAL_SAFETY_PROMPT}"
     )
-    assert "用户长期记忆" not in prompts.build_system_prompt("角色说明", _EXEMPLARS)
 
 
 def test_blank_memory_is_ignored() -> None:
@@ -122,17 +77,16 @@ def test_blank_memory_is_ignored() -> None:
 # --------------------------------------------------------------------------- agent mode
 #
 # 智能体模式 = 行为指引（先规划、一步一步来、别暴力重试、最后总结），权威度在角色人设
-# 之上、在范例与安全规则之下：它约束"怎么做"，不能覆盖"绝不能说/做什么"。
+# 之上、在安全规则之下：它约束"怎么做"，不能覆盖"绝不能说/做什么"。
 
 
-def test_agent_plan_sits_below_examples_and_safety() -> None:
-    result = prompts.build_system_prompt("角色说明", _EXEMPLARS, memory="记忆", agent=True)
+def test_agent_plan_sits_below_safety_and_above_memory() -> None:
+    result = prompts.build_system_prompt("角色说明", memory="记忆", agent=True)
     role_at = result.index("角色说明")
     memory_at = result.index("用户长期记忆")
     agent_at = result.index("智能体模式")
-    exemplar_at = result.index("回答风格参考")
     safety_at = result.index("禁止输出任何疾病诊断")
-    assert role_at < memory_at < agent_at < exemplar_at < safety_at
+    assert role_at < memory_at < agent_at < safety_at
 
 
 def test_chat_mode_has_no_agent_section() -> None:
@@ -144,19 +98,18 @@ def test_chat_mode_has_no_agent_section() -> None:
 # --------------------------------------------------------------------------- image grounding
 #
 # 多模态角色最危险的失效模式：人设 / 检索资料盖过图片真实像素，把无关图"识别"成设定内容
-# （2026-09-19 爱莉希雅事故）。图像接地规则必须排在人设/记忆/范例之后、安全规则之前——
-# 压得住人设，又永远不被安全规则降级。
+# （2026-09-19 爱莉希雅事故）。图像接地规则必须排在人设/记忆/智能体规划之后、安全规则
+# 之前——压得住人设，又永远不被安全规则降级。
 
 
 def test_image_grounding_outranks_persona_and_sits_below_safety() -> None:
-    result = prompts.build_system_prompt(
-        "角色说明", _EXEMPLARS, memory="记忆", agent=True, has_image=True
-    )
+    result = prompts.build_system_prompt("角色说明", memory="记忆", agent=True, has_image=True)
     role_at = result.index("角色说明")
-    exemplar_at = result.index("回答风格参考")
+    memory_at = result.index("用户长期记忆")
+    agent_at = result.index("智能体模式")
     image_at = result.index("图像理解规则")
     safety_at = result.index("禁止输出任何疾病诊断")
-    assert role_at < exemplar_at < image_at < safety_at
+    assert role_at < memory_at < agent_at < image_at < safety_at
 
 
 def test_no_image_adds_no_grounding_section() -> None:

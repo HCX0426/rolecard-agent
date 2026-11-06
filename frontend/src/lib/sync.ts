@@ -22,7 +22,7 @@ export type SyncKind = "card" | "thread" | "memory" | "reachout";
 /** 界面上可勾的同步项。**健康档案与上传原件这一版没有格子** ——
  *  没有实现的复选框比没有复选框更坏（勾了却什么都不发生，比看不见更让人怀疑整个界面）。 */
 export const SYNC_ITEMS: { kind: SyncKind; label: string; hint: string }[] = [
-  { kind: "card", label: "角色卡", hint: "含你改过的人设、范例与能力开关" },
+  { kind: "card", label: "角色卡", hint: "含你改过的人设与能力开关" },
   { kind: "thread", label: "会话", hint: "整条历史搬过去，检查点在对面重建" },
   { kind: "memory", label: "记忆", hint: "关于你的长期事实，按 uid 比不按字面" },
   { kind: "reachout", label: "主动消息", hint: "角色主动找过你的那些话，只追加" },

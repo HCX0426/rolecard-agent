@@ -20,7 +20,7 @@
   ⑤ 生成物过 `ruff format`（否则门禁的 ruff 步红），检查模式两边都格式化后再比对；
   ⑥ **形状随数据变化**的端点不建模（同一数组里元素类型不一致 ⇒ 一个模型表达不了）——
      实测 /api/roles：同一批返回里 A 卡的 tool_whitelist 是 null、B 卡的是字符串列表，
-     exemplars 还有 None/空/非空三种标签；这类端点不生成模型、不接线，
+     这类端点不生成模型、不接线，
      并记进"不可建模"清单让"没建模"看得见；
   ⑦ **响应必须与端点真返回逐字一致**：用 `_GIVEN_KEYS` 记下端点真给了哪些键，序列化时
      按它裁剪（exclude_unset 挡不住 before-validator 补的键 —— 实测补的键会进
@@ -31,7 +31,7 @@
 出网失败时是 null。所以标量字段一律可空。
 
 **数组元素形状取所有元素的并集**（字段并集）：列表第一条可能是空数组（实测
-`/api/roles` 第一条是内置角色、exemplars 为空，而我们造的角色卡在后面），
+`/api/roles` 第一条是内置角色、数组字段为空，而我们造的角色卡在后面），
 只看第一条就把"空"当成了形状。样本里只要有一个非空元素，形状就定下来了。
 """
 
@@ -251,7 +251,7 @@ def _merge_objects(items: list[Any]) -> tuple[dict[str, Any], dict[str, int]] | 
                     merged[key] = value
                 elif isinstance(merged[key], list) and isinstance(value, list):
                     # **嵌套数组也要合并**：不同元素的同一个数组字段，元素类型可能不同
-                    # （实测 /api/roles：A 卡的 exemplars 是对象列表、B 卡的是空列表）。
+                    # （实测 /api/roles：A 卡的 knowledge_scopes 是字符串列表、B 卡的是空列表）。
                     # 只取第一个 ⇒ 另一类型的元素校验失败。
                     merged[key] = merged[key] + value
         for key in item:
@@ -385,7 +385,7 @@ def _seed_minimal_data(app: Any) -> None:
     from rolecard_agent.config import DEFAULT_SILICONFLOW_BASE_URL
 
     client = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
-    # 角色卡：exemplars / knowledge_scopes 这两个数组在样本里得非空
+    # 角色卡：knowledge_scopes 这个数组在样本里得非空（exemplars 已随范例通道删除）
     _seed_want(
         client,
         "post",
@@ -397,7 +397,6 @@ def _seed_minimal_data(app: Any) -> None:
             "temperature": 0.7,
             "model_name": None,
             "tool_whitelist": ["sample_tool"],
-            "exemplars": [{"user": "样本问", "assistant": "样本答"}],
             "knowledge_scopes": ["sample_scope"],
             "description": "生成器样本",
         },
@@ -922,8 +921,8 @@ def generate() -> tuple[str, str | None]:
                 sample = _merge_samples(sample, sample2)
             if not _shape_is_stable(sample):
                 # **形状随数据变化的端点不该有单一模型**：/api/roles 返回里，A 卡的
-                # tool_whitelist 是 null、B 卡的是字符串列表，exemplars 还有 None/空/非空
-                # 三种标签 —— 一个模型表达不了（硬套 ⇒ 另一类元素校验失败）。这类端点
+                # tool_whitelist 是 null、B 卡的是字符串列表 —— 一个模型表达不了
+                # （硬套 ⇒ 另一类元素校验失败）。这类端点
                 # **不生成模型、不接线**，并记进清单让"没建模"这件事看得见（不是静默漏掉）。
                 UNMODELABLE.append(path)
                 continue

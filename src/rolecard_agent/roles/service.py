@@ -33,7 +33,6 @@ _INSERTABLE_COLUMNS: tuple[str, ...] = (
     "temperature",
     "model_name",
     "tool_whitelist",
-    "exemplars",
     "knowledge_scopes",
     "description",
     "is_builtin",
@@ -57,7 +56,7 @@ _COLUMNS = ", ".join((*_INSERTABLE_COLUMNS, "created_at", "updated_at"))
 # **公开名字**（10-02 轮 `R102-24`）：`features/sync.py` 交出卡的载荷时要把这三列从"行里的文本"
 # 换成"模型要的list"，那边抄一份清单就是第二个真相 —— 而那条链坏过的样子恰好是
 # "清单改了、抄的那份没改"（`R28-14` 那一族第七次）。
-CARD_JSON_COLUMNS = ("tool_whitelist", "exemplars", "knowledge_scopes")
+CARD_JSON_COLUMNS = ("tool_whitelist", "knowledge_scopes")
 _JSON_COLUMNS = CARD_JSON_COLUMNS  # 本模块内的旧称，读起来更短
 
 
@@ -175,7 +174,6 @@ class RoleCards:
                 data.temperature,
                 data.model_name,
                 _dump_json(data.tool_whitelist),
-                _dump_json(data.exemplars),
                 _dump_json(data.knowledge_scopes),
                 data.description,
                 1 if is_builtin else 0,
@@ -285,8 +283,8 @@ class RoleCardService:
             self._conn.execute(
                 "INSERT INTO role_card "
                 "(role_id, user_id, role_name, system_prompt, temperature, model_name, "
-                " tool_whitelist, exemplars, knowledge_scopes, description, is_builtin) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1) "
+                " tool_whitelist, knowledge_scopes, description, is_builtin) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1) "
                 "ON CONFLICT(role_id) DO UPDATE SET "
                 "  user_id = excluded.user_id, "
                 "  role_name = excluded.role_name, "
@@ -294,7 +292,6 @@ class RoleCardService:
                 "  temperature = excluded.temperature, "
                 "  model_name = excluded.model_name, "
                 "  tool_whitelist = excluded.tool_whitelist, "
-                "  exemplars = excluded.exemplars, "
                 "  knowledge_scopes = excluded.knowledge_scopes, "
                 "  description = excluded.description, "
                 "  is_builtin = 1, "
@@ -310,7 +307,6 @@ class RoleCardService:
                 "  OR role_card.temperature IS NOT excluded.temperature "
                 "  OR role_card.model_name IS NOT excluded.model_name "
                 "  OR role_card.tool_whitelist IS NOT excluded.tool_whitelist "
-                "  OR role_card.exemplars IS NOT excluded.exemplars "
                 "  OR role_card.knowledge_scopes IS NOT excluded.knowledge_scopes "
                 "  OR role_card.description IS NOT excluded.description "
                 "  OR role_card.is_builtin IS NOT 1",
@@ -322,7 +318,6 @@ class RoleCardService:
                     role.temperature,
                     role.model_name,
                     _dump_json(role.tool_whitelist),
-                    _dump_json(role.exemplars),
                     _dump_json(role.knowledge_scopes),
                     role.description,
                 ),
@@ -352,8 +347,8 @@ class RoleCardService:
             self._conn.execute(
                 "INSERT INTO role_card "
                 "(role_id, user_id, role_name, system_prompt, temperature, model_name, "
-                " tool_whitelist, exemplars, knowledge_scopes, description, is_builtin) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) "
+                " tool_whitelist, knowledge_scopes, description, is_builtin) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0) "
                 # 这一支只做一件事：把老库里被误标成内置的行降级。降级**真的发生**才盖时刻
                 # （`R102-25` 的另一半 —— docstring 明写"已存在则一个字段都不覆盖"，
                 # 而无条件的 `updated_at = CURRENT_TIMESTAMP` 每次都覆盖了一个字段：
@@ -369,7 +364,6 @@ class RoleCardService:
                     role.temperature,
                     role.model_name,
                     _dump_json(role.tool_whitelist),
-                    _dump_json(role.exemplars),
                     _dump_json(role.knowledge_scopes),
                     role.description,
                 ),

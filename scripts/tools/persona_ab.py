@@ -6,15 +6,12 @@
 跑在**库的副本**上（`scripts/scratch_db.py`）：主动开口那组会真的调模型、会进 guard 也会记
 token 账 —— 那些笔账不该混进真库的"今天花了多少"。
 
-    .venv\\Scripts\\python.exe scripts\\persona_ab.py                    # 开口臂：范例三种条件
+    .venv\\Scripts\\python.exe scripts\\persona_ab.py                    # 开口臂：现状基线
     .venv\\Scripts\\python.exe scripts\\persona_ab.py --group chat       # 对话臂：深度注入开/关
     .venv\\Scripts\\python.exe scripts\\persona_ab.py --role medical_archivist --n 6
 
 `--n` 默认 5：**样本小到个位数的 A/B 只能看方向，不能定阈值**。这条写在输出里也写在下面，
 因为第一次跑就有人想把 0.13 与 0.14 当成差别（它们不是 —— 见 §8.12 的读数）。
-
-刻意不复用生产配置的地方只有一处：范例的"异构"那份文本是**实验输入**，不是产品文案，
-它住在下面这个常量里就是要让人一眼看出"这是喂进去比对的，不是她该有的样子"。
 """
 
 from __future__ import annotations
@@ -51,22 +48,7 @@ from rolecard_agent.core.agent.prompts import (  # noqa: E402
 from rolecard_agent.core.common.anti_repeat import repeat_score  # noqa: E402
 from rolecard_agent.core.model_settings import ModelSettingsService  # noqa: E402
 from rolecard_agent.features.reachout import generate_reachout_text  # noqa: E402
-from rolecard_agent.roles.models import RoleCard  # noqa: E402
 from rolecard_agent.roles.service import RoleCardService  # noqa: E402
-
-#: 实验输入，不是产品文案（见模块 docstring）。三条在由头/句式/长度上互相岔开，
-#: 且刻意避开她现有口癖里那几个词 —— 否则量的就不是"范例同型"这一件事。
-HETERO_EXEMPLARS: list[dict[str, str]] = [
-    {"user": "你还在吗", "assistant": "在。刚把今天的风记到本子上，你要说的事我先听着。"},
-    {
-        "user": "给我讲点别的",
-        "assistant": (
-            "讲个小的：窗台那只猫今天没来，我等了整个下午，"
-            "结果发现自己惦记的不过是它踩奶时那点儿动静——就这样，没什么道理。"
-        ),
-    },
-    {"user": "今天不太开心", "assistant": "那就别开心了，先喝口水。我陪你坐一会儿。"},
-]
 
 #: 对话臂共用的几条"用户话"：短、日常、带一点情绪压力（那正是模板最容易回来的地方）。
 SEED_TURNS = ["我回来了", "刚跑完步", "今天好累", "你在干嘛"]
@@ -118,46 +100,29 @@ def _effective(conn: sqlite3.Connection) -> Settings:
 def _arms(
     conn: sqlite3.Connection, settings: Settings, role_id: str, n: int, backend: str | None
 ) -> dict[str, Any]:
-    """开口那组：范例 现状 / 异构 / 无范例，各跑 n 次，走**生产生成路径**。
+    """开口那一组：生产现状，跑 n 次，走**生产生成路径**。
 
     走 `generate_reachout_text` 而不是自己拼一次 invoke，为的是把 guard、去重指令与
     「复读要量化」那道复读闸门一起带进来 —— 要量的是"她实际会发出去的那句"，不是模型的裸输出。
 
-    注意：`elysia` 的三条范例已在 2026-09-23 被删（设计稿 §8.12 的实测结论），所以
-    "现状范例"与"无范例"两臂现在**会同源**——那不是 bug，是那一次实验留下的状态。
-    要再比"有 vs 无"，拿一张还有范例的卡（`medical_archivist`）或先把 §8.12 那段贴回去。
+    臂数从三条减到一条（2026-11-06）：原先这里是"现状范例 / 异构范例 / 无范例"三选一，
+    比的是范例的形状。范例这条通道已整条删除（设计稿 §8.12 的实测结论后来被对话评测追认：
+    要么被逐字复读、要么与无范例等效，而它使语气变死），对照物不存在了。留着两臂去比一个
+    已经没有的东西，就是假实验 —— 所以只留生产现状这一臂，它现在是开口的**基线**读数。
     """
     role = RoleCardService(conn).scoped(resolve_instance_identity(settings)).get(role_id)
     # 后端可由 --backend 指定：**同一轮实验必须同一个后端**，否则量的就是"云端 vs 本地"
     # 而不是"这一处改动"（§8.12 那次的读数是云端，本地 8B 在同样三臂上动作开头一律 100%）。
     model = build_model(settings, backend or role.model_name, role.temperature)
-    out: dict[str, Any] = {}
-    variants: dict[str, Any] = {
-        "现状范例": role.exemplars or [],
-        "异构范例": HETERO_EXEMPLARS,
-        "无范例": [],
-    }
-    for label, exemplars in variants.items():
-        card = RoleCard(
-            role_id=role.role_id,
-            role_name=role.role_name,
-            system_prompt=role.system_prompt,
-            exemplars=exemplars,
-            model_name=role.model_name,
-            temperature=role.temperature,
-        )
-        texts, scores = [], []
-        for _ in range(n):
-            draft = generate_reachout_text(
-                card, model, settings, conn, role_id=role_id, mode="general"
-            )
-            if draft.text is None:
-                print(f"  [{label}] 这一条没发出去：why={draft.why}")
-                continue
-            texts.append(draft.text)
-            scores.append(draft.score)
-        out[label] = {"texts": texts, "gate_scores": scores}
-    return out
+    texts, scores = [], []
+    for _ in range(n):
+        draft = generate_reachout_text(role, model, settings, conn, role_id=role_id, mode="general")
+        if draft.text is None:
+            print(f"  [现状] 这一条没发出去：why={draft.why}")
+            continue
+        texts.append(draft.text)
+        scores.append(draft.score)
+    return {"现状": {"texts": texts, "gate_scores": scores}}
 
 
 def _chat_arms(
@@ -179,7 +144,7 @@ def _chat_arms(
             "SELECT text FROM agent_reachout WHERE role_id = ? ORDER BY id DESC LIMIT 4", (role_id,)
         ).fetchall()
     ]
-    system = build_system_prompt(role.system_prompt, role.exemplars, memory="", agent=False)
+    system = build_system_prompt(role.system_prompt, memory="", agent=False)
     out: dict[str, Any] = {}
     for label, inject in (("不注入（旧形态）", False), ("注入深度指令", True)):
         turns: list[Any] = [SystemMessage(content=system)]
@@ -258,8 +223,8 @@ def main() -> None:
     parser.add_argument(
         "--role",
         default="medical_archivist",
-        help="角色 id（默认 medical_archivist：elysia 那张卡连范例已于 2026-09-23 删净，"
-        "拿它当默认 = 拿一张不存在的卡做夜间默认实验，RoleNotFound 当场红）",
+        help="角色 id（默认 medical_archivist：开口的量要在一张出厂卡上读，"
+        "用户手改过的卡会把「改了什么」混进「她本来会说什么」）",
     )
     parser.add_argument("--n", type=int, default=5, help="每个臂跑几次，默认 5")
     parser.add_argument(

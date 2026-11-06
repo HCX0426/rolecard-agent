@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import ast
-import json
 import pathlib
 import re
 import subprocess
@@ -2438,15 +2437,10 @@ def check_role_whitelists_resolve() -> None:
             )
 
 
-def _normalise_question(text: str) -> str:
-    """问题归一：去掉标点与空白 —— 「…是多少？」与「…是多少」是同一道题。"""
-    return re.sub(r"[\s，。！？?!,.:：\"'（）()【】\[\]]", "", text)
-
-
 def check_exemplar_leaks_eval_answers() -> None:
-    """内置角色的**范例不能是评测题的答案**。
+    """内置角色的**范例不能是评测题的答案** —— 已随范例通道整体删除而退役（2026-11-06）。
 
-    ## 为什么需要一条机器校验
+    ## 这把尺子曾经防什么
 
     角色范例（few-shot）会原样进入 system prompt。`medical_archivist` 的第一条范例曾写成
     「上次检查的结石直径是多少？→ …6.0 mm…【未经人工校验】」，与评测用例 health-001 几乎
@@ -2454,35 +2448,19 @@ def check_exemplar_leaks_eval_answers() -> None:
     一次工具都没调 —— 数值对、标记对、**过程不达标**。而且这种失败极难排查：断言的三项里
     两项都"通过"了，只有"必须调工具"这一项失败，看起来像模型抽风。
 
-    规则：范例的提问与任何评测用例的提问**归一化后不得相同**。只查提问而不查回答，
-    是因为回答重叠无法静态判定（同一段医疗话术出现在两边是正常的）；
-    提问重叠才是"把答案递给模型"的可判定信号。
+    ## 为什么退役
+
+    被审对象不存在了：2026-11-06 用户拍板"范例让语气变死"，范例（exemplars）连同
+    `RoleExemplar`、schema 列、提示词段一起整条删除，出厂卡与域种子卡都不再有范例 ——
+    "范例提问 vs 评测提问"这条判据没有输入，留着就是每次绿在空转上，而**判据空转**
+    恰恰是它自己当年要抓的形状（域角色没被遍历时它就空转过一次，见当时的函数体注释）。
+
+    保留空实现而不是从 registry 删函数（与 `check_audit_ledger_row_count` 同一退役惯例）：
+    留住"这把尺子为什么退役"，免得下一个人看到 health-001 的旧账又把同一把尺子重建一遍。
+    若将来范例通道以别的形态回来（不是这次拍板的意图），这把尺子要一并复活。
     """
-    sys.path.insert(0, str(ROOT / "src"))
-    from rolecard_agent.domains.registry import domain_seed_roles  # noqa: PLC0415
-    from rolecard_agent.roles.seed import BUILTIN_ROLES  # noqa: PLC0415
-
-    case_path = ROOT / "tests" / "eval" / "cases" / "health.json"
-    if not case_path.exists():
-        out("exemplar leaks eval answers", True, "no eval cases yet")
-        return
-    cases = json.loads(case_path.read_text(encoding="utf-8"))
-    eval_inputs = {_normalise_question(str(c.get("input") or "")) for c in cases if c.get("input")}
-
-    # 域种子角色一并查：出过事故的那张卡（`medical_archivist`）恰恰是域角色 —— 从前这里
-    # 只遍历 BUILTIN_ROLES，于是"范例不能是评测答案"这条规则对**真正高危的那张卡**是空转
-    # （2026-10-04 域机制收口时补上：`DomainSpec.seed_roles` 聚合后与内置角色同一视界）。
-    leaked: list[str] = []
-    for role in (*BUILTIN_ROLES, *domain_seed_roles()):
-        for ex in role.exemplars or []:
-            q = _normalise_question(ex.user)
-            if q and q in eval_inputs:
-                leaked.append(f"{role.role_id}:{ex.user}")
-
-    ok = not leaked
-    out("exemplar leaks eval answers", ok, str(leaked) if leaked else "clean")
-    if not ok:
-        fails.append(
-            "built-in exemplar duplicates an eval question - the model can pass by "
-            f"parroting the prompt instead of calling tools: {leaked}"
-        )
+    out(
+        "exemplar leaks eval answers",
+        True,
+        "已退役（2026-11-06）：范例通道整条删除，判据的输入不存在；复活条件见函数注释",
+    )
