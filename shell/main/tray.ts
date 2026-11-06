@@ -62,29 +62,17 @@ export function createTray(controls: TrayControls): TrayHandle {
   const tray = new Tray(icon);
   tray.setToolTip("rolecard-agent");
 
-  // 点完**原地重开**菜单 + 把结果播报出来 —— 只给设置类条目（勾选/单选/自启）用。
-  // Windows 原生菜单选中即销毁是 OS 行为，Electron 没有"保持展开"的口子（官方 Tray
-  // API 全文核对过）；重开是最接近"不关"的观感，但它**未能在本机验证**（上一版重开
-  // 真机没生效，用户 2026-11-05 复验）。所以这一版把两件事分开：
-  //   ① 结果可见 = **确定的**：走 `controls.notifyResult` —— 它就是更新回执那条
-  //      `new Notification().show()`（本仓唯一有真机显示证据的通道）。刻意**不用**
-  //      tray.displayBalloon：全仓此前零使用，Win11 对气泡的支持不可靠 —— 不拿没验证
-  //      过的通道当承诺（房规：从不失败的检查比没检查更坏，没显示的证据同理）。
-  //   ② 菜单重开 = **尽力而为**：先 tray.focus()（文档原话"弹过快捷菜单后把焦点还给
-  //      通知区"，焦点还挂在已销毁菜单上时后续 popup 会被系统吞掉 —— 这正是上一版
-  //      最可能的死因），再不传坐标调 popUpContextMenu() 让原生按图标锚定（上一版手算
-  //      getBounds 坐标，Win11 溢出区里那个位置可能本就错）。失败不报错：结果已送达。
-  const keepMenuOpen = (label: string, value: string) => {
+  // 设置类条目（勾选/单选/自启）点完把结果**播报**出来。菜单会关是 Win32 的 OS 行为
+  // （选中即销毁），Electron 没有"保持展开"的口子（官方 Tray API 全文核对过）。
+  // 「原地重开」试过两版（popUpContextMenu + 延时/焦点归还通知区），真机两轮都没兑现；
+  // 而这个时机在本仓不可验证 —— DSH 会话里起的壳会被沙箱拦在 userData 之外（实测
+  // `Lock file can not be created: 拒绝访问`），每次都是用户替我当测试机，猜第三组
+  // 参数就是拿别人的时间赌。用户 2026-11-06 拍板「实在不行就不做了」⇒ 撤重开，
+  // 只留有真机证据的那半边：controls.notifyResult = 更新回执同一条
+  // `new Notification().show()`（本仓唯一有真机显示证据的通道）。
+  // 观感上菜单照旧关，但点完看得见"改成了什么"。
+  const announceSetting = (label: string, value: string) => {
     controls.notifyResult(label, `已设为：${value}`);
-    if (process.platform !== "win32") return;
-    setTimeout(() => {
-      try {
-        tray.focus();
-        tray.popUpContextMenu();
-      } catch {
-        /* 重开尽力而为：结果已经由通知送达 */
-      }
-    }, 80);
   };
 
   const render = () => {
@@ -104,7 +92,7 @@ export function createTray(controls: TrayControls): TrayHandle {
         checked,
         click: (item) => {
           onChange(item.checked);
-          keepMenuOpen(label, item.checked ? "开" : "关");
+          announceSetting(label, item.checked ? "开" : "关");
         },
       });
     tray.setContextMenu(
@@ -137,7 +125,7 @@ export function createTray(controls: TrayControls): TrayHandle {
               click: () => {
                 controls.setPetPrefs({ opacity: step.value });
                 render();
-                keepMenuOpen("透明度", step.label);
+                announceSetting("透明度", step.label);
               },
             })),
           ),
@@ -171,7 +159,7 @@ export function createTray(controls: TrayControls): TrayHandle {
               click: () => {
                 controls.setPetPrefs({ panelAutoHideMs: step.value });
                 render();
-                keepMenuOpen("面板自动收起", step.label);
+                announceSetting("面板自动收起", step.label);
               },
             })),
           ),
@@ -186,14 +174,14 @@ export function createTray(controls: TrayControls): TrayHandle {
                 click: (item: MenuItem) => {
                   controls.setAutostart(item.checked);
                   render();
-                  keepMenuOpen("开机自启", item.checked ? "开" : "关");
+                  announceSetting("开机自启", item.checked ? "开" : "关");
                 },
               },
             ]
           : []),
         // 自动更新（设计稿 §3.3）：一条状态行 + 一条动作行，动作随状态变（检查→下载→装）。
         // 每次点完都 render()：托盘菜单是即时快照，不重画就会出现"下完了还写着下载"的谎。
-        ...(updateMenuItems(controls.updater, render, keepMenuOpen)),
+        ...(updateMenuItems(controls.updater, render, announceSetting)),
         { type: "separator" as const },
         // 唯一的退出入口：它触发 before-quit，那里负责回收本壳 spawn 的后端。
         { label: "退出 rolecard-agent", click: () => app.quit() },
@@ -206,12 +194,12 @@ export function createTray(controls: TrayControls): TrayHandle {
 }
 
 /** 把 updater 的状态机翻成托盘的两行（状态 + 动作）。null（dev 态）= 两行都不出。
- *  `keepMenuOpen` 由 createTray 注入：三档开关与通道是设置类条目，点完要原地重开
- *  （见 createTray 里那条注释）；动作类条目（检查/下载/装）不重开。 */
+ *  `announceSetting` 由 createTray 注入：设置类条目点完播报结果（菜单会关是 OS 行为，
+ *  见 createTray 里那条撤掉重开的账）；动作类条目不播：它们的去向不在菜单里。 */
 function updateMenuItems(
   updater: Updater | null,
   refresh: () => void,
-  keepMenuOpen: (label: string, value: string) => void,
+  announceSetting: (label: string, value: string) => void,
 ): MenuItemConstructorOptions[] {
   if (!updater) return [];
   const state = updater.state();
@@ -270,7 +258,7 @@ function updateMenuItems(
     click: (item: MenuItem) => {
       updater.setPrefs({ [key]: item.checked });
       refresh();
-      keepMenuOpen(label, item.checked ? "开" : "关");
+      announceSetting(label, item.checked ? "开" : "关");
     },
   });
   // 更新通道（P10 ③，2026-10-27 接上界面入口）：桌面版没有金丝雀，分通道的 feed 就是灰度。
@@ -297,7 +285,7 @@ function updateMenuItems(
           click: () => {
             updater.setPrefs({ channel: c.value });
             refresh();
-            keepMenuOpen("更新通道", c.value === "beta" ? "灰度 beta" : "正式版");
+            announceSetting("更新通道", c.value === "beta" ? "灰度 beta" : "正式版");
           },
         }),
       ),
