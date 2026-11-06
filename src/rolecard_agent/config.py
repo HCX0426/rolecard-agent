@@ -268,7 +268,7 @@ class Settings(BaseModel):
     # 用字符而不是 token：中文场景下字符数是保守代理，且不必引入分词器依赖。
     # 24000 是给 7B 本地模型（通常 32k 上下文）留出 system + 回答余量的取值。
     # 设成 0 或负数 = 不裁剪（仅调试用）。
-    context_max_chars: int = 24000
+    context_max_chars: int = 1_000_000
 
     # 单次**工具执行**的总时长上限（秒，见 core/nodes._invoke_tool）。
     # 与 model_timeout_seconds 是两件事：后者管模型调用，本项管工具整体跑多久。
