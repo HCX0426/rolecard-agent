@@ -225,7 +225,7 @@ numpy==2.5.3
     # via
     #   chromadb
     #   onnxruntime
-oauthlib==4.0.0
+oauthlib==4.0.1
     # via requests-oauthlib
 ollama==0.6.3
     # via langchain-ollama

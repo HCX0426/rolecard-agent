@@ -260,8 +260,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--cache-dir",
-        default=str(Path(tempfile.gettempdir()) / "gitleaks-cache"),
-        help="离线装二进制的缓存目录",
+        # 仓内而非 %TEMP%（2026-11-07 实测定的）：门禁把子进程 TEMP 重定向到每趟新建的
+        # `build/tmp/gate-<pid>`（11-04 两发假红的修复），`gettempdir()` 里的缓存因此
+        # 每趟清零 —— 每跑一次门禁都赌一次 GitHub 直连，本日 ConnectionReset 即当场红
+        # （缓存的设计寿命是"一次下载处处复用"，被重定向悄悄改成每趟一赌是那条修复的
+        # 无意副作用）。`build/tmp` 与 cwd、与 TEMP 重定向都无关：按本文件位置推仓根，
+        # 任何跑法下都是同一个目录；gitignored、门禁自己就在里面进出。
+        default=str(Path(__file__).resolve().parents[2] / "build" / "tmp" / "gitleaks-cache"),
+        help="装二进制的缓存目录（仓内 build/tmp/gitleaks-cache：%TEMP% 与重定向都够不着）",
     )
     args = parser.parse_args(argv)
 

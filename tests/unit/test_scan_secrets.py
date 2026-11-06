@@ -112,6 +112,38 @@ def test_装不到工具按红退2(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert scan.main(["--repo", str(repo)]) == 2
 
 
+def test_缓存目录住在仓内而不在每趟一换的临时区(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--cache-dir` 默认必须是仓内 `build/tmp/gitleaks-cache`，不是 `gettempdir()`。
+
+    2026-11-07 实测的红：门禁（11-04 两发假红的修复）把子进程 TEMP 重定向到每趟新建
+    的 `build/tmp/gate-<pid>`，从前的 `%TEMP%` 缓存因此每趟清零 —— 每跑一次门禁都赌
+    一次 GitHub 直连，当日 ConnectionReset 就把密钥扫描这一步打红。缓存的设计寿命是
+    「一次下载处处复用」，这里钉住它与 cwd、与 TEMP 重定向都无关。
+    （装不到仍退 2 的判据归 `test_装不到工具按红退2`，这里钉的只是缓存的落点。）
+    """
+    scan = _load()
+    repo = _fake_repo(tmp_path)
+    monkeypatch.setattr(scan, "_tool_path", lambda: None)
+    seen: dict[str, str] = {}
+
+    def _record(cache: object) -> None:
+        seen["dir"] = str(cache)
+        return None  # 装不上：逼 main 走「装不到工具退 2」那条正路（别让范围步顶包）
+
+    monkeypatch.setattr(scan, "_install_to", _record)
+    # 工具没装上：fail-closed 判据本身一步不许动，照旧退 2。
+    assert scan.main(["--repo", str(repo)]) == 2
+    import tempfile as _tf  # noqa: PLC0415 — 内联拿真实 gettempdir，与被测默认同源
+
+    expected = Path(scan.__file__).resolve().parents[2] / "build" / "tmp" / "gitleaks-cache"
+    assert Path(seen["dir"]) == expected, "缓存默认必须按脚本位置推仓根（cwd 变了也同址）"
+    assert Path(seen["dir"]) != Path(_tf.gettempdir()) / "gitleaks-cache", (
+        "缓存落回 %TEMP% 就会随门禁的每趟 TEMP 重定向清零 —— 每跑一次赌一次外网"
+    )
+
+
 def test_挂死变一次干净的红而不是无限等(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
