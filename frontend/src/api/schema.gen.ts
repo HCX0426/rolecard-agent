@@ -439,6 +439,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/knowledge/{scope}/documents/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Knowledge Document
+         * @description 删除知识库里的**某一份文档**（按展示名解析身份，删它的全部分块 + 投影行）。
+         *
+         *     与 `DELETE /api/knowledge/{scope}`（清空整个作用域）是两种破坏力：这条只动指名的那份，
+         *     同作用域里别的文档不受影响。名字→身份→分块的解析全在 `KnowledgeBase.delete_document`
+         *     （复用 `delete_source` 那条认身份的删除，不另写第二套匹配）。破坏性管理动作，写审计
+         *     （含删掉的分块数）；前端二次确认后调用。名字查不到 = 删 0 段、200 如实报，不是 404
+         *     —— "这一份不在了"与"从没有过这一份"对使用者是同一个安全结果，重复点删除不该报错。
+         */
+        delete: operations["delete_knowledge_document_api_knowledge__scope__documents__name__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/local-service": {
         parameters: {
             query?: never;
@@ -5323,6 +5349,38 @@ export interface operations {
             header?: never;
             path: {
                 scope: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_knowledge_document_api_knowledge__scope__documents__name__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scope: string;
+                name: string;
             };
             cookie?: never;
         };

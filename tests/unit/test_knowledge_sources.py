@@ -93,3 +93,24 @@ def test_seed_is_a_noop_on_fully_projected_state(tmp_path: Path, conn) -> None:
 
     assert heal_knowledge_sources(kb, conn) == 0
     assert store.names("health_reports") == ["报告.pdf"]
+
+
+def test_keys_by_name_resolves_identity_for_delete(conn) -> None:
+    """按展示名删文档的下刀口：名字 → 全部索引身份。重名两份都列出来，删才不漏。
+
+    `delete_document` 靠它把概览给的展示名对上分块身份（身份才是删除的靶子）。
+    """
+    store = KnowledgeSourceStore(conn)
+    store.remember("s", "k1", "报告.pdf")
+    store.remember("s", "k2", "报告.pdf")  # 同名不同身份（两份"报告.pdf"）
+    store.remember("s", "k3", "别的.pdf")
+    store.remember("t", "k9", "报告.pdf")  # 别的作用域同名，不串味
+
+    assert store.keys_by_name("s", "报告.pdf") == ["k1", "k2"]
+    assert store.keys_by_name("s", "别的.pdf") == ["k3"]
+    assert store.keys_by_name("s", "没有的名字") == []
+    assert store.keys_by_name("空作用域", "报告.pdf") == []
+
+    # 删掉身份后，名字解析跟着收（投影与身份同批行，不另开事实源）。
+    store.forget("s", "k1")
+    assert store.keys_by_name("s", "报告.pdf") == ["k2"]

@@ -166,6 +166,30 @@ def import_knowledge_document(
     return {**body, "scope": scope, "queued": submitted}
 
 
+@router.delete("/api/knowledge/{scope}/documents/{name}", status_code=200)
+def delete_knowledge_document(
+    scope: str, name: str, ctx: AppContext = Depends(get_context), actor: Actor = Depends(get_actor)
+) -> object:
+    """删除知识库里的**某一份文档**（按展示名解析身份，删它的全部分块 + 投影行）。
+
+    与 `DELETE /api/knowledge/{scope}`（清空整个作用域）是两种破坏力：这条只动指名的那份，
+    同作用域里别的文档不受影响。名字→身份→分块的解析全在 `KnowledgeBase.delete_document`
+    （复用 `delete_source` 那条认身份的删除，不另写第二套匹配）。破坏性管理动作，写审计
+    （含删掉的分块数）；前端二次确认后调用。名字查不到 = 删 0 段、200 如实报，不是 404
+    —— "这一份不在了"与"从没有过这一份"对使用者是同一个安全结果，重复点删除不该报错。
+    """
+    if not re.fullmatch(SCOPE_PATTERN, scope):
+        raise HTTPException(status_code=400, detail="作用域名不合法（小写字母开头，a-z0-9_）。")
+    removed = ctx.knowledge.delete_document(scope, name)
+    ctx.audit.log(
+        actor=actor.id,
+        action="delete_knowledge_document",
+        target=f"{scope}:{name}",
+        detail={"chunks_removed": removed},
+    )
+    return {"scope": scope, "name": name, "removed_chunks": removed}
+
+
 @router.delete("/api/knowledge/{scope}")
 def reset_knowledge_scope(
     scope: str, ctx: AppContext = Depends(get_context), actor: Actor = Depends(get_actor)

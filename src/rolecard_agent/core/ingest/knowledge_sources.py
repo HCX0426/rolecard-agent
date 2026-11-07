@@ -34,6 +34,21 @@ class KnowledgeSourceStore:
         ).fetchall()
         return [str(r["name"]) for r in rows]
 
+    def keys_by_name(self, scope: str, name: str) -> list[str]:
+        """某展示名背后的**索引身份**清单（删除某一份文档时按身份精确下刀）。
+
+        概览页 `describe()` 给的 sources 是展示名，而 `delete_source` 认的是身份 —— 两份
+        「报告.pdf」同名不同身份，删名字必须连它们各自的分块都清掉，所以一次解析出全部
+        身份。展示名唯一时这就是单元素；查不到 = 空清单（幂等，重复删除/已重建不报错）。
+        读的是 `names()` 同一张投影表、同一批行 —— 不新开第二份事实源。
+        """
+        rows = self._conn.execute(
+            "SELECT source_key FROM knowledge_source WHERE scope = ? AND name = ? "
+            "ORDER BY source_key",
+            (scope, name),
+        ).fetchall()
+        return [str(r["source_key"]) for r in rows]
+
     def remember(self, scope: str, source_key: str, name: str) -> None:
         """记下/更新一个来源。同身份重传 = 改名，同一行就地更新（不产生孤儿）。"""
         self._conn.execute(

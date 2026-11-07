@@ -50,6 +50,8 @@ class SourceProjection(Protocol):
 
     def names(self, scope: str) -> list[str]: ...
 
+    def keys_by_name(self, scope: str, name: str) -> list[str]: ...
+
     def remember(self, scope: str, source_key: str, name: str) -> None: ...
 
     def forget(self, scope: str, source_key: str) -> None: ...
@@ -737,6 +739,26 @@ class KnowledgeBase:
         self._invalidate_collection(scope)
         self._forget_source(scope, source)
         return len(ids)
+
+    def delete_document(self, scope: str, name: str) -> int:
+        """按**展示名**删除某一份文档：解析出名字背后的全部索引身份，逐个精确删。
+
+        这是知识库管理页「删除这一份文档」的口子。概览只给展示名（`describe()` 的
+        sources），而分块按身份存在 —— 同名多身份（两份「报告.pdf」）必须全删，
+        否则"删掉了"的名单里还藏着另一份的原文。身份清单、分块匹配、投影清理都走
+        `delete_source` 同一条路（它认身份、这里只做名字→身份的解析），**不另写第二套
+        匹配逻辑** —— 与 `search_knowledge` 没有 scope 参数是同一条归一纪律。
+
+        查不到名字 = 0（幂等：重复删除、或来源只在投影不在分块的旧形状，走
+        delete_source 的自愈分支把投影行清掉）。裸建法（无投影注入）不给名字入口：
+        那是单测/脚本的形状，名字→身份没有可查的表。
+        """
+        if self._sources is None:
+            raise ValueError("裸建的知识库没有来源投影，无法按展示名删除")
+        keys = self._sources.keys_by_name(scope, name)
+        if not keys:
+            return 0
+        return sum(self.delete_source(scope, key) for key in keys)
 
     def search(
         self, scopes: Sequence[str], query: str, k: int = 4, *, tracer: object | None = None

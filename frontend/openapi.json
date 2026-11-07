@@ -8272,6 +8272,55 @@
     "summary": "Reset Knowledge Scope"
    }
   },
+  "/api/knowledge/{scope}/documents/{name}": {
+   "delete": {
+    "description": "删除知识库里的**某一份文档**（按展示名解析身份，删它的全部分块 + 投影行）。\n\n与 `DELETE /api/knowledge/{scope}`（清空整个作用域）是两种破坏力：这条只动指名的那份，\n同作用域里别的文档不受影响。名字→身份→分块的解析全在 `KnowledgeBase.delete_document`\n（复用 `delete_source` 那条认身份的删除，不另写第二套匹配）。破坏性管理动作，写审计\n（含删掉的分块数）；前端二次确认后调用。名字查不到 = 删 0 段、200 如实报，不是 404\n—— \"这一份不在了\"与\"从没有过这一份\"对使用者是同一个安全结果，重复点删除不该报错。",
+    "operationId": "delete_knowledge_document_api_knowledge__scope__documents__name__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "scope",
+      "required": true,
+      "schema": {
+       "title": "Scope",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "name",
+      "required": true,
+      "schema": {
+       "title": "Name",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "title": "Response Delete Knowledge Document Api Knowledge  Scope  Documents  Name  Delete"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Delete Knowledge Document"
+   }
+  },
   "/api/local-service": {
    "get": {
     "description": "本地推理服务的状态：在不在跑、驻留了哪些模型、占多少显存、默认模型能不能常驻。\n\n只读，但同样限回环 —— 状态里带着端口与模型名，公网部署时那也是侦察信息。",

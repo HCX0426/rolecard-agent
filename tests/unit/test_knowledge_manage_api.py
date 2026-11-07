@@ -101,3 +101,55 @@ def test_knowledge_management_writes_audit(tmp_path: Path) -> None:
         actions = {r["action"] for r in rows}
         assert "create_knowledge_scope" in actions
         assert "import_knowledge_document" in actions
+
+
+def test_document_delete_removes_only_that_document(tmp_path: Path) -> None:
+    """删某一份文档：它的全部分块走、同库别的文档不受影响，且写审计（用户报的缺口）。
+
+    概览只给展示名，删除按名解析身份下刀 —— 这正是「有删除某个结构化知识的按钮吗」
+    此前找不到地方那一问的后端出口。用导入回来的真实展示名，不猜 safe_name 的写法。
+    """
+    app = create_app(sqlite_path=tmp_path / "kb5.db")
+    with TestClient(app) as client:
+        client.post("/api/knowledge/scopes", json={"name": "trip_notes"})
+        first = client.post(
+            "/api/knowledge/scopes/trip_notes/documents",
+            files={"file": ("kyoto.md", "京都巴士一日券 700 円。".encode(), "text/markdown")},
+        )
+        _wait_indexed(client, first.json()["task_id"])
+        second = client.post(
+            "/api/knowledge/scopes/trip_notes/documents",
+            files={"file": ("osaka.md", "大阪城公园门票 600 円。".encode(), "text/markdown")},
+        )
+        _wait_indexed(client, second.json()["task_id"])
+
+        described = {row["scope"]: row for row in client.get("/api/knowledge").json()}
+        sources = described["trip_notes"]["sources"]
+        kyoto = next(s for s in sources if "kyoto" in s)
+        osaka = next(s for s in sources if "osaka" in s)
+        before = described["trip_notes"]["chunks"]
+
+        res = client.delete(f"/api/knowledge/trip_notes/documents/{kyoto}")
+        assert res.status_code == 200
+        assert res.json()["removed_chunks"] >= 1
+
+        after = {row["scope"]: row for row in client.get("/api/knowledge").json()}["trip_notes"]
+        assert after["chunks"] == before - res.json()["removed_chunks"]
+        assert kyoto not in after["sources"], "删掉的文档还在来源名单里"
+        assert osaka in after["sources"], "不该连带删掉别的文档"
+
+        actions = {r["action"] for r in client.get("/api/audit?limit=50").json()}
+        assert "delete_knowledge_document" in actions
+
+
+def test_document_delete_is_idempotent_and_validates_scope(tmp_path: Path) -> None:
+    """删不存在的名 = 200 删 0 段（重复点删除不该报错）；坏作用域名 = 400（与建库同口径）。"""
+    app = create_app(sqlite_path=tmp_path / "kb6.db")
+    with TestClient(app) as client:
+        client.post("/api/knowledge/scopes", json={"name": "trip_notes"})
+        gone = client.delete("/api/knowledge/trip_notes/documents/从没入过库.pdf")
+        assert gone.status_code == 200
+        assert gone.json()["removed_chunks"] == 0
+
+        bad = client.delete("/api/knowledge/1 Bad/documents/x.pdf")
+        assert bad.status_code == 400

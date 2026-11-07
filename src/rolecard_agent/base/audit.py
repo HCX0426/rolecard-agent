@@ -58,6 +58,7 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "fs_read",
         "fs_write",
         "create_knowledge_scope",
+        "delete_knowledge_document",
         "set_appearance_background",
         "export_role_card",
         "import_knowledge_document",

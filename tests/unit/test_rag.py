@@ -54,6 +54,9 @@ class _FakeProjection:
     def names(self, scope: str) -> list[str]:
         return sorted(set(self.rows.get(scope, {}).values()))
 
+    def keys_by_name(self, scope: str, name: str) -> list[str]:
+        return sorted(k for k, n in self.rows.get(scope, {}).items() if n == name)
+
     def remember(self, scope: str, source_key: str, name: str) -> None:
         self.rows.setdefault(scope, {})[source_key] = name
 
@@ -298,6 +301,53 @@ def test_delete_source_is_idempotent_on_missing_targets(kb: KnowledgeBase) -> No
 
     assert kb.delete_source("health_reports", "task-1") >= 1
     assert kb.delete_source("health_reports", "task-1") == 0
+
+
+def test_delete_document_removes_only_that_document(kb: KnowledgeBase) -> None:
+    """按展示名删一份文档：它的全部分块走，同作用域别的文档不受影响。
+
+    这是知识库管理页「删除这一份文档」的底座 —— 概览只给展示名，删除要能对上身份。
+    """
+    kb.index("health_reports", "task-1", DOC_A, source_name="报告A.pdf")
+    kb.index("health_reports", "task-2", DOC_B, source_name="报告B.pdf")
+    before = kb.scope_count("health_reports")
+
+    removed = kb.delete_document("health_reports", "报告A.pdf")
+
+    assert removed >= 1
+    assert kb.scope_count("health_reports") == before - removed
+    hits = kb.search(["health_reports"], "胆囊结石随访", k=8)
+    assert all(h.source_key != "task-1" for h in hits), "删掉的那份仍能被检索到"
+    assert any(h.source_key == "task-2" for h in hits), "不该连带删掉别的文档"
+    assert kb.describe()[0]["sources"] == ["报告B.pdf"]
+
+
+def test_delete_document_same_name_two_identities_removes_both(tmp_path: Path) -> None:
+    """两份「报告.pdf」（不同身份、同一展示名）删名字必须两份都清 —— 否则名单里还藏着原文。"""
+    store = _FakeProjection()
+    kb = KnowledgeBase(tmp_path / "chroma", HashEmbedder(), sources_store=store)
+    kb.index("trip_notes", "task-a", DOC_A, source_name="报告.pdf")
+    kb.index("trip_notes", "task-b", DOC_B, source_name="报告.pdf")
+    assert store.keys_by_name("trip_notes", "报告.pdf") == ["task-a", "task-b"]
+
+    removed = kb.delete_document("trip_notes", "报告.pdf")
+
+    assert removed >= 2
+    assert store.rows.get("trip_notes") == {}
+    assert kb.search(["trip_notes"], "胆囊结石", k=8) == []
+
+
+def test_delete_document_is_idempotent_on_missing_name(kb: KnowledgeBase) -> None:
+    """名字查不到 = 返回 0 不抛错（重复点删除、或删一个不存在的名，都是同一个安全结果）。"""
+    assert kb.delete_document("没这个作用域", "不存在.pdf") == 0
+    assert kb.delete_document("health_reports", "从没入过库.pdf") == 0
+
+
+def test_delete_document_rejects_bare_built_kb(tmp_path: Path) -> None:
+    """裸建法（无来源投影）不给按名删除的口子：名字→身份没有可查的表，loud 而非静默 0。"""
+    kb = KnowledgeBase(tmp_path / "chroma", HashEmbedder())
+    with pytest.raises(ValueError, match="来源投影"):
+        kb.delete_document("health_reports", "报告A.pdf")
 
 
 def test_reindexing_with_empty_text_clears_the_old_chunks(kb: KnowledgeBase) -> None:

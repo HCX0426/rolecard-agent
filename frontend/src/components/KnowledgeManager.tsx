@@ -142,6 +142,23 @@ export function KnowledgeManager() {
     }
   }
 
+  /** 删除某一份文档（破坏性）：按展示名删它的全部分块 + 投影行，走二次确认 + 审计。
+
+   *  与「重建（清空）」是两种破坏力：这条只动指名的那份，同库别的文档不受影响。
+   *  后端按名字解析身份（同名多份一起清），删不到也回 200 删 0 段 —— 重复点不报错。
+   */
+  async function deleteDocument(scope: string, name: string) {
+    try {
+      const r = await api.del<{ removed_chunks: number }>(
+        `/api/knowledge/${encodeURIComponent(scope)}/documents/${encodeURIComponent(name)}`,
+      );
+      say("ok", `已删除 ${name}（移除 ${r.removed_chunks} 段，写入审计）`);
+      await load();
+    } catch (e) {
+      say("error", `删除失败：${describeError(e)}`);
+    }
+  }
+
   /** 盘点上传目录里的孤儿文件（**只读**，不动任何文件）。 */
   async function scanOrphans() {
     setBusy(true);
@@ -323,15 +340,36 @@ export function KnowledgeManager() {
                   重建（清空）
                 </Button>
               </div>
-              {/* 来源文件 chips：比裸文本列表更易扫读（行数多时两列排布）。 */}
+              {/* 来源文件 chips：每份都带一个删除钮（此前只列名、删不掉单个，只能整库清空）。
+                  钮在卡片这个 role=button 的选中区里，必须 stopPropagation，否则点删除
+                  顺带把库选中了。二次确认才下刀（后端按名解析身份、写审计）。 */}
               <ul className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2">
                 {(s.sources ?? []).map((src) => (
                   <li
                     key={src}
-                    className="truncate rounded bg-slate-50 px-2 py-0.5 font-mono text-11 text-slate-500"
+                    className="flex items-center justify-between gap-1 truncate rounded bg-slate-50 px-2 py-0.5 font-mono text-11 text-slate-500"
                     title={src}
                   >
-                    {src}
+                    <span className="truncate">{src}</span>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded px-1 text-11 text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/30"
+                      title="删除这一份文档（含它的全部检索分块，不可恢复）"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (
+                          await confirm({
+                            title: "删除这一份文档？",
+                            body: `将从知识库 ${s.scope} 删除「${src}」的全文与它的检索分块，不可恢复，且写入审计。`,
+                            confirmText: "确认删除",
+                            danger: true,
+                          })
+                        )
+                          void deleteDocument(s.scope ?? "", src);
+                      }}
+                    >
+                      删除
+                    </button>
                   </li>
                 ))}
               </ul>

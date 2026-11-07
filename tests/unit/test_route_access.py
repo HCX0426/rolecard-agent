@@ -102,6 +102,7 @@ def test_boundaries_that_are_easy_to_get_wrong() -> None:
         ("POST", "/api/knowledge/scopes", OPERATOR),
         ("DELETE", "/api/knowledge/health_reports", OPERATOR),
         ("POST", "/api/knowledge/scopes/health_reports/documents", OPERATOR),
+        ("DELETE", "/api/knowledge/health_reports/documents/报告.pdf", OPERATOR),
         ("GET", "/api/uploads/tasks/t1", USER),
         ("POST", "/api/uploads/cleanup", OPERATOR),
         # 审批整条收操作员（安全审计 #4）：列表没有归属过滤，读侧留 user 等于把别人
