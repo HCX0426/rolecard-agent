@@ -142,3 +142,16 @@ class DomainDataService:
             raise KeyError(record_id)
         self._conn.execute("DELETE FROM domain_data WHERE id = ?", (record_id,))
         self._conn.commit()
+
+    def drop_domain_records(self, domain: str) -> int:
+        """删掉某个域的**全部**通用记录（不限用户），返回删掉的条数。
+
+        域是实例级资源（`plugin` 表无用户归属列），删域对所有人都删 —— 记录也跟着走，
+        否则界面把域摘了、`domain_data` 里那批行还留着，重建同名域会看见"上辈子"的旧数据
+        （清单与数据的生死必须同步，这是"域的唯一事实源就是这张表 + 它的记录"那一格）。
+        """
+        self.check_domain(domain)
+        cur = self._conn.execute("DELETE FROM domain_data WHERE domain = ?", (domain,))
+        rowcount = cur.rowcount
+        self._conn.commit()
+        return rowcount

@@ -28,6 +28,12 @@ export default function DataPage({ initialBlock }: { initialBlock?: MaterialsBlo
   // 领域列表的失败要有出口：从前静默吞掉，"正在加载领域…"成了永久文案——失败与"没数据"
   // 不可区分（2026-10-30 交互审计）。
   const [domainsErr, setDomainsErr] = useState("");
+  // 域清单是否真的读回来过一次：空清单与"还没读回来"分开说（删域后归零是可达状态）。
+  const [domainsLoaded, setDomainsLoaded] = useState(false);
+  // 域增删（用户自己决定有哪些域）：输入框 + 一条在途旗防连点。
+  const [newDomain, setNewDomain] = useState("");
+  const [domainBusy, setDomainBusy] = useState(false);
+  const confirmDomain = useConfirm();
   const loadDomains = useCallback(() => {
     return api
       .get<DomainInfo[]>("/api/domains")
@@ -36,6 +42,7 @@ export default function DataPage({ initialBlock }: { initialBlock?: MaterialsBlo
         // 默认停在第一个域（还没选过时）—— 不要让"两个域都铺开"成为初始形态。
         setActiveDomain((cur) => cur || list[0]?.id || "");
         setDomainsErr("");
+        setDomainsLoaded(true);
       })
       .catch((e) => setDomainsErr(describeError(e)));
   }, []);
@@ -43,6 +50,46 @@ export default function DataPage({ initialBlock }: { initialBlock?: MaterialsBlo
   useEffect(() => {
     loadDomains();
   }, [loadDomains]);
+
+  async function createDomain() {
+    const id = newDomain.trim();
+    if (!id) return;
+    setDomainBusy(true);
+    try {
+      await api.post("/api/settings/domains", { id });
+      setNewDomain("");
+      await loadDomains();
+    } catch (e) {
+      setDomainsErr(describeError(e));
+    } finally {
+      setDomainBusy(false);
+    }
+  }
+
+  async function removeDomain() {
+    const id = activeDomain;
+    if (!id) return;
+    if (
+      !(await confirmDomain({
+        title: "删除这个域？",
+        body: `将从资料页删除域「${id}」，它名下的全部结构化记录一并删除，不可恢复。`,
+        confirmText: "确认删除",
+        danger: true,
+      }))
+    )
+      return;
+    setDomainBusy(true);
+    try {
+      await api.del(`/api/settings/domains/${encodeURIComponent(id)}`);
+      // 删的是当前选中域：清空选择，让 loadDomains 落到剩下的第一个（或归零）。
+      setActiveDomain("");
+      await loadDomains();
+    } catch (e) {
+      setDomainsErr(describeError(e));
+    } finally {
+      setDomainBusy(false);
+    }
+  }
 
   return (
     <div className="h-full overflow-y-auto p-4 md:p-6">
@@ -95,6 +142,42 @@ export default function DataPage({ initialBlock }: { initialBlock?: MaterialsBlo
                   onChange={(key) => setActiveDomain(key)}
                 />
               )}
+              {/* 域清单的增删（用户拍板："域让用户自己决定，不要卡死功能"）。两条都打
+                  `/api/settings/domains` —— 后端把它们放在操作员档（与知识库写侧同一条
+                  纪律），单机档本机来源永远放行，这里零感知。 */}
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <input
+                  value={newDomain}
+                  onChange={(e) => setNewDomain(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void createDomain();
+                  }}
+                  placeholder="新域名（小写字母开头，如 trip_notes）"
+                  className="min-w-48 flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs outline-none focus:border-blue-400"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  type="button"
+                  className="text-xs"
+                  disabled={!newDomain.trim() || domainBusy}
+                  onClick={() => void createDomain()}
+                >
+                  ＋ 新建域
+                </Button>
+                {activeDomain && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    className="ml-auto text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/30"
+                    disabled={domainBusy}
+                    onClick={() => void removeDomain()}
+                  >
+                    删除当前域
+                  </Button>
+                )}
+              </div>
               {domainsErr ? (
                 <div className="mt-4 flex items-center gap-2 text-xs">
                   <span className="text-red-600 dark:text-red-400">领域列表没读到：{domainsErr}</span>
@@ -106,7 +189,13 @@ export default function DataPage({ initialBlock }: { initialBlock?: MaterialsBlo
                   </button>
                 </div>
               ) : domains.length === 0 && (
-                <p className="mt-4 text-xs text-slate-400">正在加载领域…</p>
+                <p className="mt-4 text-xs text-slate-400">
+                  {/* 2026-10-30 那条审计的另一半：删域成了可达状态后，"真的一个都没有"与
+                      "还在读"必须分开，否则空清单会被那句永久 loading 话术盖住。 */}
+                  {domainsLoaded
+                    ? "还没有任何域：用上面「＋ 新建域」建一个，往里面补录结构化记录。"
+                    : "正在加载领域…"}
+                </p>
               )}
               {activeDomain && (
                 <section className="mt-4">

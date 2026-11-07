@@ -77,6 +77,9 @@ CREATE TABLE IF NOT EXISTS plugin (
     plugin_id     TEXT PRIMARY KEY,
     display_name  TEXT NOT NULL,
     enabled       INTEGER NOT NULL DEFAULT 0,
+    retired       INTEGER NOT NULL DEFAULT 0,  -- 用户在资料页删掉的域打这一格：行留着（播种
+                                               -- ON CONFLICT DO NOTHING 因此永不复活），读侧
+                                               -- list_plugins/enabled_domains 过滤掉它。
     config_json   TEXT,
     sort_order    INTEGER NOT NULL DEFAULT 0,
     updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP

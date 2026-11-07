@@ -1009,6 +1009,34 @@
     "title": "DistillOutcomeView",
     "type": "object"
    },
+   "DomainCreate": {
+    "description": "新建一个域的请求体。id 走通用记录通路（同 `finance` 的形状），display_name 缺省同 id。",
+    "properties": {
+     "display_name": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Display Name"
+     },
+     "id": {
+      "maxLength": 32,
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id"
+    ],
+    "title": "DomainCreate",
+    "type": "object"
+   },
    "DomainRecordCreate": {
     "description": "一条通用领域记录（最小可用：标签 + 数值或文本）。",
     "properties": {
@@ -7833,7 +7861,7 @@
   },
   "/api/domains": {
    "get": {
-    "description": "已注册域的清单（id + 展示名）—— 资料页的域分组与「关于」面板的来源。\n\n2026-10-24 权限模型收口：域常开后清单就是 `plugin` 表的全部行（原 `/api/plugins`\n端点退役），\"enabled\" 字段随之失去意义，不再回传。",
+    "description": "已注册域的清单（id + 展示名）—— 资料页的域分组与「关于」面板的来源。\n\n2026-10-24 权限模型收口：域常开后清单就是 `plugin` 表的全部行（原 `/api/plugins`\n端点退役），\"enabled\" 字段随之失去意义，不再回传。用户在资料页删掉的域（retired=1）\n已被 `list_plugins` 滤掉，这里不再列出。",
     "operationId": "list_domains_api_domains_get",
     "responses": {
      "200": {
@@ -10414,6 +10442,78 @@
      }
     },
     "summary": "List Sessions"
+   }
+  },
+  "/api/settings/domains": {
+   "post": {
+    "description": "用户新建一个**数据域**（资料页「＋ 新建域」）—— 把功能决定权交回用户。\n\n路径住 `/api/settings/domains` 而不是 `/api/domains`，是**访问档**的选择，不是分类洁癖：\n`/api/domains` 前缀整体归使用者（用户要在自己的域里增删记录），若新建/删除也挂在那儿，\n任一使用者凭据就能改写\"这台机器有哪些能力域\"的清单 —— 而域清单是操作员面\n（`domains/registry.py` 开头那条：运行时域集合绝不暴露给模型，自我扩权红线）。这与\n知识库\"读侧 user、写侧 operator\"（2026-10-30 安全审计 #2）是同一条纪律的两半。\n\nid 形状由 `DomainDataService.check_domain` 把关（与通用记录通路同一条正则，不在这里抄\n第二份）；撞已存在（且未退役）的名 → 409（显式新建撞名必须报错，不像播种那样静默跳过；\n撞一个已退役的名由 `create` 就地复活那一格兜住，见下）。新建的是纯数据域：没有代码侧的\nSPEC/工具/专属路由，通用记录通路（`/api/domains/{id}/records`）本就按 `domain_data` 表\n工作，`finance` 就是这个形状。",
+    "operationId": "create_domain_api_settings_domains_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DomainCreate"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DomainsView"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Create Domain"
+   }
+  },
+  "/api/settings/domains/{domain}": {
+   "delete": {
+    "description": "删掉一个域（资料页「删除这个域」）：置退役旗 + 清掉它的全部通用记录，**不留两套真相**。\n\n退役不是删行（`PluginService.retire` 的理由：播种 `ON CONFLICT DO NOTHING`，行留着才\n不会被 `seed_plugin_rows` 重新播回 —— 代码侧的 health/finance 用户删了也不复活）。\n清单读侧（`list_plugins`/`enabled_domains`）都滤 `retired=1`，删完界面上的页签与\n`list_domains` 工具立刻都不再列出它；装配根据 `retired_domain_ids()` 不挂它的专属路由，\n所以代码域退役后连 `/api/records` 那族也跟着下线 —— \"清单里没有\"与\"端点还在服务\"\n绝不能同时成立。记录数据一并删（域是实例级资源，删对所有人删）。\n\n域不存在 / 已退役 → 404（`retire` 返回 0 行）。",
+    "operationId": "delete_domain_api_settings_domains__domain__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "domain",
+      "required": true,
+      "schema": {
+       "title": "Domain",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "204": {
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Delete Domain"
    }
   },
   "/api/settings/memory": {

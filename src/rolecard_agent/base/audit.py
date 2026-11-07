@@ -40,6 +40,8 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "clear_task_dir",
         "consolidate_memory",
         "create_domain_record",
+        "create_domain",
+        "retire_domain",
         "create_report",
         "create_role",
         "create_session",

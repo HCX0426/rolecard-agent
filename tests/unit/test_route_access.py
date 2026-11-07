@@ -103,6 +103,12 @@ def test_boundaries_that_are_easy_to_get_wrong() -> None:
         ("DELETE", "/api/knowledge/health_reports", OPERATOR),
         ("POST", "/api/knowledge/scopes/health_reports/documents", OPERATOR),
         ("DELETE", "/api/knowledge/health_reports/documents/报告.pdf", OPERATOR),
+        # 域清单的增删是操作员面（域集合绝不交给使用者改写，同 registry 开头那条自我
+        # 扩权红线）；路径特意住 `/api/settings/domains` 而非 `/api/domains` —— 后者前缀
+        # 整体归 user（使用者要在自己域里增删记录），新建/删除若挂在那儿就会被那条 _ANY
+        # 一并放行成 user。这条与知识库"读侧 user、写侧 operator"是同一条纪律的两半。
+        ("POST", "/api/settings/domains", OPERATOR),
+        ("DELETE", "/api/settings/domains/health", OPERATOR),
         ("GET", "/api/uploads/tasks/t1", USER),
         ("POST", "/api/uploads/cleanup", OPERATOR),
         # 审批整条收操作员（安全审计 #4）：列表没有归属过滤，读侧留 user 等于把别人

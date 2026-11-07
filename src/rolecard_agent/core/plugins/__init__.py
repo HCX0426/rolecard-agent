@@ -92,7 +92,7 @@ class PluginService:
     def list_plugins(self) -> list[dict[str, object]]:
         rows = self._conn.execute(
             "SELECT plugin_id, display_name, enabled, config_json, sort_order "
-            "FROM plugin ORDER BY sort_order, plugin_id"
+            "FROM plugin WHERE retired = 0 ORDER BY sort_order, plugin_id"
         ).fetchall()
         return [
             {
@@ -111,14 +111,33 @@ class PluginService:
         return bool(row["enabled"]) if row else False
 
     def enabled_domains(self) -> list[str]:
-        """**已注册的全部域** —— 域常开（2026-10-24 权限模型收口）。
+        """**在册的全部域** —— 域常开（2026-10-24 权限模型收口），但**摘掉的不算**
+        （`retired=1` 是用户在资料页删掉的域，界面上与模型的可见集里都不该再出现）。
 
         从前这里是 `WHERE enabled = 1`：操作员开关 + 角色白名单双层过滤。现在
-        **白名单即唯一边界**，这张表退化为域清单，全部返回。仍按每次调用现读而非
-        快照：`seed_plugin_rows` 播种的新域在下一轮即可见，语义与"热生效"一致。
+        **白名单即唯一边界**，`enabled` 那一格退役为播种/新建的默认值；新增的 `retired`
+        不是"开关"而是"清单上还写不写这个名字" —— 它同时从 `list_plugins` 与这里滤掉，
+        所以界面列表、`list_domains` 工具、工具可见性闸三处读的是同一张表的同一批行。
+
+        仍按每次调用现读而非快照：`seed_plugin_rows` 播种的新域在下一轮即可见，语义与
+        "热生效"一致；反过来说，用户删掉的域在下一轮就消失，不需要重启。
         """
-        rows = self._conn.execute("SELECT plugin_id FROM plugin ORDER BY plugin_id").fetchall()
+        rows = self._conn.execute(
+            "SELECT plugin_id FROM plugin WHERE retired = 0 ORDER BY plugin_id"
+        ).fetchall()
         return [str(row["plugin_id"]) for row in rows]
+
+    def retired_domain_ids(self) -> set[str]:
+        """被用户删掉的域 id 集合 —— 装配根据此**不挂**它的专属路由。
+
+        为什么必须单独给这一格：带专属路由的富域在 `discover_specs()` 里是目录枚举，
+        装配点按它挂 `router_contrib` 交回的那族路由。用户在资料页把它删了，若路由照挂，
+        就出现"清单里没有、端点却还在服务"的两套真相 —— 正是本仓最忌讳的形状。读同一张
+        `plugin` 表（与 list_plugins/enabled_domains 同源），把"删了"这个事实贯彻到挂载
+        这一层。开机时表已由 bootstrap 播种，此处读得到。
+        """
+        rows = self._conn.execute("SELECT plugin_id FROM plugin WHERE retired = 1").fetchall()
+        return {str(row["plugin_id"]) for row in rows}
 
     # -- writes ----------------------------------------------------------------
 
@@ -143,6 +162,51 @@ class PluginService:
             (plugin_id, display_name or plugin_id, 1 if enabled else 0, sort_order),
         )
         self._conn.commit()
+
+    def create(self, plugin_id: str, *, display_name: str | None = None) -> None:
+        """用户自己新建一个**数据型域**（资料页「＋ 新建域」），不要求代码侧有目录。
+
+        与 `register` 的唯一不同：这里**不过** `_check_known` —— 那道闸是给开机播种用的
+        （"注册了 id 却忘了接工厂"的静默失败防线），而用户建的是纯数据域：通用记录通路
+        （`/api/domains/{domain}/records`）只按 `domain_data` 表 + `check_domain` 的 id 形状
+        工作，**本就不需要 SPEC/工具工厂/路由**（代码里已有的数据型域就是这个形状，
+        只是它写死在树里；内核照样不认识任何一个域名）。
+
+        为什么是 upsert 而不是裸 INSERT：撞一个**已退役**的同名墓碑必须就地复活
+        （`retired=0`），否则 INSERT 撞主键 → 500。而"撞活着的域"由路由的 409 先挡（它读
+        `list_plugins`，只含未退役的行），到得了这里的冲突只可能是墓碑 —— 所以这一格
+        `DO UPDATE ... retired=0` 只做"复活"，永远不会覆盖一个现役域的行。
+        复活即 `enabled=1`：与新建/播种行一致（`enabled` 现为默认值格，读侧已不看它）。
+        """
+        self._conn.execute(
+            "INSERT INTO plugin (plugin_id, display_name, enabled, retired, sort_order) "
+            "VALUES (?, ?, 1, 0, 0) "
+            "ON CONFLICT(plugin_id) DO UPDATE SET retired = 0, enabled = 1, "
+            "  display_name = excluded.display_name, updated_at = CURRENT_TIMESTAMP",
+            (plugin_id, display_name or plugin_id),
+        )
+        self._conn.commit()
+
+    def retire(self, plugin_id: str) -> int:
+        """把域从清单上摘掉（资料页「删除这个域」）：置 `retired=1`，**不删行**。
+
+        为什么是标记而不是 DELETE —— 播种用的是 `ON CONFLICT(plugin_id) DO NOTHING`，
+        所以这行留着就永远不会被 `seed_plugin_rows` 重新点亮（真删行的话，代码侧的域
+        下一次开机又被播回来，用户会看到"删了又活"）；而 `DOMAINS` 只枚举代码目录，
+        用户自己建的 id 本来就不在播种名单里，两种域在这一格上走同一条路。
+        事实源仍是这张表：`list_domains`（界面 + `list_domains` 工具）与
+        `enabled_domains()`（工具可见性的那道闸）都过滤 `retired=0`，删完立刻全线隐身。
+
+        返回被改的行数（0 = 这行不存在；重复 retire 也是 0，调用方按"没这个域"报 404）。
+        """
+        cur = self._conn.execute(
+            "UPDATE plugin SET retired = 1, updated_at = CURRENT_TIMESTAMP "
+            "WHERE plugin_id = ? AND retired = 0",
+            (plugin_id,),
+        )
+        rowcount = cur.rowcount
+        self._conn.commit()
+        return rowcount
 
     # -- internals -------------------------------------------------------------
 

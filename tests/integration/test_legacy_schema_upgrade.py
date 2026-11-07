@@ -745,7 +745,7 @@ def test_a_legacy_upgrade_leaves_the_capability_flags_unmeasured(tmp_path: Path)
 
 
 @pytest.mark.parametrize(
-    ("commit", "expected_missing"), [("14cb9db", 18), ("03631c6", 16)], ids=lambda v: str(v)
+    ("commit", "expected_missing"), [("14cb9db", 19), ("03631c6", 17)], ids=lambda v: str(v)
 )
 def test_audited_shortfall_is_still_the_shortfall(
     commit: str, expected_missing: int, tmp_path: Path
@@ -768,6 +768,9 @@ def test_audited_shortfall_is_still_the_shortfall(
     2026-11-06/07 的范例通道整条删除给**声明**去掉了 `role_card.exemplars` ——
     这是"减列"方向的首次漂移：14cb9db 那份形状本就无此列 ⇒ **18 / 16、合计 34**；
     03631c6 那份形状带该列，它的缺列数一个不动（仍 16）。
+    2026-11-07 的域生命周期（资料页可新建/删除域）给 `plugin` 加了 `retired`（NOT NULL
+    DEFAULT 0，ADD COLUMN 可行）⇒ **19 / 17、合计 36**：两份旧形状的 `plugin` 表都建在
+    这一列之前，各多缺 1 列。
     （这两个数只在测试与这份 docstring 里；审计文档当时没写它，所以不用同步别处。）
     这条红的用途不是"证明坏了"，而是**逼改 schema 的人
     回去看一眼审计文档还写着几个数** —— R26-06 犯的就是"写进文档的数没复算"这一条。

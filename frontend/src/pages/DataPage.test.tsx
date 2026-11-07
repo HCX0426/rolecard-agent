@@ -140,3 +140,36 @@ describe("DataPage 删除报告二次确认（useConfirm）", () => {
     expect(apiMock.del).not.toHaveBeenCalled();
   });
 });
+
+describe("DataPage 域本身的增删（用户自己决定有哪些域）", () => {
+  it("填名点『＋ 新建域』打 POST /api/settings/domains", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    render(<DataPage />);
+    const box = await screen.findByPlaceholderText(/新域名/);
+    fireEvent.change(box, { target: { value: "trip_notes" } });
+    fireEvent.click(screen.getByRole("button", { name: "＋ 新建域" }));
+    await waitFor(() =>
+      expect(apiMock.post).toHaveBeenCalledWith("/api/settings/domains", { id: "trip_notes" }),
+    );
+  });
+
+  it("点『删除当前域』二次确认后才 DELETE，取消则不打", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    render(<DataPage />);
+    // 默认选中 beforeEach 里那唯一一份域 health。
+    fireEvent.click(await screen.findByRole("button", { name: "删除当前域" }));
+    expect(await screen.findByText("删除这个域？")).toBeTruthy();
+    fireEvent.click(screen.getByText("确认删除"));
+    await waitFor(() => expect(apiMock.del).toHaveBeenCalledWith("/api/settings/domains/health"));
+  });
+
+  it("确认框点『取消』不删域", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    render(<DataPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "删除当前域" }));
+    expect(await screen.findByText("删除这个域？")).toBeTruthy();
+    fireEvent.click(screen.getByText("取消"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(apiMock.del).not.toHaveBeenCalled();
+  });
+});

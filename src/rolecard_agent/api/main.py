@@ -300,8 +300,14 @@ def create_app(
         get_actor=get_actor,
         query_services=runtime.assembly.queries,
     )
+    # 被用户在资料页删掉的域（`plugin.retired=1`）**不挂**它交回的专属路由。
+    # 这一步不是锦上添花，是"清单与端点必须同一张脸"的红线：health 是代码侧的域，
+    # `discover_specs()` 只看目录，若这里照挂 `/api/records` 族，用户在界面上删了它、
+    # 列表里没了、端点却还在服务 —— 正是本仓最忌讳的两套真相。读同一张 `plugin` 表
+    # （装配根已播种），把"删了"贯彻到挂载层；开机时表为空 ⇒ 无人退役，行为与从前逐字一致。
+    retired = runtime.assembly.plugins.retired_domain_ids()
     for spec in discover_specs():
-        if spec.router_contrib is None:
+        if spec.router_contrib is None or spec.id in retired:
             continue
         for domain_router in spec.router_contrib(router_deps):
             app.include_router(domain_router)

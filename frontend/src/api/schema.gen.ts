@@ -228,7 +228,8 @@ export interface paths {
          * @description 已注册域的清单（id + 展示名）—— 资料页的域分组与「关于」面板的来源。
          *
          *     2026-10-24 权限模型收口：域常开后清单就是 `plugin` 表的全部行（原 `/api/plugins`
-         *     端点退役），"enabled" 字段随之失去意义，不再回传。
+         *     端点退役），"enabled" 字段随之失去意义，不再回传。用户在资料页删掉的域（retired=1）
+         *     已被 `list_plugins` 滤掉，这里不再列出。
          */
         get: operations["list_domains_api_domains_get"];
         put?: never;
@@ -1555,6 +1556,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/domains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Domain
+         * @description 用户新建一个**数据域**（资料页「＋ 新建域」）—— 把功能决定权交回用户。
+         *
+         *     路径住 `/api/settings/domains` 而不是 `/api/domains`，是**访问档**的选择，不是分类洁癖：
+         *     `/api/domains` 前缀整体归使用者（用户要在自己的域里增删记录），若新建/删除也挂在那儿，
+         *     任一使用者凭据就能改写"这台机器有哪些能力域"的清单 —— 而域清单是操作员面
+         *     （`domains/registry.py` 开头那条：运行时域集合绝不暴露给模型，自我扩权红线）。这与
+         *     知识库"读侧 user、写侧 operator"（2026-10-30 安全审计 #2）是同一条纪律的两半。
+         *
+         *     id 形状由 `DomainDataService.check_domain` 把关（与通用记录通路同一条正则，不在这里抄
+         *     第二份）；撞已存在（且未退役）的名 → 409（显式新建撞名必须报错，不像播种那样静默跳过；
+         *     撞一个已退役的名由 `create` 就地复活那一格兜住，见下）。新建的是纯数据域：没有代码侧的
+         *     SPEC/工具/专属路由，通用记录通路（`/api/domains/{id}/records`）本就按 `domain_data` 表
+         *     工作，`finance` 就是这个形状。
+         */
+        post: operations["create_domain_api_settings_domains_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/domains/{domain}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Domain
+         * @description 删掉一个域（资料页「删除这个域」）：置退役旗 + 清掉它的全部通用记录，**不留两套真相**。
+         *
+         *     退役不是删行（`PluginService.retire` 的理由：播种 `ON CONFLICT DO NOTHING`，行留着才
+         *     不会被 `seed_plugin_rows` 重新播回 —— 代码侧的 health/finance 用户删了也不复活）。
+         *     清单读侧（`list_plugins`/`enabled_domains`）都滤 `retired=1`，删完界面上的页签与
+         *     `list_domains` 工具立刻都不再列出它；装配根据 `retired_domain_ids()` 不挂它的专属路由，
+         *     所以代码域退役后连 `/api/records` 那族也跟着下线 —— "清单里没有"与"端点还在服务"
+         *     绝不能同时成立。记录数据一并删（域是实例级资源，删对所有人删）。
+         *
+         *     域不存在 / 已退役 → 404（`retire` 返回 0 行）。
+         */
+        delete: operations["delete_domain_api_settings_domains__domain__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/memory": {
         parameters: {
             query?: never;
@@ -2617,6 +2679,16 @@ export interface components {
             report: components["schemas"]["MemoryReportView"];
             /** Turns Since */
             turns_since: number;
+        };
+        /**
+         * DomainCreate
+         * @description 新建一个域的请求体。id 走通用记录通路（同 `finance` 的形状），display_name 缺省同 id。
+         */
+        DomainCreate: {
+            /** Display Name */
+            display_name?: string | null;
+            /** Id */
+            id: string;
         };
         /**
          * DomainRecordCreate
@@ -7023,6 +7095,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionsView"];
+                };
+            };
+        };
+    };
+    create_domain_api_settings_domains_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DomainCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainsView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_domain_api_settings_domains__domain__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                domain: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

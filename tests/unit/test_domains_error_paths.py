@@ -92,3 +92,62 @@ def test_一轮增删改之后错误映射不吞审计(client: TestClient) -> No
     assert client.get("/api/domains/health/records").json() == []
     # 删完再改它：仍是 404（而不是"改成功了"或 500）
     assert client.patch(f"/api/domains/health/records/{rid}", json={"note": "x"}).status_code == 404
+
+
+# ---------------------------------------------------------------- 域本身的增删（资料页那两个钮）
+
+
+def _ids(client: TestClient) -> list[str]:
+    return [d["id"] for d in client.get("/api/domains").json()]
+
+
+def test_新建数据域立刻可用且再撞名报错(tmp_path) -> None:
+    """用户建的纯数据域：建完就能挂记录（通用通路本就按 domain_data 表工作），
+    撞现役域名是 409 而不是静默合并 —— 显式新建撞名必须让用户知道撞了谁。"""
+    client = TestClient(create_app(sqlite_path=tmp_path / "d.db"))
+    assert client.post("/api/settings/domains", json={"id": "trip_notes"}).status_code == 201
+    assert "trip_notes" in _ids(client)
+
+    made = client.post(
+        "/api/domains/trip_notes/records", json={"label": "民宿", "value_text": "青旅"}
+    )
+    assert made.status_code == 201, made.text
+
+    clash = client.post("/api/settings/domains", json={"id": "trip_notes"})
+    assert clash.status_code == 409, clash.text
+    # 坏 id 形状仍走"规则不允许"（400），与记录通路同一条尺子
+    assert client.post("/api/settings/domains", json={"id": "2 Bad"}).status_code == 400
+
+
+def test_删域清掉记录并从清单消失(tmp_path) -> None:
+    """删一个域 = 清单行退役 + 它的记录一起走：只摘名字留着数据，重建同名会看见旧数据。"""
+    client = TestClient(create_app(sqlite_path=tmp_path / "del.db"))
+    client.post("/api/settings/domains", json={"id": "books"})
+    client.post("/api/domains/books/records", json={"label": "三体", "value_num": 1})
+
+    assert client.delete("/api/settings/domains/books").status_code == 204
+    assert "books" not in _ids(client)
+    # 名字没了，数据也没了（不是"清单隐身、库裡还堆着"）
+    assert client.get("/api/domains/books/records").json() == []
+    # 再删一次：404（"没这个域"），不是假装成功
+    assert client.delete("/api/settings/domains/books").status_code == 404
+
+
+def test_删掉播种的域不会开机复活(tmp_path) -> None:
+    """health/finance 是播种行：退役必须**持久** —— 重启一次（新 app 对同一个库）仍不在清单里。
+
+    这条钉的是墓碑而不是 DELETE 的理由：播种 ON CONFLICT DO NOTHING，行留着就不会被
+    重新点亮；真删行的话下一次开机又被播回来，用户会看到"删了又活"。
+    """
+    db = tmp_path / "boot.db"
+    first = TestClient(create_app(sqlite_path=db))
+    assert "health" in _ids(first)
+    assert first.delete("/api/settings/domains/health").status_code == 204
+
+    again = TestClient(create_app(sqlite_path=db))
+    assert "health" not in _ids(again), "重启后播种把用户删掉的域又播回来了"
+    # 清单里没有、端点也不该还在服务：装配点按同一张表决定挂不挂载路由
+    assert again.get("/api/records").status_code == 404, "health 已删，/api/records 族必须跟着下线"
+    # 反向那一半：重新建一个同名域 = 就地复活，不是主键冲突 500
+    assert again.post("/api/settings/domains", json={"id": "health"}).status_code == 201
+    assert "health" in _ids(again)
