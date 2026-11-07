@@ -106,7 +106,7 @@ if (-not $NoFrontend) {
 if (-not $NoShell) {
     if (-not (Test-Path (Join-Path $Root "shell\node_modules\electron"))) {
         Say "⚠️ shell 的 electron 没装（或只装了 wrapper 没下二进制）—— 跳过壳。"
-        Say "   要它：cd shell; npm install; npx electron/install.js（国内网先设 ELECTRON_MIRROR，见开发流程.md 壳那节）"
+        Say "   要它：cd shell; npm ci; npx electron/install.js（有 lockfile 一律 npm ci，npm install 会漂出锁；国内网先设 ELECTRON_MIRROR，见开发流程.md 壳那节）"
     } else {
         Say "起桌宠壳（npm run dev：tsc + electron，它会连上面这个 8000 后端）..."
         Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "npm run dev" -WorkingDirectory (Join-Path $Root "shell") `
