@@ -138,12 +138,46 @@ if ($null -ne $main) {
 
 Write-Host "[4/6] silent install"
 $t0 = Get-Date
+# 安装前先记下"装前那份"的指纹：`-Wait` 的退出码**不是**判据（2026-11-07 实测）——
+# 这台机器上 NSIS 静默安装要么早退（exit=2 且一个文件都没写），要么骗过 -Wait
+# （exit=0、进程早已不在、目标目录依然不存在）。症状是脚本一路绿到底，而机器上跑的
+# 还是上一版；这与"构建退出码 0 从来不等于产物是当前的"是同一条教训的安装侧。
+#
+# 所以判据换成**装完之后的事实**：安装目录下两份关键产物必须 (a) 存在、
+# (b) 最后写入时间晚于本次开始时刻。时间戳这条挡的是"文件早就在、内容没换"
+# —— 只查存在等于什么都没查（旧版也满足）。逐字节的正确性仍由下面验货 A/B 兜底。
+$installStamp = $t0
+$probeExe = Join-Path $env:LOCALAPPDATA "Programs\rolecard-agent\rolecard-agent.exe"
+$beforeExists = Test-Path $probeExe
+$beforeTime = if ($beforeExists) { (Get-Item $probeExe).LastWriteTimeUtc } else { $null }
+Write-Host "      before: exists=$beforeExists lastwrite=$(if ($beforeTime) { $beforeTime.ToString('u') } else { '-' })"
+
 $p = Start-Process -FilePath $installer -ArgumentList "/S" -Wait -PassThru
 $secs = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1)
-Write-Host "      exit=$($p.ExitCode) elapsed=${secs}s"
-if ($p.ExitCode -ne 0) { throw "installer returned $($p.ExitCode)" }
+Write-Host "      installer returned exit=$($p.ExitCode) elapsed=${secs}s"
 $lingering = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like "rolecard-agent-$shellVersion*" })
 if ($lingering.Count -gt 0) { throw "installer did not exit: $($lingering.Count) process(es) left" }
+
+# 判据 ①：装完必须**真的在盘上、而且比装前新**。`-Wait` 返回 0 只说明那个进程对象
+# 结束了，不说明它干了活。
+if (-not (Test-Path $probeExe)) {
+    throw ("installer exited $($p.ExitCode) but $probeExe does not exist" +
+        " —— 静默安装没有真正写入（本机已实测过这种'exit=0 但零文件'的形状）")
+}
+$afterTime = (Get-Item $probeExe).LastWriteTimeUtc
+if ($afterTime -lt $installStamp.ToUniversalTime()) {
+    throw ("installed exe is OLDER than this install run: lastwrite=$($afterTime.ToString('u'))" +
+        " started=$($installStamp.ToUniversalTime().ToString('u'))" +
+        " —— 安装器没换文件（退出码 $($p.ExitCode) 不代表装上了）")
+}
+# 判据 ②：退出码非 0 且没换文件才是真的失败；**换了文件时非 0 只报警不拦**
+# （NSIS 在 post-install 收尾失败时也会给非 0，而本体已经装好 —— 那时拦下来只会
+# 让人重装一遍同样的东西）。
+if ($p.ExitCode -ne 0) {
+    Write-Host "      ⚠ installer exit=$($p.ExitCode) but files WERE replaced (exe lastwrite=$($afterTime.ToString('u'))) —— 以事实为准继续验货"
+} else {
+    Write-Host "      files replaced (exe lastwrite=$($afterTime.ToString('u')))"
+}
 
 # 验货 A：装进去的那份 dist 必须是仓库刚构建出来的那份。判据用 `index.html` 里引的
 # 入口资源哈希 —— 它比"文件存在"强，因为旧包里也有同名文件，只有哈希会随构建变。

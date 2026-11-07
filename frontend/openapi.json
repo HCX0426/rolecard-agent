@@ -6640,7 +6640,7 @@
  },
  "info": {
   "title": "rolecard-agent 管理控制台",
-  "version": "0.6.2"
+  "version": "0.6.3"
  },
  "openapi": "3.1.0",
  "paths": {
