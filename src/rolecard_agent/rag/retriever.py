@@ -1198,8 +1198,13 @@ def make_search_tool(kb: KnowledgeBase, *, tracer: object | None = None) -> Base
             )
         try:
             hits = kb.search(scopes, query, k=4, tracer=tracer)
-        except KnowledgeDimensionMismatch as exc:
-            # 维度不一致是管理员可修复的状态（重建索引），不该让整轮对话 500。
+        except (KnowledgeDimensionMismatch, EmbedError) as exc:
+            # 两种都是"查不成"，都不该让整轮对话 500：维度不一致是管理员可修复的状态
+            # （重建索引），嵌入失败（key 失效/额度用尽/网络）是上游瞬时态。文案必须
+            # **带原因**、与「库里没有」区分开——落进 nodes.py 的 TOOL_FAILED 万能句
+            # （"换一种问法"）模型就无从知道是没查到还是查不成。真机实证（dialog100
+            # 2026-11-07）：SiliconFlow 嵌入全程 402，18/26 轮照旧笃定答「查过名单了，
+            # 不会念错」——读数的锅在工具话术，不在语料。
             return f"知识库暂不可用：{exc}"
         if not hits:
             return "知识库中没有找到与该问题相关的内容。"

@@ -346,6 +346,28 @@ def test_scopes_never_in_tool_signature(search_tool) -> None:
     assert "scope" not in schema.get("properties", {})
 
 
+def test_tool_tells_reason_when_embed_fails(kb: KnowledgeBase, search_tool, monkeypatch) -> None:
+    """嵌入炸了（402/key 失效/网络）时模型要拿到**带原因的一句**，而不是万能句。
+
+    真机实证（dialog100 2026-11-07）：SiliconFlow 嵌入全程 402，search_knowledge 抛
+    EmbedError 落到 nodes.py 的 TOOL_FAILED「工具执行失败，请稍后重试或换一种问法」——
+    那话既没说是查不成还是没查到，也没说不该再信"查过"。她 18/26 轮照旧笃定答
+    「查过名单了，不会念错」。判据钉：文案含「知识库暂不可用」且含异常原因，
+    且**不含**「换一种问法」（那是万能句的签名）。与维度不一致同一族：都是查不成。
+    """
+    kb.index("health_reports", "随访须知.md", DOC_A)
+    role_knowledge_scopes_ctx.set(("health_reports",))
+
+    def _boom(texts: list[str]) -> list[list[float]]:
+        raise EmbedError("嵌入请求失败（1 条文本，重试 2 次后仍失败）：402 Payment Required")
+
+    monkeypatch.setattr(kb._embedder, "embed", _boom)
+    out = search_tool.invoke({"query": "复查频率"})
+    assert "知识库暂不可用" in out, out
+    assert "402" in out, "原因必须透传给模型，它才解释得出"
+    assert "换一种问法" not in out, "不许是 TOOL_FAILED 万能句"
+
+
 # -- 嵌入/重排选型：「服务」页的端点序是唯一事实面（P1-5 收口） --------------------------------
 
 
