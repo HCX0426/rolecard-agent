@@ -89,6 +89,10 @@ scripts/_*.js
 
 # --- 打包中间产物（D②-4）：PyInstaller 的 onedir 有几百 MB，永远不入库，安装包现打 ---
 /build/
+# 桌面壳的构建与冒烟产物：`shell/build/` 只入库 `icon.ico`，`tmp/` 放 Electron 冒烟的
+# user-data 缓存（我把 TEMP 指进仓内避沙箱，2026-11-07 误入库过 68 个 Chromium 缓存文件，
+# 其中一条路径 258 字符，直接把密钥扫描的影子树撑爆成 WinError 3）。
+/shell/build/tmp/
 data/sqlite/*.trace.jsonl
 
 # 开发态数据根里被隔离出来的陈旧快照（2026-09-25，见审计 §12.19 那条数据根分叉）
