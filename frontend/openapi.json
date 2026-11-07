@@ -1239,44 +1239,11 @@
    "DomainsView": {
     "description": "/api/domains 的顶层形状（数组包一层只为给它一个名字）。",
     "items": {
-     "$ref": "#/components/schemas/DomainsViewItem"
+     "additionalProperties": true,
+     "type": "object"
     },
     "title": "DomainsView",
     "type": "array"
-   },
-   "DomainsViewItem": {
-    "additionalProperties": true,
-    "description": "自动生成：DomainsViewItem（Item 的对象形状）。",
-    "properties": {
-     "display_name": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Display Name"
-     },
-     "id": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Id"
-     }
-    },
-    "required": [
-     "id",
-     "display_name"
-    ],
-    "title": "DomainsViewItem",
-    "type": "object"
    },
    "EditMessageBody": {
     "properties": {
@@ -6292,60 +6259,8 @@
    "ToolsCatalogDomains": {
     "additionalProperties": true,
     "description": "自动生成：ToolsCatalogDomains（domains 的对象形状）。",
-    "properties": {
-     "health": {
-      "anyOf": [
-       {
-        "items": {
-         "$ref": "#/components/schemas/ToolsCatalogDomains_healthItem"
-        },
-        "type": "array"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Health"
-     }
-    },
-    "required": [
-     "health"
-    ],
+    "properties": {},
     "title": "ToolsCatalogDomains",
-    "type": "object"
-   },
-   "ToolsCatalogDomains_healthItem": {
-    "additionalProperties": true,
-    "description": "自动生成：ToolsCatalogDomains_healthItem（domains_healthItem 的对象形状）。",
-    "properties": {
-     "description": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Description"
-     },
-     "name": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Name"
-     }
-    },
-    "required": [
-     "name",
-     "description"
-    ],
-    "title": "ToolsCatalogDomains_healthItem",
     "type": "object"
    },
    "ToolsCatalogKernelItem": {
@@ -9488,7 +9403,7 @@
   },
   "/api/settings/domains/{domain}": {
    "delete": {
-    "description": "删掉一个域（资料页「删除这个域」）：置退役旗 + 清掉它的全部通用记录，**不留两套真相**。\n\n退役不是删行（`PluginService.retire` 的理由：播种 `ON CONFLICT DO NOTHING`，行留着才\n不会被 `seed_plugin_rows` 重新播回 —— 将来代码侧再出厂的域，用户删了也不复活）。\n清单读侧（`list_plugins`/`enabled_domains`）都滤 `retired=1`，删完界面上的页签与\n`list_domains` 工具立刻都不再列出它；装配根据 `retired_domain_ids()` 不挂它的专属路由，\n所以代码域退役后连 `/api/records` 那族也跟着下线 —— \"清单里没有\"与\"端点还在服务\"\n绝不能同时成立。记录数据一并删（域是实例级资源，删对所有人删）。\n\n域不存在 / 已退役 → 404（`retire` 返回 0 行）。",
+    "description": "删掉一个域（资料页「删除这个域」）：置退役旗 + 清掉它的全部通用记录，**不留两套真相**。\n\n退役不是删行（`PluginService.retire` 的理由：播种 `ON CONFLICT DO NOTHING`，行留着才\n不会被 `seed_plugin_rows` 重新播回 —— 将来代码侧再出厂的域，用户删了也不复活）。\n清单读侧（`list_plugins`/`enabled_domains`）都滤 `retired=1`，删完界面上的页签与\n`list_domains` 工具立刻都不再列出它；装配根据 `retired_domain_ids()` 不挂它交回的\n专属路由（当前出厂域都是纯数据型，没有专属路由可摘；这道闸是给将来的富域留的）——\n\"清单里没有\"与\"端点还在服务\"绝不能同时成立。记录数据一并删（域是实例级资源，\n删对所有人删）。\n\n域不存在 / 已退役 → 404（`retire` 返回 0 行）。",
     "operationId": "delete_domain_api_settings_domains__domain__delete",
     "parameters": [
      {
@@ -9627,7 +9542,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/SettingsMemoryView"
+         "title": "Response Get Memory Api Settings Memory Get"
         }
        }
       },

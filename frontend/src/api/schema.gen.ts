@@ -1485,9 +1485,10 @@ export interface paths {
          *     退役不是删行（`PluginService.retire` 的理由：播种 `ON CONFLICT DO NOTHING`，行留着才
          *     不会被 `seed_plugin_rows` 重新播回 —— 将来代码侧再出厂的域，用户删了也不复活）。
          *     清单读侧（`list_plugins`/`enabled_domains`）都滤 `retired=1`，删完界面上的页签与
-         *     `list_domains` 工具立刻都不再列出它；装配根据 `retired_domain_ids()` 不挂它的专属路由，
-         *     所以代码域退役后连 `/api/records` 那族也跟着下线 —— "清单里没有"与"端点还在服务"
-         *     绝不能同时成立。记录数据一并删（域是实例级资源，删对所有人删）。
+         *     `list_domains` 工具立刻都不再列出它；装配根据 `retired_domain_ids()` 不挂它交回的
+         *     专属路由（当前出厂域都是纯数据型，没有专属路由可摘；这道闸是给将来的富域留的）——
+         *     "清单里没有"与"端点还在服务"绝不能同时成立。记录数据一并删（域是实例级资源，
+         *     删对所有人删）。
          *
          *     域不存在 / 已退役 → 404（`retire` 返回 0 行）。
          */
@@ -2633,19 +2634,9 @@ export interface components {
          * DomainsView
          * @description /api/domains 的顶层形状（数组包一层只为给它一个名字）。
          */
-        DomainsView: components["schemas"]["DomainsViewItem"][];
-        /**
-         * DomainsViewItem
-         * @description 自动生成：DomainsViewItem（Item 的对象形状）。
-         */
-        DomainsViewItem: {
-            /** Display Name */
-            display_name: string | null;
-            /** Id */
-            id: string | null;
-        } & {
+        DomainsView: {
             [key: string]: unknown;
-        };
+        }[];
         /** EditMessageBody */
         EditMessageBody: {
             /**
@@ -4321,21 +4312,6 @@ export interface components {
          * @description 自动生成：ToolsCatalogDomains（domains 的对象形状）。
          */
         ToolsCatalogDomains: {
-            /** Health */
-            health: components["schemas"]["ToolsCatalogDomains_healthItem"][] | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * ToolsCatalogDomains_healthItem
-         * @description 自动生成：ToolsCatalogDomains_healthItem（domains_healthItem 的对象形状）。
-         */
-        ToolsCatalogDomains_healthItem: {
-            /** Description */
-            description: string | null;
-            /** Name */
-            name: string | null;
-        } & {
             [key: string]: unknown;
         };
         /**
@@ -6656,7 +6632,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SettingsMemoryView"];
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
