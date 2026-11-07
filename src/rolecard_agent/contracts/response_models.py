@@ -4,8 +4,7 @@
 漂移判据：同一个脚本的 `--check`（CI 每次 push 比对现形状 vs 入库模型）。
 手改这份文件 = 下一次生成被覆盖；要改字段集，改端点再重跑生成器。
 
-不可建模（形状随数据变化）的端点：
-  - /api/roles
+不可建模（形状随数据变化）的端点：（无）
 
 配套：引用这些模型的端点必须带 `response_model_exclude_unset=True` ——
 否则模型会把端点**没给**的缺省键补成 null（实测 pets 的 rows 多出
@@ -20,6 +19,64 @@ from pydantic import BaseModel, ConfigDict, RootModel, model_serializer, model_v
 
 #: 记录「端点真给了哪些键」的内部键名（序列化时按它裁剪）。
 _GIVEN_KEYS = "__given_keys__"
+
+
+class RoleListItem(BaseModel):
+    """自动生成：RoleListItem（Item 的对象形状）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_missing(cls, data: Any) -> Any:
+        """缺键补 None —— 必填字段遇到响应里没有的键时不该炸。
+
+        同时记下**端点真给了哪些键**（_GIVEN_KEYS）：序列化时按它裁剪，
+        于是响应与端点真返回逐字一致（补出来的键不会被吐出去）。
+
+        为什么不用 exclude_unset：补的键进了 __fields_set__ ⇒ exclude_unset
+        挡不住它（实测 pets 的 rows 多出 'listening': None）。
+        """
+        if isinstance(data, dict):
+            known = set(cls.model_fields)
+            given = {k: v for k, v in data.items() if k != _GIVEN_KEYS}
+            missing = {k: None for k in known if k not in given}
+            merged = {**given, **missing}
+            merged[_GIVEN_KEYS] = set(given)
+            return merged
+        return data
+
+    @model_serializer(mode="wrap")
+    def _drop_filled(self, handler: Any):
+        """把"补出来的键"裁掉 —— 只留端点真给过的。"""
+        data = handler(self)
+        given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
+        if given is None:
+            return data
+        return {k: v for k, v in data.items() if k in given}
+
+    role_id: str | None
+    user_id: str | None
+    role_name: str | None
+    system_prompt: str | None
+    temperature: float | None
+    model_name: Any
+    tool_whitelist: list[str] | None
+    knowledge_scopes: list[str] | None
+    description: str | None
+    reachout_enabled: bool | None
+    recall_enabled: bool | None
+    time_pattern_enabled: bool | None
+    affinity_enabled: bool | None
+    file_watch_enabled: bool | None
+    greeting_at: Any
+    reachout_keep: int | None
+    pet_pack: str | None
+    accent: Any
+    workspace_dir: Any
+    is_builtin: bool | None
+    created_at: str | None
+    updated_at: str | None
 
 
 class ServicesViewRoot(BaseModel):
@@ -2711,6 +2768,10 @@ class SessionContextViewRoot(BaseModel):
     trimmed: int | None
     kept: int | None
     budget: int | None
+
+
+class RoleList(RootModel[list[RoleListItem]]):
+    """/api/roles 的顶层形状（数组包一层只为给它一个名字）。"""
 
 
 class ServicesView(RootModel[ServicesViewRoot]):
