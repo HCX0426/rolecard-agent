@@ -113,7 +113,7 @@ _FALLBACK_HTML = """<!DOCTYPE html>
 <h1>rolecard-agent 管理控制台</h1>
 <p>前端尚未构建。请执行：</p>
 <pre>cd frontend
-npm install
+npm ci
 npm run build</pre>
 <p>构建后刷新本页即可看到完整控制台（或使用 <code>GET /api/*</code> 直接调用接口）。</p>
 </body></html>"""
