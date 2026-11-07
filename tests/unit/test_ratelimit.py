@@ -191,12 +191,22 @@ def test_loopback_is_never_limited(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
 def test_two_identities_do_not_share_a_bucket(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A 打满不许伤到 B —— 这正是"key 跟着身份走"之后要保住的那条边界。"""
+    """A 打满不许伤到 B —— 这正是"key 跟着身份走"之后要保住的那条边界。
+
+    时间源冻结（同 `_client`/`test_over_quota` 那条纪律）：三连发只要跨过真实墙钟的整分钟
+    边界，alice 第二发就落进新窗口拿到新配额 → 期待 429 拿到 404（2026-10-09 Windows 臂
+    记下的那一击；这条从前漏冻，2026-11-07 全量门禁当场赌输一次）。这条绕开 `_client`
+    是因为要两个身份，注入口就得在这里自己补上。
+    """
     monkeypatch.setenv("AUTH_MODE", "on")
     monkeypatch.setenv("AUTH_CREDENTIALS", "alice:pw,bob:pw")
     monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "1")
     monkeypatch.setenv("RATE_LIMIT_PATHS", "/api/chat")
-    c = TestClient(create_app(sqlite_path=tmp_path / "app.db"), client=("203.0.113.9", 50000))
+    frozen: float = 1_000_000.0  # 窗口号 int(t // 60)；冻结钟 ⇒ 三连发恒落同一窗口
+    c = TestClient(
+        create_app(sqlite_path=tmp_path / "app.db", limiter_clock=lambda: frozen),
+        client=("203.0.113.9", 50000),
+    )
     body = {"thread_id": "t", "text": "hi"}
     assert c.post("/api/chat", json=body, auth=("alice", "pw")).status_code != 429
     assert c.post("/api/chat", json=body, auth=("alice", "pw")).status_code == 429
