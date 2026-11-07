@@ -25,7 +25,6 @@ from rolecard_agent.core.storage import checkpointer as ck
 from rolecard_agent.core.storage.checkpointer import make_checkpointer
 from rolecard_agent.core.storage.migrations import MIGRATION_PLAN
 from rolecard_agent.core.tools.registry import ToolRegistry
-from rolecard_agent.domains.registry import domain_seed_roles
 from rolecard_agent.roles.service import RoleCardService
 from rolecard_agent.storage.db import bootstrap, connect
 from tests.conftest import ScriptedChat, list_roles
@@ -37,7 +36,7 @@ _OLD = "2020-01-01T00:00:00.000Z"
 
 def _conn(db_path: Path) -> Any:
     conn = connect(db_path)
-    bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
+    bootstrap(conn, enabled_domains=(), plan=MIGRATION_PLAN)
     return conn
 
 
@@ -81,14 +80,14 @@ def _kernel(db_path: Path, replies: list[Any]) -> Any:
         "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name)"
         "  VALUES ('u1', 't1', 'demo user');"
         "INSERT OR IGNORE INTO session_thread (thread_id, user_id, current_role_id)"
-        "  VALUES ('thread-1', 'u1', 'medical_archivist');"
+        "  VALUES ('thread-1', 'u1', 'general_assistant');"
     )
     conn.commit()
     roles = RoleCardService(conn)
     roles.seed_builtins(user_id="u1")
-    # `medical_archivist` 是**域角色**：只 seed_builtins 的话每轮都回"角色已不存在"。
-    roles.seed_domain_roles(domain_seed_roles(), user_id="u1")
-    plugins = PluginService(conn, known_plugins=["health"])
+    # 出厂不带域角色（2026-11-07 域包物理删除）：会话绑内置那张卡就够了 —— 本文件验的是
+    # 检查点收口，与域无关。
+    plugins = PluginService(conn, known_plugins=[])
     reg = ToolRegistry()
     reg.register(list_roles)
     return build_kernel(
@@ -105,7 +104,7 @@ def _kernel(db_path: Path, replies: list[Any]) -> Any:
 def _say(graph: Any, text: str) -> None:
     graph.invoke(
         {
-            **new_state(thread_id="thread-1", user_id="u1", current_role_id="medical_archivist"),
+            **new_state(thread_id="thread-1", user_id="u1", current_role_id="general_assistant"),
             "messages": [HumanMessage(content=text)],
         },
         config={"configurable": {"thread_id": "thread-1"}},

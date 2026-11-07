@@ -131,6 +131,8 @@ def declared_table_names() -> set[str]:
     files = [
         ROOT / "src" / "rolecard_agent" / "core" / "schema.sql",
         ROOT / "src" / "rolecard_agent" / "roles" / "schema.sql",
+        # 各域的 schema（`domains/*/schema.sql`）。当前出厂**不带任何代码侧的域**，glob
+        # 为空是事实而不是事故 —— 上面两份核心件仍逐个 raise 兜住"真丢了"的情况。
         *sorted((ROOT / "src" / "rolecard_agent" / "domains").glob("*/schema.sql")),
     ]
     names: set[str] = set()

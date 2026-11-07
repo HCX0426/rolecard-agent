@@ -6,7 +6,10 @@
 
 import type { components } from "./schema.gen";
 
-export type IndexRow = components["schemas"]["RecordsViewItemsItem_indicesItem"];
+/** 指标行：随它的域模型一起退役（2026-11-07）。通用记录通路用的是 `GenericRecord`
+ * 的标签/数值/文本三格，不再有"指标行"这一层 —— 这里保留别名只为让既有引用编译过，
+ * 指向 `DomainRecordView`。 */
+export type IndexRow = components["schemas"]["DomainRecordView"];
 
 export type KnowledgeScope = components["schemas"]["KnowledgeViewItem"];
 
@@ -27,13 +30,3 @@ export interface RagMetrics {
   p99: RagStageMs;
 }
 
-/** 结构化抽取响应里 written[] 的元素 —— 运行时只回 4 键（index_name/index_value/value_text/unit）。
-
- 从前手写这份抄成了 9 键的库内指标行（`RecordsViewItemsItem_indicesItem`），而抽取端点
- 回的是窄投影（写库的那份 8 键 payload 不出门）—— 第四批手模把它拉回运行时事实。 */
-export type ExtractWritten = components["schemas"]["ExtractWrittenModel"];
-
-/** 抽取时没能通过校验 / 两次识别不一致的项 —— 交给人确认，未写库 */
-export type ExtractConflict = components["schemas"]["ExtractConflictModel"];
-
-export type ExtractResult = components["schemas"]["ExtractOutcomeView"];

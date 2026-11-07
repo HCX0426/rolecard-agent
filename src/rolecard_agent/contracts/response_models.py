@@ -462,45 +462,7 @@ class ToolsCatalogDomains(BaseModel):
             return data
         return {k: v for k, v in data.items() if k in given}
 
-    health: list[ToolsCatalogDomains_healthItem] | None
-
-
-class ToolsCatalogDomains_healthItem(BaseModel):
-    """自动生成：ToolsCatalogDomains_healthItem（domains_healthItem 的对象形状）。"""
-
-    model_config = ConfigDict(extra="allow")
-
-    @model_validator(mode="before")
-    @classmethod
-    def _fill_missing(cls, data: Any) -> Any:
-        """缺键补 None —— 必填字段遇到响应里没有的键时不该炸。
-
-        同时记下**端点真给了哪些键**（_GIVEN_KEYS）：序列化时按它裁剪，
-        于是响应与端点真返回逐字一致（补出来的键不会被吐出去）。
-
-        为什么不用 exclude_unset：补的键进了 __fields_set__ ⇒ exclude_unset
-        挡不住它（实测 pets 的 rows 多出 'listening': None）。
-        """
-        if isinstance(data, dict):
-            known = set(cls.model_fields)
-            given = {k: v for k, v in data.items() if k != _GIVEN_KEYS}
-            missing = {k: None for k in known if k not in given}
-            merged = {**given, **missing}
-            merged[_GIVEN_KEYS] = set(given)
-            return merged
-        return data
-
-    @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any):
-        """把"补出来的键"裁掉 —— 只留端点真给过的。"""
-        data = handler(self)
-        given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
-        if given is None:
-            return data
-        return {k: v for k, v in data.items() if k in given}
-
-    name: str | None
-    description: str | None
+    pass
 
 
 class KnowledgeViewItem(BaseModel):
@@ -1068,133 +1030,6 @@ class ReachoutsViewQuietItem(BaseModel):
     next_ok_at: str | None
     streak: int | None
     unread: int | None
-
-
-class RecordsViewRoot(BaseModel):
-    """自动生成：RecordsViewRoot（ 的对象形状）。"""
-
-    model_config = ConfigDict(extra="allow")
-
-    @model_validator(mode="before")
-    @classmethod
-    def _fill_missing(cls, data: Any) -> Any:
-        """缺键补 None —— 必填字段遇到响应里没有的键时不该炸。
-
-        同时记下**端点真给了哪些键**（_GIVEN_KEYS）：序列化时按它裁剪，
-        于是响应与端点真返回逐字一致（补出来的键不会被吐出去）。
-
-        为什么不用 exclude_unset：补的键进了 __fields_set__ ⇒ exclude_unset
-        挡不住它（实测 pets 的 rows 多出 'listening': None）。
-        """
-        if isinstance(data, dict):
-            known = set(cls.model_fields)
-            given = {k: v for k, v in data.items() if k != _GIVEN_KEYS}
-            missing = {k: None for k in known if k not in given}
-            merged = {**given, **missing}
-            merged[_GIVEN_KEYS] = set(given)
-            return merged
-        return data
-
-    @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any):
-        """把"补出来的键"裁掉 —— 只留端点真给过的。"""
-        data = handler(self)
-        given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
-        if given is None:
-            return data
-        return {k: v for k, v in data.items() if k in given}
-
-    items: list[RecordsViewItemsItem] | None
-    total: int | None
-    limit: int | None
-    offset: int | None
-
-
-class RecordsViewItemsItem(BaseModel):
-    """自动生成：RecordsViewItemsItem（itemsItem 的对象形状）。"""
-
-    model_config = ConfigDict(extra="allow")
-
-    @model_validator(mode="before")
-    @classmethod
-    def _fill_missing(cls, data: Any) -> Any:
-        """缺键补 None —— 必填字段遇到响应里没有的键时不该炸。
-
-        同时记下**端点真给了哪些键**（_GIVEN_KEYS）：序列化时按它裁剪，
-        于是响应与端点真返回逐字一致（补出来的键不会被吐出去）。
-
-        为什么不用 exclude_unset：补的键进了 __fields_set__ ⇒ exclude_unset
-        挡不住它（实测 pets 的 rows 多出 'listening': None）。
-        """
-        if isinstance(data, dict):
-            known = set(cls.model_fields)
-            given = {k: v for k, v in data.items() if k != _GIVEN_KEYS}
-            missing = {k: None for k in known if k not in given}
-            merged = {**given, **missing}
-            merged[_GIVEN_KEYS] = set(given)
-            return merged
-        return data
-
-    @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any):
-        """把"补出来的键"裁掉 —— 只留端点真给过的。"""
-        data = handler(self)
-        given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
-        if given is None:
-            return data
-        return {k: v for k, v in data.items() if k in given}
-
-    report_id: str | None
-    report_type: str | None
-    check_time: str | None
-    institution: str | None
-    note: str | None
-    indices: list[RecordsViewItemsItem_indicesItem] | None
-
-
-class RecordsViewItemsItem_indicesItem(BaseModel):
-    """自动生成：RecordsViewItemsItem_indicesItem（itemsItem_indicesItem 的对象形状）。"""
-
-    model_config = ConfigDict(extra="allow")
-
-    @model_validator(mode="before")
-    @classmethod
-    def _fill_missing(cls, data: Any) -> Any:
-        """缺键补 None —— 必填字段遇到响应里没有的键时不该炸。
-
-        同时记下**端点真给了哪些键**（_GIVEN_KEYS）：序列化时按它裁剪，
-        于是响应与端点真返回逐字一致（补出来的键不会被吐出去）。
-
-        为什么不用 exclude_unset：补的键进了 __fields_set__ ⇒ exclude_unset
-        挡不住它（实测 pets 的 rows 多出 'listening': None）。
-        """
-        if isinstance(data, dict):
-            known = set(cls.model_fields)
-            given = {k: v for k, v in data.items() if k != _GIVEN_KEYS}
-            missing = {k: None for k in known if k not in given}
-            merged = {**given, **missing}
-            merged[_GIVEN_KEYS] = set(given)
-            return merged
-        return data
-
-    @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any):
-        """把"补出来的键"裁掉 —— 只留端点真给过的。"""
-        data = handler(self)
-        given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
-        if given is None:
-            return data
-        return {k: v for k, v in data.items() if k in given}
-
-    index_id: str | None
-    index_name: str | None
-    index_value: float | None
-    value_text: str | None
-    unit: str | None
-    ref_range: str | None
-    is_verified: int | None
-    source: str | None
-    raw_text: str | None
 
 
 class SessionsViewItem(BaseModel):
@@ -2555,44 +2390,6 @@ class AuditViewItem(BaseModel):
     detail_json: str | None
 
 
-class DomainsViewItem(BaseModel):
-    """自动生成：DomainsViewItem（Item 的对象形状）。"""
-
-    model_config = ConfigDict(extra="allow")
-
-    @model_validator(mode="before")
-    @classmethod
-    def _fill_missing(cls, data: Any) -> Any:
-        """缺键补 None —— 必填字段遇到响应里没有的键时不该炸。
-
-        同时记下**端点真给了哪些键**（_GIVEN_KEYS）：序列化时按它裁剪，
-        于是响应与端点真返回逐字一致（补出来的键不会被吐出去）。
-
-        为什么不用 exclude_unset：补的键进了 __fields_set__ ⇒ exclude_unset
-        挡不住它（实测 pets 的 rows 多出 'listening': None）。
-        """
-        if isinstance(data, dict):
-            known = set(cls.model_fields)
-            given = {k: v for k, v in data.items() if k != _GIVEN_KEYS}
-            missing = {k: None for k in known if k not in given}
-            merged = {**given, **missing}
-            merged[_GIVEN_KEYS] = set(given)
-            return merged
-        return data
-
-    @model_serializer(mode="wrap")
-    def _drop_filled(self, handler: Any):
-        """把"补出来的键"裁掉 —— 只留端点真给过的。"""
-        data = handler(self)
-        given = (self.__pydantic_extra__ or {}).get(_GIVEN_KEYS)
-        if given is None:
-            return data
-        return {k: v for k, v in data.items() if k in given}
-
-    id: str | None
-    display_name: str | None
-
-
 class RoleTimelineViewRoot(BaseModel):
     """自动生成：RoleTimelineViewRoot（ 的对象形状）。"""
 
@@ -2952,10 +2749,6 @@ class ReachoutsView(RootModel[ReachoutsViewRoot]):
     """/api/reachouts 的顶层形状（数组包一层只为给它一个名字）。"""
 
 
-class RecordsView(RootModel[RecordsViewRoot]):
-    """/api/records 的顶层形状（数组包一层只为给它一个名字）。"""
-
-
 class SessionsView(RootModel[list[SessionsViewItem]]):
     """/api/sessions 的顶层形状（数组包一层只为给它一个名字）。"""
 
@@ -3016,7 +2809,7 @@ class AuditView(RootModel[list[AuditViewItem]]):
     """/api/audit 的顶层形状（数组包一层只为给它一个名字）。"""
 
 
-class DomainsView(RootModel[list[DomainsViewItem]]):
+class DomainsView(RootModel[list[dict[str, Any]]]):
     """/api/domains 的顶层形状（数组包一层只为给它一个名字）。"""
 
 

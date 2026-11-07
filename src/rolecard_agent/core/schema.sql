@@ -432,10 +432,10 @@ CREATE TABLE IF NOT EXISTS knowledge_source (
 -- ===========================================================================
 -- Generic domain data (settings page,「数据」tab for domains without their own tables).
 --
--- A domain plugin that does not need a rich report/indicator model can still
--- expose simple structured records here. Keyed by (domain, user_id) so each domain's
--- data is isolated; the frontend routes the rich-model domain to its own
--- /api/records endpoints and every other domain to /api/domains/{domain}/records.
+-- A domain plugin may expose its own richer model, but the generic path serves every
+-- domain that has none. Keyed by (domain, user_id) so each domain's data is isolated;
+-- the frontend routes ALL domains to /api/domains/{domain}/records (no code-shipped
+-- domain exists now; a future rich domain may still contribute its own endpoints).
 -- ===========================================================================
 
 CREATE TABLE IF NOT EXISTS domain_data (

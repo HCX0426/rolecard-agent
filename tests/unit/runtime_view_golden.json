@@ -114,32 +114,6 @@
           "note": "行内未填 base_url 的云端端点用它兜底；改它需重启（随进程构建）"
         },
         {
-          "key": "EXTRACT_BACKEND",
-          "field": "extract_backend",
-          "label": "抽取用的模型",
-          "value": "auto",
-          "default": "auto",
-          "changed": false,
-          "overridden": false,
-          "override_value": null,
-          "kind": "str",
-          "choices": null,
-          "note": ""
-        },
-        {
-          "key": "EXTRACT_VERIFY",
-          "field": "extract_verify",
-          "label": "抽取校对",
-          "value": "auto",
-          "default": "auto",
-          "changed": false,
-          "overridden": false,
-          "override_value": null,
-          "kind": "str",
-          "choices": null,
-          "note": ""
-        },
-        {
           "key": "MEMORY_EXTRACT_BACKEND",
           "field": "memory_extract_backend",
           "label": "记忆用的模型（提取精华 / 整理记忆）",

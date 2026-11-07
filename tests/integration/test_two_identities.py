@@ -326,18 +326,22 @@ def test_second_login_can_open_a_session_and_write_domain_records(
     ).fetchone()["user_id"]
     assert str(owner) == B
 
+    # 出厂不带任何代码侧的域（2026-11-07）：本用例要验的是"B 在自己名下能写域记录"，
+    # 所以这个域由测试自己建（任一使用者都可建域？不——建域是 operator 面，见
+    # route_access；这里直接走 app 内的服务层，等价于操作员先建好这个域）。
+    client.app.state.ctx.plugins.create("notes")
     rec = client.post(
-        "/api/domains/health/records",
+        "/api/domains/notes/records",
         json={"label": "心率", "value_text": "72", "unit": "bpm"},
         headers=_as(B),
     )
     assert rec.status_code == 201, rec.text
     rid = str(rec.json()["id"])
     assert rid in {
-        str(r["id"]) for r in client.get("/api/domains/health/records", headers=_as(B)).json()
+        str(r["id"]) for r in client.get("/api/domains/notes/records", headers=_as(B)).json()
     }
     assert rid not in {
-        str(r["id"]) for r in client.get("/api/domains/health/records", headers=_as(A)).json()
+        str(r["id"]) for r in client.get("/api/domains/notes/records", headers=_as(A)).json()
     }, "B 写的记录出现在 A 的读侧"
 
 

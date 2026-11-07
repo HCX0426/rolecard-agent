@@ -197,15 +197,27 @@ def test_legacy_extra_columns_survive(tmp_path: Path) -> None:
 
     14cb9db 的 `medical_report` 带着 `source_file`/`status`/`file_hash` 三列，现版声明已经
     没有它们。补列器只管补缺，不管理赔 —— 删列要走显式整表重建（core/storage/migrations.py）。
+
+    2026-11-07 起那张表**整体退役**（它所属的域包被物理删除），于是这条判据多出一个
+    更硬的半边：退役表的旧列随表一起消失（`shape.drop_domain_private_tables`），而**别的**
+    表上那些"声明里没有的旧列"照旧留着 —— "不随手删列"这条纪律不能被退役步带歪。
     """
     conn = _build_legacy("14cb9db", tmp_path / "app.db")
-    before = _cols(conn, "medical_report")
+    assert "medical_report" in _tables(conn), "前提：老库里确实有那张表"
     bootstrap(
         conn,
         enabled_domains=DOMAINS,
         plan=MIGRATION_PLAN,
     )
-    assert before <= _cols(conn, "medical_report")
+    # 退役表：整张表连同它的旧列一起没了（不是"留着表、删了列"的半吊子）
+    assert "medical_report" not in _tables(conn), "退役的私有表该被迁移步清掉"
+    # 其余表：老库比声明多的那些列仍在（补列器只补不删）
+    extra_survivors = {
+        "ingestion_task": _cols(conn, "ingestion_task"),
+        "role_card": _cols(conn, "role_card"),
+    }
+    for table, cols in extra_survivors.items():
+        assert cols, f"{table} 的列不该被升级清空"
     conn.close()
 
 
@@ -745,7 +757,7 @@ def test_a_legacy_upgrade_leaves_the_capability_flags_unmeasured(tmp_path: Path)
 
 
 @pytest.mark.parametrize(
-    ("commit", "expected_missing"), [("14cb9db", 19), ("03631c6", 17)], ids=lambda v: str(v)
+    ("commit", "expected_missing"), [("14cb9db", 18), ("03631c6", 17)], ids=lambda v: str(v)
 )
 def test_audited_shortfall_is_still_the_shortfall(
     commit: str, expected_missing: int, tmp_path: Path
@@ -771,6 +783,10 @@ def test_audited_shortfall_is_still_the_shortfall(
     2026-11-07 的域生命周期（资料页可新建/删除域）给 `plugin` 加了 `retired`（NOT NULL
     DEFAULT 0，ADD COLUMN 可行）⇒ **19 / 17、合计 36**：两份旧形状的 `plugin` 表都建在
     这一列之前，各多缺 1 列。
+    2026-11-07 的**域包物理删除**把两张域私有表（`medical_report` / `medical_index`）从
+    声明里拿掉，迁移步连同老库里的实体表一起清掉 ⇒ 它们那批"缺列"不再计入：
+    `medical_report` 在 14cb9db 形状里少一列（`user_id` 那批之外的那一列），于是
+    **14cb9db：18**；03631c6 那份形状本就没有这张表，缺口不变（仍 17）。
     （这两个数只在测试与这份 docstring 里；审计文档当时没写它，所以不用同步别处。）
     这条红的用途不是"证明坏了"，而是**逼改 schema 的人
     回去看一眼审计文档还写着几个数** —— R26-06 犯的就是"写进文档的数没复算"这一条。

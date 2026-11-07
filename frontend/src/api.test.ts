@@ -239,7 +239,7 @@ describe("请求超时：普通请求 30s，上传 / 抽取走长超时（P1-4�
 
     // 用 then(成功分支, 失败分支) 而不是 catch：catch 的返回类型会变成联合类型，
     // tsc 就没法在下面直接读 ApiError 的字段了。
-    const pending = api.extractRecord("ing_1").then(
+    const pending = api.uploadTask("ing_1").then(
       () => null,
       (e: ApiError) => e,
     );

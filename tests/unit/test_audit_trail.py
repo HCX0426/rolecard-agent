@@ -45,7 +45,7 @@ def _rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 @pytest.fixture
 def conn(tmp_path: Path):
     c = connect(tmp_path / "app.db")
-    bootstrap(c, enabled_domains=("health",))
+    bootstrap(c, enabled_domains=())
     try:
         yield c
     finally:
@@ -188,7 +188,7 @@ def test_status_view_builds_no_second_service(
     from rolecard_agent.core.models.services import ServiceEndpointService, service_status_view
 
     c = connect(tmp_path / "view.db")
-    bootstrap(c, enabled_domains=("health",))
+    bootstrap(c, enabled_domains=())
     svc = ServiceEndpointService(c, owner=DEFAULT_USER_ID)
     ms = ModelSettingsService(c)
 

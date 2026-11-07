@@ -146,8 +146,6 @@ RUNTIME_FIELDS: tuple[FieldSpec, ...] = (
         note="行内未填 base_url 的云端端点用它兜底；改它需重启（随进程构建）",
         group="rag",
     ),
-    FieldSpec("extract_backend", "EXTRACT_BACKEND", "str", label="抽取用的模型", group="rag"),
-    FieldSpec("extract_verify", "EXTRACT_VERIFY", "str", label="抽取校对", group="rag"),
     # 「提取精华 / 整理记忆」用哪个后端（空 = 跟随会话/角色）。单独一条是为了把"对话用谁"与
     # "记忆用谁"分开 —— 角色留在本地陪聊，不代表它的长期记忆也该由 8B
     # 来判（审计「档案角色的记忆该由谁来判」）。

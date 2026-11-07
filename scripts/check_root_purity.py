@@ -10,6 +10,11 @@
 判据只报**确证的负面**（占位哈希 / 命中已知夹具名 / 跨根路径），启发式的（正文里出现夹具数值）
 走 warn 不进红 —— 与门禁一贯的那条纪律同形。全程 `mode=ro`，一个字节都不写。
 
+**为什么夹具串里还留着那几条数值与 `health_reports` 这个名字**：这支脚本查的是**历史真库**
+（已装机的数据根），而当年那批演示向量就躺在那里、不会因为代码里的域包被删除而消失 ——
+名字写在这里是对存量事实的描述，不是代码耦合。表名那几行同理（`classify_text_columns` 对
+缺失的表本来就跳过，不会因为表已 DROP 而误报）。
+
 跑法：
     .venv\\Scripts\\python.exe scripts/check_root_purity.py            # 默认查安装根
     .venv\\Scripts\\python.exe scripts/check_root_purity.py --root D:\\别的根
@@ -171,8 +176,6 @@ def scan(root: pathlib.Path) -> Report:
     try:
         targets = [
             ("role_memory_item", "text", "长期记忆"),
-            ("medical_index", "raw_text", "指标原文"),
-            ("medical_index", "value_text", "指标值"),
             ("domain_data", "value_text", "领域数据"),
         ]
         total.warn += classify_text_columns(conn, targets).warn

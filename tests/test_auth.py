@@ -176,7 +176,7 @@ def test_health_endpoint_is_always_reachable(
     assert res.json()["status"] == "ok"
 
 
-def test_health_reports_size_limits_the_frontend_reads(
+def test_notes_size_limits_the_frontend_reads(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """/api/health 把两个大小上限报出去：前端附图预检现读，不再手抄数字。

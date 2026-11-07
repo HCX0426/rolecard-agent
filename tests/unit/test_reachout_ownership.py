@@ -43,7 +43,7 @@ def _card(role_id: str = ROLE) -> RoleCard:
 @pytest.fixture
 def db(tmp_path: Path):
     conn = connect(tmp_path / "app.db")
-    bootstrap(conn, enabled_domains=("health",))
+    bootstrap(conn, enabled_domains=())
     # `bootstrap` 建表但不播种身份，而 `session_thread.user_id` 是指向外键的 ——
     # 先把默认那一份身份种下来（`ensure_identity_row` 就是装配根平时干的事），
     # 再补第二个租户/身份，测试里才真有两个主人可写。

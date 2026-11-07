@@ -240,7 +240,7 @@ export default function RolesPage({
     if (!SCOPE_PATTERN.test(name)) {
       setStatus({
         ok: false,
-        msg: "作用域名不合法：小写字母开头，只含小写字母/数字/下划线（如 health_reports）。",
+        msg: "作用域名不合法：小写字母开头，只含小写字母/数字/下划线（如 notes）。",
       });
       return;
     }
@@ -749,7 +749,7 @@ export default function RolesPage({
                         addScope();
                       }
                     }}
-                    placeholder="或新建作用域（如 health_reports）"
+                    placeholder="或新建作用域（如 notes）"
                     className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
                   />
                   <Button variant="outline" size="sm" type="button" onClick={addScope}>

@@ -42,7 +42,6 @@ WIRING: dict[str, tuple[str, str]] = {
     "/api/mcp/servers": ("McpServersView", "mcp.py"),
     "/api/rag/metrics": ("RagMetricsView", "console.py"),
     "/api/reachouts": ("ReachoutsView", "reachouts.py"),
-    "/api/records": ("RecordsView", "../../domains/health/records.py"),
     "/api/sessions": ("SessionsView", "sessions.py"),
     "/api/settings/memory": ("SettingsMemoryView", "settings.py"),
     "/api/settings/model-providers": ("ModelProvidersView", "settings.py"),
@@ -66,6 +65,13 @@ WIRING: dict[str, tuple[str, str]] = {
     "/api/session/{thread_id}/messages": ("SessionMessagesView", "sessions.py"),
     "/api/session/{thread_id}/context": ("SessionContextView", "sessions.py"),
 }
+
+#: 已被**手写模型**接管的端点：契约由 `contracts/handwritten_models.py` 定义，自动生成那份
+#: 不再接线。为什么要有这份名单而不是删表项 —— `gen_response_models` 的采样白名单必须与
+#: 接线表"同集合"（锚点用例钉着），删表项会让那条锚点红；而把这行留在这儿又会让工具每次
+#: 重跑都把自动生成那份接回去（2026-11-07 实测：settings.py 里同名两个 `SettingsMemoryView`
+#: 被 ruff F811 抓到）。名单化之后，两者仍同集合，而接线这一侧不会再有第二个来源。
+HANDWRITTEN_TAKEOVER: frozenset[str] = frozenset({"/api/settings/memory"})
 
 
 def _available_models() -> set[str]:
@@ -235,6 +241,10 @@ def main() -> int:
     # import 直接炸（实测 'cannot import name ServicesView'）。所以要**去接线的**
     # 端点集合要包含它们（model=None 表示拆）。
     for api_path, (model, filename) in WIRING.items():
+        if api_path in HANDWRITTEN_TAKEOVER:
+            # 契约由手写模型接管 ⇒ 这条端点的自动生成模型不接线（已接过则拆掉）。
+            by_file.setdefault(filename, {})[api_path] = None
+            continue
         if available and model not in available:
             print(f"  拆掉 {api_path} 的接线：生成物里没有 {model}（形状不稳或本轮未生成）")
             by_file.setdefault(filename, {})[api_path] = None

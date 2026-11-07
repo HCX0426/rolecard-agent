@@ -17,7 +17,7 @@ Fields of note:
 
   is_builtin        built-in roles cannot be deleted (D6)
   model_name        a backend NAME from config.MODEL_BACKENDS, not a raw model id - this is
-                    what makes per-role routing work (medical role -> local, chat -> cloud)
+                    what makes per-role routing work (domain-scoped role -> local, chat -> cloud)
   tool_whitelist    None = all tools of enabled plugins, [] = no tools at all
   knowledge_scopes  None = no retrieval, [] = no retrieval, [..] = those collections only.
                     A role never owns a vector store; N roles x M stores would duplicate

@@ -34,7 +34,7 @@ from rolecard_agent.domains.registry import domain_seed_roles
 from rolecard_agent.roles.models import RoleCardCreate
 from rolecard_agent.roles.service import RoleCards, RoleCardService
 from rolecard_agent.storage.db import bootstrap, connect
-from tests.conftest import ScriptedChat, compare_health_index, list_roles, query_health_record
+from tests.conftest import ScriptedChat, compare_note, list_roles, lookup_note
 
 
 def cards(store: RoleCardService) -> RoleCards:
@@ -57,18 +57,30 @@ def _kernel(
     不再有 enable 开关）—— 工具可见性的唯一边界是角色卡白名单（见
     `test_whitelist_is_applied_before_binding`）。"""
     conn = connect(db_path)
-    bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
+    bootstrap(conn, enabled_domains=(), plan=MIGRATION_PLAN)
     roles = RoleCardService(conn)
     roles.seed_builtins(user_id="u1")
-    roles.seed_domain_roles(domain_seed_roles(), user_id="u1")
+    # 出厂不带任何代码侧的域 ⇒ `domain_seed_roles()` 是空集；这条用例需要"带域工具的
+    # 自定义角色"，所以由测试自己建一张（is_builtin=0，与用户自建是同一种卡）。
+    # 幂等：`_kernel` 每调一次都重连同一个库（"重启"），卡已在就跳过。
+    if not cards(roles).exists("note_keeper"):
+        cards(roles).create(
+            RoleCardCreate(
+                role_id="note_keeper",
+                role_name="笔记管理员",
+                system_prompt="你管理本机的笔记。",
+                tool_whitelist=["lookup_note", "compare_note"],
+                knowledge_scopes=["notes"],
+            )
+        )
 
-    plugins = PluginService(conn, known_plugins=["health"])
-    plugins.register("health", display_name="Health")
+    plugins = PluginService(conn, known_plugins=["notes"])
+    plugins.register("notes", display_name="Health")
 
     reg = registry or ToolRegistry()
     if registry is None:
         reg.register(list_roles)
-        reg.register_many([query_health_record, compare_health_index], domain="health")
+        reg.register_many([lookup_note, compare_note], domain="notes")
 
     model = ScriptedChat(replies)
     graph = build_kernel(
@@ -85,14 +97,14 @@ def _kernel(
 
 def _seed_identity(db_path: Path) -> None:
     conn = connect(db_path)
-    bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
+    bootstrap(conn, enabled_domains=(), plan=MIGRATION_PLAN)
     conn.executescript(
         """
         INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('t1', 'demo');
         INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name)
             VALUES ('u1', 't1', 'demo user');
         INSERT OR IGNORE INTO session_thread (thread_id, user_id, current_role_id)
-            VALUES ('thread-1', 'u1', 'medical_archivist');
+            VALUES ('thread-1', 'u1', 'note_keeper');
         """
     )
     conn.commit()
@@ -109,7 +121,7 @@ def test_tool_call_loops_back_and_result_reaches_history(tmp_path: Path) -> None
                 content="",
                 tool_calls=[
                     {
-                        "name": "query_health_record",
+                        "name": "lookup_note",
                         "args": {"start_date": "2026-01-01"},
                         "id": "c1",
                     }
@@ -124,8 +136,8 @@ def test_tool_call_loops_back_and_result_reaches_history(tmp_path: Path) -> None
             **new_state(
                 thread_id="thread-1",
                 user_id="u1",
-                current_role_id="medical_archivist",
-                enabled_domains=["health"],
+                current_role_id="note_keeper",
+                enabled_domains=["notes"],
             ),
             "messages": [HumanMessage(content="上次的结石直径是多少")],
         },
@@ -146,7 +158,7 @@ def test_system_prompt_never_enters_the_checkpoint(tmp_path: Path) -> None:
     graph, _, _ = _kernel(db, [AIMessage(content="好的。")])
     result = graph.invoke(
         {
-            **new_state(thread_id="thread-1", user_id="u1", current_role_id="medical_archivist"),
+            **new_state(thread_id="thread-1", user_id="u1", current_role_id="note_keeper"),
             "messages": [HumanMessage(content="你好")],
         },
         config={"configurable": {"thread_id": "thread-1"}},
@@ -165,7 +177,7 @@ def test_history_survives_a_reconnect(tmp_path: Path) -> None:
     first_graph, _, _ = _kernel(db, [AIMessage(content="第一次回答")])
     first_graph.invoke(
         {
-            **new_state(thread_id="thread-1", user_id="u1", current_role_id="medical_archivist"),
+            **new_state(thread_id="thread-1", user_id="u1", current_role_id="note_keeper"),
             "messages": [HumanMessage(content="第一句")],
         },
         config={"configurable": {"thread_id": "thread-1"}},
@@ -184,7 +196,7 @@ def test_whitelist_is_applied_before_binding(tmp_path: Path) -> None:
     db = tmp_path / "app.db"
     _seed_identity(db)
     conn = connect(db)
-    bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
+    bootstrap(conn, enabled_domains=(), plan=MIGRATION_PLAN)
     roles = RoleCardService(conn)
     roles.seed_builtins(user_id="u1")
     roles.seed_domain_roles(domain_seed_roles(), user_id="u1")
@@ -193,15 +205,15 @@ def test_whitelist_is_applied_before_binding(tmp_path: Path) -> None:
             role_id="narrow",
             role_name="只看对比",
             system_prompt="只能做历年对比。",
-            tool_whitelist=["compare_health_index"],
+            tool_whitelist=["compare_note"],
         )
     )
 
     reg = ToolRegistry()
     reg.register(list_roles)
-    reg.register_many([query_health_record, compare_health_index], domain="health")
-    plugins = PluginService(conn, known_plugins=["health"])
-    plugins.register("health", display_name="Health")
+    reg.register_many([lookup_note, compare_note], domain="notes")
+    plugins = PluginService(conn, known_plugins=["notes"])
+    plugins.register("notes", display_name="Health")
     model = ScriptedChat([AIMessage(content="好的。")])
     graph = build_kernel(
         model=model,
@@ -218,13 +230,13 @@ def test_whitelist_is_applied_before_binding(tmp_path: Path) -> None:
                 thread_id="thread-1",
                 user_id="u1",
                 current_role_id="narrow",
-                enabled_domains=["health"],
+                enabled_domains=["notes"],
             ),
             "messages": [HumanMessage(content="对比一下")],
         },
         config={"configurable": {"thread_id": "thread-1"}},
     )
-    assert model.last_visible_tools == ["compare_health_index"]
+    assert model.last_visible_tools == ["compare_note"]
 
 
 def test_tool_gone_from_registry_degrades_offline_not_raise(tmp_path: Path) -> None:
@@ -238,11 +250,11 @@ def test_tool_gone_from_registry_degrades_offline_not_raise(tmp_path: Path) -> N
         [
             AIMessage(
                 content="",
-                tool_calls=[{"name": "query_health_record", "args": {}, "id": "c9"}],
+                tool_calls=[{"name": "lookup_note", "args": {}, "id": "c9"}],
             ),
             AIMessage(content="该项能力当前不可用。"),
         ],
-        # 注册表里只有内核工具——health 域工具不在（等价于"服务器被移除后重建"）
+        # 注册表里只有内核工具——notes 域工具不在（等价于"服务器被移除后重建"）
         registry=_only(list_roles),
     )
     result = graph.invoke(
@@ -250,8 +262,8 @@ def test_tool_gone_from_registry_degrades_offline_not_raise(tmp_path: Path) -> N
             **new_state(
                 thread_id="thread-1",
                 user_id="u1",
-                current_role_id="medical_archivist",
-                enabled_domains=["health"],
+                current_role_id="note_keeper",
+                enabled_domains=["notes"],
             ),
             "messages": [HumanMessage(content="查一下")],
         },
@@ -271,8 +283,8 @@ def test_guard_blocks_a_diagnosing_reply_inside_the_graph(tmp_path: Path) -> Non
             **new_state(
                 thread_id="thread-1",
                 user_id="u1",
-                current_role_id="medical_archivist",
-                enabled_domains=["health"],
+                current_role_id="note_keeper",
+                enabled_domains=["notes"],
             ),
             "messages": [HumanMessage(content="我这个严重吗")],
         },

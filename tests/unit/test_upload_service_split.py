@@ -33,7 +33,7 @@ from rolecard_agent.storage.db import bootstrap, connect  # noqa: E402
 @pytest.fixture
 def ing(tmp_path: pathlib.Path) -> IngestionService:
     c = connect(":memory:")
-    bootstrap(c, enabled_domains=["health"])
+    bootstrap(c, enabled_domains=())
     c.executescript(
         "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('t1', 'demo');"
         "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name)"
@@ -67,7 +67,7 @@ def test_ingest_upload同步组合一路推到_indexed(
         upload_dir=tmp_path / "uploads",
         ingestion=ing,
         knowledge=_FakeKnowledge(),  # type: ignore[arg-type]
-        knowledge_scope="health_reports",
+        knowledge_scope="notes",
         ocr_candidates=None,
         tracer=_Tracer(),
     )
@@ -85,7 +85,7 @@ def test_ingest_upload同步组合一路推到_indexed(
         upload_dir=tmp_path / "uploads",
         ingestion=ing,
         knowledge=_FakeKnowledge(),  # type: ignore[arg-type]
-        knowledge_scope="health_reports",
+        knowledge_scope="notes",
         ocr_candidates=None,
         tracer=_Tracer(),
     )

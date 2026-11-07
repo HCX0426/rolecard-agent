@@ -19,7 +19,6 @@ import { apiBase, authHeaders } from "../lib/dataSource";
 // 免得"接口返回什么"在两处各写一遍。uploadOutcome 不 import 本文件，不存在循环。
 import type { UploadResponse, UploadTaskProgress } from "../lib/uploadOutcome";
 import type { LocalServiceStatus, ResidentModel } from "./models";
-import type { ExtractResult } from "./knowledge";
 import type { GenericRecord } from "./records";
 import type { ConsolidateOutcome, DistillOutcome } from "./memory";
 import type { TreeResult, WorkspaceDir } from "./workspace";
@@ -206,14 +205,6 @@ export const api = {
   patch: <T>(url: string, body: unknown) => request<T>("PATCH", url, body),
   put: <T>(url: string, body: unknown) => request<T>("PUT", url, body),
   del: <T>(url: string) => request<T>("DELETE", url),
-  /** 结构化抽取：把已上传的报告文本抽成指标行（三层校验，只写双方一致的项）。 */
-  extractRecord: (taskId: string) =>
-    request<ExtractResult>(
-      "POST",
-      "/api/records/extract",
-      { task_id: taskId },
-      LONG_REQUEST_TIMEOUT_MS,
-    ),
   /** 上传文件到某个对话（P3-3：201 只是受理，解析/入索引在后台 —— 终局问 uploadTask）。 */
   upload: (threadId: string, form: FormData) =>
     request<UploadResponse>(

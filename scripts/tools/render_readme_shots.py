@@ -31,86 +31,26 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
 from rolecard_agent.base.identity import DEFAULT_TENANT_ID, DEFAULT_USER_ID  # noqa: E402
-from rolecard_agent.config import Settings  # noqa: E402
-from rolecard_agent.core.assembler import candidate_ids  # noqa: E402
 from rolecard_agent.core.models.services import ServiceEndpointService  # noqa: E402
-from rolecard_agent.domains.health.service import HealthQueryService  # noqa: E402
-from rolecard_agent.rag.retriever import KnowledgeBase, make_embedder  # noqa: E402
 from rolecard_agent.storage.db import bootstrap, connect  # noqa: E402
 
 
 def _seed_demo(sqlite_path: Path, chroma_path: Path) -> None:
-    """演示数据 = `seed_demo_data.py` 的同一份口径，只是 chroma 指进临时目录。"""
+    """演示库 = 本机身份 + 「服务」页端点（域数据不再预制，见 `seed_demo_data.py`）。"""
     os.environ["SQLITE_PATH"] = str(sqlite_path)
-    settings = Settings.from_env()
     conn = connect(sqlite_path)
-    bootstrap(conn, enabled_domains=("health",))
+    bootstrap(conn, enabled_domains=())
     ServiceEndpointService(conn, owner=DEFAULT_USER_ID).seed_once()
     conn.execute(
         "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES (?, '本地演示')",
         (DEFAULT_TENANT_ID,),
     )
     conn.execute(
-        "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name)"
-        " VALUES (?, ?, '本地用户')",
+        "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "
+        "VALUES (?, ?, '本地用户')",
         (DEFAULT_USER_ID, DEFAULT_TENANT_ID),
     )
     conn.commit()
-
-    services = ServiceEndpointService(conn, owner=DEFAULT_USER_ID)
-    kb = KnowledgeBase(
-        chroma_path,
-        make_embedder(
-            settings,
-            order=candidate_ids(services, "embedding"),
-            endpoints=services.endpoint_map("embedding"),
-        ),
-    )
-    doc = (
-        "胆囊结石随访须知（虚构演示文档）：\n\n"
-        "胆囊结石直径小于 10 mm 且无症状者，建议每 6 到 12 个月复查一次腹部超声。"
-        "复查应固定同一家医疗机构，便于前后对比。\n\n"
-        "出现持续性腹痛、发热或皮肤巩膜黄染时，提示可能出现并发症，应及时就医。\n\n"
-        "本须知为演示数据，不构成任何医疗建议。"
-    )
-    kb.index("health_reports", "随访须知（演示）.md", doc)
-
-    query = HealthQueryService(conn)
-    if not query.list_reports(DEFAULT_USER_ID):
-        query.create_report(
-            user_id=DEFAULT_USER_ID,
-            report_type="超声",
-            check_time="2025-05-01",
-            institution="市第一医院",
-            note="年度体检",
-            indices=[
-                {
-                    "index_name": "结石直径",
-                    "index_value": 5.0,
-                    "unit": "mm",
-                    "ref_range": "0-5",
-                    "is_verified": True,
-                    "raw_text": "胆囊结石一枚，直径约5mm",
-                }
-            ],
-        )
-        query.create_report(
-            user_id=DEFAULT_USER_ID,
-            report_type="超声",
-            check_time="2026-03-12",
-            institution="市第一医院",
-            note="复查",
-            indices=[
-                {
-                    "index_name": "结石直径",
-                    "index_value": 6.0,
-                    "unit": "mm",
-                    "ref_range": "0-5",
-                    "is_verified": False,
-                    "raw_text": "结石较前增大，约6mm",
-                }
-            ],
-        )
     conn.close()
 
 

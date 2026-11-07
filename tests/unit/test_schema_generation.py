@@ -28,7 +28,7 @@ from rolecard_agent.storage.threads import thread_id_carriers, touch_thread
 def db_path(tmp_path: Path) -> Path:
     path = tmp_path / "app.db"
     conn = connect(path)
-    bootstrap(conn, enabled_domains=("health",))
+    bootstrap(conn, enabled_domains=())
     conn.commit()
     conn.close()
     return path
@@ -49,7 +49,7 @@ def test_user_version_refuses_newer_db(db_path: Path, capsys: object) -> None:
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 3}")
         conn.commit()
         with pytest.raises(RuntimeError, match="装包回滚"):
-            bootstrap(conn, enabled_domains=("health",))
+            bootstrap(conn, enabled_domains=())
     finally:
         conn.close()
 
@@ -67,7 +67,7 @@ def test_strand_repair_restores_rows_and_reruns_migration(db_path: Path) -> None
         # 手工构造"死在 DROP 之后、RENAME 之前"的现场：
         conn.execute("ALTER TABLE role_proactive_state RENAME TO role_proactive_state__b2")
         conn.commit()
-        bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
+        bootstrap(conn, enabled_domains=(), plan=MIGRATION_PLAN)
         cols = {row[1] for row in conn.execute("PRAGMA table_info(role_proactive_state)")}
         assert "user_id" in cols, "自愈后迁移必须整个重跑（新形状到位）"
         rows = conn.execute(
@@ -85,7 +85,7 @@ def test_strand_repair_drops_empty_temp(db_path: Path) -> None:
         conn.execute("DROP TABLE role_proactive_state")
         conn.execute("CREATE TABLE role_proactive_state__b2 (user_id TEXT, role_id TEXT)")
         conn.commit()
-        bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
+        bootstrap(conn, enabled_domains=(), plan=MIGRATION_PLAN)
         stranded = conn.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE name = 'role_proactive_state__b2'"
         ).fetchone()[0]

@@ -23,7 +23,7 @@ from rolecard_agent.storage.db import (
 def _make_conn(tmp_path: Path) -> ThreadLocalConnection:
     path = tmp_path / "app.db"
     raw = connect(path)
-    bootstrap(raw, enabled_domains=("health",))
+    bootstrap(raw, enabled_domains=())
     raw.execute("INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('t1', 'demo')")
     raw.execute(
         "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "

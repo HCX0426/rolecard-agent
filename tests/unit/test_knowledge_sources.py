@@ -54,20 +54,20 @@ def test_forget_and_forget_scope(conn) -> None:
 def test_seed_backfills_existing_chunks_once(tmp_path: Path, conn) -> None:
     """种子把**存量**分块补进投影：新世界（有 source_name）与旧世界（连键都没有）同吃。"""
     kb = KnowledgeBase(tmp_path / "chroma", HashEmbedder())  # 裸建法 = 新表之前的世界
-    kb.index("health_reports", "报告.txt", DOC)  # 旧世界形状：身份 = 文件名
+    kb.index("notes", "报告.txt", DOC)  # 旧世界形状：身份 = 文件名
     kb.index("elysia_lore", "01.md", DOC, source_name="01-基本设定与人设.md")
     # 更老的块：元数据里**没有** source_name 键（真机上就有一批）
-    collection = kb._client.get_or_create_collection(name="health_reports")
+    collection = kb._client.get_or_create_collection(name="notes")
     collection.add(
         ids=["legacy-1"],
         embeddings=[[0.0] * HashEmbedder.DIM],
         documents=[DOC],
-        metadatas=[{"source": "旧文件.txt", "scope": "health_reports", "chunk": 0}],
+        metadatas=[{"source": "旧文件.txt", "scope": "notes", "chunk": 0}],
     )
 
     assert heal_knowledge_sources(kb, conn) == 3
     store = KnowledgeSourceStore(conn)
-    assert store.names("health_reports") == ["报告.txt", "旧文件.txt"]
+    assert store.names("notes") == ["报告.txt", "旧文件.txt"]
     assert store.names("elysia_lore") == ["01-基本设定与人设.md"]
 
     # 幂等：投影已有名字就不再扫（第二趟 0 行）
@@ -77,22 +77,22 @@ def test_seed_backfills_existing_chunks_once(tmp_path: Path, conn) -> None:
 def test_seed_clears_projection_for_empty_scopes(tmp_path: Path, conn) -> None:
     """空集合反过来清投影残留（自愈）：分块全没了，名单不该还挂着一个名字。"""
     store = KnowledgeSourceStore(conn)
-    store.remember("health_reports", "k", "ghost.pdf")
+    store.remember("notes", "k", "ghost.pdf")
     kb = KnowledgeBase(tmp_path / "chroma", HashEmbedder())
-    kb._client.get_or_create_collection(name="health_reports")  # 集合在、分块为 0
+    kb._client.get_or_create_collection(name="notes")  # 集合在、分块为 0
 
     assert heal_knowledge_sources(kb, conn) == 0
-    assert store.names("health_reports") == []
+    assert store.names("notes") == []
 
 
 def test_seed_is_a_noop_on_fully_projected_state(tmp_path: Path, conn) -> None:
     """产品路径已经写过的投影：种子一行不动（不会把旧读法重新带回来）。"""
     store = KnowledgeSourceStore(conn)
     kb = KnowledgeBase(tmp_path / "chroma", HashEmbedder(), sources_store=store)
-    kb.index("health_reports", "task-1", DOC, source_name="报告.pdf")
+    kb.index("notes", "task-1", DOC, source_name="报告.pdf")
 
     assert heal_knowledge_sources(kb, conn) == 0
-    assert store.names("health_reports") == ["报告.pdf"]
+    assert store.names("notes") == ["报告.pdf"]
 
 
 def test_keys_by_name_resolves_identity_for_delete(conn) -> None:

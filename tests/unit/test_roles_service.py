@@ -42,11 +42,12 @@ def _new(role_id: str = "custom", **overrides: object) -> RoleCardCreate:
 
 def test_seeded_roles_are_listed_builtin_first(roles: RoleCardService) -> None:
     listed = cards(roles).list_roles()
-    # 通用助手（内置）恒在首位；档案管理员已降级为域种子角色（自定义类型）。
+    # 通用助手（内置）恒在首位；`note_keeper` 是本 fixture 自建的自定义卡（is_builtin=0）。
+    # 出厂**不再带任何域角色**（2026-11-07 域包物理删除），所以"非内置"那份只能是夹具建的。
     assert listed[0].role_id == "general_assistant" and listed[0].is_builtin
-    assert any(r.role_id == "medical_archivist" and not r.is_builtin for r in listed)
-    archivist = cards(roles).get("medical_archivist")
-    assert archivist.temperature == 0.3
+    assert any(r.role_id == "note_keeper" and not r.is_builtin for r in listed)
+    keeper = cards(roles).get("note_keeper")
+    assert keeper.temperature == 0.7
 
 
 def test_seeding_is_idempotent(roles: RoleCardService) -> None:
@@ -103,18 +104,16 @@ def test_whitelist_none_and_empty_round_trip_distinctly(roles: RoleCardService) 
 
 def test_builtin_role_cannot_be_deleted(roles: RoleCardService) -> None:
     # 内置只剩「通用助手」；域种子角色（档案管理员）类型是自定义，可删除。
-    # 2026-10-31 起**开机不再播种域角色**（用户拍板：默认常驻只有通用助手）——
-    # 本 fixture 的显式 seed_domain_roles 只代表"显式调用"的语义：缺失才补插。
-    # 生产路径（bootstrap/init_db）不再调用它，所以"删了又回来"不会发生。
+    # 开机不播种域角色（默认常驻只有通用助手）；本 fixture 的卡是测试自己建的，
+    # 显式 seed_domain_roles 只代表"显式调用"的语义：缺失才补插。
     with pytest.raises(BuiltinRoleProtected):
         cards(roles).delete("general_assistant")
     assert cards(roles).exists("general_assistant")
-    cards(roles).delete("medical_archivist")
-    assert not cards(roles).exists("medical_archivist")
+    cards(roles).delete("note_keeper")
+    assert not cards(roles).exists("note_keeper")
     # 显式再播种：缺失才补插，且不会复活为内置（这是"显式调用"的语义）。
     roles.seed_domain_roles(domain_seed_roles(), user_id=ME)
-    assert cards(roles).exists("medical_archivist")
-    assert cards(roles).get("medical_archivist").is_builtin is False
+    assert not cards(roles).exists("note_keeper"), "出厂域空集 ⇒ 显式播种补不回任何域角色"
 
 
 def test_custom_role_can_be_deleted(roles: RoleCardService) -> None:
@@ -143,7 +142,7 @@ def test_switch_role_keeps_history_and_audits(
     身份来换角色现在就是 `RoleNotFound`，那是这条判据在工作，不是用例写坏了。
     """
     roles.scoped("u1").create(_new("analyst"))
-    assert roles.current_thread_role("thread-1") == "medical_archivist"
+    assert roles.current_thread_role("thread-1") == "note_keeper"
 
     roles.set_thread_role("thread-1", "analyst", user_id="u1", actor="tester")
     assert roles.current_thread_role("thread-1") == "analyst"
@@ -154,12 +153,12 @@ def test_switch_role_keeps_history_and_audits(
 def test_switch_to_unknown_role_leaves_the_thread_alone(roles: RoleCardService) -> None:
     with pytest.raises(RoleNotFound):
         roles.set_thread_role("thread-1", "nope", user_id=ME)
-    assert roles.current_thread_role("thread-1") == "medical_archivist"
+    assert roles.current_thread_role("thread-1") == "note_keeper"
 
 
 def test_switch_on_unknown_thread_raises(roles: RoleCardService) -> None:
     with pytest.raises(RoleNotFound):
-        roles.set_thread_role("ghost-thread", "medical_archivist", user_id=ME)
+        roles.set_thread_role("ghost-thread", "note_keeper", user_id=ME)
 
 
 # ------------------------------------------------------------------------ knowledge scopes
@@ -169,14 +168,14 @@ def test_switch_on_unknown_thread_raises(roles: RoleCardService) -> None:
 # 判据随功能一起退役，不是阈值放水。）
 
 
-def test_domain_role_ships_with_a_scope(roles: RoleCardService) -> None:
-    role = cards(roles).get("medical_archivist")
-    assert role.knowledge_scopes == ["health_reports"]
+def test_custom_role_ships_with_a_scope(roles: RoleCardService) -> None:
+    role = cards(roles).get("note_keeper")
+    assert role.knowledge_scopes == ["notes"]
 
 
 def test_knowledge_scopes_round_trip(roles: RoleCardService) -> None:
-    cards(roles).create(_new("reader", knowledge_scopes=["health_reports", "guidelines"]))
-    assert cards(roles).get("reader").knowledge_scopes == ["health_reports", "guidelines"]
+    cards(roles).create(_new("reader", knowledge_scopes=["notes", "guidelines"]))
+    assert cards(roles).get("reader").knowledge_scopes == ["notes", "guidelines"]
 
 
 def test_bad_scope_name_is_rejected() -> None:

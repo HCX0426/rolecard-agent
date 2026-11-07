@@ -1,9 +1,9 @@
 """手写响应模型 —— **写端点那一族**（P1b 第四批，2026-10-29）。
 
 为什么这一族不能自动生成（生成器闸①的形状学解释）：写端点的响应**键集随分支变**，
-采样只能拿到"某一次调用的形状"——`/api/records/extract` 有 1 个成功体 + 3 个互斥的
-降级体；`/api/mcp/servers/{id}/test` 的 `error` 只在失败路**整个键不存在**（不是 null
-值）。生成器的表达能力是"键必填、值可空"，写不出"键可有可无"，所以这些端点从前
+采样只能拿到"某一次调用的形状"——`/api/mcp/servers/{id}/test` 的 `error` 只在失败路
+**整个键不存在**（不是 null 值）；`/api/services/check` 的顶层键名按 provider 风格
+二选一。生成器的表达能力是"键必填、值可空"，写不出"键可有可无"，所以这些端点从前
 零契约、前端全靠手抄。这里按运行时真实返回逐键手抄一份。
 
 **必填 vs 默认的判据**（对齐前端类型，别把"恒有"降级成"可选"）：
@@ -55,59 +55,6 @@ class MemoryRowView(BaseModel):
     invalidated_at: str | None
     superseded_by: int | None
     created_at: str
-
-
-class ExtractedIndexModel(BaseModel):
-    """抽取里冲突行的两侧读数（`ExtractedIndex.model_dump()` 恒 8 键，全量 dump）。"""
-
-    index_name: str
-    index_value: float | None
-    value_text: str | None
-    unit: str | None
-    ref_range: str | None
-    raw_text: str
-    confidence: str
-
-
-class ExtractWrittenModel(BaseModel):
-    """抽取响应里 written[] 的元素 —— 只有 4 个键。
-
-    ⚠️ 与库里的指标行（9 键的 SettingsMemoryViewItemsItem_indicesItem 同族）**不是**
-    一个形状：回给客户端的是抽取侧的窄投影，写库的那份（8 键 payload）不出门。
-    前端旧手写 ExtractWritten 错指到 9 键那份上，本模型把它拉回运行时事实。
-    """
-
-    index_name: str
-    index_value: float | None
-    value_text: str | None
-    unit: str | None
-
-
-class ExtractConflictModel(BaseModel):
-    index_name: str
-    reason: str
-    primary: ExtractedIndexModel | None
-    verify: ExtractedIndexModel | None
-
-
-class ExtractOutcomeView(BaseModel):
-    """`POST /api/records/extract` 的全部 4 条返回路径（键集互斥，靠 exclude_unset 裁）。
-
-    这是本文件唯一"全键带默认"的模型：成功路只给 mode..notes 七键，三条降级路各给
-    skipped + detail/report_id 之二——四套键集互斥，任一路都不该被另一端缺的键撑爆
-    校验。前端按 `skipped` 有无分支消费。
-    """
-
-    mode: str | None = None
-    report_type: str | None = None
-    check_time: str | None = None
-    institution: str | None = None
-    written: list[ExtractWrittenModel] | None = None
-    conflicts: list[ExtractConflictModel] | None = None
-    notes: list[str] | None = None
-    skipped: str | None = None
-    detail: str | None = None
-    report_id: str | None = None
 
 
 class MemoryReportView(BaseModel):
@@ -217,7 +164,7 @@ class DomainRecordView(BaseModel):
     """`/api/domains/{domain}/records` 的通用记录行（GET 列表 / POST / PATCH 三个端点共用）。
 
     带 `{domain}` 路径参数的端点不进生成器白名单的理由：域 id 是**数据而不是形状**——
-    样本只能证明 finance 一个域，契约却对任意注册域成立；手写模型的字段集取自
+    样本只能证明其中一类域，契约却对任意注册域成立；手写模型的字段集取自
     `DomainDataService._row_to_dict`（8 键恒有），比一次采样诚实。
     value_num 在库里是 REAL 列、`_row_to_dict` 原样透传（float | None）。
     """

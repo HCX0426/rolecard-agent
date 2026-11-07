@@ -37,7 +37,7 @@ from rolecard_agent.storage.db import (
 
 def _db(tmp_path: Path) -> sqlite3.Connection:
     conn = connect(tmp_path / "app.db")
-    bootstrap(conn, enabled_domains=("health",))
+    bootstrap(conn, enabled_domains=())
     return conn
 
 

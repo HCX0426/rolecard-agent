@@ -126,7 +126,9 @@ def test_file_watch_row_editable_in_reachout_group() -> None:
 def test_runtime_view_matches_frozen_golden() -> None:
     """**渲染快照不变**：视图从手写清单改为注册表派生，payload 必须逐字节等价。
 
-    金样是迁移前的 HEAD 代码导出的（`runtime_view_golden.json`，11 组 32 行）。行序、
+    金样是迁移前的 HEAD 代码导出的（`runtime_view_golden.json`，12 组 35 行）。行序、
+    2026-11-07 随域包删除去掉了 `extract_backend` / `extract_verify` 两格（唯一读者已不存在）
+    —— 有意改界面，金样与提交同笔更新。
     label、note、kind、choices 全在其中 —— 派生实现错任何一处（顺序、只读标记、动态
     文案）这里就红。**有意变更界面时**重新导出金样并在同一笔提交里把 diff 说清楚：
     金样是"这一页长什么样"的合同，不是绊脚石。

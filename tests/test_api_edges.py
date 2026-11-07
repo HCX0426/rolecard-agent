@@ -16,7 +16,6 @@ from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 
 from rolecard_agent.api.main import create_app
-from rolecard_agent.domains.health.records import _latest_numeric_history
 from tests.conftest import ScriptedChat
 
 
@@ -30,28 +29,16 @@ def client(tmp_path: Path) -> TestClient:
     )
 
 
-# -- 抽取用的历史值汇总（突变检查的输入）-------------------------------------------
+# -- 数据删除的未命中分支 -----------------------------------------------------------
 
 
-def test_latest_numeric_history_prefers_the_latest_date() -> None:
-    """同一指标多条记录：取日期最大的那条（输入不保证按时间排序）。"""
-    records = [
-        {"check_time": "2026-01-01", "indices": [{"index_name": "血糖", "index_value": 5.0}]},
-        {"check_time": "2026-06-01", "indices": [{"index_name": "血糖", "index_value": 6.0}]},
-        {"check_time": "2026-03-01", "indices": [{"index_name": "血糖", "index_value": 7.0}]},
-    ]
-    assert _latest_numeric_history(records) == {"血糖": 6.0}
+def test_deleting_missing_record_is_404(client: TestClient) -> None:
+    """错用户与不存在都返回 404 —— 不用 403 去确认"这条数据确实存在"。
 
-
-def test_latest_numeric_history_skips_text_only_rows() -> None:
-    """没有数值的指标不进历史（否则突变检查会拿 None 去比）。"""
-    records = [
-        {
-            "check_time": "2026-01-01",
-            "indices": [{"index_name": "描述", "value_text": "未见异常"}],
-        }
-    ]
-    assert _latest_numeric_history(records) == {}
+    从前这条打的是某个富域私有的 `/api/records/…`（report/index 两个 id）；那个域包被物理
+    删除之后，同一条判据由通用记录通路承担 —— 语义一字未变，只是不再有点名域的那两份形状。
+    """
+    assert client.delete("/api/domains/notes/records/r_missing").status_code == 404
 
 
 # -- 会话局部更新的三个分支 ---------------------------------------------------------
@@ -143,22 +130,15 @@ def test_unknown_role_backend_degrades_to_default(client: TestClient) -> None:
     assert client.post("/api/chat", json={"thread_id": tid, "message": "还在吗"}).status_code == 200
 
 
-# -- 数据删除的未命中分支 -----------------------------------------------------------
+# -- 上传的兜底路径 ------------------------------------------------------------------
 
 
-def test_deleting_missing_report_or_index_is_404(client: TestClient) -> None:
-    """错用户与不存在都返回 404 —— 不用 403 去确认"这条数据确实存在"。"""
-    assert client.delete("/api/records/report/rp_nope").status_code == 404
-    assert client.delete("/api/records/index/ix_nope").status_code == 404
+def test_unsupported_upload_stays_pending(client: TestClient) -> None:
+    """不支持的类型：登记为 pending，说明里如实讲"读不了"（不假装已经读过）。
 
-
-# -- 上传与抽取的兜底路径 -----------------------------------------------------------
-
-
-def test_unsupported_upload_stays_pending_and_extract_says_no_text(
-    client: TestClient,
-) -> None:
-    """不支持的类型：登记为 pending，抽取如实回 no_text（不假装抽出了东西）。"""
+    从前这条还顺手打 `/api/records/extract` 断言 `skipped=no_text`：那个抽取端点随所属
+    富域包物理删除一起退役了，这里保留的部分才是 `api/main.py` 边界的判据。
+    """
     tid = client.post("/api/session", json={}).json()["thread_id"]
     up = client.post(
         f"/api/session/{tid}/upload",
@@ -166,10 +146,6 @@ def test_unsupported_upload_stays_pending_and_extract_says_no_text(
     )
     assert up.status_code == 201
     assert up.json()["status"] == "pending"
-
-    res = client.post("/api/records/extract", json={"task_id": up.json()["task_id"]})
-    assert res.status_code == 200
-    assert res.json().get("skipped") == "no_text"
 
 
 def test_audit_limit_is_clamped(client: TestClient) -> None:

@@ -852,126 +852,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/records": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Records
-         * @description F2 数据管理视图（分页）：报告 + 完整指标行（归属演示用户）。
-         *
-         *     为什么要分页：整表返回会让"补录几十份报告之后打开数据页"变成一次几十 KB 的响应，
-         *     而界面一屏只看得下十几条（审查报告 P2）。切片目前发生在服务层：数据量到千级再改成
-         *     SQL 层 `LIMIT/OFFSET`（那时候 `total` 也应改为 COUNT 查询）。
-         */
-        get: operations["list_records_api_records_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/records/extract": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Extract Record
-         * @description 把已上传的报告抽成**结构化指标**（v2.3）：让 AI 不只能"读"原文，还能"算"数值。
-         *
-         *     三层校验（确定性 / 原文锚定 / 第二模型交叉）在 domains/health/extract.py；
-         *     **只有双方一致的项才写库**，其余作为 conflicts 返回，由人确认。
-         *     铁律：一律 `is_verified=0`（没人核实过）；同一 ingestion task 已有报告则不重复写。
-         */
-        post: operations["extract_record_api_records_extract_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/records/index/{index_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Remove Record Index */
-        delete: operations["remove_record_index_api_records_index__index_id__delete"];
-        options?: never;
-        head?: never;
-        /**
-         * Patch Record Index
-         * @description F2：修正误录的指标值。变更写审计（US-3 的数据侧延伸）。
-         */
-        patch: operations["patch_record_index_api_records_index__index_id__patch"];
-        trace?: never;
-    };
-    "/api/records/report": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create Record Report
-         * @description 手动补录一份报告（最小可用）。**主流程仍是上传报告让 AI 解析**，这里是兜底入口。
-         *
-         *     校验交给 domain service（类型/时间必填、每行指标需名称 + 数值或文本）；失败翻译成
-         *     400 而不是 500 —— 这是用户输入错误，不是服务故障。写入审计。
-         */
-        post: operations["create_record_report_api_records_report_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/records/report/{report_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * Remove Record Report
-         * @description 删除报告，**连它的检索索引一起清**（审查报告 P1-1）。
-         *
-         *     顺序是刻意的：**先清向量，再删库行**。
-         *       * 先清向量最坏情况 = 行还在、索引没了：报告仍列在页面上，只是搜不到 ——
-         *         可见、可自愈、不泄漏；
-         *       * 反过来最坏情况 = 行没了、向量还在：用户以为删掉的病历原文仍会被模型检索到
-         *         并引用 —— 这正是要修的 bug。
-         *     手工录入的报告没有 intake（`task_id=None`），跳过清理。清索引失败会直接抛错
-         *     **且不删库行**，让用户重试，而不是留下"以为删了"的状态。
-         */
-        delete: operations["remove_record_report_api_records_report__report_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/roles": {
         parameters: {
             query?: never;
@@ -1579,7 +1459,7 @@ export interface paths {
          *     第二份）；撞已存在（且未退役）的名 → 409（显式新建撞名必须报错，不像播种那样静默跳过；
          *     撞一个已退役的名由 `create` 就地复活那一格兜住，见下）。新建的是纯数据域：没有代码侧的
          *     SPEC/工具/专属路由，通用记录通路（`/api/domains/{id}/records`）本就按 `domain_data` 表
-         *     工作，`finance` 就是这个形状。
+         *     工作 —— 现在出厂的域**全部**是这个形状（清单完全归用户）。
          */
         post: operations["create_domain_api_settings_domains_post"];
         delete?: never;
@@ -1603,7 +1483,7 @@ export interface paths {
          * @description 删掉一个域（资料页「删除这个域」）：置退役旗 + 清掉它的全部通用记录，**不留两套真相**。
          *
          *     退役不是删行（`PluginService.retire` 的理由：播种 `ON CONFLICT DO NOTHING`，行留着才
-         *     不会被 `seed_plugin_rows` 重新播回 —— 代码侧的 health/finance 用户删了也不复活）。
+         *     不会被 `seed_plugin_rows` 重新播回 —— 将来代码侧再出厂的域，用户删了也不复活）。
          *     清单读侧（`list_plugins`/`enabled_domains`）都滤 `retired=1`，删完界面上的页签与
          *     `list_domains` 工具立刻都不再列出它；装配根据 `retired_domain_ids()` 不挂它的专属路由，
          *     所以代码域退役后连 `/api/records` 那族也跟着下线 —— "清单里没有"与"端点还在服务"
@@ -2682,7 +2562,7 @@ export interface components {
         };
         /**
          * DomainCreate
-         * @description 新建一个域的请求体。id 走通用记录通路（同 `finance` 的形状），display_name 缺省同 id。
+         * @description 新建一个域的请求体。id 走通用记录通路（纯数据域的形状），display_name 缺省同 id。
          */
         DomainCreate: {
             /** Display Name */
@@ -2727,7 +2607,7 @@ export interface components {
          * @description `/api/domains/{domain}/records` 的通用记录行（GET 列表 / POST / PATCH 三个端点共用）。
          *
          *     带 `{domain}` 路径参数的端点不进生成器白名单的理由：域 id 是**数据而不是形状**——
-         *     样本只能证明 finance 一个域，契约却对任意注册域成立；手写模型的字段集取自
+         *     样本只能证明其中一类域，契约却对任意注册域成立；手写模型的字段集取自
          *     `DomainDataService._row_to_dict`（8 键恒有），比一次采样诚实。
          *     value_num 在库里是 REAL 列、`_row_to_dict` 原样透传（float | None）。
          */
@@ -2803,91 +2683,6 @@ export interface components {
             idents?: {
                 [key: string]: string;
             }[];
-        };
-        /** ExtractConflictModel */
-        ExtractConflictModel: {
-            /** Index Name */
-            index_name: string;
-            primary: components["schemas"]["ExtractedIndexModel"] | null;
-            /** Reason */
-            reason: string;
-            verify: components["schemas"]["ExtractedIndexModel"] | null;
-        };
-        /**
-         * ExtractOutcomeView
-         * @description `POST /api/records/extract` 的全部 4 条返回路径（键集互斥，靠 exclude_unset 裁）。
-         *
-         *     这是本文件唯一"全键带默认"的模型：成功路只给 mode..notes 七键，三条降级路各给
-         *     skipped + detail/report_id 之二——四套键集互斥，任一路都不该被另一端缺的键撑爆
-         *     校验。前端按 `skipped` 有无分支消费。
-         */
-        ExtractOutcomeView: {
-            /** Check Time */
-            check_time?: string | null;
-            /** Conflicts */
-            conflicts?: components["schemas"]["ExtractConflictModel"][] | null;
-            /** Detail */
-            detail?: string | null;
-            /** Institution */
-            institution?: string | null;
-            /** Mode */
-            mode?: string | null;
-            /** Notes */
-            notes?: string[] | null;
-            /** Report Id */
-            report_id?: string | null;
-            /** Report Type */
-            report_type?: string | null;
-            /** Skipped */
-            skipped?: string | null;
-            /** Written */
-            written?: components["schemas"]["ExtractWrittenModel"][] | null;
-        };
-        /**
-         * ExtractRequest
-         * @description 触发一次结构化抽取（上传成功后由前端自动调用，见 S5b）。
-         */
-        ExtractRequest: {
-            /** Task Id */
-            task_id: string;
-        };
-        /**
-         * ExtractWrittenModel
-         * @description 抽取响应里 written[] 的元素 —— 只有 4 个键。
-         *
-         *     ⚠️ 与库里的指标行（9 键的 SettingsMemoryViewItemsItem_indicesItem 同族）**不是**
-         *     一个形状：回给客户端的是抽取侧的窄投影，写库的那份（8 键 payload）不出门。
-         *     前端旧手写 ExtractWritten 错指到 9 键那份上，本模型把它拉回运行时事实。
-         */
-        ExtractWrittenModel: {
-            /** Index Name */
-            index_name: string;
-            /** Index Value */
-            index_value: number | null;
-            /** Unit */
-            unit: string | null;
-            /** Value Text */
-            value_text: string | null;
-        };
-        /**
-         * ExtractedIndexModel
-         * @description 抽取里冲突行的两侧读数（`ExtractedIndex.model_dump()` 恒 8 键，全量 dump）。
-         */
-        ExtractedIndexModel: {
-            /** Confidence */
-            confidence: string;
-            /** Index Name */
-            index_name: string;
-            /** Index Value */
-            index_value: number | null;
-            /** Raw Text */
-            raw_text: string;
-            /** Ref Range */
-            ref_range: string | null;
-            /** Unit */
-            unit: string | null;
-            /** Value Text */
-            value_text: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -2977,47 +2772,6 @@ export interface components {
             items?: {
                 [key: string]: unknown;
             }[];
-        };
-        /**
-         * IndexCreate
-         * @description One indicator row in a manually created report (最小可用：名称 + 数值或文本)。
-         *
-         *     其余（单位 / 参考区间 / 是否已人工校验）都可选；未勾选校验的照旧带
-         *     【未经人工校验】标记 —— 手填不等于已核实。
-         */
-        IndexCreate: {
-            /** Index Name */
-            index_name: string;
-            /** Index Value */
-            index_value?: number | null;
-            /**
-             * Is Verified
-             * @default false
-             */
-            is_verified: boolean;
-            /** Ref Range */
-            ref_range?: string | null;
-            /** Unit */
-            unit?: string | null;
-            /** Value Text */
-            value_text?: string | null;
-        };
-        /**
-         * IndexPatch
-         * @description Data-management correction for one indicator row. `exclude_unset` semantics:
-         *     a field explicitly set to null means "clear it" (e.g. switching value -> text).
-         */
-        IndexPatch: {
-            /** Index Value */
-            index_value?: number | null;
-            /** Is Verified */
-            is_verified?: boolean | null;
-            /** Ref Range */
-            ref_range?: string | null;
-            /** Unit */
-            unit?: string | null;
-            /** Value Text */
-            value_text?: string | null;
         };
         /**
          * KnowledgeScopeCreate
@@ -3899,98 +3653,12 @@ export interface components {
             user: string;
         };
         /**
-         * RecordsView
-         * @description /api/records 的顶层形状（数组包一层只为给它一个名字）。
-         */
-        RecordsView: components["schemas"]["RecordsViewRoot"];
-        /**
-         * RecordsViewItemsItem
-         * @description 自动生成：RecordsViewItemsItem（itemsItem 的对象形状）。
-         */
-        RecordsViewItemsItem: {
-            /** Check Time */
-            check_time: string | null;
-            /** Indices */
-            indices: components["schemas"]["RecordsViewItemsItem_indicesItem"][] | null;
-            /** Institution */
-            institution: string | null;
-            /** Note */
-            note: string | null;
-            /** Report Id */
-            report_id: string | null;
-            /** Report Type */
-            report_type: string | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * RecordsViewItemsItem_indicesItem
-         * @description 自动生成：RecordsViewItemsItem_indicesItem（itemsItem_indicesItem 的对象形状）。
-         */
-        RecordsViewItemsItem_indicesItem: {
-            /** Index Id */
-            index_id: string | null;
-            /** Index Name */
-            index_name: string | null;
-            /** Index Value */
-            index_value: number | null;
-            /** Is Verified */
-            is_verified: number | null;
-            /** Raw Text */
-            raw_text: string | null;
-            /** Ref Range */
-            ref_range: string | null;
-            /** Source */
-            source: string | null;
-            /** Unit */
-            unit: string | null;
-            /** Value Text */
-            value_text: string | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * RecordsViewRoot
-         * @description 自动生成：RecordsViewRoot（ 的对象形状）。
-         */
-        RecordsViewRoot: {
-            /** Items */
-            items: components["schemas"]["RecordsViewItemsItem"][] | null;
-            /** Limit */
-            limit: number | null;
-            /** Offset */
-            offset: number | null;
-            /** Total */
-            total: number | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
          * ReorderBody
          * @description 全量优先级：该服务全部端点 id 的一个排列，第 1 位即生效。
          */
         ReorderBody: {
             /** Order */
             order: string[];
-        };
-        /**
-         * ReportCreate
-         * @description 手动补录一份报告。**主流程是"上传报告 / 图片让 AI 解析"，本接口是兜底入口**。
-         *
-         *     最小可用契约（与 domain service 一致）：report_type + check_time 必填，至少一行指标，
-         *     每行指标需 index_name 且 index_value / value_text 至少有一个。
-         */
-        ReportCreate: {
-            /** Check Time */
-            check_time: string;
-            /** Indices */
-            indices?: components["schemas"]["IndexCreate"][];
-            /** Institution */
-            institution?: string | null;
-            /** Note */
-            note?: string | null;
-            /** Report Type */
-            report_type: string;
         };
         /**
          * RoleCard
@@ -6025,197 +5693,6 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                 };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_records_api_records_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                offset?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RecordsView"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    extract_record_api_records_extract_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ExtractRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ExtractOutcomeView"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    remove_record_index_api_records_index__index_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                index_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    patch_record_index_api_records_index__index_id__patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                index_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["IndexPatch"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_record_report_api_records_report_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReportCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    remove_record_report_api_records_report__report_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                report_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Validation Error */
             422: {

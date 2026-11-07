@@ -27,7 +27,7 @@ from langchain_core.tools import BaseTool, tool
 
 from rolecard_agent.base.identity import DEFAULT_USER_ID
 from rolecard_agent.core.tools.registry import ToolRegistry
-from rolecard_agent.domains.registry import domain_seed_roles
+from rolecard_agent.roles.models import RoleCardCreate
 from rolecard_agent.roles.service import RoleCards, RoleCardService
 from rolecard_agent.storage.db import bootstrap, connect
 
@@ -213,13 +213,13 @@ class ScriptedChat:
 
 
 @tool
-def query_health_record(start_date: str = "", end_date: str = "") -> str:
+def lookup_note(start_date: str = "", end_date: str = "") -> str:
     """Query stored health record indicators within an optional date range."""
     return "结石直径 6.0 mm（参考范围 0-5）【未经人工校验】"
 
 
 @tool
-def compare_health_index(index_name: str) -> str:
+def compare_note(index_name: str) -> str:
     """Compare one indicator across years to show how it changed."""
     return "结石直径：2025 年 5.0 mm → 2026 年 6.0 mm【未经人工校验】"
 
@@ -227,7 +227,7 @@ def compare_health_index(index_name: str) -> str:
 @tool
 def list_roles() -> str:
     """List the roles available in this deployment."""
-    return "medical_archivist"
+    return "note_keeper"
 
 
 # --------------------------------------------------------------------------- fixtures
@@ -237,13 +237,13 @@ def list_roles() -> str:
 def conn(tmp_path: Any) -> Iterator[sqlite3.Connection]:
     """A bootstrapped in-temp-dir database, including one tenant, user and thread."""
     connection = connect(tmp_path / "app.db")
-    bootstrap(connection, enabled_domains=("health",))
+    bootstrap(connection, enabled_domains=())
     connection.executescript(
         """
         INSERT INTO tenant (tenant_id, display_name) VALUES ('t1', 'demo');
         INSERT INTO app_user (user_id, tenant_id, display_name) VALUES ('u1', 't1', 'demo user');
         INSERT INTO session_thread (thread_id, user_id, current_role_id)
-            VALUES ('thread-1', 'u1', 'medical_archivist');
+            VALUES ('thread-1', 'u1', 'note_keeper');
         """
     )
     connection.commit()
@@ -259,8 +259,23 @@ def roles(conn: sqlite3.Connection) -> RoleCardService:
     # 出厂卡也有主人：测试里就是本机那份。`roles` 夹具仍返回**服务**（图与内核的桩吃它），
     # 读写用例自己 `roles.scoped(...)` 拿视图）。
     service.seed_builtins(user_id=DEFAULT_USER_ID)
-    # medical_archivist 是域种子角色（自定义类型）—— 清单由各域 SPEC 聚合给出
-    service.seed_domain_roles(domain_seed_roles(), user_id=DEFAULT_USER_ID)
+    # 出厂**不带任何代码侧的域**，所以 `domain_seed_roles()` 是空集；但图路由那几条用例
+    # 需要一个"带域工具的自定义角色" —— 于是由这个夹具自己建一张（`is_builtin=0`，
+    # 与用户自建/域出厂同一类型），替身只活在测试里，不是第二份出厂清单。
+    cards = service.scoped(DEFAULT_USER_ID)
+    if not cards.exists("note_keeper"):
+        service.seed_domain_roles(
+            (
+                RoleCardCreate(
+                    role_id="note_keeper",
+                    role_name="笔记管理员",
+                    system_prompt="你管理本机的笔记。",
+                    tool_whitelist=["lookup_note", "compare_note"],
+                    knowledge_scopes=["notes"],
+                ),
+            ),
+            user_id=DEFAULT_USER_ID,
+        )
     return service
 
 
@@ -268,13 +283,13 @@ def roles(conn: sqlite3.Connection) -> RoleCardService:
 def registry() -> ToolRegistry:
     reg = ToolRegistry()
     reg.register(list_roles)  # kernel tool: domain=None
-    reg.register_many([query_health_record, compare_health_index], domain="health")
+    reg.register_many([lookup_note, compare_note], domain="notes")
     return reg
 
 
 @pytest.fixture
 def all_tools() -> list[BaseTool]:
-    return [list_roles, query_health_record, compare_health_index]
+    return [list_roles, lookup_note, compare_note]
 
 
 def model_rows(payload: dict[str, object]) -> list[dict[str, object]]:

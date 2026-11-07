@@ -16,7 +16,6 @@ from fastapi.testclient import TestClient
 
 from rolecard_agent.api.main import create_app
 from rolecard_agent.base.identity import DEFAULT_USER_ID
-from rolecard_agent.core.storage.migrations import MIGRATION_PLAN
 from tests.conftest import model_rows
 
 
@@ -116,82 +115,22 @@ def test_delete_custom_role(client: TestClient) -> None:
 
 
 def test_tools_catalog_groups_by_domain(client: TestClient) -> None:
-    """Traceability: US-9 — 工具目录按 内核/领域 分组并带一句话说明。"""
+    """Traceability: US-9 — 工具目录按 内核/领域 分组并带一句话说明。
+
+    出厂不带任何代码侧的域（2026-11-07 域包物理删除）⇒ `domains` 分组是空表；
+    内核那一组仍是那两件只读工具。空分组是事实、不是漏写：域的工具由域包自己声明，
+    重新放一个域包进去，它就会在这里出现。
+    """
     res = client.get("/api/tools/catalog")
     assert res.status_code == 200
     body = res.json()
     kernel_names = {t["name"] for t in body["kernel"]}
     assert {"list_domains", "list_roles"} <= kernel_names
-    health = {t["name"]: t for t in body["domains"]["health"]}
-    assert set(health) == {
-        "query_health_record",
-        "compare_health_index",
-        "list_reports",
-        "upload_medical_report",
-    }
-    assert all(t["description"] for t in health.values())  # 每个工具都有一句人话说明
+    assert body["domains"] == {}, f"出厂域应为空，实际 {sorted(body['domains'])}"
+    assert all(t["description"] for t in body["kernel"])
 
 
 # -- records 数据管理 + audit（F2 / F3） ---------------------------------------------
-
-
-def test_records_patch_and_audit_and_delete(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """F2/F3 端到端：修正指标 → 审计可见；删除报告 → 级联清指标。"""
-    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
-    app = create_app(sqlite_path=tmp_path / "rec.db")
-    with TestClient(app) as c:
-        # 用评测同款种子逻辑造一份可管理的数据
-        import sqlite3 as s3
-
-        from rolecard_agent.domains.health.service import HealthQueryService
-        from rolecard_agent.storage.db import bootstrap
-
-        conn = s3.connect(tmp_path / "rec.db")
-        conn.row_factory = s3.Row
-        bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
-        conn.executescript(
-            "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('local', 'd');"
-            "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "
-            "  VALUES ('local-user', 'local', 'u');"
-        )
-        conn.commit()
-        q = HealthQueryService(conn)
-        q.create_report(
-            user_id="local-user",
-            report_type="超声",
-            check_time="2026-03-12",
-            indices=[{"index_name": "结石直径", "index_value": 6.0, "unit": "mm"}],
-        )
-        conn.close()
-
-        records = c.get("/api/records").json()["items"]  # 分页响应：items/total/limit/offset
-        index_id = records[0]["indices"][0]["index_id"]
-        report_id = records[0]["report_id"]
-
-        patch = c.patch(
-            f"/api/records/index/{index_id}",
-            json={"index_value": 5.5, "is_verified": True},
-        )
-        assert patch.status_code == 200
-        assert float(patch.json()["index_value"]) == 5.5
-        assert patch.json()["is_verified"] == 1
-
-        audit = c.get("/api/audit").json()
-        assert any(a["action"] == "update_index" and a["target"] == index_id for a in audit)
-
-        assert c.delete(f"/api/records/report/{report_id}").status_code == 204
-        assert c.get("/api/records").json()["items"] == []
-        audit = c.get("/api/audit").json()
-        assert any(a["action"] == "delete_report" and a["target"] == report_id for a in audit)
-
-
-def test_records_patch_unknown_index_404(client: TestClient) -> None:
-    assert client.patch("/api/records/index/nope", json={"index_value": 1.0}).status_code == 404
-
-
-# -- console ------------------------------------------------------------------------
 
 
 def test_console_page_served(client: TestClient) -> None:

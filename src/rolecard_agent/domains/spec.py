@@ -3,7 +3,7 @@
 2026-10-04 审查快照的域机制条目给当时的现实记的账是：新增一域要动 **≥6 处**中心代码
 （`domains/registry.py` 的 DOMAINS 元组与 factories 字典、`api/main.py` 的 isinstance 接线、
 `api/routers/records.py` 的抽取器分派、`roles/seed.py` 的工具名与知识作用域），于是
-finance 域至今只能做一个 `lambda: []` 的空壳。本模块把「一个域是什么」收成**一份声明**，
+有的域至今只能做一个 `lambda: []` 的空壳。本模块把「一个域是什么」收成**一份声明**，
 中心代码只认这一份声明、不认域的名字：
 
   * `domains/registry.py` 按目录枚举各包导出的 `SPEC`（域名单、工具工厂、写工具分流）；

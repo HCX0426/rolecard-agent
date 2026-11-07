@@ -91,7 +91,7 @@ def test_the_injected_action_runs_in_place(tmp_path: Path) -> None:
 
     conn = _legacy_conn(tmp_path)
     try:
-        bootstrap(conn, enabled_domains=("health",), plan=build_plan(provider_layers=fake_layers))
+        bootstrap(conn, enabled_domains=(), plan=build_plan(provider_layers=fake_layers))
         assert calls == ["moved"]
         # 顺序承重的证据：索引是在搬层**之后**建的，所以它此刻必须真的存在。
         indexes = {
@@ -109,7 +109,7 @@ def test_new_shape_db_needs_no_action(tmp_path: Path) -> None:
     calls: list[str] = []
     bootstrap(
         conn,
-        enabled_domains=("health",),
+        enabled_domains=(),
         plan=build_plan(provider_layers=lambda _c: calls.append("x") or 0),
     )
     assert calls == []

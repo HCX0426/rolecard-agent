@@ -39,7 +39,7 @@ def test_close_releases_the_chroma_system(tmp_path: Path) -> None:
     base = len(REGISTRY)
     for i in range(4):
         kb = _make(tmp_path, f"closed-{i}")
-        kb.index("health_reports", f"{i}.txt", "随访须知：第 7 天复查血常规。")
+        kb.index("notes", f"{i}.txt", "随访须知：第 7 天复查血常规。")
         kb.close()
     assert len(REGISTRY) == base, (
         f"close() 没摘掉 chroma 的 system：基线 {base}，现在 {len(REGISTRY)} —— "
@@ -58,7 +58,7 @@ def test_without_close_the_systems_pile_up(tmp_path: Path) -> None:
     base = len(REGISTRY)
     for i in range(3):
         kb = _make(tmp_path, f"leak-{i}")
-        kb.index("health_reports", f"n{i}.txt", "化疗后注意体温。")
+        kb.index("notes", f"n{i}.txt", "化疗后注意体温。")
         del kb
     gc.collect()
     assert len(REGISTRY) == base + 3, (
@@ -71,9 +71,9 @@ def test_rebuild_path_has_only_one_live_system(tmp_path: Path) -> None:
     """装配根那一侧的形状：重建 = 新的活着、旧的摘掉，注册表不随重建次数涨。"""
     base = len(REGISTRY)
     first = _make(tmp_path, "kb-a")
-    first.index("health_reports", "a.txt", "随访须知")
+    first.index("notes", "a.txt", "随访须知")
     second = _make(tmp_path, "kb-b")  # 新实例（重建时先建新、再关旧的）
-    second.index("health_reports", "b.txt", "复查频率")
+    second.index("notes", "b.txt", "复查频率")
     first.close()
     assert len(REGISTRY) == base + 1, f"重建之后应当只剩新那一格：基线 {base}，现在 {len(REGISTRY)}"
     second.close()

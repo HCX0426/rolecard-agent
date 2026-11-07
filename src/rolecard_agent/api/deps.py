@@ -23,7 +23,6 @@ from rolecard_agent.base.observability import Tracer
 from rolecard_agent.config import Settings
 from rolecard_agent.core.bootstrap import Runtime
 from rolecard_agent.core.common.approvals import ApprovalService
-from rolecard_agent.core.domain.domain_service import DomainQueryService
 from rolecard_agent.core.ingest.ingestion import IngestionService
 from rolecard_agent.core.model_settings import ModelSettingsService
 from rolecard_agent.core.models.services import ServiceEndpointService
@@ -75,7 +74,8 @@ class AppContext:
     OCR / 抽取 / 比对在请求时读它，「运行环境」页签保存后要立刻生效。
     **api 层 import 具体域的接缝已经清零**（2026-10-04 域机制收口，快照 P1-5）：宿主域接线
     改读各域 `SPEC`（`main.py`），域专属路由改由 `DomainSpec.router_contrib` 交回宿主挂载
-    （原 `routers/records.py` 搬进 `domains/health/records.py`）。纪律在 `core/` 那半边由
+    （原 `routers/records.py` 搬回所属域包；那个域包后来被物理删除，那族端点随之退役）。
+    纪律在 `core/` 那半边由
     `core no domain token` 管，在 api 这半边由 `api domain seams` 管 —— 后者的登记名单**现在
     是空的**，谁再往 api 里 import 一个具体域就红。
 
@@ -150,15 +150,6 @@ class AppContext:
     @property
     def ingestion(self) -> IngestionService:
         return self.runtime.assembly.ingestion
-
-    @property
-    def health(self) -> DomainQueryService:
-        """health 域的查询服务（按域 id 取，见 `Runtime.query_service`）。
-
-        属性名保留 `health`：端点侧写的是"我在用哪个域"，这一层点名是**刻意的**（路由本来
-        就为这个域服务）。不认识的域 id 会 loud 报错，不会静默拿到别域的服务。
-        """
-        return self.runtime.query_service("health")
 
     @property
     def model_settings(self) -> ModelSettingsService:

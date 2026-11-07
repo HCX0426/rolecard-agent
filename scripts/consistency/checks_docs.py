@@ -109,12 +109,9 @@ def check_promised_artifacts() -> None:
         "src/rolecard_agent/roles/seed.py",
         "src/rolecard_agent/roles/schema.sql",
         "src/rolecard_agent/domains/registry.py",
-        "src/rolecard_agent/domains/health/schema.sql",
         "tests/unit",
         "tests/integration",
         "tests/eval",
-        "tests/eval/cases",
-        "tests/eval/cases/health.json",
         "frontend/package.json",
         "frontend/dist/index.html",
     ]

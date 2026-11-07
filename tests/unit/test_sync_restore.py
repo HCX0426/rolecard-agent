@@ -28,7 +28,7 @@ OTHER = "intruder"
 @pytest.fixture
 def conn(tmp_path: Path):
     c = connect(tmp_path / "app.db")
-    bootstrap(c, enabled_domains=("health",))
+    bootstrap(c, enabled_domains=())
     ensure_identity_row(c, DEFAULT_USER_ID)
     ensure_identity_row(c, OTHER)
     c.commit()

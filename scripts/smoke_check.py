@@ -55,6 +55,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from langchain_core.messages import AIMessage  # noqa: E402
 
 from rolecard_agent.api.main import create_app  # noqa: E402
+from rolecard_agent.base.scopes import UPLOAD_SCOPE  # noqa: E402
 
 
 def _make_pdf_bytes(text: str) -> bytes:
@@ -187,7 +188,6 @@ def main() -> int:
         root = Path(tmp)
         db_path = root / "smoke.db"
         # 关键：把数据目录也指向临时目录，否则会污染演示库（data/chroma / data/uploads）
-        from rolecard_agent.domains.health.service import HealthQueryService
         from rolecard_agent.storage.db import bootstrap, connect
 
         os.environ["CHROMA_PATH"] = str(root / "chroma")
@@ -203,27 +203,13 @@ def main() -> int:
         os.environ["MODEL_PIN_ON_STARTUP"] = "0"
         # 档案数据在起服务前注入：避免另开连接与应用的连接互相锁库
         conn = connect(db_path)
-        bootstrap(conn, enabled_domains=("health",))  # 建表（create_app 内的 bootstrap 幂等）
+        bootstrap(conn, enabled_domains=())  # 建表（create_app 内的 bootstrap 幂等）
         conn.executescript(  # 报告外键指向 app_user
             "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('local', 'demo');"
             "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "
             "  VALUES ('local-user', 'local', 'demo user');"
         )
         conn.commit()
-        HealthQueryService(conn).create_report(
-            user_id="local-user",
-            report_type="超声",
-            check_time="2026-04-01",
-            indices=[
-                {
-                    "index_name": "结石直径",
-                    "index_value": 7.0,
-                    "unit": "mm",
-                    "ref_range": "0-5",
-                    "is_verified": False,
-                }
-            ],
-        )
         conn.close()
         # `model_factory` 同样要给假模型：设置页保存后 rebuild_runtime 用它重建（此前只传
         # `model=`，于是热重建把假模型换成**真后端** —— `_settings` 那一项因此偷偷打了
@@ -288,7 +274,9 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
                 "system_prompt": "x",
                 # model_name 刻意不给（2026-10-31「绝对无默认」教义）：冒烟机不一定有
                 # 本机后端，硬指 "local" 会被 _validate_role_model 如实 400。不带 = 跟随默认。
-                "tool_whitelist": ["list_reports"],
+                # 白名单只放内核工具：域工具随域包退役了，写个已不存在的名字会让
+                # 真正跑起来的那条链路指向死工具（冒烟要的是"能存能改能删"这件事）。
+                "tool_whitelist": ["list_roles"],
             },
         )
         assert created.status_code == 201, created.text
@@ -296,12 +284,12 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         assert patched.status_code == 200 and patched.json()["description"] == "改过"
         assert c.delete("/api/roles/smoke_role").status_code == 204
 
-    @check("工具目录：内核能力 + 域工具（含 search_knowledge）")
+    @check("工具目录：内核能力（含 search_knowledge）；域分组当前为空")
     def _catalog() -> None:
         body = c.get("/api/tools/catalog").json()
         assert "search_knowledge" in [t["name"] for t in body["kernel"]], body
-        health = {t["name"] for t in body["domains"].get("health", [])}
-        assert {"query_health_record", "compare_health_index"} <= health
+        # 出厂不带任何代码侧的域（2026-11-07 域包物理删除）⇒ 域分组是空表，不是漏输出。
+        assert body["domains"] == {}, body["domains"]
 
     @check("域清单与工具目录：域常开（白名单即唯一边界），退役端点 405")
     def _plugins() -> None:
@@ -310,15 +298,20 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         # 已退役端点回 405（路由不存在，方法不允许）——不是 404 会和打错路径混淆；
         # 工具目录仍然按域分组（角色卡白名单的选项清单，归「工具」页）。
         domains = c.get("/api/domains").json()
+        # 出厂清单为空（域归用户）；用户建的那个域要能出现在清单里 —— 这就是"域常开"的形状。
+        created = c.post("/api/settings/domains", json={"id": "smoke_domain"})
+        assert created.status_code == 201, created.text
+        domains = c.get("/api/domains").json()
         ids = {d["id"] for d in domains}
-        assert "health" in ids, domains
+        assert "smoke_domain" in ids, domains
         assert all("enabled" not in d for d in domains), domains
         # GET 无路由 → 404（随后被静态 mount 兜底）；POST 有路径残留判定 → 405。
         # 两个码都只是"路由没了"的证据，具体码不承重——承重的是"域常开"那三条。
         assert c.get("/api/plugins").status_code in (404, 405)
-        assert c.post("/api/plugins/health/toggle", json={"enabled": False}).status_code == 405
-        catalog = c.get("/api/tools/catalog").json()
-        assert "health" in catalog["domains"], sorted(catalog["domains"])
+        assert (
+            c.post("/api/plugins/smoke_domain/toggle", json={"enabled": False}).status_code == 405
+        )
+        assert c.delete("/api/settings/domains/smoke_domain").status_code == 204
 
     @check("会话：新建 / 列表 / 详情 / 历史 / 重命名 / 模型覆盖")
     def _sessions() -> None:
@@ -403,12 +396,8 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         # 注入的说明消息应进入会话历史（模型下一轮知道有文件已索引）
         msgs = c.get(f"/api/session/{tid}/messages").json()["messages"]
         assert any("已建立检索索引" in str(m.get("content", "")) for m in msgs), msgs
-        # v2.3 结构化抽取端点：未知任务 404；模型不可用时**如实 502**（可读失败，不是 500，
-        # 也不是 200+假装成功）。本冒烟把后端指向死端口，所以"模型不可用"是确定前提 ——
-        # 旧断言写成 `in (200, 502)`，在装了 Ollama 的机器上真实抽取必然 200，于是恒绿。
-        assert c.post("/api/records/extract", json={"task_id": "ing_nope"}).status_code == 404
-        ex = c.post("/api/records/extract", json={"task_id": first.json()["task_id"]})
-        assert ex.status_code == 502, ex.text
+        # v2.3 的结构化抽取端点随它所属的域包一起退役（2026-11-07）。上传这条链到此为止：
+        # 落盘 → 解析 → 入索引 → 说明消息进历史，以上各步都已断言。
 
     @check("上传：同名不同内容的文件互不覆盖（索引身份 = task id，不是文件名）")
     def _same_name_upload() -> None:
@@ -427,7 +416,7 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
             return 0
 
         tid = c.post("/api/session", json={}).json()["thread_id"]
-        before = scope_chunks("health_reports")
+        before = scope_chunks(UPLOAD_SCOPE)
         first = c.post(
             f"/api/session/{tid}/upload",
             files={
@@ -459,26 +448,27 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         _wait_upload_terminal(first.json()["task_id"])
         _wait_upload_terminal(second.json()["task_id"])
 
-        after = scope_chunks("health_reports")
+        after = scope_chunks(UPLOAD_SCOPE)
         assert after - before >= 2, f"同名文件互相覆盖了：分块数 {before} → {after}"
         # 展示名仍应是用户看到的文件名（身份与展示名分离）
         sources = [
-            x["sources"] for x in c.get("/api/knowledge").json() if x["scope"] == "health_reports"
+            x["sources"] for x in c.get("/api/knowledge").json() if x["scope"] == UPLOAD_SCOPE
         ][0]
         assert "报告.md" in sources, sources
 
     @check("知识库概览：作用域 / 分块数 / 来源 / 嵌入器 / 重建作用域")
     def _knowledge() -> None:
         body = c.get("/api/knowledge").json()
-        scope = [x for x in body if x["scope"] == "health_reports"]
+        # 会话上传的落点固定是 `UPLOAD_SCOPE`（`base/scopes.py` 一处定义）：前面几段上传的
+        # 文件都进了这里，所以它的分块数必然 ≥1、来源里有刚才那几个文件名。
+        scope = [x for x in body if x["scope"] == UPLOAD_SCOPE]
         assert scope, body
-        assert scope[0]["chunks"] >= 1 and "须知.md" in scope[0]["sources"], scope
+        assert scope[0]["chunks"] >= 1 and scope[0]["sources"], scope
         assert scope[0]["embedder"], scope
         # 重建（清空作用域）：破坏性管理动作 —— 删集合 + 返回清掉的分块数
-        reset = c.delete("/api/knowledge/health_reports")
+        reset = c.delete(f"/api/knowledge/{UPLOAD_SCOPE}")
         assert reset.status_code == 200, reset.text
         assert reset.json()["removed_chunks"] >= 1
-        assert c.get("/api/knowledge").json() == []
 
     @check("检索延迟细分：P50/P95/P99 按阶段（/api/rag/metrics）")
     def _rag_metrics() -> None:
@@ -489,44 +479,14 @@ def run_all(c: TestClient, db_path: Path) -> None:  # noqa: C901 - 冒烟脚本�
         for label in ("p50", "p95", "p99"):
             assert set(body[label]) == stages, body
 
-    @check("数据管理：列表 / 补录 / 修正指标 / 删除指标与报告")
-    def _records() -> None:
-        # /api/records 是分页响应（items/total/limit/offset）
-        recs = c.get("/api/records").json()["items"]  # 数据在起服务前已注入
-        assert recs and recs[0]["indices"], recs
-        idx = recs[0]["indices"][0]
-        patched = c.patch(
-            f"/api/records/index/{idx['index_id']}", json={"index_value": 6.5, "is_verified": True}
-        )
-        assert patched.status_code == 200, patched.text
-        assert float(patched.json()["index_value"]) == 6.5 and patched.json()["is_verified"] == 1
-        assert c.delete(f"/api/records/index/{idx['index_id']}").status_code == 204
-        for r in c.get("/api/records").json()["items"]:
-            assert c.delete(f"/api/records/report/{r['report_id']}").status_code == 204
-        assert c.get("/api/records").json()["items"] == []
-        # 手动补录（最小可用）：类型 + 检查时间 + 一行指标
-        created = c.post(
-            "/api/records/report",
-            json={
-                "report_type": "腹部超声",
-                "check_time": "2026-03-12",
-                "indices": [{"index_name": "结石直径", "index_value": 6.1, "unit": "mm"}],
-            },
-        )
-        assert created.status_code == 201, created.text
-        assert created.json()["report_type"] == "腹部超声"
-        assert not created.json()["indices"][0]["is_verified"], "手填 ≠ 已核实"
-        # 输入错误翻译成 400，而不是 500
-        bad = c.post("/api/records/report", json={"report_type": "t", "check_time": "2026-03-12"})
-        assert bad.status_code == 400, bad.text
-
     @check("审计：数据变更与模型切换都留痕")
     def _audit() -> None:
         actions = {a["action"] for a in c.get("/api/audit?limit=200").json()}
+        # 冒烟这一趟真做过的事：建/删会话角色、建/删域、删除某份知识文档、改会话模型。
+        # 域记录/报告那一族端点已随域包退役（2026-11-07），它们不再出现在这次流里。
         assert {
-            "update_index",
-            "delete_report",
-            "create_report",
+            "create_domain",
+            "retire_domain",
             "reset_knowledge_scope",
             "set_session_model",
         } <= actions, actions

@@ -50,8 +50,8 @@ USER_ROUTES: tuple[tuple[str, frozenset[str]], ...] = (
     ("/api/prompt/enhance", _ANY),
     ("/api/session", _ANY),
     ("/api/sessions", _ANY),
-    # 自己的数据：报告/索引/域记录/知识库与检索质量指标。
-    ("/api/records", _ANY),
+    # 自己的数据：域记录/知识库与检索质量指标。（`/api/records` 那一族随首个富域的物理
+    # 删除一起退役——它曾是那个域私有的报告/指标模型；域改为用户可增删后不再出厂。）
     ("/api/domains", _ANY),
     # 知识库与上传目录是**共享面**（集合名/孤儿目录都没有用户维度）：读侧留 user
     # （角色卡的作用域下拉、检索质量指标、自己那次上传的任务进度都要读），写侧收

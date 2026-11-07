@@ -25,11 +25,10 @@ from rolecard_agent.storage.db import bootstrap, connect
 
 @pytest.fixture
 def conn() -> sqlite3.Connection:
-    # Core + roles + health schema：域报告表上有指向 `ingestion_task` 的外键列，
-    # 而外键是**真 enforced** 的（PRAGMA foreign_keys=ON），所以要把被引用的域 schema 一起建出来。
-    # Seed the identity rows `ingestion_task`/`medical_report` reference, so the FK holds.
+    # 只要 core + roles：`ingestion_task` 引到的 `app_user` 在 core 里；域私有表已随域包退役，
+    # 不再有"报告表指向 ingestion_task"的外键需要一起建出来。
     c = connect(":memory:")
-    bootstrap(c, enabled_domains=["health"])
+    bootstrap(c, enabled_domains=())
     c.executescript(
         "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('t1', 'demo');"
         "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "
@@ -139,7 +138,7 @@ def test_a_miss_on_the_ledger_does_not_leave_a_write_transaction(
 
     path = tmp_path / "ledger.db"
     first = connect(path)
-    bootstrap(first, enabled_domains=["health"])
+    bootstrap(first, enabled_domains=())
     first.executescript(
         "INSERT INTO tenant (tenant_id, display_name) VALUES ('t1', 'demo');"
         "INSERT INTO app_user (user_id, tenant_id, display_name) VALUES ('u1', 't1', 'u1');"

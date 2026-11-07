@@ -305,11 +305,11 @@ def test_extract_reads_the_importance_marker(conn: SqlConnection) -> None:
         conn,
         user_id=ME,
         model=model,
-        bucket="medical_archivist",
+        bucket="note_keeper",
         messages=[_Msg("human", "我青霉素过敏，住在苏州")],
     )
     assert out["report"]["added"] == 4
-    items = mem.list_items(conn, user_id=ME, bucket="medical_archivist")
+    items = mem.list_items(conn, user_id=ME, bucket="note_keeper")
     tiers = {str(i["text"]): int(i["importance"]) for i in items}
     assert tiers == {
         "用户青霉素过敏": 2,
@@ -393,18 +393,16 @@ def test_a_more_specific_fact_is_never_treated_as_an_echo(conn: SqlConnection) -
 
     抹掉它是吞真事实（「实验脚本要入库」那次误并的同一种错），这种收敛留给「整理记忆」。
     """
-    mem.add_item(
-        conn, user_id=ME, bucket="medical_archivist", text="用户有肾结石", source="extract"
-    )
+    mem.add_item(conn, user_id=ME, bucket="note_keeper", text="用户有肾结石", source="extract")
     out = distill.extract(
         conn,
         user_id=ME,
         model=FakeModel("ADD 用户有肾结石，2026-03-12 复查直径 6 mm"),
-        bucket="medical_archivist",
+        bucket="note_keeper",
         messages=[_Msg("human", "复查说结石 6 毫米了")],
     )
     assert out["report"]["added"] == 1 and out["report"]["dup_echo"] == 0
-    assert any("6 mm" in t for t in _texts(conn, "medical_archivist"))
+    assert any("6 mm" in t for t in _texts(conn, "note_keeper"))
 
 
 def test_is_echo_needs_a_real_length_before_it_can_suppress(conn: SqlConnection) -> None:
@@ -627,7 +625,7 @@ def test_cursor_migration_adds_the_column(conn: SqlConnection) -> None:
     conn.execute("ALTER TABLE session_thread DROP COLUMN distilled_at_seq")
     conn.commit()
     assert "distilled_at_seq" not in _thread_cols(conn)
-    bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
+    bootstrap(conn, enabled_domains=(), plan=MIGRATION_PLAN)
     assert "distilled_at_seq" in _thread_cols(conn)
     # 补列之后游标是 NULL ⇒ 全部消息都算"没提取过"，节奏判断照跑
     assert (

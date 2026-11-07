@@ -107,19 +107,22 @@ def _maybe_configure_cloud_backend() -> None:
 
 
 def _seed_demo_data(conn: object) -> None:  # 与 seed_demo_data.py 同源（脚本不互相 import）
+    """按评测环**自己建库**的方式把"能起得来"的那几件东西备好。
+
+    2026-11-07 起出厂不带任何代码侧的域（两个域包被物理删除），这一步只做两件与域无关的
+    事：`seed_once()` 补上「服务」页的内置端点（`storage.db.bootstrap` 不管这一件，绕过
+    装配根的脚本否则拿不到嵌入端点），以及播那个演示身份（端点表要主人）。域数据与域角色
+    不再由脚本预制 —— 用户想用某个域就自己在资料页建、自己补录。
+    """
+    from rolecard_agent.base.identity import DEFAULT_USER_ID
     from rolecard_agent.core.models.services import ServiceEndpointService
-    from rolecard_agent.domains.health.service import HealthQueryService
     from rolecard_agent.storage.db import bootstrap as _bootstrap
 
-    _bootstrap(conn, enabled_domains=("health",))  # type: ignore[arg-type]
+    _bootstrap(conn, enabled_domains=())  # type: ignore[arg-type]
     # `seed_once()` 平时由装配根（`core/bootstrap.py` 的 Runtime）调，`storage.db.bootstrap`
     # **不管这件事**。绕过装配根的脚本因此拿到一张空的「服务」页：
     # `candidate_ids("embedding")` 回空 → `make_embedder` 大声失败。
-    # 服务策略那次重构之后评测环就是这么静默地跑不起来的 —— 而 `make_embedder` 的注释里
-    # 还写着"生产上 order 永不为空"，那句话对**装配根之外**的调用方并不成立。
     # 主人 = 这支脚本自己播的那个演示身份（紧接着那两条 INSERT），与评测库同源。
-    from rolecard_agent.base.identity import DEFAULT_USER_ID
-
     ServiceEndpointService(conn, owner=DEFAULT_USER_ID).seed_once()  # type: ignore[arg-type]
     conn.executescript(  # type: ignore[attr-defined]
         "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('t1', 'demo');"
@@ -127,57 +130,6 @@ def _seed_demo_data(conn: object) -> None:  # 与 seed_demo_data.py 同源（脚
         "  VALUES ('local-user', 't1', 'demo user');"
     )
     conn.commit()  # type: ignore[attr-defined]
-    # 域角色卡由**宿主播种**（2026-10-31 教义：装配根开机不种域角色，只留通用助手常驻）。
-    # 评测环是显式 opt-in 的宿主：它选了 health 域、用例点名 `medical_archivist`，就得自己
-    # 把这张出厂卡播下来——bootstrap 的注释把这条路留给"init 流程或测试自己决定要不要"。
-    # 不补这一句的后果是 14 条用例全部以"角色不存在"速 fails（nightly 41176828077 实锤）。
-    from rolecard_agent.domains.registry import domain_seed_roles
-    from rolecard_agent.roles.service import RoleCardService
-
-    RoleCardService(conn).seed_domain_roles(  # type: ignore[arg-type]
-        domain_seed_roles(), user_id=DEFAULT_USER_ID
-    )
-    query = HealthQueryService(conn)  # type: ignore[arg-type]
-    if not query.list_reports("local-user"):
-        query.create_report(
-            user_id="local-user",
-            report_type="超声",
-            check_time="2025-05-01",
-            institution="市第一医院",
-            note="年度体检",
-            indices=[
-                {
-                    "index_name": "结石直径",
-                    "index_value": 5.0,
-                    "unit": "mm",
-                    "ref_range": "0-5",
-                    "is_verified": True,
-                }
-            ],
-        )
-    query.create_report(
-        user_id="local-user",
-        report_type="超声",
-        check_time="2026-03-12",
-        institution="市第一医院",
-        note="复查",
-        indices=[
-            {
-                "index_name": "结石直径",
-                "index_value": 6.0,
-                "unit": "mm",
-                "ref_range": "0-5",
-                "is_verified": False,
-            },
-            {
-                "index_name": "尿酸",
-                "index_value": 488.0,
-                "unit": "µmol/L",
-                "ref_range": "208-428",
-                "is_verified": False,
-            },
-        ],
-    )
 
 
 def _seed_knowledge(db_path: Path, settings: object) -> None:
@@ -206,14 +158,9 @@ def _seed_knowledge(db_path: Path, settings: object) -> None:
         )
     finally:
         svc_conn.close()
-    kb = KnowledgeBase(Path(db_path).parent / "chroma", embedder)
-    if kb.scope_count("health_reports") == 0:
-        kb.index(
-            "health_reports",
-            "随访须知（演示）.md",
-            "胆囊结石随访须知：每 6 到 12 个月复查一次腹部超声，复查固定同一家医疗机构。"
-            "出现腹痛、发热或黄疸时及时就医。饮食低脂、规律进餐。本须知为演示数据。",
-        )
+    # 演示语料随它所属的域一起退役（2026-11-07）：脚本不再替任何域预先往知识库里写东西。
+    # 需要知识库内容的评测用例，自己按 scopes 注入即可。
+    KnowledgeBase(Path(db_path).parent / "chroma", embedder)
 
 
 def _parse_sse(text: str) -> list[dict[str, object]]:

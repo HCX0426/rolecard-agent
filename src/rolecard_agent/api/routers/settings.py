@@ -27,6 +27,10 @@ from rolecard_agent.contracts.response_models import (
     ModelSettingsView,
     RuntimeSettingsView,
 )
+
+# `/api/settings/memory` 的契约由 `handwritten_models` 接管（R1031-30）。自动生成那份不再
+# 出现在这里 —— 同一个名字两个来源就是两套事实；重跑 wire_response_models 会把它接回来，
+# 届时按这条注释再删一次（工具的接线表还不知道"手写已接管"这件事）。
 from rolecard_agent.core import runtime_settings
 from rolecard_agent.core.model_settings import (
     ModelSettingsError,
@@ -674,8 +678,6 @@ def _memory_payload(
 
 @router.get(
     "/api/settings/memory",
-    response_model=SettingsMemoryView,
-    response_model_exclude_unset=True,
 )
 def get_memory(
     ctx: AppContext = Depends(get_context),

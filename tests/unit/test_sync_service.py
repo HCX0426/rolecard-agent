@@ -34,7 +34,7 @@ KINDS = ("card", "memory", "reachout", "thread")
 @pytest.fixture
 def conn(tmp_path: Path):
     c = connect(tmp_path / "app.db")
-    bootstrap(c, enabled_domains=("health",))
+    bootstrap(c, enabled_domains=())
     # 检查点两张表由 `SqliteSaver.setup()` 建（不在 schema.sql 里），而备份要读得到它们 ——
     # 用真路径建，别在测试里手搓一份表结构（那就是第二个事实面，列名一改测试先骗自己）。
     make_checkpointer(c)

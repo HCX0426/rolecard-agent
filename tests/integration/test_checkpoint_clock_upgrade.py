@@ -111,7 +111,7 @@ def test_migrated_old_table_converges_to_the_production_fresh_shape(tmp_path: Pa
     加了列或触发器而没管老库，红的是这一条。
     """
     fresh = connect(tmp_path / "fresh.db")
-    bootstrap(fresh, enabled_domains=("health",), plan=MIGRATION_PLAN)
+    bootstrap(fresh, enabled_domains=(), plan=MIGRATION_PLAN)
     make_checkpointer(fresh)
 
     old = _old_shape(tmp_path / "old.db")

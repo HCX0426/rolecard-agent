@@ -31,7 +31,7 @@ def conn() -> sqlite3.Connection:
 
 @pytest.fixture
 def plugins(conn: sqlite3.Connection) -> PluginService:
-    return PluginService(conn, known_plugins=["health", "finance"])
+    return PluginService(conn, known_plugins=["notes", "finance"])
 
 
 def test_tool_epoch_starts_at_one(conn: sqlite3.Connection) -> None:
@@ -39,23 +39,23 @@ def test_tool_epoch_starts_at_one(conn: sqlite3.Connection) -> None:
 
 
 def test_register_is_idempotent(plugins: PluginService) -> None:
-    plugins.register("health", display_name="Health")
-    plugins.register("health", display_name="Health")  # second call is a no-op
+    plugins.register("notes", display_name="Health")
+    plugins.register("notes", display_name="Health")  # second call is a no-op
     assert len(plugins.list_plugins()) == 1
 
 
 def test_enabled_domains_returns_every_registered_domain(plugins: PluginService) -> None:
     """域常开：清单里每一行都在（没有 enabled 过滤——白名单即唯一边界）。"""
-    plugins.register("health", display_name="Health")
+    plugins.register("notes", display_name="Health")
     plugins.register("finance", display_name="Finance")
-    assert plugins.enabled_domains() == ["finance", "health"]
+    assert plugins.enabled_domains() == ["finance", "notes"]
 
 
 def test_enabled_domains_reads_new_rows_live(plugins: PluginService) -> None:
     """每次调用现读：register 一个新域，下一次调用即可见（不快照）。"""
     assert plugins.enabled_domains() == []
-    plugins.register("health", display_name="Health")
-    assert plugins.enabled_domains() == ["health"]
+    plugins.register("notes", display_name="Health")
+    assert plugins.enabled_domains() == ["notes"]
 
 
 def test_bump_tool_epoch_advances_on_same_connection(plugins: PluginService) -> None:

@@ -407,7 +407,7 @@ def main() -> None:
     conn = connect(work)
     # 真库那份可能还没跑过新代码：`read_at` / `dismissed_at` / `fired_by` 都靠启动时的
     # `reconcile_columns` 补出来 —— 数据一行不改，只是把声明的列补齐。真库从头到尾只读。
-    bootstrap(conn, enabled_domains=("health", "finance"))
+    bootstrap(conn, enabled_domains=())
     print(f"源库（只读）：{src}")
     print(f"副本（补过列之后读它）：{work}\n")
     # 检查点只读一次：口径计数与 ⑦ 的抽样表都从这一份里取"她那句之后有没有人回"。

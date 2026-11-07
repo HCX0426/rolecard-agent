@@ -8,8 +8,8 @@ Bootstrap order is fixed and not optional:
 Step 1 must run first: domains reference app_user(user_id).
 
 Every connection MUST enable `PRAGMA foreign_keys = ON` - SQLite ignores foreign keys by
-default, which would silently turn the ON DELETE CASCADE in domains/health/schema.sql into
-a no-op and leave orphaned index rows behind.
+default, which would silently turn any `ON DELETE CASCADE` declared in a schema file
+into a no-op and leave orphaned rows behind.
 
 列级迁移是**声明驱动**的：`bootstrap` 每次启动都拿 `schema.sql` 的声明形状比对这份库，
 缺列自动 `ADD COLUMN`（`reconcile_columns`），所以加一列只改 `schema.sql` 一处就够。

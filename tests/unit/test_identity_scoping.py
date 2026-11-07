@@ -38,7 +38,7 @@ def store(tmp_path: Path):
     conn = connect(tmp_path / "app.db")
     from rolecard_agent.storage.db import bootstrap
 
-    bootstrap(conn, enabled_domains=("health",))
+    bootstrap(conn, enabled_domains=())
     yield RoleCardService(conn)
     conn.close()
 

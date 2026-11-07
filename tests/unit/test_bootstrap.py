@@ -21,11 +21,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
+
 from rolecard_agent.base.identity import DEFAULT_USER_ID, bound_user
 from rolecard_agent.config import ModelBackend, Settings
 from rolecard_agent.core.agent.nodes import KernelContext, _turn_backend, turn_settings
 from rolecard_agent.core.bootstrap import Assembly, Runtime, build_runtime
-from rolecard_agent.domains.health.service import HealthQueryService
 from rolecard_agent.domains.registry import (
     DOMAINS,
     build_query_services,
@@ -112,7 +113,10 @@ def test_kernel_assembles_without_an_app(tmp_path: Path) -> None:
         assert runtime.state["graph"] is not None, "没起 app 就该没有图 —— 装配根漏了东西"
         # 内核工具 + 各域工具都在（启用域是闭包，插件启停实时生效）。
         assert runtime.registry.names(), "注册表是空的：宿主接线没生效"
-        assert isinstance(runtime.query_service("health"), HealthQueryService)
+        # 按域取查询服务**缺域就 loud**（不回落到别的域）—— 这是 `query_service` 的
+        # 真逻辑。当前出厂不带任何代码侧的域，"拿一个不存在的域"正是这条判据的形状。
+        with pytest.raises(KeyError, match="没有查询服务"):
+            runtime.query_service("no_such_domain")
         # 模型页 DB 为空表 ⇒ 有效配置此刻与 env 一致；两者仍是**不同对象**，
         # 重建时换的是 effective，env 快照不受污染。
         assert runtime.effective.sqlite_path == runtime.env_settings.sqlite_path
@@ -125,13 +129,14 @@ def test_rebuild_swaps_every_mutable_slot(tmp_path: Path) -> None:
     """热重建之后可变引用必须**全部**换新 —— 少换任何一个就是"改了不生效"的接缝。"""
     runtime = _assemble(tmp_path)
     try:
-        before_query = runtime.query_service("health")
         before = (runtime.effective, runtime.knowledge, runtime.registry, runtime.state["graph"])
         runtime.rebuild()
         after = (runtime.effective, runtime.knowledge, runtime.registry, runtime.state["graph"])
         assert all(new is not old for new, old in zip(after, before, strict=True))
-        # 域查询服务只持有连接，是稳定引用：不随重建换（换了反而会丢掉在途请求的引用）。
-        assert runtime.query_service("health") is before_query
+        # 装配快照（含按域取的查询服务映射）随重建整体换新：重建后从一个空清单里
+        # 取一个不存在的域仍然 loud —— 槽位没被旧对象污染。
+        with pytest.raises(KeyError, match="没有查询服务"):
+            runtime.query_service("no_such_domain")
     finally:
         runtime.assembly.conn.close()
 
@@ -158,7 +163,7 @@ def test_assembly_seeds_schema_and_demo_identity(tmp_path: Path) -> None:
             str(r["name"])
             for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
-        assert {"ingestion_task", "plugin", "role_card", "medical_report"} <= tables
+        assert {"ingestion_task", "plugin", "role_card", "knowledge_source"} <= tables
         users = {str(r["user_id"]) for r in conn.execute("SELECT user_id FROM app_user")}
         assert DEFAULT_USER_ID in users
     finally:

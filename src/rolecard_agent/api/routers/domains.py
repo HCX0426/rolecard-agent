@@ -30,7 +30,7 @@ router = APIRouter()
 
 
 class DomainCreate(BaseModel):
-    """新建一个域的请求体。id 走通用记录通路（同 `finance` 的形状），display_name 缺省同 id。"""
+    """新建一个域的请求体。id 走通用记录通路（纯数据域的形状），display_name 缺省同 id。"""
 
     id: str = Field(min_length=1, max_length=32)
     display_name: str | None = Field(default=None, max_length=64)
@@ -58,6 +58,18 @@ class DomainRecordPatch(BaseModel):
 
 def _domain_service(ctx: AppContext) -> DomainDataService:
     return DomainDataService(ctx.conn)
+
+
+def _require_live_domain(ctx: AppContext, domain: str) -> None:
+    """通用记录通路的入口闸：这个域**在清单上活着**才允许读写它的记录。
+
+    没有这道闸时，"删了域"只删了清单行与已有记录，端点照旧对一个已经不存在的名字服务
+    —— 那正是本仓最忌讳的两套真相（界面里没有这个域，API 却还能往里写）。事实源是
+    `list_plugins()`（与界面、`list_domains` 工具同一个投影），不是这里另建一份判断。
+    已退役 => 404（"没有这个域"），与删除端点的 404 同一口径。
+    """
+    if domain not in {row["plugin_id"] for row in ctx.plugins.list_plugins()}:
+        raise HTTPException(status_code=404, detail=f"域 {domain!r} 不存在或已删除")
 
 
 def _domains_view(ctx: AppContext) -> list[object]:
@@ -107,7 +119,7 @@ def create_domain(
     第二份）；撞已存在（且未退役）的名 → 409（显式新建撞名必须报错，不像播种那样静默跳过；
     撞一个已退役的名由 `create` 就地复活那一格兜住，见下）。新建的是纯数据域：没有代码侧的
     SPEC/工具/专属路由，通用记录通路（`/api/domains/{id}/records`）本就按 `domain_data` 表
-    工作，`finance` 就是这个形状。
+    工作 —— 现在出厂的域**全部**是这个形状（清单完全归用户）。
     """
     try:
         DomainDataService.check_domain(body.id)
@@ -136,11 +148,12 @@ def delete_domain(
     """删掉一个域（资料页「删除这个域」）：置退役旗 + 清掉它的全部通用记录，**不留两套真相**。
 
     退役不是删行（`PluginService.retire` 的理由：播种 `ON CONFLICT DO NOTHING`，行留着才
-    不会被 `seed_plugin_rows` 重新播回 —— 代码侧的 health/finance 用户删了也不复活）。
+    不会被 `seed_plugin_rows` 重新播回 —— 将来代码侧再出厂的域，用户删了也不复活）。
     清单读侧（`list_plugins`/`enabled_domains`）都滤 `retired=1`，删完界面上的页签与
-    `list_domains` 工具立刻都不再列出它；装配根据 `retired_domain_ids()` 不挂它的专属路由，
-    所以代码域退役后连 `/api/records` 那族也跟着下线 —— "清单里没有"与"端点还在服务"
-    绝不能同时成立。记录数据一并删（域是实例级资源，删对所有人删）。
+    `list_domains` 工具立刻都不再列出它；装配根据 `retired_domain_ids()` 不挂它交回的
+    专属路由（当前出厂域都是纯数据型，没有专属路由可摘；这道闸是给将来的富域留的）——
+    "清单里没有"与"端点还在服务"绝不能同时成立。记录数据一并删（域是实例级资源，
+    删对所有人删）。
 
     域不存在 / 已退役 → 404（`retire` 返回 0 行）。
     """
@@ -175,6 +188,7 @@ def list_domain_records(
     `limit`/`offset` 可选（给 limit 才分页），缺省全量 —— 响应形状不动，
     契约面只有这两个查询参数；前端多取一条探"有没有下一页"。
     """
+    _require_live_domain(ctx, domain)
     try:
         return _domain_service(ctx).list_records(
             domain, ctx.current_user(), limit=limit, offset=offset
@@ -195,6 +209,7 @@ def create_domain_record(
     actor: Actor = Depends(get_actor),
 ) -> object:
     """新增一条通用领域记录（兜底录入入口）。"""
+    _require_live_domain(ctx, domain)
     try:
         row = _domain_service(ctx).create_record(
             domain,
@@ -228,6 +243,7 @@ def patch_domain_record(
     actor: Actor = Depends(get_actor),
 ) -> object:
     """修正一条通用记录（写入审计）。"""
+    _require_live_domain(ctx, domain)
     changes = body.model_dump(exclude_unset=True)
     try:
         row = _domain_service(ctx).patch_record(domain, ctx.current_user(), record_id, changes)
@@ -251,6 +267,7 @@ def delete_domain_record(
     ctx: AppContext = Depends(get_context),
     actor: Actor = Depends(get_actor),
 ) -> None:
+    _require_live_domain(ctx, domain)
     try:
         _domain_service(ctx).delete_record(domain, ctx.current_user(), record_id)
     except ValueError as exc:

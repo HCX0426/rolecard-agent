@@ -31,15 +31,29 @@ def model() -> ScriptedChat:
 @pytest.fixture
 def client(tmp_path: Path, model: ScriptedChat) -> Iterator[TestClient]:
     app = create_app(sqlite_path=tmp_path / "app.db", model=model)
-    # 域角色不再开机播种（2026-10-31，用户拍板：默认常驻只有通用助手）——
-    # 这几条用例要的就是健康档案角色那一档，显式补种。
+    # 出厂不带任何代码侧的域（2026-11-07 域包物理删除）⇒ 没有域角色可播种。
+    # 这几条用例要的是"一张带内核工具权限的自定义卡"，由测试自己建（与用户自建同一类型）。
     from rolecard_agent.base.identity import DEFAULT_USER_ID
-    from rolecard_agent.domains.registry import domain_seed_roles
+    from rolecard_agent.roles.models import RoleCardCreate
     from rolecard_agent.roles.service import RoleCardService
     from rolecard_agent.storage.db import connect as rc_connect
 
     conn = rc_connect(tmp_path / "app.db")
-    RoleCardService(conn).seed_domain_roles(domain_seed_roles(), user_id=DEFAULT_USER_ID)
+    # 域清单归用户：本文件要验"工具回环/RoleCard 权限"，先建一个域（操作员动作的等价体）。
+    from rolecard_agent.core.plugins import PluginService
+
+    PluginService(conn).create("notes")
+    cards = RoleCardService(conn).scoped(DEFAULT_USER_ID)
+    if not cards.exists("note_keeper"):
+        cards.create(
+            RoleCardCreate(
+                role_id="note_keeper",
+                role_name="笔记管理员",
+                system_prompt="你管理本机的笔记。",
+                tool_whitelist=["list_domains", "list_roles"],
+                knowledge_scopes=["notes"],
+            )
+        )
     conn.close()
     with TestClient(app) as c:
         yield c
@@ -121,20 +135,20 @@ def test_switch_session_role_keeps_thread(client: TestClient) -> None:
 
 def test_chat_delivers_authoritative_text(client: TestClient) -> None:
     """直答轮：即使模型脚本耗尽返回兜底句，文本也经 message_replace 完整到达并以 end 收尾。"""
-    session = make_session(client, role_id="medical_archivist")
+    session = make_session(client, role_id="note_keeper")
     events = chat(client, str(session["thread_id"]), "你好")
     assert types_of(events) == ["start", "message_replace", "end"]
-    assert events[0]["role"]["role_id"] == "medical_archivist"
+    assert events[0]["role"]["role_id"] == "note_keeper"
     assert events[1]["text"] == "(script exhausted)"  # ScriptedChat 的耗尽兜底句
 
 
 def test_chat_delivers_scripted_reply_exactly(client: TestClient, model: ScriptedChat) -> None:
     session = make_session(client)
-    model.replies = [AIMessage(content="你好，我是健康档案管理员。")]
+    model.replies = [AIMessage(content="你好，我是笔记管理员。")]
     events = chat(client, str(session["thread_id"]), "你好")
     replace = [e for e in events if e["type"] == "message_replace"]
     assert len(replace) == 1
-    assert replace[0]["text"] == "你好，我是健康档案管理员。"
+    assert replace[0]["text"] == "你好，我是笔记管理员。"
 
 
 def test_chat_second_turn_sees_history(client: TestClient, model: ScriptedChat) -> None:
@@ -155,10 +169,10 @@ def test_chat_second_turn_sees_history(client: TestClient, model: ScriptedChat) 
 def test_chat_tool_roundtrip_uses_real_registry(client: TestClient, model: ScriptedChat) -> None:
     """US-3 / US-2：模型调 list_domains → 真实注册表里的内核工具执行 → 工具结果回给模型。"""
     # 工具回环依赖角色白名单：默认「通用助手」不接工具，故显式用档案管理员角色。
-    session = make_session(client, role_id="medical_archivist")
+    session = make_session(client, role_id="note_keeper")
     model.replies = [
         AIMessage(content="", tool_calls=[{"name": "list_domains", "args": {}, "id": "c1"}]),
-        AIMessage(content="当前启用的领域插件是 health。"),
+        AIMessage(content="当前启用的领域插件是 notes。"),
     ]
     events = chat(client, str(session["thread_id"]), "你现在有哪些能力？")
     kinds = types_of(events)
@@ -167,10 +181,10 @@ def test_chat_tool_roundtrip_uses_real_registry(client: TestClient, model: Scrip
     call = next(e for e in events if e["type"] == "tool_call")
     assert call["name"] == "list_domains"
     result = next(e for e in events if e["type"] == "tool_result")
-    assert "health" in str(result["content"])  # 来自真实 ToolRegistry，而不是桩
+    assert "notes" in str(result["content"])  # 来自真实 ToolRegistry，而不是桩
 
     replace = [e for e in events if e["type"] == "message_replace"]
-    assert replace[0]["text"] == "当前启用的领域插件是 health。"
+    assert replace[0]["text"] == "当前启用的领域插件是 notes。"
     assert kinds[-1] == "end"
 
 

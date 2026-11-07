@@ -25,6 +25,7 @@ from rolecard_agent.api.deps import (
 )
 from rolecard_agent.api.message_view import expand_to_turns, serialize_message
 from rolecard_agent.base.observability import TraceEvent
+from rolecard_agent.base.scopes import UPLOAD_SCOPE
 from rolecard_agent.config import Settings
 from rolecard_agent.contracts.handwritten_models import DistillOutcomeView
 from rolecard_agent.contracts.response_models import (
@@ -1075,7 +1076,7 @@ def upload_report(
             thread_id=thread_id,
             ingestion=ctx.ingestion,
             knowledge=ctx.knowledge,
-            knowledge_scope=ctx.health.knowledge_scope,
+            knowledge_scope=UPLOAD_SCOPE,
             ocr_candidates=ctx.ocr_candidates,
             tracer=ctx.tracer,
         )
@@ -1089,7 +1090,7 @@ def upload_report(
         thread_id=thread_id,
         ingestion=ctx.ingestion,
         knowledge=ctx.knowledge,
-        knowledge_scope=ctx.health.knowledge_scope,
+        knowledge_scope=UPLOAD_SCOPE,
         ocr_candidates=ctx.ocr_candidates,
         tracer=ctx.tracer,
         sink=_inject_note,

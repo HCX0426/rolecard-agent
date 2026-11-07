@@ -48,8 +48,8 @@ def _backdate(paths: list[Path]) -> None:
 def test_describe_reports_bytes_per_scope(tmp_path: Path) -> None:
     """概览页有"这个知识库吃了多少盘"这一格：索引过的集合字节必须非零、认得作用域。"""
     kb = _kb(tmp_path)
-    kb.index("health_reports", "t1", DOC)
-    row = next(r for r in kb.describe() if r["scope"] == "health_reports")
+    kb.index("notes", "t1", DOC)
+    row = next(r for r in kb.describe() if r["scope"] == "notes")
     assert isinstance(row["bytes"], int) and row["bytes"] > 0, row
     # 字节与分块数是**两本账**：count 数段，bytes 量目录（HNSW 落盘远大于文本本身）。
     assert row["bytes"] > len(DOC), "字节若只等于文本大小，说明量错了对象"
@@ -76,12 +76,12 @@ def test_reset_scope_reclaims_or_defers_to_boot_sweep(tmp_path: Path) -> None:
     读数诚实性只在泄漏真实存在时判（第一层没删成就不许虚报 bytes_freed）。
     """
     kb = _kb(tmp_path)
-    kb.index("health_reports", "t1", DOC)
-    assert kb.collection_bytes().get("health_reports", 0) > 0, "前提：索引过就该有落盘"
+    kb.index("notes", "t1", DOC)
+    assert kb.collection_bytes().get("notes", 0) > 0, "前提：索引过就该有落盘"
 
-    segs_removed, bytes_freed = kb.reset_scope("health_reports")
-    assert "health_reports" not in kb.collection_bytes()
-    assert all(r["scope"] != "health_reports" for r in kb.describe())
+    segs_removed, bytes_freed = kb.reset_scope("notes")
+    assert "notes" not in kb.collection_bytes()
+    assert all(r["scope"] != "notes" for r in kb.describe())
 
     orphans, ok = kb.orphan_segment_dirs()
     assert ok is True, "集合删完后账必须读得出"
@@ -105,16 +105,16 @@ def test_reset_twice_is_still_idempotent_with_new_return(tmp_path: Path) -> None
     """第二次重建（集合已不在）：不炸、回收读数 (0,0) —— 幂等半边（引擎审计 #8）
     不许被新返回值弄坏。"""
     kb = _kb(tmp_path)
-    kb.index("health_reports", "t1", DOC)
-    kb.reset_scope("health_reports")
-    assert kb.reset_scope("health_reports") == (0, 0)
+    kb.index("notes", "t1", DOC)
+    kb.reset_scope("notes")
+    assert kb.reset_scope("notes") == (0, 0)
 
 
 def test_sweep_reclaims_aged_orphans_only(tmp_path: Path) -> None:
     """全扫的三条边界：旧孤儿收走、新孤儿（可能是别人正在建的集合）不碰、
     非 uuid 杂项永远不在射程。"""
     kb = _kb(tmp_path)
-    kb.index("health_reports", "t1", DOC)
+    kb.index("notes", "t1", DOC)
     base = tmp_path / "chroma"
     aged = base / str(uuid.uuid4())
     fresh = base / str(uuid.uuid4())
@@ -129,8 +129,8 @@ def test_sweep_reclaims_aged_orphans_only(tmp_path: Path) -> None:
     assert not aged.exists(), "旧孤儿必须被收走"
     assert fresh.is_dir(), "宽限期内的新目录不许碰（可能是别的进程正在建集合）"
     assert junk.is_dir(), "非 uuid 形状永远不在射程"
-    # sweep 是只删孤儿，不伤在账的目录：health_reports 的落盘还在。
-    assert kb.collection_bytes().get("health_reports", 0) > 0
+    # sweep 是只删孤儿，不伤在账的目录：notes 的落盘还在。
+    assert kb.collection_bytes().get("notes", 0) > 0
 
 
 def test_unreadable_ledger_means_no_reclaim(tmp_path: Path) -> None:

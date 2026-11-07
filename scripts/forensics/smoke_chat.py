@@ -86,60 +86,18 @@ def _stream_chat(client: object, thread_id: str, message: str) -> None:
 
 
 def _seed_demo_data(db_path: Path) -> None:
-    """给冒烟库注入虚构演示数据（编造数值），让查询工具在真实对话里有东西可查。"""
-    from rolecard_agent.domains.health.service import HealthQueryService
+    """给冒烟库播演示身份。域数据不再预制（2026-11-07 域包物理删除，域内容归用户）。"""
     from rolecard_agent.storage.db import bootstrap as _bootstrap
     from rolecard_agent.storage.db import connect as _connect
 
     conn = _connect(db_path)
-    _bootstrap(conn, enabled_domains=("health",))
+    _bootstrap(conn, enabled_domains=())
     conn.executescript(
         "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES ('t1', 'demo');"
-        "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name) "
+        "INSERT OR IGNORE INTO app_user (user_id, tenant_id, display_name)"
         "  VALUES ('local-user', 't1', 'demo user');"
     )
     conn.commit()
-    query = HealthQueryService(conn)
-    if not query.list_reports("local-user"):
-        query.create_report(
-            user_id="local-user",
-            report_type="超声",
-            check_time="2025-05-01",
-            institution="市第一医院",
-            note="年度体检",
-            indices=[
-                {
-                    "index_name": "结石直径",
-                    "index_value": 5.0,
-                    "unit": "mm",
-                    "ref_range": "0-5",
-                    "is_verified": True,
-                }
-            ],
-        )
-        query.create_report(
-            user_id="local-user",
-            report_type="超声",
-            check_time="2026-03-12",
-            institution="市第一医院",
-            note="复查",
-            indices=[
-                {
-                    "index_name": "结石直径",
-                    "index_value": 6.0,
-                    "unit": "mm",
-                    "ref_range": "0-5",
-                    "is_verified": False,
-                },
-                {
-                    "index_name": "尿酸",
-                    "index_value": 488.0,
-                    "unit": "µmol/L",
-                    "ref_range": "208-428",
-                    "is_verified": False,
-                },
-            ],
-        )
     conn.close()
 
 

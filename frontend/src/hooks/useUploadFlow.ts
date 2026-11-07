@@ -1,8 +1,8 @@
-/** 上传 → 解析 → 入索引 → 结构化抽取 这条链路（从 ChatPage 抽出）。 */
+/** 上传 → 解析 → 入索引 这条链路（从 ChatPage 抽出）。 */
 import { useState } from "react";
 
-import { api, type ExtractResult } from "../api";
-import { describeExtract, describeUpload, pollUploadProgress } from "../lib/uploadOutcome";
+import { api } from "../api";
+import { describeUpload, pollUploadProgress } from "../lib/uploadOutcome";
 import type { Tone } from "../components/Toast";
 import { describeError } from '../lib/errors';
 
@@ -72,30 +72,7 @@ export function useUploadFlow({
       const uploadOutcome = describeUpload(r);
       if (uploadOutcome) {
         onStatus(uploadOutcome.text, uploadOutcome.tone);
-        return;
       }
-
-      // v2.3：已入索引 → 自动触发结构化抽取（独立请求 + 进度提示，不拖慢上传本身）。
-      onStatus(`「${r.file}」已入检索索引，AI 识别指标中…`, "info");
-      let result: ExtractResult | null = null;
-      let extractError = "";
-      try {
-        result = await api.extractRecord(r.task_id);
-      } catch (e) {
-        extractError = describeError(e);
-      }
-      // 诚实契约：skip 路里 written 整个键缺席（旧代码 .map 会在"没有这个键"上炸，
-      // 契约收紧第一次把这个潜伏 bug 摆上类型面）。展示用的 ExtractLike 要元素
-      // index_name 是 string —— 寻址字段按恒有值处理，在此处一次兜底。
-      const outcome = describeExtract(
-        result && {
-          ...result,
-          written: (result.written ?? []).map((w) => ({ ...w, index_name: w.index_name ?? "" })),
-        },
-        extractError,
-        r.file,
-      );
-      onStatus(outcome.text, outcome.tone);
     } catch (e) {
       onStatus(`上传失败：${describeError(e)}`, "warn");
     } finally {

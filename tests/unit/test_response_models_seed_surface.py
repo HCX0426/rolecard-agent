@@ -110,7 +110,6 @@ def test_第二批端点已进白名单(seeded) -> None:
     [
         ("/api/mcp/servers", "servers", "dict"),
         ("/api/settings/memory", "items", "dict"),
-        ("/api/records", "items", "dict"),
         ("/api/approvals", "items", "dict"),
         ("/api/reachouts", "items", "dict"),
         ("/api/channels", "channels", "dict"),
@@ -224,18 +223,6 @@ def test_时间线有游标更正事件与会话锚点(seeded) -> None:
     assert "memory_correct" in kinds, "没有更正事件：from_text 恒 null 的根"
     assert "thread" in kinds, "页内没有线程锚点：created_at 倒填 + touch 那一手没生效"
     assert any(e["from_text"] for e in page["items"]), "from_text 全空"
-
-
-def test_报告行的备注与文本指标有非空代表(seeded) -> None:
-    """note / value_text / ref_range / raw_text：create_report 本就收这些键，
-    种子不喂就恒 null（IndexRow / ReportRecord 迁不动的根）。"""
-    _grm, _app, client = seeded
-    recs = client.get("/api/records").json()["items"]
-    assert any(r.get("note") for r in recs), "报告 note 全空"
-    idx = [i for r in recs for i in (r.get("indices") or [])]
-    assert any(i.get("value_text") for i in idx), "value_text 全空"
-    assert any(i.get("ref_range") for i in idx), "ref_range 全空"
-    assert any(i.get("raw_text") for i in idx), "raw_text 全空"
 
 
 def test_接线表里的路由文件路径真实存在() -> None:

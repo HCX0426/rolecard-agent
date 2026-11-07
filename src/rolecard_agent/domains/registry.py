@@ -174,8 +174,8 @@ def build_registry(
     `specs` 缺省时现场目录枚举；测试可用它注入一个假域，验证"新增域零改中心代码"。
 
     工具的 `idempotent` 标记是**执行器的重试开关**：只有显式声明"重复调用无副作用"的
-    只读工具才允许重试（审查报告 M10 —— 旧实现对所有工具都重试 2 次，包括会写台账的
-    `upload_medical_report`）。
+    只读工具才允许重试（审查报告 M10 —— 旧实现对所有工具都重试 2 次，包括那些会写台账、
+    有副作用的工具）。
     """
     from rolecard_agent.core.memory import make_memory_tool
     from rolecard_agent.core.models.consensus import build_consensus_tool

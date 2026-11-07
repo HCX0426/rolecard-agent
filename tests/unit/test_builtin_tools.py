@@ -8,6 +8,7 @@ while `core/tools/builtin.py` was still an empty docstring - the whitelist point
 from __future__ import annotations
 
 from rolecard_agent.base.identity import DEFAULT_USER_ID
+from rolecard_agent.config import Settings
 from rolecard_agent.core.tools.builtin import make_kernel_tools
 from rolecard_agent.roles.service import RoleCards, RoleCardService
 
@@ -27,25 +28,38 @@ def test_kernel_tool_names_are_stable(roles: RoleCardService) -> None:
     assert names == ["list_domains", "list_roles"]
 
 
-def test_builtin_role_whitelist_resolves(roles: RoleCardService) -> None:
-    """Every name in the seeded whitelist must be a kernel tool, a declared domain tool,
-    or the kernel search_knowledge capability (v2.1: retrieval lives in rag/)."""
-    from rolecard_agent.domains.health.names import DOMAIN_TOOL_NAMES
+def test_builtin_role_whitelist_resolves(roles: RoleCardService, tmp_path) -> None:
+    """Every name in the **built-in** role's whitelist must be a tool a real factory builds.
+
+    判据是"白名单里每个名字都真能解析成一件工具"——写了个不存在的名字，模型拿到的是
+    死链路。可解析集合取自**真实工厂**（与装配点 `build_registry` 同一批工厂）：
+    内核工具、联网、工作区文件、跨会话记忆、检索。测试夹具自建的自定义卡
+    （`note_keeper`）带的是本文件的假工具，不在此列。
+    """
+    from rolecard_agent.core.memory import make_memory_tool
+    from rolecard_agent.core.tools.files import make_file_tools
+    from rolecard_agent.core.tools.web import make_web_tools
     from rolecard_agent.rag.retriever import make_search_tool
 
+    settings = Settings(sqlite_path=tmp_path / "t.db")
     resolvable = {t.name for t in make_kernel_tools(current_user=_who, roles=roles)}
-    resolvable |= set(DOMAIN_TOOL_NAMES)
+    resolvable |= {t.name for t in make_web_tools(settings=settings)}
+    resolvable |= {t.name for t in make_file_tools(settings=settings)}
+    resolvable.add(make_memory_tool(settings=settings, conn=None).name)  # type: ignore[arg-type]
     resolvable.add(make_search_tool(None).name)  # type: ignore[arg-type]
-    whitelist = cards(roles).get("medical_archivist").tool_whitelist or []
+    # 多模型比对的工厂在本文件的 import 面之外（它要模型解析器），名字显式登记在这里
+    # 并注明出处；白名单里只剩它一件非工厂直出的。
+    resolvable.add("compare_model_answers")
+    whitelist = cards(roles).get("general_assistant").tool_whitelist or []
     assert set(whitelist) <= resolvable, set(whitelist) - resolvable
 
 
 def test_list_domains_reports_what_is_enabled(roles: RoleCardService) -> None:
     tools = {
         t.name: t
-        for t in make_kernel_tools(current_user=_who, roles=roles, enabled_domains=["health"])
+        for t in make_kernel_tools(current_user=_who, roles=roles, enabled_domains=["notes"])
     }
-    assert "health" in tools["list_domains"].invoke({})
+    assert "notes" in tools["list_domains"].invoke({})
 
 
 def test_list_domains_says_so_when_nothing_is_on(roles: RoleCardService) -> None:
@@ -59,8 +73,8 @@ def test_list_domains_says_so_when_nothing_is_on(roles: RoleCardService) -> None
 def test_list_roles_includes_the_builtin_with_its_id(roles: RoleCardService) -> None:
     tools = {t.name: t for t in make_kernel_tools(current_user=_who, roles=roles)}
     output = tools["list_roles"].invoke({})
-    assert "medical_archivist" in output
-    assert "健康档案管理员" in output
+    assert "note_keeper" in output
+    assert "笔记管理员" in output
 
 
 def test_kernel_tools_carry_descriptions_for_the_model(roles: RoleCardService) -> None:

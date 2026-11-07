@@ -64,7 +64,7 @@ class _BoomRaw(BaseTool):
 @pytest.fixture
 def conn(tmp_path: Path):
     c = db_mod.connect(tmp_path / "audit.db")
-    db_mod.bootstrap(c, enabled_domains=("health",))
+    db_mod.bootstrap(c, enabled_domains=())
     yield c
     c.close()
 

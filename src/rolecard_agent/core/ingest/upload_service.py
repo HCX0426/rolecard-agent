@@ -270,6 +270,10 @@ def process_upload(
     已经被另一路（自愈/重试）推进过，拿着 persist 时的快照推进状态机会撞非法跃迁。
     `ocr_candidates` 是**延迟求值**的 OCR 后端工厂（只有图片才问，且答案可能每次不同）。
     `thread_id` 只服务一处：解析副本写失败那条 tracer 事件要带"这是谁的会话"。
+
+    `knowledge_scope` 是会话上传的**固定落点**（`UPLOAD_SCOPE`）：从前它绑在某个域的
+    常量上，域包被物理删除之后，这个落点属于"上传"本身、不再属于任何域 —— 同一个名字
+    由 `UPLOAD_SCOPE` 一处定义，写索引与删除/重建两端读的是同一个常量。
     """
     existing = ingestion.get(p.task_id)
     task_id = p.task_id
@@ -424,6 +428,7 @@ def ingest_upload(
     HTTP 路由不再走这里：它把 `persist_upload` 与 `process_upload` 拆开用，重活交
     `submit_processing` 后台（P3-3）。**重活只有一份实现**（`process_upload`），
     同步/后台两条路不许各长一份 —— 那就是"改一边漏一边"的老形状。
+    `knowledge_scope` 的含义见 `process_upload`：会话上传的固定落点。
     """
     p = persist_upload(
         reader=reader,

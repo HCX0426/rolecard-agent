@@ -258,7 +258,7 @@ def test_unavailable_first_choice_degrades_and_says_so(tmp_path: Path) -> None:
 
     db = tmp_path / "degraded.db"
     conn = connect(db)
-    bootstrap(conn, enabled_domains=("health",))
+    bootstrap(conn, enabled_domains=())
     conn.execute(
         "INSERT INTO model_provider (id, provider, base_url, api_key, sort_order) "
         "VALUES ('siliconflow', 'siliconflow', NULL, NULL, 0)"

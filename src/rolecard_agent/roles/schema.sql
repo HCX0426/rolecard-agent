@@ -6,7 +6,7 @@
 -- ===========================================================================
 
 CREATE TABLE IF NOT EXISTS role_card (
-    role_id         TEXT PRIMARY KEY,               -- lowercase ASCII, e.g. medical_archivist
+    role_id         TEXT PRIMARY KEY,               -- lowercase ASCII, e.g. project_scribe
     -- 归属：这张卡是"谁的"。09-27 起每台实例有自己的主人（`IDENTITY_USER_ID`，架构总览 §4.1），
     -- 所有读路径都按它过滤 —— 包括播种出来的那几张：**内置卡今天不算公共资产**。
     -- 为什么不留一个"公共卡"的概念：那需要"模板 + 每人一份覆盖"的语义（改一张卡到底改了几份），
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS role_card (
     -- Role reproducibility is not one channel but several; system_prompt alone only covers the
     -- rules. This column covers the retrieval declaration:
     --
-    --   knowledge_scopes  JSON ["health_reports"] - which retrieval scopes this role may read.
+    --   knowledge_scopes  JSON ["project_notes"] - which retrieval scopes this role may read.
     --                    The role DECLARES scopes; it does not own a vector store. Owning one
     --                    would give N roles x M collections, duplicated indexes and no single
     --                    source of truth (merged audit ledger, 技术评审与决策 A1).

@@ -5,11 +5,12 @@ Why code rather than a SQL fixture:
   * `general_assistant`（唯一内置角色）不可删除（`role_card.is_builtin = 1`），种子在代码里
     才能让"出厂角色的改进随提交到达所有库"。
   * 域角色**不在本文件**：它们是域概念，随各域的 `DomainSpec.seed_roles` 出厂（2026-10-04
-    审查快照的域机制条目把 `medical_archivist` 搬进了 `domains/health/seed.py`），由宿主
-    聚合成 `domains.registry.domain_seed_roles()` 交装配根播种。类型是**自定义**
-    （is_builtin = 0）—— 可编辑、可删除、重启不覆盖修改（用户 2026-09-17 反馈
-    "健康档案管理员改成自定义"）。内核点名具体域的工具名与知识作用域就是概念泄漏，
-    所以这份文件此后只装**与领域无关**的内置角色。
+    审查快照的域机制条目把唯一的出厂域角色搬进了它所属的域包），由宿主聚合成
+    `domains.registry.domain_seed_roles()` 交装配根播种。类型是**自定义**（is_builtin = 0）
+    —— 可编辑、可删除、重启不覆盖修改（用户 2026-09-17 反馈：出厂域角色要能改成自定义）。
+    内核点名具体域的工具名与知识作用域就是概念泄漏，所以这份文件此后只装**与领域无关**
+    的内置角色。当前出厂**不带任何代码侧的域**：`domain_seed_roles()` 是空集，域清单完全
+    归用户（资料页自己建、自己删）。
 
 `GLOBAL_SAFETY_PROMPT` is NOT duplicated here. It lives in core/agent/prompts.py and is appended at
 call time, after the role prompt, so no role - built-in or custom - can override it.
@@ -20,6 +21,7 @@ call time, after the role prompt, so no role - built-in or custom - can override
 
 from __future__ import annotations
 
+from rolecard_agent.base.scopes import UPLOAD_SCOPE
 from rolecard_agent.roles.models import RoleCardCreate
 
 #: 默认角色 id：调用方没指定角色时落的那张卡。从前它住在 `api/deps.py`，而渠道适配器
@@ -66,16 +68,19 @@ BUILTIN_ROLES: tuple[RoleCardCreate, ...] = (
             "- 多模型比对（compare_model_answers）：需要交叉确认时可用；\n"
             "- 跨会话记忆（memory_save）：用户明确说出希望长期记住的事实（称呼、偏好、"
             "身份背景等）时调用，之后所有角色都会记得。"
-            "你**没有**接入健康档案、知识库检索与领域工具；如果用户想查询健康档案，"
-            "请提示他切换到「健康档案管理员」角色后再问。"
+            "你已接入知识库检索：用户在会话里上传的文件会存进这台机器的上传库，"
+            "可以直接对着它提问；设置页「知识库」里其它作用域的内容，需要角色卡勾选后"
+            "才检索得到 —— 检索不到时如实说明，不要假装读过。"
         ),
         temperature=0.7,
         model_name=None,
         tool_whitelist=GENERAL_ASSISTANT_TOOLS,
-        knowledge_scopes=[],
+        # 上传库的授权：出厂唯一的角色默认能检索"用户在本机上传的文件"，
+        # "上传完直接提问"这条既有行为因此不因域包的删除而回归。
+        knowledge_scopes=[UPLOAD_SCOPE],
         description=(
-            "默认角色：通用对话 + 基础内核工具（联网 / 工作区文件 / 多模型比对），"
-            "不接领域工具与检索。"
+            "默认角色：通用对话 + 基础内核工具（联网 / 工作区文件 / 多模型比对）+ "
+            "会话上传文件的知识库检索。"
         ),
     ),
 )

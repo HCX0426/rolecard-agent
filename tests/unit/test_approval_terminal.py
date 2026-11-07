@@ -32,7 +32,7 @@ from rolecard_agent.storage.db import bootstrap, connect
 def db_path(tmp_path: Path) -> Path:
     path = tmp_path / "app.db"
     conn = connect(path)
-    bootstrap(conn, enabled_domains=("health",))
+    bootstrap(conn, enabled_domains=())
     conn.commit()
     conn.close()
     return path

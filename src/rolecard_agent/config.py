@@ -467,14 +467,6 @@ class Settings(BaseModel):
     # 而云端嵌入器不保证，所以新建集合会按 cosine 建（见 rag/retriever 的度量说明）。
     rag_min_similarity: float = 0.0
 
-    # v2.3 结构化抽取（报告文本 → 指标行）：auto = 优先 provider=ollama 的**本地**后端
-    # （报告内容不出本机），否则用默认后端；也可填具体后端名强制指定。
-    # 由 domains/health/extract.py 消费。
-    extract_backend: str = "auto"
-    # 抽取的第二遍（"AI 校对"）：auto = 有不同 provider 的第二后端就交叉验证，否则降级为
-    # 同模型复查（弱校对，界面会如实标注）；off = 不做第二遍，只做确定性与原文锚定校验。
-    extract_verify: str = "auto"
-
     obs_backend: str = "local"
     obs_emit_raw_text: bool = False
     obs_log_path: Path | None = None
@@ -768,8 +760,6 @@ class Settings(BaseModel):
             ("OCR_PYTHON", "ocr_python"),
             ("SILICONFLOW_BASE_URL", "siliconflow_base_url"),
             ("RAG_MIN_SIMILARITY", "rag_min_similarity"),
-            ("EXTRACT_BACKEND", "extract_backend"),
-            ("EXTRACT_VERIFY", "extract_verify"),
             ("OBS_BACKEND", "obs_backend"),
             ("OBS_LOG_PATH", "obs_log_path"),
             ("AUTH_MODE", "auth_mode"),

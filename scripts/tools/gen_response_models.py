@@ -66,7 +66,6 @@ READONLY_ENDPOINTS: dict[str, str] = {
     "/api/mcp/servers": "McpServersView",
     "/api/rag/metrics": "RagMetricsView",
     "/api/reachouts": "ReachoutsView",
-    "/api/records": "RecordsView",
     "/api/sessions": "SessionsView",
     "/api/settings/memory": "SettingsMemoryView",
     "/api/settings/model-providers": "ModelProvidersView",
@@ -483,8 +482,6 @@ def _seed_minimal_data(app: Any) -> None:
     # 一条主动开口（收件箱）：/api/reachouts 的 items 从前恒空。绑 sample_reachable
     # （见 _seed_reachout 的注释：不许搅浑 sample_role 的 timeline 形状）。
     _seed_reachout(app)
-    # 一份体检报告：/api/records 的 items 从前恒空（health 域的读侧）。
-    _seed_health_report(app)
 
     # ——— 第三批（P1b ③，2026-10-28）：把"采样恒 null"的松格喂成非空 ———
     # 这些字段在真实运行里确实会有非空值，只是从前的种子造不出来；生成器旧机器还把
@@ -542,32 +539,6 @@ def _seed_reachout(app: Any) -> None:
     role = ctx.role_cards.get("sample_reachable")
     inbox.record_reachout(
         ctx.conn, role, "样本：生成器锚点", user_id=ctx.current_user(), fired_by="tick"
-    )
-
-
-def _seed_health_report(app: Any) -> None:
-    """种一份最小体检报告（health 域的读侧）。
-
-    两行指标各有分工：数值行保住 index_value 的类型代表；文本行把 value_text /
-    ref_range / raw_text 三格喂成非 null（create_report 本就收这些键）——
-    它们恒 null 时 IndexRow / ReportRecord 那族前端类型迁不动。note 同理：
-    报告行的 note 从前种成 None，喂一句真话，格就从 Any 变 str|null。"""
-    ctx = app.state.ctx
-    ctx.health.create_report(
-        user_id=ctx.current_user(),
-        report_type="样本报告",
-        check_time="2026-01-01",
-        institution="生成器",
-        note="样本备注：生成器锚点",
-        indices=[
-            {"index_name": "白细胞", "index_value": 6.5, "unit": "10^9/L"},
-            {
-                "index_name": "尿酸",
-                "value_text": "488",
-                "ref_range": "208-428",
-                "raw_text": "尿酸 488 umol/L（样本原文）",
-            },
-        ],
     )
 
 

@@ -49,17 +49,29 @@ def _domain_private_tokens() -> set[str]:
     return private
 
 
+def _domain_dir_names() -> set[str]:
+    """`domains/` 下在册的域目录名（= 代码侧出厂的域 id）。
+
+    与 `_domain_private_tokens` 同一取向：从**事实**推导，不手写名单。2026-11-07 出厂域
+    清空（两个域包被物理删除）之后，原先写死在 tokens 里的那个基准词随它的域包一起退役
+    —— 词表空是"内核此刻不该提任何域名"的当前事实，不是这道尺子退休：谁重新放一个域包
+    进去，它的目录名立刻进词表。
+    """
+    src = ROOT / "src" / "rolecard_agent"
+    return {p.name for p in (src / "domains").iterdir() if p.is_dir() and p.name != "__pycache__"}
+
+
 def check_core_no_domain_token() -> None:
     """L1：core/ 内不得出现具体域的专有名词（域目录名 + 域自己声明的表名，不区分大小写）。
 
     分层硬规则：core 是内核，domains/<x>/ 才是业务域。内核源码里出现某个域的专名，
-    说明有人把域概念抄近道塞进了内核（历史事故：AppContext.health 把具体域硬编码进
-    内核，M9 才解耦）。**注释与 SQL 注释一并禁止** —— 注释里的域词是概念泄漏的早期信号，
+    说明有人把域概念抄近道塞进了内核（历史事故：AppContext 硬编码过一个具体域的查询服务，
+    M9 才解耦）。**注释与 SQL 注释一并禁止** —— 注释里的域词是概念泄漏的早期信号，
     等它长成代码就晚了；这与 check_domain_isolation 先剥注释的取向相反，因为那条
     查的是"结构违规"（建表），本条查的是"概念泄漏"（连提都不该提）。
     内核自己的 schema 里那句"域引用本表、反向不行"因此也必须写成中性表述。
     """
-    tokens = {"health"} | _domain_private_tokens()
+    tokens = _domain_dir_names() | _domain_private_tokens()
     core_dir = ROOT / "src" / "rolecard_agent" / "core"
     bad: list[str] = []
     for path in sorted(core_dir.rglob("*")):

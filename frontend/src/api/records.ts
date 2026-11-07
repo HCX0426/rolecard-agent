@@ -10,4 +10,3 @@ import type { components } from "./schema.gen";
 
 export type GenericRecord = components["schemas"]["DomainRecordView"];
 
-export type ReportRecord = components["schemas"]["RecordsViewItemsItem"];

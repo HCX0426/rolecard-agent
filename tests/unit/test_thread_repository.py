@@ -66,7 +66,7 @@ def _write_sites() -> list[str]:
 @pytest.fixture
 def conn(tmp_path: Path):
     c = connect(tmp_path / "app.db")
-    bootstrap(c, enabled_domains=("health",))
+    bootstrap(c, enabled_domains=())
     c.execute(
         "INSERT OR IGNORE INTO tenant (tenant_id, display_name) VALUES (?, '本地演示')",
         (DEFAULT_TENANT_ID,),

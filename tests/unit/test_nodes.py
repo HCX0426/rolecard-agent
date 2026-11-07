@@ -867,14 +867,14 @@ def test_call_model_writes_live_enabled_domains_and_epoch(roles: RoleCardService
         reg,
         roles,
         FakeModel(AIMessage(content="hi")),
-        enabled_domains=["health"],
+        enabled_domains=["notes"],
         tool_epoch=7,
     )
     out = call_model(
         {"messages": [HumanMessage(content="q")], "current_role_id": rid, "thread_id": "t"}, ctx
     )
     assert out["messages"][0].content == "hi"
-    assert out["enabled_domains"] == ["health"]
+    assert out["enabled_domains"] == ["notes"]
     assert out["tool_epoch"] == 7
 
 
@@ -1013,7 +1013,7 @@ def test_call_model_trims_the_prompt_and_reports_it(roles: RoleCardService) -> N
     history = _history(8, 200)
     state = {
         "messages": history,
-        "current_role_id": "medical_archivist",
+        "current_role_id": "note_keeper",
         "thread_id": "t",
     }
     call_model(state, ctx)
@@ -1032,7 +1032,7 @@ def test_call_model_without_pressure_does_not_trim(roles: RoleCardService) -> No
     tracer = RecordingTracer()
     ctx = _ctx(ToolRegistry(), roles, model, tracer=tracer)
     history = _history(2, 10)
-    call_model({"messages": history, "current_role_id": "medical_archivist", "thread_id": "t"}, ctx)
+    call_model({"messages": history, "current_role_id": "note_keeper", "thread_id": "t"}, ctx)
     assert "context_trimmed" not in tracer.kinds()
     # 1 条 system + 全量历史 + 1 条深度注入（写法要求贴在生成点再说一遍）
     assert len(model.last_prompt) == 2 + len(history)
@@ -1064,7 +1064,7 @@ def test_voice_directive_is_injected_after_history_not_inside_the_system_block(
     model = FakeModel(AIMessage(content="ok"))
     ctx = _ctx(ToolRegistry(), roles, model)
     history = _history(6, 10)  # 12 条，倒数第 4 条的位置明显在历史里
-    call_model({"messages": history, "current_role_id": "medical_archivist", "thread_id": "t"}, ctx)
+    call_model({"messages": history, "current_role_id": "note_keeper", "thread_id": "t"}, ctx)
     prompt = model.last_prompt
     at = _voice_index(prompt)
     assert at > 1, "不能就是开头那条系统消息（那样等于没做深度注入）"
@@ -1093,7 +1093,7 @@ def test_voice_injection_never_splits_a_tool_call_group(roles: RoleCardService) 
         AIMessage(content="刚才答的"),
         HumanMessage(content="最后这句"),
     ]  # 9 条：朴素落点 9-4=5 正是 result
-    call_model({"messages": history, "current_role_id": "medical_archivist", "thread_id": "t"}, ctx)
+    call_model({"messages": history, "current_role_id": "note_keeper", "thread_id": "t"}, ctx)
     prompt = model.last_prompt
     at = _voice_index(prompt)
     call_at = prompt.index(call)
@@ -1114,7 +1114,7 @@ def test_voice_injection_survives_a_history_shorter_than_depth(
     model = FakeModel(AIMessage(content="ok"))
     ctx = _ctx(ToolRegistry(), roles, model)
     history = [HumanMessage(content="就一句")]
-    call_model({"messages": history, "current_role_id": "medical_archivist", "thread_id": "t"}, ctx)
+    call_model({"messages": history, "current_role_id": "note_keeper", "thread_id": "t"}, ctx)
     prompt = model.last_prompt
     assert len(prompt) == 3
     assert _voice_index(prompt) == 1

@@ -117,8 +117,8 @@ def test_chunk_empty_text_returns_nothing() -> None:
 
 
 def test_index_and_search_round_trip(kb: KnowledgeBase) -> None:
-    assert kb.index("health_reports", "随访须知.md", DOC_A) >= 1
-    hits = kb.search(["health_reports"], "复查频率是多少", k=3)
+    assert kb.index("notes", "随访须知.md", DOC_A) >= 1
+    hits = kb.search(["notes"], "复查频率是多少", k=3)
     assert hits, "应检索到随访须知"
     assert hits[0].source == "随访须知.md"
     assert "复查" in hits[0].text or "超声" in hits[0].text
@@ -126,23 +126,23 @@ def test_index_and_search_round_trip(kb: KnowledgeBase) -> None:
 
 def test_scope_isolation(kb: KnowledgeBase) -> None:
     """US-8：检索范围严格限定在授权作用域内 —— 其他集合的内容不可见。"""
-    kb.index("health_reports", "a.txt", DOC_A)
+    kb.index("notes", "a.txt", DOC_A)
     kb.index("private_scope", "b.txt", DOC_A)  # 同样内容放在另一个作用域
-    hits = kb.search(["health_reports"], "随访")
-    assert all(h.scope == "health_reports" for h in hits)
+    hits = kb.search(["notes"], "随访")
+    assert all(h.scope == "notes" for h in hits)
 
 
 def test_search_unknown_scope_returns_empty(kb: KnowledgeBase) -> None:
-    kb.index("health_reports", "a.txt", DOC_A)
+    kb.index("notes", "a.txt", DOC_A)
     assert kb.search(["不存在的集合"], "随访") == []
 
 
 def test_same_source_reindex_is_idempotent(kb: KnowledgeBase) -> None:
-    kb.index("health_reports", "a.txt", DOC_A)
-    assert kb.index("health_reports", "a.txt", DOC_A) >= 1
-    hits = kb.search(["health_reports"], "随访")
+    kb.index("notes", "a.txt", DOC_A)
+    assert kb.index("notes", "a.txt", DOC_A) >= 1
+    hits = kb.search(["notes"], "随访")
     assert len([h for h in hits if h.source == "a.txt"]) <= 4  # 不因重复入库而爆炸
-    ids = kb._client.get_collection("health_reports").get()["ids"]
+    ids = kb._client.get_collection("notes").get()["ids"]
     assert len(ids) == len(set(ids))  # id 唯一：同源重建覆盖而非追加
 
 
@@ -153,13 +153,13 @@ def test_two_files_with_the_same_name_do_not_eat_each_other(kb: KnowledgeBase) -
     两个「报告.pdf」的 id 完全重合，后一份 upsert 直接覆盖前一份：旧文档的索引
     永久消失，检索还会拿错内容，全程没有任何提示。
     """
-    kb.index("health_reports", "task-1", DOC_A, source_name="报告.pdf")
-    kb.index("health_reports", "task-2", DOC_B, source_name="报告.pdf")
+    kb.index("notes", "task-1", DOC_A, source_name="报告.pdf")
+    kb.index("notes", "task-2", DOC_B, source_name="报告.pdf")
 
-    ids = kb._client.get_collection("health_reports").get()["ids"]
+    ids = kb._client.get_collection("notes").get()["ids"]
     assert len(ids) == len(set(ids))
 
-    hits = kb.search(["health_reports"], "胆囊结石随访", k=8)
+    hits = kb.search(["notes"], "胆囊结石随访", k=8)
     assert any("胆囊" in h.text for h in hits), "先上传的那份被后者覆盖了"
     assert {h.source for h in hits} == {"报告.pdf"}  # 展示的仍是文件名
     assert {h.source_key for h in hits} == {"task-1", "task-2"}  # 身份彼此独立
@@ -180,14 +180,14 @@ def test_scope_count_only_treats_missing_collection_as_zero(
 
     monkeypatch.setattr(kb._client, "get_collection", broken)
     with pytest.raises(RuntimeError, match="问不到"):
-        kb.scope_count("health_reports")
+        kb.scope_count("notes")
 
 
 def test_delete_source_propagates_read_failures(
     kb: KnowledgeBase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`R102-04` 同族：删除时"取分块"失败不许报成"删干净了"（契约就是失败即失败）。"""
-    kb.index("health_reports", "task-1", DOC_A)
+    kb.index("notes", "task-1", DOC_A)
 
     class _Collection:
         @staticmethod
@@ -196,18 +196,18 @@ def test_delete_source_propagates_read_failures(
 
     monkeypatch.setattr(kb._client, "get_collection", lambda *, name: _Collection())
     with pytest.raises(RuntimeError, match="取分块失败"):
-        kb.delete_source("health_reports", "task-1")
+        kb.delete_source("notes", "task-1")
 
 
 def test_source_name_is_only_a_label(kb: KnowledgeBase) -> None:
     """展示名不参与身份：同一个文档改个名重建，仍是同一份（不产生第二份）。"""
-    kb.index("health_reports", "task-1", DOC_A, source_name="报告.pdf")
-    before = kb.scope_count("health_reports")
+    kb.index("notes", "task-1", DOC_A, source_name="报告.pdf")
+    before = kb.scope_count("notes")
 
-    kb.index("health_reports", "task-1", DOC_A, source_name="报告（改名）.pdf")
+    kb.index("notes", "task-1", DOC_A, source_name="报告（改名）.pdf")
 
-    assert kb.scope_count("health_reports") == before
-    hits = kb.search(["health_reports"], "随访", k=4)
+    assert kb.scope_count("notes") == before
+    hits = kb.search(["notes"], "随访", k=4)
     assert {h.source for h in hits} == {"报告（改名）.pdf"}
 
 
@@ -218,15 +218,15 @@ def test_legacy_chunks_without_source_name_still_show_their_name(kb: KnowledgeBa
     概览页（describe）那半边自 `R102-55` 起由投影表负责，存量分块的入库见
     tests/unit/test_knowledge_sources.py 的一次性种子用例。
     """
-    collection = kb._client.get_or_create_collection(name="health_reports")
+    collection = kb._client.get_or_create_collection(name="notes")
     collection.add(  # 故意绕过 index()，模拟旧版元数据
         ids=["legacy-1"],
         embeddings=[[0.0] * HashEmbedder.DIM],
         documents=[DOC_A],
-        metadatas=[{"source": "旧文件.txt", "scope": "health_reports", "chunk": 0}],
+        metadatas=[{"source": "旧文件.txt", "scope": "notes", "chunk": 0}],
     )
 
-    hits = kb.search(["health_reports"], "随访", k=4)
+    hits = kb.search(["notes"], "随访", k=4)
     assert [h.source for h in hits] == ["旧文件.txt"]
     assert hits[0].source_key == "旧文件.txt"
 
@@ -238,16 +238,16 @@ def test_projection_tracks_index_delete_and_reset(tmp_path: Path) -> None:
     """
     store = _FakeProjection()
     kb = KnowledgeBase(tmp_path / "chroma", HashEmbedder(), sources_store=store)
-    kb.index("health_reports", "task-1", DOC_A, source_name="报告A.pdf")
-    kb.index("health_reports", "task-2", DOC_B, source_name="报告B.pdf")
-    assert store.rows["health_reports"] == {"task-1": "报告A.pdf", "task-2": "报告B.pdf"}
+    kb.index("notes", "task-1", DOC_A, source_name="报告A.pdf")
+    kb.index("notes", "task-2", DOC_B, source_name="报告B.pdf")
+    assert store.rows["notes"] == {"task-1": "报告A.pdf", "task-2": "报告B.pdf"}
     assert kb.describe()[0]["sources"] == ["报告A.pdf", "报告B.pdf"]
 
-    kb.delete_source("health_reports", "task-1")
-    assert store.rows["health_reports"] == {"task-2": "报告B.pdf"}
+    kb.delete_source("notes", "task-1")
+    assert store.rows["notes"] == {"task-2": "报告B.pdf"}
 
-    kb.reset_scope("health_reports")
-    assert "health_reports" not in store.rows
+    kb.reset_scope("notes")
+    assert "notes" not in store.rows
 
 
 def test_reset_scope_is_idempotent_when_collection_already_gone(tmp_path: Path) -> None:
@@ -258,10 +258,10 @@ def test_reset_scope_is_idempotent_when_collection_already_gone(tmp_path: Path) 
     其实早清干净了。现在"集合本来就不在"按幂等成功。
     """
     kb = KnowledgeBase(tmp_path / "chroma", HashEmbedder())
-    kb.index("health_reports", "task-1", DOC_A, source_name="报告A.pdf")
-    kb.reset_scope("health_reports")  # 第一次：正常清空
-    kb.reset_scope("health_reports")  # 第二次：集合已不在 —— 不炸，幂等
-    assert all(s["scope"] != "health_reports" for s in kb.describe())
+    kb.index("notes", "task-1", DOC_A, source_name="报告A.pdf")
+    kb.reset_scope("notes")  # 第一次：正常清空
+    kb.reset_scope("notes")  # 第二次：集合已不在 —— 不炸，幂等
+    assert all(s["scope"] != "notes" for s in kb.describe())
 
 
 def test_reindex_after_delete_restores_the_projection(tmp_path: Path) -> None:
@@ -272,24 +272,24 @@ def test_reindex_after_delete_restores_the_projection(tmp_path: Path) -> None:
     """
     store = _FakeProjection()
     kb = KnowledgeBase(tmp_path / "chroma", HashEmbedder(), sources_store=store)
-    kb.index("health_reports", "task-1", DOC_A, source_name="报告A.pdf")
-    kb.delete_source("health_reports", "task-1")
-    assert store.rows.get("health_reports") == {}
-    kb.index("health_reports", "task-1", DOC_A, source_name="报告A.pdf")
-    assert store.rows["health_reports"] == {"task-1": "报告A.pdf"}
+    kb.index("notes", "task-1", DOC_A, source_name="报告A.pdf")
+    kb.delete_source("notes", "task-1")
+    assert store.rows.get("notes") == {}
+    kb.index("notes", "task-1", DOC_A, source_name="报告A.pdf")
+    assert store.rows["notes"] == {"task-1": "报告A.pdf"}
 
 
 def test_delete_source_removes_only_that_document(kb: KnowledgeBase) -> None:
     """P1-1 的底座：报告行删了，它的检索分块也必须跟着走，且不能误伤同作用域别的文档。"""
-    kb.index("health_reports", "task-1", DOC_A, source_name="报告A.pdf")
-    kb.index("health_reports", "task-2", DOC_B, source_name="报告B.pdf")
-    before = kb.scope_count("health_reports")
+    kb.index("notes", "task-1", DOC_A, source_name="报告A.pdf")
+    kb.index("notes", "task-2", DOC_B, source_name="报告B.pdf")
+    before = kb.scope_count("notes")
 
-    removed = kb.delete_source("health_reports", "task-1")
+    removed = kb.delete_source("notes", "task-1")
 
     assert removed >= 1
-    assert kb.scope_count("health_reports") == before - removed
-    hits = kb.search(["health_reports"], "胆囊结石随访", k=8)
+    assert kb.scope_count("notes") == before - removed
+    hits = kb.search(["notes"], "胆囊结石随访", k=8)
     assert all(h.source_key != "task-1" for h in hits), "删掉的那份仍能被检索到"
     assert any(h.source_key == "task-2" for h in hits), "不该连带删掉别的文档"
 
@@ -297,10 +297,10 @@ def test_delete_source_removes_only_that_document(kb: KnowledgeBase) -> None:
 def test_delete_source_is_idempotent_on_missing_targets(kb: KnowledgeBase) -> None:
     """不存在的作用域/来源都返回 0 且不抛错：删除路径要能被重复调用。"""
     assert kb.delete_source("没这个作用域", "task-1") == 0
-    assert kb.index("health_reports", "task-1", DOC_A) >= 1
+    assert kb.index("notes", "task-1", DOC_A) >= 1
 
-    assert kb.delete_source("health_reports", "task-1") >= 1
-    assert kb.delete_source("health_reports", "task-1") == 0
+    assert kb.delete_source("notes", "task-1") >= 1
+    assert kb.delete_source("notes", "task-1") == 0
 
 
 def test_delete_document_removes_only_that_document(kb: KnowledgeBase) -> None:
@@ -308,15 +308,15 @@ def test_delete_document_removes_only_that_document(kb: KnowledgeBase) -> None:
 
     这是知识库管理页「删除这一份文档」的底座 —— 概览只给展示名，删除要能对上身份。
     """
-    kb.index("health_reports", "task-1", DOC_A, source_name="报告A.pdf")
-    kb.index("health_reports", "task-2", DOC_B, source_name="报告B.pdf")
-    before = kb.scope_count("health_reports")
+    kb.index("notes", "task-1", DOC_A, source_name="报告A.pdf")
+    kb.index("notes", "task-2", DOC_B, source_name="报告B.pdf")
+    before = kb.scope_count("notes")
 
-    removed = kb.delete_document("health_reports", "报告A.pdf")
+    removed = kb.delete_document("notes", "报告A.pdf")
 
     assert removed >= 1
-    assert kb.scope_count("health_reports") == before - removed
-    hits = kb.search(["health_reports"], "胆囊结石随访", k=8)
+    assert kb.scope_count("notes") == before - removed
+    hits = kb.search(["notes"], "胆囊结石随访", k=8)
     assert all(h.source_key != "task-1" for h in hits), "删掉的那份仍能被检索到"
     assert any(h.source_key == "task-2" for h in hits), "不该连带删掉别的文档"
     assert kb.describe()[0]["sources"] == ["报告B.pdf"]
@@ -340,14 +340,14 @@ def test_delete_document_same_name_two_identities_removes_both(tmp_path: Path) -
 def test_delete_document_is_idempotent_on_missing_name(kb: KnowledgeBase) -> None:
     """名字查不到 = 返回 0 不抛错（重复点删除、或删一个不存在的名，都是同一个安全结果）。"""
     assert kb.delete_document("没这个作用域", "不存在.pdf") == 0
-    assert kb.delete_document("health_reports", "从没入过库.pdf") == 0
+    assert kb.delete_document("notes", "从没入过库.pdf") == 0
 
 
 def test_delete_document_rejects_bare_built_kb(tmp_path: Path) -> None:
     """裸建法（无来源投影）不给按名删除的口子：名字→身份没有可查的表，loud 而非静默 0。"""
     kb = KnowledgeBase(tmp_path / "chroma", HashEmbedder())
     with pytest.raises(ValueError, match="来源投影"):
-        kb.delete_document("health_reports", "报告A.pdf")
+        kb.delete_document("notes", "报告A.pdf")
 
 
 def test_reindexing_with_empty_text_clears_the_old_chunks(kb: KnowledgeBase) -> None:
@@ -357,13 +357,13 @@ def test_reindexing_with_empty_text_clears_the_old_chunks(kb: KnowledgeBase) -> 
     分块原样留着 —— 内容已经没有了，模型却还能检索到并引用它，docstring 承诺的
     "同 source 幂等重建"当场被打破。
     """
-    assert kb.index("health_reports", "task-1", DOC_A) >= 1
-    assert kb.search(["health_reports"], "胆囊结石随访", k=4)
+    assert kb.index("notes", "task-1", DOC_A) >= 1
+    assert kb.search(["notes"], "胆囊结石随访", k=4)
 
-    assert kb.index("health_reports", "task-1", "   ") == 0
+    assert kb.index("notes", "task-1", "   ") == 0
 
-    assert kb.scope_count("health_reports") == 0
-    assert kb.search(["health_reports"], "胆囊结石随访", k=4) == []
+    assert kb.scope_count("notes") == 0
+    assert kb.search(["notes"], "胆囊结石随访", k=4) == []
 
 
 # -- search_knowledge 工具：作用域安全模型 ----------------------------------------------
@@ -382,8 +382,8 @@ def test_tool_denies_when_role_has_no_scopes(search_tool) -> None:
 
 
 def test_tool_returns_hits_for_authorised_role(kb: KnowledgeBase, search_tool) -> None:
-    kb.index("health_reports", "随访须知.md", DOC_A)
-    role_knowledge_scopes_ctx.set(("health_reports",))
+    kb.index("notes", "随访须知.md", DOC_A)
+    role_knowledge_scopes_ctx.set(("notes",))
     out = search_tool.invoke({"query": "复查频率"})
     assert "检索到的知识片段" in out
     assert "随访须知.md" in out
@@ -405,8 +405,8 @@ def test_tool_tells_reason_when_embed_fails(kb: KnowledgeBase, search_tool, monk
     「查过名单了，不会念错」。判据钉：文案含「知识库暂不可用」且含异常原因，
     且**不含**「换一种问法」（那是万能句的签名）。与维度不一致同一族：都是查不成。
     """
-    kb.index("health_reports", "随访须知.md", DOC_A)
-    role_knowledge_scopes_ctx.set(("health_reports",))
+    kb.index("notes", "随访须知.md", DOC_A)
+    role_knowledge_scopes_ctx.set(("notes",))
 
     def _boom(texts: list[str]) -> list[list[float]]:
         raise EmbedError("嵌入请求失败（1 条文本，重试 2 次后仍失败）：402 Payment Required")
@@ -528,7 +528,7 @@ def test_execute_tools_injects_role_scopes_to_search_tool(
     from rolecard_agent.core.tools.registry import ToolRegistry
     from rolecard_agent.roles.models import RoleCardCreate
 
-    kb.index("health_reports", "随访须知.md", DOC_A)
+    kb.index("notes", "随访须知.md", DOC_A)
     reg = ToolRegistry()
     reg.register(make_search_tool(kb))
     cards(roles).create(
@@ -536,7 +536,7 @@ def test_execute_tools_injects_role_scopes_to_search_tool(
             role_id="scholar",
             role_name="学者",
             system_prompt="x",
-            knowledge_scopes=["health_reports"],
+            knowledge_scopes=["notes"],
         )
     )
     ctx = KernelContext(
@@ -597,9 +597,9 @@ def test_latency_p95_empty_before_any_search(kb: KnowledgeBase) -> None:
 
 
 def test_search_records_latency_samples(kb: KnowledgeBase) -> None:
-    kb.index("health_reports", "随访须知.md", DOC_A)
+    kb.index("notes", "随访须知.md", DOC_A)
     for _ in range(5):
-        kb.search(["health_reports"], "复查频率", k=3)
+        kb.search(["notes"], "复查频率", k=3)
     metrics = kb.latency_p95()
     assert metrics["samples"] == 5
     assert metrics["rerank_enabled"] is False
@@ -610,9 +610,9 @@ def test_search_records_latency_samples(kb: KnowledgeBase) -> None:
 
 
 def test_search_emits_rag_search_trace(kb: KnowledgeBase) -> None:
-    kb.index("health_reports", "随访须知.md", DOC_A)
+    kb.index("notes", "随访须知.md", DOC_A)
     rec = _Recorder()
-    kb.search(["health_reports"], "复查频率", k=3, tracer=rec)
+    kb.search(["notes"], "复查频率", k=3, tracer=rec)
     rag_events = [e for e in rec.events if getattr(e, "event", None) == "rag_search"]
     assert rag_events, "应 emit rag_search 留痕"
     detail = rag_events[0].detail  # type: ignore[attr-defined]
@@ -625,10 +625,10 @@ def test_rerank_failure_falls_back_and_is_timed(tmp_path: Path) -> None:
     需要 ≥2 个候选，否则 search 会跳过重排（len(hits) > 1 守卫）——故索引两份文档。
     """
     kb = KnowledgeBase(tmp_path / "chroma", HashEmbedder(), _FailingReranker())  # type: ignore[arg-type]
-    kb.index("health_reports", "随访须知.md", DOC_A)
-    kb.index("health_reports", "饮食建议.md", DOC_B)
+    kb.index("notes", "随访须知.md", DOC_A)
+    kb.index("notes", "饮食建议.md", DOC_B)
     rec = _Recorder()
-    hits = kb.search(["health_reports"], "复查频率", k=3, tracer=rec)
+    hits = kb.search(["notes"], "复查频率", k=3, tracer=rec)
     assert hits, "重排失败必须回退向量序，仍返回结果"
     assert kb.latency_p95()["rerank_enabled"] is True
     assert any(getattr(e, "event", None) == "rerank_fallback" for e in rec.events)
@@ -649,10 +649,10 @@ def test_rerank_out_of_range_index_degrades_not_crashes(tmp_path: Path) -> None:
     旧实现只兜了 HTTP/空 results，没兜 index 越界；工具层也只 except 维度不匹配）。
     """
     kb = KnowledgeBase(tmp_path / "chroma", HashEmbedder(), _OutOfRangeReranker())  # type: ignore[arg-type]
-    kb.index("health_reports", "随访须知.md", DOC_A)
-    kb.index("health_reports", "饮食建议.md", DOC_B)
+    kb.index("notes", "随访须知.md", DOC_A)
+    kb.index("notes", "饮食建议.md", DOC_B)
     rec = _Recorder()
-    hits = kb.search(["health_reports"], "复查频率", k=3, tracer=rec)
+    hits = kb.search(["notes"], "复查频率", k=3, tracer=rec)
     assert hits, "越界 index 必须回退向量序，仍返回结果"
     assert any(getattr(e, "event", None) == "rerank_fallback" for e in rec.events)
 
@@ -684,15 +684,15 @@ def test_index_failure_does_not_destroy_the_existing_chunks(tmp_path: Path) -> N
     """
     embedder = _FailingEmbedder(fail_after=99)
     kb = KnowledgeBase(tmp_path / "chroma", embedder)
-    kb.index("health_reports", "a.txt", DOC_A)
-    assert kb.search(["health_reports"], "随访"), "前置条件：第一次索引应当成功"
+    kb.index("notes", "a.txt", DOC_A)
+    assert kb.search(["notes"], "随访"), "前置条件：第一次索引应当成功"
 
     embedder._left = 0  # 之后每次嵌入都失败
     with pytest.raises(RuntimeError):
-        kb.index("health_reports", "a.txt", DOC_A)
+        kb.index("notes", "a.txt", DOC_A)
 
     embedder._left = 99  # 修好它，才能验证"库里的旧分块还在"
-    assert kb.search(["health_reports"], "随访"), "嵌入失败后旧的索引被清空了 —— 这正是修复前的问题"
+    assert kb.search(["notes"], "随访"), "嵌入失败后旧的索引被清空了 —— 这正是修复前的问题"
 
 
 class _CountingEmbedder(SiliconFlowEmbedder):
@@ -778,23 +778,23 @@ def test_index_late_batch_embed_failure_leaves_no_half_written_index(tmp_path: P
 
     embedder = _FailingEmbedder(fail_after=1)  # 第一批嵌入成功，第二批起失败
     kb = KnowledgeBase(tmp_path / "chroma", embedder)
-    kb.index("health_reports", "a.txt", DOC_A)  # 旧文档先落库
+    kb.index("notes", "a.txt", DOC_A)  # 旧文档先落库
     embedder._left = 1  # 重置换回"第一批 OK、之后炸"
     with pytest.raises(RuntimeError):
-        kb.index("health_reports", "a.txt", big)
+        kb.index("notes", "a.txt", big)
 
     # 嵌入器修好（search 也要嵌入查询），才能验证库里两件事同时成立：
     embedder._left = 99
     # 旧分块原样还在（M4 的正面），且新内容一格都没写进去（没有半份索引）
-    hits = kb.search(["health_reports"], "随访")
+    hits = kb.search(["notes"], "随访")
     assert hits, "第二批嵌入失败把旧索引弄丢了 —— M4 的洞"
     assert all("批次外测试段落" not in str(h) for h in hits), (
         "检索里出现了新文档的分块 —— 流水线化留下的半份索引就是这个形状"
     )
     # 嵌入器修好后重传：同一批 id 幂等重建，新内容完整可查
-    n = kb.index("health_reports", "a.txt", big)
+    n = kb.index("notes", "a.txt", big)
     assert n > _EMBED_BATCH
-    assert kb.search(["health_reports"], "批次外测试段落 u0107"), "重传应当完整重建"
+    assert kb.search(["notes"], "批次外测试段落 u0107"), "重传应当完整重建"
 
 
 def test_embeddings_are_sent_in_batches() -> None:
@@ -941,9 +941,9 @@ def test_重排器失败时整条检索仍有结果(unreachable_backend: str) ->
     tmp = Path(tempfile.mkdtemp())
     rr = SiliconFlowReranker(api_key="k", base_url=unreachable_backend)
     kb = KnowledgeBase(tmp / "chroma", HashEmbedder(), rr)
-    kb.index("health_reports", "a.md", DOC_A)
-    kb.index("health_reports", "b.md", DOC_B)
-    hits = kb.search(["health_reports"], "复查频率", k=3)
+    kb.index("notes", "a.md", DOC_A)
+    kb.index("notes", "b.md", DOC_B)
+    hits = kb.search(["notes"], "复查频率", k=3)
     assert len(hits) == 2, f"重排器连不上时检索必须照旧出结果：{hits}"
     rr.close()
 
@@ -956,22 +956,22 @@ def test_响应缺results时端到端仍能查到东西(tmp_path: Path) -> None:
     单独测 `rerank()` 返回 None 只能证明函数自己变了，证明不了调用方真的回退了。
     """
     builder = KnowledgeBase(tmp_path / "chroma", HashEmbedder())
-    builder.index("health_reports", "a.md", DOC_A)
-    builder.index("health_reports", "b.md", DOC_B)
+    builder.index("notes", "a.md", DOC_A)
+    builder.index("notes", "b.md", DOC_B)
     plain = KnowledgeBase(tmp_path / "chroma", HashEmbedder())
-    assert len(plain.search(["health_reports"], "复查频率", k=3)) == 2, "基线自己就不成立"
+    assert len(plain.search(["notes"], "复查频率", k=3)) == 2, "基线自己就不成立"
 
     drift = _reranker_body(_OneShotClient({}))  # 状态 200，body 里没有 results
     kb = KnowledgeBase(tmp_path / "chroma", HashEmbedder(), drift)
-    hits = kb.search(["health_reports"], "复查频率", k=3)
+    hits = kb.search(["notes"], "复查频率", k=3)
     assert len(hits) == 2, f"一次响应形状漂移不该把检索打成空：{hits}"
 
 
 def test_search_result_is_fenced_as_data_not_instructions(kb: KnowledgeBase, search_tool) -> None:
     """R1031-21：检索结果必须带资料定界与"不是指令"前言——知识库文档是外部文本，
     文档里藏的"忽略规则"不得获得指令地位（OWASP 定界模式的数据面半边）。"""
-    kb.index("health_reports", "随访须知.md", DOC_A)
-    role_knowledge_scopes_ctx.set(("health_reports",))
+    kb.index("notes", "随访须知.md", DOC_A)
+    role_knowledge_scopes_ctx.set(("notes",))
     out = search_tool.invoke({"query": "复查频率"})
     assert "不是给你的指令" in out
     assert out.count("<<<资料 [") == out.count("资料>>>")

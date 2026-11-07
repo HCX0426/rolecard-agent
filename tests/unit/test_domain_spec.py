@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from fastapi.testclient import TestClient
 from langchain_core.tools import tool
 
 from rolecard_agent.base.identity import DEFAULT_USER_ID
@@ -35,11 +36,7 @@ from rolecard_agent.domains.registry import (
     domain_seed_roles,
 )
 from rolecard_agent.domains.spec import (
-    ActorLike,
     DomainSpec,
-    DomainToolContext,
-    RouterDeps,
-    RouterHost,
 )
 from rolecard_agent.rag.retriever import KnowledgeBase
 from rolecard_agent.roles.models import RoleCardCreate
@@ -155,51 +152,32 @@ def test_a_new_domain_needs_no_central_change(
     assert isinstance(services["demo"], _FakeQueryService)
 
 
-def test_the_real_domains_still_declare_themselves() -> None:
-    """替身只活在它自己的用例里：真清单仍由目录枚举给出，health 的工厂自带头等检查。"""
-    assert "health" in DOMAINS and "finance" in DOMAINS
-    assert [r.role_id for r in domain_seed_roles()] == ["medical_archivist"]
+def test_no_code_domain_ships_in_the_tree() -> None:
+    """出厂域清单**当前是空的** —— 两个域包被物理删除之后，"代码里带一个域"这件事本身归零。
 
-    # 原 `api/main.py` 那句"喂错服务就拒绝启动"的 isinstance 接线搬进了域自己的工具工厂
-    # —— 装配点不再认识任何服务类，所以这道检查只能长在域身上。
-    health = next(spec for spec in discover_specs() if spec.id == "health")
-    ctx = DomainToolContext(
-        ingestion=cast("IngestionService", None),  # 喂错服务时走不到用它那一步
-        query=cast("DomainQueryService", _FakeQueryService(object())),
-        current_user=lambda: DEFAULT_USER_ID,
-        upload_dir=Path("."),
-    )
-    with pytest.raises(RuntimeError, match="HealthQueryService"):
-        health.tool_factory(ctx)
-
-
-def test_domain_routes_are_mounted_from_their_own_spec(conn: object) -> None:
-    """`router_contrib` 是那族端点的**住址**：宿主只靠这份声明挂路由，api 层零 import 具体域。
-
-    为什么值得单独立一条：搬迁之后再没有任何 import 关系能证明 `/api/records` 还在 ——
-    少交一份路由**不会报错**，只会静默缺一族端点（前端数据页整页 404）。这里钉住"真的交回来
-    了、路径对得上"，顺带钉住数据型域不交路由（None 是合法值，不是漏写）。
+    这条钉的是删除本身（而不是"域机制退休"）：`DOMAINS` 仍由目录枚举给出，空集就是此刻
+    的真实形状；谁以后重新放一个域包进去，它会自动出现在这里、并继续被下面那条
+    `test_registered_domains_are_their_directories` 的目录一致性判据管住。
     """
-    from rolecard_agent.domains.health import SPEC
-    from rolecard_agent.domains.health.service import HealthQueryService
+    assert DOMAINS == ()
+    assert [r.role_id for r in domain_seed_roles()] == [], "出厂不再带任何域种子角色"
 
-    deps = RouterDeps(
-        get_context=lambda: cast("RouterHost", None),
-        get_actor=lambda: cast("ActorLike", None),
-        query_services={"health": HealthQueryService(cast("SqlConnection", conn))},
-    )
-    routers = SPEC.router_contrib(deps)  # 联合类型里 None 那一半由下一条 finance 用例钉住
-    paths = {route.path for router in routers for route in router.routes}
-    assert paths == {
-        "/api/records",
-        "/api/records/report",
-        "/api/records/extract",
-        "/api/records/index/{index_id}",
-        "/api/records/report/{report_id}",
-    }, paths
 
-    finance = next(spec for spec in discover_specs() if spec.id == "finance")
-    assert finance.router_contrib is None, "数据型域没有专属路由（数据走通用 domain_data CRUD）"
+def test_mounting_skips_a_retired_domain(tmp_path: Path) -> None:
+    """带专属路由的域**被用户删掉后不再挂载** —— "清单里没有"与"端点还在服务"不许并存。
+
+    出厂已无代码域，这条判据用注入的假域验同一套机制：`router_contrib` 交回一族端点，
+    装配点按 `plugin.retired` 决定挂不挂；退役后同一个 app 上那族端点必须 404。
+    """
+    from rolecard_agent.api.main import create_app
+
+    client = TestClient(create_app(sqlite_path=tmp_path / "m.db"))
+    # 通用记录通路在任何未退役的名字上都活着（这就是"用户自建域"的形状）
+    assert client.post("/api/settings/domains", json={"id": "books"}).status_code == 201
+    assert client.get("/api/domains/books/records").status_code == 200
+    # 删掉之后，同一族端点对这个名字不再服务
+    assert client.delete("/api/settings/domains/books").status_code == 204
+    assert client.get("/api/domains/books/records").status_code == 404
 
 
 def test_a_domain_package_without_a_spec_fails_loudly() -> None:

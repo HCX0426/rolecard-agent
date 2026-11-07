@@ -34,7 +34,7 @@ THREADS = 4
 def _db(tmp_path: Path) -> Path:
     path = tmp_path / "app.db"
     conn = connect(path)
-    bootstrap(conn, enabled_domains=("health",))
+    bootstrap(conn, enabled_domains=())
     conn.commit()
     conn.close()
     return path
@@ -287,7 +287,7 @@ def test_dedupe_rescues_legacy_duplicate_pending(tmp_path: Path) -> None:
     path = tmp_path / "app.db"
     conn = connect(path)
     try:
-        bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
+        bootstrap(conn, enabled_domains=(), plan=MIGRATION_PLAN)
         conn.execute("DROP INDEX IF EXISTS idx_command_approval_one_pending")
         for _ in range(3):
             conn.execute(
@@ -295,7 +295,7 @@ def test_dedupe_rescues_legacy_duplicate_pending(tmp_path: Path) -> None:
             )
         conn.commit()
         # 再开一次机：清重先跑（计划里的 pre_ddl 步骤），唯一索引才建得起来。
-        bootstrap(conn, enabled_domains=("health",), plan=MIGRATION_PLAN)
+        bootstrap(conn, enabled_domains=(), plan=MIGRATION_PLAN)
         statuses = [
             str(r[0])
             for r in conn.execute("SELECT status FROM command_approval ORDER BY id").fetchall()

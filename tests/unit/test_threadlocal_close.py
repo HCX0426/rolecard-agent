@@ -29,7 +29,7 @@ def _seed(tmp_path: Path) -> Path:
     """建库：用一个普通连接把 schema 落下去，暂存库的连接由被测对象自己开。"""
     path = tmp_path / "app.db"
     plain = connect(path)
-    bootstrap(plain, enabled_domains=("health",))
+    bootstrap(plain, enabled_domains=())
     plain.close()
     return path
 

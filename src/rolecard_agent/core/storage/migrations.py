@@ -322,6 +322,20 @@ def _drop_service_policy(conn: SqlConnection) -> None:
     conn.execute("DROP TABLE IF EXISTS service_policy")
 
 
+def _drop_domain_private_tables(conn: SqlConnection) -> None:
+    """代码侧域包被物理删除后，它们私有的两张表不再是声明态 → DROP（同一先例）。
+
+    为什么点名而不是通用化：`plugin` 行与 `domain_data` 记录**不动** —— 域包删掉之后，
+    这两个 id 就退化成像用户自己新建的纯数据域（通用记录通路 `/api/domains/{id}/records`
+    本就按 domain_data 服务任何名字），删不删归用户在资料页点；而这两张私有表背后一行
+    代码都没有了，留着就是没人管的孤儿。子表先删（FK 指向父表，与当年建表的反向）。
+    重复跑零伤害。取舍要写清：若将来某个域**重新**声明同名表，这一步会在 DDL 之后把它
+    一起删掉 —— 与 `shape.drop_service_policy` 同一处已知取舍（历史清理步不复用名字）。
+    """
+    conn.execute("DROP TABLE IF EXISTS medical_index")
+    conn.execute("DROP TABLE IF EXISTS medical_report")
+
+
 def _upgrade_token_usage_pk(conn: SqlConnection) -> None:
     """token_usage_day 的主键升级（多租户 B1a）：(day, backend) → (day, user_id, backend)。
 
@@ -579,6 +593,7 @@ SHAPE_STEPS: tuple[Step, ...] = (
     Step(id="shape.role_proactive_state_pk", run=_upgrade_role_proactive_state_pk),
     Step(id="shape.ensure_role_memory", run=_ensure_role_memory),
     Step(id="shape.drop_service_policy", run=_drop_service_policy),
+    Step(id="shape.drop_domain_private_tables", run=_drop_domain_private_tables),
     Step(id="shape.token_usage_day_pk", run=_upgrade_token_usage_pk),
     Step(id="shape.rebuild_service_endpoint", run=_rebuild_legacy_service_endpoint),
     Step(id="shape.service_endpoint_owner", run=_backfill_service_endpoint_owner),
