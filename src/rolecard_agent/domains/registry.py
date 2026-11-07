@@ -50,8 +50,17 @@ def _domain_dirs(root: Path | None = None) -> list[Path]:
     下划线/点开头的一律跳过（`__pycache__` 与约定俗成的私有目录）；其余每个目录都**必须
     是包** —— 一个只有 schema.sql 却没有 `__init__.py` 的域会在这里报错，而不是等到
     `schema_files()` 才 FileNotFoundError。
+
+    **目录本身不在时返回空**（2026-11-07 打包态实测）：出厂域清空之后，`domains/` 里只剩
+    `__init__.py` / `registry.py` / `spec.py` 三个文件，PyInstaller 的依赖分析看不到"目录"
+    这层，于是那份 `_internal/rolecard_agent/domains/` 目录根本没被收进包 —— 启动时
+    `iterdir()` 抛 `FileNotFoundError`，症状是"装好的壳一点起来就退"。
+    "没有域目录"与"没有域"是同一件事（清空出厂域之后就是常态），所以这里按空集答；
+    真读到了目录却缺 `__init__.py` 的仍是 loud（那确实是写坏了的域包）。
     """
     base = root or _PACKAGE_DIR
+    if not base.is_dir():
+        return []
     dirs: list[Path] = []
     for child in sorted(base.iterdir()):
         if not child.is_dir() or child.name.startswith((".", "_")):

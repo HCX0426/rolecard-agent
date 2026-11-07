@@ -82,6 +82,14 @@ for _domain_dir in _domain_registry._domain_dirs():
     if _init.is_file():
         datas.append((str(_init), f"rolecard_agent/domains/{_domain_dir.name}"))
 
+# **`domains/` 这个目录本身也必须落盘**（2026-11-07 v0.6.3 打包态实测；继承上一段的同一条
+# 理由）：出厂域清空之后一个域目录都没有，上面那个循环体一次都不进，而 `domains/__init__.py`
+# 只是纯模块 ⇒ 进 PYZ 归档、不落盘 ⇒ 冻结态 `_internal/rolecard_agent/domains/` **整个目录
+# 不存在** ⇒ 启动时 `registry._domain_dirs()` 的 `iterdir()` 抛 FileNotFoundError，
+# 症状是"装好的壳一点起来就退"（源码态永远复现不出来）。把顶层包标记文件按数据文件收进去，
+# 目录就一定存在；`registry.py` 对"目录在但一个域都没有"本来就答空集（这是清空后的常态）。
+datas.append((str(PKG / "domains" / "__init__.py"), "rolecard_agent/domains"))
+
 hiddenimports = collect_submodules("rolecard_agent")
 
 # 这一族是**随包后端运行时真要用**的包，逐个 `collect_submodules` + 收数据目录。
