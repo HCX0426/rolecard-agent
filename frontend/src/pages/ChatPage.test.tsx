@@ -22,9 +22,15 @@ import { ToastProvider } from "../components/Toast";
 // （症状："权威文本"找不到 —— 消息其实到了，渲染它的 Suspense 还没换页）。
 // 全套用例开始前先 await 一次这个动态 import：vitest 对同一 specifier 复用模块图，
 // React.lazy 拿到的就是已 resolve 的 promise，Suspense 同步换页，不再与 act 赛跑。
+//
+// 60s 预算（不是默认 10s）：门禁里这条两次死在「Hook timed out in 10000ms」
+// （2026-11-07 两趟全量门禁，读数 environment 72~74% —— 49 个隔离 worker 同时建
+// jsdom 争抢 CPU，那份 346KB 的 Markdown 变换排不上队）；而独立跑与冷 TEMP 复现都
+// 绿（全套 57 用例 5.3~8.2s）。预热是**准备**不是断言：给它够用的预算不削弱任何
+// 检验，断言照旧一条不少地跑。真因（并发争抢）记在此，不在这里蒙混。
 beforeAll(async () => {
   await import("../components/Markdown");
-});
+}, 60_000);
 
 // `vi.mock` 的工厂会被**提升到文件顶部**，因此它引用的变量必须同样被提升 ——
 // 用 `vi.hoisted` 而不是普通 `const`，否则报 "Cannot access before initialization"。
