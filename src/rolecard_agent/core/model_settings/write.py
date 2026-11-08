@@ -136,12 +136,31 @@ class _WriteMixin(_ReadMixin):
 
     # -- writes ----------------------------------------------------------------
 
+    def _drop_dangling_service_refs(self) -> None:
+        """清掉「指向已不存在后端」的设备级服务引用行（OCR / 嵌入 / 重排）。
+
+        用户 2026-11-08："模型界面删除对应模型后，服务界面的同步删除" —— 旧行为把引用行
+        留成「（引用已失效）」占着名单：模型都没了，幽灵行只会让人误以为还能抢救。摘引用
+        与删配置从此是同一个动作：模型页删行（`remove_model`）与整表保存（`save`）都过这里。
+
+        范围刻意只到设备能力行（`user_id IS NULL`）：chat 引用按人归属，由
+        `_write_chat_refs` 整体重写、默认重编，不归这里管，`user_id IS NULL` 也保证绝不动
+        任何人的对话序列。`NOT EXISTS` 是自愈口径 —— 顺手收掉历史库 / 手工 SQL 留下的真
+        孤儿；后端名仍在（`model_backend.name` 是全局主键）的引用一律不动。
+        """
+        self._conn.execute(
+            "DELETE FROM service_endpoint WHERE user_id IS NULL AND ref_backend IS NOT NULL "
+            "AND NOT EXISTS ("
+            "SELECT 1 FROM model_backend b WHERE b.name = service_endpoint.ref_backend)"
+        )
+
     def remove_model(self, name: str, *, user_id: str) -> None:
         """删一行模型（名称不存在 → KeyError/404）。
 
-        组里没别的模型了才连凭据一起删（key 不留成"看不见的凭据"）。其余服务类别的引用行
-        **保持原样**并在服务页呈现「失效」—— 摘引用与删配置是两个动作，不能顺手合并；
-        chat 引用则跟着这行走，并把它的位置让给序列里的下一个（默认不能悬空）。
+        组里没别的模型了才连凭据一起删（key 不留成"看不见的凭据"）。服务页引用行**随模型
+        同步删除**（用户 2026-11-08：模型页删了，服务页不许再挂「引用已失效」幽灵）——
+        chat 引用由 `_write_chat_refs(pool)` 重写让位（默认不能悬空），设备能力行由
+        `_drop_dangling_service_refs` 同事务清掉；「失效」呈现只剩防御口径（手工插的孤儿行）。
 
         别人的那一行在这里同样是 KeyError —— 而这一处比 404 的口径更要紧：不带主人过滤的
         删除会连着 `DELETE FROM model_provider` 一起走，那是**删掉他的凭据**。
@@ -161,6 +180,8 @@ class _WriteMixin(_ReadMixin):
             self._conn.execute(
                 "DELETE FROM model_provider WHERE id = ? AND user_id = ?", (gid, user_id)
             )
+        # 服务页能力引用同步删（在模型行已删之后跑，NOT EXISTS 才看得见"真的没了"）。
+        self._drop_dangling_service_refs()
         # 引用行按新序重编 sort_order，所以删掉的正是默认时，下一位自动顶上（默认不会悬空）。
         self._write_chat_refs(pool, user_id=user_id)
         self._conn.commit()

@@ -144,3 +144,31 @@ describe("服务页真实探测（配额纪律：真请求只在首载与『重�
     expect(await screen.findByText("后端1")).toBeTruthy();
   });
 });
+
+describe("页签重新激活时重取台账（模型页刚删的模型，切回服务页要看得见）", () => {
+  const reads = () =>
+    apiMock.get.mock.calls.filter((c: unknown[]) => c[0] === "/api/services").length;
+  const probes = () =>
+    apiMock.post.mock.calls.filter((c: unknown[]) => c[0] === "/api/services/probe").length;
+
+  it("隐藏→显示触发一次 /api/services 重取；探测仍是首载那一次", async () => {
+    const { rerender } = render(<ServicesPanel visible={false} />);
+    await waitFor(() => expect(probes(), "常驻挂载的首载探测照发").toBe(1));
+    await screen.findByText("后端1");
+    const before = reads();
+    rerender(<ServicesPanel visible={true} />);
+    await waitFor(() => expect(reads()).toBeGreaterThan(before));
+    expect(probes(), "激活只重取本地台账，不许重发探测").toBe(1);
+  });
+
+  it("显示→隐藏→再显示：每次都重取，探测始终只有首载那一次", async () => {
+    const { rerender } = render(<ServicesPanel visible={true} />);
+    await screen.findByText("后端1");
+    await waitFor(() => expect(probes()).toBe(1));
+    const base = reads();
+    rerender(<ServicesPanel visible={false} />);
+    rerender(<ServicesPanel visible={true} />);
+    await waitFor(() => expect(reads()).toBeGreaterThan(base));
+    expect(probes()).toBe(1);
+  });
+});

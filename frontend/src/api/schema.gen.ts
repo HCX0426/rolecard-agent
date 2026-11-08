@@ -1783,7 +1783,8 @@ export interface paths {
         post?: never;
         /**
          * Delete Model
-         * @description 删一行模型。组里没别的模型时连凭据一起删；其他服务类别的引用呈现「失效」不动。
+         * @description 删一行模型。组里没别的模型时连凭据一起删；服务页引用行同步删除（2026-11-08 起，
+         *     原为呈现「失效」不动 —— 模型页删了，服务页不许再挂「引用已失效」幽灵行）。
          */
         delete: operations["delete_model_api_settings_models__name__delete"];
         options?: never;

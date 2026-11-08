@@ -287,12 +287,13 @@ def test_unavailable_first_choice_degrades_and_says_so(tmp_path: Path) -> None:
     assert "API Key" in first["reason"]
 
 
-def test_reference_to_a_deleted_backend_shows_up_as_stale(
+def test_deleting_a_model_on_the_model_page_removes_its_service_references(
     client: TestClient, unreachable_backend: str
 ) -> None:
-    """被引用后端在模型页删掉 → 引用行呈现"失效"，**不静默跳过**。
+    """模型页删模型（DELETE）→ 服务页对应引用行**同步消失**（用户 2026-11-08）。
 
-    静默跳过会让操作员以为"这条还在用"，而真相是这个能力已经不在任何实现上。
+    旧行为是留一行「引用已失效」占着名单：模型都没了，幽灵行只会让人误以为还能抢救。
+    摘引用与删配置从此是同一个动作 —— chat 引用本就随行走（重写让位），这条钉能力三类。
     """
     client.put(
         "/api/settings/models",
@@ -315,8 +316,47 @@ def test_reference_to_a_deleted_backend_shows_up_as_stale(
             ],
         },
     )
-    client.post("/api/services/rerank/endpoints", json={"ref_backend": "gone"})
-    # 模型页把 gonE 删掉（保留 local 作为默认）
+    for cat in ("ocr", "embedding", "rerank"):
+        res = client.post(f"/api/services/{cat}/endpoints", json={"ref_backend": "gone"})
+        assert res.status_code == 201, res.text  # 后端还在时引用加得上
+    assert client.delete("/api/settings/models/gone").status_code == 204
+    body = client.get("/api/services").json()
+    for cat in ("ocr", "embedding", "rerank"):
+        ids = [c["id"] for c in _category(body, cat)["candidates"]]
+        assert "gone" not in ids, f"{cat} 还留着已删模型的引用行：{ids}"
+    models = _category(body, "models")
+    assert all(c["id"] != "gone" for c in models["candidates"])
+    assert models["default_backend"] == "local"  # 对话默认不悬空
+
+
+def test_shrinking_backends_on_the_model_page_drops_its_service_references(
+    client: TestClient, unreachable_backend: str
+) -> None:
+    """整表保存（PUT 缩表）与 DELETE 同一种结局：引用行随模型消失 —— 两条删除路径不许两种行为。"""
+    client.put(
+        "/api/settings/models",
+        json={
+            "default": "local",
+            "backends": [
+                {
+                    "name": "local",
+                    "provider": "ollama",
+                    "model": "qwen3-vl:8b",
+                    "base_url": unreachable_backend,
+                    "api_key": "x",
+                },
+                {
+                    "name": "gone",
+                    "provider": "siliconflow",
+                    "model": "BAAI/bge-m3",
+                    "api_key": "sk-c",
+                },
+            ],
+        },
+    )
+    added = client.post("/api/services/rerank/endpoints", json={"ref_backend": "gone"})
+    assert added.status_code == 201, added.text
+    # 缩表：只剩 local —— gone 在这次保存里被删掉
     client.put(
         "/api/settings/models",
         json={
@@ -332,8 +372,32 @@ def test_reference_to_a_deleted_backend_shows_up_as_stale(
             ],
         },
     )
-    rerank = _category(client.get("/api/services").json(), "rerank")
-    stale = next(c for c in rerank["candidates"] if c["id"] == "gone")
+    rerank_ids = [
+        c["id"] for c in _category(client.get("/api/services").json(), "rerank")["candidates"]
+    ]
+    assert "gone" not in rerank_ids
+
+
+def test_a_hand_inserted_dangling_reference_still_reads_as_stale(tmp_path: Path) -> None:
+    """防御口径保留：绕过模型页手工插的引用行（历史库 / SQL）仍呈现「失效」，不静默跳过。
+
+    级联删只覆盖模型页这条正规路；直接插库的孤儿行没人替它善后 —— 静默跳过会让操作员
+    以为"这条还在用"，而真相是这个能力已经不在任何实现上。
+    """
+    from rolecard_agent.storage.db import bootstrap, connect
+
+    db = tmp_path / "stale.db"
+    conn = connect(db)
+    bootstrap(conn, enabled_domains=())
+    conn.execute(
+        "INSERT INTO service_endpoint (category, id, kind, ref_backend, enabled, sort_order, "
+        "builtin) VALUES ('rerank', 'ghost', 'cloud', 'ghost', 1, 0, 0)"
+    )
+    conn.commit()
+    conn.close()
+    c = TestClient(create_app(sqlite_path=db))
+    rerank = _category(c.get("/api/services").json(), "rerank")
+    stale = next(x for x in rerank["candidates"] if x["id"] == "ghost")
     assert stale["stale"] is True
     assert stale["available"] is False
     assert "模型页删除" in stale["reason"]

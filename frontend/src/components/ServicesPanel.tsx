@@ -52,7 +52,7 @@ function AvailBadge({
   );
 }
 
-export function ServicesPanel() {
+export function ServicesPanel({ visible = true }: { visible?: boolean }) {
   const [view, setView] = useState<ServicesView | null>(null);
   const [providers, setProviders] = useState<NonNullable<ModelSettings["providers"]>>([]);
   const [error, setError] = useState("");
@@ -94,6 +94,18 @@ export function ServicesPanel() {
       .then(() => load())
       .catch((e) => setError(`加载失败：${describeError(e)}`));
   }, [load]);
+
+  // 页签激活（隐藏→显示）时重取一次台账：面板常驻挂载，模型页刚删过模型/引用行，切回来
+  // 必须看到同步后的名单。只发本地 GET（零外发）—— 探测配额纪律不变：真请求仍然只有
+  // 首载与「重新检测」两处；常驻挂载防的是"每次点开都**重挂载重探测**"（用户 2026-09-18）。
+  const prevVisible = useRef(visible);
+  useEffect(() => {
+    const turnedOn = visible && !prevVisible.current;
+    prevVisible.current = visible;
+    if (turnedOn) {
+      load().catch((e) => setError(`加载失败：${describeError(e)}`));
+    }
+  }, [visible, load]);
 
   const run = async (id: string, fn: () => Promise<void>, okMsg: string) => {
     setBusy(id);

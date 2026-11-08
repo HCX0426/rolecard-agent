@@ -149,7 +149,7 @@ class EndpointConfig:
     enabled: bool
     builtin: bool
     ref_backend: str | None = None
-    stale: bool = False  # 引用的后端已被模型页删除
+    stale: bool = False  # 引用悬空（模型页删行已同步删引用；这只兜手工插的孤儿行）
 
     def to_api(self) -> dict[str, Any]:
         """API 形状（api_key 永不回传，只回掩码）。"""

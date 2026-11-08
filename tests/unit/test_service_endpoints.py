@@ -4,7 +4,8 @@
 覆盖五条不变量：
   1. seed_once 一次性：重启不复活被删行；默认引用只在对应后端已存在时创建。
   2. 新增 = 引用模型页已配置的后端；一后端一服务至多一条；未配置的后端大声拒绝。
-  3. 删除引用行**绝不动** model_backend 配置；后端被删后引用行呈现「失效」。
+  3. 删除引用行**绝不动** model_backend 配置；模型页删后端时引用行随之删（2026-11-08
+     用户改口径），手工插的孤儿行呈现「失效」。
   4. builtin 本地实现不可删，可停用；不能停掉最后一行。
   5. reorder 必须是全排列（部分序大声拒绝）——优先级第 1 位即生效。
 """
@@ -104,8 +105,11 @@ def test_delete_reference_keeps_model_page_config(svc: ServiceEndpointService) -
     assert any(b["name"] == "siliconflow" for b in ms.list_backends(user_id=OWNER))
 
 
-def test_stale_reference_is_visible_not_silent(svc: ServiceEndpointService) -> None:
-    # 模型页删掉 siliconflow（重存为只剩 local）→ 引用行失效但**可见**
+def test_reference_follows_its_model_when_the_model_page_deletes_it(
+    svc: ServiceEndpointService,
+) -> None:
+    # 模型页删掉 siliconflow（重存为只剩 local）→ 引用行**同步删**（用户 2026-11-08：
+    # "模型界面删除对应模型后，服务界面的同步删除"）—— 服务页不留「引用已失效」幽灵。
     ms = ModelSettingsService(svc._conn)  # noqa: SLF001
     ms.save(
         default="local",
@@ -113,7 +117,17 @@ def test_stale_reference_is_visible_not_silent(svc: ServiceEndpointService) -> N
         fallbacks=[],
         user_id=OWNER,
     )
-    row = next(e for e in svc.rows("embedding") if e.id == "siliconflow")
+    assert all(e.id != "siliconflow" for e in svc.rows("embedding"))
+
+
+def test_stale_reference_is_visible_not_silent(svc: ServiceEndpointService) -> None:
+    # 绕过模型页手工插的孤儿行（历史库 / SQL）→ 失效但**可见**（不静默跳过）：
+    # 级联删只覆盖模型页这条正规路；插库的行没人替它善后，静默了操作员就以为还在用。
+    svc._conn.execute(  # noqa: SLF001 - 测试检视同一连接
+        "INSERT INTO service_endpoint (category, id, kind, ref_backend, enabled,"
+        " sort_order, builtin) VALUES ('embedding', 'ghost', 'cloud', 'ghost', 1, 99, 0)"
+    )
+    row = next(e for e in svc.rows("embedding") if e.id == "ghost")
     assert row.stale is True and row.api_key is None
 
 

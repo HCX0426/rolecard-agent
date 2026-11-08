@@ -46,7 +46,9 @@ export default function SettingsPage({
           onChange={setTab}
         />
         {/* 子页签常驻挂载 + hidden 隐藏（P1-11 同款）：条件渲染会让每次切页签重新挂载
-            面板并重发请求 —— 服务页的探活会因此"每次点开都加载中"（用户 2026-09-18）。 */}
+            面板并重发请求 —— 服务页的探活会因此"每次点开都加载中"（用户 2026-09-18）。
+            激活同步走 ServicesPanel 的 visible prop：隐藏→显示只重取一次台账（本地 GET，
+            零外发），模型页删掉的引用行切回来即消失；探测仍只在首载发一次。 */}
         <div className={tab === "about" ? "" : "hidden"}>
           <AboutPanel onOpenChat={onOpenChat} theme={theme} onToggleTheme={onToggleTheme} />
         </div>
@@ -54,7 +56,7 @@ export default function SettingsPage({
           <ModelsPanel onOpenServices={() => setTab("services")} />
         </div>
         <div className={tab === "services" ? "" : "hidden"}>
-          <ServicesPanel />
+          <ServicesPanel visible={tab === "services"} />
         </div>
         <div className={tab === "runtime" ? "" : "hidden"}>
           <RuntimePanel />

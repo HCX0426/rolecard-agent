@@ -460,7 +460,8 @@ CREATE INDEX IF NOT EXISTS idx_domain_data_domain ON domain_data(domain, user_id
 --   本地行（builtin=1）：rapidocr / hash / off 等代码能力，id 固定、不可删、可排序停用；
 --   引用行（builtin=0）：ref_backend → model_backend.name，id = ref_backend（每类服务
 --   内一后端至多一条引用）。删除引用行**绝不**动模型页配置；后端被模型页删除时，
---   引用行在视图中呈现「失效」。
+--   引用行随之删除（2026-11-08 用户改口径，模型页删了服务页不留幽灵）—— 呈现「失效」
+--   只兜历史库 / 手工 SQL 留下的孤儿行。
 -- 优先级 = sort_order，第 1 位即生效；启停 = enabled。
 --
 -- category 取值：ocr / embedding / rerank（服务页可增删的三类）+ **chat**（「模型推理」

@@ -343,7 +343,7 @@ def check_sync_write_ownership() -> None:
         )
 
 
-#: 写语句所在、但**本函数自己不结束事务**的那九个位置（`R102-03` 沿袭项的盘点结果）。
+#: 写语句所在、但**本函数自己不结束事务**的那些位置（`R102-03` 沿袭项的盘点结果）。
 #:
 #: 逐处读过才登记：每一条都是"辅助函数由调用方收口"的形状 —— 写在这里的意义不是
 #: "这些地方可以悬挂"，而是**新增一处这样的写法必须先过一道判断**（要么自己 commit，
@@ -361,6 +361,10 @@ WRITE_TXN_HELPERS = frozenset(
         "src/rolecard_agent/core/memory/memory_distill.py::extract",
         # model_settings 拆包后（2026-10-04 审查快照 P1-6）这个方法住在 read mixin 里。
         "src/rolecard_agent/core/model_settings/read.py::_write_chat_refs",
+        # 2026-11-08 引用行随模型同步删：设备级服务引用的悬空清扫由调用方在**同一事务**里
+        # 收口 —— `write.py::remove_model`（删模型行后、_write_chat_refs 前）与
+        # `save.py::save`（缩表重插 + 凭据清理后）各自在末尾 commit，成败一体不半路落库。
+        "src/rolecard_agent/core/model_settings/write.py::_drop_dangling_service_refs",
         # 2026-10-24 域常开收口后转公共：rebuild 在换装临界区内调它并当场 commit
         # （不提交会把 RESERVED 锁留在请求线程的连接槽上，实测后续 create_app 集体 busy）。
         "src/rolecard_agent/core/plugins/__init__.py::bump_tool_epoch",

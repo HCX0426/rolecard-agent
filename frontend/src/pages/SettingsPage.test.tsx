@@ -248,3 +248,20 @@ describe("运行环境页的「她此刻为什么静默」", () => {
     expect(calls).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe("设置页服务签的激活重取（接线：模型页删行后切回来要看得到）", () => {
+  const probes = () =>
+    apiMock.post.mock.calls.filter((c) => c[0] === "/api/services/probe").length;
+  const reads = () =>
+    apiMock.get.mock.calls.filter((c) => c[0] === "/api/services").length;
+
+  it("切到『服务』页签多一次台账 GET；探测不跟着重发（配额只在首载与重新检测）", async () => {
+    render(<SettingsPage onOpenChat={() => {}} theme="light" onToggleTheme={() => {}} />);
+    // 面板常驻挂载：页面一打开首载探测就已发出（与页签是否点开无关）
+    await waitFor(() => expect(probes()).toBe(1));
+    const before = reads();
+    fireEvent.click(screen.getByRole("button", { name: "服务" }));
+    await waitFor(() => expect(reads()).toBeGreaterThan(before));
+    expect(probes(), "切页签只许本地 GET 重取").toBe(1);
+  });
+});
