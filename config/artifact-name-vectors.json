@@ -24,6 +24,7 @@
     { "name": "rolecard-agent-0.6.1-x64.exe", "version": "0.6.1", "arch": "x64" },
     { "name": "rolecard-agent-0.6.2-x64.exe", "version": "0.6.2", "arch": "x64" },
     { "name": "rolecard-agent-0.6.3-x64.exe", "version": "0.6.3", "arch": "x64" },
+    { "name": "rolecard-agent-0.6.4-x64.exe", "version": "0.6.4", "arch": "x64" },
     { "name": "rolecard-agent-1.0.0-rc.11-arm64.exe", "version": "1.0.0-rc.11", "arch": "arm64" },
     { "name": "rolecard-agent-0.4.2-beta-x64.exe", "version": "0.4.2-beta", "arch": "x64" },
     { "name": "rolecard-agent-0.4.2.exe", "version": null },
