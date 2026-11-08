@@ -3,7 +3,7 @@
 // 移除 = 仅从本服务优先级中摘除引用（不影响模型页配置）；配置的编辑只在模型页。
 // 优先级第 1 位即生效；修改立即保存并热生效（嵌入/重排后端热重建）。
 import { Button } from "../components/ui";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, USAGE_LABEL, type ModelSettings } from "../api";
 import type { ServiceCategoryView, ServiceEndpoint, ServicesView } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
@@ -73,8 +73,26 @@ export function ServicesPanel() {
     setProviders(s.providers ?? []);
   }, []);
 
+  /** 真实能力探测 + 刷新（「重新检测」专用；首载在下面的 effect 里走 bootProbe）。
+   *  后端配额纪律：真请求只从这两处发出 —— 普通刷新/保存只读探测台账、零外发。
+   *  探测本身失败不拖垮面板：读不到新账时页面照常展示"还没测过"的配置缺省。 */
+  const probeAndLoad = useCallback(async () => {
+    try {
+      await api.post("/api/services/probe");
+    } catch {
+      /* 探不到就维持缺省 —— 面板自身的加载失败由下面的 load 报错 */
+    }
+    await load();
+  }, [load]);
+
+  // StrictMode（main.tsx 开着）把首载 effect 跑两遍：探测只发一次（花配额，不许双发），
+  // 而每轮读状态都排在**同一个**探测 Promise 之后 —— 读到的必然是记过账的视图。
+  const bootProbe = useRef<Promise<unknown> | null>(null);
   useEffect(() => {
-    load().catch((e) => setError(`加载失败：${describeError(e)}`));
+    bootProbe.current ??= api.post("/api/services/probe").catch(() => {});
+    bootProbe.current
+      .then(() => load())
+      .catch((e) => setError(`加载失败：${describeError(e)}`));
   }, [load]);
 
   const run = async (id: string, fn: () => Promise<void>, okMsg: string) => {
@@ -153,8 +171,8 @@ export function ServicesPanel() {
         </p>
         <button
           onClick={() =>
-            load().then(() => {
-              setFlash("已重新检测");
+            probeAndLoad().then(() => {
+              setFlash("已重新检测（真发请求测过可用性）");
             })
           }
           className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"

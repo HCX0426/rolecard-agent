@@ -56,6 +56,8 @@ const VIEW = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 真客户端 post 永远回 Promise —— mock 必须同形，否则首载 effect 里 .catch 直接炸。
+  apiMock.post.mockResolvedValue({ probed: 0, results: [] });
   apiMock.get.mockImplementation(async (url: string) => {
     if (url === "/api/services") return VIEW;
     if (url === "/api/settings/models") return { providers: [], fallbacks: [], default: "" };
@@ -101,5 +103,44 @@ describe("ServicesPanel 停用行的排序按钮（禁用必须配说明）", ()
     const up = await screen.findByRole("button", { name: "↑" });
     expect((up as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(/先「启用」才能排优先级/)).toBeTruthy();
+  });
+});
+
+describe("服务页真实探测（配额纪律：真请求只在首载与『重新检测』）", () => {
+  const probes = () =>
+    apiMock.post.mock.calls.filter((c: unknown[]) => c[0] === "/api/services/probe").length;
+
+  it("首载真发恰好一次探测，且读状态排在探测之后", async () => {
+    render(<ServicesPanel />);
+    expect(await screen.findByText("后端1")).toBeTruthy();
+    await waitFor(() => expect(probes(), "首载应真发一次探测").toBe(1));
+  });
+
+  it("普通保存（run→load）绝不 POST 探测：配额只花在两处", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    render(<ServicesPanel />);
+    await waitFor(() => expect(probes()).toBe(1));
+    await screen.findByText("后端1");
+    fireEvent.click(screen.getByText("移除"));
+    fireEvent.click(await screen.findByText("确认移除"));
+    await waitFor(() => expect(apiMock.del).toHaveBeenCalled());
+    expect(probes(), "保存路径只许读状态").toBe(1);
+  });
+
+  it("点『重新检测』才再次真发：每点一次、真发一次", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    render(<ServicesPanel />);
+    await waitFor(() => expect(probes()).toBe(1));
+    await screen.findByText("后端1");
+    fireEvent.click(screen.getByText("重新检测"));
+    await waitFor(() => expect(probes()).toBe(2));
+    fireEvent.click(screen.getByText("重新检测"));
+    await waitFor(() => expect(probes()).toBe(3));
+  });
+
+  it("探测接口挂了：面板照常渲染（探测失败 ≠ 面板失败）", async () => {
+    apiMock.post.mockRejectedValueOnce(new Error("探测炸了"));
+    render(<ServicesPanel />);
+    expect(await screen.findByText("后端1")).toBeTruthy();
   });
 });

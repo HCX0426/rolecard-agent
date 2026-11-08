@@ -1022,6 +1022,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/services/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Probe Services
+         * @description **真发**一次能力探测并记入探测台账 —— 前端只在首载与「重新检测」调用本路由。
+         *
+         *     教训（2026-11-08 实测）：云端的"可用"此前只看配置齐缺，而欠费的硅基流动回
+         *     HTTP 402、`/models` 照回 200 —— 于是服务页写"可用"、对话必挂。判可用的唯一
+         *     诚实办法是真发一次能力请求（嵌入 `/embeddings`、重排 `/rerank`、对话
+         *     `/chat/completions`），所以要有这个**显式**入口。
+         *
+         *     配额纪律：普通 `GET /api/services` 只读台账、**绝不**触发外发 —— deep_check 上
+         *     那条"不在页面刷新时向第三方发请求"的规矩原样保留，真请求只来自用户点的这两处。
+         *     跳过规则（本地行 / 无 key 行 / 停用行 / OCR 云端行）与理由见
+         *     `core.probes.service_probe` 的模块契约。
+         */
+        post: operations["probe_services_api_services_probe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/services/{key}": {
         parameters: {
             query?: never;
@@ -3963,6 +3993,34 @@ export interface components {
             openai_compatible?: components["schemas"]["ConnectivityProbeView"] | null;
         };
         /**
+         * ServiceProbeItemView
+         * @description `POST /api/services/probe` 的单行结论。`category` 是服务页的视图类别名
+         *     （对话行 = `models`，与分组一致；台账身份键另用 `chat`，那是内部命名）。
+         */
+        ServiceProbeItemView: {
+            /** Available */
+            available: boolean;
+            /** Category */
+            category: string;
+            /** Id */
+            id: string;
+            /** Reason */
+            reason: string;
+        };
+        /**
+         * ServiceProbeView
+         * @description `POST /api/services/probe`：本轮**真发**了几行 + 各行结论。
+         *
+         *     结论同时进了进程内探测台账 —— 之后的普通 `GET /api/services` 读账回显、
+         *     零外发（配额纪律：真请求只来自这个路由的显式调用）。
+         */
+        ServiceProbeView: {
+            /** Probed */
+            probed: number;
+            /** Results */
+            results: components["schemas"]["ServiceProbeItemView"][];
+        };
+        /**
          * ServicesView
          * @description /api/services 的顶层形状（数组包一层只为给它一个名字）。
          */
@@ -5936,6 +5994,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ServiceCheckView"];
+                };
+            };
+        };
+    };
+    probe_services_api_services_probe_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceProbeView"];
                 };
             };
         };

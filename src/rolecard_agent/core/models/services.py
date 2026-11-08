@@ -24,6 +24,7 @@ key/base_url/model：
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -70,6 +71,39 @@ def category(key: str) -> ServiceCategory:
         if c.key == key:
             return c
     raise KeyError(f"unknown service category: {key!r}")
+
+
+# ------------------------------------------------------------- 真实能力探测的台账
+# （用户 2026-11-08：硅基流动欠费 402、`/models` 照回 200，服务页却写"可用"、对话必挂）
+# 判可用的唯一诚实办法 = 真发一次能力请求；但配额是钱，所以真请求只由
+# `POST /api/services/probe`（前端仅首载与「重新检测」）发起，结论记进这本台账，
+# 普通 GET 读账不外发。台账在**进程内**：它是"上次实测的结论"，不是配置 ——
+# 重启回到"还没测过"正是诚实的缺省。
+
+
+@dataclass(frozen=True, slots=True)
+class ProbeOutcome:
+    """一次真实能力探测的结论（`POST /api/services/probe` 写，GET 视图读）。"""
+
+    ok: bool
+    reason: str  # 给人看的原因（402/401/404 已翻译成处置话术）
+
+
+def probe_identity(
+    *,
+    category: str,
+    row_id: str,
+    base_url: str | None,
+    model: str | None,
+    api_key: str | None,
+) -> str:
+    """探测台账的身份键：**配置或 key 变了 = 另一条身份**，旧结论自动作废。
+
+    key 进键只打指纹（sha256 前 12 hex，不存明文）：换了 key 还继承旧的"不可用"
+    是新的谎言；而"回到还没测过的缺省"永远比过期结论诚实。
+    """
+    fp = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:12] if api_key else "nokey"
+    return f"{category}|{row_id}|{base_url or ''}|{model or ''}|{fp}"
 
 
 # ---------------------------------------------------------------- 端点行（引用 + 本地实现）
@@ -155,6 +189,10 @@ class ServiceEndpointService:
         #: "谁的 key 可以花在这个进程里"是实例级的一件事 —— 不是每次请求现问的那种归属。
         #: 它必须构造期交出来，不能给默认值：给了默认值就等于允许"没答过这个问题"的服务对象。
         self._owner = owner
+        #: 探测台账：`probe_identity(...)` → 最近一次实测结论。进程内、不落库 ——
+        #: 写时机只有 `POST /api/services/probe`（用户显式发起），读时机是状态视图；
+        #: 并发上只有探测路由单点写、dict 赋值原子，无需加锁（写完才进下一次 GET）。
+        self._probes: dict[str, ProbeOutcome] = {}
 
     @property
     def owner(self) -> str:
@@ -164,6 +202,14 @@ class ServiceEndpointService:
         现推与注入是两个真相，而构造期那份才是引用行解析凭据组时用着的那一份。
         """
         return self._owner
+
+    def record_probe(self, identity: str, outcome: ProbeOutcome) -> None:
+        """记下一条实测结论（只由探测路由调用；同身份覆盖 = 重新检测）。"""
+        self._probes[identity] = outcome
+
+    def probe_outcome(self, identity: str) -> ProbeOutcome | None:
+        """查台账：没探过（或配置已变、身份换了）→ None，视图退回"配置齐缺"的缺省判定。"""
+        return self._probes.get(identity)
 
     # -- 播种 ------------------------------------------------------------------
 
@@ -518,6 +564,21 @@ def service_status_view(
         available_by_id: dict[int, bool] = {}
         for e in all_rows:
             available, reason = endpoint_available(e, settings)
+            # 有 key 的云端行：**实测结论压过配置推断**（台账只由 POST /probe 写 ——
+            # 这里零外发）。没探过（None）保持上面的配置缺省；换 key/端点/模型会换
+            # 身份键，旧结论自然作废回到缺省（key 指纹见 probe_identity）。
+            if e.kind == "cloud" and e.api_key:
+                outcome = svc.probe_outcome(
+                    probe_identity(
+                        category=cat.key,
+                        row_id=e.id,
+                        base_url=e.base_url,
+                        model=e.model,
+                        api_key=e.api_key,
+                    )
+                )
+                if outcome is not None:
+                    available, reason = outcome.ok, outcome.reason
             available_by_id[id(e)] = available
             item = e.to_api()
             item["available"] = available
@@ -584,9 +645,26 @@ def service_status_view(
                 else (False, f"本地模型不可达或未加载（{row_model}，确认 Ollama 在跑）")
             )
         else:
-            # 云端**刻意不在这里发请求**（探活会消耗第三方配额）；配置齐缺即状态，
-            # 真实连通性走「深度检测」按钮。
+            # 云端**刻意不在这里发请求**（探活会消耗第三方配额）；配置齐缺即状态。
             available, reason = bool(row.get("has_key")), "已配置 key"
+            # 实测结论压过配置推断（读台账，仍零外发）：欠费的 key 拿"已配置"冒充可用
+            # 正是 2026-11-08 的现场。身份里的 key 指纹要**真 key**——按组取
+            # （只在进程内用，见 group_for），与探测路由同一把，指纹才对得上。
+            if available and row.get("provider_id"):
+                group = ms.group_for(user_id=user, group_id=str(row["provider_id"]))
+                raw_key = str((group or {}).get("api_key") or "")
+                if raw_key:
+                    outcome = svc.probe_outcome(
+                        probe_identity(
+                            category="chat",
+                            row_id=str(row["name"]),
+                            base_url=str(row.get("base_url") or ""),
+                            model=row_model,
+                            api_key=raw_key,
+                        )
+                    )
+                    if outcome is not None:
+                        available, reason = outcome.ok, outcome.reason
         model_items.append(
             {
                 "id": row["name"],

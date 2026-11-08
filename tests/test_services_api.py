@@ -526,3 +526,356 @@ def test_models_order_is_the_chat_pool_and_can_grow_shrink(
     assert {r["name"] for r in model_rows(body)} == {"local", "emb"}  # 两行配置都还在
     emb = next(r for r in model_rows(body) if r["name"] == "emb")
     assert emb["used_by"] == []  # 派生用途跟着序列走，没有第二处答案
+
+
+# -- 真实能力探测（POST /api/services/probe） ----------------------------------
+#
+# 用户 2026-11-08 的现场：硅基流动余额耗尽回 402，服务页徽标却写"可用"、对话必挂。
+# 根因 = 云端可用性**只看配置齐缺**，而 `/models` 在欠费账号上照样 200 —— 判可用的
+# 唯一诚实办法是真发一次能力请求。三条纪律由这组判据钉死：
+#   1. 普通 GET 永不外发（配额是钱）；真请求只来自 POST /api/services/probe
+#      （前端仅在首载与「重新检测」时调用，普通增删改只 GET）；
+#   2. 探的是**能力**端点（embeddings / rerank / chat/completions），不是 /models；
+#   3. 结论进台账：GET 读账不发请求；身份含 key 指纹，换了 key 旧结论自动作废；
+#      没 key 的行跳过（没有可发的凭据，也没资格被记成"不可用"）。
+
+
+def _fake_outbound(monkeypatch: pytest.MonkeyPatch, calls: list[str], *, status: int = 402) -> None:
+    """出站 POST 钉成固定回包并录下每次 url —— 测试离线，断言用 url 后缀钉**能力形状**。
+
+    默认 402 = 硅基流动余额耗尽的真回包形状（2026-11-08 全程实测）。
+    """
+    import httpx
+
+    def fake_post(url: str, **_kwargs: object) -> httpx.Response:
+        calls.append(str(url))
+        return httpx.Response(
+            status,
+            json={"code": 30001, "message": "balance is insufficient"},
+            request=httpx.Request("POST", str(url)),
+        )
+
+    monkeypatch.setattr("rolecard_agent.base.outbound.post", fake_post)
+
+
+@pytest.fixture
+def probe_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unreachable_backend: str
+) -> TestClient:
+    """带**可探云端行**的服务页：本地默认（必然不可用）+ 对话云端 + 嵌入/重排云端。
+
+    本地探活夹成 False —— 判据不与宿主机上是否跑着 Ollama 赌运气（与 `client` 同理，
+    这里多一层"探测期间本地行不许真发探活"）。
+    """
+    from rolecard_agent.core.models import services as services_mod
+
+    monkeypatch.setattr(services_mod, "vision_model_ready", lambda *_a, **_k: False)
+    monkeypatch.setenv(
+        "MODEL_BACKENDS",
+        '{"local": {"model": "qwen3-vl:8b", "provider": "ollama",'
+        f' "base_url": "{unreachable_backend}"}}}}',
+    )
+    monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    c = TestClient(create_app(sqlite_path=tmp_path / "probe.db"))
+    res = c.put(
+        "/api/settings/models",
+        json={
+            "default": "local",
+            "backends": [
+                {
+                    "name": "local",
+                    "provider": "ollama",
+                    "model": "qwen3-vl:8b",
+                    "base_url": unreachable_backend,
+                },
+                {
+                    "name": "sfchat",
+                    "provider": "siliconflow",
+                    "model": "Qwen/Qwen3-8B",
+                    "usage": "chat",
+                    "api_key": "sk-chat-111111",
+                },
+                {
+                    "name": "sfembed",
+                    "provider": "siliconflow",
+                    "model": "BAAI/bge-m3",
+                    "usage": "embedding",
+                    "api_key": "sk-embed-222222",
+                },
+            ],
+        },
+    )
+    assert res.status_code == 200, res.text
+    assert (
+        c.post("/api/services/embedding/endpoints", json={"ref_backend": "sfembed"}).status_code
+        == 201
+    )
+    assert (
+        c.post("/api/services/rerank/endpoints", json={"ref_backend": "sfembed"}).status_code == 201
+    )
+    return c
+
+
+def _candidate(body: dict[str, object], cat: str, rid: str) -> dict[str, object]:
+    return next(c for c in _category(body, cat)["candidates"] if c["id"] == rid)  # type: ignore[union-attr]
+
+
+def test_probe_posts_real_capability_requests_then_get_reads_ledger_offline(
+    probe_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """探测**真发能力请求**并记账；之后的普通 GET 只读账、一个外部请求都不发。
+
+    三段各自钉一条纪律：前置 GET 零外发（配额是钱）→ POST probe 发的必须是
+    `/embeddings`、`/rerank`、`/chat/completions`（`/models` 恒 200 测不出欠费）
+    → 记账后的 GET 诚实（402 入账）且照旧零外发。
+    """
+    calls: list[str] = []
+    _fake_outbound(monkeypatch, calls)
+
+    # 0) 没探过：GET 只看配置，且绝不外发
+    before = probe_client.get("/api/services").json()
+    assert calls == [], "普通 GET（哪怕有 key 的云端行）也不许发外部请求"
+    emb = _candidate(before, "embedding", "sfembed")
+    assert emb["available"] is True and emb["reason"] == "已配置 API Key"
+    chat = _candidate(before, "models", "sfchat")
+    assert chat["available"] is True and chat["reason"] == "已配置 key"
+
+    # 1) 首载/「重新检测」= 真发（这是唯一允许外发的入口）
+    res = probe_client.post("/api/services/probe")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["probed"] == 3, "嵌入 + 重排 + 对话云端各一次（本地行/停用行不花配额）"
+    pairs = {(r["category"], r["id"]) for r in body["results"]}
+    assert pairs == {("embedding", "sfembed"), ("rerank", "sfembed"), ("models", "sfchat")}
+    assert any(u.endswith("/embeddings") for u in calls), "嵌入必须发真 POST 能力端点"
+    assert any(u.endswith("/rerank") for u in calls), "重排同理"
+    assert any(u.endswith("/chat/completions") for u in calls), "对话行必须真问一次"
+
+    # 2) 记账之后：GET 读账（诚实 402），照旧零外发
+    calls.clear()
+    after = probe_client.get("/api/services").json()
+    assert calls == [], "记账后的 GET 同样只读账，绝不重复外发"
+    emb2 = _candidate(after, "embedding", "sfembed")
+    assert emb2["available"] is False
+    assert "402" in emb2["reason"] and "额度" in emb2["reason"], emb2["reason"]
+
+
+def test_probe_marks_chat_row_honest_on_402(
+    probe_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """对话行走同一本台账：欠费的云端不再拿"已配置 key"冒充可用，生效项随之改判。"""
+    calls: list[str] = []
+    _fake_outbound(monkeypatch, calls)
+    probe_client.post("/api/services/probe")
+
+    models = _category(probe_client.get("/api/services").json(), "models")
+    sfchat = next(c for c in models["candidates"] if c["id"] == "sfchat")
+    assert sfchat["available"] is False
+    assert "402" in sfchat["reason"] and "额度" in sfchat["reason"], sfchat["reason"]
+    # local 不可达 + sfchat 欠费 ⇒ 诚实的"无生效项"（而不是继续标云端可用）
+    assert models["effective"] is None
+
+
+def test_changing_the_key_invalidates_the_old_probe_verdict(
+    probe_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """换了 key = 另一把凭据：旧的 402 结论不许被继承（key 指纹进身份键的全部理由）。"""
+    _fake_outbound(monkeypatch, [])
+    assert probe_client.post("/api/services/probe").status_code == 200
+
+    res = probe_client.put(
+        "/api/settings/models",
+        json={
+            "default": "local",
+            "backends": [
+                {"name": "local", "provider": "ollama", "model": "qwen3-vl:8b"},
+                {
+                    "name": "sfchat",
+                    "provider": "siliconflow",
+                    "model": "Qwen/Qwen3-8B",
+                    "usage": "chat",
+                    "api_key": "sk-chat-111111",
+                },
+                {
+                    "name": "sfembed",
+                    "provider": "siliconflow",
+                    "model": "BAAI/bge-m3",
+                    "usage": "embedding",
+                    "api_key": "sk-embed-REPLACED-333333",
+                },
+            ],
+        },
+    )
+    assert res.status_code == 200, res.text
+    emb = _candidate(probe_client.get("/api/services").json(), "embedding", "sfembed")
+    assert emb["available"] is True and emb["reason"] == "已配置 API Key", (
+        "换 key 后必须回到'还没测过'的缺省，不能继承旧 402"
+    )
+
+    # 第二段只动 base_url（key 换回原件）：身份键的**端点分量**同样生效 ——
+    # 换到另一台端点上，旧端点的 402 结论也不许跟着过去。
+    res = probe_client.put(
+        "/api/settings/models",
+        json={
+            "default": "local",
+            "backends": [
+                {"name": "local", "provider": "ollama", "model": "qwen3-vl:8b"},
+                {
+                    "name": "sfchat",
+                    "provider": "siliconflow",
+                    "model": "Qwen/Qwen3-8B",
+                    "usage": "chat",
+                    "api_key": "sk-chat-111111",
+                },
+                {
+                    "name": "sfembed",
+                    "provider": "siliconflow",
+                    "model": "BAAI/bge-m3",
+                    "usage": "embedding",
+                    "base_url": "https://another-endpoint.example/v1",
+                    "api_key": "sk-embed-222222",
+                },
+            ],
+        },
+    )
+    assert res.status_code == 200, res.text
+    emb = _candidate(probe_client.get("/api/services").json(), "embedding", "sfembed")
+    assert emb["available"] is True and emb["reason"] == "已配置 API Key", (
+        "换端点后同样回到'还没测过'：旧端点的结论不继承"
+    )
+
+    # 第三段只动 model（key、端点都还原成被探过的原件）：身份键的**模型分量**生效 ——
+    # 另一个模型没被问过，旧模型的 402 不许替它答。
+    res = probe_client.put(
+        "/api/settings/models",
+        json={
+            "default": "local",
+            "backends": [
+                {"name": "local", "provider": "ollama", "model": "qwen3-vl:8b"},
+                {
+                    "name": "sfchat",
+                    "provider": "siliconflow",
+                    "model": "Qwen/Qwen3-8B",
+                    "usage": "chat",
+                    "api_key": "sk-chat-111111",
+                },
+                {
+                    "name": "sfembed",
+                    "provider": "siliconflow",
+                    "model": "BAAI/bge-reranker-v2-m3",
+                    "usage": "embedding",
+                    "base_url": None,
+                    "api_key": "sk-embed-222222",
+                },
+            ],
+        },
+    )
+    assert res.status_code == 200, res.text
+    emb = _candidate(probe_client.get("/api/services").json(), "embedding", "sfembed")
+    assert emb["available"] is True and emb["reason"] == "已配置 API Key", (
+        "换模型后同样回到'还没测过'：旧模型的结论不继承"
+    )
+
+
+def test_probe_skips_rows_without_a_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """没 key 的行没有可发的凭据：不发请求、不记账，状态保持"去模型页填"。
+
+    绕开 API 种无 key 云端行（`PUT /api/settings/models` 会拒绝没有 key 的 openai
+    兼容后端 —— 配置错误要当场大声；历史遗留的无效配置只能直接进库，同
+    `test_unavailable_first_choice_degrades_and_says_so` 的手法）。
+    """
+    from rolecard_agent.storage.db import bootstrap, connect
+
+    db = tmp_path / "keyless.db"
+    conn = connect(db)
+    bootstrap(conn, enabled_domains=())
+    conn.execute(
+        "INSERT INTO model_provider (id, provider, base_url, api_key, sort_order) "
+        "VALUES ('skw', 'siliconflow', 'https://keyless.example/v1', NULL, 0)"
+    )
+    conn.execute(
+        "INSERT INTO model_backend (name, provider_id, model, sort_order) "
+        "VALUES ('sfkeyless', 'skw', 'BAAI/bge-m3', 0)"
+    )
+    conn.execute(
+        "INSERT INTO service_endpoint (category, id, kind, ref_backend, enabled, sort_order, "
+        "builtin) VALUES ('embedding', 'sfkeyless', 'cloud', 'sfkeyless', 1, 0, 0)"
+    )
+    conn.commit()
+    conn.close()
+
+    calls: list[str] = []
+    _fake_outbound(monkeypatch, calls, status=200)
+
+    c = TestClient(create_app(sqlite_path=db))
+
+    # chat 引用行**引导之后**再种：引导期"对话默认"会拿它建真实 OpenAI 客户端，
+    # 无 key 的组当场炸（openai.OpenAIError）。运行期探活/视图读的是活库，照常命中。
+    # usage 是派生值：这条引用让 sfkeyless 同时是**对话池**成员（聊天路的无 key 判据）。
+    conn = connect(db)
+    conn.execute(
+        "INSERT INTO service_endpoint "
+        "(category, id, kind, ref_backend, enabled, sort_order, builtin, user_id) "
+        "VALUES ('chat', 'sfkeyless', 'cloud', 'sfkeyless', 1, 99, 0, 'local-user')"
+    )
+    conn.commit()
+    conn.close()
+
+    body = c.get("/api/services").json()
+    assert "sfkeyless" in [row["id"] for row in _category(body, "models")["candidates"]], (
+        "前置条件：无 key 行必须在对话池里，否则聊天路的'没 key 不发'判据是空转"
+    )
+
+    res = c.post("/api/services/probe")
+    assert res.status_code == 200, res.text
+    assert res.json()["probed"] == 0, "没有可发凭据的行不算探测"
+    assert not any("keyless.example" in u for u in calls), "无 key 行不许发请求"
+
+    emb = _candidate(c.get("/api/services").json(), "embedding", "sfkeyless")
+    assert emb["available"] is False
+    assert "还没有 API Key" in emb["reason"], "没探过 ≠ 不可用：回到配置缺省判定"
+
+
+def test_probe_translates_every_failure_into_an_action(
+    probe_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """坏消息必须翻译成"下一步做什么"——不肯说人话的探测等于没探。
+
+    四种坏法各钉一条分支：401（换 key）、404（查 base_url）、连不上（不可达，
+    不是钱的问题）、200 但返回形状烂（如实说不可用，不许拿 200 冒充能用）。
+    """
+    import httpx
+
+    for status, must_say in ((401, "Key 无效"), (404, "base_url")):
+
+        def fake(url: str, _status: int = status, **_kwargs: object) -> httpx.Response:
+            return httpx.Response(_status, json={}, request=httpx.Request("POST", str(url)))
+
+        monkeypatch.setattr("rolecard_agent.base.outbound.post", fake)
+        probe_client.post("/api/services/probe")
+        emb = _candidate(probe_client.get("/api/services").json(), "embedding", "sfembed")
+        assert emb["available"] is False, f"HTTP {status} 不该算可用"
+        assert must_say in emb["reason"], (
+            f"HTTP {status} 的处置话术缺了 {must_say!r}: {emb['reason']}"
+        )
+
+    # 连都没连上 → 不可达（与"额度不足"是两种病、两条处置）
+    def raise_post(url: str, **_kwargs: object) -> httpx.Response:
+        raise OSError("网线被我拔了")
+
+    monkeypatch.setattr("rolecard_agent.base.outbound.post", raise_post)
+    probe_client.post("/api/services/probe")
+    emb = _candidate(probe_client.get("/api/services").json(), "embedding", "sfembed")
+    assert emb["available"] is False
+    assert "实测不可达" in emb["reason"] and "网线被我拔了" in emb["reason"], emb["reason"]
+
+    # HTTP 200 但返回里没有 choices（对话行）→ 如实"不可用"，200 冒充不了能用
+    def shape_post(url: str, **_kwargs: object) -> httpx.Response:
+        return httpx.Response(200, json={"nonsense": 1}, request=httpx.Request("POST", str(url)))
+
+    monkeypatch.setattr("rolecard_agent.base.outbound.post", shape_post)
+    probe_client.post("/api/services/probe")
+    sfchat = _candidate(probe_client.get("/api/services").json(), "models", "sfchat")
+    assert sfchat["available"] is False
+    assert "实测不可用" in sfchat["reason"] and "choices" in sfchat["reason"], sfchat["reason"]

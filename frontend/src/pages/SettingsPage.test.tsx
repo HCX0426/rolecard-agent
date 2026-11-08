@@ -28,6 +28,8 @@ import SettingsPage from "./SettingsPage";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 服务页首载会真发探测 POST —— 真客户端 post 永远回 Promise，mock 不同形就当场炸。
+  apiMock.post.mockResolvedValue({ probed: 0, results: [] });
   apiMock.get.mockImplementation(async (url: string) => {
     if (url === "/api/settings/models") return { default: "", providers: [], fallbacks: [] };
     if (url === "/api/plugins") return [];

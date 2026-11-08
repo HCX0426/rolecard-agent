@@ -5149,6 +5149,57 @@
     "title": "ServiceCheckView",
     "type": "object"
    },
+   "ServiceProbeItemView": {
+    "description": "`POST /api/services/probe` 的单行结论。`category` 是服务页的视图类别名\n（对话行 = `models`，与分组一致；台账身份键另用 `chat`，那是内部命名）。",
+    "properties": {
+     "available": {
+      "title": "Available",
+      "type": "boolean"
+     },
+     "category": {
+      "title": "Category",
+      "type": "string"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "reason": {
+      "title": "Reason",
+      "type": "string"
+     }
+    },
+    "required": [
+     "category",
+     "id",
+     "available",
+     "reason"
+    ],
+    "title": "ServiceProbeItemView",
+    "type": "object"
+   },
+   "ServiceProbeView": {
+    "description": "`POST /api/services/probe`：本轮**真发**了几行 + 各行结论。\n\n结论同时进了进程内探测台账 —— 之后的普通 `GET /api/services` 读账回显、\n零外发（配额纪律：真请求只来自这个路由的显式调用）。",
+    "properties": {
+     "probed": {
+      "title": "Probed",
+      "type": "integer"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/ServiceProbeItemView"
+      },
+      "title": "Results",
+      "type": "array"
+     }
+    },
+    "required": [
+     "probed",
+     "results"
+    ],
+    "title": "ServiceProbeView",
+    "type": "object"
+   },
    "ServicesView": {
     "$ref": "#/components/schemas/ServicesViewRoot",
     "description": "/api/services 的顶层形状（数组包一层只为给它一个名字）。",
@@ -8544,6 +8595,25 @@
      }
     },
     "summary": "Deep Check"
+   }
+  },
+  "/api/services/probe": {
+   "post": {
+    "description": "**真发**一次能力探测并记入探测台账 —— 前端只在首载与「重新检测」调用本路由。\n\n教训（2026-11-08 实测）：云端的\"可用\"此前只看配置齐缺，而欠费的硅基流动回\nHTTP 402、`/models` 照回 200 —— 于是服务页写\"可用\"、对话必挂。判可用的唯一\n诚实办法是真发一次能力请求（嵌入 `/embeddings`、重排 `/rerank`、对话\n`/chat/completions`），所以要有这个**显式**入口。\n\n配额纪律：普通 `GET /api/services` 只读台账、**绝不**触发外发 —— deep_check 上\n那条\"不在页面刷新时向第三方发请求\"的规矩原样保留，真请求只来自用户点的这两处。\n跳过规则（本地行 / 无 key 行 / 停用行 / OCR 云端行）与理由见\n`core.probes.service_probe` 的模块契约。",
+    "operationId": "probe_services_api_services_probe_post",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ServiceProbeView"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Probe Services"
    }
   },
   "/api/services/{key}": {

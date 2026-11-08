@@ -227,6 +227,21 @@ def _message_of(first: dict[str, object]) -> dict[str, object]:
     return message if isinstance(message, dict) else {}
 
 
+def probe_chat(target: ProbeTarget) -> tuple[bool, str]:
+    """**真发一次最小对话补全**（`max_tokens=64`、只读、扣极少配额）→ (能不能花, 错误串)。
+
+    与 `probe()` 的分工（2026-11-08 实测定的规矩）：`probe()` 走 `/models` 列表与
+    工具/视觉能力，列表**免费但测不出欠费** —— 硅基流动余额耗尽时 `/models` 照回 200，
+    服务页却写"可用"、对话必挂。判"这把 key 还能不能花"只有真请求能回答；本函数就是
+    那个真请求，只由 `POST /api/services/probe`（用户显式：首载/「重新检测」）发起，
+    普通 GET 永不触发。错误串沿用 `_chat_completion` 的形状（`HTTP 402：…` /
+    `异常类型: 说明`），翻译成人话在调用方（service_probe）。"""
+    _first, error = _chat_completion(
+        target, [{"role": "user", "content": "服务页连通性探测，回复“通”即可"}]
+    )
+    return (True, "") if not error else (False, error)
+
+
 def probe_tool_capability(target: ProbeTarget) -> tuple[bool | None, str]:
     """工具能力：带一个 no-op 工具发一次请求，看它怎么应对。**1 次调用，扣配额。**
 

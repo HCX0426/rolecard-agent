@@ -140,6 +140,27 @@ class ServiceCheckView(BaseModel):
     openai_compatible: ConnectivityProbeView | None = None
 
 
+class ServiceProbeItemView(BaseModel):
+    """`POST /api/services/probe` 的单行结论。`category` 是服务页的视图类别名
+    （对话行 = `models`，与分组一致；台账身份键另用 `chat`，那是内部命名）。"""
+
+    category: str
+    id: str
+    available: bool
+    reason: str
+
+
+class ServiceProbeView(BaseModel):
+    """`POST /api/services/probe`：本轮**真发**了几行 + 各行结论。
+
+    结论同时进了进程内探测台账 —— 之后的普通 `GET /api/services` 读账回显、
+    零外发（配额纪律：真请求只来自这个路由的显式调用）。
+    """
+
+    probed: int
+    results: list[ServiceProbeItemView]
+
+
 class McpTestResultView(BaseModel):
     """`POST /api/mcp/servers/{id}/test`：id/ok/tool_count/tools 恒有，error 是可选键
     （只在异常路出现，非 null 值）⇒ 前三必填、error 带默认。"""

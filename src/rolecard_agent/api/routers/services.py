@@ -15,7 +15,11 @@ from pydantic import BaseModel, Field
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.api.errors import value_error_to_http
-from rolecard_agent.contracts.handwritten_models import ServiceCheckView
+from rolecard_agent.contracts.handwritten_models import (
+    ServiceCheckView,
+    ServiceProbeItemView,
+    ServiceProbeView,
+)
 from rolecard_agent.contracts.response_models import ServicesView
 from rolecard_agent.core.model_settings import client_style
 from rolecard_agent.core.probes.model_probe import ProbeTarget, list_models
@@ -249,6 +253,29 @@ def deep_check(ctx: AppContext = Depends(get_context)) -> object:
     # 前端可按 provider 取对应字段，避免错取。
     probe_key = "ollama" if is_ollama else "openai_compatible"
     return {probe_key: probe}
+
+
+@router.post("/api/services/probe", response_model=ServiceProbeView)
+def probe_services(ctx: AppContext = Depends(get_context)) -> object:
+    """**真发**一次能力探测并记入探测台账 —— 前端只在首载与「重新检测」调用本路由。
+
+    教训（2026-11-08 实测）：云端的"可用"此前只看配置齐缺，而欠费的硅基流动回
+    HTTP 402、`/models` 照回 200 —— 于是服务页写"可用"、对话必挂。判可用的唯一
+    诚实办法是真发一次能力请求（嵌入 `/embeddings`、重排 `/rerank`、对话
+    `/chat/completions`），所以要有这个**显式**入口。
+
+    配额纪律：普通 `GET /api/services` 只读台账、**绝不**触发外发 —— deep_check 上
+    那条"不在页面刷新时向第三方发请求"的规矩原样保留，真请求只来自用户点的这两处。
+    跳过规则（本地行 / 无 key 行 / 停用行 / OCR 云端行）与理由见
+    `core.probes.service_probe` 的模块契约。
+    """
+    from rolecard_agent.core.probes.service_probe import probe_all
+
+    results = probe_all(ctx.services, ctx.model_settings, user_id=ctx.current_user())
+    return ServiceProbeView(
+        probed=len(results),
+        results=[ServiceProbeItemView.model_validate(r) for r in results],
+    )
 
 
 __all__ = ["router"]
