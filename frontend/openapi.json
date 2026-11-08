@@ -6691,7 +6691,7 @@
  },
  "info": {
   "title": "rolecard-agent 管理控制台",
-  "version": "0.6.4"
+  "version": "0.7.0"
  },
  "openapi": "3.1.0",
  "paths": {
