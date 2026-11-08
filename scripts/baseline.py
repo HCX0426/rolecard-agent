@@ -111,12 +111,29 @@ def section_routes() -> dict[str, Any]:
     }
 
 
-def _columns(path: Path) -> dict[str, set[str]]:
+def _columns(path: Path) -> dict[str, dict[str, tuple[int, str | None]]]:
+    """表 → {列名: (notnull, dflt_value)}。
+
+    从前这里只数列名，于是"实库多出来的列"只有一种答案：全都拦。可"多出来"分两种，
+    危害差着数量级（判据与 `test_audited_shortfall` 那把尺子对"缺列"的区分是同一条）：
+
+      * **NOT NULL 且无默认** —— 新代码的 INSERT 不写这一列，SQLite 当场拒绝，
+        症状是"升级后某条写路径永远 500"。这种必须拦。
+      * **可空 / 带默认**（比如退役通道的旧列）—— 新代码不投影它，它就是一格惰性死数据，
+        读写都不碰、不报错。仓库对这一类的既定处置写在 `roles/schema.sql` 的注释里
+        （"reconcile_columns 只补不删，故无需迁移"）：留着，不迁移。
+
+    所以这一份把 notnull 与默认值一起带出来，让 `section_schema` 能分开处置。
+    """
     conn = _ro_conn(path)
     try:
-        out: dict[str, set[str]] = {}
+        out: dict[str, dict[str, tuple[int, str | None]]] = {}
         for (t,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'"):
-            out[t] = {r[1] for r in conn.execute(f"PRAGMA table_info('{t}')")}
+            # 位置索引：`_ro_conn` 是裸连接（没有 row_factory），PRAGMA table_info 的列序
+            # 是 (cid, name, type, notnull, dflt_value, pk)。
+            out[t] = {
+                str(r[1]): (int(r[3]), r[4]) for r in conn.execute(f"PRAGMA table_info('{t}')")
+            }
         return out
     finally:
         conn.close()
@@ -211,17 +228,31 @@ def section_schema(declared: dict[str, set[str]]) -> dict[str, Any]:
             continue
         actual = _columns(path)
         drift: dict[str, Any] = {}
+        dormant: dict[str, list[str]] = {}
         for table, want in declared.items():
-            have = actual.get(table)
-            if have is None:
+            shape = actual.get(table)
+            if shape is None:
                 drift[table] = {"missing_table": True}
-            elif have != want:
-                drift[table] = {"extra": sorted(have - want), "absent": sorted(want - have)}
+                continue
+            have = set(shape)
+            # 多出来的列按危害分面（见 `_columns` 的 docstring）：会炸的进 drift 拦下，
+            # 惰性死列进 dormant_extra 只上屏 —— 它不是"没人看的漂移"，是看得见的历史。
+            hard = sorted(
+                c
+                for c in have - want
+                if shape[c][0] == 1 and shape[c][1] is None  # NOT NULL 且无默认
+            )
+            soft = sorted(set(have - want) - set(hard))
+            if soft:
+                dormant[table] = soft
+            if have != want and (hard or want - have):
+                drift[table] = {"extra": hard, "absent": sorted(want - have)}
         per_root[tag] = {
             "exists": True,
             "size_bytes": path.stat().st_size,
             "tables": len(actual),
             "column_drift_vs_declared": drift or "无",
+            "dormant_extra_columns": dormant or "无",
         }
     return per_root
 
@@ -459,7 +490,13 @@ def build() -> dict[str, Any]:
 
 
 def _drift_lines(data: dict[str, Any]) -> list[str]:
-    """各根上"实库列集合 ≠ schema 声明"的那些条。空表 = 没有列漂移。"""
+    """各根上"实库列集合 ≠ schema 声明"的那些条。空表 = 没有会炸的列漂移。
+
+    只数 `column_drift_vs_declared` 那一格：里面是缺列 + 多出来的 NOT NULL 无默认列
+    （新代码的 INSERT 会被 SQLite 当场拒绝的那一类）。惰性死列不在这里拦，但**照旧上屏**
+    （见 `dormant_extra_columns` 那格与打印）—— 放行与看不见是两件事，这条尺子的来历
+    （R26-21："算了没人看等于没有"）针对的是后者。
+    """
     out: list[str] = []
     for root, entry in (data.get("schema_per_root") or {}).items():
         if not isinstance(entry, dict):
@@ -475,11 +512,17 @@ def main() -> None:
     # 从前 baseline.py 是唯一会算列漂移的脚本，却既不在门禁也不在 CI（09-26 轮 R26-21）——
     # 算了没人看，等于没有。`--check` 就是把它接进门禁的那半个接口。
     if "--check" in sys.argv:
-        drift = _drift_lines(build())
+        data = build()
+        drift = _drift_lines(data)
         if drift:
             print("列漂移（实库 ≠ 声明）：\n  " + "\n  ".join(drift))
             raise SystemExit(1)
-        print("无列漂移")
+        print("无会炸的列漂移")
+        # 惰性死列照旧上屏：放行不等于看不见（R26-21 那条教训的另一半）。
+        for root, entry in (data.get("schema_per_root") or {}).items():
+            soft = isinstance(entry, dict) and entry.get("dormant_extra_columns")
+            if soft and soft != "无":
+                print(f"  （惰性死列，不拦：{root} {soft}）")
         return
     data = build()
     OUT.parent.mkdir(parents=True, exist_ok=True)
