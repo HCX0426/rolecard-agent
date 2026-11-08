@@ -524,12 +524,62 @@ class TurnStopped(Exception):
 
 
 class EmptyModelStream(Exception):
-    """模型这一轮**一个块都没吐**（不是"被停在中途"，是空响应）。
+    """模型这一轮**没有产出任何东西**（不是"被停在中途"，是空响应）。
 
     为什么不把它当成一条 `AIMessage(content="")` 提交（`R28-06`）：那条空气泡会落进检查点，
     界面上是一个点开什么都没有的气泡，下一轮的 prompt 里还带着这条空白，而日志里这次调用
     看起来是**成功**的。空流是失败，就让它走失败那条路（`turn.model_error_detail` 给一句人话）。
+
+    两种形状都要拦住，它们不一样（2026-11-08 装机实测补的后一半）：
+      * **一个块都没来** —— 流是空的；
+      * **块来了、攒完是个空的东西** —— 模型烧满 token 预算（`finish_reason='length'`）、
+        正文空、无工具调用、无思考。旧代码只挡第一种，因为它的判据是 `acc is None`，
+        而现场那一条 `acc` 不是 None，是 `AIMessage(content="")`。
     """
+
+
+def _has_output(message: Any) -> bool:
+    """这一轮到底**产出了东西**没有 —— 空响应那两条判据的共同出处（`R28-06`）。
+
+    算产出的三种，各有各的下游：能给用户看的正文（多模态里的非文本块**本身就是**产出，
+    不看它带不带 `text`）、能驱动下一步的 `tool_calls`（`route_after_model` 只认它）、
+    能在思考面板里回放的 `reasoning_content`（`message_view` 随消息一起回吐，正文空的
+    思考轮点得开）。
+
+    不算产出的：空白正文（全空格/换行 = 界面什么都不显示）、`invalid_tool_calls`
+    （参数被截断的半成品 —— 路由看不见它，`convert_to_openai_messages` 又把它整个丢掉，
+    下一轮模型连"上次想调什么"都看不到；落库就是一个点开什么都没有的气泡）。
+
+    形状不用防：`content` 由 pydantic 校验成 `str | list[str | dict]`（实测传 int/dict 直接
+    ValidationError），所以这里只认这几支。判据看的是**原始形状**，不是 `text_of()` 压平后的
+    串 —— 走那条会把"只有图、零字"的一轮误杀成空响应。
+    """
+    content = getattr(message, "content", None)
+    for part in content if isinstance(content, list) else [content]:
+        if isinstance(part, dict):
+            if part.get("type") != "text" or str(part.get("text") or "").strip():
+                return True
+        elif isinstance(part, str) and part.strip():
+            return True
+    if getattr(message, "tool_calls", None):
+        return True
+    return bool((getattr(message, "additional_kwargs", None) or {}).get("reasoning_content"))
+
+
+def _empty_stream_detail(message: Any, blocks: int) -> str:
+    """给日志的形状描述（界面那句人话由 `turn.EMPTY_STREAM_DETAIL` 负责）。
+
+    两种空在日志里必须分得开：一个是"流是空的"，一个是"跑了、烧了 token、没吐东西"。
+    后者带 `finish_reason` —— 现场那条就是 `length`，它同时说明**别去换问法**（换什么问法
+    都会烧满预算），要动的是生成长度或模型本身。
+    """
+    reason = (getattr(message, "response_metadata", None) or {}).get("finish_reason") or "未知"
+    invalid = len(getattr(message, "invalid_tool_calls", None) or [])
+    tail = f"，另有 {invalid} 个残缺的工具调用" if invalid else ""
+    return (
+        f"模型返回了空响应（来了 {blocks} 个块，正文空、无工具调用、无思考{tail}，"
+        f"finish_reason={reason}）"
+    )
 
 
 def _plain_message(chunk: AIMessageChunk) -> AIMessage:
@@ -574,6 +624,7 @@ def _collect_model_stream(
         raise TurnStopped
     acc: Any = None
     stopped = False
+    blocks = 0
     stream = bound.stream(prompt, **invoke_kwargs)
     try:
         for chunk in stream:
@@ -581,6 +632,7 @@ def _collect_model_stream(
                 stopped = True
                 break
             acc = chunk if acc is None else acc + chunk
+            blocks += 1
     finally:
         # 显式关：让底层 HTTP 流立刻断掉，而不是等 GC。这一步才是"省下来"的那一下。
         close = getattr(stream, "close", None)
@@ -604,6 +656,16 @@ def _collect_model_stream(
             if k != "tool_calls"
         }
         message = AIMessage(content=message.content, additional_kwargs=kept)
+    # 一条纪律，两种空：**没有内容可提交的那一轮，什么都不提交**（`R28-06`）。
+    # `acc is None` 只挡得住"一个块都没来"；2026-11-08 装机实测漏的是下面这种 ——
+    # 块来了、烧满 32768 token（`finish_reason='length'`）、攒完正文仍空、无工具调用、无思考。
+    # 它绕过旧判据落进检查点，界面上又是一个点开什么都没有的气泡，而日志里这次调用是"成功"的。
+    # 成因不同，所以异常也不同：用户叫停 → `TurnStopped`（不发 Error，那不是失败）；
+    # 模型自己没产出 → `EmptyModelStream`。停在半截、而那半截恰好还是空的，同一条判据走前者。
+    if not _has_output(message):
+        if stopped:
+            raise TurnStopped
+        raise EmptyModelStream(_empty_stream_detail(message, blocks))
     return message, stopped
 
 

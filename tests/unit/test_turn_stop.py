@@ -391,3 +391,157 @@ def test_the_empty_stream_says_its_own_sentence_not_the_generic_one() -> None:
         EMPTY_STREAM_DETAIL
     )
     assert model_error_detail(EmptyModelStream("…")) != _GENERIC_MODEL_FAILURE
+
+
+def test_chunks_that_produce_nothing_raise_instead_of_a_blank_message(
+    roles: RoleCardService,
+) -> None:
+    """来了分块、却没产出任何可提交内容 ⇒ 同样抛 `EmptyModelStream`，不落空气泡（R28-06 另一半）。
+
+    2026-11-08 装机实测：`acc is None` 那道保护只挡得住"一个块都没来"，挡不住命中现场那条
+    —— 模型来了块、烧满 32768 token（`finish_reason='length'`），最终 `content=''` 且无
+    tool_calls、无 reasoning。它绕过旧保护落进历史，界面就是一个点开什么都没有的气泡，
+    下一轮 prompt 还带着它，日志里这次调用看着是成功的。这里用"空正文的分块"复现那个形状。
+    """
+    fake = _StreamedFake([AIMessageChunk(content=""), AIMessageChunk(content="")], thread_id="t")
+    with pytest.raises(EmptyModelStream):
+        call_model(_state(_role(roles)), _ctx(roles, fake))
+    assert fake.closed is True, "抛出去之前也要把底层那条流关掉"
+
+
+def test_an_empty_body_with_tool_calls_is_a_tool_turn_not_a_blank(
+    roles: RoleCardService,
+) -> None:
+    """正文空但带 tool_calls 的是**工具轮**，绝不能被上面那条判据误杀（图要能走回工具边）。
+
+    `route_after_model` 只看 tool_calls，所以"有工具调用"就是有产出。把新判据写成
+    "只看正文"就会在这里红：正常发起工具调用的那一轮被当成空响应抛掉，工具循环当场断。
+    """
+    fake = _StreamedFake(
+        [
+            AIMessageChunk(
+                content="",
+                tool_calls=[{"name": "list_roles", "args": {}, "id": "c1", "type": "tool_call"}],
+            )
+        ],
+        thread_id="t",
+    )
+    out = call_model(_state(_role(roles)), _ctx(roles, fake))
+    # 正常返回（没抛）：这一轮提交的是那条带 tool_calls 的消息
+    msgs = out["messages"]
+    assert msgs and msgs[-1].tool_calls, "工具轮不该被空响应判据拦掉"
+
+
+def test_whitespace_only_body_is_a_blank_not_a_sentence(roles: RoleCardService) -> None:
+    """正文只有空白（空格/换行）= 界面上仍然是"点开什么都没有"，同一条判据。
+
+    供应商在截断处很常回一串空白 —— 只判 `== ""` 会放过这一族，而它落进历史的症状
+    与命中现场那条一模一样。
+    """
+    fake = _StreamedFake(
+        [AIMessageChunk(content="\n"), AIMessageChunk(content="   ")], thread_id="t"
+    )
+    with pytest.raises(EmptyModelStream):
+        call_model(_state(_role(roles)), _ctx(roles, fake))
+
+
+def test_a_reasoning_only_turn_is_not_a_blank(roles: RoleCardService) -> None:
+    """只有思考、没有正文的轮次是**有产出**的：思考进折叠面板、随消息回放。
+
+    `message_view` 把 `additional_kwargs["reasoning_content"]` 一并回吐，界面点得开这一轮。
+    把判据写成"只看正文"就会把它抛掉：本地 qwen3 那一族"整段预算花在思考上、
+    `done_reason=length`、正文空"（见 `test_reachout.py::test_generate_ignores_empty_reply`）
+    会被误报成"模型没返回内容"。
+    """
+    fake = _StreamedFake(
+        [
+            AIMessageChunk(
+                content="",
+                additional_kwargs={"reasoning_content": "她在想该不该接这句"},
+            )
+        ],
+        thread_id="t",
+    )
+    out = call_model(_state(_role(roles)), _ctx(roles, fake))
+    assert out["messages"][0].additional_kwargs["reasoning_content"], "思考轮不该被当成空响应"
+
+
+def test_truncated_tool_calls_are_a_blank_not_a_tool_turn(roles: RoleCardService) -> None:
+    """参数被截断的 `invalid_tool_calls` **不算产出**：路由看不见它，落库又是空气泡。
+
+    `route_after_model` 只读 `tool_calls`，`invalid_tool_calls` 让图直接结束；而
+    `convert_to_openai_messages` 把它整个丢掉，下一轮模型连"上次想调什么"都看不到。
+    这一族正是"预算烧在别处、最后只挤出半截 JSON"的形状。
+    """
+    fake = _StreamedFake(
+        [
+            AIMessageChunk(
+                content="",
+                invalid_tool_calls=[
+                    {
+                        "name": "list_roles",
+                        "args": '{"a":',
+                        "id": "c1",
+                        "error": "截断",
+                        "type": "invalid_tool_call",
+                    }
+                ],
+            )
+        ],
+        thread_id="t",
+    )
+    with pytest.raises(EmptyModelStream):
+        call_model(_state(_role(roles)), _ctx(roles, fake))
+
+
+def test_an_image_block_counts_as_output(roles: RoleCardService) -> None:
+    """多模态正文：有图 = 有产出，哪怕一个字的正文都没有（`text_of` 会把它压成空格）。
+
+    判据若走 `text_of`，一轮纯图片的回答会被误杀 —— 这里钉住"看原始 content 的形状、
+    不看压平后的文本"。
+    """
+    fake = _StreamedFake(
+        [
+            AIMessageChunk(
+                content=[{"type": "image_url", "image_url": {"url": "data:image/png;base64,AA"}}]
+            )
+        ],
+        thread_id="t",
+    )
+    out = call_model(_state(_role(roles)), _ctx(roles, fake))
+    assert out["messages"], "带图的一轮不该被空响应判据拦掉"
+
+
+def test_the_blank_reason_says_blocks_arrived_and_why(
+    roles: RoleCardService,
+) -> None:
+    """日志那句必须分得开两种空：一个块都没来 / 来了块却没产出（后者带 `finish_reason`）。
+
+    `finish_reason=length` 在现场就是"别再换问法"的信号：预算烧满了，换什么问法都一样。
+    """
+    fake = _StreamedFake(
+        [
+            AIMessageChunk(
+                content="", response_metadata={"finish_reason": "length", "model_name": "qwen3"}
+            )
+        ],
+        thread_id="t",
+    )
+    with pytest.raises(EmptyModelStream) as got:
+        call_model(_state(_role(roles)), _ctx(roles, fake))
+    detail = str(got.value)
+    assert "1 个块" in detail and "length" in detail, detail
+
+
+def test_a_stop_on_an_empty_partial_raises_turn_stopped_not_empty_stream(
+    roles: RoleCardService,
+) -> None:
+    """停在半截、而那半截正好还是空的 ⇒ `TurnStopped`，不是空响应。
+
+    同一条"没有内容可提交"的纪律，成因决定异常：用户按停止 = 不是失败、不发 Error
+    （`run_turn` 对 `TurnStopped` 的那一支），而报"模型没返回内容"是在冤它。
+    """
+    fake = _StreamedFake([AIMessageChunk(content=""), AIMessageChunk(content="")], stop_after=1)
+    with pytest.raises(TurnStopped):
+        call_model(_state(_role(roles)), _ctx(roles, fake))
+    assert fake.closed is True, "任何一条抛出去的路都要把流关掉"
