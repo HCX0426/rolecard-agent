@@ -71,10 +71,9 @@ def make_kernel_tools(
 
     @tool("list_domains")
     def list_domains() -> str:
-        """List the domain plugins currently enabled in this deployment.
+        """列出本部署当前启用的领域插件。
 
-        Use it when the user asks what you can do, or when a lookup returns nothing and you
-        need to say which capabilities are actually switched on.
+        用户问"你能做什么"，或某次查找一无所获、需要你说明到底开着哪些能力时用它的返回。
         """
         if not (enabled := _current(provider)):
             return "当前没有启用任何领域插件。"
@@ -82,7 +81,7 @@ def make_kernel_tools(
 
     @tool("list_roles")
     def list_roles() -> str:
-        """List the roles available in this deployment, one line each."""
+        """列出本部署可用的角色卡，每行一个（名称、id、简介）。"""
         cards = roles.scoped(current_user()).list_roles()
         if not cards:
             return "当前没有可用的角色。"

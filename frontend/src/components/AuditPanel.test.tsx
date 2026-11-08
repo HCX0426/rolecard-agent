@@ -30,6 +30,14 @@ beforeEach(() => {
   apiMock.get.mockResolvedValue(ROWS);
 });
 
+describe("AuditPanel 拉取量（用户 2026-11-08：界面最多显示 100 条就够了）", () => {
+  it("台账按 limit=100 拉，不再多取那 100 条没人看的", async () => {
+    render(<AuditPanel />);
+    await screen.findByText(/记忆 1/);
+    expect(apiMock.get).toHaveBeenCalledWith("/api/audit?limit=100");
+  });
+});
+
 describe("AuditPanel 分组筛选（2026-10-30 重设计）", () => {
   it("pill 带条数且与筛选同源：点『记忆』只剩记忆行，再点取消回全部", async () => {
     render(<AuditPanel />);

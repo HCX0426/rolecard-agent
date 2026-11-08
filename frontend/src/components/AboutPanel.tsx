@@ -13,11 +13,9 @@ import { useAppearance } from "../lib/appearance";
 // ---------------------------------------------------------------- 关于与系统状态
 
 export function AboutPanel({
-  onOpenChat,
   theme,
   onToggleTheme,
 }: {
-  onOpenChat?: () => void;
   theme?: string;
   onToggleTheme?: () => void;
 }) {
@@ -236,7 +234,21 @@ export function AboutPanel({
       </Card>
 
       <Card className="p-5">
-        <h3 className="text-sm font-medium text-slate-900">系统状态</h3>
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-medium text-slate-900">系统状态</h3>
+          {/* 「刷新状态」原来长在演示数据卡上（用户 2026-11-09：那卡"点了没啥反应"）——
+              它刷的其实就是这四个计数，收进本卡标题行，动机和效果对得上。 */}
+          <button
+            onClick={async () => {
+              await loadInfo();
+              setRefreshed(true);
+              setTimeout(() => setRefreshed(false), 2000);
+            }}
+            className="rounded-lg border border-slate-200 bg-surface px-3 py-1.5 text-xs text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
+          >
+            {refreshed ? "已刷新 ✓" : "刷新状态"}
+          </button>
+        </div>
         {loadError && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{loadError}</p>}
         <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
           <div className="flex justify-between border-b border-slate-50 py-1">
@@ -262,30 +274,10 @@ export function AboutPanel({
         </p>
       </Card>
 
-      <Card className="p-5">
-        <h3 className="text-sm font-medium text-slate-900">演示数据</h3>
-        <p className="mt-1.5 text-xs text-slate-500">
-          评测 / 演示用的虚构档案可由脚本重建；对话与数据的管理操作在对话页与插件页。
-        </p>
-        <div className="mt-2 flex gap-2">
-          <button
-            onClick={() => onOpenChat?.()}
-            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
-          >
-            前往对话
-          </button>
-          <button
-            onClick={async () => {
-              await loadInfo();
-              setRefreshed(true);
-              setTimeout(() => setRefreshed(false), 2000);
-            }}
-            className="rounded-lg border border-slate-200 bg-surface px-3 py-1.5 text-xs text-slate-600 hover:border-blue-300 dark:hover:border-blue-700"
-          >
-            {refreshed ? "已刷新 ✓" : "刷新状态"}
-          </button>
-        </div>
-      </Card>
+      {/* 演示数据卡整体退场（用户 2026-11-09：「第三个页签里的演示数据，有啥用，感觉没啥用」）。
+          它剩下的两个按钮里，「刷新状态」收进了系统状态卡（它刷的就是那四个计数）；
+          「前往对话」只是换个页签跳转，顶栏本来就有。seed_demo_data.py 脚本仍在仓库，
+          要用的人照旧从命令行跑 —— 界面不给一个名不副实的入口。 */}
 
       {/* 检查更新（设计稿《更新机制与OCR随包》）：只读比对，判据在后端，这里照实画。 */}
       <UpdateCheckCard />

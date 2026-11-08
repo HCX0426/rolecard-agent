@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from rolecard_agent.config import Settings
+from rolecard_agent.core import runtime_settings
 from rolecard_agent.core.model_settings.migration import _dedupe, _group_id, endpoint_key
 from rolecard_agent.core.model_settings.read import _ReadMixin
 from rolecard_agent.core.model_settings.rows import _OWNED_MODEL_ROWS, _opt_float
@@ -136,31 +137,35 @@ class _WriteMixin(_ReadMixin):
 
     # -- writes ----------------------------------------------------------------
 
-    def _drop_dangling_service_refs(self) -> None:
-        """清掉「指向已不存在后端」的设备级服务引用行（OCR / 嵌入 / 重排）。
+    def _sweep_dangling_model_refs(self) -> None:
+        """模型页删行后的两处联动清扫（同一事务、由调用方收口）。
 
-        用户 2026-11-08："模型界面删除对应模型后，服务界面的同步删除" —— 旧行为把引用行
-        留成「（引用已失效）」占着名单：模型都没了，幽灵行只会让人误以为还能抢救。摘引用
-        与删配置从此是同一个动作：模型页删行（`remove_model`）与整表保存（`save`）都过这里。
+        用户 2026-11-08（服务页）+ 2026-11-09（运行环境）："删除对应模型后同步删除" ——
+        两条删除路径（`remove_model` 单删 / `save` 整表缩表）都过这里，不许一种行为。
 
-        范围刻意只到设备能力行（`user_id IS NULL`）：chat 引用按人归属，由
-        `_write_chat_refs` 整体重写、默认重编，不归这里管，`user_id IS NULL` 也保证绝不动
-        任何人的对话序列。`NOT EXISTS` 是自愈口径 —— 顺手收掉历史库 / 手工 SQL 留下的真
-        孤儿；后端名仍在（`model_backend.name` 是全局主键）的引用一律不动。
+        1. **服务页引用行**：设备能力行（`user_id IS NULL`）里 ref 指向已消失后端的，删掉。
+           `NOT EXISTS` 是自愈口径 —— 顺手收掉历史库 / 手工 SQL 留下的真孤儿；后端名仍在
+           （`model_backend.name` 是全局主键）的引用一律不动。chat 引用按人归属、由
+           `_write_chat_refs` 重写让位，不归这里管。
+        2. **运行环境覆盖值**：悬空的覆盖比幽灵行更坏 —— 它是静默的（`resolve_role_model`
+           拿不到那个后端时不报错，悄悄回落默认模型）。实现在 `runtime_settings`（那些键的
+           家），判据由注册表的 `choices_from` 派生，不在这里抄字段清单。
         """
         self._conn.execute(
             "DELETE FROM service_endpoint WHERE user_id IS NULL AND ref_backend IS NOT NULL "
             "AND NOT EXISTS ("
             "SELECT 1 FROM model_backend b WHERE b.name = service_endpoint.ref_backend)"
         )
+        runtime_settings.prune_dangling_model_overrides(self._conn)
 
     def remove_model(self, name: str, *, user_id: str) -> None:
         """删一行模型（名称不存在 → KeyError/404）。
 
-        组里没别的模型了才连凭据一起删（key 不留成"看不见的凭据"）。服务页引用行**随模型
-        同步删除**（用户 2026-11-08：模型页删了，服务页不许再挂「引用已失效」幽灵）——
-        chat 引用由 `_write_chat_refs(pool)` 重写让位（默认不能悬空），设备能力行由
-        `_drop_dangling_service_refs` 同事务清掉；「失效」呈现只剩防御口径（手工插的孤儿行）。
+        组里没别的模型了才连凭据一起删（key 不留成"看不见的凭据"）。服务页引用行与运行环境
+        覆盖值**随模型同步删除**（用户 2026-11-08 / 11-09：模型页删了，服务页不许再挂
+        「引用已失效」幽灵、运行环境不许留着静默回落的死指向）—— chat 引用由
+        `_write_chat_refs(pool)` 重写让位（默认不能悬空），其余由
+        `_sweep_dangling_model_refs` 同事务清掉；「失效」呈现只剩防御口径（手工插的孤儿行）。
 
         别人的那一行在这里同样是 KeyError —— 而这一处比 404 的口径更要紧：不带主人过滤的
         删除会连着 `DELETE FROM model_provider` 一起走，那是**删掉他的凭据**。
@@ -180,8 +185,8 @@ class _WriteMixin(_ReadMixin):
             self._conn.execute(
                 "DELETE FROM model_provider WHERE id = ? AND user_id = ?", (gid, user_id)
             )
-        # 服务页能力引用同步删（在模型行已删之后跑，NOT EXISTS 才看得见"真的没了"）。
-        self._drop_dangling_service_refs()
+        # 服务页引用 + 运行环境覆盖同步清（在模型行已删之后跑，NOT EXISTS 才看得见"真的没了"）。
+        self._sweep_dangling_model_refs()
         # 引用行按新序重编 sort_order，所以删掉的正是默认时，下一位自动顶上（默认不会悬空）。
         self._write_chat_refs(pool, user_id=user_id)
         self._conn.commit()

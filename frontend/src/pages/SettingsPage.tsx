@@ -23,11 +23,9 @@ const SETTINGS_TABS = [
 type SettingsTab = (typeof SETTINGS_TABS)[number]["key"];
 
 export default function SettingsPage({
-  onOpenChat,
   theme,
   onToggleTheme,
 }: {
-  onOpenChat?: () => void;
   theme?: string;
   onToggleTheme?: () => void;
 }) {
@@ -50,7 +48,7 @@ export default function SettingsPage({
             激活同步走 ServicesPanel 的 visible prop：隐藏→显示只重取一次台账（本地 GET，
             零外发），模型页删掉的引用行切回来即消失；探测仍只在首载发一次。 */}
         <div className={tab === "about" ? "" : "hidden"}>
-          <AboutPanel onOpenChat={onOpenChat} theme={theme} onToggleTheme={onToggleTheme} />
+          <AboutPanel theme={theme} onToggleTheme={onToggleTheme} />
         </div>
         <div className={tab === "models" ? "" : "hidden"}>
           <ModelsPanel onOpenServices={() => setTab("services")} />

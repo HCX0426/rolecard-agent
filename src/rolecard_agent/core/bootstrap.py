@@ -53,7 +53,7 @@ from rolecard_agent.core.model_settings import ModelSettingsService, client_styl
 from rolecard_agent.core.models.model_resolver import ModelResolver
 from rolecard_agent.core.models.services import ServiceEndpointService
 from rolecard_agent.core.plugins import PluginService, seed_plugin_rows
-from rolecard_agent.core.retention import prune_retention_tables
+from rolecard_agent.core.retention import run_retention
 from rolecard_agent.core.storage.checkpointer import make_checkpointer
 from rolecard_agent.core.storage.migrations import MIGRATION_PLAN
 from rolecard_agent.core.telemetry.probes import ollama_keep
@@ -440,24 +440,6 @@ def build_runtime(
     # `taskkill /F`）没有异常可接，approved 行会永远挂着 —— 开机一次清扫把它收成
     # done + error，模型读到"执行结果丢失"而不是永久的"正在执行"。
     sweep_interrupted(conn)
-    # 三张只增表的 retention（`R102-29`；2026-10-02 拍板：分表定档）。
-    # 0 = 该档永不清理（旧行为）。reachout 走 per-role `reachout_keep` 的既有机制。
-    # 有清理量才落事件（`R102-64` 的事件流），每次开机刷屏没有信息量。
-    pruned = prune_retention_tables(
-        conn,
-        audit_log_days=settings.audit_log_retention_days,
-        audit_log_max_rows=settings.audit_log_max_rows,
-        approval_done_days=settings.approval_done_retention_days,
-        # 「先备份再删」的那一半（`R102-29` 拍板的第三句，10-03 才补上）：要删的行先落成
-        # JSONL 再 DELETE。目录由装配根算 —— storage 不 import core（`R102-08` 的尺子）。
-        backup_dir=user_data_root() / RETENTION_BACKUP_DIRNAME,
-    )
-    if any(pruned.values()):
-        logline(
-            "notice",
-            "schema-migrate",
-            "retention 清理：" + ", ".join(f"{key}={count}" for key, count in pruned.items()),
-        )
     audit = AuditTrail(conn)
     roles = RoleCardService(conn)
     roles.seed_builtins(user_id=owner)
@@ -483,6 +465,22 @@ def build_runtime(
         model_settings.effective_settings(settings, user_id=owner),
         runtime_settings.load_overrides(conn),
     )
+    # 三张只增表的 retention（`R102-29`；2026-10-02 拍板：分表定档）。
+    # 0 = 该档永不清理（旧行为）。reachout 走 per-role `reachout_keep` 的既有机制。
+    # 有清理量才落事件（`R102-64` 的事件流），每次开机刷屏没有信息量。
+    # 2026-11-09：读 **effective** 而不是裸 env —— 保留档位从这天起能在「运行环境」页设，
+    # 存的是 DB 覆盖；从前这一句拿 `settings`，界面改了要等重启才咬合，等于开机这条
+    # 永远只认 env。同一个 `run_retention` 也被 PUT 路由当场调（保存即清，不重跑
+    # 一遍装配），所以档位这件事只有一份读取姿势。
+    # 「先备份再删」的那一半（`R102-29` 拍板的第三句，10-03 才补上）：要删的行先落成
+    # JSONL 再 DELETE。目录由装配根算 —— storage 不 import core（`R102-08` 的尺子）。
+    pruned = run_retention(conn, effective, backup_dir=user_data_root() / RETENTION_BACKUP_DIRNAME)
+    if any(pruned.values()):
+        logline(
+            "notice",
+            "schema-migrate",
+            "retention 清理：" + ", ".join(f"{key}={count}" for key, count in pruned.items()),
+        )
     assembly = Assembly(
         sqlite_path=db_path,
         conn=conn,

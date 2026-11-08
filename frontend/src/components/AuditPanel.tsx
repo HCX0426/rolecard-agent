@@ -75,7 +75,9 @@ export function AuditPanel() {
     setStatus("");
     setLoading(true);
     try {
-      setRows(await api.get<AuditRow[]>("/api/audit?limit=200"));
+      // 100 条够看（用户 2026-11-09：「审计界面最多显示 100 条就够了」）。后端默认值也是
+      // 100，两边同一档；要更早的历史是筛/翻的事，不是把首屏撑成流水账。
+      setRows(await api.get<AuditRow[]>("/api/audit?limit=100"));
     } catch (e) {
       setStatus(`加载失败：${describeError(e)}`);
     } finally {

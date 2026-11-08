@@ -14,7 +14,8 @@ from pydantic import BaseModel, Field
 from rolecard_agent.api.auth import Actor
 from rolecard_agent.api.deps import AppContext, get_actor, get_context
 from rolecard_agent.api.errors import value_error_to_http
-from rolecard_agent.base.observability import TraceEvent
+from rolecard_agent.base.observability import TraceEvent, logline
+from rolecard_agent.base.paths import user_data_root
 from rolecard_agent.base.text import text_of
 from rolecard_agent.config import SECRET_FIELD_NAMES, Settings
 from rolecard_agent.contracts.handwritten_models import (
@@ -38,6 +39,8 @@ from rolecard_agent.core.model_settings import (
     is_keyless_provider,
     provider_catalog,
 )
+from rolecard_agent.core.retention import run_retention
+from rolecard_agent.storage.db import RETENTION_BACKUP_DIRNAME
 
 router = APIRouter()
 
@@ -572,7 +575,8 @@ def put_runtime_settings(
     """保存运行环境覆盖并热重建：联网/检索/超时/思考等即时生效，无需重启进程。
 
     校验失败（未知字段/非法枚举/坏数字）整体拒绝 400，不落半套配置；秘钥字段不回明文，
-    输入留空 = 保持现状。
+    输入留空 = 保持现状。保留档位（历史数据那三条）保存**当场**清一次（用户 2026-11-09：
+    "超过多少天得自动删除旧历史审计数据" —— 从前只在开机跑，改了等重启等于承诺没上线）。
     """
     if not body.values:
         raise HTTPException(status_code=400, detail="没有要保存的配置项。")
@@ -598,6 +602,20 @@ def put_runtime_settings(
         channel = ctx.runtime.background_task("qq-channel")
         if channel is not None and hasattr(channel, "restart"):
             channel.restart()
+    # 保留档位保存即清（与开机走同一个 `run_retention`，档位读的是 rebuild 刚换进槽位的
+    # effective —— `ctx.settings` 读穿同一对象，这里不重新叠覆盖，免得第二份读取姿势）。
+    # 每次保存都跑一遍是刻意的：三条判据 0 = 永不清，成本就是几条 DELETE 谓词；而"改了
+    # 天数但什么都没发生"才是这条产品承诺最坏的形状。有清理量才落事件（同开机 R102-64）。
+    pruned = run_retention(
+        ctx.conn, ctx.settings, backup_dir=user_data_root() / RETENTION_BACKUP_DIRNAME
+    )
+    if any(pruned.values()):
+        logline(
+            "notice",
+            "runtime-retention",
+            "retention 清理（保存触发）："
+            + ", ".join(f"{key}={count}" for key, count in pruned.items()),
+        )
     return runtime_payload(
         ctx.settings,
         runtime_settings.load_overrides(ctx.conn),

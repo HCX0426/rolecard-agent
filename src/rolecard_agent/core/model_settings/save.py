@@ -239,9 +239,10 @@ class _SaveMixin(_WriteMixin):
             f"AND id NOT IN ({','.join('?' * len(used_ids))})",
             (user_id, *used_ids),
         )
-        # 缩表也可能删掉模型 —— 服务页引用行与模型行同一次保存里同步删（与 remove_model
-        # 同口径，用户 2026-11-08：两条删除路径不许两种行为）。在模型行重插完之后跑。
-        self._drop_dangling_service_refs()
+        # 缩表也可能删掉模型 —— 服务页引用行、运行环境覆盖值与模型行同一次保存里同步清
+        # （与 remove_model 同口径，用户 2026-11-08 / 11-09：两条删除路径不许两种行为）。
+        # 在模型行重插完之后跑。
+        self._sweep_dangling_model_refs()
         # 用途（chat 引用行）：默认永远第 1 位，其后依次是回退链，再后面是其余对话后端。
         chat_names = [n for n in names if usage_by_name[n] == "chat"]
         self._write_chat_refs(

@@ -361,10 +361,13 @@ WRITE_TXN_HELPERS = frozenset(
         "src/rolecard_agent/core/memory/memory_distill.py::extract",
         # model_settings 拆包后（2026-10-04 审查快照 P1-6）这个方法住在 read mixin 里。
         "src/rolecard_agent/core/model_settings/read.py::_write_chat_refs",
-        # 2026-11-08 引用行随模型同步删：设备级服务引用的悬空清扫由调用方在**同一事务**里
-        # 收口 —— `write.py::remove_model`（删模型行后、_write_chat_refs 前）与
+        # 2026-11-08 引用行随模型同步删（11-09 起连运行环境覆盖一起）：清扫由调用方在
+        # **同一事务**里收口 —— `write.py::remove_model`（删模型行后、_write_chat_refs 前）与
         # `save.py::save`（缩表重插 + 凭据清理后）各自在末尾 commit，成败一体不半路落库。
-        "src/rolecard_agent/core/model_settings/write.py::_drop_dangling_service_refs",
+        "src/rolecard_agent/core/model_settings/write.py::_sweep_dangling_model_refs",
+        # 同一道清扫的第二半（运行环境覆盖那侧的实现，判据由注册表 choices_from 派生）：
+        # 由 `_sweep_dangling_model_refs` 转调，收口点同上 —— 两处删除路径的末尾 commit。
+        "src/rolecard_agent/core/runtime_settings.py::prune_dangling_model_overrides",
         # 2026-10-24 域常开收口后转公共：rebuild 在换装临界区内调它并当场 commit
         # （不提交会把 RESERVED 锁留在请求线程的连接槽上，实测后续 create_app 集体 busy）。
         "src/rolecard_agent/core/plugins/__init__.py::bump_tool_epoch",

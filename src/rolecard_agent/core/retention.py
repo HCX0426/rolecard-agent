@@ -19,11 +19,30 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+from rolecard_agent.config import Settings
 from rolecard_agent.storage.db import (
     SqlConnection,
     dump_before_delete,
     trim_backups,
 )
+
+
+def run_retention(conn: SqlConnection, settings: Settings, *, backup_dir: Path) -> dict[str, int]:
+    """按**给定那份 Settings** 跑一遍保留清理 —— 开机与「运行环境」保存共用这一个入口。
+
+    存在的理由：`prune_retention_tables` 吃的是三个散参数，"哪三个字段喂给哪三个参数"
+    这道映射从前只写在 bootstrap 一处。2026-11-09 把保留档位搬上界面之后，PUT 路由也要
+    清一次（用户：「历史数据得可以设置，超过多少天自动删旧审计」—— 改了要等重启才咬合，
+    等于这条产品承诺没上线）。两个调用点各抄一遍映射 = 加第四个保留字段时漏改一处的
+    形状，所以把映射收在这儿：调用方只交出 settings。
+    """
+    return prune_retention_tables(
+        conn,
+        audit_log_days=settings.audit_log_retention_days,
+        audit_log_max_rows=settings.audit_log_max_rows,
+        approval_done_days=settings.approval_done_retention_days,
+        backup_dir=backup_dir,
+    )
 
 
 def prune_retention_tables(

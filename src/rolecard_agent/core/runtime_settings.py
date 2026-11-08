@@ -67,6 +67,7 @@ RUNTIME_GROUPS: tuple[tuple[str, str], ...] = (
     ("ocr", "OCR"),
     ("rag", "检索与抽取"),
     ("limit", "超时与预算"),
+    ("history", "历史数据"),
     ("think", "思考模式"),
     ("agent", "对话模式"),
     ("reachout", "主动开口"),
@@ -200,6 +201,34 @@ RUNTIME_FIELDS: tuple[FieldSpec, ...] = (
         label="多模型比对总闸",
         note="0 = compare_model_answers 返回关闭说明（一次≈N 次调用，且发给多个供应商）",
         group="limit",
+    ),
+    # -- 历史数据的保留（用户 2026-11-09：「历史数据这里得可以设置，超过多少天自动删旧审计」）
+    # 判据本来就在跑（core/retention.py），死的是"能不能设"这一半：从前只有 .env 一条路，
+    # 且开机才清理一次 —— 界面上改了要重启才咬合。现在保存**当场**清一次（PUT 路由里调
+    # `run_retention_now`），env 那三行照旧有效（引导值）。0 = 该档永不清理，与旧语义一致。
+    FieldSpec(
+        "audit_log_retention_days",
+        "AUDIT_LOG_RETENTION_DAYS",
+        "int",
+        label="审计历史保留天数",
+        note="超过这个天数的审计记录自动删除（删除前先落备份 JSONL）；0 = 永不按天数清",
+        group="history",
+    ),
+    FieldSpec(
+        "audit_log_max_rows",
+        "AUDIT_LOG_MAX_ROWS",
+        "int",
+        label="审计历史保留条数",
+        note="只留最新这么多条，超出的按最旧删；与天数任一命中即清。0 = 永不按条数清",
+        group="history",
+    ),
+    FieldSpec(
+        "approval_done_retention_days",
+        "APPROVAL_DONE_RETENTION_DAYS",
+        "int",
+        label="已了结审批保留天数",
+        note="done / rejected 的审批行超龄删除；pending / approved 是活队列，永不清",
+        group="history",
     ),
     # -- think 思考模式 --------------------------------------------------------------
     FieldSpec(
@@ -536,3 +565,47 @@ def save_overrides(conn: SqlConnection, values: dict[str, str | None]) -> list[s
             )
     conn.commit()
     return [f for f, v in parsed.items() if v is not None]
+
+
+def prune_dangling_model_overrides(conn: SqlConnection) -> int:
+    """模型页删行后，清掉「运行环境」里指向**已消失模型 / 后端**的覆盖值。
+
+    用户 2026-11-09 的联动口径（"删除对应模型后同步删除"）不止服务页：悬空的运行环境覆盖
+    比幽灵行更坏，因为它是**静默**的 —— `resolve_role_model` 拿不到那个后端时不报错，悄悄
+    回落默认模型（现场撞见过：模型页删了 siliconflow，运行环境页仍显示"记忆用 siliconflow"，
+    而每一步提取跑的都是别家）。
+
+    判据由注册表自己派生（`choices_from`），不在这里抄字段清单 —— 将来再加一条"选项来自
+    模型页"的字段，它自动进这道清扫，不需要记得改这里（单注册表那条纪律的同一族）。
+    名单类（逗号串）只剔悬空的成分，剩下的照旧留着；剔空了才整条删（回落 env）。
+    指向仍在的模型的覆盖一字不动。
+
+    **不收口**：与调用方的删除共用一个事务，成败一体（`remove_model` / `save` 在末尾 commit）。
+    """
+    survivors = {str(r["name"]) for r in conn.execute("SELECT name FROM model_backend")}
+    models = {
+        str(r["model"])
+        for r in conn.execute("SELECT DISTINCT model FROM model_backend WHERE model IS NOT NULL")
+    }
+    pruned = 0
+    for spec in RUNTIME_FIELDS:
+        if spec.choices_from not in ("backends", "models") or spec.kind == "ro":
+            continue
+        key = _PREFIX + spec.field
+        row = conn.execute("SELECT value FROM kernel_meta WHERE key = ?", (key,)).fetchone()
+        if row is None:
+            continue
+        raw = str(row["value"] or "")
+        if spec.choices_from == "backends":
+            kept = raw if raw.strip() in survivors else ""
+        else:
+            parts = [p.strip() for p in raw.split(",") if p.strip()]
+            kept = ",".join(p for p in parts if p in models)
+        if kept == raw:
+            continue
+        if kept:
+            conn.execute("UPDATE kernel_meta SET value = ? WHERE key = ?", (kept, key))
+        else:
+            conn.execute("DELETE FROM kernel_meta WHERE key = ?", (key,))
+        pruned += 1
+    return pruned

@@ -189,6 +189,51 @@
       ]
     },
     {
+      "key": "history",
+      "label": "历史数据",
+      "items": [
+        {
+          "key": "AUDIT_LOG_RETENTION_DAYS",
+          "field": "audit_log_retention_days",
+          "label": "审计历史保留天数",
+          "value": "90",
+          "default": "90",
+          "changed": false,
+          "overridden": false,
+          "override_value": null,
+          "kind": "int",
+          "choices": null,
+          "note": "超过这个天数的审计记录自动删除（删除前先落备份 JSONL）；0 = 永不按天数清"
+        },
+        {
+          "key": "AUDIT_LOG_MAX_ROWS",
+          "field": "audit_log_max_rows",
+          "label": "审计历史保留条数",
+          "value": "10000",
+          "default": "10000",
+          "changed": false,
+          "overridden": false,
+          "override_value": null,
+          "kind": "int",
+          "choices": null,
+          "note": "只留最新这么多条，超出的按最旧删；与天数任一命中即清。0 = 永不按条数清"
+        },
+        {
+          "key": "APPROVAL_DONE_RETENTION_DAYS",
+          "field": "approval_done_retention_days",
+          "label": "已了结审批保留天数",
+          "value": "30",
+          "default": "30",
+          "changed": false,
+          "overridden": false,
+          "override_value": null,
+          "kind": "int",
+          "choices": null,
+          "note": "done / rejected 的审批行超龄删除；pending / approved 是活队列，永不清"
+        }
+      ]
+    },
+    {
       "key": "think",
       "label": "思考模式",
       "items": [

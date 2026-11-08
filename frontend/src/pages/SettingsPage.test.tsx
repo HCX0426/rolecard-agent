@@ -6,7 +6,7 @@
 // "只读并指向写点"断言（单写点纪律的两半，各自住在写点所在页与只读展示页）。
 // （设置页子页签常驻挂载 + hidden —— jsdom 查询不看 CSS，各面板同屏可查。）
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -103,7 +103,7 @@ beforeEach(() => {
 describe("SettingsPage 页签结构（Batch 5 拆帖；2026-10-30 记忆三卡迁出后）", () => {
   function renderPage() {
     return render(
-      <SettingsPage onOpenChat={() => {}} theme="light" onToggleTheme={() => {}} />,
+      <SettingsPage theme="light" onToggleTheme={() => {}} />,
     );
   }
 
@@ -134,7 +134,7 @@ describe("审计面板：展开键是后端下发的唯一 id（R102-17）", () 
     // 原样摆出来：只有"键 = 后端下发的唯一 id"的实现能通过。
     const base = apiMock.get.getMockImplementation()!;
     apiMock.get.mockImplementation(async (url: string) => {
-      if (url === "/api/audit?limit=200") {
+      if (url === "/api/audit?limit=100") {
         return [
           { id: 101, ts: "2026-10-02 03:12:42", actor: "u1", action: "set_model",
             target: "elysia", detail_json: '{"who": "甲的详情"}' },
@@ -144,7 +144,7 @@ describe("审计面板：展开键是后端下发的唯一 id（R102-17）", () 
       }
       return base(url);
     });
-    render(<SettingsPage onOpenChat={() => {}} theme="light" onToggleTheme={() => {}} />);
+    render(<SettingsPage theme="light" onToggleTheme={() => {}} />);
     const btnA = (await screen.findByText('{"who": "甲的详情"}')).closest("button");
     const btnB = screen.getByText('{"who": "乙的详情"}').closest("button");
     fireEvent.click(btnA!);
@@ -206,7 +206,7 @@ describe("运行环境页的「她此刻为什么静默」", () => {
   it("挂在「主动开口」那一组下面，一句原因 + 下一次大约几点", async () => {
     stubReachouts([quietRow]);
     render(
-      <SettingsPage onOpenChat={() => {}} theme="light" onToggleTheme={() => {}} />,
+      <SettingsPage theme="light" onToggleTheme={() => {}} />,
     );
     const box = await screen.findByTestId("quiet-status");
     expect(box.textContent).toContain("爱莉希雅 静默中");
@@ -219,7 +219,7 @@ describe("运行环境页的「她此刻为什么静默」", () => {
   it("后端没给 quiet（老后端 / 没人开主动资格）时不画空壳", async () => {
     stubReachouts(undefined);
     render(
-      <SettingsPage onOpenChat={() => {}} theme="light" onToggleTheme={() => {}} />,
+      <SettingsPage theme="light" onToggleTheme={() => {}} />,
     );
     expect((await screen.findAllByText("主动开口")).length).toBeGreaterThan(0);
     expect(screen.queryByTestId("quiet-status")).toBeNull();
@@ -228,7 +228,7 @@ describe("运行环境页的「她此刻为什么静默」", () => {
   it("改了「开口间隔」保存后要重读那一格 —— 那句分钟数与时刻都是它算的", async () => {
     stubReachouts([quietRow]);
     render(
-      <SettingsPage onOpenChat={() => {}} theme="light" onToggleTheme={() => {}} />,
+      <SettingsPage theme="light" onToggleTheme={() => {}} />,
     );
     await screen.findByTestId("quiet-status");
     const input = screen.getByDisplayValue("60");
@@ -249,6 +249,19 @@ describe("运行环境页的「她此刻为什么静默」", () => {
   });
 });
 
+describe("演示数据卡退场（用户 2026-11-09：「有啥用，感觉没啥用」）", () => {
+  it("「关于」页签不再有演示数据卡，刷新状态收进系统状态卡", async () => {
+    render(<SettingsPage theme="light" onToggleTheme={() => {}} />);
+    // 演示数据那张卡整体删除：一句与按钮都对不上活的话，不该占着页签。
+    expect(screen.queryByText("演示数据")).toBeNull();
+    expect(screen.queryByText(/虚构档案可由脚本重建/)).toBeNull();
+    // 「刷新状态」保留，但挪进系统状态卡标题行 —— 它刷的就是那四个计数。
+    fireEvent.click(screen.getByRole("button", { name: "关于与系统状态" }));
+    const stateCard = screen.getByText("系统状态").closest("div");
+    expect(within(stateCard as HTMLElement).getByRole("button", { name: /刷新状态/ })).toBeTruthy();
+  });
+});
+
 describe("设置页服务签的激活重取（接线：模型页删行后切回来要看得到）", () => {
   const probes = () =>
     apiMock.post.mock.calls.filter((c) => c[0] === "/api/services/probe").length;
@@ -256,7 +269,7 @@ describe("设置页服务签的激活重取（接线：模型页删行后切回�
     apiMock.get.mock.calls.filter((c) => c[0] === "/api/services").length;
 
   it("切到『服务』页签多一次台账 GET；探测不跟着重发（配额只在首载与重新检测）", async () => {
-    render(<SettingsPage onOpenChat={() => {}} theme="light" onToggleTheme={() => {}} />);
+    render(<SettingsPage theme="light" onToggleTheme={() => {}} />);
     // 面板常驻挂载：页面一打开首载探测就已发出（与页签是否点开无关）
     await waitFor(() => expect(probes()).toBe(1));
     const before = reads();
