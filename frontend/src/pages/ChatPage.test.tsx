@@ -145,6 +145,29 @@ describe("ChatPage 流式渲染", () => {
     expect(await screen.findByText("权威文本")).toBeTruthy();
   });
 
+  it("流式途中 streamChat 抛出：气泡不能卡在「思考中…」、发送位必须回来", async () => {
+    // 2026-11-08 用户报"对话一直在思考"。根因之一在前端收尾：`send()` 里 `await streamChat`
+    // 之后那几行（setLive(null)/sendingRef=false/setBusy(false)）从前**没有 try/finally**，
+    // 一旦那条 await 抛出（归约里 onEvent 自身出错会从 postSse 冲出），整段收尾被跳过 ——
+    // 症状就是这两条：乐观气泡永远停在空气泡的「思考中…」，且 busy 卡住、发送位变不回来，
+    // 用户再也发不出下一条。这条把"抛出"当输入，钉收尾必须无条件执行。
+    // 把 `send()` 的 try/finally 摘掉 ⇒ 本用例红（气泡/发送位都停在流式中状态）。
+    streamChatMock.mockRejectedValue(new Error("归约里炸了"));
+    render(
+      <ToastProvider>
+        <ChatPage />
+      </ToastProvider>
+    );
+    await sendMessage("触发一次抛错");
+    // 发送位回来（busy 已清）：停止按钮（aria-label=停止生成）消失、发送按钮重新可用
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "发送" })).toBeTruthy(),
+    );
+    expect(screen.queryByLabelText("停止生成")).toBeNull();
+    // 乐观气泡已清：不再显示空气泡那句「思考中…」
+    expect(screen.queryByText("思考中…")).toBeNull();
+  });
+
   it("在控制台发一句话 = 她那些主动开口都看过了（红点跟着清）", async () => {
     // 用户在 09-23 定的口径是"进入对话界面/在回话 = 都看过了"。桌宠面板与抽屉早就走
     // `read-all` 了，控制台这一侧漏接的症状是：我明明在这儿聊，铃铛上别的角色还在闪。

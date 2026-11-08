@@ -628,24 +628,37 @@ export default function ChatPage({
     // 铃铛上别的角色还在闪"。清失败不碍这一轮：红点没清是可恢复的小毛病，答不回来才是大事。
     void api.markAllReachoutsRead().catch(() => undefined);
     const controller = startBubble(tid);
-    await streamChat(tid, text, onEvent, controller.signal, image);
-    const aborted = controller.signal.aborted;
-    abortRef.current = null;
-    // 流结束：checkpoint 是唯一真相，回放覆盖乐观状态（中断时同样回放，拿到已生成的部分）
+    let aborted = false;
     try {
-      await reloadMessages(tid);
-    } catch {
-      /* 会话已被删等极端情况：保留现有气泡 */
+      await streamChat(tid, text, onEvent, controller.signal, image);
+      aborted = controller.signal.aborted;
+      // 流结束：checkpoint 是唯一真相，回放覆盖乐观状态（中断时同样回放，拿到已生成的部分）
+      try {
+        await reloadMessages(tid);
+      } catch {
+        /* 会话已被删等极端情况：保留现有气泡 */
+      }
+    } catch (e) {
+      // 兜底：`streamChat` 正常不抛（错误都走 onEvent 的 error 帧），但若归约里 onEvent
+      // 自身抛错，异常会从这里冲出。落一条可读的话，别让 send() 变成一个未处理的拒绝。
+      errorRef.current ||= (e as Error).message || "对话流异常中断";
+    } finally {
+      // 收尾必须**无条件执行**。从前这几行跟在 `await streamChat` 之后却没有 try/finally：
+      // 一旦那条 await 抛出（`onEvent` 归约里 applyMeta 出错时，`postSse` 的 catch 会再调一次
+      // onEvent 发 error 帧、若又抛就冲出整条流），整段收尾被跳过 —— 症状是气泡永远停在
+      // 「思考中…」、`sendingRef` 卡在 true，用户再也发不出下一条（正是 PetPage 注释记过的
+      // "气泡一辈子不消失"那一类缺陷，这里补齐）。
+      abortRef.current = null;
+      setLive(null);
+      liveRef.current = null;
+      // 出错必须让用户看到：气泡被回放替换后，挂在气泡上的错误文案会一起消失。
+      if (errorRef.current) {
+        setStatus(`回答中断：${errorRef.current}`, "warn");
+        errorRef.current = "";
+      }
+      sendingRef.current = false;
+      setBusy(false);
     }
-    setLive(null);
-    liveRef.current = null;
-    // 出错必须让用户看到：气泡被回放替换后，挂在气泡上的错误文案会一起消失。
-    if (errorRef.current) {
-      setStatus(`回答中断：${errorRef.current}`, "warn");
-      errorRef.current = "";
-    }
-    sendingRef.current = false;
-    setBusy(false);
     if (aborted) setStatus("已停止生成（已生成的内容已保留）", "warn");
     await refreshSessions();
   }
@@ -681,15 +694,22 @@ export default function ChatPage({
     setBusy(true);
     const controller = startBubble(sessionId);
     setEditing(null);
-    await streamEdit(sessionId, mid, content, onEvent, controller.signal, image);
-    setLive(null);
-    liveRef.current = null;
-    if (errorRef.current) {
-      setStatus(`重新生成失败：${errorRef.current}`, "warn");
-      errorRef.current = "";
+    try {
+      await streamEdit(sessionId, mid, content, onEvent, controller.signal, image);
+    } catch (e) {
+      // 与 `send()` 同一条兜底：归约里 onEvent 抛错时别让 saveEdit 变成未处理拒绝。
+      errorRef.current ||= (e as Error).message || "重新生成异常中断";
+    } finally {
+      // 与 `send()` 同一条收尾纪律：`await streamEdit` 抛出也不能把气泡留在「思考中…」。
+      setLive(null);
+      liveRef.current = null;
+      if (errorRef.current) {
+        setStatus(`重新生成失败：${errorRef.current}`, "warn");
+        errorRef.current = "";
+      }
+      sendingRef.current = false;
+      setBusy(false);
     }
-    sendingRef.current = false;
-    setBusy(false);
     if (sessionId) {
       try {
         await reloadMessages(sessionId);
