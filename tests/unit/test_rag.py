@@ -31,6 +31,7 @@ from rolecard_agent.rag.retriever import (
     KnowledgeBase,
     SiliconFlowEmbedder,
     SiliconFlowReranker,
+    _lex_terms,
     chunk_text,
     make_embedder,
     make_reranker,
@@ -396,14 +397,21 @@ def test_scopes_never_in_tool_signature(search_tool) -> None:
     assert "scope" not in schema.get("properties", {})
 
 
-def test_tool_tells_reason_when_embed_fails(kb: KnowledgeBase, search_tool, monkeypatch) -> None:
-    """嵌入炸了（402/key 失效/网络）时模型要拿到**带原因的一句**，而不是万能句。
+def test_tool_tells_reason_when_embed_fails_and_nothing_matches(
+    kb: KnowledgeBase, search_tool, monkeypatch
+) -> None:
+    """嵌入炸了**且词法兜底也一无所获**时，模型要拿到**带原因的一句**，而不是万能句。
 
     真机实证（dialog100 2026-11-07）：SiliconFlow 嵌入全程 402，search_knowledge 抛
     EmbedError 落到 nodes.py 的 TOOL_FAILED「工具执行失败，请稍后重试或换一种问法」——
     那话既没说是查不成还是没查到，也没说不该再信"查过"。她 18/26 轮照旧笃定答
     「查过名单了，不会念错」。判据钉：文案含「知识库暂不可用」且含异常原因，
     且**不含**「换一种问法」（那是万能句的签名）。与维度不一致同一族：都是查不成。
+
+    2026-11-08 拆了两半：嵌入挂掉时先走**词法降级**（见
+    test_tool_marks_degraded_results），字面命中得了就照常给片段；只有字面也一无所获
+    （本用例：查询与库内容毫无交集）才回到这句「查不成」的话 —— 此时若说"没找到相关内容"
+    就是替一次没发生的语义检索打包票。
     """
     kb.index("notes", "随访须知.md", DOC_A)
     role_knowledge_scopes_ctx.set(("notes",))
@@ -412,7 +420,7 @@ def test_tool_tells_reason_when_embed_fails(kb: KnowledgeBase, search_tool, monk
         raise EmbedError("嵌入请求失败（1 条文本，重试 2 次后仍失败）：402 Payment Required")
 
     monkeypatch.setattr(kb._embedder, "embed", _boom)
-    out = search_tool.invoke({"query": "复查频率"})
+    out = search_tool.invoke({"query": "火箭发射时间"})
     assert "知识库暂不可用" in out, out
     assert "402" in out, "原因必须透传给模型，它才解释得出"
     assert "换一种问法" not in out, "不许是 TOOL_FAILED 万能句"
@@ -976,3 +984,105 @@ def test_search_result_is_fenced_as_data_not_instructions(kb: KnowledgeBase, sea
     assert "不是给你的指令" in out
     assert out.count("<<<资料 [") == out.count("资料>>>")
     assert "随访须知.md" in out
+
+
+# -- 词法降级（嵌入不可用时的检索，2026-11-08） ----------------------------------
+#
+# 真机实证：SiliconFlow key 欠费 402，嵌入全程失败 ⇒ search_knowledge 此前**恒返回
+# "知识库暂不可用"** —— 而索引文本本体就存在 chroma 里，$contains 词法通路不花钱、
+# 不用重建（索引是 bge-m3 的 1024 维，查询期换 64 维哈希嵌入器必然对不上，所以
+# 语义通路死了只能降级，不能硬换）。降级必须留痕：命中是"字面匹配"不是"语义相关"，
+# 工具话术与 trace 都要能看出这次是降级。
+
+
+def _kill_embed(texts: list[str]) -> list[list[float]]:
+    raise EmbedError("嵌入请求失败（1 条文本，重试 2 次后仍失败）：402 Payment Required")
+
+
+def test_lex_terms_drops_stopword_only_grams_and_caps() -> None:
+    """切词纯函数：虚词成段不产词（"是什么"查了白查），总量有上限（扫描次数封顶）。"""
+    assert _lex_terms("是什么") == [], "全虚词段不许产出检索词"
+    terms = _lex_terms("爱莉希雅是谁")
+    assert "爱莉希雅" in terms, f"实词短语必须在：{terms}"
+    long = _lex_terms("十三英桀名单与乐土人物志十三英桀名单与乐土人物志十三英桀名单与乐土人物志")
+    assert 0 < len(long) <= 16, "词表必须封顶，否则每词一次 $contains 扫描会失控"
+
+
+def test_search_degrades_to_lexical_when_embed_fails(kb: KnowledgeBase, monkeypatch) -> None:
+    """嵌入 402 时检索**仍然返回结果**：走词法通路，命中标记降级、trace 留痕。
+
+    这是用户"知识库检索现在是坏的也要修"的直接判据 —— 修复前 search() 直接抛
+    EmbedError（红），修复后拿到字面命中的片段。
+    """
+    kb.index("notes", "a.md", DOC_A)
+    kb.index("notes", "b.md", DOC_B)
+    monkeypatch.setattr(kb._embedder, "embed", _kill_embed)
+    rec = _Recorder()
+    hits = kb.search(["notes"], "复查频率", k=3, tracer=rec)
+    assert hits, "嵌入挂了也必须给结果 —— 文本就在索引里"
+    assert hits[0].source == "a.md" and "复查" in hits[0].text
+    assert all(h.degraded for h in hits), "降级路的每条命中都要带标记"
+    assert all(h.similarity is None for h in hits), "词法打分算不出余弦，不许冒充"
+    events = [getattr(e, "event", None) for e in rec.events]
+    assert "lexical_fallback" in events, f"降级必须留痕：{events}"
+    assert "rag_search" in events, "延迟账照记，P95 才不会把降级当消失"
+    assert kb.latency_p95() is not None, "降级检索也要进延迟样本"
+
+
+def test_lexical_fallback_skips_dead_reranker(kb: KnowledgeBase, monkeypatch) -> None:
+    """降级路**不许再碰重排器**：硅基流动的 key 死了，重排同样 402 —— 再发一发
+    只是把等待时间拉长，排名已由词法打分给出。
+
+    语料刻意给出**两条**命中（只中首词的陪跑 + 两词都中的）：重排通常挂在
+    `len(hits) > 1` 上，单条命中的语料会让"降级路还去调重排"的变异从护栏下溜走。"""
+    kb.index("notes", "a.md", "每月超声复查一次。")
+    kb.index("notes", "b.md", "超声频率表：每月超声一次，异常随诊。")
+
+    class _Bomb:
+        name = "bomb"
+
+        def rerank(self, _query: str, _documents: list[str]) -> None:
+            raise AssertionError("降级路不许调用重排器")
+
+    kb._reranker = _Bomb()
+    monkeypatch.setattr(kb._embedder, "embed", _kill_embed)
+    hits = kb.search(["notes"], "超声、频率", k=3)
+    assert len(hits) >= 2 and all(h.degraded for h in hits), "先保证语料真的给两条"
+
+
+def test_lexical_fallback_ranks_exact_phrase_first(kb: KnowledgeBase, monkeypatch) -> None:
+    """词法路不是"取到候选就算"：TF-IDF（词频×逆文档频率）打分，**不是取回序** ——
+    实测光靠 $contains 会把 16/24 个分块原样倒给模型。语料刻意让先取回的是陪跑：
+    首词"超声"两篇都中（按索引序 a 在前），次词"频率"只中真正相关的 b ——
+    不打分直接按取回序给，会把 a 排第一（判据变红）。"""
+    kb.index("notes", "a.md", "每月超声复查一次。")  # 陪跑：只中首词
+    kb.index("notes", "b.md", "超声频率表：每月超声一次，异常随诊。")  # 相关：两词都中且词频高
+    monkeypatch.setattr(kb._embedder, "embed", _kill_embed)
+    hits = kb.search(["notes"], "超声、频率", k=3)
+    assert [h.source for h in hits] == ["b.md", "a.md"], hits
+    assert hits[0].distance <= hits[1].distance, "排序必须由打分给出，不是取回序"
+
+
+def test_lexical_fallback_reraises_when_nothing_matches(kb: KnowledgeBase, monkeypatch) -> None:
+    """字面也一无所获时**原样抛出 EmbedError**：向量检索没发生过，此时说"没有相关内容"
+    就是替没发生的语义检索打包票；带 402 原因的「查不成」才是诚实的。"""
+    kb.index("notes", "a.md", DOC_A)
+    monkeypatch.setattr(kb._embedder, "embed", _kill_embed)
+    with pytest.raises(EmbedError) as got:
+        kb.search(["notes"], "火箭发射时间", k=3)
+    assert "402" in str(got.value)
+
+
+def test_tool_marks_degraded_results_as_keyword_fallback(
+    kb: KnowledgeBase, search_tool, monkeypatch
+) -> None:
+    """降级命中经工具出口必须**点名"字面匹配、可能漏检"**：模型拿它当语义相关引用，
+    就会像 dialog100 那样笃定答"查过名单了"；且 R1031-21 资料定界一个都不能少。"""
+    kb.index("notes", "随访须知.md", DOC_A)
+    role_knowledge_scopes_ctx.set(("notes",))
+    monkeypatch.setattr(kb._embedder, "embed", _kill_embed)
+    out = search_tool.invoke({"query": "复查频率"})
+    assert "降级" in out, f"必须点名降级：{out}"
+    assert "随访须知.md" in out, out
+    assert "知识库暂不可用" not in out, "字面命中了就不是'查不成'"
+    assert out.count("<<<资料 [") == out.count("资料>>>"), "定界不许因降级丢掉"
