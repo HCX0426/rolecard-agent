@@ -95,3 +95,48 @@ def test_chunk_without_choices_does_not_crash() -> None:
     out = _convert({"choices": [], "usage": usage_only})
     assert out is not None
     assert "reasoning_content" not in out.message.additional_kwargs
+
+
+def test_delta_reasoning_lands_in_the_same_key() -> None:
+    """`delta.reasoning` 也要收 —— 这是 OpenAI 兼容端点的**第二个形状**（2026-11-08 实测）。
+
+    命中现场：本地网关（127.0.0.1:18899）的 nemotron 在流式里发 `{"reasoning": "The"}`，
+    而本类原先只认 `reasoning_content`。实测证据（同一条流两种读法）：
+      * 上游**确实在想**：非流式 `usage.completion_tokens_details.reasoning_tokens = 357`，
+        流式 delta 里出现过 `reasoning` 键、累计 412 字；
+      * 而 `ChatOpenAI` 与 `ReasoningAwareChatOpenAI` 跑同一条真流，两者的
+        `additional_kwargs` **都是空** —— 思考到了客户端就被丢掉，界面与检查点一起没有。
+    所以这不是"名单没配"那种可归因于用户配置的形状，是捕获侧少认一个键。
+
+    收进**同一个键**（不是新键）：消费端 `turn.py` 与回放 `api/message_view.py` 都只读
+    `additional_kwargs["reasoning_content"]`，多一个形状就多一处要改的消费者。
+    """
+    out = _convert({"choices": [{"delta": {"reasoning": "先想清楚边界"}, "index": 0}]})
+    assert out is not None
+    assert out.message.additional_kwargs["reasoning_content"] == "先想清楚边界"
+
+
+def test_both_reasoning_shapes_do_not_double_up() -> None:
+    """两个键同时出现时**只取一次**，不能拼成"同一句话两遍"。
+
+    逐块累加靠的是 langchain 的 `merge_dicts` 对这个键做字符串拼接（实测：两块各一段
+    ⇒ 合并后是两段连写）。若这里把 `reasoning_content` 与 `reasoning` 都拼进去，同一段
+    思考会在面板里出现两遍、落库也是两遍 —— 而重复正文正是套话清洗要洗掉的东西。
+    """
+    out = _convert(
+        {"choices": [{"delta": {"reasoning_content": "同一段", "reasoning": "同一段"}, "index": 0}]}
+    )
+    assert out is not None
+    assert out.message.additional_kwargs["reasoning_content"] == "同一段"
+
+
+def test_non_string_reasoning_is_not_mapped() -> None:
+    """`reasoning` 不是字符串（Responses API 那一族的对象形状）⇒ **不收**，别拼坏。
+
+    这个键的累加语义是字符串拼接。塞一个 dict/list 进去，合并时要么 TypeError 炸掉整轮，
+    要么在界面上渲染成 `{'summary': ...}` 那种没人看得懂的东西。宁可不显示。
+    """
+    for value in ({"summary": [{"text": "x"}]}, ["一段", "两段"], 7):
+        out = _convert({"choices": [{"delta": {"reasoning": value}, "index": 0}]})
+        assert out is not None, value
+        assert "reasoning_content" not in out.message.additional_kwargs, value

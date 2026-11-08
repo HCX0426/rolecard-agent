@@ -117,3 +117,25 @@ def test_unrelated_model_error_keeps_generic_detail() -> None:
     assert "key" in model_error_detail(Exception("Error code: 401"))
     # 没锚 → 通用句（宁缺毋滥）
     assert model_error_detail(Exception("something odd")) == _GENERIC_MODEL_FAILURE
+
+
+def test_402_balance_says_recharge_not_try_again() -> None:
+    """402「余额不足」必须有自己那句话（2026-11-08 装机实测）。
+
+    现场：硅基流动那把 key 的账户余额见底，`/chat/completions`、`/embeddings`、`/rerank`
+    三条通路**全部**回 `HTTP 402 {"code":30001,"message":"Sorry, your account balance is
+    insufficient"}`。而 `_STATUS_RE` 抓的是 `Error code: NNN` / `(status code: NNN)` 两种锚，
+    openai 客户端对 4xx 抛的文本是 `Error code: 402` —— 抓得到号，但 `_failure_detail`
+    **没有 402 这一支**，于是落到通用句"请稍后重试或换一种问法"。
+
+    那句在这个形状上是两句废话：重试不会让余额变多，换问法也不会。用户照着做只会反复
+    撞同一堵墙，而唯一有用的动作（去充值/换一把 key）一次都没被说出来。
+    """
+    from rolecard_agent.core.agent.turn import _GENERIC_MODEL_FAILURE
+
+    detail = model_error_detail(
+        Exception("Error code: 402 - Sorry, your account balance is insufficient")
+    )
+    assert detail != _GENERIC_MODEL_FAILURE
+    assert "余额" in detail or "额度" in detail, detail
+    assert "402" in detail, "状态码要留在句子里，好让人对着供应商的账单页找"

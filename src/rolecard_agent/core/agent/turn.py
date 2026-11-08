@@ -110,6 +110,12 @@ def _failure_detail(text: str, status: str | None) -> str:
     """按状态码/连接类信号给出**可行动**的一句话 —— 每条都告诉人下一步去哪儿。"""
     if status == "401" or status == "403":
         return f"模型服务拒绝了凭据（{status}）：到「设置 → 服务」旁的模型页核对这把 key。"
+    if status == "402":
+        # 余额/额度见底（2026-11-08 实测：硅基流动三条通路 chat/embeddings/rerank 全回
+        # `402 {"code":30001,"message":"Sorry, your account balance is insufficient"}`）。
+        # 这一支必须单立：通用的"稍后重试或换一种问法"在这里是**两句废话** —— 重试不会让
+        # 余额变多，换问法也不会，而唯一有用的动作（充值 / 换一把 key / 换后端）一次没说。
+        return "模型服务说这把 key 没额度了（402）：去供应商页面充值，或到「模型」页换一个后端。"
     if status == "429":
         return "模型服务限流（429）：等一会儿再试，或到「服务」页换一个模型。"
     if status == "404":
@@ -482,7 +488,15 @@ def _iter_turn(
             graph_input, config=config, stream_mode=["messages", "updates"]
         ):
             if mode == "messages":
-                yield from _from_message_chunk(payload, guard=guard, usage_seen=usage_seen)
+                # 流式那一路发过思考就把兜底旗立起来 —— 旗子在这里只能由**实际发出**的事件
+                # 置位（`_from_message_chunk` 是独立函数，伸不到这个局部变量）。少了这一手，
+                # 兜底那支会把 committed 上那份**累计后的整段**再发一遍：11-08 实测
+                # 187 块共 1802 字、落库只有 901 字（恰好 2×），最后一块与前面所有块的
+                # 拼接逐字相等。症状是面板里同一段内心戏连写两遍（前端是纯拼接归约）。
+                for event in _from_message_chunk(payload, guard=guard, usage_seen=usage_seen):
+                    if isinstance(event, Thinking):
+                        think_emitted = True
+                    yield event
                 continue
             for node, update in (payload or {}).items():
                 # 冗余计数的增量来源（2026-10-04 审查快照「5 秒贵探针」那条）：每个超步
@@ -527,6 +541,13 @@ def _iter_turn(
                     if committed_think and not think_emitted:
                         think_emitted = True
                         yield Thinking(text=str(committed_think))
+                    # 旗子按**每次模型调用**归位，不按整轮：工具循环里一次用户轮会跑多次
+                    # call_model，上一轮"流式发过了"不能把这一轮的兜底整段吞掉（那会把一个
+                    # 双份缺陷换成一个静默缺陷 —— 第二轮的思考再也不显示，而第二轮常常正是
+                    # 给出最终答案那一次）。判据与 trim_reported 刻意相反：那个是"整轮只报
+                    # 第一次"，因为裁剪数值代表"这一问开始时能看到多少"；这个是"每次各算各的"，
+                    # 因为思考是每次调用自己的产出。
+                    think_emitted = False
                     for call in getattr(committed, "tool_calls", None) or []:
                         yield ToolCall(name=call.get("name"), args=call.get("args") or {})
                     text = text_of(committed)

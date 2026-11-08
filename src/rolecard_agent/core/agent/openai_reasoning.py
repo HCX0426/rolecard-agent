@@ -1,5 +1,5 @@
 """OpenAI 兼容端点的思考（reasoning）捕获 —— SiliconFlow 一族的 `enable_thinking` 开关
-与 `reasoning_content` 增量映射。
+与 `reasoning_content` / `reasoning` 两种增量映射。
 
 为什么要子类化（2026-10-31，用户："对话界面上看不到思考过程了"）：
 
@@ -12,8 +12,24 @@
     `additional_kwargs["reasoning_content"]` 这一个形状（langchain-ollama 放这里），
     所以在这里补上，形状对齐，消费端不改。
 
-**行为是纯增量**：不认识 `reasoning_content` 的响应（非思考模型/没开开关）走 super()
-原样返回；多出来的映射从前是"被丢掉"，不是"被放别处" —— 不存在移位。
+**键有两个，只认一个就会静默失灵（2026-11-08 装机实测补的第二支）**：本机那个 OpenAI 兼容
+网关（nemotron 一族）流式里发的是 `delta.reasoning`，不是 `delta.reasoning_content`。实测
+证据是同一条流的三种读法：非流式 `usage.completion_tokens_details.reasoning_tokens = 357`
+（上游**确实在想**）、流式 delta 里出现过 `reasoning` 键累计 412 字、而 `ChatOpenAI` 与
+本类跑同一条真流两者的 `additional_kwargs` **都是空** —— 思考在客户端被丢掉，界面上没有
+折叠面板，落库也没有（回放读的是同一个键）。这不是"模型没在想"，也不是"名单没配"，
+是这里少认一个键。
+
+**两支都收进同一个键**，不新造形状：`turn.py` 的 thinking 事件与 `api/message_view.py`
+的回放都只读 `additional_kwargs["reasoning_content"]`，多一个键名就多两处消费者要改。
+两键同时出现时只取一次 —— 逐块累加靠的是 langchain `merge_dicts` 对这个键做**字符串拼接**
+（实测两块各一段 ⇒ 合并后连写），都拼就等于同一段思考在面板里出现两遍。
+
+非字符串的 `reasoning`（Responses API 那一族的对象/数组形状）**不收**：这个键的累加语义
+是拼接，塞结构进去要么 TypeError 炸掉整轮，要么在界面上渲染成没人看得懂的东西。宁可不显示。
+
+**行为是纯增量**：不认识 `reasoning_content` / `reasoning` 的响应（非思考模型/没开开关）
+走 super() 原样返回；多出来的映射从前是"被丢掉"，不是"被放别处" —— 不存在移位。
 版本耦合要说清：本类对 langchain-openai 的 chunk 内部形状有依赖（锁定版本见
 requirements-runtime.lock），升级它之后这里要复核。
 
@@ -29,12 +45,15 @@ from typing import Any
 
 from langchain_openai import ChatOpenAI
 
+#: 思考增量的两个键名，**按优先级**取第一个非空者（见模块文档：同一轮里两键同时出现只算一遍）。
+_REASONING_KEYS = ("reasoning_content", "reasoning")
+
 
 class ReasoningAwareChatOpenAI(ChatOpenAI):
-    """把 `delta.reasoning_content` 收进 `additional_kwargs` 的 ChatOpenAI。
+    """把 `delta.reasoning_content` / `delta.reasoning` 收进 `additional_kwargs` 的 ChatOpenAI。
 
-    只为 OpenAI 兼容端点（SiliconFlow 一族）构造；native（Ollama）路径继续走
-    `init_chat_model` —— 那边的思考增量本来就在 `additional_kwargs` 里。
+    只为 OpenAI 兼容端点构造；native（Ollama）路径继续走 `init_chat_model` ——
+    那边的思考增量本来就在 `additional_kwargs` 里。
     """
 
     def _convert_chunk_to_generation_chunk(
@@ -49,9 +68,12 @@ class ReasoningAwareChatOpenAI(ChatOpenAI):
         if generation is None:
             return None
         delta = ((chunk.get("choices") or [{}])[0].get("delta")) or {}
-        reasoning = delta.get("reasoning_content")
-        if reasoning:
-            generation.message.additional_kwargs["reasoning_content"] = reasoning
+        for key in _REASONING_KEYS:
+            reasoning = delta.get(key)
+            # 只收字符串增量：非字符串（Responses 那族的对象/数组）拼进这个键会炸或渲染成乱码。
+            if isinstance(reasoning, str) and reasoning:
+                generation.message.additional_kwargs["reasoning_content"] = reasoning
+                break
         return generation
 
 
