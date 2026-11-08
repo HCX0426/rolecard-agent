@@ -67,12 +67,22 @@ def test_operator_denial_carries_the_chinese_reason(
 def test_rate_limited_response_is_json_with_retry_after(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """超额度 → 429 同样是 JSON，`Retry-After` 头还在（前端从此读得到它）。"""
+    """超额度 → 429 同样是 JSON，`Retry-After` 头还在（前端从此读得到它）。
+
+    时间源冻结（`test_ratelimit` 那族同一条纪律）：窗口号是 `int(stamp // 60)`，两发请求
+    只要跨过真实墙钟的整分钟边界，第二发就落进新窗口拿到新配额 → 期待 429 拿到 404。
+    2026-11-08 全量门禁就是这么赌输一次的。冻结值刻意不取整分钟（`1_000_000 % 60 = 40`），
+    于是 `Retry-After` 算出 20 而不是被 `or 1` 兜底 —— 下面那句 `>= 1` 量的仍是真实余量。
+    """
     monkeypatch.setenv("AUTH_MODE", "on")
     monkeypatch.setenv("AUTH_CREDENTIALS", "alice:pw")
     monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "1")
     monkeypatch.setenv("RATE_LIMIT_PATHS", "/api/chat")
-    c = TestClient(create_app(sqlite_path=tmp_path / "app.db"), client=("203.0.113.9", 50000))
+    frozen: float = 1_000_000.0
+    c = TestClient(
+        create_app(sqlite_path=tmp_path / "app.db", limiter_clock=lambda: frozen),
+        client=("203.0.113.9", 50000),
+    )
     body = {"thread_id": "t", "text": "hi"}
     auth = ("alice", "pw")
     c.post("/api/chat", json=body, auth=auth)  # 第一发占额度

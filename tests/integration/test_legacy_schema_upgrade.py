@@ -199,7 +199,7 @@ def test_legacy_extra_columns_survive(tmp_path: Path) -> None:
     没有它们。补列器只管补缺，不管理赔 —— 删列要走显式整表重建（core/storage/migrations.py）。
 
     2026-11-07 起那张表**整体退役**（它所属的域包被物理删除），于是这条判据多出一个
-    更硬的半边：退役表的旧列随表一起消失（`shape.drop_domain_private_tables`），而**别的**
+    更硬的半边：退役表的旧列随表一起消失（`shape.rip_domain_packages`），而**别的**
     表上那些"声明里没有的旧列"照旧留着 —— "不随手删列"这条纪律不能被退役步带歪。
     """
     conn = _build_legacy("14cb9db", tmp_path / "app.db")

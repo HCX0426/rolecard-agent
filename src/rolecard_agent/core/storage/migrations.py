@@ -322,18 +322,58 @@ def _drop_service_policy(conn: SqlConnection) -> None:
     conn.execute("DROP TABLE IF EXISTS service_policy")
 
 
-def _drop_domain_private_tables(conn: SqlConnection) -> None:
-    """代码侧域包被物理删除后，它们私有的两张表不再是声明态 → DROP（同一先例）。
+#: 这一步的"已经清过"标记（`kernel_meta`，与 `service_endpoints_seeded` 同一族）。
+#:
+#: **为什么必须有**：没有它，这一步每次开机都跑，而用户从 2026-11-07 起可以在资料页
+#: 亲手建一个叫 `health` 的域 —— 那下一次开机就会被这里删掉，等于"用户建的东西被代码
+#: 悄悄回收"，正是这次要消灭的那类两套真相的反方向版本。判据用形状（"私有表还在不在"）
+#: 也不够：实测本机就出现过"表已被上一版删掉、plugin 行还留着"的半清理状态，形状判据
+#: 对它永远为假，幽灵页签就再也清不掉。所以判据是"这台机器有没有过一次完整清理"。
+DOMAIN_RIP_FLAG = "domain_packages_ripped"
 
-    为什么点名而不是通用化：`plugin` 行与 `domain_data` 记录**不动** —— 域包删掉之后，
-    这两个 id 就退化成像用户自己新建的纯数据域（通用记录通路 `/api/domains/{id}/records`
-    本就按 domain_data 服务任何名字），删不删归用户在资料页点；而这两张私有表背后一行
-    代码都没有了，留着就是没人管的孤儿。子表先删（FK 指向父表，与当年建表的反向）。
-    重复跑零伤害。取舍要写清：若将来某个域**重新**声明同名表，这一步会在 DDL 之后把它
-    一起删掉 —— 与 `shape.drop_service_policy` 同一处已知取舍（历史清理步不复用名字）。
+
+def _domain_rip_pending(conn: SqlConnection) -> bool:
+    """这台机器的存量库还没做过这次域包清理吗（跑过一次就永久不再进）。"""
+    row = conn.execute("SELECT 1 FROM kernel_meta WHERE key = ?", (DOMAIN_RIP_FLAG,)).fetchone()
+    return row is None
+
+
+def _rip_domain_packages(conn: SqlConnection) -> None:
+    """代码侧域包被物理删除后，它们留下的三种残影一起清掉（一次性，见 `_domain_rip_pending`）。
+
+    ① 两张私有表不再是声明态 → DROP（子表先删，FK 指向父表，与当年建表的反向）；
+    ② `plugin` 里那两个播种行 → DELETE；
+    ③ 它们名下的 `domain_data` 记录 → DELETE。
+
+    **为什么 ② 可以点名删而不违反"域清单归用户"**：「＋ 新建域」是 2026-11-07 才有的
+    功能（资料页 + `POST /api/settings/domains`），在那之前 `plugin` 行**只可能**来自开机
+    播种 —— 用户从来没有能力亲手建出一个叫这两个名字的域。所以这两行不是用户的选择，
+    是上一版代码留下的印记；留着就是界面上挂着页签、背后一行代码都没有的两套真相
+    （0.6.2 装过一次再升上来的机器实测就是这样：表被 ① 删了、页签还在）。
+    反过来，**清理跑过之后**用户再建的同名域就是他的东西，本函数此后不再执行。
+
+    ③ 跟着 ② 走是同一条口径：资料页「删除当前域」删名字就连带删记录
+    （`DomainDataService.drop_domain_records`），不许出现"清单里没这个名字、库里还堆着
+    它的记录"。
+
+    取舍要写清：若将来某个域**重新**声明同名表/同名 id，而它的库恰好从没跑过这一步
+    （全新库除外），这里会在 DDL 之后把它删掉 —— 与 `shape.drop_service_policy` 同一处
+    已知取舍（历史清理步不复用名字，且一次性）。词表那侧拦不住这里：`core no domain
+    token` 的 tokens 由域目录与私有表推导，出厂域清空后是空集，所以这些名字写在本函数
+    里不会红 —— 纪律靠这段注释自陈。
     """
     conn.execute("DROP TABLE IF EXISTS medical_index")
     conn.execute("DROP TABLE IF EXISTS medical_report")
+    conn.execute("DELETE FROM domain_data WHERE domain IN ('finance', 'health')")
+    conn.execute("DELETE FROM plugin WHERE plugin_id IN ('finance', 'health')")
+    conn.execute(
+        "INSERT INTO kernel_meta (key, value, updated_at) VALUES (?, '1', CURRENT_TIMESTAMP) "
+        "ON CONFLICT(key) DO UPDATE SET value = '1', updated_at = CURRENT_TIMESTAMP",
+        (DOMAIN_RIP_FLAG,),
+    )
+    # 自己收口（与 `_backfill_service_endpoint_owner` 那一族同一条纪律）：这一步是"删用户的
+    # 东西"，半途死掉绝不能留下"表没了、行还在"的半清理状态 —— 那正是这次要修的 bug 形状。
+    conn.commit()
 
 
 def _upgrade_token_usage_pk(conn: SqlConnection) -> None:
@@ -593,7 +633,13 @@ SHAPE_STEPS: tuple[Step, ...] = (
     Step(id="shape.role_proactive_state_pk", run=_upgrade_role_proactive_state_pk),
     Step(id="shape.ensure_role_memory", run=_ensure_role_memory),
     Step(id="shape.drop_service_policy", run=_drop_service_policy),
-    Step(id="shape.drop_domain_private_tables", run=_drop_domain_private_tables),
+    # 一次性（check 见 `_domain_rip_pending`）：跑过就在 kernel_meta 立旗，此后开机不再执行
+    # —— 否则用户自己新建的同名域会被回收。
+    Step(
+        id="shape.rip_domain_packages",
+        run=_rip_domain_packages,
+        check=_domain_rip_pending,
+    ),
     Step(id="shape.token_usage_day_pk", run=_upgrade_token_usage_pk),
     Step(id="shape.rebuild_service_endpoint", run=_rebuild_legacy_service_endpoint),
     Step(id="shape.service_endpoint_owner", run=_backfill_service_endpoint_owner),
