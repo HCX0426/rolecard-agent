@@ -37,9 +37,12 @@ DEFAULT_ROLE_ID = "general_assistant"
 
 # 通用助手的基础内核工具（2026-09-18 用户反馈：默认角色不该是纯对话，要像市面上的
 # AI agent 一样能用基础能力）。只含**与领域无关**的内核工具：联网、工作区文件读写、
-# 多模型比对、部署信息。刻意不含 search_knowledge（那是"已授权知识作用域"的检索，
-# 通用助手没声明作用域，配了也搜不到，还会让用户误以为它有档案知识）与任何域工具
-# （需要领域能力请切对应的域角色）。
+# 多模型比对、部署信息、知识库检索。search_knowledge 在内（2026-11-09 拍板收口
+# R102-37 的反向覆盖 WARN）：本卡**声明了** `knowledge_scopes`（下面的上传库），提示词
+# 与描述也对用户承诺了"上传完直接提问" —— 作用域是"能看哪些库"，工具是"伸手去查"，
+# 白名单少了这半边等于承诺了却给不了。它不走 `run_command` 那种审批门豁免：检索是只读
+# 且按作用域网闸的（无作用域时工具自己在调用侧拒绝），配了但没作用域只是空转，不会
+# 越权。域工具仍然刻意不接（需要领域能力请切对应的域角色）。
 GENERAL_ASSISTANT_TOOLS = [
     "web_search",
     "web_fetch",
@@ -49,13 +52,14 @@ GENERAL_ASSISTANT_TOOLS = [
     "fs_write",
     "compare_model_answers",
     "memory_save",
+    "search_knowledge",
     "list_domains",
     "list_roles",
 ]
 
 BUILTIN_ROLES: tuple[RoleCardCreate, ...] = (
-    # 默认角色：基础内核工具（联网 / 工作区文件 / 多模型比对），不接领域工具与检索
-    # 作用域（用户 2026-09-18：默认角色不该"纯对话"，要能编辑文档、查资料）。
+    # 默认角色：基础内核工具（联网 / 工作区文件 / 多模型比对 / 上传库检索），不接领域
+    # 工具（用户 2026-09-18：默认角色不该"纯对话"，要能编辑文档、查资料）。
     RoleCardCreate(
         role_id="general_assistant",
         role_name="通用助手",
