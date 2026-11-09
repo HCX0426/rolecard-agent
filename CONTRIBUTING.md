@@ -211,7 +211,7 @@ onnxruntime）。现在维持隔离的两条理由是选择：运行树不该带
 > 11×），包集逐条比对零缺包零版本差异，uv 装出的 venv 上 pytest / 一致性 70/70 /
 > `create_app` 全部真跑通。**本地开发路径（README / install.bat / Dockerfile / 你自己的
 > `.venv`）仍用 pip**：锁的契约本来就是"pip 装得上"，`lock-refresh` 那两条验证作业也照旧
-> 用 pip（那是它的职责）。P1-12 钉的是**锁这个产物与"按锁安装"**，安装器不是契约面 ——
+> 用 pip（那是它的职责）。那条决议钉的是**锁这个产物与"按锁安装"**，安装器不是契约面 ——
 > 那条决策的备注里原话就是「其定案理由『本机无 uv』已不成立」。`installer scope parity`
 > 那条尺子认的是"被认识的安装器 verb"（`_INSTALL_VERBS`），换第三个安装器时它会红，
 > 提醒你把 verb 登记进去 —— 不要让它靠子串侥幸通过。
@@ -258,7 +258,7 @@ pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
   CI / 镜像 / 打包臂只从锁安装；镜像与锁的覆盖关系钉在 `check_consistency.py` 的
   `LOCK_SURFACES`，由 `lockfile parity` 尺子逐约束对账。
 - **数据库有迁移，别再写"删库重建"**（本条 2026-09-25 订正"v1 不做迁移"；2026-10-02 再订正：
-  下面三句教的是上一代机制——`R102-30`）。现行机制分两层：
+  下面三句教的是上一代机制——2026-10-02 订正）。现行机制分两层：
   ① **列级迁移全部声明驱动**：`storage/db.py::reconcile_columns` 按 `core/schema.sql` 与
   `domains/*/schema.sql` 的声明补列（**核心表与域表都覆盖**），bootstrap 在跑 DDL 前后各调一次。
   加列通常**只改 schema 声明一处**，不用手写 ALTER。
@@ -266,9 +266,9 @@ pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
   整表重建与搬层各自带前置 DROP 与显式事务）。
   **仍然要三处一起改的只剩一种**：`model_settings.py::migrate_to_provider_layers` 里那份
   `model_backend__layers` 内联 DDL（它抄了 schema 的十列，漏改它会在老库搬层时炸
-  `no such column`）——分叉已由一致性断言 `shape migration DDL` 看住（`R102-11`），改列时两边
+  `no such column`）——分叉已由一致性断言 `shape migration DDL` 看住，改列时两边
   一起改、改漏当场红。"从老形状库跑 bootstrap 再比列集合"的测试在
-  `tests/integration/test_legacy_schema_upgrade.py`（`R26-04` 补的那条门禁）。
+  `tests/integration/test_legacy_schema_upgrade.py`。
 
 ### 8.6 不要做的事
 
