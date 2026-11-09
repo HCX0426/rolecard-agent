@@ -981,29 +981,13 @@ def _shape(conn: sqlite3.Connection) -> dict[str, object]:
     }
 
 
-@pytest.mark.parametrize("commit", sorted(LEGACY_SHAPES))
-def test_upgraded_legacy_db_converges_to_the_fresh_bootstrap_shape(
-    commit: str, tmp_path: Path
-) -> None:
-    """升级路径的实弹演练：降级老库经 bootstrap 后**与 fresh 库逐列一致**。
+def _shape_problems(fresh_shape: dict[str, object], upgraded_shape: dict[str, object]) -> list[str]:
+    """两座库的形状差异清单（`_shape` 之间逐项比；空 = 收敛）。
 
-    为什么单立这条：`SCHEMA_VERSION` 从前只有**拒启**语义（库比代码新 → loud 拒启），
-    而"升上来的库到底对不对"只对着**声明**比过列名（`test_upgraded_columns_match_declaration`
-    那条）—— 声明是理想态，列属性、表集合、索引都不在它的比较面里。这条两边都是**真跑
-    一遍 bootstrap 的库**：fresh 的路径与老库升上来的路径只差起点，终点必须收敛到同一个
-    形状（例外只有 `_shape` docstring 与 `LEGACY_EXTRA_COLUMNS` 写明的两类）。
-
-    失败信息逐项列（这条的输出会很长，别再倒整库进去）。
+    从实弹演练那条里抽出来当**公共判据**：判"升上来的库 == 新库首建"的起点不止一种
+    （老 fixture、被旧版迁移代码重建过的库、…），起点各自造，终点只认这一个比法。
+    失败信息逐项列（输出会很长，别再倒整库进去）。
     """
-    fresh_conn = connect(tmp_path / "fresh.db")
-    bootstrap(fresh_conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
-
-    legacy = _build_legacy(commit, tmp_path / "old.db")
-    before = int(legacy.execute("PRAGMA user_version").fetchone()[0])
-    assert before < SCHEMA_VERSION, f"{commit} 的 fixture 不是降级库（user_version={before}）"
-    bootstrap(legacy, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
-
-    fresh_shape, upgraded_shape = _shape(fresh_conn), _shape(legacy)
     problems: list[str] = []
     fresh_ver, upgraded_ver = fresh_shape["user_version"], upgraded_shape["user_version"]
     if fresh_ver != upgraded_ver:
@@ -1033,9 +1017,121 @@ def test_upgraded_legacy_db_converges_to_the_fresh_bootstrap_shape(
         problems.append(
             f"索引分叉：fresh={fresh_shape['indexes']} upgraded={upgraded_shape['indexes']}"
         )
+    return problems
+
+
+@pytest.mark.parametrize("commit", sorted(LEGACY_SHAPES))
+def test_upgraded_legacy_db_converges_to_the_fresh_bootstrap_shape(
+    commit: str, tmp_path: Path
+) -> None:
+    """升级路径的实弹演练：降级老库经 bootstrap 后**与 fresh 库逐列一致**。
+
+    为什么单立这条：`SCHEMA_VERSION` 从前只有**拒启**语义（库比代码新 → loud 拒启），
+    而"升上来的库到底对不对"只对着**声明**比过列名（`test_upgraded_columns_match_declaration`
+    那条）—— 声明是理想态，列属性、表集合、索引都不在它的比较面里。这条两边都是**真跑
+    一遍 bootstrap 的库**：fresh 的路径与老库升上来的路径只差起点，终点必须收敛到同一个
+    形状（例外只有 `_shape` docstring 与 `LEGACY_EXTRA_COLUMNS` 写明的两类）。
+
+    失败信息逐项列（这条的输出会很长，别再倒整库进去）。
+    """
+    fresh_conn = connect(tmp_path / "fresh.db")
+    bootstrap(fresh_conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
+
+    legacy = _build_legacy(commit, tmp_path / "old.db")
+    before = int(legacy.execute("PRAGMA user_version").fetchone()[0])
+    assert before < SCHEMA_VERSION, f"{commit} 的 fixture 不是降级库（user_version={before}）"
+    bootstrap(legacy, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
+
+    problems = _shape_problems(_shape(fresh_conn), _shape(legacy))
     assert not problems, f"{commit} 升级未收敛（实弹演练）：" + "；".join(problems)
     fresh_conn.close()
     legacy.close()
+
+
+#: 2026-11-04 **之前**那版 B2/B1a 重建留下的形状：`user_id` 列在，但 DDL 只写了
+#: `NOT NULL`（`DEFAULT` 那半句当时还没写）。这是真实装过一段历史代码的机器的库形 ——
+#: 不是老 fixture 那种"还没有这列"的起点。
+OLD_REBUILD_SQL = """
+DROP TABLE role_proactive_state;
+CREATE TABLE role_proactive_state (
+ user_id TEXT NOT NULL, role_id TEXT NOT NULL, affinity REAL NOT NULL DEFAULT 0.0,
+ last_interaction_utc TIMESTAMP, calibration_json TEXT, open_threads TEXT,
+ open_threads_at TIMESTAMP, recall_at TIMESTAMP,
+ updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ PRIMARY KEY (user_id, role_id));
+DROP TABLE token_usage_day;
+CREATE TABLE token_usage_day (
+ day TEXT NOT NULL, user_id TEXT NOT NULL, backend TEXT NOT NULL,
+ calls INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0,
+ completion_tokens INTEGER NOT NULL DEFAULT 0, reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+ unreported INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, user_id, backend));
+"""
+
+
+def _old_rebuild_db(tmp_path: Path) -> tuple[Path, sqlite3.Connection]:
+    """造出"被旧版迁移代码重建过"的库：列齐、主键对，唯独 user_id 没有默认值。
+
+    老行按当时的语义回填本机主人 —— 重建这一步往后不许把它们改成别人。
+    """
+    db = tmp_path / "old_rebuild.db"
+    conn = connect(db)
+    bootstrap(conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
+    conn.executescript(OLD_REBUILD_SQL)
+    conn.execute(
+        "INSERT INTO role_proactive_state (user_id, role_id, affinity)"
+        " VALUES ('local-user', 'she', 2.5)"
+    )
+    conn.execute(
+        "INSERT INTO token_usage_day (day, user_id, backend, calls)"
+        " VALUES ('2026-11-01', 'local-user', 'deepseek', 3)"
+    )
+    conn.commit()
+    return db, conn
+
+
+def test_a_db_rebuilt_by_the_old_migration_code_converges(tmp_path: Path) -> None:
+    """A1 的**分叉起点**：旧版重建写法留下的库升一次，必须与新库首建**逐列一致**。
+
+    为什么必须单立这条（老 fixture 那条覆盖不到）：判"老形态"的两把尺 —— `_cols` 问
+    "有没有这列"、补列器只补**缺列** —— 对"列在、默认值没带"的库同时沉默。于是从
+    2026-11-04 那次重建修正之前活到今天的机器，`role_proactive_state.user_id` /
+    `token_usage_day.user_id` 的 `dflt_value` 是 NULL，而新库是 `'local-user'`：
+    同一条不带 user_id 的 INSERT，新库落得下、这台机器 NOT NULL 违规 —— "新库能跑的
+    SQL 老库跑不了"正是这条审查项要消灭的形状。声明是事实面，重建只是把事实写回库里。
+    """
+    fresh_conn = connect(tmp_path / "fresh.db")
+    bootstrap(fresh_conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
+
+    db, conn = _old_rebuild_db(tmp_path)
+    # 夹具自证：起点确实是"列在、默认值没带"那一版（否则这条测的就不是分叉了）
+    before = _shape(conn)["columns"]
+    assert isinstance(before, dict)
+    for table in ("role_proactive_state", "token_usage_day"):
+        assert before[table]["user_id"][2] == "None", (
+            f"{table}.user_id 起点不该带默认值，改了写法这条就测不到分叉了"
+        )
+
+    bootstrap(conn, enabled_domains=DOMAINS, plan=MIGRATION_PLAN)
+
+    problems = _shape_problems(_shape(fresh_conn), _shape(conn))
+    assert not problems, "旧版重建过的库升完没收敛到新库首建的形状：" + "；".join(problems)
+
+    # 行为那半：同一条**不带 user_id** 的 INSERT，两座库都要落得下（分叉的用户侧症状）。
+    fresh_conn.execute("INSERT INTO role_proactive_state (role_id) VALUES ('probe_fresh')")
+    conn.execute("INSERT INTO role_proactive_state (role_id) VALUES ('probe_upgraded')")
+    probe_day = "INSERT INTO token_usage_day (day, backend) VALUES ('2026-11-02', 'deepseek')"
+    fresh_conn.execute(probe_day)
+    conn.execute(probe_day)
+
+    # 老行的归属不能被这次纠偏改掉（回填语义是"当时的主人"，不是"重建时的常量"）。
+    kept = conn.execute(
+        "SELECT user_id, affinity FROM role_proactive_state WHERE role_id = 'she'"
+    ).fetchone()
+    assert kept is not None and str(kept[0]) == "local-user" and float(kept[1]) == 2.5, (
+        f"纠偏顺手改了老行的数据：{tuple(kept) if kept else None}"
+    )
+    fresh_conn.close()
+    conn.close()
 
 
 def test_user_version_advance_is_traced_exactly_once(

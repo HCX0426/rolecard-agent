@@ -2,7 +2,8 @@
 
 为什么存在（2026-10-04 审查快照 P1-6「迁移与服务逻辑 split-brain」）：从前形状迁移的
 **引擎**住在 `storage/db.py`（`_migrate` 两百多行业务 SQL）、**搬层**那一步住在
-`core/model_settings.py`、暂存表名与审批清重又散在 storage 的 bootstrap 序列里 —— 一次
+`core/model_settings`（当时还是个单文件模块，后来才拆成包）、暂存表名与审批清重又散在
+storage 的 bootstrap 序列里 —— 一次
 schema 变更要在两个包里找代码，而 storage 里长满了业务表名（`core/ no domain token` 管
 core 不管 storage，那半边一直没有尺子）。
 
@@ -36,6 +37,7 @@ from rolecard_agent.storage.db import (
     SqlConnection,
     core_schema_path,
     migrate_event,
+    quote_ident,
     repair_stranded_rebuild,
     table_columns,
 )
@@ -204,19 +206,25 @@ def _backfill_model_backend_history_columns(conn: SqlConnection) -> None:
             conn.execute(f"ALTER TABLE model_backend ADD COLUMN {name} {ddl}")
 
 
-def _ensure_role_proactive_state(conn: SqlConnection) -> None:
-    """关系驱动主动开口（架构总览 §5）：per-role 状态表（幂等建表）。
+def _user_id_default_is_missing(conn: SqlConnection, table: str) -> bool:
+    """这张表的 `user_id` 列**没带**声明里那个默认值吗（列不存在也算：那是"缺列"那半边）。
 
-    这张表的列仍由 `reconcile_columns` 补（不在 `SHAPE_TABLES` 里），只有
-    **主键换 (user_id, role_id)** 是形状迁移，走下面那一步的重建。
+    为什么必须多问这一句：判"老形态"的两把尺都只看**列在不在** —— `_cols` 的集合比、
+    以及补列器（`storage.db.reconcile_columns` 只补缺列、**永不纠偏已有列**）。于是对
+    "列在、`DEFAULT` 没写"的库它们同时沉默：2026-11-04 之前那两处重建写的就是
+    `user_id TEXT NOT NULL`，那批装过旧版代码的机器此后 `dflt_value` 恒为 NULL，而新库
+    首建是 `'local-user'` —— 同一条不带 user_id 的 INSERT，新库落得下、这台机器
+    NOT NULL 违规（架构审查 A1：老库升上来 ≠ 新库首建的全部剩余来源）。
+
+    期望值**由 `DEFAULT_USER_ID` 派生**而不是再抄一次 schema.sql 的字面量：
+    `tests/unit/test_identity_scoping.py` 已经钉住"schema 里的那个字面量 == 本常量"，
+    沿它走就是同一条事实面。
     """
-    if "affinity" not in _cols(conn, "role_proactive_state"):
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS role_proactive_state ("
-            " role_id TEXT PRIMARY KEY, affinity REAL NOT NULL DEFAULT 0.0,"
-            " last_interaction_utc TIMESTAMP, calibration_json TEXT,"
-            " updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
-        )
+    want = f"'{DEFAULT_USER_ID}'"
+    for row in conn.execute(f"PRAGMA table_info({quote_ident(table)})"):
+        if str(row[1]) == "user_id":
+            return str(row[4]) != want
+    return True
 
 
 def _upgrade_role_proactive_state_pk(conn: SqlConnection) -> None:
@@ -224,7 +232,10 @@ def _upgrade_role_proactive_state_pk(conn: SqlConnection) -> None:
 
     `role_card` 的主键将来要改成 (user_id, role_id)（第二个身份也可能建一张同名卡），
     状态表不跟着换就撞行。整表重建 + 老行归属实例主人（默认部署 = 'local-user'，
-    与 base/identity.DEFAULT_USER_ID 一字不差）。判"老形态"用有没有 user_id 列。
+    与 base/identity.DEFAULT_USER_ID 一字不差）。判"要不要动"有两条，同一次重建收口：
+    ① 没有 user_id 列 —— 多租户 B2 老形态（老行的主人由常量回填，绑参数）；
+    ② 列在、但默认值没带 —— 2026-11-04 之前那版重建的遗留（`_user_id_default_is_missing`），
+       这时老行主人**原样带过去**（他们的归属是"当时的回填"，不是"这次重建的常量"）。
 
     顺带把**主动会话线程 id 改成带身份**（s_proactive_<role> → s_proactive_<uid>_<role>）：
     同一个 role_id 将来可以属于两个人，线程 id 不带身份就会让两人的主动会话互相覆盖。
@@ -232,16 +243,24 @@ def _upgrade_role_proactive_state_pk(conn: SqlConnection) -> None:
     checkpoints/writes 的 thread_id 一起改（那是她主动说过的历史，不改就断了上下文）。
     幂等：新 id == 旧 id（已带身份）的不动；新库没有 legacy 行一轮跑过。
     """
-    if "user_id" in _cols(conn, "role_proactive_state"):
+    cols = _cols(conn, "role_proactive_state")
+    # 只问"默认值缺不缺"，不再补一句"user_id 列在不在"：缺列本来就算缺（helper 的契约，
+    # 由它的 `return True` 兜住），再合一句等于把同一条判据写两处。
+    if not _user_id_default_is_missing(conn, "role_proactive_state"):
         return
     # 滞留暂存表的现场自愈在 pre_ddl 阶段已经做过（那里才赶得在 schema DDL 前面）。
     # 前置 DROP：与 B1b 那一处同一个理由（`R28-15`，红档）。这一步死在半路的话，
     # 残留的空 `__b2` 会让下次启动的 CREATE 报 `already exists`，bootstrap 永久打不开。
     # 整段重建（含下面的线程 id 换名）包进**一个显式事务**：DDL 在 legacy autocommit
     # 下逐句落盘，显式 BEGIN 让"半路死"整体回滚 —— DROP→RENAME 之间的窗口随事务消失。
+    repairing = "user_id" in cols  # ②：列在只是没默认值 → 主人原样带过去
     conn.commit()
     conn.execute("BEGIN IMMEDIATE")
-    migrate_event("role_proactive_state 主键重建开始（B2，显式事务）")
+    migrate_event(
+        "role_proactive_state user_id 默认值纠偏（老版重建缺 DEFAULT）"
+        if repairing
+        else "role_proactive_state 主键重建开始（B2，显式事务）"
+    )
     conn.execute("DROP TABLE IF EXISTS role_proactive_state__b2")
     conn.execute(
         "CREATE TABLE role_proactive_state__b2 ("
@@ -265,11 +284,13 @@ def _upgrade_role_proactive_state_pk(conn: SqlConnection) -> None:
         "INSERT INTO role_proactive_state__b2 (user_id, role_id, affinity,"
         " last_interaction_utc, calibration_json, open_threads, open_threads_at, recall_at,"
         " updated_at)"
-        # 老行归属实例主人：DML 里能挂**绑定参数**，所以绑 `DEFAULT_USER_ID` 而不是拼字面量
-        # —— 拼是 DDL 那一步的不得已（`DEFAULT` 挂不了参数），能绑却还去拼就是自找漂移面。
-        " SELECT ?, role_id, affinity, last_interaction_utc, calibration_json,"
-        " open_threads, open_threads_at, recall_at, updated_at FROM role_proactive_state",
-        (DEFAULT_USER_ID,),
+        # 纠偏那一支（列在、只是缺默认值）：主人原样带过去；缺列那一支才是"老行归属实例
+        # 主人"，绑 `DEFAULT_USER_ID` —— DML 能挂**绑定参数**就绝不去拼字面量（拼是上面
+        # DDL 那一步的不得已：`DEFAULT` 挂不了参数），能绑却还去拼就是自找漂移面。
+        f" SELECT {'user_id' if repairing else '?'}, role_id, affinity,"
+        " last_interaction_utc, calibration_json, open_threads, open_threads_at, recall_at,"
+        " updated_at FROM role_proactive_state",
+        () if repairing else (DEFAULT_USER_ID,),
     )
 
     conn.execute("DROP TABLE role_proactive_state")
@@ -286,35 +307,11 @@ def _upgrade_role_proactive_state_pk(conn: SqlConnection) -> None:
         # 判据是库的形状，不是这段代码记得列了几张。
         rename_thread_id(conn, old=tid, new=f"s_proactive_{uid}_{tid[len('s_proactive_') :]}")
     conn.commit()  # 重建原子落盘（`R102-53`）
-    migrate_event("role_proactive_state 主键重建完成（含线程 id 换名）")
-
-
-def _ensure_role_memory(conn: SqlConnection) -> None:
-    """role_memory（"一坨文本"时代的记忆表）与 role_memory_item（可逐条退役的条目）。
-
-    老库里的 role_memory / memory:facts 两块 blob **不迁移**（用户 2026-09-20："旧的记忆
-    数据也可以不要了"）—— 旧表原样留着不删列（迁移纪律），只是不再是事实面。
-    """
-    if "value" not in _cols(conn, "role_memory"):
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS role_memory ("
-            " role_id TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '',"
-            " updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
-        )
-    if "text" not in _cols(conn, "role_memory_item"):
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS role_memory_item ("
-            " id INTEGER PRIMARY KEY AUTOINCREMENT, role_id TEXT NOT NULL,"
-            " text TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'manual',"
-            " pinned INTEGER NOT NULL DEFAULT 0, hit_count INTEGER NOT NULL DEFAULT 0,"
-            " last_hit_at TIMESTAMP, invalidated_at TIMESTAMP, superseded_by INTEGER,"
-            " created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
-            " updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_role_memory_item_bucket ON role_memory_item"
-            "(role_id, invalidated_at, pinned, id DESC)"
-        )
+    migrate_event(
+        "role_proactive_state user_id 默认值纠偏完成（老版重建的缺省已补回）"
+        if repairing
+        else "role_proactive_state 主键重建完成（含线程 id 换名）"
+    )
 
 
 def _drop_service_policy(conn: SqlConnection) -> None:
@@ -381,15 +378,25 @@ def _upgrade_token_usage_pk(conn: SqlConnection) -> None:
 
     补列改不了主键，也没有"PRAGMA 改 PK"这回事 —— 只能整表重建。旧行全部归属本机那份
     （语义 = 上线前测的本机用量，不是谁漏账）；新行由 `usage.record_usage(user_id=…)` 按
-    花谁的 key 落格。判断"旧形态"用有没有 user_id 列（与列级迁移同口径）。
+    花谁的 key 落格。判"要不要动"有两条，同一次重建收口（与 B2 那一步同构）：
+    ① 没有 user_id 列 —— 旧形（旧行主人绑 `DEFAULT_USER_ID`）；
+    ② 列在、但默认值没带 —— 2026-11-04 之前那版重建的遗留（`_user_id_default_is_missing`），
+       老行主人原样带过去。
     """
-    if "user_id" in _cols(conn, "token_usage_day"):
+    cols = _cols(conn, "token_usage_day")
+    # 与 B2 那一步同一条口径：缺列也算缺，helper 自己兜（别把判据合写两处）。
+    if not _user_id_default_is_missing(conn, "token_usage_day"):
         return
     # 前置 DROP（R28-15 同族）+ 显式事务包整段重建（`R102-53`）：
     # "半路死"要么整体回滚、要么在下一次开机被早期的自愈接住。
+    repairing = "user_id" in cols
     conn.commit()
     conn.execute("BEGIN IMMEDIATE")
-    migrate_event("token_usage_day 主键重建开始（B1a，显式事务）")
+    migrate_event(
+        "token_usage_day user_id 默认值纠偏（老版重建缺 DEFAULT）"
+        if repairing
+        else "token_usage_day 主键重建开始（B1a，显式事务）"
+    )
     conn.execute("DROP TABLE IF EXISTS token_usage_day_new")
     conn.execute(
         "CREATE TABLE token_usage_day_new ("
@@ -406,15 +413,20 @@ def _upgrade_token_usage_pk(conn: SqlConnection) -> None:
     conn.execute(
         "INSERT INTO token_usage_day_new (day, user_id, backend, calls, prompt_tokens,"
         " completion_tokens, reasoning_tokens, unreported)"
-        " SELECT day, ?, backend, calls, prompt_tokens, completion_tokens,"
-        " reasoning_tokens, unreported FROM token_usage_day",
-        (DEFAULT_USER_ID,),
+        # 缺列那一支：老行归属本机那份（绑常量）；纠偏那一支：主人原样带过去。
+        f" SELECT day, {'user_id' if repairing else '?'}, backend, calls, prompt_tokens,"
+        " completion_tokens, reasoning_tokens, unreported FROM token_usage_day",
+        () if repairing else (DEFAULT_USER_ID,),
     )
 
     conn.execute("DROP TABLE token_usage_day")
     conn.execute("ALTER TABLE token_usage_day_new RENAME TO token_usage_day")
     conn.commit()  # 重建原子落盘（`R102-53`）
-    migrate_event("token_usage_day 主键重建完成")
+    migrate_event(
+        "token_usage_day user_id 默认值纠偏完成（老版重建的缺省已补回）"
+        if repairing
+        else "token_usage_day 主键重建完成"
+    )
 
 
 def _rebuild_legacy_service_endpoint(conn: SqlConnection) -> None:
@@ -478,7 +490,7 @@ def _run_provider_layers(conn: SqlConnection) -> None:
     先建的索引跟着表一起没了）。顺序是承重的，所以它必须是注册表里的一步，而不是
     "调用方在 bootstrap 之后自己搬一次"。
 
-    由 `migrate_to_provider_layers`（`core/model_settings.py`）执行；`build_plan` 允许
+    由 `migrate_to_provider_layers`（`core/model_settings/migration.py`）执行；`build_plan` 允许
     调用方替掉这一步的动作（测试注入 / 将来换实现），形状与顺序不动。
     """
     migrate_to_provider_layers(conn)
@@ -629,9 +641,10 @@ SHAPE_STEPS: tuple[Step, ...] = (
         run=_backfill_model_backend_history_columns,
         check=_model_backend_is_legacy,
     ),
-    Step(id="shape.ensure_role_proactive_state", run=_ensure_role_proactive_state),
+    # role_proactive_state / role_memory / role_memory_item **不在这里建表**：表与索引只由
+    # schema DDL 声明（`tests/unit/test_single_table_declaration.py` 钉住"迁移不许再声明"），
+    # 这里只做声明面管不着的形状（主键换名）与退役（DROP）。
     Step(id="shape.role_proactive_state_pk", run=_upgrade_role_proactive_state_pk),
-    Step(id="shape.ensure_role_memory", run=_ensure_role_memory),
     Step(id="shape.drop_service_policy", run=_drop_service_policy),
     # 一次性（check 见 `_domain_rip_pending`）：跑过就在 kernel_meta 立旗，此后开机不再执行
     # —— 否则用户自己新建的同名域会被回收。
