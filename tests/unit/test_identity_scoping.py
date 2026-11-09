@@ -5,13 +5,16 @@
   1. **两个主人各看各的卡** —— 归属过滤不是"传了个参数"，是真的看不见（读、改、删都算）；
   2. **schema 里的默认值与 `DEFAULT_USER_ID` 不许漂** —— 那个字面量是**老库升上来时**
      `ADD COLUMN ... DEFAULT 'local-user'` 用来回填的值。它一旦和常量漂开，老库里的卡
-     就会全体变成"没人看得见"，而症状是"角色列表空了"，没人会往默认值上想；
+     就会全体变成"没人看得见"，而症状是"角色列表空了"，没人会往默认值上想 —— 这半把尺
+     扫 `*.sql`（SQL 的 `DEFAULT` 挂不了绑定参数，只能写字面量）；**另一半** `*.py`
+     不许出现那个字面量（代码能绑常量就必须绑），两条都归这个文件管；
   3. **老库（没有 `user_id` 那一版）升上来之后，原有那些卡对本机主人仍然可见** ——
      零迁移那条路（`storage.db.reconcile_columns`）在真数据上的验收。
 """
 
 from __future__ import annotations
 
+import ast
 import re
 import sqlite3
 from pathlib import Path
@@ -89,7 +92,40 @@ def test_every_schema_user_id_default_matches_the_code_constant() -> None:
             assert m.group(1) == DEFAULT_USER_ID, (
                 f"{sql.name} 的 user_id 默认值与 base.identity 漂开了：{m.group(1)!r}"
             )
-    assert found >= 2, f"只扫到 {found} 处 user_id 默认值，这条守卫该跟着形状走"
+    assert found >= 6, f"只扫到 {found} 处 user_id 默认值，这条守卫该跟着形状走（当前 6 处）"
+
+
+def test_no_python_module_hardcodes_the_local_user_literal() -> None:
+    """`.py` 里不许再出现 `'local-user'` 字面量 —— 只有 `base/identity` 那一个定义点。
+
+    与上面那把尺子是同一句话的两半（A2「三套真值源」的收口）：SQL 那半**只能**写字面量
+    （`DEFAULT` 挂不了绑定参数，由上一条钉住字面量 == 常量），代码这半**能**绑常量就必须
+    绑 —— 从前 `core/storage/migrations.py` 的两处整表重建就硬写过它：常量改了它们不跟，
+    重建出来的库与新库首建当场分叉，而症状是"老库能写、新库不认（或反过来）"，最不像
+    默认值出问题的那一类。`core/storage/migrations.py` 与 `core/model_settings/` 现在
+    全部插值/绑定常量 —— 这条把那件事从"靠记得"变成"不守就红"。
+
+    用 AST 而不是正则：注释与文档串里**解释这段历史**的 `'local-user'`（上面那两处重建的
+    修正说明就写着它）不是字面量，正则会把"修过这个 bug 的注释"判成 bug 本身。
+    """
+    import rolecard_agent.base.identity as identity_module
+
+    definition = Path(identity_module.__file__).resolve()
+    src = Path("src/rolecard_agent")
+    offenders: list[str] = []
+    for py in sorted(src.rglob("*.py")):
+        if py.resolve() == definition:
+            continue
+        tree = ast.parse(py.read_text(encoding="utf-8"))
+        offenders.extend(
+            f"{py.as_posix()}:{node.lineno}"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and node.value == "local-user"
+        )
+    assert not offenders, (
+        "这些地方把本机主人硬写成了字面量（该绑 base.identity.DEFAULT_USER_ID）: "
+        f"{sorted(offenders)}"
+    )
 
 
 def test_an_old_database_gets_the_column_and_keeps_its_cards(tmp_path: Path) -> None:

@@ -58,7 +58,8 @@ def endpoint_key(provider: str, base_url: object) -> tuple[str, str | None]:
 def migrate_to_provider_layers(conn: SqlConnection) -> int:
     """旧形态（每行自带 provider/base_url/api_key/usage）→ 两层 + chat 引用行。幂等。
 
-    由 `storage/db.py::_migrate` 在建表之后调用（那一步已把历史缺列补齐）。判据是
+    由 `core/storage/migrations.py::_run_provider_layers` 在建表之后调用（它前面那几步已把
+    历史缺列补齐）。判据是
     `model_backend.provider_id` 在不在：不在 = 旧库，搬；在 = 已搬过或本来就是新库。
 
     三件事必须同时做，否则配置会**变小**（用户最不能接受的一种错）：

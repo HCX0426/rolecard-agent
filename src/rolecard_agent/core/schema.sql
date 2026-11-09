@@ -117,8 +117,8 @@ CREATE TABLE IF NOT EXISTS agent_reachout (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     -- 归属：这条"她主动找我"是谁的收件箱里的（09-27 轮 M2c）。`id` 是自增整数、可枚举可猜，
     -- 所以按 id 改/删的那几条路径必须带上这一列 —— 否则"知道一个数"就能划掉别人的收件箱。
-    -- 默认值 = 老库升上来时回填的主人，与 `core/identity.DEFAULT_USER_ID` 的一致性由
-    -- `tests/unit/test_identity_scoping.py` 扫全部 schema 钉住。
+    -- 默认值 = 老库升上来时回填的主人，与 `base/identity.DEFAULT_USER_ID` 的一致性由
+    -- `tests/unit/test_identity_scoping.py` 钉住（*.sql 的字面量 + *.py 不许硬写，两条尺子）。
     user_id     TEXT NOT NULL DEFAULT 'local-user',
     role_id     TEXT NOT NULL,             -- 发起主动的角色
     role_name   TEXT,                      -- 展示名冗余（角色被删后仍可读）
@@ -212,12 +212,14 @@ CREATE TABLE IF NOT EXISTS role_memory (
 CREATE TABLE IF NOT EXISTS role_memory_item (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     -- 归属：这条事实是谁的（09-27 轮 M2b）。老库靠默认值回填成本机主人；那个字面量与
-    -- `core/identity.DEFAULT_USER_ID` 不许漂，由 `tests/unit/test_identity_scoping.py` 扫全部
-    -- schema 文件钉住（漂开的症状是"升完级记忆空了"，最不像默认值出问题）。
+    -- `base/identity.DEFAULT_USER_ID` 不许漂，由 `tests/unit/test_identity_scoping.py` 的两把
+    -- 尺子钉住（*.sql 的字面量 + *.py 不许硬写；漂开的症状是"升完级记忆空了"，最不像默认值
+    -- 出问题）。
     user_id        TEXT NOT NULL DEFAULT 'local-user',
     -- 跨机器稳定的身份。上行（把本机数据推到云端）的语义还没拍，但**三条语义都需要它**：
     -- `id` 是本机 AUTOINCREMENT，两台机器会各自长出相同 id 的不同条目，于是"只追加/去重/
-    -- 重放"全部会串成别人的事实。老行的 uid 由 `storage.db._migrate` 就地补 uuid4（幂等）。
+    -- 重放"全部会串成别人的事实。老行的 uid 由 `core/storage/migrations.py::_backfill_memory_item_uid`
+    -- 就地补 uuid4（幂等）。
     uid            TEXT,
     role_id        TEXT NOT NULL,
     text           TEXT NOT NULL,
@@ -267,7 +269,7 @@ CREATE INDEX IF NOT EXISTS idx_role_memory_item_bucket
 -- api_key 都只在组上，模型行只剩"这个模型叫什么"。
 --
 -- api_key 明文存在**本机** demo 库里，这个文件不出机器；GET 端点永不回明文
--- （只回 has_key + 掩码），写侧的往返规则在 core/model_settings.py。
+-- （只回 has_key + 掩码），写侧的往返规则在 core/model_settings/（包）。
 --
 -- **用途不在这里**（usage 列已删）：一行服务谁 = `service_endpoint` 里有没有指向它的
 -- 引用行（含 category='chat'，见 core/services.py）。模型页只读回显 `used_by`，
@@ -323,8 +325,8 @@ CREATE TABLE IF NOT EXISTS model_backend (
     presence_penalty  REAL                          -- 本地 ≥0 / 云端 −2..2
 );
 
--- 索引 `idx_model_backend_provider` 在 storage/db.py::_migrate 里建：搬层会重建本表，
--- 索引必须跟着重建后的形状走（放在这里，旧库的 `CREATE TABLE IF NOT EXISTS` 会跳过建表、
+-- 索引 `idx_model_backend_provider` 在 `core/storage/migrations.py::_create_provider_index` 里建：
+-- 搬层会重建本表，索引必须跟着重建后的形状走（放在这里，旧库的 `CREATE TABLE IF NOT EXISTS` 会跳过建表、
 -- 却仍然执行这条 CREATE INDEX → "no such column: provider_id"）。
 
 -- 模型调用的 token 账（审计「云端 token 与成本累计」）：路由改云端之后，对话/主动开口/记忆提取三条路都花真钱，
@@ -469,14 +471,15 @@ CREATE INDEX IF NOT EXISTS idx_domain_data_domain ON domain_data(domain, user_id
 -- 模型页的 `used_by` 才能一处派生（拆层前它是 model_backend.usage 列，于是同一件事有两个
 -- 家：列说 chat、服务页的序说别的）。**对话默认后端 = category='chat' 第一条启用的引用**，
 -- 回退链 = 其后若干条（运行时截到 MAX_FALLBACKS）；kernel_meta 里不再有 model_default /
--- model_fallbacks（旧值由迁移写进引用行的顺序，见 storage/db.py::_migrate）。
+-- model_fallbacks（旧值由搬层写进引用行的顺序，见 `core/model_settings/migration.py`）。
 --
 -- `user_id`（多租户 B1b，方案 A）：**仅 chat 引用行按人归属** —— 默认/回退链回答的是
 -- "这次对话花谁的 key 由谁定"，跟着 `model_provider` 同族走。其余能力端点（ocr / embedding /
 -- rerank）回答的是"这台机器用什么解析/检索引擎"，永远设备级：`user_id` 保持 NULL，任何
 -- 读路径都不按它过滤。这一列**刻意不 NOT NULL 不给默认**：能力行的 NULL 就是"设备级"这个
--- 语义本身。老库升级由 storage/db.py::_migrate 给 chat 引用行回填本机主人（默认部署 =
--- 'local-user'，不许与 core/identity.DEFAULT_USER_ID 漂开），新 chat 行由写入方显式带主人。
+-- 语义本身。老库升级由 `core/storage/migrations.py::_backfill_service_endpoint_owner` 给 chat
+-- 引用行回填本机主人（默认部署 = 'local-user'，不许与 base/identity.DEFAULT_USER_ID 漂开），
+-- 新 chat 行由写入方显式带主人。
 -- ===========================================================================
 
 CREATE TABLE IF NOT EXISTS service_endpoint (

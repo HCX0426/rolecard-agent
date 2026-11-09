@@ -57,7 +57,7 @@ def _code_strings(path: pathlib.Path) -> list[tuple[int, str]]:
 def check_storage_db_has_no_business_tables() -> None:
     """`storage/db.py` 里不许出现业务表名（2026-10-04 审查快照 P1-6 的验收句）。
 
-    为什么单立这一格：迁移引擎从 `_migrate` 收成 `core/migrations.py` 的步骤注册表、
+    为什么单立这一格：迁移引擎从 `_migrate` 收成 `core/storage/migrations.py` 的步骤注册表、
     retention 策略搬进 `core/retention.py`、`thread_id_carriers` 归 `storage/threads.py`
     之后，**连接 + 声明引擎 + 执行入口**这层在语义上再也不需要点名任何一张表 ——
     剩下的每一处点名都意味着"策略/业务语义偷偷留在了 storage"。
@@ -378,8 +378,8 @@ WRITE_TXN_HELPERS = frozenset(
         # 模块级 `_restore_insert`（写语句在它体内；闭包的名字进不了这份名单）。
         "src/rolecard_agent/core/memory/__init__.py::_restore_insert",
         "src/rolecard_agent/core/memory/__init__.py::restore_row",
-        # 2026-10-04 P1-6（迁移注册表）：形状迁移从 `storage/db.py::_migrate` 搬进
-        # `core/migrations.py` 的步骤，**收口纪律随代码一起搬** —— 每步自己收口（上面
+        # 2026-10-04 P1-6（迁移注册表）：形状迁移从 `storage/db.py` 那段 `_migrate` 搬进
+        # `core/storage/migrations.py` 的步骤，**收口纪律随代码一起搬** —— 每步自己收口（上面
         # `_backfill_service_endpoint_owner` 那一族）或点名收口点（下面两条）。
         # 这一步的 COMMIT 活在 executescript 里（`… ;COMMIT;` 首尾 BEGIN IMMEDIATE 包死），
         # 正是"端点配置不许半路清空"那条迁移的核心设计 —— AST 只看得见函数调用，所以登记。
@@ -402,8 +402,8 @@ WRITE_TXN_HELPERS = frozenset(
         # 刻意的：调用方各自的检查点写与计数写要能落进同一个本地事务。
         "src/rolecard_agent/storage/threads.py::bump_message_count",
         "src/rolecard_agent/storage/threads.py::record_message_count",
-        # 换线程 id 的落笔（2026-10-04 P1-6 从 `storage/db.py::_migrate` 搬来）：
-        # **刻意不收口** —— 它跑在整表重建的显式事务里（core/migrations.py 的 B2 步骤
+        # 换线程 id 的落笔（2026-10-04 P1-6 从 `storage/db.py` 那段 `_migrate` 搬来）：
+        # **刻意不收口** —— 它跑在整表重建的显式事务里（core/storage/migrations.py 的 B2 步骤
         # 首尾 BEGIN/COMMIT），自己 commit 会把 DROP→RENAME 之间的窗口重新打开。
         # 与 `set_current_role` 同族：不收口是因为调用方要用 rowcount/事务判成败。
         "src/rolecard_agent/storage/threads.py::rename_thread_id",

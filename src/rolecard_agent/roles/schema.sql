@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS role_card (
     -- 为什么不留一个"公共卡"的概念：那需要"模板 + 每人一份覆盖"的语义（改一张卡到底改了几份），
     -- 是另一件产品事；今天先按"换身份 = 换一份完整数据集"办。
     -- 为什么默认值是字面量而没有 REFERENCES：SQLite 不允许"带非常量默认值的 ADD COLUMN"再挂外键，
-    -- 而老库升上来走的正是 ADD COLUMN。默认值与 `core/identity.DEFAULT_USER_ID` 的一致性由
+    -- 而老库升上来走的正是 ADD COLUMN。默认值与 `base/identity.DEFAULT_USER_ID` 的一致性由
     -- `tests/unit/test_identity_scoping.py` 钉住（这两个数一旦漂，旧库读法就会静默变空）。
     user_id         TEXT NOT NULL DEFAULT 'local-user',
     role_name       TEXT NOT NULL,

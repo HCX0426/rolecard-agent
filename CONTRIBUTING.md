@@ -264,7 +264,7 @@ pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
   加列通常**只改 schema 声明一处**，不用手写 ALTER。
   ② `_migrate` 只管"补列器补不了"的形状迁移（当前 6 处 `ALTER`、其中 `ADD COLUMN` 3 处；
   整表重建与搬层各自带前置 DROP 与显式事务）。
-  **仍然要三处一起改的只剩一种**：`model_settings.py::migrate_to_provider_layers` 里那份
+  **仍然要三处一起改的只剩一种**：`core/model_settings/migration.py::migrate_to_provider_layers` 里那份
   `model_backend__layers` 内联 DDL（它抄了 schema 的十列，漏改它会在老库搬层时炸
   `no such column`）——分叉已由一致性断言 `shape migration DDL` 看住，改列时两边
   一起改、改漏当场红。"从老形状库跑 bootstrap 再比列集合"的测试在

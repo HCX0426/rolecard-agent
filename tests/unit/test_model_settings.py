@@ -1,4 +1,4 @@
-"""模型配置服务（core/model_settings.py）的单元测试。
+"""模型配置服务（core/model_settings/ 包）的单元测试。
 
 覆盖代码审查修复的不变量（H5/M2/M8）与拆层后的三条新纪律：
 
