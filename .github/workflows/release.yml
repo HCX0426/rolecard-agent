@@ -10,8 +10,9 @@ name: Release
 #
 # 与 ci.yml 的分工：ci.yml 负责「门禁绿不绿」；这条负责「绿了之后把可出货的产物
 # 钉成一份」。它本身**不重跑门禁**（信任 main 上已绿的 CI），但 `needs` 不存在这里——
-# 因为 tag 可能从任意 commit 打；所以发布job 自己先把门禁里的「离线快档」跑一遍当
-# 最后一道闸（见下方 `python scripts/gate.py --fast`），再打包。
+# 因为 tag 可能从任意 commit 打；所以发布job 自己把门禁的**全量档**跑一遍当
+# 最后一道闸（见下方 `gate.py --deadline-minutes 22` —— 2026-10-26 分层决定把发布
+# 首闸从快档升全量，浏览器段交 nightly 真机），再打包。
 
 on:
   push:

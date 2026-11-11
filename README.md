@@ -5,7 +5,7 @@
 ![GitHub Release](https://img.shields.io/github/v/release/HCX0426/rolecard-agent)
 [![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/HCX0426/rolecard-agent/main/docs/coverage-badge.json)](docs/gate-readings.json)
 
-**角色卡驱动的本地优先对话 Agent**：给 AI 一张持续人设卡，配上工具、知识库与健康档案插件；
+**角色卡驱动的本地优先对话 Agent**：给 AI 一张持续人设卡，配上工具与知识库，领域能力按需自建；
 本地 Ollama 或任意 OpenAI 兼容云端皆可驱动，带 Web 控制台与桌宠桌面壳，可一键公网部署。
 门禁现值见 [docs/gate-readings.json](docs/gate-readings.json)（自动写入，本页不抄数字）。
 
@@ -49,7 +49,9 @@ git config core.hooksPath .githooks
 #    打开 http://127.0.0.1:8000/ —— 新建会话即可对话；换端口用环境变量 RUN_API_PORT
 ```
 
-> 默认角色「通用助手」是纯对话；要玩健康档案功能切到「健康档案管理员」。
+> 默认角色「通用助手」带基础内核工具（联网、工作区文件读写、多模型比对、知识库检索），
+> 刻意不接领域工具；领域能力在资料页自建域、再把对应工具勾进角色白名单。出厂域包与域角色
+> 已随 2026-11-07 删除，默认常驻只有通用助手（2026-10-31 拍板，域角色仅 `--seed-domain-roles` 显式种）。
 > 改了前端再构建：`cd frontend && npm ci && npm run build`（普通演示不需要 node，dist 已入库）。
 > 开发态三件套（后端 + 前端热更新 + 桌面壳一条命令）：`powershell -NoProfile -File scripts/dev.ps1`。
 > 类 Unix：`python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements/requirements.lock`；
@@ -61,14 +63,14 @@ git config core.hooksPath .githooks
 
 控制台六个页签（**2026-10-30 IA**，页签唯一出处见 `frontend/src/App.tsx` 的 TABS 注册表）：
 **对话**（过程）· **资料**（领域数据 + 知识库区块）· **角色卡**（人格与权限 + 工作区）·
-**记忆**（跨会话事实 + 主动开口）· **工具**（能力开关 + MCP + 渠道）· **设置**（环境与凭据）。
+**记忆**（跨会话事实 + 主动开口）· **工具**（内置工具目录 + MCP + 聊天渠道）· **设置**（环境与凭据）。
 （截图 2026-10-30 随 IA 重排重拍；重拍工具：`scripts/tools/render_readme_shots.py`）
 
 | 对话 | 资料（领域数据 + 知识库区块） | 角色卡（含工作区） |
 | --- | --- | --- |
 | ![对话页](docs/assets/console-chat.png) | ![资料页](docs/assets/console-data.png) | ![角色卡页](docs/assets/console-roles.png) |
 
-| 记忆（跨会话事实 + 主动开口） | 工具（能力开关 + MCP + 渠道） | 设置（模型热切换 + 回退链） |
+| 记忆（跨会话事实 + 主动开口） | 工具（内置工具目录 + MCP + 聊天渠道） | 设置（模型热切换 + 回退链） |
 | --- | --- | --- |
 | ![记忆页](docs/assets/console-memory.png) | ![工具页](docs/assets/console-tools.png) | ![设置页](docs/assets/console-settings.png) |
 
@@ -101,13 +103,14 @@ docker run -p 8000:8000 -v rolecard-data:/app/data \
 
 ![架构总览](docs/assets/architecture.svg)
 
-<sub>分层：客户端 → 接入层 → 内核 harness → 能力（RAG / 文档摄取）→ 领域插件 → 外部依赖。
+<sub>分层：客户端 → 接入层 → 内核 harness → 能力（RAG / 文档摄取）→ 域装配点 → 外部依赖。
 核心约束：`core/` 内不出现任何领域专有名词（机器校验）；检索是内核能力，领域只声明作用域；
-工具经「启用插件 → 角色白名单」两阶段过滤后才 bind 给模型 —— 看不到即调不到。</sub>
+工具经「域在注册清单 → 角色白名单」两阶段过滤后才 bind 给模型 —— 看不到即调不到。</sub>
 
-**插件开发**只需三步：在 `domains/<name>/` 实现 `models.py` / `service.py` / `tools.py` /
-`schema.sql`，在 `domains/registry.py` 注册，初始化时装载 schema。启停在管理侧完成，
-不暴露为 LLM 可调用的工具。
+**域开发**只需三步：在 `domains/<name>/` 实现 `models.py` / `service.py` / `tools.py` /
+`schema.sql`，包的 `__init__.py` 导出 `SPEC`（`discover_specs()` 目录枚举自动派生，缺声明启动即报错），
+初始化时装载 schema（新域不必改清单，但**要重打 sidecar** 才进安装包）。边界不变式不变：不做界面
+动态安装；运行时域集合绝不暴露给模型；能力只经角色卡工具白名单生效，「启停」的现役语义就是从白名单撤工具。
 
 ---
 
@@ -116,8 +119,8 @@ docker run -p 8000:8000 -v rolecard-data:/app/data \
 | # | 内容 | 状态 |
 | --- | --- | --- |
 | **M1** | 对话内核：状态图、按角色 bind_tools、SQLite 检查点、可观测 | ✅ |
-| **M2** | 角色卡 CRUD + 插件启停（tool_epoch 实时生效）+ 两阶段工具过滤 + 审计 | ✅ |
-| **M3** | 领域插件（health 档案：结构化查询 / 对比 / 报告检索） | ✅ |
+| **M2** | 角色卡 CRUD + 插件启停（tool_epoch 实时生效；2026-10-24 收口后现役口径=角色工具白名单，`/api/plugins` 端点已退役）+ 两阶段工具过滤 + 审计 | ✅ |
+| **M3** | 领域插件（health 档案：结构化查询 / 对比 / 报告检索；出厂域包 2026-11-07 已删，域改为用户自建） | ✅ |
 | **M4** | FastAPI 接入层 + SSE 流式对话 + 聊天 UI | ✅ |
 | **M5** | 控制台前端工程化（六页签，dist 由 FastAPI 托管） | ✅ |
 
@@ -128,7 +131,7 @@ v2 系列：RAG 检索（v2.1）、文档摄取与可插拔 OCR（v2.2）、前�
 
 ## 质量与运维
 
-- **门禁**：ruff + mypy（含 Linux 档）+ 后端 pytest + 前端 vitest + 一致性核查（70 条断言：
+- **门禁**：ruff + mypy（含 Linux 档）+ 后端 pytest + 前端 vitest + 一致性核查（90 条断言：
   依赖方向、文档链接、能力矩阵、路由访问分级…），全部离线；覆盖率阈值 90%（`pyproject` 单源）。
   现值见 [docs/gate-readings.json](docs/gate-readings.json)（门禁自动写入，本页不抄数字）。
 - **安全边界**：路径穿越三重收敛、上传解压双闸、XFF 伪造链防护、命令执行审批（一次性令牌）、
