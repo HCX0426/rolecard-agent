@@ -110,6 +110,7 @@ build/_baseline/
 # 注意：它不入库，但**仍会被 check_doc_links 扫到**（那把尺子扫全仓 .md），
 # 所以里面引用仓库路径照样要用 `docs/xxx.md` 这种仓库相对写法，否则门禁会红。
 /study/
+/.research/
 /.archify/
 
 # eslint 缓存挪出 node_modules（R1031-07）：npm ci 会整个删掉 node_modules，缓存放里面 = CI 恒冷跑

@@ -60,7 +60,12 @@ src = ["src", "tests"]
 # ruff can format fenced code inside Markdown, but reformatting historical docs is pure
 # churn - and in the archive it is actively wrong, since those snippets are intentionally
 # left as they were written.
-extend-exclude = ["docs"]
+# .research/ is untracked scratch (audit/linkcheck/verify scripts for doc refresh runs):
+# it lives in the worktree but never ships, so it must stay out of the repo-wide lint
+# surface too - CI never sees it (checkout is tracked-files only), and a local full gate
+# that does must not red on it (2026-11-11: 53 findings, first full gate after the scripts
+# appeared).
+extend-exclude = ["docs", ".research"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
